@@ -1,0 +1,291 @@
+; ============================================================================
+; BANKMAP -- RamWorks bank-decode probe, one line per aux access path.
+;
+; RAM.DRV.SYSTEM sized our 128-bank RamWorks at 24 banks (3048 blocks)
+; while AUXSTRESS T9 (ALTZP path) passes all 128. So some access path
+; decodes banks differently than the ALTZP path. This walks all 128
+; banks four ways and prints, per path, how many banks hold a unique
+; signature plus the first failing bank:
+;
+;   ZP  - aux zero page via ALTZP           (T9's method; expect 128)
+;   WIN - $2000 via RAMWRT write / RAMRD read thunk in main ZP
+;   TXT - $0400 via 80STORE + PAGE2
+;   LC  - $D400 via ALTZP + LC bank1 write-enabled
+;
+; Each walk: select bank N ($C073), write sig = N eor $A7 via the path,
+; then a second pass re-selects each bank and compares. Uniqueness across
+; banks is inherent (sig differs per bank), so aliasing and dead banking
+; both count as failures. Restores bank 0, main ZP, ROM LC, 80STORE off.
+;
+; BRUN BANKMAP from the AUXSTRESS disk (not auto-run).
+; ============================================================================
+
+!cpu 6502
+!to "bankmap.bin", plain
+
+KBD      = $C000
+STORE80OFF = $C000
+STORE80ON  = $C001
+RDMAIN   = $C002
+RDCARD   = $C003
+WRMAIN   = $C004
+WRCARD   = $C005
+ALTZPOFF = $C008
+ALTZPON  = $C009
+KBDSTRB  = $C010
+PAGE2OFF = $C054
+PAGE2ON  = $C055
+LCROM    = $C082
+LCB1RW   = $C08B
+RWBANK   = $C073
+
+COUT     = $FDED
+PRBYTE   = $FDDA
+CROUT    = $FD8E
+HOME     = $FC58
+
+SIGEOR   = $A7          ; sig = bank eor SIGEOR
+
+        * = $6000
+
+        jsr HOME
+        ldy #0
+BNLP    lda TITLE,y
+        beq BNDONE
+        ora #$80
+        jsr COUT
+        iny
+        bne BNLP
+BNDONE
+
+; ---- install the RAMRD read thunk at $0100 (bottom of stack page).
+; The WHOLE RAMRD window must run from $0000-$01FF: those pages are
+; ALTZP-domain, exempt from RAMRD, so instruction fetches stay in main
+; memory while $0200-$BFFF reads come from the selected aux bank. If
+; RAMRD were switched on with the PC still at $6xxx, the next fetch
+; would come from aux bank N -- which holds no program -- and crash
+; (the first version of this tool did exactly that).
+;   0100: STA $C003   RAMRD on
+;   0103: LDA $2000   read from aux bank N
+;   0106: STA $C002   RAMRD off
+;   0109: RTS
+        ldy #0
+THLP    lda THUNK,y
+        sta $0100,y
+        iny
+        cpy #10
+        bne THLP
+
+; ================= path 1: ZP (ALTZP) =================
+        ldx #0
+P1W     txa
+        sta RWBANK
+        eor #SIGEOR
+        sta ALTZPON
+        sta $40
+        sta ALTZPOFF
+        inx
+        bpl P1W
+        ldx #0
+        stx FAIL1
+        stx CNT1
+        stx FLAG1
+P1V     txa
+        sta RWBANK
+        sta ALTZPON
+        lda $40
+        sta ALTZPOFF
+        sta TMP
+        txa
+        eor #SIGEOR
+        cmp TMP
+        bne P1BAD
+        inc CNT1
+        jmp P1NXT
+P1BAD   lda FLAG1
+        bne P1NXT
+        stx FAIL1
+        inc FLAG1
+P1NXT   inx
+        bpl P1V
+        lda #0
+        sta RWBANK
+
+; ================= path 2: WIN ($2000 RAMWRT/RAMRD) =================
+        ldx #0
+P2W     txa
+        sta RWBANK
+        eor #SIGEOR
+        sta WRCARD      ; RAMWRT on
+        sta $2000       ; -> aux bank N $2000
+        sta WRMAIN
+        inx
+        bpl P2W
+        ldx #0
+        stx FAIL2
+        stx CNT2
+        stx FLAG2
+P2V     txa
+        sta RWBANK
+        jsr $0100       ; RAMRD on / LDA aux $2000 / RAMRD off
+        sta TMP
+        txa
+        eor #SIGEOR
+        cmp TMP
+        bne P2BAD
+        inc CNT2
+        jmp P2NXT
+P2BAD   lda FLAG2
+        bne P2NXT
+        stx FAIL2
+        inc FLAG2
+P2NXT   inx
+        bpl P2V
+        lda #0
+        sta RWBANK
+
+; ================= path 3: TXT ($0400 80STORE+PAGE2) =================
+        sta STORE80ON
+        ldx #0
+P3W     txa
+        sta RWBANK
+        eor #SIGEOR
+        sta PAGE2ON     ; $0400 window -> aux bank N
+        sta $0400
+        sta PAGE2OFF
+        inx
+        bpl P3W
+        ldx #0
+        stx FAIL3
+        stx CNT3
+        stx FLAG3
+P3V     txa
+        sta RWBANK
+        sta PAGE2ON
+        lda $0400
+        sta PAGE2OFF
+        sta TMP
+        txa
+        eor #SIGEOR
+        cmp TMP
+        bne P3BAD
+        inc CNT3
+        jmp P3NXT
+P3BAD   lda FLAG3
+        bne P3NXT
+        stx FAIL3
+        inc FLAG3
+P3NXT   inx
+        bpl P3V
+        sta STORE80OFF
+        lda #0
+        sta RWBANK
+
+; ================= path 4: LC ($D400 aux LC bank1) =================
+        ldx #0
+P4W     txa
+        sta RWBANK
+        eor #SIGEOR
+        tay             ; sig
+        lda LCB1RW      ; LC bank1 RAM, write enable (read x2)
+        lda LCB1RW
+        sta ALTZPON     ; aux LC of bank N
+        tya
+        sta $D400
+        sta ALTZPOFF
+        inx
+        bpl P4W
+        ldx #0
+        stx FAIL4
+        stx CNT4
+        stx FLAG4
+P4V     txa
+        sta RWBANK
+        lda LCB1RW
+        lda LCB1RW
+        sta ALTZPON
+        lda $D400
+        sta ALTZPOFF
+        sta TMP
+        txa
+        eor #SIGEOR
+        cmp TMP
+        bne P4BAD
+        inc CNT4
+        jmp P4NXT
+P4BAD   lda FLAG4
+        bne P4NXT
+        stx FAIL4
+        inc FLAG4
+P4NXT   inx
+        bpl P4V
+        lda LCROM       ; back to ROM
+        lda #0
+        sta RWBANK
+
+; ================= report =================
+        ldx #0          ; row index
+RPT     txa
+        pha
+        asl
+        asl             ; x*4
+        tay
+        lda #4
+        sta TMP
+RCH     lda NAMES,y
+        ora #$80
+        jsr COUT
+        iny
+        dec TMP
+        bne RCH
+        pla
+        pha
+        tax
+        lda CNT1,x      ; CNT1..4 contiguous
+        jsr PRBYTE
+        lda #$A0
+        jsr COUT
+        lda #$C6        ; 'F'
+        jsr COUT
+        lda #$BD        ; '='
+        jsr COUT
+        pla
+        pha
+        tax
+        lda FAIL1,x     ; FAIL1..4 contiguous
+        jsr PRBYTE
+        jsr CROUT
+        pla
+        tax
+        inx
+        cpx #4
+        bne RPT
+
+WAITK   lda KBD
+        bpl WAITK
+        sta KBDSTRB
+        rts
+
+TMP     !byte 0
+CNT1    !byte 0
+CNT2    !byte 0
+CNT3    !byte 0
+CNT4    !byte 0
+FAIL1   !byte 0
+FAIL2   !byte 0
+FAIL3   !byte 0
+FAIL4   !byte 0
+FLAG1   !byte 0
+FLAG2   !byte 0
+FLAG3   !byte 0
+FLAG4   !byte 0
+
+THUNK   !byte $8D, $03, $C0     ; STA $C003 (RAMRD on)
+        !byte $AD, $00, $20     ; LDA $2000
+        !byte $8D, $02, $C0     ; STA $C002 (RAMRD off)
+        !byte $60               ; RTS
+
+NAMES   !text "ZP  WIN TXT LC  "
+
+TITLE   !text "BANKMAP - BANKS OK (HEX) + FIRST FAIL", $0D, $0D
+        !byte 0

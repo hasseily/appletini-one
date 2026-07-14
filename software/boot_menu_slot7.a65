@@ -1,0 +1,456 @@
+; Appletini boot-menu slot ROM.
+;
+; This slot ROM derives its Apple slot from the ROM address and uses that
+; slot's C0n0/C0n1 I/O window. It is exposed only in slot 7 and the PL
+; presents a Disk II-style signature byte for Apple autostart compatibility.
+; On exit it jumps to the runtime slot selected by boot_menu_card: SmartPort
+; in slot 7 or Disk II in slot 6.
+;
+; Transparency: the boot menu must leave the system in the state the
+; caller (the autostart slot scanner) found it in. That means:
+;
+;   - A/X/Y are saved on the 6502 stack at boot_start. The exit_scan
+;     path restores them before returning. The card handoff path
+;     replaces the scanner's return frame with a manufactured one, so
+;     the scanner is never returned to from that path -- A/X/Y don't
+;     need restoration for it.
+;   - No zero-page byte is touched. Scratch (slot index times 16, the
+;     manufactured-RTS return high byte, the raw $Cn ROM-page byte)
+;     lives in a 16-byte hardware-backed RAM register file at
+;     $CA00-$CA0F that boot_menu_card decodes only while we own the
+;     $C800 expansion-ROM window.
+;   - No screen-hole byte is touched.
+;   - Code is split between the slot page ($Cn00-$CnFF) and a single
+;     expansion ROM page at $C800-$C8FF for the bulky VBL helpers.
+;     boot_start reads $CFFF first to evict any prior expansion-ROM
+;     owner; the soft-switch manager re-asserts our ownership on the
+;     next slot-ROM instruction fetch.
+
+KBD       = $C000
+KBDSTRB   = $C010
+RDVBLBAR  = $C019
+TEXT      = $C051
+PAGE1     = $C054
+BM_IO     = $C080
+RELEASEC8 = $CFFF
+
+; Hardware-backed scratch RAM in boot_menu_card. Decoded only while we
+; own the $C800 window; reads/writes hit FFs in the FPGA. No user-
+; visible memory touched.
+SLOT16    = $CA00       ; Slot << 4, used by the BM_IO,Y indirection
+SLOTRET_HI = $CA01      ; $Cn - 1, for the manufactured-RTS handoff
+SLOT_CN   = $CA02       ; raw $Cn, pushed at handoff so AppleWin's
+                        ; Cn_Bootstrap tsx/lda $0100,x reads it
+EXIT_A    = $CA03       ; saved A across exit_scan's stack juggling
+VBL_MODE  = $CA04       ; 0 = RDVBLBAR path, 1 = II/II+ vaporlock
+
+PROMPT    = $07E7
+PROMPTLN  = $07D0
+SLOOP     = $FABA
+PROMPT_LEN = $0B
+VBL_MODE_IIPLUS = $01
+VAPOR_READ = TEXT       ; write-only softswitch read: floating bus on II/II+
+VAPOR_MARK = $BA        ; ':' in "A:APPLETINI" on bottom text row
+VAPOR_SCAN_COUNT = $08  ; count all eight scans of the text row
+
+CMD_WINDOW_BEGIN = $01
+CMD_WINDOW_END   = $02
+CMD_MENU_REQUEST = $03
+CMD_MENU_CLOSED  = $04
+CMD_VBL_START    = $05
+STATUS_HANDOFF_SMARTPORT = $08
+STATUS_HANDOFF_DISK2     = $10
+STATUS_PS_CLOSE_REQUEST  = $20
+
+; Machine-identification report: command byte $2i where i = machine id.
+; boot_menu_card latches the low nibble into status_word[15:12] for the
+; firmware. Ids: 1=II/II+, 2=IIe, 3=enhanced IIe, 4=IIgs, 5=IIc.
+; Identification technique per Apple II Miscellaneous Tech Note #7:
+; SEC / JSR $FE1F leaves carry CLEAR only on a IIgs; $FBB3 = $06 marks
+; the IIe family; $FBC0 = $00 IIc, $E0 enhanced IIe, else IIe.
+CMD_MID_IIFAMILY = $21
+CMD_MID_IIE      = $22
+CMD_MID_IIE_ENH  = $23
+CMD_MID_IIGS     = $24
+CMD_MID_IIC      = $25
+
+; Aux-slot card probe. CMD_AUX_PROBE makes the PL drop aux_provide the
+; same cycle it is decoded, so the write/read test below sees the raw
+; aux slot -- a warm reboot with our provide still armed cannot detect
+; itself. $30/$31 report the verdict; the PS re-arms provide per policy
+; when the machine-id report arrives (the id is always sent last).
+CMD_AUX_PROBE    = $26
+CMD_AUX_ABSENT   = $30
+CMD_AUX_PRESENT  = $31
+ALTZP_OFF        = $C008
+ALTZP_ON         = $C009
+IDGS             = $FE1F
+MID_FBB3         = $FBB3
+MID_FBC0         = $FBC0
+
+          * = $C700
+
+          ; Keep the odd-byte boot signature compatible with the Apple
+          ; autostart slot scan.
+          lda #$20
+          lda #$00
+          cmp #$03
+          lda #$00
+          clv
+          bvc boot_start
+
+boot_start:
+          ; Stack-save A/X/Y for transparent restoration on the
+          ; exit_scan path. (The smartport handoff path replaces the
+          ; scanner's return frame and doesn't need these.)
+          pha
+          txa
+          pha
+          tya
+          pha
+          ; Evict any prior C8 owner. Our next instruction fetch
+          ; re-asserts ownership via soft_switch_manager's c8_select.
+          lda RELEASEC8
+          jsr slot_setup
+
+boot_continue:
+          lda #CMD_WINDOW_BEGIN
+          jsr bm_cmd
+          jsr machine_id_report
+          sta TEXT
+          sta PAGE1
+
+          jsr show_prompt
+
+          jsr vbl_mousecard_sync
+
+wait_loop:
+          jsr wait_vbl_start
+          jsr bm_status
+          and #$01
+          bne window_done
+
+          lda KBD
+          bpl wait_loop
+          sta KBDSTRB
+          and #$5f
+          cmp #'A'
+          beq open_menu
+          bne wait_loop
+
+window_done:
+          jsr clear_prompt
+          lda #CMD_WINDOW_END
+          jmp handoff_or_exit
+
+open_menu:
+          lda #CMD_MENU_REQUEST
+          jsr bm_cmd
+
+menu_loop:
+          jsr wait_vbl_start
+          jsr bm_status
+          and #STATUS_PS_CLOSE_REQUEST
+          bne close_menu
+          lda KBD
+          bpl menu_loop
+          sta KBDSTRB
+          jsr bm_key
+          jmp menu_loop
+
+close_menu:
+          jsr clear_prompt
+          lda #CMD_MENU_CLOSED
+handoff_or_exit:
+          pha
+          jsr bm_status
+          and #STATUS_HANDOFF_DISK2
+          bne handoff_target
+          jsr bm_status
+          and #STATUS_HANDOFF_SMARTPORT
+          bne handoff_target
+          pla
+          jsr bm_cmd
+          jmp exit_scan
+
+handoff_target:
+          pla
+          jsr bm_cmd
+          ; Manufactured stack frame for handing off to the target card. We
+          ; intentionally do NOT pop the saved-A/X/Y from the bottom of
+          ; the stack: the manufactured RTS replaces the scanner's return
+          ; frame so we never return to it. After our RTS pops
+          ; <$FF,$Cn-1>: PC=$Cn00, stack-top=$Cn (so AppleWin's
+          ; Cn_Bootstrap sees the right slot via tsx/lda $0100,x). Below
+          ; that sits SLOOP-1 so a subsequent RTS falls through to the
+          ; monitor's slot scan loop.
+          lda #>(SLOOP - 1)
+          pha
+          lda #<(SLOOP - 1)
+          pha
+          lda SLOT_CN
+          pha
+          lda SLOTRET_HI
+          pha
+          lda #$ff
+          pha
+          rts
+
+exit_scan:
+          ; Empty-slot exit: restore Y/X/A and replace the scanner's
+          ; return frame with a SLOOP-1 frame so the eventual RTS
+          ; lands in the monitor's slot scan loop. A is held in
+          ; EXIT_A across the SLOOP-1 push (which itself uses A as
+          ; the source register).
+          pla
+          tay
+          pla
+          tax
+          pla
+          sta EXIT_A
+          lda #>(SLOOP - 1)
+          pha
+          lda #<(SLOOP - 1)
+          pha
+          lda EXIT_A
+          rts
+
+clear_prompt:
+          ldy #PROMPT_LEN - 1
+          lda #$a0
+clear_prompt_loop:
+          sta PROMPT,y
+          dey
+          bpl clear_prompt_loop
+          rts
+
+show_prompt:
+          ldy #PROMPT_LEN - 1
+show_prompt_loop:
+          lda prompt_text,y
+          sta PROMPT,y
+          dey
+          bpl show_prompt_loop
+          rts
+
+prompt_text:
+          .byte $c1,$ba,$c1,$d0,$d0,$cc,$c5,$d4,$c9,$ce,$c9
+
+slot_setup:
+          ; Called via JSR from boot_start, so the JSR's return-PC is
+          ; on top of the stack. We pull both bytes with pla;pla --
+          ; A ends up holding the high byte ($Cn) since it was pushed
+          ; last by the JSR. We use that to compute SLOT_CN, SLOTRET_HI
+          ; (= $Cn-1) and SLOT16 (= Slot<<4), then jmp to boot_continue
+          ; rather than RTS (we already discarded the return frame).
+          pla
+          pla
+          tax
+          stx SLOT_CN
+          dex
+          stx SLOTRET_HI
+          asl
+          asl
+          asl
+          asl
+          sta SLOT16
+          jmp boot_continue
+
+bm_status:
+          ldy SLOT16
+          lda BM_IO,y
+          rts
+
+bm_cmd:
+          ldy SLOT16
+          sta BM_IO,y
+          rts
+
+bm_key:
+          ldy SLOT16
+          iny
+          sta BM_IO,y
+          rts
+
+          * = $C800
+
+          ; ============================================================
+          ; Expansion-ROM helpers (boot_menu_card $C800-$C8FF page).
+          ; ============================================================
+
+          ; MouseCard-style VBL sync using only RDVBLBAR:
+          ; 1. Coarse-lock to a sampled VBL start.
+          ; 2. Probe one video frame later, then re-sample one CPU cycle
+          ;    earlier each frame until the sample is just before VBL.
+          ;    The image boots with NTSC delay constants; firmware patches
+          ;    delay_frame_back to PAL constants before releasing reset on
+          ;    PAL machines.
+vbl_mousecard_sync:
+          lda VBL_MODE
+          bne vbl_iiplus_sync
+          jsr wait_vbl_edge
+          jsr delay_frame_back
+          lda RDVBLBAR
+          and #$80
+vbl_frame_low:
+          jsr delay_frame_back
+          lda RDVBLBAR
+          and #$80
+          beq vbl_frame_low
+vbl_emit:
+          lda #CMD_VBL_START
+          ldy SLOT16
+          sta BM_IO,y
+          rts
+
+wait_vbl_start:
+          lda VBL_MODE
+          bne wait_vbl_iiplus
+          jsr wait_vbl_edge
+          beq vbl_emit
+
+          ; RDVBLBAR bit 7 is high outside VBL and low during VBL on //e.
+          ; Escape any current blanking interval, then spin on the next
+          ; high-to-low transition.
+wait_vbl_edge:
+wait_vbl_end:
+          lda RDVBLBAR
+          and #$80
+          beq wait_vbl_end
+wait_vbl_poll:
+          lda RDVBLBAR
+          and #$80
+          bne wait_vbl_poll
+          rts
+
+          ; Apple II/II+ has no RDVBLBAR. Lock to the prompt row via
+          ; the floating bus instead: after the prompt is drawn on text
+          ; row 23, its ':' byte appears once on each of the row's eight
+          ; scanlines. Counting all eight appearances gives a reference
+          ; at the bottom visible scanline; the patchable delay below
+          ; advances from that reference to the firmware's VBL-start
+          ; notification point. vbl_iiplus_sync runs this twice, so the
+          ; second lock starts just after our own inferred VBL event.
+vbl_iiplus_sync:
+          jsr iiplus_vapor_edge
+wait_vbl_iiplus:
+          jsr iiplus_vapor_edge
+          jmp vbl_emit
+
+iiplus_vapor_edge:
+          ldx #VAPOR_SCAN_COUNT
+iiplus_vapor_wait:
+          lda VAPOR_READ
+          cmp #VAPOR_MARK
+          bne iiplus_vapor_wait
+iiplus_vapor_clear:
+          lda VAPOR_READ
+          cmp #VAPOR_MARK
+          beq iiplus_vapor_clear
+          dex
+          bne iiplus_vapor_wait
+iiplus_vapor_x_opcode:
+          ldx #$02
+iiplus_vapor_outer:
+iiplus_vapor_y_opcode:
+          ldy #$04
+iiplus_vapor_inner:
+          dey
+          bne iiplus_vapor_inner
+          dex
+          bne iiplus_vapor_outer
+          rts
+
+          ; Delay body defaults to 17014 cycles.  In the scan loop, the
+          ; surrounding LDA/AND/BEQ/JSR overhead makes probe-to-probe spacing
+          ; 17029 cycles: one CPU cycle earlier than the 17030-cycle NTSC
+          ; frame.  PAL firmware patching changes the two immediates to make
+          ; the body 20264 cycles, for 20279-cycle PAL probe spacing.
+          ; Identify the host machine and report it to the firmware.
+          ; Must run only on machines where the monitor ROM is mapped
+          ; (always true during the autostart slot scan). GS note: on a
+          ; IIgs the boot scan runs in //e-compat mode and this still
+          ; works. The VBL helpers below assume //e RDVBLBAR polarity and
+          ; must not be used after switching a IIgs to native timing.
+machine_id_report:
+          lda #$00
+          sta VBL_MODE
+          sec
+          jsr IDGS
+          bcc mid_gs
+          lda MID_FBB3
+          cmp #$06
+          beq mid_iie_family
+          lda #VBL_MODE_IIPLUS
+          sta VBL_MODE
+          lda #CMD_MID_IIFAMILY
+          bne mid_send
+mid_iie_family:
+          lda MID_FBC0
+          beq mid_iic
+          cmp #$e0
+          beq mid_iie_enh
+          lda #CMD_MID_IIE
+          jmp mid_aux_probe
+mid_iie_enh:
+          lda #CMD_MID_IIE_ENH
+          jmp mid_aux_probe
+mid_iic:
+          lda #CMD_MID_IIC
+          bne mid_send
+mid_gs:
+          lda #CMD_MID_IIGS
+mid_send:
+          ldy SLOT16
+          sta BM_IO,y
+          rts
+
+          ; IIe only: probe the aux slot with our provide forced off,
+          ; report $30/$31, then fall through to send the id in X.
+          ; No JSR while ALTZP is on: with no aux card the alt stack
+          ; floats and a return address would be lost.
+mid_aux_probe:
+          tax
+          lda #CMD_AUX_PROBE
+          ldy SLOT16
+          sta BM_IO,y
+          sta ALTZP_ON
+          lda #$AA
+          sta $00
+          lda #$55
+          sta $01
+          lda #$33
+          sta $00
+          lda $01
+          cmp #$55
+          bne mid_aux_no
+          lda $00
+          cmp #$33
+          bne mid_aux_no
+          lda #CMD_AUX_PRESENT
+          bne mid_aux_send
+mid_aux_no:
+          lda #CMD_AUX_ABSENT
+mid_aux_send:
+          sta ALTZP_OFF
+          sta BM_IO,y
+          txa
+          bne mid_send
+
+delay_frame_back:
+          txa
+          pha
+delay_frame_x_opcode:
+          ldx #$1d
+delay_frame_outer:
+delay_frame_y_opcode:
+          ldy #$74
+delay_frame_inner:
+          dey
+          bne delay_frame_inner
+          dex
+          bne delay_frame_outer
+          nop
+          pla
+          tax
+          rts

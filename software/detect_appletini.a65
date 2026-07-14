@@ -1,0 +1,81 @@
+; detect_appletini.a65 — detect an Appletini from 6502 assembly.
+;
+; Method: the Appletini emulates a SmartPort controller hard-wired to slot 7
+; that cannot be disabled or relocated. Issue a SmartPort STATUS call with
+; status code $03 (GETDIB, "Return Device Information Block") to unit 0 (the
+; controller); the returned DIB ID string is "Appletini SP". (A device unit
+; returns "Appletini HD".) We compare the 9-char prefix "Appletini".
+;
+; Returns:  carry CLEAR  -> Appletini present (falls through to `found`)
+;           carry SET    -> not present, OR slot 7 not yet handed off to SmartPort
+;
+; Caveat: slot 7 only presents SmartPort after the Appletini boot-menu handoff.
+; During the boot-menu phase $C707 reads $3C and the signature guard below
+; reports "not present". For normally-running app code the handoff has already
+; happened. See README_APPLETINI_DETECTION.md for the full explanation.
+;
+; Assemble:  acme -o detect_appletini detect_appletini.a65
+
+!cpu 6502
+* = $0800
+
+SLOT        = 7
+ROM         = $C000 + (SLOT * $100)   ; $C700  slot-7 ROM
+SIG5        = ROM + $05               ; $C705  -> $03 on a SmartPort card
+SIG7        = ROM + $07               ; $C707  -> $00 on a SmartPort card
+SP_ENTRY    = ROM + $0D               ; $C70D  SmartPort dispatch (= ProDOS entry + 3)
+
+SETSLOTCXROM = $C006                  ; IIe: map peripheral-card ROM into $Cx00
+
+buffer      = $0900                   ; DIB result buffer (>= 32 bytes)
+SIG_LEN     = 9                       ; compare just "Appletini"
+
+; ===================================================================
+detect
+                ; On a IIe, ensure slot ROM (not internal Cx ROM) is mapped so
+                ; both the signature read and the dispatch call hit the card.
+                sta SETSLOTCXROM        ; write-only soft switch; value irrelevant
+
+                ; --- 1. Is slot 7 currently presenting the SmartPort ROM? ----
+                ; During the boot-menu phase $C707 reads $3C, so this guard
+                ; cleanly rejects "Appletini present but not yet handed off".
+                lda SIG5
+                cmp #$03
+                bne not_present
+                lda SIG7
+                bne not_present         ; must be $00
+
+                ; --- 2. SmartPort STATUS / GETDIB to unit 0 (controller) -----
+                jsr SP_ENTRY
+                !byte $00               ; CMD = STATUS
+                !word params
+                bcs not_present         ; carry set -> call failed
+
+                ; --- 3. Compare controller ID string to "Appletini" ----------
+                ; Controller DIB: buffer+8 = length ($0C), buffer+9.. = text.
+                ldx #0
+cmp_loop
+                lda buffer + 9, x
+                cmp sig_text, x
+                bne not_present
+                inx
+                cpx #SIG_LEN
+                bne cmp_loop
+
+found
+                clc                     ; carry clear = Appletini detected
+                rts                     ; <-- your code goes here: it's an Appletini
+
+not_present
+                sec                     ; carry set = not detected / not ready
+                rts
+
+; ---- SmartPort STATUS parameter list -------------------------------
+params
+                !byte $03               ; parameter count
+                !byte $00               ; unit 0 = SmartPort controller
+                !word buffer            ; status-list (result) pointer
+                !byte $03               ; status code $03 = GETDIB
+
+sig_text
+                !text "Appletini"       ; plain low ASCII, matches firmware

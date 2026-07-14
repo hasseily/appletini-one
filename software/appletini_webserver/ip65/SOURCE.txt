@@ -1,0 +1,11 @@
+IP65 library source
+===================
+
+Repository: https://github.com/cc65/ip65
+Commit: 25a9c5aa9480ddab0e506108ec7f1ce538165d28
+
+ip65_web.lib contains unmodified IP65 objects selected for ARP, IPv4, TCP,
+DNS, HTTP client/server, and the Apple II Uthernet II driver. That driver wraps
+the Contiki W5100 MACRAW driver. The complete corresponding source is available
+at the repository and commit above. See LICENSE.txt for the MPL 1.1 terms.
+The Contiki-derived W5100 object retains its BSD notice in LICENSE-W5100.txt.

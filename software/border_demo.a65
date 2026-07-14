@@ -1,0 +1,199 @@
+; border_demo.a65 -- cycle-exact VidHD $C034 raster bars for the Apple //e
+;
+; The loop detects NTSC/PAL, then runs exactly 262/312 scanlines at 65 cycles
+; each. Every line switches to 16-color at cycle 32. Indexed stores pair the
+; //e speaker alias read with each border write.
+
+!cpu 6502
+* = $6000
+
+KBD      = $C000
+KBDSTRB  = $C010
+RDVBLBAR = $C019
+BORDER   = $C034
+HOME     = $FC58
+COUT     = $FDED
+
+!macro raster_line .color {
+    lda #.color         ; 2
+    sta BORDER,x        ; 5; dummy read + write leaves speaker unchanged
+    jsr half_delay      ; 18
+    lda #(16 - .color)  ; 2
+    sta BORDER,x        ; 5; opposite write lands at cycle 32
+    jsr line_tail_delay ; 33; total: 65 cycles
+}
+
+!macro raster_jump .color, .target {
+    lda #.color         ; 2
+    sta BORDER,x        ; 5
+    jsr half_delay      ; 18
+    lda #(16 - .color)  ; 2
+    sta BORDER,x        ; 5
+    jsr jump_tail_delay ; 30
+    jmp .target         ; 3; total: 65 cycles
+}
+
+!macro raster_last .color {
+    lda #.color         ; 2
+    sta BORDER,x        ; 5
+    jsr half_delay      ; 18
+    lda #(16 - .color)  ; 2
+    sta BORDER,x        ; 5
+    jsr last_tail_delay ; 22
+    lda KBD             ; 4
+    bmi exit            ; 2 when no key
+    jmp (restart_vector); 5; total: 65 cycles
+}
+
+!macro raster_bottom {
+    +raster_line 14
+    +raster_line 14
+!for .line, 1, 14 {
+    +raster_line 15
+}
+}
+
+start:
+    php
+    sei
+    pha
+    txa
+    pha
+    tya
+    pha
+
+    jsr HOME
+    ldx #0
+print_title:
+    lda title,x
+    beq title_done
+    ora #$80
+    jsr COUT
+    inx
+    bne print_title
+title_done:
+    lda KBD
+    sta KBDSTRB
+    jsr detect_video
+
+sync_frame:
+-   lda RDVBLBAR
+    and #$80
+    beq -               ; leave the detector's current VBL
+-   lda RDVBLBAR
+    and #$80
+    bne -               ; start at the next VBL edge
+    ldx #0              ; required by the paired $C034 stores
+    jmp (restart_vector)
+
+; Scanner order from VBL start: bottom border, true blanking, top border,
+; then the 192 active lines. PAL adds 50 blank lines before the shared tail.
+raster_ntsc:
+    +raster_bottom
+    +raster_jump 0, raster_common_blank
+
+raster_pal:
+    +raster_bottom
+!for .line, 1, 51 {
+    +raster_line 0
+}
+
+raster_common_blank:
+!for .line, 1, 37 {
+    +raster_line 0
+}
+!for .color, 0, 13 {
+!for .line, 1, 14 {
+    +raster_line .color
+}
+}
+!for .line, 1, 11 {
+    +raster_line 14
+}
+    +raster_last 14
+
+exit:
+    sta KBDSTRB
+    lda #6
+    sta BORDER,x
+    pla
+    tay
+    pla
+    tax
+    pla
+    plp
+    rts
+
+wait_vbl_edge:
+-   lda RDVBLBAR
+    and #$80
+    beq -               ; leave any current VBL
+-   lda RDVBLBAR
+    and #$80
+    bne -               ; wait for the next high-to-low edge
+    rts
+
+detect_video:
+    jsr wait_vbl_edge
+    ldy #0
+detect_vblank:
+    ldx #16
+-   dex
+    bne -
+    iny
+    lda RDVBLBAR
+    bmi detect_active
+    jmp detect_vblank
+detect_active:
+    ldx #16
+-   dex
+    bne -
+    iny
+    lda RDVBLBAR
+    bmi detect_active
+    cpy #207            ; NTSC is about 189 ticks; PAL is about 225
+    bcc select_ntsc
+
+select_pal:
+    lda #<raster_pal
+    sta restart_vector
+    lda #>raster_pal
+    sta restart_vector + 1
+    rts
+select_ntsc:
+    lda #<raster_ntsc
+    sta restart_vector
+    lda #>raster_ntsc
+    sta restart_vector + 1
+    rts
+
+; These loops exist once so their taken branches can never acquire a
+; page-cross penalty in one particular expanded raster line.
+!align 255, 0
+restart_vector:
+    !word raster_ntsc   ; also avoids the NMOS indirect-JMP page-wrap bug
+
+last_tail_delay:        ; JSR 6 + body 10 + RTS 6 = 22
+    nop                 ; 2 * 2 before the shared half-delay body
+    nop
+half_delay:             ; JSR 6 + body 6 + RTS 6 = 18
+    nop                 ; 2 * 3
+    nop
+    nop
+    rts                 ; 6
+
+line_tail_delay:        ; JSR 6 + body 21 + RTS 6 = 33
+    ldx #4              ; 2
+-   dex                 ; 2 * 4
+    bne -               ; 3 * 3 + 2
+    rts                 ; 6
+
+jump_tail_delay:        ; JSR 6 + body 18 + RTS 6 = 30
+    ldx #3              ; 2
+-   dex                 ; 2 * 3
+    bne -               ; 3 * 2 + 2
+    nop                 ; 2
+    rts                 ; 6
+
+title:
+    !text "APPLETINI BORDER RASTER - PRESS ANY KEY TO EXIT", $0D, 0

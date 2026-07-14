@@ -1,0 +1,1052 @@
+; ============================================================================
+; auxstress.a65 -- Virtual 64K aux / RamWorks provide-path stress meter
+;
+;   A seconds-scale, quantifiable error meter for the Appletini's INH-based
+;   aux emulation. Five subtests, one
+;   per memory-soft-switch combination, each driving dense traffic of the
+;   shape that kills A2Desktop/Nox (MGTK-class serve/turnaround density),
+;   verifying every byte and accumulating 16-bit error counters that are
+;   redrawn each pass. Errors never halt the run: this is a rate meter
+;   for bench-sweeping drive/INH timing knobs.
+;
+;     T1  ALTZP        aux ZP + aux stack page, JSR storms interleaved
+;     T2  RAMRD/RAMWRT $0200-$BFFF path: main->aux, aux->aux, verify
+;     T3  80STORE      PAGE2 text window + HIRES window (aux side)
+;     T4  ALTZP + LC   aux language card, both banks, aliasing check
+;     T5  THE MIX      ALTZP+RAMRD+RAMWRT+LC all on: pointer walks off
+;                      aux ZP, aux stack storms, aux writes, LC touches
+;                      -- the A2Desktop context-switch pattern.
+;
+;   Banking discipline (the program survives its own switch flipping):
+;   - The whole program ($6000-$6FFF) is mirrored into aux RAM each pass,
+;     so phases with RAMRD on keep executing an identical copy.
+;   - Per-pass pattern seeds are patched into immediate operands BEFORE
+;     the mirror copy, so both banks agree.
+;   - NO absolute data reads/RMWs of main-bank state while RAMRD is on
+;     (they would hit the stale mirror): those phases index off main-ZP
+;     pointers and tally errors in main ZP; ALTZP phases tally in aux ZP
+;     or bump main-bank counters directly (ALTZP leaves $0200+ alone).
+;   - T5 verifies T2's aux $0800 page, so T2 must run first each pass.
+;
+;   Assemble:  acme -f plain -o auxstress.bin auxstress.a65
+;   Disk:      scripts/build_auxstress_disk.py  ->  software/AUXSTRESS.dsk
+;   BRUN at $6000 (auto-boot HELLO does this). Any key exits.
+; ============================================================================
+
+!cpu 6502
+* = $6000
+
+; ---- soft switches (//e) ----
+KBD      = $C000
+STORE80OFF = $C000      ; write
+STORE80ON  = $C001      ; write
+RDMAIN   = $C002        ; write: RAMRD off
+RDCARD   = $C003        ; write: RAMRD on
+WRMAIN   = $C004        ; write: RAMWRT off
+WRCARD   = $C005        ; write: RAMWRT on
+ALTZPOFF = $C008        ; write
+ALTZPON  = $C009        ; write
+KBDSTRB  = $C010
+PAGE2OFF = $C054        ; any access
+PAGE2ON  = $C055        ; any access
+HIRESOFF = $C056        ; any access
+HIRESON  = $C057        ; any access
+TEXTOFF  = $C050        ; any access
+TEXTON   = $C051        ; any access
+COL80OFF = $C00C        ; write
+COL80ON  = $C00D        ; write
+DHIRESON = $C05E        ; any access (AN3)
+DHIRESOF = $C05F        ; any access
+LCROM    = $C082        ; read: ROM, no write
+LCB2RW   = $C083        ; read x2: LC bank2 RAM read+write
+LCB1RW   = $C08B        ; read x2: LC bank1 RAM read+write
+RWBANK   = $C073        ; RamWorks bank select (write, data bit7=0)
+
+; ---- monitor ----
+COUT     = $FDED
+PRBYTE   = $FDDA
+CROUT    = $FD8E
+HOME     = $FC58
+TABV     = $FB5B        ; A = row, sets CV and VTABs
+CH       = $24
+
+; ---- main zero page (used only with RAMRD-safe rules; see header) ----
+P        = $06          ; +$07 pointer
+P2       = $08          ; +$09 second pointer (T2 aux->aux dst)
+TALLY    = $1E          ; main-ZP error tally for RAMRD-on phases
+
+; ProDOS block-device driver parameters (standard convention)
+DCMD     = $42          ; 1 = READ
+DUNIT    = $43          ; slot 7 drive 1 = $70
+DBUFL    = $44
+DBUFH    = $45
+DBLKL    = $46
+DBLKH    = $47
+
+; aux-ZP scratch (addresses in the AUX bank; used only with ALTZP on)
+AZTALLY  = $EB          ; T5 error tally
+AZP4     = $F4          ; +$F5 T5 source pointer (aux $0800)
+AZP6     = $F6          ; +$F7 T5 dest pointer (aux $4800)
+
+; ============================================================================
+ENTRY   jsr HOME
+        ldy #0
+BANLOOP lda BANNER,y
+        beq BANDONE
+        ora #$80
+        jsr COUT
+        iny
+        bne BANLOOP
+BANDONE sei                     ; the whole meter runs IRQ-masked
+        lda #0
+        sta PASS
+        sta PASS+1
+        sta SEED
+        ldx #17                 ; zero the nine 16-bit counters
+CLRERR  sta ERR1,x
+        dex
+        bpl CLRERR
+        ; T7 retention page: write aux $5000 ONCE, never again.
+        lda #0
+        sta P
+        lda #$50
+        sta P+1
+        sta WRCARD
+        ldy #0
+RETF    tya
+        eor #$C3                ; fixed pattern, deliberately unseeded
+        sta (P),y
+        iny
+        bne RETF
+        sta WRMAIN
+
+; ----------------------------------------------------------------------------
+PASSLP  inc SEED
+
+; ---- patch this pass's pattern immediates (main bank, normal state) ----
+        lda SEED
+        sta T1PF+1              ; T1 fill/verify
+        sta T1PV+1
+        sta T2PC+1              ; T2 copy-verify: $0800-page content is
+        sta T5PV+1              ;   y^seed (page mix cancels, see T2)
+        eor #$08
+        sta T2PA+1              ; T2 fill seed (mixed with page hi)
+        sta T2PB+1              ; T2 verify
+        lda SEED
+        eor #$A5
+        sta T3PF+1              ; T3 text window
+        sta T3PV+1
+        eor #$3C
+        sta T3HF+1              ; T3 hires window
+        sta T3HV+1
+        lda SEED
+        eor #$D0
+        sta T4PF+1              ; T4 LC bank1
+        sta T4PV+1
+        sta T4PW+1              ; T4 bank1 aliasing re-verify
+        eor #$FF
+        sta T4QF+1              ; T4 LC bank2 (inverted)
+        sta T4QV+1
+        lda SEED
+        eor #$E7
+        sta T5LF+1              ; T5 LC $E000 constant
+        lda SEED
+        eor #$48
+        sta T5PW+1              ; T5 $4800 write pattern
+        sta T5PX+1              ; T5 $4800 verify
+        lda SEED
+        eor #$18
+        sta T6PF+1              ; T6 rapid-toggle page
+        sta T6PV+1
+        lda SEED
+        eor #$B7
+        sta T9P+1               ; T9 RamWorks bank signatures
+        lda SEED
+        eor #$5A
+        sta T6PZ+1              ; T6 rapid-ALTZP cells
+
+; ---- mirror $6000-$6FFF into aux so RAMRD phases keep executing ----
+        lda #0
+        sta P
+        lda #$60
+        sta P+1
+        sta WRCARD              ; writes -> aux; reads still main
+        ldx #16                 ; 16 pages
+MIRLOOP ldy #0
+MIRBYTE lda (P),y               ; read main
+        sta (P),y               ; write aux (same address)
+        iny
+        bne MIRBYTE
+        inc P+1
+        dex
+        bne MIRLOOP
+        sta WRMAIN
+
+        lda #0                  ; display-mode loop: 40 / 80COL / DHGR
+        sta MODEIX
+MODELP  jsr DSETMODE            ; enter this segment's display mode
+        jsr TEST3               ; T3 toggles HIRES: run it first,
+        jsr DSETMODE            ; then re-assert the mode
+        jsr TEST1
+        jsr TEST2
+        jsr TEST4
+        jsr TEST5
+        jsr TEST6
+        jsr TEST7
+        jsr TEST8
+        jsr TEST9
+        jsr DSET40              ; back to sane text for bookkeeping
+        inc MODEIX
+        lda MODEIX
+        cmp #3
+        bcc MODELP
+
+        inc PASS
+        bne SHOWIT
+        inc PASS+1
+SHOWIT  jsr SHOW
+
+        lda KBD
+        bmi EXITK
+        jmp PASSLP
+EXITK   sta KBDSTRB
+        cli
+        rts
+
+; ============================================================================
+; Display-mode setters. The 80COL and DHGR segments keep the motherboard
+; video scanner fetching AUX every PHI1 (double-rate, from the empty aux
+; slot) throughout the traffic -- the ingredient the apps have and quiet
+; 40-col testing lacks. The screen shows garbage during those segments.
+; ============================================================================
+DSET40  lda DHIRESOF
+        lda TEXTON
+        lda HIRESOFF
+        sta COL80OFF
+        rts
+DSETMODE
+        lda MODEIX
+        beq DSET40
+        cmp #1
+        beq DSET80
+        sta COL80ON             ; DHGR: 80COL + HIRES + TEXT off + AN3
+        lda TEXTOFF
+        lda HIRESON
+        lda DHIRESON
+        rts
+DSET80  sta COL80ON             ; 80-col text
+        lda TEXTON
+        rts
+
+; ============================================================================
+; T1 -- ALTZP: aux zero page + aux stack page, with JSR storms.
+; Counter bumps at $6FD0 are main-bank absolutes: safe under ALTZP-only.
+; Stack-page pattern stays below $01D0 so the (aux) SP splash zone and
+; our own storm pushes never collide with verified bytes.
+; ============================================================================
+TEST1   sta ALTZPON
+        ldx #0
+T1FILL  txa
+T1PF    eor #$00                ; (patched)
+        sta $00,x
+        cpx #$D0
+        bcs T1FSKP
+        sta $0100,x
+T1FSKP  inx
+        bne T1FILL
+        lda #4                  ; four verify sweeps
+        sta T1REP
+T1SWEEP ldx #0
+T1VER   txa
+T1PV    eor #$00                ; (patched)
+        cmp $00,x
+        beq T1C2
+        jsr BUMP1
+T1C2    cpx #$D0
+        bcs T1V2
+        cmp $0100,x
+        beq T1V2
+        jsr BUMP1
+T1V2    txa
+        and #7
+        bne T1NX
+        jsr STORM               ; aux stack traffic every 8th index
+T1NX    inx
+        bne T1VER
+        dec T1REP
+        bne T1SWEEP
+        sta ALTZPOFF
+        rts
+
+; 16-bit bumps for the direct-count tests (main-bank counters)
+BUMP1   inc ERR1
+        bne BR1
+        inc ERR1+1
+BR1     rts
+BUMP3   inc ERR3
+        bne BR3
+        inc ERR3+1
+BR3     rts
+BUMP4   inc ERR4
+        bne BR4
+        inc ERR4+1
+BR4     rts
+
+; stack storm: balanced pushes/pulls on whichever stack is active
+STORM   pha
+        txa
+        pha
+        tya
+        pha
+        pla
+        tay
+        pla
+        tax
+        pla
+        rts
+
+; ============================================================================
+; T2 -- RAMRD/RAMWRT $0200-$BFFF path.
+;   A: fill aux $0800-$0FFF        (RAMWRT on;  fetches main)
+;   B: verify                      (RAMRD on;   fetches AUX MIRROR)
+;   C: copy aux $0800 -> aux $1000 (both on),   verify $1000
+; Pattern = y ^ (seed^$08) ^ pagehi, with pagehi taken from main-ZP P+1
+; (ZP reads are unaffected by RAMRD; NO absolute state reads here).
+; For page $08 the mix cancels to y^seed -- what T5 later verifies.
+; Errors tally in main ZP, merged into ERR2 after restore.
+; ============================================================================
+TEST2   lda #0
+        sta TALLY
+        sta P
+        sta P2
+        lda #$08
+        sta P+1
+        sta WRCARD
+        ldx #8                  ; 8 pages: $0800-$0FFF
+T2FA    ldy #0
+T2FB    tya
+T2PA    eor #$00                ; (patched: seed^$08)
+        eor P+1
+        sta (P),y
+        iny
+        bne T2FB
+        inc P+1
+        dex
+        bne T2FA
+        sta WRMAIN
+        lda #$08
+        sta P+1
+        sta RDCARD              ; verify from aux (fetches: aux mirror)
+        ldx #8
+T2VA    ldy #0
+T2VB    tya
+T2PB    eor #$00                ; (patched: seed^$08)
+        eor P+1
+        cmp (P),y
+        beq T2VOK
+        inc TALLY               ; main ZP: writes unaffected by RAMRD
+T2VOK   iny
+        bne T2VB
+        inc P+1
+        dex
+        bne T2VA
+        ; aux -> aux copy: $0800 page -> $1000 page, then verify
+        lda #$08
+        sta P+1
+        lda #$10
+        sta P2+1
+        sta WRCARD              ; RAMRD still on: reads aux, writes aux
+        ldy #0
+T2CP    lda (P),y
+        sta (P2),y
+        iny
+        bne T2CP
+        sta WRMAIN
+        ldy #0
+T2CV    tya
+T2PC    eor #$00                ; (patched: plain seed)
+        cmp (P2),y
+        beq T2COK
+        inc TALLY
+T2COK   iny
+        bne T2CV
+        sta RDMAIN
+        lda TALLY               ; merge
+        beq T2DONE
+        clc
+        adc ERR2
+        sta ERR2
+        bcc T2DONE
+        inc ERR2+1
+T2DONE  rts
+
+; ============================================================================
+; T3 -- 80STORE windows, aux side (PAGE2=1 keeps the visible main text
+; page untouched; TEXT display mode keeps HIRES a pure memory switch).
+; Direct counter bumps are safe: no RAMRD/RAMWRT, counters not windowed.
+; ============================================================================
+TEST3   sta STORE80ON
+        lda PAGE2ON
+        lda #0                  ; text window $0400-$07FF
+        sta P
+        lda #$04
+        sta P+1
+        ldx #4
+T3FA    ldy #0
+T3FB    tya
+T3PF    eor #$00                ; (patched)
+        eor P+1
+        sta (P),y
+        iny
+        bne T3FB
+        inc P+1
+        dex
+        bne T3FA
+        lda #$04
+        sta P+1
+        ldx #4
+T3VA    ldy #0
+T3VB    tya
+T3PV    eor #$00                ; (patched)
+        eor P+1
+        cmp (P),y
+        beq T3VOK
+        jsr BUMP3
+T3VOK   iny
+        bne T3VB
+        inc P+1
+        dex
+        bne T3VA
+        lda HIRESON             ; hires window $2000-$27FF
+        lda #0
+        sta P
+        lda #$20
+        sta P+1
+        ldx #8
+T3HA    ldy #0
+T3HB    tya
+T3HF    eor #$00                ; (patched)
+        eor P+1
+        sta (P),y
+        iny
+        bne T3HB
+        inc P+1
+        dex
+        bne T3HA
+        lda #$20
+        sta P+1
+        ldx #8
+T3IA    ldy #0
+T3IB    tya
+T3HV    eor #$00                ; (patched)
+        eor P+1
+        cmp (P),y
+        beq T3IOK
+        jsr BUMP3
+T3IOK   iny
+        bne T3IB
+        inc P+1
+        dex
+        bne T3IA
+        lda PAGE2OFF            ; order: PAGE2 off while 80STORE still on
+        lda HIRESOFF
+        sta STORE80OFF
+        rts
+
+; ============================================================================
+; T4 -- aux language card, both banks, plus a bank-aliasing check.
+; ALTZP on: no ZP/pointer use inside; absolute-indexed loops with
+; self-modified page operands (fetches stay in MAIN code: no RAMRD).
+; Self-mod is safe here for the same reason. Counter bumps are safe.
+; ============================================================================
+TEST4   sta ALTZPON
+        bit LCB1RW              ; double-read: bank1 RAM read+write
+        bit LCB1RW
+        lda #$D0                ; fill bank1 $D000-$D3FF
+        sta T4WP+2
+        ldx #4
+T4F1    ldy #0
+T4F2    tya
+T4PF    eor #$00                ; (patched)
+        eor T4WP+2
+T4WP    sta $D000,y
+        iny
+        bne T4F2
+        inc T4WP+2
+        dex
+        bne T4F1
+        ldy #0                  ; plus the bank-common $FE00 page
+T4F3    tya
+        eor #$FE
+        sta $FE00,y
+        iny
+        bne T4F3
+        lda #$D0                ; verify bank1
+        sta T4RP+2
+        ldx #4
+T4V1    ldy #0
+T4V2    tya
+T4PV    eor #$00                ; (patched)
+        eor T4RP+2
+T4RP    cmp $D000,y
+        beq T4VOK
+        jsr BUMP4
+T4VOK   iny
+        bne T4V2
+        inc T4RP+2
+        dex
+        bne T4V1
+        ldy #0
+T4V3    tya
+        eor #$FE
+        cmp $FE00,y
+        beq T4VF
+        jsr BUMP4
+T4VF    iny
+        bne T4V3
+        bit LCB2RW              ; bank 2: inverted-seed pattern
+        bit LCB2RW
+        lda #$D0
+        sta T4QW+2
+        ldx #4
+T4G1    ldy #0
+T4G2    tya
+T4QF    eor #$00                ; (patched: seed^$D0^$FF)
+        eor T4QW+2
+T4QW    sta $D000,y
+        iny
+        bne T4G2
+        inc T4QW+2
+        dex
+        bne T4G1
+        lda #$D0
+        sta T4QR+2
+        ldx #4
+T4H1    ldy #0
+T4H2    tya
+T4QV    eor #$00                ; (patched)
+        eor T4QR+2
+T4QR    cmp $D000,y
+        beq T4HOK
+        jsr BUMP4
+T4HOK   iny
+        bne T4H2
+        inc T4QR+2
+        dex
+        bne T4H1
+        bit LCB1RW              ; aliasing check: bank1 must be intact
+        bit LCB1RW
+        lda #$D0
+        sta T4SP+2
+        ldx #4
+T4I1    ldy #0
+T4I2    tya
+T4PW    eor #$00                ; (patched: same as T4PF)
+        eor T4SP+2
+T4SP    cmp $D000,y
+        beq T4IOK
+        jsr BUMP4
+T4IOK   iny
+        bne T4I2
+        inc T4SP+2
+        dex
+        bne T4I1
+        bit LCROM               ; LC back to ROM reads, write-protect
+        sta ALTZPOFF
+        rts
+
+; ============================================================================
+; T5 -- THE MIX (the A2Desktop killer): ALTZP + RAMRD + RAMWRT + aux LC
+; all live at once. Pointer walks off aux ZP, per-iteration JSR stack
+; storms on the aux stack, pattern writes through an aux-ZP pointer,
+; LC reads, dense verify -- maximal serve and bus-turnaround density.
+; Fetches run in the AUX MIRROR once RAMRD goes on. The LC verify
+; compares against the patched immediate READ AS DATA from the code
+; (identical in both banks). Error tally lives in aux ZP.
+; ============================================================================
+TEST5   sta ALTZPON
+        lda #0                  ; aux-ZP scratch setup
+        sta AZTALLY
+        sta AZP4
+        sta AZP6
+        lda #$08
+        sta AZP4+1
+        lda #$48
+        sta AZP6+1
+        bit LCB1RW              ; aux LC bank1: constant page at $E000
+        bit LCB1RW
+        ldy #0
+T5L1
+T5LF    lda #$00                ; (patched)
+        sta $E000,y
+        iny
+        bne T5L1
+        sta WRCARD              ; order: writes->aux first,
+        sta RDCARD              ; then fetches jump to the aux mirror
+        lda #6                  ; storm repetitions
+        sta T5REP               ; NOTE: RAMWRT on -> lands in the aux
+                                ; mirror's copy; read back the same way
+T5OUTER ldy #0
+T5INNER lda (AZP4),y            ; aux ZP pointer + aux data read
+        sta $D0                 ; aux ZP write
+        tya
+T5PV    eor #$00                ; (patched: plain seed = T2 $0800 page)
+        cmp (AZP4),y            ; verify T2's page under load
+        beq T5OK1
+        inc AZTALLY
+T5OK1   tya
+T5PW    eor #$00                ; (patched)
+        sta (AZP6),y            ; aux data write via aux-ZP pointer
+        lda $E000               ; aux LC read touch
+        cmp T5LF+1              ; vs patched constant (mirror-identical)
+        beq T5OK2
+        inc AZTALLY
+T5OK2   jsr STORM               ; aux stack storm
+        iny
+        bne T5INNER
+        ldy #0                  ; verify the page we just wrote
+T5WV    tya
+T5PX    eor #$00                ; (patched)
+        cmp (AZP6),y
+        beq T5OK3
+        inc AZTALLY
+T5OK3   iny
+        bne T5WV
+        dec T5REP               ; (aux-mirror copy, consistent with sta)
+        bne T5OUTER
+        sta RDMAIN              ; teardown in strict order:
+        sta WRMAIN              ; fetches back to main, writes back to main
+        bit LCROM
+        lda AZTALLY             ; still ALTZP: pull the aux-ZP tally
+        sta ALTZPOFF
+        clc                     ; merge
+        adc ERR5
+        sta ERR5
+        bcc T5DONE
+        inc ERR5+1
+T5DONE  rts
+
+; ============================================================================
+; T6 -- rapid-toggle idiom (the DeskTop pattern the sswatch histories
+; showed: every aux access bracketed by its own switch writes). One
+; bank turnaround per byte on both the fetch and data sides, plus a
+; per-byte ALTZP flip segment. Tally in main ZP (only touched with
+; switches off), merged after.
+; ============================================================================
+TEST6   lda #0
+        sta TALLY
+        sta P
+        lda #$18
+        sta P+1
+        ldy #0                  ; write: WRCARD/STA/WRMAIN per byte
+T6F     sta WRCARD
+        tya
+T6PF    eor #$00                ; (patched)
+        sta (P),y
+        sta WRMAIN
+        iny
+        bne T6F
+        ldy #0                  ; verify: RDCARD/CMP/RDMAIN per byte
+T6V     sta RDCARD              ; (fetches swap banks at every toggle)
+        tya
+T6PV    eor #$00                ; (patched)
+        cmp (P),y
+        sta RDMAIN              ; STA preserves flags
+        beq T6OK
+        inc TALLY
+T6OK    iny
+        bne T6V
+        ldx #$40                ; per-byte ALTZP flip: aux ZP $40-$7F
+T6Z     sta ALTZPON
+        txa
+T6PZ    eor #$00                ; (patched)
+        sta $00,x
+        cmp $00,x               ; read back while still ALTZP
+        sta ALTZPOFF            ; (flags preserved)
+        beq T6ZOK
+        inc TALLY
+T6ZOK   inx
+        cpx #$80
+        bne T6Z
+        lda TALLY               ; merge
+        beq T6DONE
+        clc
+        adc ERR6
+        sta ERR6
+        bcc T6DONE
+        inc ERR6+1
+T6DONE  rts
+
+; ============================================================================
+; T7 -- retention: verify the never-rewritten aux $5000 page (written
+; once at startup). Any tick here means aux content DECAYED between
+; passes -- the long-interval loss a per-pass reseeding meter hides
+; (ProDOS /RAM lives in aux for minutes between writes and reads).
+; ============================================================================
+TEST7   lda #0
+        sta TALLY
+        sta P
+        lda #$50
+        sta P+1
+        sta RDCARD              ; fetches: aux mirror
+        ldy #0
+T7V     tya
+        eor #$C3
+        cmp (P),y
+        beq T7OK
+        inc TALLY
+T7OK    iny
+        bne T7V
+        sta RDMAIN
+        lda TALLY               ; merge
+        beq T7DONE
+        clc
+        adc ERR7
+        sta ERR7
+        bcc T7DONE
+        inc ERR7+1
+T7DONE  rts
+
+; ============================================================================
+; T8 -- SmartPort interleave: the app's real I/O shape. Block reads
+; through our slot-7 ProDOS driver alternate with aux bursts; two
+; reads of the same block bracket each burst and must match the
+; first-pass reference exactly. Exercises mixed-source serving (C8
+; ROM/FIFO serves vs aux INH serves) that the pure-aux tests never
+; touch. Skipped cleanly if no driver entry is present at $C7FF.
+; ============================================================================
+TEST8   lda $C7FF               ; standard ProDOS driver entry offset
+        beq T8SKIP
+        cmp #$FF
+        beq T8SKIP
+        sta T8JSR+1
+        lda #4                  ; interleave repetitions
+        sta T8REP
+        lda #0
+        sta T8REF               ; reference not yet captured this call
+T8LOOP  lda #1                  ; READ
+        sta DCMD
+        lda #$70                ; slot 7, drive 1
+        sta DUNIT
+        lda #0
+        sta DBUFL
+        sta DBLKH
+        lda #$1A
+        sta DBUFH
+        lda #2                  ; block 2 (volume directory)
+        sta DBLKL
+T8JSR   jsr $C700               ; (self-modified: +$C7FF offset)
+        bcc T8RDOK
+        jsr BUMP8               ; driver returned an error
+        jmp T8NEXT
+T8RDOK  lda T8REF
+        bne T8CMPR
+        ; first read this call: capture the 512-byte reference
+        ldy #0
+T8CPY   lda $1A00,y
+        sta $1C00,y
+        lda $1B00,y
+        sta $1D00,y
+        iny
+        bne T8CPY
+        lda #1
+        sta T8REF
+        bne T8BRST
+T8CMPR  ldy #0                  ; later reads must match the reference
+T8CMP   lda $1A00,y
+        cmp $1C00,y
+        beq T8C2
+        jsr BUMP8
+T8C2    lda $1B00,y
+        cmp $1D00,y
+        beq T8C3
+        jsr BUMP8
+T8C3    iny
+        bne T8CMP
+T8BRST  jsr T8BURST             ; aux traffic between the reads
+T8NEXT  dec T8REP
+        bne T8LOOP
+T8SKIP  rts
+
+BUMP8   inc ERR8
+        bne BR8
+        inc ERR8+1
+BR8     rts
+
+; short aux burst: rapid-toggle writes/verifies on aux $1900 plus
+; ALTZP flips -- T6's idiom, compressed. Tally via direct bumps
+; (only touched with all switches off).
+T8BURST lda #0
+        sta P
+        lda #$19
+        sta P+1
+        ldy #0
+T8BF    sta WRCARD
+        tya
+        eor #$99
+        sta (P),y
+        sta WRMAIN
+        iny
+        bne T8BF
+        ldy #0
+T8BV    sta RDCARD
+        tya
+        eor #$99
+        cmp (P),y
+        sta RDMAIN              ; flags preserved
+        beq T8BOK
+        jsr BUMP8
+T8BOK   iny
+        bne T8BV
+        ldx #$40                ; ALTZP flips on aux ZP $40-$5F
+T8BZ    sta ALTZPON
+        txa
+        eor #$66
+        sta $00,x
+        cmp $00,x
+        sta ALTZPOFF
+        beq T8ZOK
+        jsr BUMP8
+T8ZOK   inx
+        cpx #$60
+        bne T8BZ
+        rts
+
+; ============================================================================
+; T9 -- RamWorks 8MB bank walk. Selects each of the 128 banks via
+; $C073 and writes a per-bank signature into AUX ZERO PAGE $40-$4F
+; (ALTZP only -- fetches never leave main memory, so banked fetches
+; can't strand the CPU), then re-walks verifying every bank. The
+; signature mixes bank and index, so dead banking (all writes land in
+; one bank) and aliasing (two bank numbers, one memory) both fail
+; loudly. Skips silently when RamWorks is off (probe: bank 1 vs 2
+; must hold distinct values). Exercises PSRAM banks 2-128, territory
+; nothing else touches. Restores bank 0 and main ZP on exit.
+; ============================================================================
+TEST9   lda #1                  ; probe: is banking alive?
+        sta RWBANK
+        sta ALTZPON
+        lda #$A5
+        sta $40
+        sta ALTZPOFF
+        lda #2
+        sta RWBANK
+        sta ALTZPON
+        lda #$5A
+        sta $40
+        sta ALTZPOFF
+        lda #1
+        sta RWBANK
+        sta ALTZPON
+        lda $40
+        sta ALTZPOFF
+        ldx #0
+        stx RWBANK              ; bank 0 restored either way
+        cmp #$A5
+        beq T9LIVE              ; banking alive: run the walk
+        lda #$FF                ; loud skip: T9 ERR shows FFFF, not a
+        sta ERR9                ; silent 0 masquerading as a pass
+        sta ERR9+1
+        jmp T9SKIP
+T9LIVE
+        lda #0
+        sta T9FBNK
+        sta T9FIDX
+        sta T9FGOT
+        sta T9FEXP
+        ; walk 1: write signatures, banks 0-127
+        ldx #0
+T9W1    txa
+        sta RWBANK
+        sta ALTZPON
+        txa
+T9P     eor #$00                ; (patched)
+        sta T9SIG+1             ; per-bank byte, self-mod (main $6xxx)
+        ldy #15
+T9W2    tya
+T9SIG   eor #$00                ; (self-modified above)
+        sta $40,y
+        dey
+        bpl T9W2
+        sta ALTZPOFF
+        inx
+        bpl T9W1                ; banks 0..127 (true 8MB)
+        ; walk 2: verify
+        ldx #0
+T9V1    txa
+        sta RWBANK
+        sta ALTZPON
+        txa
+        eor T9P+1
+        sta T9SG2+1
+        ldy #15
+T9V2    tya
+T9SG2   eor #$00
+        cmp $40,y
+        beq T9VOK
+        sta ALTZPOFF            ; count with main ZP/stack live
+        pha                     ; expected
+        lda T9FBNK
+        bne T9SEEN              ; only latch the FIRST failure
+        stx T9FBNK
+        sty T9FIDX
+        pla
+        sta T9FEXP
+        pha
+        sta ALTZPON
+        lda $40,y               ; re-read the failing cell
+        sta ALTZPOFF
+        sta T9FGOT
+T9SEEN  pla
+        jsr BUMP9
+        sta ALTZPON
+T9VOK   dey
+        bpl T9V2
+        sta ALTZPOFF
+        inx
+        bpl T9V1
+        lda #0
+        sta RWBANK
+T9SKIP  rts
+
+BUMP9   inc ERR9
+        bne BR9
+        inc ERR9+1
+BR9     rts
+
+; ============================================================================
+; status screen (normal state only)
+; ============================================================================
+SHOW    lda #2
+        jsr TABV
+        lda #0
+        sta CH
+        ldy #0
+S1      lda LPASS,y
+        beq S1D
+        ora #$80
+        jsr COUT
+        iny
+        bne S1
+S1D     lda PASS+1
+        jsr PRBYTE
+        lda PASS
+        jsr PRBYTE
+        ldy #0
+S2      lda LSEED,y
+        beq S2D
+        ora #$80
+        jsr COUT
+        iny
+        bne S2
+S2D     lda SEED
+        jsr PRBYTE
+        jsr CROUT
+        jsr CROUT
+        ldx #0                  ; five counter lines
+SROW    txa
+        pha
+        lda LTBL,x
+        sta S3+1
+        lda LTBH,x
+        sta S3+2
+        ldy #0
+S3      lda $FFFF,y             ; (self-modified label pointer)
+        beq S3D
+        ora #$80
+        jsr COUT
+        iny
+        bne S3
+S3D     pla
+        pha
+        asl
+        tax
+        lda ERR1+1,x
+        jsr PRBYTE
+        lda ERR1,x
+        jsr PRBYTE
+        jsr CROUT
+        pla
+        tax
+        inx
+        cpx #9
+        bne SROW
+        ldy #0                  ; T9 first-failure detail line
+S4      lda LT9F,y
+        beq S4D
+        ora #$80
+        jsr COUT
+        iny
+        bne S4
+S4D     lda T9FBNK
+        jsr PRBYTE
+        lda #$A0
+        jsr COUT
+        lda T9FIDX
+        jsr PRBYTE
+        lda #$A0
+        jsr COUT
+        lda T9FGOT
+        jsr PRBYTE
+        lda #$A0
+        jsr COUT
+        lda T9FEXP
+        jsr PRBYTE
+        jsr CROUT
+        rts
+
+; ---- text (low ASCII; print loops OR in the high bit; $0D -> CR) ----
+BANNER  !text "AUXSTRESS V8 - AUX/RAMWORKS METER", $0D, $0D
+        !byte 0
+LPASS   !text "PASS "
+        !byte 0
+LSEED   !text "   SEED "
+        !byte 0
+LT1     !text "T1 ALTZP ZP+STACK   ERR "
+        !byte 0
+LT2     !text "T2 RAMRD/RAMWRT     ERR "
+        !byte 0
+LT3     !text "T3 80STORE WINDOWS  ERR "
+        !byte 0
+LT4     !text "T4 AUX LANG CARD    ERR "
+        !byte 0
+LT5     !text "T5 MGTK MIX (ALL)   ERR "
+        !byte 0
+LT6     !text "T6 RAPID TOGGLE     ERR "
+        !byte 0
+LT7     !text "T7 RETENTION        ERR "
+        !byte 0
+LT8     !text "T8 SP INTERLEAVE    ERR "
+        !byte 0
+LT9     !text "T9 RAMWORKS 8MB     ERR "
+        !byte 0
+
+LT9F    !text "T9 1ST FAIL BNK/IDX/GOT/EXP "
+        !byte 0
+
+LTBL    !byte <LT1, <LT2, <LT3, <LT4, <LT5, <LT6, <LT7, <LT8, <LT9
+LTBH    !byte >LT1, >LT2, >LT3, >LT4, >LT5, >LT6, >LT7, >LT8, >LT9
+
+; ---- state (main bank) ----
+PASS    !byte 0, 0
+SEED    !byte 0
+T9FBNK  !byte 0
+T9FIDX  !byte 0
+T9FGOT  !byte 0
+T9FEXP  !byte 0
+T1REP   !byte 0
+T5REP   !byte 0
+MODEIX  !byte 0
+T8REP   !byte 0
+T8REF   !byte 0
+
+* = $6FD0
+ERR1    !byte 0, 0
+ERR2    !byte 0, 0
+ERR3    !byte 0, 0
+ERR4    !byte 0, 0
+ERR5    !byte 0, 0
+ERR6    !byte 0, 0
+ERR7    !byte 0, 0
+ERR8    !byte 0, 0
+ERR9    !byte 0, 0

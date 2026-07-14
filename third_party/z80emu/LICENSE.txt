@@ -1,0 +1,14 @@
+z80emu by Lin Ke-Fong, vendored from https://github.com/anotherlin/z80emu
+(master branch, fetched 2026-07-13).
+
+Upstream license statement (from the source headers):
+
+    Copyright (c) 2012-2017 Lin Ke-Fong
+    This code is free, do whatever you want with it.
+
+Unmodified upstream files: z80emu.c, z80emu.h, instructions.h, macros.h,
+tables.h.
+
+Appletini-specific files (replacing the upstream configuration templates):
+z80config.h, z80user.h. These bind the core to the PCPI Applicard emulation
+in ps_sources/frontend/applicard_z80.[ch].

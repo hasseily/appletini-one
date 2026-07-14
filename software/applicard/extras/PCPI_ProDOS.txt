@@ -1,0 +1,432 @@
+PCPI / ProDOS Support
+
+
+
+All software components in this distribution are (c) 1988-1993 by
+
+Steven N. Hirsch, except where otherwise noted by sign-on messages
+
+and/or notices in the source code.  All recipients of this code are
+
+licensed for non-commercial usage and may redistribute the unmodified
+
+binaries without restriction, so long as this notice remains intact.
+
+
+
+It is the author's intent to release all source code under the GPL as
+
+time permits.
+
+
+
+======================================================================
+
+
+
+Purpose:
+
+
+
+Run PCPI Applicard CP/M as a ProDOS application.  This offers the
+
+following features and functionality:
+
+
+
+- Boot CP/M from a SYSTEM file, keeping ProDOS live and resident. No
+
+  more requirement for a cold-boot from floppy. 
+
+
+
+- Quit directly to ProDOS from CP/M, retaining data on the Applicard
+
+  ramdisk intact and recoverable on the next boot.
+
+
+
+- Transfer files back and forth between CP/M and ProDOS using a
+
+  menu-driven utility.  Options exist for renaming during transfer if
+
+  source name is not valid on target filesystem.  Files may be
+
+  transferred to ProDOS as text, binary or system.  If CP/M
+
+  environment supports DateStamper system calls, file time stamps are
+
+  preserved in both directions.
+
+
+
+- All ProDOS MLI functionality is available to applications running on
+
+  the Z80 card through the PCPI driver API "other" commands.
+
+
+
+- A ProDOS time driver exists to support Z80 environments that
+
+  require real-time clock support.
+
+
+
+- All Z80 access to 5.25" floppy drives occurs through ProDOS RWTS, so
+
+  40-track diskettes can be supported on patched ProDOS.   
+
+
+
+======================================================================
+
+
+
+General Installation Notes:
+
+
+
+System generation in this environment will continue to require the use
+
+of the INSTALL.COM utility to create a DRIVERS file and write CP/M to
+
+the boot tracks of a 5.25" floppy diskette.  However, after initial
+
+bootstrapping you can dispense with the boot floppy and start directly
+
+from a ProDOS volume.
+
+
+
+Configuring full ProDOS support is a two-step operation. In the first
+
+phase, a ProDOS utility program captures the operating system boot
+
+tracks, patches them and saves the image to a ProDOS file.  This
+
+system is bootstrapped from a second ProDOS application but must load
+
+DRIVERS from the diskette.  Once this transitional environment is
+
+active on the Z80, you complete the process by transferring DRIVERS to
+
+ProDOS with a CP/M utility.  From that point, you can boot CP/M
+
+directly from ProDOS with no reference to the floppy (unless you need
+
+to generate a new system).
+
+
+
+=====================================================================
+
+
+
+Extra Goodies:
+
+
+
+Included on the CP/M diskette are some additional files that may be
+
+useful:
+
+
+
+FAST2E80.DVR : Updated version that corrects problem of inverse
+
+               characters displaying as MouseText on enhanced IIe.
+
+
+
+DISK35.DVR :   Driver for Apple 3.5" diskette drives.  Support Unidisk
+
+               and Appledisk 3.5" drives.  Works with Apple 'Liron'
+
+               and 3.5" controllers and most Central Point UDC
+
+               controllers.  Does NOT work with Apple 'SuperDrive'
+
+               high-density controller (work in progress to correct
+
+               this).
+
+
+
+=====================================================================
+
+
+
+Installation Procedure:
+
+
+
+While it is possible to run from a floppy-only environment,
+
+configuration and use will be a royal pain (to be quite frank).  This
+
+explanation will assume that a Pro/Partition hard disk volume is
+
+installed and accessible.  We'll also assume that you are familiar and
+
+comfortable with configuration and generation of PCPI operating system
+
+diskettes. 
+
+
+
+--------------------------------------------------------------------
+
+
+
+==> Phase 1:
+
+
+
+Create a working CP/M diskette with the following files from the PCPI
+
+Applicard distribution:
+
+
+
+FAST2E80.DVR
+
+INSTALL.COM
+
+DLDRIVER.COM
+
+PDOSHD.DVR     (configured for your hard disk!)
+
+PCPICPM
+
+
+
+add any other drivers you typically use in your base system,
+
+e.g. RAMDISK.DVR, DISK35.DVR, etc.
+
+
+
+Copy the following files from the PCPI-ProDOS CP/M diskette:
+
+
+
+PDOSMLI.DVR
+
+DISK525.DVR
+
+PDOSXFER.COM
+
+PDOSXFER.OVR
+
+QUIT.COM
+
+
+
+Create a DRIVERS file with a setup like this:
+
+
+
+1 = FAST IIe 80 CLM 19 1 x
+
+2 = ProDOS MLI Drvr 24 1 xx
+
+3 = ProDOS Hard Dsk 0  1 xx
+
+4 = ProDOS 5.25     1  2 xx
+
+
+
+(Versions may vary, thus the 'xx')
+
+
+
+Save DRIVERS and write CP/M to the boot tracks.  Put this diskette
+
+aside for the moment.
+
+
+
+Reboot into ProDOS (minimum version is 1.4).  Copy the following files
+
+from the PCPI-ProDOS ProDOS diskette to your hard disk volume:
+
+
+
+PATCHER
+
+LIB
+
+ZPATCH.1
+
+ZPATCH.2
+
+FBOOT1
+
+PCPIBOOT
+
+
+
+Insert the CP/M diskette you created earlier into a free floppy drive
+
+(slot 6, drive 2 is the recommended location).  From the ProDOS BASIC
+
+prompt, run the patch program:
+
+
+
+]-PATCHER
+
+
+
+Follow the prompts and direct the program to the proper location for
+
+the CP/M diskette.  When presented with a screen of:
+
+
+
+      0) Image capture only, to suffix ".0"
+
+
+
+      1) Patched to suffix ".1"
+
+
+
+      2) Patched to suffix ".2"
+
+
+
+      3) Patched to suffix ".3"
+
+
+
+    Choose the system to be created: 
+
+
+
+Hit '1' at the prompt.  The program will read the boot tracks into
+
+memory, apply some patch overlays from 'ZPATCH.1' and save the
+
+resulting image as 'ZIMAGE.1'.
+
+
+
+When complete, exit the program by hitting, e.g. space.
+
+
+
+Boot the system by running the floppy startup utility:
+
+
+
+]-FBOOT1
+
+
+
+When prompted, move the CP/M diskette you created to S6,D1 and strike
+
+a key.
+
+
+
+You should see the usual 'LOADING DRIVERS' message followed by the
+
+CP/M prompt.
+
+
+
+--------------------------------------------------------------------
+
+
+
+==> Phase 2:
+
+
+
+Change directory from your hard disk to the CP/M floppy (probably
+
+drive B:) and run PDOSXFER.  The default is CP/M --> ProDOS, so hit
+
+enter to proceed.  Accept the default drive and user area (B00:).  You
+
+will see a directory listing of the CP/M diskette.  Using the arrow
+
+keys, highlight 'DRIVERS'.  Enter 'R' for rename.  An entry field will
+
+open up at the bottom of the screen.  Enter 'DRIVERS' followed by a
+
+space to move the cursor past the '.' character.  Enter '2' for the
+
+extension and hit enter.  Now, tag the file for transfer by entering
+
+'B' to move it into ProDOS as a binary file.
+
+
+
+Hit enter again, which moves you to the target selection screen.  The
+
+program will try to identify all ProDOS volumes currently online.  Use
+
+the arrow keys to select the hard drive you wish to start from.  Hit
+
+enter again.  Now you can choose a subdirectory if you wish, or simply
+
+hit enter to target the root.  
+
+
+
+If all goes well, you will see a series of '>>>' characters at the
+
+bottom of the screen and the DRIVERS file will be copied to ProDOS as
+
+'DRIVERS.2'. 
+
+
+
+When complete, exit the utility with ESC.  Return back to ProDOS by
+
+running the QUIT.COM utility, select BASIC.SYSTEM and set your prefix
+
+back to the location where you placed the ProDOS support files and the
+
+new DRIVERS.2 file.
+
+
+
+Run the patcher program again, but this time select the option to read
+
+the CP/M diskette and patch to suffix '.2'.  This will read the boot
+
+tracks of the diskette again, apply the overlays from 'ZPATCH.2' and
+
+save the resulting image as 'ZIMAGE.2'.  Exit the patcher and verify
+
+that both 'ZIMAGE.2' and 'DRIVERS.2' are present in the same directory
+
+as PCPIBOOT.
+
+
+
+Run the PCPIBOOT program:
+
+
+
+]-PCPIBOOT
+
+
+
+When prompted for the suffix, enter '2'.  CP/M and drivers should load
+
+directly from ProDOS and bring you into a working CP/M environment.
+
+From here you can use the PDOSXFER program to move files back and
+
+forth, quitting to ProDOS at any point you wish with QUIT.COM.
+
+
+
+Enjoy!
+
+
+

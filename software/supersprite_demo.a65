@@ -1,0 +1,446 @@
+; ============================================================================
+; supersprite_demo.a65 -- Appletini SuperSprite showcase
+;
+;   A scrolling tile scene (TMS9918 Graphics I) with a color-cycling starfield,
+;   a scrolling "APPLETINI [martini]" banner, and a 3-voice AY-3-8910 tune.
+;
+;   The SuperSprite must be ENABLED first (config menu -> Extras tab, or UART
+;   `ss on`). It lives in slot 7 ($C0Fx) and takes the slot from SmartPort.
+;
+;   Assemble:  acme -f plain -o supersprite_demo.bin supersprite_demo.a65
+;   Disk:      scripts/build_supersprite_demo.py   (bootable DOS 3.3 SSDEMO.dsk)
+;   Press any key to quit.
+; ============================================================================
+
+!cpu 6502
+* = $6000
+
+; ---- SuperSprite I/O (slot 7) ----
+VDATA   = $C0F0         ; VDP VRAM data port
+VCTRL   = $C0F1         ; VDP register / control / status port
+VAPPOFF = $C0F3         ; Apple video off
+VAPPON  = $C0F4         ; Apple video on
+VOVLOFF = $C0F5         ; VDP overlay off
+VOVLON  = $C0F6         ; VDP overlay on (mix)
+VRESET  = $C0F7         ; VDP reset
+AYDATA  = $C0FC         ; AY-3-8910 write data
+AYADDR  = $C0FE         ; AY-3-8910 latch register number
+KBD     = $C000
+KBDSTRB = $C010
+TXTSET  = $C051
+PAGE1   = $C054
+HOME    = $FC58
+
+; ---- zero page scratch ----
+PTR     = $06           ; +$07  name-table build pointer
+SRC     = $08           ; +$09  upload source pointer
+SCROLL  = $EB
+TMP     = $EC
+ROW     = $ED
+CYC     = $EE
+MPOS    = $EF
+MDUR    = $FA
+S3      = $FB
+
+; ---- RAM buffers (not emitted) ----
+NTBUF   = $7000         ; 768 bytes (name-table staging)
+BAND    = $7300         ; 64 bytes (scrolling text row)
+
+MAPW    = 64            ; text-band width (power of two)
+TEMPO   = 12            ; frames per music step
+
+; ============================================================================
+start:
+    sta PAGE1
+    sta TXTSET          ; Apple in text/page1 (hidden under the overlay anyway)
+    jsr HOME
+    lda #0
+    sta VRESET          ; reset the VDP
+    sta VOVLON          ; overlay ON
+    sta VAPPOFF         ; Apple video off (harmless if not honored)
+
+    ; --- VDP registers R0..R7 ---
+    ldx #0
+init_reg:
+    lda VREGS,x
+    jsr vdp_reg         ; A=value, X=reg
+    inx
+    cpx #8
+    bne init_reg
+
+    ; --- tile patterns -> VRAM $0000 (192 bytes = 24 tiles) ---
+    lda #$00
+    ldx #$00
+    jsr vdp_waddr
+    ldx #0
+load_tiles:
+    lda TILES,x
+    sta VDATA
+    inx
+    cpx #192
+    bne load_tiles
+
+    ; --- color table -> VRAM $2000 (32 bytes) ---
+    lda #$00
+    ldx #$20
+    jsr vdp_waddr
+    ldx #0
+load_cols:
+    lda COLS,x
+    sta VDATA
+    inx
+    cpx #32
+    bne load_cols
+
+    ; --- disable sprites: sprite 0 Y = $D0 (list terminator) at $1B00 ---
+    lda #$00
+    ldx #$1B
+    jsr vdp_waddr
+    lda #$D0
+    sta VDATA
+
+    ; --- build the scrolling text band from MSG ---
+    ldy #0
+    ldx #0
+band_fill:
+    lda MSG,y
+    sta BAND,x
+    inx
+    iny
+    cpy #12
+    bne band_next
+    ldy #0
+band_next:
+    cpx #MAPW
+    bne band_fill
+
+    jsr init_ay
+
+    lda #0
+    sta SCROLL
+    sta CYC
+    sta MPOS
+    lda #1
+    sta MDUR
+    lda #2
+    sta S3
+
+; ---- main loop ----
+main:
+    jsr wait_vbl
+    jsr music_tick
+    dec S3
+    bpl main_noscroll
+    lda #2
+    sta S3
+    jsr build_nt
+    jsr upload_nt
+    lda CYC
+    and #7
+    bne main_nocol
+    jsr cycle_col
+main_nocol:
+    inc SCROLL
+main_noscroll:
+    inc CYC
+    lda KBD
+    bpl main
+
+    ; ---- exit: restore Apple, silence AY ----
+    sta KBDSTRB
+    jsr silence_ay
+    lda #0
+    sta VOVLOFF
+    sta VAPPON
+    rts
+
+; ============================================================================
+; VDP helpers
+; ============================================================================
+vdp_reg:                ; A=value, X=reg
+    sta VCTRL
+    txa
+    ora #$80
+    sta VCTRL
+    rts
+
+vdp_waddr:              ; A=addr low byte, X=addr high 6 bits
+    sta VCTRL
+    txa
+    ora #$40
+    sta VCTRL
+    rts
+
+; wait for the VDP vblank flag (status bit 7), with a timeout so a missing
+; flag degrades to free-run pacing instead of hanging.
+wait_vbl:
+    ldx #0
+    ldy #0
+wv_spin:
+    lda VCTRL
+    and #$80
+    bne wv_done
+    iny
+    bne wv_spin
+    inx
+    cpx #40
+    bne wv_spin
+wv_done:
+    rts
+
+; ---- build the 24x32 name table into NTBUF for the current SCROLL ----
+build_nt:
+    lda #<NTBUF
+    sta PTR
+    lda #>NTBUF
+    sta PTR+1
+    lda #0
+    sta ROW
+bn_row:
+    ldy #0
+bn_col:
+    lda ROW
+    cmp #11
+    beq bn_bar
+    cmp #13
+    beq bn_bar
+    cmp #12
+    beq bn_txt
+    jsr bg_tile         ; -> A (tile), preserves Y
+    jmp bn_store
+bn_bar:
+    lda #8              ; solid accent bar
+    jmp bn_store
+bn_txt:
+    tya
+    clc
+    adc SCROLL
+    and #(MAPW-1)
+    tax
+    lda BAND,x
+bn_store:
+    sta (PTR),y
+    iny
+    cpy #32
+    bne bn_col
+    lda PTR
+    clc
+    adc #32
+    sta PTR
+    bcc bn_nc
+    inc PTR+1
+bn_nc:
+    inc ROW
+    lda ROW
+    cmp #24
+    bne bn_row
+    rts
+
+; starfield tile from ROW + Y(col); preserves Y
+bg_tile:
+    tya
+    sta TMP
+    lda ROW
+    asl
+    asl
+    clc
+    adc ROW             ; ROW*5
+    clc
+    adc TMP             ; + col
+    and #7
+    beq bg_s1
+    cmp #4
+    beq bg_s2
+    lda #0
+    rts
+bg_s1:
+    lda #1
+    rts
+bg_s2:
+    lda #2
+    rts
+
+upload_nt:
+    lda #$00
+    ldx #$14
+    jsr vdp_waddr       ; write address $1400 (name table)
+    lda #<NTBUF
+    sta SRC
+    lda #>NTBUF
+    sta SRC+1
+    ldx #3
+    ldy #0
+up_lp:
+    lda (SRC),y
+    sta VDATA
+    iny
+    bne up_lp
+    inc SRC+1
+    dex
+    bne up_lp
+    rts
+
+; recolor the background group (color[0]) for a twinkle effect
+cycle_col:
+    lda #$00
+    ldx #$20
+    jsr vdp_waddr       ; write address $2000 (color[0])
+    lda CYC
+    and #$0F
+    asl
+    asl
+    asl
+    asl
+    ora #$04            ; low nibble = dark-blue field
+    sta VDATA
+    rts
+
+; ============================================================================
+; AY-3-8910
+; ============================================================================
+init_ay:
+    ldx #7              ; mixer: tone A+C on, B off, no noise
+    lda #$FA
+    stx AYADDR
+    sta AYDATA
+    lda #0
+    ldx #8
+    stx AYADDR
+    sta AYDATA
+    ldx #9
+    stx AYADDR
+    sta AYDATA
+    ldx #10
+    stx AYADDR
+    sta AYDATA
+    rts
+
+silence_ay:
+    lda #0
+    ldx #8
+    stx AYADDR
+    sta AYDATA
+    ldx #9
+    stx AYADDR
+    sta AYDATA
+    ldx #10
+    stx AYADDR
+    sta AYDATA
+    rts
+
+music_tick:
+    dec MDUR
+    beq mt_step
+    rts
+mt_step:
+    lda #TEMPO
+    sta MDUR
+    ldx MPOS
+    lda SONGA,x
+    cmp #$FF
+    bne mt_go
+    lda #0
+    sta MPOS
+mt_go:
+    ldx MPOS
+    lda SONGA,x
+    jsr set_lead
+    ldx MPOS
+    lda SONGC,x
+    jsr set_bass
+    inc MPOS
+    rts
+
+set_lead:               ; A = note index (0 = rest)
+    tay
+    lda NOTELO,y
+    ldx #0
+    stx AYADDR
+    sta AYDATA          ; R0 = A fine
+    lda NOTEHI,y
+    ldx #1
+    stx AYADDR
+    sta AYDATA          ; R1 = A coarse
+    lda #12
+    cpy #0
+    bne sl_v
+    lda #0
+sl_v:
+    ldx #8
+    stx AYADDR
+    sta AYDATA          ; R8 = A volume
+    rts
+
+set_bass:               ; A = note index (0 = rest)
+    tay
+    lda NOTELO,y
+    ldx #4
+    stx AYADDR
+    sta AYDATA          ; R4 = C fine
+    lda NOTEHI,y
+    ldx #5
+    stx AYADDR
+    sta AYDATA          ; R5 = C coarse
+    lda #10
+    cpy #0
+    bne sb_v
+    lda #0
+sb_v:
+    ldx #10
+    stx AYADDR
+    sta AYDATA          ; R10 = C volume
+    rts
+
+; ============================================================================
+; data
+; ============================================================================
+; R0..R7: GraphicsI, display on, name $1400, color $2000, patterns $0000,
+;         sprite attr $1B00, sprite patterns $3800, backdrop = dark blue.
+VREGS:  !byte $00,$C0,$05,$80,$00,$36,$07,$04
+
+TILES:
+    ; 0 blank
+    !byte $00,$00,$00,$00,$00,$00,$00,$00
+    ; 1 star
+    !byte $00,$10,$38,$10,$00,$02,$00,$00
+    ; 2 star (offset)
+    !byte $00,$00,$40,$00,$08,$1C,$08,$00
+    ; 3..7 blank
+    !fill 8*5, $00
+    ; 8 solid accent bar
+    !byte $FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF
+    ; 9..15 blank
+    !fill 8*7, $00
+    ; 16 A
+    !byte $3C,$42,$42,$7E,$42,$42,$42,$00
+    ; 17 P
+    !byte $7C,$42,$42,$7C,$40,$40,$40,$00
+    ; 18 L
+    !byte $40,$40,$40,$40,$40,$40,$7E,$00
+    ; 19 E
+    !byte $7E,$40,$40,$7C,$40,$40,$7E,$00
+    ; 20 T
+    !byte $7E,$18,$18,$18,$18,$18,$18,$00
+    ; 21 I
+    !byte $3C,$18,$18,$18,$18,$18,$3C,$00
+    ; 22 N
+    !byte $42,$62,$52,$4A,$46,$42,$42,$00
+    ; 23 martini glass
+    !byte $FF,$7E,$3C,$18,$18,$18,$18,$7E
+
+; color table: [0]=bg stars (cycled), [1]=accent bar, [2]=glyphs, rest filler
+COLS:
+    !byte $F4, $B0, $F0
+    !fill 29, $F1
+
+; scrolling message tiles: A P P L E T I N I _ [glass] _
+MSG:    !byte 16,17,17,18,19,20,21,22,21,0,23,0
+
+; note period table for a ~1 MHz PSG clock (period = 62500 / Hz). Index 0 = rest.
+;        rest C4  D4  E4  F4  G4  A4  B4  C5  D5  E5  C3  G3  A3  F3
+NOTELO: !byte $00,$EF,$D5,$BE,$B3,$9F,$8E,$7F,$77,$6A,$5F,$DE,$3F,$1C,$66
+NOTEHI: !byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$01,$01,$01,$01
+
+; lead (channel A) and bass (channel C); $FF loops
+SONGA:  !byte 1,3,5,8,5,3,1,0, 2,4,6,9,6,4,2,0, $FF
+SONGC:  !byte 11,11,12,12,13,13,14,14, 11,11,12,12,13,13,11,11, $FF

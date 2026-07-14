@@ -1,0 +1,42 @@
+9000  31 00 BF      LD SP,0BF00h        ; own stack in the common upper 32K
+9003  0E 01         LD C,1              ; write pass, banks 1..31
+9005          wloop:
+9005  79            LD A,C
+9006  07            RLCA                ; bank -> register bits 1-5
+9007  F6 40         OR 40h               ; keep upper 32K common
+9009  D3 C0         OUT (C0h),A
+900B  79            LD A,C
+900C  32 00 40      LD (4000h),A       ; marker = bank number
+900F  0C            INC C
+9010  79            LD A,C
+9011  FE 20         CP 20h
+9013  20 00         JR NZ,wloop
+9015  0E 01         LD C,1              ; verify pass
+9017          vloop:
+9017  79            LD A,C
+9018  07            RLCA
+9019  F6 40         OR 40h
+901B  D3 C0         OUT (C0h),A
+901D  3A 00 40      LD A,(4000h)
+9020  B9            CP C
+9021  20 00         JR NZ,fail
+9023  0C            INC C
+9024  79            LD A,C
+9025  FE 20         CP 20h
+9027  20 00         JR NZ,vloop
+9029  11 00 00      LD DE,okmsg
+902C  18 00         JR done
+902E          fail:
+902E  11 00 00      LD DE,failmsg
+9031          done:
+9031  3E 40         LD A,40h            ; restore bank 0 (common on)
+9033  D3 C0         OUT (C0h),A
+9035  AF            XOR A               ; then stock register state
+9036  D3 C0         OUT (C0h),A
+9038  0E 09         LD C,9              ; BDOS print string
+903A  CD 05 00      CALL 5
+903D  C3 00 00      JP 0                ; warm boot
+9040          okmsg:
+9040  41 50 50 4C 49 43 41 52 44 20 32 4D 42 3A 20 41 4C 4C 20 33 32 20 42 41 4E 4B 53 20 4F 4B 0D 0A 24  okmsg text
+9061          failmsg:
+9061  41 50 50 4C 49 43 41 52 44 20 42 41 4E 4B 20 54 45 53 54 20 46 41 49 4C 45 44 0D 0A 24  failmsg text

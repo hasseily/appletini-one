@@ -94,6 +94,7 @@ static uint8_t g_loaded_qtrack = DISK2_NO_LOADED_TRACK;
 static uint32_t g_loaded_track_length = 0U;
 static uint32_t g_loaded_track_bit_count = 0U;
 static uint32_t g_load_fail_count = 0U;
+static uint8_t g_disk2_enabled = 1U;
 static uint8_t g_woz_write_enable[DISK2_DRIVE_COUNT];
 static uint8_t g_woz_image_write_protected[DISK2_DRIVE_COUNT];
 static uint32_t g_woz_flush_log_count = 0U;
@@ -2543,6 +2544,14 @@ int disk2_service_init(uint32_t uart_base)
     return 0;
 }
 
+void disk2_service_set_enabled(uint8_t enabled)
+{
+    g_disk2_enabled = (enabled != 0U) ? 1U : 0U;
+    if (g_disk2_enabled == 0U) {
+        g_load_fail_count = 0U;
+    }
+}
+
 /* Log genuine dirty-flush failures at a bounded rate. Motor-on deferrals are
  * expected and remain quiet. */
 static uint32_t g_flush_fail_count;
@@ -2624,10 +2633,23 @@ void disk2_service_poll(void)
         ack_dirty_track(dirty_drive, dirty_qtrack);
     }
 
+    /* A pending dirty track is still flushed above when Slot 6 is disabled.
+     * New track-load requests are not meaningful until the card is enabled. */
+    if (g_disk2_enabled == 0U) {
+        g_load_fail_count = 0U;
+        return;
+    }
     if ((track_info & DISK2_TRACK_INFO_MATCH_BIT) != 0U) {
         return;
     }
     if (drive >= DISK2_DRIVE_COUNT) {
+        return;
+    }
+    /* An unmatched request for an empty drive is normal. Leave it pending so
+     * the PL continues to present no media, but do not report it as an I/O
+     * failure on every retry. */
+    if (g_disk2_info[drive].present == 0U) {
+        g_load_fail_count = 0U;
         return;
     }
     rc = load_track(drive, qtrack);

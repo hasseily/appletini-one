@@ -74,6 +74,7 @@ typedef struct {
 } disk2_activity_t;
 
 int disk2_service_init(uint32_t uart_base);
+void disk2_service_set_enabled(uint8_t enabled);
 void disk2_service_poll(void);
 
 /* Force-flush a pending dirty track to the image file, ignoring the

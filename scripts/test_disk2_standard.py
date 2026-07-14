@@ -20,6 +20,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DISK2_SERVICE_C = REPO_ROOT / "ps_sources" / "frontend" / "disk2_service.c"
+DISK2_SERVICE_H = REPO_ROOT / "ps_sources" / "frontend" / "disk2_service.h"
 DISK2_CARD_SV = REPO_ROOT / "hdl" / "apple" / "disk2_card.sv"
 DISK2_SOUND_PLAYER_SV = REPO_ROOT / "hdl" / "apple" / "disk2_sound_player.sv"
 BUILD_DISK2_SOUND_ASSETS_PY = REPO_ROOT / "scripts" / "build_disk2_sound_assets.py"
@@ -357,6 +358,45 @@ def test_standard_images_are_memory_cached_like_applewin() -> None:
             "standard physical track reads must not reopen/read the image file")
 
 
+def test_empty_or_disabled_disk2_track_requests_stay_quiet() -> None:
+    """Empty drives and a disabled Slot 6 are expected states, not repeated
+    track-load failures. Genuine mounted-image failures must remain visible.
+    """
+    source = DISK2_SERVICE_C.read_text(encoding="utf-8")
+    header = DISK2_SERVICE_H.read_text(encoding="utf-8")
+    frontend_main = FRONTEND_MAIN_C.read_text(encoding="utf-8")
+
+    poll_match = re.search(
+        r"void disk2_service_poll\(void\)(.*?)\n}\n\nint disk2_service_set_image_path",
+        source,
+        re.S)
+    require(poll_match is not None, "disk2_service_poll body not found")
+    poll_body = poll_match.group(1)
+
+    dirty_pos = poll_body.find("DISK2_WRITE_INFO_DIRTY_BIT")
+    disabled_pos = poll_body.find("if (g_disk2_enabled == 0U)")
+    empty_pos = poll_body.find("if (g_disk2_info[drive].present == 0U)")
+    load_pos = poll_body.find("rc = load_track(drive, qtrack);")
+    failure_pos = poll_body.find("disk2: track load FAILED")
+    require(0 <= dirty_pos < disabled_pos < empty_pos < load_pos < failure_pos,
+            "Disk II poll must flush dirty media first, then quietly skip "
+            "disabled/empty loads while preserving genuine load-failure logging")
+    require(poll_body.count("g_load_fail_count = 0U;") >= 3,
+            "expected no-load states must clear stale failure/recovery diagnostics")
+
+    require("void disk2_service_set_enabled(uint8_t enabled);" in header and
+            "void disk2_service_set_enabled(uint8_t enabled)" in source,
+            "Disk II service must expose its Slot 6 enable state")
+    slot_control = re.search(
+        r"static void control_set_slot_enabled\(.*?\n}\n\nstatic const char",
+        frontend_main,
+        re.S)
+    require(slot_control is not None and
+            "if (slot == 6U)" in slot_control.group(0) and
+            "disk2_service_set_enabled(enable);" in slot_control.group(0),
+            "Slot 6 config changes must enable or quiesce the Disk II track loader")
+
+
 def test_disk2_sound_recal_and_volume_contract() -> None:
     disk2_card = DISK2_CARD_SV.read_text(encoding="utf-8")
     sound_player = DISK2_SOUND_PLAYER_SV.read_text(encoding="utf-8")
@@ -673,6 +713,7 @@ def run() -> int:
     tests = [
         test_c_constants_and_source_contract,
         test_standard_images_are_memory_cached_like_applewin,
+        test_empty_or_disabled_disk2_track_requests_stay_quiet,
         test_disk2_sound_recal_and_volume_contract,
         test_disk2_write_protect_visual_contract,
         test_sector_order_tables_match_applewin,

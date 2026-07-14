@@ -773,6 +773,11 @@ static void control_set_slot_enabled(void *ctx, uint8_t slot, uint8_t enable)
          * lockstep with the PL front end. */
         applicard_service_set_enabled(enable);
     }
+    if (slot == 6U) {
+        /* Slot 6 is Disk II: keep the PS track loader in lockstep with the
+         * PL front end while still allowing it to drain a dirty track. */
+        disk2_service_set_enabled(enable);
+    }
     slot_bit = 1UL << slot;
     slot_mask = g_card_slot_enable_mask;
     if (enable != 0U) {

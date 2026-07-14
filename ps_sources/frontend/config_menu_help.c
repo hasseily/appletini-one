@@ -74,6 +74,37 @@ HELP(profiles,
     "Choose a profile to load it, save the current working setup, rename it, or attach a PNG thumbnail.",
     "Take screenshots of the Apple display using the USB-owned menu; screenshots are saved to 0:/SCREENSHOTS");
 
+HELP(profiles_choose,
+    "Choose profile opens the carousel rooted at 0:/profiles.",
+    "Use Left/Right to browse, Enter to open a folder or load a profile, and Back to move up or close.",
+    "Loading a profile replaces the working configuration and immediately applies its saved settings.");
+
+HELP(profiles_save_current,
+    "Save to current profile writes the current menu configuration into the selected profile.",
+    "It is available after Choose profile or Save As and overwrites that profile's saved settings.",
+    "The profile name and thumbnail are left unchanged.");
+
+HELP(profiles_save_as,
+    "Save As creates a profile in the carousel's current folder from the working configuration.",
+    "Enter a new name with the Apple keyboard in BOOT mode or the on-screen keyboard in USB mode.",
+    "The new profile becomes current; use Set image separately if you want a thumbnail.");
+
+HELP(profiles_rename,
+    "Rename profile changes the selected profile's folder name without changing its settings or thumbnail.",
+    "It is available only after a profile is selected. Existing or invalid names are rejected.");
+
+HELP(profiles_set_image,
+    "Set image selects a PNG for the current profile and stores it as a normalized 560x384 thumbnail.",
+    "The source PNG is not changed. This action is available only after a profile is selected.");
+
+static const help_override_t profiles_overrides[] = {
+    OVERRIDE(0U, profiles_choose),
+    OVERRIDE(1U, profiles_save_current),
+    OVERRIDE(2U, profiles_save_as),
+    OVERRIDE(3U, profiles_rename),
+    OVERRIDE(4U, profiles_set_image),
+};
+
 /* ======================================================================== */
 /*  BOOT SETTINGS                                                           */
 /* ======================================================================== */
@@ -385,7 +416,7 @@ HELP(about,
 /*  per-item help. The order here does not matter; lookup is by tab id.     */
 /* ======================================================================== */
 static const help_tab_t k_help_tabs[] = {
-    TAB(CONFIG_TAB_PROFILES,      profiles),
+    TAB_WITH_OVERRIDES(CONFIG_TAB_PROFILES, profiles, profiles_overrides),
     TAB(CONFIG_TAB_BOOT_SETTINGS, boot_settings),
     TAB_WITH_OVERRIDES(CONFIG_TAB_VIDEO, video, video_overrides),
     TAB_WITH_OVERRIDES(CONFIG_TAB_SMARTPORT, smartport, smartport_overrides),

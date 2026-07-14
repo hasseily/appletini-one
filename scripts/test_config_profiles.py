@@ -206,6 +206,29 @@ def test_subfolders_and_carousel_ui() -> None:
             "focused carousel thumbnails must have a one-pixel gap inside the accent border")
 
 
+def test_profiles_contextual_help_for_every_action() -> None:
+    profiles = read(CONFIG_MENU_PROFILES_C)
+    help_source = read(CONFIG_MENU_HELP_C)
+    expected = [
+        (0, "Choose profile", "profiles_choose"),
+        (1, "Save to current profile", "profiles_save_current"),
+        (2, "Save As", "profiles_save_as"),
+        (3, "Rename profile", "profiles_rename"),
+        (4, "Set image", "profiles_set_image"),
+    ]
+
+    for item, label, block in expected:
+        require(f"menu->item_focus == {item}U" in profiles and
+                f'"{label}"' in profiles,
+                f"Profiles item {item} must retain its expected label/focus mapping")
+        require(f"HELP({block}," in help_source and
+                f"OVERRIDE({item}U, {block})" in help_source,
+                f"Profiles item {item} must have its own contextual help block")
+
+    require("TAB_WITH_OVERRIDES(CONFIG_TAB_PROFILES, profiles, profiles_overrides)" in help_source,
+            "Profiles tab must resolve focused-item help instead of always showing its default block")
+
+
 def test_profile_carousel_consumes_tab_and_esc_locally() -> None:
     profiles = read(CONFIG_MENU_PROFILES_C)
     start = profiles.find("if (menu == NULL || menu->profile_carousel_active == 0U ||")
@@ -419,8 +442,8 @@ def test_modern_config_menu_ui_contract() -> None:
             '"Xilinx/AMD Vitis standalone BSP and drivers"' in source,
             "menu must expose an About tab with versions, all credits, and bottom-page help text")
     require('#define APPLETINI_BOOT_IMAGE_VERSION_FULL' in image_versions and
-            '#define APPLETINI_FIRMWARE_IMAGE_VERSION_SHORT  "F0.9.0"' in image_versions and
-            '#define APPLETINI_FIRMWARE_IMAGE_VERSION_FULL   "Firmware F0.9.0"' in image_versions,
+            '#define APPLETINI_FIRMWARE_IMAGE_VERSION_SHORT  "F0.9.1"' in image_versions and
+            '#define APPLETINI_FIRMWARE_IMAGE_VERSION_FULL   "Firmware F0.9.1"' in image_versions,
             "About/version UI must use the shared image-version definitions")
     require("#define CONFIG_MENU_HELP_H 210" in source and
             "cmui_help_panel(fb, rect, \"Help\"" in source and
@@ -490,6 +513,7 @@ def main() -> int:
         test_profile_load_overrides_current_without_updating_source_profile,
         test_profile_bezel_changes_update_active_profile,
         test_subfolders_and_carousel_ui,
+        test_profiles_contextual_help_for_every_action,
         test_profile_carousel_consumes_tab_and_esc_locally,
         test_profile_naming_and_virtual_keyboard,
         test_profile_image_picker_and_normalization,

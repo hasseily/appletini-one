@@ -3,7 +3,7 @@ import struct
 
 
 def main() -> None:
-    png_path = Path("Assets") / "bezel_default.png"
+    png_path = Path("Assets") / "Bezels" / "bezel_default.png"
     data = png_path.read_bytes()
     if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n":
         raise RuntimeError(f"{png_path} is not a PNG")

@@ -667,6 +667,7 @@ module apple_top(
             g.addr_en       = 1'b0;
             g.data_en       = 1'b0;
             g.sss_en        = 1'b0;
+            g.serve_en      = 1'b0;
         end
         return g;
     endfunction

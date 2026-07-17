@@ -9,7 +9,16 @@
 //   $Cn00-$CnFF : slot ROM (smartport_a2retronet_style_c700.mem)
 //   $C800-$CFEF : expansion ROM (.._c800.mem), served only while
 //                 soft_switch_manager says we own the C8 window
-//   $CFF0 DATA  : read = pop response FIFO, write = push command FIFO
+//   $CFF0 DATA  : read = OUT FIFO head (side-effect-free), write = push
+//                 command FIFO
+//   $CFF2 DPOP  : write-only, value ignored: advance (pop) the OUT FIFO.
+//                 Reads must be side-effect-free because a DMA bus master
+//                 (TransWarp) parks the address bus on the last real
+//                 access between its shadowed-execution cycles -- every
+//                 parked cycle replays the last read, and a pop-on-read
+//                 port would drain at bus rate. Writes never replay
+//                 (parked R/W reads back as 1), so consumption is an
+//                 explicit write.
 //   $CFF1 CTRL  : read  = {ready,7'b0} -- bit7 set once the PS has
 //                         posted a response
 //                 write = EXECUTE: firmware finished streaming the
@@ -21,9 +30,10 @@
 // Protocol (see 6502_SMARTPORT.S): the firmware streams command bytes
 // into DATA, writes CTRL, then polls CTRL bit7. The PS drains the IN
 // FIFO, executes against the disk image, pushes retcode + payload into
-// the OUT FIFO and sets READY. The firmware then pops result bytes
-// (RDBLOCK is 512 straight LDA DATAs). Block writes stream their 512
-// bytes into DATA before the CTRL write.
+// the OUT FIFO and sets READY. The firmware then reads each result byte
+// from DATA and consumes it with a DPOP write (RDBLOCK is 512
+// LDA DATA / STA DPOP pairs). Block writes stream their 512 bytes into
+// DATA before the CTRL write.
 //
 // FIFO sizing: a write command = ~16 param bytes + 512 data, so 1K
 // covers both directions with margin. Both are simple BRAM rings.
@@ -85,10 +95,10 @@ module smartport_card (
 
     logic ready_q;          // CTRL bit7: PS posted a response
     logic exec_pending_q;   // EXECUTE seen, PS has not acked
-    /* Diagnostic: DATA reads that found the OUT FIFO empty (served
-     * $00). Any nonzero here means the firmware popped more bytes
-     * than the PS pushed for some command -- silent zero-fill of
-     * block tails, invisible everywhere else. */
+    /* Diagnostic: DPOP writes that found the OUT FIFO empty. Any
+     * nonzero here means the firmware consumed more bytes than the PS
+     * pushed for some command -- silent zero-fill of block tails,
+     * invisible everywhere else. */
     logic [15:0] dry_pop_count_q;
     logic [7:0] ctrl_val_q; // value the firmware wrote to CTRL
                             // ($01 = ProDOS, $02 = SmartPort family)
@@ -118,6 +128,16 @@ module smartport_card (
     wire apple_bus_enabled = configured && ab_read.res &&
                              ((slot_assign != 3'h3) || sss.sw_slotc3rom);
 
+    /* Read serving keys on a one-clock-delayed serve_en: the ROM lookups
+     * below are registered and track ab_read.addr, so their data is valid
+     * one clock after the address sample; the delayed strobe consumes it
+     * coherently and still registers wr_data before the TAP_DATA_EMIT
+     * drive window. */
+    logic sp_serve_en_q;
+    always_ff @(posedge clk) begin
+        sp_serve_en_q <= ab_read.serve_en;
+    end
+
     wire slot_rom_hit = apple_bus_enabled && sss.slot_access &&
                         (ab_read.addr[15:12] == 4'hC) &&
                         (ab_read.addr[11] == 1'b0) &&
@@ -125,7 +145,12 @@ module smartport_card (
 
     // C8 window, gated on ownership (soft_switch_manager latches the
     // owner on the $CnXX instruction fetch; $CFFF never served).
+    // INTCXROM=1 hands all of $C100-$CFFF to motherboard internal ROM
+    // regardless of a latched claim (the enhanced //e monitor's
+    // disassembler executes internal $CBxx this way); driving then
+    // contends with the motherboard.
     wire c8_owner = apple_bus_enabled &&
+                    !sss.sw_intcxrom &&
                     sss.io_select[slot_assign] &&
                     (ab_read.addr[15:12] == 4'hC) &&
                     (ab_read.addr[11] == 1'b1) &&
@@ -133,18 +158,21 @@ module smartport_card (
 
     wire data_reg_hit = c8_owner && (ab_read.addr[10:0] == 11'h7F0);
     wire ctrl_reg_hit = c8_owner && (ab_read.addr[10:0] == 11'h7F1);
-    wire c8_rom_hit   = c8_owner && !data_reg_hit && !ctrl_reg_hit;
+    wire pop_reg_hit  = c8_owner && (ab_read.addr[10:0] == 11'h7F2);
+    wire c8_rom_hit   = c8_owner && !data_reg_hit && !ctrl_reg_hit &&
+                        !pop_reg_hit;
 
-    wire ab_rom_read   = ab_read.sss_en  && ab_read.rw  && slot_rom_hit;
-    wire ab_c8_read    = ab_read.sss_en  && ab_read.rw  && c8_rom_hit;
-    wire ab_data_read  = ab_read.sss_en  && ab_read.rw  && data_reg_hit;
-    wire ab_ctrl_read  = ab_read.sss_en  && ab_read.rw  && ctrl_reg_hit;
+    wire ab_rom_read   = sp_serve_en_q && ab_read.rw && slot_rom_hit;
+    wire ab_c8_read    = sp_serve_en_q && ab_read.rw && c8_rom_hit;
+    wire ab_data_read  = sp_serve_en_q && ab_read.rw && data_reg_hit;
+    wire ab_ctrl_read  = sp_serve_en_q && ab_read.rw && ctrl_reg_hit;
     wire ab_data_write = ab_read.data_en && !ab_read.rw && data_reg_hit;
     wire ab_ctrl_write = ab_read.data_en && !ab_read.rw && ctrl_reg_hit;
+    wire ab_pop_write  = ab_read.data_en && !ab_read.rw && pop_reg_hit;
 
-    // Synchronous ROM reads: addresses settle at the addr snap, serve
-    // happens at sss_en one cycle later -- registered ROM data is
-    // ready in time.
+    // Synchronous ROM reads: the lookups track ab_read.addr (registered
+    // at the serve sample), so ROM data is valid one clock later --
+    // exactly when sp_serve_en_q consumes it.
     logic [7:0] slot_rom_data_q;
     logic [7:0] c8_rom_data_q;
     always_ff @(posedge clk) begin
@@ -188,7 +216,7 @@ module smartport_card (
         ab_write_d.wr_rw         = 1'b0;
         ab_write_d.wr_addr_rw_en = 1'b0;
 
-        if (ab_read.sss_en) begin
+        if (sp_serve_en_q) begin
             if (ab_rom_read) begin
                 ab_write_d.wr_data    = slot_rom_data_q;
                 ab_write_d.wr_data_en = 1'b1;
@@ -245,10 +273,10 @@ module smartport_card (
                 in_wr_q          <= in_wr_q + 1'b1;
             end
 
-            if (ab_data_read && !out_empty) begin
+            if (ab_pop_write && !out_empty) begin
                 out_rd_q <= out_rd_q + 1'b1;
             end
-            if (ab_data_read && out_empty &&
+            if (ab_pop_write && out_empty &&
                 (dry_pop_count_q != 16'hFFFF)) begin
                 dry_pop_count_q <= dry_pop_count_q + 16'd1;
             end
@@ -296,7 +324,7 @@ module smartport_card (
             end else begin
                 out_count_q <= out_count_q
                     + ((axi_out_push && !out_full) ? 1'b1 : 1'b0)
-                    - ((ab_data_read && !out_empty) ? 1'b1 : 1'b0);
+                    - ((ab_pop_write && !out_empty) ? 1'b1 : 1'b0);
             end
         end
     end

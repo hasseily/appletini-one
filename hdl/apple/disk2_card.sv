@@ -239,6 +239,7 @@ module disk2_card (
     wire apple_bus_active = enabled &&
                             ((slot_assign != 3'h3) || sss.sw_slotc3rom) &&
                             ab_read.res;
+
     wire slot_rom_hit =
         apple_bus_active &&
         sss.slot_access &&
@@ -249,8 +250,8 @@ module disk2_card (
         apple_bus_active &&
         (ab_read.addr[15:8] == 8'hC0) &&
         (ab_read.addr[7:4] == (4'h8 + {1'b0, slot_assign}));
-    wire ab_rom_read = ab_read.sss_en && ab_read.rw && slot_rom_hit;
-    wire ab_io_read  = ab_read.sss_en && ab_read.rw && slot_io_hit;
+    wire ab_rom_read = ab_read.serve_en && ab_read.rw && slot_rom_hit;
+    wire ab_io_read  = ab_read.serve_en && ab_read.rw && slot_io_hit;
     wire ab_io_write = ab_read.data_en && !ab_read.rw && slot_io_hit;
     wire [3:0] io_idx = ab_read.addr[3:0];
     wire stepper_io_access = (ab_io_read || ab_io_write) && (io_idx <= IO_PHASE3_ON);
@@ -1725,7 +1726,7 @@ module disk2_card (
         ab_write_d.assert_nmi = 1'b0;
         ab_write_d.assert_dma = 1'b0;
 
-        if (ab_read.sss_en) begin
+        if (ab_read.serve_en) begin
             if (ab_rom_read) begin
                 ab_write_d.wr_data = slot_rom_byte(ab_read.addr[7:0]);
                 ab_write_d.wr_data_en = 1'b1;

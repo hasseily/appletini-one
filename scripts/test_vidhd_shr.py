@@ -97,8 +97,10 @@ def test_capture_emits_two_records_for_vidhd_io_plus_frame() -> None:
             "capture must recognize Video-7 AN3/DHIRES accesses")
     require("assign video7_softswitch_access =\n"
             "        ab_read.data_en &&\n"
-            "        is_video7_an3_access(ab_read.addr);" in source,
+            "        is_video7_an3_access(cap_addr);" in source,
             "Video-7 AN3 capture must trigger on reads and writes")
+    require("wire [15:0] cap_addr = ab_read.addr;" in source,
+            "capture must decode the authoritative PHI0-high address sample")
     require("io_record_din = pack_io_write_record" in source,
             "capture must use the canonical I/O-write record packer")
     require("io_record_din = pack_softswitch_access_record" in source and
@@ -146,9 +148,11 @@ def test_shr_capture_uses_aux_shadow_without_m2b0() -> None:
             "((a >= 24'h010400) && (a <= 24'h010BFF))" in capture and
             "24'h0107FF" not in capture,
             "capture must include AUX text page 2 for DLORES/TEXT80 PAGE2")
-    require("in_video_range(sss.addr_decode)" in capture and
-            "apple_record_din.addr_decode    = sss.addr_decode;" in capture,
-            "capture records must use the decoded main/aux shadow address directly")
+    require("in_video_range(cap_addr_decode)" in capture and
+            "apple_record_din.addr_decode    = cap_addr_decode;" in capture and
+            "cap_addr_decode    = sss.addr_decode_late" in capture,
+            "capture records must use the observation decode of the "
+            "authoritative address sample")
 
 
 def test_renderer_tracks_vidhd_register_state() -> None:
@@ -377,7 +381,7 @@ def test_vidhd_slot3_identity_and_slot_layout() -> None:
     require("input  globals::SoftSwitchState sss" in vidhd and
             "wire slot_rom_hit" in vidhd and
             "sss.slot_access" in vidhd and
-            "wire ab_rom_read = ab_read.sss_en && ab_read.rw && slot_rom_hit;" in vidhd,
+            "wire ab_rom_read = ab_read.serve_en && ab_read.rw && slot_rom_hit;" in vidhd,
             "VidHD slot-ROM identity must be gated by soft-switch slot access")
     require("logic sw_slotc3rom;" in globals_sv and
             "assign sss.sw_slotc3rom   = ss_slotc3rom;" in softswitch,

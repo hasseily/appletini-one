@@ -69,6 +69,21 @@ module apple_bus_wrapper (
     localparam int TAP_SSS_READY        = 26; // soft-switch decode latched
     localparam int TAP_INH_DEADLINE     = 32; // last chance to assert INH
     localparam int TAP_DATA_EMIT        = 25; // FPGA may drive data
+    /* THE address sample point, just inside PHI0-high (~60 ns after the
+     * detected rise, ~90 ns after the true rise once the majority
+     * filter's lag is counted). The window is bounded on BOTH sides by
+     * real masters: a DMA posted-write engine (TransWarp write-through)
+     * asserts addr/RW only around the PHI0 rise but must have them valid
+     * by the IIe row-address latch (~rise+40 ns); the TransWarp's
+     * CPU-synchronized cycles assert during PHI1 like a 6502 but RELEASE
+     * the bus around the rise, after which the level-shifted bus decays.
+     * A2DVI samples the same bus at +42/+114 ns and is field-proven on
+     * TransWarp hardware -- this tap sits inside that proven window.
+     * (An earlier value of 20 = ~+180 ns sampled the decaying bus and
+     * broke every CPU-synchronized TransWarp cycle.) TAP_ADDR_SNAP
+     * remains as the early snapshot feeding the INH/PSRAM serving path,
+     * whose assert deadline falls mid-PHI1. */
+    localparam int TAP_ADDR_SNAP_LATE   = 8;
     localparam int TAP_DATA_SNAP        = 59; // sample data from bus
 
     // ------------------------------------------------------------------
@@ -176,6 +191,7 @@ module apple_bus_wrapper (
     // give downstream decode time to settle before the bus latches it.
     wire addr_phase_inh_deadline = addr_pipe[TAP_INH_DEADLINE];
     wire data_phase_emit         = data_pipe[TAP_DATA_EMIT];
+    wire addr_phase_snap_late    = data_pipe[TAP_ADDR_SNAP_LATE];
     wire data_phase_snap_bus     = data_pipe[TAP_DATA_SNAP];
 
     // ------------------------------------------------------------------
@@ -249,11 +265,15 @@ module apple_bus_wrapper (
             ab_read_r.addr_en       <= 1'b0;
             ab_read_r.data_en       <= 1'b0;
             ab_read_r.sss_en        <= 1'b0;
+            ab_read_r.serve_en      <= 1'b0;
 
             // Sample the bus at the right phase taps
             if (addr_phase_snap_bus) begin
-                ab_read_r.addr        <= addr_clean;
-                ab_read_r.rw          <= rw_clean;
+                /* Early PHI1 snapshot: feeds ONLY the INH/PSRAM serving
+                 * path (its assert deadline falls mid-PHI1). A DMA bus
+                 * master may still be showing the previous cycle here. */
+                ab_read_r.addr_early  <= addr_clean;
+                ab_read_r.rw_early    <= rw_clean;
                 ab_read_r.m2sel       <= m2sel_clean;
                 ab_read_r.m2b0        <= m2b0_clean;
                 ab_read_r.inh         <= inh_clean;
@@ -265,9 +285,19 @@ module apple_bus_wrapper (
                 addr_en_emitted_q     <= 1'b1;
             end
             else if (addr_phase_sss_ready) begin
-                /* Decode strobe: suppressed whole for M2-invalid cycles
-                 * so every downstream decoder inherits qualification. */
+                /* Early-decode strobe: suppressed whole for M2-invalid
+                 * cycles so every downstream decoder inherits
+                 * qualification. */
                 ab_read_r.sss_en  <= ab_read_r.cycle_valid;
+            end
+            else if (addr_phase_snap_late) begin
+                /* THE authoritative address sample, inside PHI0-high:
+                 * any bus master the motherboard DRAM can accept has
+                 * addr/RW valid here (6502 or DMA engine alike).
+                 * Everything except INH/PSRAM serving keys off this. */
+                ab_read_r.addr     <= addr_clean;
+                ab_read_r.rw       <= rw_clean;
+                ab_read_r.serve_en <= ab_read_r.cycle_valid;
             end
             else if (data_phase_snap_bus) begin
                 ab_read_r.data    <= data_clean;

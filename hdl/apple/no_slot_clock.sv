@@ -57,7 +57,7 @@ module no_slot_clock (
         (ab_read.addr[10:0] != 11'h7FF);
 
     wire rom_hit         = slot_rom_hit || c8_rom_hit;
-    wire rom_cycle       = ab_read.sss_en && rom_hit;
+    wire rom_cycle       = ab_read.serve_en && rom_hit;
     wire rom_output_read = rom_cycle && ab_read.rw && ab_read.addr[2];
     wire rom_input_cycle = rom_cycle && !ab_read.addr[2];
     wire rom_reset_cycle = rom_cycle && ab_read.addr[2];
@@ -159,7 +159,7 @@ module no_slot_clock (
                 bit_count_q   <= 6'd0;
                 pattern_q     <= ACCESS_PATTERN;
                 write_shift_q <= 64'd0;
-            end else if (ab_read.sss_en && rom_hit) begin
+            end else if (ab_read.serve_en && rom_hit) begin
                 state_q       <= NSC_IDLE;
                 bit_count_q   <= 6'd0;
                 pattern_q     <= ACCESS_PATTERN;

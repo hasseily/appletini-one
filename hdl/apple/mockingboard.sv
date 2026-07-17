@@ -47,6 +47,10 @@ wire phasor_extended = phasor_native || echo_plus;
 wire ssi_visible_mode = mockingboard_mode || phasor_native;
 wire [3:0] phasor_mode_nibble = {1'b1, slot_assign};
 
+/* ab_read.addr/rw are the authoritative PHI0-high sample (valid for 6502
+ * and DMA masters alike). Read serving keys on serve_en; register-write
+ * side effects key on data_en; via_timer_clock keeps sss_en as its pure
+ * 1 MHz cadence tick. */
 wire slot_io_hit =
     card_enabled &&
     sss.slot_access &&
@@ -92,7 +96,7 @@ wire ssi_write_region =
 wire ssi_primary_write = ssi_write_region && ab_read.addr[6];
 wire ssi_secondary_write = ssi_write_region && ab_read.addr[5];
 wire ssi_native_read_region =
-    slot_io_hit && ab_read.sss_en && ab_read.rw && phasor_native &&
+    slot_io_hit && ab_read.serve_en && ab_read.rw && phasor_native &&
     !ab_read.addr[4] && !ab_read.addr[7] && (ab_read.addr[6] || ab_read.addr[5]);
 wire ssi_primary_read = ssi_native_read_region && ab_read.addr[6];
 wire ssi_secondary_read = ssi_native_read_region && ab_read.addr[5];
@@ -517,7 +521,7 @@ always_ff @(posedge clk) begin
     // normal Apple-bus mode switching.
     if (!rstn || !ab_read.res || !card_enabled || mockingboard_only) begin
         phasor_mode_q <= PH_MOCKINGBOARD;
-    end else if (ab_read.addr_en && ab_read.cycle_valid && phasor_mode_hit) begin
+    end else if (ab_read.serve_en && ab_read.cycle_valid && phasor_mode_hit) begin
         logic [2:0] next_mode;
 
         next_mode = phasor_mode_q;
@@ -1058,10 +1062,12 @@ always @(posedge clk) begin
             ab_write_q.wr_data_en <= 1'b0;
         end
 
-        if (ab_read.sss_en && ab_read.rw && ssi_read_drive) begin
+        if (ab_read.serve_en && ab_read.rw && ssi_read_drive) begin
             ab_write_q.wr_data <= ssi_read_data;
             ab_write_q.wr_data_en <= 1'b1;
-        end else if (ab_read.sss_en && ab_read.rw && (via0_hit || via1_hit)) begin
+        end else if (ab_read.serve_en && ab_read.rw && (via0_hit || via1_hit)) begin
+            /* Keyed on serve_en (the authoritative PHI0-high sample);
+             * registers wr_data before the TAP_DATA_EMIT drive window. */
             if (via0_hit && via1_hit) begin
                 ab_write_q.wr_data <= via0_data_out | via1_data_out;
             end else if (via0_hit) begin

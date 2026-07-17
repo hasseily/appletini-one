@@ -189,9 +189,9 @@ module uthernet2_card #(
         (ab_read.addr[15:8] == 8'hC0) &&
         (ab_read.addr[7:4] == (4'h8 + {1'b0, slot_assign}));
 
-    wire apple_io_read_start  = ab_read.addr_en && ab_read.cycle_valid &&
+    wire apple_io_read_start  = ab_read.serve_en && ab_read.cycle_valid &&
                                 ab_read.rw && slot_io_hit;
-    wire apple_io_write_addr_start = ab_read.addr_en && ab_read.cycle_valid &&
+    wire apple_io_write_addr_start = ab_read.serve_en && ab_read.cycle_valid &&
                                       !ab_read.rw && slot_io_hit;
     wire apple_io_write_start = ab_read.data_en && !ab_read.rw && slot_io_hit;
     wire apple_io_start = apple_io_read_start || apple_io_write_start;

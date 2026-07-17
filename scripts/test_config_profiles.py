@@ -442,8 +442,8 @@ def test_modern_config_menu_ui_contract() -> None:
             '"Xilinx/AMD Vitis standalone BSP and drivers"' in source,
             "menu must expose an About tab with versions, all credits, and bottom-page help text")
     require('#define APPLETINI_BOOT_IMAGE_VERSION_FULL' in image_versions and
-            '#define APPLETINI_FIRMWARE_IMAGE_VERSION_SHORT  "F0.9.1"' in image_versions and
-            '#define APPLETINI_FIRMWARE_IMAGE_VERSION_FULL   "Firmware F0.9.1"' in image_versions,
+            '#define APPLETINI_FIRMWARE_IMAGE_VERSION_SHORT  "F0.9.2"' in image_versions and
+            '#define APPLETINI_FIRMWARE_IMAGE_VERSION_FULL   "Firmware F0.9.2"' in image_versions,
             "About/version UI must use the shared image-version definitions")
     require("#define CONFIG_MENU_HELP_H 210" in source and
             "cmui_help_panel(fb, rect, \"Help\"" in source and

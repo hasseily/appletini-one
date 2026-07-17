@@ -62,9 +62,25 @@ package globals;
         logic rdy;
         logic dma;
         logic data_en;       // 1 in the phase that data field updates
-        logic addr_en;       // 1 in the phase that addr/rw field updates
-                             // (= TAP_ADDR_SNAP, after addr has settled)
-        logic sss_en;        // 1 in the phase that soft switches update
+        logic addr_en;       // 1 in the phase that addr_early/rw_early
+                             // update (= TAP_ADDR_SNAP, early PHI1 snap)
+        logic sss_en;        // early-decode strobe: INH-path translate and
+                             // the Apple-cycle cadence tick (timing gen)
+        logic serve_en;      // 1 in the phase that addr/rw update (the
+                             // PHI0-high sample); the universal strobe for
+                             // observation and card serving
+        /* Early PHI1 snapshot of the address bus. Only a socketed
+         * 6502/65C02 guarantees addr/RW are valid this early; a DMA bus
+         * master (e.g. the TransWarp) may assert them only around PHI0
+         * rise, so at this point the bus may still show the previous
+         * cycle's parked state. Used EXCLUSIVELY by the INH/PSRAM serving
+         * path, whose assert deadline (TAP_INH_DEADLINE, mid-PHI1) falls
+         * before the authoritative sample exists. Everything else -- the
+         * capture path, soft-switch tracking, and every virtual card --
+         * must use addr/rw, which are sampled inside PHI0-high where any
+         * master the motherboard itself can accept has the bus valid. */
+        logic [15:0] addr_early;
+        logic rw_early;
     } AppleBus_read;
 
     typedef struct packed {
@@ -105,6 +121,14 @@ package globals;
         // addr_decode_en is true for translated memory cycles; PSRAM clients
         // additionally require a nonzero bank.
         apple_route_kind_e route_kind;
+        /* Observation-path translation computed from ab_read.addr/rw (the
+         * authoritative PHI0-high sample) at serve_en. This is the decode
+         * the capture path uses. addr_decode above is its INH/serving
+         * counterpart, translated from addr_early at sss_en -- too early to
+         * be authoritative under a DMA master, but the only sample that
+         * meets the INH assert deadline. */
+        logic [23:0] addr_decode_late;
+        logic addr_decode_late_en;
         logic sw_80store;
         logic sw_intcxrom;
         logic sw_slotc3rom;

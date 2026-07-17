@@ -81,4 +81,15 @@ uint32_t apple_fb_video_settings_get(void);
 void apple_fb_video_rom_gen_set(uint32_t gen);
 uint32_t apple_fb_video_rom_gen_get(void);
 
+/* Diagnostic shadow-dump request (CPU0 writes, CPU1 takes). CPU0 cannot
+ * read the Apple memory shadow banks directly: they are cacheable and
+ * written through CPU1's L1, so a CPU0 read may observe stale DDR/L2
+ * content and falsify the diagnosis. Instead CPU0 posts a request here
+ * and CPU1 prints the dump from its own coherent view of the shadow. */
+#define APPLE_FB_DUMP_NONE      0U
+#define APPLE_FB_DUMP_TEXT_MAIN 1U   /* main bank $0400-$07FF, decoded  */
+#define APPLE_FB_DUMP_TEXT_AUX  2U   /* aux bank  $0400-$07FF, decoded  */
+void apple_fb_debug_dump_set(uint32_t req);
+uint32_t apple_fb_debug_dump_take(void);
+
 #endif /* APPLE_FB_HANDOFF_H */

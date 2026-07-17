@@ -8,6 +8,7 @@ module soft_switch_manager (
 
     import globals::*;
 
+
     // ---- Soft-switch C0xx address map (addr[7:1]) ----
     localparam logic [6:0] SS80STORE  = 7'h00;
     localparam logic [6:0] AUXREAD    = 7'h01;
@@ -44,9 +45,10 @@ module soft_switch_manager (
     logic [2:0]  ss_c8_select;
     logic [7:0]  ss_io_select;
     logic        ss_c8_internal_rom;
-    logic        ss_slot_access;
     logic [23:0] ss_addr_decode;
     logic        ss_addr_decode_en;
+    logic [23:0] ss_addr_decode_late;
+    logic        ss_addr_decode_late_en;
     apple_route_kind_e ss_route_kind;
     logic [6:0]  ss_ramworks_bank;
 
@@ -224,9 +226,10 @@ module soft_switch_manager (
             ss_c8_select           <= 3'h0;
             ss_io_select           <= 8'h00;
             ss_c8_internal_rom      <= 1'b0;
-            ss_slot_access         <= 1'b0;
             ss_addr_decode         <= '0;
             ss_addr_decode_en      <= 1'b0;
+            ss_addr_decode_late    <= '0;
+            ss_addr_decode_late_en <= 1'b0;
             ss_route_kind          <= APPLE_ROUTE_INVALID;
             ss_ramworks_bank       <= 7'b0;
         end
@@ -247,7 +250,29 @@ module soft_switch_manager (
             /* bank_sel 0x80 supplies the final RamWorks bank through PSRAM
              * address bit 23. Keep that bit in the translated address. */
 
-            if (ab_read.addr_en && ab_read.cycle_valid) begin
+            // -------- INH-path early decode (addr_en) --------
+            // The PSRAM/INH serving arm must decide before the
+            // TAP_INH_DEADLINE mid-PHI1, so it translates the early
+            // snapshot. Only a 6502-timed master is guaranteed valid
+            // here; that is inherent to INH serving and acceptable --
+            // a DMA-mastered machine (TransWarp) shadows the memory
+            // this arm would serve.
+            if (ab_read.addr_en && ab_read.cycle_valid) begin : addr_decode_translator
+                logic [31:0]        rb_decoded_addr;
+                apple_route_kind_e  rb_route_kind;
+                translate_apple_addr(ab_read.addr_early, ab_read.rw_early,
+                                     rb_decoded_addr, rb_route_kind);
+                ss_addr_decode_en  <= (rb_route_kind == APPLE_ROUTE_CACHE);
+                ss_addr_decode     <= rb_decoded_addr[23:0];
+                ss_route_kind      <= rb_route_kind;
+            end
+
+            // -------- Soft switches, claims, observation decode --------
+            // Keyed on serve_en: ab_read.addr/rw are the PHI0-high sample,
+            // valid for any master the motherboard itself can accept.
+            // Applied exactly once per cycle, so sequence-sensitive state
+            // (the LC C08x write-enable) is safe here.
+            if (ab_read.serve_en && ab_read.cycle_valid) begin
                 // -------- C0xx direct soft switches --------
                 if (is_c0xx) begin
                     unique case (ab_read.addr[7:1])
@@ -283,7 +308,6 @@ module soft_switch_manager (
                 end
 
                 // -------- Slot select / C8 expansion ROM --------
-                ss_slot_access <= 1'b0;
                 if (is_cxxx) begin
                     // C1xx-C7xx: slot select. INTC8ROM is sticky: a slot Cn
                     // access must not clear it. Once internal C3 firmware
@@ -298,13 +322,11 @@ module soft_switch_manager (
                         if (!ss_intcxrom) begin
                             ss_c8_select   <= ab_read.addr[10:8];
                             ss_io_select[ab_read.addr[10:8]] <= 1'b1;
-                            ss_slot_access <= 1'b1;
                         end
                         if (ab_read.addr[10:8] == 3'h3 && !ss_slotc3rom) begin
                             ss_c8_select   <= 3'h0;
                             ss_io_select[3] <= 1'b0;
                             ss_c8_internal_rom <= 1'b1;
-                            ss_slot_access <= 1'b0;
                         end
                     end
                     // CFFF releases C8xx expansion-ROM ownership
@@ -315,21 +337,21 @@ module soft_switch_manager (
                     end
                 end
 
-                // -------- Address decode --------
-                // translate_apple_addr() applies bank selection, language-card
-                // remapping, and route classification from the current state:
-                //   ss_addr_decode_en = (route_kind == APPLE_ROUTE_CACHE)
-                //   ss_addr_decode    = decoded_addr[23:0] for cache cases
-                //                       (don't-care otherwise -- no consumer
-                //                       reads addr_decode while en=0).
-                begin : addr_decode_translator
-                    logic [31:0]        rb_decoded_addr;
-                    apple_route_kind_e  rb_route_kind;
+                // -------- Observation address decode --------
+                // translate_apple_addr() applies bank selection,
+                // language-card remapping, and route classification from
+                // the current state. This is the decode the capture path
+                // consumes at data_en; the INH/serving decode above is its
+                // early-snapshot counterpart. Uses the pre-update switch
+                // state (same-edge semantics), matching real-hardware
+                // behavior where an access takes effect after its cycle.
+                begin : obs_decode_translator
+                    logic [31:0]        rb_decoded_addr_obs;
+                    apple_route_kind_e  rb_route_kind_obs;
                     translate_apple_addr(ab_read.addr, ab_read.rw,
-                                         rb_decoded_addr, rb_route_kind);
-                    ss_addr_decode_en  <= (rb_route_kind == APPLE_ROUTE_CACHE);
-                    ss_addr_decode     <= rb_decoded_addr[23:0];
-                    ss_route_kind      <= rb_route_kind;
+                                         rb_decoded_addr_obs, rb_route_kind_obs);
+                    ss_addr_decode_late_en <= (rb_route_kind_obs == APPLE_ROUTE_CACHE);
+                    ss_addr_decode_late    <= rb_decoded_addr_obs[23:0];
                 end
             end
 
@@ -355,9 +377,10 @@ module soft_switch_manager (
                 ss_c8_select           <= 3'h0;
                 ss_io_select           <= 8'h00;
                 ss_c8_internal_rom      <= 1'b0;
-                ss_slot_access         <= 1'b0;
-                ss_addr_decode         <= '0;
+                    ss_addr_decode         <= '0;
                 ss_addr_decode_en      <= 1'b0;
+                ss_addr_decode_late    <= '0;
+                ss_addr_decode_late_en <= 1'b0;
                 ss_route_kind          <= APPLE_ROUTE_INVALID;
                 // Ctrl-Reset selects base auxiliary bank 0 because Apple
                 // startup software assumes that bank while rebuilding its
@@ -370,11 +393,24 @@ module soft_switch_manager (
     // ---- Outputs (registered state passthrough) ----
     assign sss.addr_decode     = ss_addr_decode;
     assign sss.addr_decode_en  = ss_addr_decode_en;
+    assign sss.addr_decode_late    = ss_addr_decode_late;
+    assign sss.addr_decode_late_en = ss_addr_decode_late_en;
     assign sss.route_kind      = ss_route_kind;
     /* INTC8ROM exclusion: while the internal C8 ROM owns the window,
      * no slot card may claim it (the //e inhibits I/O STROBE'). */
     assign sss.c8_select      = ss_c8_internal_rom ? 3'h0 : ss_c8_select;
-    assign sss.slot_access    = ss_slot_access;
+    /* Per-cycle $Cnxx slot-access qualifier, combinational from the
+     * authoritative address sample so serve_en-keyed card decode sees
+     * it with zero staleness. Uses the registered INTCXROM/SLOTC3ROM
+     * state as of this cycle's start (same semantics the registered
+     * version had). Only meaningful at/after serve_en; during PHI1
+     * ab_read.addr still holds the previous cycle's sample.  */
+    assign sss.slot_access =
+        (ab_read.addr[15:12] == 4'hc) &&
+        (ab_read.addr[11] == 1'b0) &&
+        (ab_read.addr[10:8] != 3'h0) &&
+        !ss_intcxrom &&
+        !((ab_read.addr[10:8] == 3'h3) && !ss_slotc3rom);
     assign sss.sw_80store     = ss_80store;
     assign sss.sw_intcxrom    = ss_intcxrom;
     assign sss.sw_slotc3rom   = ss_slotc3rom;

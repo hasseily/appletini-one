@@ -110,7 +110,7 @@ def test_four_ay_chips_and_phasor_chip_selects() -> None:
     require("(phasor_native && ab_read.addr[4])" in source and
             "(phasor_native && ab_read.addr[7])" in source and
             "via0_data_out | via1_data_out" in source and
-            "ab_read.rw && (via0_hit || via1_hit)" in source,
+            "ab_read.serve_en && ab_read.rw && (via0_hit || via1_hit)" in source,
             "Phasor native I/O must use AppleWin's bit4/bit7 VIA select and OR-read semantics")
     require("logic via0_ay0_selected_q = 1'b0;" in source and
             "logic via0_ay1_selected_q = 1'b0;" in source and

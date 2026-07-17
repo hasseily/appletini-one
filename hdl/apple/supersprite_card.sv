@@ -70,7 +70,7 @@ module supersprite_card (
     // (pre-advance) value and the state update sample the same registers on one
     // clock edge, with no dependence on data_en-vs-sss_en ordering.
     wire wr_stb = io_hit && ab_read.data_en && !ab_read.rw;  // CPU write
-    wire rd_stb = io_hit && ab_read.sss_en  &&  ab_read.rw;  // CPU read
+    wire rd_stb = io_hit && ab_read.serve_en &&  ab_read.rw;  // CPU read
 
     // Register map (matches the a2fpga SuperSprite decode):
     //   +0  VDP VRAM data        (mode=0)
@@ -143,7 +143,7 @@ module supersprite_card (
     wire addr_psg     = (off[3:2] == 2'b11);
     wire psg_data_wr  = wr_stb && addr_psg && !off[1];               // +C/+D
     wire psg_addr_wr  = wr_stb && addr_psg &&  off[1];               // +E/+F
-    wire psg_data_rd  = io_hit && ab_read.sss_en && ab_read.rw &&
+    wire psg_data_rd  = io_hit && ab_read.serve_en && ab_read.rw &&
                         addr_psg && off[1];
     // ~1 MHz PSG clock, once per Apple bus cycle (matches mockingboard).
     wire psg_ce = card_enabled && ab_read.data_en;
@@ -297,7 +297,7 @@ module supersprite_card (
                 ab_write_q.wr_data_en <= 1'b0;
             end
 
-            if (io_hit && ab_read.sss_en && ab_read.rw) begin
+            if (io_hit && ab_read.serve_en && ab_read.rw) begin
                 if (vdp_data_hit) begin
                     ab_write_q.wr_data    <= read_buffer_q;
                     ab_write_q.wr_data_en <= 1'b1;

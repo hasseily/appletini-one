@@ -41,6 +41,7 @@
 
 #include "../frontend/apple_cycle_egress.h"
 #include "../frontend/apple_cycle_renderer.h"
+#include "../frontend/apple_fb_handoff.h"
 #include "../frontend/apple_pal_video_timing.h"
 
 #define RESET_RELEASE_REG            0x4000000CU
@@ -89,9 +90,85 @@
  * out the timer reads, counter snapshots, decimal formatting, and UART writes. */
 #define CPU1_STATUS_UART 0
 
+/* DIAGNOSTIC BUILD OVERRIDE (diag/transwarp-video-freeze): force the health
+ * line on, plus a bw= field (video-shadow write records per interval) to
+ * timestamp when TransWarp write-through cycles reach the shadow banks.
+ * Delete this block when the investigation ends. */
+#undef CPU1_STATUS_UART
+#define CPU1_STATUS_UART 1
+
 static uint8_t apple_reset_seq_read(void)
 {
     return (uint8_t)(REG_READ(APPLE_RESET_STATUS_REG) & APPLE_RESET_SEQ_MASK);
+}
+
+/* ---- Diagnostic: text-page shadow dump (diag/transwarp-video-freeze) ----
+ * Prints the 40x24 text page 1 ($0400-$07FF) from the requested shadow
+ * bank, decoded to readable ASCII, plus the capture counters at dump
+ * time. Runs on CPU1 because the shadow banks are cacheable and written
+ * through THIS core's L1 -- only CPU1's view is guaranteed current.
+ * Triggered from CPU0's UART console (":shadow [main|aux]") via the
+ * strongly-ordered request word in apple_fb_handoff.
+ *
+ * Emitted one line per main-loop pass: a full-dump blocking print
+ * (~13 ms at 921600 baud) would overflow the 8 ms cycle ring and inject
+ * the very gap markers this build exists to observe. One line (~0.5 ms)
+ * keeps the ring backlog under ~600 records between egress polls. */
+static uint32_t s_dump_req  = APPLE_FB_DUMP_NONE;
+static uint32_t s_dump_row  = 0u;
+
+static void cpu1_dump_text_shadow_step(void)
+{
+    const volatile uint8_t *bank;
+    uint32_t base;
+    uint32_t col;
+
+    if (s_dump_req == APPLE_FB_DUMP_NONE) {
+        s_dump_req = apple_fb_debug_dump_take();
+        if (s_dump_req == APPLE_FB_DUMP_NONE) {
+            return;
+        }
+        /* First pass: header with the counters at request time. */
+        s_dump_row = 0u;
+        uart_puts(UART0_BASE, "\r\n[cpu1] shadow dump: ");
+        uart_puts(UART0_BASE,
+                  (s_dump_req == APPLE_FB_DUMP_TEXT_AUX) ? "AUX" : "MAIN");
+        uart_puts(UART0_BASE, " $0400-$07FF  bus_writes=");
+        uart_putdec(UART0_BASE, g_bus_writes_seen);
+        uart_puts(UART0_BASE, " recs=");
+        uart_putdec(UART0_BASE, g_records_processed);
+        uart_puts(UART0_BASE, " gaps=");
+        uart_putdec(UART0_BASE, g_gap_markers_seen);
+        uart_puts(UART0_BASE, " frames=");
+        uart_putdec(UART0_BASE, g_acr_frames_complete);
+        uart_puts(UART0_BASE, "\r\n");
+        return;
+    }
+
+    if (s_dump_row >= 24u) {
+        uart_puts(UART0_BASE, "[cpu1] shadow dump end\r\n");
+        s_dump_req = APPLE_FB_DUMP_NONE;
+        return;
+    }
+
+    bank = (s_dump_req == APPLE_FB_DUMP_TEXT_AUX) ? g_aux_bank : g_main_bank;
+    /* Standard interleaved text page 1 row base. */
+    base = 0x0400u + ((s_dump_row & 7u) << 7) + ((s_dump_row >> 3) * 0x28u);
+
+    uart_putdec(UART0_BASE, s_dump_row);
+    uart_puts(UART0_BASE, (s_dump_row < 10u) ? "  |" : " |");
+    for (col = 0u; col < 40u; col++) {
+        /* Screen code -> printable: strip the high bit, remap the
+         * inverse/flash control rows into the letter range. */
+        uint8_t v = (uint8_t)(bank[base + col] & 0x7Fu);
+
+        if (v < 0x20u) {
+            v = (uint8_t)(v + 0x40u);
+        }
+        uart_putc(UART0_BASE, (char)v);
+    }
+    uart_puts(UART0_BASE, "|\r\n");
+    s_dump_row++;
 }
 
 #if CPU1_STATUS_UART
@@ -132,6 +209,7 @@ static uint64_t cpu1_counts_per_second(void)
 static void cpu1_emit_status(uint32_t dt_ms)
 {
     static uint32_t p_frames, p_gap, p_ovr, p_resync, p_raw, p_recs, p_polls;
+    static uint32_t p_bus_writes;
     static uint32_t p_pal_ok, p_pal_drop, p_pal_lines, p_pal_bad, p_pal_ovr;
     static uint32_t p_pal_fast, p_pal_slow, p_pal_ticks;
     static uint32_t p_pal_end_count, p_pal_end_queue, p_pal_end_drained;
@@ -142,6 +220,7 @@ static void cpu1_emit_status(uint32_t dt_ms)
     const uint32_t raw    = g_acr_frame_edges_seen;
     const uint32_t recs   = g_records_processed;
     const uint32_t polls  = g_poll_calls;
+    const uint32_t bus_writes = g_bus_writes_seen;
     const uint32_t pal_ok = g_pal_frames_published;
     const uint32_t pal_drop = g_pal_frames_dropped;
     const uint32_t pal_lines = g_pal_lines_rendered;
@@ -188,6 +267,7 @@ static void cpu1_emit_status(uint32_t dt_ms)
     uart_puts(UART0_BASE, " raw=");          uart_putdec(UART0_BASE, raw_delta);
     uart_puts(UART0_BASE, " recpf=");        uart_putdec(UART0_BASE, recs_per_frame);
     uart_puts(UART0_BASE, " recs=");         uart_putdec(UART0_BASE, recs_delta);
+    uart_puts(UART0_BASE, " bw=");           uart_putdec(UART0_BASE, bus_writes - p_bus_writes);
     uart_puts(UART0_BASE, " polls=");        uart_putdec(UART0_BASE, polls - p_polls);
     uart_puts(UART0_BASE, " palok=");        uart_putdec(UART0_BASE, pal_ok_delta);
     uart_puts(UART0_BASE, " paldrop=");      uart_putdec(UART0_BASE, pal_drop_delta);
@@ -207,6 +287,7 @@ static void cpu1_emit_status(uint32_t dt_ms)
 
     p_frames = frames; p_gap = gap; p_ovr = ovr;
     p_resync = resync; p_raw = raw; p_recs = recs; p_polls = polls;
+    p_bus_writes = bus_writes;
     p_pal_ok = pal_ok; p_pal_drop = pal_drop; p_pal_lines = pal_lines;
     p_pal_bad = pal_bad; p_pal_ovr = pal_ovr;
     p_pal_fast = pal_fast; p_pal_slow = pal_slow; p_pal_ticks = pal_ticks;
@@ -263,6 +344,11 @@ int main(void)
             apple_cycle_renderer_reset_local_video_state();
         }
         apple_cycle_egress_poll();
+
+        /* Diagnostic shadow-dump request from CPU0's UART console.
+         * Costs one strongly-ordered OCM read per pass when idle;
+         * emits at most one dump line per pass when active. */
+        cpu1_dump_text_shadow_step();
 
         /* Render queued PAL lines off the drain path. The drain (above) only
          * buffers; this does the heavy per-line work, bounded per call so the

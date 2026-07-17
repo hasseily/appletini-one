@@ -113,8 +113,8 @@ module mouse_card (
         (ab_read.addr[15:8] == 8'hC0) &&
         (ab_read.addr[7:4] == (4'h8 + {1'b0, slot_assign}));
 
-    wire ab_rom_read = ab_read.sss_en && ab_read.rw && slot_rom_hit;
-    wire ab_io_read  = ab_read.sss_en && ab_read.rw && slot_io_hit;
+    wire ab_rom_read = ab_read.serve_en && ab_read.rw && slot_rom_hit;
+    wire ab_io_read  = ab_read.serve_en && ab_read.rw && slot_io_hit;
     wire ab_io_write = ab_read.data_en && !ab_read.rw && slot_io_hit;
     wire [3:0] io_idx = ab_read.addr[3:0];
 
@@ -169,7 +169,7 @@ module mouse_card (
         ab_write_d.wr_rw = 1'b0;
         ab_write_d.wr_addr_rw_en = 1'b0;
 
-        if (ab_read.sss_en) begin
+        if (ab_read.serve_en) begin
             if (ab_rom_read) begin
                 ab_write_d.wr_data = slot_rom[ab_read.addr[7:0]];
                 ab_write_d.wr_data_en = 1'b1;

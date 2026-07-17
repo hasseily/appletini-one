@@ -103,8 +103,12 @@ module psram_simple (
                      sss.addr_decode_en &&
                      (decode_bank != 8'd0) &&
                      aux_provide_en;
-    wire serve_read_start  = ab_read.sss_en && aux_cycle && ab_read.rw;
-    wire serve_write_start = ab_read.sss_en && aux_cycle && !ab_read.rw;
+    /* rw_early: this arm keys off the early PHI1 snapshot (sss.addr_decode
+     * is translated from addr_early), the only sample that meets the INH
+     * deadline. ab_read.rw is the PHI0-high sample and is not yet valid
+     * for this cycle at sss_en time. */
+    wire serve_read_start  = ab_read.sss_en && aux_cycle && ab_read.rw_early;
+    wire serve_write_start = ab_read.sss_en && aux_cycle && !ab_read.rw_early;
 
     // ------------------------------------------------------------------
     // Write ring FIFO: 4 entries of {addr[23:0], data[7:0]}.

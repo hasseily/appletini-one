@@ -42,6 +42,7 @@
  *   0xFFFF100C  video_settings   (uint32_t)
  *   0xFFFF1010  display_mode     (uint32_t)
  *   0xFFFF1014  video_rom_gen    (uint32_t)  CPU0 writes, CPU1 reads
+ *   0xFFFF1018  debug_dump_req   (uint32_t)  CPU0 writes, CPU1 clears
  */
 
 #include <stdint.h>
@@ -63,6 +64,8 @@
  * validated ROM into the APPLE_VIDEO_ROM_OVERRIDE_ADDR buffer (or sets 0 for
  * "no override"); CPU1 rebuilds csbits when it sees the value change. */
 #define HANDOFF_VIDEO_ROM_GEN_ADDR   0xFFFF1014U
+/* Diagnostic shadow-dump request word (CPU0 writes, CPU1 clears). */
+#define HANDOFF_DEBUG_DUMP_REQ_ADDR  0xFFFF1018U
 
 #define READER_NONE    0xFFu
 #define PUBLISHED_SLOT_MASK          0x000000FFu
@@ -83,6 +86,8 @@ static volatile uint32_t *const s_display_mode =
     (volatile uint32_t *)HANDOFF_DISPLAY_MODE_ADDR;
 static volatile uint32_t *const s_video_rom_gen =
     (volatile uint32_t *)HANDOFF_VIDEO_ROM_GEN_ADDR;
+static volatile uint32_t *const s_debug_dump_req =
+    (volatile uint32_t *)HANDOFF_DEBUG_DUMP_REQ_ADDR;
 
 /* Per-core local state. Each core has its own copy in its own .bss
  * (CPU0 in lower DDR, CPU1 in upper DDR -- the per-app static).
@@ -172,6 +177,7 @@ void apple_fb_handoff_init(void)
     *s_video_settings = APPLE_VIDEO_SETTINGS_DEFAULT;
     *s_display_mode   = APPLE_FB_DISPLAY_MODE_LEGACY;
     *s_video_rom_gen  = 0u;   /* 0 = no override -> baked Enhanced US ROM */
+    *s_debug_dump_req = APPLE_FB_DUMP_NONE;
     __asm__ volatile ("dsb sy" ::: "memory");
 
     s_writer_current_slot = 0u;
@@ -236,6 +242,23 @@ uint32_t apple_fb_video_rom_gen_get(void)
     const uint32_t gen = *s_video_rom_gen;
     __asm__ volatile ("dmb sy" ::: "memory");
     return gen;
+}
+
+void apple_fb_debug_dump_set(uint32_t req)
+{
+    *s_debug_dump_req = req;
+    __asm__ volatile ("dmb sy" ::: "memory");
+}
+
+uint32_t apple_fb_debug_dump_take(void)
+{
+    const uint32_t req = *s_debug_dump_req;
+
+    if (req != APPLE_FB_DUMP_NONE) {
+        *s_debug_dump_req = APPLE_FB_DUMP_NONE;
+        __asm__ volatile ("dmb sy" ::: "memory");
+    }
+    return req;
 }
 
 uint8_t apple_fb_writer_slot(void)

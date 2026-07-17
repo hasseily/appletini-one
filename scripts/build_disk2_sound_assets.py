@@ -14,14 +14,15 @@ SAMPLES_H = REPO_ROOT / "ps_sources" / "frontend" / "disk2_sound_samples.h"
 PKG_SV = REPO_ROOT / "hdl" / "apple" / "disk2_sound_pkg.sv"
 
 SOUNDS = [
-    ("DOOR_OPEN", "01_door_open_plus24dB_cap.wav"),
-    ("DOOR_CLOSE", "02_door_close_plus24dB_cap.wav"),
-    ("TRACK0_RECAL", "03_track0_recal_plus24dB_cap.wav"),
-    ("IDLE_SPIN", "04_idle_spin_plus24dB_cap.wav"),
-    ("SEEK_34_0", "05_seek_34_0_plus24dB_cap.wav"),
-    ("SEEK_0_34", "06_seek_0_34_plus24dB_cap.wav"),
+    ("DOOR_OPEN", "01_door_open.wav"),
+    ("DOOR_CLOSE", "02_door_close.wav"),
+    ("TRACK0_RECAL", "03_track0_recal.wav"),
+    ("IDLE_SPIN", "04_idle_spin.wav"),
+    ("SEEK_34_0", "05_seek_34_0.wav"),
+    ("SEEK_0_34", "06_seek_0_34.wav"),
 ]
 
+SAMPLE_RATE_HZ = 48000
 SEEK_FULL_QTRACK_DISTANCE = 35 * 4
 SEEK_SOUND_NAMES = {
     "SEEK_34_0",
@@ -33,8 +34,8 @@ def read_wav_samples(path: Path) -> list[int]:
     with wave.open(str(path), "rb") as wav:
         if wav.getnchannels() != 1:
             raise ValueError(f"{path.name}: expected mono WAV")
-        if wav.getframerate() != 48000:
-            raise ValueError(f"{path.name}: expected 48000 Hz WAV")
+        if wav.getframerate() != SAMPLE_RATE_HZ:
+            raise ValueError(f"{path.name}: expected {SAMPLE_RATE_HZ} Hz WAV")
         if wav.getsampwidth() != 2:
             raise ValueError(f"{path.name}: expected 16-bit PCM WAV")
         frames = wav.readframes(wav.getnframes())
@@ -53,7 +54,7 @@ def write_header(total_samples: int) -> None:
         "",
         "#include <stdint.h>",
         "",
-        "#define DISK2_SOUND_SAMPLE_RATE_HZ 48000U",
+        f"#define DISK2_SOUND_SAMPLE_RATE_HZ {SAMPLE_RATE_HZ}U",
         f"#define DISK2_SOUND_SAMPLE_COUNT {total_samples}U",
         "#define DISK2_SOUND_SAMPLE_BYTES "
         "(DISK2_SOUND_SAMPLE_COUNT * (uint32_t)sizeof(uint16_t))",
@@ -97,7 +98,7 @@ def write_package(descriptors: list[tuple[str, int, int]], total_samples: int) -
         "",
         f"    localparam int unsigned DISK2_SOUND_COUNT = {len(descriptors)};",
         f"    localparam int unsigned DISK2_SOUND_SAMPLE_COUNT = {total_samples};",
-        "    localparam int unsigned DISK2_SOUND_SAMPLE_RATE_HZ = 48000;",
+        f"    localparam int unsigned DISK2_SOUND_SAMPLE_RATE_HZ = {SAMPLE_RATE_HZ};",
         "",
     ]
     for index, (name, _offset, _length) in enumerate(descriptors):

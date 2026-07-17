@@ -432,11 +432,15 @@ def test_disk2_sound_recal_and_volume_contract() -> None:
             ".sound_seek_distance(disk2_sound_seek_distance)" in apple_top,
             "Disk II seek sound events must stage starting/ending qtracks into the sound player")
 
-    require('"DOOR_OPEN", "01_door_open_plus24dB_cap.wav"' in sound_assets and
-            '"DOOR_CLOSE", "02_door_close_plus24dB_cap.wav"' in sound_assets and
-            '"SEEK_34_0", "05_seek_34_0_plus24dB_cap.wav"' in sound_assets and
-            '"SEEK_0_34", "06_seek_0_34_plus24dB_cap.wav"' in sound_assets,
-            "Disk II sound assets must include door sounds and 05/06 seek beds")
+    require('"DOOR_OPEN", "01_door_open.wav"' in sound_assets and
+            '"DOOR_CLOSE", "02_door_close.wav"' in sound_assets and
+            '"TRACK0_RECAL", "03_track0_recal.wav"' in sound_assets and
+            '"IDLE_SPIN", "04_idle_spin.wav"' in sound_assets and
+            '"SEEK_34_0", "05_seek_34_0.wav"' in sound_assets and
+            '"SEEK_0_34", "06_seek_0_34.wav"' in sound_assets and
+            "SAMPLE_RATE_HZ = 48000" in sound_assets and
+            "DISK2_SOUND_SAMPLE_RATE_HZ = 48000" in sound_pkg,
+            "Disk II sound assets must use the renamed 48 kHz sound set")
     require("DISK2_SOUND_DOOR_OPEN" in sound_pkg and
             "DISK2_SOUND_DOOR_CLOSE" in sound_pkg and
             "DISK2_SOUND_SEEK_34_0" in sound_pkg and
@@ -455,6 +459,10 @@ def test_disk2_sound_recal_and_volume_contract() -> None:
             "function automatic logic [17:0] disk2_sound_seek_position_offset" in sound_pkg and
             "8'd140" in sound_pkg,
             "Disk II seek sounds must slice position-based 05/06 playback")
+    require("sample_phase_q" not in sound_player and
+            "sample_advance" not in sound_player and
+            "if (audio_tick) begin" in sound_player,
+            "48 kHz Disk II assets must advance directly on every 48 kHz audio tick")
 
     require("#define CARD_CTRL_DISK2_SOUND_VOLUME_SHIFT     8U" in regs and
             "#define CARD_CTRL_DISK2_SOUND_EVENT_SHIFT      16U" in regs and

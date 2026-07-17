@@ -52,23 +52,33 @@ module apple_cycle_capture (
                (a == 16'hC05F);
     endfunction
 
+    /* ab_read.addr/rw are the authoritative PHI0-high sample (valid for
+     * 6502 and DMA masters alike), and sss.addr_decode_late is their
+     * translation -- both registered well before the data_en push below.
+     * The early-snapshot fields exist only for the INH/PSRAM serving arm
+     * and are never used for capture. */
+    wire [15:0] cap_addr = ab_read.addr;
+    wire        cap_rw   = ab_read.rw;
+    wire [23:0] cap_addr_decode    = sss.addr_decode_late;
+    wire        cap_addr_decode_en = sss.addr_decode_late_en;
+
     // Rule 1: qualifying bus write into video memory (in addr_decode space).
     logic rule1_valid;
     assign rule1_valid =
-        (ab_read.rw == 1'b0) &&
-        sss.addr_decode_en &&
-        in_video_range(sss.addr_decode);
+        (cap_rw == 1'b0) &&
+        cap_addr_decode_en &&
+        in_video_range(cap_addr_decode);
 
     logic vidhd_register_write;
     assign vidhd_register_write =
         ab_read.data_en &&
-        (ab_read.rw == 1'b0) &&
-        is_vidhd_register_write(ab_read.addr);
+        (cap_rw == 1'b0) &&
+        is_vidhd_register_write(cap_addr);
 
     logic video7_softswitch_access;
     assign video7_softswitch_access =
         ab_read.data_en &&
-        is_video7_an3_access(ab_read.addr);
+        is_video7_an3_access(cap_addr);
 
     logic io_push_request;
     assign io_push_request =
@@ -82,8 +92,8 @@ module apple_cycle_capture (
     logic shr_capture_active_q;
     wire c029_write_cycle =
         ab_read.data_en &&
-        (ab_read.rw == 1'b0) &&
-        (ab_read.addr == 16'hC029);
+        (cap_rw == 1'b0) &&
+        (cap_addr == 16'hC029);
     wire c029_write_shr_active = (ab_read.data[7:6] == 2'b11);
     wire shr_capture_active_next =
         c029_write_cycle ? c029_write_shr_active : shr_capture_active_q;
@@ -132,7 +142,7 @@ module apple_cycle_capture (
         end
 
         if (rule1_valid) begin
-            apple_record_din.addr_decode    = sss.addr_decode;
+            apple_record_din.addr_decode    = cap_addr_decode;
             apple_record_din.addr_decode_en = 1'b1;
             apple_record_din.data           = ab_read.data;
         end
@@ -156,14 +166,14 @@ module apple_cycle_capture (
     always_comb begin
         if (video7_softswitch_access) begin
             io_record_din = pack_softswitch_access_record(
-                ab_read.addr,
+                cap_addr,
                 current_softswitch_bits,
                 line_in_frame,
                 cycle_in_line
             );
         end else begin
             io_record_din = pack_io_write_record(
-                ab_read.addr,
+                cap_addr,
                 ab_read.data,
                 line_in_frame,
                 cycle_in_line

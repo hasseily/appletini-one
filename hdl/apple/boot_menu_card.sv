@@ -223,7 +223,7 @@ module boot_menu_card (
         io_addr_slot = ab_read.addr[6:4];
         handoff_entry_read = handoff_pending_q &&
                              slot_resolved &&
-                             ab_read.sss_en &&
+                             ab_read.serve_en &&
                              ab_read.rw &&
                              sss.slot_access &&
                              (ab_read.addr[15:12] == 4'hC) &&
@@ -250,9 +250,13 @@ module boot_menu_card (
         // latched our slot as the C8 owner -- otherwise we'd contend
         // with whichever card actually owns C8. We never serve $CFFF
         // (the standard release-signal address).
+        // INTCXROM=1 hands all of $C100-$CFFF to motherboard internal
+        // ROM regardless of a latched claim; driving then contends with
+        // the motherboard (enhanced //e monitor listing crashes).
         slot_c8_owner = (slot7_mode_q == SLOT_MODE_BOOTMENU) &&
                         !handoff_pending_q &&
                         slot_resolved &&
+                        !sss.sw_intcxrom &&
                         sss.io_select[resolved_slot] &&
                         (ab_read.addr[15:12] == 4'hC) &&
                         (ab_read.addr[11] == 1'b1) &&
@@ -275,16 +279,22 @@ module boot_menu_card (
         // contention to worry about -- and the menu code only ever
         // reads back what it itself just wrote.
         slot_c8_ram_access = (slot7_mode_q == SLOT_MODE_BOOTMENU) &&
+                             !sss.sw_intcxrom &&
+                             !sss.c8_internal_rom &&
                              (ab_read.addr[15:12] == 4'hC) &&
                              (ab_read.addr[11] == 1'b1) &&
                              (ab_read.addr[10:8] == 3'b010) &&
                              (ab_read.addr[7:4] == 4'h0);
 
-        slot_rom_read_hit = ab_read.sss_en && ab_read.rw && slot_rom_access;
-        slot_io_read_hit = ab_read.sss_en && ab_read.rw && slot_io_access;
+        slot_rom_read_hit = ab_read.serve_en &&
+                            ab_read.rw && slot_rom_access;
+        slot_io_read_hit = ab_read.serve_en &&
+                           ab_read.rw && slot_io_access;
         slot_io_write_hit = ab_read.data_en && !ab_read.rw && slot_io_access;
-        slot_c8_rom_read_hit = ab_read.sss_en && ab_read.rw && slot_c8_rom_access;
-        slot_c8_ram_read_hit = ab_read.sss_en && ab_read.rw && slot_c8_ram_access;
+        slot_c8_rom_read_hit = ab_read.serve_en &&
+                               ab_read.rw && slot_c8_rom_access;
+        slot_c8_ram_read_hit = ab_read.serve_en &&
+                               ab_read.rw && slot_c8_ram_access;
         slot_c8_ram_write_hit = ab_read.data_en && !ab_read.rw && slot_c8_ram_access;
         slot_io_reg_idx = ab_read.addr[3:0];
         c8_rom_offset = ab_read.addr[7:0];
@@ -317,7 +327,7 @@ module boot_menu_card (
         ab_write_d.wr_rw = 1'b0;
         ab_write_d.wr_addr_rw_en = 1'b0;
 
-        if (ab_read.sss_en) begin
+        if (ab_read.serve_en) begin
             if (slot_rom_read_hit) begin
                 ab_write_d.wr_data = slot_rom_byte(
                     ab_read.addr[7:0],

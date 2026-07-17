@@ -176,6 +176,7 @@ SIZEH   EQU $47
 ;;;;;;;;;;;;;;;;;;;;;;;
 DATA    EQU $CFF0       ; SMARTPORT DATA REGISTER
 CTRL    EQU $CFF1       ; SMARTPORT CONTROL REGISTER
+DPOP    EQU $CFF2       ; SMARTPORT POP REGISTER (WRITE-ONLY, VALUE IGNORED)
 ;;;;;;;;;;;;;;;;;;;;;;;;
 ; BASIC MODE ADDRESSES ;
 ;;;;;;;;;;;;;;;;;;;;;;;;

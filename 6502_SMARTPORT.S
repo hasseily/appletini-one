@@ -40,7 +40,9 @@ PDSTS   ; EXECUTE AND GET RETURN CODE
         BNE PDDONE      ; ERROR?
 
         LDX DATA        ; SIZE LO
+        STA DPOP
         LDY DATA        ; SIZE HI
+        STA DPOP
 PDOKAY  LDA #$00        ; SUCCESS
 PDDONE  CMP #$01        ; SUCCESS?
         JMP QUIT
@@ -70,8 +72,10 @@ STATUS  ; EXECUTE AND GET STATUS
 
         ; READ STATUS LIST SIZE
         LDA DATA
+        STA DPOP
         STA SIZEL
         LDA DATA
+        STA DPOP
         STA SIZEH
 
         ; READ STATUS LIST
@@ -290,6 +294,7 @@ WRCMD   ; WRITE COMMAND REG AND READ RESPONSE
 WAIT    LDA CTRL
         BPL WAIT
         LDA DATA
+        STA DPOP
         RTS
 
 RDBUF   ; READ BUFFER
@@ -303,6 +308,7 @@ RDFULL  JSR RDPAGE
 RDREST  LDX SIZEL
         BEQ RDDONE
 RDMORE  LDA DATA
+        STA DPOP
         STA (ADDRL),Y
         INY
         DEX
@@ -331,6 +337,7 @@ RDBLK1  ; READ 512-BYTE BLOCK (in-bank; CF00 RDBLOCK jumps here)
         JSR RDPAGE
         INC ADDRH
 RDPAGE  LDA DATA
+        STA DPOP
         STA (ADDRL),Y
         INY
         BNE RDPAGE
@@ -358,6 +365,7 @@ RETRY   LDA KBD
         JSR WRCMD
         BNE DOBOOT
         LDA DATA
+        STA DPOP
         STA $07F7
         BNE RETRY       ; ALWAYS
 HAVEKEY STA KBDSTRB
@@ -491,6 +499,7 @@ LINE    TXA
         JSR BASCALC
         LDY #$00
 CHAR    LDA DATA
+        STA DPOP
         STA (BASL),Y
         INY
         CPY #$28        ; COLS

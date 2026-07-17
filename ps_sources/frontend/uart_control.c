@@ -12,6 +12,7 @@
 #include "ff.h"
 #include "psram_bench.h"
 #include "card_control_regs.h"
+#include "apple_fb_handoff.h"
 #include "boot_menu_service.h"
 #include "compositor.h"
 #include "supersprite_vdp.h"
@@ -1681,6 +1682,7 @@ void uart_control_print_help(const uart_control_t *control, const uart_control_o
     uart_puts(control->control_uart_base, "  usb1 [status|start|stop]\r\n");
     uart_puts(control->control_uart_base, "  sdd [status|on|off] (USB0 bus-event stream for SuperDuperDisplay)\r\n");
     uart_puts(control->control_uart_base, "  z80 [status|on|off|reset|budget <tstates>|wall <us>|dump <hex-addr> [len]] (Applicard slot 5)\r\n");
+    uart_puts(control->control_uart_base, "  shadow [main|aux] (CPU1 prints its $0400-$07FF text-page shadow)\r\n");
 }
 
 static uart_control_event_t process_smartport_command(
@@ -2109,6 +2111,27 @@ static uart_control_event_t process_command(
 
     if (str_ieq(argv[0], "status")) {
         print_snapshot(control, ops);
+        return event;
+    }
+
+    if (str_ieq(argv[0], "shadow")) {
+        /* Diagnostic (diag/transwarp-video-freeze): ask CPU1 to print
+         * its text-page shadow. CPU0 must not read the shadow banks
+         * itself -- they are cacheable and written through CPU1's L1,
+         * so a CPU0 read can observe stale content and falsify the
+         * "is the data in the shadow?" question this exists to answer. */
+        uint32_t dump_req = APPLE_FB_DUMP_TEXT_MAIN;
+
+        if (argc >= 2 && str_ieq(argv[1], "aux")) {
+            dump_req = APPLE_FB_DUMP_TEXT_AUX;
+        } else if (argc >= 2 && !str_ieq(argv[1], "main")) {
+            uart_puts(control->control_uart_base,
+                      "usage: shadow [main|aux]\r\n");
+            return event;
+        }
+        apple_fb_debug_dump_set(dump_req);
+        uart_puts(control->control_uart_base,
+                  "shadow: requested, CPU1 prints it on UART0\r\n");
         return event;
     }
 

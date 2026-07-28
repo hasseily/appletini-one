@@ -517,6 +517,16 @@ def assemble_source(source_text: str,
             continue
 
         opcode, operand = parse_instruction(line)
+        if opcode in BRANCH_OPS and operand:
+            # py65 silently wraps an out-of-range relative branch, which once
+            # shipped a STATUS "BNE RETURN" that landed in slot-ROM padding
+            # ($00 = BRK) and hung A2Desktop's device scan. Fail loudly here.
+            target = eval_expr(operand, symbols, pc) & 0xFFFF
+            rel = target - ((pc + 2) & 0xFFFF)
+            if rel < -128 or rel > 127:
+                raise ValueError(
+                    f"branch out of range: {opcode} {operand} at ${pc:04X} "
+                    f"targets ${target:04X} (offset {rel:+d}; must be -128..+127)")
         formatted = opcode
         if operand:
             formatted += " " + format_operand(opcode, operand, symbols, pc)

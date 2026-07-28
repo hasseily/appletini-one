@@ -17,8 +17,15 @@ typedef enum {
     USB_HID_MENU_ACTION_NEXT_TAB,
     USB_HID_MENU_ACTION_PREV_TAB,
     USB_HID_MENU_ACTION_SCREENSHOT_A2,
-    USB_HID_MENU_ACTION_SCREENSHOT_1080P
+    USB_HID_MENU_ACTION_SCREENSHOT_1080P,
+    /* Global (outside-menu) virtual-TransWarp speed actions. */
+    USB_HID_MENU_ACTION_VTW_SPEED_TOGGLE,
+    USB_HID_MENU_ACTION_VTW_SPEED_UP,
+    USB_HID_MENU_ACTION_VTW_SPEED_DOWN,
+    USB_HID_MENU_ACTION_VTW_SLUG_TOGGLE
 } usb_hid_menu_action_t;
+
+#define USB_HID_VTW_SOURCE_COUNT 4U
 
 #define USB_HID_MENU_SOURCE_NONE 0U
 #define USB_HID_MENU_SOURCE_KEY_BASE 0x0100U
@@ -56,6 +63,9 @@ void usb_hid_service_set_menu_ok_source(usb_hid_menu_source_t source);
 void usb_hid_service_set_menu_open_close_source(usb_hid_menu_source_t source);
 void usb_hid_service_set_screenshot_sources(usb_hid_menu_source_t a2_source,
                                             usb_hid_menu_source_t full_source);
+/* Order: speed toggle, speed up, speed down, slug toggle. */
+void usb_hid_service_set_vtw_sources(
+    const usb_hid_menu_source_t sources[USB_HID_VTW_SOURCE_COUNT]);
 int usb_hid_service_pop_menu_event(usb_hid_menu_event_t *event);
 void usb_hid_service_get_status(usb_hid_service_status_t *status);
 void usb_hid_service_dump_status(uint32_t uart_base);

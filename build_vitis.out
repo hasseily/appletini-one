@@ -1,0 +1,1083 @@
+
+****** Xilinx Vitis Development Environment
+****** Vitis v2025.2 (64-bit)
+****** SW Build 6295257 on 2025-11-13-08:29:30
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
+
+
+==> Kill existing Vitis IDE
+ERROR: The process "vitis-ide.exe" not found.
+
+==> Kill existing Vitis server (vitis-server.exe)
+ERROR: The process "vitis-server.exe" not found.
+
+==> Kill stray java.exe (Vitis Java runtime)
+ERROR: The process "java.exe" not found.
+
+==> Remove existing vitis_workspace
+
+==> Create Vitis client
+Vitis Server started on port '52803'.
+Vitis Server for Embedded Edition. Only embedded component related functions are supported.
+
+==> Set workspace to vitis_workspace
+
+==> Create platform component appletini_platform
+Platform appletini_platform creation started.
+SDT generated successfully.
+[INFO]: Validating inputs
+[INFO]: Starting domain creation
+[INFO]: Validating inputs
+[INFO]: Starting domain creation
+[INFO]: Generating Domain-specific DTS for ps7_cortexa9_0
+[INFO]: Generating Domain-specific DTS for ps7_cortexa9_0
+[INFO]: Generating required metadata from domain specific DT
+[INFO]: Generating required metadata from domain specific DT
+CMake Warning in libsrc/xiltimer/src/CMakeLists.txt:
+  The object file directory
+    C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_0/standalone_ps7_cortexa9_0/bsp/libsrc/build_configs/gen_bsp/libsrc/xiltimer/src/CMakeFiles/xiltimer.dir/./
+  has 206 characters.  The maximum full path to an object file is 250
+  characters (see CMAKE_OBJECT_PATH_MAX).  Object file
+    core/default_timer/globaltimer_sleep_zynq.c.obj
+  cannot be safely placed under this directory.  The build may not work
+  correctly.
+CMake Warning in libsrc/standalone/src/CMakeLists.txt:
+  The object file directory
+    C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_0/standalone_ps7_cortexa9_0/bsp/libsrc/build_configs/gen_bsp/libsrc/standalone/src/CMakeFiles/xilstandalone.dir/./
+  has 213 characters.  The maximum full path to an object file is 250
+  characters (see CMAKE_OBJECT_PATH_MAX).  Object file
+    arm/cortexa9/gcc/translation_table.S.obj
+  cannot be safely placed under this directory.  The build may not work
+  correctly.
+[INFO]: Successfully created Domain at C:\Users\hasse\source\repos\hasseily\appletini-one\vitis_workspace\appletini_platform\ps7_cortexa9_0\standalone_ps7_cortexa9_0\bsp
+Domain standalone_ps7_cortexa9_0 added successfully.
+[INFO]: Successfully created Domain at C:\Users\hasse\source\repos\hasseily\appletini-one\vitis_workspace\appletini_platform\zynq_fsbl\zynq_fsbl_bsp
+[INFO]: Validating inputs
+[INFO]: Generating Linker script for zynq_fsbl
+[INFO]: Successfully Created Application sources at C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/zynq_fsbl
+Platform FSBL Boot domain added successfully.
+Platform creation finished successfully.
+Platform Quick Build initiated.
+Initiating build for the appletini_platform component.
+Generating Export directory
+Generated platform metadata for creating application(s) based on platform appletini_platform.
+
+==> Get standalone_ps7_cortexa9_0 domain
+
+==> Resolve XILINX_VITIS sw_services path
+
+==> Verify required BSP library directories exist
+
+==> Add BSP library xilffs
+
+==> Add BSP library xilflash
+
+==> Add BSP library xilrsa
+
+==> Regenerate standalone_ps7_cortexa9_0 BSP
+Regenerating BSP 
+[INFO]: Regenerating bsp
+[INFO]: Validating inputs
+[INFO]: Starting domain creation
+[INFO]: Generating Domain-specific DTS for ps7_cortexa9_0
+[INFO]: Generating required metadata from domain specific DT
+CMake Warning in libsrc/xiltimer/src/CMakeLists.txt:
+  The object file directory
+    C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_0/standalone_ps7_cortexa9_0/bsp/libsrc/build_configs/gen_bsp/libsrc/xiltimer/src/CMakeFiles/xiltimer.dir/./
+  has 206 characters.  The maximum full path to an object file is 250
+  characters (see CMAKE_OBJECT_PATH_MAX).  Object file
+    core/default_timer/globaltimer_sleep_zynq.c.obj
+  cannot be safely placed under this directory.  The build may not work
+  correctly.
+CMake Warning in libsrc/standalone/src/CMakeLists.txt:
+  The object file directory
+    C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_0/standalone_ps7_cortexa9_0/bsp/libsrc/build_configs/gen_bsp/libsrc/standalone/src/CMakeFiles/xilstandalone.dir/./
+  has 213 characters.  The maximum full path to an object file is 250
+  characters (see CMAKE_OBJECT_PATH_MAX).  Object file
+    arm/cortexa9/xil_misc_psreset_api.c.obj
+  cannot be safely placed under this directory.  The build may not work
+  correctly.
+[INFO]: Successfully created Domain at C:\Users\hasse\source\repos\hasseily\appletini-one\vitis_workspace\appletini_platform\ps7_cortexa9_0\standalone_ps7_cortexa9_0\bsp
+[INFO]: Adding ['xilffs', 'xilflash', 'xilrsa'] to the new BSP
+-- Configuring done
+CMake Warning in libsrc/xiltimer/src/CMakeLists.txt:
+  The object file directory
+    C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_0/standalone_ps7_cortexa9_0/bsp/libsrc/build_configs/gen_bsp/libsrc/xiltimer/src/CMakeFiles/xiltimer.dir/./
+  has 206 characters.  The maximum full path to an object file is 250
+  characters (see CMAKE_OBJECT_PATH_MAX).  Object file
+    core/default_timer/globaltimer_sleep_zynq.c.obj
+  cannot be safely placed under this directory.  The build may not work
+  correctly.
+CMake Warning in libsrc/standalone/src/CMakeLists.txt:
+  The object file directory
+    C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_0/standalone_ps7_cortexa9_0/bsp/libsrc/build_configs/gen_bsp/libsrc/standalone/src/CMakeFiles/xilstandalone.dir/./
+  has 213 characters.  The maximum full path to an object file is 250
+  characters (see CMAKE_OBJECT_PATH_MAX).  Object file
+    arm/cortexa9/gcc/translation_table.S.obj
+  cannot be safely placed under this directory.  The build may not work
+  correctly.
+-- Generating done
+-- Build files have been written to: C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_0/standalone_ps7_cortexa9_0/bsp/libsrc/build_configs/gen_bsp
+[INFO]: Regenerated BSP successfully.
+BSP regeneration finished successfully
+
+==> Enable frontend FatFs long filenames
+  Patched vitis_workspace\appletini_platform\ps7_cortexa9_0\standalone_ps7_cortexa9_0\bsp\include\xilffs_config.h
+  Patched vitis_workspace\appletini_platform\ps7_cortexa9_0\standalone_ps7_cortexa9_0\bsp\libsrc\build_configs\gen_bsp\include\xilffs_config.h
+  Patched vitis_workspace\appletini_platform\ps7_cortexa9_0\standalone_ps7_cortexa9_0\bsp\libsrc\build_configs\gen_bsp\CMakeCache.txt
+  Patched vitis_workspace\appletini_platform\ps7_cortexa9_0\standalone_ps7_cortexa9_0\bsp\libsrc\build_configs\gen_bsp\cmake_lib_configs.txt
+  Patched vitis_workspace\appletini_platform\ps7_cortexa9_0\standalone_ps7_cortexa9_0\bsp\bsp.yaml
+
+==> Enable frontend FatFs timestamp hook
+  Patched vitis_workspace\appletini_platform\ps7_cortexa9_0\standalone_ps7_cortexa9_0\bsp\libsrc\xilffs\src\diskio.c
+
+==> Patch FatFs no-SD-card boot hang
+  Patched vitis_workspace\appletini_platform\ps7_cortexa9_0\standalone_ps7_cortexa9_0\bsp\libsrc\xilffs\src\diskio.c
+
+==> Add standalone_ps7_cortexa9_1 domain (AMP)
+
+==> Set USE_AMP=1 on core 1 domain
+
+==> Set core 1 stdout = uart1
+
+==> Regenerate core 1 BSP
+Regenerating BSP 
+[INFO]: Regenerating bsp
+[INFO]: Validating inputs
+[INFO]: Starting domain creation
+[INFO]: Generating Domain-specific DTS for ps7_cortexa9_1
+[INFO]: Generating required metadata from domain specific DT
+CMake Warning in libsrc/xiltimer/src/CMakeLists.txt:
+  The object file directory
+    C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_1/standalone_ps7_cortexa9_1/bsp/libsrc/build_configs/gen_bsp/libsrc/xiltimer/src/CMakeFiles/xiltimer.dir/./
+  has 206 characters.  The maximum full path to an object file is 250
+  characters (see CMAKE_OBJECT_PATH_MAX).  Object file
+    core/default_timer/globaltimer_sleep_zynq.c.obj
+  cannot be safely placed under this directory.  The build may not work
+  correctly.
+CMake Warning in libsrc/standalone/src/CMakeLists.txt:
+  The object file directory
+    C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_1/standalone_ps7_cortexa9_1/bsp/libsrc/build_configs/gen_bsp/libsrc/standalone/src/CMakeFiles/xilstandalone.dir/./
+  has 213 characters.  The maximum full path to an object file is 250
+  characters (see CMAKE_OBJECT_PATH_MAX).  Object file
+    arm/cortexa9/gcc/translation_table.S.obj
+  cannot be safely placed under this directory.  The build may not work
+  correctly.
+[INFO]: Successfully created Domain at C:\Users\hasse\source\repos\hasseily\appletini-one\vitis_workspace\appletini_platform\ps7_cortexa9_1\standalone_ps7_cortexa9_1\bsp
+-- Configuring done
+CMake Warning in libsrc/xiltimer/src/CMakeLists.txt:
+  The object file directory
+    C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_1/standalone_ps7_cortexa9_1/bsp/libsrc/build_configs/gen_bsp/libsrc/xiltimer/src/CMakeFiles/xiltimer.dir/./
+  has 206 characters.  The maximum full path to an object file is 250
+  characters (see CMAKE_OBJECT_PATH_MAX).  Object file
+    core/default_timer/globaltimer_sleep_zynq.c.obj
+  cannot be safely placed under this directory.  The build may not work
+  correctly.
+CMake Warning in libsrc/standalone/src/CMakeLists.txt:
+  The object file directory
+    C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_1/standalone_ps7_cortexa9_1/bsp/libsrc/build_configs/gen_bsp/libsrc/standalone/src/CMakeFiles/xilstandalone.dir/./
+  has 213 characters.  The maximum full path to an object file is 250
+  characters (see CMAKE_OBJECT_PATH_MAX).  Object file
+    arm/cortexa9/xil_misc_psreset_api.c.obj
+  cannot be safely placed under this directory.  The build may not work
+  correctly.
+-- Generating done
+CMake Warning:
+  Manually-specified variables were not used by the project:
+    CMAKE_TOOLCHAIN_FILE
+-- Build files have been written to: C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_1/standalone_ps7_cortexa9_1/bsp/libsrc/build_configs/gen_bsp
+[INFO]: Regenerated BSP successfully.
+BSP regeneration finished successfully
+
+==> Build platform
+Initiating build for the appletini_platform component.
+[INFO]: Building BSP
+-- Configuring done
+CMake Warning in libsrc/standalone/src/CMakeLists.txt:
+  The object file directory
+    C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_1/standalone_ps7_cortexa9_1/bsp/libsrc/build_configs/gen_bsp/libsrc/standalone/src/CMakeFiles/xilstandalone.dir/./
+  has 213 characters.  The maximum full path to an object file is 250
+  characters (see CMAKE_OBJECT_PATH_MAX).  Object file
+    arm/cortexa9/xil_misc_psreset_api.c.obj
+  cannot be safely placed under this directory.  The build may not work
+  correctly.
+-- Configuring done
+CMake Warning in libsrc/xiltimer/src/CMakeLists.txt:
+  The object file directory
+    C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_1/standalone_ps7_cortexa9_1/bsp/libsrc/build_configs/gen_bsp/libsrc/xiltimer/src/CMakeFiles/xiltimer.dir/./
+  has 206 characters.  The maximum full path to an object file is 250
+  characters (see CMAKE_OBJECT_PATH_MAX).  Object file
+    core/default_timer/globaltimer_sleep_zynq.c.obj
+  cannot be safely placed under this directory.  The build may not work
+  correctly.
+-- Generating done
+CMake Warning:
+  Manually-specified variables were not used by the project:
+    CMAKE_TOOLCHAIN_FILE
+-- Build files have been written to: C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_1/standalone_ps7_cortexa9_1/bsp/libsrc/build_configs/gen_bsp
+[INFO]: Building BSP
+-- Generating done
+-- Build files have been written to: C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/zynq_fsbl/zynq_fsbl_bsp/libsrc/build_configs/gen_bsp
+[INFO]: Building BSP
+[1/141] Building C object libsrc/coresightps_dcc/src/CMakeFiles/coresightps_dcc.dir/xcoresightpsdcc.c.obj
+[2/141] Building C object libsrc/dmaps/src/CMakeFiles/dmaps.dir/xdmaps_sinit.c.obj
+[3/141] Building C object libsrc/devcfg/src/CMakeFiles/devcfg.dir/xdevcfg_g.c.obj
+[4/141] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_selftest.c.obj
+[5/141] Building C object libsrc/dmaps/src/CMakeFiles/dmaps.dir/xdmaps_g.c.obj
+[6/141] Building C object libsrc/dmaps/src/CMakeFiles/dmaps.dir/xdmaps_selftest.c.obj
+[7/141] Building C object libsrc/devcfg/src/CMakeFiles/devcfg.dir/xdevcfg_hw.c.obj
+[8/141] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps.c.obj
+[9/141] Building C object libsrc/gpiops/src/CMakeFiles/gpiops.dir/xgpiops_intr.c.obj
+[10/141] Building C object libsrc/gpiops/src/CMakeFiles/gpiops.dir/xgpiops.c.obj
+[11/141] Building C object libsrc/devcfg/src/CMakeFiles/devcfg.dir/xdevcfg_selftest.c.obj
+[12/141] Building C object libsrc/devcfg/src/CMakeFiles/devcfg.dir/xdevcfg_intr.c.obj
+[13/141] Building C object libsrc/gpiops/src/CMakeFiles/gpiops.dir/xgpiops_selftest.c.obj
+[14/141] Building C object libsrc/gpiops/src/CMakeFiles/gpiops.dir/xgpiops_hw.c.obj
+[15/141] Building C object libsrc/devcfg/src/CMakeFiles/devcfg.dir/xdevcfg.c.obj
+[16/141] Building C object libsrc/dmaps/src/CMakeFiles/dmaps.dir/xdmaps.c.obj
+[17/141] Building C object libsrc/gpiops/src/CMakeFiles/gpiops.dir/xgpiops_sinit.c.obj
+[18/141] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_g.c.obj
+[19/141] Building C object libsrc/dmaps/src/CMakeFiles/dmaps.dir/xdmaps_hw.c.obj
+[20/141] Building C object libsrc/gpiops/src/CMakeFiles/gpiops.dir/xgpiops_g.c.obj
+[21/141] Building C object libsrc/devcfg/src/CMakeFiles/devcfg.dir/xdevcfg_sinit.c.obj
+[22/141] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_options.c.obj
+[23/141] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_slave.c.obj
+[24/141] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_hw.c.obj
+[25/141] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_intr.c.obj
+[26/141] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_master.c.obj
+[27/141] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_xfer.c.obj
+[28/141] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_sinit.c.obj
+[29/141] Building C object libsrc/qspips/src/CMakeFiles/qspips.dir/xqspips_g.c.obj
+[30/141] Building C object libsrc/qspips/src/CMakeFiles/qspips.dir/xqspips_hw.c.obj
+[31/141] Building C object libsrc/qspips/src/CMakeFiles/qspips.dir/xqspips.c.obj
+[32/141] Building C object libsrc/qspips/src/CMakeFiles/qspips.dir/xqspips_selftest.c.obj
+[33/141] Building C object libsrc/qspips/src/CMakeFiles/qspips.dir/xqspips_sinit.c.obj
+[34/141] Building C object libsrc/qspips/src/CMakeFiles/qspips.dir/xqspips_options.c.obj
+[35/141] ========== BSP Build Information ==========
+Compiler PATH: C:/Xilinx/2025.2/Vitis/gnu/aarch32/nt/gcc-arm-none-eabi/bin/arm-none-eabi-gcc.exe
+Compiler FLAGS:  -DSDT -mcpu=cortex-a9 -mfpu=vfpv3 -mfloat-abi=hard  -MMD -MP -specs=C:/Users/hasse/
+source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_1/standalone_ps7
+_cortexa9_1/bsp/Xilinx.spec -IC:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/app
+letini_platform/ps7_cortexa9_1/standalone_ps7_cortexa9_1/bsp/include -DUSE_AMP=1 -DNDEBUG
+===========================================
+** The above flags are BSP level flags. Increase verbosity to see component specific flags **
+===========================================
+[36/141] Building C object libsrc/scugic/src/CMakeFiles/scugic.dir/xscugic_hw.c.obj
+C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_1/standalone_ps7_cortexa9_1/bsp/libsrc/scugic/src/xscugic_hw.c: In function 'DistInit':
+C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_1/standalone_ps7_cortexa9_1/bsp/libsrc/scugic/src/xscugic_hw.c:162:2: warning: #warning "Building GIC for AMP" [-Wcpp]
+  162 | #warning "Building GIC for AMP"
+      |  ^~~~~~~
+[37/141] Building C object libsrc/scugic/src/CMakeFiles/scugic.dir/xscugic_g.c.obj
+[38/141] Building C object libsrc/scugic/src/CMakeFiles/scugic.dir/xscugic_intr.c.obj
+[39/141] Building C object libsrc/scugic/src/CMakeFiles/scugic.dir/xscugic_selftest.c.obj
+[40/141] Building C object libsrc/scugic/src/CMakeFiles/scugic.dir/xscugic.c.obj
+C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_1/standalone_ps7_cortexa9_1/bsp/libsrc/scugic/src/xscugic.c: In function 'DistributorInit':
+C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_1/standalone_ps7_cortexa9_1/bsp/libsrc/scugic/src/xscugic.c:350:2: warning: #warning "Building GIC for AMP" [-Wcpp]
+  350 | #warning "Building GIC for AMP"
+      |  ^~~~~~~
+[41/141] Building C object libsrc/scugic/src/CMakeFiles/scugic.dir/xscugic_sinit.c.obj
+[42/141] Building C object libsrc/scutimer/src/CMakeFiles/scutimer.dir/xscutimer_g.c.obj
+[43/141] Building C object libsrc/scutimer/src/CMakeFiles/scutimer.dir/xscutimer_selftest.c.obj
+[44/141] Building C object libsrc/scutimer/src/CMakeFiles/scutimer.dir/xscutimer.c.obj
+[45/141] Building C object libsrc/scutimer/src/CMakeFiles/scutimer.dir/xscutimer_sinit.c.obj
+[46/141] Building C object libsrc/scuwdt/src/CMakeFiles/scuwdt.dir/xscuwdt_g.c.obj
+[47/141] Building C object libsrc/scuwdt/src/CMakeFiles/scuwdt.dir/xscuwdt.c.obj
+[48/141] Building C object libsrc/scuwdt/src/CMakeFiles/scuwdt.dir/xscuwdt_selftest.c.obj
+[49/141] Building C object libsrc/scuwdt/src/CMakeFiles/scuwdt.dir/xscuwdt_sinit.c.obj
+[50/141] Linking C static library libsrc\iicps\src\libiicps.a
+[51/141] Linking C static library libsrc\coresightps_dcc\src\libcoresightps_dcc.a
+[52/141] Linking C static library libsrc\gpiops\src\libgpiops.a
+[53/141] Linking C static library libsrc\devcfg\src\libdevcfg.a
+[54/141] Linking C static library libsrc\dmaps\src\libdmaps.a
+[55/141] Linking C static library libsrc\qspips\src\libqspips.a
+[56/141] Building C object libsrc/sdps/src/CMakeFiles/sdps.dir/xsdps_g.c.obj
+[57/141] Building C object libsrc/sdps/src/CMakeFiles/sdps.dir/xsdps_options.c.obj
+[58/141] Building C object libsrc/sdps/src/CMakeFiles/sdps.dir/xsdps_sinit.c.obj
+[59/141] Building C object libsrc/sdps/src/CMakeFiles/sdps.dir/xsdps_card.c.obj
+[60/141] Building C object libsrc/uartps/src/CMakeFiles/uartps.dir/xuartps_hw.c.obj
+[61/141] Building C object libsrc/sdps/src/CMakeFiles/sdps.dir/xsdps_host.c.obj
+[62/141] Building C object libsrc/sdps/src/CMakeFiles/sdps.dir/xsdps.c.obj
+[63/141] Linking C static library libsrc\scugic\src\libscugic.a
+[64/141] Building C object libsrc/uartps/src/CMakeFiles/uartps.dir/xuartps_selftest.c.obj
+[65/141] Building C object libsrc/uartps/src/CMakeFiles/uartps.dir/xuartps_intr.c.obj
+[66/141] Building C object libsrc/uartps/src/CMakeFiles/uartps.dir/xuartps_g.c.obj
+[67/141] Building C object libsrc/uartps/src/CMakeFiles/uartps.dir/xuartps.c.obj
+[68/141] Linking C static library libsrc\scutimer\src\libscutimer.a
+[69/141] Building C object libsrc/uartps/src/CMakeFiles/uartps.dir/xuartps_sinit.c.obj
+[70/141] Building C object libsrc/uartps/src/CMakeFiles/uartps.dir/xuartps_options.c.obj
+[71/141] Building C object libsrc/usbps/src/CMakeFiles/usbps.dir/xusbps_g.c.obj
+[72/141] Building C object libsrc/usbps/src/CMakeFiles/usbps.dir/xusbps.c.obj
+[73/141] Linking C static library libsrc\scuwdt\src\libscuwdt.a
+[74/141] Building C object libsrc/usbps/src/CMakeFiles/usbps.dir/xusbps_hw.c.obj
+[75/141] Building C object libsrc/usbps/src/CMakeFiles/usbps.dir/xusbps_intr.c.obj
+[76/141] Building C object libsrc/usbps/src/CMakeFiles/usbps.dir/xusbps_sinit.c.obj
+[77/141] Building C object libsrc/xadcps/src/CMakeFiles/xadcps.dir/xadcps_sinit.c.obj
+[78/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xil_testcache.c.obj
+-- Configuring done
+CMake Warning in libsrc/standalone/src/CMakeLists.txt:
+  The object file directory
+    C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_0/standalone_ps7_cortexa9_0/bsp/libsrc/build_configs/gen_bsp/libsrc/standalone/src/CMakeFiles/xilstandalone.dir/./
+  has 213 characters.  The maximum full path to an object file is 250
+  characters (see CMAKE_OBJECT_PATH_MAX).  Object file
+    arm/cortexa9/gcc/translation_table.S.obj
+  cannot be safely placed under this directory.  The build may not work
+  correctly.
+CMake Warning in libsrc/xiltimer/src/CMakeLists.txt:
+  The object file directory
+    C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_0/standalone_ps7_cortexa9_0/bsp/libsrc/build_configs/gen_bsp/libsrc/xiltimer/src/CMakeFiles/xiltimer.dir/./
+  has 206 characters.  The maximum full path to an object file is 250
+  characters (see CMAKE_OBJECT_PATH_MAX).  Object file
+    core/default_timer/globaltimer_sleep_zynq.c.obj
+  cannot be safely placed under this directory.  The build may not work
+  correctly.
+-- Generating done
+-- Build files have been written to: C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_0/standalone_ps7_cortexa9_0/bsp/libsrc/build_configs/gen_bsp
+[0/1] Re-running CMake...
+[1/152] Building C object libsrc/coresightps_dcc/src/CMakeFiles/coresightps_dcc.dir/xcoresightpsdcc.c.obj
+[2/152] Building C object libsrc/devcfg/src/CMakeFiles/devcfg.dir/xdevcfg_g.c.obj
+[3/152] Building C object libsrc/devcfg/src/CMakeFiles/devcfg.dir/xdevcfg_intr.c.obj
+[4/152] Building C object libsrc/devcfg/src/CMakeFiles/devcfg.dir/xdevcfg_selftest.c.obj
+[5/152] Building C object libsrc/devcfg/src/CMakeFiles/devcfg.dir/xdevcfg_hw.c.obj
+[6/152] Building C object libsrc/devcfg/src/CMakeFiles/devcfg.dir/xdevcfg_sinit.c.obj
+[7/152] Building C object libsrc/dmaps/src/CMakeFiles/dmaps.dir/xdmaps_g.c.obj
+[8/152] Building C object libsrc/dmaps/src/CMakeFiles/dmaps.dir/xdmaps_hw.c.obj
+[9/152] Building C object libsrc/devcfg/src/CMakeFiles/devcfg.dir/xdevcfg.c.obj
+[10/152] Building C object libsrc/dmaps/src/CMakeFiles/dmaps.dir/xdmaps_sinit.c.obj
+C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_0/standalone_ps7_cortexa9_0/bsp/libsrc/dmaps/src/xdmaps_sinit.c: In function 'XDmaPs_GetDrvIndex':
+C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_0/standalone_ps7_cortexa9_0/bsp/libsrc/dmaps/src/xdmaps_sinit.c:99:32: warning: unused parameter 'InstancePtr' [-Wunused-parameter]
+   99 | u32 XDmaPs_GetDrvIndex(XDmaPs *InstancePtr, UINTPTR BaseAddress)
+      |                        ~~~~~~~~^~~~~~~~~~~
+[11/152] Building C object libsrc/dmaps/src/CMakeFiles/dmaps.dir/xdmaps_selftest.c.obj
+[12/152] Building C object libsrc/gpiops/src/CMakeFiles/gpiops.dir/xgpiops_g.c.obj
+[13/152] Building C object libsrc/gpiops/src/CMakeFiles/gpiops.dir/xgpiops_selftest.c.obj
+[14/152] Building C object libsrc/gpiops/src/CMakeFiles/gpiops.dir/xgpiops_hw.c.obj
+[15/152] Building C object libsrc/gpiops/src/CMakeFiles/gpiops.dir/xgpiops_sinit.c.obj
+[16/152] Building C object libsrc/dmaps/src/CMakeFiles/dmaps.dir/xdmaps.c.obj
+[17/152] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_selftest.c.obj
+[18/152] Building C object libsrc/gpiops/src/CMakeFiles/gpiops.dir/xgpiops.c.obj
+[19/152] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_g.c.obj
+[20/152] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_hw.c.obj
+[21/152] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps.c.obj
+[22/152] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_intr.c.obj
+[23/152] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_slave.c.obj
+[24/152] Building C object libsrc/gpiops/src/CMakeFiles/gpiops.dir/xgpiops_intr.c.obj
+[25/152] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_sinit.c.obj
+[26/152] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_xfer.c.obj
+[27/152] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_master.c.obj
+[28/152] Building C object libsrc/qspips/src/CMakeFiles/qspips.dir/xqspips_selftest.c.obj
+[29/152] Building C object libsrc/qspips/src/CMakeFiles/qspips.dir/xqspips_g.c.obj
+[30/152] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_options.c.obj
+[31/152] Building C object libsrc/qspips/src/CMakeFiles/qspips.dir/xqspips_sinit.c.obj
+[32/152] Building C object libsrc/qspips/src/CMakeFiles/qspips.dir/xqspips_hw.c.obj
+[33/152] Linking C static library libsrc\devcfg\src\libdevcfg.a
+[34/152] Building C object libsrc/qspips/src/CMakeFiles/qspips.dir/xqspips_options.c.obj
+[35/152] Linking C static library libsrc\coresightps_dcc\src\libcoresightps_dcc.a
+[36/152] Linking C static library libsrc\dmaps\src\libdmaps.a
+[37/152] Building C object libsrc/scutimer/src/CMakeFiles/scutimer.dir/xscutimer_g.c.obj
+[38/152] Building C object libsrc/scugic/src/CMakeFiles/scugic.dir/xscugic_g.c.obj
+[39/152] Building C object libsrc/scugic/src/CMakeFiles/scugic.dir/xscugic_intr.c.obj
+[40/152] Building C object libsrc/scugic/src/CMakeFiles/scugic.dir/xscugic_selftest.c.obj
+[41/152] Building C object libsrc/scugic/src/CMakeFiles/scugic.dir/xscugic_sinit.c.obj
+[42/152] Building C object libsrc/scutimer/src/CMakeFiles/scutimer.dir/xscutimer.c.obj
+[43/152] ========== BSP Build Information ==========
+Compiler PATH: C:/Xilinx/2025.2/Vitis/gnu/aarch32/nt/gcc-arm-none-eabi/bin/arm-none-eabi-gcc.exe
+Compiler FLAGS:  -DSDT -mcpu=cortex-a9 -mfpu=vfpv3 -mfloat-abi=hard  -MMD -MP -specs=C:/Users/hasse/
+source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_0/standalone_ps7
+_cortexa9_0/bsp/Xilinx.spec -IC:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/app
+letini_platform/ps7_cortexa9_0/standalone_ps7_cortexa9_0/bsp/include  -O2 -g -Wall -Wextra -fno-tree
+-loop-distribute-patterns -DNDEBUG
+===========================================
+** The above flags are BSP level flags. Increase verbosity to see component specific flags **
+===========================================
+[44/152] Building C object libsrc/qspips/src/CMakeFiles/qspips.dir/xqspips.c.obj
+[45/152] Building C object libsrc/scugic/src/CMakeFiles/scugic.dir/xscugic_hw.c.obj
+[46/152] Building C object libsrc/scugic/src/CMakeFiles/scugic.dir/xscugic.c.obj
+[47/152] Linking C static library libsrc\gpiops\src\libgpiops.a
+[48/152] Building C object libsrc/scuwdt/src/CMakeFiles/scuwdt.dir/xscuwdt_sinit.c.obj
+[49/152] Building C object libsrc/scutimer/src/CMakeFiles/scutimer.dir/xscutimer_selftest.c.obj
+[50/152] Building C object libsrc/scutimer/src/CMakeFiles/scutimer.dir/xscutimer_sinit.c.obj
+[51/152] Building C object libsrc/scuwdt/src/CMakeFiles/scuwdt.dir/xscuwdt.c.obj
+[52/152] Building C object libsrc/scuwdt/src/CMakeFiles/scuwdt.dir/xscuwdt_selftest.c.obj
+[53/152] Linking C static library libsrc\iicps\src\libiicps.a
+[54/152] Building C object libsrc/scuwdt/src/CMakeFiles/scuwdt.dir/xscuwdt_g.c.obj
+[55/152] Building C object libsrc/uartps/src/CMakeFiles/uartps.dir/xuartps_hw.c.obj
+[56/152] Building C object libsrc/sdps/src/CMakeFiles/sdps.dir/xsdps_g.c.obj
+[57/152] Building C object libsrc/sdps/src/CMakeFiles/sdps.dir/xsdps_sinit.c.obj
+[58/152] Building C object libsrc/sdps/src/CMakeFiles/sdps.dir/xsdps_options.c.obj
+[59/152] Building C object libsrc/sdps/src/CMakeFiles/sdps.dir/xsdps.c.obj
+[60/152] Building C object libsrc/sdps/src/CMakeFiles/sdps.dir/xsdps_host.c.obj
+[61/152] Building C object libsrc/uartps/src/CMakeFiles/uartps.dir/xuartps_selftest.c.obj
+[62/152] Linking C static library libsrc\qspips\src\libqspips.a
+[63/152] Building C object libsrc/uartps/src/CMakeFiles/uartps.dir/xuartps_intr.c.obj
+[64/152] Building C object libsrc/uartps/src/CMakeFiles/uartps.dir/xuartps_g.c.obj
+[65/152] Linking C static library libsrc\scugic\src\libscugic.a
+[1/147] Building C object libsrc/coresightps_dcc/src/CMakeFiles/coresightps_dcc.dir/xcoresightpsdcc.c.obj
+[2/147] Building C object libsrc/devcfg/src/CMakeFiles/devcfg.dir/xdevcfg_g.c.obj
+[3/147] Building C object libsrc/devcfg/src/CMakeFiles/devcfg.dir/xdevcfg_hw.c.obj
+[4/147] Building C object libsrc/devcfg/src/CMakeFiles/devcfg.dir/xdevcfg_intr.c.obj
+[5/147] Building C object libsrc/devcfg/src/CMakeFiles/devcfg.dir/xdevcfg_selftest.c.obj
+[6/147] Building C object libsrc/devcfg/src/CMakeFiles/devcfg.dir/xdevcfg.c.obj
+[7/147] Building C object libsrc/dmaps/src/CMakeFiles/dmaps.dir/xdmaps_g.c.obj
+[8/147] Building C object libsrc/dmaps/src/CMakeFiles/dmaps.dir/xdmaps_selftest.c.obj
+[9/147] Building C object libsrc/devcfg/src/CMakeFiles/devcfg.dir/xdevcfg_sinit.c.obj
+[10/147] Building C object libsrc/gpiops/src/CMakeFiles/gpiops.dir/xgpiops_g.c.obj
+[11/147] Building C object libsrc/dmaps/src/CMakeFiles/dmaps.dir/xdmaps_hw.c.obj
+[12/147] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_g.c.obj
+[13/147] Building C object libsrc/gpiops/src/CMakeFiles/gpiops.dir/xgpiops_hw.c.obj
+[14/147] Building C object libsrc/dmaps/src/CMakeFiles/dmaps.dir/xdmaps_sinit.c.obj
+C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/zynq_fsbl/zynq_fsbl_bsp/libsrc/dmaps/src/xdmaps_sinit.c: In function 'XDmaPs_GetDrvIndex':
+C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/zynq_fsbl/zynq_fsbl_bsp/libsrc/dmaps/src/xdmaps_sinit.c:99:32: warning: unused parameter 'InstancePtr' [-Wunused-parameter]
+   99 | u32 XDmaPs_GetDrvIndex(XDmaPs *InstancePtr, UINTPTR BaseAddress)
+      |                        ~~~~~~~~^~~~~~~~~~~
+[15/147] Building C object libsrc/gpiops/src/CMakeFiles/gpiops.dir/xgpiops_sinit.c.obj
+[16/147] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_selftest.c.obj
+[17/147] Building C object libsrc/gpiops/src/CMakeFiles/gpiops.dir/xgpiops.c.obj
+[18/147] Building C object libsrc/gpiops/src/CMakeFiles/gpiops.dir/xgpiops_selftest.c.obj
+[19/147] Building C object libsrc/dmaps/src/CMakeFiles/dmaps.dir/xdmaps.c.obj
+[20/147] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_intr.c.obj
+[21/147] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps.c.obj
+[22/147] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_hw.c.obj
+[23/147] Linking C static library libsrc\coresightps_dcc\src\libcoresightps_dcc.a
+[24/147] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_slave.c.obj
+[25/147] Building C object libsrc/gpiops/src/CMakeFiles/gpiops.dir/xgpiops_intr.c.obj
+[26/147] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_sinit.c.obj
+[27/147] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_master.c.obj
+[28/147] Linking C static library libsrc\devcfg\src\libdevcfg.a
+[29/147] Building C object libsrc/qspips/src/CMakeFiles/qspips.dir/xqspips_g.c.obj
+[30/147] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_options.c.obj
+[31/147] Building C object libsrc/qspips/src/CMakeFiles/qspips.dir/xqspips_hw.c.obj
+[32/147] Building C object libsrc/qspips/src/CMakeFiles/qspips.dir/xqspips_selftest.c.obj
+[33/147] Building C object libsrc/iicps/src/CMakeFiles/iicps.dir/xiicps_xfer.c.obj
+[34/147] Building C object libsrc/qspips/src/CMakeFiles/qspips.dir/xqspips.c.obj
+[35/147] Building C object libsrc/qspips/src/CMakeFiles/qspips.dir/xqspips_options.c.obj
+[36/147] Building C object libsrc/qspips/src/CMakeFiles/qspips.dir/xqspips_sinit.c.obj
+[37/147] Building C object libsrc/scugic/src/CMakeFiles/scugic.dir/xscugic_g.c.obj
+[38/147] Building C object libsrc/scugic/src/CMakeFiles/scugic.dir/xscugic_hw.c.obj
+[39/147] Building C object libsrc/scugic/src/CMakeFiles/scugic.dir/xscugic_sinit.c.obj
+[40/147] Linking C static library libsrc\dmaps\src\libdmaps.a
+[41/147] Building C object libsrc/scugic/src/CMakeFiles/scugic.dir/xscugic_selftest.c.obj
+[42/147] Building C object libsrc/scutimer/src/CMakeFiles/scutimer.dir/xscutimer.c.obj
+[43/147] ========== BSP Build Information ==========
+Compiler PATH: C:/Xilinx/2025.2/Vitis/gnu/aarch32/nt/gcc-arm-none-eabi/bin/arm-none-eabi-gcc.exe
+Compiler FLAGS:  -DSDT -mcpu=cortex-a9 -mfpu=vfpv3 -mfloat-abi=hard  -MMD -MP -specs=C:/Users/hasse/
+source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/zynq_fsbl/zynq_fsbl_bsp/Xilin
+x.spec -IC:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/zynq_
+fsbl/zynq_fsbl_bsp/include  -O2 -g -Wall -Wextra -fno-tree-loop-distribute-patterns -DNDEBUG
+===========================================
+** The above flags are BSP level flags. Increase verbosity to see component specific flags **
+===========================================
+[44/147] Building C object libsrc/scutimer/src/CMakeFiles/scutimer.dir/xscutimer_selftest.c.obj
+[45/147] Building C object libsrc/scugic/src/CMakeFiles/scugic.dir/xscugic_intr.c.obj
+[46/147] Building C object libsrc/scutimer/src/CMakeFiles/scutimer.dir/xscutimer_g.c.obj
+[47/147] Building C object libsrc/scuwdt/src/CMakeFiles/scuwdt.dir/xscuwdt_g.c.obj
+[48/147] Linking C static library libsrc\gpiops\src\libgpiops.a
+[49/147] Building C object libsrc/scutimer/src/CMakeFiles/scutimer.dir/xscutimer_sinit.c.obj
+[50/147] Building C object libsrc/scuwdt/src/CMakeFiles/scuwdt.dir/xscuwdt.c.obj
+[51/147] Building C object libsrc/scugic/src/CMakeFiles/scugic.dir/xscugic.c.obj
+[52/147] Building C object libsrc/scuwdt/src/CMakeFiles/scuwdt.dir/xscuwdt_selftest.c.obj
+[53/147] Building C object libsrc/scuwdt/src/CMakeFiles/scuwdt.dir/xscuwdt_sinit.c.obj
+[54/147] Linking C static library libsrc\iicps\src\libiicps.a
+[55/147] Building C object libsrc/sdps/src/CMakeFiles/sdps.dir/xsdps.c.obj
+[56/147] Building C object libsrc/sdps/src/CMakeFiles/sdps.dir/xsdps_sinit.c.obj
+[57/147] Building C object libsrc/sdps/src/CMakeFiles/sdps.dir/xsdps_options.c.obj
+[58/147] Linking C static library libsrc\qspips\src\libqspips.a
+[59/147] Building C object libsrc/sdps/src/CMakeFiles/sdps.dir/xsdps_g.c.obj
+[60/147] Building C object libsrc/uartps/src/CMakeFiles/uartps.dir/xuartps_hw.c.obj
+[61/147] Building C object libsrc/sdps/src/CMakeFiles/sdps.dir/xsdps_host.c.obj
+[62/147] Building C object libsrc/uartps/src/CMakeFiles/uartps.dir/xuartps_g.c.obj
+[63/147] Building C object libsrc/uartps/src/CMakeFiles/uartps.dir/xuartps_selftest.c.obj
+[64/147] Building C object libsrc/uartps/src/CMakeFiles/uartps.dir/xuartps.c.obj
+[65/147] Building C object libsrc/sdps/src/CMakeFiles/sdps.dir/xsdps_card.c.obj
+[66/147] Building C object libsrc/uartps/src/CMakeFiles/uartps.dir/xuartps_intr.c.obj
+[67/147] Building C object libsrc/uartps/src/CMakeFiles/uartps.dir/xuartps_sinit.c.obj
+[68/147] Linking C static library libsrc\scutimer\src\libscutimer.a
+[69/147] Building C object libsrc/usbps/src/CMakeFiles/usbps.dir/xusbps_hw.c.obj
+[70/147] Building C object libsrc/usbps/src/CMakeFiles/usbps.dir/xusbps.c.obj
+[71/147] Building C object libsrc/uartps/src/CMakeFiles/uartps.dir/xuartps_options.c.obj
+[72/147] Building C object libsrc/usbps/src/CMakeFiles/usbps.dir/xusbps_g.c.obj
+[73/147] Building C object libsrc/usbps/src/CMakeFiles/usbps.dir/xusbps_intr.c.obj
+[74/147] Building C object libsrc/xadcps/src/CMakeFiles/xadcps.dir/xadcps_selftest.c.obj
+[75/147] Linking C static library libsrc\scugic\src\libscugic.a
+[76/147] Linking C static library libsrc\scuwdt\src\libscuwdt.a
+[77/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xil_assert.c.obj
+[78/147] Building C object libsrc/xadcps/src/CMakeFiles/xadcps.dir/xadcps_sinit.c.obj
+[79/147] Building C object libsrc/usbps/src/CMakeFiles/usbps.dir/xusbps_sinit.c.obj
+[80/147] Building C object libsrc/xadcps/src/CMakeFiles/xadcps.dir/xadcps_intr.c.obj
+[81/147] Building C object libsrc/xadcps/src/CMakeFiles/xadcps.dir/xadcps_g.c.obj
+[82/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/print.c.obj
+[83/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xil_mem.c.obj
+[79/141] Building C object libsrc/usbps/src/CMakeFiles/usbps.dir/xusbps_endpoint.c.obj[INFO]: Copying headers and built archives
+[66/152] Building C object libsrc/uartps/src/CMakeFiles/uartps.dir/xuartps_options.c.obj
+[67/152] Building C object libsrc/uartps/src/CMakeFiles/uartps.dir/xuartps.c.obj
+[68/152] Building C object libsrc/uartps/src/CMakeFiles/uartps.dir/xuartps_sinit.c.obj
+[69/152] Building C object libsrc/sdps/src/CMakeFiles/sdps.dir/xsdps_card.c.obj
+[70/152] Building C object libsrc/usbps/src/CMakeFiles/usbps.dir/xusbps_hw.c.obj
+[71/152] Building C object libsrc/usbps/src/CMakeFiles/usbps.dir/xusbps_g.c.obj
+[72/152] Building C object libsrc/usbps/src/CMakeFiles/usbps.dir/xusbps_intr.c.obj
+[73/152] Building C object libsrc/usbps/src/CMakeFiles/usbps.dir/xusbps.c.obj
+[74/152] Linking C static library libsrc\scuwdt\src\libscuwdt.a
+[75/152] Building C object libsrc/xadcps/src/CMakeFiles/xadcps.dir/xadcps_g.c.obj
+[76/152] Building C object libsrc/usbps/src/CMakeFiles/usbps.dir/xusbps_endpoint.c.obj
+[77/152] Building C object libsrc/usbps/src/CMakeFiles/usbps.dir/xusbps_sinit.c.obj
+[78/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xil_mem.c.obj
+[79/152] Linking C static library libsrc\scutimer\src\libscutimer.a
+[80/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/print.c.obj
+[81/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xil_assert.c.obj
+[82/152] Building C object libsrc/xadcps/src/CMakeFiles/xadcps.dir/xadcps_sinit.c.obj
+[83/152] Building C object libsrc/xadcps/src/CMakeFiles/xadcps.dir/xadcps_selftest.c.obj
+[84/152] Building C object libsrc/xadcps/src/CMakeFiles/xadcps.dir/xadcps_intr.c.obj
+[85/152] Building C object libsrc/xadcps/src/CMakeFiles/xadcps.dir/xadcps.c.obj
+[86/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xil_testio.c.obj
+[87/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xil_testcache.c.obj
+[88/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xil_printf.c.obj
+[89/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xil_testmem.c.obj
+[90/152] Linking C static library libsrc\sdps\src\libsdps.a
+[91/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/inbyte.c.obj
+[92/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/xcortexa9_g.c.obj
+[93/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xil_util.c.obj
+[94/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xplatform_info.c.obj
+[95/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/outbyte.c.obj
+[96/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xpm_init.c.obj
+[97/152] Linking C static library libsrc\uartps\src\libuartps.a
+[98/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/cpputest_time.c.obj
+[99/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/sbrk.c.obj
+[100/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/read.c.obj
+[101/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/isatty.c.obj
+[102/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/_sbrk.c.obj
+[103/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xil_sutil.c.obj
+[104/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/unlink.c.obj
+[105/152] Linking C static library libsrc\usbps\src\libusbps.a
+[106/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/intr/xinterrupt_wrap.c.obj
+[107/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/_exit.c.obj
+[108/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/close.c.obj
+[109/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/open.c.obj
+[110/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/getpid.c.obj
+[111/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/write.c.obj
+[112/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/fcntl.c.obj
+[113/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/abort.c.obj
+[114/152] Linking C static library libsrc\xadcps\src\libxadcps.a
+[115/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/lseek.c.obj
+[116/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/_open.c.obj
+[117/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/errno.c.obj
+[118/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/fstat.c.obj
+[119/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/kill.c.obj
+[120/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/putnum.c.obj
+[121/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/getentropy.c.obj
+[122/152] Building ASM object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/gcc/asm_vectors.S.obj
+[123/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/xil_exception.c.obj
+[124/152] Building ASM object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/gcc/boot.S.obj
+[125/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/time.c.obj
+[126/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/gettimeofday.c.obj
+[127/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/vectors.c.obj
+[128/152] Building ASM object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/gcc/cpu_init.S.obj
+[129/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/xil_spinlock.c.obj
+[130/152] Building ASM object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/gcc/xil-crt0.S.obj
+[131/152] Building ASM object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/gcc/translation_table.S.obj
+[132/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/xpm_counter.c.obj
+[133/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/xil_misc_psreset_api.c.obj
+[134/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/xil_mmu.c.obj
+[135/152] Building C object libsrc/xiltimer/src/CMakeFiles/xiltimer.dir/xiltimer.c.obj
+[136/152] Building C object libsrc/xiltimer/src/CMakeFiles/xiltimer.dir/core/default_timer/globaltimer_sleep_zynq.c.obj
+[137/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/xl2cc_counter.c.obj
+[138/152] Archiving C static library libsrc/build_configs/gen_bsp/libxil.a
+[139/152] Building C object libsrc/xilffs/src/CMakeFiles/xilffs.dir/ffsystem.c.obj
+[140/152] Building C object libsrc/xilffs/src/CMakeFiles/xilffs.dir/diskio.c.obj
+[141/152] Building C object libsrc/xilffs/src/CMakeFiles/xilffs.dir/ffunicode.c.obj
+[142/152] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/xil_cache.c.obj
+[143/152] Building C object libsrc/xilflash/src/CMakeFiles/xilflash.dir/xilflash.c.obj
+[144/152] Building C object libsrc/xilflash/src/CMakeFiles/xilflash.dir/xilflash_amd.c.obj
+[145/152] Linking C static library libsrc\xiltimer\src\libxiltimer.a
+[146/152] Building C object libsrc/xilflash/src/CMakeFiles/xilflash.dir/xilflash_cfi.c.obj
+[147/152] Linking C static library libsrc\xilrsa\src\libxilrsa.a
+[148/152] Linking C static library libsrc\standalone\src\libxilstandalone.a
+[149/152] Building C object libsrc/xilflash/src/CMakeFiles/xilflash.dir/xilflash_intel.c.obj
+[150/152] Linking C static library libsrc\xilflash\src\libxilflash.a
+[151/152] Building C object libsrc/xilffs/src/CMakeFiles/xilffs.dir/ff.c.obj[INFO]: Copying headers and built archives
+[84/147] Building C object libsrc/usbps/src/CMakeFiles/usbps.dir/xusbps_endpoint.c.obj[INFO]: Copying headers and built archives
+[INFO]: Successfully built BSP. Generated libxil.a, libxilstandalone.a, libxiltimer.a
+[80/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/print.c.obj
+[81/141] Building C object libsrc/xadcps/src/CMakeFiles/xadcps.dir/xadcps_intr.c.obj
+[82/141] Linking C static library libsrc\sdps\src\libsdps.a
+[83/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xil_assert.c.obj
+[84/141] Building C object libsrc/xadcps/src/CMakeFiles/xadcps.dir/xadcps_g.c.obj
+[85/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xil_mem.c.obj
+[86/141] Building C object libsrc/xadcps/src/CMakeFiles/xadcps.dir/xadcps.c.obj
+[87/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xil_printf.c.obj
+[88/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xil_testio.c.obj
+[89/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xil_testmem.c.obj
+[90/141] Building C object libsrc/xadcps/src/CMakeFiles/xadcps.dir/xadcps_selftest.c.obj
+[91/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xil_util.c.obj
+[92/141] Linking C static library libsrc\uartps\src\libuartps.a
+[93/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/inbyte.c.obj
+[94/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xil_sutil.c.obj
+[95/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xplatform_info.c.obj
+[96/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xpm_init.c.obj
+[97/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/unlink.c.obj
+[98/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/intr/xinterrupt_wrap.c.obj
+[99/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/outbyte.c.obj
+[100/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/read.c.obj
+[101/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/sbrk.c.obj
+[102/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/xcortexa9_g.c.obj
+[103/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/cpputest_time.c.obj
+[104/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/fcntl.c.obj
+[105/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/isatty.c.obj
+[106/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/close.c.obj
+[107/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/_exit.c.obj
+[108/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/_sbrk.c.obj
+[109/141] Linking C static library libsrc\usbps\src\libusbps.a
+[110/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/write.c.obj
+[111/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/getpid.c.obj
+[112/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/open.c.obj
+[113/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/fstat.c.obj
+[114/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/errno.c.obj
+[115/141] Linking C static library libsrc\xadcps\src\libxadcps.a
+[116/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/_open.c.obj
+[117/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/lseek.c.obj
+[118/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/getentropy.c.obj
+[119/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/abort.c.obj
+[120/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/putnum.c.obj
+[121/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/time.c.obj
+[122/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/vectors.c.obj
+[123/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/kill.c.obj
+[124/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/gettimeofday.c.obj
+[125/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/xil_exception.c.obj
+[126/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/xpm_counter.c.obj
+[127/141] Building ASM object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/gcc/asm_vectors.S.obj
+[128/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/xil_spinlock.c.obj
+[129/141] Building ASM object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/gcc/cpu_init.S.obj
+[130/141] Building ASM object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/gcc/translation_table.S.obj
+[131/141] Building ASM object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/gcc/boot.S.obj
+[132/141] Building ASM object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/gcc/xil-crt0.S.obj
+[133/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/xil_mmu.c.obj
+[134/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/xil_cache.c.obj
+[135/141] Archiving C static library libsrc/build_configs/gen_bsp/libxil.a
+[136/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/xl2cc_counter.c.obj
+[137/141] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/xil_misc_psreset_api.c.obj
+[138/141] Building C object libsrc/xiltimer/src/CMakeFiles/xiltimer.dir/xiltimer.c.obj
+[139/141] Building C object libsrc/xiltimer/src/CMakeFiles/xiltimer.dir/core/default_timer/globaltimer_sleep_zynq.c.obj
+[140/141] Linking C static library libsrc\xiltimer\src\libxiltimer.a
+[141/141] Linking C static library libsrc\standalone\src\libxilstandalone.a
+[INFO]: Successfully built BSP. Generated libxil.a, libxilffs.a, libxilrsa.a, libxilstandalone.a, libxiltimer.a
+[85/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xil_testcache.c.obj
+[86/147] Building C object libsrc/xadcps/src/CMakeFiles/xadcps.dir/xadcps.c.obj
+[87/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xil_testio.c.obj
+[88/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xil_printf.c.obj
+[89/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xil_testmem.c.obj
+[90/147] Linking C static library libsrc\sdps\src\libsdps.a
+[91/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xil_util.c.obj
+[92/147] Linking C static library libsrc\uartps\src\libuartps.a
+[93/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/inbyte.c.obj
+[94/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xplatform_info.c.obj
+[95/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/outbyte.c.obj
+[96/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xil_sutil.c.obj
+[97/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/xcortexa9_g.c.obj
+[98/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/xpm_init.c.obj
+[99/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/sbrk.c.obj
+[100/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/common/intr/xinterrupt_wrap.c.obj
+[101/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/cpputest_time.c.obj
+[102/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/unlink.c.obj
+[103/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/_exit.c.obj
+[104/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/isatty.c.obj
+[105/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/read.c.obj
+[106/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/getpid.c.obj
+[107/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/_sbrk.c.obj
+[108/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/close.c.obj
+[109/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/fcntl.c.obj
+[110/147] Linking C static library libsrc\xadcps\src\libxadcps.a
+[111/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/write.c.obj
+[112/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/fstat.c.obj
+[113/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/open.c.obj
+[114/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/errno.c.obj
+[115/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/_open.c.obj
+[116/147] Linking C static library libsrc\usbps\src\libusbps.a
+[117/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/putnum.c.obj
+[118/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/getentropy.c.obj
+[119/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/kill.c.obj
+[120/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/lseek.c.obj
+[121/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/abort.c.obj
+[122/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/xil_spinlock.c.obj
+[123/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/vectors.c.obj
+[124/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/gettimeofday.c.obj
+[125/147] Building ASM object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/gcc/asm_vectors.S.obj
+[126/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/gcc/time.c.obj
+[127/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/xil_exception.c.obj
+[128/147] Building ASM object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/gcc/translation_table.S.obj
+[129/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/common/xpm_counter.c.obj
+[130/147] Building ASM object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/gcc/xil-crt0.S.obj
+[131/147] Building ASM object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/gcc/boot.S.obj
+[132/147] Building ASM object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/gcc/cpu_init.S.obj
+[133/147] Building C object libsrc/xiltimer/src/CMakeFiles/xiltimer.dir/core/default_timer/globaltimer_sleep_zynq.c.obj
+[134/147] Building C object libsrc/xilffs/src/CMakeFiles/xilffs.dir/ffsystem.c.obj
+[135/147] Building C object libsrc/xiltimer/src/CMakeFiles/xiltimer.dir/xiltimer.c.obj
+[136/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/xil_mmu.c.obj
+[137/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/xil_misc_psreset_api.c.obj
+[138/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/xl2cc_counter.c.obj
+[139/147] Building C object libsrc/xilffs/src/CMakeFiles/xilffs.dir/ffunicode.c.obj
+[140/147] Archiving C static library libsrc/build_configs/gen_bsp/libxil.a
+[141/147] Linking C static library libsrc\xilrsa\src\libxilrsa.a
+[142/147] Building C object libsrc/xilffs/src/CMakeFiles/xilffs.dir/diskio.c.obj
+[143/147] Building C object libsrc/standalone/src/CMakeFiles/xilstandalone.dir/arm/cortexa9/xil_cache.c.obj
+[144/147] Linking C static library libsrc\xiltimer\src\libxiltimer.a
+[145/147] Linking C static library libsrc\standalone\src\libxilstandalone.a
+[146/147] Building C object libsrc/xilffs/src/CMakeFiles/xilffs.dir/ff.c.obj
+C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/zynq_fsbl/zynq_fsbl_bsp/libsrc/xilffs/src/ff.c: In function 'get_ldnumber':
+C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/zynq_fsbl/zynq_fsbl_bsp/libsrc/xilffs/src/ff.c:4000:13: warning: unused variable 'vol' [-Wunused-variable]
+ 4000 |         int vol = -1;
+      |             ^~~
+[147/147] Linking C static library libsrc\xilffs\src\libxilffs.a
+[INFO]: Successfully built BSP. Generated libxil.a, libxilffs.a, libxilflash.a, libxilrsa.a, libxilstandalone.a, libxiltimer.a
+C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_0/standalone_ps7_cortexa9_0/bsp/libsrc/xilffs/src/ff.c: In function 'get_ldnumber':
+C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/ps7_cortexa9_0/standalone_ps7_cortexa9_0/bsp/libsrc/xilffs/src/ff.c:4000:13: warning: unused variable 'vol' [-Wunused-variable]
+ 4000 |         int vol = -1;
+      |             ^~~
+[152/152] Linking C static library libsrc\xilffs\src\libxilffs.a
+Generating Boot ELFs
+[INFO]: Starting Application build process
+[INFO]: Building BSP
+[INFO]: Copying headers and built archives
+[INFO]: Successfully built BSP. Generated libxil.a, libxilffs.a, libxilrsa.a, libxilstandalone.a, libxiltimer.a
+[INFO]: Building Application
+[1/2] Archiving C static library libsrc/build_configs/gen_bsp/libxil.a
+[2/2] ========== BSP Build Information ==========
+Compiler PATH: C:/Xilinx/2025.2/Vitis/gnu/aarch32/nt/gcc-arm-none-eabi/bin/arm-none-eabi-gcc.exe
+Compiler FLAGS:  -DSDT -mcpu=cortex-a9 -mfpu=vfpv3 -mfloat-abi=hard  -MMD -MP -specs=C:/Users/hasse/
+source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/zynq_fsbl/zynq_fsbl_bsp/Xilin
+x.spec -IC:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/zynq_
+fsbl/zynq_fsbl_bsp/include  -O2 -g -Wall -Wextra -fno-tree-loop-distribute-patterns -DNDEBUG
+===========================================
+** The above flags are BSP level flags. Increase verbosity to see component specific flags **
+===========================================
+[1/14] ==========Application Build Information ==========
+Compiler Flags:  -DSDT -mcpu=cortex-a9 -mfpu=vfpv3 -mfloat-abi=hard  -MMD -MP -specs=C:/Users/hasse/
+source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/zynq_fsbl/zynq_fsbl_bsp/Xilin
+x.spec -IC:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/zynq_
+fsbl/zynq_fsbl_bsp/include -Wall -Wextra      -O0  -g3     -U__clang__  
+Linker Flags:       -Os -Wl,--gc-sections -n -T"C:/Users/hasse/source/repos/hasseily/appletini-one/v
+itis_workspace/appletini_platform/zynq_fsbl/lscript.ld" -L"C:/Users/hasse/source/repos/hasseily/appl
+etini-one/vitis_workspace/appletini_platform/zynq_fsbl/zynq_fsbl_bsp/lib/" -L"/" -Wl,--start-group,-
+lxiltimer,-lxilffs,-lxilrsa,-lxil,-lxilstandalone,-lxiltimer,-lxilffs,-lxilrsa,-lgcc,-lc -Wl,--end-g
+roup
+===========================================
+[2/14] Building ASM object CMakeFiles/fsbl.elf.dir/fsbl_handoff.S.obj
+[3/14] Building C object CMakeFiles/fsbl.elf.dir/fsbl_hooks.c.obj
+[4/14] Building C object CMakeFiles/fsbl.elf.dir/nor.c.obj
+[5/14] Building C object CMakeFiles/fsbl.elf.dir/main.c.obj
+[6/14] Building C object CMakeFiles/fsbl.elf.dir/image_mover.c.obj
+[7/14] Building C object CMakeFiles/fsbl.elf.dir/md5.c.obj
+[8/14] Building C object CMakeFiles/fsbl.elf.dir/nand.c.obj
+[9/14] Building C object CMakeFiles/fsbl.elf.dir/rsa.c.obj
+[10/14] Building C object CMakeFiles/fsbl.elf.dir/pcap.c.obj
+[11/14] Building C object CMakeFiles/fsbl.elf.dir/sd.c.obj
+[12/14] Building C object CMakeFiles/fsbl.elf.dir/qspi.c.obj
+[13/14] Building C object CMakeFiles/fsbl.elf.dir/ps7_init.c.obj
+C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/zynq_fsbl/ps7_init.c: In function 'ps7_config':
+C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/zynq_fsbl/ps7_init.c:12091:35: warning: comparison of integer expressions of different signedness: 'long unsigned int' and 'int' [-Wsign-compare]
+12091 |                     while ((*addr < delay)) {
+      |                                   ^
+[14/14] Linking C executable fsbl.elf
+   text	   data	    bss	    dec	    hex	filename
+  91153	  10496	  76300	 177949	  2b71d	fsbl.elf
+Generating Export directory
+Platform Build Finished successfully.
+
+==> Create app component bootloader
+
+==> Import sources for bootloader
+
+==> Set bootloader optimization to -O2
+  Set vitis_workspace\bootloader\src\UserConfig.cmake optimization to -O2
+
+==> Remove frontend-only sources from bootloader
+
+==> Build app bootloader
+Initiating build for the bootloader component.
+Command: cmd.exe /C set CC= && set CXX= && empyro.bat build_app -s C:\Users\hasse\source\repos\hasseily\appletini-one\vitis_workspace\bootloader\src -b C:\Users\hasse\source\repos\hasseily\appletini-one\vitis_workspace\bootloader\build
+[INFO]: Starting Application build process
+[INFO]: Building Application
+[1/19] ==========Application Build Information ==========
+Compiler Flags:  -DSDT -mcpu=cortex-a9 -mfpu=vfpv3 -mfloat-abi=hard  -MMD -MP -specs=C:/Users/hasse/
+source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/export/appletini_platform/sw/
+standalone_ps7_cortexa9_0/Xilinx.spec -IC:/Users/hasse/source/repos/hasseily/appletini-one/vitis_wor
+kspace/appletini_platform/export/appletini_platform/sw/standalone_ps7_cortexa9_0/include -Wall -Wext
+ra      -O2  -g3     -U__clang__  
+Linker Flags:       -Wl,-T -Wl,"C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/b
+ootloader/src/lscript.ld" -L"C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/boot
+loader/src/" -L"C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini_platfor
+m/export/appletini_platform/sw/standalone_ps7_cortexa9_0/lib/" -L"/" -Wl,--start-group,-lxilstandalo
+ne,-lxiltimer,-lxilffs,-lxilflash,-lxilrsa,-lxil,-lgcc,-lc -Wl,--end-group
+===========================================
+[2/19] Building C object CMakeFiles/bootloader.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/apple_font24.c.obj
+[3/19] Building C object CMakeFiles/bootloader.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/crc32.c.obj
+[4/19] Building C object CMakeFiles/bootloader.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/bootloader/boot_control.c.obj
+[5/19] Building C object CMakeFiles/bootloader.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/bootloader/updater_layout.c.obj
+[6/19] Building C object CMakeFiles/bootloader.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/bootloader/updater_metadata.c.obj
+[7/19] Building C object CMakeFiles/bootloader.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/dac_ak4493.c.obj
+[8/19] Building C object CMakeFiles/bootloader.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/tmp102.c.obj
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/tmp102.c:11:12: warning: 'i2c_wait_idle' defined but not used [-Wunused-function]
+   11 | static int i2c_wait_idle(XIicPs *i2c)
+      |            ^~~~~~~~~~~~~
+[9/19] Building C object CMakeFiles/bootloader.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/i2c.c.obj
+[10/19] Building C object CMakeFiles/bootloader.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/bootloader/main.c.obj
+[11/19] Building C object CMakeFiles/bootloader.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/uart.c.obj
+[12/19] Building C object CMakeFiles/bootloader.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/fb_ui.c.obj
+[13/19] Building C object CMakeFiles/bootloader.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/bootloader/golden_led.c.obj
+[14/19] Building C object CMakeFiles/bootloader.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/rtc_pcf8563.c.obj
+[15/19] Building C object CMakeFiles/bootloader.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/qspi_nor.c.obj
+[16/19] Building C object CMakeFiles/bootloader.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/bootloader/updater.c.obj
+[17/19] Building C object CMakeFiles/bootloader.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/fb16.c.obj
+[18/19] Building C object CMakeFiles/bootloader.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/bootloader/serial_boot.c.obj
+[19/19] Linking C executable bootloader.elf
+   text	   data	    bss	    dec	    hex	filename
+ 197219	   2068	  40720	 240007	  3a987	bootloader.elf
+Build Finished successfully
+
+==> Create app component frontend_core1
+
+==> Import sources for frontend_core1
+
+==> Set frontend_core1 optimization to -O3
+  Set vitis_workspace\frontend_core1\src\UserConfig.cmake optimization to -O3
+
+==> Remove frontend-only sources from frontend_core1
+
+==> Relocate frontend_core1 lscript to upper DDR
+  Relocated vitis_workspace\frontend_core1\src\lscript.ld ps7_ddr_0_memory_0 -> 0x20000000/0x10000000
+
+==> Register frontend_core1 cross-app sources
+
+==> Link frontend_core1 against libm
+
+==> Build app frontend_core1
+Initiating build for the frontend_core1 component.
+Command: cmd.exe /C set CC= && set CXX= && empyro.bat build_app -s C:\Users\hasse\source\repos\hasseily\appletini-one\vitis_workspace\frontend_core1\src -b C:\Users\hasse\source\repos\hasseily\appletini-one\vitis_workspace\frontend_core1\build
+[INFO]: Starting Application build process
+[INFO]: Building Application
+[1/21] ==========Application Build Information ==========
+Compiler Flags:  -DSDT -mcpu=cortex-a9 -mfpu=vfpv3 -mfloat-abi=hard  -MMD -MP -specs=C:/Users/hasse/
+source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/export/appletini_platform/sw/
+standalone_ps7_cortexa9_1/Xilinx.spec -IC:/Users/hasse/source/repos/hasseily/appletini-one/vitis_wor
+kspace/appletini_platform/export/appletini_platform/sw/standalone_ps7_cortexa9_1/include -Wall -Wext
+ra      -O3  -g3     -U__clang__  
+Linker Flags:       -Wl,-T -Wl,"C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/f
+rontend_core1/src/lscript.ld" -L"C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/
+frontend_core1/src/" -L"C:/Users/hasse/source/repos/hasseily/appletini-one/vitis_workspace/appletini
+_platform/export/appletini_platform/sw/standalone_ps7_cortexa9_1/lib/" -L"/" -Wl,--start-group,-lxil
+standalone,-lxiltimer,-lxil,-lgcc,-lc,-lm -Wl,--end-group
+===========================================
+[2/21] Building C object CMakeFiles/frontend_core1.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/apple_font24.c.obj
+[3/21] Building C object CMakeFiles/frontend_core1.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/crc32.c.obj
+[4/21] Building C object CMakeFiles/frontend_core1.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/apple2e_video_rom_data.c.obj
+[5/21] Building C object CMakeFiles/frontend_core1.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/tmp102.c.obj
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/tmp102.c:11:12: warning: 'i2c_wait_idle' defined but not used [-Wunused-function]
+   11 | static int i2c_wait_idle(XIicPs *i2c)
+      |            ^~~~~~~~~~~~~
+[6/21] Building C object CMakeFiles/frontend_core1.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/dac_ak4493.c.obj
+[7/21] Building C object CMakeFiles/frontend_core1.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/i2c.c.obj
+[8/21] Building C object CMakeFiles/frontend_core1.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/uart.c.obj
+[9/21] Building C object CMakeFiles/frontend_core1.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/apple_cycle_egress.c.obj
+[10/21] Building C object CMakeFiles/frontend_core1.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/compositor_layout.c.obj
+[11/21] Building C object CMakeFiles/frontend_core1.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/apple_fb_handoff.c.obj
+[12/21] Building C object CMakeFiles/frontend_core1.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/rtc_pcf8563.c.obj
+[13/21] Building C object CMakeFiles/frontend_core1.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/fb_ui.c.obj
+[14/21] Building C object CMakeFiles/frontend_core1.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend_core1/main.c.obj
+[15/21] Building C object CMakeFiles/frontend_core1.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/qspi_nor.c.obj
+[16/21] Building C object CMakeFiles/frontend_core1.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/appletini_csbits.c.obj
+[17/21] Building C object CMakeFiles/frontend_core1.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/appletini_ntsc.c.obj
+[18/21] Building C object CMakeFiles/frontend_core1.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/fb16.c.obj
+[19/21] Building C object CMakeFiles/frontend_core1.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/apple_pal_video_timing.c.obj
+[20/21] Building C object CMakeFiles/frontend_core1.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/apple_cycle_renderer.c.obj
+[21/21] Linking C executable frontend_core1.elf
+   text	   data	    bss	    dec	    hex	filename
+ 151523	   2032	1188608	1342163	 147ad3	frontend_core1.elf
+Build Finished successfully
+
+==> Generate default bezel PNG source
+generated ps_sources\frontend\bezel_default_png.c from Assets\Bezels\bezel_default.png (1920x67, 14954 bytes)
+
+==> Generate config menu logo PNG source
+generated ps_sources\frontend\config_menu_logo_png.c from Assets\config_menu_logo.png (440x78, 12748 bytes)
+
+==> Generate Disk II sound sample source
+wrote ps_sources\frontend\disk2_sound_samples.c (207484 samples)
+wrote ps_sources\frontend\disk2_sound_samples.h
+wrote hdl\apple\disk2_sound_pkg.sv (6 descriptors)
+
+==> Create app component frontend
+
+==> Import sources for frontend
+
+==> Set frontend optimization to -O2
+  Set vitis_workspace\frontend\src\UserConfig.cmake optimization to -O2
+
+==> Enable NEON on frontend (compositor blit uses vld1q/vzipq)
+  Set vitis_workspace\frontend\src\UserConfig.cmake FPU flag to -mfpu=neon
+
+==> Align frontend functions for icache
+  Set optimization other flags to -falign-functions=32
+
+==> Set frontend heap for bezel PNG decode
+
+==> Link frontend against libm (apple_cycle_renderer chroma init uses cos/sin)
+
+==> Register frontend include directories
+
+==> Patch frontend linker script for CherryUSB classes
+  Patched vitis_workspace\frontend\src\lscript.ld with CherryUSB class-info section
+
+==> Register frontend sources
+
+==> Generate core1 blob (objcopy + .S stub)
+  objcopy -> vitis_workspace\frontend\src\core1_blob.bin (163916 bytes)
+  wrote vitis_workspace\frontend\src\core1_blob.S
+
+==> Build app frontend
+Initiating build for the frontend component.
+Command: cmd.exe /C set CC= && set CXX= && empyro.bat build_app -s C:\Users\hasse\source\repos\hasseily\appletini-one\vitis_workspace\frontend\src -b C:\Users\hasse\source\repos\hasseily\appletini-one\vitis_workspace\frontend\build
+[INFO]: Starting Application build process
+[INFO]: Building Application
+[1/69] ==========Application Build Information ==========
+Compiler Flags:  -DSDT -mcpu=cortex-a9 -mfpu=vfpv3 -mfloat-abi=hard  -MMD -MP -specs=C:/Users/hasse/
+source/repos/hasseily/appletini-one/vitis_workspace/appletini_platform/export/appletini_platform/sw/
+standalone_ps7_cortexa9_0/Xilinx.spec -IC:/Users/hasse/source/repos/hasseily/appletini-one/vitis_wor
+kspace/appletini_platform/export/appletini_platform/sw/standalone_ps7_cortexa9_0/include -Wall -Wext
+ra      -O2 -falign-functions=32 -g3    -mfpu=neon -U__clang__  
+Linker Flags:      -Wl,--defsym,_HEAP_SIZE=0x04000000 -Wl,-T -Wl,"C:/Users/hasse/source/repos/hassei
+ly/appletini-one/vitis_workspace/frontend/src/lscript.ld" -L"C:/Users/hasse/source/repos/hasseily/ap
+pletini-one/vitis_workspace/frontend/src/" -L"C:/Users/hasse/source/repos/hasseily/appletini-one/vit
+is_workspace/appletini_platform/export/appletini_platform/sw/standalone_ps7_cortexa9_0/lib/" -L"/" -
+Wl,--start-group,-lxilstandalone,-lxiltimer,-lxilffs,-lxilflash,-lxilrsa,-lxil,-lgcc,-lc,-lm -Wl,--e
+nd-group
+===========================================
+[2/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/amp.c.obj
+[3/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/apple_font24.c.obj
+[4/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/crc32.c.obj
+[5/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/dac_ak4493.c.obj
+[6/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/i2c.c.obj
+[7/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/apple2e_video_rom_data.c.obj
+[8/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/rtc_pcf8563.c.obj
+[9/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/uart.c.obj
+[10/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/qspi_nor.c.obj
+[11/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/fb_ui.c.obj
+[12/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/appletini_csbits.c.obj
+[13/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/apple_cycle_egress.c.obj
+[14/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/applicard_rom.c.obj
+[15/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/tmp102.c.obj
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/tmp102.c:11:12: warning: 'i2c_wait_idle' defined but not used [-Wunused-function]
+   11 | static int i2c_wait_idle(XIicPs *i2c)
+      |            ^~~~~~~~~~~~~
+[16/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/apple_fb_handoff.c.obj
+[17/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/bezel_default_png.c.obj
+[18/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/applicard_z80.c.obj
+[19/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/appletini_ntsc.c.obj
+[20/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/config_menu_logo_png.c.obj
+[21/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/compositor_layout.c.obj
+[22/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/applicard_service.c.obj
+[23/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/bezel_loader.c.obj
+[24/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/boot_menu_service.c.obj
+[25/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/config_menu_help.c.obj
+[26/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/cherryusb_baremetal_osal.c.obj
+[27/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/config_menu_main_tabs.c.obj
+[28/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/cherryusb_zynq_hc.c.obj
+[29/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/fb16.c.obj
+[30/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/config_menu_device_tabs.c.obj
+[31/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/apple_pal_video_timing.c.obj
+[32/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/config_menu_phasor.c.obj
+[33/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/gic_init.c.obj
+[34/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/no_slot_clock_control.c.obj
+[35/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/compositor.c.obj
+[36/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/psram_bench.c.obj
+[37/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/cherryusb_usbh_hub_poll.c.obj
+[38/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/config_menu_ui.c.obj
+[39/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/apple_cycle_renderer.c.obj
+[40/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/debug_overlay.c.obj
+[41/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/usb0_personality.c.obj
+[42/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/config_menu_profiles.c.obj
+[43/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/usb_phy_init.c.obj
+[44/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/supersprite_vdp.c.obj
+[45/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/screenshot_service.c.obj
+[46/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/profile_manager.c.obj
+[47/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/disk2_sound_samples.c.obj
+[48/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/usb_sdd_service.c.obj
+[49/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/usb_storage_sd.c.obj
+[50/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/xusbps_ch9_storage.c.obj
+[51/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/xusbps_ch9_sddvendor.c.obj
+[52/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/xusbps_ch9.c.obj
+[53/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/smartport_service.c.obj
+[54/69] Building ASM object CMakeFiles/frontend.elf.dir/core1_blob.S.obj
+[55/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/usb_storage_service.c.obj
+[56/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/vtw_service.c.obj
+[57/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/uthernet2_control.c.obj
+[58/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/xusbps_class_storage.c.obj
+[59/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/third_party/CherryUSB/class/hid/usbh_hid.c.obj
+[60/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/disk2_service.c.obj
+[61/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/main.c.obj
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/main.c: In function 'psram_reset':
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/main.c:398:31: warning: unused parameter 'ctx' [-Wunused-parameter]
+  398 | static void psram_reset(void* ctx) {
+      |                         ~~~~~~^~~
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/main.c: In function 'psram_qpi':
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/main.c:406:29: warning: unused parameter 'ctx' [-Wunused-parameter]
+  406 | static void psram_qpi(void* ctx) {
+      |                       ~~~~~~^~~
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/main.c: In function 'psram_qpi_exit':
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/main.c:416:34: warning: unused parameter 'ctx' [-Wunused-parameter]
+  416 | static void psram_qpi_exit(void* ctx) {
+      |                            ~~~~~~^~~
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/main.c: In function 'psram_toggle_wrap':
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/main.c:426:37: warning: unused parameter 'ctx' [-Wunused-parameter]
+  426 | static void psram_toggle_wrap(void* ctx) {
+      |                               ~~~~~~^~~
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/main.c: In function 'psram_qspi_read':
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/main.c:436:35: warning: unused parameter 'ctx' [-Wunused-parameter]
+  436 | static void psram_qspi_read(void* ctx, const char* addr) {
+      |                             ~~~~~~^~~
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/main.c: In function 'psram_qspi_write':
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/main.c:454:36: warning: unused parameter 'ctx' [-Wunused-parameter]
+  454 | static void psram_qspi_write(void* ctx, const char* addr, const char* datahi, const char* datalo) {
+      |                              ~~~~~~^~~
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/main.c: In function 'psram_spi_read':
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/main.c:475:34: warning: unused parameter 'ctx' [-Wunused-parameter]
+  475 | static void psram_spi_read(void* ctx, const char* addr) {
+      |                            ~~~~~~^~~
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/main.c: In function 'psram_read_id':
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/main.c:496:33: warning: unused parameter 'ctx' [-Wunused-parameter]
+  496 | static void psram_read_id(void* ctx) {
+      |                           ~~~~~~^~~
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/main.c: In function 'psram_spi_write':
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/main.c:510:35: warning: unused parameter 'ctx' [-Wunused-parameter]
+  510 | static void psram_spi_write(void* ctx, const char* addr, const char* datahi, const char* datalo) {
+      |                             ~~~~~~^~~
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/main.c: In function 'psram_set_delay':
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/main.c:531:35: warning: unused parameter 'ctx' [-Wunused-parameter]
+  531 | static void psram_set_delay(void* ctx, const char* delay) {
+      |                             ~~~~~~^~~
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/main.c: In function 'psram_scan_delay':
+C:/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/main.c:536:36: warning: unused parameter 'ctx' [-Wunused-parameter]
+  536 | static void psram_scan_delay(void* ctx, const char* addr) {
+      |                              ~~~~~~^~~
+[62/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/usb_hid_service.c.obj
+[63/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/third_party/CherryUSB/core/usbh_core.c.obj
+[64/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/third_party/CherryUSB/port/ehci/usb_hc_ehci.c.obj
+[65/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/uart_control.c.obj
+[66/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/third_party/z80emu/z80emu.c.obj
+[67/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/lib/lodepng.c.obj
+[68/69] Building C object CMakeFiles/frontend.elf.dir/C_/Users/hasse/source/repos/hasseily/appletini-one/ps_sources/frontend/config_menu.c.obj
+[69/69] Linking C executable frontend.elf
+   text	   data	    bss	    dec	    hex	filename
+1255724	   3968	75548464	76808156	493ffdc	frontend.elf
+Build Finished successfully
+
+==> Fix frontend launch.json bitstream path
+  Patched vitis_workspace\frontend\_ide\launch.json
+
+==> Fix bootloader launch.json bitstream path
+  Patched vitis_workspace\bootloader\_ide\launch.json
+
+Workspace creation completed successfully.
+
+==> Shutdown Vitis client
+Shutting down Vitis server running on port '52803'
+
+==> Kill Vitis server
+SUCCESS: The process "java.exe" with PID 34996 has been terminated.

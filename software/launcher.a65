@@ -1,0 +1,541 @@
+; launcher.a65 -- the Appletini demo disk menu, full-screen HGR.
+;
+; Modern face on period hardware: a pre-rendered logotype, a mixed-case
+; 7x8 font (generated tables in launcher_assets.a65), an EOR-inverted
+; selection band, and the HDMI border accent when an Appletini answers
+; the read-only ROM fingerprint probe. Menu logic and the $0300
+; selection handoff to STARTUP are unchanged from the text version.
+;
+; Loads at $4000: HGR page 1 ($2000-$3FFF) is the framebuffer.
+;
+; Keys: Up/Down or Left/Right move, 1-8 jump, RETURN launches, ESC quits.
+;
+; Assemble:  acme -f plain -o LAUNCHER launcher.a65
+
+!cpu 6502
+* = $4000
+
+KBD       = $C000
+KBDSTRB   = $C010
+TXTCLR    = $C050          ; graphics
+MIXCLR    = $C052          ; full screen
+TXTPAGE1  = $C054
+HIRES     = $C057
+TXTSET    = $C051
+BORDER    = $C034
+
+SELECTION = $0300          ; handoff to STARTUP
+
+; zero page
+STRPTR    = $06            ; string pointer
+SCRPTR    = $08            ; HGR line pointer
+FONTPTR   = $EB            ; glyph/source pointer
+TMP       = $ED
+
+ITEMS      = 9
+FIRST_BAND = 6             ; 8-pixel band of item 1
+DESC_BAND  = 16
+STAT_BAND  = 4
+FOOT_BAND  = 22
+
+start:
+    lda #0
+    sta SELECTION
+    sta selected
+    sta border_idx
+    sta border_tick
+    sta border_tick2
+    jsr detect_appletini
+    sta detected
+    jsr hgr_init
+    jsr draw_screen
+
+main_loop:
+    jsr border_accent
+    lda KBD
+    bpl main_loop
+    sta KBDSTRB
+    and #$7F
+    cmp #$0D               ; RETURN
+    beq launch
+    cmp #$1B               ; ESC
+    beq quit
+    cmp #$0B               ; up
+    beq move_up
+    cmp #$08               ; left
+    beq move_up
+    cmp #$0A               ; down
+    beq move_down
+    cmp #$15               ; right
+    beq move_down
+    cmp #'1'
+    bcc main_loop
+    cmp #'1' + ITEMS
+    bcs main_loop
+    sec
+    sbc #'1'
+    jsr select_item
+    jmp main_loop
+
+move_up:
+    lda selected
+    beq main_loop
+    sec
+    sbc #1
+    jsr select_item
+    jmp main_loop
+
+move_down:
+    lda selected
+    cmp #ITEMS - 1
+    beq main_loop
+    clc
+    adc #1
+    jsr select_item
+    jmp main_loop
+
+launch:
+    lda selected
+    clc
+    adc #1
+    sta SELECTION
+    jmp bye
+
+quit:
+    lda #0
+    sta SELECTION
+bye:
+    lda TXTSET             ; back to text for STARTUP / BASIC
+    rts
+
+; ------------------------------------------------------------------
+; Selection: un-invert the old band, invert the new, redraw the
+; description panel. EOR inversion is its own undo.
+; ------------------------------------------------------------------
+select_item:
+    pha
+    lda selected
+    clc
+    adc #FIRST_BAND
+    tax
+    jsr invert_band
+    pla
+    sta selected
+    clc
+    adc #FIRST_BAND
+    tax
+    jsr invert_band
+    ; fall through
+
+draw_description:
+    ldx #DESC_BAND
+    jsr clear_band
+    ldx #DESC_BAND + 1
+    jsr clear_band
+    lda selected
+    asl
+    tay
+    lda desc_lo,y
+    sta STRPTR
+    lda desc_hi,y
+    sta STRPTR + 1
+    tya
+    pha
+    ldx #DESC_BAND
+    ldy #2
+    jsr print_at
+    pla
+    tay
+    iny
+    lda desc_lo,y
+    sta STRPTR
+    lda desc_hi,y
+    sta STRPTR + 1
+    ldx #DESC_BAND + 1
+    ldy #2
+    jmp print_at
+
+; ------------------------------------------------------------------
+; Screen assembly
+; ------------------------------------------------------------------
+draw_screen:
+    jsr draw_logo
+    ; rule line under the logo (pixel row 29)
+    lda #29
+    jsr set_line
+    lda #$7F
+    ldy #39
+-   sta (SCRPTR),y
+    dey
+    bpl -
+    ; detection banner
+    ldx #STAT_BAND
+    ldy #2
+    lda detected
+    beq +
+    lda #<msg_found
+    sta STRPTR
+    lda #>msg_found
+    sta STRPTR + 1
+    bne ++
++   lda #<msg_missing
+    sta STRPTR
+    lda #>msg_missing
+    sta STRPTR + 1
+++  jsr print_at
+    ; the eight items
+    ldx #0
+-   txa
+    pha
+    jsr paint_item
+    pla
+    tax
+    inx
+    cpx #ITEMS
+    bne -
+    ; footer
+    ldx #FOOT_BAND
+    ldy #0
+    lda #<msg_keys
+    sta STRPTR
+    lda #>msg_keys
+    sta STRPTR + 1
+    jsr print_at
+    ; select item 0 (inverts its band + draws description)
+    lda selected
+    clc
+    adc #FIRST_BAND
+    tax
+    jsr invert_band
+    jmp draw_description
+
+paint_item:                ; A = item index
+    tay
+    clc
+    adc #FIRST_BAND
+    tax
+    lda item_lo,y
+    sta STRPTR
+    lda item_hi,y
+    sta STRPTR + 1
+    ldy #2
+    jmp print_at
+
+; ------------------------------------------------------------------
+; HGR primitives
+; ------------------------------------------------------------------
+hgr_init:
+    lda TXTCLR
+    lda HIRES
+    lda MIXCLR
+    lda TXTPAGE1
+    ; clear $2000-$3FFF
+    lda #0
+    sta SCRPTR
+    tay
+    ldx #$20
+-   stx SCRPTR + 1
+    lda #0
+--  sta (SCRPTR),y
+    iny
+    bne --
+    inx
+    cpx #$40
+    bne -
+    rts
+
+set_line:                  ; A = pixel row -> SCRPTR
+    tax
+    lda hgr_lo,x
+    sta SCRPTR
+    lda hgr_hi,x
+    sta SCRPTR + 1
+    rts
+
+; draw_logo: copy LOGO_ROWS 40-byte rows onto pixel rows 3..3+n-1.
+; Source advances by simple 16-bit pointer addition, no multiplies.
+draw_logo:
+    lda #<logo_data
+    sta FONTPTR
+    lda #>logo_data
+    sta FONTPTR + 1
+    lda #0
+    sta lrow
+dl_row:
+    lda lrow
+    clc
+    adc #3
+    jsr set_line
+    ldy #39
+-   lda (FONTPTR),y
+    sta (SCRPTR),y
+    dey
+    bpl -
+    ; source += 40
+    lda FONTPTR
+    clc
+    adc #40
+    sta FONTPTR
+    bcc +
+    inc FONTPTR + 1
++   inc lrow
+    lda lrow
+    cmp #LOGO_ROWS
+    bcc dl_row
+    rts
+
+; print_at: STRPTR string (0-terminated), X = band (0-23), Y = cell col.
+print_at:
+    stx band
+    sty col
+    lda #0
+    sta sidx
+pa_loop:
+    ldy sidx
+    lda (STRPTR),y
+    beq pa_done
+    jsr draw_char
+    inc col
+    inc sidx
+    bne pa_loop
+pa_done:
+    rts
+
+; draw_char: A = ASCII, band/col set. Clobbers X,Y.
+draw_char:
+    sec
+    sbc #32
+    ; FONTPTR = font7x8 + A*8
+    sta TMP
+    lda #0
+    sta FONTPTR + 1
+    lda TMP
+    asl
+    rol FONTPTR + 1
+    asl
+    rol FONTPTR + 1
+    asl
+    rol FONTPTR + 1
+    clc
+    adc #<font7x8
+    sta FONTPTR
+    lda FONTPTR + 1
+    adc #>font7x8
+    sta FONTPTR + 1
+    ; eight lines
+    lda band
+    asl
+    asl
+    asl
+    sta TMP                ; base pixel row
+    ldx #0
+dc_line:
+    txa
+    clc
+    adc TMP
+    tay
+    lda hgr_lo,y
+    sta SCRPTR
+    lda hgr_hi,y
+    sta SCRPTR + 1
+    txa
+    tay
+    lda (FONTPTR),y
+    ldy col
+    sta (SCRPTR),y
+    inx
+    cpx #8
+    bne dc_line
+    rts
+
+invert_band:               ; X = band: EOR $7F across 40 cells x 8 lines
+    txa
+    asl
+    asl
+    asl
+    sta TMP
+    ldx #0
+ib_line:
+    txa
+    clc
+    adc TMP
+    tay
+    lda hgr_lo,y
+    sta SCRPTR
+    lda hgr_hi,y
+    sta SCRPTR + 1
+    ldy #39
+-   lda (SCRPTR),y
+    eor #$7F
+    sta (SCRPTR),y
+    dey
+    bpl -
+    inx
+    cpx #8
+    bne ib_line
+    rts
+
+clear_band:                ; X = band
+    txa
+    asl
+    asl
+    asl
+    sta TMP
+    ldx #0
+cb_line:
+    txa
+    clc
+    adc TMP
+    tay
+    lda hgr_lo,y
+    sta SCRPTR
+    lda hgr_hi,y
+    sta SCRPTR + 1
+    lda #0
+    ldy #39
+-   sta (SCRPTR),y
+    dey
+    bpl -
+    inx
+    cpx #8
+    bne cb_line
+    rts
+
+; ------------------------------------------------------------------
+; Border accent (Appletini only): slow palette cycle on $C034.
+; ------------------------------------------------------------------
+border_accent:
+    lda detected
+    beq accent_done
+    inc border_tick
+    bne accent_done
+    inc border_tick2
+    lda border_tick2
+    cmp #24
+    bcc accent_done
+    lda #0
+    sta border_tick2
+    ldx border_idx
+    lda border_colors,x
+    ldx #0
+    sta BORDER,x
+    inc border_idx
+    lda border_idx
+    cmp #border_colors_end - border_colors
+    bcc accent_done
+    lda #0
+    sta border_idx
+accent_done:
+    rts
+
+; ------------------------------------------------------------------
+; Appletini detection: pure ROM reads, no card execution. The slot-7
+; SmartPort ROM the Appletini presents has the SmartPort class bytes
+; plus a fixed fingerprint ($C70B/$C70C/$C7FE). Reading cannot crash on
+; machines whose slot 7 holds something else -- emulators included.
+; //e etiquette: select slot ROM for the probe, restore INTCXROM after
+; if it was on ($C015 read floats harmlessly on a II+).
+; ------------------------------------------------------------------
+RDCXROM      = $C015
+SETSLOTCXROM = $C006
+SETINTCXROM  = $C007
+
+detect_appletini:
+    lda RDCXROM
+    pha                    ; bit7 = internal ROM was selected (//e)
+    sta SETSLOTCXROM       ; expose the slot ROM
+    ldx #sig_count - 1
+-   ldy sig_offsets,x
+    lda $C700,y
+    cmp sig_values,x
+    bne det_no
+    dex
+    bpl -
+    pla
+    bpl +
+    sta SETINTCXROM        ; put internal ROM back the way it was
++   lda #1
+    rts
+det_no:
+    pla
+    bpl +
+    sta SETINTCXROM
++   lda #0
+    rts
+
+sig_offsets:
+    !byte $01, $03, $05, $07, $0B, $0C, $FE
+sig_values:
+    !byte $20, $00, $03, $00, $23, $C7, $D7
+sig_count = 7
+
+; ------------------------------------------------------------------
+; Data
+; ------------------------------------------------------------------
+selected:     !byte 0
+detected:     !byte 0
+band:         !byte 0
+col:          !byte 0
+sidx:         !byte 0
+lrow:         !byte 0
+border_idx:   !byte 0
+border_tick:  !byte 0
+border_tick2: !byte 0
+
+border_colors:
+    !byte 2, 3, 6, 7, 15, 7, 6, 3
+border_colors_end:
+
+item_lo:
+    !byte <item0, <item1, <item2, <item3
+    !byte <item4, <item5, <item6, <item7
+    !byte <item8
+item_hi:
+    !byte >item0, >item1, >item2, >item3
+    !byte >item4, >item5, >item6, >item7
+    !byte >item8
+
+item0: !text "1  The Impossible ][+", 0
+item1: !text "2  Speed Race: 1 MHz vs Warp", 0
+item2: !text "3  Raster Bars", 0
+item3: !text "4  Mandelbrot (BASIC)", 0
+item4: !text "5  Wave Animation", 0
+item5: !text "6  SuperSprite", 0
+item6: !text "7  Web Browser", 0
+item7: !text "8  Web Server", 0
+item8: !text "9  Internet Image Viewer", 0
+
+desc_lo:
+    !byte <d0a, <d0b, <d1a, <d1b, <d2a, <d2b, <d3a, <d3b
+    !byte <d4a, <d4b, <d5a, <d5b, <d6a, <d6b, <d7a, <d7b
+    !byte <d8a, <d8b
+desc_hi:
+    !byte >d0a, >d0b, >d1a, >d1b, >d2a, >d2b, >d3a, >d3b
+    !byte >d4a, >d4b, >d5a, >d5b, >d6a, >d6b, >d7a, >d7b
+    !byte >d8a, >d8b
+
+d0a: !text "Speech, stereo music, warp speed and", 0
+d0b: !text "8MB of RAM. One self-running show.", 0
+d1a: !text "The same fractal at 1 MHz, then at", 0
+d1b: !text "full warp. Live frame timing.", 0
+d2a: !text "Cycle-exact border colors, even when", 0
+d2b: !text "accelerated (video-sync slowdown).", 0
+d3a: !text "The classic Applesoft speed test.", 0
+d3b: !text "Try it at different TransWarp speeds.", 0
+d4a: !text "Brendan Robert's hires wave effect.", 0
+d4b: !text "", 0
+d5a: !text "TMS9918 sprites over Apple video.", 0
+d5b: !text "Enable SuperSprite in the config menu.", 0
+d6a: !text "Browse the web over the virtual", 0
+d6b: !text "Uthernet II. Needs the ethernet port.", 0
+d7a: !text "Serve a web page from your Apple II.", 0
+d7b: !text "Needs the ethernet port connected.", 0
+d8a: !text "Streams any web image into 256-color", 0
+d8b: !text "SHR4. Needs SHR4 firmware + ethernet.", 0
+
+msg_found:   !text "Appletini ONE detected", 0
+msg_missing: !text "No Appletini found - demos need one", 0
+msg_keys:    !text "Arrows/1-9 select  Return run  Esc end", 0
+
+; ------------------------------------------------------------------
+!source "launcher_assets.a65"

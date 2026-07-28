@@ -1,0 +1,294 @@
+; shrview.a65 -- SHR/SHR4/SHR-3200 test-image slideshow (ProDOS SYS).
+;
+; Boots as the first .SYSTEM file on the test disk. For each image in
+; the table: loads the first 32K into AUX $2000-$9FFF (staged through
+; main, copied with RAMWRT), reads any remaining payload straight into
+; MAIN $2000+ (the 3200 palette block or a double-mode second field),
+; and turns on SHR via $C029. Any key advances to the next image; ESC
+; quits. Images must be self-describing: magic at $9DFC and ctrl bytes
+; at $9DF8 per the SDD ruleset (build_shr_test_disk.py enforces this).
+;
+; Assemble:  acme -f plain -o SHRVIEW.SYSTEM shrview.a65
+
+!cpu 6502
+* = $2000
+
+MLI      = $BF00
+KBD      = $C000
+KBDSTRB  = $C010
+RAMWRTON = $C005
+RAMWRTOFF= $C004
+NEWVIDEO = $C029
+TEXTPAGE = $0400
+
+RUNADDR  = $1000            ; relocated run address
+IOBUF    = $1800            ; 1KB ProDOS file buffer
+LOADADDR = $2000            ; images stage and land at $2000
+
+; --- SYS entry: relocate $2000-$27FF down to $1000 and restart there ---
+    ldx #0
+reloc:
+    lda $2000,x
+    sta $1000,x
+    lda $2100,x
+    sta $1100,x
+    lda $2200,x
+    sta $1200,x
+    lda $2300,x
+    sta $1300,x
+    lda $2400,x
+    sta $1400,x
+    lda $2500,x
+    sta $1500,x
+    lda $2600,x
+    sta $1600,x
+    lda $2700,x
+    sta $1700,x
+    inx
+    bne reloc
+    jmp main                ; label is already RUNADDR-based (!pseudopc)
+
+; Everything below runs at RUNADDR-based addresses.
+!pseudopc RUNADDR + (* - $2000) {
+
+main:
+    lda #0
+    sta img_index
+
+show_image:
+    lda #$01
+    sta NEWVIDEO            ; SHR off while the next image loads
+
+    ; Clear the stale ctrl block AND magic at aux $9DF8-$9DFF before
+    ; loading: a leftover paged mode must never weave the incoming
+    ; image with the previous one if anything renders early.
+    sta RAMWRTON
+    lda #0
+    ldx #7
+-   sta $9DF8,x
+    dex
+    bpl -
+    sta RAMWRTOFF
+
+    ; ---- open ----
+    ldx img_index
+    lda names_lo,x
+    sta open_path
+    lda names_hi,x
+    sta open_path+1
+    jsr mli_open
+    bcs next_or_quit        ; missing file: skip it
+    jsr show_status         ; text-page feedback (no Appletini needed)
+
+    ; ---- read first 32K to main $2000, copy to aux ----
+    lda #$00
+    sta read_buf
+    lda #$20
+    sta read_buf+1
+    lda #$00
+    sta read_len
+    lda #$80
+    sta read_len+1
+    jsr mli_read
+    bcs close_and_next
+    jsr copy_main_to_aux
+
+    ; The aux copy above delivers the in-band ctrl bytes ($9DF8) with
+    ; the field data, so the renderer opens the main $6000-$9FFF
+    ; posted-write window while the next disk read is still in flight
+    ; (matters under vTW).
+
+    ; ---- read any remaining payload straight into main $2000 ----
+    lda #$00
+    sta read_buf
+    lda #$20
+    sta read_buf+1
+    lda #$00
+    sta read_len
+    lda #$80
+    sta read_len+1
+    jsr mli_read            ; EOF error is fine (single-bank image)
+    jsr mli_close
+
+    ; ---- SHR on, wait for key ----
+    lda #$C1
+    sta NEWVIDEO
+    bit KBDSTRB
+wait_key:
+    lda KBD
+    bpl wait_key
+    bit KBDSTRB
+    cmp #$9B                ; ESC?
+    beq quit
+
+next_or_quit:
+    ldx img_index
+    inx
+    cpx #image_count
+    bcc keep_index
+    ldx #0
+keep_index:
+    stx img_index
+    jmp show_image
+
+close_and_next:
+    jsr mli_close
+    jmp next_or_quit
+
+quit:
+    lda #$01
+    sta NEWVIDEO            ; SHR off
+    jsr MLI
+    !byte $65
+    !word quit_parms
+    brk                     ; QUIT does not return
+
+; ---- MLI helpers ----
+mli_open:
+    jsr MLI
+    !byte $C8
+    !word open_parms
+    bcs +
+    lda open_ref
+    sta read_ref
+    sta close_ref
++   rts
+
+mli_read:
+    jsr MLI
+    !byte $CA
+    !word read_parms
+    rts
+
+mli_close:
+    jsr MLI
+    !byte $CC
+    !word close_parms
+    rts
+
+; ---- status line on text row 0: "SHR: <name> - KEY=NEXT ESC=QUIT" ----
+; Direct text-page stores only (no ROM calls): the monitor may not be
+; banked in under ProDOS, and this must also show on machines where
+; $C029 does nothing and the SHR image is invisible.
+show_status:
+    ldy #39
+    lda #$A0
+-   sta TEXTPAGE,y
+    dey
+    bpl -
+    ldx #0
+-   lda t_prefix,x
+    beq +
+    ora #$80
+    sta TEXTPAGE,x
+    inx
+    bne -
++   lda open_path
+    sta src_ptr
+    lda open_path+1
+    sta src_ptr+1
+    ldy #0
+    lda (src_ptr),y
+    sta name_left
+name_loop:
+    iny
+    lda (src_ptr),y
+    ora #$80
+    sta TEXTPAGE,x
+    inx
+    dec name_left
+    bne name_loop
+    ldy #0
+suffix_loop:
+    lda t_suffix,y
+    beq status_done
+    ora #$80
+    sta TEXTPAGE,x
+    inx
+    iny
+    bne suffix_loop
+status_done:
+    rts
+
+; ---- main $2000-$9FFF -> aux $2000-$9FFF (RAMWRT: read main, write aux) ----
+copy_main_to_aux:
+    lda #$00
+    sta src_ptr
+    lda #$20
+    sta src_ptr+1
+    sta RAMWRTON
+copy_page:
+    ldy #0
+-   lda (src_ptr),y
+    sta (src_ptr),y
+    iny
+    bne -
+    inc src_ptr+1
+    lda src_ptr+1
+    cmp #$A0
+    bcc copy_page
+    sta RAMWRTOFF
+    rts
+
+; ---- data ----
+img_index:  !byte 0
+src_ptr = $06               ; free zero page pair
+name_left = $08             ; transient counter for show_status
+
+t_prefix: !text "SHR: ", 0
+t_suffix: !text " - KEY=NEXT ESC=QUIT", 0
+
+open_parms:
+    !byte 3
+open_path:
+    !word 0
+    !word IOBUF
+open_ref:
+    !byte 0
+
+read_parms:
+    !byte 4
+read_ref:
+    !byte 0
+read_buf:
+    !word 0
+read_len:
+    !word 0
+read_count:
+    !word 0
+
+close_parms:
+    !byte 1
+close_ref:
+    !byte 0
+
+quit_parms:
+    !byte 4
+    !byte 0
+    !word 0
+    !byte 0
+    !word 0
+
+; Image table: pathname pointers.
+names_lo:
+    !byte <n_beach, <n_e320a, <n_e320b, <n_e320c
+    !byte <n_e640a, <n_e640b, <n_int1, <n_int2
+    !byte <n_t256, <n_tflip
+names_hi:
+    !byte >n_beach, >n_e320a, >n_e320b, >n_e320c
+    !byte >n_e640a, >n_e640b, >n_int1, >n_int2
+    !byte >n_t256, >n_tflip
+image_count = 10
+
+n_beach: !byte 10 : !text "BEACH.3200"
+n_e320a: !byte 8  : !text "EYE320.A"
+n_e320b: !byte 8  : !text "EYE320.B"
+n_e320c: !byte 8  : !text "EYE320.C"
+n_e640a: !byte 8  : !text "EYE640.A"
+n_e640b: !byte 8  : !text "EYE640.B"
+n_int1:  !byte 12 : !text "BANNERS.INT1"
+n_int2:  !byte 12 : !text "BANNERS.INT2"
+n_t256:  !byte 8  : !text "TEST.256"
+n_tflip: !byte 9  : !text "TEST.FLIP"
+
+}

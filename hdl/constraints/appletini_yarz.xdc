@@ -565,6 +565,14 @@ set_max_delay -datapath_only 5.0 -from $a2_bus_in_ports
 # static pass-throughs of the 5V presence detect and need no bound.)
 set_max_delay 10.0 -to [get_ports {a2fpga_dir_a a2fpga_dir_d}]
 
+# In //e mode the physical PHI0 input directly closes the data-bus drive
+# window. Bound that release path separately so the level translator turns
+# around within 8 ns of PHI0 falling regardless of implementation placement.
+# The package IBUF + OBUF delay is already about 4.7 ns at the slow corner,
+# making a 5 ns pad-to-pad requirement physically unrealistic.
+set_max_delay -datapath_only 8.0 \
+    -from [get_ports a2fpga_clk] -to [get_ports a2fpga_dir_d]
+
 ################################################################################
 # Switching Activity (for power estimation)
 ################################################################################

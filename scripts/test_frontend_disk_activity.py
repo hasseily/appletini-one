@@ -46,6 +46,15 @@ def test_disk_activity_visibility_is_configurable() -> None:
     source = read(FRONTEND_MAIN_C)
     config_c = read(CONFIG_MENU_C)
     config_h = read(CONFIG_MENU_H)
+    compose = source[
+        source.index("static int ui_compose_frame("):
+        source.index("/* Adapter for the compositor's typed-erased callback contract. */")
+    ]
+    base_return = compose.index("return menu_active;")
+    first_activity_draw = compose.index("ui_draw_storage_activity(fb, s);")
+    menu_draw = compose.index("config_menu_draw(fb, menu, g_usb_menu_owned);")
+    second_activity_draw = compose.index(
+        "ui_draw_storage_activity(fb, s);", first_activity_draw + 1)
 
     require("const uint8_t show_disk_activity =\n"
             "        (menu == NULL || menu->disk2_activity_visible != 0U) ? 1U : 0U;" in source,
@@ -60,16 +69,15 @@ def test_disk_activity_visibility_is_configurable() -> None:
             "        (show_disk_activity != 0U &&\n"
             "         config_menu_storage_activity_page_visible(menu) != 0U) ? 1U : 0U;" in source and
             "if (show_disk_activity == 0U) {" in source and
-            "} else if (draw_disk_activity_after_menu == 0U) {\n"
-            "        ui_draw_storage_activity(fb, s);\n"
-            "    }" in source and
+            base_return < first_activity_draw < menu_draw < second_activity_draw and
             "if (draw_disk_activity_after_menu != 0U) {\n"
             "        ui_draw_storage_activity(fb, s);\n"
             "    }" in source,
-            "storage activity overlay must draw after the SmartPort/Disk II menu pages")
+            "storage activity must be a foreground overlay and remain above "
+            "the SmartPort/Disk II menu pages where requested")
     require("if (show_disk_activity == 0U) {" in source and
-            "ui_restore_static_rect(fb,\n"
-            "                               UI_DISK_ACTIVITY_X," in source and
+            "ui_restore_static_rect(fb," in source and
+            "UI_DISK_ACTIVITY_X," in source and
             "memset(&g_storage_activity, 0, sizeof(g_storage_activity));" in source,
             "disabled storage activity overlay must not poll or draw stale activity")
 

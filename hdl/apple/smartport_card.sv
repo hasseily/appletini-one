@@ -60,10 +60,32 @@ module smartport_card (
     input  globals::AxiSimple_common as_common,
     AxiSimple_if.client              as_client,
     output globals::AppleBus_write   ab_write,
-    output logic                     smartport_irq
+    output logic                     smartport_irq,
+
+    /* vTW short-circuit port. The accelerator classifies its own core's
+     * slot-7 accesses (using its private soft-switch state) and drives
+     * this port to reach the card's ROM/FIFO logic fabric-internally,
+     * so disk I/O runs at core speed instead of 1 MHz bus cycles. The
+     * vTW only drives it while it owns slot 7 (post boot-handoff), so it
+     * never races the bus path. target: 0=slot ROM, 1=C8 ROM, 2=DATA,
+     * 3=CTRL, 4=DPOP. 2-cycle read latency (registered ROM/FIFO). */
+    input  logic                     vtw_valid,
+    input  logic [2:0]               vtw_target,
+    input  logic [10:0]              vtw_addr,
+    input  logic                     vtw_rw,       // 1 = read, 0 = write
+    input  logic [7:0]               vtw_wdata,
+    output logic                     vtw_ready,     // combinational accept
+    output logic                     vtw_resp_valid,// 1-clk read-data pulse
+    output logic [7:0]               vtw_resp_rdata
 );
 
     import globals::*;
+
+    localparam logic [2:0] VTW_TGT_SLOT_ROM = 3'd0;
+    localparam logic [2:0] VTW_TGT_C8_ROM   = 3'd1;
+    localparam logic [2:0] VTW_TGT_DATA     = 3'd2;
+    localparam logic [2:0] VTW_TGT_CTRL     = 3'd3;
+    localparam logic [2:0] VTW_TGT_DPOP     = 3'd4;
 
     // ---- ROMs ----
     logic [7:0] slot_rom [0:255];
@@ -170,6 +192,31 @@ module smartport_card (
     wire ab_ctrl_write = ab_read.data_en && !ab_read.rw && ctrl_reg_hit;
     wire ab_pop_write  = ab_read.data_en && !ab_read.rw && pop_reg_hit;
 
+    // ---- vTW short-circuit serve ----
+    // One-cycle accept; a two-cycle read serve (registered ROM/FIFO). The
+    // write effects below reuse the same FIFO/exec logic as the bus path.
+    logic       vtw_busy_q;
+    logic [2:0] vtw_tgt_q;
+    logic [7:0] vtw_rom_data_q;
+    logic [7:0] vtw_data_snap_q;
+    logic [7:0] vtw_ctrl_snap_q;
+    assign vtw_ready = !vtw_busy_q;
+    wire vtw_fire = vtw_valid && vtw_ready;
+
+    // Write-side events: only fire on the one-cycle accept, and only for
+    // writes (a DPOP/DATA read must stay side-effect-free -- the parked
+    // bus argument holds equally for the accelerator).
+    wire vtw_data_write = vtw_fire && !vtw_rw && (vtw_target == VTW_TGT_DATA);
+    wire vtw_ctrl_write = vtw_fire && !vtw_rw && (vtw_target == VTW_TGT_CTRL);
+    wire vtw_pop_write  = vtw_fire && !vtw_rw && (vtw_target == VTW_TGT_DPOP);
+
+    // Unified access events (bus OR accelerator) driving card state.
+    wire        data_write_ev   = ab_data_write || vtw_data_write;
+    wire [7:0]  data_write_byte = ab_data_write ? ab_read.data : vtw_wdata;
+    wire        ctrl_write_ev   = ab_ctrl_write || vtw_ctrl_write;
+    wire [7:0]  ctrl_write_byte = ab_ctrl_write ? ab_read.data : vtw_wdata;
+    wire        pop_write_ev    = ab_pop_write  || vtw_pop_write;
+
     // Synchronous ROM reads: the lookups track ab_read.addr (registered
     // at the serve sample), so ROM data is valid one clock later --
     // exactly when sp_serve_en_q consumes it.
@@ -263,30 +310,52 @@ module smartport_card (
             dry_pop_count_q <= 16'd0;
             sss_snapshot_q  <= 21'd0;
             smartport_irq   <= 1'b0;
+            vtw_busy_q      <= 1'b0;
+            vtw_resp_valid  <= 1'b0;
+            vtw_tgt_q       <= 3'd0;
+            vtw_rom_data_q  <= 8'd0;
+            vtw_data_snap_q <= 8'd0;
+            vtw_ctrl_snap_q <= 8'd0;
         end else begin
             ab_write_q    <= ab_write_d;
             smartport_irq <= 1'b0;
 
-            // Apple side ------------------------------------------------
-            if (ab_data_write && !in_full) begin
-                in_fifo[in_wr_q] <= ab_read.data;
+            // Apple side (bus or vTW short-circuit) ---------------------
+            if (data_write_ev && !in_full) begin
+                in_fifo[in_wr_q] <= data_write_byte;
                 in_wr_q          <= in_wr_q + 1'b1;
             end
 
-            if (ab_pop_write && !out_empty) begin
+            if (pop_write_ev && !out_empty) begin
                 out_rd_q <= out_rd_q + 1'b1;
             end
-            if (ab_pop_write && out_empty &&
+            if (pop_write_ev && out_empty &&
                 (dry_pop_count_q != 16'hFFFF)) begin
                 dry_pop_count_q <= dry_pop_count_q + 16'd1;
             end
 
-            if (ab_ctrl_write) begin
+            if (ctrl_write_ev) begin
                 exec_pending_q <= 1'b1;
                 ready_q        <= 1'b0;
-                ctrl_val_q     <= ab_read.data;
+                ctrl_val_q     <= ctrl_write_byte;
                 sss_snapshot_q <= sss_snapshot_d;
                 smartport_irq  <= 1'b1;
+            end
+
+            // vTW short-circuit serve FSM ------------------------------
+            vtw_resp_valid <= 1'b0;
+            if (vtw_fire) begin
+                vtw_busy_q      <= 1'b1;
+                vtw_tgt_q       <= vtw_target;
+                vtw_rom_data_q  <= (vtw_target == VTW_TGT_C8_ROM)
+                                       ? c8_rom[vtw_addr]
+                                       : slot_rom[vtw_addr[7:0]];
+                vtw_data_snap_q <= out_empty ? 8'h00 : out_head_q;
+                vtw_ctrl_snap_q <= {ready_q, 7'b0000000};
+            end
+            else if (vtw_busy_q) begin
+                vtw_busy_q     <= 1'b0;
+                vtw_resp_valid <= 1'b1;
             end
 
             // PS side ---------------------------------------------------
@@ -316,7 +385,7 @@ module smartport_card (
                 in_count_q <= '0;
             end else begin
                 in_count_q <= in_count_q
-                    + ((ab_data_write && !in_full) ? 1'b1 : 1'b0)
+                    + ((data_write_ev && !in_full) ? 1'b1 : 1'b0)
                     - ((axi_pop_in && !in_empty) ? 1'b1 : 1'b0);
             end
             if (axi_clear_out) begin
@@ -324,9 +393,42 @@ module smartport_card (
             end else begin
                 out_count_q <= out_count_q
                     + ((axi_out_push && !out_full) ? 1'b1 : 1'b0)
-                    - ((ab_pop_write && !out_empty) ? 1'b1 : 1'b0);
+                    - ((pop_write_ev && !out_empty) ? 1'b1 : 1'b0);
+            end
+
+            /* Apple RES# aborts any in-flight transaction: FIFO pointers,
+             * ready, exec-pending, and the control latch clear, like a
+             * real device abandoning a command at reset. Mounted media and
+             * the slot-7 mapping live elsewhere (PS service + boot_menu)
+             * and survive -- a real SmartPort isn't unplugged by
+             * CTRL-RESET. Placed last so it overrides any same-cycle FIFO
+             * movement, including a PS-side push from a command that was
+             * mid-execution when the user hit reset (the PS reset callback
+             * cleans up anything that lands after release). dry_pop_count
+             * is forensics and deliberately survives. */
+            if (!ab_read.res) begin
+                in_wr_q        <= '0;
+                in_rd_q        <= '0;
+                out_wr_q       <= '0;
+                out_rd_q       <= '0;
+                in_count_q     <= '0;
+                out_count_q    <= '0;
+                ready_q        <= 1'b0;
+                exec_pending_q <= 1'b0;
+                ctrl_val_q     <= 8'd0;
             end
         end
+    end
+
+    // ---- vTW short-circuit read response (valid the cycle after accept) ----
+    always_comb begin
+        unique case (vtw_tgt_q)
+            VTW_TGT_SLOT_ROM,
+            VTW_TGT_C8_ROM: vtw_resp_rdata = vtw_rom_data_q;
+            VTW_TGT_DATA:   vtw_resp_rdata = vtw_data_snap_q;
+            VTW_TGT_CTRL:   vtw_resp_rdata = vtw_ctrl_snap_q;
+            default:        vtw_resp_rdata = 8'h00;   // DPOP read: harmless
+        endcase
     end
 
     // ---- AxiSimple read mux (registered araddr, axidouble timing) ----

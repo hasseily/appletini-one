@@ -1,0 +1,21 @@
+
+==========================================
+Create Firmware Image
+==========================================
+OUT : .\FIRMWARE.BIN
+FSBL: .\vitis_workspace\appletini_platform\export\appletini_platform\sw\boot\fsbl.elf
+BIT : .\project\appletini_yarz.runs\impl_1\appletini_yarz_top.bit
+APP : .\vitis_workspace\frontend\build\frontend.elf
+BIF : C:\Users\hasse\AppData\Local\Temp\appletini_firmware_94385546.bif
+
+
+
+****** Bootgen v2025.2
+  **** Build date : Oct 23 2025-12:54:55
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
+
+
+[INFO]   : Bootimage generated successfully
+
+SUCCESS: .\FIRMWARE.BIN

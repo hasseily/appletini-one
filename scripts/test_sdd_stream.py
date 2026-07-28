@@ -161,9 +161,9 @@ def test_usb_tab_sdd_and_sd_remote_mount() -> None:
             "config menu must define the USB tab")
     require('"USB"' in c,
             "config menu tab labels must expose USB")
-    require("return 2U;                          /* SD remote mount + SDD stream */"
+    require("return 3U;              /* SD remote mount + SDD stream + USB1 refresh */"
             in c,
-            "USB tab must have SDD stream and SD remote-mount items")
+            "USB tab must have SDD stream, SD remote-mount, and USB1 refresh items")
     require('"usb.sdd.stream.enabled"' in c and
             '"usb.sdd.stream.enabled=%s\\n"' in c and
             '"sdd_stream_enable"' not in c,
@@ -225,7 +225,48 @@ def test_usb0_single_owner_routing() -> None:
         require(src in ws, f"workspace generator must list {src}")
 
 
+def test_uart_dma_write_paste() -> None:
+    """UART sidecar of the SDD write path: paste hex into the console,
+    DMA it onto the Apple bus via the probe engine."""
+    u = read(UART_CONTROL_C)
+    require('str_ieq(argv[1], "write")' in u,
+            "uart console must accept dma write")
+    require("static uint8_t paste_buf[4096];" in u,
+            "paste must buffer before writing (per-byte bus writes "
+            "cannot keep up with paste rate)")
+    require("dma_probe_write((uint16_t)(addr + i), paste_buf[i]," in u,
+            "buffered bytes must replay through the probe engine")
+    require('str_ieq(argv[3], "verify")' in u and
+            "dma_peek_raw_read((uint16_t)(addr + off), chunk," in u,
+            "dma write must offer probe-read verification")
+    require("dma write <addr> [verify]" in u,
+            "help text must document dma write")
+
+
+def test_sdd_ram_window() -> None:
+    """USB RAM window: 0x10000 + apple_addr writes the live bus."""
+    sdd = read(SDD_SERVICE_C)
+    u_h = read(REPO_ROOT / "ps_sources" / "frontend" / "uart_control.h")
+    require("#define SDD_ADDR_RAM_BASE       0x00010000U" in sdd and
+            "#define SDD_ADDR_RAM_END        0x0001FFFFU" in sdd,
+            "RAM window must be framed above the register numbers")
+    require("addr >= SDD_ADDR_RAM_BASE && addr <= SDD_ADDR_RAM_END" in sdd,
+            "unknown-address writes must route to the RAM window first")
+    require("for (shift = 24; shift >= 0; shift -= 8)" in sdd,
+            "words must write high byte first (hex dumps read left "
+            "to right)")
+    require("uart_control_dma_bus_write(" in sdd,
+            "RAM writes must go through the shared DMA bus-write helper")
+    require("int uart_control_dma_bus_write(uint16_t addr, uint8_t value);"
+            in u_h,
+            "uart_control must export the DMA bus-write helper")
+    require("SddRamErrors" in sdd and "ram=%lu ramerr=%lu" in sdd,
+            "RAM writes and errors must be counted in sdd stats")
+
+
 TESTS = [
+    test_uart_dma_write_paste,
+    test_sdd_ram_window,
     test_tap_event_word_matches_sdd_parser,
     test_apple_top_second_egress_on_hp2,
     test_vendor_identity_and_pipes,

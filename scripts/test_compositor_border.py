@@ -7,6 +7,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 LAYOUT = ROOT / "ps_sources" / "frontend" / "compositor_layout.h"
 COMPOSITOR = ROOT / "ps_sources" / "frontend" / "compositor.c"
+COMPOSITOR_H = ROOT / "ps_sources" / "frontend" / "compositor.h"
+FRONTEND_MAIN = ROOT / "ps_sources" / "frontend" / "main.c"
 HANDOFF_C = ROOT / "ps_sources" / "frontend" / "apple_fb_handoff.c"
 HANDOFF_H = ROOT / "ps_sources" / "frontend" / "apple_fb_handoff.h"
 
@@ -78,10 +80,36 @@ def test_blit_and_flood_gating() -> None:
             "menu ownership must suppress the ring and flood with the Apple blit")
 
 
+def test_border_is_below_foreground_overlays() -> None:
+    header = COMPOSITOR_H.read_text(encoding="utf-8")
+    source = COMPOSITOR.read_text(encoding="utf-8")
+    frontend = FRONTEND_MAIN.read_text(encoding="utf-8")
+    tick = source[source.index("int compositor_tick(void)"):]
+    compose = frontend[
+        frontend.index("static int ui_compose_frame("):
+        frontend.index("/* Adapter for the compositor's typed-erased callback contract. */")
+    ]
+
+    require("COMPOSITOR_UI_PHASE_BASE" in header and
+            "COMPOSITOR_UI_PHASE_OVERLAY" in header,
+            "compositor UI contract must expose base and foreground phases")
+    require(tick.index("COMPOSITOR_UI_PHASE_BASE") <
+            tick.index("draw_apple_subwindow(fb)") <
+            tick.index("COMPOSITOR_UI_PHASE_OVERLAY"),
+            "Apple border/video must draw after the bezel base and before foreground UI")
+    base_return = compose.index("return menu_active;")
+    require(compose.index("ui_prepare_static_background(fb, show_bezel);") < base_return and
+            compose.index("debug_overlay_draw(fb, &debug_snapshot);") > base_return and
+            compose.index("ui_draw_storage_activity(fb, s);") > base_return and
+            compose.index("screenshot_service_draw_overlay(fb);") > base_return,
+            "debug, storage, and status overlays must be confined to the post-Apple phase")
+
+
 def main() -> int:
     test_layout()
     test_frame_coherent_color()
     test_blit_and_flood_gating()
+    test_border_is_below_foreground_overlays()
     print("compositor border tests: PASS")
     return 0
 

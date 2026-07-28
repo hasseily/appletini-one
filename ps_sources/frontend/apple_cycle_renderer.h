@@ -34,6 +34,20 @@ int apple_cycle_renderer_init(void);
  * changes so the local renderer state comes back as TEXT/C051. */
 void apple_cycle_renderer_reset_local_video_state(void);
 
+/* CPU1 sets this from the PL's effective vTW 1 MHz status before draining
+ * each batch. Only this mode needs selective video-switch lookahead. */
+void apple_cycle_renderer_set_vtw_1mhz(uint8_t active);
+
+/* CPU1 passes the PL's authoritative fake-SHR capture state each
+ * batch; the renderer repairs its local C029 shadow if a capture
+ * drop ate the C029 record (screen-freeze self-heal). */
+void apple_cycle_renderer_sync_shr_mode(uint8_t pl_shr_active);
+
+/* Pre-record hook called before egress applies the incoming record's shadow
+ * memory write. This preserves memory/write ordering while the renderer uses
+ * that record's soft-switch snapshot as one-cycle lookahead. */
+void apple_cycle_renderer_on_next_record(uint64_t rec);
+
 /* Hook called by 2b.1 once per consumed FIFO record. rec == 0 is a
  * gap marker; otherwise this carries an AppleCycleRecord (see
  * apple_cycle_egress.h for bit layout).
@@ -55,6 +69,9 @@ extern volatile uint32_t g_acr_resyncs_cleared;
 extern volatile uint32_t g_acr_records_seen;
 extern volatile uint32_t g_acr_cycles_rendered;
 extern volatile uint32_t g_acr_unknown_modes;
+/* Frames rendered with the SHR4 extended decode active (magic at aux
+ * $9DFC). Climbing = software is using SDD-style SHR4 modes. */
+extern volatile uint32_t g_acr_shr4_frames;
 extern volatile uint32_t g_acr_frame_edges_seen;
 extern volatile uint32_t g_acr_last_frame_records;
 

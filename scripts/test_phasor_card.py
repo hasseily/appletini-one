@@ -19,6 +19,7 @@ MOCKINGBOARD_SV = REPO_ROOT / "hdl" / "apple" / "mockingboard.sv"
 YM2149_SV = REPO_ROOT / "hdl" / "apple" / "YM2149.sv"
 VIA6522_V = REPO_ROOT / "hdl" / "apple" / "via6522.v"
 APPLE_TOP_SV = REPO_ROOT / "hdl" / "apple" / "apple_top.sv"
+APPLE_BUS_WRAPPER_SV = REPO_ROOT / "hdl" / "apple" / "apple_bus_wrapper.sv"
 APPLETINI_YARZ_TOP_SV = REPO_ROOT / "hdl" / "appletini_yarz_top.sv"
 CONFIG_MENU_C = REPO_ROOT / "ps_sources" / "frontend" / "config_menu.c"
 CONFIG_MENU_H = REPO_ROOT / "ps_sources" / "frontend" / "config_menu.h"
@@ -613,13 +614,14 @@ def test_ssi263_rate_and_inflection_affect_hdl_model() -> None:
             "SSI263 inflection slope bits must change target-pitch ramp speed")
 
 
-def test_via_ifr_read_sees_pending_timer_underflow() -> None:
+def test_via_ifr_read_uses_committed_timer_flags() -> None:
     via = read(VIA6522_V)
 
-    require("wire [6:0]  ifr_read = {irq_t1 || (addr == ADDR_IFR && timer1_undf && (irq_t1_one_shot || acr[6]))," in via and
-            "irq_t2 || (addr == ADDR_IFR && timer2_undf && irq_t2_one_shot)," in via and
-            "ADDR_IFR:                   data_out = {irq_p, ifr_read};" in via,
-            "VIA IFR reads must expose pending T1/T2 underflow without changing stored IRQ state")
+    require("ADDR_IFR:                   data_out = {irq_p, ifr};" in via and
+            "wire [6:0]  ifr_read" not in via and
+            "addr == ADDR_IFR && timer1_undf" not in via and
+            "addr == ADDR_IFR && timer2_undf" not in via,
+            "late VIA IFR reads must expose only committed interrupt flags, not the pending-underflow phase")
 
 
 def test_phasor_timer_low_reads_can_add_one_tick() -> None:
@@ -641,6 +643,26 @@ def test_phasor_timer_low_reads_can_add_one_tick() -> None:
             "else if (timer2_undf && timer_clock)" in via and
             "wire        irq_t2_set = (timer2_undf && timer_clock &&" in via,
             "T1/T2 state and IRQ behavior must use the combined timer clock")
+
+
+def test_via_timer_reads_preserve_pre_tick_value() -> None:
+    source = read(MOCKINGBOARD_SV)
+    via = read(VIA6522_V)
+
+    require("wire via_timer_clock = card_enabled && ab_read.sss_en;" in source and
+            "ab_read.serve_en && ab_read.rw && (via0_hit || via1_hit)" in source,
+            "Mockingboard timer cadence must remain early while reads use late authoritative decode")
+    require("reg [15:0] timer1_bus_value;" in via and
+            "reg [15:0] timer2_bus_value;" in via and
+            "else if (slow_clock) begin\n"
+            "            timer1_bus_value <= timer1;\n"
+            "            timer2_bus_value <= timer2;\n"
+            "        end" in via and
+            "ADDR_TIMER1_LO:             data_out = timer1_bus_value[7:0];" in via and
+            "ADDR_TIMER1_HI:             data_out = timer1_bus_value[15:8];" in via and
+            "ADDR_TIMER2_LO:             data_out = timer2_bus_value[7:0];" in via and
+            "ADDR_TIMER2_HI:             data_out = timer2_bus_value[15:8];" in via,
+            "late VIA timer reads must expose the value from before the current Apple-cycle tick")
 
 
 def test_via_apple_reset_preserves_timer_latches() -> None:
@@ -851,17 +873,37 @@ def test_phasor_is_apple_bus_driven() -> None:
             "normal Apple-driven Phasor reset, clock, and mix paths must remain direct")
 
 
+def test_virtual_irq_uses_bidirectional_open_collector_lane() -> None:
+    wrapper = read(APPLE_BUS_WRAPPER_SV)
+    apple_top = read(APPLE_TOP_SV)
+    top = read(APPLETINI_YARZ_TOP_SV)
+
+    require("inout  wire                   apple_irq_pin" in wrapper and
+            "assign apple_irq_pin = ab_write.assert_irq ? 1'b0 : 1'bz;" in wrapper and
+            "apple_irq_n_out" not in wrapper,
+            "bus wrapper must assert IRQ low/high-Z through the physical bidirectional lane")
+    require("inout apple_irq_pin" in apple_top and
+            "apple_irq_n_out" not in apple_top,
+            "apple_top must preserve the physical IRQ lane as bidirectional")
+    require("inout  logic        a2fpga_irq_n" in top and
+            "assign a2ctrl_irq_n = 1'b1;" in top and
+            "apple_irq_n_out" not in top,
+            "top-level must use A2FPGA.IRQ because the planned A2CTRL.IRQ pin is DNC")
+
+
 TESTS = [
     test_phasor_mode_switch_and_reset_contract,
     test_four_ay_chips_and_phasor_chip_selects,
     test_ssi263_applewin_behavior_contract,
     test_ssi263_rate_and_inflection_affect_hdl_model,
-    test_via_ifr_read_sees_pending_timer_underflow,
+    test_via_ifr_read_uses_committed_timer_flags,
     test_phasor_timer_low_reads_can_add_one_tick,
+    test_via_timer_reads_preserve_pre_tick_value,
     test_via_apple_reset_preserves_timer_latches,
     test_phasor_irq_is_suppressed_during_apple_reset,
     test_phasor_pan_registers_and_menu_schema,
     test_phasor_is_apple_bus_driven,
+    test_virtual_irq_uses_bidirectional_open_collector_lane,
 ]
 
 

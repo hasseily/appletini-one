@@ -19,6 +19,7 @@ module boot_menu_card (
     output globals::AppleBus_write  ab_write,
     output logic                    smartport_active,
     output logic                    disk2_active,
+    output logic                    boot_target_disk2,
     output logic [2:0]              boot_slot,
     output logic                    boot_slot_valid,
     output logic                    apple_vblank_start_pulse,
@@ -114,6 +115,10 @@ module boot_menu_card (
     logic ps_close_requested_q;
     logic timeout_expired_q;
     logic key_overflow_q;
+    /* "Always show menu" boot mode: the PS writes the sentinel timeout
+     * 0xFFFFFFFE, which never expires, and the ROM reads this status bit to
+     * open the config menu straight away instead of waiting for 'A'. */
+    wire  boot_open_menu = (timeout_ticks_q == 32'hFFFF_FFFE);
     logic [7:0] last_event_q;
     /* Machine identification reported by the boot ROM: command byte
      * $2i latches i here. 0 = not yet reported. Ids: 1=II/II+, 2=IIe,
@@ -186,6 +191,7 @@ module boot_menu_card (
     assign handoff_disk2 =
         disk2_enabled && (handoff_mode_q == SLOT7_HANDOFF_DISK2);
     assign handoff_smartport = !handoff_disk2;
+    assign boot_target_disk2 = handoff_disk2;
     assign boot_target_slot = handoff_disk2 ? 3'h6 : 3'h7;
     assign boot_menu_runtime_active =
         (slot7_mode_q == SLOT_MODE_BOOTMENU) &&
@@ -307,7 +313,8 @@ module boot_menu_card (
         aux_probe_pulse = apple_cmd_write_hit && (ab_read.data == 8'h26);
 
         apple_status_byte = {
-            2'd0,
+            1'b0,
+            boot_open_menu,
             ps_close_requested_q,
             handoff_disk2,
             handoff_smartport,

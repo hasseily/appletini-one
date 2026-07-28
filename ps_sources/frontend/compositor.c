@@ -18,8 +18,9 @@
  * protocol keeps that slot stable until the compositor finishes reading.
  *
  * UI drawing is delegated to a callback (compositor_ui_draw_fn) that
- * main.c registers via compositor_init(). The callback paints the
- * UI overlay; the compositor blits the Apple subwindow on top.
+ * main.c registers via compositor_init(). Its base pass paints the bezel,
+ * then the compositor blits the Apple subwindow, and its overlay pass paints
+ * status UI above the Apple border.
  */
 
 #include <stdint.h>
@@ -781,6 +782,8 @@ int compositor_tick(void)
 
     XTime total_start = 0U;
     XTime ui_start = 0U;
+    XTime ui_base_end = 0U;
+    XTime ui_overlay_start = 0U;
     XTime ui_end = 0U;
     XTime apple_start = 0U;
     XTime apple_end = 0U;
@@ -797,19 +800,21 @@ int compositor_tick(void)
     uint16_t *fb =
         (uint16_t *)(uintptr_t)comp_out_slot_addr[s_writer_idx];
 
-    /* UI overlay first (clears or fills the bezel). The callback
-     * returns non-zero to ask us to suppress the Apple subwindow
-     * blit -- used when the boot menu is up and owns the whole
-     * screen, including what would otherwise be the apple subwin. */
+    /* Paint the static background first. The base callback returns non-zero
+     * when the boot/config menu owns the whole screen and the Apple subwindow
+     * must be suppressed. */
     int suppress_apple = 0;
     int apple_drawn = 0;
     XTime_GetTime(&ui_start);
     if (s_ui_draw != NULL) {
-        suppress_apple = s_ui_draw(fb, s_ui_state, s_ui_config);
+        suppress_apple = s_ui_draw(fb,
+                                   s_ui_state,
+                                   s_ui_config,
+                                   COMPOSITOR_UI_PHASE_BASE);
     } else {
         fb16_clear(fb, FB16_COLOR_BLACK);
     }
-    XTime_GetTime(&ui_end);
+    XTime_GetTime(&ui_base_end);
     if (suppress_apple) {
         s_composited_apple_seq = apple_seq;
     } else {
@@ -818,6 +823,17 @@ int compositor_tick(void)
         draw_supersprite_overlay(fb);
         XTime_GetTime(&apple_end);
     }
+
+    /* Foreground UI is always last so status text, the disk-access view, and
+     * menus cannot be covered by the Apple border or its outer flood. */
+    XTime_GetTime(&ui_overlay_start);
+    if (s_ui_draw != NULL) {
+        (void)s_ui_draw(fb,
+                        s_ui_state,
+                        s_ui_config,
+                        COMPOSITOR_UI_PHASE_OVERLAY);
+    }
+    XTime_GetTime(&ui_end);
     if (apple_drawn) {
         g_compositor_apple_frames_drawn++;
         s_composited_apple_seq = apple_seq;
@@ -841,7 +857,8 @@ int compositor_tick(void)
     g_compositor_frames_published++;
     XTime_GetTime(&total_end);
 
-    g_compositor_last_ui_us = ticks_to_us(ui_end - ui_start);
+    g_compositor_last_ui_us = ticks_to_us(
+        (ui_base_end - ui_start) + (ui_end - ui_overlay_start));
     g_compositor_last_apple_us = ticks_to_us(apple_end - apple_start);
     g_compositor_last_sync_us = ticks_to_us(sync_end - sync_start);
     g_compositor_last_total_us = ticks_to_us(total_end - total_start);

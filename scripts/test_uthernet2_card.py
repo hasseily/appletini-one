@@ -348,11 +348,14 @@ def main():
     require("ethernet_read_config" in config_h and
             "ethernet_write_config" in config_h and
             "ethernet_test" in config_h and
-            "ethernet_dhcp_acquire" in config_h,
+            "ethernet_dhcp_start" in config_h and
+            "ethernet_dhcp_poll" in config_h and
+            "ethernet_dhcp_cancel" in config_h,
             "Config menu platform must expose Ethernet read/write/test/DHCP hooks")
     require("CONFIG_ETHERNET_ITEM_COUNT" in config and
-            "return CONFIG_ETHERNET_ITEM_COUNT;" in config,
-            "Ethernet tab must expose the full network configuration control surface")
+            "menu->ethernet_slot1_enabled != 0U" in config and
+            "CONFIG_ETHERNET_ITEM_COUNT : 1U;" in config,
+            "Ethernet tab must expose only its enable row while disabled")
     require("ethernet.config.enabled" in config and
             "ethernet.address.mode" in config and
             "ethernet.mac" in config and
@@ -374,35 +377,51 @@ def main():
             "config_menu_apply_ethernet_config" not in config[toggle_start:toggle_end],
             "Toggling saved config must not touch the card")
     require("menu->ethernet_address_mode == CONFIG_MENU_ETHERNET_ADDRESS_DHCP" in config and
-            "return config_menu_acquire_ethernet_dhcp(menu, report);" in config and
+            "return config_menu_start_ethernet_dhcp(menu, report);" in config and
             "menu->ethernet_config_enabled = 1U;" in config and
-            "report != 0U && menu->session_only == 0U" in config,
-            "Saved DHCP mode must negotiate a fresh lease during boot apply")
-    dhcp_menu_start = config.find("static uint8_t config_menu_acquire_ethernet_dhcp")
+            "menu->ethernet_dhcp_report != 0U && menu->session_only == 0U" in config,
+            "Saved DHCP mode must finish and preserve a fresh lease asynchronously")
+    dhcp_menu_start = config.find("static uint8_t config_menu_start_ethernet_dhcp")
     dhcp_menu_end = config.find("static uint8_t config_menu_apply_ethernet_config",
                                 dhcp_menu_start)
     dhcp_menu = config[dhcp_menu_start:dhcp_menu_end]
     require(dhcp_menu_start >= 0 and dhcp_menu_end > dhcp_menu_start and
             dhcp_menu.find("ethernet_write_config(menu->platform.ctx") <
-            dhcp_menu.find("ethernet_dhcp_acquire(menu->platform.ctx"),
+            dhcp_menu.find("ethernet_dhcp_start(menu->platform.ctx"),
             "DHCP must seed the card with saved config before preserving its fallback")
+    apply_start = config.find("static uint8_t config_menu_apply_ethernet_config")
+    apply_end = config.find("void config_menu_start_boot_dhcp", apply_start)
+    apply_body = config[apply_start:apply_end]
+    require(apply_start >= 0 and apply_end > apply_start and
+            "menu->ethernet_slot1_enabled == 0U" in apply_body and
+            "menu->ethernet_config_enabled == 0U" in apply_body,
+            "Automatic Ethernet configuration must be skipped when slot 1 is disabled")
     require("uint8_t parsed[UTHERNET2_IPV4_LEN];" in config and
             "memcpy(ip, parsed, sizeof(parsed));" in config and
             "uint8_t parsed[UTHERNET2_MAC_LEN];" in config and
             "memcpy(mac, parsed, sizeof(parsed));" in config,
             "Invalid Ethernet fields must not partially modify saved values")
+    bind_body = config[config.find("void config_menu_bind_platform"):
+                       config.find("uint8_t config_menu_is_active")]
     require("config_menu_retry_settings_if_needed" in config and
             "config_menu_load_profile_settings" in config and
-            "config_menu_apply_ethernet_config(menu, 0U)" in
-            config[config.find("void config_menu_bind_platform"):
-                   config.find("uint8_t config_menu_is_active")] and
+            "menu->ethernet_address_mode == CONFIG_MENU_ETHERNET_ADDRESS_STATIC" in
+            bind_body and
+            "config_menu_apply_ethernet_config(menu, 0U)" in bind_body and
             "config_menu_apply_ethernet_config(menu, 0U)" in
             config[config.find("void config_menu_retry_settings_if_needed"):
                    config.find("static uint8_t config_menu_days_in_month")] and
             "config_menu_apply_ethernet_config(menu, 0U)" not in
             config[config.find("uint8_t config_menu_load_profile_settings"):
                    config.find("uint8_t config_menu_save_profile_settings")],
-            "Saved Ethernet config must apply after either initial or deferred boot settings load")
+            "Static config must apply at bind while deferred settings can queue DHCP")
+    release_pos = frontend.find("card_control_mark_cpu0_ready();")
+    start_pos = frontend.find("config_menu_start_boot_dhcp(&config_menu);")
+    loop_pos = frontend.find("while (1)", start_pos)
+    poll_pos = frontend.find("config_menu_poll_ethernet(&config_menu);", loop_pos)
+    require(release_pos >= 0 and start_pos > release_pos and
+            loop_pos > start_pos and poll_pos > loop_pos,
+            "Boot DHCP must start after Apple release and advance from the main loop")
     require("static uint8_t last_ready = 0xFFU;" in frontend and
             "if (ready == last_ready)" in frontend and
             "last_ready == 0xFFU ||" not in frontend,
@@ -424,6 +443,27 @@ def main():
             "Get IP from network (DHCP)" in config_tabs and
             "Test link" in config_tabs,
             "Ethernet tab must draw saved-config, DHCP, and test controls")
+    draw_slot = config_tabs.find('"Enable in Slot 1"')
+    draw_guard = config_tabs.find(
+        "if (menu->ethernet_slot1_enabled == 0U)", draw_slot)
+    draw_config = config_tabs.find('"Configure network at boot"', draw_slot)
+    require(draw_slot >= 0 and draw_guard > draw_slot and
+            draw_config > draw_guard and
+            "return;" in config_tabs[draw_guard:draw_config],
+            "Disabled Ethernet must hide every configuration and action row")
+    require('config_menu_set_status(menu, 1U, "ENABLE UTHERNET II FIRST")'
+            in config and
+            "menu->ethernet_slot1_enabled == 0U &&\n"
+            "            menu->item_focus != CONFIG_ETHERNET_ITEM_SLOT" in config,
+            "Disabled Ethernet must reject stale-focus DHCP/action activation")
+    toggle_slot = config[
+        config.find("static void config_menu_ethernet_toggle_slot"):
+        config.find("static void config_menu_ethernet_toggle_saved_config")
+    ]
+    require("ethernet_dhcp_cancel(menu->platform.ctx)" in toggle_slot and
+            "menu->ethernet_dhcp_pending = 0U;" in toggle_slot and
+            "menu->item_focus = CONFIG_ETHERNET_ITEM_SLOT;" in toggle_slot,
+            "Disabling Ethernet must cancel an in-progress DHCP request")
     require(re.search(r"#define\s+W5100_REG_GAR\s+0x0001U", eth_control) and
             re.search(r"#define\s+W5100_REG_SUBR\s+0x0005U", eth_control) and
             re.search(r"#define\s+W5100_REG_SHAR\s+0x0009U", eth_control) and
@@ -448,21 +488,28 @@ def main():
             "DHCP_ACK" in eth_control and
             "W5100_S0_MR_MACRAW_MF" in eth_control and
             "w5100_raw_open" in eth_control and
-            "uthernet2_dhcp_acquire" in eth_control,
+            "uthernet2_dhcp_start" in eth_control and
+            "uthernet2_dhcp_poll" in eth_control,
             "Uthernet II control must implement DHCP over MACRAW")
-    wait_link = eth_control.find("static int w5100_wait_link")
-    dhcp_start = eth_control.find("int uthernet2_dhcp_acquire")
-    require(wait_link >= 0 and dhcp_start > wait_link and
-            "if (w5100_wait_link() != 0)" in
-            eth_control[dhcp_start:] and
-            'dhcp_fail(&previous, detail, detail_len, "DHCP LINK DOWN")' in
-            eth_control[dhcp_start:],
-            "Boot DHCP must wait for PHY link before sending")
-    require("static int w5100_reset" in eth_control and
-            "if (w5100_reset() != 0)" in eth_control[dhcp_start:] and
-            eth_control[dhcp_start:].find("w5100_reset()") <
-            eth_control[dhcp_start:].find("w5100_raw_open(mac)"),
-            "DHCP must reset the W5100S before switching to MACRAW")
+    dhcp_start = eth_control.find("int uthernet2_dhcp_start")
+    dhcp_poll = eth_control.find("int uthernet2_dhcp_poll")
+    dhcp_cancel = eth_control.find("void uthernet2_dhcp_cancel")
+    async_body = eth_control[dhcp_start:dhcp_cancel]
+    require(dhcp_start >= 0 and dhcp_poll > dhcp_start and
+            "DHCP_ASYNC_LINK_WAIT" in async_body and
+            "uthernet2_read_reg(W5100S_REG_PHYSR, &physr)" in async_body and
+            'dhcp_async_fail(detail, detail_len, "DHCP LINK DOWN")' in async_body,
+            "Background DHCP must poll PHY link with a deadline before sending")
+    start_body = eth_control[dhcp_start:dhcp_poll]
+    require("uthernet2_write_reg(W5100_REG_MR, 0x80U)" in start_body and
+            "DHCP_ASYNC_RESET_WAIT" in start_body and
+            "w5100_raw_open(g_dhcp.mac)" in eth_control[dhcp_poll:dhcp_cancel],
+            "DHCP must reset the W5100S and wait before switching to MACRAW")
+    require("dhcp_time_reached" in async_body and
+            "DHCP_LINK_WAIT_USEC" in async_body and
+            "DHCP_REPLY_WAIT_USEC" in eth_control and
+            "usleep(DHCP_POLL_USEC)" not in async_body,
+            "Background DHCP waits must be timestamp-driven rather than blocking sleeps")
     require("dhcp_build_frame" in eth_control and
             "dhcp_frame_payload" in eth_control and
             "put_be16(&frame[12], 0x0800U)" in eth_control and
@@ -471,11 +518,11 @@ def main():
     require("w5100_udp_open" not in eth_control and
             "W5100_SN_MR_UDP" not in eth_control,
             "DHCP must not use the W5100 hardware UDP engine")
-    dhcp_body = eth_control[dhcp_start:]
-    require("W5100_REG_GAR" not in dhcp_body and
-            "W5100_REG_SUBR" not in dhcp_body and
-            "W5100_REG_SIPR" not in dhcp_body.split(
-                "uthernet2_write_network_config(lease)", 1)[0],
+    fail_start = eth_control.find("static int dhcp_async_fail")
+    fail_end = eth_control.find("static int dhcp_async_send", fail_start)
+    require(fail_start >= 0 and fail_end > fail_start and
+            "w5100_write_network_config(&g_dhcp.previous)" in
+            eth_control[fail_start:fail_end],
             "A failed DHCP request must not erase the active card configuration")
     require("W5100_SOCKET_MEM_4_2_1_1 0x06U" in eth_control and
             "state != W5100_S0_SR_MACRAW" in eth_control,
@@ -489,7 +536,7 @@ def main():
             "packet[pos++] = 6U;" in eth_control,
             "DHCP discover options must match Contiki without extra padding")
     require("uthernet2_read_network_config(&previous)" in eth_control[dhcp_start:] and
-            "w5100_write_network_config(previous)" in eth_control and
+            "w5100_write_network_config(&g_dhcp.previous)" in eth_control and
             "DHCP OFFER NO RX" in eth_control and
             "DHCP OFFER INVALID RX" in eth_control,
             "DHCP failure must restore config and distinguish no RX from invalid RX")

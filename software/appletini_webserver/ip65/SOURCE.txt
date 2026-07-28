@@ -9,3 +9,7 @@ DNS, HTTP client/server, and the Apple II Uthernet II driver. That driver wraps
 the Contiki W5100 MACRAW driver. The complete corresponding source is available
 at the repository and commit above. See LICENSE.txt for the MPL 1.1 terms.
 The Contiki-derived W5100 object retains its BSD notice in LICENSE-W5100.txt.
+
+The archive still contains upstream a2_timer.o, but the Appletini programs link
+the local appletini_timer.s first. That source-compatible override replaces the
+CPU-cycle-based timer with a VBL wall clock under vTW and on the Apple //e.

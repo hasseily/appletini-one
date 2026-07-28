@@ -16,6 +16,15 @@ vivado -mode batch -source scripts/build_and_export_xsa.tcl
 vitis -s .\scripts\create_vitis_workspace.py
 ```
 
+Set `APPLETINI_FULL_BUILD=1` when a large netlist change makes the known-good
+incremental checkpoint unsuitable:
+
+```powershell
+$env:APPLETINI_FULL_BUILD = "1"
+vivado -mode batch -source scripts/build_and_export_xsa.tcl
+Remove-Item Env:APPLETINI_FULL_BUILD
+```
+
 ## Images and Programming
 
 - `make_boot_bin.bat`: create `BOOT.BIN` from the FSBL and golden updater.

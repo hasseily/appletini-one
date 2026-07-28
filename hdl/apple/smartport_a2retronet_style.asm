@@ -466,9 +466,12 @@ PDWR: ; WRITE BLOCK
 ;;;;;;;;;;;;;;;;;;;;;;
 STATUS: ; EXECUTE AND GET STATUS
         JSR GETSTS
-        BNE RETURN      ; ERROR?
+        BEQ STATOK      ; SUCCESS -> READ STATUS LIST
+        JMP RETURN      ; ERROR. Long jump: RETURN is >127 bytes ahead, out
+                        ; of BNE range (this branch silently wrapped into
+                        ; slot-ROM padding and hung A2Desktop's device scan).
 
-        ; READ STATUS LIST SIZE
+STATOK: ; READ STATUS LIST SIZE
         LDA DATA
         STA DPOP
         STA SIZEL

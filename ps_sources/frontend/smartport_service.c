@@ -1113,14 +1113,76 @@ const char *smartport_service_get_image_path(uint8_t device)
     return g_devices[index].image_path;
 }
 
+void smartport_service_apple_reset(void)
+{
+    uint32_t cpsr;
+
+    __asm__ volatile ("mrs %0, cpsr" : "=r"(cpsr));
+    __asm__ volatile ("cpsid i");
+    g_cmd_pending_count = 0U;
+    if ((cpsr & 0x80) == 0) {
+        __asm__ volatile ("cpsie i");
+    }
+    /* The PL cleared the transport at the RES# edge; this sweep also
+     * removes a response that a command mid-execution on this CPU pushed
+     * after the release. Deliberately no SET_READY: the next command
+     * starts from a clean, not-ready transport. */
+    sp_ctl(SP_CTL_CLR_IN | SP_CTL_CLR_OUT | SP_CTL_ACK_EXEC);
+}
+
+void smartport_service_uart_status(uint32_t uart_base)
+{
+    char line[96];
+    const uint32_t st = REG_READ(SP_R_STATUS);
+    const uint32_t ctl = REG_READ(SP_R_CONTROL);
+
+    snprintf(line, sizeof(line),
+             "sd: hw ready=%lu exec=%lu in=%lu out=%lu drypop=%lu lastctl=$%02lX\r\n",
+             (unsigned long)((st >> 29) & 1U),
+             (unsigned long)((st >> 28) & 1U),
+             (unsigned long)(st & 0x7FFU),
+             (unsigned long)((st >> 16) & 0x7FFU),
+             (unsigned long)((ctl >> 8) & 0xFFFFU),
+             (unsigned long)(ctl & 0xFFU));
+    uart_puts(uart_base, line);
+    snprintf(line, sizeof(line),
+             "sd: svc irq=%lu pending=%lu status=%lu read=%lu write=%lu\r\n",
+             (unsigned long)g_irq_count,
+             (unsigned long)g_cmd_pending_count,
+             (unsigned long)g_activity_status_count,
+             (unsigned long)g_activity_read_count,
+             (unsigned long)g_activity_write_count);
+    uart_puts(uart_base, line);
+    snprintf(line, sizeof(line),
+             "sd: init=%u fs=%u slot=%u ramdisk=%u\r\n",
+             (unsigned)g_devices_initialized,
+             (unsigned)g_fs_mounted,
+             (unsigned)g_smartport_slot,
+             (unsigned)g_ramdisk_state);
+    uart_puts(uart_base, line);
+}
+
 void smartport_service_poll(void)
 {
     sp_ramdisk_refresh(UART0_BASE);
     /* Run one queued command per poll. The PL stalls the Apple bus until status
      * is posted, so the count is normally 0 or 1. Limiting each poll prevents
-     * an unexpected IRQ burst from starving other main-loop services. */
-    if (g_cmd_pending_count == 0U &&
-        (sp_hw_status() & SP_ST_EXEC_PENDING) == 0U) {
+     * an unexpected IRQ burst from starving other main-loop services.
+     *
+     * Hardware EXEC_PENDING is the sole execution authority: a nonzero
+     * pending count without it is stale (an Apple RES# aborted the
+     * transaction). Executing anyway would parse an empty/partial frame
+     * and push an orphan response, offsetting every later reply. */
+    if ((sp_hw_status() & SP_ST_EXEC_PENDING) == 0U) {
+        if (g_cmd_pending_count != 0U) {
+            uint32_t stale_cpsr;
+            __asm__ volatile ("mrs %0, cpsr" : "=r"(stale_cpsr));
+            __asm__ volatile ("cpsid i");
+            g_cmd_pending_count = 0U;
+            if ((stale_cpsr & 0x80) == 0) {
+                __asm__ volatile ("cpsie i");
+            }
+        }
         return;
     }
 

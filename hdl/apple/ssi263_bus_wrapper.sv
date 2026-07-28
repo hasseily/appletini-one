@@ -32,7 +32,13 @@ module ssi263_bus_wrapper #(
     output logic [6:0]         via_ifr_clr,
 
     output logic signed [15:0] audio,
-    output logic               direct_irq
+    output logic               direct_irq,
+
+    // Debug taps (freeze diagnosis): does the phoneme complete, and are
+    // completion interrupts enabled? Combined with direct_irq they trace the
+    // whole speech-completion IRQ chain.
+    output logic               dbg_backend_done,
+    output logic               dbg_enable_ints
 );
 
     localparam logic [2:0] PH_MOCKINGBOARD = 3'd0;
@@ -82,6 +88,8 @@ module ssi263_bus_wrapper #(
 
     assign ssi_d7 = d7_q;
     assign direct_irq = direct_irq_q;
+    assign dbg_backend_done = backend_done;
+    assign dbg_enable_ints  = current_enable_ints_q;
     assign audio = formant_audio;
     assign formant_backend_start = backend_start_q;
     assign formant_backend_reset = backend_warm_reset;

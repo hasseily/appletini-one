@@ -6,6 +6,7 @@
 #include "card_control_regs.h"
 #include "../lib/common.h"
 #include "sleep.h"
+#include "xiltimer.h"
 
 #define W5100_REG_MR        0x0000U
 #define W5100_REG_GAR       0x0001U
@@ -59,8 +60,9 @@
 #define UTHERNET2_CMD_TIMEOUT_POLLS 10000U
 #define UTHERNET2_READY_POLL_USEC   20U
 #define DHCP_POLL_USEC              10000U
-#define LINK_WAIT_POLLS             500U
-#define DHCP_WAIT_POLLS             200U
+#define DHCP_RESET_WAIT_USEC        10000U
+#define DHCP_LINK_WAIT_USEC         5000000U
+#define DHCP_REPLY_WAIT_USEC        2000000U
 
 typedef struct {
     uint8_t message_type;
@@ -72,6 +74,31 @@ typedef struct {
     uint8_t has_subnet;
     uint8_t has_gateway;
 } dhcp_parse_t;
+
+typedef enum {
+    DHCP_ASYNC_IDLE = 0,
+    DHCP_ASYNC_RESET_WAIT,
+    DHCP_ASYNC_LINK_WAIT,
+    DHCP_ASYNC_OFFER_WAIT,
+    DHCP_ASYNC_ACK_WAIT
+} dhcp_async_state_t;
+
+typedef struct {
+    dhcp_async_state_t state;
+    uint8_t attempt;
+    uint8_t received;
+    uint32_t xid;
+    XTime deadline;
+    XTime next_poll;
+    uint8_t mac[UTHERNET2_MAC_LEN];
+    uthernet2_network_config_t previous;
+    dhcp_parse_t offer;
+    uint8_t packet[DHCP_PACKET_MAX];
+    uint8_t frame[DHCP_FRAME_MAX];
+} dhcp_async_t;
+
+static dhcp_async_t g_dhcp;
+static uint32_t g_dhcp_xid_seed = 0x41545001UL;
 
 static void uthernet2_io_barrier(void)
 {
@@ -273,31 +300,6 @@ int uthernet2_test(uthernet2_test_result_t *result)
         return -1;
     }
     result->link_up = (result->physr & W5100S_PHYSR_LINK) != 0U;
-    return 0;
-}
-
-static int w5100_wait_link(void)
-{
-    uint8_t physr;
-
-    for (uint16_t poll = 0U; poll < LINK_WAIT_POLLS; ++poll) {
-        if (uthernet2_read_reg(W5100S_REG_PHYSR, &physr) != 0) {
-            return -1;
-        }
-        if ((physr & W5100S_PHYSR_LINK) != 0U) {
-            return 0;
-        }
-        usleep(DHCP_POLL_USEC);
-    }
-    return -1;
-}
-
-static int w5100_reset(void)
-{
-    if (uthernet2_write_reg(W5100_REG_MR, 0x80U) != 0) {
-        return -1;
-    }
-    usleep(10000U);
     return 0;
 }
 
@@ -681,48 +683,315 @@ static uint8_t dhcp_frame_payload(const uint8_t *frame,
     return 1U;
 }
 
-static int dhcp_wait(uint8_t *frame,
-                     uint32_t xid,
-                     const uint8_t mac[UTHERNET2_MAC_LEN],
-                     uint8_t wanted_type,
-                     dhcp_parse_t *reply)
+static XTime dhcp_now(void)
 {
-    uint8_t received = 0U;
+    XTime now = 0U;
 
-    for (uint16_t poll = 0U; poll < DHCP_WAIT_POLLS; ++poll) {
-        const uint8_t *payload;
-        uint16_t frame_len;
-        uint16_t payload_len;
-        const int receive = w5100_raw_receive(frame,
-                                               DHCP_FRAME_MAX,
-                                               &frame_len);
-
-        if (receive < 0) {
-            return -1;
-        }
-        if (receive == 0) {
-            received = 1U;
-            if (dhcp_frame_payload(frame, frame_len, &payload, &payload_len) != 0U &&
-                dhcp_parse_packet(payload, payload_len, xid, mac, reply) != 0U &&
-                (reply->message_type == wanted_type ||
-                 reply->message_type == DHCP_NAK)) {
-                return 0;
-            }
-        }
-        usleep(DHCP_POLL_USEC);
-    }
-    return received != 0U ? 2 : 1;
+    XTime_GetTime(&now);
+    return now;
 }
 
-static int dhcp_fail(const uthernet2_network_config_t *previous,
-                     char *detail,
-                     size_t detail_len,
-                     const char *message)
+static XTime dhcp_ticks_from_usec(uint32_t usec)
 {
-    (void)w5100_close_sockets();
-    (void)w5100_write_network_config(previous);
+    return (XTime)(((uint64_t)usec * (uint64_t)COUNTS_PER_SECOND) / 1000000ULL);
+}
+
+static uint8_t dhcp_time_reached(XTime now, XTime deadline)
+{
+    return ((int64_t)(now - deadline) >= 0) ? 1U : 0U;
+}
+
+static int dhcp_async_fail(char *detail,
+                           size_t detail_len,
+                           const char *message)
+{
+    if (g_dhcp.state != DHCP_ASYNC_IDLE) {
+        (void)w5100_close_sockets();
+    }
+    (void)w5100_write_network_config(&g_dhcp.previous);
+    g_dhcp.state = DHCP_ASYNC_IDLE;
     set_detail(detail, detail_len, message);
     return -1;
+}
+
+static int dhcp_async_send(uint8_t message_type,
+                           XTime now,
+                           char *detail,
+                           size_t detail_len)
+{
+    const uint8_t *requested_ip = NULL;
+    const uint8_t *server_id = NULL;
+    uint16_t packet_len;
+    uint16_t frame_len;
+
+    if (message_type == DHCP_REQUEST) {
+        requested_ip = g_dhcp.offer.ip;
+        server_id = g_dhcp.offer.server_id;
+    }
+    packet_len = dhcp_build_packet(g_dhcp.packet,
+                                   message_type,
+                                   g_dhcp.xid,
+                                   g_dhcp.mac,
+                                   requested_ip,
+                                   server_id);
+    frame_len = dhcp_build_frame(g_dhcp.frame,
+                                 g_dhcp.mac,
+                                 g_dhcp.packet,
+                                 packet_len,
+                                 g_dhcp.xid);
+    if (w5100_raw_send(g_dhcp.frame, frame_len) != 0) {
+        return dhcp_async_fail(detail,
+                               detail_len,
+                               message_type == DHCP_DISCOVER ?
+                                   "DHCP DISCOVER FAILED" :
+                                   "DHCP REQUEST FAILED");
+    }
+    g_dhcp.attempt++;
+    g_dhcp.received = 0U;
+    g_dhcp.deadline = now + dhcp_ticks_from_usec(DHCP_REPLY_WAIT_USEC);
+    g_dhcp.next_poll = now;
+    return 0;
+}
+
+static int dhcp_async_receive(uint8_t wanted_type, dhcp_parse_t *reply)
+{
+    const uint8_t *payload;
+    uint16_t frame_len;
+    uint16_t payload_len;
+    const int receive = w5100_raw_receive(g_dhcp.frame,
+                                           DHCP_FRAME_MAX,
+                                           &frame_len);
+
+    if (receive != 0) {
+        return receive;
+    }
+    g_dhcp.received = 1U;
+    if (dhcp_frame_payload(g_dhcp.frame,
+                           frame_len,
+                           &payload,
+                           &payload_len) == 0U ||
+        dhcp_parse_packet(payload,
+                          payload_len,
+                          g_dhcp.xid,
+                          g_dhcp.mac,
+                          reply) == 0U) {
+        return 2;
+    }
+    return (reply->message_type == wanted_type ||
+            reply->message_type == DHCP_NAK) ? 0 : 2;
+}
+
+static int dhcp_async_complete(const dhcp_parse_t *ack,
+                               uthernet2_network_config_t *lease,
+                               char *detail,
+                               size_t detail_len)
+{
+    uthernet2_network_config_t acquired;
+
+    memcpy(acquired.mac, g_dhcp.mac, sizeof(acquired.mac));
+    memcpy(acquired.ip, ack->ip, sizeof(acquired.ip));
+    if (ack->has_subnet != 0U) {
+        memcpy(acquired.subnet, ack->subnet, sizeof(acquired.subnet));
+    } else if (g_dhcp.offer.has_subnet != 0U) {
+        memcpy(acquired.subnet,
+               g_dhcp.offer.subnet,
+               sizeof(acquired.subnet));
+    } else {
+        memset(acquired.subnet, 0, sizeof(acquired.subnet));
+    }
+    if (ack->has_gateway != 0U) {
+        memcpy(acquired.gateway, ack->gateway, sizeof(acquired.gateway));
+    } else if (g_dhcp.offer.has_gateway != 0U) {
+        memcpy(acquired.gateway,
+               g_dhcp.offer.gateway,
+               sizeof(acquired.gateway));
+    } else {
+        memset(acquired.gateway, 0, sizeof(acquired.gateway));
+    }
+
+    (void)w5100_close_sockets();
+    if (uthernet2_write_network_config(&acquired) != 0) {
+        return dhcp_async_fail(detail,
+                               detail_len,
+                               "DHCP LEASE WRITE FAILED");
+    }
+    g_dhcp.state = DHCP_ASYNC_IDLE;
+    if (lease != NULL) {
+        *lease = acquired;
+    }
+    set_detail(detail, detail_len, "DHCP LEASE ACQUIRED");
+    return 1;
+}
+
+int uthernet2_dhcp_start(const uint8_t mac[UTHERNET2_MAC_LEN],
+                         char *detail,
+                         size_t detail_len)
+{
+    uthernet2_network_config_t previous;
+    XTime now;
+
+    if (uthernet2_mac_is_valid(mac) == 0U) {
+        set_detail(detail, detail_len, "DHCP INVALID SOURCE MAC");
+        return -1;
+    }
+    if (g_dhcp.state != DHCP_ASYNC_IDLE) {
+        uthernet2_dhcp_cancel();
+    }
+    if (uthernet2_read_network_config(&previous) != 0) {
+        set_detail(detail, detail_len, "DHCP CONFIG SAVE FAILED");
+        return -1;
+    }
+
+    memset(&g_dhcp, 0, sizeof(g_dhcp));
+    g_dhcp.previous = previous;
+    memcpy(g_dhcp.mac, mac, sizeof(g_dhcp.mac));
+    if (uthernet2_write_reg(W5100_REG_MR, 0x80U) != 0) {
+        return dhcp_async_fail(detail, detail_len, "DHCP RESET FAILED");
+    }
+
+    now = dhcp_now();
+    g_dhcp.state = DHCP_ASYNC_RESET_WAIT;
+    g_dhcp.deadline = now + dhcp_ticks_from_usec(DHCP_RESET_WAIT_USEC);
+    set_detail(detail, detail_len, "DHCP REQUEST IN PROGRESS");
+    return 0;
+}
+
+int uthernet2_dhcp_poll(uthernet2_network_config_t *lease,
+                        char *detail,
+                        size_t detail_len)
+{
+    XTime now;
+
+    if (g_dhcp.state == DHCP_ASYNC_IDLE) {
+        set_detail(detail, detail_len, "DHCP NOT ACTIVE");
+        return -1;
+    }
+    now = dhcp_now();
+
+    if (g_dhcp.state == DHCP_ASYNC_RESET_WAIT) {
+        if (dhcp_time_reached(now, g_dhcp.deadline) == 0U) {
+            return 0;
+        }
+        g_dhcp.state = DHCP_ASYNC_LINK_WAIT;
+        g_dhcp.next_poll = now;
+        g_dhcp.deadline = now + dhcp_ticks_from_usec(DHCP_LINK_WAIT_USEC);
+    }
+
+    if (g_dhcp.state == DHCP_ASYNC_LINK_WAIT) {
+        uint8_t physr;
+
+        if (dhcp_time_reached(now, g_dhcp.next_poll) == 0U) {
+            return 0;
+        }
+        g_dhcp.next_poll = now + dhcp_ticks_from_usec(DHCP_POLL_USEC);
+        if (uthernet2_read_reg(W5100S_REG_PHYSR, &physr) != 0) {
+            return dhcp_async_fail(detail, detail_len, "DHCP LINK READ FAILED");
+        }
+        if ((physr & W5100S_PHYSR_LINK) == 0U) {
+            return dhcp_time_reached(now, g_dhcp.deadline) != 0U ?
+                dhcp_async_fail(detail, detail_len, "DHCP LINK DOWN") : 0;
+        }
+        if (w5100_raw_open(g_dhcp.mac) != 0) {
+            return dhcp_async_fail(detail,
+                                   detail_len,
+                                   "DHCP MACRAW OPEN FAILED");
+        }
+        g_dhcp_xid_seed += 0x01010101UL;
+        g_dhcp.xid = g_dhcp_xid_seed;
+        memset(&g_dhcp.offer, 0, sizeof(g_dhcp.offer));
+        g_dhcp.attempt = 0U;
+        g_dhcp.state = DHCP_ASYNC_OFFER_WAIT;
+        return dhcp_async_send(DHCP_DISCOVER, now, detail, detail_len);
+    }
+
+    if (dhcp_time_reached(now, g_dhcp.next_poll) == 0U) {
+        return 0;
+    }
+    g_dhcp.next_poll = now + dhcp_ticks_from_usec(DHCP_POLL_USEC);
+
+    if (g_dhcp.state == DHCP_ASYNC_OFFER_WAIT) {
+        dhcp_parse_t offer;
+        const int receive = dhcp_async_receive(DHCP_OFFER, &offer);
+
+        if (receive < 0) {
+            return dhcp_async_fail(detail,
+                                   detail_len,
+                                   "DHCP OFFER RECEIVE FAILED");
+        }
+        if (receive == 0) {
+            if (offer.message_type == DHCP_NAK) {
+                return dhcp_async_fail(detail, detail_len, "DHCP NAK");
+            }
+            if (offer.message_type == DHCP_OFFER &&
+                offer.has_server_id != 0U) {
+                g_dhcp.offer = offer;
+                g_dhcp.attempt = 0U;
+                g_dhcp.state = DHCP_ASYNC_ACK_WAIT;
+                return dhcp_async_send(DHCP_REQUEST,
+                                       now,
+                                       detail,
+                                       detail_len);
+            }
+        }
+        if (dhcp_time_reached(now, g_dhcp.deadline) != 0U) {
+            if (g_dhcp.attempt < DHCP_ATTEMPTS) {
+                return dhcp_async_send(DHCP_DISCOVER,
+                                       now,
+                                       detail,
+                                       detail_len);
+            }
+            return dhcp_async_fail(detail,
+                                   detail_len,
+                                   g_dhcp.received == 0U ?
+                                       "DHCP OFFER NO RX" :
+                                       "DHCP OFFER INVALID RX");
+        }
+        return 0;
+    }
+
+    if (g_dhcp.state == DHCP_ASYNC_ACK_WAIT) {
+        dhcp_parse_t ack;
+        const int receive = dhcp_async_receive(DHCP_ACK, &ack);
+
+        if (receive < 0) {
+            return dhcp_async_fail(detail,
+                                   detail_len,
+                                   "DHCP ACK RECEIVE FAILED");
+        }
+        if (receive == 0) {
+            if (ack.message_type == DHCP_NAK) {
+                return dhcp_async_fail(detail, detail_len, "DHCP NAK");
+            }
+            if (ack.message_type == DHCP_ACK) {
+                return dhcp_async_complete(&ack, lease, detail, detail_len);
+            }
+        }
+        if (dhcp_time_reached(now, g_dhcp.deadline) != 0U) {
+            if (g_dhcp.attempt < DHCP_ATTEMPTS) {
+                return dhcp_async_send(DHCP_REQUEST,
+                                       now,
+                                       detail,
+                                       detail_len);
+            }
+            return dhcp_async_fail(detail,
+                                   detail_len,
+                                   g_dhcp.received == 0U ?
+                                       "DHCP ACK NO RX" :
+                                       "DHCP ACK INVALID RX");
+        }
+        return 0;
+    }
+
+    return dhcp_async_fail(detail, detail_len, "DHCP INVALID STATE");
+}
+
+void uthernet2_dhcp_cancel(void)
+{
+    if (g_dhcp.state != DHCP_ASYNC_IDLE) {
+        (void)w5100_close_sockets();
+        (void)w5100_write_network_config(&g_dhcp.previous);
+        g_dhcp.state = DHCP_ASYNC_IDLE;
+    }
 }
 
 int uthernet2_dhcp_acquire(const uint8_t mac[UTHERNET2_MAC_LEN],
@@ -730,117 +999,20 @@ int uthernet2_dhcp_acquire(const uint8_t mac[UTHERNET2_MAC_LEN],
                            char *detail,
                            size_t detail_len)
 {
-    static uint32_t xid_seed = 0x41545001UL;
-    uint8_t packet[DHCP_PACKET_MAX];
-    uint8_t frame[DHCP_FRAME_MAX];
-    uint16_t packet_len;
-    uint16_t frame_len;
-    uint32_t xid;
-    uthernet2_network_config_t previous;
-    dhcp_parse_t offer;
-    dhcp_parse_t ack;
-    int result = 1;
+    int result;
 
     if (lease == NULL) {
         set_detail(detail, detail_len, "INVALID DHCP ARGUMENT");
         return -1;
     }
-    if (uthernet2_mac_is_valid(mac) == 0U) {
-        set_detail(detail, detail_len, "DHCP INVALID SOURCE MAC");
+    if (uthernet2_dhcp_start(mac, detail, detail_len) != 0) {
         return -1;
     }
-    if (uthernet2_read_network_config(&previous) != 0) {
-        set_detail(detail, detail_len, "DHCP CONFIG SAVE FAILED");
-        return -1;
-    }
-    if (w5100_reset() != 0) {
-        return dhcp_fail(&previous, detail, detail_len, "DHCP RESET FAILED");
-    }
-    if (w5100_wait_link() != 0) {
-        return dhcp_fail(&previous, detail, detail_len, "DHCP LINK DOWN");
-    }
-    if (w5100_raw_open(mac) != 0) {
-        return dhcp_fail(&previous, detail, detail_len, "DHCP MACRAW OPEN FAILED");
-    }
-
-    xid_seed += 0x01010101UL;
-    xid = xid_seed;
-    memset(&offer, 0, sizeof(offer));
-    for (uint8_t attempt = 0U; attempt < DHCP_ATTEMPTS; ++attempt) {
-        packet_len = dhcp_build_packet(packet, DHCP_DISCOVER, xid, mac,
-                                       NULL, NULL);
-        frame_len = dhcp_build_frame(frame, mac, packet, packet_len, xid);
-        if (w5100_raw_send(frame, frame_len) != 0) {
-            result = -1;
-            break;
+    do {
+        result = uthernet2_dhcp_poll(lease, detail, detail_len);
+        if (result == 0) {
+            usleep(1000U);
         }
-        result = dhcp_wait(frame, xid, mac, DHCP_OFFER, &offer);
-        if (result <= 0) {
-            break;
-        }
-    }
-    if (result < 0) {
-        return dhcp_fail(&previous, detail, detail_len, "DHCP DISCOVER FAILED");
-    }
-    if (result != 0 || offer.message_type != DHCP_OFFER ||
-        offer.has_server_id == 0U) {
-        return dhcp_fail(&previous,
-                         detail,
-                         detail_len,
-                         result == 1 ? "DHCP OFFER NO RX" :
-                                       "DHCP OFFER INVALID RX");
-    }
-
-    memset(&ack, 0, sizeof(ack));
-    result = 1;
-    for (uint8_t attempt = 0U; attempt < DHCP_ATTEMPTS; ++attempt) {
-        packet_len = dhcp_build_packet(packet, DHCP_REQUEST, xid, mac,
-                                       offer.ip, offer.server_id);
-        frame_len = dhcp_build_frame(frame, mac, packet, packet_len, xid);
-        if (w5100_raw_send(frame, frame_len) != 0) {
-            result = -1;
-            break;
-        }
-        result = dhcp_wait(frame, xid, mac, DHCP_ACK, &ack);
-        if (result <= 0) {
-            break;
-        }
-    }
-    (void)w5100_close_sockets();
-    if (result < 0) {
-        return dhcp_fail(&previous, detail, detail_len, "DHCP REQUEST FAILED");
-    }
-    if (ack.message_type == DHCP_NAK) {
-        return dhcp_fail(&previous, detail, detail_len, "DHCP NAK");
-    }
-    if (result != 0 || ack.message_type != DHCP_ACK) {
-        return dhcp_fail(&previous,
-                         detail,
-                         detail_len,
-                         result == 1 ? "DHCP ACK NO RX" :
-                                       "DHCP ACK INVALID RX");
-    }
-
-    memcpy(lease->mac, mac, sizeof(lease->mac));
-    memcpy(lease->ip, ack.ip, sizeof(lease->ip));
-    if (ack.has_subnet != 0U) {
-        memcpy(lease->subnet, ack.subnet, sizeof(lease->subnet));
-    } else if (offer.has_subnet != 0U) {
-        memcpy(lease->subnet, offer.subnet, sizeof(lease->subnet));
-    } else {
-        memset(lease->subnet, 0, sizeof(lease->subnet));
-    }
-    if (ack.has_gateway != 0U) {
-        memcpy(lease->gateway, ack.gateway, sizeof(lease->gateway));
-    } else if (offer.has_gateway != 0U) {
-        memcpy(lease->gateway, offer.gateway, sizeof(lease->gateway));
-    } else {
-        memset(lease->gateway, 0, sizeof(lease->gateway));
-    }
-    if (uthernet2_write_network_config(lease) != 0) {
-        set_detail(detail, detail_len, "DHCP LEASE WRITE FAILED");
-        return -1;
-    }
-    set_detail(detail, detail_len, "DHCP LEASE ACQUIRED");
-    return 0;
+    } while (result == 0);
+    return result > 0 ? 0 : -1;
 }

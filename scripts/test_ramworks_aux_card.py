@@ -38,10 +38,14 @@ def test_ramworks_bank_select_reaches_8192k() -> None:
     require("ab_read.data[7] == 1'b0" in softswitch and
             "ss_ramworks_bank <= ab_read.data[6:0];" in softswitch,
             "C071/C073 must accept RamWorks bank writes 0..127")
-    require("q_aux_bank_full = {1'b0, ss_ramworks_bank} + 8'd1;" in softswitch and
-            "logic [7:0]  q_bank_sel;" in softswitch and
-            "q_psram_addr[23:16] = q_bank_sel;" in softswitch,
+    # translate_apple_addr moved to globals.sv (shared with the virtual
+    # TransWarp's private switch copy); the manager feeds it xlate_st.
+    require("q_aux_bank_full = {1'b0, st.sw_ramworks_bank} + 8'd1;" in globals_sv and
+            "logic [7:0]  q_bank_sel;" in globals_sv and
+            "q_psram_addr[23:16] = q_bank_sel;" in globals_sv,
             "address translation must map bank 128 into PSRAM address bit 23")
+    require("xlate_st.sw_ramworks_bank = ss_ramworks_bank;" in softswitch,
+            "soft-switch manager must feed its bank register to the shared translator")
     require("logic [20:0] sss_snapshot_q;" in smartport_card and
             "sss.sw_ramworks_bank," in smartport_card and
             "as_client.rdata = {11'h0, sss_snapshot_q};" in smartport_card,

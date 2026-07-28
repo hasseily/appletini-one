@@ -28,7 +28,11 @@ module ssi263_voice #(
     output logic [6:0]         via_ifr_clr,
 
     output logic signed [15:0] audio,
-    output logic               direct_irq
+    output logic               direct_irq,
+
+    // Debug taps routed up for freeze diagnosis.
+    output logic               dbg_backend_done,
+    output logic               dbg_enable_ints
 );
 
     ssi263_bus_wrapper #(
@@ -51,7 +55,9 @@ module ssi263_voice #(
         .via_ifr_set(via_ifr_set),
         .via_ifr_clr(via_ifr_clr),
         .audio(audio),
-        .direct_irq(direct_irq)
+        .direct_irq(direct_irq),
+        .dbg_backend_done(dbg_backend_done),
+        .dbg_enable_ints(dbg_enable_ints)
     );
 
 endmodule

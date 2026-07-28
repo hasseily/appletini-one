@@ -47,4 +47,9 @@ uint8_t screenshot_service_restore_rect_for_frame(uint16_t *fb,
                                                   screenshot_service_rect_t *rect);
 void screenshot_service_draw_overlay(uint16_t *fb);
 
+/* Transient notice at the TOP of the display (separate instance from the
+ * bottom screenshot overlay, so the two never collide). Used for the
+ * TransWarp speed-change notices. Auto-expires after a few seconds. */
+void screenshot_service_show_notice(const char *text);
+
 #endif /* SCREENSHOT_SERVICE_H */

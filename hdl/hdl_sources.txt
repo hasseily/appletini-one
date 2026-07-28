@@ -15,6 +15,10 @@ constraints/appletini_yarz.xdc
 apple/apple_top.sv
 apple/apple_bus_wrapper.sv
 apple/apple_bus_write_arbiter.sv
+apple/w65c02_core.sv
+apple/vtw_shadow.sv
+apple/vtw_bus_engine.sv
+apple/vtw_core_top.sv
 apple/apple_dma_engine.sv
 apple/ps_dma_command.sv
 apple/soft_switch_manager.sv
@@ -30,7 +34,6 @@ apple/disk2_sound_player.sv
 apple/mouse_card.sv
 apple/applicard_card.sv
 apple/uthernet2_card.sv
-apple/vidhd_card.sv
 apple/supersprite_card.sv
 apple/smartport_card.sv
 apple/disk2_card.sv

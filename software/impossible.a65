@@ -1,0 +1,593 @@
+; impossible.a65 -- THE IMPOSSIBLE ][+
+;
+; A self-running showcase of what one Appletini ONE does to a stock
+; Apple II: it speaks (SSI-263), plays stereo music (Phasor AY), renders
+; at warp speed (virtual TransWarp), and touches 8 MB of RamWorks memory
+; -- on a machine Apple shipped with 48 K and a beep.
+;
+; Four acts, any key skips forward, ESC leaves:
+;   1  INTRO    speech: "I AM APPLETINI"
+;   2  SPEED    warp lores fractal, speech: "TWELVE MEGAHERTZ"
+;   3  MEMORY   RamWorks bank tour with live counter, speech: "EIGHT
+;               MEGABYTES"
+;   4  FINALE   AY arpeggio + border color wash, speech: "THE
+;               IMPOSSIBLE APPLE"
+;
+; Hardware assumptions: Phasor (virtual) in slot 4, virtual TransWarp
+; active for acts 2/3 ($C074 is harmless elsewhere), RamWorks armed for
+; act 3 (a stock 64K aux degrades gracefully to "1 BANK / 64 KB").
+;
+; Speech is POLLED (D7 in bit 7 of a $C440 read, Phasor native mode) --
+; no interrupts required.
+;
+; Assemble:  acme -f plain -o IMPOSSIBLE impossible.a65
+
+!cpu 6502
+* = $6000
+
+KBD      = $C000
+KBDSTRB  = $C010
+TXTSET   = $C051
+TXTPAGE1 = $C054
+RDVBLBAR = $C019
+BORDER   = $C034
+TWSPEED  = $C074
+HOME     = $FC58
+
+; RamWorks / aux switches
+RAMRDOFF = $C002
+RAMRDON  = $C003
+RAMWRTOFF= $C004
+RAMWRTON = $C005
+RWBANK   = $C073
+
+; Phasor, slot 4
+PH_MODE_NATIVE = $C0CD     ; read or write: mode <- addr[2:0] = native
+PH_MODE_MB     = $C0C8     ; back to Mockingboard mode
+VIA_ORB  = $C410           ; native-mode VIA-A
+VIA_ORA  = $C411
+VIA_DDRB = $C412
+VIA_DDRA = $C413
+SSI_DUR  = $C440           ; SSI-263 registers (native mode)
+SSI_INF  = $C441
+SSI_RATE = $C442
+SSI_CTL  = $C443
+SSI_FILT = $C444
+
+; zero page
+ROWPTR   = $EB
+strptr   = $ED
+tmp      = $FA
+
+start:
+    lda TXTSET
+    lda TXTPAGE1
+    jsr HOME
+    lda #0
+    sta skip_all
+    jsr phasor_init
+
+    ; ---- ACT 1: INTRO ----
+    jsr screen_intro
+    lda #<phrase_appletini
+    ldx #>phrase_appletini
+    jsr say
+    jsr wait_2s
+
+    lda skip_all
+    bne finale_exit
+
+    ; ---- ACT 2: SPEED ----
+    jsr screen_speed
+    lda #0
+    sta TWSPEED            ; warp (whatever the config picked)
+    jsr render_fractal
+    lda #<phrase_twelve
+    ldx #>phrase_twelve
+    jsr say
+    jsr wait_2s
+    lda skip_all
+    bne finale_exit
+
+    ; ---- ACT 3: MEMORY ----
+    jsr screen_memory
+    jsr ram_tour
+    lda #<phrase_eight
+    ldx #>phrase_eight
+    jsr say
+    jsr wait_2s
+    lda skip_all
+    bne finale_exit
+
+    ; ---- ACT 4: FINALE ----
+    jsr screen_finale
+    jsr music_start
+    lda #<phrase_impossible
+    ldx #>phrase_impossible
+    jsr say
+    jsr finale_loop
+
+finale_exit:
+    jsr music_stop
+    jsr speech_off
+    ; leave native mode the way we found things
+    sta PH_MODE_MB
+    lda TXTSET
+    jsr HOME
+    rts
+
+; ------------------------------------------------------------------
+; Key check: returns carry set when the act should end. ESC also sets
+; skip_all so the whole show winds down.
+; ------------------------------------------------------------------
+check_key:
+    lda KBD
+    bpl ck_none
+    sta KBDSTRB
+    and #$7F
+    cmp #$1B               ; ESC
+    bne +
+    lda #1
+    sta skip_all
++   sec
+    rts
+ck_none:
+    clc
+    rts
+
+wait_2s:                   ; ~120 frames, key-skippable
+    lda #120
+    sta tmp
+-   jsr wait_vbl
+    jsr check_key
+    bcs +
+    dec tmp
+    bne -
++   rts
+
+wait_vbl:
+-   lda RDVBLBAR
+    bmi -                  ; wait to enter VBL
+-   lda RDVBLBAR
+    bpl -                  ; and leave it again
+    rts
+
+; ------------------------------------------------------------------
+; Phasor bring-up: native mode, VIA data directions, AY reset,
+; SSI-263 init (the register liturgy a real Phasor speech driver uses).
+; ------------------------------------------------------------------
+phasor_init:
+    lda PH_MODE_NATIVE     ; read flips the card into native mode
+    sta PH_MODE_NATIVE
+    lda #$FF
+    sta VIA_DDRB
+    sta VIA_DDRA
+    lda #$08               ; AY reset pulse (BC/BDIR low, bit2=0)
+    sta VIA_ORB
+    lda #$0C               ; inactive, both AYs deselected at bits 4/3=1,1?
+    sta VIA_ORB            ; ($0C = primary selected, inactive function)
+    ; SSI-263 wake: power down, program voice, then CTL falling edge
+    lda #$80
+    sta SSI_CTL
+    lda #$C0
+    sta SSI_DUR
+    lda #$40
+    sta SSI_INF
+    lda #$A8
+    sta SSI_RATE
+    lda #$5A               ; CTL 1->0: mode+ints latch, voice armed
+    sta SSI_CTL
+    lda #$E8
+    sta SSI_FILT
+    rts
+
+speech_off:
+    lda #$80               ; CTL=1: quiet
+    sta SSI_CTL
+    rts
+
+; ------------------------------------------------------------------
+; say: speak a phrase. A/X = phrase pointer (lo/hi). Bytes are SSI-263
+; reg-0 values (duration<<6 | phoneme), $FF ends. Polled on D7.
+; ------------------------------------------------------------------
+say:
+    sta strptr
+    stx strptr + 1
+    ldy #0
+say_loop:
+    lda (strptr),y
+    cmp #$FF
+    beq say_done
+    sta SSI_DUR            ; write phoneme: starts (or chains) playback
+    iny
+wait_d7:
+    jsr check_key
+    bcs say_done
+    lda SSI_DUR            ; native-mode read: bit 7 = phoneme done
+    bpl wait_d7
+    jmp say_loop
+say_done:
+    lda #$00               ; trailing pause keeps the amp from clicking
+    sta SSI_DUR
+    rts
+
+; ------------------------------------------------------------------
+; Music: a small AY arpeggio on channel A/B, frame-timed.
+; ------------------------------------------------------------------
+ay_write:                  ; X = reg, A = value
+    stx VIA_ORA
+    ldx #$0F               ; latch address (primary AY selected)
+    stx VIA_ORB
+    ldx #$0C               ; inactive
+    stx VIA_ORB
+    sta VIA_ORA
+    ldx #$0E               ; write data
+    stx VIA_ORB
+    ldx #$0C
+    stx VIA_ORB
+    rts
+
+music_start:
+    ldx #7                 ; mixer: tone A+B on (active-low bits)
+    lda #%00111100
+    jsr ay_write
+    ldx #8                 ; channel A volume
+    lda #$0C
+    jsr ay_write
+    ldx #9                 ; channel B volume
+    lda #$0A
+    jsr ay_write
+    lda #0
+    sta note_idx
+    rts
+
+music_stop:
+    ldx #8
+    lda #0
+    jsr ay_write
+    ldx #9
+    lda #0
+    jsr ay_write
+    rts
+
+music_step:                ; advance the arpeggio one note
+    ldy note_idx
+    lda notes_lo,y
+    tax
+    lda notes_hi,y
+    pha
+    txa
+    ldx #0                 ; R0: channel A period low
+    jsr ay_write
+    pla
+    ldx #1                 ; R1: channel A period high
+    jsr ay_write
+    ; channel B: same note, a fifth-ish above (period * 2/3 approx: >>1)
+    ldy note_idx
+    lda notes_lo,y
+    lsr
+    ldx #2
+    jsr ay_write
+    lda #0
+    ldx #3
+    jsr ay_write
+    inc note_idx
+    lda note_idx
+    cmp #notes_end - notes_lo
+    bcc +
+    lda #0
+    sta note_idx
++   rts
+
+; ------------------------------------------------------------------
+; ACT 2: warp fractal (compact lores Mandelbrot, same math as the
+; speed-race demo, single pass, no timing).
+; ------------------------------------------------------------------
+!source "mandel_core.a65"
+
+; ------------------------------------------------------------------
+; ACT 3: RamWorks tour. Touch every bank: write a signature to aux
+; $1000-$1003, read it back through a stack-page stub (RAMRD would pull
+; main-RAM code out from under us). Live counters on screen.
+; ------------------------------------------------------------------
+ram_tour:
+    ; copy the verify stub to $01B0
+    ldx #stub_end - stub - 1
+-   lda stub,x
+    sta $01B0,x
+    dex
+    bpl -
+    lda #0
+    sta bank
+    sta banks_ok
+good_loop:
+    jsr check_key
+    bcs tour_done
+    lda bank
+    sta RWBANK             ; select bank
+    sta $C005              ; aux write
+    sta $1000              ; signature = bank number
+    eor #$FF
+    sta $1001
+    lda #$A5
+    sta $1002
+    sta $C004              ; main write
+    jsr $01B0              ; stub: aux read + verify, returns C=1 bad
+    bcs tour_done
+    inc banks_ok
+    ; update the live counter every 4 banks (keeps the tour brisk)
+    lda bank
+    and #3
+    bne +
+    jsr show_ram_count
++   inc bank
+    lda bank
+    cmp #128
+    bcc good_loop
+tour_done:
+    lda #0
+    sta RWBANK             ; bank 0 restored
+    jsr show_ram_count
+    rts
+
+stub:                      ; runs at $01B0: safe under RAMRD
+    sta $C003              ; aux read
+    lda $1000
+    cmp bank
+    bne stub_bad
+    lda $1002
+    cmp #$A5
+    bne stub_bad
+    sta $C002              ; main read
+    clc
+    rts
+stub_bad:
+    sta $C002
+    sec
+    rts
+stub_end:
+
+show_ram_count:
+    ; "BANKS: NNN   RAM: NNNNN KB"
+    lda banks_ok
+    sta num
+    lda #0
+    sta num + 1
+    ldx #12
+    ldy #10
+    jsr print_num
+    ; KB = banks * 64
+    lda #0
+    sta num + 1
+    lda banks_ok
+    ldx #6
+-   asl
+    rol num + 1
+    dex
+    bne -
+    sta num
+    ldx #12
+    ldy #22
+    jmp print_num
+
+; ------------------------------------------------------------------
+; ACT 4 finale: music + border wash until a key.
+; ------------------------------------------------------------------
+finale_loop:
+    lda #0
+    sta tmp
+fl_loop:
+    jsr wait_vbl
+    jsr music_step
+    ; border wash
+    inc tmp
+    lda tmp
+    lsr
+    lsr
+    and #$0F
+    ldx #0
+    sta BORDER,x
+    ; six frames per note
+    ldx #5
+-   jsr wait_vbl
+    jsr check_key
+    bcs fl_done
+    dex
+    bne -
+    jmp fl_loop
+fl_done:
+    lda #6
+    ldx #0
+    sta BORDER,x
+    rts
+
+; ------------------------------------------------------------------
+; Screens
+; ------------------------------------------------------------------
+screen_intro:
+    jsr HOME
+    ldx #8
+    ldy #10
+    lda #<msg_act1
+    sta strptr
+    lda #>msg_act1
+    sta strptr + 1
+    jmp print_at
+
+screen_speed:
+    jsr HOME
+    lda $C050              ; graphics
+    lda $C053              ; mixed
+    lda TXTPAGE1
+    lda $C056              ; lores
+    ldx #22
+    ldy #4
+    lda #<msg_act2
+    sta strptr
+    lda #>msg_act2
+    sta strptr + 1
+    jmp print_at
+
+screen_memory:
+    lda TXTSET             ; back to full text
+    jsr HOME
+    ldx #8
+    ldy #7
+    lda #<msg_act3
+    sta strptr
+    lda #>msg_act3
+    sta strptr + 1
+    jsr print_at
+    ldx #12
+    ldy #3
+    lda #<msg_ramrow
+    sta strptr
+    lda #>msg_ramrow
+    sta strptr + 1
+    jmp print_at
+
+screen_finale:
+    jsr HOME
+    ldx #10
+    ldy #8
+    lda #<msg_act4
+    sta strptr
+    lda #>msg_act4
+    sta strptr + 1
+    jmp print_at
+
+; ------------------------------------------------------------------
+; text helpers (shared style with the other demos)
+; ------------------------------------------------------------------
+print_at:
+    lda text_lo,x
+    sta ROWPTR
+    lda text_hi,x
+    sta ROWPTR + 1
+    sty pcol
+    ldy #0
+    sty sidx
+-   ldy sidx
+    lda (strptr),y
+    beq +
+    ora #$80
+    ldy pcol
+    sta (ROWPTR),y
+    inc pcol
+    inc sidx
+    bne -
++   rts
+
+print_num:                 ; 5 digits of num at row X col Y
+    stx prow
+    sty pcol
+    ldx #0
+digit_loop:
+    lda #0
+    sta digit
+sub_loop:
+    lda num
+    sec
+    sbc pow10_lo,x
+    sta tmpn
+    lda num + 1
+    sbc pow10_hi,x
+    bcc digit_done
+    sta num + 1
+    lda tmpn
+    sta num
+    inc digit
+    bne sub_loop
+digit_done:
+    lda digit
+    ora #$B0
+    sta digits,x
+    inx
+    cpx #5
+    bne digit_loop
+    ldx prow
+    lda text_lo,x
+    sta ROWPTR
+    lda text_hi,x
+    sta ROWPTR + 1
+    ldy pcol
+    ldx #0
+-   lda digits,x
+    sta (ROWPTR),y
+    iny
+    inx
+    cpx #5
+    bne -
+    rts
+
+; ------------------------------------------------------------------
+; data
+; ------------------------------------------------------------------
+skip_all: !byte 0
+bank:     !byte 0
+banks_ok: !byte 0
+note_idx: !byte 0
+num:      !word 0
+tmpn:     !byte 0
+digit:    !byte 0
+digits:   !fill 5, 0
+prow:     !byte 0
+pcol:     !byte 0
+sidx:     !byte 0
+
+pow10_lo: !byte <10000, <1000, <100, <10, <1
+pow10_hi: !byte >10000, >1000, >100, >10, >1
+
+text_lo:
+    !byte $00,$80,$00,$80,$00,$80,$00,$80
+    !byte $28,$A8,$28,$A8,$28,$A8,$28,$A8
+    !byte $50,$D0,$50,$D0,$50,$D0,$50,$D0
+text_hi:
+    !byte $04,$04,$05,$05,$06,$06,$07,$07
+    !byte $04,$04,$05,$05,$06,$06,$07,$07
+    !byte $04,$04,$05,$05,$06,$06,$07,$07
+
+; AY note table (channel A 12-bit periods, ~C major arpeggio)
+notes_lo:
+    !byte $BE, $97, $7F, $5F, $7F, $97   ; C E G C' G E
+notes_end:
+notes_hi:
+    !byte $01, $01, $01, $01, $01, $01
+
+msg_act1:   !text "THE IMPOSSIBLE ][+", 0
+msg_act2:   !text "RENDERING AT WARP SPEED ...", 0
+msg_act3:   !text "TOURING EIGHT MEGABYTES", 0
+msg_ramrow: !text "BANKS: 00000  RAM: 00000 KB", 0
+msg_act4:   !text "THE IMPOSSIBLE APPLE", 0
+
+; ------------------------------------------------------------------
+; SSI-263 phrases: reg-0 bytes (duration<<6 | phoneme), $FF = end.
+; Voicing is a first pass -- tune by ear on hardware.
+; Phoneme codes: PA=00 IY=01 I=07 A=08 AY=05 EH=0A AE=0C AH=0E O=11
+; UH=18 ER=1C L=20 W=23 B=24 D=25 KV=26 P=27 T=28 K=29 HV=2A Z=2F S=30
+; V=33 M=37 N=38
+; ------------------------------------------------------------------
+phrase_appletini:          ; "I AM APPLETINI"
+    !byte $05, $00, $0C, $37, $00      ; AY pa AE M pa
+    !byte $0C, $27, $20, $18, $28      ; AE P L UH T
+    !byte $01, $38, $01                ; IY N IY
+    !byte $00, $FF                     ; pause, end
+
+phrase_twelve:             ; "TWELVE MEGAHERTZ"
+    !byte $28, $23, $0A, $20, $33, $00 ; T W EH L V pa
+    !byte $37, $0A, $26, $18           ; M EH G(KV) UH
+    !byte $2A, $1C, $28, $30           ; H ER T S
+    !byte $00, $FF
+
+phrase_eight:              ; "EIGHT MEGABYTES"
+    !byte $0A, $01, $28, $00           ; EH IY T pa  ("eight")
+    !byte $37, $0A, $26, $18           ; M EH G UH
+    !byte $24, $05, $28, $30           ; B AY T S
+    !byte $00, $FF
+
+phrase_impossible:         ; "THE IMPOSSIBLE APPLE"
+    !byte $35, $18, $00                ; TH UH pa
+    !byte $07, $37, $27, $0E, $30      ; I M P AH S
+    !byte $18, $24, $18, $20, $00      ; UH B UH L pa
+    !byte $0C, $27, $18, $20           ; AE P UH L
+    !byte $00, $FF

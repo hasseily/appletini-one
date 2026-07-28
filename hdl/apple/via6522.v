@@ -300,11 +300,13 @@ module via6522(output reg [7:0] data_out,       // cpu interface
     ///////////////////////////////////////////////////
     // Timers
     reg [15:0] timer1;
+    reg [15:0] timer1_bus_value;
     reg [7:0]  timer1_latch_lo;
     reg [7:0]  timer1_latch_hi;
     reg        timer1_undf;
 
     reg [15:0] timer2;
+    reg [15:0] timer2_bus_value;
     reg [7:0]  timer2_latch_lo;
     reg        timer2l_reload;
     reg        timer2_undf;
@@ -313,6 +315,21 @@ module via6522(output reg [7:0] data_out,       // cpu interface
     reg        irq_t1;
     reg        irq_t2_one_shot;
     reg        irq_t2;
+
+    // slow_clock is the early Apple-cycle cadence pulse. Mockingboard reads
+    // are decoded and captured later at serve_en so DMA masters have time to
+    // present an authoritative address. Preserve the counter value from
+    // immediately before this cycle's decrement for that later read phase.
+    // This matches a physical VIA and MB-Audit T6522_3 (11:03:00).
+    always @(posedge clk)
+        if (reset) begin
+            timer1_bus_value <= 16'hffff;
+            timer2_bus_value <= 16'hffff;
+        end
+        else if (slow_clock) begin
+            timer1_bus_value <= timer1;
+            timer2_bus_value <= timer2;
+        end
 
     // TIMER1
     always @(posedge clk)
@@ -521,9 +538,6 @@ module via6522(output reg [7:0] data_out,       // cpu interface
     // IFR register (not including bit 7)
     wire [6:0]  ifr = {irq_t1, irq_t2, irq_cb1,
                         irq_cb2, irq_sr, irq_ca1, irq_ca2};
-    wire [6:0]  ifr_read = {irq_t1 || (addr == ADDR_IFR && timer1_undf && (irq_t1_one_shot || acr[6])),
-                             irq_t2 || (addr == ADDR_IFR && timer2_undf && irq_t2_one_shot),
-                             irq_cb1, irq_cb2, irq_sr, irq_ca1, irq_ca2};
 
     // IRQ combinatorial logic
     wire        irq_p = |{(ifr & ier)};
@@ -549,16 +563,22 @@ module via6522(output reg [7:0] data_out,       // cpu interface
             ADDR_PORTA:                 data_out = porta;
             ADDR_DDRB:                  data_out = ddrb;
             ADDR_DDRA:                  data_out = ddra;
-            ADDR_TIMER1_LO:             data_out = timer1[7:0];
-            ADDR_TIMER1_HI:             data_out = timer1[15:8];
+            ADDR_TIMER1_LO:             data_out = timer1_bus_value[7:0];
+            ADDR_TIMER1_HI:             data_out = timer1_bus_value[15:8];
             ADDR_TIMER1_LATCH_LO:       data_out = timer1_latch_lo;
             ADDR_TIMER1_LATCH_HI:       data_out = timer1_latch_hi;
-            ADDR_TIMER2_LO:             data_out = timer2[7:0];
-            ADDR_TIMER2_HI:             data_out = timer2[15:8];
+            ADDR_TIMER2_LO:             data_out = timer2_bus_value[7:0];
+            ADDR_TIMER2_HI:             data_out = timer2_bus_value[15:8];
             ADDR_IER:                   data_out = {1'b1, ier};
             ADDR_PCR:                   data_out = pcr;
             ADDR_ACR:                   data_out = acr;
-            ADDR_IFR:                   data_out = {irq_p, ifr_read};
+            // slow_clock precedes the late read-serving phase.  The timer
+            // state machines deliberately leave irq_t1/irq_t2 clear for the
+            // $FFFF cycle and latch them on the following timer tick (the
+            // VIA's N+2 behavior).  Do not expose timer*_undf here: doing so
+            // makes a late IFR read observe the interrupt one Apple cycle
+            // early (MB-Audit T6522_F/T6522_10/T6522_11).
+            ADDR_IFR:                   data_out = {irq_p, ifr};
             ADDR_SR:                    data_out = sr;
             ADDR_PORTA_NH:              data_out = porta;
         endcase

@@ -111,6 +111,43 @@ static boot_menu_event_t boot_menu_no_event(void)
     return event;
 }
 
+static uint8_t boot_menu_map_iiplus_key(uint8_t ascii, ui_input_t *input)
+{
+    if (boot_menu_service_machine_mode() != CARD_MACHINE_MODE_IIPLUS) {
+        return 0U;
+    }
+
+    /* The II/II+ keyboard has no Up, Down, Tab, or Delete keys. Reserve
+     * O/L for vertical navigation and Q/A for previous/next tab movement
+     * while the boot menu owns the Apple keyboard. */
+    switch (ascii) {
+    case 'O':
+    case 'o':
+        input->key = UI_KEY_PAGE_UP;
+        break;
+    case 'L':
+    case 'l':
+        input->key = UI_KEY_PAGE_DOWN;
+        break;
+    case 'Q':
+    case 'q':
+        input->key = UI_KEY_SHIFT_TAB;
+        break;
+    case 'A':
+    case 'a':
+        input->key = UI_KEY_TAB;
+        break;
+    default:
+        return 0U;
+    }
+
+    /* Preserve the printable character as well.  The profile-name editor
+     * consumes ASCII before menu actions, so II/II+ users can still type
+     * names containing Q, A, O, or L. */
+    input->ascii = ascii;
+    return 1U;
+}
+
 static uint8_t boot_menu_map_key(uint8_t raw_key, ui_input_t *input)
 {
     const uint8_t ascii = raw_key & 0x7FU;
@@ -122,6 +159,10 @@ static uint8_t boot_menu_map_key(uint8_t raw_key, ui_input_t *input)
     input->pressed = 1U;
     input->key = UI_KEY_NONE;
     input->ascii = 0U;
+
+    if (boot_menu_map_iiplus_key(ascii, input) != 0U) {
+        return 1U;
+    }
 
     switch (ascii) {
     case 0x1B:
@@ -248,6 +289,8 @@ static uint8_t machine_mode_from_id(uint8_t id)
  * it and the Appletini leaves those cycles alone. */
 extern uint8_t appletini_config_ram_enabled(void);
 extern uint8_t appletini_config_ramworks_enabled(void);
+/* From vtw_service.c: a virtual-TransWarp session owns the machine. */
+extern uint8_t vtw_service_session_active(void);
 
 static uint8_t g_aux_provide_applied = 0xFFU;
 static uint8_t g_ramworks_applied = 0xFFU;
@@ -263,9 +306,17 @@ static void machine_refresh_aux_policy(void)
          appletini_config_ram_enabled() != 0U) ? 1U : 0U;
     /* RamWorks banking requires the Appletini to own base aux: with a
      * physical card providing bank 0 we must never serve banks >0
-     * (the real card answers every aux cycle regardless of bank). */
+     * (the real card answers every aux cycle regardless of bank).
+     * In a vTW session the core's aux and RamWorks banks live in the
+     * shadow/PSRAM and never touch the host bus, so the //e-only rule
+     * does not apply: an accelerated II+ gets the same 8 MB. The
+     * physical-card exclusion stays -- posted aux writes echo to the
+     * real bus, and a real card folds every bank into its bank 0. */
+    const uint8_t vtw_owns_aux =
+        (vtw_service_session_active() != 0U &&
+         g_aux_card_present == 0U) ? 1U : 0U;
     const uint8_t rw_want =
-        (want != 0U &&
+        ((want != 0U || vtw_owns_aux != 0U) &&
          appletini_config_ramworks_enabled() != 0U) ? 1U : 0U;
     if (want != g_aux_provide_applied) {
         g_aux_provide_applied = want;
@@ -308,15 +359,28 @@ static void machine_observe_status(uint32_t status)
     if (id != 0U) {
         const uint32_t probe = REG_READ(CARD_CTRL_AUX_PROBE_REG);
         if ((probe & 2U) != 0U) {   /* fresh report, once per boot */
-            g_aux_card_present = (uint8_t)(probe & 1U);
-            g_aux_probe_seen = 1U;
-            uart_puts(UART0_BASE, g_aux_card_present
-                ? "machine: physical aux card detected\r\n"
-                : "machine: no aux card - Appletini may provide\r\n");
+            if (vtw_service_session_active() != 0U) {
+                /* Under the vTW the boot ROM's aux write/read test never
+                 * leaves the BRAM shadow, so it always reads back "RAM
+                 * present" -- it probed the accelerator, not the slot.
+                 * Keep the verdict from the last stock boot; without this
+                 * the false "physical card" verdict turns aux_provide and
+                 * RamWorks off mid-session. The PL still force-dropped
+                 * aux_provide during the probe, so re-apply the policy. */
+                uart_puts(UART0_BASE,
+                          "machine: aux probe ignored (vTW shadow)\r\n");
+            } else {
+                g_aux_card_present = (uint8_t)(probe & 1U);
+                g_aux_probe_seen = 1U;
+                uart_puts(UART0_BASE, g_aux_card_present
+                    ? "machine: physical aux card detected\r\n"
+                    : "machine: no aux card - Appletini may provide\r\n");
+            }
             /* The ROM's probe force-dropped aux_provide in the PL;
              * invalidate the dedup so policy rewrites it, and consume
              * the report (write-one-to-clear) so this runs once. */
             g_aux_provide_applied = 0xFFU;
+            machine_refresh_aux_policy();
             REG_WRITE(CARD_CTRL_AUX_PROBE_REG, 1U);
         }
     }
@@ -344,6 +408,16 @@ uint8_t boot_menu_service_machine_mode(void)
 const char *boot_menu_service_machine_name(void)
 {
     return machine_mode_name(boot_menu_service_machine_mode());
+}
+
+uint8_t boot_menu_service_slot7_handed_off(void)
+{
+    /* slot7_mode lives in handoff_mode_word[3:2] (see boot_menu_card.sv):
+     * 0 = still the boot menu, 1 = handed off to a boot target. BOTH the
+     * SmartPort and Disk II handoff paths latch mode 1, so this is
+     * inherently target-agnostic. */
+    uint32_t w = REG_READ(BOOT_MENU_REG_HANDOFF_MODE);
+    return (((w >> 2U) & 0x3U) == 1U) ? 1U : 0U;
 }
 
 void boot_menu_service_force_machine_mode(int mode)

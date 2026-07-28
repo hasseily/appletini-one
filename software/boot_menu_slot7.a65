@@ -1,4 +1,4 @@
-; Appletini boot-menu slot ROM.
+; Appletini boot-menu slot ROM
 ;
 ; This slot ROM derives its Apple slot from the ROM address and uses that
 ; slot's C0n0/C0n1 I/O window. It is exposed only in slot 7 and the PL
@@ -60,19 +60,21 @@ CMD_MENU_CLOSED  = $04
 CMD_VBL_START    = $05
 STATUS_HANDOFF_SMARTPORT = $08
 STATUS_HANDOFF_DISK2     = $10
+STATUS_HANDOFF_ANY       = STATUS_HANDOFF_SMARTPORT | STATUS_HANDOFF_DISK2
 STATUS_PS_CLOSE_REQUEST  = $20
+STATUS_OPEN_MENU         = $40   ; open the menu now, no prompt, no 'A' wait
 
 ; Machine-identification report: command byte $2i where i = machine id.
 ; boot_menu_card latches the low nibble into status_word[15:12] for the
-; firmware. Ids: 1=II/II+, 2=IIe, 3=enhanced IIe, 4=IIgs, 5=IIc.
+; firmware. Ids: 1=II/II+, 2=IIe, 3=enhanced IIe, 4=IIgs.
 ; Identification technique per Apple II Miscellaneous Tech Note #7:
 ; SEC / JSR $FE1F leaves carry CLEAR only on a IIgs; $FBB3 = $06 marks
-; the IIe family; $FBC0 = $00 IIc, $E0 enhanced IIe, else IIe.
+; the IIe family; $FBC0 = $E0 marks an enhanced IIe, otherwise IIe.
+; A IIc has no expansion slots, so its $FBC0 = $00 case is unreachable.
 CMD_MID_IIFAMILY = $21
 CMD_MID_IIE      = $22
 CMD_MID_IIE_ENH  = $23
 CMD_MID_IIGS     = $24
-CMD_MID_IIC      = $25
 
 ; Aux-slot card probe. CMD_AUX_PROBE makes the PL drop aux_provide the
 ; same cycle it is decoded, so the write/read test below sees the raw
@@ -120,9 +122,24 @@ boot_continue:
           sta TEXT
           sta PAGE1
 
+          ; "Always show menu" mode: open the config menu at once. Skip the
+          ; prompt and the 'A' wait; still lock VBL so the menu loop syncs.
+          jsr bm_status
+          and #STATUS_OPEN_MENU
+          bne open_direct
+
           jsr show_prompt
 
           jsr vbl_mousecard_sync
+
+          ; vbl_mousecard_sync returns through vbl_emit with Z clear.
+          bne wait_loop
+
+open_direct:
+          jsr vbl_mousecard_sync
+          ; vbl_mousecard_sync returns through vbl_emit with Z clear.
+          ; Taken BNE and JMP are both three cycles, but BNE saves a byte.
+          bne open_menu
 
 wait_loop:
           jsr wait_vbl_start
@@ -136,12 +153,15 @@ wait_loop:
           and #$5f
           cmp #'A'
           beq open_menu
+          cmp #$1b
           bne wait_loop
 
 window_done:
           jsr clear_prompt
           lda #CMD_WINDOW_END
-          jmp handoff_or_exit
+          ; CMD_WINDOW_END is nonzero, so this is an always-taken
+          ; three-cycle branch replacing the three-byte JMP.
+          bne handoff_or_exit
 
 open_menu:
           lda #CMD_MENU_REQUEST
@@ -163,15 +183,16 @@ close_menu:
           lda #CMD_MENU_CLOSED
 handoff_or_exit:
           pha
+          ; Both handoff bits come from the same stable PL status byte.
+          ; Snapshot them together instead of rereading the register.
           jsr bm_status
-          and #STATUS_HANDOFF_DISK2
-          bne handoff_target
-          jsr bm_status
-          and #STATUS_HANDOFF_SMARTPORT
+          and #STATUS_HANDOFF_ANY
           bne handoff_target
           pla
           jsr bm_cmd
-          jmp exit_scan
+          ; bm_cmd loads the nonzero slot offset into Y and returns with
+          ; Z clear, so this taken branch has the same cycles as JMP.
+          bne exit_scan
 
 handoff_target:
           pla
@@ -387,7 +408,6 @@ machine_id_report:
           bne mid_send
 mid_iie_family:
           lda MID_FBC0
-          beq mid_iic
           cmp #$e0
           beq mid_iie_enh
           lda #CMD_MID_IIE
@@ -395,9 +415,6 @@ mid_iie_family:
 mid_iie_enh:
           lda #CMD_MID_IIE_ENH
           jmp mid_aux_probe
-mid_iic:
-          lda #CMD_MID_IIC
-          bne mid_send
 mid_gs:
           lda #CMD_MID_IIGS
 mid_send:

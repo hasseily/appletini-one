@@ -31,6 +31,17 @@ const char *smartport_service_get_image_path(uint8_t device);
  * cache-fill, writeback, and Apple-bus DMA work runs from main-loop context. */
 void smartport_service_poll(void);
 
+/* Apple RES# seen: abort any in-flight transaction. Clears the service's
+ * pending-command count and the card's transport FIFOs/flags (the PL also
+ * clears them at the RES# edge; this sweeps up a command that was
+ * mid-execution on this CPU and pushed its response after the release).
+ * Mounted media and device state survive. */
+void smartport_service_apple_reset(void);
+
+/* Print protocol state over the UART: card FIFO counts / ready / exec /
+ * dry-pop forensics plus the service's IRQ and activity counters. */
+void smartport_service_uart_status(uint32_t uart_base);
+
 /* Reread the disk image (e.g. after the SD card has been swapped).
  * Returns 0 on success, negative FatFS code on failure. */
 int smartport_service_reset_media(uint8_t device);

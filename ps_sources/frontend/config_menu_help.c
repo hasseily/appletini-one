@@ -109,12 +109,74 @@ static const help_override_t profiles_overrides[] = {
 /*  BOOT SETTINGS                                                           */
 /* ======================================================================== */
 HELP(boot_settings,
-    "Boot settings control how long the menu prompt appears, which device boots first, and USB menu bindings.",
-    "There are two menu modes: Pressing 'A' on the keyboard while booting activates the BOOT mode.",
-    "During boot mode, you can use the Apple keyboard to fully navigate the menu and change settings.",
-    "In normal operation, pressing the USB device's 'MENU' binding activates the USB mode.",
-    "During USB mode, the menu is controlled by the USB bindings. Do not use the Apple keyboard, as it",
-    "interacts with the running Apple software. You cannot rebind the USB bindings in USB mode.");
+    "The wait sets how long the 'A' prompt shows before boot.",
+    "3 or 5 seconds boot after the wait. Unlimited waits for 'A' or Esc. Always show menu opens the menu now.",
+    "Press 'A' at the prompt for BOOT mode; the Apple keyboard drives the menu.",
+    "In normal use the USB device's MENU key opens USB mode, and the USB keys drive the menu.",
+    "Leave the Apple keyboard alone in USB mode: it reaches the running program.",
+    "In USB bindings, Up/Down move within a column, Left/Right move columns, and Enter captures a new input.",
+    "TW keys change TransWarp speed any time: toggle 1 MHz, step the preset, toggle the 0.05 MHz slug.");
+
+HELP(boot_timeout,
+    "How long the boot 'A' prompt shows before the machine boots on its own.",
+    "3 or 5 seconds boot after the wait. Unlimited waits until you press 'A' (menu) or Esc (boot).",
+    "Always show menu skips the prompt and opens this menu on every power-on.");
+
+HELP(boot_device,
+    "Which drive the Appletini boots from: the SmartPort drives or the Disk II drives.",
+    "SmartPort boots the images on the SmartPort tab; Disk II boots the floppy images on the Disk II tab.");
+
+HELP(boot_bind_reset,
+    "Restores every USB menu binding below to its factory default.",
+    "Bindings are editable only while the menu was opened from the Apple boot prompt ('A' + BOOT mode).");
+
+HELP(boot_bind_nav,
+    "Moves the menu selection: Up/Down within a column, Left/Right across columns.",
+    "Press Enter on the row, then press the USB key or gamepad input you want to bind.");
+
+HELP(boot_bind_tabs,
+    "Cycles the menu tabs up or down from anywhere in the menu.",
+    "Press Enter on the row, then press the USB key or gamepad input you want to bind.");
+
+HELP(boot_bind_ok_back,
+    "OK activates the selected item; BACK leaves a browser or closes the menu.",
+    "Press Enter on the row, then press the USB key or gamepad input you want to bind.");
+
+HELP(boot_bind_prtscr,
+    "Screenshot keys, active at all times, not just in the menu.",
+    "PRTSCR A2 saves the Apple's native video frame; PRTSCR 1080P saves the full 1080p HDMI output.",
+    "Screenshots land on the SD card.");
+
+HELP(boot_bind_tw_speed,
+    "TransWarp speed keys, active at all times: toggle between full speed and 1 MHz,",
+    "or step the speed preset up and down. They work only while the TransWarp is enabled.");
+
+HELP(boot_bind_tw_slug,
+    "Toggles the 0.05 MHz slug speed for debugging, active at all times.",
+    "The key works only when the slug debug key is armed on the TransWarp tab.");
+
+/* Item order: 0 boot wait, 1 boot device, 2 reset bindings, then the
+ * bindings in k_boot_usb_binding_action_order: 3-6 nav, 7-8 tabs,
+ * 9 OK, 10 BACK, 11-12 screenshots, 13-15 TW speed, 16 TW slug. */
+static const help_override_t boot_settings_overrides[] = {
+    OVERRIDE(0,  boot_timeout),
+    OVERRIDE(1,  boot_device),
+    OVERRIDE(2,  boot_bind_reset),
+    OVERRIDE(3,  boot_bind_nav),
+    OVERRIDE(4,  boot_bind_nav),
+    OVERRIDE(5,  boot_bind_nav),
+    OVERRIDE(6,  boot_bind_nav),
+    OVERRIDE(7,  boot_bind_tabs),
+    OVERRIDE(8,  boot_bind_tabs),
+    OVERRIDE(9,  boot_bind_ok_back),
+    OVERRIDE(10, boot_bind_ok_back),
+    OVERRIDE(11, boot_bind_prtscr),
+    OVERRIDE(12, boot_bind_prtscr),
+    OVERRIDE(13, boot_bind_tw_speed),
+    OVERRIDE(14, boot_bind_tw_speed),
+    OVERRIDE(15, boot_bind_tw_speed),
+    OVERRIDE(16, boot_bind_tw_slug),
+};
 
 /* ======================================================================== */
 /*  VIDEO   (config_menu.c appends a live "PAL Accurate" note)              */
@@ -210,7 +272,7 @@ static const help_override_t video_overrides[] = {
 HELP(smartport,
     "SmartPort presents up to eight block devices as ProDOS/SOS-style mass-storage units.",
     "Each SP row selects, replaces, or clears an image on the SD card; duplicate images are blocked.",
-    "Supported: HDV, 2MG, 2IMG, 140K PO, and 800K PO.",
+    "Supported: HDV, 2MG, 2IMG, and PO images of any size.",
     "SuperSprite shares slot 7; when it is enabled, the rest of this page is disabled.");
 
 HELP(smartport_supersprite,
@@ -305,13 +367,14 @@ static const help_override_t phasor_overrides[] = {
 /* ======================================================================== */
 HELP(ethernet,
     "Ethernet enables the slot 1 Uthernet II-compatible W5100S interface.",
-    "The Apple sees the C0N0-C0N3 register window while firmware can read/write W5100S network registers.",
-    "Use static fields directly, or select DHCP to request a fresh address at each boot.");
+    "When disabled, all network configuration and actions are hidden and DHCP cannot run.",
+    "Enable the card to expose its address, saved configuration, DHCP, and link-test controls.");
 
 HELP(ethernet_config,
-    "Configure network at boot writes static fields or runs DHCP, according to Address Mode.",
-    "Leave it off if Apple software should own the card registers completely after reset.",
-    "A saved DHCP mode always negotiates a new lease instead of replaying the previous address.");
+    "When Enable in Slot 1 is on, configure at boot writes static fields or runs DHCP according to",
+    "Address Mode. DHCP runs in the background after startup and negotiates a fresh lease instead of",
+    "replaying the old address. It may take up to 20s for DHCP to complete, so be patient before testing",
+    "network software after a boot. It is always faster to use a static address.");
 
 HELP(ethernet_fields,
     "Enter moves to the next byte or octet; Left/Right decrements or increments the selected value.",
@@ -353,6 +416,69 @@ static const help_override_t applicard_overrides[] = {
 };
 
 /* ======================================================================== */
+/*  TRANSWARP                                                               */
+/* ======================================================================== */
+
+HELP(transwarp,
+    "A virtual TransWarp accelerator. Never use with a physical accelerator installed.",
+    "When accelerating, the machine becomes an Enhanced //e with the full 128K. RamWorks can also",
+    "be enabled for an additional 8MB that runs at accelerator speed.",
+    "Turn acceleration on or off from BOOT mode only (press 'A' during boot); the speed",
+    "preset can be changed at any time, even mid-session. Boot settings can bind USB keys",
+    "for live speed control: 1 MHz toggle, speed up/down, and the 0.05 MHz slug toggle.");
+
+HELP(transwarp_speed,
+    "Warp runs the 65C02 as fast as the fabric allows (~ 35 MHz). 3.6 MHz matches the real TransWarp.",
+    "1 MHz cycle-exact locks every core cycle to the Apple bus clock and passes cycle-counting",
+    "speed detectors and vapor lock, but disable acceleration for really precise demos.",
+    "Most I/O and video writes always run at 1 MHz bus speed, whatever the setting.");
+
+HELP(transwarp_slug,
+    "Arms the 0.05 MHz 'slug' USB speed key for extremely slow debugging. Off by default:",
+    "the slug key is ignored until armed here, so an accidental press mid-session can't drop",
+    "the machine to a near-halt without warning. When armed, the bound slug key toggles 0.05 MHz",
+    "against the configured speed, and a notice appears at the top of the screen on each toggle.",
+    "Disarming this while slugged immediately restores the configured speed. The setting persists.");
+
+HELP(transwarp_slowdown_floatbus,
+    "Slows the 65C02 to 1 MHz after floating-bus/video I/O in $C030-$C05F or VBL status $C019.",
+    "This covers the speaker, undriven motherboard I/O, graphics switches and annunciators.",
+    "Use it for correct speaker pitch and software that cycle-counts against the video scanner.",
+    "Floating-bus read data is always emulated; this option controls only the slowdown window.");
+
+HELP(transwarp_slowdown_paddle,
+    "Slows down the 65C02 to 1 MHz for a short window after getting paddle or joystick input.",
+    "The slowdown window is the same as the other slowdown regions.");
+
+HELP(transwarp_slowdown_slots,
+    "Enable slowdown for the slots where you have physical cards that are sensitive to timings or",
+    "cycle-counting detection. This includes disk controllers, mouse cards, music cards and other",
+    "peripherals that expect the Apple bus to run at 1 MHz.",
+    "Per-slot slowdown mirrors the real TransWarp's DIP block 2: after the core touches an enabled",
+    "timing-sensitive region, it drops to 1 MHz for the slowdown window, then resumes full speed.");
+
+HELP(transwarp_slowdown_window,
+    "Controls the duration of the slowdown window for all slowdown regions.",
+    "The window is how long (in cycles) each touch stays at 1 MHz. The default of 512 cycles",
+    "should be long enough for most software; pick 16k or 32k when a very fast core needs to",
+    "stay locked through longer stretches, like a beam-synced effect or a long device loop.");
+
+static const help_override_t transwarp_overrides[] = {
+    OVERRIDE(1, transwarp_speed),
+    OVERRIDE(2, transwarp_slug),
+    OVERRIDE(3, transwarp_slowdown_floatbus),
+    OVERRIDE(4, transwarp_slowdown_paddle),
+    OVERRIDE(5, transwarp_slowdown_slots),
+    OVERRIDE(6, transwarp_slowdown_slots),
+    OVERRIDE(7, transwarp_slowdown_slots),
+    OVERRIDE(8, transwarp_slowdown_slots),
+    OVERRIDE(9, transwarp_slowdown_slots),
+    OVERRIDE(10, transwarp_slowdown_slots),
+    OVERRIDE(11, transwarp_slowdown_slots),
+    OVERRIDE(12, transwarp_slowdown_window),
+};
+
+/* ======================================================================== */
 /*  CLOCK   (config_menu.c inserts a live link-state line)                  */
 /* ======================================================================== */
 HELP(clock,
@@ -372,7 +498,9 @@ HELP(ram_provide,
     "RamWorks III compatible 8MB expansion (128 banks; software sizes it by probing).",
     "Change this only from BOOT mode (press 'A' during boot); USB-owned mode keeps it locked.",
     "The boot ROM probes the aux slot at every boot: if a physical extended 80-column card is found,",
-    "Appletini RAM stays off automatically and this switch is ignored.");
+    "Appletini RAM stays off automatically and this switch is ignored.",
+    "With TransWarp acceleration on, 128K is built into the accelerator and the 8MB RamWorks",
+    "is served from PSRAM at accelerator speed (a physical aux card disables both, as always).");
 
 static const help_override_t ram_overrides[] = {
     OVERRIDE(0, ram_provide),
@@ -387,16 +515,16 @@ HELP(usb,
     "maintenance mode that should be exited after ejecting the disk on the host.");
 
 HELP(usb_sdd,
-    "SDD stream: sends every Apple bus cycle over USB0 to SuperDuperDisplay running on a PC, which",
-    "regenerates video and audio there.",
-    "USB0 enumerates as a SuperDuperDisplay device while streaming. The SD-card remote mount stays",
-    "detached until you explicitly start it from this tab.");
+    "SDD stream sends every Apple bus cycle over USB0 to SuperDuperDisplay running on a PC, which",
+    "regenerates video and audio there. SDD is open source software on GitHub.",
+    "SD Card Remote Mounting is not available while SDD is active.");
 
 HELP(usb_sd_remote,
     "SD Card Remote Mounting exposes the card's SD filesystem to the host over USB0.",
     "This is modal because desktop operating systems issue heavy command bursts. Appletini services",
     "only the bridge and exit controls until you eject on the host and leave this mode.",
-    "Software running on the Z80 Applicard pauses during the mount and resumes when you exit.");
+    "Software running on the Z80 Applicard pauses during the mount and resumes when you exit.",
+    "SD Card Remote Mounting is not available while SDD is active.");
 
 static const help_override_t usb_overrides[] = {
     OVERRIDE(0, usb_sd_remote),
@@ -417,7 +545,8 @@ HELP(about,
 /* ======================================================================== */
 static const help_tab_t k_help_tabs[] = {
     TAB_WITH_OVERRIDES(CONFIG_TAB_PROFILES, profiles, profiles_overrides),
-    TAB(CONFIG_TAB_BOOT_SETTINGS, boot_settings),
+    TAB_WITH_OVERRIDES(CONFIG_TAB_BOOT_SETTINGS, boot_settings,
+                       boot_settings_overrides),
     TAB_WITH_OVERRIDES(CONFIG_TAB_VIDEO, video, video_overrides),
     TAB_WITH_OVERRIDES(CONFIG_TAB_SMARTPORT, smartport, smartport_overrides),
     TAB(CONFIG_TAB_DISK2,         disk2),
@@ -425,6 +554,7 @@ static const help_tab_t k_help_tabs[] = {
     TAB_WITH_OVERRIDES(CONFIG_TAB_MOCKINGBOARD, phasor, phasor_overrides),
     TAB_WITH_OVERRIDES(CONFIG_TAB_ETHERNET, ethernet, ethernet_overrides),
     TAB_WITH_OVERRIDES(CONFIG_TAB_APPLICARD, applicard, applicard_overrides),
+    TAB_WITH_OVERRIDES(CONFIG_TAB_TRANSWARP, transwarp, transwarp_overrides),
     TAB(CONFIG_TAB_CLOCK,         clock),
     TAB_WITH_OVERRIDES(CONFIG_TAB_RAM, ram, ram_overrides),
     TAB_WITH_OVERRIDES(CONFIG_TAB_USB, usb, usb_overrides),

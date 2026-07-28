@@ -11,7 +11,17 @@
 
 #define CONFIG_MENU_STATUS_LEN 96U
 #define CONFIG_MENU_PATH_LEN 128U
-#define CONFIG_MENU_USB_BIND_ACTION_COUNT 10U
+
+/* File-manager "remember last directory" categories. Each feature that
+ * picks files gets its own remembered directory (smartport shares one
+ * across its slots; disk2 shares one across both drives). */
+#define CONFIG_BROWSER_CAT_SMARTPORT 0U
+#define CONFIG_BROWSER_CAT_DISK2     1U
+#define CONFIG_BROWSER_CAT_BEZEL     2U
+#define CONFIG_BROWSER_CAT_ROM       3U
+#define CONFIG_BROWSER_CAT_PROFILE   4U
+#define CONFIG_BROWSER_CAT_COUNT     5U
+#define CONFIG_MENU_USB_BIND_ACTION_COUNT 14U
 #define CONFIG_MENU_USB_BIND_CAPTURE_NONE 0xFFU
 #define CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM 2U
 #define CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM (CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM + 1U)
@@ -31,7 +41,13 @@ typedef enum {
     CONFIG_MENU_USB_BIND_ACTION_SCREENSHOT_A2,
     CONFIG_MENU_USB_BIND_ACTION_SCREENSHOT_1080P,
     CONFIG_MENU_USB_BIND_ACTION_OK,
-    CONFIG_MENU_USB_BIND_ACTION_BACK
+    CONFIG_MENU_USB_BIND_ACTION_BACK,
+    /* Global virtual-TransWarp speed actions (keyboard keys, fire with
+     * the menu open or closed; unbound by default). */
+    CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_TOGGLE,
+    CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_UP,
+    CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_DOWN,
+    CONFIG_MENU_USB_BIND_ACTION_VTW_SLUG_TOGGLE
 } config_menu_usb_bind_action_t;
 
 typedef struct {
@@ -67,6 +83,18 @@ typedef struct {
     void (*set_slot_enabled)(void *ctx, uint8_t slot, uint8_t enable);
     uint8_t (*get_slot_enabled)(void *ctx, uint8_t slot);
     void (*set_applicard_resource_max)(void *ctx, uint8_t maximum);
+    void (*set_vtw_config)(void *ctx,
+                           uint8_t enable,
+                           uint8_t speed_mode,
+                           uint8_t pace_divider);
+    void (*set_vtw_slug_key_enabled)(void *ctx, uint8_t enable);
+    void (*set_iiplus_data_tap)(void *ctx, uint8_t tap);
+    /* Per-region slowdown (TransWarp DIP block 2): region enable mask +
+     * 1 MHz window duration in Apple cycles. */
+    void (*set_vtw_slowdown)(void *ctx, uint16_t region_mask, uint16_t cycles);
+    /* Full USB1 host re-enumeration (stop + start), for devices too slow
+     * to enumerate at power-on. */
+    void (*refresh_usb1)(void *ctx);
     void (*set_phasor_pan)(void *ctx, uint32_t pan_lo, uint32_t pan_hi);
     void (*set_phasor_audio)(void *ctx,
                              int8_t bass,
@@ -91,11 +119,15 @@ typedef struct {
     int (*ethernet_write_config)(void *ctx,
                                  const uthernet2_network_config_t *config);
     int (*ethernet_test)(void *ctx, uthernet2_test_result_t *result);
-    int (*ethernet_dhcp_acquire)(void *ctx,
-                                 const uint8_t mac[UTHERNET2_MAC_LEN],
-                                 uthernet2_network_config_t *lease,
-                                 char *detail,
-                                 size_t detail_len);
+    int (*ethernet_dhcp_start)(void *ctx,
+                               const uint8_t mac[UTHERNET2_MAC_LEN],
+                               char *detail,
+                               size_t detail_len);
+    int (*ethernet_dhcp_poll)(void *ctx,
+                              uthernet2_network_config_t *lease,
+                              char *detail,
+                              size_t detail_len);
+    void (*ethernet_dhcp_cancel)(void *ctx);
 } config_menu_platform_t;
 
 typedef struct {
@@ -130,6 +162,13 @@ typedef struct {
     uint8_t mouse_sensitivity;
     uint8_t applicard_slot5_enabled; /* PCPI Applicard (Z80) in slot 5 */
     uint8_t applicard_resource_max;  /* 0 = standard CPU share, 1 = maximum */
+    uint8_t vtw_enabled;             /* virtual TransWarp accelerator */
+    uint8_t vtw_speed_mode;          /* 0 full, 1 divided, 2 1MHz-locked */
+    uint8_t vtw_pace_divider;        /* divided mode: fabric clks per cycle */
+    uint8_t vtw_slug_key_enabled;    /* arm the 0.05 MHz slug USB key (def off) */
+    uint8_t iiplus_data_tap;         /* II/II+ bus data sample tap (debug tune) */
+    uint16_t vtw_slowdown_mask;      /* per-region 1MHz: [6:0] slots, [7] float/video, [8] paddle */
+    uint16_t vtw_slowdown_cycles;    /* 1 MHz window per region access (0 = off) */
     uint8_t supersprite_enabled;   /* SuperSprite VDP in slot 7 (excl. SmartPort) */
     uint8_t sdd_stream_enabled;    /* USB0 bus-event stream for SuperDuperDisplay */
     uint8_t usb0_sd_remote_active; /* modal USB0 SD-card mass-storage bridge */
@@ -146,6 +185,8 @@ typedef struct {
     uint8_t ethernet_config_enabled;
     uint8_t ethernet_address_mode;
     uint8_t ethernet_edit_index;
+    uint8_t ethernet_dhcp_pending;
+    uint8_t ethernet_dhcp_report;
     uthernet2_network_config_t ethernet_config;
     uint8_t clock_enabled;
     uint8_t ram_enabled;
@@ -164,6 +205,10 @@ typedef struct {
     uint16_t browser_top;
     uint16_t browser_count;
     char browser_dir[CONFIG_MENU_PATH_LEN];
+    /* Last-visited browse directory per feature category (see
+     * CONFIG_BROWSER_CAT_*). The file manager reopens here next time, or
+     * falls back to the feature default / card root if it is unreachable. */
+    char browser_last_dir[CONFIG_BROWSER_CAT_COUNT][CONFIG_MENU_PATH_LEN];
     uint8_t profile_carousel_active;
     uint16_t profile_selected;
     uint16_t profile_count;
@@ -185,9 +230,16 @@ void config_menu_bind_platform(config_menu_t *menu, const config_menu_platform_t
 void config_menu_apply_boot_runtime(config_menu_t *menu);
 void config_menu_apply_runtime(config_menu_t *menu);
 void config_menu_apply_startup_assets(config_menu_t *menu);
+void config_menu_start_boot_dhcp(config_menu_t *menu);
+void config_menu_poll_ethernet(config_menu_t *menu);
 void config_menu_retry_settings_if_needed(config_menu_t *menu);
 void config_menu_set_sdd_stream(config_menu_t *menu, uint8_t enable);
+void config_menu_refresh_vtw_slowdown(config_menu_t *menu);
 void config_menu_set_applicard_enabled(config_menu_t *menu, uint8_t enable);
+void config_menu_set_vtw_enabled(config_menu_t *menu, uint8_t enable);
+void config_menu_set_vtw_speed(config_menu_t *menu,
+                               uint8_t speed_mode,
+                               uint8_t pace_divider);
 void config_menu_stop_usb0_sd_remote(config_menu_t *menu);
 void config_menu_usb0_sd_remote_host_ejected(config_menu_t *menu);
 uint8_t config_menu_usb0_sd_remote_active(const config_menu_t *menu);
@@ -211,6 +263,8 @@ usb_hid_menu_source_t config_menu_usb_screenshot_a2_binding_source(
     const config_menu_t *menu);
 usb_hid_menu_source_t config_menu_usb_screenshot_1080p_binding_source(
     const config_menu_t *menu);
+usb_hid_menu_source_t config_menu_usb_vtw_binding_source(
+    const config_menu_t *menu, uint32_t action);
 void config_menu_draw(uint16_t *fb, const config_menu_t *menu, uint8_t usb_owned);
 
 #endif

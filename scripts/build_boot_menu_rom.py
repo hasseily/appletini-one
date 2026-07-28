@@ -277,13 +277,19 @@ def build() -> tuple[bytearray, bytearray, bytearray, dict[str, int]]:
     slot_max_pc = 0
     c8_max_pc = 0
     pc = 0
+    # Attribute each emitted byte to the source *section* it came from, not
+    # its raw address. If slot-page code overruns $C800 its spill must count
+    # against the slot page -- otherwise the overflow hides as legal C8 use
+    # and the $C800 section later clobbers it (and $C7FF is force-zeroed,
+    # silently corrupting whatever slot instruction landed there).
+    in_c8 = False
 
     def bump(new_pc: int) -> None:
         nonlocal slot_max_pc, c8_max_pc
-        if 0xC700 <= new_pc <= 0xC800:
-            slot_max_pc = max(slot_max_pc, new_pc)
-        elif 0xC800 <= new_pc <= 0xC900:
+        if in_c8:
             c8_max_pc = max(c8_max_pc, new_pc)
+        else:
+            slot_max_pc = max(slot_max_pc, new_pc)
 
     for line in lines:
         if is_assignment(line):
@@ -291,6 +297,7 @@ def build() -> tuple[bytearray, bytearray, bytearray, dict[str, int]]:
         if line.startswith("*"):
             _, expr = line.split("=", 1)
             pc = eval_expr(expr, symbols, pc)
+            in_c8 = pc >= 0xC800
             continue
         if line.startswith(".byte"):
             for item in split_items(line[5:].strip()):
@@ -310,8 +317,16 @@ def build() -> tuple[bytearray, bytearray, bytearray, dict[str, int]]:
         pc = emit_instruction(memory, reloc, pc, op, operand, symbols)
         bump(pc)
 
-    if slot_max_pc > 0xC800:
-        raise ValueError(f"slot ROM exceeds 256 bytes by {slot_max_pc - 0xC800} bytes")
+    # $C7FF is force-set to $00 below (the Disk II boot signature byte), so
+    # slot-page code must end by $C7FE. slot_max_pc is the pc just past the
+    # last slot byte; if it passes $C7FF the code reached the reserved byte
+    # (or ran off the page), which the force-zero would silently corrupt.
+    if slot_max_pc > 0xC7FF:
+        raise ValueError(
+            f"slot ROM overflows: code reaches ${slot_max_pc:04X}, "
+            f"{slot_max_pc - 0xC7FF} byte(s) past the $C7FE limit "
+            f"($C7FF is the reserved $00 signature byte)"
+        )
     if c8_max_pc > 0xC900:
         raise ValueError(f"expansion ROM page exceeds $C800-$C8FF by {c8_max_pc - 0xC900} bytes")
 

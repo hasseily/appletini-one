@@ -126,6 +126,10 @@ void uart_control_bind_config_menu(void *menu);
 void uart_control_print_help(const uart_control_t *control, const uart_control_ops_t *ops);
 uart_control_event_t uart_control_poll(uart_control_t *control, const uart_control_ops_t *ops);
 int uart_control_has_pending_input(const uart_control_t *control);
+
+/* One DMA write onto the live Apple bus (routed by the current
+ * soft-switch map, like any 6502 store). 0 on success. */
+int uart_control_dma_bus_write(uint16_t addr, uint8_t value);
 const char *uart_control_key_name(ui_key_t key);
 
 #endif

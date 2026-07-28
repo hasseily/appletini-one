@@ -37,15 +37,35 @@ typedef struct {
 
 static FATFS g_screenshot_fs;
 static uint8_t g_png_row[1U + (COMP_OUT_WIDTH * 4U)];
-static char g_overlay_text[32];
-static XTime g_overlay_until;
-static uint8_t g_overlay_active;
-static uint8_t g_overlay_drawn_slots;
-static uint8_t g_overlay_restore_slots;
+
+/* Two transient on-screen overlays, each a self-contained instance:
+ * BOTTOM = screenshot confirmations, TOP = TransWarp speed notices, so
+ * the two never overlap. Same fade-and-restore machinery for both. */
+typedef enum {
+    OVERLAY_BOTTOM = 0,   /* screenshots */
+    OVERLAY_TOP    = 1,   /* TransWarp speed notices */
+    OVERLAY_COUNT
+} overlay_slot_e;
+
+typedef struct {
+    char    text[40];
+    XTime   until;
+    uint8_t active;
+    uint8_t drawn_slots;
+    uint8_t restore_slots;
+    uint8_t anchor_top;   /* 1 = top of screen, 0 = bottom */
+    screenshot_service_rect_t rect;
+    /* Footprint pending restore. Distinct from `rect` so replacing a
+     * still-visible box (a different-width speed notice) restores the OLD
+     * box's area, not the new one's -- otherwise the old box's
+     * non-overlapping pixels orphan on screen. */
+    screenshot_service_rect_t restore_rect;
+} overlay_t;
+
+static overlay_t g_overlays[OVERLAY_COUNT];
 static uint8_t g_scanlines_mode;
 static DWORD g_fattime_override;
 static uint8_t g_fattime_override_active;
-static screenshot_service_rect_t g_overlay_rect;
 static screenshot_service_sd_write_hook_t g_sd_write_hook;
 static void *g_sd_write_hook_ctx;
 
@@ -79,7 +99,8 @@ static void result_set(screenshot_service_result_t *result,
     result->message[sizeof(result->message) - 1U] = '\0';
 }
 
-static screenshot_service_rect_t overlay_rect_for_text(const char *text)
+static screenshot_service_rect_t overlay_rect_for_text(const char *text,
+                                                       uint8_t anchor_top)
 {
     const int scale = 3;
     screenshot_service_rect_t rect;
@@ -89,7 +110,9 @@ static screenshot_service_rect_t overlay_rect_for_text(const char *text)
     rect.w = text_w + 36;
     rect.h = text_h + 24;
     rect.x = ((int)COMP_OUT_WIDTH - rect.w) / 2;
-    rect.y = (int)COMP_OUT_HEIGHT - rect.h - 32;
+    rect.y = (anchor_top != 0U)
+                 ? 32
+                 : (int)COMP_OUT_HEIGHT - rect.h - 32;
     return rect;
 }
 
@@ -100,51 +123,64 @@ static uint8_t output_slot_mask_for_fb(const uint16_t *fb)
     return (slot < COMP_OUT_SLOT_COUNT) ? (uint8_t)(1U << slot) : 0U;
 }
 
-static void overlay_expire(void)
+static void overlay_expire(overlay_t *ov)
 {
-    if (g_overlay_active == 0U) {
+    if (ov->active == 0U) {
         return;
     }
 
-    g_overlay_active = 0U;
-    g_overlay_restore_slots |= g_overlay_drawn_slots;
-    g_overlay_drawn_slots = 0U;
-    g_overlay_text[0] = '\0';
-    if (g_overlay_restore_slots != 0U) {
+    ov->active = 0U;
+    ov->restore_rect = ov->rect;
+    ov->restore_slots |= ov->drawn_slots;
+    ov->drawn_slots = 0U;
+    ov->text[0] = '\0';
+    if (ov->restore_slots != 0U) {
         compositor_request_full_refresh();
     }
 }
 
-static void overlay_show(const char *text)
+static void overlay_show(overlay_t *ov, const char *text)
 {
     XTime now = 0U;
+    const uint8_t was_active = ov->active;
 
     if (text == NULL) {
         text = "";
     }
 
-    (void)snprintf(g_overlay_text, sizeof(g_overlay_text), "%s", text);
+    /* Replacing a still-visible box: queue its CURRENT footprint for
+     * restore (with its own rect) before overwriting, so the old box is
+     * cleaned even when the new one is a different size or position. */
+    if (was_active != 0U) {
+        ov->restore_rect = ov->rect;
+        ov->restore_slots |= ov->drawn_slots;
+    }
+
+    (void)snprintf(ov->text, sizeof(ov->text), "%s", text);
     XTime_GetTime(&now);
-    g_overlay_until = now + SCREENSHOT_OVERLAY_TICKS;
-    g_overlay_rect = overlay_rect_for_text(g_overlay_text);
-    g_overlay_active = 1U;
-    g_overlay_drawn_slots = 0U;
-    g_overlay_restore_slots = 0U;
+    ov->until = now + SCREENSHOT_OVERLAY_TICKS;
+    ov->rect = overlay_rect_for_text(ov->text, ov->anchor_top);
+    ov->active = 1U;
+    ov->drawn_slots = 0U;
+    if (was_active != 0U) {
+        compositor_request_full_refresh();
+    }
+}
+
+void screenshot_service_show_notice(const char *text)
+{
+    overlay_show(&g_overlays[OVERLAY_TOP], text);
 }
 
 void screenshot_service_init(void)
 {
     g_scanlines_mode = APPLETINI_SCANLINES_OFF;
-    g_overlay_text[0] = '\0';
-    g_overlay_until = 0U;
-    g_overlay_active = 0U;
-    g_overlay_drawn_slots = 0U;
-    g_overlay_restore_slots = 0U;
+    memset(g_overlays, 0, sizeof(g_overlays));
+    g_overlays[OVERLAY_TOP].anchor_top = 1U;
     g_fattime_override = 0U;
     g_fattime_override_active = 0U;
     g_sd_write_hook = NULL;
     g_sd_write_hook_ctx = NULL;
-    memset(&g_overlay_rect, 0, sizeof(g_overlay_rect));
 }
 
 void screenshot_service_set_scanlines(uint8_t mode)
@@ -724,11 +760,11 @@ int screenshot_service_save(screenshot_service_kind_t kind,
     compositor_set_paused(0U);
 
     if (rc == 0) {
-        overlay_show("SCREENSHOT SAVED");
+        overlay_show(&g_overlays[OVERLAY_BOTTOM], "SCREENSHOT SAVED");
     } else if (result != NULL && result->message[0] != '\0') {
-        overlay_show(result->message);
+        overlay_show(&g_overlays[OVERLAY_BOTTOM], result->message);
     } else {
-        overlay_show("SCREENSHOT FAILED");
+        overlay_show(&g_overlays[OVERLAY_BOTTOM], "SCREENSHOT FAILED");
     }
     compositor_request_full_refresh();
     return rc;
@@ -737,57 +773,84 @@ int screenshot_service_save(screenshot_service_kind_t kind,
 void screenshot_service_poll(void)
 {
     XTime now = 0U;
+    uint8_t any_active = 0U;
 
-    if (g_overlay_active == 0U) {
+    for (uint32_t i = 0U; i < OVERLAY_COUNT; ++i) {
+        if (g_overlays[i].active != 0U) {
+            any_active = 1U;
+        }
+    }
+    if (any_active == 0U) {
         return;
     }
 
     XTime_GetTime(&now);
-    if ((int64_t)(g_overlay_until - now) <= 0) {
-        overlay_expire();
+    for (uint32_t i = 0U; i < OVERLAY_COUNT; ++i) {
+        if (g_overlays[i].active != 0U &&
+            (int64_t)(g_overlays[i].until - now) <= 0) {
+            overlay_expire(&g_overlays[i]);
+        }
     }
 }
 
+/* The frame restore path clears at most one overlay per call so the
+ * caller can restore each rect independently; it is invoked once per
+ * overlay until all are consumed (main.c loops on the nonzero return). */
 uint8_t screenshot_service_restore_rect_for_frame(uint16_t *fb,
                                                   screenshot_service_rect_t *rect)
 {
     const uint8_t slot_mask = output_slot_mask_for_fb(fb);
 
-    if (slot_mask == 0U || (g_overlay_restore_slots & slot_mask) == 0U) {
+    if (slot_mask == 0U) {
         return 0U;
     }
+    for (uint32_t i = 0U; i < OVERLAY_COUNT; ++i) {
+        overlay_t *ov = &g_overlays[i];
 
-    if (rect != NULL) {
-        *rect = g_overlay_rect;
+        if ((ov->restore_slots & slot_mask) == 0U) {
+            continue;
+        }
+        if (rect != NULL) {
+            *rect = ov->restore_rect;
+        }
+        ov->restore_slots = (uint8_t)(ov->restore_slots & (uint8_t)~slot_mask);
+        return 1U;
     }
-    g_overlay_restore_slots = (uint8_t)(g_overlay_restore_slots & (uint8_t)~slot_mask);
-    return 1U;
+    return 0U;
 }
 
-void screenshot_service_draw_overlay(uint16_t *fb)
+static void overlay_draw_one(uint16_t *fb, overlay_t *ov, uint8_t slot_mask)
 {
-    const char *text = g_overlay_text;
-    const uint8_t slot_mask = output_slot_mask_for_fb(fb);
     const int scale = 3;
-    const int x = g_overlay_rect.x;
-    const int y = g_overlay_rect.y;
-    const int box_w = g_overlay_rect.w;
-    const int box_h = g_overlay_rect.h;
 
-    if (fb == NULL || g_overlay_active == 0U || text[0] == '\0') {
+    if (ov->active == 0U || ov->text[0] == '\0') {
         return;
     }
 
-    fb16_fill_rect(fb, x, y, box_w, box_h, FB16_COLOR_BLACK);
-    fb16_rect(fb, x, y, box_w, box_h, FB16_COLOR_GREEN);
+    fb16_fill_rect(fb, ov->rect.x, ov->rect.y, ov->rect.w, ov->rect.h,
+                   FB16_COLOR_BLACK);
+    fb16_rect(fb, ov->rect.x, ov->rect.y, ov->rect.w, ov->rect.h,
+              FB16_COLOR_GREEN);
     fb16_string_scaled(fb,
-                       x + 18,
-                       y + 12,
-                       text,
+                       ov->rect.x + 18,
+                       ov->rect.y + 12,
+                       ov->text,
                        FB16_COLOR_WHITE,
                        FB16_COLOR_BLACK,
                        scale);
     if (slot_mask != 0U) {
-        g_overlay_drawn_slots = (uint8_t)(g_overlay_drawn_slots | slot_mask);
+        ov->drawn_slots = (uint8_t)(ov->drawn_slots | slot_mask);
+    }
+}
+
+void screenshot_service_draw_overlay(uint16_t *fb)
+{
+    const uint8_t slot_mask = output_slot_mask_for_fb(fb);
+
+    if (fb == NULL) {
+        return;
+    }
+    for (uint32_t i = 0U; i < OVERLAY_COUNT; ++i) {
+        overlay_draw_one(fb, &g_overlays[i], slot_mask);
     }
 }

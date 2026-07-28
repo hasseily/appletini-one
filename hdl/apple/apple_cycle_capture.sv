@@ -17,7 +17,12 @@ module apple_cycle_capture (
     // by fifo_full; cleared when egress acks. Egress emits a gap marker
     // record into the PS-side ring on ack.
     output logic                            capture_drop_sticky,
-    input  logic                            capture_drop_ack
+    input  logic                            capture_drop_ack,
+
+    // Authoritative fake-SHR capture state, exported so the PS can
+    // resynchronize its local C029 mode after a capture drop eats the
+    // C029 I/O record itself.
+    output logic                            shr_capture_active
 );
 
     import apple_cycle_capture_pkg::*;
@@ -29,13 +34,17 @@ module apple_cycle_capture (
     localparam int FIFO_DEPTH = 4096;
     localparam int FIFO_WIDTH = $bits(AppleCycleRecord);
 
-    // Apple-bus video-write ranges: main text 0x000400-0x000BFF, main HGR
-    // 0x002000-0x005FFF, aux text 0x010400-0x010BFF, aux HGR/SHR
+    // Apple-bus video-write ranges: main text 0x000400-0x000BFF, main
+    // HGR/SHR 0x002000-0x009FFF, aux text 0x010400-0x010BFF, aux HGR/SHR
     // 0x012000-0x019FFF. Aux text includes page 2 so DLORES/TEXT80 PAGE2
-    // frames can render from the captured AUX $0800-$0BFF shadow.
+    // frames can render from the captured AUX $0800-$0BFF shadow. Main
+    // matches the aux width because SHR interlace keeps its second field
+    // in MAIN $2000-$9FFF; a write occupies one
+    // bus cycle wherever it lands, so the wider window adds records but
+    // no peak rate.
     function automatic logic in_video_range(input logic [23:0] a);
         return ((a >= 24'h000400) && (a <= 24'h000BFF)) ||
-               ((a >= 24'h002000) && (a <= 24'h005FFF)) ||
+               ((a >= 24'h002000) && (a <= 24'h009FFF)) ||
                ((a >= 24'h010400) && (a <= 24'h010BFF)) ||
                ((a >= 24'h012000) && (a <= 24'h019FFF));
     endfunction
@@ -112,6 +121,8 @@ module apple_cycle_capture (
             shr_capture_active_q <= c029_write_shr_active;
         end
     end
+
+    assign shr_capture_active = shr_capture_active_q;
 
     logic apple_push_request;
     assign apple_push_request = ab_read.data_en && (rule1_valid || capture_frame_en);

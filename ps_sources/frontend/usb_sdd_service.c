@@ -24,6 +24,7 @@
 #include "../lib/uart.h"
 #include "card_control_regs.h"
 #include "usb_sdd_service.h"
+#include "uart_control.h"
 #include "usb0_personality.h"
 #include "usb_storage_service.h"
 #include "no_slot_clock_control.h"
@@ -52,6 +53,14 @@
 #define SDD_ADDR_WATCHDOG       0x0008U
 #define SDD_ADDR_NSC_TIME_0     0x0014U
 #define SDD_ADDR_NSC_TIME_1     0x0018U
+
+/* RAM window: 0x10000 + apple_addr is a live bus write. Register
+ * numbers all sit below 0x10000, so raw Apple addresses (which share
+ * that range) are framed out of collision by the offset. The write
+ * lands through the CURRENT soft-switch map, exactly like a 6502
+ * store: RAMWRT routes it to aux, 80STORE/PAGE2 and the LC apply. */
+#define SDD_ADDR_RAM_BASE       0x00010000U
+#define SDD_ADDR_RAM_END        0x0001FFFFU
 
 #define SDD_STATUS_ENABLE_BIT   (1U << 0)
 #define SDD_STATUS_OVERFLOW_BIT (1U << 1)
@@ -96,6 +105,8 @@ static u32 SddOverflowCount;
 static u32 SddHostEnables;
 static u32 SddWatchdogWrites;
 static u32 SddUnknownWrites;
+static u32 SddRamBytes;
+static u32 SddRamErrors;
 
 /* ------------------------------------------------------------------ */
 /* PL tap control                                                       */
@@ -362,7 +373,28 @@ static void sdd_handle_reg_write(u32 addr, u32 value)
             SddWatchdogWrites++;
             break;
         default:
-            SddUnknownWrites++;
+            if (addr >= SDD_ADDR_RAM_BASE && addr <= SDD_ADDR_RAM_END) {
+                /* One 32-bit word = 4 bytes onto the bus, high byte
+                 * first, so "4CE20001" pastes as $4C $E2 $00 $01 at
+                 * ascending addresses (hex dumps read left to right). */
+                u32 a = addr - SDD_ADDR_RAM_BASE;
+                int shift;
+                for (shift = 24; shift >= 0; shift -= 8) {
+                    if (a > 0xFFFFU) {
+                        break;              /* clip at the top of RAM */
+                    }
+                    if (uart_control_dma_bus_write(
+                            (uint16_t)a,
+                            (uint8_t)((value >> shift) & 0xFFU)) != 0) {
+                        SddRamErrors++;
+                        break;
+                    }
+                    SddRamBytes++;
+                    a++;
+                }
+            } else {
+                SddUnknownWrites++;
+            }
             break;
     }
 }
@@ -742,12 +774,15 @@ void usb_sdd_service_print_status(uint32_t uart_base)
                    (unsigned long)SddOverflowCount);
     uart_puts(uart_base, line);
     (void)snprintf(line, sizeof(line),
-                   "sdd: events=%lu msgs=%lu enables=%lu wdog=%lu unk=%lu\r\n",
+                   "sdd: events=%lu msgs=%lu enables=%lu wdog=%lu "
+                   "unk=%lu ram=%lu ramerr=%lu\r\n",
                    (unsigned long)SddEventsSent,
                    (unsigned long)SddMessagesSent,
                    (unsigned long)SddHostEnables,
                    (unsigned long)SddWatchdogWrites,
-                   (unsigned long)SddUnknownWrites);
+                   (unsigned long)SddUnknownWrites,
+                   (unsigned long)SddRamBytes,
+                   (unsigned long)SddRamErrors);
     uart_puts(uart_base, line);
     (void)snprintf(line, sizeof(line),
                    "sdd: tx sub=%lu comp=%lu inflight=%lu\r\n",

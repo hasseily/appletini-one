@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -74,8 +75,12 @@ def test_pl_exports_apple_reset_sequence() -> None:
             "CTRL+RESET must not invalidate the PSRAM cache")
     require("apple_reset_seq_q <= apple_reset_seq_q + 8'd1;" in source,
             "Apple reset status must increment a sequence counter on reset assertion")
-    require("CARD_CTRL_REG_APPLE_RESET_STATUS:  as_client_rdata_q <= {23'h000000, ab_read.res, apple_reset_seq_q};" in source,
-            "PS-visible reset status must include RES# level and reset sequence")
+    require("CARD_CTRL_REG_APPLE_RESET_STATUS:  as_client_rdata_q <= {" in source
+            and "21'h000000, shr_capture_active_w," in source
+            and "vtw_video_phase_1mhz," in source
+            and "ab_read.res, apple_reset_seq_q" in source,
+            "PS-visible reset status must include RES# level, reset sequence, "
+            "the vTW 1 MHz phase bit, and the fake-SHR capture state")
 
 
 def test_apple_bus_res_is_not_address_phase_sampled() -> None:
@@ -183,21 +188,39 @@ def test_frontend_publishes_boot_config_before_slow_services() -> None:
             "SmartPort media must be reopened after startup SD asset loads and before Apple release")
 
 
-def test_boot_menu_close_reapplies_visible_config() -> None:
+def test_boot_menu_close_does_not_reprobe_storage_after_handoff() -> None:
     source = read(FRONTEND_MAIN_C)
 
-    require("g_usb_menu_owned == 0U &&\n"
-            "        ui_config_menu_has_close_consumer(menu) == 0U &&\n"
-            "        ui_input_requests_menu_close(in) != 0U) {\n"
-            "        boot_menu_service_request_rom_close();" in source,
-            "Apple-owned parent ESC must ask the boot ROM to close instead of hiding only the PS menu")
+    close_request_start = source.find("static void ui_request_boot_menu_close")
+    close_request_end = source.find("\nstatic void ui_handle_input_with_config",
+                                    close_request_start)
+    require(close_request_start >= 0 and close_request_end > close_request_start,
+            "frontend must centralize the safe ROM-close request sequence")
+    close_request = source[close_request_start:close_request_end]
+    require("config_menu_apply_boot_runtime(menu);" in close_request and
+            "boot_menu_service_request_rom_close();" in close_request and
+            close_request.index("config_menu_apply_boot_runtime(menu);") <
+            close_request.index("boot_menu_service_request_rom_close();"),
+            "boot-critical config must be published before the ROM starts handoff")
+    require(source.count("ui_request_boot_menu_close(menu);") == 2,
+            "Apple-keyboard and USB close actions must share the safe close sequence")
     require("boot_close_child_suppress" not in source and
             "UI_BOOT_CLOSE_CHILD_SUPPRESS" not in source,
             "child ESC must not rely on suppressing a ROM close after the ROM has already released the Apple")
-    require("case BOOT_MENU_EVENT_CLOSE:\n"
-            "                    config_menu_apply_runtime(&config_menu);\n"
-            "                    ui_set_boot_menu_visible(&ui, &config_menu, 0U);" in source,
-            "ROM close events mean the Apple is closing the parent menu, so PS must publish config and hide it")
+    close_blocks = re.findall(
+        r"case BOOT_MENU_EVENT_CLOSE:(.*?)(?:case BOOT_MENU_EVENT_INPUT:|default:)",
+        source,
+        re.S,
+    )
+    require(len(close_blocks) == 2,
+            "frontend must handle ROM close in both normal and USB0-modal loops")
+    for close_block in close_blocks:
+        require("ui_set_boot_menu_visible(&ui, &config_menu, 0U);" in close_block,
+                "ROM close must hide and clean up the PS menu")
+        require("config_menu_apply_runtime" not in close_block and
+                "set_disk2_image_path" not in close_block and
+                "set_smartport_image_path" not in close_block,
+                "ROM close must not reapply or reprobe storage after handoff begins")
 
 
 def test_menu_sd_access_refreshes_smartport_media_before_handoff() -> None:
@@ -405,10 +428,10 @@ def test_vbl_lock_matches_boot_rom_timing() -> None:
     timing = read(APPLE_TIMING_GEN_SV)
 
     require("localparam logic [6:0] VBL_LOCK_CYCLE = 7'd15;" in timing,
-            "VBL lock seed must match the current slot-independent BM_IO,Y write latency")
-    require("The ROM writes BM_CMD fourteen 6502 cycles after the calibrated VBL" in timing and
-            "next timing-generator tick as cycle 15" in timing,
-            "VBL lock comment must document the current post-edge seed calculation")
+            "VBL lock seed must remain in raw motherboard scanner phase")
+    require("14 + 1 = 15" in timing and
+            "software\n    // renderer all use this common cycle convention" in timing,
+            "VBL lock comment must keep hardware and renderer in raw scanner phase")
 
     sync_start = rom.find("vbl_mousecard_sync:")
     sync_end = rom.find("vbl_emit:", sync_start)
@@ -560,6 +583,22 @@ def test_boot_prompt_shows_appletini_name() -> None:
             "boot ROM prompt text must be A:APPLETINI in Apple text codes")
 
 
+def test_boot_prompt_esc_bypasses_menu() -> None:
+    rom = read(BOOT_MENU_SLOT_A65)
+    wait_start = rom.find("wait_loop:")
+    window_done = rom.find("window_done:", wait_start)
+
+    require(wait_start >= 0 and window_done > wait_start,
+            "boot ROM must keep the prompt wait and timeout handoff path")
+    wait = rom[wait_start:window_done]
+    require("          and #$5f\n"
+            "          cmp #'A'\n"
+            "          beq open_menu\n"
+            "          cmp #$1b\n"
+            "          bne wait_loop" in wait,
+            "A must open the menu while Esc falls through to real boot")
+
+
 def test_apple_reset_closes_active_menu() -> None:
     source = read(FRONTEND_MAIN_C)
 
@@ -598,7 +637,8 @@ def test_usb_close_request_exits_apple_owned_boot_menu_in_rom() -> None:
             "boot ROM must forward ESC to the PS and wait for an explicit PS close request")
     require("logic ps_close_requested_q;" in hdl and
             "apple_status_byte = {\n"
-            "            2'd0,\n"
+            "            1'b0,\n"
+            "            boot_open_menu,\n"
             "            ps_close_requested_q,\n"
             "            handoff_disk2" in hdl,
             "boot-menu PL must expose the PS close request on Apple status bit 5")
@@ -616,8 +656,31 @@ def test_usb_close_request_exits_apple_owned_boot_menu_in_rom() -> None:
             "                return;\n"
             "            }\n"
             "            if (g_usb_menu_owned == 0U) {\n"
-            "                boot_menu_service_request_rom_close();" in frontend_main,
-            "USB close must stop child UI first, then ask the ROM to close Apple-owned boot menus")
+            "                ui_request_boot_menu_close(menu);" in frontend_main,
+            "USB close must stop child UI first, then safely publish boot config and close the ROM menu")
+
+
+def test_always_show_menu_opens_menu_without_prompt() -> None:
+    config = read(CONFIG_MENU_C)
+    hdl = read(BOOT_MENU_CARD_SV)
+    rom = read(BOOT_MENU_SLOT_A65)
+
+    require("CONFIG_BOOT_TIMEOUT_UNLIMITED" in config and
+            "CONFIG_BOOT_TIMEOUT_OPEN_MENU" in config and
+            "BOOT_TIMEOUT_TICKS_OPEN_MENU 0xFFFFFFFEU" in config,
+            "config menu must define the Unlimited and Always-show-menu modes")
+    require('return "Unlimited";' in config and
+            'return "Always show menu";' in config,
+            "boot-timeout labels must read Unlimited and Always show menu")
+    require("boot_open_menu = (timeout_ticks_q == 32'hFFFF_FFFE)" in hdl and
+            "boot_open_menu," in hdl,
+            "boot_menu_card must decode the sentinel to the open-menu status bit")
+    require("STATUS_OPEN_MENU" in rom and
+            "and #STATUS_OPEN_MENU" in rom and
+            "bne open_direct" in rom and
+            "open_direct:" in rom and
+            "bne open_menu" in rom,
+            "boot ROM must jump straight to the menu in Always-show-menu mode")
 
 
 TESTS = [
@@ -626,7 +689,7 @@ TESTS = [
     test_frontend_tracks_apple_reset_sequence,
     test_boot_menu_uses_finite_default_until_config_is_published,
     test_frontend_publishes_boot_config_before_slow_services,
-    test_boot_menu_close_reapplies_visible_config,
+    test_boot_menu_close_does_not_reprobe_storage_after_handoff,
     test_menu_sd_access_refreshes_smartport_media_before_handoff,
     test_boot_handoff_manufactures_target_slot_stack_frame,
     test_disk2_slot6_uses_boot_handoff_gate,
@@ -637,8 +700,10 @@ TESTS = [
     test_vbl_lock_matches_boot_rom_timing,
     test_iiplus_vaporlock_path_is_patchable_and_fits,
     test_boot_prompt_shows_appletini_name,
+    test_boot_prompt_esc_bypasses_menu,
     test_apple_reset_closes_active_menu,
     test_usb_close_request_exits_apple_owned_boot_menu_in_rom,
+    test_always_show_menu_opens_menu_without_prompt,
 ]
 
 

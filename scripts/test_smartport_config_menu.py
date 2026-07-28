@@ -97,11 +97,12 @@ def test_browser_selection_consumes_tab_and_esc_locally() -> None:
             "        case UI_KEY_UP:\n"
             "            config_menu_browser_move(menu, -1);" in block,
             "browser selection list must still navigate with up/down")
-    require("case UI_KEY_ESC:\n"
-            "            config_menu_browser_close(menu);\n"
+    require("case UI_KEY_BACK:\n"
+            "        case UI_KEY_ESC:\n" in block and
+            "config_menu_browser_close(menu);\n"
             "            return 1U;" in block and
             "config_menu_set_active(menu, 0U)" not in block,
-            "browser selection list ESC must close only the browser")
+            "browser selection list ESC/BACK must close only the browser")
 
 
 def test_menu_applies_all_smartport_paths() -> None:
@@ -173,45 +174,63 @@ def test_browser_targets_each_smartport_device() -> None:
             "config_menu_open_browser(menu,\n"
             "                                     (uint8_t)(CONFIG_BROWSER_TARGET_SMARTPORT_1 + slot));" in source,
             "SmartPort tab ENTER must toggle item 0/SuperSprite/RAM32 and open the browser for focused SP devices")
-    require("menu->tab == CONFIG_TAB_SMARTPORT && menu->item_focus == 0U" in source and
-            "menu->supersprite_enabled != 0U" in source and
-            "SUPERSPRITE DISABLES SMARTPORT" in source,
-            "SmartPort tab left/right must toggle the shared drive activity overlay unless SuperSprite owns slot 7")
-def test_browser_splits_po_images_by_size() -> None:
+    adjust_start = source.find("static uint8_t config_menu_adjust_focused_value")
+    adjust_end = source.find("static void config_menu_reload_smartport_device", adjust_start)
+    require(adjust_start >= 0 and adjust_end > adjust_start and
+            "menu->disk2_activity_visible =" not in source[adjust_start:adjust_end],
+            "SmartPort activity checkbox must ignore left/right adjustment")
+
+
+def test_boot_menu_timeout_supports_left_right_adjustment() -> None:
+    source = read(CONFIG_MENU_C)
+    adjust_start = source.find("static uint8_t config_menu_adjust_focused_value")
+    adjust_end = source.find("static void config_menu_reload_smartport_device", adjust_start)
+
+    require(adjust_start >= 0 and adjust_end > adjust_start,
+            "config menu focused-value adjustment handler must be present")
+    adjust = source[adjust_start:adjust_end]
+    require("if (menu->tab == CONFIG_TAB_BOOT_SETTINGS && menu->item_focus == 0U)" in adjust and
+            "(uint8_t)(CONFIG_BOOT_TIMEOUT_COUNT - 1U)" in adjust and
+            "(uint8_t)(menu->boot_timeout_mode - 1U)" in adjust and
+            "(uint8_t)((menu->boot_timeout_mode + 1U) %" in adjust and
+            "CONFIG_BOOT_TIMEOUT_COUNT);" in adjust,
+            "Boot menu must wrap backward on left and forward on right")
+
+
+def test_browser_accepts_any_smartport_po_size() -> None:
     source = read(CONFIG_MENU_C)
     help_source = read(CONFIG_MENU_HELP_C)
     service = read(SMARTPORT_C)
 
     require("#define CONFIG_DISK2_PO_IMAGE_BYTES 143360U" in source,
             "Disk II .po filter must use the 140K ProDOS image size")
-    require("#define CONFIG_SMARTPORT_140K_PO_IMAGE_BYTES 143360U" in source,
-            "SmartPort .po filter must include the 140K ProDOS image size")
-    require("#define CONFIG_SMARTPORT_800K_PO_IMAGE_BYTES 819200U" in source,
-            "SmartPort .po filter must use the 800K ProDOS image size")
+    require("CONFIG_SMARTPORT_140K_PO_IMAGE_BYTES" not in source and
+            "CONFIG_SMARTPORT_800K_PO_IMAGE_BYTES" not in source,
+            "SmartPort must not whitelist specific PO image sizes")
     require("HELP(smartport_ram32," in help_source and
             "volatile 32MB SmartPort block device" in help_source and
             "OVERRIDE(SMARTPORT_DEVICE_COUNT + 1U, smartport_ram32)" in help_source,
             "SmartPort help must include a RAM32-specific explanation")
-    require("static uint8_t config_menu_has_smartport_ext(const char *name, FSIZE_t size)" in source,
-            "SmartPort extension helper must receive the file size")
+    require("static uint8_t config_menu_has_smartport_ext(const char *name)" in source,
+            "SmartPort extension helper must be independent of file size")
     require("static uint8_t config_menu_has_disk2_ext(const char *name, FSIZE_t size)" in source,
             "Disk II extension helper must receive the file size")
-    require("(config_menu_str_ieq(dot, \".po\") != 0U &&\n"
-            "             (size == (FSIZE_t)CONFIG_SMARTPORT_140K_PO_IMAGE_BYTES ||\n"
-            "              size == (FSIZE_t)CONFIG_SMARTPORT_800K_PO_IMAGE_BYTES))" in source,
-            "SmartPort browser must accept 140K and 800K .po images")
+    require('config_menu_str_ieq(dot, ".po") != 0U' in source,
+            "SmartPort browser must accept every .po image size")
     require("(config_menu_str_ieq(dot, \".po\") != 0U &&\n"
             "             size == (FSIZE_t)CONFIG_DISK2_PO_IMAGE_BYTES)" in source,
             "Disk II browser must accept only 140K .po images")
-    require("return config_menu_has_smartport_ext(info->fname, info->fsize);" in source,
-            "SmartPort browser must pass FatFs file size to the extension helper")
+    require("return config_menu_has_smartport_ext(info->fname);" in source,
+            "SmartPort browser must filter PO images by extension only")
     require("return config_menu_has_disk2_ext(info->fname, info->fsize);" in source,
             "Disk II browser must pass FatFs file size to the extension helper")
-    require("Supported: HDV, 2MG, 2IMG, 140K PO, and 800K PO." in help_source,
-            "SmartPort help must document both supported PO sizes")
+    require("Supported: HDV, 2MG, 2IMG, and PO images of any size." in help_source,
+            "SmartPort help must document arbitrary PO sizes")
     require("SP_DISK2_PRODOS_IMAGE_BYTES" not in service and
-            "size == (FSIZE_t)SP_DISK2_PRODOS_IMAGE_BYTES" not in service,
-            "SmartPort service must not reject 140K .po images at load time")
+            "size == (FSIZE_t)SP_DISK2_PRODOS_IMAGE_BYTES" not in service and
+            "*data_bytes = raw_bytes - (raw_bytes % SP_BLOCK_SIZE);" in service and
+            "dev->image_blocks = data_bytes / SP_BLOCK_SIZE;" in service,
+            "SmartPort service must derive arbitrary raw PO capacity in blocks")
 
 
 def test_smartport_service_public_api_is_one_based() -> None:
@@ -404,10 +423,11 @@ def test_settings_menu_controls_debug_overlay_and_bezel() -> None:
             "bezel browser must filter to PNG files")
     require("config_menu_open_browser(menu, CONFIG_BROWSER_TARGET_BEZEL);" in source,
             "video Bezel row must open the bezel picker")
-    require("config_menu_parent_path(menu->bezel_path,\n"
-            "                                menu->browser_dir,\n"
-            "                                sizeof(menu->browser_dir));" in source,
-            "bezel picker should reopen beside the currently selected custom bezel")
+    require("if (config_menu_dir_accessible(menu->browser_last_dir[cat]) != 0U)" in source and
+            "menu->browser_last_dir[cat]" in source and
+            "config_menu_browser_default_dir(menu, target," in source and
+            "config_menu_parent_path(menu->bezel_path, dst, dst_len);" in source,
+            "bezel picker should prefer its remembered directory and fall back beside the selected custom bezel")
     require("menu->bezel_path[0] = '\\0';\n"
             "        config_menu_save_settings(menu);\n"
             "        config_menu_apply_bezel(menu);" in source,
@@ -443,7 +463,8 @@ def test_settings_menu_controls_debug_overlay_and_bezel() -> None:
             "ui_debug_overlay_slot_dirty(fb)" in frontend_main and
             "ui_note_debug_overlay_drawn(fb);" in frontend_main and
             "ui_note_debug_overlay_cleared(fb);" in frontend_main and
-            "if (show_debugging != 0U ||\n        ui_debug_overlay_slot_dirty(fb) != 0U)" in frontend_main,
+            "if (show_debugging != 0U ||" in frontend_main and
+            "ui_debug_overlay_slot_dirty(fb) != 0U)" in frontend_main,
             "debug overlay restore must be skipped when debug is off and the slot is clean")
     require("#include \"debug_overlay.h\"" in frontend_main and
             "debug_overlay_snapshot_t debug_snapshot;" in frontend_main and
@@ -541,7 +562,8 @@ TESTS = [
     test_browser_selection_consumes_tab_and_esc_locally,
     test_menu_applies_all_smartport_paths,
     test_browser_targets_each_smartport_device,
-    test_browser_splits_po_images_by_size,
+    test_boot_menu_timeout_supports_left_right_adjustment,
+    test_browser_accepts_any_smartport_po_size,
     test_smartport_service_public_api_is_one_based,
     test_draws_selected_path_for_every_smartport_device,
     test_menu_uses_only_main_key_mapping_help,

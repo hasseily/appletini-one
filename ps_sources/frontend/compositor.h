@@ -2,12 +2,12 @@
  * compositor.h -- PS-driven compositor that produces 1920x1080 RGB565
  * output frames for fb_reader.
  *
- * Each output frame is a composite of:
- *   - The UI overlay (bezel, debug HUD, activity badges, optional menu) when
- *     the boot menu is not full-screen, OR
- *   - The full-screen boot menu / config menu drawing.
- *   - The Apple subwindow (1120x768) scaled from the latest published
- *     Apple FB slot, present only in overlay mode.
+ * Each output frame is composited back-to-front as:
+ *   - The static UI background / bezel.
+ *   - The Apple subwindow (including its optional border), scaled from the
+ *     latest published Apple FB slot.
+ *   - Foreground UI such as the debug HUD, activity badges, status text, or
+ *     the full-screen boot/config menu.
  *
  * Triple buffer: 3 slots in DDR (comp_out_slot_addr[]). The compositor
  * picks a slot that is neither currently scanning out (per
@@ -27,20 +27,24 @@
 
 #include <stdint.h>
 
+typedef enum {
+    COMPOSITOR_UI_PHASE_BASE = 0,
+    COMPOSITOR_UI_PHASE_OVERLAY = 1
+} compositor_ui_phase_t;
+
 /* UI draw callback. Implemented in main.c (ui_compose_frame). The
- * compositor hands the chosen output slot to this callback once per
- * frame. Forward-declared as opaque pointers because compositor.c
- * doesn't know about ui_state_t / config_menu_t internals.
+ * compositor hands the chosen output slot to this callback twice per
+ * frame: BASE before the Apple blit, then OVERLAY after it. This keeps the
+ * Apple border directly above the bezel while all status overlays remain
+ * visible above the border. Forward-declared as opaque pointers because
+ * compositor.c doesn't know about ui_state_t / config_menu_t internals.
  *
- * Return value: non-zero tells the compositor to suppress the Apple
- * subwindow blit for this frame, leaving the UI's drawing intact in
- * that region. Used when the boot menu / config menu is active: the
- * menu draws full-screen and would otherwise be clobbered by the
- * Apple subwindow. Zero = compose the Apple subwindow on top as
- * normal. */
+ * During BASE, a non-zero return tells the compositor to suppress the Apple
+ * subwindow for this frame. The return value from OVERLAY is ignored. */
 typedef int (*compositor_ui_draw_fn)(uint16_t *fb,
                                      const void *ui_state,
-                                     const void *config_menu);
+                                     const void *config_menu,
+                                     compositor_ui_phase_t phase);
 
 /* One-time setup. Marks the output slots non-cacheable and primes the
  * publish-counter handshake. Must be called after the AXI register

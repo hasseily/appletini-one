@@ -42,7 +42,9 @@ COUT     = $FDED
     jsr last_tail_delay ; 22
     lda KBD             ; 4
     bmi exit            ; 2 when no key
-    jmp (restart_vector); 5; total: 65 cycles
+    nop                 ; 2
+frame_restart_jmp:
+    jmp raster_ntsc     ; 3; patched target, total: 65 cycles
 }
 
 !macro raster_bottom {
@@ -84,7 +86,9 @@ sync_frame:
     and #$80
     bne -               ; start at the next VBL edge
     ldx #0              ; required by the paired $C034 stores
-    jmp (restart_vector)
+    nop                 ; 2; keeps restart at 5 cycles on 6502 and 65C02
+sync_restart_jmp:
+    jmp raster_ntsc     ; 3; operand is patched after NTSC/PAL detection
 
 ; Scanner order from VBL start: bottom border, true blanking, top border,
 ; then the 192 active lines. PAL adds 50 blank lines before the shared tail.
@@ -156,23 +160,24 @@ detect_active:
 
 select_pal:
     lda #<raster_pal
-    sta restart_vector
+    sta sync_restart_jmp + 1
+    sta frame_restart_jmp + 1
     lda #>raster_pal
-    sta restart_vector + 1
+    sta sync_restart_jmp + 2
+    sta frame_restart_jmp + 2
     rts
 select_ntsc:
     lda #<raster_ntsc
-    sta restart_vector
+    sta sync_restart_jmp + 1
+    sta frame_restart_jmp + 1
     lda #>raster_ntsc
-    sta restart_vector + 1
+    sta sync_restart_jmp + 2
+    sta frame_restart_jmp + 2
     rts
 
 ; These loops exist once so their taken branches can never acquire a
 ; page-cross penalty in one particular expanded raster line.
 !align 255, 0
-restart_vector:
-    !word raster_ntsc   ; also avoids the NMOS indirect-JMP page-wrap bug
-
 last_tail_delay:        ; JSR 6 + body 10 + RTS 6 = 22
     nop                 ; 2 * 2 before the shared half-delay body
     nop

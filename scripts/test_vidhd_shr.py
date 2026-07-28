@@ -16,7 +16,6 @@ CAPTURE_PKG_SV = REPO_ROOT / "hdl" / "apple" / "apple_cycle_capture_pkg.sv"
 CAPTURE_SV = REPO_ROOT / "hdl" / "apple" / "apple_cycle_capture.sv"
 APPLE_TOP_SV = REPO_ROOT / "hdl" / "apple" / "apple_top.sv"
 SOFT_SWITCH_MANAGER_SV = REPO_ROOT / "hdl" / "apple" / "soft_switch_manager.sv"
-VIDHD_CARD_SV = REPO_ROOT / "hdl" / "apple" / "vidhd_card.sv"
 HDL_SOURCES = REPO_ROOT / "hdl" / "hdl_sources.txt"
 EGRESS_H = REPO_ROOT / "ps_sources" / "frontend" / "apple_cycle_egress.h"
 EGRESS_C = REPO_ROOT / "ps_sources" / "frontend" / "apple_cycle_egress.c"
@@ -138,9 +137,10 @@ def test_shr_capture_uses_aux_shadow_without_m2b0() -> None:
             "soft-switch manager comment must document the simple AUX-shadow SHR source")
     require("ab_read.m2b0" not in capture and "shr_m2b0_shadow_write" not in capture,
             "capture must not synthesize IIgs M2B0 SHR writes for the Apple //e path")
-    require("0x002000-0x005FFF" in capture and
-            "((a >= 24'h002000) && (a <= 24'h005FFF))" in capture,
-            "capture must keep the normal main HGR window bounded to $2000-$5FFF")
+    require("0x002000-0x009FFF" in capture and
+            "((a >= 24'h002000) && (a <= 24'h009FFF))" in capture,
+            "capture must mirror main $2000-$9FFF so SHR interlace "
+            "can keep their second field in the main bank")
     require("0x012000-0x019FFF" in capture and
             "((a >= 24'h012000) && (a <= 24'h019FFF))" in capture,
             "capture must keep the full AUX $2000-$9FFF SHR window")
@@ -224,9 +224,12 @@ def test_renderer_implements_applewin_shr_decode() -> None:
     require("static inline uint16_t shr_scanline_addr" in source and
             "0x2000u + 160u * y + 4u * x" in source,
             "SHR scanner address must use 160 bytes per line and four bytes per cycle")
-    require("const uint8_t control = g_aux_bank[0x9D00u + (uint16_t)y];" in source and
-            "const uint16_t palette_base = (uint16_t)(0x9E00u + ((uint16_t)(control & 0x0Fu) * 32u));" in source,
-            "SHR renderer must read line control and palette from AUX")
+    require("const uint8_t control = s_f_bank[0x9D00u + (uint16_t)y];" in source and
+            "(uint16_t)(0x9E00u + ((uint16_t)(control & 0x0Fu) * 32u));"
+            in source and
+            "shr_eval_field_modes(g_aux_bank);" in source,
+            "SHR line control/palette must come from the field bank, "
+            "with AUX as the control plane")
     require("static void shr_render_cell_320" in source and
             "if (color_fill && pixel1 == 0u)" in source and
             "color1 = (dst != row0) ? *(dst - 1) : 0u;" in source and
@@ -248,7 +251,7 @@ def test_renderer_implements_applewin_shr_decode() -> None:
     require("static void render_shr_frame_full(void)" in source and
             "for (uint32_t y = 0u; y < SHR_LOGICAL_HEIGHT; ++y)" in source and
             "for (uint32_t x = 0u; x < 40u; ++x)" in source and
-            "render_shr_cell(y, x);" in source,
+            "render_shr_line(y, y * 2u, 1);" in source,
             "renderer must be able to build a full SHR frame directly from AUX shadow")
     require("if (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_SHR) {\n"
             "        render_shr_frame_full();\n    }" in source,
@@ -259,6 +262,21 @@ def test_renderer_implements_applewin_shr_decode() -> None:
     require("if (shr_active) {\n        /* C029 SHR owns the frame geometry and pixel decode while active." in source and
             "s_records_in_frame++;\n        return;" in source,
             "per-record renderer dispatch must bypass legacy NTSC while SHR is active")
+    require("if (was_shr != vidhd_shr_enabled()) {" in source and
+            "s_render_armed = 0;" in source and
+            "s_frame_end_pending = 0u;" in source and
+            "s_pending_line0_mask = 0u;" in source and
+            "apple_pal_video_resync();" in source and
+            "g_resync_pending = 1u;" in source,
+            "SHR transitions must abandon mixed-geometry frames and resync PAL capture")
+    require("(s_frame_display_mode == APPLE_FB_DISPLAY_MODE_SHR) ?\n"
+            "            1u : apple_pal_video_end_frame();" in source and
+            "if (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_SHR) {\n"
+            "        render_shr_frame_full();\n"
+            "    } else {\n"
+            "        apple_pal_video_begin_frame();\n"
+            "    }" in source,
+            "complete SHR frames must bypass the PAL publication gate without changing the saved color mode")
     require("void apple_cycle_renderer_reset_local_video_state(void)" in source and
             "const uint32_t text_sw = SW_BIT(TEXT);" in source and
             "s_current_sw          = text_sw;" in source and
@@ -340,9 +358,12 @@ def test_compositor_and_handoff_are_mode_aware() -> None:
 def test_core1_resets_local_video_state_on_apple_reset() -> None:
     core1 = read(REPO_ROOT / "ps_sources" / "frontend_core1" / "main.c")
     renderer_h = read(REPO_ROOT / "ps_sources" / "frontend" / "apple_cycle_renderer.h")
+    card_regs = read(REPO_ROOT / "ps_sources" / "frontend" / "card_control_regs.h")
 
-    require("#define APPLE_RESET_STATUS_REG       0x40000024U" in core1 and
-            "static uint8_t apple_reset_seq_read(void)" in core1,
+    require('#include "../frontend/card_control_regs.h"' in core1 and
+            "static uint32_t apple_reset_status_read(void)" in core1 and
+            "REG_READ(CARD_CTRL_APPLE_RESET_STATUS_REG)" in core1 and
+            "#define CARD_CTRL_APPLE_RESET_SEQ_MASK" in card_regs,
             "CPU1 must read the PL Apple reset sequence register")
     require("if (reset_seq != reset_seq_last) {\n"
             "            reset_seq_last = reset_seq;\n"
@@ -353,9 +374,8 @@ def test_core1_resets_local_video_state_on_apple_reset() -> None:
             "renderer reset helper must be declared for CPU1")
 
 
-def test_vidhd_slot3_identity_and_slot_layout() -> None:
+def test_no_vidhd_identity_and_slot_layout() -> None:
     top = read(APPLE_TOP_SV)
-    vidhd = read(VIDHD_CARD_SV)
     globals_sv = read(REPO_ROOT / "hdl" / "globals.sv")
     softswitch = read(REPO_ROOT / "hdl" / "apple" / "soft_switch_manager.sv")
     mouse = read(REPO_ROOT / "hdl" / "apple" / "mouse_card.sv")
@@ -369,37 +389,23 @@ def test_vidhd_slot3_identity_and_slot_layout() -> None:
     config_menu_device_tabs = read(REPO_ROOT / "ps_sources" / "frontend" / "config_menu_device_tabs.c")
     config_menu_phasor = read(CONFIG_MENU_PHASOR_C)
 
-    require("apple/vidhd_card.sv" in sources,
-            "VidHD card source must be included in Vivado source list")
-    require("vidhd_card vidhd_card_i" in top and
-            ".sss(sss)" in top and
-            ".slot_assign(3'h3)" in top,
-            "VidHD card must be instantiated in slot 3")
+    # Product decision (July 2026): the Appletini must NEVER identify
+    # itself as a VidHD. Slot 3 carries no card identity at all -- the
+    # //e internal 80-column firmware owns slot-3 space like a stock
+    # machine, and the passive $C022/$C029/$C034/$C035 register shadow
+    # in the capture path is observation only.
+    require("apple/vidhd_card.sv" not in sources,
+            "VidHD identity card must not be in the Vivado source list")
+    require("vidhd_card" not in top,
+            "no VidHD card may be instantiated")
+    # 11 clients = the 10 post-VidHD-removal clients plus the virtual
+    # TransWarp bus master; the VidHD client itself must stay gone.
     require("apple_bus_write_arbiter #(.NUM_CLIENTS(11))" in top and
-            "vidhd_ab_write" in top,
-            "VidHD card bus writer must be in the Apple bus write arbiter")
-    require("input  globals::SoftSwitchState sss" in vidhd and
-            "wire slot_rom_hit" in vidhd and
-            "sss.slot_access" in vidhd and
-            "wire ab_rom_read = ab_read.serve_en && ab_read.rw && slot_rom_hit;" in vidhd,
-            "VidHD slot-ROM identity must be gated by soft-switch slot access")
+            "vidhd_ab_write" not in top,
+            "bus write arbiter must not include a VidHD client")
     require("logic sw_slotc3rom;" in globals_sv and
             "assign sss.sw_slotc3rom   = ss_slotc3rom;" in softswitch,
             "SoftSwitchState must expose SLOTC3ROM so slot-3 cards can avoid the internal //e ROM/IO personality")
-    require("((slot_assign != 3'h3) || sss.sw_slotc3rom)" in vidhd,
-            "VidHD slot-3 I/O and ROM identity must be disabled unless SLOTC3ROM selects the external slot")
-    require("ab_write_d.assert_inh = 1'b0;" in vidhd and
-            "assert_inh = ab_rom_read" not in vidhd,
-            "VidHD identity must leave the //e internal slot-3 ROM uninhibited")
-    require("ab_write_d               = ab_write_q;" in vidhd and
-            "if (!enabled || ab_read.addr_en || ab_read.data_en)" in vidhd,
-            "VidHD must hold its read response until the Apple data-drive window")
-    require("16'h24EA" not in vidhd and
-            "4'h0: vidhd_magic_byte = 8'h24;" in vidhd and
-            "4'h1: vidhd_magic_byte = 8'hEA;" in vidhd and
-            "4'h2: vidhd_magic_byte = 8'h4C;" in vidhd and
-            "(ab_rom_read && (rom_idx <= 8'h02))" in vidhd,
-            "VidHD slot I/O and gated slot-ROM identity must expose AppleWin's magic bytes")
     require("sss.slot_access &&" in mouse and
             "((slot_assign != 3'h3) || sss.sw_slotc3rom)" in mouse and
             "apple_bus_enabled = configured &&" in smartport and
@@ -445,6 +451,179 @@ def test_vidhd_slot3_identity_and_slot_layout() -> None:
             "frontend border rendering must come from the compositor")
 
 
+def test_shr4_extended_modes() -> None:
+    """SHR4 (SDD-compatible): magic detection, per-pixel dispatch, and
+    demosaic filter fidelity."""
+    src = RENDERER_C.read_text(encoding="utf-8")
+    hdr = (REPO_ROOT / "ps_sources" / "frontend" /
+           "apple_cycle_renderer.h").read_text(encoding="utf-8")
+
+    # Magic bytes 'SHR4' in high ASCII at aux $9DFC, re-evaluated per frame.
+    require("SHR_MAGIC_ADDR  0x9DFCu" in src and
+            "0xD3u" in src and "0xC8u" in src and
+            "0xD2u" in src and "0xB4u" in src,
+            "SHR4 magic must be the high-ASCII 'SHR4' string at $9DFC")
+    require("s_shr4_frame_active = (uint8_t)shr4_magic_present(bank);" in src
+            and "shr_eval_field_modes(g_aux_bank);" in src,
+            "the magic must be re-evaluated every frame (mode-exit hygiene)")
+
+    # Per-pixel dispatch on the palette second byte's high nibble.
+    for token in ("case 1u:", "shr4_rggb_pixel", "case 2u:",
+                  "shr4_pal256_color", "case 3u:", "shr4_r4g4b4_pixel"):
+        require(token in src, f"SHR4 dispatch must include {token}")
+
+    # PAL256 uses the flat 512-byte palette area as one 256-color table.
+    require("0x9E00u + ((uint16_t)idx * 2u)" in src,
+            "PAL256 must index the flat palette at aux $9E00")
+
+    # Demosaic weight tables: each must sum to 16 (doubled Malvar gain 8)
+    # so a flat field passes through unchanged.
+    import re
+    for name in ("k_rggb_g", "k_rggb_xg", "k_rggb_xgx", "k_rggb_rb"):
+        m = re.search(name + r"\[13\]\s*=\s*\{([^}]+)\}", src)
+        require(m is not None, f"missing filter table {name}")
+        weights = [int(t) for t in re.findall(r"-?\d+", m.group(1))]
+        require(len(weights) == 13, f"{name} must have 13 weights")
+        require(sum(weights) == 16,
+                f"{name} weights sum to {sum(weights)}, expected 16")
+
+    # Normalization divisor matches the doubled weights: max_sample * 16
+    # (240 for 4-bit 320-mode samples, 48 for 2-bit 640-mode samples).
+    require("/ (max_sample * 16)" in src,
+            "filter must normalize by max_sample * 16")
+    require("is640 ? 3 : 15" in src,
+            "640-mode RGGB must use 2-bit samples (max 3)")
+
+    # Diagnostics exported.
+    require("g_acr_shr4_frames" in hdr,
+            "SHR4 frame counter must be visible in the header")
+
+
+
+def test_shr3200_mode() -> None:
+    """SHR-3200: magic, reversed palette index, either-bank palettes."""
+    src = RENDERER_C.read_text(encoding="utf-8")
+    require("0xB3u" in src and "0xB2u" in src and "0xB0u" in src,
+            "3200 magic must be the high-ASCII '3200' string")
+    require("15u - (idx & 0x0Fu)" in src,
+            "3200 palette index must be reversed (0 = last entry)")
+    require("s_shr3200_bank ? g_aux_bank" in src,
+            "3200 palettes must come from either bank per ctrl byte 1")
+    require("pal_start < (uint16_t)(0xFFFFu - 200u * 32u)" in src,
+            "3200 palette pointer must be bounds-checked")
+    require("if (!s_shr4_frame_active && shr3200_magic_present(bank))" in src,
+            "SHR4 must take priority over 3200")
+
+
+def test_shr_interlace() -> None:
+    """SHR interlace: per-field evaluation, geometry, PL window."""
+    src = RENDERER_C.read_text(encoding="utf-8")
+    top = APPLE_TOP_SV.read_text(encoding="utf-8")
+    engine = (REPO_ROOT / "hdl" / "apple" /
+              "vtw_bus_engine.sv").read_text(encoding="utf-8")
+    core = (REPO_ROOT / "hdl" / "apple" /
+            "vtw_core_top.sv").read_text(encoding="utf-8")
+
+    # Only interlace is honored. Mode 2 previously alternated whole frames,
+    # which was too flickery; paired fields need a future merge renderer.
+    require("if (paged == 1u) s_shr_interlace_mode = 1u;" in src and
+            "paged == 2u" not in src and
+            "s_shr_flip_parity" not in src,
+            "renderer must accept interlace without page flipping")
+    # Interlace: odd rows come from the main field, each field re-evaluated.
+    require("render_shr_line(y, y * 2u + field, 0)" in src and
+            "shr_eval_field_modes(field ? g_main_bank : g_aux_bank);" in src,
+            "interlace must render both fields with per-field mode state")
+    # CPU1 -> PL handshake, write-on-change.
+    require("Xil_Out32(CARD_CTRL_VIDEO_POST_WIDE_REG" in src and
+            "if (want == s_post_wide_last) return;" in src,
+            "renderer must widen the vTW window via CARD_CTRL 0x35 on change")
+    # PL plumbing end to end.
+    require("8'h35: post_main_wide_q <= as_common.wdata[0];" in top,
+            "apple_top must decode the 0x35 widen bit")
+    require("wide_main" in engine and
+            "post_main_wide" in core,
+            "the widened window must reach the posting classifier")
+
+
+def test_shr4_640_mode() -> None:
+    """SHR4 640-mode dispatch: quadrant palette remap + 2-bit RGGB."""
+    src = RENDERER_C.read_text(encoding="utf-8")
+    require("k_shr640_quad[4] = { 8u, 12u, 0u, 4u };" in src,
+            "640-mode pixels must use the standard palette quadrants "
+            "8-11, 12-15, 0-3, 4-7 left to right")
+    require("(byte >> (6u - 2u * lp)) & 0x03u" in src,
+            "640-mode pixels are 2 bits each, leftmost in the high bits")
+    require("(bank[a] >> (6 - 2 * (px & 3))) & 0x03u" in src,
+            "640 RGGB samples extract the raw 2-bit value at 640 res")
+    require("shr4_rggb_pixel_at(px, (int32_t)s_f_out_row, 1)" in src,
+            "640 RGGB must demosaic in 640-space with 2-bit samples")
+    require("shr4_render_cell_640(row, y, x, palette_base);" in src,
+            "render_shr_line must dispatch 640-mode SCBs to the SHR4 "
+            "640 cell when SHR4 is active")
+
+
+def test_shr_mode_self_heal() -> None:
+    """A dropped C029 record must not freeze the renderer: CPU1 polls
+    the PL's authoritative SHR state each batch and repairs."""
+    src = RENDERER_C.read_text(encoding="utf-8")
+    cap = read(CAPTURE_SV)
+    top = read(APPLE_TOP_SV)
+    core1 = (REPO_ROOT / "ps_sources" / "frontend_core1" /
+             "main.c").read_text(encoding="utf-8")
+    regs = read(CARD_CONTROL_REGS_H)
+    require("output logic                            shr_capture_active" in cap
+            and "assign shr_capture_active = shr_capture_active_q;" in cap,
+            "capture must export its authoritative fake-SHR state")
+    require("21'h000000, shr_capture_active_w," in top,
+            "apple_top must expose the SHR state in the reset-status word")
+    require("CARD_CTRL_APPLE_RESET_SHR_ACTIVE_BIT   (1UL << 10)" in regs,
+            "regs header must define the SHR-active status bit")
+    require("void apple_cycle_renderer_sync_shr_mode(uint8_t pl_shr_active)"
+            in src and "g_acr_shr_mode_resyncs++;" in src,
+            "renderer must repair local C029 state from the PL and count it")
+    require("apple_cycle_renderer_sync_shr_mode(" in core1 and
+            "CARD_CTRL_APPLE_RESET_SHR_ACTIVE_BIT" in core1,
+            "CPU1 must feed the PL SHR state to the renderer each batch")
+    main0 = (REPO_ROOT / "ps_sources" / "frontend" /
+             "main.c").read_text(encoding="utf-8")
+    require("uart_control_dma_bus_write(0xC029U, 0x01U);" in main0,
+            "CPU0 must clear fake-SHR with a real C029 bus write on "
+            "Apple reset")
+    require("s_shr_sync_hold" in src and
+            "s_shr_sync_hold = 1u;" in src,
+            "the renderer must hold off SHR re-adoption after reset "
+            "until the PL clear lands")
+
+
+def test_page_flip_removed() -> None:
+    """Neither legacy video nor SHR may alternate frame pages."""
+    src = RENDERER_C.read_text(encoding="utf-8")
+    top = APPLE_TOP_SV.read_text(encoding="utf-8")
+    core1 = (REPO_ROOT / "ps_sources" / "frontend_core1" /
+             "main.c").read_text(encoding="utf-8")
+    menu = (REPO_ROOT / "ps_sources" / "frontend" /
+            "config_menu.c").read_text(encoding="utf-8")
+    menu_h = (REPO_ROOT / "ps_sources" / "frontend" /
+              "config_menu.h").read_text(encoding="utf-8")
+    menu_internal = (REPO_ROOT / "ps_sources" / "frontend" /
+                     "config_menu_internal.h").read_text(encoding="utf-8")
+    menu_tabs = (REPO_ROOT / "ps_sources" / "frontend" /
+                 "config_menu_main_tabs.c").read_text(encoding="utf-8")
+    regs = read(CARD_CONTROL_REGS_H)
+
+    combined = "\n".join((src, top, core1, menu, menu_h, menu_internal,
+                          menu_tabs, regs))
+    for obsolete in ("legacy_paging", "legacy_page_flip",
+                     "LEGACY_PAGING", "LEGACY_FLIP",
+                     "video.legacy.flip", "s_legacy_flip_parity",
+                     "s_shr_flip_parity"):
+        require(obsolete not in combined,
+                f"obsolete page-flip path remains: {obsolete}")
+    require("CONFIG_VIDEO_ITEM_COUNT        12U" in menu_internal,
+            "Video menu must end at the debugging row")
+
+
 TESTS = [
     test_record_kind_contract,
     test_capture_emits_two_records_for_vidhd_io_plus_frame,
@@ -455,7 +634,13 @@ TESTS = [
     test_bezel_lists_c029_shr_softswitch,
     test_compositor_and_handoff_are_mode_aware,
     test_core1_resets_local_video_state_on_apple_reset,
-    test_vidhd_slot3_identity_and_slot_layout,
+    test_no_vidhd_identity_and_slot_layout,
+    test_shr4_extended_modes,
+    test_shr3200_mode,
+    test_shr_interlace,
+    test_shr4_640_mode,
+    test_shr_mode_self_heal,
+    test_page_flip_removed,
 ]
 
 

@@ -20,7 +20,12 @@ module mockingboard(
     input logic audio_sample_tick,
     output globals::AppleBus_write ab_write,
     output logic signed [15:0] audio_l,
-    output logic signed [15:0] audio_r
+    output logic signed [15:0] audio_r,
+    // Debug taps for the speech-completion IRQ chain (freeze diagnosis):
+    // combined across both SSI-263 voices.
+    output logic dbg_ssi_irq,
+    output logic dbg_ssi_backend_done,
+    output logic dbg_ssi_enable_ints
 );
 
 localparam logic [2:0] PH_MOCKINGBOARD = 3'd0;
@@ -126,6 +131,13 @@ logic ssi0_d7;
 logic ssi1_d7;
 logic ssi0_direct_irq;
 logic ssi1_direct_irq;
+logic ssi0_backend_done;
+logic ssi1_backend_done;
+logic ssi0_enable_ints;
+logic ssi1_enable_ints;
+assign dbg_ssi_irq          = ssi0_direct_irq | ssi1_direct_irq;
+assign dbg_ssi_backend_done = ssi0_backend_done | ssi1_backend_done;
+assign dbg_ssi_enable_ints  = ssi0_enable_ints | ssi1_enable_ints;
 logic signed [15:0] ssi0_audio;
 logic signed [15:0] ssi1_audio;
 logic signed [15:0] speech_audio_q;
@@ -661,7 +673,9 @@ ssi263_voice #(
     .via_ifr_set(via0_ifr_set),
     .via_ifr_clr(via0_ifr_clr),
     .audio(ssi0_audio),
-    .direct_irq(ssi0_direct_irq)
+    .direct_irq(ssi0_direct_irq),
+    .dbg_backend_done(ssi0_backend_done),
+    .dbg_enable_ints(ssi0_enable_ints)
 );
 
 ssi263_voice #(
@@ -684,7 +698,9 @@ ssi263_voice #(
     .via_ifr_set(via1_ifr_set),
     .via_ifr_clr(via1_ifr_clr),
     .audio(ssi1_audio),
-    .direct_irq(ssi1_direct_irq)
+    .direct_irq(ssi1_direct_irq),
+    .dbg_backend_done(ssi1_backend_done),
+    .dbg_enable_ints(ssi1_enable_ints)
 );
 
 YM2149 psg0(

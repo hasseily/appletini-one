@@ -9,6 +9,7 @@ These tests run without Vitis or hardware:
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +18,7 @@ CONFIG_MENU_C = FRONTEND / "config_menu.c"
 CONFIG_MENU_H = FRONTEND / "config_menu.h"
 CONFIG_MENU_HELP_C = FRONTEND / "config_menu_help.c"
 CONFIG_MENU_INTERNAL_H = FRONTEND / "config_menu_internal.h"
+CONFIG_MENU_DEVICE_TABS_C = FRONTEND / "config_menu_device_tabs.c"
 CONFIG_MENU_PROFILES_C = FRONTEND / "config_menu_profiles.c"
 CONFIG_MENU_UI_C = FRONTEND / "config_menu_ui.c"
 CONFIG_MENU_UI_H = FRONTEND / "config_menu_ui.h"
@@ -89,8 +91,8 @@ def test_autosave_remains_working_config() -> None:
 def test_clean_config_schema_contract() -> None:
     source = read(CONFIG_MENU_C)
 
-    require("#define APPLETINI_CFG_VERSION 103U" in source,
-            "Border settings must use config version 103")
+    require("#define APPLETINI_CFG_VERSION 106U" in source,
+            "Removing legacy page flip must use config version 106")
     require("config_menu_parse_config_line(line, &value)" in source and
             "hash = strchr(line, '#')" in source and
             "config_menu_ascii_lower_in_place(key)" in source,
@@ -162,10 +164,6 @@ def test_profile_bezel_changes_update_active_profile() -> None:
             "        config_menu_apply_bezel(menu);\n"
             "        config_menu_save_active_profile_if_selected(menu);" in source,
             "choosing auto bezel must update the active profile config")
-    require("menu->show_bezel = (menu->show_bezel != 0U) ? 0U : 1U;\n"
-            "        config_menu_save_settings(menu);\n"
-            "        config_menu_save_active_profile_if_selected(menu);" in source,
-            "left/right Show bezel changes must update the active profile config")
     require("menu->show_bezel = (menu->show_bezel != 0U) ? 0U : 1U;\n"
             "            config_menu_apply_runtime(menu);\n"
             "            config_menu_save_settings(menu);\n"
@@ -321,7 +319,7 @@ def test_profile_image_picker_and_normalization() -> None:
             "CONFIG_BROWSER_PROFILE_PREVIEW_W" in source and
             "config_menu_blit_scaled_bgra" in source,
             "profile-image picker must draw a scaled preview panel")
-    require("CONFIG_BROWSER_PROFILE_IMAGE_VISIBLE_ROWS 11U" in source and
+    require("CONFIG_BROWSER_PROFILE_IMAGE_VISIBLE_ROWS 17U" in source and
             "config_menu_browser_visible_rows(menu)" in source,
             "profile-image picker list height must stay above the footer")
     require("CONFIG_BROWSER_PROFILE_PREVIEW_H" in source and
@@ -371,6 +369,18 @@ def test_modern_config_menu_ui_contract() -> None:
     ui_c = read(CONFIG_MENU_UI_C)
     help_source = read(CONFIG_MENU_HELP_C)
     image_versions = read(IMAGE_VERSIONS_H)
+    boot_version = re.search(
+        r'^\s*#define\s+APPLETINI_BOOT_IMAGE_VERSION_FULL\s+"([^"]+)"',
+        image_versions,
+        re.MULTILINE)
+    firmware_short = re.search(
+        r'^\s*#define\s+APPLETINI_FIRMWARE_IMAGE_VERSION_SHORT\s+"([^"]+)"',
+        image_versions,
+        re.MULTILINE)
+    firmware_full = re.search(
+        r'^\s*#define\s+APPLETINI_FIRMWARE_IMAGE_VERSION_FULL\s+"([^"]+)"',
+        image_versions,
+        re.MULTILINE)
 
     require('#include "config_menu_ui.h"' in internal,
             "config menu internals must include the modern UI layer")
@@ -404,7 +414,11 @@ def test_modern_config_menu_ui_contract() -> None:
             "                \"Appletini\",\n"
             "                APPLETINI_FIRMWARE_IMAGE_VERSION_FULL,\n"
             "                usb_owned);" in source and
-            "cmui_footer(fb, &footer, menu->status, menu->status_warning, usb_owned);" in source and
+            "cmui_footer(fb,\n"
+            "                &footer,\n"
+            "                menu->status,\n"
+            "                menu->status_warning,\n"
+            "                usb_owned," in source and
             "cmui_nav_item(fb, &row" in source and
             "if (menu->tab != CONFIG_TAB_ABOUT) {\n"
             "        config_menu_draw_help(fb, menu, &help);\n"
@@ -441,14 +455,15 @@ def test_modern_config_menu_ui_contract() -> None:
             '"CherryUSB - embedded USB stack"' in source and
             '"Xilinx/AMD Vitis standalone BSP and drivers"' in source,
             "menu must expose an About tab with versions, all credits, and bottom-page help text")
-    require('#define APPLETINI_BOOT_IMAGE_VERSION_FULL' in image_versions and
-            '#define APPLETINI_FIRMWARE_IMAGE_VERSION_SHORT  "F0.9.2"' in image_versions and
-            '#define APPLETINI_FIRMWARE_IMAGE_VERSION_FULL   "Firmware F0.9.2"' in image_versions,
+    require(boot_version is not None and
+            firmware_short is not None and
+            firmware_full is not None and
+            firmware_full.group(1) == f"Firmware {firmware_short.group(1)}",
             "About/version UI must use the shared image-version definitions")
     require("#define CONFIG_MENU_HELP_H 210" in source and
             "cmui_help_panel(fb, rect, \"Help\"" in source and
             '"Profiles store complete menu configurations' in help_source and
-            '"Boot settings control how long the menu prompt appears' in help_source and
+            '"The wait sets how long the \'A\' prompt shows before boot.' in help_source and
             '"Appletini serves 64K auxiliary memory' in help_source and
             '"Change this only from BOOT mode' in help_source,
             "each tab must have centrally managed lower help copy")
@@ -461,10 +476,12 @@ def test_modern_config_menu_ui_contract() -> None:
             "const int version_w = (version != NULL)" in ui_c and
             "badge_y + badge_h + 36" in ui_c,
             "header must expose owner mode and draw the firmware version below it")
-    require('"Tab/Del"' in ui_c and '"<>"' in ui_c and '"Enter"' in ui_c and '"Esc"' in ui_c and
+    require('"Tab/Del", "Up/Down"' in ui_c and
+            '"Q/A", "O/L"' in ui_c and
+            '"<>"' in ui_c and '"Enter"' in ui_c and '"Esc"' in ui_c and
             '"USB", "ACTIVE"' in ui_c and
             '"Navigate", "USB device"' in ui_c,
-            "footer must draw compact Apple-keyboard hints and USB ownership state")
+            "footer must draw machine-specific Apple-keyboard hints and USB ownership state")
 def test_usb_owned_menu_disables_ram_checkbox() -> None:
     header = read(CONFIG_MENU_H)
     source = read(CONFIG_MENU_C)
@@ -505,6 +522,80 @@ def test_usb_owned_menu_disables_ram_checkbox() -> None:
             "RAM tab must visually disable the RAM checkbox for USB-owned menus")
 
 
+def test_transwarp_slot_slowdown_rows() -> None:
+    header = read(CONFIG_MENU_H)
+    source = read(CONFIG_MENU_C)
+    internal = read(CONFIG_MENU_INTERNAL_H)
+    device_tabs = read(CONFIG_MENU_DEVICE_TABS_C)
+    help_source = read(CONFIG_MENU_HELP_C)
+
+    require("#define CONFIG_TRANSWARP_ITEM_FLOATBUS     3U" in internal and
+            "#define CONFIG_TRANSWARP_ITEM_SLOT_FIRST   5U" in internal and
+            "#define CONFIG_TRANSWARP_SLOT_COUNT        7U" in internal and
+            "#define CONFIG_TRANSWARP_ITEM_COUNT" in internal,
+            "TransWarp menu must expose one floating-bus row and seven slot rows")
+    require("for (uint8_t slot = 1U; slot <= CONFIG_TRANSWARP_SLOT_COUNT; ++slot)" in
+            device_tabs and
+            '"Slow down physical slot %u"' in device_tabs and
+            "hgr_draw_check_item(" in device_tabs,
+            "TransWarp tab must draw every slot as a visible checkbox row")
+    adjust_start = source.find("static uint8_t config_menu_adjust_focused_value")
+    adjust_end = source.find("static void config_menu_reload_smartport_device", adjust_start)
+    activate_start = source.find("static void config_menu_activate_item")
+    activate_end = source.find("uint8_t config_menu_handle_input", activate_start)
+    require(adjust_start >= 0 and adjust_end > adjust_start and
+            activate_start >= 0 and activate_end > activate_start,
+            "config menu adjustment and activation handlers must be present")
+    adjust = source[adjust_start:adjust_end]
+    activate = source[activate_start:activate_end]
+    require("static uint8_t config_menu_vtw_toggle_focused_slot" in source and
+            "menu->item_focus -\n"
+            "                     CONFIG_TRANSWARP_ITEM_SLOT_FIRST + 1U" in source and
+            "config_menu_vtw_toggle_focused_slot(menu)" not in adjust and
+            "(void)config_menu_vtw_toggle_focused_slot(menu);" in activate,
+            "only OK may toggle the focused TransWarp slot checkbox")
+    require("vtw_slowdown_slot_cursor" not in header + source + device_tabs,
+            "TransWarp slowdown UI must not retain the hidden slot selector")
+    require("OVERRIDE(3, transwarp_slowdown_floatbus)" in help_source and
+            "OVERRIDE(4, transwarp_slowdown_paddle)" in help_source and
+            "OVERRIDE(12, transwarp_slowdown_window)" in help_source,
+            "TransWarp non-slot slowdown rows must retain contextual help")
+    for item in range(5, 12):
+        require(f"OVERRIDE({item}, transwarp_slowdown_slots)" in help_source,
+                f"TransWarp slot slowdown row {item} must retain contextual help")
+    require('"Slow down floating-bus I/O ($C019,$C030-$C05F)"' in device_tabs and
+            "CONFIG_TRANSWARP_ITEM_SPEAKER" not in internal + source + device_tabs and
+            "CONFIG_TRANSWARP_ITEM_VIDEO" not in internal + source + device_tabs,
+            "Speaker and Video rows must be replaced by one floating-bus row")
+    require("config_menu_migrate_vtw_slowdown_mask" in source and
+            "VTW_SLOW_LEGACY_VIDEO_BIT" in source and
+            "menu->vtw_slowdown_mask |= VTW_SLOW_FLOATBUS_BIT;" in source and
+            "menu->vtw_slowdown_mask &= VTW_SLOW_VALID_MASK;" in source,
+            "config 104 Speaker/Video selections must migrate to Floating-bus I/O")
+
+
+def test_checkbox_rows_ignore_left_right() -> None:
+    source = read(CONFIG_MENU_C)
+    adjust_start = source.find("static uint8_t config_menu_adjust_focused_value")
+    adjust_end = source.find("static void config_menu_reload_smartport_device", adjust_start)
+
+    require(adjust_start >= 0 and adjust_end > adjust_start,
+            "config menu focused-value adjustment handler must be present")
+    adjust = source[adjust_start:adjust_end]
+    forbidden_checkbox_mutations = (
+        "config_menu_vtw_toggle_focused_slot(menu)",
+        "menu->border_enabled =",
+        "menu->show_bezel =",
+        "menu->show_debugging =",
+        "menu->disk2_activity_visible =",
+        "config_menu_ethernet_toggle_slot(menu)",
+        "config_menu_ethernet_toggle_saved_config(menu)",
+    )
+    for mutation in forbidden_checkbox_mutations:
+        require(mutation not in adjust,
+                f"left/right adjustment must not modify checkbox state: {mutation}")
+
+
 def main() -> int:
     tests = [
         test_profile_filesystem_contract,
@@ -520,6 +611,8 @@ def main() -> int:
         test_vitis_build_registration,
         test_modern_config_menu_ui_contract,
         test_usb_owned_menu_disables_ram_checkbox,
+        test_transwarp_slot_slowdown_rows,
+        test_checkbox_rows_ignore_left_right,
     ]
     for test in tests:
         test()

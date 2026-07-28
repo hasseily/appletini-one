@@ -148,6 +148,13 @@ void apple_cycle_egress_poll(void)
 
         rec = ACE_RING_SLOT(consumer);
 
+        /* Preserve cycle ordering for the vTW renderer's selective
+         * one-cycle soft-switch lookahead: finish the held preceding frame
+         * record before this record updates main/aux shadow memory. */
+        if (apple_cycle_renderer_on_next_record) {
+            apple_cycle_renderer_on_next_record(rec);
+        }
+
         if (rec == 0ULL) {
             /* Gap marker: both halves zero. The FPGA emits this on ring-full
              * or on-chip FIFO drop. The renderer clears resync_pending at the

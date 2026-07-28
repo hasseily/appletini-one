@@ -47,6 +47,12 @@ void boot_menu_service_refresh_machine_policy(void);
 uint8_t boot_menu_service_machine_id(void);
 uint8_t boot_menu_service_machine_mode(void);
 const char *boot_menu_service_machine_name(void);
+uint8_t boot_menu_service_aux_card_present(void);
+/* True once the boot menu has handed slot 7 off to a boot target (SmartPort
+ * or Disk II). Until then, taking the bus for acceleration would leave slot 7
+ * in boot-menu mode and force the //e ROM to re-run the boot menu on the vTW
+ * core -- which misbehaves on a II+. Target-agnostic. */
+uint8_t boot_menu_service_slot7_handed_off(void);
 /* mode >= 0: force that CARD_MACHINE_MODE_* (bench testing);
  * mode < 0: return to automatic (reported-id-driven) policy. */
 void boot_menu_service_force_machine_mode(int mode);

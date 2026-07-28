@@ -137,6 +137,7 @@ void cmui_footer(uint16_t *fb,
                  const cmui_rect_t *footer,
                  const char *status,
                  uint8_t warning,
-                 uint8_t usb_owned);
+                 uint8_t usb_owned,
+                 uint8_t iiplus_keyboard);
 
 #endif

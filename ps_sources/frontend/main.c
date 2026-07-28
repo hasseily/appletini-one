@@ -28,6 +28,7 @@
 #include "bezel_loader.h"
 #include "boot_menu_service.h"
 #include "applicard_service.h"
+#include "vtw_service.h"
 #include "compositor.h"
 #include "compositor_layout.h"
 #include "config_menu.h"
@@ -204,6 +205,7 @@ static int8_t g_clean_video_phase_cycles_shadow =
     (int8_t)APPLE_VIDEO_DEFAULT_CLEAN_PHASE_CYCLES;
 static int8_t g_pal_video_phase_cycles_shadow =
     (int8_t)APPLE_VIDEO_DEFAULT_PAL_PHASE_CYCLES;
+static XTime g_ethernet_dhcp_started = 0U;
 
 static uint32_t ticks_to_us(XTime ticks)
 {
@@ -211,6 +213,20 @@ static uint32_t ticks_to_us(XTime ticks)
         return 0U;
     }
     return (uint32_t)((ticks * 1000000ULL) / (uint64_t)COUNTS_PER_SECOND);
+}
+
+static void boot_timing_log(const char *stage, XTime started)
+{
+    XTime now = 0U;
+    char line[96];
+
+    XTime_GetTime(&now);
+    (void)snprintf(line,
+                   sizeof(line),
+                   "[boottime] cpu0 %s: %lu us\r\n",
+                   stage != NULL ? stage : "stage",
+                   (unsigned long)ticks_to_us(now - started));
+    uart_puts(UART0_BASE, line);
 }
 
 static uint32_t ui_softswitch_state(void)
@@ -699,6 +715,7 @@ static uint8_t disk2_sound_volume_clamp(uint8_t volume)
 }
 
 static uint8_t g_disk2_sound_volume = CARD_CTRL_DISK2_SOUND_DEFAULT_VOLUME;
+static uint8_t g_disk2_sound_samples_ready = 0U;
 
 static uint32_t card_control_pack_disk2_sound_control(uint8_t volume)
 {
@@ -715,7 +732,9 @@ static void card_control_write_disk2_sound_volume(uint8_t volume)
 {
     g_disk2_sound_volume = disk2_sound_volume_clamp(volume);
     REG_WRITE(CARD_CTRL_DISK2_SOUND_CONTROL_REG,
-              card_control_pack_disk2_sound_control(g_disk2_sound_volume));
+              g_disk2_sound_samples_ready != 0U ?
+                  card_control_pack_disk2_sound_control(g_disk2_sound_volume) :
+                  0U);
 }
 
 static void card_control_pulse_disk2_sound_event(uint8_t event)
@@ -724,6 +743,9 @@ static void card_control_pulse_disk2_sound_event(uint8_t event)
         ((uint32_t)(event & CARD_CTRL_DISK2_SOUND_EVENT_MASK) <<
          CARD_CTRL_DISK2_SOUND_EVENT_SHIFT);
 
+    if (g_disk2_sound_samples_ready == 0U) {
+        return;
+    }
     REG_WRITE(CARD_CTRL_DISK2_SOUND_CONTROL_REG,
               card_control_pack_disk2_sound_control(g_disk2_sound_volume) |
               event_nibble);
@@ -735,7 +757,16 @@ static void card_control_publish_disk2_sound_samples(void)
 
     Xil_DCacheFlushRange((INTPTR)sample_addr, (INTPTR)DISK2_SOUND_SAMPLE_BYTES);
     REG_WRITE(CARD_CTRL_DISK2_SOUND_BASE_REG, (uint32_t)sample_addr);
-    card_control_write_disk2_sound_volume(CARD_CTRL_DISK2_SOUND_DEFAULT_VOLUME);
+    g_disk2_sound_samples_ready = 1U;
+    card_control_write_disk2_sound_volume(g_disk2_sound_volume);
+}
+
+static void card_control_prepare_disk2_sound_samples(void)
+{
+    g_disk2_sound_samples_ready = 0U;
+    REG_WRITE(CARD_CTRL_DISK2_SOUND_CONTROL_REG, 0U);
+    REG_WRITE(CARD_CTRL_DISK2_SOUND_BASE_REG,
+              (uint32_t)(uintptr_t)disk2_sound_samples);
 }
 
 static void card_control_sync_apple_reset_seq(void)
@@ -748,7 +779,7 @@ static void card_control_init(void)
 {
     card_control_sync_slot_mask_from_hw();
     card_control_write_slot_mask(g_card_slot_enable_mask);
-    card_control_publish_disk2_sound_samples();
+    card_control_prepare_disk2_sound_samples();
     card_control_sync_apple_reset_seq();
     no_slot_clock_control_init();
 }
@@ -1098,8 +1129,14 @@ static int menu_platform_ethernet_read_config(void *ctx,
 static int menu_platform_ethernet_write_config(void *ctx,
                                                const uthernet2_network_config_t *config)
 {
+    XTime started = 0U;
+    int result;
+
     (void)ctx;
-    return uthernet2_write_network_config(config);
+    XTime_GetTime(&started);
+    result = uthernet2_write_network_config(config);
+    boot_timing_log("Ethernet config write", started);
+    return result;
 }
 
 static int menu_platform_ethernet_test(void *ctx,
@@ -1109,15 +1146,47 @@ static int menu_platform_ethernet_test(void *ctx,
     return uthernet2_test(result);
 }
 
-static int menu_platform_ethernet_dhcp_acquire(
+static int menu_platform_ethernet_dhcp_start(
     void *ctx,
     const uint8_t mac[UTHERNET2_MAC_LEN],
+    char *detail,
+    size_t detail_len)
+{
+    int result;
+
+    (void)ctx;
+    result = uthernet2_dhcp_start(mac, detail, detail_len);
+    if (result == 0) {
+        XTime_GetTime(&g_ethernet_dhcp_started);
+    }
+    return result;
+}
+
+static int menu_platform_ethernet_dhcp_poll(
+    void *ctx,
     uthernet2_network_config_t *lease,
     char *detail,
     size_t detail_len)
 {
+    int result;
+
     (void)ctx;
-    return uthernet2_dhcp_acquire(mac, lease, detail, detail_len);
+    result = uthernet2_dhcp_poll(lease, detail, detail_len);
+    if (result != 0 && g_ethernet_dhcp_started != 0U) {
+        boot_timing_log(result > 0 ?
+                            "background DHCP acquired" :
+                            "background DHCP failed",
+                        g_ethernet_dhcp_started);
+        g_ethernet_dhcp_started = 0U;
+    }
+    return result;
+}
+
+static void menu_platform_ethernet_dhcp_cancel(void *ctx)
+{
+    (void)ctx;
+    uthernet2_dhcp_cancel();
+    g_ethernet_dhcp_started = 0U;
 }
 
 static void control_set_text_mono_colors(void *ctx, uint8_t fg_color, uint8_t bg_color)
@@ -1218,6 +1287,48 @@ static void control_set_applicard_resource_max(void *ctx, uint8_t maximum)
     applicard_service_set_wall_cap(maximum != 0U ?
                                    APPLICARD_WALL_CAP_MAX_US :
                                    APPLICARD_WALL_CAP_STANDARD_US);
+}
+
+static void control_set_vtw_config(void *ctx,
+                                   uint8_t enable,
+                                   uint8_t speed_mode,
+                                   uint8_t pace_divider)
+{
+    (void)ctx;
+    vtw_service_set_speed(speed_mode, pace_divider);
+    vtw_service_set_enabled(enable);
+}
+
+static void control_set_vtw_slug_key_enabled(void *ctx, uint8_t enable)
+{
+    (void)ctx;
+    vtw_service_set_slug_enabled(enable);
+}
+
+static void control_set_iiplus_data_tap(void *ctx, uint8_t tap)
+{
+    (void)ctx;
+    REG_WRITE(CARD_CTRL_IIPLUS_DATA_TAP_REG, (uint32_t)tap);
+}
+
+static void control_set_vtw_slowdown(void *ctx, uint16_t region_mask,
+                                     uint16_t cycles)
+{
+    (void)ctx;
+    vtw_service_set_slowdown(region_mask, cycles);
+}
+
+static void control_refresh_usb1(void *ctx)
+{
+    (void)ctx;
+    /* Tear the USB1 host down and bring it back up: usbh_deinitialize()
+     * drops the hub/root port/HC, usbh_initialize() resets the controller
+     * and restarts enumeration. Devices that missed the power-on window
+     * re-enumerate as the main loop continues to pump usb_hid_service_poll().
+     */
+    uart_puts(UART0_BASE, "usb1: config-triggered re-enumeration\r\n");
+    usb_hid_service_stop();
+    usb_hid_service_start();
 }
 
 static int menu_platform_set_smartport_image(void *ctx, uint8_t device, const char *path)
@@ -1473,6 +1584,15 @@ static void ui_handle_input(ui_state_t *s, ui_input_t in)
     }
 }
 
+static void ui_request_boot_menu_close(config_menu_t *menu)
+{
+    /* Publish only the boot-critical slot/handoff/timeout state while the
+     * ROM is still waiting in its menu loop.  The later CLOSE event is too
+     * late for any operation that can remount or reprobe storage. */
+    config_menu_apply_boot_runtime(menu);
+    boot_menu_service_request_rom_close();
+}
+
 static void ui_handle_input_with_config(ui_state_t *s, config_menu_t *menu, ui_input_t in)
 {
     if (!in.pressed) {
@@ -1483,7 +1603,7 @@ static void ui_handle_input_with_config(ui_state_t *s, config_menu_t *menu, ui_i
         g_usb_menu_owned == 0U &&
         ui_config_menu_has_close_consumer(menu) == 0U &&
         ui_input_requests_menu_close(in) != 0U) {
-        boot_menu_service_request_rom_close();
+        ui_request_boot_menu_close(menu);
         s->last_key = in.key;
         s->key_count++;
         s->input_seq++;
@@ -1638,11 +1758,11 @@ static void ui_restore_screenshot_overlay_if_needed(uint16_t *fb, uint8_t show_b
 {
     screenshot_service_rect_t rect;
 
-    if (screenshot_service_restore_rect_for_frame(fb, &rect) == 0U) {
-        return;
+    /* Two overlays (top + bottom) may each have a rect to restore for
+     * this frame; drain them all. */
+    while (screenshot_service_restore_rect_for_frame(fb, &rect) != 0U) {
+        ui_restore_static_rect(fb, rect.x, rect.y, rect.w, rect.h, show_bezel);
     }
-
-    ui_restore_static_rect(fb, rect.x, rect.y, rect.w, rect.h, show_bezel);
 }
 
 static void ui_prepare_static_background(uint16_t *fb, uint8_t show_bezel)
@@ -2116,15 +2236,15 @@ static void ui_collect_debug_overlay_snapshot(debug_overlay_snapshot_t *snapshot
         (usb_storage_service_needs_attention() != 0) ? 1U : 0U;
 }
 
-/* Single-entry compositor draw callback. Runs the complete UI overlay
- * for one frame into the supplied BGRA32 framebuffer slot. The
- * compositor handles slot rotation and PL handoff; this just paints. */
-/* Returns non-zero to ask the compositor to suppress the Apple
- * subwindow blit for this frame: when the boot/config menu is
- * active it owns the entire screen and the menu drawing would be
- * clobbered if we blitted Apple pixels on top. */
-static int ui_compose_frame(uint16_t *fb, const ui_state_t *s, const config_menu_t *menu)
+/* Two-phase compositor callback. BASE paints/restores the bezel before the
+ * Apple subwindow. OVERLAY paints all dynamic UI after the Apple blit so the
+ * border never covers status text or the storage activity view. */
+static int ui_compose_frame(uint16_t *fb,
+                            const ui_state_t *s,
+                            const config_menu_t *menu,
+                            compositor_ui_phase_t phase)
 {
+    static XTime s_base_draw_ticks = 0U;
     XTime t0 = 0U, t1 = 0U;
     const uint8_t show_debugging =
         (menu != NULL && menu->show_debugging != 0U) ? 1U : 0U;
@@ -2135,17 +2255,34 @@ static int ui_compose_frame(uint16_t *fb, const ui_state_t *s, const config_menu
     const uint8_t draw_disk_activity_after_menu =
         (show_disk_activity != 0U &&
          config_menu_storage_activity_page_visible(menu) != 0U) ? 1U : 0U;
+    const int menu_active = (int)config_menu_is_active(menu);
 
     XTime_GetTime(&t0);
 
-    ui_prepare_static_background(fb, show_bezel);
-    ui_restore_apple_footprint_if_needed(fb, show_bezel);
-    ui_restore_screenshot_overlay_if_needed(fb, show_bezel);
-    if (show_debugging != 0U ||
-        ui_debug_overlay_slot_dirty(fb) != 0U) {
-        ui_restore_debug_overlay_regions(fb, show_bezel);
-        ui_note_debug_overlay_cleared(fb);
+    if (phase == COMPOSITOR_UI_PHASE_BASE) {
+        ui_prepare_static_background(fb, show_bezel);
+        ui_restore_apple_footprint_if_needed(fb, show_bezel);
+        ui_restore_screenshot_overlay_if_needed(fb, show_bezel);
+        if (show_debugging != 0U ||
+            ui_debug_overlay_slot_dirty(fb) != 0U) {
+            ui_restore_debug_overlay_regions(fb, show_bezel);
+            ui_note_debug_overlay_cleared(fb);
+        }
+        if (show_disk_activity == 0U) {
+            ui_restore_static_rect(fb,
+                                   UI_DISK_ACTIVITY_X,
+                                   UI_DISK_ACTIVITY_Y,
+                                   UI_DISK_ACTIVITY_W,
+                                   UI_DISK_ACTIVITY_H,
+                                   show_bezel);
+            memset(&g_storage_activity, 0, sizeof(g_storage_activity));
+        }
+
+        XTime_GetTime(&t1);
+        s_base_draw_ticks = t1 - t0;
+        return menu_active;
     }
+
     if (show_debugging != 0U) {
         debug_overlay_snapshot_t debug_snapshot;
 
@@ -2153,20 +2290,11 @@ static int ui_compose_frame(uint16_t *fb, const ui_state_t *s, const config_menu
         debug_overlay_draw(fb, &debug_snapshot);
         ui_note_debug_overlay_drawn(fb);
     }
-
-    if (show_disk_activity == 0U) {
-        ui_restore_static_rect(fb,
-                               UI_DISK_ACTIVITY_X,
-                               UI_DISK_ACTIVITY_Y,
-                               UI_DISK_ACTIVITY_W,
-                               UI_DISK_ACTIVITY_H,
-                               show_bezel);
-        memset(&g_storage_activity, 0, sizeof(g_storage_activity));
-    } else if (draw_disk_activity_after_menu == 0U) {
+    if (show_disk_activity != 0U &&
+        draw_disk_activity_after_menu == 0U) {
         ui_draw_storage_activity(fb, s);
     }
 
-    int menu_active = (int)config_menu_is_active(menu);
     if (menu_active) {
         config_menu_draw(fb, menu, g_usb_menu_owned);
         ui_mark_slot_dynamic(fb);
@@ -2177,23 +2305,26 @@ static int ui_compose_frame(uint16_t *fb, const ui_state_t *s, const config_menu
 
     screenshot_service_draw_overlay(fb);
     XTime_GetTime(&t1);
-    g_last_draw_ticks = t1 - t0;
+    g_last_draw_ticks = s_base_draw_ticks + (t1 - t0);
     return menu_active;
 }
 
 /* Adapter for the compositor's typed-erased callback contract. */
 static int ui_compose_thunk(uint16_t *fb,
                             const void *ui_state,
-                            const void *config_menu)
+                            const void *config_menu,
+                            compositor_ui_phase_t phase)
 {
     /* A forced full refresh invalidates every per-slot background cache so
      * the complete static background is repainted. */
-    if (compositor_full_refresh_active() != 0U) {
+    if (phase == COMPOSITOR_UI_PHASE_BASE &&
+        compositor_full_refresh_active() != 0U) {
         ui_invalidate_static_backgrounds();
     }
     return ui_compose_frame(fb,
                             (const ui_state_t *)ui_state,
-                            (const config_menu_t *)config_menu);
+                            (const config_menu_t *)config_menu,
+                            phase);
 }
 
 static void ui_set_boot_menu_visible(ui_state_t *s,
@@ -2231,6 +2362,12 @@ static void ui_handle_apple_reset(ui_state_t *s, config_menu_t *menu)
         config_menu_apply_boot_runtime(menu);
     }
     boot_menu_service_refresh_machine_policy();
+    smartport_service_apple_reset();
+    /* A IIgs clears NEWVIDEO on reset; mirror that for the fake-SHR
+     * path. One DMA bus write of $01 to $C029 clears the PL capture
+     * state and, through the captured record, CPU1's renderer too --
+     * every observer sees the same real bus write. */
+    (void)uart_control_dma_bus_write(0xC029U, 0x01U);
     if (config_menu_is_active(menu)) {
         g_usb_menu_owned = 0U;
         ui_set_boot_menu_visible(s, menu, 0U);
@@ -2297,6 +2434,19 @@ static void ui_sync_usb_menu_capture(config_menu_t *menu)
     usb_hid_service_set_screenshot_sources(
         config_menu_usb_screenshot_a2_binding_source(menu),
         config_menu_usb_screenshot_1080p_binding_source(menu));
+    {
+        usb_hid_menu_source_t vtw_sources[USB_HID_VTW_SOURCE_COUNT];
+
+        vtw_sources[0] = config_menu_usb_vtw_binding_source(
+            menu, CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_TOGGLE);
+        vtw_sources[1] = config_menu_usb_vtw_binding_source(
+            menu, CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_UP);
+        vtw_sources[2] = config_menu_usb_vtw_binding_source(
+            menu, CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_DOWN);
+        vtw_sources[3] = config_menu_usb_vtw_binding_source(
+            menu, CONFIG_MENU_USB_BIND_ACTION_VTW_SLUG_TOGGLE);
+        usb_hid_service_set_vtw_sources(vtw_sources);
+    }
     usb_hid_service_set_menu_capture(config_menu_is_active(menu));
 }
 
@@ -2348,7 +2498,7 @@ static void ui_handle_usb_menu_event(ui_state_t *s,
                 return;
             }
             if (g_usb_menu_owned == 0U) {
-                boot_menu_service_request_rom_close();
+                ui_request_boot_menu_close(menu);
             } else {
                 g_usb_menu_owned = 0U;
                 ui_set_boot_menu_visible(s, menu, 0U);
@@ -2372,6 +2522,22 @@ static void ui_handle_usb_menu_event(ui_state_t *s,
         return;
     case USB_HID_MENU_ACTION_SCREENSHOT_1080P:
         ui_save_screenshot(SCREENSHOT_SERVICE_KIND_1080P);
+        return;
+    case USB_HID_MENU_ACTION_VTW_SPEED_TOGGLE:
+        vtw_service_speed_toggle();
+        screenshot_service_show_notice(vtw_service_last_action_text());
+        return;
+    case USB_HID_MENU_ACTION_VTW_SPEED_UP:
+        vtw_service_speed_step(1);
+        screenshot_service_show_notice(vtw_service_last_action_text());
+        return;
+    case USB_HID_MENU_ACTION_VTW_SPEED_DOWN:
+        vtw_service_speed_step(-1);
+        screenshot_service_show_notice(vtw_service_last_action_text());
+        return;
+    case USB_HID_MENU_ACTION_VTW_SLUG_TOGGLE:
+        vtw_service_slug_toggle();
+        screenshot_service_show_notice(vtw_service_last_action_text());
         return;
     default:
         break;
@@ -2536,6 +2702,7 @@ int main(void)
     uint32_t uart_budget;
     uint8_t gic_ready = 0U;
     uint8_t smartport_service_started = 0U;
+    XTime boot_stage_started = 0U;
 
     uart_init_both(921600U);
 
@@ -2566,7 +2733,9 @@ int main(void)
     uart_control_init(&g_uart_control, UART1_BASE, UART0_BASE);
     uart_control_init(&g_uart0_control, UART0_BASE, UART0_BASE);
     boot_menu_service_init();
+    XTime_GetTime(&boot_stage_started);
     card_control_init();
+    boot_timing_log("card_control_init", boot_stage_started);
     screenshot_service_init();
     screenshot_service_set_sd_write_hook(ui_screenshot_sd_write_complete, NULL);
 
@@ -2603,6 +2772,11 @@ int main(void)
         menu_platform.set_slot_enabled = control_set_slot_enabled;
         menu_platform.get_slot_enabled = control_get_slot_enabled;
         menu_platform.set_applicard_resource_max = control_set_applicard_resource_max;
+        menu_platform.set_vtw_config = control_set_vtw_config;
+        menu_platform.set_vtw_slug_key_enabled = control_set_vtw_slug_key_enabled;
+        menu_platform.set_iiplus_data_tap = control_set_iiplus_data_tap;
+        menu_platform.set_vtw_slowdown = control_set_vtw_slowdown;
+        menu_platform.refresh_usb1 = control_refresh_usb1;
         menu_platform.set_phasor_pan = control_set_phasor_pan;
         menu_platform.set_phasor_audio = control_set_phasor_audio;
         menu_platform.set_mouse_sensitivity = control_set_mouse_sensitivity;
@@ -2619,8 +2793,12 @@ int main(void)
         menu_platform.ethernet_read_config = menu_platform_ethernet_read_config;
         menu_platform.ethernet_write_config = menu_platform_ethernet_write_config;
         menu_platform.ethernet_test = menu_platform_ethernet_test;
-        menu_platform.ethernet_dhcp_acquire = menu_platform_ethernet_dhcp_acquire;
+        menu_platform.ethernet_dhcp_start = menu_platform_ethernet_dhcp_start;
+        menu_platform.ethernet_dhcp_poll = menu_platform_ethernet_dhcp_poll;
+        menu_platform.ethernet_dhcp_cancel = menu_platform_ethernet_dhcp_cancel;
+        XTime_GetTime(&boot_stage_started);
         config_menu_bind_platform(&config_menu, &menu_platform);
+        boot_timing_log("config load and bind", boot_stage_started);
         boot_debug_log_snapshot("after config bind");
     }
 
@@ -2673,6 +2851,7 @@ int main(void)
     (void)disk2_service_init(UART0_BASE);
     applicard_service_init(UART0_BASE);
     applicard_service_set_checkpoint(usb0_priority_checkpoint);
+    vtw_service_init(UART0_BASE);
 
     uart_control_print_help(&g_uart_control, &g_uart_control_ops);
     uart_control_print_help(&g_uart0_control, &g_uart_control_ops);
@@ -2774,6 +2953,10 @@ int main(void)
     }
     boot_debug_log_snapshot("pre apple release");
     card_control_mark_cpu0_ready();
+    config_menu_start_boot_dhcp(&config_menu);
+    XTime_GetTime(&boot_stage_started);
+    card_control_publish_disk2_sound_samples();
+    boot_timing_log("deferred Disk II sound publish", boot_stage_started);
 
     /* USB0 is detached by default. The USB tab starts the SD-card bridge
      * only as a modal maintenance state; SDD remains the persistent opt-in
@@ -2784,6 +2967,7 @@ int main(void)
 
     while (1) {
         uart_budget = 32U;
+        config_menu_poll_ethernet(&config_menu);
         if (config_menu_usb0_sd_remote_active(&config_menu) != 0U) {
             if (usb0_modal_was_active == 0U) {
                 usb0_modal_was_active = 1U;
@@ -2817,7 +3001,12 @@ int main(void)
                         ui_set_boot_menu_visible(&ui, &config_menu, 1U);
                         break;
                     case BOOT_MENU_EVENT_CLOSE:
-                        config_menu_apply_runtime(&config_menu);
+                        /* CMD_MENU_CLOSED has already committed the ROM to
+                         * its storage handoff.  A full runtime apply here
+                         * would reprobe Disk II media while the Apple may
+                         * already be executing the target slot ROM.  Menu
+                         * edits apply when they are made, so close only
+                         * tears down the UI state. */
                         ui_set_boot_menu_visible(&ui, &config_menu, 0U);
                         usb0_modal_redraw_pending = 1U;
                         break;
@@ -2943,6 +3132,8 @@ int main(void)
         usb0_priority_checkpoint();
         applicard_service_poll();
         usb0_priority_checkpoint();
+        vtw_service_poll();
+        usb0_priority_checkpoint();
         ui_poll_sd_media_arrival(&config_menu);
         usb0_priority_checkpoint();
         screenshot_service_poll();
@@ -2965,7 +3156,9 @@ int main(void)
                     ui_set_boot_menu_visible(&ui, &config_menu, 1U);
                     break;
                 case BOOT_MENU_EVENT_CLOSE:
-                    config_menu_apply_runtime(&config_menu);
+                    /* The Apple starts the selected storage handoff before
+                     * CPU0 observes this close event.  Do not remount or
+                     * reprobe media here; settings are applied at edit time. */
                     ui_set_boot_menu_visible(&ui, &config_menu, 0U);
                     break;
                 case BOOT_MENU_EVENT_INPUT:

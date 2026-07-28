@@ -150,15 +150,15 @@ def test_overlay_frontend_and_build_wiring() -> None:
             "UsbSoftDisconnect(&UsbInstance);" in usb_storage_c and
             "UsbConnected = 0;" in usb_storage_c,
             "USB0 storage service must expose a draining soft-disconnect for local FAT writes")
-    require("static uint8_t g_overlay_drawn_slots;" in source and
-            "static uint8_t g_overlay_restore_slots;" in source and
+    require("uint8_t drawn_slots;" in source and
+            "uint8_t restore_slots;" in source and
             "output_slot_mask_for_fb(fb)" in source and
-            "g_overlay_restore_slots |= g_overlay_drawn_slots;" in source and
+            "ov->restore_slots |= ov->drawn_slots;" in source and
             "compositor_request_full_refresh();" in source,
             "overlay timeout must request a refresh and restore only slots that were drawn")
     require("(g_overlay_drawn_slots & slot_mask) != 0U" not in source,
             "active screenshot overlay must redraw each composed frame until its timeout")
-    require("overlay_show(result->message);" in source,
+    require("overlay_show(&g_overlays[OVERLAY_BOTTOM], result->message);" in source,
             "failed screenshots must show the actual failure message on screen")
     require('#include "screenshot_service.h"' in frontend_main and
             "screenshot_service_init();" in frontend_main and

@@ -114,8 +114,14 @@ def test_demo_cycle_budget() -> None:
             "NTSC must enter the shared blanking tail on a 65-cycle line")
     require("jsr last_tail_delay ; 22" in demo and
             "last_tail_delay:        ; JSR 6 + body 10 + RTS 6 = 22" in demo and
-            "jmp (restart_vector); 5; total: 65 cycles" in demo,
-            "last scanline must include polling and looping in the 65-cycle budget")
+            "frame_restart_jmp:" in demo and
+            "jmp raster_ntsc     ; 3; patched target, total: 65 cycles" in demo,
+            "last scanline must use a CPU-neutral five-cycle patched restart")
+    require("jmp (restart_vector)" not in demo and
+            "sync_restart_jmp:" in demo and
+            demo.count("sta sync_restart_jmp + 1") == 2 and
+            demo.count("sta frame_restart_jmp + 1") == 2,
+            "both frame restarts must avoid the 6502/65C02 indirect-JMP cycle difference")
     require("cpy #207" in demo and
             "!for .line, 1, 51" in demo and
             "!for .line, 1, 37" in demo and

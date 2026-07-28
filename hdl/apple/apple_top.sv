@@ -160,6 +160,52 @@ module apple_top(
     localparam logic [7:0] CARD_CTRL_REG_ETH_DATA     = 8'h47; // W5100S host access byte
     localparam logic [7:0] CARD_CTRL_REG_ETH_CMD      = 8'h48; // bit0 go, bit1 write
     localparam logic [7:0] CARD_CTRL_REG_ETH_STATUS   = 8'h49; // ready/busy/done/error + read byte
+    // Virtual TransWarp accelerator (vtw_core_top) control/status window.
+    //   VTW_CTRL        : bit0 enable request (gated on machine mode == IIe),
+    //                     bit1 core_run, [3:2] speed_mode (0=full, 1=divided,
+    //                     2=1MHz-locked), bit4 assert Apple RES# (takeover
+    //                     machine reset), [15:8] pace divider (divided mode).
+    //   VTW_SHADOW_ADDR : 18-bit shadow port-B pointer; writing it also
+    //                     fetches that byte for VTW_SHADOW_DATA reads.
+    //   VTW_SHADOW_DATA : write = store byte at pointer, pointer++ and
+    //                     refetch (boot ROM copy is one pointer write then a
+    //                     byte stream); read = last fetched byte.
+    //   VTW_SYNC_CMD    : [15:0] Apple address, [23:16] write data, [24]
+    //                     rw (1=read). Write issues one real bus cycle via
+    //                     the vTW engine; honored only while the core is
+    //                     held (core_run=0) -- the boot-time ROM copy path.
+    //   VTW_SYNC_STATUS : [7:0] read data, [8] busy, [9] done (sticky,
+    //                     cleared by the next VTW_SYNC_CMD write).
+    //   VTW_STATUS      : [1:0] $C074 state, [2] bus owned, [3] effective
+    //                     enable, [4] core_run echo, [31:16] core PC.
+    localparam logic [7:0] CARD_CTRL_REG_VTW_CTRL        = 8'h70;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_SHADOW_ADDR = 8'h71;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_SHADOW_DATA = 8'h72;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_SYNC_CMD    = 8'h73;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_SYNC_STATUS = 8'h74;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_STATUS      = 8'h75;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_CNT_CORE    = 8'h76;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_CNT_BUS     = 8'h77;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_CNT_POSTED  = 8'h78;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_POST_STATS  = 8'h79;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_CNT_INVALID = 8'h7A;
+    //   VTW_LAST_SYNC   : [15:0] address, [23:16] data, [24] rw of the
+    //                     last completed vTW bus cycle (bench forensics).
+    //   VTW_CXXX_RING_* : last eight $C1xx-$CFFF bus cycles, two 16-bit
+    //                     addresses per register, newest first.
+    localparam logic [7:0] CARD_CTRL_REG_VTW_LAST_SYNC   = 8'h7B;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_CXXX_RING0  = 8'h7C;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_CXXX_RING1  = 8'h7D;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_CXXX_RING2  = 8'h7E;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_CXXX_RING3  = 8'h7F;
+    //   VTW_C0_RING_*   : last eight $C00x/$C01x soft-switch cycles with
+    //                     latched data ({rw,addr[4:0],data[7:0]} x2/reg).
+    localparam logic [7:0] CARD_CTRL_REG_VTW_C0_RING0    = 8'h6C;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_C0_RING1    = 8'h6D;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_C0_RING2    = 8'h6E;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_C0_RING3    = 8'h6F;
+    // Per-region slowdown config: [8:0] region enables, [31:16] duration.
+    localparam logic [7:0] CARD_CTRL_REG_VTW_SLOWDOWN    = 8'h6B;
     localparam int unsigned CARD_CTRL_FEATURE_NSC_ENABLE_BIT = 0;
     localparam int unsigned CARD_CTRL_FEATURE_SS_ENABLE_BIT  = 1;
     localparam int unsigned CARD_CTRL_DISK2_SOUND_EVENT_SHIFT = 16;
@@ -238,6 +284,9 @@ module apple_top(
     assign menu_chime_start = menu_chime_start_q;
     logic smartport_active;
     logic disk2_active;
+    logic boot_target_disk2;
+    logic vtw_core_run_eff_q;
+    logic vtw_disk2_boot_scan_q;
     logic disk2_sound_spinning;
     logic [7:0] disk2_sound_qtrack;
     logic [3:0] disk2_sound_event;
@@ -362,6 +411,7 @@ module apple_top(
 
     logic        egress_capture_drop_ack;
 
+    logic shr_capture_active_w;
     apple_cycle_capture apple_cycle_capture_i (
         .clk(clk),
         .resetn(rstn[0]),
@@ -375,7 +425,8 @@ module apple_top(
         .cycle_capture_rd_en(cycle_capture_rd_en_internal),
         .cycle_capture_empty(cycle_capture_empty_internal),
         .capture_drop_sticky(capture_drop_sticky_internal),
-        .capture_drop_ack(egress_capture_drop_ack)
+        .capture_drop_ack(egress_capture_drop_ack),
+        .shr_capture_active(shr_capture_active_w)
     );
 
     apple_cycle_egress apple_cycle_egress_i (
@@ -423,9 +474,11 @@ module apple_top(
      * must positively identify a compatible machine before either signal
      * can be driven. */
     logic [1:0]  machine_mode_q;
-    /* AUX_PROVIDE: card serves the aux 64K + RamWorks banks from PSRAM
-     * (//e only -- the arbiter INH interlock enforces the machine
-     * gate). Reset = 0: snoop-only, GS-safe. */
+    logic [5:0]  iiplus_data_tap_q;   // II/II+ bus data sample tap (PS-tunable)
+    /* AUX_PROVIDE: card serves the aux 64K + RamWorks banks from PSRAM.
+     * Frontend policy enables this only for a //e with no physical aux card;
+     * the fabric interlock itself permits INH on identified //e and II/II+
+     * hosts. Reset = 0: snoop-only, GS-safe. */
     logic        aux_provide_en_q;
     /* PSRAM read-capture delay: [4:0] delay taps, [5] sample edge.
      * Writing the register pulses the driver's load strobe. */
@@ -435,6 +488,7 @@ module apple_top(
     logic        machine_inh_allowed;
     logic        machine_m2sel_active_high;
     logic        machine_gs_m2_qualify;
+    logic        machine_is_iiplus;
     assign machine_inh_allowed = (machine_mode_q == 2'd1) ||
                                  (machine_mode_q == 2'd2);
     /* M2SEL qualification arms only on a POSITIVE GS identification.
@@ -447,6 +501,12 @@ module apple_top(
      * slot scan; the INH/DMA interlock covers the serving hazards in
      * that window. */
     assign machine_gs_m2_qualify = (machine_mode_q == 2'd3);
+
+    /* II/II+ hosts present bus data on a different schedule than the //e
+     * (discrete timing, real 6502, no IOU row-address latch), so
+     * apple_bus_wrapper samples them at an earlier data tap. Selected from
+     * the PS-set machine mode (1 = II/II+); UNKNOWN/others keep the //e tap. */
+    assign machine_is_iiplus = (machine_mode_q == 2'd1);
 
     logic [31:0] sdd_stat_producer_ptr;
     logic [31:0] sdd_stat_records_written;
@@ -535,9 +595,17 @@ module apple_top(
     globals::AppleBus_write brain_transplant_write;
     globals::AppleBus_write mb1_ab_write;
     globals::AppleBus_write mouse_ab_write;
+    // Interrupt-chain debug taps (declared here so the card instantiations
+    // above the counter block can drive them; see the counters near the
+    // mouse_card instance).
+    logic [3:0]  mouse_dbg_mode;
+    logic        mouse_dbg_vbl_pending;
+    logic        mouse_dbg_irq_pending;
+    logic        mb1_dbg_ssi_irq;
+    logic        mb1_dbg_ssi_backend_done;
+    logic        mb1_dbg_ssi_enable_ints;
     globals::AppleBus_write applicard_ab_write;
     globals::AppleBus_write uthernet_ab_write;
-    globals::AppleBus_write vidhd_ab_write;
     globals::AppleBus_write disk2_ab_write;
     globals::AppleBus_write smartport_ab_write;
     globals::AppleBus_write boot_menu_ab_write;
@@ -557,14 +625,28 @@ module apple_top(
     logic [63:0] nsc_write_time_bcd;
     logic        nsc_write_time_strobe;
 
+    /* Bus-capture forensics (II+ ghost-write investigation). Cleared by
+     * writing CARD_CTRL 0x2D; read via 0x2D-0x30 (see decode below). */
+    logic [31:0] busdbg_quality;
+    logic [31:0] busdbg_tap_mismatch;
+    logic [31:0] busdbg_strobe_anom;
+    logic [31:0] busdbg_tap_last;
+    logic        busdbg_clear_pulse;
     apple_bus_wrapper apple_bus_wrapper_i (
         .res_filtered_out(res_filtered_dbg),
         .dbg_lost_cycle_count(dbg_lost_cycle_count),
+        .dbg_bus_quality(busdbg_quality),
+        .dbg_tap_mismatch(busdbg_tap_mismatch),
+        .dbg_strobe_anom(busdbg_strobe_anom),
+        .dbg_tap_last(busdbg_tap_last),
+        .dbg_clear(busdbg_clear_pulse),
         .clk(clk),
         .rstn(rstn[1]),
         .inh_allowed(machine_inh_allowed),
         .gs_m2_qualify(machine_gs_m2_qualify),
         .m2sel_active_high(machine_m2sel_active_high),
+        .host_is_iiplus(machine_is_iiplus),
+        .iiplus_data_tap(iiplus_data_tap_q),
         .apple_data_pin(apple_data_pin),
         .apple_addr_pin(apple_addr_pin),
         .apple_rw_pin(apple_rw_pin),
@@ -585,15 +667,27 @@ module apple_top(
         .ab_write(ab_write)
     );
 
-    /* PSRAM serves aux/RamWorks through the //e-only INH interlock and
-     * provides the PS DMA staging port. Main RAM, language-card RAM, and
-     * Disk II track staging are owned by other memory paths. */
+    /* PSRAM serves aux/RamWorks when frontend policy enables AUX_PROVIDE
+     * and provides the PS DMA staging port. Main RAM, language-card RAM,
+     * and Disk II track staging are owned by other memory paths. */
+    /* vTW RamWorks line port (vtw_core_top <-> psram_simple). */
+    logic        vtw_bus_owned;
+    logic        vtw_video_phase_1mhz;
+    logic        vtw_rw_req_valid;
+    logic        vtw_rw_req_rw;
+    logic [23:0] vtw_rw_req_addr;
+    logic [63:0] vtw_rw_req_wline;
+    logic        vtw_rw_req_ready;
+    logic        vtw_rw_resp_valid;
+    logic [63:0] vtw_rw_resp_rline;
+
     psram_simple psram_simple_i (
         .clk(clk),
         .resetn(rstn[0]),
         .ab_read(ab_read),
         .sss(sss),
         .aux_provide_en(aux_provide_en_q),
+        .vtw_bus_owned(vtw_bus_owned),
         .ab_write(brain_transplant_write),
         .dma_line_addr(mc_dma_line_addr),
         .dma_rw(mc_dma_rw),
@@ -602,6 +696,13 @@ module apple_top(
         .dma_ready(mc_dma_ready),
         .dma_rdata(mc_dma_rdata),
         .dma_rvalid(mc_dma_rvalid),
+        .vtw_valid(vtw_rw_req_valid),
+        .vtw_rw(vtw_rw_req_rw),
+        .vtw_addr(vtw_rw_req_addr),
+        .vtw_wline(vtw_rw_req_wline),
+        .vtw_ready(vtw_rw_req_ready),
+        .vtw_rvalid(vtw_rw_resp_valid),
+        .vtw_rline(vtw_rw_resp_rline),
         .psram_valid(mc_psram_valid),
         .psram_ready(mc_psram_ready),
         .psram_cmd(mc_psram_cmd),
@@ -685,20 +786,41 @@ module apple_top(
         .ab_read(gate_ab(ab_read, card_slot4_enable)),
         .ab_write(mb1_ab_write),
         .audio_l(mb1_audio_l),
-        .audio_r(mb1_audio_r)
+        .audio_r(mb1_audio_r),
+        .dbg_ssi_irq(mb1_dbg_ssi_irq),
+        .dbg_ssi_backend_done(mb1_dbg_ssi_backend_done),
+        .dbg_ssi_enable_ints(mb1_dbg_ssi_enable_ints)
     );
 
     // Sum the SuperSprite PSG into the card-audio bus with saturation. The PSG
     // output is pre-scaled with headroom; halve it so a full Mockingboard mix
     // plus PSG cannot wrap.
+    //
+    // Registered (one fclk stage) to pipeline the audio summation: the
+    // downstream mixer (appletini_yarz_top) adds disk2 audio with another
+    // saturating stage and only samples on an audio tick (~48 kHz), so the
+    // whole PSG->mix->sample chain was a single ~14-level combinational path
+    // on the 133 MHz clock. Splitting it here halves the depth; the added
+    // ~7.5 ns of latency on a ~48 kHz sample stream is inaudible.
     wire signed [16:0] ss_mix_l = mb1_audio_l + (ss_psg_audio >>> 1);
     wire signed [16:0] ss_mix_r = mb1_audio_r + (ss_psg_audio >>> 1);
-    assign mockingboard_audio_l =
-        (ss_mix_l >  17'sd32767) ?  16'sd32767 :
-        (ss_mix_l < -17'sd32768) ? -16'sd32768 : ss_mix_l[15:0];
-    assign mockingboard_audio_r =
-        (ss_mix_r >  17'sd32767) ?  16'sd32767 :
-        (ss_mix_r < -17'sd32768) ? -16'sd32768 : ss_mix_r[15:0];
+    logic signed [15:0] mockingboard_audio_l_q;
+    logic signed [15:0] mockingboard_audio_r_q;
+    always_ff @(posedge clk) begin
+        if (!rstn[2]) begin
+            mockingboard_audio_l_q <= 16'sd0;
+            mockingboard_audio_r_q <= 16'sd0;
+        end else begin
+            mockingboard_audio_l_q <=
+                (ss_mix_l >  17'sd32767) ?  16'sd32767 :
+                (ss_mix_l < -17'sd32768) ? -16'sd32768 : ss_mix_l[15:0];
+            mockingboard_audio_r_q <=
+                (ss_mix_r >  17'sd32767) ?  16'sd32767 :
+                (ss_mix_r < -17'sd32768) ? -16'sd32768 : ss_mix_r[15:0];
+        end
+    end
+    assign mockingboard_audio_l = mockingboard_audio_l_q;
+    assign mockingboard_audio_r = mockingboard_audio_r_q;
 
     mouse_card mouse_card_i (
         .clk(clk),
@@ -709,8 +831,101 @@ module apple_top(
         .slot_assign(3'h2),
         .as_common(as_common),
         .as_client(mouse_as_client),
-        .ab_write(mouse_ab_write)
+        .ab_write(mouse_ab_write),
+        .dbg_mode(mouse_dbg_mode),
+        .dbg_vbl_pending(mouse_dbg_vbl_pending),
+        .dbg_irq_pending(mouse_dbg_irq_pending)
     );
+
+    // ------------------------------------------------------------------
+    // Interrupt-chain debug counters (II+ mouse/Phasor freeze diagnosis).
+    // All taps are off the vTW critical path. Saturating 8-bit counts of
+    // each link in the two interrupt chains, plus mode/flag snapshots,
+    // so the UART can see exactly where a chain goes dead. Read via
+    // registers 0x2B (mouse) and 0x2C (Phasor/SSI).
+    //   mouse chain: VBL pulse -> vbl_pending -> mode-enabled -> assert_irq
+    //   speech chain: phoneme plays -> backend_done -> enable_ints -> direct_irq
+    // (Debug tap wires are declared above, next to the card ab_write nets.)
+    // ------------------------------------------------------------------
+    logic [7:0]  irqdbg_mouse_vbl_q;
+    logic [7:0]  irqdbg_mouse_irq_q;
+    logic [7:0]  irqdbg_ssi_backend_q;
+    logic [7:0]  irqdbg_ssi_irq_q;
+    logic        irqdbg_mouse_irq_prev_q;
+    logic        irqdbg_ssi_backend_prev_q;
+    logic        irqdbg_ssi_irq_prev_q;
+    // CPU IRQ/BRK-vector fetches: the 6502 reads $FFFE (then $FFFF) whenever it
+    // takes an IRQ or executes BRK. Counting $FFFE reads tells us whether the
+    // CPU services ANY interrupt during a freeze (climbing) or has interrupts
+    // masked and never vectors (flat). serve_en is one pulse per bus cycle.
+    logic [7:0]  irqdbg_vec_q;
+
+    always_ff @(posedge clk) begin
+        if (!rstn[2]) begin
+            irqdbg_mouse_vbl_q        <= 8'd0;
+            irqdbg_mouse_irq_q        <= 8'd0;
+            irqdbg_ssi_backend_q      <= 8'd0;
+            irqdbg_ssi_irq_q          <= 8'd0;
+            irqdbg_vec_q              <= 8'd0;
+            irqdbg_mouse_irq_prev_q   <= 1'b0;
+            irqdbg_ssi_backend_prev_q <= 1'b0;
+            irqdbg_ssi_irq_prev_q     <= 1'b0;
+        end
+        else begin
+            irqdbg_mouse_irq_prev_q   <= mouse_ab_write.assert_irq;
+            irqdbg_ssi_backend_prev_q <= mb1_dbg_ssi_backend_done;
+            irqdbg_ssi_irq_prev_q     <= mb1_dbg_ssi_irq;
+            if (ab_read.serve_en && ab_read.rw &&
+                (ab_read.addr == 16'hFFFE) && irqdbg_vec_q != 8'hFF) begin
+                irqdbg_vec_q <= irqdbg_vec_q + 8'd1;
+            end
+            if (mouse_vblank_start_pulse && irqdbg_mouse_vbl_q != 8'hFF) begin
+                irqdbg_mouse_vbl_q <= irqdbg_mouse_vbl_q + 8'd1;
+            end
+            if (mouse_ab_write.assert_irq && !irqdbg_mouse_irq_prev_q &&
+                irqdbg_mouse_irq_q != 8'hFF) begin
+                irqdbg_mouse_irq_q <= irqdbg_mouse_irq_q + 8'd1;
+            end
+            if (mb1_dbg_ssi_backend_done && !irqdbg_ssi_backend_prev_q &&
+                irqdbg_ssi_backend_q != 8'hFF) begin
+                irqdbg_ssi_backend_q <= irqdbg_ssi_backend_q + 8'd1;
+            end
+            if (mb1_dbg_ssi_irq && !irqdbg_ssi_irq_prev_q &&
+                irqdbg_ssi_irq_q != 8'hFF) begin
+                irqdbg_ssi_irq_q <= irqdbg_ssi_irq_q + 8'd1;
+            end
+        end
+    end
+
+    // {mouse VBL count, mouse assert_irq count, flags, mode}
+    wire [31:0] irqdbg_mouse_word = {
+        irqdbg_mouse_vbl_q, irqdbg_mouse_irq_q,
+        6'b0, mouse_dbg_vbl_pending, mouse_dbg_irq_pending,
+        4'b0, mouse_dbg_mode
+    };
+    // {SSI backend-done count, SSI direct_irq count, CPU $FFFE vec count,
+    //  enable_ints flag}
+    wire [31:0] irqdbg_phasor_word = {
+        irqdbg_ssi_backend_q, irqdbg_ssi_irq_q,
+        irqdbg_vec_q, 7'b0, mb1_dbg_ssi_enable_ints
+    };
+
+    /* Mouse DEVSEL write ring (II+ ghost-write investigation): the last
+     * eight writes the mouse card consumed at $C0A0-$C0AF, exactly as
+     * captured (data_en-qualified). Entry = {4'b0, addr[3:0], data[7:0]},
+     * newest in the low 16 bits; read via 0x31-0x34, cleared with the
+     * bus forensics (write 0x2D). */
+    logic [127:0] busdbg_mring_q;
+    wire busdbg_mouse_wr = ab_read.data_en && !ab_read.rw &&
+                           (ab_read.addr[15:4] == 12'hC0A);
+    always_ff @(posedge clk) begin
+        if (!rstn[2] || busdbg_clear_pulse) begin
+            busdbg_mring_q <= 128'd0;
+        end else if (busdbg_mouse_wr) begin
+            busdbg_mring_q <= {busdbg_mring_q[111:0],
+                               4'b0, ab_read.addr[3:0], ab_read.data};
+        end
+    end
 
     // PCPI Appli-Card (Z80 coprocessor) -- PL latches/flags for the PS
     // software Z80 in applicard_service.c. Slot 5 only ($C0D0-$C0DF).
@@ -748,15 +963,6 @@ module apple_top(
         .host_done(eth_host_done),
         .host_error(eth_host_error),
         .host_rdata(eth_host_rdata)
-    );
-
-    vidhd_card vidhd_card_i (
-        .clk(clk),
-        .rstn(rstn[2]),
-        .ab_read(ab_read),
-        .sss(sss),
-        .slot_assign(3'h3),
-        .ab_write(vidhd_ab_write)
     );
 
     // SuperSprite (TMS9918 VDP) -- PL front end for the PS software VDP.
@@ -842,18 +1048,39 @@ module apple_top(
     assign disk2_sound_read.rvalid = axi_audio_read.rvalid;
     assign axi_audio_read.rready = disk2_sound_read.rready;
 
+    /* vTW SmartPort short-circuit port (vtw_core_top <-> smartport_card). */
+    wire vtw_smartport_visible =
+        smartport_active && !card_supersprite_enable &&
+        !vtw_disk2_boot_scan_q;
+    wire         vtw_sp_active = vtw_smartport_visible;
+    logic        vtw_sp_req_valid;
+    logic [2:0]  vtw_sp_req_target;
+    logic [10:0] vtw_sp_req_addr;
+    logic        vtw_sp_req_rw;
+    logic [7:0]  vtw_sp_req_wdata;
+    logic        vtw_sp_req_ready;
+    logic        vtw_sp_resp_valid;
+    logic [7:0]  vtw_sp_resp_rdata;
+
     smartport_card smartport_card_i (
         .clk(clk),
         .rstn(rstn[2]),
-        .ab_read(gate_ab(ab_read,
-                         smartport_active && !card_supersprite_enable)),
+        .ab_read(gate_ab(ab_read, vtw_smartport_visible)),
         .sss(sss),
         // SuperSprite wins the shared slot when enabled.
         .slot_assign(3'h7),
         .as_common(as_common),
         .as_client(smartport_as_client),
         .ab_write(smartport_ab_write),
-        .smartport_irq(smartport_irq)
+        .smartport_irq(smartport_irq),
+        .vtw_valid(vtw_sp_req_valid),
+        .vtw_target(vtw_sp_req_target),
+        .vtw_addr(vtw_sp_req_addr),
+        .vtw_rw(vtw_sp_req_rw),
+        .vtw_wdata(vtw_sp_req_wdata),
+        .vtw_ready(vtw_sp_req_ready),
+        .vtw_resp_valid(vtw_sp_resp_valid),
+        .vtw_resp_rdata(vtw_sp_resp_rdata)
     );
 
     // PS-driven DMA command interface to apple_dma_engine.
@@ -922,6 +1149,7 @@ module apple_top(
         .ab_write(boot_menu_ab_write),
         .smartport_active(smartport_active),
         .disk2_active(disk2_active),
+        .boot_target_disk2(boot_target_disk2),
         .boot_slot(boot_menu_slot),
         .boot_slot_valid(boot_menu_slot_valid),
         .apple_vblank_start_pulse(apple_vblank_start_pulse),
@@ -943,18 +1171,188 @@ module apple_top(
         .ab_write(no_slot_clock_ab_write)
     );
 
+    // ------------------------------------------------------------------
+    // Virtual TransWarp accelerator. Bus-master client of the arbiter;
+    // supported on positively identified //e and II/II+ hosts. The accepted
+    // machine verdict is latched for the session so CTRL-RESET cannot drop
+    // DMA ownership while the motherboard CPU is stopped.
+    // ------------------------------------------------------------------
+    globals::AppleBus_write vtw_ab_write;
+    logic [31:0] vtw_ctrl_q;
+    logic [31:0] vtw_slowdown_q;   // [9:0] region enables, [31:16] duration
+    logic [17:0] vtw_sh_addr_q;
+    logic [7:0]  vtw_sh_wdata_q;
+    logic [7:0]  vtw_sh_rdata;
+    logic [7:0]  vtw_sh_rdata_q;
+    typedef enum logic [1:0] {
+        VTW_SH_IDLE, VTW_SH_WRITE, VTW_SH_READ, VTW_SH_CAPTURE
+    } vtw_sh_state_t;
+    vtw_sh_state_t vtw_sh_state_q;
+    logic        vtw_arm_go_pulse_q;
+    logic [15:0] vtw_arm_addr_q;
+    logic        vtw_arm_rw_q;
+    logic [7:0]  vtw_arm_wdata_q;
+    logic        vtw_arm_busy;
+    logic        vtw_arm_resp_valid;
+    logic [7:0]  vtw_arm_rdata;
+    logic        vtw_sync_done_q;
+    logic [1:0]  vtw_c074_state;
+    logic [15:0] vtw_dbg_core_pc;
+    logic [31:0] vtw_cnt_core_cycles;
+    logic [31:0] vtw_cnt_bus_cycles;
+    logic [31:0] vtw_cnt_posted_writes;
+    logic [9:0]  vtw_post_fill;
+    logic [9:0]  vtw_post_high_water;
+    logic [31:0] vtw_cnt_post_drops;
+    logic [31:0] vtw_cnt_invalid_routes;
+    logic [10:0] vtw_dbg_vsss;
+    logic [15:0] vtw_dbg_last_sync_addr;
+    logic [7:0]  vtw_dbg_last_sync_data;
+    logic        vtw_dbg_last_sync_rw;
+    logic [6:0]  vtw_dbg_irq_edges;
+    logic [127:0] vtw_dbg_cxxx_ring;
+    logic [127:0] vtw_dbg_c0_ring;
+
+    /* Machine gate, latched for the lifetime of the enable request. The
+     * PS re-identifies the machine on every Apple reset (machine_mode
+     * passes through UNKNOWN until the boot ROM re-reports), but the
+     * session must survive CTRL-RESET with /DMA held (README §2) -- a
+     * dropped gate would wake the insane motherboard 6502 mid-session.
+     * A machine cannot change type while powered; the verdict only
+     * matters at session start. Both //e (mode 2) and II/II+ (mode 1)
+     * accelerate as an Enhanced //e: the fixed //e ROM and the core's full
+     * MMU model apply regardless of host. */
+    logic vtw_machine_ok_q;
+    always_ff @(posedge clk) begin
+        if (!rstn[1]) begin
+            vtw_machine_ok_q  <= 1'b0;
+        end
+        else if (!vtw_ctrl_q[0]) begin
+            vtw_machine_ok_q  <= 1'b0;
+        end
+        else if (machine_mode_q == 2'd2 || machine_mode_q == 2'd1) begin
+            vtw_machine_ok_q  <= 1'b1;
+        end
+    end
+    // Raw vertical-blank level for the core's synthesized $C019 read. The
+    // vTW applies its CPU-visible one-cycle lag locally from line/cycle, so
+    // native timing consumers remain on the calibrated 192:0 boundary.
+    // Same fabric clock as the timing generator, so no synchronizer is needed.
+    wire vtw_video_vbl = (line_in_frame >= 9'd192);
+    wire vtw_enable_eff = vtw_ctrl_q[0] && vtw_machine_ok_q;
+    wire vtw_core_run_eff = vtw_enable_eff && vtw_ctrl_q[1];
+    wire vtw_slot6_boot_probe =
+        vtw_disk2_boot_scan_q && vtw_bus_owned &&
+        ab_read.serve_en && ab_read.rw &&
+        (ab_read.addr[15:8] == 8'hC6);
+
+    /* The native boot-menu ROM has already handed off to the selected
+     * device before vTW takes the bus. vTW then resets the machine and
+     * starts the accelerated core from a fresh //e ROM image, creating a
+     * second cold slot scan. If Disk II was selected, hide slot 7 only for
+     * that scan so the //e ROM reaches slot 6 instead of rediscovering the
+     * normally active SmartPort first. Restore slot 7 immediately when the
+     * scan probes slot 6; SmartPort remains available after boot. */
+    always_ff @(posedge clk) begin
+        if (!rstn[1]) begin
+            vtw_core_run_eff_q    <= 1'b0;
+            vtw_disk2_boot_scan_q <= 1'b0;
+        end else begin
+            vtw_core_run_eff_q <= vtw_core_run_eff;
+            if (!vtw_core_run_eff) begin
+                vtw_disk2_boot_scan_q <= 1'b0;
+            end else if (!vtw_core_run_eff_q) begin
+                vtw_disk2_boot_scan_q <= boot_target_disk2;
+            end else if (vtw_slot6_boot_probe) begin
+                vtw_disk2_boot_scan_q <= 1'b0;
+            end
+        end
+    end
+
+    /* SHR interlace posting window widen (CARD_CTRL 0x35 bit 0). */
+    logic post_main_wide_q;
+    vtw_core_top vtw_core_top_i (
+        .clk(clk),
+        .rstn(rstn[1]),
+        .enable(vtw_enable_eff),
+        .core_run(vtw_ctrl_q[1]),
+        .assert_apple_res(vtw_ctrl_q[4]),
+        .speed_mode(vtw_ctrl_q[3:2]),
+        .pace_divider(vtw_ctrl_q[31:16]),
+        .slow_region_en(vtw_slowdown_q[9:0]),
+        .slow_duration(vtw_slowdown_q[31:16]),
+        .disk2_timing_active(disk2_sound_spinning),
+        .ramworks_en(ramworks_en_q),
+        .video_vbl(vtw_video_vbl),
+        .post_main_wide(post_main_wide_q),
+        .video_mode_50hz(video_mode_50hz),
+        .video_line(line_in_frame),
+        .video_cycle(cycle_in_line),
+        .ab_read(ab_read),
+        .ab_write(vtw_ab_write),
+        .rw_req_valid(vtw_rw_req_valid),
+        .rw_req_rw(vtw_rw_req_rw),
+        .rw_req_addr(vtw_rw_req_addr),
+        .rw_req_wline(vtw_rw_req_wline),
+        .rw_req_ready(vtw_rw_req_ready),
+        .rw_resp_valid(vtw_rw_resp_valid),
+        .rw_resp_rline(vtw_rw_resp_rline),
+        .sp_active(vtw_sp_active),
+        .sp_boot_suppress(vtw_disk2_boot_scan_q),
+        .sp_req_valid(vtw_sp_req_valid),
+        .sp_req_target(vtw_sp_req_target),
+        .sp_req_addr(vtw_sp_req_addr),
+        .sp_req_rw(vtw_sp_req_rw),
+        .sp_req_wdata(vtw_sp_req_wdata),
+        .sp_req_ready(vtw_sp_req_ready),
+        .sp_resp_valid(vtw_sp_resp_valid),
+        .sp_resp_rdata(vtw_sp_resp_rdata),
+        .sh_en(vtw_sh_state_q == VTW_SH_WRITE || vtw_sh_state_q == VTW_SH_READ),
+        .sh_addr(vtw_sh_addr_q),
+        .sh_we(vtw_sh_state_q == VTW_SH_WRITE),
+        .sh_wdata(vtw_sh_wdata_q),
+        .sh_rdata(vtw_sh_rdata),
+        .arm_req_valid(vtw_arm_go_pulse_q),
+        .arm_req_addr(vtw_arm_addr_q),
+        .arm_req_rw(vtw_arm_rw_q),
+        .arm_req_wdata(vtw_arm_wdata_q),
+        .arm_req_busy(vtw_arm_busy),
+        .arm_resp_valid(vtw_arm_resp_valid),
+        .arm_resp_rdata(vtw_arm_rdata),
+        .c074_state(vtw_c074_state),
+        .bus_owned(vtw_bus_owned),
+        .video_phase_1mhz(vtw_video_phase_1mhz),
+        .dbg_core_pc(vtw_dbg_core_pc),
+        .cnt_core_cycles(vtw_cnt_core_cycles),
+        .cnt_bus_cycles(vtw_cnt_bus_cycles),
+        .cnt_posted_writes(vtw_cnt_posted_writes),
+        .post_fill(vtw_post_fill),
+        .post_high_water(vtw_post_high_water),
+        .cnt_post_drops(vtw_cnt_post_drops),
+        .cnt_invalid_routes(vtw_cnt_invalid_routes),
+        .dbg_vsss(vtw_dbg_vsss),
+        .dbg_last_sync_addr(vtw_dbg_last_sync_addr),
+        .dbg_last_sync_data(vtw_dbg_last_sync_data),
+        .dbg_last_sync_rw(vtw_dbg_last_sync_rw),
+        .dbg_irq_edges(vtw_dbg_irq_edges),
+        .dbg_cxxx_ring(vtw_dbg_cxxx_ring),
+        .dbg_c0_ring(vtw_dbg_c0_ring)
+    );
+
     // apple_bus_write_arbiter merges virtual-card responses and control-line
-    // requests before they reach apple_bus_wrapper.
+    // requests before they reach apple_bus_wrapper. The vTW is prepended so
+    // every existing client keeps its index; it is the only address-bus
+    // driver, so its priority position is immaterial.
     apple_bus_write_arbiter #(.NUM_CLIENTS(11))
     apple_bus_write_arbiter_i(
         .inh_allowed(machine_inh_allowed),
         .client_writes({
+            vtw_ab_write,
             brain_transplant_write,
             mb1_ab_write,
             mouse_ab_write,
             applicard_ab_write,
             uthernet_ab_write,
-            vidhd_ab_write,
             supersprite_ab_write,
             disk2_ab_write,
             smartport_ab_write,
@@ -1047,11 +1445,24 @@ module apple_top(
             sdd_cfg_reset_pulse             <= 1'b0;
             machine_mode_q                  <= 2'd0;
             machine_m2sel_active_high       <= 1'b0;
+            iiplus_data_tap_q               <= 6'd52;
             aux_provide_en_q                <= 1'b0;
             psram_dcount_q                  <= 5'd0;
             ramworks_en_q                   <= 1'b0;
+            post_main_wide_q                <= 1'b0;
             psram_dcount_edge_q             <= 1'b0;
             psram_dcount_wr_pulse_q         <= 1'b0;
+            vtw_ctrl_q                      <= 32'h0000_0000;
+            vtw_slowdown_q                  <= 32'h0000_0000;
+            vtw_sh_addr_q                   <= 18'd0;
+            vtw_sh_wdata_q                  <= 8'h00;
+            vtw_sh_rdata_q                  <= 8'h00;
+            vtw_sh_state_q                  <= VTW_SH_IDLE;
+            vtw_arm_go_pulse_q              <= 1'b0;
+            vtw_arm_addr_q                  <= 16'h0000;
+            vtw_arm_rw_q                    <= 1'b1;
+            vtw_arm_wdata_q                 <= 8'h00;
+            vtw_sync_done_q                 <= 1'b0;
         end else begin
             // cfg_reset_pulse is a one-cycle pulse: cleared every cycle and
             // set only when an awvalid lands on 8'h25.
@@ -1059,10 +1470,34 @@ module apple_top(
             sdd_cfg_reset_pulse <= 1'b0;
             psram_dcount_wr_pulse_q <= 1'b0;
             forensics_clear_pulse <= 1'b0;
+            busdbg_clear_pulse <= 1'b0;
             bm_aux_status_clear <= 1'b0;
             menu_chime_start_q <= 1'b0;
             disk2_menu_sound_event_q <= 4'd0;
             eth_host_req_pulse <= 1'b0;
+            vtw_arm_go_pulse_q <= 1'b0;
+
+            /* vTW shadow port-B sequencer: a register write starts either a
+             * write (then pointer++ and refetch) or a plain refetch; the
+             * shadow's registered read needs the extra CAPTURE state. ARM
+             * register accesses are hundreds of clocks apart, so the
+             * sequencer is always idle when the next command lands. */
+            unique case (vtw_sh_state_q)
+                VTW_SH_WRITE: begin
+                    vtw_sh_addr_q  <= vtw_sh_addr_q + 18'd1;
+                    vtw_sh_state_q <= VTW_SH_READ;
+                end
+                VTW_SH_READ:    vtw_sh_state_q <= VTW_SH_CAPTURE;
+                VTW_SH_CAPTURE: begin
+                    vtw_sh_rdata_q <= vtw_sh_rdata;
+                    vtw_sh_state_q <= VTW_SH_IDLE;
+                end
+                default: ;
+            endcase
+
+            if (vtw_arm_resp_valid) begin
+                vtw_sync_done_q <= 1'b1;
+            end
 
             if (eth_host_done) begin
                 eth_host_rdata_q <= eth_host_rdata;
@@ -1236,6 +1671,14 @@ module apple_top(
                         psram_dcount_wr_pulse_q <= 1'b1;
                     end
                     8'h64: forensics_clear_pulse <= 1'b1;
+                    /* Bus-capture forensics: any write clears the wrapper
+                     * counters and the mouse DEVSEL write ring. */
+                    8'h2D: busdbg_clear_pulse <= 1'b1;
+                    8'h35: post_main_wide_q <= as_common.wdata[0];
+                    /* II/II+ bus data sample tap (apple_bus_wrapper data_pipe
+                     * index). Tunable so the exact II+ value can be swept on
+                     * hardware. Range clamped by the PS to a valid pipe index. */
+                    8'h65: iiplus_data_tap_q <= as_common.wdata[5:0];
                     8'h6A: bm_aux_status_clear <= 1'b1;
                     CARD_CTRL_REG_SS_VRAM_ADDR: begin
                         automatic logic [31:0] a = globals::apply_wstrb(
@@ -1246,6 +1689,29 @@ module apple_top(
                         automatic logic [31:0] f = globals::apply_wstrb(
                             {25'b0, ss_status_flags_q}, as_common.wdata, as_common.wstrb);
                         ss_status_flags_q <= f[6:0];
+                    end
+                    CARD_CTRL_REG_VTW_CTRL: begin
+                        vtw_ctrl_q <= globals::apply_wstrb(
+                            vtw_ctrl_q, as_common.wdata, as_common.wstrb);
+                    end
+                    CARD_CTRL_REG_VTW_SLOWDOWN: begin
+                        vtw_slowdown_q <= globals::apply_wstrb(
+                            vtw_slowdown_q, as_common.wdata, as_common.wstrb);
+                    end
+                    CARD_CTRL_REG_VTW_SHADOW_ADDR: begin
+                        vtw_sh_addr_q  <= as_common.wdata[17:0];
+                        vtw_sh_state_q <= VTW_SH_READ;
+                    end
+                    CARD_CTRL_REG_VTW_SHADOW_DATA: begin
+                        vtw_sh_wdata_q <= as_common.wdata[7:0];
+                        vtw_sh_state_q <= VTW_SH_WRITE;
+                    end
+                    CARD_CTRL_REG_VTW_SYNC_CMD: begin
+                        vtw_arm_addr_q     <= as_common.wdata[15:0];
+                        vtw_arm_wdata_q    <= as_common.wdata[23:16];
+                        vtw_arm_rw_q       <= as_common.wdata[24];
+                        vtw_arm_go_pulse_q <= 1'b1;
+                        vtw_sync_done_q    <= 1'b0;
                     end
                     default: begin
                     end
@@ -1271,7 +1737,15 @@ module apple_top(
                 CARD_CTRL_REG_NSC_WRITE_SEQ:       as_client_rdata_q <= nsc_write_seq_q;
                 CARD_CTRL_REG_MENU_CHIME:          as_client_rdata_q <= 32'h0000_0000;
                 CARD_CTRL_REG_PHASOR_PAN_LO:       as_client_rdata_q <= {8'h00, phasor_pan_q[23:0]};
-                CARD_CTRL_REG_APPLE_RESET_STATUS:  as_client_rdata_q <= {23'h000000, ab_read.res, apple_reset_seq_q};
+                /* CPU1 already polls this word for reset sequencing. Bit 9
+                 * marks vTW-owned cycles that need the renderer's selective
+                 * one-cycle video-switch lookahead; no extra AXI read is
+                 * added to the cycle-render loop. */
+                CARD_CTRL_REG_APPLE_RESET_STATUS:  as_client_rdata_q <= {
+                    21'h000000, shr_capture_active_w,
+                    vtw_video_phase_1mhz,
+                    ab_read.res, apple_reset_seq_q
+                };
                 CARD_CTRL_REG_PHASOR_PAN_HI:       as_client_rdata_q <= {8'h00, phasor_pan_q[47:24]};
                 CARD_CTRL_REG_PHASOR_AUDIO:        as_client_rdata_q <= phasor_audio_q;
                 CARD_CTRL_REG_ETH_ADDR:            as_client_rdata_q <= {16'h0000, eth_host_addr_q};
@@ -1307,6 +1781,18 @@ module apple_top(
                 8'h28:   as_client_rdata_q <= egress_stat_gap_markers;
                 8'h29:   as_client_rdata_q <= egress_stat_bursts_issued;
                 8'h2A:   as_client_rdata_q <= egress_stat_full_stall_cycles;
+                8'h2B:   as_client_rdata_q <= irqdbg_mouse_word;
+                8'h2C:   as_client_rdata_q <= irqdbg_phasor_word;
+                /* Bus-capture forensics (write 0x2D clears all of these). */
+                8'h2D:   as_client_rdata_q <= busdbg_quality;
+                8'h2E:   as_client_rdata_q <= busdbg_tap_mismatch;
+                8'h2F:   as_client_rdata_q <= busdbg_strobe_anom;
+                8'h30:   as_client_rdata_q <= busdbg_tap_last;
+                8'h31:   as_client_rdata_q <= busdbg_mring_q[31:0];
+                8'h32:   as_client_rdata_q <= busdbg_mring_q[63:32];
+                8'h33:   as_client_rdata_q <= busdbg_mring_q[95:64];
+                8'h34:   as_client_rdata_q <= busdbg_mring_q[127:96];
+                8'h35:   as_client_rdata_q <= {31'b0, post_main_wide_q};
                 8'h50:   as_client_rdata_q <= {31'b0, sdd_cfg_enable_q};
                 8'h51:   as_client_rdata_q <= sdd_cfg_ring_base_q;
                 8'h52:   as_client_rdata_q <= {27'b0, sdd_cfg_ring_size_log2_q};
@@ -1343,6 +1829,44 @@ module apple_top(
                 CARD_CTRL_REG_SS_STATUS:    as_client_rdata_q <=
                     {6'b0, ss_vdp_overlay, ss_apple_video, ss_frame, ss_status};
                 CARD_CTRL_REG_SS_VRAM_DATA: as_client_rdata_q <= {24'b0, ss_vram_data};
+                CARD_CTRL_REG_VTW_CTRL:        as_client_rdata_q <= vtw_ctrl_q;
+                CARD_CTRL_REG_VTW_SLOWDOWN:    as_client_rdata_q <= vtw_slowdown_q;
+                CARD_CTRL_REG_VTW_SHADOW_ADDR: as_client_rdata_q <= {14'b0, vtw_sh_addr_q};
+                CARD_CTRL_REG_VTW_SHADOW_DATA: as_client_rdata_q <= {24'b0, vtw_sh_rdata_q};
+                CARD_CTRL_REG_VTW_SYNC_CMD:    as_client_rdata_q <= {7'b0,
+                                                                    vtw_arm_rw_q,
+                                                                    vtw_arm_wdata_q,
+                                                                    vtw_arm_addr_q};
+                CARD_CTRL_REG_VTW_SYNC_STATUS: as_client_rdata_q <= {22'b0,
+                                                                    vtw_sync_done_q,
+                                                                    vtw_arm_busy,
+                                                                    vtw_arm_rdata};
+                CARD_CTRL_REG_VTW_STATUS:      as_client_rdata_q <= {vtw_dbg_core_pc,
+                                                                    vtw_dbg_vsss,
+                                                                    vtw_ctrl_q[1],
+                                                                    vtw_enable_eff,
+                                                                    vtw_bus_owned,
+                                                                    vtw_c074_state};
+                CARD_CTRL_REG_VTW_CNT_CORE:    as_client_rdata_q <= vtw_cnt_core_cycles;
+                CARD_CTRL_REG_VTW_CNT_BUS:     as_client_rdata_q <= vtw_cnt_bus_cycles;
+                CARD_CTRL_REG_VTW_CNT_POSTED:  as_client_rdata_q <= vtw_cnt_posted_writes;
+                CARD_CTRL_REG_VTW_POST_STATS:  as_client_rdata_q <= {vtw_cnt_post_drops[5:0],
+                                                                    vtw_post_high_water,
+                                                                    6'b0,
+                                                                    vtw_post_fill};
+                CARD_CTRL_REG_VTW_CNT_INVALID: as_client_rdata_q <= vtw_cnt_invalid_routes;
+                CARD_CTRL_REG_VTW_LAST_SYNC:   as_client_rdata_q <= {vtw_dbg_irq_edges,
+                                                                    vtw_dbg_last_sync_rw,
+                                                                    vtw_dbg_last_sync_data,
+                                                                    vtw_dbg_last_sync_addr};
+                CARD_CTRL_REG_VTW_CXXX_RING0:  as_client_rdata_q <= vtw_dbg_cxxx_ring[31:0];
+                CARD_CTRL_REG_VTW_CXXX_RING1:  as_client_rdata_q <= vtw_dbg_cxxx_ring[63:32];
+                CARD_CTRL_REG_VTW_CXXX_RING2:  as_client_rdata_q <= vtw_dbg_cxxx_ring[95:64];
+                CARD_CTRL_REG_VTW_CXXX_RING3:  as_client_rdata_q <= vtw_dbg_cxxx_ring[127:96];
+                CARD_CTRL_REG_VTW_C0_RING0:    as_client_rdata_q <= vtw_dbg_c0_ring[31:0];
+                CARD_CTRL_REG_VTW_C0_RING1:    as_client_rdata_q <= vtw_dbg_c0_ring[63:32];
+                CARD_CTRL_REG_VTW_C0_RING2:    as_client_rdata_q <= vtw_dbg_c0_ring[95:64];
+                CARD_CTRL_REG_VTW_C0_RING3:    as_client_rdata_q <= vtw_dbg_c0_ring[127:96];
                 default: as_client_rdata_q <= 32'h00000000;
             endcase
         end

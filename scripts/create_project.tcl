@@ -705,8 +705,9 @@ puts "Configuring synthesis and implementation strategies..."
 # Set synthesis strategy
 set_property strategy "Vivado Synthesis Defaults" [get_runs synth_1]
 
-# Set implementation strategy
-set_property strategy "Vivado Implementation Defaults" [get_runs impl_1]
+# The design runs close to the 133.333 MHz fabric-clock limit. Explore
+# timing-oriented placement/routing and retain the post-route phys-opt pass.
+set_property strategy "Performance_ExplorePostRoutePhysOpt" [get_runs impl_1]
 set_property steps.phys_opt_design.is_enabled true [get_runs impl_1]
 
 puts "Strategies configured"

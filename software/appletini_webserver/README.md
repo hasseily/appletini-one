@@ -33,6 +33,11 @@ The build uses the cc65 `apple2` target, `apple2-system.cfg`, and an explicit
 encoded in their metadata. The trimmed, pinned IP65 library and its MPL 1.1
 license are in `ip65\`.
 
+`appletini_timer.s` overrides IP65's CPU-cycle-based Apple II timer. It uses
+the real-time `$C019` VBL edge on a //e and under vTW, so DNS, TCP, and HTTP
+timeouts remain constant when the accelerator speed changes. A stock II/II+
+keeps IP65's 1 MHz monitor-delay fallback.
+
 ## Run
 
 1. Enable the Appletini Ethernet card in slot 1.

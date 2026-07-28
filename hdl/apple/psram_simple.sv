@@ -45,6 +45,15 @@ module psram_simple (
     input  globals::AppleBus_read    ab_read,
     input  globals::SoftSwitchState  sss,
     input  logic                     aux_provide_en,
+    /* vTW session owns the bus: aux-routed READS on the bus are then only
+     * the accelerator's parked replays (its real aux traffic goes through
+     * the shadow and the vtw line port), so INH read-serving is pointless
+     * -- and each serve consumes that cycle's background-admission budget.
+     * With aux switches active every parked cycle would decode as an aux
+     * read and starve the background clients (including the vtw port the
+     * core is stalled on). Write capture stays live: posted base-aux
+     * writes are real writes worth mirroring. */
+    input  logic                     vtw_bus_owned,
     output globals::AppleBus_write   ab_write,
 
     // ---- PS DMA client ----
@@ -55,6 +64,21 @@ module psram_simple (
     output logic                     dma_ready,
     output logic [63:0]              dma_rdata,
     output logic                     dma_rvalid,
+
+    /* ---- vTW RamWorks client (line-granular). The accelerator's aux
+     * expansion reads and writes whole 8-byte lines; its line cache and
+     * write-combining live in vtw_core_top. Ops are admitted through the
+     * same bounded background window as the RMW drain and PS DMA, so the
+     * Apple serve deadline analysis is unchanged. Priority sits above
+     * PS DMA (the core is stalled on this) and below the write queue
+     * (committed Apple-bus data drains first). ---- */
+    input  logic                     vtw_valid,
+    input  logic                     vtw_rw,       // 1 = read line, 0 = write line
+    input  logic [23:0]              vtw_addr,     // byte address, line-aligned
+    input  logic [63:0]              vtw_wline,
+    output logic                     vtw_ready,    // 1-clk accept pulse
+    output logic                     vtw_rvalid,   // 1-clk completion pulse
+    output logic [63:0]              vtw_rline,
 
     // ---- psram_driver command interface ----
     output logic                     psram_valid,
@@ -107,7 +131,8 @@ module psram_simple (
      * is translated from addr_early), the only sample that meets the INH
      * deadline. ab_read.rw is the PHI0-high sample and is not yet valid
      * for this cycle at sss_en time. */
-    wire serve_read_start  = ab_read.sss_en && aux_cycle && ab_read.rw_early;
+    wire serve_read_start  = ab_read.sss_en && aux_cycle && ab_read.rw_early &&
+                             !vtw_bus_owned;
     wire serve_write_start = ab_read.sss_en && aux_cycle && !ab_read.rw_early;
 
     // ------------------------------------------------------------------
@@ -186,7 +211,8 @@ module psram_simple (
                             // driver is ready; the queue's worst-case
                             // traffic requires one complete RMW per window
         S_RMW_WRITE_WAIT,   // background: wait for write completion
-        S_DMA_OP            // background: ps dma op completion wait
+        S_DMA_OP,           // background: ps dma op completion wait
+        S_VTW_OP            // background: vtw line op completion wait
     } state_e;
 
     state_e state;
@@ -227,6 +253,9 @@ module psram_simple (
             dma_ready       <= 1'b0;
             dma_rvalid      <= 1'b0;
             dma_rdata       <= 64'd0;
+            vtw_ready       <= 1'b0;
+            vtw_rvalid      <= 1'b0;
+            vtw_rline       <= 64'd0;
             ab_write        <= '0;
             wq_rd_ptr       <= 3'd0;
             wq_wr_ptr       <= 3'd0;
@@ -260,6 +289,8 @@ module psram_simple (
             // Single-cycle pulses.
             dma_rvalid   <= 1'b0;
             dma_ready    <= 1'b0;
+            vtw_ready    <= 1'b0;
+            vtw_rvalid   <= 1'b0;
             if (psram_valid && psram_ready) begin
                 psram_valid <= 1'b0;
             end
@@ -406,6 +437,14 @@ module psram_simple (
                             psram_cmd   <= QPI_READ;
                             psram_addr  <= {wq_head_addr[23:3], 3'b000};
                             state       <= S_RMW_READ;
+                        end else if (vtw_valid) begin
+                            admit_armed_q <= 1'b0;
+                            vtw_ready   <= 1'b1;
+                            psram_valid <= 1'b1;
+                            psram_cmd   <= vtw_rw ? QPI_READ : QPI_WRITE;
+                            psram_addr  <= {vtw_addr[23:3], 3'b000};
+                            psram_wdata <= vtw_wline;
+                            state       <= S_VTW_OP;
                         end else if (dma_valid) begin
                             dbg_dma_admit_count <= dbg_dma_admit_count + 32'd1;
                             /* MC-port rw is BUS-style on BOTH clients:
@@ -482,6 +521,12 @@ module psram_simple (
                     dma_rdata  <= psram_rdata;
                     dma_rvalid <= 1'b1;
                     dbg_dma_complete_count <= dbg_dma_complete_count + 32'd1;
+                    state      <= S_IDLE;
+                end
+
+                S_VTW_OP: if (psram_rvalid) begin
+                    vtw_rline  <= psram_rdata;
+                    vtw_rvalid <= 1'b1;
                     state      <= S_IDLE;
                 end
 

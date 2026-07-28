@@ -61,6 +61,10 @@ package globals;
         logic irq;
         logic rdy;
         logic dma;
+        /* Sampled NMI# level (added for the vTW core's NMI input; the
+         * motherboard 6502 sees the same line). Refreshed once per Apple
+         * cycle like irq -- 1 MHz interrupt sampling, same as hardware. */
+        logic nmi;
         logic data_en;       // 1 in the phase that data field updates
         logic addr_en;       // 1 in the phase that addr_early/rw_early
                              // update (= TAP_ADDR_SNAP, early PHI1 snap)
@@ -69,6 +73,11 @@ package globals;
         logic serve_en;      // 1 in the phase that addr/rw update (the
                              // PHI0-high sample); the universal strobe for
                              // observation and card serving
+        logic drive_en;      // 1 at the bus-master address-drive point
+                             // (fall+TAP_DRIVE_ADDR, early PHI1) -- the only
+                             // instant a bus-master client (vtw_bus_engine)
+                             // may change its driven address/R-W, so every
+                             // cycle it emits is fully driven edge to edge
         /* Early PHI1 snapshot of the address bus. Only a socketed
          * 6502/65C02 guarantees addr/RW are valid this early; a DMA bus
          * master (e.g. the TransWarp) may assert them only around PHI0
@@ -152,6 +161,175 @@ package globals;
         logic sw_lcram_write;
         logic [6:0] sw_ramworks_bank;
     } SoftSwitchState;
+
+    /* Switch-state inputs consumed by translate_apple_addr. Two producers
+     * assemble one of these: soft_switch_manager (the motherboard-tracked
+     * state) and vtw_core_top (the virtual TransWarp's private copy, which
+     * it tracks from its own accesses). The function below is the single
+     * source of truth for //e banking semantics -- any change to Apple
+     * address routing belongs there, never in a per-consumer copy. */
+    typedef struct packed {
+        logic       sw_80store;
+        logic       sw_auxread;      // RAMRD
+        logic       sw_auxwrite;     // RAMWRT
+        logic       sw_altzp;
+        logic       sw_page2;
+        logic       sw_hires;
+        logic       sw_intcxrom;
+        logic       sw_slotc3rom;
+        logic       c8_internal_rom; // INTC8ROM latch
+        logic       sw_lcram_bank2;
+        logic       sw_lcram_read;
+        logic       sw_lcram_write;
+        logic [6:0] sw_ramworks_bank;
+    } TranslateState;
+
+    function automatic TranslateState translate_state_from_sss(
+        input SoftSwitchState sss
+    );
+        TranslateState st;
+        st.sw_80store       = sss.sw_80store;
+        st.sw_auxread       = sss.sw_ramrd;
+        st.sw_auxwrite      = sss.sw_ramwrt;
+        st.sw_altzp         = sss.sw_altzp;
+        st.sw_page2         = sss.sw_page2;
+        st.sw_hires         = sss.sw_hires;
+        st.sw_intcxrom      = sss.sw_intcxrom;
+        st.sw_slotc3rom     = sss.sw_slotc3rom;
+        st.c8_internal_rom  = sss.c8_internal_rom;
+        st.sw_lcram_bank2   = sss.sw_lcram_bank2;
+        st.sw_lcram_read    = sss.sw_lcram_read;
+        st.sw_lcram_write   = sss.sw_lcram_write;
+        st.sw_ramworks_bank = sss.sw_ramworks_bank;
+        return st;
+    endfunction
+
+    // Translate a 16-bit Apple address using the supplied soft-switch state.
+    // decoded_addr carries the selected 64K bank and Apple offset for memory
+    // cycles, or a ROM offset for motherboard-ROM reads. route_kind identifies
+    // whether memory, motherboard ROM, or bus/card I/O owns the cycle.
+    function automatic void translate_apple_addr(
+        input  TranslateState     st,
+        input  logic [15:0]       addr_in,
+        input  logic              rw_in,        // 1=read, 0=write
+        output logic [31:0]       decoded_addr,
+        output apple_route_kind_e route_kind
+    );
+        logic        q_is_cxxx;
+        logic        q_is_c0xx;
+        logic        q_is_zp_stack;
+        logic        q_is_high_ram;
+        logic        q_is_hires_pg;
+        logic        q_is_text_pg1;
+        logic        q_is_display_window;
+        logic [7:0]  q_aux_bank_full;
+        logic [7:0]  q_bank_sel;
+        logic [23:0] q_psram_addr;
+        logic        q_cxxx_intcxrom_rom;
+        logic        q_cxxx_slot3_rom;
+        logic        q_extrom_intcxrom;
+        logic        q_extrom_internal_rom;
+        logic        q_lcrange_rom_read;
+
+        q_is_cxxx      = (addr_in[15:12] == 4'hc);
+        q_is_c0xx      = (addr_in[15:8]  == 8'hc0);
+        q_is_zp_stack  = (addr_in[15:9]  == 7'h00);    // 0000-01ff
+        q_is_high_ram  = (addr_in[15:14] == 2'b11);    // c000-ffff
+        q_is_hires_pg  = (addr_in[15:13] == 3'b001);   // 2000-3fff
+        q_is_text_pg1  = (addr_in[15:10] == 6'b000001); // 0400-07ff
+        q_is_display_window = q_is_text_pg1 || (st.sw_hires && q_is_hires_pg);
+        q_aux_bank_full = {1'b0, st.sw_ramworks_bank} + 8'd1;
+
+        // ---- Physical 64K bank selection ----
+        if (q_is_cxxx) begin
+            q_bank_sel = 8'd0;
+        end
+        else if (q_is_zp_stack) begin
+            q_bank_sel = st.sw_altzp ? q_aux_bank_full : 8'd0;
+        end
+        else if (q_is_high_ram) begin
+            q_bank_sel = st.sw_altzp ? q_aux_bank_full : 8'd0;
+        end
+        else begin
+            q_bank_sel = (rw_in ? st.sw_auxread : st.sw_auxwrite)
+                         ? q_aux_bank_full : 8'd0;
+            if (st.sw_80store && q_is_display_window) begin
+                q_bank_sel = st.sw_page2 ? q_aux_bank_full : 8'd0;
+            end
+        end
+
+        // ---- PSRAM byte address, including the LC bank-1 bit-12 remap.
+        //      Bits 23:16 carry bank_sel.
+        q_psram_addr      = {8'b0, addr_in};
+        if (q_is_high_ram && !st.sw_lcram_bank2 && addr_in[13:12] == 2'b01) begin
+            q_psram_addr[12] = 1'b0;
+        end
+        q_psram_addr[23:16] = q_bank_sel;
+
+        // ---- Route selection ----
+        //
+        // ROM cases. Reads only (writes never go to ROM).
+        //   $C100-$C7FF read with intcxrom            -> ROM
+        //   $C300-$C3FF read with !slotc3rom          -> ROM (slot-3 internal)
+        //   $C800-$CFFF read with intcxrom            -> ROM (expansion)
+        //   $C800-$CFFF read after internal $C3xx     -> ROM (slot-3 exp)
+        //   $D000-$FFFF read with !sw_lcram_read      -> ROM (LC-ROM)
+        q_cxxx_intcxrom_rom = q_is_cxxx && !q_is_c0xx && rw_in &&
+                              st.sw_intcxrom &&
+                              (addr_in[11:8] >= 4'h1 && addr_in[11:8] <= 4'h7);
+        q_cxxx_slot3_rom    = q_is_cxxx && rw_in && !st.sw_slotc3rom &&
+                              (addr_in[11:8] == 4'h3);
+        q_extrom_intcxrom   = q_is_cxxx && rw_in && st.sw_intcxrom &&
+                              (addr_in[11:8] >= 4'h8 && addr_in[11:8] <= 4'hF);
+        q_extrom_internal_rom = q_is_cxxx && rw_in && !st.sw_intcxrom &&
+                                st.c8_internal_rom &&
+                                (addr_in[11:8] >= 4'h8 && addr_in[11:8] <= 4'hF);
+        q_lcrange_rom_read  = q_is_high_ram && !q_is_cxxx && rw_in &&
+                              !st.sw_lcram_read;
+
+        if (q_is_c0xx) begin
+            // $C000-$C0FF soft switches are owned by the Apple bus.
+            decoded_addr = {16'h0000, addr_in};
+            route_kind   = APPLE_ROUTE_BUS;
+        end
+        else if (q_cxxx_intcxrom_rom || q_cxxx_slot3_rom ||
+                 q_extrom_intcxrom   || q_extrom_internal_rom ||
+                 q_lcrange_rom_read) begin
+            // ROM-bound read. ROM offset = addr - $C000 = addr[13:0]
+            // because addr[15:14] == 2'b11 in all ROM-range addresses.
+            decoded_addr = {ADDR_REGION_ROM, 10'd0, addr_in[13:0]};
+            route_kind   = APPLE_ROUTE_ROM;
+        end
+        else if (q_is_cxxx) begin
+            // $C100-$CFFF non-ROM cases are motherboard or virtual-card I/O.
+            decoded_addr = {16'h0000, addr_in};
+            route_kind   = APPLE_ROUTE_BUS;
+        end
+        else if (q_is_high_ram) begin
+            // $D000-$FFFF reaches language-card RAM only when the matching
+            // read or write latch is enabled. Other accesses remain bus-owned;
+            // motherboard ROM reads were classified above.
+            if (rw_in && st.sw_lcram_read) begin
+                decoded_addr = {ADDR_REGION_PSRAM, q_psram_addr};
+                route_kind   = APPLE_ROUTE_CACHE;
+            end
+            else if (!rw_in && st.sw_lcram_write) begin
+                decoded_addr = {ADDR_REGION_PSRAM, q_psram_addr};
+                route_kind   = APPLE_ROUTE_CACHE;
+            end
+            else begin
+                // Disabled language-card writes are ignored by the motherboard.
+                decoded_addr = {16'h0000, addr_in};
+                route_kind   = APPLE_ROUTE_BUS;
+            end
+        end
+        else begin
+            // $0000-$BFFF memory. Bank 0 remains on the motherboard; selected
+            // aux/RamWorks banks are served by psram_simple.
+            decoded_addr = {ADDR_REGION_PSRAM, q_psram_addr};
+            route_kind   = APPLE_ROUTE_CACHE;
+        end
+    endfunction
 
     typedef struct packed {
         logic [19:0] centisecond_ticks;

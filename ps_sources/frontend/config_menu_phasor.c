@@ -388,6 +388,9 @@ void config_menu_phasor_activate(config_menu_t *menu)
                                             MOCKINGBOARD_CONTROL_SLOT,
                                             menu->mockingboard_slot4_enabled);
         }
+        /* The Mockingboard/Phasor slot is always slowed to 1 MHz for
+         * cycle-counted detection; refresh the effective slowdown mask. */
+        config_menu_refresh_vtw_slowdown(menu);
         config_menu_save_settings(menu);
         return;
     }

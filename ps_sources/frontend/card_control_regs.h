@@ -68,11 +68,136 @@
 #define CARD_MACHINE_MODE_IIE              2U
 #define CARD_MACHINE_MODE_IIGS             3U
 
+/* II/II+ bus data sample tap: the apple_bus_wrapper data_pipe index used to
+ * latch bus data on a II/II+ host (the //e uses a fixed tap). PS-tunable so
+ * the exact value can be swept on II+ hardware. Only the low 6 bits are used;
+ * keep it within a valid pipe index. */
+#define CARD_CTRL_IIPLUS_DATA_TAP_REG      CARD_CTRL_REG_ADDR(0x65U)
+#define CARD_CTRL_IIPLUS_DATA_TAP_DEFAULT  52U
+#define CARD_CTRL_IIPLUS_DATA_TAP_MIN      44U
+#define CARD_CTRL_IIPLUS_DATA_TAP_MAX      61U
+
 /* When set, psram_simple serves the auxiliary 64K and RamWorks banks from
  * PSRAM. The boot service enables it only for a detected //e, with RAM enabled
  * in configuration and no physical auxiliary card detected. Reset state 0 is
  * snoop-only. */
 #define CARD_CTRL_AUX_PROVIDE_REG          CARD_CTRL_REG_ADDR(0x61U)
+
+/* Virtual TransWarp accelerator (vtw_core_top). CTRL bit0 requests the
+ * session (the PL additionally gates on machine mode == IIe), bit1 releases
+ * the 65C02 core, [3:2] pick the speed mode, [15:8] the divided-mode pace.
+ * SHADOW_ADDR/DATA expose the 144 KB shadow through an auto-incrementing
+ * byte port; SYNC_CMD/STATUS issue single real bus cycles while the core is
+ * held (the boot-time ROM copy path). */
+/* Interrupt-chain debug (II+ mouse/Phasor freeze diagnosis). Read-only.
+ * Saturating 8-bit counts of each link plus mode/flag snapshots. Counts
+ * reset with the card-emulation reset (power-on / config reset). */
+#define CARD_CTRL_IRQDBG_MOUSE_REG         CARD_CTRL_REG_ADDR(0x2BU)
+#define CARD_CTRL_IRQDBG_PHASOR_REG        CARD_CTRL_REG_ADDR(0x2CU)
+/* Mouse word: [31:24] VBL-pulse count, [23:16] assert_irq count,
+ * [9] vbl_pending, [8] irq_pending, [3:0] mouse mode register. */
+#define CARD_CTRL_IRQDBG_MOUSE_VBL_SHIFT   24U
+#define CARD_CTRL_IRQDBG_MOUSE_IRQ_SHIFT   16U
+#define CARD_CTRL_IRQDBG_MOUSE_VBLPEND_BIT 0x0200U
+#define CARD_CTRL_IRQDBG_MOUSE_IRQPEND_BIT 0x0100U
+#define CARD_CTRL_IRQDBG_MOUSE_MODE_MASK   0x0FU
+/* Phasor word: [31:24] SSI backend-done count, [23:16] SSI direct_irq count,
+ * [15:8] CPU $FFFE IRQ/BRK-vector fetch count, [0] SSI ints-enabled flag. */
+#define CARD_CTRL_IRQDBG_SSI_BACKEND_SHIFT 24U
+#define CARD_CTRL_IRQDBG_SSI_IRQ_SHIFT     16U
+#define CARD_CTRL_IRQDBG_VEC_SHIFT         8U
+#define CARD_CTRL_IRQDBG_SSI_ENABLE_BIT    0x0001U
+#define CARD_CTRL_IRQDBG_COUNT_MASK        0xFFU
+
+/* Bus-capture forensics (II+ ghost-write investigation). Read-only
+ * except 0x2D: writing anything there clears every counter and the
+ * mouse write ring. All counters saturate at 0xFFFF.
+ *   QUALITY  {PHI0 ring events[31:16], short (<300ns) edges[15:0]}
+ *   TAPMM    {read tap-mismatches[31:16], write tap-mismatches[15:0]}
+ *   STROBE   {extra data_en[31:16], missing data_en[15:0]}
+ *   TAPLAST  {addr[31:16], early byte[15:8], late byte[7:0]}
+ *   MRING0-3 last 8 mouse DEVSEL ($C0A0-AF) writes, 2 per register,
+ *            entry {4'b0, addr[3:0], data[7:0]}, newest in MRING0[15:0]. */
+#define CARD_CTRL_BUSDBG_QUALITY_REG       CARD_CTRL_REG_ADDR(0x2DU)
+#define CARD_CTRL_BUSDBG_TAPMM_REG         CARD_CTRL_REG_ADDR(0x2EU)
+#define CARD_CTRL_BUSDBG_STROBE_REG        CARD_CTRL_REG_ADDR(0x2FU)
+#define CARD_CTRL_BUSDBG_TAPLAST_REG       CARD_CTRL_REG_ADDR(0x30U)
+#define CARD_CTRL_BUSDBG_MRING_REG(n)      CARD_CTRL_REG_ADDR(0x31U + (n))
+
+/* SHR interlace posting window: bit 0 widens the vTW posted-write video
+ * window to main $6000-$9FFF so the second field reaches the capture.
+ * Written by CPU1's renderer on mode entry/exit; off by default. */
+#define CARD_CTRL_VIDEO_POST_WIDE_REG      CARD_CTRL_REG_ADDR(0x35U)
+
+#define CARD_CTRL_VTW_CTRL_REG             CARD_CTRL_REG_ADDR(0x70U)
+#define CARD_CTRL_VTW_SHADOW_ADDR_REG      CARD_CTRL_REG_ADDR(0x71U)
+#define CARD_CTRL_VTW_SHADOW_DATA_REG      CARD_CTRL_REG_ADDR(0x72U)
+#define CARD_CTRL_VTW_SYNC_CMD_REG         CARD_CTRL_REG_ADDR(0x73U)
+#define CARD_CTRL_VTW_SYNC_STATUS_REG      CARD_CTRL_REG_ADDR(0x74U)
+#define CARD_CTRL_VTW_STATUS_REG           CARD_CTRL_REG_ADDR(0x75U)
+#define CARD_CTRL_VTW_CNT_CORE_REG         CARD_CTRL_REG_ADDR(0x76U)
+#define CARD_CTRL_VTW_CNT_BUS_REG          CARD_CTRL_REG_ADDR(0x77U)
+#define CARD_CTRL_VTW_CNT_POSTED_REG       CARD_CTRL_REG_ADDR(0x78U)
+#define CARD_CTRL_VTW_POST_STATS_REG       CARD_CTRL_REG_ADDR(0x79U)
+#define CARD_CTRL_VTW_CNT_INVALID_REG      CARD_CTRL_REG_ADDR(0x7AU)
+#define CARD_CTRL_VTW_LAST_SYNC_REG        CARD_CTRL_REG_ADDR(0x7BU)
+/* Last eight $C1xx-$CFFF vTW bus cycles: two 16-bit addresses per
+ * register, newest address in RING0[15:0]. */
+#define CARD_CTRL_VTW_CXXX_RING_REG(n)     CARD_CTRL_REG_ADDR(0x7CU + (n))
+/* Last eight $C00x/$C01x soft-switch cycles with latched data, two
+ * 16-bit entries per register, newest in RING0[15:0]. Entry format:
+ * {2'b0, rw, addr[4:0], data[7:0]}. */
+#define CARD_CTRL_VTW_C0_RING_REG(n)       CARD_CTRL_REG_ADDR(0x6CU + (n))
+
+/* Per-region slowdown (mirrors the physical TransWarp's DIP block 2): after
+ * the core touches an enabled timing-sensitive region it drops to
+ * cycle-locked 1 MHz for DURATION Apple cycles, retriggered on each such
+ * access. [9:0] = region enables; [31:16] = duration in Apple cycles
+ * (0 disables the feature). Region-enable bit layout:
+ *   [6:0] per-slot device I/O $C0n0-$C0nF for slots 1..7 (bit0 = slot 1)
+ *   [7]   floating-bus/video timing: $C019 and $C030-$C05F
+ *   [8]   paddle   $C064-$C067 (PADDL0-3) and $C070 (PTRIG)
+ *   [9]   reserved */
+#define CARD_CTRL_VTW_SLOWDOWN_REG         CARD_CTRL_REG_ADDR(0x6BU)
+#define CARD_CTRL_VTW_SLOWDOWN_MASK_SHIFT  0U
+#define CARD_CTRL_VTW_SLOWDOWN_MASK_MASK   0x1FFUL
+#define CARD_CTRL_VTW_SLOWDOWN_FLOATBUS_BIT (1UL << 7)
+#define CARD_CTRL_VTW_SLOWDOWN_PADDLE_BIT  (1UL << 8)
+#define CARD_CTRL_VTW_SLOWDOWN_SLOT_BIT(s) (1UL << ((s) - 1U))  /* s = 1..7 */
+#define CARD_CTRL_VTW_SLOWDOWN_DUR_SHIFT   16U
+#define CARD_CTRL_VTW_SLOWDOWN_DUR_MASK    0xFFFFUL
+
+#define CARD_CTRL_VTW_CTRL_ENABLE_BIT      (1UL << 0)
+#define CARD_CTRL_VTW_CTRL_CORE_RUN_BIT    (1UL << 1)
+#define CARD_CTRL_VTW_CTRL_SPEED_SHIFT     2U
+#define CARD_CTRL_VTW_CTRL_SPEED_MASK      0x3UL
+#define CARD_CTRL_VTW_CTRL_APPLE_RES_BIT   (1UL << 4)
+/* 16-bit pace divider at [31:16] (50 kHz slug mode needs divider 2667). */
+#define CARD_CTRL_VTW_CTRL_DIVIDER_SHIFT   16U
+#define CARD_CTRL_VTW_CTRL_DIVIDER_MASK    0xFFFFUL
+#define CARD_CTRL_VTW_SPEED_FULL           0U
+#define CARD_CTRL_VTW_SPEED_DIVIDED        1U
+#define CARD_CTRL_VTW_SPEED_1MHZ           2U
+#define CARD_CTRL_VTW_SYNC_CMD_RW_BIT      (1UL << 24)
+#define CARD_CTRL_VTW_SYNC_WDATA_SHIFT     16U
+#define CARD_CTRL_VTW_SYNC_STATUS_BUSY     (1UL << 8)
+#define CARD_CTRL_VTW_SYNC_STATUS_DONE     (1UL << 9)
+#define CARD_CTRL_VTW_STATUS_C074_MASK     0x3UL
+#define CARD_CTRL_VTW_STATUS_BUS_OWNED     (1UL << 2)
+#define CARD_CTRL_VTW_STATUS_ENABLE_EFF    (1UL << 3)
+#define CARD_CTRL_VTW_STATUS_CORE_RUN     (1UL << 4)
+/* [15:5]: the vTW's private //e switch state, MSB first:
+ * {intcxrom, slotc3rom, intc8rom, lc_read, lc_write, lc_bank2,
+ *  altzp, ramrd, ramwrt, 80store, text} */
+#define CARD_CTRL_VTW_STATUS_VSSS_SHIFT    5U
+#define CARD_CTRL_VTW_STATUS_VSSS_MASK     0x7FFUL
+#define CARD_CTRL_VTW_STATUS_PC_SHIFT      16U
+/* VTW_LAST_SYNC: [15:0] address, [23:16] data, [24] rw (1=read),
+ * [31:25] saturating count of IRQ assertions the vTW core observed. */
+#define CARD_CTRL_VTW_LAST_SYNC_DATA_SHIFT 16U
+#define CARD_CTRL_VTW_LAST_SYNC_RW_BIT     (1UL << 24)
+#define CARD_CTRL_VTW_LAST_SYNC_IRQ_SHIFT  25U
+#define CARD_CTRL_VTW_LAST_SYNC_IRQ_MASK   0x7FUL
 
 #define RESET_RELEASE_CPU0_READY_BIT       (1UL << 0)
 
@@ -108,6 +233,9 @@
 
 #define CARD_CTRL_SOFTSW_STATE_MASK           0x001FFFFFUL
 #define CARD_CTRL_APPLE_RESET_SEQ_MASK        0x000000FFUL
+#define CARD_CTRL_APPLE_RESET_RES_BIT          (1UL << 8)
+#define CARD_CTRL_APPLE_RESET_VTW_1MHZ_BIT     (1UL << 9)
+#define CARD_CTRL_APPLE_RESET_SHR_ACTIVE_BIT   (1UL << 10)
 #define CARD_CTRL_SOFTSW_80STORE_BIT          (1UL << 0)
 #define CARD_CTRL_SOFTSW_RAMRD_BIT            (1UL << 1)
 #define CARD_CTRL_SOFTSW_RAMWRT_BIT           (1UL << 2)

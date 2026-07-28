@@ -1,8 +1,10 @@
 /* Appletini web server for an NMOS 6502. */
 
+#include <apple2.h>
 #include <conio.h>
 #include <stdint.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "appletini_net.h"
 #include "ip65_min.h"
@@ -116,6 +118,13 @@ static void wait_for_key(void)
     (void)cgetc();
 }
 
+/* Relaunch the demo menu instead of quitting to Bitsy Bye. exec()
+ * only returns on failure; fall through to the normal ProDOS quit. */
+static void exit_to_menu(void)
+{
+    exec("BASIC.SYSTEM", "STARTUP");
+}
+
 int main(void)
 {
     uint8_t status;
@@ -127,6 +136,7 @@ int main(void)
         cputs(appletini_network_error(status));
         cputs("\r\n");
         wait_for_key();
+        exit_to_menu();
         return 1;
     }
 
@@ -141,5 +151,6 @@ int main(void)
     httpd_start(80U, http_server);
     cputs("\r\nSERVER STOPPED\r\n");
     wait_for_key();
+    exit_to_menu();
     return 0;
 }

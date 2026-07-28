@@ -687,16 +687,20 @@ void cmui_footer(uint16_t *fb,
                  const cmui_rect_t *footer,
                  const char *status,
                  uint8_t warning,
-                 uint8_t usb_owned)
+                 uint8_t usb_owned,
+                 uint8_t iiplus_keyboard)
 {
     uint32_t status_color;
     int x;
 
-    static const char * const apple_keys[] = {
-        "Tab/Del", "<>", "Enter", "Esc"
+    static const char * const apple_iie_keys[] = {
+        "Tab/Del", "Up/Down", "<>", "Enter", "Esc"
+    };
+    static const char * const apple_iiplus_keys[] = {
+        "Q/A", "O/L", "<>", "Enter", "Esc"
     };
     static const char * const apple_labels[] = {
-        "Navigate", "Change", "Select", "Close"
+        "Tabs", "Navigate", "Change", "Select", "Close"
     };
     static const char * const usb_keys[] = {
         "USB", "ACTIVE"
@@ -727,7 +731,12 @@ void cmui_footer(uint16_t *fb,
             x += key_w + 8 + cmui_text_width(usb_labels[i], CMUI_SMALL_SCALE) + 24;
         }
     } else {
-        for (uint32_t i = 0U; i < (sizeof(apple_keys) / sizeof(apple_keys[0])); ++i) {
+        const char * const *apple_keys = (iiplus_keyboard != 0U) ?
+            apple_iiplus_keys : apple_iie_keys;
+
+        for (uint32_t i = 0U;
+             i < (sizeof(apple_iie_keys) / sizeof(apple_iie_keys[0]));
+             ++i) {
             const int key_w = cmui_text_width(apple_keys[i], CMUI_SMALL_SCALE) + 18;
             fb16_fill_rect(fb, x, footer->y + 22, key_w, 28,
                            CMUI_COLOR_ROW_ACTIVE);

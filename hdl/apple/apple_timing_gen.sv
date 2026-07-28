@@ -13,9 +13,26 @@ module apple_timing_gen (
 );
 
     localparam logic [8:0] VBL_START_LINE = 9'd192;
-    // The ROM writes BM_CMD fourteen 6502 cycles after the calibrated VBL
-    // edge. The write is observed after that cycle's sss_en tick, so seed the
-    // next timing-generator tick as cycle 15 of the VBL-start line.
+    // Raw scanner calibration lock, as 14 + 1 = 15:
+    //
+    //  * cycle 14 -- the ROM's first CMD_VBL_START write lands here on the
+    //    VBL-start line: RDVBLBAR sampled at the last active cycle, then
+    //    and + beq + lda# + ldy(abs $CA00) + sta(abs,Y) = 15 CPU cycles.
+    //
+    //  * +1 (-> 15): the seed fires during cycle 14 (after that cycle's
+    //    sss_en), so it phases the counter's NEXT tick. sss_en advances
+    //    cycle_in_line early in the Apple cycle (tap 26) and the capture
+    //    samples it later at data_en (tap 59), so it reads the current
+    //    cycle's value. At 15 the counter is aligned: a soft-switch write is
+    //    tagged at its own true Apple cycle.
+    //
+    // Keep this counter in raw motherboard scanner phase. Consumers such as
+    // synthesized $C019, MouseCard VBL, capture timestamps, and the software
+    // renderer all use this common cycle convention. Folding a display
+    // pipeline estimate into this seed makes the hardware-visible timing
+    // consumers early and breaks the renderer's frame phasing.
+    //
+    // Confirmed with cycle-accurate mid-scanline mode-switch demos.
     localparam logic [6:0] VBL_LOCK_CYCLE = 7'd15;
 
     wire [8:0] line_max = video_mode_50hz ? 9'd311 : 9'd261;

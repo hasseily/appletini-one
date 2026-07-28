@@ -1,0 +1,592 @@
+; speedrace.a65 -- the same fractal at 1 MHz and at warp, timed live.
+;
+; Renders a 40x40 lores Mandelbrot twice under the virtual TransWarp:
+; pass 1 with $C074=1 (the TW-contract 1 MHz lock), pass 2 with $C074=0
+; (whatever speed the config menu picked). Each pass counts video frames
+; via $C019 RDVBLBAR -- the Appletini synthesizes it on every host, so
+; the timing works on a II+ as well as a //e. The mixed-mode text rows
+; show both counts and the speed ratio.
+;
+; Without a TransWarp session both passes run at 1 MHz and the ratio
+; honestly reads 1X.
+;
+; Fixed point is 4.12. The render window is x in [-2.0, 0.5],
+; y in [-1.25, 1.25], so the per-pixel step is exactly $0100 and the
+; coordinate math needs no multiplies.
+;
+; Assemble:  acme -f plain -o SPEEDRACE speedrace.a65
+
+!cpu 6502
+* = $6000
+
+KBD      = $C000
+KBDSTRB  = $C010
+TXTCLR   = $C050           ; graphics
+TXTSET   = $C051
+MIXSET   = $C053           ; mixed: 4 text rows
+TXTPAGE1 = $C054
+LORES    = $C056
+RDVBLBAR = $C019
+TWSPEED  = $C074           ; vTW: 0=config speed, 1=1 MHz lock
+
+PLOT     = $F800           ; ROM: plot block, A=vrow, Y=hcol
+SETCOL   = $F864           ; ROM: set lores color from A
+HOME     = $FC58
+
+; zero page
+ZR       = $06             ; 4.12
+ZI       = $08
+ZR2      = $1A
+ZI2      = $1C
+MULA     = $1E             ; multiply operands / product
+MULB     = $50
+PROD     = $52             ; 32-bit product
+ROWPTR   = $EB
+strptr   = $56             ; string pointer (free zp)
+
+MAXITER  = 15
+
+start:
+    jsr HOME
+    lda TXTSET
+    lda TXTPAGE1
+    ; title + prompt on the text screen
+    ldx #10
+    ldy #10
+    lda #<msg_title
+    sta strptr
+    lda #>msg_title
+    sta strptr + 1
+    jsr print_at
+    ldx #12
+    ldy #2
+    lda #<msg_prompt
+    sta strptr
+    lda #>msg_prompt
+    sta strptr + 1
+    jsr print_at
+    ldx #14
+    ldy #9
+    lda #<msg_prompt2
+    sta strptr
+    lda #>msg_prompt2
+    sta strptr + 1
+    jsr print_at
+-   lda KBD
+    bpl -
+    sta KBDSTRB
+
+    ; graphics: lores mixed, page 1
+    jsr HOME
+    lda TXTCLR
+    lda MIXSET
+    lda TXTPAGE1
+    lda LORES
+
+    ; ---- pass 1: top half at the 1 MHz lock ----
+    lda #0
+    sta row_start
+    lda #20
+    sta row_end
+    lda #1
+    sta TWSPEED
+    ldx #20
+    jsr clear_text_row
+    ldx #20
+    ldy #0
+    lda #<msg_pass1
+    sta strptr
+    lda #>msg_pass1
+    sta strptr + 1
+    jsr print_at
+    jsr render_fractal
+    lda frames
+    sta f1
+    lda frames + 1
+    sta f1 + 1
+    ; report
+    ldx #20
+    ldy #22
+    jsr print_frames
+
+    ; ---- pass 2: bottom half at warp (config speed) ----
+    lda #20
+    sta row_start
+    lda #40
+    sta row_end
+    lda #0
+    sta TWSPEED
+    ldx #21
+    jsr clear_text_row
+    ldx #21
+    ldy #0
+    lda #<msg_pass2
+    sta strptr
+    lda #>msg_pass2
+    sta strptr + 1
+    jsr print_at
+    jsr render_fractal
+    lda frames
+    sta f2
+    lda frames + 1
+    sta f2 + 1
+    ldx #21
+    ldy #22
+    jsr print_frames
+
+    ; ---- ratio: f1 / f2 (integer, f2 floored to 1) ----
+    lda f2
+    ora f2 + 1
+    bne +
+    inc f2                 ; avoid divide by zero
++   jsr compute_ratio
+    ldx #23
+    ldy #0
+    lda #<msg_ratio
+    sta strptr
+    lda #>msg_ratio
+    sta strptr + 1
+    jsr print_at
+    lda ratio
+    sta num
+    lda ratio + 1
+    sta num + 1
+    ldx #23
+    ldy #9
+    jsr print_num
+    ldx #23
+    ldy #15
+    lda #<msg_faster
+    sta strptr
+    lda #>msg_faster
+    sta strptr + 1
+    jsr print_at
+
+    ; wait for a key, restore text, leave
+-   lda KBD
+    bpl -
+    sta KBDSTRB
+    lda #0
+    sta TWSPEED            ; back to configured speed
+    lda TXTSET
+    jsr HOME
+    rts
+
+; ------------------------------------------------------------------
+; render_fractal: 40x40 lores plot, counting VBL frames into `frames`.
+; ------------------------------------------------------------------
+; render_fractal: renders rows [row_start, row_end). The Mandelbrot
+; window is symmetric about y = 0, so the top and bottom halves are
+; exactly equal work -- the two passes stay an honest comparison.
+render_fractal:
+    lda #0
+    sta frames
+    sta frames + 1
+    sta vbl_prev
+    lda row_start
+    sta py
+py_loop:
+    lda #0
+    sta px
+px_loop:
+    ; c = (cr, ci): cr = $E000 + px*$100, ci = $EC00 + py*$100
+    lda #0
+    sta cr
+    sta ci
+    lda px
+    clc
+    adc #$E0
+    sta cr + 1
+    lda py
+    clc
+    adc #$EC
+    sta ci + 1
+    ; z = 0
+    lda #0
+    sta ZR
+    sta ZR + 1
+    sta ZI
+    sta ZI + 1
+    sta iter
+
+iter_loop:
+    jsr poll_vbl
+    ; zr2 = zr*zr, zi2 = zi*zi (both 4.12)
+    lda ZR
+    sta MULA
+    lda ZR + 1
+    sta MULA + 1
+    lda ZR
+    sta MULB
+    lda ZR + 1
+    sta MULB + 1
+    jsr mul16s
+    lda PROD + 1
+    sta ZR2
+    lda PROD + 2
+    sta ZR2 + 1
+    lda ZI
+    sta MULA
+    lda ZI + 1
+    sta MULA + 1
+    lda ZI
+    sta MULB
+    lda ZI + 1
+    sta MULB + 1
+    jsr mul16s
+    lda PROD + 1
+    sta ZI2
+    lda PROD + 2
+    sta ZI2 + 1
+    ; escape if zr2 + zi2 >= 4.0 ($4000)
+    lda ZR2
+    clc
+    adc ZI2
+    lda ZR2 + 1
+    adc ZI2 + 1
+    bmi escaped            ; overflow past $7FFF also escapes
+    cmp #$40
+    bcs escaped
+    ; zi' = 2*zr*zi + ci
+    lda ZR
+    sta MULA
+    lda ZR + 1
+    sta MULA + 1
+    lda ZI
+    sta MULB
+    lda ZI + 1
+    sta MULB + 1
+    jsr mul16s
+    ; 2 * product: take (PROD>>12) then asl
+    lda PROD + 1
+    asl
+    sta ZI
+    lda PROD + 2
+    rol
+    sta ZI + 1
+    lda ZI
+    clc
+    adc ci
+    sta ZI
+    lda ZI + 1
+    adc ci + 1
+    sta ZI + 1
+    ; zr' = zr2 - zi2 + cr
+    lda ZR2
+    sec
+    sbc ZI2
+    sta ZR
+    lda ZR2 + 1
+    sbc ZI2 + 1
+    sta ZR + 1
+    lda ZR
+    clc
+    adc cr
+    sta ZR
+    lda ZR + 1
+    adc cr + 1
+    sta ZR + 1
+    inc iter
+    lda iter
+    cmp #MAXITER
+    bcs escaped
+    jmp iter_loop
+escaped:
+    ; color = iter (0..15), plot at (px, py)
+    lda iter
+    jsr SETCOL
+    lda py
+    ldy px
+    jsr PLOT
+    inc px
+    lda px
+    cmp #40
+    bcs +
+    jmp px_loop
++   inc py
+    lda py
+    cmp row_end
+    bcs +
+    jmp py_loop
++   rts
+
+; VBL frame counter: count entries into vertical blank (bit7 low on the
+; //e-style RDVBLBAR the Appletini synthesizes for every host).
+poll_vbl:
+    lda RDVBLBAR
+    bmi not_in_vbl
+    lda vbl_prev
+    bne pv_done            ; still in the same VBL
+    lda #1
+    sta vbl_prev
+    inc frames
+    bne pv_done
+    inc frames + 1
+pv_done:
+    rts
+not_in_vbl:
+    lda #0
+    sta vbl_prev
+    rts
+
+; ------------------------------------------------------------------
+; mul16s: PROD(32) = MULA(16,signed 4.12) * MULB(16,signed 4.12).
+; Caller reads PROD+1..PROD+2 as the 4.12 result (>>12 = >>8 then >>4).
+; ------------------------------------------------------------------
+mul16s:
+    lda #0
+    sta sign
+    lda MULA + 1
+    bpl +
+    jsr neg_a
+    inc sign
++   lda MULB + 1
+    bpl +
+    jsr neg_b
+    inc sign
++   ; unsigned 16x16 -> 32 shift-add
+    lda #0
+    sta PROD
+    sta PROD + 1
+    sta PROD + 2
+    sta PROD + 3
+    ldx #16
+mul_loop:
+    lsr MULB + 1
+    ror MULB
+    bcc no_add
+    lda PROD + 2
+    clc
+    adc MULA
+    sta PROD + 2
+    lda PROD + 3
+    adc MULA + 1
+    sta PROD + 3
+no_add:
+    lsr PROD + 3
+    ror PROD + 2
+    ror PROD + 1
+    ror PROD
+    dex
+    bne mul_loop
+    ; product currently = (a*b) >> 16; we accumulated into the top and
+    ; shifted right 16 times, so PROD holds the full 32-bit product.
+    lda sign
+    and #1
+    beq mul_done
+    ; negate the 32-bit product
+    lda PROD
+    eor #$FF
+    clc
+    adc #1
+    sta PROD
+    lda PROD + 1
+    eor #$FF
+    adc #0
+    sta PROD + 1
+    lda PROD + 2
+    eor #$FF
+    adc #0
+    sta PROD + 2
+    lda PROD + 3
+    eor #$FF
+    adc #0
+    sta PROD + 3
+mul_done:
+    ; shift so PROD+1/+2 hold the 4.12 result: need >>12 overall; the
+    ; loop already right-aligned the 32-bit product, so shift left 4
+    ; and use the middle bytes.
+    ldx #4
+-   asl PROD
+    rol PROD + 1
+    rol PROD + 2
+    rol PROD + 3
+    dex
+    bne -
+    rts
+
+neg_a:
+    lda MULA
+    eor #$FF
+    clc
+    adc #1
+    sta MULA
+    lda MULA + 1
+    eor #$FF
+    adc #0
+    sta MULA + 1
+    rts
+
+neg_b:
+    lda MULB
+    eor #$FF
+    clc
+    adc #1
+    sta MULB
+    lda MULB + 1
+    eor #$FF
+    adc #0
+    sta MULB + 1
+    rts
+
+; ------------------------------------------------------------------
+; compute_ratio: ratio = f1 / f2 (16-bit repeated subtraction; counts
+; are small so this is instant).
+; ------------------------------------------------------------------
+compute_ratio:
+    lda #0
+    sta ratio
+    sta ratio + 1
+    lda f1
+    sta rem
+    lda f1 + 1
+    sta rem + 1
+ratio_loop:
+    lda rem
+    sec
+    sbc f2
+    tax
+    lda rem + 1
+    sbc f2 + 1
+    bcc ratio_done         ; rem < f2
+    stx rem
+    sta rem + 1
+    inc ratio
+    bne ratio_loop
+    inc ratio + 1
+    jmp ratio_loop
+ratio_done:
+    rts
+
+; ------------------------------------------------------------------
+; text helpers (page-1 rows 20-23 usable in mixed mode)
+; ------------------------------------------------------------------
+print_frames:
+    ; frames of the just-finished pass at row X, col Y
+    lda frames
+    sta num
+    lda frames + 1
+    sta num + 1
+    jmp print_num
+
+; print_num: 5-digit decimal of `num` at row X, col Y.
+print_num:
+    stx prow
+    sty pcol
+    ; binary -> 5 BCD-ish digits by repeated subtraction of powers
+    ldx #0
+digit_loop:
+    lda #0
+    sta digit
+sub_loop:
+    lda num
+    sec
+    sbc pow10_lo,x
+    sta tmpn
+    lda num + 1
+    sbc pow10_hi,x
+    bcc digit_done
+    sta num + 1
+    lda tmpn
+    sta num
+    inc digit
+    bne sub_loop
+digit_done:
+    lda digit
+    ora #$B0               ; ASCII digit, high bit set
+    sta digits,x
+    inx
+    cpx #5
+    bne digit_loop
+    ; write the five characters
+    ldx prow
+    lda text_lo,x
+    sta ROWPTR
+    lda text_hi,x
+    sta ROWPTR + 1
+    ldy pcol
+    ldx #0
+-   lda digits,x
+    sta (ROWPTR),y
+    iny
+    inx
+    cpx #5
+    bne -
+    rts
+
+print_at:
+    ; strptr string at row X col Y (normal video)
+    lda text_lo,x
+    sta ROWPTR
+    lda text_hi,x
+    sta ROWPTR + 1
+    sty pcol
+    ldy #0
+    sty sidx
+-   ldy sidx
+    lda (strptr),y
+    beq +
+    ora #$80
+    ldy pcol
+    sta (ROWPTR),y
+    inc pcol
+    inc sidx
+    bne -
++   rts
+
+clear_text_row:            ; X = row
+    lda text_lo,x
+    sta ROWPTR
+    lda text_hi,x
+    sta ROWPTR + 1
+    lda #$A0
+    ldy #39
+-   sta (ROWPTR),y
+    dey
+    bpl -
+    rts
+
+; ------------------------------------------------------------------
+; data
+; ------------------------------------------------------------------
+px:       !byte 0
+py:       !byte 0
+row_start: !byte 0
+row_end:   !byte 40
+iter:     !byte 0
+cr:       !word 0
+ci:       !word 0
+frames:   !word 0
+f1:       !word 0
+f2:       !word 0
+ratio:    !word 0
+rem:      !word 0
+num:      !word 0
+tmpn:     !byte 0
+digit:    !byte 0
+digits:   !fill 5, 0
+vbl_prev: !byte 0
+sign:     !byte 0
+prow:     !byte 0
+pcol:     !byte 0
+sidx:     !byte 0
+
+pow10_lo: !byte <10000, <1000, <100, <10, <1
+pow10_hi: !byte >10000, >1000, >100, >10, >1
+
+text_lo:
+    !byte $00,$80,$00,$80,$00,$80,$00,$80
+    !byte $28,$A8,$28,$A8,$28,$A8,$28,$A8
+    !byte $50,$D0,$50,$D0,$50,$D0,$50,$D0
+text_hi:
+    !byte $04,$04,$05,$05,$06,$06,$07,$07
+    !byte $04,$04,$05,$05,$06,$06,$07,$07
+    !byte $04,$04,$05,$05,$06,$06,$07,$07
+
+msg_title:  !text "APPLETINI SPEED RACE", 0
+msg_prompt: !text "TOP HALF AT 1 MHZ, BOTTOM AT WARP", 0
+msg_prompt2: !text "PRESS ANY KEY TO START", 0
+msg_pass1:  !text "1 MHZ LOCK ...       ", 0
+msg_pass2:  !text "WARP ...             ", 0
+msg_ratio:  !text "SPEEDUP:", 0
+msg_faster: !text "X FASTER", 0

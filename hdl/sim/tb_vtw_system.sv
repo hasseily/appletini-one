@@ -1,0 +1,833 @@
+`timescale 1ns / 1ps
+// Full-stack virtual TransWarp bench: the real W65C02 core executing a real
+// program out of vtw_shadow, mastering the Apple bus through vtw_bus_engine,
+// the arbiter, and the pin-level apple_bus_wrapper, against a motherboard
+// model (PHI0 generator, weak bus pulls, RAM write capture, $C000 keyboard).
+//
+// The scenario is the vTW boot flow from README_VIRTUAL_TRANSWARP.md:
+//   1. TB-as-ARM loads a program into the shadow ROM region over port B.
+//   2. Session enable -> /DMA asserted (PHI1-only transitions), parked
+//      driving begins, Apple RES# released, core released.
+//   3. The program: reads $C000 over the bus (sync cycle), writes ZP
+//      (shadow-only, invisible), posts a video write, floods 768 more
+//      posted writes through the 512-deep queue (backpressure), writes
+//      $C074=1 (sync write cycle + 1 MHz lock), then loops on shadow.
+// Checks: every posted write reaches motherboard RAM in order, the sync
+// read data lands in shadow, address/R-W transitions stay inside early
+// PHI1, /DMA transitions stay inside PHI1, no queue drops, no invalid
+// routes, and the 1 MHz lock paces the core to one cycle per Apple cycle.
+
+module tb_vtw_system;
+
+    timeunit 1ns;
+    timeprecision 1ps;
+
+    logic clk = 0;
+    always #3.75 clk = ~clk;   // 133.333 MHz
+
+    logic rstn = 0;
+
+    // ------------------------------------------------------------------
+    // Apple bus pins with motherboard-style weak pulls
+    // ------------------------------------------------------------------
+    wire [7:0]  apple_data_pin;
+    wire [15:0] apple_addr_pin;
+    wire        apple_rw_pin;
+    logic       phi0 = 0;
+    wire        apple_inh_pin;
+    wire        apple_res_pin;
+    wire        apple_irq_pin;
+    wire        apple_rdy_pin;
+    wire        apple_dma_pin;
+    wire        apple_nmi_pin;
+
+    assign (weak0, weak1) apple_data_pin = 8'hFF;
+    assign (weak0, weak1) apple_addr_pin = 16'hFFFF;
+    assign (weak0, weak1) apple_rw_pin   = 1'b1;
+    assign (weak0, weak1) apple_inh_pin  = 1'b1;
+    assign (weak0, weak1) apple_res_pin  = 1'b1;
+    assign (weak0, weak1) apple_irq_pin  = 1'b1;
+    assign (weak0, weak1) apple_rdy_pin  = 1'b1;
+    assign (weak0, weak1) apple_dma_pin  = 1'b1;
+    assign (weak0, weak1) apple_nmi_pin  = 1'b1;
+
+    // PHI0: ~1.02 MHz, 490 ns per half.
+    always #490 phi0 = ~phi0;
+
+    // TB reset driver (open-drain style).
+    logic res_drive_low = 1;
+    assign apple_res_pin = res_drive_low ? 1'b0 : 1'bz;
+
+    // ------------------------------------------------------------------
+    // DUT stack: wrapper + arbiter + vtw_core_top
+    // ------------------------------------------------------------------
+    globals::AppleBus_read  ab_read;
+    globals::AppleBus_write ab_write;
+    globals::AppleBus_write vtw_ab_write;
+
+    logic tini_oe_pin, tini_addr_dir_pin, tini_data_dir_pin;
+
+    apple_bus_wrapper wrapper_i (
+        .clk(clk),
+        .rstn(rstn),
+        .res_filtered_out(),
+        .dbg_lost_cycle_count(), .dbg_clear(1'b0),
+        .inh_allowed(1'b1),
+        .gs_m2_qualify(1'b0),
+        .m2sel_active_high(1'b0),
+        .host_is_iiplus(1'b0),
+        .iiplus_data_tap(6'd52),
+        .apple_data_pin(apple_data_pin),
+        .apple_addr_pin(apple_addr_pin),
+        .apple_rw_pin(apple_rw_pin),
+        .apple_phi0_pin(phi0),
+        .apple_m2sel_pin(1'b0),
+        .apple_m2b0_pin(1'b0),
+        .apple_inh_pin(apple_inh_pin),
+        .apple_res_pin(apple_res_pin),
+        .apple_irq_pin(apple_irq_pin),
+        .apple_rdy_pin(apple_rdy_pin),
+        .apple_dma_pin(apple_dma_pin),
+        .apple_nmi_pin(apple_nmi_pin),
+        .tini_oe_pin(tini_oe_pin),
+        .tini_5v_pin(1'b0),
+        .tini_addr_dir_pin(tini_addr_dir_pin),
+        .tini_data_dir_pin(tini_data_dir_pin),
+        .ab_read(ab_read),
+        .ab_write(ab_write)
+    );
+
+    apple_bus_write_arbiter #(.NUM_CLIENTS(1)) arbiter_i (
+        .inh_allowed(1'b1),
+        .client_writes({vtw_ab_write}),
+        .ab_write(ab_write)
+    );
+
+    logic        enable = 0;
+    logic        core_run = 0;
+    logic        tb_assert_res = 0;
+    logic        sp_boot_suppress = 1;
+    /* Per-region slowdown config (feature off by default so the existing
+     * scenario is unchanged; the slowdown bench drives these). */
+    logic [8:0]  sd_region_en = 9'd0;
+    logic [15:0] sd_duration  = 16'd0;
+    logic        video_mode_50hz = 1'b0;
+    logic [8:0]  video_line = 9'd253;
+    logic [6:0]  video_cycle = 7'd27;
+    logic        sh_en = 0;
+    logic [17:0] sh_addr = '0;
+    logic        sh_we = 0;
+    logic [7:0]  sh_wdata = '0;
+    logic [7:0]  sh_rdata;
+    logic [1:0]  c074_state;
+    logic        bus_owned;
+    logic [15:0] dbg_core_pc;
+    logic [31:0] cnt_core_cycles;
+    logic [31:0] cnt_bus_cycles;
+    logic [31:0] cnt_posted_writes;
+    logic [9:0]  post_fill;
+    logic [9:0]  post_high_water;
+    logic [31:0] cnt_post_drops;
+    logic [31:0] cnt_invalid_routes;
+
+    /* PSRAM line-port model: sparse 8 MB byte memory behind an
+     * admission-like handshake with varying latency (30..~120 clk),
+     * emulating psram_simple's once-per-bus-cycle background window. */
+    logic        rw_req_valid, rw_req_rw, rw_req_ready, rw_resp_valid;
+    logic [23:0] rw_req_addr;
+    logic [63:0] rw_req_wline, rw_resp_rline;
+    logic [7:0]  psram_model [logic [23:0]];
+
+    logic        rwm_busy_q = 0, rwm_rw_q;
+    logic [23:0] rwm_addr_q;
+    logic [63:0] rwm_wline_q;
+    int          rwm_lat_q, rwm_ops = 0;
+    always @(posedge clk) begin
+        rw_req_ready  <= 1'b0;
+        rw_resp_valid <= 1'b0;
+        if (rw_req_valid && !rwm_busy_q) begin
+            rwm_busy_q  <= 1'b1;
+            rwm_rw_q    <= rw_req_rw;
+            rwm_addr_q  <= {rw_req_addr[23:3], 3'b000};
+            rwm_wline_q <= rw_req_wline;
+            rwm_lat_q   <= 30 + ((rwm_ops * 37) % 90);
+            rwm_ops     <= rwm_ops + 1;
+            rw_req_ready <= 1'b1;
+        end
+        else if (rwm_busy_q) begin
+            if (rwm_lat_q != 0) begin
+                rwm_lat_q <= rwm_lat_q - 1;
+            end
+            else begin
+                if (rwm_rw_q) begin
+                    for (int b = 0; b < 8; b++) begin
+                        rw_resp_rline[8*b +: 8] <=
+                            psram_model.exists(rwm_addr_q + 24'(b)) ?
+                            psram_model[rwm_addr_q + 24'(b)] : 8'hFF;
+                    end
+                end
+                else begin
+                    for (int b = 0; b < 8; b++) begin
+                        psram_model[rwm_addr_q + 24'(b)] = rwm_wline_q[8*b +: 8];
+                    end
+                end
+                rw_resp_valid <= 1'b1;
+                rwm_busy_q    <= 1'b0;
+            end
+        end
+    end
+
+    vtw_core_top dut (
+        .clk(clk),
+        .rstn(rstn),
+        .enable(enable),
+        .core_run(core_run),
+        .assert_apple_res(tb_assert_res),
+        .speed_mode(2'd0),        // full-rate bursts
+        .pace_divider(16'd0),
+        .slow_region_en(sd_region_en),
+        .slow_duration(sd_duration),
+        .disk2_timing_active(1'b0),
+        .ramworks_en(1'b1),
+        .video_vbl(1'b0),
+        .post_main_wide(1'b0),
+        .video_mode_50hz(video_mode_50hz),
+        .video_line(video_line),
+        .video_cycle(video_cycle),
+        .ab_read(ab_read),
+        .ab_write(vtw_ab_write),
+        .rw_req_valid(rw_req_valid),
+        .rw_req_rw(rw_req_rw),
+        .rw_req_addr(rw_req_addr),
+        .rw_req_wline(rw_req_wline),
+        .rw_req_ready(rw_req_ready),
+        .rw_resp_valid(rw_resp_valid),
+        .rw_resp_rline(rw_resp_rline),
+        // SmartPort short-circuit disabled here (its own bench covers it).
+        .sp_active(1'b0),
+        .sp_boot_suppress(sp_boot_suppress),
+        .sp_req_valid(),
+        .sp_req_target(),
+        .sp_req_addr(),
+        .sp_req_rw(),
+        .sp_req_wdata(),
+        .sp_req_ready(1'b1),
+        .sp_resp_valid(1'b0),
+        .sp_resp_rdata(8'd0),
+        .sh_en(sh_en),
+        .sh_addr(sh_addr),
+        .sh_we(sh_we),
+        .sh_wdata(sh_wdata),
+        .sh_rdata(sh_rdata),
+        .arm_req_valid(1'b0),
+        .arm_req_addr('0),
+        .arm_req_rw(1'b1),
+        .arm_req_wdata('0),
+        .arm_req_busy(),
+        .arm_resp_valid(),
+        .arm_resp_rdata(),
+        .c074_state(c074_state),
+        .bus_owned(bus_owned),
+        .dbg_core_pc(dbg_core_pc),
+        .cnt_core_cycles(cnt_core_cycles),
+        .cnt_bus_cycles(cnt_bus_cycles),
+        .cnt_posted_writes(cnt_posted_writes),
+        .post_fill(post_fill),
+        .post_high_water(post_high_water),
+        .cnt_post_drops(cnt_post_drops),
+        .cnt_invalid_routes(cnt_invalid_routes)
+    );
+
+    // ------------------------------------------------------------------
+    // Motherboard model: read drive during PHI0-high, write capture at
+    // the PHI0 fall, $C000 keyboard register.
+    // ------------------------------------------------------------------
+    logic [7:0] kbd_value = 8'hA7;
+    logic [7:0] mb_ram [0:16'hFFFF];
+
+    logic [7:0] mb_rdata;
+    always_comb begin
+        if (apple_addr_pin == 16'hC000) mb_rdata = kbd_value;
+        else if (apple_addr_pin[15:12] == 4'hC) mb_rdata = 8'hEE; // I/O misc
+        else mb_rdata = mb_ram[apple_addr_pin];
+    end
+    wire mb_drive_data = phi0 && (apple_rw_pin === 1'b1) && !tini_data_dir_pin;
+    assign apple_data_pin = mb_drive_data ? mb_rdata : 8'hzz;
+
+    /* Mirror apple_top's one-shot release condition for the focused cold
+     * scan scenario in this bench. The core itself owns the deterministic
+     * slot-7 no-card response; the integration latch clears when the real
+     * bus cycle for slot 6 appears. */
+    always_ff @(posedge clk) begin
+        if (!rstn) begin
+            sp_boot_suppress <= 1'b1;
+        end else if (sp_boot_suppress && bus_owned &&
+                     ab_read.serve_en && ab_read.rw &&
+                     (ab_read.addr[15:8] == 8'hC6)) begin
+            sp_boot_suppress <= 1'b0;
+        end
+    end
+
+    typedef struct { logic [15:0] addr; logic [7:0] data; } wrec_t;
+    wrec_t wrecs [$];
+
+    always @(negedge phi0) begin
+        if (apple_rw_pin === 1'b0) begin
+            mb_ram[apple_addr_pin] <= apple_data_pin;
+            wrecs.push_back('{apple_addr_pin, apple_data_pin});
+        end
+    end
+
+    // ------------------------------------------------------------------
+    // Contract monitors
+    // ------------------------------------------------------------------
+    int fails = 0;
+    task automatic check(input bit cond, input string msg);
+        if (!cond) begin
+            fails++;
+            $display("VTW SYSTEM FAIL: %s (t=%0t)", msg, $time);
+        end
+    endtask
+
+    logic monitors_armed = 0;
+    realtime last_fall = 0;
+    always @(negedge phi0) last_fall = $realtime;
+
+    /* Address/R-W may change only in early PHI1 (the drive tap plus CDC and
+     * majority-filter lag lands ~100-140 ns after the true fall). */
+    always @(apple_addr_pin or apple_rw_pin) begin
+        if (monitors_armed && tini_addr_dir_pin) begin
+            check(phi0 === 1'b0 && ($realtime - last_fall) < 250.0,
+                  $sformatf("addr/rw transition outside early PHI1 (addr=%h dt=%0t)",
+                            apple_addr_pin, $realtime - last_fall));
+        end
+    end
+
+    /* /DMA transitions only during PHI1 (Apple IIe Tech Note #2). */
+    always @(apple_dma_pin) begin
+        if (rstn) begin
+            check(phi0 === 1'b0, "/DMA transition outside PHI1");
+        end
+    end
+
+    // ------------------------------------------------------------------
+    // TB-as-ARM shadow access
+    // ------------------------------------------------------------------
+    task automatic sh_write(input logic [17:0] a, input logic [7:0] d);
+        @(posedge clk);
+        sh_en <= 1'b1; sh_we <= 1'b1; sh_addr <= a; sh_wdata <= d;
+        @(posedge clk);
+        sh_en <= 1'b0; sh_we <= 1'b0;
+    endtask
+
+    task automatic sh_read(input logic [17:0] a, output logic [7:0] d);
+        @(posedge clk);
+        sh_en <= 1'b1; sh_we <= 1'b0; sh_addr <= a;
+        @(posedge clk);
+        sh_en <= 1'b0;
+        @(posedge clk);
+        d = sh_rdata;
+    endtask
+
+    // ------------------------------------------------------------------
+    // Program (hand-assembled, see header). ROM region: CPU $F000 ->
+    // shadow phys $23000; vectors at $23FFC/D.
+    // ------------------------------------------------------------------
+    localparam logic [17:0] ROM_BASE = 18'h20000;
+    localparam byte PROGRAM [0:95] = '{
+        8'hA2, 8'h00,               // F000 LDX #$00
+        8'hAD, 8'h00, 8'hC0,        // F002 LDA $C000
+        8'h85, 8'h10,               // F005 STA $10
+        8'hA9, 8'h5A,               // F007 LDA #$5A
+        8'h8D, 8'h00, 8'h04,        // F009 STA $0400
+        8'hA9, 8'h11,               // F00C LDA #$11
+        8'h9D, 8'h00, 8'h20,        // F00E STA $2000,X
+        8'hE8,                      // F011 INX
+        8'hD0, 8'hFA,               // F012 BNE $F00E
+        8'hA2, 8'h00,               // F014 LDX #$00
+        8'h9D, 8'h00, 8'h21,        // F016 STA $2100,X
+        8'hE8,                      // F019 INX
+        8'hD0, 8'hFA,               // F01A BNE $F016
+        8'hA2, 8'h00,               // F01C LDX #$00
+        8'h9D, 8'h00, 8'h22,        // F01E STA $2200,X
+        8'hE8,                      // F021 INX
+        8'hD0, 8'hFA,               // F022 BNE $F01E
+        8'hA9, 8'h01,               // F024 LDA #$01
+        8'h8D, 8'h74, 8'hC0,        // F026 STA $C074
+        // ---- Banking discriminator: the //e boot-flow switch dance ----
+        8'h8D, 8'h06, 8'hC0,        // F029 STA $C006  INTCXROM off
+        // Disk II accelerated cold-scan gate: slot 7 is absent until the
+        // scan reaches slot 6, then immediately becomes visible again.
+        8'hAD, 8'h00, 8'hC7,        // F02C LDA $C700  -> internal no-card $FF
+        8'h85, 8'h1A,               // F02F STA $1A
+        8'hAD, 8'h00, 8'hC6,        // F031 LDA $C600  -> bus $EE, releases gate
+        8'h85, 8'h1B,               // F034 STA $1B
+        8'hAD, 8'h01, 8'hC7,        // F036 LDA $C701  -> bus (slot ROM, $EE)
+        8'h85, 8'h12,               // F039 STA $12
+        8'h8D, 8'h07, 8'hC0,        // F03B STA $C007  INTCXROM on
+        8'hAD, 8'h01, 8'hC7,        // F03E LDA $C701  -> shadow internal ($88)
+        8'h85, 8'h13,               // F041 STA $13
+        8'h8D, 8'h06, 8'hC0,        // F043 STA $C006  INTCXROM off again
+        8'hAD, 8'h01, 8'hC7,        // F046 LDA $C701  -> bus again ($EE)
+        8'h85, 8'h14,               // F049 STA $14
+        8'hAD, 8'h10, 8'hC3,        // F04B LDA $C310  -> internal slot-3 ROM
+        8'h85, 8'h15,               // F04E STA $15    ($33; sets INTC8ROM)
+        8'hAD, 8'h00, 8'hC8,        // F050 LDA $C800  -> shadow internal C8 ($C8)
+        8'h85, 8'h16,               // F053 STA $16
+        8'hAD, 8'hFF, 8'hCF,        // F055 LDA $CFFF  releases INTC8ROM
+        8'hAD, 8'h00, 8'hC8,        // F058 LDA $C800  -> bus now ($EE)
+        8'h85, 8'h17,               // F05B STA $17
+        /* The LC test must run from RAM: switching LC RAM in makes this
+         * very ROM code disappear from the address space (as on a real
+         * //e -- the first run of this bench proved it the hard way). */
+        8'h4C, 8'h00, 8'h03         // F05D JMP $0300
+    };
+
+    localparam byte LC_PROG [0:96] = '{
+        8'hAD, 8'h83, 8'hC0,        // 0300 LDA $C083  LC RAM read (1st)
+        8'hAD, 8'h83, 8'hC0,        // 0303 LDA $C083  LC RAM read+write (2nd)
+        8'hAD, 8'h22, 8'hD0,        // 0306 LDA $D022  -> shadow LC RAM ($42)
+        8'h85, 8'h18,               // 0309 STA $18
+        8'hAD, 8'h82, 8'hC0,        // 030B LDA $C082  LC ROM
+        8'hAD, 8'h22, 8'hD0,        // 030E LDA $D022  -> shadow ROM copy ($99)
+        8'h85, 8'h19,               // 0311 STA $19
+        // ---- Aux video write-through + bank-steer flush ordering ----
+        8'h8D, 8'h01, 8'hC0,        // 0313 STA $C001  80STORE on (flushes)
+        8'h8D, 8'h55, 8'hC0,        // 0316 STA $C055  PAGE2 on -> aux window
+        8'hA9, 8'h77,               // 0319 LDA #$77
+        8'h8D, 8'h27, 8'h04,        // 031B STA $0427  aux write -> posted
+        8'h8D, 8'h54, 8'hC0,        // 031E STA $C054  PAGE2 off (must flush)
+        8'hA9, 8'h78,               // 0321 LDA #$78
+        8'h8D, 8'h28, 8'h04,        // 0323 STA $0428  main write -> posted
+        8'h8D, 8'h00, 8'hC0,        // 0326 STA $C000  80STORE off
+        8'h4C, 8'h80, 8'h01,        // 0329 JMP $0180  RamWorks segment
+        /* FLOATBUS sanity probes (RamWorks segment jumps here). At raw line
+         * 253/cycle 27, the two-cycle rewind selects scanner cycle 25 and
+         * main $37F8. Every read in $C030-$C05F must return that byte while
+         * still executing its physical speaker/video/annunciator effect. */
+        8'h2C, 8'h57, 8'hC0,        // 032C BIT $C057  HIRES on
+        8'h2C, 8'h50, 8'hC0,        // 032F BIT $C050  TEXT off
+        8'hAD, 8'h30, 8'hC0,        // 0332 LDA $C030  speaker + floating bus
+        8'h85, 8'h12,               // 0335 STA $12
+        8'hAD, 8'h47, 8'hC0,        // 0337 LDA $C047  undriven motherboard I/O
+        8'h85, 8'h24,               // 033A STA $24
+        8'hAD, 8'h4F, 8'hC0,        // 033C LDA $C04F  undriven motherboard I/O
+        8'h85, 8'h25,               // 033F STA $25
+        8'hAD, 8'h50, 8'hC0,        // 0341 LDA $C050  graphics switch
+        8'h85, 8'h26,               // 0344 STA $26
+        8'hAD, 8'h57, 8'hC0,        // 0346 LDA $C057  graphics switch
+        8'h85, 8'h27,               // 0349 STA $27
+        8'hAD, 8'h58, 8'hC0,        // 034B LDA $C058  annunciator
+        8'h85, 8'h28,               // 034E STA $28
+        8'hAD, 8'h5A, 8'hC0,        // 0350 LDA $C05A  FLOATBUS ZIPLOCK read
+        8'h85, 8'h29,               // 0353 STA $29
+        8'h4C, 8'h58, 8'h03,        // 0355 JMP $0358  timing loop
+        /* Timing loop for the cycle-exact 1 MHz check: LDA abs (4) +
+         * INC zp (5) + NOP (2) + JMP abs (3) = 14 cycles, identical on
+         * NMOS and 65C02. Consecutive $C000 sync reads must be exactly
+         * 14 Apple cycles apart under the lock. */
+        8'hAD, 8'h00, 8'hC0,        // 0358 LDA $C000  sync bus read
+        8'hE6, 8'h11,               // 035B INC $11
+        8'hEA,                      // 035D NOP
+        8'h4C, 8'h58, 8'h03         // 035E JMP $0358
+    };
+
+    /* RamWorks exercise. Lives in the stack page ($0180): zp/stack routing
+     * ignores RAMRD/RAMWRT (ALTZP off), so this code stays fetchable while
+     * the data switches point at aux -- main-RAM code would vanish mid-
+     * segment the instant RAMRD turns on. Covers write-allocate misses,
+     * a cache-hit write, flush-on-eviction chains, bank isolation via
+     * $C073, and read-back through fills; results land in main ZP $20-$23
+     * and the flushed lines in the TB's PSRAM model. */
+    localparam byte RW_PROG [0:79] = '{
+        8'hA9, 8'h02,               // 0180 LDA #$02
+        8'h8D, 8'h73, 8'hC0,        // 0182 STA $C073  bank 2 (decode bank 3)
+        8'h8D, 8'h05, 8'hC0,        // 0185 STA $C005  RAMWRT on
+        8'hA9, 8'hA5,               // 0188 LDA #$A5
+        8'h8D, 8'h00, 8'h18,        // 018A STA $1800  miss: fill + patch
+        8'hA9, 8'h77,               // 018D LDA #$77
+        8'h8D, 8'h03, 8'h18,        // 018F STA $1803  cache-hit write
+        8'hA9, 8'h5A,               // 0192 LDA #$5A
+        8'h8D, 8'h08, 8'h18,        // 0194 STA $1808  next line: flush + fill
+        8'hA9, 8'h05,               // 0197 LDA #$05
+        8'h8D, 8'h73, 8'hC0,        // 0199 STA $C073  bank 5 (decode bank 6)
+        8'hA9, 8'h3C,               // 019C LDA #$3C
+        8'h8D, 8'h00, 8'h18,        // 019E STA $1800  other bank, same address
+        8'h8D, 8'h04, 8'hC0,        // 01A1 STA $C004  RAMWRT off
+        8'h8D, 8'h03, 8'hC0,        // 01A4 STA $C003  RAMRD on
+        8'hA9, 8'h02,               // 01A7 LDA #$02
+        8'h8D, 8'h73, 8'hC0,        // 01A9 STA $C073  bank 2
+        8'hAD, 8'h00, 8'h18,        // 01AC LDA $1800  expect $A5
+        8'h85, 8'h20,               // 01AF STA $20    (zp: main regardless)
+        8'hAD, 8'h03, 8'h18,        // 01B1 LDA $1803  expect $77
+        8'h85, 8'h21,               // 01B4 STA $21
+        8'hAD, 8'h08, 8'h18,        // 01B6 LDA $1808  expect $5A
+        8'h85, 8'h22,               // 01B9 STA $22
+        8'hA9, 8'h05,               // 01BB LDA #$05
+        8'h8D, 8'h73, 8'hC0,        // 01BD STA $C073  bank 5
+        8'hAD, 8'h00, 8'h18,        // 01C0 LDA $1800  expect $3C
+        8'h85, 8'h23,               // 01C3 STA $23
+        8'h8D, 8'h02, 8'hC0,        // 01C5 STA $C002  RAMRD off
+        8'hA9, 8'h00,               // 01C8 LDA #$00
+        8'h8D, 8'h73, 8'hC0,        // 01CA STA $C073  bank 0
+        8'h4C, 8'h2C, 8'h03         // 01CD JMP $032C  floating-read probe
+    };
+
+    task automatic load_program();
+        // Program at ROM offset $3000 ($F000 - $C000).
+        for (int i = 0; i < 96; i++) begin
+            sh_write(ROM_BASE + 18'h3000 + 18'(i), PROGRAM[i]);
+        end
+        // LC + aux test routine in shadow main RAM at $0300.
+        for (int i = 0; i < 97; i++) begin
+            sh_write(18'h00300 + 18'(i), LC_PROG[i]);
+        end
+        // Reset vector -> $F000.
+        sh_write(ROM_BASE + 18'h3FFC, 8'h00);
+        sh_write(ROM_BASE + 18'h3FFD, 8'hF0);
+        // Zero ZP + stack so reset-sequence and loop reads are defined.
+        for (int i = 0; i < 512; i++) begin
+            sh_write(18'(i), 8'h00);
+        end
+        // RamWorks segment in the stack page (after the zero sweep).
+        for (int i = 0; i < 80; i++) begin
+            sh_write(18'h00180 + 18'(i), RW_PROG[i]);
+        end
+        // Discriminator landmarks in the shadow's "internal ROM" copy and
+        // memory banks (values the bus model never returns; it serves $EE
+        // for all non-$C000 I/O-space reads).
+        sh_write(ROM_BASE + 18'h0701, 8'h88);  // internal $C701
+        sh_write(ROM_BASE + 18'h0310, 8'h33);  // internal $C310
+        sh_write(ROM_BASE + 18'h0800, 8'hC8);  // internal $C800
+        sh_write(ROM_BASE + 18'h1022, 8'h99);  // ROM $D022
+        sh_write(ROM_BASE + 18'h0FFF, 8'h00);  // internal $CFFF (release read)
+        sh_write(18'h0D022, 8'h42);            // main-bank LC RAM $D022 (bank 2)
+        /* Address-sensitive scanner landmarks. Only $37F8 is correct for
+         * HGR page 1 at raw line 253/cycle 27 after the two-cycle rewind;
+         * adjacent cycles and the text-page address carry different values
+         * so a phase/mode error cannot pass. */
+        sh_write(18'h037F7, 8'hE1);
+        sh_write(18'h037F8, 8'hD7);
+        sh_write(18'h037F9, 8'hE2);
+        sh_write(18'h007F8, 8'hE3);
+    endtask
+
+    // ------------------------------------------------------------------
+    // Scenario
+    // ------------------------------------------------------------------
+    int flood_seen;
+    int c074_seen;
+    int c006_seen;
+    int c007_seen;
+    int idx_aux, idx_main, idx_c054;
+    logic [7:0] rd;
+    int cyc_a, cyc_b;
+
+    /* Cycle-exactness probe: Apple-cycle stamps of every $C000 sync read
+     * (parked $Cxxx replays are sanitized to $FFFF, so each appearance is
+     * one real sync cycle). */
+    int apple_cyc_cnt;
+    int c6_bus_reads = 0;
+    int c7_bus_reads = 0;
+    bit collect_c000 = 0;
+    int c000_stamps[$];
+    always @(negedge phi0) begin
+        apple_cyc_cnt++;
+        if (monitors_armed && apple_rw_pin === 1'b1) begin
+            if (apple_addr_pin[15:8] == 8'hC6) c6_bus_reads++;
+            if (apple_addr_pin[15:8] == 8'hC7) c7_bus_reads++;
+        end
+        if (collect_c000 && apple_addr_pin === 16'hC000 &&
+            apple_rw_pin === 1'b1) begin
+            c000_stamps.push_back(apple_cyc_cnt);
+        end
+    end
+
+    initial begin
+        repeat (20) @(posedge clk);
+        rstn = 1;
+
+        load_program();
+
+        /* Session start with the Apple still in reset: the engine must NOT
+         * take the bus while RES# is low -- the motherboard MMU/IOU only
+         * process a reset under stock bus conditions (no DMA master). */
+        enable = 1;
+        #10us;
+        check(apple_dma_pin === 1'b1, "no takeover while Apple RES# is held");
+
+        // Release the Apple: the takeover proceeds.
+        res_drive_low = 0;
+        fork : dma_wait
+            begin
+                wait (apple_dma_pin === 1'b0);
+                disable dma_wait;
+            end
+            begin
+                /* 2.1 us RES# filter + 80 stock cycles (~78 us) + arm and
+                 * grace: the takeover lands around 85 us after release. */
+                #150us;
+                check(0, "/DMA never asserted");
+                disable dma_wait;
+            end
+        join
+        #5us;
+        check(bus_owned, "parked driver active before core release");
+        check(tini_addr_dir_pin, "address transceiver driving (never floats)");
+        monitors_armed = 1;
+
+        core_run = 1;
+
+        // Wait for the whole program to retire on the bus: 788 write
+        // records (1 + 768 + 2 posted; sync writes $C074, $C006 x2,
+        // $C007, $C001, $C055, $C054, $C000, then the RamWorks segment's
+        // $C073 x5 and $C005/$C004/$C003/$C002).
+        fork : prog_wait
+            begin
+                wait (wrecs.size() >= 788);
+                disable prog_wait;
+            end
+            begin
+                #5ms;
+                check(0, $sformatf("program timeout: %0d bus writes seen",
+                                   wrecs.size()));
+                disable prog_wait;
+            end
+        join
+
+        check(wrecs.size() >= 788, "all bus writes arrived");
+        if (wrecs.size() >= 788) begin
+            // First record: the $0400 posted write.
+            check(wrecs[0].addr == 16'h0400 && wrecs[0].data == 8'h5A,
+                  "posted $0400 write first and intact");
+            // Flood records in exact order; sync writes (speed register,
+            // soft switches) may overtake the queue tail (decoupled
+            // engine, like the real card) so they can appear anywhere.
+            flood_seen = 0;
+            c074_seen  = 0;
+            c006_seen  = 0;
+            c007_seen  = 0;
+            for (int i = 1; i < wrecs.size(); i++) begin
+                if (wrecs[i].addr == 16'hC074) begin
+                    check(wrecs[i].data == 8'h01, "$C074 write data");
+                    c074_seen++;
+                end
+                else if (wrecs[i].addr == 16'hC006) begin
+                    c006_seen++;
+                end
+                else if (wrecs[i].addr == 16'hC007) begin
+                    c007_seen++;
+                end
+                else if (wrecs[i].addr == 16'hC001 ||
+                         wrecs[i].addr == 16'hC000 ||
+                         wrecs[i].addr == 16'hC055) begin
+                    // Aux-test steering switches; ordering checked below.
+                end
+                else if (wrecs[i].addr == 16'hC054) begin
+                    idx_c054 = i;
+                end
+                else if (wrecs[i].addr == 16'h0427) begin
+                    check(wrecs[i].data == 8'h77, "aux posted write data");
+                    idx_aux = i;
+                end
+                else if (wrecs[i].addr == 16'h0428) begin
+                    check(wrecs[i].data == 8'h78, "main posted write data");
+                    idx_main = i;
+                end
+                else if (wrecs[i].addr == 16'hC073 ||
+                         wrecs[i].addr == 16'hC005 ||
+                         wrecs[i].addr == 16'hC004 ||
+                         wrecs[i].addr == 16'hC003 ||
+                         wrecs[i].addr == 16'hC002) begin
+                    // RamWorks segment bank/switch writes (in the 788).
+                end
+                else begin
+                    automatic logic [15:0] expect_addr =
+                        (flood_seen < 256) ? 16'h2000 + 16'(flood_seen) :
+                        (flood_seen < 512) ? 16'h2100 + 16'(flood_seen - 256) :
+                                             16'h2200 + 16'(flood_seen - 512);
+                    if (flood_seen < 768) begin
+                        check(wrecs[i].addr == expect_addr &&
+                              wrecs[i].data == 8'h11,
+                              $sformatf("flood write %0d in order (got %h=%h)",
+                                        flood_seen, wrecs[i].addr, wrecs[i].data));
+                    end
+                    flood_seen++;
+                end
+            end
+            check(flood_seen == 768, "flood write count");
+            check(c074_seen == 1, "$C074 written exactly once");
+            check(c006_seen == 2 && c007_seen == 1,
+                  "INTCXROM switch writes reached the real MMU");
+            // Aux write-through: the aux-window write reaches the bus, and
+            // the bank-steer flush keeps it ahead of the PAGE2 change.
+            check(idx_aux > 0 && idx_c054 > 0 && idx_main > 0,
+                  "aux/main posted writes and PAGE2 switch all on the bus");
+            check(idx_aux < idx_c054 && idx_c054 < idx_main,
+                  $sformatf("bank-steer flush ordering (aux=%0d c054=%0d main=%0d)",
+                            idx_aux, idx_c054, idx_main));
+        end
+
+        // Sync read result landed in shadow ZP.
+        sh_read(18'h00010, rd);
+        check(rd == 8'hA7, $sformatf("sync $C000 read -> ZP $10 (got %h)", rd));
+
+        // Disk II cold-boot selection: the first accelerated slot-7 probe
+        // is consumed as an empty slot, the slot-6 probe releases the
+        // one-shot, and later slot-7 traffic reaches the bus normally.
+        sh_read(18'h0001A, rd);
+        check(rd == 8'hFF, $sformatf("hidden cold-scan $C700 -> $FF (got %h)", rd));
+        sh_read(18'h0001B, rd);
+        check(rd == 8'hEE, $sformatf("Disk II $C600 probe reached bus (got %h)", rd));
+        check(!sp_boot_suppress, "slot 7 restored after the slot-6 probe");
+        check(c6_bus_reads == 1 && c7_bus_reads == 2,
+              $sformatf("cold scan hides only first slot-7 probe (C6=%0d C7=%0d)",
+                        c6_bus_reads, c7_bus_reads));
+
+        // Banking discriminator: private INTCXROM / INTC8ROM / LC tracking
+        // must route exactly like a stock //e MMU. Bus-served reads return
+        // the model's $EE; shadow-served reads return the preloaded marks.
+        sh_read(18'h00012, rd);
+        check(rd == 8'hEE, $sformatf("INTCXROM off: $C701 from the bus (got %h)", rd));
+        sh_read(18'h00013, rd);
+        check(rd == 8'h88, $sformatf("INTCXROM on: $C701 from shadow internal ROM (got %h)", rd));
+        sh_read(18'h00014, rd);
+        check(rd == 8'hEE, $sformatf("INTCXROM off again: $C701 from the bus (got %h)", rd));
+        sh_read(18'h00015, rd);
+        check(rd == 8'h33, $sformatf("$C310 from shadow slot-3 internal ROM (got %h)", rd));
+        sh_read(18'h00016, rd);
+        check(rd == 8'hC8, $sformatf("INTC8ROM claim: $C800 from shadow (got %h)", rd));
+        sh_read(18'h00017, rd);
+        check(rd == 8'hEE, $sformatf("$CFFF release: $C800 from the bus (got %h)", rd));
+        sh_read(18'h00018, rd);
+        check(rd == 8'h42, $sformatf("LC RAM read: $D022 from shadow RAM (got %h)", rd));
+        sh_read(18'h00019, rd);
+        check(rd == 8'h99, $sformatf("LC ROM read: $D022 from shadow ROM copy (got %h)", rd));
+
+        // Aux write landed in the vTW's own aux shadow too.
+        sh_read(18'h10427, rd);
+        check(rd == 8'h77, $sformatf("aux write in shadow aux bank (got %h)", rd));
+
+        /* RamWorks banks from PSRAM through the line cache: bank isolation
+         * ($1800 differs across banks 2 and 5), cache-hit read-back,
+         * write-allocate fills, and the flush chains that pushed every
+         * dirty line out to the model. */
+        sh_read(18'h00020, rd);
+        check(rd == 8'hA5, $sformatf("RamWorks bank 2 $1800 (got %h)", rd));
+        sh_read(18'h00021, rd);
+        check(rd == 8'h77, $sformatf("RamWorks cache-hit $1803 (got %h)", rd));
+        sh_read(18'h00022, rd);
+        check(rd == 8'h5A, $sformatf("RamWorks line-cross $1808 (got %h)", rd));
+        sh_read(18'h00023, rd);
+        check(rd == 8'h3C, $sformatf("RamWorks bank 5 $1800 (got %h)", rd));
+        check(psram_model.exists(24'h031800) && psram_model[24'h031800] == 8'hA5,
+              "bank 2 $1800 flushed to PSRAM");
+        check(psram_model.exists(24'h031803) && psram_model[24'h031803] == 8'h77,
+              "bank 2 $1803 flushed to PSRAM");
+        check(psram_model.exists(24'h031808) && psram_model[24'h031808] == 8'h5A,
+              "bank 2 $1808 flushed to PSRAM");
+        check(psram_model.exists(24'h061800) && psram_model[24'h061800] == 8'h3C,
+              "bank 5 $1800 flushed to PSRAM");
+
+        /* Floating-bus substitution: FLOATBUS's six sanity addresses plus
+         * its $C05A ZIPLOCK capture address must return main shadow $37F8
+         * ($D7), selected two cycles behind the raw scanner coordinates and
+         * from pre-access video state. Adjacent-cycle and text-page locations
+         * contain different markers, proving address and BEAMPOS phase. */
+        // Seven 4-cycle reads plus their stores and setup take roughly
+        // 64 native Apple cycles; leave enough room for the whole sequence.
+        #100us;
+        sh_read(18'h00012, rd);
+        check(rd == 8'hD7,
+              $sformatf("floating $C030 read returns scanner $37F8 byte (got %h)",
+                        rd));
+        sh_read(18'h00024, rd);
+        check(rd == 8'hD7,
+              $sformatf("floating $C047 read returns scanner $37F8 byte (got %h)",
+                        rd));
+        sh_read(18'h00025, rd);
+        check(rd == 8'hD7,
+              $sformatf("floating $C04F read returns scanner $37F8 byte (got %h)",
+                        rd));
+        sh_read(18'h00026, rd);
+        check(rd == 8'hD7,
+              $sformatf("floating $C050 read returns scanner $37F8 byte (got %h)",
+                        rd));
+        sh_read(18'h00027, rd);
+        check(rd == 8'hD7,
+              $sformatf("floating $C057 read returns scanner $37F8 byte (got %h)",
+                        rd));
+        sh_read(18'h00028, rd);
+        check(rd == 8'hD7,
+              $sformatf("floating $C058 read returns scanner $37F8 byte (got %h)",
+                        rd));
+        sh_read(18'h00029, rd);
+        check(rd == 8'hD7,
+              $sformatf("floating $C05A read returns scanner $37F8 byte (got %h)",
+                        rd));
+
+        // Engine health.
+        check(cnt_post_drops == 32'd0, "no posted-queue drops");
+        check(cnt_invalid_routes == 32'd0, "no invalid routes");
+        check(post_high_water >= 10'd400, "queue backpressure exercised");
+        check(c074_state == 2'd1, "$C074 state mirrors the write");
+
+        // 1 MHz lock: exactly one core cycle per Apple cycle (+/- jitter).
+        wait (post_fill == '0);
+        repeat (5) @(negedge phi0);
+        cyc_a = int'(cnt_core_cycles);
+        repeat (100) @(negedge phi0);
+        cyc_b = int'(cnt_core_cycles);
+        check(cyc_b - cyc_a >= 97 && cyc_b - cyc_a <= 103,
+              $sformatf("1 MHz lock: %0d core cycles per 100 Apple cycles",
+                        cyc_b - cyc_a));
+
+        /* Cycle-exactness through I/O: the running 14-cycle loop does one
+         * $C000 sync read per iteration. Under the lock, consecutive reads
+         * must be EXACTLY 14 Apple cycles apart, every iteration -- any
+         * fixed excess or jitter here is raster-program drift on hardware. */
+        collect_c000 = 1;
+        repeat (60 * 14) @(negedge phi0);
+        collect_c000 = 0;
+        check(c000_stamps.size() >= 40, "collected loop sync-read stamps");
+        begin
+            int delta0 = 0;
+            bit uniform = 1;
+            for (int i = 1; i < c000_stamps.size(); i++) begin
+                int d = c000_stamps[i] - c000_stamps[i-1];
+                if (i == 1) delta0 = d;
+                else if (d != delta0) uniform = 0;
+            end
+            check(uniform, "locked-mode loop spacing is uniform");
+            check(delta0 == 14,
+                  $sformatf("locked-mode I/O loop cycle-exact: %0d per iteration (stock 14)",
+                            delta0));
+        end
+
+        /* Takeover machine reset: the vTW pulls RES# open-collector, and
+         * the engine must respond to its OWN reset exactly as it does to a
+         * keyboard reset -- full bus release (stock reset window for the
+         * MMU/IOU), then automatic re-take at release. */
+        tb_assert_res = 1;
+        #8us;
+        check(apple_res_pin === 1'b0, "vTW asserts Apple RES#");
+        check(apple_dma_pin === 1'b1, "/DMA released during the machine reset");
+        tb_assert_res = 0;
+        /* Filter release + the 80-cycle motherboard stock run, then the
+         * automatic re-take. */
+        #120us;
+        check(apple_res_pin === 1'b1, "vTW releases Apple RES#");
+        check(apple_dma_pin === 1'b0, "bus re-taken after the reset");
+
+        if (fails == 0) $display("VTW SYSTEM PASS");
+        else            $display("VTW SYSTEM FAILED: %0d checks", fails);
+        $finish;
+    end
+
+    initial begin
+        #20ms;
+        $display("VTW SYSTEM FAIL: global timeout");
+        $finish;
+    end
+
+endmodule

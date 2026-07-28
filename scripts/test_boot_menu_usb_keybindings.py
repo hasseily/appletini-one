@@ -36,7 +36,7 @@ def test_usb_keybinding_state_and_persistence() -> None:
     header = read(CONFIG_MENU_H)
     source = read(CONFIG_MENU_C)
 
-    require("#define CONFIG_MENU_USB_BIND_ACTION_COUNT 10U" in header and
+    require("#define CONFIG_MENU_USB_BIND_ACTION_COUNT 14U" in header and
             "usb_hid_menu_source_t usb_menu_bindings[CONFIG_MENU_USB_BIND_ACTION_COUNT];" in header and
             "uint8_t usb_binding_capture;" in header and
             "uint8_t usb_bindings_editable;" in header,
@@ -142,9 +142,13 @@ def test_boot_settings_draws_binding_editor() -> None:
             "    };" in tabs and
             "static const uint8_t right_actions[] = {\n"
             "        CONFIG_MENU_USB_BIND_ACTION_SCREENSHOT_A2,\n"
-            "        CONFIG_MENU_USB_BIND_ACTION_SCREENSHOT_1080P\n"
+            "        CONFIG_MENU_USB_BIND_ACTION_SCREENSHOT_1080P,\n"
+            "        CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_TOGGLE,\n"
+            "        CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_UP,\n"
+            "        CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_DOWN,\n"
+            "        CONFIG_MENU_USB_BIND_ACTION_VTW_SLUG_TOGGLE\n"
             "    };" in tabs and
-            "binding_y + ((int)i + 1) * row_h" in tabs and
+            "binding_y + ((int)i + 1 + spacer) * row_h" in tabs and
             "config_menu_boot_usb_binding_item_for_action(action)" in tabs,
             "visible binding order must put OK/Back in the middle and PrtScr rows below Menu")
     require("const int row_h = CMUI_ROW_H + CMUI_ROW_GAP;" in tabs and
@@ -186,6 +190,7 @@ def test_boot_settings_draws_binding_editor() -> None:
 def test_only_usb_menu_events_are_remapped() -> None:
     frontend_main = read(FRONTEND_MAIN_C)
     boot_menu = read(BOOT_MENU_SERVICE_C)
+    config_menu = read(CONFIG_MENU_C)
 
     require("return config_menu_translate_usb_binding(menu, source);" in frontend_main,
             "USB menu sources must translate through the binding table")
@@ -203,6 +208,44 @@ def test_only_usb_menu_events_are_remapped() -> None:
             "case 0x7F:\n        input->key = UI_KEY_SHIFT_TAB;" in boot_menu and
             "case 0x7F:\n        input->key = UI_KEY_BACK;" not in boot_menu,
             "Apple keyboard ESC must stay Back while DEL reverse-tabs")
+    require("boot_menu_service_machine_mode() != CARD_MACHINE_MODE_IIPLUS" in boot_menu and
+            "case 'O':\n    case 'o':\n        input->key = UI_KEY_PAGE_UP;" in boot_menu and
+            "case 'L':\n    case 'l':\n        input->key = UI_KEY_PAGE_DOWN;" in boot_menu and
+            "case 'Q':\n    case 'q':\n        input->key = UI_KEY_SHIFT_TAB;" in boot_menu and
+            "case 'A':\n    case 'a':\n        input->key = UI_KEY_TAB;" in boot_menu and
+            "case 'I':" not in boot_menu and "case 'K':" not in boot_menu,
+            "II/II+ boot menus must use O/L for items, Q for tab up, and A for tab down")
+    require("case UI_KEY_SHIFT_TAB:\n        config_menu_prev_tab(menu);" in config_menu and
+            "case UI_KEY_TAB:\n        config_menu_next_tab(menu);" in config_menu,
+            "Q must move to the previous/up tab and A to the next/down tab")
+    require("input->ascii = ascii;" in boot_menu,
+            "II/II+ navigation aliases must remain typeable in text editors")
+
+
+def test_binding_grid_navigation_requires_ok_for_edits() -> None:
+    source = read(CONFIG_MENU_C)
+    help_source = read(REPO_ROOT / "ps_sources" / "frontend" / "config_menu_help.c")
+    adjust_start = source.find("static uint8_t config_menu_adjust_focused_value")
+    adjust_end = source.find("static void config_menu_reload_smartport_device", adjust_start)
+    adjust = source[adjust_start:adjust_end]
+
+    require("k_boot_usb_binding_column_first[] = { 0U, 4U, 8U }" in source and
+            "k_boot_usb_binding_column_row_first[] = { 0U, 0U, 1U }" in source and
+            "k_boot_usb_binding_column_count[] = { 4U, 4U, 6U }" in source,
+            "USB binding navigation must model the three visible columns")
+    require("config_menu_boot_usb_binding_move_horizontal(menu, -1)" in source and
+            "config_menu_boot_usb_binding_move_horizontal(menu, 1)" in source and
+            "config_menu_boot_usb_binding_move_vertical(menu, -1)" in source and
+            "config_menu_boot_usb_binding_move_vertical(menu, 1)" in source,
+            "arrows must navigate the binding grid by row and column")
+    require("config_menu_usb_binding_next_source" not in source and
+            "config_menu_assign_usb_binding" not in adjust,
+            "Left/Right must never cycle or assign a USB binding")
+    require("menu->usb_binding_capture = (uint8_t)action;" in source and
+            '"PRESS USB INPUT FOR %s"' in source,
+            "Enter/OK must be the only binding-row action that starts capture")
+    require("Up/Down move within a column, Left/Right move columns, and Enter captures" in help_source,
+            "Boot Settings help must describe binding-grid navigation")
 
 
 def test_usb_bindings_edit_only_from_apple_boot_menu() -> None:
@@ -213,11 +256,8 @@ def test_usb_bindings_edit_only_from_apple_boot_menu() -> None:
     require("void config_menu_set_usb_bindings_editable(config_menu_t *menu, uint8_t editable);" in header,
             "config menu must expose an editability switch for USB bindings")
     require("if (menu->usb_bindings_editable == 0U) {\n"
-            "            config_menu_set_status(menu, 1U, \"USB BINDINGS EDITABLE AT BOOT\");" in source,
-            "adjusting inactive USB binding rows must be blocked")
-    require("if (menu->usb_bindings_editable == 0U) {\n"
             "                config_menu_set_status(menu, 1U, \"USB BINDINGS EDITABLE AT BOOT\");" in source,
-            "activating inactive USB binding rows must be blocked")
+            "starting capture on inactive USB binding rows must be blocked")
     require("if (menu->usb_bindings_editable == 0U) {\n"
             "        menu->usb_binding_capture = CONFIG_MENU_USB_BIND_CAPTURE_NONE;" in source,
             "capturing inactive USB binding rows must be blocked defensively")
@@ -304,8 +344,8 @@ def test_screenshot_usb_shortcuts_are_global_keyboard_bindings() -> None:
             "config menu must expose clamped screenshot binding sources")
     require("config_menu_usb_binding_action_is_screenshot(action)" in source and
             '"SCREENSHOT REQUIRES USB KEY"' in source and
-            "k_usb_binding_screenshot_source_order" in source,
-            "screenshot bindings must be keyboard-only and cycle through screenshot key defaults")
+            "usb_hid_menu_source_is_keyboard(source)" in source,
+            "screenshot bindings must remain keyboard-only")
     require("USB_HID_MENU_ACTION_SCREENSHOT_A2" in hid_header and
             "USB_HID_MENU_ACTION_SCREENSHOT_1080P" in hid_header and
             "void usb_hid_service_set_screenshot_sources(usb_hid_menu_source_t a2_source," in hid_header,
@@ -332,6 +372,7 @@ TESTS = [
     test_default_usb_mapping_preserves_existing_behavior,
     test_boot_settings_draws_binding_editor,
     test_only_usb_menu_events_are_remapped,
+    test_binding_grid_navigation_requires_ok_for_edits,
     test_usb_bindings_edit_only_from_apple_boot_menu,
     test_open_close_is_long_press_of_open_close_source,
     test_usb_keyboard_uses_binding_sources_only,

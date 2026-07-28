@@ -27,6 +27,14 @@ static const char *usb_binding_draw_label(uint32_t action)
         return "OK";
     case CONFIG_MENU_USB_BIND_ACTION_BACK:
         return "BACK";
+    case CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_TOGGLE:
+        return "TW 1MHZ";
+    case CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_UP:
+        return "TW SPEED+";
+    case CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_DOWN:
+        return "TW SPEED-";
+    case CONFIG_MENU_USB_BIND_ACTION_VTW_SLUG_TOGGLE:
+        return "TW SLUG .05";
     default:
         return "";
     }
@@ -76,7 +84,11 @@ void config_menu_draw_boot_settings(uint16_t *fb,
     };
     static const uint8_t right_actions[] = {
         CONFIG_MENU_USB_BIND_ACTION_SCREENSHOT_A2,
-        CONFIG_MENU_USB_BIND_ACTION_SCREENSHOT_1080P
+        CONFIG_MENU_USB_BIND_ACTION_SCREENSHOT_1080P,
+        CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_TOGGLE,
+        CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_UP,
+        CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_DOWN,
+        CONFIG_MENU_USB_BIND_ACTION_VTW_SLUG_TOGGLE
     };
     const int heading_y = y + (row_h * 3);
     const int heading_text_w =
@@ -232,12 +244,16 @@ void config_menu_draw_boot_settings(uint16_t *fb,
         const uint8_t focused =
             (uint8_t)(menu->item_focus ==
                       config_menu_boot_usb_binding_item_for_action(action));
+        /* Spacer row between the screenshot pair and the TransWarp
+         * bindings so the two groups read as separate blocks. */
+        const int spacer = (i >= 2U) ? 1 : 0;
+        const int row_y = binding_y + ((int)i + 1 + spacer) * row_h;
 
         if (menu->usb_bindings_editable != 0U) {
             hgr_draw_usb_binding_item(
                 fb,
                 x + (column_w + column_gap) * 2,
-                binding_y + ((int)i + 1) * row_h,
+                row_y,
                 column_w,
                 focused,
                 0U,
@@ -248,7 +264,7 @@ void config_menu_draw_boot_settings(uint16_t *fb,
             hgr_draw_usb_binding_item(
                 fb,
                 x + (column_w + column_gap) * 2,
-                binding_y + ((int)i + 1) * row_h,
+                row_y,
                 column_w,
                 focused,
                 1U,

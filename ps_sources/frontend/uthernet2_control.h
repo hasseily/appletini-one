@@ -28,6 +28,14 @@ int uthernet2_write_reg(uint16_t addr, uint8_t value);
 int uthernet2_read_network_config(uthernet2_network_config_t *config);
 int uthernet2_write_network_config(const uthernet2_network_config_t *config);
 int uthernet2_test(uthernet2_test_result_t *result);
+int uthernet2_dhcp_start(const uint8_t mac[UTHERNET2_MAC_LEN],
+                         char *detail,
+                         size_t detail_len);
+/* Returns 0 while pending, 1 after a lease is acquired, and -1 on failure. */
+int uthernet2_dhcp_poll(uthernet2_network_config_t *lease,
+                        char *detail,
+                        size_t detail_len);
+void uthernet2_dhcp_cancel(void);
 int uthernet2_dhcp_acquire(const uint8_t mac[UTHERNET2_MAC_LEN],
                            uthernet2_network_config_t *lease,
                            char *detail,

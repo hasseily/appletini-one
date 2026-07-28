@@ -44,6 +44,7 @@ typedef enum {
     CONFIG_TAB_MOCKINGBOARD,
     CONFIG_TAB_ETHERNET,
     CONFIG_TAB_APPLICARD,
+    CONFIG_TAB_TRANSWARP,
     CONFIG_TAB_CLOCK,
     CONFIG_TAB_RAM,
     CONFIG_TAB_USB,
@@ -77,6 +78,19 @@ typedef enum {
 #define CONFIG_VIDEO_ITEM_BEZEL        10U
 #define CONFIG_VIDEO_ITEM_DEBUG        11U
 #define CONFIG_VIDEO_ITEM_COUNT        12U
+#define CONFIG_TRANSWARP_ITEM_ENABLE       0U
+#define CONFIG_TRANSWARP_ITEM_SPEED        1U
+#define CONFIG_TRANSWARP_ITEM_SLUG         2U
+#define CONFIG_TRANSWARP_ITEM_FLOATBUS     3U
+#define CONFIG_TRANSWARP_ITEM_PADDLE       4U
+#define CONFIG_TRANSWARP_ITEM_SLOT_FIRST   5U
+#define CONFIG_TRANSWARP_SLOT_COUNT        7U
+#define CONFIG_TRANSWARP_ITEM_SLOT_LAST \
+    (CONFIG_TRANSWARP_ITEM_SLOT_FIRST + CONFIG_TRANSWARP_SLOT_COUNT - 1U)
+#define CONFIG_TRANSWARP_ITEM_WINDOW \
+    (CONFIG_TRANSWARP_ITEM_SLOT_LAST + 1U)
+#define CONFIG_TRANSWARP_ITEM_COUNT \
+    (CONFIG_TRANSWARP_ITEM_WINDOW + 1U)
 #define MOCKINGBOARD_CHANNEL_COUNT 12U
 #define MOCKINGBOARD_LEGACY_CHANNEL_COUNT 6U
 #define PHASOR_AUDIO_CONTROL_COUNT 4U
@@ -196,6 +210,12 @@ void config_menu_draw_clock(uint16_t *fb,
                             int x,
                             int y,
                             int w);
+void config_menu_draw_transwarp(uint16_t *fb,
+                                const config_menu_t *menu,
+                                int x,
+                                int y,
+                                int w);
+const char *config_menu_vtw_speed_label(const config_menu_t *menu);
 void config_menu_draw_ram(uint16_t *fb,
                           const config_menu_t *menu,
                           int x,

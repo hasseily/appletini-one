@@ -1,0 +1,233 @@
+; mandel_core.a65 -- shared 40x40 lores Mandelbrot core (ACME !source).
+;
+; Provides render_fractal. 4.12 fixed point, window x [-2.0, 0.5],
+; y [-1.25, 1.25] so per-pixel steps are exactly $0100. Uses ROM PLOT
+; and SETCOL. The including file must not define these labels or the
+; zero-page equates below.
+
+M_ZR     = $06
+M_ZI     = $08
+M_ZR2    = $1A
+M_ZI2    = $1C
+M_MULA   = $1E
+M_MULB   = $50
+M_PROD   = $52
+
+M_PLOT   = $F800
+M_SETCOL = $F864
+M_MAXIT  = 15
+
+render_fractal:
+    lda #0
+    sta m_py
+mrf_py_loop:
+    lda #0
+    sta m_px
+mrf_px_loop:
+    lda #0
+    sta m_cr
+    sta m_ci
+    lda m_px
+    clc
+    adc #$E0
+    sta m_cr + 1
+    lda m_py
+    clc
+    adc #$EC
+    sta m_ci + 1
+    lda #0
+    sta M_ZR
+    sta M_ZR + 1
+    sta M_ZI
+    sta M_ZI + 1
+    sta m_iter
+
+mrf_iter_loop:
+    lda M_ZR
+    sta M_MULA
+    lda M_ZR + 1
+    sta M_MULA + 1
+    lda M_ZR
+    sta M_MULB
+    lda M_ZR + 1
+    sta M_MULB + 1
+    jsr m_mul16s
+    lda M_PROD + 1
+    sta M_ZR2
+    lda M_PROD + 2
+    sta M_ZR2 + 1
+    lda M_ZI
+    sta M_MULA
+    lda M_ZI + 1
+    sta M_MULA + 1
+    lda M_ZI
+    sta M_MULB
+    lda M_ZI + 1
+    sta M_MULB + 1
+    jsr m_mul16s
+    lda M_PROD + 1
+    sta M_ZI2
+    lda M_PROD + 2
+    sta M_ZI2 + 1
+    lda M_ZR2
+    clc
+    adc M_ZI2
+    lda M_ZR2 + 1
+    adc M_ZI2 + 1
+    bmi mrf_escaped
+    cmp #$40
+    bcs mrf_escaped
+    lda M_ZR
+    sta M_MULA
+    lda M_ZR + 1
+    sta M_MULA + 1
+    lda M_ZI
+    sta M_MULB
+    lda M_ZI + 1
+    sta M_MULB + 1
+    jsr m_mul16s
+    lda M_PROD + 1
+    asl
+    sta M_ZI
+    lda M_PROD + 2
+    rol
+    sta M_ZI + 1
+    lda M_ZI
+    clc
+    adc m_ci
+    sta M_ZI
+    lda M_ZI + 1
+    adc m_ci + 1
+    sta M_ZI + 1
+    lda M_ZR2
+    sec
+    sbc M_ZI2
+    sta M_ZR
+    lda M_ZR2 + 1
+    sbc M_ZI2 + 1
+    sta M_ZR + 1
+    lda M_ZR
+    clc
+    adc m_cr
+    sta M_ZR
+    lda M_ZR + 1
+    adc m_cr + 1
+    sta M_ZR + 1
+    inc m_iter
+    lda m_iter
+    cmp #M_MAXIT
+    bcs mrf_escaped
+    jmp mrf_iter_loop
+mrf_escaped:
+    lda m_iter
+    jsr M_SETCOL
+    lda m_py
+    ldy m_px
+    jsr M_PLOT
+    inc m_px
+    lda m_px
+    cmp #40
+    bcs +
+    jmp mrf_px_loop
++   inc m_py
+    lda m_py
+    cmp #40
+    bcs +
+    jmp mrf_py_loop
++   rts
+
+m_mul16s:
+    lda #0
+    sta m_sign
+    lda M_MULA + 1
+    bpl +
+    jsr m_neg_a
+    inc m_sign
++   lda M_MULB + 1
+    bpl +
+    jsr m_neg_b
+    inc m_sign
++   lda #0
+    sta M_PROD
+    sta M_PROD + 1
+    sta M_PROD + 2
+    sta M_PROD + 3
+    ldx #16
+m_mul_loop:
+    lsr M_MULB + 1
+    ror M_MULB
+    bcc m_no_add
+    lda M_PROD + 2
+    clc
+    adc M_MULA
+    sta M_PROD + 2
+    lda M_PROD + 3
+    adc M_MULA + 1
+    sta M_PROD + 3
+m_no_add:
+    lsr M_PROD + 3
+    ror M_PROD + 2
+    ror M_PROD + 1
+    ror M_PROD
+    dex
+    bne m_mul_loop
+    lda m_sign
+    and #1
+    beq m_mul_done
+    lda M_PROD
+    eor #$FF
+    clc
+    adc #1
+    sta M_PROD
+    lda M_PROD + 1
+    eor #$FF
+    adc #0
+    sta M_PROD + 1
+    lda M_PROD + 2
+    eor #$FF
+    adc #0
+    sta M_PROD + 2
+    lda M_PROD + 3
+    eor #$FF
+    adc #0
+    sta M_PROD + 3
+m_mul_done:
+    ldx #4
+-   asl M_PROD
+    rol M_PROD + 1
+    rol M_PROD + 2
+    rol M_PROD + 3
+    dex
+    bne -
+    rts
+
+m_neg_a:
+    lda M_MULA
+    eor #$FF
+    clc
+    adc #1
+    sta M_MULA
+    lda M_MULA + 1
+    eor #$FF
+    adc #0
+    sta M_MULA + 1
+    rts
+
+m_neg_b:
+    lda M_MULB
+    eor #$FF
+    clc
+    adc #1
+    sta M_MULB
+    lda M_MULB + 1
+    eor #$FF
+    adc #0
+    sta M_MULB + 1
+    rts
+
+m_px:   !byte 0
+m_py:   !byte 0
+m_iter: !byte 0
+m_cr:   !word 0
+m_ci:   !word 0
+m_sign: !byte 0

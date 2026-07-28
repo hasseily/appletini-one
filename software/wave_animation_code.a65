@@ -1,0 +1,73 @@
+; Wave Animation by Brendan Robert.
+;
+; 97-byte helper extracted from the encoded REM payload in the original
+; STARTUP program. BASIC loads it at $0300, calls $0300 after drawing each
+; frame, and calls $0318 to animate the five captured frames.
+
+!cpu 65c02
+
+KBD       = $C000
+KBDSTRB   = $C010
+PAGE1     = $C054
+ROM_MOVE  = $C311
+ROM_BASIC = $F399
+
+* = $0300
+
+wave_copy:
+    lda #$20           ; BASIC patches this operand with POKE 769
+    sta $43
+    stz $42
+    stz $3C
+    lda #$40
+    sta $3D
+    lda #$FF
+    sta $3E
+    lda #$5F
+    sta $3F
+    sec
+    jmp ROM_MOVE
+
+wave_animate:
+    sta KBDSTRB
+
+animation_restart:
+    lda #$A0
+    sta row_value + 1
+
+row_value:
+    lda #$A0
+    sta $3D
+    stz $3C
+    clc
+    adc #$1F
+    sta $3F
+    lda #$FF
+    sta $3E
+    bit KBD
+    bmi animation_exit
+
+page_base:
+    lda #$20
+    sta $43
+    stz $42
+    clc
+    jsr ROM_MOVE
+
+display_page:
+    bit PAGE1
+    lda #$60
+    eor page_base + 1
+    sta page_base + 1
+    lda #$01
+    eor display_page + 1
+    sta display_page + 1
+    lda row_value + 1
+    sec
+    sbc #$20
+    beq animation_restart
+    sta row_value + 1
+    bne row_value
+
+animation_exit:
+    jmp ROM_BASIC

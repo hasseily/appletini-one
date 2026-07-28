@@ -117,6 +117,7 @@ static usb_hid_menu_source_t g_menu_ok_source = USB_HID_MENU_ACTION_SELECT;
 static usb_hid_menu_source_t g_menu_open_close_source = USB_HID_MENU_ACTION_SELECT;
 static usb_hid_menu_source_t g_screenshot_a2_source = USB_HID_MENU_SOURCE_NONE;
 static usb_hid_menu_source_t g_screenshot_1080p_source = USB_HID_MENU_SOURCE_NONE;
+static usb_hid_menu_source_t g_vtw_sources[USB_HID_VTW_SOURCE_COUNT];
 static int32_t g_x;
 static int32_t g_y;
 static int32_t g_x_residue;
@@ -433,6 +434,29 @@ static uint8_t screenshot_push_source(usb_hid_menu_source_t source)
     if (source == g_screenshot_1080p_source) {
         mouse_menu_push_event(USB_HID_MENU_ACTION_SCREENSHOT_1080P, source);
         return 1U;
+    }
+    return 0U;
+}
+
+/* Virtual-TransWarp speed actions: global keyboard bindings that fire
+ * whether or not the menu is open, same class as the screenshots. */
+static uint8_t vtw_push_source(usb_hid_menu_source_t source)
+{
+    static const usb_hid_menu_action_t k_vtw_actions[USB_HID_VTW_SOURCE_COUNT] = {
+        USB_HID_MENU_ACTION_VTW_SPEED_TOGGLE,
+        USB_HID_MENU_ACTION_VTW_SPEED_UP,
+        USB_HID_MENU_ACTION_VTW_SPEED_DOWN,
+        USB_HID_MENU_ACTION_VTW_SLUG_TOGGLE
+    };
+
+    if (source == USB_HID_MENU_SOURCE_NONE) {
+        return 0U;
+    }
+    for (uint32_t i = 0U; i < USB_HID_VTW_SOURCE_COUNT; ++i) {
+        if (source == g_vtw_sources[i]) {
+            mouse_menu_push_event(k_vtw_actions[i], source);
+            return 1U;
+        }
     }
     return 0U;
 }
@@ -986,6 +1010,9 @@ static void hid_process_keyboard_usages(usb_hid_slot_t *slot,
             continue;
         }
         if (screenshot_push_source(next_sources[i]) != 0U) {
+            continue;
+        }
+        if (vtw_push_source(next_sources[i]) != 0U) {
             continue;
         }
         if (next_sources[i] == g_menu_open_close_source) {
@@ -1799,6 +1826,9 @@ int usb_hid_service_init(void)
     g_menu_open_close_source = USB_HID_MENU_ACTION_SELECT;
     g_screenshot_a2_source = USB_HID_MENU_SOURCE_NONE;
     g_screenshot_1080p_source = USB_HID_MENU_SOURCE_NONE;
+    for (uint32_t i = 0U; i < USB_HID_VTW_SOURCE_COUNT; ++i) {
+        g_vtw_sources[i] = USB_HID_MENU_SOURCE_NONE;
+    }
     g_menu_event_rd = 0U;
     g_menu_event_wr = 0U;
     g_menu_event_count = 0U;
@@ -1940,6 +1970,26 @@ void usb_hid_service_set_screenshot_sources(usb_hid_menu_source_t a2_source,
 
     g_screenshot_a2_source = a2_source;
     g_screenshot_1080p_source = full_source;
+}
+
+void usb_hid_service_set_vtw_sources(
+    const usb_hid_menu_source_t sources[USB_HID_VTW_SOURCE_COUNT])
+{
+    for (uint32_t i = 0U; i < USB_HID_VTW_SOURCE_COUNT; ++i) {
+        usb_hid_menu_source_t s =
+            (sources != NULL) ? sources[i] : USB_HID_MENU_SOURCE_NONE;
+        if (screenshot_source_valid(s) == 0U ||
+            s == g_screenshot_a2_source ||
+            s == g_screenshot_1080p_source) {
+            s = USB_HID_MENU_SOURCE_NONE;
+        }
+        for (uint32_t j = 0U; j < i; ++j) {
+            if (s != USB_HID_MENU_SOURCE_NONE && s == g_vtw_sources[j]) {
+                s = USB_HID_MENU_SOURCE_NONE;
+            }
+        }
+        g_vtw_sources[i] = s;
+    }
 }
 
 int usb_hid_service_pop_menu_event(usb_hid_menu_event_t *event)

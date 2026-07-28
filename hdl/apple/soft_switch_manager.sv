@@ -74,131 +74,26 @@ module soft_switch_manager (
     // M2B0 is intentionally not used for real memory steering here. The
     // current Apple //e fake-SHR path is selected only by C029 and reads the
     // captured AUX $2000-$9FFF shadow; there is no IIgs M2B0 bank source.
-    // Translate a 16-bit Apple address using the registered soft switches.
-    // decoded_addr carries the selected 64K bank and Apple offset for memory
-    // cycles, or a ROM offset for motherboard-ROM reads. route_kind identifies
-    // whether memory, motherboard ROM, or bus/card I/O owns the cycle.
-    function automatic void translate_apple_addr(
-        input  logic [15:0]   addr_in,
-        input  logic          rw_in,        // 1=read, 0=write
-        output logic [31:0]   decoded_addr,
-        output apple_route_kind_e route_kind
-    );
-        logic        q_is_cxxx;
-        logic        q_is_c0xx;
-        logic        q_is_zp_stack;
-        logic        q_is_high_ram;
-        logic        q_is_hires_pg;
-        logic        q_is_text_pg1;
-        logic        q_is_display_window;
-        logic [7:0]  q_aux_bank_full;
-        logic [7:0]  q_bank_sel;
-        logic [23:0] q_psram_addr;
-        logic        q_cxxx_intcxrom_rom;
-        logic        q_cxxx_slot3_rom;
-        logic        q_extrom_intcxrom;
-        logic        q_extrom_internal_rom;
-        logic        q_lcrange_rom_read;
-
-        q_is_cxxx      = (addr_in[15:12] == 4'hc);
-        q_is_c0xx      = (addr_in[15:8]  == 8'hc0);
-        q_is_zp_stack  = (addr_in[15:9]  == 7'h00);    // 0000-01ff
-        q_is_high_ram  = (addr_in[15:14] == 2'b11);    // c000-ffff
-        q_is_hires_pg  = (addr_in[15:13] == 3'b001);   // 2000-3fff
-        q_is_text_pg1  = (addr_in[15:10] == 6'b000001); // 0400-07ff
-        q_is_display_window = q_is_text_pg1 || (ss_hires && q_is_hires_pg);
-        q_aux_bank_full = {1'b0, ss_ramworks_bank} + 8'd1;
-
-        // ---- Physical 64K bank selection ----
-        if (q_is_cxxx) begin
-            q_bank_sel = 8'd0;
-        end
-        else if (q_is_zp_stack) begin
-            q_bank_sel = ss_altzp ? q_aux_bank_full : 8'd0;
-        end
-        else if (q_is_high_ram) begin
-            q_bank_sel = ss_altzp ? q_aux_bank_full : 8'd0;
-        end
-        else begin
-            q_bank_sel = (rw_in ? ss_auxread : ss_auxwrite)
-                         ? q_aux_bank_full : 8'd0;
-            if (ss_80store && q_is_display_window) begin
-                q_bank_sel = ss_page2 ? q_aux_bank_full : 8'd0;
-            end
-        end
-
-        // ---- PSRAM byte address, including the LC bank-1 bit-12 remap.
-        //      Bits 23:16 carry bank_sel.
-        q_psram_addr      = {8'b0, addr_in};
-        if (q_is_high_ram && !ss_lcram_bank2 && addr_in[13:12] == 2'b01) begin
-            q_psram_addr[12] = 1'b0;
-        end
-        q_psram_addr[23:16] = q_bank_sel;
-
-        // ---- Route selection ----
-        //
-        // ROM cases. Reads only (writes never go to ROM).
-        //   $C100-$C7FF read with intcxrom            -> ROM
-        //   $C300-$C3FF read with !slotc3rom          -> ROM (slot-3 internal)
-        //   $C800-$CFFF read with intcxrom            -> ROM (expansion)
-        //   $C800-$CFFF read after internal $C3xx     -> ROM (slot-3 exp)
-        //   $D000-$FFFF read with !sw_lcram_read      -> ROM (LC-ROM)
-        q_cxxx_intcxrom_rom = q_is_cxxx && !q_is_c0xx && rw_in &&
-                              ss_intcxrom &&
-                              (addr_in[11:8] >= 4'h1 && addr_in[11:8] <= 4'h7);
-        q_cxxx_slot3_rom    = q_is_cxxx && rw_in && !ss_slotc3rom &&
-                              (addr_in[11:8] == 4'h3);
-        q_extrom_intcxrom   = q_is_cxxx && rw_in && ss_intcxrom &&
-                              (addr_in[11:8] >= 4'h8 && addr_in[11:8] <= 4'hF);
-        q_extrom_internal_rom = q_is_cxxx && rw_in && !ss_intcxrom &&
-                                ss_c8_internal_rom &&
-                                (addr_in[11:8] >= 4'h8 && addr_in[11:8] <= 4'hF);
-        q_lcrange_rom_read  = q_is_high_ram && !q_is_cxxx && rw_in &&
-                              !ss_lcram_read;
-
-        if (q_is_c0xx) begin
-            // $C000-$C0FF soft switches are owned by the Apple bus.
-            decoded_addr = {16'h0000, addr_in};
-            route_kind   = APPLE_ROUTE_BUS;
-        end
-        else if (q_cxxx_intcxrom_rom || q_cxxx_slot3_rom ||
-                 q_extrom_intcxrom   || q_extrom_internal_rom ||
-                 q_lcrange_rom_read) begin
-            // ROM-bound read. ROM offset = addr - $C000 = addr[13:0]
-            // because addr[15:14] == 2'b11 in all ROM-range addresses.
-            decoded_addr = {ADDR_REGION_ROM, 10'd0, addr_in[13:0]};
-            route_kind   = APPLE_ROUTE_ROM;
-        end
-        else if (q_is_cxxx) begin
-            // $C100-$CFFF non-ROM cases are motherboard or virtual-card I/O.
-            decoded_addr = {16'h0000, addr_in};
-            route_kind   = APPLE_ROUTE_BUS;
-        end
-        else if (q_is_high_ram) begin
-            // $D000-$FFFF reaches language-card RAM only when the matching
-            // read or write latch is enabled. Other accesses remain bus-owned;
-            // motherboard ROM reads were classified above.
-            if (rw_in && ss_lcram_read) begin
-                decoded_addr = {ADDR_REGION_PSRAM, q_psram_addr};
-                route_kind   = APPLE_ROUTE_CACHE;
-            end
-            else if (!rw_in && ss_lcram_write) begin
-                decoded_addr = {ADDR_REGION_PSRAM, q_psram_addr};
-                route_kind   = APPLE_ROUTE_CACHE;
-            end
-            else begin
-                // Disabled language-card writes are ignored by the motherboard.
-                decoded_addr = {16'h0000, addr_in};
-                route_kind   = APPLE_ROUTE_BUS;
-            end
-        end
-        else begin
-            // $0000-$BFFF memory. Bank 0 remains on the motherboard; selected
-            // aux/RamWorks banks are served by psram_simple.
-            decoded_addr = {ADDR_REGION_PSRAM, q_psram_addr};
-            route_kind   = APPLE_ROUTE_CACHE;
-        end
-    endfunction
+    //
+    // Address translation lives in globals::translate_apple_addr (shared
+    // with the virtual TransWarp's private switch copy). This module feeds
+    // it the registered switch state below.
+    TranslateState xlate_st;
+    always_comb begin
+        xlate_st.sw_80store       = ss_80store;
+        xlate_st.sw_auxread       = ss_auxread;
+        xlate_st.sw_auxwrite      = ss_auxwrite;
+        xlate_st.sw_altzp         = ss_altzp;
+        xlate_st.sw_page2         = ss_page2;
+        xlate_st.sw_hires         = ss_hires;
+        xlate_st.sw_intcxrom      = ss_intcxrom;
+        xlate_st.sw_slotc3rom     = ss_slotc3rom;
+        xlate_st.c8_internal_rom  = ss_c8_internal_rom;
+        xlate_st.sw_lcram_bank2   = ss_lcram_bank2;
+        xlate_st.sw_lcram_read    = ss_lcram_read;
+        xlate_st.sw_lcram_write   = ss_lcram_write;
+        xlate_st.sw_ramworks_bank = ss_ramworks_bank;
+    end
 
     // Register the translation with the soft-switch state for downstream
     // capture, INH arbitration, and PSRAM service.
@@ -260,7 +155,8 @@ module soft_switch_manager (
             if (ab_read.addr_en && ab_read.cycle_valid) begin : addr_decode_translator
                 logic [31:0]        rb_decoded_addr;
                 apple_route_kind_e  rb_route_kind;
-                translate_apple_addr(ab_read.addr_early, ab_read.rw_early,
+                translate_apple_addr(xlate_st,
+                                     ab_read.addr_early, ab_read.rw_early,
                                      rb_decoded_addr, rb_route_kind);
                 ss_addr_decode_en  <= (rb_route_kind == APPLE_ROUTE_CACHE);
                 ss_addr_decode     <= rb_decoded_addr[23:0];
@@ -348,7 +244,7 @@ module soft_switch_manager (
                 begin : obs_decode_translator
                     logic [31:0]        rb_decoded_addr_obs;
                     apple_route_kind_e  rb_route_kind_obs;
-                    translate_apple_addr(ab_read.addr, ab_read.rw,
+                    translate_apple_addr(xlate_st, ab_read.addr, ab_read.rw,
                                          rb_decoded_addr_obs, rb_route_kind_obs);
                     ss_addr_decode_late_en <= (rb_route_kind_obs == APPLE_ROUTE_CACHE);
                     ss_addr_decode_late    <= rb_decoded_addr_obs[23:0];

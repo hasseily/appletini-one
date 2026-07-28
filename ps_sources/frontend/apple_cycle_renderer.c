@@ -37,6 +37,8 @@
 #include "apple_cycle_egress.h"
 #include "apple_cycle_renderer.h"
 #include "apple_fb_handoff.h"
+#include "card_control_regs.h"
+#include "xil_io.h"
 #include "apple_pal_video_timing.h"
 #include "appletini_csbits.h"
 #include "appletini_ntsc.h"
@@ -66,6 +68,27 @@ static uint8_t  s_frame_end_pending = 0u;
 static uint32_t s_scanner_frame_lines = ATN_SCANNER_MAX_VERT_NTSC;
 static uint32_t s_pending_line0_sw[ATN_BORDER_H_CYCLES];
 static uint8_t  s_pending_line0_mask = 0u;
+
+/*
+ * A 1 MHz vTW core learns its next bus address immediately after the prior
+ * Apple data phase, while the serialized physical C0xx access is captured
+ * in the following record. VIDSYNC observes that as a one-cycle-late mode
+ * transition. Hold one vTW frame record so the following record can supply
+ * only the affected next-cycle video bits. ALTCHARSET is deliberately not
+ * in the mask: hardware validation shows its glyph path is already aligned.
+ */
+#define VTW_PHASE_SW_MASK ( \
+    (1U << ACE_SWB_80STORE_BIT) | \
+    (1U << ACE_SWB_TEXT_BIT) | \
+    (1U << ACE_SWB_MIXED_BIT) | \
+    (1U << ACE_SWB_PAGE2_BIT) | \
+    (1U << ACE_SWB_HIRES_BIT) | \
+    (1U << ACE_SWB_80COL_BIT) | \
+    (1U << ACE_SWB_DHIRES_BIT))
+
+static uint8_t  s_vtw_1mhz_active = 0u;
+static uint8_t  s_vtw_pending_valid = 0u;
+static uint64_t s_vtw_pending_record = 0ULL;
 
 /* Tracks the previous line for per-line chroma-state reset. Initialised
  * to a sentinel that doesn't match any valid line (line is 9-bit ->
@@ -152,6 +175,11 @@ static inline uint8_t pal_positive_phase_preroll_cycle(uint32_t raw_line,
 
 static uint8_t  s_vidhd_screen_color = 0u;
 static uint8_t  s_vidhd_newvideo = 0u;
+/* After an Apple reset, CPU0 clears the PL's fake-SHR state with a
+ * DMA write of $01 to $C029. Until that lands, the PL still reports
+ * SHR active; hold off adopting it so the stale image cannot flash
+ * back. A real C029 record always releases the hold. */
+static uint8_t  s_shr_sync_hold = 0u;
 static uint8_t  s_vidhd_border_color = APPLE_VIDEO_IIGS_BORDER_DEFAULT;
 static uint8_t  s_vidhd_shadow = 0u;
 static uint8_t  s_vidhd_bw_force_seen = 0xFFu;
@@ -317,11 +345,14 @@ static inline uint32_t shr_apply_c029_bw(uint32_t bgra) {
     return shr_pack_bgra(y, y, y);
 }
 
+static const volatile uint8_t *s_shr_color_bank; /* set per field pass */
+
 static inline uint32_t shr_palette_color(uint16_t palette_base, uint8_t idx) {
+    const volatile uint8_t *bank = s_shr_color_bank;
     const uint16_t a = (uint16_t)(palette_base + ((uint16_t)(idx & 0x0Fu) * 2u));
     const uint16_t raw =
-        (uint16_t)g_aux_bank[a] |
-        (uint16_t)((uint16_t)g_aux_bank[(uint16_t)(a + 1u)] << 8);
+        (uint16_t)bank[a] |
+        (uint16_t)((uint16_t)bank[(uint16_t)(a + 1u)] << 8);
     const uint8_t b = (uint8_t)((raw & 0x000Fu) * 16u);
     const uint8_t g = (uint8_t)(((raw >> 4) & 0x000Fu) * 16u);
     const uint8_t r = (uint8_t)(((raw >> 8) & 0x000Fu) * 16u);
@@ -1179,27 +1210,376 @@ static void shr_render_cell_640(uint32_t *row0, uint32_t x,
     }
 }
 
-static void render_shr_cell(uint32_t y, uint32_t x)
+/* ==================================================================== */
+/* SHR4 extended modes (SuperDuperDisplay-compatible).                  */
+/*                                                                      */
+/* Armed by the magic bytes 'SHR4' (high-ASCII $D3 $C8 $D2 $B4) at aux  */
+/* $9DFC. Each palette entry's SECOND byte carries a mode nibble in its */
+/* top 4 bits (unused by stock SHR):                                    */
+/*   $0RGB standard SHR   $1ggg RGGB Bayer demosaic                    */
+/*   $2RGB PAL256 flat 256-color palette   $3xxx R4G4B4 direct color   */
+/* Reference: SDD shaders/a2video_beam_shr_raw.frag. The frame renders  */
+/* from the mirror at the frame marker, so PAL256 palette snapshots are */
+/* frame-accurate rather than beam-accurate -- identical for static     */
+/* art, approximate for beam-racing art (documented difference).       */
+/* ==================================================================== */
+
+#define SHR_MAGIC_ADDR  0x9DFCu
+#define SHR_CTRL_ADDR   0x9DF8u
+
+/* Per-FIELD mode state: SDD re-evaluates magic/ctrl per field bank, so a
+ * double-mode second field carries its own mode data in main memory. */
+static uint8_t  s_shr4_frame_active;
+static uint8_t  s_shr3200_frame_active;
+static uint8_t  s_shr3200_bank;        /* 0 = main, 1 = aux */
+static uint16_t s_shr3200_pal_start;   /* base of 200 x 32-byte palettes */
+static const volatile uint8_t *s_f_bank;   /* current field's pixel bank */
+static uint8_t  s_shr_interlace_mode;  /* SDD $9DF8 interlace enabled */
+static uint8_t  s_shr_interlaced;      /* rendering an interlaced frame  */
+static uint32_t s_f_out_row;           /* output row of the line in flight */
+static uint8_t  s_post_wide_last = 0xFFu;
+
+/* Diagnostic: frames rendered with any SHR4/3200 mode active. */
+volatile uint32_t g_acr_shr4_frames = 0u;
+
+static inline int shr4_magic_present(const volatile uint8_t *bank) {
+    return bank[SHR_MAGIC_ADDR + 0u] == 0xD3u &&   /* 'S' | $80 */
+           bank[SHR_MAGIC_ADDR + 1u] == 0xC8u &&   /* 'H' | $80 */
+           bank[SHR_MAGIC_ADDR + 2u] == 0xD2u &&   /* 'R' | $80 */
+           bank[SHR_MAGIC_ADDR + 3u] == 0xB4u;     /* '4' | $80 */
+}
+
+static inline int shr3200_magic_present(const volatile uint8_t *bank) {
+    return bank[SHR_MAGIC_ADDR + 0u] == 0xB3u &&   /* '3' | $80 */
+           bank[SHR_MAGIC_ADDR + 1u] == 0xB2u &&   /* '2' | $80 */
+           bank[SHR_MAGIC_ADDR + 2u] == 0xB0u &&   /* '0' | $80 */
+           bank[SHR_MAGIC_ADDR + 3u] == 0xB0u;     /* '0' | $80 */
+}
+
+/* Direct RGB444 -> BGRA, matching ConvertIIgs2RGB (channel * 16). */
+static inline uint32_t shr4_rgb444(uint8_t r4, uint8_t g4, uint8_t b4) {
+    return shr_apply_c029_bw(shr_pack_bgra((uint8_t)(r4 * 16u),
+                                           (uint8_t)(g4 * 16u),
+                                           (uint8_t)(b4 * 16u)));
+}
+
+/* RGGB neighborhood sample: the 4-bit palette INDEX of pixel (px, py)  */
+/* in 320x200 space, 0 outside the content area (matches the shader's   */
+/* bounds behavior).                                                    */
+/* row is in OUTPUT space: 0..199 normally (one field), 0..399 when the
+ * frame is interlaced -- even output rows sample the aux field, odd rows
+ * the main field, exactly like the shader's 320x400 interlace path. */
+static inline int32_t shr4_rggb_sample(int32_t px, int32_t row) {
+    const int32_t rows = s_shr_interlaced ? 400 : 200;
+    if (px < 0 || px >= 320 || row < 0 || row >= rows) return 0;
+    const volatile uint8_t *bank = s_f_bank;
+    int32_t py = row;
+    if (s_shr_interlaced) {
+        bank = (row & 1) ? g_main_bank : g_aux_bank;
+        py = row >> 1;
+    }
+    const uint16_t a = (uint16_t)(0x2000u + 160u * (uint32_t)py +
+                                  ((uint32_t)px >> 1));
+    const uint8_t byte = bank[a];
+    return (px & 1) ? (int32_t)(byte & 0x0Fu) : (int32_t)(byte >> 4);
+}
+
+/* 640-mode variant: the sample is the raw 2-bit pixel value (0..3) at
+ * full 640 horizontal resolution, matching the shader's 640 CFA path. */
+static inline int32_t shr4_rggb_sample640(int32_t px, int32_t row) {
+    const int32_t rows = s_shr_interlaced ? 400 : 200;
+    if (px < 0 || px >= 640 || row < 0 || row >= rows) return 0;
+    const volatile uint8_t *bank = s_f_bank;
+    int32_t py = row;
+    if (s_shr_interlaced) {
+        bank = (row & 1) ? g_main_bank : g_aux_bank;
+        py = row >> 1;
+    }
+    const uint16_t a = (uint16_t)(0x2000u + 160u * (uint32_t)py +
+                                  ((uint32_t)px >> 2));
+    return (int32_t)((bank[a] >> (6 - 2 * (px & 3))) & 0x03u);
+}
+
+/* Malvar 5x5 demosaic weights over the shader's 13-sample layout:      */
+/*   s0 (x,y-2); s1..s3 (x-1..x+1, y-1); s4..s8 (x-2..x+2, y);          */
+/*   s9..s11 (x-1..x+1, y+1); s12 (x,y+2).                              */
+/* Weights are doubled so the 0.5/1.5 entries stay integral; the final  */
+/* divisor is therefore 240 (= 15 * 8 * 2).                             */
+static const int8_t k_rggb_g[13]   = { -2,  0,  4,  0,
+                                       -2,  4,  8,  4, -2,
+                                        0,  4,  0, -2 };
+static const int8_t k_rggb_xg[13]  = {  1, -2,  0, -2,
+                                       -2,  8, 10,  8, -2,
+                                       -2,  0, -2,  1 };
+static const int8_t k_rggb_xgx[13] = { -2, -2,  8, -2,
+                                        1,  0, 10,  0,  1,
+                                       -2,  8, -2, -2 };
+static const int8_t k_rggb_rb[13]  = { -3,  4,  0,  4,
+                                       -3,  0, 12,  0, -3,
+                                        4,  0,  4, -3 };
+
+/* max_sample is 15 in 320 mode, 3 in 640 mode; the divisor follows the
+ * shader's "filter gives x8" normalization (doubled weights -> x16). */
+static uint32_t shr4_rggb_filter(const int32_t *s, const int8_t *w,
+                                 int32_t max_sample) {
+    int32_t acc = 0;
+    for (int i = 0; i < 13; ++i) acc += s[i] * (int32_t)w[i];
+    acc = (acc * 255) / (max_sample * 16);
+    if (acc < 0) acc = 0;
+    if (acc > 255) acc = 255;
+    return (uint32_t)acc;
+}
+
+/* Demosaic one pixel in 320- or 640-space. Bayer cell: (even x, even  */
+/* y) = R, (odd x, even y) = G, (even x, odd y) = G, (odd x, odd y) = B.*/
+static uint32_t shr4_rggb_pixel_at(int32_t px, int32_t py, int is640) {
+    int32_t (*const sample)(int32_t, int32_t) =
+        is640 ? shr4_rggb_sample640 : shr4_rggb_sample;
+    const int32_t maxs = is640 ? 3 : 15;
+    int32_t s[13];
+    s[0]  = sample(px,     py - 2);
+    s[1]  = sample(px - 1, py - 1);
+    s[2]  = sample(px,     py - 1);
+    s[3]  = sample(px + 1, py - 1);
+    s[4]  = sample(px - 2, py);
+    s[5]  = sample(px - 1, py);
+    s[6]  = sample(px,     py);
+    s[7]  = sample(px + 1, py);
+    s[8]  = sample(px + 2, py);
+    s[9]  = sample(px - 1, py + 1);
+    s[10] = sample(px,     py + 1);
+    s[11] = sample(px + 1, py + 1);
+    s[12] = sample(px,     py + 2);
+
+    const uint32_t own = (uint32_t)((s[6] * 255) / maxs);
+    uint32_t r, g, b;
+    if (((px & 1) == 0) && ((py & 1) == 0)) {          /* R site */
+        r = own;
+        g = shr4_rggb_filter(s, k_rggb_g, maxs);
+        b = shr4_rggb_filter(s, k_rggb_rb, maxs);
+    } else if (((px & 1) == 1) && ((py & 1) == 0)) {   /* G site, R row */
+        r = shr4_rggb_filter(s, k_rggb_xg, maxs);
+        g = own;
+        b = shr4_rggb_filter(s, k_rggb_xgx, maxs);
+    } else if (((px & 1) == 0) && ((py & 1) == 1)) {   /* G site, B row */
+        r = shr4_rggb_filter(s, k_rggb_xgx, maxs);
+        g = own;
+        b = shr4_rggb_filter(s, k_rggb_xg, maxs);
+    } else {                                           /* B site */
+        r = shr4_rggb_filter(s, k_rggb_rb, maxs);
+        g = shr4_rggb_filter(s, k_rggb_g, maxs);
+        b = own;
+    }
+    return shr_apply_c029_bw(shr_pack_bgra((uint8_t)r, (uint8_t)g,
+                                           (uint8_t)b));
+}
+
+static uint32_t shr4_rggb_pixel(int32_t px, int32_t py) {
+    return shr4_rggb_pixel_at(px, py, 0);
+}
+
+/* R4G4B4: 3-byte groups hold two direct-color pixels, each spanning    */
+/* three 320-space pixels: bytes AB CD EF -> colors (A,B,C) and (D,E,F).*/
+static uint32_t shr4_r4g4b4_pixel(uint32_t y, int32_t px) {
+    const uint32_t group = (uint32_t)px / 6u;
+    const uint16_t base = (uint16_t)(0x2000u + 160u * y + group * 3u);
+    const uint8_t b0 = s_f_bank[base];
+    const uint8_t b1 = s_f_bank[(uint16_t)(base + 1u)];
+    const uint8_t b2 = s_f_bank[(uint16_t)(base + 2u)];
+    if (((uint32_t)px % 6u) < 3u) {
+        return shr4_rgb444((uint8_t)(b0 >> 4), (uint8_t)(b0 & 0x0Fu),
+                           (uint8_t)(b1 >> 4));
+    }
+    return shr4_rgb444((uint8_t)(b1 & 0x0Fu), (uint8_t)(b2 >> 4),
+                       (uint8_t)(b2 & 0x0Fu));
+}
+
+/* PAL256: the SHR byte is an index into the flat 512-byte palette area */
+/* at aux $9E00 (all 16 palettes as one 256-color table). Both pixels   */
+/* of the byte show the same color.                                     */
+static inline uint32_t shr4_pal256_color(uint8_t idx) {
+    const uint16_t a = (uint16_t)(0x9E00u + ((uint16_t)idx * 2u));
+    const uint16_t raw =
+        (uint16_t)s_f_bank[a] |
+        (uint16_t)((uint16_t)s_f_bank[(uint16_t)(a + 1u)] << 8);
+    return shr_apply_c029_bw(shr_pack_bgra(
+        (uint8_t)(((raw >> 8) & 0x0Fu) * 16u),
+        (uint8_t)(((raw >> 4) & 0x0Fu) * 16u),
+        (uint8_t)((raw & 0x0Fu) * 16u)));
+}
+
+/* SHR-3200 ("Brooks"): magic '3200' at $9DFC; ctrl bytes at $9DF8 are  */
+/* {paged mode, bank, palette lo, palette hi}. One 32-byte palette per  */
+/* line, in EITHER bank, and the palette index is REVERSED (0 = last    */
+/* entry) -- both per the SDD reference.                                */
+static inline uint32_t shr3200_color(uint32_t y, uint8_t idx) {
+    const uint16_t a = (uint16_t)(s_shr3200_pal_start + y * 32u +
+                                  ((uint16_t)(15u - (idx & 0x0Fu)) * 2u));
+    const uint8_t lo = s_shr3200_bank ? g_aux_bank[a] : g_main_bank[a];
+    const uint8_t hi = s_shr3200_bank ? g_aux_bank[(uint16_t)(a + 1u)]
+                                      : g_main_bank[(uint16_t)(a + 1u)];
+    const uint16_t raw = (uint16_t)lo | ((uint16_t)hi << 8);
+    return shr_apply_c029_bw(shr_pack_bgra(
+        (uint8_t)(((raw >> 8) & 0x0Fu) * 16u),
+        (uint8_t)(((raw >> 4) & 0x0Fu) * 16u),
+        (uint8_t)((raw & 0x0Fu) * 16u)));
+}
+
+static void shr3200_render_cell_320(uint32_t *row0, uint32_t y, uint32_t x)
 {
+    uint32_t *dst = row0 + x * 16u;
     const uint16_t addr = shr_scanline_addr(y, x);
-    const uint32_t a =
-        (uint32_t)g_aux_bank[addr] |
-        ((uint32_t)g_aux_bank[(uint16_t)(addr + 1u)] << 8) |
-        ((uint32_t)g_aux_bank[(uint16_t)(addr + 2u)] << 16) |
-        ((uint32_t)g_aux_bank[(uint16_t)(addr + 3u)] << 24);
-    const uint8_t control = g_aux_bank[0x9D00u + (uint16_t)y];
-    const uint16_t palette_base = (uint16_t)(0x9E00u + ((uint16_t)(control & 0x0Fu) * 32u));
+
+    for (uint32_t i = 0u; i < 4u; ++i) {
+        const uint8_t byte = s_f_bank[(uint16_t)(addr + i)];
+        const uint32_t c1 = shr3200_color(y, (uint8_t)(byte >> 4));
+        *dst++ = c1;
+        *dst++ = c1;
+        const uint32_t c2 = shr3200_color(y, (uint8_t)(byte & 0x0Fu));
+        *dst++ = c2;
+        *dst++ = c2;
+    }
+}
+
+/* SHR4 320-mode cell: 4 bytes -> 8 doubled pixels, each pixel routed   */
+/* by ITS palette entry's mode nibble (submodes mix freely on a line).  */
+static void shr4_render_cell_320(uint32_t *row0, uint32_t y, uint32_t x,
+                                 uint16_t palette_base)
+{
+    uint32_t *dst = row0 + x * 16u;
+    const uint16_t addr = shr_scanline_addr(y, x);
+
+    for (uint32_t i = 0u; i < 4u; ++i) {
+        const uint8_t byte = s_f_bank[(uint16_t)(addr + i)];
+        for (uint32_t half = 0u; half < 2u; ++half) {
+            const uint8_t idx = (half == 0u) ? (uint8_t)(byte >> 4)
+                                             : (uint8_t)(byte & 0x0Fu);
+            const int32_t px = (int32_t)(x * 8u + i * 2u + half);
+            const uint8_t b2 =
+                s_f_bank[(uint16_t)(palette_base + idx * 2u + 1u)];
+            uint32_t color;
+            switch (b2 >> 4) {
+            case 1u:
+                color = shr4_rggb_pixel(px, (int32_t)s_f_out_row);
+                break;
+            case 2u:
+                color = shr4_pal256_color(byte);
+                break;
+            case 3u:
+                color = shr4_r4g4b4_pixel(y, px);
+                break;
+            default:
+                color = shr_palette_color(palette_base, idx);
+                break;
+            }
+            *dst++ = color;
+            *dst++ = color;
+        }
+    }
+}
+
+/* SHR4 640-mode cell: 4 bytes -> 16 single-width pixels. Each 2-bit
+ * pixel selects a palette entry from its position's quadrant (the
+ * standard 640-mode remap); that entry's mode nibble routes the pixel.
+ * RGGB uses the raw 2-bit value as the Bayer sample at full 640
+ * resolution; every other submode renders as standard 640 color. */
+static const uint8_t k_shr640_quad[4] = { 8u, 12u, 0u, 4u };
+
+static void shr4_render_cell_640(uint32_t *row0, uint32_t y, uint32_t x,
+                                 uint16_t palette_base)
+{
+    uint32_t *dst = row0 + x * 16u;
+    const uint16_t addr = shr_scanline_addr(y, x);
+    (void)y;
+
+    for (uint32_t i = 0u; i < 4u; ++i) {
+        const uint8_t byte = s_f_bank[(uint16_t)(addr + i)];
+        for (uint32_t lp = 0u; lp < 4u; ++lp) {
+            const uint8_t v = (uint8_t)((byte >> (6u - 2u * lp)) & 0x03u);
+            const uint8_t idx = (uint8_t)(k_shr640_quad[lp] + v);
+            const uint8_t b2 =
+                s_f_bank[(uint16_t)(palette_base + idx * 2u + 1u)];
+            if ((b2 >> 4) == 1u) {
+                const int32_t px = (int32_t)(x * 16u + i * 4u + lp);
+                *dst++ = shr4_rggb_pixel_at(px, (int32_t)s_f_out_row, 1);
+            } else {
+                *dst++ = shr_palette_color(palette_base, idx);
+            }
+        }
+    }
+}
+
+/* Evaluate the extended-mode state for one field bank: magic, 3200 ctrl,
+ * and (aux only) the paged-mode byte. Mirrors SDD's per-bank re-run. */
+static void shr_eval_field_modes(const volatile uint8_t *bank)
+{
+    s_f_bank = bank;
+    s_shr_color_bank = bank;
+    s_shr4_frame_active = (uint8_t)shr4_magic_present(bank);
+    s_shr3200_frame_active = 0u;
+    if (!s_shr4_frame_active && shr3200_magic_present(bank)) {
+        const uint16_t pal_start =
+            (uint16_t)bank[SHR_CTRL_ADDR + 2u] |
+            (uint16_t)((uint16_t)bank[SHR_CTRL_ADDR + 3u] << 8);
+        /* Palettes must fit below the 64K mirror: 200 lines * 32 bytes. */
+        if (pal_start < (uint16_t)(0xFFFFu - 200u * 32u)) {
+            s_shr3200_frame_active = 1u;
+            s_shr3200_bank = (bank[SHR_CTRL_ADDR + 1u] == 1u) ? 1u : 0u;
+            s_shr3200_pal_start = pal_start;
+        }
+    }
+}
+
+/* Render one SHR line of the current field into output row `out_row`.
+ * dup != 0 also copies the line to out_row + 1 (progressive doubling). */
+static void render_shr_line(uint32_t y, uint32_t out_row, int dup)
+{
+    uint32_t *row = &g_atn_framebuffer[out_row * SHR_WIDTH];
+    const uint8_t control = s_f_bank[0x9D00u + (uint16_t)y];
+    const uint16_t palette_base =
+        (uint16_t)(0x9E00u + ((uint16_t)(control & 0x0Fu) * 32u));
     const int is_640 = (control & 0x80u) != 0u;
     const int color_fill = (control & 0x20u) != 0u;
-    uint32_t *row0 = &g_atn_framebuffer[(y * 2u) * SHR_WIDTH];
-    uint32_t *row1 = row0 + SHR_WIDTH;
 
-    if (is_640) {
-        shr_render_cell_640(row0, x, a, palette_base);
-    } else {
-        shr_render_cell_320(row0, x, a, palette_base, color_fill);
+    /* RGGB samples in field space (0..199) normally, or unified
+     * 400-line space when interlaced. */
+    s_f_out_row = s_shr_interlaced ? out_row : (out_row >> 1);
+
+    for (uint32_t x = 0u; x < 40u; ++x) {
+        if (s_shr4_frame_active) {
+            if (is_640) {
+                shr4_render_cell_640(row, y, x, palette_base);
+            } else {
+                shr4_render_cell_320(row, y, x, palette_base);
+            }
+        } else if (s_shr3200_frame_active && !is_640) {
+            shr3200_render_cell_320(row, y, x);
+        } else {
+            const uint16_t addr = shr_scanline_addr(y, x);
+            const uint32_t a =
+                (uint32_t)s_f_bank[addr] |
+                ((uint32_t)s_f_bank[(uint16_t)(addr + 1u)] << 8) |
+                ((uint32_t)s_f_bank[(uint16_t)(addr + 2u)] << 16) |
+                ((uint32_t)s_f_bank[(uint16_t)(addr + 3u)] << 24);
+            if (is_640) {
+                shr_render_cell_640(row, x, a, palette_base);
+            } else {
+                shr_render_cell_320(row, x, a, palette_base, color_fill);
+            }
+        }
     }
-    memcpy(row1 + x * 16u, row0 + x * 16u, 16u * sizeof(uint32_t));
+    if (dup) {
+        memcpy(row + SHR_WIDTH, row, SHR_WIDTH * sizeof(uint32_t));
+    }
+}
+
+/* Tell the PL whether vTW must post main $6000-$9FFF for the second SHR
+ * interlace field. Write-on-change only. */
+static void shr_update_post_wide(uint8_t want)
+{
+    if (want == s_post_wide_last) return;
+    s_post_wide_last = want;
+    Xil_Out32(CARD_CTRL_VIDEO_POST_WIDE_REG, (uint32_t)want);
 }
 
 static void render_shr_frame_full(void)
@@ -1208,10 +1588,35 @@ static void render_shr_frame_full(void)
         return;
     }
 
-    for (uint32_t y = 0u; y < SHR_LOGICAL_HEIGHT; ++y) {
-        for (uint32_t x = 0u; x < 40u; ++x) {
-            render_shr_cell(y, x);
+    /* Mode/interlace decisions come from the AUX control plane, re-read
+     * every frame (mode-exit hygiene: clearing $9DFC drops the extended
+     * decode on the next frame). SHR4 wins over 3200, per SDD. */
+    shr_eval_field_modes(g_aux_bank);
+    s_shr_interlace_mode = 0u;
+    if (s_shr4_frame_active || s_shr3200_frame_active) {
+        const uint8_t paged = g_aux_bank[SHR_CTRL_ADDR + 0u];
+        if (paged == 1u) s_shr_interlace_mode = 1u;
+        g_acr_shr4_frames++;
+    }
+    shr_update_post_wide(s_shr_interlace_mode);
+
+    if (s_shr_interlace_mode != 0u) {
+        /* Interlace: even output rows from aux, odd rows from main; each
+         * field carries its own mode data, SCBs, and palettes. */
+        s_shr_interlaced = 1u;
+        for (uint32_t field = 0u; field < 2u; ++field) {
+            shr_eval_field_modes(field ? g_main_bank : g_aux_bank);
+            for (uint32_t y = 0u; y < SHR_LOGICAL_HEIGHT; ++y) {
+                render_shr_line(y, y * 2u + field, 0);
+            }
         }
+        s_shr_interlaced = 0u;
+        return;
+    }
+
+    s_shr_interlaced = 0u;
+    for (uint32_t y = 0u; y < SHR_LOGICAL_HEIGHT; ++y) {
+        render_shr_line(y, y * 2u, 1);
     }
 }
 
@@ -1293,6 +1698,7 @@ static void apply_video_settings_if_changed(void) {
 
 void apple_cycle_renderer_reset_local_video_state(void)
 {
+    s_shr_sync_hold = 1u;
     const uint32_t text_sw = SW_BIT(TEXT);
     const uint32_t settings = apple_fb_video_settings_get();
 
@@ -1301,6 +1707,9 @@ void apple_cycle_renderer_reset_local_video_state(void)
     s_frame_end_pending   = 0u;
     s_scanner_frame_lines = ATN_SCANNER_MAX_VERT_NTSC;
     s_pending_line0_mask  = 0u;
+    s_vtw_1mhz_active     = 0u;
+    s_vtw_pending_valid   = 0u;
+    s_vtw_pending_record  = 0ULL;
     s_chroma_prev_line    = 0xFFFFFFFFu;
     s_render_armed        = 0;
     s_just_resynced       = 1;
@@ -1351,6 +1760,57 @@ static void handle_video7_softswitch_record(uint64_t rec)
     s_video7_prev_an3_addr = low;
 }
 
+/*
+ * C029 can change in the middle of a frame. Abandon the current
+ * writer rather than publishing a buffer containing both legacy and
+ * SHR geometry. The next line-0 marker starts a complete frame in the
+ * newly selected mode; the compositor keeps showing its last coherent
+ * frame until then.
+ *
+ * This also drops any in-flight PAL-accurate capture. SHR uses its
+ * normal 640x400 renderer regardless of the configured legacy color
+ * mode, and PAL capture resumes from a clean frame after SHR exits.
+ */
+static void shr_mode_switch_resync(void)
+{
+    s_render_armed = 0;
+    s_frame_end_pending = 0u;
+    s_pending_line0_mask = 0u;
+    apple_pal_video_resync();
+    g_resync_pending = 1u;
+}
+
+/* Diagnostic: PL-vs-local C029 SHR disagreements repaired. */
+volatile uint32_t g_acr_shr_mode_resyncs = 0u;
+
+/* CPU1 calls this each drain batch with the PL's authoritative
+ * fake-SHR capture state. The local C029 shadow normally tracks it
+ * through I/O records; if a capture drop eats the C029 record itself,
+ * the two diverge and the renderer waits forever for frame markers
+ * that never come (or ignores the ones arriving). Repair by adopting
+ * the PL's state -- it is the side that actually gates the stream. */
+void apple_cycle_renderer_sync_shr_mode(uint8_t pl_shr_active)
+{
+    const int local = vidhd_shr_enabled();
+
+    if (s_shr_sync_hold) {
+        if (!pl_shr_active) {
+            s_shr_sync_hold = 0u;
+        }
+        return;
+    }
+    if (pl_shr_active && !local) {
+        s_vidhd_newvideo |= 0xC0u;
+    } else if (!pl_shr_active && local) {
+        s_vidhd_newvideo &= (uint8_t)~0x40u;
+    } else {
+        return;
+    }
+    g_acr_shr_mode_resyncs++;
+    apply_video_settings_if_changed();
+    shr_mode_switch_resync();
+}
+
 static void handle_vidhd_io_record(uint64_t rec)
 {
     const uint16_t addr = ace_io_addr(rec);
@@ -1363,6 +1823,7 @@ static void handle_vidhd_io_record(uint64_t rec)
         break;
     case 0xC029U:
         s_vidhd_newvideo = data;
+        s_shr_sync_hold = 0u;       /* real write beats the reset hold */
         apply_video_settings_if_changed();
         break;
     case 0xC034U:
@@ -1376,13 +1837,20 @@ static void handle_vidhd_io_record(uint64_t rec)
     }
 
     if (was_shr != vidhd_shr_enabled()) {
-        s_frame_display_mode = vidhd_shr_enabled() ?
-            APPLE_FB_DISPLAY_MODE_SHR : APPLE_FB_DISPLAY_MODE_LEGACY;
+        shr_mode_switch_resync();
     }
 }
 
 static void on_frame_end(void) {
-    const uint8_t pal_frame_ready = apple_pal_video_end_frame();
+    /*
+     * SHR is rendered as a complete 640x400 frame at on_frame_start().
+     * Its sparse capture stream has no PAL scanlines to complete, so it must
+     * bypass the PAL-accurate publication gate. Legacy frames retain the
+     * existing delayed PAL-completion contract.
+     */
+    const uint8_t frame_ready =
+        (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_SHR) ?
+            1u : apple_pal_video_end_frame();
 
     g_acr_frame_edges_seen++;
 
@@ -1401,7 +1869,7 @@ static void on_frame_end(void) {
      * frames finishing one accepted exact PAL capture; only publish when that
      * delayed frame is complete, never while a writer slot contains partial
      * PAL scanlines. */
-    if (pal_frame_ready != 0u) {
+    if (frame_ready != 0u) {
         apple_fb_writer_publish_frame(s_frame_display_mode,
                                       s_vidhd_border_color);
         g_acr_frames_complete++;
@@ -1454,9 +1922,10 @@ static void on_frame_start(void) {
     appletini_ntsc_set_framebuffer(slot_addr);
     apple_pal_video_set_framebuffer(slot_addr);
     apply_video_settings_if_changed();
-    apple_pal_video_begin_frame();
     if (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_SHR) {
         render_shr_frame_full();
+    } else {
+        apple_pal_video_begin_frame();
     }
     /* Do NOT reinitialise g_nColorBurstPixels here. Resetting the
      * counter at every frame start gave a chroma-warmup artifact
@@ -1535,7 +2004,7 @@ int apple_cycle_renderer_init(void) {
 
 /* ---------- Per-record dispatch ---------- */
 
-void apple_cycle_renderer_on_record(uint64_t rec) {
+static void apple_cycle_renderer_dispatch_record(uint64_t rec) {
     g_acr_records_seen++;
 
     /* Gap marker: 2b.1 already set g_resync_pending. We hold output
@@ -1757,4 +2226,98 @@ void apple_cycle_renderer_on_record(uint64_t rec) {
 
     g_acr_cycles_rendered++;
     s_records_in_frame++;
+}
+
+static int vtw_record_has_video_state(uint64_t rec)
+{
+    if (rec == 0ULL) {
+        return 0;
+    }
+    if (ace_record_kind(rec) == ACE_RECORD_KIND_SOFTSW_ACCESS) {
+        return 1;
+    }
+    return ace_record_kind(rec) == ACE_RECORD_KIND_LEGACY &&
+           ace_frame_en(rec);
+}
+
+static int vtw_records_are_consecutive(uint64_t prior, uint64_t next)
+{
+    const uint32_t prior_line = ace_line_in_frame(prior);
+    const uint32_t prior_cycle = ace_cycle_in_line(prior);
+    const uint32_t next_line = ace_line_in_frame(next);
+    const uint32_t next_cycle = ace_cycle_in_line(next);
+
+    if (prior_cycle < (ATN_SCANNER_MAX_HORZ - 1u)) {
+        return next_line == prior_line && next_cycle == prior_cycle + 1u;
+    }
+    if (next_cycle != 0u) {
+        return 0;
+    }
+    if (next_line == prior_line + 1u) {
+        return 1;
+    }
+    return next_line == 0u &&
+           (prior_line == (ATN_SCANNER_MAX_VERT_NTSC - 1u) ||
+            prior_line == (ATN_SCANNER_MAX_VERT_PAL - 1u));
+}
+
+static uint64_t vtw_record_with_advanced_video_state(uint64_t prior,
+                                                      uint64_t next)
+{
+    const uint64_t packed_mask =
+        (uint64_t)VTW_PHASE_SW_MASK << ACE_BIT_SW_DHIRES;
+    const uint64_t next_bits =
+        (uint64_t)(ace_softswitch_bits(next) & VTW_PHASE_SW_MASK)
+        << ACE_BIT_SW_DHIRES;
+
+    return (prior & ~packed_mask) | next_bits;
+}
+
+void apple_cycle_renderer_set_vtw_1mhz(uint8_t active)
+{
+    active = active != 0u ? 1u : 0u;
+    if (s_vtw_1mhz_active != 0u && active == 0u &&
+        s_vtw_pending_valid != 0u) {
+        apple_cycle_renderer_dispatch_record(s_vtw_pending_record);
+        s_vtw_pending_valid = 0u;
+    }
+    s_vtw_1mhz_active = active;
+}
+
+void apple_cycle_renderer_on_next_record(uint64_t rec)
+{
+    uint64_t pending;
+
+    if (s_vtw_pending_valid == 0u) {
+        return;
+    }
+
+    pending = s_vtw_pending_record;
+    if (s_vtw_1mhz_active != 0u &&
+        vtw_record_has_video_state(rec) &&
+        vtw_records_are_consecutive(pending, rec)) {
+        pending = vtw_record_with_advanced_video_state(pending, rec);
+    }
+
+    /*
+     * apple_cycle_egress calls this before applying rec's shadow-memory
+     * write, so the prior cycle sees next-cycle mode bits without seeing
+     * next-cycle RAM contents.
+     */
+    apple_cycle_renderer_dispatch_record(pending);
+    s_vtw_pending_valid = 0u;
+}
+
+void apple_cycle_renderer_on_record(uint64_t rec)
+{
+    if (s_vtw_1mhz_active != 0u &&
+        rec != 0ULL &&
+        ace_record_kind(rec) == ACE_RECORD_KIND_LEGACY &&
+        ace_frame_en(rec)) {
+        s_vtw_pending_record = rec;
+        s_vtw_pending_valid = 1u;
+        return;
+    }
+
+    apple_cycle_renderer_dispatch_record(rec);
 }

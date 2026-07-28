@@ -3,6 +3,8 @@
 #include <stdio.h>
 
 extern uint8_t boot_menu_service_aux_card_present(void);
+extern uint8_t boot_menu_service_machine_mode(void);
+#include "card_control_regs.h"   /* CARD_MACHINE_MODE_* */
 
 void config_menu_draw_smartport(uint16_t *fb,
                                 const config_menu_t *menu,
@@ -119,6 +121,12 @@ void config_menu_draw_usb(uint16_t *fb,
                         (uint8_t)(menu->item_focus == 1U),
                         menu->sdd_stream_enabled,
                         "SuperDuperDisplay stream (USB0)");
+    /* USB1 host (keyboards/mice): a full re-enumeration for devices that
+     * were too slow to enumerate at power-on. */
+    hgr_draw_item(fb, x, y + (2 * row_h), w,
+                  (uint8_t)(menu->item_focus == 2U),
+                  "Refresh USB1 devices (re-scan)",
+                  HGR_WHITE);
 }
 
 void config_menu_draw_applicard(uint16_t *fb,
@@ -307,14 +315,18 @@ void config_menu_draw_ethernet(uint16_t *fb,
         return;
     }
 
+    hgr_draw_check_item(fb, x, y, w,
+                        (uint8_t)(menu->item_focus == CONFIG_ETHERNET_ITEM_SLOT),
+                        menu->ethernet_slot1_enabled, "Enable in Slot 1");
+    if (menu->ethernet_slot1_enabled == 0U) {
+        return;
+    }
+
     config_menu_format_mac(menu->ethernet_config.mac, mac, sizeof(mac));
     config_menu_format_ipv4(menu->ethernet_config.ip, ip, sizeof(ip));
     config_menu_format_ipv4(menu->ethernet_config.subnet, subnet, sizeof(subnet));
     config_menu_format_ipv4(menu->ethernet_config.gateway, gateway, sizeof(gateway));
 
-    hgr_draw_check_item(fb, x, y, w,
-                        (uint8_t)(menu->item_focus == CONFIG_ETHERNET_ITEM_SLOT),
-                        menu->ethernet_slot1_enabled, "Enable in Slot 1");
     hgr_draw_check_item(fb, x, y + row_h, w,
                         (uint8_t)(menu->item_focus ==
                                   CONFIG_ETHERNET_ITEM_CONFIG_ENABLED),
@@ -390,12 +402,100 @@ void config_menu_draw_ethernet(uint16_t *fb,
                   HGR_WHITE);
 }
 
+void config_menu_draw_transwarp(uint16_t *fb,
+                                const config_menu_t *menu,
+                                int x,
+                                int y,
+                                int w)
+{
+    const int row_h = CMUI_ROW_H + CMUI_ROW_GAP;
+    uint8_t machine_blocks;
+
+    if (menu == NULL) {
+        return;
+    }
+
+    /* Dim on a POSITIVE unsupported identification (IIgs); before the
+     * boot ROM reports (UNKNOWN) the setting is a valid intent that
+     * engages later. //e and II/II+ both accelerate. Also dimmed
+     * outside the boot menu: sessions start and stop only from BOOT
+     * mode (the toggle handler enforces it; speed stays live). */
+    machine_blocks =
+        (boot_menu_service_machine_mode() == CARD_MACHINE_MODE_IIGS) ? 1U : 0U;
+
+    if (machine_blocks != 0U) {
+        hgr_draw_check_item_dimmed(fb, x, y, w,
+                                   (uint8_t)(menu->item_focus ==
+                                             CONFIG_TRANSWARP_ITEM_ENABLE),
+                                   0U, "Accelerate (not on a IIgs)");
+    } else if (menu->usb_owned != 0U) {
+        hgr_draw_check_item_dimmed(fb, x, y, w,
+                                   (uint8_t)(menu->item_focus ==
+                                             CONFIG_TRANSWARP_ITEM_ENABLE),
+                                   menu->vtw_enabled,
+                                   "Accelerate the Apple II (BOOT mode)");
+    } else {
+        hgr_draw_check_item(fb, x, y, w,
+                            (uint8_t)(menu->item_focus ==
+                                      CONFIG_TRANSWARP_ITEM_ENABLE),
+                            menu->vtw_enabled,
+                            "Accelerate the Apple II");
+    }
+    hgr_draw_value_item(fb, x, y + row_h, w,
+                        (uint8_t)(menu->item_focus ==
+                                  CONFIG_TRANSWARP_ITEM_SPEED),
+                        "Speed:",
+                        config_menu_vtw_speed_label(menu));
+    hgr_draw_check_item(fb, x, y + (2 * row_h), w,
+                        (uint8_t)(menu->item_focus ==
+                                  CONFIG_TRANSWARP_ITEM_SLUG),
+                        menu->vtw_slug_key_enabled,
+                        "Enable 0.05 MHz slug debug key");
+
+    /* Per-region slowdown (TransWarp DIP block 2): each enabled region
+     * drops the core to 1 MHz for a window after it is touched, so
+     * timing-sensitive I/O keeps working at high core speeds. */
+    hgr_draw_check_item(fb, x, y + (3 * row_h), w,
+                        (uint8_t)(menu->item_focus ==
+                                  CONFIG_TRANSWARP_ITEM_FLOATBUS),
+                        (uint8_t)((menu->vtw_slowdown_mask & (1U << 7)) != 0U),
+                        "Slow down floating-bus I/O ($C019,$C030-$C05F)");
+    hgr_draw_check_item(fb, x, y + (4 * row_h), w,
+                        (uint8_t)(menu->item_focus ==
+                                  CONFIG_TRANSWARP_ITEM_PADDLE),
+                        (uint8_t)((menu->vtw_slowdown_mask & (1U << 8)) != 0U),
+                        "Slow down paddles/joystick ($C064-$C070)");
+    for (uint8_t slot = 1U; slot <= CONFIG_TRANSWARP_SLOT_COUNT; ++slot) {
+        const uint32_t item = CONFIG_TRANSWARP_ITEM_SLOT_FIRST + slot - 1U;
+        char slot_label[34];
+
+        (void)snprintf(slot_label, sizeof(slot_label),
+                       "Slow down physical slot %u", (unsigned)slot);
+        hgr_draw_check_item(
+            fb, x, y + ((int)item * row_h), w,
+            (uint8_t)(menu->item_focus == item),
+            (uint8_t)((menu->vtw_slowdown_mask & (1U << (slot - 1U))) != 0U),
+            slot_label);
+    }
+    {
+        char win_val[16];
+        (void)snprintf(win_val, sizeof(win_val), "%u cyc",
+                       (unsigned)menu->vtw_slowdown_cycles);
+        hgr_draw_value_item(fb, x,
+                            y + (CONFIG_TRANSWARP_ITEM_WINDOW * row_h), w,
+                            (uint8_t)(menu->item_focus ==
+                                      CONFIG_TRANSWARP_ITEM_WINDOW),
+                            "Slowdown window:", win_val);
+    }
+}
+
 void config_menu_draw_ram(uint16_t *fb,
                           const config_menu_t *menu,
                           int x,
                           int y,
                           int w)
 {
+    const int row_h = CMUI_ROW_H + CMUI_ROW_GAP;
     const uint8_t focused =
         (uint8_t)(menu != NULL && menu->item_focus == 0U);
 
@@ -414,5 +514,15 @@ void config_menu_draw_ram(uint16_t *fb,
         hgr_draw_check_item(fb, x, y, w, focused,
                             menu->ram_enabled,
                             "Provide 64K aux + 8MB RamWorks");
+    }
+    if (menu->vtw_enabled != 0U) {
+        /* Informational only (not a focusable item): the accelerated
+         * machine always has 128K from shadow memory; with Appletini
+         * RAM enabled (no physical aux card) the accelerator serves the
+         * full 8MB RamWorks from PSRAM at speed. */
+        hgr_draw_item_dimmed(fb, x, y + row_h, w, 0U,
+                             menu->ram_enabled != 0U
+                                 ? "TransWarp on: 128K + 8MB RamWorks, accelerated"
+                                 : "TransWarp on: 128K built in");
     }
 }

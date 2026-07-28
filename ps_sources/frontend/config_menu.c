@@ -12,6 +12,8 @@
 #include "ff.h"
 
 #include "apple_fb_handoff.h"
+#include "boot_menu_service.h"
+#include "card_control_regs.h"
 #include "compositor_layout.h"
 #include "profile_manager.h"
 #include "../image_versions.h"
@@ -20,11 +22,9 @@
 #include "video_ghosting.h"
 #include "video_output.h"
 
-extern uint8_t boot_menu_service_aux_card_present(void);
-
 #define APPLETINI_CFG_PATH "0:/appletini_cfg.txt"
 #define APPLETINI_CFG_MAX 8192U
-#define APPLETINI_CFG_VERSION 103U
+#define APPLETINI_CFG_VERSION 106U
 #define ETHERNET_CONTROL_SLOT 1U
 #define DISK2_CONTROL_SLOT 6U
 #define MOUSE_CONTROL_SLOT 2U
@@ -48,6 +48,22 @@ extern uint8_t boot_menu_service_aux_card_present(void);
 #define CONFIG_DEFAULT_SMARTPORT_DISK1_ENABLED 1U
 #define CONFIG_DEFAULT_DISK2_SLOT6_ENABLED 1U
 #define CONFIG_DEFAULT_APPLICARD_SLOT5_ENABLED 0U
+#define CONFIG_DEFAULT_VTW_ENABLED 0U
+#define CONFIG_DEFAULT_VTW_SPEED_MODE 0U     /* full-rate bursts */
+#define CONFIG_DEFAULT_VTW_PACE_DIVIDER 37U  /* ~3.6 MHz-equivalent */
+#define CONFIG_DEFAULT_VTW_SLUG_KEY 0U       /* slug USB key disarmed */
+#define CONFIG_DEFAULT_VTW_SLOWDOWN_MASK 0U     /* all regions full speed */
+#define CONFIG_DEFAULT_VTW_SLOWDOWN_CYCLES 512U /* 1 MHz window per access */
+/* Per-region slowdown mask bits (mirror card_control_regs.h). */
+#define VTW_SLOW_FLOATBUS_BIT     (1U << 7)
+#define VTW_SLOW_PADDLE_BIT      (1U << 8)
+#define VTW_SLOW_LEGACY_VIDEO_BIT (1U << 9)
+#define VTW_SLOW_VALID_MASK       0x1FFU
+#define VTW_SLOW_SLOT_BIT(s)      (1U << ((s) - 1U))   /* s = 1..7 */
+/* Duration presets the menu cycles through (Apple cycles). */
+static const uint16_t k_vtw_slowdown_cycle_presets[] = {
+    256U, 512U, 1024U, 2048U, 4096U, 8192U, 16384U, 32768U
+};
 #define CONFIG_DEFAULT_DISK2_ACTIVITY_VISIBLE 1U
 #define CONFIG_DEFAULT_DISK2_SOUND_VOLUME 5U
 #define CONFIG_MAX_DISK2_SOUND_VOLUME 10U
@@ -62,6 +78,16 @@ extern uint8_t boot_menu_service_aux_card_present(void);
 #define CONFIG_DEFAULT_CLOCK_ENABLED 1U
 #define CONFIG_DEFAULT_RAM_ENABLED 1U
 #define CONFIG_DEFAULT_SP_RAMDISK_ENABLED 0U
+
+/* Config keys for the file-manager per-feature last-directory memory,
+ * indexed by CONFIG_BROWSER_CAT_*. */
+static const char *const k_browser_lastdir_keys[CONFIG_BROWSER_CAT_COUNT] = {
+    "browser.lastdir.smartport",
+    "browser.lastdir.disk2",
+    "browser.lastdir.bezel",
+    "browser.lastdir.rom",
+    "browser.lastdir.profile"
+};
 #define CONFIG_USB_KEY_USAGE_A 0x04U
 #define CONFIG_USB_KEY_USAGE_1 0x1EU
 #define CONFIG_USB_KEY_USAGE_0 0x27U
@@ -80,14 +106,17 @@ extern uint8_t boot_menu_service_aux_card_present(void);
 
 #define CONFIG_SMARTPORT_ALL_DEVICES 0xFFU
 #define CONFIG_DISK2_PO_IMAGE_BYTES 143360U
-#define CONFIG_SMARTPORT_140K_PO_IMAGE_BYTES 143360U
-#define CONFIG_SMARTPORT_800K_PO_IMAGE_BYTES 819200U
 
 static uint8_t config_menu_str_ieq(const char *a, const char *b);
 
 #define BOOT_TIMEOUT_TICKS_3S 399000000U
 #define BOOT_TIMEOUT_TICKS_5S 665000000U
-#define BOOT_TIMEOUT_TICKS_ALWAYS 0xFFFFFFFFU
+#define BOOT_TIMEOUT_TICKS_UNLIMITED 0xFFFFFFFFU
+/* Sentinel, not a tick count: the boot menu opens straight to the config
+ * menu with no 'A' wait. boot_menu_card decodes it to the "open menu" status
+ * bit the ROM reads. The window still never expires, so a ROM that missed
+ * the bit waits rather than boots. */
+#define BOOT_TIMEOUT_TICKS_OPEN_MENU 0xFFFFFFFEU
 #define MOUSE_SENSITIVITY_MIN 3U
 #define MOUSE_SENSITIVITY_MAX 150U
 #define MOUSE_SENSITIVITY_DEFAULT_INDEX 11U
@@ -104,7 +133,8 @@ static const uint8_t k_mouse_sensitivity_steps[MOUSE_SENSITIVITY_STEP_COUNT] = {
 typedef enum {
     CONFIG_BOOT_TIMEOUT_3S = 0,
     CONFIG_BOOT_TIMEOUT_5S,
-    CONFIG_BOOT_TIMEOUT_ALWAYS,
+    CONFIG_BOOT_TIMEOUT_UNLIMITED,   /* prompt waits for 'A' forever */
+    CONFIG_BOOT_TIMEOUT_OPEN_MENU,   /* skip the prompt, open the menu */
     CONFIG_BOOT_TIMEOUT_COUNT
 } config_boot_timeout_t;
 
@@ -161,8 +191,8 @@ typedef struct {
 } config_browser_preview_cache_t;
 
 #define CONFIG_BROWSER_MAX_ENTRIES 96U
-#define CONFIG_BROWSER_VISIBLE_ROWS 12U
-#define CONFIG_BROWSER_PROFILE_IMAGE_VISIBLE_ROWS 11U
+#define CONFIG_BROWSER_VISIBLE_ROWS 17U
+#define CONFIG_BROWSER_PROFILE_IMAGE_VISIBLE_ROWS 17U
 #define CONFIG_BROWSER_PROFILE_PREVIEW_W 118
 #define CONFIG_BROWSER_PROFILE_PREVIEW_GAP 8
 #define CONFIG_BROWSER_PROFILE_PREVIEW_PAD_X 4
@@ -186,6 +216,7 @@ static const char * const k_tab_labels[CONFIG_TAB_COUNT] = {
     "Phasor",
     "Ethernet",
     "Z80 Applicard",
+    "TransWarp",
     "Clock",
     "RAM",
     "USB",
@@ -218,13 +249,13 @@ static const char * const k_about_third_party[] = {
     "Xilinx/AMD Vitis standalone BSP and drivers",
     "A2RetroNet project - Oliver Schmidt",
     "z80emu - Lin Ke-Fong",
-    "AppleWin reference - AppleWin emulator by Tom Charlesworth, Michael Pohoreski, and others",
+    "AppleWin reference - AppleWin emulator by Tom Charlesworth, Michael Pohoreski and others",
     "Accurate PAL video timing reference - Stephane Champailler",
     "SC-01 Speech chip emulation reference - Olivier Galibert",
     "Mockingboard/Phasor reference - Tom Charlesworth",
     "",
     "And in no particular order: Peter Ferrie, John Brooks, fenarinarsa, Jansky, the Paris a2cp",
-    "fatdog, 4am, the Infinitum Slack, the Apple II community discords and so many more..."
+    "fatdog, 4am, arekkusu, MAME, Infinitum, the Apple II discords and so many more..."
 };
 
 static const char * const k_usb_binding_config_keys[CONFIG_MENU_USB_BIND_ACTION_COUNT] = {
@@ -237,7 +268,11 @@ static const char * const k_usb_binding_config_keys[CONFIG_MENU_USB_BIND_ACTION_
     "usb.menu.bind.screenshot.a2",
     "usb.menu.bind.screenshot.1080p",
     "usb.menu.bind.ok",
-    "usb.menu.bind.back"
+    "usb.menu.bind.back",
+    "usb.menu.bind.vtw.toggle",
+    "usb.menu.bind.vtw.up",
+    "usb.menu.bind.vtw.down",
+    "usb.menu.bind.vtw.slug"
 };
 
 static const char * const k_usb_binding_action_text[CONFIG_MENU_USB_BIND_ACTION_COUNT] = {
@@ -250,7 +285,11 @@ static const char * const k_usb_binding_action_text[CONFIG_MENU_USB_BIND_ACTION_
     "PRTSCR A2",
     "PRTSCR 1080P",
     "OK",
-    "Back"
+    "Back",
+    "TW 1MHz",
+    "TW speed +",
+    "TW speed -",
+    "TW slug .05"
 };
 
 static const uint8_t k_boot_usb_binding_action_order[CONFIG_MENU_USB_BIND_ACTION_COUNT] = {
@@ -263,8 +302,17 @@ static const uint8_t k_boot_usb_binding_action_order[CONFIG_MENU_USB_BIND_ACTION
     CONFIG_MENU_USB_BIND_ACTION_OK,
     CONFIG_MENU_USB_BIND_ACTION_BACK,
     CONFIG_MENU_USB_BIND_ACTION_SCREENSHOT_A2,
-    CONFIG_MENU_USB_BIND_ACTION_SCREENSHOT_1080P
+    CONFIG_MENU_USB_BIND_ACTION_SCREENSHOT_1080P,
+    CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_TOGGLE,
+    CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_UP,
+    CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_DOWN,
+    CONFIG_MENU_USB_BIND_ACTION_VTW_SLUG_TOGGLE
 };
+
+#define CONFIG_MENU_BOOT_USB_BIND_COLUMN_COUNT 3U
+static const uint8_t k_boot_usb_binding_column_first[] = { 0U, 4U, 8U };
+static const uint8_t k_boot_usb_binding_column_row_first[] = { 0U, 0U, 1U };
+static const uint8_t k_boot_usb_binding_column_count[] = { 4U, 4U, 6U };
 
 static const ui_key_t k_usb_binding_keys[CONFIG_MENU_USB_BIND_ACTION_COUNT] = {
     UI_KEY_PAGE_UP,
@@ -276,7 +324,11 @@ static const ui_key_t k_usb_binding_keys[CONFIG_MENU_USB_BIND_ACTION_COUNT] = {
     UI_KEY_NONE,
     UI_KEY_NONE,
     UI_KEY_ENTER,
-    UI_KEY_BACK
+    UI_KEY_BACK,
+    UI_KEY_NONE,
+    UI_KEY_NONE,
+    UI_KEY_NONE,
+    UI_KEY_NONE
 };
 
 static const usb_hid_menu_source_t k_usb_binding_defaults[CONFIG_MENU_USB_BIND_ACTION_COUNT] = {
@@ -289,7 +341,11 @@ static const usb_hid_menu_source_t k_usb_binding_defaults[CONFIG_MENU_USB_BIND_A
     CONFIG_USB_KEY_SOURCE(CONFIG_USB_KEY_USAGE_F12),
     CONFIG_USB_KEY_SOURCE(CONFIG_USB_KEY_USAGE_PRINTSCN),
     USB_HID_MENU_ACTION_SELECT,
-    CONFIG_USB_KEY_SOURCE(CONFIG_USB_KEY_USAGE_ESCAPE)
+    CONFIG_USB_KEY_SOURCE(CONFIG_USB_KEY_USAGE_ESCAPE),
+    USB_HID_MENU_SOURCE_NONE,
+    USB_HID_MENU_SOURCE_NONE,
+    USB_HID_MENU_SOURCE_NONE,
+    USB_HID_MENU_SOURCE_NONE
 };
 
 static const usb_hid_menu_source_t k_usb_binding_source_order[] = {
@@ -309,12 +365,6 @@ static const usb_hid_menu_source_t k_usb_binding_button_source_order[] = {
     USB_HID_MENU_ACTION_SELECT,
     USB_HID_MENU_ACTION_ITEM_DOWN,
     USB_HID_MENU_ACTION_ITEM_UP
-};
-
-static const usb_hid_menu_source_t k_usb_binding_screenshot_source_order[] = {
-    USB_HID_MENU_SOURCE_NONE,
-    CONFIG_USB_KEY_SOURCE(CONFIG_USB_KEY_USAGE_F12),
-    CONFIG_USB_KEY_SOURCE(CONFIG_USB_KEY_USAGE_PRINTSCN)
 };
 
 void config_menu_set_status(config_menu_t *menu, uint8_t warning, const char *text)
@@ -760,29 +810,66 @@ static char *config_menu_parse_config_line(char *line, char **out_value)
         return NULL;
     }
 
+    /* Split key from value at the FIRST '='. A '#' is a comment only when
+     * it appears before the '=' (a commented-out line) or on a line with
+     * no '=' at all. A '#' inside the VALUE is handled per-value below:
+     * quoted values are literal (so file paths may contain '#', spaces,
+     * and every other allowed filename character), unquoted values keep
+     * the legacy trailing-comment + trim behaviour. */
+    eq = strchr(line, '=');
     hash = strchr(line, '#');
-    if (hash != NULL) {
-        *hash = '\0';
+    if (eq == NULL || (hash != NULL && hash < eq)) {
+        return NULL;
     }
+
+    *eq = '\0';
     key = config_menu_trim(line);
     if (key == NULL || key[0] == '\0') {
         return NULL;
     }
 
-    eq = strchr(key, '=');
-    if (eq == NULL) {
-        return NULL;
+    value = eq + 1;
+    while (config_menu_is_space(*value) != 0U) {
+        value++;
     }
-    *eq = '\0';
-    value = config_menu_trim(eq + 1);
-    key = config_menu_trim(key);
-    if (key == NULL || value == NULL || key[0] == '\0') {
+    if (*value == '"') {
+        /* Quoted value: literal up to the closing quote. FAT/exFAT
+         * filenames cannot contain '"', so the delimiter is unambiguous
+         * and needs no escaping. Anything after the closing quote (e.g. a
+         * trailing comment) is ignored. */
+        char *close;
+        value++;
+        close = strchr(value, '"');
+        if (close != NULL) {
+            *close = '\0';
+        }
+    } else {
+        /* Legacy unquoted value: '#' starts a trailing comment; trim. */
+        char *vhash = strchr(value, '#');
+        if (vhash != NULL) {
+            *vhash = '\0';
+        }
+        value = config_menu_trim(value);
+    }
+    if (value == NULL) {
         return NULL;
     }
 
     config_menu_ascii_lower_in_place(key);
     *out_value = value;
     return key;
+}
+
+/* Quote a stored path as a config value so '#', spaces, and every other
+ * allowed filename character round-trip through save/load. FAT/exFAT paths
+ * never contain '"', so no escaping is needed. An empty path becomes "".
+ * Returns dst. (The FIRMWARE sentinel for bezel/video-ROM is handled at the
+ * call site: empty there means "built in", not an empty path.) */
+static const char *config_menu_quote_path(const char *path,
+                                          char *dst, size_t dst_len)
+{
+    (void)snprintf(dst, dst_len, "\"%s\"", (path != NULL) ? path : "");
+    return dst;
 }
 
 static char config_menu_path_eq_char(char c)
@@ -862,7 +949,7 @@ const char *config_menu_basename(const char *path)
     return name;
 }
 
-static uint8_t config_menu_has_smartport_ext(const char *name, FSIZE_t size)
+static uint8_t config_menu_has_smartport_ext(const char *name)
 {
     const char *dot = NULL;
 
@@ -881,9 +968,7 @@ static uint8_t config_menu_has_smartport_ext(const char *name, FSIZE_t size)
     return (config_menu_str_ieq(dot, ".hdv") != 0U ||
             config_menu_str_ieq(dot, ".2mg") != 0U ||
             config_menu_str_ieq(dot, ".2img") != 0U ||
-            (config_menu_str_ieq(dot, ".po") != 0U &&
-             (size == (FSIZE_t)CONFIG_SMARTPORT_140K_PO_IMAGE_BYTES ||
-              size == (FSIZE_t)CONFIG_SMARTPORT_800K_PO_IMAGE_BYTES))) ? 1U : 0U;
+            config_menu_str_ieq(dot, ".po") != 0U) ? 1U : 0U;
 }
 
 static uint8_t config_menu_has_disk2_ext(const char *name, FSIZE_t size)
@@ -1106,9 +1191,11 @@ const char *config_menu_boot_timeout_text(uint8_t mode)
         return "3 seconds";
     case CONFIG_BOOT_TIMEOUT_5S:
         return "5 seconds";
-    case CONFIG_BOOT_TIMEOUT_ALWAYS:
+    case CONFIG_BOOT_TIMEOUT_OPEN_MENU:
+        return "Always show menu";
+    case CONFIG_BOOT_TIMEOUT_UNLIMITED:
     default:
-        return "Always show";
+        return "Unlimited";
     }
 }
 
@@ -1168,11 +1255,20 @@ static uint8_t config_menu_usb_binding_action_is_screenshot(uint32_t action)
             action == CONFIG_MENU_USB_BIND_ACTION_SCREENSHOT_1080P) ? 1U : 0U;
 }
 
+static uint8_t config_menu_usb_binding_action_is_vtw(uint32_t action)
+{
+    return (action >= CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_TOGGLE &&
+            action <= CONFIG_MENU_USB_BIND_ACTION_VTW_SLUG_TOGGLE) ? 1U : 0U;
+}
+
 static uint8_t config_menu_usb_binding_source_valid_for_action(
     uint32_t action,
     usb_hid_menu_source_t source)
 {
-    if (config_menu_usb_binding_action_is_screenshot(action) != 0U) {
+    /* Screenshot and vTW-speed actions are global keyboard bindings:
+     * a dedicated key (or unbound), never a menu-navigation source. */
+    if (config_menu_usb_binding_action_is_screenshot(action) != 0U ||
+        config_menu_usb_binding_action_is_vtw(action) != 0U) {
         return (source == USB_HID_MENU_SOURCE_NONE ||
                 usb_hid_menu_source_is_keyboard(source) != 0U) ? 1U : 0U;
     }
@@ -1189,94 +1285,6 @@ static usb_hid_menu_source_t config_menu_usb_binding_source_clamp_for_action(
 
     return (config_menu_usb_binding_source_valid_for_action(action, value) != 0U) ?
         value : USB_HID_MENU_SOURCE_NONE;
-}
-
-static uint32_t config_menu_usb_binding_source_index(usb_hid_menu_source_t source)
-{
-    for (uint32_t i = 0U;
-         i < (sizeof(k_usb_binding_source_order) /
-              sizeof(k_usb_binding_source_order[0]));
-         ++i) {
-        if (k_usb_binding_source_order[i] == source) {
-            return i;
-        }
-    }
-    return 0U;
-}
-
-static uint32_t config_menu_usb_binding_button_source_index(usb_hid_menu_source_t source)
-{
-    for (uint32_t i = 0U;
-         i < (sizeof(k_usb_binding_button_source_order) /
-              sizeof(k_usb_binding_button_source_order[0]));
-         ++i) {
-        if (k_usb_binding_button_source_order[i] == source) {
-            return i;
-        }
-    }
-    return 2U;
-}
-
-static uint32_t config_menu_usb_binding_screenshot_source_index(
-    usb_hid_menu_source_t source)
-{
-    for (uint32_t i = 0U;
-         i < (sizeof(k_usb_binding_screenshot_source_order) /
-              sizeof(k_usb_binding_screenshot_source_order[0]));
-         ++i) {
-        if (k_usb_binding_screenshot_source_order[i] == source) {
-            return i;
-        }
-    }
-    return 0U;
-}
-
-static usb_hid_menu_source_t config_menu_usb_binding_next_ordered_source(
-    const usb_hid_menu_source_t *order,
-    uint32_t count,
-    uint32_t index,
-    int8_t delta)
-{
-    if (order == NULL || count == 0U) {
-        return USB_HID_MENU_SOURCE_NONE;
-    }
-
-    if (delta < 0) {
-        index = (index == 0U) ? (count - 1U) : (index - 1U);
-    } else {
-        index = (index + 1U) % count;
-    }
-    return order[index];
-}
-
-static usb_hid_menu_source_t config_menu_usb_binding_next_source(
-    uint32_t action,
-    usb_hid_menu_source_t source,
-    int8_t delta)
-{
-    if (config_menu_usb_binding_action_is_button(action) != 0U) {
-        return config_menu_usb_binding_next_ordered_source(
-            k_usb_binding_button_source_order,
-            sizeof(k_usb_binding_button_source_order) /
-                sizeof(k_usb_binding_button_source_order[0]),
-            config_menu_usb_binding_button_source_index(source),
-            delta);
-    }
-    if (config_menu_usb_binding_action_is_screenshot(action) != 0U) {
-        return config_menu_usb_binding_next_ordered_source(
-            k_usb_binding_screenshot_source_order,
-            sizeof(k_usb_binding_screenshot_source_order) /
-                sizeof(k_usb_binding_screenshot_source_order[0]),
-            config_menu_usb_binding_screenshot_source_index(source),
-            delta);
-    }
-
-    return config_menu_usb_binding_next_ordered_source(
-        k_usb_binding_source_order,
-        sizeof(k_usb_binding_source_order) /
-            sizeof(k_usb_binding_source_order[0]),
-        config_menu_usb_binding_source_index(source),
-        delta);
 }
 
 static void config_menu_usb_bindings_set_defaults(config_menu_t *menu)
@@ -1712,6 +1720,16 @@ usb_hid_menu_source_t config_menu_usb_screenshot_1080p_binding_source(
         menu->usb_menu_bindings[CONFIG_MENU_USB_BIND_ACTION_SCREENSHOT_1080P]);
 }
 
+usb_hid_menu_source_t config_menu_usb_vtw_binding_source(
+    const config_menu_t *menu, uint32_t action)
+{
+    if (menu == NULL || config_menu_usb_binding_action_is_vtw(action) == 0U) {
+        return USB_HID_MENU_SOURCE_NONE;
+    }
+    return config_menu_usb_binding_source_clamp_for_action(
+        action, menu->usb_menu_bindings[action]);
+}
+
 const char *config_menu_video_output_text(uint8_t mono)
 {
     return (mono != 0U) ? "Monochrome" : "Color";
@@ -1957,9 +1975,11 @@ static uint32_t config_menu_boot_timeout_ticks(uint8_t mode)
         return BOOT_TIMEOUT_TICKS_3S;
     case CONFIG_BOOT_TIMEOUT_5S:
         return BOOT_TIMEOUT_TICKS_5S;
-    case CONFIG_BOOT_TIMEOUT_ALWAYS:
+    case CONFIG_BOOT_TIMEOUT_OPEN_MENU:
+        return BOOT_TIMEOUT_TICKS_OPEN_MENU;
+    case CONFIG_BOOT_TIMEOUT_UNLIMITED:
     default:
-        return BOOT_TIMEOUT_TICKS_ALWAYS;
+        return BOOT_TIMEOUT_TICKS_UNLIMITED;
     }
 }
 
@@ -2013,6 +2033,21 @@ static void config_menu_coerce_border(config_menu_t *menu)
         menu->show_bezel = 0U;
         menu->show_debugging = 0U;
     }
+}
+
+/* Config 104 exposed separate Speaker (bit 7) and Video (bit 9) slowdown
+ * controls. Config 105 combines them as Floating-bus I/O on bit 7. Preserve
+ * either old choice, then permanently discard the retired bit. */
+static void config_menu_migrate_vtw_slowdown_mask(config_menu_t *menu)
+{
+    if (menu == NULL) {
+        return;
+    }
+    if ((menu->vtw_slowdown_mask &
+         (VTW_SLOW_FLOATBUS_BIT | VTW_SLOW_LEGACY_VIDEO_BIT)) != 0U) {
+        menu->vtw_slowdown_mask |= VTW_SLOW_FLOATBUS_BIT;
+    }
+    menu->vtw_slowdown_mask &= VTW_SLOW_VALID_MASK;
 }
 
 static void config_menu_apply_border(config_menu_t *menu)
@@ -2107,8 +2142,7 @@ static void config_menu_apply_video_rom(config_menu_t *menu)
         apple_fb_video_rom_gen_set(0U);   /* no override -> baked Enhanced US */
         return;
     }
-    if (config_menu_mount_sd() != FR_OK ||
-        f_open(&file, menu->video_rom_path, FA_READ) != FR_OK) {
+    if (config_menu_open_path(&file, menu->video_rom_path, FA_READ) != FR_OK) {
         apple_fb_video_rom_gen_set(0U);
         config_menu_set_status(menu, 1U, "VIDEO ROM OPEN FAILED - USING BUILT-IN");
         return;
@@ -2316,6 +2350,10 @@ static uint8_t config_menu_ethernet_card_access(config_menu_t *menu)
     if (menu == NULL) {
         return 0U;
     }
+    if (menu->ethernet_slot1_enabled == 0U) {
+        config_menu_set_status(menu, 1U, "ENABLE UTHERNET II FIRST");
+        return 0U;
+    }
     if (menu->usb_owned != 0U) {
         config_menu_set_status(menu, 1U, "CARD ACCESS ONLY FROM BOOT MENU");
         return 0U;
@@ -2329,20 +2367,27 @@ static void config_menu_ethernet_set_status_ip(
     uint8_t warning,
     const uthernet2_network_config_t *config);
 
-static uint8_t config_menu_acquire_ethernet_dhcp(config_menu_t *menu,
-                                                 uint8_t report)
+static uint8_t config_menu_start_ethernet_dhcp(config_menu_t *menu,
+                                               uint8_t report)
 {
-    uthernet2_network_config_t lease;
     char detail[CONFIG_MENU_STATUS_LEN];
 
     if (config_menu_ethernet_card_access(menu) == 0U) {
         return 0U;
     }
-    if (menu->platform.ethernet_dhcp_acquire == NULL) {
+    if (menu->platform.ethernet_dhcp_start == NULL ||
+        menu->platform.ethernet_dhcp_poll == NULL) {
         if (report != 0U) {
             config_menu_set_status(menu, 1U, "UTHERNET II DHCP UNAVAILABLE");
         }
         return 0U;
+    }
+    if (menu->ethernet_dhcp_pending != 0U) {
+        if (menu->platform.ethernet_dhcp_cancel != NULL) {
+            menu->platform.ethernet_dhcp_cancel(menu->platform.ctx);
+        }
+        menu->ethernet_dhcp_pending = 0U;
+        menu->ethernet_dhcp_report = 0U;
     }
     if (menu->platform.ethernet_write_config == NULL ||
         menu->platform.ethernet_write_config(menu->platform.ctx,
@@ -2357,11 +2402,10 @@ static uint8_t config_menu_acquire_ethernet_dhcp(config_menu_t *menu,
     if (report != 0U) {
         config_menu_set_status(menu, 1U, "DHCP REQUEST IN PROGRESS");
     }
-    if (menu->platform.ethernet_dhcp_acquire(menu->platform.ctx,
-                                             menu->ethernet_config.mac,
-                                             &lease,
-                                             detail,
-                                             sizeof(detail)) != 0) {
+    if (menu->platform.ethernet_dhcp_start(menu->platform.ctx,
+                                           menu->ethernet_config.mac,
+                                           detail,
+                                           sizeof(detail)) != 0) {
         if (report != 0U) {
             config_menu_set_status(menu,
                                    1U,
@@ -2369,28 +2413,21 @@ static uint8_t config_menu_acquire_ethernet_dhcp(config_menu_t *menu,
         }
         return 0U;
     }
-
-    menu->ethernet_config = lease;
-    menu->ethernet_address_mode = CONFIG_MENU_ETHERNET_ADDRESS_DHCP;
-    menu->ethernet_config_enabled = 1U;
-    config_menu_save_settings(menu);
-    if (report != 0U && menu->session_only == 0U) {
-        config_menu_ethernet_set_status_ip(menu,
-                                           "DHCP LEASE IP",
-                                           0U,
-                                           &menu->ethernet_config);
-    }
+    menu->ethernet_dhcp_pending = 1U;
+    menu->ethernet_dhcp_report = report;
     return 1U;
 }
 
 static uint8_t config_menu_apply_ethernet_config(config_menu_t *menu,
                                                  uint8_t report)
 {
-    if (menu == NULL || menu->ethernet_config_enabled == 0U) {
+    if (menu == NULL ||
+        menu->ethernet_slot1_enabled == 0U ||
+        menu->ethernet_config_enabled == 0U) {
         return 1U;
     }
     if (menu->ethernet_address_mode == CONFIG_MENU_ETHERNET_ADDRESS_DHCP) {
-        return config_menu_acquire_ethernet_dhcp(menu, report);
+        return config_menu_start_ethernet_dhcp(menu, report);
     }
     if (config_menu_ethernet_card_access(menu) == 0U) {
         return 0U;
@@ -2413,6 +2450,76 @@ static uint8_t config_menu_apply_ethernet_config(config_menu_t *menu,
     }
     return 1U;
 }
+
+void config_menu_start_boot_dhcp(config_menu_t *menu)
+{
+    if (menu != NULL &&
+        menu->ethernet_address_mode == CONFIG_MENU_ETHERNET_ADDRESS_DHCP) {
+        (void)config_menu_apply_ethernet_config(menu, 0U);
+    }
+}
+
+void config_menu_poll_ethernet(config_menu_t *menu)
+{
+    uthernet2_network_config_t lease;
+    char detail[CONFIG_MENU_STATUS_LEN];
+    int result;
+
+    if (menu == NULL || menu->ethernet_dhcp_pending == 0U) {
+        return;
+    }
+    if (menu->ethernet_slot1_enabled == 0U ||
+        menu->ethernet_config_enabled == 0U ||
+        menu->ethernet_address_mode != CONFIG_MENU_ETHERNET_ADDRESS_DHCP) {
+        if (menu->platform.ethernet_dhcp_cancel != NULL) {
+            menu->platform.ethernet_dhcp_cancel(menu->platform.ctx);
+        }
+        menu->ethernet_dhcp_pending = 0U;
+        menu->ethernet_dhcp_report = 0U;
+        return;
+    }
+    if (menu->platform.ethernet_dhcp_poll == NULL) {
+        menu->ethernet_dhcp_pending = 0U;
+        if (menu->ethernet_dhcp_report != 0U) {
+            config_menu_set_status(menu, 1U, "UTHERNET II DHCP UNAVAILABLE");
+        }
+        menu->ethernet_dhcp_report = 0U;
+        return;
+    }
+
+    detail[0] = '\0';
+    result = menu->platform.ethernet_dhcp_poll(menu->platform.ctx,
+                                               &lease,
+                                               detail,
+                                               sizeof(detail));
+    if (result == 0) {
+        return;
+    }
+    menu->ethernet_dhcp_pending = 0U;
+    if (result < 0) {
+        if (menu->ethernet_dhcp_report != 0U) {
+            config_menu_set_status(menu,
+                                   1U,
+                                   detail[0] != '\0' ? detail : "DHCP FAILED");
+        }
+        menu->ethernet_dhcp_report = 0U;
+        return;
+    }
+
+    menu->ethernet_config = lease;
+    menu->ethernet_address_mode = CONFIG_MENU_ETHERNET_ADDRESS_DHCP;
+    menu->ethernet_config_enabled = 1U;
+    config_menu_save_settings(menu);
+    if (menu->ethernet_dhcp_report != 0U && menu->session_only == 0U) {
+        config_menu_ethernet_set_status_ip(menu,
+                                           "DHCP LEASE IP",
+                                           0U,
+                                           &menu->ethernet_config);
+    }
+    menu->ethernet_dhcp_report = 0U;
+}
+
+static void config_menu_apply_vtw_slowdown(config_menu_t *menu, uint8_t save);
 
 static void config_menu_apply_runtime_internal(config_menu_t *menu,
                                                uint8_t apply_boot_timeout)
@@ -2447,6 +2554,21 @@ static void config_menu_apply_runtime_internal(config_menu_t *menu,
         menu->platform.set_applicard_resource_max(menu->platform.ctx,
                                                   menu->applicard_resource_max);
     }
+    if (menu->platform.set_vtw_config != NULL) {
+        menu->platform.set_vtw_config(menu->platform.ctx,
+                                      menu->vtw_enabled,
+                                      menu->vtw_speed_mode,
+                                      menu->vtw_pace_divider);
+    }
+    if (menu->platform.set_vtw_slug_key_enabled != NULL) {
+        menu->platform.set_vtw_slug_key_enabled(menu->platform.ctx,
+                                                menu->vtw_slug_key_enabled);
+    }
+    if (menu->platform.set_iiplus_data_tap != NULL) {
+        menu->platform.set_iiplus_data_tap(menu->platform.ctx,
+                                           menu->iiplus_data_tap);
+    }
+    config_menu_apply_vtw_slowdown(menu, 0U);
     if (menu->platform.set_supersprite_enabled != NULL) {
         menu->platform.set_supersprite_enabled(menu->platform.ctx,
                                                menu->supersprite_enabled);
@@ -2523,6 +2645,23 @@ static uint8_t config_menu_config_path_is_firmware_default(const char *value)
                      config_menu_str_ieq(value, "firmware") != 0U);
 }
 
+/* Returns 1 and stores the value if key is a browser.lastdir.* entry. */
+static uint8_t config_menu_parse_browser_lastdir(config_menu_t *menu,
+                                                 const char *key,
+                                                 const char *value)
+{
+    uint8_t i;
+
+    for (i = 0U; i < CONFIG_BROWSER_CAT_COUNT; ++i) {
+        if (strcmp(key, k_browser_lastdir_keys[i]) == 0) {
+            config_menu_copy_text(menu->browser_last_dir[i],
+                                  sizeof(menu->browser_last_dir[i]), value);
+            return 1U;
+        }
+    }
+    return 0U;
+}
+
 static void config_menu_parse_key_value(config_menu_t *menu, const char *key, const char *value)
 {
     uint32_t i;
@@ -2535,8 +2674,12 @@ static void config_menu_parse_key_value(config_menu_t *menu, const char *key, co
     if (strcmp(key, "appletini.config.version") == 0) {
         return;
     } else if (strcmp(key, "boot.menu.seconds") == 0) {
-        if (config_menu_str_ieq(value, "always") != 0U) {
-            menu->boot_timeout_mode = CONFIG_BOOT_TIMEOUT_ALWAYS;
+        if (config_menu_str_ieq(value, "menu") != 0U) {
+            menu->boot_timeout_mode = CONFIG_BOOT_TIMEOUT_OPEN_MENU;
+        } else if (config_menu_str_ieq(value, "unlimited") != 0U ||
+                   config_menu_str_ieq(value, "always") != 0U) {
+            /* "always" is the old name for the unlimited-wait mode. */
+            menu->boot_timeout_mode = CONFIG_BOOT_TIMEOUT_UNLIMITED;
         } else if (strtoul(value, NULL, 10) == 5UL) {
             menu->boot_timeout_mode = CONFIG_BOOT_TIMEOUT_5S;
         } else {
@@ -2588,6 +2731,8 @@ static void config_menu_parse_key_value(config_menu_t *menu, const char *key, co
                                   sizeof(menu->video_rom_path),
                                   value);
         }
+    } else if (config_menu_parse_browser_lastdir(menu, key, value) != 0U) {
+        /* stored into browser_last_dir[] */
     } else if (config_menu_parse_indexed_config_key(
                    key, "smartport.disk.", 1U, SMARTPORT_DEVICE_COUNT,
                    &i, &suffix) != 0U) {
@@ -2602,6 +2747,35 @@ static void config_menu_parse_key_value(config_menu_t *menu, const char *key, co
         menu->applicard_slot5_enabled = config_menu_bool_text(value);
     } else if (strcmp(key, "applicard.resource.max") == 0) {
         menu->applicard_resource_max = config_menu_bool_text(value);
+    } else if (strcmp(key, "vtw.enabled") == 0) {
+        menu->vtw_enabled = config_menu_bool_text(value);
+    } else if (strcmp(key, "vtw.speed.mode") == 0) {
+        unsigned long mode = strtoul(value, NULL, 10);
+        menu->vtw_speed_mode = (mode <= 2UL) ? (uint8_t)mode : 0U;
+    } else if (strcmp(key, "vtw.slug.key") == 0) {
+        menu->vtw_slug_key_enabled = config_menu_bool_text(value);
+    } else if (strcmp(key, "vtw.iiplus.tap") == 0) {
+        unsigned long tap = strtoul(value, NULL, 10);
+        if (tap < CARD_CTRL_IIPLUS_DATA_TAP_MIN) {
+            tap = CARD_CTRL_IIPLUS_DATA_TAP_MIN;
+        } else if (tap > CARD_CTRL_IIPLUS_DATA_TAP_MAX) {
+            tap = CARD_CTRL_IIPLUS_DATA_TAP_MAX;
+        }
+        menu->iiplus_data_tap = (uint8_t)tap;
+    } else if (strcmp(key, "vtw.slowdown.mask") == 0) {
+        menu->vtw_slowdown_mask =
+            (uint16_t)(strtoul(value, NULL, 0) & 0x3FFUL);
+    } else if (strcmp(key, "vtw.slowdown.cycles") == 0) {
+        unsigned long c = strtoul(value, NULL, 10);
+        menu->vtw_slowdown_cycles = (c > 0xFFFFUL) ? 0xFFFFU : (uint16_t)c;
+    } else if (strcmp(key, "vtw.pace.divider") == 0) {
+        unsigned long div = strtoul(value, NULL, 10);
+        if (div < 2UL) {
+            div = 2UL;
+        } else if (div > 255UL) {
+            div = 255UL;
+        }
+        menu->vtw_pace_divider = (uint8_t)div;
     } else if (strcmp(key, "disk2.slot6.enabled") == 0) {
         menu->disk2_slot6_enabled = config_menu_bool_text(value);
     } else if (strcmp(key, "disk2.activity.visible") == 0) {
@@ -2676,6 +2850,9 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
     char ethernet_ip[16];
     char ethernet_subnet[16];
     char ethernet_gateway[16];
+    /* Scratch for one quoted path value at a time (see config_menu_quote_path).
+     * No single APPEND_CFG below passes two path args, so reuse is safe. */
+    char path_val[CONFIG_MENU_PATH_LEN + 3U];
 
     if (menu == NULL || path == NULL || path[0] == '\0') {
         return 0U;
@@ -2716,7 +2893,8 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                "video.bezel.visible=%s\n"
                "video.bezel.path=%s\n",
                (unsigned)APPLETINI_CFG_VERSION,
-               (menu->boot_timeout_mode == CONFIG_BOOT_TIMEOUT_ALWAYS) ? "ALWAYS" :
+               (menu->boot_timeout_mode == CONFIG_BOOT_TIMEOUT_OPEN_MENU) ? "MENU" :
+               (menu->boot_timeout_mode == CONFIG_BOOT_TIMEOUT_UNLIMITED) ? "UNLIMITED" :
                ((menu->boot_timeout_mode == CONFIG_BOOT_TIMEOUT_5S) ? "5" : "3"),
                (menu->boot_device == CONFIG_BOOT_DEVICE_DISK2) ? "DISK2" : "SMARTPORT",
                config_menu_scanlines_config(menu->scanlines_mode),
@@ -2730,16 +2908,29 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                (menu->border_flood != 0u) ? "FLOOD" : "BEZEL",
                config_menu_on_off(menu->show_debugging),
                config_menu_on_off(menu->show_bezel),
-               (menu->bezel_path[0] != '\0') ? menu->bezel_path : "FIRMWARE");
+               (menu->bezel_path[0] != '\0')
+                   ? config_menu_quote_path(menu->bezel_path,
+                                            path_val, sizeof(path_val))
+                   : "FIRMWARE");
 
     APPEND_CFG("video.rom=%s\n",
-               (menu->video_rom_path[0] != '\0') ?
-               menu->video_rom_path : "FIRMWARE");
+               (menu->video_rom_path[0] != '\0')
+                   ? config_menu_quote_path(menu->video_rom_path,
+                                            path_val, sizeof(path_val))
+                   : "FIRMWARE");
+
+    for (uint32_t cat = 0U; cat < CONFIG_BROWSER_CAT_COUNT; ++cat) {
+        APPEND_CFG("%s=%s\n",
+                   k_browser_lastdir_keys[cat],
+                   config_menu_quote_path(menu->browser_last_dir[cat],
+                                          path_val, sizeof(path_val)));
+    }
 
     for (uint32_t device = 0U; device < SMARTPORT_DEVICE_COUNT; ++device) {
         APPEND_CFG("smartport.disk.%u.path=%s\n",
                    (unsigned)(device + 1U),
-                   menu->smartport_disk_paths[device]);
+                   config_menu_quote_path(menu->smartport_disk_paths[device],
+                                          path_val, sizeof(path_val)));
     }
     for (uint32_t device = 0U; device < SMARTPORT_DEVICE_COUNT; ++device) {
         APPEND_CFG("smartport.disk.%u.enabled=%s\n",
@@ -2750,13 +2941,15 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
     APPEND_CFG("disk2.slot6.enabled=%s\n"
                "disk2.activity.visible=%s\n"
                "disk2.sound.volume=%u\n"
-               "disk2.drive.1.path=%s\n"
-               "disk2.drive.2.path=%s\n",
+               "disk2.drive.1.path=%s\n",
                config_menu_on_off(menu->disk2_slot6_enabled),
                config_menu_on_off(menu->disk2_activity_visible),
                (unsigned)config_menu_disk2_sound_volume_clamp(menu->disk2_sound_volume),
-               menu->disk2_disk_paths[0],
-               menu->disk2_disk_paths[1]);
+               config_menu_quote_path(menu->disk2_disk_paths[0],
+                                      path_val, sizeof(path_val)));
+    APPEND_CFG("disk2.drive.2.path=%s\n",
+               config_menu_quote_path(menu->disk2_disk_paths[1],
+                                      path_val, sizeof(path_val)));
 
     for (uint32_t drive = 0U; drive < 2U; ++drive) {
         for (uint32_t slot = 0U; slot < 4U; ++slot) {
@@ -2770,11 +2963,25 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
     APPEND_CFG("mouse.slot2.enabled=%s\n"
                "mouse.sensitivity=%u\n"
                "applicard.slot5.enabled=%s\n"
-               "applicard.resource.max=%s\n",
+               "applicard.resource.max=%s\n"
+               "vtw.enabled=%s\n"
+               "vtw.speed.mode=%u\n"
+               "vtw.pace.divider=%u\n"
+               "vtw.slug.key=%s\n"
+               "vtw.iiplus.tap=%u\n"
+               "vtw.slowdown.mask=0x%X\n"
+               "vtw.slowdown.cycles=%u\n",
                config_menu_on_off(menu->mouse_slot2_enabled),
                (unsigned)menu->mouse_sensitivity,
                config_menu_on_off(menu->applicard_slot5_enabled),
-               config_menu_on_off(menu->applicard_resource_max));
+               config_menu_on_off(menu->applicard_resource_max),
+               config_menu_on_off(menu->vtw_enabled),
+               (unsigned)menu->vtw_speed_mode,
+               (unsigned)menu->vtw_pace_divider,
+               config_menu_on_off(menu->vtw_slug_key_enabled),
+               (unsigned)menu->iiplus_data_tap,
+               (unsigned)menu->vtw_slowdown_mask,
+               (unsigned)menu->vtw_slowdown_cycles);
 
     for (uint32_t binding = 0U;
          binding < CONFIG_MENU_USB_BIND_ACTION_COUNT;
@@ -2912,6 +3119,7 @@ static void config_menu_load_settings(config_menu_t *menu)
     config_menu_coerce_video_ghosting(menu);
     config_menu_coerce_border(menu);
     config_menu_coerce_ethernet(menu);
+    config_menu_migrate_vtw_slowdown_mask(menu);
     config_menu_usb_bindings_coerce(menu);
     menu->settings_loaded = 1U;
     menu->session_only = 0U;
@@ -3093,6 +3301,11 @@ static void config_menu_reset_settings_only(config_menu_t *menu)
         return;
     }
 
+    if (menu->ethernet_dhcp_pending != 0U &&
+        menu->platform.ethernet_dhcp_cancel != NULL) {
+        menu->platform.ethernet_dhcp_cancel(menu->platform.ctx);
+    }
+
     menu->boot_timeout_mode = CONFIG_DEFAULT_BOOT_TIMEOUT_MODE;
     menu->boot_device = CONFIG_DEFAULT_BOOT_DEVICE;
     menu->scanlines_mode = CONFIG_DEFAULT_SCANLINES_MODE;
@@ -3123,10 +3336,18 @@ static void config_menu_reset_settings_only(config_menu_t *menu)
     menu->disk2_slot6_enabled = CONFIG_DEFAULT_DISK2_SLOT6_ENABLED;
     menu->applicard_slot5_enabled = CONFIG_DEFAULT_APPLICARD_SLOT5_ENABLED;
     menu->applicard_resource_max = 0U;
+    menu->vtw_enabled = CONFIG_DEFAULT_VTW_ENABLED;
+    menu->vtw_speed_mode = CONFIG_DEFAULT_VTW_SPEED_MODE;
+    menu->vtw_pace_divider = CONFIG_DEFAULT_VTW_PACE_DIVIDER;
+    menu->vtw_slug_key_enabled = CONFIG_DEFAULT_VTW_SLUG_KEY;
+    menu->iiplus_data_tap = CARD_CTRL_IIPLUS_DATA_TAP_DEFAULT;
+    menu->vtw_slowdown_mask = CONFIG_DEFAULT_VTW_SLOWDOWN_MASK;
+    menu->vtw_slowdown_cycles = CONFIG_DEFAULT_VTW_SLOWDOWN_CYCLES;
     menu->disk2_activity_visible = CONFIG_DEFAULT_DISK2_ACTIVITY_VISIBLE;
     menu->disk2_sound_volume = CONFIG_DEFAULT_DISK2_SOUND_VOLUME;
     memset(menu->disk2_slots, 0, sizeof(menu->disk2_slots));
     memset(menu->disk2_disk_paths, 0, sizeof(menu->disk2_disk_paths));
+    memset(menu->browser_last_dir, 0, sizeof(menu->browser_last_dir));
 
     menu->mouse_slot2_enabled = CONFIG_DEFAULT_MOUSE_SLOT2_ENABLED;
     menu->mouse_sensitivity = CONFIG_DEFAULT_MOUSE_SENSITIVITY;
@@ -3139,6 +3360,8 @@ static void config_menu_reset_settings_only(config_menu_t *menu)
     menu->ethernet_config_enabled = CONFIG_DEFAULT_ETHERNET_CONFIG_ENABLED;
     menu->ethernet_address_mode = CONFIG_DEFAULT_ETHERNET_ADDRESS_MODE;
     menu->ethernet_edit_index = 0U;
+    menu->ethernet_dhcp_pending = 0U;
+    menu->ethernet_dhcp_report = 0U;
     uthernet2_default_config(&menu->ethernet_config);
     menu->clock_enabled = CONFIG_DEFAULT_CLOCK_ENABLED;
     menu->ram_enabled = CONFIG_DEFAULT_RAM_ENABLED;
@@ -3205,6 +3428,7 @@ static uint8_t config_menu_read_settings_from_path(config_menu_t *menu,
     config_menu_coerce_video_ghosting(menu);
     config_menu_coerce_border(menu);
     config_menu_coerce_ethernet(menu);
+    config_menu_migrate_vtw_slowdown_mask(menu);
     config_menu_usb_bindings_coerce(menu);
     menu->settings_loaded = 1U;
     menu->session_only = 0U;
@@ -3346,6 +3570,203 @@ void config_menu_set_applicard_enabled(config_menu_t *menu, uint8_t enable)
                                "APPLICARD Z80 OFF - SLOT 5 EMPTY");
 }
 
+/* Speed presets shown in the TransWarp tab. Divided-mode rates follow from
+ * the 133.333 MHz fabric clock / divider. The divider column stays
+ * meaningful for the full and 1 MHz rows so cycling back into a divided
+ * preset restores a sane value. */
+typedef struct {
+    const char *label;
+    uint8_t mode;      /* 0 full, 1 divided, 2 1MHz-locked */
+    uint8_t divider;
+} vtw_speed_preset_t;
+
+static const vtw_speed_preset_t k_vtw_speed_presets[] = {
+    { "1 MHz default",        2U, 37U },
+    { "2.6 MHz",              1U, 51U },
+    { "3.6 MHz (TransWarp)",  1U, 37U },
+    { "7 MHz",                1U, 19U },
+    { "13 MHz (UltraWarp)",   1U, 10U },
+    { "26 MHz",               1U,  5U },
+    { "MAX Speed",            0U, 37U },
+};
+#define VTW_SPEED_PRESET_COUNT \
+    ((uint32_t)(sizeof(k_vtw_speed_presets) / sizeof(k_vtw_speed_presets[0])))
+
+static uint32_t config_menu_vtw_preset_index(const config_menu_t *menu)
+{
+    if (menu->vtw_speed_mode == CARD_CTRL_VTW_SPEED_FULL) {
+        return VTW_SPEED_PRESET_COUNT - 1U;
+    }
+    if (menu->vtw_speed_mode == CARD_CTRL_VTW_SPEED_1MHZ) {
+        return 0U;
+    }
+    for (uint32_t i = 0U; i < VTW_SPEED_PRESET_COUNT; ++i) {
+        if (k_vtw_speed_presets[i].mode == CARD_CTRL_VTW_SPEED_DIVIDED &&
+            k_vtw_speed_presets[i].divider == menu->vtw_pace_divider) {
+            return i;
+        }
+    }
+    return 2U;   /* unknown divider (UART-set): treat as the TW preset */
+}
+
+const char *config_menu_vtw_speed_label(const config_menu_t *menu)
+{
+    if (menu == NULL) {
+        return "?";
+    }
+    return k_vtw_speed_presets[config_menu_vtw_preset_index(menu)].label;
+}
+
+static void config_menu_vtw_cycle_speed(config_menu_t *menu, int8_t delta)
+{
+    uint32_t index = config_menu_vtw_preset_index(menu);
+
+    index = (index + VTW_SPEED_PRESET_COUNT +
+             (uint32_t)(delta < 0 ? -1 : 1)) % VTW_SPEED_PRESET_COUNT;
+    config_menu_set_vtw_speed(menu,
+                              k_vtw_speed_presets[index].mode,
+                              k_vtw_speed_presets[index].divider);
+    config_menu_set_status(menu, 0U, "TRANSWARP SPEED SET");
+}
+
+/* Single authority for the virtual TransWarp settings: applies the live
+ * service configuration AND persists, so the config tab and the uart 'vtw'
+ * command can never disagree with what the next boot does. */
+void config_menu_set_vtw_enabled(config_menu_t *menu, uint8_t enable)
+{
+    if (menu == NULL) {
+        return;
+    }
+    menu->vtw_enabled = enable ? 1U : 0U;
+    if (menu->platform.set_vtw_config != NULL) {
+        menu->platform.set_vtw_config(menu->platform.ctx,
+                                      menu->vtw_enabled,
+                                      menu->vtw_speed_mode,
+                                      menu->vtw_pace_divider);
+    }
+    config_menu_save_settings(menu);
+    config_menu_set_status(menu, menu->vtw_enabled,
+                           menu->vtw_enabled != 0U ?
+                               "TRANSWARP ON - //E ACCELERATED" :
+                               "TRANSWARP OFF - CTRL-RESET TO RESUME");
+}
+
+void config_menu_set_vtw_speed(config_menu_t *menu,
+                               uint8_t speed_mode,
+                               uint8_t pace_divider)
+{
+    if (menu == NULL) {
+        return;
+    }
+    menu->vtw_speed_mode = (speed_mode <= 2U) ? speed_mode : 0U;
+    menu->vtw_pace_divider = (pace_divider >= 2U) ? pace_divider : 2U;
+    if (menu->platform.set_vtw_config != NULL) {
+        menu->platform.set_vtw_config(menu->platform.ctx,
+                                      menu->vtw_enabled,
+                                      menu->vtw_speed_mode,
+                                      menu->vtw_pace_divider);
+    }
+    config_menu_save_settings(menu);
+}
+
+/* Mockingboard / Phasor live in slot 4. Its virtual-card detection reads
+ * the 6522 VIA timers with cycle-counted loops, which fail at high core
+ * speed -- so its slot slowdown is ALWAYS forced on when the card is
+ * present, regardless of the per-slot config. */
+#define VTW_MOCKINGBOARD_SLOT 4U
+
+/* Push the per-region slowdown config to the PL (and persist). The stored
+ * mask is the user's choice; the mask actually sent to hardware also
+ * force-includes the Mockingboard/Phasor slot when that card is enabled. */
+static void config_menu_apply_vtw_slowdown(config_menu_t *menu, uint8_t save)
+{
+    uint16_t eff_mask;
+    uint16_t eff_cycles;
+
+    if (menu == NULL) {
+        return;
+    }
+    eff_mask   = menu->vtw_slowdown_mask;
+    eff_cycles = menu->vtw_slowdown_cycles;
+    if (menu->mockingboard_slot4_enabled != 0U) {
+        eff_mask |= VTW_SLOW_SLOT_BIT(VTW_MOCKINGBOARD_SLOT);
+        if (eff_cycles == 0U) {
+            eff_cycles = CONFIG_DEFAULT_VTW_SLOWDOWN_CYCLES;
+        }
+    }
+    if (menu->platform.set_vtw_slowdown != NULL) {
+        menu->platform.set_vtw_slowdown(menu->platform.ctx,
+                                        eff_mask, eff_cycles);
+    }
+    if (save != 0U) {
+        config_menu_save_settings(menu);
+    }
+}
+
+static uint32_t config_menu_vtw_slowdown_cycle_index(const config_menu_t *menu)
+{
+    uint32_t count = (uint32_t)(sizeof(k_vtw_slowdown_cycle_presets) /
+                                sizeof(k_vtw_slowdown_cycle_presets[0]));
+    for (uint32_t i = 0U; i < count; ++i) {
+        if (k_vtw_slowdown_cycle_presets[i] == menu->vtw_slowdown_cycles) {
+            return i;
+        }
+    }
+    return 1U;   /* default 512 */
+}
+
+static void config_menu_vtw_cycle_slowdown_window(config_menu_t *menu,
+                                                  int8_t delta)
+{
+    uint32_t count = (uint32_t)(sizeof(k_vtw_slowdown_cycle_presets) /
+                                sizeof(k_vtw_slowdown_cycle_presets[0]));
+    uint32_t idx = config_menu_vtw_slowdown_cycle_index(menu);
+
+    idx = (idx + count + (uint32_t)(delta < 0 ? -1 : 1)) % count;
+    menu->vtw_slowdown_cycles = k_vtw_slowdown_cycle_presets[idx];
+    config_menu_apply_vtw_slowdown(menu, 1U);
+    config_menu_set_status(menu, 0U, "SLOWDOWN WINDOW SET");
+}
+
+static void config_menu_vtw_toggle_slowdown_region(config_menu_t *menu,
+                                                   uint16_t bit,
+                                                   const char *name)
+{
+    char text[CONFIG_MENU_STATUS_LEN];
+
+    menu->vtw_slowdown_mask ^= bit;
+    config_menu_apply_vtw_slowdown(menu, 1U);
+    (void)snprintf(text, sizeof(text), "SLOW %s: %s", name,
+                   (menu->vtw_slowdown_mask & bit) ? "ON" : "OFF");
+    config_menu_set_status(menu, 0U, text);
+}
+
+static uint8_t config_menu_vtw_toggle_focused_slot(config_menu_t *menu)
+{
+    uint8_t slot;
+    char name[12];
+
+    if (menu == NULL ||
+        menu->item_focus < CONFIG_TRANSWARP_ITEM_SLOT_FIRST ||
+        menu->item_focus > CONFIG_TRANSWARP_ITEM_SLOT_LAST) {
+        return 0U;
+    }
+
+    slot = (uint8_t)(menu->item_focus -
+                     CONFIG_TRANSWARP_ITEM_SLOT_FIRST + 1U);
+    (void)snprintf(name, sizeof(name), "SLOT %u", (unsigned)slot);
+    config_menu_vtw_toggle_slowdown_region(menu,
+                                           VTW_SLOW_SLOT_BIT(slot), name);
+    return 1U;
+}
+
+/* Re-push the effective slowdown config to the PL (e.g. after the
+ * Mockingboard/Phasor slot is toggled, which force-adds its slot). */
+void config_menu_refresh_vtw_slowdown(config_menu_t *menu)
+{
+    config_menu_apply_vtw_slowdown(menu, 0U);
+}
+
 void config_menu_set_sdd_stream(config_menu_t *menu, uint8_t enable)
 {
     if (menu == NULL) {
@@ -3421,9 +3842,13 @@ uint8_t config_menu_usb0_sd_remote_active(const config_menu_t *menu)
     return (menu != NULL && menu->usb0_sd_remote_active != 0U) ? 1U : 0U;
 }
 
-static uint32_t config_menu_tab_item_count(uint32_t tab)
+static uint32_t config_menu_tab_item_count(const config_menu_t *menu)
 {
-    switch (tab) {
+    if (menu == NULL) {
+        return 0U;
+    }
+
+    switch (menu->tab) {
     case CONFIG_TAB_BOOT_SETTINGS:
         return CONFIG_MENU_BOOT_ITEM_COUNT;
     case CONFIG_TAB_PROFILES:
@@ -3433,7 +3858,7 @@ static uint32_t config_menu_tab_item_count(uint32_t tab)
     case CONFIG_TAB_SMARTPORT:
         return SMARTPORT_DEVICE_COUNT + 3U; /* overlay + N slots + ram disk + SuperSprite */
     case CONFIG_TAB_USB:
-        return 2U;                          /* SD remote mount + SDD stream */
+        return 3U;              /* SD remote mount + SDD stream + USB1 refresh */
     case CONFIG_TAB_DISK2:
         return 5U;
     case CONFIG_TAB_MOUSE:
@@ -3441,9 +3866,12 @@ static uint32_t config_menu_tab_item_count(uint32_t tab)
     case CONFIG_TAB_MOCKINGBOARD:
         return config_menu_phasor_item_count();
     case CONFIG_TAB_ETHERNET:
-        return CONFIG_ETHERNET_ITEM_COUNT;
+        return (menu->ethernet_slot1_enabled != 0U) ?
+            CONFIG_ETHERNET_ITEM_COUNT : 1U;
     case CONFIG_TAB_APPLICARD:
         return 2U;
+    case CONFIG_TAB_TRANSWARP:
+        return CONFIG_TRANSWARP_ITEM_COUNT;
     case CONFIG_TAB_RAM:
         return 1U;
     case CONFIG_TAB_ABOUT:
@@ -3478,9 +3906,109 @@ uint32_t config_menu_boot_usb_binding_item_for_action(uint32_t action)
     return CONFIG_MENU_BOOT_ITEM_COUNT;
 }
 
+static uint8_t config_menu_boot_usb_binding_position(uint32_t item_focus,
+                                                     uint32_t *column,
+                                                     uint32_t *row)
+{
+    uint32_t index;
+
+    if (column == NULL || row == NULL ||
+        item_focus < CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM ||
+        item_focus >= CONFIG_MENU_BOOT_ITEM_COUNT) {
+        return 0U;
+    }
+
+    index = item_focus - CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM;
+    for (uint32_t i = 0U; i < CONFIG_MENU_BOOT_USB_BIND_COLUMN_COUNT; ++i) {
+        const uint32_t first = k_boot_usb_binding_column_first[i];
+        const uint32_t count = k_boot_usb_binding_column_count[i];
+
+        if (index >= first && index < first + count) {
+            *column = i;
+            *row = (uint32_t)k_boot_usb_binding_column_row_first[i] +
+                   index - first;
+            return 1U;
+        }
+    }
+    return 0U;
+}
+
+static uint32_t config_menu_boot_usb_binding_item_at(uint32_t column,
+                                                     uint32_t row)
+{
+    uint32_t first_row;
+    uint32_t last_row;
+
+    if (column >= CONFIG_MENU_BOOT_USB_BIND_COLUMN_COUNT) {
+        return CONFIG_MENU_BOOT_ITEM_COUNT;
+    }
+
+    first_row = k_boot_usb_binding_column_row_first[column];
+    last_row = first_row + k_boot_usb_binding_column_count[column] - 1U;
+    if (row < first_row) {
+        row = first_row;
+    } else if (row > last_row) {
+        row = last_row;
+    }
+
+    return CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM +
+           k_boot_usb_binding_column_first[column] + row - first_row;
+}
+
+static uint8_t config_menu_boot_usb_binding_move_horizontal(config_menu_t *menu,
+                                                            int8_t delta)
+{
+    uint32_t column;
+    uint32_t row;
+
+    if (menu == NULL ||
+        config_menu_boot_usb_binding_position(menu->item_focus,
+                                              &column,
+                                              &row) == 0U) {
+        return 0U;
+    }
+
+    if (delta < 0) {
+        column = (column == 0U) ?
+            (CONFIG_MENU_BOOT_USB_BIND_COLUMN_COUNT - 1U) : column - 1U;
+    } else {
+        column = (column + 1U) % CONFIG_MENU_BOOT_USB_BIND_COLUMN_COUNT;
+    }
+    menu->item_focus = config_menu_boot_usb_binding_item_at(column, row);
+    return 1U;
+}
+
+static uint8_t config_menu_boot_usb_binding_move_vertical(config_menu_t *menu,
+                                                          int8_t delta)
+{
+    uint32_t column;
+    uint32_t row;
+    uint32_t first_row;
+    uint32_t last_row;
+
+    if (menu == NULL ||
+        config_menu_boot_usb_binding_position(menu->item_focus,
+                                              &column,
+                                              &row) == 0U) {
+        return 0U;
+    }
+
+    first_row = k_boot_usb_binding_column_row_first[column];
+    last_row = first_row + k_boot_usb_binding_column_count[column] - 1U;
+    if (delta < 0) {
+        menu->item_focus = (row == first_row) ?
+            CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM :
+            config_menu_boot_usb_binding_item_at(column, row - 1U);
+    } else {
+        menu->item_focus = (row == last_row) ? 0U :
+            config_menu_boot_usb_binding_item_at(column, row + 1U);
+    }
+    return 1U;
+}
+
 static void config_menu_clamp_item(config_menu_t *menu)
 {
-    const uint32_t count = (menu != NULL) ? config_menu_tab_item_count(menu->tab) : 0U;
+    const uint32_t count = config_menu_tab_item_count(menu);
 
     if (menu == NULL || count == 0U) {
         return;
@@ -3512,7 +4040,7 @@ static void config_menu_prev_tab(config_menu_t *menu)
 
 static void config_menu_next_item(config_menu_t *menu)
 {
-    const uint32_t count = (menu != NULL) ? config_menu_tab_item_count(menu->tab) : 0U;
+    const uint32_t count = config_menu_tab_item_count(menu);
 
     if (menu == NULL || count == 0U) {
         return;
@@ -3522,7 +4050,7 @@ static void config_menu_next_item(config_menu_t *menu)
 
 static void config_menu_prev_item(config_menu_t *menu)
 {
-    const uint32_t count = (menu != NULL) ? config_menu_tab_item_count(menu->tab) : 0U;
+    const uint32_t count = config_menu_tab_item_count(menu);
 
     if (menu == NULL || count == 0U) {
         return;
@@ -3588,6 +4116,15 @@ static void config_menu_ethernet_toggle_slot(config_menu_t *menu)
         return;
     }
     menu->ethernet_slot1_enabled = menu->ethernet_slot1_enabled ? 0U : 1U;
+    if (menu->ethernet_slot1_enabled == 0U) {
+        if (menu->ethernet_dhcp_pending != 0U &&
+            menu->platform.ethernet_dhcp_cancel != NULL) {
+            menu->platform.ethernet_dhcp_cancel(menu->platform.ctx);
+        }
+        menu->ethernet_dhcp_pending = 0U;
+        menu->ethernet_dhcp_report = 0U;
+        menu->item_focus = CONFIG_ETHERNET_ITEM_SLOT;
+    }
     if (menu->platform.set_slot_enabled != NULL) {
         menu->platform.set_slot_enabled(menu->platform.ctx,
                                         ETHERNET_CONTROL_SLOT,
@@ -3776,7 +4313,7 @@ static void config_menu_ethernet_write_to_card(config_menu_t *menu)
 
 static void config_menu_ethernet_dhcp(config_menu_t *menu)
 {
-    (void)config_menu_acquire_ethernet_dhcp(menu, 1U);
+    (void)config_menu_start_ethernet_dhcp(menu, 1U);
 }
 
 static void config_menu_ethernet_test(config_menu_t *menu)
@@ -3825,6 +4362,16 @@ static uint8_t config_menu_adjust_focused_value(config_menu_t *menu, int8_t delt
         return 0U;
     }
 
+    if (menu->tab == CONFIG_TAB_TRANSWARP &&
+        menu->item_focus == CONFIG_TRANSWARP_ITEM_SPEED) {
+        config_menu_vtw_cycle_speed(menu, delta);
+        return 1U;
+    }
+    if (menu->tab == CONFIG_TAB_TRANSWARP &&
+        menu->item_focus == CONFIG_TRANSWARP_ITEM_WINDOW) {
+        config_menu_vtw_cycle_slowdown_window(menu, delta);
+        return 1U;
+    }
     if (menu->tab == CONFIG_TAB_VIDEO &&
         menu->item_focus == CONFIG_VIDEO_ITEM_SCANLINES) {
         if (delta < 0) {
@@ -3890,15 +4437,6 @@ static uint8_t config_menu_adjust_focused_value(config_menu_t *menu, int8_t delt
     }
 
     if (menu->tab == CONFIG_TAB_VIDEO &&
-        menu->item_focus == CONFIG_VIDEO_ITEM_BORDER) {
-        (void)delta;
-        menu->border_enabled = (menu->border_enabled != 0u) ? 0u : 1u;
-        config_menu_apply_runtime(menu);
-        config_menu_save_settings(menu);
-        return 1u;
-    }
-
-    if (menu->tab == CONFIG_TAB_VIDEO &&
         menu->item_focus == CONFIG_VIDEO_ITEM_BORDER_COLOR) {
         if (delta < 0) {
             menu->border_color = (menu->border_color == 0u) ?
@@ -3927,6 +4465,22 @@ static uint8_t config_menu_adjust_focused_value(config_menu_t *menu, int8_t delt
         return 1u;
     }
 
+    if (menu->tab == CONFIG_TAB_BOOT_SETTINGS && menu->item_focus == 0U) {
+        if (delta < 0) {
+            menu->boot_timeout_mode =
+                (menu->boot_timeout_mode == 0U) ?
+                    (uint8_t)(CONFIG_BOOT_TIMEOUT_COUNT - 1U) :
+                    (uint8_t)(menu->boot_timeout_mode - 1U);
+        } else {
+            menu->boot_timeout_mode =
+                (uint8_t)((menu->boot_timeout_mode + 1U) %
+                          CONFIG_BOOT_TIMEOUT_COUNT);
+        }
+        config_menu_apply_runtime(menu);
+        config_menu_save_settings(menu);
+        return 1U;
+    }
+
     if (menu->tab == CONFIG_TAB_BOOT_SETTINGS && menu->item_focus == 1U) {
         if (menu->disk2_slot6_enabled == 0U) {
             menu->boot_device = CONFIG_BOOT_DEVICE_SMARTPORT;
@@ -3941,60 +4495,6 @@ static uint8_t config_menu_adjust_focused_value(config_menu_t *menu, int8_t delt
             menu->boot_device = CONFIG_BOOT_DEVICE_SMARTPORT;
         }
         config_menu_apply_runtime(menu);
-        config_menu_save_settings(menu);
-        return 1U;
-    }
-
-    if (menu->tab == CONFIG_TAB_VIDEO &&
-        menu->item_focus == CONFIG_VIDEO_ITEM_DEBUG) {
-        (void)delta;
-        menu->show_debugging = (menu->show_debugging != 0U) ? 0U : 1U;
-        config_menu_save_settings(menu);
-        return 1U;
-    }
-
-    if (menu->tab == CONFIG_TAB_VIDEO &&
-        menu->item_focus == CONFIG_VIDEO_ITEM_SHOW_BEZEL) {
-        (void)delta;
-        menu->show_bezel = (menu->show_bezel != 0U) ? 0U : 1U;
-        config_menu_save_settings(menu);
-        config_menu_save_active_profile_if_selected(menu);
-        return 1U;
-    }
-
-    if (menu->tab == CONFIG_TAB_BOOT_SETTINGS &&
-        menu->item_focus >= CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM &&
-        menu->item_focus < CONFIG_MENU_BOOT_ITEM_COUNT) {
-        const uint32_t action =
-            config_menu_boot_usb_binding_action_for_item(menu->item_focus);
-
-        if (menu->usb_bindings_editable == 0U) {
-            config_menu_set_status(menu, 1U, "USB BINDINGS EDITABLE AT BOOT");
-            return 1U;
-        }
-        if (action >= CONFIG_MENU_USB_BIND_ACTION_COUNT) {
-            return 1U;
-        }
-        config_menu_assign_usb_binding(
-            menu,
-            action,
-            config_menu_usb_binding_next_source(action,
-                                                menu->usb_menu_bindings[action],
-                                                delta));
-        config_menu_save_settings(menu);
-        return 1U;
-    }
-
-    if ((menu->tab == CONFIG_TAB_SMARTPORT && menu->item_focus == 0U) ||
-        (menu->tab == CONFIG_TAB_DISK2 && menu->item_focus == 1U)) {
-        (void)delta;
-        if (menu->tab == CONFIG_TAB_SMARTPORT &&
-            menu->supersprite_enabled != 0U) {
-            config_menu_set_status(menu, 1U, "SUPERSPRITE DISABLES SMARTPORT");
-            return 1U;
-        }
-        menu->disk2_activity_visible =
-            (menu->disk2_activity_visible != 0U) ? 0U : 1U;
         config_menu_save_settings(menu);
         return 1U;
     }
@@ -4020,14 +4520,8 @@ static uint8_t config_menu_adjust_focused_value(config_menu_t *menu, int8_t delt
     }
 
     if (menu->tab == CONFIG_TAB_ETHERNET) {
-        if (menu->item_focus == CONFIG_ETHERNET_ITEM_SLOT) {
-            (void)delta;
-            config_menu_ethernet_toggle_slot(menu);
-            return 1U;
-        }
-        if (menu->item_focus == CONFIG_ETHERNET_ITEM_CONFIG_ENABLED) {
-            (void)delta;
-            config_menu_ethernet_toggle_saved_config(menu);
+        if (menu->ethernet_slot1_enabled == 0U) {
+            menu->item_focus = CONFIG_ETHERNET_ITEM_SLOT;
             return 1U;
         }
         if (menu->item_focus == CONFIG_ETHERNET_ITEM_MODE) {
@@ -4217,6 +4711,54 @@ static uint8_t config_menu_browser_is_bezel_target(uint8_t target)
     return (target == CONFIG_BROWSER_TARGET_BEZEL) ? 1U : 0U;
 }
 
+/* Map a browser target to its remember-last-directory category. */
+static uint8_t config_menu_browser_category(uint8_t target)
+{
+    if (config_menu_browser_is_smartport_target(target) != 0U) {
+        return CONFIG_BROWSER_CAT_SMARTPORT;
+    }
+    if (config_menu_browser_is_disk2_target(target) != 0U) {
+        return CONFIG_BROWSER_CAT_DISK2;
+    }
+    if (config_menu_browser_is_bezel_target(target) != 0U) {
+        return CONFIG_BROWSER_CAT_BEZEL;
+    }
+    if (target == CONFIG_BROWSER_TARGET_VIDEO_ROM) {
+        return CONFIG_BROWSER_CAT_ROM;
+    }
+    return CONFIG_BROWSER_CAT_PROFILE;   /* PROFILE_IMAGE */
+}
+
+/* Is this directory openable right now (card present, path exists)? */
+static uint8_t config_menu_dir_accessible(const char *dir)
+{
+    DIR d;
+
+    if (dir == NULL || dir[0] == '\0') {
+        return 0U;
+    }
+    if (f_opendir(&d, dir) != FR_OK) {
+        return 0U;
+    }
+    (void)f_closedir(&d);
+    return 1U;
+}
+
+/* Record the current browse directory as the last-visited one for the
+ * active feature category (persisted at the next config save). */
+static void config_menu_browser_remember_dir(config_menu_t *menu)
+{
+    uint8_t cat;
+
+    if (menu == NULL) {
+        return;
+    }
+    cat = config_menu_browser_category(menu->browser_target);
+    config_menu_copy_text(menu->browser_last_dir[cat],
+                          sizeof(menu->browser_last_dir[cat]),
+                          menu->browser_dir);
+}
+
 static uint8_t config_menu_browser_target_smartport_device(uint8_t target)
 {
     if (config_menu_browser_is_smartport_target(target) == 0U) {
@@ -4302,7 +4844,7 @@ static uint8_t config_menu_browser_accepts(const config_menu_t *menu,
         return 1U;
     }
     if (config_menu_browser_is_smartport_target(menu->browser_target) != 0U) {
-        return config_menu_has_smartport_ext(info->fname, info->fsize);
+        return config_menu_has_smartport_ext(info->fname);
     }
     if (config_menu_browser_is_disk2_target(menu->browser_target) != 0U) {
         return config_menu_has_disk2_ext(info->fname, info->fsize);
@@ -4552,6 +5094,7 @@ static void config_menu_browser_set_dir(config_menu_t *menu, const char *dir)
     }
     config_menu_copy_text(menu->browser_dir, sizeof(menu->browser_dir),
                           (dir != NULL && dir[0] != '\0') ? dir : "0:/");
+    config_menu_browser_remember_dir(menu);
     menu->browser_selected = 0U;
     menu->browser_top = 0U;
     if (config_menu_browser_refresh(menu) != FR_OK) {
@@ -4561,9 +5104,32 @@ static void config_menu_browser_set_dir(config_menu_t *menu, const char *dir)
     config_menu_browser_preview_prepare(menu);
 }
 
+/* First-time default directory for a feature (used when nothing has been
+ * remembered yet, or the remembered directory is unreachable). */
+static void config_menu_browser_default_dir(const config_menu_t *menu,
+                                            uint8_t target,
+                                            char *dst, size_t dst_len)
+{
+    if (config_menu_browser_is_bezel_target(target) != 0U &&
+        menu->bezel_path[0] != '\0') {
+        config_menu_parent_path(menu->bezel_path, dst, dst_len);
+    } else if (target == CONFIG_BROWSER_TARGET_VIDEO_ROM) {
+        if (menu->video_rom_path[0] != '\0') {
+            config_menu_parent_path(menu->video_rom_path, dst, dst_len);
+        } else if (config_menu_dir_accessible("0:/ROMs") != 0U) {
+            config_menu_copy_text(dst, dst_len, "0:/ROMs");
+        } else {
+            config_menu_copy_text(dst, dst_len, "0:/");
+        }
+    } else {
+        config_menu_copy_text(dst, dst_len, "0:/");
+    }
+}
+
 static void config_menu_open_browser(config_menu_t *menu, uint8_t target)
 {
     FRESULT fr;
+    uint8_t cat;
 
     if (menu == NULL) {
         return;
@@ -4574,32 +5140,22 @@ static void config_menu_open_browser(config_menu_t *menu, uint8_t target)
     menu->browser_target = target;
     menu->browser_selected = 0U;
     menu->browser_top = 0U;
-    if (config_menu_browser_is_bezel_target(target) != 0U &&
-        menu->bezel_path[0] != '\0') {
-        config_menu_parent_path(menu->bezel_path,
-                                menu->browser_dir,
-                                sizeof(menu->browser_dir));
-    } else if (target == CONFIG_BROWSER_TARGET_VIDEO_ROM) {
-        if (menu->video_rom_path[0] != '\0') {
-            config_menu_parent_path(menu->video_rom_path,
-                                    menu->browser_dir,
-                                    sizeof(menu->browser_dir));
-        } else {
-            /* Default to /ROMs; fall back to the card root if it is absent. */
-            DIR roms_dir;
-            if (f_opendir(&roms_dir, "0:/ROMs") == FR_OK) {
-                (void)f_closedir(&roms_dir);
-                config_menu_copy_text(menu->browser_dir,
-                                      sizeof(menu->browser_dir), "0:/ROMs");
-            } else {
-                config_menu_copy_text(menu->browser_dir,
-                                      sizeof(menu->browser_dir), "0:/");
-            }
-        }
-    } else if (target == CONFIG_BROWSER_TARGET_PROFILE_IMAGE) {
-        config_menu_copy_text(menu->browser_dir, sizeof(menu->browser_dir), "0:/");
+    cat = config_menu_browser_category(target);
+
+    /* Reopen where this feature was last used, if that directory is still
+     * reachable; otherwise fall back to the feature default, then to the
+     * card root (an unreachable remembered path reverts to top level). */
+    if (config_menu_dir_accessible(menu->browser_last_dir[cat]) != 0U) {
+        config_menu_copy_text(menu->browser_dir, sizeof(menu->browser_dir),
+                              menu->browser_last_dir[cat]);
     } else {
-        config_menu_copy_text(menu->browser_dir, sizeof(menu->browser_dir), "0:/");
+        config_menu_browser_default_dir(menu, target,
+                                        menu->browser_dir,
+                                        sizeof(menu->browser_dir));
+        if (config_menu_dir_accessible(menu->browser_dir) == 0U) {
+            config_menu_copy_text(menu->browser_dir,
+                                  sizeof(menu->browser_dir), "0:/");
+        }
     }
 
     fr = config_menu_browser_refresh(menu);
@@ -4625,6 +5181,10 @@ static void config_menu_browser_apply_file(config_menu_t *menu, const char *path
     if (menu == NULL || path == NULL) {
         return;
     }
+
+    /* The chosen file lives in the current browse dir: remember it so the
+     * next open of this feature returns here (persisted by the save below). */
+    config_menu_browser_remember_dir(menu);
 
     if (config_menu_browser_is_smartport_target(menu->browser_target) != 0U) {
         char text[CONFIG_MENU_STATUS_LEN];
@@ -4992,6 +5552,11 @@ static void config_menu_activate_item(config_menu_t *menu)
         break;
 
     case CONFIG_TAB_ETHERNET:
+        if (menu->ethernet_slot1_enabled == 0U &&
+            menu->item_focus != CONFIG_ETHERNET_ITEM_SLOT) {
+            menu->item_focus = CONFIG_ETHERNET_ITEM_SLOT;
+            break;
+        }
         switch (menu->item_focus) {
         case CONFIG_ETHERNET_ITEM_SLOT:
             config_menu_ethernet_toggle_slot(menu);
@@ -5079,6 +5644,46 @@ static void config_menu_activate_item(config_menu_t *menu)
         config_menu_save_settings(menu);
         break;
 
+    case CONFIG_TAB_TRANSWARP:
+        if (menu->item_focus == CONFIG_TRANSWARP_ITEM_ENABLE) {
+            /* Session start/stop only from the boot menu: enabling
+             * mid-run would reset a machine with software live on it,
+             * and disabling releases /DMA under a motherboard CPU that
+             * has been asleep since takeover (handback needs the full
+             * boot path). Speed stays live-adjustable. */
+            if (menu->usb_owned != 0U) {
+                config_menu_set_status(menu, 1U,
+                    "ACCELERATION CAN ONLY CHANGE FROM BOOT MENU");
+                break;
+            }
+            config_menu_set_vtw_enabled(menu,
+                menu->vtw_enabled ? 0U : 1U);
+        } else if (menu->item_focus == CONFIG_TRANSWARP_ITEM_SPEED) {
+            config_menu_vtw_cycle_speed(menu, 1);
+        } else if (menu->item_focus == CONFIG_TRANSWARP_ITEM_SLUG) {
+            menu->vtw_slug_key_enabled = menu->vtw_slug_key_enabled ? 0U : 1U;
+            if (menu->platform.set_vtw_slug_key_enabled != NULL) {
+                menu->platform.set_vtw_slug_key_enabled(
+                    menu->platform.ctx, menu->vtw_slug_key_enabled);
+            }
+            config_menu_set_status(menu, 0U, menu->vtw_slug_key_enabled
+                ? "SLUG DEBUG KEY ARMED"
+                : "SLUG DEBUG KEY DISABLED");
+            config_menu_save_settings(menu);
+        } else if (menu->item_focus == CONFIG_TRANSWARP_ITEM_FLOATBUS) {
+            config_menu_vtw_toggle_slowdown_region(menu, VTW_SLOW_FLOATBUS_BIT,
+                                                   "FLOATING BUS");
+        } else if (menu->item_focus == CONFIG_TRANSWARP_ITEM_PADDLE) {
+            config_menu_vtw_toggle_slowdown_region(menu, VTW_SLOW_PADDLE_BIT,
+                                                   "PADDLE");
+        } else if (menu->item_focus >= CONFIG_TRANSWARP_ITEM_SLOT_FIRST &&
+                   menu->item_focus <= CONFIG_TRANSWARP_ITEM_SLOT_LAST) {
+            (void)config_menu_vtw_toggle_focused_slot(menu);
+        } else if (menu->item_focus == CONFIG_TRANSWARP_ITEM_WINDOW) {
+            config_menu_vtw_cycle_slowdown_window(menu, 1);
+        }
+        break;
+
     case CONFIG_TAB_APPLICARD:
         if (menu->item_focus == 0U) {
             config_menu_set_applicard_enabled(menu,
@@ -5103,6 +5708,11 @@ static void config_menu_activate_item(config_menu_t *menu)
             config_menu_start_usb0_sd_remote(menu);
         } else if (menu->item_focus == 1U) {
             config_menu_set_sdd_stream(menu, menu->sdd_stream_enabled ? 0U : 1U);
+        } else if (menu->item_focus == 2U) {
+            if (menu->platform.refresh_usb1 != NULL) {
+                menu->platform.refresh_usb1(menu->platform.ctx);
+                config_menu_set_status(menu, 0U, "USB1 RE-SCAN STARTED");
+            }
         }
         break;
 
@@ -5146,6 +5756,13 @@ void config_menu_init(config_menu_t *menu)
     menu->disk2_slot6_enabled = CONFIG_DEFAULT_DISK2_SLOT6_ENABLED;
     menu->applicard_slot5_enabled = CONFIG_DEFAULT_APPLICARD_SLOT5_ENABLED;
     menu->applicard_resource_max = 0U;
+    menu->vtw_enabled = CONFIG_DEFAULT_VTW_ENABLED;
+    menu->vtw_speed_mode = CONFIG_DEFAULT_VTW_SPEED_MODE;
+    menu->vtw_pace_divider = CONFIG_DEFAULT_VTW_PACE_DIVIDER;
+    menu->vtw_slug_key_enabled = CONFIG_DEFAULT_VTW_SLUG_KEY;
+    menu->iiplus_data_tap = CARD_CTRL_IIPLUS_DATA_TAP_DEFAULT;
+    menu->vtw_slowdown_mask = CONFIG_DEFAULT_VTW_SLOWDOWN_MASK;
+    menu->vtw_slowdown_cycles = CONFIG_DEFAULT_VTW_SLOWDOWN_CYCLES;
     menu->disk2_activity_visible = CONFIG_DEFAULT_DISK2_ACTIVITY_VISIBLE;
     menu->disk2_sound_volume = CONFIG_DEFAULT_DISK2_SOUND_VOLUME;
     menu->mouse_slot2_enabled = CONFIG_DEFAULT_MOUSE_SLOT2_ENABLED;
@@ -5162,6 +5779,8 @@ void config_menu_init(config_menu_t *menu)
     menu->ethernet_config_enabled = CONFIG_DEFAULT_ETHERNET_CONFIG_ENABLED;
     menu->ethernet_address_mode = CONFIG_DEFAULT_ETHERNET_ADDRESS_MODE;
     menu->ethernet_edit_index = 0U;
+    menu->ethernet_dhcp_pending = 0U;
+    menu->ethernet_dhcp_report = 0U;
     uthernet2_default_config(&menu->ethernet_config);
     menu->clock_enabled = CONFIG_DEFAULT_CLOCK_ENABLED;
     menu->ram_enabled = CONFIG_DEFAULT_RAM_ENABLED;
@@ -5187,7 +5806,9 @@ void config_menu_bind_platform(config_menu_t *menu, const config_menu_platform_t
     config_menu_load_platform_defaults(menu);
     config_menu_load_settings(menu);
     config_menu_apply_boot_runtime_internal(menu, 1U);
-    (void)config_menu_apply_ethernet_config(menu, 0U);
+    if (menu->ethernet_address_mode == CONFIG_MENU_ETHERNET_ADDRESS_STATIC) {
+        (void)config_menu_apply_ethernet_config(menu, 0U);
+    }
     config_menu_apply_disk2_sound(menu);
     config_menu_apply_smartport_paths(menu);
 }
@@ -5317,24 +5938,43 @@ uint8_t config_menu_handle_input(config_menu_t *menu, ui_input_t input)
         case UI_KEY_LEFT:
             config_menu_browser_parent(menu);
             return 1U;
-        case UI_KEY_BACK:
-            if (config_menu_path_is_root(menu->browser_dir) != 0U) {
-                config_menu_browser_close(menu);
-            } else {
-                config_menu_browser_parent(menu);
-            }
-            return 1U;
         case UI_KEY_RIGHT:
         case UI_KEY_ENTER:
             config_menu_browser_select(menu);
             return 1U;
+        case UI_KEY_BACK:
         case UI_KEY_ESC:
+            /* Exit the browser outright. LEFT (or selecting [..]) still
+             * navigates up a level; ESC/BACK leaves the browser. */
             config_menu_browser_close(menu);
             return 1U;
         default:
             break;
         }
         return 1U;
+    }
+
+    if (menu->tab == CONFIG_TAB_BOOT_SETTINGS &&
+        menu->item_focus >= CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM &&
+        menu->item_focus < CONFIG_MENU_BOOT_ITEM_COUNT) {
+        switch (input.key) {
+        case UI_KEY_PAGE_UP:
+        case UI_KEY_UP:
+            (void)config_menu_boot_usb_binding_move_vertical(menu, -1);
+            return 1U;
+        case UI_KEY_PAGE_DOWN:
+        case UI_KEY_DOWN:
+            (void)config_menu_boot_usb_binding_move_vertical(menu, 1);
+            return 1U;
+        case UI_KEY_LEFT:
+            (void)config_menu_boot_usb_binding_move_horizontal(menu, -1);
+            return 1U;
+        case UI_KEY_RIGHT:
+            (void)config_menu_boot_usb_binding_move_horizontal(menu, 1);
+            return 1U;
+        default:
+            break;
+        }
     }
 
     switch (input.key) {
@@ -5807,7 +6447,7 @@ static void config_menu_draw_help(uint16_t *fb,
         }
         if (config_menu_video_pal_accurate_help_visible(menu) != 0U &&
             count < CONFIG_MENU_HELP_MAX_LINES) {
-            lines[count++] = "PAL Accurate modes do not support SHR.";
+            lines[count++] = "SHR uses its normal renderer in PAL Accurate modes.";
         }
         break;
 
@@ -6175,6 +6815,9 @@ static void config_menu_draw_page(uint16_t *fb, const config_menu_t *menu,
     case CONFIG_TAB_APPLICARD:
         config_menu_draw_applicard(fb, menu, x, y, w);
         break;
+    case CONFIG_TAB_TRANSWARP:
+        config_menu_draw_transwarp(fb, menu, x, y, w);
+        break;
     case CONFIG_TAB_CLOCK:
         config_menu_draw_clock(fb, menu, x, y, w);
         break;
@@ -6225,7 +6868,13 @@ void config_menu_draw(uint16_t *fb, const config_menu_t *menu, uint8_t usb_owned
         config_menu_draw_tabs(fb, menu, nav.x, nav.y, nav.w);
         config_menu_draw_page(fb, menu, body.x, body.y, body.w, body.h);
     }
-    cmui_footer(fb, &footer, menu->status, menu->status_warning, usb_owned);
+    cmui_footer(fb,
+                &footer,
+                menu->status,
+                menu->status_warning,
+                usb_owned,
+                (uint8_t)(boot_menu_service_machine_mode() ==
+                          CARD_MACHINE_MODE_IIPLUS));
     if (menu->usb0_sd_remote_active == 0U) {
         config_menu_draw_browser(fb, menu, body.x, body.y - 4, body.w);
     }

@@ -491,6 +491,13 @@ def test_disk2_sound_recal_and_volume_contract() -> None:
             "card_control_pulse_disk2_sound_event" in frontend_main and
             "set_disk2_sound_volume = control_set_disk2_sound_volume" in frontend_main,
             "PS control path must publish and update Disk II sound volume/events")
+    release_pos = frontend_main.find("card_control_mark_cpu0_ready();")
+    publish_pos = frontend_main.find("card_control_publish_disk2_sound_samples();",
+                                     release_pos)
+    require("card_control_prepare_disk2_sound_samples();" in frontend_main and
+            "g_disk2_sound_samples_ready" in frontend_main and
+            release_pos >= 0 and publish_pos > release_pos,
+            "Disk II sample flush must be muted and deferred until after Apple release")
 
     require("void (*set_disk2_sound_volume)(void *ctx, uint8_t volume);" in config_h and
             "void (*play_disk2_sound_event)(void *ctx, uint8_t event);" in config_h and

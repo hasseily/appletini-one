@@ -22,6 +22,15 @@ module tb_psram_simple;
     logic        dma_ready, dma_rvalid;
     logic [63:0] dma_rdata;
 
+    logic        vtw_valid = 1'b0;
+    logic        vtw_rw = 1'b1;
+    logic [23:0] vtw_addr = '0;
+    logic [63:0] vtw_wline = '0;
+    logic        vtw_ready, vtw_rvalid;
+    logic [63:0] vtw_rline;
+    logic        vtw_owned = 1'b0;
+    integer      vtw_ops_done = 0;
+
     logic        psram_valid, psram_ready, psram_rvalid;
     logic [7:0]  psram_cmd;
     logic [23:0] psram_addr;
@@ -38,11 +47,16 @@ module tb_psram_simple;
         .clk(clk), .resetn(resetn),
         .ab_read(ab_read), .sss(sss),
         .aux_provide_en(1'b1),
+        .vtw_bus_owned(vtw_owned),
         .ab_write(ab_write),
         .dma_line_addr(dma_line_addr), .dma_rw(dma_rw),
         .dma_wdata(dma_wdata), .dma_valid(dma_valid),
         .dma_ready(dma_ready), .dma_rdata(dma_rdata),
         .dma_rvalid(dma_rvalid),
+        .vtw_valid(vtw_valid), .vtw_rw(vtw_rw),
+        .vtw_addr(vtw_addr), .vtw_wline(vtw_wline),
+        .vtw_ready(vtw_ready), .vtw_rvalid(vtw_rvalid),
+        .vtw_rline(vtw_rline),
         .psram_valid(psram_valid), .psram_ready(psram_ready),
         .psram_cmd(psram_cmd), .psram_addr(psram_addr),
         .psram_wdata(psram_wdata), .psram_rvalid(psram_rvalid),
@@ -232,6 +246,29 @@ module tb_psram_simple;
                     wait (dma_rvalid);
                 end
             end
+        begin : vtw_bg
+            /* vTW RamWorks line traffic riding the same background
+             * admission window as the RMW drain and PS DMA: alternating
+             * line writes and reads every ~17 bus cycles. Must complete
+             * under full MGTK + DMA contention with zero deadline misses
+             * and zero write drops (checked by the mgtk branch's final
+             * asserts, which run while this traffic is still live). */
+            integer v;
+            v = 0;
+            forever begin
+                v = v + 1;
+                repeat (17*130) @(posedge clk);
+                vtw_rw    = (v[0] == 1'b0);      // alternate write/read
+                vtw_addr  = 24'h038000 + {v[20:0], 3'b000};
+                vtw_wline = {8{v[7:0]}};
+                vtw_valid = 1'b1;
+                wait (vtw_ready);
+                @(posedge clk);
+                vtw_valid = 1'b0;
+                wait (vtw_rvalid);
+                vtw_ops_done = vtw_ops_done + 1;
+            end
+        end
         begin : mgtk
             integer rnd, it, s;
             for (rnd = 0; rnd < 20; rnd = rnd + 1) begin
@@ -266,9 +303,64 @@ module tb_psram_simple;
                 $display("FAIL: %0d deadline misses under disk2 load", dbg_m);
                 $finish;
             end
+            if (vtw_ops_done < 10) begin
+                $display("FAIL: vtw client starved: %0d ops", vtw_ops_done);
+                $finish;
+            end
+            $display("[%0t] VTW CLIENT: %0d line ops under contention",
+                     $time, vtw_ops_done);
         end
         join_any
         disable fork;
+
+        /* --- vTW-owned starvation regression: with the accelerator
+         * owning the bus and aux switches active, EVERY parked replay
+         * decodes as an aux read. Read serves must be suppressed
+         * (vtw_bus_owned) so the background window stays open -- without
+         * the gate the vtw line client starves and the accelerated CPU
+         * hangs on its first RamWorks fill. --- */
+        vtw_owned = 1'b1;
+        sss.route_kind     = globals::APPLE_ROUTE_CACHE;
+        sss.addr_decode_en = 1'b1;
+        sss.addr_decode    = 24'h03FFFF;   // aux-routed parked replay
+        ab_read.rw       = 1'b1;
+        ab_read.rw_early = 1'b1;
+        begin : owned_storm
+            integer k;
+            integer done_before;
+            done_before = vtw_ops_done;
+            for (k = 0; k < 20; k = k + 1) begin
+                @(posedge clk);
+                vtw_rw    = (k[0] == 1'b0);
+                vtw_addr  = 24'h050000 + {k[20:0], 3'b000};
+                vtw_wline = {8{k[7:0]}};
+                vtw_valid = 1'b1;
+                fork
+                    begin
+                        wait (vtw_ready);
+                        @(posedge clk);
+                        vtw_valid = 1'b0;
+                        wait (vtw_rvalid);
+                    end
+                    begin
+                        repeat (5000) @(posedge clk);
+                        $display("FAIL: vtw op %0d starved under owned aux storm", k);
+                        $finish;
+                    end
+                join_any
+                disable fork;
+            end
+            $display("[%0t] VTW OWNED STORM: 20 line ops served, no starvation",
+                     $time);
+        end
+        if (ab_write.assert_inh !== 1'b0) begin
+            $display("FAIL: INH asserted for a parked replay under vtw_bus_owned");
+            $finish;
+        end
+        vtw_owned = 1'b0;
+        sss.route_kind     = globals::APPLE_ROUTE_BUS;
+        sss.addr_decode_en = 1'b0;
+        ab_read.rw_early   = 1'b0;
 
         $display("ALL HANDSHAKES PASS");
         $finish;

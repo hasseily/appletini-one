@@ -16,7 +16,12 @@ module mouse_card (
     input  logic [2:0]               slot_assign,
     input  globals::AxiSimple_common as_common,
     AxiSimple_if.client              as_client,
-    output globals::AppleBus_write   ab_write
+    output globals::AppleBus_write   ab_write,
+    // Debug taps (freeze diagnosis): the mode register the app programmed
+    // (enable + which IRQ sources), and the pending latches.
+    output logic [3:0]               dbg_mode,
+    output logic                     dbg_vbl_pending,
+    output logic                     dbg_irq_pending
 );
 
     localparam logic [7:0] AXI_REG_STATUS  = 8'h00;
@@ -83,6 +88,9 @@ module mouse_card (
     logic        vbl_pending_q;
     logic        irq_pending_q;
     logic [3:0]  mode_q;
+    assign dbg_mode        = mode_q;
+    assign dbg_vbl_pending = vbl_pending_q;
+    assign dbg_irq_pending = irq_pending_q;
     logic        clamp_axis_q;
     logic [9:0]  clamp_x_min_q;
     logic [9:0]  clamp_x_max_q;

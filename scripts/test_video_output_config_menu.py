@@ -287,6 +287,7 @@ def test_boot_menu_groups_boot_and_video_settings() -> None:
             '"IIgs border (VidHD $C034)"' in video_draw and
             '"Border color"' in video_draw and
             '"Outside ring"' in video_draw and
+            '"Legacy page flip' not in video_draw and
             '"Phosphor ghosting"' in source and
             '"Phosphor blur"' not in video_draw and
             '"Horizontal soften"' not in video_draw and
@@ -327,9 +328,9 @@ def test_boot_menu_groups_boot_and_video_settings() -> None:
             "config_menu_next_color_mode(menu, menu->video_color_mode, 1)" in source,
             "color mode row must skip PAL Accurate modes unless the Apple timing register reports 50Hz PAL")
     require("config_menu_video_pal_accurate_help_visible(menu) != 0U" in help_draw and
-            '"PAL Accurate modes do not support SHR."' in help_draw and
-            "PAL Accurate modes do not support SHR" not in video_draw,
-            "PAL Accurate help text must only show for selected PAL Accurate modes in the shared lower help panel")
+            '"SHR uses its normal renderer in PAL Accurate modes."' in help_draw and
+            "SHR uses its normal renderer in PAL Accurate modes" not in video_draw,
+            "PAL Accurate help text must explain the SHR fallback only in the shared lower help panel")
     require("menu->video7_auto_mono_enabled =\n"
             "            (menu->video7_auto_mono_enabled != 0U) ? 0U : 1U;" in source and
             "config_menu_video7_auto_mono_text(\n"
@@ -724,13 +725,14 @@ def test_pal_accurate_renderer_model_is_registered() -> None:
             "pal_positive_phase_preroll_cycle(line," in renderer and
             "apple_pal_video_preroll_line0_cycle(pal_preroll_cycle, sw);" in renderer and
             "raw_line < (uint32_t)ATN_SCANNER_Y_DISPLAY" in renderer and
-            "const uint8_t pal_frame_ready = apple_pal_video_end_frame();" in renderer and
-            "if (pal_frame_ready != 0u) {" in renderer and
+            "const uint8_t frame_ready =" in renderer and
+            "1u : apple_pal_video_end_frame();" in renderer and
+            "if (frame_ready != 0u) {" in renderer and
             "s_pal_capture_phase_cycles" in renderer and
             "capture_to_scanner_phase(line,\n"
             "                             cycle,\n"
             "                             s_clean_capture_phase_cycles," in renderer,
-            "cycle renderer must include, dispatch, and only publish completed PAL frames")
+            "cycle renderer must include and dispatch PAL capture, publish only complete PAL frames, and bypass that gate for SHR")
     require("../../../ps_sources/frontend/apple_pal_video_timing.c" in vitis,
             "frontend_core1 Vitis build must compile the PAL timing source")
 

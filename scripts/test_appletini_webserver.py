@@ -18,11 +18,20 @@ def require(condition, message):
 def verify_system(name):
     binary = APP / "build" / f"{name}.SYSTEM"
     listing = APP / "build" / f"{name}.lst"
-    if not binary.is_file() or not listing.is_file():
+    map_file = APP / "build" / f"{name}.map"
+    if not binary.is_file() or not listing.is_file() or not map_file.is_file():
         return False
 
-    require('.setcpu\t\t"6502"' in listing.read_text(encoding="utf-8"),
+    require(re.search(r'\.setcpu\s+"6502"',
+                      listing.read_text(encoding="utf-8")) is not None,
             f"{name} listing must declare the NMOS 6502 target")
+    map_text = map_file.read_text(encoding="utf-8")
+    require("timer_init (appletini_timer" in map_text and
+            "timer_read (appletini_timer" in map_text,
+            f"{name} must resolve IP65 timing to appletini_timer.o")
+    require("timer_init (a2_timer.o)" not in map_text and
+            "timer_read (a2_timer.o)" not in map_text,
+            f"{name} must not link IP65's CPU-speed-dependent a2_timer.o")
     image = binary.read_bytes()
     require(len(image) > 58 and image[:4] == b"\x00\x05\x16\x00",
             f"{name} must carry an AppleSingle header")
@@ -44,9 +53,16 @@ def verify_system(name):
 def main():
     server = (APP / "webserver.c").read_text(encoding="utf-8")
     browser = (APP / "browser.c").read_text(encoding="utf-8")
+    image_viewer = (APP / "a2img.c").read_text(encoding="utf-8")
+    image_net = (APP / "a2img_net.s").read_text(encoding="utf-8")
     network = (APP / "appletini_net.c").read_text(encoding="utf-8")
+    timer = (APP / "appletini_timer.s").read_text(encoding="utf-8")
     build = (APP / "build.bat").read_text(encoding="utf-8")
     disk = (ROOT / "scripts" / "build_appletini_demo_disk.py").read_text(
+        encoding="utf-8")
+    wave_basic = (ROOT / "software" / "wave_animation.bas").read_text(
+        encoding="utf-8")
+    wave_code = (ROOT / "software" / "wave_animation_code.a65").read_text(
         encoding="utf-8")
 
     require("-t apple2" in build and "--cpu 6502" in build and
@@ -54,10 +70,25 @@ def main():
             "build must explicitly create NMOS-6502 ProDOS programs")
     require("apple2enh" not in build.lower(),
             "build must not use the enhanced Apple II target")
-    for target in ("A2WEBSRV", "A2BROWSE"):
+    for target in ("A2WEBSRV", "A2BROWSE", "A2IMG"):
         require(target in build, f"build must create {target}.SYSTEM")
-    require("appletini_net.c" in build and "ip65\\ip65_web.lib" in build,
-            "both programs must use the shared W5100/IP65 path")
+    require("appletini_net.c" in build and "appletini_timer.s" in build and
+            "ip65\\ip65_web.lib" in build,
+            "both programs must use the shared W5100/IP65 path and wall-clock timer")
+    require(build.rindex("appletini_timer.s") <
+            build.rindex("ip65\\ip65_web.lib"),
+            "the Appletini timer must precede IP65 so a2_timer.o is not extracted")
+
+    require("RDVBLBAR       = $C019" in timer and
+            "MACHINE_ID     = $FBB3" in timer and
+            "cpx #IIE_ID" in timer,
+            "timer must select real VBL time for the IIe family and vTW")
+    require("cmp last_vbl_state" in timer and
+            "adc #FRAME_MS" in timer and
+            "FRAME_MS       = 17" in timer,
+            "timer must advance once per real VBL edge")
+    require("jsr MON_WAIT" in timer and "adc #33" in timer,
+            "timer must retain the stock 1 MHz II/II+ fallback")
 
     require("U2_MODE = 0x03U" in network and
             "U2_MODE != 0x03U" in network and "W5100S" not in network,
@@ -106,15 +137,32 @@ def main():
     require("appletini_network_init()" in server and
             "appletini_network_init()" in browser,
             "both demos must load the card configuration")
-    require('#define APPLETINI_URL "http://httpbin.io/headers"' in browser and
-            "url_download(APPLETINI_URL" in browser,
-            "browser must request the exact plain-HTTP demo URL")
-    cap = re.search(r"#define RESPONSE_CAP\s+(\d+)U", browser)
-    require(cap is not None and int(cap.group(1)) >= 1460,
-            "IP65 HTTP client needs at least a full TCP payload buffer")
-    require("strstr(response, \"\\r\\n\\r\\n\")" in browser and
-            "print_text(body != NULL ? body + 4 : response)" in browser,
-            "browser must display the HTTP status and response body")
+    require('#define HOME_URL   "http://frogfind.com/"' in browser and
+            '#define PROXY_PRE  "http://frogfind.com/read.php?a="' in browser and
+            "url_download(cur_url" in browser,
+            "browser must use the current plain-HTTP FrogFind frontend")
+    cap = re.search(r"#define BUF_CAP\s+(\d+)U", browser)
+    require(cap is not None and int(cap.group(1)) >= 10240,
+            "text browser needs the full response/render buffer")
+    require("find_body(total, &body)" in browser and
+            "render(body, len)" in browser and
+            "exit_to_menu();" in browser,
+            "browser must decode HTTP bodies and return to the demo menu")
+    require("auxsrc := $06" in image_net and "auxdst := $08" in image_net and
+            "auxlen := $0A" in image_net and
+            ".importzp ptr1, ptr2" not in image_net and
+            "lda (auxsrc),y" in image_net and "sta (auxdst),y" in image_net,
+            "A2IMG aux copies must keep pointers and countdown in private ZP")
+    require("lda auxlen" in image_net and "dec auxlen" in image_net and
+            "dec _aux_len" not in image_net,
+            "A2IMG must not decrement main-memory BSS while RAMWRT is on")
+    require("if (sp >= 4095U)" in image_viewer and
+            'fail("LZW CHAIN LOOP")' in image_viewer,
+            "A2IMG must bound corrupted LZW prefix-chain stack writes")
+    require("net_poll();" in image_viewer and
+            "NEWVIDEO = 0xC1" in image_viewer and
+            "aux_copy(line_buf);" in image_viewer,
+            "A2IMG must retain streaming decode directly into SHR memory")
     require('cputs("URL: HTTP://")' in server and
             'cputs("/\\r\\nSUBNET: ")' in server and
             'cputs("\\r\\nGATEWAY: ")' in server,
@@ -122,20 +170,32 @@ def main():
     stopped = server[server.index('cputs("\\r\\nSERVER STOPPED'):
                      server.index("return 0;", server.index(
                          'cputs("\\r\\nSERVER STOPPED'))]
-    require("wait_for_key();" in stopped and
-            "wait_for_key();" in browser,
-            "results and startup errors must remain visible")
+    require("wait_for_key();" in stopped and "exit_to_menu();" in stopped,
+            "server shutdown must remain visible and return to the demo menu")
     require("ip65_diag" not in build and "ip65_ctr" not in network and
             "arp_cache" not in network,
             "the production web demo must exclude packet diagnostics")
-    require("A2BROWSE.SYSTEM" in disk and '"3  WEB BROWSER"' in disk,
-            "800KB demo disk must include and launch the browser")
+    require("A2BROWSE.SYSTEM" in disk and "A2IMG.SYSTEM" in disk and
+            "WAVE.ANIMATION" in disk and
+            '"WAVE.CODE", "BIN", "0x0300"' in disk,
+            "800KB demo disk must include all three web apps and wave assets")
+    require("WAVE ANIMATION BY BRENDAN ROBERT" in wave_basic and
+            "Wave Animation by Brendan Robert" in wave_code and
+            'CHR$(4)"BLOAD WAVE.CODE"' in wave_basic and
+            "POKE 769" in wave_basic and "CALL 768" in wave_basic and
+            "CALL 792" in wave_basic,
+            "wave BASIC driver must load and call the extracted helper")
+    require("!cpu 65c02" in wave_code and "* = $0300" in wave_code and
+            "wave_copy:" in wave_code and "wave_animate:" in wave_code and
+            "jmp ROM_MOVE" in wave_code and "jmp ROM_BASIC" in wave_code,
+            "wave helper must preserve both original $0300 entry points")
     require((APP / "ip65" / "LICENSE.txt").is_file() and
             (APP / "ip65" / "LICENSE-W5100.txt").is_file() and
             (APP / "ip65" / "SOURCE.txt").is_file(),
             "vendored IP65 library must retain licenses and provenance")
 
-    built = [verify_system(name) for name in ("A2WEBSRV", "A2BROWSE")]
+    built = [verify_system(name)
+             for name in ("A2WEBSRV", "A2BROWSE", "A2IMG")]
     print("Appletini 6502 web demo tests passed" +
           ("" if all(built) else " (build not present)"))
 

@@ -140,7 +140,7 @@ def test_apple_top_integration() -> None:
             "frame tick reuses the Apple vblank pulse")
     require("apple_bus_write_arbiter #(.NUM_CLIENTS(11))" in s and
             "supersprite_ab_write" in s,
-            "SuperSprite must be in the 11-client write arbiter")
+            "SuperSprite must be in the write arbiter (11 clients with the vTW)")
     # PS export window
     require("CARD_CTRL_REG_SS_REGS_LO" in s and "CARD_CTRL_REG_SS_VRAM_ADDR" in s and
             "CARD_CTRL_REG_SS_SPR_FLAGS" in s,

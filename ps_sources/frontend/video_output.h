@@ -36,6 +36,11 @@
 #define APPLE_VIDEO_TIMING_PHASE_MAX 63
 #define APPLE_VIDEO_TIMING_PHASE_BIAS 64
 
+/*
+ * PL capture timestamps and both renderers use the same raw motherboard
+ * scanner convention. Keep the offsets independently packable for diagnostic
+ * calibration, but do not apply an additional display-pipeline shift here.
+ */
 #define APPLE_VIDEO_DEFAULT_CLEAN_PHASE_CYCLES 0
 #define APPLE_VIDEO_DEFAULT_PAL_PHASE_CYCLES   0
 

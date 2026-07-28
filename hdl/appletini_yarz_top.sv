@@ -717,7 +717,9 @@ module appletini_yarz_top (
     logic apple_vblank_start_pulse;
     logic apple_reset_n_out;
 
-    // these are unused, setting them to silence warnings
+    // Only A2CTRL.RESET is populated on the production board. The other
+    // planned assertion pins are physically unconnected; IRQ is driven
+    // low/high-Z through the bidirectional A2FPGA.IRQ transceiver lane.
     assign a2ctrl_irq_n = 1'b1;
     assign a2ctrl_nmi_n = 1'b1;
     assign a2ctrl_rdy_n = 1'b1;

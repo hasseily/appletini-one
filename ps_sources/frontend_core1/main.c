@@ -43,11 +43,10 @@
 #include "../frontend/apple_cycle_renderer.h"
 #include "../frontend/apple_fb_handoff.h"
 #include "../frontend/apple_pal_video_timing.h"
+#include "../frontend/card_control_regs.h"
 
 #define RESET_RELEASE_REG            0x4000000CU
 #define RESET_RELEASE_CPU1_READY_BIT (1UL << 1)
-#define APPLE_RESET_STATUS_REG       0x40000024U
-#define APPLE_RESET_SEQ_MASK         0x000000FFUL
 
 /* ---- Live CPU1 health line (UART0, TX shared with CPU0) ----------------
  * Emits one line per ~second carrying per-interval deltas, so the PAL
@@ -90,16 +89,9 @@
  * out the timer reads, counter snapshots, decimal formatting, and UART writes. */
 #define CPU1_STATUS_UART 0
 
-/* DIAGNOSTIC BUILD OVERRIDE (diag/transwarp-video-freeze): force the health
- * line on, plus a bw= field (video-shadow write records per interval) to
- * timestamp when TransWarp write-through cycles reach the shadow banks.
- * Delete this block when the investigation ends. */
-#undef CPU1_STATUS_UART
-#define CPU1_STATUS_UART 1
-
-static uint8_t apple_reset_seq_read(void)
+static uint32_t apple_reset_status_read(void)
 {
-    return (uint8_t)(REG_READ(APPLE_RESET_STATUS_REG) & APPLE_RESET_SEQ_MASK);
+    return REG_READ(CARD_CTRL_APPLE_RESET_STATUS_REG);
 }
 
 /* ---- Diagnostic: text-page shadow dump (diag/transwarp-video-freeze) ----
@@ -322,7 +314,8 @@ int main(void)
 
     REG_WRITE(RESET_RELEASE_REG,
               RESET_RELEASE_CPU1_READY_BIT);
-    reset_seq_last = apple_reset_seq_read();
+    reset_seq_last = (uint8_t)(apple_reset_status_read() &
+                               CARD_CTRL_APPLE_RESET_SEQ_MASK);
 
     /* Tight poll loop. No CPU0 work fights us for the cycles, so
      * we burn the whole core on egress drain + renderer dispatch.
@@ -338,11 +331,17 @@ int main(void)
         " frames ~= line rate\r\n");
 #endif
     for (;;) {
-        uint8_t reset_seq = apple_reset_seq_read();
+        const uint32_t apple_status = apple_reset_status_read();
+        const uint8_t reset_seq =
+            (uint8_t)(apple_status & CARD_CTRL_APPLE_RESET_SEQ_MASK);
         if (reset_seq != reset_seq_last) {
             reset_seq_last = reset_seq;
             apple_cycle_renderer_reset_local_video_state();
         }
+        apple_cycle_renderer_set_vtw_1mhz(
+            (apple_status & CARD_CTRL_APPLE_RESET_VTW_1MHZ_BIT) != 0U);
+        apple_cycle_renderer_sync_shr_mode(
+            (apple_status & CARD_CTRL_APPLE_RESET_SHR_ACTIVE_BIT) != 0U);
         apple_cycle_egress_poll();
 
         /* Diagnostic shadow-dump request from CPU0's UART console.

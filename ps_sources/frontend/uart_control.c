@@ -23,6 +23,7 @@
 #include "usb_storage_service.h"
 #include "usb_sdd_service.h"
 #include "applicard_service.h"
+#include "vtw_service.h"
 #include "config_menu.h"
 #include "xusbps_class_storage.h"
 #include "xusbps_hw.h"
@@ -848,6 +849,15 @@ static int dma_probe_write(uint16_t addr, uint8_t pattern, uint16_t count, uint1
     return rc;
 }
 
+/* Shared with the USB SDD service: one DMA bus write of a single byte.
+ * Callers run in the cooperative CPU0 main loop, never concurrently. */
+int uart_control_dma_bus_write(uint16_t addr, uint8_t value)
+{
+    uint16_t done = 0U;
+    int rc = dma_probe_write(addr, value, 1U, &done);
+    return (rc == 0 && done == 1U) ? 0 : -1;
+}
+
 static int parse_rtc_datetime(const char *date_str, const char *time_str, rtc_pcf8563_time_t *t)
 {
     unsigned int y;
@@ -1664,7 +1674,7 @@ void uart_control_print_help(const uart_control_t *control, const uart_control_o
     uart_puts(control->control_uart_base, "  audio mute <on|off|toggle>\r\n");
     uart_puts(control->control_uart_base, "  audio tone <hz>\r\n");
     uart_puts(control->control_uart_base, "  audio amp <0xHEX|DEC>\r\n");
-    uart_puts(control->control_uart_base, "  sd reset | sd dumpblk <block> [count]\r\n");
+    uart_puts(control->control_uart_base, "  sd status | sd reset | sd dumpblk <block> [count]\r\n");
     uart_puts(control->control_uart_base, "  disk2 status | disk2 scan [d1|d2] [all] | disk2 wozscan [d1|d2] [all] | disk2 underruns\r\n");
     uart_puts(control->control_uart_base, "  disk2 wozwrite d1|d2 <on|off|status>\r\n");
     uart_puts(control->control_uart_base, "  rtc get\r\n");
@@ -1682,6 +1692,7 @@ void uart_control_print_help(const uart_control_t *control, const uart_control_o
     uart_puts(control->control_uart_base, "  usb1 [status|start|stop]\r\n");
     uart_puts(control->control_uart_base, "  sdd [status|on|off] (USB0 bus-event stream for SuperDuperDisplay)\r\n");
     uart_puts(control->control_uart_base, "  z80 [status|on|off|reset|budget <tstates>|wall <us>|dump <hex-addr> [len]] (Applicard slot 5)\r\n");
+    uart_puts(control->control_uart_base, "  vtw [status|on|off|speed full|1mhz|div <n>] (virtual TransWarp accelerator)\r\n");
     uart_puts(control->control_uart_base, "  shadow [main|aux] (CPU1 prints its $0400-$07FF text-page shadow)\r\n");
 }
 
@@ -1697,9 +1708,8 @@ static uart_control_event_t process_smartport_command(
 
     memset(&event, 0, sizeof(event));
 
-    if (argc < 2) {
-        uart_puts(control->control_uart_base,
-                  "usage: sd <reset|dumpblk>\r\n");
+    if (argc < 2 || str_ieq(argv[1], "status")) {
+        smartport_service_uart_status(control->control_uart_base);
         return event;
     }
 
@@ -1752,7 +1762,7 @@ static uart_control_event_t process_smartport_command(
     }
 
     uart_puts(control->control_uart_base,
-              "usage: sd <reset|dumpblk>\r\n");
+              "usage: sd <status|reset|dumpblk>\r\n");
     return event;
 }
 
@@ -2242,6 +2252,76 @@ static uart_control_event_t process_command(
         return event;
     }
 
+    if (str_ieq(argv[0], "vtw")) {
+        if (argc < 2 || str_ieq(argv[1], "status")) {
+            vtw_service_uart_status(control->control_uart_base);
+            if (g_sdd_config_menu != NULL) {
+                uart_puts(control->control_uart_base,
+                          g_sdd_config_menu->vtw_enabled != 0U ?
+                              "vtw: persisted setting = ON\r\n" :
+                              "vtw: persisted setting = OFF\r\n");
+            }
+            return event;
+        }
+        if (str_ieq(argv[1], "on") || str_ieq(argv[1], "off")) {
+            uint8_t enable = str_ieq(argv[1], "on") ? 1U : 0U;
+
+            /* Route through the config menu so the persisted setting and
+             * the live session stay in lockstep (same rationale as the
+             * sdd and z80 commands). */
+            if (g_sdd_config_menu != NULL) {
+                config_menu_set_vtw_enabled(g_sdd_config_menu, enable);
+            } else {
+                vtw_service_set_enabled(enable);
+            }
+            uart_puts(control->control_uart_base,
+                      enable ? "vtw: on (saved)\r\n"
+                             : "vtw: off (saved); CTRL-RESET the Apple\r\n");
+            return event;
+        }
+        if (str_ieq(argv[1], "speed") && argc >= 3) {
+            uint8_t mode;
+            uint8_t divider = vtw_service_pace_divider();
+
+            if (str_ieq(argv[2], "full")) {
+                mode = 0U;
+            } else if (str_ieq(argv[2], "1mhz")) {
+                mode = 2U;
+            } else if (str_ieq(argv[2], "div") && argc >= 4) {
+                unsigned long div = strtoul(argv[3], NULL, 10);
+                mode = 1U;
+                if (div < 2UL) {
+                    div = 2UL;
+                } else if (div > 255UL) {
+                    div = 255UL;
+                }
+                divider = (uint8_t)div;
+            } else {
+                uart_puts(control->control_uart_base,
+                          "usage: vtw speed full|1mhz|div <2-255>\r\n");
+                return event;
+            }
+            if (g_sdd_config_menu != NULL) {
+                config_menu_set_vtw_speed(g_sdd_config_menu, mode, divider);
+            } else {
+                vtw_service_set_speed(mode, divider);
+            }
+            uart_puts(control->control_uart_base, "vtw: speed set\r\n");
+            return event;
+        }
+        if (str_ieq(argv[1], "dump") && argc >= 3) {
+            uint32_t addr = (uint32_t)strtoul(argv[2], NULL, 16);
+            uint32_t len = (argc >= 4) ?
+                (uint32_t)strtoul(argv[3], NULL, 16) : 64U;
+            vtw_service_uart_dump(control->control_uart_base, addr, len);
+            return event;
+        }
+        uart_puts(control->control_uart_base,
+                  "usage: vtw [status|on|off|speed full|1mhz|div <n>|"
+                  "dump <hex-phys> [hex-len]]\r\n");
+        return event;
+    }
+
     if (str_ieq(argv[0], "usb1")) {
         if (argc < 2 || str_ieq(argv[1], "status")) {
             usb_hid_service_dump_status(control->control_uart_base);
@@ -2601,6 +2681,114 @@ static uart_control_event_t process_command(
                 (unsigned)boot_menu_service_machine_id(),
                 boot_menu_service_machine_forced() ? ", FORCED" : "",
                 (unsigned long)REG_READ(CARD_CTRL_MACHINE_MODE_REG));
+            uart_puts(control->control_uart_base, line);
+        }
+        return event;
+    }
+
+    if (str_ieq(argv[0], "irqdbg")) {
+        uint32_t m = REG_READ(CARD_CTRL_IRQDBG_MOUSE_REG);
+        uint32_t p = REG_READ(CARD_CTRL_IRQDBG_PHASOR_REG);
+        uint32_t mode = m & CARD_CTRL_IRQDBG_MOUSE_MODE_MASK;
+        char line[200];
+
+        /* Mouse chain: VBL pulse -> vbl_pending -> mode(enable+VBL-IRQ)
+         * -> assert_irq. Counts saturate at 255. */
+        (void)snprintf(line, sizeof(line),
+            "mouse: vbl=%lu irq=%lu | mode=$%X [%s%s%s%s] vblpend=%u irqpend=%u\r\n",
+            (unsigned long)((m >> CARD_CTRL_IRQDBG_MOUSE_VBL_SHIFT)
+                            & CARD_CTRL_IRQDBG_COUNT_MASK),
+            (unsigned long)((m >> CARD_CTRL_IRQDBG_MOUSE_IRQ_SHIFT)
+                            & CARD_CTRL_IRQDBG_COUNT_MASK),
+            (unsigned)mode,
+            (mode & 0x1U) ? "EN " : "off ",
+            (mode & 0x2U) ? "moveIRQ " : "",
+            (mode & 0x4U) ? "btnIRQ " : "",
+            (mode & 0x8U) ? "vblIRQ" : "",
+            (m & CARD_CTRL_IRQDBG_MOUSE_VBLPEND_BIT) ? 1U : 0U,
+            (m & CARD_CTRL_IRQDBG_MOUSE_IRQPEND_BIT) ? 1U : 0U);
+        uart_puts(control->control_uart_base, line);
+
+        /* Speech chain: phoneme plays -> backend_done -> enable_ints
+         * -> direct_irq. */
+        (void)snprintf(line, sizeof(line),
+            "ssi:   backend_done=%lu direct_irq=%lu | ints_enabled=%u\r\n",
+            (unsigned long)((p >> CARD_CTRL_IRQDBG_SSI_BACKEND_SHIFT)
+                            & CARD_CTRL_IRQDBG_COUNT_MASK),
+            (unsigned long)((p >> CARD_CTRL_IRQDBG_SSI_IRQ_SHIFT)
+                            & CARD_CTRL_IRQDBG_COUNT_MASK),
+            (p & CARD_CTRL_IRQDBG_SSI_ENABLE_BIT) ? 1U : 0U);
+        uart_puts(control->control_uart_base, line);
+
+        /* CPU-side: how many times the 6502 fetched the IRQ/BRK vector
+         * ($FFFE). Climbing = CPU services interrupts; flat = masked/never
+         * vectors. Counts saturate at 255; reset on power-on/config reset. */
+        (void)snprintf(line, sizeof(line),
+            "cpu:   $FFFE vector fetches=%lu\r\n",
+            (unsigned long)((p >> CARD_CTRL_IRQDBG_VEC_SHIFT)
+                            & CARD_CTRL_IRQDBG_COUNT_MASK));
+        uart_puts(control->control_uart_base, line);
+        return event;
+    }
+
+    if (str_ieq(argv[0], "busdbg")) {
+        char line[200];
+
+        if (argc >= 2 && str_ieq(argv[1], "clear")) {
+            REG_WRITE(CARD_CTRL_BUSDBG_QUALITY_REG, 1U);
+            uart_puts(control->control_uart_base, "busdbg: cleared\r\n");
+            return event;
+        }
+
+        /* Bus-capture forensics. Counters saturate at 65535; clear with
+         * "busdbg clear", then reproduce, then read. */
+        {
+            uint32_t q = REG_READ(CARD_CTRL_BUSDBG_QUALITY_REG);
+            uint32_t m = REG_READ(CARD_CTRL_BUSDBG_TAPMM_REG);
+            uint32_t s = REG_READ(CARD_CTRL_BUSDBG_STROBE_REG);
+            uint32_t l = REG_READ(CARD_CTRL_BUSDBG_TAPLAST_REG);
+
+            (void)snprintf(line, sizeof(line),
+                "phi0:  ring events=%lu short edges=%lu\r\n",
+                (unsigned long)(q >> 16), (unsigned long)(q & 0xFFFFU));
+            uart_puts(control->control_uart_base, line);
+            (void)snprintf(line, sizeof(line),
+                "strobe: extra data_en=%lu missing data_en=%lu\r\n",
+                (unsigned long)(s >> 16), (unsigned long)(s & 0xFFFFU));
+            uart_puts(control->control_uart_base, line);
+            (void)snprintf(line, sizeof(line),
+                "tap:   rd mismatch=%lu wr mismatch=%lu"
+                " | last $%04lX early=$%02lX late=$%02lX\r\n",
+                (unsigned long)(m >> 16), (unsigned long)(m & 0xFFFFU),
+                (unsigned long)(l >> 16), (unsigned long)((l >> 8) & 0xFFU),
+                (unsigned long)(l & 0xFFU));
+            uart_puts(control->control_uart_base, line);
+        }
+
+        /* Mouse DEVSEL write ring, newest first. */
+        {
+            uint32_t r0 = REG_READ(CARD_CTRL_BUSDBG_MRING_REG(0));
+            uint32_t r1 = REG_READ(CARD_CTRL_BUSDBG_MRING_REG(1));
+            uint32_t r2 = REG_READ(CARD_CTRL_BUSDBG_MRING_REG(2));
+            uint32_t r3 = REG_READ(CARD_CTRL_BUSDBG_MRING_REG(3));
+            uint16_t e[8];
+
+            e[0] = (uint16_t)(r0 & 0xFFFFU); e[1] = (uint16_t)(r0 >> 16);
+            e[2] = (uint16_t)(r1 & 0xFFFFU); e[3] = (uint16_t)(r1 >> 16);
+            e[4] = (uint16_t)(r2 & 0xFFFFU); e[5] = (uint16_t)(r2 >> 16);
+            e[6] = (uint16_t)(r3 & 0xFFFFU); e[7] = (uint16_t)(r3 >> 16);
+            (void)snprintf(line, sizeof(line),
+                "mouse wr ring (new->old):"
+                " %X:%02X %X:%02X %X:%02X %X:%02X"
+                " %X:%02X %X:%02X %X:%02X %X:%02X\r\n",
+                (unsigned)((e[0] >> 8) & 0xFU), (unsigned)(e[0] & 0xFFU),
+                (unsigned)((e[1] >> 8) & 0xFU), (unsigned)(e[1] & 0xFFU),
+                (unsigned)((e[2] >> 8) & 0xFU), (unsigned)(e[2] & 0xFFU),
+                (unsigned)((e[3] >> 8) & 0xFU), (unsigned)(e[3] & 0xFFU),
+                (unsigned)((e[4] >> 8) & 0xFU), (unsigned)(e[4] & 0xFFU),
+                (unsigned)((e[5] >> 8) & 0xFU), (unsigned)(e[5] & 0xFFU),
+                (unsigned)((e[6] >> 8) & 0xFU), (unsigned)(e[6] & 0xFFU),
+                (unsigned)((e[7] >> 8) & 0xFU), (unsigned)(e[7] & 0xFFU));
             uart_puts(control->control_uart_base, line);
         }
         return event;
@@ -3648,6 +3836,149 @@ static uart_control_event_t process_command(
                      (unsigned long)done,
                      (unsigned long)count);
             uart_puts(control->control_uart_base, line);
+            return event;
+        }
+
+        if (str_ieq(argv[1], "write")) {
+            /* dma write <addr> [verify]: paste hex bytes into the
+             * terminal; they are DMA-written onto the Apple bus at
+             * addr and up. The paste is buffered at full UART speed
+             * first (per-byte bus writes cannot keep up with paste
+             * rate), then replayed through the probe engine. Ends on
+             * '.', ESC, or ~2 s of silence. Whitespace and commas are
+             * ignored, so hex dumps paste as-is. Writes land through
+             * the CURRENT soft-switch memory map, like dma probe. */
+            static uint8_t paste_buf[4096];
+            uint32_t addr = 0U;
+            uint32_t nbytes = 0U;
+            uint32_t idle;
+            uint32_t i;
+            uint8_t nibble_full = 0U;
+            uint8_t byte_acc = 0U;
+            uint8_t started = 0U;
+            int do_verify;
+            int rc = 0;
+            char c;
+            char line[96];
+
+            if (argc < 3 || parse_u32(argv[2], &addr) != 0 ||
+                addr > 0xFFFFU) {
+                uart_puts(control->control_uart_base,
+                          "usage: dma write <addr> [verify]\r\n");
+                return event;
+            }
+            do_verify = (argc >= 4 && str_ieq(argv[3], "verify"));
+
+            uart_puts(control->control_uart_base,
+                      "dma write: paste hex bytes; '.' or ESC (or 2s "
+                      "idle) ends\r\n");
+
+            idle = 0U;
+            for (;;) {
+                if (!uart_try_getc(control->control_uart_base, &c)) {
+                    /* ~2 s of silence after data ends the paste */
+                    ++idle;
+                    if (started && idle > 100U * UART_ESC_BYTE_WAIT_LOOPS) {
+                        break;
+                    }
+                    continue;
+                }
+                idle = 0U;
+                if (c == '.' || c == 0x1B) {
+                    break;
+                }
+                if (c == ' ' || c == '\r' || c == '\n' || c == '\t' ||
+                    c == ',' || c == '$') {
+                    continue;
+                }
+                if (c >= '0' && c <= '9') {
+                    c = (char)(c - '0');
+                } else if (c >= 'a' && c <= 'f') {
+                    c = (char)(c - 'a' + 10);
+                } else if (c >= 'A' && c <= 'F') {
+                    c = (char)(c - 'A' + 10);
+                } else {
+                    uart_puts(control->control_uart_base,
+                              "dma write: non-hex input, stopping\r\n");
+                    break;
+                }
+                started = 1U;
+                if (!nibble_full) {
+                    byte_acc = (uint8_t)(c << 4);
+                    nibble_full = 1U;
+                } else {
+                    paste_buf[nbytes] = (uint8_t)(byte_acc | (uint8_t)c);
+                    nibble_full = 0U;
+                    ++nbytes;
+                    if (nbytes >= sizeof(paste_buf) ||
+                        (addr + nbytes) > 0x10000U) {
+                        uart_puts(control->control_uart_base,
+                                  "dma write: buffer full, stopping\r\n");
+                        break;
+                    }
+                }
+            }
+            if (nibble_full) {
+                uart_puts(control->control_uart_base,
+                          "dma write: odd trailing nibble dropped\r\n");
+            }
+            if (nbytes == 0U) {
+                uart_puts(control->control_uart_base,
+                          "dma write: no data\r\n");
+                return event;
+            }
+
+            for (i = 0U; i < nbytes; ++i) {
+                uint16_t done = 0U;
+                rc = dma_probe_write((uint16_t)(addr + i), paste_buf[i],
+                                     1U, &done);
+                if (rc != 0 || done != 1U) {
+                    snprintf(line, sizeof(line),
+                             "dma write: FAILED at 0x%04lX (%lu of %lu "
+                             "written)\r\n",
+                             (unsigned long)(addr + i),
+                             (unsigned long)i, (unsigned long)nbytes);
+                    uart_puts(control->control_uart_base, line);
+                    return event;
+                }
+                if ((i & 63U) == 63U) {
+                    uart_puts(control->control_uart_base, ".");
+                }
+            }
+            snprintf(line, sizeof(line),
+                     "\r\ndma write: %lu bytes to 0x%04lX\r\n",
+                     (unsigned long)nbytes, (unsigned long)addr);
+            uart_puts(control->control_uart_base, line);
+
+            if (do_verify) {
+                uint32_t bad = 0U;
+                uint32_t off = 0U;
+                while (off < nbytes) {
+                    uint8_t rd_buf[64];
+                    uint16_t chunk = (uint16_t)((nbytes - off > 64U)
+                                                    ? 64U
+                                                    : (nbytes - off));
+                    uint16_t done = 0U;
+                    rc = dma_peek_raw_read((uint16_t)(addr + off), chunk,
+                                           rd_buf, &done);
+                    if (rc != 0 || done != chunk) {
+                        uart_puts(control->control_uart_base,
+                                  "dma write: verify read failed\r\n");
+                        return event;
+                    }
+                    for (i = 0U; i < chunk; ++i) {
+                        if (rd_buf[i] != paste_buf[off + i]) {
+                            ++bad;
+                        }
+                    }
+                    off += chunk;
+                }
+                snprintf(line, sizeof(line),
+                         "dma write: verify %s (%lu mismatches)\r\n",
+                         (bad == 0U) ? "OK" : "FAILED",
+                         (unsigned long)bad);
+                uart_puts(control->control_uart_base, line);
+            }
             return event;
         }
 

@@ -21,6 +21,9 @@ vivado*.backup.*
 **/.xsim_*/
 **/.xim_*/
 
+# Passing routed checkpoint used as an incremental placement reference
+.vivado_cache/
+
 # Vivado IP upgrade logs
 ip_upgrade.log
 

@@ -1,0 +1,67 @@
+
+****** Vivado v2025.2 (64-bit)
+  **** SW Build 6299465 on Fri Nov 14 19:35:11 GMT 2025
+  **** IP Build 6300035 on Fri Nov 14 10:48:45 MST 2025
+  **** SharedData Build 6298862 on Thu Nov 13 04:50:51 MST 2025
+  **** Start of session at: Mon Jul 20 12:36:17 2026
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source scripts/create_project.tcl -notrace
+==========================================
+Creating Appletini One Vivado Project
+==========================================
+Project: appletini_yarz
+Part: xc7z020clg484-2
+Directory: ./project
+
+Project created successfully
+
+Adding source files...
+CRITICAL WARNING: [Vivado 12-3645] Please note that adding or importing multiple files, one at a time, can be performance intensive.  Both add_files and import_files commands accept multiple files as input, and passing a collection of multiple files to a single add_files or import_files commands can offer significant performance improvement.
+Source files added
+
+Creating block design...
+Wrote  : <C:\Users\hasse\source\repos\hasseily\appletini-one\project\appletini_yarz.srcs\sources_1\bd\zynq_ps_bd\zynq_ps_bd.bd> 
+Adding and configuring Zynq PS...
+WARNING: [Boardtcl 53-1] No current board_part set.
+Zynq PS configured
+
+Creating external ports...
+INFO: [Device 21-403] Loading part xc7z020clg484-2
+create_bd_cell: Time (s): cpu = 00:00:02 ; elapsed = 00:00:08 . Memory (MB): peak = 700.031 ; gain = 267.992
+External ports created
+
+Assigning address segments...
+Slave segment '/M_AXI_GP0_0/Reg' is being assigned into address space '/processing_system7_0/Data' at <0x4000_0000 [ 1G ]>.
+Slave segment '/processing_system7_0/S_AXI_HP0/HP0_DDR_LOWOCM' is being assigned into address space '/S_AXI_HP0_0' at <0x0000_0000 [ 1G ]>.
+Slave segment '/processing_system7_0/S_AXI_HP1/HP1_DDR_LOWOCM' is being assigned into address space '/S_AXI_HP1_0' at <0x0000_0000 [ 1G ]>.
+Slave segment '/processing_system7_0/S_AXI_HP2/HP2_DDR_LOWOCM' is being assigned into address space '/S_AXI_HP2_0' at <0x0000_0000 [ 1G ]>.
+Slave segment '/processing_system7_0/S_AXI_HP3/HP3_DDR_LOWOCM' is being assigned into address space '/S_AXI_HP3_0' at <0x0000_0000 [ 1G ]>.
+Address segments assigned
+
+Validating block design...
+clk_domain: zynq_ps_bd_processing_system7_0_0_FCLK_CLK2, clk_domain_1: zynq_ps_bd_clk_wiz_0_0_clk_out1, clkDomainValSrc_1: DEFAULT, clk_domain_ctrl: 0
+clk_domain: zynq_ps_bd_processing_system7_0_0_FCLK_CLK0, clk_domain_1: zynq_ps_bd_clk_wiz_1_0_clk_out1, clkDomainValSrc_1: DEFAULT, clk_domain_ctrl: 0
+clk_domain: zynq_ps_bd_processing_system7_0_0_FCLK_CLK0, clk_domain_1: zynq_ps_bd_processing_system7_0_0_FCLK_CLK0, clkDomainValSrc_1: PROPAGATED, clk_domain_ctrl: 0
+INFO: [xilinx.com:ip:clk_wiz:6.0-1] /clk_wiz_1 clk_wiz propagate
+INFO: [xilinx.com:ip:clk_wiz:6.0-1] /clk_wiz_0 clk_wiz propagate
+Wrote  : <C:\Users\hasse\source\repos\hasseily\appletini-one\project\appletini_yarz.srcs\sources_1\bd\zynq_ps_bd\zynq_ps_bd.bd> 
+Block design validated and saved
+
+Generating HDL wrapper...
+INFO: [BD 41-1662] The design 'zynq_ps_bd.bd' is already validated. Therefore parameter propagation will not be re-run.
+Verilog Output written to : C:/Users/hasse/source/repos/hasseily/appletini-one/project/appletini_yarz.gen/sources_1/bd/zynq_ps_bd/synth/zynq_ps_bd.v
+Verilog Output written to : C:/Users/hasse/source/repos/hasseily/appletini-one/project/appletini_yarz.gen/sources_1/bd/zynq_ps_bd/sim/zynq_ps_bd.v
+Verilog Output written to : C:/Users/hasse/source/repos/hasseily/appletini-one/project/appletini_yarz.gen/sources_1/bd/zynq_ps_bd/hdl/zynq_ps_bd_wrapper.v
+HDL wrapper generated
+
+Configuring synthesis and implementation strategies...
+Strategies configured
+
+==========================================
+Project creation complete!
+==========================================
+Project: project/appletini_yarz.xpr
+Build/export: vivado -mode batch -source scripts/build_and_export_xsa.tcl
+INFO: [Common 17-206] Exiting Vivado at Mon Jul 20 12:36:42 2026...

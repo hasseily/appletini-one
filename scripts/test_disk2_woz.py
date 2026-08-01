@@ -83,6 +83,7 @@ def info_payload(*,
                  version: int = 2,
                  disk_type: int = 1,
                  write_protected: int = 0,
+                 boot_sector_format: int = 0,
                  optimal_bit_timing: int = 32) -> bytes:
     payload = bytearray(WOZ_INFO_SIZE)
     payload[0] = version
@@ -91,6 +92,7 @@ def info_payload(*,
     payload[4:4 + 16] = b"Appletini tests "
     if version >= 2:
         payload[37] = 1
+        payload[38] = boot_sector_format
         payload[39] = optimal_bit_timing
     return bytes(payload)
 
@@ -616,6 +618,10 @@ class WozImage:
         require(len(self.data) >= WOZ_HEADER_SIZE, "WOZ file too small")
         require(self.data[:3] == b"WOZ" and self.data[4:8] == WOZ_MAGIC2, "bad WOZ header")
         require(self.data[3] in (ord("1"), ord("2")), "unsupported WOZ version")
+        expected_crc = read_le32(self.data, 8)
+        if expected_crc != 0:
+            actual_crc = binascii.crc32(self.data[WOZ_HEADER_SIZE:]) & 0xFFFFFFFF
+            require(actual_crc == expected_crc, "nonzero WOZ header CRC mismatch")
         self.version = self.data[3] - ord("0")
         pos = WOZ_HEADER_SIZE
         have_info = have_tmap = have_trks = False
@@ -630,6 +636,9 @@ class WozImage:
                 require(self.data[payload + 1] == 1, "not a 5.25 WOZ")
                 self.read_only = self.data[payload + 2] != 0
                 info_version = self.data[payload]
+                if info_version >= 2:
+                    require(self.data[payload + 38] != 2,
+                            "13-sector WOZ images are not supported")
                 if info_version >= 2 and self.data[payload + 39] != 0:
                     self.optimal_bit_timing = self.data[payload + 39]
                 have_info = True
@@ -843,7 +852,7 @@ def test_c_constants_still_match() -> None:
             "load_track should invalidate PL track metadata before overwriting DDR staging")
     for name in (
         "track_woz_q",
-        "woz_head_window_q",
+        "drive_woz_head_window_q",
         "woz_latch_delay_q",
         "woz_bit_cell_tick",
         "woz_seam_arm_q",
@@ -1236,17 +1245,22 @@ def test_pl_woz_write_uses_post_access_q_state() -> None:
             "AppleWin does not call GetBitCellDelta() while the" in source,
             "WOZ PL must carry dataLoadWrite elapsed time forward instead of "
             "dropping bit cells before the next dataShiftWrite")
-    track_commit = source.split("track_loaded_q <= 1'b1;", 1)[1].split("prefetch_valid_q <= '0;", 1)[0]
-    woz_commit = track_commit.split("if (as_common.wdata[2]) begin", 1)[1].split("end else begin", 1)[0]
-    require("woz_head_window_q <= 4'd0;" in woz_commit and
+    track_commit = source.split(
+        "automatic logic load_drive_v = as_common.wdata[20];", 1)[1]
+    track_commit = track_commit.split("prefetch_valid_q <= '0;", 1)[0]
+    woz_commit = track_commit.split("end else if (load_woz_v) begin", 1)[1]
+    woz_commit = woz_commit.split("end else begin", 1)[0]
+    require("if (!same_rotation_v)" in woz_commit and
+            "drive_woz_head_window_q[load_drive_v] <= 4'd0;" in woz_commit and
             "woz_bit_accum_q <= 16'd0;" in woz_commit,
-            "WOZ track commit must match AppleWin by resetting head window and timing remainder")
+            "a new WOZ track must reset its head window and timing remainder, "
+            "while an exact per-drive rotation restore preserves the head window")
     require("woz_shift_q <= 8'h00;" not in woz_commit and
             "woz_latch_delay_q <= 4'd0;" not in woz_commit and
             "disk_latch_q <= 8'hFF;" not in woz_commit,
             "WOZ track commit must preserve AppleWin's shift register, latch delay, and latch byte")
     q6_high_block = source.split("IO_Q6_HIGH: begin", 1)[1].split("IO_Q7_LOW:", 1)[0]
-    require("woz_head_window_q" not in q6_high_block,
+    require("drive_woz_head_window_q" not in q6_high_block,
             "WOZ write-protect/load-state access must not reset the AppleWin drive head window")
     require("woz_cached_valid_q" not in q6_high_block and "woz_cached_ready_q" not in q6_high_block,
             "WOZ write-protect/load-state access must not discard the active raw-bit cache")
@@ -1341,11 +1355,12 @@ def test_pl_stepper_matches_applewin_deferred_motion() -> None:
     require("stepper_result(" in source and "magnets == 4'hC" in source and
             "next_qtrack = phase + phase + 8'd1;" in source,
             "Disk II WOZ stepper must preserve AppleWin half-phase head positions")
-    require("ab_read.sss_en && step_pending_q && !stepper_io_access" in source,
+    require("enabled && ab_read.res && ab_read.sss_en &&\n"
+            "                step_pending_q && !stepper_io_access" in source,
             "Disk II deferred stepper event must age during non-stepper I/O")
 
 
-def test_rejects_bad_chunks_and_write_protect() -> None:
+def test_rejects_bad_chunks_crc_13_sector_and_write_protect() -> None:
     bad = make_empty_woz2()
     write_le32(bad, WOZ_HEADER_SIZE + 4, len(bad) + 1)
     try:
@@ -1354,6 +1369,34 @@ def test_rejects_bad_chunks_and_write_protect() -> None:
         pass
     else:
         raise TestFailure("parser accepted chunk past EOF")
+
+    bad_crc = make_empty_woz2()
+    require(read_le32(bad_crc, 8) != 0,
+            "CRC rejection test needs a nonzero header CRC")
+    bad_crc[-1] ^= 0x01
+    try:
+        WozImage(bad_crc)
+    except TestFailure:
+        pass
+    else:
+        raise TestFailure("parser accepted a mismatched nonzero WOZ CRC")
+
+    # The WOZ specification permits zero as "CRC not supplied". Preserve
+    # AppleWin compatibility by accepting that sentinel.
+    bad_crc[8:12] = bytes(4)
+    WozImage(bad_crc)
+
+    sector13 = make_header(2)
+    sector13 += chunk(b"INFO", info_payload(boot_sector_format=2))
+    sector13 += chunk(b"TMAP", bytes([WOZ_TMAP_EMPTY] * WOZ_TMAP_SIZE))
+    sector13 += chunk(b"TRKS", bytes(WOZ_TRKV2_TABLE_BYTES))
+    update_woz_crc(sector13)
+    try:
+        WozImage(sector13)
+    except TestFailure:
+        pass
+    else:
+        raise TestFailure("parser accepted a WOZ marked as 13-sector")
 
     protected = make_header(2)
     protected += chunk(b"INFO", info_payload(write_protected=1))
@@ -1368,6 +1411,15 @@ def test_rejects_bad_chunks_and_write_protect() -> None:
         pass
     else:
         raise TestFailure("write-protected WOZ accepted a write")
+
+    source = DISK2_SERVICE_C.read_text(encoding="utf-8")
+    require("static int woz_calculate_crc" in source and
+            "if (expected_crc != 0U)" in source and
+            "if (actual_crc != expected_crc)" in source,
+            "firmware must reject a mismatched nonzero WOZ header CRC")
+    require("DISK2_WOZ_INFO_BOOT_SECTOR_FORMAT_OFFSET 38U" in source and
+            "DISK2_WOZ_BOOT_SECTOR_13 2U" in source,
+            "firmware must reject explicitly marked 13-sector WOZ images")
 
 
 def test_applewin_shift_write_round_trips_through_lss() -> None:
@@ -1765,7 +1817,8 @@ def test_pl_woz_track_commit_preserves_write_started() -> None:
     require(match is not None, "TRACK_INFO register block not found")
     block = match.group(1)
     commit_match = re.search(
-        r"track_loaded_q <= 1'b1;.*?if \(as_common\.wdata\[2\]\) begin(.*?)"
+        r"automatic logic load_drive_v = as_common\.wdata\[20\];.*?"
+        r"end else if \(load_woz_v\) begin(.*?)"
         r"end else begin",
         block,
         re.S)
@@ -1968,38 +2021,49 @@ def test_woz_writeback_runtime_toggle_preserves_media_write_protect() -> None:
             "before publishing it as rw to the PL")
 
 
-def test_woz_mount_clears_stale_idle_dirty_latch() -> None:
-    """Mounting or clearing a drive must not leave a stale PL dirty latch for
-    that drive. A stale latch can immediately force a structural reject on the
-    next mount and make WOZ writeback appear permanently off.
+def test_media_change_flushes_dirty_track_before_clearing_state() -> None:
+    """Eject/reload must land a pending write before changing the file path.
+    Clearing the dirty latch without writing it is silent data loss.
     """
     source = DISK2_SERVICE_C.read_text(encoding="utf-8")
     helper_match = re.search(
-        r"static uint8_t clear_drive_dirty_if_idle\(.*?\n}\n\nstatic int stage_track_to_ddr",
+        r"static int flush_drive_before_media_change\(.*?\n}\n\nint disk2_service_init",
         source,
         re.S)
     require(helper_match is not None,
-            "drive clear path must have a helper for stale idle dirty latches")
+            "media-change path must have a bounded dirty-track flush helper")
     helper = helper_match.group(0)
     require("disk2_reg_read(DISK2_REG_WRITE_INFO)" in helper,
-            "stale dirty clear helper must inspect PL WRITE_INFO")
+            "media-change flush must inspect PL WRITE_INFO")
     require("DISK2_WRITE_INFO_DIRTY_BIT" in helper and
             "DISK2_WRITE_INFO_BUSY_BIT" in helper,
-            "stale dirty clear helper must distinguish dirty from busy")
-    require("write_info_drive(write_info) != drive" in helper,
-            "stale dirty clear helper must only clear the requested drive")
-    require("ack_dirty_track(drive, write_info_qtrack(write_info))" in helper,
-            "stale idle dirty latch must be acknowledged with the PL qtrack")
+            "media-change flush must wait for the write FIFO and detect dirty state")
+    require("dirty_drive != drive" in helper,
+            "media-change flush must only act on the requested drive")
+    require("rc = flush_dirty_track(dirty_drive, dirty_qtrack);" in helper and
+            "if (rc != 0)" in helper and
+            "ack_dirty_track(dirty_drive, dirty_qtrack);" in helper,
+            "dirty metadata may only be acknowledged after successful file writeback")
 
     clear_match = re.search(
-        r"static void clear_drive\(uint8_t drive\)(.*?)\n}\n\nstatic int probe_woz",
+        r"static void clear_drive_state\(uint8_t drive\)(.*?)\n}\n\nstatic int probe_woz",
         source,
         re.S)
-    require(clear_match is not None, "clear_drive body not found")
+    require(clear_match is not None, "clear_drive_state body not found")
     clear_body = clear_match.group(1)
-    require("(void)clear_drive_dirty_if_idle(drive);" in clear_body,
-            "clear_drive must clear stale idle dirty state before resetting "
-            "software drive state")
+    require("ack_dirty_track" not in clear_body and
+            "if (g_loaded_drive == drive)" in clear_body,
+            "state clear must not discard dirty data or unload the other drive")
+
+    setter = source[source.find("int disk2_service_set_image_path"):]
+    setter = setter[:setter.find("const char *disk2_service_get_image_path")]
+    require(setter.find("flush_drive_before_media_change(drive)") <
+            setter.find("copy_path(g_disk2_paths[drive]"),
+            "image replacement must flush before publishing the new path")
+    resetter = source[source.find("int disk2_service_reset_media"):]
+    resetter = resetter[:resetter.find("int disk2_service_get_image_info")]
+    require("flush_drive_before_media_change(drive)" in resetter,
+            "media reprobe must flush before clearing current state")
 
 
 def test_wozwrite_on_clears_disabled_stale_dirty_state() -> None:
@@ -2086,7 +2150,11 @@ def test_woz_flush_refuses_structural_prologue_regressions() -> None:
     prologue counts and abort if the captured stream lost structure.
     """
     source = DISK2_SERVICE_C.read_text(encoding="utf-8")
-    match = re.search(r"static int flush_dirty_track\(.*?\n\}\n", source, re.S)
+    match = re.search(
+        r"static int flush_dirty_track\(uint8_t drive, uint8_t qtrack\)\n"
+        r"\{.*?\n\}\n",
+        source,
+        re.S)
     require(match is not None, "flush_dirty_track not found")
     body = match.group(0)
     require("Disk II WOZ structure" in source,
@@ -2182,10 +2250,12 @@ def test_pl_woz_io_access_requires_loaded_woz_track() -> None:
         "wire woz_io_access =\n"
         "        (ab_io_read || ab_io_write) &&\n"
         "        drive_spinning &&\n"
+        "        drive_has_media &&\n"
         "        track_woz_q &&\n"
         "        woz_track_stream_ready;" in source,
-        "woz_io_access must combine ab_io, spinning, track_woz, and a "
-        "loaded-track gate so it never fires on stale or non-WOZ media"
+        "woz_io_access must combine ab_io, spinning, media presence, "
+        "track_woz, and a loaded-track gate so it never fires on empty, "
+        "stale, or non-WOZ media"
     )
 
 
@@ -2289,7 +2359,11 @@ def test_flush_dirty_track_aborts_on_ddr_read_race() -> None:
     retries with the current staging contents.
     """
     source = DISK2_SERVICE_C.read_text(encoding="utf-8")
-    match = re.search(r"static int flush_dirty_track\(.*?\n\}\n", source, re.S)
+    match = re.search(
+        r"static int flush_dirty_track\(uint8_t drive, uint8_t qtrack\)\n"
+        r"\{.*?\n\}\n",
+        source,
+        re.S)
     require(match is not None, "flush_dirty_track not found")
     body = match.group(0)
     snap_pos = body.find("DISK2_REG_WRITE_COUNT")
@@ -2463,7 +2537,7 @@ TESTS = [
     test_standard_images_do_not_use_woz_alias_fast_path,
     test_pl_write_fifo_accounts_simultaneous_push_pop_once,
     test_pl_stepper_matches_applewin_deferred_motion,
-    test_rejects_bad_chunks_and_write_protect,
+    test_rejects_bad_chunks_crc_13_sector_and_write_protect,
     test_applewin_shift_write_round_trips_through_lss,
     test_applewin_shift_write_is_bit_addressed_not_byte_aligned,
     test_load_track_same_tmap_retag_applies_woz_bit_offset_bump,
@@ -2492,7 +2566,7 @@ TESTS = [
     test_load_track_rechecks_write_pending_before_clearing_track_info,
     test_woz_mount_enables_writeback_when_image_and_file_allow,
     test_woz_writeback_runtime_toggle_preserves_media_write_protect,
-    test_woz_mount_clears_stale_idle_dirty_latch,
+    test_media_change_flushes_dirty_track_before_clearing_state,
     test_wozwrite_on_clears_disabled_stale_dirty_state,
     test_uart_has_wozwrite_debug_command,
     test_woz_flush_logging_captures_dirty_metadata,

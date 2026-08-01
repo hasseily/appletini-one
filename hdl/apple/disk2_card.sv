@@ -90,6 +90,11 @@ module disk2_card (
     localparam logic [5:0] STANDARD_SPIN_SECOND_IDLE = 6'd23;
     localparam logic [5:0] STANDARD_SPIN_REPEAT_IDLE = 6'd32;
     localparam logic [2:0] STANDARD_READ_GAP_LIMIT = 3'd7;
+    // A connected Disk II drive with no media initially leaves the LSS at
+    // $80, then produces changing noise after the analog logic settles.
+    // AppleWin uses the same $2EC-cycle compatibility window (GH#864).
+    localparam logic [9:0] EMPTY_DRIVE_LSS_STABLE_CYCLES = 10'h2EC;
+    localparam logic [15:0] EMPTY_DRIVE_LFSR_SEED = 16'h1D0F;
 
     localparam int unsigned TRACK_STREAM_BYTES = 8192;
     localparam logic [12:0] TRACK_STREAM_LAST = 13'(TRACK_STREAM_BYTES - 1);
@@ -133,6 +138,7 @@ module disk2_card (
     logic [7:0] drive_qtrack_q [0:1];
     logic       track_loaded_q;
     logic       track_woz_q;
+    logic       track_unavailable_q;
     logic       loaded_drive_q;
     logic [7:0] loaded_qtrack_q;
     logic [7:0] woz_alias_lo_q;
@@ -140,16 +146,21 @@ module disk2_card (
     logic       woz_alias_drive_q [0:1];
     logic [13:0] track_length_q;
     logic [12:0] track_write_index_q;
-    logic [12:0] track_stream_pos_q;
+    logic [12:0] drive_stream_pos_q [0:1];
     logic [5:0]  standard_spin_countdown_q;
     logic        standard_spin_repeat_q;
     logic [2:0]  standard_read_gap_q;
+    logic [9:0]  empty_drive_lss_settle_q;
+    logic [15:0] empty_drive_lfsr_q;
     logic [16:0] track_bit_count_q;
-    logic [16:0] track_bit_offset_q;
+    logic [16:0] drive_bit_offset_q [0:1];
     logic [7:0] disk_latch_q;
     logic [7:0] woz_shift_q;
     logic [3:0] woz_latch_delay_q;
-    logic [3:0] woz_head_window_q;
+    logic [3:0] drive_woz_head_window_q [0:1];
+    logic       drive_rotation_valid_q [0:1];
+    logic       drive_rotation_woz_q [0:1];
+    logic [7:0] drive_rotation_qtrack_q [0:1];
     logic       woz_write_started_q;
     logic [7:0]  track_bit_timing_q;
     logic [15:0] woz_seam_start_q;
@@ -255,9 +266,15 @@ module disk2_card (
     wire ab_io_write = ab_read.data_en && !ab_read.rw && slot_io_hit;
     wire [3:0] io_idx = ab_read.addr[3:0];
     wire stepper_io_access = (ab_io_read || ab_io_write) && (io_idx <= IO_PHASE3_ON);
-    wire drive_connected = drive_info_q[drive_select_q][0];
+    // The two emulated drives are always physically connected. Bit 0 says
+    // whether media is inserted; it must not gate the motor or stepper.
+    wire drive_has_media = drive_info_q[drive_select_q][0];
     wire drive_read_only = drive_info_q[drive_select_q][1];
     wire [7:0] current_qtrack = drive_qtrack_q[drive_select_q];
+    wire [12:0] selected_stream_pos = drive_stream_pos_q[drive_select_q];
+    wire [16:0] selected_bit_offset = drive_bit_offset_q[drive_select_q];
+    wire [3:0] selected_woz_head_window =
+        drive_woz_head_window_q[drive_select_q];
     wire selected_track_loaded =
         track_loaded_q &&
         (loaded_drive_q == drive_select_q) &&
@@ -273,9 +290,20 @@ module disk2_card (
         selected_track_loaded &&
         woz_alias_drive_q[drive_select_q];
     wire active_drive_loaded = track_woz_q ? woz_alias_loaded : exact_drive_loaded;
+    wire active_track_unavailable =
+        track_unavailable_q &&
+        (loaded_drive_q == drive_select_q) &&
+        (loaded_qtrack_q == current_qtrack);
+    // A mounted track request is pending while PS prepares/stages a stream
+    // that does not yet match the selected drive and head position. Do not
+    // expose the previous track's latch or invent a valid $FF nibble.
+    wire track_data_pending =
+        drive_has_media &&
+        !active_drive_loaded &&
+        !active_track_unavailable;
     wire stream_track_loaded = active_drive_loaded;
     wire woz_track_stream_ready = woz_alias_loaded;
-    wire drive_spinning = drive_connected && (motor_on_q || (spin_countdown_q[drive_select_q] != 28'd0));
+    wire drive_spinning = motor_on_q || (spin_countdown_q[drive_select_q] != 28'd0);
     assign sound_spinning = drive_spinning;
     assign sound_qtrack = current_qtrack;
     assign sound_event = sound_event_q;
@@ -290,9 +318,18 @@ module disk2_card (
     wire disk_stream_access =
         (ab_io_read || ab_io_write) &&
         drive_spinning &&
+        drive_has_media &&
+        active_drive_loaded &&
+        !active_track_unavailable &&
         !track_woz_q &&
         (io_idx == IO_Q6_LOW);
+    wire empty_drive_latch_access =
+        (ab_io_read || ab_io_write) &&
+        (!drive_has_media || active_track_unavailable) &&
+        (io_idx == IO_Q6_LOW);
     wire standard_stream_active =
+        enabled &&
+        ab_read.res &&
         drive_spinning &&
         !track_woz_q &&
         stream_track_loaded;
@@ -303,14 +340,25 @@ module disk2_card (
         (standard_spin_countdown_q == 6'd1);
     wire standard_partial_read =
         disk_stream_access &&
-        active_drive_loaded &&
         !q7_after_access &&
+        stream_line_hit_q &&
         (standard_read_gap_q <= 3'd6);
+    wire standard_read_miss =
+        disk_stream_access &&
+        !q7_after_access &&
+        !stream_line_hit_q;
+    wire disk_read_not_ready =
+        ab_io_read &&
+        drive_spinning &&
+        !q6_after_access &&
+        !q7_after_access &&
+        (track_data_pending || standard_read_miss);
     wire [3:0] standard_invalid_bits =
         4'd8 - {3'b000, standard_read_gap_q[2]};
     wire woz_io_access =
         (ab_io_read || ab_io_write) &&
         drive_spinning &&
+        drive_has_media &&
         track_woz_q &&
         woz_track_stream_ready;
     wire woz_q6_mode = woz_io_access ? q6_after_access : q6_q;
@@ -339,6 +387,8 @@ module disk2_card (
     wire [15:0] woz_accum_plus_saturated =
         woz_accum_plus_cycle[16] ? 16'hFFFF : woz_accum_plus_cycle[15:0];
     wire woz_stream_active =
+        enabled &&
+        ab_read.res &&
         ab_read.sss_en &&
         drive_spinning &&
         track_woz_q &&
@@ -356,7 +406,10 @@ module disk2_card (
         8'hFF;
     wire [7:0] standard_read_byte =
         standard_partial_read ? (disk_next_byte >> standard_invalid_bits) : disk_next_byte;
-    wire [7:0] disk_read_byte = (disk_stream_access && !q7_after_access) ? standard_read_byte : disk_latch_q;
+    wire [7:0] disk_read_byte =
+        disk_read_not_ready ? 8'h00 :
+        (disk_stream_access && !q7_after_access) ? standard_read_byte :
+        disk_latch_q;
     wire disk_track_write =
         disk_stream_access &&
         q7_after_access &&
@@ -478,6 +531,13 @@ module disk2_card (
         woz_rand_5_10 = (rand_state[30:16] < 15'd16384);
     endfunction
 
+    // Maximal-length 16-bit Galois LFSR. Empty media must not leave a valid
+    // high-bit disk nibble frozen in the shared data latch indefinitely.
+    function automatic logic [15:0] empty_drive_lfsr_next(input logic [15:0] state);
+        empty_drive_lfsr_next =
+            state[0] ? ((state >> 1) ^ 16'hB400) : (state >> 1);
+    endfunction
+
     function automatic logic [15:0] stepper_result(input logic [7:0] phase,
                                                    input logic [3:0] magnets,
                                                    input logic is_woz);
@@ -581,9 +641,10 @@ module disk2_card (
 
     function automatic logic [31:0] track_info_word;
         track_info_word = 32'h0000_0000;
-        track_info_word[0] = track_loaded_q;
-        track_info_word[1] = active_drive_loaded;
+        track_info_word[0] = track_loaded_q || track_unavailable_q;
+        track_info_word[1] = active_drive_loaded || active_track_unavailable;
         track_info_word[2] = track_woz_q;
+        track_info_word[3] = track_unavailable_q;
         track_info_word[15:8] = current_qtrack;
         track_info_word[16] = drive_select_q;
         track_info_word[20] = loaded_drive_q;
@@ -592,9 +653,9 @@ module disk2_card (
 
     always_comb begin
         if (track_woz_q)
-            active_stream_pos = woz_byte_pos(track_bit_offset_q);
+            active_stream_pos = woz_byte_pos(selected_bit_offset);
         else
-            active_stream_pos = track_stream_pos_q;
+            active_stream_pos = selected_stream_pos;
     end
 
     always_comb begin
@@ -679,6 +740,7 @@ module disk2_card (
             drive_qtrack_q[1] <= 8'h00;
             track_loaded_q <= 1'b0;
             track_woz_q <= 1'b0;
+            track_unavailable_q <= 1'b0;
             loaded_drive_q <= 1'b0;
             loaded_qtrack_q <= 8'h00;
             woz_alias_lo_q <= 8'hFF;
@@ -687,12 +749,16 @@ module disk2_card (
             woz_alias_drive_q[1] <= 1'b0;
             track_length_q <= 14'd0;
             track_write_index_q <= 13'd0;
-            track_stream_pos_q <= 13'd0;
+            drive_stream_pos_q[0] <= 13'd0;
+            drive_stream_pos_q[1] <= 13'd0;
             standard_spin_countdown_q <= STANDARD_SPIN_FIRST_IDLE;
             standard_spin_repeat_q <= 1'b0;
             standard_read_gap_q <= STANDARD_READ_GAP_LIMIT;
+            empty_drive_lss_settle_q <= 10'd0;
+            empty_drive_lfsr_q <= EMPTY_DRIVE_LFSR_SEED;
             track_bit_count_q <= 17'd0;
-            track_bit_offset_q <= 17'd0;
+            drive_bit_offset_q[0] <= 17'd0;
+            drive_bit_offset_q[1] <= 17'd0;
             track_bit_timing_q <= 8'd32;
             woz_seam_start_q <= 16'd0;
             woz_seam_run_q <= 16'd0;
@@ -702,7 +768,14 @@ module disk2_card (
             disk_latch_q <= 8'hFF;
             woz_shift_q <= 8'h00;
             woz_latch_delay_q <= 4'd0;
-            woz_head_window_q <= 4'd0;
+            drive_woz_head_window_q[0] <= 4'd0;
+            drive_woz_head_window_q[1] <= 4'd0;
+            drive_rotation_valid_q[0] <= 1'b0;
+            drive_rotation_valid_q[1] <= 1'b0;
+            drive_rotation_woz_q[0] <= 1'b0;
+            drive_rotation_woz_q[1] <= 1'b0;
+            drive_rotation_qtrack_q[0] <= 8'd0;
+            drive_rotation_qtrack_q[1] <= 8'd0;
             woz_write_started_q <= 1'b0;
             woz_bit_accum_q <= 16'd0;
             woz_weak_rand_q <= WOZ_WEAK_RAND_FIRST;
@@ -806,6 +879,8 @@ module disk2_card (
                     sound_step_end_qtrack_q);
                 sound_step_valid_q <= 1'b0;
             end
+            if (ab_read.sss_en && empty_drive_lss_settle_q != 10'd0)
+                empty_drive_lss_settle_q <= empty_drive_lss_settle_q - 10'd1;
             woz_alias_drive_q[0] <= woz_alias_hit(drive_qtrack_q[0]);
             woz_alias_drive_q[1] <= woz_alias_hit(drive_qtrack_q[1]);
             prefetch_current_line_q <= active_line_next;
@@ -822,7 +897,8 @@ module disk2_card (
 
                 if (standard_stream_active && !disk_stream_access) begin
                     if (standard_spin_tick) begin
-                        track_stream_pos_q <= stream_pos_next(track_stream_pos_q, track_length_q);
+                        drive_stream_pos_q[drive_select_q] <=
+                            stream_pos_next(selected_stream_pos, track_length_q);
                         standard_spin_countdown_q <=
                             standard_spin_repeat_q ?
                             STANDARD_SPIN_REPEAT_IDLE :
@@ -942,7 +1018,7 @@ module disk2_card (
                     spin_countdown_q[0] <= spin_countdown_q[0] - 28'd1;
                 if (spin_countdown_q[1] != 28'd0)
                     spin_countdown_q[1] <= spin_countdown_q[1] - 28'd1;
-            end else if (drive_connected) begin
+            end else begin
                 spin_countdown_q[drive_select_q] <= SPIN_DOWN_TICKS;
             end
 
@@ -950,17 +1026,11 @@ module disk2_card (
                 phase_on_q <= 4'h0;
                 motor_on_q <= 1'b0;
                 drive_select_q <= 1'b0;
-                spin_countdown_q[0] <= 28'd0;
-                spin_countdown_q[1] <= 28'd0;
                 step_pending_q <= 1'b0;
                 step_pending_addr_q <= 4'h0;
                 step_delay_q <= 4'd0;
                 q6_q <= 1'b0;
                 q7_q <= 1'b0;
-                // NOTE: the emulated drive head position (drive_phase_q /
-                // drive_qtrack_q) is deliberately NOT cleared here -- see the
-                // separate `if (!enabled)` block below. A real Disk II has no
-                // reset line; Apple RESET must not move the head.
                 sound_seek_start_qtrack_q <= 8'd0;
                 sound_step_valid_q <= 1'b0;
                 sound_step_start_qtrack_q <= 8'd0;
@@ -969,14 +1039,12 @@ module disk2_card (
                 sound_step_recal_armed_q <= 1'b0;
                 recal_sound_armed_q[0] <= 1'b1;
                 recal_sound_armed_q[1] <= 1'b1;
-                track_stream_pos_q <= 13'd0;
                 standard_spin_countdown_q <= STANDARD_SPIN_FIRST_IDLE;
                 standard_spin_repeat_q <= 1'b0;
                 standard_read_gap_q <= STANDARD_READ_GAP_LIMIT;
-                track_bit_offset_q <= 17'd0;
+                empty_drive_lss_settle_q <= 10'd0;
                 woz_shift_q <= 8'h00;
                 woz_latch_delay_q <= 4'd0;
-                woz_head_window_q <= 4'd0;
                 woz_write_started_q <= 1'b0;
                 woz_bit_accum_q <= 16'd0;
                 woz_seam_arm_q <= 1'b0;
@@ -988,23 +1056,30 @@ module disk2_card (
                 prefetch_req_q <= 1'b0;
                 prefetch_resp_pending_q <= 1'b0;
                 cache_patch_pending_q <= 1'b0;
-                write_fifo_head_q <= 4'd0;
-                write_fifo_tail_q <= 4'd0;
-                write_fifo_count_q <= 5'd0;
-                disk_write_pending_q <= 1'b0;
-                woz_write_pending_q <= 1'b0;
-                write_req_q <= 1'b0;
-                disk_latch_q <= 8'hFF;
             end
 
-            // Apple RESET must not move the emulated drive head. A Disk II has no
-            // reset input, and DOS retains its current-track state across a warm
-            // reset. Only power-on or disabling the virtual card clears the head.
+            // Apple RESET only clears the controller switches/sequencer. It
+            // neither stops an already-spinning platter nor moves the head,
+            // resets rotation, changes the data latch, or drops buffered writes.
+            // Disabling the virtual card is the explicit full device reset.
             if (!enabled) begin
+                spin_countdown_q[0] <= 28'd0;
+                spin_countdown_q[1] <= 28'd0;
                 drive_phase_q[0] <= 8'h00;
                 drive_phase_q[1] <= 8'h00;
                 drive_qtrack_q[0] <= 8'h00;
                 drive_qtrack_q[1] <= 8'h00;
+                drive_stream_pos_q[0] <= 13'd0;
+                drive_stream_pos_q[1] <= 13'd0;
+                drive_bit_offset_q[0] <= 17'd0;
+                drive_bit_offset_q[1] <= 17'd0;
+                drive_woz_head_window_q[0] <= 4'd0;
+                drive_woz_head_window_q[1] <= 4'd0;
+                drive_rotation_valid_q[0] <= 1'b0;
+                drive_rotation_valid_q[1] <= 1'b0;
+                track_loaded_q <= 1'b0;
+                track_unavailable_q <= 1'b0;
+                disk_latch_q <= 8'hFF;
             end
 
             if (ab_io_read || ab_io_write) begin
@@ -1077,28 +1152,42 @@ module disk2_card (
                             standard_spin_countdown_q <= STANDARD_SPIN_FIRST_IDLE;
                             standard_spin_repeat_q <= 1'b0;
                         end
+                        if (!motor_on_q) begin
+                            empty_drive_lss_settle_q <= EMPTY_DRIVE_LSS_STABLE_CYCLES;
+                            if (!drive_has_media)
+                                disk_latch_q <= 8'h80;
+                        end
                         motor_on_q <= 1'b1;
-                        if (drive_connected)
-                            spin_countdown_q[drive_select_q] <= SPIN_DOWN_TICKS;
+                        spin_countdown_q[drive_select_q] <= SPIN_DOWN_TICKS;
                     end
                     IO_DRIVE1: begin
-                        if (motor_on_q && drive_info_q[0][0] && spin_countdown_q[0] == 28'd0) begin
+                        if (motor_on_q && spin_countdown_q[0] == 28'd0) begin
                             standard_spin_countdown_q <= STANDARD_SPIN_FIRST_IDLE;
                             standard_spin_repeat_q <= 1'b0;
+                        end
+                        if (motor_on_q && drive_select_q != 1'b0) begin
+                            empty_drive_lss_settle_q <= EMPTY_DRIVE_LSS_STABLE_CYCLES;
+                            if (!drive_info_q[0][0])
+                                disk_latch_q <= 8'h80;
                         end
                         drive_select_q <= 1'b0;
                         spin_countdown_q[1] <= 28'd0;
-                        if (motor_on_q && drive_info_q[0][0])
+                        if (motor_on_q)
                             spin_countdown_q[0] <= SPIN_DOWN_TICKS;
                     end
                     IO_DRIVE2: begin
-                        if (motor_on_q && drive_info_q[1][0] && spin_countdown_q[1] == 28'd0) begin
+                        if (motor_on_q && spin_countdown_q[1] == 28'd0) begin
                             standard_spin_countdown_q <= STANDARD_SPIN_FIRST_IDLE;
                             standard_spin_repeat_q <= 1'b0;
                         end
+                        if (motor_on_q && drive_select_q != 1'b1) begin
+                            empty_drive_lss_settle_q <= EMPTY_DRIVE_LSS_STABLE_CYCLES;
+                            if (!drive_info_q[1][0])
+                                disk_latch_q <= 8'h80;
+                        end
                         drive_select_q <= 1'b1;
                         spin_countdown_q[0] <= 28'd0;
-                        if (motor_on_q && drive_info_q[1][0])
+                        if (motor_on_q)
                             spin_countdown_q[1] <= SPIN_DOWN_TICKS;
                     end
                     IO_Q6_LOW:     q6_q <= 1'b0;
@@ -1120,7 +1209,17 @@ module disk2_card (
 
             end
 
-            if (ab_read.sss_en && step_pending_q && !stepper_io_access) begin
+            if (empty_drive_latch_access) begin
+                if (empty_drive_lss_settle_q != 10'd0) begin
+                    disk_latch_q <= 8'h80;
+                end else begin
+                    disk_latch_q <= empty_drive_lfsr_q[7:0];
+                    empty_drive_lfsr_q <= empty_drive_lfsr_next(empty_drive_lfsr_q);
+                end
+            end
+
+            if (enabled && ab_read.res && ab_read.sss_en &&
+                step_pending_q && !stepper_io_access) begin
                 if (step_delay_q <= 4'd1) begin
                     automatic logic [15:0] step_next = stepper_result(
                         drive_phase_q[drive_select_q],
@@ -1179,7 +1278,7 @@ module disk2_card (
                 automatic logic [16:0] accum_after_tick_v;
 
                 if (woz_cache_before_tick) begin
-                    automatic logic [7:0] cache_mask_v = 8'h80 >> track_bit_offset_q[2:0];
+                    automatic logic [7:0] cache_mask_v = 8'h80 >> selected_bit_offset[2:0];
 
                     woz_cached_valid_q <= stream_line_hit_q;
                     woz_cached_ready_q <= 1'b1;
@@ -1191,7 +1290,7 @@ module disk2_card (
                         woz_read_mode &&
                         woz_seam_run_q > 16'd110 &&
                         woz_seam_pre_start_q != WOZ_SEAM_PRE_START_INVALID &&
-                        track_bit_offset_q == woz_seam_pre_start_q;
+                        selected_bit_offset == woz_seam_pre_start_q;
                 end
 
                 if (woz_bit_cell_tick) begin
@@ -1214,7 +1313,7 @@ module disk2_card (
                             woz_cached_valid_q <= 1'b1;
                             woz_cached_ready_q <= 1'b1;
                             woz_cached_byte_q <= disk_next_byte;
-                            woz_cached_mask_q <= 8'h80 >> track_bit_offset_q[2:0];
+                            woz_cached_mask_q <= 8'h80 >> selected_bit_offset[2:0];
                             woz_cached_line_q <= stream_line_addr_q;
                             woz_cached_offset_q <= stream_line_offset_q;
                             cache_retry_v = 1'b1;
@@ -1248,10 +1347,11 @@ module disk2_card (
                         // stream and resets the LSS; it does not shift a read bit.
                     end else if (woz_read_mode) begin
                         input_bit_v = cached_v[8] && ((byte_v & mask_v) != 8'h00);
-                        woz_head_window_q <= {woz_head_window_q[2:0], input_bit_v};
-                        head_next_v = {woz_head_window_q[2:0], input_bit_v};
+                        drive_woz_head_window_q[drive_select_q] <=
+                            {selected_woz_head_window[2:0], input_bit_v};
+                        head_next_v = {selected_woz_head_window[2:0], input_bit_v};
                         if (head_next_v != 4'h0) begin
-                            output_bit_v = woz_head_window_q[0];
+                            output_bit_v = selected_woz_head_window[0];
                         end else begin
                             output_bit_v = woz_weak_rand_bit_q;
                             woz_weak_rand_q <= woz_weak_next_rand_q;
@@ -1292,14 +1392,14 @@ module disk2_card (
                     if (!skip_bit_advance_v) begin
                         seam_slip_v = woz_seam_arm_q && woz_rand_5_10(woz_weak_rand_q);
                         next_bit_offset =
-                            raw_bit_offset_next(track_bit_offset_q, track_bit_count_q, seam_slip_v);
+                            raw_bit_offset_next(selected_bit_offset, track_bit_count_q, seam_slip_v);
                         if (woz_seam_arm_q) begin
                             woz_weak_rand_q <= woz_weak_next_rand_q;
                             woz_weak_rand_bit_q <= woz_weak_next_rand_bit_q;
                             woz_weak_refill_pending_q <= 1'b1;
                         end
                         woz_seam_arm_q <= 1'b0;
-                        track_bit_offset_q <= next_bit_offset;
+                        drive_bit_offset_q[drive_select_q] <= next_bit_offset;
                         accum_after_tick_v =
                             woz_accum_plus_cycle - {9'h000, woz_effective_bit_timing};
                         woz_bit_accum_q <= accum_after_tick_v[15:0];
@@ -1328,7 +1428,7 @@ module disk2_card (
 
             if (disk_stream_access) begin
                 automatic logic [12:0] next_pos =
-                    standard_partial_read ?
+                    (standard_partial_read || standard_read_miss) ?
                     active_stream_pos :
                     stream_pos_next(active_stream_pos, track_length_q);
                 standard_spin_countdown_q <= STANDARD_SPIN_FIRST_IDLE;
@@ -1350,14 +1450,17 @@ module disk2_card (
                     end else begin
                         underrun_count_q <= underrun_count_q + 32'd1;
                     end
-                end else if (!q7_after_access) begin
+                end else if (!q7_after_access && stream_line_hit_q) begin
                     disk_latch_q <= standard_read_byte;
-                    if (!standard_partial_read && active_drive_loaded)
+                    if (!standard_partial_read)
                         standard_read_gap_q <= 3'd0;
-                    if (active_drive_loaded && !stream_line_hit_q)
-                        underrun_count_q <= underrun_count_q + 32'd1;
+                end else if (standard_read_miss) begin
+                    // The DDR request is already being issued by the prefetch
+                    // machinery. Report the fault, but leave both the latch
+                    // and byte position untouched so the Apple can retry.
+                    underrun_count_q <= underrun_count_q + 32'd1;
                 end
-                track_stream_pos_q <= next_pos;
+                drive_stream_pos_q[drive_select_q] <= next_pos;
                 stream_read_count_q <= stream_read_count_q + 32'd1;
             end
 
@@ -1406,6 +1509,7 @@ module disk2_card (
                         if (as_common.wstrb[0] && as_common.wdata[0] == 1'b0) begin
                             track_loaded_q <= 1'b0;
                             track_woz_q <= 1'b0;
+                            track_unavailable_q <= 1'b0;
                             woz_alias_lo_q <= 8'hFF;
                             woz_alias_hi_q <= 8'h00;
                             woz_alias_drive_q[0] <= 1'b0;
@@ -1434,26 +1538,45 @@ module disk2_card (
                             // replacement bytes with this track's disk location.
                             write_dirty_q <= 1'b0;
                         end else if (as_common.wstrb[0] && as_common.wdata[0] == 1'b1) begin
-                            track_loaded_q <= 1'b1;
-                            track_woz_q <= as_common.wdata[2];
-                            loaded_qtrack_q <= as_common.wdata[15:8];
-                            loaded_drive_q <= as_common.wdata[20];
-                            if (as_common.wdata[2]) begin
-                                automatic logic [16:0] bit_offset_next = track_bit_offset_q;
-                                if (track_bit_count_q != 17'd0 && track_bit_offset_q >= track_bit_count_q)
+                            automatic logic load_drive_v = as_common.wdata[20];
+                            automatic logic [7:0] load_qtrack_v = as_common.wdata[15:8];
+                            automatic logic load_woz_v = as_common.wdata[2];
+                            automatic logic no_track_v = as_common.wdata[3];
+                            automatic logic same_rotation_v =
+                                drive_rotation_valid_q[load_drive_v] &&
+                                drive_rotation_woz_q[load_drive_v] == load_woz_v &&
+                                drive_rotation_qtrack_q[load_drive_v] == load_qtrack_v;
+
+                            track_loaded_q <= !no_track_v;
+                            track_woz_q <= load_woz_v && !no_track_v;
+                            track_unavailable_q <= no_track_v;
+                            loaded_qtrack_q <= load_qtrack_v;
+                            loaded_drive_q <= load_drive_v;
+                            if (no_track_v) begin
+                                woz_alias_lo_q <= 8'hFF;
+                                woz_alias_hi_q <= 8'h00;
+                                woz_alias_drive_q[0] <= 1'b0;
+                                woz_alias_drive_q[1] <= 1'b0;
+                                standard_spin_countdown_q <= STANDARD_SPIN_FIRST_IDLE;
+                                standard_spin_repeat_q <= 1'b0;
+                                standard_read_gap_q <= STANDARD_READ_GAP_LIMIT;
+                            end else if (load_woz_v) begin
+                                automatic logic [16:0] bit_offset_next =
+                                    drive_bit_offset_q[load_drive_v];
+                                if (track_bit_count_q != 17'd0 &&
+                                    bit_offset_next >= track_bit_count_q)
                                     bit_offset_next = 17'd0;
-                                track_bit_offset_q <= bit_offset_next;
+                                drive_bit_offset_q[load_drive_v] <= bit_offset_next;
                                 prefetch_current_line_q <= 21'd0;
                                 prefetch_next_line_q <= 21'd0;
-                                woz_head_window_q <= 4'd0;
+                                if (!same_rotation_v)
+                                    drive_woz_head_window_q[load_drive_v] <= 4'd0;
                                 woz_bit_accum_q <= 16'd0;
                             end else begin
                                 woz_alias_lo_q <= 8'hFF;
                                 woz_alias_hi_q <= 8'h00;
                                 woz_alias_drive_q[0] <= 1'b0;
                                 woz_alias_drive_q[1] <= 1'b0;
-                                track_bit_offset_q <= 17'd0;
-                                track_stream_pos_q <= 13'd0;
                                 standard_spin_countdown_q <= STANDARD_SPIN_FIRST_IDLE;
                                 standard_spin_repeat_q <= 1'b0;
                                 standard_read_gap_q <= STANDARD_READ_GAP_LIMIT;
@@ -1462,9 +1585,15 @@ module disk2_card (
                                 disk_latch_q <= 8'hFF;
                                 woz_shift_q <= 8'h00;
                                 woz_latch_delay_q <= 4'd0;
-                                woz_head_window_q <= 4'd0;
+                                if (!same_rotation_v)
+                                    drive_woz_head_window_q[load_drive_v] <= 4'd0;
                                 woz_write_started_q <= 1'b0;
                                 woz_bit_accum_q <= 16'd0;
+                            end
+                            if (!no_track_v) begin
+                                drive_rotation_valid_q[load_drive_v] <= 1'b1;
+                                drive_rotation_woz_q[load_drive_v] <= load_woz_v;
+                                drive_rotation_qtrack_q[load_drive_v] <= load_qtrack_v;
                             end
                             prefetch_valid_q <= '0;
                             prefetch_req_q <= 1'b0;
@@ -1522,13 +1651,13 @@ module disk2_card (
                     end
                     D2_REG_TRACK_BIT_OFFSET: begin
                         automatic logic [31:0] bit_offset_tmp = globals::apply_wstrb(
-                            {15'h0000, track_bit_offset_q}, as_common.wdata, as_common.wstrb);
+                            {15'h0000, selected_bit_offset}, as_common.wdata, as_common.wstrb);
                         automatic logic [16:0] bit_offset_next;
                         if (bit_offset_tmp > 32'd65535)
                             bit_offset_next = 17'd65535;
                         else
                             bit_offset_next = bit_offset_tmp[16:0];
-                        track_bit_offset_q <= bit_offset_next;
+                        drive_bit_offset_q[drive_select_q] <= bit_offset_next;
                         woz_seam_arm_q <= 1'b0;
                         woz_cached_valid_q <= 1'b0;
                         woz_cached_ready_q <= 1'b0;
@@ -1563,9 +1692,9 @@ module disk2_card (
                     end
                     D2_REG_STREAM_POS: begin
                         automatic logic [31:0] pos_tmp = globals::apply_wstrb(
-                            {19'h00000, track_stream_pos_q}, as_common.wdata, as_common.wstrb);
+                            {19'h00000, selected_stream_pos}, as_common.wdata, as_common.wstrb);
                         automatic logic [12:0] pos_next = pos_tmp[12:0] & TRACK_STREAM_LAST;
-                        track_stream_pos_q <= pos_next;
+                        drive_stream_pos_q[drive_select_q] <= pos_next;
                         standard_spin_countdown_q <= STANDARD_SPIN_FIRST_IDLE;
                         standard_spin_repeat_q <= 1'b0;
                         prefetch_current_line_q <= 21'd0;
@@ -1601,8 +1730,15 @@ module disk2_card (
                             stream_write_count_q, as_common.wdata, as_common.wstrb);
                     end
                     D2_REG_D1_INFO: begin
-                        drive_info_q[0] <= globals::apply_wstrb(
+                        automatic logic [31:0] info_next = globals::apply_wstrb(
                             drive_info_q[0], as_common.wdata, as_common.wstrb);
+                        drive_info_q[0] <= info_next;
+                        if (!info_next[0]) begin
+                            drive_stream_pos_q[0] <= 13'd0;
+                            drive_bit_offset_q[0] <= 17'd0;
+                            drive_woz_head_window_q[0] <= 4'd0;
+                            drive_rotation_valid_q[0] <= 1'b0;
+                        end
                     end
                     D2_REG_D1_SIZE: begin
                         drive_size_q[0] <= globals::apply_wstrb(
@@ -1621,8 +1757,15 @@ module disk2_card (
                             drive_length_q[0], as_common.wdata, as_common.wstrb);
                     end
                     D2_REG_D2_INFO: begin
-                        drive_info_q[1] <= globals::apply_wstrb(
+                        automatic logic [31:0] info_next = globals::apply_wstrb(
                             drive_info_q[1], as_common.wdata, as_common.wstrb);
+                        drive_info_q[1] <= info_next;
+                        if (!info_next[0]) begin
+                            drive_stream_pos_q[1] <= 13'd0;
+                            drive_bit_offset_q[1] <= 17'd0;
+                            drive_woz_head_window_q[1] <= 4'd0;
+                            drive_rotation_valid_q[1] <= 1'b0;
+                        end
                     end
                     D2_REG_D2_SIZE: begin
                         drive_size_q[1] <= globals::apply_wstrb(
@@ -1683,7 +1826,7 @@ module disk2_card (
                 D2_REG_STREAM_POS:   as_client_rdata_q <= {19'h00000, active_stream_pos};
                 D2_REG_STREAM_READS: as_client_rdata_q <= stream_read_count_q;
                 D2_REG_TRACK_BIT_COUNT: as_client_rdata_q <= {15'h0000, track_bit_count_q};
-                D2_REG_TRACK_BIT_OFFSET: as_client_rdata_q <= {15'h0000, track_bit_offset_q};
+                D2_REG_TRACK_BIT_OFFSET: as_client_rdata_q <= {15'h0000, selected_bit_offset};
                 D2_REG_TRACK_BIT_TIMING: as_client_rdata_q <= {24'h000000, track_bit_timing_q};
                 D2_REG_TRACK_SEAM: as_client_rdata_q <= {woz_seam_run_q, woz_seam_start_q};
                 D2_REG_WRITE_INFO: begin

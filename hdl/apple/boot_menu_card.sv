@@ -483,11 +483,16 @@ module boot_menu_card (
                     // Cold boot with no handoff yet (e.g. power-on): the boot
                     // menu owns slot 7, so make it eligible to run.
                     boot_eligible_q <= 1'b1;
-                end else begin
+                end else if (machine_id_q != 4'd1) begin
                     // Already handed off => this is a warm Ctrl-Reset. Keep the
                     // handoff (storage stays mapped) and arm Open-Apple detection
                     // so Open-Apple+Ctrl-Reset can still cold-boot back to the
-                    // menu (decided in the window below).
+                    // menu (decided in the window below). NOT on a II/II+
+                    // (machine id 1): there is no Open-Apple key there --
+                    // $C061 is a floating game-connector button that reads
+                    // "pressed", and with no //e ROM read to close the window
+                    // benignly, the first application button poll inside it
+                    // would silently revoke the storage handoff mid-session.
                     oa_window_q <= 1'b1;
                     oa_window_timer_q <= OA_WINDOW_TICKS;
                 end

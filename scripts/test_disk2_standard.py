@@ -121,12 +121,17 @@ def encode_6and2(sector: bytes | bytearray) -> bytes:
 
 def decode_6and2(encoded: bytes | bytearray) -> bytes:
     require(len(encoded) >= 343, "encoded sector is too short")
-    raw = [GCR_DECODE[encoded[i]] for i in range(343)]
+    raw = []
+    for i in range(343):
+        require(encoded[i] in GCR_DECODE,
+                f"encoded sector contains invalid GCR byte ${encoded[i]:02X}")
+        raw.append(GCR_DECODE[encoded[i]])
     saved = 0
     for i in range(342):
         value = saved ^ raw[i]
         raw[i] = value
         saved = value
+    require(raw[342] == saved, "encoded sector data checksum is invalid")
 
     sector = bytearray(SECTOR_BYTES)
     offset = 0xAC
@@ -199,47 +204,71 @@ def nibblize_track(sector_track: bytes | bytearray, track: int, is_prodos: bool)
     return bytes(out[:pos])
 
 
-def denibblize_track(nibbles: bytes | bytearray, is_prodos: bool, base_track: bytes | bytearray | None = None) -> bytes:
+def denibblize_track(nibbles: bytes | bytearray,
+                     is_prodos: bool,
+                     expected_track: int,
+                     base_track: bytes | bytearray | None = None) -> bytes:
     require(len(nibbles) >= 512, "nibble stream is too short")
-    sector_track = bytearray(base_track if base_track is not None else bytes(TRACK_DENIBBLIZED_SIZE))
+    # AppleWin starts every denibblized write with a zeroed 4K track. Valid
+    # address/data pairs fill their sectors; absent or invalid sectors stay 0.
+    del base_track
+    sector_track = bytearray(TRACK_DENIBBLIZED_SIZE)
     offset = 0
     sector = -1
     sectors_seen = 0
     length = len(nibbles)
 
-    for _ in range((SECTORS_PER_TRACK * 2) + 1):
-        byteval = [0, 0, 0]
-        bytenum = 0
-        loop = length
-        while loop and bytenum < 3:
-            value = nibbles[offset]
-            offset = 0 if offset + 1 >= length else offset + 1
-            loop -= 1
-            if bytenum:
-                byteval[bytenum] = value
-                bytenum += 1
-            elif value == 0xD5:
-                byteval[bytenum] = value
-                bytenum += 1
+    # Scan byte positions, not a fixed number of $D5 candidates. Disk II
+    # write splices may leave harmless $D5 bytes in gaps between fields.
+    # A second pass permits an address/data pair to cross the circular seam.
+    for scanned in range(length * 2):
+        if sectors_seen == 0xFFFF:
+            break
+        offset = scanned % length
+        byteval = (
+            nibbles[offset],
+            nibbles[(offset + 1) % length],
+            nibbles[(offset + 2) % length],
+        )
 
-        if bytenum == 3 and byteval[1] == 0xAA:
+        if (byteval[0] == 0xD5
+                and byteval[1] == 0xAA
+                and byteval[2] in (0x96, 0xAD)):
             encoded = bytearray()
-            temp_offset = offset
+            temp_offset = (offset + 3) % length
             for _ in range(384):
                 encoded.append(nibbles[temp_offset])
                 temp_offset = 0 if temp_offset + 1 >= length else temp_offset + 1
 
             if byteval[2] == 0x96:
-                sector = decode44_pair(encoded, 4)
+                volume = decode44_pair(encoded, 0)
+                track = decode44_pair(encoded, 2)
+                address_sector = decode44_pair(encoded, 4)
+                checksum = decode44_pair(encoded, 6)
+                address_valid = all((value & 0xAA) == 0xAA
+                                    for value in encoded[:8])
+                address_valid = (
+                    address_valid
+                    and track == expected_track
+                    and address_sector < SECTORS_PER_TRACK
+                    and (volume ^ track ^ address_sector) == checksum
+                    and encoded[8:11] == b"\xDE\xAA\xEB"
+                )
+                if address_valid:
+                    sector = address_sector
             elif byteval[2] == 0xAD:
-                if 0 <= sector < SECTORS_PER_TRACK:
+                if (0 <= sector < SECTORS_PER_TRACK
+                        and encoded[343:346] == b"\xDE\xAA\xEB"):
                     file_sector = physical_to_file_sector(sector, is_prodos)
-                    decoded = decode_6and2(encoded[:343])
-                    sector_track[file_sector * SECTOR_BYTES:(file_sector + 1) * SECTOR_BYTES] = decoded
-                    sectors_seen |= 1 << sector
-                sector = 0
+                    try:
+                        decoded = decode_6and2(encoded[:343])
+                    except TestFailure:
+                        decoded = None
+                    if decoded is not None:
+                        sector_track[file_sector * SECTOR_BYTES:(file_sector + 1) * SECTOR_BYTES] = decoded
+                        sectors_seen |= 1 << sector
+                        sector = -1
 
-    require(sectors_seen == 0xFFFF, f"expected all sectors, saw bitmap {sectors_seen:04X}")
     return bytes(sector_track)
 
 
@@ -269,10 +298,12 @@ class StandardImage:
 
     def qtrack_to_track(self, qtrack: int) -> int:
         track = qtrack // 4
-        return min(track, self.track_count - 1)
+        return track if track < self.track_count else -1
 
     def read_qtrack(self, qtrack: int) -> bytes:
         track = self.qtrack_to_track(qtrack)
+        if track < 0:
+            return b""
         if self.format_name == "nib":
             start = track * NIB_TRACK_BYTES
             return bytes(self.data[start:start + NIB_TRACK_BYTES])
@@ -281,6 +312,8 @@ class StandardImage:
 
     def write_qtrack(self, qtrack: int, stream: bytes) -> None:
         track = self.qtrack_to_track(qtrack)
+        if track < 0:
+            return
         if self.format_name == "nib":
             require(len(stream) >= NIB_TRACK_BYTES, "NIB write must contain a full raw track")
             start = track * NIB_TRACK_BYTES
@@ -288,7 +321,7 @@ class StandardImage:
             return
         start = track * TRACK_DENIBBLIZED_SIZE
         old_track = bytes(self.data[start:start + TRACK_DENIBBLIZED_SIZE])
-        new_track = denibblize_track(stream, self.is_prodos, old_track)
+        new_track = denibblize_track(stream, self.is_prodos, track, old_track)
         self.data[start:start + TRACK_DENIBBLIZED_SIZE] = new_track
 
 
@@ -314,6 +347,9 @@ def test_c_constants_and_source_contract() -> None:
     require('str_ieq(ext, ".dsk")' in source, "DSK image detection is missing")
     require('str_ieq(ext, ".do")' in source, "DO image detection is missing")
     require('str_ieq(ext, ".po")' in source, "PO image detection is missing")
+    require('str_ieq(ext, ".2mg")' in source and
+            'str_ieq(ext, ".2img")' in source,
+            "2MG/2IMG image detection is missing")
     require("(format == DISK2_IMAGE_PO) ? 1U : 0U" in source, "only PO should use ProDOS order")
     require("physical_sector * (is_prodos ? 8U : 7U)" in source, "sector skew formula changed")
     require(re.search(r"qtrack\)\s*/\s*4U", source) is not None,
@@ -321,6 +357,39 @@ def test_c_constants_and_source_contract() -> None:
     require("offset = (uint32_t)track * DISK2_NIB_TRACK_BYTES" in source, "NIB read/write must be raw track offset")
     require("offset = (uint32_t)track * DISK2_DSK_SECTORS_PER_TRACK * DISK2_SECTOR_BYTES" in source,
             "DSK/PO read/write must use denibblized 4096-byte track offset")
+    require("static int gcr_decode_6and2(uint8_t value, uint8_t *decoded_out)" in source and
+            "memset(table, 0xFF, sizeof(table));" in source,
+            "DSK/PO writeback must reject invalid 6-and-2 GCR bytes")
+    require("static int decode_6and2_sector" in source and
+            "if (raw[342] != saved)" in source,
+            "DSK/PO writeback must validate each sector data checksum")
+    require("uint8_t expected_track)" in source and
+            "track != expected_track" in source and
+            "(uint8_t)(volume ^ track ^ address_sector) != checksum" in source,
+            "DSK/PO writeback must validate address track and checksum fields")
+    require("encoded[343] == 0xDEU" in source and
+            "encoded[8] != 0xDEU" in source,
+            "DSK/PO writeback must validate address and data epilogues")
+    require("memset(sector_track, 0," in source and
+            "return 0;" in source,
+            "DSK/PO writeback must zero missing sectors and accept valid ones")
+    require("scanned < (len * 2U)" in source and
+            "nib[offset] == 0xD5U" in source and
+            "parts_left" not in source,
+            "DSK/PO writeback must scan the complete circular track instead "
+            "of counting a fixed number of $D5 candidates")
+    require("DISK2_STANDARD_STRUCTURE_REJECT" not in source and
+            "discard_standard_write_after_reject" not in source,
+            "partial standard-image writes must not be rejected")
+    require("DISK2_TRACK_INFO_NO_TRACK_BIT" in source and
+            "return DISK2_NO_PHYSICAL_TRACK;" in source,
+            "out-of-range qtracks must not alias the image's final track")
+    require("cached_nib_address_valid" in source and
+            "cached_nib_is_13_sector" in source and
+            "data[p2] == 0xB5U" in source and
+            "cached_nib_address_valid(data, pos, 13U)" in source and
+            "DISK2_WOZ_BOOT_SECTOR_13" in source,
+            "valid 13-sector NIB address fields and marked WOZ images must be rejected")
 
 
 def test_standard_images_are_memory_cached_like_applewin() -> None:
@@ -337,15 +406,18 @@ def test_standard_images_are_memory_cached_like_applewin() -> None:
             "standard images must have a per-drive memory image buffer")
     require("static int load_standard_image_cache" in source,
             "standard images must be read into memory at mount time")
-    require("load_standard_image_cache(drive, &file, info.file_size)" in source,
+    require("load_standard_image_cache(drive," in source and
+            "info.image_data_offset" in source and
+            "info.image_data_size" in source,
             "probe_file must populate the standard-image cache before publishing media")
     require("static int read_standard_image_bytes" in source and
             "memcpy(buf, &g_standard_image_buf[drive][offset], len)" in source,
             "standard track reads must memcpy from the mounted image buffer")
     require("static int write_standard_image_bytes" in source and
-            "memcpy(&g_standard_image_buf[drive][offset], buf, len)" in source and
-            "return write_drive_bytes(drive, offset, buf, len);" in source,
-            "standard writes must update the mounted image buffer before file writeback")
+            "g_disk2_info[drive].image_data_offset + offset" in source and
+            "if (rc == 0)" in source and
+            "memcpy(&g_standard_image_buf[drive][offset], buf, len)" in source,
+            "standard writes must use the container data offset and update cache only after writeback")
 
     sector_read = re.search(
         r"static int read_sector_physical_track\(.*?\n}\n", source, re.S)
@@ -356,6 +428,145 @@ def test_standard_images_are_memory_cached_like_applewin() -> None:
     require("read_drive_bytes" not in sector_read.group(0) and
             "read_drive_bytes" not in nib_read.group(0),
             "standard physical track reads must not reopen/read the image file")
+
+
+def test_applewin_size_validation_and_2mg_contract() -> None:
+    source = DISK2_SERVICE_C.read_text(encoding="utf-8")
+    header = DISK2_SERVICE_H.read_text(encoding="utf-8")
+    menu_source = CONFIG_MENU_C.read_text(encoding="utf-8")
+
+    def sector_size_valid(size: int) -> bool:
+        if size > 40 * TRACK_DENIBBLIZED_SIZE:
+            return False
+        if size >= 36 * TRACK_DENIBBLIZED_SIZE:
+            return ((size - 35 * TRACK_DENIBBLIZED_SIZE) %
+                    TRACK_DENIBBLIZED_SIZE) == 0
+        return (143105 <= size <= 143364 or
+                size in (143403, 143488))
+
+    for size in (143105, 143195, 143360, 143364, 143403, 143488,
+                 147456, 151552, 163840):
+        require(sector_size_valid(size),
+                f"AppleWin-compatible size {size} should be accepted")
+    for size in (0, 143104, 143365, 143402, 143404, 143487, 143489,
+                 143616, 147455, 147457, 163841):
+        require(not sector_size_valid(size),
+                f"non-AppleWin sector-image size {size} should be rejected")
+
+    size_match = re.search(
+        r"static uint8_t sector_image_size_valid\(.*?\n}\n",
+        source,
+        re.S)
+    require(size_match is not None, "sector_image_size_valid helper not found")
+    size_body = size_match.group(0)
+    require("size > DISK2_STANDARD_MAX_TRACKS *" in size_body and
+            "size >= (DISK2_STANDARD_TRACKS + 1U) *" in size_body and
+            "size >= 143105U" in size_body and "size <= 143364U" in size_body and
+            "size == 143403U" in size_body and "size == 143488U" in size_body,
+            "sector-image validation must match AppleWin's exact raw-size exceptions")
+    require("size < DISK2_STANDARD_TRACKS * DISK2_NIB_TRACK_BYTES" in source and
+            "size > DISK2_STANDARD_MAX_TRACKS * DISK2_NIB_TRACK_BYTES" in source and
+            "(size % DISK2_NIB_TRACK_BYTES) != 0U" in source,
+            "NIB validation must accept only exact 35- through 40-track images")
+    require("size >= 143105U && size <= 143364U" in menu_source and
+            "size == 143403U || size == 143488U" in menu_source and
+            "CONFIG_DISK2_MAX_TRACKS *" in menu_source,
+            "Disk II browser must use the same AppleWin raw-size filter")
+
+    probe_match = re.search(r"static int probe_2mg\(.*?\n}\n", source, re.S)
+    require(probe_match is not None, "2MG parser not found")
+    probe = probe_match.group(0)
+    require("le32_load(&hdr[0]) != DISK2_2MG_MAGIC" in probe and
+            "le16_load(&hdr[8]) != DISK2_2MG_HEADER_SIZE" in probe and
+            "le16_load(&hdr[10]) > 1U" in probe,
+            "2MG parser must validate magic, 64-byte header, and version")
+    require("data_offset = le32_load(&hdr[24]);" in probe and
+            "data_size = le32_load(&hdr[28]);" in probe and
+            "data_size > info->file_size - data_offset" in probe,
+            "2MG parser must bound the declared payload within the file")
+    require("case DISK2_2MG_FORMAT_DOS33:" in probe and
+            "case DISK2_2MG_FORMAT_PRODOS:" in probe and
+            "case DISK2_2MG_FORMAT_NIB:" in probe and
+            "data_size != DISK2_STANDARD_TRACKS * DISK2_NIB_TRACK_BYTES" in probe,
+            "2MG must support DOS, ProDOS, and exactly 35-track NIB payloads")
+    require("format == DISK2_2MG_FORMAT_DOS33" in probe and
+            "DISK2_2MG_FLAG_VOLUME_VALID" in probe and
+            "DISK2_2MG_FLAG_LOCKED" in probe,
+            "2MG DOS volume and locked flags must follow AppleWin semantics")
+    require("uint8_t container_2mg;" in header and
+            "uint32_t image_data_offset;" in header and
+            "uint32_t image_data_size;" in header,
+            "mounted 2MG metadata must retain its container and payload extent")
+
+
+def test_media_change_flush_duplicate_and_rotation_contract() -> None:
+    source = DISK2_SERVICE_C.read_text(encoding="utf-8")
+    hdl = DISK2_CARD_SV.read_text(encoding="utf-8")
+    menu_source = CONFIG_MENU_C.read_text(encoding="utf-8")
+
+    setter = re.search(
+        r"int disk2_service_set_image_path\(.*?\n}\n",
+        source,
+        re.S)
+    require(setter is not None, "disk2_service_set_image_path not found")
+    setter_body = setter.group(0)
+    require(setter_body.find("flush_drive_before_media_change(drive)") <
+            setter_body.find("copy_path(g_disk2_paths[drive]") <
+            setter_body.find("return probe_file(drive);"),
+            "media replacement must flush the old resident track before changing its path")
+    reset_media = re.search(
+        r"int disk2_service_reset_media\(.*?\n}\n",
+        source,
+        re.S)
+    require(reset_media is not None and
+            "flush_drive_before_media_change(drive)" in reset_media.group(0),
+            "media refresh must flush pending writes before reprobe")
+
+    clear_state = re.search(
+        r"static void clear_drive_state\(.*?\n}\n",
+        source,
+        re.S)
+    require(clear_state is not None, "clear_drive_state not found")
+    require("ack_dirty_track" not in clear_state.group(0) and
+            "if (g_loaded_drive == drive)" in clear_state.group(0),
+            "state clearing must not discard dirty media or unload the other drive")
+    require("path_ieq(new_path, g_disk2_paths[other])" in setter_body and
+            "return -3;" in setter_body,
+            "service must reject mounting one image through both drive caches")
+    require("config_menu_disk2_path_in_use" in menu_source and
+            "DISK II D%u DUPLICATE IMAGE" in menu_source and
+            "config_menu_browser_entry_is_duplicate_image" in menu_source,
+            "the menu must reject and visibly dim duplicate Disk II images")
+    require("menu->disk2_disk_paths[1][0] = '\\0';" in menu_source and
+            "menu->disk2_slots[1][0] = 0U;" in menu_source,
+            "startup must keep only the first duplicate Disk II mount and "
+            "make the menu model match the backend")
+
+    require("logic [12:0] drive_stream_pos_q [0:1];" in hdl and
+            "logic [16:0] drive_bit_offset_q [0:1];" in hdl and
+            "logic [3:0] drive_woz_head_window_q [0:1];" in hdl,
+            "each drive must retain independent byte, bit, and head-window rotation")
+    warm_reset = hdl.split("if (!enabled || !ab_read.res) begin", 1)[1]
+    warm_reset = warm_reset.split("if (!enabled) begin", 1)[0]
+    for assignment in ("drive_stream_pos_q[", "drive_bit_offset_q[",
+                       "drive_woz_head_window_q[", "spin_countdown_q[",
+                       "write_fifo_head_q <=", "write_fifo_tail_q <=",
+                       "write_fifo_count_q <=", "disk_latch_q <="):
+        require(assignment not in warm_reset,
+                f"warm RESET must preserve Disk II mechanical/write state: {assignment}")
+    require("if (!enabled) begin" in hdl and
+            "drive_stream_pos_q[0] <= 13'd0;" in hdl and
+            "drive_bit_offset_q[0] <= 17'd0;" in hdl,
+            "explicit card disable must remain the full virtual-drive reset")
+    require("g_drive_rotation_raw_bits[drive] == 0U &&\n"
+            "               g_drive_rotation_qtrack[drive] == qtrack &&\n"
+            "               stream.length != 0U" in source,
+            "standard rotation must be restored per drive when returning to "
+            "the same track, while a newly loaded track starts at byte zero like AppleWin")
+    require("DISK2_TRACK_INFO_NO_TRACK_BIT" in source and
+            "track_unavailable_q" in hdl and
+            "active_track_unavailable" in hdl,
+            "outer standard tracks must produce no-track media behavior, not clamp")
 
 
 def test_empty_or_disabled_disk2_track_requests_stay_quiet() -> None:
@@ -395,6 +606,49 @@ def test_empty_or_disabled_disk2_track_requests_stay_quiet() -> None:
             "if (slot == 6U)" in slot_control.group(0) and
             "disk2_service_set_enabled(enable);" in slot_control.group(0),
             "Slot 6 config changes must enable or quiesce the Disk II track loader")
+
+
+def test_pl_empty_drive_returns_changing_latch_noise() -> None:
+    """An empty image slot is still a connected physical drive. Its motor and
+    stepper run, while $C0EC returns the LSS settling value followed by noise
+    instead of a byte retained from the other drive.
+    """
+    source = DISK2_CARD_SV.read_text(encoding="utf-8")
+
+    require("wire drive_has_media = drive_info_q[drive_select_q][0];" in source,
+            "Disk II media presence must be distinct from physical drive connection")
+    require("wire drive_spinning = motor_on_q || "
+            "(spin_countdown_q[drive_select_q] != 28'd0);" in source,
+            "an empty connected drive must still run its motor and stepper")
+    require("drive_has_media &&\n        active_drive_loaded &&\n"
+            "        !active_track_unavailable &&\n        !track_woz_q" in source and
+            "drive_has_media &&\n        track_woz_q" in source,
+            "mounted-media streams must remain gated by actual media presence")
+    require("EMPTY_DRIVE_LSS_STABLE_CYCLES = 10'h2EC" in source and
+            "disk_latch_q <= 8'h80;" in source,
+            "empty-drive reads must model the proven LSS settling window")
+    require("wire empty_drive_latch_access" in source and
+            "(!drive_has_media || active_track_unavailable)" in source and
+            "(io_idx == IO_Q6_LOW);" in source,
+            "empty-drive and out-of-range-track noise must be generated on $C0EC accesses")
+    require("empty_drive_lfsr_next" in source and
+            "disk_latch_q <= empty_drive_lfsr_q[7:0];" in source and
+            "empty_drive_lfsr_q <= empty_drive_lfsr_next(empty_drive_lfsr_q);" in source,
+            "an empty drive must not retain a stale high-bit nibble forever")
+    require("else if (drive_connected)" not in source and
+            "if (drive_connected)" not in source,
+            "media absence must not disable the emulated drive mechanism")
+
+    state = 0x1D0F
+    values = []
+    for _ in range(512):
+        values.append(state & 0xFF)
+        state = ((state >> 1) ^ 0xB400) if (state & 1) else (state >> 1)
+    require(len(set(values)) > 128,
+            "empty-drive LFSR does not provide enough changing latch values")
+    require(any(value & 0x80 for value in values) and
+            any((value & 0x80) == 0 for value in values),
+            "empty-drive latch noise must exercise both data-ready states")
 
 
 def test_disk2_sound_recal_and_volume_contract() -> None:
@@ -525,7 +779,7 @@ def test_disk2_sound_recal_and_volume_contract() -> None:
             '"Show drive activity overlay"' in tabs and
             '"Show activity overlay"' not in tabs and
             "menu->disk2_sound_volume" in tabs and
-            "Supported: WOZ, NIB, DSK, DO, PO." in help_c and
+            "Supported: WOZ, NIB, DSK, DO, PO, 2MG, and 2IMG (16-sector only)." in help_c and
             "cmui_slider(fb," in tabs,
             "Disk II tab must draw the activity toggle and volume control, with supported format help in the shared help panel")
 
@@ -616,12 +870,17 @@ def test_dsk_and_po_writeback_round_trip_full_tracks() -> None:
         qtrack = 10
         track = image.qtrack_to_track(qtrack)
         stream = image.read_qtrack(qtrack)
-        require(denibblize_track(stream, image.is_prodos) == tracks[track],
+        require(denibblize_track(stream, image.is_prodos, track) == tracks[track],
                 f"{format_name} read stream does not denibblize to original track")
 
-        replacement = bytearray(make_sector_track(track))
+        replacement = bytearray(tracks[track])
         replacement[3 * SECTOR_BYTES:4 * SECTOR_BYTES] = bytes([0xA5]) * SECTOR_BYTES
-        write_stream = nibblize_track(replacement, track, image.is_prodos)
+        write_stream = bytearray(stream)
+        data_offsets = find_prologues(write_stream, b"\xD5\xAA\xAD")
+        physical_sector = disk_order(image.is_prodos).index(3)
+        data_pos = data_offsets[physical_sector] + 3
+        write_stream[data_pos:data_pos + 343] = encode_6and2(
+            replacement[3 * SECTOR_BYTES:4 * SECTOR_BYTES])
         image.write_qtrack(qtrack, write_stream)
 
         start = track * TRACK_DENIBBLIZED_SIZE
@@ -631,6 +890,86 @@ def test_dsk_and_po_writeback_round_trip_full_tracks() -> None:
                 f"{format_name} writeback modified earlier tracks")
         require(bytes(image.data[start + TRACK_DENIBBLIZED_SIZE:]) == b"".join(tracks[track + 1:]),
                 f"{format_name} writeback modified later tracks")
+
+
+def test_dsk_and_po_writeback_accepts_gap_splice_noise() -> None:
+    for is_prodos, name in ((False, "DSK"), (True, "PO")):
+        track_number = 11
+        original = make_sector_track(track_number)
+        stream = bytearray(nibblize_track(
+            original, track_number, is_prodos))
+
+        # These bytes are in the initial sync/gap area, not in an address or
+        # data field. The old 33-$D5-candidate loop stopped before sector 15
+        # when two such splice bytes were present, despite every field and
+        # checksum remaining valid.
+        stream[1] = 0xD5
+        stream[4] = 0xD5
+        decoded = denibblize_track(stream, is_prodos, track_number)
+        require(decoded == original,
+                f"{name} rejected harmless $D5 bytes in a write-splice gap")
+
+
+def test_dsk_and_po_writeback_keeps_valid_sectors_and_zeros_bad_ones() -> None:
+    for is_prodos, name in ((False, "DSK"), (True, "PO")):
+        track_number = 7
+        original = make_sector_track(track_number)
+        valid = bytearray(nibblize_track(original, track_number, is_prodos))
+        address_offsets = find_prologues(valid, b"\xD5\xAA\x96")
+        data_offsets = find_prologues(valid, b"\xD5\xAA\xAD")
+
+        cases: list[tuple[bytearray, int, str]] = []
+
+        bad_gcr = bytearray(valid)
+        bad_gcr[data_offsets[0] + 3] = 0x80
+        cases.append((bad_gcr, 0, "an invalid GCR byte"))
+
+        bad_data_checksum = bytearray(valid)
+        checksum_pos = data_offsets[1] + 3 + 342
+        checksum_index = GCR_6AND2.index(bad_data_checksum[checksum_pos])
+        bad_data_checksum[checksum_pos] = GCR_6AND2[(checksum_index + 1) % 64]
+        cases.append((bad_data_checksum, 1, "a bad data checksum"))
+
+        bad_address_checksum = bytearray(valid)
+        address_pos = address_offsets[2]
+        fields = bad_address_checksum[address_pos + 3:address_pos + 11]
+        checksum = decode44_pair(fields, 6)
+        bad_address_checksum[address_pos + 9:address_pos + 11] = code44(checksum ^ 1)
+        cases.append((bad_address_checksum, 2, "a bad address checksum"))
+
+        wrong_track = bytearray(valid)
+        address_pos = address_offsets[3]
+        address_fields = wrong_track[address_pos + 3:address_pos + 11]
+        volume = decode44_pair(address_fields, 0)
+        sector = decode44_pair(address_fields, 4)
+        wrong_track_number = track_number + 1
+        wrong_track[address_pos + 5:address_pos + 7] = code44(wrong_track_number)
+        wrong_track[address_pos + 9:address_pos + 11] = code44(
+            volume ^ wrong_track_number ^ sector)
+        cases.append((wrong_track, 3, "the wrong track number"))
+
+        bad_address_epilogue = bytearray(valid)
+        bad_address_epilogue[address_offsets[4] + 11] = 0xFF
+        cases.append((bad_address_epilogue, 4, "a bad address epilogue"))
+
+        bad_data_epilogue = bytearray(valid)
+        bad_data_epilogue[data_offsets[5] + 3 + 343] = 0xFF
+        cases.append((bad_data_epilogue, 5, "a bad data epilogue"))
+
+        missing_sector = bytearray(valid)
+        missing_sector[data_offsets[6]] = 0xFF
+        cases.append((missing_sector, 6, "a missing data field"))
+
+        for stream, bad_physical_sector, description in cases:
+            decoded = denibblize_track(stream, is_prodos, track_number)
+            bad_file_sector = physical_to_file_sector(
+                bad_physical_sector, is_prodos)
+            expected = bytearray(original)
+            start = bad_file_sector * SECTOR_BYTES
+            expected[start:start + SECTOR_BYTES] = bytes(SECTOR_BYTES)
+            require(decoded == bytes(expected),
+                    f"{name} did not preserve every valid sector and zero "
+                    f"only the sector with {description}")
 
 
 def test_nib_passthrough_read_and_write() -> None:
@@ -671,7 +1010,8 @@ def test_pl_standard_stream_advance_matches_applewin_readwrite() -> None:
             "        !disk_stream_access &&\n"
             "        (standard_spin_countdown_q == 6'd1);" in source,
             "standard media must advance while spinning between $C0EC accesses")
-    require("track_stream_pos_q <= stream_pos_next(track_stream_pos_q, track_length_q);" in source,
+    require("drive_stream_pos_q[drive_select_q] <=\n"
+            "                            stream_pos_next(selected_stream_pos, track_length_q);" in source,
             "standard media idle spin must advance the staged nibble position")
     require("standard_spin_repeat_q ?\n"
             "                            STANDARD_SPIN_REPEAT_IDLE :\n"
@@ -696,19 +1036,74 @@ def test_pl_standard_partial_read_matches_applewin_threshold() -> None:
             "standard-media read latch")
     require("standard_read_gap_q <= 3'd6" in source,
             "standard media partial-read threshold must match AppleWin's 6 cycles")
+    require("!q7_after_access &&\n"
+            "        stream_line_hit_q &&\n"
+            "        (standard_read_gap_q <= 3'd6);" in source,
+            "a missing DDR line must not be treated as a valid partial nibble")
     require("standard_read_byte =\n"
             "        standard_partial_read ? (disk_next_byte >> standard_invalid_bits) : disk_next_byte;" in source,
             "standard media partial reads must return the shifted current nibble")
-    require("standard_partial_read ?\n"
+    require("(standard_partial_read || standard_read_miss) ?\n"
             "                    active_stream_pos :\n"
             "                    stream_pos_next(active_stream_pos, track_length_q)" in source,
-            "standard media partial reads must not consume the current nibble")
-    require("if (!standard_partial_read && active_drive_loaded)\n"
+            "standard media partial reads and DDR misses must not consume the current nibble")
+    require("if (!standard_partial_read)\n"
             "                        standard_read_gap_q <= 3'd0;" in source,
             "standard media partial reads must not update the last full-read cycle")
 
 
-def test_qtrack_mapping_clamps_to_last_track() -> None:
+def test_pl_pending_track_and_standard_miss_are_retryable() -> None:
+    """PS track staging and a transient DDR cache miss must look like a Disk II
+    data-not-ready interval. Neither condition may expose a valid-looking $FF,
+    reuse a stale latch, or consume the byte that the Apple is retrying.
+    """
+    source = DISK2_CARD_SV.read_text(encoding="utf-8")
+
+    require("wire track_data_pending =\n"
+            "        drive_has_media &&\n"
+            "        !active_drive_loaded &&\n"
+            "        !active_track_unavailable;" in source,
+            "a mounted mismatched track must have an explicit pending state")
+
+    stream_access = re.search(
+        r"wire disk_stream_access =(?P<body>.*?);\n",
+        source,
+        re.S)
+    require(stream_access is not None and
+            "active_drive_loaded" in stream_access.group("body"),
+            "pending tracks must not enter the standard stream access path")
+
+    require("wire standard_read_miss =\n"
+            "        disk_stream_access &&\n"
+            "        !q7_after_access &&\n"
+            "        !stream_line_hit_q;" in source,
+            "standard DDR read misses need an explicit retry condition")
+    require("wire disk_read_not_ready =" in source and
+            "(track_data_pending || standard_read_miss);" in source and
+            "disk_read_not_ready ? 8'h00" in source,
+            "pending and missed reads must return a bit-7-clear not-ready value")
+
+    access_start = source.find("            if (disk_stream_access) begin")
+    access_end = source.find("\n            if (disk_data_load)", access_start)
+    require(access_start >= 0 and access_end > access_start,
+            "standard stream access block not found")
+    access = source[access_start:access_end]
+    require("(standard_partial_read || standard_read_miss) ?" in access,
+            "a standard read miss must preserve the current byte position")
+    require("else if (!q7_after_access && stream_line_hit_q) begin\n"
+            "                    disk_latch_q <= standard_read_byte;" in access,
+            "only a cache hit may replace the standard disk data latch")
+    miss_branch = access.split("else if (standard_read_miss) begin", 1)
+    require(len(miss_branch) == 2,
+            "standard cache-miss retry branch not found")
+    miss_branch = miss_branch[1].split("end", 1)[0]
+    require("underrun_count_q <= underrun_count_q + 32'd1;" in miss_branch and
+            "disk_latch_q" not in miss_branch and
+            "stream_pos_next" not in miss_branch,
+            "a cache miss must be counted without changing the latch or byte position")
+
+
+def test_qtrack_mapping_leaves_outer_tracks_unavailable() -> None:
     image = StandardImage.with_tracks("dsk", [make_sector_track(track) for track in range(TRACK_COUNT)])
     expected = {
         0: 0,
@@ -718,27 +1113,39 @@ def test_qtrack_mapping_clamps_to_last_track() -> None:
         4: 1,
         10: 2,
         139: 34,
-        159: 34,
+        159: -1,
     }
     for qtrack, track in expected.items():
         require(image.qtrack_to_track(qtrack) == track, f"qtrack {qtrack} mapped to wrong track")
+    require(image.read_qtrack(159) == b"",
+            "an out-of-range qtrack must not read the final physical track")
+    before = bytes(image.data)
+    image.write_qtrack(159, bytes([0xFF]) * GENERATED_TRACK_BYTES)
+    require(bytes(image.data) == before,
+            "an out-of-range qtrack must not write the final physical track")
 
 
 def run() -> int:
     tests = [
         test_c_constants_and_source_contract,
         test_standard_images_are_memory_cached_like_applewin,
+        test_applewin_size_validation_and_2mg_contract,
+        test_media_change_flush_duplicate_and_rotation_contract,
         test_empty_or_disabled_disk2_track_requests_stay_quiet,
+        test_pl_empty_drive_returns_changing_latch_noise,
         test_disk2_sound_recal_and_volume_contract,
         test_disk2_write_protect_visual_contract,
         test_sector_order_tables_match_applewin,
         test_6and2_round_trip_for_varied_sector_data,
         test_dsk_and_po_tracks_have_applewin_layout_and_decode_correctly,
         test_dsk_and_po_writeback_round_trip_full_tracks,
+        test_dsk_and_po_writeback_accepts_gap_splice_noise,
+        test_dsk_and_po_writeback_keeps_valid_sectors_and_zeros_bad_ones,
         test_nib_passthrough_read_and_write,
         test_pl_standard_stream_advance_matches_applewin_readwrite,
         test_pl_standard_partial_read_matches_applewin_threshold,
-        test_qtrack_mapping_clamps_to_last_track,
+        test_pl_pending_track_and_standard_miss_are_retryable,
+        test_qtrack_mapping_leaves_outer_tracks_unavailable,
     ]
     failures = []
     for test in tests:

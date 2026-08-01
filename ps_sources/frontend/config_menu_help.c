@@ -300,7 +300,7 @@ static const help_override_t smartport_overrides[] = {
 HELP(disk2,
     "Disk II emulates slot 6 drives with activity overlay and optional drive-door and activity audio.",
     "Select Disk 1 or Disk 2 to attach or clear an image; write-protected files show a lock.",
-    "Supported: WOZ, NIB, DSK, DO, PO.");
+    "Supported: WOZ, NIB, DSK, DO, PO, 2MG, and 2IMG (16-sector only).");
 
 /* ======================================================================== */
 /*  MOUSE                                                                   */
@@ -494,9 +494,8 @@ HELP(ram,
     "Memory the Appletini provides to the Apple IIe. Change it from BOOT mode before software runs.");
 
 HELP(ram_provide,
-    "Appletini serves 64K auxiliary memory (80-column text, double hi-res, ProDOS /RAM) plus a",
-    "RamWorks III compatible 8MB expansion (128 banks; software sizes it by probing).",
-    "Change this only from BOOT mode (press 'A' during boot); USB-owned mode keeps it locked.",
+    "Appletini serves 64K auxiliary memory plus a RamWorks III compatible 8MB expansion.",
+    "Change this only from BOOT mode (press 'A' during boot);",
     "The boot ROM probes the aux slot at every boot: if a physical extended 80-column card is found,",
     "Appletini RAM stays off automatically and this switch is ignored.",
     "With TransWarp acceleration on, 128K is built into the accelerator and the 8MB RamWorks",

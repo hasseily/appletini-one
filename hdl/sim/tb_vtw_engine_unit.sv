@@ -16,8 +16,10 @@ module tb_vtw_engine_unit;
 
     logic rstn = 0;
     logic enable = 0;
+    logic host_is_iiplus = 0;
 
     globals::AppleBus_read  ab_read;
+    globals::AppleBus_read  ab_read_q;
     globals::AppleBus_write ab_write;
 
     logic        sync_req_valid = 0;
@@ -39,13 +41,26 @@ module tb_vtw_engine_unit;
     logic [31:0] cnt_posted_writes;
     logic [9:0]  post_high_water;
     logic [31:0] cnt_post_drops;
+    logic        dbg_clear = 0;
+    logic [31:0] dbg_sync_write_check;
+    logic [15:0] dbg_sync_write_addr;
+    logic [31:0] dbg_c000_context;
+    logic [31:0] dbg_c000_counts;
+    logic [511:0] dbg_io_trace;
+    logic          dbg_bad_c000_pulse;
+    logic [31:0]   dbg_bus_faults;
 
     vtw_bus_engine dut (
         .clk(clk),
         .rstn(rstn),
         .enable(enable),
+        .host_is_iiplus(host_is_iiplus),
         .ab_read(ab_read),
         .ab_write(ab_write),
+        .data_drive_in(ab_write.wr_data_en),
+        .data_drive_value_in(ab_write.wr_data),
+        .dbg_clear(dbg_clear),
+        .dbg_trace_freeze(1'b0),
         .sync_req_valid(sync_req_valid),
         .sync_req_ready(sync_req_ready),
         .sync_req_addr(sync_req_addr),
@@ -62,7 +77,14 @@ module tb_vtw_engine_unit;
         .cnt_sync_cycles(cnt_sync_cycles),
         .cnt_posted_writes(cnt_posted_writes),
         .post_high_water(post_high_water),
-        .cnt_post_drops(cnt_post_drops)
+        .cnt_post_drops(cnt_post_drops),
+        .dbg_sync_write_check(dbg_sync_write_check),
+        .dbg_sync_write_addr(dbg_sync_write_addr),
+        .dbg_c000_context(dbg_c000_context),
+        .dbg_c000_counts(dbg_c000_counts),
+        .dbg_io_trace(dbg_io_trace),
+        .dbg_bad_c000_pulse(dbg_bad_c000_pulse),
+        .dbg_bus_faults(dbg_bus_faults)
     );
 
     // ------------------------------------------------------------------
@@ -82,13 +104,21 @@ module tb_vtw_engine_unit;
      * engine's per-cycle decision point. */
     logic strobes_on = 1;
 
+    always_comb begin
+        ab_read     = ab_read_q;
+        ab_read.res = !force_res;
+    end
+
     always @(posedge clk) begin
-        ab_read <= '0;
-        ab_read.res      <= !force_res;
-        ab_read.data     <= bus_read_value;
+        ab_read_q <= '0;
+        ab_read_q.res  <= 1'b1;
+        ab_read_q.addr <= ab_write.wr_addr;
+        ab_read_q.rw   <= ab_write.wr_rw;
+        ab_read_q.dma  <= ~ab_write.assert_dma;
+        ab_read_q.data <= bus_read_value;
         if (strobes_on) begin
-            ab_read.drive_en <= (cyc_clk == DRIVE_CLK);
-            ab_read.data_en  <= (cyc_clk == DATA_CLK);
+            ab_read_q.drive_en <= (cyc_clk == DRIVE_CLK);
+            ab_read_q.data_en  <= (cyc_clk == DATA_CLK);
             cyc_clk <= (cyc_clk == CYC_CLKS-1) ? 0 : cyc_clk + 1;
         end
     end
@@ -111,8 +141,13 @@ module tb_vtw_engine_unit;
 
     cycrec_t cur, prev;
     initial prev = '{default: '0};
+    int observed_bus_writes = 0;
 
     always @(posedge clk) begin
+        if (ab_read.data_en && ab_write.wr_addr_rw_en &&
+            !ab_write.wr_rw && ab_write.wr_data_en) begin
+            observed_bus_writes++;
+        end
         if (cyc_clk == 90) begin
             cur.owned = ab_write.wr_addr_rw_en;
             cur.addr  = ab_write.wr_addr;
@@ -196,6 +231,68 @@ module tb_vtw_engine_unit;
     task automatic sync_finish(output logic [7:0] d);
         @(posedge clk iff sync_resp_valid);
         d = sync_resp_rdata;
+    endtask
+
+    /* Assert RES# in one exact posted-write pipeline stage, then verify the
+     * transaction boundary and symmetric handback. stage uses the engine's
+     * documented CYC_POST_* encoding: 1=FETCH, 2=LOAD, 3=POST. */
+    task automatic reset_in_post_stage(input int stage,
+                                       input bit late_post,
+                                       input logic [15:0] a,
+                                       input string tag);
+        int posted_before;
+        int writes_before;
+
+        posted_before = int'(cnt_posted_writes);
+        writes_before = observed_bus_writes;
+        push_posted(a, a[7:0]);
+        wait (dut.cyc_q == stage);
+        if (late_post) begin
+            @(negedge clk iff (cyc_clk == DATA_CLK-3));
+        end
+        else begin
+            @(negedge clk);
+        end
+
+        /* The reset override is combinational so the one-clock FETCH/LOAD
+         * states can each be hit deterministically without freezing the
+         * generated drive/data strobes. */
+        force_res = 1'b1;
+        wait (!bus_owned && ab_write.assert_dma);
+        check(!ab_write.wr_addr_rw_en && !ab_write.wr_data_en,
+              {tag, ": address/data released before dma"});
+        check(post_fill == '0, {tag, ": posted queue cleared"});
+
+        /* S_RELEASE must preserve one entire address/data-free Apple cycle. */
+        @(posedge clk iff ab_read.drive_en);
+        @(negedge clk);
+        check(!ab_write.assert_dma, {tag, ": dma released after guard cycle"});
+        if (stage < 3) begin
+            check(int'(cnt_posted_writes) == posted_before,
+                  {tag, ": unlaunched write canceled"});
+            check(observed_bus_writes == writes_before,
+                  {tag, ": canceled write never reached the bus"});
+        end
+        else begin
+            check(int'(cnt_posted_writes) == posted_before + 1,
+                  {tag, ": already-launched write completed exactly once"});
+            check(observed_bus_writes == writes_before + 1,
+                  {tag, ": exactly one physical write at reset boundary"});
+        end
+
+        force_res = 1'b0;
+        wait (bus_owned);
+        begin
+            int n = recs.size();
+            bit dma_before_own = 0;
+            for (int i = n-1; i > 0; i--) begin
+                if (recs[i].owned && !recs[i-1].owned) begin
+                    dma_before_own = recs[i-1].dma;
+                    break;
+                end
+            end
+            check(dma_before_own, {tag, ": retake keeps dma-before-drive"});
+        end
     endtask
 
     int ebase;
@@ -413,6 +510,60 @@ module tb_vtw_engine_unit;
                   $sformatf("post-reset request gets its own response (got %h)", rd));
         end
 
+        // ---- 5c. Reset at every posted-write pipeline boundary. FETCH
+        //       and LOAD must vanish; early/late POST may finish once. ----
+        reset_in_post_stage(1, 1'b0, 16'h0441, "reset in POST_FETCH");
+        reset_in_post_stage(2, 1'b0, 16'h0442, "reset in POST_LOAD");
+        reset_in_post_stage(3, 1'b0, 16'h0443, "reset in early POST");
+        reset_in_post_stage(3, 1'b1, 16'h0444, "reset in late POST");
+
+        // ---- 5d. Passive transaction diagnostics. A correct synchronous
+        //       write stays clean; a deliberately wrong loopback records
+        //       exactly one mismatch. A posted write immediately before a
+        //       $C000 read is preserved as predecessor context. ----
+        @(posedge clk);
+        dbg_clear <= 1'b1;
+        @(posedge clk);
+        dbg_clear <= 1'b0;
+        @(posedge clk);
+
+        bus_read_value = 8'h5D;
+        sync_start(16'hC030, 1'b0, 8'h5D);
+        sync_finish(rd);
+        check(dbg_sync_write_check[31:16] == 16'd0,
+              "matching sync-write loopback stays clean");
+
+        bus_read_value = 8'hA5;
+        sync_start(16'hC031, 1'b0, 8'h5D);
+        sync_finish(rd);
+        check(dbg_sync_write_check == 32'h0001_5DA5 &&
+              dbg_sync_write_addr == 16'hC031,
+              "sync-write mismatch captures count/address/bytes");
+
+        push_posted(16'h0445, 8'h45);
+        wait (dut.cyc_q == 3);
+        bus_read_value = 8'h80;
+        sync_start(16'hC000, 1'b1, 8'h00);
+        sync_finish(rd);
+        check(dbg_c000_counts == 32'h0001_0001,
+              "$C000 total and bit7-high counters");
+        check(dbg_c000_context[31:16] == 16'h0445 &&
+              dbg_c000_context[15:14] == 2'd1 &&
+              dbg_c000_context[13] == 1'b0 &&
+              dbg_c000_context[12] == 1'b1 &&
+              dbg_c000_context[7:0] == 8'h80,
+              "$C000 records the immediately preceding posted write");
+
+        @(posedge clk);
+        dbg_clear <= 1'b1;
+        @(posedge clk);
+        dbg_clear <= 1'b0;
+        @(posedge clk);
+        check(dbg_sync_write_check == 32'd0 &&
+              dbg_sync_write_addr == 16'd0 &&
+              dbg_c000_counts == 32'd0,
+              "busdbg clear resets vTW transaction diagnostics");
+
         // ---- 6. Queue backpressure: fast fill, no drops, full drain ----
         begin
             int target = 600;
@@ -446,12 +597,127 @@ module tb_vtw_engine_unit;
 
         // ---- 7. Session release at a PHI1 point ----
         enable = 0;
+        wait (!bus_owned && ab_write.assert_dma);
+        check(!ab_write.wr_addr_rw_en && !ab_write.wr_data_en,
+              "disable releases address/data while dma guards handback");
+        @(posedge clk iff ab_read.drive_en);
+        @(negedge clk);
+        check(!ab_write.assert_dma, "disable releases dma after guard cycle");
+        check(!bus_owned, "bus_owned deasserts");
+
+        // ---- 8. II/II+ initial takeover still waits for the stock reset
+        //      window, but every owned idle cycle parks on ordinary main
+        //      RAM. $FFFF is not safe when a Language Card has RAM selected
+        //      and is driving /INH+data. ----
+        host_is_iiplus = 1;
+        enable = 1;
+        wait_cycles(40);
+        check(!bus_owned,
+              "II+ retains the stock post-reset takeover window");
+        wait_cycles(45);
+        begin
+            int n = recs.size();
+            check(recs[n-1].owned && recs[n-1].rw &&
+                  recs[n-1].addr == 16'h0200,
+                  "II+ initial park is side-effect-free main RAM");
+        end
+        bus_read_value = 8'h5D;
+        sync_start(16'hC000, 1'b1, 8'h00);
+        sync_finish(rd);
+        check(rd == 8'h5D, "II+ sync read returns bus data");
+
+        // The II+-only wrapper hold owns the final write-data margin. The
+        // engine itself must release the live transceiver drive at data_en,
+        // leaving nearly a full PHI1 address-settling interval before the
+        // following keyboard/speaker cycle. The //e behavior remains covered
+        // by the earlier tests and deliberately retains its established tail.
+        bus_read_value = 8'hA6;
+        sync_start(16'hC030, 1'b0, 8'hA6);
+        wait (dut.cyc_q == 4 && ab_write.wr_data_en);
+        @(posedge clk iff ab_read.data_en);
+        @(negedge clk);
+        check(!ab_write.wr_data_en,
+              "II+ sync-write live data drive drops at data_en");
+        sync_finish(rd);
+
+        push_posted(16'h0446, 8'h46);
+        wait (dut.cyc_q == 3 && ab_write.wr_data_en);
+        @(posedge clk iff ab_read.data_en);
+        @(negedge clk);
+        check(!ab_write.wr_data_en,
+              "II+ posted-write live data drive drops at data_en");
+
         wait_cycles(3);
         begin
             int n = recs.size();
-            check(!recs[n-1].owned && !recs[n-1].dma, "released after disable");
+            check(recs[n-1].owned && recs[n-1].rw &&
+                  recs[n-1].addr == 16'h0200 &&
+                  !recs[n-1].data_drive,
+                   "II+ re-parks in main RAM after keyboard I/O");
         end
-        check(!bus_owned, "bus_owned deasserts");
+
+        // Once an II+ session owns the bus, RESET must never release /DMA.
+        // The engine removes address/data, holds ownership throughout RESET,
+        // waits one complete cycle after release, then resumes at $0200.
+        force_res = 1'b1;
+        wait (!bus_owned);
+        check(ab_write.assert_dma && !ab_write.wr_addr_rw_en &&
+              !ab_write.wr_data_en,
+              "II+ RESET releases address/data but holds dma");
+        check(post_fill == '0, "II+ RESET clears posted queue");
+        repeat (4) begin
+            @(posedge clk iff ab_read.drive_en);
+            @(negedge clk);
+            check(ab_write.assert_dma && !bus_owned,
+                  "II+ keeps dma continuously asserted while RESET is low");
+        end
+
+        force_res = 1'b0;
+        @(posedge clk iff ab_read.drive_en);
+        @(negedge clk);
+        check(ab_write.assert_dma && !bus_owned,
+              "II+ preserves one dma-only cycle after RESET release");
+        @(posedge clk iff ab_read.drive_en);
+        @(negedge clk);
+        check(ab_write.assert_dma && bus_owned &&
+              ab_write.wr_addr_rw_en && ab_write.wr_rw &&
+              ab_write.wr_addr == 16'h0200,
+              "II+ resumes owned inert park without a dma gap");
+
+        // Re-arm the rolling trace, then model a phantom keyboard strobe.
+        // The offending transaction must be newest and the trace must stop
+        // changing before subsequent activity destroys the evidence.
+        begin
+            logic [31:0] frozen_entry;
+            @(posedge clk);
+            dbg_clear <= 1'b1;
+            @(posedge clk);
+            dbg_clear <= 1'b0;
+            @(posedge clk);
+
+            bus_read_value = 8'h80;
+            sync_start(16'hC000, 1'b1, 8'h00);
+            sync_finish(rd);
+            frozen_entry = dbg_io_trace[31:0];
+            check(frozen_entry == 32'h80C0_0080,
+                  $sformatf("II+ phantom-key trace captures cycle (%08h)",
+                            frozen_entry));
+            check(dbg_bus_faults == 32'd0,
+                  "clean phantom-key cycle has no address/data/DMA fault");
+
+            bus_read_value = 8'h21;
+            sync_start(16'hC010, 1'b1, 8'h00);
+            sync_finish(rd);
+            check(dbg_io_trace[31:0] == frozen_entry,
+                  "phantom-key event freezes the I/O trace");
+        end
+
+        enable = 0;
+        wait (!bus_owned && ab_write.assert_dma);
+        @(posedge clk iff ab_read.drive_en);
+        @(negedge clk);
+        check(!ab_write.assert_dma && !bus_owned,
+              "II+ session handback remains guarded");
 
         if (fails == 0) $display("VTW ENGINE UNIT PASS");
         else            $display("VTW ENGINE UNIT FAILED: %0d checks", fails);

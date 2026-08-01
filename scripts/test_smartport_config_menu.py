@@ -202,8 +202,12 @@ def test_browser_accepts_any_smartport_po_size() -> None:
     help_source = read(CONFIG_MENU_HELP_C)
     service = read(SMARTPORT_C)
 
-    require("#define CONFIG_DISK2_PO_IMAGE_BYTES 143360U" in source,
-            "Disk II .po filter must use the 140K ProDOS image size")
+    require("#define CONFIG_DISK2_STANDARD_TRACK_BYTES 4096U" in source and
+            "#define CONFIG_DISK2_STANDARD_TRACKS 35U" in source and
+            "#define CONFIG_DISK2_MAX_TRACKS 40U" in source and
+            "#define CONFIG_DISK2_NIB_TRACK_BYTES 6656U" in source and
+            "#define CONFIG_DISK2_2MG_HEADER_BYTES 64U" in source,
+            "Disk II browser must expose AppleWin-compatible geometry limits")
     require("CONFIG_SMARTPORT_140K_PO_IMAGE_BYTES" not in source and
             "CONFIG_SMARTPORT_800K_PO_IMAGE_BYTES" not in source,
             "SmartPort must not whitelist specific PO image sizes")
@@ -217,9 +221,15 @@ def test_browser_accepts_any_smartport_po_size() -> None:
             "Disk II extension helper must receive the file size")
     require('config_menu_str_ieq(dot, ".po") != 0U' in source,
             "SmartPort browser must accept every .po image size")
-    require("(config_menu_str_ieq(dot, \".po\") != 0U &&\n"
-            "             size == (FSIZE_t)CONFIG_DISK2_PO_IMAGE_BYTES)" in source,
-            "Disk II browser must accept only 140K .po images")
+    require("size >= 143105U && size <= 143364U" in source and
+            "size == 143403U || size == 143488U" in source and
+            "CONFIG_DISK2_MAX_TRACKS *" in source and
+            "sector_size_valid != 0U" in source,
+            "Disk II browser must apply AppleWin's exact 35-40 track raw-size rules")
+    require('config_menu_str_ieq(dot, ".2mg") != 0U' in source and
+            'config_menu_str_ieq(dot, ".2img") != 0U' in source and
+            "size >= CONFIG_DISK2_2MG_HEADER_BYTES" in source,
+            "Disk II browser must expose plausible 2MG and 2IMG containers")
     require("return config_menu_has_smartport_ext(info->fname);" in source,
             "SmartPort browser must filter PO images by extension only")
     require("return config_menu_has_disk2_ext(info->fname, info->fsize);" in source,
@@ -320,20 +330,22 @@ def test_menu_rejects_duplicate_smartport_paths() -> None:
             "duplicate rejection must happen before mutating the selected SP path")
 
 
-def test_browser_dims_duplicate_smartport_images() -> None:
+def test_browser_dims_duplicate_disk_images() -> None:
     source = read(CONFIG_MENU_C)
     internal = read(CONFIG_MENU_INTERNAL_H)
 
     require("#define HGR_DIMMED CMUI_COLOR_DIM" in internal,
             "browser must have a dimmed color for already-mounted SmartPort images")
-    require("static uint8_t config_menu_browser_entry_is_duplicate_smartport_image(\n"
+    require("static uint8_t config_menu_browser_entry_is_duplicate_image(\n"
             "    const config_menu_t *menu,\n"
             "    const config_browser_entry_t *entry)" in source,
-            "browser draw path must identify duplicate SmartPort image entries")
-    require("entry->type != CONFIG_BROWSER_ENTRY_FILE ||\n"
-            "        config_menu_browser_is_smartport_target(menu->browser_target) == 0U" in source,
-            "duplicate dimming must only apply to SmartPort file entries")
-    require("dimmed = config_menu_browser_entry_is_duplicate_smartport_image(menu, &entry);" in source,
+            "browser draw path must identify duplicate SmartPort and Disk II images")
+    require("entry->type != CONFIG_BROWSER_ENTRY_FILE" in source and
+            "config_menu_browser_is_smartport_target(menu->browser_target)" in source and
+            "config_menu_browser_is_disk2_target(menu->browser_target)" in source and
+            "config_menu_disk2_path_in_use(menu, drive, entry->path)" in source,
+            "duplicate dimming must cover file entries for both virtual disk controllers")
+    require("dimmed = config_menu_browser_entry_is_duplicate_image(menu, &entry);" in source,
             "browser row drawing must compute duplicate-image dim state")
     require("hgr_draw_item_with_lock_ex(\n"
             "            fb,\n"
@@ -569,7 +581,7 @@ TESTS = [
     test_menu_uses_only_main_key_mapping_help,
     test_clock_fields_support_left_right_adjustment,
     test_menu_rejects_duplicate_smartport_paths,
-    test_browser_dims_duplicate_smartport_images,
+    test_browser_dims_duplicate_disk_images,
     test_settings_menu_controls_debug_overlay_and_bezel,
 ]
 

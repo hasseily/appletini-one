@@ -52,7 +52,8 @@ set_property PACKAGE_PIN V20 [get_ports a2fpga_reset_n]
 set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_reset_n]
 
 set_property PACKAGE_PIN V19 [get_ports a2fpga_irq_n]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_irq_n]
+set_property -dict {IOSTANDARD LVCMOS33 DRIVE 16 SLEW FAST} \
+    [get_ports a2fpga_irq_n]
 
 ## Apple //e Bus Transceiver Control
 set_property PACKAGE_PIN V18 [get_ports a2fpga_oe_n]
@@ -572,6 +573,22 @@ set_max_delay 10.0 -to [get_ports {a2fpga_dir_a a2fpga_dir_d}]
 # making a 5 ns pad-to-pad requirement physically unrealistic.
 set_max_delay -datapath_only 8.0 \
     -from [get_ports a2fpga_clk] -to [get_ports a2fpga_dir_d]
+
+# The II+ IRQ workaround briefly releases a level-low IRQ, then reasserts it
+# through the bidirectional lane. Bound the re-arm register-to-pad path so
+# implementation cannot move the falling edge past the CPU's raw-PHI0 sample.
+set_max_delay -datapath_only 8.0 \
+    -from [get_cells -hierarchical -filter \
+        {NAME =~ *apple_bus_wrapper_i/irq_rearm_release_q_reg}] \
+    -to [get_ports a2fpga_irq_n]
+
+# The automatic II+ vTW /DMA refresh uses an equivalent short re-arm notch.
+# Bound its register-to-pad path so the refreshed falling edge remains ahead
+# of the next bus-ownership boundary.
+set_max_delay -datapath_only 8.0 \
+    -from [get_cells -hierarchical -filter \
+        {NAME =~ *apple_bus_wrapper_i/dma_rearm_release_q_reg}] \
+    -to [get_ports a2fpga_dma_n]
 
 ################################################################################
 # Switching Activity (for power estimation)

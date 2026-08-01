@@ -44,6 +44,9 @@ SOURCES = [
     "hdl/sim/tb_smartport_shortcut.sv",
     "hdl/sim/tb_vtw_slowdown.sv",
     "hdl/sim/tb_vtw_video.sv",
+    "hdl/sim/tb_vtw_drivehold.sv",
+    "hdl/sim/tb_iiplus_irq_chirp.sv",
+    "hdl/sim/tb_iiplus_dma_refresh.sv",
 ]
 
 # smartport_card $readmemh resolves against the simulation cwd.
@@ -59,6 +62,9 @@ BENCHES = [
     ("tb_smartport_shortcut", "SP SHORTCUT PASS"),
     ("tb_vtw_slowdown", "VTW SLOWDOWN PASS"),
     ("tb_vtw_video", "VTW VIDEO PASS"),
+    ("tb_vtw_drivehold", "VTW DRIVEHOLD PASS"),
+    ("tb_iiplus_irq_chirp", "IIPLUS IRQ CHIRP PASS"),
+    ("tb_iiplus_dma_refresh", "IIPLUS DMA REFRESH PASS"),
 ]
 
 
@@ -101,6 +107,7 @@ def read(rel_path: str) -> str:
 def static_checks() -> None:
     top = read("hdl/apple/apple_top.sv")
     sources = read("hdl/hdl_sources.txt")
+    xdc = read("hdl/constraints/appletini_yarz.xdc")
     regs = read("ps_sources/frontend/card_control_regs.h")
     service = read("ps_sources/frontend/vtw_service.c")
     uart = read("ps_sources/frontend/uart_control.c")
@@ -113,10 +120,18 @@ def static_checks() -> None:
             "apple_bus_write_arbiter #(.NUM_CLIENTS(11))" in top and
             "vtw_ab_write," in top,
             "apple_top must instantiate the vTW as the 11th arbiter client")
-    require("vtw_machine_ok_q  <= 1'b1;" in top and
-            "machine_mode_q == 2'd2 || machine_mode_q == 2'd1" in top and
+    require("logic vtw_machine_ok_q;" in top and
+            "if (machine_mode_q == 2'd1)" in top and
+            "else if (machine_mode_q == 2'd2)" in top and
+            "vtw_machine_ok_q       <= 1'b1;" in top and
             "vtw_ctrl_q[0] && vtw_machine_ok_q" in top,
             "vTW enable must latch the machine verdict so sessions survive CTRL-RESET")
+    require("vtw_host_is_iiplus_q" in top and
+            ".host_is_iiplus(vtw_host_is_iiplus_q)" in top and
+            "IIPLUS_PARK_ADDR = 16'h0200" in
+            read("hdl/apple/vtw_bus_engine.sv"),
+            "vTW must latch II/II+ host type and park that host in ordinary "
+            "main RAM rather than I/O or Language Card space")
 
     # SmartPort short-circuit: vtw_core_top fast port wired to the card.
     core_top = read("hdl/apple/vtw_core_top.sv")
@@ -170,12 +185,20 @@ def static_checks() -> None:
     require("vtw_service_set_slowdown" in service_c and
             "CARD_CTRL_VTW_SLOWDOWN_REG" in service_c,
             "vtw_service must push the slowdown config to the PL")
+    require("CARD_CTRL_VTW_CTRL_IIPLUS_DMA_REFRESH_BIT" not in regs and
+            "vtw_service_set_iiplus_dma_refresh" not in service_c and
+            "g_iiplus_dma_refresh_enabled" not in service_c and
+            "dma-refresh" not in uart,
+            "automatic II+ /DMA refresh must have no PS control bit, "
+            "runtime selector, or UART command")
 
     # Takeover machine reset (RES#-at-takeover)
     wrapper = read("hdl/apple/apple_bus_wrapper.sv")
     service = read("ps_sources/frontend/vtw_service.c")
-    require("assign apple_res_pin = ab_write.assert_res ? 1'b0 : 1'bz;" in wrapper,
-            "wrapper must drive RES# open-collector from assert_res")
+    require("assign apple_res_pin = 1'bz;" in wrapper and
+            "apple_reset_release && !ab_write_arb.assert_res;" in top,
+            "all internal RESET requests must use the dedicated A2CTRL "
+            "transistor while A2FPGA.RESET remains observation-only")
     require(".assert_apple_res(vtw_ctrl_q[4])" in top,
             "apple_top must wire VTW_CTRL bit4 to the takeover reset")
     require("VTW_ST_RES_HOLD" in service and
@@ -296,6 +319,122 @@ def static_checks() -> None:
     require("TAB_WITH_OVERRIDES(CONFIG_TAB_TRANSWARP, transwarp, transwarp_overrides)," in help_c,
             "TransWarp tab must have help text")
 
+    # II/II+ hosts: the embedded //e ROM's reset-path Apple-key checks must
+    # be patched at load (floating game-connector buttons otherwise enter
+    # the ROM self-test and force cold starts). Verify the patch table, the
+    # machine gate, the original-byte guard, and that the embedded ROM
+    # still carries the exact bytes the patch was audited against.
+    require("k_iiplus_rom_patches" in service and
+            "{ 0x02BBU, 0xA9U }" in service and
+            "{ 0x02C3U, 0xA9U }" in service and
+            "{ 0x02BEU, 0x80U }" not in service and
+            "{ 0x02C6U, 0x80U }" not in service,
+            "vtw_service must patch the //e ROM button checks at $C2BB/$C2C3")
+    require("boot_menu_service_machine_mode() == CARD_MACHINE_MODE_IIPLUS" in service,
+            "the ROM button patch must be gated on a II/II+ host")
+    require("II+ button patch SKIPPED" in service,
+            "the ROM button patch must guard against a changed ROM image")
+    rom = (ROOT / "docs" / "Apple2e_Enhanced.rom").read_bytes()
+    require(rom[0x02BB:0x02BE] == bytes((0xAD, 0x62, 0xC0)) and
+            rom[0x02BE:0x02C3] == bytes((0x10, 0x03, 0x4C, 0x00, 0xC6)) and
+            rom[0x02C3:0x02C6] == bytes((0xAD, 0x61, 0xC0)) and
+            rom[0x02C6:0x02C8] == bytes((0x10, 0x1A)),
+            "embedded //e ROM reset button checks moved -- re-audit the II+ patch offsets")
+
+    # vTW-on-II+ fix batch (raw-PHI0 data release, IRQ merge, button
+    # synthesis, OA-window machine gate): the wiring must stay intact end
+    # to end. The II+-specific hold is permitted only for read responses;
+    # writes must still release directly at raw PHI0.
+    require("LUT6 #(.INIT(64'hFF88_FF80_8088_8080)) apple_data_enable_lut" in wrapper and
+            ".I0(bus_emit_state)," in wrapper and
+            ".I1(ab_write.wr_data_en)," in wrapper and
+            ".I2(apple_phi0_pin)," in wrapper and
+            ".I3(host_is_iiplus)," in wrapper and
+            ".I4(apple_addr_rw_enable)," in wrapper and
+            ".I5(iiplus_read_hold_q)," in wrapper and
+            "drive_live && (!apple_addr_rw_enable || ab_write.wr_rw)" in wrapper and
+            "else if (phi0_fall)" in wrapper and
+            "else if (read_response_live && phi0_filt)" in wrapper and
+            "iiplus_read_hold_active ? iiplus_read_data_q : ab_write.wr_data" in wrapper,
+            "placed data-enable LUT must absorb the phase/data-enable AND "
+            "while the II+ hold applies only to saved read-response bytes")
+    require("TAP_IRQ_REARM_RELEASE = TAP_DATA_SNAP - 8;" in wrapper and
+            "TAP_IRQ_REARM_ASSERT  = TAP_DATA_SNAP - 4;" in wrapper and
+            "always_ff @(posedge clk)" in wrapper and
+            "(!host_is_iiplus || !irq_rearm_release_q);" in wrapper and
+            "{NAME =~ *apple_bus_wrapper_i/irq_rearm_release_q_reg}" in xdc and
+            "{IOSTANDARD LVCMOS33 DRIVE 16 SLEW FAST}" in xdc and
+            "-to [get_ports a2fpga_irq_n]" in xdc,
+            "II+ IRQ must use a mostly-low re-arm waveform with a bounded "
+            "register-to-pad route and the strongest IRQ-pad edge")
+    require("TAP_DMA_REARM_RELEASE = TAP_DATA_SNAP - 8;" in wrapper and
+            "TAP_DMA_REARM_ASSERT  = TAP_DATA_SNAP - 4;" in wrapper and
+            "iiplus_dma_refresh_active && dma_rearm_release_q" in wrapper and
+            "assign vtw_iiplus_dma_refresh_active = vtw_host_is_iiplus_q;" in top and
+            ".iiplus_dma_refresh_active(vtw_iiplus_dma_refresh_active)" in top and
+            "{NAME =~ *apple_bus_wrapper_i/dma_rearm_release_q_reg}" in xdc and
+            "-to [get_ports a2fpga_dma_n]" in xdc,
+            "automatic /DMA refresh must be phase locked and impossible "
+            "outside a session latched as II/II+")
+    require("S_RESET_HOLD" in engine and
+            "A II/II+ has no //e MMU/IOU" in engine and
+            "assert_dma_q    <= 1'b1;" in engine and
+            "session_q <= (!enable || !host_is_iiplus)" in engine and
+            "wr_addr_q       <= IIPLUS_PARK_ADDR;" in engine,
+            "an active II+ session must hold /DMA through RESET, release "
+            "address/data, and resume at the inert park address")
+    require("if (host_is_iiplus &&" in engine and
+            "(cyc_q == CYC_SYNC && !sync_rw_q)" in engine and
+            "(cyc_q == CYC_POST)" in engine and
+            "wr_data_en_q <= 1'b0;" in engine,
+            "II+ vTW writes must clear their logical data drive at data_en "
+            "instead of carrying it into the next cycle")
+    core = read("hdl/apple/vtw_core_top.sv")
+    require("core_irq_n = ab_read.irq & ~irq_assert_in" in core and
+            ".irq_n(core_irq_n)" in core,
+            "vTW core must merge the internal IRQ assert with the pin sample")
+    require("xl_btn_rd" in core and
+            "iiplus_buttons_zero" in core,
+            "vTW core must synthesize $C061-$C063 reads on II/II+ hosts")
+    require(".irq_assert_in(ab_write_arb.assert_irq)" in top and
+            ".iiplus_buttons_zero(vtw_ctrl_q[5])" in top,
+            "apple_top must wire the vTW IRQ merge and button-synthesis controls")
+    require("CARD_CTRL_VTW_CTRL_IIPLUS_BTNS_BIT (1UL << 5)" in regs,
+            "ctrl bit 5 must be reserved for II+ button synthesis")
+    require("CARD_CTRL_VTW_CTRL_IIPLUS_BTNS_BIT;" in service,
+            "vtw_service must set the II+ button-synthesis bit for II/II+ hosts")
+    require(".sync(core_sync)" in core and
+            "eng_bad_c000_pulse" in core and
+            "dbg_trace_selftest_event" in core,
+            "vTW must preserve an instruction trail through RESET and freeze "
+            "on phantom keyboard input or internal self-test entry")
+    require("dbg_bad_c000_event" in engine and
+            "dbg_self_data_bad" in engine and
+            "dbg_addr_bad" in engine and
+            "ab_read.dma" in engine and
+            "dbg_io_trace_q" in engine,
+            "vTW must preserve physical-cycle context and distinguish "
+            "address, self-drive-data, and DMA-release faults")
+    require("CARD_CTRL_VTW_TRACE_STATUS_REG" in regs and
+            "CARD_CTRL_VTW_IO_TRACE_REG(n)" in regs and
+            "CARD_CTRL_VTW_PC_TRACE_REG(n)" in regs and
+            ".data_drive_value_in(ab_write_arb.wr_data)" in top,
+            "event trace must be wired through the card-control window")
+    require("CARD_CTRL_RESET_FORENSICS_INTERNAL_BIT" in regs and
+            "CARD_CTRL_RESET_FORENSICS_EXTERNAL_BIT" in regs and
+            "res_internal_seen_sticky" in top and
+            "res_external_seen_sticky" in top and
+            "REG_WRITE(CARD_CTRL_RESET_FORENSICS_REG, 1U);" in uart,
+            "busdbg clear must re-arm reset-source classification")
+    require("vtw: trace=" in service and "vtw: io trail" in service and
+            "vtw: pc trail" in service,
+            "vtw status must print an event-frozen CPU and I/O trail")
+    require("vtw: slowdown mask=" in service,
+            "vtw status must surface the slowdown configuration")
+    bmc = read("hdl/apple/boot_menu_card.sv")
+    require("end else if (machine_id_q != 4'd1) begin" in bmc,
+            "boot menu OA snoop window must not arm on II/II+ hosts")
+
 
 def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -312,7 +451,7 @@ def main() -> int:
         for bench, _pass in BENCHES:
             run(
                 [vivado_tool("xelab"), bench, "-s", f"{bench}_snap",
-                 "--timescale", "1ns/1ps"],
+                 "--timescale", "1ns/1ps", "-L", "unisims_ver"],
                 OUT_DIR / f"xelab_{bench}.log",
             )
         for bench, pass_line in BENCHES:

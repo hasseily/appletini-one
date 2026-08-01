@@ -879,9 +879,12 @@ def test_virtual_irq_uses_bidirectional_open_collector_lane() -> None:
     top = read(APPLETINI_YARZ_TOP_SV)
 
     require("inout  wire                   apple_irq_pin" in wrapper and
-            "assign apple_irq_pin = ab_write.assert_irq ? 1'b0 : 1'bz;" in wrapper and
+            "wire apple_irq_drive_low = ab_write.assert_irq &&" in wrapper and
+            "(!host_is_iiplus || !irq_rearm_release_q);" in wrapper and
+            "assign apple_irq_pin = apple_irq_drive_low ? 1'b0 : 1'bz;" in wrapper and
             "apple_irq_n_out" not in wrapper,
-            "bus wrapper must assert IRQ low/high-Z through the physical bidirectional lane")
+            "bus wrapper must assert IRQ low/high-Z through the physical "
+            "bidirectional lane, with II+-only phase-locked re-arm notches")
     require("inout apple_irq_pin" in apple_top and
             "apple_irq_n_out" not in apple_top,
             "apple_top must preserve the physical IRQ lane as bidirectional")

@@ -43,13 +43,17 @@ module vtw_core_top (
     /* Session enable: vTW configured on AND the //e or II/II+ machine gate
      * satisfied. Must be asserted before Apple reset release. */
     input  logic                    enable,
+    /* Session-latched physical host type. It selects only the electrically
+     * safe parked-bus address; the accelerated personality remains a //e. */
+    input  logic                    host_is_iiplus,
     /* ARM releases the core after the boot ROM copy. While low the core
      * is held in reset and the ARM owns the sync-cycle port. */
     input  logic                    core_run,
     /* Pull the Apple RES# line low (open-collector, like CTRL-RESET).
      * The takeover sequence asserts this for ~100 ms so the whole machine
      * -- cards, MMU, PS reset detection -- restarts coherently before
-     * the vTW core boots. /DMA stays held throughout. */
+     * the vTW core boots. A //e gets the guarded stock-CPU reset window; a
+     * II/II+ keeps /DMA continuously asserted and resumes from shadow. */
     input  logic                    assert_apple_res,
 
     // Speed configuration (config menu / persisted profile). 16-bit
@@ -102,6 +106,24 @@ module vtw_core_top (
 
     input  globals::AppleBus_read   ab_read,
     output globals::AppleBus_write  ab_write,
+
+    /* Arbiter-merged virtual-card IRQ assert (pre-pin). The core must not
+     * depend on the physical IRQ pin round-trip for interrupts our own
+     * cards generate: the open-drain pad -> slot net -> sampler loop has
+     * proven electrically unreliable on the II/II+ host. The pin sample
+     * term is kept so real slot cards still interrupt the core. */
+    input  logic                    irq_assert_in,
+    input  logic                    data_drive_in,
+    input  logic [7:0]              data_drive_value_in,
+    input  logic                    dbg_clear,
+
+    /* Serve $C061-$C063 Apple-key reads internally as $00 (not pressed).
+     * An accelerated session presents as an Enhanced //e, so software
+     * legitimately polls the Apple keys -- but on a controller-less II/II+
+     * host those addresses are the game-connector pushbuttons and FLOAT
+     * HIGH ("pressed"). Set by the PS for II/II+ hosts (vtw ctrl bit 5);
+     * clear it to restore real reads when a controller is attached. */
+    input  logic                    iiplus_buttons_zero,
 
     /* PSRAM line port (psram_simple vtw client): 8-byte line reads and
      * writes for RamWorks banks. One op per background admission window,
@@ -180,7 +202,21 @@ module vtw_core_top (
     /* Last eight $C1xx-$CFFF bus cycles, newest in [15:0]. */
     output logic [8*16-1:0]         dbg_cxxx_ring,
     /* Last eight $C00x/$C01x soft-switch cycles with data (see engine). */
-    output logic [8*16-1:0]         dbg_c0_ring
+    output logic [8*16-1:0]         dbg_c0_ring,
+    output logic [31:0]             dbg_sync_write_check,
+    output logic [15:0]             dbg_sync_write_addr,
+    output logic [31:0]             dbg_c000_context,
+    output logic [31:0]             dbg_c000_counts,
+    /* Event-frozen forensic traces, re-armed by `busdbg clear`.
+     * PC entries are instruction-fetch addresses; I/O entries are packed
+     * by vtw_bus_engine. TRACE_STATUS: [0] frozen, [2:1] reason
+     * (2=$C000 bit7, 3=internal $C600). RESET source is recorded
+     * independently and the rings continue through RESET so they retain
+     * the post-reset ROM path. */
+    output logic [16*16-1:0]        dbg_pc_trace,
+    output logic [16*32-1:0]        dbg_io_trace,
+    output logic [31:0]             dbg_trace_status,
+    output logic [31:0]             dbg_bus_faults
 );
 
     import globals::*;
@@ -193,6 +229,7 @@ module vtw_core_top (
     logic        core_en;
     logic [15:0] core_addr;
     logic [7:0]  core_data_out;
+    logic        core_sync;
     /* Registered CPU operand. Every X_*_DONE-entry edge resolves that
      * cycle's response -- shadow BRAM, bus engine, RamWorks cache byte,
      * SmartPort card, synthesized $C01x status, or the $FF dead-route
@@ -227,19 +264,24 @@ module vtw_core_top (
         end
     end
 
+    /* Interrupt merge: our own virtual cards' asserts reach the core
+     * directly; the sampled physical line keeps real slot cards working.
+     * ab_read.irq is the filtered LINE level (1 = released). */
+    wire core_irq_n = ab_read.irq & ~irq_assert_in;
+
     w65c02_core #(.DEBUG_STATE_LOAD(1'b0)) core_i (
         .clk(clk),
         .reset_n(core_res_n),
         .enable(core_en),
         .ready(1'b1),
-        .irq_n(ab_read.irq),
+        .irq_n(core_irq_n),
         .nmi_n(ab_read.nmi),
         .so_n(1'b1),
         .data_in(core_data_in_q),
         .addr(core_addr),
         .data_out(core_data_out),
         .rwb(core_rwb),
-        .sync(),
+        .sync(core_sync),
         .vpb_n(),
         .mlb_n(),
         .waiting(),
@@ -370,6 +412,15 @@ module vtw_core_top (
                       (cycle_addr_q[15:4] == 12'hC01) &&
                       (cycle_addr_q[3:0] != 4'h0);
 
+    /* Floating II/II+ pushbuttons: serve $C061-$C063 reads internally as
+     * "not pressed" when the PS flags a II/II+ host (see the
+     * iiplus_buttons_zero port comment). These reads have no side
+     * effects, so skipping the bus cycle is faithful. $C060 (cassette
+     * in) keeps real-bus semantics. */
+    wire xl_btn_rd = xl_is_bus && cycle_rw_q && iiplus_buttons_zero &&
+                     (cycle_addr_q[15:2] == 14'h3018) &&
+                     (cycle_addr_q[1:0] != 2'b00);
+
     /* $C019 RDVBLBAR bit 7 uses the //e (AppleWin-ported renderer)
      * convention: 1 during active display, 0 during vertical blanking.
      * Hardware exposes the transition one native cycle behind the raw
@@ -469,6 +520,13 @@ module vtw_core_top (
     logic [7:0]  eng_resp_rdata;
     logic        eng_post_we;
     logic        eng_post_full;
+    logic        eng_bad_c000_pulse;
+    logic [15:0] dbg_pc_trace_q [0:15];
+    logic        dbg_trace_frozen_q;
+    logic [1:0]  dbg_trace_reason_q;
+    wire dbg_trace_selftest_event =
+        core_en && core_sync && (core_addr == 16'hC600) &&
+        vsss.sw_intcxrom;
 
     logic        fsm_req_valid;
     logic        arm_owns_bus;
@@ -503,8 +561,13 @@ module vtw_core_top (
         .clk(clk),
         .rstn(rstn),
         .enable(enable),
+        .host_is_iiplus(host_is_iiplus),
         .ab_read(ab_read),
         .ab_write(eng_ab_write),
+        .data_drive_in(data_drive_in),
+        .data_drive_value_in(data_drive_value_in),
+        .dbg_clear(dbg_clear),
+        .dbg_trace_freeze(dbg_trace_selftest_event),
         .sync_req_valid(eng_req_valid),
         .sync_req_ready(eng_req_ready),
         .sync_req_addr(eng_req_addr),
@@ -526,8 +589,63 @@ module vtw_core_top (
         .dbg_last_sync_data(dbg_last_sync_data),
         .dbg_last_sync_rw(dbg_last_sync_rw),
         .dbg_cxxx_ring(dbg_cxxx_ring),
-        .dbg_c0_ring(dbg_c0_ring)
+        .dbg_c0_ring(dbg_c0_ring),
+        .dbg_sync_write_check(dbg_sync_write_check),
+        .dbg_sync_write_addr(dbg_sync_write_addr),
+        .dbg_c000_context(dbg_c000_context),
+        .dbg_c000_counts(dbg_c000_counts),
+        .dbg_io_trace(dbg_io_trace),
+        .dbg_bad_c000_pulse(eng_bad_c000_pulse),
+        .dbg_bus_faults(dbg_bus_faults)
     );
+
+    generate
+        for (genvar pi = 0; pi < 16; pi++) begin : dbg_pc_trace_pack
+            assign dbg_pc_trace[pi*16 +: 16] = dbg_pc_trace_q[pi];
+        end
+    endgenerate
+    assign dbg_trace_status = {29'b0, dbg_trace_reason_q,
+                               dbg_trace_frozen_q};
+
+    /* Instruction history is passive and event-frozen. It deliberately
+     * continues across Apple RESET so a later $C600 trigger preserves the
+     * reset-handler path. A phantom keyboard strobe wins over the later
+     * consequence of entering self-test. */
+    always_ff @(posedge clk) begin
+        if (!rstn) begin
+            for (int i = 0; i < 16; i++) begin
+                dbg_pc_trace_q[i] <= '0;
+            end
+            dbg_trace_frozen_q <= 1'b0;
+            dbg_trace_reason_q <= 2'd0;
+        end
+        else if (dbg_clear) begin
+            for (int i = 0; i < 16; i++) begin
+                dbg_pc_trace_q[i] <= '0;
+            end
+            dbg_trace_frozen_q <= 1'b0;
+            dbg_trace_reason_q <= 2'd0;
+        end
+        else begin
+            if (!dbg_trace_frozen_q) begin
+                if (core_en && core_sync) begin
+                    for (int i = 15; i > 0; i--) begin
+                        dbg_pc_trace_q[i] <= dbg_pc_trace_q[i-1];
+                    end
+                    dbg_pc_trace_q[0] <= core_addr;
+                end
+
+                if (eng_bad_c000_pulse) begin
+                    dbg_trace_frozen_q <= 1'b1;
+                    dbg_trace_reason_q <= 2'd2;
+                end
+                else if (dbg_trace_selftest_event) begin
+                    dbg_trace_frozen_q <= 1'b1;
+                    dbg_trace_reason_q <= 2'd3;
+                end
+            end
+        end
+    end
 
     always_ff @(posedge clk) begin
         if (!rstn) begin
@@ -1006,6 +1124,12 @@ module vtw_core_top (
                                 (eff_mode == SPEED_1MHZ);
                             status_vbl_sampled_q <= 1'b0;
                             xstate_q       <= X_STATUS_DONE;
+                        end
+                        else if (xl_btn_rd) begin
+                            // II/II+ host: Apple keys read "not pressed"
+                            // instead of the floating game-connector level.
+                            core_data_in_q <= 8'h00;
+                            xstate_q       <= X_DEAD;
                         end
                         else begin
                             xstate_q <= X_BUS;

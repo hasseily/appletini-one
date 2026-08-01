@@ -134,6 +134,13 @@ static uint32_t vtw_ctrl_value(uint8_t enable, uint8_t core_run,
     v |= ((uint32_t)(vtw_eff_mode() & CARD_CTRL_VTW_CTRL_SPEED_MASK))
          << CARD_CTRL_VTW_CTRL_SPEED_SHIFT;
     v |= ((uint32_t)vtw_eff_divider()) << CARD_CTRL_VTW_CTRL_DIVIDER_SHIFT;
+    if (boot_menu_service_machine_mode() == CARD_MACHINE_MODE_IIPLUS) {
+        /* Controller-less II/II+ game-connector buttons float "pressed";
+         * serve the //e Apple-key reads ($C061-$C063) as not-pressed
+         * inside the core. Clear via a ctrl-reg write for hosts with a
+         * real controller attached. */
+        v |= CARD_CTRL_VTW_CTRL_IIPLUS_BTNS_BIT;
+    }
     return v;
 }
 
@@ -439,11 +446,12 @@ void vtw_service_poll(void)
              * land mid-protocol (boot menu open, command in flight), and
              * without a RES# edge the cards and PS would keep that state
              * while the vTW boots from scratch. This is our CTRL-RESET.
-             * The engine releases /DMA for the duration of RES# low (the
-             * //e MMU only processes a reset under stock bus conditions)
-             * and re-takes the bus automatically at release; BUS_OWNED
-             * dips during RES_HOLD, which is why the later states are
-             * timer-driven, not owned-polled. */
+             * A //e engine releases /DMA for the duration of RES# low so its
+             * MMU can process a stock reset, then re-takes automatically.
+             * A II/II+ keeps /DMA asserted while releasing address/data so
+             * the physical CPU can never escape. BUS_OWNED dips in either
+             * case, which is why later states are timer-driven rather than
+             * owned-polled. */
             uart_puts(g_uart_base, "vtw: bus taken, resetting machine\r\n");
             REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(1U, 0U, 1U));
             XTime_GetTime(&g_res_phase_start);
@@ -474,6 +482,44 @@ void vtw_service_poll(void)
 
     case VTW_ST_LOAD_ROM: {
         uint32_t i;
+        /* Enhanced //e reset-path Apple-key checks, patched out on II/II+
+         * hosts. The //e RESET routine reads Closed-Apple ($C062: pressed
+         * -> JMP $C600 self-test) and Open-Apple ($C061: pressed -> forced
+         * cold start) at ROM $C2BB/$C2C3. On a II/II+ those addresses are
+         * the game-connector pushbuttons, which FLOAT HIGH with no
+         * controller attached, so every accelerated boot entered the ROM
+         * self-test (lo-res patterns + beeps) and every reset went cold;
+         * the stray $C061 read also re-armed the boot menu's post-reset
+         * Open-Apple snoop window. Replace both loads with LDA #$00 / NOP
+         * so the checks read "not pressed". Gameplay button reads
+         * elsewhere still hit the real bus, so attached controllers keep
+         * working; //e hosts get the unmodified ROM. */
+        static const struct { uint16_t off; uint8_t val; }
+        k_iiplus_rom_patches[] = {
+            { 0x02BBU, 0xA9U }, { 0x02BCU, 0x00U }, { 0x02BDU, 0xEAU },
+            { 0x02C3U, 0xA9U }, { 0x02C4U, 0x00U }, { 0x02C5U, 0xEAU },
+        };
+        uint8_t iiplus_patch =
+            (boot_menu_service_machine_mode() == CARD_MACHINE_MODE_IIPLUS)
+                ? 1U : 0U;
+        /* Guard: only patch the bytes we decoded (LDA $C062 / LDA $C061).
+         * A future ROM image swap must be re-audited, not blind-patched. */
+        if ((iiplus_patch != 0U) &&
+            ((apple2e_cpu_rom[0x02BBU] != 0xADU) ||
+             (apple2e_cpu_rom[0x02BCU] != 0x62U) ||
+             (apple2e_cpu_rom[0x02BDU] != 0xC0U) ||
+             (apple2e_cpu_rom[0x02C3U] != 0xADU) ||
+             (apple2e_cpu_rom[0x02C4U] != 0x61U) ||
+             (apple2e_cpu_rom[0x02C5U] != 0xC0U))) {
+            iiplus_patch = 0U;
+            uart_puts(g_uart_base,
+                      "vtw: ROM image changed, II+ button patch SKIPPED\r\n");
+        }
+        if (iiplus_patch != 0U) {
+            uart_puts(g_uart_base,
+                      "vtw: II+ host, patching //e ROM reset button checks\r\n");
+        }
+
         /* Force the autostart COLD path: the shadow persists across
          * sessions, so a re-takeover would otherwise warm-vector through
          * a stale ($03F2) into OS state that no longer matches the
@@ -491,8 +537,18 @@ void vtw_service_poll(void)
          * data pointer auto-increments on each write. */
         REG_WRITE(CARD_CTRL_VTW_SHADOW_ADDR_REG, VTW_SHADOW_ROM_PHYS);
         for (i = 0U; i < VTW_ROM_BYTES; i++) {
-            REG_WRITE(CARD_CTRL_VTW_SHADOW_DATA_REG,
-                      (uint32_t)apple2e_cpu_rom[i]);
+            uint8_t b = apple2e_cpu_rom[i];
+            if (iiplus_patch != 0U) {
+                uint32_t p;
+                for (p = 0U;
+                     p < (sizeof(k_iiplus_rom_patches) /
+                          sizeof(k_iiplus_rom_patches[0])); p++) {
+                    if ((uint32_t)k_iiplus_rom_patches[p].off == i) {
+                        b = k_iiplus_rom_patches[p].val;
+                    }
+                }
+            }
+            REG_WRITE(CARD_CTRL_VTW_SHADOW_DATA_REG, (uint32_t)b);
         }
 
         REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(1U, 1U, 0U));
@@ -522,12 +578,93 @@ void vtw_service_uart_status(uint32_t uart_base)
     char line[96];
     uint32_t st = REG_READ(CARD_CTRL_VTW_STATUS_REG);
     uint32_t post = REG_READ(CARD_CTRL_VTW_POST_STATS_REG);
+    uint32_t wr_check = REG_READ(CARD_CTRL_VTW_WR_CHECK_REG);
+    uint32_t wr_addr = REG_READ(CARD_CTRL_VTW_WR_ADDR_REG);
+    uint32_t c000_ctx = REG_READ(CARD_CTRL_VTW_C000_CTX_REG);
+    uint32_t c000_cnt = REG_READ(CARD_CTRL_VTW_C000_CNT_REG);
+    uint32_t trace = REG_READ(CARD_CTRL_VTW_TRACE_STATUS_REG);
+    uint32_t faults = REG_READ(CARD_CTRL_VTW_BUS_FAULTS_REG);
+    uint32_t resetf = REG_READ(CARD_CTRL_RESET_FORENSICS_REG);
+    static const char *const cycle_kind[4] = {
+        "park", "post", "syncR", "syncW"
+    };
+    static const char *const trace_reason[4] = {
+        "none", "reserved", "C000-bit7", "internal-C600"
+    };
 
     snprintf(line, sizeof(line),
              "vtw: %s, intent=%s, machine=%s\r\n",
              vtw_state_name(g_state),
              g_intent_enabled != 0U ? "on" : "off",
              boot_menu_service_machine_name());
+    uart_puts(uart_base, line);
+    snprintf(line, sizeof(line),
+             "vtw: trace=%s reason=%s faults addr=%lu selfdata=%lu dmahigh=%lu\r\n",
+             (trace & CARD_CTRL_VTW_TRACE_FROZEN_BIT) ? "frozen" : "armed",
+             trace_reason[(trace >> CARD_CTRL_VTW_TRACE_REASON_SHIFT) &
+                          CARD_CTRL_VTW_TRACE_REASON_MASK],
+             (unsigned long)(faults >> 16),
+             (unsigned long)((faults >> 8) & 0xFFU),
+             (unsigned long)(faults & 0xFFU));
+    uart_puts(uart_base, line);
+    snprintf(line, sizeof(line),
+             "vtw: reset seen=%lu source=%s%s rstn=$%lX\r\n",
+             (unsigned long)((resetf &
+                 CARD_CTRL_RESET_FORENSICS_RES_SEEN_BIT) ? 1U : 0U),
+             (resetf & CARD_CTRL_RESET_FORENSICS_INTERNAL_BIT)
+                 ? "Appletini" : "",
+             (resetf & CARD_CTRL_RESET_FORENSICS_EXTERNAL_BIT)
+                 ? ((resetf & CARD_CTRL_RESET_FORENSICS_INTERNAL_BIT)
+                        ? "+external" : "external")
+                 : ((resetf & CARD_CTRL_RESET_FORENSICS_INTERNAL_BIT)
+                        ? "" : "none"),
+             (unsigned long)(resetf &
+                 CARD_CTRL_RESET_FORENSICS_RSTN_MASK));
+    uart_puts(uart_base, line);
+
+    if ((trace & CARD_CTRL_VTW_TRACE_FROZEN_BIT) != 0U) {
+        for (uint32_t row = 0U; row < 2U; ++row) {
+            int pos = snprintf(line, sizeof(line),
+                               row == 0U ? "vtw: pc trail" :
+                                           "vtw: pc trail+");
+            for (uint32_t n = row * 4U; n < row * 4U + 4U; ++n) {
+                uint32_t r = REG_READ(CARD_CTRL_VTW_PC_TRACE_REG(n));
+                pos += snprintf(line + pos, sizeof(line) - (size_t)pos,
+                                " %04lX %04lX",
+                                (unsigned long)(r & 0xFFFFU),
+                                (unsigned long)(r >> 16));
+            }
+            uart_puts(uart_base, line);
+            uart_puts(uart_base, row == 1U ? " (new->old)\r\n" : "\r\n");
+        }
+
+        for (uint32_t row = 0U; row < 4U; ++row) {
+            int pos = snprintf(line, sizeof(line),
+                               row == 0U ? "vtw: io trail" :
+                                           "vtw: io trail+");
+            for (uint32_t n = row * 4U; n < row * 4U + 4U; ++n) {
+                uint32_t e = REG_READ(CARD_CTRL_VTW_IO_TRACE_REG(n));
+                pos += snprintf(line + pos, sizeof(line) - (size_t)pos,
+                                " %c%04lX:%02lX/%c%c%c%c",
+                                (e & 0x80000000UL) ? 'R' : 'W',
+                                (unsigned long)((e >> 8) & 0xFFFFU),
+                                (unsigned long)(e & 0xFFU),
+                                (e & 0x40000000UL) ? 'S' : '-',
+                                (e & 0x20000000UL) ? 'D' : '-',
+                                (e & 0x10000000UL) ? 'A' : '-',
+                                (e & 0x08000000UL) ? 'V' : '-');
+            }
+            uart_puts(uart_base, line);
+            uart_puts(uart_base, row == 3U ? " (new->old)\r\n" : "\r\n");
+        }
+    }
+
+    snprintf(line, sizeof(line),
+             "vtw: slowdown mask=$%03X cycles=%u%s\r\n",
+             (unsigned)g_slowdown_mask,
+             (unsigned)g_slowdown_cycles,
+             (g_slowdown_mask == 0U || g_slowdown_cycles == 0U)
+                 ? " [inactive]" : "");
     uart_puts(uart_base, line);
     snprintf(line, sizeof(line),
              "vtw: speed=%s%s div=%u c074=%lu owned=%lu run=%lu pc=%04lX\r\n",
@@ -552,6 +689,23 @@ void vtw_service_uart_status(uint32_t uart_base)
              (unsigned long)((post >> 16) & 0x3FFU),
              (unsigned long)(post >> 26),
              (unsigned long)g_sessions_started);
+    uart_puts(uart_base, line);
+    snprintf(line, sizeof(line),
+             "vtw: wrchk mismatch=%lu last $%04lX expected=$%02lX observed=$%02lX\r\n",
+             (unsigned long)(wr_check >> 16),
+             (unsigned long)(wr_addr & 0xFFFFU),
+             (unsigned long)((wr_check >> 8) & 0xFFU),
+             (unsigned long)(wr_check & 0xFFU));
+    uart_puts(uart_base, line);
+    snprintf(line, sizeof(line),
+             "vtw: c000 reads=%lu bit7=%lu last=$%02lX prev=%s $%04lX %c drive=%lu\r\n",
+             (unsigned long)(c000_cnt & 0xFFFFU),
+             (unsigned long)(c000_cnt >> 16),
+             (unsigned long)(c000_ctx & 0xFFU),
+             cycle_kind[(c000_ctx >> 14) & 0x3U],
+             (unsigned long)(c000_ctx >> 16),
+             ((c000_ctx & (1UL << 13)) != 0U) ? 'R' : 'W',
+             (unsigned long)((c000_ctx >> 12) & 1U));
     uart_puts(uart_base, line);
 
     {

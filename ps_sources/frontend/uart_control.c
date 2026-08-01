@@ -2722,12 +2722,15 @@ static uart_control_event_t process_command(
 
         /* CPU-side: how many times the 6502 fetched the IRQ/BRK vector
          * ($FFFE). Climbing = CPU services interrupts; flat = masked/never
-         * vectors. Counts saturate at 255; reset on power-on/config reset. */
+         * vectors. Counts saturate at 255; reset on power-on/config reset.
+         * NB: counts ANY $FFFE read -- OS environments that copy ROM into
+         * Language Card RAM (ProDOS/DOS) inflate it with data reads. */
         (void)snprintf(line, sizeof(line),
             "cpu:   $FFFE vector fetches=%lu\r\n",
             (unsigned long)((p >> CARD_CTRL_IRQDBG_VEC_SHIFT)
                             & CARD_CTRL_IRQDBG_COUNT_MASK));
         uart_puts(control->control_uart_base, line);
+
         return event;
     }
 
@@ -2736,6 +2739,7 @@ static uart_control_event_t process_command(
 
         if (argc >= 2 && str_ieq(argv[1], "clear")) {
             REG_WRITE(CARD_CTRL_BUSDBG_QUALITY_REG, 1U);
+            REG_WRITE(CARD_CTRL_RESET_FORENSICS_REG, 1U);
             uart_puts(control->control_uart_base, "busdbg: cleared\r\n");
             return event;
         }
@@ -2747,6 +2751,7 @@ static uart_control_event_t process_command(
             uint32_t m = REG_READ(CARD_CTRL_BUSDBG_TAPMM_REG);
             uint32_t s = REG_READ(CARD_CTRL_BUSDBG_STROBE_REG);
             uint32_t l = REG_READ(CARD_CTRL_BUSDBG_TAPLAST_REG);
+            uint32_t r = REG_READ(CARD_CTRL_RESET_FORENSICS_REG);
 
             (void)snprintf(line, sizeof(line),
                 "phi0:  ring events=%lu short edges=%lu\r\n",
@@ -2762,6 +2767,20 @@ static uart_control_event_t process_command(
                 (unsigned long)(m >> 16), (unsigned long)(m & 0xFFFFU),
                 (unsigned long)(l >> 16), (unsigned long)((l >> 8) & 0xFFU),
                 (unsigned long)(l & 0xFFU));
+            uart_puts(control->control_uart_base, line);
+            (void)snprintf(line, sizeof(line),
+                "reset: seen=%lu source=%s%s rstn_dips=$%lX\r\n",
+                (unsigned long)((r &
+                    CARD_CTRL_RESET_FORENSICS_RES_SEEN_BIT) ? 1U : 0U),
+                (r & CARD_CTRL_RESET_FORENSICS_INTERNAL_BIT)
+                    ? "Appletini" : "",
+                (r & CARD_CTRL_RESET_FORENSICS_EXTERNAL_BIT)
+                    ? ((r & CARD_CTRL_RESET_FORENSICS_INTERNAL_BIT)
+                           ? "+external" : "external")
+                    : ((r & CARD_CTRL_RESET_FORENSICS_INTERNAL_BIT)
+                           ? "" : "none"),
+                (unsigned long)(r &
+                    CARD_CTRL_RESET_FORENSICS_RSTN_MASK));
             uart_puts(control->control_uart_base, line);
         }
 

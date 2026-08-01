@@ -1305,12 +1305,6 @@ static void control_set_vtw_slug_key_enabled(void *ctx, uint8_t enable)
     vtw_service_set_slug_enabled(enable);
 }
 
-static void control_set_iiplus_data_tap(void *ctx, uint8_t tap)
-{
-    (void)ctx;
-    REG_WRITE(CARD_CTRL_IIPLUS_DATA_TAP_REG, (uint32_t)tap);
-}
-
 static void control_set_vtw_slowdown(void *ctx, uint16_t region_mask,
                                      uint16_t cycles)
 {
@@ -2774,7 +2768,6 @@ int main(void)
         menu_platform.set_applicard_resource_max = control_set_applicard_resource_max;
         menu_platform.set_vtw_config = control_set_vtw_config;
         menu_platform.set_vtw_slug_key_enabled = control_set_vtw_slug_key_enabled;
-        menu_platform.set_iiplus_data_tap = control_set_iiplus_data_tap;
         menu_platform.set_vtw_slowdown = control_set_vtw_slowdown;
         menu_platform.refresh_usb1 = control_refresh_usb1;
         menu_platform.set_phasor_pan = control_set_phasor_pan;
@@ -2842,12 +2835,15 @@ int main(void)
     if (usb_storage_service_init() != 0) {
         uart_puts(UART0_BASE, "USB storage service: disabled\r\n");
     }
+    /* The first config read can precede cold SD-card settling. Retry after
+     * the storage backend's robust attach, while Apple RESET is still held. */
+    config_menu_retry_settings_if_needed(&config_menu);
     (void)usb_sdd_service_init();
     /* Center the PSRAM read-capture delay before any data is staged so the
      * sampling point remains valid across boards and temperature. */
     (void)psram_calibrate_dcount(UART0_BASE);
     /* Arm the reset-forensics stickies (they latch the boot reset). */
-    REG_WRITE(0x40000190U, 1U);
+    REG_WRITE(CARD_CTRL_RESET_FORENSICS_REG, 1U);
     (void)disk2_service_init(UART0_BASE);
     applicard_service_init(UART0_BASE);
     applicard_service_set_checkpoint(usb0_priority_checkpoint);

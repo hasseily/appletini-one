@@ -46,9 +46,11 @@
 #define DISK2_WOZ_INFO_CHUNK_SIZE 60U
 #define DISK2_WOZ_INFO_DISK_TYPE_OFFSET 1U
 #define DISK2_WOZ_INFO_WRITE_PROTECT_OFFSET 2U
+#define DISK2_WOZ_INFO_BOOT_SECTOR_FORMAT_OFFSET 38U
 #define DISK2_WOZ_INFO_OPTIMAL_BIT_TIMING_OFFSET 39U
 #define DISK2_WOZ_OPTIMAL_BIT_TIMING_5_25 32U
 #define DISK2_WOZ_DISK_TYPE_5_25 1U
+#define DISK2_WOZ_BOOT_SECTOR_13 2U
 #define DISK2_WOZ1_TRACK_BYTES 6656U
 #define DISK2_WOZ1_TRK_OFFSET 6646U
 #define DISK2_WOZ_EMPTY_TRACK_BYTES 6400U
@@ -60,12 +62,23 @@
 #define DISK2_APPLEWIN_RAND_MAX 32767U
 #define DISK2_APPLEWIN_RAND_3_10 9830U
 #define DISK2_NO_LOADED_TRACK 0xFFU
+#define DISK2_NO_PHYSICAL_TRACK 0xFFU
 #define DISK2_LOAD_STALE_REQUEST (-100)
 #define DISK2_WOZ_SCAN_SEAM_BITS 256U
+
+#define DISK2_2MG_HEADER_SIZE 64U
+#define DISK2_2MG_MAGIC 0x474D4932U
+#define DISK2_2MG_FORMAT_DOS33 0U
+#define DISK2_2MG_FORMAT_PRODOS 1U
+#define DISK2_2MG_FORMAT_NIB 2U
+#define DISK2_2MG_FLAG_VOLUME_VALID 0x00000100U
+#define DISK2_2MG_FLAG_LOCKED 0x80000000U
+#define DISK2_DEFAULT_VOLUME_NUMBER 0xFEU
 
 #define DISK2_TRACK_INFO_LOADED_BIT 0x00000001U
 #define DISK2_TRACK_INFO_MATCH_BIT  0x00000002U
 #define DISK2_TRACK_INFO_RAW_BITS_BIT 0x00000004U
+#define DISK2_TRACK_INFO_NO_TRACK_BIT 0x00000008U
 #define DISK2_TRACK_INFO_CUR_DRIVE_SHIFT 16U
 #define DISK2_TRACK_INFO_CUR_QTRACK_SHIFT 8U
 #define DISK2_TRACK_INFO_LOAD_DRIVE_SHIFT 20U
@@ -93,6 +106,10 @@ static uint8_t g_loaded_drive = DISK2_NO_LOADED_TRACK;
 static uint8_t g_loaded_qtrack = DISK2_NO_LOADED_TRACK;
 static uint32_t g_loaded_track_length = 0U;
 static uint32_t g_loaded_track_bit_count = 0U;
+static uint8_t g_drive_rotation_valid[DISK2_DRIVE_COUNT];
+static uint8_t g_drive_rotation_qtrack[DISK2_DRIVE_COUNT];
+static uint8_t g_drive_rotation_raw_bits[DISK2_DRIVE_COUNT];
+static uint32_t g_drive_rotation_bit_count[DISK2_DRIVE_COUNT];
 static uint32_t g_load_fail_count = 0U;
 static uint8_t g_disk2_enabled = 1U;
 static uint8_t g_woz_write_enable[DISK2_DRIVE_COUNT];
@@ -122,6 +139,7 @@ static const uint8_t gcr_6and2[64] = {
 
 static uint8_t decode44_pair(const uint8_t *buf, uint32_t len, uint32_t pos);
 static uint8_t woz_raw_bit_at(const uint8_t *buf, uint32_t bit_offset);
+static int flush_dirty_track(uint8_t drive, uint8_t qtrack);
 
 static uint8_t drive_reg_base(uint8_t drive)
 {
@@ -187,21 +205,6 @@ static uint8_t write_info_has_pending(uint32_t write_info)
 {
     return ((write_info & (DISK2_WRITE_INFO_DIRTY_BIT |
                            DISK2_WRITE_INFO_BUSY_BIT)) != 0U) ? 1U : 0U;
-}
-
-static uint8_t clear_drive_dirty_if_idle(uint8_t drive)
-{
-    uint32_t write_info = disk2_reg_read(DISK2_REG_WRITE_INFO);
-
-    if ((write_info & DISK2_WRITE_INFO_DIRTY_BIT) == 0U ||
-        write_info_drive(write_info) != drive) {
-        return 1U;
-    }
-    if ((write_info & DISK2_WRITE_INFO_BUSY_BIT) != 0U) {
-        return 0U;
-    }
-    ack_dirty_track(drive, write_info_qtrack(write_info));
-    return 1U;
 }
 
 static int stage_track_to_ddr(uint32_t length)
@@ -274,6 +277,30 @@ static uint8_t str_ieq(const char *a, const char *b)
         }
         ++a;
         ++b;
+    }
+    return (*a == '\0' && *b == '\0') ? 1U : 0U;
+}
+
+static uint8_t path_ieq(const char *a, const char *b)
+{
+    uint8_t ac;
+    uint8_t bc;
+
+    if (a == NULL || b == NULL) {
+        return 0U;
+    }
+    while (*a != '\0' && *b != '\0') {
+        ac = (uint8_t)*a++;
+        bc = (uint8_t)*b++;
+        if (ac == (uint8_t)'\\') {
+            ac = (uint8_t)'/';
+        }
+        if (bc == (uint8_t)'\\') {
+            bc = (uint8_t)'/';
+        }
+        if (ascii_lower(ac) != ascii_lower(bc)) {
+            return 0U;
+        }
     }
     return (*a == '\0' && *b == '\0') ? 1U : 0U;
 }
@@ -393,20 +420,10 @@ static int write_drive_bytes(uint8_t drive, uint32_t offset, const void *buf, ui
     return rc;
 }
 
-static uint32_t standard_track_bytes_for_format(disk2_image_format_t format)
-{
-    if (format == DISK2_IMAGE_NIB) {
-        return DISK2_NIB_TRACK_BYTES;
-    }
-    if (format == DISK2_IMAGE_DSK ||
-        format == DISK2_IMAGE_DO ||
-        format == DISK2_IMAGE_PO) {
-        return DISK2_DSK_SECTORS_PER_TRACK * DISK2_SECTOR_BYTES;
-    }
-    return 0U;
-}
-
-static int load_standard_image_cache(uint8_t drive, FIL *file, uint32_t file_size)
+static int load_standard_image_cache(uint8_t drive,
+                                     FIL *file,
+                                     uint32_t data_offset,
+                                     uint32_t data_size)
 {
     FRESULT fr;
     uint32_t offset = 0U;
@@ -417,19 +434,19 @@ static int load_standard_image_cache(uint8_t drive, FIL *file, uint32_t file_siz
     g_standard_image_cached[drive] = 0U;
     g_standard_image_size[drive] = 0U;
 
-    if (file_size > DISK2_STANDARD_MAX_IMAGE_BYTES) {
+    if (data_size > DISK2_STANDARD_MAX_IMAGE_BYTES) {
         return -2;
     }
 
-    fr = f_lseek(file, 0U);
+    fr = f_lseek(file, data_offset);
     if (fr != FR_OK) {
         return -(int)fr;
     }
 
-    while (offset < file_size) {
+    while (offset < data_size) {
         UINT chunk;
         UINT got = 0U;
-        uint32_t remaining = file_size - offset;
+        uint32_t remaining = data_size - offset;
 
         chunk = (remaining > DISK2_IO_CHUNK_BYTES) ?
             (UINT)DISK2_IO_CHUNK_BYTES : (UINT)remaining;
@@ -443,7 +460,7 @@ static int load_standard_image_cache(uint8_t drive, FIL *file, uint32_t file_siz
         offset += (uint32_t)chunk;
     }
 
-    g_standard_image_size[drive] = file_size;
+    g_standard_image_size[drive] = data_size;
     g_standard_image_cached[drive] = 1U;
     return 0;
 }
@@ -495,8 +512,14 @@ static int write_standard_image_bytes(uint8_t drive, uint32_t offset, const void
     if (rc != 0) {
         return rc;
     }
-    memcpy(&g_standard_image_buf[drive][offset], buf, len);
-    return write_drive_bytes(drive, offset, buf, len);
+    rc = write_drive_bytes(drive,
+                           g_disk2_info[drive].image_data_offset + offset,
+                           buf,
+                           len);
+    if (rc == 0) {
+        memcpy(&g_standard_image_buf[drive][offset], buf, len);
+    }
+    return rc;
 }
 
 static int sector_track_offset(uint8_t drive, uint8_t track, uint32_t *offset_out)
@@ -518,7 +541,8 @@ static int sector_track_offset(uint8_t drive, uint8_t track, uint32_t *offset_ou
         return -2;
     }
     offset = (uint32_t)track * DISK2_DSK_SECTORS_PER_TRACK * DISK2_SECTOR_BYTES;
-    if (offset + (DISK2_DSK_SECTORS_PER_TRACK * DISK2_SECTOR_BYTES) > info->file_size) {
+    if (offset + (DISK2_DSK_SECTORS_PER_TRACK * DISK2_SECTOR_BYTES) >
+        info->image_data_size) {
         return -2;
     }
     *offset_out = offset;
@@ -541,7 +565,7 @@ static int nib_track_offset(uint8_t drive, uint8_t track, uint32_t *offset_out)
         return -2;
     }
     offset = (uint32_t)track * DISK2_NIB_TRACK_BYTES;
-    if (offset + DISK2_NIB_TRACK_BYTES > info->file_size) {
+    if (offset + DISK2_NIB_TRACK_BYTES > info->image_data_size) {
         return -2;
     }
     *offset_out = offset;
@@ -567,6 +591,9 @@ static disk2_image_format_t format_from_path(const char *path)
     if (str_ieq(ext, ".po") != 0U) {
         return DISK2_IMAGE_PO;
     }
+    if (str_ieq(ext, ".2mg") != 0U || str_ieq(ext, ".2img") != 0U) {
+        return DISK2_IMAGE_2MG;
+    }
     return DISK2_IMAGE_NONE;
 }
 
@@ -586,16 +613,237 @@ static void copy_path(char *dst, size_t dst_len, const char *src)
     dst[i] = '\0';
 }
 
-static void clear_drive(uint8_t drive)
+/* Match AppleWin's 5.25-inch DO/PO size acceptance exactly. In particular,
+ * a few historically distributed 140K images have short or extra tails and
+ * are intentionally accepted even though their size is not a multiple of 4K. */
+static uint8_t sector_image_size_valid(uint32_t size, uint32_t *tracks_out)
+{
+    uint8_t valid;
+
+    if (size > DISK2_STANDARD_MAX_TRACKS *
+               DISK2_DSK_SECTORS_PER_TRACK * DISK2_SECTOR_BYTES) {
+        return 0U;
+    }
+    if (size >= (DISK2_STANDARD_TRACKS + 1U) *
+                DISK2_DSK_SECTORS_PER_TRACK * DISK2_SECTOR_BYTES) {
+        valid = (((size - DISK2_STANDARD_TRACKS *
+                         DISK2_DSK_SECTORS_PER_TRACK * DISK2_SECTOR_BYTES) %
+                  (DISK2_DSK_SECTORS_PER_TRACK * DISK2_SECTOR_BYTES)) == 0U) ?
+            1U : 0U;
+    } else {
+        valid = (((size >= 143105U) && (size <= 143364U)) ||
+                 size == 143403U || size == 143488U) ? 1U : 0U;
+    }
+    if (valid != 0U && tracks_out != NULL) {
+        *tracks_out = size /
+            (DISK2_DSK_SECTORS_PER_TRACK * DISK2_SECTOR_BYTES);
+    }
+    return valid;
+}
+
+static uint8_t nib_image_size_valid(uint32_t size, uint32_t *tracks_out)
+{
+    if (size < DISK2_STANDARD_TRACKS * DISK2_NIB_TRACK_BYTES ||
+        size > DISK2_STANDARD_MAX_TRACKS * DISK2_NIB_TRACK_BYTES ||
+        (size % DISK2_NIB_TRACK_BYTES) != 0U) {
+        return 0U;
+    }
+    if (tracks_out != NULL) {
+        *tracks_out = size / DISK2_NIB_TRACK_BYTES;
+    }
+    return 1U;
+}
+
+/* A 13-sector NIB uses D5 AA B5 address prologues. Do not reject an odd
+ * protected track merely because B5 appears in data: only identify the image
+ * as 13-sector when it has B5 address fields and no 16-sector address fields. */
+static uint8_t cached_nib_address_valid(const uint8_t *track,
+                                        uint32_t pos,
+                                        uint8_t sector_count)
+{
+    uint8_t encoded[11];
+    uint8_t volume;
+    uint8_t track_number;
+    uint8_t sector;
+    uint8_t checksum;
+
+    for (uint32_t i = 0U; i < sizeof(encoded); ++i) {
+        encoded[i] = track[(pos + 3U + i) % DISK2_NIB_TRACK_BYTES];
+    }
+    for (uint32_t i = 0U; i < 8U; ++i) {
+        if ((encoded[i] & 0xAAU) != 0xAAU) {
+            return 0U;
+        }
+    }
+    if (encoded[8] != 0xDEU ||
+        encoded[9] != 0xAAU ||
+        encoded[10] != 0xEBU) {
+        return 0U;
+    }
+    volume = decode44_pair(encoded, sizeof(encoded), 0U);
+    track_number = decode44_pair(encoded, sizeof(encoded), 2U);
+    sector = decode44_pair(encoded, sizeof(encoded), 4U);
+    checksum = decode44_pair(encoded, sizeof(encoded), 6U);
+    return (sector < sector_count &&
+            (uint8_t)(volume ^ track_number ^ sector) == checksum) ? 1U : 0U;
+}
+
+static uint8_t cached_nib_is_13_sector(uint8_t drive, uint32_t track_count)
+{
+    uint32_t addr13 = 0U;
+    uint32_t addr16 = 0U;
+
+    if (drive >= DISK2_DRIVE_COUNT ||
+        g_standard_image_cached[drive] == 0U) {
+        return 0U;
+    }
+    for (uint32_t track = 0U; track < track_count; ++track) {
+        const uint8_t *data = &g_standard_image_buf[drive][track *
+                                                           DISK2_NIB_TRACK_BYTES];
+        for (uint32_t pos = 0U; pos < DISK2_NIB_TRACK_BYTES; ++pos) {
+            uint32_t p1 = (pos + 1U) % DISK2_NIB_TRACK_BYTES;
+            uint32_t p2 = (pos + 2U) % DISK2_NIB_TRACK_BYTES;
+
+            if (data[pos] == 0xD5U && data[p1] == 0xAAU) {
+                if (data[p2] == 0x96U &&
+                    cached_nib_address_valid(data, pos, 16U) != 0U) {
+                    ++addr16;
+                } else if (data[p2] == 0xB5U &&
+                           cached_nib_address_valid(data, pos, 13U) != 0U) {
+                    ++addr13;
+                }
+            }
+        }
+    }
+    return (addr13 != 0U && addr16 == 0U) ? 1U : 0U;
+}
+
+static int woz_calculate_crc(FIL *file, uint32_t file_size, uint32_t *crc_out)
+{
+    uint32_t crc;
+    uint32_t pos;
+    int rc;
+
+    if (file == NULL || crc_out == NULL ||
+        file_size < DISK2_WOZ_HEADER_SIZE) {
+        return -1;
+    }
+    crc = crc32_init();
+    for (pos = DISK2_WOZ_HEADER_SIZE; pos < file_size; ) {
+        uint32_t chunk = file_size - pos;
+
+        if (chunk > sizeof(g_file_io_buf)) {
+            chunk = sizeof(g_file_io_buf);
+        }
+        rc = file_read_exact_at(file, pos, g_file_io_buf, (UINT)chunk);
+        if (rc != 0) {
+            return rc;
+        }
+        crc = crc32_update(crc, g_file_io_buf, chunk);
+        pos += chunk;
+    }
+    *crc_out = crc32_finish(crc);
+    return 0;
+}
+
+static int probe_2mg(FIL *file, disk2_image_info_t *info)
+{
+    uint8_t hdr[DISK2_2MG_HEADER_SIZE];
+    uint32_t format;
+    uint32_t flags;
+    uint32_t blocks;
+    uint32_t data_offset;
+    uint32_t data_size;
+    uint32_t tracks = 0U;
+    int rc;
+
+    if (file == NULL || info == NULL || info->file_size < sizeof(hdr)) {
+        return -2;
+    }
+    rc = file_read_exact_at(file, 0U, hdr, sizeof(hdr));
+    if (rc != 0) {
+        return rc;
+    }
+    if (le32_load(&hdr[0]) != DISK2_2MG_MAGIC ||
+        le16_load(&hdr[8]) != DISK2_2MG_HEADER_SIZE ||
+        le16_load(&hdr[10]) > 1U) {
+        return -2;
+    }
+
+    format = le32_load(&hdr[12]);
+    flags = le32_load(&hdr[16]);
+    blocks = le32_load(&hdr[20]);
+    data_offset = le32_load(&hdr[24]);
+    data_size = le32_load(&hdr[28]);
+    if (data_offset == 0U) {
+        data_offset = DISK2_2MG_HEADER_SIZE;
+    }
+    if (format == DISK2_2MG_FORMAT_PRODOS && data_size == 0U) {
+        if (blocks > (0xFFFFFFFFU / 512U)) {
+            return -2;
+        }
+        data_size = blocks * 512U;
+    }
+    if (data_offset < DISK2_2MG_HEADER_SIZE ||
+        data_offset > info->file_size ||
+        data_size > info->file_size - data_offset) {
+        return -2;
+    }
+
+    switch (format) {
+    case DISK2_2MG_FORMAT_DOS33:
+        if (sector_image_size_valid(data_size, &tracks) == 0U) {
+            return -2;
+        }
+        info->format = DISK2_IMAGE_DO;
+        break;
+    case DISK2_2MG_FORMAT_PRODOS:
+        if (sector_image_size_valid(data_size, &tracks) == 0U) {
+            return -2;
+        }
+        info->format = DISK2_IMAGE_PO;
+        break;
+    case DISK2_2MG_FORMAT_NIB:
+        /* AppleWin only accepts the standard 35-track NIB payload in 2IMG. */
+        if (data_size != DISK2_STANDARD_TRACKS * DISK2_NIB_TRACK_BYTES) {
+            return -2;
+        }
+        tracks = DISK2_STANDARD_TRACKS;
+        info->format = DISK2_IMAGE_NIB;
+        break;
+    default:
+        return -2;
+    }
+
+    info->container_2mg = 1U;
+    /* AppleWin only applies the optional 2IMG volume number to DOS-order
+     * sector images. ProDOS-order sector images retain the normal $FE
+     * address-field volume. */
+    info->volume_number =
+        (format == DISK2_2MG_FORMAT_DOS33 &&
+         (flags & DISK2_2MG_FLAG_VOLUME_VALID) != 0U) ?
+            (uint8_t)flags : DISK2_DEFAULT_VOLUME_NUMBER;
+    info->read_only = (flags & DISK2_2MG_FLAG_LOCKED) ? 1U : 0U;
+    info->image_data_offset = data_offset;
+    info->image_data_size = data_size;
+    info->track_count = tracks;
+    info->logical_blocks = data_size / 512U;
+    return 0;
+}
+
+static void clear_drive_state(uint8_t drive)
 {
     if (drive >= DISK2_DRIVE_COUNT) {
         return;
     }
-    (void)clear_drive_dirty_if_idle(drive);
     g_woz_write_enable[drive] = 0U;
     g_woz_image_write_protected[drive] = 0U;
     g_standard_image_cached[drive] = 0U;
     g_standard_image_size[drive] = 0U;
+    g_drive_rotation_valid[drive] = 0U;
+    g_drive_rotation_qtrack[drive] = 0U;
+    g_drive_rotation_raw_bits[drive] = 0U;
+    g_drive_rotation_bit_count[drive] = 0U;
     memset(&g_disk2_info[drive], 0, sizeof(g_disk2_info[drive]));
     if (g_loaded_drive == drive) {
         g_loaded_drive = DISK2_NO_LOADED_TRACK;
@@ -604,7 +852,6 @@ static void clear_drive(uint8_t drive)
         g_loaded_track_bit_count = 0U;
         disk2_reg_write(DISK2_REG_TRACK_INFO, 0U);
         disk2_reg_write(DISK2_REG_TRACK_BIT_COUNT, 0U);
-        disk2_reg_write(DISK2_REG_TRACK_BIT_OFFSET, 0U);
     }
     publish_drive(drive);
 }
@@ -619,6 +866,8 @@ static int probe_woz(FIL *file, disk2_image_info_t *info)
     uint8_t have_info = 0U;
     uint8_t have_tmap = 0U;
     uint8_t have_trks = 0U;
+    uint32_t expected_crc;
+    uint32_t actual_crc;
 
     memset(info->woz_tmap, DISK2_WOZ_TMAP_EMPTY, sizeof(info->woz_tmap));
     info->woz_version = 0U;
@@ -637,8 +886,21 @@ static int probe_woz(FIL *file, disk2_image_info_t *info)
         return -(int)fr;
     }
     if (got != sizeof(hdr) ||
-        (memcmp(hdr, "WOZ1", 4U) != 0 && memcmp(hdr, "WOZ2", 4U) != 0)) {
+        (memcmp(hdr, "WOZ1", 4U) != 0 && memcmp(hdr, "WOZ2", 4U) != 0) ||
+        hdr[4] != 0xFFU || hdr[5] != 0x0AU ||
+        hdr[6] != 0x0DU || hdr[7] != 0x0AU) {
         return -2;
+    }
+    expected_crc = le32_load(&hdr[8]);
+    if (expected_crc != 0U) {
+        int crc_rc = woz_calculate_crc(file, info->file_size, &actual_crc);
+
+        if (crc_rc != 0) {
+            return crc_rc;
+        }
+        if (actual_crc != expected_crc) {
+            return -2;
+        }
     }
     info->woz_version = (uint8_t)(hdr[3] - (uint8_t)'0');
 
@@ -681,6 +943,11 @@ static int probe_woz(FIL *file, disk2_image_info_t *info)
                 return -2;
             }
             info_version = info_chunk[0];
+            if (info_version >= 2U &&
+                info_chunk[DISK2_WOZ_INFO_BOOT_SECTOR_FORMAT_OFFSET] ==
+                    DISK2_WOZ_BOOT_SECTOR_13) {
+                return -2;
+            }
             info->read_only =
                 (info_chunk[DISK2_WOZ_INFO_WRITE_PROTECT_OFFSET] != 0U) ? 1U : 0U;
             if (info_version >= 2U &&
@@ -752,14 +1019,14 @@ static int probe_file(uint8_t drive)
     const char *path;
     disk2_image_info_t info;
     disk2_image_format_t format;
-    uint32_t track_bytes;
+    uint32_t tracks = 0U;
 
     if (drive >= DISK2_DRIVE_COUNT) {
         return -1;
     }
 
     path = g_disk2_paths[drive];
-    clear_drive(drive);
+    clear_drive_state(drive);
     if (path[0] == '\0') {
         return 0;
     }
@@ -776,15 +1043,18 @@ static int probe_file(uint8_t drive)
 
     memset(&info, 0, sizeof(info));
     info.present = 1U;
-    info.read_only = 1U;
+    info.read_only = 0U;
+    info.volume_number = DISK2_DEFAULT_VOLUME_NUMBER;
     info.format = format;
     info.file_size = (uint32_t)f_size(&file);
+    info.image_data_offset = 0U;
+    info.image_data_size = info.file_size;
 
     if (format == DISK2_IMAGE_WOZ) {
         int rc = probe_woz(&file, &info);
         (void)f_close(&file);
         if (rc != 0) {
-            clear_drive(drive);
+            clear_drive_state(drive);
             return rc;
         }
         g_woz_image_write_protected[drive] = info.read_only;
@@ -800,42 +1070,56 @@ static int probe_file(uint8_t drive)
     } else {
         int rc;
 
-        track_bytes = standard_track_bytes_for_format(format);
-        if (track_bytes == 0U || info.file_size < track_bytes) {
-            (void)f_close(&file);
-            clear_drive(drive);
-            return -2;
+        if (format == DISK2_IMAGE_2MG) {
+            rc = probe_2mg(&file, &info);
+        } else if (format == DISK2_IMAGE_NIB) {
+            rc = (nib_image_size_valid(info.image_data_size, &tracks) != 0U) ?
+                0 : -2;
+            info.track_count = tracks;
+            info.logical_blocks = info.image_data_size / 512U;
+        } else if (format == DISK2_IMAGE_DSK ||
+                   format == DISK2_IMAGE_DO ||
+                   format == DISK2_IMAGE_PO) {
+            rc = (sector_image_size_valid(info.image_data_size, &tracks) != 0U) ?
+                0 : -2;
+            info.track_count = tracks;
+            info.logical_blocks = info.image_data_size / 512U;
+        } else {
+            rc = -2;
         }
-        info.track_count = info.file_size / track_bytes;
-        info.logical_blocks = info.file_size / 512U;
-        rc = load_standard_image_cache(drive, &file, info.file_size);
-        (void)f_close(&file);
         if (rc != 0) {
-            clear_drive(drive);
+            (void)f_close(&file);
+            clear_drive_state(drive);
             return rc;
         }
-        if (format == DISK2_IMAGE_NIB ||
-            format == DISK2_IMAGE_DSK ||
-            format == DISK2_IMAGE_DO ||
-            format == DISK2_IMAGE_PO) {
+        rc = load_standard_image_cache(drive,
+                                       &file,
+                                       info.image_data_offset,
+                                       info.image_data_size);
+        (void)f_close(&file);
+        if (rc != 0) {
+            clear_drive_state(drive);
+            return rc;
+        }
+        if (info.format == DISK2_IMAGE_NIB &&
+            cached_nib_is_13_sector(drive, info.track_count) != 0U) {
+            clear_drive_state(drive);
+            return -2;
+        }
+        if (info.read_only == 0U) {
             fr = f_open(&file, path, FA_READ | FA_WRITE);
             if (fr == FR_OK) {
                 info.read_only = 0U;
                 (void)f_close(&file);
+            } else {
+                info.read_only = 1U;
             }
         }
     }
 
     g_disk2_info[drive] = info;
     publish_drive(drive);
-    g_loaded_drive = DISK2_NO_LOADED_TRACK;
-    g_loaded_qtrack = DISK2_NO_LOADED_TRACK;
-    g_loaded_track_length = 0U;
     g_load_fail_count = 0U;
-    disk2_reg_write(DISK2_REG_TRACK_INFO, 0U);
-    disk2_reg_write(DISK2_REG_TRACK_BIT_COUNT, 0U);
-    disk2_reg_write(DISK2_REG_TRACK_BIT_OFFSET, 0U);
-    disk2_reg_write(DISK2_REG_TRACK_SEAM, 0U);
 
     if (g_uart_base != 0U) {
         uart_puts(g_uart_base, "Disk II D");
@@ -880,11 +1164,8 @@ static uint8_t qtrack_to_track(uint8_t qtrack, uint32_t track_count)
 {
     uint32_t track = ((uint32_t)qtrack) / 4U;
 
-    if (track_count == 0U) {
-        return 0U;
-    }
-    if (track >= track_count) {
-        track = track_count - 1U;
+    if (track_count == 0U || track >= track_count) {
+        return DISK2_NO_PHYSICAL_TRACK;
     }
     return (uint8_t)track;
 }
@@ -1015,7 +1296,8 @@ static int write_sector_physical_track(uint8_t drive, uint8_t track, const uint8
 static uint32_t nibblize_sector_track(uint8_t *nib,
                                       const uint8_t *sector_track,
                                       uint8_t track,
-                                      uint8_t is_prodos)
+                                      uint8_t is_prodos,
+                                      uint8_t volume)
 {
     uint32_t pos = 0U;
     uint8_t encoded[343];
@@ -1026,12 +1308,12 @@ static uint32_t nibblize_sector_track(uint8_t *nib,
          physical_sector < DISK2_DSK_SECTORS_PER_TRACK;
          ++physical_sector) {
         uint8_t file_sector = sector_image_file_sector(physical_sector, is_prodos);
-        uint8_t checksum = (uint8_t)(0xFEU ^ track ^ physical_sector);
+        uint8_t checksum = (uint8_t)(volume ^ track ^ physical_sector);
 
         nib_put(nib, &pos, 0xD5U);
         nib_put(nib, &pos, 0xAAU);
         nib_put(nib, &pos, 0x96U);
-        nib_put_44(nib, &pos, 0xFEU);
+        nib_put_44(nib, &pos, volume);
         nib_put_44(nib, &pos, track);
         nib_put_44(nib, &pos, physical_sector);
         nib_put_44(nib, &pos, checksum);
@@ -1057,36 +1339,56 @@ static uint32_t nibblize_sector_track(uint8_t *nib,
     return pos;
 }
 
-static uint8_t gcr_decode_6and2(uint8_t value)
+static int gcr_decode_6and2(uint8_t value, uint8_t *decoded_out)
 {
     static uint8_t table_ready = 0U;
     static uint8_t table[0x80];
+    uint8_t decoded;
+
+    if (decoded_out == NULL || value < 0x80U) {
+        return -1;
+    }
 
     if (table_ready == 0U) {
-        memset(table, 0, sizeof(table));
+        memset(table, 0xFF, sizeof(table));
         for (uint32_t i = 0U; i < 64U; ++i) {
             table[gcr_6and2[i] - 0x80U] = (uint8_t)(i << 2);
         }
         table_ready = 1U;
     }
-    return table[value & 0x7FU];
+
+    decoded = table[value - 0x80U];
+    if (decoded == 0xFFU) {
+        return -1;
+    }
+    *decoded_out = decoded;
+    return 0;
 }
 
-static void decode_6and2_sector(uint8_t *sector, const uint8_t *encoded)
+static int decode_6and2_sector(uint8_t *sector, const uint8_t *encoded)
 {
     uint8_t raw[343];
     uint8_t saved = 0U;
     uint8_t offset = 0xACU;
     uint32_t low_index = 0U;
 
+    if (sector == NULL || encoded == NULL) {
+        return -1;
+    }
+
     for (uint32_t i = 0U; i < sizeof(raw); ++i) {
-        raw[i] = gcr_decode_6and2(encoded[i]);
+        if (gcr_decode_6and2(encoded[i], &raw[i]) != 0) {
+            return -1;
+        }
     }
 
     for (uint32_t i = 0U; i < 342U; ++i) {
         uint8_t value = (uint8_t)(saved ^ raw[i]);
         raw[i] = value;
         saved = value;
+    }
+    if (raw[342] != saved) {
+        return -1;
     }
 
     while (offset != 0x02U) {
@@ -1110,45 +1412,60 @@ static void decode_6and2_sector(uint8_t *sector, const uint8_t *encoded)
 
         offset = (uint8_t)(offset - 0x53U);
     }
+    return 0;
 }
 
 static int denibblize_sector_track(const uint8_t *nib,
                                    uint32_t len,
                                    uint8_t *sector_track,
-                                   uint8_t is_prodos)
+                                   uint8_t is_prodos,
+                                   uint8_t expected_track)
 {
     uint32_t offset = 0U;
     int sector = -1;
     uint16_t sectors_seen = 0U;
     uint8_t encoded[384];
+    uint8_t decoded_sector[DISK2_SECTOR_BYTES];
 
     if (nib == NULL || sector_track == NULL || len < 512U) {
         return -1;
     }
+    /* AppleWin writes a freshly zeroed 4K track and fills only sectors that
+     * have a valid address/data pair. This is important for protected disks
+     * whose formatter intentionally leaves sectors absent. */
+    memset(sector_track, 0,
+           DISK2_DSK_SECTORS_PER_TRACK * DISK2_SECTOR_BYTES);
 
-    for (uint32_t parts_left = (DISK2_DSK_SECTORS_PER_TRACK * 2U) + 1U;
-         parts_left != 0U;
-         --parts_left) {
-        uint8_t byteval[3] = { 0U, 0U, 0U };
-        uint32_t bytenum = 0U;
-        uint32_t loop = len;
+    /*
+     * Inspect every byte position instead of assuming that the first 33
+     * occurrences of $D5 are the 32 address/data prologues. A real Disk II
+     * write splice may leave harmless $D5 bytes in a gap. Counting those as
+     * fields made a fully valid track stop at bitmap $7FFF and reject sector
+     * 15. Two passes preserve circular address/data pairing if a field spans
+     * the staging-buffer seam; normally all 16 sectors finish in pass one.
+     */
+    for (uint32_t scanned = 0U;
+         scanned < (len * 2U) && sectors_seen != 0xFFFFU;
+         ++scanned) {
+        uint32_t next1 = offset + 1U;
+        uint32_t next2;
 
-        while (loop != 0U && bytenum < 3U) {
-            uint8_t value = nib[offset++];
-            if (offset >= len) {
-                offset = 0U;
-            }
-            --loop;
-
-            if (bytenum != 0U) {
-                byteval[bytenum++] = value;
-            } else if (value == 0xD5U) {
-                byteval[bytenum++] = value;
-            }
+        if (next1 >= len) {
+            next1 = 0U;
+        }
+        next2 = next1 + 1U;
+        if (next2 >= len) {
+            next2 = 0U;
         }
 
-        if (bytenum == 3U && byteval[1] == 0xAAU) {
-            uint32_t temp_offset = offset;
+        if (nib[offset] == 0xD5U &&
+            nib[next1] == 0xAAU &&
+            (nib[next2] == 0x96U || nib[next2] == 0xADU)) {
+            uint32_t temp_offset = next2 + 1U;
+
+            if (temp_offset >= len) {
+                temp_offset = 0U;
+            }
 
             for (uint32_t i = 0U; i < sizeof(encoded); ++i) {
                 encoded[i] = nib[temp_offset++];
@@ -1157,22 +1474,58 @@ static int denibblize_sector_track(const uint8_t *nib,
                 }
             }
 
-            if (byteval[2] == 0x96U) {
-                sector = (int)decode44_pair(encoded, sizeof(encoded), 4U);
-            } else if (byteval[2] == 0xADU) {
-                if (sector >= 0 && sector < (int)DISK2_DSK_SECTORS_PER_TRACK) {
+            if (nib[next2] == 0x96U) {
+                uint8_t volume = decode44_pair(encoded, sizeof(encoded), 0U);
+                uint8_t track = decode44_pair(encoded, sizeof(encoded), 2U);
+                uint8_t address_sector =
+                    decode44_pair(encoded, sizeof(encoded), 4U);
+                uint8_t checksum = decode44_pair(encoded, sizeof(encoded), 6U);
+                uint8_t address_valid = 1U;
+
+                for (uint32_t i = 0U; i < 8U; ++i) {
+                    if ((encoded[i] & 0xAAU) != 0xAAU) {
+                        address_valid = 0U;
+                    }
+                }
+                if (track != expected_track ||
+                    address_sector >= DISK2_DSK_SECTORS_PER_TRACK ||
+                    (uint8_t)(volume ^ track ^ address_sector) != checksum ||
+                    encoded[8] != 0xDEU ||
+                    encoded[9] != 0xAAU ||
+                    encoded[10] != 0xEBU) {
+                    address_valid = 0U;
+                }
+                /*
+                 * An invalid prologue-shaped sequence may be splice noise in
+                 * the gap between a valid address and its data field. Do not
+                 * let it erase the pending valid address; the next genuine
+                 * address will replace it naturally.
+                 */
+                if (address_valid != 0U) {
+                    sector = (int)address_sector;
+                }
+            } else {
+                if (sector >= 0 &&
+                    sector < (int)DISK2_DSK_SECTORS_PER_TRACK &&
+                    encoded[343] == 0xDEU &&
+                    encoded[344] == 0xAAU &&
+                    encoded[345] == 0xEBU &&
+                    decode_6and2_sector(decoded_sector, encoded) == 0) {
                     uint8_t file_sector =
                         sector_image_file_sector((uint8_t)sector, is_prodos);
-                    decode_6and2_sector(&sector_track[(uint32_t)file_sector * DISK2_SECTOR_BYTES],
-                                        encoded);
+                    memcpy(&sector_track[(uint32_t)file_sector * DISK2_SECTOR_BYTES],
+                           decoded_sector,
+                           sizeof(decoded_sector));
                     sectors_seen |= (uint16_t)(1U << (uint8_t)sector);
+                    sector = -1;
                 }
-                sector = 0;
             }
         }
+
+        offset = next1;
     }
 
-    return (sectors_seen != 0U) ? 0 : -2;
+    return 0;
 }
 
 static void count_prologue(const uint8_t *buf,
@@ -1558,29 +1911,14 @@ static int woz_find_next_track_index(const disk2_image_info_t *info, uint8_t *in
 static int woz_write_header_crc(FIL *file, uint32_t file_size)
 {
     uint32_t crc;
-    uint32_t pos;
     uint8_t crc_bytes[4];
     int rc;
 
-    if (file == NULL || file_size < DISK2_WOZ_HEADER_SIZE) {
-        return -1;
+    rc = woz_calculate_crc(file, file_size, &crc);
+    if (rc != 0) {
+        return rc;
     }
-
-    crc = crc32_init();
-    for (pos = DISK2_WOZ_HEADER_SIZE; pos < file_size; ) {
-        uint32_t chunk = file_size - pos;
-
-        if (chunk > sizeof(g_file_io_buf)) {
-            chunk = sizeof(g_file_io_buf);
-        }
-        rc = file_read_exact_at(file, pos, g_file_io_buf, (UINT)chunk);
-        if (rc != 0) {
-            return rc;
-        }
-        crc = crc32_update(crc, g_file_io_buf, chunk);
-        pos += chunk;
-    }
-    le32_store(crc_bytes, crc32_finish(crc));
+    le32_store(crc_bytes, crc);
     return file_write_exact_at(file, 8U, crc_bytes, sizeof(crc_bytes));
 }
 
@@ -2043,7 +2381,8 @@ static int prepare_standard_track_stream(uint8_t drive,
         stream->length = nibblize_sector_track(buf,
                                                g_sector_track_buf,
                                                track,
-                                               sector_image_is_prodos_order(info->format));
+                                               sector_image_is_prodos_order(info->format),
+                                               info->volume_number);
         stream->bit_count = stream->length * 8U;
         return 0;
     }
@@ -2114,6 +2453,7 @@ static int load_track(uint8_t drive, uint8_t qtrack)
     disk2_track_stream_t stream;
     uint32_t track_info;
     uint32_t commit_word;
+    uint32_t restored_stream_pos = 0U;
     const disk2_image_info_t *info;
     int rc;
 
@@ -2161,7 +2501,34 @@ static int load_track(uint8_t drive, uint8_t qtrack)
         g_loaded_qtrack = qtrack;
         g_loaded_track_length = disk2_reg_read(DISK2_REG_TRACK_LENGTH);
         g_loaded_track_bit_count = bit_count;
-    g_load_fail_count = 0U;
+        g_drive_rotation_valid[drive] = 1U;
+        g_drive_rotation_qtrack[drive] = qtrack;
+        g_drive_rotation_raw_bits[drive] = 1U;
+        g_drive_rotation_bit_count[drive] = bit_count;
+        g_load_fail_count = 0U;
+        return 0;
+    }
+
+    if (info->format != DISK2_IMAGE_WOZ &&
+        qtrack_to_track(qtrack, info->track_count) ==
+            DISK2_NO_PHYSICAL_TRACK) {
+        if (track_request_matches(drive, qtrack) == 0U ||
+            write_info_has_pending(disk2_reg_read(DISK2_REG_WRITE_INFO)) != 0U) {
+            return DISK2_LOAD_STALE_REQUEST;
+        }
+        disk2_reg_write(DISK2_REG_TRACK_INFO, 0U);
+        disk2_reg_write(DISK2_REG_TRACK_LENGTH, 0U);
+        disk2_reg_write(DISK2_REG_TRACK_BIT_COUNT, 0U);
+        commit_word = DISK2_TRACK_INFO_LOADED_BIT |
+                      DISK2_TRACK_INFO_NO_TRACK_BIT |
+                      ((uint32_t)qtrack << DISK2_TRACK_INFO_LOAD_QTRACK_SHIFT) |
+                      ((uint32_t)drive << DISK2_TRACK_INFO_LOAD_DRIVE_SHIFT);
+        disk2_reg_write(DISK2_REG_TRACK_INFO, commit_word);
+        g_loaded_drive = drive;
+        g_loaded_qtrack = qtrack;
+        g_loaded_track_length = 0U;
+        g_loaded_track_bit_count = 0U;
+        g_load_fail_count = 0U;
         return 0;
     }
 
@@ -2182,15 +2549,33 @@ static int load_track(uint8_t drive, uint8_t qtrack)
         return DISK2_LOAD_STALE_REQUEST;
     }
 
-    /* Freeze the LSS by clearing TRACK_INFO BEFORE reading BIT_OFFSET so
-       the captured value is a stable snapshot. Then scale to the new
-       track's bit space using the PS-cached old bit_count (stable, no race).
-       For non-WOZ media stream.bit_offset stays 0. */
+    /* Freeze the LSS before taking the selected drive's saved position. The
+       PL keeps independent rotation registers for both drives even though
+       only one track image occupies DDR at a time. */
     disk2_reg_write(DISK2_REG_TRACK_INFO, 0U);
     if (info->format == DISK2_IMAGE_WOZ) {
         uint32_t old_bit_offset = disk2_reg_read(DISK2_REG_TRACK_BIT_OFFSET);
-        stream.bit_offset = woz_track_switch_bit_offset(
-            old_bit_offset, g_loaded_track_bit_count, stream.bit_count);
+
+        if (g_drive_rotation_valid[drive] != 0U &&
+            g_drive_rotation_raw_bits[drive] != 0U &&
+            g_drive_rotation_qtrack[drive] == qtrack) {
+            stream.bit_offset = (stream.bit_count != 0U) ?
+                (old_bit_offset % stream.bit_count) : 0U;
+        } else {
+            stream.bit_offset = woz_track_switch_bit_offset(
+                old_bit_offset,
+                g_drive_rotation_bit_count[drive],
+                stream.bit_count);
+        }
+    } else if (g_drive_rotation_valid[drive] != 0U &&
+               g_drive_rotation_raw_bits[drive] == 0U &&
+               g_drive_rotation_qtrack[drive] == qtrack &&
+               stream.length != 0U) {
+        /* AppleWin keeps m_byte per drive, but resets it when that drive
+         * actually loads a different standard track. Returning to the same
+         * resident qtrack after selecting the other drive restores it. */
+        restored_stream_pos =
+            disk2_reg_read(DISK2_REG_STREAM_POS) % stream.length;
     }
 
     rc = stage_track_to_ddr(stream.length);
@@ -2210,7 +2595,7 @@ static int load_track(uint8_t drive, uint8_t qtrack)
                     ((stream.seam_run & 0xFFFFU) << 16) |
                     (stream.seam_start & 0xFFFFU));
     disk2_reg_write(DISK2_REG_TRACK_INDEX, 0U);
-    disk2_reg_write(DISK2_REG_STREAM_POS, 0U);
+    disk2_reg_write(DISK2_REG_STREAM_POS, restored_stream_pos);
     if (stream.raw_bits != 0U) {
         publish_woz_alias_range(info, qtrack);
     } else {
@@ -2227,6 +2612,10 @@ static int load_track(uint8_t drive, uint8_t qtrack)
     g_loaded_qtrack = qtrack;
     g_loaded_track_length = stream.length;
     g_loaded_track_bit_count = stream.bit_count;
+    g_drive_rotation_valid[drive] = 1U;
+    g_drive_rotation_qtrack[drive] = qtrack;
+    g_drive_rotation_raw_bits[drive] = stream.raw_bits;
+    g_drive_rotation_bit_count[drive] = stream.bit_count;
     g_load_fail_count = 0U;
     return 0;
 }
@@ -2436,6 +2825,11 @@ static int flush_dirty_track(uint8_t drive, uint8_t qtrack)
     }
 
     track = qtrack_to_track(qtrack, info->track_count);
+    if (info->format != DISK2_IMAGE_WOZ &&
+        track == DISK2_NO_PHYSICAL_TRACK) {
+        /* There is no backing track beyond the end of a standard image. */
+        return 0;
+    }
     bit_count = disk2_reg_read(DISK2_REG_TRACK_BIT_COUNT);
 
     /* Snapshot stream_write_count before copying the DDR staging region.
@@ -2488,12 +2882,9 @@ static int flush_dirty_track(uint8_t drive, uint8_t qtrack)
     } else if (info->format == DISK2_IMAGE_DSK ||
                info->format == DISK2_IMAGE_DO ||
                info->format == DISK2_IMAGE_PO) {
-        rc = read_sector_physical_track(drive, track, g_sector_track_buf);
-        if (rc != 0) {
-            return rc;
-        }
         rc = denibblize_sector_track(g_track_buf, length, g_sector_track_buf,
-                                     sector_image_is_prodos_order(info->format));
+                                     sector_image_is_prodos_order(info->format),
+                                     track);
         if (rc != 0) {
             return rc;
         }
@@ -2527,11 +2918,46 @@ static int flush_dirty_track(uint8_t drive, uint8_t qtrack)
     return rc;
 }
 
+static int flush_drive_before_media_change(uint8_t drive)
+{
+    /* The PL write FIFO normally drains in only a few polls. Bound the wait
+     * so a broken memory port cannot hang the configuration UI forever. */
+    for (uint32_t attempt = 0U; attempt < 65536U; ++attempt) {
+        uint32_t write_info = disk2_reg_read(DISK2_REG_WRITE_INFO);
+        uint8_t dirty_drive;
+        uint8_t dirty_qtrack;
+        int rc;
+
+        if ((write_info & DISK2_WRITE_INFO_BUSY_BIT) != 0U) {
+            continue;
+        }
+        if ((write_info & DISK2_WRITE_INFO_DIRTY_BIT) == 0U) {
+            return 0;
+        }
+        dirty_drive = write_info_drive(write_info);
+        if (dirty_drive != drive) {
+            return 0;
+        }
+        dirty_qtrack = write_info_qtrack(write_info);
+        rc = flush_dirty_track(dirty_drive, dirty_qtrack);
+        if (rc == DISK2_WOZ_STRUCTURE_REJECT) {
+            ack_dirty_track(dirty_drive, dirty_qtrack);
+            disable_woz_write_after_reject(dirty_drive, dirty_qtrack);
+            return 0;
+        }
+        if (rc != 0) {
+            return rc;
+        }
+        ack_dirty_track(dirty_drive, dirty_qtrack);
+    }
+    return -4;
+}
+
 int disk2_service_init(uint32_t uart_base)
 {
     g_uart_base = uart_base;
-    clear_drive(0U);
-    clear_drive(1U);
+    clear_drive_state(0U);
+    clear_drive_state(1U);
     g_disk2_paths[0][0] = '\0';
     g_disk2_paths[1][0] = '\0';
     disk2_reg_write(DISK2_REG_TRACK_INFO, 0U);
@@ -2682,10 +3108,26 @@ void disk2_service_poll(void)
 
 int disk2_service_set_image_path(uint8_t drive, const char *path)
 {
+    char new_path[DISK2_IMAGE_PATH_MAX];
+    uint8_t other;
+    int rc;
+
     if (drive >= DISK2_DRIVE_COUNT) {
         return -1;
     }
-    copy_path(g_disk2_paths[drive], sizeof(g_disk2_paths[drive]), path);
+    copy_path(new_path, sizeof(new_path), path);
+    other = (uint8_t)(drive ^ 1U);
+    if (new_path[0] != '\0' &&
+        g_disk2_info[other].present != 0U &&
+        path_ieq(new_path, g_disk2_paths[other]) != 0U) {
+        /* Never open one writable image through two independent caches. */
+        return -3;
+    }
+    rc = flush_drive_before_media_change(drive);
+    if (rc != 0) {
+        return rc;
+    }
+    copy_path(g_disk2_paths[drive], sizeof(g_disk2_paths[drive]), new_path);
     return probe_file(drive);
 }
 
@@ -2699,6 +3141,15 @@ const char *disk2_service_get_image_path(uint8_t drive)
 
 int disk2_service_reset_media(uint8_t drive)
 {
+    int rc;
+
+    if (drive >= DISK2_DRIVE_COUNT) {
+        return -1;
+    }
+    rc = flush_drive_before_media_change(drive);
+    if (rc != 0) {
+        return rc;
+    }
     return probe_file(drive);
 }
 
@@ -2798,7 +3249,8 @@ int disk2_service_scan_loaded_track(disk2_track_scan_t *out)
 
     memset(out, 0, sizeof(*out));
     if (g_loaded_drive >= DISK2_DRIVE_COUNT ||
-        g_loaded_qtrack == DISK2_NO_LOADED_TRACK) {
+        g_loaded_qtrack == DISK2_NO_LOADED_TRACK ||
+        g_loaded_track_length == 0U) {
         return -1;
     }
 
@@ -2947,6 +3399,8 @@ const char *disk2_service_format_name(disk2_image_format_t format)
         return "DO";
     case DISK2_IMAGE_PO:
         return "PO";
+    case DISK2_IMAGE_2MG:
+        return "2MG";
     case DISK2_IMAGE_NONE:
     default:
         return "none";

@@ -1,0 +1,206 @@
+; AppleMouse-compatible slot 2 firmware for the Appletini virtual mouse card.
+;
+; Assembled by scripts/build_mouse_rom.py into hdl/apple/mouse_card_slot2.mem
+; (256 bytes at $C200). The builder pins the fixed-position bytes: the
+; AppleMouse ID set ($C205=$38 $C207=$18 $C20B=$01 $C20C=$20 $C2FB=$D6),
+; the entry vector table at $C212-$C21A (eight standard routines plus the
+; ninth READCLAMP vector documented in Apple II Mouse Technical Note #7),
+; the 3-byte slot helper at $C200 and two shared stubs in the header gaps.
+;
+; The card is served by mouse_card.sv: sixteen I/O bytes at $C0A0-$C0AF
+; (slot 2 DEVSEL) backed by fabric registers, positions and clamps 16 bits
+; wide. This firmware is deliberately slot-2 absolute -- the helper loads
+; X=2 for the screen-hole index and every register access is an absolute
+; $C0Ax address.
+;
+; Protocol notes:
+;  - SERVEMOUSE always releases the card IRQ before deciding carry, exactly
+;    like the real AppleMouse. This is required when READMOUSE has cleared
+;    the reason for an IRQ which was asserted after the previous SERVEMOUSE.
+;    The returned carry still considers only status bits $0E, so state bits
+;    (buttons held, moved-since-read) never claim a shared interrupt.
+;  - INITMOUSE resets both clamps to 0-1023 (hardware command $03), zeroes
+;    the position, and leaves the mode byte alone, matching the real card.
+;  - READCLAMP implements the exact Mouse Technical Note #7 protocol: the
+;    caller stores a selector in $0478 (starting at $4E, decrementing it
+;    after each of eight calls) and each call returns one clamp byte in
+;    $0578. Calls return MaxYL MaxXL MaxYH MaxXH MinYL MinXL MinYH MinXH;
+;    the Technical Note stores them backward into its result buffer, yielding
+;    MinXH MinYH MinXL MinYL MaxXH MaxYH MaxXL MaxYL. The firmware never
+;    modifies $0478. Selectors outside $47-$4E return carry set.
+
+; Card registers (slot 2 DEVSEL page, absolute).
+R_STATUS  = $C0A0
+R_XLO     = $C0A1
+R_XHI     = $C0A2
+R_YLO     = $C0A3
+R_YHI     = $C0A4
+R_CLAXIS  = $C0A7
+R_CLMINLO = $C0A8
+R_CLMINHI = $C0A9
+R_CLMAXLO = $C0AA
+R_CLMAXHI = $C0AB
+R_CMD     = $C0AC
+R_MODE    = $C0AE
+R_ACK     = $C0AF
+
+; Hardware command register values.
+CMD_HOME     = $01
+CMD_CLAMPNOW = $02
+CMD_CLDEFLT  = $03
+
+; ACK register: bit0 clears status reasons + latches previous buttons,
+; bit1 releases the interrupt output latch. READMOUSE clears only status;
+; SERVEMOUSE owns IRQ release, matching the original card's race handling.
+ACK_STATUS   = $01
+ACK_IRQ      = $02
+
+; Screen holes, slot-indexed (,X with X=2).
+H_XLO   = $0478
+H_YLO   = $04F8
+H_XHI   = $0578
+H_YHI   = $05F8
+H_STAT  = $0778
+H_MODE  = $07F8
+
+; Clamp interchange holes (slot-0 absolute, per the mouse protocol).
+CI_MINLO = $0478
+CI_MAXLO = $04F8
+CI_MINHI = $0578
+CI_MAXHI = $05F8
+
+; Pinned by the builder outside the main code region:
+;   slotregs ($C200): ldx #$02 / rts
+;   secrts   ($C205): sec / rts  (the $38 ID byte doubles as SEC)
+;   stcmd    ($C20D): sta R_CMD / clc / rts
+
+; ---- main code region ($C21B..) --------------------------------------
+; CLAMPMOUSE and READCLAMP come first so their error branches reach the
+; shared secrts stub in the header (relative range).
+
+clampmouse:
+          cmp #$02
+          bcs secrts
+          sta R_CLAXIS
+          lda CI_MINLO
+          sta R_CLMINLO
+          lda CI_MINHI
+          sta R_CLMINHI
+          lda CI_MAXLO
+          sta R_CLMAXLO
+          lda CI_MAXHI
+          sta R_CLMAXHI
+          lda #CMD_CLAMPNOW
+          jmp stcmd
+
+; TN#7 GetClamp: selector byte in $0478, one result byte to $0578.
+; With i = selector - $47 (valid 0..7):
+;   bit0: 0 = X axis, 1 = Y axis        -> R_CLAXIS = bit0
+;   bit2: 0 = min pair, 1 = max pair
+;   bit1: 0 = high byte, 1 = low byte
+; Register offset from R_CLMINLO is ((i & 6) >> 1) ^ 1, giving
+; MINHI/MINLO/MAXHI/MAXLO for j = 0/1/2/3.
+readclamp:
+          lda CI_MINLO        ; $0478 selector
+          sec
+          sbc #$47
+          cmp #$08
+          bcs secrts
+          pha
+          and #$01
+          sta R_CLAXIS
+          pla
+          and #$06
+          lsr
+          eor #$01
+          tax
+          lda R_CLMINLO,x
+          sta CI_MINHI        ; $0578 result byte
+          clc
+          rts
+
+setmouse:
+          cmp #$10
+          bcs secrts
+          pha
+          jsr slotregs
+          pla
+          sta H_MODE,x
+          sta R_MODE
+          clc
+          rts
+
+servemouse:
+          jsr slotregs
+          lda R_STATUS
+          sta H_STAT,x
+          pha
+          lda #ACK_IRQ
+          sta R_ACK
+          pla
+          and #$0E
+          beq svnone
+          clc
+          rts
+svnone:
+          sec
+          rts
+
+; Copy the card position/status registers into the screen holes.
+regs2holes:
+          lda R_XLO
+          sta H_XLO,x
+          lda R_XHI
+          sta H_XHI,x
+          lda R_YLO
+          sta H_YLO,x
+          lda R_YHI
+          sta H_YHI,x
+          lda R_STATUS
+          sta H_STAT,x
+          rts
+
+readmouse:
+          jsr slotregs
+          jsr regs2holes
+ackstatus:
+          lda #ACK_STATUS
+          sta R_ACK
+          clc
+          rts
+
+clearmouse:
+          jsr slotregs
+clrbody:
+          lda #$00
+          sta H_XLO,x
+          sta H_YLO,x
+          sta H_XHI,x
+          sta H_YHI,x
+          sta H_STAT,x
+          jsr posbody
+          jmp ackstatus
+
+posmouse:
+          jsr slotregs
+posbody:
+          lda H_XLO,x
+          sta R_XLO
+          lda H_XHI,x
+          sta R_XHI
+          lda H_YLO,x
+          sta R_YLO
+          lda H_YHI,x
+          sta R_YHI
+          clc
+          rts
+
+homemouse:
+          lda #CMD_HOME
+          jmp stcmd
+
+initmouse:
+          jsr slotregs
+          lda #CMD_CLDEFLT
+          sta R_CMD
+          jmp clrbody

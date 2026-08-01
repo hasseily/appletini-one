@@ -167,6 +167,10 @@ def test_frontend_publishes_boot_config_before_slow_services() -> None:
     bind_pos = source.find("config_menu_bind_platform(&config_menu, &menu_platform);")
     gic_pos = source.find("if (gic_init() != 0)")
     storage_pos = source.find("if (usb_storage_service_init() != 0)")
+    cold_retry_pos = source.find(
+        "config_menu_retry_settings_if_needed(&config_menu);",
+        storage_pos,
+    )
     disk2_pos = source.find("(void)disk2_service_init(UART0_BASE);")
     smartport_pos = source.find("int smartport_rc = smartport_service_init(UART0_BASE);")
     runtime_pos = source.find("config_menu_apply_runtime(&config_menu);")
@@ -175,6 +179,7 @@ def test_frontend_publishes_boot_config_before_slow_services() -> None:
     ready_pos = source.find("card_control_mark_cpu0_ready();")
 
     require(bind_pos >= 0 and gic_pos >= 0 and storage_pos >= 0 and
+            cold_retry_pos >= 0 and
             disk2_pos >= 0 and smartport_pos >= 0,
             "frontend startup markers must be present")
     require(bind_pos < gic_pos and bind_pos < storage_pos and
@@ -182,6 +187,8 @@ def test_frontend_publishes_boot_config_before_slow_services() -> None:
             "frontend must publish loaded boot config and SmartPort paths before slow service init")
     require(gic_pos < storage_pos < disk2_pos < smartport_pos,
             "frontend must bring up SD storage before disk services open media")
+    require(storage_pos < cold_retry_pos < disk2_pos and cold_retry_pos < ready_pos,
+            "frontend must retry cold-boot config after robust SD attach and before Apple release")
     require(runtime_pos >= 0 and assets_pos > runtime_pos,
             "full runtime apply must run before startup-only assets")
     require(assets_pos < refresh_pos < ready_pos,

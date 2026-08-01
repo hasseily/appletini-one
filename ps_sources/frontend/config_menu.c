@@ -24,7 +24,7 @@
 
 #define APPLETINI_CFG_PATH "0:/appletini_cfg.txt"
 #define APPLETINI_CFG_MAX 8192U
-#define APPLETINI_CFG_VERSION 106U
+#define APPLETINI_CFG_VERSION 107U
 #define ETHERNET_CONTROL_SLOT 1U
 #define DISK2_CONTROL_SLOT 6U
 #define MOUSE_CONTROL_SLOT 2U
@@ -105,7 +105,11 @@ static const char *const k_browser_lastdir_keys[CONFIG_BROWSER_CAT_COUNT] = {
     ((usb_hid_menu_source_t)(USB_HID_MENU_SOURCE_KEY_BASE | (usage)))
 
 #define CONFIG_SMARTPORT_ALL_DEVICES 0xFFU
-#define CONFIG_DISK2_PO_IMAGE_BYTES 143360U
+#define CONFIG_DISK2_STANDARD_TRACK_BYTES 4096U
+#define CONFIG_DISK2_STANDARD_TRACKS 35U
+#define CONFIG_DISK2_MAX_TRACKS 40U
+#define CONFIG_DISK2_NIB_TRACK_BYTES 6656U
+#define CONFIG_DISK2_2MG_HEADER_BYTES 64U
 
 static uint8_t config_menu_str_ieq(const char *a, const char *b);
 
@@ -914,6 +918,21 @@ static uint8_t config_menu_smartport_path_in_use(const config_menu_t *menu,
     return 0U;
 }
 
+static uint8_t config_menu_disk2_path_in_use(const config_menu_t *menu,
+                                             uint8_t drive,
+                                             const char *path)
+{
+    uint8_t other;
+
+    if (menu == NULL || drive >= 2U || path == NULL || path[0] == '\0') {
+        return 0U;
+    }
+    other = (uint8_t)(drive ^ 1U);
+    return (menu->disk2_disk_paths[other][0] != '\0' &&
+            config_menu_path_ieq(path, menu->disk2_disk_paths[other]) != 0U) ?
+        1U : 0U;
+}
+
 static uint8_t config_menu_smartport_path_used_before(const config_menu_t *menu,
                                                       uint8_t device,
                                                       const char *path)
@@ -974,6 +993,8 @@ static uint8_t config_menu_has_smartport_ext(const char *name)
 static uint8_t config_menu_has_disk2_ext(const char *name, FSIZE_t size)
 {
     const char *dot = NULL;
+    uint8_t sector_size_valid;
+    uint8_t nib_size_valid;
 
     if (name == NULL) {
         return 0U;
@@ -987,12 +1008,31 @@ static uint8_t config_menu_has_disk2_ext(const char *name, FSIZE_t size)
     if (dot == NULL) {
         return 0U;
     }
-    return (config_menu_str_ieq(dot, ".woz") != 0U ||
-            config_menu_str_ieq(dot, ".nib") != 0U ||
-            config_menu_str_ieq(dot, ".dsk") != 0U ||
-            config_menu_str_ieq(dot, ".do") != 0U ||
-            (config_menu_str_ieq(dot, ".po") != 0U &&
-             size == (FSIZE_t)CONFIG_DISK2_PO_IMAGE_BYTES)) ? 1U : 0U;
+    sector_size_valid =
+        ((size >= (FSIZE_t)((CONFIG_DISK2_STANDARD_TRACKS + 1U) *
+                            CONFIG_DISK2_STANDARD_TRACK_BYTES) &&
+          size <= (FSIZE_t)(CONFIG_DISK2_MAX_TRACKS *
+                            CONFIG_DISK2_STANDARD_TRACK_BYTES) &&
+          ((size - (FSIZE_t)(CONFIG_DISK2_STANDARD_TRACKS *
+                             CONFIG_DISK2_STANDARD_TRACK_BYTES)) %
+           CONFIG_DISK2_STANDARD_TRACK_BYTES) == 0U) ||
+         (size >= 143105U && size <= 143364U) ||
+         size == 143403U || size == 143488U) ? 1U : 0U;
+    nib_size_valid =
+        (size >= (FSIZE_t)(CONFIG_DISK2_STANDARD_TRACKS *
+                           CONFIG_DISK2_NIB_TRACK_BYTES) &&
+         size <= (FSIZE_t)(CONFIG_DISK2_MAX_TRACKS *
+                           CONFIG_DISK2_NIB_TRACK_BYTES) &&
+         (size % CONFIG_DISK2_NIB_TRACK_BYTES) == 0U) ? 1U : 0U;
+    return ((config_menu_str_ieq(dot, ".woz") != 0U && size >= 12U) ||
+            (config_menu_str_ieq(dot, ".nib") != 0U && nib_size_valid != 0U) ||
+            ((config_menu_str_ieq(dot, ".dsk") != 0U ||
+              config_menu_str_ieq(dot, ".do") != 0U ||
+              config_menu_str_ieq(dot, ".po") != 0U) &&
+             sector_size_valid != 0U) ||
+            ((config_menu_str_ieq(dot, ".2mg") != 0U ||
+              config_menu_str_ieq(dot, ".2img") != 0U) &&
+             size >= CONFIG_DISK2_2MG_HEADER_BYTES)) ? 1U : 0U;
 }
 
 static uint8_t config_menu_has_png_ext(const char *name)
@@ -2330,6 +2370,13 @@ static void config_menu_apply_disk2_paths(config_menu_t *menu)
     (void)menu->platform.set_disk2_image_path(menu->platform.ctx,
                                               0U,
                                               menu->disk2_disk_paths[0]);
+    if (config_menu_path_ieq(menu->disk2_disk_paths[0],
+                             menu->disk2_disk_paths[1]) != 0U) {
+        /* Keep the first configured mount, matching SmartPort's duplicate
+         * cleanup, and keep the menu model consistent with the backend. */
+        menu->disk2_disk_paths[1][0] = '\0';
+        menu->disk2_slots[1][0] = 0U;
+    }
     (void)menu->platform.set_disk2_image_path(menu->platform.ctx,
                                               1U,
                                               menu->disk2_disk_paths[1]);
@@ -2564,10 +2611,6 @@ static void config_menu_apply_runtime_internal(config_menu_t *menu,
         menu->platform.set_vtw_slug_key_enabled(menu->platform.ctx,
                                                 menu->vtw_slug_key_enabled);
     }
-    if (menu->platform.set_iiplus_data_tap != NULL) {
-        menu->platform.set_iiplus_data_tap(menu->platform.ctx,
-                                           menu->iiplus_data_tap);
-    }
     config_menu_apply_vtw_slowdown(menu, 0U);
     if (menu->platform.set_supersprite_enabled != NULL) {
         menu->platform.set_supersprite_enabled(menu->platform.ctx,
@@ -2754,14 +2797,6 @@ static void config_menu_parse_key_value(config_menu_t *menu, const char *key, co
         menu->vtw_speed_mode = (mode <= 2UL) ? (uint8_t)mode : 0U;
     } else if (strcmp(key, "vtw.slug.key") == 0) {
         menu->vtw_slug_key_enabled = config_menu_bool_text(value);
-    } else if (strcmp(key, "vtw.iiplus.tap") == 0) {
-        unsigned long tap = strtoul(value, NULL, 10);
-        if (tap < CARD_CTRL_IIPLUS_DATA_TAP_MIN) {
-            tap = CARD_CTRL_IIPLUS_DATA_TAP_MIN;
-        } else if (tap > CARD_CTRL_IIPLUS_DATA_TAP_MAX) {
-            tap = CARD_CTRL_IIPLUS_DATA_TAP_MAX;
-        }
-        menu->iiplus_data_tap = (uint8_t)tap;
     } else if (strcmp(key, "vtw.slowdown.mask") == 0) {
         menu->vtw_slowdown_mask =
             (uint16_t)(strtoul(value, NULL, 0) & 0x3FFUL);
@@ -2968,7 +3003,6 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                "vtw.speed.mode=%u\n"
                "vtw.pace.divider=%u\n"
                "vtw.slug.key=%s\n"
-               "vtw.iiplus.tap=%u\n"
                "vtw.slowdown.mask=0x%X\n"
                "vtw.slowdown.cycles=%u\n",
                config_menu_on_off(menu->mouse_slot2_enabled),
@@ -2979,7 +3013,6 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                (unsigned)menu->vtw_speed_mode,
                (unsigned)menu->vtw_pace_divider,
                config_menu_on_off(menu->vtw_slug_key_enabled),
-               (unsigned)menu->iiplus_data_tap,
                (unsigned)menu->vtw_slowdown_mask,
                (unsigned)menu->vtw_slowdown_cycles);
 
@@ -3340,7 +3373,6 @@ static void config_menu_reset_settings_only(config_menu_t *menu)
     menu->vtw_speed_mode = CONFIG_DEFAULT_VTW_SPEED_MODE;
     menu->vtw_pace_divider = CONFIG_DEFAULT_VTW_PACE_DIVIDER;
     menu->vtw_slug_key_enabled = CONFIG_DEFAULT_VTW_SLUG_KEY;
-    menu->iiplus_data_tap = CARD_CTRL_IIPLUS_DATA_TAP_DEFAULT;
     menu->vtw_slowdown_mask = CONFIG_DEFAULT_VTW_SLOWDOWN_MASK;
     menu->vtw_slowdown_cycles = CONFIG_DEFAULT_VTW_SLOWDOWN_CYCLES;
     menu->disk2_activity_visible = CONFIG_DEFAULT_DISK2_ACTIVITY_VISIBLE;
@@ -4767,20 +4799,27 @@ static uint8_t config_menu_browser_target_smartport_device(uint8_t target)
     return (uint8_t)(target - CONFIG_BROWSER_TARGET_SMARTPORT_1 + 1U);
 }
 
-static uint8_t config_menu_browser_entry_is_duplicate_smartport_image(
+static uint8_t config_menu_browser_entry_is_duplicate_image(
     const config_menu_t *menu,
     const config_browser_entry_t *entry)
 {
     uint8_t device;
+    uint8_t drive;
 
     if (menu == NULL || entry == NULL ||
-        entry->type != CONFIG_BROWSER_ENTRY_FILE ||
-        config_menu_browser_is_smartport_target(menu->browser_target) == 0U) {
+        entry->type != CONFIG_BROWSER_ENTRY_FILE) {
         return 0U;
     }
-
-    device = config_menu_browser_target_smartport_device(menu->browser_target);
-    return config_menu_smartport_path_in_use(menu, device, entry->path);
+    if (config_menu_browser_is_smartport_target(menu->browser_target) != 0U) {
+        device = config_menu_browser_target_smartport_device(menu->browser_target);
+        return config_menu_smartport_path_in_use(menu, device, entry->path);
+    }
+    if (config_menu_browser_is_disk2_target(menu->browser_target) != 0U) {
+        drive = (menu->browser_target == CONFIG_BROWSER_TARGET_DISK2_D2) ?
+            1U : 0U;
+        return config_menu_disk2_path_in_use(menu, drive, entry->path);
+    }
+    return 0U;
 }
 
 static const char *config_menu_browser_title(uint8_t target)
@@ -5205,7 +5244,17 @@ static void config_menu_browser_apply_file(config_menu_t *menu, const char *path
         config_menu_save_settings(menu);
         config_menu_reload_smartport_device(menu, device);
     } else if (config_menu_browser_is_disk2_target(menu->browser_target) != 0U) {
+        char text[CONFIG_MENU_STATUS_LEN];
+
         drive = config_menu_browser_target_drive(menu->browser_target);
+        if (config_menu_disk2_path_in_use(menu, drive, path) != 0U) {
+            (void)snprintf(text,
+                           sizeof(text),
+                           "DISK II D%u DUPLICATE IMAGE",
+                           (unsigned)drive + 1U);
+            config_menu_set_status(menu, 1U, text);
+            return;
+        }
         config_menu_copy_text(menu->disk2_disk_paths[drive],
                               sizeof(menu->disk2_disk_paths[drive]),
                               path);
@@ -5760,7 +5809,6 @@ void config_menu_init(config_menu_t *menu)
     menu->vtw_speed_mode = CONFIG_DEFAULT_VTW_SPEED_MODE;
     menu->vtw_pace_divider = CONFIG_DEFAULT_VTW_PACE_DIVIDER;
     menu->vtw_slug_key_enabled = CONFIG_DEFAULT_VTW_SLUG_KEY;
-    menu->iiplus_data_tap = CARD_CTRL_IIPLUS_DATA_TAP_DEFAULT;
     menu->vtw_slowdown_mask = CONFIG_DEFAULT_VTW_SLOWDOWN_MASK;
     menu->vtw_slowdown_cycles = CONFIG_DEFAULT_VTW_SLOWDOWN_CYCLES;
     menu->disk2_activity_visible = CONFIG_DEFAULT_DISK2_ACTIVITY_VISIBLE;
@@ -6688,7 +6736,7 @@ static void config_menu_draw_browser(uint16_t *fb,
             (void)snprintf(line, sizeof(line), "%.128s", entry.name);
         }
         focused = (uint8_t)(index == menu->browser_selected);
-        dimmed = config_menu_browser_entry_is_duplicate_smartport_image(menu, &entry);
+        dimmed = config_menu_browser_entry_is_duplicate_image(menu, &entry);
         color = (entry.type == CONFIG_BROWSER_ENTRY_EMPTY) ? HGR_ORANGE :
                 ((entry.type == CONFIG_BROWSER_ENTRY_CLOSE) ? HGR_GREEN : HGR_WHITE);
         hgr_draw_item_with_lock_ex(

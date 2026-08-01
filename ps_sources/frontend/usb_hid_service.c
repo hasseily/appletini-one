@@ -337,21 +337,23 @@ const char *usb_hid_menu_source_text(usb_hid_menu_source_t source)
     return text;
 }
 
-static int32_t mouse_clamp_10bit(int32_t value)
+static int32_t mouse_clamp_16bit(int32_t value)
 {
     if (value < 0) {
         return 0;
     }
-    if (value > 1023) {
-        return 1023;
+    if (value > 0xFFFF) {
+        return 0xFFFF;
     }
     return value;
 }
 
+/* The card's clamp windows are full 16-bit (AppleWin-normalized, so
+ * min <= max after every firmware commit; keep the guard as a safety). */
 static int32_t mouse_clamp_range(int32_t value, uint32_t min_value, uint32_t max_value)
 {
-    min_value &= 0x3FFU;
-    max_value &= 0x3FFU;
+    min_value &= 0xFFFFU;
+    max_value &= 0xFFFFU;
     if (max_value < min_value) {
         max_value = min_value;
     }
@@ -745,8 +747,8 @@ static void mouse_menu_process_buttons(usb_hid_slot_t *slot,
 static void mouse_publish_state(uint8_t connected, int32_t x, int32_t y, uint8_t buttons)
 {
     REG_WRITE(MOUSE_REG_STATUS, connected ? 1U : 0U);
-    REG_WRITE(MOUSE_REG_X, (uint32_t)mouse_clamp_10bit(x));
-    REG_WRITE(MOUSE_REG_Y, (uint32_t)mouse_clamp_10bit(y));
+    REG_WRITE(MOUSE_REG_X, (uint32_t)mouse_clamp_16bit(x));
+    REG_WRITE(MOUSE_REG_Y, (uint32_t)mouse_clamp_16bit(y));
     REG_WRITE(MOUSE_REG_BUTTONS, (uint32_t)(buttons & MOUSE_BUTTON_APPLE_MASK));
     REG_WRITE(MOUSE_REG_COMMIT, (uint32_t)g_seq++);
 }
@@ -802,8 +804,8 @@ static void mouse_mark_connected(usb_hid_slot_t *slot)
     slot->mouse_card = 1U;
     slot->apple_buttons = 0U;
     if (g_ready == 0U) {
-        g_x = (int32_t)(REG_READ(MOUSE_REG_X) & 0x3FFU);
-        g_y = (int32_t)(REG_READ(MOUSE_REG_Y) & 0x3FFU);
+        g_x = (int32_t)(REG_READ(MOUSE_REG_X) & 0xFFFFU);
+        g_y = (int32_t)(REG_READ(MOUSE_REG_Y) & 0xFFFFU);
     }
     g_ready = 1U;
     g_last_error = 0;
@@ -880,8 +882,8 @@ static void mouse_apply_motion(usb_hid_slot_t *slot,
     y_min = REG_READ(MOUSE_REG_Y_MIN);
     y_max = REG_READ(MOUSE_REG_Y_MAX);
 
-    g_x = (int32_t)(REG_READ(MOUSE_REG_X) & 0x3FFU);
-    g_y = (int32_t)(REG_READ(MOUSE_REG_Y) & 0x3FFU);
+    g_x = (int32_t)(REG_READ(MOUSE_REG_X) & 0xFFFFU);
+    g_y = (int32_t)(REG_READ(MOUSE_REG_Y) & 0xFFFFU);
     g_x = mouse_clamp_range(g_x + dx, x_min, x_max);
     g_y = mouse_clamp_range(g_y + dy, y_min, y_max);
     mouse_publish_state(1U, g_x, g_y, mouse_card_aggregate_buttons());
@@ -1913,8 +1915,8 @@ void usb_hid_service_set_menu_capture(uint8_t capture)
     g_y_residue = 0;
     hid_slots_reset_menu_state();
     if (capture != 0U && g_ready != 0U) {
-        g_x = (int32_t)(REG_READ(MOUSE_REG_X) & 0x3FFU);
-        g_y = (int32_t)(REG_READ(MOUSE_REG_Y) & 0x3FFU);
+        g_x = (int32_t)(REG_READ(MOUSE_REG_X) & 0xFFFFU);
+        g_y = (int32_t)(REG_READ(MOUSE_REG_Y) & 0xFFFFU);
         mouse_publish_state(1U, g_x, g_y, 0U);
     }
 }
@@ -2110,15 +2112,15 @@ void usb_hid_service_dump_status(uint32_t uart_base)
 
     portsc = cherryusb_usb1_portsc();
     hid_status = REG_READ(MOUSE_REG_STATUS);
-    mouse_x = REG_READ(MOUSE_REG_X) & 0x3FFU;
-    mouse_y = REG_READ(MOUSE_REG_Y) & 0x3FFU;
+    mouse_x = REG_READ(MOUSE_REG_X) & 0xFFFFU;
+    mouse_y = REG_READ(MOUSE_REG_Y) & 0xFFFFU;
     mouse_buttons = REG_READ(MOUSE_REG_BUTTONS);
     mouse_commit = REG_READ(MOUSE_REG_COMMIT);
     mouse_mode = REG_READ(MOUSE_REG_MODE);
-    mouse_x_min = REG_READ(MOUSE_REG_X_MIN) & 0x3FFU;
-    mouse_x_max = REG_READ(MOUSE_REG_X_MAX) & 0x3FFU;
-    mouse_y_min = REG_READ(MOUSE_REG_Y_MIN) & 0x3FFU;
-    mouse_y_max = REG_READ(MOUSE_REG_Y_MAX) & 0x3FFU;
+    mouse_x_min = REG_READ(MOUSE_REG_X_MIN) & 0xFFFFU;
+    mouse_x_max = REG_READ(MOUSE_REG_X_MAX) & 0xFFFFU;
+    mouse_y_min = REG_READ(MOUSE_REG_Y_MIN) & 0xFFFFU;
+    mouse_y_max = REG_READ(MOUSE_REG_Y_MAX) & 0xFFFFU;
 
     uart_puts(uart_base, "---- usb1 CherryUSB HID ----\r\n");
     uart_puts(uart_base, "service: started=");

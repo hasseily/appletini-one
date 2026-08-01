@@ -46,7 +46,10 @@ module apple_bus_wrapper (
     input  logic                  gs_m2_qualify,
     input  logic                  m2sel_active_high,
     input  logic                  host_is_iiplus,
-    input  logic [5:0]            iiplus_data_tap,
+    /* Active vTW session latched as II/II+. apple_top holds this verdict
+     * across Apple RESET, when live machine identification is unavailable.
+     * Every such session automatically refreshes the translated /DMA hold. */
+    input  logic                  iiplus_dma_refresh_active,
 
     // Apple II edge connector
     inout  wire  [7:0]            apple_data_pin,
@@ -98,12 +101,18 @@ module apple_bus_wrapper (
      * remains as the early snapshot feeding the INH/PSRAM serving path,
      * whose assert deadline falls mid-PHI1. */
     localparam int TAP_ADDR_SNAP_LATE   = 8;
-    localparam int TAP_DATA_SNAP        = 59; // sample data from bus (IIe/accel)
-    /* II/II+ hosts drive the data bus on a different schedule than the //e
-     * (discrete timing, real 6502, no IOU row-address latch), so their data
-     * settles earlier in the window. On a II/II+ the sample point is taken
-     * from the runtime `iiplus_data_tap` input (PS-tunable, default 52) so
-     * the exact value can be swept on hardware without a rebuild. */
+    localparam int TAP_DATA_SNAP        = 59; // sample data from bus
+    /* II+ IRQ re-arm: release the otherwise level-low IRQ for four fabric
+     * clocks (~30 ns), then reassert at the hardware-proven falling-edge
+     * point. This gives the translator enough recovery time while keeping its
+     * refreshed falling edge close to the CPU IRQ sample. */
+    localparam int TAP_IRQ_REARM_RELEASE = TAP_DATA_SNAP - 8;
+    localparam int TAP_IRQ_REARM_ASSERT  = TAP_DATA_SNAP - 4;
+    /* II+ /DMA re-arm uses the same late-PHI0 notch. /DMA is low again before
+     * the next ownership boundary, while the fresh falling edge retriggers
+     * the TXS lane's edge accelerator. */
+    localparam int TAP_DMA_REARM_RELEASE = TAP_DATA_SNAP - 8;
+    localparam int TAP_DMA_REARM_ASSERT  = TAP_DATA_SNAP - 4;
     /* Bus-master address-drive point, early PHI1 (~60 ns after the detected
      * fall). A master updating its driven addr/R-W here presents ideal 6502
      * timing: asserted long before the IIe row-address latch, held through
@@ -209,6 +218,8 @@ module apple_bus_wrapper (
     globals::AppleBus_read         ab_read_r;
     logic                          bus_emit_state;
     logic                          apple_inh_assert;
+    (* KEEP = "TRUE" *) logic       irq_rearm_release_q;
+    (* KEEP = "TRUE" *) logic       dma_rearm_release_q;
     /* IRQ/NMI glitch filters: previous data-snap samples (active low).
      * See the sampling note at the data-snap branch below. */
     logic                          irq_snap_q;
@@ -227,81 +238,119 @@ module apple_bus_wrapper (
     wire addr_phase_inh_deadline = addr_pipe[TAP_INH_DEADLINE];
     wire data_phase_emit         = data_pipe[TAP_DATA_EMIT];
     wire addr_phase_snap_late    = data_pipe[TAP_ADDR_SNAP_LATE];
-    wire data_phase_snap_bus     = host_is_iiplus ? data_pipe[iiplus_data_tap]
-                                                   : data_pipe[TAP_DATA_SNAP];
+    wire data_phase_snap_bus     = data_pipe[TAP_DATA_SNAP];
     wire addr_phase_drive        = addr_pipe[TAP_DRIVE_ADDR];
 
     // ------------------------------------------------------------------
     // Pin drivers
     // ------------------------------------------------------------------
-    /* Outbound data drive. On a //e, card clients still drop wr_data_en at
-     * data_en (tap 59), while the pin driver below enforces the physical
-     * PHI0 boundary. Do not extend that drive to filtered phi0_fall here:
-     * phi0_fall is produced after IOB capture, synchronization, majority
-     * filtering, and edge detection, so it occurs well after the physical
-     * falling edge and would make the external transceiver contend with the
-     * motherboard in PHI1.
+    /* Outbound data drive. The physical PHI0 pin remains the hard electrical
+     * release boundary for every write. II/II+ card READ responses alone get
+     * a short saved-byte hold through the synchronized fall: that restores
+     * the margin required by the unbuffered motherboard without allowing a
+     * vTW or posted write to leak stale data into PHI1.
      *
-     * The earlier II/II+ data tap is still under investigation. Preserve its
-     * existing byte hold for now, but isolate it completely from the //e
-     * path so II/II+ experiments cannot perturb known-good //e timing. */
-    wire drive_live = bus_emit_state && ab_write.wr_data_en;
-    logic       drive_hold_q;
-    logic [7:0] drive_data_q;
-    always_ff @(posedge clk) begin
-        if (!rstn) begin
-            drive_hold_q <= 1'b0;
-            drive_data_q <= 8'h00;
-        end else if (phi0_fall) begin
-            drive_hold_q <= 1'b0;
-        end else if (drive_live) begin
-            drive_hold_q <= 1'b1;
-            drive_data_q <= ab_write.wr_data;
-        end
-    end
+     * A //e vTW-owned cycle retains the established explicit engine window.
+     * Its buffered bus is isolated under /DMA and this path is already
+     * hardware-validated. */
     // Address and R/W drive only while an arbiter client explicitly requests
     // ownership; otherwise both buses remain tri-stated.
     wire apple_addr_rw_enable = ab_write.wr_addr_rw_en;
+    wire drive_live = bus_emit_state && ab_write.wr_data_en;
+    wire read_response_live =
+        drive_live && (!apple_addr_rw_enable || ab_write.wr_rw);
+    logic       iiplus_read_hold_q;
+    logic [7:0] iiplus_read_data_q;
 
-    /* On the //e, the physical PHI0 level is the hard electrical boundary
-     * for native card-serving cycles. The synchronized/filtered PHI0 markers
-     * are intentionally suitable for internal sequencing, not for releasing
-     * an external bus: their latency extends into PHI1. vTW-owned cycles drive
-     * address/RW as well and retain the bus engine's explicit drive window.
-     * The direction-output route is bounded in the XDC so the native-cycle
-     * asynchronous release remains placement-independent. */
-    wire drive_live_at_pin    = drive_live &&
-                                (host_is_iiplus || apple_addr_rw_enable ||
-                                 apple_phi0_pin);
-    wire drive_hold_active    = host_is_iiplus && drive_hold_q;
-    wire apple_data_enable    = drive_live_at_pin || drive_hold_active;
+    /* Clear before considering a new arm. A client may leave wr_data_en high
+     * briefly past the fall, so allowing an arm while PHI0 is low would
+     * recreate the stale-byte whole-cycle hold this gate is meant to avoid. */
+    always_ff @(posedge clk) begin
+        if (!rstn || !host_is_iiplus) begin
+            iiplus_read_hold_q <= 1'b0;
+            iiplus_read_data_q <= 8'h00;
+        end else if (phi0_fall) begin
+            iiplus_read_hold_q <= 1'b0;
+        end else if (read_response_live && phi0_filt) begin
+            iiplus_read_hold_q <= 1'b1;
+            iiplus_read_data_q <= ab_write.wr_data;
+        end
+    end
+    wire iiplus_read_hold_active =
+        host_is_iiplus && iiplus_read_hold_q;
 
-    assign apple_data_pin = drive_live_at_pin ? ab_write.wr_data :
-                            drive_hold_active ? drive_data_q     : 8'hzz;
+    /* The direction-output route is bounded in the XDC so the asynchronous
+     * raw-PHI0 release remains placement-independent. Keep this one gate at
+     * the timing-clean placement validated by the promoted checkpoint. An
+     * unconstrained incremental run moved the equivalent inferred LUT seven
+     * columns away and changed this path from +0.362 ns to -0.052 ns.
+     *
+     * Keep the bus phase and client data-enable as separate LUT inputs. If
+     * they are ANDed first, small unrelated netlist changes can prevent
+     * synthesis from absorbing that AND into the arbiter cone and insert an
+     * extra LUT on this bounded register-to-pad path.
+     *
+     * LUT inputs implement:
+     *   (bus_emit_state && wr_data_en &&
+     *       (PHI0 || (!host_is_iiplus && addr_rw_enable))) ||
+     *   (host_is_iiplus && iiplus_read_hold_q)
+     * INIT bit order is {I5,I4,I3,I2,I1,I0}. */
+    wire apple_data_enable;
+    (* LOC = "SLICE_X104Y23", BEL = "A6LUT", DONT_TOUCH = "TRUE" *)
+    LUT6 #(.INIT(64'hFF88_FF80_8088_8080)) apple_data_enable_lut (
+        .I0(bus_emit_state),
+        .I1(ab_write.wr_data_en),
+        .I2(apple_phi0_pin),
+        .I3(host_is_iiplus),
+        .I4(apple_addr_rw_enable),
+        .I5(iiplus_read_hold_q),
+        .O(apple_data_enable)
+    );
+    wire [7:0] apple_data_out =
+        iiplus_read_hold_active ? iiplus_read_data_q : ab_write.wr_data;
+
+    assign apple_data_pin = apple_data_enable ? apple_data_out : 8'hzz;
     assign apple_addr_pin = apple_addr_rw_enable ? ab_write.wr_addr : 16'hzzzz;
     assign apple_rw_pin   = apple_addr_rw_enable ? ab_write.wr_rw   : 1'hz;
 
-    /* IRQ is open-collector and timing-insensitive. The production board has
-     * no dedicated IRQ assertion transistor: U19 (the planned A2CTRL.IRQ pin)
-     * is physically unconnected. Assert through the bidirectional IRQ lane by
-     * driving only low or high-Z; the external pull-up provides release. */
-    assign apple_irq_pin = ab_write.assert_irq ? 1'b0 : 1'bz;
+    /* The production board has no dedicated IRQ assertion transistor: U19
+     * (the planned A2CTRL.IRQ pin) is physically unconnected, so IRQ uses the
+     * bidirectional TXS0108 lane. A II/II+ motherboard pulls IRQ up through
+     * 1 kOhm. The TXS lane's weak static sink may not hold that net below a
+     * valid NMOS-6502 low, although its falling-edge accelerator does.
+     *
+     * While a virtual card's level request remains asserted on a II+, hold the
+     * pin low except for a short high-Z re-arm notch before the late-PHI0 CPU
+     * sample. Reasserting at the old chirp's proven falling-edge point gives
+     * the translator a fresh edge while the static low remains present for
+     * almost the entire cycle. The //e keeps its hardware-validated continuous
+     * level-low behavior, and ab_write.assert_irq remains a level for the vTW
+     * core's internal interrupt path. Driving is still low/high-Z only,
+     * preserving the open-collector electrical contract. */
+    wire apple_irq_drive_low = ab_write.assert_irq &&
+                               (!host_is_iiplus || !irq_rearm_release_q);
+    assign apple_irq_pin = apple_irq_drive_low ? 1'b0 : 1'bz;
     // INH must only flip in the addr-phase window, so it's registered
     assign apple_inh_pin = (apple_inh_assert && inh_allowed)
                                                 ? 1'b0 : 1'bz;
-    /* RES# is open-collector like a keyboard CTRL-RESET: pulled low on
-     * request, released to the motherboard pull-up otherwise. The only
-     * client asserting it is the vTW session start, which resets the
-     * whole machine (cards, MMU, PS reset detection) before taking over
-     * so a takeover can never land mid-protocol. */
-    assign apple_res_pin = ab_write.assert_res ? 1'b0 : 1'bz;
+    /* A2FPGA.RESET is the bidirectional observation lane through U234.
+     * Never assert RESET through that translator: every Appletini-generated
+     * reset is merged onto the populated A2CTRL.RESET transistor in
+     * apple_top. Keeping this lane high-Z lets the same input path observe
+     * both motherboard-originated and Appletini-originated RESET events. */
+    assign apple_res_pin = 1'bz;
     // Appletini does not drive these motherboard control lines.
     assign apple_rdy_pin = 1'bz;
     assign apple_nmi_pin = 1'bz;
-    // DMA# is open-drain: any client asserting takes the line low; nobody
-    // asserting leaves it tri-state (pulled high by the motherboard).
-    assign apple_dma_pin = (ab_write.assert_dma && inh_allowed)
-                                                ? 1'b0 : 1'bz;
+    /* DMA# is open-drain. A vTW session latched as II/II+ automatically
+     * releases and reasserts that low briefly once per Apple cycle to refresh
+     * the TXS edge accelerator. Other masters and every //e session retain
+     * the established continuous-low path. */
+    wire apple_dma_requested = ab_write.assert_dma && inh_allowed;
+    wire apple_dma_drive_low =
+        apple_dma_requested &&
+        !(iiplus_dma_refresh_active && dma_rearm_release_q);
+    assign apple_dma_pin = apple_dma_drive_low ? 1'b0 : 1'bz;
 
     // Tini board glue
     assign tini_oe_pin       = tini_5v_pin;
@@ -313,6 +362,33 @@ module apple_bus_wrapper (
     // ------------------------------------------------------------------
     // Sequential
     // ------------------------------------------------------------------
+    /* Phase-locked II+ IRQ re-arm notch. The request asserts immediately and
+     * remains low. Once per Apple cycle it is released for four fabric clocks,
+     * then reasserted early enough to be low at the raw-PHI0 CPU sample. */
+    always_ff @(posedge clk) begin
+        if (!rstn || !host_is_iiplus || !ab_write.assert_irq) begin
+            irq_rearm_release_q <= 1'b0;
+        end else if (data_pipe[TAP_IRQ_REARM_RELEASE]) begin
+            irq_rearm_release_q <= 1'b1;
+        end else if (data_pipe[TAP_IRQ_REARM_ASSERT]) begin
+            irq_rearm_release_q <= 1'b0;
+        end
+    end
+
+    /* Keep the refresh entirely dormant unless an active II+ vTW session owns
+     * /DMA. The 30 ns high-Z notch is phase locked late in PHI0 and ends
+     * before the next PHI1 drive point. */
+    always_ff @(posedge clk) begin
+        if (!rstn || !iiplus_dma_refresh_active ||
+            !apple_dma_requested) begin
+            dma_rearm_release_q <= 1'b0;
+        end else if (data_pipe[TAP_DMA_REARM_RELEASE]) begin
+            dma_rearm_release_q <= 1'b1;
+        end else if (data_pipe[TAP_DMA_REARM_ASSERT]) begin
+            dma_rearm_release_q <= 1'b0;
+        end
+    end
+
     always_ff @(posedge clk) begin
         if (!rstn) begin
             addr_en_emitted_q  <= 1'b1;
@@ -439,12 +515,10 @@ module apple_bus_wrapper (
     //    strobe. dbg_lost_cycle_count only sees missing addr strobes;
     //    this catches extras.
     //  * tap mismatch: bus data at tap 46 vs tap 58 disagreeing within
-    //    one cycle = the data window is not stable where the host tap
-    //    (52 on II/II+, 59 on //e) samples. The last offender's address
-    //    and both bytes are latched. Self-served cycles are excluded:
-    //    the card releases its drive when data_en fires, so with a host
-    //    tap below 58 the late debug sample would see the released bus
-    //    and count a phantom mismatch on every served read.
+    //    one cycle = the input window was not stable immediately before
+    //    the fixed tap-59 production sample. The last offender's address
+    //    and both bytes are latched. Self-served cycles are excluded
+    //    because this probe is intended to characterize the host driver.
     // ------------------------------------------------------------------
     localparam int TAP_DATA_DBG_EARLY = 46;
     localparam int TAP_DATA_DBG_LATE  = 58;

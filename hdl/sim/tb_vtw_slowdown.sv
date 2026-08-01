@@ -55,7 +55,7 @@ module tb_vtw_slowdown;
         .res_filtered_out(), .dbg_lost_cycle_count(), .dbg_clear(1'b0),
         .inh_allowed(1'b1), .gs_m2_qualify(1'b0), .m2sel_active_high(1'b0),
         .host_is_iiplus(1'b0),
-        .iiplus_data_tap(6'd52),
+        .iiplus_dma_refresh_active(1'b0),
         .apple_data_pin(apple_data_pin), .apple_addr_pin(apple_addr_pin),
         .apple_rw_pin(apple_rw_pin), .apple_phi0_pin(phi0),
         .apple_m2sel_pin(1'b0), .apple_m2b0_pin(1'b0),
@@ -86,10 +86,16 @@ module tb_vtw_slowdown;
     logic        video_phase_1mhz;
 
     vtw_core_top dut (
-        .clk(clk), .rstn(rstn), .enable(enable), .core_run(core_run),
+        .clk(clk), .rstn(rstn), .enable(enable),
+        .host_is_iiplus(1'b0), .core_run(core_run),
         .assert_apple_res(1'b0),
         .speed_mode(2'd0),        // WARP baseline
         .pace_divider(16'd0),
+        .irq_assert_in(1'b0),
+        .data_drive_in(vtw_ab_write.wr_data_en),
+        .data_drive_value_in(vtw_ab_write.wr_data),
+        .dbg_clear(1'b0),
+        .iiplus_buttons_zero(1'b0),
         .slow_region_en(sd_region_en),
         .slow_duration(sd_duration),
         .disk2_timing_active(disk2_timing_active),

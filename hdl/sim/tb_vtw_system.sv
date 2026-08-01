@@ -54,9 +54,8 @@ module tb_vtw_system;
     // PHI0: ~1.02 MHz, 490 ns per half.
     always #490 phi0 = ~phi0;
 
-    // TB reset driver (open-drain style).
+    // Motherboard reset driver (open-drain style).
     logic res_drive_low = 1;
-    assign apple_res_pin = res_drive_low ? 1'b0 : 1'bz;
 
     // ------------------------------------------------------------------
     // DUT stack: wrapper + arbiter + vtw_core_top
@@ -64,6 +63,11 @@ module tb_vtw_system;
     globals::AppleBus_read  ab_read;
     globals::AppleBus_write ab_write;
     globals::AppleBus_write vtw_ab_write;
+
+    /* Model the production board's dedicated A2CTRL.RESET transistor.
+     * A2FPGA.RESET inside the wrapper is observation-only. */
+    assign apple_res_pin =
+        (res_drive_low || ab_write.assert_res) ? 1'b0 : 1'bz;
 
     logic tini_oe_pin, tini_addr_dir_pin, tini_data_dir_pin;
 
@@ -76,7 +80,7 @@ module tb_vtw_system;
         .gs_m2_qualify(1'b0),
         .m2sel_active_high(1'b0),
         .host_is_iiplus(1'b0),
-        .iiplus_data_tap(6'd52),
+        .iiplus_dma_refresh_active(1'b0),
         .apple_data_pin(apple_data_pin),
         .apple_addr_pin(apple_addr_pin),
         .apple_rw_pin(apple_rw_pin),
@@ -181,10 +185,16 @@ module tb_vtw_system;
         .clk(clk),
         .rstn(rstn),
         .enable(enable),
+        .host_is_iiplus(1'b0),
         .core_run(core_run),
         .assert_apple_res(tb_assert_res),
         .speed_mode(2'd0),        // full-rate bursts
         .pace_divider(16'd0),
+        .irq_assert_in(1'b0),
+        .data_drive_in(vtw_ab_write.wr_data_en),
+        .data_drive_value_in(vtw_ab_write.wr_data),
+        .dbg_clear(1'b0),
+        .iiplus_buttons_zero(1'b0),
         .slow_region_en(sd_region_en),
         .slow_duration(sd_duration),
         .disk2_timing_active(1'b0),

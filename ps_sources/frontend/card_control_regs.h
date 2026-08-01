@@ -63,19 +63,15 @@
  * and DMA on it. UNKNOWN is the reset state and is treated as a GS
  * (maximum caution). */
 #define CARD_CTRL_MACHINE_MODE_REG         CARD_CTRL_REG_ADDR(0x60U)
+#define CARD_CTRL_RESET_FORENSICS_REG      CARD_CTRL_REG_ADDR(0x64U)
+#define CARD_CTRL_RESET_FORENSICS_RSTN_MASK      0x0FU
+#define CARD_CTRL_RESET_FORENSICS_RES_SEEN_BIT   (1UL << 4)
+#define CARD_CTRL_RESET_FORENSICS_INTERNAL_BIT   (1UL << 5)
+#define CARD_CTRL_RESET_FORENSICS_EXTERNAL_BIT   (1UL << 6)
 #define CARD_MACHINE_MODE_UNKNOWN          0U
 #define CARD_MACHINE_MODE_IIPLUS           1U
 #define CARD_MACHINE_MODE_IIE              2U
 #define CARD_MACHINE_MODE_IIGS             3U
-
-/* II/II+ bus data sample tap: the apple_bus_wrapper data_pipe index used to
- * latch bus data on a II/II+ host (the //e uses a fixed tap). PS-tunable so
- * the exact value can be swept on II+ hardware. Only the low 6 bits are used;
- * keep it within a valid pipe index. */
-#define CARD_CTRL_IIPLUS_DATA_TAP_REG      CARD_CTRL_REG_ADDR(0x65U)
-#define CARD_CTRL_IIPLUS_DATA_TAP_DEFAULT  52U
-#define CARD_CTRL_IIPLUS_DATA_TAP_MIN      44U
-#define CARD_CTRL_IIPLUS_DATA_TAP_MAX      61U
 
 /* When set, psram_simple serves the auxiliary 64K and RamWorks banks from
  * PSRAM. The boot service enables it only for a detected //e, with RAM enabled
@@ -84,7 +80,8 @@
 #define CARD_CTRL_AUX_PROVIDE_REG          CARD_CTRL_REG_ADDR(0x61U)
 
 /* Virtual TransWarp accelerator (vtw_core_top). CTRL bit0 requests the
- * session (the PL additionally gates on machine mode == IIe), bit1 releases
+ * session (the PL additionally gates on machine mode == IIe or II/II+),
+ * bit1 releases
  * the 65C02 core, [3:2] pick the speed mode, [15:8] the divided-mode pace.
  * SHADOW_ADDR/DATA expose the 144 KB shadow through an auto-incrementing
  * byte port; SYNC_CMD/STATUS issue single real bus cycles while the core is
@@ -129,6 +126,18 @@
  * Written by CPU1's renderer on mode entry/exit; off by default. */
 #define CARD_CTRL_VIDEO_POST_WIDE_REG      CARD_CTRL_REG_ADDR(0x35U)
 
+/* vTW physical-transaction forensics; cleared with "busdbg clear".
+ * WR_CHECK {mismatch_count[15:0], expected[7:0], observed[7:0]}
+ * WR_ADDR  last mismatching synchronous-write address in [15:0]
+ * C000_CTX {previous address[15:0], kind[1:0], rw, data_drive, 4'b0,
+ *           last $C000 byte[7:0]}; kind 0=park, 1=posted,
+ *           2=sync read, 3=sync write
+ * C000_CNT {bit7-high reads[15:0], total reads[15:0]} */
+#define CARD_CTRL_VTW_WR_CHECK_REG         CARD_CTRL_REG_ADDR(0x36U)
+#define CARD_CTRL_VTW_WR_ADDR_REG          CARD_CTRL_REG_ADDR(0x37U)
+#define CARD_CTRL_VTW_C000_CTX_REG         CARD_CTRL_REG_ADDR(0x38U)
+#define CARD_CTRL_VTW_C000_CNT_REG         CARD_CTRL_REG_ADDR(0x39U)
+
 #define CARD_CTRL_VTW_CTRL_REG             CARD_CTRL_REG_ADDR(0x70U)
 #define CARD_CTRL_VTW_SHADOW_ADDR_REG      CARD_CTRL_REG_ADDR(0x71U)
 #define CARD_CTRL_VTW_SHADOW_DATA_REG      CARD_CTRL_REG_ADDR(0x72U)
@@ -148,6 +157,30 @@
  * 16-bit entries per register, newest in RING0[15:0]. Entry format:
  * {2'b0, rw, addr[4:0], data[7:0]}. */
 #define CARD_CTRL_VTW_C0_RING_REG(n)       CARD_CTRL_REG_ADDR(0x6CU + (n))
+
+/* Event-frozen II+ diagnostics, re-armed by "busdbg clear".
+ * TRACE_STATUS: bit0 frozen, [2:1] reason
+ *   2 = $C000 read with bit7 high,
+ *   3 = instruction fetch from internal $C600 self-test.
+ * RESET does not freeze these rings: the post-reset path remains visible,
+ * while CARD_CTRL_RESET_FORENSICS_REG records the reset and its source.
+ * BUS_FAULTS: {address mismatch count[15:0],
+ *              self-drive data mismatch count[7:0],
+ *              observed DMA-released count[7:0]}.
+ * IO_TRACE entry (newest n=0):
+ *   {rw, self_drive, dma_released, addr_bad, data_bad, 3'b0,
+ *    requested_addr[15:0], sampled_data[7:0]}.
+ * PC_TRACE packs two 16-bit instruction-fetch PCs per register, newest in
+ * the low half of register 0. */
+#define CARD_CTRL_VTW_TRACE_STATUS_REG      CARD_CTRL_REG_ADDR(0x80U)
+#define CARD_CTRL_VTW_BUS_FAULTS_REG        CARD_CTRL_REG_ADDR(0x81U)
+#define CARD_CTRL_VTW_IO_TRACE_REG(n)       CARD_CTRL_REG_ADDR(0x82U + (n))
+#define CARD_CTRL_VTW_PC_TRACE_REG(n)       CARD_CTRL_REG_ADDR(0x92U + (n))
+#define CARD_CTRL_VTW_TRACE_FROZEN_BIT      (1UL << 0)
+#define CARD_CTRL_VTW_TRACE_REASON_SHIFT    1U
+#define CARD_CTRL_VTW_TRACE_REASON_MASK     0x3UL
+#define CARD_CTRL_VTW_TRACE_REASON_C000     2U
+#define CARD_CTRL_VTW_TRACE_REASON_C600     3U
 
 /* Per-region slowdown (mirrors the physical TransWarp's DIP block 2): after
  * the core touches an enabled timing-sensitive region it drops to
@@ -172,6 +205,11 @@
 #define CARD_CTRL_VTW_CTRL_SPEED_SHIFT     2U
 #define CARD_CTRL_VTW_CTRL_SPEED_MASK      0x3UL
 #define CARD_CTRL_VTW_CTRL_APPLE_RES_BIT   (1UL << 4)
+/* II/II+ host: serve $C061-$C063 Apple-key reads internally as $00
+ * (controller-less game-connector buttons float "pressed"). Set by the
+ * PS whenever the machine is a II/II+; clear to restore real reads for
+ * hosts with a controller attached. */
+#define CARD_CTRL_VTW_CTRL_IIPLUS_BTNS_BIT (1UL << 5)
 /* 16-bit pace divider at [31:16] (50 kHz slug mode needs divider 2667). */
 #define CARD_CTRL_VTW_CTRL_DIVIDER_SHIFT   16U
 #define CARD_CTRL_VTW_CTRL_DIVIDER_MASK    0xFFFFUL

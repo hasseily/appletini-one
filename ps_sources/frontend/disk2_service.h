@@ -18,14 +18,21 @@ typedef enum {
     DISK2_IMAGE_NIB,
     DISK2_IMAGE_DSK,
     DISK2_IMAGE_DO,
-    DISK2_IMAGE_PO
+    DISK2_IMAGE_PO,
+    /* Probe-only container type. Mounted 2MG images publish their embedded
+     * DO, PO, or NIB format to the PL. */
+    DISK2_IMAGE_2MG
 } disk2_image_format_t;
 
 typedef struct {
     uint8_t present;
     uint8_t read_only;
+    uint8_t container_2mg;
+    uint8_t volume_number;
     disk2_image_format_t format;
     uint32_t file_size;
+    uint32_t image_data_offset;
+    uint32_t image_data_size;
     uint32_t track_count;
     uint32_t logical_blocks;
     uint8_t woz_version;
@@ -81,8 +88,8 @@ void disk2_service_poll(void);
  * motor-on deferral. For use when another SD owner is about to take over
  * (USB0 SD remote mount): CP/M's PCPI BIOS can hold the drive enabled
  * indefinitely, which would otherwise leave the file stale while the
- * host rewrites the card. Returns 0 when nothing is pending (or the
- * flush landed), negative when the caller should retry. */
+ * host rewrites the card. Returns 0 when no dirty track remains (nothing
+ * was pending or the flush landed), negative when the caller should retry. */
 int disk2_service_flush_dirty_now(void);
 
 int disk2_service_set_image_path(uint8_t drive, const char *path);

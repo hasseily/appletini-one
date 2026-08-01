@@ -88,7 +88,6 @@ typedef struct {
                            uint8_t speed_mode,
                            uint8_t pace_divider);
     void (*set_vtw_slug_key_enabled)(void *ctx, uint8_t enable);
-    void (*set_iiplus_data_tap)(void *ctx, uint8_t tap);
     /* Per-region slowdown (TransWarp DIP block 2): region enable mask +
      * 1 MHz window duration in Apple cycles. */
     void (*set_vtw_slowdown)(void *ctx, uint16_t region_mask, uint16_t cycles);
@@ -166,7 +165,6 @@ typedef struct {
     uint8_t vtw_speed_mode;          /* 0 full, 1 divided, 2 1MHz-locked */
     uint8_t vtw_pace_divider;        /* divided mode: fabric clks per cycle */
     uint8_t vtw_slug_key_enabled;    /* arm the 0.05 MHz slug USB key (def off) */
-    uint8_t iiplus_data_tap;         /* II/II+ bus data sample tap (debug tune) */
     uint16_t vtw_slowdown_mask;      /* per-region 1MHz: [6:0] slots, [7] float/video, [8] paddle */
     uint16_t vtw_slowdown_cycles;    /* 1 MHz window per region access (0 = off) */
     uint8_t supersprite_enabled;   /* SuperSprite VDP in slot 7 (excl. SmartPort) */

@@ -120,6 +120,7 @@ module apple_top(
     logic [6:0] detect_cycle_in_line;
     logic [15:0] detect_line_clk_count;
     logic mouse_vblank_start_pulse;
+    logic bm_vbl_cmd_pulse;   // boot ROM CMD_VBL_START (software-paced)
     localparam [15:0] APPLE_LINE_PERIOD_50HZ_THRESHOLD = 16'd8513;
 
     assign apple_bus_pulse = ab_read.sss_en;
@@ -127,13 +128,23 @@ module apple_top(
     assign video_mode_50hz_out = video_mode_50hz;
     assign mouse_vblank_start_pulse =
         update_pulse && (line_in_frame == 9'd192) && (cycle_in_line == 7'd0);
+    /* HDMI genlock heartbeat. video_timing_gen uses this pulse ONLY for
+     * activity detection ("is the Apple running?"), never for phase, so it
+     * must be steady whenever PHI0 ticks. The boot ROM's CMD_VBL_START used
+     * to feed it directly, but a II/II+ paces that by vapor-lock at one
+     * pulse per ~80-200 ms -- far outside the detector's 2-frame tolerance
+     * -- so V_TOTAL flapped 1123<->1125 through the whole boot menu (monitor
+     * re-lock flicker). Source it from the PL frame flywheel instead: one
+     * tick per Apple frame, host-independent, and genlock now also survives
+     * the boot->OS handoff instead of stepping to the standard mode. */
+    assign apple_vblank_start_pulse = mouse_vblank_start_pulse;
     wire apple_reset_assert_pulse = rstn[1] && apple_reset_prev_q && !ab_read.res;
     assign set_frame_zero_pulse = apple_reset_release_q;
     // The ROM's first VBL command after reset is the calibrated lock point.
-    // Later commands are useful as activity pulses, but must not re-phase the
-    // Apple timing counters with raw polling jitter.
+    // Later commands must not re-phase the Apple timing counters with raw
+    // polling jitter (the genlock heartbeat no longer needs them at all).
     assign set_vblank_start_pulse =
-        apple_vblank_start_pulse && !apple_vblank_lock_seen_q;
+        bm_vbl_cmd_pulse && !apple_vblank_lock_seen_q;
 
     localparam logic [7:0] CARD_CTRL_REG_SLOT_ENABLE_MASK   = 8'h00;
     localparam logic [7:0] CARD_CTRL_REG_FEATURE_ENABLE_MASK = 8'h01;
@@ -160,11 +171,16 @@ module apple_top(
     localparam logic [7:0] CARD_CTRL_REG_ETH_DATA     = 8'h47; // W5100S host access byte
     localparam logic [7:0] CARD_CTRL_REG_ETH_CMD      = 8'h48; // bit0 go, bit1 write
     localparam logic [7:0] CARD_CTRL_REG_ETH_STATUS   = 8'h49; // ready/busy/done/error + read byte
+    localparam logic [7:0] CARD_CTRL_REG_VTW_WR_CHECK = 8'h36;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_WR_ADDR  = 8'h37;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_C000_CTX = 8'h38;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_C000_CNT = 8'h39;
     // Virtual TransWarp accelerator (vtw_core_top) control/status window.
-    //   VTW_CTRL        : bit0 enable request (gated on machine mode == IIe),
+    //   VTW_CTRL        : bit0 enable request (gated on //e or II/II+ mode),
     //                     bit1 core_run, [3:2] speed_mode (0=full, 1=divided,
     //                     2=1MHz-locked), bit4 assert Apple RES# (takeover
-    //                     machine reset), [15:8] pace divider (divided mode).
+    //                     machine reset), bit5 II+ Apple-key synthesis,
+    //                     [31:16] pace divider (divided mode).
     //   VTW_SHADOW_ADDR : 18-bit shadow port-B pointer; writing it also
     //                     fetches that byte for VTW_SHADOW_DATA reads.
     //   VTW_SHADOW_DATA : write = store byte at pointer, pointer++ and
@@ -198,6 +214,11 @@ module apple_top(
     localparam logic [7:0] CARD_CTRL_REG_VTW_CXXX_RING1  = 8'h7D;
     localparam logic [7:0] CARD_CTRL_REG_VTW_CXXX_RING2  = 8'h7E;
     localparam logic [7:0] CARD_CTRL_REG_VTW_CXXX_RING3  = 8'h7F;
+    // Event-frozen vTW forensic trace (`busdbg clear` re-arms).
+    localparam logic [7:0] CARD_CTRL_REG_VTW_TRACE_STATUS = 8'h80;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_BUS_FAULTS   = 8'h81;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_IO_TRACE0    = 8'h82;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_PC_TRACE0    = 8'h92;
     //   VTW_C0_RING_*   : last eight $C00x/$C01x soft-switch cycles with
     //                     latched data ({rw,addr[4:0],data[7:0]} x2/reg).
     localparam logic [7:0] CARD_CTRL_REG_VTW_C0_RING0    = 8'h6C;
@@ -252,6 +273,7 @@ module apple_top(
     logic [7:0]  eth_host_rdata;
     logic [31:0] disk2_sound_sample_base_q = 32'h0000_0000;
     logic [31:0] disk2_sound_control_q = 32'h0000_0000; // bit 0 enable, [11:8] volume 0..10
+    globals::AppleBus_write ab_write_arb;
     Axi3_read_if #(.ADDR_WIDTH(32), .DATA_WIDTH(64)) disk2_sound_read();
     localparam logic [63:0] NSC_TIME_RESET =
         {8'h26, 8'h01, 8'h01, 8'h01, 8'h00, 8'h00, 8'h00, 8'h00};
@@ -280,7 +302,12 @@ module apple_top(
         8'h80;
     wire apple_reset_release =
         (reset_release_ready_q & RESET_RELEASE_READY_MASK) == RESET_RELEASE_READY_MASK;
-    assign apple_reset_n_out = apple_reset_release;
+    /* A2CTRL.RESET is the sole card-generated RESET assertion path. Merge
+     * every virtual-card request with the power-up/boot hold so RESET uses
+     * the populated open-collector transistor on every Apple model. The
+     * separate A2FPGA.RESET lane remains an input observer. */
+    assign apple_reset_n_out =
+        apple_reset_release && !ab_write_arb.assert_res;
     assign menu_chime_start = menu_chime_start_q;
     logic smartport_active;
     logic disk2_active;
@@ -474,7 +501,6 @@ module apple_top(
      * must positively identify a compatible machine before either signal
      * can be driven. */
     logic [1:0]  machine_mode_q;
-    logic [5:0]  iiplus_data_tap_q;   // II/II+ bus data sample tap (PS-tunable)
     /* AUX_PROVIDE: card serves the aux 64K + RamWorks banks from PSRAM.
      * Frontend policy enables this only for a //e with no physical aux card;
      * the fabric interlock itself permits INH on identified //e and II/II+
@@ -502,10 +528,9 @@ module apple_top(
      * that window. */
     assign machine_gs_m2_qualify = (machine_mode_q == 2'd3);
 
-    /* II/II+ hosts present bus data on a different schedule than the //e
-     * (discrete timing, real 6502, no IOU row-address latch), so
-     * apple_bus_wrapper samples them at an earlier data tap. Selected from
-     * the PS-set machine mode (1 = II/II+); UNKNOWN/others keep the //e tap. */
+    /* II/II+ mode selects only the proven host-specific electrical behavior
+     * (served-byte output hold and accelerated Apple-key synthesis). Bus
+     * capture uses the same fixed sample point on every host. */
     assign machine_is_iiplus = (machine_mode_q == 2'd1);
 
     logic [31:0] sdd_stat_producer_ptr;
@@ -621,7 +646,6 @@ module apple_top(
     logic        ss_apple_video;
     logic        ss_vdp_overlay;
     logic [7:0]  ss_vram_data;
-    globals::AppleBus_write ab_write_arb;
     logic [63:0] nsc_write_time_bcd;
     logic        nsc_write_time_strobe;
 
@@ -632,6 +656,7 @@ module apple_top(
     logic [31:0] busdbg_strobe_anom;
     logic [31:0] busdbg_tap_last;
     logic        busdbg_clear_pulse;
+    logic        vtw_iiplus_dma_refresh_active;
     apple_bus_wrapper apple_bus_wrapper_i (
         .res_filtered_out(res_filtered_dbg),
         .dbg_lost_cycle_count(dbg_lost_cycle_count),
@@ -646,7 +671,7 @@ module apple_top(
         .gs_m2_qualify(machine_gs_m2_qualify),
         .m2sel_active_high(machine_m2sel_active_high),
         .host_is_iiplus(machine_is_iiplus),
-        .iiplus_data_tap(iiplus_data_tap_q),
+        .iiplus_dma_refresh_active(vtw_iiplus_dma_refresh_active),
         .apple_data_pin(apple_data_pin),
         .apple_addr_pin(apple_addr_pin),
         .apple_rw_pin(apple_rw_pin),
@@ -738,20 +763,38 @@ module apple_top(
     );
     /* Reset forensics: no-reset sticky flops that latch any post-arm
      * dip of the replicated rstn bits or an Apple-reset assertion
-     * (post-filter). Writing CARD_CTRL 0x64 clears/arms; reading it
-     * returns {res_seen, rstn_dips[3:0]}. Deliberately never reset --
-     * they must survive the very events they record. */
+     * (post-filter). Writing CARD_CTRL 0x64 clears/arms; reading it returns
+     * {external_res_seen, internal_res_seen, res_seen, rstn_dips[3:0]}.
+     * The source bits sample the merged Appletini reset request while the
+     * filtered line is low, distinguishing our deliberate open-collector
+     * pull from a motherboard/keyboard-originated reset. Deliberately never
+     * reset -- they must survive the very events they record. */
     logic [3:0]  rstn_dip_sticky = 4'b0;
     logic        res_seen_sticky = 1'b0;
+    logic        res_internal_seen_sticky = 1'b0;
+    logic        res_external_seen_sticky = 1'b0;
+    logic        res_filtered_prev_q = 1'b1;
     logic        forensics_clear_pulse;
     always_ff @(posedge clk) begin
         if (forensics_clear_pulse) begin
             rstn_dip_sticky <= 4'b0;
             res_seen_sticky <= 1'b0;
+            res_internal_seen_sticky <= 1'b0;
+            res_external_seen_sticky <= 1'b0;
+            res_filtered_prev_q <= res_filtered_dbg;
         end else begin
+            res_filtered_prev_q <= res_filtered_dbg;
             rstn_dip_sticky <= rstn_dip_sticky | ~rstn;
             if (!res_filtered_dbg) begin
                 res_seen_sticky <= 1'b1;
+            end
+            if (res_filtered_prev_q && !res_filtered_dbg) begin
+                if (ab_write_arb.assert_res) begin
+                    res_internal_seen_sticky <= 1'b1;
+                end
+                else begin
+                    res_external_seen_sticky <= 1'b1;
+                end
             end
         end
     end
@@ -967,14 +1010,15 @@ module apple_top(
 
     // SuperSprite (TMS9918 VDP) -- PL front end for the PS software VDP.
     // Registers/VRAM/status live here; the PS renders the picture and the
-    // compositor overlays it. vblank_tick reuses the Apple frame pulse.
+    // compositor overlays it. vblank_tick reuses the boot ROM's VBL command
+    // pulse (unchanged when the genlock heartbeat moved to the flywheel).
     supersprite_card supersprite_card_i (
         .clk(clk),
         .rstn(rstn[2]),
         .ab_read(gate_ab(ab_read, card_supersprite_enable)),
         .sss(sss),
         .slot_assign(3'h7),
-        .vblank_tick(apple_vblank_start_pulse),
+        .vblank_tick(bm_vbl_cmd_pulse),
         .ps_status_flags(ss_status_flags_q),
         .ab_write(supersprite_ab_write),
         .irq_n(),                       // aggregated via ab_write.assert_irq
@@ -1152,7 +1196,7 @@ module apple_top(
         .boot_target_disk2(boot_target_disk2),
         .boot_slot(boot_menu_slot),
         .boot_slot_valid(boot_menu_slot_valid),
-        .apple_vblank_start_pulse(apple_vblank_start_pulse),
+        .apple_vblank_start_pulse(bm_vbl_cmd_pulse),
         .aux_probe_pulse(bm_aux_probe_pulse),
         .aux_status(bm_aux_status),
         .aux_status_clear(bm_aux_status_clear)
@@ -1212,6 +1256,14 @@ module apple_top(
     logic [6:0]  vtw_dbg_irq_edges;
     logic [127:0] vtw_dbg_cxxx_ring;
     logic [127:0] vtw_dbg_c0_ring;
+    logic [31:0] vtw_dbg_sync_write_check;
+    logic [15:0] vtw_dbg_sync_write_addr;
+    logic [31:0] vtw_dbg_c000_context;
+    logic [31:0] vtw_dbg_c000_counts;
+    logic [16*16-1:0] vtw_dbg_pc_trace;
+    logic [16*32-1:0] vtw_dbg_io_trace;
+    logic [31:0] vtw_dbg_trace_status;
+    logic [31:0] vtw_dbg_bus_faults;
 
     /* Machine gate, latched for the lifetime of the enable request. The
      * PS re-identifies the machine on every Apple reset (machine_mode
@@ -1223,17 +1275,32 @@ module apple_top(
      * accelerate as an Enhanced //e: the fixed //e ROM and the core's full
      * MMU model apply regardless of host. */
     logic vtw_machine_ok_q;
+    logic vtw_host_is_iiplus_q;
     always_ff @(posedge clk) begin
         if (!rstn[1]) begin
-            vtw_machine_ok_q  <= 1'b0;
+            vtw_machine_ok_q       <= 1'b0;
+            vtw_host_is_iiplus_q   <= 1'b0;
         end
         else if (!vtw_ctrl_q[0]) begin
-            vtw_machine_ok_q  <= 1'b0;
+            vtw_machine_ok_q       <= 1'b0;
+            vtw_host_is_iiplus_q   <= 1'b0;
         end
-        else if (machine_mode_q == 2'd2 || machine_mode_q == 2'd1) begin
-            vtw_machine_ok_q  <= 1'b1;
+        else if (!vtw_machine_ok_q) begin
+            if (machine_mode_q == 2'd1) begin
+                vtw_machine_ok_q       <= 1'b1;
+                vtw_host_is_iiplus_q   <= 1'b1;
+            end
+            else if (machine_mode_q == 2'd2) begin
+                vtw_machine_ok_q       <= 1'b1;
+                vtw_host_is_iiplus_q   <= 1'b0;
+            end
         end
     end
+    /* Every II/II+ vTW session refreshes the weak translated /DMA hold. Use
+     * the session-latched verdict so refresh remains active while Apple RESET
+     * temporarily makes the live machine report UNKNOWN. A //e can never
+     * activate this path. */
+    assign vtw_iiplus_dma_refresh_active = vtw_host_is_iiplus_q;
     // Raw vertical-blank level for the core's synthesized $C019 read. The
     // vTW applies its CPU-visible one-cycle lag locally from line/cycle, so
     // native timing consumers remain on the calibrated 192:0 boundary.
@@ -1275,10 +1342,16 @@ module apple_top(
         .clk(clk),
         .rstn(rstn[1]),
         .enable(vtw_enable_eff),
+        .host_is_iiplus(vtw_host_is_iiplus_q),
         .core_run(vtw_ctrl_q[1]),
         .assert_apple_res(vtw_ctrl_q[4]),
         .speed_mode(vtw_ctrl_q[3:2]),
         .pace_divider(vtw_ctrl_q[31:16]),
+        .irq_assert_in(ab_write_arb.assert_irq),
+        .data_drive_in(ab_write_arb.wr_data_en),
+        .data_drive_value_in(ab_write_arb.wr_data),
+        .dbg_clear(busdbg_clear_pulse),
+        .iiplus_buttons_zero(vtw_ctrl_q[5]),
         .slow_region_en(vtw_slowdown_q[9:0]),
         .slow_duration(vtw_slowdown_q[31:16]),
         .disk2_timing_active(disk2_sound_spinning),
@@ -1336,7 +1409,15 @@ module apple_top(
         .dbg_last_sync_rw(vtw_dbg_last_sync_rw),
         .dbg_irq_edges(vtw_dbg_irq_edges),
         .dbg_cxxx_ring(vtw_dbg_cxxx_ring),
-        .dbg_c0_ring(vtw_dbg_c0_ring)
+        .dbg_c0_ring(vtw_dbg_c0_ring),
+        .dbg_sync_write_check(vtw_dbg_sync_write_check),
+        .dbg_sync_write_addr(vtw_dbg_sync_write_addr),
+        .dbg_c000_context(vtw_dbg_c000_context),
+        .dbg_c000_counts(vtw_dbg_c000_counts),
+        .dbg_pc_trace(vtw_dbg_pc_trace),
+        .dbg_io_trace(vtw_dbg_io_trace),
+        .dbg_trace_status(vtw_dbg_trace_status),
+        .dbg_bus_faults(vtw_dbg_bus_faults)
     );
 
     // apple_bus_write_arbiter merges virtual-card responses and control-line
@@ -1362,7 +1443,7 @@ module apple_top(
         .ab_write(ab_write_arb)
     );
 
-    // Virtual-card bus requests feed the physical bus wrapper directly.
+    /* Virtual-card bus requests feed the physical bus wrapper directly. */
     assign ab_write = ab_write_arb;
 
     // AxiSimple card-control and diagnostic register mux.
@@ -1445,7 +1526,6 @@ module apple_top(
             sdd_cfg_reset_pulse             <= 1'b0;
             machine_mode_q                  <= 2'd0;
             machine_m2sel_active_high       <= 1'b0;
-            iiplus_data_tap_q               <= 6'd52;
             aux_provide_en_q                <= 1'b0;
             psram_dcount_q                  <= 5'd0;
             ramworks_en_q                   <= 1'b0;
@@ -1675,10 +1755,6 @@ module apple_top(
                      * counters and the mouse DEVSEL write ring. */
                     8'h2D: busdbg_clear_pulse <= 1'b1;
                     8'h35: post_main_wide_q <= as_common.wdata[0];
-                    /* II/II+ bus data sample tap (apple_bus_wrapper data_pipe
-                     * index). Tunable so the exact II+ value can be swept on
-                     * hardware. Range clamped by the PS to a valid pipe index. */
-                    8'h65: iiplus_data_tap_q <= as_common.wdata[5:0];
                     8'h6A: bm_aux_status_clear <= 1'b1;
                     CARD_CTRL_REG_SS_VRAM_ADDR: begin
                         automatic logic [31:0] a = globals::apply_wstrb(
@@ -1793,6 +1869,14 @@ module apple_top(
                 8'h33:   as_client_rdata_q <= busdbg_mring_q[95:64];
                 8'h34:   as_client_rdata_q <= busdbg_mring_q[127:96];
                 8'h35:   as_client_rdata_q <= {31'b0, post_main_wide_q};
+                CARD_CTRL_REG_VTW_WR_CHECK: as_client_rdata_q <=
+                    vtw_dbg_sync_write_check;
+                CARD_CTRL_REG_VTW_WR_ADDR:  as_client_rdata_q <=
+                    {16'b0, vtw_dbg_sync_write_addr};
+                CARD_CTRL_REG_VTW_C000_CTX: as_client_rdata_q <=
+                    vtw_dbg_c000_context;
+                CARD_CTRL_REG_VTW_C000_CNT: as_client_rdata_q <=
+                    vtw_dbg_c000_counts;
                 8'h50:   as_client_rdata_q <= {31'b0, sdd_cfg_enable_q};
                 8'h51:   as_client_rdata_q <= sdd_cfg_ring_base_q;
                 8'h52:   as_client_rdata_q <= {27'b0, sdd_cfg_ring_size_log2_q};
@@ -1811,7 +1895,9 @@ module apple_top(
                 8'h63:   as_client_rdata_q <= {26'b0,
                                                psram_dcount_edge_q,
                                                psram_dcount_q};
-                8'h64:   as_client_rdata_q <= {27'b0,
+                8'h64:   as_client_rdata_q <= {25'b0,
+                                               res_external_seen_sticky,
+                                               res_internal_seen_sticky,
                                                res_seen_sticky,
                                                rstn_dip_sticky};
                 8'h66:   as_client_rdata_q <= dbg_lost_cycle_count;
@@ -1867,6 +1953,32 @@ module apple_top(
                 CARD_CTRL_REG_VTW_C0_RING1:    as_client_rdata_q <= vtw_dbg_c0_ring[63:32];
                 CARD_CTRL_REG_VTW_C0_RING2:    as_client_rdata_q <= vtw_dbg_c0_ring[95:64];
                 CARD_CTRL_REG_VTW_C0_RING3:    as_client_rdata_q <= vtw_dbg_c0_ring[127:96];
+                CARD_CTRL_REG_VTW_TRACE_STATUS: as_client_rdata_q <= vtw_dbg_trace_status;
+                CARD_CTRL_REG_VTW_BUS_FAULTS:   as_client_rdata_q <= vtw_dbg_bus_faults;
+                8'h82: as_client_rdata_q <= vtw_dbg_io_trace[31:0];
+                8'h83: as_client_rdata_q <= vtw_dbg_io_trace[63:32];
+                8'h84: as_client_rdata_q <= vtw_dbg_io_trace[95:64];
+                8'h85: as_client_rdata_q <= vtw_dbg_io_trace[127:96];
+                8'h86: as_client_rdata_q <= vtw_dbg_io_trace[159:128];
+                8'h87: as_client_rdata_q <= vtw_dbg_io_trace[191:160];
+                8'h88: as_client_rdata_q <= vtw_dbg_io_trace[223:192];
+                8'h89: as_client_rdata_q <= vtw_dbg_io_trace[255:224];
+                8'h8A: as_client_rdata_q <= vtw_dbg_io_trace[287:256];
+                8'h8B: as_client_rdata_q <= vtw_dbg_io_trace[319:288];
+                8'h8C: as_client_rdata_q <= vtw_dbg_io_trace[351:320];
+                8'h8D: as_client_rdata_q <= vtw_dbg_io_trace[383:352];
+                8'h8E: as_client_rdata_q <= vtw_dbg_io_trace[415:384];
+                8'h8F: as_client_rdata_q <= vtw_dbg_io_trace[447:416];
+                8'h90: as_client_rdata_q <= vtw_dbg_io_trace[479:448];
+                8'h91: as_client_rdata_q <= vtw_dbg_io_trace[511:480];
+                8'h92: as_client_rdata_q <= vtw_dbg_pc_trace[31:0];
+                8'h93: as_client_rdata_q <= vtw_dbg_pc_trace[63:32];
+                8'h94: as_client_rdata_q <= vtw_dbg_pc_trace[95:64];
+                8'h95: as_client_rdata_q <= vtw_dbg_pc_trace[127:96];
+                8'h96: as_client_rdata_q <= vtw_dbg_pc_trace[159:128];
+                8'h97: as_client_rdata_q <= vtw_dbg_pc_trace[191:160];
+                8'h98: as_client_rdata_q <= vtw_dbg_pc_trace[223:192];
+                8'h99: as_client_rdata_q <= vtw_dbg_pc_trace[255:224];
                 default: as_client_rdata_q <= 32'h00000000;
             endcase
         end

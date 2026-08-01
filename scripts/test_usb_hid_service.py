@@ -357,13 +357,16 @@ def test_usb0_storage_priority_over_usb1_hid_poll() -> None:
             "            menu->profile_name_editor_active != 0U" in frontend_main and
             "static void ui_close_config_menu_child(ui_state_t *s, config_menu_t *menu)" in frontend_main,
             "frontend close routing must recognize child menu contexts")
-    require("case BOOT_MENU_EVENT_CLOSE:\n"
-            "                        config_menu_apply_runtime(&config_menu);\n"
-            "                        ui_set_boot_menu_visible(&ui, &config_menu, 0U);\n"
-            "                        usb0_modal_redraw_pending = 1U;\n"
-            "                        break;" in modal_loop and
-            "static void ui_close_config_menu_child(ui_state_t *s, config_menu_t *menu)" in frontend_main,
-            "ROM close events must hide the parent menu while child ESC stays local")
+    modal_close_start = modal_loop.find("case BOOT_MENU_EVENT_CLOSE:")
+    modal_close_end = modal_loop.find(
+        "case BOOT_MENU_EVENT_INPUT:", modal_close_start)
+    require(0 <= modal_close_start < modal_close_end,
+            "modal path must handle ROM close events")
+    modal_close = modal_loop[modal_close_start:modal_close_end]
+    require("ui_set_boot_menu_visible(&ui, &config_menu, 0U);" in modal_close and
+            "usb0_modal_redraw_pending = 1U;" in modal_close and
+            "config_menu_apply_runtime" not in modal_close,
+            "ROM close must hide the modal parent without reapplying runtime during storage handoff")
     require("uint8_t usb0_modal_redraw_pending = 0U;" in frontend_main and
             "usb0_modal_redraw_pending != 0U &&\n"
             "                (config_menu_usb0_sd_remote_active(&config_menu) == 0U ||\n"

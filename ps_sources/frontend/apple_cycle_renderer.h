@@ -43,6 +43,12 @@ void apple_cycle_renderer_set_vtw_1mhz(uint8_t active);
  * drop ate the C029 record (screen-freeze self-heal). */
 void apple_cycle_renderer_sync_shr_mode(uint8_t pl_shr_active);
 
+/* Egress hook: a captured aux write to $9DF8 (SDD paged-mode ctrl)
+ * just landed in the mirror. Opens/closes the vTW main $6000-$9FFF
+ * posting window immediately so a second interlace field loaded while
+ * SHR is off still reaches the capture. */
+void apple_cycle_renderer_note_aux_ctrl_write(uint8_t value);
+
 /* Pre-record hook called before egress applies the incoming record's shadow
  * memory write. This preserves memory/write ordering while the renderer uses
  * that record's soft-switch snapshot as one-cycle lookahead. */

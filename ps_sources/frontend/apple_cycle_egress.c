@@ -19,6 +19,7 @@
 #include "../lib/uart.h"
 
 #include "apple_cycle_egress.h"
+#include "apple_cycle_renderer.h"
 
 /* --- Public state -------------------------------------------------- */
 volatile uint8_t  *const g_main_bank = (volatile uint8_t *)ACE_MAIN_BANK_ADDR;
@@ -171,6 +172,12 @@ void apple_cycle_egress_poll(void)
                      * index into the 64 KB bank. */
                     if ((a & 0x010000U) != 0U) {
                         g_aux_bank[a & 0xFFFFU] = d;
+                        if ((a & 0xFFFFU) == 0x9DF8U) {
+                            /* Paged-mode ctrl byte: open/close the vTW
+                             * main $6000-$9FFF posting window NOW, before
+                             * a second interlace field loads behind it. */
+                            apple_cycle_renderer_note_aux_ctrl_write(d);
+                        }
                     } else {
                         g_main_bank[a & 0xFFFFU] = d;
                     }

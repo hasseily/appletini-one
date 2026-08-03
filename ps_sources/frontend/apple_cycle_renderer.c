@@ -1582,6 +1582,22 @@ static void shr_update_post_wide(uint8_t want)
     Xil_Out32(CARD_CTRL_VIDEO_POST_WIDE_REG, (uint32_t)want);
 }
 
+/* Called by the egress the moment a captured aux write to $9DF8 (the
+ * SDD paged-mode ctrl byte) lands in the mirror. Under vTW, main
+ * $6000-$9FFF writes are only posted while the wide window is open,
+ * and a loader delivers the ctrl byte (via its aux field copy) right
+ * BEFORE it reads the second interlace field into main -- with SHR
+ * held off during the load, no rendered frame can open the window in
+ * time, and the whole second field would bypass the mirror (observed:
+ * an interlaced image showing the previous image's staging leftovers
+ * in $6000-$9FFF whenever it loads after a non-interlaced one).
+ * Render-time evaluation still narrows the window after
+ * non-interlaced SHR frames. */
+void apple_cycle_renderer_note_aux_ctrl_write(uint8_t value)
+{
+    shr_update_post_wide((value == 1u) ? 1u : 0u);
+}
+
 static void render_shr_frame_full(void)
 {
     if (g_atn_framebuffer == NULL) {

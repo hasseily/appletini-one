@@ -49,6 +49,8 @@ typedef struct {
     uint8_t video_color_mode;
     uint8_t video7_auto_mono;
     uint8_t video_ghosting_strength;
+    uint8_t video_blur_strength;
+    uint8_t video_glow_strength;
 
     uint32_t compositor_frames_published;
     uint32_t compositor_frames_skipped;

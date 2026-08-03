@@ -172,9 +172,16 @@ class Renderer:
                             c = gs_rgb(rd(field.bank, a)
                                        | (rd(field.bank, a + 1) << 8))
                         elif sub == 3:
-                            base = 0x2000 + 160 * y + (px // 6) * 3
-                            b0, b1, bx = (rd(field.bank, base + k)
-                                          for k in range(3))
+                            group = px // 6
+                            base = 0x2000 + 160 * y + group * 3
+                            # 160 bytes = 53 1/3 triplets: bytes past the
+                            # line read back 0, matching SDD's shader
+                            # (out-of-texture texel fetch) and the C
+                            # renderer's clamp.
+                            b0, b1, bx = (
+                                rd(field.bank, base + k)
+                                if group * 3 + k < 160 else 0
+                                for k in range(3))
                             if px % 6 < 3:
                                 c = ((b0 >> 4) * 16, (b0 & 0xF) * 16,
                                      (b1 >> 4) * 16)

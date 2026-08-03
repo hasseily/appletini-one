@@ -99,9 +99,9 @@ module vtw_core_top (
     input  logic [8:0]              video_line,
     input  logic [6:0]              video_cycle,
 
-    /* Widen the posted-write video window to main $6000-$9FFF. Set by
-     * the PS when it sees SHR interlace armed (second field in main
-     * memory); clear otherwise. */
+    /* PS fallback for the main $6000-$9FFF posted-write window. The core
+     * also tracks aux $9DF8 itself so an accelerated second-field load does
+     * not race the physical capture and CPU1 service path. */
     input  logic                    post_main_wide,
 
     input  globals::AppleBus_read   ab_read,
@@ -388,6 +388,12 @@ module vtw_core_top (
     wire xl_is_bus   = (xl_route == APPLE_ROUTE_BUS);
     wire xl_is_write = !cycle_rw_q;
     wire xl_is_aux   = (xl_decoded[23:16] == 8'd1);
+    /* Paged SHR control lives in aux $9DF8. Track it at the private shadow
+     * write, before the posted copy reaches the physical bus. Waiting for
+     * CPU1 to see that posted byte can lose the start of a fast main-field
+     * load, including its mode magic at $9DFC. */
+    logic shr_post_main_wide_q;
+    wire post_main_wide_eff = post_main_wide | shr_post_main_wide_q;
     /* Posted write-through: video-window writes to main (bank 0) AND base
      * aux (bank 1). The bus cycle carries only the Apple address; the
      * motherboard's own 80STORE/PAGE2/RAMWRT state -- which mirrors the
@@ -400,7 +406,8 @@ module vtw_core_top (
      * aux $2000-$9FFF -- reach the capture/renderer too. */
     wire xl_is_posted = !xl_is_bus && xl_shadow_valid && xl_is_write &&
                         (xl_decoded[23:16] <= 8'd1) &&
-                        vtw_is_video_window(cycle_addr_q, xl_is_aux, post_main_wide);
+                        vtw_is_video_window(cycle_addr_q, xl_is_aux,
+                                            post_main_wide_eff);
 
     /* Synthesized //e status reads ($C011-$C01F). On a real //e the IOU
      * answers these over the bus; an accelerated II+ has no IOU, so the
@@ -967,6 +974,7 @@ module vtw_core_top (
             cycle_video_page2_q  <= 1'b0;
             cycle_video_hires_q  <= 1'b0;
             cycle_video_80store_q <= 1'b0;
+            shr_post_main_wide_q <= 1'b0;
             cnt_core_q          <= '0;
             cnt_invalid_q       <= '0;
             rwc_valid_q         <= 1'b0;
@@ -1054,6 +1062,19 @@ module vtw_core_top (
             end
             if (!ab_read.res) begin
                 c074_q <= 2'd0;
+            end
+
+            /* The write is already translated here, so xl_is_aux names the
+             * actual target bank after RAMWRT/80STORE/PAGE2 routing. Values
+             * 1 and 2 both use a second field in main $2000-$9FFF. */
+            if (!core_res_n) begin
+                shr_post_main_wide_q <= 1'b0;
+            end
+            else if (xstate_q == X_ROUTE && xl_shadow_valid &&
+                     xl_is_write && xl_is_aux &&
+                     cycle_addr_q == 16'h9DF8) begin
+                shr_post_main_wide_q <=
+                    (cycle_wdata_q == 8'd1 || cycle_wdata_q == 8'd2);
             end
 
             // Per-region slowdown one-shot: (re)arm to slow_duration when a

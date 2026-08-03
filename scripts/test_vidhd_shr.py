@@ -160,10 +160,13 @@ def test_renderer_tracks_vidhd_register_state() -> None:
 
     require("static void handle_vidhd_io_record(uint64_t rec)" in source,
             "renderer must handle ordered VidHD I/O records")
-    require("case 0xC022U:\n        s_vidhd_screen_color = data;" in source and
+    require("case 0xC022U:" in source and
+            "s_vidhd_screen_color = data;" in source and
             "case 0xC029U:\n        s_vidhd_newvideo = data;" in source and
-            "case 0xC034U:\n        s_vidhd_border_color =" in source and
-            "case 0xC035U:\n        s_vidhd_shadow = data;" in source,
+            "case 0xC034U:" in source and
+            "s_vidhd_border_color = color;" in source and
+            "case 0xC035U:" in source and
+            "s_vidhd_shadow = data;" in source,
             "renderer must track C022, C029, C034, and C035 state")
     require("if (ace_record_kind(rec) == ACE_RECORD_KIND_IO_WRITE) {\n"
             "        handle_vidhd_io_record(rec);\n"
@@ -186,12 +189,14 @@ def test_renderer_implements_video7_auto_white_mono() -> None:
             "renderer must clock !80COL on exact C05E->C05F AN3 transitions")
     require("const uint8_t video7_auto_mono =\n"
             "        ((user_mono == 0u) &&\n"
+            "         (shr_now == 0u) &&\n"
             "         (apple_video_settings_video7_auto_mono_enabled(settings) != 0u) &&\n"
             "         (s_video7_rgb_mode == 3u)) ? 1u : 0u;" in source and
             "((user_mono != 0u) || (bw_force != 0u) || (video7_auto_mono != 0u)) ? 1u : 0u" in source and
             "((bw_force != 0u) || (video7_auto_mono != 0u)) ?\n"
             "        APPLE_VIDEO_MONO_WHITE" in source,
-            "Video-7 mode 3 must auto-force white mono only when bootmenu mono is off and the toggle is enabled")
+            "Video-7 mode 3 must auto-force white mono only when bootmenu mono is off, "
+            "the toggle is enabled, and C029 SHR is not active")
     require("apple_video_settings_color_mode(settings)" in source and
             "s_render_color_mode = apple_video_settings_color_mode(settings);" in source and
             "video7_auto_mono" in source and
@@ -251,17 +256,23 @@ def test_renderer_implements_applewin_shr_decode() -> None:
     require("static void render_shr_frame_full(void)" in source and
             "for (uint32_t y = 0u; y < SHR_LOGICAL_HEIGHT; ++y)" in source and
             "for (uint32_t x = 0u; x < 40u; ++x)" in source and
-            "render_shr_line(y, y * 2u, 1);" in source,
+            "render_shr_line_to(out, y);" in source and
+            "memcpy(out + SHR_WIDTH, out, SHR_WIDTH * sizeof(uint32_t));" in source,
             "renderer must be able to build a full SHR frame directly from AUX shadow")
-    require("if (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_SHR) {\n"
-            "        render_shr_frame_full();\n    }" in source,
-            "renderer must render the full SHR AUX-shadow frame at frame start")
+    require("if (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_SHR) {" in source and
+            "if (rebuild != 0u) {\n"
+            "            render_shr_frame_full();\n"
+            "            publish_current_frame();" in source,
+            "renderer must render and publish a changed SHR shadow at frame start")
     require("const int shr_frame_marker =\n        shr_active && line == 0u && cycle == 0u;" in source and
             "(s_prev_line >= 200u || (shr_frame_marker && s_render_armed))" in source,
             "renderer must treat sparse SHR markers as frame boundaries")
-    require("if (shr_active) {\n        /* C029 SHR owns the frame geometry and pixel decode while active." in source and
+    require("if (shr_active ||\n"
+            "        s_frame_display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I ||\n"
+            "        s_legacy_flip_q != 0u) {" in source and
             "s_records_in_frame++;\n        return;" in source,
-            "per-record renderer dispatch must bypass legacy NTSC while SHR is active")
+            "per-record renderer dispatch must bypass legacy NTSC while SHR, "
+            "weave, or flip merge is active")
     require("if (was_shr != vidhd_shr_enabled()) {" in source and
             "s_render_armed = 0;" in source and
             "s_frame_end_pending = 0u;" in source and
@@ -269,14 +280,21 @@ def test_renderer_implements_applewin_shr_decode() -> None:
             "apple_pal_video_resync();" in source and
             "g_resync_pending = 1u;" in source,
             "SHR transitions must abandon mixed-geometry frames and resync PAL capture")
-    require("(s_frame_display_mode == APPLE_FB_DISPLAY_MODE_SHR) ?\n"
-            "            1u : apple_pal_video_end_frame();" in source and
-            "if (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_SHR) {\n"
-            "        render_shr_frame_full();\n"
+    require("const uint8_t synthesized =" in source and
+            "s_frame_display_mode == APPLE_FB_DISPLAY_MODE_SHR ||" in source and
+            "s_frame_display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I ||" in source and
+            "synthesized ? 0u : apple_pal_video_end_frame();" in source and
+            "} else if (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I) {\n"
+            "        render_legacy_weave_frame_full();\n"
+            "        publish_current_frame();\n"
+            "    } else if (s_legacy_flip_q != 0u) {\n"
+            "        render_legacy_flip_merge_frame_full();\n"
+            "        publish_current_frame();\n"
             "    } else {\n"
             "        apple_pal_video_begin_frame();\n"
             "    }" in source,
-            "complete SHR frames must bypass the PAL publication gate without changing the saved color mode")
+            "full shadow modes must publish at frame start and never publish "
+            "an untouched writer slot at frame end")
     require("void apple_cycle_renderer_reset_local_video_state(void)" in source and
             "const uint32_t text_sw = SW_BIT(TEXT);" in source and
             "s_current_sw          = text_sw;" in source and
@@ -319,9 +337,15 @@ def test_compositor_and_handoff_are_mode_aware() -> None:
             "display mode metadata must live in the shared OCM handoff block")
     require("#define PUBLISHED_DISPLAY_MODE_SHIFT 8u" in handoff_c and
             "static inline uint32_t handoff_pack_published" in handoff_c and
-            "handoff_pack_published(s_writer_current_slot, normalized_mode, border_color)" in handoff_c and
+            "handoff_pack_published(s_writer_current_slot, normalized_mode," in handoff_c and
             "s_reader_display_mode = handoff_published_mode(published);" in handoff_c,
             "published slot word must carry the display mode atomically with the slot index")
+    require("APPLE_FB_FORMAT_SHR4_320" in handoff_h and
+            "void apple_fb_writer_publish_frame_detail" in handoff_h and
+            "uint32_t apple_fb_reader_format_detail(void);" in handoff_h and
+            "#define PUBLISHED_FORMAT_DETAIL_SHIFT 14u" in handoff_c and
+            "s_reader_format_detail = handoff_published_format_detail(published);" in handoff_c,
+            "published slot word must carry exact format detail with the frame")
 
     require("#define COMP_APPLE_SHR_WIDTH        640u" in layout and
             "#define COMP_APPLE_SHR_HEIGHT       400u" in layout and
@@ -342,6 +366,14 @@ def test_compositor_and_handoff_are_mode_aware() -> None:
             "g_compositor_last_apple_mode" in compositor and
             "const uint32_t display_mode = apple_fb_reader_display_mode();" in compositor,
             "compositor must expose the last claimed Apple slot and mode for hardware diagnostics")
+    badge = compositor[
+        compositor.index("static const char *format_badge_label(void)"):
+        compositor.index("static void draw_format_badge")
+    ]
+    require("apple_fb_reader_format_detail()" in badge and
+            "ACE_MAIN_BANK_ADDR" not in badge and "ACE_AUX_BANK_ADDR" not in badge and
+            '"SHR4 %s %s%s"' in badge and '"SHR-3200 320"' in badge,
+            "badge must use frame-coherent CPU1 metadata and name SHR subformats")
     require("apple_fb_slot" in read(REPO_ROOT / "ps_sources" / "frontend" / "uart_control.h") and
             "apple fb: slot=%lu mode=%s" in read(REPO_ROOT / "ps_sources" / "frontend" / "uart_control.c") and
             "snapshot->apple_fb_mode = g_compositor_last_apple_mode;" in frontend_main,
@@ -353,6 +385,51 @@ def test_compositor_and_handoff_are_mode_aware() -> None:
             "COMP_SUBWIN_SHR_WIDTH" in frontend_main and
             "ui_restore_apple_footprint_if_needed(fb, show_bezel);" in frontend_main,
             "static bezel caching must restore the larger SHR footprint when returning to legacy video")
+
+
+def test_shr_generation_cache() -> None:
+    renderer = read(RENDERER_C)
+    egress = read(EGRESS_C) + read(EGRESS_H)
+
+    require("volatile uint32_t g_shr_shadow_generation = 1U;" in egress and
+            "extern volatile uint32_t g_shr_shadow_generation;" in egress and
+            "(uint16_t)(a & 0xFFFFU) >= 0x2000U" in egress and
+            "(uint16_t)(a & 0xFFFFU) <= 0x9FFFU" in egress and
+            "g_shr_shadow_generation++;" in egress,
+            "egress must advance the SHR generation after each relevant shadow write")
+    require("static uint8_t  s_shr_cache_valid = 0u;" in renderer and
+            "static uint8_t  s_shr_cache_invalidate = 1u;" in renderer and
+            "static uint32_t s_shr_cache_generation = 0u;" in renderer,
+            "renderer must track cache validity, non-memory changes, and generation")
+    require("generation != s_shr_cache_generation" in renderer and
+            "render_shr_frame_full();\n"
+            "            publish_current_frame();\n"
+            "            s_shr_cache_generation = g_shr_shadow_generation;" in renderer and
+            "g_acr_shr_cache_rebuilds++;" in renderer and
+            "g_acr_shr_frames_skipped++;" in renderer,
+            "changed SHR frames must publish at once and static frames must skip work")
+    require("s_shr_cache_invalidate = 1u;" in
+            renderer[renderer.index("static void apply_video_rom_if_changed"):
+                     renderer.index("static void apply_video_settings_if_changed")] and
+            "s_shr_cache_invalidate = 1u;" in
+            renderer[renderer.index("static void apply_video_settings_if_changed"):
+                     renderer.index("void apple_cycle_renderer_reset_local_video_state")] and
+            "s_shr_cache_valid     = 0u;" in
+            renderer[renderer.index("void apple_cycle_renderer_reset_local_video_state"):
+                     renderer.index("static void handle_video7_softswitch_record")] and
+            "s_shr_cache_valid = 0u;" in
+            renderer[renderer.index("static void shr_mode_switch_resync"):
+                     renderer.index("volatile uint32_t g_acr_shr_mode_resyncs")],
+            "ROM, settings, reset, and mode resync must invalidate cached SHR")
+    require("const uint8_t frame_ready =\n"
+            "        synthesized ? 0u : apple_pal_video_end_frame();" in renderer,
+            "frame end must not publish a stale synthesized writer slot")
+    marker = renderer[
+        renderer.index("if (shr_frame_marker) {"):
+        renderer.index("} else {", renderer.index("if (shr_frame_marker) {"))
+    ]
+    require("on_frame_end();" in marker and "on_frame_start();" in marker,
+            "each SHR marker must close the frame and run the cache decision")
 
 
 def test_core1_resets_local_video_state_on_apple_reset() -> None:
@@ -524,14 +601,19 @@ def test_shr_interlace() -> None:
     core = (REPO_ROOT / "hdl" / "apple" /
             "vtw_core_top.sv").read_text(encoding="utf-8")
 
-    # Only interlace is honored. Mode 2 previously alternated whole frames,
-    # which was too flickery; paired fields need a future merge renderer.
-    require("if (paged == 1u) s_shr_interlace_mode = 1u;" in src and
-            "paged == 2u" not in src and
+    # Paged type 1 = interlace weave; type 2 = page flip, which below
+    # 120 Hz output MERGES both fields 50/50 per frame (the old
+    # frame-alternation approach was too flickery and stays banned).
+    require("if (paged == 1u) {" in src and
+            "s_shr_interlace_mode = 1u;" in src and
+            "} else if (paged == 2u) {" in src and
+            "flip_merge = 1u;" in src and
+            "bgra_avg(s_shr_merge_row_a[x]," in src and
             "s_shr_flip_parity" not in src,
-            "renderer must accept interlace without page flipping")
+            "renderer must weave interlace and merge page flips, never alternate")
     # Interlace: odd rows come from the main field, each field re-evaluated.
-    require("render_shr_line(y, y * 2u + field, 0)" in src and
+    require("render_shr_line_to(\n"
+            "                    &g_atn_framebuffer[(y * 2u + field) * SHR_WIDTH], y);" in src and
             "shr_eval_field_modes(field ? g_main_bank : g_aux_bank);" in src,
             "interlace must render both fields with per-field mode state")
     # CPU1 -> PL handshake, write-on-change.
@@ -544,6 +626,13 @@ def test_shr_interlace() -> None:
     require("wide_main" in engine and
             "post_main_wide" in core,
             "the widened window must reach the posting classifier")
+    require("logic shr_post_main_wide_q;" in core and
+            "wire post_main_wide_eff = post_main_wide | shr_post_main_wide_q;" in core and
+            "cycle_addr_q == 16'h9DF8" in core and
+            "xl_is_write && xl_is_aux" in core and
+            "cycle_wdata_q == 8'd1 || cycle_wdata_q == 8'd2" in core and
+            "post_main_wide_eff" in core,
+            "vTW must widen from its private aux $9DF8 write before CPU1 sees the post")
 
 
 def test_shr4_640_mode() -> None:
@@ -556,7 +645,7 @@ def test_shr4_640_mode() -> None:
             "640-mode pixels are 2 bits each, leftmost in the high bits")
     require("(bank[a] >> (6 - 2 * (px & 3))) & 0x03u" in src,
             "640 RGGB samples extract the raw 2-bit value at 640 res")
-    require("shr4_rggb_pixel_at(px, (int32_t)s_f_out_row, 1)" in src,
+    require("shr4_rggb_pixel_lookup(px, (int32_t)s_f_out_row, 1)" in src,
             "640 RGGB must demosaic in 640-space with 2-bit samples")
     require("shr4_render_cell_640(row, y, x, palette_base);" in src,
             "render_shr_line must dispatch 640-mode SCBs to the SHR4 "
@@ -620,7 +709,7 @@ def test_page_flip_removed() -> None:
                      "s_shr_flip_parity"):
         require(obsolete not in combined,
                 f"obsolete page-flip path remains: {obsolete}")
-    require("CONFIG_VIDEO_ITEM_COUNT        12U" in menu_internal,
+    require("CONFIG_VIDEO_ITEM_COUNT        15U" in menu_internal,
             "Video menu must end at the debugging row")
 
 
@@ -633,6 +722,7 @@ TESTS = [
     test_renderer_implements_applewin_shr_decode,
     test_bezel_lists_c029_shr_softswitch,
     test_compositor_and_handoff_are_mode_aware,
+    test_shr_generation_cache,
     test_core1_resets_local_video_state_on_apple_reset,
     test_no_vidhd_identity_and_slot_layout,
     test_shr4_extended_modes,

@@ -88,6 +88,11 @@ vitis_workspace/
 # Miscellaneous
 # =============================================================================
 
+tmp/
+
+# Generated demo-viewer source (build_appletini_demo_disk.py)
+software/a2imgview_demo.a65
+
 # Local agent/tool state
 .claude/settings.local.json
 .codex_tmp/

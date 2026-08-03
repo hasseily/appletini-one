@@ -819,6 +819,14 @@ def create_and_build_app(name, src_subdir, domain="standalone_ps7_cortexa9_0"):
             "Link frontend_core1 against libm",
             lambda: ensure_userconfig_library("frontend_core1", "m"),
         )
+        # The SHR4 RGGB demosaic has a NEON row path (vld1q/vmlaq);
+        # without -mfpu=neon it falls back to the scalar per-pixel
+        # filter, which cannot keep animated RGGB content at frame
+        # rate.
+        run_step(
+            "Enable NEON on frontend_core1 (RGGB demosaic row path)",
+            lambda: set_userconfig_mfpu("frontend_core1", "-mfpu=neon"),
+        )
     run_step(f"Build app {name}", lambda: comp.build())
     return comp
 

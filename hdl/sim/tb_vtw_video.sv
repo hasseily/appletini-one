@@ -8,9 +8,10 @@
 //     the posted-write rate:
 //        - AUX $9D00  -> posts  (in the extended aux window)
 //        - AUX $B000  -> no post (above the $9FFF ceiling)
-//        - MAIN $9D00 -> no post (main window still ends at $5FFF)
-//     The last two prove the window stays bank-aware (main RAM above $5FFF
-//     is not spuriously echoed to the bus).
+//        - MAIN $9D00 -> no post until aux $9DF8 arms paged SHR
+//        - AUX $9DF8=1, then MAIN $9D00 -> posts immediately
+//     These prove the window stays bank-aware and that the private ctrl-byte
+//     tracker does not wait for the posted byte to cross the physical bus.
 //
 //  2. Synthesized //e status reads. After RAMRD on ($C003), reading RDRAMRD
 //     ($C013) must return bit7=1 without a bus cycle; the program stores the
@@ -186,6 +187,30 @@ module tb_vtw_video;
         for (int i = 0; i < 512; i++) sh_write(18'(i), 8'h00);
     endtask
 
+    // Arm paged SHR in AUX $9DF8, return writes to MAIN, then hammer main
+    // $9D00. clear_after_arm verifies that a later ctrl zero narrows again.
+    task automatic load_paged_main_hammer(input bit clear_after_arm);
+        logic [17:0] p;
+        p = PROG;
+        sh_write(p,         8'hA9); sh_write(p+18'd1,  8'h01);             // LDA #1
+        sh_write(p+18'd2,   8'h8D); sh_write(p+18'd3,  8'h05); sh_write(p+18'd4,  8'hC0);
+        sh_write(p+18'd5,   8'h8D); sh_write(p+18'd6,  8'hF8); sh_write(p+18'd7,  8'h9D);
+        if (clear_after_arm) begin
+            sh_write(p+18'd8,  8'hA9); sh_write(p+18'd9,  8'h00);         // LDA #0
+            sh_write(p+18'd10, 8'h8D); sh_write(p+18'd11, 8'hF8); sh_write(p+18'd12, 8'h9D);
+        end else begin
+            sh_write(p+18'd8,  8'hEA); sh_write(p+18'd9,  8'hEA);
+            sh_write(p+18'd10, 8'hEA); sh_write(p+18'd11, 8'hEA); sh_write(p+18'd12, 8'hEA);
+        end
+        sh_write(p+18'd13, 8'h8D); sh_write(p+18'd14, 8'h04); sh_write(p+18'd15, 8'hC0);
+        sh_write(p+18'd16, 8'h8D); sh_write(p+18'd17, 8'h00); sh_write(p+18'd18, 8'h9D);
+        sh_write(p+18'd19, 8'hEA); sh_write(p+18'd20, 8'hEA);
+        sh_write(p+18'd21, 8'h4C); sh_write(p+18'd22, 8'h10); sh_write(p+18'd23, 8'hF0);
+        sh_write(ROM_BASE + 18'h3FFC, 8'h00);
+        sh_write(ROM_BASE + 18'h3FFD, 8'hF0);
+        for (int i = 0; i < 512; i++) sh_write(18'(i), 8'h00);
+    endtask
+
     // Status probe: STA $C0<switch>; LDA $C0<status>; STA $0300; spin.
     task automatic load_status_probe(input logic [7:0] switch_lo,
                                      input logic [7:0] status_lo);
@@ -256,6 +281,7 @@ module tb_vtw_video;
 
     localparam int WINDOW = 300;   // Apple cycles per measurement
     int posts_aux_shr, posts_aux_hi, posts_main_shr;
+    int posts_main_paged, posts_main_cleared;
 
     task automatic measure_posts(output int delta);
         int a;
@@ -289,6 +315,20 @@ module tb_vtw_video;
         check(posts_aux_shr >= 5 * (posts_aux_hi + 1),
               $sformatf("SHR aux window clearly distinct (shr=%0d hi=%0d)",
                         posts_aux_shr, posts_aux_hi));
+
+        // ---- 1d. AUX $9DF8=1 must widen MAIN before physical posting ----
+        boot();  load_paged_main_hammer(1'b0);  go();
+        measure_posts(posts_main_paged);
+        check(posts_main_paged > WINDOW / 4,
+              $sformatf("aux $9DF8=1 immediately widens main (%0d)",
+                        posts_main_paged));
+
+        // ---- 1e. AUX $9DF8=0 must narrow MAIN again ----
+        boot();  load_paged_main_hammer(1'b1);  go();
+        measure_posts(posts_main_cleared);
+        check(posts_main_cleared < WINDOW / 20,
+              $sformatf("aux $9DF8=0 narrows main again (%0d)",
+                        posts_main_cleared));
 
         // ---- 2. Status read: RAMRD on -> RDRAMRD ($C013) bit7 = 1 ----
         boot();  load_status_probe(8'h03, 8'h13);  go();

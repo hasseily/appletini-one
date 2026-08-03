@@ -10,12 +10,11 @@
  * signal-bit register) inside appletini_ntsc.c globals.
  *
  * The renderer writes 616x224 Apple border-ring frames or 640x400 SHR
- * frames into comp_apple_slot_addr[] (see compositor_layout.h). On every clean
- * Apple frame edge it publishes the just-finished slot via the
- * atomic 3-slot handoff in apple_fb_handoff.[ch]. The compositor
- * claims the freshest published slot whenever it composes an output
- * frame; the handoff guarantees writer/reader ownership cannot
- * collide so no tearing is possible.
+ * frames into comp_apple_slot_addr[] (see compositor_layout.h). It publishes
+ * completed frames through the atomic 3-slot handoff in apple_fb_handoff.[ch].
+ * Static SHR shadows reuse the last published slot. The compositor claims the
+ * freshest slot whenever it composes an output frame; writer and reader slots
+ * cannot collide.
  *
  * License: GPLv2 (inherited from AppleWin).
  */
@@ -63,11 +62,15 @@ void apple_cycle_renderer_on_next_record(uint64_t rec);
 void apple_cycle_renderer_on_record(uint64_t rec);
 
 /* Compositor reads the published Apple frame via apple_fb_reader_claim()
- * (see apple_fb_handoff.h). The renderer publishes via
- * apple_fb_writer_publish() at on_frame_end. Frame indices and the
- * "fresh frame waiting" flag live in a single 32-bit atomic word so the
- * Apple-frame and DVI-frame rates can run independently with frame
- * skip / frame hold semantics. */
+ * (see apple_fb_handoff.h). Normal legacy video publishes at frame end.
+ * Full shadow renders, such as SHR and legacy interlace, publish as soon as
+ * that render finishes at frame start. Frame indices and the "fresh frame
+ * waiting" flag live in one 32-bit atomic word. */
+
+/* Diagnostic: print one UART0 line with the A2Li hole bytes, gate
+ * inputs, and last frame mode, from CPU1's coherent shadow view.
+ * Triggered by the CPU0 console command "shadow a2li". */
+void apple_cycle_renderer_debug_a2li_line(void);
 
 /* Diagnostic counters (read-only from outside this module). */
 extern volatile uint32_t g_acr_frames_complete;
@@ -78,6 +81,9 @@ extern volatile uint32_t g_acr_unknown_modes;
 /* Frames rendered with the SHR4 extended decode active (magic at aux
  * $9DFC). Climbing = software is using SDD-style SHR4 modes. */
 extern volatile uint32_t g_acr_shr4_frames;
+/* Static SHR frame markers skipped and changed SHR frames rebuilt. */
+extern volatile uint32_t g_acr_shr_frames_skipped;
+extern volatile uint32_t g_acr_shr_cache_rebuilds;
 extern volatile uint32_t g_acr_frame_edges_seen;
 extern volatile uint32_t g_acr_last_frame_records;
 

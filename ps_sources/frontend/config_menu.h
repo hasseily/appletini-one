@@ -56,6 +56,12 @@ typedef struct {
     uint8_t (*get_scanlines)(void *ctx);
     void (*set_video_ghosting)(void *ctx, uint8_t strength);
     uint8_t (*get_video_ghosting)(void *ctx);
+    void (*set_video_blur)(void *ctx, uint8_t strength);
+    uint8_t (*get_video_blur)(void *ctx);
+    void (*set_video_glow)(void *ctx, uint8_t strength);
+    uint8_t (*get_video_glow)(void *ctx);
+    void (*set_format_badge)(void *ctx, uint8_t enabled);
+    uint8_t (*get_format_badge)(void *ctx);
     void (*set_border)(void *ctx, uint8_t enabled, uint8_t color, uint8_t flood);
     uint8_t (*get_border_enabled)(void *ctx);
     uint8_t (*get_border_color)(void *ctx);
@@ -141,6 +147,9 @@ typedef struct {
     uint8_t video_color_mode;
     uint8_t video7_auto_mono_enabled;
     uint8_t video_ghosting_strength;
+    uint8_t video_blur_strength;
+    uint8_t video_glow_strength;
+    uint8_t format_badge_enabled;
     uint8_t border_enabled;
     uint8_t border_color;
     uint8_t border_flood;

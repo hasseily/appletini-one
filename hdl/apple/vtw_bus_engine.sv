@@ -48,9 +48,9 @@ package vtw_pkg;
     function automatic logic vtw_is_video_window(input logic [15:0] addr,
                                                  input logic is_aux,
                                                  input logic wide_main);
-        // wide_main: the PS saw SHR interlace armed (second field in MAIN
-        // $2000-$9FFF) and widened the main window via CARD_CTRL so the
-        // capture sees that field too. Off by default: main $6000+
+        // wide_main: paged SHR is armed (second field in MAIN
+        // $2000-$9FFF), either from the core's direct aux-$9DF8 tracker or
+        // the PS CARD_CTRL fallback. Off by default: main $6000+
         // is program space and posting it would flood the write queue.
         return (addr[15:10] == 6'b000001) ||           // $0400-$07FF text
                (addr[15:10] == 6'b000010) ||           // $0800-$0BFF text

@@ -64,6 +64,25 @@ void compositor_set_scanlines(uint8_t mode);
 void compositor_set_video_ghosting(uint8_t strength);
 uint8_t compositor_video_ghosting(void);
 
+/* Apple subwindow phosphor blur (spatial softening) strength. Display-only:
+ * it shapes what is emitted to the framebuffer and never feeds back into the
+ * ghosting history, so persistence and blur compose independently. */
+void compositor_set_video_blur(uint8_t strength);
+uint8_t compositor_video_blur(void);
+
+/* Apple subwindow phosphor glow (additive halo) strength. Independent of
+ * blur, SDD-style: a scaled tent-filtered copy is saturating-added on top
+ * of the (sharp or blurred) base, so brights bleed light without softening
+ * the underlying image. Display-only like blur. */
+void compositor_set_video_glow(uint8_t strength);
+uint8_t compositor_video_glow(void);
+
+/* Corner overlay naming the current Apple video format (HGR, DHGR,
+ * SHR4, 3200, ...). Derived per frame from the PL soft-switch state
+ * and the aux shadow's in-band SDD bytes. */
+void compositor_set_format_badge(uint8_t enabled);
+uint8_t compositor_format_badge(void);
+
 /* IIgs-style border ring and optional outer flood. */
 void compositor_set_border(uint8_t enabled, uint8_t flood);
 

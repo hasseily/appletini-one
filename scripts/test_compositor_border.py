@@ -49,7 +49,7 @@ def test_frame_coherent_color() -> None:
     require("void apple_fb_writer_publish_frame(uint32_t display_mode, uint8_t border_color);" in header and
             "uint8_t apple_fb_reader_border_color(void);" in header,
             "handoff API must publish and claim a frame-coherent border color")
-    require("#define PUBLISHED_BORDER_COLOR_SHIFT 9u" in source and
+    require("#define PUBLISHED_BORDER_COLOR_SHIFT 10u" in source and
             "handoff_published_border_color(published)" in source and
             "s_reader_border_color = handoff_published_border_color(published);" in source,
             "border nibble must share the atomic published-frame word")

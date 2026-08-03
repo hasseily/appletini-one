@@ -7,7 +7,9 @@
 #include "apple_fb_handoff.h"
 #include "card_control_regs.h"
 #include "scanlines.h"
+#include "video_blur.h"
 #include "video_ghosting.h"
+#include "video_glow.h"
 #include "video_output.h"
 
 #define HUD_TEXT_SCALE_X 1
@@ -569,8 +571,10 @@ static void draw_video(uint16_t *fb, const debug_overlay_snapshot_t *s)
     line(fb, x, y, w, 3U, text, HUD_MUTED);
     (void)snprintf(text,
                    sizeof(text),
-                   "Ghosting %s",
-                   appletini_video_ghosting_name(s->video_ghosting_strength));
+                   "Ghost %s Blur %s Glow %s",
+                   appletini_video_ghosting_name(s->video_ghosting_strength),
+                   appletini_video_blur_name(s->video_blur_strength),
+                   appletini_video_glow_name(s->video_glow_strength));
     line(fb, x, y, w, 4U, text, HUD_MUTED);
     (void)snprintf(text,
                    sizeof(text),

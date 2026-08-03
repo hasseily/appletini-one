@@ -42,7 +42,9 @@
 #include "usb_storage_backend.h"
 #include "usb_storage_service.h"
 #include "usb_sdd_service.h"
+#include "video_blur.h"
 #include "video_ghosting.h"
+#include "video_glow.h"
 #include "no_slot_clock_control.h"
 #include "gic_init.h"
 #include "apple_cycle_egress.h"
@@ -192,6 +194,9 @@ static void ui_invalidate_static_backgrounds(void);
 static psram_ui_state_t g_psram = {0};
 static uint8_t g_scanlines_mode_shadow = APPLETINI_SCANLINES_OFF;
 static uint8_t g_video_ghosting_shadow = APPLETINI_VIDEO_GHOSTING_OFF;
+static uint8_t g_video_blur_shadow = APPLETINI_VIDEO_BLUR_OFF;
+static uint8_t g_video_glow_shadow = APPLETINI_VIDEO_GLOW_OFF;
+static uint8_t g_format_badge_shadow = 0u;
 static uint8_t g_text_mono_fg_color_shadow = 0U;
 static uint8_t g_text_mono_bg_color_shadow = 0U;
 static uint8_t g_display_mono_enable_shadow = 0U;
@@ -386,6 +391,27 @@ static void    video_ghosting_set(uint8_t strength)
 {
     g_video_ghosting_shadow = appletini_video_ghosting_clamp(strength);
     compositor_set_video_ghosting(g_video_ghosting_shadow);
+}
+
+static uint8_t video_blur_get(void) { return g_video_blur_shadow; }
+static void    video_blur_set(uint8_t strength)
+{
+    g_video_blur_shadow = appletini_video_blur_clamp(strength);
+    compositor_set_video_blur(g_video_blur_shadow);
+}
+
+static uint8_t video_glow_get(void) { return g_video_glow_shadow; }
+static void    video_glow_set(uint8_t strength)
+{
+    g_video_glow_shadow = appletini_video_glow_clamp(strength);
+    compositor_set_video_glow(g_video_glow_shadow);
+}
+
+static uint8_t format_badge_get(void) { return g_format_badge_shadow; }
+static void    format_badge_set(uint8_t enabled)
+{
+    g_format_badge_shadow = (enabled != 0u) ? 1u : 0u;
+    compositor_set_format_badge(g_format_badge_shadow);
 }
 
 static void border_set(uint8_t enabled, uint8_t color, uint8_t flood)
@@ -682,6 +708,24 @@ static void control_set_video_ghosting(void *ctx, uint8_t strength)
 {
     (void)ctx;
     video_ghosting_set(strength);
+}
+
+static void control_set_video_blur(void *ctx, uint8_t strength)
+{
+    (void)ctx;
+    video_blur_set(strength);
+}
+
+static void control_set_video_glow(void *ctx, uint8_t strength)
+{
+    (void)ctx;
+    video_glow_set(strength);
+}
+
+static void control_set_format_badge(void *ctx, uint8_t enabled)
+{
+    (void)ctx;
+    format_badge_set(enabled);
 }
 
 static uint32_t card_control_normalize_slot_mask(uint32_t slot_mask)
@@ -998,6 +1042,24 @@ static uint8_t menu_platform_get_video_ghosting(void *ctx)
 {
     (void)ctx;
     return video_ghosting_get();
+}
+
+static uint8_t menu_platform_get_video_blur(void *ctx)
+{
+    (void)ctx;
+    return video_blur_get();
+}
+
+static uint8_t menu_platform_get_video_glow(void *ctx)
+{
+    (void)ctx;
+    return video_glow_get();
+}
+
+static uint8_t menu_platform_get_format_badge(void *ctx)
+{
+    (void)ctx;
+    return format_badge_get();
 }
 
 static void menu_platform_set_border(void *ctx,
@@ -2196,6 +2258,8 @@ static void ui_collect_debug_overlay_snapshot(debug_overlay_snapshot_t *snapshot
     snapshot->video_color_mode = video_color_mode_get();
     snapshot->video7_auto_mono = video7_auto_mono_enable_get();
     snapshot->video_ghosting_strength = video_ghosting_get();
+    snapshot->video_blur_strength = video_blur_get();
+    snapshot->video_glow_strength = video_glow_get();
 
     snapshot->compositor_frames_published = g_compositor_frames_published;
     snapshot->compositor_frames_skipped = g_compositor_frames_skipped;
@@ -2742,6 +2806,12 @@ int main(void)
         menu_platform.get_scanlines = menu_platform_get_scanlines;
         menu_platform.set_video_ghosting = control_set_video_ghosting;
         menu_platform.get_video_ghosting = menu_platform_get_video_ghosting;
+        menu_platform.set_video_blur = control_set_video_blur;
+        menu_platform.get_video_blur = menu_platform_get_video_blur;
+        menu_platform.set_video_glow = control_set_video_glow;
+        menu_platform.get_video_glow = menu_platform_get_video_glow;
+        menu_platform.set_format_badge = control_set_format_badge;
+        menu_platform.get_format_badge = menu_platform_get_format_badge;
         menu_platform.set_border = menu_platform_set_border;
         menu_platform.get_border_enabled = menu_platform_get_border_enabled;
         menu_platform.get_border_color = menu_platform_get_border_color;
@@ -2870,6 +2940,9 @@ int main(void)
     }
     control_set_scanlines(NULL, config_menu.scanlines_mode);
     control_set_video_ghosting(NULL, config_menu.video_ghosting_strength);
+    control_set_video_blur(NULL, config_menu.video_blur_strength);
+    control_set_video_glow(NULL, config_menu.video_glow_strength);
+    control_set_format_badge(NULL, config_menu.format_badge_enabled);
 
     if (gic_ready == 0U) {
         uart_puts(UART0_BASE, "SmartPort service: skipped (GIC unavailable)\r\n");

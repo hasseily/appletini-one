@@ -237,6 +237,13 @@ extern volatile uint8_t  *const g_main_bank;       /* 64 KB at 0x3F100000 */
 extern volatile uint8_t  *const g_aux_bank;        /* 64 KB at 0x3F110000 */
 extern volatile uint32_t g_resync_pending;
 
+/* Advances after each captured write to $2000-$9FFF in either shadow bank.
+ * This range covers SHR pixels, SCBs, palettes, control bytes, and mode magic
+ * used by current image formats. The renderer records the generation after a
+ * full decode and can then skip unchanged SHR frames. Egress and rendering run
+ * on CPU1, so this counter needs no cross-core lock. */
+extern volatile uint32_t g_shr_shadow_generation;
+
 /* --- Diagnostic counters ----------------------------------------------- */
 extern volatile uint32_t g_records_processed;
 extern volatile uint32_t g_gap_markers_seen;

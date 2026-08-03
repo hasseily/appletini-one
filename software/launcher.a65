@@ -8,7 +8,7 @@
 ;
 ; Loads at $4000: HGR page 1 ($2000-$3FFF) is the framebuffer.
 ;
-; Keys: Up/Down or Left/Right move, 1-8 jump, RETURN launches, ESC quits.
+; Keys: Up/Down or Left/Right move, 1-9 jump, RETURN launches, ESC quits.
 ;
 ; Assemble:  acme -f plain -o LAUNCHER launcher.a65
 
@@ -183,7 +183,7 @@ draw_screen:
     lda #>msg_missing
     sta STRPTR + 1
 ++  jsr print_at
-    ; the eight items
+    ; the menu items
     ldx #0
 -   txa
     pha
@@ -495,7 +495,7 @@ item_hi:
     !byte >item4, >item5, >item6, >item7
     !byte >item8
 
-item0: !text "1  The Impossible ][+", 0
+item0: !text "1  New Image Modes", 0
 item1: !text "2  Speed Race: 1 MHz vs Warp", 0
 item2: !text "3  Raster Bars", 0
 item3: !text "4  Mandelbrot (BASIC)", 0
@@ -514,8 +514,8 @@ desc_hi:
     !byte >d4a, >d4b, >d5a, >d5b, >d6a, >d6b, >d7a, >d7b
     !byte >d8a, >d8b
 
-d0a: !text "Speech, stereo music, warp speed and", 0
-d0b: !text "8MB of RAM. One self-running show.", 0
+d0a: !text "A slideshow of HGR, DHGR, SHR4 and", 0
+d0b: !text "3200 art, interlaced modes included.", 0
 d1a: !text "The same fractal at 1 MHz, then at", 0
 d1b: !text "full warp. Live frame timing.", 0
 d2a: !text "Cycle-exact border colors, even when", 0

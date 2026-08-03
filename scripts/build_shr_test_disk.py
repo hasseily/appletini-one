@@ -24,8 +24,8 @@ REPO = Path(__file__).resolve().parents[1]
 SOFTWARE = REPO / "software"
 IMAGES = SOFTWARE / "shr_testimages"
 PRODOS_MASTER = SOFTWARE / "ProDOS_2_4_3.po"
-VIEWER_SRC = SOFTWARE / "shrview.a65"
-VIEWER_APP = SOFTWARE / "shrview.bin"
+VIEWER_SRC = SOFTWARE / "a2imgview.a65"
+VIEWER_APP = SOFTWARE / "a2imgview.bin"
 OUTPUT = SOFTWARE / "SHR_Test.po"
 TEMP_OUTPUT = SOFTWARE / "SHR_Test.tmp.po"
 VOLUME = "SHR.TEST"
@@ -36,7 +36,7 @@ ACME_EXE = os.environ.get("ACME_EXE", r"C:\Users\hasse\tools\acme\acme.exe")
 ACME_LIB = os.environ.get("ACME", r"C:\Users\hasse\tools\acme\ACME_Lib")
 
 # (disk name, source file, expected size, expected paged mode) -- names
-# must match the viewer's embedded table in shrview.a65.
+# must match the viewer's embedded table in a2imgview.a65.
 IMAGE_FILES = (
     ("BEACH.3200", "beach.3200", 39168, 0),
     ("EYE320.A", "eye320a.shr4", 32768, 0),

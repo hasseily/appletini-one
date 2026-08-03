@@ -14,19 +14,29 @@
  * guard pixels for shifted NTSC writes. Slot ownership is
  * managed by the atomic 3-slot handoff in apple_fb_handoff.[ch] so
  * the renderer (writer) and compositor (reader) can run at independent
- * frame rates: writer-faster-than-reader silently drops frames, reader
- * -faster-than-writer holds the last good frame. At the start of each
- * Apple frame on_frame_start() reads the writer-slot index from the
- * handoff and points the NTSC core's framebuffer at it; on frame end
- * it flushes the slot and calls apple_fb_writer_publish() which atomic-
- * ally promotes the slot to idle and rotates the writer to the freed
- * slot.
+ * frame rates: writer-faster-than-reader silently drops frames, while a
+ * faster reader holds the last good frame. Normal legacy video publishes
+ * at frame end. Full shadow renders publish when their frame is complete;
+ * unchanged SHR shadows keep the last published slot without a new decode.
  *
  * License: GPLv2 (inherited from AppleWin).
  */
 
 #include <stdint.h>
 #include <string.h>
+
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
+
+/* Data barrier before the publish CAS. Compiles away on the host
+ * regression harness (scripts/host_render_harness), which executes
+ * this file single-threaded on x86. */
+#if defined(__GNUC__) && defined(__arm__)
+#define ACR_DSB() __asm__ volatile ("dsb sy")
+#else
+#define ACR_DSB() ((void)0)
+#endif
 
 #include "xil_cache.h"
 #include "xil_mmu.h"
@@ -119,6 +129,7 @@ static uint8_t s_video7_rgb_flags = 0u;
 static uint8_t s_video7_rgb_mode = 0u;
 static uint8_t s_video7_prev_an3_addr = 0u;
 static uint8_t s_video7_rgb_mode_seen = 0xFFu;
+static uint8_t s_shr_mono_gate_seen = 0xFFu;
 
 /*
  * PL timestamps are locked to the motherboard-visible VBL edge. The clean
@@ -185,6 +196,17 @@ static uint8_t  s_vidhd_shadow = 0u;
 static uint8_t  s_vidhd_bw_force_seen = 0xFFu;
 static uint32_t s_frame_display_mode = APPLE_FB_DISPLAY_MODE_LEGACY;
 static uint32_t s_previous_frame_display_mode = APPLE_FB_DISPLAY_MODE_LEGACY;
+static uint32_t s_frame_format_detail = APPLE_FB_FORMAT_UNKNOWN;
+
+/* SHR decode cache. Full RGGB decode can take longer than one Apple frame.
+ * A captured shadow write advances g_shr_shadow_generation. Static frames
+ * therefore keep the last published slot without decoding or publishing a
+ * duplicate. A rebuild publishes at once, on the same frame marker. */
+static uint8_t  s_shr_cache_valid = 0u;
+static uint8_t  s_shr_cache_invalidate = 1u;
+static uint32_t s_shr_cache_generation = 0u;
+volatile uint32_t g_acr_shr_frames_skipped = 0u;
+volatile uint32_t g_acr_shr_cache_rebuilds = 0u;
 
 static uint32_t s_left_border_colors[ATN_BORDER_H_CYCLES];
 
@@ -1236,11 +1258,63 @@ static uint16_t s_shr3200_pal_start;   /* base of 200 x 32-byte palettes */
 static const volatile uint8_t *s_f_bank;   /* current field's pixel bank */
 static uint8_t  s_shr_interlace_mode;  /* SDD $9DF8 interlace enabled */
 static uint8_t  s_shr_interlaced;      /* rendering an interlaced frame  */
+/* Format facts gathered from the exact pixels rendered into this frame.
+ * They become frame-coherent badge metadata in the OCM handoff. */
+static uint8_t  s_shr_badge_family_mask;   /* 1=SHR, 2=SHR4, 4=3200 */
+static uint8_t  s_shr_badge_geometry_mask; /* 1=320, 2=640 */
+static uint8_t  s_shr_badge_selector_mask; /* SHR4 selector bits 0..3 */
 static uint32_t s_f_out_row;           /* output row of the line in flight */
 static uint8_t  s_post_wide_last = 0xFFu;
 
 /* Diagnostic: frames rendered with any SHR4/3200 mode active. */
 volatile uint32_t g_acr_shr4_frames = 0u;
+
+static void shr_badge_begin(void)
+{
+    s_shr_badge_family_mask = 0u;
+    s_shr_badge_geometry_mask = 0u;
+    s_shr_badge_selector_mask = 0u;
+}
+
+static uint32_t shr_badge_detail(uint8_t page_mode)
+{
+    uint32_t base;
+
+    switch (s_shr_badge_family_mask) {
+    case 1u:
+        base = (s_shr_badge_geometry_mask == 1u) ? APPLE_FB_FORMAT_SHR_320 :
+               (s_shr_badge_geometry_mask == 2u) ? APPLE_FB_FORMAT_SHR_640 :
+                                                   APPLE_FB_FORMAT_SHR_MIXED;
+        break;
+    case 2u:
+        base = (s_shr_badge_geometry_mask == 1u) ? APPLE_FB_FORMAT_SHR4_320 :
+               (s_shr_badge_geometry_mask == 2u) ? APPLE_FB_FORMAT_SHR4_640 :
+                                                   APPLE_FB_FORMAT_SHR4_MIXED;
+        break;
+    case 4u:
+        base = (s_shr_badge_geometry_mask == 1u) ? APPLE_FB_FORMAT_SHR3200_320 :
+               (s_shr_badge_geometry_mask == 2u) ? APPLE_FB_FORMAT_SHR3200_640 :
+                                                   APPLE_FB_FORMAT_SHR3200_MIXED;
+        break;
+    default:
+        base = APPLE_FB_FORMAT_SHR_EXT_MIXED;
+        break;
+    }
+
+    return APPLE_FB_FORMAT_DETAIL(base, s_shr_badge_selector_mask,
+                                  page_mode);
+}
+
+static inline void shr_badge_note_selector(uint8_t selector)
+{
+    if (selector <= 3u) {
+        s_shr_badge_selector_mask |= (uint8_t)(1u << selector);
+    } else {
+        /* Unknown values render through the standard fallback. Mark all
+         * selectors so the badge says MIXED instead of making a false claim. */
+        s_shr_badge_selector_mask = 0x0Fu;
+    }
+}
 
 static inline int shr4_magic_present(const volatile uint8_t *bank) {
     return bank[SHR_MAGIC_ADDR + 0u] == 0xD3u &&   /* 'S' | $80 */
@@ -1320,7 +1394,10 @@ static const int8_t k_rggb_rb[13]  = { -3,  4,  0,  4,
 
 /* max_sample is 15 in 320 mode, 3 in 640 mode; the divisor follows the
  * shader's "filter gives x8" normalization (doubled weights -> x16). */
-static uint32_t shr4_rggb_filter(const int32_t *s, const int8_t *w,
+/* Scalar reference; the NEON row path below is bit-exact to it and is
+ * used instead whenever __ARM_NEON is available. */
+static uint32_t __attribute__((unused))
+shr4_rggb_filter(const int32_t *s, const int8_t *w,
                                  int32_t max_sample) {
     int32_t acc = 0;
     for (int i = 0; i < 13; ++i) acc += s[i] * (int32_t)w[i];
@@ -1332,7 +1409,8 @@ static uint32_t shr4_rggb_filter(const int32_t *s, const int8_t *w,
 
 /* Demosaic one pixel in 320- or 640-space. Bayer cell: (even x, even  */
 /* y) = R, (odd x, even y) = G, (even x, odd y) = G, (odd x, odd y) = B.*/
-static uint32_t shr4_rggb_pixel_at(int32_t px, int32_t py, int is640) {
+static uint32_t __attribute__((unused))
+shr4_rggb_pixel_at(int32_t px, int32_t py, int is640) {
     int32_t (*const sample)(int32_t, int32_t) =
         is640 ? shr4_rggb_sample640 : shr4_rggb_sample;
     const int32_t maxs = is640 ? 3 : 15;
@@ -1374,8 +1452,220 @@ static uint32_t shr4_rggb_pixel_at(int32_t px, int32_t py, int is640) {
                                            (uint8_t)b));
 }
 
-static uint32_t shr4_rggb_pixel(int32_t px, int32_t py) {
-    return shr4_rggb_pixel_at(px, py, 0);
+#if defined(__ARM_NEON)
+/* ---------- NEON RGGB row demosaic ----------
+ *
+ * The scalar path gathers 13 samples and runs a 13-tap filter per
+ * pixel: several frame budgets per frame at 640 or double-field
+ * resolution. This path demosaics a whole line at a time, 8 pixels
+ * per vector, bit-exact to the scalar filter:
+ *
+ *   (acc * 255) / 240 == (acc * 17) >> 4    (320 mode, 255/240 = 17/16)
+ *   (acc * 255) /  48 == (acc * 85) >> 4    (640 mode, 255/48  = 85/16)
+ *
+ * for every acc the weights can produce (|acc| <= 645, |acc*85| <=
+ * 10965: int16-safe), with vqmovun_s16 supplying exactly the scalar's
+ * 0..255 clamp (negatives -> 0). Sample rows are unpacked once into a
+ * ring of padded int16 rows (2 zero samples each side reproduce the
+ * scalar's out-of-bounds behavior) and shared across the five output
+ * rows that reference them; the generation counter invalidates the
+ * ring and the line cache at each full-frame decode. $C029 B&W is
+ * applied at lookup, not baked into the cached line. */
+static int16_t  s_rggb_srows[8][648] __attribute__((aligned(16)));
+static int32_t  s_rggb_srow_id[8];
+static uint8_t  s_rggb_srow_is640[8];
+static uint32_t s_rggb_srow_gen[8];
+/* Bank identity per cached row: SHR4 page-flip merging renders the
+ * SAME row index from two different field banks within one frame, so
+ * the row index alone cannot key the cache. */
+static const volatile uint8_t *s_rggb_srow_bank[8];
+static uint32_t s_rggb_gen = 1u;
+
+static uint32_t s_rggb_line_bgra[640] __attribute__((aligned(16)));
+static int32_t  s_rggb_line_id = -3;
+static uint8_t  s_rggb_line_is640;
+static const volatile uint8_t *s_rggb_line_bank;
+static uint32_t s_rggb_line_gen = 0u;
+
+/* Unpack (or fetch cached) one sample row in unified output-row space.
+ * Returns the padded buffer; sample x lives at [2 + x]. Bank selection
+ * matches shr4_rggb_sample exactly: interlaced rows alternate banks,
+ * otherwise the current field bank serves the whole frame. */
+static const int16_t *rggb_sample_row(int32_t row, int is640)
+{
+    const int32_t rows = s_shr_interlaced ? 400 : 200;
+    const uint32_t slot = (uint32_t)(row + 2) & 7u;
+    const int32_t width = is640 ? 640 : 320;
+    int16_t *buf = s_rggb_srows[slot];
+    const volatile uint8_t *bank = s_f_bank;
+    int32_t py = row;
+
+    if (s_shr_interlaced) {
+        bank = (row & 1) ? g_main_bank : g_aux_bank;
+        py = row >> 1;
+    }
+
+    if (s_rggb_srow_gen[slot] == s_rggb_gen &&
+        s_rggb_srow_id[slot] == row &&
+        s_rggb_srow_is640[slot] == (uint8_t)is640 &&
+        s_rggb_srow_bank[slot] == bank) {
+        return buf;
+    }
+
+    memset(buf, 0, (size_t)(width + 4) * sizeof(int16_t));
+    if (row >= 0 && row < rows) {
+        const uint16_t base = (uint16_t)(0x2000u + 160u * (uint32_t)py);
+        int16_t *out = buf + 2;
+        if (is640) {
+            for (uint32_t i = 0u; i < 160u; ++i) {
+                const uint8_t byte = bank[(uint16_t)(base + i)];
+                out[0] = (int16_t)((byte >> 6) & 0x03u);
+                out[1] = (int16_t)((byte >> 4) & 0x03u);
+                out[2] = (int16_t)((byte >> 2) & 0x03u);
+                out[3] = (int16_t)(byte & 0x03u);
+                out += 4;
+            }
+        } else {
+            for (uint32_t i = 0u; i < 160u; ++i) {
+                const uint8_t byte = bank[(uint16_t)(base + i)];
+                out[0] = (int16_t)(byte >> 4);
+                out[1] = (int16_t)(byte & 0x0Fu);
+                out += 2;
+            }
+        }
+    }
+    s_rggb_srow_gen[slot] = s_rggb_gen;
+    s_rggb_srow_id[slot] = row;
+    s_rggb_srow_is640[slot] = (uint8_t)is640;
+    s_rggb_srow_bank[slot] = bank;
+    return buf;
+}
+
+static void rggb_build_line_neon(int32_t row, int is640)
+{
+    const int32_t width = is640 ? 640 : 320;
+    const int16_t *rm2 = rggb_sample_row(row - 2, is640) + 2;
+    const int16_t *rm1 = rggb_sample_row(row - 1, is640) + 2;
+    const int16_t *rc  = rggb_sample_row(row,     is640) + 2;
+    const int16_t *rp1 = rggb_sample_row(row + 1, is640) + 2;
+    const int16_t *rp2 = rggb_sample_row(row + 2, is640) + 2;
+    const int16_t scale = is640 ? 85 : 17;
+    static const uint16_t k_even_lanes[8] =
+        { 0xFFFFu, 0u, 0xFFFFu, 0u, 0xFFFFu, 0u, 0xFFFFu, 0u };
+    const uint16x8_t even = vld1q_u16(k_even_lanes);
+    const int row_odd = (int)(row & 1);
+
+    for (int32_t px = 0; px < width; px += 8) {
+        const int16x8_t sm2  = vld1q_s16(rm2 + px);
+        const int16x8_t sm1l = vld1q_s16(rm1 + px - 1);
+        const int16x8_t sm1c = vld1q_s16(rm1 + px);
+        const int16x8_t sm1r = vld1q_s16(rm1 + px + 1);
+        const int16x8_t s0l2 = vld1q_s16(rc + px - 2);
+        const int16x8_t s0l1 = vld1q_s16(rc + px - 1);
+        const int16x8_t s0c  = vld1q_s16(rc + px);
+        const int16x8_t s0r1 = vld1q_s16(rc + px + 1);
+        const int16x8_t s0r2 = vld1q_s16(rc + px + 2);
+        const int16x8_t sp1l = vld1q_s16(rp1 + px - 1);
+        const int16x8_t sp1c = vld1q_s16(rp1 + px);
+        const int16x8_t sp1r = vld1q_s16(rp1 + px + 1);
+        const int16x8_t sp2  = vld1q_s16(rp2 + px);
+
+        /* k_rggb_g: -2*s0 +4*(s2,s5,s7,s10) +8*s6 -2*(s4,s8,s12) */
+        int16x8_t gf = vmulq_n_s16(s0c, 8);
+        gf = vmlaq_n_s16(gf, sm1c, 4);
+        gf = vmlaq_n_s16(gf, s0l1, 4);
+        gf = vmlaq_n_s16(gf, s0r1, 4);
+        gf = vmlaq_n_s16(gf, sp1c, 4);
+        gf = vmlaq_n_s16(gf, sm2, -2);
+        gf = vmlaq_n_s16(gf, s0l2, -2);
+        gf = vmlaq_n_s16(gf, s0r2, -2);
+        gf = vmlaq_n_s16(gf, sp2, -2);
+
+        /* k_rggb_xg: +1*(s0,s12) -2*(s1,s3,s4,s8,s9,s11) +8*(s5,s7) +10*s6 */
+        int16x8_t xg = vmulq_n_s16(s0c, 10);
+        xg = vmlaq_n_s16(xg, s0l1, 8);
+        xg = vmlaq_n_s16(xg, s0r1, 8);
+        xg = vaddq_s16(xg, sm2);
+        xg = vaddq_s16(xg, sp2);
+        xg = vmlaq_n_s16(xg, sm1l, -2);
+        xg = vmlaq_n_s16(xg, sm1r, -2);
+        xg = vmlaq_n_s16(xg, s0l2, -2);
+        xg = vmlaq_n_s16(xg, s0r2, -2);
+        xg = vmlaq_n_s16(xg, sp1l, -2);
+        xg = vmlaq_n_s16(xg, sp1r, -2);
+
+        /* k_rggb_xgx: -2*(s0,s1,s3,s9,s11,s12) +8*(s2,s10) +1*(s4,s8) +10*s6 */
+        int16x8_t xgx = vmulq_n_s16(s0c, 10);
+        xgx = vmlaq_n_s16(xgx, sm1c, 8);
+        xgx = vmlaq_n_s16(xgx, sp1c, 8);
+        xgx = vaddq_s16(xgx, s0l2);
+        xgx = vaddq_s16(xgx, s0r2);
+        xgx = vmlaq_n_s16(xgx, sm2, -2);
+        xgx = vmlaq_n_s16(xgx, sm1l, -2);
+        xgx = vmlaq_n_s16(xgx, sm1r, -2);
+        xgx = vmlaq_n_s16(xgx, sp1l, -2);
+        xgx = vmlaq_n_s16(xgx, sp1r, -2);
+        xgx = vmlaq_n_s16(xgx, sp2, -2);
+
+        /* k_rggb_rb: -3*(s0,s4,s8,s12) +4*(s1,s3,s9,s11) +12*s6 */
+        int16x8_t rb = vmulq_n_s16(s0c, 12);
+        rb = vmlaq_n_s16(rb, sm1l, 4);
+        rb = vmlaq_n_s16(rb, sm1r, 4);
+        rb = vmlaq_n_s16(rb, sp1l, 4);
+        rb = vmlaq_n_s16(rb, sp1r, 4);
+        rb = vmlaq_n_s16(rb, sm2, -3);
+        rb = vmlaq_n_s16(rb, s0l2, -3);
+        rb = vmlaq_n_s16(rb, s0r2, -3);
+        rb = vmlaq_n_s16(rb, sp2, -3);
+
+        gf  = vshrq_n_s16(vmulq_n_s16(gf, scale), 4);
+        xg  = vshrq_n_s16(vmulq_n_s16(xg, scale), 4);
+        xgx = vshrq_n_s16(vmulq_n_s16(xgx, scale), 4);
+        rb  = vshrq_n_s16(vmulq_n_s16(rb, scale), 4);
+        const int16x8_t own = vmulq_n_s16(s0c, scale);
+
+        /* Bayer site map (even x, even y)=R, G, G, (odd, odd)=B. */
+        int16x8_t rv, gv, bv;
+        if (row_odd == 0) {
+            rv = vbslq_s16(even, own, xg);
+            gv = vbslq_s16(even, gf, own);
+            bv = vbslq_s16(even, rb, xgx);
+        } else {
+            rv = vbslq_s16(even, xgx, rb);
+            gv = vbslq_s16(even, own, gf);
+            bv = vbslq_s16(even, xg, own);
+        }
+
+        uint8x8x4_t out;
+        out.val[0] = vqmovun_s16(bv);
+        out.val[1] = vqmovun_s16(gv);
+        out.val[2] = vqmovun_s16(rv);
+        out.val[3] = vdup_n_u8(0xFFu);
+        vst4_u8((uint8_t *)&s_rggb_line_bgra[px], out);
+    }
+}
+#endif /* __ARM_NEON */
+
+/* Per-pixel RGGB entry point for the cell renderers: NEON builds (and
+ * caches) the whole line on first touch; scalar builds fall through to
+ * the reference per-pixel filter. */
+static inline uint32_t shr4_rggb_pixel_lookup(int32_t px, int32_t row,
+                                              int is640)
+{
+#if defined(__ARM_NEON)
+    if (s_rggb_line_gen != s_rggb_gen || s_rggb_line_id != row ||
+        s_rggb_line_is640 != (uint8_t)is640 ||
+        s_rggb_line_bank != s_f_bank) {
+        rggb_build_line_neon(row, is640);
+        s_rggb_line_gen = s_rggb_gen;
+        s_rggb_line_id = row;
+        s_rggb_line_is640 = (uint8_t)is640;
+        s_rggb_line_bank = s_f_bank;
+    }
+    return shr_apply_c029_bw(s_rggb_line_bgra[px]);
+#else
+    return shr4_rggb_pixel_at(px, row, is640);
+#endif
 }
 
 /* R4G4B4: 3-byte groups hold two direct-color pixels, each spanning    */
@@ -1384,8 +1674,15 @@ static uint32_t shr4_r4g4b4_pixel(uint32_t y, int32_t px) {
     const uint32_t group = (uint32_t)px / 6u;
     const uint16_t base = (uint16_t)(0x2000u + 160u * y + group * 3u);
     const uint8_t b0 = s_f_bank[base];
-    const uint8_t b1 = s_f_bank[(uint16_t)(base + 1u)];
-    const uint8_t b2 = s_f_bank[(uint16_t)(base + 2u)];
+    /* A 160-byte line holds 53 full triplets plus a 2-pixel tail whose
+     * later bytes would live past the line. SDD's shader texel-fetches
+     * out of its VRAM texture there and reads back zero; match that
+     * instead of spilling into the next row's first byte (which showed
+     * as a colored tint down the last 320-mode column). */
+    const uint8_t b1 = (group * 3u + 1u < 160u)
+        ? s_f_bank[(uint16_t)(base + 1u)] : 0u;
+    const uint8_t b2 = (group * 3u + 2u < 160u)
+        ? s_f_bank[(uint16_t)(base + 2u)] : 0u;
     if (((uint32_t)px % 6u) < 3u) {
         return shr4_rgb444((uint8_t)(b0 >> 4), (uint8_t)(b0 & 0x0Fu),
                            (uint8_t)(b1 >> 4));
@@ -1457,10 +1754,12 @@ static void shr4_render_cell_320(uint32_t *row0, uint32_t y, uint32_t x,
             const int32_t px = (int32_t)(x * 8u + i * 2u + half);
             const uint8_t b2 =
                 s_f_bank[(uint16_t)(palette_base + idx * 2u + 1u)];
+            const uint8_t selector = (uint8_t)(b2 >> 4);
             uint32_t color;
-            switch (b2 >> 4) {
+            shr_badge_note_selector(selector);
+            switch (selector) {
             case 1u:
-                color = shr4_rggb_pixel(px, (int32_t)s_f_out_row);
+                color = shr4_rggb_pixel_lookup(px, (int32_t)s_f_out_row, 0);
                 break;
             case 2u:
                 color = shr4_pal256_color(byte);
@@ -1499,9 +1798,11 @@ static void shr4_render_cell_640(uint32_t *row0, uint32_t y, uint32_t x,
             const uint8_t idx = (uint8_t)(k_shr640_quad[lp] + v);
             const uint8_t b2 =
                 s_f_bank[(uint16_t)(palette_base + idx * 2u + 1u)];
-            if ((b2 >> 4) == 1u) {
+            const uint8_t selector = (uint8_t)(b2 >> 4);
+            shr_badge_note_selector(selector);
+            if (selector == 1u) {
                 const int32_t px = (int32_t)(x * 16u + i * 4u + lp);
-                *dst++ = shr4_rggb_pixel_at(px, (int32_t)s_f_out_row, 1);
+                *dst++ = shr4_rggb_pixel_lookup(px, (int32_t)s_f_out_row, 1);
             } else {
                 *dst++ = shr_palette_color(palette_base, idx);
             }
@@ -1530,20 +1831,19 @@ static void shr_eval_field_modes(const volatile uint8_t *bank)
     }
 }
 
-/* Render one SHR line of the current field into output row `out_row`.
- * dup != 0 also copies the line to out_row + 1 (progressive doubling). */
-static void render_shr_line(uint32_t y, uint32_t out_row, int dup)
+/* Render one SHR line of the current field into `row`. Callers set
+ * s_f_out_row (the RGGB sample-space row) beforehand. */
+static void render_shr_line_to(uint32_t *row, uint32_t y)
 {
-    uint32_t *row = &g_atn_framebuffer[out_row * SHR_WIDTH];
     const uint8_t control = s_f_bank[0x9D00u + (uint16_t)y];
     const uint16_t palette_base =
         (uint16_t)(0x9E00u + ((uint16_t)(control & 0x0Fu) * 32u));
     const int is_640 = (control & 0x80u) != 0u;
     const int color_fill = (control & 0x20u) != 0u;
 
-    /* RGGB samples in field space (0..199) normally, or unified
-     * 400-line space when interlaced. */
-    s_f_out_row = s_shr_interlaced ? out_row : (out_row >> 1);
+    s_shr_badge_geometry_mask |= is_640 ? 2u : 1u;
+    s_shr_badge_family_mask |= s_shr4_frame_active ? 2u :
+                               (s_shr3200_frame_active ? 4u : 1u);
 
     for (uint32_t x = 0u; x < 40u; ++x) {
         if (s_shr4_frame_active) {
@@ -1568,13 +1868,11 @@ static void render_shr_line(uint32_t y, uint32_t out_row, int dup)
             }
         }
     }
-    if (dup) {
-        memcpy(row + SHR_WIDTH, row, SHR_WIDTH * sizeof(uint32_t));
-    }
 }
 
-/* Tell the PL whether vTW must post main $6000-$9FFF for the second SHR
- * interlace field. Write-on-change only. */
+/* CPU1 fallback: tell the PL whether vTW must post main $6000-$9FFF for a
+ * second SHR field. The vTW core also tracks its own aux $9DF8 writes before
+ * they reach the physical capture. Write-on-change only. */
 static void shr_update_post_wide(uint8_t want)
 {
     if (want == s_post_wide_last) return;
@@ -1595,26 +1893,59 @@ static void shr_update_post_wide(uint8_t want)
  * non-interlaced SHR frames. */
 void apple_cycle_renderer_note_aux_ctrl_write(uint8_t value)
 {
-    shr_update_post_wide((value == 1u) ? 1u : 0u);
+    /* Both paged types keep their second field in MAIN $2000-$9FFF:
+     * 1 = interlace (spatial), 2 = page flip (temporal). */
+    shr_update_post_wide((value == 1u || value == 2u) ? 1u : 0u);
 }
+
+/* Exact per-byte floor average, used to merge page-flip fields on
+ * sub-120 Hz output: alternating pages at 50/60 Hz would strobe, so
+ * both fields blend 50/50 into every frame instead. */
+static inline uint32_t bgra_avg(uint32_t a, uint32_t b)
+{
+    return (a & b) + (((a ^ b) & 0xFEFEFEFEu) >> 1);
+}
+
+static uint32_t s_shr_merge_row_a[SHR_WIDTH] __attribute__((aligned(16)));
+static uint32_t s_shr_merge_row_b[SHR_WIDTH] __attribute__((aligned(16)));
 
 static void render_shr_frame_full(void)
 {
+    uint8_t page_mode = APPLE_FB_FORMAT_PAGE_NONE;
+
     if (g_atn_framebuffer == NULL) {
         return;
     }
 
-    /* Mode/interlace decisions come from the AUX control plane, re-read
+    shr_badge_begin();
+
+#if defined(__ARM_NEON)
+    /* Invalidate the RGGB sample-row ring and line cache: the shadow
+     * may have changed since the previous decode. */
+    s_rggb_gen++;
+#endif
+
+    /* Mode/paged decisions come from the AUX control plane, re-read
      * every frame (mode-exit hygiene: clearing $9DFC drops the extended
-     * decode on the next frame). SHR4 wins over 3200, per SDD. */
+     * decode on the next frame). SHR4 wins over 3200, per SDD. The
+     * creator declares the paged TYPE in ctrl byte 0: 1 = interlace
+     * (even rows aux, odd rows main; double vertical resolution),
+     * 2 = page flip (two full-rate frames; merged below 120 Hz). */
     shr_eval_field_modes(g_aux_bank);
     s_shr_interlace_mode = 0u;
+    uint8_t flip_merge = 0u;
     if (s_shr4_frame_active || s_shr3200_frame_active) {
         const uint8_t paged = g_aux_bank[SHR_CTRL_ADDR + 0u];
-        if (paged == 1u) s_shr_interlace_mode = 1u;
+        if (paged == 1u) {
+            s_shr_interlace_mode = 1u;
+            page_mode = APPLE_FB_FORMAT_PAGE_INTERLACE;
+        } else if (paged == 2u) {
+            flip_merge = 1u;
+            page_mode = APPLE_FB_FORMAT_PAGE_FLIP_MERGE;
+        }
         g_acr_shr4_frames++;
     }
-    shr_update_post_wide(s_shr_interlace_mode);
+    shr_update_post_wide((s_shr_interlace_mode || flip_merge) ? 1u : 0u);
 
     if (s_shr_interlace_mode != 0u) {
         /* Interlace: even output rows from aux, odd rows from main; each
@@ -1623,16 +1954,272 @@ static void render_shr_frame_full(void)
         for (uint32_t field = 0u; field < 2u; ++field) {
             shr_eval_field_modes(field ? g_main_bank : g_aux_bank);
             for (uint32_t y = 0u; y < SHR_LOGICAL_HEIGHT; ++y) {
-                render_shr_line(y, y * 2u + field, 0);
+                s_f_out_row = y * 2u + field;
+                render_shr_line_to(
+                    &g_atn_framebuffer[(y * 2u + field) * SHR_WIDTH], y);
             }
         }
         s_shr_interlaced = 0u;
+        s_frame_format_detail = shr_badge_detail(page_mode);
+        return;
+    }
+
+    if (flip_merge != 0u) {
+        /* Page flip on sub-120 Hz output: render the same line from
+         * both field banks (each self-described per SDD) and blend
+         * 50/50, doubled vertically like a progressive frame. */
+        s_shr_interlaced = 0u;
+        for (uint32_t y = 0u; y < SHR_LOGICAL_HEIGHT; ++y) {
+            uint32_t *out = &g_atn_framebuffer[(y * 2u) * SHR_WIDTH];
+
+            s_f_out_row = y;
+            shr_eval_field_modes(g_aux_bank);
+            render_shr_line_to(s_shr_merge_row_a, y);
+            shr_eval_field_modes(g_main_bank);
+            render_shr_line_to(s_shr_merge_row_b, y);
+            for (uint32_t x = 0u; x < SHR_WIDTH; ++x) {
+                out[x] = bgra_avg(s_shr_merge_row_a[x],
+                                  s_shr_merge_row_b[x]);
+            }
+            memcpy(out + SHR_WIDTH, out, SHR_WIDTH * sizeof(uint32_t));
+        }
+        s_frame_format_detail = shr_badge_detail(page_mode);
         return;
     }
 
     s_shr_interlaced = 0u;
     for (uint32_t y = 0u; y < SHR_LOGICAL_HEIGHT; ++y) {
-        render_shr_line(y, y * 2u, 1);
+        uint32_t *out = &g_atn_framebuffer[(y * 2u) * SHR_WIDTH];
+
+        s_f_out_row = y;
+        render_shr_line_to(out, y);
+        memcpy(out + SHR_WIDTH, out, SHR_WIDTH * sizeof(uint32_t));
+    }
+    s_frame_format_detail = shr_badge_detail(page_mode);
+}
+
+/* ---------- Legacy interlace weave ----------
+ *
+ * The A2Li in-band signal (SDD docs/LEGACY_PAGED_VIDEO_MODES.md):
+ * hi-ASCII 'A2Li' plus a mode byte in PAGE 2's first screen hole,
+ * main bank -- $4078-$407C for the hires pair, $0878-$087C for the
+ * lores pair, following the Fotofile precedent of metadata at page
+ * offset +$78. Mode $01 = interlace, $02 = page flip, anything else
+ * disarms. Both hole locations sit inside the FPGA capture windows
+ * (main $0400-$0BFF / $2000-$9FFF), so the signal always reaches the
+ * shadow. Level-sampled at every frame start; honored only while a
+ * graphics mode is selected (TEXT off), reading the hole of the
+ * family the soft switches pick (HIRES on -> hires pair).
+ *
+ * When armed, the per-cycle legacy pipeline is bypassed and the frame
+ * is synthesized shadow-side like SHR: 384 rows fetched from both
+ * pages (80STORE forced clear so PAGE2 swaps pages), each row
+ * rendered by the normal mode steppers with the per-line chroma
+ * reset the live path applies -- so every color mode, mono included,
+ * renders through its usual pixel pipeline. The hires pair weaves at
+ * scanline parity (even rows PAGE1, odd rows PAGE2); the lores pair
+ * weaves at nibble-row bands (96 four-scanline bands, page by band
+ * parity) so a 40x96 image shows 96 crisp rows instead of striped
+ * blends. The woven frame starts at slot row 0 with no border data
+ * (384 rows at the legacy stride exceed the bordered layout; the
+ * IIgs border is unavailable while interlaced). */
+/* Returns the armed paged TYPE, declared by the content:
+ * 0 = off, 1 = interlace (spatial fields), 2 = page flip (temporal:
+ * PAGE2 is the alternate frame; merged 50/50 below 120 Hz output,
+ * where true flipping would strobe). */
+static uint8_t legacy_paged_mode(void)
+{
+    if (sw_text(s_current_sw)) {
+        return 0u;
+    }
+    {
+        const uint16_t hole = sw_hires(s_current_sw) ? 0x4078u : 0x0878u;
+
+        if (g_main_bank[hole]      != 0xC1u ||    /* 'A' | $80 */
+            g_main_bank[hole + 1u] != 0xB2u ||    /* '2' | $80 */
+            g_main_bank[hole + 2u] != 0xCCu ||    /* 'L' | $80 */
+            g_main_bank[hole + 3u] != 0xE9u) {    /* 'i' | $80 */
+            return 0u;
+        }
+        {
+            const uint8_t mode = g_main_bank[hole + 4u];
+            return (mode == 1u || mode == 2u) ? mode : 0u;
+        }
+    }
+}
+
+static uint32_t legacy_format_detail(uint8_t page_mode)
+{
+    uint32_t base;
+    uint32_t page = APPLE_FB_FORMAT_PAGE_NONE;
+
+    if (sw_text(s_current_sw)) {
+        base = APPLE_FB_FORMAT_TEXT;
+    } else {
+        const uint8_t dbl =
+            (sw_80col(s_current_sw) && sw_dhires(s_current_sw)) ? 1u : 0u;
+
+        if (sw_hires(s_current_sw)) {
+            base = dbl ? APPLE_FB_FORMAT_DHGR : APPLE_FB_FORMAT_HGR;
+        } else {
+            base = dbl ? APPLE_FB_FORMAT_DGR : APPLE_FB_FORMAT_GR;
+        }
+    }
+
+    if (page_mode == 1u) {
+        page = APPLE_FB_FORMAT_PAGE_INTERLACE;
+    } else if (page_mode == 2u) {
+        page = APPLE_FB_FORMAT_PAGE_FLIP_MERGE;
+    }
+    return APPLE_FB_FORMAT_DETAIL(base, 0u, page);
+}
+
+/* Nonzero while frames render as legacy flip merges (published with
+ * plain LEGACY geometry, but synthesized shadow-side like the weave). */
+static uint8_t s_legacy_flip_q = 0u;
+static uint8_t s_prev_legacy_flip_q = 0u;
+
+static void render_legacy_weave_frame_full(void)
+{
+    if (g_atn_framebuffer == NULL) {
+        return;
+    }
+
+    const uint32_t sw0 =
+        s_current_sw & ~(SW_BIT(PAGE2) | SW_BIT(80STORE));
+    const uint8_t hires_pair = sw_hires(s_current_sw) ? 1u : 0u;
+
+    for (uint32_t row = 0u; row < 384u; ++row) {
+        int y;
+        uint32_t sw;
+
+        if (hires_pair != 0u) {
+            /* Scanline fields: even output rows PAGE1, odd PAGE2. */
+            y  = (int)(row >> 1);
+            sw = (row & 1u) ? (sw0 | SW_BIT(PAGE2)) : sw0;
+        } else {
+            /* Lores nibble-row bands: output band row>>2, page by
+             * band parity, source scanline within the band's nibble
+             * row (four scanlines per band). */
+            y  = (int)(((row >> 3) << 2) | (row & 3u));
+            sw = ((row >> 2) & 1u) ? (sw0 | SW_BIT(PAGE2)) : sw0;
+        }
+        const render_mode_t mode = pick_mode(sw, y);
+        const int left_shift = applewin_visible_left_shift(mode);
+
+        /* Same per-scanline chroma lock the live path applies. The
+         * synthesized row skips the real colorburst cycles, so assert the
+         * burst latch here before the active HGR/DHGR cells are emitted. */
+        g_nColorBurstPixels   = 1024;
+        g_nColorPhaseNTSC      = 0;
+        g_nLastColumnPixelNTSC = 0;
+        g_nSignalBitsNTSC      = 0;
+
+        g_nVideoClockVert = y;
+        g_nVideoCharSet = sw_altcharset(sw) ? 1 : 0;
+        g_pVideoAddress =
+            &g_atn_framebuffer[row * ATN_SCRATCH_ROW_PIXELS
+                               + ATN_SCRATCH_LEFT_BORDER_PIXELS
+                               + ATN_ACTIVE_X] - left_shift;
+
+        for (uint32_t c = 0u; c < 40u; ++c) {
+            g_nVideoClockHorz = (int)(ATN_SCANNER_HORZ_START + c);
+            switch (mode) {
+                case MODE_TEXT40: step_text40(sw); break;
+                case MODE_TEXT80: step_text80(sw); break;
+                case MODE_HGR:    step_hgr(sw);    break;
+                case MODE_DHGR:   step_dhgr(sw);   break;
+                case MODE_LORES:  step_lores(sw);  break;
+                case MODE_DLORES: step_dlores(sw); break;
+                default: break;
+            }
+        }
+        g_nVideoClockHorz = (int)(ATN_SCANNER_MAX_HORZ - 1u);
+        emit_shifted_right_edge_pixels(mode);
+    }
+}
+
+/* Page-flip merge: both pages are complete 192-line frames meant to
+ * alternate at 120 Hz. Below 120 Hz output, render each line from
+ * PAGE1 directly into the slot at the normal legacy position, render
+ * the PAGE2 line into a scratch row, and blend 50/50. Published as
+ * plain LEGACY geometry (borders stay black; the slot is cleared on
+ * entry via the flip-state change). */
+static uint32_t s_legacy_merge_row[ATN_SCRATCH_ROW_PIXELS]
+    __attribute__((aligned(16)));
+
+static void render_legacy_flip_merge_frame_full(void)
+{
+    if (g_atn_framebuffer == NULL) {
+        return;
+    }
+
+    const uint32_t sw0 =
+        s_current_sw & ~(SW_BIT(PAGE2) | SW_BIT(80STORE));
+
+    for (int y = 0; y < 192; ++y) {
+        const render_mode_t mode = pick_mode(sw0, y);
+        const int left_shift = applewin_visible_left_shift(mode);
+        uint32_t *fb_row =
+            &g_atn_framebuffer[(uint32_t)(y + (int)ATN_ACTIVE_Y) *
+                               ATN_SCRATCH_ROW_PIXELS];
+
+        g_nVideoClockVert = y;
+        g_nVideoCharSet = sw_altcharset(sw0) ? 1 : 0;
+
+        /* PAGE1 pass, straight into the slot row. */
+        g_nColorBurstPixels   = 1024;
+        g_nColorPhaseNTSC      = 0;
+        g_nLastColumnPixelNTSC = 0;
+        g_nSignalBitsNTSC      = 0;
+        g_pVideoAddress = fb_row + ATN_SCRATCH_LEFT_BORDER_PIXELS +
+                          ATN_ACTIVE_X - left_shift;
+        for (uint32_t c = 0u; c < 40u; ++c) {
+            g_nVideoClockHorz = (int)(ATN_SCANNER_HORZ_START + c);
+            switch (mode) {
+                case MODE_TEXT40: step_text40(sw0); break;
+                case MODE_TEXT80: step_text80(sw0); break;
+                case MODE_HGR:    step_hgr(sw0);    break;
+                case MODE_DHGR:   step_dhgr(sw0);   break;
+                case MODE_LORES:  step_lores(sw0);  break;
+                case MODE_DLORES: step_dlores(sw0); break;
+                default: break;
+            }
+        }
+        g_nVideoClockHorz = (int)(ATN_SCANNER_MAX_HORZ - 1u);
+        emit_shifted_right_edge_pixels(mode);
+
+        /* PAGE2 pass into the scratch row, then blend. */
+        {
+            const uint32_t sw2 = sw0 | SW_BIT(PAGE2);
+
+            memset(s_legacy_merge_row, 0, sizeof(s_legacy_merge_row));
+            g_nColorBurstPixels   = 1024;
+            g_nColorPhaseNTSC      = 0;
+            g_nLastColumnPixelNTSC = 0;
+            g_nSignalBitsNTSC      = 0;
+            g_pVideoAddress = s_legacy_merge_row +
+                              ATN_SCRATCH_LEFT_BORDER_PIXELS +
+                              ATN_ACTIVE_X - left_shift;
+            for (uint32_t c = 0u; c < 40u; ++c) {
+                g_nVideoClockHorz = (int)(ATN_SCANNER_HORZ_START + c);
+                switch (mode) {
+                    case MODE_TEXT40: step_text40(sw2); break;
+                    case MODE_TEXT80: step_text80(sw2); break;
+                    case MODE_HGR:    step_hgr(sw2);    break;
+                    case MODE_DHGR:   step_dhgr(sw2);   break;
+                    case MODE_LORES:  step_lores(sw2);  break;
+                    case MODE_DLORES: step_dlores(sw2); break;
+                    default: break;
+                }
+            }
+            g_nVideoClockHorz = (int)(ATN_SCANNER_MAX_HORZ - 1u);
+            emit_shifted_right_edge_pixels(mode);
+
+            for (uint32_t x = 0u; x < ATN_SCRATCH_ROW_PIXELS; ++x) {
+                fb_row[x] = bgra_avg(fb_row[x], s_legacy_merge_row[x]);
+            }
+        }
     }
 }
 
@@ -1647,6 +2234,7 @@ static void apply_video_rom_if_changed(void) {
         return;
     }
     s_video_rom_gen_seen = gen;
+    s_shr_cache_invalidate = 1u;
     if (gen != 0u) {
         appletini_video_rom_use_override(
             (const uint8_t *)(uintptr_t)APPLE_VIDEO_ROM_OVERRIDE_ADDR);
@@ -1676,15 +2264,24 @@ static void apply_video_settings_if_changed(void) {
         s_border_default_color = border_default;
     }
 
+    const uint8_t shr_now = vidhd_shr_enabled() ? 1u : 0u;
     if (settings == s_video_settings_seen &&
         bw_force == s_vidhd_bw_force_seen &&
-        s_video7_rgb_mode == s_video7_rgb_mode_seen) {
+        s_video7_rgb_mode == s_video7_rgb_mode_seen &&
+        shr_now == s_shr_mono_gate_seen) {
         return;
     }
-
+    /* Settings, mono gating, and ROM selection can change a decoded frame
+     * without touching shadow RAM. Rebuild the next SHR frame. */
+    s_shr_cache_invalidate = 1u;
     const uint8_t user_mono = apple_video_settings_mono_enabled(settings);
+    /* Video-7 auto-mono is a legacy-DHGR heuristic; it must never
+     * grayscale an SHR frame (a stale RGB-mode latch could otherwise
+     * flip a whole SHR slideshow to monochrome). SHR's own $C029 B&W
+     * control (bw_force) remains honored. */
     const uint8_t video7_auto_mono =
         ((user_mono == 0u) &&
+         (shr_now == 0u) &&
          (apple_video_settings_video7_auto_mono_enabled(settings) != 0u) &&
          (s_video7_rgb_mode == 3u)) ? 1u : 0u;
     const uint8_t effective_mono =
@@ -1710,6 +2307,7 @@ static void apply_video_settings_if_changed(void) {
     s_video_settings_seen = settings;
     s_vidhd_bw_force_seen = bw_force;
     s_video7_rgb_mode_seen = s_video7_rgb_mode;
+    s_shr_mono_gate_seen = shr_now;
 }
 
 void apple_cycle_renderer_reset_local_video_state(void)
@@ -1743,9 +2341,16 @@ void apple_cycle_renderer_reset_local_video_state(void)
     s_video7_rgb_mode     = 0u;
     s_video7_prev_an3_addr = 0u;
     s_video7_rgb_mode_seen = 0xFFu;
+    s_shr_mono_gate_seen  = 0xFFu;
+    s_shr_cache_valid     = 0u;
+    s_shr_cache_invalidate = 1u;
+    s_shr_cache_generation = 0u;
+    s_legacy_flip_q       = 0u;
+    s_prev_legacy_flip_q  = 0u;
 
     s_frame_display_mode = APPLE_FB_DISPLAY_MODE_LEGACY;
     s_previous_frame_display_mode = APPLE_FB_DISPLAY_MODE_LEGACY;
+    s_frame_format_detail = APPLE_FB_FORMAT_UNKNOWN;
 
     apple_pal_video_reset();
     g_resync_pending = 1u;
@@ -1792,6 +2397,8 @@ static void shr_mode_switch_resync(void)
     s_render_armed = 0;
     s_frame_end_pending = 0u;
     s_pending_line0_mask = 0u;
+    s_shr_cache_valid = 0u;
+    s_shr_cache_invalidate = 1u;
     apple_pal_video_resync();
     g_resync_pending = 1u;
 }
@@ -1835,7 +2442,10 @@ static void handle_vidhd_io_record(uint64_t rec)
 
     switch ((uint32_t)addr) {
     case 0xC022U:
-        s_vidhd_screen_color = data;
+        if (s_vidhd_screen_color != data) {
+            s_vidhd_screen_color = data;
+            s_shr_cache_invalidate = 1u;
+        }
         break;
     case 0xC029U:
         s_vidhd_newvideo = data;
@@ -1843,10 +2453,19 @@ static void handle_vidhd_io_record(uint64_t rec)
         apply_video_settings_if_changed();
         break;
     case 0xC034U:
-        s_vidhd_border_color = apple_video_iigs_border_color_clamp(data);
+        {
+            const uint8_t color = apple_video_iigs_border_color_clamp(data);
+            if (s_vidhd_border_color != color) {
+                s_vidhd_border_color = color;
+                s_shr_cache_invalidate = 1u;
+            }
+        }
         break;
     case 0xC035U:
-        s_vidhd_shadow = data;
+        if (s_vidhd_shadow != data) {
+            s_vidhd_shadow = data;
+            s_shr_cache_invalidate = 1u;
+        }
         break;
     default:
         break;
@@ -1857,25 +2476,30 @@ static void handle_vidhd_io_record(uint64_t rec)
     }
 }
 
+static void publish_current_frame(void)
+{
+    /* Slot memory is non-cacheable, but order all completed pixel stores
+     * before exposing the slot and its matching format metadata to CPU0. */
+    ACR_DSB();
+    apple_fb_writer_publish_frame_detail(s_frame_display_mode,
+                                         s_frame_format_detail,
+                                         s_vidhd_border_color);
+    g_acr_frames_complete++;
+}
+
 static void on_frame_end(void) {
     /*
-     * SHR is rendered as a complete 640x400 frame at on_frame_start().
-     * Its sparse capture stream has no PAL scanlines to complete, so it must
-     * bypass the PAL-accurate publication gate. Legacy frames retain the
-     * existing delayed PAL-completion contract.
+     * Full shadow modes publish at on_frame_start(), as soon as their frame
+     * is complete. Only the normal legacy path waits for PAL completion here.
      */
+    const uint8_t synthesized =
+        (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_SHR ||
+         s_frame_display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I ||
+         s_legacy_flip_q != 0u) ? 1u : 0u;
     const uint8_t frame_ready =
-        (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_SHR) ?
-            1u : apple_pal_video_end_frame();
+        synthesized ? 0u : apple_pal_video_end_frame();
 
     g_acr_frame_edges_seen++;
-
-    /* Slot region is mapped non-cacheable on both cores (see
-     * apple_cycle_renderer_init() and compositor_init()), so all
-     * pixel stores from this core have already gone straight to
-     * DDR. No cache flush needed; the dsb makes the writes visible
-     * before the publish CAS happens. */
-    __asm__ volatile ("dsb sy");
 
     /* Atomic handoff: claim the current idle slot as our next writer
      * slot, demote our just-finished slot to idle, set idle_ready=1.
@@ -1886,9 +2510,7 @@ static void on_frame_end(void) {
      * delayed frame is complete, never while a writer slot contains partial
      * PAL scanlines. */
     if (frame_ready != 0u) {
-        apple_fb_writer_publish_frame(s_frame_display_mode,
-                                      s_vidhd_border_color);
-        g_acr_frames_complete++;
+        publish_current_frame();
     }
     g_acr_last_frame_records = s_records_in_frame;
     s_records_in_frame = 0u;
@@ -1901,8 +2523,19 @@ static void on_frame_start(void) {
 
     uint32_t *slot_addr =
         (uint32_t *)(uintptr_t)comp_apple_slot_addr[s_cached_writer_slot];
-    s_frame_display_mode = vidhd_shr_enabled() ?
-        APPLE_FB_DISPLAY_MODE_SHR : APPLE_FB_DISPLAY_MODE_LEGACY;
+    {
+        const uint8_t legacy_paged =
+            vidhd_shr_enabled() ? 0u : legacy_paged_mode();
+
+        s_legacy_flip_q = (legacy_paged == 2u) ? 1u : 0u;
+        s_frame_display_mode = vidhd_shr_enabled()
+            ? APPLE_FB_DISPLAY_MODE_SHR
+            : (legacy_paged == 1u ? APPLE_FB_DISPLAY_MODE_LEGACY_I
+                                  : APPLE_FB_DISPLAY_MODE_LEGACY);
+        if (!vidhd_shr_enabled()) {
+            s_frame_format_detail = legacy_format_detail(legacy_paged);
+        }
+    }
 
     /* Resync zero: when a gap kicked us out of arming and we are
      * picking back up, the writer slot may hold a partial paint from
@@ -1915,11 +2548,14 @@ static void on_frame_start(void) {
      * ago content, but since we are about to paint a complete frame
      * over it (on_frame_end only fires after a full line-wrap), every
      * visible pixel will be overwritten before we publish. */
-    if (s_just_resynced || s_frame_display_mode != s_previous_frame_display_mode) {
+    if (s_just_resynced ||
+        s_frame_display_mode != s_previous_frame_display_mode ||
+        s_legacy_flip_q != s_prev_legacy_flip_q) {
         memset(slot_addr, 0, COMP_APPLE_BYTES);
         s_just_resynced = 0;
     }
     s_previous_frame_display_mode = s_frame_display_mode;
+    s_prev_legacy_flip_q = s_legacy_flip_q;
 
     /* Reset per-frame record counter so g_acr_last_frame_records
      * tells us how many cycles got dispatched into this slot before
@@ -1939,7 +2575,28 @@ static void on_frame_start(void) {
     apple_pal_video_set_framebuffer(slot_addr);
     apply_video_settings_if_changed();
     if (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_SHR) {
-        render_shr_frame_full();
+        const uint32_t generation = g_shr_shadow_generation;
+        const uint8_t rebuild =
+            (s_shr_cache_valid == 0u ||
+             s_shr_cache_invalidate != 0u ||
+             generation != s_shr_cache_generation) ? 1u : 0u;
+
+        if (rebuild != 0u) {
+            render_shr_frame_full();
+            publish_current_frame();
+            s_shr_cache_generation = g_shr_shadow_generation;
+            s_shr_cache_valid = 1u;
+            s_shr_cache_invalidate = 0u;
+            g_acr_shr_cache_rebuilds++;
+        } else {
+            g_acr_shr_frames_skipped++;
+        }
+    } else if (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I) {
+        render_legacy_weave_frame_full();
+        publish_current_frame();
+    } else if (s_legacy_flip_q != 0u) {
+        render_legacy_flip_merge_frame_full();
+        publish_current_frame();
     } else {
         apple_pal_video_begin_frame();
     }
@@ -1983,7 +2640,7 @@ int apple_cycle_renderer_init(void) {
         void *slot = (void *)(uintptr_t)comp_apple_slot_addr[i];
         memset(slot, 0, COMP_APPLE_BYTES);
     }
-    __asm__ volatile ("dsb sy");
+    ACR_DSB();
 
     /* Initialize NTSC chroma tables and the pixel-double mask. */
     appletini_csbits_init();
@@ -2010,7 +2667,7 @@ int apple_cycle_renderer_init(void) {
     s_just_resynced = 0;
     g_resync_pending = 0u;
 
-    __asm__ volatile ("dsb sy");
+    ACR_DSB();
 
     uart_puts(UART0_BASE,
         "apple_cycle_renderer_init: 3-slot Apple FB ring at 0x3F300000+, "
@@ -2077,6 +2734,8 @@ static void apple_cycle_renderer_dispatch_record(uint64_t rec) {
                                             ATN_SCANNER_MAX_VERT_NTSC;
             }
             if (shr_frame_marker) {
+                /* Close the old marker, then either rebuild and publish the
+                 * changed shadow or keep the last static frame published. */
                 on_frame_end();
                 on_frame_start();
             } else {
@@ -2115,15 +2774,21 @@ static void apple_cycle_renderer_dispatch_record(uint64_t rec) {
      * open the new frame before line 0 reaches any active pixels. */
     if (s_frame_end_pending != 0u) {
         if (line == 0u && cycle < ATN_BORDER_H_CYCLES) {
-            uint32_t border_line;
-            uint32_t border_cycle;
-            const int8_t phase =
-                (apple_pal_video_mode_is_active(s_render_color_mode) != 0u) ?
-                s_pal_capture_phase_cycles : s_clean_capture_phase_cycles;
+            /* A finishing woven or flip-merged frame has no border
+             * geometry to complete; emitting here would scribble on
+             * synthesized rows. */
+            if (s_frame_display_mode != APPLE_FB_DISPLAY_MODE_LEGACY_I &&
+                s_legacy_flip_q == 0u) {
+                uint32_t border_line;
+                uint32_t border_cycle;
+                const int8_t phase =
+                    (apple_pal_video_mode_is_active(s_render_color_mode) != 0u) ?
+                    s_pal_capture_phase_cycles : s_clean_capture_phase_cycles;
 
-            capture_to_scanner_phase(line, cycle, phase,
-                                     &border_line, &border_cycle);
-            emit_border_cycle(border_line, border_cycle);
+                capture_to_scanner_phase(line, cycle, phase,
+                                         &border_line, &border_cycle);
+                emit_border_cycle(border_line, border_cycle);
+            }
             s_pending_line0_sw[cycle] = sw;
             s_pending_line0_mask |= (uint8_t)(1u << cycle);
             g_acr_cycles_rendered++;
@@ -2131,23 +2796,37 @@ static void apple_cycle_renderer_dispatch_record(uint64_t rec) {
             return;
         }
 
-        on_frame_end();
-        on_frame_start();
-        s_frame_end_pending = 0u;
-        if (apple_pal_video_mode_is_active(s_render_color_mode) != 0u) {
-            for (uint32_t i = 0u; i < ATN_BORDER_H_CYCLES; ++i) {
-                if ((s_pending_line0_mask & (uint8_t)(1u << i)) != 0u) {
-                    apple_pal_video_on_cycle(0u, i, s_pending_line0_sw[i]);
+        {
+            const int was_weave =
+                (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I) ||
+                (s_legacy_flip_q != 0u);
+            on_frame_end();
+            on_frame_start();
+            s_frame_end_pending = 0u;
+            if (!was_weave &&
+                apple_pal_video_mode_is_active(s_render_color_mode) != 0u) {
+                for (uint32_t i = 0u; i < ATN_BORDER_H_CYCLES; ++i) {
+                    if ((s_pending_line0_mask & (uint8_t)(1u << i)) != 0u) {
+                        apple_pal_video_on_cycle(0u, i, s_pending_line0_sw[i]);
+                    }
                 }
             }
         }
         s_pending_line0_mask = 0u;
     }
 
-    if (shr_active) {
-        /* C029 SHR owns the frame geometry and pixel decode while active.
-         * on_frame_start() renders the complete AUX-shadow frame; sparse
-         * frame markers only publish the finished slot. */
+    if (shr_active ||
+        s_frame_display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I ||
+        s_legacy_flip_q != 0u) {
+        /* C029 SHR, the legacy interlace weave, and the legacy flip
+         * merge own the frame geometry and pixel decode while active.
+         * on_frame_start() renders the complete shadow frame; the
+         * stream only drives frame edges. The soft-switch snapshot
+         * MUST keep tracking here: legacy_paged_mode() gates on
+         * s_current_sw at every frame start, and without this update
+         * a weave stayed latched after the machine dropped to TEXT
+         * (caught by the host harness, T2). */
+        s_current_sw = sw;
         g_acr_cycles_rendered++;
         s_records_in_frame++;
         return;
@@ -2322,6 +3001,70 @@ void apple_cycle_renderer_on_next_record(uint64_t rec)
      */
     apple_cycle_renderer_dispatch_record(pending);
     s_vtw_pending_valid = 0u;
+}
+
+/* Diagnostic: one-line A2Li/SHR gate dump over UART0, printed from
+ * CPU1's coherent view of the shadow (CPU0 must not read the banks;
+ * see apple_fb_debug_dump_set). Triggered by the CPU0 console command
+ * "shadow a2li". Answers, on live hardware: did the A2Li signature
+ * reach the shadow, what do the gate inputs say, and what mode did
+ * the last frame select. */
+static void acr_put_hex8(uint8_t v)
+{
+    static const char hex[] = "0123456789ABCDEF";
+
+    uart_putc(UART0_BASE, hex[v >> 4]);
+    uart_putc(UART0_BASE, hex[v & 0x0Fu]);
+}
+
+static void acr_put_hex16(uint16_t v)
+{
+    acr_put_hex8((uint8_t)(v >> 8));
+    acr_put_hex8((uint8_t)v);
+}
+
+static void acr_put_bytes(const char *tag, const volatile uint8_t *bank,
+                          uint16_t addr, uint32_t count)
+{
+    uart_puts(UART0_BASE, tag);
+    for (uint32_t i = 0u; i < count; ++i) {
+        acr_put_hex8(bank[(uint16_t)(addr + i)]);
+        if (i + 1u < count) uart_putc(UART0_BASE, ' ');
+    }
+}
+
+void apple_cycle_renderer_debug_a2li_line(void)
+{
+    uart_puts(UART0_BASE, "[cpu1] a2li:");
+    acr_put_bytes(" hgr@4078=", g_main_bank, 0x4078u, 5u);
+    acr_put_bytes(" lgr@0878=", g_main_bank, 0x0878u, 5u);
+    uart_puts(UART0_BASE, " text=");
+    uart_putc(UART0_BASE, sw_text(s_current_sw) ? '1' : '0');
+    uart_puts(UART0_BASE, " hires=");
+    uart_putc(UART0_BASE, sw_hires(s_current_sw) ? '1' : '0');
+    uart_puts(UART0_BASE, " 80store=");
+    uart_putc(UART0_BASE, sw_80store(s_current_sw) ? '1' : '0');
+    uart_puts(UART0_BASE, " 80col=");
+    uart_putc(UART0_BASE, sw_80col(s_current_sw) ? '1' : '0');
+    uart_puts(UART0_BASE, " dhires=");
+    uart_putc(UART0_BASE, sw_dhires(s_current_sw) ? '1' : '0');
+    uart_puts(UART0_BASE, " paged=");
+    uart_putc(UART0_BASE, (char)('0' + legacy_paged_mode()));
+    uart_puts(UART0_BASE, " dispmode=");
+    uart_putc(UART0_BASE, (char)('0' + s_frame_display_mode));
+    uart_puts(UART0_BASE, " pubmode=");
+    uart_putc(UART0_BASE,
+              (char)('0' + apple_fb_reader_published_display_mode()));
+    uart_puts(UART0_BASE, " flipq=");
+    uart_putc(UART0_BASE, (char)('0' + s_legacy_flip_q));
+    uart_puts(UART0_BASE, " nv=");
+    acr_put_hex8(s_vidhd_newvideo);
+    acr_put_bytes(" auxctrl@9DF8=", g_aux_bank, 0x9DF8u, 8u);
+    uart_puts(UART0_BASE, " localfmt=");
+    acr_put_hex16((uint16_t)s_frame_format_detail);
+    uart_puts(UART0_BASE, " pubfmt=");
+    acr_put_hex16((uint16_t)apple_fb_reader_published_format_detail());
+    uart_puts(UART0_BASE, "\r\n");
 }
 
 void apple_cycle_renderer_on_record(uint64_t rec)

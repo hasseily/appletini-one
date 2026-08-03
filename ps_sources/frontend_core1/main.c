@@ -112,16 +112,32 @@ static uint32_t s_dump_row  = 0u;
 static void cpu1_dump_text_shadow_step(void)
 {
     const volatile uint8_t *bank;
+    uint32_t queued;
     uint32_t base;
     uint32_t col;
 
-    if (s_dump_req == APPLE_FB_DUMP_NONE) {
-        s_dump_req = apple_fb_debug_dump_take();
-        if (s_dump_req == APPLE_FB_DUMP_NONE) {
+    /* Take a new request even while a row dump is active. This lets the
+     * short A2Li query replace an old MAIN/AUX dump instead of appearing
+     * to run the default MAIN command first. */
+    queued = apple_fb_debug_dump_take();
+    if (queued != APPLE_FB_DUMP_NONE) {
+        s_dump_req = queued;
+        s_dump_row = 0u;
+
+        if (s_dump_req == APPLE_FB_DUMP_A2LI) {
+            /* Single-line paged-mode gate dump; ~1 ms, no row stepper. */
+            apple_cycle_renderer_debug_a2li_line();
+            s_dump_req = APPLE_FB_DUMP_NONE;
             return;
         }
+        if (s_dump_req != APPLE_FB_DUMP_TEXT_MAIN &&
+            s_dump_req != APPLE_FB_DUMP_TEXT_AUX) {
+            uart_puts(UART0_BASE, "[cpu1] shadow: invalid request\r\n");
+            s_dump_req = APPLE_FB_DUMP_NONE;
+            return;
+        }
+
         /* First pass: header with the counters at request time. */
-        s_dump_row = 0u;
         uart_puts(UART0_BASE, "\r\n[cpu1] shadow dump: ");
         uart_puts(UART0_BASE,
                   (s_dump_req == APPLE_FB_DUMP_TEXT_AUX) ? "AUX" : "MAIN");
@@ -134,6 +150,10 @@ static void cpu1_dump_text_shadow_step(void)
         uart_puts(UART0_BASE, " frames=");
         uart_putdec(UART0_BASE, g_acr_frames_complete);
         uart_puts(UART0_BASE, "\r\n");
+        return;
+    }
+
+    if (s_dump_req == APPLE_FB_DUMP_NONE) {
         return;
     }
 

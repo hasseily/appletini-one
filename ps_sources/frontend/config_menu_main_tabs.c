@@ -296,6 +296,12 @@ void config_menu_draw_video(uint16_t *fb,
         (menu->border_flood != 0u) ?
             hgr_draw_value_item_dimmed : hgr_draw_value_item;
 
+    /* Border+Video-7 and Debug+video-mode share rows. Value controls keep
+     * a full line so their labels and current values stay clear. */
+    const int half_w = (w - 12) / 2;
+    const int right_x = x + half_w + 12;
+    const int right_w = w - half_w - 12;
+
     hgr_draw_value_item(fb,
                         x,
                         y,
@@ -314,47 +320,58 @@ void config_menu_draw_video(uint16_t *fb,
                         x,
                         y + (row_h * 2),
                         w,
-                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_VIDEO7),
-                        "Video-7 mono",
-                        config_menu_video7_auto_mono_text(
-                            menu->video7_auto_mono_enabled));
-    hgr_draw_value_item(fb,
-                        x,
-                        y + (row_h * 3),
-                        w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_SCANLINES),
                         "Scanlines",
                         appletini_scanlines_name(menu->scanlines_mode));
+    hgr_draw_video_blur_item(fb,
+                             x,
+                             y + (row_h * 3),
+                             w,
+                             (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BLUR),
+                             menu->video_blur_strength);
+    hgr_draw_video_glow_item(fb,
+                             x,
+                             y + (row_h * 4),
+                             w,
+                             (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_GLOW),
+                             menu->video_glow_strength);
     hgr_draw_video_ghosting_item(fb,
                                  x,
-                                 y + (row_h * 4),
+                                 y + (row_h * 5),
                                  w,
                                  (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_GHOSTING),
                                  menu->video_ghosting_strength);
     hgr_draw_check_item(fb,
                         x,
-                        y + (row_h * 5),
-                        w,
+                        y + (row_h * 6),
+                        half_w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BORDER),
                         menu->border_enabled,
                         "IIgs border (VidHD $C034)");
+    hgr_draw_check_item(fb,
+                        right_x,
+                        y + (row_h * 6),
+                        right_w,
+                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_VIDEO7),
+                        menu->video7_auto_mono_enabled,
+                        "Video-7 mono");
     hgr_draw_value_item(fb,
                         x,
-                        y + (row_h * 6),
+                        y + (row_h * 7),
                         w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BORDER_COLOR),
                         "Border color",
                         config_menu_border_color_text(menu->border_color));
     hgr_draw_value_item(fb,
                         x,
-                        y + (row_h * 7),
+                        y + (row_h * 8),
                         w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BORDER_FLOOD),
                         "Outside ring",
                         config_menu_border_outside_text(menu->border_flood));
     hgr_draw_value_item(fb,
                         x,
-                        y + (row_h * 8),
+                        y + (row_h * 9),
                         w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_ROM),
                         "Video ROM",
@@ -376,10 +393,17 @@ void config_menu_draw_video(uint16_t *fb,
     draw_exclusive_check(fb,
                          x,
                          y + (row_h * 12),
-                         w,
+                         half_w,
                          (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_DEBUG),
                          menu->show_debugging,
                          "Show debugging");
+    hgr_draw_check_item(fb,
+                        right_x,
+                        y + (row_h * 12),
+                        right_w,
+                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BADGE),
+                        menu->format_badge_enabled,
+                        "Show video mode");
 }
 
 void config_menu_draw_clock(uint16_t *fb,

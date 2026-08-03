@@ -31,6 +31,56 @@
 
 #define APPLE_FB_DISPLAY_MODE_LEGACY 0U
 #define APPLE_FB_DISPLAY_MODE_SHR    1U
+/* Interlaced legacy weave: 384 rows (even from PAGE1, odd from PAGE2)
+ * at the legacy row stride, starting at slot row 0, no border data.
+ * The compositor blits it 2x2 into the same rect as legacy 2x4. */
+#define APPLE_FB_DISPLAY_MODE_LEGACY_I 2U
+
+/* Frame format detail, published atomically with the slot and display mode.
+ * CPU0 must not infer this from the renderer's cached main/AUX shadows: those
+ * banks belong to CPU1 and are not cross-core coherent.
+ *
+ * Bits 3:0  base format
+ * Bits 7:4  SHR4 selectors actually used by rendered pixels
+ * Bits 9:8  paged presentation (none/interlace/merged page flip) */
+#define APPLE_FB_FORMAT_BASE_MASK          0x000FU
+#define APPLE_FB_FORMAT_SELECTORS_SHIFT    4U
+#define APPLE_FB_FORMAT_SELECTORS_MASK     0x00F0U
+#define APPLE_FB_FORMAT_PAGE_SHIFT         8U
+#define APPLE_FB_FORMAT_PAGE_MASK          0x0300U
+
+#define APPLE_FB_FORMAT_UNKNOWN            0U
+#define APPLE_FB_FORMAT_TEXT               1U
+#define APPLE_FB_FORMAT_GR                 2U
+#define APPLE_FB_FORMAT_DGR                3U
+#define APPLE_FB_FORMAT_HGR                4U
+#define APPLE_FB_FORMAT_DHGR               5U
+#define APPLE_FB_FORMAT_SHR_320            6U
+#define APPLE_FB_FORMAT_SHR_640            7U
+#define APPLE_FB_FORMAT_SHR_MIXED          8U
+#define APPLE_FB_FORMAT_SHR4_320           9U
+#define APPLE_FB_FORMAT_SHR4_640          10U
+#define APPLE_FB_FORMAT_SHR4_MIXED        11U
+#define APPLE_FB_FORMAT_SHR3200_320       12U
+#define APPLE_FB_FORMAT_SHR3200_640       13U
+#define APPLE_FB_FORMAT_SHR3200_MIXED     14U
+#define APPLE_FB_FORMAT_SHR_EXT_MIXED     15U
+
+#define APPLE_FB_FORMAT_SELECTOR_STD       0x1U
+#define APPLE_FB_FORMAT_SELECTOR_RGGB      0x2U
+#define APPLE_FB_FORMAT_SELECTOR_PAL256    0x4U
+#define APPLE_FB_FORMAT_SELECTOR_R4G4B4    0x8U
+
+#define APPLE_FB_FORMAT_PAGE_NONE          0U
+#define APPLE_FB_FORMAT_PAGE_INTERLACE     1U
+#define APPLE_FB_FORMAT_PAGE_FLIP_MERGE    2U
+
+#define APPLE_FB_FORMAT_DETAIL(base, selectors, page) \
+    ((((uint32_t)(base)) & APPLE_FB_FORMAT_BASE_MASK) | \
+     ((((uint32_t)(selectors)) << APPLE_FB_FORMAT_SELECTORS_SHIFT) & \
+       APPLE_FB_FORMAT_SELECTORS_MASK) | \
+     ((((uint32_t)(page)) << APPLE_FB_FORMAT_PAGE_SHIFT) & \
+       APPLE_FB_FORMAT_PAGE_MASK))
 
 /* Writer-side: returns the slot the renderer should paint into. */
 uint8_t apple_fb_writer_slot(void);
@@ -42,6 +92,9 @@ uint8_t apple_fb_writer_slot(void);
 void apple_fb_writer_publish(void);
 void apple_fb_writer_publish_mode(uint32_t display_mode);
 void apple_fb_writer_publish_frame(uint32_t display_mode, uint8_t border_color);
+void apple_fb_writer_publish_frame_detail(uint32_t display_mode,
+                                          uint32_t format_detail,
+                                          uint8_t border_color);
 
 /* Reader-side: claim the freshest frame the writer has published,
  * if any. Returns the slot index to read (0..2). If the writer has
@@ -54,8 +107,10 @@ void apple_fb_writer_publish_frame(uint32_t display_mode, uint8_t border_color);
 uint8_t apple_fb_reader_claim(void);
 uint32_t apple_fb_reader_display_mode(void);
 uint8_t apple_fb_reader_border_color(void);
+uint32_t apple_fb_reader_format_detail(void);
 uint32_t apple_fb_reader_publish_seq(void);
 uint32_t apple_fb_reader_published_display_mode(void);
+uint32_t apple_fb_reader_published_format_detail(void);
 
 /* CPU0/shared init: reset shared handoff/control words to their boot defaults.
  * Call once at boot from CPU0. */
@@ -89,6 +144,7 @@ uint32_t apple_fb_video_rom_gen_get(void);
 #define APPLE_FB_DUMP_NONE      0U
 #define APPLE_FB_DUMP_TEXT_MAIN 1U   /* main bank $0400-$07FF, decoded  */
 #define APPLE_FB_DUMP_TEXT_AUX  2U   /* aux bank  $0400-$07FF, decoded  */
+#define APPLE_FB_DUMP_A2LI      3U   /* A2Li holes + paged-gate state   */
 void apple_fb_debug_dump_set(uint32_t req);
 uint32_t apple_fb_debug_dump_take(void);
 

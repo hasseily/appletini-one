@@ -214,6 +214,21 @@ HELP(video_ghosting,
     "Light, Medium, and Strong increase persistence, so motion and flashes leave longer trails.",
     "Ghosting is expensive, so avoid mixing it with borders, full screen bezels and debug.");
 
+HELP(video_blur,
+    "Phosphor blur softens the Apple video like a CRT spot, bleeding each pixel into its neighbors.",
+    "Light softens horizontally. Medium adds vertical bleed across scanlines. Strong widens further.",
+    "Blur is much cheaper than ghosting, and combines with glow and ghosting for a full CRT look.");
+
+HELP(video_glow,
+    "Phosphor glow adds a halo of light around bright pixels without softening the image itself.",
+    "The halo is additive and saturates toward white, like a CRT bloom. Strengths set its intensity.",
+    "Glow is independent of blur: sharp with glow, soft with glow, or both work together.");
+
+HELP(video_format_badge,
+    "Show video mode labels the current Apple format (HGR, DHGR, SHR4, 3200...) in a corner.",
+    "SHR submodes are read from the in-band SDD control bytes; legacy modes from the soft switches.",
+    "Interlaced legacy variants report their base mode until legacy interlace support lands.");
+
 HELP(video_border,
     "Enables the IIgs-style border. This is cycle accurate and has moderate performance impact.",
     "From BASIC, POKE 49204,N selects one of 16 colors; only the low nibble is used.");
@@ -254,16 +269,19 @@ HELP(video_debug,
 static const help_override_t video_overrides[] = {
     OVERRIDE(CONFIG_VIDEO_ITEM_OUTPUT, video_output),
     OVERRIDE(CONFIG_VIDEO_ITEM_VARIANT, video_variant),
-    OVERRIDE(CONFIG_VIDEO_ITEM_VIDEO7, video_video7),
     OVERRIDE(CONFIG_VIDEO_ITEM_SCANLINES, video_scanlines),
+    OVERRIDE(CONFIG_VIDEO_ITEM_BLUR, video_blur),
+    OVERRIDE(CONFIG_VIDEO_ITEM_GLOW, video_glow),
     OVERRIDE(CONFIG_VIDEO_ITEM_GHOSTING, video_ghosting),
     OVERRIDE(CONFIG_VIDEO_ITEM_BORDER, video_border),
+    OVERRIDE(CONFIG_VIDEO_ITEM_VIDEO7, video_video7),
     OVERRIDE(CONFIG_VIDEO_ITEM_BORDER_COLOR, video_border_color),
     OVERRIDE(CONFIG_VIDEO_ITEM_BORDER_FLOOD, video_border_outside),
     OVERRIDE(CONFIG_VIDEO_ITEM_ROM, video_rom),
     OVERRIDE(CONFIG_VIDEO_ITEM_SHOW_BEZEL, video_show_bezel),
     OVERRIDE(CONFIG_VIDEO_ITEM_BEZEL, video_bezel),
     OVERRIDE(CONFIG_VIDEO_ITEM_DEBUG, video_debug),
+    OVERRIDE(CONFIG_VIDEO_ITEM_BADGE, video_format_badge),
 };
 
 /* ======================================================================== */

@@ -42,11 +42,14 @@
 
 #include "apple_cycle_renderer.h"
 #include "apple_fb_handoff.h"
+#include "card_control_regs.h"
 #include "compositor.h"
 #include "compositor_layout.h"
 #include "scanlines.h"
 #include "supersprite_vdp.h"
+#include "video_blur.h"
 #include "video_ghosting.h"
+#include "video_glow.h"
 
 /* ---------- Public counters ---------- */
 
@@ -81,6 +84,9 @@ static const void           *s_ui_state  = NULL;
 static const void           *s_ui_config = NULL;
 static uint8_t               s_scanlines_mode = APPLETINI_SCANLINES_OFF;
 static uint8_t               s_video_ghosting_strength = APPLETINI_VIDEO_GHOSTING_OFF;
+static uint8_t               s_video_blur_strength = APPLETINI_VIDEO_BLUR_OFF;
+static uint8_t               s_video_glow_strength = APPLETINI_VIDEO_GLOW_OFF;
+static uint8_t               s_format_badge_enabled = 0u;
 static uint8_t               s_border_enabled = 0u;
 static uint8_t               s_border_flood = 0u;
 static volatile uint8_t      s_force_full_refresh = 0u;
@@ -225,6 +231,182 @@ static inline uint32_t effect_max_rgb(uint32_t a, uint32_t b)
 }
 
 
+/* ---------- Phosphor blur (spatial spot glow) ----------
+ *
+ * Display-only separable tent filter over the post-ghosting 8:8:8 rows,
+ * applied at Apple source resolution before the 2x doubling. History keeps
+ * the unblurred pixel, so persistence and glow never feedback-accumulate.
+ *
+ * The taps are SWAR halves/quarters/eighths on the 0x00RRGGBB fields; the
+ * masked terms sum to at most 0xFD per channel, so no cross-field carry.
+ * Truncation loses up to ~2 LSB per channel -- invisible next to the 565
+ * pack that follows.
+ *
+ * Strengths: LIGHT = horizontal 1/4,1/2,1/4. MEDIUM = LIGHT plus the
+ * 1/4,1/2,1/4 kernel vertically (the vertical tap is what softens the
+ * scanline gap; the three-row ring below delays emission by one source
+ * row so it stays symmetric). STRONG = the wider 1/8,1/4,1/4,1/4,1/8
+ * horizontal tap plus the same vertical tent. */
+
+static inline uint32_t effect_rgb_half(uint32_t p)
+{
+    return (p >> 1) & 0x007F7F7FU;
+}
+
+static inline uint32_t effect_rgb_quarter(uint32_t p)
+{
+    return (p >> 2) & 0x003F3F3FU;
+}
+
+static inline uint32_t effect_rgb_eighth(uint32_t p)
+{
+    return (p >> 3) & 0x001F1F1FU;
+}
+
+static uint32_t s_effect_blur_ring[3U][COMP_APPLE_SHR_WIDTH]
+    __attribute__((aligned(32)));
+
+/* ---------- Phosphor glow (additive halo) ----------
+ *
+ * SDD-style bloom, independent of blur: the emitted pixel is the base
+ * (sharp, or blurred when blur is enabled) plus a scaled copy of the
+ * full separable tent of the same content, saturating per channel so
+ * brights bleed toward white instead of wrapping. Strength picks the
+ * halo weight in 64ths; the halo kernel is the MEDIUM tent whenever
+ * blur itself is off. */
+#define EFFECT_GLOW_NUMER_LIGHT   8U
+#define EFFECT_GLOW_NUMER_MEDIUM 16U
+#define EFFECT_GLOW_NUMER_STRONG 32U
+
+static const uint8_t k_effect_glow_numer[APPLETINI_VIDEO_GLOW_MAX + 1U] = {
+    0U, EFFECT_GLOW_NUMER_LIGHT, EFFECT_GLOW_NUMER_MEDIUM,
+    EFFECT_GLOW_NUMER_STRONG
+};
+
+/* Sharp (pre-blur) rows for the glow-over-sharp base when blur is off,
+ * plus scratch for the assembled base and halo rows at emit time. */
+static uint32_t s_effect_sharp_ring[3U][COMP_APPLE_SHR_WIDTH]
+    __attribute__((aligned(32)));
+static uint32_t s_effect_halo_row[COMP_APPLE_SHR_WIDTH]
+    __attribute__((aligned(32)));
+
+/* Saturating per-channel add in the same pairwise-field style as
+ * effect_scale_64: RB spread across 0x00FF00FF and G at 0x0000FF00
+ * give every channel headroom, and the per-field overflow bit turns
+ * into a 0xFF clamp without cross-field borrows. Alpha is ignored;
+ * the 565 pack never reads it. */
+static inline uint32_t effect_rgb_sat_add(uint32_t p, uint32_t q)
+{
+    uint32_t rb = (p & 0x00FF00FFu) + (q & 0x00FF00FFu);
+    uint32_t g  = (p & 0x0000FF00u) + (q & 0x0000FF00u);
+    const uint32_t sat_rb = (rb >> 8) & 0x00010001u;
+    const uint32_t sat_g  = (g >> 16) & 0x1u;
+
+    rb = (rb & 0x00FF00FFu) | ((sat_rb << 8) - sat_rb);
+    g  = (g & 0x0000FF00u) | (0x0000FF00u & (0u - sat_g));
+    return rb | g;
+}
+
+/* Vertical stage over the three H-filtered ring rows: the 1/4,1/2,1/4
+ * tent for STRONG blur and for every glow halo; pass-through otherwise. */
+static void effect_blur_v_row(const uint32_t *up, const uint32_t *mid,
+                              const uint32_t *dn, uint32_t *dst, int w,
+                              int tent)
+{
+    if (!tent) {
+        memcpy(dst, mid, (size_t)w * sizeof(uint32_t));
+        return;
+    }
+    for (int x = 0; x < w; ++x) {
+        dst[x] = effect_rgb_half(mid[x]) + effect_rgb_quarter(up[x]) +
+                 effect_rgb_quarter(dn[x]);
+    }
+}
+
+static void effect_blur_h_row(const uint32_t *src,
+                              uint32_t *dst,
+                              int w,
+                              uint8_t blur)
+{
+    if (blur == APPLETINI_VIDEO_BLUR_OFF || w < 4) {
+        memcpy(dst, src, (size_t)w * sizeof(uint32_t));
+        return;
+    }
+
+    if (blur == APPLETINI_VIDEO_BLUR_STRONG) {
+        /* Wide 1/8,1/4,1/4,1/4,1/8 tap. Edge pixels clamp. */
+        for (int x = 0; x < w; ++x) {
+            const uint32_t c  = src[x];
+            const uint32_t l1 = (x > 0) ? src[x - 1] : c;
+            const uint32_t l2 = (x > 1) ? src[x - 2] : l1;
+            const uint32_t r1 = (x + 1 < w) ? src[x + 1] : c;
+            const uint32_t r2 = (x + 2 < w) ? src[x + 2] : r1;
+            dst[x] = effect_rgb_quarter(c) +
+                     effect_rgb_quarter(l1) + effect_rgb_quarter(r1) +
+                     effect_rgb_eighth(l2) + effect_rgb_eighth(r2);
+        }
+        return;
+    }
+
+    /* LIGHT and MEDIUM share the 1/4,1/2,1/4 horizontal tap. */
+    {
+        uint32_t left = src[0];
+        for (int x = 0; x < w; ++x) {
+            const uint32_t c = src[x];
+            const uint32_t r = (x + 1 < w) ? src[x + 1] : c;
+            dst[x] = effect_rgb_half(c) +
+                     effect_rgb_quarter(left) + effect_rgb_quarter(r);
+            left = c;
+        }
+    }
+}
+
+/* Assemble one output row from the rings, apply the optional glow
+ * halo, and emit the 565 pack + horizontal doubling into
+ * s_effect_2x_row -- one pass, same contract as the ghosting emit. */
+static void effect_emit_2x_row(const uint32_t *sharp,
+                               const uint32_t *up,
+                               const uint32_t *mid,
+                               const uint32_t *dn,
+                               int w,
+                               uint8_t blur,
+                               uint8_t glow)
+{
+    const uint32_t *base;
+
+    /* The vertical tent serves double duty: MEDIUM/STRONG blur's
+     * vertical stage and (always) the glow halo's shape. */
+    if (glow != APPLETINI_VIDEO_GLOW_OFF ||
+        blur >= APPLETINI_VIDEO_BLUR_MEDIUM) {
+        effect_blur_v_row(up, mid, dn, s_effect_halo_row, w, 1);
+    }
+
+    if (blur == APPLETINI_VIDEO_BLUR_OFF) {
+        base = sharp;
+    } else if (blur == APPLETINI_VIDEO_BLUR_LIGHT) {
+        base = mid;
+    } else {
+        base = s_effect_halo_row;
+    }
+
+    if (glow != APPLETINI_VIDEO_GLOW_OFF) {
+        const uint32_t numer = k_effect_glow_numer[glow];
+        for (int x = 0; x < w; ++x) {
+            const uint32_t p = effect_rgb_sat_add(
+                base[x], effect_scale_64(s_effect_halo_row[x], numer));
+            const uint32_t v = fb16_from_bgra32(p);
+            ((uint32_t *)s_effect_2x_row)[x] = (v << 16) | v;
+        }
+        return;
+    }
+
+    for (int x = 0; x < w; ++x) {
+        const uint32_t p = base[x];
+        const uint32_t v = fb16_from_bgra32(p);
+        ((uint32_t *)s_effect_2x_row)[x] = (v << 16) | v;
+    }
+}
+
 static uint8_t effect_scanline_blank(uint8_t phase,
                                      uint8_t scale_y,
                                      uint8_t scanline_mode)
@@ -254,7 +436,9 @@ static void blit_apple_ghosting_2x(uint16_t *fb,
                                    int src_stride,
                                    uint8_t scale_y,
                                    uint8_t scanline_mode,
-                                   uint8_t strength)
+                                   uint8_t strength,
+                                   uint8_t blur,
+                                   uint8_t glow)
 {
     const size_t row_pixels = (size_t)src_w * 2U;
 
@@ -270,7 +454,11 @@ static void blit_apple_ghosting_2x(uint16_t *fb,
         return;
     }
 
-    if (appletini_video_ghosting_clamp(strength) == APPLETINI_VIDEO_GHOSTING_OFF) {
+    blur = appletini_video_blur_clamp(blur);
+    glow = appletini_video_glow_clamp(glow);
+    if (appletini_video_ghosting_clamp(strength) == APPLETINI_VIDEO_GHOSTING_OFF &&
+        blur == APPLETINI_VIDEO_BLUR_OFF &&
+        glow == APPLETINI_VIDEO_GLOW_OFF) {
         return;
     }
 
@@ -279,6 +467,71 @@ static void blit_apple_ghosting_2x(uint16_t *fb,
         effect_clear_history();
         s_effect_history_w = (uint16_t)src_w;
         s_effect_history_h = (uint16_t)src_h;
+    }
+
+    if (blur != APPLETINI_VIDEO_BLUR_OFF || glow != APPLETINI_VIDEO_GLOW_OFF) {
+        /* Blur/glow path: same ghosting blend, but the row is kept in
+         * 8:8:8, horizontally filtered into a three-row ring, and packed
+         * to 565 one source row late so the vertical tap sees both
+         * neighbors. With glow but no blur, the ring still carries the
+         * LIGHT horizontal tap purely as the halo source, and the sharp
+         * ring keeps the unfiltered base. With ghosting OFF the decay
+         * numerator is 0 and the blend degenerates to pass-through
+         * (history writes are then redundant but harmless). The loop
+         * runs one extra iteration to flush the delayed final row. */
+        const uint8_t ring_h_kernel = (blur != APPLETINI_VIDEO_BLUR_OFF)
+            ? blur : (uint8_t)APPLETINI_VIDEO_BLUR_LIGHT;
+
+        for (int sy = 0; sy <= src_h; ++sy) {
+            if (sy < src_h) {
+                const uint32_t *srow = src + sy * src_stride;
+                const uint32_t hist_base = (uint32_t)sy * EFFECT_HISTORY_STRIDE;
+
+                memcpy(s_effect_row, srow, (size_t)src_w * sizeof(uint32_t));
+                for (int x = 0; x < src_w; ++x) {
+                    uint32_t p = s_effect_row[x];
+                    uint32_t *hist = &s_effect_history[hist_base + (uint32_t)x];
+                    const uint8_t decay_numer = effect_decay_numer(*hist, strength);
+
+                    p = effect_max_rgb(p, effect_scale_64(*hist, decay_numer));
+                    *hist = p;
+                    s_effect_row[x] = p;
+                }
+                if (blur == APPLETINI_VIDEO_BLUR_OFF) {
+                    memcpy(s_effect_sharp_ring[sy % 3], s_effect_row,
+                           (size_t)src_w * sizeof(uint32_t));
+                }
+                effect_blur_h_row(s_effect_row, s_effect_blur_ring[sy % 3],
+                                  src_w, ring_h_kernel);
+            }
+            if (sy < 1) {
+                continue;
+            }
+            {
+                const int ey = sy - 1;
+                const uint32_t *up =
+                    s_effect_blur_ring[((ey > 0) ? (ey - 1) : 0) % 3];
+                const uint32_t *mid = s_effect_blur_ring[ey % 3];
+                const uint32_t *dn =
+                    s_effect_blur_ring[((sy < src_h) ? sy : ey) % 3];
+
+                effect_emit_2x_row(s_effect_sharp_ring[ey % 3], up, mid, dn,
+                                   src_w, blur, glow);
+                for (uint8_t phase = 0U; phase < scale_y; ++phase) {
+                    uint16_t *drow = fb +
+                        (dst_y + ey * (int)scale_y + (int)phase) * FB16_WIDTH +
+                        dst_x;
+                    if (effect_scanline_blank(phase, scale_y,
+                                              scanline_mode) != 0U) {
+                        memset(drow, 0, row_pixels * sizeof(uint16_t));
+                    } else {
+                        memcpy(drow, s_effect_2x_row,
+                               row_pixels * sizeof(uint16_t));
+                    }
+                }
+            }
+        }
+        return;
     }
 
     for (int sy = 0; sy < src_h; ++sy) {
@@ -318,6 +571,105 @@ static void blit_apple_ghosting_2x(uint16_t *fb,
             }
         }
     }
+}
+
+/* ---------- Format badge ----------
+ *
+ * CPU1 derives this from the exact frame it rendered and publishes it
+ * atomically with the framebuffer slot. CPU0 must never inspect CPU1's
+ * cached main/AUX shadows: invalidating CPU0's cache cannot make CPU1's
+ * dirty lines reach DDR, so that old scheme reported stale HGR/SHR labels. */
+static const char *format_badge_page_suffix(uint32_t detail)
+{
+    switch ((detail & APPLE_FB_FORMAT_PAGE_MASK) >>
+            APPLE_FB_FORMAT_PAGE_SHIFT) {
+    case APPLE_FB_FORMAT_PAGE_INTERLACE:  return "i";
+    case APPLE_FB_FORMAT_PAGE_FLIP_MERGE: return "p";
+    default:                               return "";
+    }
+}
+
+static const char *format_badge_shr4_selector(uint32_t detail)
+{
+    const uint32_t selectors =
+        (detail & APPLE_FB_FORMAT_SELECTORS_MASK) >>
+        APPLE_FB_FORMAT_SELECTORS_SHIFT;
+
+    switch (selectors) {
+    case APPLE_FB_FORMAT_SELECTOR_STD:    return "STD";
+    case APPLE_FB_FORMAT_SELECTOR_RGGB:   return "RGGB";
+    case APPLE_FB_FORMAT_SELECTOR_PAL256: return "PAL256";
+    case APPLE_FB_FORMAT_SELECTOR_R4G4B4: return "R4G4B4";
+    default:                               return "MIXED";
+    }
+}
+
+static const char *format_badge_label(void)
+{
+    static char label[32];
+    const uint32_t detail = apple_fb_reader_format_detail();
+    const uint32_t base = detail & APPLE_FB_FORMAT_BASE_MASK;
+    const char *suffix = format_badge_page_suffix(detail);
+    const char *name = NULL;
+    const char *geometry = NULL;
+
+    switch (base) {
+    case APPLE_FB_FORMAT_TEXT: name = "TEXT"; break;
+    case APPLE_FB_FORMAT_GR:   name = "GR";   break;
+    case APPLE_FB_FORMAT_DGR:  name = "DGR";  break;
+    case APPLE_FB_FORMAT_HGR:  name = "HGR";  break;
+    case APPLE_FB_FORMAT_DHGR: name = "DHGR"; break;
+    case APPLE_FB_FORMAT_SHR_320: name = "SHR 320"; break;
+    case APPLE_FB_FORMAT_SHR_640: name = "SHR 640"; break;
+    case APPLE_FB_FORMAT_SHR_MIXED: name = "SHR MIXED"; break;
+    case APPLE_FB_FORMAT_SHR4_320: geometry = "320"; break;
+    case APPLE_FB_FORMAT_SHR4_640: geometry = "640"; break;
+    case APPLE_FB_FORMAT_SHR4_MIXED: geometry = "MIXED"; break;
+    case APPLE_FB_FORMAT_SHR3200_320: name = "SHR-3200 320"; break;
+    case APPLE_FB_FORMAT_SHR3200_640: name = "SHR-3200 640"; break;
+    case APPLE_FB_FORMAT_SHR3200_MIXED: name = "SHR-3200 MIXED"; break;
+    case APPLE_FB_FORMAT_SHR_EXT_MIXED: name = "SHR EXT MIXED"; break;
+    default:
+        name = (g_compositor_last_apple_mode == APPLE_FB_DISPLAY_MODE_SHR) ?
+               "SHR ?" : "VIDEO ?";
+        break;
+    }
+
+    if (geometry != NULL) {
+        snprintf(label, sizeof(label), "SHR4 %s %s%s",
+                 format_badge_shr4_selector(detail), geometry, suffix);
+    } else {
+        snprintf(label, sizeof(label), "%s%s", name, suffix);
+    }
+    return label;
+}
+
+static void draw_format_badge(uint16_t *fb, int x, int y, int w_px)
+{
+    const char *label = format_badge_label();
+    const int scale = 2;
+    const int text_w =
+        (int)strlen(label) * FB16_BUILTIN_FONT_ADVANCE_X * scale;
+    const int badge_w = text_w + 16;
+    const int badge_h = 8 * scale + 10;
+    const int bx = x + w_px - badge_w - 10;
+    const int by = y + 10;
+
+    fb16_fill_rect(fb, bx, by, badge_w, badge_h, FB16_RGB(0x10, 0x14, 0x1C));
+    fb16_rect(fb, bx, by, badge_w, badge_h, FB16_RGB(0x34, 0x48, 0x5C));
+    fb16_string_scaled_xy(fb, bx + 8, by + 5, label,
+                          FB16_RGB(0x62, 0xD8, 0xE8),
+                          FB16_RGB(0x10, 0x14, 0x1C), scale, scale);
+}
+
+/* Nonzero when the Apple subwindow must route through the effects blit
+ * (ghosting history blend and/or phosphor blur) instead of the fast
+ * fb16 NEON path. */
+static inline int compositor_apple_effects_active(void)
+{
+    return (s_video_ghosting_strength != APPLETINI_VIDEO_GHOSTING_OFF) ||
+           (s_video_blur_strength != APPLETINI_VIDEO_BLUR_OFF) ||
+           (s_video_glow_strength != APPLETINI_VIDEO_GLOW_OFF);
 }
 
 /* ---------- Slot picking ---------- */
@@ -431,7 +783,7 @@ static int draw_apple_subwindow(uint16_t *fb)
     const uint32_t *src_base =
         (const uint32_t *)(uintptr_t)comp_apple_slot_addr[slot];
     if (display_mode == APPLE_FB_DISPLAY_MODE_SHR) {
-        if (s_video_ghosting_strength != APPLETINI_VIDEO_GHOSTING_OFF) {
+        if (compositor_apple_effects_active()) {
             blit_apple_ghosting_2x(fb,
                                    (int)COMP_SUBWIN_SHR_X_OFF,
                                    (int)COMP_SUBWIN_SHR_Y_OFF,
@@ -441,7 +793,9 @@ static int draw_apple_subwindow(uint16_t *fb)
                                    (int)COMP_APPLE_SHR_ROW_PIXELS,
                                    2U,
                                    s_scanlines_mode,
-                                   s_video_ghosting_strength);
+                                   s_video_ghosting_strength,
+                                   s_video_blur_strength,
+                                   s_video_glow_strength);
         } else {
             fb16_blit_2x2_scanlines(fb,
                                     (int)COMP_SUBWIN_SHR_X_OFF,
@@ -451,6 +805,49 @@ static int draw_apple_subwindow(uint16_t *fb)
                                     (int)COMP_APPLE_SHR_HEIGHT,
                                     (int)COMP_APPLE_SHR_ROW_PIXELS,
                                     s_scanlines_mode);
+        }
+        if (s_format_badge_enabled != 0u) {
+            draw_format_badge(fb, (int)COMP_SUBWIN_SHR_X_OFF,
+                              (int)COMP_SUBWIN_SHR_Y_OFF,
+                              (int)(COMP_APPLE_SHR_WIDTH * 2u));
+        }
+        return 1;
+    }
+
+    if (display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I) {
+        /* Woven 384-row frame at the legacy stride, starting at slot
+         * row 0 with no border data: blit 2x2 into the same rect the
+         * legacy 2x4 path fills. The IIgs border is unavailable while
+         * interlaced. */
+        const uint32_t *srcw = src_base + COMP_APPLE_ACTIVE_X;
+
+        if (compositor_apple_effects_active()) {
+            blit_apple_ghosting_2x(fb,
+                                   (int)COMP_SUBWIN_X_OFF,
+                                   (int)COMP_SUBWIN_Y_OFF,
+                                   srcw,
+                                   (int)COMP_APPLE_WIDTH,
+                                   384,
+                                   (int)COMP_APPLE_ROW_PIXELS,
+                                   2U,
+                                   s_scanlines_mode,
+                                   s_video_ghosting_strength,
+                                   s_video_blur_strength,
+                                   s_video_glow_strength);
+        } else {
+            fb16_blit_2x2_scanlines(fb,
+                                    (int)COMP_SUBWIN_X_OFF,
+                                    (int)COMP_SUBWIN_Y_OFF,
+                                    srcw,
+                                    (int)COMP_APPLE_WIDTH,
+                                    384,
+                                    (int)COMP_APPLE_ROW_PIXELS,
+                                    s_scanlines_mode);
+        }
+        if (s_format_badge_enabled != 0u) {
+            draw_format_badge(fb, (int)COMP_SUBWIN_X_OFF,
+                              (int)COMP_SUBWIN_Y_OFF,
+                              (int)(COMP_APPLE_WIDTH * 2u));
         }
         return 1;
     }
@@ -481,7 +878,7 @@ static int draw_apple_subwindow(uint16_t *fb)
         src_w = (int)COMP_APPLE_WIDTH;
         src_h = (int)COMP_APPLE_HEIGHT;
     }
-    if (s_video_ghosting_strength != APPLETINI_VIDEO_GHOSTING_OFF) {
+    if (compositor_apple_effects_active()) {
         blit_apple_ghosting_2x(fb,
                                dst_x,
                                dst_y,
@@ -491,7 +888,9 @@ static int draw_apple_subwindow(uint16_t *fb)
                                (int)COMP_APPLE_ROW_PIXELS,
                                4U,
                                s_scanlines_mode,
-                               s_video_ghosting_strength);
+                               s_video_ghosting_strength,
+                               s_video_blur_strength,
+                               s_video_glow_strength);
     } else {
         fb16_blit_2x4_scanlines(fb,
                                 dst_x,
@@ -501,6 +900,9 @@ static int draw_apple_subwindow(uint16_t *fb)
                                 src_h,
                                 (int)COMP_APPLE_ROW_PIXELS,
                                 s_scanlines_mode);
+    }
+    if (s_format_badge_enabled != 0u) {
+        draw_format_badge(fb, dst_x, dst_y, src_w * 2);
     }
     return 1;
 }
@@ -663,6 +1065,46 @@ void compositor_set_video_ghosting(uint8_t strength)
 uint8_t compositor_video_ghosting(void)
 {
     return s_video_ghosting_strength;
+}
+
+void compositor_set_video_blur(uint8_t strength)
+{
+    strength = appletini_video_blur_clamp(strength);
+    s_video_blur_strength = strength;
+    /* Display-only: no history reset needed, but the subwindow must be
+     * recomposited so a strength change lands without waiting for the
+     * next fresh Apple frame. */
+    s_force_full_refresh = 1u;
+}
+
+uint8_t compositor_video_blur(void)
+{
+    return s_video_blur_strength;
+}
+
+void compositor_set_video_glow(uint8_t strength)
+{
+    strength = appletini_video_glow_clamp(strength);
+    s_video_glow_strength = strength;
+    /* Display-only, like blur: recomposite so the change lands without
+     * waiting for the next fresh Apple frame. */
+    s_force_full_refresh = 1u;
+}
+
+uint8_t compositor_video_glow(void)
+{
+    return s_video_glow_strength;
+}
+
+void compositor_set_format_badge(uint8_t enabled)
+{
+    s_format_badge_enabled = (enabled != 0u) ? 1u : 0u;
+    s_force_full_refresh = 1u;
+}
+
+uint8_t compositor_format_badge(void)
+{
+    return s_format_badge_enabled;
 }
 
 void compositor_set_border(uint8_t enabled, uint8_t flood)

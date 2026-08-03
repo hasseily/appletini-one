@@ -67,17 +67,20 @@ typedef enum {
 #define CONFIG_ETHERNET_ITEM_COUNT 11U
 #define CONFIG_VIDEO_ITEM_OUTPUT       0U
 #define CONFIG_VIDEO_ITEM_VARIANT      1U
-#define CONFIG_VIDEO_ITEM_VIDEO7       2U
-#define CONFIG_VIDEO_ITEM_SCANLINES    3U
-#define CONFIG_VIDEO_ITEM_GHOSTING     4U
-#define CONFIG_VIDEO_ITEM_BORDER       5U
-#define CONFIG_VIDEO_ITEM_BORDER_COLOR 6U
-#define CONFIG_VIDEO_ITEM_BORDER_FLOOD 7U
-#define CONFIG_VIDEO_ITEM_ROM          8U
-#define CONFIG_VIDEO_ITEM_SHOW_BEZEL   9U
-#define CONFIG_VIDEO_ITEM_BEZEL        10U
-#define CONFIG_VIDEO_ITEM_DEBUG        11U
-#define CONFIG_VIDEO_ITEM_COUNT        12U
+#define CONFIG_VIDEO_ITEM_SCANLINES    2U
+#define CONFIG_VIDEO_ITEM_BLUR         3U
+#define CONFIG_VIDEO_ITEM_GLOW         4U
+#define CONFIG_VIDEO_ITEM_GHOSTING     5U
+#define CONFIG_VIDEO_ITEM_BORDER       6U
+#define CONFIG_VIDEO_ITEM_VIDEO7       7U
+#define CONFIG_VIDEO_ITEM_BORDER_COLOR 8U
+#define CONFIG_VIDEO_ITEM_BORDER_FLOOD 9U
+#define CONFIG_VIDEO_ITEM_ROM          10U
+#define CONFIG_VIDEO_ITEM_SHOW_BEZEL   11U
+#define CONFIG_VIDEO_ITEM_BEZEL        12U
+#define CONFIG_VIDEO_ITEM_DEBUG        13U
+#define CONFIG_VIDEO_ITEM_BADGE        14U
+#define CONFIG_VIDEO_ITEM_COUNT        15U
 #define CONFIG_TRANSWARP_ITEM_ENABLE       0U
 #define CONFIG_TRANSWARP_ITEM_SPEED        1U
 #define CONFIG_TRANSWARP_ITEM_SLUG         2U
@@ -307,5 +310,17 @@ void hgr_draw_video_ghosting_item(uint16_t *fb,
                                   int w,
                                   uint8_t focused,
                                   uint8_t strength);
+void hgr_draw_video_blur_item(uint16_t *fb,
+                              int x,
+                              int y,
+                              int w,
+                              uint8_t focused,
+                              uint8_t strength);
+void hgr_draw_video_glow_item(uint16_t *fb,
+                              int x,
+                              int y,
+                              int w,
+                              uint8_t focused,
+                              uint8_t strength);
 
 #endif

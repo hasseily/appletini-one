@@ -1,0 +1,633 @@
+; a2imgview.a65 -- A2IMGVIEW, the HGR/DHGR/SHR image slideshow
+; (ProDOS SYS).
+;
+; Runs as a boot .SYSTEM file or dash-launched from BASIC.SYSTEM. One
+; binary handles every format: the build script generates the image
+; table with a format byte per entry, and the loader dispatches on it:
+;
+;   fmt 0 SHR    first 32K to AUX $2000-$9FFF (staged through main),
+;                remaining payload to MAIN $2000+. $C029 selects SHR
+;                before the AUX copy so the image paints in.
+;                Images must be self-describing (magic at $9DFC, ctrl
+;                at $9DF8 per the SDD ruleset).
+;   fmt 1 HGR    8K to MAIN $2000, HGR soft switches.
+;   fmt 2 HGRi   8K to MAIN $2000 + 8K to MAIN $4000 (page 2 = the odd
+;                interlace field), HGR switches.
+;   fmt 3 DHR    .dhr order: 8K to AUX $2000 (staged), 8K to MAIN
+;                $2000, DHGR switches.
+;   fmt 4 DHRi   two .dhr pairs: page-1 pair as fmt 3, page-2 pair to
+;                AUX/MAIN $4000, DHGR switches.
+;
+; Paged (interlace/flip) images are self-describing per SDD
+; docs/LEGACY_PAGED_VIDEO_MODES.md: the A2Li signature + mode byte
+; ride in page 2's first screen hole (file page-2 offset +$78), so
+; staging page 2 arms the renderer with no loader side channel. The
+; loader disarms between images and writes each mode byte last, after
+; both pages are complete.
+;
+; The MLI prefix is set at startup when empty: booting leaves it on
+; the boot volume, but BASIC.SYSTEM's dash launch leaves it EMPTY (it
+; resolves paths itself), which would fail every partial-path open.
+;
+; RIGHT arrow (or any other key) advances, LEFT arrow goes back, ESC
+; quits. After a key is consumed the loader waits for release, so
+; auto-repeat cannot machine-gun the slideshow. There is NO text-mode
+; gap between images: the previous image stays on screen while the
+; next loads over it (the paint-in is intentional); only the very
+; first load shows the blanked black text page. No status text, ever.
+; If a full pass over the deck loads nothing, the viewer QUITs to
+; ProDOS instead of spinning on a black screen. The on-screen format
+; badge is drawn by the Appletini compositor (Video > Format badge),
+; not by this loader.
+;
+; Assemble:  acme -f plain -o A2IMGVIEW a2imgview.a65
+
+!cpu 6502
+* = $2000
+
+MLI      = $BF00
+KBD      = $C000
+KBDSTRB  = $C010
+STORE80OFF = $C000          ; write: 80STORE off (keeps RAMWRT honest)
+COL80OFF = $C00C
+COL80ON  = $C00D
+RAMRDOFF = $C002
+RAMWRTON = $C005
+RAMWRTOFF= $C004
+TEXTON   = $C051
+TEXTOFF  = $C050
+MIXEDOFF = $C052
+PAGE1    = $C054
+HIRESON  = $C057
+AN3ON    = $C05E            ; access: DHGR on (with 80COL set)
+AN3OFF   = $C05F            ; access: DHGR off
+NEWVIDEO = $C029
+TEXTPAGE = $0400
+
+FMT_SHR   = 0
+FMT_HGR   = 1
+FMT_HGRI  = 2
+FMT_DHGR  = 3
+FMT_DHGRI = 4
+
+KEY_LEFT  = $88
+KEY_ESC   = $9B
+
+RUNADDR  = $1000            ; relocated run address
+IOBUF    = $1800            ; 1KB ProDOS file buffer
+LOADADDR = $2000            ; images stage and land at $2000
+
+; --- SYS entry: relocate $2000-$27FF down to $1000 and restart there ---
+    ldx #0
+reloc:
+    lda $2000,x
+    sta $1000,x
+    lda $2100,x
+    sta $1100,x
+    lda $2200,x
+    sta $1200,x
+    lda $2300,x
+    sta $1300,x
+    lda $2400,x
+    sta $1400,x
+    lda $2500,x
+    sta $1500,x
+    lda $2600,x
+    sta $1600,x
+    lda $2700,x
+    sta $1700,x
+    inx
+    bne reloc
+    jmp main                ; label is already RUNADDR-based (!pseudopc)
+
+; Everything below runs at RUNADDR-based addresses.
+!pseudopc RUNADDR + (* - $2000) {
+
+main:
+    sta STORE80OFF          ; 80STORE off: RAMWRT owns $2000+ aux routing
+    ; Blank the whole text page once: the wait before the first image
+    ; shows pure black instead of boot text or a status line.
+    lda #$A0
+    ldx #0
+-   sta $0400,x
+    sta $0500,x
+    sta $0600,x
+    sta $0700,x
+    inx
+    bne -
+    jsr set_prefix          ; dash launch leaves the MLI prefix empty
+    lda #0
+    sta img_index
+    sta fail_count
+
+show_image:
+    ; No text-mode gap: the previous image stays up while the next
+    ; loads over it. Only disarm the legacy paged modes (A2Li signal
+    ; in page 2's first screen hole, main bank) so a half-loaded pair
+    ; never weaves with stale data. Mode byte 0 = off; the signature
+    ; bytes may stay. A paged image re-arms only after page 2 is done.
+    lda #0
+    sta STORE80OFF
+    sta RAMRDOFF
+    sta RAMWRTOFF            ; A2Li always lives in main memory
+    sta $407C               ; hires pair mode byte
+    sta $087C               ; lores pair mode byte
+
+    ; ---- open ----
+    ldx img_index
+    lda names_lo,x
+    sta open_path
+    lda names_hi,x
+    sta open_path+1
+    jsr mli_open
+    bcc +
+    jmp count_fail          ; missing file: skip it forward
++   ldx img_index
+    lda formats,x
+    sta cur_fmt
+
+    ; ---- format dispatch ----
+    cmp #FMT_HGR
+    beq prepare_hgr
+    cmp #FMT_HGRI
+    beq prepare_hgri
+    cmp #FMT_DHGR
+    beq prepare_dhgr
+    cmp #FMT_DHGRI
+    beq prepare_dhgri
+    jmp load_shr
+
+prepare_hgr:
+    jsr select_hgr
+    jmp load_hgr
+
+prepare_hgri:
+    jsr select_hgr
+    jmp load_hgri
+
+prepare_dhgr:
+    jsr select_dhgr
+    jmp load_dhgr
+
+prepare_dhgri:
+    jsr select_dhgr
+    jmp load_dhgri
+
+; Select the base mode before the first disk read. The old image stays
+; visible, then the new bytes paint over it as ProDOS fills the screen.
+select_hgr:
+    sta STORE80OFF          ; ProDOS does not preserve video bank switches
+    sta RAMRDOFF
+    sta RAMWRTOFF            ; final A2Li arm must target main $407C
+    lda #$01
+    sta NEWVIDEO
+    bit AN3OFF
+    sta COL80OFF
+    bit TEXTOFF
+    bit MIXEDOFF
+    bit PAGE1
+    bit HIRESON
+    rts
+
+select_dhgr:
+    sta STORE80OFF          ; RAMWRT must own every aux screen write
+    sta RAMRDOFF
+    sta RAMWRTOFF            ; A2Li is in main even for DHGR
+    lda #$01
+    sta NEWVIDEO
+    bit TEXTOFF
+    bit MIXEDOFF
+    bit PAGE1
+    bit HIRESON
+    sta COL80ON
+    bit AN3ON
+    rts
+
+load_hgri:
+    lda #$20
+    ldy #$20
+    jsr read_chunk
+    bcs fail_load
+    ; Read page 2 into spare memory, then copy it to $4000 with the
+    ; A2Li mode held at zero. This keeps a partial pair disarmed.
+    lda #$60
+    ldy #$20
+    jsr read_chunk
+    bcs fail_load
+    jsr copy_paged_main_disarmed
+    jmp show_hgr
+
+load_hgr:
+    lda #$20
+    ldy #$20
+    jsr read_chunk
+    bcs fail_load
+show_hgr:
+    jsr mli_close
+    ; Restore the full base mode first. The A2Li byte below must be the
+    ; final state change, so the next frame cannot sample an armed pair
+    ; with stale TEXT/HIRES/page switches from ProDOS.
+    jsr select_hgr
+    lda cur_fmt
+    cmp #FMT_HGRI
+    bne +
+    lda paged_mode
+    sta $407C               ; final write arms the complete page pair
++
+    jmp wait_key
+
+fail_load:
+    jmp close_and_next
+
+load_dhgri:
+    jsr read_pair_to_page2000
+    bcs fail_load
+    ; Page-2 pair: stage AUX $4000 through MAIN $4000, then main.
+    lda #$40
+    ldy #$20
+    jsr read_chunk
+    bcs fail_load
+    lda #$40
+    ldy #$60
+    jsr copy_aux_range
+    lda #$60
+    ldy #$20
+    jsr read_chunk
+    bcs fail_load
+    jsr copy_paged_main_disarmed
+    jmp show_dhgr
+
+load_dhgr:
+    jsr read_pair_to_page2000
+    bcs fail_load
+show_dhgr:
+    jsr mli_close
+    jsr select_dhgr
+    lda cur_fmt
+    cmp #FMT_DHGRI
+    bne +
+    lda paged_mode
+    sta $407C               ; final write arms the complete page pair
++
+    jmp wait_key
+
+load_shr:
+    ; Neutralize the stale aux ctrl block AND magic at $9DF8-$9DFF
+    ; before staging: a leftover paged mode must never weave the
+    ; incoming image with the previous one while the aux copy is
+    ; partial. The incoming image restores its own ctrl+magic near
+    ; the end of the copy; until then a displayed SHR image briefly
+    ; decodes as standard SHR, which is the harmless transient.
+    sta STORE80OFF
+    sta RAMWRTON
+    lda #0
+    ldx #7
+-   sta $9DF8,x
+    dex
+    bpl -
+    sta RAMWRTOFF
+
+    ; ---- read first 32K to main $2000, copy to aux ----
+    lda #$20
+    ldy #$80
+    jsr read_chunk
+    bcs fail_load
+
+    ; Copy the control bytes now so vTW can open its wide main-memory
+    ; posting window for a second field. Hold back the four magic bytes
+    ; so SHR4 or SHR-3200 cannot start before the whole file is ready.
+    ldx #3
+-   lda $9DFC,x
+    sta shr_magic,x
+    lda #0
+    sta $9DFC,x
+    dex
+    bpl -
+
+    ; The staging read is not visible. Select base SHR now, while the
+    ; extension magic is invalid, so the AUX copy paints in on screen.
+    lda #$C1
+    sta NEWVIDEO
+    lda #$20
+    ldy #$A0
+    jsr copy_aux_range
+
+    ; The aux copy above delivers the in-band ctrl bytes ($9DF8) with
+    ; the field data, so the renderer opens the main $6000-$9FFF
+    ; posted-write window while the next disk read is still in flight
+    ; (matters under vTW).
+
+    ; Staging leaves this field's ctrl+magic in MAIN $9DF8-$9DFF, and a
+    ; single-bank image never overwrites them. The renderer evaluates
+    ; magic/ctrl per field bank, so stale main-bank state must not leak
+    ; into paged-mode sampling: zero it here. A genuine second field
+    ; restores its own ctrl+magic through the next read.
+    lda #0
+    ldx #7
+-   sta $9DF8,x
+    dex
+    bpl -
+
+    ; ---- read any remaining payload straight into main $2000 ----
+    lda #$20
+    ldy #$80
+    jsr read_chunk          ; EOF error is fine (single-bank image)
+    jsr mli_close
+
+    ; Arm the complete mode last. Its four-byte magic does not match
+    ; until the final write, so the renderer sees one clean change.
+    sta RAMRDOFF            ; shr_magic lives in main program memory
+    sta RAMWRTON
+    ldx #0
+-   lda shr_magic,x
+    sta $9DFC,x
+    inx
+    cpx #4
+    bcc -
+    sta RAMWRTOFF
+
+    ; No C029 edge here. The renderer redraws each SHR frame, so the next
+    ; frame marker sees the final magic and the complete AUX/main fields.
+
+    ; ---- wait for key ----
+    ; No strobe clear on entry: a key pressed while the image was
+    ; still loading stays queued and advances immediately. After
+    ; consuming a key, spin until it is RELEASED -- $C010 bit 7 is
+    ; any-key-down, and each read also clears the strobe -- so the
+    ; IIe's ~15 Hz auto-repeat cannot machine-gun the slideshow.
+wait_key:
+    lda #0                  ; an image is on screen: the deck works
+    sta fail_count
+wk_poll:
+    lda KBD
+    bpl wk_poll
+    pha
+release:
+    lda KBDSTRB
+    bmi release
+    pla
+    cmp #KEY_ESC
+    beq quit
+    cmp #KEY_LEFT
+    beq prev_image
+
+next_or_quit:
+    ldx img_index
+    inx
+    cpx #image_count
+    bcc keep_index
+    ldx #0
+keep_index:
+    stx img_index
+    jmp show_image
+
+prev_image:
+    ldx img_index
+    bne +
+    ldx #image_count
++   dex
+    stx img_index
+    jmp show_image
+
+close_and_next:
+    jsr mli_close
+    ; fall through
+
+; Failed image: skip forward, but if a whole pass loads nothing,
+; QUIT to ProDOS instead of spinning forever on a black screen.
+count_fail:
+    inc fail_count
+    lda fail_count
+    cmp #image_count
+    bcc +
+    jmp quit
++   jmp next_or_quit
+
+quit:
+    lda #$01
+    sta NEWVIDEO            ; SHR off
+    bit AN3OFF
+    sta COL80OFF
+    bit TEXTON
+    jsr MLI
+    !byte $65
+    !word quit_parms
+    brk                     ; QUIT does not return
+
+; ---- Prefix: GET_PREFIX; if empty, ON_LINE(DEVNUM) -> SET_PREFIX ----
+; Booted directly, ProDOS leaves the prefix on the boot volume. Dash-
+; launched from BASIC.SYSTEM, the MLI prefix is EMPTY (BASIC resolves
+; paths itself) and every partial-path open would fail with $40.
+DEVNUM = $BF30
+set_prefix:
+    jsr MLI
+    !byte $C7               ; GET_PREFIX
+    !word gp_parms
+    lda prefix_buf
+    bne sp_done             ; nonempty: keep it
+    lda DEVNUM              ; last-accessed device (the boot volume)
+    sta ol_unit
+    jsr MLI
+    !byte $C5               ; ON_LINE (single unit)
+    !word ol_parms
+    bcs sp_done             ; no volume: opens fail, count_fail QUITs
+    lda ol_buf
+    and #$0F                ; low nibble = volume name length
+    beq sp_done
+    sta sp_len
+    clc
+    adc #1                  ; + leading '/'
+    sta prefix_buf
+    lda #$2F                ; '/'
+    sta prefix_buf+1
+    ldx #0
+-   inx
+    lda ol_buf,x
+    sta prefix_buf+1,x
+    cpx sp_len
+    bne -
+    jsr MLI
+    !byte $C6               ; SET_PREFIX (same {1, ptr} block shape)
+    !word gp_parms
+sp_done:
+    rts
+
+; ---- A2FC pair to page $2000: 8K staged to AUX, 8K to MAIN ----
+read_pair_to_page2000:
+    lda #$20
+    ldy #$20
+    jsr read_chunk
+    bcs +
+    lda #$20
+    ldy #$40
+    jsr copy_aux_range
+    lda #$20
+    ldy #$20
+    jsr read_chunk
++   rts
+
+; ---- MLI helpers ----
+mli_open:
+    jsr MLI
+    !byte $C8
+    !word open_parms
+    bcs +
+    lda open_ref
+    sta read_ref
+    sta close_ref
++   rts
+
+; Read Y*256 bytes into main memory at A:00.
+read_chunk:
+    sta read_buf+1
+    sty read_len+1
+    lda #$00
+    sta read_buf
+    sta read_len
+    jsr MLI
+    !byte $CA
+    !word read_parms
+    rts
+
+mli_close:
+    jsr MLI
+    !byte $CC
+    !word close_parms
+    rts
+
+; ---- main A:00 up to (Y-1):FF -> same range in aux (RAMWRT) ----
+copy_aux_range:
+    sta src_ptr+1
+    sty cp_end
+    lda #$00
+    sta src_ptr
+    sta STORE80OFF          ; 80STORE would override RAMWRT at $2000-$3FFF
+    sta RAMRDOFF            ; source must be main, even if the MLI used AUX
+    sta RAMWRTON
+copy_page:
+    ldy #0
+-   lda (src_ptr),y
+    sta (src_ptr),y
+    iny
+    bne -
+    inc src_ptr+1
+    lda src_ptr+1
+    cmp cp_end
+    bcc copy_page
+    sta RAMWRTOFF
+    rts
+
+; ---- MAIN $6000-$7FFF -> MAIN $4000-$5FFF, A2Li held off ----
+; Save the staged mode byte, copy the signature and pixels with mode 0,
+; then let show_hgr/show_dhgr write the saved mode after close.
+copy_paged_main_disarmed:
+    lda #0
+    sta STORE80OFF
+    sta RAMRDOFF
+    sta RAMWRTOFF            ; source and destination are both main
+    lda $607C
+    sta paged_mode
+    lda #0
+    sta $607C
+    sta src_ptr
+    sta dst_ptr
+    lda #$60
+    sta src_ptr+1
+    lda #$40
+    sta dst_ptr+1
+    ldx #$20
+copy_paged_page:
+    ldy #0
+-   lda (src_ptr),y
+    sta (dst_ptr),y
+    iny
+    bne -
+    inc src_ptr+1
+    inc dst_ptr+1
+    dex
+    bne copy_paged_page
+    rts
+
+; ---- data ----
+img_index:  !byte 0
+cur_fmt:    !byte 0
+fail_count: !byte 0
+sp_len:     !byte 0
+paged_mode: !byte 0
+shr_magic:  !fill 4, 0
+src_ptr = $06               ; free zero page pair
+cp_end  = $08               ; aux-copy end page (exclusive)
+dst_ptr = $09               ; paged main-copy destination pair
+
+gp_parms:                   ; GET_PREFIX and SET_PREFIX share the shape
+    !byte 1
+    !word prefix_buf
+ol_parms:
+    !byte 2
+ol_unit:
+    !byte 0
+    !word ol_buf
+prefix_buf:
+    !fill 65, 0             ; len + up to 64 path chars
+ol_buf:
+    !fill 16, 0             ; single-unit ON_LINE record
+
+open_parms:
+    !byte 3
+open_path:
+    !word 0
+    !word IOBUF
+open_ref:
+    !byte 0
+
+read_parms:
+    !byte 4
+read_ref:
+    !byte 0
+read_buf:
+    !word 0
+read_len:
+    !word 0
+read_count:
+    !word 0
+
+close_parms:
+    !byte 1
+close_ref:
+    !byte 0
+
+quit_parms:
+    !byte 4
+    !byte 0
+    !word 0
+    !byte 0
+    !word 0
+
+; Image table: pathname pointers plus a format byte per entry. The
+; demo build script regenerates everything below names_lo.
+names_lo:
+    !byte <n_beach, <n_e320a, <n_e320b, <n_e320c
+    !byte <n_e640a, <n_e640b, <n_int1, <n_int2
+    !byte <n_t256, <n_tflip
+names_hi:
+    !byte >n_beach, >n_e320a, >n_e320b, >n_e320c
+    !byte >n_e640a, >n_e640b, >n_int1, >n_int2
+    !byte >n_t256, >n_tflip
+formats:
+    !byte 0, 0, 0, 0
+    !byte 0, 0, 0, 0
+    !byte 0, 0
+image_count = 10
+
+n_beach: !byte 10 : !text "BEACH.3200"
+n_e320a: !byte 8  : !text "EYE320.A"
+n_e320b: !byte 8  : !text "EYE320.B"
+n_e320c: !byte 8  : !text "EYE320.C"
+n_e640a: !byte 8  : !text "EYE640.A"
+n_e640b: !byte 8  : !text "EYE640.B"
+n_int1:  !byte 12 : !text "BANNERS.INT1"
+n_int2:  !byte 12 : !text "BANNERS.INT2"
+n_t256:  !byte 8  : !text "TEST.256"
+n_tflip: !byte 9  : !text "TEST.FLIP"
+
+}

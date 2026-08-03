@@ -121,9 +121,10 @@
 #define CARD_CTRL_BUSDBG_TAPLAST_REG       CARD_CTRL_REG_ADDR(0x30U)
 #define CARD_CTRL_BUSDBG_MRING_REG(n)      CARD_CTRL_REG_ADDR(0x31U + (n))
 
-/* SHR interlace posting window: bit 0 widens the vTW posted-write video
- * window to main $6000-$9FFF so the second field reaches the capture.
- * Written by CPU1's renderer on mode entry/exit; off by default. */
+/* SHR paged-mode fallback: bit 0 widens the vTW posted-write window to main
+ * $6000-$9FFF. The vTW core tracks aux $9DF8 directly during accelerated
+ * writes; CPU1 also drives this bit from captured/rendered state so takeover
+ * and recovery start with the right window. */
 #define CARD_CTRL_VIDEO_POST_WIDE_REG      CARD_CTRL_REG_ADDR(0x35U)
 
 /* vTW physical-transaction forensics; cleared with "busdbg clear".

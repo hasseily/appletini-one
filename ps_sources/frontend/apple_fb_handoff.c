@@ -10,7 +10,7 @@
  * `dmb sy` provide ordering without cross-core compare-exchange.
  *
  *   writer_state (CPU1 writes, CPU0 reads):
- *     uint32_t published_slot;   // slot, display mode, and border color
+ *     uint32_t published_slot;   // slot, display mode, border, format detail
  *     uint32_t publish_seq;      // monotonic, increments on each publish
  *
  *   reader_state (CPU0 writes, CPU1 reads):
@@ -70,9 +70,11 @@
 #define READER_NONE    0xFFu
 #define PUBLISHED_SLOT_MASK          0x000000FFu
 #define PUBLISHED_DISPLAY_MODE_SHIFT 8u
-#define PUBLISHED_DISPLAY_MODE_MASK  (1u << PUBLISHED_DISPLAY_MODE_SHIFT)
-#define PUBLISHED_BORDER_COLOR_SHIFT 9u
+#define PUBLISHED_DISPLAY_MODE_MASK  (3u << PUBLISHED_DISPLAY_MODE_SHIFT)
+#define PUBLISHED_BORDER_COLOR_SHIFT 10u
 #define PUBLISHED_BORDER_COLOR_MASK  (0xFu << PUBLISHED_BORDER_COLOR_SHIFT)
+#define PUBLISHED_FORMAT_DETAIL_SHIFT 14u
+#define PUBLISHED_FORMAT_DETAIL_MASK  (0x3FFu << PUBLISHED_FORMAT_DETAIL_SHIFT)
 
 static volatile uint32_t *const s_published_slot =
     (volatile uint32_t *)HANDOFF_PUBLISHED_SLOT_ADDR;
@@ -97,22 +99,27 @@ static uint32_t s_reader_last_seq     = 0u;   /* CPU0 only */
 static uint8_t  s_reader_current_slot = APPLE_FB_NO_SLOT; /* CPU0 only */
 static uint32_t s_reader_display_mode = APPLE_FB_DISPLAY_MODE_LEGACY; /* CPU0 only */
 static uint8_t  s_reader_border_color = APPLE_VIDEO_IIGS_BORDER_DEFAULT; /* CPU0 only */
+static uint32_t s_reader_format_detail = APPLE_FB_FORMAT_UNKNOWN; /* CPU0 only */
 
 static inline uint32_t handoff_normalize_display_mode(uint32_t display_mode)
 {
-    return (display_mode == APPLE_FB_DISPLAY_MODE_SHR) ?
-        APPLE_FB_DISPLAY_MODE_SHR : APPLE_FB_DISPLAY_MODE_LEGACY;
+    return (display_mode == APPLE_FB_DISPLAY_MODE_SHR ||
+            display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I) ?
+        display_mode : APPLE_FB_DISPLAY_MODE_LEGACY;
 }
 
 static inline uint32_t handoff_pack_published(uint32_t slot,
                                               uint32_t display_mode,
+                                              uint32_t format_detail,
                                               uint8_t border_color)
 {
     const uint32_t mode = handoff_normalize_display_mode(display_mode);
     return (slot & PUBLISHED_SLOT_MASK) |
            (mode << PUBLISHED_DISPLAY_MODE_SHIFT) |
            ((uint32_t)apple_video_iigs_border_color_clamp(border_color) <<
-            PUBLISHED_BORDER_COLOR_SHIFT);
+            PUBLISHED_BORDER_COLOR_SHIFT) |
+           ((format_detail << PUBLISHED_FORMAT_DETAIL_SHIFT) &
+            PUBLISHED_FORMAT_DETAIL_MASK);
 }
 
 static inline uint32_t handoff_published_slot(uint32_t published)
@@ -122,14 +129,21 @@ static inline uint32_t handoff_published_slot(uint32_t published)
 
 static inline uint32_t handoff_published_mode(uint32_t published)
 {
-    return ((published & PUBLISHED_DISPLAY_MODE_MASK) != 0u) ?
-        APPLE_FB_DISPLAY_MODE_SHR : APPLE_FB_DISPLAY_MODE_LEGACY;
+    return handoff_normalize_display_mode(
+        (published & PUBLISHED_DISPLAY_MODE_MASK) >>
+        PUBLISHED_DISPLAY_MODE_SHIFT);
 }
 
 static inline uint8_t handoff_published_border_color(uint32_t published)
 {
     return (uint8_t)((published & PUBLISHED_BORDER_COLOR_MASK) >>
                      PUBLISHED_BORDER_COLOR_SHIFT);
+}
+
+static inline uint32_t handoff_published_format_detail(uint32_t published)
+{
+    return (published & PUBLISHED_FORMAT_DETAIL_MASK) >>
+           PUBLISHED_FORMAT_DETAIL_SHIFT;
 }
 
 /* Pick the slot that is neither `a` nor `b`. With 3 slots and
@@ -171,7 +185,8 @@ void apple_fb_handoff_init(void)
      * READER_NONE so the writer's pick_third treats it as "no
      * constraint". */
     *s_published_slot = handoff_pack_published(
-        0u, APPLE_FB_DISPLAY_MODE_LEGACY, APPLE_VIDEO_IIGS_BORDER_DEFAULT);
+        0u, APPLE_FB_DISPLAY_MODE_LEGACY, APPLE_FB_FORMAT_UNKNOWN,
+        APPLE_VIDEO_IIGS_BORDER_DEFAULT);
     *s_publish_seq    = 0u;
     *s_reader_active  = READER_NONE;
     *s_video_settings = APPLE_VIDEO_SETTINGS_DEFAULT;
@@ -185,6 +200,7 @@ void apple_fb_handoff_init(void)
     s_reader_current_slot = APPLE_FB_NO_SLOT;
     s_reader_display_mode = APPLE_FB_DISPLAY_MODE_LEGACY;
     s_reader_border_color = APPLE_VIDEO_IIGS_BORDER_DEFAULT;
+    s_reader_format_detail = APPLE_FB_FORMAT_UNKNOWN;
 }
 
 void apple_fb_handoff_secondary_init(void)
@@ -197,6 +213,7 @@ void apple_fb_handoff_secondary_init(void)
     s_reader_current_slot = APPLE_FB_NO_SLOT;
     s_reader_display_mode = APPLE_FB_DISPLAY_MODE_LEGACY;
     s_reader_border_color = APPLE_VIDEO_IIGS_BORDER_DEFAULT;
+    s_reader_format_detail = APPLE_FB_FORMAT_UNKNOWN;
 }
 
 uint32_t apple_fb_handoff_state(void)
@@ -278,6 +295,15 @@ void apple_fb_writer_publish_mode(uint32_t display_mode)
 
 void apple_fb_writer_publish_frame(uint32_t display_mode, uint8_t border_color)
 {
+    apple_fb_writer_publish_frame_detail(display_mode,
+                                         APPLE_FB_FORMAT_UNKNOWN,
+                                         border_color);
+}
+
+void apple_fb_writer_publish_frame_detail(uint32_t display_mode,
+                                          uint32_t format_detail,
+                                          uint8_t border_color)
+{
     const uint32_t normalized_mode = handoff_normalize_display_mode(display_mode);
 
     /* Make the slot's pixel writes visible system-wide before
@@ -292,7 +318,8 @@ void apple_fb_writer_publish_frame(uint32_t display_mode, uint8_t border_color)
      * Order matters: a reader that sees seq advance MUST see the
      * matching published slot and mode value. dmb between them. */
     *s_published_slot =
-        handoff_pack_published(s_writer_current_slot, normalized_mode, border_color);
+        handoff_pack_published(s_writer_current_slot, normalized_mode,
+                               format_detail, border_color);
     __asm__ volatile ("dmb sy" ::: "memory");
     *s_publish_seq    = *s_publish_seq + 1u;
     __asm__ volatile ("dsb sy" ::: "memory");
@@ -335,6 +362,7 @@ uint8_t apple_fb_reader_claim(void)
     s_reader_current_slot = (uint8_t)slot;
     s_reader_display_mode = handoff_published_mode(published);
     s_reader_border_color = handoff_published_border_color(published);
+    s_reader_format_detail = handoff_published_format_detail(published);
 
     /* Tell the writer which slot the reader is now displaying so
      * it can avoid stomping it on the next paint. */
@@ -352,6 +380,11 @@ uint32_t apple_fb_reader_display_mode(void)
 uint8_t apple_fb_reader_border_color(void)
 {
     return s_reader_border_color;
+}
+
+uint32_t apple_fb_reader_format_detail(void)
+{
+    return s_reader_format_detail;
 }
 
 uint32_t apple_fb_reader_publish_seq(void)
@@ -372,4 +405,18 @@ uint32_t apple_fb_reader_published_display_mode(void)
     const uint32_t published = *s_published_slot;
     __asm__ volatile ("dmb sy" ::: "memory");
     return handoff_published_mode(published);
+}
+
+
+uint32_t apple_fb_reader_published_format_detail(void)
+{
+    const uint32_t seq = *s_publish_seq;
+    __asm__ volatile ("dmb sy" ::: "memory");
+    if (seq == 0u) {
+        return APPLE_FB_FORMAT_UNKNOWN;
+    }
+
+    const uint32_t published = *s_published_slot;
+    __asm__ volatile ("dmb sy" ::: "memory");
+    return handoff_published_format_detail(published);
 }

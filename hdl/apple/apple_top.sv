@@ -1336,7 +1336,7 @@ module apple_top(
         end
     end
 
-    /* SHR interlace posting window widen (CARD_CTRL 0x35 bit 0). */
+    /* SHR paged-mode posting fallback (CARD_CTRL 0x35 bit 0). */
     logic post_main_wide_q;
     vtw_core_top vtw_core_top_i (
         .clk(clk),

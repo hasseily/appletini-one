@@ -219,7 +219,7 @@ def test_shr_frame_uses_applewin_memory_map_and_line_control() -> None:
     require("static void render_shr_frame_full(void)" in src, "renderer should render SHR as a full AUX-shadow frame")
     require("for (uint32_t y = 0u; y < SHR_LOGICAL_HEIGHT; ++y)" in src, "renderer should render 200 logical SHR lines")
     require("for (uint32_t x = 0u; x < 40u; ++x)" in src, "renderer should render 40 SHR byte cells per scanline")
-    require("memcpy(row + SHR_WIDTH, row, SHR_WIDTH * sizeof(uint32_t));" in src, "renderer should duplicate each 200-line SHR row vertically")
+    require("memcpy(out + SHR_WIDTH, out, SHR_WIDTH * sizeof(uint32_t));" in src, "renderer should duplicate each 200-line SHR row vertically")
 
 
 def test_reference_image_generation_from_aux_memory_is_visible() -> None:

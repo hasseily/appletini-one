@@ -263,12 +263,15 @@ def static_checks() -> None:
             "vTW $C030-$C05F reads must use the two-cycle-lagged scanner "
             "address and main shadow byte")
     # Super Hi-Res: aux posted-write window extended to $9FFF.
-    require("vtw_is_video_window(cycle_addr_q, xl_is_aux, post_main_wide)"
+    require("vtw_is_video_window(cycle_addr_q, xl_is_aux," in core_top and
+            "post_main_wide_eff);" in core_top and
+            "wire post_main_wide_eff = post_main_wide | shr_post_main_wide_q;"
             in core_top and
+            "cycle_addr_q == 16'h9DF8" in core_top and
             "input logic is_aux" in engine and
             "input logic wide_main" in engine,
             "vTW must extend the aux posted-write window for Super Hi-Res "
-            "and support the widened main window for SHR interlace")
+            "and arm the main interlace window from its private ctrl write")
     require("vtw_service_init(UART0_BASE);" in main_c and
             "vtw_service_poll();" in main_c and
             "menu_platform.set_vtw_config = control_set_vtw_config;" in main_c,

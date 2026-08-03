@@ -1044,6 +1044,15 @@ static const char *mono_color_name(uint8_t color)
     }
 }
 
+static const char *apple_fb_mode_name(uint32_t mode)
+{
+    switch (mode) {
+    case APPLE_FB_DISPLAY_MODE_SHR:      return "SHR";
+    case APPLE_FB_DISPLAY_MODE_LEGACY_I: return "legacy-i";
+    default:                             return "legacy";
+    }
+}
+
 static const char *boot_device_name(uint8_t device)
 {
     return (device == 1U) ? "Disk II" : "SmartPort";
@@ -1150,7 +1159,7 @@ static void print_snapshot(const uart_control_t *control, const uart_control_ops
     snprintf(line, sizeof(line),
              "apple fb: slot=%lu mode=%s target=%uHz apple_fps=%lu.%02lu hdmi_fps=%lu.%02lu blits=%lu comp_pub=%lu comp_skip=%lu pl_vblanks=%lu latched=0x%08lX",
              (unsigned long)snap.apple_fb_slot,
-             (snap.apple_fb_mode != 0U) ? "SHR" : "legacy",
+             apple_fb_mode_name(snap.apple_fb_mode),
              (unsigned)(snap.apple_video_50hz != 0U ? 50U : 60U),
              (unsigned long)(snap.apple_fps_x100 / 100U),
              (unsigned long)(snap.apple_fps_x100 % 100U),
@@ -1650,50 +1659,58 @@ void uart_control_print_help(const uart_control_t *control, const uart_control_o
 {
     (void)ops;
 
-    uart_puts(control->control_uart_base, "\r\n[text_ui_test] Control UART\r\n");
-    uart_puts(control->control_uart_base, "  W/S : move menu\r\n");
-    uart_puts(control->control_uart_base, "  A/D : page-specific adjust\r\n");
-    uart_puts(control->control_uart_base, "  E   : page action\r\n");
-    uart_puts(control->control_uart_base, "  L   : cycle scanlines\r\n");
-    uart_puts(control->control_uart_base, "  M   : toggle config menu\r\n");
-    uart_puts(control->control_uart_base, "  T   : page toggle\r\n");
-    uart_puts(control->control_uart_base, "  Tab/Shift-Tab/PgUp/PgDn/Space/Esc and arrows work in config menu\r\n");
-    uart_puts(control->control_uart_base, "  :<cmd> then ENTER for command mode\r\n");
-    uart_puts(control->control_uart_base, "  ?   : print this help\r\n");
-    uart_puts(control->control_uart_base, "Commands:\r\n");
-    uart_puts(control->control_uart_base, "  help | status\r\n");
-    uart_puts(control->control_uart_base, "  reboot | reset\r\n");
-    uart_puts(control->control_uart_base, "  mrd <addr> [count]\r\n");
-    uart_puts(control->control_uart_base, "  nav <up|down|left|right|e|toggle|scanlines|tab|shift-tab|pgup|pgdn|space|esc|menu>\r\n");
-    uart_puts(control->control_uart_base, "  vsync <on|off|toggle>\r\n");
-    uart_puts(control->control_uart_base, "  scanlines <off|light|medium|strong|toggle|status>\r\n");
-    uart_puts(control->control_uart_base, "  textmono <fg> <bg> | textmono status\r\n");
-    uart_puts(control->control_uart_base, "  mono <off|white|amber|green|status>\r\n");
-    uart_puts(control->control_uart_base, "  audio status\r\n");
-    uart_puts(control->control_uart_base, "  audio <on|off>\r\n");
-    uart_puts(control->control_uart_base, "  audio mute <on|off|toggle>\r\n");
-    uart_puts(control->control_uart_base, "  audio tone <hz>\r\n");
-    uart_puts(control->control_uart_base, "  audio amp <0xHEX|DEC>\r\n");
-    uart_puts(control->control_uart_base, "  sd status | sd reset | sd dumpblk <block> [count]\r\n");
-    uart_puts(control->control_uart_base, "  disk2 status | disk2 scan [d1|d2] [all] | disk2 wozscan [d1|d2] [all] | disk2 underruns\r\n");
-    uart_puts(control->control_uart_base, "  disk2 wozwrite d1|d2 <on|off|status>\r\n");
-    uart_puts(control->control_uart_base, "  rtc get\r\n");
-    uart_puts(control->control_uart_base, "  rtc set YYYY-MM-DD HH:MM:SS\r\n");
-    uart_puts(control->control_uart_base, "  dma hold <on|off>\r\n");
-    uart_puts(control->control_uart_base, "  dma status\r\n");
-    uart_puts(control->control_uart_base, "  dma blocks\r\n");
-    uart_puts(control->control_uart_base, "  dma tail\r\n");
-    uart_puts(control->control_uart_base, "  dma peek <addr> [count]\r\n");
-    uart_puts(control->control_uart_base, "  dma reset\r\n");
-    uart_puts(control->control_uart_base, "  dma probe [addr] [pattern] [count]\r\n");
-    uart_puts(control->control_uart_base, "  dma trace <status|arm [addr|release [addr]]|off|clear|dump [start] [count]>\r\n");
-    uart_puts(control->control_uart_base, "  comp uncap <on|off> (bypass vblank pacing to measure raw comp fps)\r\n");
-    uart_puts(control->control_uart_base, "  usb status | usb resetstats\r\n");
-    uart_puts(control->control_uart_base, "  usb1 [status|start|stop]\r\n");
-    uart_puts(control->control_uart_base, "  sdd [status|on|off] (USB0 bus-event stream for SuperDuperDisplay)\r\n");
-    uart_puts(control->control_uart_base, "  z80 [status|on|off|reset|budget <tstates>|wall <us>|dump <hex-addr> [len]] (Applicard slot 5)\r\n");
-    uart_puts(control->control_uart_base, "  vtw [status|on|off|speed full|1mhz|div <n>] (virtual TransWarp accelerator)\r\n");
-    uart_puts(control->control_uart_base, "  shadow [main|aux] (CPU1 prints its $0400-$07FF text-page shadow)\r\n");
+    uart_puts(control->control_uart_base,
+        "\r\nAppletini control UART\r\n"
+        "UI keys:\r\n"
+        "  W/S=up/down  A/D=left/right  E=OK  T=toggle\r\n"
+        "  L=scanlines  M=menu  Tab/Space/Esc and terminal arrows work\r\n"
+        "  : or ; starts a command; ENTER runs it; ? prints this help\r\n"
+        "General:\r\n"
+        "  help | status | temp | reboot | reset\r\n"
+        "  nav <up|down|left|right|e|select|action|back|home|toggle|scanlines|tab|shift-tab|pgup|pgdn|space|esc|menu>\r\n"
+        "  machine [auto|force <unknown|iiplus|iie|iigs>]\r\n"
+        "Video and audio:\r\n"
+        "  vsync <on|off|toggle>\r\n"
+        "  scanlines [status|off|light|medium|strong|toggle]\r\n"
+        "  textmono [status] | textmono <black|white|amber|green> <black|white|amber|green>\r\n"
+        "  mono [status|off|black|white|amber|green]\r\n"
+        "  audio <status|on|off>\r\n"
+        "  audio mute [on|off|toggle] | audio tone <1..20000>\r\n"
+        "  audio amp <0xHEX|DEC>\r\n"
+        "  comp stats | comp uncap [on|off]\r\n"
+        "  shadow [main|aux|a2li]\r\n"
+        "Storage and USB:\r\n"
+        "  sd [status|reset] | sd dumpblk <block> [count]\r\n"
+        "  disk2 status | disk2 verify | disk2 underruns\r\n"
+        "  disk2 scan [d1|d2] [all] | disk2 wozscan [d1|d2] [all]\r\n"
+        "  disk2 wozwrite <d1|d2> <on|off|status>\r\n"
+        "  usb [status|resetstats] | usb1 [status|start|stop]\r\n"
+        "  sdd [status|on|off]\r\n"
+        "Cards and acceleration:\r\n"
+        "  z80 [status|on|off|reset]\r\n"
+        "  z80 budget <tstates> | z80 wall <us> | z80 dump <hex-addr> [hex-len]\r\n"
+        "  vtw [status|on|off] | vtw speed <full|1mhz|div <2-255>>\r\n"
+        "  vtw dump <hex-phys> [hex-len]\r\n"
+        "  ss [on|off|force <on|off>|dump]\r\n"
+        "Bus diagnostics:\r\n"
+        "  bustail [count [back]] | bustail on | bustail save\r\n"
+        "  bustail find <addr16> | bustail entry\r\n"
+        "  busdbg [clear] | irqdbg | sswatch [on|off]\r\n"
+        "  bankprobe | spverify\r\n"
+        "  mrd <aligned-addr> [count] | mwr <aligned-addr> <value>\r\n"
+        "DMA diagnostics:\r\n"
+        "  dma hold <on|off> | dma status | dma blocks | dma tail | dma reset\r\n"
+        "  dma dump <mcaddr24> [count<=56] | dma peek <addr> [count]\r\n"
+        "  dma probe [addr] [pattern] [count] | dma write <addr> [verify]\r\n"
+        "  dma trace [status|off|clear]\r\n"
+        "  dma trace arm [addr|release|resume [addr]]\r\n"
+        "  dma trace dump [start] [count]\r\n"
+        "RTC and raw PSRAM diagnostics:\r\n"
+        "  rtc get | rtc set YYYY-MM-DD HH:MM:SS\r\n"
+        "  pid | pqpi | pqpix | pres | ptr\r\n"
+        "  pqr <hex-addr> | pqw <hex-addr> <hex-hi> <hex-lo>\r\n"
+        "  psr <hex-addr> | psw <hex-addr> <hex-hi> <hex-lo>\r\n"
+        "  pd <hex-delay> | ps <hex-addr>\r\n");
 }
 
 static uart_control_event_t process_smartport_command(
@@ -2134,14 +2151,25 @@ static uart_control_event_t process_command(
 
         if (argc >= 2 && str_ieq(argv[1], "aux")) {
             dump_req = APPLE_FB_DUMP_TEXT_AUX;
+        } else if (argc >= 2 && str_ieq(argv[1], "a2li")) {
+            /* One line: A2Li hole bytes, paged-gate inputs, and the
+             * last frame's display mode, from CPU1's coherent view. */
+            dump_req = APPLE_FB_DUMP_A2LI;
         } else if (argc >= 2 && !str_ieq(argv[1], "main")) {
             uart_puts(control->control_uart_base,
-                      "usage: shadow [main|aux]\r\n");
+                      "usage: shadow [main|aux|a2li]\r\n");
             return event;
         }
         apple_fb_debug_dump_set(dump_req);
-        uart_puts(control->control_uart_base,
-                  "shadow: requested, CPU1 prints it on UART0\r\n");
+        if (dump_req == APPLE_FB_DUMP_A2LI) {
+            uart_puts(control->control_uart_base,
+                      "shadow: requested A2Li state on UART0\r\n");
+        } else {
+            uart_puts(control->control_uart_base,
+                      (dump_req == APPLE_FB_DUMP_TEXT_AUX) ?
+                          "shadow: requested AUX text on UART0\r\n" :
+                          "shadow: requested MAIN text on UART0\r\n");
+        }
         return event;
     }
 
@@ -2845,7 +2873,7 @@ static uart_control_event_t process_command(
                 (unsigned long)g_compositor_frames_published,
                 (unsigned long)g_compositor_frames_skipped,
                 (unsigned long)g_compositor_apple_frames_drawn,
-                (g_compositor_last_apple_mode == 1U) ? "SHR" : "legacy",
+                apple_fb_mode_name(g_compositor_last_apple_mode),
                 (unsigned)compositor_uncapped());
             uart_puts(control->control_uart_base, line);
             {
@@ -2996,7 +3024,8 @@ static uart_control_event_t process_command(
 
     if (str_ieq(argv[0], "nav")) {
         if (argc < 2 || parse_nav_key(argv[1], &event.input.key) != 0) {
-            uart_puts(control->control_uart_base, "usage: nav <up|down|left|right|e|toggle|scanlines|tab|shift-tab|pgup|pgdn|space|esc|menu>\r\n");
+            uart_puts(control->control_uart_base,
+                      "usage: nav <up|down|left|right|e|select|action|back|home|toggle|scanlines|tab|shift-tab|pgup|pgdn|space|esc|menu>\r\n");
             return event;
         }
         event.input.pressed = 1U;
@@ -3100,13 +3129,18 @@ static uart_control_event_t process_command(
     if (str_ieq(argv[0], "pqr")) {
         if (argc > 1) {
             ops->psram_qspi_read(ops->ctx,argv[1]);
+        } else {
+            uart_puts(control->control_uart_base, "usage: pqr <hex-addr>\r\n");
         }
         return event;
     }
 
     if (str_ieq(argv[0], "pqw")) {
-        if (argc > 2) {
+        if (argc > 3) {
             ops->psram_qspi_write(ops->ctx,argv[1],argv[2],argv[3]);
+        } else {
+            uart_puts(control->control_uart_base,
+                      "usage: pqw <hex-addr> <hex-hi> <hex-lo>\r\n");
         }
         return event;
     }
@@ -3114,20 +3148,27 @@ static uart_control_event_t process_command(
     if (str_ieq(argv[0], "psr")) {
         if (argc > 1) {
             ops->psram_spi_read(ops->ctx,argv[1]);
+        } else {
+            uart_puts(control->control_uart_base, "usage: psr <hex-addr>\r\n");
         }
         return event;
     }
 
     if (str_ieq(argv[0], "psw")) {
-        if (argc > 2) {
+        if (argc > 3) {
             ops->psram_spi_write(ops->ctx,argv[1],argv[2],argv[3]);
+        } else {
+            uart_puts(control->control_uart_base,
+                      "usage: psw <hex-addr> <hex-hi> <hex-lo>\r\n");
         }
         return event;
     }
 
     if (str_ieq(argv[0], "pd")) {
-        if (argc > 2) {
+        if (argc > 1) {
             ops->psram_set_delay(ops->ctx, argv[1]);
+        } else {
+            uart_puts(control->control_uart_base, "usage: pd <hex-delay>\r\n");
         }
         return event;
     }
@@ -3135,6 +3176,8 @@ static uart_control_event_t process_command(
     if (str_ieq(argv[0], "ps")) {
         if (argc > 1) {
             ops->psram_scan_delay(ops->ctx, argv[1]);
+        } else {
+            uart_puts(control->control_uart_base, "usage: ps <hex-addr>\r\n");
         }
         return event;
     }  
@@ -4030,11 +4073,15 @@ static uart_control_event_t process_command(
             return event;
         }
         
-        if (argc >= 3 && str_ieq(argv[1], "set")) {
+        if (argc >= 2 && str_ieq(argv[1], "set")) {
             if (argc < 4 || parse_rtc_datetime(argv[2], argv[3], &t) != 0) {
                 uart_puts(control->control_uart_base, "usage: rtc set YYYY-MM-DD HH:MM:SS\r\n");
                 return event;
             }
+        } else {
+            uart_puts(control->control_uart_base,
+                      "usage: rtc get | rtc set YYYY-MM-DD HH:MM:SS\r\n");
+            return event;
         }
 
         if (ops->set_rtc == NULL) {

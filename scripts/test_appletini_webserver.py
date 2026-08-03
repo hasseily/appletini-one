@@ -148,6 +148,18 @@ def main():
             "render(body, len)" in browser and
             "exit_to_menu();" in browser,
             "browser must decode HTTP bodies and return to the demo menu")
+    inverse = browser[browser.index("static void inverse_cputc"):
+                      browser.index("static void status_line")]
+    require("c >= 'a' && c <= 'z'" in inverse and
+            "(uint8_t)c | 0x80U" in inverse and
+            inverse.index("revers(0);") < inverse.index("cputc((char") <
+            inverse.index("revers(1);"),
+            "browser must emit $61-$7A screen codes for inverse lowercase")
+    require("inverse_cputs(left);" in browser and
+            "inverse_cputs(right);" in browser and
+            "inverse_cputc(buf[start]);" in browser and
+            "inverse_cputc(c);" in browser,
+            "all browser reverse-video text must use safe lowercase output")
     require("auxsrc := $06" in image_net and "auxdst := $08" in image_net and
             "auxlen := $0A" in image_net and
             ".importzp ptr1, ptr2" not in image_net and

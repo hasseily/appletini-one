@@ -92,6 +92,29 @@ static uint8_t starts_with_ci(const char *s, const char *prefix)
     return 1;
 }
 
+/* The generic cc65 Apple II conio library maps reverse lowercase to
+ * $01-$1A.  With the //e alternate character set those bytes are MouseText,
+ * not letters.  The enhanced character set keeps inverse lowercase at
+ * $61-$7A.  Feed cputc() a high-ASCII character with reverse off to place
+ * that exact screen byte while retaining the NMOS-6502 apple2 target. */
+static void inverse_cputc(char c)
+{
+    if (c >= 'a' && c <= 'z') {
+        revers(0);
+        cputc((char)((uint8_t)c | 0x80U));
+        revers(1);
+    } else {
+        cputc(c);
+    }
+}
+
+static void inverse_cputs(const char *s)
+{
+    while (*s != '\0') {
+        inverse_cputc(*s++);
+    }
+}
+
 static void status_line(const char *left, const char *right)
 {
     uint8_t x;
@@ -102,12 +125,12 @@ static void status_line(const char *left, const char *right)
         cputc(' ');
     }
     gotoxy(0, 23);
-    cputs(left);
+    inverse_cputs(left);
     if (right != NULL) {
         x = (uint8_t)strlen(right);
         if (x < SCREEN_W) {
             gotoxy((uint8_t)(SCREEN_W - x), 23);
-            cputs(right);
+            inverse_cputs(right);
         }
     }
     revers(0);
@@ -144,7 +167,7 @@ static uint8_t prompt_line(const char *label, char *out, uint8_t cap)
         if (c >= ' ' && c < 0x7F && len < (uint8_t)(cap - 1U)) {
             out[len] = c;
             ++len;
-            cputc(c);
+            inverse_cputc(c);
         }
     }
     cursor(0);
@@ -728,7 +751,11 @@ static void draw_page(void)
             if (x == hi_end) {
                 revers(0);
             }
-            cputc(buf[start]);
+            if (x >= hi_col && x < hi_end) {
+                inverse_cputc(buf[start]);
+            } else {
+                cputc(buf[start]);
+            }
             ++start;
             ++x;
         }

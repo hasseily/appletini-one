@@ -212,14 +212,14 @@ def test_shr_frame_uses_applewin_memory_map_and_line_control() -> None:
 
     src = source_text()
     require("0x2000u + 160u * y + 4u * x" in src, "renderer should use AppleWin SHR screen byte layout")
-    require("const uint8_t control = g_aux_bank[0x9D00u + (uint16_t)y];" in src, "renderer should read the per-line SHR control byte")
+    require("const uint8_t control = s_f_bank[0x9D00u + (uint16_t)y];" in src, "renderer should read the per-line SHR control byte from the current field bank")
     require("0x9E00u + ((uint16_t)(control & 0x0Fu) * 32u)" in src, "renderer should select one of 16 SHR palettes")
     require("const int is_640 = (control & 0x80u) != 0u;" in src, "renderer should use line-control bit 7 for 640 mode")
     require("const int color_fill = (control & 0x20u) != 0u;" in src, "renderer should use line-control bit 5 for color fill")
     require("static void render_shr_frame_full(void)" in src, "renderer should render SHR as a full AUX-shadow frame")
     require("for (uint32_t y = 0u; y < SHR_LOGICAL_HEIGHT; ++y)" in src, "renderer should render 200 logical SHR lines")
     require("for (uint32_t x = 0u; x < 40u; ++x)" in src, "renderer should render 40 SHR byte cells per scanline")
-    require("memcpy(row1 + x * 16u, row0 + x * 16u, 16u * sizeof(uint32_t));" in src, "renderer should duplicate each 200-line SHR row vertically")
+    require("memcpy(row + SHR_WIDTH, row, SHR_WIDTH * sizeof(uint32_t));" in src, "renderer should duplicate each 200-line SHR row vertically")
 
 
 def test_reference_image_generation_from_aux_memory_is_visible() -> None:

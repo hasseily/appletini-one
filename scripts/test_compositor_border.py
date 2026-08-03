@@ -32,6 +32,10 @@ def test_layout() -> None:
         "#define COMP_BORDER_HEIGHT   896u",
         "#define COMP_SUBWIN_X_OFF    400u",
         "#define COMP_SUBWIN_Y_OFF    156u",
+        "#define COMP_SHR_BORDER_H_PIXELS (COMP_SUBWIN_X_OFF - COMP_BORDER_X_OFF)",
+        "#define COMP_SHR_BORDER_V_PIXELS (COMP_SUBWIN_Y_OFF - COMP_BORDER_Y_OFF)",
+        "#define COMP_SHR_BORDER_X_OFF    (COMP_SUBWIN_SHR_X_OFF - COMP_SHR_BORDER_H_PIXELS)",
+        "#define COMP_SHR_BORDER_Y_OFF    (COMP_SUBWIN_SHR_Y_OFF - COMP_SHR_BORDER_V_PIXELS)",
     )
     for text in expected:
         require(text in layout, f"missing layout contract: {text}")
@@ -40,6 +44,26 @@ def test_layout() -> None:
             "border ring must fit the 1080p output")
     require(344 + 28 * 2 == 400 and 92 + 16 * 4 == 156,
             "active image must stay at its existing output origin")
+    shr_border_x = 320 - (400 - 344)
+    shr_border_y = 140 - (156 - 92)
+    shr_border_w = 1280 + 2 * (400 - 344)
+    shr_border_h = 800 + 2 * (156 - 92)
+    require((shr_border_x, shr_border_y, shr_border_w, shr_border_h) ==
+            (264, 76, 1392, 928),
+            "SHR ring must retain the legacy on-screen border thickness")
+    require(shr_border_x >= 0 and shr_border_y >= 0 and
+            shr_border_x + shr_border_w <= 1920 and
+            shr_border_y + shr_border_h <= 1080,
+            "expanded SHR ring must fit the output")
+    widget = (1168, 110, 360, 28)
+    require(344 <= widget[0] and 92 <= widget[1] and
+            widget[0] + widget[2] <= 344 + 1232 and
+            widget[1] + widget[3] <= 92 + 896,
+            "disk widget must fit wholly inside the legacy border")
+    require(shr_border_x <= widget[0] and shr_border_y <= widget[1] and
+            widget[0] + widget[2] <= shr_border_x + shr_border_w and
+            widget[1] + widget[3] <= shr_border_y + shr_border_h,
+            "disk widget must fit wholly inside the SHR border")
 
 
 def test_frame_coherent_color() -> None:
@@ -64,12 +88,13 @@ def test_blit_and_flood_gating() -> None:
             "COMP_APPLE_ACTIVE_Y * COMP_APPLE_ROW_PIXELS" in source,
             "border on/off paths must select ring or active source geometry")
     require("static void draw_border_flood(uint16_t *fb," in source and
-            source.count("fill_border_flood_rect(") == 5,
-            "outer flood must use four rectangles around the ring")
-    require("effect_scanline_blank(phase, 4U, scanline_mode)" in source and
-            "y + row - (int)COMP_BORDER_Y_OFF" in source and
-            "color, scanline_mode" in source,
-            "outer flood must continue the ring's scanline phase")
+            "static void draw_solid_border_ring(uint16_t *fb," in source and
+            source.count("fill_border_rect(") == 9,
+            "flood and synthesized SHR ring must each use four rectangles")
+    require("effect_scanline_blank(phase, vertical_scale, scanline_mode)" in source and
+            "y + row - phase_origin_y" in source and
+            "vertical_scale - 1U" in source,
+            "border fills must follow the selected legacy or SHR scanline phase")
     require("if (s_border_flood != 0u)" in source and
             "fb16_from_bgra32(" in source and
             "apple_video_iigs_border_bgra(border_color))" in source,
@@ -78,6 +103,49 @@ def test_blit_and_flood_gating() -> None:
     require("if (suppress_apple)" in tick and
             tick.index("if (suppress_apple)") < tick.index("draw_apple_subwindow(fb)"),
             "menu ownership must suppress the ring and flood with the Apple blit")
+
+
+def test_shr_border_surrounds_video() -> None:
+    source = COMPOSITOR.read_text(encoding="utf-8")
+    frontend = FRONTEND_MAIN.read_text(encoding="utf-8")
+    shr = source[
+        source.index("if (display_mode == APPLE_FB_DISPLAY_MODE_SHR) {"):
+        source.index("if (display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I) {")
+    ]
+
+    require("if (s_border_enabled != 0u)" in shr and
+            "draw_solid_border_ring(fb," in shr and
+            "COMP_SHR_BORDER_X_OFF" in shr and
+            "COMP_SHR_BORDER_Y_OFF" in shr and
+            "COMP_SHR_BORDER_WIDTH" in shr and
+            "COMP_SHR_BORDER_HEIGHT" in shr,
+            "SHR must synthesize a border around its own larger geometry")
+    require(shr.index("draw_solid_border_ring(fb,") <
+            shr.index("fb16_blit_2x2_scanlines(fb,"),
+            "SHR video must land inside, not over, the synthesized ring")
+    require("draw_border_flood(fb," in shr and
+            "s_scanlines_mode,\n                                  2U);" in shr,
+            "SHR flood must use the SHR ring and two-row scanline phase")
+    require("COMP_SHR_BORDER_X_OFF" in frontend and
+            "COMP_SHR_BORDER_Y_OFF" in frontend and
+            "COMP_SHR_BORDER_WIDTH" in frontend and
+            "COMP_SHR_BORDER_HEIGHT" in frontend,
+            "leaving SHR must restore its complete border footprint")
+
+
+def test_format_badge_stays_on_active_image() -> None:
+    source = COMPOSITOR.read_text(encoding="utf-8")
+    legacy = source[
+        source.index("const uint32_t *src;", source.index("static int draw_apple_subwindow")):
+        source.index("return 1;", source.index("const uint32_t *src;"))
+    ]
+
+    require("draw_format_badge(fb,\n"
+            "                          (int)COMP_SUBWIN_X_OFF,\n"
+            "                          (int)COMP_SUBWIN_Y_OFF,\n"
+            "                          (int)COMP_SUBWIN_WIDTH);" in legacy and
+            "draw_format_badge(fb, dst_x, dst_y, src_w * 2);" not in legacy,
+            "legacy badge must stay on the active image when border state changes")
 
 
 def test_border_is_below_foreground_overlays() -> None:
@@ -109,6 +177,8 @@ def main() -> int:
     test_layout()
     test_frame_coherent_color()
     test_blit_and_flood_gating()
+    test_shr_border_surrounds_video()
+    test_format_badge_stays_on_active_image()
     test_border_is_below_foreground_overlays()
     print("compositor border tests: PASS")
     return 0

@@ -381,10 +381,12 @@ def test_compositor_and_handoff_are_mode_aware() -> None:
     require("static uint8_t g_output_slot_apple_mode[COMP_OUT_SLOT_COUNT];" in frontend_main and
             "static void ui_restore_apple_footprint_if_needed" in frontend_main and
             "apple_fb_reader_published_display_mode();" in frontend_main and
-            "COMP_SUBWIN_SHR_X_OFF" in frontend_main and
-            "COMP_SUBWIN_SHR_WIDTH" in frontend_main and
+            "COMP_SHR_BORDER_X_OFF" in frontend_main and
+            "COMP_SHR_BORDER_Y_OFF" in frontend_main and
+            "COMP_SHR_BORDER_WIDTH" in frontend_main and
+            "COMP_SHR_BORDER_HEIGHT" in frontend_main and
             "ui_restore_apple_footprint_if_needed(fb, show_bezel);" in frontend_main,
-            "static bezel caching must restore the larger SHR footprint when returning to legacy video")
+            "static bezel caching must restore the complete SHR border footprint when returning to legacy video")
 
 
 def test_shr_generation_cache() -> None:

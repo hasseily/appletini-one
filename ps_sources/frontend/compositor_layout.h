@@ -144,4 +144,16 @@ extern const uint32_t comp_apple_slot_addr[COMP_APPLE_SLOT_COUNT];
 #define COMP_SUBWIN_SHR_WIDTH    1280u
 #define COMP_SUBWIN_SHR_HEIGHT   800u
 
+/* SHR is wider and taller than the legacy active image, so its IIgs border
+ * needs its own outer rectangle. Keep the same on-screen border thickness as
+ * legacy while expanding the ring around the complete 1280x800 SHR image. */
+#define COMP_SHR_BORDER_H_PIXELS (COMP_SUBWIN_X_OFF - COMP_BORDER_X_OFF)
+#define COMP_SHR_BORDER_V_PIXELS (COMP_SUBWIN_Y_OFF - COMP_BORDER_Y_OFF)
+#define COMP_SHR_BORDER_X_OFF    (COMP_SUBWIN_SHR_X_OFF - COMP_SHR_BORDER_H_PIXELS)
+#define COMP_SHR_BORDER_Y_OFF    (COMP_SUBWIN_SHR_Y_OFF - COMP_SHR_BORDER_V_PIXELS)
+#define COMP_SHR_BORDER_WIDTH    (COMP_SUBWIN_SHR_WIDTH + \
+                                  (2u * COMP_SHR_BORDER_H_PIXELS))
+#define COMP_SHR_BORDER_HEIGHT   (COMP_SUBWIN_SHR_HEIGHT + \
+                                  (2u * COMP_SHR_BORDER_V_PIXELS))
+
 #endif /* COMPOSITOR_LAYOUT_H */

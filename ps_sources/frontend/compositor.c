@@ -706,14 +706,17 @@ static void fb_mark_noncached(uintptr_t base, uint32_t size)
 
 /* ---------- Apple subwindow ---------- */
 
-static void fill_border_flood_rect(uint16_t *fb,
-                                   int x,
-                                   int y,
-                                   int w,
-                                   int h,
-                                   uint16_t color,
-                                   uint8_t scanline_mode)
+static void fill_border_rect(uint16_t *fb,
+                             int x,
+                             int y,
+                             int w,
+                             int h,
+                             uint16_t color,
+                             uint8_t scanline_mode,
+                             int phase_origin_y,
+                             uint8_t vertical_scale)
 {
+    vertical_scale = (vertical_scale >= 4U) ? 4U : 2U;
     if (scanline_mode == APPLETINI_SCANLINES_OFF) {
         fb16_fill_rect(fb, x, y, w, h, color);
         return;
@@ -721,35 +724,67 @@ static void fill_border_flood_rect(uint16_t *fb,
 
     for (int row = 0; row < h; ++row) {
         const uint8_t phase = (uint8_t)((uint32_t)
-            (y + row - (int)COMP_BORDER_Y_OFF) & 3U);
+            (y + row - phase_origin_y) & (uint32_t)(vertical_scale - 1U));
         const uint16_t row_color =
-            (effect_scanline_blank(phase, 4U, scanline_mode) != 0U) ? 0U : color;
+            (effect_scanline_blank(phase, vertical_scale, scanline_mode) != 0U) ?
+            0U : color;
 
         fb16_fill_rect(fb, x, y + row, w, 1, row_color);
     }
 }
 
 static void draw_border_flood(uint16_t *fb,
+                              int border_x,
+                              int border_y,
+                              int border_w,
+                              int border_h,
                               uint16_t color,
-                              uint8_t scanline_mode)
+                              uint8_t scanline_mode,
+                              uint8_t vertical_scale)
 {
     scanline_mode = appletini_scanlines_clamp(scanline_mode);
-    fill_border_flood_rect(fb, 0, 0,
-                           (int)COMP_OUT_WIDTH, (int)COMP_BORDER_Y_OFF,
-                           color, scanline_mode);
-    fill_border_flood_rect(
-        fb, 0, (int)(COMP_BORDER_Y_OFF + COMP_BORDER_HEIGHT),
+    fill_border_rect(fb, 0, 0,
+                     (int)COMP_OUT_WIDTH, border_y,
+                     color, scanline_mode, border_y, vertical_scale);
+    fill_border_rect(
+        fb, 0, border_y + border_h,
         (int)COMP_OUT_WIDTH,
-        (int)(COMP_OUT_HEIGHT - COMP_BORDER_Y_OFF - COMP_BORDER_HEIGHT),
-        color, scanline_mode);
-    fill_border_flood_rect(fb, 0, (int)COMP_BORDER_Y_OFF,
-                           (int)COMP_BORDER_X_OFF, (int)COMP_BORDER_HEIGHT,
-                           color, scanline_mode);
-    fill_border_flood_rect(
-        fb, (int)(COMP_BORDER_X_OFF + COMP_BORDER_WIDTH),
-        (int)COMP_BORDER_Y_OFF,
-        (int)(COMP_OUT_WIDTH - COMP_BORDER_X_OFF - COMP_BORDER_WIDTH),
-        (int)COMP_BORDER_HEIGHT, color, scanline_mode);
+        (int)COMP_OUT_HEIGHT - border_y - border_h,
+        color, scanline_mode, border_y, vertical_scale);
+    fill_border_rect(fb, 0, border_y,
+                     border_x, border_h,
+                     color, scanline_mode, border_y, vertical_scale);
+    fill_border_rect(
+        fb, border_x + border_w, border_y,
+        (int)COMP_OUT_WIDTH - border_x - border_w,
+        border_h, color, scanline_mode, border_y, vertical_scale);
+}
+
+static void draw_solid_border_ring(uint16_t *fb,
+                                   int border_x,
+                                   int border_y,
+                                   int border_w,
+                                   int border_h,
+                                   int inner_x,
+                                   int inner_y,
+                                   int inner_w,
+                                   int inner_h,
+                                   uint16_t color,
+                                   uint8_t scanline_mode,
+                                   uint8_t vertical_scale)
+{
+    fill_border_rect(fb, border_x, border_y,
+                     border_w, inner_y - border_y,
+                     color, scanline_mode, border_y, vertical_scale);
+    fill_border_rect(fb, border_x, inner_y + inner_h,
+                     border_w, border_y + border_h - inner_y - inner_h,
+                     color, scanline_mode, border_y, vertical_scale);
+    fill_border_rect(fb, border_x, inner_y,
+                     inner_x - border_x, inner_h,
+                     color, scanline_mode, border_y, vertical_scale);
+    fill_border_rect(fb, inner_x + inner_w, inner_y,
+                     border_x + border_w - inner_x - inner_w, inner_h,
+                     color, scanline_mode, border_y, vertical_scale);
 }
 
 static int draw_apple_subwindow(uint16_t *fb)
@@ -783,6 +818,33 @@ static int draw_apple_subwindow(uint16_t *fb)
     const uint32_t *src_base =
         (const uint32_t *)(uintptr_t)comp_apple_slot_addr[slot];
     if (display_mode == APPLE_FB_DISPLAY_MODE_SHR) {
+        if (s_border_enabled != 0u) {
+            const uint16_t color = fb16_from_bgra32(
+                apple_video_iigs_border_bgra(border_color));
+
+            if (s_border_flood != 0u) {
+                draw_border_flood(fb,
+                                  (int)COMP_SHR_BORDER_X_OFF,
+                                  (int)COMP_SHR_BORDER_Y_OFF,
+                                  (int)COMP_SHR_BORDER_WIDTH,
+                                  (int)COMP_SHR_BORDER_HEIGHT,
+                                  color,
+                                  s_scanlines_mode,
+                                  2U);
+            }
+            draw_solid_border_ring(fb,
+                                   (int)COMP_SHR_BORDER_X_OFF,
+                                   (int)COMP_SHR_BORDER_Y_OFF,
+                                   (int)COMP_SHR_BORDER_WIDTH,
+                                   (int)COMP_SHR_BORDER_HEIGHT,
+                                   (int)COMP_SUBWIN_SHR_X_OFF,
+                                   (int)COMP_SUBWIN_SHR_Y_OFF,
+                                   (int)COMP_SUBWIN_SHR_WIDTH,
+                                   (int)COMP_SUBWIN_SHR_HEIGHT,
+                                   color,
+                                   s_scanlines_mode,
+                                   2U);
+        }
         if (compositor_apple_effects_active()) {
             blit_apple_ghosting_2x(fb,
                                    (int)COMP_SUBWIN_SHR_X_OFF,
@@ -861,9 +923,14 @@ static int draw_apple_subwindow(uint16_t *fb)
     if (s_border_enabled != 0u) {
         if (s_border_flood != 0u) {
             draw_border_flood(fb,
+                              (int)COMP_BORDER_X_OFF,
+                              (int)COMP_BORDER_Y_OFF,
+                              (int)COMP_BORDER_WIDTH,
+                              (int)COMP_BORDER_HEIGHT,
                               fb16_from_bgra32(
                                   apple_video_iigs_border_bgra(border_color)),
-                              s_scanlines_mode);
+                              s_scanlines_mode,
+                              4U);
         }
         src = src_base + COMP_APPLE_LEFT_BORDER_PIXELS;
         dst_x = (int)COMP_BORDER_X_OFF;
@@ -902,7 +969,14 @@ static int draw_apple_subwindow(uint16_t *fb)
                                 s_scanlines_mode);
     }
     if (s_format_badge_enabled != 0u) {
-        draw_format_badge(fb, dst_x, dst_y, src_w * 2);
+        /* The badge belongs to the active Apple image, not to the optional
+         * border ring. A border setting may arrive a few frames after the
+         * first image during boot; a fixed anchor prevents the badge from
+         * jumping between the ring and the picture. */
+        draw_format_badge(fb,
+                          (int)COMP_SUBWIN_X_OFF,
+                          (int)COMP_SUBWIN_Y_OFF,
+                          (int)COMP_SUBWIN_WIDTH);
     }
     return 1;
 }

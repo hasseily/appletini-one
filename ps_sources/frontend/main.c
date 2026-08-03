@@ -1855,10 +1855,10 @@ static void ui_restore_apple_footprint_if_needed(uint16_t *fb, uint8_t show_beze
     if (g_output_slot_apple_mode[slot] == APPLE_FB_DISPLAY_MODE_SHR &&
         next_mode != APPLE_FB_DISPLAY_MODE_SHR) {
         ui_restore_static_rect(fb,
-                               (int)COMP_SUBWIN_SHR_X_OFF,
-                               (int)COMP_SUBWIN_SHR_Y_OFF,
-                               (int)COMP_SUBWIN_SHR_WIDTH,
-                               (int)COMP_SUBWIN_SHR_HEIGHT,
+                               (int)COMP_SHR_BORDER_X_OFF,
+                               (int)COMP_SHR_BORDER_Y_OFF,
+                               (int)COMP_SHR_BORDER_WIDTH,
+                               (int)COMP_SHR_BORDER_HEIGHT,
                                show_bezel);
     }
 
@@ -2327,12 +2327,19 @@ static int ui_compose_frame(uint16_t *fb,
             ui_note_debug_overlay_cleared(fb);
         }
         if (show_disk_activity == 0U) {
-            ui_restore_static_rect(fb,
-                                   UI_DISK_ACTIVITY_X,
-                                   UI_DISK_ACTIVITY_Y,
-                                   UI_DISK_ACTIVITY_W,
-                                   UI_DISK_ACTIVITY_H,
-                                   show_bezel);
+            /* The widget sits wholly inside either enabled border. Do not
+             * paint the static bezel/black background through that ring;
+             * the Apple phase immediately redraws the frame-coherent border
+             * in the same rectangle. With the border off, restore the real
+             * static background because no Apple pixels cover this area. */
+            if (menu->border_enabled == 0U) {
+                ui_restore_static_rect(fb,
+                                       UI_DISK_ACTIVITY_X,
+                                       UI_DISK_ACTIVITY_Y,
+                                       UI_DISK_ACTIVITY_W,
+                                       UI_DISK_ACTIVITY_H,
+                                       show_bezel);
+            }
             memset(&g_storage_activity, 0, sizeof(g_storage_activity));
         }
 

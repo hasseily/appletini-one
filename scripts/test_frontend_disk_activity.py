@@ -76,10 +76,11 @@ def test_disk_activity_visibility_is_configurable() -> None:
             "storage activity must be a foreground overlay and remain above "
             "the SmartPort/Disk II menu pages where requested")
     require("if (show_disk_activity == 0U) {" in source and
+            "if (menu->border_enabled == 0U) {" in source and
             "ui_restore_static_rect(fb," in source and
             "UI_DISK_ACTIVITY_X," in source and
             "memset(&g_storage_activity, 0, sizeof(g_storage_activity));" in source,
-            "disabled storage activity overlay must not poll or draw stale activity")
+            "disabled storage activity must restore the static background only when no border can repaint it")
 
 
 def test_storage_activity_draws_disk2_or_smartport_label() -> None:

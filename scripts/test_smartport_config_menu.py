@@ -175,7 +175,7 @@ def test_browser_targets_each_smartport_device() -> None:
             "                                     (uint8_t)(CONFIG_BROWSER_TARGET_SMARTPORT_1 + slot));" in source,
             "SmartPort tab ENTER must toggle item 0/SuperSprite/RAM32 and open the browser for focused SP devices")
     adjust_start = source.find("static uint8_t config_menu_adjust_focused_value")
-    adjust_end = source.find("static void config_menu_reload_smartport_device", adjust_start)
+    adjust_end = source.find("static int config_menu_reload_smartport_device", adjust_start)
     require(adjust_start >= 0 and adjust_end > adjust_start and
             "menu->disk2_activity_visible =" not in source[adjust_start:adjust_end],
             "SmartPort activity checkbox must ignore left/right adjustment")
@@ -184,7 +184,7 @@ def test_browser_targets_each_smartport_device() -> None:
 def test_boot_menu_timeout_supports_left_right_adjustment() -> None:
     source = read(CONFIG_MENU_C)
     adjust_start = source.find("static uint8_t config_menu_adjust_focused_value")
-    adjust_end = source.find("static void config_menu_reload_smartport_device", adjust_start)
+    adjust_end = source.find("static int config_menu_reload_smartport_device", adjust_start)
 
     require(adjust_start >= 0 and adjust_end > adjust_start,
             "config menu focused-value adjustment handler must be present")
@@ -323,11 +323,49 @@ def test_menu_rejects_duplicate_smartport_paths() -> None:
             "                           sizeof(text),\n"
             "                           \"SMARTPORT SP%u DUPLICATE IMAGE\"," in source,
             "browser selection must reject duplicate SmartPort image paths before saving")
-    require("config_menu_set_status(menu, 1U, text);\n"
-            "            return;\n"
-            "        }\n"
-            "        config_menu_copy_text(menu->smartport_disk_paths[device - 1U]" in source,
+    apply_start = source.find("static uint8_t config_menu_browser_apply_file")
+    apply_end = source.find("static void config_menu_browser_apply_empty", apply_start)
+    require(apply_start >= 0 and apply_end > apply_start,
+            "browser file-selection handler must be present")
+    apply = source[apply_start:apply_end]
+    reject_pos = apply.find("SMARTPORT SP%u DUPLICATE IMAGE")
+    reject_return_pos = apply.find("return 0U;", reject_pos)
+    mutate_pos = apply.find("menu->smartport_slots[device - 1U] = 1U;")
+    require(reject_pos >= 0 and reject_return_pos > reject_pos and
+            mutate_pos > reject_return_pos,
             "duplicate rejection must happen before mutating the selected SP path")
+
+
+def test_smartport_selection_loads_before_save_and_rolls_back() -> None:
+    source = read(CONFIG_MENU_C)
+    start = source.find("static uint8_t config_menu_browser_apply_file")
+    end = source.find("static void config_menu_browser_apply_empty", start)
+
+    require(start >= 0 and end > start,
+            "browser file-selection handler must be present")
+    block = source[start:end]
+    reload_pos = block.find("rc = config_menu_reload_smartport_device(menu, device);")
+    save_pos = block.find("config_menu_save_settings(menu);", reload_pos)
+    final_reload_pos = block.find("rc = config_menu_reload_smartport_device(menu, device);",
+                                  save_pos)
+    require(reload_pos >= 0 and save_pos > reload_pos,
+            "SmartPort selection must open the candidate before saving it")
+    require(final_reload_pos > save_pos,
+            "SmartPort selection must reopen the exact unit after save-side media refresh")
+    require("if (rc != 0) {" in block and
+            "menu->smartport_slots[device - 1U] = old_enabled;" in block and
+            "const char *restore_path = (old_enabled != 0U) ? old_path : \"\";" in block and
+            "return 0U;" in block,
+            "failed SmartPort selection must restore the old menu and backend path")
+    require("SMARTPORT SP%u FINAL LOAD FAILED RC=%d" in block,
+            "a failed final reopen must remain visible instead of being hidden by RAM32")
+    select_start = source.find("static void config_menu_browser_select")
+    select_end = source.find("static void config_menu_browser_parent", select_start)
+    require(select_start >= 0 and select_end > select_start and
+            "if (config_menu_browser_apply_file(menu, entry.path) != 0U) {\n"
+            "            config_menu_browser_close(menu);\n"
+            "        }" in source[select_start:select_end],
+            "the browser must stay open when a SmartPort replacement fails")
 
 
 def test_browser_dims_duplicate_disk_images() -> None:
@@ -581,6 +619,7 @@ TESTS = [
     test_menu_uses_only_main_key_mapping_help,
     test_clock_fields_support_left_right_adjustment,
     test_menu_rejects_duplicate_smartport_paths,
+    test_smartport_selection_loads_before_save_and_rolls_back,
     test_browser_dims_duplicate_disk_images,
     test_settings_menu_controls_debug_overlay_and_bezel,
 ]

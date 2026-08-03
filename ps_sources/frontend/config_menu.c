@@ -4789,14 +4789,14 @@ static uint8_t config_menu_adjust_focused_value(config_menu_t *menu, int8_t delt
     return 0U;
 }
 
-static void config_menu_reload_smartport_device(config_menu_t *menu, uint8_t device)
+static int config_menu_reload_smartport_device(config_menu_t *menu, uint8_t device)
 {
     int rc = 0;
     char text[CONFIG_MENU_STATUS_LEN];
     const uint8_t index = (uint8_t)(device - 1U);
 
     if (menu == NULL || device == 0U || device > SMARTPORT_DEVICE_COUNT) {
-        return;
+        return -1;
     }
 
     if (menu->platform.set_smartport_image_path != NULL) {
@@ -4823,6 +4823,7 @@ static void config_menu_reload_smartport_device(config_menu_t *menu, uint8_t dev
                        rc);
         config_menu_set_status(menu, 1U, text);
     }
+    return rc;
 }
 
 static void config_menu_clear_smartport_device(config_menu_t *menu, uint8_t device)
@@ -5407,13 +5408,13 @@ static uint8_t config_menu_browser_target_drive(uint8_t target)
     return (target == CONFIG_BROWSER_TARGET_DISK2_D2) ? 1U : 0U;
 }
 
-static void config_menu_browser_apply_file(config_menu_t *menu, const char *path)
+static uint8_t config_menu_browser_apply_file(config_menu_t *menu, const char *path)
 {
     uint8_t drive;
     uint8_t device;
 
     if (menu == NULL || path == NULL) {
-        return;
+        return 0U;
     }
 
     /* The chosen file lives in the current browse dir: remember it so the
@@ -5421,7 +5422,10 @@ static void config_menu_browser_apply_file(config_menu_t *menu, const char *path
     config_menu_browser_remember_dir(menu);
 
     if (config_menu_browser_is_smartport_target(menu->browser_target) != 0U) {
+        char old_path[CONFIG_MENU_PATH_LEN];
+        uint8_t old_enabled;
         char text[CONFIG_MENU_STATUS_LEN];
+        int rc;
 
         device = config_menu_browser_target_smartport_device(menu->browser_target);
         if (config_menu_smartport_path_in_use(menu, device, path) != 0U) {
@@ -5430,14 +5434,67 @@ static void config_menu_browser_apply_file(config_menu_t *menu, const char *path
                            "SMARTPORT SP%u DUPLICATE IMAGE",
                            (unsigned)device);
             config_menu_set_status(menu, 1U, text);
-            return;
+            return 0U;
         }
+        old_enabled = menu->smartport_slots[device - 1U];
+        config_menu_copy_text(old_path,
+                              sizeof(old_path),
+                              menu->smartport_disk_paths[device - 1U]);
         config_menu_copy_text(menu->smartport_disk_paths[device - 1U],
                               sizeof(menu->smartport_disk_paths[device - 1U]),
                               path);
         menu->smartport_slots[device - 1U] = 1U;
+        rc = config_menu_reload_smartport_device(menu, device);
+        if (rc != 0) {
+            /* Keep both the saved model and the live backend on the old
+             * selection when the candidate cannot be opened. */
+            config_menu_copy_text(menu->smartport_disk_paths[device - 1U],
+                                  sizeof(menu->smartport_disk_paths[device - 1U]),
+                                  old_path);
+            menu->smartport_slots[device - 1U] = old_enabled;
+            if (menu->platform.set_smartport_image_path != NULL) {
+                const char *restore_path = (old_enabled != 0U) ? old_path : "";
+                int restore_rc = menu->platform.set_smartport_image_path(
+                    menu->platform.ctx, device, restore_path);
+                if (restore_rc == 0 &&
+                    menu->platform.reset_smartport_media != NULL) {
+                    (void)menu->platform.reset_smartport_media(menu->platform.ctx,
+                                                               device);
+                }
+            }
+            return 0U;
+        }
         config_menu_save_settings(menu);
-        config_menu_reload_smartport_device(menu, device);
+        /* Saving the config uses FatFs and refreshes every SmartPort unit.
+         * RAM32 or another mounted unit used to hide a failed SP1 reopen.
+         * Reopen this exact unit last; do not leave the browser unless the
+         * selected file is the live backend after all save-side SD work. */
+        rc = config_menu_reload_smartport_device(menu, device);
+        if (rc != 0) {
+            config_menu_copy_text(menu->smartport_disk_paths[device - 1U],
+                                  sizeof(menu->smartport_disk_paths[device - 1U]),
+                                  old_path);
+            menu->smartport_slots[device - 1U] = old_enabled;
+            if (menu->platform.set_smartport_image_path != NULL) {
+                const char *restore_path = (old_enabled != 0U) ? old_path : "";
+                int restore_rc = menu->platform.set_smartport_image_path(
+                    menu->platform.ctx, device, restore_path);
+                if (restore_rc == 0 &&
+                    menu->platform.reset_smartport_media != NULL) {
+                    (void)menu->platform.reset_smartport_media(menu->platform.ctx,
+                                                               device);
+                }
+            }
+            config_menu_save_settings(menu);
+            (void)snprintf(text,
+                           sizeof(text),
+                           "SMARTPORT SP%u FINAL LOAD FAILED RC=%d",
+                           (unsigned)device,
+                           rc);
+            config_menu_set_status(menu, 1U, text);
+            return 0U;
+        }
+        return 1U;
     } else if (config_menu_browser_is_disk2_target(menu->browser_target) != 0U) {
         char text[CONFIG_MENU_STATUS_LEN];
 
@@ -5448,7 +5505,7 @@ static void config_menu_browser_apply_file(config_menu_t *menu, const char *path
                            "DISK II D%u DUPLICATE IMAGE",
                            (unsigned)drive + 1U);
             config_menu_set_status(menu, 1U, text);
-            return;
+            return 0U;
         }
         config_menu_copy_text(menu->disk2_disk_paths[drive],
                               sizeof(menu->disk2_disk_paths[drive]),
@@ -5474,6 +5531,7 @@ static void config_menu_browser_apply_file(config_menu_t *menu, const char *path
     } else if (menu->browser_target == CONFIG_BROWSER_TARGET_PROFILE_IMAGE) {
         config_menu_profiles_set_image_from_png(menu, path);
     }
+    return 1U;
 }
 
 static void config_menu_browser_apply_empty(config_menu_t *menu)
@@ -5529,8 +5587,9 @@ static void config_menu_browser_select(config_menu_t *menu)
                entry.type == CONFIG_BROWSER_ENTRY_DIR) {
         config_menu_browser_set_dir(menu, entry.path);
     } else if (entry.type == CONFIG_BROWSER_ENTRY_FILE) {
-        config_menu_browser_apply_file(menu, entry.path);
-        config_menu_browser_close(menu);
+        if (config_menu_browser_apply_file(menu, entry.path) != 0U) {
+            config_menu_browser_close(menu);
+        }
     }
 }
 

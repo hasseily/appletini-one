@@ -811,11 +811,7 @@ static void close_device(sp_device_t *dev)
         return;
     }
     if (dev->is_ram != 0U) {
-        dev->image_open = 0U;
-        dev->is_ram = 0U;
-        dev->image_blocks = 0U;
-        dev->image_data_offset = 0U;
-        dev->image_path[0] = '\0';
+        memset(dev, 0, sizeof(*dev));
     } else {
         (void)f_close(&dev->image_file);
         dev->image_open = 0U;
@@ -948,19 +944,19 @@ static int load_device(sp_device_t *dev)
 static int load_all_devices(void)
 {
     uint8_t i;
-    uint8_t mounted = 0U;
     int first_error = 0;
 
     for (i = 0U; i < SP_MAX_DEVICES; ++i) {
         int rc = load_device(&g_devices[i]);
-        if (rc == 0 && g_devices[i].image_open != 0U) {
-            mounted = 1U;
-        } else if (rc != 0 && first_error == 0) {
+        if (rc != 0 && first_error == 0) {
             first_error = rc;
         }
     }
 
-    return (mounted != 0U || first_error == 0) ? 0 : first_error;
+    /* A mounted RAM32 or another good unit must not hide a failed file.
+     * Callers that care about one unit can retry it directly; callers that
+     * refresh all media need to know that the result was only partial. */
+    return first_error;
 }
 
 static int sp_cache_get_block(sp_device_t *dev,
@@ -1055,9 +1051,6 @@ int smartport_service_init(uint32_t uart_base)
 
     rc = load_all_devices();
     sp_ramdisk_refresh(uart_base);
-    if (smartport_present_count() != 0U) {
-        rc = 0;
-    }
     /* Even if media load fails, we still register the IRQ handler so
      * status commands can return DEVICE_NOT_CONNECTED rather than
      * leaving the firmware spinning forever. */
@@ -1095,6 +1088,14 @@ int smartport_service_set_image_path(uint8_t device, const char *path)
     }
     if (sp_image_path_duplicate(index, path) != 0U) {
         return SMARTPORT_SERVICE_ERR_DUPLICATE_PATH;
+    }
+
+    /* RAM32 borrows an otherwise unused device entry. Remove it before
+     * storing a real path: close_device() clears a RAM device, so copying the
+     * path first would erase the new selection before load_device() opens it. */
+    if (g_devices[index].is_ram != 0U) {
+        close_device(&g_devices[index]);
+        g_ramdisk_state = 0U;
     }
 
     memcpy(g_devices[index].image_path, path, len + 1U);
@@ -1160,6 +1161,18 @@ void smartport_service_uart_status(uint32_t uart_base)
              (unsigned)g_smartport_slot,
              (unsigned)g_ramdisk_state);
     uart_puts(uart_base, line);
+    for (uint8_t i = 0U; i < SP_MAX_DEVICES; ++i) {
+        const sp_device_t *dev = &g_devices[i];
+        snprintf(line, sizeof(line),
+                 "sd: SP%u open=%u ram=%u ro=%u blocks=%lu path=%.44s\r\n",
+                 (unsigned)i + 1U,
+                 (unsigned)dev->image_open,
+                 (unsigned)dev->is_ram,
+                 (unsigned)dev->read_only,
+                 (unsigned long)dev->image_blocks,
+                 dev->image_path);
+        uart_puts(uart_base, line);
+    }
 }
 
 void smartport_service_poll(void)
@@ -1221,9 +1234,6 @@ int smartport_service_reset_media(uint8_t device)
         {
             int rc = load_all_devices();
             sp_ramdisk_refresh(g_uart_base);
-            if (smartport_present_count() != 0U) {
-                rc = 0;
-            }
             return rc;
         }
     }
@@ -1363,7 +1373,11 @@ static void sp_ramdisk_refresh(uint32_t uart_base)
 
     if (want != 0U && g_ramdisk_state != 1U) {
         for (i = 0U; i < SP_MAX_DEVICES; ++i) {
-            if (g_devices[i].image_open == 0U) {
+            /* A configured file that failed to open still owns its unit.
+             * Taking it for RAM32 would hide the load error and could erase a
+             * replacement path when the user selects new media. */
+            if (g_devices[i].image_open == 0U &&
+                g_devices[i].image_path[0] == '\0') {
                 memset(&g_devices[i], 0, sizeof(g_devices[i]));
                 g_devices[i].is_ram = 1U;
                 g_devices[i].image_open = 1U;
@@ -1384,8 +1398,7 @@ static void sp_ramdisk_refresh(uint32_t uart_base)
     } else if (want == 0U && g_ramdisk_state == 1U) {
         for (i = 0U; i < SP_MAX_DEVICES; ++i) {
             if (g_devices[i].is_ram != 0U) {
-                g_devices[i].image_open = 0U;
-                g_devices[i].is_ram = 0U;
+                close_device(&g_devices[i]);
             }
         }
         g_ramdisk_state = 2U;

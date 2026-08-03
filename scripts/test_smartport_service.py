@@ -183,28 +183,59 @@ def test_ramdisk_survives_media_refresh_contract() -> None:
     require("static uint8_t g_ramdisk_state = 0U;" in source,
             "RAM disk mount state must be shared with media reset handling")
     require("if (dev->is_ram != 0U) {\n"
-            "        dev->image_open = 0U;\n"
-            "        dev->is_ram = 0U;\n"
-            "        dev->image_blocks = 0U;\n"
-            "        dev->image_data_offset = 0U;\n"
-            "        dev->image_path[0] = '\\0';" in source,
+            "        memset(dev, 0, sizeof(*dev));" in source,
             "closing a RAM disk must not call FatFs or leave a synthetic path behind")
     require("rc = load_all_devices();\n"
-            "    sp_ramdisk_refresh(uart_base);\n"
-            "    if (smartport_present_count() != 0U) {\n"
+            "    sp_ramdisk_refresh(uart_base);" in source and
+            "if (smartport_present_count() != 0U) {\n"
             "        rc = 0;\n"
-            "    }" in source,
+            "    }" not in source,
             "SmartPort init must mount the configured RAM disk immediately")
     require("g_ramdisk_state = 0U;\n"
             "        sp_cache_invalidate_device(SMARTPORT_SERVICE_ALL_DEVICES);" in source,
             "all-device media reset must forget any closed RAM disk")
     require("int rc = load_all_devices();\n"
             "            sp_ramdisk_refresh(g_uart_base);\n"
-            "            if (smartport_present_count() != 0U) {\n"
-            "                rc = 0;\n"
-            "            }\n"
             "            return rc;" in source,
-            "all-device media reset must remount the configured RAM disk before returning")
+            "all-device media reset must remount RAM32 without hiding a file-load error")
+
+
+def test_ramdisk_never_claims_or_erases_configured_media() -> None:
+    source = read(SMARTPORT_C)
+
+    require("if (g_devices[i].image_open == 0U &&\n"
+            "                g_devices[i].image_path[0] == '\\0') {" in source,
+            "RAM32 must use only an unconfigured unit, not a configured image that failed to open")
+    setter_start = source.find("int smartport_service_set_image_path")
+    getter_start = source.find("const char *smartport_service_get_image_path", setter_start)
+    require(setter_start >= 0 and getter_start > setter_start,
+            "SmartPort image-path setter must be present")
+    setter = source[setter_start:getter_start]
+    require("if (g_devices[index].is_ram != 0U) {\n"
+            "        close_device(&g_devices[index]);\n"
+            "        g_ramdisk_state = 0U;\n"
+            "    }\n\n"
+            "    memcpy(g_devices[index].image_path, path, len + 1U);" in setter,
+            "replacing RAM32 must remove it before copying the real image path")
+    require("if (g_devices[i].is_ram != 0U) {\n"
+            "                close_device(&g_devices[i]);\n"
+            "            }" in source,
+            "disabling RAM32 must clear its synthetic path and geometry")
+
+
+def test_ramdisk_does_not_mask_partial_media_failure() -> None:
+    source = read(SMARTPORT_C)
+
+    load_start = source.find("static int load_all_devices(void)")
+    load_end = source.find("static int sp_cache_get_block", load_start)
+    require(load_start >= 0 and load_end > load_start,
+            "all-device SmartPort loader must be present")
+    load = source[load_start:load_end]
+    require("return first_error;" in load and
+            "mounted != 0U" not in load,
+            "another mounted unit must not turn a partial media load into success")
+    require("sd: SP%u open=%u ram=%u ro=%u blocks=%lu path=%.44s" in source,
+            "UART SmartPort status must expose each unit's real backend state")
 
 
 TESTS = [
@@ -216,6 +247,8 @@ TESTS = [
     test_rejects_duplicate_image_paths,
     test_frontend_uses_sp1_for_current_debug_compatibility,
     test_ramdisk_survives_media_refresh_contract,
+    test_ramdisk_never_claims_or_erases_configured_media,
+    test_ramdisk_does_not_mask_partial_media_failure,
 ]
 
 

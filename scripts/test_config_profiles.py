@@ -540,7 +540,7 @@ def test_transwarp_slot_slowdown_rows() -> None:
             "hgr_draw_check_item(" in device_tabs,
             "TransWarp tab must draw every slot as a visible checkbox row")
     adjust_start = source.find("static uint8_t config_menu_adjust_focused_value")
-    adjust_end = source.find("static void config_menu_reload_smartport_device", adjust_start)
+    adjust_end = source.find("static int config_menu_reload_smartport_device", adjust_start)
     activate_start = source.find("static void config_menu_activate_item")
     activate_end = source.find("uint8_t config_menu_handle_input", activate_start)
     require(adjust_start >= 0 and adjust_end > adjust_start and
@@ -577,7 +577,7 @@ def test_transwarp_slot_slowdown_rows() -> None:
 def test_checkbox_rows_ignore_left_right() -> None:
     source = read(CONFIG_MENU_C)
     adjust_start = source.find("static uint8_t config_menu_adjust_focused_value")
-    adjust_end = source.find("static void config_menu_reload_smartport_device", adjust_start)
+    adjust_end = source.find("static int config_menu_reload_smartport_device", adjust_start)
 
     require(adjust_start >= 0 and adjust_end > adjust_start,
             "config menu focused-value adjustment handler must be present")

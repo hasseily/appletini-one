@@ -205,6 +205,13 @@ HELP(video_video7,
     "When enabled, a certain switch combination will force monochrome output.",
     "Disable it if you see software in monochrome when it should be in color.");
 
+HELP(video_video7_mix,
+    "COL140M is also the Video-7 mode called MIX. It mixes color and monochrome within one DHGR scanline.",
+    "It is present in the Video-7 and Chat Mauve RGB cards. The most famous image in this mode is the",
+    "elephant image. The Appletini demo disk has such an image as well.",
+    "When enabled, Video-7 state 10 selects MIX through the $C05E/$C05F soft-switch sequence.",
+    "The byte high bits select color or monochrome at each four-dot color boundary.");
+
 HELP(video_scanlines,
     "Scanlines blank replicated output rows after scaling. It is a naive but effective effect.",
     "There is no performance impact, and it is purely a matter of preference.");
@@ -275,6 +282,7 @@ static const help_override_t video_overrides[] = {
     OVERRIDE(CONFIG_VIDEO_ITEM_GHOSTING, video_ghosting),
     OVERRIDE(CONFIG_VIDEO_ITEM_BORDER, video_border),
     OVERRIDE(CONFIG_VIDEO_ITEM_VIDEO7, video_video7),
+    OVERRIDE(CONFIG_VIDEO_ITEM_COL140M, video_video7_mix),
     OVERRIDE(CONFIG_VIDEO_ITEM_BORDER_COLOR, video_border_color),
     OVERRIDE(CONFIG_VIDEO_ITEM_BORDER_FLOOD, video_border_outside),
     OVERRIDE(CONFIG_VIDEO_ITEM_ROM, video_rom),

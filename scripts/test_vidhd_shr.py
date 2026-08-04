@@ -180,23 +180,32 @@ def test_renderer_implements_video7_auto_white_mono() -> None:
 
     require("static uint8_t s_video7_rgb_flags = 0u;" in source and
             "static uint8_t s_video7_rgb_mode = 0u;" in source and
-            "static uint8_t s_video7_prev_an3_addr = 0u;" in source,
-            "renderer must keep AppleWin-style Video-7 RGB mode state")
+            "static uint8_t s_video7_an3_sequence = 0u;" in source,
+            "renderer must keep the Video-7 sequence and two-bit mode state")
     require("static void handle_video7_softswitch_record(uint64_t rec)" in source and
-            "if (low == 0x5Fu && s_video7_prev_an3_addr == 0x5Eu)" in source and
-            "s_video7_rgb_flags = (uint8_t)((s_video7_rgb_flags << 1) & 0x03u);" in source and
-            "s_video7_rgb_flags |= sw_80col(ace_softswitch_bits(rec)) ? 0u : 1u;" in source,
-            "renderer must clock !80COL on exact C05E->C05F AN3 transitions")
-    require("const uint8_t video7_auto_mono =\n"
-            "        ((user_mono == 0u) &&\n"
-            "         (shr_now == 0u) &&\n"
+            "OFF-ON-OFF-ON-OFF" in source and
+            "if (s_video7_an3_sequence == 2u)" in source and
+            "if (s_video7_an3_sequence == 4u)" in source and
+            "(s_video7_rgb_flags & 0x01u)" in source and
+            "(sw_80col(sw) ? 0u : 0x02u)" in source,
+            "renderer must store the first Video-7 ON as bit 0 and the second as bit 1")
+    require("const uint8_t video7_mono =\n"
+            "        ((shr_now == 0u) &&\n"
             "         (apple_video_settings_video7_auto_mono_enabled(settings) != 0u) &&\n"
             "         (s_video7_rgb_mode == 3u)) ? 1u : 0u;" in source and
+            "const uint8_t video7_auto_mono =\n"
+            "        ((user_mono == 0u) && (video7_mono != 0u)) ? 1u : 0u;" in source and
             "((user_mono != 0u) || (bw_force != 0u) || (video7_auto_mono != 0u)) ? 1u : 0u" in source and
             "((bw_force != 0u) || (video7_auto_mono != 0u)) ?\n"
             "        APPLE_VIDEO_MONO_WHITE" in source,
             "Video-7 mode 3 must auto-force white mono only when bootmenu mono is off, "
             "the toggle is enabled, and C029 SHR is not active")
+    require("const uint8_t video7_mix =\n"
+            "        ((shr_now == 0u) &&\n"
+            "         (apple_video_settings_dhgr_col140m_enabled(settings) != 0u) &&\n"
+            "         (s_video7_rgb_mode == 2u)) ? 1u : 0u;" in source and
+            "s_render_dhgr_col140m_enable = video7_mix;" in source,
+            "Video-7 mode 2 must enable MIX only when its UI switch is on and SHR is off")
     require("apple_video_settings_color_mode(settings)" in source and
             "s_render_color_mode = apple_video_settings_color_mode(settings);" in source and
             "video7_auto_mono" in source and
@@ -204,7 +213,7 @@ def test_renderer_implements_video7_auto_white_mono() -> None:
             "Video-7 auto-mono must apply to every bootmenu color mode, not only RGB")
     require("s_video7_rgb_flags    = 0u;" in source and
             "s_video7_rgb_mode     = 0u;" in source and
-            "s_video7_prev_an3_addr = 0u;" in source,
+            "s_video7_an3_sequence = 0u;" in source,
             "Apple reset must clear Video-7 RGB state")
     require("if (ace_record_kind(rec) == ACE_RECORD_KIND_SOFTSW_ACCESS) {\n"
             "        handle_video7_softswitch_record(rec);\n"
@@ -367,13 +376,18 @@ def test_compositor_and_handoff_are_mode_aware() -> None:
             "const uint32_t display_mode = apple_fb_reader_display_mode();" in compositor,
             "compositor must expose the last claimed Apple slot and mode for hardware diagnostics")
     badge = compositor[
-        compositor.index("static const char *format_badge_label(void)"):
+        compositor.index("static const char *format_badge_video7_tag"):
         compositor.index("static void draw_format_badge")
     ]
     require("apple_fb_reader_format_detail()" in badge and
             "ACE_MAIN_BANK_ADDR" not in badge and "ACE_AUX_BANK_ADDR" not in badge and
             '"SHR4 %s %s%s"' in badge and '"SHR-3200 320"' in badge,
             "badge must use frame-coherent CPU1 metadata and name SHR subformats")
+    require("format_badge_video7_tag" in badge and
+            'return " Video-7 mono";' in badge and
+            'return " Video-7 MIX";' in badge and
+            "base == APPLE_FB_FORMAT_DHGR" in badge,
+            "badge must tag Video-7 mono on legacy modes and MIX only on DHGR")
     require("apple_fb_slot" in read(REPO_ROOT / "ps_sources" / "frontend" / "uart_control.h") and
             "apple fb: slot=%lu mode=%s" in read(REPO_ROOT / "ps_sources" / "frontend" / "uart_control.c") and
             "snapshot->apple_fb_mode = g_compositor_last_apple_mode;" in frontend_main,
@@ -711,8 +725,8 @@ def test_page_flip_removed() -> None:
                      "s_shr_flip_parity"):
         require(obsolete not in combined,
                 f"obsolete page-flip path remains: {obsolete}")
-    require("CONFIG_VIDEO_ITEM_COUNT        15U" in menu_internal,
-            "Video menu must end at the debugging row")
+    require("CONFIG_VIDEO_ITEM_COUNT        16U" in menu_internal,
+            "Video menu must contain the current 16 controls")
 
 
 TESTS = [

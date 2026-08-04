@@ -17,6 +17,8 @@
 ;                $2000, DHGR switches.
 ;   fmt 4 DHRi   two .dhr pairs: page-1 pair as fmt 3, page-2 pair to
 ;                AUX/MAIN $4000, DHGR switches.
+;   video7 mode 2 selects Video-7 MIX/COL140M with the five-access AN3
+;                sequence before a marked DHGR image is shown.
 ;
 ; Paged (interlace/flip) images are self-describing per SDD
 ; docs/LEGACY_PAGED_VIDEO_MODES.md: the A2Li signature + mode byte
@@ -69,6 +71,8 @@ FMT_HGR   = 1
 FMT_HGRI  = 2
 FMT_DHGR  = 3
 FMT_DHGRI = 4
+V7_NONE    = 0
+V7_MIX     = 2
 
 KEY_LEFT  = $88
 KEY_ESC   = $9B
@@ -145,6 +149,9 @@ show_image:
 +   ldx img_index
     lda formats,x
     sta cur_fmt
+    lda video7_modes,x
+    sta cur_video7
+    lda cur_fmt
 
     ; ---- format dispatch ----
     cmp #FMT_HGR
@@ -187,6 +194,8 @@ select_hgr:
     bit MIXEDOFF
     bit PAGE1
     bit HIRESON
+    jsr video7_select_normal
+    sta COL80OFF
     rts
 
 select_dhgr:
@@ -201,6 +210,37 @@ select_dhgr:
     bit HIRESON
     sta COL80ON
     bit AN3ON
+    jsr video7_select_dhgr
+    sta COL80ON
+    bit AN3ON
+    rts
+
+; Video-7 samples !80COL at each ON in the exact five-access sequence
+; OFF-ON-OFF-ON-OFF. The first ON supplies state bit 0 and the second
+; supplies state bit 1. State 00 restores normal DHGR; state 10 selects
+; MIX/COL140M. The caller restores the base HGR or DHGR switches after
+; the selector finishes with AN3 off.
+video7_select_dhgr:
+    lda cur_video7
+    cmp #V7_MIX
+    beq video7_select_mix
+video7_select_normal:
+    bit AN3OFF
+    sta COL80ON             ; !80COL=0 -> state bit 0 = 0
+    bit AN3ON
+    bit AN3OFF
+    bit AN3ON               ; !80COL=0 -> state bit 1 = 0
+    bit AN3OFF              ; commit state 00
+    rts
+
+video7_select_mix:
+    bit AN3OFF
+    sta COL80ON             ; !80COL=0 -> state bit 0 = 0
+    bit AN3ON
+    bit AN3OFF
+    sta COL80OFF            ; !80COL=1 -> state bit 1 = 1
+    bit AN3ON
+    bit AN3OFF              ; commit state 10 (MIX/COL140M)
     rts
 
 load_hgri:
@@ -551,6 +591,7 @@ copy_paged_page:
 ; ---- data ----
 img_index:  !byte 0
 cur_fmt:    !byte 0
+cur_video7: !byte 0
 fail_count: !byte 0
 sp_len:     !byte 0
 paged_mode: !byte 0
@@ -614,6 +655,10 @@ names_hi:
     !byte >n_e640a, >n_e640b, >n_int1, >n_int2
     !byte >n_t256, >n_tflip
 formats:
+    !byte 0, 0, 0, 0
+    !byte 0, 0, 0, 0
+    !byte 0, 0
+video7_modes:
     !byte 0, 0, 0, 0
     !byte 0, 0, 0, 0
     !byte 0, 0

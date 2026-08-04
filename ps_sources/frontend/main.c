@@ -203,6 +203,7 @@ static uint8_t g_display_mono_enable_shadow = 0U;
 static uint8_t g_display_mono_color_shadow = APPLE_VIDEO_MONO_WHITE;
 static uint8_t g_video_color_mode_shadow = APPLE_VIDEO_COLOR_COMPOSITE_MONITOR;
 static uint8_t g_video7_auto_mono_enable_shadow = 1U;
+static uint8_t g_dhgr_col140m_enable_shadow = 1U;
 static uint8_t g_border_enabled_shadow = 0U;
 static uint8_t g_border_color_shadow = APPLE_VIDEO_IIGS_BORDER_DEFAULT;
 static uint8_t g_border_flood_shadow = 0U;
@@ -335,6 +336,7 @@ static uint8_t display_mono_enable_get(void) { return g_display_mono_enable_shad
 static uint8_t display_mono_color_get(void)  { return g_display_mono_color_shadow; }
 static uint8_t video_color_mode_get(void) { return g_video_color_mode_shadow; }
 static uint8_t video7_auto_mono_enable_get(void) { return g_video7_auto_mono_enable_shadow; }
+static uint8_t dhgr_col140m_enable_get(void) { return g_dhgr_col140m_enable_shadow; }
 static int8_t clean_video_phase_cycles_get(void) { return g_clean_video_phase_cycles_shadow; }
 static int8_t pal_video_phase_cycles_get(void) { return g_pal_video_phase_cycles_shadow; }
 
@@ -346,6 +348,7 @@ static void video_output_publish(void)
             g_display_mono_color_shadow,
             g_video_color_mode_shadow,
             g_video7_auto_mono_enable_shadow,
+            g_dhgr_col140m_enable_shadow,
             g_clean_video_phase_cycles_shadow,
             g_pal_video_phase_cycles_shadow,
             g_border_enabled_shadow,
@@ -364,6 +367,7 @@ static void video_output_set(uint8_t mono_enable,
                              uint8_t mono_color,
                              uint8_t color_mode,
                              uint8_t video7_auto_mono_enable,
+                             uint8_t dhgr_col140m_enable,
                              int8_t clean_phase_cycles,
                              int8_t pal_phase_cycles)
 {
@@ -371,6 +375,7 @@ static void video_output_set(uint8_t mono_enable,
     g_display_mono_color_shadow = apple_video_mono_color_clamp(mono_color);
     g_video_color_mode_shadow = apple_video_color_mode_clamp(color_mode);
     g_video7_auto_mono_enable_shadow = (video7_auto_mono_enable != 0U) ? 1U : 0U;
+    g_dhgr_col140m_enable_shadow = (dhgr_col140m_enable != 0U) ? 1U : 0U;
     g_clean_video_phase_cycles_shadow =
         apple_video_timing_phase_clamp(clean_phase_cycles);
     g_pal_video_phase_cycles_shadow =
@@ -1094,6 +1099,7 @@ static void menu_platform_set_video_output(void *ctx,
                                            uint8_t mono_color,
                                            uint8_t color_mode,
                                            uint8_t video7_auto_mono_enable,
+                                           uint8_t dhgr_col140m_enable,
                                            int8_t clean_phase_cycles,
                                            int8_t pal_phase_cycles)
 {
@@ -1102,6 +1108,7 @@ static void menu_platform_set_video_output(void *ctx,
                      mono_color,
                      color_mode,
                      video7_auto_mono_enable,
+                     dhgr_col140m_enable,
                      clean_phase_cycles,
                      pal_phase_cycles);
 }
@@ -1128,6 +1135,12 @@ static uint8_t menu_platform_get_video7_auto_mono_enabled(void *ctx)
 {
     (void)ctx;
     return video7_auto_mono_enable_get();
+}
+
+static uint8_t menu_platform_get_dhgr_col140m_enabled(void *ctx)
+{
+    (void)ctx;
+    return dhgr_col140m_enable_get();
 }
 
 static int8_t menu_platform_get_clean_video_phase_cycles(void *ctx)
@@ -2829,6 +2842,8 @@ int main(void)
         menu_platform.get_video_output_color_mode = menu_platform_get_video_output_color_mode;
         menu_platform.get_video7_auto_mono_enabled =
             menu_platform_get_video7_auto_mono_enabled;
+        menu_platform.get_dhgr_col140m_enabled =
+            menu_platform_get_dhgr_col140m_enabled;
         menu_platform.get_clean_video_phase_cycles =
             menu_platform_get_clean_video_phase_cycles;
         menu_platform.get_pal_video_phase_cycles =

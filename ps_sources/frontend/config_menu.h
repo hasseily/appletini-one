@@ -71,12 +71,14 @@ typedef struct {
                              uint8_t mono_color,
                              uint8_t color_mode,
                              uint8_t video7_auto_mono_enable,
+                             uint8_t dhgr_col140m_enable,
                              int8_t clean_phase_cycles,
                              int8_t pal_phase_cycles);
     uint8_t (*get_video_output_mono)(void *ctx);
     uint8_t (*get_video_output_mono_color)(void *ctx);
     uint8_t (*get_video_output_color_mode)(void *ctx);
     uint8_t (*get_video7_auto_mono_enabled)(void *ctx);
+    uint8_t (*get_dhgr_col140m_enabled)(void *ctx);
     int8_t (*get_clean_video_phase_cycles)(void *ctx);
     int8_t (*get_pal_video_phase_cycles)(void *ctx);
     uint8_t (*is_apple_video_50hz)(void *ctx);
@@ -146,6 +148,7 @@ typedef struct {
     uint8_t video_mono_color;
     uint8_t video_color_mode;
     uint8_t video7_auto_mono_enabled;
+    uint8_t dhgr_col140m_enabled;
     uint8_t video_ghosting_strength;
     uint8_t video_blur_strength;
     uint8_t video_glow_strength;

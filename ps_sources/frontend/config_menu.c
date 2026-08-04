@@ -26,7 +26,7 @@
 
 #define APPLETINI_CFG_PATH "0:/appletini_cfg.txt"
 #define APPLETINI_CFG_MAX 8192U
-#define APPLETINI_CFG_VERSION 110U
+#define APPLETINI_CFG_VERSION 111U
 #define ETHERNET_CONTROL_SLOT 1U
 #define DISK2_CONTROL_SLOT 6U
 #define MOUSE_CONTROL_SLOT 2U
@@ -39,6 +39,7 @@
 #define CONFIG_DEFAULT_VIDEO_MONO_COLOR APPLE_VIDEO_MONO_WHITE
 #define CONFIG_DEFAULT_VIDEO_COLOR_MODE APPLE_VIDEO_COLOR_COMPOSITE_MONITOR
 #define CONFIG_DEFAULT_VIDEO7_AUTO_MONO_ENABLED 1U
+#define CONFIG_DEFAULT_DHGR_COL140M_ENABLED 1U
 #define CONFIG_DEFAULT_VIDEO_GHOSTING_STRENGTH APPLETINI_VIDEO_GHOSTING_OFF
 #define CONFIG_DEFAULT_VIDEO_BLUR_STRENGTH APPLETINI_VIDEO_BLUR_OFF
 #define CONFIG_DEFAULT_VIDEO_GLOW_STRENGTH APPLETINI_VIDEO_GLOW_OFF
@@ -2117,6 +2118,8 @@ static void config_menu_coerce_video_output(config_menu_t *menu)
     }
     menu->video7_auto_mono_enabled =
         (menu->video7_auto_mono_enabled != 0U) ? 1U : 0U;
+    menu->dhgr_col140m_enabled =
+        (menu->dhgr_col140m_enabled != 0U) ? 1U : 0U;
     menu->clean_video_phase_cycles = CONFIG_DEFAULT_CLEAN_VIDEO_PHASE_CYCLES;
     menu->pal_video_phase_cycles = CONFIG_DEFAULT_PAL_VIDEO_PHASE_CYCLES;
 }
@@ -2260,6 +2263,7 @@ static void config_menu_apply_video_output(config_menu_t *menu)
                                         menu->video_mono_color,
                                         menu->video_color_mode,
                                         menu->video7_auto_mono_enabled,
+                                        menu->dhgr_col140m_enabled,
                                         menu->clean_video_phase_cycles,
                                         menu->pal_video_phase_cycles);
     }
@@ -2407,6 +2411,11 @@ static void config_menu_load_platform_defaults(config_menu_t *menu)
     if (menu->platform.get_video7_auto_mono_enabled != NULL) {
         menu->video7_auto_mono_enabled =
             (menu->platform.get_video7_auto_mono_enabled(menu->platform.ctx) != 0U) ?
+            1U : 0U;
+    }
+    if (menu->platform.get_dhgr_col140m_enabled != NULL) {
+        menu->dhgr_col140m_enabled =
+            (menu->platform.get_dhgr_col140m_enabled(menu->platform.ctx) != 0U) ?
             1U : 0U;
     }
     if (menu->platform.get_clean_video_phase_cycles != NULL) {
@@ -2890,6 +2899,8 @@ static void config_menu_parse_key_value(config_menu_t *menu, const char *key, co
         menu->video_mono_color = config_menu_video_mono_color_value(value);
     } else if (strcmp(key, "video.color.mode") == 0) {
         menu->video_color_mode = config_menu_video_color_mode_value(value);
+    } else if (strcmp(key, "video.dhgr.col140m") == 0) {
+        menu->dhgr_col140m_enabled = config_menu_bool_text(value);
     } else if (strcmp(key, "video.video7.monochrome") == 0) {
         menu->video7_auto_mono_enabled = config_menu_bool_text(value);
     } else if (strcmp(key, "video.ghosting") == 0) {
@@ -3073,6 +3084,7 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                "video.output=%s\n"
                "video.mono.color=%s\n"
                "video.color.mode=%s\n"
+               "video.dhgr.col140m=%s\n"
                "video.video7.monochrome=%s\n"
                "video.ghosting=%s\n"
                "video.blur=%s\n"
@@ -3093,6 +3105,7 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                (menu->video_output_mono != 0U) ? "MONOCHROME" : "COLOR",
                config_menu_video_mono_color_config(menu->video_mono_color),
                config_menu_video_color_mode_config(menu->video_color_mode),
+               config_menu_on_off(menu->dhgr_col140m_enabled),
                config_menu_on_off(menu->video7_auto_mono_enabled),
                config_menu_video_ghosting_config(menu->video_ghosting_strength),
                config_menu_video_blur_config(menu->video_blur_strength),
@@ -3509,6 +3522,7 @@ static void config_menu_reset_settings_only(config_menu_t *menu)
     menu->video_mono_color = CONFIG_DEFAULT_VIDEO_MONO_COLOR;
     menu->video_color_mode = CONFIG_DEFAULT_VIDEO_COLOR_MODE;
     menu->video7_auto_mono_enabled = CONFIG_DEFAULT_VIDEO7_AUTO_MONO_ENABLED;
+    menu->dhgr_col140m_enabled = CONFIG_DEFAULT_DHGR_COL140M_ENABLED;
     menu->video_ghosting_strength = CONFIG_DEFAULT_VIDEO_GHOSTING_STRENGTH;
     menu->video_blur_strength = CONFIG_DEFAULT_VIDEO_BLUR_STRENGTH;
     menu->video_glow_strength = CONFIG_DEFAULT_VIDEO_GLOW_STRENGTH;
@@ -5741,6 +5755,9 @@ static void config_menu_activate_item(config_menu_t *menu)
         } else if (menu->item_focus == CONFIG_VIDEO_ITEM_VIDEO7) {
             menu->video7_auto_mono_enabled =
                 (menu->video7_auto_mono_enabled != 0U) ? 0U : 1U;
+        } else if (menu->item_focus == CONFIG_VIDEO_ITEM_COL140M) {
+            menu->dhgr_col140m_enabled =
+                (menu->dhgr_col140m_enabled != 0U) ? 0U : 1U;
         } else if (menu->item_focus == CONFIG_VIDEO_ITEM_SCANLINES) {
             menu->scanlines_mode =
                 (uint8_t)((menu->scanlines_mode + 1U) % APPLETINI_SCANLINES_COUNT);
@@ -6052,6 +6069,7 @@ void config_menu_init(config_menu_t *menu)
     menu->video_mono_color = CONFIG_DEFAULT_VIDEO_MONO_COLOR;
     menu->video_color_mode = CONFIG_DEFAULT_VIDEO_COLOR_MODE;
     menu->video7_auto_mono_enabled = CONFIG_DEFAULT_VIDEO7_AUTO_MONO_ENABLED;
+    menu->dhgr_col140m_enabled = CONFIG_DEFAULT_DHGR_COL140M_ENABLED;
     menu->video_ghosting_strength = CONFIG_DEFAULT_VIDEO_GHOSTING_STRENGTH;
     menu->video_blur_strength = CONFIG_DEFAULT_VIDEO_BLUR_STRENGTH;
     menu->video_glow_strength = CONFIG_DEFAULT_VIDEO_GLOW_STRENGTH;

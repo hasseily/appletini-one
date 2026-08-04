@@ -4,7 +4,7 @@
  * Compiles the REAL apple_cycle_renderer.c + appletini_ntsc.c +
  * appletini_csbits.c for x86 and drives them with synthetic capture
  * records, mimicking apple_cycle_egress.c's shadow-write + dispatch
- * order exactly. Three scenarios, mirroring hardware reports:
+ * order exactly. Four scenarios, mirroring hardware reports:
  *
  *   T1  dragons.shr4i (interlaced R4G4B4): full-frame decode dumped
  *       for pixel-exact comparison against scripts/render_shr4.py.
@@ -16,6 +16,8 @@
  *       load_shr streams them while SHR stays on. After each load the
  *       published frame and the shadow banks are dumped; the checker
  *       re-decodes the banks and compares.
+ *   T4  Video-7 MIX (COL140M): state 10 and the UI gate must select
+ *       monochrome and color across 8, 8, 8, and 4 dots per 28 dots.
  *
  * Usage: harness.exe <repo_root> <out_dir>
  * Then:  python scripts/host_render_harness/check_output.py <out_dir>
@@ -97,9 +99,8 @@ uint8_t apple_pal_video_mode_is_active(uint8_t color_mode)
                       color_mode == APPLE_VIDEO_COLOR_PAL_ACCURATE_TV) ? 1u : 0u);
 }
 void apple_pal_video_set_framebuffer(uint32_t *fb) { (void)fb; }
-void apple_pal_video_set_video_output(uint8_t a, uint8_t b, uint8_t c,
-                                      int8_t d, int8_t e)
-{ (void)a; (void)b; (void)c; (void)d; (void)e; }
+void apple_pal_video_set_video_output(uint8_t a, uint8_t b, uint8_t c)
+{ (void)a; (void)b; (void)c; }
 void apple_pal_video_reset(void) {}
 void apple_pal_video_resync(void) {}
 void apple_pal_video_begin_frame(void) {}
@@ -139,6 +140,13 @@ static uint64_t rec_io(uint16_t addr, uint8_t data)
     return ((uint64_t)ACE_RECORD_KIND_IO_WRITE << ACE_BIT_RECORD_KIND_LO) |
            ((uint64_t)addr << ACE_BIT_IO_ADDR_LO) |
            ((uint64_t)data << ACE_BIT_IO_DATA_LO);
+}
+
+static uint64_t rec_softswitch(uint16_t addr, uint32_t sw11)
+{
+    return ((uint64_t)ACE_RECORD_KIND_SOFTSW_ACCESS << ACE_BIT_RECORD_KIND_LO) |
+           ((uint64_t)(sw11 & 0x7FFu) << ACE_BIT_SW_DHIRES) |
+           ((uint64_t)addr << ACE_BIT_ADDR_DECODE_LO);
 }
 
 /* Soft-switch words. */
@@ -187,9 +195,33 @@ static void legacy_frame(uint32_t sw11)
     }
 }
 
+static void legacy_full_frame(uint32_t sw11)
+{
+    for (uint32_t line = 0u; line < 262u; ++line) {
+        for (uint32_t cycle = 0u; cycle < 65u; ++cycle) {
+            feed(rec_frame(line, cycle, sw11));
+        }
+    }
+}
+
 static void shr_marker(void)
 {
     feed(rec_frame(0u, 0u, SW_TEXT_ONLY));
+}
+
+static void video7_select_mode(uint8_t mode)
+{
+    uint32_t sw;
+
+    /* OFF-ON-OFF-ON-OFF. The first ON clocks mode bit 0 from !80COL;
+     * the second ON clocks mode bit 1. */
+    feed(rec_softswitch(0xC05Fu, 0u));
+    sw = ((mode & 0x01u) != 0u) ? 0u : (1u << ACE_SWB_80COL_BIT);
+    feed(rec_softswitch(0xC05Eu, sw));
+    feed(rec_softswitch(0xC05Fu, sw));
+    sw = ((mode & 0x02u) != 0u) ? 0u : (1u << ACE_SWB_80COL_BIT);
+    feed(rec_softswitch(0xC05Eu, sw));
+    feed(rec_softswitch(0xC05Fu, sw));
 }
 
 /* ---------- file + dump helpers ---------- */
@@ -524,6 +556,132 @@ static void t3_shr_transitions(void)
     free(beach); free(eye); free(fluid);
 }
 
+static void t4_dhgr_col140m(void)
+{
+    uint32_t color_pixels[28];
+    uint32_t mixed_pixels[28];
+    uint32_t disabled_pixels[28];
+    uint32_t mixed_detail;
+    uint32_t disabled_detail;
+    const uint32_t row = 80u + ATN_ACTIVE_Y;
+    int mono_changed = 0;
+    int mono_is_bw = 1;
+    int color_unchanged = 1;
+
+    printf("--- T4 Video-7 MIX (COL140M) state gate and 8+8+8+4 alignment ---\n");
+    feed(rec_io(0xC029u, 0x01u));
+    memset(&s_aux_mem[0x2000u], 0x55, 0x2000u);
+    memset(&s_main_mem[0x2000u], 0xAA, 0x2000u);
+
+    s_settings = apple_video_settings_pack_border_full(
+        0u, 0u, APPLE_VIDEO_COLOR_RGB, 1u, 1u, 0, 0, 0u, 0u, 0u);
+    legacy_full_frame(SW_DHGR);
+    legacy_full_frame(SW_DHGR);
+    memcpy(color_pixels,
+           s_slot_mem[s_pub_slot] +
+               (row * ATN_SCRATCH_ROW_PIXELS +
+                ATN_SCRATCH_LEFT_BORDER_PIXELS + ATN_ACTIVE_X) * 4u,
+           sizeof(color_pixels));
+
+    video7_select_mode(2u);
+    legacy_full_frame(SW_DHGR);
+    legacy_full_frame(SW_DHGR);
+    memcpy(mixed_pixels,
+           s_slot_mem[s_pub_slot] +
+               (row * ATN_SCRATCH_ROW_PIXELS +
+                ATN_SCRATCH_LEFT_BORDER_PIXELS + ATN_ACTIVE_X) * 4u,
+           sizeof(mixed_pixels));
+    mixed_detail = s_pub_detail;
+
+    s_settings = apple_video_settings_pack_border_full(
+        0u, 0u, APPLE_VIDEO_COLOR_RGB, 1u, 0u, 0, 0, 0u, 0u, 0u);
+    legacy_full_frame(SW_DHGR);
+    legacy_full_frame(SW_DHGR);
+    memcpy(disabled_pixels,
+           s_slot_mem[s_pub_slot] +
+               (row * ATN_SCRATCH_ROW_PIXELS +
+                ATN_SCRATCH_LEFT_BORDER_PIXELS + ATN_ACTIVE_X) * 4u,
+           sizeof(disabled_pixels));
+    disabled_detail = s_pub_detail;
+
+    for (int i = 0; i < 28; ++i) {
+        const int mono = (i < 8 || (i >= 16 && i < 24));
+        const uint32_t p = mixed_pixels[i];
+        const uint8_t b = (uint8_t)p;
+        const uint8_t g = (uint8_t)(p >> 8);
+        const uint8_t r = (uint8_t)(p >> 16);
+
+        if (mono) {
+            if (p != color_pixels[i]) {
+                mono_changed++;
+            }
+            if (r != g || g != b) {
+                mono_is_bw = 0;
+            }
+        } else if (p != color_pixels[i]) {
+            color_unchanged = 0;
+        }
+    }
+
+    expect(mono_changed > 0,
+           "T4 AUX-controlled 8-dot spans switch to monochrome");
+    expect(mono_is_bw,
+           "T4 monochrome spans contain only neutral pixels");
+    expect(color_unchanged,
+           "T4 MAIN controls 8 dots then the final 4 dots");
+    expect((mixed_detail & APPLE_FB_FORMAT_SELECTORS_MASK) ==
+               (APPLE_FB_FORMAT_LEGACY_VIDEO7_MIX <<
+                APPLE_FB_FORMAT_SELECTORS_SHIFT),
+           "T4 DHGR badge metadata carries Video-7 MIX");
+    expect(memcmp(disabled_pixels, color_pixels, sizeof(color_pixels)) == 0,
+           "T4 checkbox off ignores latched Video-7 state 10");
+    expect((disabled_detail & APPLE_FB_FORMAT_SELECTORS_MASK) == 0u,
+           "T4 checkbox off removes the Video-7 MIX badge tag");
+
+    s_settings = apple_video_settings_pack_border_full(
+        0u, 0u, APPLE_VIDEO_COLOR_RGB, 1u, 1u, 0, 0, 0u, 0u, 0u);
+    video7_select_mode(3u);
+    legacy_full_frame(SW_HGR);
+    legacy_full_frame(SW_HGR);
+    legacy_full_frame(SW_HGR);
+    expect((s_pub_detail & APPLE_FB_FORMAT_BASE_MASK) == APPLE_FB_FORMAT_HGR &&
+           (s_pub_detail & APPLE_FB_FORMAT_SELECTORS_MASK) ==
+               (APPLE_FB_FORMAT_LEGACY_VIDEO7_MONO <<
+                APPLE_FB_FORMAT_SELECTORS_SHIFT),
+           "T4 HGR badge metadata carries Video-7 mono");
+
+    video7_select_mode(2u);
+    s_main_mem[0x4078u] = 0xC1u;
+    s_main_mem[0x4079u] = 0xB2u;
+    s_main_mem[0x407Au] = 0xCCu;
+    s_main_mem[0x407Bu] = 0xE9u;
+    s_main_mem[0x407Cu] = 1u;
+    legacy_full_frame(SW_DHGR);
+    legacy_full_frame(SW_DHGR);
+    legacy_full_frame(SW_DHGR);
+    expect((s_pub_detail & APPLE_FB_FORMAT_BASE_MASK) == APPLE_FB_FORMAT_DHGR &&
+           (s_pub_detail & APPLE_FB_FORMAT_SELECTORS_MASK) ==
+               (APPLE_FB_FORMAT_LEGACY_VIDEO7_MIX <<
+                APPLE_FB_FORMAT_SELECTORS_SHIFT) &&
+           (s_pub_detail & APPLE_FB_FORMAT_PAGE_MASK) ==
+               (APPLE_FB_FORMAT_PAGE_INTERLACE <<
+                APPLE_FB_FORMAT_PAGE_SHIFT),
+           "T4 DHGRi badge metadata carries Video-7 MIX");
+
+    s_main_mem[0x407Cu] = 2u;
+    legacy_full_frame(SW_DHGR);
+    legacy_full_frame(SW_DHGR);
+    legacy_full_frame(SW_DHGR);
+    expect((s_pub_detail & APPLE_FB_FORMAT_BASE_MASK) == APPLE_FB_FORMAT_DHGR &&
+           (s_pub_detail & APPLE_FB_FORMAT_SELECTORS_MASK) ==
+               (APPLE_FB_FORMAT_LEGACY_VIDEO7_MIX <<
+                APPLE_FB_FORMAT_SELECTORS_SHIFT) &&
+           (s_pub_detail & APPLE_FB_FORMAT_PAGE_MASK) ==
+               (APPLE_FB_FORMAT_PAGE_FLIP_MERGE <<
+                APPLE_FB_FORMAT_PAGE_SHIFT),
+           "T4 DHGRp badge metadata carries Video-7 MIX");
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 3) {
@@ -534,7 +692,8 @@ int main(int argc, char **argv)
     snprintf(s_out, sizeof s_out, "%s", argv[2]);
 
     s_settings = apple_video_settings_pack_border_full(
-        0u, 0u, APPLE_VIDEO_COLOR_COMPOSITE_MONITOR, 1u, 0u, 0u, 0, 0, 0u);
+        0u, 0u, APPLE_VIDEO_COLOR_COMPOSITE_MONITOR, 1u, 1u,
+        0u, 0u, 0, 0, 0u);
 
     if (apple_cycle_renderer_init() != 0) {
         fprintf(stderr, "renderer init failed\n");
@@ -544,6 +703,7 @@ int main(int argc, char **argv)
     t1_dragons();
     t2_legacy_weave();
     t3_shr_transitions();
+    t4_dhgr_col140m();
 
     printf("harness: %d failure(s)\n", s_failures);
     return s_failures ? 1 : 0;

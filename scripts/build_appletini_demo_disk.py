@@ -96,6 +96,9 @@ STARTUP = """10 PRINT CHR$(4)"BRUN LAUNCHER"
 
 
 FMT_SHR, FMT_HGR, FMT_HGRI, FMT_DHGR, FMT_DHGRI = range(5)
+VIDEO7_NONE = 0
+VIDEO7_MIX = 2
+VIDEO7_MIX_SOURCES = frozenset({"face.dhri"})
 
 # (folder, disk name, source dir, source file, expected size, format,
 #  expected SHR paged mode or None)
@@ -171,6 +174,10 @@ def generate_demo_viewer() -> None:
     table.append("formats:")
     table.append("    !byte " + ", ".join(
         str(fmt) for _, _, _, _, _, fmt, _ in IMAGE_FILES))
+    table.append("video7_modes:")
+    table.append("    !byte " + ", ".join(
+        str(VIDEO7_MIX if src in VIDEO7_MIX_SOURCES else VIDEO7_NONE)
+        for _, _, _, src, _, _, _ in IMAGE_FILES))
     table.append(f"image_count = {len(IMAGE_FILES)}")
     table.append("")
     for label, (folder, disk_name, _, _, _, _, _) in zip(labels, IMAGE_FILES):

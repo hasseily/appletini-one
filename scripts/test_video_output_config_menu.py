@@ -84,6 +84,7 @@ def test_shared_video_output_contract() -> None:
             "packed video settings must default to Composite Monitor")
     require("#define APPLE_VIDEO_SETTINGS_COLOR_MODE_MASK   0xFU" in header and
             "#define APPLE_VIDEO_SETTINGS_VIDEO7_AUTO_MONO_SHIFT 8U" in header and
+            "#define APPLE_VIDEO_SETTINGS_DHGR_COL140M_SHIFT 11U" in header and
             "#define APPLE_VIDEO_SETTINGS_CLEAN_PHASE_SHIFT 12U" in header and
             "#define APPLE_VIDEO_SETTINGS_PAL_PHASE_SHIFT   20U" in header and
             "APPLE_VIDEO_DEFAULT_CLEAN_PHASE_CYCLES" in header and
@@ -91,10 +92,11 @@ def test_shared_video_output_contract() -> None:
             "static inline uint32_t apple_video_settings_pack_ex" in header and
             "static inline uint32_t apple_video_settings_pack_full" in header and
             "apple_video_settings_video7_auto_mono_enabled" in header and
+            "apple_video_settings_dhgr_col140m_enabled" in header and
             "apple_video_settings_clean_phase_cycles" in header and
             "apple_video_settings_pal_phase_cycles" in header and
             "apple_video_color_mode_is_pal_accurate" in header,
-            "packed video settings must carry six modes, Video-7 auto-mono, and timing phase biases")
+            "packed video settings must carry six modes, Video-7 and COL140M controls, and timing phase biases")
     require("void apple_fb_video_settings_set(uint32_t settings);" in handoff_h and
             "uint32_t apple_fb_video_settings_get(void);" in handoff_h,
             "CPU0/CPU1 handoff must expose video settings accessors")
@@ -113,10 +115,12 @@ def test_menu_persists_video_output_settings() -> None:
 
     require("void (*set_video_output)(void *ctx," in header and
             "uint8_t video7_auto_mono_enable,\n"
+            "                             uint8_t dhgr_col140m_enable,\n"
             "                             int8_t clean_phase_cycles,\n"
             "                             int8_t pal_phase_cycles);" in header and
             "uint8_t (*get_video_output_color_mode)(void *ctx);" in header and
             "uint8_t (*get_video7_auto_mono_enabled)(void *ctx);" in header and
+            "uint8_t (*get_dhgr_col140m_enabled)(void *ctx);" in header and
             "int8_t (*get_clean_video_phase_cycles)(void *ctx);" in header and
             "int8_t (*get_pal_video_phase_cycles)(void *ctx);" in header and
             "void (*set_video_ghosting)(void *ctx, uint8_t strength);" in header and
@@ -128,6 +132,7 @@ def test_menu_persists_video_output_settings() -> None:
             "uint8_t video_mono_color;" in header and
             "uint8_t video_color_mode;" in header and
             "uint8_t video7_auto_mono_enabled;" in header and
+            "uint8_t dhgr_col140m_enabled;" in header and
             "uint8_t video_ghosting_strength;" in header and
             "uint8_t border_enabled;" in header and
             "uint8_t border_color;" in header and
@@ -143,6 +148,8 @@ def test_menu_persists_video_output_settings() -> None:
             "new configs must default to Composite Monitor")
     require("#define CONFIG_DEFAULT_VIDEO7_AUTO_MONO_ENABLED 1U" in source,
             "new configs must preserve existing Video-7 auto-mono behavior by default")
+    require("#define CONFIG_DEFAULT_DHGR_COL140M_ENABLED 1U" in source,
+            "new configs must enable Video-7 MIX detection by default")
     require("#define CONFIG_DEFAULT_VIDEO_GHOSTING_STRENGTH APPLETINI_VIDEO_GHOSTING_OFF" in source and
             has_define(ghosting_h, "APPLETINI_VIDEO_GHOSTING_OFF", "0U") and
             has_define(ghosting_h, "APPLETINI_VIDEO_GHOSTING_LIGHT", "1U") and
@@ -160,6 +167,7 @@ def test_menu_persists_video_output_settings() -> None:
     require('"video.output=%s\\n"' in source and
             '"video.mono.color=%s\\n"' in source and
             '"video.color.mode=%s\\n"' in source and
+            '"video.dhgr.col140m=%s\\n"' in source and
             '"video.video7.monochrome=%s\\n"' in source and
             '"video.ghosting=%s\\n"' in source and
             '"video.border.enabled=%s\\n"' in source and
@@ -172,6 +180,7 @@ def test_menu_persists_video_output_settings() -> None:
     require('strcmp(key, "video.output") == 0' in source and
             'strcmp(key, "video.mono.color") == 0' in source and
             'strcmp(key, "video.color.mode") == 0' in source and
+            'strcmp(key, "video.dhgr.col140m") == 0' in source and
             'strcmp(key, "video.video7.monochrome") == 0' in source and
             'strcmp(key, "video.ghosting") == 0' in source and
             'strcmp(key, "video.border.enabled") == 0' in source and
@@ -232,6 +241,10 @@ def test_video_help_overrides_every_row() -> None:
             "every Video row must have exactly one help override in menu order")
     require(re.search(r'"\s*\n\s*"', video_help) is None,
             "Video help lines must be comma-separated, not concatenated")
+    require("COL140M is also the Video-7 mode called MIX." in video_help and
+            "Video-7 state 10 selects MIX" in video_help and
+            "Leaving it enabled is generally safe" not in video_help,
+            "Video-7 MIX help must describe state 10 without the old safety claim")
     for line in re.findall(r'^\s*"([^"]*)', video_help, re.MULTILINE):
         require(len(line) <= 100,
                 f"Video help line exceeds 100 characters: {line}")
@@ -271,7 +284,7 @@ def test_boot_menu_groups_boot_and_video_settings() -> None:
     require("case CONFIG_TAB_BOOT_SETTINGS:\n        return CONFIG_MENU_BOOT_ITEM_COUNT;" in source,
             "boot settings tab must contain boot controls and USB menu bindings")
     require("case CONFIG_TAB_VIDEO:\n        return CONFIG_VIDEO_ITEM_COUNT;" in source and
-            "#define CONFIG_VIDEO_ITEM_COUNT        15U" in internal,
+            "#define CONFIG_VIDEO_ITEM_COUNT        16U" in internal,
             "video tab must contain output, effects, border, bezel, and ROM controls")
     require('"Boot menu"' in boot_draw and
             '"Boot device"' in boot_draw and
@@ -282,6 +295,7 @@ def test_boot_menu_groups_boot_and_video_settings() -> None:
             "boot settings tab must draw only boot rows and USB menu bindings")
     require('"Video output"' in video_draw and
             '"Video-7 mono"' in video_draw and
+            '"Video-7 MIX (COL140M)"' in video_draw and
             '"Scanlines"' in video_draw and
             "hgr_draw_video_ghosting_item" in video_draw and
             '"IIgs border (VidHD $C034)"' in video_draw and
@@ -315,15 +329,17 @@ def test_boot_menu_groups_boot_and_video_settings() -> None:
             "                             (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BLUR)" in video_draw and
             "y + (row_h * 4),\n                             w,\n"
             "                             (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_GLOW)" in video_draw and
-            "y + (row_h * 6),\n                        half_w,\n"
+            "y + (row_h * 6),\n                        third_w,\n"
             "                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BORDER)" in video_draw and
-            "right_x,\n                        y + (row_h * 6),\n                        right_w,\n"
+            "middle_x,\n                        y + (row_h * 6),\n                        third_w,\n"
             "                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_VIDEO7)" in video_draw and
+            "last_x,\n                        y + (row_h * 6),\n                        last_w,\n"
+            "                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_COL140M)" in video_draw and
             "y + (row_h * 12),\n                         half_w,\n"
             "                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_DEBUG)" in video_draw and
             "right_x,\n                        y + (row_h * 12),\n                        right_w,\n"
             "                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BADGE)" in video_draw,
-            "video tab must give output, color, blur, and glow full rows and pair only the requested checkboxes")
+            "video tab must give full rows to value controls and group the three requested video checkboxes")
     require("y + (row_h * 8)" in video_draw and
             "y + (row_h * 10)" in video_draw,
             "video tab must leave a blank row between Video ROM and Show bezel")
@@ -354,8 +370,16 @@ def test_boot_menu_groups_boot_and_video_settings() -> None:
             "                        \"Video-7 mono\");" in main_tabs and
             "CONFIG_VIDEO_ITEM_VIDEO7" not in
             source[source.index("static uint8_t config_menu_adjust_focused_value"):
-                   source.index("static void config_menu_reload_smartport_device")],
+                   source.index("static int config_menu_reload_smartport_device")],
             "Video-7 must draw as an OK-only checkbox, not a left/right value")
+    require("menu->dhgr_col140m_enabled =" in source and
+            "(menu->dhgr_col140m_enabled != 0U) ? 0U : 1U;" in source and
+            "menu->dhgr_col140m_enabled,\n"
+            "                        \"Video-7 MIX (COL140M)\");" in main_tabs and
+            "CONFIG_VIDEO_ITEM_COL140M" not in
+            source[source.index("static uint8_t config_menu_adjust_focused_value"):
+                   source.index("static int config_menu_reload_smartport_device")],
+            "Video-7 MIX must draw as an OK-only checkbox, not a left/right value")
     require("hgr_draw_video_ghosting_item" in video_draw and
             "cmui_slider" not in ghosting_draw and
             '"Phosphor ghosting"' in ghosting_draw and
@@ -379,6 +403,7 @@ def test_frontend_wires_settings_to_cpu1_renderer() -> None:
 
     require("static uint8_t g_video_color_mode_shadow = APPLE_VIDEO_COLOR_COMPOSITE_MONITOR;" in frontend_main and
             "static uint8_t g_video7_auto_mono_enable_shadow = 1U;" in frontend_main and
+            "static uint8_t g_dhgr_col140m_enable_shadow = 1U;" in frontend_main and
             "static uint8_t g_video_ghosting_shadow = APPLETINI_VIDEO_GHOSTING_OFF;" in frontend_main and
             "static int8_t g_clean_video_phase_cycles_shadow" in frontend_main and
             "static int8_t g_pal_video_phase_cycles_shadow" in frontend_main,
@@ -388,12 +413,14 @@ def test_frontend_wires_settings_to_cpu1_renderer() -> None:
             "frontend must publish packed video settings through the shared handoff")
     require("static void menu_platform_set_video_output(void *ctx," in frontend_main and
             "uint8_t video7_auto_mono_enable,\n"
+            "                                           uint8_t dhgr_col140m_enable,\n"
             "                                           int8_t clean_phase_cycles,\n"
             "                                           int8_t pal_phase_cycles)" in frontend_main and
             "video_output_set(mono_enable,\n"
             "                     mono_color,\n"
             "                     color_mode,\n"
             "                     video7_auto_mono_enable,\n"
+            "                     dhgr_col140m_enable,\n"
             "                     clean_phase_cycles,\n"
             "                     pal_phase_cycles);" in frontend_main,
             "boot menu platform callback must update the shared renderer settings")
@@ -411,6 +438,8 @@ def test_frontend_wires_settings_to_cpu1_renderer() -> None:
             "menu_platform.get_video_output_color_mode = menu_platform_get_video_output_color_mode;" in frontend_main and
             "menu_platform.get_video7_auto_mono_enabled =\n"
             "            menu_platform_get_video7_auto_mono_enabled;" in frontend_main and
+            "menu_platform.get_dhgr_col140m_enabled =\n"
+            "            menu_platform_get_dhgr_col140m_enabled;" in frontend_main and
             "menu_platform.get_clean_video_phase_cycles =\n"
             "            menu_platform_get_clean_video_phase_cycles;" in frontend_main and
             "menu_platform.get_pal_video_phase_cycles =\n"
@@ -431,6 +460,10 @@ def test_frontend_wires_settings_to_cpu1_renderer() -> None:
     require("static void apply_video_settings_if_changed(void)" in renderer and
             "const uint32_t settings = apple_fb_video_settings_get();" in renderer and
             "apple_video_settings_video7_auto_mono_enabled(settings)" in renderer and
+            "apple_video_settings_dhgr_col140m_enabled(settings)" in renderer and
+            "const uint8_t video7_mix =" in renderer and
+            "(s_video7_rgb_mode == 2u)) ? 1u : 0u;" in renderer and
+            "s_render_dhgr_col140m_enable = video7_mix;" in renderer and
             "apple_video_settings_clean_phase_cycles(settings)" in renderer and
             "apple_video_settings_pal_phase_cycles(settings)" in renderer and
             "appletini_ntsc_set_video_output(" in renderer and

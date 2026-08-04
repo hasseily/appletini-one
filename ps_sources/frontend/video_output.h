@@ -26,6 +26,7 @@
 #define APPLE_VIDEO_SETTINGS_VIDEO7_AUTO_MONO_SHIFT 8U
 #define APPLE_VIDEO_SETTINGS_BORDER_ENABLE_SHIFT 9U
 #define APPLE_VIDEO_SETTINGS_BORDER_FLOOD_SHIFT 10U
+#define APPLE_VIDEO_SETTINGS_DHGR_COL140M_SHIFT 11U
 #define APPLE_VIDEO_SETTINGS_CLEAN_PHASE_SHIFT 12U
 #define APPLE_VIDEO_SETTINGS_PAL_PHASE_SHIFT   20U
 #define APPLE_VIDEO_SETTINGS_PHASE_MASK        0x7FU
@@ -48,6 +49,7 @@
     (((uint32_t)APPLE_VIDEO_MONO_WHITE << APPLE_VIDEO_SETTINGS_MONO_COLOR_SHIFT) | \
      ((uint32_t)APPLE_VIDEO_COLOR_COMPOSITE_MONITOR << APPLE_VIDEO_SETTINGS_COLOR_MODE_SHIFT) | \
      ((uint32_t)1U << APPLE_VIDEO_SETTINGS_VIDEO7_AUTO_MONO_SHIFT) | \
+     ((uint32_t)1U << APPLE_VIDEO_SETTINGS_DHGR_COL140M_SHIFT) | \
      ((uint32_t)APPLE_VIDEO_IIGS_BORDER_DEFAULT << APPLE_VIDEO_SETTINGS_BORDER_COLOR_SHIFT) | \
      ((uint32_t)(APPLE_VIDEO_DEFAULT_CLEAN_PHASE_CYCLES + APPLE_VIDEO_TIMING_PHASE_BIAS) << \
       APPLE_VIDEO_SETTINGS_CLEAN_PHASE_SHIFT) | \
@@ -133,6 +135,7 @@ static inline uint32_t apple_video_settings_pack_border_full(
     uint8_t mono_color,
     uint8_t color_mode,
     uint8_t video7_auto_mono_enable,
+    uint8_t dhgr_col140m_enable,
     int8_t clean_phase_cycles,
     int8_t pal_phase_cycles,
     uint8_t border_enable,
@@ -144,6 +147,8 @@ static inline uint32_t apple_video_settings_pack_border_full(
            ((uint32_t)apple_video_color_mode_clamp(color_mode) << APPLE_VIDEO_SETTINGS_COLOR_MODE_SHIFT) |
            ((uint32_t)((video7_auto_mono_enable != 0U) ? 1U : 0U) <<
             APPLE_VIDEO_SETTINGS_VIDEO7_AUTO_MONO_SHIFT) |
+           ((uint32_t)((dhgr_col140m_enable != 0U) ? 1U : 0U) <<
+            APPLE_VIDEO_SETTINGS_DHGR_COL140M_SHIFT) |
            ((uint32_t)((border_enable != 0U) ? 1U : 0U) <<
             APPLE_VIDEO_SETTINGS_BORDER_ENABLE_SHIFT) |
            ((uint32_t)((border_flood != 0U) ? 1U : 0U) <<
@@ -160,6 +165,7 @@ static inline uint32_t apple_video_settings_pack_full(uint8_t mono_enable,
                                                       uint8_t mono_color,
                                                       uint8_t color_mode,
                                                       uint8_t video7_auto_mono_enable,
+                                                      uint8_t dhgr_col140m_enable,
                                                       int8_t clean_phase_cycles,
                                                       int8_t pal_phase_cycles)
 {
@@ -168,6 +174,7 @@ static inline uint32_t apple_video_settings_pack_full(uint8_t mono_enable,
         mono_color,
         color_mode,
         video7_auto_mono_enable,
+        dhgr_col140m_enable,
         clean_phase_cycles,
         pal_phase_cycles,
         0U,
@@ -178,12 +185,14 @@ static inline uint32_t apple_video_settings_pack_full(uint8_t mono_enable,
 static inline uint32_t apple_video_settings_pack_ex(uint8_t mono_enable,
                                                     uint8_t mono_color,
                                                     uint8_t color_mode,
-                                                    uint8_t video7_auto_mono_enable)
+                                                    uint8_t video7_auto_mono_enable,
+                                                    uint8_t dhgr_col140m_enable)
 {
     return apple_video_settings_pack_full(mono_enable,
                                           mono_color,
                                           color_mode,
                                           video7_auto_mono_enable,
+                                          dhgr_col140m_enable,
                                           (int8_t)APPLE_VIDEO_DEFAULT_CLEAN_PHASE_CYCLES,
                                           (int8_t)APPLE_VIDEO_DEFAULT_PAL_PHASE_CYCLES);
 }
@@ -192,7 +201,7 @@ static inline uint32_t apple_video_settings_pack(uint8_t mono_enable,
                                                  uint8_t mono_color,
                                                  uint8_t color_mode)
 {
-    return apple_video_settings_pack_ex(mono_enable, mono_color, color_mode, 1U);
+    return apple_video_settings_pack_ex(mono_enable, mono_color, color_mode, 1U, 1U);
 }
 
 static inline uint8_t apple_video_settings_mono_enabled(uint32_t settings)
@@ -216,6 +225,11 @@ static inline uint8_t apple_video_settings_color_mode(uint32_t settings)
 static inline uint8_t apple_video_settings_video7_auto_mono_enabled(uint32_t settings)
 {
     return (uint8_t)((settings >> APPLE_VIDEO_SETTINGS_VIDEO7_AUTO_MONO_SHIFT) & 0x1U);
+}
+
+static inline uint8_t apple_video_settings_dhgr_col140m_enabled(uint32_t settings)
+{
+    return (uint8_t)((settings >> APPLE_VIDEO_SETTINGS_DHGR_COL140M_SHIFT) & 0x1U);
 }
 
 static inline uint8_t apple_video_settings_border_enabled(uint32_t settings)
@@ -254,6 +268,7 @@ static inline uint32_t apple_video_settings_normalize(uint32_t settings)
         apple_video_settings_mono_color(settings),
         apple_video_settings_color_mode(settings),
         apple_video_settings_video7_auto_mono_enabled(settings),
+        apple_video_settings_dhgr_col140m_enabled(settings),
         apple_video_settings_clean_phase_cycles(settings),
         apple_video_settings_pal_phase_cycles(settings),
         apple_video_settings_border_enabled(settings),

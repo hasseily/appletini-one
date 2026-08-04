@@ -296,11 +296,15 @@ void config_menu_draw_video(uint16_t *fb,
         (menu->border_flood != 0u) ?
             hgr_draw_value_item_dimmed : hgr_draw_value_item;
 
-    /* Border+Video-7 and Debug+video-mode share rows. Value controls keep
-     * a full line so their labels and current values stay clear. */
+    /* Border and the two Video-7 options share one row. Debug and video mode
+     * share another. Value controls keep a full line so their labels stay clear. */
     const int half_w = (w - 12) / 2;
     const int right_x = x + half_w + 12;
     const int right_w = w - half_w - 12;
+    const int third_w = (w - 16) / 3;
+    const int middle_x = x + third_w + 8;
+    const int last_x = middle_x + third_w + 8;
+    const int last_w = w - (third_w * 2) - 16;
 
     hgr_draw_value_item(fb,
                         x,
@@ -344,17 +348,24 @@ void config_menu_draw_video(uint16_t *fb,
     hgr_draw_check_item(fb,
                         x,
                         y + (row_h * 6),
-                        half_w,
+                        third_w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BORDER),
                         menu->border_enabled,
                         "IIgs border (VidHD $C034)");
     hgr_draw_check_item(fb,
-                        right_x,
+                        middle_x,
                         y + (row_h * 6),
-                        right_w,
+                        third_w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_VIDEO7),
                         menu->video7_auto_mono_enabled,
                         "Video-7 mono");
+    hgr_draw_check_item(fb,
+                        last_x,
+                        y + (row_h * 6),
+                        last_w,
+                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_COL140M),
+                        menu->dhgr_col140m_enabled,
+                        "Video-7 MIX (COL140M)");
     hgr_draw_value_item(fb,
                         x,
                         y + (row_h * 7),

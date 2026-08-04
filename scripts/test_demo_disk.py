@@ -83,6 +83,12 @@ def static_checks() -> None:
     require("sta $407C" in viewer and "sta $087C" in viewer and
             "$02E4" not in viewer,
             "a2imgview must disarm the A2Li holes, not the old $02E0 signal")
+    require("video7_select_mix:" in viewer and
+            "video7_select_normal:" in viewer and
+            "video7_modes,x" in viewer and
+            "bit AN3OFF" in viewer and "bit AN3ON" in viewer and
+            "sta COL80ON" in viewer and "sta COL80OFF" in viewer,
+            "a2imgview must select Video-7 state 10 with five AN3 accesses")
 
     # Keep the visible paint-in, but never expose a half-loaded extended
     # mode. HGRi/DHRi stage page 2 and write the mode byte after close;
@@ -201,6 +207,8 @@ def image_checks() -> None:
     require("LOGO6" not in disk_names and "PLAYFLD" not in disk_names and
             "FACE.I" in disk_names,
             "demo deck must keep DHGRi FACE.I and omit classic DHGR images")
+    require(demo_build.VIDEO7_MIX_SOURCES == {"face.dhri"},
+            "FACE.DHRI must be the only demo image marked for Video-7 MIX")
     for _, _, src_dir, src, size, fmt, paged in demo_build.IMAGE_FILES:
         path = demo_build.source_path(src_dir, src)
         require(path.is_file(), f"missing demo image {path}")
@@ -212,6 +220,15 @@ def image_checks() -> None:
         elif fmt in (demo_build.FMT_HGRI, demo_build.FMT_DHGRI):
             demo_build.check_legacy_paged(src, data, fmt)
     demo_build.generate_demo_viewer()
+    generated = read(SOFTWARE / "a2imgview_demo.a65")
+    mix_index = next(i for i, item in enumerate(demo_build.IMAGE_FILES)
+                     if item[3] == "face.dhri")
+    modes_line = generated.split("video7_modes:", 1)[1].splitlines()[1]
+    modes = [int(value.strip())
+             for value in modes_line.split("!byte", 1)[1].split(",")]
+    require(modes[mix_index] == demo_build.VIDEO7_MIX and
+            sum(mode == demo_build.VIDEO7_MIX for mode in modes) == 1,
+            "generated viewer must select Video-7 MIX only for FACE.DHRI")
 
 
 def assembly_checks() -> None:

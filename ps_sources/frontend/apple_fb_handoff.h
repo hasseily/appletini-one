@@ -41,7 +41,7 @@
  * banks belong to CPU1 and are not cross-core coherent.
  *
  * Bits 3:0  base format
- * Bits 7:4  SHR4 selectors actually used by rendered pixels
+ * Bits 7:4  SHR4 selectors, or the active Video-7 legacy-mode tag
  * Bits 9:8  paged presentation (none/interlace/merged page flip) */
 #define APPLE_FB_FORMAT_BASE_MASK          0x000FU
 #define APPLE_FB_FORMAT_SELECTORS_SHIFT    4U
@@ -70,6 +70,10 @@
 #define APPLE_FB_FORMAT_SELECTOR_RGGB      0x2U
 #define APPLE_FB_FORMAT_SELECTOR_PAL256    0x4U
 #define APPLE_FB_FORMAT_SELECTOR_R4G4B4    0x8U
+
+#define APPLE_FB_FORMAT_LEGACY_VIDEO7_NONE 0U
+#define APPLE_FB_FORMAT_LEGACY_VIDEO7_MONO 1U
+#define APPLE_FB_FORMAT_LEGACY_VIDEO7_MIX  2U
 
 #define APPLE_FB_FORMAT_PAGE_NONE          0U
 #define APPLE_FB_FORMAT_PAGE_INTERLACE     1U

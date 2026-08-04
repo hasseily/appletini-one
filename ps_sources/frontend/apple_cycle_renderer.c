@@ -123,11 +123,14 @@ static uint32_t s_video_settings_seen = 0xFFFFFFFFu;
 static uint32_t s_video_rom_gen_seen = 0u;   /* applied video-ROM override gen */
 static uint8_t s_render_mono_enable = 0u;
 static uint8_t s_render_color_mode = APPLE_VIDEO_COLOR_COMPOSITE_MONITOR;
+static uint8_t s_render_video7_mono_enable = 0u;
+static uint8_t s_render_dhgr_col140m_enable = 1u;
+static uint8_t s_dhgr_col140m_right_mono = 0u;
 static uint8_t s_border_enabled = 0u;
 static uint8_t s_border_default_color = APPLE_VIDEO_IIGS_BORDER_DEFAULT;
 static uint8_t s_video7_rgb_flags = 0u;
 static uint8_t s_video7_rgb_mode = 0u;
-static uint8_t s_video7_prev_an3_addr = 0u;
+static uint8_t s_video7_an3_sequence = 0u;
 static uint8_t s_video7_rgb_mode_seen = 0xFFu;
 static uint8_t s_shr_mono_gate_seen = 0xFFu;
 
@@ -790,6 +793,56 @@ static void step_dhgr_rgb(uint32_t sw) {
     }
 }
 
+static uint8_t dhgr_col140m_mode_is_mono(uint16_t row_addr, int dot)
+{
+    const int pair_dot = dot % 28;
+    const int pair = dot / 28;
+    const int mode_byte = (pair_dot < 8) ? 0 :
+                          (pair_dot < 16) ? 1 :
+                          (pair_dot < 24) ? 2 : 3;
+    const int byte_index = pair * 4 + mode_byte;
+    const uint16_t addr = (uint16_t)(row_addr + (uint16_t)(byte_index >> 1));
+    const uint8_t value = ((byte_index & 1) != 0) ?
+        g_main_bank[addr] : g_aux_bank[addr];
+
+    return (uint8_t)(((value & 0x80u) == 0u) ? 1u : 0u);
+}
+
+static void dhgr_col140m_apply_crisp(uint32_t *dst, uint16_t addr, int x)
+{
+    const uint16_t row_addr = (uint16_t)(addr - (uint16_t)x);
+    const uint16_t bits = (uint16_t)((g_aux_bank[addr] & 0x7fu) |
+                                    ((uint16_t)(g_main_bank[addr] & 0x7fu) << 7));
+    const int first_dot = x * 14;
+
+    for (int i = 0; i < 14; ++i) {
+        const int dot = first_dot + i;
+        if (dhgr_col140m_mode_is_mono(row_addr, dot) != 0u) {
+            dst[i] = s_aw_base_packed[((bits >> i) & 1u) ? 15u : 0u];
+        }
+    }
+}
+
+static void atn_updatePixels_dhgr_col140m(uint16_t bits,
+                                          uint16_t row_addr,
+                                          int x)
+{
+    /* Composite DHGR starts three scratch pixels before the visible edge. */
+    const int first_dot = x * 14 - 3;
+
+    for (int i = 0; i < 14; ++i) {
+        const int dot = first_dot + i;
+        if (dot >= 0 && dot < (int)ATN_ACTIVE_WIDTH &&
+            dhgr_col140m_mode_is_mono(row_addr, dot) != 0u) {
+            atn_emit_mono(bits & 1u);
+        } else {
+            atn_emit_color(bits & 1u);
+        }
+        bits >>= 1;
+    }
+    g_nLastColumnPixelNTSC = bits & 1u;
+}
+
 static void step_lores_crisp(uint32_t sw) {
     const uint16_t addr = scanner_addr_txt(g_nVideoClockVert, g_nVideoClockHorz, sw);
     const uint8_t val = g_main_bank[addr & 0xFFFFu];
@@ -912,7 +965,20 @@ static void emit_shifted_right_edge_pixels(render_mode_t mode) {
 
     const int left_shift = applewin_visible_left_shift(mode);
     if (left_shift > 0) {
-        atn_emit_blank_pixels((uint8_t)left_shift);
+        if (mode == MODE_DHGR &&
+            s_render_mono_enable == 0u &&
+            s_render_dhgr_col140m_enable != 0u) {
+            for (int i = 0; i < left_shift; ++i) {
+                if (s_dhgr_col140m_right_mono != 0u) {
+                    atn_emit_mono(0u);
+                } else {
+                    atn_emit_color(0u);
+                }
+            }
+            g_nLastColumnPixelNTSC = 0u;
+        } else {
+            atn_emit_blank_pixels((uint8_t)left_shift);
+        }
     }
 }
 
@@ -1116,21 +1182,41 @@ static void step_dhgr(uint32_t sw) {
             && g_nVideoClockHorz >= (int)ATN_SCANNER_HORZ_COLORBURST_BEG) {
             g_nColorBurstPixels = 1024;
         } else if (g_nVideoClockHorz >= (int)ATN_SCANNER_HORZ_START) {
+            const int x = g_nVideoClockHorz - (int)ATN_SCANNER_HORZ_START;
+            uint32_t *const output = g_pVideoAddress;
+
             if (s_render_mono_enable == 0u &&
                 s_render_color_mode == APPLE_VIDEO_COLOR_IDEALIZED) {
                 step_dhgr_idealized(sw);
+                if (s_render_dhgr_col140m_enable != 0u) {
+                    dhgr_col140m_apply_crisp(output, addr, x);
+                }
                 return;
             }
             if (s_render_mono_enable == 0u &&
                 s_render_color_mode == APPLE_VIDEO_COLOR_RGB) {
                 step_dhgr_rgb(sw);
+                if (s_render_dhgr_col140m_enable != 0u) {
+                    dhgr_col140m_apply_crisp(output, addr, x);
+                }
                 return;
             }
             uint8_t m = g_main_bank[addr & 0xFFFFu];
             uint8_t a = g_aux_bank[addr & 0xFFFFu];
             uint16_t bits = (uint16_t)(((m & 0x7F) << 7) | (a & 0x7F));
             bits = (uint16_t)((bits << 1) | g_nLastColumnPixelNTSC);
-            atn_updatePixels(bits);
+            if (s_render_mono_enable == 0u &&
+                s_render_dhgr_col140m_enable != 0u) {
+                const uint16_t row_addr = (uint16_t)(addr - (uint16_t)x);
+                atn_updatePixels_dhgr_col140m(bits, row_addr, x);
+                if (x == 39) {
+                    s_dhgr_col140m_right_mono =
+                        dhgr_col140m_mode_is_mono(
+                            row_addr, (int)ATN_ACTIVE_WIDTH - 1);
+                }
+            } else {
+                atn_updatePixels(bits);
+            }
             g_nLastColumnPixelNTSC = (uint16_t)((bits >> 14) & 1);
         }
     }
@@ -2052,6 +2138,7 @@ static uint32_t legacy_format_detail(uint8_t page_mode)
 {
     uint32_t base;
     uint32_t page = APPLE_FB_FORMAT_PAGE_NONE;
+    uint32_t video7 = APPLE_FB_FORMAT_LEGACY_VIDEO7_NONE;
 
     if (sw_text(s_current_sw)) {
         base = APPLE_FB_FORMAT_TEXT;
@@ -2071,7 +2158,13 @@ static uint32_t legacy_format_detail(uint8_t page_mode)
     } else if (page_mode == 2u) {
         page = APPLE_FB_FORMAT_PAGE_FLIP_MERGE;
     }
-    return APPLE_FB_FORMAT_DETAIL(base, 0u, page);
+    if (s_render_video7_mono_enable != 0u) {
+        video7 = APPLE_FB_FORMAT_LEGACY_VIDEO7_MONO;
+    } else if (base == APPLE_FB_FORMAT_DHGR &&
+               s_render_dhgr_col140m_enable != 0u) {
+        video7 = APPLE_FB_FORMAT_LEGACY_VIDEO7_MIX;
+    }
+    return APPLE_FB_FORMAT_DETAIL(base, video7, page);
 }
 
 /* Nonzero while frames render as legacy flip merges (published with
@@ -2275,15 +2368,20 @@ static void apply_video_settings_if_changed(void) {
      * without touching shadow RAM. Rebuild the next SHR frame. */
     s_shr_cache_invalidate = 1u;
     const uint8_t user_mono = apple_video_settings_mono_enabled(settings);
-    /* Video-7 auto-mono is a legacy-DHGR heuristic; it must never
+    /* Video-7 auto-mono is a legacy-video mode; it must never
      * grayscale an SHR frame (a stale RGB-mode latch could otherwise
      * flip a whole SHR slideshow to monochrome). SHR's own $C029 B&W
      * control (bw_force) remains honored. */
-    const uint8_t video7_auto_mono =
-        ((user_mono == 0u) &&
-         (shr_now == 0u) &&
+    const uint8_t video7_mono =
+        ((shr_now == 0u) &&
          (apple_video_settings_video7_auto_mono_enabled(settings) != 0u) &&
          (s_video7_rgb_mode == 3u)) ? 1u : 0u;
+    const uint8_t video7_auto_mono =
+        ((user_mono == 0u) && (video7_mono != 0u)) ? 1u : 0u;
+    const uint8_t video7_mix =
+        ((shr_now == 0u) &&
+         (apple_video_settings_dhgr_col140m_enabled(settings) != 0u) &&
+         (s_video7_rgb_mode == 2u)) ? 1u : 0u;
     const uint8_t effective_mono =
         ((user_mono != 0u) || (bw_force != 0u) || (video7_auto_mono != 0u)) ? 1u : 0u;
     const uint8_t mono_color = ((bw_force != 0u) || (video7_auto_mono != 0u)) ?
@@ -2302,6 +2400,8 @@ static void apply_video_settings_if_changed(void) {
     }
     s_render_mono_enable = effective_mono;
     s_render_color_mode = apple_video_settings_color_mode(settings);
+    s_render_video7_mono_enable = video7_mono;
+    s_render_dhgr_col140m_enable = video7_mix;
     s_clean_capture_phase_cycles = clean_phase;
     s_pal_capture_phase_cycles = pal_phase;
     s_video_settings_seen = settings;
@@ -2339,7 +2439,7 @@ void apple_cycle_renderer_reset_local_video_state(void)
     s_vidhd_bw_force_seen = 0xFFu;
     s_video7_rgb_flags    = 0u;
     s_video7_rgb_mode     = 0u;
-    s_video7_prev_an3_addr = 0u;
+    s_video7_an3_sequence = 0u;
     s_video7_rgb_mode_seen = 0xFFu;
     s_shr_mono_gate_seen  = 0xFFu;
     s_shr_cache_valid     = 0u;
@@ -2361,24 +2461,45 @@ static void handle_video7_softswitch_record(uint64_t rec)
 {
     const uint16_t addr = ace_softswitch_access_addr(rec);
     const uint8_t low = (uint8_t)(addr & 0xFFu);
+    const uint32_t sw = ace_softswitch_bits(rec);
+    const uint8_t expected =
+        ((s_video7_an3_sequence & 1u) == 0u) ? 0x5Fu : 0x5Eu;
 
-    if ((low & 0xFEu) != 0x5Eu) {
+    /* Video-7 selects a two-bit mode with five AN3 accesses while MIXED
+     * is off: OFF-ON-OFF-ON-OFF. The first ON supplies bit 0 from
+     * !80COL; the second supplies bit 1. */
+    if ((low & 0xFEu) != 0x5Eu || sw_mixed(sw)) {
+        s_video7_an3_sequence = 0u;
         return;
     }
 
-    if (low == 0x5Fu && s_video7_prev_an3_addr == 0x5Eu) {
+    if (low != expected) {
+        /* A fresh OFF can be the first access of a new sequence. */
+        s_video7_an3_sequence = (low == 0x5Fu) ? 1u : 0u;
+        s_video7_rgb_flags = 0u;
+        return;
+    }
+
+    if (s_video7_an3_sequence == 0u) {
+        s_video7_rgb_flags = 0u;
+    }
+    s_video7_an3_sequence++;
+
+    if (s_video7_an3_sequence == 2u) {
+        s_video7_rgb_flags = sw_80col(sw) ? 0u : 1u;
+    } else if (s_video7_an3_sequence == 4u) {
+        s_video7_rgb_flags = (uint8_t)(
+            (s_video7_rgb_flags & 0x01u) |
+            (sw_80col(sw) ? 0u : 0x02u));
+    } else if (s_video7_an3_sequence == 5u) {
         const uint8_t old_mode = s_video7_rgb_mode;
 
-        s_video7_rgb_flags = (uint8_t)((s_video7_rgb_flags << 1) & 0x03u);
-        s_video7_rgb_flags |= sw_80col(ace_softswitch_bits(rec)) ? 0u : 1u;
+        s_video7_an3_sequence = 0u;
         s_video7_rgb_mode = s_video7_rgb_flags;
-
         if (s_video7_rgb_mode != old_mode) {
             apply_video_settings_if_changed();
         }
     }
-
-    s_video7_prev_an3_addr = low;
 }
 
 /*
@@ -2517,6 +2638,10 @@ static void on_frame_end(void) {
 }
 
 static void on_frame_start(void) {
+    /* Apply CPU0 settings before deriving this frame's format metadata, so
+     * the badge tag and the pixels always describe the same frame. */
+    apply_video_settings_if_changed();
+
     /* Bind the NTSC core to the fresh writer slot selected by the handoff
      * before the first cycle of the frame writes pixels. */
     s_cached_writer_slot = apple_fb_writer_slot();
@@ -2573,7 +2698,6 @@ static void on_frame_start(void) {
      * g_atn_framebuffer. */
     appletini_ntsc_set_framebuffer(slot_addr);
     apple_pal_video_set_framebuffer(slot_addr);
-    apply_video_settings_if_changed();
     if (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_SHR) {
         const uint32_t generation = g_shr_shadow_generation;
         const uint8_t rebuild =

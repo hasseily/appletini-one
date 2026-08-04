@@ -604,12 +604,31 @@ static const char *format_badge_shr4_selector(uint32_t detail)
     }
 }
 
+static const char *format_badge_video7_tag(uint32_t detail, uint32_t base)
+{
+    const uint32_t video7 =
+        (detail & APPLE_FB_FORMAT_SELECTORS_MASK) >>
+        APPLE_FB_FORMAT_SELECTORS_SHIFT;
+
+    if (base >= APPLE_FB_FORMAT_TEXT && base <= APPLE_FB_FORMAT_DHGR) {
+        if (video7 == APPLE_FB_FORMAT_LEGACY_VIDEO7_MONO) {
+            return " Video-7 mono";
+        }
+        if (base == APPLE_FB_FORMAT_DHGR &&
+            video7 == APPLE_FB_FORMAT_LEGACY_VIDEO7_MIX) {
+            return " Video-7 MIX";
+        }
+    }
+    return "";
+}
+
 static const char *format_badge_label(void)
 {
     static char label[32];
     const uint32_t detail = apple_fb_reader_format_detail();
     const uint32_t base = detail & APPLE_FB_FORMAT_BASE_MASK;
     const char *suffix = format_badge_page_suffix(detail);
+    const char *video7 = format_badge_video7_tag(detail, base);
     const char *name = NULL;
     const char *geometry = NULL;
 
@@ -639,7 +658,7 @@ static const char *format_badge_label(void)
         snprintf(label, sizeof(label), "SHR4 %s %s%s",
                  format_badge_shr4_selector(detail), geometry, suffix);
     } else {
-        snprintf(label, sizeof(label), "%s%s", name, suffix);
+        snprintf(label, sizeof(label), "%s%s%s", name, suffix, video7);
     }
     return label;
 }

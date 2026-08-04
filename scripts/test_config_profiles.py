@@ -91,8 +91,8 @@ def test_autosave_remains_working_config() -> None:
 def test_clean_config_schema_contract() -> None:
     source = read(CONFIG_MENU_C)
 
-    require("#define APPLETINI_CFG_VERSION 110U" in source,
-            "Adding the persisted format badge must use config version 110")
+    require("#define APPLETINI_CFG_VERSION 111U" in source,
+            "Adding persisted DHGR COL140M must use config version 111")
     require("config_menu_parse_config_line(line, &value)" in source and
             "hash = strchr(line, '#')" in source and
             "config_menu_ascii_lower_in_place(key)" in source,

@@ -137,10 +137,10 @@ def main():
     require("appletini_network_init()" in server and
             "appletini_network_init()" in browser,
             "both demos must load the card configuration")
-    require('#define HOME_URL   "http://frogfind.com/"' in browser and
+    require('#define HOME_URL   "http://appletini.org"' in browser and
             '#define PROXY_PRE  "http://frogfind.com/read.php?a="' in browser and
             "url_download(cur_url" in browser,
-            "browser must use the current plain-HTTP FrogFind frontend")
+            "browser must open Appletini.org and retain FrogFind for proxy links")
     cap = re.search(r"#define BUF_CAP\s+(\d+)U", browser)
     require(cap is not None and int(cap.group(1)) >= 10240,
             "text browser needs the full response/render buffer")

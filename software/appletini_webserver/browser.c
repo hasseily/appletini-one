@@ -2,9 +2,8 @@
  *
  * Plain-HTTP browsing over ip65 (the Appletini virtual Uthernet).
  * The modern web is HTTPS, which a 6502 cannot terminate, so the
- * homepage is FrogFind (frogfind.com): a public proxy that serves any
- * site as simplified plain-HTTP HTML for vintage machines. https://
- * links are routed through it automatically.
+ * homepage is the Appletini site. FrogFind remains the public proxy
+ * used to simplify HTTPS sites for vintage machines.
  *
  * Renderer: single-pass HTML-subset parser that compacts the response
  * buffer in place (output never outruns input), word-wraps at the
@@ -36,7 +35,7 @@
 #define SCREEN_W   80U
 #define PAGE_ROWS  23U      /* rows 0..22 content, row 23 status */
 
-#define HOME_URL   "http://frogfind.com/"
+#define HOME_URL   "http://appletini.org"
 #define PROXY_PRE  "http://frogfind.com/read.php?a="
 #define SEARCH_PRE "http://frogfind.com/?q="
 

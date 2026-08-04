@@ -3,8 +3,8 @@
 These ProDOS system programs use the Appletini Uthernet II interface in slot 1:
 
 - `A2WEBSRV.SYSTEM` serves a small HTTP/1.0 status page.
-- `A2BROWSE.SYSTEM` requests `http://httpbin.io/headers` and displays the HTTP
-  status and returned JSON.
+- `A2BROWSE.SYSTEM` opens `http://appletini.org` as its home page and uses
+  FrogFind for search and HTTPS links.
 
 Both run on an NMOS 6502 and do not require an enhanced Apple //e.
 
@@ -17,7 +17,7 @@ network settings.
 MAC, IP, subnet, and gateway are read from the card before IP65 initializes.
 The programs establish a valid W5100 socket-memory map first, then restore the
 saved values to both IP65 and the card. Because a W5100 has no DNS register,
-the browser asks the saved gateway to resolve `httpbin.io`.
+the browser asks the saved gateway to resolve each requested host.
 
 ## Build
 

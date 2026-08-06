@@ -41,8 +41,10 @@ module apple_dma_engine #(
     input  logic [LENGTH_W-1:0]  req_length,      // bytes; need not be %8
     input  logic                 req_rw,          // 1=DDR to PSRAM, 0=PSRAM to DDR
     input  logic                 req_valid,
+    input  logic                 req_abort,
     output logic                 req_ready,
     output logic                 req_done,
+    output logic                 req_abort_done,
 
     // PSRAM line interface
     output logic [20:0]          dma_line_addr,
@@ -88,7 +90,7 @@ module apple_dma_engine #(
     wire [3:0]        last_byte_count = last_byte_count_q;
 
     // ---------------- FSM ----------------
-    typedef enum logic [3:0] {
+    typedef enum logic [4:0] {
         S_IDLE,
         // DDR to PSRAM
         S_W_LINE_BEGIN,
@@ -101,9 +103,15 @@ module apple_dma_engine #(
         S_R_BEAT_BEGIN,
         S_R_MC_REQ, S_R_MC_WAIT,
         S_R_DDR_W, S_R_DDR_B,
-        S_DONE
+        S_DONE,
+        // Abort drains any already-accepted DDR read burst or PSRAM op
+        // before reporting completion. New PSRAM writes stop at once.
+        S_ABORT_DDR_R, S_ABORT_MC_WAIT, S_ABORT_DONE
     } state_t;
     state_t state_q;
+    wire abort_state = (state_q == S_ABORT_DDR_R) ||
+                       (state_q == S_ABORT_MC_WAIT) ||
+                       (state_q == S_ABORT_DONE);
 
     // ---------------- Index counters (data-path / address) ----------------
     // line_idx_q / beat_idx_q drive dma_line_addr offsets and the byte
@@ -240,6 +248,7 @@ module apple_dma_engine #(
     always_comb begin
         req_ready             = (state_q == S_IDLE);
         req_done              = (state_q == S_DONE);
+        req_abort_done        = (state_q == S_ABORT_DONE);
 
         dma_line_addr         = '0;
         dma_rw                = 1'b1;
@@ -271,6 +280,11 @@ module apple_dma_engine #(
                 axi_hp1_read.arvalid = 1'b1;
             end
             S_W_DDR_R: begin
+                axi_hp1_read.rready  = 1'b1;
+            end
+            S_ABORT_DDR_R: begin
+                // An AR burst cannot be withdrawn. Drain every accepted
+                // beat, but discard it and issue no more PSRAM writes.
                 axi_hp1_read.rready  = 1'b1;
             end
             S_W_RMW_REQ: begin
@@ -349,6 +363,48 @@ module apple_dma_engine #(
             ar_burst_size_q <= ar_burst_size_d;
             aw_burst_size_q <= aw_burst_size_d;
 
+            /* SmartPort only aborts DDR-to-PSRAM requests. If a future
+             * caller aborts the reverse direction, let its AXI write finish
+             * first; the held abort request is acknowledged from S_IDLE.
+             * For DDR-to-PSRAM, stop before the next PSRAM write but drain
+             * any transaction already accepted by AXI or the PSRAM port. */
+            if (req_abort && !abort_state &&
+                ((state_q == S_IDLE) || rw_q)) begin
+                unique case (state_q)
+                    S_W_DDR_AR: begin
+                        if (axi_hp1_read.arready) begin
+                            burst_remaining_q <= ar_burst_size;
+                            state_q           <= S_ABORT_DDR_R;
+                        end else begin
+                            state_q <= S_ABORT_DONE;
+                        end
+                    end
+                    S_W_DDR_R: begin
+                        if (axi_hp1_read.rvalid) begin
+                            burst_remaining_q <= burst_remaining_q - 5'd1;
+                            state_q <= (burst_remaining_q == 5'd1)
+                                     ? S_ABORT_DONE : S_ABORT_DDR_R;
+                        end else begin
+                            state_q <= S_ABORT_DDR_R;
+                        end
+                    end
+                    S_W_LINE_BEGIN: begin
+                        state_q <= (burst_remaining_q != 5'd0)
+                                 ? S_ABORT_DDR_R : S_ABORT_DONE;
+                    end
+                    S_W_RMW_REQ,
+                    S_W_MC_WRITE: begin
+                        state_q <= dma_ready ? S_ABORT_MC_WAIT
+                                             : S_ABORT_DONE;
+                    end
+                    S_W_RMW_WAIT,
+                    S_W_MC_WRITE_WAIT: begin
+                        state_q <= dma_rvalid ? S_ABORT_DONE
+                                              : S_ABORT_MC_WAIT;
+                    end
+                    default: state_q <= S_ABORT_DONE;
+                endcase
+            end else begin
             unique case (state_q)
                 S_IDLE: begin
                     if (req_valid) begin
@@ -610,8 +666,26 @@ module apple_dma_engine #(
                     state_q <= S_IDLE;
                 end
 
+                S_ABORT_DDR_R: begin
+                    if (axi_hp1_read.rvalid) begin
+                        burst_remaining_q <= burst_remaining_q - 5'd1;
+                        if (burst_remaining_q == 5'd1)
+                            state_q <= S_ABORT_DONE;
+                    end
+                end
+
+                S_ABORT_MC_WAIT: begin
+                    if (dma_rvalid)
+                        state_q <= S_ABORT_DONE;
+                end
+
+                S_ABORT_DONE: begin
+                    state_q <= S_IDLE;
+                end
+
                 default: state_q <= S_IDLE;
             endcase
+            end
         end
     end
 

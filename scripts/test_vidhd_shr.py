@@ -182,13 +182,27 @@ def test_renderer_implements_video7_auto_white_mono() -> None:
             "static uint8_t s_video7_rgb_mode = 0u;" in source and
             "static uint8_t s_video7_an3_sequence = 0u;" in source,
             "renderer must keep the Video-7 sequence and two-bit mode state")
-    require("static void handle_video7_softswitch_record(uint64_t rec)" in source and
-            "OFF-ON-OFF-ON-OFF" in source and
-            "if (s_video7_an3_sequence == 2u)" in source and
-            "if (s_video7_an3_sequence == 4u)" in source and
-            "(s_video7_rgb_flags & 0x01u)" in source and
-            "(sw_80col(sw) ? 0u : 0x02u)" in source,
-            "renderer must store the first Video-7 ON as bit 0 and the second as bit 1")
+    handler_start = source.find(
+        "static void handle_video7_softswitch_record(uint64_t rec)")
+    handler_end = source.find("\n}\n", handler_start)
+    require(handler_start >= 0 and handler_end > handler_start,
+            "renderer must keep the Video-7 soft-switch handler")
+    handler = source[handler_start:handler_end]
+    require("if ((low & 0xFEu) != 0x5Eu) {\n        return;\n    }" in handler,
+            "non-AN3 accesses (the interleaved 80COL writes) must not disturb "
+            "the Video-7 sequence")
+    require("if (sw_mixed(sw)) {\n        s_video7_an3_sequence = 0u;" in handler,
+            "an AN3 access with MIXED on must abort the select sequence")
+    require("if (low == 0x5Eu) {" in handler and
+            "s_video7_an3_sequence = 1u;" in handler and
+            "if (s_video7_an3_sequence == 5u)" in handler,
+            "the sequence must start and commit on $C05E -- DHGR enabled at "
+            "both ends, matching A2Desktop's five-toggle select")
+    require("if (s_video7_an3_sequence == 2u) {" in handler and
+            "sw_80col(sw) ? 0u : 0x02u" in handler and
+            "sw_80col(sw) ? 0u : 0x01u" in handler,
+            "each $C05F rising edge must clock !80COL, first into bit 1 and "
+            "second into bit 0 (AppleWin RGBMonitor latch F2,F1)")
     require("const uint8_t video7_mono =\n"
             "        ((shr_now == 0u) &&\n"
             "         (apple_video_settings_video7_auto_mono_enabled(settings) != 0u) &&\n"
@@ -269,10 +283,12 @@ def test_renderer_implements_applewin_shr_decode() -> None:
             "memcpy(out + SHR_WIDTH, out, SHR_WIDTH * sizeof(uint32_t));" in source,
             "renderer must be able to build a full SHR frame directly from AUX shadow")
     require("if (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_SHR) {" in source and
-            "if (rebuild != 0u) {\n"
-            "            render_shr_frame_full();\n"
-            "            publish_current_frame();" in source,
-            "renderer must render and publish a changed SHR shadow at frame start")
+            "if (rebuild != 0u) {" in source and
+            "generation != s_shr_settle_generation" in source and
+            "render_shr_frame_full();" in source and
+            "publish_current_frame();" in source,
+            "renderer must settle, render, and publish a changed SHR shadow "
+            "at a frame start")
     require("const int shr_frame_marker =\n        shr_active && line == 0u && cycle == 0u;" in source and
             "(s_prev_line >= 200u || (shr_frame_marker && s_render_armed))" in source,
             "renderer must treat sparse SHR markers as frame boundaries")
@@ -294,12 +310,17 @@ def test_renderer_implements_applewin_shr_decode() -> None:
             "s_frame_display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I ||" in source and
             "synthesized ? 0u : apple_pal_video_end_frame();" in source and
             "} else if (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I) {\n"
-            "        render_legacy_weave_frame_full();\n"
-            "        publish_current_frame();\n"
+            "        if (legacy_shadow_is_settled() != 0u) {\n"
+            "            render_legacy_weave_frame_full();\n"
+            "            publish_current_frame();\n"
+            "        }\n"
             "    } else if (s_legacy_flip_q != 0u) {\n"
-            "        render_legacy_flip_merge_frame_full();\n"
-            "        publish_current_frame();\n"
+            "        if (legacy_shadow_is_settled() != 0u) {\n"
+            "            render_legacy_flip_merge_frame_full();\n"
+            "            publish_current_frame();\n"
+            "        }\n"
             "    } else {\n"
+            "        s_legacy_settle_armed = 0u;\n"
             "        apple_pal_video_begin_frame();\n"
             "    }" in source,
             "full shadow modes must publish at frame start and never publish "
@@ -406,24 +427,46 @@ def test_compositor_and_handoff_are_mode_aware() -> None:
 def test_shr_generation_cache() -> None:
     renderer = read(RENDERER_C)
     egress = read(EGRESS_C) + read(EGRESS_H)
+    layout = read(COMPOSITOR_LAYOUT_H)
 
-    require("volatile uint32_t g_shr_shadow_generation = 1U;" in egress and
-            "extern volatile uint32_t g_shr_shadow_generation;" in egress and
+    require("volatile uint32_t g_video_shadow_generation = 1U;" in egress and
+            "extern volatile uint32_t g_video_shadow_generation;" in egress and
             "(uint16_t)(a & 0xFFFFU) >= 0x2000U" in egress and
             "(uint16_t)(a & 0xFFFFU) <= 0x9FFFU" in egress and
-            "g_shr_shadow_generation++;" in egress,
-            "egress must advance the SHR generation after each relevant shadow write")
+            "g_video_shadow_generation++;" in egress,
+            "egress must advance the video generation after each relevant shadow write")
     require("static uint8_t  s_shr_cache_valid = 0u;" in renderer and
             "static uint8_t  s_shr_cache_invalidate = 1u;" in renderer and
-            "static uint32_t s_shr_cache_generation = 0u;" in renderer,
+            "static uint32_t s_shr_cache_generation = 0u;" in renderer and
+            "static uint8_t  s_shr_settle_armed = 0u;" in renderer and
+            "static uint32_t s_shr_settle_generation = 0u;" in renderer,
             "renderer must track cache validity, non-memory changes, and generation")
     require("generation != s_shr_cache_generation" in renderer and
-            "render_shr_frame_full();\n"
-            "            publish_current_frame();\n"
-            "            s_shr_cache_generation = g_shr_shadow_generation;" in renderer and
+            "generation != s_shr_settle_generation" in renderer and
+            "s_shr_settle_generation = generation;" in renderer and
+            "render_shr_frame_full();" in renderer and
+            "publish_current_frame();" in renderer and
+            "s_shr_cache_generation = g_video_shadow_generation;" in renderer and
             "g_acr_shr_cache_rebuilds++;" in renderer and
             "g_acr_shr_frames_skipped++;" in renderer,
-            "changed SHR frames must publish at once and static frames must skip work")
+            "changed SHR frames must settle before one full rebuild while "
+            "static frames skip work")
+    require("static uint8_t legacy_shadow_is_settled(void)" in renderer and
+            "generation != s_legacy_settle_generation" in renderer and
+            "s_frame_format_detail != s_legacy_settle_detail" in renderer and
+            "s_video_settings_seen != s_legacy_settle_settings" in renderer,
+            "legacy paged modes must wait for a stable data and format snapshot")
+    require("#define ACE_RING_BASE           0x3F200000U" in egress and
+            "#define ACE_RING_SIZE_LOG2      20U" in egress and
+            "#define ACE_POLL_RECORD_CAP   131072U" in egress and
+            "#define ACE_MMU_CONTROL_SECTION 0x3F000000U" in egress and
+            "Xil_SetTlbAttributes(ACE_MMU_CONTROL_SECTION, NORM_NONCACHE);" in egress and
+            "Xil_SetTlbAttributes(ACE_MMU_RING_SECTION, NORM_NONCACHE);" in egress and
+            "#error \"Apple-cycle egress ring overlaps SDD or video shadow storage\"" in egress and
+            "#error \"Apple-cycle egress ring overlaps Apple framebuffer slot 0\"" in egress and
+            "0x3F200000  apple-cycle egress ring (1 MB; ends at 0x3F300000)" in layout,
+            "the capture ring must hold one long SHR decode without "
+            "overlapping SDD storage or framebuffer slots")
     require("s_shr_cache_invalidate = 1u;" in
             renderer[renderer.index("static void apply_video_rom_if_changed"):
                      renderer.index("static void apply_video_settings_if_changed")] and

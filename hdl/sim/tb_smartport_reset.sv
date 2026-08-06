@@ -39,6 +39,7 @@ module tb_smartport_reset;
         .vtw_addr(11'd0),
         .vtw_rw(1'b1),
         .vtw_wdata(8'd0),
+        .vtw_sss_snapshot(22'd0),
         .vtw_ready(),
         .vtw_resp_valid(),
         .vtw_resp_rdata()
@@ -54,6 +55,7 @@ module tb_smartport_reset;
     localparam logic [7:0] R_IN_HEAD  = 8'd1;
     localparam logic [7:0] R_OUT_PUSH = 8'd2;
     localparam logic [7:0] R_CONTROL  = 8'd3;
+    localparam logic [7:0] R_OUT_PUSH4 = 8'd5;
     localparam int CTL_POP_IN    = 1;
     localparam int CTL_CLR_IN    = 2;
     localparam int CTL_CLR_OUT   = 4;
@@ -209,6 +211,22 @@ module tb_smartport_reset;
 
         // ---- 1. Baseline round trip ----
         round_trip(8'hA1, "baseline");
+
+        // Cross a 32-bit word boundary through the physical Apple-bus
+        // pipeline, including a scalar tail in the following RAM word.
+        axi_write(R_CONTROL, CTL_CLR_OUT);
+        axi_write(R_OUT_PUSH4, 32'h44332211);
+        axi_write(R_OUT_PUSH, 8'h55);
+        axi_write(R_CONTROL, CTL_SET_READY);
+        for (int i = 0; i < 5; i++) begin
+            apple_read(A_DATA, rd);
+            check(rd == (8'h11 * 8'(i + 1)),
+                  $sformatf("physical word-buffer byte %0d (got %h)", i, rd));
+            apple_write(A_POP, 8'h00);
+        end
+        axi_read(R_STATUS, st);
+        check(st_out(st) == 0,
+              "physical word plus scalar tail drains exactly");
 
         // ---- 2. RES# during a partial input frame ----
         apple_write(A_DATA, 8'hB0);

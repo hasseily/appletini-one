@@ -177,6 +177,40 @@
 #define CARD_CTRL_VTW_BUS_FAULTS_REG        CARD_CTRL_REG_ADDR(0x81U)
 #define CARD_CTRL_VTW_IO_TRACE_REG(n)       CARD_CTRL_REG_ADDR(0x82U + (n))
 #define CARD_CTRL_VTW_PC_TRACE_REG(n)       CARD_CTRL_REG_ADDR(0x92U + (n))
+/* CPU0 may inject a video write into the vTW's normal posted queue while the
+ * core waits for a SmartPort response. PUSH packs {data[7:0],addr[15:0]} in
+ * bits [23:0]. STATUS bit31 is ready and [30:0] counts accepted pushes. */
+#define CARD_CTRL_VTW_POST_PUSH_REG          CARD_CTRL_REG_ADDR(0x9AU)
+#define CARD_CTRL_VTW_POST_STATUS_REG        CARD_CTRL_REG_ADDR(0x9BU)
+#define CARD_CTRL_VTW_POST_READY_BIT         (1UL << 31)
+#define CARD_CTRL_VTW_POST_ACCEPT_MASK       0x7FFFFFFFUL
+/* Write bit0 to freeze the vTW core and flush+invalidate its RamWorks line
+ * cache; the core stays frozen until bit1 (release) is written, so a PS-DMA
+ * block write cannot race any core access. Session end or Apple RES#
+ * auto-releases. Status: bit31 busy, bit30 core held, bits 29:0 count
+ * completed requests (a request cancelled by auto-release still counts,
+ * with held low). */
+#define CARD_CTRL_VTW_RW_FLUSH_REG            CARD_CTRL_REG_ADDR(0x9CU)
+#define CARD_CTRL_VTW_RW_FLUSH_REQ_BIT        1UL
+#define CARD_CTRL_VTW_RW_FLUSH_RELEASE_BIT    2UL
+#define CARD_CTRL_VTW_RW_FLUSH_BUSY_BIT       (1UL << 31)
+#define CARD_CTRL_VTW_RW_FLUSH_HELD_BIT       (1UL << 30)
+#define CARD_CTRL_VTW_RW_FLUSH_COUNT_MASK     0x3FFFFFFFUL
+/* Four-byte shadow writes. DATA4 queues one little-endian word. STATUS bit31
+ * means queue space is available, bit30 means accepted data is still
+ * draining, and bits29:0 count accepted words. A SHADOW_ADDR write clears
+ * queued packed data so byte fallback cannot race a late direct write. */
+#define CARD_CTRL_VTW_SHADOW_DATA4_REG         CARD_CTRL_REG_ADDR(0x9DU)
+#define CARD_CTRL_VTW_SHADOW_DATA4_STATUS_REG  CARD_CTRL_REG_ADDR(0x9EU)
+#define CARD_CTRL_VTW_SHADOW_DATA4_READY_BIT   (1UL << 31)
+#define CARD_CTRL_VTW_SHADOW_DATA4_BUSY_BIT    (1UL << 30)
+#define CARD_CTRL_VTW_SHADOW_DATA4_ACCEPT_MASK 0x3FFFFFFFUL
+#define CARD_CTRL_VTW_SHADOW_READ4_REG          CARD_CTRL_REG_ADDR(0x9FU)
+#define CARD_CTRL_VTW_SHADOW_READ4_DATA_REG     CARD_CTRL_REG_ADDR(0xA0U)
+#define CARD_CTRL_VTW_SHADOW_READ4_STATUS_REG   CARD_CTRL_REG_ADDR(0xA1U)
+#define CARD_CTRL_VTW_SHADOW_READ4_READY_BIT    (1UL << 31)
+#define CARD_CTRL_VTW_SHADOW_READ4_BUSY_BIT     (1UL << 30)
+#define CARD_CTRL_VTW_SHADOW_READ4_COUNT_MASK   0x3FFFFFFFUL
 #define CARD_CTRL_VTW_TRACE_FROZEN_BIT      (1UL << 0)
 #define CARD_CTRL_VTW_TRACE_REASON_SHIFT    1U
 #define CARD_CTRL_VTW_TRACE_REASON_MASK     0x3UL

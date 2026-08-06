@@ -121,7 +121,7 @@ def test_shr_border_surrounds_video() -> None:
             "COMP_SHR_BORDER_HEIGHT" in shr,
             "SHR must synthesize a border around its own larger geometry")
     require(shr.index("draw_solid_border_ring(fb,") <
-            shr.index("fb16_blit_2x2_scanlines(fb,"),
+            shr.index("blit_apple_2x2_serviced(fb,"),
             "SHR video must land inside, not over, the synthesized ring")
     require("draw_border_flood(fb," in shr and
             "s_scanlines_mode,\n                                  2U);" in shr,

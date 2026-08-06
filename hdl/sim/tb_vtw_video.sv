@@ -95,6 +95,7 @@ module tb_vtw_video;
     logic [31:0] cnt_core_cycles;
     logic [31:0] cnt_posted_writes;
     logic [15:0] dbg_core_pc;
+    logic [21:0] sp_sss_snapshot;
     logic [7:0]  rb;
 
     vtw_core_top dut (
@@ -124,12 +125,16 @@ module tb_vtw_video;
         .sp_boot_suppress(1'b0),
         .sp_req_valid(), .sp_req_target(), .sp_req_addr(), .sp_req_rw(),
         .sp_req_wdata(), .sp_req_ready(1'b1), .sp_resp_valid(1'b0),
-        .sp_resp_rdata(8'd0),
+        .sp_resp_rdata(8'd0), .sp_sss_snapshot(sp_sss_snapshot),
         .sh_en(sh_en), .sh_addr(sh_addr), .sh_we(sh_we),
         .sh_wdata(sh_wdata), .sh_rdata(sh_rdata),
         .arm_req_valid(1'b0), .arm_req_addr('0), .arm_req_rw(1'b1),
         .arm_req_wdata('0), .arm_req_busy(), .arm_resp_valid(),
         .arm_resp_rdata(),
+        .arm_post_we(1'b0), .arm_post_addr('0), .arm_post_wdata('0),
+        .arm_post_ready(),
+        .arm_rw_flush_req(1'b0), .arm_rw_hold_release(1'b0),
+        .arm_rw_flush_done(), .arm_rw_hold_state(),
         .c074_state(), .bus_owned(),
         .dbg_core_pc(dbg_core_pc), .cnt_core_cycles(cnt_core_cycles),
         .cnt_bus_cycles(), .cnt_posted_writes(cnt_posted_writes),
@@ -322,6 +327,8 @@ module tb_vtw_video;
         check(posts_main_paged > WINDOW / 4,
               $sformatf("aux $9DF8=1 immediately widens main (%0d)",
                         posts_main_paged));
+        check(sp_sss_snapshot[21],
+              "SmartPort snapshot includes private wide-main state");
 
         // ---- 1e. AUX $9DF8=0 must narrow MAIN again ----
         boot();  load_paged_main_hammer(1'b1);  go();
@@ -329,6 +336,8 @@ module tb_vtw_video;
         check(posts_main_cleared < WINDOW / 20,
               $sformatf("aux $9DF8=0 narrows main again (%0d)",
                         posts_main_cleared));
+        check(!sp_sss_snapshot[21],
+              "SmartPort snapshot clears private wide-main state");
 
         // ---- 2. Status read: RAMRD on -> RDRAMRD ($C013) bit7 = 1 ----
         boot();  load_status_probe(8'h03, 8'h13);  go();

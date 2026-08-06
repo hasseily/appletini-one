@@ -1,16 +1,9 @@
 #!/usr/bin/env python3
-"""Build and run the virtual TransWarp simulation benches.
+"""Build and run the focused virtual TransWarp simulation benches.
 
-Two XSim benches cover the phase-1 vTW island (README_VIRTUAL_TRANSWARP.md):
-
-- tb_vtw_engine_unit: vtw_bus_engine alone against synthesized wrapper
-  strobes -- /DMA sequencing, posted/sync ordering (flush-before-video-window,
-  I/O overtake), queue backpressure and drops, session release.
-- tb_vtw_system: the real W65C02 core executing a program from vtw_shadow,
-  mastering the pin-level apple_bus_wrapper against a motherboard model --
-  posted write-through order and integrity, sync cycle data, early-PHI1
-  address discipline, PHI1-only /DMA transitions, $C074 and the cycle-locked
-  1 MHz pace.
+The suite covers the full vTW path plus its SmartPort shortcut, RamWorks
+flush/hold protocol, PS-DMA abort path, video timing, II+ bus rules, and reset
+handling. It does not run the large standalone 65C02 instruction suites.
 
 Requires the Xilinx simulation tools (xvlog/xelab/xsim) on PATH.
 """
@@ -34,9 +27,12 @@ SOURCES = [
     "hdl/apple/apple_bus_wrapper.sv",
     "hdl/apple/apple_bus_write_arbiter.sv",
     "hdl/apple/vtw_shadow.sv",
+    "hdl/apple/vtw_shadow_host_port.sv",
     "hdl/apple/vtw_bus_engine.sv",
     "hdl/apple/w65c02_core.sv",
     "hdl/apple/vtw_core_top.sv",
+    "hdl/apple/apple_dma_engine.sv",
+    "hdl/apple/ps_dma_command.sv",
     "hdl/apple/smartport_card.sv",
     "hdl/sim/tb_vtw_engine_unit.sv",
     "hdl/sim/tb_vtw_system.sv",
@@ -47,6 +43,9 @@ SOURCES = [
     "hdl/sim/tb_vtw_drivehold.sv",
     "hdl/sim/tb_iiplus_irq_chirp.sv",
     "hdl/sim/tb_iiplus_dma_refresh.sv",
+    "hdl/sim/tb_apple_dma_abort.sv",
+    "hdl/sim/tb_ps_dma_command.sv",
+    "hdl/sim/tb_vtw_shadow_host_port.sv",
 ]
 
 # smartport_card $readmemh resolves against the simulation cwd.
@@ -65,6 +64,9 @@ BENCHES = [
     ("tb_vtw_drivehold", "VTW DRIVEHOLD PASS"),
     ("tb_iiplus_irq_chirp", "IIPLUS IRQ CHIRP PASS"),
     ("tb_iiplus_dma_refresh", "IIPLUS DMA REFRESH PASS"),
+    ("tb_apple_dma_abort", "APPLE DMA ABORT PASS"),
+    ("tb_ps_dma_command", "PS DMA COMMAND PASS"),
+    ("tb_vtw_shadow_host_port", "VTW SHADOW HOST PASS"),
 ]
 
 

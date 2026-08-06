@@ -21,8 +21,8 @@
 // (read the 64-bit line, patch it, write it back; one entry retired
 // per RMW -- duplicate same-line entries just cost a redundant RMW,
 // never correctness). At 1 MHz the worst realistic burst (interrupt
-// pushing 3 stack bytes on consecutive cycles with ALTZP aux) fits the
-// 4-deep FIFO with margin. Reads forward the newest matching queued
+// pushing stack bytes on consecutive cycles with ALTZP aux) fits the
+// 8-deep FIFO with margin. Reads forward the newest matching queued
 // byte so read-after-write is always coherent.
 //
 // Scheduling: a background op (RMW drain / ps-dma) is admitted at
@@ -136,7 +136,7 @@ module psram_simple (
     wire serve_write_start = ab_read.sss_en && aux_cycle && !ab_read.rw_early;
 
     // ------------------------------------------------------------------
-    // Write ring FIFO: 4 entries of {addr[23:0], data[7:0]}.
+    // Write ring FIFO: 8 entries of {addr[23:0], data[7:0]}.
     // Push at data_en of a write cycle; head retired per background RMW.
     // Ring order IS age order: rd_ptr = oldest, (wr_ptr-1) = newest.
     // ------------------------------------------------------------------
@@ -145,6 +145,7 @@ module psram_simple (
     localparam int WQ_DEPTH = 8;
     logic [23:0] wq_addr [WQ_DEPTH];
     logic [7:0]  wq_data [WQ_DEPTH];
+    logic [WQ_DEPTH-1:0] wq_valid_q;
     logic [2:0]  wq_rd_ptr, wq_wr_ptr;
     logic [3:0]  wq_count;
 
@@ -155,18 +156,25 @@ module psram_simple (
     logic        write_pending_q;      // between sss_en and data_en
     logic [23:0] write_pending_addr_q;
 
-    // Read forwarding: newest queued byte for this exact address wins.
-    // Scan oldest -> newest, letting later matches overwrite.
+    // Read forwarding: form the hit as a fixed parallel match tree. Do not
+    // put the dynamic ring walk on fwd_hit: that signal controls the serve
+    // FSM and must meet the Apple read deadline. The data selector still
+    // scans oldest -> newest so the newest queued byte wins.
+    logic [WQ_DEPTH-1:0] fwd_match;
     logic       fwd_hit;
     logic [7:0] fwd_data;
+
+    for (genvar i = 0; i < WQ_DEPTH; i++) begin : g_fwd_match
+        assign fwd_match[i] = wq_valid_q[i] &&
+                              (wq_addr[i] == sss.addr_decode[23:0]);
+    end
+    assign fwd_hit = |fwd_match;
+
     always_comb begin
-        fwd_hit  = 1'b0;
         fwd_data = 8'h00;
         for (int k = 0; k < WQ_DEPTH; k++) begin
             automatic logic [2:0] idx = wq_rd_ptr + 3'(k);
-            if ((4'(k) < wq_count) &&
-                (wq_addr[idx] == sss.addr_decode[23:0])) begin
-                fwd_hit  = 1'b1;
+            if (fwd_match[idx]) begin
                 fwd_data = wq_data[idx];
             end
         end
@@ -260,6 +268,7 @@ module psram_simple (
             wq_rd_ptr       <= 3'd0;
             wq_wr_ptr       <= 3'd0;
             wq_count        <= 4'd0;
+            wq_valid_q      <= '0;
             write_pending_q <= 1'b0;
             write_pending_addr_q <= 24'd0;
             admit_delay_q   <= 2'd0;
@@ -335,7 +344,6 @@ module psram_simple (
                     serve_fwd_q      <= 1'b1;
                 end else if (state == S_IDLE) begin
                     serve_fwd_q <= 1'b0;
-                    serve_age_q <= 8'd0;
                     psram_valid <= 1'b1;
                     psram_cmd   <= QPI_READ;
                     psram_addr  <= {sss.addr_decode[23:3], 3'b000};
@@ -347,7 +355,6 @@ module psram_simple (
                     // next background admission window.
                     rmw_park_q  <= 1'b1;
                     serve_fwd_q <= 1'b0;
-                    serve_age_q <= 8'd0;
                     psram_valid <= 1'b1;
                     psram_cmd   <= QPI_READ;
                     psram_addr  <= {sss.addr_decode[23:3], 3'b000};
@@ -376,6 +383,7 @@ module psram_simple (
                 if (!wq_full) begin
                     wq_addr[wq_wr_ptr] <= write_pending_addr_q;
                     wq_data[wq_wr_ptr] <= ab_read.data;
+                    wq_valid_q[wq_wr_ptr] <= 1'b1;
                     wq_wr_ptr   <= wq_wr_ptr + 3'd1;
                     wq_push_now = 1'b1;
                 end else begin
@@ -386,6 +394,18 @@ module psram_simple (
                 end
             end
             wq_retire_now = 1'b0;
+
+            // Keep serve latency accounting out of the forwarding decision.
+            // A forwarded read may clear a stale age value, which has no
+            // functional effect. A real in-flight serve keeps aging even if
+            // another cycle misses its deadline.
+            if (serve_read_start &&
+                ((state == S_IDLE) || (state == S_RMW_WRITE_ISSUE))) begin
+                serve_age_q <= 8'd0;
+            end else if ((state == S_SERVE_READ) &&
+                         (serve_age_q != 8'hFF)) begin
+                serve_age_q <= serve_age_q + 8'd1;
+            end
 
             // ---- FSM ----
             case (state)
@@ -426,10 +446,8 @@ module psram_simple (
                             admit_armed_q <= 1'b0;
                             rmw_line_q  <= {wq_head_addr[23:3], 3'b000};
                             for (int i = 0; i < WQ_DEPTH; i++) begin
-                                automatic logic [2:0] age =
-                                    3'(i) - wq_rd_ptr;
                                 rmw_hit_q[i] <=
-                                    ({1'b0, age} < wq_count) &&
+                                    wq_valid_q[i] &&
                                     (wq_addr[i][23:3] ==
                                      wq_head_addr[23:3]);
                             end
@@ -468,9 +486,6 @@ module psram_simple (
                 end
 
                 S_SERVE_READ: begin
-                    if (serve_age_q != 8'hFF) begin
-                        serve_age_q <= serve_age_q + 8'd1;
-                    end
                     if (psram_rvalid) begin
                         if (!serve_fwd_q) begin
                             ab_write.wr_data <=
@@ -511,6 +526,7 @@ module psram_simple (
                 end
                 S_RMW_WRITE_WAIT: if (psram_rvalid) begin
                     // Once the write lands, the head entry is redundant.
+                    wq_valid_q[wq_rd_ptr] <= 1'b0;
                     wq_rd_ptr     <= wq_rd_ptr + 3'd1;
                     wq_retire_now = 1'b1;
                     state         <= S_IDLE;

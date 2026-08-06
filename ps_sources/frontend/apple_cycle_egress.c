@@ -30,7 +30,7 @@ volatile uint32_t g_resync_pending = 0U;
 volatile uint32_t g_records_processed  = 0U;
 volatile uint32_t g_gap_markers_seen   = 0U;
 volatile uint32_t g_bus_writes_seen    = 0U;
-volatile uint32_t g_shr_shadow_generation = 1U;
+volatile uint32_t g_video_shadow_generation = 1U;
 volatile uint32_t g_frame_records_seen = 0U;
 volatile uint32_t g_poll_calls         = 0U;
 volatile uint32_t g_oversized_drains   = 0U;
@@ -51,11 +51,12 @@ int apple_cycle_egress_init(void)
 {
     uint32_t i;
 
-    /* (1) MMU. Mark the ring + producer-ptr 1 MB section non-cacheable
+    /* (1) MMU. Mark the ring and producer-pointer sections non-cacheable
      *     so PS reads see FPGA HP0 writes immediately. The shadow bank
      *     section (0x3F100000) is intentionally left cacheable -- only
      *     this CPU writes/reads it, and the renderer (2b.2) wants the
      *     cache line speedup. */
+    Xil_SetTlbAttributes(ACE_MMU_CONTROL_SECTION, NORM_NONCACHE);
     Xil_SetTlbAttributes(ACE_MMU_RING_SECTION, NORM_NONCACHE);
 
     /* (2) Zero producer-ptr slot. */
@@ -96,7 +97,7 @@ int apple_cycle_egress_init(void)
     REG_WRITE(ACE_REG_CFG_ENABLE, 1U);
 
     uart_puts(UART0_BASE,
-        "apple_cycle_egress_init: ring 0x3F010000+64KB, producer 0x3F000000, "
+        "apple_cycle_egress_init: ring 0x3F200000+1MB, producer 0x3F000000, "
         "shadows 0x3F100000/0x3F110000\r\n");
     return 0;
 }
@@ -110,6 +111,7 @@ void apple_cycle_egress_amp_secondary_init(void)
      * Nothing else from init is repeated -- the PL register
      * configuration (cfg_enable, ring base, producer addr) is
      * write-once at boot and was already done by CPU0. */
+    Xil_SetTlbAttributes(ACE_MMU_CONTROL_SECTION, NORM_NONCACHE);
     Xil_SetTlbAttributes(ACE_MMU_RING_SECTION, NORM_NONCACHE);
 }
 
@@ -184,7 +186,7 @@ void apple_cycle_egress_poll(void)
                     }
                     if ((uint16_t)(a & 0xFFFFU) >= 0x2000U &&
                         (uint16_t)(a & 0xFFFFU) <= 0x9FFFU) {
-                        g_shr_shadow_generation++;
+                        g_video_shadow_generation++;
                     }
                     g_bus_writes_seen++;
                 }

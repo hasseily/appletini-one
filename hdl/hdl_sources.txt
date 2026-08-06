@@ -17,6 +17,7 @@ apple/apple_bus_wrapper.sv
 apple/apple_bus_write_arbiter.sv
 apple/w65c02_core.sv
 apple/vtw_shadow.sv
+apple/vtw_shadow_host_port.sv
 apple/vtw_bus_engine.sv
 apple/vtw_core_top.sv
 apple/apple_dma_engine.sv

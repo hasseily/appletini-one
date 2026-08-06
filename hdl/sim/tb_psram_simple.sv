@@ -124,6 +124,7 @@ module tb_psram_simple;
     endtask
 
     integer miss_prev = 0;
+    integer valid_count;
     // Trace every deadline miss with FSM context.
     always @(posedge clk) begin
         if (resetn && dut.dbg_deadline_miss_count != miss_prev) begin
@@ -131,6 +132,14 @@ module tb_psram_simple;
             $display("[%0t] MISS state=%0d addr=%h valid=%b ready=%b buesph=%0d",
                      $time, dut.state, dut.sss.addr_decode[15:0],
                      psram_valid, psram_ready, buscnt % 130);
+        end
+        if (resetn) begin
+            valid_count = $countones(dut.wq_valid_q);
+            if (dut.wq_count !== valid_count[3:0]) begin
+                $display("FAIL: WQ valid/count mismatch valid=%0d count=%0d",
+                         valid_count, dut.wq_count);
+                $finish;
+            end
         end
     end
 
@@ -361,6 +370,36 @@ module tb_psram_simple;
         sss.route_kind     = globals::APPLE_ROUTE_BUS;
         sss.addr_decode_en = 1'b0;
         ab_read.rw_early   = 1'b0;
+
+        /* Fixed-slot match-tree regression. The valid queue wraps from slot
+         * 6 through slot 2; the later slot-2 byte must win. Slot 4 holds a
+         * stale matching address but is invalid and must never hit. */
+        force dut.wq_valid_q = 8'hC7;
+        force dut.wq_count   = 4'd5;
+        force dut.wq_rd_ptr  = 3'd6;
+        dut.wq_addr[6] = 24'h012345;
+        dut.wq_data[6] = 8'h11;
+        dut.wq_addr[7] = 24'h020000;
+        dut.wq_addr[0] = 24'h020001;
+        dut.wq_addr[1] = 24'h020002;
+        dut.wq_addr[2] = 24'h012345;
+        dut.wq_data[2] = 8'hA5;
+        dut.wq_addr[4] = 24'h065432;
+        dut.wq_data[4] = 8'hEE;
+        sss.addr_decode = 24'h012345;
+        #1;
+        if (!dut.fwd_hit || dut.fwd_data != 8'hA5) begin
+            $display("FAIL: wrapped newest forwarding hit=%b data=%02h",
+                     dut.fwd_hit, dut.fwd_data);
+            $finish;
+        end
+        sss.addr_decode = 24'h065432;
+        #1;
+        if (dut.fwd_hit) begin
+            $display("FAIL: invalid stale queue slot produced a forwarding hit");
+            $finish;
+        end
+        $display("FIXED MATCH TREE PASS");
 
         $display("ALL HANDSHAKES PASS");
         $finish;

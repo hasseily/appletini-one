@@ -16,7 +16,18 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SMARTPORT_C = REPO_ROOT / "ps_sources" / "frontend" / "smartport_service.c"
 SMARTPORT_H = REPO_ROOT / "ps_sources" / "frontend" / "smartport_service.h"
+SMARTPORT_SV = REPO_ROOT / "hdl" / "apple" / "smartport_card.sv"
+VTW_CORE_SV = REPO_ROOT / "hdl" / "apple" / "vtw_core_top.sv"
+APPLE_TOP_SV = REPO_ROOT / "hdl" / "apple" / "apple_top.sv"
+APPLE_DMA_SV = REPO_ROOT / "hdl" / "apple" / "apple_dma_engine.sv"
+PS_DMA_SV = REPO_ROOT / "hdl" / "apple" / "ps_dma_command.sv"
+CARD_REGS_H = REPO_ROOT / "ps_sources" / "frontend" / "card_control_regs.h"
 FRONTEND_MAIN_C = REPO_ROOT / "ps_sources" / "frontend" / "main.c"
+COMPOSITOR_C = REPO_ROOT / "ps_sources" / "frontend" / "compositor.c"
+SMARTPORT_ASM = REPO_ROOT / "6502_SMARTPORT.S"
+PSDMA_C = REPO_ROOT / "ps_sources" / "lib" / "psdma.c"
+PSDMA_H = REPO_ROOT / "ps_sources" / "lib" / "psdma.h"
+SHADOW_HOST_SV = REPO_ROOT / "hdl" / "apple" / "vtw_shadow_host_port.sv"
 
 
 class TestFailure(Exception):
@@ -125,20 +136,324 @@ def test_command_path_uses_cache_for_reads_and_writes() -> None:
 
     require("return (uint8_t *)(uintptr_t)cache_addr;" in source,
             "cache/RAM disk address translation must use absolute DDR pointers")
-    require("sp_cache_get_block(dev, block_num, 0U, &cache_addr)" in source,
+    require("sp_cache_get_block(dev, block_num, 0U, accelerated," in source,
             "READBLOCK must load/cache the requested device block")
-    require("sp_cache_get_block(dev, block_num, 1U, &cache_addr)" in source,
+    require("sp_cache_get_block(dev, block_num, 1U, 0U, &cache_addr)" in source,
             "WRITEBLOCK must load/cache the requested device block before updating media")
-    require("sp_push_buf(cache_ptr_from_addr(cache_addr), SP_BLOCK_SIZE);" in source,
-            "READBLOCK must stream the selected cache block through the OUT FIFO")
-    require("sp_push_buf(g_scratch, length);" in source,
+    require(source.count(
+                "sp_response_append_buf(\n"
+                "                            cache_ptr_from_addr(cache_addr), SP_BLOCK_SIZE);") == 2,
+            "both READBLOCK families must retain the full FIFO fallback")
+    require("sp_response_append_buf(g_scratch, length);" in source,
             "SmartPort STATUS payload must stream through the OUT FIFO")
+    require("sp_response_commit(accelerated);\n"
+            "    smartport_note_activity" in source,
+            "each command must publish one complete response before READY")
     require("sp_write_block_to_image(dev, block_num," in source and
             "memcpy(cache_ptr_from_addr(cache_addr), data, SP_BLOCK_SIZE);" in source,
             "WRITEBLOCK must update the selected cached block before persisting media")
     require("f_write(&dev->image_file," in source and
             "data, SP_BLOCK_SIZE, &bw)" in source,
             "WRITEBLOCK must persist the Apple-supplied block to the selected image file")
+
+
+def test_vtw_uses_readahead_and_word_wide_response_buffer() -> None:
+    source = read(SMARTPORT_C)
+    gateware = read(SMARTPORT_SV)
+
+    require("#define SP_VTW_READAHEAD_BLOCKS 8U" in source and
+            "if (for_write == 0U && allow_readahead != 0U)" in source and
+            "f_read(&dev->image_file, dst, (UINT)fill_bytes, &br)" in source,
+            "vTW cache misses must fill one bounded multi-block read-ahead line")
+    require("const uint8_t accelerated =\n"
+            "        ((hw_status & SP_ST_EXEC_VTW) != 0U) ? 1U : 0U;" in source,
+            "the PS must select acceleration from the command's latched origin")
+    require(source.count("sp_cache_get_block(dev, block_num, 0U, accelerated,") == 2,
+            "both ProDOS and SmartPort reads must allow vTW read-ahead")
+    require("sp_cache_get_block(dev, block_num, 0U, 0U, &cache_addr)" in source,
+            "non-command/debug reads must retain the single-block cache path")
+    require("#define SP_R_OUT_PUSH4" in source and
+            "static void sp_response_commit(uint8_t accelerated)" in source and
+            "REG_WRITE(SP_R_OUT_PUSH4, word);" in source,
+            "only accelerated response buffers may use packed output words")
+    require("g_response[SP_RESPONSE_MAX] __attribute__((aligned(4)))" in source and
+            "sp_response_reset();" in source and
+            "sp_response_commit(accelerated);" in source,
+            "the service must build the full aligned response before publishing it")
+    require("sp_push4_wait_idle" not in source and
+            "SP_ST_PUSH4_BUSY" not in source,
+            "the PS path must not retain serializer pacing or busy polling")
+
+    require("SP_REG_OUT_PUSH4" in gateware and
+            "exec_vtw_q     <= vtw_ctrl_write;" in gateware and
+            "logic [31:0] out_fifo" in gateware and
+            "out_mem_we    = 4'b1111;" in gateware and
+            "out_head = out_word_q[8*out_rd_q[1:0] +: 8]" in gateware,
+            "gateware must store whole words and expose them byte-wise to the Apple")
+    require("out_pack" not in gateware and
+            "exec_vtw_q, 1'b0, ready_q" in gateware,
+            "the serializer must be gone and STATUS bit 30 must stay free")
+    require("#define SP_R_IN_HEAD4" in source and
+            "#define SP_CTL_POP_IN4" in source and
+            "REG_READ(SP_R_IN_HEAD4)" in source and
+            "sp_ctl(SP_CTL_POP_IN4);" in source and
+            "logic [31:0] in_fifo" in gateware and
+            "SP_REG_IN_HEAD4" in gateware and
+            "axi_pop_in4_accept" in gateware,
+            "accelerated writes must drain aligned IN words without changing "
+            "the Apple byte protocol")
+
+
+def test_vtw_direct_read_is_complete_and_fail_closed() -> None:
+    source = read(SMARTPORT_C)
+    gateware = read(SMARTPORT_SV)
+    vtw_core = read(VTW_CORE_SV)
+    apple_top = read(APPLE_TOP_SV)
+    card_regs = read(CARD_REGS_H)
+
+    build_start = source.find("static uint8_t sp_vtw_build_spans")
+    shadow_start = source.find("static uint8_t sp_vtw_shadow_write_span")
+    direct_start = source.find("static uint8_t sp_vtw_direct_read_block")
+    execute_start = source.find("static void execute_command", direct_start)
+    require(direct_start >= 0 and execute_start > direct_start,
+            "vTW direct block helper must be present before command dispatch")
+    direct = source[direct_start:execute_start]
+
+    require(build_start >= 0 and shadow_start > build_start and
+            direct_start > shadow_start,
+            "direct block path must preflight all 512 destinations before writing")
+    build = source[build_start:shadow_start]
+    shadow = source[shadow_start:direct_start]
+    require("for (i = 0U; i < SP_VTW_DIRECT_BYTES; ++i)" in build and
+            "sp_vtw_build_spans(apple_addr, sss, 1U," in direct,
+            "direct read must prove all 512 destination mappings before copying")
+    require("bank != spans[span_count - 1U].bank" in build and
+            "span_count++" in build and
+            "for (i = 0U; i < span_count; ++i)" in direct,
+            "legal bank discontinuities must become bounded direct spans")
+    require("apple_addr < 0x0200U" in build and
+            "(uint32_t)apple_addr + SP_VTW_DIRECT_BYTES > 0x10000UL" in build,
+            "direct preflight must reject zero-page/stack and wrapping buffers")
+    require("if (bank > 127U)" in source and
+            "if (spans[i].bank > 1U)" in direct and
+            "sp_vtw_direct_ramworks_block(" in direct,
+            "direct mapping must route RamWorks banks 2..127 to the bulk path")
+    require(direct.count("sp_vtw_is_live()") >= 2,
+            "direct copy must prove vTW live before and after the shadow write")
+    require("CARD_CTRL_VTW_SHADOW_ADDR_REG) & 0x3FFFFUL" in shadow and
+            "span->phys + (uint32_t)span->length" in shadow,
+            "direct copy must verify that the shadow port accepted all bytes")
+    require("#define SP_SSS_VTW_WIDE_BIT     (1UL << 21)" in source and
+            "const uint8_t aux" in source and "const uint8_t wide" in source and
+            "(aux != 0U || wide != 0U)" in source,
+            "SmartPort must use the command's exact bank and wide-main state")
+    post_start = source.find("static uint8_t sp_vtw_post_span")
+    post_end = source.find("static uint8_t sp_vtw_direct_read_block", post_start)
+    post = source[post_start:post_end]
+    require("CARD_CTRL_VTW_POST_STATS_REG" in post and
+            "SP_VTW_POST_CAPACITY - fill" in post and
+            "post_credits--" in post and
+            "REG_WRITE(CARD_CTRL_VTW_POST_PUSH_REG" in post and
+            "CARD_CTRL_VTW_POST_ACCEPT_MASK" in post and
+            "post_count" in post,
+            "video-range direct loads must reserve queue credits in batches "
+            "and prove the final accepted count")
+    require(post.count("REG_READ(CARD_CTRL_VTW_POST_STATUS_REG)") <= 3,
+            "direct video posting must not read POST_STATUS for each byte")
+    require("static uint8_t sp_vtw_wait_video_posts_drained(void)" in post and
+            "SP_VTW_POST_DRAIN_TIMEOUT_US" in post and
+            "SP_VTW_POST_FILL_MASK) == 0U" in post and
+            "sp_vtw_wait_video_posts_drained()" in direct,
+            "a direct video read must not complete until its queued "
+            "motherboard writes have drained")
+    require("assign arm_post_ready = core_active && !eng_post_full && !core_post_req;" in vtw_core and
+            "arm_post_we && arm_post_ready" in vtw_core,
+            "CPU0 posts must share the ordered vTW queue without replacing a core post")
+    require("CARD_CTRL_REG_VTW_POST_PUSH     = 8'h9A" in apple_top and
+            "CARD_CTRL_REG_VTW_POST_STATUS   = 8'h9B" in apple_top and
+            "vtw_arm_post_accept_count_q" in apple_top and
+            "CARD_CTRL_VTW_POST_PUSH_REG" in card_regs and
+            "CARD_CTRL_VTW_POST_STATUS_REG" in card_regs,
+            "PS and PL must agree on the posted-write command and accepted counter")
+    require("CARD_CTRL_REG_VTW_RW_FLUSH      = 8'h9C" in apple_top and
+            "arm_rw_flush_req" in vtw_core and
+            "rw_flush_active_q" in vtw_core and
+            "CARD_CTRL_VTW_RW_FLUSH_REG" in card_regs and
+            "sp_vtw_flush_ramworks_cache()" in source,
+            "PS and PL must flush and invalidate the vTW RamWorks line before bulk DMA")
+    require("psdma_transfer(PSDMA_OWNER_SMARTPORT" in source and
+            "PSDMA_DDR_TO_MC" in source and
+            "g_vtw_direct_ramworks_count++" in source,
+            "RamWorks direct reads must use the owned shared DDR-to-PSRAM service")
+    shadow_host = read(SHADOW_HOST_SV)
+    require("CARD_CTRL_REG_VTW_SHADOW_DATA4  = 8'h9D" in apple_top and
+            "CARD_CTRL_REG_VTW_SHADOW_DATA4_STATUS = 8'h9E" in apple_top and
+            "vtw_shadow_host_port vtw_shadow_host_port_i" in apple_top and
+            "word_fifo_q [0:1]" in shadow_host and
+            "word_accept_count" in shadow_host and
+            "CARD_CTRL_VTW_SHADOW_DATA4_ACCEPT_MASK" in shadow,
+            "packed shadow writes must use a two-word queue with a final "
+            "accepted-count proof")
+    require("output logic [21:0]             sp_sss_snapshot" in vtw_core and
+            ".vtw_sss_snapshot(vtw_sp_sss_snapshot)" in apple_top and
+            "sss_snapshot_q <= vtw_ctrl_write" in read(SMARTPORT_SV),
+            "vTW SmartPort commands must latch the core's private switch state")
+
+    require(source.count("sp_vtw_direct_read_block(") == 3,
+            "only the helper plus ProDOS and SmartPort READBLOCK may use direct copy")
+    require("((direct_completed != 0U) ? SP_CTL_SET_DIRECT : 0U)" in source,
+            "READY must advertise direct completion only after a successful copy")
+    require("if (axi_set_direct && exec_vtw_q) direct_q <= 1'b1;" in gateware and
+            "direct_q       <= 1'b0;" in gateware,
+            "gateware must restrict DIRECT to vTW commands and clear it on reset")
+
+
+def test_vtw_ramworks_dma_freezes_core_and_bounds_polls() -> None:
+    source = read(SMARTPORT_C)
+    vtw_core = read(VTW_CORE_SV)
+    apple_top = read(APPLE_TOP_SV)
+    card_regs = read(CARD_REGS_H)
+    dma_engine = read(APPLE_DMA_SV)
+    dma_command = read(PS_DMA_SV)
+    psdma = read(PSDMA_C)
+
+    require("core_res_n && !rw_hold_q" in vtw_core and
+            "arm_rw_hold_release" in vtw_core and
+            "assign arm_rw_hold_state = rw_hold_q;" in vtw_core,
+            "a RamWorks flush must freeze the core via core_en until CPU0 "
+            "releases it")
+    require("wire rw_flush_unsafe =" in vtw_core and
+            "(xstate_q == X_RW_LOOKUP)" in vtw_core and
+            "rw_flush_pending_q && !arm_rw_hold_release" in vtw_core and
+            "!rw_flush_unsafe" in vtw_core,
+            "the flush must wait out the FSM's one-access lookahead before "
+            "taking the cache")
+    require("if (!enable || !ab_read.res) begin\n"
+            "                rw_hold_q <= 1'b0;" in vtw_core and
+            "arm_rw_flush_req) begin\n"
+            "                    arm_rw_flush_done <= 1'b1;" in vtw_core,
+            "session end or Apple RES# must auto-release a frozen core")
+    require("rw_release_pending_q" in vtw_core and
+            "if (rw_flush_active_q) begin" in vtw_core and
+            "rw_release_pending_q <= 1'b1;" in vtw_core and
+            "rw_flush_pending_q && !arm_rw_hold_release" in vtw_core and
+            "rw_flush_pending_q <= 1'b0;\n"
+            "                        arm_rw_flush_done  <= 1'b1;" in vtw_core,
+            "release must wait for an active writeback and cancel a pending flush cleanly")
+    require("vtw_arm_rw_release_pulse_q" in apple_top and
+            "vtw_arm_rw_hold_state," in apple_top,
+            "apple_top must expose the release command and held status")
+    require("CARD_CTRL_VTW_RW_FLUSH_HELD_BIT" in card_regs and
+            "CARD_CTRL_VTW_RW_FLUSH_RELEASE_BIT" in card_regs and
+            "sp_vtw_release_core_hold()" in source and
+            "CARD_CTRL_VTW_RW_FLUSH_HELD_BIT) != 0U)" in source,
+            "the PS must demand HELD on flush completion and release after DMA")
+    require("for (;;)" not in source and
+            "SP_VTW_FLUSH_POLLS" in source and
+            "SP_VTW_DMA_TIMEOUT_US" in source and
+            "g_vtw_dma_fault = 1U;" in source,
+            "every CPU0 poll must be bounded, with a sticky fault on DMA timeout")
+    require("psdma_abort_owned" in psdma and
+            "PSDMA_ERR_ABORT" in source and
+            "SP_VTW_COPY_FATAL" in source and
+            "direct_rc == SP_VTW_COPY_FATAL" in source,
+            "a DMA timeout must drain or fail closed, never start byte fallback beside a live DMA")
+    require("input  logic                 req_abort" in dma_engine and
+            "S_ABORT_DDR_R" in dma_engine and
+            "S_ABORT_MC_WAIT" in dma_engine and
+            "req_abort_done" in dma_engine,
+            "the DMA engine must drain accepted AXI and PSRAM work on abort")
+    require("REG_CONTROL" in dma_command and
+            "ps_cmd_busy_q" in dma_command and
+            "ps_cmd_aborted_q" in dma_command and
+            "dma_req_abort_done" in dma_command,
+            "the PS DMA command block must expose busy and completed abort state")
+    require("CARD_CTRL_VTW_STATUS_ENABLE_EFF" in source and
+            "g_vtw_dma_fault = 0U;" in source,
+            "the sticky DMA fault must clear only after the vTW session ends")
+    require("g_cache[i].block_num >= block_num" in source and
+            "g_cache[i].block_num < block_num + fill_blocks" in source,
+            "read-ahead fills must retire duplicate copies cached outside "
+            "the group")
+
+
+def test_smartport_latency_and_cache_measurements() -> None:
+    source = read(SMARTPORT_C)
+
+    require("XTime_GetTime(&now);\n    g_irq_tick = now;" in source and
+            "XTime_GetTime(&dispatch_tick);" in source and
+            "XTime_GetTime(&ready_tick);" in source,
+            "SmartPort must measure IRQ-to-dispatch and IRQ-to-READY time")
+    execute = source[source.find("static void execute_command"):
+                     source.find("/* ------------------------------------------------------------------ */\n"
+                                 "/* IRQ handler", source.find("static void execute_command"))]
+    require(execute.find("XTime_GetTime(&dispatch_tick);") <
+            execute.find("const uint32_t hw_status = sp_hw_status();") <
+            execute.find("sp_drain(g_cmd_buf"),
+            "dispatch time must be sampled before MMIO and command draining")
+    require("g_cache_hit_count++" in source and
+            "g_cache_miss_count++" in source and
+            "g_cache_bypass_count++" in source,
+            "cache hit, miss, and RAM-disk bypass paths must be counted")
+    require("sd: lat dispatch us" in source and
+            "sd: lat ready us" in source and
+            "sd: cache hit=" in source,
+            "sd status must report the new latency and cache measurements")
+
+
+def test_vtw_direct_write_preflight_is_fail_closed() -> None:
+    source = read(SMARTPORT_C)
+    gateware = read(SMARTPORT_SV)
+    apple_top = read(APPLE_TOP_SV)
+    card_regs = read(CARD_REGS_H)
+    shadow_host = read(SHADOW_HOST_SV)
+    rom = read(SMARTPORT_ASM)
+
+    require("vtw_ctrl_snap_q <= {ready_q, direct_q, 1'b1, 5'b00000};" in gateware and
+            "AND #$20" in rom and "JSR WRCMD" in rom and
+            "BVS WRDIRECT" in rom,
+            "only the vTW ROM path may preflight and omit a write payload")
+    require("SP_FAMILY_PREFLIGHT_BIT" in source and
+            "g_vtw_write_preflight.prefix" in source and
+            "memmove(g_cmd_buf + g_vtw_write_preflight.prefix_len" in source and
+            "direct_write_requested" in source,
+            "CPU0 must preserve the drained command prefix across preflight")
+    require("sp_vtw_build_spans(apple_addr, sss, 0U," in source and
+            "SP_SSS_RAMRD_BIT" in source and
+            "sp_vtw_direct_source_eligible" in source,
+            "write sources must use the read-side MMU map and prove every span")
+    require("sp_vtw_direct_write_source(" in source and
+            "if (direct_rc == SP_VTW_COPY_COMPLETE)" in source and
+            "write_data = g_scratch;" in source and
+            "g_vtw_write_fault_count++" in source,
+            "media writes must start only after a complete direct source copy")
+    require("CARD_CTRL_REG_VTW_SHADOW_READ4 = 8'h9F" in apple_top and
+            "CARD_CTRL_REG_VTW_SHADOW_READ4_DATA = 8'hA0" in apple_top and
+            "CARD_CTRL_REG_VTW_SHADOW_READ4_STATUS = 8'hA1" in apple_top and
+            "word_read_count" in shadow_host and
+            "SH_WORD_CAPTURE" in shadow_host and
+            "CARD_CTRL_VTW_SHADOW_READ4_COUNT_MASK" in card_regs,
+            "packed shadow reads must expose ready, busy, and a completion proof")
+    require("PSDMA_MC_TO_DDR" in source and
+            "Xil_DCacheFlushRange((UINTPTR)data, length);" in source and
+            "Xil_DCacheInvalidateRange((UINTPTR)data, length);" in source,
+            "RamWorks write sources must use coherent PSRAM-to-DDR DMA")
+
+
+def test_compositor_yields_to_pending_smartport_commands() -> None:
+    source = read(SMARTPORT_C)
+    header = read(SMARTPORT_H)
+    compositor = read(COMPOSITOR_C)
+
+    require("uint8_t smartport_service_has_pending(void);" in header and
+            "return (g_cmd_pending_count != 0U) ? 1U : 0U;" in source,
+            "long CPU0 work needs a cheap IRQ-updated pending check")
+    require("COMPOSITOR_SP_ROWS_PER_SLICE 16" in compositor and
+            "compositor_smartport_checkpoint();" in compositor and
+            "smartport_service_poll();" in compositor and
+            "blit_apple_2x2_serviced" in compositor and
+            "blit_apple_2x4_serviced" in compositor,
+            "Apple frame copies must service SmartPort between bounded row slices")
 
 
 def test_rejects_duplicate_image_paths() -> None:
@@ -244,6 +559,12 @@ TESTS = [
     test_units_select_device_table_entries,
     test_status_reports_present_devices_and_per_device_geometry,
     test_command_path_uses_cache_for_reads_and_writes,
+    test_vtw_uses_readahead_and_word_wide_response_buffer,
+    test_vtw_direct_read_is_complete_and_fail_closed,
+    test_vtw_ramworks_dma_freezes_core_and_bounds_polls,
+    test_smartport_latency_and_cache_measurements,
+    test_vtw_direct_write_preflight_is_fail_closed,
+    test_compositor_yields_to_pending_smartport_commands,
     test_rejects_duplicate_image_paths,
     test_frontend_uses_sp1_for_current_debug_compatibility,
     test_ramdisk_survives_media_refresh_contract,

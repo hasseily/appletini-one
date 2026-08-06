@@ -44,7 +44,7 @@ static uint8_t s_aux_mem[0x10000];
 volatile uint8_t *const g_main_bank = s_main_mem;
 volatile uint8_t *const g_aux_bank  = s_aux_mem;
 volatile uint32_t g_resync_pending  = 0u;
-volatile uint32_t g_shr_shadow_generation = 1u;
+volatile uint32_t g_video_shadow_generation = 1u;
 
 static uint8_t s_slot_mem[COMP_APPLE_SLOT_COUNT][COMP_APPLE_SLOT_BYTES];
 const uint32_t comp_apple_slot_addr[COMP_APPLE_SLOT_COUNT] = {
@@ -175,7 +175,7 @@ static void feed(uint64_t rec)
         }
         if ((uint16_t)(a & 0xFFFFu) >= 0x2000u &&
             (uint16_t)(a & 0xFFFFu) <= 0x9FFFu) {
-            g_shr_shadow_generation++;
+            g_video_shadow_generation++;
         }
     }
     apple_cycle_renderer_on_record(rec);
@@ -213,15 +213,24 @@ static void video7_select_mode(uint8_t mode)
 {
     uint32_t sw;
 
-    /* OFF-ON-OFF-ON-OFF. The first ON clocks mode bit 0 from !80COL;
-     * the second ON clocks mode bit 1. */
-    feed(rec_softswitch(0xC05Fu, 0u));
-    sw = ((mode & 0x01u) != 0u) ? 0u : (1u << ACE_SWB_80COL_BIT);
-    feed(rec_softswitch(0xC05Eu, sw));
-    feed(rec_softswitch(0xC05Fu, sw));
+    /* Real-world select shape (A2Desktop lib/monocolor.s): five AN3
+     * toggles $C05E,$C05F,$C05E,$C05F,$C05E. Each $C05F is an AN3
+     * rising edge clocking !80COL into the card's shift register --
+     * first edge into bit 1, second into bit 0 (AppleWin RGBMonitor
+     * "latch F2,F1") -- and the final $C05E commits the mode with DHGR
+     * left enabled. The interleaved 80COL writes, including the restore
+     * before the final toggle, must not disturb the sequence. */
     sw = ((mode & 0x02u) != 0u) ? 0u : (1u << ACE_SWB_80COL_BIT);
+    feed(rec_softswitch(((mode & 0x02u) != 0u) ? 0xC00Cu : 0xC00Du, sw));
     feed(rec_softswitch(0xC05Eu, sw));
     feed(rec_softswitch(0xC05Fu, sw));
+    sw = ((mode & 0x01u) != 0u) ? 0u : (1u << ACE_SWB_80COL_BIT);
+    feed(rec_softswitch(((mode & 0x01u) != 0u) ? 0xC00Cu : 0xC00Du, sw));
+    feed(rec_softswitch(0xC05Eu, sw));
+    feed(rec_softswitch(0xC05Fu, sw));
+    sw = (1u << ACE_SWB_80COL_BIT);
+    feed(rec_softswitch(0xC00Du, sw));
+    feed(rec_softswitch(0xC05Eu, sw));
 }
 
 /* ---------- file + dump helpers ---------- */
@@ -406,8 +415,11 @@ static void t2_legacy_weave(void)
 
     /* show_hgr restores all HGR switches after the MLI close. */
     legacy_frame(SW_HGR);
+    expect(s_pub_mode == APPLE_FB_DISPLAY_MODE_LEGACY,
+           "T2 waits one stable frame before publishing the weave");
+    legacy_frame(SW_HGR);
     expect(s_pub_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I,
-           "T2 publishes the completed weave at its first frame start");
+           "T2 publishes the completed weave after the stable frame");
     legacy_frame(SW_HGR);
     legacy_frame(SW_HGR);
     expect(s_pub_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I,
@@ -543,8 +555,11 @@ static void t3_shr_transitions(void)
     rebuilt = g_acr_shr_cache_rebuilds;
     feed(rec_write(0x012000u, (uint8_t)(old_pixel ^ 0x01u)));
     shr_marker();
+    expect(s_pub_count == published,
+           "T3 changed shadow waits one stable marker before rebuild");
+    shr_marker();
     expect(s_pub_count == published + 1u,
-           "T3 one shadow write rebuilds and publishes at next marker");
+           "T3 one shadow write rebuilds after its stable marker");
     expect(g_acr_shr_cache_rebuilds == rebuilt + 1u,
            "T3 one shadow write counts one cache rebuild");
 

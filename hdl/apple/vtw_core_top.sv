@@ -156,6 +156,9 @@ module vtw_core_top (
     input  logic                    sp_req_ready,
     input  logic                    sp_resp_valid,
     input  logic [7:0]              sp_resp_rdata,
+    /* Exact private state for the SmartPort command snapshot. Bit 21 is
+     * the effective wide-main video flag; bits 20:0 match SP_REG_SSS. */
+    output logic [21:0]             sp_sss_snapshot,
 
     // ARM shadow access (port B), AxiSimple-mapped in apple_top.
     input  logic                    sh_en,
@@ -173,6 +176,29 @@ module vtw_core_top (
     output logic                    arm_req_busy,
     output logic                    arm_resp_valid,  // 1-clk pulse
     output logic [7:0]              arm_resp_rdata,
+
+    /* CPU0 posted-write injection. SmartPort uses this only while the core
+     * waits for its command response: shadow RAM receives the block through
+     * port B, while video-window bytes enter the same ordered queue used by
+     * normal core writes. arm_post_ready is a true per-write handshake. */
+    input  logic                    arm_post_we,
+    input  logic [15:0]             arm_post_addr,
+    input  logic [7:0]              arm_post_wdata,
+    output logic                    arm_post_ready,
+
+    /* CPU0 flush+hold for SmartPort direct copies into RamWorks. A
+     * flush request freezes the core by gating core_en; once the
+     * one-access-lookahead xstate FSM has drained clear of the RamWorks
+     * cache states and the PSRAM channel is idle, the dirty line is
+     * written back, the cache invalidated, and done pulsed. The core
+     * stays frozen until arm_rw_hold_release, so the PS-DMA block write
+     * cannot race any core access -- including an IRQ handler's stack
+     * pushes into a RamWorks bank. Session end or Apple RES#
+     * auto-releases: a wedged CPU0 must never leave the Apple frozen. */
+    input  logic                    arm_rw_flush_req,
+    input  logic                    arm_rw_hold_release,
+    output logic                    arm_rw_flush_done,
+    output logic                    arm_rw_hold_state,
 
     // Status / diagnostics (`:vtw status`).
     output logic [1:0]              c074_state,
@@ -394,6 +420,24 @@ module vtw_core_top (
      * load, including its mode magic at $9DFC. */
     logic shr_post_main_wide_q;
     wire post_main_wide_eff = post_main_wide | shr_post_main_wide_q;
+    assign sp_sss_snapshot = {
+        post_main_wide_eff,
+        vsss.sw_ramworks_bank,
+        vsss.sw_lcram_write,
+        vsss.sw_lcram_read,
+        vsss.sw_lcram_bank2,
+        vsss.sw_dhires,
+        vsss.sw_80col,
+        vsss.sw_altcharset,
+        vsss.sw_hires,
+        vsss.sw_page2,
+        vsss.sw_mixed,
+        vsss.sw_text,
+        vsss.sw_altzp,
+        vsss.sw_ramwrt,
+        vsss.sw_ramrd,
+        vsss.sw_80store
+    };
     /* Posted write-through: video-window writes to main (bank 0) AND base
      * aux (bank 1). The bus cycle carries only the Apple address; the
      * motherboard's own 80STORE/PAGE2/RAMWRT state -- which mirrors the
@@ -527,6 +571,8 @@ module vtw_core_top (
     logic [7:0]  eng_resp_rdata;
     logic        eng_post_we;
     logic        eng_post_full;
+    logic [15:0] eng_post_addr;
+    logic [7:0]  eng_post_wdata;
     logic        eng_bad_c000_pulse;
     logic [15:0] dbg_pc_trace_q [0:15];
     logic        dbg_trace_frozen_q;
@@ -583,8 +629,8 @@ module vtw_core_top (
         .sync_resp_valid(eng_resp_valid),
         .sync_resp_rdata(eng_resp_rdata),
         .post_we(eng_post_we),
-        .post_addr(cycle_addr_q),
-        .post_wdata(cycle_wdata_q),
+        .post_addr(eng_post_addr),
+        .post_wdata(eng_post_wdata),
         .post_full(eng_post_full),
         .post_fill(post_fill),
         .bus_owned(bus_owned),
@@ -766,8 +812,10 @@ module vtw_core_top (
      * lands in a cached line, so a flush is always a full-line write and
      * sequential traffic costs one PSRAM op per 8 bytes. No other agent
      * touches banks 2..128 during a session (posted writes are banks 0/1
-     * only, parked cycles are reads, PS DMA stays out of RamWorks space
-     * while a session runs), so the cache cannot go stale. A dirty line
+     * only and parked cycles are reads). SmartPort freezes the core, then
+     * flushes and invalidates this line before its PS-DMA block writes and
+     * keeps it frozen until the DMA completes, so the cache cannot go stale.
+     * A dirty line
      * is flushed by the sequencer below whenever the core drops into
      * reset -- session end, ARM re-hold, or Apple RES# -- so RamWorks
      * contents survive warm resets and handback; the cache invalidates
@@ -781,6 +829,10 @@ module vtw_core_top (
     logic        rw_req_valid_q;
     logic        rw_req_rw_q;
     logic [23:0] rw_req_addr_q;
+    logic        rw_flush_pending_q;
+    logic        rw_flush_active_q;
+    logic        rw_release_pending_q;
+    logic        rw_hold_q;
 
     wire [20:0] xl_line = xl_decoded[23:3];
     wire [2:0]  xl_lane = xl_decoded[2:0];
@@ -934,9 +986,18 @@ module vtw_core_top (
     end
 
     assign fsm_req_valid = (xstate_q == X_BUS) && core_run && ab_read.res;
-    assign eng_post_we   = (core_active && (xstate_q == X_ROUTE) &&
-                            xl_is_posted && !eng_post_full) ||
-                           ((xstate_q == X_POST_STALL) && !eng_post_full);
+    wire core_post_req = (core_active && (xstate_q == X_ROUTE) &&
+                          xl_is_posted) || (xstate_q == X_POST_STALL);
+    wire core_post_push = core_post_req && !eng_post_full;
+    /* SmartPort holds the core outside X_ROUTE until READY, so contention is
+     * not expected. Keeping it in the handshake still makes a stray CPU0
+     * request fail closed instead of replacing a core write. */
+    assign arm_post_ready = core_active && !eng_post_full && !core_post_req;
+    assign eng_post_we    = core_post_push || (arm_post_we && arm_post_ready);
+    assign eng_post_addr  = (arm_post_we && arm_post_ready)
+                          ? arm_post_addr : cycle_addr_q;
+    assign eng_post_wdata = (arm_post_we && arm_post_ready)
+                          ? arm_post_wdata : cycle_wdata_q;
 
     /* Completing edge: enable seen high by the core at the clock edge. */
     wire complete_mem    = (xstate_q == X_MEM_DONE)    && pace_ok;
@@ -947,9 +1008,22 @@ module vtw_core_top (
                            (!status_vbl_data_phase_q ||
                             status_vbl_sampled_q);
     wire complete_dead   = (xstate_q == X_DEAD)        && pace_ok;
-    assign core_en = core_res_n && (complete_mem || complete_bus ||
-                                    complete_rw || complete_sp ||
-                                    complete_status || complete_dead);
+    assign core_en = core_res_n && !rw_hold_q &&
+                     (complete_mem || complete_bus ||
+                      complete_rw || complete_sp ||
+                      complete_status || complete_dead);
+    assign arm_rw_hold_state = rw_hold_q;
+
+    /* The xstate FSM runs one access ahead of a frozen core: these are
+     * the only states from which it can still reach the RamWorks cache.
+     * From every other state the in-flight access drains to a *_DONE
+     * state with no RamWorks traffic and parks there against the gated
+     * core_en, so the CPU0 flush below may safely take the cache. */
+    wire rw_flush_unsafe =
+        core_res_n &&
+        ((xstate_q == X_CAPTURE) || (xstate_q == X_ROUTE) ||
+         (xstate_q == X_RW_LOOKUP) || (xstate_q == X_RW_FLUSH) ||
+         (xstate_q == X_RW_FILL));
 
     assign c074_state      = c074_q;
     assign cnt_core_cycles = cnt_core_q;
@@ -985,11 +1059,42 @@ module vtw_core_top (
             rw_req_valid_q      <= 1'b0;
             rw_req_rw_q         <= 1'b1;
             rw_req_addr_q       <= '0;
+            rw_flush_pending_q  <= 1'b0;
+            rw_flush_active_q   <= 1'b0;
+            rw_release_pending_q <= 1'b0;
+            rw_hold_q           <= 1'b0;
+            arm_rw_flush_done   <= 1'b0;
             cycle_sp_iosel7_q   <= 1'b0;
             sp_inflight_q       <= 1'b0;
             slow_cnt_q          <= 16'd0;
         end
         else begin
+            arm_rw_flush_done <= 1'b0;
+
+            if (arm_rw_flush_req) begin
+                rw_flush_pending_q <= 1'b1;
+                rw_release_pending_q <= 1'b0;
+                rw_hold_q          <= 1'b1;
+            end
+            if (arm_rw_hold_release) begin
+                if (rw_flush_active_q) begin
+                    /* The line write has reached the PSRAM channel and
+                     * cannot be cancelled. Keep the core frozen until its
+                     * response arrives, then release below. */
+                    rw_release_pending_q <= 1'b1;
+                end else begin
+                    rw_hold_q            <= 1'b0;
+                    rw_release_pending_q <= 1'b0;
+                    /* A release while the flush is still pending is CPU0's
+                     * timeout path. Cancel it and acknowledge completion so
+                     * apple_top cannot leave STATUS.busy stuck forever. */
+                    if (rw_flush_pending_q || arm_rw_flush_req) begin
+                        rw_flush_pending_q <= 1'b0;
+                        arm_rw_flush_done  <= 1'b1;
+                    end
+                end
+            end
+
             /* Status-only output sampled by CPU1. Registering it keeps the
              * effective-speed decode out of the AXI read-data path; its
              * one-fabric-clock reporting latency is immaterial to the
@@ -1027,6 +1132,7 @@ module vtw_core_top (
              * the session is disabled -- between sessions the motherboard
              * CPU can write aux banks through the serve path. */
             if (!core_res_n && rwc_dirty_q &&
+                !rw_flush_pending_q && !rw_flush_active_q &&
                 !rw_inflight_q && !rw_req_valid_q) begin
                 rw_req_valid_q <= 1'b1;
                 rw_req_rw_q    <= 1'b0;
@@ -1037,6 +1143,54 @@ module vtw_core_top (
             end
             if (!enable && !rwc_dirty_q) begin
                 rwc_valid_q <= 1'b0;
+            end
+
+            /* SmartPort direct copies into RamWorks use the PS DMA client,
+             * which sits outside this cache. The flush request has already
+             * frozen the core (rw_hold_q gates core_en); wait for the
+             * lookahead access to drain clear of the cache states, then
+             * write back a dirty line and invalidate. done implies both
+             * "cache clean" and "core frozen" -- CPU0 runs the DMA, then
+             * releases the hold. */
+            if (rw_flush_pending_q && !arm_rw_hold_release &&
+                !rw_flush_unsafe &&
+                !rw_inflight_q && !rw_req_valid_q) begin
+                rw_flush_pending_q <= 1'b0;
+                if (rwc_dirty_q) begin
+                    rw_req_valid_q    <= 1'b1;
+                    rw_req_rw_q       <= 1'b0;
+                    rw_req_addr_q     <= {rwc_line_q, 3'b000};
+                    rw_flush_active_q <= 1'b1;
+                end else begin
+                    rwc_valid_q       <= 1'b0;
+                    rw_flush_active_q <= 1'b0;
+                    arm_rw_flush_done <= 1'b1;
+                end
+            end
+            if (rw_flush_active_q && rw_resp_valid && !rw_req_rw_q) begin
+                rwc_dirty_q         <= 1'b0;
+                rwc_valid_q         <= 1'b0;
+                rw_flush_active_q   <= 1'b0;
+                arm_rw_flush_done   <= 1'b1;
+                if (rw_release_pending_q || arm_rw_hold_release) begin
+                    rw_hold_q            <= 1'b0;
+                    rw_release_pending_q <= 1'b0;
+                end
+            end
+            /* Auto-release: session teardown or Apple RES# must never
+             * leave the core frozen by a wedged CPU0. A cancelled flush
+             * still pulses done -- with the held status low -- so the PS
+             * side sees closure and falls back. Placed last so it
+             * overrides a same-cycle request or completion. */
+            if (!enable || !ab_read.res) begin
+                rw_hold_q <= 1'b0;
+                if (rw_flush_pending_q || rw_flush_active_q ||
+                    arm_rw_flush_req) begin
+                    arm_rw_flush_done <= 1'b1;
+                end
+                rw_flush_pending_q <= 1'b0;
+                rw_flush_active_q  <= 1'b0;
+                rw_release_pending_q <= 1'b0;
             end
             // Pace bookkeeping: the divider counts fabric clocks, the
             // 1 MHz lock counts Apple data snaps. Both clear on the

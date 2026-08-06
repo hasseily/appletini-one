@@ -86,9 +86,15 @@ def static_checks() -> None:
     require("video7_select_mix:" in viewer and
             "video7_select_normal:" in viewer and
             "video7_modes,x" in viewer and
-            "bit AN3OFF" in viewer and "bit AN3ON" in viewer and
+            "bit DHGRON" in viewer and "bit DHGROFF" in viewer and
             "sta COL80ON" in viewer and "sta COL80OFF" in viewer,
             "a2imgview must select Video-7 state 10 with five AN3 accesses")
+    mix_sel = viewer.split("video7_select_mix:", 1)[1].split("rts", 1)[0]
+    require(mix_sel.index("sta COL80OFF") < mix_sel.index("sta COL80ON") and
+            mix_sel.count("bit DHGROFF") == 2 and
+            mix_sel.count("bit DHGRON") == 3,
+            "MIX must clock !80COL=1 on the first $C05F edge and 0 on the "
+            "second (AppleWin latch F2,F1), committing on the fifth toggle")
 
     # Keep the visible paint-in, but never expose a half-loaded extended
     # mode. HGRi/DHRi stage page 2 and write the mode byte after close;

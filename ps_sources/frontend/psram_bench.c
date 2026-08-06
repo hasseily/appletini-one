@@ -7,6 +7,7 @@
 
 #include "../lib/framebuffer.h"
 #include "../lib/common.h"
+#include "../lib/psdma.h"
 #include "psram_bench.h"
 
 #define REG_PSRAM_CTRL    (FB_CONTROL_BASE + 0x38U)
@@ -373,11 +374,6 @@ int psram_bench_step(psram_ui_state_t *p)
 #include "xil_cache.h"
 #include "../lib/uart.h"
 
-#define CAL_PSDMA_MC_ADDR    0x40030000U
-#define CAL_PSDMA_DDR_ADDR   0x40030004U
-#define CAL_PSDMA_LEN_RW     0x40030008U
-#define CAL_PSDMA_STATUS     0x4003000CU
-#define CAL_PSDMA_RW_TO_MC   (1UL << 31)
 #define CAL_DCOUNT_REG       0x4000018CU   /* CARD_CTRL word 0x63 */
 #define CAL_SCRATCH_MC       0x00000040U   /* bank-0 region (aliased by
                                              * RamWorks bank 128); cal runs
@@ -385,22 +381,23 @@ int psram_bench_step(psram_ui_state_t *p)
                                              * the 64-byte scribble lands in
                                              * power-on-undefined content */
 #define CAL_BYTES            64U
+#define CAL_PSDMA_TIMEOUT_US 100000U
 
 static uint8_t g_cal_buf[CAL_BYTES] __attribute__((aligned(64)));
 static uint8_t g_cal_ref[CAL_BYTES] __attribute__((aligned(64)));
 
 static int cal_psdma(uint32_t mc, uint32_t ddr, uint32_t len, uint32_t to_mc)
 {
-    uint32_t i;
-    REG_WRITE(CAL_PSDMA_MC_ADDR, mc);
-    REG_WRITE(CAL_PSDMA_DDR_ADDR, ddr);
-    REG_WRITE(CAL_PSDMA_LEN_RW, (to_mc ? CAL_PSDMA_RW_TO_MC : 0U) | len);
-    for (i = 0U; i < 5000000U; ++i) {
-        if ((REG_READ(CAL_PSDMA_STATUS) & 1U) != 0U) {
-            return 0;
-        }
-    }
-    return -1;
+    const psdma_result_t rc = psdma_transfer(
+        PSDMA_OWNER_PSRAM_CAL,
+        mc,
+        ddr,
+        len,
+        (to_mc != 0U) ? PSDMA_DDR_TO_MC : PSDMA_MC_TO_DDR,
+        CAL_PSDMA_TIMEOUT_US,
+        CAL_PSDMA_TIMEOUT_US);
+
+    return (rc == PSDMA_OK) ? 0 : -1;
 }
 
 static uint32_t cal_setting_passes(uint32_t setting)

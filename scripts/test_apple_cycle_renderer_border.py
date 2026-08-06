@@ -64,8 +64,11 @@ def test_palette_and_latch() -> None:
             "apple_video_settings_border_color(settings)" in renderer,
             "Apple reset must restore the configured border color")
     require("case 0xC034U:" in renderer and
-            "s_vidhd_border_color = apple_video_iigs_border_color_clamp(data);" in renderer,
-            "$C034 writes must update only the low-nibble latch")
+            "const uint8_t color = apple_video_iigs_border_color_clamp(data);" in renderer and
+            "if (s_vidhd_border_color != color)" in renderer and
+            "s_vidhd_border_color = color;" in renderer and
+            "s_shr_cache_invalidate = 1u;" in renderer,
+            "$C034 writes must clamp the color latch and invalidate a cached SHR frame")
 
 
 def test_cycle_emission_and_handoff() -> None:
@@ -79,12 +82,16 @@ def test_cycle_emission_and_handoff() -> None:
             "border emitter must separate right, left, and border-only regions")
     require("s_frame_end_pending = 1u;" in renderer and
             "line == 0u && cycle < ATN_BORDER_H_CYCLES" in renderer and
-            "on_frame_end();\n        on_frame_start();" in renderer,
+            "on_frame_end();" in renderer and
+            "on_frame_start();" in renderer and
+            "s_frame_end_pending = 0u;" in renderer,
             "frame publish must wait until wrapped right-border cycles are stored")
     require("restore_left_border(render_line, render_cycle);" in renderer and
             "s_left_border_colors[left_index] = color;" in renderer,
             "AppleWin chroma preroll must not overwrite visible left-border pixels")
-    require("apple_fb_writer_publish_frame(s_frame_display_mode," in renderer,
+    require("apple_fb_writer_publish_frame_detail(s_frame_display_mode," in renderer and
+            "s_frame_format_detail," in renderer and
+            "s_vidhd_border_color);" in renderer,
             "published frames must carry their sampled border color")
 
 

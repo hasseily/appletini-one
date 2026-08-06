@@ -43,6 +43,7 @@
 #include "apple_cycle_renderer.h"
 #include "apple_fb_handoff.h"
 #include "card_control_regs.h"
+#include "smartport_service.h"
 #include "compositor.h"
 #include "compositor_layout.h"
 #include "scanlines.h"
@@ -427,6 +428,63 @@ static void effect_clear_history(void)
     s_effect_history_h = 0U;
 }
 
+#define COMPOSITOR_SP_ROWS_PER_SLICE 16
+
+/* SmartPort may interrupt CPU0 while it copies an uncached Apple frame. A
+ * whole RGGB pass can take several milliseconds, so check between short row
+ * slices and run the normal foreground service there. This keeps FatFs and
+ * DMA work out of IRQ context and never publishes a half-drawn frame. */
+static inline void compositor_smartport_checkpoint(void)
+{
+    if (smartport_service_has_pending() != 0U) {
+        smartport_service_poll();
+    }
+}
+
+static void blit_apple_2x2_serviced(uint16_t *fb,
+                                    int dst_x,
+                                    int dst_y,
+                                    const uint32_t *src,
+                                    int src_w,
+                                    int src_h,
+                                    int src_stride,
+                                    uint8_t scanline_mode)
+{
+    int row;
+
+    for (row = 0; row < src_h; row += COMPOSITOR_SP_ROWS_PER_SLICE) {
+        const int rows = (src_h - row < COMPOSITOR_SP_ROWS_PER_SLICE)
+                             ? src_h - row : COMPOSITOR_SP_ROWS_PER_SLICE;
+
+        fb16_blit_2x2_scanlines(fb, dst_x, dst_y + row * 2,
+                                src + row * src_stride, src_w, rows,
+                                src_stride, scanline_mode);
+        compositor_smartport_checkpoint();
+    }
+}
+
+static void blit_apple_2x4_serviced(uint16_t *fb,
+                                    int dst_x,
+                                    int dst_y,
+                                    const uint32_t *src,
+                                    int src_w,
+                                    int src_h,
+                                    int src_stride,
+                                    uint8_t scanline_mode)
+{
+    int row;
+
+    for (row = 0; row < src_h; row += COMPOSITOR_SP_ROWS_PER_SLICE) {
+        const int rows = (src_h - row < COMPOSITOR_SP_ROWS_PER_SLICE)
+                             ? src_h - row : COMPOSITOR_SP_ROWS_PER_SLICE;
+
+        fb16_blit_2x4_scanlines(fb, dst_x, dst_y + row * 4,
+                                src + row * src_stride, src_w, rows,
+                                src_stride, scanline_mode);
+        compositor_smartport_checkpoint();
+    }
+}
+
 static void blit_apple_ghosting_2x(uint16_t *fb,
                                    int dst_x,
                                    int dst_y,
@@ -483,6 +541,9 @@ static void blit_apple_ghosting_2x(uint16_t *fb,
             ? blur : (uint8_t)APPLETINI_VIDEO_BLUR_LIGHT;
 
         for (int sy = 0; sy <= src_h; ++sy) {
+            if ((sy & (COMPOSITOR_SP_ROWS_PER_SLICE - 1)) == 0) {
+                compositor_smartport_checkpoint();
+            }
             if (sy < src_h) {
                 const uint32_t *srow = src + sy * src_stride;
                 const uint32_t hist_base = (uint32_t)sy * EFFECT_HISTORY_STRIDE;
@@ -535,6 +596,9 @@ static void blit_apple_ghosting_2x(uint16_t *fb,
     }
 
     for (int sy = 0; sy < src_h; ++sy) {
+        if ((sy & (COMPOSITOR_SP_ROWS_PER_SLICE - 1)) == 0) {
+            compositor_smartport_checkpoint();
+        }
         const uint32_t *srow = src + sy * src_stride;
         const uint32_t hist_base = (uint32_t)sy * EFFECT_HISTORY_STRIDE;
 
@@ -878,7 +942,7 @@ static int draw_apple_subwindow(uint16_t *fb)
                                    s_video_blur_strength,
                                    s_video_glow_strength);
         } else {
-            fb16_blit_2x2_scanlines(fb,
+            blit_apple_2x2_serviced(fb,
                                     (int)COMP_SUBWIN_SHR_X_OFF,
                                     (int)COMP_SUBWIN_SHR_Y_OFF,
                                     src_base,
@@ -916,7 +980,7 @@ static int draw_apple_subwindow(uint16_t *fb)
                                    s_video_blur_strength,
                                    s_video_glow_strength);
         } else {
-            fb16_blit_2x2_scanlines(fb,
+            blit_apple_2x2_serviced(fb,
                                     (int)COMP_SUBWIN_X_OFF,
                                     (int)COMP_SUBWIN_Y_OFF,
                                     srcw,
@@ -978,7 +1042,7 @@ static int draw_apple_subwindow(uint16_t *fb)
                                s_video_blur_strength,
                                s_video_glow_strength);
     } else {
-        fb16_blit_2x4_scanlines(fb,
+        blit_apple_2x4_serviced(fb,
                                 dst_x,
                                 dst_y,
                                 src,

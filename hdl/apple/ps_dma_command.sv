@@ -9,9 +9,9 @@
 //   0x02  LENGTH_RW   [31]=rw, [15:0]=length
 //                              : writing this register kicks off a DMA
 //                                with the currently-latched values
-//   0x03  STATUS      [0]=ps_cmd_complete
-//                              : 0 until apple_dma_engine signals done,
-//                                then 1 until consumed by a PS read.
+//   0x03  STATUS      [0]=complete, [1]=busy, [2]=aborted
+//   0x04  CONTROL     [0]=abort current command. The engine drains any
+//                         accepted AXI/PSRAM operation before ABORTED rises.
 //
 // rw=1 transfers DDR to PSRAM; rw=0 transfers PSRAM to DDR.
 
@@ -28,21 +28,27 @@ module ps_dma_command (
     output logic [15:0]              dma_req_length,
     output logic                     dma_req_rw,
     output logic                     dma_req_valid,
+    output logic                     dma_req_abort,
     input  logic                     dma_req_ready,
-    input  logic                     dma_req_done
+    input  logic                     dma_req_done,
+    input  logic                     dma_req_abort_done
 );
 
     localparam logic [7:0] REG_MC_ADDR   = 8'h00;
     localparam logic [7:0] REG_DDR_ADDR  = 8'h01;
     localparam logic [7:0] REG_LENGTH_RW = 8'h02;
     localparam logic [7:0] REG_STATUS    = 8'h03;
+    localparam logic [7:0] REG_CONTROL   = 8'h04;
 
     logic [23:0] mc_addr_q;
     logic [31:0] ddr_addr_q;
     logic [15:0] length_q;
     logic        rw_q;
     logic        req_valid_q;
+    logic        req_abort_q;
+    logic        ps_cmd_busy_q;
     logic        ps_cmd_complete_q;
+    logic        ps_cmd_aborted_q;
 
     // Detect a read of STATUS by tracking the prior araddr. axidouble's
     // addrdecode advances araddr the cycle after a read fires (see the
@@ -65,6 +71,7 @@ module ps_dma_command (
     assign dma_req_length   = length_q;
     assign dma_req_rw       = rw_q;
     assign dma_req_valid    = req_valid_q;
+    assign dma_req_abort    = req_abort_q;
 
     // Registered rdata mux. axidouble samples rdata one cycle after araddr
     // is presented, so the read path needs a matching one-cycle latency
@@ -75,7 +82,9 @@ module ps_dma_command (
             REG_MC_ADDR:   as_client_rdata_q <= mc_addr_word;
             REG_DDR_ADDR:  as_client_rdata_q <= ddr_addr_q;
             REG_LENGTH_RW: as_client_rdata_q <= length_rw_word;
-            REG_STATUS:    as_client_rdata_q <= {31'h0, ps_cmd_complete_q};
+            REG_STATUS:    as_client_rdata_q <= {
+                29'h0, ps_cmd_aborted_q, ps_cmd_busy_q, ps_cmd_complete_q
+            };
             default:       as_client_rdata_q <= 32'h0000_0000;
         endcase
     end
@@ -88,7 +97,10 @@ module ps_dma_command (
             length_q          <= '0;
             rw_q              <= 1'b0;
             req_valid_q       <= 1'b0;
+            req_abort_q       <= 1'b0;
+            ps_cmd_busy_q     <= 1'b0;
             ps_cmd_complete_q <= 1'b0;
+            ps_cmd_aborted_q  <= 1'b0;
             araddr_prev_q     <= 8'hFF;
         end else begin
             araddr_prev_q <= as_common.araddr;
@@ -96,10 +108,18 @@ module ps_dma_command (
             if (req_valid_q && dma_req_ready)
                 req_valid_q <= 1'b0;
 
-            if (dma_req_done)
+            if (dma_req_done) begin
+                ps_cmd_busy_q     <= 1'b0;
                 ps_cmd_complete_q <= 1'b1;
-            else if (status_read_pulse)
+            end else if (status_read_pulse) begin
                 ps_cmd_complete_q <= 1'b0;
+                ps_cmd_aborted_q  <= 1'b0;
+            end
+            if (dma_req_abort_done) begin
+                req_abort_q      <= 1'b0;
+                ps_cmd_busy_q    <= 1'b0;
+                ps_cmd_aborted_q <= 1'b1;
+            end
 
             if (as_client.awvalid) begin
                 case (as_common.awaddr)
@@ -109,7 +129,17 @@ module ps_dma_command (
                         length_q          <= length_rw_next[15:0];
                         rw_q              <= length_rw_next[31];
                         req_valid_q       <= 1'b1;
+                        req_abort_q       <= 1'b0;
+                        ps_cmd_busy_q     <= 1'b1;
                         ps_cmd_complete_q <= 1'b0;
+                        ps_cmd_aborted_q  <= 1'b0;
+                    end
+                    REG_CONTROL: begin
+                        if (as_common.wstrb[0] && as_common.wdata[0] &&
+                            ps_cmd_busy_q) begin
+                            req_valid_q <= 1'b0;
+                            req_abort_q <= 1'b1;
+                        end
                     end
                     default: ;
                 endcase

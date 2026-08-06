@@ -6,7 +6,7 @@
  * UART input, etc. -- everything that is latency-sensitive to host
  * input. CPU1 owns the Apple-bus stream end-to-end:
  *
- *   1. Drains records from the PL cycle ring (DDR @ 0x3F010000) via
+ *   1. Drains records from the PL cycle ring (DDR @ 0x3F200000) via
  *      apple_cycle_egress_poll().
  *   2. Dispatches per-cycle records into apple_cycle_renderer_on_record
  *      which walks the NTSC core's per-cycle scan state.

@@ -19,8 +19,11 @@
 //                 port would drain at bus rate. Writes never replay
 //                 (parked R/W reads back as 1), so consumption is an
 //                 explicit write.
-//   $CFF1 CTRL  : read  = {ready,7'b0} -- bit7 set once the PS has
-//                         posted a response
+//   $CFF1 CTRL  : read  = {ready,direct,fast,5'b0} -- bit7 marks a response;
+//                         bit6 means a vTW read block already landed in
+//                         shadow memory and has no FIFO payload to drain
+//                         bit5 is set only on vTW reads, so the ROM may
+//                         preflight a write without changing native flow
 //                 write = EXECUTE: firmware finished streaming the
 //                         command (params, plus data for writes) into
 //                         DATA; snapshot soft switches, raise the PS
@@ -36,17 +39,25 @@
 // DATA before the CTRL write.
 //
 // FIFO sizing: a write command = ~16 param bytes + 512 data, so 1K
-// covers both directions with margin. Both are simple BRAM rings.
+// covers both directions with margin. Both rings use 256x32 BRAM. The
+// Apple side still reads and writes bytes; the PS can move aligned words.
 //
 // PS AxiSimple map (word index):
 //   0 STATUS  (RO): [10:0] in_count, [26:16] out_count,
-//                   [28] exec_pending, [29] ready
+//                   [28] exec_pending, [29] ready,
+//                   [30] reserved, [31] command came from vTW
 //   1 IN_HEAD (RO): [7:0] oldest unpopped IN byte, [8] valid
 //   2 OUT_PUSH(WO): pushes wdata[7:0] into the OUT FIFO
 //   3 CONTROL (WO): [0] pop one IN byte     [1] clear IN FIFO
 //                   [2] clear OUT FIFO      [3] set READY
-//                   [4] ack exec_pending
-//   4 SSS     (RO): soft-switch snapshot at EXECUTE for diagnostics
+//                   [4] ack exec_pending     [5] set vTW direct-copy flag
+//                   [6] pop four aligned IN bytes
+//   4 SSS     (RO): soft-switch snapshot at EXECUTE; bit 21 is the vTW
+//                   private wide-main video flag, bits 20:0 are the normal
+//                   switch state
+//   5 OUT_PUSH4(WO): push one aligned 32-bit response word, with its
+//                    bytes consumed least-significant first
+//   6 IN_HEAD4 (RO): oldest four aligned IN bytes, least-significant first
 //
 // When slot_assign == 0 the card is disabled: no decode fires, the
 // AxiSimple mux returns zero, FIFOs hold their state.
@@ -67,13 +78,16 @@ module smartport_card (
      * this port to reach the card's ROM/FIFO logic fabric-internally,
      * so disk I/O runs at core speed instead of 1 MHz bus cycles. The
      * vTW only drives it while it owns slot 7 (post boot-handoff), so it
-     * never races the bus path. target: 0=slot ROM, 1=C8 ROM, 2=DATA,
-     * 3=CTRL, 4=DPOP. 2-cycle read latency (registered ROM/FIFO). */
+    * never races the bus path. target: 0=slot ROM, 1=C8 ROM, 2=DATA,
+     * 3=CTRL, 4=DPOP. vtw_sss_snapshot comes from the same private state
+     * that maps the core's next memory cycle. 2-cycle read latency
+     * (registered ROM/FIFO). */
     input  logic                     vtw_valid,
     input  logic [2:0]               vtw_target,
     input  logic [10:0]              vtw_addr,
     input  logic                     vtw_rw,       // 1 = read, 0 = write
     input  logic [7:0]               vtw_wdata,
+    input  logic [21:0]              vtw_sss_snapshot,
     output logic                     vtw_ready,     // combinational accept
     output logic                     vtw_resp_valid,// 1-clk read-data pulse
     output logic [7:0]               vtw_resp_rdata
@@ -97,8 +111,10 @@ module smartport_card (
 
     // ---- FIFOs (BRAM rings) ----
     localparam int FIFO_AW = 10;                    // 1024 bytes each
-    logic [7:0] in_fifo  [0:(1<<FIFO_AW)-1];
-    logic [7:0] out_fifo [0:(1<<FIFO_AW)-1];
+    (* ram_style = "block" *)
+    logic [31:0] in_fifo  [0:(1<<(FIFO_AW-2))-1];
+    (* ram_style = "block" *)
+    logic [31:0] out_fifo [0:(1<<(FIFO_AW-2))-1];
     logic [FIFO_AW-1:0] in_wr_q, in_rd_q, out_wr_q, out_rd_q;
     logic [FIFO_AW:0]   in_count_q, out_count_q;
     wire in_full   = in_count_q[FIFO_AW];
@@ -106,17 +122,14 @@ module smartport_card (
     wire in_empty  = (in_count_q == '0);
     wire out_empty = (out_count_q == '0);
 
-    // Registered BRAM head reads: rd pointers settle a cycle before
-    // any consumer looks, and consumers are many cycles apart.
-    logic [7:0] in_head_q;
-    logic [7:0] out_head_q;
-    always_ff @(posedge clk) begin
-        in_head_q  <= in_fifo[in_rd_q];
-        out_head_q <= out_fifo[out_rd_q];
-    end
+    // Registered BRAM head read. Byte and packed PS views share this word.
+    logic [31:0] in_word_q;
+    wire [7:0] in_head = in_word_q[8*in_rd_q[1:0] +: 8];
 
     logic ready_q;          // CTRL bit7: PS posted a response
+    logic direct_q;         // CTRL bit6: vTW shadow already has read payload
     logic exec_pending_q;   // EXECUTE seen, PS has not acked
+    logic exec_vtw_q;       // EXECUTE arrived through the vTW fast port
     /* Diagnostic: DPOP writes that found the OUT FIFO empty. Any
      * nonzero here means the firmware consumed more bytes than the PS
      * pushed for some command -- silent zero-fill of block tails,
@@ -126,8 +139,9 @@ module smartport_card (
                             // ($01 = ProDOS, $02 = SmartPort family)
 
     // ---- Soft-switch snapshot ----
-    logic [20:0] sss_snapshot_q;
-    wire [20:0] sss_snapshot_d = {
+    logic [21:0] sss_snapshot_q;
+    wire [21:0] sss_snapshot_d = {
+        1'b0,
         sss.sw_ramworks_bank,
         sss.sw_lcram_write,
         sss.sw_lcram_read,
@@ -233,18 +247,88 @@ module smartport_card (
     localparam logic [7:0] SP_REG_OUT_PUSH = 8'd2;
     localparam logic [7:0] SP_REG_CONTROL  = 8'd3;
     localparam logic [7:0] SP_REG_SSS      = 8'd4;
+    localparam logic [7:0] SP_REG_OUT_PUSH4 = 8'd5;
+    localparam logic [7:0] SP_REG_IN_HEAD4 = 8'd6;
 
     wire axi_out_push = as_client.awvalid &&
                         (as_common.awaddr == SP_REG_OUT_PUSH) &&
                         as_common.wstrb[0];
+    wire axi_out_push4 = as_client.awvalid &&
+                         (as_common.awaddr == SP_REG_OUT_PUSH4) &&
+                         (&as_common.wstrb);
     wire axi_ctrl_wr  = as_client.awvalid &&
                         (as_common.awaddr == SP_REG_CONTROL) &&
                         as_common.wstrb[0];
     wire axi_pop_in    = axi_ctrl_wr && as_common.wdata[0];
+    wire axi_pop_in4   = axi_ctrl_wr && as_common.wdata[6];
     wire axi_clear_in  = axi_ctrl_wr && as_common.wdata[1];
     wire axi_clear_out = axi_ctrl_wr && as_common.wdata[2];
     wire axi_set_ready = axi_ctrl_wr && as_common.wdata[3];
     wire axi_ack_exec  = axi_ctrl_wr && as_common.wdata[4];
+    wire axi_set_direct = axi_ctrl_wr && as_common.wdata[5];
+    wire axi_pop_in4_accept = axi_pop_in4 &&
+                              (in_count_q >= 11'd4) &&
+                              (in_rd_q[1:0] == 2'b00);
+    wire axi_pop_in_accept = axi_pop_in && !in_empty;
+    wire [2:0] in_pop_count = axi_pop_in4_accept ? 3'd4 :
+                              axi_pop_in_accept  ? 3'd1 : 3'd0;
+    wire out_space4 = (out_count_q <= ((1 << FIFO_AW) - 4));
+    /* OUT_PUSH4 is a single BRAM write. The response builder starts from
+     * byte zero after CLR_OUT and emits all full words before its scalar
+     * tail, so every packed write is aligned by contract. */
+    wire axi_out_push4_accept = axi_out_push4 && out_space4 &&
+                                (out_wr_q[1:0] == 2'b00);
+    wire axi_out_push_accept = axi_out_push && !out_full;
+    wire [2:0] out_push_count = axi_out_push4_accept ? 3'd4 :
+                                axi_out_push_accept  ? 3'd1 : 3'd0;
+
+    logic [3:0]  out_mem_we;
+    logic [31:0] out_mem_wdata;
+    logic [3:0]  in_mem_we;
+    logic [31:0] in_mem_wdata;
+    always_comb begin
+        out_mem_we    = 4'b0000;
+        out_mem_wdata = 32'd0;
+        if (axi_out_push4_accept) begin
+            out_mem_we    = 4'b1111;
+            out_mem_wdata = as_common.wdata;
+        end else if (axi_out_push_accept) begin
+            out_mem_we[out_wr_q[1:0]] = 1'b1;
+            out_mem_wdata[8*out_wr_q[1:0] +: 8] = as_common.wdata[7:0];
+        end
+
+        in_mem_we    = 4'b0000;
+        in_mem_wdata = 32'd0;
+        if (data_write_ev && !in_full) begin
+            in_mem_we[in_wr_q[1:0]] = 1'b1;
+            in_mem_wdata[8*in_wr_q[1:0] +: 8] = data_write_byte;
+        end
+    end
+
+    /* Read the post-pop word on the pop edge. This prefetch makes lane
+     * 3 -> lane 0 crossings valid before the next physical or vTW DATA
+     * access, while repeated DATA reads remain side-effect-free. */
+    wire [FIFO_AW-1:0] out_rd_prefetch =
+        out_rd_q + ((pop_write_ev && !out_empty) ? 1'b1 : 1'b0);
+    logic [31:0] out_word_q;
+    wire [7:0] out_head = out_word_q[8*out_rd_q[1:0] +: 8];
+    wire [FIFO_AW-1:0] in_rd_prefetch = in_rd_q + in_pop_count;
+    always_ff @(posedge clk) begin
+        for (int lane = 0; lane < 4; lane++) begin
+            if (in_mem_we[lane]) begin
+                in_fifo[in_wr_q[FIFO_AW-1:2]][8*lane +: 8] <=
+                    in_mem_wdata[8*lane +: 8];
+            end
+        end
+        in_word_q <= in_fifo[in_rd_prefetch[FIFO_AW-1:2]];
+        for (int lane = 0; lane < 4; lane++) begin
+            if (out_mem_we[lane]) begin
+                out_fifo[out_wr_q[FIFO_AW-1:2]][8*lane +: 8] <=
+                    out_mem_wdata[8*lane +: 8];
+            end
+        end
+        out_word_q <= out_fifo[out_rd_prefetch[FIFO_AW-1:2]];
+    end
 
     // ---- Bus write-side (serve) ----
     globals::AppleBus_write ab_write_d;
@@ -276,11 +360,11 @@ module smartport_card (
                 // Empty-pop returns $00; the firmware only reads DATA
                 // after CTRL signalled ready, so this is a guard, not
                 // a protocol case.
-                ab_write_d.wr_data    = out_empty ? 8'h00 : out_head_q;
+                ab_write_d.wr_data    = out_empty ? 8'h00 : out_head;
                 ab_write_d.wr_data_en = 1'b1;
             end
             else if (ab_ctrl_read) begin
-                ab_write_d.wr_data    = {ready_q, 7'b0000000};
+                ab_write_d.wr_data    = {ready_q, direct_q, 6'b000000};
                 ab_write_d.wr_data_en = 1'b1;
             end
             else begin
@@ -305,10 +389,12 @@ module smartport_card (
             in_count_q      <= '0;
             out_count_q     <= '0;
             ready_q         <= 1'b0;
+            direct_q        <= 1'b0;
             exec_pending_q  <= 1'b0;
+            exec_vtw_q      <= 1'b0;
             ctrl_val_q      <= 8'd0;
             dry_pop_count_q <= 16'd0;
-            sss_snapshot_q  <= 21'd0;
+            sss_snapshot_q  <= 22'd0;
             smartport_irq   <= 1'b0;
             vtw_busy_q      <= 1'b0;
             vtw_resp_valid  <= 1'b0;
@@ -322,7 +408,6 @@ module smartport_card (
 
             // Apple side (bus or vTW short-circuit) ---------------------
             if (data_write_ev && !in_full) begin
-                in_fifo[in_wr_q] <= data_write_byte;
                 in_wr_q          <= in_wr_q + 1'b1;
             end
 
@@ -336,9 +421,12 @@ module smartport_card (
 
             if (ctrl_write_ev) begin
                 exec_pending_q <= 1'b1;
+                exec_vtw_q     <= vtw_ctrl_write;
                 ready_q        <= 1'b0;
+                direct_q       <= 1'b0;
                 ctrl_val_q     <= ctrl_write_byte;
-                sss_snapshot_q <= sss_snapshot_d;
+                sss_snapshot_q <= vtw_ctrl_write
+                                    ? vtw_sss_snapshot : sss_snapshot_d;
                 smartport_irq  <= 1'b1;
             end
 
@@ -350,8 +438,8 @@ module smartport_card (
                 vtw_rom_data_q  <= (vtw_target == VTW_TGT_C8_ROM)
                                        ? c8_rom[vtw_addr]
                                        : slot_rom[vtw_addr[7:0]];
-                vtw_data_snap_q <= out_empty ? 8'h00 : out_head_q;
-                vtw_ctrl_snap_q <= {ready_q, 7'b0000000};
+                vtw_data_snap_q <= out_empty ? 8'h00 : out_head;
+                vtw_ctrl_snap_q <= {ready_q, direct_q, 1'b1, 5'b00000};
             end
             else if (vtw_busy_q) begin
                 vtw_busy_q     <= 1'b0;
@@ -359,13 +447,12 @@ module smartport_card (
             end
 
             // PS side ---------------------------------------------------
-            if (axi_out_push && !out_full) begin
-                out_fifo[out_wr_q] <= as_common.wdata[7:0];
-                out_wr_q           <= out_wr_q + 1'b1;
+            if (out_push_count != 3'd0) begin
+                out_wr_q <= out_wr_q + out_push_count;
             end
 
-            if (axi_pop_in && !in_empty) begin
-                in_rd_q <= in_rd_q + 1'b1;
+            if (in_pop_count != 3'd0) begin
+                in_rd_q <= in_rd_q + in_pop_count;
             end
 
             if (axi_clear_in) begin
@@ -377,7 +464,14 @@ module smartport_card (
                 out_wr_q <= '0;
             end
             if (axi_set_ready) ready_q        <= 1'b1;
-            if (axi_ack_exec)  exec_pending_q <= 1'b0;
+            /* Only a command accepted through the private vTW port may
+             * suppress the ROM's payload drain. Native commands ignore an
+             * accidental DIRECT request from PS software. */
+            if (axi_set_direct && exec_vtw_q) direct_q <= 1'b1;
+            if (axi_ack_exec) begin
+                exec_pending_q <= 1'b0;
+                exec_vtw_q     <= 1'b0;
+            end
 
             // Unified counts (Apple and PS sides can move in the same
             // cycle; clears win).
@@ -386,13 +480,13 @@ module smartport_card (
             end else begin
                 in_count_q <= in_count_q
                     + ((data_write_ev && !in_full) ? 1'b1 : 1'b0)
-                    - ((axi_pop_in && !in_empty) ? 1'b1 : 1'b0);
+                    - in_pop_count;
             end
             if (axi_clear_out) begin
                 out_count_q <= '0;
             end else begin
                 out_count_q <= out_count_q
-                    + ((axi_out_push && !out_full) ? 1'b1 : 1'b0)
+                    + out_push_count
                     - ((pop_write_ev && !out_empty) ? 1'b1 : 1'b0);
             end
 
@@ -414,7 +508,9 @@ module smartport_card (
                 in_count_q     <= '0;
                 out_count_q    <= '0;
                 ready_q        <= 1'b0;
+                direct_q       <= 1'b0;
                 exec_pending_q <= 1'b0;
+                exec_vtw_q     <= 1'b0;
                 ctrl_val_q     <= 8'd0;
             end
         end
@@ -443,7 +539,7 @@ module smartport_card (
         end else begin
             case (axi_read_addr_q)
                 SP_REG_STATUS: as_client.rdata = {
-                    2'b00, ready_q, exec_pending_q, 1'b0,
+                    exec_vtw_q, 1'b0, ready_q, exec_pending_q, 1'b0,
                     out_count_q,            // [26:16]
                     5'b00000,
                     in_count_q              // [10:0]
@@ -451,8 +547,9 @@ module smartport_card (
                 SP_REG_CONTROL: as_client.rdata =
                     {8'h0, dry_pop_count_q, ctrl_val_q};
                 SP_REG_IN_HEAD: as_client.rdata =
-                    {23'h0, !in_empty, in_head_q};
-                SP_REG_SSS: as_client.rdata = {11'h0, sss_snapshot_q};
+                    {23'h0, !in_empty, in_head};
+                SP_REG_IN_HEAD4: as_client.rdata = in_word_q;
+                SP_REG_SSS: as_client.rdata = {10'h0, sss_snapshot_q};
                 default: as_client.rdata = 32'h0;
             endcase
         end

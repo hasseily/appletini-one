@@ -450,11 +450,12 @@ PDRD: ; EXECUTE AND GET RETURN CODE
         BNE PDDONE      ; ERROR?
 
         ; READ BLOCK
-        JSR RDBLK1
+        JSR RDBLK2
         JMP PDOKAY
 
 PDWR: ; WRITE BLOCK
-        JSR WRBLOCK
+        LDA #$81        ; vTW ProDOS write preflight family
+        JSR WRPREP
 
         ; EXECUTE AND GET RETURN CODE
         JSR RETCODE
@@ -494,13 +495,14 @@ READBL: ; EXECUTE AND GET STATUS
         ; READ BLOCK
         LDY #$02        ; OFFSET OF BUFFER ADDRESS
         JSR SETADDR
-        JSR RDBLK1
+        JSR RDBLK2
         JMP RETURN
 
 WRITEBL: ; WRITE BLOCK
         LDY #$02        ; OFFSET OF BUFFER ADDRESS
         JSR SETADDR
-        JSR WRBLOCK
+        LDA #$82        ; vTW SmartPort write preflight family
+        JSR WRPREP
         ; FALL THROUGH
 
 FORMAT: ; EXECUTE AND GET STATUS
@@ -745,6 +747,29 @@ RDPAGE: LDA DATA
         STA (ADDRL),Y
         INY
         BNE RDPAGE
+        RTS
+
+RDBLK2: ; vTW may have copied the whole payload directly into shadow RAM
+        BIT CTRL        ; V=1 only for a completed direct-copy response
+        BVS RDDIRECT
+        JSR RDBLK1
+RDDIRECT:
+        RTS
+
+WRPREP: ; vTW may read a proven-safe source block straight from shadow RAM
+        PHA
+        LDA CTRL
+        AND #$20        ; private fast-port marker; always clear on native bus
+        BEQ WRNATIVE
+        PLA
+        JSR WRCMD       ; save command prefix and ask PS to map the source
+        BIT CTRL
+        BVS WRDIRECT    ; PS accepted a direct source; send no payload
+        JMP WRBLOCK
+WRNATIVE:
+        PLA
+        JMP WRBLOCK
+WRDIRECT:
         RTS
 
 WRBLOCK: ; WRITE 512-BYTE BLOCK

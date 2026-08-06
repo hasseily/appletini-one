@@ -94,13 +94,17 @@ module apple_cycle_egress
     // "Ring full for normal records": used >= ring_size - 16 (no room for
     // another 8-byte record without consuming the reservation).
     // "Ring full for gap marker too": used >= ring_size - 8 (no room at all).
-    logic ring_full_for_records;
-    logic ring_full_for_gap;
-    assign ring_full_for_records = (used_bytes >= (ring_size_bytes - 32'd16));
-    assign ring_full_for_gap     = (used_bytes >= (ring_size_bytes - 32'd8));
+    logic ring_full_for_records_now;
+    logic ring_full_for_gap_now;
+    logic ring_full_for_records_q;
+    logic ring_full_for_gap_q;
+    assign ring_full_for_records_now =
+        (used_bytes >= (ring_size_bytes - 32'd16));
+    assign ring_full_for_gap_now =
+        (used_bytes >= (ring_size_bytes - 32'd8));
     // Burst-cap free space clamps at zero to prevent unsigned underflow from
     // being interpreted as available room. Caps at ring_size-16.
-    assign free_bytes = ring_full_for_records ? 32'd0
+    assign free_bytes = ring_full_for_records_now ? 32'd0
                        : ((ring_size_bytes - 32'd16) - used_bytes);
 
     // ---------------- Stage register file ----------------
@@ -181,8 +185,18 @@ module apple_cycle_egress
             sz_wrap_q    <= 5'd16;
             free_beats_q <= 5'd0;
             beat_addr_q  <= 32'h0;
+            ring_full_for_records_q <= 1'b0;
+            ring_full_for_gap_q     <= 1'b0;
         end else begin
             beat_addr_q <= cfg_ring_base_addr + producer_ptr_q;
+
+            /* Keep the 32-bit pointer subtraction and threshold compares off
+             * the S_DRAIN state path. Producer updates are followed by the
+             * notify burst before S_DRAIN can inspect these flags. A consumer
+             * advance can therefore cost one extra stall clock, but cannot
+             * allow an unsafe burst. */
+            ring_full_for_records_q <= ring_full_for_records_now;
+            ring_full_for_gap_q     <= ring_full_for_gap_now;
 
             /* 4KB boundary cap: beat_addr_q[11:3] is the beat index
              * within the 4KB page (0..511); the last 16-beat slot has
@@ -379,10 +393,10 @@ module apple_cycle_egress
                         // Skip emission if even the gap-reserved slot is
                         // gone (consumer fully stopped advancing). When
                         // consumer eventually moves, fall through and emit.
-                        if (!ring_full_for_gap)
+                        if (!ring_full_for_gap_q)
                             state_q <= S_GAP_PREP;
                     end else if (ring_burst_trigger) begin
-                        if (ring_full_for_records) begin
+                        if (ring_full_for_records_q) begin
                             // Ring full for normal records. Queue a
                             // gap marker (ring-full source) and stall.
                             // Consumer must advance before we can do

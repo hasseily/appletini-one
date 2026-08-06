@@ -31,6 +31,10 @@ const char *smartport_service_get_image_path(uint8_t device);
  * cache-fill, writeback, and Apple-bus DMA work runs from main-loop context. */
 void smartport_service_poll(void);
 
+/* Cheap main-loop check used by long CPU0 drawing loops. It reads only the
+ * IRQ-updated pending word; callers may then yield to smartport_service_poll(). */
+uint8_t smartport_service_has_pending(void);
+
 /* Apple RES# seen: abort any in-flight transaction. Clears the service's
  * pending-command count and the card's transport FIFOs/flags (the PL also
  * clears them at the RES# edge; this sweeps up a command that was

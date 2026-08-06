@@ -201,13 +201,23 @@ static uint32_t s_frame_display_mode = APPLE_FB_DISPLAY_MODE_LEGACY;
 static uint32_t s_previous_frame_display_mode = APPLE_FB_DISPLAY_MODE_LEGACY;
 static uint32_t s_frame_format_detail = APPLE_FB_FORMAT_UNKNOWN;
 
-/* SHR decode cache. Full RGGB decode can take longer than one Apple frame.
- * A captured shadow write advances g_shr_shadow_generation. Static frames
- * therefore keep the last published slot without decoding or publishing a
- * duplicate. A rebuild publishes at once, on the same frame marker. */
+/* Full-shadow rendering. Full RGGB decode can take longer than one Apple
+ * frame. A captured video write advances g_video_shadow_generation. Static
+ * SHR frames therefore keep the last published slot without decoding or
+ * publishing a duplicate. A changed shadow must remain stable for one frame
+ * before a rebuild: this prevents repeated 30 ms decodes during a fast bulk
+ * load and lets the capture consumer keep up with the posted-write stream.
+ * Legacy paged modes use the same stable-snapshot rule before weaving fields. */
 static uint8_t  s_shr_cache_valid = 0u;
 static uint8_t  s_shr_cache_invalidate = 1u;
 static uint32_t s_shr_cache_generation = 0u;
+static uint8_t  s_shr_settle_armed = 0u;
+static uint32_t s_shr_settle_generation = 0u;
+static uint8_t  s_legacy_settle_armed = 0u;
+static uint32_t s_legacy_settle_generation = 0u;
+static uint32_t s_legacy_settle_detail = APPLE_FB_FORMAT_UNKNOWN;
+static uint32_t s_legacy_settle_settings = 0u;
+static uint8_t  s_legacy_settle_newvideo = 0u;
 volatile uint32_t g_acr_shr_frames_skipped = 0u;
 volatile uint32_t g_acr_shr_cache_rebuilds = 0u;
 
@@ -2172,6 +2182,29 @@ static uint32_t legacy_format_detail(uint8_t page_mode)
 static uint8_t s_legacy_flip_q = 0u;
 static uint8_t s_prev_legacy_flip_q = 0u;
 
+/* A2Li commits its mode byte only after both fields are in memory. The
+ * capture consumer can still be behind that write, though, so do not pair
+ * the new mode with the current shadow at the same frame edge. Require one
+ * frame marker with no video write or format change before rendering. */
+static uint8_t legacy_shadow_is_settled(void)
+{
+    const uint32_t generation = g_video_shadow_generation;
+
+    if (s_legacy_settle_armed == 0u ||
+        generation != s_legacy_settle_generation ||
+        s_frame_format_detail != s_legacy_settle_detail ||
+        s_video_settings_seen != s_legacy_settle_settings ||
+        s_vidhd_newvideo != s_legacy_settle_newvideo) {
+        s_legacy_settle_generation = generation;
+        s_legacy_settle_detail = s_frame_format_detail;
+        s_legacy_settle_settings = s_video_settings_seen;
+        s_legacy_settle_newvideo = s_vidhd_newvideo;
+        s_legacy_settle_armed = 1u;
+        return 0u;
+    }
+    return 1u;
+}
+
 static void render_legacy_weave_frame_full(void)
 {
     if (g_atn_framebuffer == NULL) {
@@ -2445,6 +2478,13 @@ void apple_cycle_renderer_reset_local_video_state(void)
     s_shr_cache_valid     = 0u;
     s_shr_cache_invalidate = 1u;
     s_shr_cache_generation = 0u;
+    s_shr_settle_armed    = 0u;
+    s_shr_settle_generation = 0u;
+    s_legacy_settle_armed = 0u;
+    s_legacy_settle_generation = 0u;
+    s_legacy_settle_detail = APPLE_FB_FORMAT_UNKNOWN;
+    s_legacy_settle_settings = 0u;
+    s_legacy_settle_newvideo = 0u;
     s_legacy_flip_q       = 0u;
     s_prev_legacy_flip_q  = 0u;
 
@@ -2457,47 +2497,56 @@ void apple_cycle_renderer_reset_local_video_state(void)
     apply_video_settings_if_changed();
 }
 
+/* Video-7 mode select: five alternating AN3 toggles while MIXED is off,
+ * OFF-ON-OFF-ON-OFF where OFF = $C05E (DHGR enabled) and ON = $C05F --
+ * the sequence both starts and ends with DHGR enabled (A2Desktop
+ * lib/monocolor.s). Each ON is an AN3 rising edge; the card clocks
+ * !80COL there into a two-bit shift register, first edge into bit 1,
+ * second into bit 0 (AppleWin RGBMonitor.cpp, "latch F2,F1"). The fifth
+ * toggle commits: 00 = COL140, 01 = 160x192 (unsupported), 10 = MIX,
+ * 11 = MONO560. Repeated same-polarity accesses produce no edge and are
+ * ignored; non-AN3 accesses -- including the 80COL writes real
+ * sequences interleave -- never disturb the sequence; an AN3 access
+ * with MIXED on aborts it. */
 static void handle_video7_softswitch_record(uint64_t rec)
 {
     const uint16_t addr = ace_softswitch_access_addr(rec);
     const uint8_t low = (uint8_t)(addr & 0xFFu);
     const uint32_t sw = ace_softswitch_bits(rec);
-    const uint8_t expected =
-        ((s_video7_an3_sequence & 1u) == 0u) ? 0x5Fu : 0x5Eu;
 
-    /* Video-7 selects a two-bit mode with five AN3 accesses while MIXED
-     * is off: OFF-ON-OFF-ON-OFF. The first ON supplies bit 0 from
-     * !80COL; the second supplies bit 1. */
-    if ((low & 0xFEu) != 0x5Eu || sw_mixed(sw)) {
+    if ((low & 0xFEu) != 0x5Eu) {
+        return;
+    }
+    if (sw_mixed(sw)) {
         s_video7_an3_sequence = 0u;
         return;
     }
 
-    if (low != expected) {
-        /* A fresh OFF can be the first access of a new sequence. */
-        s_video7_an3_sequence = (low == 0x5Fu) ? 1u : 0u;
-        s_video7_rgb_flags = 0u;
-        return;
-    }
+    if (low == 0x5Eu) {
+        if (s_video7_an3_sequence == 0u) {
+            s_video7_rgb_flags = 0u;
+            s_video7_an3_sequence = 1u;
+        } else if ((s_video7_an3_sequence & 1u) == 0u) {
+            s_video7_an3_sequence++;
+            if (s_video7_an3_sequence == 5u) {
+                const uint8_t old_mode = s_video7_rgb_mode;
 
-    if (s_video7_an3_sequence == 0u) {
-        s_video7_rgb_flags = 0u;
-    }
-    s_video7_an3_sequence++;
-
-    if (s_video7_an3_sequence == 2u) {
-        s_video7_rgb_flags = sw_80col(sw) ? 0u : 1u;
-    } else if (s_video7_an3_sequence == 4u) {
-        s_video7_rgb_flags = (uint8_t)(
-            (s_video7_rgb_flags & 0x01u) |
-            (sw_80col(sw) ? 0u : 0x02u));
-    } else if (s_video7_an3_sequence == 5u) {
-        const uint8_t old_mode = s_video7_rgb_mode;
-
-        s_video7_an3_sequence = 0u;
-        s_video7_rgb_mode = s_video7_rgb_flags;
-        if (s_video7_rgb_mode != old_mode) {
-            apply_video_settings_if_changed();
+                s_video7_an3_sequence = 0u;
+                s_video7_rgb_mode = s_video7_rgb_flags;
+                if (s_video7_rgb_mode != old_mode) {
+                    apply_video_settings_if_changed();
+                }
+            }
+        }
+    } else if ((s_video7_an3_sequence & 1u) != 0u) {
+        /* $C05E -> $C05F rising edge: clock !80COL into the register. */
+        s_video7_an3_sequence++;
+        if (s_video7_an3_sequence == 2u) {
+            s_video7_rgb_flags = sw_80col(sw) ? 0u : 0x02u;
+        } else {
+            s_video7_rgb_flags = (uint8_t)(
+                (s_video7_rgb_flags & 0x02u) |
+                (sw_80col(sw) ? 0u : 0x01u));
         }
     }
 }
@@ -2520,6 +2569,7 @@ static void shr_mode_switch_resync(void)
     s_pending_line0_mask = 0u;
     s_shr_cache_valid = 0u;
     s_shr_cache_invalidate = 1u;
+    s_shr_settle_armed = 0u;
     apple_pal_video_resync();
     g_resync_pending = 1u;
 }
@@ -2699,29 +2749,46 @@ static void on_frame_start(void) {
     appletini_ntsc_set_framebuffer(slot_addr);
     apple_pal_video_set_framebuffer(slot_addr);
     if (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_SHR) {
-        const uint32_t generation = g_shr_shadow_generation;
+        const uint32_t generation = g_video_shadow_generation;
         const uint8_t rebuild =
             (s_shr_cache_valid == 0u ||
              s_shr_cache_invalidate != 0u ||
              generation != s_shr_cache_generation) ? 1u : 0u;
 
         if (rebuild != 0u) {
-            render_shr_frame_full();
-            publish_current_frame();
-            s_shr_cache_generation = g_shr_shadow_generation;
-            s_shr_cache_valid = 1u;
-            s_shr_cache_invalidate = 0u;
-            g_acr_shr_cache_rebuilds++;
+            if (s_shr_settle_armed == 0u ||
+                generation != s_shr_settle_generation) {
+                /* Keep showing the last complete frame while a loader is
+                 * still changing the shadow. One unchanged frame marker is
+                 * enough to prove that the bulk stream has stopped. */
+                s_shr_settle_generation = generation;
+                s_shr_settle_armed = 1u;
+                g_acr_shr_frames_skipped++;
+            } else {
+                render_shr_frame_full();
+                publish_current_frame();
+                s_shr_cache_generation = g_video_shadow_generation;
+                s_shr_cache_valid = 1u;
+                s_shr_cache_invalidate = 0u;
+                s_shr_settle_armed = 0u;
+                g_acr_shr_cache_rebuilds++;
+            }
         } else {
+            s_shr_settle_armed = 0u;
             g_acr_shr_frames_skipped++;
         }
     } else if (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I) {
-        render_legacy_weave_frame_full();
-        publish_current_frame();
+        if (legacy_shadow_is_settled() != 0u) {
+            render_legacy_weave_frame_full();
+            publish_current_frame();
+        }
     } else if (s_legacy_flip_q != 0u) {
-        render_legacy_flip_merge_frame_full();
-        publish_current_frame();
+        if (legacy_shadow_is_settled() != 0u) {
+            render_legacy_flip_merge_frame_full();
+            publish_current_frame();
+        }
     } else {
+        s_legacy_settle_armed = 0u;
         apple_pal_video_begin_frame();
     }
     /* Do NOT reinitialise g_nColorBurstPixels here. Resetting the

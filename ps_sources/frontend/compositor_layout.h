@@ -34,12 +34,17 @@
  *   0x3EC00000..0x3EFFFFFF  reserved/free
  *
  *   0x3F000000  egress producer pointer + status regs
- *   0x3F010000  egress ring (64 KB)
+ *   0x3F010000..0x3F01FFFF  reserved/free
  *   0x3F020000  video character-ROM override buffer    (4 KB, NONCACHE)
- *   0x3F021000..0x3F0FFFFF  free
+ *   0x3F021000..0x3F02FFFF  free
+ *   0x3F030000  SDD producer pointer
+ *   0x3F040000  SDD capture ring (512 KB; ends at 0x3F0C0000)
+ *   0x3F0C0000  SDD USB DMA arena (64 KB)
+ *   0x3F0D0000..0x3F0FFFFF  free
  *   0x3F100000  apple_cycle_egress shadow main bank    (64 KB)
  *   0x3F110000  apple_cycle_egress shadow aux bank     (64 KB)
- *   0x3F120000..0x3F2FFFFF  free
+ *   0x3F120000..0x3F1FFFFF  free
+ *   0x3F200000  apple-cycle egress ring (1 MB; ends at 0x3F300000)
  *   0x3F300000  Apple FB slot 0    (1 MB)              ┐
  *   0x3F400000  Apple FB slot 1    (1 MB)              │ contiguous trio
  *   0x3F500000  Apple FB slot 2    (1 MB)              ┘

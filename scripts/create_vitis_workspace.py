@@ -782,6 +782,7 @@ def create_and_build_app(name, src_subdir, domain="standalone_ps7_cortexa9_0"):
                 [
                     "../../../ps_sources/lib/amp.c",
                     "../../../ps_sources/lib/lodepng.c",
+                    "../../../ps_sources/lib/psdma.c",
                 ],
             ),
         )
@@ -987,6 +988,7 @@ run_step(
             "../../../ps_sources/lib/crc32.c",
             "../../../ps_sources/lib/fb_ui.c",
             "../../../ps_sources/lib/lodepng.c",
+            "../../../ps_sources/lib/psdma.c",
             "../../../third_party/CherryUSB/core/usbh_core.c",
             "../../../third_party/CherryUSB/class/hid/usbh_hid.c",
             "../../../third_party/CherryUSB/port/ehci/usb_hc_ehci.c",

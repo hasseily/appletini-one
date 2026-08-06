@@ -7,6 +7,7 @@
 
 #include "../lib/common.h"
 #include "../lib/framebuffer.h"
+#include "../lib/psdma.h"
 #include "../lib/uart.h"
 #include "xil_cache.h"
 #include "ff.h"
@@ -3721,7 +3722,7 @@ static uart_control_event_t process_command(
             uint32_t base;
             uint32_t span;
             uint32_t i;
-            uint32_t t0;
+            psdma_result_t dma_rc;
             char line[96];
 
             if (argc < 3 || parse_u32(argv[2], &addr) != 0 ||
@@ -3743,17 +3744,17 @@ static uart_control_event_t process_command(
             }
 
             Xil_DCacheFlushRange((UINTPTR)dump_buf, sizeof(dump_buf));
-            REG_WRITE(0x40030000U, base);
-            REG_WRITE(0x40030004U, (uint32_t)(uintptr_t)dump_buf);
-            REG_WRITE(0x40030008U, span);   /* rw bit31=0: MC -> DDR */
-            for (t0 = 0U; t0 < 5000000U; ++t0) {
-                if ((REG_READ(0x4003000CU) & 1U) != 0U) {
-                    break;
-                }
-            }
-            if (t0 >= 5000000U) {
-                uart_puts(control->control_uart_base,
-                          "dma dump: TIMEOUT\r\n");
+            dma_rc = psdma_transfer(PSDMA_OWNER_UART,
+                                    base,
+                                    (uint32_t)(uintptr_t)dump_buf,
+                                    span,
+                                    PSDMA_MC_TO_DDR,
+                                    100000U,
+                                    100000U);
+            if (dma_rc != PSDMA_OK) {
+                (void)snprintf(line, sizeof(line),
+                               "dma dump: FAILED rc=%d\r\n", (int)dma_rc);
+                uart_puts(control->control_uart_base, line);
                 return event;
             }
             Xil_DCacheInvalidateRange((UINTPTR)dump_buf, sizeof(dump_buf));

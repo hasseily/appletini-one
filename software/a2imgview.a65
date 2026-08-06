@@ -61,8 +61,8 @@ TEXTOFF  = $C050
 MIXEDOFF = $C052
 PAGE1    = $C054
 HIRESON  = $C057
-AN3ON    = $C05E            ; access: DHGR on (with 80COL set)
-AN3OFF   = $C05F            ; access: DHGR off
+DHGRON   = $C05E            ; access: AN3 low = DHGR on (with 80COL set)
+DHGROFF  = $C05F            ; access: AN3 high = DHGR off
 NEWVIDEO = $C029
 TEXTPAGE = $0400
 
@@ -188,13 +188,14 @@ select_hgr:
     sta RAMWRTOFF            ; final A2Li arm must target main $407C
     lda #$01
     sta NEWVIDEO
-    bit AN3OFF
-    sta COL80OFF
     bit TEXTOFF
     bit MIXEDOFF
     bit PAGE1
     bit HIRESON
     jsr video7_select_normal
+    bit DHGROFF             ; HGR needs DHGR back off. 80COL is still on,
+                            ; so this extra rising edge clocks another 0
+                            ; and the committed state stays 00.
     sta COL80OFF
     rts
 
@@ -208,39 +209,36 @@ select_dhgr:
     bit MIXEDOFF
     bit PAGE1
     bit HIRESON
-    sta COL80ON
-    bit AN3ON
-    jsr video7_select_dhgr
-    sta COL80ON
-    bit AN3ON
+    jsr video7_select_dhgr  ; commits the mode with 80COL and DHGR on
     rts
 
-; Video-7 samples !80COL at each ON in the exact five-access sequence
-; OFF-ON-OFF-ON-OFF. The first ON supplies state bit 0 and the second
-; supplies state bit 1. State 00 restores normal DHGR; state 10 selects
-; MIX/COL140M. The caller restores the base HGR or DHGR switches after
-; the selector finishes with AN3 off.
+; Video-7 mode select: five AN3 toggles $C05E,$C05F,$C05E,$C05F,$C05E
+; with MIXED off. Each $C05F is an AN3 rising edge that clocks !80COL
+; into the card's two-bit shift register -- the first edge lands in
+; bit 1, the second in bit 0 (AppleWin RGBMonitor "latch F2,F1") -- and
+; the final $C05E commits the state with DHGR left enabled. State 00
+; restores normal DHGR; state 10 selects MIX/COL140M.
 video7_select_dhgr:
     lda cur_video7
     cmp #V7_MIX
     beq video7_select_mix
 video7_select_normal:
-    bit AN3OFF
-    sta COL80ON             ; !80COL=0 -> state bit 0 = 0
-    bit AN3ON
-    bit AN3OFF
-    bit AN3ON               ; !80COL=0 -> state bit 1 = 0
-    bit AN3OFF              ; commit state 00
+    sta COL80ON             ; !80COL=0 for both edges
+    bit DHGRON
+    bit DHGROFF             ; edge: state bit 1 = 0
+    bit DHGRON
+    bit DHGROFF             ; edge: state bit 0 = 0
+    bit DHGRON              ; commit state 00, DHGR on
     rts
 
 video7_select_mix:
-    bit AN3OFF
-    sta COL80ON             ; !80COL=0 -> state bit 0 = 0
-    bit AN3ON
-    bit AN3OFF
-    sta COL80OFF            ; !80COL=1 -> state bit 1 = 1
-    bit AN3ON
-    bit AN3OFF              ; commit state 10 (MIX/COL140M)
+    sta COL80OFF            ; !80COL=1 for the first edge
+    bit DHGRON
+    bit DHGROFF             ; edge: state bit 1 = 1
+    sta COL80ON             ; !80COL=0 for the second edge
+    bit DHGRON
+    bit DHGROFF             ; edge: state bit 0 = 0
+    bit DHGRON              ; commit state 10 (MIX/COL140M), DHGR on
     rts
 
 load_hgri:
@@ -446,7 +444,7 @@ count_fail:
 quit:
     lda #$01
     sta NEWVIDEO            ; SHR off
-    bit AN3OFF
+    bit DHGROFF
     sta COL80OFF
     bit TEXTON
     jsr MLI

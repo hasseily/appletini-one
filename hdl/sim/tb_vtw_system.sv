@@ -133,6 +133,22 @@ module tb_vtw_system;
     logic [9:0]  post_high_water;
     logic [31:0] cnt_post_drops;
     logic [31:0] cnt_invalid_routes;
+    logic        arm_post_we = 1'b0;
+    logic [15:0] arm_post_addr = 16'h0000;
+    logic [7:0]  arm_post_wdata = 8'h00;
+    logic        arm_post_ready;
+    logic        arm_rw_flush_req = 1'b0;
+    logic        arm_rw_hold_release = 1'b0;
+    logic        arm_rw_flush_done;
+    logic        arm_rw_hold_state;
+    logic        sp_active = 1'b0;
+    logic        sp_req_valid;
+    logic [2:0]  sp_req_target;
+    logic [10:0] sp_req_addr;
+    logic        sp_req_rw;
+    logic [7:0]  sp_req_wdata;
+    logic        sp_resp_valid = 1'b0;
+    logic [7:0]  sp_resp_rdata = 8'h00;
 
     /* PSRAM line-port model: sparse 8 MB byte memory behind an
      * admission-like handshake with varying latency (30..~120 clk),
@@ -146,6 +162,7 @@ module tb_vtw_system;
     logic [23:0] rwm_addr_q;
     logic [63:0] rwm_wline_q;
     int          rwm_lat_q, rwm_ops = 0;
+    int          rwm_latency_override = -1;
     always @(posedge clk) begin
         rw_req_ready  <= 1'b0;
         rw_resp_valid <= 1'b0;
@@ -154,7 +171,9 @@ module tb_vtw_system;
             rwm_rw_q    <= rw_req_rw;
             rwm_addr_q  <= {rw_req_addr[23:3], 3'b000};
             rwm_wline_q <= rw_req_wline;
-            rwm_lat_q   <= 30 + ((rwm_ops * 37) % 90);
+            rwm_lat_q   <= (rwm_latency_override >= 0)
+                         ? rwm_latency_override
+                         : 30 + ((rwm_ops * 37) % 90);
             rwm_ops     <= rwm_ops + 1;
             rw_req_ready <= 1'b1;
         end
@@ -213,17 +232,17 @@ module tb_vtw_system;
         .rw_req_ready(rw_req_ready),
         .rw_resp_valid(rw_resp_valid),
         .rw_resp_rline(rw_resp_rline),
-        // SmartPort short-circuit disabled here (its own bench covers it).
-        .sp_active(1'b0),
+        .sp_active(sp_active),
         .sp_boot_suppress(sp_boot_suppress),
-        .sp_req_valid(),
-        .sp_req_target(),
-        .sp_req_addr(),
-        .sp_req_rw(),
-        .sp_req_wdata(),
+        .sp_req_valid(sp_req_valid),
+        .sp_req_target(sp_req_target),
+        .sp_req_addr(sp_req_addr),
+        .sp_req_rw(sp_req_rw),
+        .sp_req_wdata(sp_req_wdata),
         .sp_req_ready(1'b1),
-        .sp_resp_valid(1'b0),
-        .sp_resp_rdata(8'd0),
+        .sp_resp_valid(sp_resp_valid),
+        .sp_resp_rdata(sp_resp_rdata),
+        .sp_sss_snapshot(),
         .sh_en(sh_en),
         .sh_addr(sh_addr),
         .sh_we(sh_we),
@@ -236,6 +255,14 @@ module tb_vtw_system;
         .arm_req_busy(),
         .arm_resp_valid(),
         .arm_resp_rdata(),
+        .arm_post_we(arm_post_we),
+        .arm_post_addr(arm_post_addr),
+        .arm_post_wdata(arm_post_wdata),
+        .arm_post_ready(arm_post_ready),
+        .arm_rw_flush_req(arm_rw_flush_req),
+        .arm_rw_hold_release(arm_rw_hold_release),
+        .arm_rw_flush_done(arm_rw_flush_done),
+        .arm_rw_hold_state(arm_rw_hold_state),
         .c074_state(c074_state),
         .bus_owned(bus_owned),
         .dbg_core_pc(dbg_core_pc),
@@ -337,6 +364,16 @@ module tb_vtw_system;
         sh_en <= 1'b0;
         @(posedge clk);
         d = sh_rdata;
+    endtask
+
+    task automatic arm_post_push(input logic [15:0] a,
+                                 input logic [7:0] d);
+        while (!arm_post_ready) @(posedge clk);
+        arm_post_addr  <= a;
+        arm_post_wdata <= d;
+        arm_post_we    <= 1'b1;
+        @(posedge clk);
+        arm_post_we    <= 1'b0;
     endtask
 
     // ------------------------------------------------------------------
@@ -532,6 +569,7 @@ module tb_vtw_system;
     int idx_aux, idx_main, idx_c054;
     logic [7:0] rd;
     int cyc_a, cyc_b;
+    int arm_rec_base, arm_post_before;
 
     /* Cycle-exactness probe: Apple-cycle stamps of every $C000 sync read
      * (parked $Cxxx replays are sanitized to $FFFF, so each appearance is
@@ -784,6 +822,197 @@ module tb_vtw_system;
 
         // 1 MHz lock: exactly one core cycle per Apple cycle (+/- jitter).
         wait (post_fill == '0);
+
+        /* CPU0 SmartPort fast path: inject video copies through the same
+         * ordered queue while the core runs. The handshake must preserve
+         * every address and byte and must not count a drop. */
+        arm_rec_base = wrecs.size();
+        arm_post_before = int'(cnt_posted_writes);
+        for (int i = 0; i < 4; i++) begin
+            arm_post_push(16'h6000 + 16'(i), 8'hD0 + 8'(i));
+        end
+        fork : arm_post_wait
+            begin
+                wait (cnt_posted_writes == arm_post_before + 32'd4);
+                disable arm_post_wait;
+            end
+            begin
+                #100us;
+                check(0, $sformatf(
+                    "CPU0 post timeout: before=%0d now=%0d fill=%0d ready=%b",
+                    arm_post_before, cnt_posted_writes, post_fill,
+                    arm_post_ready));
+                disable arm_post_wait;
+            end
+        join
+        check(wrecs.size() >= arm_rec_base + 4,
+              "CPU0 injected all four physical writes");
+        if (wrecs.size() >= arm_rec_base + 4) begin
+            for (int i = 0; i < 4; i++) begin
+                check(wrecs[arm_rec_base + i].addr == 16'h6000 + 16'(i) &&
+                      wrecs[arm_rec_base + i].data == 8'hD0 + 8'(i),
+                      $sformatf("CPU0 post %0d kept address/data", i));
+            end
+        end
+        check(cnt_post_drops == 32'd0, "CPU0 post injection has no drops");
+
+        /* Hold the core on one internal SmartPort access, seed a dirty
+         * RamWorks cache line, and issue the same flush request CPU0 uses
+         * before a 512-byte PS-DMA copy. The dirty line must reach PSRAM and
+         * the cache must be invalid before the completion pulse. */
+        sp_active = 1'b1;
+        sh_write(18'h0035A, 8'hC7);  // loop LDA $C000 -> LDA $C700
+        fork : sp_wait_enter
+            begin
+                wait (sp_req_valid);
+                check(sp_req_target == 3'd0 && sp_req_rw,
+                      "SmartPort test access reaches slot-ROM read target");
+                @(posedge clk);
+                disable sp_wait_enter;
+            end
+            begin
+                #100us;
+                check(0, "SmartPort wait-state entry timeout");
+                disable sp_wait_enter;
+            end
+        join
+        @(negedge clk);
+        dut.rwc_valid_q = 1'b1;
+        dut.rwc_dirty_q = 1'b1;
+        dut.rwc_line_q  = 21'h04300;  // PSRAM $021800
+        dut.rwc_data_q  = 64'h8877_6655_4433_2211;
+        arm_rw_flush_req <= 1'b1;
+        @(posedge clk);
+        arm_rw_flush_req <= 1'b0;
+        fork : rw_flush_wait
+            begin
+                wait (arm_rw_flush_done);
+                disable rw_flush_wait;
+            end
+            begin
+                #100us;
+                check(0, "RamWorks cache flush timeout");
+                disable rw_flush_wait;
+            end
+        join
+        check(psram_model.exists(24'h021800) &&
+              psram_model[24'h021800] == 8'h11 &&
+              psram_model[24'h021807] == 8'h88,
+              "CPU0 flush writes the complete dirty RamWorks line");
+        check(!dut.rwc_valid_q && !dut.rwc_dirty_q,
+              "CPU0 flush invalidates the RamWorks cache");
+        check(arm_rw_hold_state,
+              "flush completion leaves the core frozen for the DMA window");
+        /* Un-park the fast-port access: the pending SmartPort response may
+         * arrive, but the frozen core must not complete a single cycle
+         * until CPU0 releases the hold (this is the DMA window). */
+        sh_write(18'h0035A, 8'hC0);
+        sp_resp_rdata = 8'h00;
+        sp_resp_valid = 1'b1;
+        @(posedge clk);
+        sp_resp_valid = 1'b0;
+        sp_active = 1'b0;
+        cyc_a = int'(cnt_core_cycles);
+        #20us;
+        cyc_b = int'(cnt_core_cycles);
+        check(cyc_b == cyc_a,
+              $sformatf("held core completes no cycles (%0d -> %0d)",
+                        cyc_a, cyc_b));
+        arm_rw_hold_release <= 1'b1;
+        @(posedge clk);
+        arm_rw_hold_release <= 1'b0;
+        #20us;
+        cyc_b = int'(cnt_core_cycles);
+        check(cyc_b > cyc_a, "released core resumes execution");
+
+        /* A timeout may release a request before it becomes safe to touch
+         * the cache. It must cancel the pending command, pulse DONE so the
+         * 0x9C BUSY latch closes, and never fire later. */
+        @(negedge clk);
+        dut.rwc_valid_q = 1'b1;
+        dut.rwc_dirty_q = 1'b1;
+        dut.rwc_line_q  = 21'h04310;
+        dut.rwc_data_q  = 64'hA8A7_A6A5_A4A3_A2A1;
+        force dut.rw_flush_unsafe = 1'b1;
+        arm_rw_flush_req <= 1'b1;
+        @(posedge clk);
+        arm_rw_flush_req <= 1'b0;
+        repeat (4) @(posedge clk);
+        check(arm_rw_hold_state && dut.rw_flush_pending_q,
+              "unsafe flush stays pending with the core held");
+        /* Make the cache safe on the release edge itself. Old pending state
+         * must not win NBA priority and launch this dirty writeback. */
+        @(negedge clk);
+        force dut.rw_flush_unsafe = 1'b0;
+        arm_rw_hold_release = 1'b1;
+        @(posedge clk);
+        @(negedge clk);
+        arm_rw_hold_release = 1'b0;
+        @(posedge clk);
+        check(arm_rw_flush_done && !arm_rw_hold_state &&
+              !dut.rw_flush_pending_q && !dut.rw_flush_active_q &&
+              !dut.rw_req_valid_q,
+              $sformatf("release cancels pending: done=%b held=%b pend=%b active=%b req=%b",
+                        arm_rw_flush_done, arm_rw_hold_state,
+                        dut.rw_flush_pending_q, dut.rw_flush_active_q,
+                        dut.rw_req_valid_q));
+        release dut.rw_flush_unsafe;
+        repeat (8) @(posedge clk);
+        check(!dut.rw_flush_active_q && !arm_rw_hold_state,
+              $sformatf("cancelled flush stays dead: held=%b active=%b req=%b inflight=%b",
+                        arm_rw_hold_state, dut.rw_flush_active_q,
+                        dut.rw_req_valid_q, dut.rw_inflight_q));
+
+        /* Once a dirty-line write reaches PSRAM it cannot be cancelled.
+         * An early RELEASE must stay deferred until the response returns. */
+        @(negedge clk);
+        dut.rwc_valid_q = 1'b1;
+        dut.rwc_dirty_q = 1'b1;
+        dut.rwc_line_q  = 21'h04320;
+        dut.rwc_data_q  = 64'hFEDC_BA98_7654_3210;
+        rwm_latency_override = 200;
+        arm_rw_flush_req <= 1'b1;
+        @(posedge clk);
+        arm_rw_flush_req <= 1'b0;
+        fork : rw_active_wait
+            begin
+                wait (dut.rw_flush_active_q && dut.rw_inflight_q);
+                disable rw_active_wait;
+            end
+            begin
+                #100us;
+                check(0, "active flush acceptance timeout");
+                disable rw_active_wait;
+            end
+        join
+        arm_rw_hold_release <= 1'b1;
+        @(posedge clk);
+        arm_rw_hold_release <= 1'b0;
+        repeat (20) @(posedge clk);
+        check(arm_rw_hold_state && dut.rw_release_pending_q,
+              "release stays deferred while dirty writeback is active");
+        fork : rw_deferred_wait
+            begin
+                wait (arm_rw_flush_done);
+                disable rw_deferred_wait;
+            end
+            begin
+                #100us;
+                check(0, "deferred release completion timeout");
+                disable rw_deferred_wait;
+            end
+        join
+        check(!arm_rw_hold_state && !dut.rw_release_pending_q &&
+              psram_model.exists(24'h021900) &&
+              psram_model[24'h021900] == 8'h10 &&
+              psram_model[24'h021907] == 8'hFE,
+              $sformatf("active release drains: held=%b relpend=%b exists=%b first=%02x last=%02x",
+                        arm_rw_hold_state, dut.rw_release_pending_q,
+                        psram_model.exists(24'h021900),
+                        psram_model.exists(24'h021900) ? psram_model[24'h021900] : 8'h00,
+                        psram_model.exists(24'h021907) ? psram_model[24'h021907] : 8'h00));
+        rwm_latency_override = -1;
+
         repeat (5) @(negedge phi0);
         cyc_a = int'(cnt_core_cycles);
         repeat (100) @(negedge phi0);
@@ -814,6 +1043,25 @@ module tb_vtw_system;
                             delta0));
         end
 
+        /* A hold that CPU0 never releases must clear on Apple RES#. The
+         * cache is clean here, so the flush completes immediately and
+         * only the frozen-core state carries into the reset. */
+        arm_rw_flush_req <= 1'b1;
+        @(posedge clk);
+        arm_rw_flush_req <= 1'b0;
+        fork : rw_hold_rearm
+            begin
+                wait (arm_rw_flush_done);
+                disable rw_hold_rearm;
+            end
+            begin
+                #100us;
+                check(0, "auto-release re-arm flush timeout");
+                disable rw_hold_rearm;
+            end
+        join
+        check(arm_rw_hold_state, "core re-frozen ahead of the machine reset");
+
         /* Takeover machine reset: the vTW pulls RES# open-collector, and
          * the engine must respond to its OWN reset exactly as it does to a
          * keyboard reset -- full bus release (stock reset window for the
@@ -822,6 +1070,17 @@ module tb_vtw_system;
         #8us;
         check(apple_res_pin === 1'b0, "vTW asserts Apple RES#");
         check(apple_dma_pin === 1'b1, "/DMA released during the machine reset");
+        check(!arm_rw_hold_state, "Apple RES# auto-releases the core hold");
+        /* A CPU0 request that arrives after RES# fell must also close. This
+         * covers the request/reset race that would otherwise leave 0x9C
+         * BUSY set even though the hold auto-released. */
+        arm_rw_flush_req <= 1'b1;
+        @(posedge clk);
+        arm_rw_flush_req <= 1'b0;
+        @(posedge clk);
+        check(arm_rw_flush_done && !arm_rw_hold_state &&
+              !dut.rw_flush_pending_q && !dut.rw_flush_active_q,
+              "flush request during Apple RES# completes without a hold");
         tb_assert_res = 0;
         /* Filter release + the 80-cycle motherboard stock run, then the
          * automatic re-take. */

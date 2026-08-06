@@ -186,6 +186,11 @@ module apple_top(
     //   VTW_SHADOW_DATA : write = store byte at pointer, pointer++ and
     //                     refetch (boot ROM copy is one pointer write then a
     //                     byte stream); read = last fetched byte.
+    //   VTW_SHADOW_DATA4: write = queue four little-endian bytes.
+    //   VTW_SHADOW_DATA4_STATUS: {ready,busy,accepted_count[29:0]}.
+    //   VTW_SHADOW_READ4: write bit0 = fetch four bytes and advance.
+    //   VTW_SHADOW_READ4_DATA: last fetched little-endian word.
+    //   VTW_SHADOW_READ4_STATUS: {ready,busy,completed_count[29:0]}.
     //   VTW_SYNC_CMD    : [15:0] Apple address, [23:16] write data, [24]
     //                     rw (1=read). Write issues one real bus cycle via
     //                     the vTW engine; honored only while the core is
@@ -219,6 +224,19 @@ module apple_top(
     localparam logic [7:0] CARD_CTRL_REG_VTW_BUS_FAULTS   = 8'h81;
     localparam logic [7:0] CARD_CTRL_REG_VTW_IO_TRACE0    = 8'h82;
     localparam logic [7:0] CARD_CTRL_REG_VTW_PC_TRACE0    = 8'h92;
+    // CPU0 video-post injection: PUSH={8'b0,data[7:0],addr[15:0]}.
+    // STATUS={ready,accepted_count[30:0]}; each accepted PUSH increments it.
+    localparam logic [7:0] CARD_CTRL_REG_VTW_POST_PUSH     = 8'h9A;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_POST_STATUS   = 8'h9B;
+    // RamWorks flush+hold: bit0 freezes the vTW core and flushes its line
+    // cache; bit1 releases the frozen core after the PS-DMA copy.
+    // STATUS={busy,held,count[29:0]}.
+    localparam logic [7:0] CARD_CTRL_REG_VTW_RW_FLUSH      = 8'h9C;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_SHADOW_DATA4  = 8'h9D;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_SHADOW_DATA4_STATUS = 8'h9E;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_SHADOW_READ4 = 8'h9F;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_SHADOW_READ4_DATA = 8'hA0;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_SHADOW_READ4_STATUS = 8'hA1;
     //   VTW_C0_RING_*   : last eight $C00x/$C01x soft-switch cycles with
     //                     latched data ({rw,addr[4:0],data[7:0]} x2/reg).
     localparam logic [7:0] CARD_CTRL_REG_VTW_C0_RING0    = 8'h6C;
@@ -1105,6 +1123,7 @@ module apple_top(
     logic        vtw_sp_req_ready;
     logic        vtw_sp_resp_valid;
     logic [7:0]  vtw_sp_resp_rdata;
+    logic [21:0] vtw_sp_sss_snapshot;
 
     smartport_card smartport_card_i (
         .clk(clk),
@@ -1122,6 +1141,7 @@ module apple_top(
         .vtw_addr(vtw_sp_req_addr),
         .vtw_rw(vtw_sp_req_rw),
         .vtw_wdata(vtw_sp_req_wdata),
+        .vtw_sss_snapshot(vtw_sp_sss_snapshot),
         .vtw_ready(vtw_sp_req_ready),
         .vtw_resp_valid(vtw_sp_resp_valid),
         .vtw_resp_rdata(vtw_sp_resp_rdata)
@@ -1133,8 +1153,10 @@ module apple_top(
     logic [15:0] dma_req_length;
     logic        dma_req_rw;
     logic        dma_req_valid;
+    logic        dma_req_abort;
     logic        dma_req_ready;
     logic        dma_req_done;
+    logic        dma_req_abort_done;
 
     ps_dma_command ps_dma_command_i (
         .clk(clk),
@@ -1146,8 +1168,10 @@ module apple_top(
         .dma_req_length(dma_req_length),
         .dma_req_rw(dma_req_rw),
         .dma_req_valid(dma_req_valid),
+        .dma_req_abort(dma_req_abort),
         .dma_req_ready(dma_req_ready),
-        .dma_req_done(dma_req_done)
+        .dma_req_done(dma_req_done),
+        .dma_req_abort_done(dma_req_abort_done)
     );
 
     // smartport_card splits any transfer at 256-byte page boundaries
@@ -1163,8 +1187,10 @@ module apple_top(
         .req_length(dma_req_length[9:0]),
         .req_rw(dma_req_rw),
         .req_valid(dma_req_valid),
+        .req_abort(dma_req_abort),
         .req_ready(dma_req_ready),
         .req_done(dma_req_done),
+        .req_abort_done(dma_req_abort_done),
         .dma_line_addr(mc_dma_line_addr),
         .dma_rw(mc_dma_rw),
         .dma_wdata(mc_dma_wdata),
@@ -1225,13 +1251,18 @@ module apple_top(
     logic [31:0] vtw_ctrl_q;
     logic [31:0] vtw_slowdown_q;   // [9:0] region enables, [31:16] duration
     logic [17:0] vtw_sh_addr_q;
-    logic [7:0]  vtw_sh_wdata_q;
     logic [7:0]  vtw_sh_rdata;
     logic [7:0]  vtw_sh_rdata_q;
-    typedef enum logic [1:0] {
-        VTW_SH_IDLE, VTW_SH_WRITE, VTW_SH_READ, VTW_SH_CAPTURE
-    } vtw_sh_state_t;
-    vtw_sh_state_t vtw_sh_state_q;
+    logic        vtw_sh_port_en;
+    logic        vtw_sh_port_we;
+    logic [7:0]  vtw_sh_port_wdata;
+    logic        vtw_sh_word_ready;
+    logic        vtw_sh_word_busy;
+    logic [29:0] vtw_sh_word_accept_count;
+    logic [31:0] vtw_sh_word_read_data;
+    logic        vtw_sh_word_read_ready;
+    logic        vtw_sh_word_read_busy;
+    logic [29:0] vtw_sh_word_read_count;
     logic        vtw_arm_go_pulse_q;
     logic [15:0] vtw_arm_addr_q;
     logic        vtw_arm_rw_q;
@@ -1240,6 +1271,17 @@ module apple_top(
     logic        vtw_arm_resp_valid;
     logic [7:0]  vtw_arm_rdata;
     logic        vtw_sync_done_q;
+    logic        vtw_arm_post_pulse_q;
+    logic [15:0] vtw_arm_post_addr_q;
+    logic [7:0]  vtw_arm_post_wdata_q;
+    logic        vtw_arm_post_ready;
+    logic [30:0] vtw_arm_post_accept_count_q;
+    logic        vtw_arm_rw_flush_pulse_q;
+    logic        vtw_arm_rw_release_pulse_q;
+    logic        vtw_arm_rw_flush_done;
+    logic        vtw_arm_rw_hold_state;
+    logic        vtw_arm_rw_flush_busy_q;
+    logic [29:0] vtw_arm_rw_flush_count_q;
     logic [1:0]  vtw_c074_state;
     logic [15:0] vtw_dbg_core_pc;
     logic [31:0] vtw_cnt_core_cycles;
@@ -1264,6 +1306,19 @@ module apple_top(
     logic [16*32-1:0] vtw_dbg_io_trace;
     logic [31:0] vtw_dbg_trace_status;
     logic [31:0] vtw_dbg_bus_faults;
+
+    wire vtw_sh_addr_set = as_client.awvalid &&
+                           (as_common.awaddr == CARD_CTRL_REG_VTW_SHADOW_ADDR) &&
+                           (as_common.wstrb != 4'b0000);
+    wire vtw_sh_byte_write = as_client.awvalid &&
+                             (as_common.awaddr == CARD_CTRL_REG_VTW_SHADOW_DATA) &&
+                             as_common.wstrb[0];
+    wire vtw_sh_word_write = as_client.awvalid &&
+                             (as_common.awaddr == CARD_CTRL_REG_VTW_SHADOW_DATA4) &&
+                             (as_common.wstrb == 4'b1111);
+    wire vtw_sh_word_read = as_client.awvalid &&
+                            (as_common.awaddr == CARD_CTRL_REG_VTW_SHADOW_READ4) &&
+                            as_common.wstrb[0] && as_common.wdata[0];
 
     /* Machine gate, latched for the lifetime of the enable request. The
      * PS re-identifies the machine on every Apple reset (machine_mode
@@ -1338,6 +1393,33 @@ module apple_top(
 
     /* SHR paged-mode posting fallback (CARD_CTRL 0x35 bit 0). */
     logic post_main_wide_q;
+
+    vtw_shadow_host_port vtw_shadow_host_port_i (
+        .clk(clk),
+        .rstn(rstn[3]),
+        .addr_set(vtw_sh_addr_set),
+        .addr_value(as_common.wdata[17:0]),
+        .byte_write(vtw_sh_byte_write),
+        .byte_wdata(as_common.wdata[7:0]),
+        .word_write(vtw_sh_word_write),
+        .word_wdata(as_common.wdata),
+        .word_read(vtw_sh_word_read),
+        .pointer(vtw_sh_addr_q),
+        .read_data(vtw_sh_rdata_q),
+        .word_ready(vtw_sh_word_ready),
+        .word_busy(vtw_sh_word_busy),
+        .word_accept_count(vtw_sh_word_accept_count),
+        .word_read_data(vtw_sh_word_read_data),
+        .word_read_ready(vtw_sh_word_read_ready),
+        .word_read_busy(vtw_sh_word_read_busy),
+        .word_read_count(vtw_sh_word_read_count),
+        .sh_en(vtw_sh_port_en),
+        .sh_addr(),
+        .sh_we(vtw_sh_port_we),
+        .sh_wdata(vtw_sh_port_wdata),
+        .sh_rdata(vtw_sh_rdata)
+    );
+
     vtw_core_top vtw_core_top_i (
         .clk(clk),
         .rstn(rstn[1]),
@@ -1380,10 +1462,11 @@ module apple_top(
         .sp_req_ready(vtw_sp_req_ready),
         .sp_resp_valid(vtw_sp_resp_valid),
         .sp_resp_rdata(vtw_sp_resp_rdata),
-        .sh_en(vtw_sh_state_q == VTW_SH_WRITE || vtw_sh_state_q == VTW_SH_READ),
+        .sp_sss_snapshot(vtw_sp_sss_snapshot),
+        .sh_en(vtw_sh_port_en),
         .sh_addr(vtw_sh_addr_q),
-        .sh_we(vtw_sh_state_q == VTW_SH_WRITE),
-        .sh_wdata(vtw_sh_wdata_q),
+        .sh_we(vtw_sh_port_we),
+        .sh_wdata(vtw_sh_port_wdata),
         .sh_rdata(vtw_sh_rdata),
         .arm_req_valid(vtw_arm_go_pulse_q),
         .arm_req_addr(vtw_arm_addr_q),
@@ -1392,6 +1475,14 @@ module apple_top(
         .arm_req_busy(vtw_arm_busy),
         .arm_resp_valid(vtw_arm_resp_valid),
         .arm_resp_rdata(vtw_arm_rdata),
+        .arm_post_we(vtw_arm_post_pulse_q),
+        .arm_post_addr(vtw_arm_post_addr_q),
+        .arm_post_wdata(vtw_arm_post_wdata_q),
+        .arm_post_ready(vtw_arm_post_ready),
+        .arm_rw_flush_req(vtw_arm_rw_flush_pulse_q),
+        .arm_rw_hold_release(vtw_arm_rw_release_pulse_q),
+        .arm_rw_flush_done(vtw_arm_rw_flush_done),
+        .arm_rw_hold_state(vtw_arm_rw_hold_state),
         .c074_state(vtw_c074_state),
         .bus_owned(vtw_bus_owned),
         .video_phase_1mhz(vtw_video_phase_1mhz),
@@ -1514,7 +1605,7 @@ module apple_top(
             as_client_rdata_q <= 32'h0000_0000;
             egress_cfg_enable_q             <= 1'b0;
             egress_cfg_ring_base_q          <= 32'h0;
-            egress_cfg_ring_size_log2_q     <= 5'd16; // 64 KB default
+            egress_cfg_ring_size_log2_q     <= 5'd19; // 512 KB default
             egress_cfg_producer_ptr_addr_q  <= 32'h0;
             egress_cfg_consumer_ptr_q       <= 32'h0;
             egress_cfg_reset_pulse          <= 1'b0;
@@ -1534,15 +1625,19 @@ module apple_top(
             psram_dcount_wr_pulse_q         <= 1'b0;
             vtw_ctrl_q                      <= 32'h0000_0000;
             vtw_slowdown_q                  <= 32'h0000_0000;
-            vtw_sh_addr_q                   <= 18'd0;
-            vtw_sh_wdata_q                  <= 8'h00;
-            vtw_sh_rdata_q                  <= 8'h00;
-            vtw_sh_state_q                  <= VTW_SH_IDLE;
             vtw_arm_go_pulse_q              <= 1'b0;
             vtw_arm_addr_q                  <= 16'h0000;
             vtw_arm_rw_q                    <= 1'b1;
             vtw_arm_wdata_q                 <= 8'h00;
             vtw_sync_done_q                 <= 1'b0;
+            vtw_arm_post_pulse_q            <= 1'b0;
+            vtw_arm_post_addr_q             <= 16'h0000;
+            vtw_arm_post_wdata_q            <= 8'h00;
+            vtw_arm_post_accept_count_q     <= 31'd0;
+            vtw_arm_rw_flush_pulse_q        <= 1'b0;
+            vtw_arm_rw_release_pulse_q      <= 1'b0;
+            vtw_arm_rw_flush_busy_q         <= 1'b0;
+            vtw_arm_rw_flush_count_q        <= 30'd0;
         end else begin
             // cfg_reset_pulse is a one-cycle pulse: cleared every cycle and
             // set only when an awvalid lands on 8'h25.
@@ -1556,24 +1651,18 @@ module apple_top(
             disk2_menu_sound_event_q <= 4'd0;
             eth_host_req_pulse <= 1'b0;
             vtw_arm_go_pulse_q <= 1'b0;
+            vtw_arm_post_pulse_q <= 1'b0;
+            vtw_arm_rw_flush_pulse_q <= 1'b0;
+            vtw_arm_rw_release_pulse_q <= 1'b0;
 
-            /* vTW shadow port-B sequencer: a register write starts either a
-             * write (then pointer++ and refetch) or a plain refetch; the
-             * shadow's registered read needs the extra CAPTURE state. ARM
-             * register accesses are hundreds of clocks apart, so the
-             * sequencer is always idle when the next command lands. */
-            unique case (vtw_sh_state_q)
-                VTW_SH_WRITE: begin
-                    vtw_sh_addr_q  <= vtw_sh_addr_q + 18'd1;
-                    vtw_sh_state_q <= VTW_SH_READ;
-                end
-                VTW_SH_READ:    vtw_sh_state_q <= VTW_SH_CAPTURE;
-                VTW_SH_CAPTURE: begin
-                    vtw_sh_rdata_q <= vtw_sh_rdata;
-                    vtw_sh_state_q <= VTW_SH_IDLE;
-                end
-                default: ;
-            endcase
+            if (vtw_arm_post_pulse_q && vtw_arm_post_ready) begin
+                vtw_arm_post_accept_count_q <=
+                    vtw_arm_post_accept_count_q + 31'd1;
+            end
+            if (vtw_arm_rw_flush_done) begin
+                vtw_arm_rw_flush_busy_q  <= 1'b0;
+                vtw_arm_rw_flush_count_q <= vtw_arm_rw_flush_count_q + 30'd1;
+            end
 
             if (vtw_arm_resp_valid) begin
                 vtw_sync_done_q <= 1'b1;
@@ -1774,20 +1863,26 @@ module apple_top(
                         vtw_slowdown_q <= globals::apply_wstrb(
                             vtw_slowdown_q, as_common.wdata, as_common.wstrb);
                     end
-                    CARD_CTRL_REG_VTW_SHADOW_ADDR: begin
-                        vtw_sh_addr_q  <= as_common.wdata[17:0];
-                        vtw_sh_state_q <= VTW_SH_READ;
-                    end
-                    CARD_CTRL_REG_VTW_SHADOW_DATA: begin
-                        vtw_sh_wdata_q <= as_common.wdata[7:0];
-                        vtw_sh_state_q <= VTW_SH_WRITE;
-                    end
                     CARD_CTRL_REG_VTW_SYNC_CMD: begin
                         vtw_arm_addr_q     <= as_common.wdata[15:0];
                         vtw_arm_wdata_q    <= as_common.wdata[23:16];
                         vtw_arm_rw_q       <= as_common.wdata[24];
                         vtw_arm_go_pulse_q <= 1'b1;
                         vtw_sync_done_q    <= 1'b0;
+                    end
+                    CARD_CTRL_REG_VTW_POST_PUSH: begin
+                        vtw_arm_post_addr_q  <= as_common.wdata[15:0];
+                        vtw_arm_post_wdata_q <= as_common.wdata[23:16];
+                        vtw_arm_post_pulse_q <= 1'b1;
+                    end
+                    CARD_CTRL_REG_VTW_RW_FLUSH: begin
+                        if (as_common.wdata[0] && !vtw_arm_rw_flush_busy_q) begin
+                            vtw_arm_rw_flush_pulse_q <= 1'b1;
+                            vtw_arm_rw_flush_busy_q  <= 1'b1;
+                        end
+                        if (as_common.wdata[1]) begin
+                            vtw_arm_rw_release_pulse_q <= 1'b1;
+                        end
                     end
                     default: begin
                     end
@@ -1945,6 +2040,21 @@ module apple_top(
                                                                     vtw_dbg_last_sync_rw,
                                                                     vtw_dbg_last_sync_data,
                                                                     vtw_dbg_last_sync_addr};
+                CARD_CTRL_REG_VTW_POST_STATUS: as_client_rdata_q <= {vtw_arm_post_ready,
+                                                                    vtw_arm_post_accept_count_q};
+                CARD_CTRL_REG_VTW_RW_FLUSH:    as_client_rdata_q <= {vtw_arm_rw_flush_busy_q,
+                                                                    vtw_arm_rw_hold_state,
+                                                                    vtw_arm_rw_flush_count_q};
+                CARD_CTRL_REG_VTW_SHADOW_DATA4_STATUS:
+                    as_client_rdata_q <= {vtw_sh_word_ready,
+                                          vtw_sh_word_busy,
+                                          vtw_sh_word_accept_count};
+                CARD_CTRL_REG_VTW_SHADOW_READ4_DATA:
+                    as_client_rdata_q <= vtw_sh_word_read_data;
+                CARD_CTRL_REG_VTW_SHADOW_READ4_STATUS:
+                    as_client_rdata_q <= {vtw_sh_word_read_ready,
+                                          vtw_sh_word_read_busy,
+                                          vtw_sh_word_read_count};
                 CARD_CTRL_REG_VTW_CXXX_RING0:  as_client_rdata_q <= vtw_dbg_cxxx_ring[31:0];
                 CARD_CTRL_REG_VTW_CXXX_RING1:  as_client_rdata_q <= vtw_dbg_cxxx_ring[63:32];
                 CARD_CTRL_REG_VTW_CXXX_RING2:  as_client_rdata_q <= vtw_dbg_cxxx_ring[95:64];

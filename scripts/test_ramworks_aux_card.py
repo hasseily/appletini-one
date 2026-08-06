@@ -46,9 +46,9 @@ def test_ramworks_bank_select_reaches_8192k() -> None:
             "address translation must map bank 128 into PSRAM address bit 23")
     require("xlate_st.sw_ramworks_bank = ss_ramworks_bank;" in softswitch,
             "soft-switch manager must feed its bank register to the shared translator")
-    require("logic [20:0] sss_snapshot_q;" in smartport_card and
+    require("logic [21:0] sss_snapshot_q;" in smartport_card and
             "sss.sw_ramworks_bank," in smartport_card and
-            "as_client.rdata = {11'h0, sss_snapshot_q};" in smartport_card,
+            "as_client.rdata = {10'h0, sss_snapshot_q};" in smartport_card,
             "SmartPort soft-switch snapshots must carry the seventh bank bit")
     require("wire [20:0] current_softswitch_state" in apple_top and
             "CARD_CTRL_REG_SOFTSW_STATE:        as_client_rdata_q <= {11'h000, current_softswitch_state};" in apple_top,

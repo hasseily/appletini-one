@@ -28,6 +28,7 @@ module tb_smartport_shortcut;
     logic [10:0] vtw_addr = 0;
     logic       vtw_rw = 1;
     logic [7:0] vtw_wdata = 0;
+    logic [21:0] vtw_sss_snapshot = 22'h2AAAAA;
     logic       vtw_ready;
     logic       vtw_resp_valid;
     logic [7:0] vtw_resp_rdata;
@@ -47,6 +48,7 @@ module tb_smartport_shortcut;
         .vtw_addr(vtw_addr),
         .vtw_rw(vtw_rw),
         .vtw_wdata(vtw_wdata),
+        .vtw_sss_snapshot(vtw_sss_snapshot),
         .vtw_ready(vtw_ready),
         .vtw_resp_valid(vtw_resp_valid),
         .vtw_resp_rdata(vtw_resp_rdata)
@@ -64,11 +66,16 @@ module tb_smartport_shortcut;
     localparam logic [7:0] R_IN_HEAD  = 8'd1;
     localparam logic [7:0] R_OUT_PUSH = 8'd2;
     localparam logic [7:0] R_CONTROL  = 8'd3;
+    localparam logic [7:0] R_SSS      = 8'd4;
+    localparam logic [7:0] R_OUT_PUSH4 = 8'd5;
+    localparam logic [7:0] R_IN_HEAD4 = 8'd6;
     localparam int CTL_POP_IN    = 1;
     localparam int CTL_CLR_IN    = 2;
     localparam int CTL_CLR_OUT   = 4;
     localparam int CTL_SET_READY = 8;
     localparam int CTL_ACK_EXEC  = 16;
+    localparam int CTL_SET_DIRECT = 32;
+    localparam int CTL_POP_IN4    = 64;
 
     int fails = 0;
     task automatic check(input bit cond, input string msg);
@@ -144,6 +151,7 @@ module tb_smartport_shortcut;
 
     function automatic bit st_ready(input logic [31:0] st); return st[29]; endfunction
     function automatic bit st_exec(input logic [31:0] st);  return st[28]; endfunction
+    function automatic bit st_exec_vtw(input logic [31:0] st); return st[31]; endfunction
     function automatic int st_in(input logic [31:0] st);  return int'(st[10:0]); endfunction
     function automatic int st_out(input logic [31:0] st); return int'(st[26:16]); endfunction
 
@@ -181,24 +189,42 @@ module tb_smartport_shortcut;
         vtw_access(T_DATA, 1'b0, 11'h7F0, 8'hA1, rd);   // frame byte 0
         vtw_access(T_DATA, 1'b0, 11'h7F0, 8'h11, rd);   // frame byte 1
         vtw_access(T_DATA, 1'b0, 11'h7F0, 8'h22, rd);   // frame byte 2
+        vtw_access(T_DATA, 1'b0, 11'h7F0, 8'h33, rd);
+        vtw_access(T_DATA, 1'b0, 11'h7F0, 8'h44, rd);
+        vtw_access(T_DATA, 1'b0, 11'h7F0, 8'h55, rd);
+        vtw_access(T_DATA, 1'b0, 11'h7F0, 8'h66, rd);
+        vtw_access(T_DATA, 1'b0, 11'h7F0, 8'h77, rd);
         axi_read(R_STATUS, st);
-        check(st_in(st) == 3, "fast-port DATA writes reached the IN FIFO");
+        check(st_in(st) == 8, "fast-port DATA writes reached the IN FIFO");
 
         irq_count = 0;
         vtw_access(T_CTRL, 1'b0, 11'h7F1, 8'h02, rd);   // EXECUTE
         axi_read(R_STATUS, st);
         check(st_exec(st), "fast-port CTRL write raised exec_pending");
+        check(st_exec_vtw(st), "fast-port command is tagged as vTW");
         check(irq_count == 1, "fast-port EXECUTE pulsed the PS IRQ once");
+        axi_read(R_SSS, st);
+        check(st[21:0] == vtw_sss_snapshot,
+              "fast-port command latched the vTW private switch state");
 
-        // PS drains the frame, answers with two bytes, sets ready.
-        repeat (3) axi_write(R_CONTROL, CTL_POP_IN);
-        axi_write(R_OUT_PUSH, 8'h5A);
-        axi_write(R_OUT_PUSH, 8'h6B);
+        // PS drains aligned words and posts one aligned response word. The
+        // Apple still sees four bytes in least-significant-first order.
+        axi_read(R_IN_HEAD4, st);
+        check(st == 32'h332211A1, "packed IN head returns first four bytes");
+        axi_write(R_CONTROL, CTL_POP_IN4);
+        axi_read(R_IN_HEAD4, st);
+        check(st == 32'h77665544, "packed IN pop prefetched the next word");
+        axi_write(R_CONTROL, CTL_POP_IN4);
+        axi_write(R_OUT_PUSH4, 32'h8D7C6B5A);
+        axi_read(R_STATUS, st);
+        check(!st[30] && st_out(st) == 4,
+              "word response stored four bytes before READY");
         axi_write(R_CONTROL, CTL_SET_READY | CTL_ACK_EXEC | CTL_CLR_IN);
 
         // Poll ready through the fast port.
         vtw_access(T_CTRL, 1'b1, 11'h7F1, 8'h00, rd);
-        check(rd[7], "fast-port CTRL read returns ready");
+        check(rd[7] && rd[5],
+              "fast-port CTRL read returns ready and private fast marker");
 
         // ---- 3. DATA read is side-effect-free; DPOP advances ----
         vtw_access(T_DATA, 1'b1, 11'h7F0, 8'h00, rd);
@@ -212,15 +238,66 @@ module tb_smartport_shortcut;
         vtw_access(T_DPOP, 1'b1, 11'h7F2, 8'h00, rd);
         vtw_access(T_DATA, 1'b1, 11'h7F0, 8'h00, rd);
         check(rd == 8'h6B, "fast DPOP read did not pop");
+        vtw_access(T_DPOP, 1'b0, 11'h7F2, 8'h00, rd);
+        vtw_access(T_DATA, 1'b1, 11'h7F0, 8'h00, rd);
+        check(rd == 8'h7C, "packed response byte 2 is ordered");
+        vtw_access(T_DPOP, 1'b0, 11'h7F2, 8'h00, rd);
+        vtw_access(T_DATA, 1'b1, 11'h7F0, 8'h00, rd);
+        check(rd == 8'h8D, "packed response byte 3 is ordered");
         vtw_access(T_DPOP, 1'b0, 11'h7F2, 8'h00, rd);   // pop last
         axi_read(R_STATUS, st);
         check(st_out(st) == 0 && !st_exec(st),
               "transport drained via the fast port");
 
-        // ---- 4. Bus path still works after fast-port traffic ----
+        // ---- 3b. Word-boundary prefetch and scalar tail ----
+        axi_write(R_OUT_PUSH4, 32'h04030201);
+        axi_write(R_OUT_PUSH, 8'h05);
+        for (int i = 1; i <= 5; i++) begin
+            vtw_access(T_DATA, 1'b1, 11'h7F0, 8'h00, rd);
+            check(rd == 8'(i),
+                  $sformatf("response byte %0d crosses word boundary", i));
+            vtw_access(T_DPOP, 1'b0, 11'h7F2, 8'h00, rd);
+        end
+        axi_read(R_STATUS, st);
+        check(st_out(st) == 0, "word plus scalar tail drains exactly");
+
+        // ---- 4. Direct block response contains only the result byte ----
+        vtw_access(T_DATA, 1'b0, 11'h7F0, 8'h01, rd);
+        vtw_access(T_CTRL, 1'b0, 11'h7F1, 8'h01, rd);
+        axi_write(R_CONTROL, CTL_POP_IN);
+        axi_write(R_OUT_PUSH, 8'h00);
+        axi_write(R_CONTROL, CTL_SET_READY | CTL_SET_DIRECT |
+                             CTL_ACK_EXEC | CTL_CLR_IN);
+        vtw_access(T_CTRL, 1'b1, 11'h7F1, 8'h00, rd);
+        check(rd[7:6] == 2'b11,
+              "vTW CTRL reports ready plus completed direct copy");
+        vtw_access(T_DATA, 1'b1, 11'h7F0, 8'h00, rd);
+        check(rd == 8'h00, "direct response retains its result byte");
+        vtw_access(T_DPOP, 1'b0, 11'h7F2, 8'h00, rd);
+        axi_read(R_STATUS, st);
+        check(st_out(st) == 0,
+              "direct response has no hidden 512-byte FIFO payload");
+
+        // ---- 5. Bus path still works after fast-port traffic ----
+        sss.sw_ramworks_bank = 7'h12;
+        sss.sw_ramwrt = 1'b1;
         apple_write(16'hCFF0, 8'h99);
         axi_read(R_STATUS, st);
         check(st_in(st) == 1, "bus-path DATA write still reaches the IN FIFO");
+        apple_write(16'hCFF1, 8'h01);
+        axi_read(R_STATUS, st);
+        check(st_exec(st) && !st_exec_vtw(st),
+              "native command is not tagged for packed acceleration");
+        axi_read(R_SSS, st);
+        check(!st[21] && st[20:14] == 7'h12 && st[2],
+              "native command keeps the motherboard switch snapshot");
+        axi_write(R_CONTROL, CTL_POP_IN);
+        axi_write(R_OUT_PUSH, 8'h00);
+        axi_write(R_CONTROL, CTL_SET_READY | CTL_SET_DIRECT |
+                             CTL_ACK_EXEC | CTL_CLR_IN);
+        vtw_access(T_CTRL, 1'b1, 11'h7F1, 8'h00, rd);
+        check(rd[7] && !rd[6],
+              "native command cannot acquire the direct-copy flag");
 
         if (fails == 0) $display("SP SHORTCUT PASS");
         else            $display("SP SHORTCUT FAILED: %0d checks", fails);

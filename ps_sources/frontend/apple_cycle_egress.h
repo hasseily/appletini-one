@@ -24,18 +24,26 @@
 
 /* --- DDR allocations (must match init()) ------------------------------- */
 #define ACE_PRODUCER_PTR_ADDR   0x3F000000U
-#define ACE_RING_BASE           0x3F010000U
-#define ACE_RING_SIZE_LOG2      16U
+#define ACE_RING_BASE           0x3F200000U
+#define ACE_RING_SIZE_LOG2      20U
 #define ACE_RING_SIZE_BYTES     (1U << ACE_RING_SIZE_LOG2)
 #define ACE_RING_MASK           (ACE_RING_SIZE_BYTES - 1U)
 #define ACE_RECORD_BYTES        8U
 
-#define ACE_MMU_RING_SECTION    0x3F000000U   /* 1 MB section, NORM_NONCACHE */
+#define ACE_MMU_CONTROL_SECTION 0x3F000000U   /* producer pointer, NONCACHE */
+#define ACE_MMU_RING_SECTION    0x3F200000U   /* 1 MB ring, NORM_NONCACHE   */
 #define ACE_MMU_SHADOW_SECTION  0x3F100000U   /* 1 MB section, cacheable     */
 
 #define ACE_MAIN_BANK_ADDR      0x3F100000U
 #define ACE_AUX_BANK_ADDR       0x3F110000U
 #define ACE_BANK_BYTES          0x10000U      /* 64 KB per bank */
+
+#if ACE_RING_BASE < 0x3F200000U
+#error "Apple-cycle egress ring overlaps SDD or video shadow storage"
+#endif
+#if (ACE_RING_BASE + ACE_RING_SIZE_BYTES) > 0x3F300000U
+#error "Apple-cycle egress ring overlaps Apple framebuffer slot 0"
+#endif
 
 /* --- AxiSimple register map (mirror of apple_top.sv 8'h20..8'h2A) -------
  * Slave base 0x40000000. Word index N -> byte addr 0x40000000 + N*4. */
@@ -55,14 +63,12 @@
 #define ACE_REG_STAT_FULL_STALL     ACE_AS_REG(0x2AU)  /* 0x400000A8 */
 
 /* --- Drain loop tunables ----------------------------------------------- */
-/* Cap records processed per poll() to bound main-loop latency. Apple bus
- * runs at ~1 MHz with frame_en=1 capture, so each main-loop iteration
- * (~30 Hz) sees ~33K new records. The 8K-entry ring fills in ~8 ms if
- * we only drain 1024 per poll, which is faster than the main-loop
- * period -- causing constant gap-marker resync churn that prevents
- * the renderer from completing any frame. Sized to cover one full
- * ring (8192) plus headroom so a single poll can always catch up. */
-#define ACE_POLL_RECORD_CAP   16384U
+/* CPU1 normally drains continuously, but a full SHR4/RGGB decode can keep
+ * it in the renderer for about 30 ms. The 64K ring used to fill after only
+ * 8 ms at the posted 1 MHz write rate, permanently losing video-memory
+ * records. The 1 MB ring holds 131072 records (~131 ms), and this cap lets
+ * the next poll drain a complete backlog before it returns to other work. */
+#define ACE_POLL_RECORD_CAP   131072U
 
 /* --- AppleCycleRecord bit layout --------------------------------------- *
  * Mirrors apple_cycle_capture_pkg::AppleCycleRecord exactly.
@@ -242,7 +248,7 @@ extern volatile uint32_t g_resync_pending;
  * used by current image formats. The renderer records the generation after a
  * full decode and can then skip unchanged SHR frames. Egress and rendering run
  * on CPU1, so this counter needs no cross-core lock. */
-extern volatile uint32_t g_shr_shadow_generation;
+extern volatile uint32_t g_video_shadow_generation;
 
 /* --- Diagnostic counters ----------------------------------------------- */
 extern volatile uint32_t g_records_processed;

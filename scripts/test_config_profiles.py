@@ -91,8 +91,8 @@ def test_autosave_remains_working_config() -> None:
 def test_clean_config_schema_contract() -> None:
     source = read(CONFIG_MENU_C)
 
-    require("#define APPLETINI_CFG_VERSION 111U" in source,
-            "Adding persisted DHGR COL140M must use config version 111")
+    require("#define APPLETINI_CFG_VERSION 112U" in source,
+            "Adding persisted vTW compatibility controls must use config version 112")
     require("config_menu_parse_config_line(line, &value)" in source and
             "hash = strchr(line, '#')" in source and
             "config_menu_ascii_lower_in_place(key)" in source,
@@ -529,16 +529,41 @@ def test_transwarp_slot_slowdown_rows() -> None:
     device_tabs = read(CONFIG_MENU_DEVICE_TABS_C)
     help_source = read(CONFIG_MENU_HELP_C)
 
-    require("#define CONFIG_TRANSWARP_ITEM_FLOATBUS     3U" in internal and
-            "#define CONFIG_TRANSWARP_ITEM_SLOT_FIRST   5U" in internal and
+    require("#define CONFIG_TRANSWARP_ITEM_IGNORE_C074  2U" in internal and
+            "#define CONFIG_TRANSWARP_ITEM_DISABLE_D2   3U" in internal and
+            "#define CONFIG_TRANSWARP_ITEM_FLOATBUS     4U" in internal and
+            "#define CONFIG_TRANSWARP_ITEM_PADDLE       5U" in internal and
+            "#define CONFIG_TRANSWARP_ITEM_SLUG         6U" in internal and
+            "#define CONFIG_TRANSWARP_ITEM_SLOT_FIRST   7U" in internal and
             "#define CONFIG_TRANSWARP_SLOT_COUNT        7U" in internal and
             "#define CONFIG_TRANSWARP_ITEM_COUNT" in internal,
-            "TransWarp menu must expose one floating-bus row and seven slot rows")
-    require("for (uint8_t slot = 1U; slot <= CONFIG_TRANSWARP_SLOT_COUNT; ++slot)" in
+            "TransWarp focus order must match the compact slowdown layout")
+    require('"Ignore $C074 Speed Switch"' in device_tabs and
+            '"Disable DiskII Acceleration"' in device_tabs and
+            "y + (2 * row_h), option_w" in device_tabs and
+            "option_x2, y + (2 * row_h), option_w2" in device_tabs,
+            "TransWarp compatibility checkboxes must share one row")
+    require('strcmp(key, "vtw.c074.ignore") == 0' in source and
+            'strcmp(key, "vtw.disk2.acceleration.disabled") == 0' in source and
+            '"vtw.c074.ignore=%s\\n"' in source and
+            '"vtw.disk2.acceleration.disabled=%s\\n"' in source,
+            "TransWarp compatibility checkboxes must persist")
+    require('"Floating bus ($C019,$C030-$C05F)"' in device_tabs and
+            '"Paddles/joystick ($C064-$C070)"' in device_tabs and
+            "y + (3 * row_h), option_w" in device_tabs and
+            "option_x2, y + (3 * row_h), option_w2" in device_tabs and
+            '"Enable 0.05 MHz slug debug key"' in device_tabs and
+            "y + (4 * row_h), w" in device_tabs,
+            "floating-bus and paddle slowdown must share the row above slug")
+    require('"Slow down physical slots:"' in device_tabs and
+            "for (uint8_t slot = 1U; slot <= CONFIG_TRANSWARP_SLOT_COUNT; ++slot)" in
             device_tabs and
-            '"Slow down physical slot %u"' in device_tabs and
-            "hgr_draw_check_item(" in device_tabs,
-            "TransWarp tab must draw every slot as a visible checkbox row")
+            'snprintf(slot_label, sizeof(slot_label), "%u"' in device_tabs and
+            "fb, slot_x, y + (6 * row_h), slot_w" in device_tabs,
+            "TransWarp tab must show slots 1-7 as checkbox cells under one heading")
+    require('"Slowdown window:", win_val' in device_tabs and
+            "hgr_draw_value_item(fb, x, y + (7 * row_h), w" in device_tabs,
+            "slowdown window must follow the compact physical-slot row")
     adjust_start = source.find("static uint8_t config_menu_adjust_focused_value")
     adjust_end = source.find("static int config_menu_reload_smartport_device", adjust_start)
     activate_start = source.find("static void config_menu_activate_item")
@@ -556,14 +581,17 @@ def test_transwarp_slot_slowdown_rows() -> None:
             "only OK may toggle the focused TransWarp slot checkbox")
     require("vtw_slowdown_slot_cursor" not in header + source + device_tabs,
             "TransWarp slowdown UI must not retain the hidden slot selector")
-    require("OVERRIDE(3, transwarp_slowdown_floatbus)" in help_source and
-            "OVERRIDE(4, transwarp_slowdown_paddle)" in help_source and
-            "OVERRIDE(12, transwarp_slowdown_window)" in help_source,
+    require("OVERRIDE(2, transwarp_ignore_c074)" in help_source and
+            "OVERRIDE(3, transwarp_disable_disk2_accel)" in help_source and
+            "OVERRIDE(4, transwarp_slowdown_floatbus)" in help_source and
+            "OVERRIDE(5, transwarp_slowdown_paddle)" in help_source and
+            "OVERRIDE(6, transwarp_slug)" in help_source and
+            "OVERRIDE(14, transwarp_slowdown_window)" in help_source,
             "TransWarp non-slot slowdown rows must retain contextual help")
-    for item in range(5, 12):
+    for item in range(7, 14):
         require(f"OVERRIDE({item}, transwarp_slowdown_slots)" in help_source,
                 f"TransWarp slot slowdown row {item} must retain contextual help")
-    require('"Slow down floating-bus I/O ($C019,$C030-$C05F)"' in device_tabs and
+    require('"Floating bus ($C019,$C030-$C05F)"' in device_tabs and
             "CONFIG_TRANSWARP_ITEM_SPEAKER" not in internal + source + device_tabs and
             "CONFIG_TRANSWARP_ITEM_VIDEO" not in internal + source + device_tabs,
             "Speaker and Video rows must be replaced by one floating-bus row")
@@ -584,6 +612,8 @@ def test_checkbox_rows_ignore_left_right() -> None:
     adjust = source[adjust_start:adjust_end]
     forbidden_checkbox_mutations = (
         "config_menu_vtw_toggle_focused_slot(menu)",
+        "menu->vtw_ignore_c074 =",
+        "menu->vtw_disable_disk2_accel =",
         "menu->border_enabled =",
         "menu->show_bezel =",
         "menu->show_debugging =",

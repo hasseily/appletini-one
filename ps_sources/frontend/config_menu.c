@@ -26,7 +26,7 @@
 
 #define APPLETINI_CFG_PATH "0:/appletini_cfg.txt"
 #define APPLETINI_CFG_MAX 8192U
-#define APPLETINI_CFG_VERSION 111U
+#define APPLETINI_CFG_VERSION 112U
 #define ETHERNET_CONTROL_SLOT 1U
 #define DISK2_CONTROL_SLOT 6U
 #define MOUSE_CONTROL_SLOT 2U
@@ -57,6 +57,8 @@
 #define CONFIG_DEFAULT_VTW_ENABLED 0U
 #define CONFIG_DEFAULT_VTW_SPEED_MODE 0U     /* full-rate bursts */
 #define CONFIG_DEFAULT_VTW_PACE_DIVIDER 37U  /* ~3.6 MHz-equivalent */
+#define CONFIG_DEFAULT_VTW_IGNORE_C074 0U    /* honor software speed control */
+#define CONFIG_DEFAULT_VTW_DISABLE_D2_ACCEL 0U
 #define CONFIG_DEFAULT_VTW_SLUG_KEY 0U       /* slug USB key disarmed */
 #define CONFIG_DEFAULT_VTW_SLOWDOWN_MASK 0U     /* all regions full speed */
 #define CONFIG_DEFAULT_VTW_SLOWDOWN_CYCLES 512U /* 1 MHz window per access */
@@ -2762,7 +2764,9 @@ static void config_menu_apply_runtime_internal(config_menu_t *menu,
         menu->platform.set_vtw_config(menu->platform.ctx,
                                       menu->vtw_enabled,
                                       menu->vtw_speed_mode,
-                                      menu->vtw_pace_divider);
+                                      menu->vtw_pace_divider,
+                                      menu->vtw_ignore_c074,
+                                      menu->vtw_disable_disk2_accel);
     }
     if (menu->platform.set_vtw_slug_key_enabled != NULL) {
         menu->platform.set_vtw_slug_key_enabled(menu->platform.ctx,
@@ -2957,6 +2961,10 @@ static void config_menu_parse_key_value(config_menu_t *menu, const char *key, co
         menu->applicard_resource_max = config_menu_bool_text(value);
     } else if (strcmp(key, "vtw.enabled") == 0) {
         menu->vtw_enabled = config_menu_bool_text(value);
+    } else if (strcmp(key, "vtw.c074.ignore") == 0) {
+        menu->vtw_ignore_c074 = config_menu_bool_text(value);
+    } else if (strcmp(key, "vtw.disk2.acceleration.disabled") == 0) {
+        menu->vtw_disable_disk2_accel = config_menu_bool_text(value);
     } else if (strcmp(key, "vtw.speed.mode") == 0) {
         unsigned long mode = strtoul(value, NULL, 10);
         menu->vtw_speed_mode = (mode <= 2UL) ? (uint8_t)mode : 0U;
@@ -3173,6 +3181,8 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                "applicard.slot5.enabled=%s\n"
                "applicard.resource.max=%s\n"
                "vtw.enabled=%s\n"
+               "vtw.c074.ignore=%s\n"
+               "vtw.disk2.acceleration.disabled=%s\n"
                "vtw.speed.mode=%u\n"
                "vtw.pace.divider=%u\n"
                "vtw.slug.key=%s\n"
@@ -3183,6 +3193,8 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                config_menu_on_off(menu->applicard_slot5_enabled),
                config_menu_on_off(menu->applicard_resource_max),
                config_menu_on_off(menu->vtw_enabled),
+               config_menu_on_off(menu->vtw_ignore_c074),
+               config_menu_on_off(menu->vtw_disable_disk2_accel),
                (unsigned)menu->vtw_speed_mode,
                (unsigned)menu->vtw_pace_divider,
                config_menu_on_off(menu->vtw_slug_key_enabled),
@@ -3552,6 +3564,8 @@ static void config_menu_reset_settings_only(config_menu_t *menu)
     menu->vtw_enabled = CONFIG_DEFAULT_VTW_ENABLED;
     menu->vtw_speed_mode = CONFIG_DEFAULT_VTW_SPEED_MODE;
     menu->vtw_pace_divider = CONFIG_DEFAULT_VTW_PACE_DIVIDER;
+    menu->vtw_ignore_c074 = CONFIG_DEFAULT_VTW_IGNORE_C074;
+    menu->vtw_disable_disk2_accel = CONFIG_DEFAULT_VTW_DISABLE_D2_ACCEL;
     menu->vtw_slug_key_enabled = CONFIG_DEFAULT_VTW_SLUG_KEY;
     menu->vtw_slowdown_mask = CONFIG_DEFAULT_VTW_SLOWDOWN_MASK;
     menu->vtw_slowdown_cycles = CONFIG_DEFAULT_VTW_SLOWDOWN_CYCLES;
@@ -3857,7 +3871,9 @@ void config_menu_set_vtw_enabled(config_menu_t *menu, uint8_t enable)
         menu->platform.set_vtw_config(menu->platform.ctx,
                                       menu->vtw_enabled,
                                       menu->vtw_speed_mode,
-                                      menu->vtw_pace_divider);
+                                      menu->vtw_pace_divider,
+                                      menu->vtw_ignore_c074,
+                                      menu->vtw_disable_disk2_accel);
     }
     config_menu_save_settings(menu);
     config_menu_set_status(menu, menu->vtw_enabled,
@@ -3879,7 +3895,9 @@ void config_menu_set_vtw_speed(config_menu_t *menu,
         menu->platform.set_vtw_config(menu->platform.ctx,
                                       menu->vtw_enabled,
                                       menu->vtw_speed_mode,
-                                      menu->vtw_pace_divider);
+                                      menu->vtw_pace_divider,
+                                      menu->vtw_ignore_c074,
+                                      menu->vtw_disable_disk2_accel);
     }
     config_menu_save_settings(menu);
 }
@@ -5991,6 +6009,37 @@ static void config_menu_activate_item(config_menu_t *menu)
                 menu->vtw_enabled ? 0U : 1U);
         } else if (menu->item_focus == CONFIG_TRANSWARP_ITEM_SPEED) {
             config_menu_vtw_cycle_speed(menu, 1);
+        } else if (menu->item_focus == CONFIG_TRANSWARP_ITEM_IGNORE_C074) {
+            menu->vtw_ignore_c074 = menu->vtw_ignore_c074 ? 0U : 1U;
+            if (menu->platform.set_vtw_config != NULL) {
+                menu->platform.set_vtw_config(menu->platform.ctx,
+                                              menu->vtw_enabled,
+                                              menu->vtw_speed_mode,
+                                              menu->vtw_pace_divider,
+                                              menu->vtw_ignore_c074,
+                                              menu->vtw_disable_disk2_accel);
+            }
+            config_menu_set_status(menu, menu->vtw_ignore_c074,
+                menu->vtw_ignore_c074
+                    ? "$C074 SPEED SWITCH IGNORED"
+                    : "$C074 SPEED SWITCH HONORED");
+            config_menu_save_settings(menu);
+        } else if (menu->item_focus == CONFIG_TRANSWARP_ITEM_DISABLE_D2) {
+            menu->vtw_disable_disk2_accel =
+                menu->vtw_disable_disk2_accel ? 0U : 1U;
+            if (menu->platform.set_vtw_config != NULL) {
+                menu->platform.set_vtw_config(menu->platform.ctx,
+                                              menu->vtw_enabled,
+                                              menu->vtw_speed_mode,
+                                              menu->vtw_pace_divider,
+                                              menu->vtw_ignore_c074,
+                                              menu->vtw_disable_disk2_accel);
+            }
+            config_menu_set_status(menu, menu->vtw_disable_disk2_accel,
+                menu->vtw_disable_disk2_accel
+                    ? "DISK II ACCELERATION DISABLED"
+                    : "DISK II ACCELERATION ENABLED");
+            config_menu_save_settings(menu);
         } else if (menu->item_focus == CONFIG_TRANSWARP_ITEM_SLUG) {
             menu->vtw_slug_key_enabled = menu->vtw_slug_key_enabled ? 0U : 1U;
             if (menu->platform.set_vtw_slug_key_enabled != NULL) {
@@ -6094,6 +6143,8 @@ void config_menu_init(config_menu_t *menu)
     menu->vtw_enabled = CONFIG_DEFAULT_VTW_ENABLED;
     menu->vtw_speed_mode = CONFIG_DEFAULT_VTW_SPEED_MODE;
     menu->vtw_pace_divider = CONFIG_DEFAULT_VTW_PACE_DIVIDER;
+    menu->vtw_ignore_c074 = CONFIG_DEFAULT_VTW_IGNORE_C074;
+    menu->vtw_disable_disk2_accel = CONFIG_DEFAULT_VTW_DISABLE_D2_ACCEL;
     menu->vtw_slug_key_enabled = CONFIG_DEFAULT_VTW_SLUG_KEY;
     menu->vtw_slowdown_mask = CONFIG_DEFAULT_VTW_SLOWDOWN_MASK;
     menu->vtw_slowdown_cycles = CONFIG_DEFAULT_VTW_SLOWDOWN_CYCLES;

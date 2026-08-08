@@ -81,8 +81,9 @@
 
 /* Virtual TransWarp accelerator (vtw_core_top). CTRL bit0 requests the
  * session (the PL additionally gates on machine mode == IIe or II/II+),
- * bit1 releases
- * the 65C02 core, [3:2] pick the speed mode, [15:8] the divided-mode pace.
+ * bit1 releases the 65C02 core, [3:2] pick the speed mode, bit6 ignores
+ * every software write to $C074, bit7 disables the private Disk II read
+ * shortcut, and [31:16] holds the divided-mode pace.
  * SHADOW_ADDR/DATA expose the 144 KB shadow through an auto-incrementing
  * byte port; SYNC_CMD/STATUS issue single real bus cycles while the core is
  * held (the boot-time ROM copy path). */
@@ -245,6 +246,11 @@
  * PS whenever the machine is a II/II+; clear to restore real reads for
  * hosts with a controller attached. */
 #define CARD_CTRL_VTW_CTRL_IIPLUS_BTNS_BIT (1UL << 5)
+/* Discard every core write to $C074. This also clears an already-latched
+ * $C074 state so the configured or USB-selected speed takes effect live. */
+#define CARD_CTRL_VTW_CTRL_IGNORE_C074_BIT  (1UL << 6)
+/* Route virtual Disk II through the original physical 1 MHz path. */
+#define CARD_CTRL_VTW_CTRL_DISABLE_D2_ACCEL_BIT (1UL << 7)
 /* 16-bit pace divider at [31:16] (50 kHz slug mode needs divider 2667). */
 #define CARD_CTRL_VTW_CTRL_DIVIDER_SHIFT   16U
 #define CARD_CTRL_VTW_CTRL_DIVIDER_MASK    0xFFFFUL

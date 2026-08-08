@@ -1346,7 +1346,8 @@ def test_pl_write_fifo_accounts_simultaneous_push_pop_once() -> None:
 
 def test_pl_stepper_matches_applewin_deferred_motion() -> None:
     source = DISK2_CARD_SV.read_text(encoding="utf-8")
-    require("wire stepper_io_access = (ab_io_read || ab_io_write) && (io_idx <= IO_PHASE3_ON);" in source,
+    require("wire stepper_io_access =\n"
+            "        (io_read || io_write) && (io_idx <= IO_PHASE3_ON);" in source,
             "Disk II stepper timer must be blocked only by another phase access")
     require("step_delay_q <= 4'd10;" in source,
             "Disk II stepper motion must be deferred by AppleWin's 10-cycle delay")
@@ -1355,9 +1356,10 @@ def test_pl_stepper_matches_applewin_deferred_motion() -> None:
     require("stepper_result(" in source and "magnets == 4'hC" in source and
             "next_qtrack = phase + phase + 8'd1;" in source,
             "Disk II WOZ stepper must preserve AppleWin half-phase head positions")
-    require("enabled && ab_read.res && ab_read.sss_en &&\n"
+    require("enabled && ab_read.res && disk_cycle_tick &&\n"
             "                step_pending_q && !stepper_io_access" in source,
-            "Disk II deferred stepper event must age during non-stepper I/O")
+            "Disk II deferred stepper event must age on the selected native "
+            "or virtual cycle clock during non-stepper I/O")
 
 
 def test_rejects_bad_chunks_crc_13_sector_and_write_protect() -> None:
@@ -2248,7 +2250,7 @@ def test_pl_woz_io_access_requires_loaded_woz_track() -> None:
     source = DISK2_CARD_SV.read_text(encoding="utf-8")
     require(
         "wire woz_io_access =\n"
-        "        (ab_io_read || ab_io_write) &&\n"
+        "        (io_read || io_write) &&\n"
         "        drive_spinning &&\n"
         "        drive_has_media &&\n"
         "        track_woz_q &&\n"

@@ -22,6 +22,7 @@
 //     stock machine, which the real TW fails.
 //   - $C074 (0=fast, 1=1 MHz, 3=off-until-reset): decoded from the core's
 //     own writes; the write still goes to the bus like the real card's.
+//     A persisted compatibility override may ignore every write.
 //
 // Interrupts arrive through the physical pins: virtual cards assert IRQ on
 // the real line via the arbiter, the wrapper samples it back, and the core
@@ -60,6 +61,11 @@ module vtw_core_top (
     // divider: the 0.05 MHz slug mode needs ~2667 fabric clks/cycle.
     input  logic [1:0]              speed_mode,   // 0=full, 1=divided, 2=1MHz-locked
     input  logic [15:0]             pace_divider, // divided: min fabric clks/cycle
+    /* Ignore every software write to the TransWarp speed register. Raising
+     * this live also clears a value that software latched earlier, so the
+     * selected menu/USB speed takes effect at once. The physical write still
+     * reaches the Apple bus; only its vTW control effect is suppressed. */
+    input  logic                    ignore_c074,
 
     /* Per-region slowdown (physical TransWarp DIP block 2). After the core
      * touches an enabled timing-sensitive region, it drops to cycle-locked
@@ -70,11 +76,21 @@ module vtw_core_top (
     input  logic [9:0]              slow_region_en,
     input  logic [15:0]             slow_duration,
 
-    /* Disk II is never acceleration-safe. Copy-protected media depends on
-     * CPU instruction timing between controller accesses, not just the
-     * $C0E0-$C0EF bus cycles themselves. Hold every core cycle at native
-     * speed while the virtual drive is physically spinning. */
-    input  logic                    disk2_timing_active,
+    /* Virtual Disk II read shortcut. Even-address reads in $C0E0-$C0EF
+     * may run against the private card port. Odd reads, every CPU write,
+     * and the whole Q7 write-mode interval retain the proven physical
+     * 1 MHz path. The card may hold virtual time while CPU0 stages a track
+     * or the DDR line cache catches up. */
+    input  logic                    d2_active,
+    output logic                    d2_req_valid,
+    output logic [3:0]              d2_req_addr,
+    input  logic                    d2_req_ready,
+    input  logic                    d2_resp_valid,
+    input  logic [7:0]              d2_resp_rdata,
+    output logic                    d2_cycle_tick,
+    output logic                    d2_native_cycle_active,
+    input  logic                    d2_time_ready,
+    input  logic                    d2_write_timing_active,
 
     /* RamWorks 8 MB expansion (card-control register 0x62, i.e. the same
      * config bit that arms the motherboard-side PSRAM aux serving). When
@@ -560,6 +576,19 @@ module vtw_core_top (
     assign sp_req_wdata  = cycle_wdata_q;
 
     // ------------------------------------------------------------------
+    // Disk II read shortcut. The direct path is deliberately narrow:
+    // only reads of even $C0E0-$C0EE switches may bypass the Apple bus.
+    // Odd reads need the motherboard floating-bus value, CPU writes keep
+    // their native data phase, and Q7 write mode keeps all timing at 1 MHz.
+    // ------------------------------------------------------------------
+    wire d2_io_hit = d2_active &&
+                     (cycle_addr_q[15:8] == 8'hC0) &&
+                     (cycle_addr_q[7:4] == 4'hE);
+    wire d2_fast_hit = d2_io_hit && cycle_rw_q &&
+                       !cycle_addr_q[0] && !d2_write_timing_active;
+    assign d2_req_addr = cycle_addr_q[3:0];
+
+    // ------------------------------------------------------------------
     // Bus engine + request mux (core when running, ARM during boot copy)
     // ------------------------------------------------------------------
     logic        eng_req_valid;
@@ -803,9 +832,14 @@ module vtw_core_top (
     } xstate_t;
     xstate_t xstate_q;
 
-    // SmartPort short-circuit response + single-outstanding guard.
+    // Private-card response selection. SmartPort needs a single-outstanding
+    // guard because its card port can remain busy; Disk II accepts at most
+    // one request because the common state leaves ISSUE on the handshake.
+    logic       private_d2_q;
     logic       sp_inflight_q;
-    assign sp_req_valid = (xstate_q == X_SP_ISSUE) && !sp_inflight_q &&
+    assign sp_req_valid = (xstate_q == X_SP_ISSUE) && !private_d2_q &&
+                          !sp_inflight_q && core_run && ab_read.res;
+    assign d2_req_valid = (xstate_q == X_SP_ISSUE) && private_d2_q &&
                           core_run && ab_read.res;
 
     /* RamWorks single-line cache (8 bytes), write-allocate: every access
@@ -898,12 +932,13 @@ module vtw_core_top (
                                 (cycle_addr_q[10:8] != 3'd0);   // $C100-$C7FF
     wire [2:0]   sd_iosel_slot = cycle_addr_q[10:8];            // 1..7
 
-    /* Disk II is an unconditional 1 MHz region. The direct address decode
-     * paces the access that turns the motor on; disk2_timing_active then
-     * keeps all intervening CPU instructions native until spin-down ends.
-     * This is deliberately independent of the user slowdown mask/window. */
+    /* Disk II accesses that do not use the private read port remain an
+     * unconditional 1 MHz region. The card also holds the whole core at
+     * native speed while Q7 write mode is active. This stays independent
+     * of the user slowdown mask/window. */
     wire sd_disk2 = (sd_slot_io && (sd_slot_num == 3'd6)) ||
                     (sd_iosel  && (sd_iosel_slot == 3'd6));
+    wire sd_disk2_native = sd_disk2 && !d2_fast_hit;
 
     wire sd_hit = (sd_floating_io && slow_region_en[7]) ||
                   (sd_paddle      && slow_region_en[8]) ||
@@ -911,10 +946,12 @@ module vtw_core_top (
                   (sd_iosel   && slow_region_en[sd_iosel_slot - 3'd1]);
 
     /* $C074 = 1 or 3 forces stock speed; the divided/full presets apply
-     * only in state 0. The per-region slowdown one-shot and Disk II's
-     * mandatory active-drive interlock also force 1 MHz. */
+     * only in state 0. ignore_c074 keeps that state at zero. Per-region
+     * slowdown, physical Disk II accesses, and Disk II Q7 write mode also
+     * force 1 MHz. */
     wire [1:0] eff_mode =
-        (c074_q != 2'd0 || slow_active || sd_disk2 || disk2_timing_active) ?
+        (c074_q != 2'd0 || slow_active || sd_disk2_native ||
+         d2_write_timing_active) ?
                           SPEED_1MHZ : speed_mode;
 
     wire pace_ok =
@@ -1009,10 +1046,22 @@ module vtw_core_top (
                             status_vbl_sampled_q);
     wire complete_dead   = (xstate_q == X_DEAD)        && pace_ok;
     assign core_en = core_res_n && !rw_hold_q &&
+                     d2_time_ready &&
                      (complete_mem || complete_bus ||
                       complete_rw || complete_sp ||
                       complete_status || complete_dead);
     assign arm_rw_hold_state = rw_hold_q;
+
+    /* One Disk II time tick per virtual 65C02 cycle. Normal cycles tick when
+     * the core completes. disk2_card adds the direct-access tick when its
+     * registered private request executes, keeping the tick and soft-switch
+     * side effect on the same edge. Physical Disk II cycles use
+     * ab_read.sss_en inside disk2_card and are suppressed here. */
+    wire d2_req_fire = d2_req_valid && d2_req_ready;
+    assign d2_cycle_tick =
+        core_en && d2_active && !private_d2_q && !sd_disk2_native;
+    assign d2_native_cycle_active =
+        core_active && (xstate_q == X_BUS) && sd_disk2_native;
 
     /* The xstate FSM runs one access ahead of a frozen core: these are
      * the only states from which it can still reach the RamWorks cache.
@@ -1065,6 +1114,7 @@ module vtw_core_top (
             rw_hold_q           <= 1'b0;
             arm_rw_flush_done   <= 1'b0;
             cycle_sp_iosel7_q   <= 1'b0;
+            private_d2_q        <= 1'b0;
             sp_inflight_q       <= 1'b0;
             slow_cnt_q          <= 16'd0;
         end
@@ -1209,13 +1259,14 @@ module vtw_core_top (
 
             // $C074: decoded from the core's own write cycles. A write of
             // 3 latches until the next Apple reset, like the real card's
-            // off-until-reset.
-            if (ssm_pulse && !core_rwb && core_addr == 16'hC074 &&
-                c074_q != 2'd3) begin
-                c074_q <= core_data_out[1:0];
-            end
-            if (!ab_read.res) begin
+            // off-until-reset. The override discards all values and clears
+            // any state that software latched before it was enabled.
+            if (!ab_read.res || ignore_c074) begin
                 c074_q <= 2'd0;
+            end
+            else if (ssm_pulse && !core_rwb && core_addr == 16'hC074 &&
+                     c074_q != 2'd3) begin
+                c074_q <= core_data_out[1:0];
             end
 
             /* The write is already translated here, so xl_is_aux names the
@@ -1276,10 +1327,9 @@ module vtw_core_top (
                     if (xl_is_bus) begin
                         // core_res_n implies the session is active, so the
                         // bus engine is running and will take the request.
-                        // SmartPort accesses (a subset of the bus route)
-                        // are short-circuited to the card instead, and the
-                        // //e status reads ($C011-$C01F) are served from the
-                        // tracked switch state without a bus cycle.
+                        // Private Disk II reads and SmartPort accesses are
+                        // short-circuited to their cards. The //e status
+                        // reads ($C011-$C01F) use tracked switch state.
                         if (sp_boot_suppress_hit) begin
                             // The accelerated ROM is performing a second
                             // cold slot scan after takeover. Disk II was the
@@ -1289,7 +1339,12 @@ module vtw_core_top (
                             core_data_in_q <= 8'hFF;
                             xstate_q       <= X_DEAD;
                         end
+                        else if (d2_fast_hit) begin
+                            private_d2_q <= 1'b1;
+                            xstate_q     <= X_SP_ISSUE;
+                        end
                         else if (sp_hit) begin
+                            private_d2_q <= 1'b0;
                             xstate_q <= X_SP_ISSUE;
                         end
                         else if (xl_c01x_rd) begin
@@ -1431,15 +1486,20 @@ module vtw_core_top (
                 end
 
                 X_SP_ISSUE: begin
-                    // sp_req_valid asserts combinationally; advance once
-                    // the card accepts (single outstanding via inflight).
-                    if (sp_req_valid && sp_req_ready) begin
+                    // The selected private-card request asserts
+                    // combinationally and advances on its handshake.
+                    if ((private_d2_q && d2_req_fire) ||
+                        (!private_d2_q && sp_req_valid && sp_req_ready)) begin
                         xstate_q <= X_SP_WAIT;
                     end
                 end
 
                 X_SP_WAIT: begin
-                    if (sp_resp_valid) begin
+                    if (private_d2_q && d2_resp_valid) begin
+                        core_data_in_q <= d2_resp_rdata;
+                        xstate_q       <= X_SP_DONE;
+                    end
+                    else if (!private_d2_q && sp_resp_valid) begin
                         core_data_in_q <= sp_resp_rdata;
                         xstate_q       <= X_SP_DONE;
                     end
@@ -1447,6 +1507,7 @@ module vtw_core_top (
 
                 X_SP_DONE: begin
                     if (core_en) begin
+                        private_d2_q <= 1'b0;
                         xstate_q <= X_CAPTURE;
                     end
                 end
@@ -1485,6 +1546,7 @@ module vtw_core_top (
              * its own; the stale response is simply ignored. */
             if (!core_res_n) begin
                 xstate_q                   <= X_CAPTURE;
+                private_d2_q              <= 1'b0;
                 status_vbl_data_phase_q   <= 1'b0;
                 status_vbl_sampled_q      <= 1'b0;
             end

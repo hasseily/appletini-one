@@ -41,22 +41,31 @@ module apple_bus_write_arbiter #(parameter NUM_CLIENTS = 1) (
     end
 
     // ---- Priority mux for data + address bus ----
+    // Keep the enable reductions separate from the payload muxes. The enable
+    // bits only mean "at least one client is driving"; putting them in the
+    // priority loops needlessly ties the board-direction outputs to the full
+    // payload selection trees.
     always_comb begin
         ab_write.wr_data       = '0;
-        ab_write.wr_data_en    = 1'b0;
         ab_write.wr_addr       = '0;
         ab_write.wr_rw         = 1'b0;
-        ab_write.wr_addr_rw_en = 1'b0;
         for (int i = NUM_CLIENTS-1; i >= 0; i--) begin
             if (gated_writes[i].wr_data_en) begin
-                ab_write.wr_data    = gated_writes[i].wr_data;
-                ab_write.wr_data_en = 1'b1;
+                ab_write.wr_data = gated_writes[i].wr_data;
             end
             if (gated_writes[i].wr_addr_rw_en) begin
-                ab_write.wr_addr       = gated_writes[i].wr_addr;
-                ab_write.wr_rw         = gated_writes[i].wr_rw;
-                ab_write.wr_addr_rw_en = 1'b1;
+                ab_write.wr_addr = gated_writes[i].wr_addr;
+                ab_write.wr_rw   = gated_writes[i].wr_rw;
             end
+        end
+    end
+
+    always_comb begin
+        ab_write.wr_data_en = 1'b0;
+        ab_write.wr_addr_rw_en = 1'b0;
+        for (int i = 0; i < NUM_CLIENTS; i++) begin
+            ab_write.wr_data_en |= gated_writes[i].wr_data_en;
+            ab_write.wr_addr_rw_en |= gated_writes[i].wr_addr_rw_en;
         end
     end
 

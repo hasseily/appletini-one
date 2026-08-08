@@ -76,14 +76,31 @@ module tb_vtw_slowdown;
     logic        core_run = 0;
     logic [9:0]  sd_region_en = 10'd0;
     logic [15:0] sd_duration  = 16'd0;
-    logic        disk2_timing_active = 0;
+    logic        disk2_write_timing_active = 0;
     logic        sh_en = 0;
     logic [17:0] sh_addr = '0;
     logic        sh_we = 0;
     logic [7:0]  sh_wdata = '0;
     logic [7:0]  sh_rdata;
     logic [31:0] cnt_core_cycles;
+    logic [31:0] cnt_bus_cycles;
     logic        video_phase_1mhz;
+    logic        disk2_active = 1'b0;
+    logic        disk2_req_valid;
+    logic [3:0]  disk2_req_addr;
+    logic        disk2_resp_valid = 1'b0;
+    logic [31:0] disk2_req_count = 32'd0;
+
+    always_ff @(posedge clk) begin
+        if (!rstn) begin
+            disk2_resp_valid <= 1'b0;
+            disk2_req_count <= 32'd0;
+        end else begin
+            disk2_resp_valid <= disk2_req_valid;
+            if (disk2_req_valid)
+                disk2_req_count <= disk2_req_count + 32'd1;
+        end
+    end
 
     vtw_core_top dut (
         .clk(clk), .rstn(rstn), .enable(enable),
@@ -91,6 +108,7 @@ module tb_vtw_slowdown;
         .assert_apple_res(1'b0),
         .speed_mode(2'd0),        // WARP baseline
         .pace_divider(16'd0),
+        .ignore_c074(1'b0),
         .irq_assert_in(1'b0),
         .data_drive_in(vtw_ab_write.wr_data_en),
         .data_drive_value_in(vtw_ab_write.wr_data),
@@ -98,7 +116,13 @@ module tb_vtw_slowdown;
         .iiplus_buttons_zero(1'b0),
         .slow_region_en(sd_region_en),
         .slow_duration(sd_duration),
-        .disk2_timing_active(disk2_timing_active),
+        .d2_active(disk2_active),
+        .d2_req_valid(disk2_req_valid), .d2_req_addr(disk2_req_addr),
+        .d2_req_ready(1'b1),
+        .d2_resp_valid(disk2_resp_valid), .d2_resp_rdata(8'hA5),
+        .d2_cycle_tick(), .d2_native_cycle_active(),
+        .d2_time_ready(1'b1),
+        .d2_write_timing_active(disk2_write_timing_active),
         .ramworks_en(1'b0),
         .video_vbl(1'b0),
         .post_main_wide(1'b0),
@@ -125,7 +149,7 @@ module tb_vtw_slowdown;
         .c074_state(), .bus_owned(),
         .video_phase_1mhz(video_phase_1mhz),
         .dbg_core_pc(), .cnt_core_cycles(cnt_core_cycles),
-        .cnt_bus_cycles(), .cnt_posted_writes(),
+        .cnt_bus_cycles(cnt_bus_cycles), .cnt_posted_writes(),
         .post_fill(), .post_high_water(), .cnt_post_drops(),
         .cnt_invalid_routes(),
         .dbg_vsss(), .dbg_last_sync_addr(), .dbg_last_sync_data(),
@@ -157,10 +181,11 @@ module tb_vtw_slowdown;
     localparam logic [17:0] ROM_BASE = 18'h20000;
     localparam int NOPS = 12;
 
-    task automatic load_program_abs(input logic [15:0] addr);
+    task automatic load_program_op_abs(input logic [7:0] opcode,
+                                       input logic [15:0] addr);
         int off;
-        // $F000: STA addr (region access)
-        sh_write(ROM_BASE + 18'h3000, 8'h8D);
+        // $F000: absolute read/write of the selected region.
+        sh_write(ROM_BASE + 18'h3000, opcode);
         sh_write(ROM_BASE + 18'h3001, addr[7:0]);
         sh_write(ROM_BASE + 18'h3002, addr[15:8]);
         off = 3;
@@ -178,6 +203,10 @@ module tb_vtw_slowdown;
         sh_write(ROM_BASE + 18'h3FFD, 8'hF0);
         // define zero page / stack
         for (int i = 0; i < 512; i++) sh_write(18'(i), 8'h00);
+    endtask
+
+    task automatic load_program_abs(input logic [15:0] addr);
+        load_program_op_abs(8'h8D, addr);
     endtask
 
     task automatic load_program(input logic [7:0] region_lo);
@@ -199,6 +228,19 @@ module tb_vtw_slowdown;
         core_run = 1;
     endtask
 
+    task automatic reboot_op_with(input logic [7:0] opcode,
+                                  input logic [15:0] tgt);
+        core_run = 0; enable = 0;
+        rstn = 0; res_drive_low = 1;
+        sd_region_en = 10'd0; sd_duration = 16'd0;
+        repeat (20) @(posedge clk);
+        rstn = 1;
+        load_program_op_abs(opcode, tgt);
+        enable = 1; #10us;
+        res_drive_low = 0; #4us;
+        core_run = 1;
+    endtask
+
     int fails = 0;
     task automatic check(input bit cond, input string msg);
         if (!cond) begin
@@ -212,6 +254,7 @@ module tb_vtw_slowdown;
     int iosel_on_core, iosel_off_core;
     int video_on_core, video_off_core;
     int disk2_on_core, disk2_off_core;
+    int disk2_direct_before, disk2_bus_before;
 
     initial begin
         // ---- 1. Baseline WARP: slowdown disabled ----
@@ -322,11 +365,11 @@ module tb_vtw_slowdown;
         check(video_off_core > 2 * WINDOW,
               $sformatf("$C05A with video off stays warp (%0d)", video_off_core));
 
-        // ---- 8. Disk II active-drive interlock: even with every optional
-        //         slowdown disabled, a spinning drive holds all instructions
-        //         at native speed. Releasing the drive restores Warp. ----
+        // ---- 8. Disk II Q7 write-mode interlock: even with every optional
+        //         slowdown disabled, writing holds all instructions at native
+        //         speed. Leaving write mode restores Warp. ----
         reboot_with(16'hC030, 10'd0, 16'd0);
-        disk2_timing_active = 1'b1;
+        disk2_write_timing_active = 1'b1;
         repeat (80) @(negedge phi0);
         begin
             int a = int'(cnt_core_cycles);
@@ -334,12 +377,12 @@ module tb_vtw_slowdown;
             disk2_on_core = int'(cnt_core_cycles) - a;
         end
         check(disk2_on_core <= WINDOW + WINDOW / 4,
-              $sformatf("active Disk II holds every cycle at ~1 MHz (%0d / %0d)",
+              $sformatf("Disk II write mode holds every cycle at ~1 MHz (%0d / %0d)",
                         disk2_on_core, WINDOW));
         check(video_phase_1mhz,
-              "Disk II's mandatory 1 MHz interlock advertises lookahead");
+              "Disk II write mode advertises 1 MHz lookahead");
 
-        disk2_timing_active = 1'b0;
+        disk2_write_timing_active = 1'b0;
         repeat (80) @(negedge phi0);
         begin
             int a = int'(cnt_core_cycles);
@@ -347,9 +390,42 @@ module tb_vtw_slowdown;
             disk2_off_core = int'(cnt_core_cycles) - a;
         end
         check(disk2_off_core > 2 * WINDOW,
-              $sformatf("stopped Disk II restores Warp (%0d)", disk2_off_core));
+              $sformatf("leaving Disk II write mode restores Warp (%0d)", disk2_off_core));
         check(!video_phase_1mhz,
               "leaving the 1 MHz interlock disables renderer lookahead");
+
+        // ---- 9. Disk II route split. Even reads use the private card port;
+        //         writes and odd reads still emit real Apple bus cycles. ----
+        disk2_active = 1'b1;
+        reboot_op_with(8'hAD, 16'hC0EC); // LDA $C0EC
+        repeat (80) @(negedge phi0);
+        disk2_direct_before = int'(disk2_req_count);
+        disk2_bus_before = int'(cnt_bus_cycles);
+        repeat (80) @(negedge phi0);
+        check(int'(disk2_req_count) > disk2_direct_before,
+              "even Disk II reads did not use the private port");
+        check(int'(cnt_bus_cycles) == disk2_bus_before,
+              "even Disk II reads leaked onto the physical Apple bus");
+
+        reboot_op_with(8'h8D, 16'hC0EC); // STA $C0EC
+        repeat (80) @(negedge phi0);
+        disk2_direct_before = int'(disk2_req_count);
+        disk2_bus_before = int'(cnt_bus_cycles);
+        repeat (80) @(negedge phi0);
+        check(int'(disk2_req_count) == disk2_direct_before,
+              "Disk II write used the private read port");
+        check(int'(cnt_bus_cycles) > disk2_bus_before,
+              "Disk II write did not use the physical 1 MHz bus path");
+
+        reboot_op_with(8'hAD, 16'hC0ED); // odd read needs floating bus
+        repeat (80) @(negedge phi0);
+        disk2_direct_before = int'(disk2_req_count);
+        disk2_bus_before = int'(cnt_bus_cycles);
+        repeat (80) @(negedge phi0);
+        check(int'(disk2_req_count) == disk2_direct_before,
+              "odd Disk II read used the private port");
+        check(int'(cnt_bus_cycles) > disk2_bus_before,
+              "odd Disk II read did not use the physical Apple bus");
 
         if (fails == 0) $display("VTW SLOWDOWN PASS");
         else            $display("VTW SLOWDOWN FAILED: %0d checks", fails);

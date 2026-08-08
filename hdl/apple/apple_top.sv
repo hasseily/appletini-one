@@ -180,6 +180,8 @@ module apple_top(
     //                     bit1 core_run, [3:2] speed_mode (0=full, 1=divided,
     //                     2=1MHz-locked), bit4 assert Apple RES# (takeover
     //                     machine reset), bit5 II+ Apple-key synthesis,
+    //                     bit6 ignore all $C074 speed-switch writes,
+    //                     bit7 disable the private Disk II read shortcut,
     //                     [31:16] pace divider (divided mode).
     //   VTW_SHADOW_ADDR : 18-bit shadow port-B pointer; writing it also
     //                     fetches that byte for VTW_SHADOW_DATA reads.
@@ -332,6 +334,16 @@ module apple_top(
     logic boot_target_disk2;
     logic vtw_core_run_eff_q;
     logic vtw_disk2_boot_scan_q;
+    logic vtw_disk2_active;
+    logic vtw_d2_req_valid;
+    logic [3:0] vtw_d2_req_addr;
+    logic vtw_d2_req_ready;
+    logic vtw_d2_resp_valid;
+    logic [7:0] vtw_d2_resp_rdata;
+    logic vtw_d2_cycle_tick;
+    logic vtw_d2_native_cycle_active;
+    logic vtw_d2_time_ready;
+    logic vtw_d2_write_timing_active;
     logic disk2_sound_spinning;
     logic [7:0] disk2_sound_qtrack;
     logic [3:0] disk2_sound_event;
@@ -1068,6 +1080,16 @@ module apple_top(
         .mc_rdata(mc_disk2_rdata),
         .mc_rvalid(mc_disk2_rvalid),
         .ab_write(disk2_ab_write),
+        .vtw_active(vtw_disk2_active),
+        .vtw_req_valid(vtw_d2_req_valid),
+        .vtw_req_addr(vtw_d2_req_addr),
+        .vtw_req_ready(vtw_d2_req_ready),
+        .vtw_resp_valid(vtw_d2_resp_valid),
+        .vtw_resp_rdata(vtw_d2_resp_rdata),
+        .vtw_cycle_tick(vtw_d2_cycle_tick),
+        .vtw_native_cycle_active(vtw_d2_native_cycle_active),
+        .vtw_time_ready(vtw_d2_time_ready),
+        .vtw_write_timing_active(vtw_d2_write_timing_active),
         .sound_spinning(disk2_sound_spinning),
         .sound_qtrack(disk2_sound_qtrack),
         .sound_event(disk2_sound_event),
@@ -1363,6 +1385,9 @@ module apple_top(
     wire vtw_video_vbl = (line_in_frame >= 9'd192);
     wire vtw_enable_eff = vtw_ctrl_q[0] && vtw_machine_ok_q;
     wire vtw_core_run_eff = vtw_enable_eff && vtw_ctrl_q[1];
+    assign vtw_disk2_active = vtw_core_run_eff && vtw_bus_owned &&
+                              card_slot6_enable && disk2_active &&
+                              !vtw_ctrl_q[7];
     wire vtw_slot6_boot_probe =
         vtw_disk2_boot_scan_q && vtw_bus_owned &&
         ab_read.serve_en && ab_read.rw &&
@@ -1429,6 +1454,7 @@ module apple_top(
         .assert_apple_res(vtw_ctrl_q[4]),
         .speed_mode(vtw_ctrl_q[3:2]),
         .pace_divider(vtw_ctrl_q[31:16]),
+        .ignore_c074(vtw_ctrl_q[6]),
         .irq_assert_in(ab_write_arb.assert_irq),
         .data_drive_in(ab_write_arb.wr_data_en),
         .data_drive_value_in(ab_write_arb.wr_data),
@@ -1436,7 +1462,16 @@ module apple_top(
         .iiplus_buttons_zero(vtw_ctrl_q[5]),
         .slow_region_en(vtw_slowdown_q[9:0]),
         .slow_duration(vtw_slowdown_q[31:16]),
-        .disk2_timing_active(disk2_sound_spinning),
+        .d2_active(vtw_disk2_active),
+        .d2_req_valid(vtw_d2_req_valid),
+        .d2_req_addr(vtw_d2_req_addr),
+        .d2_req_ready(vtw_d2_req_ready),
+        .d2_resp_valid(vtw_d2_resp_valid),
+        .d2_resp_rdata(vtw_d2_resp_rdata),
+        .d2_cycle_tick(vtw_d2_cycle_tick),
+        .d2_native_cycle_active(vtw_d2_native_cycle_active),
+        .d2_time_ready(vtw_d2_time_ready),
+        .d2_write_timing_active(vtw_d2_write_timing_active),
         .ramworks_en(ramworks_en_q),
         .video_vbl(vtw_video_vbl),
         .post_main_wide(post_main_wide_q),

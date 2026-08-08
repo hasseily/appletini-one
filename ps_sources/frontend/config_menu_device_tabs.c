@@ -409,6 +409,14 @@ void config_menu_draw_transwarp(uint16_t *fb,
                                 int w)
 {
     const int row_h = CMUI_ROW_H + CMUI_ROW_GAP;
+    const int option_gap = 8;
+    const int option_w = (w - option_gap) / 2;
+    const int option_x2 = x + option_w + option_gap;
+    const int option_w2 = w - option_w - option_gap;
+    const int slot_gap = 8;
+    const int slot_w =
+        (w - ((CONFIG_TRANSWARP_SLOT_COUNT - 1U) * slot_gap)) /
+        CONFIG_TRANSWARP_SLOT_COUNT;
     uint8_t machine_blocks;
 
     if (menu == NULL) {
@@ -446,33 +454,45 @@ void config_menu_draw_transwarp(uint16_t *fb,
                                   CONFIG_TRANSWARP_ITEM_SPEED),
                         "Speed:",
                         config_menu_vtw_speed_label(menu));
-    hgr_draw_check_item(fb, x, y + (2 * row_h), w,
+    hgr_draw_check_item(fb, x, y + (2 * row_h), option_w,
+                        (uint8_t)(menu->item_focus ==
+                                  CONFIG_TRANSWARP_ITEM_IGNORE_C074),
+                        menu->vtw_ignore_c074,
+                        "Ignore $C074 Speed Switch");
+    hgr_draw_check_item(fb, option_x2, y + (2 * row_h), option_w2,
+                        (uint8_t)(menu->item_focus ==
+                                  CONFIG_TRANSWARP_ITEM_DISABLE_D2),
+                        menu->vtw_disable_disk2_accel,
+                        "Disable DiskII Acceleration");
+    /* Per-region slowdown (TransWarp DIP block 2): each enabled region
+     * drops the core to 1 MHz for a window after it is touched, so
+     * timing-sensitive I/O keeps working at high core speeds. */
+    hgr_draw_check_item(fb, x, y + (3 * row_h), option_w,
+                        (uint8_t)(menu->item_focus ==
+                                  CONFIG_TRANSWARP_ITEM_FLOATBUS),
+                        (uint8_t)((menu->vtw_slowdown_mask & (1U << 7)) != 0U),
+                        "Slow Floating bus ($C019,$C030-$C05F)");
+    hgr_draw_check_item(fb, option_x2, y + (3 * row_h), option_w2,
+                        (uint8_t)(menu->item_focus ==
+                                  CONFIG_TRANSWARP_ITEM_PADDLE),
+                        (uint8_t)((menu->vtw_slowdown_mask & (1U << 8)) != 0U),
+                        "Slow Paddles/joystick ($C064-$C070)");
+    hgr_draw_check_item(fb, x, y + (4 * row_h), w,
                         (uint8_t)(menu->item_focus ==
                                   CONFIG_TRANSWARP_ITEM_SLUG),
                         menu->vtw_slug_key_enabled,
                         "Enable 0.05 MHz slug debug key");
 
-    /* Per-region slowdown (TransWarp DIP block 2): each enabled region
-     * drops the core to 1 MHz for a window after it is touched, so
-     * timing-sensitive I/O keeps working at high core speeds. */
-    hgr_draw_check_item(fb, x, y + (3 * row_h), w,
-                        (uint8_t)(menu->item_focus ==
-                                  CONFIG_TRANSWARP_ITEM_FLOATBUS),
-                        (uint8_t)((menu->vtw_slowdown_mask & (1U << 7)) != 0U),
-                        "Slow down floating-bus I/O ($C019,$C030-$C05F)");
-    hgr_draw_check_item(fb, x, y + (4 * row_h), w,
-                        (uint8_t)(menu->item_focus ==
-                                  CONFIG_TRANSWARP_ITEM_PADDLE),
-                        (uint8_t)((menu->vtw_slowdown_mask & (1U << 8)) != 0U),
-                        "Slow down paddles/joystick ($C064-$C070)");
+    cmui_caption(fb, x + 18, y + (5 * row_h) + 10, w - 36,
+                 "Slow down physical slots:");
     for (uint8_t slot = 1U; slot <= CONFIG_TRANSWARP_SLOT_COUNT; ++slot) {
         const uint32_t item = CONFIG_TRANSWARP_ITEM_SLOT_FIRST + slot - 1U;
-        char slot_label[34];
+        const int slot_x = x + ((int)(slot - 1U) * (slot_w + slot_gap));
+        char slot_label[4];
 
-        (void)snprintf(slot_label, sizeof(slot_label),
-                       "Slow down physical slot %u", (unsigned)slot);
+        (void)snprintf(slot_label, sizeof(slot_label), "%u", (unsigned)slot);
         hgr_draw_check_item(
-            fb, x, y + ((int)item * row_h), w,
+            fb, slot_x, y + (6 * row_h), slot_w,
             (uint8_t)(menu->item_focus == item),
             (uint8_t)((menu->vtw_slowdown_mask & (1U << (slot - 1U))) != 0U),
             slot_label);
@@ -481,8 +501,7 @@ void config_menu_draw_transwarp(uint16_t *fb,
         char win_val[16];
         (void)snprintf(win_val, sizeof(win_val), "%u cyc",
                        (unsigned)menu->vtw_slowdown_cycles);
-        hgr_draw_value_item(fb, x,
-                            y + (CONFIG_TRANSWARP_ITEM_WINDOW * row_h), w,
+        hgr_draw_value_item(fb, x, y + (7 * row_h), w,
                             (uint8_t)(menu->item_focus ==
                                       CONFIG_TRANSWARP_ITEM_WINDOW),
                             "Slowdown window:", win_val);

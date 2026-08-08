@@ -22,6 +22,23 @@ module disk2_card (
     input  logic [63:0]              mc_rdata,
     input  logic                     mc_rvalid,
     output globals::AppleBus_write   ab_write,
+
+    /* vTW read shortcut. Only read accesses that the accelerator has
+     * classified as safe reach this port; all CPU writes and native-only
+     * reads still use the Apple bus path above. The cycle tick advances the
+     * disk sequencer once per virtual 65C02 cycle. A native Disk II bus
+     * access, or Q7 write mode, selects the physical 1 MHz tick instead. */
+    input  logic                     vtw_active,
+    input  logic                     vtw_req_valid,
+    input  logic [3:0]               vtw_req_addr,
+    output logic                     vtw_req_ready,
+    output logic                     vtw_resp_valid,
+    output logic [7:0]               vtw_resp_rdata,
+    input  logic                     vtw_cycle_tick,
+    input  logic                     vtw_native_cycle_active,
+    output logic                     vtw_time_ready,
+    output logic                     vtw_write_timing_active,
+
     output logic                     sound_spinning,
     output logic [7:0]               sound_qtrack,
     output logic [3:0]               sound_event,
@@ -118,6 +135,7 @@ module disk2_card (
     logic [31:0] control_q;
     logic [31:0] psram_base_q;
     logic [31:0] underrun_count_q;
+    logic        underrun_event_q;
     logic [31:0] drive_info_q [0:1];
     logic [31:0] drive_size_q [0:1];
     logic [31:0] drive_tracks_q [0:1];
@@ -149,6 +167,7 @@ module disk2_card (
     logic [12:0] drive_stream_pos_q [0:1];
     logic [5:0]  standard_spin_countdown_q;
     logic        standard_spin_repeat_q;
+    logic        standard_spin_reload_q;
     logic [2:0]  standard_read_gap_q;
     logic [9:0]  empty_drive_lss_settle_q;
     logic [15:0] empty_drive_lfsr_q;
@@ -245,6 +264,8 @@ module disk2_card (
     logic [20:0] prefetch_next_req_line;
     logic [1:0]  prefetch_next_req_slot;
     logic [12:0] active_stream_pos;
+    logic        vtw_req_pending_q;
+    logic [3:0]  vtw_req_addr_q;
 
     wire enabled = (slot_assign != 3'h0);
     wire apple_bus_active = enabled &&
@@ -264,8 +285,13 @@ module disk2_card (
     wire ab_rom_read = ab_read.serve_en && ab_read.rw && slot_rom_hit;
     wire ab_io_read  = ab_read.serve_en && ab_read.rw && slot_io_hit;
     wire ab_io_write = ab_read.data_en && !ab_read.rw && slot_io_hit;
-    wire [3:0] io_idx = ab_read.addr[3:0];
-    wire stepper_io_access = (ab_io_read || ab_io_write) && (io_idx <= IO_PHASE3_ON);
+
+    wire vtw_q6_after_access =
+        (vtw_req_addr == IO_Q6_LOW)  ? 1'b0 :
+        (vtw_req_addr == IO_Q6_HIGH) ? 1'b1 : q6_q;
+    wire vtw_q7_after_access =
+        (vtw_req_addr == IO_Q7_LOW)  ? 1'b0 :
+        (vtw_req_addr == IO_Q7_HIGH) ? 1'b1 : q7_q;
     // The two emulated drives are always physically connected. Bit 0 says
     // whether media is inserted; it must not gate the motor or stepper.
     wire drive_has_media = drive_info_q[drive_select_q][0];
@@ -304,6 +330,51 @@ module disk2_card (
     wire stream_track_loaded = active_drive_loaded;
     wire woz_track_stream_ready = woz_alias_loaded;
     wire drive_spinning = motor_on_q || (spin_countdown_q[drive_select_q] != 28'd0);
+
+    /* Q7 is the Disk II write-mode latch. Preserve the old physical timing
+     * for the whole write interval; the vTW also routes every CPU write and
+     * every odd-address read through the Apple bus. */
+    assign vtw_write_timing_active =
+        enabled && ab_read.res && drive_spinning && q7_q;
+
+    /* A read-accelerated session may pause virtual time while CPU0 stages a
+     * new track or while the DDR line cache catches up. This is a transparent
+     * CPU hold: no virtual timeout or disk bit cell advances during it. Empty
+     * drives and known unavailable tracks remain live so their normal noise
+     * behavior is visible. */
+    assign vtw_time_ready =
+        !vtw_active || !enabled || !ab_read.res ||
+        vtw_write_timing_active || !drive_spinning || !drive_has_media ||
+        active_track_unavailable ||
+        (active_drive_loaded && stream_line_hit_q);
+
+    wire vtw_read_not_ready =
+        !vtw_q6_after_access && !vtw_q7_after_access &&
+        (track_data_pending ||
+         (!track_woz_q && active_drive_loaded && !stream_line_hit_q));
+    /* Register the private request before it touches the controller state.
+     * This keeps the vTW classifier and boot-menu ownership decode out of
+     * the Disk II stepper, LSS, write, and sound update cones. The response
+     * is returned when the registered event executes one clock later. */
+    assign vtw_req_ready =
+        enabled && ab_read.res && !vtw_req_pending_q &&
+        !vtw_resp_valid && !vtw_read_not_ready;
+    wire vtw_req_fire = vtw_req_valid && vtw_req_ready;
+    wire vtw_io_read = vtw_req_pending_q;
+    wire io_read = ab_io_read || vtw_io_read;
+    wire io_write = ab_io_write;
+    wire [3:0] io_idx = vtw_io_read ? vtw_req_addr_q : ab_read.addr[3:0];
+    wire stepper_io_access =
+        (io_read || io_write) && (io_idx <= IO_PHASE3_ON);
+
+    /* Use native bus phase while vTW performs a physical Disk II access or
+     * while Q7 write mode is active. All other accelerated cycles use the
+     * core-provided virtual tick. */
+    wire disk_cycle_tick =
+        (!vtw_active || vtw_native_cycle_active ||
+         vtw_write_timing_active) ? ab_read.sss_en :
+                                    (vtw_cycle_tick || vtw_io_read);
+
     assign sound_spinning = drive_spinning;
     assign sound_qtrack = current_qtrack;
     assign sound_event = sound_event_q;
@@ -316,7 +387,7 @@ module disk2_card (
         (io_idx == IO_Q7_LOW)  ? 1'b0 :
         (io_idx == IO_Q7_HIGH) ? 1'b1 : q7_q;
     wire disk_stream_access =
-        (ab_io_read || ab_io_write) &&
+        (io_read || io_write) &&
         drive_spinning &&
         drive_has_media &&
         active_drive_loaded &&
@@ -324,7 +395,7 @@ module disk2_card (
         !track_woz_q &&
         (io_idx == IO_Q6_LOW);
     wire empty_drive_latch_access =
-        (ab_io_read || ab_io_write) &&
+        (io_read || io_write) &&
         (!drive_has_media || active_track_unavailable) &&
         (io_idx == IO_Q6_LOW);
     wire standard_stream_active =
@@ -335,7 +406,7 @@ module disk2_card (
         stream_track_loaded;
     wire standard_spin_tick =
         standard_stream_active &&
-        ab_read.sss_en &&
+        disk_cycle_tick &&
         !disk_stream_access &&
         (standard_spin_countdown_q == 6'd1);
     wire standard_partial_read =
@@ -356,7 +427,7 @@ module disk2_card (
     wire [3:0] standard_invalid_bits =
         4'd8 - {3'b000, standard_read_gap_q[2]};
     wire woz_io_access =
-        (ab_io_read || ab_io_write) &&
+        (io_read || io_write) &&
         drive_spinning &&
         drive_has_media &&
         track_woz_q &&
@@ -389,7 +460,7 @@ module disk2_card (
     wire woz_stream_active =
         enabled &&
         ab_read.res &&
-        ab_read.sss_en &&
+        disk_cycle_tick &&
         drive_spinning &&
         track_woz_q &&
         woz_track_stream_ready;
@@ -712,6 +783,7 @@ module disk2_card (
             control_q <= 32'h0000_0000;
             psram_base_q <= D2_PSRAM_BASE_RESET;
             underrun_count_q <= 32'h0000_0000;
+            underrun_event_q <= 1'b0;
             drive_info_q[0] <= 32'h0000_0000;
             drive_info_q[1] <= 32'h0000_0000;
             drive_size_q[0] <= 32'h0000_0000;
@@ -753,6 +825,7 @@ module disk2_card (
             drive_stream_pos_q[1] <= 13'd0;
             standard_spin_countdown_q <= STANDARD_SPIN_FIRST_IDLE;
             standard_spin_repeat_q <= 1'b0;
+            standard_spin_reload_q <= 1'b0;
             standard_read_gap_q <= STANDARD_READ_GAP_LIMIT;
             empty_drive_lss_settle_q <= 10'd0;
             empty_drive_lfsr_q <= EMPTY_DRIVE_LFSR_SEED;
@@ -848,6 +921,10 @@ module disk2_card (
                 write_fifo_byte_q[i] <= 8'h00;
                 write_fifo_offset_q[i] <= 3'd0;
             end
+            vtw_resp_valid <= 1'b0;
+            vtw_resp_rdata <= 8'h00;
+            vtw_req_pending_q <= 1'b0;
+            vtw_req_addr_q <= 4'h0;
             ab_write_q <= '0;
         end else begin
             automatic logic [20:0] active_line_next =
@@ -863,7 +940,20 @@ module disk2_card (
             stream_line_addr_q <= current_line_addr;
             stream_line_offset_q <= current_line_offset;
 
+            /* These are status/control events, not sequencer data. Register
+             * them once so the wide controller condition trees do not drive
+             * a 32-bit counter CE or the spin counter's full update mux. */
+            underrun_event_q <= 1'b0;
+            standard_spin_reload_q <= 1'b0;
+            if (underrun_event_q)
+                underrun_count_q <= underrun_count_q + 32'd1;
+
             ab_write_q <= ab_write_d;
+            vtw_resp_valid <= 1'b0;
+            if (vtw_req_fire) begin
+                vtw_req_pending_q <= 1'b1;
+                vtw_req_addr_q <= vtw_req_addr;
+            end
             sound_event_q <= SOUND_EVENT_NONE;
             sound_seek_start_qtrack_q <= 8'd0;
             sound_seek_distance_q <= 8'd0;
@@ -879,7 +969,7 @@ module disk2_card (
                     sound_step_end_qtrack_q);
                 sound_step_valid_q <= 1'b0;
             end
-            if (ab_read.sss_en && empty_drive_lss_settle_q != 10'd0)
+            if (disk_cycle_tick && empty_drive_lss_settle_q != 10'd0)
                 empty_drive_lss_settle_q <= empty_drive_lss_settle_q - 10'd1;
             woz_alias_drive_q[0] <= woz_alias_hit(drive_qtrack_q[0]);
             woz_alias_drive_q[1] <= woz_alias_hit(drive_qtrack_q[1]);
@@ -891,7 +981,7 @@ module disk2_card (
                 woz_seam_recalc_q <= 1'b0;
             end
 
-            if (ab_read.sss_en) begin
+            if (disk_cycle_tick) begin
                 if (standard_read_gap_q != STANDARD_READ_GAP_LIMIT)
                     standard_read_gap_q <= standard_read_gap_q + 3'd1;
 
@@ -1056,6 +1146,7 @@ module disk2_card (
                 prefetch_req_q <= 1'b0;
                 prefetch_resp_pending_q <= 1'b0;
                 cache_patch_pending_q <= 1'b0;
+                vtw_req_pending_q <= 1'b0;
             end
 
             // Apple RESET only clears the controller switches/sequencer. It
@@ -1082,7 +1173,7 @@ module disk2_card (
                 disk_latch_q <= 8'hFF;
             end
 
-            if (ab_io_read || ab_io_write) begin
+            if (io_read || io_write) begin
                 last_io_q <= {4'hC, io_idx};
                 io_access_count_q <= io_access_count_q + 32'd1;
 
@@ -1209,6 +1300,12 @@ module disk2_card (
 
             end
 
+            if (vtw_io_read) begin
+                vtw_req_pending_q <= 1'b0;
+                vtw_resp_rdata <= disk_read_byte;
+                vtw_resp_valid <= 1'b1;
+            end
+
             if (empty_drive_latch_access) begin
                 if (empty_drive_lss_settle_q != 10'd0) begin
                     disk_latch_q <= 8'h80;
@@ -1218,7 +1315,7 @@ module disk2_card (
                 end
             end
 
-            if (enabled && ab_read.res && ab_read.sss_en &&
+            if (enabled && ab_read.res && disk_cycle_tick &&
                 step_pending_q && !stepper_io_access) begin
                 if (step_delay_q <= 4'd1) begin
                     automatic logic [15:0] step_next = stepper_result(
@@ -1336,7 +1433,7 @@ module disk2_card (
                             cache_patch_byte_q <= byte_v;
                             cache_patch_offset_q <= offset_v;
                         end else if (active_drive_loaded && (!cached_v[8] || woz_write_pending_q)) begin
-                            underrun_count_q <= underrun_count_q + 32'd1;
+                            underrun_event_q <= 1'b1;
                             if (!drive_read_only)
                                 write_stall_v = 1'b1;
                         end
@@ -1359,7 +1456,7 @@ module disk2_card (
                             woz_weak_refill_pending_q <= 1'b1;
                         end
                         if (!cached_v[8])
-                            underrun_count_q <= underrun_count_q + 32'd1;
+                            underrun_event_q <= 1'b1;
 
                         shift_next_v = {woz_shift_q[6:0], output_bit_v};
                         delay_next_v = woz_latch_delay_q;
@@ -1381,7 +1478,7 @@ module disk2_card (
                             end
                         end
                     end else if (!cached_v[8]) begin
-                        underrun_count_q <= underrun_count_q + 32'd1;
+                        underrun_event_q <= 1'b1;
                     end
 
                     skip_bit_advance_v =
@@ -1448,7 +1545,7 @@ module disk2_card (
                         write_dirty_qtrack_q <= loaded_qtrack_q;
                         stream_write_count_q <= stream_write_count_q + 32'd1;
                     end else begin
-                        underrun_count_q <= underrun_count_q + 32'd1;
+                        underrun_event_q <= 1'b1;
                     end
                 end else if (!q7_after_access && stream_line_hit_q) begin
                     disk_latch_q <= standard_read_byte;
@@ -1458,7 +1555,7 @@ module disk2_card (
                     // The DDR request is already being issued by the prefetch
                     // machinery. Report the fault, but leave both the latch
                     // and byte position untouched so the Apple can retry.
-                    underrun_count_q <= underrun_count_q + 32'd1;
+                    underrun_event_q <= 1'b1;
                 end
                 drive_stream_pos_q[drive_select_q] <= next_pos;
                 stream_read_count_q <= stream_read_count_q + 32'd1;
@@ -1496,6 +1593,7 @@ module disk2_card (
                     D2_REG_UNDERRUNS: begin
                         underrun_count_q <= globals::apply_wstrb(
                             underrun_count_q, as_common.wdata, as_common.wstrb);
+                        underrun_event_q <= 1'b0;
                     end
                     D2_REG_LAST_IO: begin
                         if (as_common.wstrb[0])
@@ -1557,8 +1655,7 @@ module disk2_card (
                                 woz_alias_hi_q <= 8'h00;
                                 woz_alias_drive_q[0] <= 1'b0;
                                 woz_alias_drive_q[1] <= 1'b0;
-                                standard_spin_countdown_q <= STANDARD_SPIN_FIRST_IDLE;
-                                standard_spin_repeat_q <= 1'b0;
+                                standard_spin_reload_q <= 1'b1;
                                 standard_read_gap_q <= STANDARD_READ_GAP_LIMIT;
                             end else if (load_woz_v) begin
                                 automatic logic [16:0] bit_offset_next =
@@ -1577,8 +1674,7 @@ module disk2_card (
                                 woz_alias_hi_q <= 8'h00;
                                 woz_alias_drive_q[0] <= 1'b0;
                                 woz_alias_drive_q[1] <= 1'b0;
-                                standard_spin_countdown_q <= STANDARD_SPIN_FIRST_IDLE;
-                                standard_spin_repeat_q <= 1'b0;
+                                standard_spin_reload_q <= 1'b1;
                                 standard_read_gap_q <= STANDARD_READ_GAP_LIMIT;
                                 prefetch_current_line_q <= 21'd0;
                                 prefetch_next_line_q <= 21'd0;
@@ -1695,8 +1791,7 @@ module disk2_card (
                             {19'h00000, selected_stream_pos}, as_common.wdata, as_common.wstrb);
                         automatic logic [12:0] pos_next = pos_tmp[12:0] & TRACK_STREAM_LAST;
                         drive_stream_pos_q[drive_select_q] <= pos_next;
-                        standard_spin_countdown_q <= STANDARD_SPIN_FIRST_IDLE;
-                        standard_spin_repeat_q <= 1'b0;
+                        standard_spin_reload_q <= 1'b1;
                         prefetch_current_line_q <= 21'd0;
                         prefetch_next_line_q <= 21'd0;
                         prefetch_valid_q <= '0;
@@ -1793,6 +1888,14 @@ module disk2_card (
                     default: begin
                     end
                 endcase
+            end
+
+            /* CPU0 track commits arrive far less often than disk ticks. Apply
+             * their registered reload last so it retains the old write-side
+             * priority without leaving M_AXI control in the sequencer cone. */
+            if (standard_spin_reload_q) begin
+                standard_spin_countdown_q <= STANDARD_SPIN_FIRST_IDLE;
+                standard_spin_repeat_q <= 1'b0;
             end
 
             case (as_common.araddr)

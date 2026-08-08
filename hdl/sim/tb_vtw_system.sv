@@ -110,6 +110,8 @@ module tb_vtw_system;
     logic        enable = 0;
     logic        core_run = 0;
     logic        tb_assert_res = 0;
+    logic [1:0]  speed_mode = 2'd0;
+    logic        ignore_c074 = 0;
     logic        sp_boot_suppress = 1;
     /* Per-region slowdown config (feature off by default so the existing
      * scenario is unchanged; the slowdown bench drives these). */
@@ -207,8 +209,9 @@ module tb_vtw_system;
         .host_is_iiplus(1'b0),
         .core_run(core_run),
         .assert_apple_res(tb_assert_res),
-        .speed_mode(2'd0),        // full-rate bursts
+        .speed_mode(speed_mode),  // starts with full-rate bursts
         .pace_divider(16'd0),
+        .ignore_c074(ignore_c074),
         .irq_assert_in(1'b0),
         .data_drive_in(vtw_ab_write.wr_data_en),
         .data_drive_value_in(vtw_ab_write.wr_data),
@@ -216,7 +219,11 @@ module tb_vtw_system;
         .iiplus_buttons_zero(1'b0),
         .slow_region_en(sd_region_en),
         .slow_duration(sd_duration),
-        .disk2_timing_active(1'b0),
+        .d2_active(1'b0),
+        .d2_req_valid(), .d2_req_addr(), .d2_req_ready(1'b0),
+        .d2_resp_valid(1'b0), .d2_resp_rdata(8'd0),
+        .d2_cycle_tick(), .d2_native_cycle_active(),
+        .d2_time_ready(1'b1), .d2_write_timing_active(1'b0),
         .ramworks_en(1'b1),
         .video_vbl(1'b0),
         .post_main_wide(1'b0),
@@ -307,11 +314,17 @@ module tb_vtw_system;
 
     typedef struct { logic [15:0] addr; logic [7:0] data; } wrec_t;
     wrec_t wrecs [$];
+    int c074_bus_writes = 0;
+    logic [7:0] last_c074_bus_data = 8'h00;
 
     always @(negedge phi0) begin
         if (apple_rw_pin === 1'b0) begin
             mb_ram[apple_addr_pin] <= apple_data_pin;
             wrecs.push_back('{apple_addr_pin, apple_data_pin});
+            if (apple_addr_pin === 16'hC074) begin
+                c074_bus_writes <= c074_bus_writes + 1;
+                last_c074_bus_data <= apple_data_pin;
+            end
         end
     end
 
@@ -569,7 +582,7 @@ module tb_vtw_system;
     int idx_aux, idx_main, idx_c054;
     logic [7:0] rd;
     int cyc_a, cyc_b;
-    int arm_rec_base, arm_post_before;
+    int arm_rec_base, arm_post_before, c074_override_base;
 
     /* Cycle-exactness probe: Apple-cycle stamps of every $C000 sync read
      * (parked $Cxxx replays are sanitized to $FFFF, so each appearance is
@@ -1043,6 +1056,17 @@ module tb_vtw_system;
                             delta0));
         end
 
+        /* Enabling the override live must clear a value latched before the
+         * setting changed. Keep the rest of this bench at 1 MHz through the
+         * configured mode after dropping the override again. */
+        ignore_c074 = 1'b1;
+        repeat (4) @(posedge clk);
+        check(c074_state == 2'd0,
+              "$C074 override clears an already-latched 1 MHz state");
+        speed_mode = 2'd2;
+        ignore_c074 = 1'b0;
+        repeat (4) @(posedge clk);
+
         /* A hold that CPU0 never releases must clear on Apple RES#. The
          * cache is clean here, so the flush completes immediately and
          * only the frozen-core state carries into the reset. */
@@ -1087,6 +1111,36 @@ module tb_vtw_system;
         #120us;
         check(apple_res_pin === 1'b1, "vTW releases Apple RES#");
         check(apple_dma_pin === 1'b0, "bus re-taken after the reset");
+
+        /* Last, restart with the program's immediate value changed from
+         * $C074=$01 to $03. The override must keep the new value from
+         * changing the latch while the physical write remains visible. No
+         * later timing check depends on this deliberate restart. */
+        core_run = 1'b0;
+        wait (post_fill == '0);
+        repeat (4) @(posedge clk);
+        ignore_c074 = 1'b1;
+        speed_mode = 2'd0;
+        repeat (4) @(posedge clk);
+        check(c074_state == 2'd0, "$C074 state clear before ignored write");
+        sh_write(ROM_BASE + 18'h03025, 8'h03);
+        c074_override_base = c074_bus_writes;
+        core_run = 1'b1;
+        fork : c074_override_wait
+            begin
+                wait (c074_bus_writes > c074_override_base);
+                disable c074_override_wait;
+            end
+            begin
+                #5ms;
+                check(0, "$C074 override physical-write timeout");
+                disable c074_override_wait;
+            end
+        join
+        check(last_c074_bus_data == 8'h03,
+              "$C074=$03 write still reaches the physical bus while ignored");
+        check(c074_state == 2'd0,
+              "$C074 override ignores off-until-reset value 3");
 
         if (fails == 0) $display("VTW SYSTEM PASS");
         else            $display("VTW SYSTEM FAILED: %0d checks", fails);

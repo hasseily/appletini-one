@@ -1367,9 +1367,13 @@ static void control_set_applicard_resource_max(void *ctx, uint8_t maximum)
 static void control_set_vtw_config(void *ctx,
                                    uint8_t enable,
                                    uint8_t speed_mode,
-                                   uint8_t pace_divider)
+                                   uint8_t pace_divider,
+                                   uint8_t ignore_c074,
+                                   uint8_t disable_disk2_accel)
 {
     (void)ctx;
+    vtw_service_set_ignore_c074(ignore_c074);
+    vtw_service_set_disk2_accel_disabled(disable_disk2_accel);
     vtw_service_set_speed(speed_mode, pace_divider);
     vtw_service_set_enabled(enable);
 }

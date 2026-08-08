@@ -459,6 +459,17 @@ HELP(transwarp_speed,
     "speed detectors and vapor lock, but disable acceleration for really precise demos.",
     "Most I/O and video writes always run at 1 MHz bus speed, whatever the setting.");
 
+HELP(transwarp_ignore_c074,
+    "$C074 is the TransWarp software speed switch: $00 selects fast, $01 selects 1 MHz,",
+    "and $03 disables acceleration until reset. When checked, vTW ignores every write to",
+    "$C074 and keeps the speed chosen here or by USB. This can break copy protection, disk",
+    "access, sound, serial I/O, and other code that uses $C074 to protect timed operations.");
+
+HELP(transwarp_disable_disk2_accel,
+    "Disables vTW's private fast-read path for the virtual Disk II card. Every Disk II access",
+    "then uses the original physical 1 MHz path. Use this if a WOZ or copy-protected disk",
+    "fails with Disk II acceleration. Reads will be slower; writes already use the 1 MHz path.");
+
 HELP(transwarp_slug,
     "Arms the 0.05 MHz 'slug' USB speed key for extremely slow debugging. Off by default:",
     "the slug key is ignored until armed here, so an accidental press mid-session can't drop",
@@ -491,17 +502,19 @@ HELP(transwarp_slowdown_window,
 
 static const help_override_t transwarp_overrides[] = {
     OVERRIDE(1, transwarp_speed),
-    OVERRIDE(2, transwarp_slug),
-    OVERRIDE(3, transwarp_slowdown_floatbus),
-    OVERRIDE(4, transwarp_slowdown_paddle),
-    OVERRIDE(5, transwarp_slowdown_slots),
-    OVERRIDE(6, transwarp_slowdown_slots),
+    OVERRIDE(2, transwarp_ignore_c074),
+    OVERRIDE(3, transwarp_disable_disk2_accel),
+    OVERRIDE(4, transwarp_slowdown_floatbus),
+    OVERRIDE(5, transwarp_slowdown_paddle),
+    OVERRIDE(6, transwarp_slug),
     OVERRIDE(7, transwarp_slowdown_slots),
     OVERRIDE(8, transwarp_slowdown_slots),
     OVERRIDE(9, transwarp_slowdown_slots),
     OVERRIDE(10, transwarp_slowdown_slots),
     OVERRIDE(11, transwarp_slowdown_slots),
-    OVERRIDE(12, transwarp_slowdown_window),
+    OVERRIDE(12, transwarp_slowdown_slots),
+    OVERRIDE(13, transwarp_slowdown_slots),
+    OVERRIDE(14, transwarp_slowdown_window),
 };
 
 /* ======================================================================== */

@@ -1006,10 +1006,11 @@ def test_pl_standard_stream_advance_matches_applewin_readwrite() -> None:
             "spin thresholds without a wide modulo path")
     require("wire standard_spin_tick =\n"
             "        standard_stream_active &&\n"
-            "        ab_read.sss_en &&\n"
+            "        disk_cycle_tick &&\n"
             "        !disk_stream_access &&\n"
             "        (standard_spin_countdown_q == 6'd1);" in source,
-            "standard media must advance while spinning between $C0EC accesses")
+            "standard media must advance on the selected native or virtual "
+            "cycle clock while spinning between $C0EC accesses")
     require("drive_stream_pos_q[drive_select_q] <=\n"
             "                            stream_pos_next(selected_stream_pos, track_length_q);" in source,
             "standard media idle spin must advance the staged nibble position")
@@ -1097,10 +1098,13 @@ def test_pl_pending_track_and_standard_miss_are_retryable() -> None:
     require(len(miss_branch) == 2,
             "standard cache-miss retry branch not found")
     miss_branch = miss_branch[1].split("end", 1)[0]
-    require("underrun_count_q <= underrun_count_q + 32'd1;" in miss_branch and
+    require("underrun_event_q <= 1'b1;" in miss_branch and
             "disk_latch_q" not in miss_branch and
             "stream_pos_next" not in miss_branch,
             "a cache miss must be counted without changing the latch or byte position")
+    require("if (underrun_event_q)\n"
+            "                underrun_count_q <= underrun_count_q + 32'd1;" in source,
+            "the registered underrun event must update the diagnostic counter")
 
 
 def test_qtrack_mapping_leaves_outer_tracks_unavailable() -> None:

@@ -33,6 +33,7 @@ SOURCES = [
     "hdl/apple/vtw_core_top.sv",
     "hdl/apple/apple_dma_engine.sv",
     "hdl/apple/ps_dma_command.sv",
+    "hdl/apple/disk2_card.sv",
     "hdl/apple/smartport_card.sv",
     "hdl/sim/tb_vtw_engine_unit.sv",
     "hdl/sim/tb_vtw_system.sv",
@@ -46,12 +47,14 @@ SOURCES = [
     "hdl/sim/tb_apple_dma_abort.sv",
     "hdl/sim/tb_ps_dma_command.sv",
     "hdl/sim/tb_vtw_shadow_host_port.sv",
+    "hdl/sim/tb_disk2_vtw_read.sv",
 ]
 
-# smartport_card $readmemh resolves against the simulation cwd.
+# Card-ROM $readmemh calls resolve against the simulation cwd.
 MEM_FILES = [
     "hdl/apple/smartport_a2retronet_style_c700.mem",
     "hdl/apple/smartport_a2retronet_style_c800.mem",
+    "hdl/apple/disk2_slot6.mem",
 ]
 
 BENCHES = [
@@ -67,6 +70,7 @@ BENCHES = [
     ("tb_apple_dma_abort", "APPLE DMA ABORT PASS"),
     ("tb_ps_dma_command", "PS DMA COMMAND PASS"),
     ("tb_vtw_shadow_host_port", "VTW SHADOW HOST PASS"),
+    ("tb_disk2_vtw_read", "DISK2 VTW READ PASS"),
 ]
 
 
@@ -138,6 +142,7 @@ def static_checks() -> None:
     # SmartPort short-circuit: vtw_core_top fast port wired to the card.
     core_top = read("hdl/apple/vtw_core_top.sv")
     card = read("hdl/apple/smartport_card.sv")
+    disk2_card = read("hdl/apple/disk2_card.sv")
     boot_card = read("hdl/apple/boot_menu_card.sv")
     require("vtw_valid," in card and "vtw_resp_valid" in card and
             "data_write_ev" in card and "vtw_data_write" in card and
@@ -175,10 +180,30 @@ def static_checks() -> None:
             "(cycle_addr_q[7:4] <= 4'h5)" in core_top and
             "if (full_floating_read)" in core_top,
             "all reads in $C030-$C05F must return the synthesized scanner byte")
-    require("disk2_timing_active" in core_top and "sd_disk2" in core_top and
-            "sd_disk2 || disk2_timing_active" in core_top and
-            ".disk2_timing_active(disk2_sound_spinning)" in top,
-            "active Disk II operation must unconditionally hold vTW at 1 MHz")
+    require("wire d2_fast_hit" in core_top and
+            "cycle_rw_q &&" in core_top and
+            "!cycle_addr_q[0] && !d2_write_timing_active" in core_top and
+            "wire sd_disk2_native = sd_disk2 && !d2_fast_hit;" in core_top,
+            "vTW may bypass the Apple bus only for even Disk II reads")
+    require("d2_write_timing_active" in core_top and
+            "sd_disk2_native ||" in core_top and
+            ".d2_write_timing_active(vtw_d2_write_timing_active)" in top and
+            "disk2_timing_active" not in core_top,
+            "physical Disk II accesses and Q7 write mode must force 1 MHz")
+    require("assign vtw_disk2_active = vtw_core_run_eff && vtw_bus_owned" in top and
+            "!vtw_ctrl_q[7];" in top and
+            ".vtw_active(vtw_disk2_active)" in top and
+            ".d2_active(vtw_disk2_active)" in top,
+            "apple_top must enable the private Disk II port only during vTW bus ownership "
+            "and while its compatibility disable is clear")
+    require("wire disk_cycle_tick" in disk2_card and
+            "vtw_native_cycle_active" in disk2_card and
+            "assign vtw_time_ready" in disk2_card and
+            "assign vtw_write_timing_active" in disk2_card and
+            "logic        vtw_req_pending_q;" in disk2_card and
+            "wire vtw_io_read = vtw_req_pending_q;" in disk2_card and
+            "vtw_resp_valid <= 1'b1;" in disk2_card,
+            "disk2_card must expose virtual time, safe holds, and the private read response")
     require("CARD_CTRL_REG_VTW_SLOWDOWN" in top and
             ".slow_region_en(vtw_slowdown_q[9:0])" in top and
             ".slow_duration(vtw_slowdown_q[31:16])" in top,
@@ -216,6 +241,16 @@ def static_checks() -> None:
             "CARD_CTRL_VTW_CTRL_REG             CARD_CTRL_REG_ADDR(0x70U)" in regs and
             "CARD_CTRL_VTW_CNT_INVALID_REG      CARD_CTRL_REG_ADDR(0x7AU)" in regs,
             "vTW register window must agree between apple_top and card_control_regs.h")
+    require("input  logic                    ignore_c074" in core_top and
+            "if (!ab_read.res || ignore_c074)" in core_top and
+            ".ignore_c074(vtw_ctrl_q[6])" in top and
+            "CARD_CTRL_VTW_CTRL_IGNORE_C074_BIT" in regs and
+            "vtw_service_set_ignore_c074" in service,
+            "the persisted $C074 override must clear and ignore every software value")
+    require("CARD_CTRL_VTW_CTRL_DISABLE_D2_ACCEL_BIT" in regs and
+            "vtw_service_set_disk2_accel_disabled" in service and
+            "g_disable_disk2_accel" in service,
+            "the persisted Disk II compatibility switch must reach VTW_CTRL bit7")
 
     # PS service + wiring
     require("boot_menu_service_machine_mode() != CARD_MACHINE_MODE_IIE" in service,
@@ -282,7 +317,11 @@ def static_checks() -> None:
             "config_menu_set_vtw_enabled(g_sdd_config_menu, enable);" in uart,
             "uart vtw command must route enable through the config menu")
     require('"vtw.enabled=%s\\n"' in menu_c and
+            '"vtw.c074.ignore=%s\\n"' in menu_c and
+            '"vtw.disk2.acceleration.disabled=%s\\n"' in menu_c and
             'strcmp(key, "vtw.enabled") == 0' in menu_c and
+            'strcmp(key, "vtw.c074.ignore") == 0' in menu_c and
+            'strcmp(key, "vtw.disk2.acceleration.disabled") == 0' in menu_c and
             "menu->platform.set_vtw_config(menu->platform.ctx," in menu_c,
             "config menu must persist and apply the vTW settings")
     require("uint8_t vtw_enabled;" in menu_h and
@@ -319,8 +358,12 @@ def static_checks() -> None:
             "if (div >= 51U) return 1;" not in ladder_index,
             "runtime speed stepping must derive every divided rung from the ladder table")
     require("void config_menu_draw_transwarp" in tabs_c and
+            '"Ignore $C074 Speed Switch"' in tabs_c and
+            '"Disable DiskII Acceleration"' in tabs_c and
+            "option_x2, y + (2 * row_h), option_w2" in tabs_c and
             '"TransWarp on: 128K + 8MB RamWorks, accelerated"' in tabs_c,
-            "RAM tab must surface the accelerated-RamWorks status")
+            "TransWarp tab must show both compatibility checkboxes on one row, "
+            "and RAM must surface the accelerated-RamWorks status")
     require("TAB_WITH_OVERRIDES(CONFIG_TAB_TRANSWARP, transwarp, transwarp_overrides)," in help_c,
             "TransWarp tab must have help text")
 

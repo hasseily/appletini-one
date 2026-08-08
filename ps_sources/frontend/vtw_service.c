@@ -55,6 +55,12 @@ static uint16_t g_ovr_div;
  * 0.05 MHz toggle mid-game looks like a crash, so the key must be
  * armed deliberately. */
 static uint8_t  g_slug_enabled;
+/* Persisted compatibility override: discard all core writes to $C074.
+ * Menu and USB speed controls still rewrite VTW_CTRL normally. */
+static uint8_t  g_ignore_c074;
+/* Persisted compatibility option: keep Disk II on the original physical
+ * 1 MHz path instead of using vTW's private read shortcut. */
+static uint8_t  g_disable_disk2_accel;
 /* Result of the last speed action, for the on-screen overlay. */
 static char     g_last_action_text[40];
 
@@ -141,7 +147,26 @@ static uint32_t vtw_ctrl_value(uint8_t enable, uint8_t core_run,
          * real controller attached. */
         v |= CARD_CTRL_VTW_CTRL_IIPLUS_BTNS_BIT;
     }
+    if (g_ignore_c074 != 0U) {
+        v |= CARD_CTRL_VTW_CTRL_IGNORE_C074_BIT;
+    }
+    if (g_disable_disk2_accel != 0U) {
+        v |= CARD_CTRL_VTW_CTRL_DISABLE_D2_ACCEL_BIT;
+    }
     return v;
+}
+
+static void vtw_apply_ctrl_options_live(void)
+{
+    /* Preserve the current session and reset phase while changing either
+     * compatibility option. */
+    if (g_state == VTW_ST_RUN) {
+        REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(1U, 1U, 0U));
+    } else if (g_state == VTW_ST_RES_HOLD) {
+        REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(1U, 0U, 1U));
+    } else if (g_state != VTW_ST_IDLE) {
+        REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(1U, 0U, 0U));
+    }
 }
 
 static uint8_t vtw_ms_elapsed(XTime since, uint32_t ms)
@@ -202,6 +227,22 @@ void vtw_service_set_speed(uint8_t speed_mode, uint8_t pace_divider)
     } else if (g_state != VTW_ST_IDLE) {
         REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(1U, 0U, 0U));
     }
+}
+
+void vtw_service_set_ignore_c074(uint8_t ignore)
+{
+    g_ignore_c074 = (ignore != 0U) ? 1U : 0U;
+
+    /* Apply it live. The PL clears any old $C074 latch as soon as the bit
+     * rises; turning it off starts from fast state until software writes a
+     * new value. */
+    vtw_apply_ctrl_options_live();
+}
+
+void vtw_service_set_disk2_accel_disabled(uint8_t disable)
+{
+    g_disable_disk2_accel = (disable != 0U) ? 1U : 0U;
+    vtw_apply_ctrl_options_live();
 }
 
 /* ---- Runtime speed overrides (USB keymap actions) ------------------- */
@@ -667,11 +708,13 @@ void vtw_service_uart_status(uint32_t uart_base)
                  ? " [inactive]" : "");
     uart_puts(uart_base, line);
     snprintf(line, sizeof(line),
-             "vtw: speed=%s%s div=%u c074=%lu owned=%lu run=%lu pc=%04lX\r\n",
+             "vtw: speed=%s%s div=%u c074=%lu ignore=%u d2accel=%s owned=%lu run=%lu pc=%04lX\r\n",
              vtw_eff_speed_name(),
              g_ovr_active != 0U ? " (override)" : "",
              (unsigned)vtw_eff_divider(),
              (unsigned long)(st & CARD_CTRL_VTW_STATUS_C074_MASK),
+             (unsigned)g_ignore_c074,
+             g_disable_disk2_accel != 0U ? "off" : "on",
              (unsigned long)((st & CARD_CTRL_VTW_STATUS_BUS_OWNED) ? 1U : 0U),
              (unsigned long)((st & CARD_CTRL_VTW_STATUS_CORE_RUN) ? 1U : 0U),
              (unsigned long)(st >> CARD_CTRL_VTW_STATUS_PC_SHIFT));

@@ -31,6 +31,13 @@ void vtw_service_set_speed(uint8_t speed_mode, uint8_t pace_divider);
 uint8_t vtw_service_speed_mode(void);
 uint8_t vtw_service_pace_divider(void);
 
+/* Ignore all software writes to $C074, including fast, 1 MHz, and disable.
+ * Enabling it live clears any value that software latched earlier. */
+void vtw_service_set_ignore_c074(uint8_t ignore);
+
+/* Force virtual Disk II accesses through the original physical 1 MHz path. */
+void vtw_service_set_disk2_accel_disabled(uint8_t disable);
+
 /* Per-region slowdown (TransWarp DIP block 2): region_mask bits are
  * CARD_CTRL_VTW_SLOWDOWN_* (slots 1-7, floating-bus/video timing, paddle);
  * cycles is the 1 MHz window per region access (0 disables). */

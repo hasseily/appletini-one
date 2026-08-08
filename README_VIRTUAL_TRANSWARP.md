@@ -57,7 +57,8 @@ Components:
   positive non-//e identification; presets MAX / 26 / 13 / 7 / 3.6
   / 2.6 / 1 MHz cycle-exact (divided-mode dividers 5/10/19/37/51 against the
   133.333 MHz fabric clock). Persisted keys `vtw.enabled`,
-  `vtw.speed.mode`, `vtw.pace.divider`. RAM-tab interplay: under
+  `vtw.speed.mode`, `vtw.pace.divider`, `vtw.c074.ignore`, and
+  `vtw.disk2.acceleration.disabled`. RAM-tab interplay: under
   acceleration the machine always has 8MB (lives in the shadow);
 - SmartPort transport state (FIFOs, exec/ready, control) clears on Apple
   RES#, on the card and via the PS sweep + hw-EXEC-gated poll
@@ -101,12 +102,12 @@ which also means our own snooping paths observe our cycles perfectly.
 | Access class | Bus behavior |
 |---|---|
 | /DMA | Asserted (open-drain low) from Apple reset-release when the vTW is enabled; held for the whole session **except during Apple RES# windows, where the bus is fully released so the MMU/IOU process the reset under stock conditions (see RES# row)**. Transitions only during PHI1 (Apple IIe Tech Note #2). Motherboard 6502 sleeps; handback is via CTRL-RESET with the vTW disabled, exactly like `$C074 = 3` on the real card. //e and II/II+ (the `machine_inh_allowed` interlock covers both; a IIgs is refused). On a II/II+ the core's translator neutralizes the //e-only MMU switches (no aux, no internal $CX ROM, slot 3 owns $C3xx) — acceleration only, the machine's memory is what it is; the language card is tracked either way (slot-0 $C08x protocol, LC image lives in the shadow). |
-| $C000–$CFFF (all reads and writes) | Real bus cycles, one per access, synchronized to PHI0. The core stalls (clock-enable held) until the cycle completes: sync-to-PHI0 plus the cycle itself, i.e. ~1–2 µs — the same cost profile as the real card. This covers motherboard soft switches, keyboard, speaker, paddles, and every slot's I/O and ROM space — including the Appletini's own virtual cards, which are reached over the physical bus like any other card (no internal short-circuit in phase 1; fidelity first). |
+| $C000–$CFFF | Real bus cycles, one per access, synchronized to PHI0, except for the Appletini's private SmartPort path and safe even reads of its virtual Disk II switches. Normal bus accesses stall the core for sync plus one Apple cycle. Disk II odd reads and all Disk II writes stay on this path; Q7 write mode also holds the whole core at 1 MHz. |
 | Writes to $0400–$0BFF and $2000–$5FFF | Written through to motherboard RAM as posted bus writes (keeps a CRT/composite display live, matching AAL's documented TW behavior), for main (bank 0) AND base aux (bank 1): the bus cycle carries only the Apple address, and the motherboard's own switch state — which mirrors the core's, since it tracks the same $C0xx cycles — steers it into the right bank. A bank-steer flush rule (sync write to $C000–$C007 or any $C054–$C057 access flushes the posted queue) keeps queued writes retiring under the switch regime they were issued in; without it the capture shadow's aux banks never update and 80-col/DHGR render empty. Posted queue drains on idle bus cycles; the core does not stall unless the queue fills. |
 | All other memory traffic | Invisible. Reads and writes hit the BRAM shadow only; motherboard RAM is deliberately stale outside the video windows (manual: "The Apple's memory is used only for video display"). |
 | RamWorks banks (aux beyond base 64K) | When the Appletini provides aux memory (RAM tab on, no physical aux card — the same gate as the motherboard-side serving), the vTW serves all 8 MB from PSRAM **at accelerator speed**: the private translator emits bank-qualified addresses from its own $C071/$C073 tracking, and a single-line (8-byte) write-allocate cache turns sequential traffic into one PSRAM line op per 8 bytes, admitted through `psram_simple`'s existing bounded background window (priority above PS-DMA, below the Apple write queue — serve-deadline analysis unchanged). Dirty lines are written back on eviction and whenever the core drops into reset, so RamWorks contents survive CTRL-RESET and handback; the cache invalidates between sessions. While the vTW owns the bus, `psram_simple` suppresses INH read-serving (parked aux-routed replays would otherwise consume every background-admission slot and starve this port — the accelerator's real aux traffic never uses the bus), and the boot ROM's aux-slot probe report is ignored during a session (the probe reads back the shadow, not the slot). With a physical aux card (or RAM tab off) the translator never leaves banks 0/1: banked software sees clean 64K-card aliasing and correctly sizes the machine as having no RamWorks. This is better than the physical TW, which passes all aux traffic to the bus at 1 MHz. |
 | Idle cycles | Bus actively parked: last real address re-driven with R/W = 1 (I/O-page addresses sanitized to $FFFF so read side effects are never replayed). No floating, no decay. |
-| $C074 | Decoded by the vTW (motherboard-space register, same as the real card): write 0 = full speed, 1 = cycle-locked 1 MHz, 3 = off-until-reset. RocketChip-compatible software expects this. |
+| $C074 | Decoded by the vTW (motherboard-space register, same as the real card): write 0 = full speed, 1 = cycle-locked 1 MHz, 3 = off-until-reset. RocketChip-compatible software expects this. The optional `Ignore $C074 Speed Switch` setting discards every value and clears any value latched before it was enabled. This keeps the chosen menu or USB speed in force, but can break timed I/O and copy protection. |
 | RES# | Filtered RES# resets the core through the shadow's reset vector (autostart ROM). **The bus is released for the entire reset window** — /DMA deasserted, nothing driven — **and the motherboard 6502 then runs 80 stock cycles after RES# rises before the bus is re-taken.** Both halves are required by the //e MMU: it does not process a reset while a DMA master holds the bus, and its soft-switch clear is only completed by the 6502's own post-reset activity (reset sequence + $FFFC/$FFFD vector fetch). 80 cycles covers the vector fetch and INIT's display-mode switches (snooped by the tracker) while ending well before the reset handler's first MMU write (the $FA77 trampoline's `STA $C007`, ~cycle 160); the 6502's remaining traffic is zero-page/stack writes to real RAM, which is stale under the vTW anyway. The vTW core boots from shadow in parallel and stalls on its first $C0xx sync access until the engine re-owns the bus. CTRL-RESET with vTW disabled simply never re-takes: the machine returns to the motherboard 6502 cold. |
 | IRQ/NMI | The sampled slot pins (already in `ab_read`) wire directly to the core's IRQ#/NMI# inputs. Vector fetches go through the shadow with correct LC banking. Strictly better than the real TW's power-on reboot stub, with the same observable contract for a booted OS. |
 
@@ -286,7 +287,23 @@ In priority order:
    $C7xx over the bus; after, SmartPort is short-circuited. The disk
    *service* latency (PS/USB) is unchanged — only the transport and driver
    execution accelerate, which is the dominant cost.
-4. **Per-region slowdown — implemented (TW DIP block 2).** After the core
+4. **Virtual Disk II reads at core speed — implementation pending hardware
+   validation.** When the Appletini Disk II owns slot 6, even reads of
+   `$C0E0-$C0EE` use a private `disk2_card` port. One virtual Disk II tick is
+   generated for each completed vTW CPU cycle, so standard nibble rotation,
+   WOZ bit cells, empty-drive settling, and deferred head steps scale with the
+   chosen CPU speed. A track-stage or DDR line-cache miss holds both the CPU
+   and virtual disk time until valid data is ready; it cannot return a stale
+   latch or consume a missing byte. The `Disable DiskII Acceleration` setting
+   bypasses this private path and sends all Disk II accesses through the
+   original physical 1 MHz route for problem disks. Odd reads still use the
+   motherboard's floating bus. Every CPU write uses the physical Apple bus
+   at 1 MHz. While Q7 write mode is active, the whole core stays at 1 MHz
+   until Q7 clears, so the existing DSK/PO/NIB/WOZ write path and its
+   copy-protection timing stay
+   unchanged. Motor and seek audio remain tied to real time. Covered by
+   `tb_disk2_vtw_read`, `test_disk2_standard.py`, and `test_disk2_woz.py`.
+5. **Per-region slowdown — implemented (TW DIP block 2).** After the core
    touches an enabled timing-sensitive region it drops to cycle-locked
    1 MHz for a configurable window (retriggered per access), so speaker
    pitch, paddle timing, and per-slot device loops stay correct at high
@@ -301,7 +318,7 @@ In priority order:
    warp. Validated by `tb_vtw_slowdown` (warp baseline runs fast; speaker
    slowdown collapses the rate to ~1 MHz; a non-matching region enable
    stays warp).
-5. **II/II+ acceleration — implemented, bench validation pending.**
+6. **II/II+ acceleration — implemented, bench validation pending.**
    Acceleration only, no memory changes: the machine gate accepts a
    positive II/II+ identification, and the core's translator runs a
    sanitized view (aux switches, internal $CX ROM, and slot-3 internal
@@ -314,7 +331,7 @@ In priority order:
    off via the existing IIe-only PS policy. Still needs first-hardware
    validation on a real II+: bus buffering under /DMA mastering and the
    machine's reset physiology have never been measured there.
-6. **Config-menu polish** — slug-key arm checkbox + top-of-screen
+7. **Config-menu polish** — slug-key arm checkbox + top-of-screen
    speed overlay done; per-region slowdown toggles and a RamWorks
    status row remain (follow items 4 and 1 respectively).
 
@@ -345,6 +362,8 @@ The physical-TW validation suite, re-run against the vTW at full speed and
 at cycle-locked 1 MHz, plus a vTW-disabled stock pass unchanged:
 cold boot through boot menu → BASIC; CATALOG + DOS 3.3 SAVE/LOAD round-trip;
 Ultima V logo + Phasor music; SmartPort "A:APPLETINI" boot (DPOP protocol);
+Disk II DSK/PO save-load round-trip; NIB and WOZ copy-protected reads; empty
+drive 2 prompt and disk swap; Disk II writes at forced 1 MHz;
 monitor `0L` listing; A2DeskTop slot listing (Phasor must appear at 1 MHz
 mode — a fidelity improvement over the real card); CRT liveness via the
 posted write-through; Klaus Dormann suite in simulation before first

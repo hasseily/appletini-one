@@ -254,18 +254,19 @@ static const char * const k_about_versions[] = {
 };
 
 static const char * const k_about_third_party[] = {
-    "Project origin and multiple components - John \"Elltwo\" Flanagan",
+    "Project origin and harness - John \"Elltwo\" Flanagan",
     "CherryUSB - embedded USB stack",
     "FatFs - FAT filesystem module by ChaN",
     "LodePNG - PNG codec by Lode Vandevenne",
     "WB2AXIP - AXI helper RTL by Gisselquist Technology",
     "Xilinx/AMD Vitis standalone BSP and drivers",
     "A2RetroNet project - Oliver Schmidt",
-    "z80emu - Lin Ke-Fong",
     "AppleWin reference - AppleWin emulator by Tom Charlesworth, Michael Pohoreski and others",
     "Accurate PAL video timing reference - Stephane Champailler",
     "SC-01 Speech chip emulation reference - Olivier Galibert",
     "Mockingboard/Phasor reference - Tom Charlesworth",
+    "z80emu - Lin Ke-Fong",
+    "AD8088 Reboot Camp '83 - Seth Kushniryk",
     "",
     "And in no particular order: Peter Ferrie, John Brooks, fenarinarsa, Jansky, the Paris a2cp",
     "fatdog, 4am, arekkusu, MAME, Infinitum, the Apple II discords and so many more..."

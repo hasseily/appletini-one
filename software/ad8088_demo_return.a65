@@ -1,0 +1,78 @@
+; ad8088_demo_return.a65 -- return from the AD8088 demo to STARTUP.
+;
+; The Reboot Camp bridge normally calls ProDOS QUIT, which opens the
+; system program selector. The demo build redirects that one call here.
+; Reloading BASIC.SYSTEM restores the Applesoft environment that the
+; bridge used for its boot buffers, then BASIC.SYSTEM runs STARTUP and
+; returns to the Appletini demo menu.
+;
+; This code fills the unused top of the bridge's $0800-$1FFF load area.
+
+!cpu 6502
+* = $1E00
+
+MLI       = $BF00
+OPEN      = $C8
+READ      = $CA
+CLOSE     = $CC
+QUIT      = $65
+LOAD_ADDR = $2000
+IO_BUFFER = $4800
+FILE_SIZE = $2800
+
+start:
+    jsr MLI
+    !byte OPEN
+    !word open_params
+    bcs fallback
+
+    lda open_ref
+    sta read_ref
+    sta close_ref
+    jsr MLI
+    !byte READ
+    !word read_params
+    bcs close_fallback
+
+    jsr MLI
+    !byte CLOSE
+    !word close_params
+    jmp LOAD_ADDR
+
+close_fallback:
+    jsr MLI
+    !byte CLOSE
+    !word close_params
+
+fallback:
+    jsr MLI
+    !byte QUIT
+    !word quit_params
+-   jmp -
+
+open_params:
+    !byte 3
+    !word basic_path
+    !word IO_BUFFER
+open_ref:
+    !byte 0
+
+read_params:
+    !byte 4
+read_ref:
+    !byte 0
+    !word LOAD_ADDR
+    !word FILE_SIZE
+    !word 0
+
+close_params:
+    !byte 1
+close_ref:
+    !byte 0
+
+quit_params:
+    !byte 4, 0, 0, 0, 0, 0, 0, 0
+
+basic_path:
+    !byte 19
+    !text "/MSDOS/BASIC.SYSTEM"

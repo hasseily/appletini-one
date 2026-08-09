@@ -38,6 +38,7 @@
 #include "disk2_service.h"
 #include "disk2_sound_samples.h"
 #include "psram_bench.h"
+#include "printer_service.h"
 #include "screenshot_service.h"
 #include "smartport_service.h"
 #include "usb_hid_service.h"
@@ -1068,6 +1069,21 @@ static void control_set_supersprite_enabled(void *ctx, uint8_t enable)
         feat |= CARD_CTRL_FEATURE_SUPERSPRITE_ENABLE_BIT;
     } else {
         feat &= ~CARD_CTRL_FEATURE_SUPERSPRITE_ENABLE_BIT;
+    }
+    REG_WRITE(CARD_CTRL_FEATURE_ENABLE_REG, feat);
+}
+
+static void control_set_ssc_enabled(void *ctx, uint8_t enable)
+{
+    /* Live read-modify-write of the feature register (bit 2); the virtual
+     * SSC shares slot 1 with the Uthernet II, so it never touches the
+     * slot-enable mask. */
+    uint32_t feat = REG_READ(CARD_CTRL_FEATURE_ENABLE_REG);
+    (void)ctx;
+    if (enable != 0U) {
+        feat |= CARD_CTRL_FEATURE_SSC_ENABLE_BIT;
+    } else {
+        feat &= ~CARD_CTRL_FEATURE_SSC_ENABLE_BIT;
     }
     REG_WRITE(CARD_CTRL_FEATURE_ENABLE_REG, feat);
 }
@@ -2877,6 +2893,7 @@ int main(void)
     boot_timing_log("card_control_init", boot_stage_started);
     screenshot_service_init();
     screenshot_service_set_sd_write_hook(ui_screenshot_sd_write_complete, NULL);
+    printer_service_init();
 
     {
         config_menu_platform_t menu_platform;
@@ -2914,6 +2931,7 @@ int main(void)
         menu_platform.set_boot_handoff = menu_platform_set_boot_handoff;
         menu_platform.set_clock_enabled = control_set_clock_enabled;
         menu_platform.set_supersprite_enabled = control_set_supersprite_enabled;
+        menu_platform.set_ssc_enabled = control_set_ssc_enabled;
         menu_platform.set_sdd_stream_enabled = control_set_sdd_stream_enabled;
         menu_platform.set_usb0_sd_remote_mount = control_set_usb0_sd_remote_mount;
         menu_platform.set_slot_enabled = control_set_slot_enabled;
@@ -3001,6 +3019,7 @@ int main(void)
     (void)disk2_service_init(UART0_BASE);
     applicard_service_init(UART0_BASE);
     applicard_service_set_checkpoint(usb0_priority_checkpoint);
+    printer_service_set_checkpoint(usb0_priority_checkpoint);
     ad8088_service_init(UART0_BASE);
     ad8088_service_set_checkpoint(usb0_priority_checkpoint);
     vtw_service_init(UART0_BASE);
@@ -3294,6 +3313,8 @@ int main(void)
         ui_poll_sd_media_arrival(&config_menu);
         usb0_priority_checkpoint();
         screenshot_service_poll();
+        usb0_priority_checkpoint();
+        printer_service_poll();
         usb0_priority_checkpoint();
         /* apple_cycle_egress_poll() and the per-cycle renderer
          * dispatch run on CPU1 in AMP mode -- not here. */

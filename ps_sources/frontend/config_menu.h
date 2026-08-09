@@ -20,7 +20,8 @@
 #define CONFIG_BROWSER_CAT_BEZEL     2U
 #define CONFIG_BROWSER_CAT_ROM       3U
 #define CONFIG_BROWSER_CAT_PROFILE   4U
-#define CONFIG_BROWSER_CAT_COUNT     5U
+#define CONFIG_BROWSER_CAT_PRINTOUT  5U
+#define CONFIG_BROWSER_CAT_COUNT     6U
 #define CONFIG_MENU_USB_BIND_ACTION_COUNT 14U
 #define CONFIG_MENU_USB_BIND_CAPTURE_NONE 0xFFU
 #define CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM 2U
@@ -92,6 +93,7 @@ typedef struct {
     void (*set_boot_handoff)(void *ctx, uint8_t handoff);
     void (*set_clock_enabled)(void *ctx, uint8_t enable);
     void (*set_supersprite_enabled)(void *ctx, uint8_t enable);
+    void (*set_ssc_enabled)(void *ctx, uint8_t enable);
     void (*set_sdd_stream_enabled)(void *ctx, uint8_t enable);
     void (*set_usb0_sd_remote_mount)(void *ctx, uint8_t enable);
     void (*set_slot_enabled)(void *ctx, uint8_t slot, uint8_t enable);
@@ -204,6 +206,7 @@ typedef struct {
     uint8_t phasor_psg_ay_mode;
     uint8_t phasor_mockingboard_only;  /* lock card to Mockingboard mode */
     uint8_t ethernet_slot1_enabled;
+    uint8_t ssc_slot1_enabled;     /* virtual SSC printer, shares slot 1 */
     uint8_t ethernet_config_enabled;
     uint8_t ethernet_address_mode;
     uint8_t ethernet_edit_index;
@@ -242,6 +245,14 @@ typedef struct {
     uint8_t profile_name_editor_vk_index;
     char profile_name_editor_text[CONFIG_MENU_PATH_LEN];
     char profile_name_editor_target_dir[CONFIG_MENU_PATH_LEN];
+    /* Printout browser file actions (rename editor + delete confirm). */
+    uint8_t printout_editor_active;
+    uint8_t printout_editor_virtual;
+    uint8_t printout_editor_vk_index;
+    uint8_t printout_delete_confirm_active;
+    char printout_editor_text[CONFIG_MENU_PATH_LEN];
+    char printout_action_name[CONFIG_MENU_PATH_LEN];
+    char printout_action_path[CONFIG_MENU_PATH_LEN];
     rtc_pcf8563_time_t clock_time;
     config_menu_platform_t platform;
     char status[CONFIG_MENU_STATUS_LEN];

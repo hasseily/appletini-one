@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "ff.h"
+
 #include "config_menu.h"
 #include "config_menu_ui.h"
 #include "../lib/fb16.h"
@@ -48,6 +50,7 @@ typedef enum {
     CONFIG_TAB_CLOCK,
     CONFIG_TAB_RAM,
     CONFIG_TAB_USB,
+    CONFIG_TAB_PRINTING,
     CONFIG_TAB_ABOUT,
     CONFIG_TAB_COUNT
 } config_tab_t;
@@ -232,6 +235,38 @@ void config_menu_draw_usb(uint16_t *fb,
                           int x,
                           int y,
                           int w);
+/* Printing tab + printout browser file actions (config_menu_printing.c). */
+#define CONFIG_PRINTING_ITEM_COUNT 2U
+#define CONFIG_PRINTING_ITEM_ENABLE 0U
+#define CONFIG_PRINTING_ITEM_BROWSE 1U
+void config_menu_draw_printing(uint16_t *fb,
+                               const config_menu_t *menu,
+                               int x,
+                               int y,
+                               int w);
+void config_menu_printing_toggle_ssc(config_menu_t *menu);
+uint8_t config_menu_printing_handle_input(config_menu_t *menu,
+                                          ui_input_t input);
+void config_menu_printing_draw_overlays(uint16_t *fb,
+                                        const config_menu_t *menu,
+                                        int x,
+                                        int y,
+                                        int w);
+void config_menu_printing_start_rename(config_menu_t *menu,
+                                       const char *name,
+                                       const char *path);
+void config_menu_printing_start_delete(config_menu_t *menu,
+                                       const char *name,
+                                       const char *path);
+/* Browser plumbing exposed by config_menu.c for the printout actions. */
+FRESULT config_menu_mount_sd(void);
+void config_menu_browser_reload_after_fileop(config_menu_t *menu);
+uint8_t config_menu_browser_selected_file(const config_menu_t *menu,
+                                          char *name,
+                                          size_t name_len,
+                                          char *path,
+                                          size_t path_len);
+
 void config_menu_profiles_init(config_menu_t *menu);
 uint8_t config_menu_profiles_handle_input(config_menu_t *menu, ui_input_t input);
 void config_menu_profiles_open_carousel(config_menu_t *menu);

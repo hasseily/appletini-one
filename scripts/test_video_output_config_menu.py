@@ -622,10 +622,13 @@ def test_compositor_ghosting_is_optional_and_cache_friendly() -> None:
             "static uint32_t s_effect_row[COMP_APPLE_SHR_WIDTH]" in compositor and
             "static uint16_t s_effect_2x_row[COMP_APPLE_SHR_WIDTH * 2U]" in compositor,
             "ghosting blits must use cacheable scratch/history buffers instead of output-row readback")
-    require("const uint32_t v = fb16_from_bgra32(p);" in compositor and
-            "((uint32_t *)s_effect_2x_row)[x] = (v << 16) | v;" in compositor,
-            "ghosting must blend in 8:8:8 scratch and emit the doubled 565 "
-            "pair in the same pass (no separate expansion pass)")
+    require("effect_blend_history_row(s_effect_row," in compositor and
+            "fb16_expand_2x_row_bgra32src(s_effect_2x_row," in compositor and
+            "vld4_u8((const uint8_t *)(history + x))" in compositor and
+            "vmull_u8(old.val[0], numer)" in compositor and
+            "vmax_u8(current.val[0]" in compositor,
+            "ghosting must blend cached 8:8:8 rows with NEON and use the "
+            "shared NEON doubled-565 row output")
     require("static inline uint8_t effect_decay_numer(uint32_t p, uint8_t strength)" in compositor and
             "(p & 0x00808080U)" in compositor and
             "(p & 0x00202020U)" in compositor and
@@ -635,11 +638,11 @@ def test_compositor_ghosting_is_optional_and_cache_friendly() -> None:
             "k_effect_numer_bright[strength]" in compositor and
             "k_effect_numer_knee[strength]" in compositor and
             "k_effect_numer_tail[strength]" in compositor and
-            "const uint8_t decay_numer = effect_decay_numer(*hist, strength);" in compositor and
+            "const uint8_t decay_numer = effect_decay_numer(history[x], strength);" in compositor and
             "\"usub8 %0, %2, %3\\n\\t\"" in compositor and
             "\"sel %1, %2, %3\\n\\t\"" in compositor and
-            "effect_max_rgb(p, effect_scale_64(*hist, decay_numer))" in compositor and
-            "*hist = p;" in compositor and
+            "effect_max_rgb(p, effect_scale_64(history[x], decay_numer))" in compositor and
+            "history[x] = p;" in compositor and
             "effect_mix_3_1" not in compositor and
             "effect_row_weight" not in compositor and
             "effect_write_row" not in compositor,
@@ -695,9 +698,17 @@ def test_compositor_phosphor_blur_is_display_only() -> None:
             "effect_rgb_eighth" in compositor and
             "effect_blur_h_row(s_effect_row, s_effect_blur_ring[sy % 3]," in compositor,
             "blur must run as SWAR taps over a cacheable three-row ring at source resolution")
-    require(compositor.index("*hist = p;\n                    s_effect_row[x] = p;") <
-            compositor.index("effect_blur_h_row(s_effect_row, s_effect_blur_ring[sy % 3],"),
+    blur_path = compositor[compositor.index(
+        "if (blur != APPLETINI_VIDEO_BLUR_OFF || glow != APPLETINI_VIDEO_GLOW_OFF)"):
+        compositor.index("    for (int sy = 0; sy < src_h; ++sy) {")]
+    require(blur_path.index("effect_blend_history_row(") <
+            blur_path.index("effect_blur_h_row(s_effect_row, s_effect_blur_ring[sy % 3],"),
             "blur must be display-only: history keeps the unblurred pixel")
+    require("vld1q_u32(src + x - 1)" in compositor and
+            "vld1q_u32(src + x + 1)" in compositor and
+            "vld1q_u32(up + x)" in compositor and
+            "fb16_expand_2x_row_bgra32src(s_effect_2x_row, base, w);" in compositor,
+            "blur filters and output packing must use NEON for complete row groups")
     require("effect_mix_3_1" not in compositor and
             "effect_row_weight" not in compositor and
             "effect_write_row" not in compositor,
@@ -731,8 +742,15 @@ def test_compositor_phosphor_blur_is_display_only() -> None:
             "uint8_t compositor_video_glow(void);" in compositor_h and
             "static uint8_t               s_video_glow_strength = APPLETINI_VIDEO_GLOW_OFF;" in compositor and
             "effect_rgb_sat_add" in compositor and
-            "k_effect_glow_numer[glow]" in compositor,
-            "glow must be an additive saturating halo, default off")
+            "effect_glow_scale(s_effect_halo_row[x], glow)" in compositor and
+            "vqadd_u8(p.val[0], vshl_u8(h.val[0], shift))" in compositor and
+            "vzipq_u16(px, px)" in compositor and
+            "k_effect_glow_numer" not in compositor,
+            "glow must use shifted halo weights and a NEON saturating "
+            "add/doubled-565 output, with a scalar fallback")
+    require("if (strength != APPLETINI_VIDEO_GHOSTING_OFF) {" in compositor and
+            "effect_blend_history_row(" in compositor,
+            "blur and glow must skip temporal history work when ghosting is off")
     require('"video.glow=%s\\n"' in source and
             'strcmp(key, "video.glow") == 0' in source and
             "#define CONFIG_DEFAULT_VIDEO_GLOW_STRENGTH APPLETINI_VIDEO_GLOW_OFF" in source and

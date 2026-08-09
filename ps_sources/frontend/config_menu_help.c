@@ -224,12 +224,14 @@ HELP(video_ghosting,
 HELP(video_blur,
     "Phosphor blur softens the Apple video like a CRT spot, bleeding each pixel into its neighbors.",
     "Light softens horizontally. Medium adds vertical bleed across scanlines. Strong widens further.",
-    "Blur is much cheaper than ghosting, and combines with glow and ghosting for a full CRT look.");
+    "Blur combines with glow and ghosting for a full CRT look.",
+    "Blur+glow are expensive, so avoid mixing them with borders, full screen bezels and debug.");
 
 HELP(video_glow,
     "Phosphor glow adds a halo of light around bright pixels without softening the image itself.",
     "The halo is additive and saturates toward white, like a CRT bloom. Strengths set its intensity.",
-    "Glow is independent of blur: sharp with glow, soft with glow, or both work together.");
+    "Glow is independent of blur: sharp with glow, soft with glow, or both work together.",
+    "Blur+glow are expensive, so avoid mixing them with borders, full screen bezels and debug.");
 
 HELP(video_format_badge,
     "Show video mode labels the current Apple format (HGR, DHGR, SHR4, 3200...) in a corner.",
@@ -270,8 +272,7 @@ HELP(video_debug,
     "Show debugging overlays live firmware, video, compositor, USB, and storage diagnostics.",
     "Use it to inspect frame rate, timing, and service state while diagnosing firmware or hardware.",
     "It adds overlay drawing. Border Flood forces it Off and disables this control.",
-    "Showing debugging has a mild performance impact.",
-    "Let us know if you want additional debug information.");
+    "Debugging has a mild performance impact. Let us know if you want additional debug information.");
 
 static const help_override_t video_overrides[] = {
     OVERRIDE(CONFIG_VIDEO_ITEM_OUTPUT, video_output),

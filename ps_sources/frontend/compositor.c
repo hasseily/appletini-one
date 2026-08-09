@@ -231,6 +231,63 @@ static inline uint32_t effect_max_rgb(uint32_t a, uint32_t b)
 #endif
 }
 
+/* Blend one cached source row with its temporal history. The NEON path
+ * applies the same whole-pixel decay-band choice as effect_decay_numer(),
+ * then scales and takes the per-channel maximum eight pixels at a time. */
+static void effect_blend_history_row(uint32_t *row,
+                                     uint32_t *history,
+                                     int w,
+                                     uint8_t strength)
+{
+    int x = 0;
+
+#if defined(__ARM_NEON)
+    const uint8x8_t zero = vdup_n_u8(0U);
+    const uint8x8_t full_alpha = vdup_n_u8(0xFFU);
+    const uint8x8_t bright_numer =
+        vdup_n_u8(k_effect_numer_bright[strength]);
+    const uint8x8_t knee_numer =
+        vdup_n_u8(k_effect_numer_knee[strength]);
+    const uint8x8_t tail_numer =
+        vdup_n_u8(k_effect_numer_tail[strength]);
+
+    for (; x + 8 <= w; x += 8) {
+        const uint8x8x4_t current =
+            vld4_u8((const uint8_t *)(row + x));
+        const uint8x8x4_t old =
+            vld4_u8((const uint8_t *)(history + x));
+        const uint8x8_t rgb_or =
+            vorr_u8(vorr_u8(old.val[0], old.val[1]), old.val[2]);
+        const uint8x8_t active = vtst_u8(rgb_or, vdup_n_u8(0xFCU));
+        const uint8x8_t knee = vtst_u8(rgb_or, vdup_n_u8(0x20U));
+        const uint8x8_t bright = vtst_u8(rgb_or, vdup_n_u8(0x80U));
+        uint8x8_t numer = vbsl_u8(active, tail_numer, zero);
+        uint8x8x4_t out;
+
+        numer = vbsl_u8(knee, knee_numer, numer);
+        numer = vbsl_u8(bright, bright_numer, numer);
+        out.val[0] = vmax_u8(current.val[0],
+            vshrn_n_u16(vmull_u8(old.val[0], numer), 6));
+        out.val[1] = vmax_u8(current.val[1],
+            vshrn_n_u16(vmull_u8(old.val[1], numer), 6));
+        out.val[2] = vmax_u8(current.val[2],
+            vshrn_n_u16(vmull_u8(old.val[2], numer), 6));
+        out.val[3] = full_alpha;
+        vst4_u8((uint8_t *)(row + x), out);
+        vst4_u8((uint8_t *)(history + x), out);
+    }
+#endif
+
+    for (; x < w; ++x) {
+        uint32_t p = row[x];
+        const uint8_t decay_numer = effect_decay_numer(history[x], strength);
+
+        p = effect_max_rgb(p, effect_scale_64(history[x], decay_numer));
+        history[x] = p;
+        row[x] = p;
+    }
+}
+
 
 /* ---------- Phosphor blur (spatial spot glow) ----------
  *
@@ -275,14 +332,9 @@ static uint32_t s_effect_blur_ring[3U][COMP_APPLE_SHR_WIDTH]
  * brights bleed toward white instead of wrapping. Strength picks the
  * halo weight in 64ths; the halo kernel is the MEDIUM tent whenever
  * blur itself is off. */
-#define EFFECT_GLOW_NUMER_LIGHT   8U
-#define EFFECT_GLOW_NUMER_MEDIUM 16U
-#define EFFECT_GLOW_NUMER_STRONG 32U
-
-static const uint8_t k_effect_glow_numer[APPLETINI_VIDEO_GLOW_MAX + 1U] = {
-    0U, EFFECT_GLOW_NUMER_LIGHT, EFFECT_GLOW_NUMER_MEDIUM,
-    EFFECT_GLOW_NUMER_STRONG
-};
+#define EFFECT_GLOW_SHIFT_LIGHT   3U
+#define EFFECT_GLOW_SHIFT_MEDIUM  2U
+#define EFFECT_GLOW_SHIFT_STRONG  1U
 
 /* Sharp (pre-blur) rows for the glow-over-sharp base when blur is off,
  * plus scratch for the assembled base and halo rows at emit time. */
@@ -308,17 +360,58 @@ static inline uint32_t effect_rgb_sat_add(uint32_t p, uint32_t q)
     return rb | g;
 }
 
+/* Glow weights are 1/8, 1/4, and 1/2. Keep them as shifts so the hot
+ * output loop never pays for the generic per-channel multiply used by
+ * temporal decay. */
+static inline uint8_t effect_glow_shift(uint8_t glow)
+{
+    if (glow == APPLETINI_VIDEO_GLOW_LIGHT) {
+        return EFFECT_GLOW_SHIFT_LIGHT;
+    }
+    if (glow == APPLETINI_VIDEO_GLOW_MEDIUM) {
+        return EFFECT_GLOW_SHIFT_MEDIUM;
+    }
+    return EFFECT_GLOW_SHIFT_STRONG;
+}
+
+static inline uint32_t effect_glow_scale(uint32_t p, uint8_t glow)
+{
+    if (glow == APPLETINI_VIDEO_GLOW_LIGHT) {
+        return effect_rgb_eighth(p);
+    }
+    if (glow == APPLETINI_VIDEO_GLOW_MEDIUM) {
+        return effect_rgb_quarter(p);
+    }
+    return effect_rgb_half(p);
+}
+
 /* Vertical stage over the three H-filtered ring rows: the 1/4,1/2,1/4
  * tent for STRONG blur and for every glow halo; pass-through otherwise. */
 static void effect_blur_v_row(const uint32_t *up, const uint32_t *mid,
                               const uint32_t *dn, uint32_t *dst, int w,
                               int tent)
 {
+    int x = 0;
+
     if (!tent) {
         memcpy(dst, mid, (size_t)w * sizeof(uint32_t));
         return;
     }
-    for (int x = 0; x < w; ++x) {
+#if defined(__ARM_NEON)
+    for (; x + 4 <= w; x += 4) {
+        const uint32x4_t vu = vld1q_u32(up + x);
+        const uint32x4_t vm = vld1q_u32(mid + x);
+        const uint32x4_t vd = vld1q_u32(dn + x);
+        const uint32x4_t half = vandq_u32(vshrq_n_u32(vm, 1),
+                                          vdupq_n_u32(0x007F7F7FU));
+        const uint32x4_t up_q = vandq_u32(vshrq_n_u32(vu, 2),
+                                          vdupq_n_u32(0x003F3F3FU));
+        const uint32x4_t dn_q = vandq_u32(vshrq_n_u32(vd, 2),
+                                          vdupq_n_u32(0x003F3F3FU));
+        vst1q_u32(dst + x, vaddq_u32(vaddq_u32(half, up_q), dn_q));
+    }
+#endif
+    for (; x < w; ++x) {
         dst[x] = effect_rgb_half(mid[x]) + effect_rgb_quarter(up[x]) +
                  effect_rgb_quarter(dn[x]);
     }
@@ -336,10 +429,44 @@ static void effect_blur_h_row(const uint32_t *src,
 
     if (blur == APPLETINI_VIDEO_BLUR_STRONG) {
         /* Wide 1/8,1/4,1/4,1/4,1/8 tap. Edge pixels clamp. */
-        for (int x = 0; x < w; ++x) {
+        int x = 0;
+
+        for (; x < w && x < 2; ++x) {
             const uint32_t c  = src[x];
             const uint32_t l1 = (x > 0) ? src[x - 1] : c;
             const uint32_t l2 = (x > 1) ? src[x - 2] : l1;
+            const uint32_t r1 = (x + 1 < w) ? src[x + 1] : c;
+            const uint32_t r2 = (x + 2 < w) ? src[x + 2] : r1;
+            dst[x] = effect_rgb_quarter(c) +
+                     effect_rgb_quarter(l1) + effect_rgb_quarter(r1) +
+                     effect_rgb_eighth(l2) + effect_rgb_eighth(r2);
+        }
+#if defined(__ARM_NEON)
+        for (; x + 5 < w; x += 4) {
+            const uint32x4_t l2 = vld1q_u32(src + x - 2);
+            const uint32x4_t l1 = vld1q_u32(src + x - 1);
+            const uint32x4_t c  = vld1q_u32(src + x);
+            const uint32x4_t r1 = vld1q_u32(src + x + 1);
+            const uint32x4_t r2 = vld1q_u32(src + x + 2);
+            const uint32x4_t quarter_mask = vdupq_n_u32(0x003F3F3FU);
+            const uint32x4_t eighth_mask = vdupq_n_u32(0x001F1F1FU);
+            uint32x4_t out = vandq_u32(vshrq_n_u32(c, 2), quarter_mask);
+
+            out = vaddq_u32(out,
+                vandq_u32(vshrq_n_u32(l1, 2), quarter_mask));
+            out = vaddq_u32(out,
+                vandq_u32(vshrq_n_u32(r1, 2), quarter_mask));
+            out = vaddq_u32(out,
+                vandq_u32(vshrq_n_u32(l2, 3), eighth_mask));
+            out = vaddq_u32(out,
+                vandq_u32(vshrq_n_u32(r2, 3), eighth_mask));
+            vst1q_u32(dst + x, out);
+        }
+#endif
+        for (; x < w; ++x) {
+            const uint32_t c  = src[x];
+            const uint32_t l1 = src[x - 1];
+            const uint32_t l2 = src[x - 2];
             const uint32_t r1 = (x + 1 < w) ? src[x + 1] : c;
             const uint32_t r2 = (x + 2 < w) ? src[x + 2] : r1;
             dst[x] = effect_rgb_quarter(c) +
@@ -351,13 +478,32 @@ static void effect_blur_h_row(const uint32_t *src,
 
     /* LIGHT and MEDIUM share the 1/4,1/2,1/4 horizontal tap. */
     {
-        uint32_t left = src[0];
-        for (int x = 0; x < w; ++x) {
+        int x = 0;
+
+        dst[0] = effect_rgb_half(src[0]) +
+                 effect_rgb_quarter(src[0]) + effect_rgb_quarter(src[1]);
+        x = 1;
+#if defined(__ARM_NEON)
+        for (; x + 4 < w; x += 4) {
+            const uint32x4_t left = vld1q_u32(src + x - 1);
+            const uint32x4_t c = vld1q_u32(src + x);
+            const uint32x4_t right = vld1q_u32(src + x + 1);
+            const uint32x4_t half = vandq_u32(vshrq_n_u32(c, 1),
+                                              vdupq_n_u32(0x007F7F7FU));
+            const uint32x4_t left_q = vandq_u32(vshrq_n_u32(left, 2),
+                                                vdupq_n_u32(0x003F3F3FU));
+            const uint32x4_t right_q = vandq_u32(vshrq_n_u32(right, 2),
+                                                 vdupq_n_u32(0x003F3F3FU));
+            vst1q_u32(dst + x,
+                      vaddq_u32(vaddq_u32(half, left_q), right_q));
+        }
+#endif
+        for (; x < w; ++x) {
             const uint32_t c = src[x];
+            const uint32_t left = src[x - 1];
             const uint32_t r = (x + 1 < w) ? src[x + 1] : c;
             dst[x] = effect_rgb_half(c) +
                      effect_rgb_quarter(left) + effect_rgb_quarter(r);
-            left = c;
         }
     }
 }
@@ -391,21 +537,42 @@ static void effect_emit_2x_row(const uint32_t *sharp,
     }
 
     if (glow != APPLETINI_VIDEO_GLOW_OFF) {
-        const uint32_t numer = k_effect_glow_numer[glow];
-        for (int x = 0; x < w; ++x) {
+        int x = 0;
+#if defined(__ARM_NEON)
+        const int8x8_t shift =
+            vdup_n_s8(-(int8_t)effect_glow_shift(glow));
+
+        for (; x + 8 <= w; x += 8) {
+            const uint8x8x4_t p =
+                vld4_u8((const uint8_t *)(base + x));
+            const uint8x8x4_t h =
+                vld4_u8((const uint8_t *)(s_effect_halo_row + x));
+            const uint8x8_t b =
+                vqadd_u8(p.val[0], vshl_u8(h.val[0], shift));
+            const uint8x8_t g =
+                vqadd_u8(p.val[1], vshl_u8(h.val[1], shift));
+            const uint8x8_t r =
+                vqadd_u8(p.val[2], vshl_u8(h.val[2], shift));
+            uint16x8_t px = vshll_n_u8(r, 8);
+            uint16x8x2_t doubled;
+
+            px = vsriq_n_u16(px, vshll_n_u8(g, 8), 5);
+            px = vsriq_n_u16(px, vshll_n_u8(b, 8), 11);
+            doubled = vzipq_u16(px, px);
+            vst1q_u16(s_effect_2x_row + 2 * x, doubled.val[0]);
+            vst1q_u16(s_effect_2x_row + 2 * x + 8, doubled.val[1]);
+        }
+#endif
+        for (; x < w; ++x) {
             const uint32_t p = effect_rgb_sat_add(
-                base[x], effect_scale_64(s_effect_halo_row[x], numer));
+                base[x], effect_glow_scale(s_effect_halo_row[x], glow));
             const uint32_t v = fb16_from_bgra32(p);
             ((uint32_t *)s_effect_2x_row)[x] = (v << 16) | v;
         }
         return;
     }
 
-    for (int x = 0; x < w; ++x) {
-        const uint32_t p = base[x];
-        const uint32_t v = fb16_from_bgra32(p);
-        ((uint32_t *)s_effect_2x_row)[x] = (v << 16) | v;
-    }
+    fb16_expand_2x_row_bgra32src(s_effect_2x_row, base, w);
 }
 
 static uint8_t effect_scanline_blank(uint8_t phase,
@@ -512,16 +679,18 @@ static void blit_apple_ghosting_2x(uint16_t *fb,
         return;
     }
 
+    strength = appletini_video_ghosting_clamp(strength);
     blur = appletini_video_blur_clamp(blur);
     glow = appletini_video_glow_clamp(glow);
-    if (appletini_video_ghosting_clamp(strength) == APPLETINI_VIDEO_GHOSTING_OFF &&
+    if (strength == APPLETINI_VIDEO_GHOSTING_OFF &&
         blur == APPLETINI_VIDEO_BLUR_OFF &&
         glow == APPLETINI_VIDEO_GLOW_OFF) {
         return;
     }
 
-    if (s_effect_history_w != (uint16_t)src_w ||
-        s_effect_history_h != (uint16_t)src_h) {
+    if (strength != APPLETINI_VIDEO_GHOSTING_OFF &&
+        (s_effect_history_w != (uint16_t)src_w ||
+         s_effect_history_h != (uint16_t)src_h)) {
         effect_clear_history();
         s_effect_history_w = (uint16_t)src_w;
         s_effect_history_h = (uint16_t)src_h;
@@ -533,10 +702,9 @@ static void blit_apple_ghosting_2x(uint16_t *fb,
          * to 565 one source row late so the vertical tap sees both
          * neighbors. With glow but no blur, the ring still carries the
          * LIGHT horizontal tap purely as the halo source, and the sharp
-         * ring keeps the unfiltered base. With ghosting OFF the decay
-         * numerator is 0 and the blend degenerates to pass-through
-         * (history writes are then redundant but harmless). The loop
-         * runs one extra iteration to flush the delayed final row. */
+         * ring keeps the unfiltered base. With ghosting OFF, skip the
+         * temporal history entirely. The loop runs one extra iteration
+         * to flush the delayed final row. */
         const uint8_t ring_h_kernel = (blur != APPLETINI_VIDEO_BLUR_OFF)
             ? blur : (uint8_t)APPLETINI_VIDEO_BLUR_LIGHT;
 
@@ -546,17 +714,15 @@ static void blit_apple_ghosting_2x(uint16_t *fb,
             }
             if (sy < src_h) {
                 const uint32_t *srow = src + sy * src_stride;
-                const uint32_t hist_base = (uint32_t)sy * EFFECT_HISTORY_STRIDE;
 
                 memcpy(s_effect_row, srow, (size_t)src_w * sizeof(uint32_t));
-                for (int x = 0; x < src_w; ++x) {
-                    uint32_t p = s_effect_row[x];
-                    uint32_t *hist = &s_effect_history[hist_base + (uint32_t)x];
-                    const uint8_t decay_numer = effect_decay_numer(*hist, strength);
+                if (strength != APPLETINI_VIDEO_GHOSTING_OFF) {
+                    const uint32_t hist_base =
+                        (uint32_t)sy * EFFECT_HISTORY_STRIDE;
 
-                    p = effect_max_rgb(p, effect_scale_64(*hist, decay_numer));
-                    *hist = p;
-                    s_effect_row[x] = p;
+                    effect_blend_history_row(
+                        s_effect_row, &s_effect_history[hist_base],
+                        src_w, strength);
                 }
                 if (blur == APPLETINI_VIDEO_BLUR_OFF) {
                     memcpy(s_effect_sharp_ring[sy % 3], s_effect_row,
@@ -607,23 +773,11 @@ static void blit_apple_ghosting_2x(uint16_t *fb,
          * would require one DDR round trip per pixel. */
         memcpy(s_effect_row, srow, (size_t)src_w * sizeof(uint32_t));
 
-        /* Blend in 8:8:8 (history keeps full phosphor precision) and
-         * emit the 2x-doubled 565 output pair in the same pass: the
-         * scalar loop already owns every pixel, so narrowing here
-         * costs three shifts and saves a whole row re-read and
-         * expansion pass. Keep this loop scalar and self-contained. */
-        for (int x = 0; x < src_w; ++x) {
-            uint32_t p = s_effect_row[x];
-            uint32_t *hist = &s_effect_history[hist_base + (uint32_t)x];
-            const uint8_t decay_numer = effect_decay_numer(*hist, strength);
-
-            p = effect_max_rgb(p, effect_scale_64(*hist, decay_numer));
-            *hist = p;
-            {
-                const uint32_t v = fb16_from_bgra32(p);
-                ((uint32_t *)s_effect_2x_row)[x] = (v << 16) | v;
-            }
-        }
+        effect_blend_history_row(s_effect_row,
+                                 &s_effect_history[hist_base],
+                                 src_w, strength);
+        fb16_expand_2x_row_bgra32src(s_effect_2x_row,
+                                     s_effect_row, src_w);
 
         for (uint8_t phase = 0U; phase < scale_y; ++phase) {
             uint16_t *drow =

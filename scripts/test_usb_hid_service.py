@@ -187,10 +187,40 @@ def test_baremetal_osal_pumps_polled_irq_during_waits() -> None:
             "blocking CherryUSB transfers must pump the polled EHCI IRQ")
     require("USB_OSAL_WAITING_FOREVER" in sem_take,
             "OSAL waits must preserve CherryUSB's forever timeout semantics")
+    require("cherryusb_background_poll();" in sem_take,
+            "blocking USB1 transfers must yield to higher-priority work")
+    msleep = function_body(osal, "usb_osal_msleep")
+    require("cherryusb_background_poll();" in msleep,
+            "USB1 reset and debounce waits must yield to higher-priority work")
     require("const size_t padded = USB_ALIGN_UP(size, CONFIG_USB_ALIGN_SIZE);" in osal and
             '#include "usb_util.h"' in osal and
             "malloc(padded + align - 1U + sizeof(void *))" in osal,
             "CherryUSB heap buffers must include trailing cache-line padding for EHCI DMA")
+
+
+def test_usb1_waits_keep_frontend_services_running() -> None:
+    frontend_main = read(FRONTEND_MAIN_C)
+    platform = read(CHERRY_PLATFORM_H)
+    callback = function_body(frontend_main, "cherryusb_background_poll")
+
+    require("void cherryusb_background_poll(void);" in platform,
+            "CherryUSB platform API must expose the background yield hook")
+    for token in [
+        "usb0_priority_checkpoint();",
+        "smartport_service_poll();",
+        "disk2_service_poll();",
+        "(void)compositor_tick();",
+    ]:
+        require(token in callback,
+                f"USB1 waits must keep frontend work running: {token}")
+    require("g_usb1_background_poll_active" in callback,
+            "USB1 background work must have a recursion guard")
+    require("g_usb1_background_compositor_ready" in callback and
+            "g_usb1_background_compositor_ready = 1U;" in frontend_main,
+            "video yields must remain disabled until compositor init completes")
+    require(frontend_main.find("compositor_init(ui_compose_thunk);") <
+            frontend_main.find("g_usb1_background_compositor_ready = 1U;"),
+            "compositor readiness must be published after compositor_init")
 
 
 def test_zynq_glue_uses_usb1_host_mode_and_cache_hooks() -> None:
@@ -759,6 +789,7 @@ TESTS = [
     test_usb_keyboard_and_keypad_emit_bindable_sources,
     test_cherryusb_config_supports_hubs_and_zynq_ehci,
     test_baremetal_osal_pumps_polled_irq_during_waits,
+    test_usb1_waits_keep_frontend_services_running,
     test_zynq_glue_uses_usb1_host_mode_and_cache_hooks,
     test_hub_source_is_pollable_not_threaded,
     test_vitis_registers_cherryusb_sources_and_linker_section,

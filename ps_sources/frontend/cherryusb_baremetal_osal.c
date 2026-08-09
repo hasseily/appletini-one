@@ -45,6 +45,10 @@ typedef struct {
 static cherry_timer_t *g_timer_list;
 static uint8_t g_osal_polling;
 
+__attribute__((weak)) void cherryusb_background_poll(void)
+{
+}
+
 uint32_t cherryusb_baremetal_ms(void)
 {
     XTime now = 0U;
@@ -181,6 +185,7 @@ int usb_osal_sem_take(usb_osal_sem_t sem, uint32_t timeout)
 
         cherryusb_baremetal_osal_poll();
         cherryusb_baremetal_poll_irq();
+        cherryusb_background_poll();
 
         if (timeout != USB_OSAL_WAITING_FOREVER &&
             (cherryusb_baremetal_ms() - start) >= timeout) {
@@ -426,6 +431,7 @@ void usb_osal_msleep(uint32_t delay)
     while ((cherryusb_baremetal_ms() - start) < delay) {
         cherryusb_baremetal_osal_poll();
         cherryusb_baremetal_poll_irq();
+        cherryusb_background_poll();
         usleep(1000U);
     }
 }

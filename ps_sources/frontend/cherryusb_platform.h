@@ -75,6 +75,9 @@ typedef struct {
 uint32_t cherryusb_baremetal_ms(void);
 void cherryusb_baremetal_osal_poll(void);
 void cherryusb_baremetal_poll_irq(void);
+/* Called from CherryUSB waits so a frontend can keep higher-priority work
+ * moving while USB1 resets, debounces, or completes a control transfer. */
+void cherryusb_background_poll(void);
 void cherryusb_host_poll(uint8_t busid);
 void cherryusb_host_debug_snapshot(uint8_t busid, cherryusb_host_debug_t *snapshot);
 void cherryusb_host_debug_note_control(const struct usbh_hubport *hport,

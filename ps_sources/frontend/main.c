@@ -180,6 +180,8 @@ static uint32_t g_card_slot_enable_mask = CARD_CTRL_SLOT_ENABLE_RESET_MASK;
 static uint8_t g_slot5_processor = CONFIG_SLOT5_PROCESSOR_Z80;
 static uint8_t g_apple_reset_seq_valid = 0U;
 static uint8_t g_apple_reset_seq_last = 0U;
+static uint8_t g_usb1_background_poll_active = 0U;
+static uint8_t g_usb1_background_compositor_ready = 0U;
 
 static void ui_invalidate_static_backgrounds(void);
 
@@ -1581,6 +1583,25 @@ static void usb0_priority_checkpoint(void)
         return;
     }
     usb_storage_service_poll();
+}
+
+/* CherryUSB's reset, debounce, and transfer waits can last for hundreds of
+ * milliseconds. Keep Apple-facing work moving during those waits. Do not
+ * call USB1 here: this callback runs from inside the USB1 stack. */
+void cherryusb_background_poll(void)
+{
+    if (g_usb1_background_poll_active != 0U) {
+        return;
+    }
+
+    g_usb1_background_poll_active = 1U;
+    usb0_priority_checkpoint();
+    smartport_service_poll();
+    disk2_service_poll();
+    if (g_usb1_background_compositor_ready != 0U) {
+        (void)compositor_tick();
+    }
+    g_usb1_background_poll_active = 0U;
 }
 
 static void usb1_boot_settle_begin(void)
@@ -3081,6 +3102,7 @@ int main(void)
      * publishing completed compositor slots to fb_reader. */
     compositor_init(ui_compose_thunk);
     compositor_set_draw_context(&ui, &config_menu);
+    g_usb1_background_compositor_ready = 1U;
     usb0_priority_checkpoint();
     if (hid_rc == 0) {
         usb1_boot_settle_begin();

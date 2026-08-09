@@ -11,13 +11,14 @@
 //     physical pointer is reloaded when it is no longer known to match.
 //
 // Apple slot I/O:
-//   $C0n0: W5100 mode register
-//   $C0n1: W5100 indirect address high
-//   $C0n2: W5100 indirect address low
-//   $C0n3: W5100 indirect data port
+//   $C0n4: W5100 mode register
+//   $C0n5: W5100 indirect address high
+//   $C0n6: W5100 indirect address low
+//   $C0n7: W5100 indirect data port
 //
-// A0/A1 are the only decoded address bits; $C0n4-$C0nF alias the same four
-// registers.
+// Only $C0n4-$C0n7 respond (A3:A2 must be 01); A1:A0 select the register.
+// The rest of the DEVSEL page stays free so a virtual Super Serial Card can
+// share the same slot ($C0n1/$C0n2 DIP readback, $C0n8-$C0nF ACIA).
 module uthernet2_card #(
     parameter int unsigned CLK_HZ = 133_000_000,
     parameter int unsigned RESET_HOLD_US = 10_000,
@@ -187,7 +188,8 @@ module uthernet2_card #(
     wire slot_io_hit =
         apple_bus_active &&
         (ab_read.addr[15:8] == 8'hC0) &&
-        (ab_read.addr[7:4] == (4'h8 + {1'b0, slot_assign}));
+        (ab_read.addr[7:4] == (4'h8 + {1'b0, slot_assign})) &&
+        (ab_read.addr[3:2] == 2'b01);
 
     wire apple_io_read_start  = ab_read.serve_en && ab_read.cycle_valid &&
                                 ab_read.rw && slot_io_hit;

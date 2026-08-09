@@ -88,20 +88,20 @@ module tb_uthernet2_card;
 
     task automatic pulse_apple_read(input logic [1:0] reg_sel);
         @(negedge clk);
-        ab_read.addr = 16'hC090 | reg_sel;
+        ab_read.addr = 16'hC094 | reg_sel;
         ab_read.rw = 1'b1;
-        ab_read.addr_en = 1'b1;
+        ab_read.serve_en = 1'b1;
         @(negedge clk);
-        ab_read.addr_en = 1'b0;
+        ab_read.serve_en = 1'b0;
     endtask
 
     task automatic start_apple_write(input logic [1:0] reg_sel);
         @(negedge clk);
-        ab_read.addr = 16'hC090 | reg_sel;
+        ab_read.addr = 16'hC094 | reg_sel;
         ab_read.rw = 1'b0;
-        ab_read.addr_en = 1'b1;
+        ab_read.serve_en = 1'b1;
         @(negedge clk);
-        ab_read.addr_en = 1'b0;
+        ab_read.serve_en = 1'b0;
     endtask
 
     task automatic finish_apple_cycle(input logic [7:0] data);
@@ -124,12 +124,12 @@ module tb_uthernet2_card;
 
         // A simultaneous Apple read wins; the one-cycle host request is queued.
         @(negedge clk);
-        ab_read.addr = 16'hC090;
+        ab_read.addr = 16'hC094;
         ab_read.rw = 1'b1;
-        ab_read.addr_en = 1'b1;
+        ab_read.serve_en = 1'b1;
         host_req = 1'b1;
         @(negedge clk);
-        ab_read.addr_en = 1'b0;
+        ab_read.serve_en = 1'b0;
         host_req = 1'b0;
         finish_apple_cycle(8'h00);
         wait_host_done(1'b0);
@@ -161,12 +161,12 @@ module tb_uthernet2_card;
         // A write address reserves the bus until data_en, so host work cannot
         // start in the middle of the Apple cycle.
         @(negedge clk);
-        ab_read.addr = 16'hC090;
+        ab_read.addr = 16'hC094;
         ab_read.rw = 1'b0;
-        ab_read.addr_en = 1'b1;
+        ab_read.serve_en = 1'b1;
         host_req = 1'b1;
         @(negedge clk);
-        ab_read.addr_en = 1'b0;
+        ab_read.serve_en = 1'b0;
         host_req = 1'b0;
         repeat (8) begin
             @(posedge clk);

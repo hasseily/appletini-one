@@ -103,8 +103,11 @@ def main():
             "Uthernet II HDL module missing")
     require("ab_read.addr[7:4] == (4'h8 + {1'b0, slot_assign})" in card,
             "Uthernet II must decode the selected C0nX slot I/O page")
+    require("(ab_read.addr[3:2] == 2'b01)" in card,
+            "Uthernet II must answer only C0n4-C0n7 so a virtual SSC can "
+            "share the same slot's DEVSEL page")
     require("wire [1:0] apple_io_reg = ab_read.addr[1:0];" in card,
-            "Uthernet II must alias C0n0-C0nF through A0/A1 only")
+            "Uthernet II must select its register through A0/A1")
     require("slot_rom" not in card and "slot_access" not in card,
             "Uthernet II implementation should not add a slot ROM")
     require("function automatic logic [7:0] next_mode_value" in card,
@@ -317,7 +320,7 @@ def main():
     require(".ab_read(gate_ab(ab_read, card_slot1_enable))" in top and
             ".slot_assign(3'h1)" in top,
             "Uthernet II card must be gated by slot 1 enable and assigned to slot 1")
-    require("apple_bus_write_arbiter #(.NUM_CLIENTS(11))" in top and
+    require("apple_bus_write_arbiter #(.NUM_CLIENTS(12))" in top and
             "uthernet_ab_write" in top,
             "Apple bus arbiter must include the Uthernet writer")
 
@@ -565,5 +568,62 @@ def main():
             "colliding Apple read was lost" in sim and
             "host started inside Apple write" in sim,
             "Behavioral simulation must cover host/Apple arbitration collisions")
+
+    simulate()
+
+
+def vivado_tool(name):
+    import shutil
+
+    bat = shutil.which(f"{name}.bat")
+    if bat:
+        return bat
+    tool = shutil.which(name)
+    if tool:
+        return tool
+    raise FileNotFoundError(f"unable to locate Vivado tool {name}")
+
+
+def simulate():
+    """Run tb_uthernet2_card under xsim (the bench once bit-rotted unnoticed
+    because nothing executed it)."""
+    import shutil
+    import subprocess
+
+    out_dir = ROOT / "build" / "uthernet2_sim"
+
+    try:
+        xvlog = vivado_tool("xvlog")
+    except FileNotFoundError:
+        print("SKIP simulation: Vivado tools not on PATH")
+        return
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def run(cmd, log_name):
+        completed = subprocess.run(
+            cmd, cwd=out_dir, capture_output=True, text=True)
+        (out_dir / log_name).write_text(
+            (completed.stdout or "") + (completed.stderr or ""),
+            encoding="utf-8")
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"{cmd[0]} failed (exit {completed.returncode}); "
+                f"see {out_dir / log_name}")
+        return completed.stdout or ""
+
+    run([xvlog, "--sv",
+         str(ROOT / "hdl" / "globals.sv"),
+         str(ROOT / "hdl" / "apple" / "uthernet2_card.sv"),
+         str(ROOT / "hdl" / "sim" / "tb_uthernet2_card.sv")], "xvlog.log")
+    run([vivado_tool("xelab"), "tb_uthernet2_card", "-s",
+         "tb_uthernet2_snap", "--timescale", "1ns/1ps"], "xelab.log")
+    stdout = run([vivado_tool("xsim"), "tb_uthernet2_snap", "--runall"],
+                 "xsim.log")
+    require("UTHERNET2 ARBITRATION PASS" in stdout,
+            "tb_uthernet2_card did not pass")
+    print("PASS simulate")
+
+
 if __name__ == "__main__":
     main()

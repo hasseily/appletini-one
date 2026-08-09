@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-"""Build the bootable 800 KB Appletini ProDOS demo disk.
+"""Build the bootable 32 MB Appletini ProDOS demo disk.
 
 Besides the classic demos, the disk carries the "New Image Modes"
 slideshow: one A2IMGVIEW binary that walks HGR, DHGR, and SHR images in
 per-format ProDOS folders (/HGR, /DHGR, /SHR). This script generates
 the viewer's image table from the IMAGE_FILES manifest below, so the
 launcher entry, the viewer, and the folders always agree.
+
+The disk also carries Reboot Camp '83. Its 4 MB FAT12 disk boots
+MS-DOS 2.0 on the virtual AD8088 Plus and AUTOEXEC runs HGRCUBE.COM,
+which draws an animated cube through the 8088's Apple-memory window.
+The tracked AD8088 MSDOS.hdv supplies the known-good bridge, DOS files,
+and FAT image; this script only replaces AUTOEXEC.BAT for demo use.
 
 Image formats: 0=SHR (self-describing SDD images, conformance-checked),
 1=HGR 8K, 2=HGRi 16K (both pages, woven by the firmware), 3=DHR 16K
@@ -32,6 +38,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -43,7 +50,9 @@ WEB_DIR = SOFTWARE / "appletini_webserver"
 WEB_APP = WEB_DIR / "build" / "A2WEBSRV.SYSTEM"
 BROWSER_APP = WEB_DIR / "build" / "A2BROWSE.SYSTEM"
 IMG_APP = WEB_DIR / "build" / "A2IMG.SYSTEM"
-PRODOS_MASTER = SOFTWARE / "ProDOS_2_4_3.po"
+AD8088_BASE = SOFTWARE / "AD8088 MSDOS.hdv"
+AD8088_RETURN_SRC = SOFTWARE / "ad8088_demo_return.a65"
+AD8088_RETURN_APP = SOFTWARE / "ad8088_demo_return.bin"
 SSDEMO_DISK = SOFTWARE / "SSDEMO.dsk"
 BORDER_SRC = SOFTWARE / "border_demo.a65"
 BORDER_APP = SOFTWARE / "border_demo.bin"
@@ -66,7 +75,6 @@ VIEWER_DEMO_SRC = SOFTWARE / "a2imgview_demo.a65"
 VIEWER_DEMO_APP = SOFTWARE / "a2imgview_demo.bin"
 OUTPUT = SOFTWARE / "Appletini_Demos.po"
 TEMP_OUTPUT = SOFTWARE / "Appletini_Demos.tmp.po"
-VOLUME = "APPLETINI.DEMOS"
 
 AC_JAR = Path(os.environ.get(
     "APPLECOMMANDER", r"C:\Users\hasse\tools\AppleCommander-ac-13.0.jar"))
@@ -85,6 +93,7 @@ STARTUP = """10 PRINT CHR$(4)"BRUN LAUNCHER"
 100 IF S = 7 THEN PRINT CHR$(4)"-A2BROWSE.SYSTEM"
 110 IF S = 8 THEN PRINT CHR$(4)"-A2WEBSRV.SYSTEM"
 115 IF S = 9 THEN PRINT CHR$(4)"-A2IMG.SYSTEM"
+117 IF S = 10 THEN PRINT CHR$(4)"BRUN MSDOS.BRIDGE,A2048"
 120 GOTO 10
 200 PRINT CHR$(4)"BLOAD SSDEMO"
 210 HOME : PRINT "ENABLE SUPERSPRITE IN CONFIG MENU"
@@ -93,6 +102,23 @@ STARTUP = """10 PRINT CHR$(4)"BRUN LAUNCHER"
 240 HOME : PRINT "DISABLE SUPERSPRITE TO RESTORE DISK" : GET A$
 250 RETURN
 """
+
+AD8088_AUTOEXEC = (
+    b"ECHO OFF\r\n"
+    b"PATH C:\\DOS;C:\\PRODOS\r\n"
+    b"CLS\r\n"
+    b"ECHO APPLETINI ONE AD8088 PLUS DEMO\r\n"
+    b"ECHO MS-DOS 2.0 IS RUNNING ON THE 8088\r\n"
+    b"ECHO MOVE THE JOYSTICK OR LET IT ROTATE\r\n"
+    b"ECHO PRESS ANY KEY TO RETURN TO PRODOS\r\n"
+    b"HGRCUBE\r\n"
+    b"QUIT\r\n"
+)
+
+AD8088_BRIDGE_LOAD = 0x0800
+AD8088_RETURN_ADDR = 0x1E00
+AD8088_BRIDGE_QUIT = bytes.fromhex("20 00 BF 65 1E 03")
+AD8088_BRIDGE_RETURN = bytes.fromhex("4C 00 1E EA EA EA")
 
 
 FMT_SHR, FMT_HGR, FMT_HGRI, FMT_DHGR, FMT_DHGRI = range(5)
@@ -202,15 +228,123 @@ def ac(*args: str, stdin: bytes | None = None,
     return result.stdout if capture else b""
 
 
-def copy_prodos_file(name: str, aux: str) -> None:
-    data = ac("-g", str(PRODOS_MASTER), name, capture=True)
-    ac("-p", str(TEMP_OUTPUT), name, "SYS", aux, stdin=data)
+def _fat12_root_entry(image: bytes | bytearray, dos_name: bytes) -> tuple[int, int, int, int]:
+    """Return (entry offset, first cluster, cluster bytes, FAT offset)."""
+    if len(dos_name) != 11:
+        raise ValueError("FAT root names must be exactly 11 bytes")
+    if len(image) < 512:
+        raise RuntimeError("FAT image is too small")
+
+    bytes_per_sector = struct.unpack_from("<H", image, 11)[0]
+    sectors_per_cluster = image[13]
+    reserved_sectors = struct.unpack_from("<H", image, 14)[0]
+    fat_count = image[16]
+    root_entries = struct.unpack_from("<H", image, 17)[0]
+    sectors_per_fat = struct.unpack_from("<H", image, 22)[0]
+    if (bytes_per_sector == 0 or sectors_per_cluster == 0 or
+            fat_count == 0 or sectors_per_fat == 0):
+        raise RuntimeError("invalid FAT12 BIOS parameter block")
+
+    fat_offset = reserved_sectors * bytes_per_sector
+    root_offset = (reserved_sectors + fat_count * sectors_per_fat) * bytes_per_sector
+    for entry_offset in range(root_offset,
+                              root_offset + root_entries * 32, 32):
+        first = image[entry_offset]
+        if first == 0x00:
+            break
+        if first == 0xE5 or image[entry_offset + 11] == 0x0F:
+            continue
+        if image[entry_offset:entry_offset + 11] == dos_name:
+            first_cluster = struct.unpack_from("<H", image, entry_offset + 26)[0]
+            return (entry_offset, first_cluster,
+                    bytes_per_sector * sectors_per_cluster, fat_offset)
+    raise RuntimeError(f"{dos_name.decode('ascii')} is missing from the DOS disk")
 
 
-def copy_boot_blocks() -> None:
-    boot = PRODOS_MASTER.read_bytes()[:1024]
-    with TEMP_OUTPUT.open("r+b") as image:
-        image.write(boot)
+def _fat12_chain(image: bytes | bytearray, first_cluster: int,
+                 fat_offset: int) -> list[int]:
+    if first_cluster < 2:
+        raise RuntimeError("FAT file has no data cluster")
+    chain = []
+    seen = set()
+    cluster = first_cluster
+    while cluster < 0xFF8:
+        if cluster < 2 or cluster == 0xFF7 or cluster in seen:
+            raise RuntimeError("invalid FAT12 cluster chain")
+        seen.add(cluster)
+        chain.append(cluster)
+        off = fat_offset + cluster + cluster // 2
+        word = image[off] | (image[off + 1] << 8)
+        cluster = ((word >> 4) if cluster & 1 else word) & 0x0FFF
+    return chain
+
+
+def read_fat12_root_file(image: bytes, dos_name: bytes) -> bytes:
+    entry, first_cluster, cluster_bytes, fat_offset = _fat12_root_entry(
+        image, dos_name)
+    size = struct.unpack_from("<I", image, entry + 28)[0]
+    root_entries = struct.unpack_from("<H", image, 17)[0]
+    bytes_per_sector = struct.unpack_from("<H", image, 11)[0]
+    sectors_per_cluster = image[13]
+    reserved_sectors = struct.unpack_from("<H", image, 14)[0]
+    fat_count = image[16]
+    sectors_per_fat = struct.unpack_from("<H", image, 22)[0]
+    root_sectors = (root_entries * 32 + bytes_per_sector - 1) // bytes_per_sector
+    data_offset = (reserved_sectors + fat_count * sectors_per_fat +
+                   root_sectors) * bytes_per_sector
+    data = bytearray()
+    for cluster in _fat12_chain(image, first_cluster, fat_offset):
+        off = data_offset + (cluster - 2) * cluster_bytes
+        data.extend(image[off:off + cluster_bytes])
+    if size > len(data):
+        raise RuntimeError("FAT file size exceeds its cluster chain")
+    return bytes(data[:size])
+
+
+def replace_fat12_root_file(image: bytes, dos_name: bytes,
+                            content: bytes) -> bytes:
+    """Replace a root file without changing its allocated FAT12 chain."""
+    data = bytearray(image)
+    entry, first_cluster, cluster_bytes, fat_offset = _fat12_root_entry(
+        data, dos_name)
+    chain = _fat12_chain(data, first_cluster, fat_offset)
+    capacity = len(chain) * cluster_bytes
+    if len(content) > capacity:
+        raise RuntimeError(
+            f"{dos_name.decode('ascii')} needs {len(content)} bytes, "
+            f"but its FAT chain holds {capacity}")
+
+    root_entries = struct.unpack_from("<H", data, 17)[0]
+    bytes_per_sector = struct.unpack_from("<H", data, 11)[0]
+    sectors_per_cluster = data[13]
+    reserved_sectors = struct.unpack_from("<H", data, 14)[0]
+    fat_count = data[16]
+    sectors_per_fat = struct.unpack_from("<H", data, 22)[0]
+    root_sectors = (root_entries * 32 + bytes_per_sector - 1) // bytes_per_sector
+    data_offset = (reserved_sectors + fat_count * sectors_per_fat +
+                   root_sectors) * bytes_per_sector
+    padded = content + bytes(capacity - len(content))
+    for index, cluster in enumerate(chain):
+        off = data_offset + (cluster - 2) * cluster_bytes
+        start = index * cluster_bytes
+        data[off:off + cluster_bytes] = padded[start:start + cluster_bytes]
+    struct.pack_into("<I", data, entry + 28, len(content))
+    return bytes(data)
+
+
+def add_ad8088_demo_return(bridge: bytes, return_stub: bytes) -> bytes:
+    """Redirect the bridge's sole ProDOS QUIT call to the demo return stub."""
+    if bridge.count(AD8088_BRIDGE_QUIT) != 1:
+        raise RuntimeError("AD8088 bridge QUIT sequence changed")
+    stub_offset = AD8088_RETURN_ADDR - AD8088_BRIDGE_LOAD
+    if len(bridge) > stub_offset:
+        raise RuntimeError(
+            f"AD8088 bridge grew into the return stub at ${AD8088_RETURN_ADDR:04X}")
+    if AD8088_RETURN_ADDR + len(return_stub) > 0x2000:
+        raise RuntimeError("AD8088 demo return stub exceeds $1FFF")
+    patched = bridge.replace(AD8088_BRIDGE_QUIT,
+                             AD8088_BRIDGE_RETURN, 1)
+    return patched + bytes(stub_offset - len(patched)) + return_stub
 
 
 def build_assembly_programs() -> None:
@@ -224,7 +358,8 @@ def build_assembly_programs() -> None:
             (LAUNCHER_SRC, LAUNCHER_APP),
             (SPEEDRACE_SRC, SPEEDRACE_APP),
             (RASTER_SRC, RASTER_APP),
-            (VIEWER_DEMO_SRC, VIEWER_DEMO_APP)):
+            (VIEWER_DEMO_SRC, VIEWER_DEMO_APP),
+            (AD8088_RETURN_SRC, AD8088_RETURN_APP)):
         subprocess.run([exe, "-f", "plain", "-o", str(output), str(source)],
                        cwd=SOFTWARE, env=env, check=True)
     viewer = VIEWER_DEMO_APP.read_bytes()
@@ -235,7 +370,8 @@ def build_assembly_programs() -> None:
 
 
 def main() -> int:
-    required = [AC_JAR, PRODOS_MASTER, SSDEMO_DISK, BORDER_SRC,
+    required = [AC_JAR, AD8088_BASE, AD8088_RETURN_SRC,
+                SSDEMO_DISK, BORDER_SRC,
                 MANDELBROT_SRC, WAVE_BASIC_SRC, WAVE_CODE_SRC,
                 LAUNCHER_SRC, SPEEDRACE_SRC, RASTER_SRC, GEN_ASSETS,
                 VIEWER_SRC, WEB_DIR / "build.bat"]
@@ -280,13 +416,35 @@ def main() -> int:
 
     TEMP_OUTPUT.unlink(missing_ok=True)
     try:
-        ac("-pro800", str(TEMP_OUTPUT), VOLUME)
-        copy_boot_blocks()
+        # Reboot Camp supplies a complete 32 MB ProDOS disk. It already has
+        # PRODOS, BASIC.SYSTEM, the AD8088 bridge, and the DOS disk image.
+        # Keep its MSDOS volume name because the bridge uses absolute paths.
+        shutil.copyfile(AD8088_BASE, TEMP_OUTPUT)
+        ac("-d", str(TEMP_OUTPUT), "STARTUP")
 
-        # PRODOS boots the first .SYSTEM file, so BASIC.SYSTEM precedes the
-        # web server and runs the STARTUP launcher.
-        copy_prodos_file("PRODOS", "0x0000")
-        copy_prodos_file("BASIC.SYSTEM", "0x0000")
+        # The stock bridge exits through ProDOS QUIT and lands in Bitsy Bye.
+        # The demo copy reloads BASIC.SYSTEM instead, which runs STARTUP and
+        # brings the user back to this disk's launcher.
+        bridge = ac("-g", str(AD8088_BASE), "MSDOS.BRIDGE", capture=True)
+        bridge = add_ad8088_demo_return(
+            bridge, AD8088_RETURN_APP.read_bytes())
+        ac("-d", str(TEMP_OUTPUT), "MSDOS.BRIDGE")
+        ac("-p", str(TEMP_OUTPUT), "MSDOS.BRIDGE", "BIN", "0x0800",
+           stdin=bridge)
+
+        # AUTOEXEC starts the HGR cube and QUIT returns to ProDOS when a key
+        # ends the animation. HGRCUBE.COM itself stays byte-for-byte from the
+        # tracked, hardware-tested Reboot Camp image.
+        msdos_hdd = ac("-g", str(AD8088_BASE), "MSDOS.HDD", capture=True)
+        if not read_fat12_root_file(msdos_hdd, b"HGRCUBE COM"):
+            raise RuntimeError("Reboot Camp DOS disk has an empty HGRCUBE.COM")
+        msdos_hdd = replace_fat12_root_file(
+            msdos_hdd, b"AUTOEXECBAT", AD8088_AUTOEXEC)
+        ac("-d", str(TEMP_OUTPUT), "MSDOS.HDD")
+        ac("-p", str(TEMP_OUTPUT), "MSDOS.HDD", "BIN", "0x0000",
+           stdin=msdos_hdd)
+
+        # BASIC.SYSTEM remains the first .SYSTEM file and runs this STARTUP.
         ac("-bas", str(TEMP_OUTPUT), "STARTUP",
            stdin=STARTUP.encode("ascii"))
         ac("-bas", str(TEMP_OUTPUT), "MANDELBROT",
@@ -323,22 +481,29 @@ def main() -> int:
             ac("-p", str(TEMP_OUTPUT), f"{folder}/{disk_name}", "BIN",
                "0x2000", stdin=source_path(src_dir, src).read_bytes())
 
-        if TEMP_OUTPUT.stat().st_size != 800 * 1024:
-            raise RuntimeError("AppleCommander did not create an 800 KB image")
+        if TEMP_OUTPUT.stat().st_size != AD8088_BASE.stat().st_size:
+            raise RuntimeError("AppleCommander changed the 32 MB image size")
         if (TEMP_OUTPUT.read_bytes()[:1024] !=
-                PRODOS_MASTER.read_bytes()[:1024]):
-            raise RuntimeError("ProDOS boot-block copy failed")
+                AD8088_BASE.read_bytes()[:1024]):
+            raise RuntimeError("Reboot Camp ProDOS boot blocks changed")
         catalog = ac("-ll", str(TEMP_OUTPUT), capture=True).decode(
             "utf-8", errors="replace")
         for name in ("PRODOS", "BASIC.SYSTEM", "STARTUP", "MANDELBROT",
                      "WAVE.ANIMATION", "WAVE.CODE",
                      "A2WEBSRV.SYSTEM", "A2BROWSE.SYSTEM", "A2IMG.SYSTEM", "SSDEMO",
                      "BORDERDEMO", "LAUNCHER", "SPEEDRACE",
-                     "RASTERDEMO", "A2IMGVIEW",
+                     "RASTERDEMO", "A2IMGVIEW", "MSDOS.BRIDGE",
+                     "MSDOS.HDD", "IO.SYS", "MSDOS.SYS",
                      *(disk_name for _, disk_name, _, _, _, _, _
                        in IMAGE_FILES)):
             if name not in catalog:
                 raise RuntimeError(f"missing {name} from output catalog")
+
+        built_hdd = ac("-g", str(TEMP_OUTPUT), "MSDOS.HDD", capture=True)
+        if read_fat12_root_file(built_hdd, b"AUTOEXECBAT") != AD8088_AUTOEXEC:
+            raise RuntimeError("AD8088 demo AUTOEXEC verification failed")
+        if not read_fat12_root_file(built_hdd, b"HGRCUBE COM"):
+            raise RuntimeError("AD8088 demo is missing HGRCUBE.COM")
 
         os.replace(TEMP_OUTPUT, OUTPUT)
     except BaseException:

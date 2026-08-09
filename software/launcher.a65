@@ -8,7 +8,7 @@
 ;
 ; Loads at $4000: HGR page 1 ($2000-$3FFF) is the framebuffer.
 ;
-; Keys: Up/Down or Left/Right move, 1-9 jump, RETURN launches, ESC quits.
+; Keys: Up/Down or Left/Right move, 0-9 jump, RETURN launches, ESC quits.
 ;
 ; Assemble:  acme -f plain -o LAUNCHER launcher.a65
 
@@ -32,9 +32,9 @@ SCRPTR    = $08            ; HGR line pointer
 FONTPTR   = $EB            ; glyph/source pointer
 TMP       = $ED
 
-ITEMS      = 9
+ITEMS      = 10
 FIRST_BAND = 6             ; 8-pixel band of item 1
-DESC_BAND  = 16
+DESC_BAND  = 17
 STAT_BAND  = 4
 FOOT_BAND  = 22
 
@@ -68,12 +68,19 @@ main_loop:
     beq move_down
     cmp #$15               ; right
     beq move_down
+    cmp #'0'
+    beq select_ad8088
     cmp #'1'
     bcc main_loop
-    cmp #'1' + ITEMS
+    cmp #':'                ; numeric shortcuts stop at 9
     bcs main_loop
     sec
     sbc #'1'
+    jsr select_item
+    jmp main_loop
+
+select_ad8088:
+    lda #ITEMS - 1
     jsr select_item
     jmp main_loop
 
@@ -489,11 +496,11 @@ border_colors_end:
 item_lo:
     !byte <item0, <item1, <item2, <item3
     !byte <item4, <item5, <item6, <item7
-    !byte <item8
+    !byte <item8, <item9
 item_hi:
     !byte >item0, >item1, >item2, >item3
     !byte >item4, >item5, >item6, >item7
-    !byte >item8
+    !byte >item8, >item9
 
 item0: !text "1  New Image Modes", 0
 item1: !text "2  Speed Race: 1 MHz vs Warp", 0
@@ -504,15 +511,16 @@ item5: !text "6  SuperSprite", 0
 item6: !text "7  Web Browser", 0
 item7: !text "8  Web Server", 0
 item8: !text "9  Internet Image Viewer", 0
+item9: !text "0  AD8088 MS-DOS HGR Cube", 0
 
 desc_lo:
     !byte <d0a, <d0b, <d1a, <d1b, <d2a, <d2b, <d3a, <d3b
     !byte <d4a, <d4b, <d5a, <d5b, <d6a, <d6b, <d7a, <d7b
-    !byte <d8a, <d8b
+    !byte <d8a, <d8b, <d9a, <d9b
 desc_hi:
     !byte >d0a, >d0b, >d1a, >d1b, >d2a, >d2b, >d3a, >d3b
     !byte >d4a, >d4b, >d5a, >d5b, >d6a, >d6b, >d7a, >d7b
-    !byte >d8a, >d8b
+    !byte >d8a, >d8b, >d9a, >d9b
 
 d0a: !text "A slideshow of HGR, DHGR, SHR4 and", 0
 d0b: !text "3200 art, interlaced modes included.", 0
@@ -532,10 +540,12 @@ d7a: !text "Serve a web page from your Apple II.", 0
 d7b: !text "Needs the ethernet port connected.", 0
 d8a: !text "Streams any web image into 256-color", 0
 d8b: !text "SHR4. Needs SHR4 firmware + ethernet.", 0
+d9a: !text "MS-DOS 2.0 runs on the virtual 8088,", 0
+d9b: !text "then draws an animated Apple HGR cube.", 0
 
 msg_found:   !text "Appletini ONE detected", 0
 msg_missing: !text "No Appletini found - demos need one", 0
-msg_keys:    !text "Arrows/1-9 select  Return run  Esc end", 0
+msg_keys:    !text "Arrows/0-9 select Return run Esc end", 0
 
 ; ------------------------------------------------------------------
 !source "launcher_assets.a65"

@@ -4,7 +4,7 @@
 #   powershell -File scripts\host_render_harness\build_and_run.ps1
 #
 # Compiles the REAL apple_cycle_renderer.c / appletini_ntsc.c for the
-# host and executes the T1/T2/T3/T4 scenarios (see harness.c). 32-bit x86
+# host and executes the T1/T2/T3/T4/T5 scenarios (see harness.c). 32-bit x86
 # so hardware-address arithmetic on uint32_t stays pointer-sized.
 
 $ErrorActionPreference = "Stop"

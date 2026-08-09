@@ -230,12 +230,12 @@ void apple_cycle_egress_poll(void);
 void apple_cycle_egress_amp_secondary_init(void);
 
 /* --- Renderer hooks ---------------------------------------------------- *
- * The pre-record hook runs before a record's video-memory write reaches
- * the PS shadow. It lets the vTW 1 MHz renderer finish its held previous
- * cycle with one-cycle soft-switch lookahead without seeing next-cycle
- * memory contents. Both weak declarations let egress-only diagnostic
- * builds omit the renderer. */
-__attribute__((weak)) void apple_cycle_renderer_on_next_record(uint64_t rec);
+ * The ring reader peeks at future switch snapshots without applying their
+ * video-memory writes. Weak declarations let egress-only diagnostic builds
+ * omit the renderer. */
+__attribute__((weak)) int apple_cycle_renderer_needs_phase_lookahead(uint64_t rec);
+__attribute__((weak)) void apple_cycle_renderer_on_record_lookahead(
+    uint64_t rec, uint64_t next1, uint64_t next2);
 __attribute__((weak)) void apple_cycle_renderer_on_record(uint64_t rec);
 
 /* --- Public state ------------------------------------------------------ */

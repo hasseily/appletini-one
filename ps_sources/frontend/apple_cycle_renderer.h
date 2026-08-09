@@ -4,8 +4,8 @@
  * AppleWin source/NTSC.cpp; behavior matches that emulator at the
  * cycle level.
  *
- * apple_cycle_egress.c calls apple_cycle_renderer_on_record(rec) once per
- * record consumed from the FIFO, in order. The renderer maintains its
+ * apple_cycle_egress.c calls apple_cycle_renderer_on_record_lookahead() once
+ * per record consumed from the FIFO, in order. The renderer maintains its
  * own per-cycle scan state (g_nVideoClockVert/Horz, g_pVideoAddress,
  * signal-bit register) inside appletini_ntsc.c globals.
  *
@@ -34,7 +34,8 @@ int apple_cycle_renderer_init(void);
 void apple_cycle_renderer_reset_local_video_state(void);
 
 /* CPU1 sets this from the PL's effective vTW 1 MHz status before draining
- * each batch. Only this mode needs selective video-switch lookahead. */
+ * each batch. It selects the vTW capture normalization applied before the
+ * common scanner-phase correction. */
 void apple_cycle_renderer_set_vtw_1mhz(uint8_t active);
 
 /* CPU1 passes the PL's authoritative fake-SHR capture state each
@@ -48,10 +49,18 @@ void apple_cycle_renderer_sync_shr_mode(uint8_t pl_shr_active);
  * SHR is off still reaches the capture. */
 void apple_cycle_renderer_note_aux_ctrl_write(uint8_t value);
 
-/* Pre-record hook called before egress applies the incoming record's shadow
- * memory write. This preserves memory/write ordering while the renderer uses
- * that record's soft-switch snapshot as one-cycle lookahead. */
-void apple_cycle_renderer_on_next_record(uint64_t rec);
+/* True when a legacy frame record needs two future frame snapshots for its
+ * per-switch scanner-phase correction. Fake SHR emits one marker per frame
+ * and never takes this path. */
+int apple_cycle_renderer_needs_phase_lookahead(uint64_t rec);
+
+/* Hook called by 2b.1 with the current record and up to two consecutive
+ * future legacy frame records. A zero future record means unavailable. The
+ * future records supply switch bits only; egress has not applied their video
+ * memory writes, so the current cycle cannot see future pixel data. */
+void apple_cycle_renderer_on_record_lookahead(uint64_t rec,
+                                              uint64_t next1,
+                                              uint64_t next2);
 
 /* Hook called by 2b.1 once per consumed FIFO record. rec == 0 is a
  * gap marker; otherwise this carries an AppleCycleRecord (see
@@ -60,6 +69,10 @@ void apple_cycle_renderer_on_next_record(uint64_t rec);
  * Defined as a weak symbol so 2b.1 can call it whether or not 2b.2 is
  * linked in. Default-weak version is a no-op. */
 void apple_cycle_renderer_on_record(uint64_t rec);
+
+/* Last phase-corrected switch word. Used by the host timing test and useful
+ * for a precise UART diagnostic without exposing renderer internals. */
+uint32_t apple_cycle_renderer_debug_phase_switches(void);
 
 /* Compositor reads the published Apple frame via apple_fb_reader_claim()
  * (see apple_fb_handoff.h). Normal legacy video publishes at frame end.

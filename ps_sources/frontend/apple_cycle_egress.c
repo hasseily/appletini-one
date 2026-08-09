@@ -40,6 +40,12 @@ volatile uint32_t g_oversized_drains   = 0U;
  * batch-write to ACE_REG_CFG_CONSUMER_PTR at the end of each drain pass. */
 static uint32_t s_consumer_ptr;
 
+/* Cached lookahead batch. The ring is non-cacheable, so rereading two future
+ * records for every rendered cycle costs far more than the phase correction.
+ * Copy each record once, then do all lookahead work from this cached array. */
+#define ACE_LOOKAHEAD_BATCH_RECORDS 256U
+static uint64_t s_lookahead_batch[ACE_LOOKAHEAD_BATCH_RECORDS];
+
 /* --- Macros for ring access ---------------------------------------- */
 #define ACE_RING_SLOT(off) \
     (*(volatile uint64_t *)(uintptr_t)(ACE_RING_BASE + (off)))
@@ -115,6 +121,73 @@ void apple_cycle_egress_amp_secondary_init(void)
     Xil_SetTlbAttributes(ACE_MMU_RING_SECTION, NORM_NONCACHE);
 }
 
+static int egress_frame_records_are_consecutive(uint64_t prior, uint64_t next)
+{
+    const uint32_t prior_line = ace_line_in_frame(prior);
+    const uint32_t prior_cycle = ace_cycle_in_line(prior);
+    const uint32_t next_line = ace_line_in_frame(next);
+    const uint32_t next_cycle = ace_cycle_in_line(next);
+
+    if (prior_cycle < 64u) {
+        return next_line == prior_line && next_cycle == prior_cycle + 1u;
+    }
+    if (next_cycle != 0u) {
+        return 0;
+    }
+    if (next_line == prior_line + 1u) {
+        return 1;
+    }
+    return next_line == 0u && (prior_line == 261u || prior_line == 311u);
+}
+
+/* Find two future frame snapshots in the cached batch. A C029 write, gap, or
+ * broken coordinate sequence marks a real boundary, so dispatch with the
+ * snapshots already found. Running out of cached records is not a boundary;
+ * the caller reloads from the current consumer position or waits for the next
+ * producer update. Future records never update the video shadow here. */
+static int egress_find_phase_lookahead(const uint64_t *records,
+                                       uint32_t record_count,
+                                       uint32_t current_index,
+                                       uint64_t *next1,
+                                       uint64_t *next2)
+{
+    uint32_t scan = current_index + 1u;
+    uint64_t prior = records[current_index];
+    uint32_t found = 0u;
+
+    *next1 = 0ULL;
+    *next2 = 0ULL;
+
+    while (scan < record_count) {
+        const uint64_t candidate = records[scan];
+
+        if (candidate == 0ULL) {
+            return 1;
+        }
+        if (ace_record_kind(candidate) == ACE_RECORD_KIND_IO_WRITE &&
+            ace_io_addr(candidate) == 0xC029u) {
+            return 1;
+        }
+        if (ace_record_kind(candidate) == ACE_RECORD_KIND_LEGACY &&
+            ace_frame_en(candidate)) {
+            if (!egress_frame_records_are_consecutive(prior, candidate)) {
+                return 1;
+            }
+            if (found == 0u) {
+                *next1 = candidate;
+            } else {
+                *next2 = candidate;
+                return 1;
+            }
+            prior = candidate;
+            found++;
+        }
+        scan++;
+    }
+
+    return 0;
+}
+
 /* --- Poll ----------------------------------------------------------- */
 void apple_cycle_egress_poll(void)
 {
@@ -140,76 +213,106 @@ void apple_cycle_egress_poll(void)
         return;  /* empty */
     }
 
-    /* (3) Drain. */
+    /* (3) Drain in cached batches. Each non-cacheable ring slot is read once
+     * in the common path; phase lookahead then reads normal cached memory. */
     while (consumer != producer) {
-        uint64_t rec;
+        uint32_t batch_count = 0u;
+        uint32_t batch_scan = consumer;
+        uint32_t processed = 0u;
+        int batch_reaches_producer;
 
         if (budget == 0U) {
             g_oversized_drains++;
             break;
         }
-        budget--;
 
-        rec = ACE_RING_SLOT(consumer);
-
-        /* Preserve cycle ordering for the vTW renderer's selective
-         * one-cycle soft-switch lookahead: finish the held preceding frame
-         * record before this record updates main/aux shadow memory. */
-        if (apple_cycle_renderer_on_next_record) {
-            apple_cycle_renderer_on_next_record(rec);
+        while (batch_scan != producer &&
+               batch_count < ACE_LOOKAHEAD_BATCH_RECORDS) {
+            s_lookahead_batch[batch_count++] = ACE_RING_SLOT(batch_scan);
+            batch_scan = (batch_scan + ACE_RECORD_BYTES) & ACE_RING_MASK;
         }
+        batch_reaches_producer = batch_scan == producer;
 
-        if (rec == 0ULL) {
-            /* Gap marker: both halves zero. The FPGA emits this on ring-full
-             * or on-chip FIFO drop. The renderer clears resync_pending at the
-             * next clean frame boundary. */
-            g_gap_markers_seen++;
-            g_resync_pending = 1U;
-        } else {
-            switch (ace_record_kind(rec)) {
-            case ACE_RECORD_KIND_LEGACY:
-                if (ace_addr_decode_en(rec)) {
-                    uint32_t a = ace_addr_decode(rec);
-                    uint8_t  d = ace_data(rec);
-                    /* addr_decode bit 16 = 0 -> main, 1 -> aux. Low 16 bits
-                     * index into the 64 KB bank. */
-                    if ((a & 0x010000U) != 0U) {
-                        g_aux_bank[a & 0xFFFFU] = d;
-                        if ((a & 0xFFFFU) == 0x9DF8U) {
-                            /* Paged-mode ctrl byte: open/close the vTW
-                             * main $6000-$9FFF posting window NOW, before
-                             * a second interlace field loads behind it. */
-                            apple_cycle_renderer_note_aux_ctrl_write(d);
-                        }
-                    } else {
-                        g_main_bank[a & 0xFFFFU] = d;
-                    }
-                    if ((uint16_t)(a & 0xFFFFU) >= 0x2000U &&
-                        (uint16_t)(a & 0xFFFFU) <= 0x9FFFU) {
-                        g_video_shadow_generation++;
-                    }
-                    g_bus_writes_seen++;
-                }
+        for (uint32_t i = 0u; i < batch_count && budget != 0u; ++i) {
+            const uint64_t rec = s_lookahead_batch[i];
+            uint64_t next1 = 0ULL;
+            uint64_t next2 = 0ULL;
+            int lookahead_ready = 1;
 
-                if (ace_frame_en(rec)) {
-                    g_frame_records_seen++;
-                }
-                break;
-
-            case ACE_RECORD_KIND_IO_WRITE:
-            case ACE_RECORD_KIND_SOFTSW_ACCESS:
-            default:
-                break;
+            if (apple_cycle_renderer_needs_phase_lookahead &&
+                apple_cycle_renderer_on_record_lookahead &&
+                apple_cycle_renderer_needs_phase_lookahead(rec)) {
+                lookahead_ready = egress_find_phase_lookahead(
+                    s_lookahead_batch, batch_count, i, &next1, &next2);
             }
+            if (!lookahead_ready) {
+                /* Normally only the final two frame records reach here. If
+                 * an abnormal stream has no two frame records in a complete
+                 * 256-record batch, dispatch without them so it cannot pin
+                 * the consumer forever. */
+                if (i == 0u && !batch_reaches_producer &&
+                    batch_count == ACE_LOOKAHEAD_BATCH_RECORDS) {
+                    lookahead_ready = 1;
+                } else {
+                    break;
+                }
+            }
+            budget--;
+
+            if (rec == 0ULL) {
+                /* Gap marker: both halves zero. The FPGA emits this on
+                 * ring-full or on-chip FIFO drop. */
+                g_gap_markers_seen++;
+                g_resync_pending = 1U;
+            } else {
+                switch (ace_record_kind(rec)) {
+                case ACE_RECORD_KIND_LEGACY:
+                    if (ace_addr_decode_en(rec)) {
+                        uint32_t a = ace_addr_decode(rec);
+                        uint8_t  d = ace_data(rec);
+                        if ((a & 0x010000U) != 0U) {
+                            g_aux_bank[a & 0xFFFFU] = d;
+                            if ((a & 0xFFFFU) == 0x9DF8U) {
+                                apple_cycle_renderer_note_aux_ctrl_write(d);
+                            }
+                        } else {
+                            g_main_bank[a & 0xFFFFU] = d;
+                        }
+                        if ((uint16_t)(a & 0xFFFFU) >= 0x2000U &&
+                            (uint16_t)(a & 0xFFFFU) <= 0x9FFFU) {
+                            g_video_shadow_generation++;
+                        }
+                        g_bus_writes_seen++;
+                    }
+
+                    if (ace_frame_en(rec)) {
+                        g_frame_records_seen++;
+                    }
+                    break;
+
+                case ACE_RECORD_KIND_IO_WRITE:
+                case ACE_RECORD_KIND_SOFTSW_ACCESS:
+                default:
+                    break;
+                }
+            }
+
+            /* Apply only this record's shadow write before dispatch. Future
+             * cached records contribute switch bits, never pixels. */
+            if (apple_cycle_renderer_on_record_lookahead) {
+                apple_cycle_renderer_on_record_lookahead(rec, next1, next2);
+            } else if (apple_cycle_renderer_on_record) {
+                apple_cycle_renderer_on_record(rec);
+            }
+
+            g_records_processed++;
+            consumer = (consumer + ACE_RECORD_BYTES) & ACE_RING_MASK;
+            processed++;
         }
 
-        /* Forward records to the renderer when it is linked. */
-        if (apple_cycle_renderer_on_record) {
-            apple_cycle_renderer_on_record(rec);
+        if (processed == 0u) {
+            break;
         }
-
-        g_records_processed++;
-        consumer = (consumer + ACE_RECORD_BYTES) & ACE_RING_MASK;
     }
 
     /* (4) Publish new consumer pointer. Single AxiSimple write. */

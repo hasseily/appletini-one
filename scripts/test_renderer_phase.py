@@ -76,15 +76,21 @@ def test_raw_frame_edges_remain_unshifted() -> None:
     )
 
 
-def test_vtw_phase_lookahead_is_selective_and_ordered() -> None:
+def test_per_switch_phase_lookahead_is_selective_and_ordered() -> None:
     renderer = RENDERER_C.read_text(encoding="utf-8")
     renderer_h = RENDERER_H.read_text(encoding="utf-8")
     egress = EGRESS_C.read_text(encoding="utf-8")
     egress_h = EGRESS_H.read_text(encoding="utf-8")
 
-    mask_start = renderer.index("#define VTW_PHASE_SW_MASK")
-    mask_end = renderer.index("static uint8_t  s_vtw_1mhz_active", mask_start)
-    mask = renderer[mask_start:mask_end]
+    vtw_start = renderer.index("#define VTW_PHASE_SW_MASK")
+    delay_start = renderer.index("#define PHASE_DELAY_1_SW_MASK", vtw_start)
+    advance1_start = renderer.index("#define PHASE_ADVANCE_1_SW_MASK", delay_start)
+    advance2_start = renderer.index("#define PHASE_ADVANCE_2_SW_MASK", advance1_start)
+    mask_end = renderer.index("static uint8_t  s_vtw_1mhz_active", advance2_start)
+    vtw_mask = renderer[vtw_start:delay_start]
+    delay_mask = renderer[delay_start:advance1_start]
+    advance1_mask = renderer[advance1_start:advance2_start]
+    advance2_mask = renderer[advance2_start:mask_end]
     for switch in (
         "ACE_SWB_80STORE_BIT",
         "ACE_SWB_TEXT_BIT",
@@ -94,33 +100,63 @@ def test_vtw_phase_lookahead_is_selective_and_ordered() -> None:
         "ACE_SWB_80COL_BIT",
         "ACE_SWB_DHIRES_BIT",
     ):
-        require(switch in mask, f"vTW lookahead mask must include {switch}")
+        require(switch in vtw_mask, f"vTW normalization must include {switch}")
     require(
-        "ACE_SWB_ALTCHARSET_BIT" not in mask,
-        "ALTCHAR must retain its hardware-validated physical timing",
+        "ACE_SWB_ALTCHARSET_BIT" not in vtw_mask,
+        "ALTCHAR must bypass the vTW-only normalization",
     )
     require(
-        "void apple_cycle_renderer_on_next_record(uint64_t rec)" in renderer and
-        "vtw_records_are_consecutive(pending, rec)" in renderer and
-        "vtw_record_with_advanced_video_state(pending, rec)" in renderer,
-        "vTW correction must use guarded one-cycle lookahead",
+        "ACE_SWB_TEXT_BIT" in delay_mask and
+        "ACE_SWB_MIXED_BIT" in delay_mask,
+        "C050 TEXT and C052 MIXED must be delayed one scanner cycle",
+    )
+    require(
+        "ACE_SWB_80COL_BIT" in advance1_mask and
+        "ACE_SWB_DHIRES_BIT" in advance1_mask,
+        "C00D 80COL and C05E DHIRES must advance one scanner cycle",
+    )
+    require(
+        "ACE_SWB_ALTCHARSET_BIT" in advance2_mask,
+        "C00F ALTCHARSET must advance two scanner cycles",
+    )
+    require(
+        "phase_records_are_consecutive(s_phase_prev_record, rec)" in renderer and
+        "phase_replace_bits(corrected, baseline1" in renderer and
+        "phase_replace_bits(corrected, raw2" in renderer,
+        "phase correction must use guarded prior, next, and next+2 states",
     )
     require(
         "void apple_cycle_renderer_set_vtw_1mhz(uint8_t active);" in renderer_h,
-        "renderer API must gate lookahead on effective vTW 1 MHz operation",
+        "renderer API must gate vTW normalization on effective 1 MHz operation",
     )
     require(
-        "__attribute__((weak)) void apple_cycle_renderer_on_next_record(uint64_t rec);" in egress_h,
-        "egress-only builds must be able to omit the renderer pre-record hook",
+        "apple_cycle_renderer_on_record_lookahead" in renderer_h and
+        "apple_cycle_renderer_on_record_lookahead" in egress_h,
+        "egress must pass two future switch snapshots to the renderer",
     )
 
     poll = egress[egress.index("void apple_cycle_egress_poll(void)"):]
-    pre = poll.index("apple_cycle_renderer_on_next_record(rec)")
+    fill = poll.index("s_lookahead_batch[batch_count++] = ACE_RING_SLOT(batch_scan)")
+    peek = poll.index("lookahead_ready = egress_find_phase_lookahead(")
     shadow_main = poll.index("g_main_bank[a & 0xFFFFU] = d;")
     shadow_aux = poll.index("g_aux_bank[a & 0xFFFFU] = d;")
+    dispatch = poll.index("apple_cycle_renderer_on_record_lookahead(rec, next1, next2)")
     require(
-        pre < shadow_main and pre < shadow_aux,
-        "held vTW cycle must render before next-cycle shadow writes are applied",
+        fill < peek < shadow_main and peek < shadow_aux and
+        shadow_main < dispatch and shadow_aux < dispatch,
+        "egress must cache records, peek switches, apply current memory, then dispatch",
+    )
+    require(
+        "Future records never update the video shadow here." in egress and
+        "egress_find_phase_lookahead(const uint64_t *records" in egress,
+        "lookahead must document that future pixel data stays hidden",
+    )
+    helper = egress[egress.index("static int egress_find_phase_lookahead"):
+                    egress.index("/* --- Poll", egress.index(
+                        "static int egress_find_phase_lookahead"))]
+    require(
+        "ACE_RING_SLOT" not in helper,
+        "per-cycle phase lookahead must never reread non-cacheable DDR",
     )
 
 
@@ -153,7 +189,7 @@ def main() -> int:
     tests = [
         test_renderer_has_explicit_capture_phase_offset,
         test_raw_frame_edges_remain_unshifted,
-        test_vtw_phase_lookahead_is_selective_and_ordered,
+        test_per_switch_phase_lookahead_is_selective_and_ordered,
         test_vtw_phase_gate_reuses_cpu1_status_poll,
     ]
     for test in tests:

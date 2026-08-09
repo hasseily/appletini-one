@@ -4,7 +4,7 @@
  * Compiles the REAL apple_cycle_renderer.c + appletini_ntsc.c +
  * appletini_csbits.c for x86 and drives them with synthetic capture
  * records, mimicking apple_cycle_egress.c's shadow-write + dispatch
- * order exactly. Four scenarios, mirroring hardware reports:
+ * order exactly. Five scenarios, mirroring hardware reports:
  *
  *   T1  dragons.shr4i (interlaced R4G4B4): full-frame decode dumped
  *       for pixel-exact comparison against scripts/render_shr4.py.
@@ -18,6 +18,9 @@
  *       re-decodes the banks and compares.
  *   T4  Video-7 MIX (COL140M): state 10 and the UI gate must select
  *       monochrome and color across 8, 8, 8, and 4 dots per 28 dots.
+ *   T5  Per-switch scanner phase: TEXT/MIXED delay one cycle,
+ *       80COL/DHIRES advance one, and ALTCHAR advances two, with and
+ *       without the vTW capture normalization.
  *
  * Usage: harness.exe <repo_root> <out_dir>
  * Then:  python scripts/host_render_harness/check_output.py <out_dir>
@@ -697,6 +700,62 @@ static void t4_dhgr_col140m(void)
            "T4 DHGRp badge metadata carries Video-7 MIX");
 }
 
+static void t5_switch_phase(void)
+{
+    uint64_t prior;
+    uint64_t current;
+    uint64_t next1;
+    uint64_t next2;
+    uint32_t got;
+    uint32_t expected;
+
+    printf("--- T5 per-switch scanner phase ---\n");
+
+    apple_cycle_renderer_reset_local_video_state();
+    prior = rec_frame(10u, 10u, 1u << ACE_SWB_TEXT_BIT);
+    current = rec_frame(10u, 11u, 1u << ACE_SWB_MIXED_BIT);
+    next1 = rec_frame(10u, 12u, 1u << ACE_SWB_80COL_BIT);
+    next2 = rec_frame(10u, 13u, 1u << ACE_SWB_ALTCHARSET_BIT);
+    apple_cycle_renderer_on_record_lookahead(prior, current, next1);
+    apple_cycle_renderer_on_record_lookahead(current, next1, next2);
+    got = apple_cycle_renderer_debug_phase_switches();
+    expected = (1u << ACE_SWB_TEXT_BIT) |
+               (1u << ACE_SWB_80COL_BIT) |
+               (1u << ACE_SWB_ALTCHARSET_BIT);
+    expect(got == expected,
+           "T5 native phase uses previous, next, and next+2 switch states");
+
+    apple_cycle_renderer_reset_local_video_state();
+    apple_cycle_renderer_set_vtw_1mhz(1u);
+    prior = rec_frame(20u, 20u, 0u);
+    current = rec_frame(20u, 21u,
+                        (1u << ACE_SWB_TEXT_BIT) |
+                        (1u << ACE_SWB_MIXED_BIT));
+    next1 = rec_frame(20u, 22u,
+                      (1u << ACE_SWB_80STORE_BIT) |
+                      (1u << ACE_SWB_PAGE2_BIT) |
+                      (1u << ACE_SWB_HIRES_BIT));
+    next2 = rec_frame(20u, 23u,
+                      (1u << ACE_SWB_80COL_BIT) |
+                      (1u << ACE_SWB_DHIRES_BIT) |
+                      (1u << ACE_SWB_ALTCHARSET_BIT));
+    apple_cycle_renderer_on_record_lookahead(prior, current, next1);
+    apple_cycle_renderer_on_record_lookahead(current, next1, next2);
+    got = apple_cycle_renderer_debug_phase_switches();
+    expected = (1u << ACE_SWB_TEXT_BIT) |
+               (1u << ACE_SWB_MIXED_BIT) |
+               (1u << ACE_SWB_80STORE_BIT) |
+               (1u << ACE_SWB_PAGE2_BIT) |
+               (1u << ACE_SWB_HIRES_BIT) |
+               (1u << ACE_SWB_80COL_BIT) |
+               (1u << ACE_SWB_DHIRES_BIT) |
+               (1u << ACE_SWB_ALTCHARSET_BIT);
+    expect(got == expected,
+           "T5 vTW normalization composes with the common phase correction");
+
+    apple_cycle_renderer_set_vtw_1mhz(0u);
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 3) {
@@ -719,6 +778,7 @@ int main(int argc, char **argv)
     t2_legacy_weave();
     t3_shr_transitions();
     t4_dhgr_col140m();
+    t5_switch_phase();
 
     printf("harness: %d failure(s)\n", s_failures);
     return s_failures ? 1 : 0;

@@ -79,14 +79,12 @@ static uint32_t s_scanner_frame_lines = ATN_SCANNER_MAX_VERT_NTSC;
 static uint32_t s_pending_line0_sw[ATN_BORDER_H_CYCLES];
 static uint8_t  s_pending_line0_mask = 0u;
 
-/*
- * A 1 MHz vTW core learns its next bus address immediately after the prior
- * Apple data phase, while the serialized physical C0xx access is captured
- * in the following record. VIDSYNC observes that as a one-cycle-late mode
- * transition. Hold one vTW frame record so the following record can supply
- * only the affected next-cycle video bits. ALTCHARSET is deliberately not
- * in the mask: hardware validation shows its glyph path is already aligned.
- */
+/* A 1 MHz vTW record needs one initial normalization because its serialized
+ * C0xx access lands in the following capture record. Scanner tests then show
+ * distinct phase offsets in both native and vTW operation. Apply those as a
+ * second, shared stage: TEXT/MIXED use the prior normalized state, 80COL and
+ * DHIRES use the next normalized state, and ALTCHARSET uses raw state from
+ * two cycles ahead. VBL lock and record coordinates stay unchanged. */
 #define VTW_PHASE_SW_MASK ( \
     (1U << ACE_SWB_80STORE_BIT) | \
     (1U << ACE_SWB_TEXT_BIT) | \
@@ -96,9 +94,21 @@ static uint8_t  s_pending_line0_mask = 0u;
     (1U << ACE_SWB_80COL_BIT) | \
     (1U << ACE_SWB_DHIRES_BIT))
 
+#define PHASE_DELAY_1_SW_MASK ( \
+    (1U << ACE_SWB_TEXT_BIT) | \
+    (1U << ACE_SWB_MIXED_BIT))
+
+#define PHASE_ADVANCE_1_SW_MASK ( \
+    (1U << ACE_SWB_80COL_BIT) | \
+    (1U << ACE_SWB_DHIRES_BIT))
+
+#define PHASE_ADVANCE_2_SW_MASK (1U << ACE_SWB_ALTCHARSET_BIT)
+
 static uint8_t  s_vtw_1mhz_active = 0u;
-static uint8_t  s_vtw_pending_valid = 0u;
-static uint64_t s_vtw_pending_record = 0ULL;
+static uint8_t  s_phase_prev_valid = 0u;
+static uint64_t s_phase_prev_record = 0ULL;
+static uint32_t s_phase_prev_baseline_sw = 0u;
+static uint32_t s_phase_last_corrected_sw = 0u;
 
 /* Tracks the previous line for per-line chroma-state reset. Initialised
  * to a sentinel that doesn't match any valid line (line is 9-bit ->
@@ -2455,8 +2465,10 @@ void apple_cycle_renderer_reset_local_video_state(void)
     s_scanner_frame_lines = ATN_SCANNER_MAX_VERT_NTSC;
     s_pending_line0_mask  = 0u;
     s_vtw_1mhz_active     = 0u;
-    s_vtw_pending_valid   = 0u;
-    s_vtw_pending_record  = 0ULL;
+    s_phase_prev_valid    = 0u;
+    s_phase_prev_record   = 0ULL;
+    s_phase_prev_baseline_sw = 0u;
+    s_phase_last_corrected_sw = text_sw;
     s_chroma_prev_line    = 0xFFFFFFFFu;
     s_render_armed        = 0;
     s_just_resynced       = 1;
@@ -2565,6 +2577,7 @@ static void handle_video7_softswitch_record(uint64_t rec)
 static void shr_mode_switch_resync(void)
 {
     s_render_armed = 0;
+    s_phase_prev_valid = 0u;
     s_frame_end_pending = 0u;
     s_pending_line0_mask = 0u;
     s_shr_cache_valid = 0u;
@@ -3114,19 +3127,7 @@ static void apple_cycle_renderer_dispatch_record(uint64_t rec) {
     s_records_in_frame++;
 }
 
-static int vtw_record_has_video_state(uint64_t rec)
-{
-    if (rec == 0ULL) {
-        return 0;
-    }
-    if (ace_record_kind(rec) == ACE_RECORD_KIND_SOFTSW_ACCESS) {
-        return 1;
-    }
-    return ace_record_kind(rec) == ACE_RECORD_KIND_LEGACY &&
-           ace_frame_en(rec);
-}
-
-static int vtw_records_are_consecutive(uint64_t prior, uint64_t next)
+static int phase_records_are_consecutive(uint64_t prior, uint64_t next)
 {
     const uint32_t prior_line = ace_line_in_frame(prior);
     const uint32_t prior_cycle = ace_cycle_in_line(prior);
@@ -3147,51 +3148,80 @@ static int vtw_records_are_consecutive(uint64_t prior, uint64_t next)
             prior_line == (ATN_SCANNER_MAX_VERT_PAL - 1u));
 }
 
-static uint64_t vtw_record_with_advanced_video_state(uint64_t prior,
-                                                      uint64_t next)
+static uint32_t phase_replace_bits(uint32_t dst, uint32_t src, uint32_t mask)
 {
-    const uint64_t packed_mask =
-        (uint64_t)VTW_PHASE_SW_MASK << ACE_BIT_SW_DHIRES;
-    const uint64_t next_bits =
-        (uint64_t)(ace_softswitch_bits(next) & VTW_PHASE_SW_MASK)
-        << ACE_BIT_SW_DHIRES;
+    return (dst & ~mask) | (src & mask);
+}
 
-    return (prior & ~packed_mask) | next_bits;
+static int phase_record_is_frame(uint64_t rec)
+{
+    return rec != 0ULL &&
+           ace_record_kind(rec) == ACE_RECORD_KIND_LEGACY &&
+           ace_frame_en(rec);
+}
+
+static uint64_t phase_correct_record(uint64_t rec,
+                                     uint64_t next1,
+                                     uint64_t next2)
+{
+    const int have_next1 = phase_record_is_frame(next1) &&
+                           phase_records_are_consecutive(rec, next1);
+    const int have_next2 = have_next1 && phase_record_is_frame(next2) &&
+                           phase_records_are_consecutive(next1, next2);
+    const uint32_t raw0 = ace_softswitch_bits(rec);
+    const uint32_t raw1 = have_next1 ? ace_softswitch_bits(next1) : raw0;
+    const uint32_t raw2 = have_next2 ? ace_softswitch_bits(next2) : raw1;
+    uint32_t baseline0 = raw0;
+    uint32_t baseline1 = raw1;
+    uint32_t corrected;
+    const uint64_t packed_mask = 0x7FFULL << ACE_BIT_SW_DHIRES;
+
+    if (s_vtw_1mhz_active != 0u && have_next1) {
+        baseline0 = phase_replace_bits(baseline0, raw1,
+                                       VTW_PHASE_SW_MASK);
+    }
+    if (s_vtw_1mhz_active != 0u && have_next2) {
+        baseline1 = phase_replace_bits(baseline1, raw2,
+                                       VTW_PHASE_SW_MASK);
+    }
+
+    corrected = baseline0;
+    if (s_phase_prev_valid != 0u &&
+        phase_records_are_consecutive(s_phase_prev_record, rec)) {
+        corrected = phase_replace_bits(corrected,
+                                       s_phase_prev_baseline_sw,
+                                       PHASE_DELAY_1_SW_MASK);
+    }
+    if (have_next1) {
+        corrected = phase_replace_bits(corrected, baseline1,
+                                       PHASE_ADVANCE_1_SW_MASK);
+    }
+    if (have_next2) {
+        corrected = phase_replace_bits(corrected, raw2,
+                                       PHASE_ADVANCE_2_SW_MASK);
+    }
+
+    s_phase_prev_valid = 1u;
+    s_phase_prev_record = rec;
+    s_phase_prev_baseline_sw = baseline0;
+    s_phase_last_corrected_sw = corrected;
+
+    return (rec & ~packed_mask) |
+           ((uint64_t)(corrected & 0x7FFu) << ACE_BIT_SW_DHIRES);
 }
 
 void apple_cycle_renderer_set_vtw_1mhz(uint8_t active)
 {
     active = active != 0u ? 1u : 0u;
-    if (s_vtw_1mhz_active != 0u && active == 0u &&
-        s_vtw_pending_valid != 0u) {
-        apple_cycle_renderer_dispatch_record(s_vtw_pending_record);
-        s_vtw_pending_valid = 0u;
+    if (s_vtw_1mhz_active != active) {
+        s_phase_prev_valid = 0u;
     }
     s_vtw_1mhz_active = active;
 }
 
-void apple_cycle_renderer_on_next_record(uint64_t rec)
+int apple_cycle_renderer_needs_phase_lookahead(uint64_t rec)
 {
-    uint64_t pending;
-
-    if (s_vtw_pending_valid == 0u) {
-        return;
-    }
-
-    pending = s_vtw_pending_record;
-    if (s_vtw_1mhz_active != 0u &&
-        vtw_record_has_video_state(rec) &&
-        vtw_records_are_consecutive(pending, rec)) {
-        pending = vtw_record_with_advanced_video_state(pending, rec);
-    }
-
-    /*
-     * apple_cycle_egress calls this before applying rec's shadow-memory
-     * write, so the prior cycle sees next-cycle mode bits without seeing
-     * next-cycle RAM contents.
-     */
-    apple_cycle_renderer_dispatch_record(pending);
-    s_vtw_pending_valid = 0u;
+    return phase_record_is_frame(rec) && !vidhd_shr_enabled();
 }
 
 /* Diagnostic: one-line A2Li/SHR gate dump over UART0, printed from
@@ -3260,14 +3290,23 @@ void apple_cycle_renderer_debug_a2li_line(void)
 
 void apple_cycle_renderer_on_record(uint64_t rec)
 {
-    if (s_vtw_1mhz_active != 0u &&
-        rec != 0ULL &&
-        ace_record_kind(rec) == ACE_RECORD_KIND_LEGACY &&
-        ace_frame_en(rec)) {
-        s_vtw_pending_record = rec;
-        s_vtw_pending_valid = 1u;
-        return;
+    apple_cycle_renderer_on_record_lookahead(rec, 0ULL, 0ULL);
+}
+
+void apple_cycle_renderer_on_record_lookahead(uint64_t rec,
+                                              uint64_t next1,
+                                              uint64_t next2)
+{
+    if (phase_record_is_frame(rec) && !vidhd_shr_enabled()) {
+        rec = phase_correct_record(rec, next1, next2);
+    } else if (rec == 0ULL || vidhd_shr_enabled()) {
+        s_phase_prev_valid = 0u;
     }
 
     apple_cycle_renderer_dispatch_record(rec);
+}
+
+uint32_t apple_cycle_renderer_debug_phase_switches(void)
+{
+    return s_phase_last_corrected_sw;
 }

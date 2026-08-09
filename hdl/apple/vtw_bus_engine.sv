@@ -478,6 +478,13 @@ module vtw_bus_engine #(
         ab_write.wr_addr_rw_en = wr_addr_rw_en_q;
         ab_write.wr_data       = wr_data_q;
         ab_write.wr_data_en    = wr_data_en_q;
+        /* Posted writes target motherboard video RAM. The normal data
+         * window stays asserted so the late bus capture sees the byte, but
+         * it opens too late for the //e DRAM CAS setup limit. Arm the same
+         * early PH0 DMA-write window used by the AD8088 master as well.
+         * Synchronous $C0xx writes remain on the normal window: virtual and
+         * physical slot devices consume them at the late data strobe. */
+        ab_write.wr_dma_data_en = wr_data_en_q && (cyc_q == CYC_POST);
         ab_write.assert_dma    = assert_dma_q;
     end
 

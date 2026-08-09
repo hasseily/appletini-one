@@ -134,6 +134,7 @@ module tb_vtw_engine_unit;
         logic        rw;
         logic        dma;
         logic        data_drive;
+        logic        dma_data_drive;
         logic [7:0]  data;
     } cycrec_t;
     cycrec_t recs [$];
@@ -153,6 +154,7 @@ module tb_vtw_engine_unit;
             cur.addr  = ab_write.wr_addr;
             cur.rw    = ab_write.wr_rw;
             cur.dma   = ab_write.assert_dma;
+            cur.dma_data_drive = ab_write.wr_dma_data_en;
         end
         if (cyc_clk == 120) begin
             cur.data_drive = ab_write.wr_data_en;
@@ -398,6 +400,10 @@ module tb_vtw_engine_unit;
         check_event(ebase+0, 1'b0, 16'h0400, 8'h5A, "posted write 1 on bus");
         check_event(ebase+1, 1'b0, 16'h0427, 8'h5B, "posted write 2 on bus");
         check_event(ebase+2, 1'b0, 16'h2000, 8'h5C, "posted write 3 on bus");
+        check(events[ebase+0].dma_data_drive &&
+              events[ebase+1].dma_data_drive &&
+              events[ebase+2].dma_data_drive,
+              "posted RAM writes arm the early DMA data window");
         check(events.size() == ebase+3, "no extra cycles after drain");
         begin
             int n = recs.size();
@@ -529,6 +535,9 @@ module tb_vtw_engine_unit;
 
         bus_read_value = 8'h5D;
         sync_start(16'hC030, 1'b0, 8'h5D);
+        wait (dut.cyc_q == 4 && ab_write.wr_data_en);
+        check(!ab_write.wr_dma_data_en,
+              "sync I/O write does not arm the RAM-only early window");
         sync_finish(rd);
         check(dbg_sync_write_check[31:16] == 16'd0,
               "matching sync-write loopback stays clean");
@@ -641,7 +650,8 @@ module tb_vtw_engine_unit;
         sync_finish(rd);
 
         push_posted(16'h0446, 8'h46);
-        wait (dut.cyc_q == 3 && ab_write.wr_data_en);
+        wait (dut.cyc_q == 3 && ab_write.wr_data_en &&
+              ab_write.wr_dma_data_en);
         @(posedge clk iff ab_read.data_en);
         @(negedge clk);
         check(!ab_write.wr_data_en,

@@ -1,5 +1,8 @@
 # PCPI Appli-Card
 
+For the mutually exclusive ALF AD8088 Plus slot-5 personality, see
+[`README_AD8088.md`](README_AD8088.md).
+
 Appletini One provides a PCPI Appli-Card compatible Z80 coprocessor in Apple
 slot 5. The Apple-visible latch protocol is implemented in PL, while the Z80
 and its private memory run on the Zynq PS.

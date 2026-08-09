@@ -48,7 +48,9 @@
  *   0x3F300000  Apple FB slot 0    (1 MB)              ┐
  *   0x3F400000  Apple FB slot 1    (1 MB)              │ contiguous trio
  *   0x3F500000  Apple FB slot 2    (1 MB)              ┘
- *   0x3F600000..0x3FFFFFFF  free
+ *   0x3F600000..0x3F7FFFFF  virtual Z80 Appli-Card RAM (2 MB)
+ *   0x3F800000..0x3F8FFFFF  virtual AD8088 address space (1 MB)
+ *   0x3F900000..0x3FFFFFFF  free
  */
 
 #ifndef COMPOSITOR_LAYOUT_H

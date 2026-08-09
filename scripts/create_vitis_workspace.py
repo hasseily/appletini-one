@@ -928,6 +928,7 @@ run_step(
         "frontend",
         [
             "../../../ps_sources/frontend",
+            "../../../third_party/xtulator_cpu",
             "../../../third_party/z80emu",
             "../../../third_party/CherryUSB/common",
             "../../../third_party/CherryUSB/core",
@@ -950,6 +951,8 @@ run_step(
         "frontend",
         [
             "../../../ps_sources/frontend/apple_fb_handoff.c",
+            "../../../ps_sources/frontend/ad8088_machine.c",
+            "../../../ps_sources/frontend/ad8088_service.c",
             "../../../ps_sources/frontend/applicard_rom.c",
             "../../../ps_sources/frontend/applicard_service.c",
             "../../../ps_sources/frontend/applicard_z80.c",
@@ -992,6 +995,7 @@ run_step(
             "../../../third_party/CherryUSB/core/usbh_core.c",
             "../../../third_party/CherryUSB/class/hid/usbh_hid.c",
             "../../../third_party/CherryUSB/port/ehci/usb_hc_ehci.c",
+            "../../../third_party/xtulator_cpu/cpu.c",
             "../../../third_party/z80emu/z80emu.c",
             "core1_blob.S",
         ],

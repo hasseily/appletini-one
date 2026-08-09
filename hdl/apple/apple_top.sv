@@ -685,6 +685,7 @@ module apple_top(
     logic [31:0] busdbg_tap_mismatch;
     logic [31:0] busdbg_strobe_anom;
     logic [31:0] busdbg_tap_last;
+    logic [31:0] busdbg_ghost_write;
     logic        busdbg_clear_pulse;
     logic        vtw_iiplus_dma_refresh_active;
     apple_bus_wrapper apple_bus_wrapper_i (
@@ -694,6 +695,7 @@ module apple_top(
         .dbg_tap_mismatch(busdbg_tap_mismatch),
         .dbg_strobe_anom(busdbg_strobe_anom),
         .dbg_tap_last(busdbg_tap_last),
+        .dbg_ghost_write(busdbg_ghost_write),
         .dbg_clear(busdbg_clear_pulse),
         .clk(clk),
         .rstn(rstn[1]),
@@ -727,6 +729,7 @@ module apple_top(
      * and Disk II track staging are owned by other memory paths. */
     /* vTW RamWorks line port (vtw_core_top <-> psram_simple). */
     logic        vtw_bus_owned;
+    logic        vtw_enable_eff;
     logic        vtw_video_phase_1mhz;
     logic        vtw_rw_req_valid;
     logic        vtw_rw_req_rw;
@@ -1000,12 +1003,17 @@ module apple_top(
         end
     end
 
-    // PCPI Appli-Card (Z80 coprocessor) -- PL latches/flags for the PS
-    // software Z80 in applicard_service.c. Slot 5 only ($C0D0-$C0DF).
+    // Selectable slot-5 coprocessor. The PL owns the PCPI/AD8088 mailbox
+    // timing and the AD8088's sparse Apple-memory cycles; either CPU runs in
+    // PS software. The two personalities are mutually exclusive.
     applicard_card applicard_card_i (
         .clk(clk),
         .rstn(rstn[2]),
         .ab_read(gate_ab(ab_read, card_slot5_enable)),
+        .card_enabled(card_slot5_enable),
+        .disk2_timing_active(disk2_sound_spinning),
+        .vtw_enabled(vtw_enable_eff),
+        .vtw_bus_owned(vtw_bus_owned),
         .slot_assign(3'h5),
         .as_common(as_common),
         .as_client(applicard_as_client),
@@ -1383,7 +1391,7 @@ module apple_top(
     // native timing consumers remain on the calibrated 192:0 boundary.
     // Same fabric clock as the timing generator, so no synchronizer is needed.
     wire vtw_video_vbl = (line_in_frame >= 9'd192);
-    wire vtw_enable_eff = vtw_ctrl_q[0] && vtw_machine_ok_q;
+    assign vtw_enable_eff = vtw_ctrl_q[0] && vtw_machine_ok_q;
     wire vtw_core_run_eff = vtw_enable_eff && vtw_ctrl_q[1];
     assign vtw_disk2_active = vtw_core_run_eff && vtw_bus_owned &&
                               card_slot6_enable && disk2_active &&
@@ -1548,8 +1556,9 @@ module apple_top(
 
     // apple_bus_write_arbiter merges virtual-card responses and control-line
     // requests before they reach apple_bus_wrapper. The vTW is prepended so
-    // every existing client keeps its index; it is the only address-bus
-    // driver, so its priority position is immaterial.
+    // every existing client keeps its index. vTW and AD8088 can both drive
+    // address/RW, but applicard_card blocks AD8088 whenever vTW is enabled,
+    // so the two bus masters cannot contend at this priority mux.
     apple_bus_write_arbiter #(.NUM_CLIENTS(11))
     apple_bus_write_arbiter_i(
         .inh_allowed(machine_inh_allowed),
@@ -1999,6 +2008,7 @@ module apple_top(
                 8'h33:   as_client_rdata_q <= busdbg_mring_q[95:64];
                 8'h34:   as_client_rdata_q <= busdbg_mring_q[127:96];
                 8'h35:   as_client_rdata_q <= {31'b0, post_main_wide_q};
+                8'h3A:   as_client_rdata_q <= busdbg_ghost_write;
                 CARD_CTRL_REG_VTW_WR_CHECK: as_client_rdata_q <=
                     vtw_dbg_sync_write_check;
                 CARD_CTRL_REG_VTW_WR_ADDR:  as_client_rdata_q <=

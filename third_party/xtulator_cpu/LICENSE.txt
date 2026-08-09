@@ -1,0 +1,19 @@
+XTulator 8086/8088 CPU core by Mike Chambers
+Vendored from https://github.com/mikechambers84/XTulator (2026-08-01).
+
+The upstream source headers license this code under GNU GPL version 2 or,
+at the user's option, any later version. Appletini One is distributed under
+GNU GPL version 3, so this copy is used under the "or later" provision.
+
+Imported files: cpu.c, cpu.h, cpuconf.h.
+
+Appletini changes are deliberately small and visible in those files:
+
+* select the CPU_8086 instruction set (the AD8088 contains an 8088),
+* remove XTulator's PC/PIC and logging dependencies,
+* provide the local inline macro, and
+* add an opaque machine-model context pointer to CPU_t.
+
+The complete GNU GPL version 3 license for this combined work is in the
+repository root LICENSE file. The original copyright and GPL notice remain
+at the top of every imported source file.

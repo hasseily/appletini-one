@@ -27,6 +27,12 @@ module apple_bus_wrapper (
     output logic [31:0]           dbg_tap_mismatch,
     output logic [31:0]           dbg_strobe_anom,
     output logic [31:0]           dbg_tap_last,
+    /*   dbg_ghost_write  {ghost writes[15:0], last ghost addr[15:0]}:
+     *   owned-bus cycles (a master holds /DMA without driving address/R-W)
+     *   whose R/W still sampled LOW at the production data tap. Each count
+     *   is a cycle the motherboard decoded as a WRITE no master issued --
+     *   floating-bus residue matured into a rogue write. Must stay 0. */
+    output logic [31:0]           dbg_ghost_write,
     input  logic                  dbg_clear,
 
     /* Machine-mode interlock: INH and DMA may only be driven after the PS
@@ -245,39 +251,98 @@ module apple_bus_wrapper (
     // Pin drivers
     // ------------------------------------------------------------------
     /* Outbound data drive. The physical PHI0 pin remains the hard electrical
-     * release boundary for every write. II/II+ card READ responses alone get
-     * a short saved-byte hold through the synchronized fall: that restores
+     * release boundary for ordinary writes. II/II+ card READ responses alone
+     * get a short saved-byte hold through the synchronized fall: that restores
      * the margin required by the unbuffered motherboard without allowing a
      * vTW or posted write to leak stale data into PHI1.
      *
      * A //e vTW-owned cycle retains the established explicit engine window.
      * Its buffered bus is isolated under /DMA and this path is already
-     * hardware-validated. */
+     * hardware-validated.
+     *
+     * Sparse AD8088 motherboard-RAM writes are different: the IIe DRAM
+     * captures them at CAS, before the ordinary card-response window opens.
+     * wr_dma_data_en therefore arms a dedicated window entirely inside PH0.
+     * It shares the final LUT override input with the II+ read hold, leaving
+     * every existing data-enable truth-table entry unchanged when inactive. */
     // Address and R/W drive only while an arbiter client explicitly requests
     // ownership; otherwise both buses remain tri-stated.
     wire apple_addr_rw_enable = ab_write.wr_addr_rw_en;
     wire drive_live = bus_emit_state && ab_write.wr_data_en;
     wire read_response_live =
         drive_live && (!apple_addr_rw_enable || ab_write.wr_rw);
-    logic       iiplus_read_hold_q;
-    logic [7:0] iiplus_read_data_q;
+    localparam int DMA_WRITE_START_CLKS = 18;
+    localparam int DMA_WRITE_END_CLKS   = 40;
 
-    /* Clear before considering a new arm. A client may leave wr_data_en high
-     * briefly past the fall, so allowing an arm while PHI0 is low would
-     * recreate the stale-byte whole-cycle hold this gate is meant to avoid. */
+    logic       data_override_q;
+    logic       data_override_saved_q;
+    logic [7:0] iiplus_read_data_q;
+    logic       phi0_clean_q;
+    logic [5:0] dma_write_phase_q;
+
+    wire phi0_clean_rise = phi0_clean && !phi0_clean_q;
+    wire dma_write_request = ab_write.wr_dma_data_en &&
+                             apple_addr_rw_enable && !ab_write.wr_rw;
+
+    /* At 133.333 MHz, the IOB + two synchronizer flops make phi0_clean_rise
+     * visible 22.5..30 ns after the slot edge. Eighteen more clocks plus the
+     * output path put data at the slot about 159..174 ns after PH0 rises:
+     * later than the 155 ns bus-turnaround floor and before the 210 ns CAS
+     * setup deadline. Releasing at clock 40 lands around 333..345 ns, safely
+     * after CAS+55 ns and well before PH0 falls, including the long cycle.
+     *
+     * The same final-LUT input retains the established II+ saved-byte read
+     * hold. The two uses cannot overlap: a DMA write owns address/R-W while a
+     * slot read response is generated only for the motherboard CPU. */
     always_ff @(posedge clk) begin
-        if (!rstn || !host_is_iiplus) begin
-            iiplus_read_hold_q <= 1'b0;
-            iiplus_read_data_q <= 8'h00;
-        end else if (phi0_fall) begin
-            iiplus_read_hold_q <= 1'b0;
-        end else if (read_response_live && phi0_filt) begin
-            iiplus_read_hold_q <= 1'b1;
-            iiplus_read_data_q <= ab_write.wr_data;
+        if (!rstn) begin
+            data_override_q       <= 1'b0;
+            data_override_saved_q <= 1'b0;
+            iiplus_read_data_q    <= 8'h00;
+            phi0_clean_q          <= 1'b0;
+            dma_write_phase_q     <= 6'd0;
+        end else begin
+            phi0_clean_q <= phi0_clean;
+
+            if (dma_write_request) begin
+                data_override_saved_q <= 1'b0;
+                if (phi0_clean_rise) begin
+                    dma_write_phase_q <= 6'd1;
+                    data_override_q   <= 1'b0;
+                end else if (dma_write_phase_q != 6'd0) begin
+                    if (dma_write_phase_q ==
+                        6'(DMA_WRITE_START_CLKS)) begin
+                        data_override_q <= 1'b1;
+                    end
+                    if (dma_write_phase_q == 6'(DMA_WRITE_END_CLKS)) begin
+                        dma_write_phase_q <= 6'd0;
+                        data_override_q   <= 1'b0;
+                    end else begin
+                        dma_write_phase_q <= dma_write_phase_q + 6'd1;
+                    end
+                end else begin
+                    data_override_q <= 1'b0;
+                end
+            end else if (dma_write_phase_q != 6'd0) begin
+                // Cancellation or reset of the client request is fail-safe.
+                dma_write_phase_q     <= 6'd0;
+                data_override_q       <= 1'b0;
+                data_override_saved_q <= 1'b0;
+            end else if (!host_is_iiplus) begin
+                data_override_q       <= 1'b0;
+                data_override_saved_q <= 1'b0;
+            end else if (phi0_fall) begin
+                data_override_q       <= 1'b0;
+                data_override_saved_q <= 1'b0;
+            end else if (read_response_live && phi0_filt) begin
+                data_override_q       <= 1'b1;
+                data_override_saved_q <= 1'b1;
+                iiplus_read_data_q    <= ab_write.wr_data;
+            end
         end
     end
     wire iiplus_read_hold_active =
-        host_is_iiplus && iiplus_read_hold_q;
+        host_is_iiplus && data_override_q && data_override_saved_q;
 
     /* The direction-output route is bounded in the XDC so the asynchronous
      * raw-PHI0 release remains placement-independent. Keep this one gate at
@@ -293,17 +358,17 @@ module apple_bus_wrapper (
      * LUT inputs implement:
      *   (bus_emit_state && wr_data_en &&
      *       (PHI0 || (!host_is_iiplus && addr_rw_enable))) ||
-     *   (host_is_iiplus && iiplus_read_hold_q)
+     *   data_override_q
      * INIT bit order is {I5,I4,I3,I2,I1,I0}. */
     wire apple_data_enable;
     (* LOC = "SLICE_X104Y23", BEL = "A6LUT", DONT_TOUCH = "TRUE" *)
-    LUT6 #(.INIT(64'hFF88_FF80_8088_8080)) apple_data_enable_lut (
+    LUT6 #(.INIT(64'hFFFF_FFFF_8088_8080)) apple_data_enable_lut (
         .I0(bus_emit_state),
         .I1(ab_write.wr_data_en),
         .I2(apple_phi0_pin),
         .I3(host_is_iiplus),
         .I4(apple_addr_rw_enable),
-        .I5(iiplus_read_hold_q),
+        .I5(data_override_q),
         .O(apple_data_enable)
     );
     wire [7:0] apple_data_out =
@@ -543,11 +608,14 @@ module apple_bus_wrapper (
     logic [7:0]  dbg_early_data_q;
     logic        dbg_self_drive_q;
     logic [31:0] dbg_tap_last_q;
+    logic [15:0] dbg_ghost_cnt_q;
+    logic [15:0] dbg_ghost_addr_q;
 
     assign dbg_bus_quality  = {dbg_ring_cnt_q, dbg_short_cnt_q};
     assign dbg_tap_mismatch = {dbg_mm_rd_q, dbg_mm_wr_q};
     assign dbg_strobe_anom  = {dbg_extra_cnt_q, dbg_miss_cnt_q};
     assign dbg_tap_last     = dbg_tap_last_q;
+    assign dbg_ghost_write  = {dbg_ghost_cnt_q, dbg_ghost_addr_q};
 
     always_ff @(posedge clk) begin
         if (!rstn || dbg_clear) begin
@@ -563,7 +631,21 @@ module apple_bus_wrapper (
             dbg_early_data_q <= 8'd0;
             dbg_self_drive_q <= 1'b0;
             dbg_tap_last_q   <= 32'd0;
+            dbg_ghost_cnt_q  <= 16'd0;
+            dbg_ghost_addr_q <= 16'd0;
         end else begin
+            /* Ghost-write meter: R/W sampled low, at the production data
+             * tap, in a cycle a bus master owns but does not drive. R/W
+             * residue only decays downward on this bus, so a low sample
+             * here covers every possible low at the earlier DRAM CAS
+             * decision point. */
+            if (data_phase_snap_bus && ab_write.assert_dma &&
+                !ab_write.wr_addr_rw_en && !rw_clean) begin
+                if (dbg_ghost_cnt_q != 16'hFFFF) begin
+                    dbg_ghost_cnt_q <= dbg_ghost_cnt_q + 16'd1;
+                end
+                dbg_ghost_addr_q <= addr_clean;
+            end
             // PHI0 majority-window ringing, one count per burst.
             dbg_ring_prev_q <= dbg_ringing;
             if (dbg_ringing && !dbg_ring_prev_q &&

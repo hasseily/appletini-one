@@ -28,6 +28,8 @@
 #include "bezel_loader.h"
 #include "boot_menu_service.h"
 #include "applicard_service.h"
+#include "ad8088_service.h"
+#include "applicard_regs.h"
 #include "vtw_service.h"
 #include "compositor.h"
 #include "compositor_layout.h"
@@ -175,6 +177,7 @@ uint8_t appletini_config_ramworks_enabled(void)
          : (g_config_menu_state->ramworks_enabled != 0U) ? 1U : 0U;
 }
 static uint32_t g_card_slot_enable_mask = CARD_CTRL_SLOT_ENABLE_RESET_MASK;
+static uint8_t g_slot5_processor = CONFIG_SLOT5_PROCESSOR_Z80;
 static uint8_t g_apple_reset_seq_valid = 0U;
 static uint8_t g_apple_reset_seq_last = 0U;
 
@@ -839,6 +842,37 @@ static void card_control_mark_cpu0_ready(void)
               RESET_RELEASE_CPU0_READY_BIT);
 }
 
+static void control_apply_slot5_service(uint8_t enable)
+{
+    /* Always disarm both first. This makes live personality changes atomic
+     * from the PS point of view; each CPU retains a separate DDR arena. */
+    applicard_service_set_enabled(0U);
+    ad8088_service_set_enabled(0U);
+    if (enable != 0U) {
+        if (g_slot5_processor == CONFIG_SLOT5_PROCESSOR_AD8088) {
+            ad8088_service_set_enabled(1U);
+        } else {
+            applicard_service_set_enabled(1U);
+        }
+    }
+}
+
+static void control_set_slot5_processor(void *ctx, uint8_t processor)
+{
+    const uint8_t enabled =
+        ((g_card_slot_enable_mask & (1UL << 5)) != 0U) ? 1U : 0U;
+
+    (void)ctx;
+    g_slot5_processor =
+        (processor == CONFIG_SLOT5_PROCESSOR_AD8088) ?
+            CONFIG_SLOT5_PROCESSOR_AD8088 : CONFIG_SLOT5_PROCESSOR_Z80;
+    control_apply_slot5_service(0U);
+    REG_WRITE(APPLICARD_REG_MODE,
+              g_slot5_processor == CONFIG_SLOT5_PROCESSOR_AD8088 ?
+                  APPLICARD_MODE_AD8088 : APPLICARD_MODE_Z80);
+    control_apply_slot5_service(enabled);
+}
+
 static void control_set_slot_enabled(void *ctx, uint8_t slot, uint8_t enable)
 {
     uint32_t slot_mask;
@@ -849,9 +883,8 @@ static void control_set_slot_enabled(void *ctx, uint8_t slot, uint8_t enable)
         return;
     }
     if (slot == 5U) {
-        /* Slot 5 is the Applicard: arm/disarm the PS Z80 service in
-         * lockstep with the PL front end. */
-        applicard_service_set_enabled(enable);
+        /* Slot 5 is a mutually exclusive Z80/8088 personality. */
+        control_apply_slot5_service(enable);
     }
     if (slot == 6U) {
         /* Slot 6 is Disk II: keep the PS track loader in lockstep with the
@@ -1362,6 +1395,9 @@ static void control_set_applicard_resource_max(void *ctx, uint8_t maximum)
     applicard_service_set_wall_cap(maximum != 0U ?
                                    APPLICARD_WALL_CAP_MAX_US :
                                    APPLICARD_WALL_CAP_STANDARD_US);
+    ad8088_service_set_wall_cap(maximum != 0U ?
+                                AD8088_WALL_CAP_MAX_US :
+                                AD8088_WALL_CAP_STANDARD_US);
 }
 
 static void control_set_vtw_config(void *ctx,
@@ -2861,6 +2897,7 @@ int main(void)
         menu_platform.set_usb0_sd_remote_mount = control_set_usb0_sd_remote_mount;
         menu_platform.set_slot_enabled = control_set_slot_enabled;
         menu_platform.get_slot_enabled = control_get_slot_enabled;
+        menu_platform.set_slot5_processor = control_set_slot5_processor;
         menu_platform.set_applicard_resource_max = control_set_applicard_resource_max;
         menu_platform.set_vtw_config = control_set_vtw_config;
         menu_platform.set_vtw_slug_key_enabled = control_set_vtw_slug_key_enabled;
@@ -2943,6 +2980,8 @@ int main(void)
     (void)disk2_service_init(UART0_BASE);
     applicard_service_init(UART0_BASE);
     applicard_service_set_checkpoint(usb0_priority_checkpoint);
+    ad8088_service_init(UART0_BASE);
+    ad8088_service_set_checkpoint(usb0_priority_checkpoint);
     vtw_service_init(UART0_BASE);
 
     uart_control_print_help(&g_uart_control, &g_uart_control_ops);
@@ -3226,6 +3265,7 @@ int main(void)
         disk2_service_poll();
         usb0_priority_checkpoint();
         applicard_service_poll();
+        ad8088_service_poll();
         usb0_priority_checkpoint();
         vtw_service_poll();
         usb0_priority_checkpoint();

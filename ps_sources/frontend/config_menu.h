@@ -50,6 +50,12 @@ typedef enum {
     CONFIG_MENU_USB_BIND_ACTION_VTW_SLUG_TOGGLE
 } config_menu_usb_bind_action_t;
 
+typedef enum {
+    CONFIG_SLOT5_PROCESSOR_Z80 = 0,
+    CONFIG_SLOT5_PROCESSOR_AD8088,
+    CONFIG_SLOT5_PROCESSOR_COUNT
+} config_slot5_processor_t;
+
 typedef struct {
     void *ctx;
     void (*set_scanlines)(void *ctx, uint8_t mode);
@@ -90,6 +96,7 @@ typedef struct {
     void (*set_usb0_sd_remote_mount)(void *ctx, uint8_t enable);
     void (*set_slot_enabled)(void *ctx, uint8_t slot, uint8_t enable);
     uint8_t (*get_slot_enabled)(void *ctx, uint8_t slot);
+    void (*set_slot5_processor)(void *ctx, uint8_t processor);
     void (*set_applicard_resource_max)(void *ctx, uint8_t maximum);
     void (*set_vtw_config)(void *ctx,
                            uint8_t enable,
@@ -173,7 +180,8 @@ typedef struct {
     char disk2_disk_paths[2][CONFIG_MENU_PATH_LEN];
     uint8_t mouse_slot2_enabled;
     uint8_t mouse_sensitivity;
-    uint8_t applicard_slot5_enabled; /* PCPI Applicard (Z80) in slot 5 */
+    uint8_t applicard_slot5_enabled; /* selected coprocessor in slot 5 */
+    uint8_t slot5_processor;         /* config_slot5_processor_t */
     uint8_t applicard_resource_max;  /* 0 = standard CPU share, 1 = maximum */
     uint8_t vtw_enabled;             /* virtual TransWarp accelerator */
     uint8_t vtw_speed_mode;          /* 0 full, 1 divided, 2 1MHz-locked */

@@ -121,6 +121,10 @@
 #define CARD_CTRL_BUSDBG_STROBE_REG        CARD_CTRL_REG_ADDR(0x2FU)
 #define CARD_CTRL_BUSDBG_TAPLAST_REG       CARD_CTRL_REG_ADDR(0x30U)
 #define CARD_CTRL_BUSDBG_MRING_REG(n)      CARD_CTRL_REG_ADDR(0x31U + (n))
+/* {ghost writes[31:16], last ghost address[15:0]}: owned-but-undriven bus
+ * cycles whose R/W sampled low -- floating residue that matured into a
+ * write no master issued. Cleared with the other busdbg counters. */
+#define CARD_CTRL_BUSDBG_GHOSTWR_REG       CARD_CTRL_REG_ADDR(0x3AU)
 
 /* SHR paged-mode fallback: bit 0 widens the vTW posted-write window to main
  * $6000-$9FFF. The vTW core tracks aux $9DF8 directly during accelerated

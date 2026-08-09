@@ -1,0 +1,321 @@
+; AD8088.TEST -- visible hardware test for the virtual ALF AD8088 + AD128K.
+;
+; The same binary runs under DOS 3.3 and ProDOS at $6000. It checks the
+; documented slot-5 mailbox, integer command, AD128K memory, and finally
+; copies a short 8088 program onto the card and executes it. The 8088 writes
+; its own message into the Apple text page through the shared-memory window.
+
+!cpu 6502
+
+PORT0       = $C0D0
+PORT14      = $C0DE
+PORT15      = $C0DF
+KBD         = $C000
+KBDSTRB     = $C010
+TXTSET      = $C051
+TRACE_MARK  = $FFFE
+
+COUT        = $FDED
+CROUT       = $FD8E
+HOME        = $FC58
+
+INTBUF      = $3000
+COPYBUF     = $3200
+X86BUF      = $3300
+X86_TEXT    = $0650             ; text row 20
+
+CMD_UMUL    = 29
+CMD_FILL    = 253
+CMD_MOVE    = 254
+CMD_CALL    = 255
+
+PRINT_PTR   = $06
+WAIT_LO     = $08
+WAIT_MID    = $09
+WAIT_HI     = $0A
+
+            * = $6000
+
+START       lda TXTSET
+            jsr HOME
+            lda #0
+            sta FAIL_COUNT
+            ldx #<TITLE
+            ldy #>TITLE
+            jsr PRINTZ
+
+            ; A booting Disk II may still be inside its timing-critical
+            ; motor window after BRUN finishes. Give it time to go quiet.
+            ldx #<DRIVE_WAIT
+            ldy #>DRIVE_WAIT
+            jsr PRINTZ
+            jsr WAIT_DRIVE
+
+            jsr WAIT_READY
+            bcc CARD_READY
+            ldx #<NO_CARD
+            ldy #>NO_CARD
+            jsr PRINTZ
+            jmp FINISH
+
+CARD_READY  ldx #<CARD_OK
+            ldy #>CARD_OK
+            jsr PRINTZ
+
+            ; 7 * 9 = 63 through PROM command 29. Address B points into the
+            ; Apple-visible $10000-$1FFFF memory window.
+            lda #7
+            sta INTBUF
+            lda #0
+            sta INTBUF+1
+            lda #9
+            sta INTBUF+2
+            lda #0
+            sta INTBUF+3
+            sta INTBUF+4
+            sta INTBUF+5
+            ldx #<TEST_INTEGER
+            ldy #>TEST_INTEGER
+            jsr PRINTZ
+            ldx #<INTBUF
+            ldy #>INTBUF
+            jsr SET_ADDRESS_B
+            lda #CMD_UMUL
+            jsr SEND_COMMAND
+            bcs INTEGER_FAIL
+            lda INTBUF
+            cmp #63
+            bne INTEGER_FAIL
+            lda INTBUF+1
+            ora INTBUF+2
+            ora INTBUF+3
+            bne INTEGER_FAIL
+            jsr PRINT_PASS
+            jmp TEST_MEMORY
+INTEGER_FAIL
+            jsr PRINT_FAIL
+
+TEST_MEMORY ldx #<TEST_AD128K
+            ldy #>TEST_AD128K
+            jsr PRINTZ
+            ldx #<FILL_TABLE
+            ldy #>FILL_TABLE
+            jsr SET_ADDRESS_B
+            lda #CMD_FILL
+            jsr SEND_COMMAND
+            bcs MEMORY_FAIL
+            ldx #<MOVE_TO_APPLE
+            ldy #>MOVE_TO_APPLE
+            jsr SET_ADDRESS_B
+            lda #CMD_MOVE
+            jsr SEND_COMMAND
+            bcs MEMORY_FAIL
+            ldx #0
+MEMORY_CHECK
+            lda COPYBUF,x
+            cmp #$A5
+            bne MEMORY_FAIL
+            inx
+            cpx #32
+            bne MEMORY_CHECK
+            jsr PRINT_PASS
+            jmp TEST_CPU
+MEMORY_FAIL jsr PRINT_FAIL
+
+TEST_CPU    ldx #<TEST_EXECUTE
+            ldy #>TEST_EXECUTE
+            jsr PRINTZ
+            ; Never let pre-existing screen text satisfy the execution test.
+            lda #0
+            sta X86_TEXT
+            sta X86_TEXT+1
+            ldx #0
+COPY_X86    lda X86_CODE,x
+            sta X86BUF,x
+            inx
+            cpx #X86_CODE_LEN
+            bne COPY_X86
+
+            ; Copy Apple $3300 to AD8088 local $0100, then issue the
+            ; documented far-call command through CALL_TABLE.
+            ldx #<MOVE_X86_TO_CARD
+            ldy #>MOVE_X86_TO_CARD
+            jsr SET_ADDRESS_B
+            lda #CMD_MOVE
+            jsr SEND_COMMAND
+            bcs CPU_FAIL
+            ldx #<CALL_TABLE
+            ldy #>CALL_TABLE
+            jsr SET_ADDRESS_B
+            lda #CMD_CALL
+            jsr SEND_COMMAND
+            bcs CPU_FAIL
+            lda X86_TEXT
+            cmp #$B8                 ; high-bit ASCII '8'
+            bne CPU_FAIL
+            lda X86_TEXT+1
+            cmp #$B0                 ; high-bit ASCII '0'
+            bne CPU_FAIL
+            jsr PRINT_PASS
+SUMMARY     lda FAIL_COUNT
+            bne SOME_FAILED
+            ldx #<ALL_PASS
+            ldy #>ALL_PASS
+            jsr PRINTZ
+            jmp FINISH
+CPU_FAIL    jsr PRINT_FAIL
+            jmp SUMMARY
+SOME_FAILED ldx #<FAILED_SUMMARY
+            ldy #>FAILED_SUMMARY
+            jsr PRINTZ
+
+FINISH      ldx #<KEY_PROMPT
+            ldy #>KEY_PROMPT
+            jsr PRINTZ
+            ; Two reads of $FFFE within the recorder's 16-cycle window
+            ; trigger its existing IRQ/BRK-vector trap. This freezes the
+            ; preceding command traffic before this final key loop can wrap
+            ; the 64K-event bustail ring. It is just an inert ROM read when
+            ; bustail is not armed.
+WAIT_KEY    lda TRACE_MARK
+            lda KBD
+            bpl WAIT_KEY
+            sta KBDSTRB
+            rts
+
+; Write the Apple address in X/Y into AD8088 parameter ports 14/15.
+SET_ADDRESS_B
+            stx PORT14
+            sty PORT15
+            rts
+
+; A contains the command. Carry is set on a roughly three-second timeout.
+SEND_COMMAND
+            pha
+            ; The manual requires READY before every port write. A fast
+            ; command may finish before the Apple ever observes BUSY.
+            jsr WAIT_READY
+            bcs COMMAND_NOT_READY
+            pla
+            sta PORT0
+            jmp WAIT_READY
+COMMAND_NOT_READY
+            pla
+            sec
+            rts
+
+WAIT_READY  lda #6
+            sta WAIT_HI
+            lda #0
+            sta WAIT_LO
+            sta WAIT_MID
+WAIT_LOOP   lda PORT0
+            bmi WAIT_OK
+            inc WAIT_LO
+            bne WAIT_LOOP
+            inc WAIT_MID
+            bne WAIT_LOOP
+            dec WAIT_HI
+            bne WAIT_LOOP
+            sec
+            rts
+WAIT_OK     clc
+            rts
+
+; About 3.5 seconds on a stock 1 MHz Apple.
+WAIT_DRIVE  lda #6
+            sta WAIT_HI
+            lda #0
+            sta WAIT_LO
+            sta WAIT_MID
+DRIVE_LOOP  inc WAIT_LO
+            bne DRIVE_LOOP
+            inc WAIT_MID
+            bne DRIVE_LOOP
+            dec WAIT_HI
+            bne DRIVE_LOOP
+            rts
+
+PRINT_PASS  ldx #<PASS_TEXT
+            ldy #>PASS_TEXT
+            jmp PRINTZ
+PRINT_FAIL  inc FAIL_COUNT
+            ldx #<FAIL_TEXT
+            ldy #>FAIL_TEXT
+            jmp PRINTZ
+
+; X/Y point to a zero-terminated low-ASCII string.
+PRINTZ      stx PRINT_PTR
+            sty PRINT_PTR+1
+            ldy #0
+PRINT_LOOP  lda (PRINT_PTR),y
+            beq PRINT_DONE
+            ora #$80
+            jsr COUT
+            iny
+            bne PRINT_LOOP
+            inc PRINT_PTR+1
+            bne PRINT_LOOP
+PRINT_DONE  rts
+
+; Command 253 table: destination 4000:0000, 32 bytes, value $A5.
+FILL_TABLE  !word $0000, $4000, 32
+            !byte $A5
+
+; Command 254 table: Apple physical $13200 <- AD128K physical $40000.
+MOVE_TO_APPLE
+            !word $0000, $1320
+            !word $0000, $4000
+            !word 32
+
+; Command 254 table: local physical $00100 <- Apple physical $13300.
+MOVE_X86_TO_CARD
+            !word $0100, $0000
+            !word $0000, $1330
+            !word X86_CODE_LEN
+
+; Command 255 table: far pointer 0000:0100.
+CALL_TABLE  !word $0100, $0000
+
+; 8088 program loaded at physical $0100. It copies a message from local RAM
+; into Apple text row 20 through ES=$1000, proving actual 8088 execution and
+; shared Apple-memory writes rather than only monitor-command emulation.
+X86_CODE    !byte $B8, $00, $10       ; MOV AX,$1000
+            !byte $8E, $C0            ; MOV ES,AX
+            !byte $BE                 ; MOV SI,message
+            !word $0100 + (X86_MESSAGE - X86_CODE)
+            !byte $BF                 ; MOV DI,$0680
+            !word X86_TEXT
+            !byte $B9                 ; MOV CX,message length
+            !word X86_MESSAGE_LEN
+            !byte $FC                 ; CLD
+X86_LOOP    !byte $AC                 ; LODSB
+            !byte $0C, $80            ; OR AL,$80
+            !byte $AA                 ; STOSB
+            !byte $E2, $FA            ; LOOP X86_LOOP
+            !byte $CB                 ; RETF to the clean-room monitor
+X86_MESSAGE !text "8088 EXECUTED THIS LINE"
+X86_MESSAGE_END
+X86_MESSAGE_LEN = X86_MESSAGE_END - X86_MESSAGE
+X86_CODE_END
+X86_CODE_LEN = X86_CODE_END - X86_CODE
+
+TITLE       !text "APPLETINI AD8088 + AD128K TEST", $0D, $0D, 0
+DRIVE_WAIT  !text "WAITING FOR DISK II BUS RELEASE...", $0D, 0
+NO_CARD     !text "NO READY AD8088 IN SLOT 5.", $0D
+            !text "SELECT AD8088, ENABLE SLOT 5.", $0D
+            !text "TURN VTW OFF AND TRY AGAIN.", $0D, 0
+CARD_OK     !text "MAILBOX READY:                      PASS", $0D, 0
+TEST_INTEGER
+            !text "8088 INTEGER COMMAND:               ", 0
+TEST_AD128K !text "AD128K FILL/COPY:                   ", 0
+TEST_EXECUTE
+            !text "8088 CODE + APPLE WINDOW:           ", 0
+PASS_TEXT   !text "PASS", $0D, 0
+FAIL_TEXT   !text "FAIL", $0D, 0
+ALL_PASS    !text $0D, "ALL AD8088 TESTS PASSED.", $0D
+            !text "BOTTOM LINE WAS DRAWN BY 8088 CODE.", $0D, 0
+KEY_PROMPT  !text $0D, "PRESS A KEY TO RETURN.", 0
+FAILED_SUMMARY
+            !text $0D, "ONE OR MORE TESTS FAILED.", $0D, 0
+FAIL_COUNT  !byte 0

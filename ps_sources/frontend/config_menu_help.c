@@ -424,21 +424,28 @@ static const help_override_t ethernet_overrides[] = {
 };
 
 /* ======================================================================== */
-/*  Z80 APPLICARD                                                           */
+/*  SLOT 5 PROCESSOR                                                        */
 /* ======================================================================== */
 HELP(applicard,
-    "The Z80 Applicard is a PCPI Appli-Card compatible coprocessor in slot 5: a virtual Z80 running",
-    "near 80 MHz with 2 MB of banked RAM. The boot ROM is built into the firmware.",
-    "Boot PCPI CP/M from the Disk II to use it. Physical slot 5 must be empty.");
+    "Choose one virtual processor card for slot 5. The Z80 option is PCPI Appli-Card compatible",
+    "with 2 MB of banked RAM. The ALF option emulates a fully expanded 640 KB AD8088 Plus",
+    "and its shared Apple-memory window. Physical slot 5 must be empty.");
+
+HELP(applicard_processor,
+    "Z80 Appli-Card runs PCPI CP/M with the firmware's built-in boot ROM.",
+    "ALF AD8088 Plus provides an 8088 and 640 KB RAM, including the AD128K-compatible range.",
+    "Changing the selection resets the selected virtual processor. Turn virtual TransWarp off",
+    "while using AD8088 because both processors need to master the Apple bus.");
 
 HELP(applicard_resource,
-    "Resource usage sets how much Appletini CPU time the Z80 may claim per pass.",
-    "Standard is right for everyday use. Maximum speeds up long computations (compilers,",
-    "number crunching) by roughly 10%, at the cost of slightly less responsive menus while",
-    "the Z80 is working flat out. Disk and console speed are unaffected.");
+    "Resource usage sets how much Appletini CPU time the selected processor may claim per pass.",
+    "Standard is right for everyday use. Maximum improves sustained long computations (compilers,",
+    "number crunching), at the cost of slightly less responsive menus while",
+    "the coprocessor is working flat out. Disk and console speed are unaffected.");
 
 static const help_override_t applicard_overrides[] = {
-    OVERRIDE(1, applicard_resource),
+    OVERRIDE(1, applicard_processor),
+    OVERRIDE(2, applicard_resource),
 };
 
 /* ======================================================================== */
@@ -561,7 +568,7 @@ HELP(usb_sd_remote,
     "SD Card Remote Mounting exposes the card's SD filesystem to the host over USB0.",
     "This is modal because desktop operating systems issue heavy command bursts. Appletini services",
     "only the bridge and exit controls until you eject on the host and leave this mode.",
-    "Software running on the Z80 Applicard pauses during the mount and resumes when you exit.",
+    "Software running on the slot 5 processor pauses during the mount and resumes when you exit.",
     "SD Card Remote Mounting is not available while SDD is active.");
 
 static const help_override_t usb_overrides[] = {

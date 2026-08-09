@@ -96,6 +96,7 @@ software/a2imgview_demo.a65
 # Local agent/tool state
 .claude/settings.local.json
 .codex_tmp/
+/tmp/
 tclstore.wpc
 
 # Vivado/Vitis PS summary output

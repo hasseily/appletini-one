@@ -24,6 +24,7 @@
 #include "usb_storage_service.h"
 #include "usb_sdd_service.h"
 #include "applicard_service.h"
+#include "ad8088_service.h"
 #include "vtw_service.h"
 #include "config_menu.h"
 #include "xusbps_class_storage.h"
@@ -1690,6 +1691,7 @@ void uart_control_print_help(const uart_control_t *control, const uart_control_o
         "Cards and acceleration:\r\n"
         "  z80 [status|on|off|reset]\r\n"
         "  z80 budget <tstates> | z80 wall <us> | z80 dump <hex-addr> [hex-len]\r\n"
+        "  8088 [status|dump <hex-addr> [hex-len]|trace on|off|paddle]\r\n"
         "  vtw [status|on|off] | vtw speed <full|1mhz|div <2-255>>\r\n"
         "  vtw dump <hex-phys> [hex-len]\r\n"
         "  ss [on|off|force <on|off>|dump]\r\n"
@@ -2219,6 +2221,37 @@ static uart_control_event_t process_command(
             return event;
         }
         uart_puts(control->control_uart_base, "usage: sdd [status|on|off]\r\n");
+        return event;
+    }
+
+    if (str_ieq(argv[0], "8088")) {
+        if (argc < 2 || str_ieq(argv[1], "status")) {
+            ad8088_service_uart_status(control->control_uart_base);
+            return event;
+        }
+        if (str_ieq(argv[1], "dump") && argc >= 3) {
+            const uint32_t addr = (uint32_t)strtoul(argv[2], NULL, 16);
+            const uint32_t len = (argc >= 4) ?
+                (uint32_t)strtoul(argv[3], NULL, 16) : 64U;
+            ad8088_service_uart_dump(control->control_uart_base,
+                                     addr, len);
+            return event;
+        }
+        if (str_ieq(argv[1], "trace") && argc >= 3) {
+            const uint8_t enable = str_ieq(argv[2], "on") ? 1U : 0U;
+            ad8088_service_set_trace(enable);
+            uart_puts(control->control_uart_base,
+                      enable != 0U ? "8088: trace on\r\n"
+                                   : "8088: trace off\r\n");
+            return event;
+        }
+        if (str_ieq(argv[1], "paddle")) {
+            ad8088_service_uart_paddle(control->control_uart_base);
+            return event;
+        }
+        uart_puts(control->control_uart_base,
+                  "usage: 8088 [status|dump <hex-addr> [len]|trace on|off|"
+                  "paddle]\r\n");
         return event;
     }
 
@@ -2780,6 +2813,7 @@ static uart_control_event_t process_command(
             uint32_t m = REG_READ(CARD_CTRL_BUSDBG_TAPMM_REG);
             uint32_t s = REG_READ(CARD_CTRL_BUSDBG_STROBE_REG);
             uint32_t l = REG_READ(CARD_CTRL_BUSDBG_TAPLAST_REG);
+            uint32_t g = REG_READ(CARD_CTRL_BUSDBG_GHOSTWR_REG);
             uint32_t r = REG_READ(CARD_CTRL_RESET_FORENSICS_REG);
 
             (void)snprintf(line, sizeof(line),
@@ -2796,6 +2830,13 @@ static uart_control_event_t process_command(
                 (unsigned long)(m >> 16), (unsigned long)(m & 0xFFFFU),
                 (unsigned long)(l >> 16), (unsigned long)((l >> 8) & 0xFFU),
                 (unsigned long)(l & 0xFFU));
+            uart_puts(control->control_uart_base, line);
+            /* Owned-bus cycles whose R/W sampled low with no master
+             * driving: floating residue that became a real write. Any
+             * nonzero value here is a bus-mastering fault. */
+            (void)snprintf(line, sizeof(line),
+                "ghost: owned-bus writes=%lu last addr=$%04lX\r\n",
+                (unsigned long)(g >> 16), (unsigned long)(g & 0xFFFFU));
             uart_puts(control->control_uart_base, line);
             (void)snprintf(line, sizeof(line),
                 "reset: seen=%lu source=%s%s rstn_dips=$%lX\r\n",

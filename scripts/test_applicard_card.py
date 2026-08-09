@@ -1,4 +1,4 @@
-"""Consistency checks for the PCPI Applicard (Z80) virtual card on slot 5.
+"""Consistency checks for the selectable slot-5 coprocessor front end.
 
 Static checks: PL module wiring (apple_top / appletini_yarz_top / crossbar
 slot 7), PS service + build registration, config persistence, UART command.
@@ -255,8 +255,8 @@ def check_ps():
             "main() must init the applicard service")
     require("applicard_service_poll();" in frontend,
             "main loop must poll the applicard service")
-    require("applicard_service_set_enabled(enable);" in frontend,
-            "slot-5 enable must arm/disarm the service")
+    require("control_apply_slot5_service(enable);" in frontend,
+            "slot-5 enable must arm/disarm the selected service")
 
     # Boot ROM is embedded only: no SD file required, and deliberately no
     # SD override -- a stray user file named APPLICARD.ROM must never be
@@ -279,7 +279,13 @@ def check_ps():
     require('"applicard.slot5.enabled"' in config,
             "config parse key missing")
     require("applicard.slot5.enabled=%s" in config, "config save key missing")
+    require('"slot5.processor"' in config and
+            '"slot5.processor=%s' in config,
+            "slot-5 processor selection must persist")
     require("applicard_slot5_enabled" in config_h, "config field missing")
+    require("slot5_processor" in config_h and
+            "set_slot5_processor" in config_h,
+            "slot-5 processor state/callback missing")
     require("APPLICARD_CONTROL_SLOT" in config,
             "config must apply slot 5 at boot")
 
@@ -289,12 +295,16 @@ def check_ps():
     tabs_c = read_text("ps_sources/frontend/config_menu_device_tabs.c")
     require("CONFIG_TAB_ETHERNET,\n    CONFIG_TAB_APPLICARD," in internal_h,
             "Applicard tab must sit below Ethernet")
-    require('"Z80 Applicard"' in config, "tab label missing")
+    require('"Slot 5 Processor"' in config, "tab label missing")
     require("config_menu_draw_applicard(fb, menu, x, y, w);" in config,
             "tab draw dispatch missing")
     require("config_menu_set_applicard_enabled(menu,\n                menu->applicard_slot5_enabled ? 0U : 1U);"
             in config, "tab toggle handler missing")
     require("void config_menu_draw_applicard" in tabs_c, "tab draw fn missing")
+    require('"Processor card:"' in tabs_c and
+            '"ALF AD8088 Plus (640K)"' in tabs_c and
+            '"Z80 Appli-Card"' in tabs_c,
+            "slot-5 personality selector row missing")
     require("TAB_WITH_OVERRIDES(CONFIG_TAB_APPLICARD," in help_c,
             "help entry missing")
 
@@ -327,6 +337,10 @@ def check_ps():
     for needle in (
         "ps_sources/frontend/applicard_service.c",
         "ps_sources/frontend/applicard_z80.c",
+        "ps_sources/frontend/ad8088_machine.c",
+        "ps_sources/frontend/ad8088_service.c",
+        "third_party/xtulator_cpu/cpu.c",
+        "third_party/xtulator_cpu",
         "third_party/z80emu/z80emu.c",
         "third_party/z80emu",
     ):

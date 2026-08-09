@@ -133,11 +133,12 @@ def test_apple_top_integration() -> None:
             "SuperSprite occupies hard slot 7 when its feature gate is enabled")
     require("card_feature_enable_mask_q[CARD_CTRL_FEATURE_SS_ENABLE_BIT]" in s,
             "enable comes from the feature-enable mask")
-    require(".ab_read(gate_ab(ab_read,\n"
-            "                         smartport_active && !card_supersprite_enable))" in s,
-            "SmartPort (also slot 7) must be gated off when SuperSprite is enabled")
-    require(".vblank_tick(apple_vblank_start_pulse)" in s,
-            "frame tick reuses the Apple vblank pulse")
+    require("wire vtw_smartport_visible =\n"
+            "        smartport_active && !card_supersprite_enable &&" in s and
+            ".ab_read(gate_ab(ab_read, vtw_smartport_visible))" in s,
+            "SmartPort and its vTW shortcut must be gated off when SuperSprite is enabled")
+    require(".vblank_tick(bm_vbl_cmd_pulse)" in s,
+            "frame tick reuses the boot ROM VBL command pulse")
     require("apple_bus_write_arbiter #(.NUM_CLIENTS(11))" in s and
             "supersprite_ab_write" in s,
             "SuperSprite must be in the write arbiter (11 clients with the vTW)")

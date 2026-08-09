@@ -91,8 +91,8 @@ def test_autosave_remains_working_config() -> None:
 def test_clean_config_schema_contract() -> None:
     source = read(CONFIG_MENU_C)
 
-    require("#define APPLETINI_CFG_VERSION 112U" in source,
-            "Adding persisted vTW compatibility controls must use config version 112")
+    require("#define APPLETINI_CFG_VERSION 113U" in source,
+            "Adding the slot-5 processor selector to config version 112 must use version 113")
     require("config_menu_parse_config_line(line, &value)" in source and
             "hash = strchr(line, '#')" in source and
             "config_menu_ascii_lower_in_place(key)" in source,
@@ -548,8 +548,8 @@ def test_transwarp_slot_slowdown_rows() -> None:
             '"vtw.c074.ignore=%s\\n"' in source and
             '"vtw.disk2.acceleration.disabled=%s\\n"' in source,
             "TransWarp compatibility checkboxes must persist")
-    require('"Floating bus ($C019,$C030-$C05F)"' in device_tabs and
-            '"Paddles/joystick ($C064-$C070)"' in device_tabs and
+    require('"Slow Floating bus ($C019,$C030-$C05F)"' in device_tabs and
+            '"Slow Paddles/joystick ($C064-$C070)"' in device_tabs and
             "y + (3 * row_h), option_w" in device_tabs and
             "option_x2, y + (3 * row_h), option_w2" in device_tabs and
             '"Enable 0.05 MHz slug debug key"' in device_tabs and
@@ -591,7 +591,7 @@ def test_transwarp_slot_slowdown_rows() -> None:
     for item in range(7, 14):
         require(f"OVERRIDE({item}, transwarp_slowdown_slots)" in help_source,
                 f"TransWarp slot slowdown row {item} must retain contextual help")
-    require('"Floating bus ($C019,$C030-$C05F)"' in device_tabs and
+    require('"Slow Floating bus ($C019,$C030-$C05F)"' in device_tabs and
             "CONFIG_TRANSWARP_ITEM_SPEAKER" not in internal + source + device_tabs and
             "CONFIG_TRANSWARP_ITEM_VIDEO" not in internal + source + device_tabs,
             "Speaker and Video rows must be replaced by one floating-bus row")

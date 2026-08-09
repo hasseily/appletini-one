@@ -95,6 +95,12 @@ package globals;
     typedef struct packed {
         logic [7:0] wr_data;
         logic wr_data_en;
+        /* A physical motherboard-RAM DMA write. Unlike an ordinary card
+         * response, this request must use the Apple IIe Tech Note #2 data
+         * window: begin after the PH0-rise bus turnaround, meet CAS setup,
+         * then release before PH1. The wrapper owns that pin timing; the
+         * client holds wr_data and address/R-W stable for the whole cycle. */
+        logic wr_dma_data_en;
         logic [15:0] wr_addr;
         logic wr_rw;
         logic wr_addr_rw_en;

@@ -38,7 +38,7 @@ module tb_vtw_drivehold;
         .clk(clk), .rstn(rstn),
         .res_filtered_out(), .dbg_lost_cycle_count(),
         .dbg_bus_quality(), .dbg_tap_mismatch(),
-        .dbg_strobe_anom(), .dbg_tap_last(),
+        .dbg_strobe_anom(), .dbg_tap_last(), .dbg_ghost_write(),
         .dbg_clear(1'b0),
         .inh_allowed(1'b1), .gs_m2_qualify(1'b0), .m2sel_active_high(1'b0),
         .host_is_iiplus(host_is_iiplus),

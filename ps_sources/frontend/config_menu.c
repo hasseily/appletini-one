@@ -26,7 +26,7 @@
 
 #define APPLETINI_CFG_PATH "0:/appletini_cfg.txt"
 #define APPLETINI_CFG_MAX 8192U
-#define APPLETINI_CFG_VERSION 112U
+#define APPLETINI_CFG_VERSION 113U
 #define ETHERNET_CONTROL_SLOT 1U
 #define DISK2_CONTROL_SLOT 6U
 #define MOUSE_CONTROL_SLOT 2U
@@ -54,6 +54,7 @@
 #define CONFIG_DEFAULT_SMARTPORT_DISK1_ENABLED 1U
 #define CONFIG_DEFAULT_DISK2_SLOT6_ENABLED 1U
 #define CONFIG_DEFAULT_APPLICARD_SLOT5_ENABLED 0U
+#define CONFIG_DEFAULT_SLOT5_PROCESSOR CONFIG_SLOT5_PROCESSOR_Z80
 #define CONFIG_DEFAULT_VTW_ENABLED 0U
 #define CONFIG_DEFAULT_VTW_SPEED_MODE 0U     /* full-rate bursts */
 #define CONFIG_DEFAULT_VTW_PACE_DIVIDER 37U  /* ~3.6 MHz-equivalent */
@@ -227,7 +228,7 @@ static const char * const k_tab_labels[CONFIG_TAB_COUNT] = {
     "Mouse",
     "Phasor",
     "Ethernet",
-    "Z80 Applicard",
+    "Slot 5 Processor",
     "TransWarp",
     "Clock",
     "RAM",
@@ -2724,6 +2725,12 @@ void config_menu_poll_ethernet(config_menu_t *menu)
 
 static void config_menu_apply_vtw_slowdown(config_menu_t *menu, uint8_t save);
 
+static uint8_t config_menu_ad8088_active(const config_menu_t *menu)
+{
+    return menu != NULL && menu->applicard_slot5_enabled != 0U &&
+           menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_AD8088;
+}
+
 static void config_menu_apply_runtime_internal(config_menu_t *menu,
                                                uint8_t apply_boot_timeout)
 {
@@ -2742,6 +2749,18 @@ static void config_menu_apply_runtime_internal(config_menu_t *menu,
     config_menu_apply_format_badge(menu);
     config_menu_apply_video_output(menu);
     config_menu_apply_border(menu);
+    /* vTW and the AD8088 cannot own the Apple bus together. Old profiles may
+     * contain both settings, so make startup deterministic before either
+     * service is applied. The next normal save records the corrected state. */
+    if (config_menu_ad8088_active(menu)) {
+        menu->vtw_enabled = 0U;
+    }
+    /* Select the slot-5 personality before enabling the slot. This keeps the
+     * PL mailbox and the matching PS CPU service in lockstep at boot. */
+    if (menu->platform.set_slot5_processor != NULL) {
+        menu->platform.set_slot5_processor(menu->platform.ctx,
+                                           menu->slot5_processor);
+    }
     if (menu->platform.set_slot_enabled != NULL) {
         menu->platform.set_slot_enabled(menu->platform.ctx,
                                         ETHERNET_CONTROL_SLOT,
@@ -2957,6 +2976,10 @@ static void config_menu_parse_key_value(config_menu_t *menu, const char *key, co
         }
     } else if (strcmp(key, "applicard.slot5.enabled") == 0) {
         menu->applicard_slot5_enabled = config_menu_bool_text(value);
+    } else if (strcmp(key, "slot5.processor") == 0) {
+        menu->slot5_processor =
+            (config_menu_str_ieq(value, "AD8088") != 0U) ?
+                CONFIG_SLOT5_PROCESSOR_AD8088 : CONFIG_SLOT5_PROCESSOR_Z80;
     } else if (strcmp(key, "applicard.resource.max") == 0) {
         menu->applicard_resource_max = config_menu_bool_text(value);
     } else if (strcmp(key, "vtw.enabled") == 0) {
@@ -3179,6 +3202,7 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
     APPEND_CFG("mouse.slot2.enabled=%s\n"
                "mouse.sensitivity=%u\n"
                "applicard.slot5.enabled=%s\n"
+               "slot5.processor=%s\n"
                "applicard.resource.max=%s\n"
                "vtw.enabled=%s\n"
                "vtw.c074.ignore=%s\n"
@@ -3191,6 +3215,8 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                config_menu_on_off(menu->mouse_slot2_enabled),
                (unsigned)menu->mouse_sensitivity,
                config_menu_on_off(menu->applicard_slot5_enabled),
+               menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_AD8088 ?
+                   "AD8088" : "Z80",
                config_menu_on_off(menu->applicard_resource_max),
                config_menu_on_off(menu->vtw_enabled),
                config_menu_on_off(menu->vtw_ignore_c074),
@@ -3560,6 +3586,7 @@ static void config_menu_reset_settings_only(config_menu_t *menu)
 
     menu->disk2_slot6_enabled = CONFIG_DEFAULT_DISK2_SLOT6_ENABLED;
     menu->applicard_slot5_enabled = CONFIG_DEFAULT_APPLICARD_SLOT5_ENABLED;
+    menu->slot5_processor = CONFIG_DEFAULT_SLOT5_PROCESSOR;
     menu->applicard_resource_max = 0U;
     menu->vtw_enabled = CONFIG_DEFAULT_VTW_ENABLED;
     menu->vtw_speed_mode = CONFIG_DEFAULT_VTW_SPEED_MODE;
@@ -3771,15 +3798,47 @@ void config_menu_apply_startup_assets(config_menu_t *menu)
     config_menu_try_read_rtc(menu, 0U);
 }
 
-/* Single authority for the SuperDuperDisplay stream setting: applies the
- * personality switch AND persists it, so the USB tab checkbox and the uart
- * 'sdd on/off' command can never disagree with what the next boot does. */
+static void config_menu_set_slot5_processor(config_menu_t *menu,
+                                             uint8_t processor)
+{
+    if (menu == NULL) {
+        return;
+    }
+    processor = (processor == CONFIG_SLOT5_PROCESSOR_AD8088) ?
+        CONFIG_SLOT5_PROCESSOR_AD8088 : CONFIG_SLOT5_PROCESSOR_Z80;
+    if (processor == CONFIG_SLOT5_PROCESSOR_AD8088 &&
+        menu->applicard_slot5_enabled != 0U && menu->vtw_enabled != 0U) {
+        config_menu_set_status(menu, 1U,
+            "TURN TRANSWARP OFF BEFORE ENABLING AD8088");
+        return;
+    }
+    menu->slot5_processor = processor;
+    if (menu->platform.set_slot5_processor != NULL) {
+        menu->platform.set_slot5_processor(menu->platform.ctx,
+                                           menu->slot5_processor);
+    }
+    config_menu_save_settings(menu);
+    config_menu_set_status(menu, 0U,
+        menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_AD8088 ?
+            "SLOT 5: ALF AD8088 PLUS 640K" :
+            "SLOT 5: Z80 APPLI-CARD");
+}
+
+/* Single authority for the selected slot-5 card's enable state. */
 void config_menu_set_applicard_enabled(config_menu_t *menu, uint8_t enable)
 {
     if (menu == NULL) {
         return;
     }
-    menu->applicard_slot5_enabled = enable ? 1U : 0U;
+    enable = enable ? 1U : 0U;
+    if (enable != 0U &&
+        menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_AD8088 &&
+        menu->vtw_enabled != 0U) {
+        config_menu_set_status(menu, 1U,
+            "TURN TRANSWARP OFF BEFORE ENABLING AD8088");
+        return;
+    }
+    menu->applicard_slot5_enabled = enable;
     if (menu->platform.set_slot_enabled != NULL) {
         menu->platform.set_slot_enabled(menu->platform.ctx,
                                         APPLICARD_CONTROL_SLOT,
@@ -3793,10 +3852,14 @@ void config_menu_set_applicard_enabled(config_menu_t *menu, uint8_t enable)
                                             APPLICARD_CONTROL_SLOT);
     }
     config_menu_save_settings(menu);
-    config_menu_set_status(menu, menu->applicard_slot5_enabled,
-                           menu->applicard_slot5_enabled != 0U ?
-                               "APPLICARD Z80 ON - SLOT 5" :
-                               "APPLICARD Z80 OFF - SLOT 5 EMPTY");
+    if (menu->applicard_slot5_enabled != 0U) {
+        config_menu_set_status(menu, 0U,
+            menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_AD8088 ?
+                "AD8088 PLUS 640K ON - SLOT 5" :
+                "APPLI-CARD Z80 ON - SLOT 5");
+    } else {
+        config_menu_set_status(menu, 0U, "SLOT 5 PROCESSOR OFF");
+    }
 }
 
 /* Speed presets shown in the TransWarp tab. Divided-mode rates follow from
@@ -3866,7 +3929,13 @@ void config_menu_set_vtw_enabled(config_menu_t *menu, uint8_t enable)
     if (menu == NULL) {
         return;
     }
-    menu->vtw_enabled = enable ? 1U : 0U;
+    enable = enable ? 1U : 0U;
+    if (enable != 0U && config_menu_ad8088_active(menu)) {
+        config_menu_set_status(menu, 1U,
+            "DISABLE SLOT 5 AD8088 BEFORE TRANSWARP");
+        return;
+    }
+    menu->vtw_enabled = enable;
     if (menu->platform.set_vtw_config != NULL) {
         menu->platform.set_vtw_config(menu->platform.ctx,
                                       menu->vtw_enabled,
@@ -4102,7 +4171,7 @@ static uint32_t config_menu_tab_item_count(const config_menu_t *menu)
         return (menu->ethernet_slot1_enabled != 0U) ?
             CONFIG_ETHERNET_ITEM_COUNT : 1U;
     case CONFIG_TAB_APPLICARD:
-        return 2U;
+        return 3U;
     case CONFIG_TAB_TRANSWARP:
         return CONFIG_TRANSWARP_ITEM_COUNT;
     case CONFIG_TAB_RAM:
@@ -4593,6 +4662,14 @@ static uint8_t config_menu_adjust_focused_value(config_menu_t *menu, int8_t delt
 
     if (menu == NULL) {
         return 0U;
+    }
+
+    if (menu->tab == CONFIG_TAB_APPLICARD && menu->item_focus == 1U) {
+        (void)delta;
+        config_menu_set_slot5_processor(menu,
+            menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_AD8088 ?
+                CONFIG_SLOT5_PROCESSOR_Z80 : CONFIG_SLOT5_PROCESSOR_AD8088);
+        return 1U;
     }
 
     if (menu->tab == CONFIG_TAB_TRANSWARP &&
@@ -6069,6 +6146,10 @@ static void config_menu_activate_item(config_menu_t *menu)
             config_menu_set_applicard_enabled(menu,
                 menu->applicard_slot5_enabled ? 0U : 1U);
         } else if (menu->item_focus == 1U) {
+            config_menu_set_slot5_processor(menu,
+                menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_AD8088 ?
+                    CONFIG_SLOT5_PROCESSOR_Z80 : CONFIG_SLOT5_PROCESSOR_AD8088);
+        } else if (menu->item_focus == 2U) {
             menu->applicard_resource_max =
                 menu->applicard_resource_max ? 0U : 1U;
             if (menu->platform.set_applicard_resource_max != NULL) {
@@ -6078,8 +6159,8 @@ static void config_menu_activate_item(config_menu_t *menu)
             config_menu_save_settings(menu);
             config_menu_set_status(menu, 0U,
                 menu->applicard_resource_max != 0U ?
-                    "Z80 RESOURCE USAGE: MAXIMUM" :
-                    "Z80 RESOURCE USAGE: STANDARD");
+                    "SLOT 5 RESOURCE USAGE: MAXIMUM" :
+                    "SLOT 5 RESOURCE USAGE: STANDARD");
         }
         break;
 
@@ -6139,6 +6220,7 @@ void config_menu_init(config_menu_t *menu)
     menu->smartport_slots[0] = CONFIG_DEFAULT_SMARTPORT_DISK1_ENABLED;
     menu->disk2_slot6_enabled = CONFIG_DEFAULT_DISK2_SLOT6_ENABLED;
     menu->applicard_slot5_enabled = CONFIG_DEFAULT_APPLICARD_SLOT5_ENABLED;
+    menu->slot5_processor = CONFIG_DEFAULT_SLOT5_PROCESSOR;
     menu->applicard_resource_max = 0U;
     menu->vtw_enabled = CONFIG_DEFAULT_VTW_ENABLED;
     menu->vtw_speed_mode = CONFIG_DEFAULT_VTW_SPEED_MODE;

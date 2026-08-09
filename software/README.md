@@ -6,6 +6,7 @@ side.
 - `Appletini_Demos.po`: 800 KB ProDOS demo volume
 - `appletini_webserver/`: 6502-compatible HTTP server and client demos
 - `applicard/`: PCPI CP/M media, Appli-Card ROM input, and validation programs
+- `AD8088_Test.dsk` / `AD8088_Test.po`: virtual AD8088 monitor and RAM validation disks
 - `*.a65`: ACME assembly sources for card, memory, video, and storage tests
 - `*.dsk`, `*.do`, and `*.po`: bootable demo or compatibility-test media
 

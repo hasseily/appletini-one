@@ -8,7 +8,7 @@ and higher-level peripheral emulation.
 ## Virtual Hardware
 
 - SmartPort storage and Disk II disk-image support
-- PCPI Appli-Card compatible Z80 coprocessor in slot 5
+- Selectable slot-5 coprocessor: PCPI-compatible Z80 Appli-Card or 640 KB ALF AD8088 Plus
 - Phasor/Mockingboard audio with SSI-263/SC-01 speech
 - Uthernet II compatible W5100 interface
 - Mouse card, RamWorks memory, and no-slot clock

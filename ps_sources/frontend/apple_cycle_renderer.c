@@ -80,11 +80,8 @@ static uint32_t s_pending_line0_sw[ATN_BORDER_H_CYCLES];
 static uint8_t  s_pending_line0_mask = 0u;
 
 /* A 1 MHz vTW record needs one initial normalization because its serialized
- * C0xx access lands in the following capture record. Scanner tests then show
- * distinct phase offsets in both native and vTW operation. Apply those as a
- * second, shared stage: TEXT/MIXED use the prior normalized state, 80COL and
- * DHIRES use the next normalized state, and ALTCHARSET uses raw state from
- * two cycles ahead. VBL lock and record coordinates stay unchanged. */
+ * C0xx access lands in the following capture record. VBL lock and record
+ * coordinates stay unchanged. */
 #define VTW_PHASE_SW_MASK ( \
     (1U << ACE_SWB_80STORE_BIT) | \
     (1U << ACE_SWB_TEXT_BIT) | \
@@ -94,15 +91,49 @@ static uint8_t  s_pending_line0_mask = 0u;
     (1U << ACE_SWB_80COL_BIT) | \
     (1U << ACE_SWB_DHIRES_BIT))
 
-#define PHASE_DELAY_1_SW_MASK ( \
-    (1U << ACE_SWB_TEXT_BIT) | \
-    (1U << ACE_SWB_MIXED_BIT))
+/*
+ * Scanner phase tuning table. Change only the five PHASE_Cxxx_* lines after
+ * a hardware timing check. If a switch appears early, delay it. If it appears
+ * late, advance it. The correction applies equally to native and vTW video,
+ * after the separate 1 MHz vTW normalization above.
+ */
+#define PHASE_DELAY_1   (-1)
+#define PHASE_NATIVE      0
+#define PHASE_ADVANCE_1   1
+#define PHASE_ADVANCE_2   2
 
-#define PHASE_ADVANCE_1_SW_MASK ( \
-    (1U << ACE_SWB_80COL_BIT) | \
-    (1U << ACE_SWB_DHIRES_BIT))
+#define PHASE_C050_TEXT       PHASE_NATIVE
+#define PHASE_C052_MIXED      PHASE_DELAY_1
+#define PHASE_C00D_80COL      PHASE_NATIVE
+#define PHASE_C05E_DHIRES     PHASE_NATIVE
+#define PHASE_C00F_ALTCHARSET PHASE_NATIVE
 
-#define PHASE_ADVANCE_2_SW_MASK (1U << ACE_SWB_ALTCHARSET_BIT)
+#define PHASE_SETTING_VALID(value) ( \
+    (value) == PHASE_DELAY_1 || (value) == PHASE_NATIVE || \
+    (value) == PHASE_ADVANCE_1 || (value) == PHASE_ADVANCE_2)
+
+#if !PHASE_SETTING_VALID(PHASE_C050_TEXT) || \
+    !PHASE_SETTING_VALID(PHASE_C052_MIXED) || \
+    !PHASE_SETTING_VALID(PHASE_C00D_80COL) || \
+    !PHASE_SETTING_VALID(PHASE_C05E_DHIRES) || \
+    !PHASE_SETTING_VALID(PHASE_C00F_ALTCHARSET)
+#error "Unsupported Apple video soft-switch phase setting"
+#endif
+
+#define PHASE_SWITCH_MASK_AT(value) ( \
+    ((PHASE_C050_TEXT == (value)) ? (1U << ACE_SWB_TEXT_BIT) : 0U) | \
+    ((PHASE_C052_MIXED == (value)) ? (1U << ACE_SWB_MIXED_BIT) : 0U) | \
+    ((PHASE_C00D_80COL == (value)) ? (1U << ACE_SWB_80COL_BIT) : 0U) | \
+    ((PHASE_C05E_DHIRES == (value)) ? (1U << ACE_SWB_DHIRES_BIT) : 0U) | \
+    ((PHASE_C00F_ALTCHARSET == (value)) ? \
+        (1U << ACE_SWB_ALTCHARSET_BIT) : 0U))
+
+#define PHASE_DELAY_1_SW_MASK \
+    PHASE_SWITCH_MASK_AT(PHASE_DELAY_1)
+#define PHASE_ADVANCE_1_SW_MASK \
+    PHASE_SWITCH_MASK_AT(PHASE_ADVANCE_1)
+#define PHASE_ADVANCE_2_SW_MASK \
+    PHASE_SWITCH_MASK_AT(PHASE_ADVANCE_2)
 
 static uint8_t  s_vtw_1mhz_active = 0u;
 static uint8_t  s_phase_prev_valid = 0u;

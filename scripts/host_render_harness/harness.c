@@ -719,11 +719,9 @@ static void t5_switch_phase(void)
     apple_cycle_renderer_on_record_lookahead(prior, current, next1);
     apple_cycle_renderer_on_record_lookahead(current, next1, next2);
     got = apple_cycle_renderer_debug_phase_switches();
-    expected = (1u << ACE_SWB_TEXT_BIT) |
-               (1u << ACE_SWB_80COL_BIT) |
-               (1u << ACE_SWB_ALTCHARSET_BIT);
+    expected = 0u;
     expect(got == expected,
-           "T5 native phase uses previous, next, and next+2 switch states");
+           "T5 native phase delays only C052 MIXED by one cycle");
 
     apple_cycle_renderer_reset_local_video_state();
     apple_cycle_renderer_set_vtw_1mhz(1u);
@@ -742,14 +740,10 @@ static void t5_switch_phase(void)
     apple_cycle_renderer_on_record_lookahead(prior, current, next1);
     apple_cycle_renderer_on_record_lookahead(current, next1, next2);
     got = apple_cycle_renderer_debug_phase_switches();
-    expected = (1u << ACE_SWB_TEXT_BIT) |
-               (1u << ACE_SWB_MIXED_BIT) |
+    expected = (1u << ACE_SWB_MIXED_BIT) |
                (1u << ACE_SWB_80STORE_BIT) |
                (1u << ACE_SWB_PAGE2_BIT) |
-               (1u << ACE_SWB_HIRES_BIT) |
-               (1u << ACE_SWB_80COL_BIT) |
-               (1u << ACE_SWB_DHIRES_BIT) |
-               (1u << ACE_SWB_ALTCHARSET_BIT);
+               (1u << ACE_SWB_HIRES_BIT);
     expect(got == expected,
            "T5 vTW normalization composes with the common phase correction");
 

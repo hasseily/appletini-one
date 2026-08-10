@@ -172,6 +172,11 @@ void screenshot_service_show_notice(const char *text)
     overlay_show(&g_overlays[OVERLAY_TOP], text);
 }
 
+void screenshot_service_show_confirmation(const char *text)
+{
+    overlay_show(&g_overlays[OVERLAY_BOTTOM], text);
+}
+
 void screenshot_service_init(void)
 {
     g_scanlines_mode = APPLETINI_SCANLINES_OFF;
@@ -195,7 +200,9 @@ void screenshot_service_set_sd_write_hook(screenshot_service_sd_write_hook_t hoo
     g_sd_write_hook_ctx = ctx;
 }
 
-static void screenshot_service_note_local_sd_write_complete(void)
+/* Shared by every service that writes the SD card locally (screenshots,
+ * printouts) so the USB0 mass-storage host cache gets invalidated. */
+void screenshot_service_note_local_sd_write_complete(void)
 {
     if (g_sd_write_hook != NULL) {
         g_sd_write_hook(g_sd_write_hook_ctx);

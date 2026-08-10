@@ -35,6 +35,7 @@ apple/disk2_sound_player.sv
 apple/mouse_card.sv
 apple/applicard_card.sv
 apple/uthernet2_card.sv
+apple/ssc_card.sv
 apple/supersprite_card.sv
 apple/smartport_card.sv
 apple/disk2_card.sv
@@ -49,6 +50,8 @@ apple/smartport_a2retronet_style_c700.mem
 apple/smartport_a2retronet_style_c800.mem
 apple/mouse_card_slot2.mem
 apple/disk2_slot6.mem
+apple/ssc_slot1_c100.mem
+apple/ssc_c800.mem
 apple/psram_driver.sv
 apple/psram_simple.sv
 apple/apple_timing_gen.sv

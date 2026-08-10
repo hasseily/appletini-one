@@ -16,14 +16,33 @@ vivado -mode batch -source scripts/build_and_export_xsa.tcl
 vitis -s .\scripts\create_vitis_workspace.py
 ```
 
-Set `APPLETINI_FULL_BUILD=1` when a large netlist change makes the known-good
-incremental checkpoint unsuitable:
+Use the known-good checkpoint for normal small changes. For a large netlist
+change, first recreate the project, then request a full build:
 
 ```powershell
+vivado -mode batch -source scripts/create_project.tcl
 $env:APPLETINI_FULL_BUILD = "1"
 vivado -mode batch -source scripts/build_and_export_xsa.tcl
 Remove-Item Env:APPLETINI_FULL_BUILD
 ```
+
+The generated project must keep the `Performance_ExplorePostRoutePhysOpt`
+implementation strategy. Its Explore placement, physical optimization, route,
+and post-route physical optimization settings are part of the timing flow. Do
+not force Default placement or disable the post-place pass. Those changes made
+the same F0.9.75 design miss setup timing by 0.207 ns.
+
+The build script checks both setup and hold slack before it exports the XSA. If
+the normal full flow misses setup by a small amount, it runs one more
+post-route `AggressiveExplore` physical-optimization pass on the routed design.
+For F0.9.75 this moved setup slack from -0.025 ns to +0.022 ns while hold stayed
+at +0.039 ns. The script still stops if either check remains negative. Never
+package a bitstream from a run that stopped at that timing gate.
+
+An incremental run can fail placement when the known-good checkpoint predates
+a large change. In that case, do not weaken timing settings or promote the
+failed run. Use the fresh full-build sequence above. Promote a new candidate
+checkpoint only after the firmware passes hardware tests.
 
 ## Images and Programming
 

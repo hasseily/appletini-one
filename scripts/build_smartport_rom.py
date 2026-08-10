@@ -96,6 +96,8 @@ def eval_expr(expr: str, symbols: dict[str, int], pc: int) -> int:
     expr = re.sub(r"(?<![A-Za-z0-9_$])\*(?![A-Za-z0-9_$])", str(pc), expr)
     expr = re.sub(r"\$([0-9A-Fa-f]+)", r"0x\1", expr)
     expr = re.sub(r"%([01]+)", r"0b\1", expr)
+    # Python 3 rejects leading-zero decimal literals ("SBC #01").
+    expr = re.sub(r"\b0+(?=\d)", "", expr)
 
     def replace_symbol(match: re.Match[str]) -> str:
         name = match.group(0).upper()
@@ -202,6 +204,21 @@ def is_label_line(line: str) -> bool:
     return True
 
 
+def colon_outside_quotes(text: str) -> bool:
+    quote: str | None = None
+    for ch in text:
+        if quote is not None:
+            if ch == quote:
+                quote = None
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            continue
+        if ch == ":":
+            return True
+    return False
+
+
 def convert_line_syntax(line: str) -> str:
     indent = line[:len(line) - len(line.lstrip(" "))]
     stripped = line.strip()
@@ -231,7 +248,8 @@ def convert_line_syntax(line: str) -> str:
     if re.match(r"^\.RES\b", stripped, re.IGNORECASE):
         return indent + ".res" + stripped[4:]
 
-    if ":" not in stripped and is_label_line(stripped):
+    if (not colon_outside_quotes(strip_comment(stripped)) and
+            is_label_line(stripped)):
         parts = stripped.split(None, 1)
         label = parts[0]
         if len(parts) == 1:
@@ -439,7 +457,8 @@ def assemble_source(source_text: str,
 
 def assemble_source(source_text: str,
                     *,
-                    include_symbols: bool = False
+                    include_symbols: bool = False,
+                    slot_base: int = 0xC700
                     ) -> tuple[bytearray, bytearray] | tuple[bytearray, bytearray, dict[str, int]]:
     lines = source_text.splitlines()
     symbols: dict[str, int] = {}
@@ -535,7 +554,7 @@ def assemble_source(source_text: str,
             memory[pc] = byte
             pc += 1
 
-    slot_data = memory[0xC700:0xC800]
+    slot_data = memory[slot_base:slot_base + 0x100]
     cont_data = memory[0xC800:0xD000]
     if include_symbols:
         return slot_data, cont_data, symbols

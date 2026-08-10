@@ -578,6 +578,23 @@ static const help_override_t usb_overrides[] = {
 };
 
 /* ======================================================================== */
+/*  PRINTING                                                                */
+/* ======================================================================== */
+HELP(printing,
+    "The virtual Super Serial Card prints as an ImageWriter II. It shares slot 1 with the",
+    "Uthernet II. Print from the Apple with PR#1 (or select an SSC in slot 1 in your software).",
+    "Each printed page becomes a PNG file in 0:/printouts on the SD card.");
+
+HELP(printing_browse,
+    "Browse the saved printouts with a preview. ENTER renames the selected printout,",
+    "SPACE deletes it after a confirmation. A print job closes a few seconds after the",
+    "Apple stops sending data; the last partial page is saved at that point.");
+
+static const help_override_t printing_overrides[] = {
+    OVERRIDE(1, printing_browse),
+};
+
+/* ======================================================================== */
 /*  ABOUT                                                                   */
 /* ======================================================================== */
 HELP(about,
@@ -604,6 +621,7 @@ static const help_tab_t k_help_tabs[] = {
     TAB(CONFIG_TAB_CLOCK,         clock),
     TAB_WITH_OVERRIDES(CONFIG_TAB_RAM, ram, ram_overrides),
     TAB_WITH_OVERRIDES(CONFIG_TAB_USB, usb, usb_overrides),
+    TAB_WITH_OVERRIDES(CONFIG_TAB_PRINTING, printing, printing_overrides),
     TAB(CONFIG_TAB_ABOUT,         about),
 };
 

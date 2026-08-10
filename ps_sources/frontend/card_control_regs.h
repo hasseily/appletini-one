@@ -24,6 +24,7 @@
 /* Card feature-enable bits (CARD_CTRL_FEATURE_ENABLE_REG). */
 #define CARD_CTRL_FEATURE_NSC_ENABLE_BIT         (1UL << 0)
 #define CARD_CTRL_FEATURE_SUPERSPRITE_ENABLE_BIT (1UL << 1)
+#define CARD_CTRL_FEATURE_SSC_ENABLE_BIT         (1UL << 2)
 
 /* SuperSprite (TMS9918 VDP) PS-facing readback window. The PL owns the VDP
  * register/VRAM interface; the PS renders the picture in software.
@@ -57,6 +58,26 @@
 #define CARD_CTRL_ETH_STATUS_ERROR         (1UL << 3)
 #define CARD_CTRL_ETH_STATUS_RDATA_SHIFT   8U
 #define CARD_CTRL_ETH_STATUS_RDATA_MASK    0xFFUL
+
+/* Virtual SSC printer FIFO drain window (ssc_card, slot 1). Every byte the
+ * Apple writes to the ACIA transmit register queues in a 2 KB PL FIFO;
+ * the printer service pops one byte per SSC_CTRL_POP write.
+ *   SSC_STATUS : [11:0] queued byte count, [16] overflow (sticky),
+ *                [17] card enabled.
+ *   SSC_HEAD   : [7:0] oldest byte, [8] valid.
+ *   SSC_CTRL   : write-only strobes.
+ *   SSC_ACIA   : [7:0] 6551 command latch, [15:8] control latch. */
+#define CARD_CTRL_SSC_STATUS_REG           CARD_CTRL_REG_ADDR(0x4AU)
+#define CARD_CTRL_SSC_HEAD_REG             CARD_CTRL_REG_ADDR(0x4BU)
+#define CARD_CTRL_SSC_CTRL_REG             CARD_CTRL_REG_ADDR(0x4CU)
+#define CARD_CTRL_SSC_ACIA_REG             CARD_CTRL_REG_ADDR(0x4DU)
+#define CARD_CTRL_SSC_STATUS_COUNT_MASK    0x0FFFUL
+#define CARD_CTRL_SSC_STATUS_OVERFLOW      (1UL << 16)
+#define CARD_CTRL_SSC_STATUS_ENABLED       (1UL << 17)
+#define CARD_CTRL_SSC_HEAD_VALID           (1UL << 8)
+#define CARD_CTRL_SSC_CTRL_POP             (1UL << 0)
+#define CARD_CTRL_SSC_CTRL_CLEAR           (1UL << 1)
+#define CARD_CTRL_SSC_CTRL_OVF_CLEAR       (1UL << 2)
 
 /* Written by the PS after the boot ROM reports the host machine. The PL
  * interlocks INH

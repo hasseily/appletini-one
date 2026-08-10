@@ -84,6 +84,11 @@ static inline uint32_t fb16_to_bgra32(uint16_t v) {
 #define FB16_BUILTIN_FONT_DRAW_WIDTH  7
 #define FB16_BUILTIN_FONT_ADVANCE_X   FB16_BUILTIN_FONT_DRAW_WIDTH
 
+/* Glyph access to the built-in 7x8 font for renderers with their own
+ * canvas (the ImageWriter interpreter). Returns 8 row bytes, bit N =
+ * column N left-to-right; NULL outside ASCII 0x20-0x7F. */
+const uint8_t *fb16_builtin_font_glyph(uint8_t ch);
+
 /* Bitmap font descriptor (used by apple_font24.c and other variable-
  * size fonts). */
 typedef struct {

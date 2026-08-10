@@ -101,6 +101,32 @@ if {[llength $worst_setup_path] == 0 || [llength $worst_hold_path] == 0} {
 set worst_setup_slack [get_property SLACK $worst_setup_path]
 set worst_hold_slack  [get_property SLACK $worst_hold_path]
 puts "Final implementation slack: setup=$worst_setup_slack ns hold=$worst_hold_slack ns"
+
+# A full placement can finish a few picoseconds short even after the run's
+# normal post-route Explore pass. Do not change the placement strategy or
+# accept that result. One AggressiveExplore pass on the routed design can
+# transform only the remaining critical cones while preserving the completed
+# placement and routing. This closed the F0.9.75 image from -0.025 ns to
+# +0.022 ns. Keep hold failures fatal; this fallback targets setup only.
+if {$worst_setup_slack < 0.0 && $worst_hold_slack >= 0.0} {
+    puts "Setup timing is short; running one extra post-route AggressiveExplore pass."
+    phys_opt_design -directive AggressiveExplore
+
+    set worst_setup_path [get_timing_paths -quiet -delay_type max -max_paths 1]
+    set worst_hold_path  [get_timing_paths -quiet -delay_type min -max_paths 1]
+    set worst_setup_slack [get_property SLACK $worst_setup_path]
+    set worst_hold_slack  [get_property SLACK $worst_hold_path]
+    puts "Slack after extra physical optimization: setup=$worst_setup_slack ns hold=$worst_hold_slack ns"
+
+    if {$worst_setup_slack >= 0.0 && $worst_hold_slack >= 0.0} {
+        set impl_dir [get_property DIRECTORY [get_runs impl_1]]
+        write_checkpoint -force [file join $impl_dir appletini_yarz_top_postroute_physopt.dcp]
+        report_timing_summary -file [file join $impl_dir appletini_yarz_top_timing_summary_postroute_physopted.rpt]
+        report_bus_skew -warn_on_violation -file [file join $impl_dir appletini_yarz_top_bus_skew_postroute_physopted.rpt]
+        write_bitstream -force [file join $impl_dir appletini_yarz_top.bit]
+    }
+}
+
 if {$worst_setup_slack < 0.0 || $worst_hold_slack < 0.0} {
     error "Timing failed; refusing to export hardware or replace the incremental reference."
 }

@@ -15,6 +15,7 @@
 #include "boot_menu_service.h"
 #include "card_control_regs.h"
 #include "compositor_layout.h"
+#include "printer_service.h"
 #include "profile_manager.h"
 #include "../image_versions.h"
 #include "xil_cache.h"
@@ -26,7 +27,7 @@
 
 #define APPLETINI_CFG_PATH "0:/appletini_cfg.txt"
 #define APPLETINI_CFG_MAX 8192U
-#define APPLETINI_CFG_VERSION 113U
+#define APPLETINI_CFG_VERSION 114U
 #define ETHERNET_CONTROL_SLOT 1U
 #define DISK2_CONTROL_SLOT 6U
 #define MOUSE_CONTROL_SLOT 2U
@@ -87,6 +88,7 @@ static const uint16_t k_vtw_slowdown_cycle_presets[] = {
 #define CONFIG_DEFAULT_CLOCK_ENABLED 1U
 #define CONFIG_DEFAULT_RAM_ENABLED 1U
 #define CONFIG_DEFAULT_SP_RAMDISK_ENABLED 0U
+#define CONFIG_DEFAULT_SSC_SLOT1_ENABLED 1U
 
 /* Config keys for the file-manager per-feature last-directory memory,
  * indexed by CONFIG_BROWSER_CAT_*. */
@@ -95,7 +97,8 @@ static const char *const k_browser_lastdir_keys[CONFIG_BROWSER_CAT_COUNT] = {
     "browser.lastdir.disk2",
     "browser.lastdir.bezel",
     "browser.lastdir.rom",
-    "browser.lastdir.profile"
+    "browser.lastdir.profile",
+    "browser.lastdir.printouts"
 };
 #define CONFIG_USB_KEY_USAGE_A 0x04U
 #define CONFIG_USB_KEY_USAGE_1 0x1EU
@@ -176,7 +179,8 @@ typedef enum {
     CONFIG_BROWSER_TARGET_DISK2_D2,
     CONFIG_BROWSER_TARGET_BEZEL,
     CONFIG_BROWSER_TARGET_VIDEO_ROM,
-    CONFIG_BROWSER_TARGET_PROFILE_IMAGE
+    CONFIG_BROWSER_TARGET_PROFILE_IMAGE,
+    CONFIG_BROWSER_TARGET_PRINTOUT
 } config_browser_target_t;
 
 typedef enum {
@@ -233,6 +237,7 @@ static const char * const k_tab_labels[CONFIG_TAB_COUNT] = {
     "Clock",
     "RAM",
     "USB",
+    "Printing",
     "About"
 };
 
@@ -1259,7 +1264,7 @@ static void config_menu_parent_path(const char *path, char *out, size_t out_len)
     }
 }
 
-static FRESULT config_menu_mount_sd(void)
+FRESULT config_menu_mount_sd(void)
 {
     FRESULT fr = f_mount(&g_config_fs, "0:/", 1U);
 
@@ -2769,6 +2774,10 @@ static void config_menu_apply_runtime_internal(config_menu_t *menu,
         menu->platform.set_slot_enabled(menu->platform.ctx,
                                         MOUSE_CONTROL_SLOT,
                                         menu->mouse_slot2_enabled);
+        if (menu->platform.set_ssc_enabled != NULL) {
+            menu->platform.set_ssc_enabled(menu->platform.ctx,
+                                           menu->ssc_slot1_enabled);
+        }
         menu->platform.set_slot_enabled(menu->platform.ctx,
                                         MOCKINGBOARD_CONTROL_SLOT,
                                         menu->mockingboard_slot4_enabled);
@@ -3046,6 +3055,8 @@ static void config_menu_parse_key_value(config_menu_t *menu, const char *key, co
         menu->sdd_stream_enabled = config_menu_bool_text(value);
     } else if (strcmp(key, "ethernet.slot1.enabled") == 0) {
         menu->ethernet_slot1_enabled = config_menu_bool_text(value);
+    } else if (strcmp(key, "printing.ssc.enabled") == 0) {
+        menu->ssc_slot1_enabled = config_menu_bool_text(value);
     } else if (strcmp(key, "ethernet.config.enabled") == 0) {
         menu->ethernet_config_enabled = config_menu_bool_text(value);
     } else if (strcmp(key, "ethernet.address.mode") == 0) {
@@ -3246,6 +3257,7 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
     APPEND_CFG("smartport.ram32.enabled=%s\n"
                "smartport.supersprite.enabled=%s\n"
                "usb.sdd.stream.enabled=%s\n"
+               "printing.ssc.enabled=%s\n"
                "ethernet.slot1.enabled=%s\n"
                "ethernet.config.enabled=%s\n"
                "ethernet.address.mode=%s\n"
@@ -3258,6 +3270,7 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                config_menu_on_off(menu->sp_ramdisk_enabled),
                config_menu_on_off(menu->supersprite_enabled),
                config_menu_on_off(menu->sdd_stream_enabled),
+               config_menu_on_off(menu->ssc_slot1_enabled),
                config_menu_on_off(menu->ethernet_slot1_enabled),
                config_menu_on_off(menu->ethernet_config_enabled),
                config_menu_ethernet_address_mode_text(menu->ethernet_address_mode),
@@ -3611,6 +3624,7 @@ static void config_menu_reset_settings_only(config_menu_t *menu)
     menu->mockingboard_slot4_enabled = CONFIG_DEFAULT_MOCKINGBOARD_SLOT4_ENABLED;
     config_menu_phasor_set_defaults(menu);
     menu->ethernet_slot1_enabled = CONFIG_DEFAULT_ETHERNET_SLOT1_ENABLED;
+    menu->ssc_slot1_enabled = CONFIG_DEFAULT_SSC_SLOT1_ENABLED;
     menu->ethernet_config_enabled = CONFIG_DEFAULT_ETHERNET_CONFIG_ENABLED;
     menu->ethernet_address_mode = CONFIG_DEFAULT_ETHERNET_ADDRESS_MODE;
     menu->ethernet_edit_index = 0U;
@@ -4177,6 +4191,8 @@ static uint32_t config_menu_tab_item_count(const config_menu_t *menu)
         return CONFIG_TRANSWARP_ITEM_COUNT;
     case CONFIG_TAB_RAM:
         return 1U;
+    case CONFIG_TAB_PRINTING:
+        return CONFIG_PRINTING_ITEM_COUNT;
     case CONFIG_TAB_ABOUT:
         return 0U;
     case CONFIG_TAB_CLOCK:
@@ -5064,6 +5080,9 @@ static uint8_t config_menu_browser_category(uint8_t target)
     if (target == CONFIG_BROWSER_TARGET_VIDEO_ROM) {
         return CONFIG_BROWSER_CAT_ROM;
     }
+    if (target == CONFIG_BROWSER_TARGET_PRINTOUT) {
+        return CONFIG_BROWSER_CAT_PRINTOUT;
+    }
     return CONFIG_BROWSER_CAT_PROFILE;   /* PROFILE_IMAGE */
 }
 
@@ -5143,6 +5162,8 @@ static const char *config_menu_browser_title(uint8_t target)
         return "Video ROM";
     case CONFIG_BROWSER_TARGET_PROFILE_IMAGE:
         return "Profile Image PNG";
+    case CONFIG_BROWSER_TARGET_PRINTOUT:
+        return "Printouts  ENTER=Rename SPACE=Delete";
     default:
         if (config_menu_browser_is_smartport_target(target) != 0U) {
             (void)snprintf(title,
@@ -5201,6 +5222,9 @@ static uint8_t config_menu_browser_accepts(const config_menu_t *menu,
         return config_menu_is_video_rom_file(info->fname, info->fsize);
     }
     if (menu->browser_target == CONFIG_BROWSER_TARGET_PROFILE_IMAGE) {
+        return config_menu_has_png_ext(info->fname);
+    }
+    if (menu->browser_target == CONFIG_BROWSER_TARGET_PRINTOUT) {
         return config_menu_has_png_ext(info->fname);
     }
     return 0U;
@@ -5301,7 +5325,11 @@ static FRESULT config_menu_browser_refresh(config_menu_t *menu)
     }
 
     menu->browser_count = 0U;
-    if (config_menu_path_is_root(menu->browser_dir) != 0U) {
+    /* The printout browser is jailed to its directory: its root shows
+     * [CLOSE] instead of [..], and it has no [EMPTY] selection row. */
+    if (config_menu_path_is_root(menu->browser_dir) != 0U ||
+        (menu->browser_target == CONFIG_BROWSER_TARGET_PRINTOUT &&
+         config_menu_path_ieq(menu->browser_dir, PRINTER_SERVICE_DIR) != 0U)) {
         config_menu_browser_add_entry(menu, CONFIG_BROWSER_ENTRY_CLOSE, "[CLOSE]", "", 0U);
     } else {
         char parent[CONFIG_MENU_PATH_LEN];
@@ -5309,11 +5337,13 @@ static FRESULT config_menu_browser_refresh(config_menu_t *menu)
         config_menu_parent_path(menu->browser_dir, parent, sizeof(parent));
         config_menu_browser_add_entry(menu, CONFIG_BROWSER_ENTRY_PARENT, "[..]", parent, 0U);
     }
-    config_menu_browser_add_entry(menu,
-                                  CONFIG_BROWSER_ENTRY_EMPTY,
-                                  config_menu_browser_empty_text(menu->browser_target),
-                                  "",
-                                  0U);
+    if (menu->browser_target != CONFIG_BROWSER_TARGET_PRINTOUT) {
+        config_menu_browser_add_entry(menu,
+                                      CONFIG_BROWSER_ENTRY_EMPTY,
+                                      config_menu_browser_empty_text(menu->browser_target),
+                                      "",
+                                      0U);
+    }
 
     fr = f_opendir(&dir, menu->browser_dir);
     if (fr != FR_OK) {
@@ -5385,6 +5415,43 @@ static void config_menu_browser_preview_clear(void)
     memset(&g_browser_preview_cache, 0, sizeof(g_browser_preview_cache));
 }
 
+/* Re-list the open browser after a printout delete/rename so the entries
+ * and the preview match the directory again. */
+void config_menu_browser_reload_after_fileop(config_menu_t *menu)
+{
+    if (menu == NULL || menu->browser_active == 0U) {
+        return;
+    }
+    config_menu_browser_preview_clear();
+    (void)config_menu_browser_refresh(menu);
+    config_menu_refresh_smartport_media_after_menu_sd(menu);
+}
+
+/* Name and path of the currently selected FILE row, for the printout
+ * rename/delete actions. Returns 0 when the selection is not a file. */
+uint8_t config_menu_browser_selected_file(const config_menu_t *menu,
+                                          char *name,
+                                          size_t name_len,
+                                          char *path,
+                                          size_t path_len)
+{
+    config_browser_entry_t entry;
+
+    if (menu == NULL || menu->browser_active == 0U ||
+        config_menu_browser_get_entry(menu, menu->browser_selected,
+                                      &entry) != FR_OK ||
+        entry.type != CONFIG_BROWSER_ENTRY_FILE) {
+        return 0U;
+    }
+    if (name != NULL) {
+        config_menu_copy_text(name, name_len, entry.name);
+    }
+    if (path != NULL) {
+        config_menu_copy_text(path, path_len, entry.path);
+    }
+    return 1U;
+}
+
 static void config_menu_browser_preview_prepare(config_menu_t *menu)
 {
     config_browser_entry_t entry;
@@ -5392,7 +5459,8 @@ static void config_menu_browser_preview_prepare(config_menu_t *menu)
 
     if (menu == NULL ||
         menu->browser_active == 0U ||
-        menu->browser_target != CONFIG_BROWSER_TARGET_PROFILE_IMAGE ||
+        (menu->browser_target != CONFIG_BROWSER_TARGET_PROFILE_IMAGE &&
+         menu->browser_target != CONFIG_BROWSER_TARGET_PRINTOUT) ||
         config_menu_browser_get_entry(menu, menu->browser_selected, &entry) != FR_OK ||
         entry.type != CONFIG_BROWSER_ENTRY_FILE) {
         config_menu_browser_preview_clear();
@@ -5466,6 +5534,8 @@ static void config_menu_browser_default_dir(const config_menu_t *menu,
         } else {
             config_menu_copy_text(dst, dst_len, "0:/");
         }
+    } else if (target == CONFIG_BROWSER_TARGET_PRINTOUT) {
+        config_menu_copy_text(dst, dst_len, PRINTER_SERVICE_DIR);
     } else {
         config_menu_copy_text(dst, dst_len, "0:/");
     }
@@ -5640,6 +5710,12 @@ static uint8_t config_menu_browser_apply_file(config_menu_t *menu, const char *p
         config_menu_refresh_smartport_media_after_menu_sd(menu);
     } else if (menu->browser_target == CONFIG_BROWSER_TARGET_PROFILE_IMAGE) {
         config_menu_profiles_set_image_from_png(menu, path);
+    } else if (menu->browser_target == CONFIG_BROWSER_TARGET_PRINTOUT) {
+        /* Selecting a printout starts the rename editor over the browser. */
+        config_menu_printing_start_rename(menu,
+                                          config_menu_basename(path),
+                                          path);
+        return 0U;
     }
     return 1U;
 }
@@ -5708,6 +5784,11 @@ static void config_menu_browser_parent(config_menu_t *menu)
     char parent[CONFIG_MENU_PATH_LEN];
 
     if (menu == NULL || menu->browser_active == 0U) {
+        return;
+    }
+    /* The printout browser never leaves its directory tree. */
+    if (menu->browser_target == CONFIG_BROWSER_TARGET_PRINTOUT &&
+        config_menu_path_ieq(menu->browser_dir, PRINTER_SERVICE_DIR) != 0U) {
         return;
     }
     config_menu_parent_path(menu->browser_dir, parent, sizeof(parent));
@@ -6178,6 +6259,18 @@ static void config_menu_activate_item(config_menu_t *menu)
         }
         break;
 
+    case CONFIG_TAB_PRINTING:
+        if (menu->item_focus == CONFIG_PRINTING_ITEM_ENABLE) {
+            config_menu_printing_toggle_ssc(menu);
+        } else if (menu->item_focus == CONFIG_PRINTING_ITEM_BROWSE) {
+            /* Make the jail root reachable before the browser opens. */
+            if (config_menu_mount_sd() == FR_OK) {
+                (void)f_mkdir(PRINTER_SERVICE_DIR);
+            }
+            config_menu_open_browser(menu, CONFIG_BROWSER_TARGET_PRINTOUT);
+        }
+        break;
+
     case CONFIG_TAB_ABOUT:
         break;
 
@@ -6244,6 +6337,7 @@ void config_menu_init(config_menu_t *menu)
     menu->mockingboard_slot4_enabled = CONFIG_DEFAULT_MOCKINGBOARD_SLOT4_ENABLED;
     config_menu_phasor_set_defaults(menu);
     menu->ethernet_slot1_enabled = CONFIG_DEFAULT_ETHERNET_SLOT1_ENABLED;
+    menu->ssc_slot1_enabled = CONFIG_DEFAULT_SSC_SLOT1_ENABLED;
     menu->ethernet_config_enabled = CONFIG_DEFAULT_ETHERNET_CONFIG_ENABLED;
     menu->ethernet_address_mode = CONFIG_DEFAULT_ETHERNET_ADDRESS_MODE;
     menu->ethernet_edit_index = 0U;
@@ -6390,6 +6484,12 @@ uint8_t config_menu_handle_input(config_menu_t *menu, ui_input_t input)
         return 1U;
     }
 
+    /* Printout rename editor / delete confirm run over the browser, so
+     * they must consume input before the browser block does. */
+    if (config_menu_printing_handle_input(menu, input) != 0U) {
+        return 1U;
+    }
+
     if (menu->browser_active != 0U) {
         switch (input.key) {
         case UI_KEY_TAB:
@@ -6409,6 +6509,18 @@ uint8_t config_menu_handle_input(config_menu_t *menu, ui_input_t input)
         case UI_KEY_RIGHT:
         case UI_KEY_ENTER:
             config_menu_browser_select(menu);
+            return 1U;
+        case UI_KEY_SPACE:
+            if (menu->browser_target == CONFIG_BROWSER_TARGET_PRINTOUT) {
+                char name[CONFIG_MENU_PATH_LEN];
+                char path[CONFIG_MENU_PATH_LEN];
+
+                if (config_menu_browser_selected_file(menu,
+                                                      name, sizeof(name),
+                                                      path, sizeof(path)) != 0U) {
+                    config_menu_printing_start_delete(menu, name, path);
+                }
+            }
             return 1U;
         case UI_KEY_BACK:
         case UI_KEY_ESC:
@@ -7184,7 +7296,8 @@ static void config_menu_draw_browser(uint16_t *fb,
 {
     const uint8_t show_preview =
         (uint8_t)(menu != NULL &&
-                  menu->browser_target == CONFIG_BROWSER_TARGET_PROFILE_IMAGE);
+                  (menu->browser_target == CONFIG_BROWSER_TARGET_PROFILE_IMAGE ||
+                   menu->browser_target == CONFIG_BROWSER_TARGET_PRINTOUT));
     const int box_y = y;
     const int box_bottom = CMUI_SCREEN_H - CMUI_MARGIN_Y - CMUI_FOOTER_H - 24;
     const int box_h = box_bottom - box_y;
@@ -7379,6 +7492,9 @@ static void config_menu_draw_page(uint16_t *fb, const config_menu_t *menu,
     case CONFIG_TAB_USB:
         config_menu_draw_usb(fb, menu, x, y, w);
         break;
+    case CONFIG_TAB_PRINTING:
+        config_menu_draw_printing(fb, menu, x, y, w);
+        break;
     case CONFIG_TAB_ABOUT:
         config_menu_draw_about(fb, x, y, w, content_h);
         break;
@@ -7429,5 +7545,7 @@ void config_menu_draw(uint16_t *fb, const config_menu_t *menu, uint8_t usb_owned
                           CARD_MACHINE_MODE_IIPLUS));
     if (menu->usb0_sd_remote_active == 0U) {
         config_menu_draw_browser(fb, menu, body.x, body.y - 4, body.w);
+        /* Printout rename editor / delete confirm draw over the browser. */
+        config_menu_printing_draw_overlays(fb, menu, body.x, body.y, body.w);
     }
 }

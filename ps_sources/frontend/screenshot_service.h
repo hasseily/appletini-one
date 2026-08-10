@@ -39,6 +39,11 @@ void screenshot_service_set_scanlines(uint8_t mode);
 void screenshot_service_update_fattime_from_rtc(const rtc_pcf8563_time_t *rtc);
 void screenshot_service_set_sd_write_hook(screenshot_service_sd_write_hook_t hook,
                                           void *ctx);
+
+/* Fires the registered SD-write hook. Shared by every service that writes
+ * the card locally (screenshots, printouts) so the USB0 mass-storage host
+ * cache gets invalidated. */
+void screenshot_service_note_local_sd_write_complete(void);
 int screenshot_service_save(screenshot_service_kind_t kind,
                             const rtc_pcf8563_time_t *rtc,
                             screenshot_service_result_t *result);
@@ -46,6 +51,10 @@ void screenshot_service_poll(void);
 uint8_t screenshot_service_restore_rect_for_frame(uint16_t *fb,
                                                   screenshot_service_rect_t *rect);
 void screenshot_service_draw_overlay(uint16_t *fb);
+
+/* Transient confirmation at the BOTTOM of the display. This is the same
+ * overlay slot used by screenshot results. */
+void screenshot_service_show_confirmation(const char *text);
 
 /* Transient notice at the TOP of the display (separate instance from the
  * bottom screenshot overlay, so the two never collide). Used for the

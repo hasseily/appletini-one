@@ -193,6 +193,14 @@ static inline uint64_t color_x4(uint16_t color)
     return ((uint64_t)d << 32) | d;
 }
 
+const uint8_t *fb16_builtin_font_glyph(uint8_t ch)
+{
+    if (ch < 0x20U || ch > 0x7FU) {
+        return (const uint8_t *)0;
+    }
+    return font7x8[ch - 0x20U];
+}
+
 /* ---------- Solid fills ---------- */
 
 void fb16_clear(uint16_t *fb, uint16_t color)

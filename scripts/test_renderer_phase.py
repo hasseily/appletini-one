@@ -83,14 +83,10 @@ def test_per_switch_phase_lookahead_is_selective_and_ordered() -> None:
     egress_h = EGRESS_H.read_text(encoding="utf-8")
 
     vtw_start = renderer.index("#define VTW_PHASE_SW_MASK")
-    delay_start = renderer.index("#define PHASE_DELAY_1_SW_MASK", vtw_start)
-    advance1_start = renderer.index("#define PHASE_ADVANCE_1_SW_MASK", delay_start)
-    advance2_start = renderer.index("#define PHASE_ADVANCE_2_SW_MASK", advance1_start)
-    mask_end = renderer.index("static uint8_t  s_vtw_1mhz_active", advance2_start)
-    vtw_mask = renderer[vtw_start:delay_start]
-    delay_mask = renderer[delay_start:advance1_start]
-    advance1_mask = renderer[advance1_start:advance2_start]
-    advance2_mask = renderer[advance2_start:mask_end]
+    tuning_start = renderer.index("#define PHASE_DELAY_1", vtw_start)
+    mask_end = renderer.index("static uint8_t  s_vtw_1mhz_active", tuning_start)
+    vtw_mask = renderer[vtw_start:tuning_start]
+    tuning = renderer[tuning_start:mask_end]
     for switch in (
         "ACE_SWB_80STORE_BIT",
         "ACE_SWB_TEXT_BIT",
@@ -106,18 +102,19 @@ def test_per_switch_phase_lookahead_is_selective_and_ordered() -> None:
         "ALTCHAR must bypass the vTW-only normalization",
     )
     require(
-        "ACE_SWB_TEXT_BIT" in delay_mask and
-        "ACE_SWB_MIXED_BIT" in delay_mask,
-        "C050 TEXT and C052 MIXED must be delayed one scanner cycle",
+        "#define PHASE_C050_TEXT       PHASE_NATIVE" in tuning and
+        "#define PHASE_C052_MIXED      PHASE_DELAY_1" in tuning and
+        "#define PHASE_C00D_80COL      PHASE_NATIVE" in tuning and
+        "#define PHASE_C05E_DHIRES     PHASE_NATIVE" in tuning and
+        "#define PHASE_C00F_ALTCHARSET PHASE_NATIVE" in tuning,
+        "only C052 MIXED must retain a one-cycle scanner delay",
     )
     require(
-        "ACE_SWB_80COL_BIT" in advance1_mask and
-        "ACE_SWB_DHIRES_BIT" in advance1_mask,
-        "C00D 80COL and C05E DHIRES must advance one scanner cycle",
-    )
-    require(
-        "ACE_SWB_ALTCHARSET_BIT" in advance2_mask,
-        "C00F ALTCHARSET must advance two scanner cycles",
+        "#define PHASE_SWITCH_MASK_AT(value)" in tuning and
+        "PHASE_SWITCH_MASK_AT(PHASE_DELAY_1)" in tuning and
+        "PHASE_SWITCH_MASK_AT(PHASE_ADVANCE_1)" in tuning and
+        "PHASE_SWITCH_MASK_AT(PHASE_ADVANCE_2)" in tuning,
+        "phase masks must derive from the per-switch tuning table",
     )
     require(
         "phase_records_are_consecutive(s_phase_prev_record, rec)" in renderer and

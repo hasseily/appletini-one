@@ -171,6 +171,11 @@ module apple_top(
     localparam logic [7:0] CARD_CTRL_REG_ETH_DATA     = 8'h47; // W5100S host access byte
     localparam logic [7:0] CARD_CTRL_REG_ETH_CMD      = 8'h48; // bit0 go, bit1 write
     localparam logic [7:0] CARD_CTRL_REG_ETH_STATUS   = 8'h49; // ready/busy/done/error + read byte
+    // Virtual SSC printer FIFO drain window (ssc_card in slot 1).
+    localparam logic [7:0] CARD_CTRL_REG_SSC_STATUS   = 8'h4A; // [11:0] count, [16] overflow, [17] enabled
+    localparam logic [7:0] CARD_CTRL_REG_SSC_HEAD     = 8'h4B; // [7:0] oldest byte, [8] valid
+    localparam logic [7:0] CARD_CTRL_REG_SSC_CTRL     = 8'h4C; // bit0 pop, bit1 clear, bit2 overflow clear
+    localparam logic [7:0] CARD_CTRL_REG_SSC_ACIA     = 8'h4D; // [7:0] command, [15:8] control latch
     localparam logic [7:0] CARD_CTRL_REG_VTW_WR_CHECK = 8'h36;
     localparam logic [7:0] CARD_CTRL_REG_VTW_WR_ADDR  = 8'h37;
     localparam logic [7:0] CARD_CTRL_REG_VTW_C000_CTX = 8'h38;
@@ -249,6 +254,7 @@ module apple_top(
     localparam logic [7:0] CARD_CTRL_REG_VTW_SLOWDOWN    = 8'h6B;
     localparam int unsigned CARD_CTRL_FEATURE_NSC_ENABLE_BIT = 0;
     localparam int unsigned CARD_CTRL_FEATURE_SS_ENABLE_BIT  = 1;
+    localparam int unsigned CARD_CTRL_FEATURE_SSC_ENABLE_BIT = 2;
     localparam int unsigned CARD_CTRL_DISK2_SOUND_EVENT_SHIFT = 16;
     localparam logic [31:0] CARD_CTRL_DISK2_SOUND_EVENT_MASK  = 32'h000F_0000;
     localparam logic [31:0] CARD_CTRL_ETH_CMD_GO              = 32'h0000_0001;
@@ -291,6 +297,15 @@ module apple_top(
     logic        eth_host_done;
     logic        eth_host_error;
     logic [7:0]  eth_host_rdata;
+    logic        ssc_tx_pop_pulse = 1'b0;
+    logic        ssc_tx_clear_pulse = 1'b0;
+    logic        ssc_tx_ovf_clear_pulse = 1'b0;
+    logic [11:0] ssc_tx_count;
+    logic [7:0]  ssc_tx_head;
+    logic        ssc_tx_head_valid;
+    logic        ssc_tx_overflow;
+    logic [7:0]  ssc_acia_command;
+    logic [7:0]  ssc_acia_control;
     logic [31:0] disk2_sound_sample_base_q = 32'h0000_0000;
     logic [31:0] disk2_sound_control_q = 32'h0000_0000; // bit 0 enable, [11:8] volume 0..10
     globals::AppleBus_write ab_write_arb;
@@ -315,6 +330,10 @@ module apple_top(
         card_feature_enable_mask_q[CARD_CTRL_FEATURE_SS_ENABLE_BIT];
     wire no_slot_clock_enabled =
         card_feature_enable_mask_q[CARD_CTRL_FEATURE_NSC_ENABLE_BIT];
+    /* The SSC shares slot 1 with the Uthernet II (disjoint decode), so it
+     * enables through its own feature bit instead of the slot mask. */
+    wire card_ssc_enable =
+        card_feature_enable_mask_q[CARD_CTRL_FEATURE_SSC_ENABLE_BIT];
     wire [7:0] no_slot_clock_slot_mask =
         (card_slot2_enable ? 8'h04 : 8'h00) |
         (card_slot4_enable ? 8'h10 : 8'h00) |
@@ -661,6 +680,7 @@ module apple_top(
     logic        mb1_dbg_ssi_enable_ints;
     globals::AppleBus_write applicard_ab_write;
     globals::AppleBus_write uthernet_ab_write;
+    globals::AppleBus_write ssc_ab_write;
     globals::AppleBus_write disk2_ab_write;
     globals::AppleBus_write smartport_ab_write;
     globals::AppleBus_write boot_menu_ab_write;
@@ -1044,6 +1064,28 @@ module apple_top(
         .host_done(eth_host_done),
         .host_error(eth_host_error),
         .host_rdata(eth_host_rdata)
+    );
+
+    /* Virtual Super Serial Card (printer duty). Shares slot 1 with the
+     * Uthernet II: the SSC owns the slot ROM, the $C800 window, and DEVSEL
+     * $C0n1/$C0n2/$C0n8-$C0nF, while the Uthernet II answers only
+     * $C0n4-$C0n7. Printed bytes drain through the SSC card-control regs. */
+    ssc_card ssc_card_i (
+        .clk(clk),
+        .rstn(rstn[2]),
+        .ab_read(gate_ab(ab_read, card_ssc_enable)),
+        .sss(sss),
+        .slot_assign(3'h1),
+        .ab_write(ssc_ab_write),
+        .tx_count(ssc_tx_count),
+        .tx_head(ssc_tx_head),
+        .tx_head_valid(ssc_tx_head_valid),
+        .tx_pop(ssc_tx_pop_pulse),
+        .tx_clear(ssc_tx_clear_pulse),
+        .tx_overflow(ssc_tx_overflow),
+        .tx_overflow_clear(ssc_tx_ovf_clear_pulse),
+        .acia_command(ssc_acia_command),
+        .acia_control(ssc_acia_control)
     );
 
     // SuperSprite (TMS9918 VDP) -- PL front end for the PS software VDP.
@@ -1559,7 +1601,7 @@ module apple_top(
     // every existing client keeps its index. vTW and AD8088 can both drive
     // address/RW, but applicard_card blocks AD8088 whenever vTW is enabled,
     // so the two bus masters cannot contend at this priority mux.
-    apple_bus_write_arbiter #(.NUM_CLIENTS(11))
+    apple_bus_write_arbiter #(.NUM_CLIENTS(12))
     apple_bus_write_arbiter_i(
         .inh_allowed(machine_inh_allowed),
         .client_writes({
@@ -1569,6 +1611,7 @@ module apple_top(
             mouse_ab_write,
             applicard_ab_write,
             uthernet_ab_write,
+            ssc_ab_write,
             supersprite_ab_write,
             disk2_ab_write,
             smartport_ab_write,
@@ -1694,6 +1737,9 @@ module apple_top(
             menu_chime_start_q <= 1'b0;
             disk2_menu_sound_event_q <= 4'd0;
             eth_host_req_pulse <= 1'b0;
+            ssc_tx_pop_pulse <= 1'b0;
+            ssc_tx_clear_pulse <= 1'b0;
+            ssc_tx_ovf_clear_pulse <= 1'b0;
             vtw_arm_go_pulse_q <= 1'b0;
             vtw_arm_post_pulse_q <= 1'b0;
             vtw_arm_rw_flush_pulse_q <= 1'b0;
@@ -1814,6 +1860,13 @@ module apple_top(
                                 eth_host_done_q <= 1'b1;
                                 eth_host_error_q <= 1'b1;
                             end
+                        end
+                    end
+                    CARD_CTRL_REG_SSC_CTRL: begin
+                        if (as_common.wstrb[0] != 1'b0) begin
+                            ssc_tx_pop_pulse       <= as_common.wdata[0];
+                            ssc_tx_clear_pulse     <= as_common.wdata[1];
+                            ssc_tx_ovf_clear_pulse <= as_common.wdata[2];
                         end
                     end
                     CARD_CTRL_REG_DISK2_SOUND_BASE: begin
@@ -1976,6 +2029,16 @@ module apple_top(
                     eth_host_done_q,
                     eth_host_busy_q,
                     eth_host_ready
+                };
+                CARD_CTRL_REG_SSC_STATUS:          as_client_rdata_q <= {
+                    14'h0000, card_ssc_enable, ssc_tx_overflow,
+                    4'h0, ssc_tx_count
+                };
+                CARD_CTRL_REG_SSC_HEAD:            as_client_rdata_q <= {
+                    23'h000000, ssc_tx_head_valid, ssc_tx_head
+                };
+                CARD_CTRL_REG_SSC_ACIA:            as_client_rdata_q <= {
+                    16'h0000, ssc_acia_control, ssc_acia_command
                 };
                 CARD_CTRL_REG_DISK2_SOUND_BASE:    as_client_rdata_q <= disk2_sound_sample_base_q;
                 CARD_CTRL_REG_DISK2_SOUND_CONTROL: as_client_rdata_q <= disk2_sound_control_q;

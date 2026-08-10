@@ -28,6 +28,8 @@ Provenance of the SHR demo images (originals in tmp/shr4, untracked):
 - gridtest.shr4: rebuilt from a bare pixel dump (SCBs, QuickDraw II
   default 320 palette, ctrl, SHR4 magic added).
 - eye320.shr4: copy of shr_testimages/eye320a.shr4 (320-mode RGGB).
+- observatory.pal256 and skycity.pal256i: original Appletini showcase art,
+  packed with scripts/build_pal256_image.py for the 320x100 PAL256 layout.
 Legacy images (originals in tmp/legacy_img) are raw page dumps; the
 interlaced ones carry the baked A2Li signal, nothing else was
 altered.
@@ -138,10 +140,10 @@ IMAGE_FILES = (
     ("DHGR", "FACE.I", "legacy", "face.dhri", 32768, FMT_DHGRI, None),
     ("SHR", "BEACH.3200", "shr", "beach.3200", 39168, FMT_SHR, 0),
     ("SHR", "PORSCHE.INT", "shr", "cartest.shr4i", 65536, FMT_SHR, 1),
-    ("SHR", "FLUIDART.INT", "shr", "fluidart.shr4i", 65536, FMT_SHR, 1),
+    ("SHR", "SKYCITY.INT", "shr", "skycity.pal256i", 65536, FMT_SHR, 1),
     ("SHR", "DRAGONS.INT", "shr", "dragons.shr4i", 65536, FMT_SHR, 1),
     ("SHR", "GOTHOUSES.INT", "shr", "gothouses.shr4i", 65536, FMT_SHR, 1),
-    ("SHR", "GRID.TEST", "shr", "gridtest.shr4", 32768, FMT_SHR, 0),
+    ("SHR", "OBSERVATORY", "shr", "observatory.pal256", 32768, FMT_SHR, 0),
     ("SHR", "EYE.320", "shr", "eye320.shr4", 32768, FMT_SHR, 0),
 )
 

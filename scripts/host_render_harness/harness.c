@@ -571,6 +571,24 @@ static void t3_shr_transitions(void)
     expect(s_pub_count == published,
            "T3 rebuilt static frame returns to cache-hit state");
 
+    published = s_pub_count;
+    feed(rec_write(0x019DF8u, 0u));
+    shr_marker();
+    expect(s_pub_count == published + 1u,
+           "T3 progressive PAL256 publishes at the first frame marker");
+    expect(s_pub_detail == APPLE_FB_FORMAT_DETAIL(
+               APPLE_FB_FORMAT_SHR4_320,
+               APPLE_FB_FORMAT_SELECTOR_PAL256,
+               APPLE_FB_FORMAT_PAGE_NONE),
+           "T3 progressive PAL256 publishes 320x100 detail");
+    expect(memcmp(s_slot_mem[s_pub_slot],
+                  s_slot_mem[s_pub_slot] + 640u * 4u,
+                  640u * 4u) == 0 &&
+           memcmp(s_slot_mem[s_pub_slot],
+                  s_slot_mem[s_pub_slot] + 640u * 4u * 3u,
+                  640u * 4u) == 0,
+           "T3 progressive PAL256 repeats each source row four times");
+
     free(beach); free(eye); free(fluid);
 }
 

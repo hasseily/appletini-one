@@ -242,13 +242,11 @@ static uint32_t s_frame_display_mode = APPLE_FB_DISPLAY_MODE_LEGACY;
 static uint32_t s_previous_frame_display_mode = APPLE_FB_DISPLAY_MODE_LEGACY;
 static uint32_t s_frame_format_detail = APPLE_FB_FORMAT_UNKNOWN;
 
-/* Full-shadow rendering. Full RGGB decode can take longer than one Apple
- * frame. A captured video write advances g_video_shadow_generation. Static
- * SHR frames therefore keep the last published slot without decoding or
- * publishing a duplicate. A changed shadow must remain stable for one frame
- * before a rebuild: this prevents repeated 30 ms decodes during a fast bulk
- * load and lets the capture consumer keep up with the posted-write stream.
- * Legacy paged modes use the same stable-snapshot rule before weaving fields. */
+/* Full-shadow rendering. A captured video write advances
+ * g_video_shadow_generation. Progressive SHR publishes the latest shadow at
+ * the next frame marker. Costly RGGB/SHR-3200 and paired modes must remain
+ * stable for one frame before a rebuild so they cannot keep the capture
+ * consumer busy with stale decodes. Legacy paged modes use the same rule. */
 static uint8_t  s_shr_cache_valid = 0u;
 static uint8_t  s_shr_cache_invalidate = 1u;
 static uint32_t s_shr_cache_generation = 0u;
@@ -1467,6 +1465,35 @@ static inline int shr3200_magic_present(const volatile uint8_t *bank) {
            bank[SHR_MAGIC_ADDR + 3u] == 0xB0u;     /* '0' | $80 */
 }
 
+static uint8_t shr4_field_uses_selector(const volatile uint8_t *bank,
+                                        uint8_t selector)
+{
+    if (!shr4_magic_present(bank)) {
+        return 0u;
+    }
+    for (uint32_t addr = 0x9E01u; addr <= 0x9FFFu; addr += 2u) {
+        if ((bank[addr] >> 4) == selector) {
+            return 1u;
+        }
+    }
+    return 0u;
+}
+
+static uint8_t shr_shadow_needs_settle(void)
+{
+    if (shr3200_magic_present(g_aux_bank)) {
+        return 1u;
+    }
+    const uint8_t paged = g_aux_bank[SHR_CTRL_ADDR];
+    if (shr4_magic_present(g_aux_bank) && (paged == 1u || paged == 2u)) {
+        return 1u;
+    }
+
+    /* Selector 1 is RGGB. Other progressive SHR4 selectors are cheap enough
+     * to show their latest complete shadow at each frame marker. */
+    return shr4_field_uses_selector(g_aux_bank, 1u);
+}
+
 /* Direct RGB444 -> BGRA, matching ConvertIIgs2RGB (channel * 16). */
 static inline uint32_t shr4_rgb444(uint8_t r4, uint8_t g4, uint8_t b4) {
     return shr_apply_c029_bw(shr_pack_bgra((uint8_t)(r4 * 16u),
@@ -1828,9 +1855,9 @@ static uint32_t shr4_r4g4b4_pixel(uint32_t y, int32_t px) {
                        (uint8_t)(b2 & 0x0Fu));
 }
 
-/* PAL256: the SHR byte is an index into the flat 512-byte palette area */
-/* at aux $9E00 (all 16 palettes as one 256-color table). Both pixels   */
-/* of the byte show the same color.                                     */
+/* PAL256: the SHR byte is an index into the flat 512-byte palette area
+ * at $9E00 (all 16 palettes as one 256-color table). PAL256 is a
+ * field-wide 320x100 mode: 320 byte indices per packed source row. */
 static inline uint32_t shr4_pal256_color(uint8_t idx) {
     const uint16_t a = (uint16_t)(0x9E00u + ((uint16_t)idx * 2u));
     const uint16_t raw =
@@ -1840,6 +1867,20 @@ static inline uint32_t shr4_pal256_color(uint8_t idx) {
         (uint8_t)(((raw >> 8) & 0x0Fu) * 16u),
         (uint8_t)(((raw >> 4) & 0x0Fu) * 16u),
         (uint8_t)((raw & 0x0Fu) * 16u)));
+}
+
+static void shr4_render_pal256_line(uint32_t *row,
+                                    const volatile uint8_t *bank,
+                                    uint32_t y)
+{
+    const uint32_t base = 0x2000u + 320u * y;
+
+    s_f_bank = bank;
+    for (uint32_t x = 0u; x < 320u; ++x) {
+        const uint32_t color = shr4_pal256_color(bank[base + x]);
+        row[x * 2u] = color;
+        row[x * 2u + 1u] = color;
+    }
 }
 
 /* SHR-3200 ("Brooks"): magic '3200' at $9DFC; ctrl bytes at $9DF8 are  */
@@ -2046,6 +2087,53 @@ static inline uint32_t bgra_avg(uint32_t a, uint32_t b)
 static uint32_t s_shr_merge_row_a[SHR_WIDTH] __attribute__((aligned(16)));
 static uint32_t s_shr_merge_row_b[SHR_WIDTH] __attribute__((aligned(16)));
 
+static void render_shr4_pal256_frame(uint8_t page_mode)
+{
+    s_shr_interlaced = 0u;
+    s_shr_badge_family_mask |= 2u;
+    s_shr_badge_geometry_mask |= 1u;
+    shr_badge_note_selector(2u);
+
+    if (page_mode == APPLE_FB_FORMAT_PAGE_INTERLACE) {
+        /* PAL256 interlace is one 320x200 image: AUX supplies the first
+         * 100 rows and MAIN the next 100. Double each row to fill 400. */
+        for (uint32_t field = 0u; field < 2u; ++field) {
+            const volatile uint8_t *bank = field ? g_main_bank : g_aux_bank;
+            for (uint32_t y = 0u; y < 100u; ++y) {
+                uint32_t *out = &g_atn_framebuffer[
+                    ((field * 100u + y) * 2u) * SHR_WIDTH];
+                shr4_render_pal256_line(out, bank, y);
+                memcpy(out + SHR_WIDTH, out, SHR_WIDTH * sizeof(uint32_t));
+            }
+        }
+    } else if (page_mode == APPLE_FB_FORMAT_PAGE_FLIP_MERGE) {
+        for (uint32_t y = 0u; y < 100u; ++y) {
+            uint32_t *out = &g_atn_framebuffer[(y * 4u) * SHR_WIDTH];
+            shr4_render_pal256_line(s_shr_merge_row_a, g_aux_bank, y);
+            shr4_render_pal256_line(s_shr_merge_row_b, g_main_bank, y);
+            for (uint32_t x = 0u; x < SHR_WIDTH; ++x) {
+                out[x] = bgra_avg(s_shr_merge_row_a[x],
+                                  s_shr_merge_row_b[x]);
+            }
+            for (uint32_t copy = 1u; copy < 4u; ++copy) {
+                memcpy(out + copy * SHR_WIDTH, out,
+                       SHR_WIDTH * sizeof(uint32_t));
+            }
+        }
+    } else {
+        /* Progressive PAL256 is 320x100. Quad each row to fill 640x400. */
+        for (uint32_t y = 0u; y < 100u; ++y) {
+            uint32_t *out = &g_atn_framebuffer[(y * 4u) * SHR_WIDTH];
+            shr4_render_pal256_line(out, g_aux_bank, y);
+            for (uint32_t copy = 1u; copy < 4u; ++copy) {
+                memcpy(out + copy * SHR_WIDTH, out,
+                       SHR_WIDTH * sizeof(uint32_t));
+            }
+        }
+    }
+    s_frame_format_detail = shr_badge_detail(page_mode);
+}
+
 static void render_shr_frame_full(void)
 {
     uint8_t page_mode = APPLE_FB_FORMAT_PAGE_NONE;
@@ -2065,8 +2153,7 @@ static void render_shr_frame_full(void)
     /* Mode/paged decisions come from the AUX control plane, re-read
      * every frame (mode-exit hygiene: clearing $9DFC drops the extended
      * decode on the next frame). SHR4 wins over 3200, per SDD. The
-     * creator declares the paged TYPE in ctrl byte 0: 1 = interlace
-     * (even rows aux, odd rows main; double vertical resolution),
+     * creator declares the paged TYPE in ctrl byte 0: 1 = interlace,
      * 2 = page flip (two full-rate frames; merged below 120 Hz). */
     shr_eval_field_modes(g_aux_bank);
     s_shr_interlace_mode = 0u;
@@ -2084,8 +2171,14 @@ static void render_shr_frame_full(void)
     }
     shr_update_post_wide((s_shr_interlace_mode || flip_merge) ? 1u : 0u);
 
+    if (s_shr4_frame_active &&
+        shr4_field_uses_selector(g_aux_bank, 2u)) {
+        render_shr4_pal256_frame(page_mode);
+        return;
+    }
+
     if (s_shr_interlace_mode != 0u) {
-        /* Interlace: even output rows from aux, odd rows from main; each
+        /* Other interlaced modes alternate AUX and MAIN output rows. Each
          * field carries its own mode data, SCBs, and palettes. */
         s_shr_interlaced = 1u;
         for (uint32_t field = 0u; field < 2u; ++field) {
@@ -2800,15 +2893,19 @@ static void on_frame_start(void) {
              generation != s_shr_cache_generation) ? 1u : 0u;
 
         if (rebuild != 0u) {
-            if (s_shr_settle_armed == 0u ||
-                generation != s_shr_settle_generation) {
-                /* Keep showing the last complete frame while a loader is
-                 * still changing the shadow. One unchanged frame marker is
-                 * enough to prove that the bulk stream has stopped. */
+            uint8_t render_now = 1u;
+
+            if (shr_shadow_needs_settle() != 0u &&
+                (s_shr_settle_armed == 0u ||
+                 generation != s_shr_settle_generation)) {
+                /* Keep the last complete costly or paired frame while its
+                 * shadow changes. One quiet frame marker permits the rebuild. */
                 s_shr_settle_generation = generation;
                 s_shr_settle_armed = 1u;
                 g_acr_shr_frames_skipped++;
-            } else {
+                render_now = 0u;
+            }
+            if (render_now != 0u) {
                 render_shr_frame_full();
                 publish_current_frame();
                 s_shr_cache_generation = g_video_shadow_generation;

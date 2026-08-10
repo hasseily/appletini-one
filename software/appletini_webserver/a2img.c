@@ -2,7 +2,7 @@
  *
  * Fetches any web image through the wsrv.nl proxy (plain HTTP; the
  * proxy terminates TLS to the origin and resizes/transcodes server
- * side) as a 160x200 GIF, and decodes it STRAIGHT out of the TCP
+ * side) as a 320x100 GIF, and decodes it STRAIGHT out of the TCP
  * segments into aux SHR memory -- the 30 KB GIF never exists in Apple
  * RAM. The GIF's 256-color palette maps 1:1 onto SHR4 PAL256: palette
  * to aux $9E00 (as $GB, $2R entries -- the $2 nibble is the PAL256
@@ -11,10 +11,8 @@
  * while it downloads.
  *
  * Needs the SHR4 firmware to decode PAL256 (plain-SHR firmware shows
- * noise), a //e with aux memory, and the Ethernet port. 160x200 shows
- * line-doubled as the full 640x400 SHR output. A true 400-line double
- * field would need main $2000-$9FFF, where this program lives; the
- * LZW tables alone outgrow what is left, so PAL256 stays single-field.
+ * noise), a //e with aux memory, and the Ethernet port. 320x100 fills
+ * the 32 KB pixel field and each row expands four times to 640x400.
  *
  * Keys when done: G new URL, R reload, any other key to the menu.
  */
@@ -34,8 +32,8 @@
     "https://wallpapers-clan.com/wp-content/uploads/2024/02/" \
     "marvel-spiderman-in-rain-comics-desktop-wallpaper-cover.jpg"
 
-#define IMG_W      160U
-#define IMG_H      200U
+#define IMG_W      320U
+#define IMG_H      100U
 #define URL_CAP    180U
 #define REQ_CAP    420U
 
@@ -84,7 +82,7 @@ static uint8_t pal_buf[512];
 
 static uint16_t ext_left;
 
-static uint8_t img_w;           /* clipped to IMG_W */
+static uint16_t img_w;          /* clipped to IMG_W */
 static uint16_t src_w;          /* full source width */
 static uint16_t src_h;
 static uint8_t interlaced;
@@ -185,7 +183,7 @@ static void pal_feed(uint8_t b)
 static void flush_line(void)
 {
     if (out_row < IMG_H) {
-        aux_dst = (uint16_t)(0x2000U + 160U * out_row);
+        aux_dst = (uint16_t)(0x2000U + IMG_W * out_row);
         aux_len = IMG_W;
         aux_copy(line_buf);
     }
@@ -398,7 +396,7 @@ static void step(uint8_t b)
             fail("IMAGE TOO WIDE");
             break;
         }
-        img_w = (src_w > IMG_W) ? (uint8_t)IMG_W : (uint8_t)src_w;
+        img_w = (src_w > IMG_W) ? IMG_W : src_w;
         interlaced = (uint8_t)((hold[8] & 0x40U) != 0U);
         pass = 0;
         out_row = interlaced ? pass_start[0] : 0U;
@@ -509,7 +507,7 @@ static void build_request(void)
     req_len = 0;
     req_text("GET /?url=");
     req_url_encoded(url);
-    req_text("&w=160&h=200&fit=cover&output=gif HTTP/1.0\r\nHost: ");
+    req_text("&w=320&h=100&fit=cover&output=gif HTTP/1.0\r\nHost: ");
     req_text(PROXY_HOST);
     req_text("\r\nUser-Agent: A2IMG\r\nConnection: close\r\n\r\n");
 }
@@ -535,7 +533,7 @@ static uint8_t fetch(void)
     cputs("A2IMG - INTERNET IMAGE VIEWER (SHR4)\r\n\r\n");
     cputs("URL: ");
     cputs(url);
-    cputs("\r\n\r\nVIA HTTP://" PROXY_HOST "  160X200 PAL256\r\n");
+    cputs("\r\n\r\nVIA HTTP://" PROXY_HOST "  320X100 PAL256\r\n");
 
     reset_decoder();
     build_request();

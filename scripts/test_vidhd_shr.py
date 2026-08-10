@@ -284,11 +284,12 @@ def test_renderer_implements_applewin_shr_decode() -> None:
             "renderer must be able to build a full SHR frame directly from AUX shadow")
     require("if (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_SHR) {" in source and
             "if (rebuild != 0u) {" in source and
+            "shr_shadow_needs_settle() != 0u" in source and
             "generation != s_shr_settle_generation" in source and
             "render_shr_frame_full();" in source and
             "publish_current_frame();" in source,
-            "renderer must settle, render, and publish a changed SHR shadow "
-            "at a frame start")
+            "renderer must render progressive SHR at a frame start and settle "
+            "costly or paired modes")
     require("const int shr_frame_marker =\n        shr_active && line == 0u && cycle == 0u;" in source and
             "(s_prev_line >= 200u || (shr_frame_marker && s_render_armed))" in source,
             "renderer must treat sparse SHR markers as frame boundaries")
@@ -442,6 +443,11 @@ def test_shr_generation_cache() -> None:
             "static uint32_t s_shr_settle_generation = 0u;" in renderer,
             "renderer must track cache validity, non-memory changes, and generation")
     require("generation != s_shr_cache_generation" in renderer and
+            "static uint8_t shr_shadow_needs_settle(void)" in renderer and
+            "shr3200_magic_present(g_aux_bank)" in renderer and
+            "const uint8_t paged = g_aux_bank[SHR_CTRL_ADDR];" in renderer and
+            "return shr4_field_uses_selector(g_aux_bank, 1u);" in renderer and
+            "if (shr_shadow_needs_settle() != 0u &&" in renderer and
             "generation != s_shr_settle_generation" in renderer and
             "s_shr_settle_generation = generation;" in renderer and
             "render_shr_frame_full();" in renderer and
@@ -449,8 +455,8 @@ def test_shr_generation_cache() -> None:
             "s_shr_cache_generation = g_video_shadow_generation;" in renderer and
             "g_acr_shr_cache_rebuilds++;" in renderer and
             "g_acr_shr_frames_skipped++;" in renderer,
-            "changed SHR frames must settle before one full rebuild while "
-            "static frames skip work")
+            "progressive SHR must publish promptly while RGGB, SHR-3200, and "
+            "paired modes settle before one full rebuild")
     require("static uint8_t legacy_shadow_is_settled(void)" in renderer and
             "generation != s_legacy_settle_generation" in renderer and
             "s_frame_format_detail != s_legacy_settle_detail" in renderer and
@@ -534,9 +540,10 @@ def test_no_vidhd_identity_and_slot_layout() -> None:
             "VidHD identity card must not be in the Vivado source list")
     require("vidhd_card" not in top,
             "no VidHD card may be instantiated")
-    # 11 clients = the 10 post-VidHD-removal clients plus the virtual
+    # 12 clients = the post-VidHD clients, ImageWriter, and the virtual
     # TransWarp bus master; the VidHD client itself must stay gone.
-    require("apple_bus_write_arbiter #(.NUM_CLIENTS(11))" in top and
+    require("apple_bus_write_arbiter #(.NUM_CLIENTS(12))" in top and
+            "ssc_ab_write" in top and
             "vidhd_ab_write" not in top,
             "bus write arbiter must not include a VidHD client")
     require("logic sw_slotc3rom;" in globals_sv and
@@ -608,9 +615,15 @@ def test_shr4_extended_modes() -> None:
                   "shr4_pal256_color", "case 3u:", "shr4_r4g4b4_pixel"):
         require(token in src, f"SHR4 dispatch must include {token}")
 
-    # PAL256 uses the flat 512-byte palette area as one 256-color table.
-    require("0x9E00u + ((uint16_t)idx * 2u)" in src,
-            "PAL256 must index the flat palette at aux $9E00")
+    # PAL256 uses the flat 512-byte palette as one table and packs one
+    # 320-byte row per source line.
+    require("0x9E00u + ((uint16_t)idx * 2u)" in src and
+            "static void shr4_render_pal256_line" in src and
+            "const uint32_t base = 0x2000u + 320u * y;" in src and
+            "((field * 100u + y) * 2u) * SHR_WIDTH" in src and
+            "g_atn_framebuffer[(y * 4u) * SHR_WIDTH]" in src,
+            "PAL256 must render 320x100 progressive and AUX-then-MAIN "
+            "320x200 interlace")
 
     # Demosaic weight tables: each must sum to 16 (doubled Malvar gain 8)
     # so a flat field passes through unchanged.

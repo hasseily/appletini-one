@@ -7,10 +7,10 @@ validate the firmware decode without hardware. Supported:
 
 - standard SHR 320/640 (colorfill excluded, as in the SHR4 path)
 - SHR4 (magic $D3C8D2B4): per-pixel submode dispatch -- $1 RGGB Malvar
-  demosaic (4-bit samples in 320, 2-bit in 640), $2 PAL256, $3 R4G4B4,
-  else standard
+  demosaic (4-bit samples in 320, 2-bit in 640), $3 R4G4B4, else standard;
+  $2 selects field-wide PAL256 with 320x100 packed byte pixels
 - SHR-3200 (magic $B3B2B0B0): 200 per-line palettes, reversed index
-- interlace (even rows aux field, odd rows main field)
+- interlace (PAL256: AUX top 100 rows, MAIN bottom 100; other modes alternate)
 - paired fields (renders both source fields as separate PNG references;
   firmware does not alternate them)
 
@@ -66,6 +66,8 @@ class Field:
         self.bank, self.aux, self.main = bank, aux, main
         self.shr4 = bank[MAGIC - 0x2000:MAGIC - 0x2000 + 4] == \
             b"\xd3\xc8\xd2\xb4"
+        self.pal256 = self.shr4 and any(
+            (bank[0x7E01 + i * 2] >> 4) == 2 for i in range(256))
         self.shr3200 = False
         if not self.shr4 and bank[MAGIC - 0x2000:MAGIC - 0x2000 + 4] == \
                 b"\xb3\xb2\xb0\xb0":
@@ -136,6 +138,15 @@ class Renderer:
             return (filt(K_XGX), own, filt(K_XG))
         return (filt(K_RB), filt(K_G), own)
 
+    def pal256_line(self, field, y):
+        px_row = []
+        for x in range(320):
+            idx = rd(field.bank, 0x2000 + 320 * y + x)
+            a = 0x9E00 + idx * 2
+            c = gs_rgb(rd(field.bank, a) | (rd(field.bank, a + 1) << 8))
+            px_row.extend((c, c))
+        return b"".join(bytes(c) for c in px_row)
+
     def line(self, field, y, out_row):
         """One SHR line -> 640 RGB pixels. out_row is the RGGB row space
         (0..199 per field, 0..399 interlaced), like s_f_out_row."""
@@ -202,6 +213,22 @@ class Renderer:
 
     def frame(self, field_index=0):
         rows = [None] * 400
+        aux_field = Field(self.aux, self.aux, self.main)
+        if aux_field.pal256:
+            if self.interlaced:
+                for fi, bank in enumerate((self.aux, self.main)):
+                    field = Field(bank, self.aux, self.main)
+                    for y in range(100):
+                        row = self.pal256_line(field, y)
+                        out_y = (fi * 100 + y) * 2
+                        rows[out_y] = rows[out_y + 1] = row
+            else:
+                bank = self.main if (self.paged == 2 and field_index) else self.aux
+                field = Field(bank, self.aux, self.main)
+                for y in range(100):
+                    row = self.pal256_line(field, y)
+                    rows[y * 4:y * 4 + 4] = [row] * 4
+            return rows
         if self.interlaced:
             for fi, bank in enumerate((self.aux, self.main)):
                 field = Field(bank, self.aux, self.main)

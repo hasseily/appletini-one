@@ -829,6 +829,16 @@ def create_and_build_app(name, src_subdir, domain="standalone_ps7_cortexa9_0"):
             lambda: set_userconfig_mfpu("frontend_core1", "-mfpu=neon"),
         )
     run_step(f"Build app {name}", lambda: comp.build())
+    # Vitis 2025.2 can print a failed CMake build yet return normally from
+    # comp.build(). Treat the ELF as the build result so the script cannot
+    # report success after a link failure.
+    run_step(
+        f"Verify app {name} ELF",
+        lambda: require_path(
+            f"Verify {name} build output",
+            Path("vitis_workspace") / name / "build" / f"{name}.elf",
+        ),
+    )
     return comp
 
 
@@ -1007,6 +1017,13 @@ run_step(
 run_step("Generate core1 blob (objcopy + .S stub)",
          generate_core1_blob_and_stub)
 run_step("Build app frontend", lambda: frontend_comp.build())
+run_step(
+    "Verify app frontend ELF",
+    lambda: require_path(
+        "Verify frontend build output",
+        Path("vitis_workspace") / "frontend" / "build" / "frontend.elf",
+    ),
+)
 
 run_step("Fix frontend launch.json bitstream path", lambda: fix_launch_bitstream("frontend"))
 run_step("Fix bootloader launch.json bitstream path", lambda: fix_launch_bitstream("bootloader"))

@@ -107,8 +107,9 @@ def test_sources():
             "printout actions must delete and rename through FatFs")
     require("PRINTER_SERVICE_DIR" in service and
             "lodepng_encode_memory" in service and
-            "LCT_GREY" in service,
-            "printer service must encode grayscale PNGs into the printouts dir")
+            "LCT_RGB" in service and
+            'screenshot_service_show_confirmation("PAGE PRINTED")' in service,
+            "printer service must save color PNGs and show a page notice")
     print("PASS test_sources")
 
 

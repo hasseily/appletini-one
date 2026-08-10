@@ -6,7 +6,9 @@
  * Pure model: no filesystem, no PL register, and no platform knowledge, so
  * a host harness can compile and drive it. printer_service.c feeds it the
  * SSC byte stream; each completed page comes back through the page_done
- * callback as an 8-bit grayscale canvas (0 = ink, 255 = paper).
+ * callback as an 8-bit ink-mask canvas. Zero is paper; the four low bits
+ * record yellow, magenta, cyan, and black ribbon strikes. Keeping bitplanes
+ * in one byte lets overprints mix without making the live page buffer larger.
  *
  * Geometry: US Letter at 144 dpi vertically (1 unit = 1/144 inch = 1 px)
  * and 2880 units/inch horizontally (20 units = 1 px), so every ImageWriter
@@ -23,6 +25,12 @@
 #define IW_XUNITS_PER_PX   20
 #define IW_YUNITS_PER_INCH 144
 
+#define IW_INK_NONE     0x00U
+#define IW_INK_YELLOW   0x01U
+#define IW_INK_MAGENTA  0x02U
+#define IW_INK_CYAN     0x04U
+#define IW_INK_BLACK    0x08U
+
 typedef void (*iw_page_done_fn)(void *ctx,
                                 const uint8_t *canvas,
                                 uint32_t width,
@@ -36,8 +44,9 @@ typedef enum {
 } iw_esc_state_t;
 
 typedef struct {
-    uint8_t *canvas;               /* IW_PAGE_WIDTH * IW_PAGE_HEIGHT bytes */
+    uint8_t *canvas;               /* one IW_INK_* mask per page pixel */
     uint8_t  page_dirty;
+    uint8_t  ink_mask;             /* ribbon color selected by ESC K n */
 
     int32_t x;                     /* 1/2880 in from the paper edge */
     int32_t y;                     /* 1/144 in from the top of the page */

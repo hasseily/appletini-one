@@ -25,7 +25,8 @@
 
 static void iw_wipe_canvas(imagewriter_t *iw)
 {
-    memset(iw->canvas, 0xFF, (size_t)IW_PAGE_WIDTH * IW_PAGE_HEIGHT);
+    memset(iw->canvas, IW_INK_NONE,
+           (size_t)IW_PAGE_WIDTH * IW_PAGE_HEIGHT);
     iw->page_dirty = 0U;
 }
 
@@ -75,6 +76,7 @@ void imagewriter_reset(imagewriter_t *iw)
     iw->doublewide_line = 0U;
     iw->reverse_feed = 0U;
     iw->msb_pass = 0U;
+    iw->ink_mask = IW_INK_BLACK;
     iw->esc_state = IW_ESC_NONE;
     iw->graphics_remaining = 0U;
 }
@@ -117,8 +119,12 @@ static void iw_dot(imagewriter_t *iw, int32_t x_units, int32_t y_px,
         return;
     }
     for (yy = y_px; yy < y_end; ++yy) {
-        memset(&iw->canvas[(size_t)yy * IW_PAGE_WIDTH + (size_t)x_px],
-               0x00, (size_t)(x_end - x_px));
+        uint8_t *row = &iw->canvas[(size_t)yy * IW_PAGE_WIDTH + (size_t)x_px];
+        int32_t xx;
+
+        for (xx = 0; xx < x_end - x_px; ++xx) {
+            row[xx] |= iw->ink_mask;
+        }
     }
     iw->page_dirty = 1U;
 }
@@ -313,6 +319,7 @@ static void iw_exec_immediate(imagewriter_t *iw, uint8_t cmd)
         iw->doublewide_line = 0U;
         iw->reverse_feed = 0U;
         iw->msb_pass = 0U;
+        iw->ink_mask = IW_INK_BLACK;
         iw->x = 0;
         break;
     default:
@@ -384,8 +391,22 @@ static void iw_exec_params(imagewriter_t *iw)
         }
         break;
     }
+    case 'K':
+        /* Four-color ribbon selection. The three secondary colors use the
+         * same two-pass combinations as the printer. A later strike at the
+         * same dot ORs into the canvas and mixes in the same way. */
+        switch (iw->params[0]) {
+        case '0': iw->ink_mask = IW_INK_BLACK; break;
+        case '1': iw->ink_mask = IW_INK_YELLOW; break;
+        case '2': iw->ink_mask = IW_INK_MAGENTA; break;
+        case '3': iw->ink_mask = IW_INK_CYAN; break;
+        case '4': iw->ink_mask = IW_INK_YELLOW | IW_INK_MAGENTA; break;
+        case '5': iw->ink_mask = IW_INK_YELLOW | IW_INK_CYAN; break;
+        case '6': iw->ink_mask = IW_INK_MAGENTA | IW_INK_CYAN; break;
+        default: break;
+        }
+        break;
     case 0x19:      /* cut-sheet feeder control */
-    case 'K':       /* color ribbon: rendered as black */
     case 'a': case 'l': case 's': case 't': case '=': case '@':
     case 'D': case 'Z': case 'u': case 'U':
     default:

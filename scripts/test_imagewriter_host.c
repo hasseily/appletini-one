@@ -24,7 +24,7 @@ static unsigned long ink_in_rect(const uint8_t *canvas,
 
     for (y = y0; y < y1; ++y) {
         for (x = x0; x < x1; ++x) {
-            if (canvas[(size_t)y * IW_PAGE_WIDTH + x] != 0xFFU) {
+            if (canvas[(size_t)y * IW_PAGE_WIDTH + x] != IW_INK_NONE) {
                 count++;
             }
         }
@@ -137,6 +137,21 @@ int main(void)
     feed_str(&iw, "\x1bT05\x1bq\x1b!\x1b" "c");
     REQUIRE(iw.line_spacing == 24 && iw.char_advance == 288 && iw.bold == 0U,
             "ESC c reinitializes");
+
+    /* ESC K selects the four-color ribbon. Secondary colors are two ribbon
+     * strikes, and separate passes at one dot mix by accumulating ink bits. */
+    REQUIRE(iw.ink_mask == IW_INK_BLACK, "reset selects black ribbon");
+    imagewriter_flush_page(&iw);
+    imagewriter_reset(&iw);
+    imagewriter_feed(&iw, (const uint8_t *)"\x1bK1\x1bG0001\xff", 10);
+    REQUIRE(iw.ink_mask == IW_INK_YELLOW, "ESC K1 selects yellow");
+    imagewriter_feed(&iw, (const uint8_t *)"\r\x1bK2\x1bG0001\xff", 11);
+    REQUIRE((g_canvas[0] & (IW_INK_YELLOW | IW_INK_MAGENTA)) ==
+                (IW_INK_YELLOW | IW_INK_MAGENTA),
+            "yellow and magenta strikes mix");
+    feed_str(&iw, "\x1bK6");
+    REQUIRE(iw.ink_mask == (IW_INK_MAGENTA | IW_INK_CYAN),
+            "ESC K6 selects purple");
 
     if (g_failures != 0) {
         fprintf(stderr, "%d failure(s)\n", g_failures);

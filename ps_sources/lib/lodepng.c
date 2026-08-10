@@ -29,7 +29,8 @@ Rename this file to lodepng.cpp to use it for C++, or to lodepng.c to use it for
 */
 
 #define LODEPNG_NO_COMPILE_CPP
-#define LODEPNG_NO_COMPILE_ENCODER
+/* Appletini uses the decoder for UI assets and the encoder for ImageWriter
+ * printouts. Keep both halves in the frontend build. */
 #define LODEPNG_NO_COMPILE_DISK
 
 #include "lodepng.h"

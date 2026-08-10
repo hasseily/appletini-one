@@ -137,13 +137,50 @@ static int printer_write_exact(FIL *file, const uint8_t *data, uint32_t len)
     return 0;
 }
 
+static void printer_render_rgb(uint8_t *rgb,
+                               const uint8_t *ink,
+                               size_t pixels)
+{
+    size_t i;
+
+    for (i = 0U; i < pixels; ++i) {
+        uint8_t r = 255U;
+        uint8_t g = 255U;
+        uint8_t b = 255U;
+
+        switch (ink[i] & 0x0FU) {
+        case IW_INK_NONE:                                      break;
+        case IW_INK_YELLOW:   r = 255U; g = 220U; b = 0U;      break;
+        case IW_INK_MAGENTA:  r = 220U; g = 0U;   b = 70U;     break;
+        case IW_INK_CYAN:     r = 0U;   g = 105U; b = 220U;    break;
+        case IW_INK_YELLOW | IW_INK_MAGENTA:
+                               r = 255U; g = 96U;  b = 0U;      break;
+        case IW_INK_YELLOW | IW_INK_CYAN:
+                               r = 0U;   g = 160U; b = 60U;     break;
+        case IW_INK_MAGENTA | IW_INK_CYAN:
+                               r = 120U; g = 40U;  b = 160U;    break;
+        default:               r = 0U;   g = 0U;   b = 0U;      break;
+        }
+        if ((ink[i] & IW_INK_BLACK) != 0U) {
+            r = 0U;
+            g = 0U;
+            b = 0U;
+        }
+        rgb[i * 3U + 0U] = r;
+        rgb[i * 3U + 1U] = g;
+        rgb[i * 3U + 2U] = b;
+    }
+}
+
 static void printer_page_done(void *ctx,
                               const uint8_t *canvas,
                               uint32_t width,
                               uint32_t height)
 {
     unsigned char *png = NULL;
+    uint8_t *rgb = NULL;
     size_t png_size = 0U;
+    const size_t pixels = (size_t)width * (size_t)height;
     unsigned error;
     char path[PRINTER_SERVICE_PATH_LEN];
     FIL file;
@@ -153,9 +190,18 @@ static void printer_page_done(void *ctx,
 
     (void)ctx;
 
+    if (pixels == 0U || pixels > SIZE_MAX / 3U) {
+        return;
+    }
+    rgb = (uint8_t *)malloc(pixels * 3U);
+    if (rgb == NULL) {
+        return;
+    }
+    printer_render_rgb(rgb, canvas, pixels);
     printer_checkpoint();
-    error = lodepng_encode_memory(&png, &png_size, canvas, width, height,
-                                  LCT_GREY, 8U);
+    error = lodepng_encode_memory(&png, &png_size, rgb, width, height,
+                                  LCT_RGB, 8U);
+    free(rgb);
     printer_checkpoint();
     if (error != 0U || png == NULL) {
         free(png);
@@ -194,6 +240,7 @@ static void printer_page_done(void *ctx,
         g_next_seq++;
         g_pages_saved++;
         (void)snprintf(g_last_file, sizeof(g_last_file), "%s", path);
+        screenshot_service_show_confirmation("PAGE PRINTED");
     }
 }
 

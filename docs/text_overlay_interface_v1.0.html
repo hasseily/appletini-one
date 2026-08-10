@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Text Overlay Card Interface — Specification</title>
+<style>
+  :root {
+    --paper: #F6F4EE;
+    --card: #FFFFFF;
+    --well: #EEEAE0;
+    --ink: #262319;
+    --muted: #726B5B;
+    --line: #DCD6C6;
+    --accent: #9A6510;
+    --accent-dim: #F3EAD6;
+    --green: #1F7A3D;
+    --green-dim: #E4EEE2;
+    --mono: "Cascadia Code", Consolas, "JetBrains Mono", "SF Mono", "Liberation Mono", monospace;
+    --serif: "Sitka Text", Charter, "Bitstream Charter", Cambria, Georgia, serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #14110B;
+      --card: #1B1811;
+      --well: #221E14;
+      --ink: #E0DACB;
+      --muted: #98907C;
+      --line: #332D1F;
+      --accent: #E3A344;
+      --accent-dim: #2E2413;
+      --green: #4FCE78;
+      --green-dim: #1B2E1E;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #14110B;
+    --card: #1B1811;
+    --well: #221E14;
+    --ink: #E0DACB;
+    --muted: #98907C;
+    --line: #332D1F;
+    --accent: #E3A344;
+    --accent-dim: #2E2413;
+    --green: #4FCE78;
+    --green-dim: #1B2E1E;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 16.5px;
+    line-height: 1.62;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 48px 28px 88px; }
+  header.doc { margin-bottom: 8px; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 10px;
+  }
+  h1 {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: clamp(26px, 4.4vw, 38px);
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+    margin: 0 0 14px;
+    text-wrap: balance;
+  }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; padding: 0; list-style: none; }
+  .meta li {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--muted);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 3px 9px;
+    background: var(--card);
+  }
+  .meta li b { color: var(--ink); font-weight: 600; }
+  .palette-rule {
+    display: grid;
+    grid-template-columns: repeat(16, 1fr);
+    height: 8px;
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    overflow: hidden;
+    margin: 22px 0 0;
+  }
+
+  section { margin-top: 52px; }
+  h2 {
+    font-family: var(--mono);
+    font-size: 19px;
+    font-weight: 700;
+    margin: 0 0 6px;
+    padding-top: 14px;
+    border-top: 2px solid var(--ink);
+    text-wrap: balance;
+  }
+  h2 .sec { color: var(--accent); font-weight: 700; margin-right: 10px; }
+  h3 { font-family: var(--mono); font-size: 14.5px; font-weight: 600; margin: 26px 0 6px; }
+  p, ul.plain { max-width: 72ch; }
+  p { margin: 10px 0; }
+  ul { margin: 10px 0; padding-left: 22px; }
+  li { margin: 4px 0; }
+  li::marker { color: var(--accent); }
+
+  code, .hex {
+    font-family: var(--mono);
+    font-size: 0.88em;
+    color: var(--accent);
+    background: var(--accent-dim);
+    border-radius: 3px;
+    padding: 1px 5px;
+  }
+  strong { font-weight: 650; }
+
+  pre {
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.55;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 4px 4px 0;
+    padding: 14px 18px;
+    overflow-x: auto;
+    max-width: 100%;
+    margin: 14px 0;
+  }
+  pre em { color: var(--muted); font-style: normal; }
+
+  .note {
+    max-width: 72ch;
+    background: var(--green-dim);
+    border-left: 3px solid var(--green);
+    border-radius: 0 4px 4px 0;
+    padding: 10px 16px;
+    margin: 16px 0;
+  }
+  .note p { margin: 4px 0; }
+
+  .tablewrap { overflow-x: auto; margin: 14px 0; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+    background: var(--card);
+    border: 1px solid var(--line);
+  }
+  th {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    text-align: left;
+    color: var(--muted);
+    font-weight: 600;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+    background: var(--well);
+    white-space: nowrap;
+  }
+  td { padding: 7px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.m, .m { font-family: var(--mono); font-size: 13px; white-space: nowrap; }
+  td.m { color: var(--accent); }
+  td .rw { color: var(--muted); }
+  .sw {
+    display: inline-block;
+    width: 30px;
+    height: 16px;
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    vertical-align: -3px;
+  }
+
+  .demo { display: flex; flex-wrap: wrap; gap: 18px; margin: 16px 0; }
+  .demo figure { margin: 0; flex: none; }
+  .demo .cellbg {
+    width: 132px; height: 66px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: repeating-linear-gradient(45deg, #2E5EA8 0 11px, #7A3FA0 11px 22px, #B8483C 22px 33px);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .demo .cell { font-family: var(--mono); font-weight: 700; font-size: 30px; line-height: 1; padding: 8px 12px; }
+  .demo figcaption {
+    font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+    margin-top: 6px; max-width: 132px; line-height: 1.5;
+  }
+
+  footer {
+    margin-top: 64px; padding-top: 16px;
+    border-top: 1px solid var(--line);
+    font-family: var(--mono); font-size: 12px; color: var(--muted);
+    max-width: 72ch;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="doc">
+  <p class="eyebrow">Interface Specification &middot; For Card Developers</p>
+  <h1>Text Overlay Card Interface</h1>
+  <ul class="meta">
+    <li>Version: <b>1.0 draft</b></li>
+    <li>Date: <b>2026-08-10</b></li>
+    <li>Signature: <b>$54 &rsquo;T&rsquo;</b></li>
+    <li>Reference implementation: <b>Appletini One</b></li>
+  </ul>
+  <div class="palette-rule" aria-hidden="true">
+    <i style="background:#000000"></i><i style="background:#DD0033"></i><i style="background:#000099"></i><i style="background:#DD22DD"></i>
+    <i style="background:#007722"></i><i style="background:#555555"></i><i style="background:#2222FF"></i><i style="background:#66AAFF"></i>
+    <i style="background:#885500"></i><i style="background:#FF6600"></i><i style="background:#AAAAAA"></i><i style="background:#FF9988"></i>
+    <i style="background:#00DD00"></i><i style="background:#FFFF00"></i><i style="background:#44FF99"></i><i style="background:#FFFFFF"></i>
+  </div>
+</header>
+
+<section>
+  <h2><span class="sec">1</span>Overview</h2>
+  <p>This document specifies a text overlay interface for Apple II video cards. A card that implements it shows a grid of character cells on top of its video output. An Apple II program controls the grid through the 16 I/O bytes of one slot. The interface is character-based like COUT, addressable like a Slinky RAM card, and fully readable: a program can ask what character and colors sit at any position.</p>
+  <ul>
+    <li>Each cell holds a <strong>character byte</strong> (an index into a 256-glyph font) and an <strong>attribute byte</strong> (4-bit foreground color, 4-bit background color).</li>
+    <li>The program uploads its own font. Cell sizes from 5&times;7 to 32&times;64 pixels are supported.</li>
+    <li>Colors for new text come from <code>$C022</code>, the Apple IIgs text-color register, which the card observes on the bus.</li>
+    <li>The overlay draws above the normal video picture. Cells can be opaque, glyph-only, or fully transparent.</li>
+  </ul>
+  <p>This specification describes only bus-visible behavior. How a card stores the grid, renders the glyphs, or scales its output is the implementer&rsquo;s business.</p>
+
+  <h3>Conventions</h3>
+  <p>The card occupies one slot <em>s</em> (1&ndash;7). Its registers live in that slot&rsquo;s DEVSEL space, <code>$C080 + $10&times;s</code>. This document writes register addresses as offsets, <code>+$0</code> through <code>+$F</code>. In the 6502 examples, the X register holds <code>s&times;$10</code>, so <code>$C080,X</code> reaches offset <code>+$0</code>. Multi-byte values are little-endian. &ldquo;Undefined&rdquo; means: software must not depend on the value, and implementations may return anything.</p>
+</section>
+
+<section>
+  <h2><span class="sec">2</span>Register reference</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Offset</th><th>Name</th><th>R/W</th><th>Function</th></tr>
+    <tr><td class="m">+$0</td><td class="m">ADDR_LO</td><td class="rw m">RW</td><td>Window address bits 7:0</td></tr>
+    <tr><td class="m">+$1</td><td class="m">ADDR_HI</td><td class="rw m">RW</td><td>Window address bits 15:8</td></tr>
+    <tr><td class="m">+$2</td><td class="m">ADDR_BANK</td><td class="rw m">RW</td><td>Window address bits 17:16 (bits 7:2 read as 0)</td></tr>
+    <tr><td class="m">+$3</td><td class="m">DATA</td><td class="rw m">RW</td><td>Byte at the window address; every access then increments the 18-bit address, wrapping at $3FFFF</td></tr>
+    <tr><td class="m">+$4</td><td class="m">XPOS</td><td class="rw m">RW</td><td>Cursor column, 0&ndash;255</td></tr>
+    <tr><td class="m">+$5</td><td class="m">YPOS</td><td class="rw m">RW</td><td>Cursor row, 0&ndash;127</td></tr>
+    <tr><td class="m">+$6</td><td class="m">CHAR</td><td class="rw m">RW</td><td><strong>Write:</strong> store the byte as the character at (XPOS,&nbsp;YPOS), store the latched <code>$C022</code> value as its attribute, then advance the cursor. <strong>Read:</strong> the character at (XPOS,&nbsp;YPOS); no advance.</td></tr>
+    <tr><td class="m">+$7</td><td class="m">ATTR</td><td class="rw m">RW</td><td>Attribute byte at (XPOS,&nbsp;YPOS); never advances</td></tr>
+    <tr><td class="m">+$8</td><td class="m">CMD</td><td class="rw m">W</td><td><span class="m">$00</span> disable &middot; <span class="m">$01</span> enable &middot; <span class="m">$02</span> clear &middot; <span class="m">$03</span> home &middot; <span class="m">$04</span> scroll up one row</td></tr>
+    <tr><td class="m">+$9</td><td class="m">STATUS</td><td class="rw m">R</td><td>bit&nbsp;7 busy &middot; bit&nbsp;1 high-resolution canvas active &middot; bit&nbsp;0 overlay enabled &middot; other bits 0</td></tr>
+    <tr><td class="m">+$A</td><td class="m">FONT_W</td><td class="rw m">RW</td><td>Glyph width in pixels, clamped to 5&ndash;32</td></tr>
+    <tr><td class="m">+$B</td><td class="m">FONT_H</td><td class="rw m">RW</td><td>Glyph height in pixels, clamped to 7&ndash;64</td></tr>
+    <tr><td class="m">+$C</td><td class="m">COLS</td><td class="rw m">R</td><td>Visible columns on the current canvas, <strong>minus one</strong></td></tr>
+    <tr><td class="m">+$D</td><td class="m">ROWS</td><td class="rw m">R</td><td>Visible rows on the current canvas, <strong>minus one</strong></td></tr>
+    <tr><td class="m">+$E</td><td class="m">SIG</td><td class="rw m">R</td><td>Always <span class="m">$54</span> (&rsquo;T&rsquo;)</td></tr>
+    <tr><td class="m">+$F</td><td class="m">VER</td><td class="rw m">R</td><td>Interface version, BCD; <span class="m">$10</span> = 1.0</td></tr>
+  </table></div>
+
+  <h3>Cursor rules</h3>
+  <ul>
+    <li>A CHAR <strong>write</strong> advances: XPOS +&nbsp;1; if XPOS &ge; columns, XPOS&nbsp;=&nbsp;0 and YPOS&nbsp;+&nbsp;1; if YPOS &ge; rows, YPOS&nbsp;=&nbsp;0.</li>
+    <li><strong>Reads never advance.</strong> To read one cell, set XPOS and YPOS, read CHAR, read ATTR &mdash; the two reads see the same cell.</li>
+    <li>There is no auto-scroll. A terminal program issues CMD <code>$04</code> itself when text reaches the bottom.</li>
+    <li>XPOS and YPOS may address cells outside the visible grid (up to 255 and 127). Those cells store data normally; they are simply not shown.</li>
+  </ul>
+
+  <h3>Commands and busy</h3>
+  <ul>
+    <li><strong>CLEAR</strong> (<code>$02</code>) fills the whole character plane with <code>$20</code> and the whole attribute plane with <code>$00</code> &mdash; all 256&times;128 cells, visible or not. The result is an invisible screen (see &sect;5).</li>
+    <li><strong>SCROLL</strong> (<code>$04</code>) moves full storage rows: rows 1&hellip;rows&minus;1 move up one row, all 256 columns; the last visible row clears to <code>$20</code>/<code>$00</code>. The cursor does not move.</li>
+    <li>CLEAR and SCROLL set STATUS bit 7 while they run. While busy, accesses to DATA, CHAR, ATTR, and CMD are undefined. Poll STATUS until bit 7 is 0.</li>
+    <li>ENABLE/DISABLE show and hide the overlay. A disabled overlay keeps all state, and every register stays live.</li>
+  </ul>
+
+  <h3>Reset state</h3>
+  <p>After power-on or reset: overlay disabled, FONT_W&nbsp;=&nbsp;8, FONT_H&nbsp;=&nbsp;16, XPOS&nbsp;=&nbsp;YPOS&nbsp;=&nbsp;0, window address&nbsp;=&nbsp;0, planes cleared to <code>$20</code>/<code>$00</code>, <code>$C022</code> latch&nbsp;=&nbsp;<code>$F0</code> (white on black). The atlas content is undefined until uploaded.</p>
+</section>
+
+<section>
+  <h2><span class="sec">3</span>The memory window</h2>
+  <p>ADDR_LO/HI/BANK and DATA expose one 18-bit address space, in the style of a Slinky RAM card. Use it for bulk work: font upload, raw attribute writes, saving and restoring screen regions.</p>
+  <div class="tablewrap"><table>
+    <tr><th>Range</th><th>Contents</th><th>Access</th></tr>
+    <tr><td class="m">$00000&ndash;$07FFF</td><td>Character plane. Cell (x,y) at <span class="m">y&times;256&nbsp;+&nbsp;x</span>. Rows 0&ndash;127.</td><td>read/write</td></tr>
+    <tr><td class="m">$08000&ndash;$0FFFF</td><td>Attribute plane, same layout: cell address +&nbsp;<span class="m">$08000</span></td><td>read/write</td></tr>
+    <tr><td class="m">$10000&ndash;$1FFFF</td><td>Font atlas, 256 glyphs (see &sect;6)</td><td><strong>write-only;</strong> reads undefined</td></tr>
+    <tr><td class="m">$20000&ndash;$3FFEF</td><td>Reserved for future versions; do not access</td><td>&mdash;</td></tr>
+    <tr><td class="m">$3FFF0&ndash;$3FFFF</td><td>ID block: magic, version, capabilities (see &sect;7)</td><td>read-only; writes ignored</td></tr>
+  </table></div>
+  <p>The row stride is fixed at 256 regardless of font size, so a cell&rsquo;s address never changes &mdash; not when the font changes, and not when the machine switches video modes. Writes through the window are raw: they never touch the <code>$C022</code> latch and never move the cursor.</p>
+</section>
+
+<section>
+  <h2><span class="sec">4</span>Canvas and grid</h2>
+  <p>The overlay canvas covers the card&rsquo;s active picture. Its pixel dimensions are <strong>implementation-defined</strong> and may change with the host&rsquo;s video mode; the reference implementation uses 1280&times;800 when Super Hi-Res is active (STATUS bit 1&nbsp;=&nbsp;1) and 1120&times;768 for legacy modes (bit 1&nbsp;=&nbsp;0). Software must not assume these numbers: <strong>COLS and ROWS are the truth.</strong> They always report the visible grid of the current canvas with the current font, each minus one.</p>
+  <p>When the canvas changes, cells keep their stored addresses; only the visible window changes. Reference grids:</p>
+  <div class="tablewrap"><table>
+    <tr><th>Font (W&times;H)</th><th>1280&times;800 canvas</th><th>1120&times;768 canvas</th></tr>
+    <tr><td class="m">5 &times; 7 (minimum)</td><td>256 &times; 114</td><td>224 &times; 109</td></tr>
+    <tr><td class="m">8 &times; 16</td><td>160 &times; 50</td><td>140 &times; 48</td></tr>
+    <tr><td class="m">16 &times; 32</td><td>80 &times; 25</td><td>70 &times; 24</td></tr>
+    <tr><td class="m">32 &times; 64 (maximum)</td><td>40 &times; 12</td><td>35 &times; 12</td></tr>
+  </table></div>
+  <p>Writing FONT_W or FONT_H takes effect at once: COLS, ROWS, glyph addressing, and the rendered picture all follow. Set the font before you upload the atlas, because the atlas layout depends on the glyph size.</p>
+</section>
+
+<section>
+  <h2><span class="sec">5</span>Color and transparency</h2>
+  <p>An attribute byte is <code>foreground&times;16 + background</code> &mdash; the <code>$C022</code> convention: high nibble text, low nibble background. The card observes writes to <code>$C022</code> on the bus and latches the most recent value; a CHAR write stamps that value into the cell. On a IIgs the register is real and the machine&rsquo;s own text colors follow it too; on a II, II+, or //e the write reaches no motherboard device and is harmless. Programs that cannot write <code>$C022</code> can set any cell&rsquo;s colors directly through ATTR or the attribute plane.</p>
+  <p>The renderer applies one rule per cell:</p>
+  <div class="demo">
+    <figure>
+      <div class="cellbg"><span class="cell" style="color:#FFFFFF;background:#000099">A</span></div>
+      <figcaption>fg &ne; bg<br>opaque cell</figcaption>
+    </figure>
+    <figure>
+      <div class="cellbg"><span class="cell" style="color:#00DD00">A</span></div>
+      <figcaption>fg = bg<br>glyph only, video shows through</figcaption>
+    </figure>
+    <figure>
+      <div class="cellbg"><span class="cell">&nbsp;</span></div>
+      <figcaption>space + fg = bg<br>fully transparent</figcaption>
+    </figure>
+  </div>
+  <ul>
+    <li><strong>fg &ne; bg:</strong> the cell is opaque. Set glyph bits show the foreground color, clear bits the background color.</li>
+    <li><strong>fg = bg:</strong> only the glyph is drawn, in that color. Clear bits show the video underneath.</li>
+    <li>A fully transparent cell is a glyph with no set bits (normally <code>$20</code>, space) with fg&nbsp;=&nbsp;bg. This is what CLEAR produces.</li>
+  </ul>
+  <p>The 16 colors are fixed in version 1.0 (4-bit channels scaled &times;17):</p>
+  <div class="tablewrap"><table>
+    <tr><th>Index</th><th>0</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th><th>8</th><th>9</th><th>A</th><th>B</th><th>C</th><th>D</th><th>E</th><th>F</th></tr>
+    <tr><td class="m rw">Color</td>
+      <td><span class="sw" style="background:#000000"></span></td><td><span class="sw" style="background:#DD0033"></span></td>
+      <td><span class="sw" style="background:#000099"></span></td><td><span class="sw" style="background:#DD22DD"></span></td>
+      <td><span class="sw" style="background:#007722"></span></td><td><span class="sw" style="background:#555555"></span></td>
+      <td><span class="sw" style="background:#2222FF"></span></td><td><span class="sw" style="background:#66AAFF"></span></td>
+      <td><span class="sw" style="background:#885500"></span></td><td><span class="sw" style="background:#FF6600"></span></td>
+      <td><span class="sw" style="background:#AAAAAA"></span></td><td><span class="sw" style="background:#FF9988"></span></td>
+      <td><span class="sw" style="background:#00DD00"></span></td><td><span class="sw" style="background:#FFFF00"></span></td>
+      <td><span class="sw" style="background:#44FF99"></span></td><td><span class="sw" style="background:#FFFFFF"></span></td>
+    </tr>
+    <tr><td class="m rw">RGB</td>
+      <td class="m">000</td><td class="m">D03</td><td class="m">009</td><td class="m">D2D</td>
+      <td class="m">072</td><td class="m">555</td><td class="m">22F</td><td class="m">6AF</td>
+      <td class="m">850</td><td class="m">F60</td><td class="m">AAA</td><td class="m">F98</td>
+      <td class="m">0D0</td><td class="m">FF0</td><td class="m">4F9</td><td class="m">FFF</td>
+    </tr>
+  </table></div>
+  <p>These are the standard IIgs 4-bit colors, so <code>$C022</code> values mean the same thing on the overlay as on a IIgs screen.</p>
+</section>
+
+<section>
+  <h2><span class="sec">6</span>Font atlas</h2>
+  <p>The atlas holds 256 glyphs at window <code>$10000</code>, packed in character-code order with no gaps:</p>
+  <ul>
+    <li>1 bit per pixel; a set bit is a foreground pixel.</li>
+    <li>Rows are packed MSB-first: bit 7 of the first row byte is the leftmost pixel. <span class="m">row_bytes = (FONT_W + 7) / 8</span>, unused low bits clear.</li>
+    <li>One glyph is <span class="m">row_bytes &times; FONT_H</span> bytes, rows top to bottom.</li>
+    <li>Glyph <em>c</em> starts at <span class="m">$10000 + c &times; row_bytes &times; FONT_H</span>.</li>
+  </ul>
+  <p>Character bytes are raw atlas indices. The interface imposes no encoding: upload ASCII where you want ASCII, and put inverse or graphic glyphs at any free codes. Codes above the last uploaded glyph draw whatever the atlas holds there &mdash; upload all glyphs you intend to use.</p>
+  <p>The largest font (32&times;64, 256 bytes per glyph) fills the region exactly. The atlas region is write-only; keep a copy in host memory if you need to read it back.</p>
+</section>
+
+<section>
+  <h2><span class="sec">7</span>Card detection</h2>
+  <p>Detection uses only the DEVSEL registers and the memory window &mdash; no ROM claim. It runs in three phases, and each rejects a different class of impostor. A single signature byte is not enough, because the DEVSEL space of other cards is live hardware: a real Slinky RAM card tracks writes at offset&nbsp;+$0 by design, and the floating bus of an empty slot echoes screen memory. The probe is also minimal by construction: the only writes it ever makes are the window-address writes it needs anyway.</p>
+  <div class="tablewrap"><table>
+    <tr><th>Phase</th><th>Test</th><th>Rejects</th></tr>
+    <tr><td class="m">1</td><td>Read SIG = <span class="m">$54</span>; read VER = valid BCD &ge; <span class="m">$10</span></td><td>Almost everything, with reads only</td></tr>
+    <tr><td class="m">2</td><td>Write the ID-block address ($F0, $FF, $03) to ADDR_LO/HI/BANK; each reads back</td><td>The floating bus, input-only and stuck ports</td></tr>
+    <tr><td class="m">3</td><td>8 DATA reads match the magic at <span class="m">$3FFF0</span></td><td>RAM cards that track addresses &mdash; including a real Slinky; also reports capabilities</td></tr>
+  </table></div>
+  <p><strong>Etiquette is part of the protocol:</strong> phase 1 comes before any write, so a slot that fails is never written to. On some cards &mdash; a Disk&nbsp;II controller above all &mdash; every DEVSEL access has side effects; two reads of offsets +$E/+$F on an idle controller are the least intrusive probe possible.</p>
+  <p><strong>The magic read is not optional.</strong> A real Slinky card passes phases 1 and 2 by construction if its +$E/+$F happen to satisfy phase 1: its address registers hold state exactly like ours. Only the magic separates a register file backed by RAM from this card &mdash; 8 chosen bytes at a fixed 18-bit address do not occur by accident.</p>
+  <pre><em>; Entry: X = slot * $10.  Exit: carry clear = card found.</em>
+DETECT   LDA   $C08E,X      <em>; 1. reads only: SIG must be $54</em>
+         CMP   #$54
+         BNE   NOCARD
+         LDA   $C08F,X      <em>;    VER must be BCD, $10 or higher</em>
+         CMP   #$10
+         BCC   NOCARD
+         LDA   #$F0         <em>; 2. point the window at the ID block;</em>
+         STA   $C080,X      <em>;    the read-backs prove the registers</em>
+         LDA   #$FF         <em>;    hold state -- a floating bus cannot</em>
+         STA   $C081,X
+         LDA   #$03
+         STA   $C082,X      <em>;    ADDR = $3FFF0</em>
+         LDA   $C080,X
+         CMP   #$F0
+         BNE   NOCARD
+         LDA   $C081,X
+         CMP   #$FF
+         BNE   NOCARD
+         LDA   $C082,X
+         CMP   #$03         <em>;    ADDR_BANK bits 7:2 read as 0</em>
+         BNE   NOCARD
+         LDY   #0           <em>; 3. the magic makes it certain</em>
+MAGIC    LDA   $C083,X      <em>;    DATA, auto-increment</em>
+         CMP   IDSTR,Y
+         BNE   NOCARD
+         INY
+         CPY   #8
+         BCC   MAGIC
+         CLC
+         RTS
+NOCARD   SEC
+         RTS
+IDSTR    ASC   "TOVERLAY"</pre>
+  <p>Sixteen bus accesses in all. On success the window already points at <code>$3FFF8</code>, so the natural next step is free: keep reading DATA for the version, feature bits, and font limits.</p>
+
+  <h3>The ID block</h3>
+  <p>The last 16 bytes of the address space are a read-only ID block:</p>
+  <div class="tablewrap"><table>
+    <tr><th>Address</th><th>Bytes</th><th>Contents</th></tr>
+    <tr><td class="m">$3FFF0</td><td class="m">8</td><td>Magic <span class="m">&ldquo;TOVERLAY&rdquo;</span> = $54 $4F $56 $45 $52 $4C $41 $59</td></tr>
+    <tr><td class="m">$3FFF8</td><td class="m">1</td><td>Interface version, BCD; equals VER</td></tr>
+    <tr><td class="m">$3FFF9</td><td class="m">1</td><td>Feature bits: bit&nbsp;0 palette upload, bit&nbsp;1 streaming read port; others 0</td></tr>
+    <tr><td class="m">$3FFFA</td><td class="m">2</td><td>FONT_W minimum, maximum</td></tr>
+    <tr><td class="m">$3FFFC</td><td class="m">2</td><td>FONT_H minimum, maximum</td></tr>
+    <tr><td class="m">$3FFFE</td><td class="m">2</td><td>Reserved, $00</td></tr>
+  </table></div>
+  <p>Registers answer &ldquo;is the card here&rdquo;; the ID block answers &ldquo;for certain, and here is what it can do&rdquo;. The block is normative: every implementation provides it, it needs no expansion-ROM claim, and it reads the same way on every machine.</p>
+</section>
+
+<section>
+  <h2><span class="sec">8</span>Programming examples</h2>
+  <h3>Initialize, once, at program start</h3>
+  <pre><em>; X = slot * $10 throughout.  1. detect  2. font  3. atlas  4. clear  5. enable</em>
+         JSR   DETECT
+         BCS   FAIL
+         LDA   #8
+         STA   $C08A,X      <em>; FONT_W = 8</em>
+         LDA   #16
+         STA   $C08B,X      <em>; FONT_H = 16</em>
+         JSR   LOADFONT     <em>; see below</em>
+         LDA   #$02
+         STA   $C088,X      <em>; CMD: clear</em>
+WAIT     LDA   $C089,X      <em>; STATUS</em>
+         BMI   WAIT         <em>; bit 7 = busy</em>
+         LDA   #$01
+         STA   $C088,X      <em>; CMD: enable</em></pre>
+
+  <h3>Upload an 8&times;16 font (4096 bytes)</h3>
+  <pre>LOADFONT LDA   #$00
+         STA   $C080,X      <em>; ADDR_LO = 0</em>
+         STA   $C081,X      <em>; ADDR_HI = 0</em>
+         LDA   #$01
+         STA   $C082,X      <em>; ADDR_BANK = 1  -> window $10000, the atlas</em>
+         LDA   #&lt;FONT
+         STA   PTR
+         LDA   #&gt;FONT
+         STA   PTR+1
+         LDA   #16
+         STA   PAGES        <em>; page counter in zero page; X stays the slot index</em>
+         LDY   #0
+PAGE     LDA   (PTR),Y
+         STA   $C083,X      <em>; DATA, address auto-increments</em>
+         INY
+         BNE   PAGE
+         INC   PTR+1
+         DEC   PAGES
+         BNE   PAGE
+         RTS</pre>
+
+  <h3>Print a string at (10, 5)</h3>
+  <pre>         LDA   #$F0
+         STA   $C022        <em>; white on black for all text that follows</em>
+         LDA   #10
+         STA   $C084,X      <em>; XPOS</em>
+         LDA   #5
+         STA   $C085,X      <em>; YPOS</em>
+         LDY   #0
+PRINT    LDA   MSG,Y
+         BEQ   DONE
+         STA   $C086,X      <em>; CHAR: stores char + colors, advances cursor</em>
+         INY
+         BNE   PRINT
+DONE     RTS
+MSG      ASC   "HELLO, WORLD"
+         DFB   0</pre>
+
+  <h3>Read the cell at (x, y)</h3>
+  <pre>         STA   $C084,X      <em>; A = column</em>
+         TYA
+         STA   $C085,X      <em>; Y = row</em>
+         LDA   $C086,X      <em>; the character  (no advance on reads)</em>
+         PHA
+         LDA   $C087,X      <em>; its attribute</em></pre>
+</section>
+
+<section>
+  <h2><span class="sec">9</span>Compliance</h2>
+  <p><strong>Normative:</strong> the register offsets and semantics (&sect;2), the window layout and 256-byte stride (&sect;3), the attribute format, transparency rules, and palette values (&sect;5), the atlas format and font limits (&sect;6), the <code>$C022</code> observation, the detection protocol, SIG/VER values, and the ID block (&sect;7), and the busy contract (&sect;2).</p>
+  <p><strong>Implementation-defined:</strong> the slot; the canvas dimensions and when they change (reported through COLS/ROWS and STATUS bit 1); the overlay&rsquo;s placement over the picture; how long CLEAR and SCROLL take (bounded by the busy bit).</p>
+  <p><strong>Reserved for future versions:</strong> window <code>$20000&ndash;$3FFEF</code> (palette upload), CMD values above <code>$04</code>, STATUS bits 2&ndash;6, feature bits 2&ndash;7. A card returns VER &gt; $10 only if it implements every rule of that version.</p>
+</section>
+
+<footer>
+  Text Overlay Card Interface 1.0 draft &middot; 2026-08-10 &middot; Reference implementation: Appletini One. Comments to the author.
+</footer>
+</div>
+</body>
+</html>

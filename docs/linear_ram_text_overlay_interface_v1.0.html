@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Linear RAM Text Overlay Interface &mdash; Specification</title>
+<style>
+  :root {
+    --paper: #F6F4EE;
+    --card: #FFFFFF;
+    --well: #EEEAE0;
+    --ink: #262319;
+    --muted: #726B5B;
+    --line: #DCD6C6;
+    --accent: #9A6510;
+    --accent-dim: #F3EAD6;
+    --green: #1F7A3D;
+    --green-dim: #E4EEE2;
+    --red: #9D3228;
+    --red-dim: #F5E5E1;
+    --mono: "Cascadia Code", Consolas, "JetBrains Mono", "SF Mono", "Liberation Mono", monospace;
+    --serif: "Sitka Text", Charter, "Bitstream Charter", Cambria, Georgia, serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #14110B;
+      --card: #1B1811;
+      --well: #221E14;
+      --ink: #E0DACB;
+      --muted: #98907C;
+      --line: #332D1F;
+      --accent: #E3A344;
+      --accent-dim: #2E2413;
+      --green: #4FCE78;
+      --green-dim: #1B2E1E;
+      --red: #F08B7D;
+      --red-dim: #321C18;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #14110B;
+    --card: #1B1811;
+    --well: #221E14;
+    --ink: #E0DACB;
+    --muted: #98907C;
+    --line: #332D1F;
+    --accent: #E3A344;
+    --accent-dim: #2E2413;
+    --green: #4FCE78;
+    --green-dim: #1B2E1E;
+    --red: #F08B7D;
+    --red-dim: #321C18;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 16.5px;
+    line-height: 1.62;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 48px 28px 88px; }
+  header.doc { margin-bottom: 8px; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 10px;
+  }
+  h1 {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: clamp(26px, 4.4vw, 38px);
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+    margin: 0 0 14px;
+    text-wrap: balance;
+  }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; padding: 0; list-style: none; }
+  .meta li {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--muted);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 3px 9px;
+    background: var(--card);
+  }
+  .meta li b { color: var(--ink); font-weight: 600; }
+  .palette-rule {
+    display: grid;
+    grid-template-columns: repeat(16, 1fr);
+    height: 8px;
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    overflow: hidden;
+    margin: 22px 0 0;
+  }
+
+  section { margin-top: 52px; }
+  h2 {
+    font-family: var(--mono);
+    font-size: 19px;
+    font-weight: 700;
+    margin: 0 0 6px;
+    padding-top: 14px;
+    border-top: 2px solid var(--ink);
+    text-wrap: balance;
+  }
+  h2 .sec { color: var(--accent); font-weight: 700; margin-right: 10px; }
+  h3 { font-family: var(--mono); font-size: 14.5px; font-weight: 600; margin: 26px 0 6px; }
+  p, ul.plain { max-width: 74ch; }
+  p { margin: 10px 0; }
+  ul, ol { margin: 10px 0; padding-left: 24px; }
+  li { margin: 4px 0; }
+  li::marker { color: var(--accent); }
+
+  code, .hex {
+    font-family: var(--mono);
+    font-size: 0.88em;
+    color: var(--accent);
+    background: var(--accent-dim);
+    border-radius: 3px;
+    padding: 1px 5px;
+  }
+  strong { font-weight: 650; }
+
+  pre {
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.55;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 4px 4px 0;
+    padding: 14px 18px;
+    overflow-x: auto;
+    max-width: 100%;
+    margin: 14px 0;
+  }
+  pre em { color: var(--muted); font-style: normal; }
+
+  .note, .warning {
+    max-width: 74ch;
+    border-left: 3px solid;
+    border-radius: 0 4px 4px 0;
+    padding: 10px 16px;
+    margin: 16px 0;
+  }
+  .note { background: var(--green-dim); border-color: var(--green); }
+  .warning { background: var(--red-dim); border-color: var(--red); }
+  .note p, .warning p { margin: 4px 0; }
+
+  .tablewrap { overflow-x: auto; margin: 14px 0; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+    background: var(--card);
+    border: 1px solid var(--line);
+  }
+  th {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    text-align: left;
+    color: var(--muted);
+    font-weight: 600;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+    background: var(--well);
+    white-space: nowrap;
+  }
+  td { padding: 7px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.m, .m { font-family: var(--mono); font-size: 13px; white-space: nowrap; }
+  td.m { color: var(--accent); }
+  td .rw { color: var(--muted); }
+  .sw {
+    display: inline-block;
+    width: 30px;
+    height: 16px;
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    vertical-align: -3px;
+  }
+
+  footer {
+    margin-top: 64px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    max-width: 74ch;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="doc">
+  <p class="eyebrow">Interface Specification &middot; For Card and Software Developers</p>
+  <h1>Linear RAM Text Overlay Interface</h1>
+  <ul class="meta">
+    <li>Version: <b>1.0 draft</b></li>
+    <li>Date: <b>2026-08-11</b></li>
+    <li>Signature: <b>$4C &rsquo;L&rsquo;</b></li>
+    <li>Location: <b>one slot&rsquo;s DEVSEL block</b></li>
+    <li>Reference implementation: <b>Appletini One</b></li>
+  </ul>
+  <div class="palette-rule" aria-hidden="true">
+    <i style="background:#000000"></i><i style="background:#0000AA"></i><i style="background:#00AA00"></i><i style="background:#00AAAA"></i>
+    <i style="background:#AA0000"></i><i style="background:#AA00AA"></i><i style="background:#AA5500"></i><i style="background:#AAAAAA"></i>
+    <i style="background:#555555"></i><i style="background:#5555FF"></i><i style="background:#55FF55"></i><i style="background:#55FFFF"></i>
+    <i style="background:#FF5555"></i><i style="background:#FF55FF"></i><i style="background:#FFFF55"></i><i style="background:#FFFFFF"></i>
+  </div>
+</header>
+
+<section>
+  <h2><span class="sec">1</span>Overview</h2>
+  <p>This document specifies a text layer for an Apple II video card. An Apple II program puts 16-bit text cells in one linear block of main or auxiliary RAM. The card watches writes to that block, keeps a private copy, and draws the text above the normal Apple picture.</p>
+  <ul>
+    <li>The layer does not replace Apple text, lores, hires, or Super Hi-Res video.</li>
+    <li>The buffer uses a simple row-major layout: one character byte followed by one attribute byte for each cell.</li>
+    <li>The program may place the buffer at any byte address from <code>$0200</code> through <code>$BFFF</code> in main or auxiliary RAM, subject to the range checks in &sect;5.</li>
+    <li>Version 1.0 supplies fixed 8&times;14 and 8&times;16 fonts, VT100 and CP437 character modes, VGA-style colors, blink, a hardware cursor, and an optional transparent background.</li>
+    <li>A staged <strong>ARM then SHOW</strong> flow lets software fill a new buffer before the card shows it.</li>
+  </ul>
+  <p>The card only watches RAM writes. It does not change Apple RAM, drive the data bus for RAM cycles, stop the processor, or change Apple video soft switches.</p>
+
+  <h3>Conventions</h3>
+  <p>The interface occupies the 16-byte DEVSEL block of one slot: <code>$C080 + s&times;$10</code> for slot <em>s</em>. The slot is implementation-defined; a card may use any slot whose DEVSEL block it owns. This document writes the bytes as offsets <code>+$0</code> through <code>+$F</code>, and software finds the slot with the scan in &sect;9. Multi-byte values use little-endian order. Bit 0 is the low bit.</p>
+  <p>The interface asserts no IRQ, NMI, DMA, or RDY signal. It drives the Apple data bus only for reads from its own DEVSEL block.</p>
+</section>
+
+<section>
+  <h2><span class="sec">2</span>DEVSEL register reference</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Offset</th><th>Name</th><th>R/W</th><th>Function</th></tr>
+    <tr><td class="m">+$0</td><td class="m">INDEX</td><td class="rw m">RW</td><td>Selects one indirect register, 0&ndash;255.</td></tr>
+    <tr><td class="m">+$1</td><td class="m">DATA</td><td class="rw m">RW</td><td>Reads or writes the selected indirect register. INDEX does not change.</td></tr>
+    <tr><td class="m">+$2</td><td class="m">DATA_INC</td><td class="rw m">RW</td><td>Reads or writes the selected indirect register, then increments INDEX modulo 256.</td></tr>
+    <tr><td class="m">+$3</td><td class="m">CMD</td><td class="rw m">W</td><td>Issues one command from the table below.</td></tr>
+    <tr><td class="m">+$4</td><td class="m">STATUS</td><td class="rw m">R</td><td>Current capture and display state.</td></tr>
+    <tr><td class="m">+$5&ndash;+$7</td><td class="m">RESERVED</td><td class="rw m">R</td><td>Read as 0. Writes have no effect.</td></tr>
+    <tr><td class="m">+$8&ndash;+$D</td><td class="m">MAGIC</td><td class="rw m">R</td><td>ASCII <span class="m">LINTXT</span>: $4C $49 $4E $54 $58 $54.</td></tr>
+    <tr><td class="m">+$E</td><td class="m">SIG</td><td class="rw m">R</td><td>Always <span class="m">$4C</span> (&rsquo;L&rsquo;).</td></tr>
+    <tr><td class="m">+$F</td><td class="m">VER</td><td class="rw m">R</td><td>Interface version in BCD; <span class="m">$10</span> means 1.0.</td></tr>
+  </table></div>
+
+  <h3>Commands</h3>
+  <div class="tablewrap"><table>
+    <tr><th>Value</th><th>Name</th><th>Action</th></tr>
+    <tr><td class="m">$00</td><td class="m">OFF</td><td>Hide the layer at the next output frame and stop buffer capture.</td></tr>
+    <tr><td class="m">$01</td><td class="m">ARM</td><td>Check and latch the staged buffer settings, clear the card&rsquo;s new shadow buffer, and start capture. The shown layer does not change.</td></tr>
+    <tr><td class="m">$02</td><td class="m">SHOW</td><td>At the next output frame, make the armed buffer active and show it.</td></tr>
+    <tr><td class="m">$03</td><td class="m">HIDE</td><td>Hide the layer at the next output frame but keep capture armed.</td></tr>
+  </table></div>
+  <p>Other command values are reserved and have no effect. The card ignores every CMD write while BUSY is 1. An accepted ARM sets BUSY during the CMD write cycle itself. An accepted SHOW, HIDE, or OFF sets FRAME_PENDING during the CMD write cycle itself. The first STATUS read after a CMD write therefore shows the command&rsquo;s effect; software never sees an accepted command that is still invisible in STATUS.</p>
+
+  <h3>STATUS bits</h3>
+  <div class="tablewrap"><table>
+    <tr><th>Bit</th><th>Name</th><th>Meaning when set</th></tr>
+    <tr><td class="m">7</td><td class="m">BUSY</td><td>The card is clearing or changing an internal shadow buffer.</td></tr>
+    <tr><td class="m">6</td><td class="m">STALE</td><td>The card lost one or more watched writes. It has hidden the layer. Software must ARM and refill it.</td></tr>
+    <tr><td class="m">5</td><td class="m">CONFIG_ERROR</td><td>The last ARM request failed a range or value check.</td></tr>
+    <tr><td class="m">4</td><td class="m">FRAME_PENDING</td><td>A SHOW, HIDE, or OFF change waits for the next output frame.</td></tr>
+    <tr><td class="m">3&ndash;2</td><td class="m">RESERVED</td><td>Always 0 in version 1.0.</td></tr>
+    <tr><td class="m">1</td><td class="m">ARMED</td><td>The card watches writes to the latched buffer range.</td></tr>
+    <tr><td class="m">0</td><td class="m">VISIBLE</td><td>The layer is part of the current output frame.</td></tr>
+  </table></div>
+</section>
+
+<section>
+  <h2><span class="sec">3</span>Indirect register reference</h2>
+  <p>Software selects a byte with INDEX and reads or writes it through DATA. DATA_INC makes a run of registers cheaper to set. Unknown indirect registers read as 0 and ignore writes.</p>
+  <div class="tablewrap"><table>
+    <tr><th>Index</th><th>Name</th><th>R/W</th><th>Function</th></tr>
+    <tr><td class="m">$00</td><td class="m">BASE_LO</td><td class="rw m">RW</td><td>Staged Apple RAM buffer address bits 7:0.</td></tr>
+    <tr><td class="m">$01</td><td class="m">BASE_HI</td><td class="rw m">RW</td><td>Staged Apple RAM buffer address bits 15:8.</td></tr>
+    <tr><td class="m">$02</td><td class="m">CONFIG</td><td class="rw m">RW</td><td>Staged bank, character mode, font, blink, and background settings; see &sect;4.</td></tr>
+    <tr><td class="m">$03</td><td class="m">COLS</td><td class="rw m">RW</td><td>Staged column count, 1&ndash;255. Zero is invalid.</td></tr>
+    <tr><td class="m">$04</td><td class="m">ROWS</td><td class="rw m">RW</td><td>Staged row count, 1&ndash;127. Zero is invalid.</td></tr>
+    <tr><td class="m">$05</td><td class="m">ORIGIN_X_LO</td><td class="rw m">RW</td><td>Staged left edge in output pixels, bits 7:0.</td></tr>
+    <tr><td class="m">$06</td><td class="m">ORIGIN_X_HI</td><td class="rw m">RW</td><td>Staged left edge in output pixels, bits 15:8.</td></tr>
+    <tr><td class="m">$07</td><td class="m">ORIGIN_Y_LO</td><td class="rw m">RW</td><td>Staged top edge in output pixels, bits 7:0.</td></tr>
+    <tr><td class="m">$08</td><td class="m">ORIGIN_Y_HI</td><td class="rw m">RW</td><td>Staged top edge in output pixels, bits 15:8.</td></tr>
+    <tr><td class="m">$09</td><td class="m">SCALE</td><td class="rw m">RW</td><td>Vertical scale in bits 7:4 and horizontal scale in bits 3:0. Each is 1&ndash;15; zero is invalid.</td></tr>
+    <tr><td class="m">$0A</td><td class="m">CURSOR_X</td><td class="rw m">RW</td><td>Live cursor column, 0&ndash;255.</td></tr>
+    <tr><td class="m">$0B</td><td class="m">CURSOR_Y</td><td class="rw m">RW</td><td>Live cursor row, 0&ndash;127.</td></tr>
+    <tr><td class="m">$0C</td><td class="m">CURSOR_CTRL</td><td class="rw m">RW</td><td>Live cursor enable, blink, and shape; see &sect;7.</td></tr>
+    <tr><td class="m">$0D</td><td class="m">FILL_CHAR</td><td class="rw m">RW</td><td>Character value used when ARM clears the new shadow buffer.</td></tr>
+    <tr><td class="m">$0E</td><td class="m">FILL_ATTR</td><td class="rw m">RW</td><td>Attribute value used when ARM clears the new shadow buffer.</td></tr>
+    <tr><td class="m">$0F</td><td class="m">RESERVED</td><td class="rw m">R</td><td>Reads as 0.</td></tr>
+    <tr><td class="m">$10</td><td class="m">CANVAS_W_LO</td><td class="rw m">R</td><td>Current output canvas width in pixels, bits 7:0.</td></tr>
+    <tr><td class="m">$11</td><td class="m">CANVAS_W_HI</td><td class="rw m">R</td><td>Current output canvas width in pixels, bits 15:8.</td></tr>
+    <tr><td class="m">$12</td><td class="m">CANVAS_H_LO</td><td class="rw m">R</td><td>Current output canvas height in pixels, bits 7:0.</td></tr>
+    <tr><td class="m">$13</td><td class="m">CANVAS_H_HI</td><td class="rw m">R</td><td>Current output canvas height in pixels, bits 15:8.</td></tr>
+    <tr><td class="m">$14</td><td class="m">ACTIVE_BASE_LO</td><td class="rw m">R</td><td>Shown buffer base, bits 7:0.</td></tr>
+    <tr><td class="m">$15</td><td class="m">ACTIVE_BASE_HI</td><td class="rw m">R</td><td>Shown buffer base, bits 15:8.</td></tr>
+    <tr><td class="m">$16</td><td class="m">ACTIVE_CONFIG</td><td class="rw m">R</td><td>Shown buffer CONFIG value.</td></tr>
+    <tr><td class="m">$17</td><td class="m">ACTIVE_COLS</td><td class="rw m">R</td><td>Shown buffer column count.</td></tr>
+    <tr><td class="m">$18</td><td class="m">ACTIVE_ROWS</td><td class="rw m">R</td><td>Shown buffer row count.</td></tr>
+    <tr><td class="m">$19&ndash;$1D</td><td class="m">ACTIVE_LAYOUT</td><td class="rw m">R</td><td>Shown ORIGIN_X low/high, ORIGIN_Y low/high, and SCALE, in that order.</td></tr>
+    <tr><td class="m">$1E</td><td class="m">CAPS</td><td class="rw m">R</td><td>Version 1.0 returns <span class="m">$7F</span>; bits 6:0 report staged handoff, cursor, transparent background, 8&times;16, 8&times;14, CP437, and VT100 support.</td></tr>
+    <tr><td class="m">$1F&ndash;$FF</td><td class="m">RESERVED</td><td class="rw m">R</td><td>Read as 0. Writes have no effect.</td></tr>
+  </table></div>
+  <p>Writes to staged registers never change the shown layer or the watched RAM range. ARM latches all staged registers except the live cursor registers. SHOW later copies the armed layout to the active layout at one output-frame edge.</p>
+</section>
+
+<section>
+  <h2><span class="sec">4</span>Cell and character formats</h2>
+  <p>Cells use two bytes with no row padding:</p>
+  <pre>cell = row * COLS + column
+address = BASE + 2 * cell
+
+address + 0   character
+address + 1   attribute</pre>
+  <p>A 16-bit little-endian store would hold <span class="m">attribute&times;$100 + character</span>. An 80&times;24 buffer uses 3,840 bytes. An 80&times;25 buffer uses 4,000 bytes.</p>
+
+  <h3>CONFIG bits</h3>
+  <div class="tablewrap"><table>
+    <tr><th>Bit</th><th>Name</th><th>0</th><th>1</th></tr>
+    <tr><td class="m">0</td><td class="m">AUX_BANK</td><td>Main RAM</td><td>Auxiliary RAM</td></tr>
+    <tr><td class="m">1</td><td class="m">CP437</td><td>VT100 character mode</td><td>CP437 character mode</td></tr>
+    <tr><td class="m">2</td><td class="m">FONT_16</td><td>8&times;14 font</td><td>8&times;16 font</td></tr>
+    <tr><td class="m">3</td><td class="m">BLINK_MODE</td><td>Attribute bit 7 is background bit 3</td><td>Attribute bit 7 enables blink</td></tr>
+    <tr><td class="m">4</td><td class="m">TRANSPARENT</td><td>Draw the cell background color</td><td>Let Apple video show through clear glyph pixels</td></tr>
+    <tr><td class="m">7&ndash;5</td><td class="m">RESERVED</td><td colspan="2">Write 0; reads return 0.</td></tr>
+  </table></div>
+
+  <h3>VT100 character mode</h3>
+  <p>The low seven character bits select a glyph. Character bit 7 requests underline. The card draws underline across all eight logical pixels on font row <span class="m">FONT_H&minus;2</span>; the last font row remains clear.</p>
+  <div class="tablewrap"><table>
+    <tr><th>Stored code</th><th>Glyph</th></tr>
+    <tr><td class="m">$00&ndash;$1F</td><td>DEC Special Graphics codes $5F&ndash;$7E, in order.</td></tr>
+    <tr><td class="m">$20&ndash;$7E</td><td>US ASCII.</td></tr>
+    <tr><td class="m">$7F</td><td>Blank.</td></tr>
+  </table></div>
+  <p>A program sets underline by ORing <code>$80</code> into any stored code. This includes a space, so an underlined space still draws a line. A terminal parser maps bold to a bright foreground color and resolves reverse video by swapping foreground and background before it stores the cell.</p>
+
+  <h3>CP437 character mode</h3>
+  <p>All eight character bits select one of the 256 fixed CP437 glyphs. No character bit remains for underline. This mode suits ANSI and BBS screens that need the full IBM graphic set.</p>
+</section>
+
+<section>
+  <h2><span class="sec">5</span>Apple RAM capture</h2>
+  <p>ARM forms one watched range from BASE, CONFIG.AUX_BANK, COLS, and ROWS. The byte count is <span class="m">2&times;COLS&times;ROWS</span>. A valid range meets every rule below:</p>
+  <ul>
+    <li>COLS and ROWS are not zero.</li>
+    <li>Both scale nibbles are from 1 through 15.</li>
+    <li>BASE is not below <code>$0200</code>.</li>
+    <li>BASE through <span class="m">BASE + byte_count &minus; 1</span> stays in one bank and below <code>$C000</code>.</li>
+    <li>The addition does not wrap past <code>$FFFF</code>.</li>
+    <li>Reserved CONFIG bits are zero.</li>
+  </ul>
+  <p>BASE need not be aligned. The <code>$0200</code> floor keeps zero page and the stack outside the watched range; those pages follow ALTZP and are always in use. The floor also makes an ARM with the reset defaults fail, because BASE resets to 0. Version 1.0 does not accept slot space, ROM, or language-card RAM. Software owns the chosen range and must not also use it for code, disk work space, or other changing data.</p>
+  <p>The card watches the <strong>actual target bank</strong> of each Apple bus write. It must account for AUXWRITE, 80STORE, PAGE2, and any other bank-routing state. Writes from a DMA bus master count in the same way as processor writes. On a machine with no auxiliary RAM, a buffer with AUX_BANK&nbsp;=&nbsp;1 never receives writes; ARM cannot detect this, and the layer then shows only fill cells.</p>
+  <div class="warning"><p>If the buffer overlaps native text or graphics memory, writes can change both the normal Apple picture and the overlay. Use unused RAM when the two pictures must stay independent.</p></div>
+
+  <h3>ARM</h3>
+  <ol>
+    <li>The card sets BUSY during the ARM write cycle itself.</li>
+    <li>The card checks all staged values. If any check fails, it sets CONFIG_ERROR, clears BUSY, and changes no active or armed state.</li>
+    <li>The card latches the staged values as the new capture settings.</li>
+    <li>The card fills its private shadow cells with FILL_CHAR and FILL_ATTR. It does not write those values to Apple RAM.</li>
+    <li>While the fill runs, BUSY stays 1 and watched writes need not be kept.</li>
+    <li>When the fill ends, the card clears BUSY and sets ARMED. From then on it keeps every write in the range.</li>
+  </ol>
+  <p>Software polls STATUS until BUSY is 0, then checks CONFIG_ERROR, then writes every cell that SHOW should display. The card cannot read old bytes that were already in Apple RAM before ARM.</p>
+
+  <h3>Lost writes</h3>
+  <p>If the card cannot keep a watched write after ARMED becomes 1, it sets STALE, clears ARMED, and hides the layer at the next output frame. It must not keep showing data that it knows may be wrong. A new valid ARM clears STALE and CONFIG_ERROR.</p>
+</section>
+
+<section>
+  <h2><span class="sec">6</span>Handoff and frame rules</h2>
+  <p>SHOW changes the active base, bank, grid, origin, scale, format, and font together at one output-frame edge. It never exposes a mix of old and new settings. SHOW has no effect unless ARMED is 1, BUSY is 0, and STALE and CONFIG_ERROR are both 0. SHOW does not clear ARMED: after the flip, the armed range is the active range, and capture continues on it. A later HIDE then SHOW shows the same buffer again without a new ARM.</p>
+  <p>After SHOW, later watched writes update the shown layer in bus order. A card may delay those writes before they reach its output, but it must preserve their order. The exact delay is implementation-defined and should not exceed two output frames under normal load.</p>
+  <p>HIDE and OFF also take effect at an output-frame edge. HIDE leaves capture armed. OFF stops capture after it hides the layer.</p>
+
+  <h3>Double buffering</h3>
+  <p>Software may keep one buffer visible while it prepares another:</p>
+  <ol>
+    <li>Leave buffer A visible.</li>
+    <li>Stage buffer B, issue ARM, and wait for BUSY to clear.</li>
+    <li>Do not change buffer A after ARM; the card now watches buffer B.</li>
+    <li>Fill buffer B and issue SHOW.</li>
+    <li>The card switches from A to B at one output-frame edge.</li>
+  </ol>
+  <p>Use non-overlapping ranges for A and B. ARM may clear the card&rsquo;s private copy of the new range, so an overlap could change cells that the old active layout still reads.</p>
+  <p>To know when the flip is complete, poll FRAME_PENDING until it is 0. Do not poll VISIBLE for this; VISIBLE is already 1 while the card flips from A to B.</p>
+</section>
+
+<section>
+  <h2><span class="sec">7</span>Color, background, blink, and cursor</h2>
+  <p>The attribute byte follows VGA order:</p>
+  <pre>bits 3:0   foreground color, 0-15
+bits 6:4   background color bits 2:0
+bit 7      blink when CONFIG.BLINK_MODE = 1
+           background color bit 3 when CONFIG.BLINK_MODE = 0</pre>
+  <p>In blink mode, the background range is 0&ndash;7. Outside blink mode, the background range is 0&ndash;15 and cells do not blink. All blinking cells share one phase: visible for 500 ms, hidden for 500 ms. On the hidden phase, glyph and underline pixels become background pixels, or clear pixels when CONFIG.TRANSPARENT is 1.</p>
+  <p>The interface does not observe <code>$C022</code>. Software writes VGA-order color values straight into each attribute byte.</p>
+  <p>When TRANSPARENT is 0, clear glyph pixels use the cell background color. When TRANSPARENT is 1, clear glyph pixels show the normal Apple picture below the layer. This setting applies to the whole buffer; version 1.0 has no per-cell transparency bit, so an ANSI cell with equal foreground and background stays a solid color block.</p>
+
+  <h3>Fixed palette</h3>
+  <div class="tablewrap"><table>
+    <tr><th>Index</th><th>0</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th><th>8</th><th>9</th><th>A</th><th>B</th><th>C</th><th>D</th><th>E</th><th>F</th></tr>
+    <tr><td class="m rw">Color</td>
+      <td><span class="sw" style="background:#000000"></span></td><td><span class="sw" style="background:#0000AA"></span></td>
+      <td><span class="sw" style="background:#00AA00"></span></td><td><span class="sw" style="background:#00AAAA"></span></td>
+      <td><span class="sw" style="background:#AA0000"></span></td><td><span class="sw" style="background:#AA00AA"></span></td>
+      <td><span class="sw" style="background:#AA5500"></span></td><td><span class="sw" style="background:#AAAAAA"></span></td>
+      <td><span class="sw" style="background:#555555"></span></td><td><span class="sw" style="background:#5555FF"></span></td>
+      <td><span class="sw" style="background:#55FF55"></span></td><td><span class="sw" style="background:#55FFFF"></span></td>
+      <td><span class="sw" style="background:#FF5555"></span></td><td><span class="sw" style="background:#FF55FF"></span></td>
+      <td><span class="sw" style="background:#FFFF55"></span></td><td><span class="sw" style="background:#FFFFFF"></span></td>
+    </tr>
+    <tr><td class="m rw">RGB</td>
+      <td class="m">000</td><td class="m">00A</td><td class="m">0A0</td><td class="m">0AA</td>
+      <td class="m">A00</td><td class="m">A0A</td><td class="m">A50</td><td class="m">AAA</td>
+      <td class="m">555</td><td class="m">55F</td><td class="m">5F5</td><td class="m">5FF</td>
+      <td class="m">F55</td><td class="m">F5F</td><td class="m">FF5</td><td class="m">FFF</td>
+    </tr>
+  </table></div>
+  <p>This is the standard VGA/ANSI color order. It differs from the IIgs <code>$C022</code> color order used by Text Overlay Card Interface 1.0.</p>
+
+  <h3>Cursor</h3>
+  <div class="tablewrap"><table>
+    <tr><th>CURSOR_CTRL bit</th><th>Name</th><th>Meaning</th></tr>
+    <tr><td class="m">0</td><td class="m">ENABLE</td><td>Draw the cursor when its row and column are inside the active grid.</td></tr>
+    <tr><td class="m">1</td><td class="m">BLINK</td><td>Blink the cursor on the same 500 ms phase as blinking cells.</td></tr>
+    <tr><td class="m">3&ndash;2</td><td class="m">SHAPE</td><td>0 block, 1 underline, 2 left bar, 3 reserved.</td></tr>
+    <tr><td class="m">7&ndash;4</td><td class="m">RESERVED</td><td>Write 0; reads return 0.</td></tr>
+  </table></div>
+  <p>A block cursor reverses foreground and background selection for the cell. An underline cursor forces the logical row <span class="m">FONT_H&minus;2</span> to foreground. A left-bar cursor forces logical column 0 to foreground. Cursor changes take effect at the next output frame and do not change Apple RAM or the card&rsquo;s text shadow.</p>
+</section>
+
+<section>
+  <h2><span class="sec">8</span>Canvas, placement, and clipping</h2>
+  <p>The canvas is the card&rsquo;s full active output picture. Pixel (0,0) is its top-left corner. CANVAS_W and CANVAS_H report its current size. Card-owned menus and status marks may draw above this text layer.</p>
+  <p>The unscaled cell size is 8&times;14 or 8&times;16 pixels. SCALE sets an integer size on each axis. The card places cell (x,y) at:</p>
+  <pre>left = ORIGIN_X + x * 8 * horizontal_scale
+top  = ORIGIN_Y + y * FONT_H * vertical_scale</pre>
+  <p>The card clips any part outside the canvas. An origin beyond the right or bottom edge is valid but shows no cells. The card does not resize the grid when the output mode changes; software can read the new canvas size and ARM a new layout.</p>
+  <div class="note"><p>An 80&times;24 VT100 grid with the 8&times;14 font and SCALE <span class="m">$22</span> is 1280&times;672 pixels. It fills the full width of a 1280&times;800 canvas and leaves 128 pixels for top and bottom margins.</p></div>
+</section>
+
+<section>
+  <h2><span class="sec">9</span>Reset and card detection</h2>
+  <h3>Reset state</h3>
+  <p>After card or Apple reset: the layer is hidden and not armed; INDEX, BASE, and origin are 0; CONFIG is <code>$08</code> (main RAM, VT100, 8&times;14, blink mode, opaque background); COLS is 80; ROWS is 24; SCALE is <code>$11</code>; FILL_CHAR is <code>$20</code>; FILL_ATTR is <code>$07</code>; and the cursor is off at (0,0). STATUS is 0. BASE resets below the <code>$0200</code> floor, so an ARM fails with CONFIG_ERROR until software stages a real address.</p>
+
+  <h3>Detection</h3>
+  <p>The interface adds no slot-ROM or <code>$C800</code> decode; it does not disturb the ROM its host slot already carries. Every identification byte sits at a fixed DEVSEL offset, in the manner of Apple&rsquo;s fixed-address auxiliary-memory entry points: identification must never depend on card state such as INDEX. Detection uses reads only. A detector scans the candidate slots; in each slot it reads SIG and VER first, and only if those match does it read the six MAGIC bytes.</p>
+  <p><strong>Etiquette is part of the protocol.</strong> A probe must never write to a slot that has not passed every check &mdash; not even to INDEX. On some cards &mdash; a Disk&nbsp;II controller above all &mdash; every DEVSEL access has side effects; the two reads of +$E and +$F are the least intrusive probe possible.</p>
+  <pre><em>; Entry: X = slot * $10.  PTR = any free zero-page pair.</em>
+<em>; Exit: carry clear = interface found in that slot.</em>
+DETECT   LDA   $C08E,X
+         CMP   #$4C             <em>; SIG = 'L'</em>
+         BNE   NOCARD
+         LDA   $C08F,X
+         CMP   #$10             <em>; version 1.0 or later</em>
+         BCC   NOCARD
+         TXA
+         ORA   #$88             <em>; DEVSEL base + $8 = first MAGIC byte</em>
+         STA   PTR
+         LDA   #$C0
+         STA   PTR+1
+         LDY   #0
+MAGIC    LDA   (PTR),Y
+         CMP   IDSTR,Y
+         BNE   NOCARD
+         INY
+         CPY   #6
+         BCC   MAGIC
+         CLC
+         RTS
+NOCARD   SEC
+         RTS
+IDSTR    HEX   4C494E545854   <em>; "LINTXT", high bits clear</em></pre>
+  <p>The ID string uses a HEX directive because Merlin&rsquo;s double-quoted ASC sets the high bits, and the compare would then always fail.</p>
+  <p>The reference implementation exposes these registers only while its SmartPort interface owns slot 7. It must not answer at <code>$C0F0&ndash;$C0FF</code> while SuperSprite owns that slot.</p>
+</section>
+
+<section>
+  <h2><span class="sec">10</span>Programming example</h2>
+  <p>This example stages an 80&times;24 VT100 buffer in main RAM at <code>$6000</code>. It uses an 8&times;14 font at 2&times; scale and places the 1280&times;672 layer at (0,64), centered on a 1280&times;800 canvas. It assumes the reference slot-7 binding, so the DEVSEL block sits at <code>$C0F0</code>.</p>
+  <pre>         LDA   #$00
+         STA   $C0F0            <em>; INDEX = BASE_LO</em>
+
+         LDA   #$00
+         STA   $C0F2            <em>; BASE_LO = $00; INDEX increments</em>
+         LDA   #$60
+         STA   $C0F2            <em>; BASE_HI = $60</em>
+         LDA   #$08
+         STA   $C0F2            <em>; main, VT100, 8x14, blink, opaque</em>
+         LDA   #80
+         STA   $C0F2            <em>; COLS</em>
+         LDA   #24
+         STA   $C0F2            <em>; ROWS</em>
+         LDA   #$00
+         STA   $C0F2            <em>; ORIGIN_X = 0</em>
+         LDA   #$00
+         STA   $C0F2
+         LDA   #$40
+         STA   $C0F2            <em>; ORIGIN_Y = $0040 = 64</em>
+         LDA   #$00
+         STA   $C0F2
+         LDA   #$22
+         STA   $C0F2            <em>; 2x horizontal, 2x vertical</em>
+
+         LDA   #$01
+         STA   $C0F3            <em>; CMD: ARM; BUSY sets in this write cycle</em>
+WAIT     LDA   $C0F4
+         BMI   WAIT             <em>; wait for BUSY = 0</em>
+         AND   #$20
+         BNE   BADCFG
+
+         JSR   FILL6000         <em>; write all 3,840 bytes after ARM</em>
+
+         LDA   #$02
+         STA   $C0F3            <em>; CMD: SHOW at next output frame</em>
+SHOWN    LDA   $C0F4
+         AND   #$10
+         BNE   SHOWN            <em>; FRAME_PENDING clears at the frame edge</em>
+         RTS</pre>
+  <p>To write cell (column,row), compute <span class="m">$6000 + 2&times;(row&times;80 + column)</span>, store the character first, then the attribute. Either byte order is valid. A frame can contain one old byte and one new byte if the two stores cross an output-frame edge; use the staged second buffer when a whole-screen change must be exact.</p>
+</section>
+
+<section>
+  <h2><span class="sec">11</span>Compliance</h2>
+  <p><strong>Normative:</strong> the 16-byte DEVSEL block and its register offsets, indirect register meanings, command and status rules, range checks, the two-byte row-major cell layout, CONFIG and attribute bits, VT100 and CP437 code maps, fixed palette, cursor shapes, reset state, capture of the resolved RAM bank, lost-write behavior, frame-edge handoff, and the MAGIC, SIG, and VER bytes at their fixed DEVSEL addresses.</p>
+  <p><strong>Implementation-defined:</strong> the slot, and any co-residency rules inside it (the reference implementation shares slot 7 with SmartPort and yields to SuperSprite and the boot menu); output canvas size; write-to-output delay within the stated two-frame goal; and the drawing order of card-owned menus above the text layer.</p>
+  <p><strong>Reserved for future versions:</strong> CONFIG bits 7:5, CURSOR_CTRL bits 7:4 and shape 3, DEVSEL offsets +$5 through +$7, indirect registers $1F through $FF, command values above $03, and STATUS bits 3:2. A future font-upload extension would use this reserved space.</p>
+</section>
+
+<footer>
+  Linear RAM Text Overlay Interface 1.0 draft &middot; 2026-08-11 &middot; Reference implementation: Appletini One. Review before implementation.
+</footer>
+</div>
+</body>
+</html>

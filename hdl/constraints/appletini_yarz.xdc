@@ -591,22 +591,6 @@ set_max_delay -datapath_only 8.0 \
     -to [get_ports a2fpga_dma_n]
 
 ################################################################################
-# Apple bus snapshot fanout
-################################################################################
-
-# Card decode paths share the authoritative PHI0-high address sample. Keep
-# each synthesis copy below 32 loads so placement can keep copies near card
-# groups. Apply this only to address data, not strobes, resets, or the full
-# packed bus.
-set appletini_ab_addr_regs [get_cells -quiet -hierarchical -regexp \
-    {.*apple_bus_wrapper_i/ab_read_r_reg\[addr\]\[[0-9]+\]$}]
-if {[llength $appletini_ab_addr_regs] != 16} {
-    error "Expected 16 Apple bus address registers; found [llength $appletini_ab_addr_regs]."
-}
-set_property MAX_FANOUT 32 $appletini_ab_addr_regs
-unset appletini_ab_addr_regs
-
-################################################################################
 # Switching Activity (for power estimation)
 ################################################################################
 

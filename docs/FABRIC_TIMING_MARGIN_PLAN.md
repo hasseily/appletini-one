@@ -232,6 +232,35 @@ Disk II cone than a broad fanout setting. Bus snapshot copies may still help
 the SmartPort paths and the remaining common route delay, but fresh reports
 must show the useful copy points.
 
+#### vTW Disk II Gate Build
+
+Commit `4a61407ff25d3e649a967ff854959f9f28383880` registered only the
+boot-menu Disk II gate used by vTW. It kept the native handoff gate live. All
+14 vTW benches, 19 standard Disk II tests, and 66 WOZ tests passed. The clean
+full build `20260812T163431Z-4a61407f-full` produced:
+
+| Check | Result |
+| --- | ---: |
+| Setup WNS / TNS | `+0.004 ns` / `0.000 ns` |
+| Hold WNS / TNS | `+0.057 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.366 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+
+The long address-to-vTW Disk II path left the top ten. Local Disk II paths
+now start at registered drive state and have at least `+0.100 ns` slack. Four
+of the top ten paths start at `ab_read_r.addr[13]` and end in SmartPort or
+Disk II; they have 46 to 74 loads and about 74 to 77 percent route delay. The
+worst path is a Mockingboard response to the Apple data-direction pin at
+`+0.004 ns`.
+
+The design used 10,077 slices, 30,598 LUTs, 20,305 registers, 74 block RAM
+tiles, and 1,053 control sets. Keep the local Disk II gate stage, but do not
+promote this build. Test a synthesis `MAX_FANOUT` of 32 on the sampled 16-bit
+Apple address register as one flow change. Do not apply it to the whole bus or
+to the local capture record stage.
+
 ### 2. Limit Apple Bus Snapshot Fanout
 
 First try a measured `MAX_FANOUT` limit on the bus snapshot source. Check the

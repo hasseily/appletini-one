@@ -118,3 +118,4 @@ dfx_runtime.txt
 **/__pycache__/
 hdl/sim/*
 !hdl/sim/tb_*.sv
+!hdl/sim/xpm_fifo_sync_model.sv

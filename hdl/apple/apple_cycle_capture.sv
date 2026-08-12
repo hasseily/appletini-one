@@ -9,6 +9,14 @@ module apple_cycle_capture (
     input  logic [6:0]                      cycle_in_line,
     input  logic                            frame_en,
 
+    // Slot-7 linear text overlay capture window. The bank bit matches
+    // addr_decode_late[16]; limit is exclusive.
+    input  logic                            overlay_devsel_enabled,
+    input  logic                            overlay_capture_armed,
+    input  logic                            overlay_capture_bank_aux,
+    input  logic [15:0]                     overlay_capture_base,
+    input  logic [15:0]                     overlay_capture_limit,
+
     output apple_cycle_capture_pkg::AppleCycleRecord cycle_capture_data,
     input  logic                            cycle_capture_rd_en,
     output logic                            cycle_capture_empty,
@@ -18,6 +26,7 @@ module apple_cycle_capture (
     // record into the PS-side ring on ack.
     output logic                            capture_drop_sticky,
     input  logic                            capture_drop_ack,
+    output logic                            overlay_capture_drop_sticky,
 
     // Authoritative fake-SHR capture state, exported so the PS can
     // resynchronize its local C029 mode after a capture drop eats the
@@ -73,10 +82,19 @@ module apple_cycle_capture (
 
     // Rule 1: qualifying bus write into video memory (in addr_decode space).
     logic rule1_valid;
+    logic overlay_rule_valid;
+    assign overlay_rule_valid =
+        overlay_capture_armed &&
+        (cap_rw == 1'b0) &&
+        cap_addr_decode_en &&
+        (cap_addr_decode[23:17] == 7'd0) &&
+        (cap_addr_decode[16] == overlay_capture_bank_aux) &&
+        (cap_addr_decode[15:0] >= overlay_capture_base) &&
+        (cap_addr_decode[15:0] < overlay_capture_limit);
     assign rule1_valid =
         (cap_rw == 1'b0) &&
         cap_addr_decode_en &&
-        in_video_range(cap_addr_decode);
+        (in_video_range(cap_addr_decode) || overlay_rule_valid);
 
     logic vidhd_register_write;
     assign vidhd_register_write =
@@ -89,10 +107,19 @@ module apple_cycle_capture (
         ab_read.data_en &&
         is_video7_an3_access(cap_addr);
 
+    logic overlay_command_write;
+    assign overlay_command_write =
+        overlay_devsel_enabled &&
+        ab_read.data_en &&
+        (cap_rw == 1'b0) &&
+        (cap_addr == 16'hC0F3) &&
+        (ab_read.data == 8'h02);
+
     logic io_push_request;
     assign io_push_request =
         vidhd_register_write ||
-        video7_softswitch_access;
+        video7_softswitch_access ||
+        overlay_command_write;
 
     // Fake-SHR on the Apple //e is selected by C029 only. While active,
     // the PS renderer builds complete frames from the captured AUX shadow,
@@ -228,8 +255,9 @@ module apple_cycle_capture (
             pending_record_valid  <= 1'b0;
             pending_record_q      <= '0;
         end else begin
-            if (pending_record_valid && fifo_wr_en)
+            if (pending_record_valid && fifo_wr_en) begin
                 pending_record_valid <= 1'b0;
+            end
 
             if (io_push_request && apple_push_request && !pending_record_valid && !fifo_full) begin
                 pending_record_q     <= apple_record_din;
@@ -245,6 +273,25 @@ module apple_cycle_capture (
         end
     end
     assign capture_drop_sticky = capture_drop_sticky_q;
+
+    /* Only a lost watched write or overlay command invalidates the overlay.
+     * A drop elsewhere still invalidates the Apple renderer through the
+     * general sticky bit, but does not create a false overlay STALE state. */
+    logic overlay_capture_drop_sticky_q;
+    always_ff @(posedge clk) begin
+        if (~resetn || soft_reset) begin
+            overlay_capture_drop_sticky_q <= 1'b0;
+        end else begin
+            if (((!pending_record_valid && fifo_full) ||
+                 pending_record_valid) &&
+                (overlay_rule_valid || overlay_command_write)) begin
+                overlay_capture_drop_sticky_q <= 1'b1;
+            end else if (capture_drop_ack) begin
+                overlay_capture_drop_sticky_q <= 1'b0;
+            end
+        end
+    end
+    assign overlay_capture_drop_sticky = overlay_capture_drop_sticky_q;
 
     assign cycle_capture_data  = AppleCycleRecord'(fifo_dout);
     assign cycle_capture_empty = fifo_empty;

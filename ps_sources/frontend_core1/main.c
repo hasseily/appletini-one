@@ -44,6 +44,7 @@
 #include "../frontend/apple_fb_handoff.h"
 #include "../frontend/apple_pal_video_timing.h"
 #include "../frontend/card_control_regs.h"
+#include "../frontend/linear_text_overlay.h"
 
 #define RESET_RELEASE_REG            0x4000000CU
 #define RESET_RELEASE_CPU1_READY_BIT (1UL << 1)
@@ -331,6 +332,7 @@ int main(void)
         uart_puts(UART0_BASE, "core 1: apple_cycle_renderer_init failed\r\n");
         for (;;) { __asm__ volatile ("wfe"); }
     }
+    linear_text_overlay_capture_init();
 
     REG_WRITE(RESET_RELEASE_REG,
               RESET_RELEASE_CPU1_READY_BIT);
@@ -362,6 +364,7 @@ int main(void)
             (apple_status & CARD_CTRL_APPLE_RESET_VTW_1MHZ_BIT) != 0U);
         apple_cycle_renderer_sync_shr_mode(
             (apple_status & CARD_CTRL_APPLE_RESET_SHR_ACTIVE_BIT) != 0U);
+        linear_text_overlay_capture_poll();
         apple_cycle_egress_poll();
 
         /* Diagnostic shadow-dump request from CPU0's UART console.

@@ -445,12 +445,12 @@ bit 7      blink when CONFIG.BLINK_MODE = 1
 
 <section>
   <h2><span class="sec">8</span>Canvas, placement, and clipping</h2>
-  <p>The canvas is the card&rsquo;s full active output picture. Pixel (0,0) is its top-left corner. CANVAS_W and CANVAS_H report its current size. Card-owned menus and status marks may draw above this text layer.</p>
+  <p>The canvas is the card&rsquo;s full active Apple picture, not its border or bezel. Pixel (0,0) is its top-left corner. CANVAS_W and CANVAS_H report its current size. The reference implementation reports 1120&times;768 for legacy Apple modes and 1280&times;800 for SHR. Card-owned menus and status marks may draw above this text layer.</p>
   <p>The unscaled cell size is 8&times;14 or 8&times;16 pixels. SCALE sets an integer size on each axis. The card places cell (x,y) at:</p>
   <pre>left = ORIGIN_X + x * 8 * horizontal_scale
 top  = ORIGIN_Y + y * FONT_H * vertical_scale</pre>
   <p>The card clips any part outside the canvas. An origin beyond the right or bottom edge is valid but shows no cells. The card does not resize the grid when the output mode changes; software can read the new canvas size and ARM a new layout.</p>
-  <div class="note"><p>An 80&times;24 VT100 grid with the 8&times;14 font and SCALE <span class="m">$22</span> is 1280&times;672 pixels. It fills the full width of a 1280&times;800 canvas and leaves 128 pixels for top and bottom margins.</p></div>
+  <div class="note"><p>An 80&times;24 VT100 grid with the 8&times;14 font and SCALE <span class="m">$22</span> is 1280&times;672 pixels. On the reference SHR canvas it sits at (0,64). On the 1120&times;768 legacy canvas, SCALE <span class="m">$21</span> makes the same grid 640&times;672 pixels and centers it at (240,48). Software should read CANVAS_W and CANVAS_H before it chooses these values.</p></div>
 </section>
 
 <section>
@@ -492,7 +492,7 @@ IDSTR    HEX   4C494E545854   <em>; "LINTXT", high bits clear</em></pre>
 
 <section>
   <h2><span class="sec">10</span>Programming example</h2>
-  <p>This example stages an 80&times;24 VT100 buffer in main RAM at <code>$6000</code>. It uses an 8&times;14 font at 2&times; scale and places the 1280&times;672 layer at (0,64), centered on a 1280&times;800 canvas. It assumes the reference slot-7 binding, so the DEVSEL block sits at <code>$C0F0</code>.</p>
+  <p>This SHR example stages an 80&times;24 VT100 buffer in main RAM at <code>$6000</code>. It uses an 8&times;14 font at 2&times; scale and places the 1280&times;672 layer at (0,64), centered on a 1280&times;800 canvas. A program that can also run in legacy modes must read the canvas registers and use the legacy layout above. This example assumes the reference slot-7 binding, so the DEVSEL block sits at <code>$C0F0</code>.</p>
   <pre>         LDA   #$00
          STA   $C0F0            <em>; INDEX = BASE_LO</em>
 
@@ -530,8 +530,14 @@ WAIT     LDA   $C0F4
          STA   $C0F3            <em>; CMD: SHOW at next output frame</em>
 SHOWN    LDA   $C0F4
          AND   #$10
-         BNE   SHOWN            <em>; FRAME_PENDING clears at the frame edge</em>
-         RTS</pre>
+          BNE   SHOWN            <em>; FRAME_PENDING clears at the frame edge</em>
+          RTS</pre>
+  <p>Before it exits, a program must remove its layer and wait for the clean output frame to take effect. OFF hides the layer and disarms capture; it does not change the Apple RAM buffer.</p>
+  <pre>         LDA   #$00
+         STA   $C0F3            <em>; CMD: OFF</em>
+ CLEAN    LDA   $C0F4
+          AND   #$10
+          BNE   CLEAN            <em>; do not return while the layer is visible</em></pre>
   <p>To write cell (column,row), compute <span class="m">$6000 + 2&times;(row&times;80 + column)</span>, store the character first, then the attribute. Either byte order is valid. A frame can contain one old byte and one new byte if the two stores cross an output-frame edge; use the staged second buffer when a whole-screen change must be exact.</p>
 </section>
 

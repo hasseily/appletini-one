@@ -443,9 +443,14 @@ module vtw_bus_engine #(
      * (read-after-write consistency), and neither may a bank-steering
      * soft-switch access (queued aux/main writes must retire under the
      * switch regime they were issued in). */
+    /* Slot-7 DEVSEL includes the linear-text command port. Drain posted
+     * text-buffer writes before any register access so SHOW enters the
+     * capture stream after every byte it exposes. */
+    wire sync_slot7_devsel = (sync_addr_q[15:4] == 12'hC0F);
     wire sync_flush_wait = (vtw_is_video_window(sync_addr_q, 1'b1, 1'b1) ||
-                            vtw_is_bank_steer(sync_addr_q, sync_rw_q)) &&
-                           (post_fill_q != '0);
+                            vtw_is_bank_steer(sync_addr_q, sync_rw_q) ||
+                            sync_slot7_devsel) &&
+                            (post_fill_q != '0);
     wire [1:0] dbg_current_kind =
         (cyc_q == CYC_POST) ? 2'd1 :
         (cyc_q == CYC_SYNC) ? (sync_rw_q ? 2'd2 : 2'd3) :

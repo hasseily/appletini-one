@@ -1,0 +1,713 @@
+; textoverlay.a65 -- Linear RAM text overlay interface demo.
+;
+; Loads at $2000 and uses main RAM $6000-$6EFF as an 80x24 cell buffer.
+; Each cell is two bytes: character, then VGA attribute. Attribute bits 3:0
+; select the foreground; bits 7:4 select the background or blink flag.
+; The card copies writes to this range after CMD_ARM, then draws that copy.
+; Keys: C toggles VT/CP437, T toggles transparency, other keys exit.
+
+!cpu 6502
+* = $2000
+
+KBD          = $C000       ; keyboard data, bit 7 = key ready
+KBDSTRB      = $C010       ; clear keyboard strobe
+TXTSET       = $C051       ; leave Apple video in text mode
+RDCXROM      = $C015       ; bit 7 = internal slot ROM selected
+SETSLOTCXROM = $C006       ; expose peripheral slot ROM/I/O
+SETINTCXROM  = $C007       ; restore internal slot ROM/I/O
+HOME         = $FC58
+COUT         = $FDED
+BUFFER       = $6000       ; 80 * 24 * 2 = $0F00 bytes
+
+DEV  = $06                ; zero-page pointer to slot DEVSEL block
+CELL = $08                ; zero-page pointer into BUFFER
+SRC  = $0A                ; zero-page pointer to a zero-ended string
+
+CMD_OFF  = $00            ; hide and disarm at an output-frame edge
+CMD_ARM  = $01            ; validate config, clear shadow, start capture
+CMD_SHOW = $02            ; make the armed config visible at a frame edge
+
+; ----------------------------------------------------------------------
+; Entry and UI loop
+; ----------------------------------------------------------------------
+start:
+    lda TXTSET             ; show diagnostics on native Apple text
+    jsr HOME
+    lda #<native_msg
+    sta SRC
+    lda #>native_msg
+    sta SRC + 1
+    jsr print_z
+    jsr find_overlay       ; returns C=1 and leaves DEV on the card
+    bcs found
+    lda #<missing_msg
+    sta SRC
+    lda #>missing_msg
+    sta SRC + 1
+    jsr print_z
+    jsr wait_key
+    rts
+
+found:
+    lda #$08               ; main, VT, 8x14, blink attrs, opaque
+    sta mode_config
+redraw:
+    ; ARM clears a private slot. Fill BUFFER only after ARM so the capture
+    ; path sees every byte written below.
+    jsr configure_and_arm
+    bcs overlay_error
+    jsr fill_buffer
+    lda mode_config
+    and #$02
+    bne draw_cp437
+    jsr draw_vt_screen
+    jmp show_screen
+draw_cp437:
+    jsr draw_cp437_screen
+
+show_screen:
+    ldx #$0A               ; CURSOR_X
+    lda #$43               ; column 67
+    jsr write_indexed
+    ldx #$0B               ; CURSOR_Y
+    lda #$14               ; row 20
+    jsr write_indexed
+    ldx #$0C               ; CURSOR_CTRL
+    lda #$03               ; enable + blink, block shape
+    jsr write_indexed
+    lda #CMD_SHOW
+    jsr write_command
+    jsr wait_frame
+
+key_loop:
+    jsr wait_key
+    cmp #'C'
+    beq toggle_cp437
+    cmp #'c'
+    beq toggle_cp437
+    cmp #'T'
+    beq toggle_transparent
+    cmp #'t'
+    beq toggle_transparent
+    jsr clear_overlay      ; all other keys leave the demo
+    lda TXTSET
+    rts
+
+toggle_cp437:
+    lda mode_config
+    eor #$02               ; CONFIG bit 1: VT / CP437
+    sta mode_config
+    jmp redraw
+toggle_transparent:
+    lda mode_config
+    eor #$10               ; CONFIG bit 4: opaque / transparent
+    sta mode_config
+    jmp redraw
+
+overlay_error:
+    ; ARM can fail for a bad range, size, scale, or stale capture state.
+    jsr clear_overlay
+    lda #<error_msg
+    sta SRC
+    lda #>error_msg
+    sta SRC + 1
+    jsr print_z
+    jsr wait_key
+    rts
+
+; OFF is frame-staged. Do not return while a scanned buffer can show it.
+clear_overlay:
+    lda #CMD_OFF
+    jsr write_command
+    jsr wait_frame
+    rts
+
+; ----------------------------------------------------------------------
+; Read-only card detection
+; ----------------------------------------------------------------------
+; Scan slots 7 down to 1. Probe +$E/+F first because DEVSEL reads can have
+; side effects on unrelated cards. Only read +$8..+$D after both match.
+find_overlay:
+    lda RDCXROM            ; save the caller's Cx ROM state in bit 7
+    pha
+    sta SETSLOTCXROM       ; make external slot I/O visible during scan
+    lda #7
+    sta candidate
+scan_slot:
+    ; DEV = $C080 + slot * $10: $C090 for slot 1 through $C0F0 for slot 7.
+    lda candidate
+    asl
+    asl
+    asl
+    asl
+    ora #$80
+    sta DEV
+    lda #$C0
+    sta DEV + 1
+    ldy #$0E               ; fixed SIG byte, $4C
+    lda (DEV),y
+    cmp signature + 6
+    bne next_slot
+    iny
+    lda (DEV),y
+    cmp signature + 7
+    bne next_slot
+    ldx #0                 ; compare "LINTXT" at offsets $8..$D
+    ldy #8
+scan_sig:
+    lda (DEV),y
+    cmp signature,x
+    bne next_slot
+    iny
+    inx
+    cpx #6
+    bne scan_sig
+    pla                    ; restore internal Cx ROM only if it was set
+    bpl +
+    sta SETINTCXROM
++   sec
+    rts
+next_slot:
+    dec candidate
+    bne scan_slot
+    pla                    ; no match; restore the saved Cx ROM state
+    bpl +
+    sta SETINTCXROM
++   clc
+    rts
+
+; ----------------------------------------------------------------------
+; Staged card setup
+; ----------------------------------------------------------------------
+; Program INDEX/DATA registers, issue ARM, and wait for shadow clear.
+; Return C=0 on success, C=1 on STALE or CONFIG_ERROR.
+configure_and_arm:
+    jsr choose_canvas_layout
+    ldx #$00               ; BASE_LO
+    lda #<BUFFER
+    jsr write_indexed
+    ldx #$01               ; BASE_HI
+    lda #>BUFFER
+    jsr write_indexed
+    ldx #$02               ; CONFIG
+    lda mode_config
+    jsr write_indexed
+    ldx #$03               ; COLS
+    lda #80
+    jsr write_indexed
+    ldx #$04               ; ROWS
+    lda #24
+    jsr write_indexed
+    ldx #$05               ; ORIGIN_X_LO
+    lda origin_x
+    jsr write_indexed
+    ldx #$06               ; ORIGIN_X_HI
+    lda origin_x + 1
+    jsr write_indexed
+    ldx #$07               ; ORIGIN_Y_LO
+    lda origin_y
+    jsr write_indexed
+    ldx #$08               ; ORIGIN_Y_HI
+    lda origin_y + 1
+    jsr write_indexed
+    ldx #$09               ; SCALE: vertical in high nibble
+    lda layout_scale
+    jsr write_indexed
+    ldx #$0D               ; FILL_CHAR
+    lda #' '
+    jsr write_indexed
+    ldx #$0E               ; FILL_ATTR: blue background, gray text
+    lda #$17
+    jsr write_indexed
+    lda #CMD_ARM
+    jsr write_command
+-   jsr read_status
+    bmi -                   ; STATUS bit 7: ARM/clear still busy
+    and #$60                ; bits 6:5: STALE or CONFIG_ERROR
+    beq +
+    sec
+    rts
++   clc
+    rts
+
+; Fit the 80x24 grid inside the canvas reported for the live Apple mode.
+; SHR uses 2x2 pixels (1280x672). Legacy uses 1x2 pixels (640x672).
+choose_canvas_layout:
+    ldx #$10               ; CANVAS_W_LO
+    jsr read_indexed
+    sta canvas_width
+    ldx #$11               ; CANVAS_W_HI
+    jsr read_indexed
+    sta canvas_width + 1
+    ldx #$12               ; CANVAS_H_LO
+    jsr read_indexed
+    sta canvas_height
+    ldx #$13               ; CANVAS_H_HI
+    jsr read_indexed
+    sta canvas_height + 1
+
+    ; Width >= $0500 selects 2x horizontal scale; smaller widths use 1x.
+    lda canvas_width + 1
+    cmp #$05
+    bcc legacy_layout
+    lda #$22
+    sta layout_scale
+    ; origin_x = (canvas_width - 1280) / 2
+    lda canvas_width
+    sec
+    sbc #<$0500
+    sta origin_x
+    lda canvas_width + 1
+    sbc #>$0500
+    sta origin_x + 1
+    jmp center_x
+legacy_layout:
+    lda #$21
+    sta layout_scale
+    ; origin_x = (canvas_width - 640) / 2
+    lda canvas_width
+    sec
+    sbc #<$0280
+    sta origin_x
+    lda canvas_width + 1
+    sbc #>$0280
+    sta origin_x + 1
+center_x:
+    lsr origin_x + 1
+    ror origin_x
+
+    ; Both layouts are 672 ($02A0) pixels high at 2x vertical scale.
+    ; origin_y = (canvas_height - 672) / 2
+    lda canvas_height
+    sec
+    sbc #<$02A0
+    sta origin_y
+    lda canvas_height + 1
+    sbc #>$02A0
+    sta origin_y + 1
+    lsr origin_y + 1
+    ror origin_y
+    rts
+
+; DEV offsets: +0 INDEX, +1 DATA without increment, +2 DATA with increment,
+; +3 COMMAND, +4 STATUS. These helpers use +1 so each call names its index.
+write_indexed:             ; in: X=index, A=value
+    sta value
+    ldy #0
+    txa
+    sta (DEV),y
+    iny
+    lda value
+    sta (DEV),y
+    rts
+read_indexed:              ; in: X=index; out: A=value
+    ldy #0
+    txa
+    sta (DEV),y
+    iny
+    lda (DEV),y
+    rts
+write_command:
+    ldy #3
+    sta (DEV),y
+    rts
+read_status:
+    ldy #4
+    lda (DEV),y
+    rts
+wait_frame:
+-   jsr read_status
+    and #$10               ; STATUS bit 4: frame change pending
+    bne -
+    rts
+
+; ----------------------------------------------------------------------
+; Buffer initialization and demo screen builders
+; ----------------------------------------------------------------------
+; Write all 15 pages after ARM. Even bytes are spaces; odd bytes are $17
+; attributes. This produces a blank gray-on-blue 80x24 screen and gives the
+; capture path a write for every byte in the active range.
+fill_buffer:
+    lda #<BUFFER
+    sta CELL
+    lda #>BUFFER
+    sta CELL + 1
+    lda #15                ; $0F pages = $0F00 bytes
+    sta page_count
+page_loop:
+    ldy #0
+byte_loop:
+    tya
+    and #1                 ; interleaved character/attribute byte
+    beq fill_char
+    lda #$17
+    bne fill_store
+fill_char:
+    lda #' '
+fill_store:
+    sta (CELL),y
+    iny
+    bne byte_loop
+    inc CELL + 1
+    dec page_count
+    bne page_loop
+    rts
+
+draw_vt_screen:
+    ; Centered title, DEC frame, color row, underline, blink, then help.
+    lda #1
+    sta cell_row
+    lda #23
+    sta cell_col
+    lda #$1F               ; white on blue
+    sta cell_attr
+    lda #<title_vt
+    sta SRC
+    lda #>title_vt
+    sta SRC + 1
+    jsr put_string
+    jsr draw_dec_frame
+    lda #5
+    sta cell_row
+    lda #5
+    sta cell_col
+    lda #$0F               ; white on black
+    sta cell_attr
+    lda #<color_title
+    sta SRC
+    lda #>color_title
+    sta SRC + 1
+    jsr put_string
+    jsr draw_colors
+    lda #9
+    sta cell_row
+    lda #5
+    sta cell_col
+    lda #$0B               ; bright cyan on black
+    sta cell_attr
+    lda #<underlined
+    sta SRC
+    lda #>underlined
+    sta SRC + 1
+    jsr put_string
+    lda #11
+    sta cell_row
+    lda #5
+    sta cell_col
+    lda #$8E               ; blink bit + bright yellow foreground
+    sta cell_attr
+    lda #<blink_text
+    sta SRC
+    lda #>blink_text
+    sta SRC + 1
+    jsr put_string
+    jmp draw_help
+
+draw_cp437_screen:
+    ; Use CP437 frame bytes and show block, shade, line, and Greek glyphs.
+    lda #1
+    sta cell_row
+    lda #20
+    sta cell_col
+    lda #$1F
+    sta cell_attr
+    lda #<title_cp437
+    sta SRC
+    lda #>title_cp437
+    sta SRC + 1
+    jsr put_string
+    jsr draw_dec_frame
+    jsr draw_colors
+    lda #8
+    sta cell_row
+    lda #5
+    sta cell_col
+    lda #$0E               ; bright yellow on black
+    sta cell_attr
+    lda #<cp437_sample
+    sta SRC
+    lda #>cp437_sample
+    sta SRC + 1
+    jsr put_string
+    lda #11
+    sta cell_row
+    lda #5
+    sta cell_col
+    lda #$8A               ; blink bit + bright green foreground
+    sta cell_attr
+    lda #<blink_text
+    sta SRC
+    lda #>blink_text
+    sta SRC + 1
+    jsr put_string
+
+draw_help:
+    lda #18
+    sta cell_row
+    lda #10
+    sta cell_col
+    lda #$0F
+    sta cell_attr
+    lda #<help_text
+    sta SRC
+    lda #>help_text
+    sta SRC + 1
+    jsr put_string
+    rts
+
+draw_colors:
+    ; Draw sixteen groups of three '#'. Values 0..15 select foreground;
+    ; all background and blink bits remain clear.
+    lda #7
+    sta cell_row
+    lda #8
+    sta cell_col
+    lda #0
+    sta color
+color_loop:
+    lda color
+    sta cell_attr
+    lda #'#'
+    sta cell_char
+    lda #3                 ; three cells per color
+    sta run_count
+-   jsr put_char
+    inc cell_col
+    dec run_count
+    bne -
+    inc cell_col
+    inc color
+    lda color
+    cmp #16
+    bne color_loop
+    rts
+
+draw_dec_frame:
+    ; The same frame builder serves both maps. CP437 uses byte values
+    ; $B3/$C4/$DA...; VT mode uses DEC Special Graphics indices 11..25.
+    lda mode_config
+    and #$02
+    beq vt_frame_chars
+    lda #$DA               ; CP437 upper-left
+    sta frame_ul
+    lda #$BF
+    sta frame_ur
+    lda #$C0
+    sta frame_ll
+    lda #$D9
+    sta frame_lr
+    lda #$C4
+    sta frame_h
+    lda #$B3
+    sta frame_v
+    bne frame_chars_ready
+vt_frame_chars:
+    lda #13                ; DEC upper-left
+    sta frame_ul
+    lda #12
+    sta frame_ur
+    lda #14
+    sta frame_ll
+    lda #11
+    sta frame_lr
+    lda #18
+    sta frame_h
+    lda #25
+    sta frame_v
+frame_chars_ready:
+    ; Frame spans columns 1..78 and rows 3..22.
+    lda #3
+    sta cell_row
+    lda #1
+    sta cell_col
+    lda #$1B
+    sta cell_attr
+    lda frame_ul
+    sta cell_char
+    jsr put_char
+    inc cell_col
+    lda frame_h
+    sta cell_char
+    lda #76                ; cells between the two corners
+    sta run_count
+-   jsr put_char
+    inc cell_col
+    dec run_count
+    bne -
+    lda frame_ur
+    sta cell_char
+    jsr put_char
+    lda #22
+    sta cell_row
+    lda #1
+    sta cell_col
+    lda frame_ll
+    sta cell_char
+    jsr put_char
+    inc cell_col
+    lda frame_h
+    sta cell_char
+    lda #76
+    sta run_count
+-   jsr put_char
+    inc cell_col
+    dec run_count
+    bne -
+    lda frame_lr
+    sta cell_char
+    jsr put_char
+    lda #4
+    sta cell_row
+vertical_loop:
+    lda frame_v
+    sta cell_char
+    lda #1
+    sta cell_col
+    jsr put_char
+    lda #78
+    sta cell_col
+    jsr put_char
+    inc cell_row
+    lda cell_row
+    cmp #22                ; rows 4 through 21
+    bne vertical_loop
+    rts
+
+; ----------------------------------------------------------------------
+; Cell and string writers
+; ----------------------------------------------------------------------
+; CELL = BUFFER + row * 160 + column * 2. The card uses the same packed,
+; row-major address rule, so normal 6502 stores feed its capture shadow.
+set_cell_ptr:
+    lda #<BUFFER
+    sta CELL
+    lda #>BUFFER
+    sta CELL + 1
+    ldx cell_row
+    beq add_column
+row_add:
+    clc
+    lda CELL
+    adc #160               ; 80 cells * 2 bytes
+    sta CELL
+    bcc +
+    inc CELL + 1
++   dex
+    bne row_add
+add_column:
+    lda cell_col
+    asl                    ; two bytes per cell
+    clc
+    adc CELL
+    sta CELL
+    bcc +
+    inc CELL + 1
++   rts
+
+put_char:
+    ; Write one complete cell. Keep character first for easy screen dumps;
+    ; the interface accepts either byte order.
+    jsr set_cell_ptr
+    ldy #0
+    lda cell_char
+    sta (CELL),y
+    iny
+    lda cell_attr
+    sta (CELL),y
+    rts
+
+put_string:
+    ; Write a zero-ended string at (cell_col,cell_row) with one fixed attr.
+    ; SRC and CELL both advance, so Y returns to zero for every cell.
+    jsr set_cell_ptr
+    ldy #0
+string_loop:
+    lda (SRC),y
+    beq string_done
+    sta (CELL),y           ; character byte
+    iny
+    lda cell_attr
+    sta (CELL),y           ; attribute byte
+    inc SRC
+    bne +
+    inc SRC + 1
++   clc
+    lda CELL
+    adc #2
+    sta CELL
+    bcc +
+    inc CELL + 1
++   ldy #0
+    jmp string_loop
+string_done:
+    rts
+
+wait_key:
+    ; Keep keys latched during redraw. Clear the strobe only after reading
+    ; the key; reads of KBDSTRB cannot test release on an Apple II or II+.
+-   lda KBD
+    bpl -
+    sta KBDSTRB
+    and #$7F
+    rts
+
+print_z:
+    ; Print a zero-ended string through monitor COUT. COUT expects bit 7 set.
+    ldy #0
+-   lda (SRC),y
+    beq +
+    ora #$80
+    jsr COUT
+    iny
+    bne -
+    inc SRC + 1
+    bne -
++   rts
+
+; ----------------------------------------------------------------------
+; Constant data
+; ----------------------------------------------------------------------
+signature: !text "LINTXT" ; DEV +$8..+$D
+           !byte $4C, $10  ; DEV +$E signature, +$F version 1.0
+native_msg:  !text "LINEAR TEXT OVERLAY DEMO", $0D
+             !text "NATIVE APPLE VIDEO REMAINS UNDER IT.", $0D, 0
+missing_msg: !text "NO LINTXT V1.0 CARD FOUND.", $0D, 0
+error_msg:   !text "OVERLAY ARM FAILED.", $0D, 0
+title_vt:    !text "VT/ANSI TEXT OVERLAY", 0
+title_cp437: !text "CP437 TEXT OVERLAY", 0
+color_title: !text "16-COLOR VGA FOREGROUND", 0
+; VT mode uses character bit 7 as underline. These are "UNDERLINE" with
+; bit 7 set; the following plain text stays unlined.
+underlined:  !byte $D5, $CE, $C4, $C5, $D2, $CC, $C9, $CE, $C5
+             !text "  (CHARACTER BIT 7)", 0
+blink_text:  !text "BLINK: 500 MS ON / 500 MS OFF", 0
+help_text:   !text "C CP437   T TRANSPARENT   OTHER EXIT", 0
+; Shade/block run, box run, vertical/cross lines, then Greek letters.
+cp437_sample: !byte $B0, $B1, $B2, $DB, $DC, $DD, $DE, $DF, $20
+              !byte $DA, $C4, $BF, $20, $C0, $C4, $D9, $20
+              !byte $B3, $C5, $B3, $20, $E0, $E1, $E2, $E3, $E4, $E5, 0
+
+; ----------------------------------------------------------------------
+; State outside zero page
+; ----------------------------------------------------------------------
+candidate:     !byte 0     ; slot number during probe
+mode_config:   !byte 0     ; staged CONFIG value
+value:         !byte 0     ; saves A while write_indexed writes INDEX
+canvas_width:  !word 0     ; live CANVAS_W
+canvas_height: !word 0     ; live CANVAS_H
+origin_x:      !word 0     ; centered origin derived from canvas
+origin_y:      !word 0
+layout_scale:  !byte 0     ; $22 for SHR, $21 for legacy
+page_count:    !byte 0
+cell_row:      !byte 0
+cell_col:      !byte 0
+cell_char:     !byte 0
+cell_attr:     !byte 0
+run_count:     !byte 0
+color:         !byte 0
+frame_ul:      !byte 0     ; upper-left corner
+frame_ur:      !byte 0     ; upper-right corner
+frame_ll:      !byte 0     ; lower-left corner
+frame_lr:      !byte 0     ; lower-right corner
+frame_h:       !byte 0     ; horizontal line
+frame_v:       !byte 0     ; vertical line

@@ -471,6 +471,12 @@ module apple_top(
     logic                                     cycle_capture_empty_internal;
     logic                                     cycle_capture_rd_en_internal;
     logic                                     capture_drop_sticky_internal;
+    logic                                     overlay_capture_drop_internal;
+    logic                                     overlay_devsel_enabled;
+    logic                                     overlay_capture_armed;
+    logic                                     overlay_capture_bank_aux;
+    logic [15:0]                              overlay_capture_base;
+    logic [15:0]                              overlay_capture_limit;
 
     logic        egress_cfg_enable_q;
     logic [31:0] egress_cfg_ring_base_q;
@@ -497,11 +503,17 @@ module apple_top(
         .line_in_frame(line_in_frame),
         .cycle_in_line(cycle_in_line),
         .frame_en(frame_en),
+        .overlay_devsel_enabled(overlay_devsel_enabled),
+        .overlay_capture_armed(overlay_capture_armed),
+        .overlay_capture_bank_aux(overlay_capture_bank_aux),
+        .overlay_capture_base(overlay_capture_base),
+        .overlay_capture_limit(overlay_capture_limit),
         .cycle_capture_data(cycle_capture_data_internal),
         .cycle_capture_rd_en(cycle_capture_rd_en_internal),
         .cycle_capture_empty(cycle_capture_empty_internal),
         .capture_drop_sticky(capture_drop_sticky_internal),
         .capture_drop_ack(egress_capture_drop_ack),
+        .overlay_capture_drop_sticky(overlay_capture_drop_internal),
         .shr_capture_active(shr_capture_active_w)
     );
 
@@ -1208,6 +1220,13 @@ module apple_top(
         .as_client(smartport_as_client),
         .ab_write(smartport_ab_write),
         .smartport_irq(smartport_irq),
+        .overlay_capture_drop(overlay_capture_drop_internal),
+        .overlay_canvas_shr_active(shr_capture_active_w),
+        .overlay_devsel_enabled(overlay_devsel_enabled),
+        .overlay_capture_armed(overlay_capture_armed),
+        .overlay_capture_bank_aux(overlay_capture_bank_aux),
+        .overlay_capture_base(overlay_capture_base),
+        .overlay_capture_limit(overlay_capture_limit),
         .vtw_valid(vtw_sp_req_valid),
         .vtw_target(vtw_sp_req_target),
         .vtw_addr(vtw_sp_req_addr),
@@ -1525,6 +1544,10 @@ module apple_top(
         .ramworks_en(ramworks_en_q),
         .video_vbl(vtw_video_vbl),
         .post_main_wide(post_main_wide_q),
+        .overlay_capture_armed(overlay_capture_armed),
+        .overlay_capture_bank_aux(overlay_capture_bank_aux),
+        .overlay_capture_base(overlay_capture_base),
+        .overlay_capture_limit(overlay_capture_limit),
         .video_mode_50hz(video_mode_50hz),
         .video_line(line_in_frame),
         .video_cycle(cycle_in_line),
@@ -1601,7 +1624,10 @@ module apple_top(
     // every existing client keeps its index. vTW and AD8088 can both drive
     // address/RW, but applicard_card blocks AD8088 whenever vTW is enabled,
     // so the two bus masters cannot contend at this priority mux.
-    apple_bus_write_arbiter #(.NUM_CLIENTS(12))
+    apple_bus_write_arbiter #(
+        .NUM_CLIENTS(12),
+        .FAST_DATA_CLIENT(2)
+    )
     apple_bus_write_arbiter_i(
         .inh_allowed(machine_inh_allowed),
         .client_writes({

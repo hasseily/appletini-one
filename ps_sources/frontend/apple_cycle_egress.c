@@ -20,6 +20,7 @@
 
 #include "apple_cycle_egress.h"
 #include "apple_cycle_renderer.h"
+#include "linear_text_overlay.h"
 
 /* --- Public state -------------------------------------------------- */
 volatile uint8_t  *const g_main_bank = (volatile uint8_t *)ACE_MAIN_BANK_ADDR;
@@ -264,6 +265,7 @@ void apple_cycle_egress_poll(void)
                  * ring-full or on-chip FIFO drop. */
                 g_gap_markers_seen++;
                 g_resync_pending = 1U;
+                linear_text_overlay_capture_on_gap();
             } else {
                 switch (ace_record_kind(rec)) {
                 case ACE_RECORD_KIND_LEGACY:
@@ -278,6 +280,7 @@ void apple_cycle_egress_poll(void)
                         } else {
                             g_main_bank[a & 0xFFFFU] = d;
                         }
+                        linear_text_overlay_capture_on_write(a, d);
                         if ((uint16_t)(a & 0xFFFFU) >= 0x2000U &&
                             (uint16_t)(a & 0xFFFFU) <= 0x9FFFU) {
                             g_video_shadow_generation++;
@@ -291,6 +294,11 @@ void apple_cycle_egress_poll(void)
                     break;
 
                 case ACE_RECORD_KIND_IO_WRITE:
+                    if (ace_io_addr(rec) == 0xC0F3U) {
+                        linear_text_overlay_capture_on_command(
+                            ace_io_data(rec));
+                    }
+                    break;
                 case ACE_RECORD_KIND_SOFTSW_ACCESS:
                 default:
                     break;

@@ -37,6 +37,7 @@ apple/applicard_card.sv
 apple/uthernet2_card.sv
 apple/ssc_card.sv
 apple/supersprite_card.sv
+apple/linear_text_overlay_card.sv
 apple/smartport_card.sv
 apple/disk2_card.sv
 apple/disk2_ddr_bridge.sv

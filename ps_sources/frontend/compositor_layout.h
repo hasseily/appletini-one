@@ -40,7 +40,10 @@
  *   0x3F030000  SDD producer pointer
  *   0x3F040000  SDD capture ring (512 KB; ends at 0x3F0C0000)
  *   0x3F0C0000  SDD USB DMA arena (64 KB)
- *   0x3F0D0000..0x3F0FFFFF  free
+ *   0x3F0D0000..0x3F0D0FFF  reserved for linear text overlay control
+ *   0x3F0D1000  linear text overlay shadow slot 0 (48 KB)
+ *   0x3F0DD000  linear text overlay shadow slot 1 (48 KB)
+ *   0x3F0E9000..0x3F0FFFFF  free
  *   0x3F100000  apple_cycle_egress shadow main bank    (64 KB)
  *   0x3F110000  apple_cycle_egress shadow aux bank     (64 KB)
  *   0x3F120000..0x3F1FFFFF  free

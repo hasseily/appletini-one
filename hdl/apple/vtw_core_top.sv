@@ -120,6 +120,14 @@ module vtw_core_top (
      * not race the physical capture and CPU1 service path. */
     input  logic                    post_main_wide,
 
+    /* An armed linear-text buffer is another write-through window. The
+     * physical capture path must see these writes even when the accelerated
+     * core keeps ordinary program RAM only in its private shadow. */
+    input  logic                    overlay_capture_armed,
+    input  logic                    overlay_capture_bank_aux,
+    input  logic [15:0]             overlay_capture_base,
+    input  logic [15:0]             overlay_capture_limit,
+
     input  globals::AppleBus_read   ab_read,
     output globals::AppleBus_write  ab_write,
 
@@ -464,10 +472,17 @@ module vtw_core_top (
      * empty. The aux window extends to $9FFF (vs $5FFF for main) so the
      * Super Hi-Res framebuffer, SCB ($9D00) and palette ($9E00) -- all in
      * aux $2000-$9FFF -- reach the capture/renderer too. */
+    wire xl_is_overlay_post =
+        overlay_capture_armed && !xl_is_bus && xl_shadow_valid &&
+        xl_is_write && (xl_decoded[23:17] == 7'd0) &&
+        (xl_decoded[16] == overlay_capture_bank_aux) &&
+        (xl_decoded[15:0] >= overlay_capture_base) &&
+        (xl_decoded[15:0] < overlay_capture_limit);
     wire xl_is_posted = !xl_is_bus && xl_shadow_valid && xl_is_write &&
                         (xl_decoded[23:16] <= 8'd1) &&
-                        vtw_is_video_window(cycle_addr_q, xl_is_aux,
-                                            post_main_wide_eff);
+                        (vtw_is_video_window(cycle_addr_q, xl_is_aux,
+                                             post_main_wide_eff) ||
+                         xl_is_overlay_post);
 
     /* Synthesized //e status reads ($C011-$C01F). On a real //e the IOU
      * answers these over the bus; an accelerated II+ has no IOU, so the

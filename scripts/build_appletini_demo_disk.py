@@ -64,6 +64,8 @@ SPEEDRACE_SRC = SOFTWARE / "speedrace.a65"
 SPEEDRACE_APP = SOFTWARE / "speedrace.bin"
 RASTER_SRC = SOFTWARE / "rasterdemo.a65"
 RASTER_APP = SOFTWARE / "rasterdemo.bin"
+TEXT_OVERLAY_SRC = SOFTWARE / "textoverlay.a65"
+TEXT_OVERLAY_APP = SOFTWARE / "textoverlay.bin"
 LAUNCHER_ASSETS = SOFTWARE / "launcher_assets.a65"
 GEN_ASSETS = REPO / "scripts" / "gen_hgr_assets.py"
 MANDELBROT_SRC = SOFTWARE / "mandelbrot.bas"
@@ -96,6 +98,7 @@ STARTUP = """10 PRINT CHR$(4)"BRUN LAUNCHER"
 110 IF S = 8 THEN PRINT CHR$(4)"-A2WEBSRV.SYSTEM"
 115 IF S = 9 THEN PRINT CHR$(4)"-A2IMG.SYSTEM"
 117 IF S = 10 THEN PRINT CHR$(4)"BRUN MSDOS.BRIDGE,A2048"
+118 IF S = 11 THEN PRINT CHR$(4)"BRUN TEXTOVERLAY"
 120 GOTO 10
 200 PRINT CHR$(4)"BLOAD SSDEMO"
 210 HOME : PRINT "ENABLE SUPERSPRITE IN CONFIG MENU"
@@ -360,6 +363,7 @@ def build_assembly_programs() -> None:
             (LAUNCHER_SRC, LAUNCHER_APP),
             (SPEEDRACE_SRC, SPEEDRACE_APP),
             (RASTER_SRC, RASTER_APP),
+            (TEXT_OVERLAY_SRC, TEXT_OVERLAY_APP),
             (VIEWER_DEMO_SRC, VIEWER_DEMO_APP),
             (AD8088_RETURN_SRC, AD8088_RETURN_APP)):
         subprocess.run([exe, "-f", "plain", "-o", str(output), str(source)],
@@ -374,6 +378,7 @@ def build_assembly_programs() -> None:
 def main() -> int:
     required = [AC_JAR, AD8088_BASE, AD8088_RETURN_SRC,
                 SSDEMO_DISK, BORDER_SRC,
+                TEXT_OVERLAY_SRC,
                 MANDELBROT_SRC, WAVE_BASIC_SRC, WAVE_CODE_SRC,
                 LAUNCHER_SRC, SPEEDRACE_SRC, RASTER_SRC, GEN_ASSETS,
                 VIEWER_SRC, WEB_DIR / "build.bat"]
@@ -473,6 +478,8 @@ def main() -> int:
            stdin=SPEEDRACE_APP.read_bytes())
         ac("-p", str(TEMP_OUTPUT), "RASTERDEMO", "BIN", "0x6000",
            stdin=RASTER_APP.read_bytes())
+        ac("-p", str(TEMP_OUTPUT), "TEXTOVERLAY", "BIN", "0x2000",
+           stdin=TEXT_OVERLAY_APP.read_bytes())
 
         # New Image Modes: the viewer SYS (dash-launched by type, so the
         # name needs no .SYSTEM suffix and boot order stays
@@ -494,7 +501,7 @@ def main() -> int:
                      "WAVE.ANIMATION", "WAVE.CODE",
                      "A2WEBSRV.SYSTEM", "A2BROWSE.SYSTEM", "A2IMG.SYSTEM", "SSDEMO",
                      "BORDERDEMO", "LAUNCHER", "SPEEDRACE",
-                     "RASTERDEMO", "A2IMGVIEW", "MSDOS.BRIDGE",
+                     "RASTERDEMO", "TEXTOVERLAY", "A2IMGVIEW", "MSDOS.BRIDGE",
                      "MSDOS.HDD", "IO.SYS", "MSDOS.SYS",
                      *(disk_name for _, disk_name, _, _, _, _, _
                        in IMAGE_FILES)):

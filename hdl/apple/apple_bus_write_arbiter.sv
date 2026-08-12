@@ -8,7 +8,10 @@
 //   them active, mirroring real 6502 bus behavior.
 //////////////////////////////////////////////////////////////////////////////////
 
-module apple_bus_write_arbiter #(parameter NUM_CLIENTS = 1) (
+module apple_bus_write_arbiter #(
+    parameter NUM_CLIENTS = 1,
+    parameter integer FAST_DATA_CLIENT = -1
+) (
     /* Machine-mode interlock: when low, any
      * client serve that DEPENDS on INH (assert_inh + data drive in the
      * same request) is dropped WHOLE -- suppressing only the INH pin
@@ -62,12 +65,59 @@ module apple_bus_write_arbiter #(parameter NUM_CLIENTS = 1) (
         end
     end
 
+    /* Factor the INH interlock after the client reductions. This is the same
+     * Boolean rule as gated_writes[i].wr_data_en, but inh_allowed now crosses
+     * one final LUT instead of one gate plus the client OR tree. A fixed fast
+     * client still enters that last LUT directly. */
+    generate
+        if ((FAST_DATA_CLIENT >= 0) &&
+            (FAST_DATA_CLIENT < NUM_CLIENTS)) begin : gen_fast_data_enable
+            (* keep = "true" *) logic other_noninh_wr_data_en;
+            (* keep = "true" *) logic other_inh_wr_data_en;
+            always_comb begin
+                other_noninh_wr_data_en = 1'b0;
+                other_inh_wr_data_en = 1'b0;
+                for (int i = 0; i < NUM_CLIENTS; i++) begin
+                    if (i != FAST_DATA_CLIENT) begin
+                        other_noninh_wr_data_en |=
+                            client_writes[i].wr_data_en &&
+                            !client_writes[i].assert_inh;
+                        other_inh_wr_data_en |=
+                            client_writes[i].wr_data_en &&
+                            client_writes[i].assert_inh;
+                    end
+                end
+                ab_write.wr_data_en =
+                    (client_writes[FAST_DATA_CLIENT].wr_data_en &&
+                     !client_writes[FAST_DATA_CLIENT].assert_inh) |
+                    other_noninh_wr_data_en |
+                    (inh_allowed &&
+                     ((client_writes[FAST_DATA_CLIENT].wr_data_en &&
+                       client_writes[FAST_DATA_CLIENT].assert_inh) |
+                      other_inh_wr_data_en));
+            end
+        end else begin : gen_normal_data_enable
+            logic noninh_wr_data_en;
+            logic inh_wr_data_en;
+            always_comb begin
+                noninh_wr_data_en = 1'b0;
+                inh_wr_data_en = 1'b0;
+                for (int i = 0; i < NUM_CLIENTS; i++) begin
+                    noninh_wr_data_en |= client_writes[i].wr_data_en &&
+                                          !client_writes[i].assert_inh;
+                    inh_wr_data_en |= client_writes[i].wr_data_en &&
+                                      client_writes[i].assert_inh;
+                end
+                ab_write.wr_data_en = noninh_wr_data_en |
+                                      (inh_allowed && inh_wr_data_en);
+            end
+        end
+    endgenerate
+
     always_comb begin
-        ab_write.wr_data_en = 1'b0;
         ab_write.wr_dma_data_en = 1'b0;
         ab_write.wr_addr_rw_en = 1'b0;
         for (int i = 0; i < NUM_CLIENTS; i++) begin
-            ab_write.wr_data_en |= gated_writes[i].wr_data_en;
             ab_write.wr_dma_data_en |= gated_writes[i].wr_dma_data_en;
             ab_write.wr_addr_rw_en |= gated_writes[i].wr_addr_rw_en;
         end

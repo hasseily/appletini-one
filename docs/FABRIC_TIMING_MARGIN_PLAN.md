@@ -261,22 +261,52 @@ promote this build. Test a synthesis `MAX_FANOUT` of 32 on the sampled 16-bit
 Apple address register as one flow change. Do not apply it to the whole bus or
 to the local capture record stage.
 
-### 2. Limit Apple Bus Snapshot Fanout
+#### Apple Address `MAX_FANOUT` Build
 
-First try a measured `MAX_FANOUT` limit on the bus snapshot source. Check the
-post-route net report to make sure Vivado made useful local copies.
+Commit `3802754e1313f12d0a34a9e875a405ce103e2a02` set `MAX_FANOUT` to
+32 on the 16 sampled Apple address registers. A post-synthesis cell check found
+155 address-register cells instead of 16, so synthesis made 139 copies. It made
+the most copies for the low address bits and only two cells for each of bits
+11 through 15.
 
-If that does not work, make explicit copies in `apple_bus_wrapper` for these
-consumer groups:
+The clean full build `20260812T165450Z-3802754e-full` produced:
+
+| Check | Result |
+| --- | ---: |
+| Setup WNS / TNS | `+0.004 ns` / `0.000 ns` |
+| Hold WNS / TNS | `+0.014 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.657 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+
+Setup WNS did not change from the prior full build, while hold WNS fell from
+`+0.057 ns` to `+0.014 ns`. The worst path still started at live
+`ab_read_r.addr[11]` and ended in Disk II. Other address-to-Disk II and
+address-to-SmartPort paths remained in the top ten. The build used 9,787
+slices, 30,577 LUTs, 20,319 registers, 74 block RAM tiles, and 1,041 control
+sets.
+
+The broad limit did not make useful per-card groups and did not raise margin.
+Commit `f75dc4d` removed it. Do not use a broad `MAX_FANOUT` rule on these
+registers. If a later path calls for copies, make explicit same-cycle source
+copies for named consumer groups, preserve the Apple bus sample edge, and
+measure that change on its own.
+
+### 2. Group Apple Bus Snapshot Copies When Needed
+
+The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report
+before adding explicit copies. If one sampled bus source still limits several
+blocks, make same-edge copies in `apple_bus_wrapper` for these consumer groups:
 
 - Card and slot logic.
 - Cycle and SDD capture.
 - vTW and video state.
 
-Copy the completed snapshot register. Do not add a cycle to the bus event or
-copy a partly assembled bus word. Keep each copy near its consumers. Use
-`DONT_TOUCH` only on the copy registers that Vivado would merge; do not put it
-on the full cones.
+Capture each copy on the same edge as the completed snapshot register. Do not
+add a cycle to the bus event or copy a partly assembled bus word. Keep each
+copy near its named consumers. Use `DONT_TOUCH` only on copy registers that
+Vivado would merge; do not put it on the full cones.
 
 Measure this as its own commit and full build. Remove the copies if they raise
 LUT use or create a worse path without a clear timing gain.

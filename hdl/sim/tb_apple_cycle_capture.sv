@@ -147,6 +147,10 @@ module tb_apple_cycle_capture;
                 @(negedge clk);
             end
             ab_read.data_en = 1'b0;
+            // Let the final assembled record reach the FIFO.
+            @(posedge clk);
+            #1;
+            @(negedge clk);
         end
     endtask
 
@@ -161,6 +165,8 @@ module tb_apple_cycle_capture;
             sss.addr_decode_late = 24'h000400;
             sss.addr_decode_late_en = 1'b1;
             push_cycle();
+            check(cycle_capture_empty,
+                  "assembled record waits one cycle before FIFO write");
             pop_record(got);
             check(got.record_kind == RECORD_KIND_LEGACY,
                   "watched write kind");
@@ -169,6 +175,42 @@ module tb_apple_cycle_capture;
                   "watched write address");
             check(got.data == 8'h5A, "watched write data");
             #1 check(cycle_capture_empty, "watched write makes one record");
+        end
+    endtask
+
+    task automatic test_back_to_back_writes;
+        AppleCycleRecord got;
+        int i;
+        begin
+            $display("TEST: back-to-back video write order");
+            soft_reset_dut();
+            ab_read.rw = 1'b0;
+            sss.addr_decode_late_en = 1'b1;
+
+            @(negedge clk);
+            ab_read.data_en = 1'b1;
+            for (i = 0; i < 3; i++) begin
+                ab_read.addr = 16'h0400 + i[15:0];
+                ab_read.data = 8'h70 + i[7:0];
+                sss.addr_decode_late = 24'h000400 + i;
+                @(posedge clk);
+                #1;
+                @(negedge clk);
+            end
+            ab_read.data_en = 1'b0;
+            @(posedge clk);
+            #1;
+
+            for (i = 0; i < 3; i++) begin
+                pop_record(got);
+                check(got.record_kind == RECORD_KIND_LEGACY &&
+                      got.addr_decode_en &&
+                      got.addr_decode == (24'h000400 + i) &&
+                      got.data == (8'h70 + i[7:0]),
+                      "back-to-back write order and payload");
+            end
+            #1 check(cycle_capture_empty,
+                     "back-to-back writes make three records");
         end
     endtask
 
@@ -264,12 +306,19 @@ module tb_apple_cycle_capture;
             capture_drop_ack = 1'b1;
             @(posedge clk);
             #1;
+
+            // The third record reaches arbitration one cycle later. Keep
+            // ack high so the drop still tests set-over-clear priority.
+            @(negedge clk);
+            ab_read.data_en = 1'b0;
+            frame_en = 1'b0;
+            @(posedge clk);
+            #1;
             check(capture_drop_sticky,
                   "pending collision sets sticky over simultaneous ack");
             check(!overlay_capture_drop_sticky,
                   "non-overlay pending collision leaves overlay clean");
             @(negedge clk);
-            ab_read.data_en = 1'b0;
             capture_drop_ack = 1'b0;
 
             pop_record(first);
@@ -296,11 +345,14 @@ module tb_apple_cycle_capture;
             capture_drop_ack = 1'b1;
             ab_read.data = 8'hE1;
             push_cycle();
-            capture_drop_ack = 1'b0;
+            @(posedge clk);
+            #1;
             check(capture_drop_sticky,
                   "full normal write sets general sticky over ack");
             check(!overlay_capture_drop_sticky,
                   "full normal write leaves overlay sticky clear");
+            @(negedge clk);
+            capture_drop_ack = 1'b0;
             pulse_drop_ack();
             #1 check(!capture_drop_sticky, "ack clears full-drop sticky");
 
@@ -315,11 +367,14 @@ module tb_apple_cycle_capture;
             ab_read.data = 8'hE2;
             capture_drop_ack = 1'b1;
             push_cycle();
-            capture_drop_ack = 1'b0;
+            @(posedge clk);
+            #1;
             check(capture_drop_sticky,
                   "full overlay-only write sets general sticky");
             check(overlay_capture_drop_sticky,
                   "full overlay-only write sets overlay sticky over ack");
+            @(negedge clk);
+            capture_drop_ack = 1'b0;
             sss.addr_decode_late = 24'h000000;
             sss.addr_decode_late_en = 1'b0;
             ab_read.rw = 1'b1;
@@ -380,6 +435,8 @@ module tb_apple_cycle_capture;
             sss.addr_decode_late = 24'h000400;
             sss.addr_decode_late_en = 1'b1;
             push_cycle();
+            @(posedge clk);
+            #1;
             check(!cycle_capture_empty, "record queued before soft reset");
             soft_reset_dut();
             check(cycle_capture_empty, "soft reset empties capture FIFO");
@@ -399,6 +456,7 @@ module tb_apple_cycle_capture;
         end
 
         test_watched_write();
+        test_back_to_back_writes();
         test_frame_and_write();
         test_io_apple_order();
         test_pending_drop_set_wins();

@@ -106,11 +106,13 @@ def test_capture_emits_two_records_for_vidhd_io_plus_frame() -> None:
             "current_softswitch_bits" in source,
             "capture must emit soft-switch records with same-cycle soft-switch state")
     require("pending_record_valid" in source and
-            "pending_record_q     <= apple_record_din;" in source,
+            "pending_record_q     <= apple_record_q;" in source,
             "capture must queue the frame/memory record when an I/O write also occurs")
-    require("if (pending_record_valid)" in source and
-            "else if (io_push_request)" in source and
-            "else\n            record_din = apple_record_din;" in source,
+    require("apple_push_request_q <= apple_push_request;" in source and
+            "io_push_request_q    <= io_push_request;" in source and
+            "if (pending_record_valid)" in source and
+            "else if (io_push_request_q)" in source and
+            "else\n            record_din = apple_record_q;" in source,
             "capture arbitration must emit pending, then I/O, then normal Apple records")
     require("logic shr_capture_active_q;" in source and
             "wire c029_write_shr_active = (ab_read.data[7:6] == 2'b11);" in source,

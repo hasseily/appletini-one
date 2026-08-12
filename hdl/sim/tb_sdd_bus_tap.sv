@@ -145,6 +145,9 @@ module tb_sdd_bus_tap;
                 @(negedge clk);
             end
             ab_read.data_en = 1'b0;
+            // Flush the last assembled record into the FIFO.
+            @(posedge clk);
+            #1;
         end
     endtask
 
@@ -163,13 +166,61 @@ module tb_sdd_bus_tap;
             route_info = 3'b101;
             want = expected_record(16'h1234, 1'b0, 1'b1, 1'b0, 1'b1,
                                    8'hA6, 3'b101);
-            push_event();
+            @(negedge clk);
+            ab_read.data_en = 1'b1;
+            @(posedge clk);
+            #1;
+            check(cycle_capture_empty,
+                  "record assembly adds one FIFO-write cycle");
+            @(negedge clk);
+            ab_read.data_en = 1'b0;
+            @(posedge clk);
+            #1;
+            check(!cycle_capture_empty,
+                  "assembled record reaches FIFO on the next clock");
             pop_record(got);
             check(got == want, "SDD record matches all 64 expected bits");
             check(got[31:0] == {3'b101, 1'b1, 8'hA6, 1'b1, 1'b0,
                                 1'b1, 1'b0, 16'h1234},
                   "SDD parser word layout");
             #1 check(cycle_capture_empty, "one cycle makes one SDD record");
+        end
+    endtask
+
+    task automatic test_back_to_back_order;
+        logic [63:0] got;
+        logic [63:0] want;
+        int i;
+        begin
+            $display("TEST: back-to-back SDD record order");
+            clear_and_enable();
+            ab_read.rw = 1'b1;
+            ab_read.res = 1'b1;
+            ab_read.m2sel = 1'b0;
+            ab_read.m2b0 = 1'b1;
+            route_info = 3'b110;
+            @(negedge clk);
+            ab_read.data_en = 1'b1;
+            for (i = 0; i < 3; i++) begin
+                ab_read.addr = 16'h3100 + i[15:0];
+                ab_read.data = 8'h80 + i[7:0];
+                @(posedge clk);
+                #1;
+                @(negedge clk);
+            end
+            ab_read.data_en = 1'b0;
+            @(posedge clk);
+            #1;
+
+            for (i = 0; i < 3; i++) begin
+                pop_record(got);
+                want = expected_record(16'h3100 + i[15:0], 1'b1, 1'b1,
+                                       1'b0, 1'b1, 8'h80 + i[7:0],
+                                       3'b110);
+                check(got == want, "back-to-back record order and payload");
+            end
+            #1 check(cycle_capture_empty,
+                     "back-to-back events make three records");
         end
     endtask
 
@@ -259,8 +310,16 @@ module tb_sdd_bus_tap;
 
             ab_read.addr = 16'h4000;
             ab_read.data = 8'hE1;
+            @(negedge clk);
+            ab_read.data_en = 1'b1;
+            @(posedge clk);
+            #1;
+            @(negedge clk);
+            ab_read.data_en = 1'b0;
             capture_drop_ack = 1'b1;
-            push_event();
+            @(posedge clk);
+            #1;
+            @(negedge clk);
             capture_drop_ack = 1'b0;
             check(capture_drop_sticky,
                   "SDD overflow set beats same-cycle ack");
@@ -269,6 +328,8 @@ module tb_sdd_bus_tap;
 
             // Set it once more, then disable must clear the full FIFO and flag.
             push_event();
+            @(posedge clk);
+            #1;
             check(capture_drop_sticky, "SDD overflow sticky sets again");
             @(negedge clk);
             enable = 1'b0;
@@ -291,6 +352,8 @@ module tb_sdd_bus_tap;
             ab_read.addr = 16'h8888;
             ab_read.data = 8'h88;
             push_event();
+            @(posedge clk);
+            #1;
             check(!cycle_capture_empty, "record queued before hard reset");
             @(negedge clk);
             resetn = 1'b0;
@@ -316,6 +379,7 @@ module tb_sdd_bus_tap;
         end
 
         test_exact_event_bits();
+        test_back_to_back_order();
         test_storm_last_event();
         test_jam_last_event();
         test_full_drop_ack();

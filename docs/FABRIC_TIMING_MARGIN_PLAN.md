@@ -81,7 +81,7 @@ an immutable hardware record tied to the first checkpoint and tested firmware.
 
 ## Phase 0: Measure the Design
 
-Status: implementation started.
+Status: complete for the initial baseline.
 
 1. Add immutable build manifests, `builds.csv`, and `paths.csv` to the normal
    build script.
@@ -110,6 +110,47 @@ Remove-Item Env:APPLETINI_TIMING_DIAGNOSTICS
 
 Do not compare WNS alone. Compare the top path class, setup path count, hold,
 route share, LUT levels, use, and control sets.
+
+### Phase 0 Baseline Result
+
+The clean full build `20260812T153728Z-7342c1a5-full` used commit
+`7342c1a51dd9b1e8b29220e276b0094d885b3038` and Vivado 2025.2. It used no
+incremental reference and no rescue pass. It produced:
+
+| Check | Result |
+| --- | ---: |
+| Setup WNS / TNS | `+0.012 ns` / `0.000 ns` |
+| Hold WNS / TNS | `+0.048 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.496 ns` |
+| Route errors | `0` |
+| Unconstrained internal endpoints | `0` |
+| Missing XDC objects | `0` |
+
+The final design used 10,226 slices, 30,465 LUTs, 20,153 registers, 74 block
+RAM tiles, six DSPs, and 1,001 control sets. The routed design had no congestion
+window above Vivado level 5. Vivado gave no QoR suggestion because timing met.
+This makes broad floorplanning and control-set work lower priority than the
+measured path classes.
+
+The top ten setup paths were:
+
+| Rank | End block | Slack | Route share | Levels | Max fanout |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 1 | Apple capture FIFO RAM | `+0.012 ns` | 78.6% | 10 | 48 |
+| 2-3 | Disk II `drive_bit_offset` enable | `+0.015 ns` | 72.8% | 15 | 81 |
+| 4-5 | Apple capture FIFO RAM | `+0.050` to `+0.073 ns` | about 78% | 10 | 48-54 |
+| 6 | Apple bus direction output | `+0.079 ns` | 44.7% | 5 | 11 |
+| 7-9 | Apple cycle egress space logic | `+0.079 ns` | 57.9% | 13 | 8 |
+| 10 | Disk II `drive_phase` enable | `+0.108 ns` | 74.0% | 14 | 81 |
+
+The first five and tenth paths start at `ab_read_r.addr[11]`. The capture path
+passes through slot-7 overlay qualification, pending-record selection, and the
+FIFO input before it reaches block RAM. The Disk II path passes through slot-7,
+boot-menu, vTW Disk II, and drive-state logic. The capture register stage should
+remove three top-ten paths, but Disk II will then set WNS near `+0.015 ns` unless
+placement changes. Review the Disk II path before assuming bus-snapshot copies
+alone can add the remaining margin.
 
 ## Phase 1: Remove Route-Heavy Capture Paths
 

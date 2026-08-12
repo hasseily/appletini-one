@@ -413,21 +413,28 @@ def static_checks() -> None:
     # writes must still release directly at raw PHI0.
     require("LUT6 #(.INIT(64'hFFFF_FFFF_8088_8080)) apple_data_enable_lut" in wrapper and
             ".I0(bus_emit_state)," in wrapper and
-            ".I1(ab_write.wr_data_en)," in wrapper and
+            ".I1(physical_data_en_safe)," in wrapper and
             ".I2(apple_phi0_pin)," in wrapper and
             ".I3(host_is_iiplus)," in wrapper and
-            ".I4(apple_addr_rw_enable)," in wrapper and
-            ".I5(data_override_q)," in wrapper and
-            "drive_live && (!apple_addr_rw_enable || ab_write.wr_rw)" in wrapper and
+            ".I4(physical_addr_rw_en_q)," in wrapper and
+            ".I5(data_override_safe)," in wrapper and
+            "physical_data_en_q    <= ab_write.wr_data_en;" in wrapper and
+            "physical_data_q <= ab_write.wr_data;" in wrapper and
+            "physical_inh_dependent_q <= ab_write.assert_inh;" in wrapper and
+            "iiplus_read_inh_dependent_q <=" in wrapper and
+            "physical_inh_dependent_q;" in wrapper and
+            "(!physical_inh_dependent_q || inh_allowed)" in wrapper and
+            "drive_live && (!physical_addr_rw_en_q || physical_rw_q)" in wrapper and
             "DMA_WRITE_START_CLKS = 18" in wrapper and
             "DMA_WRITE_END_CLKS   = 40" in wrapper and
             "ab_write.wr_dma_data_en" in wrapper and
             "else if (phi0_fall)" in wrapper and
             "else if (read_response_live && phi0_filt)" in wrapper and
             "data_override_q && data_override_saved_q" in wrapper and
-            "iiplus_read_hold_active ? iiplus_read_data_q : ab_write.wr_data" in wrapper,
+            "iiplus_read_hold_active ? iiplus_read_data_q : physical_data_q" in wrapper,
             "placed data-enable LUT must absorb the phase/data-enable AND "
-            "while preserving the II+ saved-read hold and timed DMA write window")
+            "from a staged physical response while preserving the II+ saved-read hold "
+            "and timed DMA write window with an INH fail-safe")
     require("TAP_IRQ_REARM_RELEASE = TAP_DATA_SNAP - 8;" in wrapper and
             "TAP_IRQ_REARM_ASSERT  = TAP_DATA_SNAP - 4;" in wrapper and
             "always_ff @(posedge clk)" in wrapper and

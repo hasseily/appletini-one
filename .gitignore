@@ -24,6 +24,9 @@ vivado*.backup.*
 # Passing routed checkpoint used as an incremental placement reference
 .vivado_cache/
 
+# Per-build timing reports, manifests, checkpoints, and index CSV files
+.timing_runs/
+
 # Vivado IP upgrade logs
 ip_upgrade.log
 

@@ -26,6 +26,11 @@ vivado -mode batch -source scripts/build_and_export_xsa.tcl
 Remove-Item Env:APPLETINI_FULL_BUILD
 ```
 
+Set `APPLETINI_TIMING_DIAGNOSTICS=1` on a full build to add congestion,
+high-fanout-net, and QoR reports. Each build writes an immutable record under
+`.timing_runs/<build-id>/`. The two CSV files at the root of that directory
+track build results and the top ten setup paths.
+
 The generated project must keep the `Performance_ExplorePostRoutePhysOpt`
 implementation strategy. Its Explore placement, physical optimization, route,
 and post-route physical optimization settings are part of the timing flow. Do
@@ -41,8 +46,27 @@ package a bitstream from a run that stopped at that timing gate.
 
 An incremental run can fail placement when the known-good checkpoint predates
 a large change. In that case, do not weaken timing settings or promote the
-failed run. Use the fresh full-build sequence above. Promote a new candidate
-checkpoint only after the firmware passes hardware tests.
+failed run. Use the fresh full-build sequence above.
+
+Promotion requires two consecutive clean full builds of the same commit. Both
+must have setup WNS of at least `+0.300 ns`, nonnegative hold and pulse width,
+no timing failure, no bad route or bus skew, and no missing XDC object. Test the
+Package the first build's exact XSA and bitstream, test its named firmware on
+hardware, then bind that firmware hash to the build:
+
+```powershell
+python scripts/package_timing_firmware.py <tested-build-id>
+
+vivado -mode batch -source scripts/mark_timing_hardware_validated.tcl `
+  -tclargs <tested-build-id> `
+  boot-menu,disk-ii,smartport,vtw,mb-audit,linear-overlay,sdd,uthernet,ssc,reset
+
+vivado -mode batch -source scripts/promote_timing_candidate.tcl `
+  -tclargs <tested-build-id> <confirm-build-id>
+```
+
+Promotion copies the tested build's checkpoint to the known-good incremental
+reference. See `docs/FABRIC_TIMING_MARGIN_PLAN.md` for the full process.
 
 ## Images and Programming
 

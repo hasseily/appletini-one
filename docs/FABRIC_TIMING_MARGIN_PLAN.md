@@ -186,6 +186,52 @@ After this change, run a full build. Accept it only if the old capture path
 class leaves the top paths and all counts remain exact. If Disk II becomes the
 new limit, record that result before the next edit.
 
+#### First Capture-Pipeline Build
+
+Commit `e26205d08f3a2fdfcb7bc00d295d669a3f09c537` added the one-cycle
+record stage to both capture FIFOs. The direct simulations proved consecutive
+records, I/O-before-Apple order, pending-record handling, full-FIFO loss,
+set-over-ack behavior, reset, SDD storm and jam trigger records, and exact
+record data. The VidHD/SHR, Apple egress, SDD stream, and linear-overlay tests
+also passed.
+
+The clean full build `20260812T160459Z-e26205d0-full` produced:
+
+| Check | Result |
+| --- | ---: |
+| Setup WNS / TNS | `+0.006 ns` / `0.000 ns` |
+| Hold WNS / TNS | `+0.037 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.904 ns` |
+| Route errors | `0` |
+| Unconstrained internal endpoints | `0` |
+| Missing XDC objects | `0` |
+
+No capture FIFO endpoint remained in the top ten. The change removed the
+target path class, but it did not raise total margin. The new leading paths
+were:
+
+| Rank | End block | Slack | Route share | Levels |
+| ---: | --- | ---: | ---: | ---: |
+| 1 | vTW 65C02 `a_q[1]` to `p_q[1]` | `+0.006 ns` | 62.0% | 13 |
+| 2 | Apple DMA `line_idx_q[2]` to PSRAM write data | `+0.037 ns` | 72.0% | 9 |
+| 3-4 | Disk II `drive_phase` | `+0.044` to `+0.050 ns` | 77-79% | 11-12 |
+| 5 | vTW Apple-bus direction output | `+0.057 ns` | 48.2% | 3 |
+| 6-7, 9 | SmartPort output FIFO address | `+0.063` to `+0.101 ns` | about 76% | 12 |
+
+The build used 10,072 slices, 30,541 LUTs, 20,282 registers, 74 block RAM
+tiles, and 1,008 control sets. Against the baseline, slices fell by 154 while
+LUTs rose by 76, registers rose by 129, and control sets rose by seven. The
+build used the normal post-route `Explore` pass and no extra rescue pass.
+
+Keep the capture stage because it removes the measured long decode-to-BRAM
+path and its tests pass. Do not promote this build. Trace the new 65C02,
+DMA/PSRAM, Disk II, and SmartPort paths before the next edit. A local vTW
+Disk II enable register is a better first cut for the measured 11- to 12-level
+Disk II cone than a broad fanout setting. Bus snapshot copies may still help
+the SmartPort paths and the remaining common route delay, but fresh reports
+must show the useful copy points.
+
 ### 2. Limit Apple Bus Snapshot Fanout
 
 First try a measured `MAX_FANOUT` limit on the bus snapshot source. Check the

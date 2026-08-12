@@ -34,11 +34,13 @@ SOURCES = [
     "hdl/apple/apple_dma_engine.sv",
     "hdl/apple/ps_dma_command.sv",
     "hdl/apple/disk2_card.sv",
+    "hdl/apple/linear_text_overlay_card.sv",
     "hdl/apple/smartport_card.sv",
     "hdl/sim/tb_vtw_engine_unit.sv",
     "hdl/sim/tb_vtw_system.sv",
     "hdl/sim/tb_smartport_reset.sv",
     "hdl/sim/tb_smartport_shortcut.sv",
+    "hdl/sim/tb_linear_text_overlay.sv",
     "hdl/sim/tb_vtw_slowdown.sv",
     "hdl/sim/tb_vtw_video.sv",
     "hdl/sim/tb_vtw_drivehold.sv",
@@ -62,6 +64,7 @@ BENCHES = [
     ("tb_vtw_system", "VTW SYSTEM PASS"),
     ("tb_smartport_reset", "SP RESET PASS"),
     ("tb_smartport_shortcut", "SP SHORTCUT PASS"),
+    ("tb_linear_text_overlay", "LINEAR TEXT OVERLAY PASS"),
     ("tb_vtw_slowdown", "VTW SLOWDOWN PASS"),
     ("tb_vtw_video", "VTW VIDEO PASS"),
     ("tb_vtw_drivehold", "VTW DRIVEHOLD PASS"),
@@ -123,9 +126,10 @@ def static_checks() -> None:
 
     # PL integration
     require("vtw_core_top vtw_core_top_i" in top and
-            "apple_bus_write_arbiter #(.NUM_CLIENTS(11))" in top and
+            ".NUM_CLIENTS(12)" in top and
+            ".FAST_DATA_CLIENT(2)" in top and
             "vtw_ab_write," in top,
-            "apple_top must instantiate the vTW as the 11th arbiter client")
+            "apple_top must instantiate the vTW in the 12-client arbiter")
     require("logic vtw_machine_ok_q;" in top and
             "if (machine_mode_q == 2'd1)" in top and
             "else if (machine_mode_q == 2'd2)" in top and
@@ -156,6 +160,15 @@ def static_checks() -> None:
             ".sp_active(vtw_sp_active)" in top and
             ".vtw_valid(vtw_sp_req_valid)" in top,
             "apple_top must gate the short-circuit on SmartPort owning slot 7 and wire the port")
+    require("xl_is_overlay_post" in core_top and
+            "overlay_capture_armed" in core_top and
+            "xl_decoded[16] == overlay_capture_bank_aux" in core_top and
+            ".overlay_capture_armed(overlay_capture_armed)" in top,
+            "vTW must post writes in the armed linear-text RAM window")
+    require("sync_slot7_devsel" in read("hdl/apple/vtw_bus_engine.sv") and
+            "sync_addr_q[15:4] == 12'hC0F" in
+            read("hdl/apple/vtw_bus_engine.sv"),
+            "vTW must drain posted text bytes before slot-7 DEVSEL access")
     require(".boot_target_disk2(boot_target_disk2)" in top and
             "vtw_disk2_boot_scan_q <= boot_target_disk2;" in top and
             "vtw_slot6_boot_probe" in top and
@@ -301,7 +314,7 @@ def static_checks() -> None:
             "address and main shadow byte")
     # Super Hi-Res: aux posted-write window extended to $9FFF.
     require("vtw_is_video_window(cycle_addr_q, xl_is_aux," in core_top and
-            "post_main_wide_eff);" in core_top and
+            "post_main_wide_eff)" in core_top and
             "wire post_main_wide_eff = post_main_wide | shr_post_main_wide_q;"
             in core_top and
             "cycle_addr_q == 16'h9DF8" in core_top and

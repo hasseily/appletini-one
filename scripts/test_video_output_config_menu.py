@@ -559,8 +559,10 @@ def test_compositor_can_supersede_pending_frames_for_latency() -> None:
             "compositor_tick must report whether it actually published")
     require("s_composited_apple_seq" in compositor and
             "const int fresh_apple_frame" in compositor and
-            "!prior_publish_latched && !fresh_apple_frame" in compositor,
-            "compositor must allow a fresh Apple frame to supersede a pending output frame")
+            "!fresh_apple_frame && !force_full_refresh" in compositor and
+            "if (overlay_wait_latch)" in compositor,
+            "compositor must allow normal fresh frames to supersede while "
+            "holding an overlay frame until scanout")
     require("(void)compositor_tick();" in frontend_main and
             "ui.frame++;" in frontend_main and
             "lets us supersede the pending output frame" in frontend_main,

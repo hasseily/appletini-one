@@ -43,6 +43,13 @@ module tb_smartport_shortcut;
         .as_client(as_if),
         .ab_write(ab_write),
         .smartport_irq(smartport_irq),
+        .overlay_capture_drop(1'b0),
+        .overlay_canvas_shr_active(1'b0),
+        .overlay_devsel_enabled(),
+        .overlay_capture_armed(),
+        .overlay_capture_bank_aux(),
+        .overlay_capture_base(),
+        .overlay_capture_limit(),
         .vtw_valid(vtw_valid),
         .vtw_target(vtw_target),
         .vtw_addr(vtw_addr),
@@ -128,6 +135,32 @@ module tb_smartport_shortcut;
         repeat (4) @(posedge clk);
     endtask
 
+    /* A DEVSEL reply must stay live from its address decode through the
+     * wrapper's later data-drive window. A one-clock pulse can pass a unit
+     * test but never reach the Apple bus. */
+    task automatic apple_overlay_read(input logic [15:0] addr,
+                                      input logic [7:0] expected);
+        @(posedge clk);
+        ab_read.addr <= addr;
+        ab_read.rw   <= 1'b1;
+        @(posedge clk);
+        ab_read.serve_en <= 1'b1;
+        @(posedge clk);
+        ab_read.serve_en <= 1'b0;
+        repeat (20) @(posedge clk);
+        check(ab_write.wr_data_en,
+              $sformatf("overlay holds read reply for %h", addr));
+        check(ab_write.wr_data == expected,
+              $sformatf("overlay read %h returns %h (got %h)",
+                        addr, expected, ab_write.wr_data));
+        ab_read.data_en <= 1'b1;
+        @(posedge clk);
+        ab_read.data_en <= 1'b0;
+        repeat (2) @(posedge clk);
+        check(!ab_write.wr_data_en,
+              $sformatf("overlay releases read reply for %h", addr));
+    endtask
+
     // ------------------------------------------------------------------
     // PS (AXI) emulation
     // ------------------------------------------------------------------
@@ -174,6 +207,9 @@ module tb_smartport_shortcut;
         repeat (10) @(posedge clk);
         rstn = 1;
         repeat (10) @(posedge clk);
+
+        // The v1.0 MAGIC byte lives at slot-7 DEVSEL +$E.
+        apple_overlay_read(16'hC0FE, 8'h4C);
 
         // ---- 1. ROM reads are stable and side-effect-free ----
         vtw_access(T_SLOT_ROM, 1'b1, 11'h000, 8'h00, rom0);

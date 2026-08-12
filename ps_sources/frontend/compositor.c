@@ -47,6 +47,7 @@
 #include "compositor.h"
 #include "compositor_layout.h"
 #include "scanlines.h"
+#include "linear_text_overlay.h"
 #include "supersprite_vdp.h"
 #include "video_blur.h"
 #include "video_ghosting.h"
@@ -1261,6 +1262,7 @@ static void draw_supersprite_overlay(uint16_t *fb)
 
 void compositor_init(compositor_ui_draw_fn draw_fn)
 {
+    linear_text_overlay_init();
     /* USB/SD DMA and full-menu repaints share DDR bandwidth with HP0 scanout.
      * The full-screen UI throttle limits repaint bursts to 30 Hz. */
 
@@ -1498,14 +1500,26 @@ int compositor_tick(void)
     const int prior_publish_latched =
         (s_published_idx == 0xFFu) ||
         ((int32_t)(now - s_published_counter) > 0);
+    const uint8_t overlay_poll = linear_text_overlay_poll_frame_latch(
+        prior_publish_latched != 0 ? 1U : 0U);
+    const int overlay_refresh =
+        (overlay_poll & LTO_POLL_REFRESH) != 0U;
+    const int overlay_wait_latch =
+        (overlay_poll & LTO_POLL_WAIT_LATCH) != 0U;
     const uint32_t apple_seq = apple_fb_reader_publish_seq();
     const int fresh_apple_frame =
         (apple_seq != 0u) && (apple_seq != s_composited_apple_seq);
-    const int force_full_refresh = (s_force_full_refresh != 0u);
+    const int force_full_refresh =
+        (s_force_full_refresh != 0u) || (overlay_refresh != 0);
 
-    if (s_published_idx != 0xFFu && s_uncapped == 0u) {
-        if (!prior_publish_latched && !fresh_apple_frame &&
-            !force_full_refresh) {
+    if (s_published_idx != 0xFFu && !prior_publish_latched) {
+        /* Once an overlay change has been drawn, keep that exact publish
+         * queued until scanout latches it. Fresh Apple frames must not move
+         * the counter target forward forever. */
+        if (overlay_wait_latch) {
+            return 0;
+        }
+        if (s_uncapped == 0u && !fresh_apple_frame && !force_full_refresh) {
             return 0;
         }
     }
@@ -1570,10 +1584,16 @@ int compositor_tick(void)
     XTime_GetTime(&ui_base_end);
     if (suppress_apple) {
         s_composited_apple_seq = apple_seq;
+        /* The boot and config screens own the picture, but frame-edge
+         * commands must still complete while they are open. */
+        linear_text_overlay_draw(NULL,
+            g_compositor_last_apple_mode == APPLE_FB_DISPLAY_MODE_SHR);
     } else {
         XTime_GetTime(&apple_start);
         apple_drawn = draw_apple_subwindow(fb);
         draw_supersprite_overlay(fb);
+        linear_text_overlay_draw(fb,
+            g_compositor_last_apple_mode == APPLE_FB_DISPLAY_MODE_SHR);
         XTime_GetTime(&apple_end);
     }
 

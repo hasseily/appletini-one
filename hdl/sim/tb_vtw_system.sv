@@ -120,6 +120,10 @@ module tb_vtw_system;
     logic        video_mode_50hz = 1'b0;
     logic [8:0]  video_line = 9'd253;
     logic [6:0]  video_cycle = 7'd27;
+    logic        overlay_capture_armed = 1'b0;
+    logic        overlay_capture_bank_aux = 1'b0;
+    logic [15:0] overlay_capture_base = 16'h6000;
+    logic [15:0] overlay_capture_limit = 16'h6001;
     logic        sh_en = 0;
     logic [17:0] sh_addr = '0;
     logic        sh_we = 0;
@@ -227,6 +231,10 @@ module tb_vtw_system;
         .ramworks_en(1'b1),
         .video_vbl(1'b0),
         .post_main_wide(1'b0),
+        .overlay_capture_armed(overlay_capture_armed),
+        .overlay_capture_bank_aux(overlay_capture_bank_aux),
+        .overlay_capture_base(overlay_capture_base),
+        .overlay_capture_limit(overlay_capture_limit),
         .video_mode_50hz(video_mode_50hz),
         .video_line(video_line),
         .video_cycle(video_cycle),
@@ -868,6 +876,61 @@ module tb_vtw_system;
             end
         end
         check(cnt_post_drops == 32'd0, "CPU0 post injection has no drops");
+
+        /* An armed main-RAM text buffer must become a vTW write-through
+         * window even though $6000 is ordinary program RAM. The following
+         * DEVSEL command must wait behind that posted byte. */
+        begin
+            int overlay_rec_base = wrecs.size();
+            overlay_capture_armed = 1'b1;
+            sh_write(18'h00500, 8'hA9); // LDA #$5A
+            sh_write(18'h00501, 8'h5A);
+            sh_write(18'h00502, 8'h8D); // STA $6000
+            sh_write(18'h00503, 8'h00);
+            sh_write(18'h00504, 8'h60);
+            sh_write(18'h00505, 8'hA9); // LDA #$02
+            sh_write(18'h00506, 8'h02);
+            sh_write(18'h00507, 8'h8D); // STA $C0F3 (SHOW)
+            sh_write(18'h00508, 8'hF3);
+            sh_write(18'h00509, 8'hC0);
+            sh_write(18'h0050A, 8'h4C); // wait at $050A
+            sh_write(18'h0050B, 8'h0A);
+            sh_write(18'h0050C, 8'h05);
+            // The live loop is LDA $C000 at $0358. Its low byte is already 0.
+            sh_write(18'h0035A, 8'h05);
+            sh_write(18'h00358, 8'h4C); // JMP $0500
+            fork : overlay_post_wait
+                begin
+                    wait (wrecs.size() >= overlay_rec_base + 2);
+                    disable overlay_post_wait;
+                end
+                begin
+                    #200us;
+                    check(0, $sformatf(
+                        "vTW overlay timeout pc=%h state=%0d cycle=%h fill=%0d records=%0d",
+                        dbg_core_pc, dut.xstate_q, dut.cycle_addr_q,
+                        post_fill, wrecs.size()));
+                    disable overlay_post_wait;
+                end
+            join
+            check(wrecs.size() >= overlay_rec_base + 2,
+                  "vTW emitted overlay RAM write and DEVSEL command");
+            if (wrecs.size() >= overlay_rec_base + 2) begin
+                check(wrecs[overlay_rec_base].addr == 16'h6000 &&
+                      wrecs[overlay_rec_base].data == 8'h5A,
+                      "vTW posts armed main-RAM overlay byte");
+                check(wrecs[overlay_rec_base + 1].addr == 16'hC0F3 &&
+                      wrecs[overlay_rec_base + 1].data == 8'h02,
+                      "vTW orders SHOW after overlay bytes");
+            end
+            // Restore the live loop, then let the wait loop return to it.
+            sh_write(18'h0035A, 8'hC0);
+            sh_write(18'h00358, 8'hAD);
+            sh_write(18'h0050B, 8'h5A);
+            sh_write(18'h0050C, 8'h03);
+            overlay_capture_armed = 1'b0;
+            repeat (20) @(posedge clk);
+        end
 
         /* Hold the core on one internal SmartPort access, seed a dirty
          * RamWorks cache line, and issue the same flush request CPU0 uses

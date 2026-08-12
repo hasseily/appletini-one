@@ -58,6 +58,8 @@
 //   5 OUT_PUSH4(WO): push one aligned 32-bit response word, with its
 //                    bytes consumed least-significant first
 //   6 IN_HEAD4 (RO): oldest four aligned IN bytes, least-significant first
+//   20h-28h: linear text overlay PS handoff registers; see
+//            linear_text_overlay_card.sv
 //
 // When slot_assign == 0 the card is disabled: no decode fires, the
 // AxiSimple mux returns zero, FIFOs hold their state.
@@ -72,6 +74,13 @@ module smartport_card (
     AxiSimple_if.client              as_client,
     output globals::AppleBus_write   ab_write,
     output logic                     smartport_irq,
+    input  logic                     overlay_capture_drop,
+    input  logic                     overlay_canvas_shr_active,
+    output logic                     overlay_devsel_enabled,
+    output logic                     overlay_capture_armed,
+    output logic                     overlay_capture_bank_aux,
+    output logic [15:0]              overlay_capture_base,
+    output logic [15:0]              overlay_capture_limit,
 
     /* vTW short-circuit port. The accelerator classifies its own core's
      * slot-7 accesses (using its private soft-switch state) and drives
@@ -163,6 +172,34 @@ module smartport_card (
     wire configured = (slot_assign != 3'd0);
     wire apple_bus_enabled = configured && ab_read.res &&
                              ((slot_assign != 3'h3) || sss.sw_slotc3rom);
+
+    logic [7:0] axi_read_addr_q;
+    logic [31:0] overlay_ps_rdata;
+    logic overlay_io_read_valid;
+    logic [7:0] overlay_io_read_data;
+
+    linear_text_overlay_card linear_text_overlay_card_i (
+        .clk(clk),
+        .rstn(rstn),
+        .ab_read(ab_read),
+        .sss(sss),
+        .slot_assign(slot_assign),
+        .capture_drop_sticky(overlay_capture_drop),
+        .canvas_shr_active(overlay_canvas_shr_active),
+        .ps_wr_en(as_client.awvalid && (as_common.awaddr >= 8'h20) &&
+                  (|as_common.wstrb)),
+        .ps_addr(as_common.awaddr),
+        .ps_wdata(as_common.wdata),
+        .ps_read_addr(axi_read_addr_q),
+        .ps_rdata(overlay_ps_rdata),
+        .io_read_valid(overlay_io_read_valid),
+        .io_read_data(overlay_io_read_data),
+        .devsel_enabled(overlay_devsel_enabled),
+        .capture_armed(overlay_capture_armed),
+        .capture_bank_aux(overlay_capture_bank_aux),
+        .capture_base(overlay_capture_base),
+        .capture_limit(overlay_capture_limit)
+    );
 
     /* Read serving keys on a one-clock-delayed serve_en: the ROM lookups
      * below are registered and track ab_read.addr, so their data is valid
@@ -333,6 +370,7 @@ module smartport_card (
     // ---- Bus write-side (serve) ----
     globals::AppleBus_write ab_write_d;
     globals::AppleBus_write ab_write_q;
+    logic overlay_reply_hold_q;
     assign ab_write = ab_write_q;
 
     always_comb begin
@@ -367,14 +405,22 @@ module smartport_card (
                 ab_write_d.wr_data    = {ready_q, direct_q, 6'b000000};
                 ab_write_d.wr_data_en = 1'b1;
             end
-            else begin
+            else if (!overlay_reply_hold_q) begin
                 ab_write_d.wr_data    = 8'h00;
                 ab_write_d.wr_data_en = 1'b0;
             end
         end
-        else if (ab_read.data_en) begin
+        else if (ab_read.data_en || !ab_read.res) begin
             ab_write_d.wr_data    = 8'h00;
             ab_write_d.wr_data_en = 1'b0;
+        end
+
+        /* Overlay DEVSEL reads share SmartPort's output register. Keeping
+         * this choice before the register avoids a mux on the Apple data
+         * output timing path. */
+        if (overlay_io_read_valid) begin
+            ab_write_d.wr_data    = overlay_io_read_data;
+            ab_write_d.wr_data_en = 1'b1;
         end
     end
 
@@ -382,6 +428,7 @@ module smartport_card (
     always_ff @(posedge clk) begin
         if (!rstn) begin
             ab_write_q      <= '0;
+            overlay_reply_hold_q <= 1'b0;
             in_wr_q         <= '0;
             in_rd_q         <= '0;
             out_wr_q        <= '0;
@@ -405,6 +452,11 @@ module smartport_card (
         end else begin
             ab_write_q    <= ab_write_d;
             smartport_irq <= 1'b0;
+
+            if (overlay_io_read_valid)
+                overlay_reply_hold_q <= 1'b1;
+            else if (ab_read.data_en || !ab_read.res)
+                overlay_reply_hold_q <= 1'b0;
 
             // Apple side (bus or vTW short-circuit) ---------------------
             if (data_write_ev && !in_full) begin
@@ -528,7 +580,6 @@ module smartport_card (
     end
 
     // ---- AxiSimple read mux (registered araddr, axidouble timing) ----
-    logic [7:0] axi_read_addr_q;
     always_ff @(posedge clk) begin
         axi_read_addr_q <= as_common.araddr;
     end
@@ -550,7 +601,7 @@ module smartport_card (
                     {23'h0, !in_empty, in_head};
                 SP_REG_IN_HEAD4: as_client.rdata = in_word_q;
                 SP_REG_SSS: as_client.rdata = {10'h0, sss_snapshot_q};
-                default: as_client.rdata = 32'h0;
+                default: as_client.rdata = overlay_ps_rdata;
             endcase
         end
     end

@@ -203,12 +203,17 @@ def static_checks() -> None:
             ".d2_write_timing_active(vtw_d2_write_timing_active)" in top and
             "disk2_timing_active" not in core_top,
             "physical Disk II accesses and Q7 write mode must force 1 MHz")
-    require("assign vtw_disk2_active = vtw_core_run_eff && vtw_bus_owned" in top and
+    require("logic disk2_active_vtw_q;" in top and
+            "if (!rstn[1])\n            disk2_active_vtw_q <= 1'b0;" in top and
+            "disk2_active_vtw_q <= disk2_active;" in top and
+            "assign vtw_disk2_active = vtw_core_run_eff && vtw_bus_owned" in top and
+            "card_slot6_enable && disk2_active_vtw_q" in top and
             "!vtw_ctrl_q[7];" in top and
             ".vtw_active(vtw_disk2_active)" in top and
             ".d2_active(vtw_disk2_active)" in top,
-            "apple_top must enable the private Disk II port only during vTW bus ownership "
-            "and while its compatibility disable is clear")
+            "apple_top must stage the boot-menu Disk II gate for vTW, then enable both "
+            "private-port consumers only during bus ownership and while compatibility "
+            "disable is clear")
     require("wire disk_cycle_tick" in disk2_card and
             "vtw_native_cycle_active" in disk2_card and
             "assign vtw_time_ready" in disk2_card and

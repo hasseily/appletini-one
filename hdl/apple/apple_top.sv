@@ -350,6 +350,7 @@ module apple_top(
     assign menu_chime_start = menu_chime_start_q;
     logic smartport_active;
     logic disk2_active;
+    logic disk2_active_vtw_q;
     logic boot_target_disk2;
     logic vtw_core_run_eff_q;
     logic vtw_disk2_boot_scan_q;
@@ -1454,8 +1455,18 @@ module apple_top(
     wire vtw_video_vbl = (line_in_frame >= 9'd192);
     assign vtw_enable_eff = vtw_ctrl_q[0] && vtw_machine_ok_q;
     wire vtw_core_run_eff = vtw_enable_eff && vtw_ctrl_q[1];
+
+    // The native card needs the live handoff gate. vTW can take the gate one
+    // fabric clock later, which cuts the slot-7 decode from its Disk II path.
+    always_ff @(posedge clk) begin
+        if (!rstn[1])
+            disk2_active_vtw_q <= 1'b0;
+        else
+            disk2_active_vtw_q <= disk2_active;
+    end
+
     assign vtw_disk2_active = vtw_core_run_eff && vtw_bus_owned &&
-                              card_slot6_enable && disk2_active &&
+                              card_slot6_enable && disk2_active_vtw_q &&
                               !vtw_ctrl_q[7];
     wire vtw_slot6_boot_probe =
         vtw_disk2_boot_scan_q && vtw_bus_owned &&

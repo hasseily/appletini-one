@@ -1414,6 +1414,69 @@ Keep the post-capture map, but do not promote or package this build. It remains
 Trace the SSI263 arithmetic and SDD free-space paths next. Do not alter the
 live Disk II sequencer based on the rank-10 placement path alone.
 
+#### SSI263 Filter-Finalization Build
+
+Commit `9b89c5c801dd19b9ca21b3a43629e5cc9df4a170` saves the final signed
+56-bit filter sum in the existing accumulator, then shifts, saturates, and
+updates filter history in a new finalization state. The state is appended so
+all prior state values stay fixed. The change adds seven fabric clocks to each
+audio sample, raising the exact pipeline length from 144 to 151 clocks. The
+normal 192-clock simulation cadence and the roughly 2,771-clock hardware
+sample period remain above that bound.
+
+The focused filter test passed 1,973 checks across all seven filter stages,
+the last and non-last tap edges, signed saturation limits, history updates,
+reset/restart cancellation, and exact output samples. The start-timing bench
+passed 89 checks. Quoted `00` through `3F` sweeps proved 64 unique SSI263 IDs
+and 64 unique native Votrax IDs; each 92,160-sample post-change stream matched
+the exact pre-change RTL byte for byte. The 152-clock minimum matched the
+192-clock output, while 151 clocks correctly preempted the final output edge.
+All 12 Phasor checks, 19 vTW benches, 20 standard-Disk-II checks, and 66 WOZ
+checks passed.
+
+The clean full build `20260813T181310Z-9b89c5c8-full` used Vivado 2025.2,
+the default seed, no incremental reference, and no rescue pass. It exported
+the candidate DCP, bitstream, and XSA.
+
+| Check | Result |
+| --- | ---: |
+| Build status | `exported` |
+| Setup WNS / TNS | `+0.239 ns` / `0.000 ns` |
+| Setup failing endpoints | `0` |
+| Hold WNS / TNS | `+0.044 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.861 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Unconstrained internal endpoints | `0` |
+| Rescue used | `0` |
+
+The build used 9,913 slices, 30,270 LUTs, 20,274 registers, 74 block RAM
+tiles, six DSPs, and 1,013 control sets. Against the post-capture shadow-map
+build, slices fell by 193, LUTs by 197, and registers by 32. Setup WNS rose by
+`0.130 ns` and hold WNS by `0.011 ns`; pulse width did not change. Bus-skew
+slack fell by `0.105 ns` but still passed. The methodology categories and
+counts did not change.
+
+The routed checkpoint proves the intended split in both speech instances.
+The direct DSP-to-974-filter/history-endpoint class has zero paths. In the
+secondary instance, the worst DSP-to-accumulator path is `+4.016 ns` with 15
+levels, and the worst accumulator-to-history path is `+1.862 ns` with seven
+levels. The primary instance has `+4.029 ns` and `+1.752 ns` on the same two
+halves. The former direct secondary path was `+0.109 ns` with 20 levels.
+
+| Rank | Path class | Slack | Levels |
+| ---: | --- | ---: | ---: |
+| 1 | PS GP0 AXI exclusive-lock state | `+0.239 ns` | 15 |
+| 2-9 | Disk II drive select to vTW debug trace enables | `+0.269` to `+0.279 ns` | 8 |
+| 10 | Registered AXI write data to boot-ROM write address | `+0.284 ns` | 0 |
+
+Keep the filter-finalization stage, but do not promote or package this build.
+It remains `0.061 ns` below the `+0.300 ns` gate, and hardware validation is
+deferred. The next work must address the AXI exclusive path and the independent
+debug/boot paths; do not change Disk II media timing to fix a debug-only enable
+cone.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

@@ -1550,6 +1550,80 @@ Do not promote or package it; hardware validation is still deferred. Trace the
 debug-only Disk II-to-vTW enable cone next, and preserve Disk II controller and
 media timing.
 
+#### vTW Debug-Trace Event Pipeline Build
+
+Commit `816ab96079f1acbdb629ac1d96558e5b44375209` queues each vTW PC-trace
+event and its freeze reason for one fabric clock before updating the 16-entry
+history. This removes Disk II readiness from the common clock enable on all
+256 PC-history bits. The queue accepts one fetch per clock, keeps the trigger
+PC and bad-C000-before-C600 reason priority, and drains across Apple RESET.
+Only the public forensic history and freeze status appear one 133 MHz clock
+later; the CPU, Disk II controller, media state, and cycle timing do not
+change.
+
+The focused bench covered adjacent fetches, a C600 trigger behind an older
+pending PC, both freeze causes and their priority, a bad-C000 pulse without a
+fetch, cancellation by debug clear and hard reset, and draining across Apple
+RESET. Static checks forbid a direct `core_addr` write into the history. All
+20 vTW benches, 20 standard-Disk-II checks, and 66 WOZ checks passed.
+
+The clean full build `20260813T202256Z-816ab960-full` used Vivado 2025.2,
+the default seed, no incremental reference, and no rescue pass. It exported
+the candidate DCP, bitstream, and XSA.
+
+| Check | Result |
+| --- | ---: |
+| Build status | `exported` |
+| Setup WNS / TNS | `+0.148 ns` / `0.000 ns` |
+| Setup failing endpoints | `0` |
+| Hold WNS / TNS | `+0.016 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.789 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Unconstrained internal endpoints | `0` |
+| Rescue used | `0` |
+
+The exact routed query found five Disk II drive-select launch replicas, eight
+WOZ cached-mask registers, and all 256 PC-trace CE and D pins. No path remains
+from drive select, cached mask, or `d2_time_ready` to any PC-trace CE or D pin.
+The replacement halves have ample margin: Disk II readiness to the event stage
+is `+1.224 ns`, the event stage to the trace CE is `+3.100 ns`, and the saved
+PC to the trace D input is `+5.978 ns`. The unchanged same-edge I/O-trace
+freeze path is also clear at `+0.900 ns`.
+
+The build uses 9,896 slices, 30,252 LUTs, 20,174 registers, 2,845 `CARRY4`
+blocks, 74 block RAM tiles, six DSPs, and 1,010 control sets. Against the AXI
+exclusive-monitor build, occupied slices fell by 323, registers by 14, F7
+muxes by 51, and control sets by two; LUTs rose by 122. The prior control-set
+methodology warning is gone, so the methodology count fell from 101 to 100.
+The exported SHA-256 values are
+`732a2159bde25bc57eddc0415881fad82de93fedc80bc9c70d2a9cd148617e3c`
+for the DCP,
+`d38ef493fd27cbce03045254b6dbcb5a028e2892e8e7e3c6e7e3af510a68286c`
+for the bitstream, and
+`f00daff21780d412a6cb770e109bd9f9f9cd167d2790bbd82f29b7625709829a`
+for the XSA.
+
+The former ten Disk-II-readiness-to-PC-trace paths are absent from the global
+top ten. The new global limit is an unrelated zero-logic AXI write-skid route
+to the vTW shadow-host FIFO at `+0.148 ns`. Four functional vTW-cycle-address
+to Disk II bit-offset enables appear at `+0.297` to `+0.330 ns`; do not retime
+those without a separate same-cycle proof.
+
+| Rank | Path class | Slack | Levels |
+| ---: | --- | ---: | ---: |
+| 1-5 | Registered AXI write data to vTW/Phasor registers | `+0.148` to `+0.285 ns` | 0-1 |
+| 6-9 | vTW cycle address to Disk II bit-offset enable | `+0.297` to `+0.330 ns` | 9 |
+| 10 | PS reset register to PSRAM CE | `+0.338 ns` | 1 |
+
+Keep the debug pipeline as a structural timing and packing cleanup. Global
+setup WNS moved by only `-0.008 ns`, so do not call it a global timing gain.
+The build remains `0.152 ns` below the `+0.300 ns` promotion gate. Do not
+promote or package it; hardware validation is still deferred. The next work
+should address the route-heavy registered AXI write-data class without
+changing the exposed vTW-to-Disk-II functional timing.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

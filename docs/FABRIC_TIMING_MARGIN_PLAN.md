@@ -1101,6 +1101,68 @@ sound zero-length calculation next. Keep this physical constraint tied to the
 fixed production device and U17 pin, and later check DIR_A handoff and edge
 quality on hardware.
 
+#### Disk II Sound Zero-Length Retime Build
+
+Commit `f0d13f64ed70231621be699c31b25c2e2d1fa75e` moves the Disk II seek
+zero-length comparison into the existing next sound-event pipeline stage. It
+compares the registered start and end sample positions, removes the prior
+zero-length register, and adds no pipeline stage or event latency. It changes
+sound-event setup only; it does not change Disk II rotation, Q6/Q7, media
+reads or writes, WOZ state, or vTW cycle pacing.
+
+The standard-Disk-II regression exhaustively compared the old arithmetic and
+the independent boundary rule for all 16 event codes, all 256 start tracks,
+and all 256 distances. It also checked the exact registered-stage contract.
+All 20 standard-Disk-II checks, 66 WOZ checks, and 19 vTW benches passed.
+The vTW suite includes the physical Disk II bus, native and vTW WOZ
+read/write, and every supported vTW speed.
+
+The clean full build `20260813T151743Z-f0d13f64-full` used Vivado 2025.2,
+the default seed, no incremental reference, and no rescue pass. It exported
+the candidate DCP, bitstream, and XSA.
+
+| Check | Result |
+| --- | ---: |
+| Build status | `exported` |
+| Setup WNS / TNS | `+0.083 ns` / `0.000 ns` |
+| Setup failing endpoints | `0` |
+| Hold WNS / TNS | `+0.039 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.883 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Unconstrained internal endpoints | `0` |
+| Rescue used | `0` |
+
+The build used 10,131 slices, 30,469 LUTs, 20,349 registers, 74 block RAM
+tiles, six DSPs, and 1,008 control sets. Against the address-direction build,
+slices rose by 94, LUTs fell by 128, registers fell by 32, and control sets
+fell by five. Setup WNS fell by `0.023 ns`, hold WNS fell by `0.040 ns`, pulse
+width did not change, and bus-skew slack rose by `0.074 ns`. The control-set
+method warning also cleared.
+
+The saved checkpoints prove the local cut. The prior
+`event_pos_zero_length_q` endpoint had a worst `+0.106 ns` path with 11 logic
+levels. That register, its D pin, and all matching nets are absent from the
+new checkpoint. The worst registered-position to replacement zero-length
+path has `+4.815 ns` slack and three logic levels. The worst setup-input path
+to the registered end position has `+1.780 ns` slack. The local sound cone is
+therefore no longer near the timing limit.
+
+| Rank | Path class | Slack | Route share | Levels |
+| ---: | --- | ---: | ---: | ---: |
+| 1-3, 5, 9 | vTW cycle address to shadow-RAM write/address pins | `+0.083` to `+0.240 ns` | 82.9-84.2% | 6-7 |
+| 4, 7-8 | Registered AXI write data to vTW host/control state | `+0.190` to `+0.239 ns` | 91.1-94.3% | 0-1 |
+| 6 | Apple address state to Disk II WOZ shift enable | `+0.226 ns` | 83.2% | 7 |
+| 10 | Registered AXI write data to boot-ROM write address | `+0.242 ns` | 94.6% | 0 |
+
+Keep the sound retime, but do not promote or package this build. The local
+target is gone, while unrelated placement exposed the vTW shadow path and
+left global setup `0.217 ns` below the `+0.300 ns` gate. Trace the captured
+cycle-address to shadow-RAM cone next. Preserve the Apple-cycle translation
+snapshot and do not add a vTW core state or change Disk II time-ready pacing.
+Hardware validation remains deferred.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

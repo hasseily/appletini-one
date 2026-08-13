@@ -1234,6 +1234,67 @@ margin. Trace the W65C02 decimal flag cone next and use its existing decimal
 extra cycle if a retime can preserve every bus cycle and architectural result.
 Do not change the live Disk II WOZ path based on this report.
 
+#### W65C02 Decimal-Result Retime Build
+
+Commit `1adfc51fa719356bd5b3188b09fc937e7c9b3476` saves the exact ADC or
+SBC result when a decimal operand is accepted, then commits A and P during
+the W65C02's existing decimal-extra cycle. It adds no bus cycle or CPU state.
+The extra-cycle dummy address, instruction boundary, binary arithmetic, and
+all non-ADC/SBC paths remain unchanged. A small pending bit preserves an SO
+edge while RDY or the core enable holds the extra cycle.
+
+The CPU tests now fail with a nonzero simulator exit on any mismatch. All
+180,000 WDC ADC/SBC vectors passed with exact state and bus-cycle checks over
+all 18 opcode and addressing-mode forms. The Klaus decimal test checked A,
+N, V, Z, and C for every accumulator, operand, and carry-in value, including
+invalid BCD digits; it passed 56,640,803 cycles and 18,396,348 instructions.
+Directed tests also held decimal ADC with RDY, held decimal SBC with the core
+enable, and asserted SO during a held extra cycle. All 19 vTW benches, 20
+standard-Disk-II checks, and 66 WOZ checks passed.
+
+The clean full build `20260813T162120Z-1adfc51f-full` used Vivado 2025.2,
+the default seed, no incremental reference, and no rescue pass. It exported
+the candidate DCP, bitstream, and XSA.
+
+| Check | Result |
+| --- | ---: |
+| Build status | `exported` |
+| Setup WNS / TNS | `+0.127 ns` / `0.000 ns` |
+| Setup failing endpoints | `0` |
+| Hold WNS / TNS | `+0.041 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.851 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Unconstrained internal endpoints | `0` |
+| Rescue used | `0` |
+
+The build used 10,081 slices, 30,623 LUTs, 20,394 registers, 74 block RAM
+tiles, six DSPs, and 1,011 control sets. Against the route-capture build,
+slices rose by 183, LUTs by 11, and registers by 94; control sets fell by two.
+Setup WNS fell by `0.024 ns`, hold WNS rose by `0.008 ns`, pulse width did
+not change, and bus-skew slack rose by `0.073 ns`. The new global limit is an
+unrelated SSI263 route, not a CPU path.
+
+The focused routed queries prove the local cut. The prior P-to-A/P path rose
+from `+0.151 ns` to `+0.879 ns`; A-to-A/P rose from `+0.395 ns` to
+`+0.788 ns`; and registered input data to A/P rose from `+0.301 ns` to
+`+1.125 ns`. The new arithmetic capture boundary has at least `+1.331 ns`
+slack, and the saved result to A/P commit has `+4.320 ns` slack with three
+logic levels. Other binary A/P updates still share the old endpoints, so do
+not claim that every path to those registers disappeared.
+
+| Rank | Path class | Slack | Route share | Levels |
+| ---: | --- | ---: | ---: | ---: |
+| 1, 3-5, 7-8, 10 | SSI263 clear/start pulse to formant history | `+0.127` to `+0.252 ns` | 92.5-92.7% | 1 |
+| 2, 9 | Apple read-data snapshot to Mockingboard VIA timer latch | `+0.132`, `+0.229 ns` | 93.9% | 0 |
+| 6 | Registered AXI write data to SDD ring base | `+0.215 ns` | 94.9% | 0 |
+
+Keep the decimal retime, but do not promote or package this build. It is
+`0.173 ns` below the `+0.300 ns` gate, and hardware validation remains
+deferred. Trace the merged SSI263 clear/start pulse next. Preserve its event
+edge and the formant sample sequence; do not add an audio or Apple bus cycle.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

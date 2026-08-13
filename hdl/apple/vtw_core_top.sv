@@ -636,6 +636,10 @@ module vtw_core_top (
     logic [15:0] dbg_pc_trace_q [0:15];
     logic        dbg_trace_frozen_q;
     logic [1:0]  dbg_trace_reason_q;
+    logic        dbg_trace_event_pending_q;
+    logic [15:0] dbg_trace_pc_pending_q;
+    logic        dbg_trace_freeze_pending_q;
+    logic [1:0]  dbg_trace_reason_pending_q;
     wire dbg_trace_selftest_event =
         core_en && core_sync && (core_addr == 16'hC600) &&
         vsss.sw_intcxrom;
@@ -719,10 +723,13 @@ module vtw_core_top (
     assign dbg_trace_status = {29'b0, dbg_trace_reason_q,
                                dbg_trace_frozen_q};
 
-    /* Instruction history is passive and event-frozen. It deliberately
-     * continues across Apple RESET so a later $C600 trigger preserves the
-     * reset-handler path. A phantom keyboard strobe wins over the later
-     * consequence of entering self-test. */
+    /* Instruction history is passive and event-frozen. Queue the PC and
+     * freeze reason together so Disk II readiness does not drive all 256
+     * history clock enables. The queue accepts one fetch per clock and adds
+     * only one debug clock; it does not pace the core. It deliberately drains
+     * across Apple RESET so a later $C600 trigger preserves the reset-handler
+     * path. A phantom keyboard strobe wins over the later consequence of
+     * entering self-test. */
     always_ff @(posedge clk) begin
         if (!rstn) begin
             for (int i = 0; i < 16; i++) begin
@@ -730,6 +737,10 @@ module vtw_core_top (
             end
             dbg_trace_frozen_q <= 1'b0;
             dbg_trace_reason_q <= 2'd0;
+            dbg_trace_event_pending_q <= 1'b0;
+            dbg_trace_pc_pending_q <= 16'd0;
+            dbg_trace_freeze_pending_q <= 1'b0;
+            dbg_trace_reason_pending_q <= 2'd0;
         end
         else if (dbg_clear) begin
             for (int i = 0; i < 16; i++) begin
@@ -737,23 +748,47 @@ module vtw_core_top (
             end
             dbg_trace_frozen_q <= 1'b0;
             dbg_trace_reason_q <= 2'd0;
+            dbg_trace_event_pending_q <= 1'b0;
+            dbg_trace_pc_pending_q <= 16'd0;
+            dbg_trace_freeze_pending_q <= 1'b0;
+            dbg_trace_reason_pending_q <= 2'd0;
         end
         else begin
             if (!dbg_trace_frozen_q) begin
-                if (core_en && core_sync) begin
+                if (dbg_trace_event_pending_q) begin
                     for (int i = 15; i > 0; i--) begin
                         dbg_pc_trace_q[i] <= dbg_pc_trace_q[i-1];
                     end
-                    dbg_pc_trace_q[0] <= core_addr;
+                    dbg_pc_trace_q[0] <= dbg_trace_pc_pending_q;
                 end
 
-                if (eng_bad_c000_pulse) begin
+                if (dbg_trace_freeze_pending_q) begin
                     dbg_trace_frozen_q <= 1'b1;
-                    dbg_trace_reason_q <= 2'd2;
+                    dbg_trace_reason_q <= dbg_trace_reason_pending_q;
+                end
+            end
+
+            /* A pending freeze commits on this edge. Do not accept the next
+             * fetch behind it: the old direct path was already frozen then. */
+            if (dbg_trace_frozen_q || dbg_trace_freeze_pending_q) begin
+                dbg_trace_event_pending_q <= 1'b0;
+                dbg_trace_pc_pending_q <= 16'd0;
+                dbg_trace_freeze_pending_q <= 1'b0;
+                dbg_trace_reason_pending_q <= 2'd0;
+            end
+            else begin
+                dbg_trace_event_pending_q <= core_en && core_sync;
+                dbg_trace_pc_pending_q <= core_addr;
+                dbg_trace_freeze_pending_q <=
+                    eng_bad_c000_pulse || dbg_trace_selftest_event;
+                if (eng_bad_c000_pulse) begin
+                    dbg_trace_reason_pending_q <= 2'd2;
                 end
                 else if (dbg_trace_selftest_event) begin
-                    dbg_trace_frozen_q <= 1'b1;
-                    dbg_trace_reason_q <= 2'd3;
+                    dbg_trace_reason_pending_q <= 2'd3;
+                end
+                else begin
+                    dbg_trace_reason_pending_q <= 2'd0;
                 end
             end
         end

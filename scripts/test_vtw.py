@@ -40,6 +40,7 @@ SOURCES = [
     "hdl/apple/smartport_card.sv",
     "hdl/sim/tb_apple_bus_addr_enable.sv",
     "hdl/sim/tb_vtw_engine_unit.sv",
+    "hdl/sim/tb_vtw_pc_event_pipeline.sv",
     "hdl/sim/tb_vtw_system.sv",
     "hdl/sim/tb_smartport_reset.sv",
     "hdl/sim/tb_smartport_shortcut.sv",
@@ -69,6 +70,7 @@ MEM_FILES = [
 BENCHES = [
     ("tb_apple_bus_addr_enable", "APPLE BUS ADDR ENABLE PASS"),
     ("tb_vtw_engine_unit", "VTW ENGINE UNIT PASS"),
+    ("tb_vtw_pc_event_pipeline", "VTW PC EVENT PIPELINE PASS"),
     ("tb_vtw_system", "VTW SYSTEM PASS"),
     ("tb_smartport_reset", "SP RESET PASS"),
     ("tb_smartport_shortcut", "SP SHORTCUT PASS"),
@@ -657,6 +659,45 @@ def static_checks() -> None:
             "dbg_trace_selftest_event" in core,
             "vTW must preserve an instruction trail through RESET and freeze "
             "on phantom keyboard input or internal self-test entry")
+    trace_marker = core.find("/* Instruction history is passive")
+    require(trace_marker >= 0,
+            "vTW PC trace must retain its instruction-history block")
+    trace_history = core[trace_marker:] if trace_marker >= 0 else ""
+    trace_branches = re.search(
+        r"always_ff\s*@\(posedge clk\)\s*begin\s*"
+        r"if\s*\(!rstn\)\s*begin(?P<reset>.*?)"
+        r"\bend\s*else if\s*\(dbg_clear\)\s*begin(?P<clear>.*?)"
+        r"\bend\s*else\s*begin",
+        trace_history,
+        re.DOTALL,
+    )
+    require(trace_branches is not None,
+            "vTW PC trace must keep explicit hard-reset and dbg-clear branches")
+    if trace_branches is not None:
+        pending_regs = (
+            "dbg_trace_event_pending_q",
+            "dbg_trace_pc_pending_q",
+            "dbg_trace_freeze_pending_q",
+            "dbg_trace_reason_pending_q",
+        )
+        for branch_name in ("reset", "clear"):
+            branch = trace_branches.group(branch_name)
+            for pending_reg in pending_regs:
+                require(
+                    re.search(
+                        rf"\b{pending_reg}\s*<=\s*(?:'0|\d+'[bdh]0)\s*;",
+                        branch,
+                    ) is not None,
+                    f"vTW PC trace {branch_name} must clear {pending_reg}",
+                )
+    trace_zero_writes = re.findall(
+        r"dbg_pc_trace_q\s*\[\s*0\s*\]\s*<=\s*([^;]+);",
+        trace_history,
+    )
+    require(trace_zero_writes == ["dbg_trace_pc_pending_q"] and
+            "if (dbg_trace_event_pending_q) begin" in trace_history and
+            "dbg_pc_trace_q[0] <= core_addr;" not in trace_history,
+            "vTW PC history must shift only a queued event and queued PC")
     require("dbg_bad_c000_event" in engine and
             "dbg_self_data_bad" in engine and
             "dbg_addr_bad" in engine and

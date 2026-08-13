@@ -553,6 +553,65 @@ live Apple-address consumer cone before choosing the next cut. Do not infer a
 new change from WNS alone; both classes are route-heavy and need path-level
 control-flow review.
 
+#### vTW Disk II Time-Tick Stage Build
+
+Commit `bd99547fb82abcf90b5c4adbf7928926b536be46` stages only the
+accepted normal vTW Disk II time tick by one 133.333 MHz fabric clock. The
+stage clears when the core session ends. Private Disk II reads keep their
+registered direct-access tick, while native and Q7 cycles keep the physical
+1 MHz tick path.
+
+All 14 vTW benches passed. The focused checks prove exact accepted and output
+pulse counts across a readiness stall, let an accepted tick drain after a
+later stall, clear a pending tick on session reset, and keep private, native,
+and Q7 tick selection separate. All 19 standard Disk II tests, 66 WOZ tests,
+the capture-FIFO and cycle-egress tests, nine SDD tests, the linear-overlay
+source and RTL tests, and 17 VidHD/SHR tests also passed.
+
+The clean full diagnostic run `20260813T082040Z-bd99547f-full` used Vivado
+2025.2, the default seed, and no incremental reference. Its normal
+post-route `Explore` result had `-0.030 ns` setup WNS. The extra
+`AggressiveExplore` rescue pass did not improve it, so `rescue_used=1`. The
+run failed its setup gate and exported no candidate DCP, bitstream, or XSA.
+
+| Check | Result |
+| --- | ---: |
+| Build status | `failed` |
+| Setup WNS / TNS | `-0.030 ns` / `-0.030 ns` |
+| Setup failing endpoints | `1` |
+| Hold WNS / TNS | `+0.039 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.994 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Unconstrained internal endpoints | `0` |
+| Rescue used | `1` |
+| Hardware export | refused |
+
+The run used 9,725 slices, 30,398 LUTs, 20,289 registers, 74 block RAM
+tiles, six DSPs, and 1,008 control sets. Against the soft-switch apply build,
+slices fell by 130, LUTs fell by 103, registers rose by 26, and control sets
+stayed unchanged. Setup WNS fell by `0.039 ns`, hold WNS fell by `0.002 ns`,
+and bus-skew slack rose by `0.083 ns`.
+
+The old Disk II quarter-track/readiness/normal-tick paths to the WOZ shift and
+data-latch enables left the top ten. The existing vTW posted-write class took
+over instead:
+
+| Rank | Path class | Slack | Route share | Levels |
+| ---: | --- | ---: | ---: | ---: |
+| 1, 5-7, 9 | vTW cycle address to posted-write BRAM enable/data | `-0.030`, then `+0.059` to `+0.123 ns` | 76.3-76.6% | 10 |
+| 2 | vTW write-direction state to address-direction output | `+0.003 ns` | 48.4% | 2 |
+| 3 | Machine-INH safety copy to data-direction output | `+0.004 ns` | 53.5% | 3 |
+| 4, 8 | vTW cycle address to posted-fill state | `+0.040`, `+0.119 ns` | 66.7-67.4% | 13 |
+| 10 | Disk II request address to recalibration-sound arm state | `+0.133 ns` | 80.2% | 8 |
+
+Keep the time-tick stage because it cut the measured same-cycle feedback and
+passed its functional checks. Do not claim that it removed every Disk II
+quarter-track consumer. Do not promote this run: it has one failing setup
+endpoint, used the rescue pass, and produced no hardware outputs. Trace the
+cycle-address-to-posted-write BRAM enable cone before choosing another cut.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

@@ -501,6 +501,58 @@ arbiter remains at `+0.359 ns`. Neither path limits this build. Keep the copy,
 but do not claim that it removed the old route. Do not promote this build;
 setup margin remains below `+0.300 ns`.
 
+#### vTW Soft-Switch Apply Build
+
+Commit `bceefabda0ba6449a5fa5a42009c41f13abba786` moved only the
+private vTW soft-switch manager to a one-clock apply stage. `X_CAPTURE` saves
+the core address, read/write state, write data, and pre-access switch state.
+`X_ROUTE` applies that saved tuple to the private manager. The shared
+`ssm_pulse` and the `$C074` speed latch remain at `X_CAPTURE`.
+
+The full-system test now checks both `$C071` and `$C073`: the RamWorks bank
+stays old at `X_CAPTURE`, changes at `X_ROUTE`, and appears in the next access
+snapshot. Its existing checks also kept `$C006/$C007`, the C3/CFFF claim and
+release, double `$C083`, video switches, and `$C074` behavior intact. All 14
+vTW benches passed. The RamWorks 8 MB contract test, capture-FIFO, cycle-egress,
+SDD stream, linear-overlay, and VidHD/SHR regressions also passed.
+
+The clean full build `20260813T071806Z-bceefabd-full` used Vivado 2025.2,
+no incremental reference, and no rescue pass. It produced:
+
+| Check | Result |
+| --- | ---: |
+| Setup WNS / TNS | `+0.009 ns` / `0.000 ns` |
+| Hold WNS / TNS | `+0.041 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.911 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Unconstrained internal endpoints | `0` |
+| Rescue used | `0` |
+
+The build used 9,855 slices, 30,501 LUTs, 20,263 registers, 74 block RAM
+tiles, six DSPs, and 1,008 control sets. Against the bus-safety-copy build,
+slices rose by 29, LUTs fell by 40, registers fell by 33, and control sets
+fell by one.
+
+The CPU-state-to-`ss_ramworks_bank` enable paths left the top ten, so keep
+this structural cut. Global WNS fell by `0.107 ns` because Disk II and live
+Apple-address paths took over:
+
+| Rank | Path class | Slack | Route share | Levels |
+| ---: | --- | ---: | ---: | ---: |
+| 1, 7-10 | Disk II quarter-track to WOZ-shift enable | `+0.009`, then `+0.075 ns` | 76.1-76.2% | 12 |
+| 2 | Apple address to Disk II bit-offset data | `+0.017 ns` | 76.7% | 12 |
+| 3, 5 | Disk II quarter-track to data-latch enable | `+0.038`, `+0.069 ns` | 76.3-76.5% | 12 |
+| 4 | Apple address to SmartPort input-FIFO write enable | `+0.066 ns` | 74.9% | 12 |
+| 6 | vTW cycle address to posted-write memory input | `+0.074 ns` | 76.4% | 10 |
+
+Do not promote this build. It passes the nonnegative export gates but remains
+well below `+0.300 ns`. Trace the Disk II quarter-track enable cone and the
+live Apple-address consumer cone before choosing the next cut. Do not infer a
+new change from WNS alone; both classes are route-heavy and need path-level
+control-flow review.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

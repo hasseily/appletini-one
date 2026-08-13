@@ -1354,6 +1354,66 @@ Trace the W65C02-mode to route-capture cone next. Preserve the pre-access
 translation snapshot and the existing `X_CAPTURE` to `X_ROUTE` sequence; do
 not add a state or change the live Disk II path.
 
+#### vTW Post-Capture Shadow-Map Build
+
+Commit `1b7f01f600bd5ac0af09ede02f69348e5cf85b38` saves only the full
+translated address and route kind during `X_CAPTURE`, then calls the shared
+shadow mapper from that registered tuple during `X_ROUTE`. It removes the
+redundant shadow-valid and 18-bit physical-address capture registers. The
+change adds no state or Apple cycle and keeps the same pre-access soft-switch
+snapshot.
+
+The full-system monitor now checks the saved translator result, mapped shadow
+address, port enable, and write control on every `X_ROUTE`. A directed
+language-card test selects bank 1 with two `$C08B` reads and proves that
+`$D022` reaches physical `$C022`, including the translated bit-12 remap. All
+19 vTW benches, 20 standard-Disk-II checks, and 66 WOZ checks passed.
+
+The clean full build `20260813T172644Z-1b7f01f6-full` used Vivado 2025.2,
+the default seed, no incremental reference, and no rescue pass. It exported
+the candidate DCP, bitstream, and XSA.
+
+| Check | Result |
+| --- | ---: |
+| Build status | `exported` |
+| Setup WNS / TNS | `+0.109 ns` / `0.000 ns` |
+| Setup failing endpoints | `0` |
+| Hold WNS / TNS | `+0.033 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.966 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Unconstrained internal endpoints | `0` |
+| Rescue used | `0` |
+
+The build used 10,106 slices, 30,467 LUTs, 20,306 registers, 74 block RAM
+tiles, six DSPs, and 1,012 control sets. Against the backend-start build,
+slices rose by 148, while LUTs fell by 160 and registers by 117. Setup WNS
+fell by `0.029 ns`, hold WNS by `0.039 ns`, and bus-skew slack rose by
+`0.008 ns`; pulse width did not change. The methodology categories and counts
+did not change.
+
+The old `cycle_xl_shadow_valid_q` and `cycle_xl_shadow_phys_q` cell families
+are absent from the routed design. They had supplied eight of the prior global
+top ten. The worst W65C02-state path into the 13 saved decoded/route endpoints
+is now `+0.382 ns` with seven levels. From those registers, the worst shadow
+write-enable path is `+1.038 ns` with five levels across 32 paths, and the
+worst shadow-address path is `+0.804 ns` with four levels across 568 paths.
+No vTW path remains in the new top ten. The lower global WNS comes from an
+unrelated SSI263 DSP arithmetic path, not a residual route-capture path.
+
+| Rank | Path class | Slack | Route share | Levels |
+| ---: | --- | ---: | ---: | ---: |
+| 1-2, 8 | SSI263 formant DSP return to filter state | `+0.109` to `+0.202 ns` | 47.5-48.3% | 20 |
+| 3-6 | SDD egress consumer pointer to free-space state | `+0.129 ns` | 57.4% | 13 |
+| 7, 9 | Apple read-data snapshot to SDD record data | `+0.199`, `+0.202 ns` | 93.8-93.9% | 0 |
+| 10 | Disk II spin countdown to bit-offset enable | `+0.224 ns` | 82.1% | 7 |
+
+Keep the post-capture map, but do not promote or package this build. It remains
+`0.191 ns` below the `+0.300 ns` gate, and hardware validation is deferred.
+Trace the SSI263 arithmetic and SDD free-space paths next. Do not alter the
+live Disk II sequencer based on the rank-10 placement path alone.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

@@ -130,6 +130,12 @@ Run `python scripts\test_ssi263_start_timing.py` after SSI263, Votrax, or
 formant-start changes. It checks the same-edge backend start and VIA clear,
 the saved phoneme tuple, reset cancellation, and formant pipeline restart.
 
+Run `python scripts\test_ssi263_filter_finalize.py` after SSI263 formant MAC or
+filter-pipeline changes. It checks every filter stage, exact accumulator and
+history timing, saturation limits, reset/restart cancellation, and sample output.
+Use `python scripts\sim_ssi263_formant_rtl.py --votrax ...` for direct SC-01
+phone sweeps; omit `--votrax` for SSI263 mode.
+
 Simulator-backed checks require the Xilinx simulation tools on `PATH`.
 Hardware-facing scripts document their required UART, JTAG, SD, or USB setup in
 their command-line help.

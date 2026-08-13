@@ -69,7 +69,8 @@ module ssi263_formant_backend (
         SYNTH_OUTPUT_SCALE,
         SYNTH_OUTPUT_GAIN,
         SYNTH_OUTPUT_LIMIT,
-        SYNTH_OUT
+        SYNTH_OUT,
+        SYNTH_FILTER_FINALIZE
     } synth_state_t;
 
     typedef enum logic [2:0] {
@@ -1248,100 +1249,104 @@ module ssi263_formant_backend (
 
                     SYNTH_FILTER_ACCUM: begin
                         mac_next = mac_accum_q + mac_product_q;
+                        mac_accum_q <= mac_next;
                         if (mac_tap_q == filter_last_tap(filter_stage_q)) begin
-                            filter_out = sat24_from56(mac_next >>> SC01_COEFF_FRAC_BITS);
-                            mac_accum_q <= 56'sd0;
                             mac_tap_q <= 3'd0;
-
-                            case (filter_stage_q)
-                                FILTER_F1: begin
-                                    synth_f1_q <= filter_out;
-                                    f1_x3_q <= f1_x2_q;
-                                    f1_x2_q <= f1_x1_q;
-                                    f1_x1_q <= synth_voice_input_q;
-                                    f1_y3_q <= f1_y2_q;
-                                    f1_y2_q <= f1_y1_q;
-                                    f1_y1_q <= filter_out;
-                                    filter_stage_q <= FILTER_F2;
-                                    synth_state_q <= SYNTH_FILTER_PREP;
-                                end
-
-                                FILTER_F2: begin
-                                    synth_f2_q <= filter_out;
-                                    f2_x3_q <= f2_x2_q;
-                                    f2_x2_q <= f2_x1_q;
-                                    f2_x1_q <= synth_f1_q;
-                                    f2_y3_q <= f2_y2_q;
-                                    f2_y2_q <= f2_y1_q;
-                                    f2_y1_q <= filter_out;
-                                    filter_stage_q <= FILTER_FN;
-                                    synth_state_q <= SYNTH_FILTER_PREP;
-                                end
-
-                                FILTER_F3: begin
-                                    synth_f3_q <= filter_out;
-                                    f3_x3_q <= f3_x2_q;
-                                    f3_x2_q <= f3_x1_q;
-                                    f3_x1_q <= synth_vn_q;
-                                    f3_y3_q <= f3_y2_q;
-                                    f3_y2_q <= f3_y1_q;
-                                    f3_y1_q <= filter_out;
-                                    // F3 done -> step-11 secondary noise insertion.
-                                    synth_state_q <= SYNTH_NOISE_GAIN;
-                                end
-
-                                FILTER_FN: begin
-                                    synth_fn_q <= filter_out;
-                                    fn_x2_q <= fn_x1_q;
-                                    fn_x1_q <= synth_noise_input_q;
-                                    fn_y2_q <= fn_y1_q;
-                                    fn_y1_q <= filter_out;
-                                    // Pipeline the MAME step-7 gain so the FN
-                                    // MAC result does not feed scale/saturate
-                                    // logic in the same 133 MHz cycle.
-                                    synth_state_q <= SYNTH_F2N_SCALE;
-                                end
-
-                                FILTER_F2N: begin
-                                    synth_f2n_q <= filter_out;
-                                    f2n_x3_q <= f2n_x2_q;
-                                    f2n_x2_q <= f2n_x1_q;
-                                    f2n_x1_q <= synth_f2n_in_q;
-                                    f2n_y3_q <= f2n_y2_q;
-                                    f2n_y2_q <= f2n_y1_q;
-                                    f2n_y1_q <= filter_out;
-                                    // Pipeline the MAME step-9 mix so the F2N
-                                    // MAC result does not feed adder/saturate
-                                    // logic in the same 133 MHz cycle.
-                                    synth_state_q <= SYNTH_F2N_MIX;
-                                end
-
-                                FILTER_F4: begin
-                                    synth_f4_q <= filter_out;
-                                    f4_x3_q <= f4_x2_q;
-                                    f4_x2_q <= f4_x1_q;
-                                    f4_x1_q <= synth_mixed_q;
-                                    f4_y3_q <= f4_y2_q;
-                                    f4_y2_q <= f4_y1_q;
-                                    f4_y1_q <= filter_out;
-                                    synth_state_q <= SYNTH_CLOSURE;
-                                end
-
-                                FILTER_FX: begin
-                                    synth_fx_q <= filter_out;
-                                    fx_y1_q <= filter_out;
-                                    synth_state_q <= SYNTH_SCALE;
-                                end
-
-                                default: begin
-                                    synth_state_q <= SYNTH_IDLE;
-                                end
-                            endcase
+                            synth_state_q <= SYNTH_FILTER_FINALIZE;
                         end else begin
-                            mac_accum_q <= mac_next;
                             mac_tap_q <= mac_tap_q + 3'd1;
                             synth_state_q <= SYNTH_FILTER_PREP;
                         end
+                    end
+
+                    SYNTH_FILTER_FINALIZE: begin
+                        filter_out = sat24_from56(mac_accum_q >>> SC01_COEFF_FRAC_BITS);
+                        mac_accum_q <= 56'sd0;
+
+                        case (filter_stage_q)
+                            FILTER_F1: begin
+                                synth_f1_q <= filter_out;
+                                f1_x3_q <= f1_x2_q;
+                                f1_x2_q <= f1_x1_q;
+                                f1_x1_q <= synth_voice_input_q;
+                                f1_y3_q <= f1_y2_q;
+                                f1_y2_q <= f1_y1_q;
+                                f1_y1_q <= filter_out;
+                                filter_stage_q <= FILTER_F2;
+                                synth_state_q <= SYNTH_FILTER_PREP;
+                            end
+
+                            FILTER_F2: begin
+                                synth_f2_q <= filter_out;
+                                f2_x3_q <= f2_x2_q;
+                                f2_x2_q <= f2_x1_q;
+                                f2_x1_q <= synth_f1_q;
+                                f2_y3_q <= f2_y2_q;
+                                f2_y2_q <= f2_y1_q;
+                                f2_y1_q <= filter_out;
+                                filter_stage_q <= FILTER_FN;
+                                synth_state_q <= SYNTH_FILTER_PREP;
+                            end
+
+                            FILTER_F3: begin
+                                synth_f3_q <= filter_out;
+                                f3_x3_q <= f3_x2_q;
+                                f3_x2_q <= f3_x1_q;
+                                f3_x1_q <= synth_vn_q;
+                                f3_y3_q <= f3_y2_q;
+                                f3_y2_q <= f3_y1_q;
+                                f3_y1_q <= filter_out;
+                                // F3 done -> step-11 secondary noise insertion.
+                                synth_state_q <= SYNTH_NOISE_GAIN;
+                            end
+
+                            FILTER_FN: begin
+                                synth_fn_q <= filter_out;
+                                fn_x2_q <= fn_x1_q;
+                                fn_x1_q <= synth_noise_input_q;
+                                fn_y2_q <= fn_y1_q;
+                                fn_y1_q <= filter_out;
+                                // Pipeline the MAME step-7 gain so the FN
+                                // MAC result does not feed scale/saturate
+                                // logic in the same 133 MHz cycle.
+                                synth_state_q <= SYNTH_F2N_SCALE;
+                            end
+
+                            FILTER_F2N: begin
+                                synth_f2n_q <= filter_out;
+                                f2n_x3_q <= f2n_x2_q;
+                                f2n_x2_q <= f2n_x1_q;
+                                f2n_x1_q <= synth_f2n_in_q;
+                                f2n_y3_q <= f2n_y2_q;
+                                f2n_y2_q <= f2n_y1_q;
+                                f2n_y1_q <= filter_out;
+                                // Pipeline the MAME step-9 mix so the F2N
+                                // MAC result does not feed adder/saturate
+                                // logic in the same 133 MHz cycle.
+                                synth_state_q <= SYNTH_F2N_MIX;
+                            end
+
+                            FILTER_F4: begin
+                                synth_f4_q <= filter_out;
+                                f4_x3_q <= f4_x2_q;
+                                f4_x2_q <= f4_x1_q;
+                                f4_x1_q <= synth_mixed_q;
+                                f4_y3_q <= f4_y2_q;
+                                f4_y2_q <= f4_y1_q;
+                                f4_y1_q <= filter_out;
+                                synth_state_q <= SYNTH_CLOSURE;
+                            end
+
+                            FILTER_FX: begin
+                                synth_fx_q <= filter_out;
+                                fx_y1_q <= filter_out;
+                                synth_state_q <= SYNTH_SCALE;
+                            end
+
+                            default: begin
+                                synth_state_q <= SYNTH_IDLE;
+                            end
+                        endcase
                     end
 
                     SYNTH_F2N_SCALE: begin

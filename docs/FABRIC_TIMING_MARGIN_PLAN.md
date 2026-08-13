@@ -46,9 +46,10 @@ The prior resource report showed 10,223 slices, 30,465 LUTs, 20,153 registers,
 control sets. This leaves little gain from a broad control-set rewrite unless a
 later report shows a worse result.
 
-The SmartPort C8 ROM already maps to block RAM. The SSI263 F2 table does not.
-The bus write arbiter has 12 clients; vTW is client 11. Most clients already
-register their requests.
+Current synthesis maps both 4,096 by 16-bit SSI263 F2 copies and the 2,048 by
+8-bit SmartPort C8 ROM into LUTs. The earlier assumption that the C8 ROM used
+block RAM was wrong. The bus write arbiter has 12 clients; vTW is client 11.
+Most clients already register their requests.
 
 ## Build Records and Promotion
 
@@ -293,6 +294,51 @@ registers. If a later path calls for copies, make explicit same-cycle source
 copies for named consumer groups, preserve the Apple bus sample edge, and
 measure that change on its own.
 
+#### Physical Response Stage Build
+
+Commit `fbddd81997ee8c0c537ce64c6929aa006f886051` registered the
+physical data-response tuple after the 12-client arbiter. Data, normal data
+enable, address ownership, R/W, and the INH dependency move together. Address,
+R/W, control-line requests, and the early DMA-window control remain live. The
+staged byte also feeds the DMA window because both DMA clients hold it well
+before that window opens.
+
+The stage keeps the raw PHI0 release at the placed output LUT. It also stores
+the INH dependency with an II+ saved read, so closing the machine-mode
+interlock releases both INH and the live or held byte. The focused tests proved
+late and back-to-back card responses, native and vTW-owned reads and writes,
+II+ saved-byte hold, live and saved INH cutoff, reset masking, and the existing
+AD8088 DMA window. The AD8088 bench still measured `158.8` to `323.8 ns`, with
+zero ghost writes.
+
+The clean full build `20260813T045644Z-fbddd819-full` produced:
+
+| Check | Result |
+| --- | ---: |
+| Setup WNS / TNS | `+0.003 ns` / `0.000 ns` |
+| Hold WNS / TNS | `+0.045 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.376 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+
+The card-to-data-direction path left the top paths. Against the prior accepted
+netlist, slices fell from 10,077 to 9,752, LUTs fell from 30,598 to 30,558,
+and control sets fell from 1,053 to 1,008. Registers rose from 20,305 to
+20,314. Keep the stage for the removed output path and lower use, but do not
+promote this build. Setup margin stayed flat because Disk II replaced the
+removed path:
+
+| Rank | Path class | Slack | Route share | Levels |
+| ---: | --- | ---: | ---: | ---: |
+| 1-4 | Apple address to Disk II bit-offset enable | `+0.003 ns` | 79.8% | 10 |
+| 5 | PS to Disk II underrun count | `+0.010 ns` | 77.5% | 5 |
+| 6-9 | Disk II spin count to latch enable | `+0.014 ns` | 75.3% | 13 |
+| 10 | Disk II spin count to step-delay enable | `+0.034 ns` | 77.2% | 12 |
+
+Trace and cut these two Disk II enable classes before adding bus snapshot
+copies. The new report does not support a broad address-copy change.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report
@@ -321,48 +367,55 @@ independent read. Register the outputs and add the read cycle to the coefficient
 load state. Audio sample work has thousands of fabric clocks available, so one
 read cycle should fit. Prove address and coefficient order in simulation.
 
-Do not rewrite the SmartPort C8 ROM for this goal. It already uses block RAM.
-An inference guard or test is enough unless a later build changes that result.
-
 Measure block RAM, LUT, F7/F8, slice, and timing changes. Keep the edit only if
 it frees useful logic or improves placement without an audio fault.
 
-### 2. Test Control-Set Settings
+### 2. Move the SmartPort C8 ROM to Block RAM
 
-Run a full build with a higher synthesis control-set optimization threshold.
+Measure the SmartPort C8 ROM as a separate change. Its two registered read
+ports should fit one true dual-port block RAM without adding a read cycle, but
+the synthesis report must prove the mapping and the physical and vTW ROM tests
+must prove byte and cycle order.
+
+### 3. Test Control-Set Settings
+
+Run a full build with synthesis control-set optimization threshold `8`.
 Change no RTL in that experiment. Compare control sets, slices, LUTs, WNS, and
-the top paths. Keep the setting only if it gives repeatable gain.
+the top paths. Test `16` later only if `8` helps. Keep a setting only if it
+gives repeatable gain.
 
 For new RTL, prefer a shared enable and a synchronous reset when the behavior
 allows it. Do not remove a needed reset or merge unrelated enables just to cut
 the count.
 
-### 3. Test Synthesis Retiming
+### 4. Test Synthesis Retiming
 
-Test `STEPS.SYNTH_DESIGN.ARGS.RETIMING true` as one flow-only commit. Run all
-CDC and source checks. Review every XDC query after retiming; hierarchy-based
-queries may no longer bind. Keep retiming only if both timing and function pass.
+Test `STEPS.SYNTH_DESIGN.ARGS.GLOBAL_RETIMING on` as one flow-only commit.
+Vivado 2025.2 marks the old `RETIMING` property obsolete. Run all CDC and
+source checks. Review every XDC query after retiming; hierarchy-based queries
+may no longer bind. Keep retiming only if both timing and function pass.
 
-### 4. Sweep Place Directives
+### 5. Sweep Place Directives
 
 Wait until the Phase 1 and ROM netlists stop changing. Then run a small full
-build sweep with one placement directive per build. Keep synthesis, route, and
+build sweep with one placement directive per build: `ExtraNetDelay_high`,
+`ExtraPostPlacementOpt`, then `AltSpreadLogic_high`. Keep synthesis, route, and
 physical optimization fixed. Record every result, including failures. Use the
 best repeatable result as a candidate; do not select one lucky build by WNS
 alone.
 
+Before any flow trial, fix the build record to read `GLOBAL_RETIMING`, record
+the post-route enable and route options, and make promotion compare the Vivado
+version and every flow field between both builds. Promotion must also require
+`rescue_used=0`; an extra rescue pass does not show intrinsic margin.
+
 ## Phase 3: Use Only if the Target Still Fails
 
-### 1. Stage Bus Write Arbitration
+### 1. Physical Response Stage
 
-Review fresh timing paths first. Most of the 12 clients already latch their
-requests. If the final priority and response mux becomes critical, add one
-fixed output stage after arbitration. Keep client numbering stable and check
-vTW client 11 first. Update fixed-latency taps and assertions with the same
-commit.
-
-The Apple bus has enough fabric cycles for the added delay, but the HDL and
-hardware tests must prove write order, pulse width, and vTW timing.
+Complete in `fbddd819`. The stage removed the final card-response mux from the
+data and direction pins but did not raise total WNS. Do not add another stage
+unless a new report shows a remaining physical response path.
 
 ### 2. Add Small Pblocks
 

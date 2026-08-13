@@ -187,6 +187,21 @@ def static_checks() -> None:
     require("sp_boot_suppress_hit" in core_top and
             "core_data_in_q <= 8'hFF;" in core_top,
             "vTW must return deterministic no-card data while slot 7 is hidden")
+    require("logic                    ssm_apply_pulse;" in core_top and
+            "core_ab.addr        = cycle_addr_q;" in core_top and
+            "core_ab.rw          = cycle_rw_q;" in core_top and
+            "core_ab.data        = cycle_wdata_q;" in core_top and
+            "core_ab.serve_en    = ssm_apply_pulse;" in core_top and
+            "core_ab.data_en     = ssm_apply_pulse;" in core_top and
+            "assign ssm_pulse       = core_active && (xstate_q == X_CAPTURE);"
+            in core_top and
+            "assign ssm_apply_pulse = core_active && (xstate_q == X_ROUTE);"
+            in core_top and
+            "else if (ssm_pulse && !core_rwb && core_addr == 16'hC074 &&"
+            in core_top and
+            "core_ab.addr        = core_addr;" not in core_top,
+            "the private soft-switch manager must apply the captured cycle at "
+            "X_ROUTE while $C074 keeps the raw X_CAPTURE pulse")
 
     # Per-region slowdown (TW DIP block 2).
     require("slow_region_en" in core_top and "slow_duration" in core_top and

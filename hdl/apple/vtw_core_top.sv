@@ -354,28 +354,32 @@ module vtw_core_top (
 
     // ------------------------------------------------------------------
     // Private //e switch state, tracked from the core's own accesses.
-    // One synthetic serve_en pulse per core cycle; the manager ignores
-    // non-$Cxxx addresses by construction, so pulsing unconditionally
-    // reproduces stock //e semantics exactly (including INTC8ROM claims
-    // from shadow-served $C3xx ROM reads that never reach the bus).
-    // The RamWorks bank latch inside the manager keys on data_en (on the
-    // real bus the bank value is only on the wires at the data snap); the
-    // core's write data is valid at the synthetic pulse, so data_en fires
-    // with serve_en and carries core_data_out.
+    // X_CAPTURE saves the cycle and its pre-access bank state. X_ROUTE then
+    // gives the private manager one synthetic serve_en/data_en pulse from
+    // that saved tuple. The manager ignores non-$Cxxx addresses, so pulsing
+    // every cycle preserves stock //e behavior, including shadow-served C3
+    // claims, CFFF releases, and language-card double-access rules. Keeping
+    // this apply pulse off the live core state also removes the CPU-state to
+    // RamWorks-bank enable path.
     // ------------------------------------------------------------------
     globals::SoftSwitchState vsss;
     logic                    ssm_pulse;
+    logic                    ssm_apply_pulse;
     globals::AppleBus_read   core_ab;
+    logic [15:0]             cycle_addr_q;
+    logic [7:0]              cycle_wdata_q;
+    logic                    cycle_rw_q;
+    TranslateState           cycle_translate_state_q;
 
     always_comb begin
         core_ab             = '0;
         core_ab.res         = ab_read.res && enable;
-        core_ab.addr        = core_addr;
-        core_ab.rw          = core_rwb;
-        core_ab.data        = core_data_out;
+        core_ab.addr        = cycle_addr_q;
+        core_ab.rw          = cycle_rw_q;
+        core_ab.data        = cycle_wdata_q;
         core_ab.cycle_valid = 1'b1;
-        core_ab.serve_en    = ssm_pulse;
-        core_ab.data_en     = ssm_pulse;
+        core_ab.serve_en    = ssm_apply_pulse;
+        core_ab.data_en     = ssm_apply_pulse;
     end
 
     soft_switch_manager vtw_ssm (
@@ -418,10 +422,6 @@ module vtw_core_top (
     logic              xl_shadow_valid;
     logic [17:0]       xl_shadow_phys;
 
-    logic [15:0]       cycle_addr_q;
-    logic [7:0]        cycle_wdata_q;
-    logic              cycle_rw_q;
-    TranslateState     cycle_translate_state_q;
     logic              cycle_video_text_q;
     logic              cycle_video_mixed_q;
     logic              cycle_video_page2_q;
@@ -978,7 +978,8 @@ module vtw_core_top (
      * held core's cycles are served $FF instead of reaching the bus. */
     wire core_active = enable && core_run && ab_read.res;
 
-    assign ssm_pulse   = core_active && (xstate_q == X_CAPTURE);
+    assign ssm_pulse       = core_active && (xstate_q == X_CAPTURE);
+    assign ssm_apply_pulse = core_active && (xstate_q == X_ROUTE);
     /* Reads from the fully floating motherboard-I/O region $C030-$C05F
      * execute their physical bus cycle for any speaker/video/annunciator
      * side effect, but the return byte is the main-memory byte fetched by

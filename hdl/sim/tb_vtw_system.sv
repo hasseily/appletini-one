@@ -347,6 +347,80 @@ module tb_vtw_system;
         end
     endtask
 
+    /* Private RamWorks switch phase checks. The manager must keep the old
+     * bank through X_CAPTURE, apply the saved C071/C073 tuple at X_ROUTE,
+     * and expose the new bank to the next captured access. */
+    logic       bank_apply_pending = 1'b0;
+    logic       bank_next_pending  = 1'b0;
+    logic [6:0] bank_old_q          = 7'd0;
+    logic [6:0] bank_new_q          = 7'd0;
+    logic [15:0] bank_switch_addr_q = 16'h0000;
+    int c071_capture_checks = 0;
+    int c071_apply_checks   = 0;
+    int c071_next_checks    = 0;
+    int c073_capture_checks = 0;
+    int c073_apply_checks   = 0;
+    int c073_next_checks    = 0;
+
+    always @(posedge clk) begin
+        if (!rstn) begin
+            bank_apply_pending = 1'b0;
+            bank_next_pending  = 1'b0;
+        end
+        else if (dut.ssm_pulse && !dut.core_rwb &&
+                 (dut.core_addr == 16'hC071 ||
+                  dut.core_addr == 16'hC073)) begin
+            check(!bank_apply_pending && !bank_next_pending,
+                  "RamWorks switch capture has no prior phase pending");
+            bank_old_q          = dut.vsss.sw_ramworks_bank;
+            bank_new_q          = dut.core_data_out[6:0];
+            bank_switch_addr_q  = dut.core_addr;
+            bank_apply_pending  = 1'b1;
+            if (dut.core_addr == 16'hC071)
+                c071_capture_checks++;
+            else
+                c073_capture_checks++;
+            #1ps;
+            check(dut.vsss.sw_ramworks_bank == bank_old_q,
+                  "RamWorks bank stays old at X_CAPTURE");
+            check(dut.cycle_addr_q == bank_switch_addr_q &&
+                  !dut.cycle_rw_q &&
+                  dut.cycle_wdata_q[6:0] == bank_new_q,
+                  "X_CAPTURE saves the complete RamWorks switch tuple");
+            check(dut.cycle_translate_state_q.sw_ramworks_bank == bank_old_q,
+                  "RamWorks switch access snapshots the pre-access bank");
+        end
+        else if (dut.ssm_apply_pulse && !dut.cycle_rw_q &&
+                 (dut.cycle_addr_q == 16'hC071 ||
+                  dut.cycle_addr_q == 16'hC073)) begin
+            check(bank_apply_pending &&
+                  dut.cycle_addr_q == bank_switch_addr_q &&
+                  dut.cycle_wdata_q[6:0] == bank_new_q,
+                  "X_ROUTE applies the pending RamWorks switch tuple");
+            #1ps;
+            check(dut.vsss.sw_ramworks_bank == bank_new_q,
+                  "RamWorks bank changes at X_ROUTE");
+            check(dut.cycle_translate_state_q.sw_ramworks_bank == bank_old_q,
+                  "current RamWorks switch cycle keeps its old-bank snapshot");
+            bank_apply_pending = 1'b0;
+            bank_next_pending  = 1'b1;
+            if (bank_switch_addr_q == 16'hC071)
+                c071_apply_checks++;
+            else
+                c073_apply_checks++;
+        end
+        else if (bank_next_pending && dut.ssm_pulse) begin
+            #1ps;
+            check(dut.cycle_translate_state_q.sw_ramworks_bank == bank_new_q,
+                  "next vTW access snapshots the new RamWorks bank");
+            bank_next_pending = 1'b0;
+            if (bank_switch_addr_q == 16'hC071)
+                c071_next_checks++;
+            else
+                c073_next_checks++;
+        end
+    end
+
     logic monitors_armed = 0;
     realtime last_fall = 0;
     always @(negedge phi0) last_fall = $realtime;
@@ -505,7 +579,7 @@ module tb_vtw_system;
      * the data switches point at aux -- main-RAM code would vanish mid-
      * segment the instant RAMRD turns on. Covers write-allocate misses,
      * a cache-hit write, flush-on-eviction chains, bank isolation via
-     * $C073, and read-back through fills; results land in main ZP $20-$23
+     * $C071/$C073, and read-back through fills; results land in main ZP $20-$23
      * and the flushed lines in the TB's PSRAM model. */
     localparam byte RW_PROG [0:79] = '{
         8'hA9, 8'h02,               // 0180 LDA #$02
@@ -518,7 +592,7 @@ module tb_vtw_system;
         8'hA9, 8'h5A,               // 0192 LDA #$5A
         8'h8D, 8'h08, 8'h18,        // 0194 STA $1808  next line: flush + fill
         8'hA9, 8'h05,               // 0197 LDA #$05
-        8'h8D, 8'h73, 8'hC0,        // 0199 STA $C073  bank 5 (decode bank 6)
+        8'h8D, 8'h71, 8'hC0,        // 0199 STA $C071  bank 5 (decode bank 6)
         8'hA9, 8'h3C,               // 019C LDA #$3C
         8'h8D, 8'h00, 8'h18,        // 019E STA $1800  other bank, same address
         8'h8D, 8'h04, 8'hC0,        // 01A1 STA $C004  RAMWRT off
@@ -587,6 +661,8 @@ module tb_vtw_system;
     int c074_seen;
     int c006_seen;
     int c007_seen;
+    int c071_seen;
+    int c073_seen;
     int idx_aux, idx_main, idx_c054;
     logic [7:0] rd;
     int cyc_a, cyc_b;
@@ -650,7 +726,7 @@ module tb_vtw_system;
         // Wait for the whole program to retire on the bus: 788 write
         // records (1 + 768 + 2 posted; sync writes $C074, $C006 x2,
         // $C007, $C001, $C055, $C054, $C000, then the RamWorks segment's
-        // $C073 x5 and $C005/$C004/$C003/$C002).
+        // $C071 x1, $C073 x4, and $C005/$C004/$C003/$C002).
         fork : prog_wait
             begin
                 wait (wrecs.size() >= 788);
@@ -676,6 +752,8 @@ module tb_vtw_system;
             c074_seen  = 0;
             c006_seen  = 0;
             c007_seen  = 0;
+            c071_seen  = 0;
+            c073_seen  = 0;
             for (int i = 1; i < wrecs.size(); i++) begin
                 if (wrecs[i].addr == 16'hC074) begin
                     check(wrecs[i].data == 8'h01, "$C074 write data");
@@ -703,8 +781,13 @@ module tb_vtw_system;
                     check(wrecs[i].data == 8'h78, "main posted write data");
                     idx_main = i;
                 end
-                else if (wrecs[i].addr == 16'hC073 ||
-                         wrecs[i].addr == 16'hC005 ||
+                else if (wrecs[i].addr == 16'hC071) begin
+                    c071_seen++;
+                end
+                else if (wrecs[i].addr == 16'hC073) begin
+                    c073_seen++;
+                end
+                else if (wrecs[i].addr == 16'hC005 ||
                          wrecs[i].addr == 16'hC004 ||
                          wrecs[i].addr == 16'hC003 ||
                          wrecs[i].addr == 16'hC002) begin
@@ -728,6 +811,8 @@ module tb_vtw_system;
             check(c074_seen == 1, "$C074 written exactly once");
             check(c006_seen == 2 && c007_seen == 1,
                   "INTCXROM switch writes reached the real MMU");
+            check(c071_seen == 1 && c073_seen == 4,
+                  "both RamWorks bank-select addresses reached the real MMU");
             // Aux write-through: the aux-window write reaches the bus, and
             // the bank-steer flush keeps it ahead of the PAGE2 change.
             check(idx_aux > 0 && idx_c054 > 0 && idx_main > 0,
@@ -834,6 +919,14 @@ module tb_vtw_system;
         check(rd == 8'hD7,
               $sformatf("floating $C05A read returns scanner $37F8 byte (got %h)",
                         rd));
+        check(c071_capture_checks == 1 && c071_apply_checks == 1 &&
+              c071_next_checks == 1,
+              "C071 changes at X_ROUTE and reaches the next access");
+        check(c073_capture_checks == 4 && c073_apply_checks == 4 &&
+              c073_next_checks == 4,
+              "C073 changes at X_ROUTE and reaches each next access");
+        check(!bank_apply_pending && !bank_next_pending,
+              "RamWorks switch phase monitor is idle after the program");
 
         // Engine health.
         check(cnt_post_drops == 32'd0, "no posted-queue drops");

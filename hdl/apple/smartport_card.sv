@@ -342,11 +342,10 @@ module smartport_card (
         end
     end
 
-    /* Read the post-pop word on the pop edge. This prefetch makes lane
-     * 3 -> lane 0 crossings valid before the next physical or vTW DATA
-     * access, while repeated DATA reads remain side-effect-free. */
-    wire [FIFO_AW-1:0] out_rd_prefetch =
-        out_rd_q + ((pop_write_ev && !out_empty) ? 1'b1 : 1'b0);
+    /* Read from the registered pointer. A pop updates the pointer first, then
+     * the BRAM word one clock later. Native and vTW protocols both leave more
+     * than one fabric clock before the next DATA access. This keeps the long
+     * slot/pop decode off the BRAM address pins. */
     logic [31:0] out_word_q;
     wire [7:0] out_head = out_word_q[8*out_rd_q[1:0] +: 8];
     wire [FIFO_AW-1:0] in_rd_prefetch = in_rd_q + in_pop_count;
@@ -364,7 +363,7 @@ module smartport_card (
                     out_mem_wdata[8*lane +: 8];
             end
         end
-        out_word_q <= out_fifo[out_rd_prefetch[FIFO_AW-1:2]];
+        out_word_q <= out_fifo[out_rd_q[FIFO_AW-1:2]];
     end
 
     // ---- Bus write-side (serve) ----

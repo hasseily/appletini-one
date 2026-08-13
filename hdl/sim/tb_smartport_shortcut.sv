@@ -135,6 +135,26 @@ module tb_smartport_shortcut;
         repeat (4) @(posedge clk);
     endtask
 
+    task automatic apple_read(input logic [15:0] addr,
+                              output logic [7:0] d);
+        @(posedge clk);
+        ab_read.addr <= addr;
+        ab_read.rw   <= 1'b1;
+        @(posedge clk);
+        ab_read.serve_en <= 1'b1;
+        @(posedge clk);
+        ab_read.serve_en <= 1'b0;
+        @(posedge clk);
+        #1;
+        check(ab_write.wr_data_en,
+              $sformatf("bus read %h produced no response", addr));
+        d = ab_write.wr_data;
+        ab_read.data_en <= 1'b1;
+        @(posedge clk);
+        ab_read.data_en <= 1'b0;
+        repeat (2) @(posedge clk);
+    endtask
+
     /* A DEVSEL reply must stay live from its address decode through the
      * wrapper's later data-drive window. A one-clock pulse can pass a unit
      * test but never reach the Apple bus. */
@@ -313,6 +333,21 @@ module tb_smartport_shortcut;
         axi_read(R_STATUS, st);
         check(st_out(st) == 0,
               "direct response has no hidden 512-byte FIFO payload");
+
+        // Native DATA/DPOP also crosses a packed-word boundary. Each Apple
+        // cycle leaves ample time for the registered BRAM word to catch up.
+        axi_write(R_CONTROL, CTL_CLR_OUT);
+        axi_write(R_OUT_PUSH4, 32'h14131211);
+        axi_write(R_OUT_PUSH, 8'h15);
+        for (int i = 1; i <= 5; i++) begin
+            apple_read(16'hCFF0, rd);
+            check(rd == 8'(8'h10 + i),
+                  $sformatf("native response byte %0d crosses word boundary (got %02h)",
+                            i, rd));
+            apple_write(16'hCFF2, 8'h00);
+        end
+        axi_read(R_STATUS, st);
+        check(st_out(st) == 0, "native word plus scalar tail drains exactly");
 
         // ---- 5. Bus path still works after fast-port traffic ----
         sss.sw_ramworks_bank = 7'h12;

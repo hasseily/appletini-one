@@ -1477,6 +1477,79 @@ deferred. The next work must address the AXI exclusive path and the independent
 debug/boot paths; do not change Disk II media timing to fix a debug-only enable
 cone.
 
+#### AXI Exclusive-Monitor Removal Build
+
+Commit `f5bc4b1d81119544b7a03a0bad0105ae90522607` disables the unused
+exclusive monitor only in the hard-PS GP0 AxiSimple wrapper. The eight clients
+are side-effect MMIO registers, not shared memory. Locked reads and writes now
+return ordinary `OKAY`; a locked write still reaches its client, so firmware
+must never issue atomic or exclusive requests to this register plane.
+
+Both Cortex-A9 applications now map the one 1 MiB section containing all eight
+clients (`0x40000000-0x4007FFFF`) as Device memory before their first PL
+access. The generated startup tables retain Strongly Ordered mappings for all
+1,024 GP0 sections. A fresh Vitis 2025.2 build succeeded for both applications.
+The linked-image audit found one early Device mapping in each `main`, no
+exclusive instructions in CPU1, and only the two dormant Xilinx BSP spinlock
+instructions in CPU0. Neither image calls `Xil_InitializeSpinLock`.
+
+The wrapper regression first proved that the old monitor returned `EXOKAY` for
+a matching locked read/write pair. With the monitor disabled, the same pair
+performed one client write and returned `OKAY`. The existing write-data skid,
+burst, reset, response-order, and real Disk II BASE checks also passed. All 19
+vTW benches, 20 standard-Disk-II checks, 66 WOZ checks, 16 SmartPort checks,
+21 boot-menu/reset checks, and all remaining card/capture/video regressions
+passed.
+
+The clean full build `20260813T190639Z-f5bc4b1d-full` used Vivado 2025.2,
+the default seed, no incremental reference, and no rescue pass. It exported
+the candidate DCP, bitstream, and XSA. The generated implementation worker had
+to be started after a local run-queue stall; it then completed the normal
+saved strategy without changing any design input.
+
+| Check | Result |
+| --- | ---: |
+| Build status | `exported` |
+| Setup WNS / TNS | `+0.156 ns` / `0.000 ns` |
+| Setup failing endpoints | `0` |
+| Hold WNS / TNS | `+0.039 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.989 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Unconstrained internal endpoints | `0` |
+| Rescue used | `0` |
+
+The build used 10,219 slices, 30,130 LUTs, 20,188 registers, 2,845
+`CARRY4` blocks, 74 block RAM tiles, six DSPs, and 1,012 control sets. Against
+the SSI263 filter-finalization build, it removed 140 LUTs, 86 registers, and
+28 `CARRY4` blocks, but occupied slices rose by 306. The methodology classes
+and counts did not change.
+
+The former `MAXIGP0AWSIZE[0]` to `r_lock_valid/D` path and its nine-stage
+carry chain are absent. As a second structural check, the saved DCP archive
+contains no `EXCLUSIVE_ACCESS`, `r_lock_valid`, `r_locked_burst`, `lock_addr`,
+`lock_last`, `lock_len`, `lock_size`, `lock_id`, or `locked_write` names; the
+baseline archive contained the first five families. This archive-name check is
+not an exact Vivado object count, but it agrees with the synthesis and routed
+reports. The global limit moved to an unchanged debug-only
+class from Disk II drive selection through WOZ ready/cache logic into vTW PC
+trace enables. Its worst routed slack moved from `+0.269 ns` to `+0.156 ns`
+because of placement and route changes; no Disk II media timing or RTL changed.
+
+| Rank | Path class | Slack | Levels |
+| ---: | --- | ---: | ---: |
+| 1 | Disk II drive select to vTW PC-trace enable | `+0.156 ns` | 10 |
+| 2-9 | Same debug-only class | `+0.185` to `+0.186 ns` | 10 |
+| 10 | Same debug-only class | `+0.197 ns` | 10 |
+
+Keep the monitor removal as a protocol-policy and resource cleanup, but do not
+claim a global timing win. Setup WNS fell by `0.083 ns` in this one routed
+sample, and the build remains `0.144 ns` below the `+0.300 ns` promotion gate.
+Do not promote or package it; hardware validation is still deferred. Trace the
+debug-only Disk II-to-vTW enable cone next, and preserve Disk II controller and
+media timing.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

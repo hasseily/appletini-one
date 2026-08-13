@@ -459,6 +459,48 @@ tiles, and 1,018 control sets. Do not promote it. First remove the live
 machine-mode decode from the direction-output cone. Then cut the measured
 Disk II rotation and native-event cones.
 
+#### Bus Safety Interlock Copy Build
+
+Commit `c647de77861ad7cadaf797d77da7be7e61db13ee` added a preserved,
+same-edge copy of the machine INH safety flag for `apple_bus_wrapper`. The
+copy keeps reset and machine-mode update behavior unchanged. All 14 vTW
+benches passed before the full build.
+
+The clean full build `20260813T063714Z-c647de77-full` used Vivado 2025.2,
+no incremental reference, and no rescue pass. It produced:
+
+| Check | Result |
+| --- | ---: |
+| Setup WNS / TNS | `+0.116 ns` / `0.000 ns` |
+| Hold WNS / TNS | `+0.075 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.928 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Unconstrained internal endpoints | `0` |
+| Rescue used | `0` |
+
+The build used 9,826 slices, 30,541 LUTs, 20,296 registers, 74 block RAM
+tiles, six DSPs, and 1,009 control sets. The new top paths are:
+
+| Rank | Path class | Slack | Route share | Levels |
+| ---: | --- | ---: | ---: | ---: |
+| 1-7 | vTW CPU state to private RamWorks-bank enable | `+0.116 ns` | 80.8% | 7 |
+| 8 | vTW cycle address to card-control read data | `+0.140 ns` | 68.8% | 14 |
+| 9 | Apple address to SmartPort input count | `+0.155 ns` | 67.6% | 14 |
+| 10 | Disk II quarter-track to bit-offset enable | `+0.159 ns` | 74.4% | 13 |
+
+The first path class starts at a CPU state bit with fanout 93 and ends at all
+seven `ss_ramworks_bank` clock enables. Cut this measured class next by using
+a private soft-switch apply pulse after the captured vTW cycle tuple is ready.
+
+The copy improved placement, but it did not remove every old
+machine-mode-to-data-direction route. The new local-copy path to `DIR_D` has
+`+0.445 ns` slack, while the original machine-mode path through the write
+arbiter remains at `+0.359 ns`. Neither path limits this build. Keep the copy,
+but do not claim that it removed the old route. Do not promote this build;
+setup margin remains below `+0.300 ns`.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

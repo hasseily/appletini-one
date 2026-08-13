@@ -122,6 +122,10 @@ Run `python scripts\test_axisimple_wrapper.py` after PS-to-PL AXI write-path
 changes. It checks write-address/data skew, bursts, backpressure, reset, client
 selection, and write-response order through the real AxiSimple wrapper.
 
+Run `python scripts\test_psram_driver_iddr_reset.py` after PSRAM capture or
+reset changes. It compares reset modes, both capture phases, a mid-read reset,
+and the first read after reset through the real tape and input-DDR path.
+
 Simulator-backed checks require the Xilinx simulation tools on `PATH`.
 Hardware-facing scripts document their required UART, JTAG, SD, or USB setup in
 their command-line help.

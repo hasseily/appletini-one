@@ -736,6 +736,59 @@ count cone before choosing the next measured cut. Do not spend the next commit
 on the old SmartPort BRAM-write path alone; its measured residual is already
 above the promotion gate.
 
+#### Address-Direction Fast-Edge Build
+
+Commit `78b839a65f7893f9d0a0d51806f051da582c339e` kept the existing 12 mA
+drive on `a2fpga_dir_a` and changed only its output slew from slow to fast.
+The 18 vTW benches and the Appli-Card/AD8088 source checks passed. A query on
+the prior routed checkpoint predicted that the output-buffer delay would fall
+by `0.531 ns`, moving the target path from `+0.053 ns` to `+0.584 ns` without
+changing logic or clock count.
+
+The clean full build `20260813T114539Z-78b839a6-full` used Vivado 2025.2,
+the default seed, no incremental reference, and no rescue pass. It exported
+the candidate DCP, bitstream, and XSA.
+
+| Check | Result |
+| --- | ---: |
+| Build status | `exported` |
+| Setup WNS / TNS | `+0.015 ns` / `0.000 ns` |
+| Setup failing endpoints | `0` |
+| Hold WNS / TNS | `+0.044 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.748 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Unconstrained internal endpoints | `0` |
+| Rescue used | `0` |
+
+The build used 10,038 slices, 30,646 LUTs, 20,315 registers, 74 block RAM
+tiles, six DSPs, and 1,007 control sets. Against the handoff-gate build,
+slices rose by 139, LUTs fell by 15, registers fell by 59, and control sets
+fell by 18. Setup WNS fell by `0.038 ns`, hold WNS fell by `0.005 ns`, and
+bus-skew slack fell by `0.232 ns`.
+
+The fast pad did reduce logic and output-buffer delay from `3.799 ns` to
+`3.214 ns`. The route delay rose from `3.625 ns` to `4.244 ns`, however, so
+the same address-direction endpoint remained worst and fell from `+0.053 ns`
+to `+0.015 ns`. The target did not improve in a clean implementation.
+
+| Rank | Path class | Slack | Route share | Levels |
+| ---: | --- | ---: | ---: | ---: |
+| 1 | vTW write-direction state to the address-direction pad | `+0.015 ns` | 56.9% | 2 |
+| 2, 4, 8 | Apple address to SmartPort input-FIFO write enable | `+0.110` to `+0.159 ns` | 72.2-72.4% | 13 |
+| 3 | Apple address to SmartPort input count | `+0.112 ns` | 63.3% | 16 |
+| 5-7 | Disk II WOZ accumulator to data-latch enable | `+0.148 ns` | 60.2% | 10 |
+| 9 | Apple address to SmartPort output count | `+0.163 ns` | 62.8% | 16 |
+| 10 | vTW cycle address to aux-shadow BRAM address | `+0.169 ns` | 82.8% | 7 |
+
+Reject and revert the DIR_A fast-edge trial. It did not improve the measured
+target or global WNS, and its faster electrical edge cannot be checked without
+hardware. Keep DIR_D fast because its own measured target cleared the campaign
+gate; restore DIR_A to slow before the next structural build. Then register
+the vTW SmartPort request target at the existing route-to-issue boundary so the
+live handoff and Apple-address decode cannot reach the FIFO write/count cones.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

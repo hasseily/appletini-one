@@ -30,9 +30,11 @@ module tb_disk2_vtw_read;
     logic vtw_resp_valid;
     logic [7:0] vtw_resp_rdata;
     logic vtw_tick_extra = 1'b0;
-    wire vtw_cycle_tick = vtw_tick_extra || (vtw_req_valid && vtw_req_ready);
+    wire vtw_cycle_tick = vtw_tick_extra;
+    logic vtw_native_cycle_active = 1'b0;
     logic vtw_time_ready;
     logic vtw_write_timing_active;
+    int disk_tick_count = 0;
 
     disk2_card dut (
         .clk(clk), .rstn(rstn),
@@ -48,7 +50,7 @@ module tb_disk2_vtw_read;
         .vtw_req_ready(vtw_req_ready),
         .vtw_resp_valid(vtw_resp_valid), .vtw_resp_rdata(vtw_resp_rdata),
         .vtw_cycle_tick(vtw_cycle_tick),
-        .vtw_native_cycle_active(1'b0),
+        .vtw_native_cycle_active(vtw_native_cycle_active),
         .vtw_time_ready(vtw_time_ready),
         .vtw_write_timing_active(vtw_write_timing_active),
         .sound_spinning(), .sound_qtrack(), .sound_event(),
@@ -60,9 +62,14 @@ module tb_disk2_vtw_read;
         if (!rstn) begin
             mc_read_pending_q <= 1'b0;
             mc_rvalid <= 1'b0;
+            disk_tick_count <= 0;
         end else begin
             mc_rvalid <= mc_read_pending_q;
             mc_read_pending_q <= mc_valid && mc_rw && mc_ready;
+            if (dut.disk_cycle_tick)
+                disk_tick_count <= disk_tick_count + 1;
+            if (vtw_cycle_tick && dut.vtw_io_read)
+                $fatal(1, "FAIL: normal and private Disk II ticks overlapped");
         end
     end
 
@@ -94,6 +101,13 @@ module tb_disk2_vtw_read;
         ab_read.data_en = 1'b0;
         ab_read.rw = 1'b1;
         repeat (2) @(negedge clk);
+    endtask
+
+    task automatic physical_tick;
+        @(negedge clk);
+        ab_read.sss_en = 1'b1;
+        @(negedge clk);
+        ab_read.sss_en = 1'b0;
     endtask
 
     task automatic virtual_ticks(input int count);
@@ -129,6 +143,7 @@ module tb_disk2_vtw_read;
     endtask
 
     logic [7:0] value;
+    int ticks_before;
     initial begin
         ab_read = '0;
         ab_read.res = 1'b1;
@@ -173,25 +188,70 @@ module tb_disk2_vtw_read;
 
         // Keep the read asserted across the miss. It must not complete with
         // stale data; cache fill makes it ready and returns the first byte.
+        ticks_before = disk_tick_count;
         direct_read(4'hC, value);
         check(value == 8'hA1,
               $sformatf("first private nibble was %02X, expected A1", value));
+        check(disk_tick_count == ticks_before + 1,
+              "first private read did not add exactly one execution tick");
 
         // A full read resets the partial-nibble gap. After enough virtual
         // CPU cycles, the next read returns the next staged byte.
+        ticks_before = disk_tick_count;
         virtual_ticks(8);
+        check(disk_tick_count == ticks_before + 8,
+              "normal vTW pulse train did not add exactly eight ticks");
+        ticks_before = disk_tick_count;
         direct_read(4'hC, value);
         check(value == 8'hA2,
               $sformatf("second private nibble was %02X, expected A2", value));
+        check(disk_tick_count == ticks_before + 1,
+              "second private read did not add exactly one execution tick");
+
+        // A native Disk II cycle uses only the physical sss_en pulse. A
+        // virtual pulse presented at the same time source selection is native
+        // must not advance the card.
+        vtw_native_cycle_active = 1'b1;
+        ticks_before = disk_tick_count;
+        virtual_ticks(1);
+        check(disk_tick_count == ticks_before,
+              "native mode consumed a normal virtual tick");
+        physical_tick();
+        check(disk_tick_count == ticks_before + 1,
+              "native mode did not consume exactly one physical tick");
+        vtw_native_cycle_active = 1'b0;
 
         // Enter and leave Q7 write mode through physical 1 MHz writes. The
         // card must request a whole-core native-speed hold while Q7 is set.
         physical_write(4'hF, 8'h5A);
         check(vtw_write_timing_active,
               "Q7 write mode did not request the 1 MHz interlock");
+        ticks_before = disk_tick_count;
+        virtual_ticks(1);
+        check(disk_tick_count == ticks_before,
+              "Q7 write mode consumed a normal virtual tick");
+        physical_tick();
+        check(disk_tick_count == ticks_before + 1,
+              "Q7 write mode did not consume exactly one physical tick");
         physical_write(4'hE, 8'h00);
         check(!vtw_write_timing_active,
               "leaving Q7 write mode did not release the 1 MHz interlock");
+
+        // Reset after request acceptance but before private execution. No
+        // pending private tick or response may survive the reset edge.
+        @(negedge clk);
+        vtw_req_addr = 4'hC;
+        vtw_req_valid = 1'b1;
+        while (!vtw_req_ready)
+            @(negedge clk);
+        @(posedge clk);
+        @(negedge clk);
+        vtw_req_valid = 1'b0;
+        rstn = 1'b0;
+        @(posedge clk);
+        #1;
+        check(!dut.vtw_req_pending_q && !dut.vtw_io_read && !vtw_resp_valid,
+              "reset left a private Disk II tick or response pending");
 
         $display("DISK2 VTW READ PASS");
         $finish;

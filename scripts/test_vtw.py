@@ -220,6 +220,18 @@ def static_checks() -> None:
             "!cycle_addr_q[0] && !d2_write_timing_active" in core_top and
             "wire sd_disk2_native = sd_disk2 && !d2_fast_hit;" in core_top,
             "vTW may bypass the Apple bus only for even Disk II reads")
+    require("wire d2_cycle_tick_accept =\n"
+            "        core_en && d2_active && !private_d2_q && !sd_disk2_native;"
+            in core_top and
+            "logic d2_cycle_tick_q;" in core_top and
+            "assign d2_cycle_tick = d2_cycle_tick_q;" in core_top and
+            "d2_cycle_tick_q     <= 1'b0;" in core_top and
+            "if (!core_active)\n                d2_cycle_tick_q <= 1'b0;"
+            in core_top and
+            "d2_cycle_tick_q <= d2_cycle_tick_accept;" in core_top and
+            "assign d2_cycle_tick =\n        core_en" not in core_top,
+            "vTW must stage each accepted normal Disk II tick for one fabric "
+            "clock without changing private or native tick selection")
     require("d2_write_timing_active" in core_top and
             "sd_disk2_native ||" in core_top and
             ".d2_write_timing_active(vtw_d2_write_timing_active)" in top and
@@ -238,6 +250,7 @@ def static_checks() -> None:
             "disable is clear")
     require("wire disk_cycle_tick" in disk2_card and
             "vtw_native_cycle_active" in disk2_card and
+            "(vtw_cycle_tick || vtw_io_read);" in disk2_card and
             "assign vtw_time_ready" in disk2_card and
             "assign vtw_write_timing_active" in disk2_card and
             "logic       vtw_drive_spinning_q;" in disk2_card and

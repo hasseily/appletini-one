@@ -1068,14 +1068,17 @@ module vtw_core_top (
                       complete_status || complete_dead);
     assign arm_rw_hold_state = rw_hold_q;
 
-    /* One Disk II time tick per virtual 65C02 cycle. Normal cycles tick when
-     * the core completes. disk2_card adds the direct-access tick when its
-     * registered private request executes, keeping the tick and soft-switch
-     * side effect on the same edge. Physical Disk II cycles use
-     * ab_read.sss_en inside disk2_card and are suppressed here. */
+    /* One Disk II time tick per virtual 65C02 cycle. Stage the accepted
+     * normal-cycle predicate for one fabric clock so the card's readiness
+     * feedback does not feed its own rotation enables on the same edge.
+     * disk2_card adds the direct-access tick when its registered private
+     * request executes. Physical Disk II cycles use ab_read.sss_en inside
+     * disk2_card and are suppressed here. */
     wire d2_req_fire = d2_req_valid && d2_req_ready;
-    assign d2_cycle_tick =
+    wire d2_cycle_tick_accept =
         core_en && d2_active && !private_d2_q && !sd_disk2_native;
+    logic d2_cycle_tick_q;
+    assign d2_cycle_tick = d2_cycle_tick_q;
     assign d2_native_cycle_active =
         core_active && (xstate_q == X_BUS) && sd_disk2_native;
 
@@ -1131,11 +1134,16 @@ module vtw_core_top (
             arm_rw_flush_done   <= 1'b0;
             cycle_sp_iosel7_q   <= 1'b0;
             private_d2_q        <= 1'b0;
+            d2_cycle_tick_q     <= 1'b0;
             sp_inflight_q       <= 1'b0;
             slow_cnt_q          <= 16'd0;
         end
         else begin
             arm_rw_flush_done <= 1'b0;
+            if (!core_active)
+                d2_cycle_tick_q <= 1'b0;
+            else
+                d2_cycle_tick_q <= d2_cycle_tick_accept;
 
             if (arm_rw_flush_req) begin
                 rw_flush_pending_q <= 1'b1;

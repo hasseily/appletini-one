@@ -49,9 +49,10 @@ def require(pattern: str, source: str, message: str) -> None:
 def check_registered_wskid() -> None:
     source = WRAPPER.read_text(encoding="utf-8")
     require(
+        r"\(\*\s*MAX_FANOUT\s*=\s*64\s*\*\)\s*"
         r"wire\s+\[36:0\]\s+wskid_payload\s*;",
         source,
-        "axisimple_wrapper must retain one 37-bit W payload",
+        "axisimple_wrapper must retain one 37-bit fanout-bounded W payload",
     )
     require(
         r"assign\s+S_AXI_WREADY\s*=\s*"

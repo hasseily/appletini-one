@@ -467,6 +467,9 @@ def main() -> int:
                         help="How the testbench maps SSI263 phones to the SC-01 backend input.")
     parser.add_argument("--votrax", action="store_true",
                         help="Drive native Votrax mode; --phones are direct SC-01 IDs.")
+    parser.add_argument("--backend-source", type=Path,
+                        default=ROOT / "hdl" / "apple" / "ssi263_formant_backend.sv",
+                        help="Backend RTL source to compile (defaults to the working tree).")
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT)
     args = parser.parse_args()
 
@@ -492,7 +495,7 @@ def main() -> int:
     run([vivado_tool("xvlog"), "-sv",
          str(ROOT / "hdl" / "apple" / "ssi263_formant_pkg.sv"),
          str(ROOT / "hdl" / "apple" / "sc01a_digital_core.sv"),
-         str(ROOT / "hdl" / "apple" / "ssi263_formant_backend.sv"),
+         str(args.backend_source.resolve()),
          str(tb)], ROOT, xvlog_log)
     run([vivado_tool("xelab"), "ssi263_formant_audio_tb", "-s", snapshot], ROOT, xelab_log)
     run([vivado_tool("xsim"), snapshot, "-runall"], ROOT, xsim_log)

@@ -284,6 +284,25 @@ def static_checks() -> None:
             "core_ab.addr        = core_addr;" not in core_top,
             "the private soft-switch manager must apply the captured cycle at "
             "X_ROUTE while $C074 keeps the raw X_CAPTURE pulse")
+    require("logic [31:0]       capture_xl_decoded_d;" in core_top and
+            "apple_route_kind_e capture_xl_route_d;" in core_top and
+            "logic [31:0]       cycle_xl_decoded_q;" in core_top and
+            "apple_route_kind_e cycle_xl_route_q;" in core_top and
+            "translate_apple_addr(translate_state_from_sss(vsss)," in core_top and
+            "core_addr, core_rwb," in core_top and
+            "vtw_shadow_map(capture_xl_route_d, capture_xl_decoded_d," in core_top and
+            "xl_decoded      = cycle_xl_decoded_q" in core_top and
+            "xl_route        = cycle_xl_route_q" in core_top and
+            "xl_shadow_valid = cycle_xl_shadow_valid_q" in core_top and
+            "xl_shadow_phys  = cycle_xl_shadow_phys_q" in core_top and
+            "cycle_xl_route_q        <= APPLE_ROUTE_INVALID;" in core_top and
+            "cycle_xl_decoded_q      <= capture_xl_decoded_d;" in core_top and
+            "cycle_xl_route_q        <= capture_xl_route_d;" in core_top and
+            "cycle_xl_shadow_valid_q <= capture_xl_shadow_valid_d;" in core_top and
+            "cycle_xl_shadow_phys_q  <= capture_xl_shadow_phys_d;" in core_top and
+            "translate_apple_addr(cycle_translate_state_q" not in core_top,
+            "X_CAPTURE must save the full pre-access translated route tuple "
+            "before X_ROUTE drives shadow memory")
 
     # Per-region slowdown (TW DIP block 2).
     require("slow_region_en" in core_top and "slow_duration" in core_top and

@@ -413,14 +413,26 @@ module vtw_core_top (
     assign dbg_irq_edges = irq_edge_cnt_q;
 
     // ------------------------------------------------------------------
-    // Routing: one translate per core cycle, against a snapshot of the
-    // private state.  The raw core cycle is registered before translation;
-    // this breaks the core-address -> banking -> BRAM control timing path.
+    // Routing: translate the stable core outputs during X_CAPTURE and save
+    // the complete result beside the raw cycle. X_ROUTE then starts from a
+    // registered route tuple, keeping the address/bank decode off the shadow
+    // BRAM controls without adding an FSM state or changing which pre-access
+    // soft-switch snapshot owns the cycle.
     // ------------------------------------------------------------------
-    logic [31:0]       xl_decoded;
+    logic [31:0]       capture_xl_decoded_d;
+    apple_route_kind_e capture_xl_route_d;
+    logic              capture_xl_shadow_valid_d;
+    logic [17:0]       capture_xl_shadow_phys_d;
+    logic [31:0]       cycle_xl_decoded_q;
+    apple_route_kind_e cycle_xl_route_q;
+    logic              cycle_xl_shadow_valid_q;
+    logic [17:0]       cycle_xl_shadow_phys_q;
+
+    wire [31:0]       xl_decoded      = cycle_xl_decoded_q;
     apple_route_kind_e xl_route;
-    logic              xl_shadow_valid;
-    logic [17:0]       xl_shadow_phys;
+    assign             xl_route        = cycle_xl_route_q;
+    wire               xl_shadow_valid = cycle_xl_shadow_valid_q;
+    wire [17:0]        xl_shadow_phys  = cycle_xl_shadow_phys_q;
 
     logic              cycle_video_text_q;
     logic              cycle_video_mixed_q;
@@ -429,10 +441,12 @@ module vtw_core_top (
     logic              cycle_video_80store_q;
 
     always_comb begin
-        translate_apple_addr(cycle_translate_state_q,
-                             cycle_addr_q, cycle_rw_q,
-                             xl_decoded, xl_route);
-        vtw_shadow_map(xl_route, xl_decoded, xl_shadow_valid, xl_shadow_phys);
+        translate_apple_addr(translate_state_from_sss(vsss),
+                             core_addr, core_rwb,
+                             capture_xl_decoded_d, capture_xl_route_d);
+        vtw_shadow_map(capture_xl_route_d, capture_xl_decoded_d,
+                       capture_xl_shadow_valid_d,
+                       capture_xl_shadow_phys_d);
     end
 
     wire xl_is_bus   = (xl_route == APPLE_ROUTE_BUS);
@@ -1141,6 +1155,10 @@ module vtw_core_top (
             cycle_wdata_q       <= '0;
             cycle_rw_q          <= 1'b1;
             cycle_translate_state_q <= '0;
+            cycle_xl_decoded_q      <= '0;
+            cycle_xl_route_q        <= APPLE_ROUTE_INVALID;
+            cycle_xl_shadow_valid_q <= 1'b0;
+            cycle_xl_shadow_phys_q  <= '0;
             cycle_video_text_q   <= 1'b0;
             cycle_video_mixed_q  <= 1'b0;
             cycle_video_page2_q  <= 1'b0;
@@ -1366,6 +1384,10 @@ module vtw_core_top (
                         // //e switches and the private tracker follows them,
                         // so the full MMU model always applies.
                         cycle_translate_state_q <= translate_state_from_sss(vsss);
+                        cycle_xl_decoded_q      <= capture_xl_decoded_d;
+                        cycle_xl_route_q        <= capture_xl_route_d;
+                        cycle_xl_shadow_valid_q <= capture_xl_shadow_valid_d;
+                        cycle_xl_shadow_phys_q  <= capture_xl_shadow_phys_d;
                         cycle_video_text_q       <= vsss.sw_text;
                         cycle_video_mixed_q      <= vsss.sw_mixed;
                         cycle_video_page2_q      <= vsss.sw_page2;

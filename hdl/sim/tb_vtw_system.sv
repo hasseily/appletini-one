@@ -347,6 +347,59 @@ module tb_vtw_system;
         end
     endtask
 
+    /* X_CAPTURE must save the same route tuple that the old X_ROUTE
+     * combinational translator produced from the captured cycle and its
+     * pre-access switch state. Count each route class so this assertion is
+     * not satisfied by only the boot-ROM path. */
+    int route_tuple_checks = 0;
+    int route_bus_checks = 0;
+    int route_rom_checks = 0;
+    int route_main_checks = 0;
+    int route_aux_checks = 0;
+    int route_ramworks_checks = 0;
+
+    always @(posedge clk) begin : route_tuple_monitor
+        globals::apple_route_kind_e ref_route;
+        logic [31:0] ref_decoded;
+        logic        ref_shadow_valid;
+        logic [17:0] ref_shadow_phys;
+
+        if (rstn && dut.ssm_apply_pulse) begin
+            globals::translate_apple_addr(
+                dut.cycle_translate_state_q,
+                dut.cycle_addr_q,
+                dut.cycle_rw_q,
+                ref_decoded,
+                ref_route);
+            vtw_shadow_pkg::vtw_shadow_map(
+                ref_route,
+                ref_decoded,
+                ref_shadow_valid,
+                ref_shadow_phys);
+
+            check(dut.cycle_xl_decoded_q === ref_decoded &&
+                  dut.cycle_xl_route_q === ref_route &&
+                  dut.cycle_xl_shadow_valid_q === ref_shadow_valid &&
+                  dut.cycle_xl_shadow_phys_q === ref_shadow_phys,
+                  "X_CAPTURE saves the exact pre-access route tuple");
+            route_tuple_checks++;
+
+            unique case (ref_route)
+                globals::APPLE_ROUTE_BUS: route_bus_checks++;
+                globals::APPLE_ROUTE_ROM: route_rom_checks++;
+                globals::APPLE_ROUTE_CACHE: begin
+                    if (!ref_shadow_valid)
+                        route_ramworks_checks++;
+                    else if (ref_shadow_phys[16])
+                        route_aux_checks++;
+                    else
+                        route_main_checks++;
+                end
+                default: ;
+            endcase
+        end
+    end
+
     /* Private RamWorks switch phase checks. The manager must keep the old
      * bank through X_CAPTURE, apply the saved C071/C073 tuple at X_ROUTE,
      * and expose the new bank to the next captured access. */
@@ -988,6 +1041,11 @@ module tb_vtw_system;
               "C073 changes at X_ROUTE and reaches each next access");
         check(!bank_apply_pending && !bank_next_pending,
               "RamWorks switch phase monitor is idle after the program");
+        check(route_tuple_checks > 100 &&
+              route_bus_checks > 0 && route_rom_checks > 0 &&
+              route_main_checks > 0 && route_aux_checks > 0 &&
+              route_ramworks_checks > 0,
+              "captured route tuple covers bus, ROM, main, aux, and RamWorks");
 
         // Engine health.
         check(cnt_post_drops == 32'd0, "no posted-queue drops");

@@ -126,6 +126,10 @@ Run `python scripts\test_psram_driver_iddr_reset.py` after PSRAM capture or
 reset changes. It compares reset modes, both capture phases, a mid-read reset,
 and the first read after reset through the real tape and input-DDR path.
 
+Run `python scripts\test_ssi263_start_timing.py` after SSI263, Votrax, or
+formant-start changes. It checks the same-edge backend start and VIA clear,
+the saved phoneme tuple, reset cancellation, and formant pipeline restart.
+
 Simulator-backed checks require the Xilinx simulation tools on `PATH`.
 Hardware-facing scripts document their required UART, JTAG, SD, or USB setup in
 their command-line help.

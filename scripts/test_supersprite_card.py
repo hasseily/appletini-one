@@ -139,9 +139,9 @@ def test_apple_top_integration() -> None:
             "SmartPort and its vTW shortcut must be gated off when SuperSprite is enabled")
     require(".vblank_tick(bm_vbl_cmd_pulse)" in s,
             "frame tick reuses the boot ROM VBL command pulse")
-    require("apple_bus_write_arbiter #(.NUM_CLIENTS(11))" in s and
+    require(".NUM_CLIENTS(12)" in s and
             "supersprite_ab_write" in s,
-            "SuperSprite must be in the write arbiter (11 clients with the vTW)")
+            "SuperSprite must be in the write arbiter (12 clients with the vTW)")
     # PS export window
     require("CARD_CTRL_REG_SS_REGS_LO" in s and "CARD_CTRL_REG_SS_VRAM_ADDR" in s and
             "CARD_CTRL_REG_SS_SPR_FLAGS" in s,

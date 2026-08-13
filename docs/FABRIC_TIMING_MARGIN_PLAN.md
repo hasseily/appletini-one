@@ -789,6 +789,64 @@ gate; restore DIR_A to slow before the next structural build. Then register
 the vTW SmartPort request target at the existing route-to-issue boundary so the
 live handoff and Apple-address decode cannot reach the FIFO write/count cones.
 
+#### vTW SmartPort Target Stage Build
+
+Commit `81888341018f6a903d0141ba7934e1a0ffc4a1aa` captures the final
+three-bit SmartPort request target when `X_ROUTE` accepts a SmartPort access.
+`X_SP_ISSUE` already starts on the following fabric edge, so the register adds
+no state or request cycle. The 18 vTW benches passed, including the Disk II
+physical-bus, WOZ read/write, all-speed, and end-to-end WOZ checks. The 16
+SmartPort service checks, 21 boot-menu/reset checks, and nine SuperSprite
+checks also passed. The system bench drops SmartPort ownership after route
+capture and proves that request-valid and the captured target stay fixed.
+
+The clean full build `20260813T120543Z-81888341-full` used Vivado 2025.2,
+the default seed, no incremental reference, and no rescue pass. It exported
+the candidate DCP, bitstream, and XSA.
+
+| Check | Result |
+| --- | ---: |
+| Build status | `exported` |
+| Setup WNS / TNS | `+0.057 ns` / `0.000 ns` |
+| Setup failing endpoints | `0` |
+| Hold WNS / TNS | `+0.051 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.885 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Unconstrained internal endpoints | `0` |
+| Rescue used | `0` |
+
+The build used 9,915 slices, 30,561 LUTs, 20,236 registers, 74 block RAM
+tiles, six DSPs, and 1,103 control sets. Against the kept Disk II handoff-gate
+build, slices rose by 16, LUTs fell by 100, registers fell by 138, and control
+sets rose by 78. Setup WNS rose by `0.004 ns`, hold WNS rose by `0.002 ns`,
+and bus-skew slack fell by `0.095 ns`.
+
+The prior vTW SmartPort target-to-FIFO class left the saved top ten. The exact
+old slot-C3-ROM-to-input-count-bit-9 path improved from `+0.092 ns`, 16 logic
+levels, and `7.315 ns` of data delay to `+1.132 ns`, 12 levels, and `6.305 ns`.
+A targeted checkpoint query shows the new target-register paths at `+2.707 ns` to the
+input-FIFO write enable, `+2.755 ns` to the input count, and `+3.634 ns` to
+the output count. Live Apple-address, slot-C3-ROM, and boot-activation paths
+still reach those endpoints through the native SmartPort slot-access route;
+they were not removed. Their worst measured slacks are now `+0.844 ns`,
+`+0.975 ns`, and `+1.356 ns`, respectively, across the three endpoint groups.
+
+| Rank | Path class | Slack | Route share | Levels |
+| ---: | --- | ---: | ---: | ---: |
+| 1, 3, 4 | PS AXI interface to SmartPort input-FIFO read address | `+0.057` to `+0.153 ns` | 62.8-63.8% | 8-9 |
+| 2 | PS AXI interface to AXI exclusive-access lock state | `+0.064 ns` | 54.1% | 14 |
+| 5-8 | PS AXI interface to boot-menu C8-ROM write address | `+0.161 ns` | 83.5% | 0 |
+| 9 | PS AXI interface to vTW slowdown state | `+0.165 ns` | 83.9% | 0 |
+| 10 | vTW cycle address to RamWorks cache-data enable | `+0.169 ns` | 74.2% | 10 |
+
+Keep the registered target, but do not promote or package this build. It is
+still `0.243 ns` below the `+0.300 ns` setup gate, and no hardware check has
+run. Trace the PS-AXI-to-SmartPort input-FIFO address cone next. Do not change
+the new target stage based on global WNS alone; its measured residual has more
+than `+2.7 ns` of slack.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

@@ -383,6 +383,44 @@ Keep the rotation stage, but do not promote this build. The setup gain is
 route, then cut the vTW record-control and Disk II mapping cones. Do not add a
 broad fanout rule: none of these paths starts at a high-load source.
 
+#### Data-Direction Pad Build
+
+Commit `d9cb0beefc688798046bfe52a6ae8dba0b4e8016` kept the existing
+12 mA drive on `a2fpga_dir_d` and changed only its output slew from slow to
+fast. This keeps the raw-PHI0 truth table and clock count unchanged. A routed
+checkpoint test predicted `+0.624 ns` on the eight-nanosecond pad-to-pad bound.
+All 14 vTW benches passed before the full build.
+
+The clean full build `20260813T055125Z-d9cb0bee-full` produced:
+
+| Check | Result |
+| --- | ---: |
+| Setup WNS / TNS | `+0.036 ns` / `0.000 ns` |
+| Hold WNS / TNS | `+0.066 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.388 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Rescue used | `0` |
+
+The target path improved from `+0.093` to `+0.476 ns`, even though its route
+delay rose from `3.136` to `3.284 ns`. The output-buffer delay fell by about
+`0.53 ns`. Keep this constraint because the raw-PHI0 release path now clears
+the campaign target without changing its logic. Hardware signoff must still
+check the faster control edge for ringing.
+
+Global WNS fell due to placement of a different path. The new top paths are:
+
+| Rank | Path class | Slack | Route share | Levels |
+| ---: | --- | ---: | ---: | ---: |
+| 1-2, 4-5, 10 | Slot state to SmartPort output-FIFO address | `+0.036` to `+0.207 ns` | 74-76% | 12-13 |
+| 3 | Disk II track length to data latch | `+0.161 ns` | 75.9% | 13 |
+| 6-9 | vTW cycle address to RamWorks data enable | `+0.205 ns` | 69.1% | 10 |
+
+The build used 10,013 slices, 30,542 LUTs, 20,267 registers, 74 block RAM
+tiles, and 1,008 control sets. Do not promote it. Cut the SmartPort FIFO
+address path next, then the measured vTW and Disk II paths.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

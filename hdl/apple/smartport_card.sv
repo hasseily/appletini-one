@@ -348,7 +348,6 @@ module smartport_card (
      * slot/pop decode off the BRAM address pins. */
     logic [31:0] out_word_q;
     wire [7:0] out_head = out_word_q[8*out_rd_q[1:0] +: 8];
-    wire [FIFO_AW-1:0] in_rd_prefetch = in_rd_q + in_pop_count;
     always_ff @(posedge clk) begin
         for (int lane = 0; lane < 4; lane++) begin
             if (in_mem_we[lane]) begin
@@ -356,7 +355,7 @@ module smartport_card (
                     in_mem_wdata[8*lane +: 8];
             end
         end
-        in_word_q <= in_fifo[in_rd_prefetch[FIFO_AW-1:2]];
+        in_word_q <= in_fifo[in_rd_q[FIFO_AW-1:2]];
         for (int lane = 0; lane < 4; lane++) begin
             if (out_mem_we[lane]) begin
                 out_fifo[out_wr_q[FIFO_AW-1:2]][8*lane +: 8] <=

@@ -136,6 +136,7 @@ module tb_disk2_physical_bus;
         .clk(clk),
         .rstn(rstn),
         .ab_read(ab_read),
+        .rom_serve_en(1'b0),
         .sss(sss),
         .slot_assign(3'd6),
         .as_common(as_common),

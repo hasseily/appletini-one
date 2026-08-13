@@ -125,6 +125,7 @@ def read(rel_path: str) -> str:
 
 def static_checks() -> None:
     top = read("hdl/apple/apple_top.sv")
+    disk2 = read("hdl/apple/disk2_card.sv")
     sources = read("hdl/hdl_sources.txt")
     xdc = read("hdl/constraints/appletini_yarz.xdc")
     regs = read("ps_sources/frontend/card_control_regs.h")
@@ -270,11 +271,18 @@ def static_checks() -> None:
             ".d2_write_timing_active(vtw_d2_write_timing_active)" in top and
             "disk2_timing_active" not in core_top,
             "physical Disk II accesses and Q7 write mode must force 1 MHz")
-    require("logic disk2_active_vtw_q;" in top and
-            "if (!rstn[1])\n            disk2_active_vtw_q <= 1'b0;" in top and
-            "disk2_active_vtw_q <= disk2_active;" in top and
+    require("logic disk2_active_timing_q;" in top and
+            "if (!rstn[1])\n            disk2_active_timing_q <= 1'b0;" in top and
+            "disk2_active_timing_q <= disk2_active;" in top and
+            ".ab_read(gate_ab(" in top and
+            "card_slot6_enable && disk2_active_timing_q))" in top and
+            ".rom_serve_en(ab_read.serve_en &&" in top and
+            "card_slot6_enable && disk2_active &&" in top and
+            "!disk2_active_timing_q)" in top and
+            "wire rom_read_serve = ab_read.serve_en || rom_serve_en;" in disk2 and
+            "wire ab_rom_read = rom_read_serve && ab_read.rw && slot_rom_hit;" in disk2 and
             "assign vtw_disk2_active = vtw_core_run_eff && vtw_bus_owned" in top and
-            "card_slot6_enable && disk2_active_vtw_q" in top and
+            "card_slot6_enable && disk2_active_timing_q" in top and
             "!vtw_ctrl_q[7];" in top and
             ".vtw_active(vtw_disk2_active)" in top and
             ".d2_active(vtw_disk2_active)" in top,

@@ -143,7 +143,8 @@ module tb_vtw_disk2_woz_e2e;
     logic disk2_write_timing_active;
 
     disk2_card card_i (
-        .clk(clk), .rstn(rstn), .ab_read(ab_read), .sss(sss),
+        .clk(clk), .rstn(rstn), .ab_read(ab_read),
+        .rom_serve_en(1'b0), .sss(sss),
         .slot_assign(3'd6), .as_common(as_common), .as_client(axi),
         .mc_line_addr(mc_line_addr), .mc_rw(mc_rw),
         .mc_wdata(mc_wdata), .mc_wstrb(mc_wstrb),

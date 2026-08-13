@@ -50,7 +50,8 @@ module tb_disk2_woz_rw;
 
     disk2_card dut (
         .clk(clk), .rstn(rstn),
-        .ab_read(ab_read), .sss(sss), .slot_assign(3'd6),
+        .ab_read(ab_read), .rom_serve_en(1'b0),
+        .sss(sss), .slot_assign(3'd6),
         .as_common(as_common), .as_client(axi),
         .mc_line_addr(mc_line_addr), .mc_rw(mc_rw),
         .mc_wdata(mc_wdata), .mc_wstrb(mc_wstrb),

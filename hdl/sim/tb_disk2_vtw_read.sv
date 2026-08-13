@@ -25,6 +25,7 @@ module tb_disk2_vtw_read;
     logic mc_read_pending_q = 1'b0;
 
     logic vtw_req_valid = 1'b0;
+    logic rom_serve_en = 1'b0;
     logic [3:0] vtw_req_addr = 4'h0;
     logic vtw_req_ready;
     logic vtw_resp_valid;
@@ -38,7 +39,8 @@ module tb_disk2_vtw_read;
 
     disk2_card dut (
         .clk(clk), .rstn(rstn),
-        .ab_read(ab_read), .sss(sss), .slot_assign(3'd6),
+        .ab_read(ab_read), .rom_serve_en(rom_serve_en),
+        .sss(sss), .slot_assign(3'd6),
         .as_common(as_common), .as_client(axi),
         .mc_line_addr(mc_line_addr), .mc_rw(mc_rw),
         .mc_wdata(mc_wdata), .mc_wstrb(mc_wstrb),
@@ -156,6 +158,30 @@ module tb_disk2_vtw_read;
         repeat (5) @(posedge clk);
         rstn = 1'b1;
         repeat (4) @(posedge clk);
+
+        // The live handoff bypass may serve only the first slot-ROM read. It
+        // must not turn a C0Ex access into a controller event while normal
+        // service remains blocked by the registered top-level gate.
+        @(negedge clk);
+        ab_read.addr = 16'hC600;
+        ab_read.rw = 1'b1;
+        ab_read.serve_en = 1'b0;
+        sss.slot_access = 1'b1;
+        rom_serve_en = 1'b1;
+        @(posedge clk);
+        #1;
+        check(ab_write.wr_data_en,
+              "live handoff bypass did not serve the C600 slot ROM");
+        @(negedge clk);
+        ab_read.addr = 16'hC0EC;
+        sss.slot_access = 1'b0;
+        @(posedge clk);
+        #1;
+        check(!ab_write.wr_data_en && dut.io_access_count_q == 32'd0,
+              "live handoff bypass escaped the slot-ROM response path");
+        @(negedge clk);
+        rom_serve_en = 1'b0;
+        repeat (2) @(negedge clk);
 
         // Drive 1 has standard media. Track 0 is staged, but its first DDR
         // line has not reached the local cache yet.

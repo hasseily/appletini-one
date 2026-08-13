@@ -350,7 +350,7 @@ module apple_top(
     assign menu_chime_start = menu_chime_start_q;
     logic smartport_active;
     logic disk2_active;
-    logic disk2_active_vtw_q;
+    logic disk2_active_timing_q;
     logic boot_target_disk2;
     logic vtw_core_run_eff_q;
     logic vtw_disk2_boot_scan_q;
@@ -1132,7 +1132,12 @@ module apple_top(
     disk2_card disk2_card_i (
         .clk(clk),
         .rstn(rstn[2]),
-        .ab_read(gate_ab(ab_read, card_slot6_enable && disk2_active)),
+        .ab_read(gate_ab(
+            ab_read,
+            card_slot6_enable && disk2_active_timing_q)),
+        .rom_serve_en(ab_read.serve_en &&
+                      card_slot6_enable && disk2_active &&
+                      !disk2_active_timing_q),
         .sss(sss),
         .slot_assign(3'h6),
         .as_common(as_common),
@@ -1459,17 +1464,18 @@ module apple_top(
     assign vtw_enable_eff = vtw_ctrl_q[0] && vtw_machine_ok_q;
     wire vtw_core_run_eff = vtw_enable_eff && vtw_ctrl_q[1];
 
-    // The native card needs the live handoff gate. vTW can take the gate one
-    // fabric clock later, which cuts the slot-7 decode from its Disk II path.
+    // The first slot-ROM handoff read needs the live gate. Normal Disk II I/O,
+    // timing, and vTW can take it one fabric clock later, cutting the slot-7
+    // decode from the controller's rotation and stepper enables.
     always_ff @(posedge clk) begin
         if (!rstn[1])
-            disk2_active_vtw_q <= 1'b0;
+            disk2_active_timing_q <= 1'b0;
         else
-            disk2_active_vtw_q <= disk2_active;
+            disk2_active_timing_q <= disk2_active;
     end
 
     assign vtw_disk2_active = vtw_core_run_eff && vtw_bus_owned &&
-                              card_slot6_enable && disk2_active_vtw_q &&
+                              card_slot6_enable && disk2_active_timing_q &&
                               !vtw_ctrl_q[7];
     wire vtw_slot6_boot_probe =
         vtw_disk2_boot_scan_q && vtw_bus_owned &&

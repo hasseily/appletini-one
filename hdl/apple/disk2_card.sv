@@ -9,6 +9,7 @@ module disk2_card (
     input  logic                     clk,
     input  logic                     rstn,
     input  globals::AppleBus_read    ab_read,
+    input  logic                     rom_serve_en,
     input  globals::SoftSwitchState  sss,
     input  logic [2:0]               slot_assign,
     input  globals::AxiSimple_common as_common,
@@ -283,7 +284,11 @@ module disk2_card (
         apple_bus_active &&
         (ab_read.addr[15:8] == 8'hC0) &&
         (ab_read.addr[7:4] == (4'h8 + {1'b0, slot_assign}));
-    wire ab_rom_read = ab_read.serve_en && ab_read.rw && slot_rom_hit;
+    /* Normal card service arrives through the registered top-level enable.
+     * rom_serve_en is the sole live handoff bypass: it lets the first C600
+     * read return the slot ROM while the registered enable catches up. */
+    wire rom_read_serve = ab_read.serve_en || rom_serve_en;
+    wire ab_rom_read = rom_read_serve && ab_read.rw && slot_rom_hit;
     wire ab_io_read  = ab_read.serve_en && ab_read.rw && slot_io_hit;
     wire ab_io_write = ab_read.data_en && !ab_read.rw && slot_io_hit;
 
@@ -1984,7 +1989,7 @@ module disk2_card (
         ab_write_d.assert_nmi = 1'b0;
         ab_write_d.assert_dma = 1'b0;
 
-        if (ab_read.serve_en) begin
+        if (rom_read_serve) begin
             if (ab_rom_read) begin
                 ab_write_d.wr_data = slot_rom_byte(ab_read.addr[7:0]);
                 ab_write_d.wr_data_en = 1'b1;

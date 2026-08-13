@@ -1163,6 +1163,77 @@ cycle-address to shadow-RAM cone next. Preserve the Apple-cycle translation
 snapshot and do not add a vTW core state or change Disk II time-ready pacing.
 Hardware validation remains deferred.
 
+#### vTW Translated Route-Tuple Capture Build
+
+Commit `f1e3da2845efcb1e0db98648646d5c21144fa748` translates the stable
+W65C02 cycle during the existing `X_CAPTURE` state and saves the decoded
+address, route class, shadow validity, and final shadow address beside the
+raw cycle tuple. `X_ROUTE` consumes those registers. The change adds no FSM
+state or Apple cycle, and the private switch manager still applies the saved
+access at `X_ROUTE`, after translation used the pre-access switch state.
+
+The full-system vTW monitor recomputed the prior translator result for every
+saved cycle and compared all four fields. It observed bus, ROM, main, aux,
+and RamWorks routes. Existing checks continued to prove C071/C073 phase
+order, language-card and C3/CFFF behavior, posted-write order and pressure,
+RamWorks miss/fill/writeback, and SmartPort and Disk II shortcuts. All 19
+vTW benches, 20 standard-Disk-II checks, and 66 WOZ checks passed.
+
+The clean full build `20260813T154352Z-f1e3da28-full` used Vivado 2025.2,
+the default seed, no incremental reference, and no rescue pass. It exported
+the candidate DCP, bitstream, and XSA.
+
+| Check | Result |
+| --- | ---: |
+| Build status | `exported` |
+| Setup WNS / TNS | `+0.151 ns` / `0.000 ns` |
+| Setup failing endpoints | `0` |
+| Hold WNS / TNS | `+0.033 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.778 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Unconstrained internal endpoints | `0` |
+| Rescue used | `0` |
+
+The build used 9,898 slices, 30,612 LUTs, 20,300 registers, 74 block RAM
+tiles, six DSPs, and 1,013 control sets. Against the sound-retime build,
+slices fell by 233, LUTs rose by 143, registers fell by 49, and control sets
+rose by five. Setup WNS rose by `0.068 ns`, hold WNS fell by `0.006 ns`,
+pulse width did not change, and bus-skew slack fell by `0.105 ns` while still
+passing. The control-set count again crossed Vivado's advisory threshold;
+it did not cause a timing or route failure.
+
+The focused routed queries prove the intended cut. In the prior checkpoint,
+the cycle-address and translate-state register banks each produced 600 paths
+to the shadow address/write pins; their worst paths were `+0.083 ns` and
+`+0.093 ns`, both seven levels into aux write enable. In the new checkpoint,
+the translate-state bank has no path to any of the 432 write pins or 1,152
+address pins. The captured tuple's worst residuals are `+1.816 ns` to write
+enable with two levels and `+2.457 ns` to an address pin with one level.
+
+Raw `cycle_addr_q` still reaches the shadow through the separate floating-bus
+address mux. Those residual paths are not the removed translation cone: their
+worst slack is `+0.846 ns` to write enable and `+0.620 ns` to an address pin.
+The moved route-capture boundary has 32 timed endpoints. Its worst path is
+W65C02 state to a saved shadow-address bit at `+0.230 ns` with eight levels;
+the worst private-switch path is `+2.959 ns`.
+
+| Rank | Path class | Slack | Route share | Levels |
+| ---: | --- | ---: | ---: | ---: |
+| 1 | W65C02 decimal arithmetic flag update | `+0.151 ns` | 63.9% | 14 |
+| 2, 4, 6 | W65C02 state to captured shadow address | `+0.230` to `+0.284 ns` | 75.4-75.6% | 8 |
+| 3 | PS AXI exclusive-access overlap state | `+0.247 ns` | 52.2% | 14 |
+| 5 | vTW address-drive state to DIR_A | `+0.282 ns` | 47.8% | 2 |
+| 7-10 | Registered AXI write data to boot-ROM write address | `+0.285 ns` | 94.7% | 0 |
+
+Keep the captured route tuple, but do not promote or package this build.
+Global setup remains `0.149 ns` below the `+0.300 ns` gate, and hardware
+validation is deferred. The shadow-memory side of this cut now has ample
+margin. Trace the W65C02 decimal flag cone next and use its existing decimal
+extra cycle if a retime can preserve every bus cycle and architectural result.
+Do not change the live Disk II WOZ path based on this report.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

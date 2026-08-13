@@ -91,7 +91,7 @@ def test_autosave_remains_working_config() -> None:
 def test_clean_config_schema_contract() -> None:
     source = read(CONFIG_MENU_C)
 
-    require("#define APPLETINI_CFG_VERSION 113U" in source,
+    require("#define APPLETINI_CFG_VERSION 114U" in source,
             "Adding the slot-5 processor selector to config version 112 must use version 113")
     require("config_menu_parse_config_line(line, &value)" in source and
             "hash = strchr(line, '#')" in source and

@@ -847,6 +847,61 @@ run. Trace the PS-AXI-to-SmartPort input-FIFO address cone next. Do not change
 the new target stage based on global WNS alone; its measured residual has more
 than `+2.7 ns` of slack.
 
+#### SmartPort Input-FIFO Read-Address Build
+
+Commit `b3bd14a4c63f61a573dd068a11bc93666add5084` reads the SmartPort input
+FIFO from its registered read pointer instead of a combinational post-pop
+pointer. Pop acceptance, pointer and count updates, clear priority, and AXI
+completion stay on their old edge. The cached head word now refreshes one
+fabric edge after a pop, matching the existing output-FIFO structure. A new
+minimum-gap regression checks packed `POP_IN4` to `IN_HEAD4`, every scalar
+byte lane, and the packed-word boundary. The 18 vTW benches, 16 SmartPort
+service checks, six SmartPort ROM checks, 21 boot-menu/reset checks, and nine
+SuperSprite checks passed.
+
+The clean full build `20260813T123026Z-b3bd14a4-full` used Vivado 2025.2,
+the default seed, no incremental reference, and no rescue pass. It exported
+the candidate DCP, bitstream, and XSA.
+
+| Check | Result |
+| --- | ---: |
+| Build status | `exported` |
+| Setup WNS / TNS | `+0.105 ns` / `0.000 ns` |
+| Setup failing endpoints | `0` |
+| Hold WNS / TNS | `+0.039 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.879 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Unconstrained internal endpoints | `0` |
+| Rescue used | `0` |
+
+The build used 9,811 slices, 30,620 LUTs, 20,215 registers, 74 block RAM
+tiles, six DSPs, and 1,009 control sets. Against the target-stage build,
+slices fell by 104, LUTs rose by 59, registers fell by 21, and control sets
+fell by 94. Setup WNS rose by `0.048 ns`, hold WNS fell by `0.012 ns`, and
+bus-skew slack fell by `0.006 ns`.
+
+The prior PS-write-decode-to-input-FIFO-address class left the saved top ten.
+A targeted query of every path into the input-FIFO read-address pins finds a
+worst residual of `+5.712 ns`, zero logic levels, and a local registered
+startpoint. The prior exact class was `+0.057 ns` with nine logic levels. The
+cut therefore removed the measured combinational pop/prefetch cone.
+
+| Rank | Path class | Slack | Route share | Levels |
+| ---: | --- | ---: | ---: | ---: |
+| 1 | PS write data to Disk II PSRAM-base state | `+0.105 ns` | 84.1% | 0 |
+| 2 | vTW shadow-host pointer to aux-shadow BRAM address | `+0.135 ns` | 94.8% | 0 |
+| 3 | PS write data to Mouse-card X state | `+0.137 ns` | 84.0% | 0 |
+| 4-7 | PS write data to boot-menu C8-ROM write address | `+0.169 ns` | 84.2% | 0 |
+| 8-10 | PS write data to another boot-menu C8-ROM write bank | `+0.196 ns` | 84.2% | 0 |
+
+Keep the registered read address, but do not promote or package this build. It
+is still `0.195 ns` below the `+0.300 ns` setup gate, and no hardware check has
+run. Trace the direct PS-write-data-to-Disk-II configuration path next. The
+former AXI exclusive-monitor cone is no longer in the saved top ten, so do not
+remove that protocol feature solely on the prior placement result.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

@@ -902,6 +902,73 @@ run. Trace the direct PS-write-data-to-Disk-II configuration path next. The
 former AXI exclusive-monitor cone is no longer in the saved top ten, so do not
 remove that protocol feature solely on the prior placement result.
 
+#### AXI Write-Data Stage Build
+
+Commit `8f2d80393efead02ebc74c31a7e6637e208061d2` places a registered
+two-entry skid buffer on the PS GP0 write-data channel. It keeps `WDATA`,
+`WSTRB`, and `WLAST` in one 37-bit tuple and leaves the independent address
+channel in the existing AXI bridge. The stage adds one fabric clock before an
+unstalled write beat reaches the bridge, keeps one-beat-per-clock throughput,
+and does not issue a write response until the saved beat reaches its selected
+client. The wrapper's existing contract still forbids AXI3 write-data
+interleaving across write IDs because the design does not carry `WID`.
+
+The focused wrapper regression passed address-before-data, data-before-address,
+same-edge channels, two-entry backpressure, a 16-beat burst with distinct byte
+strobes, client selection, response ordering and backpressure, and reset
+cancellation. A second bench sent full, partial, adjacent, and reset-canceled
+BASE writes through the real wrapper and Disk II card. It checked the exact
+client edge, eight-byte alignment, cache and write-queue invalidation, ordered
+responses, and response-before-readback ordering. The 18 vTW benches, 19
+standard-Disk-II checks, 66 WOZ checks, 16 SmartPort checks, 21 boot-menu/reset
+checks, and the Mouse, Appli-Card, Uthernet II, SSC, and Phasor suites passed.
+
+The clean full build `20260813T132044Z-8f2d8039-full` used Vivado 2025.2,
+the default seed, no incremental reference, and no rescue pass. It exported
+the candidate DCP, bitstream, and XSA.
+
+| Check | Result |
+| --- | ---: |
+| Build status | `exported` |
+| Setup WNS / TNS | `+0.139 ns` / `0.000 ns` |
+| Setup failing endpoints | `0` |
+| Hold WNS / TNS | `+0.053 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.908 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Unconstrained internal endpoints | `0` |
+| Rescue used | `0` |
+
+The build used 10,082 slices, 30,593 LUTs, 20,303 registers, 74 block RAM
+tiles, six DSPs, and 1,009 control sets. Against the SmartPort read-address
+build, slices rose by 271, LUTs fell by 27, registers rose by 88, and control
+sets did not change. Setup WNS rose by `0.034 ns`, hold WNS rose by `0.014 ns`,
+and bus-skew slack rose by `0.029 ns`. No reported congestion window exceeded
+level 5.
+
+The raw PS `MAXIGP0WDATA` class left the saved top ten. It had occupied nine
+of ten positions in the prior build, including the `+0.105 ns` Disk II BASE
+path, the `+0.137 ns` Mouse path, and the `+0.169` to `+0.196 ns` boot-ROM
+paths. The worst saved residual from the new write-data register is a
+zero-level route to vTW ARM-address state at `+0.288 ns`; the cut therefore
+placed a sequential boundary before the shared PS write-data loads, although
+its route remains `0.012 ns` short of the campaign gate.
+
+| Rank | Path class | Slack | Route share | Levels |
+| ---: | --- | ---: | ---: | ---: |
+| 1-7, 10 | PS reset to PSRAM input-DDR reset recovery | `+0.139` to `+0.277 ns` | 80.4-81.3% | 1 |
+| 8 | Disk II seek state to zero-length sound-event state | `+0.268 ns` | 69.1% | 10 |
+| 9 | PSRAM CE tape to the falling-edge CE output | `+0.269 ns` | 81.6% | 1 |
+
+Keep the registered write-data stage, but do not promote or package this
+build. It remains `0.161 ns` below the `+0.300 ns` setup gate, and no hardware
+check has run. The current WNS is an asynchronous-reset recovery path into the
+eight PSRAM input-DDR cells, not a read-data path. Review whether those cells
+need their separate reset, prove reset-during-read and first-read behavior in
+simulation, and measure that cut next. Do not change the registered write-data
+stage based on global WNS alone; its measured residual is already `+0.288 ns`.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

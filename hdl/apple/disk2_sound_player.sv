@@ -63,7 +63,6 @@ module disk2_sound_player (
     logic [7:0]         event_pos_sample_start_pos_q;
     logic [7:0]         event_pos_sample_end_pos_q;
     logic               event_pos_seek_q;
-    logic               event_pos_zero_length_q;
     logic               event_calc_valid_q;
     logic [3:0]         event_calc_event_q;
     logic [17:0]        event_calc_sound_offset_q;
@@ -245,7 +244,6 @@ module disk2_sound_player (
             event_pos_sample_start_pos_q <= 8'd0;
             event_pos_sample_end_pos_q <= 8'd0;
             event_pos_seek_q <= 1'b0;
-            event_pos_zero_length_q <= 1'b0;
             event_calc_valid_q <= 1'b0;
             event_calc_event_q <= EVENT_NONE;
             event_calc_sound_offset_q <= 18'd0;
@@ -323,7 +321,11 @@ module disk2_sound_player (
                             event_pos_sample_end_pos_q) :
                         18'd0;
                 event_calc_seek_q <= event_pos_seek_q;
-                event_calc_zero_length_q <= event_pos_zero_length_q;
+                /* Compare the registered positions in this existing stage.
+                 * This keeps event latency unchanged and avoids carrying the
+                 * clamp/add/reverse cone into the prior stage's equality. */
+                event_calc_zero_length_q <= event_pos_seek_q &&
+                    (event_pos_sample_end_pos_q == event_pos_sample_start_pos_q);
                 event_calc_valid_q <= 1'b1;
                 event_pos_valid_q <= 1'b0;
             end
@@ -358,7 +360,6 @@ module disk2_sound_player (
                 event_pos_sample_start_pos_q <= sample_start_pos;
                 event_pos_sample_end_pos_q <= sample_end_pos;
                 event_pos_seek_q <= seek_event;
-                event_pos_zero_length_q <= seek_event && (sample_end_pos == sample_start_pos);
                 event_pos_valid_q <= 1'b1;
                 event_setup_valid_q <= 1'b0;
             end

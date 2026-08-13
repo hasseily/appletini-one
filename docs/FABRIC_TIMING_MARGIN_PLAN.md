@@ -1036,6 +1036,71 @@ current electrical slew. Do not infer PSRAM eye margin from RTL simulation;
 run the eye calibration and real PSRAM, Disk II, WOZ, and vTW read/write checks
 when hardware becomes available.
 
+#### Address-Direction Final-LUT Placement Build
+
+Commit `e6654ba9cc8f3b11c4cf454c186a50dc2a23f463` factors the address-drive
+enable into the Boolean-equivalent OR of vTW and all other clients, then keeps
+that final LUT at `SLICE_X112Y23/A6LUT` near the U17 direction output. It adds
+no register or bus phase. The INH safety gate remains before both inputs, the
+DIR_A pad keeps its slow edge, and the existing `10.000 ns` maximum-delay
+constraint remains unchanged.
+
+The focused arbiter regression compared the placed form with the generic
+reduction for all 4,096 client-enable masks. It also checked every client's
+assertion and release, every unsafe-INH block and re-enable, and a vTW to
+Appli-Card handoff with no low gap. All 19 vTW benches passed, including the
+physical Disk II bus, native and vTW WOZ read/write, and all vTW speed modes.
+The Appli-Card suite and the 19 standard-Disk-II and 66 WOZ checks also passed.
+
+The clean full build `20260813T145234Z-e6654ba9-full` used Vivado 2025.2,
+the default seed, no incremental reference, and no rescue pass. It exported
+the candidate DCP, bitstream, and XSA.
+
+| Check | Result |
+| --- | ---: |
+| Build status | `exported` |
+| Setup WNS / TNS | `+0.106 ns` / `0.000 ns` |
+| Setup failing endpoints | `0` |
+| Hold WNS / TNS | `+0.079 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.809 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Unconstrained internal endpoints | `0` |
+| Rescue used | `0` |
+
+The build used 10,037 slices, 30,597 LUTs, 20,381 registers, 74 block RAM
+tiles, six DSPs, and 1,013 control sets. Against the PSRAM input-reset build,
+slices fell by 88, LUTs did not change, registers rose by six, and control sets
+rose by three. Setup WNS rose by `0.093 ns`, hold WNS rose by `0.030 ns`, pulse
+width did not change, and bus-skew slack fell by `0.100 ns` while still
+passing.
+
+The placed LUT bound at the requested site. The exact vTW
+`wr_addr_rw_en_q` to `a2fpga_dir_a` path kept the same LUT2 plus slow OBUF and
+the same `10.000 ns` bound. Its slack rose from `+0.013 ns` to `+0.340 ns`,
+clearing the local campaign gate by `0.040 ns`. Logic delay stayed at
+`3.745 ns`; route delay fell from `3.702 ns` to `3.377 ns`. The longer route
+into the near-pin LUT was outweighed by the final route falling from
+`2.876 ns` to `1.641 ns`. The worst non-vTW DIR_A path is the Appli-Card at
+`+0.895 ns`; none of the eight timed DIR_A paths remains below `+0.300 ns`.
+
+| Rank | Path class | Slack | Route share | Levels |
+| ---: | --- | ---: | ---: | ---: |
+| 1 | Disk II seek start to zero-length sound-event state | `+0.106 ns` | 64.8% | 11 |
+| 2-5, 9 | Disk II track length to vTW PC-trace enables | `+0.156` to `+0.212 ns` | 78.1% | 10 |
+| 6-7 | SDD producer pointer to free-beat reset state | `+0.200 ns` | 58.0% | 13 |
+| 8 | PS AXI address state to exclusive-lock state | `+0.204 ns` | 52.7% | 15 |
+| 10 | vTW CPU accumulator to status state | `+0.217 ns` | 60.0% | 13 |
+
+Keep the placed final OR, but do not promote or package this build. Global
+setup remains `0.194 ns` below the `+0.300 ns` gate, and hardware validation
+is deferred. The extra methodology warning is the control-set count crossing
+Vivado's advisory threshold, not a timing or route failure. Trace the Disk II
+sound zero-length calculation next. Keep this physical constraint tied to the
+fixed production device and U17 pin, and later check DIR_A handoff and edge
+quality on hardware.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

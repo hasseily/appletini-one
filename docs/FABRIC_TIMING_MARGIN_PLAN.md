@@ -612,6 +612,67 @@ quarter-track consumer. Do not promote this run: it has one failing setup
 endpoint, used the rescue pass, and produced no hardware outputs. Trace the
 cycle-address-to-posted-write BRAM enable cone before choosing another cut.
 
+#### vTW Posted-Write Tuple Stage Build
+
+Commit `72903dd21744a04e6f493c650492b66c3b66c4c3` adds one registered
+address/data/valid tuple between final core-or-ARM acceptance and the vTW bus
+engine's posted queue. The core keeps priority on an exact collision. The
+stage can drain and refill on the same edge, so it keeps one write per fabric
+clock. It adds one 133.333 MHz clock, about 7.5 ns, before queue entry. Reset,
+disable, or Apple `RES#` cancels the pending tuple at the same transaction
+boundary that clears the queue.
+
+All 14 vTW benches passed. Away from a queue-clear boundary, the full-system
+test now proves that each accepted core or ARM tuple reaches the engine on the
+next edge with the same address and data. It also checks a sustained
+eight-write ARM burst, exact core-over-ARM collision order, overlay-write order
+before slot-7 `DEVSEL`, and reset cancellation of an accepted tuple. The
+capture-FIFO, cycle-egress, nine SDD, linear-overlay source and RTL, 17
+VidHD/SHR, and 16 SmartPort service tests also passed.
+
+The clean full build `20260813T090405Z-72903dd2-full` used Vivado 2025.2, the
+default seed, no incremental reference, and no rescue pass. It exported the
+candidate DCP, bitstream, and XSA.
+
+| Check | Result |
+| --- | ---: |
+| Build status | `exported` |
+| Setup WNS / TNS | `+0.121 ns` / `0.000 ns` |
+| Setup failing endpoints | `0` |
+| Hold WNS / TNS | `+0.058 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.816 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Unconstrained internal endpoints | `0` |
+| Rescue used | `0` |
+
+The build used 10,014 slices, 30,533 LUTs, 20,273 registers, 74 block RAM
+tiles, six DSPs, and 1,009 control sets. Against the Disk II time-tick run,
+slices rose by 289, LUTs rose by 135, registers fell by 16, and control sets
+rose by one. Setup WNS rose by `0.151 ns`, hold WNS rose by `0.019 ns`, and
+bus-skew slack fell by `0.178 ns`.
+
+The prior vTW posted-memory and posted-fill paths left the saved top ten, so
+keep this cut. Live Apple-address consumers took over:
+
+| Rank | Path class | Slack | Route share | Levels |
+| ---: | --- | ---: | ---: | ---: |
+| 1 | Apple address to Disk II recalibration-sound arm state | `+0.121 ns` | 73.6% | 12 |
+| 2, 3, 5 | Apple address to SmartPort input-FIFO write enable | `+0.206` to `+0.255 ns` | 73.0-73.2% | 13 |
+| 4, 10 | Apple address to Disk II bit-offset enable | `+0.222`, `+0.283 ns` | 75.5-75.7% | 12 |
+| 6, 8 | PS AXI interface to egress and Ethernet config state | `+0.259`, `+0.278 ns` | 83.7-83.9% | 0 |
+| 7 | Apple reset snapshot to control read data | `+0.264 ns` | 76.5% | 10 |
+| 9 | Slot-enable mask to no-slot-clock reset | `+0.280 ns` | 80.5% | 7 |
+
+Do not promote or package this build. Setup margin is still `0.179 ns` below
+the `+0.300 ns` gate. For the next measured cut, split the native Disk II raw
+read-response path from its controller side effects, then register the native
+`$C0Ex` read/write pulse and low address for the stepper and bit-offset
+updates. Capture write data at its current data phase. Keep the same-cycle
+Apple read response and private vTW request order intact. This targets ranks
+1, 4, and 10; remeasure before changing the SmartPort path.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

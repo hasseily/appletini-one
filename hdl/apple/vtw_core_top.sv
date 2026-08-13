@@ -414,25 +414,21 @@ module vtw_core_top (
 
     // ------------------------------------------------------------------
     // Routing: translate the stable core outputs during X_CAPTURE and save
-    // the complete result beside the raw cycle. X_ROUTE then starts from a
-    // registered route tuple, keeping the address/bank decode off the shadow
-    // BRAM controls without adding an FSM state or changing which pre-access
-    // soft-switch snapshot owns the cycle.
+    // the complete result beside the raw cycle. X_ROUTE maps that registered
+    // tuple onto the shadow address, keeping the address/bank decode off the
+    // shadow BRAM controls without adding an FSM state or changing which
+    // pre-access soft-switch snapshot owns the cycle.
     // ------------------------------------------------------------------
     logic [31:0]       capture_xl_decoded_d;
     apple_route_kind_e capture_xl_route_d;
-    logic              capture_xl_shadow_valid_d;
-    logic [17:0]       capture_xl_shadow_phys_d;
     logic [31:0]       cycle_xl_decoded_q;
     apple_route_kind_e cycle_xl_route_q;
-    logic              cycle_xl_shadow_valid_q;
-    logic [17:0]       cycle_xl_shadow_phys_q;
 
     wire [31:0]       xl_decoded      = cycle_xl_decoded_q;
     apple_route_kind_e xl_route;
     assign             xl_route        = cycle_xl_route_q;
-    wire               xl_shadow_valid = cycle_xl_shadow_valid_q;
-    wire [17:0]        xl_shadow_phys  = cycle_xl_shadow_phys_q;
+    logic              xl_shadow_valid;
+    logic [17:0]       xl_shadow_phys;
 
     logic              cycle_video_text_q;
     logic              cycle_video_mixed_q;
@@ -444,9 +440,11 @@ module vtw_core_top (
         translate_apple_addr(translate_state_from_sss(vsss),
                              core_addr, core_rwb,
                              capture_xl_decoded_d, capture_xl_route_d);
-        vtw_shadow_map(capture_xl_route_d, capture_xl_decoded_d,
-                       capture_xl_shadow_valid_d,
-                       capture_xl_shadow_phys_d);
+    end
+
+    always_comb begin
+        vtw_shadow_map(cycle_xl_route_q, cycle_xl_decoded_q,
+                       xl_shadow_valid, xl_shadow_phys);
     end
 
     wire xl_is_bus   = (xl_route == APPLE_ROUTE_BUS);
@@ -838,15 +836,15 @@ module vtw_core_top (
     );
 
     // ------------------------------------------------------------------
-    // Core cycle FSM. X_CAPTURE snapshots the core outputs and banking
-    // state. X_ROUTE performs translation and issues the BRAM access from
-    // those registers. X_MEM_CAPTURE adds a register between the BRAM and
-    // the core ALU. These two explicit cuts keep both sides of the inferred
-    // BRAM inside the 133.333 MHz fabric-clock budget.
+    // Core cycle FSM. X_CAPTURE translates and saves the core outputs with
+    // their banking state. X_ROUTE maps the saved tuple and issues the BRAM
+    // access. X_MEM_CAPTURE adds a register between the BRAM and the core
+    // ALU. These two explicit cuts keep both sides of the inferred BRAM
+    // inside the 133.333 MHz fabric-clock budget.
     // ------------------------------------------------------------------
     typedef enum logic [3:0] {
         X_CAPTURE,
-        X_ROUTE,      // translate registered cycle + issue shadow access
+        X_ROUTE,      // map registered route tuple + issue shadow access
         X_MEM_CAPTURE,// capture synchronous BRAM output
         X_MEM_DONE,   // registered read data ready / waiting for pace
         X_POST_STALL, // posted queue full: push pending
@@ -1157,8 +1155,6 @@ module vtw_core_top (
             cycle_translate_state_q <= '0;
             cycle_xl_decoded_q      <= '0;
             cycle_xl_route_q        <= APPLE_ROUTE_INVALID;
-            cycle_xl_shadow_valid_q <= 1'b0;
-            cycle_xl_shadow_phys_q  <= '0;
             cycle_video_text_q   <= 1'b0;
             cycle_video_mixed_q  <= 1'b0;
             cycle_video_page2_q  <= 1'b0;
@@ -1386,8 +1382,6 @@ module vtw_core_top (
                         cycle_translate_state_q <= translate_state_from_sss(vsss);
                         cycle_xl_decoded_q      <= capture_xl_decoded_d;
                         cycle_xl_route_q        <= capture_xl_route_d;
-                        cycle_xl_shadow_valid_q <= capture_xl_shadow_valid_d;
-                        cycle_xl_shadow_phys_q  <= capture_xl_shadow_phys_d;
                         cycle_video_text_q       <= vsss.sw_text;
                         cycle_video_mixed_q      <= vsss.sw_mixed;
                         cycle_video_page2_q      <= vsss.sw_page2;

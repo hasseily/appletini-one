@@ -347,9 +347,10 @@ module tb_vtw_system;
         end
     endtask
 
-    /* X_CAPTURE must save the same route tuple that the old X_ROUTE
-     * combinational translator produced from the captured cycle and its
-     * pre-access switch state. Count each route class so this assertion is
+    /* X_CAPTURE must save the same translator result that the old X_ROUTE
+     * combinational path produced from the captured cycle and its pre-access
+     * switch state. X_ROUTE must then map that saved tuple to the exact shadow
+     * address and write control. Count each route class so this assertion is
      * not satisfied by only the boot-ROM path. */
     int route_tuple_checks = 0;
     int route_bus_checks = 0;
@@ -357,6 +358,7 @@ module tb_vtw_system;
     int route_main_checks = 0;
     int route_aux_checks = 0;
     int route_ramworks_checks = 0;
+    int route_lc_bank1_checks = 0;
 
     always @(posedge clk) begin : route_tuple_monitor
         globals::apple_route_kind_e ref_route;
@@ -379,9 +381,20 @@ module tb_vtw_system;
 
             check(dut.cycle_xl_decoded_q === ref_decoded &&
                   dut.cycle_xl_route_q === ref_route &&
-                  dut.cycle_xl_shadow_valid_q === ref_shadow_valid &&
-                  dut.cycle_xl_shadow_phys_q === ref_shadow_phys,
-                  "X_CAPTURE saves the exact pre-access route tuple");
+                  dut.xl_shadow_valid === ref_shadow_valid &&
+                  dut.xl_shadow_phys === ref_shadow_phys,
+                  "X_CAPTURE saves and X_ROUTE maps the pre-access tuple");
+            check(dut.core_shadow_issue === ref_shadow_valid,
+                  "only shadow-backed X_ROUTE cycles issue port A");
+            if (ref_shadow_valid) begin
+                check(dut.shadow_a_en &&
+                      dut.shadow_a_addr === ref_shadow_phys &&
+                      dut.shadow_a_we === !dut.cycle_rw_q,
+                      "X_ROUTE drives the exact shadow address and write control");
+                if (dut.cycle_addr_q == 16'hD022 &&
+                    ref_shadow_phys == 18'h0C022)
+                    route_lc_bank1_checks++;
+            end
             route_tuple_checks++;
 
             unique case (ref_route)
@@ -695,7 +708,7 @@ module tb_vtw_system;
      * a cache-hit write, flush-on-eviction chains, bank isolation via
      * $C071/$C073, and read-back through fills; results land in main ZP $20-$23
      * and the flushed lines in the TB's PSRAM model. */
-    localparam byte RW_PROG [0:79] = '{
+    localparam byte RW_PROG [0:93] = '{
         8'hA9, 8'h02,               // 0180 LDA #$02
         8'h8D, 8'h73, 8'hC0,        // 0182 STA $C073  bank 2 (decode bank 3)
         8'h8D, 8'h05, 8'hC0,        // 0185 STA $C005  RAMWRT on
@@ -726,7 +739,14 @@ module tb_vtw_system;
         8'h8D, 8'h02, 8'hC0,        // 01C5 STA $C002  RAMRD off
         8'hA9, 8'h00,               // 01C8 LDA #$00
         8'h8D, 8'h73, 8'hC0,        // 01CA STA $C073  bank 0
-        8'h4C, 8'h2C, 8'h03         // 01CD JMP $032C  floating-read probe
+        /* Select LC bank 1 and prove its $Dxxx bit-12 remap reaches physical
+         * $Cxxx, then restore ROM before the long timing loop. */
+        8'hAD, 8'h8B, 8'hC0,        // 01CD LDA $C08B  LC bank 1 read (1st)
+        8'hAD, 8'h8B, 8'hC0,        // 01D0 LDA $C08B  LC bank 1 read+write
+        8'hAD, 8'h22, 8'hD0,        // 01D3 LDA $D022  -> physical $C022
+        8'h85, 8'h1C,               // 01D6 STA $1C
+        8'hAD, 8'h82, 8'hC0,        // 01D8 LDA $C082  LC bank 2 ROM
+        8'h4C, 8'h2C, 8'h03         // 01DB JMP $032C  floating-read probe
     };
 
     task automatic load_program();
@@ -746,7 +766,7 @@ module tb_vtw_system;
             sh_write(18'(i), 8'h00);
         end
         // RamWorks segment in the stack page (after the zero sweep).
-        for (int i = 0; i < 80; i++) begin
+        for (int i = 0; i < 94; i++) begin
             sh_write(18'h00180 + 18'(i), RW_PROG[i]);
         end
         // Discriminator landmarks in the shadow's "internal ROM" copy and
@@ -758,6 +778,7 @@ module tb_vtw_system;
         sh_write(ROM_BASE + 18'h1022, 8'h99);  // ROM $D022
         sh_write(ROM_BASE + 18'h0FFF, 8'h00);  // internal $CFFF (release read)
         sh_write(18'h0D022, 8'h42);            // main-bank LC RAM $D022 (bank 2)
+        sh_write(18'h0C022, 8'h6D);            // main-bank LC RAM $D022 (bank 1)
         /* Address-sensitive scanner landmarks. Only $37F8 is correct for
          * HGR page 1 at raw line 253/cycle 27 after the two-cycle rewind;
          * adjacent cycles and the text-page address carry different values
@@ -971,7 +992,6 @@ module tb_vtw_system;
         check(rd == 8'h42, $sformatf("LC RAM read: $D022 from shadow RAM (got %h)", rd));
         sh_read(18'h00019, rd);
         check(rd == 8'h99, $sformatf("LC ROM read: $D022 from shadow ROM copy (got %h)", rd));
-
         // Aux write landed in the vTW's own aux shadow too.
         sh_read(18'h10427, rd);
         check(rd == 8'h77, $sformatf("aux write in shadow aux bank (got %h)", rd));
@@ -1005,6 +1025,9 @@ module tb_vtw_system;
         // Seven 4-cycle reads plus their stores and setup take roughly
         // 64 native Apple cycles; leave enough room for the whole sequence.
         #100us;
+        sh_read(18'h0001C, rd);
+        check(rd == 8'h6D,
+              $sformatf("LC bank-1 $D022 maps to physical $C022 (got %h)", rd));
         sh_read(18'h00012, rd);
         check(rd == 8'hD7,
               $sformatf("floating $C030 read returns scanner $37F8 byte (got %h)",
@@ -1044,8 +1067,8 @@ module tb_vtw_system;
         check(route_tuple_checks > 100 &&
               route_bus_checks > 0 && route_rom_checks > 0 &&
               route_main_checks > 0 && route_aux_checks > 0 &&
-              route_ramworks_checks > 0,
-              "captured route tuple covers bus, ROM, main, aux, and RamWorks");
+              route_ramworks_checks > 0 && route_lc_bank1_checks > 0,
+              "route tuple covers bus, ROM, main, aux, RamWorks, and LC bank 1");
 
         // Engine health.
         check(cnt_post_drops == 32'd0, "no posted-queue drops");

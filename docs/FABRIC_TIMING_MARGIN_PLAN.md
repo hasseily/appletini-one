@@ -339,6 +339,50 @@ removed path:
 Trace and cut these two Disk II enable classes before adding bus snapshot
 copies. The new report does not support a broad address-copy change.
 
+#### Disk II vTW Rotation Stage Build
+
+Commit `03de4daec1d2d03a1c566bdffe669365ec97d0f1` registered the
+Disk II rotation state only at the boundary into vTW speed control. Local Q7,
+cache-miss, media-ready, and sequencer logic remain live. Motor and drive
+changes come through physical Disk II cycles, so the new view settles well
+before vTW can start another private cycle.
+
+All 14 vTW benches, 19 standard Disk II tests, and 66 WOZ tests passed. The
+boot-menu source checks passed 19 of 20 tests; the one failed source-order guard
+is unrelated to this RTL change and existed before it.
+
+The clean full build `20260813T052716Z-03de4dae-full` produced:
+
+| Check | Result |
+| --- | ---: |
+| Setup WNS / TNS | `+0.093 ns` / `0.000 ns` |
+| Hold WNS / TNS | `+0.047 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.921 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Rescue used | `0` |
+
+The spin-count-to-vTW-to-Disk II feedback paths left the top ten. The prior
+Apple-address-to-Disk II paths also stayed out of the top ten in this placement.
+The build used 9,916 slices, 30,540 LUTs, 20,285 registers, 74 block RAM tiles,
+and 1,007 control sets. Against the response-stage build, LUTs fell by 18,
+registers fell by 29, control sets fell by one, and slices rose by 164.
+
+The new top paths are:
+
+| Rank | Path class | Slack | Route share | Levels |
+| ---: | --- | ---: | ---: | ---: |
+| 1 | Raw PHI0 input to data-direction output | `+0.093 ns` | 39.7% | 3 |
+| 2-4 | vTW cycle address to record enable | `+0.112 ns` | 71.9% | 10 |
+| 5 | vTW cycle address to record enable | `+0.135 ns` | 72.0% | 10 |
+| 6-10 | Slot mapping to Disk II dirty-track enable | `+0.163 ns` | 76.9% | 11 |
+
+Keep the rotation stage, but do not promote this build. The setup gain is
+`0.090 ns`, and the target remains `+0.300 ns`. Review the fixed PHI0 release
+route, then cut the vTW record-control and Disk II mapping cones. Do not add a
+broad fanout rule: none of these paths starts at a high-load source.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

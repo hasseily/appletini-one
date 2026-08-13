@@ -421,6 +421,44 @@ The build used 10,013 slices, 30,542 LUTs, 20,267 registers, 74 block RAM
 tiles, and 1,008 control sets. Do not promote it. Cut the SmartPort FIFO
 address path next, then the measured vTW and Disk II paths.
 
+#### SmartPort FIFO Address Build
+
+Commit `12dc4977418f0cc3e4e35812c63ebf772b6a716e` removed the same-edge
+post-pop lookahead from the SmartPort output FIFO. The block RAM now reads
+from the registered pointer. The word catches up one fabric clock after a
+pop, before either the native Apple bus or vTW can issue its next DATA read.
+The test bench covers a five-byte word crossing through both paths. All 14
+vTW benches, 16 SmartPort service tests, six ROM tests, and 15 menu tests
+passed before the full build.
+
+The clean full build `20260813T061638Z-12dc4977-full` produced:
+
+| Check | Result |
+| --- | ---: |
+| Setup WNS / TNS | `+0.017 ns` / `0.000 ns` |
+| Hold WNS / TNS | `+0.030 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.915 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Rescue used | `0` |
+
+The target SmartPort block-RAM address path left the top ten. Keep the cut.
+The lower global WNS comes from a different machine-mode-to-data-direction
+route under the ten-nanosecond output bound. The new top paths are:
+
+| Rank | Path class | Slack | Route share | Levels |
+| ---: | --- | ---: | ---: | ---: |
+| 1 | Machine mode to data-direction output | `+0.017 ns` | 55.5% | 3 |
+| 2-5 | Disk II quarter-track to bit-offset enable | `+0.124 ns` | 75.3% | 13 |
+| 6-7 | Apple address to Disk II WOZ shift enable | `+0.137 ns` | 77.9% | 11 |
+| 8-10 | Disk II quarter-track to stream-position enable | `+0.159` to `+0.165 ns` | 75.2% | 13 |
+
+The build used 9,909 slices, 30,567 LUTs, 20,289 registers, 74 block RAM
+tiles, and 1,018 control sets. Do not promote it. First remove the live
+machine-mode decode from the direction-output cone. Then cut the measured
+Disk II rotation and native-event cones.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

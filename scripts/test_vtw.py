@@ -2,14 +2,16 @@
 """Build and run the focused virtual TransWarp simulation benches.
 
 The suite covers the full vTW path plus its SmartPort shortcut, RamWorks
-flush/hold protocol, PS-DMA abort path, video timing, II+ bus rules, and reset
-handling. It does not run the large standalone 65C02 instruction suites.
+flush/hold protocol, PS-DMA abort path, video timing, II+ bus rules, Disk II
+physical/WOZ paths at every vTW speed, and reset handling. It does not run the
+large standalone 65C02 instruction suites.
 
 Requires the Xilinx simulation tools (xvlog/xelab/xsim) on PATH.
 """
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
@@ -50,6 +52,10 @@ SOURCES = [
     "hdl/sim/tb_ps_dma_command.sv",
     "hdl/sim/tb_vtw_shadow_host_port.sv",
     "hdl/sim/tb_disk2_vtw_read.sv",
+    "hdl/sim/tb_disk2_physical_bus.sv",
+    "hdl/sim/tb_disk2_woz_rw.sv",
+    "hdl/sim/tb_vtw_disk2_speed_matrix.sv",
+    "hdl/sim/tb_vtw_disk2_woz_e2e.sv",
 ]
 
 # Card-ROM $readmemh calls resolve against the simulation cwd.
@@ -74,6 +80,10 @@ BENCHES = [
     ("tb_ps_dma_command", "PS DMA COMMAND PASS"),
     ("tb_vtw_shadow_host_port", "VTW SHADOW HOST PASS"),
     ("tb_disk2_vtw_read", "DISK2 VTW READ PASS"),
+    ("tb_disk2_physical_bus", "DISK2 PHYSICAL BUS PASS"),
+    ("tb_disk2_woz_rw", "DISK2 WOZ RW PASS"),
+    ("tb_vtw_disk2_speed_matrix", "VTW DISK2 SPEED MATRIX PASS"),
+    ("tb_vtw_disk2_woz_e2e", "VTW DISK2 WOZ E2E PASS"),
 ]
 
 
@@ -123,6 +133,29 @@ def static_checks() -> None:
     menu_c = read("ps_sources/frontend/config_menu.c")
     menu_h = read("ps_sources/frontend/config_menu.h")
     main_c = read("ps_sources/frontend/main.c")
+
+    ladder_match = re.search(
+        r"} k_vtw_ladder\[\] = \{(.*?)\n\};", service, re.DOTALL
+    )
+    require(ladder_match is not None,
+            "vtw_service must keep a readable speed-ladder table")
+    ladder = re.findall(
+        r"\{\s*(CARD_CTRL_VTW_SPEED_[A-Z0-9_]+),\s*(\d+)U,\s*\"[^\"]+\"\s*\}",
+        ladder_match.group(1) if ladder_match is not None else "",
+    )
+    require(
+        ladder == [
+            ("CARD_CTRL_VTW_SPEED_1MHZ", "0"),
+            ("CARD_CTRL_VTW_SPEED_DIVIDED", "51"),
+            ("CARD_CTRL_VTW_SPEED_DIVIDED", "37"),
+            ("CARD_CTRL_VTW_SPEED_DIVIDED", "19"),
+            ("CARD_CTRL_VTW_SPEED_DIVIDED", "10"),
+            ("CARD_CTRL_VTW_SPEED_DIVIDED", "5"),
+            ("CARD_CTRL_VTW_SPEED_FULL", "0"),
+        ] and "#define VTW_SLUG_DIVIDER 2667U" in service,
+        "the dynamic Disk II speed matrix must match every vTW ladder preset "
+        "and the slug override",
+    )
 
     # PL integration
     require("vtw_core_top vtw_core_top_i" in top and

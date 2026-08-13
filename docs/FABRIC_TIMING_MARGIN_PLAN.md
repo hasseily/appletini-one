@@ -673,6 +673,69 @@ updates. Capture write data at its current data phase. Keep the same-cycle
 Apple read response and private vTW request order intact. This targets ranks
 1, 4, and 10; remeasure before changing the SmartPort path.
 
+#### Disk II Handoff Gate Build
+
+Commit `e360dec24b71b16c96f2c3ffbb1f21e51d9cba4a` puts normal native
+Disk II I/O, the physical timing strobe, and vTW activation behind the existing
+one-fabric-clock registered handoff view. The first `$C600` handoff read keeps
+a live one-clock bypass that ends in the slot-ROM response. The slot-6 enable
+remains a live term in both gates. This avoids the unsafe plan to delay Disk II
+controller side effects while keeping the first handoff ROM byte on its old
+response schedule.
+
+All 18 vTW benches passed, including the native physical-bus, native/vTW WOZ
+read/write, all-speed vTW, and full vTW-to-WOZ tests. A directed RTL check
+proves that the live bypass serves `$C600` but cannot turn `$C0EC` into a
+controller event. All 21 boot-menu/reset, 19 standard Disk II, 66 WOZ, 16
+SmartPort service, six SmartPort ROM, nine SDD, 17 VidHD/SHR, 12 Phasor,
+Uthernet, SSC, cycle-egress, capture-FIFO, and linear-overlay checks also
+passed. Hardware tests remain deferred.
+
+The clean full build `20260813T112209Z-e360dec2-full` used Vivado 2025.2, the
+default seed, no incremental reference, and no rescue pass. It exported the
+candidate DCP, bitstream, and XSA.
+
+| Check | Result |
+| --- | ---: |
+| Build status | `exported` |
+| Setup WNS / TNS | `+0.053 ns` / `0.000 ns` |
+| Setup failing endpoints | `0` |
+| Hold WNS / TNS | `+0.049 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.980 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Unconstrained internal endpoints | `0` |
+| Rescue used | `0` |
+
+The build used 9,899 slices, 30,661 LUTs, 20,374 registers, 74 block RAM
+tiles, six DSPs, and 1,025 control sets. Against the posted-write build, slices
+fell by 115, LUTs rose by 128, registers rose by 101, and control sets rose by
+16. Setup WNS fell by `0.068 ns`, hold WNS fell by `0.009 ns`, and bus-skew
+slack rose by `0.164 ns`.
+
+The old handoff-qualified Disk II paths left the saved top ten. A targeted
+checkpoint query still finds Apple-address paths into the named Disk II
+bit-offset and recalibration endpoint group, but their worst slack is now
+`+0.362 ns` with seven logic levels instead of the prior `+0.121 ns` with 12
+levels. The worst Apple-address path into the SmartPort input-FIFO BRAM write
+enable is `+0.328 ns`; it also left the saved top ten but was not removed.
+
+| Rank | Path class | Slack | Route share | Levels |
+| ---: | --- | ---: | ---: | ---: |
+| 1 | vTW write-direction state to the address-direction pad | `+0.053 ns` | 48.8% | 2 |
+| 2, 8, 10 | Slot-C3-ROM state to SmartPort input count | `+0.092` to `+0.171 ns` | 64.3-65.0% | 16 |
+| 3-6 | PS AXI interface to boot-menu key-FIFO enable | `+0.113 ns` | 73.9% | 6 |
+| 7 | SSI263 formant accumulator to filter history | `+0.144 ns` | 44.6% | 20 |
+| 9 | PS AXI interface to Phasor audio output | `+0.170 ns` | 84.2% | 0 |
+
+Keep the handoff cut, but do not promote or package this build. Its setup
+margin is still `0.247 ns` below the `+0.300 ns` gate, and no hardware check
+has run. Trace the address-direction pad path and the slot-C3-ROM-to-SmartPort
+count cone before choosing the next measured cut. Do not spend the next commit
+on the old SmartPort BRAM-write path alone; its measured residual is already
+above the promotion gate.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

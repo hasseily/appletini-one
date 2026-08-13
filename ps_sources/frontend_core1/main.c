@@ -37,6 +37,7 @@
 #include "xiltimer.h"     /* COUNTS_PER_SECOND */
 
 #include "../lib/common.h"
+#include "../lib/axisimple_mmio.h"
 #include "../lib/uart.h"
 
 #include "../frontend/apple_cycle_egress.h"
@@ -313,6 +314,8 @@ static void cpu1_emit_status(uint32_t dt_ms)
 int main(void)
 {
     uint8_t reset_seq_last;
+
+    axisimple_mmio_mmu_init();
 
     /* CPU0 owns UART0 init (921600 baud). We just write to the TX
      * FIFO; do NOT re-run uart_init_baud or we will glitch CPU0's

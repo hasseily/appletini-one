@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and run the focused AXI write-data skid regressions."""
+"""Build and run focused AxiSimple wrapper regressions."""
 
 from __future__ import annotations
 
@@ -12,6 +12,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "build" / "axisimple_wrapper_sim"
 WRAPPER = ROOT / "hdl" / "axisimple" / "axisimple_wrapper.sv"
+MMIO_H = ROOT / "ps_sources" / "lib" / "axisimple_mmio.h"
+FRONTEND_MAIN = ROOT / "ps_sources" / "frontend" / "main.c"
+CORE1_MAIN = ROOT / "ps_sources" / "frontend_core1" / "main.c"
 
 
 def vivado_tool(name: str) -> str:
@@ -90,8 +93,69 @@ def check_registered_wskid() -> None:
     )
 
 
+def check_no_exclusive_mmio_contract() -> None:
+    wrapper_source = WRAPPER.read_text(encoding="utf-8")
+    mmio_source = MMIO_H.read_text(encoding="utf-8")
+    frontend_source = FRONTEND_MAIN.read_text(encoding="utf-8")
+    core1_source = CORE1_MAIN.read_text(encoding="utf-8")
+    exclusive_settings = re.findall(
+        r"\.OPT_EXCLUSIVE_ACCESS\s*\(\s*([^)]*?)\s*\)",
+        wrapper_source,
+    )
+    if exclusive_settings != ["1'b0"]:
+        raise AssertionError(
+            "axisimple_wrapper must disable its one exclusive monitor instance"
+        )
+    require(
+        r"axisimple_mmio_mmu_init\s*\([^)]*\)\s*\{.*?"
+        r"Xil_SetTlbAttributes\s*\(\s*0x40000000U\s*,\s*"
+        r"DEVICE_MEMORY\s*\)\s*;",
+        mmio_source,
+        "both cores must share the Device-memory AxiSimple mapping helper",
+    )
+    if mmio_source.count("Xil_SetTlbAttributes") != 1:
+        raise AssertionError("AxiSimple MMIO helper must map exactly one section")
+    if re.search(r"NORM_NONCACHE|STRONG_ORDERED", mmio_source):
+        raise AssertionError("AxiSimple MMIO mapping must fail closed to Device")
+    for source, first_pl_use, name in (
+        (frontend_source, "apple_fb_handoff_init();", "CPU0"),
+        (core1_source, "apple_cycle_egress_amp_secondary_init();", "CPU1"),
+    ):
+        main_source = source[source.index("int main(void)") :]
+        if main_source.count("axisimple_mmio_mmu_init();") != 1:
+            raise AssertionError(f"{name} must map AxiSimple MMIO exactly once")
+        call = main_source.find("axisimple_mmio_mmu_init();")
+        first_use = main_source.find(first_pl_use)
+        if call < 0 or first_use < 0 or call > first_use:
+            raise AssertionError(
+                f"{name} must map GP0 as Device memory before its first PL use"
+            )
+
+    # This is deliberately broad. Any new atomic use needs review before it
+    # can coexist with a PL register plane that has no exclusive monitor.
+    forbidden = re.compile(
+        r"(?:__atomic|__sync|__ldrex|__strex|\bldrex(?:b|h|d)?\b|"
+        r"\bstrex(?:b|h|d)?\b|\bclrex\b|\bswpb?\b|"
+        r"Xil_InitializeSpinLock|\bstdatomic\.h\b)",
+        re.IGNORECASE,
+    )
+    violations: list[str] = []
+    for path in sorted((ROOT / "ps_sources").rglob("*")):
+        if path.suffix.lower() not in {".c", ".h", ".s"}:
+            continue
+        source = path.read_text(encoding="utf-8", errors="ignore")
+        if forbidden.search(source):
+            violations.append(str(path.relative_to(ROOT)))
+    if violations:
+        raise AssertionError(
+            "GP0 MMIO firmware must not introduce atomic/exclusive operations: "
+            + ", ".join(violations)
+        )
+
+
 def main() -> int:
     check_registered_wskid()
+    check_no_exclusive_mmio_contract()
     if OUT_DIR.exists():
         shutil.rmtree(OUT_DIR)
     OUT_DIR.mkdir(parents=True)
@@ -158,7 +222,7 @@ def main() -> int:
     if "AXISIMPLE DISK2 BASE PASS" not in output:
         print(output)
         raise RuntimeError("AXI Disk II BASE bench did not report success")
-    print("AXI write-data skid regressions passed")
+    print("AxiSimple wrapper regressions passed")
     return 0
 
 

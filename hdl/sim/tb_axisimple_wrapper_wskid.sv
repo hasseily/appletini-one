@@ -161,7 +161,8 @@ module tb_axisimple_wrapper_wskid;
     task automatic send_aw(
         input logic [31:0] addr,
         input logic [3:0] len,
-        input logic [11:0] id
+        input logic [11:0] id,
+        input logic lock
     );
         begin
             @(negedge clk);
@@ -170,11 +171,54 @@ module tb_axisimple_wrapper_wskid;
             s_awid = id;
             s_awsize = 3'd2;
             s_awburst = 2'b01;
+            s_awlock = lock;
             s_awvalid = 1'b1;
             @(posedge clk);
             while (!s_awready) @(posedge clk);
             @(negedge clk);
             s_awvalid = 1'b0;
+            s_awlock = 1'b0;
+        end
+    endtask
+
+    task automatic send_ar(
+        input logic [31:0] addr,
+        input logic [11:0] id,
+        input logic lock,
+        input logic [31:0] expected_data,
+        input logic [1:0] expected_resp,
+        input string message
+    );
+        integer cycles;
+        begin
+            @(negedge clk);
+            // Hold the response so the task samples the transfer itself,
+            // rather than missing a one-cycle response while dropping ARVALID.
+            s_rready = 1'b0;
+            s_araddr = addr;
+            s_arid = id;
+            s_arlock = lock;
+            s_arvalid = 1'b1;
+            @(posedge clk);
+            while (!s_arready) @(posedge clk);
+            @(negedge clk);
+            s_arvalid = 1'b0;
+            s_arlock = 1'b0;
+            cycles = 0;
+            while (!s_rvalid && cycles < 200) begin
+                @(posedge clk);
+                cycles = cycles + 1;
+            end
+            #1ps;
+            check(s_rvalid && s_rid == id && s_rdata == expected_data &&
+                  s_rlast && s_rresp == expected_resp,
+                  $sformatf("%s: valid=%b id=%03x data=%08x last=%b resp=%x",
+                            message, s_rvalid, s_rid, s_rdata, s_rlast, s_rresp));
+            @(negedge clk);
+            s_rready = 1'b1;
+            @(posedge clk);
+            #1ps;
+            check(!s_rvalid, $sformatf("%s: duplicate read response", message));
         end
     endtask
 
@@ -294,7 +338,7 @@ module tb_axisimple_wrapper_wskid;
         rstn = 1'b1;
         s_bready = 1'b1;
         repeat (2) @(posedge clk);
-        send_aw(32'h40000010, 4'd0, 12'h101);
+        send_aw(32'h40000010, 4'd0, 12'h101, 1'b0);
         repeat (5) @(posedge clk);
         check(write_count == wbase,
               "post-reset AW does not consume stale W payload");
@@ -309,7 +353,7 @@ module tb_axisimple_wrapper_wskid;
         // held after reset must wait for a new AW and use that new AW's ID.
         wbase = write_count;
         bbase = response_count;
-        send_aw(32'h40020050, 4'd0, 12'hA01);
+        send_aw(32'h40020050, 4'd0, 12'hA01, 1'b0);
         repeat (4) @(posedge clk);
         check(write_count == wbase,
               "AW-only request remains pending without W");
@@ -327,7 +371,7 @@ module tb_axisimple_wrapper_wskid;
         repeat (5) @(posedge clk);
         check(write_count == wbase,
               "post-reset W does not consume stale AW");
-        send_aw(32'h40050054, 4'd0, 12'hA02);
+        send_aw(32'h40050054, 4'd0, 12'hA02, 1'b0);
         wait_for_writes(wbase + 1, "fresh AW completes post-reset W");
         wait_for_responses(bbase + 1, "fresh AW returns post-reset B");
         check_write(wbase, 5, 8'h15, 32'hA0A10001, 4'h6,
@@ -371,7 +415,7 @@ module tb_axisimple_wrapper_wskid;
         check(write_count == wbase && response_count == bbase,
               "jointly buffered AW and W do not reappear after reset");
         fork
-            send_aw(32'h4006005C, 4'd0, 12'hB02);
+            send_aw(32'h4006005C, 4'd0, 12'hB02, 1'b0);
             send_w(32'hB0B20002, 4'h9, 1'b1);
         join
         wait_for_writes(wbase + 1,
@@ -390,7 +434,7 @@ module tb_axisimple_wrapper_wskid;
         send_w(32'h11112222, 4'h3, 1'b1);
         repeat (4) @(posedge clk);
         check(write_count == wbase, "W-before-AW remains buffered");
-        send_aw(32'h40010024, 4'd0, 12'h111);
+        send_aw(32'h40010024, 4'd0, 12'h111, 1'b0);
         wait_for_writes(wbase + 1, "W-before-AW reaches client");
         wait_for_responses(bbase + 1, "W-before-AW returns B");
         check_write(wbase, 1, 8'h09, 32'h11112222, 4'h3,
@@ -400,7 +444,7 @@ module tb_axisimple_wrapper_wskid;
         // AW-before-W exercises the opposite independent-channel order.
         wbase = write_count;
         bbase = response_count;
-        send_aw(32'h4002002C, 4'd0, 12'h222);
+        send_aw(32'h4002002C, 4'd0, 12'h222, 1'b0);
         repeat (4) @(posedge clk);
         check(write_count == wbase, "AW-before-W waits for data");
         send_w(32'h33334444, 4'hC, 1'b1);
@@ -414,7 +458,7 @@ module tb_axisimple_wrapper_wskid;
         wbase = write_count;
         bbase = response_count;
         fork
-            send_aw(32'h40030030, 4'd0, 12'h333);
+            send_aw(32'h40030030, 4'd0, 12'h333, 1'b0);
             send_w(32'h55556666, 4'hA, 1'b1);
         join
         wait_for_writes(wbase + 1, "simultaneous AW/W reaches client");
@@ -422,6 +466,29 @@ module tb_axisimple_wrapper_wskid;
         check_write(wbase, 3, 8'h0C, 32'h55556666, 4'hA,
                     "simultaneous write");
         check_response(bbase, 12'h333, "simultaneous response");
+
+        send_ar(32'h40020000, 12'h3A0, 1'b0, 32'hA5000002, 2'b00,
+                "normal read returns client data and OKAY");
+
+        // Firmware must not issue exclusive GP0 MMIO. Inject a forbidden
+        // sequence here to prove the wrapper's no-monitor fallback is
+        // deterministic: one client access and OKAY, never EXOKAY.
+        send_ar(32'h40030000, 12'h3A1, 1'b1, 32'hA5000003, 2'b00,
+                "locked read returns ordinary client data and OKAY");
+        wbase = write_count;
+        bbase = response_count;
+        fork
+            // Match the preceding locked read exactly. With the exclusive
+            // monitor enabled this would return EXOKAY; the MMIO contract
+            // requires the no-monitor build to return ordinary OKAY.
+            send_aw(32'h40030000, 4'd0, 12'h3A1, 1'b1);
+            send_w(32'hA1A2A3A4, 4'hF, 1'b1);
+        join
+        wait_for_writes(wbase + 1, "locked write reaches client");
+        wait_for_responses(bbase + 1, "locked write returns B");
+        check_write(wbase, 3, 8'h00, 32'hA1A2A3A4, 4'hF,
+                    "locked write is ordinary MMIO");
+        check_response(bbase, 12'h3A1, "locked write returns OKAY");
 
         // With no AW, the registered output holds one beat and the skid
         // register holds a second. The wrapper must then apply backpressure.
@@ -436,8 +503,8 @@ module tb_axisimple_wrapper_wskid;
             #1ps;
             check(!s_wready, "WREADY stays low while both W slots are full");
         end
-        send_aw(32'h40000040, 4'd0, 12'h401);
-        send_aw(32'h40070044, 4'd0, 12'h402);
+        send_aw(32'h40000040, 4'd0, 12'h401, 1'b0);
+        send_aw(32'h40070044, 4'd0, 12'h402, 1'b0);
         wait_for_writes(wbase + 2, "two buffered W beats drain in order");
         wait_for_responses(bbase + 2, "two buffered W beats return B responses");
         check_write(wbase, 0, 8'h10, 32'h70000001, 4'h1,
@@ -451,7 +518,7 @@ module tb_axisimple_wrapper_wskid;
         // AWLEN bit, distinct data/strobes, WLAST, and address updates.
         wbase = write_count;
         bbase = response_count;
-        send_aw(32'h40040020, 4'd15, 12'h444);
+        send_aw(32'h40040020, 4'd15, 12'h444, 1'b0);
         for (burst_i = 0; burst_i < 16; burst_i = burst_i + 1) begin
             send_w(32'hB4000000 + burst_i,
                    burst_i[3:0], burst_i == 15);
@@ -479,15 +546,15 @@ module tb_axisimple_wrapper_wskid;
         @(negedge clk);
         s_bready = 1'b0;
         fork
-            send_aw(32'h40050014, 4'd0, 12'h501);
+            send_aw(32'h40050014, 4'd0, 12'h501, 1'b0);
             send_w(32'h50000001, 4'hF, 1'b1);
         join
         fork
-            send_aw(32'h40010018, 4'd0, 12'h502);
+            send_aw(32'h40010018, 4'd0, 12'h502, 1'b0);
             send_w(32'h50000002, 4'h7, 1'b1);
         join
         fork
-            send_aw(32'h4006001C, 4'd0, 12'h503);
+            send_aw(32'h4006001C, 4'd0, 12'h503, 1'b0);
             send_w(32'h50000003, 4'hE, 1'b1);
         join
         wait_for_writes(wbase + 3, "different client-window writes complete");

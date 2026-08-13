@@ -154,7 +154,9 @@ module axisimple_wrapper(
                 { 32'hffff0000 }
             }
         ),
-        .OPT_EXCLUSIVE_ACCESS(1)
+        // The GP0 clients are side-effect MMIO registers, not shared memory.
+        // Firmware must not issue exclusive accesses to this register plane.
+        .OPT_EXCLUSIVE_ACCESS(1'b0)
     ) axidouble_i (
         .S_AXI_ACLK(S_AXI_ACLK),
         .S_AXI_ARESETN(S_AXI_ARESETN),

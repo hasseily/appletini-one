@@ -118,6 +118,10 @@ Run `python scripts\test_vtw.py` for the simulator-backed vTW gate. It includes
 pin-level Disk II response timing, native and vTW raw WOZ read/write, and an
 end-to-end vTW-core-to-Disk-II run at every speed preset plus the slug override.
 
+Run `python scripts\test_axisimple_wrapper.py` after PS-to-PL AXI write-path
+changes. It checks write-address/data skew, bursts, backpressure, reset, client
+selection, and write-response order through the real AxiSimple wrapper.
+
 Simulator-backed checks require the Xilinx simulation tools on `PATH`.
 Hardware-facing scripts document their required UART, JTAG, SD, or USB setup in
 their command-line help.

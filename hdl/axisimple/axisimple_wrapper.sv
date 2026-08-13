@@ -95,6 +95,35 @@ module axisimple_wrapper(
     wire [7:0] axi_awvalid_array;
     wire [255:0] axi_rdata_array;
 
+    /* Break the hard-PS write-data fanout before it reaches the eight PL
+     * register clients. Keep WDATA, WSTRB, and WLAST in one registered AXI
+     * beat; the skid buffer retains one-beat-per-clock throughput and absorbs
+     * downstream write-address stalls without changing transaction order.
+     * This wrapper has never carried AXI3 WID, so GP0 must keep write-data
+     * beats in write-address order and must not interleave write IDs. */
+    wire        wskid_input_ready;
+    wire        wskid_valid;
+    wire        axid_wready;
+    wire [36:0] wskid_payload;
+
+    assign S_AXI_WREADY = S_AXI_ARESETN && wskid_input_ready;
+
+    skidbuffer #(
+        .OPT_LOWPOWER(1'b1),
+        .OPT_OUTREG(1'b1),
+        .DW(37)
+    )
+    wchannel_skid_i (
+        .i_clk(S_AXI_ACLK),
+        .i_reset(!S_AXI_ARESETN),
+        .i_valid(S_AXI_WVALID),
+        .o_ready(wskid_input_ready),
+        .i_data({S_AXI_WLAST, S_AXI_WSTRB, S_AXI_WDATA}),
+        .o_valid(wskid_valid),
+        .i_ready(axid_wready),
+        .o_data(wskid_payload)
+    );
+
     axidouble #(
         .C_AXI_DATA_WIDTH(32),
         .C_AXI_ADDR_WIDTH(32),
@@ -140,11 +169,11 @@ module axisimple_wrapper(
 		.S_AXI_AWCACHE(S_AXI_AWCACHE),
 		.S_AXI_AWPROT(S_AXI_AWPROT),
 		.S_AXI_AWQOS(S_AXI_AWQOS),
-		.S_AXI_WVALID(S_AXI_WVALID),
-		.S_AXI_WREADY(S_AXI_WREADY),
-		.S_AXI_WDATA(S_AXI_WDATA),
-		.S_AXI_WSTRB(S_AXI_WSTRB),
-		.S_AXI_WLAST(S_AXI_WLAST),
+		.S_AXI_WVALID(wskid_valid),
+		.S_AXI_WREADY(axid_wready),
+		.S_AXI_WDATA(wskid_payload[31:0]),
+		.S_AXI_WSTRB(wskid_payload[35:32]),
+		.S_AXI_WLAST(wskid_payload[36]),
 		.S_AXI_BVALID(S_AXI_BVALID),
 		.S_AXI_BREADY(S_AXI_BREADY),
 		.S_AXI_BID(S_AXI_BID),

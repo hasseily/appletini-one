@@ -366,6 +366,30 @@ def static_checks() -> None:
             "input logic wide_main" in engine,
             "vTW must extend the aux posted-write window for Super Hi-Res "
             "and arm the main interlace window from its private ctrl write")
+    require("wire core_post_accept = core_post_req && !eng_post_full;"
+            in core_top and
+            "wire arm_post_accept = arm_post_we && arm_post_ready;"
+            in core_top and
+            "logic        post_stage_valid_q;" in core_top and
+            "logic [15:0] post_stage_addr_q;" in core_top and
+            "logic [7:0]  post_stage_wdata_q;" in core_top and
+            "post_stage_valid_q <= core_post_accept || arm_post_accept;"
+            in core_top and
+            "post_stage_addr_q  <= arm_post_accept ? arm_post_addr"
+            in core_top and
+            "post_stage_wdata_q <= arm_post_accept ? arm_post_wdata"
+            in core_top and
+            "assign eng_post_we    = post_stage_valid_q && rstn && enable && ab_read.res;"
+            in core_top and
+            "assign eng_post_addr  = post_stage_addr_q;" in core_top and
+            "assign eng_post_wdata = post_stage_wdata_q;" in core_top and
+            "if (!rstn || !enable || !ab_read.res) begin\n"
+            "            post_stage_valid_q <= 1'b0;" in core_top and
+            "assign arm_post_ready = core_active && !eng_post_full && !core_post_req;"
+            in core_top and
+            "assign eng_post_we    = core_post_push" not in core_top,
+            "vTW must register the final accepted core-or-ARM posted tuple "
+            "for one clock, keep core priority, and cancel it with queue clear")
     require("vtw_service_init(UART0_BASE);" in main_c and
             "vtw_service_poll();" in main_c and
             "menu_platform.set_vtw_config = control_set_vtw_config;" in main_c,

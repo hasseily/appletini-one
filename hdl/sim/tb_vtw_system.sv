@@ -421,6 +421,46 @@ module tb_vtw_system;
         end
     end
 
+    /* Every accepted core or ARM post must emerge from the new boundary on
+     * exactly the next fabric edge with the same tuple. This point-by-point
+     * check catches loss, duplication, and address/data mixing. */
+    logic        post_expected_valid_q = 1'b0;
+    logic [15:0] post_expected_addr_q  = 16'h0000;
+    logic [7:0]  post_expected_data_q  = 8'h00;
+    int          post_accept_checks    = 0;
+    int          post_emit_checks      = 0;
+
+    always @(posedge clk) begin
+        if (!rstn || !enable || !ab_read.res) begin
+            check(!dut.eng_post_we,
+                  "posted boundary emits no tuple across a clear boundary");
+            post_expected_valid_q = 1'b0;
+        end
+        else begin
+            check(dut.eng_post_we === post_expected_valid_q,
+                  "posted boundary valid is delayed by exactly one clock");
+            if (post_expected_valid_q) begin
+                check(dut.eng_post_addr == post_expected_addr_q &&
+                      dut.eng_post_wdata == post_expected_data_q,
+                      "posted boundary keeps the accepted address/data tuple");
+                post_emit_checks++;
+            end
+
+            post_expected_valid_q = dut.core_post_accept ||
+                                    dut.arm_post_accept;
+            if (dut.core_post_accept) begin
+                post_expected_addr_q = dut.cycle_addr_q;
+                post_expected_data_q = dut.cycle_wdata_q;
+                post_accept_checks++;
+            end
+            else if (dut.arm_post_accept) begin
+                post_expected_addr_q = arm_post_addr;
+                post_expected_data_q = arm_post_wdata;
+                post_accept_checks++;
+            end
+        end
+    end
+
     logic monitors_armed = 0;
     realtime last_fall = 0;
     always @(negedge phi0) last_fall = $realtime;
@@ -463,12 +503,33 @@ module tb_vtw_system;
 
     task automatic arm_post_push(input logic [15:0] a,
                                  input logic [7:0] d);
-        while (!arm_post_ready) @(posedge clk);
-        arm_post_addr  <= a;
-        arm_post_wdata <= d;
-        arm_post_we    <= 1'b1;
-        @(posedge clk);
-        arm_post_we    <= 1'b0;
+        @(negedge clk);
+        arm_post_addr  = a;
+        arm_post_wdata = d;
+        arm_post_we    = 1'b1;
+        do @(posedge clk); while (!arm_post_ready);
+        @(negedge clk);
+        arm_post_we = 1'b0;
+    endtask
+
+    task automatic arm_post_burst(input logic [15:0] base,
+                                  input logic [7:0] first_data,
+                                  input int count);
+        @(negedge clk);
+        arm_post_we    = 1'b1;
+        arm_post_addr  = base;
+        arm_post_wdata = first_data;
+        for (int i = 0; i < count; i++) begin
+            do @(posedge clk); while (!arm_post_ready);
+            @(negedge clk);
+            if (i + 1 < count) begin
+                arm_post_addr  = base + 16'(i + 1);
+                arm_post_wdata = first_data + 8'(i + 1);
+            end
+            else begin
+                arm_post_we = 1'b0;
+            end
+        end
     endtask
 
     // ------------------------------------------------------------------
@@ -942,12 +1003,10 @@ module tb_vtw_system;
          * every address and byte and must not count a drop. */
         arm_rec_base = wrecs.size();
         arm_post_before = int'(cnt_posted_writes);
-        for (int i = 0; i < 4; i++) begin
-            arm_post_push(16'h6000 + 16'(i), 8'hD0 + 8'(i));
-        end
+        arm_post_burst(16'h6000, 8'hD0, 8);
         fork : arm_post_wait
             begin
-                wait (cnt_posted_writes == arm_post_before + 32'd4);
+                wait (cnt_posted_writes == arm_post_before + 32'd8);
                 disable arm_post_wait;
             end
             begin
@@ -959,10 +1018,10 @@ module tb_vtw_system;
                 disable arm_post_wait;
             end
         join
-        check(wrecs.size() >= arm_rec_base + 4,
-              "CPU0 injected all four physical writes");
-        if (wrecs.size() >= arm_rec_base + 4) begin
-            for (int i = 0; i < 4; i++) begin
+        check(wrecs.size() >= arm_rec_base + 8,
+              "CPU0 injected all eight physical writes");
+        if (wrecs.size() >= arm_rec_base + 8) begin
+            for (int i = 0; i < 8; i++) begin
                 check(wrecs[arm_rec_base + i].addr == 16'h6000 + 16'(i) &&
                       wrecs[arm_rec_base + i].data == 8'hD0 + 8'(i),
                       $sformatf("CPU0 post %0d kept address/data", i));
@@ -992,9 +1051,35 @@ module tb_vtw_system;
             // The live loop is LDA $C000 at $0358. Its low byte is already 0.
             sh_write(18'h0035A, 8'h05);
             sh_write(18'h00358, 8'h4C); // JMP $0500
+
+            /* Hold one ARM post valid on the exact core-post edge. The core
+             * tuple must win this capture; the held ARM tuple follows on the
+             * next accepted edge. Both must drain before the DEVSEL command. */
+            do @(negedge clk); while (!dut.core_post_accept);
+            arm_post_addr  = 16'h6FFD;
+            arm_post_wdata = 8'hA6;
+            arm_post_we    = 1'b1;
+            check(!arm_post_ready,
+                  "core posted write has priority over a simultaneous ARM post");
+            @(posedge clk);
+            #1ps;
+            check(dut.post_stage_valid_q &&
+                  dut.post_stage_addr_q == 16'h6000 &&
+                  dut.post_stage_wdata_q == 8'h5A,
+                  "core tuple occupies the posted boundary after collision");
+            do @(negedge clk); while (!arm_post_ready);
+            @(posedge clk);
+            #1ps;
+            check(dut.post_stage_valid_q &&
+                  dut.post_stage_addr_q == 16'h6FFD &&
+                  dut.post_stage_wdata_q == 8'hA6,
+                  "held ARM tuple follows the core tuple without mixing");
+            @(negedge clk);
+            arm_post_we = 1'b0;
+
             fork : overlay_post_wait
                 begin
-                    wait (wrecs.size() >= overlay_rec_base + 2);
+                    wait (wrecs.size() >= overlay_rec_base + 3);
                     disable overlay_post_wait;
                 end
                 begin
@@ -1006,14 +1091,17 @@ module tb_vtw_system;
                     disable overlay_post_wait;
                 end
             join
-            check(wrecs.size() >= overlay_rec_base + 2,
-                  "vTW emitted overlay RAM write and DEVSEL command");
-            if (wrecs.size() >= overlay_rec_base + 2) begin
+            check(wrecs.size() >= overlay_rec_base + 3,
+                  "vTW emitted both queued RAM writes and DEVSEL command");
+            if (wrecs.size() >= overlay_rec_base + 3) begin
                 check(wrecs[overlay_rec_base].addr == 16'h6000 &&
                       wrecs[overlay_rec_base].data == 8'h5A,
                       "vTW posts armed main-RAM overlay byte");
-                check(wrecs[overlay_rec_base + 1].addr == 16'hC0F3 &&
-                      wrecs[overlay_rec_base + 1].data == 8'h02,
+                check(wrecs[overlay_rec_base + 1].addr == 16'h6FFD &&
+                      wrecs[overlay_rec_base + 1].data == 8'hA6,
+                      "ARM post follows the simultaneous core post");
+                check(wrecs[overlay_rec_base + 2].addr == 16'hC0F3 &&
+                      wrecs[overlay_rec_base + 2].data == 8'h02,
                       "vTW orders SHOW after overlay bytes");
             end
             // Restore the live loop, then let the wait loop return to it.
@@ -1297,6 +1385,41 @@ module tb_vtw_system;
               "$C074=$03 write still reaches the physical bus while ignored");
         check(c074_state == 2'd0,
               "$C074 override ignores off-until-reset value 3");
+
+        /* Cancel one accepted-but-not-yet-emitted ARM tuple with hard reset.
+         * It must neither reach the engine nor appear on the Apple bus. */
+        begin
+            int reset_rec_base;
+            int reset_accept_base;
+            int reset_emit_base;
+            do @(negedge clk); while (!arm_post_ready ||
+                                      dut.post_stage_valid_q);
+            reset_accept_base = post_accept_checks;
+            reset_emit_base = post_emit_checks;
+            arm_post_addr  = 16'h6FFE;
+            arm_post_wdata = 8'hE7;
+            arm_post_we    = 1'b1;
+            @(posedge clk);
+            #1ps;
+            check(dut.post_stage_valid_q &&
+                  dut.post_stage_addr_q == 16'h6FFE &&
+                  dut.post_stage_wdata_q == 8'hE7,
+                  "reset test captures one pending ARM post");
+            reset_rec_base = wrecs.size();
+            rstn = 1'b0;
+            arm_post_we = 1'b0;
+            repeat (4) @(posedge clk);
+            #1ps;
+            check(!dut.post_stage_valid_q && !dut.eng_post_we,
+                  "hard reset clears the pending posted tuple");
+            for (int i = reset_rec_base; i < wrecs.size(); i++) begin
+                check(wrecs[i].addr != 16'h6FFE,
+                      "reset-cancelled posted tuple never reaches the bus");
+            end
+            check(post_accept_checks == reset_accept_base + 1 &&
+                  post_emit_checks == reset_emit_base,
+                  "reset cancels exactly one accepted tuple before emission");
+        end
 
         if (fails == 0) $display("VTW SYSTEM PASS");
         else            $display("VTW SYSTEM FAILED: %0d checks", fails);

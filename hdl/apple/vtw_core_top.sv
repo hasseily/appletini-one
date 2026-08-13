@@ -1041,16 +1041,43 @@ module vtw_core_top (
     assign fsm_req_valid = (xstate_q == X_BUS) && core_run && ab_read.res;
     wire core_post_req = (core_active && (xstate_q == X_ROUTE) &&
                           xl_is_posted) || (xstate_q == X_POST_STALL);
-    wire core_post_push = core_post_req && !eng_post_full;
+    wire core_post_accept = core_post_req && !eng_post_full;
     /* SmartPort holds the core outside X_ROUTE until READY, so contention is
      * not expected. Keeping it in the handshake still makes a stray CPU0
      * request fail closed instead of replacing a core write. */
     assign arm_post_ready = core_active && !eng_post_full && !core_post_req;
-    assign eng_post_we    = core_post_push || (arm_post_we && arm_post_ready);
-    assign eng_post_addr  = (arm_post_we && arm_post_ready)
-                          ? arm_post_addr : cycle_addr_q;
-    assign eng_post_wdata = (arm_post_we && arm_post_ready)
-                          ? arm_post_wdata : cycle_wdata_q;
+    wire arm_post_accept = arm_post_we && arm_post_ready;
+
+    /* Register the final accepted tuple before the queue. This cuts address
+     * translation and core/ARM arbitration away from the inferred BRAM write
+     * and fill-count enables. The queue's early-full margin reserves room for
+     * this one in-flight entry, so an accepted tuple drains on the next edge
+     * even if the early-full flag rises meanwhile. */
+    logic        post_stage_valid_q;
+    logic [15:0] post_stage_addr_q;
+    logic [7:0]  post_stage_wdata_q;
+
+    assign eng_post_we    = post_stage_valid_q && rstn && enable && ab_read.res;
+    assign eng_post_addr  = post_stage_addr_q;
+    assign eng_post_wdata = post_stage_wdata_q;
+
+    always_ff @(posedge clk) begin
+        if (!rstn || !enable || !ab_read.res) begin
+            post_stage_valid_q <= 1'b0;
+            post_stage_addr_q  <= '0;
+            post_stage_wdata_q <= '0;
+        end
+        else begin
+            post_stage_valid_q <= core_post_accept || arm_post_accept;
+            /* Capture the core tuple without the posted classifier as a
+             * register enable. ARM wins this data mux only when its handshake
+             * is accepted; core_post_req already makes the cases exclusive. */
+            post_stage_addr_q  <= arm_post_accept ? arm_post_addr
+                                                  : cycle_addr_q;
+            post_stage_wdata_q <= arm_post_accept ? arm_post_wdata
+                                                  : cycle_wdata_q;
+        end
+    end
 
     /* Completing edge: enable seen high by the core at the clock edge. */
     wire complete_mem    = (xstate_q == X_MEM_DONE)    && pace_ok;

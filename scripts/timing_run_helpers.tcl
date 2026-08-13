@@ -424,6 +424,19 @@ proc timing_run::require_file_hash {path expected description} {
     }
 }
 
+proc timing_run::require_matching_manifest_values {first second keys} {
+    foreach key $keys {
+        if {![dict exists $first $key] || ![dict exists $second $key]} {
+            error "Build manifests do not both contain '$key'."
+        }
+        set first_value [dict get $first $key]
+        set second_value [dict get $second $key]
+        if {$first_value ne $second_value} {
+            error "Build setting '$key' differs ('$first_value' != '$second_value')."
+        }
+    }
+}
+
 proc timing_run::validate_hardware_tests {tests_text} {
     variable required_hardware_tests
     set tests_text [string trim $tests_text]
@@ -477,6 +490,11 @@ proc timing_run::validate_signoff_manifest {values} {
     require_manifest_value $values status exported "Build status"
     require_manifest_value $values build_mode full "Build mode"
     require_manifest_value $values git_dirty 0 "Git dirty flag"
+    require_manifest_value $values rescue_used 0 "Timing rescue use"
+    require_manifest_value $values incremental_reference "" \
+        "Incremental reference"
+    require_manifest_value $values incremental_reference_sha256 "" \
+        "Incremental reference hash"
     require_number_at_least $values wns_ns 0.300 "Setup slack"
     require_number_at_least $values whs_ns 0.000 "Hold slack"
     require_number_at_least $values wpws_ns 0.000 "Pulse-width slack"
@@ -490,6 +508,16 @@ proc timing_run::validate_signoff_manifest {values} {
     }
     require_manifest_value $values route_status PASS "Route status"
     require_manifest_value $values bus_skew_status PASS "Bus-skew status"
+    foreach key {
+        vivado_version device_part speed_grade seed_control
+        synth_strategy synth_retiming control_set_opt_threshold
+        impl_strategy place_directive phys_opt_directive route_directive
+        post_route_phys_opt_directive jobs
+    } {
+        if {![dict exists $values $key] || [dict get $values $key] eq ""} {
+            error "Build flow value is missing ($key)."
+        }
+    }
     foreach key {candidate_dcp_sha256 bitstream_sha256 xsa_sha256} {
         if {![dict exists $values $key] ||
             [dict get $values $key] in {"" unavailable}} {

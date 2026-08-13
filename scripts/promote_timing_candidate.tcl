@@ -32,6 +32,12 @@ set confirm_sha [dict get $confirm git_sha]
 if {$tested_sha ne $confirm_sha} {
     error "The two builds must use the same Git commit ($tested_sha != $confirm_sha)."
 }
+timing_run::require_matching_manifest_values $tested $confirm {
+    vivado_version device_part speed_grade seed_control
+    synth_strategy synth_retiming control_set_opt_threshold
+    impl_strategy place_directive phys_opt_directive route_directive
+    post_route_phys_opt_directive jobs rescue_used
+}
 set current_git [timing_run::git_state]
 timing_run::require_manifest_value $current_git git_sha $tested_sha \
     "Current Git commit"

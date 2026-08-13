@@ -97,9 +97,27 @@ if {[regexp {(-[0-9][A-Za-z]?)$} $device_part -> speed_grade]} {
 
 set synth_run [get_runs synth_1]
 set impl_run [get_runs impl_1]
+
+# Keep all signoff flow settings in tracked Tcl. A generated project may hold
+# stale run options, so apply and check the required route and post-route
+# settings before the manifest records them.
+set_property -dict \
+    [list {STEPS.ROUTE_DESIGN.ARGS.MORE OPTIONS} {-tns_cleanup}] $impl_run
+set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true $impl_run
+set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE Explore $impl_run
+if {[string trim [get_property {STEPS.ROUTE_DESIGN.ARGS.MORE OPTIONS} $impl_run]] ne
+        "-tns_cleanup"} {
+    error "Route extra options did not apply."
+}
+if {![get_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED $impl_run] ||
+    [get_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE $impl_run] ne
+        "Explore"} {
+    error "Post-route physical optimization settings did not apply."
+}
+
 dict set build_info synth_strategy [timing_run::safe_property $synth_run STRATEGY ""]
 dict set build_info synth_retiming \
-    [timing_run::safe_property $synth_run STEPS.SYNTH_DESIGN.ARGS.RETIMING ""]
+    [timing_run::safe_property $synth_run STEPS.SYNTH_DESIGN.ARGS.GLOBAL_RETIMING ""]
 dict set build_info control_set_opt_threshold \
     [timing_run::safe_property $synth_run STEPS.SYNTH_DESIGN.ARGS.CONTROL_SET_OPT_THRESHOLD ""]
 dict set build_info impl_strategy [timing_run::safe_property $impl_run STRATEGY ""]
@@ -107,10 +125,18 @@ dict set build_info place_directive \
     [timing_run::safe_property $impl_run STEPS.PLACE_DESIGN.ARGS.DIRECTIVE ""]
 dict set build_info phys_opt_directive \
     [timing_run::safe_property $impl_run STEPS.PHYS_OPT_DESIGN.ARGS.DIRECTIVE ""]
-dict set build_info route_directive \
+set route_directive \
     [timing_run::safe_property $impl_run STEPS.ROUTE_DESIGN.ARGS.DIRECTIVE ""]
+set route_more_options \
+    [timing_run::safe_property $impl_run {STEPS.ROUTE_DESIGN.ARGS.MORE OPTIONS} ""]
+dict set build_info route_directive \
+    "directive=$route_directive;more_options=$route_more_options"
+set post_route_enabled \
+    [timing_run::safe_property $impl_run STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED ""]
+set post_route_directive \
+    [timing_run::safe_property $impl_run STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE ""]
 dict set build_info post_route_phys_opt_directive \
-    [timing_run::safe_property $impl_run STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE "Explore"]
+    "enabled=$post_route_enabled;directive=$post_route_directive"
 
 # Always synthesize from current RTL. Generated partitions in an incremental
 # checkpoint may not match the source being validated.
@@ -173,8 +199,6 @@ reset_run impl_1 -quiet
 # placement can leave sub-100 ps setup violations on pre-existing
 # carry-chain paths (the audio mixer, etc.). Post-route phys_opt closes
 # these deterministically; it is a no-op once timing is already met.
-catch {set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true [get_runs impl_1]}
-catch {set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE Explore [get_runs impl_1]}
 launch_runs impl_1 -to_step write_bitstream -jobs 8
 wait_on_run impl_1
 

@@ -50,9 +50,11 @@ failed run. Use the fresh full-build sequence above.
 
 Promotion requires two consecutive clean full builds of the same commit. Both
 must have setup WNS of at least `+0.300 ns`, nonnegative hold and pulse width,
-no timing failure, no bad route or bus skew, and no missing XDC object. Test the
-Package the first build's exact XSA and bitstream, test its named firmware on
-hardware, then bind that firmware hash to the build:
+no timing failure, no bad route or bus skew, no missing XDC object, and no
+extra rescue pass. Both builds must also use the same Vivado version and the
+same synthesis, placement, route, and physical-optimization settings. Package
+the first build's exact XSA and bitstream, test its named firmware on hardware,
+then bind that firmware hash to the build:
 
 ```powershell
 python scripts/package_timing_firmware.py <tested-build-id>
@@ -67,6 +69,13 @@ vivado -mode batch -source scripts/promote_timing_candidate.tcl `
 
 Promotion copies the tested build's checkpoint to the known-good incremental
 reference. See `docs/FABRIC_TIMING_MARGIN_PLAN.md` for the full process.
+
+Run the timing-tool tests after changing this flow:
+
+```powershell
+vivado -mode batch -source scripts/test_timing_tooling.tcl
+vivado -mode batch -source scripts/test_timing_run_properties.tcl
+```
 
 ## Images and Programming
 

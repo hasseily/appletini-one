@@ -62,6 +62,13 @@ require_equal [dict get $skew bus_skew_wns_ns] -0.267 "Bus-skew slack parser"
 
 set signoff [dict create \
     status exported build_mode full git_dirty 0 \
+    rescue_used 0 incremental_reference "" incremental_reference_sha256 "" \
+    vivado_version 2025.2 device_part xc7z020clg484-2 speed_grade -2 \
+    seed_control default synth_strategy synth synth_retiming auto \
+    control_set_opt_threshold auto impl_strategy impl \
+    place_directive Explore phys_opt_directive Explore \
+    route_directive {directive=Explore;more_options=-tns_cleanup} \
+    post_route_phys_opt_directive {enabled=1;directive=Explore} jobs 8 \
     wns_ns 0.312 tns_ns 0.000 whs_ns 0.061 ths_ns 0.000 \
     setup_failing_endpoints 0 hold_failing_endpoints 0 \
     pulse_width_failing_endpoints 0 \
@@ -72,6 +79,11 @@ set signoff [dict create \
     bitstream_sha256 [string repeat b 64] \
     xsa_sha256 [string repeat c 64]]
 timing_run::validate_signoff_manifest $signoff
+set rescued $signoff
+dict set rescued rescue_used 1
+if {![catch {timing_run::validate_signoff_manifest $rescued}]} {
+    error "Promotion policy accepted a rescued build."
+}
 dict set signoff whs_ns -0.001
 if {![catch {timing_run::validate_signoff_manifest $signoff}]} {
     error "Promotion policy accepted negative hold slack."
@@ -94,6 +106,16 @@ timing_run::validate_hardware_tests $all_hardware_tests
 if {![catch {timing_run::validate_hardware_tests \
     "boot-menu,disk-ii,smartport,vtw,mb-audit"}]} {
     error "Hardware test policy accepted an incomplete list."
+}
+
+set first_flow [dict create vivado_version 2025.2 route_directive Explore]
+set second_flow $first_flow
+timing_run::require_matching_manifest_values \
+    $first_flow $second_flow {vivado_version route_directive}
+dict set second_flow route_directive ExtraNetDelay_high
+if {![catch {timing_run::require_matching_manifest_values \
+        $first_flow $second_flow {vivado_version route_directive}}]} {
+    error "Promotion policy accepted different flow settings."
 }
 
 set temp_channel [file tempfile timing_history_root]

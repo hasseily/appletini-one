@@ -561,6 +561,7 @@ module vtw_core_top (
      * with the same access; the slot-ROM read that sets it uses the
      * address decode, not this bit. */
     logic cycle_sp_iosel7_q;
+    logic [2:0] sp_req_target_q;
 
     wire sp_intcxrom = cycle_translate_state_q.sw_intcxrom;
     wire sp_is_cxxx  = (cycle_addr_q[15:12] == 4'hC);
@@ -581,11 +582,13 @@ module vtw_core_top (
     wire sp_pop_reg  = sp_c8_win && (cycle_addr_q[10:0] == 11'h7F2);
     wire sp_hit      = sp_slot_rom || sp_c8_win;
 
-    assign sp_req_target = sp_slot_rom ? SP_TGT_SLOT_ROM :
-                           sp_data_reg ? SP_TGT_DATA     :
-                           sp_ctrl_reg ? SP_TGT_CTRL     :
-                           sp_pop_reg  ? SP_TGT_DPOP     :
-                                         SP_TGT_C8_ROM;
+    wire [2:0] sp_req_target_d =
+        sp_slot_rom ? SP_TGT_SLOT_ROM :
+        sp_data_reg ? SP_TGT_DATA     :
+        sp_ctrl_reg ? SP_TGT_CTRL     :
+        sp_pop_reg  ? SP_TGT_DPOP     :
+                      SP_TGT_C8_ROM;
+    assign sp_req_target = sp_req_target_q;
     assign sp_req_addr   = cycle_addr_q[10:0];
     assign sp_req_rw     = cycle_rw_q;
     assign sp_req_wdata  = cycle_wdata_q;
@@ -1160,6 +1163,7 @@ module vtw_core_top (
             rw_hold_q           <= 1'b0;
             arm_rw_flush_done   <= 1'b0;
             cycle_sp_iosel7_q   <= 1'b0;
+            sp_req_target_q     <= SP_TGT_C8_ROM;
             private_d2_q        <= 1'b0;
             d2_cycle_tick_q     <= 1'b0;
             sp_inflight_q       <= 1'b0;
@@ -1395,8 +1399,9 @@ module vtw_core_top (
                             xstate_q     <= X_SP_ISSUE;
                         end
                         else if (sp_hit) begin
-                            private_d2_q <= 1'b0;
-                            xstate_q <= X_SP_ISSUE;
+                            sp_req_target_q <= sp_req_target_d;
+                            private_d2_q    <= 1'b0;
+                            xstate_q        <= X_SP_ISSUE;
                         end
                         else if (xl_c01x_rd) begin
                             core_data_in_q <= status_byte;

@@ -1124,6 +1124,14 @@ module tb_vtw_system;
                 wait (sp_req_valid);
                 check(sp_req_target == 3'd0 && sp_req_rw,
                       "SmartPort test access reaches slot-ROM read target");
+                /* Ownership may change once X_ROUTE has accepted the
+                 * access. The issued request must keep its captured target
+                 * until the next handshake edge. */
+                sp_active = 1'b0;
+                #1ps;
+                check(sp_req_valid && sp_req_target == 3'd0,
+                      "SmartPort issue keeps its captured target");
+                sp_active = 1'b1;
                 @(posedge clk);
                 disable sp_wait_enter;
             end

@@ -197,6 +197,35 @@ def static_checks() -> None:
             "X_SP_ISSUE" in core_top and "wire sp_hit" in core_top and
             "cycle_sp_iosel7_q" in core_top,
             "vtw_core_top must classify and short-circuit SmartPort accesses")
+    require(re.search(
+                r"\blogic\s*\[\s*2\s*:\s*0\s*\]\s+sp_req_target_q\s*;",
+                core_top) is not None and
+            re.search(
+                r"\b(?:wire|logic)\s*\[\s*2\s*:\s*0\s*\]\s+"
+                r"sp_req_target_d\s*=\s*"
+                r"sp_slot_rom\s*\?\s*SP_TGT_SLOT_ROM\s*:\s*"
+                r"sp_data_reg\s*\?\s*SP_TGT_DATA\s*:\s*"
+                r"sp_ctrl_reg\s*\?\s*SP_TGT_CTRL\s*:\s*"
+                r"sp_pop_reg\s*\?\s*SP_TGT_DPOP\s*:\s*"
+                r"SP_TGT_C8_ROM\s*;",
+                core_top, re.DOTALL) is not None,
+            "vTW must decode each SmartPort request into a captured target")
+    require(re.search(
+                r"\bassign\s+sp_req_target\s*=\s*sp_req_target_q\s*;",
+                core_top) is not None,
+            "the vTW SmartPort output must use the captured request target")
+    require(re.search(
+                r"if\s*\(\s*!rstn\s*\)\s*begin"
+                r"(?:(?!\n\s*end\s*\n\s*else\s+begin).)*"
+                r"\bsp_req_target_q\s*<=\s*SP_TGT_C8_ROM\s*;",
+                core_top, re.DOTALL) is not None,
+            "the captured vTW SmartPort target must have a reset value")
+    require(re.search(
+                r"else\s+if\s*\(\s*sp_hit\s*\)\s*begin"
+                r"(?:(?!\n\s*end\b).)*"
+                r"\bsp_req_target_q\s*<=\s*sp_req_target_d\s*;",
+                core_top, re.DOTALL) is not None,
+            "X_ROUTE must capture the SmartPort target before X_SP_ISSUE")
     require("wire         vtw_sp_active = vtw_smartport_visible;" in top and
             ".sp_active(vtw_sp_active)" in top and
             ".vtw_valid(vtw_sp_req_valid)" in top,

@@ -38,6 +38,7 @@ SOURCES = [
     "hdl/apple/disk2_card.sv",
     "hdl/apple/linear_text_overlay_card.sv",
     "hdl/apple/smartport_card.sv",
+    "hdl/sim/tb_apple_bus_addr_enable.sv",
     "hdl/sim/tb_vtw_engine_unit.sv",
     "hdl/sim/tb_vtw_system.sv",
     "hdl/sim/tb_smartport_reset.sv",
@@ -66,6 +67,7 @@ MEM_FILES = [
 ]
 
 BENCHES = [
+    ("tb_apple_bus_addr_enable", "APPLE BUS ADDR ENABLE PASS"),
     ("tb_vtw_engine_unit", "VTW ENGINE UNIT PASS"),
     ("tb_vtw_system", "VTW SYSTEM PASS"),
     ("tb_smartport_reset", "SP RESET PASS"),
@@ -125,6 +127,7 @@ def read(rel_path: str) -> str:
 
 def static_checks() -> None:
     top = read("hdl/apple/apple_top.sv")
+    arbiter = read("hdl/apple/apple_bus_write_arbiter.sv")
     disk2 = read("hdl/apple/disk2_card.sv")
     sources = read("hdl/hdl_sources.txt")
     xdc = read("hdl/constraints/appletini_yarz.xdc")
@@ -162,8 +165,24 @@ def static_checks() -> None:
     require("vtw_core_top vtw_core_top_i" in top and
             ".NUM_CLIENTS(12)" in top and
             ".FAST_DATA_CLIENT(2)" in top and
+            ".FAST_ADDR_CLIENT(11)" in top and
             "vtw_ab_write," in top,
             "apple_top must instantiate the vTW in the 12-client arbiter")
+    require("parameter integer FAST_ADDR_CLIENT = -1" in arbiter and
+            "logic other_addr_rw_en;" in arbiter and
+            "LUT2 #(.INIT(4'hE)) apple_addr_enable_lut" in arbiter and
+            'LOC = "SLICE_X112Y23"' in arbiter and
+            'BEL = "A6LUT"' in arbiter and
+            ".I0(gated_writes[FAST_ADDR_CLIENT].wr_addr_rw_en)" in arbiter and
+            ".I1(other_addr_rw_en)" in arbiter and
+            ".O(ab_write.wr_addr_rw_en)" in arbiter,
+            "the production address-direction OR must stay same-cycle and "
+            "placed near U17")
+    require("set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_dir_a]" in xdc and
+            xdc.count("[get_ports a2fpga_dir_a]") == 2 and
+            "set_max_delay 10.0 -to [get_ports {a2fpga_dir_a a2fpga_dir_d}]" in xdc and
+            "SLEW FAST} [get_ports a2fpga_dir_a]" not in xdc,
+            "DIR_A must keep its slow electrical edge and 10 ns output bound")
     require("logic vtw_machine_ok_q;" in top and
             "if (machine_mode_q == 2'd1)" in top and
             "else if (machine_mode_q == 2'd2)" in top and

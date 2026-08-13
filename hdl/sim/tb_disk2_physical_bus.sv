@@ -125,7 +125,8 @@ module tb_disk2_physical_bus;
 
     apple_bus_write_arbiter #(
         .NUM_CLIENTS(12),
-        .FAST_DATA_CLIENT(2)
+        .FAST_DATA_CLIENT(2),
+        .FAST_ADDR_CLIENT(11)
     ) arbiter_i (
         .inh_allowed(1'b1),
         .client_writes(client_writes),

@@ -1646,7 +1646,8 @@ module apple_top(
     // so the two bus masters cannot contend at this priority mux.
     apple_bus_write_arbiter #(
         .NUM_CLIENTS(12),
-        .FAST_DATA_CLIENT(2)
+        .FAST_DATA_CLIENT(2),
+        .FAST_ADDR_CLIENT(11)
     )
     apple_bus_write_arbiter_i(
         .inh_allowed(machine_inh_allowed),

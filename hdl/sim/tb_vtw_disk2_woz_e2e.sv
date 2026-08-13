@@ -72,7 +72,11 @@ module tb_vtw_disk2_woz_e2e;
         client_writes[11] = vtw_write;
         client_writes[3] = disk_write;
     end
-    apple_bus_write_arbiter #(.NUM_CLIENTS(12), .FAST_DATA_CLIENT(2)) arbiter_i (
+    apple_bus_write_arbiter #(
+        .NUM_CLIENTS(12),
+        .FAST_DATA_CLIENT(2),
+        .FAST_ADDR_CLIENT(11)
+    ) arbiter_i (
         .inh_allowed(1'b1), .client_writes(client_writes),
         .ab_write(ab_write)
     );

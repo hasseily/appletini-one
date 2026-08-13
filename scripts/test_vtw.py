@@ -539,9 +539,10 @@ def static_checks() -> None:
             "placed data-enable LUT must absorb the phase/data-enable AND "
             "from a staged physical response while preserving the II+ saved-read hold "
             "and timed DMA write window with an INH fail-safe")
-    require("{IOSTANDARD LVCMOS33 DRIVE 12 SLEW FAST}" in xdc and
+    require(xdc.count("{IOSTANDARD LVCMOS33 DRIVE 12 SLEW FAST}") >= 2 and
+            "[get_ports a2fpga_dir_a]" in xdc and
             "[get_ports a2fpga_dir_d]" in xdc,
-            "the raw-PHI0 data-direction release must use the timed fast pad edge")
+            "both translator direction pins must use the measured 12 mA fast pad edge")
     require("TAP_IRQ_REARM_RELEASE = TAP_DATA_SNAP - 8;" in wrapper and
             "TAP_IRQ_REARM_ASSERT  = TAP_DATA_SNAP - 4;" in wrapper and
             "always_ff @(posedge clk)" in wrapper and

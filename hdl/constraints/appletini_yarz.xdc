@@ -63,7 +63,10 @@ set_property PACKAGE_PIN Y20 [get_ports a2fpga_oe_n_aux]
 set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_oe_n_aux]
 
 set_property PACKAGE_PIN U17 [get_ports a2fpga_dir_a]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_dir_a]
+# DIR_A uses the same 12 mA translator-control load as DIR_D. Keep the drive
+# strength and use the fast edge to meet the bus-master ownership bound.
+set_property -dict {IOSTANDARD LVCMOS33 DRIVE 12 SLEW FAST} \
+    [get_ports a2fpga_dir_a]
 
 set_property PACKAGE_PIN V17 [get_ports a2fpga_dir_d]
 # DIR_D closes the data-drive window from raw PHI0. Keep its current 12 mA

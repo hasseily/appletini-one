@@ -969,6 +969,73 @@ need their separate reset, prove reset-during-read and first-read behavior in
 simulation, and measure that cut next. Do not change the registered write-data
 stage based on global WNS alone; its measured residual is already `+0.288 ns`.
 
+#### PSRAM Input-IDDR Reset Build
+
+Commit `3c3a2064bbaf7817054a1e36f2f61a1010ccccbe` ties the reset input of
+each PSRAM data IDDR low. Configuration still initializes both IDDR outputs to
+zero. The input delays keep their existing reset, and fabric reset still
+clears the PSRAM command state, capture tape, shift word, data, and response
+valid state. A new read also clears the shift word before its delayed
+eight-sample input window. The change removes only the eight redundant IDDR
+reset sinks; it does not change the PSRAM clock, delay taps, sample phase, or
+read and write state timing.
+
+The focused XSim regression compared the production design with explicit
+asynchronous-reset, synchronous-reset, and reset-free IDDR variants. It
+checked both sampling phases, exact eight-sample reads, reset after samples
+one, three, and seven, the first read after reset, reset during a QPI write,
+and delay taps 0, 15, and 31. It also checked configuration initialization,
+the retained input-delay resets, and the top-level reset connection. The
+existing PSRAM handshake bench and 134 reported vTW, capture, egress, SDD,
+overlay, video, standard-Disk-II, and WOZ checks passed.
+
+The clean full build `20260813T141240Z-3c3a2064-full` used Vivado 2025.2,
+the default seed, no incremental reference, and no rescue pass. It exported
+the candidate DCP, bitstream, and XSA.
+
+| Check | Result |
+| --- | ---: |
+| Build status | `exported` |
+| Setup WNS / TNS | `+0.013 ns` / `0.000 ns` |
+| Setup failing endpoints | `0` |
+| Hold WNS / TNS | `+0.049 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.909 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Unconstrained internal endpoints | `0` |
+| Rescue used | `0` |
+
+The build used 10,125 slices, 30,597 LUTs, 20,375 registers, 74 block RAM
+tiles, six DSPs, and 1,010 control sets. Against the AXI write-data build,
+slices rose by 43, LUTs rose by four, registers rose by 72, and control sets
+rose by one. Setup WNS fell by `0.126 ns`, hold WNS fell by `0.004 ns`, pulse
+width did not change, and bus-skew slack rose by `0.001 ns`.
+
+The target class is gone. The prior report had eight timing destinations on
+PSRAM input-IDDR reset pins and 16 total report mentions of those pins; the
+new report has none. The asynchronous 133 MHz group lost exactly those eight
+endpoints and its WNS rose from `+0.139 ns` to `+1.158 ns`. Global WNS fell
+because an unrelated, existing vTW address-direction output path routed
+worse: its slack moved from `+0.885 ns` to `+0.013 ns` without a logic-depth
+change.
+
+| Rank | Path class | Slack | Route share | Levels |
+| ---: | --- | ---: | ---: | ---: |
+| 1 | vTW address-drive enable to `a2fpga_dir_a` | `+0.013 ns` | 49.7% | 2 |
+| 2 | vTW cycle address to main shadow-RAM write enable | `+0.168 ns` | 83.2% | 7 |
+| 3 | Registered AXI write data to Ethernet host write data | `+0.253 ns` | 94.6% | 0 |
+| 4-6, 8 | vTW CPU and engine control to debug state | `+0.255` to `+0.286 ns` | 73.8-74.9% | 8 |
+| 7, 9-10 | Disk II Q7 state to WOZ cached-line enables | `+0.280` to `+0.289 ns` | 79.7-79.8% | 9 |
+
+Keep the reset cut, but do not promote or package this build. It remains
+`0.287 ns` below the `+0.300 ns` setup gate, and no hardware check has run.
+Trace the address-direction output route next while preserving its same-cycle
+assertion and release, its `10.000 ns` maximum-delay constraint, and its
+current electrical slew. Do not infer PSRAM eye margin from RTL simulation;
+run the eye calibration and real PSRAM, Disk II, WOZ, and vTW read/write checks
+when hardware becomes available.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

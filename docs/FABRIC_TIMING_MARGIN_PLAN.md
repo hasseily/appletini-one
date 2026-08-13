@@ -1295,6 +1295,65 @@ Keep the decimal retime, but do not promote or package this build. It is
 deferred. Trace the merged SSI263 clear/start pulse next. Preserve its event
 edge and the formant sample sequence; do not add an audio or Apple bus cycle.
 
+#### SSI263 Backend-Start Register Build
+
+Commit `f265db75818be771c6f26117e52da14432a0d14a` keeps the existing
+SSI263 backend-start pulse as its own register. In the secondary Votrax
+instance, synthesis had merged that private audio pulse with the VIA CB1
+interrupt-clear pulse because both had the same value on every edge. The
+change adds no logic state, audio cycle, or Apple bus cycle. It leaves physical
+replication to implementation and does not impose a fanout limit.
+
+A new XSim bench checked 89 edge and state conditions. Each accepted Votrax
+write produced exactly one backend start and one VIA clear on the same edge,
+with the exact translated SSI263 and SC-01 tuple. Normal SSI starts did not
+clear the Votrax interrupt. Hard reset, Apple reset, and card disable cancelled
+the event, and the formant pipeline cleared and restarted on the consume edge.
+All 12 Phasor tests, 19 vTW benches, 20 standard-Disk-II checks, 66 WOZ checks,
+and the common capture, egress, SDD, overlay, and VidHD regressions passed.
+
+The clean full build `20260813T165055Z-f265db75-full` used Vivado 2025.2,
+the default seed, no incremental reference, and no rescue pass. It exported
+the candidate DCP, bitstream, and XSA.
+
+| Check | Result |
+| --- | ---: |
+| Build status | `exported` |
+| Setup WNS / TNS | `+0.138 ns` / `0.000 ns` |
+| Setup failing endpoints | `0` |
+| Hold WNS / TNS | `+0.072 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.958 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Unconstrained internal endpoints | `0` |
+| Rescue used | `0` |
+
+The build used 9,958 slices, 30,627 LUTs, 20,423 registers, 74 block RAM
+tiles, six DSPs, and 1,011 control sets. Against the decimal-retime build,
+slices fell by 123, LUTs rose by four, and registers rose by 29. Setup WNS
+rose by `0.011 ns`, hold WNS by `0.031 ns`, and bus-skew slack by `0.107 ns`;
+pulse width did not change. The methodology categories did not change.
+
+The routed checkpoint proves the split. The prior 1,011-load VIA-clear
+register no longer drives the formant history. The secondary backend-start
+register is distinct at `SLICE_X67Y111/AFF` with 242 direct pins, while the
+VIA-clear register has two pins. No VIA-clear path remains to the former seven
+endpoints. Their worst slack is now `+2.976` to `+3.227 ns`, and the worst
+remaining secondary start-to-formant path is `+2.466 ns`. Normal physical
+optimization made smaller start-register copies without a manual fanout rule.
+
+| Rank | Path class | Slack | Route share | Levels |
+| ---: | --- | ---: | ---: | ---: |
+| 1-4, 6-8, 10 | W65C02 mode to captured vTW shadow address | `+0.138` to `+0.284 ns` | 79.8-80.2% | 8 |
+| 5, 9 | Registered AXI write data to mouse Y shadow | `+0.180`, `+0.223 ns` | 94.6-95.0% | 0 |
+
+Keep the SSI263 register, but do not promote or package this build. It remains
+`0.162 ns` below the `+0.300 ns` gate, and hardware validation is deferred.
+Trace the W65C02-mode to route-capture cone next. Preserve the pre-access
+translation snapshot and the existing `X_CAPTURE` to `X_ROUTE` sequence; do
+not add a state or change the live Disk II path.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

@@ -218,6 +218,10 @@ def static_checks() -> None:
             "vtw_native_cycle_active" in disk2_card and
             "assign vtw_time_ready" in disk2_card and
             "assign vtw_write_timing_active" in disk2_card and
+            "logic       vtw_drive_spinning_q;" in disk2_card and
+            "vtw_drive_spinning_q <= drive_spinning;" in disk2_card and
+            "enabled && ab_read.res && vtw_drive_spinning_q && q7_q" in disk2_card and
+            "!vtw_drive_spinning_q || !drive_has_media" in disk2_card and
             "logic        vtw_req_pending_q;" in disk2_card and
             "wire vtw_io_read = vtw_req_pending_q;" in disk2_card and
             "vtw_resp_valid <= 1'b1;" in disk2_card,

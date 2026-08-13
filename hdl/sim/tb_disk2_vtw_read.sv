@@ -147,7 +147,25 @@ module tb_disk2_vtw_read;
         axi_write(8'h10, 32'h0000_0001); // D1_INFO: media present
         axi_write(8'h07, 32'd16);        // TRACK_LENGTH
         axi_write(8'h06, 32'h0000_0001);// TRACK_INFO: drive 1, qtrack 0
-        physical_write(4'h9, 8'h00);     // motor on, always a native write
+
+        // vTW sees rotation through one register. The local motor state must
+        // change first; the outbound speed-control view follows next clock.
+        @(negedge clk);
+        ab_read.addr = 16'hC0E9;
+        ab_read.rw = 1'b0;
+        ab_read.data_en = 1'b1;
+        @(posedge clk);
+        #1;
+        check(dut.motor_on_q && !dut.vtw_drive_spinning_q,
+              "vTW rotation view changed on the motor-on edge");
+        @(posedge clk);
+        #1;
+        check(dut.vtw_drive_spinning_q,
+              "vTW rotation view did not follow motor-on in one clock");
+        @(negedge clk);
+        ab_read.data_en = 1'b0;
+        ab_read.rw = 1'b1;
+        repeat (2) @(negedge clk);
 
         @(negedge clk);
         check(!vtw_time_ready,

@@ -574,6 +574,9 @@ module apple_top(
     logic        psram_dcount_edge_q;
     logic        psram_dcount_wr_pulse_q;
     logic        machine_inh_allowed;
+    /* Give the wrapper a same-edge copy that the placer can keep near its
+     * loads. The wrapper still sees each mode change on its original edge. */
+    (* DONT_TOUCH = "TRUE" *) logic machine_inh_allowed_wrapper_q;
     logic        machine_m2sel_active_high;
     logic        machine_gs_m2_qualify;
     logic        machine_is_iiplus;
@@ -732,7 +735,7 @@ module apple_top(
         .dbg_clear(busdbg_clear_pulse),
         .clk(clk),
         .rstn(rstn[1]),
-        .inh_allowed(machine_inh_allowed),
+        .inh_allowed(machine_inh_allowed_wrapper_q),
         .gs_m2_qualify(machine_gs_m2_qualify),
         .m2sel_active_high(machine_m2sel_active_high),
         .host_is_iiplus(machine_is_iiplus),
@@ -1740,6 +1743,7 @@ module apple_top(
             sdd_cfg_consumer_ptr_q          <= 32'h0;
             sdd_cfg_reset_pulse             <= 1'b0;
             machine_mode_q                  <= 2'd0;
+            machine_inh_allowed_wrapper_q   <= 1'b0;
             machine_m2sel_active_high       <= 1'b0;
             aux_provide_en_q                <= 1'b0;
             psram_dcount_q                  <= 5'd0;
@@ -1961,6 +1965,9 @@ module apple_top(
                     8'h55: sdd_cfg_reset_pulse <= as_common.wdata[0];
                     8'h60: begin
                         machine_mode_q            <= as_common.wdata[1:0];
+                        machine_inh_allowed_wrapper_q <=
+                            (as_common.wdata[1:0] == 2'd1) ||
+                            (as_common.wdata[1:0] == 2'd2);
                         machine_m2sel_active_high <= as_common.wdata[2];
                     end
                     8'h61: aux_provide_en_q <= as_common.wdata[0];

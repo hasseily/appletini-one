@@ -142,6 +142,13 @@ def static_checks() -> None:
             read("hdl/apple/vtw_bus_engine.sv"),
             "vTW must latch II/II+ host type and park that host in ordinary "
             "main RAM rather than I/O or Language Card space")
+    require("(* DONT_TOUCH = \"TRUE\" *) logic machine_inh_allowed_wrapper_q;" in top and
+            ".inh_allowed(machine_inh_allowed_wrapper_q)" in top and
+            "machine_inh_allowed_wrapper_q   <= 1'b0;" in top and
+            "machine_inh_allowed_wrapper_q <=" in top and
+            "(as_common.wdata[1:0] == 2'd1) ||" in top and
+            "(as_common.wdata[1:0] == 2'd2);" in top,
+            "the wrapper machine interlock needs a preserved same-edge local copy")
 
     # SmartPort short-circuit: vtw_core_top fast port wired to the card.
     core_top = read("hdl/apple/vtw_core_top.sv")

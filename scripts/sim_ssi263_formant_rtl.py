@@ -497,7 +497,8 @@ def main() -> int:
          str(ROOT / "hdl" / "apple" / "sc01a_digital_core.sv"),
          str(args.backend_source.resolve()),
          str(tb)], ROOT, xvlog_log)
-    run([vivado_tool("xelab"), "ssi263_formant_audio_tb", "-s", snapshot], ROOT, xelab_log)
+    run([vivado_tool("xelab"), "ssi263_formant_audio_tb", "-s", snapshot,
+         "-L", "unisims_ver"], ROOT, xelab_log)
     run([vivado_tool("xsim"), snapshot, "-runall"], ROOT, xsim_log)
 
     samples = read_samples(sample_txt)

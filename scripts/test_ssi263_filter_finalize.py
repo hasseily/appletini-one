@@ -12,11 +12,134 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "build" / "ssi263_filter_finalize_sim"
 BACKEND = ROOT / "hdl" / "apple" / "ssi263_formant_backend.sv"
+CONSTRAINTS_DIR = ROOT / "hdl" / "constraints"
 PASS_MARKER = "SSI263 FILTER FINALIZE PASS"
+
+
+def tcl_commands(source: str) -> list[str]:
+    """Return uncommented Tcl commands with backslash continuations joined."""
+    commands: list[str] = []
+    pending: list[str] = []
+    for raw_line in source.splitlines():
+        line = raw_line.split("#", 1)[0].rstrip()
+        if not line and not pending:
+            continue
+        continued = line.endswith("\\")
+        if continued:
+            line = line[:-1].rstrip()
+        if line:
+            pending.append(line)
+        if not continued and pending:
+            commands.append(" ".join(pending))
+            pending = []
+    if pending:
+        commands.append(" ".join(pending))
+    return commands
+
+
+def check_local_hard_reset_decode(source: str) -> None:
+    reset_name = "formant_hard_reset_local"
+    instance_name = "formant_hard_reset_local_i"
+
+    if source.count(reset_name) != 4:
+        raise RuntimeError(
+            f"{reset_name} must have only its declaration, LUT instance, "
+            "LUT output, and outer reset-condition references"
+        )
+    if not re.search(rf"\bwire\s+{reset_name}\s*;", source):
+        raise RuntimeError(f"{reset_name} must remain a combinational wire")
+
+    lut_contract = re.compile(
+        r'\(\*\s*KEEP\s*=\s*"TRUE"\s*,\s*'
+        r'DONT_TOUCH\s*=\s*"TRUE"\s*\*\)\s*'
+        r"LUT1\s*#\s*\(\s*\.INIT\s*\(\s*2'h1\s*\)\s*\)\s*"
+        rf"{instance_name}\s*\(\s*"
+        r"\.I0\s*\(\s*rstn\s*\)\s*,\s*"
+        rf"\.O\s*\(\s*{reset_name}\s*\)\s*"
+        r"\)\s*;",
+        re.DOTALL,
+    )
+    if not lut_contract.search(source):
+        raise RuntimeError(
+            "local formant hard reset must be the preserved stable-name "
+            "LUT1 INIT=2'h1 decode of raw rstn"
+        )
+
+    reset_priority = re.compile(
+        rf"if\s*\(\s*{reset_name}\s*\|\|\s*!\s*card_enabled\s*\)\s*"
+        r"begin\s*reset_power_state\s*\(\s*\)\s*;\s*end\s*"
+        r"else\s+if\s*\(\s*warm_reset\s*\)",
+        re.DOTALL,
+    )
+    if not reset_priority.search(source):
+        raise RuntimeError(
+            "outer backend hard/card reset must use the local decode at "
+            "first priority ahead of warm reset"
+        )
+    if re.search(r"if\s*\(\s*!\s*rstn\s*\|\|\s*!\s*card_enabled", source):
+        raise RuntimeError("outer backend reset still bypasses the local decode")
+
+    core_match = re.search(
+        r"sc01a_digital_core\s+digital_core_i\s*\((.*?)\n\s*\);",
+        source,
+        re.DOTALL,
+    )
+    if not core_match:
+        raise RuntimeError("missing digital_core_i instance")
+    core_ports = core_match.group(1)
+    if len(re.findall(r"\.rstn\s*\(\s*rstn\s*\)", core_ports)) != 1:
+        raise RuntimeError("digital_core_i.rstn must remain wired to raw rstn")
+    if len(
+        re.findall(
+            r"\.reset\s*\(\s*!\s*card_enabled\s*\|\|\s*warm_reset\s*\)",
+            core_ports,
+        )
+    ) != 1:
+        raise RuntimeError(
+            "digital_core_i.reset must remain card-disable or warm-reset"
+        )
+    if reset_name in core_ports:
+        raise RuntimeError("local outer-backend reset must not feed digital_core_i")
+
+    forbidden_source = (
+        r"\bformant_hard_reset\w*_q\b",
+        rf"\b{reset_name}\s*<=",
+        r"\bMAX_FANOUT\b",
+        rf"\bLOC\b[^\n]*\b{reset_name}\b",
+        rf"\b{reset_name}\b[^\n]*\bLOC\b",
+    )
+    for pattern in forbidden_source:
+        if re.search(pattern, source, re.IGNORECASE):
+            raise RuntimeError(
+                "local formant hard reset must not use a copy register, "
+                "MAX_FANOUT, or RTL placement attribute"
+            )
+
+    timing_commands = re.compile(
+        r"^set_(?:false_path|max_delay|min_delay|multicycle_path)\b",
+        re.IGNORECASE,
+    )
+    reset_targets = re.compile(
+        rf"{reset_name}|{instance_name}|ssi263|formant_backend",
+        re.IGNORECASE,
+    )
+    for xdc in CONSTRAINTS_DIR.rglob("*.xdc"):
+        for command in tcl_commands(xdc.read_text(encoding="utf-8")):
+            if reset_name.lower() in command.lower():
+                raise RuntimeError(
+                    f"local formant reset must have no XDC property or "
+                    f"timing exception: {xdc}: {command}"
+                )
+            if timing_commands.search(command) and reset_targets.search(command):
+                raise RuntimeError(
+                    f"SSI263/formant reset timing exception is forbidden: "
+                    f"{xdc}: {command}"
+                )
 
 
 def static_checks() -> bool:
     source = BACKEND.read_text(encoding="utf-8")
+    check_local_hard_reset_decode(source)
     has_finalize = "SYNTH_FILTER_FINALIZE" in source
 
     if has_finalize:
@@ -109,6 +232,8 @@ def main() -> int:
             "tb_ssi263_filter_finalize_snap",
             "--timescale",
             "1ns/1ps",
+            "-L",
+            "unisims_ver",
         ],
         "xelab.log",
     )

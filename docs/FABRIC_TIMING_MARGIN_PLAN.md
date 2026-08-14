@@ -1685,6 +1685,88 @@ worse, and it remained `0.248 ns` below the promotion gate. Local commit
 `321ae0b62e9c3d8115b4c6de6dfbc8f7529dffc6` restores the prior RTL and test
 guard. Do not lower the fanout limit or keep this broad replication hint.
 
+#### Targeted vTW/Phasor Write-Payload Copy Build
+
+Commit `22a4b39408209246e360ac4922ec7a872e448e91` adds a masked copy to the
+existing registered AXI write skid. Only WDATA bits 1, 5, 8, and 13 plus all
+four WSTRB bits get copy flops. The copy flops use the canonical output
+register's exact initial value, reset, clock enable, and input mux; they do not
+sample the canonical Q output or add an AXI cycle. Unselected bits remain
+direct aliases. Only vTW shadow and Phasor pan/audio writes use the copied
+bus; AWVALID, AWADDR, response state, and all other clients stay canonical.
+
+The focused wrapper bench checked copy equality after every clock across
+reset, idle, AW-first, W-first, simultaneous AW/W, both skid slots, poisoned
+live inputs, a 16-beat burst, response stalls, and locked MMIO. Static checks
+pin the mask, parameter order, update priority, aliases, full top-level
+threading, and consumer list. All 20 vTW benches, 12 Phasor checks, 16
+SmartPort checks, 20 standard-Disk-II checks, 66 WOZ checks, and 64 other
+card/capture/video checks passed. The capture-FIFO suite still reports its
+existing note that a nonzero jam address freezes after 65 events while the
+RTL comment says 64.
+
+The clean full build `20260814T014836Z-22a4b394-full` used Vivado 2025.2,
+the default seed, no incremental reference, and no rescue pass. It exported
+the candidate DCP, bitstream, and XSA.
+
+| Check | Result |
+| --- | ---: |
+| Build status | `exported` |
+| Setup WNS / TNS | `+0.243 ns` / `0.000 ns` |
+| Setup failing endpoints | `0` |
+| Hold WNS / TNS | `+0.015 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.893 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Unconstrained internal endpoints | `0` |
+| Rescue used | `0` |
+
+The routed DCP contains exactly eight enabled copy FDREs: bits 1, 5, 8, 13,
+and 32 through 35. They use the same 133 MHz clock, clock enable, and reset.
+Their direct loads range from four to nine. The worst copy D and CE slacks are
+`+2.091 ns` and `+1.487 ns`.
+
+No path remains from a selected canonical write-data or strobe bit to the 658
+switched vTW-shadow and Phasor D/CE endpoints. The former exact target paths
+now start at the copy flops:
+
+| Target | Routed slack |
+| --- | ---: |
+| Write data bit 8 to shadow word FIFO | `+4.564 ns` |
+| Write data bit 1 to Phasor pan | `+4.018 ns` |
+| Write data bit 13 to shadow pointer | `+5.139 ns` |
+| Write data bit 5 to Phasor audio | `+5.285 ns` |
+| Write data bit 5 to shadow byte data | `+5.038 ns` |
+
+The build uses 9,868 slices, 30,181 LUTs, 20,218 registers, 2,843 `CARRY4`
+blocks, 74 block RAM tiles, six DSPs, and 1,009 control sets. Against the vTW
+debug-pipeline baseline, slices fell by 28, LUTs by 71, `CARRY4` blocks by two,
+and control sets by one; registers rose by 44. The methodology set remains 100
+findings with no new class.
+
+| Rank | Path class | Slack | Levels |
+| ---: | --- | ---: | ---: |
+| 1-3, 8-10 | Reset replica to primary SSI263 filter reset | `+0.243` to `+0.289 ns` | 1 |
+| 4-5 | Unmasked write-data bit 4 to Phasor/SmartPort state | `+0.262` / `+0.265 ns` | 0 |
+| 6-7 | W65C02 state to vTW debug-reason staging | `+0.278` / `+0.283 ns` | 6 |
+
+The exported SHA-256 values are
+`0515b7e2019f7c7c1bab2c5b31a192e4db9595c3197292cc4dfcbb23a2564e67`
+for the DCP,
+`89f612e685152958b91f759c8a3c45b8ab6fec9906ca42628487e5c62aae0c8b`
+for the bitstream, and
+`554097de5cb1ac89ad5b064b30bb2a07488aacea141577d3f8f6f26337b5bb81`
+for the XSA.
+
+Keep this targeted copy. It improves setup WNS by `0.095 ns`, removes every
+selected old target, reduces slices and LUTs, and leaves all signoff checks
+clean. Do not claim that it removes the whole write-skid class: unmasked bit 4
+is still route-bound at `+0.262 ns`. The build remains `0.057 ns` below the
+promotion gate, so do not promote or package it; hardware validation is still
+deferred. Trace the SSI263 reset class next, then decide whether the bit-4
+copy is still needed.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

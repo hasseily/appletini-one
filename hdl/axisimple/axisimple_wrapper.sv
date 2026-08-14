@@ -104,9 +104,7 @@ module axisimple_wrapper(
     wire        wskid_input_ready;
     wire        wskid_valid;
     wire        axid_wready;
-    /* Keep one AXI beat/state machine. Ask synthesis to clone only its
-     * registered output bits when the client routes exceed this fanout. */
-    (* MAX_FANOUT = 64 *) wire [36:0] wskid_payload;
+    wire [36:0] wskid_payload;
 
     assign S_AXI_WREADY = S_AXI_ARESETN && wskid_input_ready;
 

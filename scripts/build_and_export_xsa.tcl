@@ -99,12 +99,27 @@ set synth_run [get_runs synth_1]
 set impl_run [get_runs impl_1]
 
 # Keep all signoff flow settings in tracked Tcl. A generated project may hold
-# stale run options, so apply and check the required route and post-route
-# settings before the manifest records them.
+# stale run options, so apply and check the required placement, route, and
+# post-route settings before the manifest records them.
+set place_directive Explore
+if {[timing_run::env_enabled APPLETINI_PLACE_DIRECTIVE]} {
+    set place_directive [string trim $::env(APPLETINI_PLACE_DIRECTIVE)]
+}
+set allowed_place_directives {
+    Explore ExtraNetDelay_high ExtraPostPlacementOpt AltSpreadLogic_high
+}
+if {[lsearch -exact $allowed_place_directives $place_directive] < 0} {
+    error "Unsupported APPLETINI_PLACE_DIRECTIVE: $place_directive"
+}
+set_property STEPS.PLACE_DESIGN.ARGS.DIRECTIVE $place_directive $impl_run
 set_property -dict \
     [list {STEPS.ROUTE_DESIGN.ARGS.MORE OPTIONS} {-tns_cleanup}] $impl_run
 set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true $impl_run
 set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE Explore $impl_run
+if {[get_property STEPS.PLACE_DESIGN.ARGS.DIRECTIVE $impl_run] ne
+        $place_directive} {
+    error "Place directive did not apply."
+}
 if {[string trim [get_property {STEPS.ROUTE_DESIGN.ARGS.MORE OPTIONS} $impl_run]] ne
         "-tns_cleanup"} {
     error "Route extra options did not apply."
@@ -114,6 +129,7 @@ if {![get_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED $impl_run] ||
         "Explore"} {
     error "Post-route physical optimization settings did not apply."
 }
+puts "Placement directive: $place_directive"
 
 dict set build_info synth_strategy [timing_run::safe_property $synth_run STRATEGY ""]
 dict set build_info synth_retiming \

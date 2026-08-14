@@ -79,8 +79,6 @@ def main() -> int:
             "tb_ssi263_start_timing_snap",
             "--timescale",
             "1ns/1ps",
-            "-L",
-            "unisims_ver",
         ],
         "xelab.log",
     )

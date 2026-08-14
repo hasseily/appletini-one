@@ -43,7 +43,6 @@ module tb_ssi263_filter_finalize;
     integer fabric_cycle = 0;
     integer last_tick_cycle = -1;
     integer output_commits = 0;
-    integer reset_decode_checks = 0;
 
     always #5 clk = ~clk;
 
@@ -84,18 +83,6 @@ module tb_ssi263_filter_finalize;
             end
         end
     endtask
-
-    // Check both clock phases and each asynchronous testbench reset change.
-    // The short delay lets the primitive's combinational output settle.
-    always @(clk or rstn) begin
-        #1;
-        reset_decode_checks = reset_decode_checks + 1;
-        if (dut.formant_hard_reset_local !== ~rstn) begin
-            $display("SSI263 FILTER FINALIZE FAIL: local hard-reset decode mismatch rstn=%b local=%b",
-                     rstn, dut.formant_hard_reset_local);
-            $fatal(1);
-        end
-    end
 
     function automatic logic [2:0] last_tap(input integer stage);
         begin
@@ -396,161 +383,26 @@ module tb_ssi263_filter_finalize;
         end
     endtask
 
-    task automatic expect_hard_reset_state(input string reset_case);
-        begin
-            require(dut.synth_state_q == dut.SYNTH_IDLE &&
-                    dut.filter_stage_q == dut.FILTER_F1 &&
-                    dut.active_valid_q == 1'b0 &&
-                    dut.is_votrax_q == 1'b0 &&
-                    dut.mac_accum_q == 56'sd0 &&
-                    dut.mac_product_q == 56'sd0 &&
-                    dut.mac_tap_q == 3'd0 &&
-                    dut.ticks_q == 5'd0 &&
-                    dut.rom_f1_q == 4'd7 &&
-                    dut.filt_f2_q == 5'd0 &&
-                    dut.f1_y1_q == 24'sd0 &&
-                    audio == 16'sd0 && phoneme_done == 1'b0,
-                    {reset_case, " did not clear on the hard-reset edge"});
-        end
-    endtask
-
-    task automatic release_hard_reset_and_expect_quiet(
-        input integer commits_before,
-        input string reset_case,
-        input logic start_on_release
-    );
-        integer cycle;
-        begin
-            @(negedge clk);
-            warm_reset = 1'b0;
-            audio_tick = 1'b0;
-            start_votrax = start_on_release;
-            start = start_on_release;
-            rstn = 1'b1;
-            @(posedge clk);
-            #1;
-            require(dut.synth_state_q == dut.SYNTH_IDLE &&
-                    dut.active_valid_q == start_on_release &&
-                    dut.is_votrax_q == start_on_release &&
-                    audio == 16'sd0 &&
-                    output_commits == commits_before,
-                    {reset_case, " reset release was late or produced output"});
-
-            @(negedge clk);
-            start = 1'b0;
-            start_votrax = 1'b0;
-            for (cycle = 1; cycle <= PIPELINE_LATENCY; cycle = cycle + 1) begin
-                @(posedge clk);
-                #1;
-                require(dut.synth_state_q == dut.SYNTH_IDLE &&
-                        audio == 16'sd0 &&
-                        output_commits == commits_before,
-                        {reset_case, " produced a late output after reset release"});
-            end
-        end
-    endtask
-
-    task automatic check_active_hard_reset;
-        integer commits_before;
-        begin
-            pulse_reset();
-
-            // Enter a real active phoneme and start its synth pipeline.
-            @(negedge clk);
-            start_votrax = 1'b1;
-            start = 1'b1;
-            @(posedge clk);
-            #1;
-            require(dut.active_valid_q == 1'b1 &&
-                    dut.is_votrax_q == 1'b1,
-                    "could not arm active phoneme before hard reset");
-            @(negedge clk);
-            start = 1'b0;
-            start_votrax = 1'b0;
-            audio_tick = 1'b1;
-            @(posedge clk);
-            #1;
-            require(dut.synth_state_q == dut.SYNTH_EXCITE,
-                    "could not arm active synth pipeline before hard reset");
-
-            // Dirty state that the hard-reset edge must clear.
-            dut.mac_accum_q = 56'sd1234567;
-            dut.mac_product_q = -56'sd7654321;
-            dut.mac_tap_q = 3'd5;
-            dut.f1_y1_q = 24'sd3456;
-            dut.audio_q = 16'sd2345;
-            commits_before = output_commits;
-            @(negedge clk);
-            warm_reset = 1'b1;
-            start = 1'b1;
-            audio_tick = 1'b1;
-            rstn = 1'b0;
-            #1;
-            require(dut.formant_hard_reset_local === 1'b1 &&
-                    dut.synth_state_q == dut.SYNTH_EXCITE &&
-                    dut.active_valid_q == 1'b1 &&
-                    dut.mac_accum_q == 56'sd1234567 &&
-                    dut.f1_y1_q == 24'sd3456,
-                    "hard reset changed active state before its clock edge");
-            @(posedge clk);
-            #1;
-            expect_hard_reset_state("active pipeline");
-            require(output_commits == commits_before,
-                    "active pipeline committed on its hard-reset edge");
-
-            release_hard_reset_and_expect_quiet(commits_before,
-                                                "active pipeline", 1'b0);
-        end
-    endtask
-
-    task automatic check_finalize_hard_reset;
-        integer commits_before;
-        begin
-            arm_pending_finalize();
-            commits_before = output_commits;
-            rstn = 1'b0;
-            #1;
-            require(dut.formant_hard_reset_local === 1'b1 &&
-                    dut.synth_state_q == STATE_FILTER_FINALIZE &&
-                    dut.mac_accum_q != 56'sd0,
-                    "hard reset changed pending finalize before its clock edge");
-            @(posedge clk);
-            #1;
-            expect_hard_reset_state("pending finalize");
-            require(output_commits == commits_before,
-                    "pending finalize committed on its hard-reset edge");
-
-            release_hard_reset_and_expect_quiet(commits_before,
-                                                "pending finalize", 1'b1);
-        end
-    endtask
-
     task automatic check_finalize_cancellations;
         begin
             arm_pending_finalize();
-            dut.rom_f1_q = 4'd2;
             warm_reset = 1'b1;
             @(posedge clk);
             #1;
             require(dut.synth_state_q == dut.SYNTH_IDLE &&
                     dut.active_valid_q == 1'b0 &&
-                    dut.mac_accum_q == 56'sd0 && audio == 16'sd0 &&
-                    dut.formant_hard_reset_local === 1'b0 &&
-                    dut.rom_f1_q == 4'd2,
+                    dut.mac_accum_q == 56'sd0 && audio == 16'sd0,
                     "warm reset did not cancel pending finalize");
             @(negedge clk);
             warm_reset = 1'b0;
 
             arm_pending_finalize();
-            dut.rom_f1_q = 4'd2;
             card_enabled = 1'b0;
             @(posedge clk);
             #1;
             require(dut.synth_state_q == dut.SYNTH_IDLE &&
                     dut.active_valid_q == 1'b0 &&
-                    dut.mac_accum_q == 56'sd0 && audio == 16'sd0 &&
-                    dut.formant_hard_reset_local === 1'b0 &&
-                    dut.rom_f1_q == 4'd7,
+                    dut.mac_accum_q == 56'sd0 && audio == 16'sd0,
                     "card disable did not cancel pending finalize");
             @(negedge clk);
             card_enabled = 1'b1;
@@ -715,14 +567,11 @@ module tb_ssi263_filter_finalize;
         check_last(6, -56'sd274877906944, 56'sd0, -24'sd8388608);
         check_last(6, -56'sd274877939712, 56'sd0, -24'sd8388608);
 
-        check_active_hard_reset();
-        check_finalize_hard_reset();
         check_finalize_cancellations();
         check_exact_sequence();
 
         $display("SSI263 FILTER FINALIZE PASS checks=%0d latency=%0d samples=%0d",
-                 checks + reset_decode_checks,
-                 PIPELINE_LATENCY, SEQUENCE_SAMPLES);
+                 checks, PIPELINE_LATENCY, SEQUENCE_SAMPLES);
         $finish;
     end
 

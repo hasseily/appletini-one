@@ -256,14 +256,6 @@ module ssi263_formant_backend (
     logic [3:0] core_filt_f3;
     logic       core_phoneme_done;
     logic       phoneme_done_q;
-    wire        formant_hard_reset_local;
-
-    // Decode the shared active-low reset next to this backend's reset load.
-    (* KEEP = "TRUE", DONT_TOUCH = "TRUE" *)
-    LUT1 #(.INIT(2'h1)) formant_hard_reset_local_i (
-        .I0(rstn),
-        .O(formant_hard_reset_local)
-    );
 
     assign audio = audio_q;
     assign phoneme_done = phoneme_done_q;
@@ -1131,7 +1123,7 @@ module ssi263_formant_backend (
         logic signed [55:0] mixed_next;
         logic signed [23:0] closed_next;
 
-        if (formant_hard_reset_local || !card_enabled) begin
+        if (!rstn || !card_enabled) begin
             reset_power_state();
         end else if (warm_reset) begin
             phoneme_done_q <= 1'b0;

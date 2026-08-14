@@ -1624,6 +1624,67 @@ promote or package it; hardware validation is still deferred. The next work
 should address the route-heavy registered AXI write-data class without
 changing the exposed vTW-to-Disk-II functional timing.
 
+#### AXI Write-Payload Fanout Trial (Rejected)
+
+Commit `27913a0d3db5904f1d4748329caf78bcd952257c` changed production RTL only
+by adding a `MAX_FANOUT = 64` hint to the registered 37-bit AXI write-skid
+payload, and it updated the matching static guard. The hint asked synthesis to
+clone the existing same-edge output registers; it did not add a skid state,
+change AXI handshakes, or add a client clock cycle. The wrapper regression,
+all 20 vTW benches, 12 Phasor checks, 16 SmartPort checks, 20
+standard-Disk-II checks, and 66 WOZ checks passed.
+
+The clean full build `20260813T205035Z-27913a0d-full` used Vivado 2025.2,
+the default seed, no incremental reference, and no rescue pass. It exported
+the candidate DCP, bitstream, and XSA.
+
+| Check | Result |
+| --- | ---: |
+| Build status | `exported` |
+| Setup WNS / TNS | `+0.052 ns` / `0.000 ns` |
+| Setup failing endpoints | `0` |
+| Hold WNS / TNS | `+0.057 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.773 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Unconstrained internal endpoints | `0` |
+| Rescue used | `0` |
+
+The hint worked locally. The routed DCP has 76 write-skid output FDREs instead
+of 39. Each measured target bit has one original and two copies, all on the
+same 133 MHz clock, and the largest measured direct load fell from 147 to 60.
+The worst output-register D and CE paths were `+2.080 ns` and `+2.444 ns`.
+
+| Former target | Baseline slack | Trial slack |
+| --- | ---: | ---: |
+| Write data bit 8 to shadow word FIFO | `+0.148 ns` | `+2.847 ns` |
+| Write data bit 1 to Phasor pan | `+0.174 ns` | `+0.250 ns` |
+| Write data bit 13 to the old shadow-pointer endpoint | `+0.204 ns` | `+3.849 ns` |
+| Write data bit 5 to Phasor audio | `+0.272 ns` | `+0.725 ns` |
+| Write data bit 5 to shadow byte data | `+0.285 ns` | `+2.963 ns` |
+
+No write-skid path remains in the routed global top 30. Placement instead
+exposed unrelated reset-to-SSI, W65C02-to-vTW-decode, SSI backend-start, and
+Disk-II-to-vTW paths at `+0.052` to `+0.095 ns`. Against the debug-pipeline
+baseline, setup WNS fell by `0.096 ns`; occupied slices rose by 133, LUTs by
+43, and registers by 39. The build used 10,029 slices, 30,295 LUTs, 20,213
+registers, 2,845 `CARRY4` blocks, 74 block RAM tiles, six DSPs, and 1,010
+control sets. Methodology classes and counts did not change.
+
+The exported SHA-256 values are
+`c1258fe3985eb213a6fc714e4c5ae14bf40df98efcdca9f10f8cd88a27197e68`
+for the DCP,
+`037d698d486ce102b4b866a062ed790836a2704c8ca755edfe9adca9a1d49687`
+for the bitstream, and
+`5e9c7491ab754cd99cb0a901a2b759fd716dec2e44d655264fa6dd0361d625bf`
+for the XSA.
+
+Reject this trial. It fixed the named routes but made total timing and packing
+worse, and it remained `0.248 ns` below the promotion gate. Local commit
+`321ae0b62e9c3d8115b4c6de6dfbc8f7529dffc6` restores the prior RTL and test
+guard. Do not lower the fanout limit or keep this broad replication hint.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

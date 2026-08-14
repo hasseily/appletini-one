@@ -1767,6 +1767,75 @@ promotion gate, so do not promote or package it; hardware validation is still
 deferred. Trace the SSI263 reset class next, then decide whether the bit-4
 copy is still needed.
 
+#### Rejected SSI263 Local Hard-Reset Decode Trial
+
+Commit `6758a6e2d0497b7e2ca1cc2899a8cf00616a3b00` added one preserved
+`LUT1 INIT=1` hard-reset decode inside each SSI263 formant backend. It changed
+only the outer backend's synchronous hard-reset term. The nested digital core
+kept its raw reset input, and card-disable and Apple warm-reset priority did
+not change. Commit `38d6d84` reverts the trial after the routed audit.
+
+The focused formant test passed 7,620 checks at the unchanged 151-clock
+pipeline length and produced the same 12 exact samples. The start-timing bench
+passed 89 checks, and all 12 Phasor checks passed. Fresh 64-phone SSI263 and
+64-phone native Votrax runs each captured 92,160 samples. Their text and WAV
+files matched the retained post-finalization goldens byte for byte.
+
+The clean full build `20260814T024305Z-6758a6e2-full` used Vivado 2025.2,
+the default seed, no incremental reference, and no rescue pass. It exported
+the candidate DCP, bitstream, and XSA.
+
+| Check | Result |
+| --- | ---: |
+| Build status | `exported` |
+| Setup WNS / TNS | `+0.057 ns` / `0.000 ns` |
+| Setup failing endpoints | `0` |
+| Hold WNS / TNS | `+0.046 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.931 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Unconstrained internal endpoints | `0` |
+| Rescue used | `0` |
+
+The DCP proves the requested split. It contains exactly two distinct,
+unfixed `LUT1 INIT=1` cells with `KEEP` and `DONT_TOUCH`. The primary local
+decode drives 1,138 outer-backend reset endpoints; the secondary drives 553.
+Neither local reset crosses into the other backend or the nested digital core.
+The old global reset drives no outer-backend reset endpoint and still drives
+the unchanged 157 secondary digital-core reset endpoints.
+
+| Local reset leg | LUT location | Loads | Worst full-path slack |
+| --- | --- | ---: | ---: |
+| Primary backend | `X52Y104/D6LUT` | 444 | `+1.691 ns` |
+| Secondary backend | `X87Y90/A6LUT` | 885 | `+2.194 ns` |
+
+The target reset legs are therefore safe, but placement made another formant
+path much worse. The new first three setup paths start at the Apple-bus reset
+snapshot and end at primary `f2_y2`, `f2_y3`, and `f2n_y2` data inputs. Their
+slacks are `+0.057`, `+0.059`, and `+0.101 ns`. The worst path has one logic
+level and 7.337 ns data delay: 0.484 ns logic and 6.853 ns route. Global setup
+margin fell by `0.186 ns` from the `+0.243 ns` baseline.
+
+The trial uses 9,873 slices, 30,175 LUTs, 20,195 registers, 2,843 `CARRY4`
+blocks, 74 block RAM tiles, six DSPs, and 1,010 control sets. Against the
+baseline, slices rose by five and control sets by one; LUTs fell by six and
+registers by 23. The 100 methodology findings and their classes did not
+change.
+
+The exported SHA-256 values are
+`c4866f9583cb448949319c6b7b83625b9155820e703a101320838322405c8a94`
+for the DCP,
+`016e4752d924315571a9702681046e1899220ef26f7535d85cde33e0aa7425c2`
+for the bitstream, and
+`0e77466d54714028671a3298e4c4464d3b85b32596c85e249d64a6f73a329a4b`
+for the XSA.
+
+Reject this trial. The local reset split works, but the full routed design
+loses 0.186 ns of setup margin and adds a control set. Keep the `22a4b39`
+baseline. Do not widen this reset split or thread another reset partition
+without a new path report and a separate safety case.
+
 ### 2. Group Apple Bus Snapshot Copies When Needed
 
 The broad `MAX_FANOUT` trial is complete and rejected. Use a fresh path report

@@ -13,6 +13,8 @@ module apple_top(
     //       card_feature_enable, reset_release_ready, etc.)
     input [3:0] rstn,
     input globals::AxiSimple_common as_common,
+    input [31:0] as_vtw_phasor_wdata,
+    input [3:0] as_vtw_phasor_wstrb,
     AxiSimple_if.client as_client,
     AxiSimple_if.client smartport_as_client,
     AxiSimple_if.client boot_menu_as_client,
@@ -1409,16 +1411,16 @@ module apple_top(
 
     wire vtw_sh_addr_set = as_client.awvalid &&
                            (as_common.awaddr == CARD_CTRL_REG_VTW_SHADOW_ADDR) &&
-                           (as_common.wstrb != 4'b0000);
+                           (as_vtw_phasor_wstrb != 4'b0000);
     wire vtw_sh_byte_write = as_client.awvalid &&
                              (as_common.awaddr == CARD_CTRL_REG_VTW_SHADOW_DATA) &&
-                             as_common.wstrb[0];
+                             as_vtw_phasor_wstrb[0];
     wire vtw_sh_word_write = as_client.awvalid &&
                              (as_common.awaddr == CARD_CTRL_REG_VTW_SHADOW_DATA4) &&
-                             (as_common.wstrb == 4'b1111);
+                             (as_vtw_phasor_wstrb == 4'b1111);
     wire vtw_sh_word_read = as_client.awvalid &&
                             (as_common.awaddr == CARD_CTRL_REG_VTW_SHADOW_READ4) &&
-                            as_common.wstrb[0] && as_common.wdata[0];
+                            as_vtw_phasor_wstrb[0] && as_vtw_phasor_wdata[0];
 
     /* Machine gate, latched for the lifetime of the enable request. The
      * PS re-identifies the machine on every Apple reset (machine_mode
@@ -1512,11 +1514,11 @@ module apple_top(
         .clk(clk),
         .rstn(rstn[3]),
         .addr_set(vtw_sh_addr_set),
-        .addr_value(as_common.wdata[17:0]),
+        .addr_value(as_vtw_phasor_wdata[17:0]),
         .byte_write(vtw_sh_byte_write),
-        .byte_wdata(as_common.wdata[7:0]),
+        .byte_wdata(as_vtw_phasor_wdata[7:0]),
         .word_write(vtw_sh_word_write),
-        .word_wdata(as_common.wdata),
+        .word_wdata(as_vtw_phasor_wdata),
         .word_read(vtw_sh_word_read),
         .pointer(vtw_sh_addr_q),
         .read_data(vtw_sh_rdata_q),
@@ -1862,17 +1864,19 @@ module apple_top(
                     end
                     CARD_CTRL_REG_PHASOR_PAN_LO: begin
                         automatic logic [31:0] pan_tmp = globals::apply_wstrb(
-                            {8'h00, phasor_pan_q[23:0]}, as_common.wdata, as_common.wstrb);
+                            {8'h00, phasor_pan_q[23:0]},
+                            as_vtw_phasor_wdata, as_vtw_phasor_wstrb);
                         phasor_pan_q[23:0] <= pan_tmp[23:0];
                     end
                     CARD_CTRL_REG_PHASOR_PAN_HI: begin
                         automatic logic [31:0] pan_tmp = globals::apply_wstrb(
-                            {8'h00, phasor_pan_q[47:24]}, as_common.wdata, as_common.wstrb);
+                            {8'h00, phasor_pan_q[47:24]},
+                            as_vtw_phasor_wdata, as_vtw_phasor_wstrb);
                         phasor_pan_q[47:24] <= pan_tmp[23:0];
                     end
                     CARD_CTRL_REG_PHASOR_AUDIO: begin
                         phasor_audio_q <= globals::apply_wstrb(
-                            phasor_audio_q, as_common.wdata, as_common.wstrb);
+                            phasor_audio_q, as_vtw_phasor_wdata, as_vtw_phasor_wstrb);
                     end
                     CARD_CTRL_REG_ETH_ADDR: begin
                         automatic logic [31:0] tmp = globals::apply_wstrb(

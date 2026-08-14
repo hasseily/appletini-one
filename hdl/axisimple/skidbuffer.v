@@ -85,7 +85,8 @@ module skidbuffer #(
 		//
 		parameter	[0:0]	OPT_PASSTHROUGH = 0,
 		parameter		DW = 8,
-		parameter	[0:0]	OPT_INITIAL = 1'b1
+		parameter	[0:0]	OPT_INITIAL = 1'b1,
+		parameter	[DW-1:0]	OPT_COPY_MASK = {DW{1'b0}}
 		// }}}
 	) (
 		// {{{
@@ -95,11 +96,13 @@ module skidbuffer #(
 		input	wire	[DW-1:0]	i_data,
 		output	wire			o_valid,
 		input	wire			i_ready,
-		output	reg	[DW-1:0]	o_data
+		output	reg	[DW-1:0]	o_data,
+		output	wire	[DW-1:0]	o_data_copy
 		// }}}
 	);
 
 	wire	[DW-1:0]	w_data;
+	genvar	copy_index;
 
 	generate if (OPT_PASSTHROUGH)
 	begin : PASSTHROUGH
@@ -111,6 +114,8 @@ module skidbuffer #(
 			o_data = 0;
 		else
 			o_data = i_data;
+
+		assign	o_data_copy = o_data;
 
 		assign	w_data = 0;
 
@@ -181,6 +186,8 @@ module skidbuffer #(
 				o_data = i_data;
 			else
 				o_data = 0;
+
+			assign	o_data_copy = o_data;
 			// }}}
 			// }}}
 		end else begin : REG_OUTPUT
@@ -217,6 +224,31 @@ module skidbuffer #(
 					o_data <= 0;
 			end
 			// }}}
+
+			for (copy_index = 0; copy_index < DW;
+					copy_index = copy_index + 1) begin : COPY_BITS
+				if (OPT_COPY_MASK[copy_index]) begin : ENABLED
+					(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) reg copy_q;
+
+					initial if (OPT_INITIAL) copy_q = 0;
+					always @(posedge i_clk)
+					if (OPT_LOWPOWER && i_reset)
+						copy_q <= 0;
+					else if (!o_valid || i_ready)
+					begin
+						if (r_valid)
+							copy_q <= r_data[copy_index];
+						else if (!OPT_LOWPOWER || i_valid)
+							copy_q <= i_data[copy_index];
+						else
+							copy_q <= 0;
+					end
+
+					assign	o_data_copy[copy_index] = copy_q;
+				end else begin : DISABLED
+					assign	o_data_copy[copy_index] = o_data[copy_index];
+				end
+			end
 
 			// }}}
 		end

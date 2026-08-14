@@ -51,6 +51,8 @@ module axisimple_wrapper(
     output	wire				S_AXI_RLAST,
     output	wire	[1:0]			S_AXI_RRESP,
 
+    output wire [31:0] as_vtw_phasor_wdata,
+    output wire [3:0]  as_vtw_phasor_wstrb,
     output globals::AxiSimple_common as_common,
     AxiSimple_if.master as_clients [7:0]
 );
@@ -105,12 +107,17 @@ module axisimple_wrapper(
     wire        wskid_valid;
     wire        axid_wready;
     wire [36:0] wskid_payload;
+    wire [36:0] wskid_payload_copy;
 
     assign S_AXI_WREADY = S_AXI_ARESETN && wskid_input_ready;
 
+    /* Give the east-side vTW shadow and Phasor loads their own same-stage
+     * launch flops for the routed data bits and all write strobes. Unselected
+     * payload bits remain direct aliases of the canonical skid output. */
     skidbuffer #(
         .OPT_LOWPOWER(1'b1),
         .OPT_OUTREG(1'b1),
+        .OPT_COPY_MASK({1'b0, 4'b1111, 32'h0000_2122}),
         .DW(37)
     )
     wchannel_skid_i (
@@ -121,8 +128,12 @@ module axisimple_wrapper(
         .i_data({S_AXI_WLAST, S_AXI_WSTRB, S_AXI_WDATA}),
         .o_valid(wskid_valid),
         .i_ready(axid_wready),
-        .o_data(wskid_payload)
+        .o_data(wskid_payload),
+        .o_data_copy(wskid_payload_copy)
     );
+
+    assign as_vtw_phasor_wdata = wskid_payload_copy[31:0];
+    assign as_vtw_phasor_wstrb = wskid_payload_copy[35:32];
 
     axidouble #(
         .C_AXI_DATA_WIDTH(32),

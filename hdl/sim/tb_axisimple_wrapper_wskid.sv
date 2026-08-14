@@ -54,6 +54,8 @@ module tb_axisimple_wrapper_wskid;
     wire [1:0]   s_rresp;
 
     globals::AxiSimple_common as_common;
+    wire [31:0] as_vtw_phasor_wdata;
+    wire [3:0]  as_vtw_phasor_wstrb;
     AxiSimple_if as_clients [7:0] ();
     wire [7:0] client_awvalid;
 
@@ -106,6 +108,8 @@ module tb_axisimple_wrapper_wskid;
         .S_AXI_RLAST(s_rlast),
         .S_AXI_RRESP(s_rresp),
         .as_common(as_common),
+        .as_vtw_phasor_wdata(as_vtw_phasor_wdata),
+        .as_vtw_phasor_wstrb(as_vtw_phasor_wstrb),
         .as_clients(as_clients)
     );
 
@@ -127,6 +131,19 @@ module tb_axisimple_wrapper_wskid;
             fails = fails + 1;
         end
     endtask
+
+    /* Check after nonblocking assignments on every edge. This covers reset,
+     * idle/invalid cycles, every AW/W arrival order, both skid slots, poisoned
+     * live inputs, bursts, B backpressure, and locked MMIO below. */
+    always @(posedge clk) begin
+        #1ps;
+        check(as_vtw_phasor_wdata === as_common.wdata,
+              $sformatf("vTW/Phasor WDATA copy mismatch: copy=%08x canonical=%08x",
+                        as_vtw_phasor_wdata, as_common.wdata));
+        check(as_vtw_phasor_wstrb === as_common.wstrb,
+              $sformatf("vTW/Phasor WSTRB copy mismatch: copy=%x canonical=%x",
+                        as_vtw_phasor_wstrb, as_common.wstrb));
+    end
 
     always @(posedge clk) begin
         if (rstn) begin

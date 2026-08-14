@@ -12,6 +12,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "build" / "axisimple_wrapper_sim"
 WRAPPER = ROOT / "hdl" / "axisimple" / "axisimple_wrapper.sv"
+SKIDBUFFER = ROOT / "hdl" / "axisimple" / "skidbuffer.v"
+TOP = ROOT / "hdl" / "appletini_yarz_top.sv"
+APPLE_TOP = ROOT / "hdl" / "apple" / "apple_top.sv"
 MMIO_H = ROOT / "ps_sources" / "lib" / "axisimple_mmio.h"
 FRONTEND_MAIN = ROOT / "ps_sources" / "frontend" / "main.c"
 CORE1_MAIN = ROOT / "ps_sources" / "frontend_core1" / "main.c"
@@ -93,6 +96,241 @@ def check_registered_wskid() -> None:
     )
 
 
+def check_masked_wskid_copy() -> None:
+    wrapper_source = WRAPPER.read_text(encoding="utf-8")
+    skid_source = SKIDBUFFER.read_text(encoding="utf-8")
+    top_source = TOP.read_text(encoding="utf-8")
+    apple_source = APPLE_TOP.read_text(encoding="utf-8")
+
+    require(
+        r"parameter\s+\[0:0\]\s+OPT_INITIAL\s*=\s*1'b1\s*,\s*"
+        r"parameter\s+\[DW-1:0\]\s+OPT_COPY_MASK\s*=\s*"
+        r"\{\s*DW\s*\{\s*1'b0\s*\}\s*\}",
+        skid_source,
+        "copy mask must append after OPT_INITIAL and default to no copied bits",
+    )
+    require(
+        r"output\s+(?:wire\s+)?\[DW-1:0\]\s+o_data_copy",
+        skid_source,
+        "skidbuffer must expose its same-stage masked copy",
+    )
+    require(
+        r"if\s*\(\s*OPT_PASSTHROUGH\s*\)\s*"
+        r"begin\s*:\s*PASSTHROUGH.*?"
+        r"assign\s+o_data_copy\s*=\s*o_data\s*;.*?"
+        r"end\s+else\s+begin\s*:\s*LOGIC",
+        skid_source,
+        "passthrough mode must alias o_data_copy to o_data",
+    )
+    require(
+        r"if\s*\(\s*!OPT_OUTREG\s*\)\s*"
+        r"begin\s*:\s*NET_OUTPUT.*?"
+        r"assign\s+o_data_copy\s*=\s*o_data\s*;.*?"
+        r"end\s+else\s+begin\s*:\s*REG_OUTPUT",
+        skid_source,
+        "unregistered output mode must alias o_data_copy to o_data",
+    )
+    require(
+        r"for\s*\(\s*copy_index\s*=\s*0\s*;\s*"
+        r"copy_index\s*<\s*DW\s*;\s*copy_index\s*=\s*copy_index\s*\+\s*1\s*\)"
+        r"\s*begin\s*:\s*COPY_BITS.*?"
+        r"if\s*\(\s*OPT_COPY_MASK\[copy_index\]\s*\)\s*begin\s*:\s*ENABLED.*?"
+        r"\breg\s+copy_q\s*;",
+        skid_source,
+        "skidbuffer must create copy flops only for selected mask bits",
+    )
+    require(
+        r"begin\s*:\s*ENABLED.*?\breg\s+copy_q\s*;\s*"
+        r"initial\s+if\s*\(\s*OPT_INITIAL\s*\)\s*copy_q\s*=\s*0\s*;",
+        skid_source,
+        "selected copy flops must follow the existing OPT_INITIAL policy",
+    )
+    require(
+        r"always\s*@\s*\(\s*posedge\s+i_clk\s*\)\s*"
+        r"if\s*\(\s*OPT_LOWPOWER\s*&&\s*i_reset\s*\)\s*"
+        r"copy_q\s*<=\s*(?:1'b)?0\s*;\s*"
+        r"else\s+if\s*\(\s*!o_valid\s*\|\|\s*i_ready\s*\)\s*begin\s*"
+        r"if\s*\(\s*r_valid\s*\)\s*"
+        r"copy_q\s*<=\s*r_data\[copy_index\]\s*;\s*"
+        r"else\s+if\s*\(\s*!OPT_LOWPOWER\s*\|\|\s*i_valid\s*\)\s*"
+        r"copy_q\s*<=\s*i_data\[copy_index\]\s*;\s*"
+        r"else\s+copy_q\s*<=\s*(?:1'b)?0\s*;\s*end",
+        skid_source,
+        "copy flops must use the registered skid output's exact update priority",
+    )
+    if re.search(r"\bcopy_q\s*<=\s*o_data(?:\b|\s*\[)", skid_source):
+        raise AssertionError(
+            "masked skid copy must not add an o_data-to-copy register stage"
+        )
+    require(
+        r"assign\s+o_data_copy\[copy_index\]\s*=\s*copy_q\s*;",
+        skid_source,
+        "selected copy output bits must come from copy_q",
+    )
+    require(
+        r"else\s+begin\s*:\s*DISABLED.*?"
+        r"assign\s+o_data_copy\[copy_index\]\s*=\s*o_data\[copy_index\]\s*;",
+        skid_source,
+        "unselected copy output bits must remain canonical combinational aliases",
+    )
+
+    require(
+        r"output\s+(?:wire|logic)?\s*\[31:0\]\s+as_vtw_phasor_wdata",
+        wrapper_source,
+        "wrapper must expose the shared vTW/Phasor WDATA copy",
+    )
+    require(
+        r"output\s+(?:wire|logic)?\s*\[3:0\]\s+as_vtw_phasor_wstrb",
+        wrapper_source,
+        "wrapper must expose the shared vTW/Phasor WSTRB copy",
+    )
+    require(
+        r"wire\s+\[36:0\]\s+wskid_payload_copy\s*;",
+        wrapper_source,
+        "wrapper must retain the complete copied W payload",
+    )
+    require(
+        r"wchannel_skid_i\s*\("
+        r"(?=[^;]*\.o_data\s*\(\s*wskid_payload\s*\))"
+        r"(?=[^;]*\.o_data_copy\s*\(\s*wskid_payload_copy\s*\))",
+        wrapper_source,
+        "canonical and copied payloads must come from the same skid instance",
+    )
+    require(
+        r"\.OPT_COPY_MASK\s*\(\s*"
+        r"\{\s*1'b0\s*,\s*4'b1111\s*,\s*32'h0000_2122\s*\}\s*\)",
+        wrapper_source,
+        "copy mask must select only WDATA bits 1, 5, 8, 13 and WSTRB bits 0-3",
+    )
+    require(
+        r"assign\s+as_vtw_phasor_wdata\s*=\s*"
+        r"wskid_payload_copy\[31:0\]\s*;",
+        wrapper_source,
+        "shared WDATA output must use the copied payload",
+    )
+    require(
+        r"assign\s+as_vtw_phasor_wstrb\s*=\s*"
+        r"wskid_payload_copy\[35:32\]\s*;",
+        wrapper_source,
+        "shared WSTRB output must use the copied payload",
+    )
+    if re.search(r"MAX_FANOUT", wrapper_source):
+        raise AssertionError("masked trial must not restore broad MAX_FANOUT copying")
+
+    for signal, width in (
+        ("as_vtw_phasor_wdata", r"31:0"),
+        ("as_vtw_phasor_wstrb", r"3:0"),
+    ):
+        require(
+            rf"(?:wire|logic)\s+\[{width}\]\s+{signal}\s*;",
+            top_source,
+            f"top must declare {signal}",
+        )
+        connections = re.findall(
+            rf"\.{signal}\s*\(\s*{signal}\s*\)", top_source
+        )
+        if len(connections) != 2:
+            raise AssertionError(
+                f"top must thread {signal} once from wrapper and once to apple_top"
+            )
+        require(
+            rf"input\s+(?:wire|logic)?\s*\[{width}\]\s+{signal}",
+            apple_source,
+            f"apple_top must accept {signal}",
+        )
+
+    allowed_patterns = [
+        r"input\s+(?:wire|logic)?\s*\[31:0\]\s+as_vtw_phasor_wdata",
+        r"input\s+(?:wire|logic)?\s*\[3:0\]\s+as_vtw_phasor_wstrb",
+        r"wire\s+vtw_sh_addr_set\s*=.*?;",
+        r"wire\s+vtw_sh_byte_write\s*=.*?;",
+        r"wire\s+vtw_sh_word_write\s*=.*?;",
+        r"wire\s+vtw_sh_word_read\s*=.*?;",
+        r"vtw_shadow_host_port\s+vtw_shadow_host_port_i\s*\(.*?\);",
+        r"CARD_CTRL_REG_PHASOR_PAN_LO\s*:\s*begin.*?end",
+        r"CARD_CTRL_REG_PHASOR_PAN_HI\s*:\s*begin.*?end",
+        r"CARD_CTRL_REG_PHASOR_AUDIO\s*:\s*begin.*?end",
+    ]
+    allowed_spans: list[tuple[int, int]] = []
+    for pattern in allowed_patterns:
+        match = re.search(pattern, apple_source, re.MULTILINE | re.DOTALL)
+        if not match:
+            raise AssertionError(
+                f"apple_top is missing an approved copy consumer: {pattern}"
+            )
+        allowed_spans.append(match.span())
+    for match in re.finditer(r"\bas_vtw_phasor_w(?:data|strb)\b", apple_source):
+        if not any(start <= match.start() < end for start, end in allowed_spans):
+            line = apple_source.count("\n", 0, match.start()) + 1
+            raise AssertionError(
+                f"shared skid copy reached an unapproved apple_top consumer at line {line}"
+            )
+
+    for pattern, message in (
+        (
+            r"wire\s+vtw_sh_addr_set\s*=.*?"
+            r"as_vtw_phasor_wstrb\s*!=\s*4'b0000\s*\)\s*;",
+            "vTW address command must use copied WSTRB",
+        ),
+        (
+            r"wire\s+vtw_sh_byte_write\s*=.*?"
+            r"as_vtw_phasor_wstrb\[0\]\s*;",
+            "vTW byte command must use copied WSTRB",
+        ),
+        (
+            r"wire\s+vtw_sh_word_write\s*=.*?"
+            r"as_vtw_phasor_wstrb\s*==\s*4'b1111\s*\)\s*;",
+            "vTW word command must use copied WSTRB",
+        ),
+        (
+            r"wire\s+vtw_sh_word_read\s*=.*?"
+            r"as_vtw_phasor_wstrb\[0\].*?as_vtw_phasor_wdata\[0\]\s*;",
+            "vTW word-read command must use both copied buses",
+        ),
+        (
+            r"\.addr_value\s*\(\s*as_vtw_phasor_wdata\[17:0\]\s*\).*?"
+            r"\.byte_wdata\s*\(\s*as_vtw_phasor_wdata\[7:0\]\s*\).*?"
+            r"\.word_wdata\s*\(\s*as_vtw_phasor_wdata\s*\)",
+            "vTW shadow payload ports must use copied WDATA",
+        ),
+    ):
+        require(pattern, apple_source, message)
+
+    for target, pattern in (
+        ("vtw_sh_addr_set", r"wire\s+vtw_sh_addr_set\s*=.*?;"),
+        ("vtw_sh_byte_write", r"wire\s+vtw_sh_byte_write\s*=.*?;"),
+        ("vtw_sh_word_write", r"wire\s+vtw_sh_word_write\s*=.*?;"),
+        ("vtw_sh_word_read", r"wire\s+vtw_sh_word_read\s*=.*?;"),
+        (
+            "vtw_shadow_host_port_i",
+            r"vtw_shadow_host_port\s+vtw_shadow_host_port_i\s*\(.*?\);",
+        ),
+    ):
+        match = re.search(pattern, apple_source, re.MULTILINE | re.DOTALL)
+        if not match:
+            raise AssertionError(f"apple_top is missing {target}")
+        if re.search(r"as_common\.w(?:data|strb)", match.group(0)):
+            raise AssertionError(
+                f"{target} must not retain canonical WDATA/WSTRB loads"
+            )
+
+    for register in ("PHASOR_PAN_LO", "PHASOR_PAN_HI", "PHASOR_AUDIO"):
+        match = re.search(
+            rf"CARD_CTRL_REG_{register}\s*:\s*begin(.*?)end",
+            apple_source,
+            re.MULTILINE | re.DOTALL,
+        )
+        if not match or "as_vtw_phasor_wdata" not in match.group(1) or \
+                "as_vtw_phasor_wstrb" not in match.group(1):
+            raise AssertionError(
+                f"{register} must use both shared copied buses"
+            )
+        if re.search(r"as_common\.w(?:data|strb)", match.group(1)):
+            raise AssertionError(
+                f"{register} must not retain a canonical WDATA/WSTRB load"
+            )
+
+
 def check_no_exclusive_mmio_contract() -> None:
     wrapper_source = WRAPPER.read_text(encoding="utf-8")
     mmio_source = MMIO_H.read_text(encoding="utf-8")
@@ -155,6 +393,7 @@ def check_no_exclusive_mmio_contract() -> None:
 
 def main() -> int:
     check_registered_wskid()
+    check_masked_wskid_copy()
     check_no_exclusive_mmio_contract()
     if OUT_DIR.exists():
         shutil.rmtree(OUT_DIR)

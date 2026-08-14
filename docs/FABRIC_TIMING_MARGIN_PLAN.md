@@ -1906,6 +1906,65 @@ the post-route enable and route options, and make promotion compare the Vivado
 version and every flow field between both builds. Promotion must also require
 `rescue_used=0`; an extra rescue pass does not show intrinsic margin.
 
+#### Rejected `ExtraNetDelay_high` Placement Trial
+
+Commit `851a634068004755610765e6cbe85fac2e64cd7d` adds a checked
+`APPLETINI_PLACE_DIRECTIVE` build setting. The default remains `Explore`; the
+setting accepts only the four planned directives, reads the applied value back
+from `impl_1`, and records it in the timing manifest.
+
+The clean full build `20260814T074859Z-851a6340-full` used
+`ExtraNetDelay_high`, Vivado 2025.2, the default seed, no incremental
+reference, and no rescue pass. It exported the candidate DCP, bitstream, and
+XSA from a clean tree.
+
+| Check | Result |
+| --- | ---: |
+| Build status | `exported` |
+| Setup WNS / TNS | `+0.251 ns` / `0.000 ns` |
+| Setup failing endpoints | `0` |
+| Hold WNS / TNS | `+0.041 ns` / `0.000 ns` |
+| Pulse-width WNS / TNS | `+0.265 ns` / `0.000 ns` |
+| Worst bus-skew slack | `+5.822 ns` |
+| Route errors | `0` |
+| Missing XDC objects | `0` |
+| Unconstrained internal endpoints | `0` |
+| Rescue used | `0` |
+
+Both clean `Explore` builds, `20260814T014836Z-22a4b394-full` and
+`20260814T063549Z-e6df807c-full`, produced the same `+0.243 ns` setup WNS,
+resources, methodology counts, and top ten. `ExtraNetDelay_high` therefore
+gained only `0.008 ns`. It moved the former reset, unmasked write-data bit 4,
+and vTW debug-reason classes out of the top ten, but exposed other route-heavy
+paths:
+
+| Rank | Path class | Slack | Levels |
+| ---: | --- | ---: | ---: |
+| 1 | Apple bus data bit 6 to SuperSprite PSG state | `+0.251 ns` | 0 |
+| 2-3 | AXI write-skid bit 2 to boot-menu C8 ROM | `+0.264` / `+0.268 ns` | 0 |
+| 4 | AXI write-skid bit 12 to boot-menu timeout state | `+0.274 ns` | 0 |
+| 5 | vTW cycle address to shadow block-RAM write enable | `+0.318 ns` | 5 |
+
+The build uses 9,925 slices, 30,165 LUTs, 20,235 registers, 2,843 `CARRY4`
+blocks, 74 block RAM tiles, six DSPs, and 1,010 control sets. Against the
+repeatable `Explore` reference, slices rose by 57, registers by 17, and
+control sets by one; LUTs fell by 16. The methodology set remains the same
+100 findings and the same six rule rows.
+
+The exported SHA-256 values are
+`79a27afa41eeca809e8a9c412c7919d14c6002bae0c556bef515a6bc699c5ad0`
+for the DCP,
+`6ba3d0ced33f7fc507dc83503a794c7ca13e34728c6fc20426696fe5a274bf5a`
+for the bitstream, and
+`5e40eb4680993926324147d095e76dd2a9abc69d607e837b1820dd290034827a`
+for the XSA.
+
+Reject this directive as the placement reference. Its `0.008 ns` gain does
+not justify the slice, register, and control-set cost, and it remains
+`0.049 ns` below the promotion gate. Keep the `+0.243 ns` `Explore` build as
+the current reference. Retain the directive-control tooling and this archive
+for the remaining bounded placement trials.
+
 ## Phase 3: Use Only if the Target Still Fails
 
 ### 1. Physical Response Stage

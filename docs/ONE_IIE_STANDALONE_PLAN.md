@@ -12,6 +12,9 @@ Last source audit: 2026-08-16
   simulation has passed.
 - `[ ]` means the work or proof is still missing.
 - An RTL simulation or a clean build does not count as board proof.
+- The clean `36a5bd2` package is a user-approved hardware test image. The user
+  waived the +0.300 ns release margin for this test handoff only; the image is
+  not promoted and has not passed board validation.
 
 ## Goal and Supported Shape
 
@@ -71,6 +74,12 @@ sections list the board and system tests which still need to run.
   `data_en` instead of repeating the address decode on the BRAM enable path.
 - `354cc9a`: use the existing east-side AXI write-data copy for vTW sync and
   posted-write commands, with the same register values and strobes.
+- `acb770d`: register the resolved virtual data phase while keeping card data
+  live before that phase for existing `serve_en` users.
+- `649faca`: pipeline the unchanged ONE//e speaker output calculation while
+  preserving its public sample cadence and values.
+- `36a5bd2`: pipeline vTW slowdown bookkeeping and add directed checks for the
+  unchanged slowdown timing contract.
 
 ## Safety Contract
 
@@ -142,7 +151,10 @@ soft-switch manager, capture path, and virtual card modules used in host mode.
 After `drive_en`, the bus samples the active owner/address/R/W tuple across a
 window which includes the vTW posted-write pipeline, then holds that tuple from
 `addr_en` through `data_en`. Slot decoders therefore do not use a live
-high-fanout owner mux during the visible cycle.
+high-fanout owner mux during the visible cycle. Card write or floating data
+remains live before the data phase so existing `serve_en` consumers can see it.
+One fabric clock before `data_en`, the bus captures the merged arbiter byte and
+holds it through the public data phase and soft-CPU response.
 
 `apple_top` keeps `physical_ab_read` and `virtual_ab_read` separate. Effective
 ONE//e selects the virtual record. All card replies enter the existing
@@ -302,7 +314,9 @@ Each `$C03x` access toggles the motherboard speaker. `onee_speaker_audio.sv`
 turns that state into signed, DC-blocked, saturated 16-bit mono samples. The
 board top mixes the sample into both left and right channels after the existing
 Mockingboard plus Disk II mix, using the existing saturating adder and output
-volume/mute path. Effective-mode loss masks the ONE//e sample to zero.
+volume/mute path. The output arithmetic is pipelined without changing the
+public sample cadence or values. Effective-mode loss masks the ONE//e sample
+to zero.
 
 The cassette-output latch exists for software compatibility, and cassette
 input reads low. There is no analog cassette input or output path in this
@@ -416,8 +430,9 @@ The following focused checks have passed on this branch:
 - `python scripts/test_apple_virtual_bus.py`: native phase order, idle scanner
   cadence, card response, floating-bus fallback, local RESET#/IRQ#/NMI#/INH#/
   RDY#/DMA# returns, RDY replay, a late two-clock registered slot master,
-  owner/address/R/W stability through `data_en`, virtual DMA ownership, and CPU
-  resume after release.
+  owner/address/R/W stability through `data_en`, live pre-data card visibility,
+  held resolved data through the public data phase, virtual DMA ownership, and
+  CPU resume after release.
 - `python scripts/test_onee_integration.py`: top-level source contract plus
   `tb_apple_bus_isolation`; address, R/W, and data release, IRQ/DMA/INH release,
   transceiver disable, and direction clears pass in simulation.
@@ -448,7 +463,8 @@ The following focused checks have passed on this branch:
   cycle virtual reset, physical-reset separation, speaker hookup, and reset
   controller XSim.
 - `python scripts/test_onee_speaker_audio.py`: signed waveform, DC removal,
-  saturation, sample hold, disable, and reset behavior.
+  saturation, pipelined output, unchanged sample cadence, sample hold, disable,
+  and reset behavior.
 - `python scripts/test_onee_video_path.py`: passed; checks full NTSC
   cadence, VBL, frame reset/wrap, C050/C057 frame state, posted screen-write
   renderer-input records, and a real 16K ROM
@@ -465,18 +481,18 @@ The following focused checks have passed on this branch:
   `01 38 B0 03`. Each run counted 73,479 slot cycles, 5,764 I/O cycles, 5,599
   data reads, 879 DDR reads, and 28 D5 prologs, with zero card-to-bus or engine
   response mismatches.
-- The 20-test `python scripts/test_vtw.py` suite passed at commit `8fec225`.
+- The 20-test `python scripts/test_vtw.py` suite passed at commit `36a5bd2`,
+  including the directed slowdown bookkeeping checks.
 - ARM GCC syntax-only checks passed for the new frontend ONE//e service, input
   service, USB HID changes, vTW service changes, config menu, and `main.c`.
+- The final regression at `36a5bd2` passed all nine focused ONE//e HDL scripts,
+  all 98 frontend checks, both DOS and ProDOS `$0801` boot-sector runs, and the
+  Appli-Card, SSC, SuperSprite, Uthernet II, and VidHD card suites.
 
 ### Synthesis and Firmware Build State
 
 - Full `appletini_yarz_top` synthesis passed at commit `8fec225` with zero
   errors and zero critical warnings.
-- [x] Candidate-source `appletini_yarz_top` synthesis at `530b29e`, including
-  the input bridge, warm reset, speaker mixer, video hookup, held-level safety
-  veto, virtual-cycle tuple, and contained diagnostic paths, passed on
-  2026-08-16 with zero errors and zero critical warnings.
 - Isolated `onee_input_bridge` synthesis passed with zero errors and zero
   critical warnings.
 - The `72d299f` implementation routed and wrote a bitstream, but its final
@@ -489,18 +505,23 @@ The following focused checks have passed on this branch:
   13-client write-arbiter owner/address path feeding virtual slot decoders.
   Commits `8550239`, `9f3c259`, `9a5deb8`, and `530b29e` shorten or contain
   those paths.
-- [x] The full `530b29e` implementation met all reported setup, hold, and
-  pulse-width constraints with WNS +0.038 ns, TNS 0, WHS +0.051 ns, zero
-  critical warnings, and zero errors. It exported a same-source bitstream and
-  XSA to immutable archive
+- The full `530b29e` implementation was the first later candidate to meet all
+  reported setup, hold, and pulse-width constraints. It reached WNS +0.038 ns,
+  TNS 0, and WHS +0.051 ns and exported the historical archive
   `.timing_runs/20260816T140140Z-530b29e5-full`.
-- [ ] Reach the project's +0.300 ns setup-margin promotion gate and repeat the
-  clean full build at the same commit. The +0.038 ns candidate proves that the
-  source can route and export, but it is not a promoted final image.
-- [ ] Synthesize and route current head `354cc9a`. The CPU arithmetic-stage,
-  speaker-clamp, scanner-read, and local AXI write-data changes in `a6cd13e`,
-  `ad0f988`, and `354cc9a` have focused test proof but no full-route result yet.
-- [ ] Run the final full source regression after all branch commits.
+- [x] The clean full build of `36a5bd2` completed and exported for the approved
+  test handoff as build `20260816T152953Z-36a5bd21-full`. It reports WNS
+  +0.069 ns, TNS 0, WHS +0.046 ns, and WPWS +0.265 ns, with zero failing
+  endpoints, unrouted nets, errors, or critical warnings. The same-source XSA
+  SHA-256 is
+  `f0cfb90ca6e05a951799b84cc39d963c71b881edecf1b1f5ec51320aefe7acdb`.
+- [x] The final source regression at `36a5bd2` passed the nine focused ONE//e
+  HDL scripts, 98 frontend checks, all 20 vTW tests, both DOS and ProDOS
+  `$0801` runs, and the Appli-Card, SSC, SuperSprite, Uthernet II, and VidHD
+  suites.
+- [ ] Promote a release build only after it reaches the project's +0.300 ns
+  setup-margin gate, repeats cleanly at the same commit, and passes the board
+  checks below. The user waived that margin only for the `36a5bd2` test image.
 - The first 2026-08-16 Vitis attempt made BSP content, but
   `vitis_workspace/appletini_platform/export/.buildstatus` reported
   `export=ERROR`. The expected
@@ -511,18 +532,22 @@ The following focused checks have passed on this branch:
   script now permits one bounded retry of a transient platform-build failure,
   then stops on another nonzero result or a missing exported XPFM instead of
   continuing into app creation.
-- [x] A fresh Vitis 2025.2 workspace build after `4a2d4d6`, using the
-  `530b29e` hardware candidate, completed on 2026-08-16. Platform
-  `.buildstatus` reports `export=SUCCESS`, the XPFM exists, and the run linked
-  `fsbl.elf`, `bootloader.elf`, `frontend_core1.elf`, and `frontend.elf`.
-- [ ] Rebuild against the final promoted XSA, then package and byte-check the
-  final firmware image. The successful workspace build proves the PS source
-  and platform export; it is not a programmed or board-tested image.
+- [x] A fresh Vitis 2025.2 workspace build against the exact `36a5bd2` XSA
+  completed successfully. Platform `.buildstatus` reports `export=SUCCESS`,
+  the XPFM exists, and the run linked `fsbl.elf`, `bootloader.elf`,
+  `frontend_core1.elf`, and `frontend.elf`.
+- [x] The F0.9.77 test package is complete. Root `FIRMWARE.BIN` and
+  `.timing_runs/20260816T152953Z-36a5bd21-full/FIRMWARE_TEST.BIN` are
+  byte-identical, each 4,236,236 bytes, with SHA-256
+  `1b5a932f836471075fdb9a7a92664be44af2f0537787ece638ad9314a18d9b0f`.
+  The handoff record is
+  `.timing_runs/20260816T152953Z-36a5bd21-full/test_firmware_manifest.txt`.
+  This is a test-only package, not a promoted or board-tested release image.
 
 ### Missing Board and End-to-End Proof
 
-- [ ] Program a final same-source bitstream and firmware image on an Appletini
-  ONE.
+- [ ] Program the archived test-only `36a5bd2` bitstream and F0.9.77 firmware
+  image on an Appletini ONE.
 - [ ] Verify all physical Apple pins and translators while ONE//e starts,
   runs, faults, stops, and returns to host mode, including PL configuration and
   both card/Apple power orders.

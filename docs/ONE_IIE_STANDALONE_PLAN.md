@@ -15,9 +15,14 @@ Last source audit: 2026-08-16
 - The clean `36a5bd2` package is the historical F0.9.77 hardware test image.
   The user waived the +0.300 ns release margin for that test handoff only. The
   card ran it out of the Apple slot and reported a false `LOCKED` state.
-- F0.9.78 contains the source correction for that false lock. Its test image
-  has been built and packaged; the corrected image has not yet been retested
-  on the board.
+- F0.9.78 contains the source correction for that false lock. The card starts
+  ONE//e with that image, but the test exposed three runtime state faults:
+  SmartPort could not be the cold-boot target, Disk II activity could retain a
+  `SMARTPORT SP1` label, and USB speed keys changed the label without changing
+  the running core.
+- The F0.9.79 source changes correct those three faults. The focused source,
+  native, ROM-path, and bus tests pass. A new full build, package, and board
+  retest are still pending.
 
 ## Goal and Supported Shape
 
@@ -84,6 +89,14 @@ sections list the board and system tests which still need to run.
 - `36a5bd2`: pipeline vTW slowdown bookkeeping and add directed checks for the
   unchanged slowdown timing contract.
 - `65adf37`: document the F0.9.77 test handoff.
+- `9b5f474`: select the storage label from effective Disk II and SmartPort
+  activity instead of the saved Slot 6 bit.
+- `4b02a05`: route all live TransWarp speed controls through one verified
+  host-or-ONE//e control writer.
+- `6cf17a2`: keep the effective Disk II service and ONE//e session state intact
+  across reset and config reapply.
+- `d4be1dd`: latch the configured ONE//e boot target and give a SmartPort
+  session slot-7 ownership over saved SuperSprite state.
 - `7838f235`: learn the stable open-connector U533 input vector, use a
   96-cycle quiet interval, retain the main translators as an input-only clock
   monitor, disable auxiliary translator U234, and reserve F0.9.78.
@@ -188,9 +201,17 @@ CPU-to-card interface. The vTW core uses the scanner address and main shadow RAM
 for unclaimed floating reads. For status reads, it combines the claimed bit 7
 with scanner bits 6:0.
 
-`hdl/apple/onee_cold_slot_scan.sv` hides slot 7 at each ONE//e entry. The first
-`$C600` ROM probe ends the hold, so the cold scan reaches virtual Disk II in
-slot 6 first and slot 7 cards become visible after that probe.
+`hdl/apple/onee_cold_slot_scan.sv` uses the configured boot target. For a
+SmartPort target, slot 7 is visible on the first `$C7xx` probe. For a Disk II
+target, slot 7 stays hidden until the first `$C6xx` probe, so virtual Disk II
+answers first; slot 7 becomes visible after that probe. ONE//e entry and each
+virtual warm reset re-arm this choice from the same configured target.
+
+The configured target and the physical-host handoff are separate signals. The
+physical-host path may fall back to SmartPort when the saved Slot 6 enable is
+off. ONE//e must not use that fallback rule: it supplies its virtual Disk II
+for the session even when the saved Slot 6 setting is off. This split keeps the
+menu choice intact without changing normal host behavior.
 
 The Appli-Card/AD8088 bus-master path stays blocked for the whole ONE//e
 session. Virtual-card IRQ and NMI requests remain internal; physical DMA is not
@@ -263,6 +284,26 @@ intent, speed, divider, and compatibility options unchanged. Stopping writes a
 literal zero to vTW control before it clears the ONE//e request and restores
 the saved Disk II service state.
 
+Host TransWarp and ONE//e use separate run state: `g_state` records the host
+path and `g_onee_running` records the stand-alone path. The old USB-key path
+tested saved host intent and wrote `VTW_CTRL` only for a host `RUN` state. It
+still formatted the new speed notice, which caused the label-only change seen
+on F0.9.78. Menu speed changes had a separate ONE//e branch, so they worked.
+
+All live menu and USB-key changes now use one `vtw_apply_ctrl_live()` writer.
+It selects the active host or ONE//e control word, preserves that session's
+run/reset bits, writes `VTW_CTRL`, and checks the register readback before it
+reports success. The ONE//e word keeps private Disk II acceleration disabled.
+On a failed readback, a USB speed action restores its prior override and shows
+`TW: CONTROL WRITE FAILED` instead of a false speed label.
+
+Reset and config reapply paths also need the effective session state, not just
+saved host intent. One centralized Disk II setter now keeps the service on
+while `g_onee_running` owns the machine, without changing the saved Slot 6
+setting. On stop, the same setter applies the latest saved setting rather than
+a restore value captured when the session began. The ONE//e-private reset path
+skips the IIgs `$C029` DMA write, which belongs only to a physical-host reset.
+
 Ctrl+Pause requests a virtual warm reset. The PL holds virtual RESET for at
 least eight full native cycles and acknowledges the input bridge. This resets
 the soft CPU and virtual motherboard I/O but preserves shadow RAM. It never
@@ -305,6 +346,15 @@ send a USB HID output report for it, so a keyboard's Caps Lock LED may not show
 the current ONE//e state. This is an input-device limit, not a start or safety
 blocker.
 
+A standard full-size USB HID keyboard should work, including its main key
+block, arrows, modifiers, and mapped numeric keypad keys. The translator uses a
+US layout. A boot-protocol keyboard supports six simultaneous non-modifier
+keys plus modifiers. A parsed report-protocol keyboard tracks at most eight
+active key usages. Unusual vendor reports and exotic NKRO modes are not
+guaranteed. Firmware sends no keyboard LED output reports, so Caps Lock and
+other lock LEDs do not track ONE//e state. Media and other extra keys have no
+Apple //e character unless the firmware gives them a separate binding.
+
 ### Storage and Other Cards
 
 In ONE//e mode, slot 6 always selects `disk2_card`, even if the saved slot-6
@@ -314,12 +364,27 @@ switches, sequencer, motor, write, WOZ timing, and drive-sound state all use
 the shared synthetic slot bus. ONE//e has no path to a physical Disk II card,
 cable, or drive.
 
-SmartPort appears in virtual slot 7 after the cold `$C600` probe. Its private
-vTW shortcut is disabled in ONE//e, so its slot ROM, `$C800` window, control,
-data, and interrupt behavior use the same synthetic slot bus. Other enabled
-virtual cards also see the selected bus record. Cards still need their own
-compatibility tests; sharing the record does not prove every card or external
-chip works without a host board.
+When SmartPort is the configured boot target, it appears in virtual slot 7 on
+the first `$C7xx` cold-boot probe. When Disk II is the target, SmartPort appears
+after the `$C6xx` probe. Its private vTW shortcut is disabled in ONE//e, so its
+slot ROM, `$C800` window, control, data, and interrupt behavior use the same
+synthetic slot bus. Other enabled virtual cards also see the selected bus
+record. Cards still need their own compatibility tests; sharing the record
+does not prove every card or external chip works without a host board.
+
+Saved SuperSprite state is another host policy which cannot own slot 7 during
+a SmartPort-target ONE//e session. The effective slot-7 selector therefore
+gives the configured SmartPort target session priority over SuperSprite, while
+leaving the saved SuperSprite setting intact for normal host mode and after
+ONE//e stops.
+
+The storage overlay now polls the effective Disk II service state instead of
+gating it on the saved Slot 6 bit. The old gate hid the session-only Disk II
+which ONE//e had enabled, while a SmartPort `STATUS` poll remained as the last
+visible source and produced the false `SMARTPORT SP1` label. Source selection
+now gives SmartPort data first place, then current Disk II motor/read/write
+work, then a SmartPort `STATUS` poll, then the retained valid source. Thus Disk
+II work beats SmartPort discovery traffic and shows its actual drive number.
 
 ### Video and Speaker
 
@@ -401,13 +466,20 @@ mode is off.
   utility-strobe, and speaker soft switches.
 - [x] Add the session-only boot-menu action.
 - [x] Auto-start vTW through a stand-alone cold-ROM path.
-- [x] Run the real embedded ROM reset entry and cold slot scan in simulation
-  through the slot-6 `$C600` probe.
+- [x] Select the configured SmartPort or Disk II cold-boot order without using
+  the physical-host fallback rule.
+- [x] Re-arm the configured target across a virtual warm reset.
 - [x] Run the stock DOS 3.3 System Master and ProDOS 2.4.3 track-0 paths through
   the production Disk II slot bus and enter each loaded boot sector at `$0801`
   in simulation.
 - [ ] Reach a BASIC prompt or a known monitor loop in a full-ROM system test.
 - [x] Add and test held-key repeat for mapped USB keyboard keys.
+- [x] Support standard full-size USB HID keyboards within the US-layout,
+  six-key boot-report, and eight-key parsed-report limits.
+- [x] Route menu and USB speed changes through the same readback-checked live
+  `VTW_CTRL` writer for host and ONE//e sessions.
+- [x] Reapply effective Disk II state through one setter on config and reset,
+  and skip the host-only IIgs `$C029` DMA write for a ONE//e reset.
 
 ### Input, Video, and Audio
 
@@ -431,7 +503,12 @@ mode is off.
 - [x] Force only virtual Disk II into slot 6 for the ONE//e session.
 - [x] Keep Disk II on the shared synthetic slot bus and restore saved state on
   exit.
-- [x] Keep SmartPort on the shared slot-7 bus after the slot-6 cold probe.
+- [x] Put SmartPort on the first slot-7 probe when it is the configured target,
+  or after the slot-6 probe when Disk II is the configured target.
+- [x] Override saved SuperSprite slot-7 ownership during a SmartPort-target
+  ONE//e session without changing the saved host setting.
+- [x] Poll effective session Disk II state and let its motor/read/write work
+  take priority over SmartPort `STATUS`-only activity in the storage overlay.
 - [x] Block the AD8088 virtual bus-master path during ONE//e.
 - [x] Load and enter the first sector from the stock DOS 3.3 System Master
   image through virtual Disk II in simulation.
@@ -528,11 +605,46 @@ historical record and do not validate the later F0.9.78 correction:
   corrected source, including the vTW, boot-sector, and virtual-card checks.
 - [x] Complete a full Vivado route and export, exact-XSA Vitis build, and
   firmware package for F0.9.78.
-- [ ] Program F0.9.78 and repeat the out-of-slot and live-clock board tests.
+- [x] Program F0.9.78 and start ONE//e out of the Apple slot. It reached the
+  Enhanced //e screen, then exposed the runtime faults recorded below.
+- [ ] Complete the live-clock and electrical board tests.
 
 The completed source and firmware checks apply to commit
 `7838f23580d95a03e2e9f2442d80f2e3ce9c6ebf`. They do not replace the pending
-board retest.
+live-clock and electrical board tests or the F0.9.79 functional retest.
+
+### F0.9.78 Runtime Test and F0.9.79 Fixes
+
+The F0.9.78 out-of-slot test reached the Enhanced //e ROM, but it found three
+faults caused by parallel saved, host-runtime, and session-runtime state:
+
+- The cold-slot helper always hid slot 7, so a configured SmartPort boot could
+  not answer the ROM's first `$C7xx` probe. Disk II then answered at `$C6xx` if
+  it had media; with no Disk II boot, the machine stayed at `Apple //e`.
+- ONE//e enabled Disk II for the session without setting the saved Slot 6 bit.
+  The overlay used that saved bit as its poll gate, then retained a SmartPort
+  `STATUS` probe as the source. It could therefore show `SMARTPORT SP1` while
+  Disk II drive 1 was running.
+- USB speed keys checked saved host-vTW intent and wrote `VTW_CTRL` only when
+  the host state machine said `RUN`. ONE//e instead used
+  `g_onee_running`. The key path changed its notice even though it had not
+  changed the control register. The config menu worked because it had a
+  separate ONE//e write branch.
+
+The F0.9.79 source removes those split decisions: cold-slot order uses the
+configured target, storage uses effective service state and activity priority,
+and all live speed controls use one readback-checked writer for the active
+host or ONE//e session. The reset/config path uses the same effective Disk II
+setter, and a SmartPort-target session overrides saved SuperSprite slot-7
+ownership. Both saved host choices remain intact after ONE//e stops.
+
+- [x] Run the focused cold-slot, joined-bus, real-ROM, effective Disk II,
+  SuperSprite override, storage-selection, and live-speed-control regressions
+  at the final F0.9.79 source checkpoint.
+- [ ] Complete a full Vivado route and export, exact-XSA Vitis build, and
+  F0.9.79 test package.
+- [ ] Program F0.9.79 and run the target, warm-reset, speed, storage-label,
+  keyboard, and safety checklist in `docs/ONE_IIE_HARDWARE_TEST.md`.
 
 ### Synthesis and Firmware Build State
 
@@ -621,7 +733,9 @@ board retest.
 - [x] Run the archived F0.9.77 image on an Appletini ONE out of the Apple slot;
   it reached the menu but ONE//e falsely reported `LOCKED`.
 - [x] Build and package the corrected F0.9.78 image.
-- [ ] Program F0.9.78 and repeat the out-of-slot test.
+- [x] Program F0.9.78 and start ONE//e out of the Apple slot; it booted the ROM
+  and exposed the target, storage-label, and speed-control faults above.
+- [ ] Build, package, and run the F0.9.79 functional retest.
 - [ ] Verify all physical Apple pins and translators while ONE//e starts,
   runs, faults, stops, and returns to host mode, including PL configuration and
   both card/Apple power orders.

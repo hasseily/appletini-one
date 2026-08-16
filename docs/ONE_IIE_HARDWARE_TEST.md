@@ -1,4 +1,4 @@
-# ONE//e Hardware Test Record and F0.9.78 Retest Plan
+# ONE//e Hardware Test Record and F0.9.79 Retest Plan
 
 ## F0.9.77 Test Result
 
@@ -74,7 +74,62 @@ The Vivado manifest records `git_dirty=1` because these two ONE//e documents
 were being edited. No HDL or firmware source was dirty. This image is below
 the project's release-only +0.300 ns setup-margin gate. The user waived that
 gate for this test image only; this is not a promoted release. The corrected
-image has not yet been tested on the board.
+image starts ONE//e out of the Apple slot, but the functional test found the
+three faults below.
+
+## F0.9.78 Functional Test Result
+
+F0.9.78 reached the Enhanced //e screen. The test then found these faults:
+
+- Selecting SmartPort did not boot SmartPort. If Disk II drive 1 had bootable
+  media, the ROM booted it instead; without Disk II media, it stayed at
+  `Apple //e`.
+- While Disk II drive 1 ran, the storage overlay could say
+  `SMARTPORT SP1`.
+- A bound USB TransWarp speed key changed its notice but did not change the
+  machine's speed. Changing speed on the TransWarp config page did work.
+
+These were state-model faults, not three unrelated device faults. ONE//e had
+session state beside the saved config and normal host-run state, but three
+callers still read the wrong copy:
+
+- The cold-slot helper always hid slot 7. It did not receive the configured
+  SmartPort or Disk II target.
+- ONE//e enabled virtual Disk II for the session without changing the saved
+  Slot 6 bit. The overlay used that saved bit to decide whether Disk II
+  activity existed, then retained a SmartPort `STATUS` poll as its source.
+- The USB key path checked saved host TransWarp intent and wrote `VTW_CTRL`
+  only for the host state machine. It still made a success label. The config
+  page had its own ONE//e write path, which is why that path worked.
+
+## F0.9.79 Runtime Corrections
+
+The F0.9.79 source uses one clear rule at each boundary:
+
+- The configured target controls the ONE//e cold scan. SmartPort exposes slot
+  7 on the first `$C7xx` probe. Disk II hides slot 7 until the first `$C6xx`
+  probe, then releases it. A virtual warm reset re-arms the same configured
+  target. The normal host handoff keeps its own fallback rule, so a disabled
+  physical Slot 6 does not rewrite ONE//e's virtual target.
+- The overlay polls the effective Disk II service state, not the saved Slot 6
+  bit. SmartPort data has first priority, then active Disk II motor/read/write
+  work, then SmartPort `STATUS`, then the last valid source. A discovery poll
+  can no longer replace an active `DISK II D1` label.
+- Menu and USB speed changes use one live `VTW_CTRL` writer. It chooses the
+  running host or ONE//e word, writes it, and verifies the register readback
+  before it shows success. A failed USB change restores its old override and
+  reports `TW: CONTROL WRITE FAILED`.
+- All reset and config paths use one effective Disk II setter. During ONE//e,
+  it keeps the session service enabled without changing saved host state. When
+  ONE//e stops, it applies the latest saved state instead of a value captured
+  at session start. A private ONE//e reset also skips the host-only IIgs
+  `$C029` DMA write.
+- A SmartPort-target ONE//e session overrides saved SuperSprite slot-7
+  ownership. Without that session override, SuperSprite could still claim the
+  shared slot and keep SmartPort's ROM invisible even after the cold-scan fix.
+
+The source correction and focused regression are complete. The full Vivado and
+Vitis build, package, and hardware retest remain pending.
 
 ## Detection Limit
 
@@ -99,12 +154,25 @@ output enable, leakage, back-power, and high impedance with test gear.
   completed successfully.
 - [x] F0.9.78 packaging, byte comparison, SHA-256 checks, and Bootgen readback
   passed.
-- [ ] Program the corrected image and repeat the hardware test.
+- [x] Program F0.9.78 and start ONE//e out of the Apple slot. It reached the
+  Enhanced //e screen and exposed the functional faults above.
 
-## Program the Corrected Test Slot
+## F0.9.79 Readiness
 
-The package checks produced the named and checked F0.9.78 `FIRMWARE.BIN` above.
-Keep the golden boot image unchanged.
+- [x] Pass the final cold-target, joined-bus, real-ROM, effective Disk II,
+  SuperSprite override, storage-selection, and live-speed-control tests.
+- [ ] Complete a full Vivado route and export with no failing path.
+- [ ] Build Vitis from the exact exported XSA.
+- [ ] Package F0.9.79, record its source commit, size, SHA-256, timing result,
+  and Bootgen readback, and compare the root and archived files byte for byte.
+- [ ] Program F0.9.79 and complete the hardware checks below.
+
+Do not use the root `FIRMWARE.BIN` for this retest until this section names and
+checks the F0.9.79 package. Keep the golden boot image unchanged.
+
+## Program the F0.9.79 Test Slot
+
+This step remains pending until the package checks above pass.
 
 1. Connect the card's update UART and its stand-alone power source.
 2. Find the port if needed:
@@ -113,8 +181,8 @@ Keep the golden boot image unchanged.
    python scripts\serial_firmware_update.py --list-ports
    ```
 
-3. Upload the checked F0.9.78 image, replacing `COM3` with the update UART
-   port:
+3. After checking that root `FIRMWARE.BIN` is the recorded F0.9.79 file,
+   upload it, replacing `COM3` with the update UART port:
 
    ```powershell
    python scripts\serial_firmware_update.py .\FIRMWARE.BIN --port COM3 --reboot-golden
@@ -122,7 +190,7 @@ Keep the golden boot image unchanged.
 
 The updater writes the firmware slot and checks the full programmed image.
 
-## Out-of-Slot Retest
+## F0.9.79 Out-of-Slot Retest
 
 This hardware retest is still pending.
 
@@ -130,15 +198,31 @@ Connect DVI, audio, a USB keyboard, and the SD card. A USB gamepad is optional.
 Keep the Apple slot edge disconnected and apply the same stand-alone supply
 used for the F0.9.77 test.
 
-1. Power the card and confirm the on-screen firmware version is `F0.9.78`.
-2. In the normal menu, attach a bootable DOS or ProDOS image to virtual Disk II
-   drive 1.
-3. Open `Boot Settings` and select `ONE//e standalone`.
+1. Power the card and confirm the on-screen firmware version is `F0.9.79`.
+2. Attach bootable images to both SmartPort SP1 and Disk II drive 1. Keep both
+   available so the result proves the target choice rather than media fallback.
+3. Enable SuperSprite in saved config, select SmartPort as the boot target,
+   then select `ONE//e standalone` in `Boot Settings`.
 4. Confirm that the item changes from `OFF` to `RUNNING`, not `LOCKED`, and
-   that the menu closes.
-5. Confirm that the Enhanced //e ROM scans slot 6 and boots the virtual Disk II
-   image.
-6. Turn ONE//e off, wait for the stable connector vector to pass the 96-cycle
+   that the ROM takes the first slot-7 SmartPort path and boots SP1. It must not
+   fall through to Disk II.
+5. Confirm that SmartPort data work says `SMARTPORT SP1`. Use `Ctrl+Pause` and
+   confirm that the virtual warm reset keeps SmartPort as the target and boots
+   it again. The reset must not touch a physical host or run the IIgs `$C029`
+   DMA write.
+6. Stop ONE//e. Select Disk II as the boot target and start ONE//e again.
+   Confirm that the ROM hides slot 7 for the cold scan, reaches `$C600`, and
+   boots drive 1. The activity label must say `DISK II D1`, even if SmartPort
+   sends `STATUS` calls.
+7. While ONE//e runs, change the saved Slot 6 setting and apply config. Confirm
+   that the session Disk II service stays enabled. Stop ONE//e and confirm that
+   the latest saved Slot 6 state, not the state from session start, takes
+   effect.
+8. Press each bound TransWarp toggle, speed-up, and speed-down key. Confirm the
+   notice changes and time a fixed loop or other repeatable task at each speed;
+   the measured rate must change with the label. If the slug key is armed,
+   check it the same way.
+9. Turn ONE//e off, wait for the stable connector vector to pass the 96-cycle
    quiet check, and select it again.
 
 A request never restarts itself after a real activity lock.
@@ -148,10 +232,15 @@ A request never restarts itself after a real activity lock.
 Run these checks before any Apple-connected safety test:
 
 - Boot DOS and ProDOS to their ready screen.
-- Type letters, numbers, punctuation, arrows, Return, Escape, and Delete.
+- Use a standard full-size USB HID keyboard. Type letters, numbers,
+  punctuation, arrows, Return, Escape, Delete, and numeric keypad keys.
 - Check held-key repeat.
 - Check Open Apple with left Alt or GUI, and Closed Apple with right Alt or
   GUI.
+- Confirm the fixed US layout. A boot-protocol keyboard has six-key rollover
+  plus modifiers; a parsed report keyboard tracks at most eight active key
+  usages. Lock LEDs do not track ONE//e, and exotic NKRO reports are not
+  guaranteed.
 - Check a paddle or joystick program with all axes and the first three
   buttons.
 - Use `Ctrl+Pause` and confirm that only the virtual //e resets.

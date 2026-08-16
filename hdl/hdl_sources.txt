@@ -14,6 +14,8 @@ irq_pulse_stretcher.sv
 constraints/appletini_yarz.xdc
 apple/apple_top.sv
 apple/apple_bus_wrapper.sv
+apple/onee_mode_safety_guard.sv
+apple/apple_virtual_bus.sv
 apple/apple_bus_write_arbiter.sv
 apple/w65c02_core.sv
 apple/vtw_shadow.sv

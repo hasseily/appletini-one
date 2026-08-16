@@ -2302,10 +2302,12 @@ module apple_top(
                 endcase
             end
 
-            // Raw or sticky Apple activity has priority over a same-cycle
-            // software write. Clearing the request also makes a new off/on
-            // selection mandatory after the guard's quiet interval.
-            if (onee_activity_now || onee_activity_lockout) begin
+            // The guard sets the lockout asynchronously from every raw Apple
+            // activity input. Clear from that single registered state so raw
+            // slot pins never feed this central control block as data paths.
+            // This still has priority over a same-cycle software write and
+            // makes a new off/on selection mandatory after the quiet interval.
+            if (onee_activity_lockout) begin
                 onee_request_q <= 1'b0;
             end
 

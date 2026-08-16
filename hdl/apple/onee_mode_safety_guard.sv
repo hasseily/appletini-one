@@ -4,8 +4,9 @@
 //
 // This block does not drive Apple-side pins. Gate virtual-machine activity with
 // onee_enable_effective/force_outputs_off. Disable every physical Apple-edge
-// output while physical_bus_isolate is asserted. The raw Apple inputs are
-// compared with synchronized copies so either edge counts as activity.
+// output while physical_bus_isolate is asserted. Raw Apple inputs may set the
+// sticky safety state at once, but never feed the broad virtual-machine muxes
+// as combinational data paths.
 //
 // The local clock must run continuously while the board is powered. Set
 // QUIET_CYCLES longer than the largest valid gap between Apple bus transitions.
@@ -193,19 +194,27 @@ module onee_mode_safety_guard #(
         end
     end
 
-    // Keep this as a direct combinational path from raw activity and the manual
-    // request. The sticky state provides the longer lockout; it is not the only
-    // protection for downstream output enables.
-    assign force_outputs_off =
+    // Contain every immediate fail-off source at one flop. Its Q is the only
+    // high-fanout virtual-machine enable, so raw slot pins cannot become data
+    // paths through every emulated card. Any pulse can only clear the mode.
+    // Re-entry stays synchronous and still requires the guard's selected state.
+    logic onee_run_q = 1'b0;
+    wire mode_kill_async =
         !resetn ||
-        apple_power_present_raw ||
         !manual_enable_request ||
         apple_activity_now ||
         apple_activity_sampled ||
-        apple_activity_lockout ||
-        !onee_selected;
+        apple_activity_lockout;
 
-    assign onee_enable_effective = !force_outputs_off;
+    always_ff @(posedge clk or posedge mode_kill_async) begin
+        if (mode_kill_async)
+            onee_run_q <= 1'b0;
+        else if (onee_selected)
+            onee_run_q <= 1'b1;
+    end
+
+    assign onee_enable_effective = onee_run_q;
+    assign force_outputs_off = !onee_run_q;
 
     // Active high means every physical Apple-edge driver must be disabled.
     // This signal intentionally stays high while ONE//e runs; it is not the

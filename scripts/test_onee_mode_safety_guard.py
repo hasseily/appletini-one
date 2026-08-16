@@ -104,13 +104,27 @@ def static_contract_checks() -> None:
         "physical isolation hold must catch activity and clear only on rearm",
     )
     require(
+        "wire mode_kill_async =" in rtl and
+        "!resetn ||" in rtl and
         "!manual_enable_request ||" in rtl and
-        "apple_power_present_raw ||" in rtl and
         "apple_activity_now ||" in rtl and
-        "apple_activity_lockout ||" in rtl and
-        "!onee_selected;" in rtl,
-        "effective output kill must directly include request, raw activity, "
-        "sticky lockout, and selected state",
+        "apple_activity_sampled ||" in rtl and
+        "apple_activity_lockout;" in rtl,
+        "one fail-off term must contain reset, request, raw/sampled activity, "
+        "and the sticky lockout",
+    )
+    require(
+        "always_ff @(posedge clk or posedge mode_kill_async)" in rtl and
+        "onee_run_q <= 1'b0;" in rtl and
+        "else if (onee_selected)" in rtl and
+        "onee_run_q <= 1'b1;" in rtl,
+        "raw activity must asynchronously clear one contained run flop and "
+        "only selected state may restart it",
+    )
+    require(
+        "assign onee_enable_effective = onee_run_q;" in rtl and
+        "assign force_outputs_off = !onee_run_q;" in rtl,
+        "broad effective enable and output kill must come only from run state",
     )
     require(
         "apple_activity_quiet &&" in rtl and

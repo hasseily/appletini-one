@@ -67,7 +67,7 @@ def static_checks() -> None:
     )
     write_pos = apple_top.index("CARD_CTRL_REG_ONEE: begin")
     activity_clear_pos = apple_top.index(
-        "if (onee_activity_now || onee_activity_lockout) begin"
+        "if (onee_activity_lockout) begin"
     )
     require(
         activity_clear_pos > write_pos and

@@ -30,14 +30,15 @@ module tb_onee_video_path;
     logic resp_valid;
     logic [7:0] resp_rdata;
 
-    // Short phases keep the full-frame cadence check quick while retaining
-    // the relative drive/address/serve/data order of the production bus.
+    // Short phases keep the full-frame cadence check quick. Leave three
+    // clocks between drive_en and addr_en so the production vTW posted-write
+    // FETCH/LOAD pipeline can settle inside the tuple resolve window.
     apple_virtual_bus #(
         .CYCLE_CLKS(16),
         .PHI0_RISE_CLK(8),
         .DRIVE_CLK(1),
-        .ADDR_CLK(3),
-        .SSS_CLK(4),
+        .ADDR_CLK(5),
+        .SSS_CLK(6),
         .SERVE_CLK(9),
         .DATA_CLK(14)
     ) virtual_bus_i (

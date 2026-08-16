@@ -34,8 +34,8 @@ module tb_onee_rom_cold_boot;
         .CYCLE_CLKS(16),
         .PHI0_RISE_CLK(8),
         .DRIVE_CLK(1),
-        .ADDR_CLK(3),
-        .SSS_CLK(4),
+        .ADDR_CLK(5),
+        .SSS_CLK(6),
         .SERVE_CLK(9),
         .DATA_CLK(14)
     ) virtual_bus_i (

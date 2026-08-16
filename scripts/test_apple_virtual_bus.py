@@ -58,6 +58,12 @@ def static_contract_checks() -> None:
         raise RuntimeError("virtual bus must provide the shared AppleBus_read contract")
     if "input  globals::AppleBus_write  ab_write" not in rtl:
         raise RuntimeError("virtual bus must consume the shared AppleBus_write contract")
+    if "cycle_data_q <= bus_data_live" not in rtl:
+        raise RuntimeError("virtual bus must register the resolved data byte")
+    if "phase_data_q ? cycle_data_q : bus_data_live" not in rtl:
+        raise RuntimeError("virtual bus must hold data only during data_en")
+    if "phase_data_q <= (phase_q == PHASE_WIDTH'(DATA_CLK - 1))" not in rtl:
+        raise RuntimeError("virtual bus must register its data phase strobe")
 
 
 def main() -> None:

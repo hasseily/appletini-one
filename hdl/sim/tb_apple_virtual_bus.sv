@@ -150,6 +150,8 @@ module tb_apple_virtual_bus;
         @(posedge clk iff ab_read.serve_en);
         check(ab_read.addr == 16'hC0A0 && ab_read.rw,
               "CPU read serve phase");
+        check(ab_read.data == 8'h3C,
+              "pre-data floating bus was not live at serve_en");
         slot_write.wr_data    <= 8'hA5;
         slot_write.wr_data_en <= 1'b1;
         @(posedge clk iff ab_read.data_en);
@@ -158,8 +160,30 @@ module tb_apple_virtual_bus;
               "slot read response did not complete the CPU request");
         slot_write.wr_data_en <= 1'b0;
 
+        // The bus captures the resolved byte on the clock before data_en.
+        // A card may drive until that edge, but a later source change must not
+        // alter the public data phase or the CPU response.
+        submit_request(16'hC0A4, 1'b1, 8'h00);
+        @(posedge clk iff ab_read.serve_en);
+        slot_write.wr_data    <= 8'hD1;
+        slot_write.wr_data_en <= 1'b1;
+        @(negedge clk iff dut.phase_q == 7'd123);
+        @(posedge clk);
+        slot_write.wr_data    <= 8'hE2;
+        slot_write.wr_data_en <= 1'b0;
+        #1;
+        check(ab_read.data_en && ab_read.data == 8'hD1,
+              "resolved data was not held across data_en");
+        @(posedge clk iff ab_read.data_en);
+        #1;
+        check(resp_valid && resp_rdata == 8'hD1,
+              "CPU response did not use the held data byte");
+
         // Writes place the CPU byte on ab_read.data for card side effects.
         submit_request(16'hC0A1, 1'b0, 8'h5A);
+        @(posedge clk iff ab_read.serve_en);
+        check(ab_read.data == 8'h5A,
+              "CPU write byte was not live before data_en");
         @(posedge clk iff ab_read.data_en);
         check(ab_read.addr == 16'hC0A1 && !ab_read.rw &&
               ab_read.data == 8'h5A,

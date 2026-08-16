@@ -58,12 +58,14 @@ module apple_virtual_bus #(
     logic                   cycle_slot_master_q;
     logic [15:0]            cycle_addr_q;
     logic                   cycle_rw_q;
+    (* KEEP = "TRUE" *) logic [7:0] cycle_data_q;
+    (* KEEP = "TRUE" *) logic       phase_data_q;
 
     wire phase_drive = (phase_q == PHASE_WIDTH'(DRIVE_CLK));
     wire phase_addr  = (phase_q == PHASE_WIDTH'(ADDR_CLK));
     wire phase_sss   = (phase_q == PHASE_WIDTH'(SSS_CLK));
     wire phase_serve = (phase_q == PHASE_WIDTH'(SERVE_CLK));
-    wire phase_data  = (phase_q == PHASE_WIDTH'(DATA_CLK));
+    wire phase_data  = phase_data_q;
 
     // Apple slot control lines are open drain: a high assert_* request pulls
     // the corresponding active-low line down.
@@ -84,10 +86,10 @@ module apple_virtual_bus #(
                                   cpu_cycle_q ? cpu_rw_q : 1'b1;
     wire        slot_data_drive = ab_write.wr_data_en |
                                   ab_write.wr_dma_data_en;
-    wire [7:0]  bus_data = slot_data_drive ? ab_write.wr_data :
-                           (cpu_cycle_q && !cpu_rw_q &&
-                            !cycle_slot_master_q) ?
-                               cpu_wdata_q : floating_bus_data;
+    wire [7:0]  bus_data_live = slot_data_drive ? ab_write.wr_data :
+                                (cpu_cycle_q && !cpu_rw_q &&
+                                 !cycle_slot_master_q) ?
+                                    cpu_wdata_q : floating_bus_data;
 
     // Do not start a CPU cycle while reset, RDY, or DMA holds the processor.
     // A pending RDY-stalled request also blocks the single-entry interface.
@@ -101,7 +103,10 @@ module apple_virtual_bus #(
     // card timers and the scanner.
     always_comb begin
         ab_read             = '0;
-        ab_read.data        = bus_data;
+        // Keep write bytes and floating-bus state live before the data phase:
+        // several slot cards inspect them at serve_en. The registered branch
+        // is selected only for the public data window.
+        ab_read.data        = phase_data_q ? cycle_data_q : bus_data_live;
         ab_read.addr        = cycle_addr_q;
         ab_read.rw          = cycle_rw_q;
         ab_read.phi0        = (phase_q >= PHASE_WIDTH'(PHI0_RISE_CLK));
@@ -133,10 +138,13 @@ module apple_virtual_bus #(
             cycle_slot_master_q <= 1'b0;
             cycle_addr_q <= 16'hFFFF;
             cycle_rw_q   <= 1'b1;
+            cycle_data_q <= '0;
+            phase_data_q <= 1'b0;
             resp_valid   <= 1'b0;
             resp_rdata   <= '0;
         end else begin
             resp_valid <= 1'b0;
+            phase_data_q <= (phase_q == PHASE_WIDTH'(DATA_CLK - 1));
 
             if (phase_q == PHASE_WIDTH'(CYCLE_CLKS - 1)) begin
                 phase_q <= '0;
@@ -156,6 +164,15 @@ module apple_virtual_bus #(
                 cycle_rw_q          <= cycle_rw_live;
             end
 
+            // Cards have the full serve-to-data window to produce a response.
+            // Capture the resolved byte one fabric clock before data_en, then
+            // hold it across the public data phase. This keeps late registered
+            // card replies intact while removing the live card arbiter from
+            // every data-phase consumer.
+            if (phase_q == PHASE_WIDTH'(DATA_CLK - 1)) begin
+                cycle_data_q <= bus_data_live;
+            end
+
             if (!bus_res_n) begin
                 cpu_cycle_q <= 1'b0;
             end else begin
@@ -171,7 +188,7 @@ module apple_virtual_bus #(
                 if (phase_data && cpu_cycle_q && !cycle_slot_master_q &&
                     bus_rdy_n) begin
                     resp_valid  <= 1'b1;
-                    resp_rdata  <= bus_data;
+                    resp_rdata  <= cycle_data_q;
                     cpu_cycle_q <= 1'b0;
                 end
             end

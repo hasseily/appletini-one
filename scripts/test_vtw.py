@@ -467,6 +467,8 @@ def static_checks() -> None:
             "floating_scan_pos" in core_top and
             "video_cycle, 2'd2" in core_top and
             "floating_scan_issue" in core_top and
+            "floating_scan_pending_q && ab_read.data_en" in core_top and
+            "floating_scan_pending_q <= 1'b1;" in core_top and
             "full_floating_read" in core_top and
             "(cycle_addr_q[7:4] >= 4'h3)" in core_top and
             "(cycle_addr_q[7:4] <= 4'h5)" in core_top and

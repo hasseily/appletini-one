@@ -1083,10 +1083,12 @@ module vtw_core_top (
         core_active && (xstate_q == X_BUS) && scanner_bus_read &&
         ab_read.serve_en && ab_read.rw &&
         (ab_read.addr == cycle_addr_q);
+    logic floating_scan_pending_q;
+    /* SERVE already proves this is the matching floating read. Carry that
+     * fact to DATA in one bit instead of repeating the address/scanner decode
+     * in the BRAM enable path. SERVE and DATA are distinct on both buses. */
     wire floating_scan_issue =
-        core_active && (xstate_q == X_BUS) && scanner_bus_read &&
-        ab_read.data_en && ab_read.rw &&
-        (ab_read.addr == cycle_addr_q);
+        floating_scan_pending_q && ab_read.data_en;
     logic onee_bus_data_claimed_q;
     wire core_shadow_issue =
         (xstate_q == X_ROUTE) && xl_shadow_valid && core_res_n;
@@ -1102,10 +1104,16 @@ module vtw_core_top (
     always_ff @(posedge clk) begin
         if (!rstn) begin
             floating_scan_addr_q <= '0;
+            floating_scan_pending_q <= 1'b0;
             onee_bus_data_claimed_q <= 1'b0;
         end
-        else if (floating_scan_addr_latch) begin
-            floating_scan_addr_q <= floating_scan_addr;
+        else begin
+            if (floating_scan_addr_latch) begin
+                floating_scan_addr_q <= floating_scan_addr;
+                floating_scan_pending_q <= 1'b1;
+            end
+            if (!core_active || (xstate_q != X_BUS) || ab_read.data_en)
+                floating_scan_pending_q <= 1'b0;
         end
         if (!rstn || !virtual_motherboard) begin
             onee_bus_data_claimed_q <= 1'b0;

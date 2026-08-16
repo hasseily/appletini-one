@@ -1,4 +1,4 @@
-# ONE//e Hardware Test Record and F0.9.80 Retest Plan
+# ONE//e Hardware Test Record and F0.9.81 Retest Plan
 
 ## F0.9.77 Test Result
 
@@ -194,12 +194,12 @@ the renderer correctly saw HGRi.
 
 ## F0.9.80 Source Corrections
 
-F0.9.80 is the current test image. A timing-clean build of the speed, repeat,
+F0.9.80 is a historical test image. A timing-clean build of the speed, repeat,
 and DHGRi fixes finished before the user added the latched-selection
 requirement.
 That baseline was intentionally not packaged. The final source checks, full
 build, exact-XSA Vitis build, and test package are now complete at `cd8e9b8`.
-Programming and the board retest have not run yet.
+The board retest ran and its result is recorded below.
 
 - Speed commits: `147e56d23be402a4feed68e0719d41636a74e3e4` and
   `dde9b204e426d28ee4a11586f68af2e8b4c8271c`. A speed action is now
@@ -488,3 +488,98 @@ and require a fresh manual selection. Keep the Apple quiet afterward long
 enough to prove that quiet alone cannot restart ONE//e. Also test the stated
 limit with a clock-stopped Apple before approving use while the card remains
 installed.
+
+## F0.9.80 Functional Retest Result
+
+The user confirmed the earlier boot-target, storage-label, speed, key-repeat,
+and DHGRi mode-selection fixes. The test then found three remaining issues:
+
+- Manual ONE//e ON returned to OFF after a card power cycle.
+- DHGRi could show stray lines, and changing back could leave the prior image
+  corrupt. The AUX RAM test reported zero errors.
+- ONE//e needed fixed USB controls and full menu input ownership, with the soft
+  Apple paused while the config menu was open.
+
+The video fault came from frame delivery, not the tested AUX RAM. DVI scanout
+could clear its accounting while accepted old AXI reads were still in flight;
+the reader could claim a slot as the writer reclaimed it; and repeated full
+DHGRi shadow rebuilds could starve the CPU1 record drain.
+
+## F0.9.81 Corrections
+
+- `e076280` drains accepted old AXI traffic before DVI restart, reserves then
+  verifies the displayed triple-buffer slot, and caches unchanged full-shadow
+  interlaced modes. TEXT and MIXED stay uncached. Gap, underrun, and AXI
+  counters support the board check.
+- `9feaccd` saves manual ON globally before raising the PL request and restores
+  it only after boot safety checks. Apple activity or a lost request forces
+  OFF and queues a synced, backed-up global write. Profiles cannot change the
+  latch.
+- ONE//e fixed controls bypass saved bindings: Page Up/Page Down switch tabs;
+  arrows move; Enter or keypad Enter selects; Escape closes; Print Screen
+  captures the Apple screen; Shift+Print Screen captures 1080p; keypad `+` and
+  `-` step speed; and keypad `0` toggles acceleration.
+- Opening the config menu blocks keyboard and joystick delivery and parks the
+  65C02 after its current bus access, without reset or a speed change. DVI
+  remains live. Closing waits for neutral keys, modifiers, buttons, hats, and
+  axes before resuming.
+- `b33b631` reserves F0.9.81.
+
+Persistence has one hardware limit. If all card power disappears after PL
+detects Apple activity but before the PS records OFF on the SD card, firmware
+cannot preserve that event. If the Apple remains active at the next boot, PL
+still blocks ONE//e and firmware then saves OFF. Closing this window requires
+a nonvolatile hardware event latch.
+
+## F0.9.81 Test Image
+
+- Source commit: `b33b63176d758ac25d582bdfbdd62717a17484ba`
+- Clean full nonincremental build: `20260816T210350Z-b33b6317-full`
+- Build status: exported; `rescue_used=0`
+- Route: WNS `+0.194 ns`, TNS `0`, WHS `+0.061 ns`, THS `0`, and WPWS
+  `+0.265 ns`
+- Route and bus skew: `PASS`; bus-skew WNS `+5.657 ns`
+- Failures: zero setup, hold, or pulse-width failing endpoints; zero route
+  errors, missing constraint objects, or unconstrained internal endpoints
+- Candidate DCP SHA-256:
+  `dc13f81019146784367f33d44c47e0fe0a2e054159c36770411c9992bb0b38e7`
+- Bitstream SHA-256:
+  `2e0e2a948aa647f1e13d4e2774f4d33db31ee239587920a0b50d7d4ef22bea42`
+- XSA SHA-256:
+  `601d18dc1ec0cef12619cf8b0262d41cb813af52ccdecc20db07759f4101275c`
+- Files: root `FIRMWARE.BIN` and
+  `.timing_runs/20260816T210350Z-b33b6317-full/FIRMWARE_TEST.BIN`
+- Size: `4,241,804` bytes each
+- Firmware SHA-256:
+  `e5a6fa0440b9eee92a1bdc59ad8f90bd5ddb53bc97f88cbea5b57fde47f94964`
+- Handoff record:
+  `.timing_runs/20260816T210350Z-b33b6317-full/test_firmware_manifest.txt`
+
+A fresh Vitis build used the exact archived XSA. Platform export and all app
+builds report `SUCCESS`; the image contains F0.9.81, B1.1.0, and the
+`196684`-byte CPU1 blob. Root and archive files are byte-identical. Bootgen
+found three named image headers but four total images and four partitions
+because `frontend.elf` contributes two load partitions.
+
+WNS is positive but below the project's +0.300 ns promotion gate. The user
+waived that gate for this test image only. Programming and hardware retest are
+open; this is not a promoted release.
+
+## F0.9.81 Focused Retest
+
+1. Program root `FIRMWARE.BIN` and confirm F0.9.81 on screen.
+2. Out of slot, select ONE//e ON, power-cycle the whole card, and confirm it
+   returns to RUNNING. Select OFF, power-cycle, and confirm it stays OFF.
+3. Run DHGRi and switch repeatedly among interlaced and prior images. Require
+   no stray lines and no new capture-gap, scanout-underrun, or AXI-error count.
+4. Confirm the fixed Page Up/Page Down, arrow, Enter, Escape, Print Screen,
+   Shift+Print Screen, keypad `+`, keypad `-`, and keypad `0` controls. Saved
+   USB bindings must not alter them in ONE//e.
+5. Open the config menu while code runs. Confirm the Apple CPU stops, no menu
+   key reaches Apple input, all menu controls work, and close resumes the same
+   state and speed only after input returns to neutral.
+6. Recheck SmartPort and Disk II boots, storage labels, warm-reset speed,
+   single-tap repeat, paddles, speaker, and normal host mode.
+7. Complete the Apple-connected high-impedance and live-clock stop tests. An
+   Apple event must force OFF and leave it OFF across later card power cycles
+   until manual reselect.

@@ -4,7 +4,7 @@ Branch: `feature/self-contained-one-iie`
 
 Baseline: `a4c2d22fc6029263f61a5cfe1178a2ab3c6ef762`
 
-Last source audit: 2026-08-16
+Last source audit: 2026-08-17
 
 ## Status Rules
 
@@ -27,16 +27,23 @@ Last source audit: 2026-08-16
   key repeat used fast frontend poll counts instead of elapsed time, and the
   demo image viewer did not enable IOUDIS before selecting DHIRES, so DHGRi
   remained HGRi.
-- F0.9.80 is the current test image. The speed, repeat, and DHGRi fixes reached
+- F0.9.80 is a historical test image. The speed, repeat, and DHGRi fixes reached
   a timing-clean baseline build, but that build was not packaged because the
   user then required the manual ONE//e selection to stay latched. Checkpoint
   `36be6c5` implements that rule. The final source checks, full build,
   exact-XSA Vitis build, and test package are complete at `cd8e9b8`. Board
-  programming and retest are still pending.
+  programming and retest found the remaining persistence, interlaced-video,
+  fixed-control, and menu-pause work recorded below.
+- F0.9.81 is the current test image. Checkpoints `e076280`, `9feaccd`, and
+  `b33b631` fix that work. The clean full nonincremental build, exact-XSA
+  Vitis build, and package are complete. Programming and board retest remain
+  open.
 
 ## Goal and Supported Shape
 
-ONE//e is a session-only, self-contained 128K Enhanced US Apple //e. It runs
+ONE//e is a manually selected, self-contained 128K Enhanced US Apple //e. Its
+saved ON intent survives a card power cycle until Apple activity forces it
+OFF. It runs
 the existing soft 65C02/TransWarp core and uses Appletini's DVI output, USB
 host, virtual cards, and audio output. It does not use a host Apple CPU,
 motherboard I/O, or a physical Disk II controller.
@@ -126,6 +133,13 @@ sections list the board and system tests which still need to run.
 - `36be6c5`: keep a manual ONE//e selection with no software expiry, retry a
   failed private runtime without losing its speed, and require a fresh manual
   selection after every terminal stop.
+- `e076280`: drain accepted old AXI reads before restarting DVI scanout,
+  reserve and verify each displayed triple-buffer slot, and cache unchanged
+  full-shadow interlaced frames.
+- `9feaccd`: persist the global ONE//e latch, force it OFF after Apple
+  activity, add fixed ONE//e USB controls, and pause the soft CPU while the
+  config menu owns input.
+- `b33b631`: reserve firmware version `F0.9.81`.
 
 ## Safety Contract
 
@@ -287,16 +301,16 @@ motherboard VBL-interrupt enable which the base //e does not have.
 
 ### CPU, Memory, Menu, and Reset
 
-The Boot Settings page has a session-only row 2 named `ONE//e standalone`,
-before the USB binding rows. It reports `OFF`, `RUNNING`, or `LOCKED`. It does
-not enter config files, saved settings, or profiles.
+The Boot Settings page has row 2 named `ONE//e standalone`, before the USB
+binding rows. It reports `OFF`, `RUNNING`, or `LOCKED`. Its global ON/OFF latch
+is saved in `0:/appletini_cfg.txt`; profiles neither write nor load it.
 
 The item help is:
 
 > Runs the built-in Enhanced Apple //e on Appletini's soft 65C02 without an
-> Apple host. This mode is session-only and starts off after every card boot.
-> Any Apple-bus activity stops ONE//e and keeps it off. After the connector is
-> quiet, select this item again.
+> Apple host. The selection survives a card power cycle and starts only after
+> the connector is quiet. Any Apple-bus activity stops ONE//e and saves it
+> OFF. After the connector is quiet, select this item again to save it ON.
 
 The sole high write to the ONE//e request register comes from an explicit menu
 selection. A safe request has no software timeout: it remains selected while
@@ -304,12 +318,19 @@ physical isolation settles and while a recoverable private-runtime fault is
 retried. The menu closes only when the vTW status confirms both effective
 enable and a released core; the user can reopen it to stop the session.
 
-Every full card and PS boot writes the ONE//e request low and starts in `OFF`.
-The mode is not saved in config or profiles. A saved automatic start would be
-unsafe on this board because a software restart loses all prior Apple-bus
-activity history. Without a nonvolatile hardware activity latch, software
-cannot know that a connected Apple ran before the card or PS restarted. Only
-a new manual menu selection may start ONE//e.
+F0.9.81 saves manual ON to the global config before it raises the PL request.
+After a card boot it restores that intent only when the safety signature is
+valid, the connector is quiet, reselect is armed, and no activity, power, or
+lockout bit is set. Apple activity or a lost request forces a terminal stop
+and queues a durable OFF write. The writer syncs a temporary file, keeps the
+last committed file as a backup, and then installs the new global file. A
+failed write stays pending and retries. A profile cannot arm or disarm ONE//e.
+
+There is one hard limit. If all card power disappears after PL sees Apple
+activity but before the PS records OFF on the SD card, that event cannot be
+made durable on this board. If the Apple remains active at the next boot, the
+PL guard still blocks ONE//e and firmware saves OFF then. An absolute record
+across that power-loss window needs a nonvolatile hardware event latch.
 
 `vtw_service_onee_start()` then:
 
@@ -380,6 +401,14 @@ least eight full native cycles and acknowledges the input bridge. This resets
 the soft CPU and virtual motherboard I/O but preserves shadow RAM. It never
 asserts the Apple connector's RESET signal.
 
+When the Appletini config menu opens during ONE//e, firmware blocks keyboard
+and joystick delivery and sets `VTW_CTRL.PAUSE`. The PL finishes any access in
+flight, then parks the 65C02 at a completed cycle without reset or a speed
+change. DVI scanout and other independent clocks keep running so the menu can
+stay visible. On close, input remains blocked until all keys, modifiers,
+buttons, hats, and joystick axes return to neutral; firmware then resumes the
+same core state and speed.
+
 ### USB Input
 
 `onee_input_service` receives both boot-keyboard and parsed report-keyboard HID
@@ -434,6 +463,14 @@ guaranteed. Firmware sends no keyboard LED output reports, so Caps Lock and
 other lock LEDs do not track ONE//e state. Media and other extra keys have no
 Apple //e character unless the firmware gives them a separate binding.
 
+While ONE//e is selected, its fixed controls bypass the saved USB bindings
+and cannot be edited: Page Up/Page Down change tabs; arrows move in the menu;
+Enter or keypad Enter selects; Escape closes; Print Screen captures the Apple
+screen; Shift+Print Screen captures the 1080p output; keypad `+` and `-` step
+TransWarp speed; and keypad `0` toggles acceleration. Print Screen and the
+keypad speed keys work with the menu closed. The saved long-hold menu key still
+opens and closes the menu.
+
 ### Storage and Other Cards
 
 In ONE//e mode, slot 6 always selects `disk2_card`, even if the saved slot-6
@@ -481,7 +518,18 @@ The access therefore left DHIRES off, and the renderer correctly saw HGRi.
 Checkpoint `9cbf3e0` adds the missing `$C07E` write before the common DHGR
 mode setter. Its test runs the assembled HGRi and DHGRi setters against the
 Enhanced //e switches and requires distinct final modes. The demo disk image
-was rebuilt from that source and is ready alongside the F0.9.80 firmware.
+was rebuilt from that source and remains part of the F0.9.81 retest.
+
+The later intermittent DHGRi lines were not an AUX RAM fault. Three timing
+faults could damage a displayed frame: DVI scanout reset its FIFO and AXI
+outstanding count while accepted old reads could still return; the reader
+could claim a published slot while the writer reclaimed it; and rebuilding
+every unchanged interlaced shadow frame could starve the CPU1 capture drain.
+Checkpoint `e076280` drains old AXI traffic before restart, reserves then
+verifies the displayed slot, and caches unchanged full-shadow modes by memory
+generation and mode metadata. TEXT and MIXED stay uncached so flash advances.
+New gap, underrun, and AXI counters support the board retest. A capture event
+already lost before this fix cannot be reconstructed.
 
 Each `$C03x` access toggles the motherboard speaker. `onee_speaker_audio.sv`
 turns that state into signed, DC-blocked, saturated 16-bit mono samples. The
@@ -518,7 +566,8 @@ mode is off.
 
 ### Safety and Control
 
-- [x] Default the mode and firmware session request off.
+- [x] Start the PL request low, then restore only a saved global manual intent
+  after the safety checks pass.
 - [x] Isolate physical outputs before effective mode can start.
 - [x] Reprove that raw U533 transitions kill effective mode without firmware
   after the F0.9.78 guard change.
@@ -527,16 +576,18 @@ mode is off.
 - [x] Reprove that PHI0, 7M, and Q3 remain visible through U533 while ONE//e is
   isolated, so running Apple clocks cannot become quiet.
 - [x] Latch activity and require a later manual selection.
-- [x] Keep startup, profile, apply, and polling paths from raising request.
+- [x] Keep profiles and config apply from changing the latch; let boot raise
+  request only from the saved global manual intent.
 - [x] Keep a safe selected request active with no software expiry, including
   through long stable quiet intervals.
 - [x] Suspend and retry a failed private runtime without clearing its exact
   queued or live speed override.
-- [x] Treat watched Apple activity, lost request echo, missing safety logic,
-  and manual OFF as terminal stops which require a fresh manual selection.
+- [x] Treat watched Apple activity, lost request echo, and manual OFF as
+  terminal saved-OFF stops; missing safety logic keeps outputs off without
+  erasing the saved choice.
 - [x] Bind all six watched U533 inputs to the 5 ns raw-input route constraint.
-- [x] Start every full card and PS boot in `OFF`; keep ONE//e out of saved
-  settings and profiles.
+- [x] Persist manual ON across card power cycles, persist terminal Apple stops
+  as OFF, and keep the latch out of profiles.
 - [x] Reprove physical address, R/W, data, IRQ, INH, DMA, and RESET drive masks
   with the main translators forced input-only and auxiliary translator U234
   disabled.
@@ -561,7 +612,7 @@ mode is off.
   CPU without driving physical pins.
 - [x] Implement keyboard, status, video, annunciator, paddle, cassette-latch,
   utility-strobe, and speaker soft switches.
-- [x] Add the session-only boot-menu action.
+- [x] Add the boot-menu action and durable global manual latch.
 - [x] Auto-start vTW through a stand-alone cold-ROM path.
 - [x] Select the configured SmartPort or Disk II cold-boot order without using
   the physical-host fallback rule.
@@ -581,6 +632,10 @@ mode is off.
   it across a private warm reset. Keep true off closed-menu actions off.
 - [x] Reapply effective Disk II state through one setter on config and reset,
   and skip the host-only IIgs `$C029` DMA write for a ONE//e reset.
+- [x] Use fixed ONE//e menu, screenshot, and keypad speed controls which
+  bypass saved bindings.
+- [x] Pause the soft CPU and block Apple input while the config menu is open;
+  wait for neutral input before resume.
 
 ### Input, Video, and Audio
 
@@ -591,6 +646,8 @@ mode is off.
 - [x] Feed posted screen writes and switch state into normal renderer records.
 - [x] Enable IOUDIS before the demo viewer selects DHIRES and execute the
   assembled HGRi and DHGRi setters in a distinct-mode regression.
+- [x] Drain late AXI reads on DVI restart, reserve and verify framebuffer
+  claims, and cache unchanged full-shadow interlaced frames.
 - [x] Mix the motherboard speaker into both audio channels.
 - [ ] Validate DVI text, lores, hires, double-hires, 40/80-column, mixed-mode,
   raster, and PAL output on a board.
@@ -797,6 +854,26 @@ one.
 - [ ] Program F0.9.80 and run the out-of-slot hardware retest in
   `docs/ONE_IIE_HARDWARE_TEST.md`.
 
+### F0.9.80 Runtime Test and F0.9.81 Fixes
+
+The F0.9.80 board test confirmed the prior boot-target, storage-label, speed,
+repeat, and DHGRi-selection fixes. It exposed the next three faults: saved
+ONE//e intent returned to OFF after a power cycle; DHGRi could gain stray
+lines which could remain after changing images despite a zero-error AUX test;
+and ONE//e still used editable USB bindings and let menu input reach the soft
+Apple.
+
+- [x] `e076280` fixes the DVI restart, triple-buffer claim, and interlaced
+  renderer-drain races and adds focused simulation and handoff stress tests.
+- [x] `9feaccd` saves manual ONE//e intent globally, saves OFF after a terminal
+  Apple event, bypasses editable bindings with the fixed USB map, and parks
+  the soft CPU while the menu owns input.
+- [x] `b33b631` reserves F0.9.81 and forms the build checkpoint.
+- [x] Complete the clean full Vivado route, exact-XSA Vitis build, and F0.9.81
+  package.
+- [ ] Program F0.9.81 and run the focused persistence, video, input, pause,
+  and Apple-safety retest.
+
 ### Synthesis and Firmware Build State
 
 - Full `appletini_yarz_top` synthesis passed at commit `8fec225` with zero
@@ -830,8 +907,8 @@ one.
 - [ ] Promote a release build only after it reaches the project's +0.300 ns
   setup-margin gate, repeats cleanly at the same commit, and passes the board
   checks below. The user waived that margin for the F0.9.77 through F0.9.80
-  test images and asked that F0.9.80 first work as a test image rather than
-  spend more time on the +0.300 ns target. F0.9.80 is not a promoted release.
+  test images and F0.9.81 test image. The margin is waived for test only;
+  F0.9.81 is not a promoted release.
 - The first 2026-08-16 Vitis attempt made BSP content, but
   `vitis_workspace/appletini_platform/export/.buildstatus` reported
   `export=ERROR`. The expected
@@ -930,6 +1007,27 @@ one.
   `.timing_runs/20260816T193636Z-cd8e9b8e-full/test_firmware_manifest.txt`.
   This is a test-only package under the user's +0.300 ns margin waiver, not a
   promoted release.
+- [x] The clean full nonincremental F0.9.81 build at
+  `b33b63176d758ac25d582bdfbdd62717a17484ba` exported as
+  `20260816T210350Z-b33b6317-full` with `rescue_used=0`. It reports WNS
+  +0.194 ns, TNS 0, WHS +0.061 ns, THS 0, and WPWS +0.265 ns. Route and bus
+  skew pass; all setup, hold, pulse-width, route, missing-constraint, and
+  unconstrained-internal failure counts are zero.
+- [x] Its candidate DCP SHA-256 is
+  `dc13f81019146784367f33d44c47e0fe0a2e054159c36770411c9992bb0b38e7`;
+  bitstream SHA-256 is
+  `2e0e2a948aa647f1e13d4e2774f4d33db31ee239587920a0b50d7d4ef22bea42`;
+  XSA SHA-256 is
+  `601d18dc1ec0cef12619cf8b0262d41cb813af52ccdecc20db07759f4101275c`.
+- [x] A fresh Vitis build used that exact XSA. Platform export and all apps
+  report `SUCCESS`; the package contains F0.9.81, B1.1.0, and the
+  `196684`-byte CPU1 blob.
+- [x] Root `FIRMWARE.BIN` and the archived `FIRMWARE_TEST.BIN` are
+  byte-identical, each 4,241,804 bytes, with SHA-256
+  `e5a6fa0440b9eee92a1bdc59ad8f90bd5ddb53bc97f88cbea5b57fde47f94964`.
+  Bootgen reports three named image headers but four total images and four
+  partitions because `frontend.elf` has two load partitions. The handoff file
+  is `.timing_runs/20260816T210350Z-b33b6317-full/test_firmware_manifest.txt`.
 
 ### Missing Board and End-to-End Proof
 
@@ -943,7 +1041,10 @@ one.
   and DHGRi faults recorded above.
 - [x] Build and package the corrected F0.9.80 functional retest image from
   final source checkpoint `cd8e9b8`.
-- [ ] Program and run the F0.9.80 functional retest.
+- [x] Program and run the F0.9.80 functional retest; it exposed the F0.9.81
+  work recorded above.
+- [x] Build and package F0.9.81 from checkpoint `b33b631`.
+- [ ] Program and run the F0.9.81 functional retest.
 - [ ] Verify all physical Apple pins and translators while ONE//e starts,
   runs, faults, stops, and returns to host mode, including PL configuration and
   both card/Apple power orders.

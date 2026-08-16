@@ -18,6 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SOFTWARE = ROOT / "software"
 ACME_EXE = os.environ.get("ACME_EXE", r"C:\Users\hasse\tools\acme\acme.exe")
 ACME_LIB = os.environ.get("ACME", r"C:\Users\hasse\tools\acme\ACME_Lib")
+AC_JAR = Path(os.environ.get(
+    "APPLECOMMANDER", r"C:\Users\hasse\tools\AppleCommander-ac-13.0.jar"))
 
 
 class TestFailure(AssertionError):
@@ -314,6 +316,97 @@ def fat_helper_checks() -> None:
             "AD8088 bridge must jump to the BASIC.SYSTEM return stub")
 
 
+def assembled_viewer_mode_checks(binary: Path, symbol_list: Path) -> None:
+    """Run the assembled mode setters against Enhanced //e video switches."""
+    import re
+    from py65.devices.mpu6502 import MPU
+
+    symbols: dict[str, int] = {}
+    for line in symbol_list.read_text(encoding="utf-8").splitlines():
+        match = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\$([0-9a-fA-F]+)",
+                         line)
+        if match:
+            symbols[match.group(1)] = int(match.group(2), 16)
+    for name in ("select_hgr", "select_dhgr", "cur_video7"):
+        require(name in symbols, f"assembled viewer has no {name} symbol")
+
+    class EnhancedIIeMemory:
+        def __init__(self) -> None:
+            self.data = bytearray(65536)
+            self.text = True
+            self.hires = False
+            self.col80 = False
+            self.dhires = False
+            self.ioudis = False
+
+        def _access(self, addr: int, write: bool) -> None:
+            if write and addr == 0xC07E:
+                self.ioudis = True
+            elif write and addr == 0xC07F:
+                self.ioudis = False
+            elif write and addr == 0xC00C:
+                self.col80 = False
+            elif write and addr == 0xC00D:
+                self.col80 = True
+            elif addr == 0xC050:
+                self.text = False
+            elif addr == 0xC051:
+                self.text = True
+            elif addr == 0xC056:
+                self.hires = False
+            elif addr == 0xC057:
+                self.hires = True
+            elif addr in (0xC05E, 0xC05F) and self.ioudis:
+                self.dhires = addr == 0xC05E
+
+        def __getitem__(self, key):
+            if isinstance(key, slice):
+                return self.data[key]
+            self._access(key, False)
+            return self.data[key]
+
+        def __setitem__(self, key, value) -> None:
+            if isinstance(key, slice):
+                self.data[key] = value
+                return
+            self._access(key, True)
+            self.data[key] = value
+
+    image = binary.read_bytes()
+
+    def run_mode_setter(label: str, video7_mode: int) -> str:
+        memory = EnhancedIIeMemory()
+        memory.data[0x2000:0x2000 + len(image)] = image
+        # The SYS entry copies its $2000-$27FF body to $1000-$17FF. Mirror
+        # that relocation so ACME's pseudopc symbols address the real code.
+        memory.data[0x1000:0x1800] = memory.data[0x2000:0x2800]
+        memory.data[symbols["cur_video7"]] = video7_mode
+        mpu = MPU(memory=memory, pc=symbols[label])
+        call_depth = 1
+        for _ in range(256):
+            opcode = memory.data[mpu.pc]
+            if opcode == 0x60:             # RTS
+                call_depth -= 1
+                if call_depth == 0:
+                    break
+            elif opcode == 0x20:           # JSR abs
+                call_depth += 1
+            mpu.step()
+        else:
+            raise TestFailure(f"assembled {label} did not return")
+
+        require(not memory.text and memory.hires,
+                f"assembled {label} did not select hi-res graphics")
+        base = "DHGR" if memory.col80 and memory.dhires else "HGR"
+        return base + "i"  # Both tested image records carry A2Li type 1.
+
+    hgr_i = run_mode_setter("select_hgr", 0)
+    dhgr_i = run_mode_setter("select_dhgr", 2)
+    require(hgr_i == "HGRi" and dhgr_i == "DHGRi" and hgr_i != dhgr_i,
+            "assembled viewer must leave HGRi and DHGRi in distinct modes")
+    print(f"PASS assembled viewer modes: {hgr_i} != {dhgr_i}")
+
+
 def assembly_checks() -> None:
     subprocess.run([sys.executable,
                     str(ROOT / "scripts" / "gen_hgr_assets.py")],
@@ -335,8 +428,13 @@ def assembly_checks() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         for name, (org, ceiling) in budgets.items():
             out = Path(tmp) / (name + ".bin")
+            symbols = Path(tmp) / (name + ".sym")
+            command = [exe, "-f", "plain", "-o", str(out)]
+            if name == "a2imgview_demo.a65":
+                command.extend(("-l", str(symbols)))
+            command.append(name)
             subprocess.run(
-                [exe, "-f", "plain", "-o", str(out), name],
+                command,
                 cwd=SOFTWARE, env=env, check=True,
                 capture_output=True)
             size = out.stat().st_size
@@ -344,6 +442,17 @@ def assembly_checks() -> None:
             require(org + size <= ceiling,
                     f"{name}: {size} bytes overruns ${ceiling:04X}")
             print(f"PASS {name}: {size} bytes at ${org:04X}")
+            if name == "a2imgview_demo.a65":
+                assembled_viewer_mode_checks(out, symbols)
+                if AC_JAR.is_file() and shutil.which("java"):
+                    disk_viewer = subprocess.run(
+                        ["java", "-jar", str(AC_JAR), "-g",
+                         str(SOFTWARE / "Appletini_Demos.po"), "A2IMGVIEW"],
+                        check=True, capture_output=True).stdout
+                    require(disk_viewer == out.read_bytes(),
+                            "tracked demo disk A2IMGVIEW must match the "
+                            "tested assembled viewer")
+                    print("PASS tracked disk contains tested A2IMGVIEW")
 
 
 def main() -> int:

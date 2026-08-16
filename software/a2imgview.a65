@@ -63,6 +63,7 @@ PAGE1    = $C054
 HIRESON  = $C057
 DHGRON   = $C05E            ; access: AN3 low = DHGR on (with 80COL set)
 DHGROFF  = $C05F            ; access: AN3 high = DHGR off
+IOUDISON = $C07E            ; write: C05E/C05F control DHIRES, not AN3
 NEWVIDEO = $C029
 TEXTPAGE = $0400
 
@@ -209,6 +210,7 @@ select_dhgr:
     bit MIXEDOFF
     bit PAGE1
     bit HIRESON
+    sta IOUDISON             ; Enhanced //e: route C05E/F to DHIRES
     jsr video7_select_dhgr  ; commits the mode with 80COL and DHGR on
     rts
 

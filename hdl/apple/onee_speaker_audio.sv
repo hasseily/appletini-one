@@ -30,12 +30,16 @@ module onee_speaker_audio #(
         input logic signed [18:0] sample
     );
         begin
-            if (sample > 19'sd32767)
-                saturate_pcm16 = 16'sh7FFF;
-            else if (sample < -19'sd32768)
+            // A signed value fits in 16 bits exactly when every bit above
+            // bit 15 is a copy of bit 15. This avoids two wide compares on
+            // the output of the DC-blocking arithmetic.
+            if ((sample[18:15] == 4'b0000) ||
+                (sample[18:15] == 4'b1111))
+                saturate_pcm16 = sample[15:0];
+            else if (sample[18])
                 saturate_pcm16 = -16'sd32768;
             else
-                saturate_pcm16 = sample[15:0];
+                saturate_pcm16 = 16'sh7FFF;
         end
     endfunction
 

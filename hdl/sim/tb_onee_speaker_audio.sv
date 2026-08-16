@@ -57,6 +57,19 @@ module tb_onee_speaker_audio;
     logic signed [15:0] held_sample;
 
     initial begin
+        // Prove each signed-saturation boundary directly. Values whose upper
+        // bits extend bit 15 pass through; the next values clamp.
+        check(dut.saturate_pcm16(19'sd32767) == 16'sd32767,
+              "positive saturation boundary did not pass through");
+        check(dut.saturate_pcm16(19'sd32768) == 16'sd32767,
+              "positive saturation boundary did not clamp");
+        check(dut.saturate_pcm16(-19'sd32768) == -16'sd32768,
+              "negative saturation boundary did not pass through");
+        check(dut.saturate_pcm16(-19'sd32769) == -16'sd32768,
+              "negative saturation boundary did not clamp");
+        check(dut.saturate_pcm16(19'sd0) == 16'sd0,
+              "zero did not pass through saturation");
+
         // Reset tracks the current static level while forcing a zero sample.
         enabled = 1'b1;
         speaker_level = 1'b1;

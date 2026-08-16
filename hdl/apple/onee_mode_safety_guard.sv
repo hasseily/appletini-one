@@ -87,6 +87,10 @@ module onee_mode_safety_guard #(
 
     wire apple_activity_sampled =
         |(apple_sync_level ^ apple_sync_previous);
+    wire apple_sampled_nonidle =
+        |(apple_sync_level ^ APPLE_IDLE_LEVELS);
+    wire apple_activity_synchronized =
+        apple_activity_sampled || apple_sampled_nonidle;
 
     // A raw input differs from its synchronized copy as soon as it changes.
     // This direct path is the fail-safe kill while the synchronizer and sticky
@@ -125,7 +129,7 @@ module onee_mode_safety_guard #(
     always_ff @(posedge clk or negedge resetn) begin
         if (!resetn) begin
             quiet_count <= {QUIET_COUNT_WIDTH{1'b0}};
-        end else if (apple_activity_now || apple_activity_sampled) begin
+        end else if (apple_activity_synchronized) begin
             quiet_count <= {QUIET_COUNT_WIDTH{1'b0}};
         end else if (!apple_activity_quiet) begin
             quiet_count <= quiet_count + 1'b1;
@@ -141,13 +145,12 @@ module onee_mode_safety_guard #(
     wire activity_lockout_clear =
         apple_activity_quiet &&
         !manual_enable_request &&
-        !apple_activity_now &&
-        !apple_activity_sampled;
+        !apple_activity_synchronized;
 
     always_ff @(posedge clk or posedge activity_lockout_set) begin
         if (activity_lockout_set) begin
             apple_activity_lockout <= 1'b1;
-        end else if (apple_activity_sampled) begin
+        end else if (apple_activity_synchronized) begin
             apple_activity_lockout <= 1'b1;
         end else if (activity_lockout_clear) begin
             apple_activity_lockout <= 1'b0;
@@ -160,7 +163,7 @@ module onee_mode_safety_guard #(
     // seen, the hold keeps the connector isolated even after manual off until
     // the same quiet manual-off condition which clears the activity lockout.
     wire physical_isolation_set =
-        apple_activity_now &&
+        apple_activity_lockout &&
         (manual_enable_request || onee_selected);
 
     always_ff @(posedge clk or posedge physical_isolation_set) begin
@@ -180,8 +183,7 @@ module onee_mode_safety_guard #(
             reselect_armed <= 1'b0;
             onee_selected  <= 1'b0;
         end else if (apple_activity_lockout ||
-                     apple_activity_now ||
-                     apple_activity_sampled) begin
+                     apple_activity_synchronized) begin
             reselect_armed <= 1'b0;
             onee_selected  <= 1'b0;
         end else if (!manual_enable_request) begin
@@ -202,8 +204,6 @@ module onee_mode_safety_guard #(
     wire mode_kill_async =
         !resetn ||
         !manual_enable_request ||
-        apple_activity_now ||
-        apple_activity_sampled ||
         apple_activity_lockout;
 
     always_ff @(posedge clk or posedge mode_kill_async) begin

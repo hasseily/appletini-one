@@ -107,11 +107,9 @@ def static_contract_checks() -> None:
         "wire mode_kill_async =" in rtl and
         "!resetn ||" in rtl and
         "!manual_enable_request ||" in rtl and
-        "apple_activity_now ||" in rtl and
-        "apple_activity_sampled ||" in rtl and
         "apple_activity_lockout;" in rtl,
-        "one fail-off term must contain reset, request, raw/sampled activity, "
-        "and the sticky lockout",
+        "one fail-off term must contain reset, request, and the asynchronously "
+        "set sticky lockout",
     )
     require(
         "always_ff @(posedge clk or posedge mode_kill_async)" in rtl and
@@ -125,6 +123,13 @@ def static_contract_checks() -> None:
         "assign onee_enable_effective = onee_run_q;" in rtl and
         "assign force_outputs_off = !onee_run_q;" in rtl,
         "broad effective enable and output kill must come only from run state",
+    )
+    require(
+        "wire apple_activity_synchronized =" in rtl and
+        "apple_activity_sampled || apple_sampled_nonidle;" in rtl and
+        "apple_activity_lockout &&" in rtl,
+        "quiet/reselect logic and isolation hold must use synchronized or "
+        "contained sticky state",
     )
     require(
         "apple_activity_quiet &&" in rtl and

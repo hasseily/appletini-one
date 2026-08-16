@@ -149,6 +149,8 @@ module apple_top(
     logic onee_selected;
     logic onee_activity_quiet;
     logic [2:0] onee_inhibit_reason;
+    logic onee_activity_status_q;
+    logic [2:0] onee_inhibit_reason_status_q;
     logic virtual_req_ready;
     logic virtual_resp_valid;
     logic [7:0] virtual_resp_rdata;
@@ -181,6 +183,19 @@ module apple_top(
         .apple_activity_quiet   (onee_activity_quiet),
         .inhibit_reason         (onee_inhibit_reason)
     );
+
+    // Keep live raw-pin diagnostics out of the large AXI readback mux. Safety
+    // still acts asynchronously inside the guard; software sees the sampled
+    // activity and reason one fabric clock later.
+    always_ff @(posedge clk) begin
+        if (!rstn[1]) begin
+            onee_activity_status_q       <= 1'b0;
+            onee_inhibit_reason_status_q <= 3'd1;
+        end else begin
+            onee_activity_status_q       <= onee_activity_now;
+            onee_inhibit_reason_status_q <= onee_inhibit_reason;
+        end
+    end
 
     wire onee_input_ps_wr_en = as_client.awvalid &&
         (as_common.awaddr >= 8'h5C) && (as_common.awaddr <= 8'h5F) &&
@@ -2417,13 +2432,13 @@ module apple_top(
                 8'h5A:   as_client_rdata_q <= sdd_stat_full_stall_cycles;
                 CARD_CTRL_REG_ONEE: as_client_rdata_q <= {
                     8'hE1, 8'h00, 1'b1, 1'b0, ONEE_POWER_SENSE_PRESENT,
-                    onee_inhibit_reason,
+                    onee_inhibit_reason_status_q,
                     onee_physical_isolation_hold,
                     onee_selected,
                     onee_reselect_armed,
                     onee_activity_quiet,
                     onee_activity_lockout,
-                    onee_activity_now,
+                    onee_activity_status_q,
                     onee_force_outputs_off,
                     physical_bus_isolate,
                     onee_enable_effective,

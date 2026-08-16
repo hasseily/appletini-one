@@ -56,8 +56,11 @@ module onee_speaker_audio #(
             dc_step_wide = 18'sd1;
 
         dc_next_wide = {dc_estimate_q[16], dc_estimate_q} + dc_step_wide;
-        highpass_wide = {{2{target_sample[16]}}, target_sample} -
-                        {dc_next_wide[17], dc_next_wide};
+        // target - (estimate + step) is exactly (target - estimate) - step.
+        // Use the saved error term so the estimate update and output filter do
+        // not form a serial add/subtract chain on the 133 MHz sample path.
+        highpass_wide = {dc_error_wide[17], dc_error_wide} -
+                        {dc_step_wide[17], dc_step_wide};
     end
 
     always_ff @(posedge clk) begin

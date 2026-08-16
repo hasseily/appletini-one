@@ -62,7 +62,8 @@ def static_contract_checks() -> None:
         "dc_error_wide =" in rtl and
         "dc_next_wide =" in rtl and
         "highpass_wide =" in rtl and
-        "{dc_next_wide[17], dc_next_wide}" in rtl,
+        "{dc_error_wide[17], dc_error_wide}" in rtl and
+        "{dc_step_wide[17], dc_step_wide}" in rtl,
         "speaker path must subtract a tracked DC estimate from both levels",
     )
     require(

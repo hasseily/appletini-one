@@ -11,6 +11,8 @@ module tb_onee_joined_bus;
 
     logic resetn = 1'b0;
     logic onee_enabled = 1'b0;
+    // ONE//e resolves Disk II independently of the saved physical slot mask.
+    logic configured_boot_target_disk2 = 1'b1;
     logic vtw_enable = 1'b0;
     logic core_run = 1'b0;
 
@@ -114,7 +116,10 @@ module tb_onee_joined_bus;
         .clk(clk),
         .resetn(resetn),
         .enabled(onee_enabled),
+        .manual_enable_request(onee_enabled),
+        .boot_target_disk2(configured_boot_target_disk2),
         .ab_read(ab_read),
+        .session_boot_target_disk2(),
         .slot7_hidden(slot7_hidden)
     );
 
@@ -449,6 +454,8 @@ module tb_onee_joined_bus;
 
         onee_enabled = 1'b1;
         repeat (3) @(posedge clk);
+        check(!saved_slot6_enable && configured_boot_target_disk2,
+              "test did not cover Disk II target with saved Slot 6 off");
         check(slot7_hidden, "ONE//e entry did not hide slot 7");
         push_key(7'h41);
         check(keyboard_latch == 8'hC1,

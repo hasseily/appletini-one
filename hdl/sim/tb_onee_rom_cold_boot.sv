@@ -1,12 +1,14 @@
 `timescale 1ns / 1ps
 
-// Real-ROM ONE//e cold-reset smoke.
+// Real-ROM ONE//e cold-reset boot-target proof.
 //
 // The runner converts the firmware's embedded Enhanced //e CPU ROM array to
-// onee_enhanced_cpu_rom.mem.  This bench boots that exact image on the vTW
-// core over the isolated virtual motherboard bus and stops only after the
-// ROM reaches its descending slot scan and probes slot 6.
-module tb_onee_rom_cold_boot;
+// onee_enhanced_cpu_rom.mem. This bench boots that exact image on the vTW
+// core over the isolated virtual motherboard bus. Production slot-ROM bytes
+// prove that the ROM enters $C700 for SmartPort and $C600 for Disk II.
+module tb_onee_rom_cold_boot #(
+    parameter bit BOOT_TARGET_DISK2 = 1'b1
+);
 
     timeunit 1ns;
     timeprecision 1ps;
@@ -21,8 +23,10 @@ module tb_onee_rom_cold_boot;
     globals::AppleBus_read ab_read;
     globals::AppleBus_read softswitch_ab_read;
     globals::AppleBus_write motherboard_write;
+    globals::AppleBus_write slot6_write_q = '0;
+    globals::AppleBus_write slot7_write_q = '0;
     globals::AppleBus_write vtw_write;
-    globals::AppleBus_write [1:0] client_writes;
+    globals::AppleBus_write [3:0] client_writes;
     globals::AppleBus_write merged_write;
     globals::SoftSwitchState sss;
 
@@ -120,17 +124,59 @@ module tb_onee_rom_cold_boot;
         .clk(clk),
         .resetn(resetn),
         .enabled(1'b1),
+        .manual_enable_request(1'b1),
+        .boot_target_disk2(BOOT_TARGET_DISK2),
         .ab_read(ab_read),
+        .session_boot_target_disk2(),
         .slot7_hidden(slot7_hidden)
     );
+
+    logic [7:0] slot6_rom [0:255];
+    logic [7:0] slot7_rom [0:255];
+
+    initial begin
+        $readmemh("disk2_slot6.mem", slot6_rom);
+        $readmemh("smartport_a2retronet_style_c700.mem", slot7_rom);
+    end
+
+    // Use the production ROM bytes while keeping this test focused on the
+    // reset scan and entry choice. The full Disk II boot bench covers the
+    // slot-6 ROM's controller path; SmartPort protocol service remains a
+    // separate end-to-end test.
+    always_ff @(posedge clk) begin
+        if (!resetn) begin
+            slot6_write_q <= '0;
+            slot7_write_q <= '0;
+        end else begin
+            if (ab_read.serve_en && ab_read.rw &&
+                (ab_read.addr[15:8] == 8'hC6)) begin
+                slot6_write_q.wr_data    <= slot6_rom[ab_read.addr[7:0]];
+                slot6_write_q.wr_data_en <= 1'b1;
+            end else if (ab_read.data_en) begin
+                slot6_write_q.wr_data    <= 8'h00;
+                slot6_write_q.wr_data_en <= 1'b0;
+            end
+
+            if (ab_read.serve_en && ab_read.rw && !slot7_hidden &&
+                (ab_read.addr[15:8] == 8'hC7)) begin
+                slot7_write_q.wr_data    <= slot7_rom[ab_read.addr[7:0]];
+                slot7_write_q.wr_data_en <= 1'b1;
+            end else if (ab_read.data_en) begin
+                slot7_write_q.wr_data    <= 8'h00;
+                slot7_write_q.wr_data_en <= 1'b0;
+            end
+        end
+    end
 
     always_comb begin
         client_writes[0] = motherboard_write;
         client_writes[1] = vtw_write;
+        client_writes[2] = slot6_write_q;
+        client_writes[3] = slot7_write_q;
     end
 
     apple_bus_write_arbiter #(
-        .NUM_CLIENTS(2),
+        .NUM_CLIENTS(4),
         .FAST_DATA_CLIENT(1),
         .FAST_ADDR_CLIENT(1)
     ) arbiter_i (
@@ -252,7 +298,10 @@ module tb_onee_rom_cold_boot;
 
     logic saw_reset_entry = 1'b0;
     logic saw_slot7_probe_while_hidden = 1'b0;
+    logic saw_slot7_probe_while_visible = 1'b0;
     logic saw_slot6_probe = 1'b0;
+    logic saw_slot7_entry = 1'b0;
+    logic saw_slot6_entry = 1'b0;
 
     always @(posedge clk) begin
         if (core_run && dbg_core_pc == 16'hFA62)
@@ -263,13 +312,48 @@ module tb_onee_rom_cold_boot;
             saw_slot7_probe_while_hidden <= 1'b1;
 
         if (ab_read.serve_en && ab_read.rw &&
+            ab_read.addr[15:8] == 8'hC7 && !slot7_hidden)
+            saw_slot7_probe_while_visible <= 1'b1;
+
+        if (ab_read.serve_en && ab_read.rw &&
             ab_read.addr[15:8] == 8'hC6 && slot7_hidden)
             saw_slot6_probe <= 1'b1;
+
+        if (core_run && dbg_core_pc == 16'hC700)
+            saw_slot7_entry <= 1'b1;
+        if (core_run && dbg_core_pc == 16'hC600)
+            saw_slot6_entry <= 1'b1;
     end
 
     task automatic check(input logic condition, input string message);
         if (condition !== 1'b1)
             $fatal(1, "ONEE ROM BOOT FAIL: %s", message);
+    endtask
+
+    task automatic check_selected_path(input string phase);
+        check(saw_reset_entry,
+              $sformatf("%s did not execute the $FA62 reset entry", phase));
+        if (BOOT_TARGET_DISK2) begin
+            check(saw_slot7_probe_while_hidden,
+                  $sformatf("%s did not hide the first slot-7 probe", phase));
+            check(!saw_slot7_probe_while_visible,
+                  $sformatf("%s exposed slot 7 before entering $C600", phase));
+            check(saw_slot6_probe && saw_slot6_entry,
+                  $sformatf("%s did not probe and enter $C600", phase));
+            check(!saw_slot7_entry,
+                  $sformatf("%s entered the SmartPort slot ROM", phase));
+            check(!slot7_hidden,
+                  $sformatf("%s did not release slot 7 at $C600", phase));
+        end else begin
+            check(!saw_slot7_probe_while_hidden,
+                  $sformatf("%s hid a SmartPort slot-7 probe", phase));
+            check(saw_slot7_probe_while_visible && saw_slot7_entry,
+                  $sformatf("%s did not probe and enter $C700", phase));
+            check(!saw_slot6_probe && !saw_slot6_entry,
+                  $sformatf("%s fell through to Disk II", phase));
+            check(!slot7_hidden,
+                  $sformatf("%s did not keep slot 7 visible", phase));
+        end
     endtask
 
     initial begin
@@ -307,37 +391,39 @@ module tb_onee_rom_cold_boot;
             end
         join
 
-        check(slot7_hidden, "slot 7 was not hidden at cold-reset start");
+        check(slot7_hidden == BOOT_TARGET_DISK2,
+              "initial slot-7 visibility did not match the boot target");
         core_run = 1'b1;
 
-        fork : wait_for_slot6
+        fork : wait_for_boot_entry
             begin
-                wait (saw_slot6_probe);
+                if (BOOT_TARGET_DISK2)
+                    wait (saw_slot6_entry);
+                else
+                    wait (saw_slot7_entry);
                 repeat (4) @(posedge clk);
-                disable wait_for_slot6;
+                disable wait_for_boot_entry;
             end
             begin
                 #12ms;
                 $fatal(1,
-                       "ONEE ROM BOOT FAIL: no slot-6 scan PC=%04X core=%0d bus=%0d line=%0d cycle=%0d",
+                       "ONEE ROM BOOT FAIL: no selected card entry target=%s PC=%04X core=%0d bus=%0d line=%0d cycle=%0d",
+                       BOOT_TARGET_DISK2 ? "Disk II" : "SmartPort",
                        dbg_core_pc, core_cycles, bus_cycles,
                        line_in_frame, cycle_in_line);
             end
         join
 
-        check(saw_reset_entry, "real ROM did not execute its $FA62 reset entry");
-        check(saw_slot7_probe_while_hidden,
-              "real ROM did not perform the descending slot-7 probe");
-        check(saw_slot6_probe,
-              "real ROM did not advance its cold scan to slot 6");
-        check(!slot7_hidden,
-              "slot-6 probe did not release the ONE//e slot-7 hold");
+        check_selected_path("cold reset");
         check(core_cycles > 32'd100,
               "cold-reset smoke did not execute a meaningful ROM path");
         check(bus_cycles > 32'd10,
               "cold-reset smoke did not traverse the virtual Apple bus");
 
-        $display("ONEE ROM COLD BOOT PASS");
+        if (BOOT_TARGET_DISK2)
+            $display("ONEE ROM DISK2 BOOT PATH PASS");
+        else
+            $display("ONEE ROM SMARTPORT BOOT PATH PASS");
         $finish;
     end
 
@@ -346,4 +432,12 @@ module tb_onee_rom_cold_boot;
         $fatal(1, "ONEE ROM BOOT FAIL: timeout");
     end
 
+endmodule
+
+module tb_onee_rom_cold_boot_disk2;
+    tb_onee_rom_cold_boot #(.BOOT_TARGET_DISK2(1'b1)) bench_i();
+endmodule
+
+module tb_onee_rom_cold_boot_smartport;
+    tb_onee_rom_cold_boot #(.BOOT_TARGET_DISK2(1'b0)) bench_i();
 endmodule

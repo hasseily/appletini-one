@@ -141,6 +141,9 @@ module apple_top(
     localparam logic ONEE_POWER_SENSE_PRESENT = 1'b0;
     logic onee_request_q;
     logic onee_enable_effective;
+    logic onee_boot_target_disk2;
+    logic boot_target_disk2;
+    logic configured_boot_target_disk2;
     logic onee_force_outputs_off;
     logic physical_bus_isolate;
     logic onee_physical_isolation_hold;
@@ -561,21 +564,30 @@ module apple_top(
     wire onee_slot7_cards_visible =
         !onee_enable_effective || !onee_slot7_cold_scan_q;
 
-    // A stand-alone Enhanced //e scans down from slot 7. Keep all virtual
-    // slot-7 cards hidden until the first $C600 ROM probe lets Disk II answer.
+    // A stand-alone Enhanced //e scans down from slot 7. SmartPort must be
+    // visible on its first $C7xx probe. Hide slot 7 only for a selected Disk
+    // II boot, then release it as soon as the scan reaches $C6xx.
     onee_cold_slot_scan onee_cold_slot_scan_i (
         .clk         (clk),
         .resetn      (rstn[1]),
         .enabled     (onee_enable_effective),
+        .manual_enable_request(onee_request_q),
+        .boot_target_disk2(configured_boot_target_disk2),
         .ab_read     (ab_read),
+        .session_boot_target_disk2(onee_boot_target_disk2),
         .slot7_hidden(onee_slot7_cold_scan_q)
     );
 
     // SuperSprite hardware and software require slot 7, which is also the
-    // SmartPort slot. Enabling SuperSprite therefore gates off SmartPort, SD
-    // storage, and the SmartPort GETDIB detection channel.
+    // SmartPort slot. The saved feature choice normally gates off SmartPort,
+    // except when a SmartPort-selected ONE//e session owns that slot.
     wire card_supersprite_enable =
         card_feature_enable_mask_q[CARD_CTRL_FEATURE_SS_ENABLE_BIT];
+    // A SmartPort-selected ONE//e session owns slot 7 even when the saved
+    // physical-host profile enables SuperSprite. A Disk II session keeps the
+    // saved SuperSprite-vs-SmartPort policy after its $C600 scan completes.
+    wire onee_smartport_boot_owner =
+        onee_enable_effective && !onee_boot_target_disk2;
     wire no_slot_clock_enabled =
         card_feature_enable_mask_q[CARD_CTRL_FEATURE_NSC_ENABLE_BIT];
     /* The SSC shares slot 1 with the Uthernet II (disjoint decode), so it
@@ -599,7 +611,6 @@ module apple_top(
     logic smartport_active;
     logic disk2_active;
     logic disk2_active_timing_q;
-    logic boot_target_disk2;
     logic vtw_core_run_eff_q;
     logic vtw_disk2_boot_scan_q;
     wire disk2_bus_visible =
@@ -1370,7 +1381,8 @@ module apple_top(
         .rstn(rstn[2]),
         .ab_read(gate_ab(
             ab_read,
-            card_supersprite_enable && onee_slot7_cards_visible)),
+            card_supersprite_enable && !onee_smartport_boot_owner &&
+            onee_slot7_cards_visible)),
         .sss(sss),
         .slot_assign(3'h7),
         .vblank_tick(bm_vbl_cmd_pulse),
@@ -1460,7 +1472,7 @@ module apple_top(
 
     /* vTW SmartPort short-circuit port (vtw_core_top <-> smartport_card). */
     wire vtw_smartport_visible =
-        !card_supersprite_enable &&
+        (!card_supersprite_enable || onee_smartport_boot_owner) &&
         (onee_enable_effective || smartport_active) &&
         !vtw_disk2_boot_scan_q &&
         onee_slot7_cards_visible;
@@ -1584,6 +1596,7 @@ module apple_top(
         .smartport_active(smartport_active),
         .disk2_active(disk2_active),
         .boot_target_disk2(boot_target_disk2),
+        .configured_boot_target_disk2(configured_boot_target_disk2),
         .boot_slot(boot_menu_slot),
         .boot_slot_valid(boot_menu_slot_valid),
         .apple_vblank_start_pulse(bm_vbl_cmd_pulse),

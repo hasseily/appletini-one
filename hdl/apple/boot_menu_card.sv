@@ -20,6 +20,7 @@ module boot_menu_card (
     output logic                    smartport_active,
     output logic                    disk2_active,
     output logic                    boot_target_disk2,
+    output logic                    configured_boot_target_disk2,
     output logic [2:0]              boot_slot,
     output logic                    boot_slot_valid,
     output logic                    apple_vblank_start_pulse,
@@ -192,6 +193,11 @@ module boot_menu_card (
         disk2_enabled && (handoff_mode_q == SLOT7_HANDOFF_DISK2);
     assign handoff_smartport = !handoff_disk2;
     assign boot_target_disk2 = handoff_disk2;
+    // Keep the configured choice separate from the physical-host fallback.
+    // ONE//e always supplies its virtual slot-6 card, even when the saved
+    // physical Slot 6 enable is off.
+    assign configured_boot_target_disk2 =
+        handoff_mode_q == SLOT7_HANDOFF_DISK2;
     assign boot_target_slot = handoff_disk2 ? 3'h6 : 3'h7;
     assign boot_menu_runtime_active =
         (slot7_mode_q == SLOT_MODE_BOOTMENU) &&

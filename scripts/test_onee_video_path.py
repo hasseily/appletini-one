@@ -29,6 +29,7 @@ SOURCES = [
     "hdl/apple/w65c02_core.sv",
     "hdl/apple/vtw_core_top.sv",
     "hdl/sim/tb_onee_video_path.sv",
+    "hdl/sim/tb_onee_cold_slot_scan.sv",
     "hdl/sim/tb_onee_rom_cold_boot.sv",
 ]
 
@@ -103,6 +104,11 @@ def main() -> int:
         shutil.rmtree(OUT_DIR)
     OUT_DIR.mkdir(parents=True)
     make_embedded_rom_mem()
+    shutil.copy2(ROOT / "hdl" / "apple" / "disk2_slot6.mem", OUT_DIR)
+    shutil.copy2(
+        ROOT / "hdl" / "apple" / "smartport_a2retronet_style_c700.mem",
+        OUT_DIR,
+    )
 
     run(
         [vivado_tool("xvlog"), "--sv", *[str(ROOT / src) for src in SOURCES]],
@@ -114,12 +120,22 @@ def main() -> int:
         "ONEE VIDEO PATH PASS",
     )
     run_bench(
-        "tb_onee_rom_cold_boot",
-        "onee_rom_cold_boot_snap",
-        "ONEE ROM COLD BOOT PASS",
+        "tb_onee_cold_slot_scan",
+        "onee_cold_slot_scan_snap",
+        "ONEE COLD SLOT SCAN RESET PASS",
+    )
+    run_bench(
+        "tb_onee_rom_cold_boot_disk2",
+        "onee_rom_disk2_boot_path_snap",
+        "ONEE ROM DISK2 BOOT PATH PASS",
+    )
+    run_bench(
+        "tb_onee_rom_cold_boot_smartport",
+        "onee_rom_smartport_boot_path_snap",
+        "ONEE ROM SMARTPORT BOOT PATH PASS",
     )
 
-    print("ONE//e video path and real-ROM cold-boot simulations passed")
+    print("ONE//e video path and both real-ROM boot-target paths passed")
     return 0
 
 

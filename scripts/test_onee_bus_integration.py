@@ -12,6 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "build" / "onee_joined_bus_sim"
 TOP = ROOT / "hdl" / "apple" / "apple_top.sv"
 CORE = ROOT / "hdl" / "apple" / "vtw_core_top.sv"
+BOOT_CARD = ROOT / "hdl" / "apple" / "boot_menu_card.sv"
+COLD_SCAN = ROOT / "hdl" / "apple" / "onee_cold_slot_scan.sv"
 SOURCES_LIST = ROOT / "hdl" / "hdl_sources.txt"
 
 
@@ -47,6 +49,8 @@ def run(command: list[str], log_name: str) -> str:
 def static_checks() -> None:
     top = TOP.read_text(encoding="utf-8")
     core = CORE.read_text(encoding="utf-8")
+    boot_card = BOOT_CARD.read_text(encoding="utf-8")
+    cold_scan = COLD_SCAN.read_text(encoding="utf-8")
     sources = SOURCES_LIST.read_text(encoding="utf-8")
 
     for source in (
@@ -102,8 +106,28 @@ def static_checks() -> None:
 
     require(
         "onee_cold_slot_scan onee_cold_slot_scan_i" in top and
+        ".manual_enable_request(onee_request_q)" in top and
+        ".boot_target_disk2(configured_boot_target_disk2)" in top and
+        ".session_boot_target_disk2(onee_boot_target_disk2)" in top and
+        ".configured_boot_target_disk2(configured_boot_target_disk2)" in top and
+        "if (manual_enable_request && !request_q)\n"
+        "                session_boot_target_disk2 <= boot_target_disk2;" in cold_scan and
+        "assign configured_boot_target_disk2 =\n"
+        "        handoff_mode_q == SLOT7_HANDOFF_DISK2;" in boot_card and
+        "assign boot_target_disk2 = handoff_disk2;" in boot_card and
+        "else if (!ab_read.res)\n"
+        "                slot7_hidden <= session_boot_target_disk2;" in cold_scan and
         ".ab_read(gate_ab(physical_ab_read, !onee_enable_effective))" in top,
-        "ONE//e must hide the host boot-menu card and own cold-slot order",
+        "ONE//e must use and re-arm its target without changing host fallback",
+    )
+    require(
+        "wire onee_smartport_boot_owner =\n"
+        "        onee_enable_effective && !onee_boot_target_disk2;" in top and
+        "card_supersprite_enable && !onee_smartport_boot_owner &&\n"
+        "            onee_slot7_cards_visible))" in top and
+        "(!card_supersprite_enable || onee_smartport_boot_owner) &&\n"
+        "        (onee_enable_effective || smartport_active)" in top,
+        "SmartPort-selected ONE//e must own slot 7 over saved SuperSprite",
     )
     require(
         "wire disk2_bus_visible =\n        onee_enable_effective ||" in top and
@@ -117,7 +141,7 @@ def static_checks() -> None:
         "!onee_enable_effective && vtw_smartport_visible" in top and
         "!onee_enable_effective && vtw_disk2_boot_scan_q" in top and
         ".sp_boot_suppress(vtw_sp_boot_suppress)" in top,
-        "ONE//e SmartPort must appear after C600 only on the synthetic bus",
+        "ONE//e SmartPort must use selected slot visibility on the synthetic bus",
     )
 
     require(

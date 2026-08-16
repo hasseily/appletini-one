@@ -43,6 +43,18 @@ def require_path(step, p: Path):
     return p
 
 
+def require_platform_build_success(status):
+    """Reject the Vitis API's numeric FAILURE/IN_PROGRESS results.
+
+    Platform.build() streams its log but returns the final protobuf enum
+    instead of raising when the build fails: SUCCESS=0, FAILURE=1, and
+    IN_PROGRESS=2.  Do not continue to app creation with a missing XPFM.
+    """
+    if status != 0:
+        raise RuntimeError(f"Vitis platform build returned status {status}")
+    return status
+
+
 def generate_default_bezel_png_sources():
     subprocess.run([sys.executable, "scripts/generate_default_bezel_png.py"], check=True)
 
@@ -717,7 +729,22 @@ run_step(
     lambda: domain_core1.regenerate(),
 )
 
-run_step("Build platform", lambda: platform.build())
+platform_build_status = run_step("Build platform", lambda: platform.build())
+run_step(
+    "Verify platform build status",
+    lambda: require_platform_build_success(platform_build_status),
+)
+run_step(
+    "Verify exported platform XPFM",
+    lambda: require_path(
+        "Find exported platform XPFM",
+        Path("vitis_workspace")
+        / "appletini_platform"
+        / "export"
+        / "appletini_platform"
+        / "appletini_platform.xpfm",
+    ),
+)
 
 # Create application components
 

@@ -27,9 +27,11 @@ Last source audit: 2026-08-16
   key repeat used fast frontend poll counts instead of elapsed time, and the
   demo image viewer did not enable IOUDIS before selecting DHIRES, so DHGRi
   remained HGRi.
-- F0.9.80 is the next test image. The three source fixes and their focused
-  checks are separate from the still-pending full build, package, and board
-  retest.
+- F0.9.80 is the next test image. The speed, repeat, and DHGRi fixes reached a
+  timing-clean baseline build, but that build was not packaged because the
+  user then required the manual ONE//e selection to stay latched. Checkpoint
+  `36be6c5` implements that rule. Its final full build, package, and board
+  retest are still pending.
 
 ## Goal and Supported Shape
 
@@ -118,6 +120,11 @@ sections list the board and system tests which still need to run.
   first core release, and virtual warm reset.
 - `dde9b20`: let an explicitly open Appletini menu stage the next ONE//e speed
   while host TransWarp is off; the same key stays off when the menu is closed.
+- `e7fe40a`: reserve F0.9.80 and form the timing-clean pre-latch build
+  checkpoint.
+- `36be6c5`: keep a manual ONE//e selection with no software expiry, retry a
+  failed private runtime without losing its speed, and require a fresh manual
+  selection after every terminal stop.
 
 ## Safety Contract
 
@@ -147,6 +154,10 @@ wait for firmware or for the status synchronizer. The run-state flop's Q
 drives the high-fanout virtual machine selection. Software's live activity and
 inhibit fields use a sampled copy, not the raw pins.
 
+The input constraint gives all six watched U533 pins the same 5 ns
+pad-to-first-flop route bound. PHI0, 7M, Q3, M2SEL, M2B0, and DEVSEL# must all
+remain in that set; none may rely on an unconstrained asynchronous route.
+
 U234 carries RESET#, INH#, IRQ#, NMI#, RDY#, and DMA#. ONE//e disables U234
 while physical isolation is asserted, so changes or floating levels on its
 FPGA side do not enter the activity detector. The main translators remain
@@ -154,10 +165,18 @@ enabled in forced Apple-to-FPGA direction during ONE//e. U533 therefore keeps
 the three Apple clocks and select lines visible while every FPGA-side bus
 driver remains off.
 
-After an activity stop:
+The manual selection has no firmware expiry. If REQUEST stays high and the PL
+reports no hazard, long stable quiet time leaves the selection in force. A
+failed private-runtime start, or a released core which later stops, suspends
+vTW and retries inside the same selected session. That recoverable path keeps
+the exact queued or live speed override.
+
+Apple-side activity, a lost PL request echo, missing or invalid safety logic,
+and explicit manual OFF are terminal stops. On a terminal stop:
 
 - Effective mode drops at once.
-- Firmware clears the session request and stops vTW.
+- Firmware stops vTW, clears the session request, and clears session-only
+  speed state.
 - The request is never raised again by polling, startup, config load, or a
   profile.
 - Quiet time alone cannot restart the machine.
@@ -279,9 +298,17 @@ The item help is:
 > quiet, select this item again.
 
 The sole high write to the ONE//e request register comes from an explicit menu
-selection. A request waits for PL effective state with a bounded timeout. The
-menu closes only when the vTW status confirms both effective enable and a
-released core; the user can reopen it to stop the session.
+selection. A safe request has no software timeout: it remains selected while
+physical isolation settles and while a recoverable private-runtime fault is
+retried. The menu closes only when the vTW status confirms both effective
+enable and a released core; the user can reopen it to stop the session.
+
+Every full card and PS boot writes the ONE//e request low and starts in `OFF`.
+The mode is not saved in config or profiles. A saved automatic start would be
+unsafe on this board because a software restart loses all prior Apple-bus
+activity history. Without a nonvolatile hardware activity latch, software
+cannot know that a connected Apple ran before the card or PS restarted. Only
+a new manual menu selection may start ONE//e.
 
 `vtw_service_onee_start()` then:
 
@@ -335,8 +362,10 @@ state still reports `TW: OFF` and queues nothing.
 All three ONE//e start control words use the effective mode and divider, so the
 first core release uses that queued or configured speed. The private warm
 reset does not rewrite `VTW_CTRL`, so the same session rung survives it. A
-session stop clears the temporary override, and a new session returns to the
-saved configured speed.
+recoverable runtime suspend writes vTW control to zero but retains the exact
+temporary override; the retry uses that same mode and divider in every start
+word. A terminal session stop clears the temporary override, and a new manual
+session returns to the saved configured speed.
 
 Reset and config reapply paths also need the effective session state, not just
 saved host intent. One centralized Disk II setter now keeps the service on
@@ -498,6 +527,15 @@ mode is off.
   isolated, so running Apple clocks cannot become quiet.
 - [x] Latch activity and require a later manual selection.
 - [x] Keep startup, profile, apply, and polling paths from raising request.
+- [x] Keep a safe selected request active with no software expiry, including
+  through long stable quiet intervals.
+- [x] Suspend and retry a failed private runtime without clearing its exact
+  queued or live speed override.
+- [x] Treat watched Apple activity, lost request echo, missing safety logic,
+  and manual OFF as terminal stops which require a fresh manual selection.
+- [x] Bind all six watched U533 inputs to the 5 ns raw-input route constraint.
+- [x] Start every full card and PS boot in `OFF`; keep ONE//e out of saved
+  settings and profiles.
 - [x] Reprove physical address, R/W, data, IRQ, INH, DMA, and RESET drive masks
   with the main translators forced input-only and auxiliary translator U234
   disabled.
@@ -735,7 +773,12 @@ Checkpoint `147e56d` queues a speed request during ONE//e takeover, applies it
 to the first core release, retains it across virtual warm reset, and clears the
 temporary override when the session stops. Checkpoint `dde9b20` also accepts
 the preselection while the Appletini menu is open and host TransWarp is off,
-without enabling that action when the menu is closed.
+without enabling that action when the menu is closed. Checkpoint `36be6c5`
+removes the request-to-effective software timeout, preserves the exact speed
+through recoverable runtime suspend/retry, and reserves terminal stop for
+watched Apple activity, lost request, missing safety logic, and manual OFF.
+Stable quiet time cannot expire a selection or restart a terminally stopped
+one.
 
 - [x] Add focused source and native checks for a one-event short key tap,
   elapsed repeat timing, clock wrap, and no repeat catch-up burst.
@@ -743,6 +786,11 @@ without enabling that action when the menu is closed.
   IOUDIS/DHIRES behavior and require distinct results.
 - [x] Add focused firmware and joined-bus checks for configured and queued
   start speed plus `VTW_CTRL` retention across virtual warm reset.
+- [x] Add native and RTL checks for selection with no software expiry,
+  recoverable runtime restart at the exact speed, terminal-stop latching,
+  fresh manual reselect, and no restart after a long quiet interval.
+- [x] Check that the XDC gives PHI0, 7M, Q3, M2SEL, M2B0, and DEVSEL# the same
+  5 ns raw-input route bound.
 - [ ] Complete a clean full Vivado route and export for F0.9.80.
 - [ ] Build Vitis from that exact XSA and package the F0.9.80 test image.
 - [ ] Program F0.9.80 and run the out-of-slot hardware retest in
@@ -851,8 +899,15 @@ without enabling that action when the menu is closed.
   `.timing_runs/20260816T180541Z-a94aefc2-full/test_firmware_manifest.txt`.
   This F0.9.79 image is a test image under the user's +0.300 ns margin waiver,
   not a promoted release.
-- [ ] Build and export a clean F0.9.80 bitstream and XSA. No timing result,
-  archive name, or source checkpoint has been recorded yet.
+- [x] The clean pre-latch F0.9.80 baseline at commit
+  `e7fe40a4f3903331c2701c9cb2d5fc811b856882` exported as build
+  `20260816T185749Z-e7fe40a4-full`. It is timing-clean with WNS +0.103 ns, TNS
+  0, and WHS +0.019 ns. It was intentionally not packaged because the user
+  added the latched-selection requirement after the build began. Do not use it
+  as the F0.9.80 test image.
+- [ ] Build and export a clean F0.9.80 bitstream and XSA from checkpoint
+  `36be6c5` plus these documentation updates. No final build result or archive
+  has been recorded yet.
 - [ ] Build the firmware from that exact XSA, package F0.9.80, compare the
   archived and root files byte for byte, and record size, hashes, version
   strings, and Bootgen readback.
@@ -867,13 +922,15 @@ without enabling that action when the menu is closed.
 - [x] Build and package the F0.9.79 functional retest image.
 - [x] Program and run F0.9.79 out of slot; it exposed the speed, key-repeat,
   and DHGRi faults recorded above.
-- [ ] Build and package the corrected F0.9.80 functional retest image.
+- [ ] Build and package the corrected F0.9.80 functional retest image from
+  `36be6c5` plus these documentation updates.
 - [ ] Program and run the F0.9.80 functional retest.
 - [ ] Verify all physical Apple pins and translators while ONE//e starts,
   runs, faults, stops, and returns to host mode, including PL configuration and
   both card/Apple power orders.
-- [ ] Verify a live-host event stops ONE//e with no contention, back-power, or
-  automatic restart.
+- [ ] Verify a live-host event stops ONE//e with no contention or back-power,
+  that long later quiet does not restart it, and that only a fresh manual
+  selection can run it again.
 - [ ] Complete real DOS and ProDOS boots to their OS-ready states through
   virtual Disk II.
 - [ ] Check a rendered frame, USB input, paddles, warm reset, speaker, Disk II,

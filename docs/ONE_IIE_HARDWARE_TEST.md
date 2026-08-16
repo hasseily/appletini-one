@@ -194,7 +194,10 @@ the renderer correctly saw HGRi.
 
 ## F0.9.80 Source Corrections
 
-F0.9.80 is the next test image. Its full build, package, and board retest have
+F0.9.80 is the next test image. A timing-clean build of the speed, repeat, and
+DHGRi fixes finished before the user added the latched-selection requirement.
+That baseline was intentionally not packaged. The final full build, package,
+and board retest for checkpoint `36be6c5` plus these documentation updates have
 not run yet.
 
 - Speed commits: `147e56d23be402a4feed68e0719d41636a74e3e4` and
@@ -221,6 +224,34 @@ not run yet.
   writes `$C07E` before it selects DHIRES, and the demo disk contains that
   rebuilt viewer. Its regression executes the assembled HGRi and DHGRi mode
   setters against Enhanced //e switches and requires `HGRi != DHGRi`.
+- Selection-latch commit:
+  `36be6c5cf8f22796a986548482f994f48818e7e1`. A manual ONE//e selection
+  has no software expiry. Stable quiet, including a long wait for effective
+  state, does not clear it. A failed private-runtime start or a released core
+  which stops suspends vTW and retries inside the same selected session while
+  preserving the exact queued or live speed override. Watched Apple activity,
+  a lost PL request echo, missing or invalid safety logic, and manual OFF are
+  terminal stops: they stop vTW, clear session-only speed state, and require a
+  fresh manual selection. Later quiet time never restarts a terminally stopped
+  session.
+
+Every full card and PS boot starts ONE//e in `OFF` and writes its request low.
+ONE//e is not saved in config or profiles. A saved automatic start is not safe
+without a nonvolatile hardware activity latch: a software restart cannot know
+that a connected Apple was active before the card or PS restarted.
+
+## F0.9.80 Pre-Latch Baseline Build
+
+- Source commit: `e7fe40a4f3903331c2701c9cb2d5fc811b856882`
+- Clean full build: `20260816T185749Z-e7fe40a4-full`
+- Route: WNS `+0.103 ns`, TNS `0`, and WHS `+0.019 ns`
+- Build result: timing-clean and exported
+- Package result: intentionally not built
+
+The user added the latched-selection requirement after this build began. Its
+bitstream and XSA do not contain checkpoint `36be6c5`, so no F0.9.80 firmware
+package was made from them. The final `36be6c5` plus documentation build
+remains pending.
 
 ## Detection Limit
 
@@ -228,7 +259,8 @@ Slot +5 V cannot identify an Apple in this stand-alone setup because that same
 pin supplies the card when it is out of the computer. The design therefore
 uses the Apple bus clocks, not slot +5 V, to detect a powered and running host.
 PHI0, 7M, or Q3 will change within the sub-microsecond guard window during
-normal Apple operation.
+normal Apple operation. The XDC gives all six watched U533 inputs—PHI0, 7M,
+Q3, M2SEL, M2B0, and DEVSEL#—the same 5 ns pad-to-first-flop route bound.
 
 There is no independent power sensor on this board. The clock guard cannot
 prove that a host with all watched clocks stopped is off. A powered,
@@ -274,8 +306,22 @@ Keep the golden boot image unchanged.
   `3e978a10fa5cf975a69fa1d44cd4c983349901ee`.
 - [x] Correct and test the demo viewer's IOUDIS/DHGRi selection at commit
   `9cbf3e0dfdf4cfeb33b09c88a4e739959ddae82c`.
+- [x] Remove the selected-state software expiry and test long stable quiet at
+  commit `36be6c5cf8f22796a986548482f994f48818e7e1`.
+- [x] Test recoverable private-runtime suspend/retry with the exact queued or
+  live speed override retained.
+- [x] Test terminal stop and fresh manual reselect for watched Apple activity,
+  lost request echo, missing safety logic, and manual OFF. Test that long later
+  quiet never restarts the mode.
+- [x] Bind PHI0, 7M, Q3, M2SEL, M2B0, and DEVSEL# to the 5 ns raw-input route
+  constraint.
+- [x] Confirm that every full card and PS boot writes request low and starts
+  `OFF`, with no config or profile auto-start.
+- [x] Complete timing-clean pre-latch build
+  `20260816T185749Z-e7fe40a4-full` at `e7fe40a4`; do not package it because it
+  predates the latch requirement.
 - [ ] Complete a clean full Vivado route and export for the combined F0.9.80
-  source checkpoint.
+  checkpoint `36be6c5` plus these documentation updates.
 - [ ] Build Vitis against that exact XSA.
 - [ ] Package F0.9.80, record its source commit, build, timing, size, hashes,
   and Bootgen readback, then compare root and archived files byte for byte.
@@ -311,6 +357,9 @@ Keep the Apple slot edge disconnected and apply the same stand-alone supply
 used for the F0.9.77 test.
 
 1. Power the card and confirm the on-screen firmware version is `F0.9.80`.
+   Before any menu action, confirm that ONE//e says `OFF`. Perform a full card
+   power cycle and a PS reboot; after each, confirm it returns to `OFF`. No
+   saved setting or profile may select it.
 2. Attach bootable images to both SmartPort SP1 and Disk II drive 1. Keep both
    available so the result proves the target choice rather than media fallback.
 3. Enable SuperSprite in saved config, select SmartPort as the boot target,
@@ -351,10 +400,14 @@ used for the F0.9.77 test.
 12. In the demo image viewer, show both HGRi and DHGRi samples. They must select
     distinct modes, and DHGRi must show double-hi-res pixels rather than HGRi.
     Recheck the other new image modes for regression.
-13. Turn ONE//e off, wait for the stable connector vector to pass the 96-cycle
-   quiet check, and select it again.
+13. Leave a selected ONE//e running for a long stable quiet interval and
+    confirm that it stays selected and running. A safe request which is still
+    settling must not time out. Turn ONE//e off, wait for the stable connector
+    vector to pass the 96-cycle quiet check, and select it again.
 
-A request never restarts itself after a real activity lock.
+A request never restarts itself after watched Apple activity, a lost request,
+missing safety logic, or manual OFF. Long later quiet must leave it off until a
+fresh manual menu selection.
 
 ## Functional Checks
 
@@ -380,6 +433,8 @@ Run these checks before any Apple-connected safety test:
 - Check 40/80-column text, lores, hires, double-hires, HGRi, DHGRi, and mixed
   video. HGRi and DHGRi must produce distinct switch states and images.
 - Reopen the menu, turn ONE//e off, and confirm the state returns to `OFF`.
+- Leave it off through a long quiet interval and confirm it does not restart.
+  Select it manually and confirm that it can start a new session.
 
 Record the UART log, disk image name, USB device names, DVI mode, and card
 control register `0x5B` for each failure.
@@ -393,5 +448,7 @@ and U234 stays disabled. Cover both power orders and an Apple which starts its
 clocks while ONE//e runs.
 
 PHI0, 7M, or Q3 activity must stop ONE//e at once, keep the connector isolated,
-and require a later manual off/on selection. Also test the stated limit with a
-clock-stopped Apple before approving use while the card remains installed.
+and require a fresh manual selection. Keep the Apple quiet afterward long
+enough to prove that quiet alone cannot restart ONE//e. Also test the stated
+limit with a clock-stopped Apple before approving use while the card remains
+installed.

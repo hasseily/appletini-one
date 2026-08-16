@@ -129,8 +129,37 @@ The F0.9.79 source uses one clear rule at each boundary:
   ownership. Without that session override, SuperSprite could still claim the
   shared slot and keep SmartPort's ROM invisible even after the cold-scan fix.
 
-The source correction and focused regression are complete. The full Vivado and
-Vitis build, package, and hardware retest remain pending.
+The source correction, focused regression, full Vivado and Vitis build, and
+package are complete. The hardware retest remains pending.
+
+## F0.9.79 Test Image
+
+- Source and packaging commit:
+  `a94aefc27353f8ccdefe7b9dbf012d343a9f1564`
+- Clean full build: `20260816T180541Z-a94aefc2-full`
+- Route: WNS `+0.103 ns`, TNS `0`, WHS `+0.019 ns`, THS `0`, and WPWS
+  `+0.265 ns`
+- Failures: no failing endpoints, route errors, missing constraint objects, or
+  unconstrained internal endpoints
+- Bitstream SHA-256:
+  `a03e90819fee064d4163572925392d18e9a05e47c8426f32b6258d2dd03afea8`
+- XSA SHA-256:
+  `0963dc9999f253dac21dd69d3af5a20c7e88008e613479497a9762fc87dcedce`
+- Files: root `FIRMWARE.BIN` and
+  `.timing_runs/20260816T180541Z-a94aefc2-full/FIRMWARE_TEST.BIN`
+- Size: `4,109,260` bytes each
+- Firmware SHA-256:
+  `3d4c6d9797eac2ebfae74d110963077a91897175f6c19cc21b56a9f69d567941`
+- Handoff record:
+  `.timing_runs/20260816T180541Z-a94aefc2-full/test_firmware_manifest.txt`
+
+The two firmware files are byte-identical. A fresh Vitis workspace used the
+exact archived XSA; platform export and all application builds report
+`SUCCESS`. Bootgen readback passed with `total_images=3` and
+`total_partitions=3`. The frontend contains the `196684`-byte CPU1 blob.
+
+This image is below the project's release-only +0.300 ns setup-margin gate.
+The user waived that gate for this test image; this is not a promoted release.
 
 ## Detection Limit
 
@@ -162,18 +191,18 @@ output enable, leakage, back-power, and high impedance with test gear.
 
 - [x] Pass the final cold-target, joined-bus, real-ROM, effective Disk II,
   SuperSprite override, storage-selection, and live-speed-control tests.
-- [ ] Complete a full Vivado route and export with no failing path.
-- [ ] Build Vitis from the exact exported XSA.
-- [ ] Package F0.9.79, record its source commit, size, SHA-256, timing result,
+- [x] Complete a full Vivado route and export with no failing path.
+- [x] Build Vitis from the exact exported XSA.
+- [x] Package F0.9.79, record its source commit, size, SHA-256, timing result,
   and Bootgen readback, and compare the root and archived files byte for byte.
 - [ ] Program F0.9.79 and complete the hardware checks below.
 
-Do not use the root `FIRMWARE.BIN` for this retest until this section names and
-checks the F0.9.79 package. Keep the golden boot image unchanged.
+Root `FIRMWARE.BIN` is the checked F0.9.79 test file named above. Keep the
+golden boot image unchanged.
 
 ## Program the F0.9.79 Test Slot
 
-This step remains pending until the package checks above pass.
+The package checks above passed. Programming remains pending.
 
 1. Connect the card's update UART and its stand-alone power source.
 2. Find the port if needed:

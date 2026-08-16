@@ -21,8 +21,8 @@ Last source audit: 2026-08-16
   `SMARTPORT SP1` label, and USB speed keys changed the label without changing
   the running core.
 - The F0.9.79 source changes correct those three faults. The focused source,
-  native, ROM-path, and bus tests pass. A new full build, package, and board
-  retest are still pending.
+  native, ROM-path, and bus tests pass. The clean full build and test package
+  are complete. The board retest is still pending.
 
 ## Goal and Supported Shape
 
@@ -102,6 +102,7 @@ sections list the board and system tests which still need to run.
 - `7838f235`: learn the stable open-connector U533 input vector, use a
   96-cycle quiet interval, retain the main translators as an input-only clock
   monitor, disable auxiliary translator U234, and reserve F0.9.78.
+- `a94aefc`: reserve F0.9.79 and form its source and packaging checkpoint.
 
 ## Safety Contract
 
@@ -645,7 +646,7 @@ choices remain intact after ONE//e stops.
 - [x] Run the focused cold-slot, joined-bus, real-ROM, effective Disk II,
   SuperSprite override, storage-selection, and live-speed-control regressions
   at the final F0.9.79 source checkpoint.
-- [ ] Complete a full Vivado route and export, exact-XSA Vitis build, and
+- [x] Complete a full Vivado route and export, exact-XSA Vitis build, and
   F0.9.79 test package.
 - [ ] Program F0.9.79 and run the target, warm-reset, speed, storage-label,
   keyboard, and safety checklist in `docs/ONE_IIE_HARDWARE_TEST.md`.
@@ -682,8 +683,8 @@ choices remain intact after ONE//e stops.
   suites.
 - [ ] Promote a release build only after it reaches the project's +0.300 ns
   setup-margin gate, repeats cleanly at the same commit, and passes the board
-  checks below. The user waived that margin for the F0.9.77 and F0.9.78 test
-  images only.
+  checks below. The user waived that margin for the F0.9.77, F0.9.78, and
+  F0.9.79 test images only.
 - The first 2026-08-16 Vitis attempt made BSP content, but
   `vitis_workspace/appletini_platform/export/.buildstatus` reported
   `export=ERROR`. The expected
@@ -731,6 +732,27 @@ choices remain intact after ONE//e stops.
   `.timing_runs/20260816T164305Z-7838f235-full/test_firmware_manifest.txt`.
   This F0.9.78 image is a test image under the user's +0.300 ns margin waiver,
   not a promoted release.
+- [x] The clean full F0.9.79 implementation from source and packaging commit
+  `a94aefc27353f8ccdefe7b9dbf012d343a9f1564` exported as build
+  `20260816T180541Z-a94aefc2-full`. It reports WNS +0.103 ns, TNS 0, WHS
+  +0.019 ns, THS 0, and WPWS +0.265 ns, with no failing endpoints, route
+  errors, missing constraint objects, or unconstrained internal endpoints.
+  Its bitstream SHA-256 is
+  `a03e90819fee064d4163572925392d18e9a05e47c8426f32b6258d2dd03afea8`;
+  its XSA SHA-256 is
+  `0963dc9999f253dac21dd69d3af5a20c7e88008e613479497a9762fc87dcedce`.
+- [x] A fresh Vitis workspace build used that exact archived XSA. Platform
+  export and all application builds report `SUCCESS`. Bootgen readback passed
+  with `total_images=3` and `total_partitions=3`; the frontend contains the
+  `196684`-byte CPU1 blob.
+- [x] Root `FIRMWARE.BIN` and
+  `.timing_runs/20260816T180541Z-a94aefc2-full/FIRMWARE_TEST.BIN` are
+  byte-identical, each 4,109,260 bytes, with SHA-256
+  `3d4c6d9797eac2ebfae74d110963077a91897175f6c19cc21b56a9f69d567941`.
+  The handoff record is
+  `.timing_runs/20260816T180541Z-a94aefc2-full/test_firmware_manifest.txt`.
+  This F0.9.79 image is a test image under the user's +0.300 ns margin waiver,
+  not a promoted release.
 
 ### Missing Board and End-to-End Proof
 
@@ -739,7 +761,8 @@ choices remain intact after ONE//e stops.
 - [x] Build and package the corrected F0.9.78 image.
 - [x] Program F0.9.78 and start ONE//e out of the Apple slot; it booted the ROM
   and exposed the target, storage-label, and speed-control faults above.
-- [ ] Build, package, and run the F0.9.79 functional retest.
+- [x] Build and package the F0.9.79 functional retest image.
+- [ ] Program and run the F0.9.79 functional retest.
 - [ ] Verify all physical Apple pins and translators while ONE//e starts,
   runs, faults, stops, and returns to host mode, including PL configuration and
   both card/Apple power orders.

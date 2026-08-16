@@ -106,7 +106,8 @@ def test_boot_settings_draws_binding_editor() -> None:
     tabs = read(CONFIG_MENU_MAIN_TABS_C)
     source = read(CONFIG_MENU_C)
 
-    require("CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM 2U" in header and
+    require("CONFIG_MENU_BOOT_ONEE_ITEM 2U" in header and
+            "CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM 3U" in header and
             "CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM (CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM + 1U)" in header and
             "CONFIG_MENU_BOOT_ITEM_COUNT" in header,
             "Boot Settings must reserve rows for the USB binding editor")

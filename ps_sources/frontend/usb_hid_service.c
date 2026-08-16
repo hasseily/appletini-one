@@ -16,6 +16,7 @@
 #include "xusbps_hw.h"
 
 #include "usb_hid_service.h"
+#include "onee_input_service.h"
 
 #include "cherryusb_platform.h"
 #include "usbh_core.h"
@@ -76,6 +77,7 @@ typedef struct {
     uint8_t boot_mouse;
     uint8_t boot_keyboard;
     uint8_t mouse_capable;
+    uint8_t onee_joystick;
     uint8_t mouse_card;
     uint8_t report_info_valid;
     uint8_t report_pending;
@@ -975,10 +977,16 @@ static void hid_process_keyboard_usages(usb_hid_slot_t *slot,
 {
     usb_hid_menu_source_t next_sources[HID_SOURCE_TRACK_COUNT];
     uint32_t next_count = 0U;
+    uint8_t onee_reset_chord;
 
     if (slot == NULL || keys == NULL) {
         return;
     }
+
+    onee_reset_chord = onee_input_service_keyboard_report(slot->index,
+                                                           modifier,
+                                                           keys,
+                                                           count);
 
     memset(next_sources, 0, sizeof(next_sources));
     for (uint8_t bit = 0U; bit < 8U; ++bit) {
@@ -1006,6 +1014,12 @@ static void hid_process_keyboard_usages(usb_hid_slot_t *slot,
     }
 
     for (uint32_t i = 0U; i < next_count; ++i) {
+        if (onee_reset_chord != 0U &&
+            next_sources[i] ==
+                usb_hid_menu_source_from_keyboard_usage(
+                    HID_KBD_USAGE_PAUSE)) {
+            continue;
+        }
         if (hid_source_in_list(next_sources[i],
                                slot->prev_sources,
                                HID_SOURCE_TRACK_COUNT) != 0U) {
@@ -1303,6 +1317,23 @@ static uint16_t hid_desktop_usage_for_field(const struct usbh_hid_report_item *i
     return usage_min;
 }
 
+static uint8_t hid_onee_axis_from_usage(uint16_t usage,
+                                        onee_input_axis_t *axis)
+{
+    if (axis == NULL) {
+        return 0U;
+    }
+    switch (usage) {
+    case HID_DESKTOP_USAGE_X:  *axis = ONEE_INPUT_AXIS_X;  return 1U;
+    case HID_DESKTOP_USAGE_Y:  *axis = ONEE_INPUT_AXIS_Y;  return 1U;
+    case HID_DESKTOP_USAGE_Z:  *axis = ONEE_INPUT_AXIS_Z;  return 1U;
+    case HID_DESKTOP_USAGE_RX: *axis = ONEE_INPUT_AXIS_RX; return 1U;
+    case HID_DESKTOP_USAGE_RY: *axis = ONEE_INPUT_AXIS_RY; return 1U;
+    case HID_DESKTOP_USAGE_RZ: *axis = ONEE_INPUT_AXIS_RZ; return 1U;
+    default: return 0U;
+    }
+}
+
 static void hid_menu_push_hat(usb_hid_slot_t *slot, uint8_t hat)
 {
     if (slot == NULL || hat == slot->prev_hat) {
@@ -1354,7 +1385,8 @@ static void hid_collect_desktop_item(usb_hid_slot_t *slot,
                                      int32_t *dy,
                                      uint8_t *mouse_delta_seen,
                                      int8_t *wheel,
-                                     uint8_t *wheel_seen)
+                                     uint8_t *wheel_seen,
+                                     onee_input_joystick_report_t *onee_joystick)
 {
     const uint8_t relative = (uint8_t)((item->report_flags & HID_MAINITEM_RELATIVE) ? 1U : 0U);
 
@@ -1376,6 +1408,18 @@ static void hid_collect_desktop_item(usb_hid_slot_t *slot,
 
         value = hid_item_signed_value(item, raw);
         usage = hid_desktop_usage_for_field(item, field);
+        if (relative == 0U && onee_joystick != NULL) {
+            onee_input_axis_t axis;
+            if (hid_onee_axis_from_usage(usage, &axis) != 0U) {
+                onee_joystick->axis_valid_mask |=
+                    (uint8_t)(1U << axis);
+                onee_joystick->axis[axis] = value;
+                onee_joystick->logical_min[axis] =
+                    item->attribute.logical_min;
+                onee_joystick->logical_max[axis] =
+                    item->attribute.logical_max;
+            }
+        }
         switch (usage) {
         case HID_DESKTOP_USAGE_X:
             if (relative != 0U) {
@@ -1418,6 +1462,40 @@ static void hid_collect_desktop_item(usb_hid_slot_t *slot,
             break;
         }
     }
+}
+
+static uint8_t hid_report_info_has_absolute_joystick(
+    const usb_hid_slot_t *slot)
+{
+    uint8_t axis_mask = 0U;
+
+    if (slot == NULL || slot->report_info_valid == 0U ||
+        slot->interface_protocol == HID_PROTOCOL_MOUSE) {
+        return 0U;
+    }
+    for (uint32_t i = 0U; i < slot->report_info.report_item_count; ++i) {
+        const struct usbh_hid_report_item *item =
+            &slot->report_info.report_items[i];
+
+        if (item->report_type != HID_REPORT_INPUT ||
+            item->attribute.usage_page !=
+                HID_USAGE_PAGE_GENERIC_DESKTOP_CONTROLS ||
+            (item->report_flags & HID_MAINITEM_VARIABLE) == 0U ||
+            (item->report_flags & HID_MAINITEM_RELATIVE) != 0U) {
+            continue;
+        }
+        for (uint32_t field = 0U; field < item->attribute.report_count;
+             ++field) {
+            onee_input_axis_t axis;
+            if (hid_onee_axis_from_usage(
+                    hid_desktop_usage_for_field(item, field), &axis) != 0U) {
+                axis_mask |= (uint8_t)(1U << axis);
+            }
+        }
+    }
+    /* A pair of absolute axes distinguishes a joystick/gamepad from a
+     * single absolute control such as a throttle or dial. */
+    return ((axis_mask & (uint8_t)(axis_mask - 1U)) != 0U) ? 1U : 0U;
 }
 
 static uint8_t hid_report_info_has_relative_mouse(const usb_hid_slot_t *slot)
@@ -1468,12 +1546,14 @@ static void hid_process_report_protocol_report(usb_hid_slot_t *slot,
     int32_t dx = 0;
     int32_t dy = 0;
     uint8_t mouse_delta_seen = 0U;
+    onee_input_joystick_report_t onee_joystick;
 
     if (slot == NULL || report == NULL || slot->report_info_valid == 0U) {
         return;
     }
 
     memset(keys, 0, sizeof(keys));
+    memset(&onee_joystick, 0, sizeof(onee_joystick));
     for (uint32_t i = 0U; i < slot->report_info.report_item_count; ++i) {
         struct usbh_hid_report_item *item = &slot->report_info.report_items[i];
 
@@ -1504,7 +1584,8 @@ static void hid_process_report_protocol_report(usb_hid_slot_t *slot,
                                  &dy,
                                  &mouse_delta_seen,
                                  &wheel,
-                                 &wheel_seen);
+                                 &wheel_seen,
+                                 &onee_joystick);
     }
 
     if (keyboard_seen != 0U) {
@@ -1519,6 +1600,13 @@ static void hid_process_report_protocol_report(usb_hid_slot_t *slot,
 
     if (mouse_delta_seen != 0U || button_seen != 0U) {
         mouse_apply_motion(slot, dx, dy, (button_seen != 0U) ? buttons : slot->prev_buttons);
+    }
+
+    if (slot->onee_joystick != 0U &&
+        (onee_joystick.axis_valid_mask != 0U || button_seen != 0U)) {
+        onee_joystick.buttons_valid = button_seen;
+        onee_joystick.buttons = buttons;
+        onee_input_service_joystick_report(slot->index, &onee_joystick);
     }
 }
 
@@ -1674,6 +1762,9 @@ static void hid_parse_report_descriptor(usb_hid_slot_t *slot)
         if (hid_report_info_has_relative_mouse(slot) != 0U) {
             slot->mouse_capable = 1U;
         }
+        if (hid_report_info_has_absolute_joystick(slot) != 0U) {
+            slot->onee_joystick = 1U;
+        }
     } else {
         slot->last_error = rc;
         g_last_error = rc;
@@ -1701,6 +1792,8 @@ static void hid_log_connected(const usb_hid_slot_t *slot)
     uart_putdec(UART0_BASE, slot->report_info_valid);
     uart_puts(UART0_BASE, " mouse=");
     uart_putdec(UART0_BASE, slot->mouse_capable);
+    uart_puts(UART0_BASE, " joystick=");
+    uart_putdec(UART0_BASE, slot->onee_joystick);
     uart_puts(UART0_BASE, "\r\n");
 }
 
@@ -1748,6 +1841,7 @@ void usbh_hid_run(struct usbh_hid *hid_class)
         return;
     }
 
+    onee_input_service_disconnect(slot->index);
     hid_slot_reset(slot);
     intf_desc = &hid_class->hport->config.intf[hid_class->intf]
                      .altsetting[0]
@@ -1813,12 +1907,14 @@ void usbh_hid_stop(struct usbh_hid *hid_class)
     uart_puts(UART0_BASE, "\r\n");
 
     mouse_release_slot(slot);
+    onee_input_service_disconnect(slot->index);
     hid_class->user_data = NULL;
     hid_slot_reset(slot);
 }
 
 int usb_hid_service_init(void)
 {
+    onee_input_service_init();
     g_started = 0U;
     g_ready = 0U;
     g_seq = 0U;
@@ -1843,6 +1939,7 @@ int usb_hid_service_init(void)
     g_transfer_error_count = 0U;
     g_last_error = 0;
     hid_slots_reset_all();
+    onee_input_service_release_all();
     mouse_publish_state(0U, g_x, g_y, 0U);
 
     uart_puts(UART0_BASE, "[usb1] CherryUSB HID service init (stopped)\r\n");
@@ -1879,6 +1976,7 @@ void usb_hid_service_stop(void)
 {
     if (g_started == 0U) {
         mouse_mark_disconnected();
+        onee_input_service_release_all();
         hid_slots_reset_all();
         return;
     }
@@ -1887,6 +1985,7 @@ void usb_hid_service_stop(void)
     (void)usbh_deinitialize(CHERRYUSB_USB1_BUSID);
     g_started = 0U;
     mouse_mark_disconnected();
+    onee_input_service_release_all();
     hid_slots_reset_all();
 }
 
@@ -2195,10 +2294,12 @@ void usb_hid_service_dump_status(uint32_t uart_base)
 
 void usb_hid_service_poll(void)
 {
-    if (g_started == 0U) {
-        return;
+    /* Arm a newly running session before this poll can deliver its first HID
+     * report, then flush report changes without waiting for the next loop. */
+    onee_input_service_poll();
+    if (g_started != 0U) {
+        cherryusb_host_poll(CHERRYUSB_USB1_BUSID);
+        hid_slots_poll_holds();
+        onee_input_service_poll();
     }
-
-    cherryusb_host_poll(CHERRYUSB_USB1_BUSID);
-    hid_slots_poll_holds();
 }

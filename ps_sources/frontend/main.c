@@ -32,6 +32,7 @@
 #include "ad8088_service.h"
 #include "applicard_regs.h"
 #include "vtw_service.h"
+#include "onee_service.h"
 #include "compositor.h"
 #include "compositor_layout.h"
 #include "config_menu.h"
@@ -114,6 +115,7 @@ static usb1_boot_settle_t g_usb1_boot_settle = {0};
 static fw_update_metadata_t g_update_meta = {0};
 static uint8_t g_update_meta_valid = 0U;
 static uint8_t g_usb_menu_owned = 0U;
+static uint8_t g_onee_ui_running_seen = 0U;
 static uint16_t *g_bezel_565 = NULL;
 static unsigned g_bezel_width = 0U;
 static unsigned g_bezel_height = 0U;
@@ -1223,6 +1225,48 @@ static void menu_platform_set_boot_handoff(void *ctx, uint8_t handoff)
 {
     (void)ctx;
     boot_menu_service_set_handoff((boot_menu_handoff_t)handoff);
+}
+
+static uint8_t menu_platform_set_onee_mode(void *ctx, uint8_t enable)
+{
+    (void)ctx;
+    if (enable != 0U) {
+        return onee_service_request_start();
+    }
+    onee_service_request_stop();
+    return 1U;
+}
+
+static uint8_t menu_platform_get_onee_mode_state(void *ctx)
+{
+    (void)ctx;
+    return (uint8_t)onee_service_state();
+}
+
+static uint32_t menu_platform_get_onee_mode_status(void *ctx)
+{
+    (void)ctx;
+    return onee_service_status();
+}
+
+static uint8_t onee_runtime_start(void *ctx)
+{
+    (void)ctx;
+    return vtw_service_onee_start(
+        ((g_card_slot_enable_mask & (1UL << CARD_CTRL_SLOT_DISK2)) != 0U) ?
+            1U : 0U);
+}
+
+static void onee_runtime_stop(void *ctx)
+{
+    (void)ctx;
+    vtw_service_onee_stop();
+}
+
+static uint8_t onee_runtime_running(void *ctx)
+{
+    (void)ctx;
+    return vtw_service_onee_running();
 }
 
 static int menu_platform_read_rtc(void *ctx, rtc_pcf8563_time_t *t)
@@ -2606,6 +2650,26 @@ static void ui_sync_usb_menu_capture(config_menu_t *menu)
     usb_hid_service_set_menu_capture(config_menu_is_active(menu));
 }
 
+static void ui_close_menu_on_onee_running(ui_state_t *s,
+                                          config_menu_t *menu)
+{
+    const uint8_t running =
+        (menu != NULL &&
+         menu->onee_mode_state == CONFIG_MENU_ONEE_MODE_RUNNING) ? 1U : 0U;
+
+    /* Close once, only after the soft core reports released. Keeping a
+     * transition latch lets the user open the menu again while ONE//e runs
+     * and select the same row to stop it. */
+    if (running != 0U && g_onee_ui_running_seen == 0U &&
+        config_menu_is_active(menu) != 0U) {
+        g_usb_menu_owned = 0U;
+        ui_set_boot_menu_visible(s, menu, 0U);
+        ui_sync_usb_menu_capture(menu);
+        compositor_request_full_refresh();
+    }
+    g_onee_ui_running_seen = running;
+}
+
 static void ui_save_screenshot(screenshot_service_kind_t kind)
 {
     screenshot_service_result_t result;
@@ -2893,6 +2957,7 @@ int main(void)
     XTime_GetTime(&boot_stage_started);
     card_control_init();
     boot_timing_log("card_control_init", boot_stage_started);
+    onee_service_init();
     screenshot_service_init();
     screenshot_service_set_sd_write_hook(ui_screenshot_sd_write_complete, NULL);
     printer_service_init();
@@ -2931,6 +2996,9 @@ int main(void)
         menu_platform.is_apple_video_50hz = menu_platform_is_apple_video_50hz;
         menu_platform.set_boot_timeout_ticks = menu_platform_set_boot_timeout;
         menu_platform.set_boot_handoff = menu_platform_set_boot_handoff;
+        menu_platform.set_onee_mode = menu_platform_set_onee_mode;
+        menu_platform.get_onee_mode_state = menu_platform_get_onee_mode_state;
+        menu_platform.get_onee_mode_status = menu_platform_get_onee_mode_status;
         menu_platform.set_clock_enabled = control_set_clock_enabled;
         menu_platform.set_supersprite_enabled = control_set_supersprite_enabled;
         menu_platform.set_ssc_enabled = control_set_ssc_enabled;
@@ -3025,6 +3093,10 @@ int main(void)
     ad8088_service_init(UART0_BASE);
     ad8088_service_set_checkpoint(usb0_priority_checkpoint);
     vtw_service_init(UART0_BASE);
+    onee_service_bind_runtime(onee_runtime_start,
+                              onee_runtime_stop,
+                              onee_runtime_running,
+                              NULL);
 
     uart_control_print_help(&g_uart_control, &g_uart_control_ops);
     uart_control_print_help(&g_uart0_control, &g_uart_control_ops);
@@ -3128,6 +3200,9 @@ int main(void)
 
     while (1) {
         uart_budget = 32U;
+        onee_service_poll();
+        config_menu_poll_onee_mode(&config_menu);
+        ui_close_menu_on_onee_running(&ui, &config_menu);
         config_menu_poll_ethernet(&config_menu);
         if (config_menu_usb0_sd_remote_active(&config_menu) != 0U) {
             if (usb0_modal_was_active == 0U) {

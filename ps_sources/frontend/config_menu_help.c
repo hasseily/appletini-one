@@ -126,6 +126,12 @@ HELP(boot_device,
     "Which drive the Appletini boots from: the SmartPort drives or the Disk II drives.",
     "SmartPort boots the images on the SmartPort tab; Disk II boots the floppy images on the Disk II tab.");
 
+HELP(boot_onee,
+    "Runs the built-in Enhanced Apple //e on Appletini's soft 65C02 without an Apple host.",
+    "This mode is session-only and starts off after every card boot.",
+    "Any Apple-bus activity stops ONE//e and keeps it off.",
+    "After the connector is quiet, select this item again.");
+
 HELP(boot_bind_reset,
     "Restores every USB menu binding below to its factory default.",
     "Bindings are editable only while the menu was opened from the Apple boot prompt ('A' + BOOT mode).");
@@ -155,27 +161,28 @@ HELP(boot_bind_tw_slug,
     "Toggles the 0.05 MHz slug speed for debugging, active at all times.",
     "The key works only when the slug debug key is armed on the TransWarp tab.");
 
-/* Item order: 0 boot wait, 1 boot device, 2 reset bindings, then the
- * bindings in k_boot_usb_binding_action_order: 3-6 nav, 7-8 tabs,
- * 9 OK, 10 BACK, 11-12 screenshots, 13-15 TW speed, 16 TW slug. */
+/* Item order: 0 boot wait, 1 boot device, 2 ONE//e, 3 reset bindings, then
+ * the bindings in k_boot_usb_binding_action_order: 4-7 nav, 8-9 tabs,
+ * 10 OK, 11 BACK, 12-13 screenshots, 14-16 TW speed, 17 TW slug. */
 static const help_override_t boot_settings_overrides[] = {
     OVERRIDE(0,  boot_timeout),
     OVERRIDE(1,  boot_device),
-    OVERRIDE(2,  boot_bind_reset),
-    OVERRIDE(3,  boot_bind_nav),
+    OVERRIDE(2,  boot_onee),
+    OVERRIDE(3,  boot_bind_reset),
     OVERRIDE(4,  boot_bind_nav),
     OVERRIDE(5,  boot_bind_nav),
     OVERRIDE(6,  boot_bind_nav),
-    OVERRIDE(7,  boot_bind_tabs),
+    OVERRIDE(7,  boot_bind_nav),
     OVERRIDE(8,  boot_bind_tabs),
-    OVERRIDE(9,  boot_bind_ok_back),
+    OVERRIDE(9,  boot_bind_tabs),
     OVERRIDE(10, boot_bind_ok_back),
-    OVERRIDE(11, boot_bind_prtscr),
+    OVERRIDE(11, boot_bind_ok_back),
     OVERRIDE(12, boot_bind_prtscr),
-    OVERRIDE(13, boot_bind_tw_speed),
+    OVERRIDE(13, boot_bind_prtscr),
     OVERRIDE(14, boot_bind_tw_speed),
     OVERRIDE(15, boot_bind_tw_speed),
-    OVERRIDE(16, boot_bind_tw_slug),
+    OVERRIDE(16, boot_bind_tw_speed),
+    OVERRIDE(17, boot_bind_tw_slug),
 };
 
 /* ======================================================================== */

@@ -1329,6 +1329,23 @@ const char *config_menu_boot_device_text(uint8_t device)
     }
 }
 
+const char *config_menu_onee_mode_text(const config_menu_t *menu)
+{
+    if (menu == NULL) {
+        return "LOCKED";
+    }
+
+    switch (menu->onee_mode_state) {
+    case CONFIG_MENU_ONEE_MODE_OFF:
+        return "OFF";
+    case CONFIG_MENU_ONEE_MODE_RUNNING:
+        return "RUNNING";
+    case CONFIG_MENU_ONEE_MODE_LOCKED:
+    default:
+        return "LOCKED";
+    }
+}
+
 static uint8_t config_menu_usb_binding_source_valid(usb_hid_menu_source_t source)
 {
     for (uint32_t i = 0U;
@@ -4673,6 +4690,88 @@ static void config_menu_ethernet_test(config_menu_t *menu)
     config_menu_set_status(menu, (result.link_up != 0U) ? 0U : 1U, text);
 }
 
+static uint32_t config_menu_onee_inhibit_reason(const config_menu_t *menu)
+{
+    if (menu == NULL) {
+        return CARD_CTRL_ONEE_INHIBIT_RESET;
+    }
+    return (menu->onee_mode_status >> CARD_CTRL_ONEE_STATUS_INHIBIT_SHIFT) &
+           CARD_CTRL_ONEE_STATUS_INHIBIT_MASK;
+}
+
+static void config_menu_set_onee_refusal_status(config_menu_t *menu)
+{
+    const uint32_t status = (menu != NULL) ? menu->onee_mode_status : 0U;
+    const uint32_t reason = config_menu_onee_inhibit_reason(menu);
+    const uint32_t signature =
+        (status >> CARD_CTRL_ONEE_STATUS_SIGNATURE_SHIFT) &
+        CARD_CTRL_ONEE_STATUS_SIGNATURE_MASK;
+    const char *text;
+
+    if ((status & CARD_CTRL_ONEE_STATUS_HDL_PRESENT_BIT) == 0U ||
+        signature != CARD_CTRL_ONEE_STATUS_SIGNATURE) {
+        text = "ONE//e LOCKED: PL MODE NOT READY";
+    } else if ((status & CARD_CTRL_ONEE_STATUS_APPLE_POWER_BIT) != 0U ||
+               reason == CARD_CTRL_ONEE_INHIBIT_APPLE_POWER) {
+        text = "ONE//e LOCKED: APPLE POWER PRESENT";
+    } else if ((status & CARD_CTRL_ONEE_STATUS_ACTIVITY_BIT) != 0U ||
+               reason == CARD_CTRL_ONEE_INHIBIT_APPLE_ACTIVITY) {
+        text = "ONE//e LOCKED: APPLE BUS ACTIVE";
+    } else if ((status & CARD_CTRL_ONEE_STATUS_LOCKOUT_BIT) != 0U ||
+               reason == CARD_CTRL_ONEE_INHIBIT_ACTIVITY_LOCKOUT) {
+        text = "ONE//e LOCKED: APPLE ACTIVITY LOCKOUT";
+    } else if ((status & CARD_CTRL_ONEE_STATUS_QUIET_BIT) == 0U) {
+        text = "ONE//e LOCKED: WAITING FOR APPLE BUS QUIET";
+    } else if ((status & CARD_CTRL_ONEE_STATUS_RESELECT_ARMED_BIT) == 0U ||
+               reason == CARD_CTRL_ONEE_INHIBIT_RESELECT_REQUIRED) {
+        text = "ONE//e LOCKED: RESELECT NOT ARMED";
+    } else if (reason == CARD_CTRL_ONEE_INHIBIT_RESET) {
+        text = "ONE//e LOCKED: PL RESET";
+    } else if ((status & (CARD_CTRL_ONEE_STATUS_REQUEST_BIT |
+                          CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT |
+                          CARD_CTRL_ONEE_STATUS_SELECTED_BIT |
+                          CARD_CTRL_ONEE_STATUS_ISOLATED_BIT)) != 0U) {
+        text = "ONE//e LOCKED: PL MODE BUSY";
+    } else {
+        text = "ONE//e REQUEST REFUSED";
+    }
+    config_menu_set_status(menu, 1U, text);
+}
+
+static void config_menu_toggle_onee_mode(config_menu_t *menu)
+{
+    uint8_t accepted;
+
+    if (menu == NULL) {
+        return;
+    }
+
+    config_menu_poll_onee_mode(menu);
+    if (menu->platform.set_onee_mode == NULL) {
+        menu->onee_mode_state = CONFIG_MENU_ONEE_MODE_LOCKED;
+        config_menu_set_status(menu, 1U, "ONE//e SERVICE UNAVAILABLE");
+        return;
+    }
+
+    if (menu->onee_mode_state == CONFIG_MENU_ONEE_MODE_RUNNING ||
+        (menu->onee_mode_status & CARD_CTRL_ONEE_STATUS_REQUEST_BIT) != 0U) {
+        (void)menu->platform.set_onee_mode(menu->platform.ctx, 0U);
+        config_menu_poll_onee_mode(menu);
+        config_menu_set_status(menu, 0U, "ONE//e OFF");
+        return;
+    }
+
+    accepted = menu->platform.set_onee_mode(menu->platform.ctx, 1U);
+    config_menu_poll_onee_mode(menu);
+    if (accepted == 0U) {
+        config_menu_set_onee_refusal_status(menu);
+    } else if (menu->onee_mode_state == CONFIG_MENU_ONEE_MODE_RUNNING) {
+        config_menu_set_status(menu, 0U, "ONE//e RUNNING");
+    } else {
+        config_menu_set_status(menu, 0U, "ONE//e START REQUESTED");
+    }
+}
+
 static uint8_t config_menu_adjust_focused_value(config_menu_t *menu, int8_t delta)
 {
     uint32_t index;
@@ -4849,6 +4948,13 @@ static uint8_t config_menu_adjust_focused_value(config_menu_t *menu, int8_t delt
         }
         config_menu_apply_runtime(menu);
         config_menu_save_settings(menu);
+        return 1U;
+    }
+
+    if (menu->tab == CONFIG_TAB_BOOT_SETTINGS &&
+        menu->item_focus == CONFIG_MENU_BOOT_ONEE_ITEM) {
+        (void)delta;
+        config_menu_toggle_onee_mode(menu);
         return 1U;
     }
 
@@ -5854,6 +5960,9 @@ static void config_menu_activate_item(config_menu_t *menu)
                 break;
             }
             menu->boot_device = (uint8_t)((menu->boot_device + 1U) % CONFIG_BOOT_DEVICE_COUNT);
+        } else if (menu->item_focus == CONFIG_MENU_BOOT_ONEE_ITEM) {
+            config_menu_toggle_onee_mode(menu);
+            break;
         } else if (menu->item_focus == CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM) {
             if (menu->usb_bindings_editable == 0U) {
                 config_menu_set_status(menu, 1U, "USB BINDINGS EDITABLE AT BOOT");
@@ -6288,6 +6397,8 @@ void config_menu_init(config_menu_t *menu)
     memset(menu, 0, sizeof(*menu));
     menu->boot_timeout_mode = CONFIG_DEFAULT_BOOT_TIMEOUT_MODE;
     menu->boot_device = CONFIG_DEFAULT_BOOT_DEVICE;
+    menu->onee_mode_state = CONFIG_MENU_ONEE_MODE_OFF;
+    menu->onee_mode_status = 0U;
     menu->scanlines_mode = CONFIG_DEFAULT_SCANLINES_MODE;
     menu->video_output_mono = CONFIG_DEFAULT_VIDEO_OUTPUT_MONO;
     menu->video_mono_color = CONFIG_DEFAULT_VIDEO_MONO_COLOR;
@@ -6373,6 +6484,28 @@ void config_menu_bind_platform(config_menu_t *menu, const config_menu_platform_t
     }
     config_menu_apply_disk2_sound(menu);
     config_menu_apply_smartport_paths(menu);
+}
+
+void config_menu_poll_onee_mode(config_menu_t *menu)
+{
+    uint8_t state;
+
+    if (menu == NULL) {
+        return;
+    }
+    if (menu->platform.get_onee_mode_state == NULL ||
+        menu->platform.get_onee_mode_status == NULL) {
+        menu->onee_mode_state = CONFIG_MENU_ONEE_MODE_LOCKED;
+        menu->onee_mode_status = 0U;
+        return;
+    }
+
+    state = menu->platform.get_onee_mode_state(menu->platform.ctx);
+    menu->onee_mode_state =
+        (state <= CONFIG_MENU_ONEE_MODE_LOCKED) ?
+            state : CONFIG_MENU_ONEE_MODE_LOCKED;
+    menu->onee_mode_status =
+        menu->platform.get_onee_mode_status(menu->platform.ctx);
 }
 
 uint8_t config_menu_is_active(const config_menu_t *menu)

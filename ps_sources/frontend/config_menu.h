@@ -24,13 +24,20 @@
 #define CONFIG_BROWSER_CAT_COUNT     6U
 #define CONFIG_MENU_USB_BIND_ACTION_COUNT 14U
 #define CONFIG_MENU_USB_BIND_CAPTURE_NONE 0xFFU
-#define CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM 2U
+#define CONFIG_MENU_BOOT_ONEE_ITEM 2U
+#define CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM 3U
 #define CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM (CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM + 1U)
 #define CONFIG_MENU_BOOT_ITEM_COUNT \
     (CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM + CONFIG_MENU_USB_BIND_ACTION_COUNT)
 #define CONFIG_MENU_PROFILE_ITEM_COUNT 5U
 #define CONFIG_MENU_ETHERNET_ADDRESS_STATIC 0U
 #define CONFIG_MENU_ETHERNET_ADDRESS_DHCP 1U
+
+typedef enum {
+    CONFIG_MENU_ONEE_MODE_OFF = 0,
+    CONFIG_MENU_ONEE_MODE_RUNNING,
+    CONFIG_MENU_ONEE_MODE_LOCKED
+} config_menu_onee_mode_state_t;
 
 typedef enum {
     CONFIG_MENU_USB_BIND_ACTION_UP = 0,
@@ -91,6 +98,9 @@ typedef struct {
     uint8_t (*is_apple_video_50hz)(void *ctx);
     void (*set_boot_timeout_ticks)(void *ctx, uint32_t ticks);
     void (*set_boot_handoff)(void *ctx, uint8_t handoff);
+    uint8_t (*set_onee_mode)(void *ctx, uint8_t enable);
+    uint8_t (*get_onee_mode_state)(void *ctx);
+    uint32_t (*get_onee_mode_status)(void *ctx);
     void (*set_clock_enabled)(void *ctx, uint8_t enable);
     void (*set_supersprite_enabled)(void *ctx, uint8_t enable);
     void (*set_ssc_enabled)(void *ctx, uint8_t enable);
@@ -154,6 +164,8 @@ typedef struct {
     uint32_t item_focus;
     uint8_t boot_timeout_mode;
     uint8_t boot_device;
+    uint8_t onee_mode_state;     /* session-only; never saved or profiled */
+    uint32_t onee_mode_status;   /* live PL supervisor readback */
     uint8_t scanlines_mode;
     uint8_t video_output_mono;
     uint8_t video_mono_color;
@@ -264,6 +276,7 @@ void config_menu_apply_boot_runtime(config_menu_t *menu);
 void config_menu_apply_runtime(config_menu_t *menu);
 void config_menu_apply_startup_assets(config_menu_t *menu);
 void config_menu_start_boot_dhcp(config_menu_t *menu);
+void config_menu_poll_onee_mode(config_menu_t *menu);
 void config_menu_poll_ethernet(config_menu_t *menu);
 void config_menu_retry_settings_if_needed(config_menu_t *menu);
 void config_menu_set_sdd_stream(config_menu_t *menu, uint8_t enable);

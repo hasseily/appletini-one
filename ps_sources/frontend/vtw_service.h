@@ -57,6 +57,14 @@ const char *vtw_service_last_action_text(void);
 /* 1 while the vTW owns the Apple bus (session active past takeover). */
 uint8_t vtw_service_session_active(void);
 
+/* ONE//e stand-alone entry. This path never changes the persisted host-vTW
+ * intent or options and never waits for host identity, /DMA ownership,
+ * physical RESET, or slot-7 handoff. start() requires the ONE//e supervisor
+ * to report an effective, isolated session. */
+uint8_t vtw_service_onee_start(uint8_t disk2_restore_enabled);
+void vtw_service_onee_stop(void);
+uint8_t vtw_service_onee_running(void);
+
 void vtw_service_poll(void);
 void vtw_service_uart_status(uint32_t uart_base);
 

@@ -122,6 +122,13 @@ void config_menu_draw_boot_settings(uint16_t *fb,
                         (uint8_t)(menu->item_focus == 1U),
                         "Boot device",
                         config_menu_boot_device_text(menu->boot_device));
+    hgr_draw_value_item(fb,
+                        x,
+                        y + (row_h * 2),
+                        w,
+                        (uint8_t)(menu->item_focus == CONFIG_MENU_BOOT_ONEE_ITEM),
+                        "ONE//e standalone",
+                        config_menu_onee_mode_text(menu));
     cmui_text(fb, x + 18, heading_y + 11, heading_text,
               CMUI_COLOR_ACCENT, CMUI_COLOR_BG, CMUI_BODY_SCALE);
     if (heading_line_w > 0) {

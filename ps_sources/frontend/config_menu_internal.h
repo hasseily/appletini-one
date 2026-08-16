@@ -141,6 +141,7 @@ uint8_t config_menu_pan_clamp(uint32_t pan);
 const char *config_menu_basename(const char *path);
 const char *config_menu_boot_timeout_text(uint8_t mode);
 const char *config_menu_boot_device_text(uint8_t device);
+const char *config_menu_onee_mode_text(const config_menu_t *menu);
 const char *config_menu_video_output_text(uint8_t mono);
 const char *config_menu_video7_auto_mono_text(uint8_t enabled);
 const char *config_menu_border_color_text(uint8_t color);

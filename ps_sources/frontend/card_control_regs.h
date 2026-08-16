@@ -79,6 +79,45 @@
 #define CARD_CTRL_SSC_CTRL_CLEAR           (1UL << 1)
 #define CARD_CTRL_SSC_CTRL_OVF_CLEAR       (1UL << 2)
 
+/* Session-only ONE//e stand-alone supervisor. A write to bit 0 is the
+ * operator's current request. Readback reports the PL safety interlock:
+ *   [0] request, [1] effective, [2] physical bus isolated,
+ *   [3] outputs forced off, [4] live Apple activity,
+ *   [5] sticky activity lockout, [6] connector quiet,
+ *   [7] a new manual selection is armed, [8] ONE//e selected,
+ *   [9] isolation hold, [12:10] inhibit reason,
+ *   [13] power-sense pin fitted, [14] Apple power sensed,
+ *   [15] ONE//e HDL present, [31:24] signature/version (0xE1).
+ * Firmware may write REQUEST high only from the explicit Boot Settings
+ * action. Polling and startup paths may only clear it. */
+#define CARD_CTRL_ONEE_MODE_REG                  CARD_CTRL_REG_ADDR(0x5BU)
+#define CARD_CTRL_ONEE_CTRL_REQUEST_BIT          (1UL << 0)
+#define CARD_CTRL_ONEE_STATUS_REQUEST_BIT        (1UL << 0)
+#define CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT      (1UL << 1)
+#define CARD_CTRL_ONEE_STATUS_ISOLATED_BIT       (1UL << 2)
+#define CARD_CTRL_ONEE_STATUS_OUTPUTS_OFF_BIT     (1UL << 3)
+#define CARD_CTRL_ONEE_STATUS_ACTIVITY_BIT       (1UL << 4)
+#define CARD_CTRL_ONEE_STATUS_LOCKOUT_BIT        (1UL << 5)
+#define CARD_CTRL_ONEE_STATUS_QUIET_BIT          (1UL << 6)
+#define CARD_CTRL_ONEE_STATUS_RESELECT_ARMED_BIT (1UL << 7)
+#define CARD_CTRL_ONEE_STATUS_SELECTED_BIT       (1UL << 8)
+#define CARD_CTRL_ONEE_STATUS_ISOLATION_HOLD_BIT (1UL << 9)
+#define CARD_CTRL_ONEE_STATUS_INHIBIT_SHIFT      10U
+#define CARD_CTRL_ONEE_STATUS_INHIBIT_MASK       0x7UL
+#define CARD_CTRL_ONEE_STATUS_POWER_SENSE_PRESENT_BIT (1UL << 13)
+#define CARD_CTRL_ONEE_STATUS_APPLE_POWER_BIT    (1UL << 14)
+#define CARD_CTRL_ONEE_STATUS_HDL_PRESENT_BIT    (1UL << 15)
+#define CARD_CTRL_ONEE_STATUS_SIGNATURE_SHIFT    24U
+#define CARD_CTRL_ONEE_STATUS_SIGNATURE_MASK     0xFFUL
+#define CARD_CTRL_ONEE_STATUS_SIGNATURE          0xE1UL
+#define CARD_CTRL_ONEE_INHIBIT_NONE              0U
+#define CARD_CTRL_ONEE_INHIBIT_RESET             1U
+#define CARD_CTRL_ONEE_INHIBIT_APPLE_POWER       2U
+#define CARD_CTRL_ONEE_INHIBIT_APPLE_ACTIVITY    3U
+#define CARD_CTRL_ONEE_INHIBIT_ACTIVITY_LOCKOUT  4U
+#define CARD_CTRL_ONEE_INHIBIT_RESELECT_REQUIRED 5U
+#define CARD_CTRL_ONEE_INHIBIT_MANUAL_OFF        6U
+
 /* Written by the PS after the boot ROM reports the host machine. The PL
  * interlocks INH
  * and DMA on it. UNKNOWN is the reset state and is treated as a GS

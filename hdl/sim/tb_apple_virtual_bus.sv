@@ -58,6 +58,9 @@ module tb_apple_virtual_bus;
     int phase_order = 0;
     int complete_cycles = 0;
     int strobe_count;
+    logic [15:0] held_cycle_addr;
+    logic        held_cycle_rw;
+    logic        held_cycle_valid = 1'b0;
 
     // Check the public phase contract without reading internal state.
     always @(posedge clk) begin
@@ -76,21 +79,37 @@ module tb_apple_virtual_bus;
             if (ab_read.addr_en) begin
                 check(phase_order == 1, "addr_en phase order");
                 check(!ab_read.phi0, "addr_en must occur in PHI1");
+                held_cycle_addr = ab_read.addr;
+                held_cycle_rw = ab_read.rw;
+                held_cycle_valid = 1'b1;
                 phase_order = 2;
             end
             if (ab_read.sss_en) begin
                 check(phase_order == 2, "sss_en phase order");
                 check(!ab_read.phi0, "sss_en must occur in PHI1");
+                check(held_cycle_valid &&
+                      (ab_read.addr == held_cycle_addr) &&
+                      (ab_read.rw == held_cycle_rw),
+                      "cycle tuple changed before sss_en");
                 phase_order = 3;
             end
             if (ab_read.serve_en) begin
                 check(phase_order == 3, "serve_en phase order");
                 check(ab_read.phi0, "serve_en must occur in PHI0");
+                check(held_cycle_valid &&
+                      (ab_read.addr == held_cycle_addr) &&
+                      (ab_read.rw == held_cycle_rw),
+                      "cycle tuple changed before serve_en");
                 phase_order = 4;
             end
             if (ab_read.data_en) begin
                 check(phase_order == 4, "data_en phase order");
                 check(ab_read.phi0, "data_en must occur in PHI0");
+                check(held_cycle_valid &&
+                      (ab_read.addr == held_cycle_addr) &&
+                      (ab_read.rw == held_cycle_rw),
+                      "cycle tuple changed before data_en");
+                held_cycle_valid = 1'b0;
                 phase_order = 0;
                 complete_cycles++;
             end
@@ -166,6 +185,26 @@ module tb_apple_virtual_bus;
         check(!ab_read.inh && !ab_read.res && !ab_read.irq &&
               !ab_read.rdy && !ab_read.nmi && !ab_read.dma,
               "open-drain slot-line fold");
+        slot_write <= '0;
+
+        // A posted-write style master may not load its registered address
+        // until two clocks after drive_en. The resolve window must still catch
+        // it before addr_en and hold it through data_en.
+        @(posedge clk iff ab_read.drive_en);
+        slot_write.assert_dma <= 1'b1;
+        repeat (2) @(posedge clk);
+        slot_write.wr_addr       <= 16'h2345;
+        slot_write.wr_rw         <= 1'b0;
+        slot_write.wr_addr_rw_en <= 1'b1;
+        slot_write.wr_data       <= 8'h7B;
+        slot_write.wr_dma_data_en <= 1'b1;
+        @(posedge clk iff ab_read.addr_en);
+        check(ab_read.addr == 16'h2345 && !ab_read.rw,
+              "late registered master missed the resolve window");
+        @(posedge clk iff ab_read.data_en);
+        check(ab_read.addr == 16'h2345 && !ab_read.rw &&
+              ab_read.data == 8'h7B,
+              "late registered master tuple was not held through data_en");
         slot_write <= '0;
 
         // RDY repeats the current CPU cycle and withholds resp_valid.

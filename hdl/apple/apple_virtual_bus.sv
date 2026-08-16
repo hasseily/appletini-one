@@ -55,6 +55,9 @@ module apple_virtual_bus #(
     logic [15:0]            cpu_addr_q;
     logic                   cpu_rw_q;
     logic [7:0]             cpu_wdata_q;
+    logic                   cycle_slot_master_q;
+    logic [15:0]            cycle_addr_q;
+    logic                   cycle_rw_q;
 
     wire phase_drive = (phase_q == PHASE_WIDTH'(DRIVE_CLK));
     wire phase_addr  = (phase_q == PHASE_WIDTH'(ADDR_CLK));
@@ -74,22 +77,23 @@ module apple_virtual_bus #(
     // A slot DMA master has the address and data buses whenever it enables
     // the address/R-W drivers. It may begin driving just after drive_en, so
     // selection remains live through the later sample phases.
-    wire        slot_master = ab_write.wr_addr_rw_en;
-    wire [15:0] bus_addr = slot_master ? ab_write.wr_addr :
-                             cpu_cycle_q ? cpu_addr_q : 16'hFFFF;
-    wire        bus_rw = slot_master ? ab_write.wr_rw :
-                           cpu_cycle_q ? cpu_rw_q : 1'b1;
+    wire        slot_master_live = ab_write.wr_addr_rw_en;
+    wire [15:0] cycle_addr_live = slot_master_live ? ab_write.wr_addr :
+                                    cpu_cycle_q ? cpu_addr_q : 16'hFFFF;
+    wire        cycle_rw_live = slot_master_live ? ab_write.wr_rw :
+                                  cpu_cycle_q ? cpu_rw_q : 1'b1;
     wire        slot_data_drive = ab_write.wr_data_en |
                                   ab_write.wr_dma_data_en;
     wire [7:0]  bus_data = slot_data_drive ? ab_write.wr_data :
-                           (cpu_cycle_q && !cpu_rw_q && !slot_master) ?
+                           (cpu_cycle_q && !cpu_rw_q &&
+                            !cycle_slot_master_q) ?
                                cpu_wdata_q : floating_bus_data;
 
     // Do not start a CPU cycle while reset, RDY, or DMA holds the processor.
     // A pending RDY-stalled request also blocks the single-entry interface.
     always_comb begin
         req_ready = phase_drive && !cpu_cycle_q && bus_res_n && bus_rdy_n &&
-                    bus_dma_n && !slot_master;
+                    bus_dma_n && !slot_master_live;
     end
 
     // The field values match an Enhanced //e bus. M2SEL qualification does
@@ -98,8 +102,8 @@ module apple_virtual_bus #(
     always_comb begin
         ab_read             = '0;
         ab_read.data        = bus_data;
-        ab_read.addr        = bus_addr;
-        ab_read.rw          = bus_rw;
+        ab_read.addr        = cycle_addr_q;
+        ab_read.rw          = cycle_rw_q;
         ab_read.phi0        = (phase_q >= PHASE_WIDTH'(PHI0_RISE_CLK));
         ab_read.m2sel       = 1'b0;
         ab_read.m2b0        = 1'b0;
@@ -115,8 +119,8 @@ module apple_virtual_bus #(
         ab_read.sss_en      = phase_sss;
         ab_read.serve_en    = phase_serve;
         ab_read.drive_en    = phase_drive;
-        ab_read.addr_early  = bus_addr;
-        ab_read.rw_early    = bus_rw;
+        ab_read.addr_early  = cycle_addr_q;
+        ab_read.rw_early    = cycle_rw_q;
     end
 
     always_ff @(posedge clk) begin
@@ -126,6 +130,9 @@ module apple_virtual_bus #(
             cpu_addr_q   <= 16'hFFFF;
             cpu_rw_q     <= 1'b1;
             cpu_wdata_q  <= '0;
+            cycle_slot_master_q <= 1'b0;
+            cycle_addr_q <= 16'hFFFF;
+            cycle_rw_q   <= 1'b1;
             resp_valid   <= 1'b0;
             resp_rdata   <= '0;
         end else begin
@@ -135,6 +142,18 @@ module apple_virtual_bus #(
                 phase_q <= '0;
             end else begin
                 phase_q <= phase_q + PHASE_WIDTH'(1);
+            end
+
+            // Resolve the current owner once per fabric clock after drive_en,
+            // then freeze the tuple before addr_en. This gives registered bus
+            // masters time to react to drive_en and also covers vTW's two-step
+            // posted-write fetch. The held tuple removes the live arbiter mux
+            // from every slot decoder for the rest of the native cycle.
+            if ((phase_q >= PHASE_WIDTH'(DRIVE_CLK + 1)) &&
+                (phase_q < PHASE_WIDTH'(ADDR_CLK))) begin
+                cycle_slot_master_q <= slot_master_live;
+                cycle_addr_q        <= cycle_addr_live;
+                cycle_rw_q          <= cycle_rw_live;
             end
 
             if (!bus_res_n) begin
@@ -149,7 +168,8 @@ module apple_virtual_bus #(
 
                 // A DMA address owner defers the pending CPU cycle. RDY also
                 // repeats it. Once both release, data_en completes the cycle.
-                if (phase_data && cpu_cycle_q && !slot_master && bus_rdy_n) begin
+                if (phase_data && cpu_cycle_q && !cycle_slot_master_q &&
+                    bus_rdy_n) begin
                     resp_valid  <= 1'b1;
                     resp_rdata  <= bus_data;
                     cpu_cycle_q <= 1'b0;

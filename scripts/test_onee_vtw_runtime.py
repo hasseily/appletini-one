@@ -42,12 +42,14 @@ def test_real_runtime_hooks_are_bound_after_vtw_init() -> None:
     header = read(ONEE_H)
     main = read(MAIN_C)
 
-    require("onee_service_runtime_running_fn" in header and
+    require("onee_service_runtime_suspend_fn" in header and
+            "onee_service_runtime_running_fn" in header and
             "onee_runtime_start" in main and
             "return vtw_service_onee_start(" in main and
+            "vtw_service_onee_suspend();" in main and
             "vtw_service_onee_stop();" in main and
             "return vtw_service_onee_running();" in main,
-            "main must bind start, stop, and actual-running hooks")
+            "main must bind start, suspend, stop, and actual-running hooks")
     bind = main.find("onee_service_bind_runtime(onee_runtime_start,")
     require(bind > main.find("vtw_service_init(UART0_BASE);") and
             "onee_service_bind_runtime(NULL" not in main,
@@ -58,7 +60,7 @@ def test_cold_start_is_direct_and_isolation_first() -> None:
     source = read(VTW_C)
     start = between(source,
                     "uint8_t vtw_service_onee_start(",
-                    "void vtw_service_onee_stop(void)")
+                    "void vtw_service_onee_suspend(void)")
 
     isolate = start.find("vtw_onee_isolation_confirmed() == 0U")
     reset = start.find("vtw_onee_ctrl_value(0U, 1U)")
@@ -89,7 +91,7 @@ def test_rom_and_cold_signature_helpers_are_shared() -> None:
     source = read(VTW_C)
     start = between(source,
                     "uint8_t vtw_service_onee_start(",
-                    "void vtw_service_onee_stop(void)")
+                    "void vtw_service_onee_suspend(void)")
     host_load = between(source, "case VTW_ST_LOAD_ROM: {", "case VTW_ST_RUN:")
     rom_helper = between(source,
                          "static uint8_t vtw_shadow_load_fixed_rom",
@@ -119,11 +121,17 @@ def test_standalone_forces_synthetic_disk2_without_changing_options() -> None:
                    "static uint8_t vtw_onee_isolation_confirmed")
     start = between(source,
                     "uint8_t vtw_service_onee_start(",
-                    "void vtw_service_onee_stop(void)")
+                    "void vtw_service_onee_suspend(void)")
 
     require("CARD_CTRL_VTW_CTRL_DISABLE_D2_ACCEL_BIT" in ctrl and
             "vtw_eff_mode()" in ctrl and "vtw_eff_divider()" in ctrl,
             "ONE//e must force the Disk II shortcut off while retaining speed options")
+    shutdown = between(source,
+                       "static void vtw_onee_shutdown",
+                       "uint8_t vtw_service_onee_start(")
+    suspend = between(source,
+                      "void vtw_service_onee_suspend(void)",
+                      "void vtw_service_onee_stop(void)")
     stop = between(source,
                    "void vtw_service_onee_stop(void)",
                    "uint8_t vtw_service_onee_running(void)")
@@ -135,16 +143,18 @@ def test_standalone_forces_synthetic_disk2_without_changing_options() -> None:
             "disk2_service_set_enabled(1U);" in start and
             start.find("disk2_service_set_enabled(1U);") <
             start.find("vtw_shadow_force_cold_start(1U)") and
-            "disk2_service_set_enabled(g_disk2_config_enabled);" in stop and
+            "disk2_service_set_enabled(g_disk2_config_enabled);" in shutdown and
             "g_onee_disk2_override_active != 0U" in disk2_config and
             "vtw_service_set_disk2_config_enabled(enable);" in main and
             "g_card_slot_enable_mask" in main and
             "CARD_CTRL_SLOT_DISK2" in main,
             "ONE//e must keep one effective Disk II service owner")
-    require(start.count("vtw_service_onee_stop();") == 3 and
-            stop.find("REG_WRITE(CARD_CTRL_VTW_CTRL_REG, 0U);") <
-            stop.find("disk2_service_set_enabled(g_disk2_config_enabled);"),
-            "every failed start and stop must clear vTW before restoring Disk II")
+    require(start.count("vtw_service_onee_suspend();") == 3 and
+            "vtw_onee_shutdown(0U);" in suspend and
+            "vtw_onee_shutdown(1U);" in stop and
+            shutdown.find("REG_WRITE(CARD_CTRL_VTW_CTRL_REG, 0U);") <
+            shutdown.find("disk2_service_set_enabled(g_disk2_config_enabled);"),
+            "failed starts must suspend while terminal stop clears the session")
     require("card_control_write_slot_mask" not in start and
             "control_set_slot_enabled" not in start and
             "config_menu_save_settings" not in start,
@@ -180,12 +190,21 @@ def test_onee_reset_uses_private_runtime_paths() -> None:
             "vtw status must separate the live session from saved host intent")
 
 
-def test_stop_and_effective_drop_clear_vtw_before_onee_request() -> None:
+def test_stop_order_and_runtime_drop_preserves_request() -> None:
     vtw = read(VTW_C)
     onee = read(ONEE_C)
+    shutdown = between(vtw,
+                       "static void vtw_onee_shutdown",
+                       "uint8_t vtw_service_onee_start(")
+    suspend = between(vtw,
+                      "void vtw_service_onee_suspend(void)",
+                      "void vtw_service_onee_stop(void)")
     stop = between(vtw,
                    "void vtw_service_onee_stop(void)",
                    "uint8_t vtw_service_onee_running(void)")
+    vtw_poll = between(vtw,
+                       "void vtw_service_poll(void)",
+                       "void vtw_service_uart_status")
     disarm = between(onee,
                      "static void onee_service_disarm",
                      "void onee_service_init(void)")
@@ -193,13 +212,27 @@ def test_stop_and_effective_drop_clear_vtw_before_onee_request() -> None:
                    "void onee_service_poll(void)",
                    "onee_service_state_t onee_service_state(void)")
 
-    require("REG_WRITE(CARD_CTRL_VTW_CTRL_REG, 0U);" in stop,
+    require("REG_WRITE(CARD_CTRL_VTW_CTRL_REG, 0U);" in shutdown and
+            "clear_speed_override != 0U" in shutdown and
+            "vtw_override_clear();" in shutdown and
+            "vtw_onee_shutdown(0U);" in suspend and
+            "vtw_onee_shutdown(1U);" in stop,
             "stand-alone stop must clear VTW CTRL with a literal zero")
+    require("vtw_service_onee_suspend();" in vtw_poll,
+            "a dropped private core must preserve its speed for service retry")
     require(disarm.find("onee_service_stop_runtime();") <
-            disarm.find("onee_service_write_request(0U);") and
-            "g_effective_seen != 0U" in poll and
+            disarm.find("onee_service_write_request(0U);"),
+            "a safety disarm must stop vTW before clearing the ONE//e request")
+    require("g_runtime_running(g_runtime_ctx) == 0U" in poll and
+            "onee_service_suspend_runtime();" in poll and
+            "g_runtime_retry_polls = 0U;" in poll and
+            "ONEE_EFFECTIVE_WAIT_POLL_LIMIT" not in onee and
+            "g_effective_wait_polls" not in onee,
+            "a private runtime drop must retain the selected PL request and retry")
+    require(onee.count("onee_service_write_request(1U);") == 1 and
+            "(g_status & CARD_CTRL_ONEE_STATUS_REQUEST_BIT) == 0U" in poll and
             "onee_service_disarm(1U);" in poll,
-            "an effective drop must stop vTW before clearing the ONE//e request")
+            "a lost PL request must latch off and only manual start may write it high")
 
 
 def test_running_state_requires_released_core_status() -> None:
@@ -330,7 +363,7 @@ TESTS = [
     test_rom_and_cold_signature_helpers_are_shared,
     test_standalone_forces_synthetic_disk2_without_changing_options,
     test_onee_reset_uses_private_runtime_paths,
-    test_stop_and_effective_drop_clear_vtw_before_onee_request,
+    test_stop_order_and_runtime_drop_preserves_request,
     test_running_state_requires_released_core_status,
     test_menu_closes_once_only_after_true_running,
     test_normal_host_state_machine_remains_after_onee_gate,
@@ -874,8 +907,36 @@ def run_native_speed_control_test() -> bool:
                 return 0;
             }
 
-            /* Ending the session clears the non-persistent override. A new
-             * session returns to the configured 3.6 MHz baseline. */
+            /* A recoverable runtime stop must leave the exact queued/live
+             * rung intact and use it in every word of the retry start. */
+            before = write_count;
+            vtw_service_onee_suspend();
+            if (!check(write_count == before + 1U && ctrl_value() == 0U &&
+                       g_onee_running == 0U && g_ovr_active != 0U &&
+                       g_ovr_mode == CARD_CTRL_VTW_SPEED_DIVIDED &&
+                       g_ovr_div == 19U,
+                       "recoverable ONE//e suspend lost the exact override")) {
+                return 0;
+            }
+            memset(writes, 0, sizeof(writes));
+            write_count = 0U;
+            ctrl_read_count = 0U;
+            set_onee_isolated();
+            start_write = write_count;
+            first_core_run_ctrl = 0U;
+            if (!check(vtw_service_onee_start(0U) != 0U &&
+                       ctrl_speed() == CARD_CTRL_VTW_SPEED_DIVIDED &&
+                       ctrl_divider() == 19U && g_ovr_active != 0U,
+                       "ONE//e retry did not keep its exact override") ||
+                !check_start_ctrl_words(start_write,
+                                        CARD_CTRL_VTW_SPEED_DIVIDED,
+                                        19U,
+                                        "ONE//e retry changed its speed words")) {
+                return 0;
+            }
+
+            /* A terminal session stop clears the non-persistent override. A
+             * new manual session returns to the configured 3.6 MHz baseline. */
             vtw_service_onee_stop();
             memset(writes, 0, sizeof(writes));
             write_count = 0U;

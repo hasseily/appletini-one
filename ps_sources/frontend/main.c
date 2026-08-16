@@ -1260,6 +1260,12 @@ static uint8_t onee_runtime_start(void *ctx)
             1U : 0U);
 }
 
+static void onee_runtime_suspend(void *ctx)
+{
+    (void)ctx;
+    vtw_service_onee_suspend();
+}
+
 static void onee_runtime_stop(void *ctx)
 {
     (void)ctx;
@@ -3184,6 +3190,7 @@ int main(void)
     ad8088_service_set_checkpoint(usb0_priority_checkpoint);
     vtw_service_init(UART0_BASE);
     onee_service_bind_runtime(onee_runtime_start,
+                              onee_runtime_suspend,
                               onee_runtime_stop,
                               onee_runtime_running,
                               NULL);

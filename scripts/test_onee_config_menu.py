@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-"""Source checks for the session-only ONE//e Boot Settings action."""
+"""Source and native checks for the ONE//e Boot Settings action."""
 
+import shutil
+import subprocess
+import textwrap
 from pathlib import Path
 
 
@@ -15,6 +18,7 @@ ONEE_H = FRONTEND / "onee_service.h"
 ONEE_C = FRONTEND / "onee_service.c"
 MAIN_C = FRONTEND / "main.c"
 VITIS_SCRIPT = REPO_ROOT / "scripts" / "create_vitis_workspace.py"
+NATIVE_BUILD = REPO_ROOT / "build" / "onee_service_native"
 
 
 class TestFailure(AssertionError):
@@ -156,8 +160,9 @@ def test_start_is_manual_only_and_activity_never_restarts() -> None:
     require("onee_service_write_request(1U);" not in poll and
             "onee_service_disarm(1U);" in poll and
             "onee_status_pl_ready(g_status) == 0U" in poll and
-            "onee_status_has_hazard(g_status)" in poll,
-            "polling must cancel on missing PL or activity and never reassert the session")
+            "onee_status_has_hazard(g_status)" in poll and
+            "(g_status & CARD_CTRL_ONEE_STATUS_REQUEST_BIT) == 0U" in poll,
+            "polling must latch off on missing PL, activity, or a lost request and never reassert it")
     require("g_lockout_latched = 1U;" in source and
             "g_lockout_latched = 0U;" in start,
             "an activity stop must stay locally locked until a new user start")
@@ -186,24 +191,354 @@ def test_start_refuses_unsafe_or_missing_pl() -> None:
             "Boot Settings must report each safety refusal")
 
 
-def test_request_to_effective_wait_is_bounded() -> None:
+def test_selected_request_has_no_software_expiry() -> None:
     source = read(ONEE_C)
     poll = function_slice(source,
                           "void onee_service_poll",
                           "onee_service_state_t onee_service_state")
-    wait = poll[poll.find("Bound the whole request-to-effective interval"):]
+    pending = poll[poll.find("REQUEST is still high"):]
 
-    require("ONEE_EFFECTIVE_WAIT_POLL_LIMIT" in source and
-            "g_effective_wait_polls" in source and
-            "if (g_effective_wait_polls < ONEE_EFFECTIVE_WAIT_POLL_LIMIT)" in wait and
-            "++g_effective_wait_polls;" in wait and
-            "onee_service_force_runtime_off();" in wait and
-            "onee_service_disarm(1U);" in wait,
-            "REQUEST=1/EFFECTIVE=0 must stop, time out, and latch LOCKED")
-    require("CARD_CTRL_ONEE_STATUS_REQUEST_BIT" not in wait and
-            "g_runtime_stop(g_runtime_ctx);" in source and
-            "onee_service_write_request(0U);" in source,
-            "the effective timeout must not depend on request echo and must disarm")
+    require("ONEE_EFFECTIVE_WAIT_POLL_LIMIT" not in source and
+            "g_effective_wait_polls" not in source and
+            "onee_service_disarm" not in pending and
+            "onee_service_suspend_runtime();" in pending,
+            "a safe REQUEST=1/EFFECTIVE=0 state must retain the user selection without expiry")
+    require("ONEE_RUNTIME_RETRY_POLL_LIMIT" in source and
+            "g_runtime_retry_polls" in source and
+            "onee_service_suspend_runtime();" in poll and
+            "g_runtime_retry_polls = ONEE_RUNTIME_RETRY_POLL_LIMIT;" in poll,
+            "a private soft-core start failure must stop and retry without clearing selection")
+    require("g_runtime_running(g_runtime_ctx) == 0U" in poll and
+            "g_runtime_retry_polls = 0U;" in poll and
+            poll.count("onee_service_disarm(1U);") == 2,
+            "a released-core drop must retry while only safety failures disarm the mode")
+
+
+def find_native_c_compiler() -> Path | None:
+    for name in ("gcc", "cc", "clang"):
+        found = shutil.which(name)
+        if found:
+            return Path(found)
+    xilinx = Path("C:/Xilinx")
+    if xilinx.exists():
+        matches = sorted(
+            xilinx.glob(
+                "*/tps/mingw/*/win64.o/nt/bin/x86_64-w64-mingw32-gcc.exe"
+            ),
+            reverse=True,
+        )
+        if matches:
+            return matches[0]
+    return None
+
+
+def test_native_latched_selection_lifecycle() -> None:
+    compiler = find_native_c_compiler()
+    if compiler is None:
+        print("SKIP native_latched_selection_lifecycle: no host C compiler")
+        return
+
+    if NATIVE_BUILD.exists():
+        shutil.rmtree(NATIVE_BUILD)
+    NATIVE_BUILD.mkdir(parents=True)
+    harness = NATIVE_BUILD / "onee_service_harness.c"
+    executable = NATIVE_BUILD / "onee_service_harness.exe"
+    harness.write_text(textwrap.dedent(r'''
+        #include <stdint.h>
+        #include <stdio.h>
+
+        static uint32_t mode_status;
+        static uint32_t high_writes;
+        static uint32_t low_writes;
+        static uint32_t start_calls;
+        static uint32_t suspend_calls;
+        static uint32_t stop_calls;
+        static uint32_t start_failures;
+        static uint32_t runtime_speed_override;
+        static uint32_t last_start_speed_override;
+        static uint8_t runtime_live;
+
+        static uint32_t test_reg_read(uint32_t address)
+        {
+            (void)address;
+            return mode_status;
+        }
+
+        static void test_reg_write(uint32_t address, uint32_t value)
+        {
+            (void)address;
+            if ((value & 1U) != 0U) {
+                ++high_writes;
+            } else {
+                ++low_writes;
+            }
+        }
+
+        #define COMMON_H
+        #define REG_READ(address) test_reg_read((uint32_t)(address))
+        #define REG_WRITE(address, value) \
+            test_reg_write((uint32_t)(address), (uint32_t)(value))
+        #include "onee_service.c"
+
+        static uint32_t status_base(void)
+        {
+            return (CARD_CTRL_ONEE_STATUS_SIGNATURE <<
+                    CARD_CTRL_ONEE_STATUS_SIGNATURE_SHIFT) |
+                   CARD_CTRL_ONEE_STATUS_HDL_PRESENT_BIT;
+        }
+
+        static uint32_t status_safe_off(void)
+        {
+            return status_base() |
+                   CARD_CTRL_ONEE_STATUS_QUIET_BIT |
+                   CARD_CTRL_ONEE_STATUS_RESELECT_ARMED_BIT |
+                   (CARD_CTRL_ONEE_INHIBIT_MANUAL_OFF <<
+                    CARD_CTRL_ONEE_STATUS_INHIBIT_SHIFT);
+        }
+
+        static uint32_t status_request_pending(void)
+        {
+            return status_base() |
+                   CARD_CTRL_ONEE_STATUS_REQUEST_BIT |
+                   CARD_CTRL_ONEE_STATUS_ISOLATED_BIT |
+                   CARD_CTRL_ONEE_STATUS_QUIET_BIT |
+                   (CARD_CTRL_ONEE_INHIBIT_RESELECT_REQUIRED <<
+                    CARD_CTRL_ONEE_STATUS_INHIBIT_SHIFT);
+        }
+
+        static uint32_t status_effective(void)
+        {
+            return status_base() |
+                   CARD_CTRL_ONEE_STATUS_REQUEST_BIT |
+                   CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT |
+                   CARD_CTRL_ONEE_STATUS_ISOLATED_BIT |
+                   CARD_CTRL_ONEE_STATUS_QUIET_BIT |
+                   CARD_CTRL_ONEE_STATUS_SELECTED_BIT;
+        }
+
+        static uint8_t runtime_start(void *ctx)
+        {
+            (void)ctx;
+            ++start_calls;
+            last_start_speed_override = runtime_speed_override;
+            if (start_failures != 0U) {
+                --start_failures;
+                runtime_live = 0U;
+                return 0U;
+            }
+            runtime_live = 1U;
+            return 1U;
+        }
+
+        static void runtime_suspend(void *ctx)
+        {
+            (void)ctx;
+            ++suspend_calls;
+            runtime_live = 0U;
+        }
+
+        static void runtime_stop(void *ctx)
+        {
+            (void)ctx;
+            ++stop_calls;
+            runtime_live = 0U;
+            runtime_speed_override = 0U;
+        }
+
+        static uint8_t runtime_running(void *ctx)
+        {
+            (void)ctx;
+            return runtime_live;
+        }
+
+        static int check(int condition, const char *message)
+        {
+            if (!condition) {
+                fprintf(stderr, "FAIL: %s\n", message);
+                return 0;
+            }
+            return 1;
+        }
+
+        int main(void)
+        {
+            uint32_t high_before;
+            uint32_t low_before;
+            uint32_t stop_before;
+
+            mode_status = status_safe_off();
+            onee_service_init();
+            onee_service_bind_runtime(runtime_start, runtime_suspend,
+                                      runtime_stop,
+                                      runtime_running, NULL);
+            runtime_speed_override = 19U;
+            if (!check(high_writes == 0U && low_writes == 1U,
+                       "firmware boot did not force the session off") ||
+                !check(onee_service_request_start() == 1U && high_writes == 1U,
+                       "manual selection did not write the sole high request")) {
+                return 1;
+            }
+
+            mode_status = status_request_pending();
+            high_before = high_writes;
+            for (uint32_t i = 0U; i < 512U; ++i) {
+                onee_service_poll();
+            }
+            if (!check(high_writes == high_before && low_writes == 1U &&
+                       start_calls == 0U && g_manual_request != 0U,
+                       "safe request wait expired or rewrote the PL request")) {
+                return 1;
+            }
+
+            mode_status = status_effective();
+            start_failures = 1U;
+            onee_service_poll();
+            if (!check(start_calls == 1U && suspend_calls == 1U &&
+                       stop_calls == 0U && runtime_speed_override == 19U &&
+                       last_start_speed_override == 19U &&
+                       g_manual_request != 0U && high_writes == high_before,
+                       "runtime start failure lost the selected mode or speed")) {
+                return 1;
+            }
+            for (uint32_t i = 0U; i < ONEE_RUNTIME_RETRY_POLL_LIMIT; ++i) {
+                onee_service_poll();
+            }
+            if (!check(start_calls == 1U && g_manual_request != 0U,
+                       "runtime retry delay changed the selection")) {
+                return 1;
+            }
+            onee_service_poll();
+            if (!check(start_calls == 2U && runtime_live != 0U &&
+                       runtime_speed_override == 19U &&
+                       last_start_speed_override == 19U &&
+                       onee_service_state() == ONEE_SERVICE_STATE_RUNNING,
+                       "selected mode did not retry at its exact speed")) {
+                return 1;
+            }
+
+            stop_before = stop_calls;
+            onee_service_poll();
+            if (!check(start_calls == 2U && stop_calls == stop_before &&
+                       high_writes == high_before,
+                       "ordinary virtual-machine operation changed selection")) {
+                return 1;
+            }
+
+            runtime_live = 0U;
+            onee_service_poll();
+            if (!check(g_manual_request != 0U &&
+                       suspend_calls == 2U && stop_calls == stop_before &&
+                       runtime_speed_override == 19U,
+                       "released-core drop cleared the selection or speed")) {
+                return 1;
+            }
+            onee_service_poll();
+            if (!check(start_calls == 3U && runtime_live != 0U &&
+                       last_start_speed_override == 19U &&
+                       onee_service_state() == ONEE_SERVICE_STATE_RUNNING,
+                       "released-core drop did not restart at the exact speed")) {
+                return 1;
+            }
+
+            mode_status = status_base() |
+                          CARD_CTRL_ONEE_STATUS_ACTIVITY_BIT |
+                          CARD_CTRL_ONEE_STATUS_LOCKOUT_BIT |
+                          (CARD_CTRL_ONEE_INHIBIT_APPLE_ACTIVITY <<
+                           CARD_CTRL_ONEE_STATUS_INHIBIT_SHIFT);
+            onee_service_poll();
+            if (!check(g_manual_request == 0U && low_writes == 2U &&
+                       stop_calls == stop_before + 1U &&
+                       runtime_speed_override == 0U &&
+                       onee_service_state() == ONEE_SERVICE_STATE_LOCKED,
+                       "Apple activity did not latch off and clear session speed")) {
+                return 1;
+            }
+            mode_status = status_safe_off();
+            high_before = high_writes;
+            for (uint32_t i = 0U; i < 512U; ++i) {
+                onee_service_poll();
+            }
+            if (!check(high_writes == high_before &&
+                       onee_service_state() == ONEE_SERVICE_STATE_LOCKED,
+                       "quiet polling restarted an activity-locked mode")) {
+                return 1;
+            }
+
+            runtime_speed_override = 23U;
+            if (!check(onee_service_request_start() == 1U &&
+                       high_writes == high_before + 1U,
+                       "fresh manual selection did not clear local lockout")) {
+                return 1;
+            }
+            mode_status = status_effective();
+            onee_service_poll();
+            mode_status = status_safe_off();
+            high_before = high_writes;
+            stop_before = stop_calls;
+            onee_service_poll();
+            for (uint32_t i = 0U; i < 512U; ++i) {
+                onee_service_poll();
+            }
+            if (!check(g_manual_request == 0U && high_writes == high_before &&
+                       stop_calls == stop_before + 1U &&
+                       runtime_speed_override == 0U &&
+                       onee_service_state() == ONEE_SERVICE_STATE_LOCKED,
+                       "lost request echo did not clear the session speed")) {
+                return 1;
+            }
+
+            mode_status = status_safe_off();
+            runtime_speed_override = 29U;
+            if (!check(onee_service_request_start() == 1U &&
+                       high_writes == high_before + 1U,
+                       "lost-request lock did not require a fresh manual ON")) {
+                return 1;
+            }
+            mode_status = status_effective();
+            onee_service_poll();
+            low_before = low_writes;
+            high_before = high_writes;
+            stop_before = stop_calls;
+            onee_service_request_stop();
+            mode_status = status_safe_off();
+            onee_service_poll();
+            if (!check(g_manual_request == 0U && low_writes == low_before + 1U &&
+                       stop_calls == stop_before + 1U &&
+                       runtime_speed_override == 0U &&
+                       onee_service_state() == ONEE_SERVICE_STATE_OFF,
+                       "explicit manual OFF did not clear the session speed")) {
+                return 1;
+            }
+            if (!check(onee_service_request_start() == 1U &&
+                       high_writes == high_before + 1U,
+                       "manual OFF followed by fresh ON did not restart selection")) {
+                return 1;
+            }
+
+            puts("ONEE LATCHED SELECTION NATIVE PASS");
+            return 0;
+        }
+    '''), encoding="utf-8")
+
+    command = [
+        str(compiler), "-std=c11", "-Wall", "-Wextra", "-Werror",
+        str(harness), "-o", str(executable), f"-I{FRONTEND}",
+    ]
+    if "mingw" in compiler.as_posix().lower():
+        command.insert(5, "-static")
+    compiled = subprocess.run(
+        command, cwd=REPO_ROOT, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    )
+    require(compiled.returncode == 0,
+            f"native lifecycle harness did not compile:\n{compiled.stdout}")
+    ran = subprocess.run(
+        [str(executable)], cwd=REPO_ROOT, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    )
+    require(ran.returncode == 0 and
+            "ONEE LATCHED SELECTION NATIVE PASS" in ran.stdout,
+            f"native lifecycle harness failed:\n{ran.stdout}")
 
 
 def test_platform_polling_and_standalone_runtime_binding() -> None:
@@ -223,11 +558,13 @@ def test_platform_polling_and_standalone_runtime_binding() -> None:
             "menu_platform.set_onee_mode = menu_platform_set_onee_mode;" in frontend,
             "frontend startup and the main loop must wire the ONE//e service")
     require("onee_service_runtime_start_fn" in service_header and
+            "onee_service_runtime_suspend_fn" in service_header and
             "onee_service_runtime_stop_fn" in service_header and
             "onee_service_runtime_running_fn" in service_header and
             "onee_service_bind_runtime" in service_header and
             "onee_runtime_start" in frontend and
             "return vtw_service_onee_start(" in frontend and
+            "vtw_service_onee_suspend();" in frontend and
             "vtw_service_onee_stop();" in frontend and
             "return vtw_service_onee_running();" in frontend and
             "onee_service_bind_runtime(onee_runtime_start," in frontend and
@@ -247,7 +584,8 @@ TESTS = [
     test_disk2_boot_choice_is_independent_of_physical_slot6,
     test_start_is_manual_only_and_activity_never_restarts,
     test_start_refuses_unsafe_or_missing_pl,
-    test_request_to_effective_wait_is_bounded,
+    test_selected_request_has_no_software_expiry,
+    test_native_latched_selection_lifecycle,
     test_platform_polling_and_standalone_runtime_binding,
 ]
 

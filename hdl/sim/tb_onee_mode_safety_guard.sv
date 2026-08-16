@@ -199,6 +199,62 @@ module tb_onee_mode_safety_guard;
         select_off_then_on();
     endtask
 
+    task automatic check_stable_selection_persists;
+        // A selected ONE//e has no idle timeout. Once the connector vector is
+        // quiet, only manual off, guard reset, or watched Apple activity may
+        // clear the selected/run state.
+        wait_clocks(2048);
+        require_true(manual_enable_request,
+                     "stable run must retain the manual request");
+        require_true(onee_selected,
+                     "stable run must retain the selected state");
+        require_true(onee_enable_effective,
+                     "stable run must retain effective ONE//e mode");
+        require_false(force_outputs_off,
+                      "stable run must not assert the output kill");
+        require_true(physical_bus_isolate,
+                     "stable run must keep the physical bus isolated");
+        require_false(apple_activity_lockout,
+                      "stable run must not invent an activity lockout");
+    endtask
+
+    task automatic check_activity_requires_fresh_selection;
+        // apple_top clears its request register on the first lockout clock.
+        // Model that clear here, then prove that later quiet time cannot turn
+        // the machine back on without a new software write.
+        #1;
+        apple_phi0_raw = ~apple_phi0_raw;
+        #1;
+        require_false(onee_enable_effective,
+                      "activity must kill the running mode before request clear");
+        apple_phi0_raw = ~apple_phi0_raw;
+        wait_clocks(1);
+        manual_enable_request = 1'b0;
+
+        wait_clocks(QUIET_CYCLES + 8);
+        require_false(apple_activity_lockout,
+                      "quiet request-off state may clear the hazard latch");
+        require_true(reselect_armed,
+                     "quiet request-off state must arm a fresh selection");
+        wait_clocks(2048);
+        require_false(onee_selected,
+                      "quiet time alone must not restore selected state");
+        require_false(onee_enable_effective,
+                      "quiet time alone must not restart ONE//e");
+        require_true(force_outputs_off,
+                     "manual-required off state must retain the output kill");
+
+        manual_enable_request = 1'b1;
+        #1;
+        require_true(physical_bus_isolate,
+                     "fresh request must isolate before re-entry");
+        wait_clocks(2);
+        require_true(onee_selected,
+                     "fresh request must restore selected state");
+        require_true(onee_enable_effective,
+                     "fresh request must restart ONE//e");
+    endtask
+
     task automatic check_aux_changes_ignored;
         integer aux_index;
 
@@ -290,6 +346,7 @@ module tb_onee_mode_safety_guard;
         require_true(reselect_armed,
                      "stable open-bus vector must arm selection");
         select_off_then_on();
+        check_stable_selection_persists();
 
         // A reset with the request still on must kill the VM. Isolation stays
         // asserted because this is not ordinary host mode.
@@ -322,6 +379,7 @@ module tb_onee_mode_safety_guard;
             check_short_activity(source_index);
 
         check_aux_changes_ignored();
+        check_activity_requires_fresh_selection();
 
         // Stable levels may become the open-bus baseline. Running Apple
         // clocks may not: their edges keep the guard locked and unarmed.

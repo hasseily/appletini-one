@@ -7,15 +7,15 @@
 #include "card_control_regs.h"
 #include "../lib/common.h"
 
-#define ONEE_EFFECTIVE_WAIT_POLL_LIMIT 64U
+#define ONEE_RUNTIME_RETRY_POLL_LIMIT 64U
 
 static uint8_t g_manual_request;
 static uint8_t g_lockout_latched;
-static uint8_t g_effective_seen;
 static uint8_t g_runtime_started;
-static uint32_t g_effective_wait_polls;
+static uint32_t g_runtime_retry_polls;
 static uint32_t g_status;
 static onee_service_runtime_start_fn g_runtime_start;
+static onee_service_runtime_suspend_fn g_runtime_suspend;
 static onee_service_runtime_stop_fn g_runtime_stop;
 static onee_service_runtime_running_fn g_runtime_running;
 static void *g_runtime_ctx;
@@ -77,15 +77,15 @@ static void onee_service_write_request(uint8_t enable)
               (enable != 0U) ? CARD_CTRL_ONEE_CTRL_REQUEST_BIT : 0U);
 }
 
-static void onee_service_stop_runtime(void)
+static void onee_service_suspend_runtime(void)
 {
-    if (g_runtime_started != 0U && g_runtime_stop != NULL) {
-        g_runtime_stop(g_runtime_ctx);
+    if (g_runtime_suspend != NULL) {
+        g_runtime_suspend(g_runtime_ctx);
     }
     g_runtime_started = 0U;
 }
 
-static void onee_service_force_runtime_off(void)
+static void onee_service_stop_runtime(void)
 {
     if (g_runtime_stop != NULL) {
         g_runtime_stop(g_runtime_ctx);
@@ -96,11 +96,12 @@ static void onee_service_force_runtime_off(void)
 static void onee_service_disarm(uint8_t lock_out)
 {
     g_manual_request = 0U;
-    g_effective_seen = 0U;
-    g_effective_wait_polls = 0U;
+    g_runtime_retry_polls = 0U;
     if (lock_out != 0U) {
         g_lockout_latched = 1U;
     }
+    /* A terminal disarm clears session-only state, including a speed choice
+     * queued before the soft core managed to start. */
     onee_service_stop_runtime();
     onee_service_write_request(0U);
 }
@@ -109,10 +110,10 @@ void onee_service_init(void)
 {
     g_manual_request = 0U;
     g_lockout_latched = 0U;
-    g_effective_seen = 0U;
     g_runtime_started = 0U;
-    g_effective_wait_polls = 0U;
+    g_runtime_retry_polls = 0U;
     g_runtime_start = NULL;
+    g_runtime_suspend = NULL;
     g_runtime_stop = NULL;
     g_runtime_running = NULL;
     g_runtime_ctx = NULL;
@@ -123,12 +124,16 @@ void onee_service_init(void)
 }
 
 void onee_service_bind_runtime(onee_service_runtime_start_fn start,
+                               onee_service_runtime_suspend_fn suspend,
                                onee_service_runtime_stop_fn stop,
                                onee_service_runtime_running_fn running,
                                void *ctx)
 {
-    onee_service_stop_runtime();
+    if (g_runtime_started != 0U) {
+        onee_service_stop_runtime();
+    }
     g_runtime_start = start;
+    g_runtime_suspend = suspend;
     g_runtime_stop = stop;
     g_runtime_running = running;
     g_runtime_ctx = ctx;
@@ -139,16 +144,16 @@ uint8_t onee_service_request_start(void)
     const uint32_t status = REG_READ(CARD_CTRL_ONEE_MODE_REG);
 
     g_status = status;
-    if (g_runtime_start == NULL || g_runtime_stop == NULL ||
-        g_runtime_running == NULL || onee_status_can_start(status) == 0U) {
+    if (g_runtime_start == NULL || g_runtime_suspend == NULL ||
+        g_runtime_stop == NULL || g_runtime_running == NULL ||
+        onee_status_can_start(status) == 0U) {
         onee_service_disarm(1U);
         return 0U;
     }
 
     g_lockout_latched = 0U;
     g_manual_request = 1U;
-    g_effective_seen = 0U;
-    g_effective_wait_polls = 0U;
+    g_runtime_retry_polls = 0U;
 
     /* This is the sole high write. It runs only for a fresh user action. */
     onee_service_write_request(1U);
@@ -171,7 +176,9 @@ void onee_service_poll(void)
                          CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT)) != 0U) {
             onee_service_write_request(0U);
         }
-        onee_service_stop_runtime();
+        if (g_runtime_started != 0U) {
+            onee_service_stop_runtime();
+        }
         return;
     }
 
@@ -183,35 +190,49 @@ void onee_service_poll(void)
         return;
     }
 
+    /* The PL clears REQUEST when its sticky activity detector fires. Check
+     * the echo as an event latch too: a short Apple-side pulse can finish and
+     * the live activity bit can return quiet before this slow poll runs. Never
+     * turn REQUEST back on here. Only a fresh menu action may do that. */
+    if ((g_status & CARD_CTRL_ONEE_STATUS_REQUEST_BIT) == 0U) {
+        onee_service_disarm(1U);
+        return;
+    }
+
     if ((g_status & CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT) != 0U) {
-        g_effective_seen = 1U;
         if (g_runtime_started == 0U) {
+            if (g_runtime_retry_polls != 0U) {
+                --g_runtime_retry_polls;
+                return;
+            }
             if (g_runtime_start(g_runtime_ctx) == 0U) {
-                onee_service_disarm(1U);
+                /* A soft-core start fault is not an Apple-presence event.
+                 * Keep the manual selection and physical isolation latched,
+                 * force the failed runtime off, and try it again later. */
+                onee_service_suspend_runtime();
+                g_runtime_retry_polls = ONEE_RUNTIME_RETRY_POLL_LIMIT;
                 return;
             }
             g_runtime_started = 1U;
+            g_runtime_retry_polls = 0U;
         }
         if (g_runtime_running(g_runtime_ctx) == 0U) {
-            onee_service_disarm(1U);
+            /* Keep the selected mode. The next poll restarts the private
+             * soft machine while REQUEST and the safety gate remain valid. */
+            onee_service_suspend_runtime();
+            g_runtime_retry_polls = 0U;
         }
         return;
     }
 
-    if (g_effective_seen != 0U) {
-        onee_service_disarm(1U);
-        return;
+    /* REQUEST is still high and the guard reports no Apple hazard. Keep the
+     * user's selection while isolation settles. There is no software expiry:
+     * only the PL activity latch, an explicit manual OFF, or missing safety
+     * logic may clear the selected mode. */
+    if (g_runtime_started != 0U) {
+        onee_service_suspend_runtime();
     }
-
-    /* Bound the whole request-to-effective interval, not just the time until
-     * PL echoes REQUEST. A stuck REQUEST=1/EFFECTIVE=0 split must not leave
-     * the UI at START REQUESTED forever. */
-    if (g_effective_wait_polls < ONEE_EFFECTIVE_WAIT_POLL_LIMIT) {
-        ++g_effective_wait_polls;
-    } else {
-        onee_service_force_runtime_off();
-        onee_service_disarm(1U);
-    }
+    g_runtime_retry_polls = 0U;
 }
 
 onee_service_state_t onee_service_state(void)

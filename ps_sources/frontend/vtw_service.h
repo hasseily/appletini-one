@@ -53,7 +53,8 @@ void vtw_service_set_slowdown(uint16_t region_mask, uint16_t cycles);
  * host-vTW or ONE//e core changes at once. Set allow_onee_preselect only for
  * an event from the open Appletini menu; it lets that event queue a rung for
  * the upcoming ONE//e session while saved host-vTW stays off. The
- * queued/live rung remains in force across a warm reset in that session. */
+ * queued/live rung remains in force across a warm reset or a recoverable
+ * private-runtime restart in that session. */
 void vtw_service_speed_toggle(uint8_t allow_onee_preselect);
 void vtw_service_speed_step(int8_t dir, uint8_t allow_onee_preselect);
 void vtw_service_slug_toggle(uint8_t allow_onee_preselect);
@@ -71,6 +72,10 @@ uint8_t vtw_service_session_active(void);
  * physical RESET, or slot-7 handoff. start() requires the ONE//e supervisor
  * to report an effective, isolated session. */
 uint8_t vtw_service_onee_start(uint8_t disk2_config_enabled);
+/* Stop a failed private runtime so the same manual ONE//e session can retry.
+ * This keeps its queued/live speed override. */
+void vtw_service_onee_suspend(void);
+/* End the manual ONE//e session and clear all session-only overrides. */
 void vtw_service_onee_stop(void);
 uint8_t vtw_service_onee_running(void);
 

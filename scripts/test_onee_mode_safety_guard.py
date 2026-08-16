@@ -13,6 +13,7 @@ OUT_DIR = ROOT / "build" / "onee_mode_safety_guard_sim"
 RTL = ROOT / "hdl" / "apple" / "onee_mode_safety_guard.sv"
 BENCH = ROOT / "hdl" / "sim" / "tb_onee_mode_safety_guard.sv"
 HDL_SOURCES = ROOT / "hdl" / "hdl_sources.txt"
+XDC = ROOT / "hdl" / "constraints" / "appletini_yarz.xdc"
 
 
 def vivado_tool(name: str) -> str:
@@ -47,6 +48,7 @@ def run(command: list[str], log_name: str) -> str:
 def static_contract_checks() -> None:
     rtl = RTL.read_text(encoding="utf-8")
     sources = HDL_SOURCES.read_text(encoding="utf-8").splitlines()
+    xdc = XDC.read_text(encoding="utf-8")
 
     require(
         sources.count("apple/onee_mode_safety_guard.sv") == 1,
@@ -77,6 +79,25 @@ def static_contract_checks() -> None:
         "parameter integer QUIET_CYCLES = 96" in rtl,
         "the production quiet window must stay below one microsecond at "
         "133.333 MHz",
+    )
+    input_bound_start = xdc.index("set a2_bus_in_ports [get_ports {")
+    input_bound_end = xdc.index("}]", input_bound_start)
+    input_bound = xdc[input_bound_start:input_bound_end]
+    for signal in (
+        "a2fpga_clk",
+        "a2fpga_7m",
+        "a2fpga_q3",
+        "a2fpga_m2sel",
+        "a2fpga_m2b0",
+        "a2fpga_devsel_n",
+    ):
+        require(
+            signal in input_bound,
+            f"watched Apple input {signal} must have the raw-input route bound",
+        )
+    require(
+        "set_max_delay -datapath_only 5.0 -from $a2_bus_in_ports" in xdc,
+        "every watched U533 input must retain the 5 ns route bound",
     )
 
     raw_vector_start = rtl.index("wire [5:0] apple_raw_levels = {")

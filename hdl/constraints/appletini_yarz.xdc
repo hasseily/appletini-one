@@ -567,10 +567,13 @@ set_output_delay -clock dvi_clk_out -min -1.4 \
 #
 # -datapath_only bounds the pad -> first-FF route without pretending these
 # async pins are synchronous to the fabric clock. 5 ns is comfortable for
-# an IBUF plus a short route and collapses the differential to ~2-3 ns.
+# an IBUF plus a short route and collapses the differential to ~2-3 ns. Keep
+# all six always-watched ONE//e safety lanes (PHI0, 7M, Q3, M2SEL, M2B0, and
+# DEVSEL#) in this set so every host-activity kill path has the same bound.
 set a2_bus_in_ports [get_ports {a2fpga_a[*] a2fpga_d[*] a2fpga_rdwr_n \
-    a2fpga_clk a2fpga_m2sel a2fpga_m2b0 a2fpga_inh_n a2fpga_reset_n \
-    a2fpga_irq_n a2fpga_rdy_n a2fpga_dma_n}]
+    a2fpga_clk a2fpga_7m a2fpga_q3 a2fpga_m2sel a2fpga_m2b0 \
+    a2fpga_devsel_n a2fpga_inh_n a2fpga_reset_n a2fpga_irq_n \
+    a2fpga_rdy_n a2fpga_dma_n}]
 set_max_delay -datapath_only 5.0 -from $a2_bus_in_ports
 
 # The level-shifter direction outputs race the pad tristate enables at the

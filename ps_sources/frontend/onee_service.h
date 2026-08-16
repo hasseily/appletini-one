@@ -13,11 +13,13 @@ typedef enum {
  * soft 65C02 without using the normal vTW host takeover path, physical /DMA,
  * physical RESET, or a prior slot-7 handoff. */
 typedef uint8_t (*onee_service_runtime_start_fn)(void *ctx);
+typedef void (*onee_service_runtime_suspend_fn)(void *ctx);
 typedef void (*onee_service_runtime_stop_fn)(void *ctx);
 typedef uint8_t (*onee_service_runtime_running_fn)(void *ctx);
 
 void onee_service_init(void);
 void onee_service_bind_runtime(onee_service_runtime_start_fn start,
+                               onee_service_runtime_suspend_fn suspend,
                                onee_service_runtime_stop_fn stop,
                                onee_service_runtime_running_fn running,
                                void *ctx);
@@ -27,7 +29,10 @@ void onee_service_bind_runtime(onee_service_runtime_start_fn start,
 uint8_t onee_service_request_start(void);
 void onee_service_request_stop(void);
 
-/* Polling can stop a session, but never starts or restarts one. */
+/* Polling may restart the private soft-machine runtime while the original
+ * manual PL request remains high. It never writes that request high. Apple
+ * activity, a lost PL request, or missing safety logic latches the mode off
+ * until a fresh operator action. */
 void onee_service_poll(void);
 onee_service_state_t onee_service_state(void);
 uint32_t onee_service_status(void);

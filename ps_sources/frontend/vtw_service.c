@@ -693,6 +693,23 @@ uint8_t vtw_service_session_active(void)
     return (g_state == VTW_ST_RUN || g_onee_running != 0U) ? 1U : 0U;
 }
 
+static void vtw_onee_shutdown(uint8_t clear_speed_override)
+{
+    /* Literal zero: do not leave a host option bit or core-run request set. */
+    REG_WRITE(CARD_CTRL_VTW_CTRL_REG, 0U);
+    if (g_onee_running != 0U) {
+        uart_puts(g_uart_base, "vtw: ONE//e core stopped\r\n");
+    }
+    g_onee_running = 0U;
+    if (clear_speed_override != 0U) {
+        vtw_override_clear();
+    }
+    if (g_onee_disk2_override_active != 0U) {
+        g_onee_disk2_override_active = 0U;
+        disk2_service_set_enabled(g_disk2_config_enabled);
+    }
+}
+
 uint8_t vtw_service_onee_start(uint8_t disk2_config_enabled)
 {
     uint32_t poll;
@@ -719,7 +736,7 @@ uint8_t vtw_service_onee_start(uint8_t disk2_config_enabled)
     if (vtw_onee_isolation_confirmed() == 0U ||
         vtw_shadow_force_cold_start(1U) == 0U ||
         vtw_shadow_load_fixed_rom(0U, 1U) == 0U) {
-        vtw_service_onee_stop();
+        vtw_service_onee_suspend();
         return 0U;
     }
 
@@ -727,7 +744,7 @@ uint8_t vtw_service_onee_start(uint8_t disk2_config_enabled)
      * core. Disk II private acceleration stays forced off in both writes. */
     REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_onee_ctrl_value(0U, 0U));
     if (vtw_onee_isolation_confirmed() == 0U) {
-        vtw_service_onee_stop();
+        vtw_service_onee_suspend();
         return 0U;
     }
     REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_onee_ctrl_value(1U, 0U));
@@ -750,24 +767,19 @@ uint8_t vtw_service_onee_start(uint8_t disk2_config_enabled)
         }
     }
 
-    vtw_service_onee_stop();
+    vtw_service_onee_suspend();
     uart_puts(g_uart_base, "vtw: ONE//e core release failed\r\n");
     return 0U;
 }
 
+void vtw_service_onee_suspend(void)
+{
+    vtw_onee_shutdown(0U);
+}
+
 void vtw_service_onee_stop(void)
 {
-    /* Literal zero: do not leave a host option bit or core-run request set. */
-    REG_WRITE(CARD_CTRL_VTW_CTRL_REG, 0U);
-    if (g_onee_running != 0U) {
-        uart_puts(g_uart_base, "vtw: ONE//e core stopped\r\n");
-    }
-    g_onee_running = 0U;
-    vtw_override_clear();
-    if (g_onee_disk2_override_active != 0U) {
-        g_onee_disk2_override_active = 0U;
-        disk2_service_set_enabled(g_disk2_config_enabled);
-    }
+    vtw_onee_shutdown(1U);
 }
 
 uint8_t vtw_service_onee_running(void)
@@ -785,7 +797,7 @@ void vtw_service_poll(void)
 {
     if (g_onee_running != 0U) {
         if (vtw_service_onee_running() == 0U) {
-            vtw_service_onee_stop();
+            vtw_service_onee_suspend();
         }
         return;
     }

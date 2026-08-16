@@ -19,7 +19,8 @@ def main() -> int:
 
     build = source.index(
         'platform_build_status = run_step("Build platform"')
-    status = source.index('"Verify platform build status"', build)
+    retry = source.index('"Retry platform build"', build)
+    status = source.index('"Verify platform build status"', retry)
     xpfm = source.index('"Verify exported platform XPFM"', status)
     apps = source.index("def create_app_only", xpfm)
 
@@ -28,8 +29,12 @@ def main() -> int:
         "Vitis platform build returned status" in source,
         "numeric Vitis platform failures must raise",
     )
-    require(build < status < xpfm < apps,
-            "status and XPFM checks must run before app creation")
+    require(build < retry < status < xpfm < apps,
+            "bounded retry, status, and XPFM checks must precede apps")
+    require(
+        source.count("lambda: platform.build()") == 2,
+        "the platform build must have exactly one retry",
+    )
     require(
         'Path("vitis_workspace")' in source and
         '"appletini_platform.xpfm"' in source,

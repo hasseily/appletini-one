@@ -730,6 +730,20 @@ run_step(
 )
 
 platform_build_status = run_step("Build platform", lambda: platform.build())
+if platform_build_status != 0:
+    # Vitis 2025.2 can return FAILURE after the first platform build even
+    # though all three BSPs finished. A second build of that same generated
+    # component completes the FSBL and export. Keep this retry bounded: a
+    # real or repeatable fault must still stop before application creation.
+    print(
+        f"Platform build returned status {platform_build_status}; "
+        "retrying once.",
+        flush=True,
+    )
+    platform_build_status = run_step(
+        "Retry platform build",
+        lambda: platform.build(),
+    )
 run_step(
     "Verify platform build status",
     lambda: require_platform_build_success(platform_build_status),

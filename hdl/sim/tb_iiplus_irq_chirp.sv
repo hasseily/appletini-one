@@ -33,7 +33,7 @@ module tb_iiplus_irq_chirp;
     globals::AppleBus_write ab_write;
 
     apple_bus_wrapper wrapper_i (
-        .clk(clk), .rstn(rstn),
+        .clk(clk), .rstn(rstn), .physical_bus_isolate(1'b0),
         .res_filtered_out(), .dbg_lost_cycle_count(),
         .dbg_bus_quality(), .dbg_tap_mismatch(),
         .dbg_strobe_anom(), .dbg_tap_last(), .dbg_ghost_write(),

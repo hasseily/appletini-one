@@ -83,6 +83,7 @@ module tb_disk2_physical_bus;
     apple_bus_wrapper wrapper_i (
         .clk(clk),
         .rstn(rstn),
+        .physical_bus_isolate(1'b0),
         .res_filtered_out(),
         .dbg_lost_cycle_count(),
         .dbg_bus_quality(),

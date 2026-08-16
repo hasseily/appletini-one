@@ -26,8 +26,11 @@ module apple_top(
     inout [15:0] apple_addr_pin,
     inout apple_rw_pin,
     input apple_phi0_pin,
+    input apple_7m_pin,
+    input apple_q3_pin,
     input apple_m2sel_pin,
     input apple_m2b0_pin,
+    input apple_devsel_n_pin,
     inout apple_inh_pin,
     inout apple_res_pin,
     inout apple_irq_pin,
@@ -93,10 +96,91 @@ module apple_top(
     input  wire       eth_int_n
 );
 
-    globals::AppleBus_read ab_read;
+    globals::AppleBus_read  ab_read;
+    globals::AppleBus_read  physical_ab_read;
+    globals::AppleBus_read  virtual_ab_read;
     globals::AppleBus_write ab_write;
+    globals::AppleBus_write ab_write_arb;
     globals::SoftSwitchState sss;
     logic ramworks_en_q;  // RamWorks 8 MB expansion, card-control register 0x62
+
+    // ONE//e stand-alone selection. This build has no Apple-slot power-sense
+    // pin, so the guard's level veto is tied low and bit 13 of CARD_CTRL 0x5B
+    // reports that limit. All available raw clocks and control pins still feed
+    // the activity interlock.
+    localparam logic ONEE_POWER_SENSE_PRESENT = 1'b0;
+    logic onee_request_q;
+    logic onee_enable_effective;
+    logic onee_force_outputs_off;
+    logic physical_bus_isolate;
+    logic onee_physical_isolation_hold;
+    logic onee_activity_now;
+    logic onee_activity_lockout;
+    logic onee_reselect_armed;
+    logic onee_selected;
+    logic onee_activity_quiet;
+    logic [2:0] onee_inhibit_reason;
+    logic virtual_req_ready;
+    logic virtual_resp_valid;
+    logic [7:0] virtual_resp_rdata;
+
+    onee_mode_safety_guard onee_mode_safety_guard_i (
+        .clk                    (clk),
+        .resetn                 (rstn[1]),
+        .manual_enable_request  (onee_request_q),
+        .apple_power_present_raw(1'b0),
+        .apple_phi0_raw         (apple_phi0_pin),
+        .apple_7m_raw           (apple_7m_pin),
+        .apple_q3_raw           (apple_q3_pin),
+        .apple_m2sel_raw        (apple_m2sel_pin),
+        .apple_m2b0_raw         (apple_m2b0_pin),
+        .apple_devsel_n_raw     (apple_devsel_n_pin),
+        .apple_reset_n_raw      (apple_res_pin),
+        .apple_inh_n_raw        (apple_inh_pin),
+        .apple_irq_n_raw        (apple_irq_pin),
+        .apple_nmi_n_raw        (apple_nmi_pin),
+        .apple_rdy_n_raw        (apple_rdy_pin),
+        .apple_dma_n_raw        (apple_dma_pin),
+        .onee_enable_effective  (onee_enable_effective),
+        .force_outputs_off      (onee_force_outputs_off),
+        .physical_bus_isolate   (physical_bus_isolate),
+        .physical_isolation_hold(onee_physical_isolation_hold),
+        .apple_activity_now     (onee_activity_now),
+        .apple_activity_lockout (onee_activity_lockout),
+        .reselect_armed         (onee_reselect_armed),
+        .onee_selected          (onee_selected),
+        .apple_activity_quiet   (onee_activity_quiet),
+        .inhibit_reason         (onee_inhibit_reason)
+    );
+
+    apple_virtual_bus apple_virtual_bus_i (
+        .clk              (clk),
+        .resetn           (rstn[1]),
+        .res_n_in         (1'b1),
+        .irq_n_in         (1'b1),
+        .nmi_n_in         (1'b1),
+        .rdy_n_in         (1'b1),
+        .dma_n_in         (1'b1),
+        .inh_n_in         (1'b1),
+        .req_valid        (1'b0),
+        .req_ready        (virtual_req_ready),
+        .req_addr         (16'hFFFF),
+        .req_rw           (1'b1),
+        .req_wdata        (8'h00),
+        .resp_valid       (virtual_resp_valid),
+        .resp_rdata       (virtual_resp_rdata),
+        .floating_bus_data(8'hFF),
+        .ab_write         (ab_write_arb),
+        .ab_read          (virtual_ab_read)
+    );
+
+    // Isolation asserts on the raw request before the guard may select the
+    // virtual bus. The physical wrapper receives no requests while isolated;
+    // its own direct kill also clears every pin driver without waiting for
+    // another Apple clock edge.
+    assign ab_read  = onee_enable_effective ? virtual_ab_read
+                                             : physical_ab_read;
+    assign ab_write = physical_bus_isolate ? '0 : ab_write_arb;
 
     soft_switch_manager ssm(
         .clk(clk),
@@ -178,6 +262,13 @@ module apple_top(
     localparam logic [7:0] CARD_CTRL_REG_SSC_HEAD     = 8'h4B; // [7:0] oldest byte, [8] valid
     localparam logic [7:0] CARD_CTRL_REG_SSC_CTRL     = 8'h4C; // bit0 pop, bit1 clear, bit2 overflow clear
     localparam logic [7:0] CARD_CTRL_REG_SSC_ACIA     = 8'h4D; // [7:0] command, [15:8] control latch
+    // ONE//e stand-alone request/status. Write bit 0 to request the mode.
+    // Read: [0] request, [1] effective, [2] physical isolate, [3] forced off,
+    // [4] live activity, [5] lockout, [6] quiet, [7] reselect armed,
+    // [8] selected, [9] isolation hold, [12:10] inhibit reason,
+    // [13] power-sense pin fitted (0 on this board), [14] sensed power,
+    // [15] ONE//e HDL present, [31:24] register signature/version 8'hE1.
+    localparam logic [7:0] CARD_CTRL_REG_ONEE         = 8'h5B;
     localparam logic [7:0] CARD_CTRL_REG_VTW_WR_CHECK = 8'h36;
     localparam logic [7:0] CARD_CTRL_REG_VTW_WR_ADDR  = 8'h37;
     localparam logic [7:0] CARD_CTRL_REG_VTW_C000_CTX = 8'h38;
@@ -310,7 +401,6 @@ module apple_top(
     logic [7:0]  ssc_acia_control;
     logic [31:0] disk2_sound_sample_base_q = 32'h0000_0000;
     logic [31:0] disk2_sound_control_q = 32'h0000_0000; // bit 0 enable, [11:8] volume 0..10
-    globals::AppleBus_write ab_write_arb;
     Axi3_read_if #(.ADDR_WIDTH(32), .DATA_WIDTH(64)) disk2_sound_read();
     localparam logic [63:0] NSC_TIME_RESET =
         {8'h26, 8'h01, 8'h01, 8'h01, 8'h00, 8'h00, 8'h00, 8'h00};
@@ -347,8 +437,8 @@ module apple_top(
      * every virtual-card request with the power-up/boot hold so RESET uses
      * the populated open-collector transistor on every Apple model. The
      * separate A2FPGA.RESET lane remains an input observer. */
-    assign apple_reset_n_out =
-        apple_reset_release && !ab_write_arb.assert_res;
+    assign apple_reset_n_out = physical_bus_isolate ? 1'b1 :
+        (apple_reset_release && !ab_write_arb.assert_res);
     assign menu_chime_start = menu_chime_start_q;
     logic smartport_active;
     logic disk2_active;
@@ -737,6 +827,7 @@ module apple_top(
         .dbg_clear(busdbg_clear_pulse),
         .clk(clk),
         .rstn(rstn[1]),
+        .physical_bus_isolate(physical_bus_isolate),
         .inh_allowed(machine_inh_allowed_wrapper_q),
         .gs_m2_qualify(machine_gs_m2_qualify),
         .m2sel_active_high(machine_m2sel_active_high),
@@ -758,7 +849,7 @@ module apple_top(
         .tini_5v_pin(tini_5v_pin), // hardcoded to 0 (active low)
         .tini_addr_dir_pin(tini_addr_dir_pin),
         .tini_data_dir_pin(tini_data_dir_pin),
-        .ab_read(ab_read),
+        .ab_read(physical_ab_read),
         .ab_write(ab_write)
     );
 
@@ -1442,7 +1533,7 @@ module apple_top(
             vtw_machine_ok_q       <= 1'b0;
             vtw_host_is_iiplus_q   <= 1'b0;
         end
-        else if (!vtw_machine_ok_q) begin
+        else if (!vtw_machine_ok_q && !physical_bus_isolate) begin
             if (machine_mode_q == 2'd1) begin
                 vtw_machine_ok_q       <= 1'b1;
                 vtw_host_is_iiplus_q   <= 1'b1;
@@ -1457,13 +1548,22 @@ module apple_top(
      * the session-latched verdict so refresh remains active while Apple RESET
      * temporarily makes the live machine report UNKNOWN. A //e can never
      * activate this path. */
-    assign vtw_iiplus_dma_refresh_active = vtw_host_is_iiplus_q;
+    assign vtw_iiplus_dma_refresh_active =
+        !physical_bus_isolate && vtw_host_is_iiplus_q;
     // Raw vertical-blank level for the core's synthesized $C019 read. The
     // vTW applies its CPU-visible one-cycle lag locally from line/cycle, so
     // native timing consumers remain on the calibrated 192:0 boundary.
     // Same fabric clock as the timing generator, so no synchronizer is needed.
     wire vtw_video_vbl = (line_in_frame >= 9'd192);
-    assign vtw_enable_eff = vtw_ctrl_q[0] && vtw_machine_ok_q;
+    // ONE//e is always an Enhanced //e and needs no physical-machine verdict.
+    // During the request-to-effective guard interval, and after an activity
+    // kill while isolation remains held, neither virtual nor physical vTW may
+    // run.
+    assign vtw_enable_eff = vtw_ctrl_q[0] &&
+        (onee_enable_effective ||
+         (!physical_bus_isolate && vtw_machine_ok_q));
+    wire vtw_host_is_iiplus_eff =
+        !onee_enable_effective && vtw_host_is_iiplus_q;
     wire vtw_core_run_eff = vtw_enable_eff && vtw_ctrl_q[1];
 
     // The first slot-ROM handoff read needs the live gate. Normal Disk II I/O,
@@ -1540,7 +1640,7 @@ module apple_top(
         .clk(clk),
         .rstn(rstn[1]),
         .enable(vtw_enable_eff),
-        .host_is_iiplus(vtw_host_is_iiplus_q),
+        .host_is_iiplus(vtw_host_is_iiplus_eff),
         .core_run(vtw_ctrl_q[1]),
         .assert_apple_res(vtw_ctrl_q[4]),
         .speed_mode(vtw_ctrl_q[3:2]),
@@ -1670,9 +1770,6 @@ module apple_top(
         .ab_write(ab_write_arb)
     );
 
-    /* Virtual-card bus requests feed the physical bus wrapper directly. */
-    assign ab_write = ab_write_arb;
-
     // AxiSimple card-control and diagnostic register mux.
     //   araddr 0x13: aux/RamWorks reads
     //   araddr 0x14: aux/RamWorks read deadline misses
@@ -1751,6 +1848,7 @@ module apple_top(
             sdd_cfg_producer_ptr_addr_q     <= 32'h0;
             sdd_cfg_consumer_ptr_q          <= 32'h0;
             sdd_cfg_reset_pulse             <= 1'b0;
+            onee_request_q                  <= 1'b0;
             machine_mode_q                  <= 2'd0;
             machine_inh_allowed_wrapper_q   <= 1'b0;
             machine_m2sel_active_high       <= 1'b0;
@@ -1972,8 +2070,14 @@ module apple_top(
                     8'h53: sdd_cfg_producer_ptr_addr_q <= globals::apply_wstrb(
                                 sdd_cfg_producer_ptr_addr_q, as_common.wdata, as_common.wstrb);
                     8'h54: sdd_cfg_consumer_ptr_q <= globals::apply_wstrb(
-                                sdd_cfg_consumer_ptr_q, as_common.wdata, as_common.wstrb);
+                                 sdd_cfg_consumer_ptr_q, as_common.wdata, as_common.wstrb);
                     8'h55: sdd_cfg_reset_pulse <= as_common.wdata[0];
+                    CARD_CTRL_REG_ONEE: begin
+                        automatic logic [31:0] tmp = globals::apply_wstrb(
+                            {31'b0, onee_request_q},
+                            as_common.wdata, as_common.wstrb);
+                        onee_request_q <= tmp[0];
+                    end
                     8'h60: begin
                         machine_mode_q            <= as_common.wdata[1:0];
                         machine_inh_allowed_wrapper_q <=
@@ -2039,6 +2143,13 @@ module apple_top(
                     default: begin
                     end
                 endcase
+            end
+
+            // Raw or sticky Apple activity has priority over a same-cycle
+            // software write. Clearing the request also makes a new off/on
+            // selection mandatory after the guard's quiet interval.
+            if (onee_activity_now || onee_activity_lockout) begin
+                onee_request_q <= 1'b0;
             end
 
             if (bm_aux_probe_pulse) begin
@@ -2145,6 +2256,20 @@ module apple_top(
                 8'h58:   as_client_rdata_q <= sdd_stat_gap_markers;
                 8'h59:   as_client_rdata_q <= sdd_stat_bursts_issued;
                 8'h5A:   as_client_rdata_q <= sdd_stat_full_stall_cycles;
+                CARD_CTRL_REG_ONEE: as_client_rdata_q <= {
+                    8'hE1, 8'h00, 1'b1, 1'b0, ONEE_POWER_SENSE_PRESENT,
+                    onee_inhibit_reason,
+                    onee_physical_isolation_hold,
+                    onee_selected,
+                    onee_reselect_armed,
+                    onee_activity_quiet,
+                    onee_activity_lockout,
+                    onee_activity_now,
+                    onee_force_outputs_off,
+                    physical_bus_isolate,
+                    onee_enable_effective,
+                    onee_request_q
+                };
                 8'h60:   as_client_rdata_q <= {29'b0,
                                                machine_m2sel_active_high,
                                                machine_mode_q};

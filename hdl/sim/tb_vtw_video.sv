@@ -60,7 +60,7 @@ module tb_vtw_video;
     logic tini_oe_pin, tini_addr_dir_pin, tini_data_dir_pin;
 
     apple_bus_wrapper wrapper_i (
-        .clk(clk), .rstn(rstn),
+        .clk(clk), .rstn(rstn), .physical_bus_isolate(1'b0),
         .res_filtered_out(), .dbg_lost_cycle_count(), .dbg_clear(1'b0),
         .inh_allowed(1'b1), .gs_m2_qualify(1'b0), .m2sel_active_high(1'b0),
         .host_is_iiplus(1'b0),

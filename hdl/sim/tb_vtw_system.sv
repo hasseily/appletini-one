@@ -74,6 +74,7 @@ module tb_vtw_system;
     apple_bus_wrapper wrapper_i (
         .clk(clk),
         .rstn(rstn),
+        .physical_bus_isolate(1'b0),
         .res_filtered_out(),
         .dbg_lost_cycle_count(), .dbg_clear(1'b0),
         .inh_allowed(1'b1),

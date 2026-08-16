@@ -12,6 +12,10 @@
 module apple_bus_wrapper (
     input  logic                  clk,
     input  logic                  rstn,
+    /* Direct physical-output kill for stand-alone ONE//e mode. This gate
+     * must not depend on PHI0: the host clock may already be stopped while a
+     * registered INH or data response remains armed. */
+    input  logic                  physical_bus_isolate,
     /* Filtered Apple RES# (post-hysteresis), exported for the reset
      * forensics stickies in apple_top. */
     output logic                  res_filtered_out,
@@ -267,7 +271,8 @@ module apple_bus_wrapper (
      * every existing data-enable truth-table entry unchanged when inactive. */
     // Address and R/W drive only while an arbiter client explicitly requests
     // ownership; otherwise both buses remain tri-stated.
-    wire apple_addr_rw_enable = ab_write.wr_addr_rw_en;
+    wire apple_addr_rw_enable = ab_write.wr_addr_rw_en &&
+                                !physical_bus_isolate;
 
     /* Card responses settle many fabric clocks before TAP_DATA_EMIT. Register
      * the physical data tuple so the 12-client arbiter does not remain on the
@@ -409,7 +414,7 @@ module apple_bus_wrapper (
      *       (PHI0 || (!host_is_iiplus && addr_rw_enable))) ||
      *   data_override_safe
      * INIT bit order is {I5,I4,I3,I2,I1,I0}. */
-    wire apple_data_enable;
+    wire apple_data_enable_unisolated;
     (* LOC = "SLICE_X104Y23", BEL = "A6LUT", DONT_TOUCH = "TRUE" *)
     LUT6 #(.INIT(64'hFFFF_FFFF_8088_8080)) apple_data_enable_lut (
         .I0(bus_emit_state),
@@ -418,8 +423,10 @@ module apple_bus_wrapper (
         .I3(host_is_iiplus),
         .I4(physical_addr_rw_en_q),
         .I5(data_override_safe),
-        .O(apple_data_enable)
+        .O(apple_data_enable_unisolated)
     );
+    wire apple_data_enable = apple_data_enable_unisolated &&
+                             !physical_bus_isolate;
     wire [7:0] apple_data_out =
         iiplus_read_hold_active ? iiplus_read_data_q : physical_data_q;
 
@@ -441,12 +448,14 @@ module apple_bus_wrapper (
      * level-low behavior, and ab_write.assert_irq remains a level for the vTW
      * core's internal interrupt path. Driving is still low/high-Z only,
      * preserving the open-collector electrical contract. */
-    wire apple_irq_drive_low = ab_write.assert_irq &&
+    wire apple_irq_drive_low = !physical_bus_isolate &&
+                               ab_write.assert_irq &&
                                (!host_is_iiplus || !irq_rearm_release_q);
     assign apple_irq_pin = apple_irq_drive_low ? 1'b0 : 1'bz;
     // INH must only flip in the addr-phase window, so it's registered
-    assign apple_inh_pin = (apple_inh_assert && inh_allowed)
-                                                ? 1'b0 : 1'bz;
+    assign apple_inh_pin = (!physical_bus_isolate &&
+                            apple_inh_assert && inh_allowed)
+                                                 ? 1'b0 : 1'bz;
     /* A2FPGA.RESET is the bidirectional observation lane through U234.
      * Never assert RESET through that translator: every Appletini-generated
      * reset is merged onto the populated A2CTRL.RESET transistor in
@@ -460,14 +469,15 @@ module apple_bus_wrapper (
      * releases and reasserts that low briefly once per Apple cycle to refresh
      * the TXS edge accelerator. Other masters and every //e session retain
      * the established continuous-low path. */
-    wire apple_dma_requested = ab_write.assert_dma && inh_allowed;
+    wire apple_dma_requested = !physical_bus_isolate &&
+                               ab_write.assert_dma && inh_allowed;
     wire apple_dma_drive_low =
         apple_dma_requested &&
         !(iiplus_dma_refresh_active && dma_rearm_release_q);
     assign apple_dma_pin = apple_dma_drive_low ? 1'b0 : 1'bz;
 
     // Tini board glue
-    assign tini_oe_pin       = tini_5v_pin;
+    assign tini_oe_pin       = physical_bus_isolate ? 1'b1 : tini_5v_pin;
     assign tini_data_dir_pin = apple_data_enable;
     // Tini board's addr direction follows our addr-drive enable.
     assign tini_addr_dir_pin = apple_addr_rw_enable;

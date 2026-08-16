@@ -189,10 +189,13 @@ def static_checks() -> None:
             "if (machine_mode_q == 2'd1)" in top and
             "else if (machine_mode_q == 2'd2)" in top and
             "vtw_machine_ok_q       <= 1'b1;" in top and
-            "vtw_ctrl_q[0] && vtw_machine_ok_q" in top,
-            "vTW enable must latch the machine verdict so sessions survive CTRL-RESET")
+            "(!physical_bus_isolate && vtw_machine_ok_q)" in top and
+            "onee_enable_effective ||" in top,
+            "vTW enable must latch the physical-machine verdict while also "
+            "allowing a guarded virtual //e session")
     require("vtw_host_is_iiplus_q" in top and
-            ".host_is_iiplus(vtw_host_is_iiplus_q)" in top and
+            "vtw_host_is_iiplus_eff" in top and
+            ".host_is_iiplus(vtw_host_is_iiplus_eff)" in top and
             "IIPLUS_PARK_ADDR = 16'h0200" in
             read("hdl/apple/vtw_bus_engine.sv"),
             "vTW must latch II/II+ host type and park that host in ordinary "
@@ -388,9 +391,11 @@ def static_checks() -> None:
     wrapper = read("hdl/apple/apple_bus_wrapper.sv")
     service = read("ps_sources/frontend/vtw_service.c")
     require("assign apple_res_pin = 1'bz;" in wrapper and
-            "apple_reset_release && !ab_write_arb.assert_res;" in top,
+            "assign apple_reset_n_out = physical_bus_isolate ? 1'b1 :" in top and
+            "(apple_reset_release && !ab_write_arb.assert_res);" in top,
             "all internal RESET requests must use the dedicated A2CTRL "
-            "transistor while A2FPGA.RESET remains observation-only")
+            "transistor while A2FPGA.RESET remains observation-only and "
+            "ONE//e isolation releases the transistor")
     require(".assert_apple_res(vtw_ctrl_q[4])" in top,
             "apple_top must wire VTW_CTRL bit4 to the takeover reset")
     require("VTW_ST_RES_HOLD" in service and
@@ -621,7 +626,7 @@ def static_checks() -> None:
     require("TAP_DMA_REARM_RELEASE = TAP_DATA_SNAP - 8;" in wrapper and
             "TAP_DMA_REARM_ASSERT  = TAP_DATA_SNAP - 4;" in wrapper and
             "iiplus_dma_refresh_active && dma_rearm_release_q" in wrapper and
-            "assign vtw_iiplus_dma_refresh_active = vtw_host_is_iiplus_q;" in top and
+            "!physical_bus_isolate && vtw_host_is_iiplus_q;" in top and
             ".iiplus_dma_refresh_active(vtw_iiplus_dma_refresh_active)" in top and
             "{NAME =~ *apple_bus_wrapper_i/dma_rearm_release_q_reg}" in xdc and
             "-to [get_ports a2fpga_dma_n]" in xdc,

@@ -25,6 +25,8 @@ module onee_speaker_audio #(
     logic signed [17:0] dc_step_wide;
     logic signed [17:0] dc_next_wide;
     logic signed [18:0] highpass_wide;
+    (* KEEP = "TRUE" *) logic signed [18:0] highpass_q;
+    logic sample_pending_q;
 
     function automatic logic signed [15:0] saturate_pcm16(
         input logic signed [18:0] sample
@@ -70,14 +72,30 @@ module onee_speaker_audio #(
     always_ff @(posedge clk) begin
         if (!resetn) begin
             dc_estimate_q <= target_sample;
+            highpass_q    <= '0;
+            sample_pending_q <= 1'b0;
             audio_mono    <= 16'sd0;
         end else if (!enabled) begin
             // Track the muted level so enabling ONE//e does not add a click.
             dc_estimate_q <= target_sample;
+            highpass_q    <= '0;
+            sample_pending_q <= 1'b0;
             audio_mono    <= 16'sd0;
-        end else if (audio_sample_tick) begin
-            dc_estimate_q <= dc_next_wide[16:0];
-            audio_mono    <= saturate_pcm16(highpass_wide);
+        end else begin
+            // The top-level mixer samples the prior output on the same edge
+            // as audio_sample_tick. Register the new high-pass result here
+            // and publish it one fabric clock later, well before the next
+            // audio tick. This preserves the DAC sample sequence while
+            // splitting the DC-block arithmetic from the output clamp.
+            sample_pending_q <= 1'b0;
+            if (sample_pending_q)
+                audio_mono <= saturate_pcm16(highpass_q);
+
+            if (audio_sample_tick) begin
+                dc_estimate_q   <= dc_next_wide[16:0];
+                highpass_q      <= highpass_wide;
+                sample_pending_q <= 1'b1;
+            end
         end
     end
 

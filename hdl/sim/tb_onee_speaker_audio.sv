@@ -43,11 +43,17 @@ module tb_onee_speaker_audio;
             $fatal(1, "%s", message);
     endtask
 
-    task automatic sample_tick;
+    task automatic launch_sample_tick;
         audio_sample_tick = 1'b1;
         @(posedge clk);
         #1;
         audio_sample_tick = 1'b0;
+    endtask
+
+    task automatic sample_tick;
+        launch_sample_tick();
+        @(posedge clk);
+        #1;
     endtask
 
     integer sample_index;
@@ -99,7 +105,12 @@ module tb_onee_speaker_audio;
         // A high-to-low edge gives a negative sample, then a held zero level
         // decays to exact silence. The wide test instance must clamp low.
         speaker_level = 1'b0;
-        sample_tick();
+        held_sample = audio_mono;
+        launch_sample_tick();
+        check(audio_mono == held_sample,
+              "speaker result changed before its pipeline clock");
+        @(posedge clk);
+        #1;
         check(audio_mono < 16'sd0,
               "speaker falling edge did not give a negative response");
         check(bounded_audio_mono == -16'sd32768,

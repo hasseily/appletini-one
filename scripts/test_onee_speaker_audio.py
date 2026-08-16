@@ -69,8 +69,10 @@ def static_contract_checks() -> None:
     require(
         "else if (!enabled) begin" in rtl and
         "audio_mono    <= 16'sd0;" in rtl and
-        "else if (audio_sample_tick) begin" in rtl,
-        "reset/disable must silence output and samples must change on ticks",
+        "highpass_q      <= highpass_wide;" in rtl and
+        "if (sample_pending_q)" in rtl and
+        "audio_mono <= saturate_pcm16(highpass_q);" in rtl,
+        "reset/disable must silence output and samples need a pipeline stage",
     )
     require(
         "function automatic logic signed [15:0] saturate_pcm16" in rtl and

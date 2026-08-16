@@ -124,7 +124,9 @@ HELP(boot_timeout,
 
 HELP(boot_device,
     "Which drive the Appletini boots from: the SmartPort drives or the Disk II drives.",
-    "SmartPort boots the images on the SmartPort tab; Disk II boots the floppy images on the Disk II tab.");
+    "SmartPort boots the images on the SmartPort tab; Disk II boots the floppy images on the Disk II tab.",
+    "ONE//e always has virtual Disk II. It keeps this choice even when physical Slot 6 is off.",
+    "An Apple host falls back to SmartPort when Disk II is selected but physical Slot 6 is off.");
 
 HELP(boot_onee,
     "Runs the built-in Enhanced Apple //e on Appletini's soft 65C02 without an Apple host.",

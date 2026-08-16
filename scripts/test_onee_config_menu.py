@@ -109,6 +109,38 @@ def test_session_only_action_is_not_serialized() -> None:
             "activation must handle ONE//e separately and leave before save/apply")
 
 
+def test_disk2_boot_choice_is_independent_of_physical_slot6() -> None:
+    source = read(CONFIG_C)
+    help_source = read(CONFIG_HELP_C)
+    apply = function_slice(source,
+                           "static void config_menu_apply_boot_runtime_internal",
+                           "static void config_menu_apply_smartport_paths")
+    adjust = function_slice(source,
+                            "static uint8_t config_menu_adjust_focused_value",
+                            "static int config_menu_reload_smartport_device")
+    activate = function_slice(source,
+                              "static void config_menu_activate_item",
+                              "void config_menu_init")
+
+    require("config_menu_coerce_boot_device" not in source and
+            "ENABLE DISK II TO BOOT SLOT 6" not in source,
+            "saved Disk II choice must never be rewritten when physical Slot 6 is off")
+    require("if (menu->boot_device == CONFIG_BOOT_DEVICE_DISK2) {\n"
+            "            handoff = CONFIG_BOOT_HANDOFF_DISK2;" in apply and
+            "menu->boot_device == CONFIG_BOOT_DEVICE_DISK2 &&" not in apply,
+            "runtime apply must publish the configured Disk II target without a Slot 6 gate")
+    require("menu->disk2_slot6_enabled" not in adjust and
+            "menu->disk2_slot6_enabled" not in
+            activate[activate.find("case CONFIG_TAB_BOOT_SETTINGS:"):
+                     activate.find("case CONFIG_TAB_PROFILES:")],
+            "both Boot device actions must allow Disk II while physical Slot 6 is off")
+    require("ONE//e always has virtual Disk II. It keeps this choice even when physical Slot 6 is off." in
+            help_source and
+            "An Apple host falls back to SmartPort when Disk II is selected but physical Slot 6 is off." in
+            help_source,
+            "Boot device help must explain the ONE//e target and physical-host fallback")
+
+
 def test_start_is_manual_only_and_activity_never_restarts() -> None:
     source = read(ONEE_C)
     start = function_slice(source,
@@ -212,6 +244,7 @@ TESTS = [
     test_control_register_contract,
     test_menu_row_state_and_exact_help,
     test_session_only_action_is_not_serialized,
+    test_disk2_boot_choice_is_independent_of_physical_slot6,
     test_start_is_manual_only_and_activity_never_restarts,
     test_start_refuses_unsafe_or_missing_pl,
     test_request_to_effective_wait_is_bounded,

@@ -76,14 +76,12 @@ def static_contract_checks() -> None:
     require(
         "wire apple_nonidle_level =" in rtl and
         "|(apple_raw_levels ^ APPLE_IDLE_LEVELS);" in rtl and
-        "apple_power_present_raw || apple_input_transition_now ||" in rtl and
-        "apple_nonidle_level;" in rtl,
+        "apple_nonidle_level || apple_sampled_nonidle;" in rtl,
         "every non-idle raw level must be a direct continuous veto",
     )
     require(
-        "~resetn | apple_power_present_raw | apple_input_transition_now |"
-        in rtl and "apple_nonidle_level;" in rtl,
-        "reset, raw transitions, and held non-idle levels must asynchronously "
+        "wire activity_lockout_set = ~resetn | apple_activity_now;" in rtl,
+        "reset and any raw or synchronized non-idle level must asynchronously "
         "set the sticky lockout",
     )
     require(

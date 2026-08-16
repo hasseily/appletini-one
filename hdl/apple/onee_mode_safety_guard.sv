@@ -92,23 +92,18 @@ module onee_mode_safety_guard #(
     wire apple_activity_synchronized =
         apple_activity_sampled || apple_sampled_nonidle;
 
-    // A raw input differs from its synchronized copy as soon as it changes.
-    // This direct path is the fail-safe kill while the synchronizer and sticky
-    // lockout catch up.
-    wire apple_input_transition_now =
-        |(apple_raw_levels ^ apple_sync_level);
-
     // A stable asserted control or stopped-high clock is still evidence of a
     // connected Apple. Keep it as a continuous veto instead of allowing the
     // quiet timer to age a non-idle level into a valid reselect state.
     wire apple_nonidle_level =
         |(apple_raw_levels ^ APPLE_IDLE_LEVELS);
 
-    // Slot power is a level-sensitive veto, not just another transition. A
-    // powered Apple must never share connector outputs with ONE//e mode.
+    // For each bit, (raw ^ synchronized) OR (raw ^ idle) is exactly
+    // (raw ^ idle) OR (synchronized ^ idle). This shorter form still catches
+    // both edges and every held non-idle level. Slot power is bit 12 with an
+    // idle value of zero, so it remains a level-sensitive veto.
     assign apple_activity_now =
-        apple_power_present_raw || apple_input_transition_now ||
-        apple_nonidle_level;
+        apple_nonidle_level || apple_sampled_nonidle;
 
     always_ff @(posedge clk or negedge resetn) begin
         if (!resetn) begin
@@ -139,9 +134,7 @@ module onee_mode_safety_guard #(
     // Reset and any raw transition asynchronously set the sticky lockout.
     // Clearing remains synchronous and is allowed only after a quiet interval
     // while the manual selection is off.
-    wire activity_lockout_set =
-        ~resetn | apple_power_present_raw | apple_input_transition_now |
-        apple_nonidle_level;
+    wire activity_lockout_set = ~resetn | apple_activity_now;
     wire activity_lockout_clear =
         apple_activity_quiet &&
         !manual_enable_request &&

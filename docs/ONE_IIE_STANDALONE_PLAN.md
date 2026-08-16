@@ -12,9 +12,12 @@ Last source audit: 2026-08-16
   simulation has passed.
 - `[ ]` means the work or proof is still missing.
 - An RTL simulation or a clean build does not count as board proof.
-- The clean `36a5bd2` package is a user-approved hardware test image. The user
-  waived the +0.300 ns release margin for this test handoff only; the image is
-  not promoted and has not passed board validation.
+- The clean `36a5bd2` package is the historical F0.9.77 hardware test image.
+  The user waived the +0.300 ns release margin for that test handoff only. The
+  card ran it out of the Apple slot and reported a false `LOCKED` state.
+- F0.9.78 contains the source correction for that false lock. Its test image
+  has been built and packaged; the corrected image has not yet been retested
+  on the board.
 
 ## Goal and Supported Shape
 
@@ -80,6 +83,10 @@ sections list the board and system tests which still need to run.
   preserving its public sample cadence and values.
 - `36a5bd2`: pipeline vTW slowdown bookkeeping and add directed checks for the
   unchanged slowdown timing contract.
+- `65adf37`: document the F0.9.77 test handoff.
+- `7838f235`: learn the stable open-connector U533 input vector, use a
+  96-cycle quiet interval, retain the main translators as an input-only clock
+  monitor, disable auxiliary translator U234, and reserve F0.9.78.
 
 ## Safety Contract
 
@@ -92,21 +99,29 @@ states:
 2. `onee_activity_lockout`: sticky evidence of Apple-side activity.
 3. `onee_enable_effective`: the only signal which may run the virtual machine.
 
-The request itself asserts `physical_bus_isolate`. The supervisor does not set
-`onee_enable_effective` until every monitored input matches its reset idle level,
-the guard has seen no transition for its quiet interval, and a new selection is
-armed. This orders physical isolation before soft-CPU start. A stopped-high
-clock or held-low active control remains a continuous veto; it cannot age into
-the quiet state. The current guard interval is 2,048 clocks in the 133.333 MHz
-fabric domain, about 15.4 microseconds.
+The request itself asserts `physical_bus_isolate`. The supervisor learns the
+stable input vector presented by U533 instead of requiring fixed Apple idle
+levels. It does not set `onee_enable_effective` until the guard has seen no
+U533 transition for 96 clocks in the 133.333 MHz fabric domain, about 0.72
+microseconds, and a new selection is armed. This orders physical isolation
+before soft-CPU start and lets an open connector settle at either logic level.
 
-The guard watches raw PHI0, 7M, Q3, M2SEL, M2B0, DEVSEL#, RESET#, INH#, IRQ#,
-NMI#, RDY#, and DMA# inputs. A raw transition or non-idle level asynchronously
-sets the sticky activity lockout; that state asynchronously clears one
-contained run-state flop and sets the physical-isolation hold. This path does
-not wait for firmware or for the two-flop status synchronizer. The run-state
-flop's Q drives the high-fanout virtual machine selection. Software's live
-activity and inhibit fields use a one-clock sampled copy, not the raw pins.
+The always-observed U533 vector contains PHI0, 7M, Q3, M2SEL, M2B0, and
+DEVSEL#. A raw difference from the synchronized live vector or a synchronized
+transition sets the sticky activity lockout. That state asynchronously clears
+one contained run-state flop and sets the physical-isolation hold. In
+particular, PHI0, 7M, and Q3 from a running Apple keep changing, so they block
+start or kill a running ONE//e in less than a microsecond. This path does not
+wait for firmware or for the status synchronizer. The run-state flop's Q
+drives the high-fanout virtual machine selection. Software's live activity and
+inhibit fields use a sampled copy, not the raw pins.
+
+U234 carries RESET#, INH#, IRQ#, NMI#, RDY#, and DMA#. ONE//e disables U234
+while physical isolation is asserted, so changes or floating levels on its
+FPGA side do not enter the activity detector. The main translators remain
+enabled in forced Apple-to-FPGA direction during ONE//e. U533 therefore keeps
+the three Apple clocks and select lines visible while every FPGA-side bus
+driver remains off.
 
 After an activity stop:
 
@@ -115,30 +130,35 @@ After an activity stop:
 - The request is never raised again by polling, startup, config load, or a
   profile.
 - Quiet time alone cannot restart the machine.
-- The user must select the boot-menu item again after the request has gone off,
-  every monitored input has returned to its reset idle level, and the connector
-  has shown no transition for the quiet interval.
+- The user must select the boot-menu item again after the request has gone off
+  and the learned U533 input vector has shown no transition for the quiet
+  interval.
 
 While isolation is high, `apple_bus_wrapper` blocks address/R/W drive, data
-drive, IRQ#, INH#, DMA#, the address and data directions, and the main bus
-transceiver. `apple_top` sends an all-zero physical `AppleBus_write` record and
-releases the separate physical RESET output. The virtual warm-reset path does
-not connect to the physical RESET path.
+drive, IRQ#, INH#, DMA#, and the address and data output directions. It leaves
+the main translators enabled as an input-only monitor and `apple_top` disables
+auxiliary translator U234. `apple_top` sends an all-zero physical
+`AppleBus_write` record and releases the separate physical RESET output. The
+virtual warm-reset path does not connect to the physical RESET path.
 
 ### Board Limit: No Slot-Power Sense
 
-This board revision has no physical Apple-slot power-sense input. The top level
-ties `apple_power_present_raw` low and reports both the power-sense-present and
-Apple-power bits as zero in card-control register `0x5B`.
+This board revision has no independent Apple-slot power-sense input. The top
+level ties `apple_power_present_raw` low and reports both the
+power-sense-present and Apple-power bits as zero in card-control register
+`0x5B`. Slot +5 V cannot provide that distinction when the same pin supplies
+the card's stand-alone power: it is high with the card out of the Apple.
 
-The activity detector catches clock or control transitions and continuously
-vetoes any monitored level which differs from the reset idle vector. It still
-cannot identify a powered host whose monitored slot pins all match the same
-idle vector as an unpowered host. The output-side design isolates the connector
-before ONE//e starts, but simulation cannot prove translator behavior, leakage,
-back-power, or board high impedance in that case. Until the board tests below
-pass, do not treat ONE//e as safe for use while it remains plugged into an
-Apple.
+The running-host test therefore uses the bus clocks. The guard learns any
+stable open-connector U533 vector, then treats each PHI0, 7M, Q3, M2SEL, M2B0,
+or DEVSEL# transition as Apple activity. This detects a powered, clock-running
+Apple in less than a microsecond. Without a separate sensor, it cannot prove
+that a host whose clocks have stopped is unpowered; a powered, clock-stopped
+host and an unplugged connector can both present a stable vector. The
+output-side design isolates every drive path before ONE//e starts, but
+simulation cannot prove translator behavior, leakage, back-power, or board
+high impedance. Until the board tests below pass, do not treat ONE//e as safe
+for use while it remains plugged into an Apple.
 
 ## Implemented Architecture
 
@@ -347,23 +367,30 @@ mode is off.
 
 - [x] Default the mode and firmware session request off.
 - [x] Isolate physical outputs before effective mode can start.
-- [x] Kill effective mode on raw Apple-side transitions without firmware.
-- [x] Keep a stopped-high clock or asserted active-low control from becoming
-  quiet until it returns to the reset idle level.
+- [x] Reprove that raw U533 transitions kill effective mode without firmware
+  after the F0.9.78 guard change.
+- [x] Reprove that the guard learns an arbitrary stable open-connector vector
+  instead of requiring fixed Apple idle levels.
+- [x] Reprove that PHI0, 7M, and Q3 remain visible through U533 while ONE//e is
+  isolated, so running Apple clocks cannot become quiet.
 - [x] Latch activity and require a later manual selection.
 - [x] Keep startup, profile, apply, and polling paths from raising request.
-- [x] Mask physical address, R/W, data, IRQ, INH, DMA, transceiver, and RESET
-  outputs in RTL.
+- [x] Reprove physical address, R/W, data, IRQ, INH, DMA, and RESET drive masks
+  with the main translators forced input-only and auxiliary translator U234
+  disabled.
 - [ ] Prove connector pin voltage, high impedance, leakage, and back-power on
   a production board.
 - [ ] Prove external translator OE/DIR defaults while the PL is unconfigured,
   configuring, or held in reset, under both Apple-first and card-first power
   order.
-- [ ] Test an Apple already on and an Apple powered on during ONE//e.
-- [x] Document the missing slot-power input and the undetectable powered host
-  whose monitored pins all match the reset idle vector.
+- [ ] Test a clock-running Apple already on and an Apple powered on during
+  ONE//e.
+- [x] Document that slot +5 V is also the stand-alone supply and cannot act as
+  Apple-presence sense in that setup.
+- [x] Document the powered, clock-stopped host which no clock-only detector can
+  distinguish from a stable open connector.
 - [ ] Add a board-level power interlock or power-sense input if ONE//e must
-  reject that all-idle powered-host case.
+  reject that powered, clock-stopped case.
 
 ### Virtual Motherboard and Boot
 
@@ -419,9 +446,10 @@ mode is off.
 
 ## Validation Record
 
-### Passed Focused Checks
+### Passed F0.9.77 Focused Checks
 
-The following focused checks have passed on this branch:
+The following focused checks passed for the F0.9.77 source. They are a
+historical record and do not validate the later F0.9.78 correction:
 
 - `python scripts/test_onee_mode_safety_guard.py`: source contract plus XSim
   for reset-off, every monitored raw transition, modeled power veto, direct
@@ -489,6 +517,23 @@ The following focused checks have passed on this branch:
   all 98 frontend checks, both DOS and ProDOS `$0801` boot-sector runs, and the
   Appli-Card, SSC, SuperSprite, Uthernet II, and VidHD card suites.
 
+### F0.9.78 Validation
+
+- [x] Run the revised guard source checks and XSim for arbitrary stable U533
+  vectors, 96-cycle quiet qualification, PHI0/7M/Q3 start veto and immediate
+  kill, sticky lockout, and manual reselect.
+- [x] Run the revised physical-isolation simulation for input-only main
+  translators and disabled U234.
+- [x] Run all stated focused ONE//e HDL and frontend regressions against the
+  corrected source, including the vTW, boot-sector, and virtual-card checks.
+- [x] Complete a full Vivado route and export, exact-XSA Vitis build, and
+  firmware package for F0.9.78.
+- [ ] Program F0.9.78 and repeat the out-of-slot and live-clock board tests.
+
+The completed source and firmware checks apply to commit
+`7838f23580d95a03e2e9f2442d80f2e3ce9c6ebf`. They do not replace the pending
+board retest.
+
 ### Synthesis and Firmware Build State
 
 - Full `appletini_yarz_top` synthesis passed at commit `8fec225` with zero
@@ -521,7 +566,8 @@ The following focused checks have passed on this branch:
   suites.
 - [ ] Promote a release build only after it reaches the project's +0.300 ns
   setup-margin gate, repeats cleanly at the same commit, and passes the board
-  checks below. The user waived that margin only for the `36a5bd2` test image.
+  checks below. The user waived that margin for the F0.9.77 and F0.9.78 test
+  images only.
 - The first 2026-08-16 Vitis attempt made BSP content, but
   `vitis_workspace/appletini_platform/export/.buildstatus` reported
   `export=ERROR`. The expected
@@ -542,12 +588,40 @@ The following focused checks have passed on this branch:
   `1b5a932f836471075fdb9a7a92664be44af2f0537787ece638ad9314a18d9b0f`.
   The handoff record is
   `.timing_runs/20260816T152953Z-36a5bd21-full/test_firmware_manifest.txt`.
-  This is a test-only package, not a promoted or board-tested release image.
+  This is a test-only package, not a promoted release image.
+- [x] The first out-of-slot board test powered the card from the slot +5 V pin
+  and F0.9.77 reported `LOCKED`. The open U533 inputs did not match the guard's
+  fixed reset vector. Physical isolation also disabled the main translator, so
+  that design could not keep watching the bus clocks after selection.
+- [x] The full F0.9.78 implementation from source commit
+  `7838f23580d95a03e2e9f2442d80f2e3ce9c6ebf` exported as build
+  `20260816T164305Z-7838f235-full`. It reports WNS +0.019 ns, TNS 0, WHS
+  +0.063 ns, THS 0, and WPWS +0.265 ns, with no setup, hold, or pulse-width
+  failing endpoints, route errors, missing constraint objects, or
+  unconstrained internal endpoints. Its bitstream SHA-256 is
+  `46a4f3ffa6d03bd6d9887506689e7b1c8ef605e6f7c252ad24a7e41f8094bbf6`;
+  its XSA SHA-256 is
+  `314435c8f18adfade2c2d766871d59c30b8d6078f548e33f9686a5c9dc758ed5`.
+  The run manifest records `git_dirty=1` because the two ONE//e documents were
+  edited; no HDL or firmware source was dirty during the run.
+- [x] A fresh Vitis 2025.2 workspace build used that exact archived XSA.
+  Platform export and all application builds completed successfully. Bootgen
+  readback reports `total_images=4`.
+- [x] Root `FIRMWARE.BIN` and
+  `.timing_runs/20260816T164305Z-7838f235-full/FIRMWARE_TEST.BIN` are
+  byte-identical, each 4,235,276 bytes, with SHA-256
+  `47f7385846b8092e46784649a0f99f7b90e7d2415d2ee02eb627c2628a71d9fa`.
+  The handoff record is
+  `.timing_runs/20260816T164305Z-7838f235-full/test_firmware_manifest.txt`.
+  This F0.9.78 image is a test image under the user's +0.300 ns margin waiver,
+  not a promoted release.
 
 ### Missing Board and End-to-End Proof
 
-- [ ] Program the archived test-only `36a5bd2` bitstream and F0.9.77 firmware
-  image on an Appletini ONE.
+- [x] Run the archived F0.9.77 image on an Appletini ONE out of the Apple slot;
+  it reached the menu but ONE//e falsely reported `LOCKED`.
+- [x] Build and package the corrected F0.9.78 image.
+- [ ] Program F0.9.78 and repeat the out-of-slot test.
 - [ ] Verify all physical Apple pins and translators while ONE//e starts,
   runs, faults, stops, and returns to host mode, including PL configuration and
   both card/Apple power orders.

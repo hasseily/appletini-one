@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-"""Focused source checks for the ONE//e soft-CPU cold-start path."""
+"""Focused source and native checks for the ONE//e vTW runtime path."""
 
+import shutil
+import subprocess
+import textwrap
 from pathlib import Path
 
 
@@ -11,6 +14,7 @@ VTW_H = FRONTEND / "vtw_service.h"
 ONEE_C = FRONTEND / "onee_service.c"
 ONEE_H = FRONTEND / "onee_service.h"
 MAIN_C = FRONTEND / "main.c"
+BUILD = REPO_ROOT / "build" / "onee_vtw_runtime_test"
 
 
 class TestFailure(AssertionError):
@@ -229,6 +233,50 @@ def test_normal_host_state_machine_remains_after_onee_gate() -> None:
             "the saved host intent must resume through the unchanged host takeover path")
 
 
+def test_live_speed_controls_share_one_verified_writer() -> None:
+    source = read(VTW_C)
+    writer = between(source,
+                     "static vtw_ctrl_live_result_t vtw_apply_ctrl_live",
+                     "static uint8_t vtw_onee_isolation_confirmed")
+    toggle = between(source,
+                     "void vtw_service_speed_toggle(void)",
+                     "void vtw_service_speed_step(int8_t dir)")
+    step = between(source,
+                   "void vtw_service_speed_step(int8_t dir)",
+                   "void vtw_service_slug_toggle(void)")
+    slug = between(source,
+                   "void vtw_service_slug_toggle(void)",
+                   "void vtw_service_set_slowdown")
+    configured = between(source,
+                         "void vtw_service_set_speed(",
+                         "void vtw_service_set_ignore_c074")
+    options = between(source,
+                      "static void vtw_apply_ctrl_options_live",
+                      "static uint8_t vtw_ms_elapsed")
+
+    require("g_onee_running != 0U" in writer and
+            "vtw_onee_ctrl_value(1U, 0U)" in writer and
+            "g_state == VTW_ST_RUN" in writer and
+            "vtw_ctrl_value(1U, 1U, 0U)" in writer and
+            "REG_WRITE(CARD_CTRL_VTW_CTRL_REG, desired);" in writer and
+            "REG_READ(CARD_CTRL_VTW_CTRL_REG) != desired" in writer,
+            "host and ONE//e live changes must share a verified CTRL writer")
+    require("vtw_apply_ctrl_live()" in configured and
+            "vtw_apply_ctrl_live()" in options and
+            "vtw_apply_ctrl_live()" in between(
+                source, "static uint8_t vtw_override_apply", "/* Nearest"),
+            "menu, compatibility options, and USB overrides must use that writer")
+    require(all("g_intent_enabled == 0U" not in action
+                for action in (toggle, step, slug)) and
+            all("g_onee_running == 0U" in action
+                for action in (toggle, step, slug)),
+            "saved host intent must not gate speed keys on a live ONE//e core")
+    require("TW: CONTROL WRITE FAILED" in source and
+            all("vtw_override_apply(" in action
+                for action in (toggle, step, slug)),
+            "USB labels must report success only after a verified live write")
+
+
 TESTS = [
     test_real_runtime_hooks_are_bound_after_vtw_init,
     test_cold_start_is_direct_and_isolation_first,
@@ -238,7 +286,398 @@ TESTS = [
     test_running_state_requires_released_core_status,
     test_menu_closes_once_only_after_true_running,
     test_normal_host_state_machine_remains_after_onee_gate,
+    test_live_speed_controls_share_one_verified_writer,
 ]
+
+
+def find_native_c_compiler() -> Path | None:
+    for name in ("gcc", "cc", "clang"):
+        found = shutil.which(name)
+        if found:
+            return Path(found)
+    xilinx = Path("C:/Xilinx")
+    if xilinx.exists():
+        matches = sorted(
+            xilinx.glob(
+                "*/tps/mingw/*/win64.o/nt/bin/x86_64-w64-mingw32-gcc.exe"
+            ),
+            reverse=True,
+        )
+        if matches:
+            return matches[0]
+    return None
+
+
+def run_native_speed_control_test() -> bool:
+    compiler = find_native_c_compiler()
+    if compiler is None:
+        print("SKIP native_speed_control_test: no host C compiler")
+        return True
+
+    if BUILD.exists():
+        shutil.rmtree(BUILD)
+    BUILD.mkdir(parents=True)
+    harness = BUILD / "onee_vtw_runtime_harness.c"
+    executable = BUILD / "onee_vtw_runtime_harness.exe"
+    (BUILD / "xiltimer.h").write_text(textwrap.dedent(r'''
+        #ifndef XILTIMER_H
+        #define XILTIMER_H
+        #include <stdint.h>
+        typedef uint64_t XTime;
+        #define COUNTS_PER_SECOND 100000000ULL
+        void XTime_GetTime(XTime *value);
+        #endif
+    '''), encoding="utf-8")
+    harness.write_text(textwrap.dedent(r'''
+        #include <stdint.h>
+        #include <stdio.h>
+        #include <string.h>
+
+        static uint32_t test_reg_read(uint32_t address);
+        static void test_reg_write(uint32_t address, uint32_t value);
+        uint8_t boot_menu_service_machine_mode(void);
+        const char *boot_menu_service_machine_name(void);
+        uint8_t boot_menu_service_slot7_handed_off(void);
+        void disk2_service_set_enabled(uint8_t enabled);
+        void uart_puts(uint32_t base, const char *s);
+
+        #define BOOT_MENU_SERVICE_H
+        #define DISK2_SERVICE_H
+        #define COMMON_H
+        #define UART_H
+        #define REG_READ(address) test_reg_read((uint32_t)(address))
+        #define REG_WRITE(address, value) \
+            test_reg_write((uint32_t)(address), (uint32_t)(value))
+        #include "../../ps_sources/frontend/vtw_service.c"
+
+        const uint8_t apple2e_cpu_rom[16384] = { 0U };
+
+        typedef struct {
+            uint32_t address;
+            uint32_t value;
+        } write_event_t;
+
+        static uint32_t registers[256];
+        static write_event_t writes[256];
+        static uint32_t write_count;
+        static uint32_t ctrl_read_count;
+        static uint8_t ctrl_write_sticks;
+        static uint8_t machine_mode;
+        static uint8_t disk2_enabled;
+        static XTime fake_time;
+
+        static uint32_t reg_index(uint32_t address)
+        {
+            return (address - APPLE_DEBUG_BASE) / 4U;
+        }
+
+        static uint32_t test_reg_read(uint32_t address)
+        {
+            if (address == CARD_CTRL_VTW_CTRL_REG) {
+                ++ctrl_read_count;
+            }
+            return registers[reg_index(address)];
+        }
+
+        static void test_reg_write(uint32_t address, uint32_t value)
+        {
+            if (write_count < (sizeof(writes) / sizeof(writes[0]))) {
+                writes[write_count].address = address;
+                writes[write_count].value = value;
+            }
+            ++write_count;
+            if (address != CARD_CTRL_VTW_CTRL_REG || ctrl_write_sticks != 0U) {
+                registers[reg_index(address)] = value;
+            }
+        }
+
+        uint8_t boot_menu_service_machine_mode(void)
+        {
+            return machine_mode;
+        }
+
+        const char *boot_menu_service_machine_name(void)
+        {
+            return "test";
+        }
+
+        uint8_t boot_menu_service_slot7_handed_off(void)
+        {
+            return 1U;
+        }
+
+        void disk2_service_set_enabled(uint8_t enabled)
+        {
+            disk2_enabled = enabled;
+        }
+
+        void uart_puts(uint32_t base, const char *s)
+        {
+            (void)base;
+            (void)s;
+        }
+
+        void XTime_GetTime(XTime *value)
+        {
+            *value = fake_time;
+        }
+
+        static uint32_t writes_to(uint32_t address)
+        {
+            uint32_t count = 0U;
+
+            for (uint32_t i = 0U; i < write_count; ++i) {
+                if (writes[i].address == address) {
+                    ++count;
+                }
+            }
+            return count;
+        }
+
+        static uint32_t ctrl_value(void)
+        {
+            return registers[reg_index(CARD_CTRL_VTW_CTRL_REG)];
+        }
+
+        static uint32_t ctrl_speed(void)
+        {
+            return (ctrl_value() >> CARD_CTRL_VTW_CTRL_SPEED_SHIFT) &
+                   CARD_CTRL_VTW_CTRL_SPEED_MASK;
+        }
+
+        static uint32_t ctrl_divider(void)
+        {
+            return (ctrl_value() >> CARD_CTRL_VTW_CTRL_DIVIDER_SHIFT) &
+                   CARD_CTRL_VTW_CTRL_DIVIDER_MASK;
+        }
+
+        static int check(uint8_t condition, const char *message)
+        {
+            if (condition == 0U) {
+                fprintf(stderr, "FAIL: %s\n", message);
+                return 0;
+            }
+            return 1;
+        }
+
+        static void reset_fixture(void)
+        {
+            memset(registers, 0, sizeof(registers));
+            memset(writes, 0, sizeof(writes));
+            write_count = 0U;
+            ctrl_read_count = 0U;
+            ctrl_write_sticks = 1U;
+            machine_mode = CARD_MACHINE_MODE_IIE;
+            disk2_enabled = 0U;
+            fake_time = 0U;
+            g_uart_base = 0U;
+            g_intent_enabled = 0U;
+            g_speed_mode = CARD_CTRL_VTW_SPEED_FULL;
+            g_pace_divider = 37U;
+            g_ovr_active = 0U;
+            g_ovr_mode = 0U;
+            g_ovr_div = 0U;
+            g_slug_enabled = 0U;
+            g_ignore_c074 = 0U;
+            g_disable_disk2_accel = 0U;
+            memset(g_last_action_text, 0, sizeof(g_last_action_text));
+            g_slowdown_mask = 0U;
+            g_slowdown_cycles = 0U;
+            g_state = VTW_ST_IDLE;
+            g_take_polls = 0U;
+            g_sessions_started = 0U;
+            g_announced_wait = 0U;
+            g_announced_handoff_wait = 0U;
+            g_onee_running = 0U;
+            g_onee_disk2_override_active = 0U;
+            g_onee_disk2_restore_enabled = 0U;
+            g_res_phase_start = 0U;
+            vtw_service_init(0U);
+            write_count = 0U;
+            ctrl_read_count = 0U;
+        }
+
+        static int test_host_live_controls(void)
+        {
+            uint32_t before;
+
+            reset_fixture();
+            machine_mode = CARD_MACHINE_MODE_IIPLUS;
+            g_intent_enabled = 1U;
+            g_state = VTW_ST_RUN;
+
+            vtw_service_set_speed(CARD_CTRL_VTW_SPEED_DIVIDED, 37U);
+            if (!check(writes_to(CARD_CTRL_VTW_CTRL_REG) == 1U &&
+                       ctrl_read_count == 1U &&
+                       (ctrl_value() & (CARD_CTRL_VTW_CTRL_ENABLE_BIT |
+                                        CARD_CTRL_VTW_CTRL_CORE_RUN_BIT |
+                                        CARD_CTRL_VTW_CTRL_IIPLUS_BTNS_BIT)) ==
+                                       (CARD_CTRL_VTW_CTRL_ENABLE_BIT |
+                                        CARD_CTRL_VTW_CTRL_CORE_RUN_BIT |
+                                        CARD_CTRL_VTW_CTRL_IIPLUS_BTNS_BIT) &&
+                       ctrl_speed() == CARD_CTRL_VTW_SPEED_DIVIDED &&
+                       ctrl_divider() == 37U,
+                       "host menu speed did not use verified live CTRL")) {
+                return 0;
+            }
+
+            before = write_count;
+            vtw_service_speed_toggle();
+            if (!check(write_count == before + 1U &&
+                       ctrl_speed() == CARD_CTRL_VTW_SPEED_1MHZ &&
+                       strcmp(vtw_service_last_action_text(),
+                              "TW: 1 MHz default") == 0,
+                       "host USB toggle did not change the running core")) {
+                return 0;
+            }
+
+            before = write_count;
+            vtw_service_set_ignore_c074(1U);
+            if (!check(write_count == before + 1U &&
+                       (ctrl_value() & CARD_CTRL_VTW_CTRL_IGNORE_C074_BIT) != 0U,
+                       "host option did not use the live writer")) {
+                return 0;
+            }
+            return 1;
+        }
+
+        static int test_onee_live_controls_without_host_intent(void)
+        {
+            uint32_t before;
+            uint32_t before_reads;
+            const uint32_t onee_run =
+                CARD_CTRL_VTW_CTRL_ENABLE_BIT |
+                CARD_CTRL_VTW_CTRL_CORE_RUN_BIT |
+                CARD_CTRL_VTW_CTRL_DISABLE_D2_ACCEL_BIT;
+
+            reset_fixture();
+            vtw_service_set_speed(CARD_CTRL_VTW_SPEED_FULL, 37U);
+            g_onee_running = 1U;
+            g_intent_enabled = 0U;
+
+            vtw_service_speed_toggle();
+            if (!check(write_count == 1U && ctrl_read_count == 1U &&
+                       ctrl_value() ==
+                           (onee_run |
+                            (CARD_CTRL_VTW_SPEED_1MHZ <<
+                             CARD_CTRL_VTW_CTRL_SPEED_SHIFT)) &&
+                       strcmp(vtw_service_last_action_text(),
+                              "TW: 1 MHz default") == 0,
+                       "ONE//e toggle did not write and read back its exact CTRL word")) {
+                return 0;
+            }
+
+            before_reads = ctrl_read_count;
+            vtw_service_speed_step(1);
+            if (!check(ctrl_read_count == before_reads + 1U &&
+                       ctrl_value() ==
+                           (onee_run |
+                            (CARD_CTRL_VTW_SPEED_DIVIDED <<
+                             CARD_CTRL_VTW_CTRL_SPEED_SHIFT) |
+                            (51UL << CARD_CTRL_VTW_CTRL_DIVIDER_SHIFT)),
+                       "ONE//e speed step lost its exact live or Disk II state")) {
+                return 0;
+            }
+
+            vtw_service_set_slug_enabled(1U);
+            vtw_service_slug_toggle();
+            if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_DIVIDED &&
+                       ctrl_divider() == VTW_SLUG_DIVIDER,
+                       "ONE//e slug key did not reach CTRL")) {
+                return 0;
+            }
+            before = write_count;
+            before_reads = ctrl_read_count;
+            vtw_service_set_slug_enabled(0U);
+            if (!check(write_count == before + 1U &&
+                       ctrl_read_count == before_reads + 1U &&
+                       ctrl_value() ==
+                           (onee_run |
+                            (37UL << CARD_CTRL_VTW_CTRL_DIVIDER_SHIFT)),
+                       "ONE//e slug disable did not restore through the live writer")) {
+                return 0;
+            }
+
+            vtw_service_set_disk2_accel_disabled(0U);
+            if (!check((ctrl_value() &
+                        CARD_CTRL_VTW_CTRL_DISABLE_D2_ACCEL_BIT) != 0U,
+                       "ONE//e live options cleared its forced Disk II bit")) {
+                return 0;
+            }
+            return 1;
+        }
+
+        static int test_failed_and_absent_live_writes_do_not_claim_success(void)
+        {
+            uint32_t before;
+
+            reset_fixture();
+            g_onee_running = 1U;
+            (void)vtw_apply_ctrl_live();
+            before = ctrl_value();
+            ctrl_write_sticks = 0U;
+            vtw_service_speed_toggle();
+            if (!check(ctrl_value() == before &&
+                       g_ovr_active == 0U && g_ovr_mode == 0U &&
+                       g_ovr_div == 0U && ctrl_read_count == 2U &&
+                       strcmp(vtw_service_last_action_text(),
+                              "TW: CONTROL WRITE FAILED") == 0,
+                       "failed CTRL readback claimed a speed change")) {
+                return 0;
+            }
+
+            ctrl_write_sticks = 1U;
+            g_onee_running = 0U;
+            g_intent_enabled = 1U;
+            g_state = VTW_ST_IDLE;
+            before = write_count;
+            vtw_service_speed_toggle();
+            if (!check(write_count == before &&
+                       strcmp(vtw_service_last_action_text(), "TW: OFF") == 0,
+                       "saved intent without a live core claimed success")) {
+                return 0;
+            }
+            return 1;
+        }
+
+        int main(void)
+        {
+            if (!test_host_live_controls() ||
+                !test_onee_live_controls_without_host_intent() ||
+                !test_failed_and_absent_live_writes_do_not_claim_success()) {
+                return 1;
+            }
+            puts("ONEE VTW LIVE CONTROL NATIVE PASS");
+            return 0;
+        }
+    '''), encoding="utf-8")
+
+    compile_cmd = [
+        str(compiler), "-std=c11", "-Wall", "-Wextra", "-Werror",
+        str(harness), "-o", str(executable), f"-I{BUILD}",
+        f"-I{FRONTEND}", f"-I{REPO_ROOT / 'ps_sources' / 'lib'}",
+    ]
+    if "mingw" in compiler.as_posix().lower():
+        compile_cmd.insert(5, "-static")
+    compiled = subprocess.run(
+        compile_cmd, cwd=REPO_ROOT, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    )
+    if compiled.returncode != 0:
+        print(compiled.stdout)
+        print("FAIL native_speed_control_test: host compilation failed")
+        return False
+    ran = subprocess.run(
+        [str(executable)], cwd=REPO_ROOT, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    )
+    if (ran.returncode != 0 or
+            "ONEE VTW LIVE CONTROL NATIVE PASS" not in ran.stdout):
+        print(ran.stdout)
+        print("FAIL native_speed_control_test: harness failed")
+        return False
+    print("PASS native_speed_control_test")
+    return True
 
 
 def main() -> int:
@@ -251,11 +690,12 @@ def main() -> int:
             print(f"FAIL {test.__name__}: {exc}")
         else:
             print(f"PASS {test.__name__}")
-    if failures:
+    native_ok = run_native_speed_control_test()
+    if failures or not native_ok:
         print(f"{len(TESTS) - len(failures)} of {len(TESTS)} tests passed; "
               f"{len(failures)} failed")
         return 1
-    print(f"{len(TESTS)} ONE//e vTW runtime tests passed")
+    print(f"{len(TESTS)} ONE//e vTW source checks and native test passed")
     return 0
 
 

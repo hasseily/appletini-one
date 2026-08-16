@@ -193,6 +193,40 @@ static uint32_t vtw_onee_ctrl_value(uint8_t core_run, uint8_t apple_res)
     return v;
 }
 
+typedef enum {
+    VTW_CTRL_LIVE_NONE = 0,
+    VTW_CTRL_LIVE_APPLIED,
+    VTW_CTRL_LIVE_FAILED
+} vtw_ctrl_live_result_t;
+
+/* Apply the current speed and option state without changing the phase of the
+ * active host or ONE//e session. All menu, option, and USB-key live updates
+ * pass through this writer so they cannot disagree about which control word
+ * owns the running core. */
+static vtw_ctrl_live_result_t vtw_apply_ctrl_live(void)
+{
+    uint32_t desired;
+
+    if (g_onee_running != 0U) {
+        desired = vtw_onee_ctrl_value(1U, 0U);
+    } else if (g_state == VTW_ST_RUN) {
+        desired = vtw_ctrl_value(1U, 1U, 0U);
+    } else if (g_state == VTW_ST_RES_HOLD) {
+        desired = vtw_ctrl_value(1U, 0U, 1U);
+    } else if (g_state != VTW_ST_IDLE) {
+        desired = vtw_ctrl_value(1U, 0U, 0U);
+    } else {
+        return VTW_CTRL_LIVE_NONE;
+    }
+
+    REG_WRITE(CARD_CTRL_VTW_CTRL_REG, desired);
+    if (REG_READ(CARD_CTRL_VTW_CTRL_REG) != desired) {
+        uart_puts(g_uart_base, "vtw: CTRL write readback failed\r\n");
+        return VTW_CTRL_LIVE_FAILED;
+    }
+    return VTW_CTRL_LIVE_APPLIED;
+}
+
 static uint8_t vtw_onee_isolation_confirmed(void)
 {
     const uint32_t status = REG_READ(CARD_CTRL_ONEE_MODE_REG);
@@ -312,17 +346,7 @@ static uint8_t vtw_shadow_load_fixed_rom(uint8_t iiplus_patch,
 
 static void vtw_apply_ctrl_options_live(void)
 {
-    /* Preserve the current session and reset phase while changing either
-     * compatibility option. */
-    if (g_onee_running != 0U) {
-        REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_onee_ctrl_value(1U, 0U));
-    } else if (g_state == VTW_ST_RUN) {
-        REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(1U, 1U, 0U));
-    } else if (g_state == VTW_ST_RES_HOLD) {
-        REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(1U, 0U, 1U));
-    } else if (g_state != VTW_ST_IDLE) {
-        REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(1U, 0U, 0U));
-    }
+    (void)vtw_apply_ctrl_live();
 }
 
 static uint8_t vtw_ms_elapsed(XTime since, uint32_t ms)
@@ -382,13 +406,7 @@ void vtw_service_set_speed(uint8_t speed_mode, uint8_t pace_divider)
     /* A configured (menu) speed change wins over any runtime override. */
     g_ovr_active = 0U;
     /* Live update: rewrite CTRL with the current session bits intact. */
-    if (g_onee_running != 0U) {
-        REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_onee_ctrl_value(1U, 0U));
-    } else if (g_state == VTW_ST_RUN) {
-        REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(1U, 1U, 0U));
-    } else if (g_state != VTW_ST_IDLE) {
-        REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(1U, 0U, 0U));
-    }
+    (void)vtw_apply_ctrl_live();
 }
 
 void vtw_service_set_ignore_c074(uint8_t ignore)
@@ -427,10 +445,15 @@ static const char *vtw_eff_speed_name(void)
     return "custom divider";
 }
 
-static void vtw_override_apply(const char *tag)
+static uint8_t vtw_override_apply(const char *tag)
 {
-    if (g_state == VTW_ST_RUN) {
-        REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(1U, 1U, 0U));
+    if (vtw_apply_ctrl_live() != VTW_CTRL_LIVE_APPLIED) {
+        uart_puts(g_uart_base, "vtw: ");
+        uart_puts(g_uart_base, tag);
+        uart_puts(g_uart_base, " failed; speed unchanged\r\n");
+        (void)snprintf(g_last_action_text, sizeof(g_last_action_text),
+                       "TW: CONTROL WRITE FAILED");
+        return 0U;
     }
     uart_puts(g_uart_base, "vtw: ");
     uart_puts(g_uart_base, tag);
@@ -440,6 +463,7 @@ static void vtw_override_apply(const char *tag)
                                               : " (configured)\r\n");
     (void)snprintf(g_last_action_text, sizeof(g_last_action_text),
                    "TW: %s", vtw_eff_speed_name());
+    return 1U;
 }
 
 /* Nearest ladder index for the current effective speed; slug maps below
@@ -480,11 +504,27 @@ void vtw_service_set_slug_enabled(uint8_t enable)
     /* Disarming the key also drops an active slug override: the setting
      * must leave no way to be stuck at 0.05 MHz unknowingly. */
     if (g_slug_enabled == 0U && vtw_eff_is_slug() != 0U) {
+        const uint8_t old_ovr_active = g_ovr_active;
+        const uint8_t old_ovr_mode = g_ovr_mode;
+        const uint16_t old_ovr_div = g_ovr_div;
+        vtw_ctrl_live_result_t applied;
+
         g_ovr_active = 0U;
-        if (g_state == VTW_ST_RUN) {
-            REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(1U, 1U, 0U));
+        applied = vtw_apply_ctrl_live();
+        if (applied == VTW_CTRL_LIVE_FAILED) {
+            g_ovr_active = old_ovr_active;
+            g_ovr_mode = old_ovr_mode;
+            g_ovr_div = old_ovr_div;
+            uart_puts(g_uart_base,
+                      "vtw: slug disable CTRL write failed; speed unchanged\r\n");
+            return;
         }
-        uart_puts(g_uart_base, "vtw: slug disabled, speed restored\r\n");
+        if (applied == VTW_CTRL_LIVE_APPLIED) {
+            uart_puts(g_uart_base, "vtw: slug disabled, speed restored\r\n");
+        } else {
+            uart_puts(g_uart_base,
+                      "vtw: slug disabled for the next session\r\n");
+        }
     }
 }
 
@@ -495,7 +535,11 @@ const char *vtw_service_last_action_text(void)
 
 void vtw_service_speed_toggle(void)
 {
-    if (g_intent_enabled == 0U) {
+    const uint8_t old_ovr_active = g_ovr_active;
+    const uint8_t old_ovr_mode = g_ovr_mode;
+    const uint16_t old_ovr_div = g_ovr_div;
+
+    if (g_state != VTW_ST_RUN && g_onee_running == 0U) {
         uart_puts(g_uart_base, "vtw: speed toggle ignored (vtw off)\r\n");
         (void)snprintf(g_last_action_text, sizeof(g_last_action_text),
                        "TW: OFF");
@@ -512,14 +556,21 @@ void vtw_service_speed_toggle(void)
         g_ovr_mode = CARD_CTRL_VTW_SPEED_1MHZ;
         g_ovr_div = 0U;
     }
-    vtw_override_apply("speed toggle");
+    if (vtw_override_apply("speed toggle") == 0U) {
+        g_ovr_active = old_ovr_active;
+        g_ovr_mode = old_ovr_mode;
+        g_ovr_div = old_ovr_div;
+    }
 }
 
 void vtw_service_speed_step(int8_t dir)
 {
     int idx;
+    const uint8_t old_ovr_active = g_ovr_active;
+    const uint8_t old_ovr_mode = g_ovr_mode;
+    const uint16_t old_ovr_div = g_ovr_div;
 
-    if (g_intent_enabled == 0U) {
+    if (g_state != VTW_ST_RUN && g_onee_running == 0U) {
         uart_puts(g_uart_base, "vtw: speed step ignored (vtw off)\r\n");
         (void)snprintf(g_last_action_text, sizeof(g_last_action_text),
                        "TW: OFF");
@@ -536,12 +587,20 @@ void vtw_service_speed_step(int8_t dir)
     g_ovr_mode = k_vtw_ladder[idx].mode;
     g_ovr_div = (k_vtw_ladder[idx].divider != 0U)
                     ? k_vtw_ladder[idx].divider : (uint16_t)g_pace_divider;
-    vtw_override_apply(dir > 0 ? "speed +" : "speed -");
+    if (vtw_override_apply(dir > 0 ? "speed +" : "speed -") == 0U) {
+        g_ovr_active = old_ovr_active;
+        g_ovr_mode = old_ovr_mode;
+        g_ovr_div = old_ovr_div;
+    }
 }
 
 void vtw_service_slug_toggle(void)
 {
-    if (g_intent_enabled == 0U) {
+    const uint8_t old_ovr_active = g_ovr_active;
+    const uint8_t old_ovr_mode = g_ovr_mode;
+    const uint16_t old_ovr_div = g_ovr_div;
+
+    if (g_state != VTW_ST_RUN && g_onee_running == 0U) {
         uart_puts(g_uart_base, "vtw: slug toggle ignored (vtw off)\r\n");
         (void)snprintf(g_last_action_text, sizeof(g_last_action_text),
                        "TW: OFF");
@@ -561,7 +620,11 @@ void vtw_service_slug_toggle(void)
         g_ovr_mode = CARD_CTRL_VTW_SPEED_DIVIDED;
         g_ovr_div = VTW_SLUG_DIVIDER;
     }
-    vtw_override_apply("slug toggle");
+    if (vtw_override_apply("slug toggle") == 0U) {
+        g_ovr_active = old_ovr_active;
+        g_ovr_mode = old_ovr_mode;
+        g_ovr_div = old_ovr_div;
+    }
 }
 
 void vtw_service_set_slowdown(uint16_t region_mask, uint16_t cycles)

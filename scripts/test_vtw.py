@@ -402,6 +402,14 @@ def static_checks() -> None:
     # Takeover machine reset (RES#-at-takeover)
     wrapper = read("hdl/apple/apple_bus_wrapper.sv")
     service = read("ps_sources/frontend/vtw_service.c")
+    irq_pad_match = re.search(
+        r"set_property\s+-dict\s+\{([^}]*)\}\s*\\\s*"
+        r"\[get_ports\s+a2fpga_irq_n\]",
+        xdc,
+    )
+    irq_pad_tokens = irq_pad_match.group(1).split() if irq_pad_match else []
+    irq_pad_properties = set(zip(irq_pad_tokens[0::2],
+                                 irq_pad_tokens[1::2]))
     require("assign apple_res_pin = 1'bz;" in wrapper and
             "assign apple_reset_n_out = physical_bus_isolate ? 1'b1 :" in top and
             "(apple_reset_release && !ab_write_arb.assert_res);" in top,
@@ -633,10 +641,13 @@ def static_checks() -> None:
             "always_ff @(posedge clk)" in wrapper and
             "(!host_is_iiplus || !irq_rearm_release_q);" in wrapper and
             "{NAME =~ *apple_bus_wrapper_i/irq_rearm_release_q_reg}" in xdc and
-            "{IOSTANDARD LVCMOS33 DRIVE 16 SLEW FAST}" in xdc and
+            {("IOSTANDARD", "LVCMOS33"),
+             ("DRIVE", "16"),
+             ("SLEW", "FAST"),
+             ("PULLTYPE", "PULLUP")} <= irq_pad_properties and
             "-to [get_ports a2fpga_irq_n]" in xdc,
             "II+ IRQ must use a mostly-low re-arm waveform with a bounded "
-            "register-to-pad route and the strongest IRQ-pad edge")
+            "register-to-pad route, strongest IRQ-pad edge, and safe pull-up")
     require("TAP_DMA_REARM_RELEASE = TAP_DATA_SNAP - 8;" in wrapper and
             "TAP_DMA_REARM_ASSERT  = TAP_DATA_SNAP - 4;" in wrapper and
             "iiplus_dma_refresh_active && dma_rearm_release_q" in wrapper and

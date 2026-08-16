@@ -9,8 +9,8 @@
  *
  *   - CPU1 publishes a writer-owned slot and monotonically advances
  *     a sequence number after pixel writes are visible.
- *   - CPU0 claims a fresh sequence when available, otherwise it
- *     keeps drawing the previously claimed slot.
+ *   - CPU0 reserves and validates a fresh sequence when available,
+ *     otherwise it keeps drawing the previously claimed slot.
  *   - CPU0 publishes reader_active so CPU1 can avoid the slot that
  *     the compositor is currently reading.
  *

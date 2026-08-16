@@ -242,11 +242,12 @@ static uint32_t s_frame_display_mode = APPLE_FB_DISPLAY_MODE_LEGACY;
 static uint32_t s_previous_frame_display_mode = APPLE_FB_DISPLAY_MODE_LEGACY;
 static uint32_t s_frame_format_detail = APPLE_FB_FORMAT_UNKNOWN;
 
-/* Full-shadow rendering. A captured video write advances
- * g_video_shadow_generation. Progressive SHR publishes the latest shadow at
- * the next frame marker. Costly RGGB/SHR-3200 and paired modes must remain
- * stable for one frame before a rebuild so they cannot keep the capture
- * consumer busy with stale decodes. Legacy paged modes use the same rule. */
+/* Full-shadow rendering. Captured high-video writes advance the SHR
+ * generation; the legacy generation also covers text/lores pages. Progressive
+ * SHR publishes the latest shadow at the next frame marker. Costly
+ * RGGB/SHR-3200 and paired modes must remain stable for one frame before a
+ * rebuild so they cannot keep the capture consumer busy with stale decodes.
+ * Legacy paged modes use the same rule. */
 static uint8_t  s_shr_cache_valid = 0u;
 static uint8_t  s_shr_cache_invalidate = 1u;
 static uint32_t s_shr_cache_generation = 0u;
@@ -257,8 +258,26 @@ static uint32_t s_legacy_settle_generation = 0u;
 static uint32_t s_legacy_settle_detail = APPLE_FB_FORMAT_UNKNOWN;
 static uint32_t s_legacy_settle_settings = 0u;
 static uint8_t  s_legacy_settle_newvideo = 0u;
+static uint8_t  s_legacy_settle_border_color =
+    APPLE_VIDEO_IIGS_BORDER_DEFAULT;
+/* The full legacy weave/merge decode is much slower than consuming one frame
+ * of capture records, especially for DHGR. Keep the last complete static
+ * shadow frame published until an input that affects its pixels changes.
+ * Without this cache, a 384-row DHGRi image was rebuilt at every Apple frame
+ * edge and could hold CPU1 off the egress ring long enough to create gaps. */
+static uint8_t  s_legacy_cache_valid = 0u;
+static uint32_t s_legacy_cache_generation = 0u;
+static uint32_t s_legacy_cache_detail = APPLE_FB_FORMAT_UNKNOWN;
+static uint32_t s_legacy_cache_settings = 0u;
+static uint32_t s_legacy_cache_softswitch = 0u;
+static uint32_t s_legacy_cache_video_rom_gen = 0u;
+static uint8_t  s_legacy_cache_newvideo = 0u;
+static uint8_t  s_legacy_cache_border_color =
+    APPLE_VIDEO_IIGS_BORDER_DEFAULT;
 volatile uint32_t g_acr_shr_frames_skipped = 0u;
 volatile uint32_t g_acr_shr_cache_rebuilds = 0u;
+volatile uint32_t g_acr_legacy_frames_skipped = 0u;
+volatile uint32_t g_acr_legacy_cache_rebuilds = 0u;
 
 static uint32_t s_left_border_colors[ATN_BORDER_H_CYCLES];
 
@@ -2322,21 +2341,64 @@ static uint8_t s_prev_legacy_flip_q = 0u;
  * frame marker with no video write or format change before rendering. */
 static uint8_t legacy_shadow_is_settled(void)
 {
-    const uint32_t generation = g_video_shadow_generation;
+    const uint32_t generation = g_legacy_video_shadow_generation;
 
     if (s_legacy_settle_armed == 0u ||
         generation != s_legacy_settle_generation ||
         s_frame_format_detail != s_legacy_settle_detail ||
         s_video_settings_seen != s_legacy_settle_settings ||
-        s_vidhd_newvideo != s_legacy_settle_newvideo) {
+        s_vidhd_newvideo != s_legacy_settle_newvideo ||
+        s_vidhd_border_color != s_legacy_settle_border_color) {
         s_legacy_settle_generation = generation;
         s_legacy_settle_detail = s_frame_format_detail;
         s_legacy_settle_settings = s_video_settings_seen;
         s_legacy_settle_newvideo = s_vidhd_newvideo;
+        s_legacy_settle_border_color = s_vidhd_border_color;
         s_legacy_settle_armed = 1u;
         return 0u;
     }
     return 1u;
+}
+
+static uint8_t legacy_shadow_cache_matches(void)
+{
+    const uint32_t render_sw_mask =
+        SW_BIT(DHIRES) | SW_BIT(80COL) | SW_BIT(ALTCHARSET) |
+        SW_BIT(HIRES) | SW_BIT(MIXED) | SW_BIT(TEXT);
+
+    /* TEXT and MIXED can expose flashing characters. Keep those cases on the
+     * live frame cadence; full-screen HGRi/DHGRi and lores/DLORESi, which
+     * caused the sustained load, remain cacheable. legacy_paged_mode()
+     * already rejects TEXT, but keep this guard local to the cache contract. */
+    if (sw_text(s_current_sw) || sw_mixed(s_current_sw)) {
+        return 0u;
+    }
+
+    return (uint8_t)(
+        s_legacy_cache_valid != 0u &&
+        s_legacy_cache_generation == g_legacy_video_shadow_generation &&
+        s_legacy_cache_detail == s_frame_format_detail &&
+        s_legacy_cache_settings == s_video_settings_seen &&
+        s_legacy_cache_softswitch == (s_current_sw & render_sw_mask) &&
+        s_legacy_cache_video_rom_gen == s_video_rom_gen_seen &&
+        s_legacy_cache_newvideo == s_vidhd_newvideo &&
+        s_legacy_cache_border_color == s_vidhd_border_color);
+}
+
+static void legacy_shadow_cache_commit(void)
+{
+    const uint32_t render_sw_mask =
+        SW_BIT(DHIRES) | SW_BIT(80COL) | SW_BIT(ALTCHARSET) |
+        SW_BIT(HIRES) | SW_BIT(MIXED) | SW_BIT(TEXT);
+
+    s_legacy_cache_generation = g_legacy_video_shadow_generation;
+    s_legacy_cache_detail = s_frame_format_detail;
+    s_legacy_cache_settings = s_video_settings_seen;
+    s_legacy_cache_softswitch = s_current_sw & render_sw_mask;
+    s_legacy_cache_video_rom_gen = s_video_rom_gen_seen;
+    s_legacy_cache_newvideo = s_vidhd_newvideo;
+    s_legacy_cache_border_color = s_vidhd_border_color;
+    s_legacy_cache_valid = 1u;
 }
 
 static void render_legacy_weave_frame_full(void)
@@ -2621,6 +2683,15 @@ void apple_cycle_renderer_reset_local_video_state(void)
     s_legacy_settle_detail = APPLE_FB_FORMAT_UNKNOWN;
     s_legacy_settle_settings = 0u;
     s_legacy_settle_newvideo = 0u;
+    s_legacy_settle_border_color = APPLE_VIDEO_IIGS_BORDER_DEFAULT;
+    s_legacy_cache_valid = 0u;
+    s_legacy_cache_generation = 0u;
+    s_legacy_cache_detail = APPLE_FB_FORMAT_UNKNOWN;
+    s_legacy_cache_settings = 0u;
+    s_legacy_cache_softswitch = 0u;
+    s_legacy_cache_video_rom_gen = 0u;
+    s_legacy_cache_newvideo = 0u;
+    s_legacy_cache_border_color = APPLE_VIDEO_IIGS_BORDER_DEFAULT;
     s_legacy_flip_q       = 0u;
     s_prev_legacy_flip_q  = 0u;
 
@@ -2707,6 +2778,7 @@ static void shr_mode_switch_resync(void)
     s_shr_cache_valid = 0u;
     s_shr_cache_invalidate = 1u;
     s_shr_settle_armed = 0u;
+    s_legacy_cache_valid = 0u;
     apple_pal_video_resync();
     g_resync_pending = 1u;
 }
@@ -2864,6 +2936,7 @@ static void on_frame_start(void) {
         s_frame_display_mode != s_previous_frame_display_mode ||
         s_legacy_flip_q != s_prev_legacy_flip_q) {
         memset(slot_addr, 0, COMP_APPLE_BYTES);
+        s_legacy_cache_valid = 0u;
         s_just_resynced = 0;
     }
     s_previous_frame_display_mode = s_frame_display_mode;
@@ -2919,17 +2992,30 @@ static void on_frame_start(void) {
             g_acr_shr_frames_skipped++;
         }
     } else if (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I) {
-        if (legacy_shadow_is_settled() != 0u) {
+        if (legacy_shadow_cache_matches() != 0u) {
+            s_legacy_settle_armed = 0u;
+            g_acr_legacy_frames_skipped++;
+        } else if (legacy_shadow_is_settled() != 0u) {
             render_legacy_weave_frame_full();
             publish_current_frame();
+            legacy_shadow_cache_commit();
+            s_legacy_settle_armed = 0u;
+            g_acr_legacy_cache_rebuilds++;
         }
     } else if (s_legacy_flip_q != 0u) {
-        if (legacy_shadow_is_settled() != 0u) {
+        if (legacy_shadow_cache_matches() != 0u) {
+            s_legacy_settle_armed = 0u;
+            g_acr_legacy_frames_skipped++;
+        } else if (legacy_shadow_is_settled() != 0u) {
             render_legacy_flip_merge_frame_full();
             publish_current_frame();
+            legacy_shadow_cache_commit();
+            s_legacy_settle_armed = 0u;
+            g_acr_legacy_cache_rebuilds++;
         }
     } else {
         s_legacy_settle_armed = 0u;
+        s_legacy_cache_valid = 0u;
         apple_pal_video_begin_frame();
     }
     /* Do NOT reinitialise g_nColorBurstPixels here. Resetting the
@@ -3018,6 +3104,9 @@ static void apple_cycle_renderer_dispatch_record(uint64_t rec) {
         s_render_armed = 0;
         s_frame_end_pending = 0u;
         s_pending_line0_mask = 0u;
+        s_legacy_cache_valid = 0u;
+        s_shr_cache_valid = 0u;
+        s_shr_cache_invalidate = 1u;
         apple_pal_video_resync();
         return;
     }

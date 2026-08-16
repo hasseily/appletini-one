@@ -4,7 +4,7 @@
  * Compiles the REAL apple_cycle_renderer.c + appletini_ntsc.c +
  * appletini_csbits.c for x86 and drives them with synthetic capture
  * records, mimicking apple_cycle_egress.c's shadow-write + dispatch
- * order exactly. Five scenarios, mirroring hardware reports:
+ * order exactly. Seven scenarios, mirroring hardware reports:
  *
  *   T1  dragons.shr4i (interlaced R4G4B4): full-frame decode dumped
  *       for pixel-exact comparison against scripts/render_shr4.py.
@@ -21,6 +21,11 @@
  *   T5  Per-switch scanner phase: TEXT/MIXED delay one cycle,
  *       80COL/DHIRES advance one, and ALTCHAR advances two, with and
  *       without the vTW capture normalization.
+ *   T6  Static DHGRi cadence: a settled 384-row double-hires weave
+ *       publishes once, holds that slot across frame markers, and rebuilds
+ *       exactly once after a shadow write settles.
+ *   T7  Static DLORESi invalidation: writes to either low-resolution page
+ *       advance the legacy cache generation without churning the SHR cache.
  *
  * Usage: harness.exe <repo_root> <out_dir>
  * Then:  python scripts/host_render_harness/check_output.py <out_dir>
@@ -48,6 +53,7 @@ volatile uint8_t *const g_main_bank = s_main_mem;
 volatile uint8_t *const g_aux_bank  = s_aux_mem;
 volatile uint32_t g_resync_pending  = 0u;
 volatile uint32_t g_video_shadow_generation = 1u;
+volatile uint32_t g_legacy_video_shadow_generation = 1u;
 
 static uint8_t s_slot_mem[COMP_APPLE_SLOT_COUNT][COMP_APPLE_SLOT_BYTES];
 const uint32_t comp_apple_slot_addr[COMP_APPLE_SLOT_COUNT] = {
@@ -157,6 +163,8 @@ static uint64_t rec_softswitch(uint16_t addr, uint32_t sw11)
 #define SW_HGR        (1u << ACE_SWB_HIRES_BIT)
 #define SW_DHGR       ((1u << ACE_SWB_HIRES_BIT) | (1u << ACE_SWB_80COL_BIT) | \
                        (1u << ACE_SWB_DHIRES_BIT))
+#define SW_DLORES     ((1u << ACE_SWB_80COL_BIT) | \
+                       (1u << ACE_SWB_DHIRES_BIT))
 
 /* ---------- egress mimic (apple_cycle_egress.c drain body) ---------- */
 
@@ -176,9 +184,13 @@ static void feed(uint64_t rec)
         } else {
             g_main_bank[a & 0xFFFFu] = d;
         }
-        if ((uint16_t)(a & 0xFFFFu) >= 0x2000u &&
-            (uint16_t)(a & 0xFFFFu) <= 0x9FFFu) {
+        const uint16_t video_addr = (uint16_t)(a & 0xFFFFu);
+        if (video_addr >= 0x2000u && video_addr <= 0x9FFFu) {
             g_video_shadow_generation++;
+        }
+        if ((video_addr >= 0x0400u && video_addr <= 0x0BFFu) ||
+            (video_addr >= 0x2000u && video_addr <= 0x9FFFu)) {
+            g_legacy_video_shadow_generation++;
         }
     }
     apple_cycle_renderer_on_record(rec);
@@ -768,6 +780,132 @@ static void t5_switch_phase(void)
     apple_cycle_renderer_set_vtw_1mhz(0u);
 }
 
+static void t6_dhgri_static_cache(void)
+{
+    size_t len;
+    uint8_t *f = load_file("software/legacy_demo_images/face.dhri", &len);
+    const uint8_t mode = f[0x607Cu];
+    uint32_t published;
+    uint32_t skipped;
+    uint32_t rebuilt;
+
+    printf("--- T6 static DHGRi render cadence ---\n");
+    expect(len == 0x8000u, "T6 DHGRi source is four 8K banks");
+
+    memset(s_main_mem, 0, sizeof(s_main_mem));
+    memset(s_aux_mem, 0, sizeof(s_aux_mem));
+    apple_cycle_renderer_reset_local_video_state();
+
+    /* File layout matches A2IMGVIEW: page-1 AUX/main, then page-2
+     * AUX/main. Hold the A2Li mode byte at zero until all four banks have
+     * reached the renderer shadow. */
+    for (size_t i = 0u; i < 0x2000u; ++i) {
+        feed(rec_write(0x012000u + (uint32_t)i, f[i]));
+        feed(rec_write(0x002000u + (uint32_t)i, f[0x2000u + i]));
+        feed(rec_write(0x014000u + (uint32_t)i, f[0x4000u + i]));
+        feed(rec_write(0x004000u + (uint32_t)i,
+                       (i == 0x7Cu) ? 0u : f[0x6000u + i]));
+    }
+    legacy_frame(SW_DHGR);
+    legacy_frame(SW_DHGR);
+    feed(rec_write(0x00407Cu, mode));
+
+    legacy_frame(SW_DHGR);  /* observe mode and arm settling */
+    legacy_frame(SW_DHGR);  /* render and publish once */
+    expect(s_pub_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I,
+           "T6 publishes the settled DHGRi weave");
+    expect((s_pub_detail & APPLE_FB_FORMAT_BASE_MASK) ==
+               APPLE_FB_FORMAT_DHGR,
+           "T6 publishes DHGR rather than HGR detail");
+
+    published = s_pub_count;
+    skipped = g_acr_legacy_frames_skipped;
+    rebuilt = g_acr_legacy_cache_rebuilds;
+    for (uint32_t frame = 0u; frame < 64u; ++frame) {
+        legacy_frame(SW_DHGR);
+    }
+    expect(s_pub_count == published,
+           "T6 64 unchanged frame markers reuse one complete DHGRi slot");
+    expect(g_acr_legacy_frames_skipped - skipped == 64u,
+           "T6 static cadence skips all 64 costly DHGRi rebuilds");
+    expect(g_acr_legacy_cache_rebuilds == rebuilt,
+           "T6 static cadence does not report a hidden rebuild");
+
+    /* A real shadow change must wait one quiet marker, rebuild once, then
+     * return to the static hold. */
+    feed(rec_write(0x012000u, (uint8_t)(g_aux_bank[0x2000u] ^ 0x7Fu)));
+    legacy_frame(SW_DHGR);
+    expect(s_pub_count == published,
+           "T6 changed DHGRi shadow waits one settling frame");
+    legacy_frame(SW_DHGR);
+    expect(s_pub_count == published + 1u,
+           "T6 changed DHGRi shadow rebuilds exactly once");
+    published = s_pub_count;
+    for (uint32_t frame = 0u; frame < 16u; ++frame) {
+        legacy_frame(SW_DHGR);
+    }
+    expect(s_pub_count == published,
+           "T6 rebuilt DHGRi frame returns to a stable hold");
+
+    free(f);
+}
+
+static void t7_dloresi_cache_invalidation(void)
+{
+    uint32_t published;
+    uint32_t shr_generation;
+    uint32_t legacy_generation;
+
+    printf("--- T7 DLORESi cache invalidation ---\n");
+    memset(s_main_mem, 0, sizeof(s_main_mem));
+    memset(s_aux_mem, 0, sizeof(s_aux_mem));
+    apple_cycle_renderer_reset_local_video_state();
+
+    /* Seed both text/lores pages and arm A2Li interlace through the page-2
+     * screen hole. The final mode-byte write is the commit edge. */
+    for (uint32_t i = 0u; i < 0x400u; ++i) {
+        feed(rec_write(0x010400u + i, (uint8_t)(i ^ 0x55u)));
+        feed(rec_write(0x000400u + i, (uint8_t)(i ^ 0xAAu)));
+        feed(rec_write(0x010800u + i, (uint8_t)(i + 0x31u)));
+        feed(rec_write(0x000800u + i, (uint8_t)(i + 0x73u)));
+    }
+    feed(rec_write(0x000878u, 0xC1u));
+    feed(rec_write(0x000879u, 0xB2u));
+    feed(rec_write(0x00087Au, 0xCCu));
+    feed(rec_write(0x00087Bu, 0xE9u));
+    feed(rec_write(0x00087Cu, 0x00u));
+    legacy_frame(SW_DLORES);
+    legacy_frame(SW_DLORES);
+    feed(rec_write(0x00087Cu, 0x01u));
+    legacy_frame(SW_DLORES);
+    legacy_frame(SW_DLORES);
+    expect(s_pub_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I,
+           "T7 publishes the settled DLORESi weave");
+    expect((s_pub_detail & APPLE_FB_FORMAT_BASE_MASK) ==
+               APPLE_FB_FORMAT_DGR,
+           "T7 publishes DGR interlace detail");
+
+    published = s_pub_count;
+    legacy_frame(SW_DLORES);
+    legacy_frame(SW_DLORES);
+    expect(s_pub_count == published,
+           "T7 unchanged DLORESi markers hold the cached frame");
+
+    shr_generation = g_video_shadow_generation;
+    legacy_generation = g_legacy_video_shadow_generation;
+    feed(rec_write(0x010400u, (uint8_t)(g_aux_bank[0x0400u] ^ 0x0Fu)));
+    expect(g_video_shadow_generation == shr_generation,
+           "T7 lores write does not invalidate the SHR cache");
+    expect(g_legacy_video_shadow_generation == legacy_generation + 1u,
+           "T7 lores write advances the legacy cache generation");
+    legacy_frame(SW_DLORES);
+    expect(s_pub_count == published,
+           "T7 changed DLORESi shadow waits one settling frame");
+    legacy_frame(SW_DLORES);
+    expect(s_pub_count == published + 1u,
+           "T7 changed DLORESi shadow rebuilds exactly once");
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 3) {
@@ -791,6 +929,8 @@ int main(int argc, char **argv)
     t3_shr_transitions();
     t4_dhgr_col140m();
     t5_switch_phase();
+    t6_dhgri_static_cache();
+    t7_dloresi_cache_invalidation();
 
     printf("harness: %d failure(s)\n", s_failures);
     return s_failures ? 1 : 0;

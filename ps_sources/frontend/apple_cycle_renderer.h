@@ -97,6 +97,9 @@ extern volatile uint32_t g_acr_shr4_frames;
 /* Static SHR frame markers skipped and changed SHR frames rebuilt. */
 extern volatile uint32_t g_acr_shr_frames_skipped;
 extern volatile uint32_t g_acr_shr_cache_rebuilds;
+/* Static full-shadow legacy frames skipped and changed frames rebuilt. */
+extern volatile uint32_t g_acr_legacy_frames_skipped;
+extern volatile uint32_t g_acr_legacy_cache_rebuilds;
 extern volatile uint32_t g_acr_frame_edges_seen;
 extern volatile uint32_t g_acr_last_frame_records;
 

@@ -97,6 +97,8 @@ sections list the board and system tests which still need to run.
   across reset and config reapply.
 - `d4be1dd`: latch the configured ONE//e boot target and give a SmartPort
   session slot-7 ownership over saved SuperSprite state.
+- `27232cc`: preserve the configured Disk II target when physical Slot 6 is
+  off; the host still applies its own SmartPort fallback in the PL.
 - `7838f235`: learn the stable open-connector U533 input vector, use a
   96-cycle quiet interval, retain the main translators as an input-only clock
   monitor, disable auxiliary translator U234, and reserve F0.9.78.
@@ -636,7 +638,9 @@ configured target, storage uses effective service state and activity priority,
 and all live speed controls use one readback-checked writer for the active
 host or ONE//e session. The reset/config path uses the same effective Disk II
 setter, and a SmartPort-target session overrides saved SuperSprite slot-7
-ownership. Both saved host choices remain intact after ONE//e stops.
+ownership. The menu also keeps a configured Disk II target when physical Slot
+6 is off; only the physical-host path applies that fallback. Both saved host
+choices remain intact after ONE//e stops.
 
 - [x] Run the focused cold-slot, joined-bus, real-ROM, effective Disk II,
   SuperSprite override, storage-selection, and live-speed-control regressions

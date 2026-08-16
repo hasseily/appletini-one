@@ -110,7 +110,8 @@ The F0.9.79 source uses one clear rule at each boundary:
   7 on the first `$C7xx` probe. Disk II hides slot 7 until the first `$C6xx`
   probe, then releases it. A virtual warm reset re-arms the same configured
   target. The normal host handoff keeps its own fallback rule, so a disabled
-  physical Slot 6 does not rewrite ONE//e's virtual target.
+  physical Slot 6 does not rewrite ONE//e's virtual target. The menu now keeps
+  that Disk II choice instead of changing it back to SmartPort.
 - The overlay polls the effective Disk II service state, not the saved Slot 6
   bit. SmartPort data has first priority, then active Disk II motor/read/write
   work, then SmartPort `STATUS`, then the last valid source. A discovery poll

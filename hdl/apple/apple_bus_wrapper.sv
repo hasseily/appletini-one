@@ -476,8 +476,12 @@ module apple_bus_wrapper (
         !(iiplus_dma_refresh_active && dma_rearm_release_q);
     assign apple_dma_pin = apple_dma_drive_low ? 1'b0 : 1'bz;
 
-    // Tini board glue
-    assign tini_oe_pin       = physical_bus_isolate ? 1'b1 : tini_5v_pin;
+    // Tini board glue. Keep the main translators enabled as an input-only
+    // monitor during ONE//e. Isolation already releases every FPGA-side
+    // driver and forces both direction pins low (Apple -> FPGA), while U533
+    // has a board-level low direction strap. This preserves PHI0/7M/Q3
+    // observation so Apple power-up can kill ONE//e on its first clock edge.
+    assign tini_oe_pin       = tini_5v_pin;
     assign tini_data_dir_pin = apple_data_enable;
     // Tini board's addr direction follows our addr-drive enable.
     assign tini_addr_dir_pin = apple_addr_rw_enable;

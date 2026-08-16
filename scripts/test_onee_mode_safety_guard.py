@@ -67,22 +67,62 @@ def static_contract_checks() -> None:
         "apple_rdy_n_raw",
         "apple_dma_n_raw",
     ):
-        require(signal in rtl, f"safety guard must monitor {signal}")
+        require(signal in rtl, f"safety guard interface must retain {signal}")
 
     require(
         '(* ASYNC_REG = "TRUE" *)' in rtl,
         "raw Apple inputs must pass through marked synchronizers",
     )
     require(
-        "wire apple_nonidle_level =" in rtl and
-        "|(apple_raw_levels ^ APPLE_IDLE_LEVELS);" in rtl and
-        "apple_nonidle_level || apple_sampled_nonidle;" in rtl,
-        "every non-idle raw level must be a direct continuous veto",
+        "parameter integer QUIET_CYCLES = 96" in rtl,
+        "the production quiet window must stay below one microsecond at "
+        "133.333 MHz",
+    )
+
+    raw_vector_start = rtl.index("wire [5:0] apple_raw_levels = {")
+    raw_vector_end = rtl.index("};", raw_vector_start)
+    raw_vector = rtl[raw_vector_start:raw_vector_end]
+    for signal in (
+        "apple_phi0_raw",
+        "apple_7m_raw",
+        "apple_q3_raw",
+        "apple_m2sel_raw",
+        "apple_m2b0_raw",
+        "apple_devsel_n_raw",
+    ):
+        require(signal in raw_vector,
+                f"always-observed activity vector must include {signal}")
+    for signal in (
+        "apple_reset_n_raw",
+        "apple_inh_n_raw",
+        "apple_irq_n_raw",
+        "apple_nmi_n_raw",
+        "apple_rdy_n_raw",
+        "apple_dma_n_raw",
+    ):
+        require(signal not in raw_vector,
+                f"isolated AUX activity vector must exclude {signal}")
+
+    require(
+        "wire apple_raw_transition =" in rtl and
+        "|(apple_raw_levels ^ apple_sync_level);" in rtl and
+        "apple_power_present_raw ||" in rtl and
+        "apple_raw_transition || apple_activity_sampled;" in rtl and
+        "apple_nonidle_level" not in rtl and
+        "apple_sampled_nonidle" not in rtl and
+        "APPLE_IDLE_LEVELS" not in rtl,
+        "bus safety must detect changes from the synchronized live vector "
+        "without a fixed-level veto",
+    )
+    require(
+        "wire apple_power_present_sync = apple_power_sync[1];" in rtl and
+        "apple_activity_sampled || apple_power_present_sync;" in rtl,
+        "slot power must remain a synchronized level veto for the quiet timer",
     )
     require(
         "wire activity_lockout_set = ~resetn | apple_activity_now;" in rtl,
-        "reset and any raw or synchronized non-idle level must asynchronously "
-        "set the sticky lockout",
+        "reset, raw change, or slot power must asynchronously set the sticky "
+        "lockout",
     )
     require(
         "always_ff @(posedge clk or posedge activity_lockout_set)" in rtl,
@@ -124,10 +164,10 @@ def static_contract_checks() -> None:
     )
     require(
         "wire apple_activity_synchronized =" in rtl and
-        "apple_activity_sampled || apple_sampled_nonidle;" in rtl and
+        "apple_activity_sampled || apple_power_present_sync;" in rtl and
         "apple_activity_lockout &&" in rtl,
-        "quiet/reselect logic and isolation hold must use synchronized or "
-        "contained sticky state",
+        "quiet/reselect logic must use synchronized changes, synchronized "
+        "power, or contained sticky state",
     )
     require(
         "apple_activity_quiet &&" in rtl and

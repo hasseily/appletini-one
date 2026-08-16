@@ -3,6 +3,8 @@
 module tb_onee_mode_safety_guard;
 
     localparam integer QUIET_CYCLES = 4;
+    localparam logic [11:0] OPEN_BUS_VECTOR_A = 12'b101001011010;
+    localparam logic [11:0] OPEN_BUS_VECTOR_B = ~OPEN_BUS_VECTOR_A;
 
     logic clk = 1'b0;
     logic resetn = 1'b0;
@@ -20,6 +22,7 @@ module tb_onee_mode_safety_guard;
     logic apple_nmi_n_raw = 1'b1;
     logic apple_rdy_n_raw = 1'b1;
     logic apple_dma_n_raw = 1'b1;
+    logic periodic_clocks = 1'b0;
 
     wire onee_enable_effective;
     wire force_outputs_off;
@@ -65,6 +68,17 @@ module tb_onee_mode_safety_guard;
 
     always #5 clk = ~clk;
 
+    // Model the three clocks which distinguish a powered, running Apple from
+    // an open connector whose inputs have settled at arbitrary levels.
+    always begin
+        #2;
+        if (periodic_clocks) begin
+            apple_phi0_raw = ~apple_phi0_raw;
+            apple_7m_raw   = ~apple_7m_raw;
+            apple_q3_raw   = ~apple_q3_raw;
+        end
+    end
+
     task automatic wait_clocks(input integer count);
         repeat (count)
             @(posedge clk);
@@ -85,9 +99,44 @@ module tb_onee_mode_safety_guard;
         end
     endtask
 
+    task automatic set_bus_vector(input logic [11:0] value);
+        {
+            apple_dma_n_raw,
+            apple_rdy_n_raw,
+            apple_nmi_n_raw,
+            apple_irq_n_raw,
+            apple_reset_n_raw,
+            apple_inh_n_raw,
+            apple_devsel_n_raw,
+            apple_m2b0_raw,
+            apple_m2sel_raw,
+            apple_q3_raw,
+            apple_7m_raw,
+            apple_phi0_raw
+        } = value;
+    endtask
+
+    task automatic toggle_activity_source(input integer source_index);
+        case (source_index)
+            0: apple_phi0_raw     = ~apple_phi0_raw;
+            1: apple_7m_raw       = ~apple_7m_raw;
+            2: apple_q3_raw       = ~apple_q3_raw;
+            3: apple_m2sel_raw    = ~apple_m2sel_raw;
+            4: apple_m2b0_raw     = ~apple_m2b0_raw;
+            5: apple_devsel_n_raw = ~apple_devsel_n_raw;
+            6: apple_reset_n_raw  = ~apple_reset_n_raw;
+            7: apple_inh_n_raw    = ~apple_inh_n_raw;
+            8: apple_irq_n_raw    = ~apple_irq_n_raw;
+            9: apple_nmi_n_raw    = ~apple_nmi_n_raw;
+            10: apple_rdy_n_raw   = ~apple_rdy_n_raw;
+            11: apple_dma_n_raw   = ~apple_dma_n_raw;
+            default: $fatal(1, "bad activity source index");
+        endcase
+    endtask
+
     task automatic select_off_then_on;
         manual_enable_request = 1'b0;
-        wait_clocks(QUIET_CYCLES + 4);
+        wait_clocks(QUIET_CYCLES + 6);
         require_false(apple_activity_lockout,
                       "off selection must clear a quiet lockout");
         require_true(reselect_armed,
@@ -118,21 +167,7 @@ module tb_onee_mode_safety_guard;
         // Start between local clock edges and finish before the next edge. The
         // raw fail-safe and asynchronous lockout must still catch the event.
         #1;
-        case (source_index)
-            0: apple_phi0_raw     = 1'b1;
-            1: apple_7m_raw       = 1'b1;
-            2: apple_q3_raw       = 1'b1;
-            3: apple_m2sel_raw    = 1'b1;
-            4: apple_m2b0_raw     = 1'b1;
-            5: apple_devsel_n_raw = 1'b0;
-            6: apple_reset_n_raw  = 1'b0;
-            7: apple_inh_n_raw    = 1'b0;
-            8: apple_irq_n_raw    = 1'b0;
-            9: apple_nmi_n_raw    = 1'b0;
-            10: apple_rdy_n_raw   = 1'b0;
-            11: apple_dma_n_raw   = 1'b0;
-            default: $fatal(1, "bad activity source index");
-        endcase
+        toggle_activity_source(source_index);
         #1;
 
         require_true(apple_activity_now,
@@ -148,21 +183,7 @@ module tb_onee_mode_safety_guard;
         require_true(inhibit_reason == 3'd3,
                      "live Apple transition must report activity reason");
 
-        case (source_index)
-            0: apple_phi0_raw     = 1'b0;
-            1: apple_7m_raw       = 1'b0;
-            2: apple_q3_raw       = 1'b0;
-            3: apple_m2sel_raw    = 1'b0;
-            4: apple_m2b0_raw     = 1'b0;
-            5: apple_devsel_n_raw = 1'b1;
-            6: apple_reset_n_raw  = 1'b1;
-            7: apple_inh_n_raw    = 1'b1;
-            8: apple_irq_n_raw    = 1'b1;
-            9: apple_nmi_n_raw    = 1'b1;
-            10: apple_rdy_n_raw   = 1'b1;
-            11: apple_dma_n_raw   = 1'b1;
-            default: $fatal(1, "bad activity source index");
-        endcase
+        toggle_activity_source(source_index);
         #1;
 
         wait_clocks(QUIET_CYCLES + 4);
@@ -178,53 +199,77 @@ module tb_onee_mode_safety_guard;
         select_off_then_on();
     endtask
 
-    task automatic check_held_nonidle(input integer source_index);
-        case (source_index)
-            0: apple_phi0_raw     = 1'b1;
-            6: apple_reset_n_raw  = 1'b0;
-            default: $fatal(1, "bad held-level source index");
-        endcase
-        #1;
+    task automatic check_aux_changes_ignored;
+        integer aux_index;
 
-        require_true(apple_activity_now,
-                     "held non-idle Apple level must stay live");
-        require_true(force_outputs_off,
-                     "held non-idle Apple level must keep output kill set");
-        require_false(onee_enable_effective,
-                      "held non-idle Apple level must keep ONE//e off");
+        // U234 is disabled during physical isolation. Its FPGA-side outputs
+        // may move as the translator turns off, so these six controls cannot
+        // be ONE//e activity sources once the always-observed clocks/selects
+        // have proved the Apple side quiet.
+        for (aux_index = 6; aux_index < 12; aux_index = aux_index + 1)
+            toggle_activity_source(aux_index);
+        #1;
+        require_false(apple_activity_now,
+                      "isolated AUX changes must not report Apple activity");
+        require_false(apple_activity_lockout,
+                      "isolated AUX changes must not set activity lockout");
+        require_true(onee_enable_effective,
+                     "isolated AUX changes must not stop ONE//e");
+
+        for (aux_index = 6; aux_index < 12; aux_index = aux_index + 1)
+            toggle_activity_source(aux_index);
+        wait_clocks(3);
+        require_false(apple_activity_lockout,
+                      "sampled AUX changes must remain outside the guard");
+        require_true(onee_enable_effective,
+                     "sampled AUX changes must leave ONE//e running");
+    endtask
+
+    task automatic check_periodic_clocks_block_arm;
+        periodic_clocks = 1'b1;
+        #3;
+
         require_true(apple_activity_lockout,
-                     "held non-idle Apple level must set sticky lockout");
+                     "continuous Apple clocks must set sticky lockout");
+        require_true(force_outputs_off,
+                     "continuous Apple clocks must kill ONE//e at once");
+        require_false(onee_enable_effective,
+                      "continuous Apple clocks must stop ONE//e");
         require_true(physical_isolation_hold,
-                     "held non-idle Apple level must retain isolation");
+                     "continuous Apple clocks must latch isolation");
 
         manual_enable_request = 1'b0;
         wait_clocks(QUIET_CYCLES + 6);
         require_false(apple_activity_quiet,
-                      "held non-idle Apple level must block quiet state");
+                      "continuous Apple clocks must block quiet state");
         require_false(reselect_armed,
-                      "held non-idle Apple level must block reselect arm");
+                      "continuous Apple clocks must block reselect arm");
         require_true(apple_activity_lockout,
-                     "held non-idle Apple level must retain lockout");
+                     "continuous Apple clocks must retain lockout");
         require_true(physical_bus_isolate,
-                     "held non-idle Apple level must retain physical isolation");
+                     "continuous Apple clocks must retain isolation");
 
-        manual_enable_request = 1'b1;
-        wait_clocks(2);
-        require_false(onee_enable_effective,
-                      "manual request must not override held non-idle veto");
-        manual_enable_request = 1'b0;
+        periodic_clocks = 1'b0;
+        wait_clocks(QUIET_CYCLES + 6);
+        require_true(apple_activity_quiet,
+                     "stopped stable clocks must reach quiet state");
+        require_false(apple_activity_lockout,
+                      "stopped clocks plus manual off must clear lockout");
+        require_true(reselect_armed,
+                     "stopped clocks plus manual off must arm reselect");
+        require_false(physical_bus_isolate,
+                      "quiet manual off must release isolation");
 
-        case (source_index)
-            0: apple_phi0_raw     = 1'b0;
-            6: apple_reset_n_raw  = 1'b1;
-            default: $fatal(1, "bad held-level source index");
-        endcase
         select_off_then_on();
     endtask
 
     integer source_index;
 
     initial begin
+        // An unplugged translator may present any stable 12-bit vector. The
+        // guard must learn it after reset instead of requiring Apple idle
+        // polarities which do not exist on an open connector.
+        set_bus_vector(OPEN_BUS_VECTOR_A);
         #2;
         require_false(onee_enable_effective,
                       "reset must keep effective enable off");
@@ -237,7 +282,13 @@ module tb_onee_mode_safety_guard;
 
         #10;
         resetn = 1'b1;
-        wait_clocks(QUIET_CYCLES + 4);
+        wait_clocks(QUIET_CYCLES + 6);
+        require_true(apple_activity_quiet,
+                     "stable open-bus vector must reach quiet state");
+        require_false(apple_activity_lockout,
+                      "stable open-bus vector must clear startup lockout");
+        require_true(reselect_armed,
+                     "stable open-bus vector must arm selection");
         select_off_then_on();
 
         // A reset with the request still on must kill the VM. Isolation stays
@@ -250,19 +301,31 @@ module tb_onee_mode_safety_guard;
                      "request high during reset must retain isolation");
         #9;
         resetn = 1'b1;
-        wait_clocks(QUIET_CYCLES + 4);
+        wait_clocks(QUIET_CYCLES + 6);
         require_false(onee_enable_effective,
                       "request high across reset must not restart mode");
         select_off_then_on();
 
-        for (source_index = 0; source_index < 12;
+        // Both complementary stable baselines make the first pulse on every
+        // always-observed pin run once in each direction. Each pulse ends
+        // before a fabric edge.
+        for (source_index = 0; source_index < 6;
              source_index = source_index + 1)
             check_short_activity(source_index);
 
-        // A stopped-high clock and a held-low active control must never age
-        // into quiet/rearmed state. Both stay live until they return to idle.
-        check_held_nonidle(0);
-        check_held_nonidle(6);
+        manual_enable_request = 1'b0;
+        #1;
+        set_bus_vector(OPEN_BUS_VECTOR_B);
+        select_off_then_on();
+        for (source_index = 0; source_index < 6;
+             source_index = source_index + 1)
+            check_short_activity(source_index);
+
+        check_aux_changes_ignored();
+
+        // Stable levels may become the open-bus baseline. Running Apple
+        // clocks may not: their edges keep the guard locked and unarmed.
+        check_periodic_clocks_block_arm();
 
         // Slot power is a continuous veto. Manual off cannot release the bus
         // or clear the lockout until power disappears and the quiet time runs.

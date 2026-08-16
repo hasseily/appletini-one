@@ -12,7 +12,7 @@
 // QUIET_CYCLES longer than the largest valid gap between Apple bus transitions.
 
 module onee_mode_safety_guard #(
-    parameter integer QUIET_CYCLES = 2048
+    parameter integer QUIET_CYCLES = 96
 ) (
     input  wire        clk,
     input  wire        resetn,
@@ -58,21 +58,17 @@ module onee_mode_safety_guard #(
     localparam logic [2:0] INHIBIT_RESELECT_REQUIRED = 3'd5;
     localparam logic [2:0] INHIBIT_MANUAL_OFF        = 3'd6;
 
-    // Raw level order: slot power, DMA#, RDY#, NMI#, IRQ#, RESET#, INH#,
-    // DEVSEL#, M2B0, M2SEL, Q3, 7M, PHI0.
-    // The reset value represents the normal idle levels. If an unpowered bus
-    // settles elsewhere, that first difference is handled as activity and the
-    // guard remains off until the signals settle and the user selects off/on.
-    localparam logic [12:0] APPLE_IDLE_LEVELS = 13'b0111111100000;
+    // Raw bus order: DEVSEL#, M2B0, M2SEL, Q3, 7M, PHI0. U533 always observes
+    // these lanes, including while physical isolation is asserted. U234 is
+    // disabled during isolation, so its DMA#/RDY#/NMI#/IRQ#/RESET#/INH# outputs
+    // can change or float and must not feed this activity detector.
+    //
+    // These seed values only initialize the synchronizer; they are not
+    // required idle levels. An open connector may settle at any stable vector.
+    // Activity is a change from the synchronized live vector.
+    localparam logic [5:0] APPLE_RESET_LEVELS = 6'b100000;
 
-    wire [12:0] apple_raw_levels = {
-        apple_power_present_raw,
-        apple_dma_n_raw,
-        apple_rdy_n_raw,
-        apple_nmi_n_raw,
-        apple_irq_n_raw,
-        apple_reset_n_raw,
-        apple_inh_n_raw,
+    wire [5:0] apple_raw_levels = {
         apple_devsel_n_raw,
         apple_m2b0_raw,
         apple_m2sel_raw,
@@ -81,39 +77,42 @@ module onee_mode_safety_guard #(
         apple_phi0_raw
     };
 
-    (* ASYNC_REG = "TRUE" *) logic [12:0] apple_sync_meta;
-    (* ASYNC_REG = "TRUE" *) logic [12:0] apple_sync_level;
-    logic [12:0] apple_sync_previous;
+    (* ASYNC_REG = "TRUE" *) logic [5:0] apple_sync_meta;
+    (* ASYNC_REG = "TRUE" *) logic [5:0] apple_sync_level;
+    (* ASYNC_REG = "TRUE" *) logic [1:0] apple_power_sync;
+    logic [5:0] apple_sync_previous;
 
+    // raw ^ synchronized asserts before a bus change traverses the two-flop
+    // synchronizer. It also catches a pulse which ends before the next clock.
+    // Once an open connector settles, the synchronized copy follows it and the
+    // arbitrary level is no longer treated as Apple activity.
+    wire apple_raw_transition =
+        |(apple_raw_levels ^ apple_sync_level);
     wire apple_activity_sampled =
         |(apple_sync_level ^ apple_sync_previous);
-    wire apple_sampled_nonidle =
-        |(apple_sync_level ^ APPLE_IDLE_LEVELS);
+    wire apple_power_present_sync = apple_power_sync[1];
     wire apple_activity_synchronized =
-        apple_activity_sampled || apple_sampled_nonidle;
+        apple_activity_sampled || apple_power_present_sync;
 
-    // A stable asserted control or stopped-high clock is still evidence of a
-    // connected Apple. Keep it as a continuous veto instead of allowing the
-    // quiet timer to age a non-idle level into a valid reselect state.
-    wire apple_nonidle_level =
-        |(apple_raw_levels ^ APPLE_IDLE_LEVELS);
-
-    // For each bit, (raw ^ synchronized) OR (raw ^ idle) is exactly
-    // (raw ^ idle) OR (synchronized ^ idle). This shorter form still catches
-    // both edges and every held non-idle level. Slot power is bit 12 with an
-    // idle value of zero, so it remains a level-sensitive veto.
+    // Slot power is a separate level-sensitive veto. It must never age into
+    // the learned bus baseline. Normal Apple clocks keep producing changes, so
+    // a powered and running host cannot reach the quiet state.
     assign apple_activity_now =
-        apple_nonidle_level || apple_sampled_nonidle;
+        apple_power_present_raw ||
+        apple_raw_transition || apple_activity_sampled;
 
     always_ff @(posedge clk or negedge resetn) begin
         if (!resetn) begin
-            apple_sync_meta     <= APPLE_IDLE_LEVELS;
-            apple_sync_level    <= APPLE_IDLE_LEVELS;
-            apple_sync_previous <= APPLE_IDLE_LEVELS;
+            apple_sync_meta     <= APPLE_RESET_LEVELS;
+            apple_sync_level    <= APPLE_RESET_LEVELS;
+            apple_sync_previous <= APPLE_RESET_LEVELS;
+            apple_power_sync    <= 2'b00;
         end else begin
             apple_sync_meta     <= apple_raw_levels;
             apple_sync_level    <= apple_sync_meta;
             apple_sync_previous <= apple_sync_level;
+            apple_power_sync    <= {apple_power_sync[0],
+                                    apple_power_present_raw};
         end
     end
 

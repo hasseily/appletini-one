@@ -14,6 +14,7 @@ OUT_DIR = ROOT / "build" / "onee_integration_sim"
 APPLE_TOP = ROOT / "hdl" / "apple" / "apple_top.sv"
 WRAPPER = ROOT / "hdl" / "apple" / "apple_bus_wrapper.sv"
 TOP = ROOT / "hdl" / "appletini_yarz_top.sv"
+XDC = ROOT / "hdl" / "constraints" / "appletini_yarz.xdc"
 BENCH = ROOT / "hdl" / "sim" / "tb_apple_bus_isolation.sv"
 
 
@@ -50,6 +51,7 @@ def static_checks() -> None:
     apple_top = APPLE_TOP.read_text(encoding="utf-8")
     wrapper = WRAPPER.read_text(encoding="utf-8")
     top = TOP.read_text(encoding="utf-8")
+    xdc = XDC.read_text(encoding="utf-8")
 
     require(
         "CARD_CTRL_REG_ONEE         = 8'h5B" in apple_top,
@@ -107,6 +109,12 @@ def static_checks() -> None:
         ".apple_power_present_raw(1'b0)" in apple_top,
         "this board must explicitly tie absent slot-power sensing low",
     )
+    require(
+        "assign tini_aux_oe_pin = !physical_bus_isolate;" in apple_top and
+        ".tini_aux_oe_pin(a2fpga_oe_n_aux)" in top and
+        "assign a2fpga_oe_n_aux = 1'b1;" not in top,
+        "ONE//e must disable the bidirectional auxiliary translator",
+    )
     for port, signal in (
         ("apple_7m_pin", "a2fpga_7m"),
         ("apple_q3_pin", "a2fpga_q3"),
@@ -115,6 +123,21 @@ def static_checks() -> None:
         require(
             f".{port}({signal})" in top,
             f"top must route {signal} into apple_top",
+        )
+    for signal, pull in (
+        ("a2fpga_clk", "PULLDOWN"),
+        ("a2fpga_7m", "PULLDOWN"),
+        ("a2fpga_q3", "PULLDOWN"),
+        ("a2fpga_m2b0", "PULLDOWN"),
+        ("a2fpga_m2sel", "PULLDOWN"),
+        ("a2fpga_devsel_n", "PULLUP"),
+    ):
+        require(
+            re.search(
+                rf"PULLTYPE\s+{pull}}}.*\n\s*\[get_ports\s+{signal}\]",
+                xdc,
+            ) is not None,
+            f"open U533 output {signal} must have a safe {pull}",
         )
 
     require(
@@ -154,7 +177,7 @@ def static_checks() -> None:
         "wire apple_irq_drive_low = !physical_bus_isolate",
         "assign apple_inh_pin = (!physical_bus_isolate",
         "wire apple_dma_requested = !physical_bus_isolate",
-        "physical_bus_isolate ? 1'b1 : tini_5v_pin",
+        "assign tini_oe_pin       = tini_5v_pin;",
     ):
         require(contract in wrapper, f"missing physical isolation gate: {contract}")
 

@@ -108,7 +108,8 @@ module tb_apple_bus_isolation;
         // Isolation must take effect without a fabric or Apple clock edge.
         physical_bus_isolate = 1'b1;
         #1;
-        check(tini_oe_pin == 1'b1, "isolation must disable main transceiver");
+        check(tini_oe_pin == 1'b0,
+              "isolation must retain the input-only clock monitor");
         check(tini_addr_dir_pin == 1'b0, "isolation must clear address direction");
         check(tini_data_dir_pin == 1'b0, "isolation must clear data direction");
         check(apple_addr_pin === 16'hzzzz, "isolation must release address");
@@ -121,9 +122,9 @@ module tb_apple_bus_isolation;
         // Requests may remain asserted internally; the physical kill must
         // continue to win until isolation is removed.
         repeat (3) @(posedge clk);
-        check(tini_oe_pin == 1'b1 && tini_addr_dir_pin == 1'b0 &&
+        check(tini_oe_pin == 1'b0 && tini_addr_dir_pin == 1'b0 &&
               tini_data_dir_pin == 1'b0,
-              "registered bus state escaped physical isolation");
+              "input-only monitor direction escaped physical isolation");
         check(apple_irq_pin === 1'b1 && apple_dma_pin === 1'b1 &&
               apple_inh_pin === 1'b1,
               "control request escaped physical isolation");

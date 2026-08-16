@@ -38,6 +38,7 @@ module apple_top(
     inout apple_dma_pin,
     inout apple_nmi_pin,
     output reg tini_oe_pin,
+    output logic tini_aux_oe_pin,
     input tini_5v_pin,
     output reg tini_addr_dir_pin,
     output reg tini_data_dir_pin,
@@ -183,6 +184,13 @@ module apple_top(
         .apple_activity_quiet   (onee_activity_quiet),
         .inhibit_reason         (onee_inhibit_reason)
     );
+
+    /* U234 is the bidirectional auxiliary control-line translator. Disable it
+     * while ONE//e owns the card so no auxiliary lane can couple to the slot.
+     * The main U133-U533 translators remain enabled in forced input direction;
+     * U533 must stay live so PHI0, 7M, and Q3 can stop ONE//e on the first
+     * observed Apple clock edge. */
+    assign tini_aux_oe_pin = !physical_bus_isolate;
 
     // Keep live raw-pin diagnostics out of the large AXI readback mux. Safety
     // still acts asynchronously inside the guard; software sees the sampled

@@ -37,22 +37,27 @@ set_property IOSTANDARD LVCMOS33 [get_ports a2ctrl_reset_n]
 
 ## Apple //e Control Signals - Observe (Input to FPGA)
 set_property PACKAGE_PIN U22 [get_ports a2fpga_dma_n]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_dma_n]
+set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLUP} \
+    [get_ports a2fpga_dma_n]
 
 set_property PACKAGE_PIN V22 [get_ports a2fpga_rdy_n]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_rdy_n]
+set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLUP} \
+    [get_ports a2fpga_rdy_n]
 
 set_property PACKAGE_PIN W21 [get_ports a2fpga_inh_n]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_inh_n]
+set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLUP} \
+    [get_ports a2fpga_inh_n]
 
 set_property PACKAGE_PIN U20 [get_ports a2fpga_nmi_n]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_nmi_n]
+set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLUP} \
+    [get_ports a2fpga_nmi_n]
 
 set_property PACKAGE_PIN V20 [get_ports a2fpga_reset_n]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_reset_n]
+set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLUP} \
+    [get_ports a2fpga_reset_n]
 
 set_property PACKAGE_PIN V19 [get_ports a2fpga_irq_n]
-set_property -dict {IOSTANDARD LVCMOS33 DRIVE 16 SLEW FAST} \
+set_property -dict {IOSTANDARD LVCMOS33 DRIVE 16 SLEW FAST PULLTYPE PULLUP} \
     [get_ports a2fpga_irq_n]
 
 ## Apple //e Bus Transceiver Control
@@ -151,23 +156,29 @@ set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_rdwr_n]
 
 ## Apple //e Clock Inputs
 set_property PACKAGE_PIN Y18 [get_ports a2fpga_clk]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_clk]
+set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLDOWN} \
+    [get_ports a2fpga_clk]
 
 set_property PACKAGE_PIN AA18 [get_ports a2fpga_7m]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_7m]
+set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLDOWN} \
+    [get_ports a2fpga_7m]
 
 set_property PACKAGE_PIN W17 [get_ports a2fpga_q3]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_q3]
+set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLDOWN} \
+    [get_ports a2fpga_q3]
 
 ## Apple //e Status/Select Signals
 set_property PACKAGE_PIN W18 [get_ports a2fpga_m2b0]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_m2b0]
+set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLDOWN} \
+    [get_ports a2fpga_m2b0]
 
 set_property PACKAGE_PIN AA17 [get_ports a2fpga_m2sel]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_m2sel]
+set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLDOWN} \
+    [get_ports a2fpga_m2sel]
 
 set_property PACKAGE_PIN AB17 [get_ports a2fpga_devsel_n]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_devsel_n]
+set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLUP} \
+    [get_ports a2fpga_devsel_n]
 
 ################################################################################
 # DVI Video Output - Bank 34

@@ -72,7 +72,7 @@ module appletini_yarz_top (
 
     // Bus Transceiver Control
     output logic        a2fpga_oe_n,          // Main transceiver output enable
-    output logic        a2fpga_oe_n_aux,      // Auxiliary transceiver output enable
+    output logic        a2fpga_oe_n_aux,      // Auxiliary OE (active high; legacy name)
     output logic        a2fpga_dir_a,         // Address bus direction control
     output logic        a2fpga_dir_d,         // Data bus direction control
 
@@ -735,8 +735,6 @@ module appletini_yarz_top (
     assign a2ctrl_dma_n = 1'b1;
     assign a2ctrl_inh_n = 1'b1;
     assign a2ctrl_reset_n = apple_reset_n_out;
-    assign a2fpga_oe_n_aux = 1'b1;
-
     wire [3:0] psram_oe;
     wire [3:0] psram_a_i;
     wire [3:0] psram_a_o;
@@ -775,6 +773,7 @@ module appletini_yarz_top (
         .apple_dma_pin(a2fpga_dma_n),
         .apple_nmi_pin(a2fpga_nmi_n),
         .tini_oe_pin(a2fpga_oe_n),
+        .tini_aux_oe_pin(a2fpga_oe_n_aux),
         .tini_5v_pin(1'b0),
         .tini_addr_dir_pin(a2fpga_dir_a),
         .tini_data_dir_pin(a2fpga_dir_d),

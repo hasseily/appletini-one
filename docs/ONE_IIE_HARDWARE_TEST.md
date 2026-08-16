@@ -194,11 +194,12 @@ the renderer correctly saw HGRi.
 
 ## F0.9.80 Source Corrections
 
-F0.9.80 is the next test image. A timing-clean build of the speed, repeat, and
-DHGRi fixes finished before the user added the latched-selection requirement.
-That baseline was intentionally not packaged. The final full build, package,
-and board retest for checkpoint `36be6c5` plus these documentation updates have
-not run yet.
+F0.9.80 is the current test image. A timing-clean build of the speed, repeat,
+and DHGRi fixes finished before the user added the latched-selection
+requirement.
+That baseline was intentionally not packaged. The final source checks, full
+build, exact-XSA Vitis build, and test package are now complete at `cd8e9b8`.
+Programming and the board retest have not run yet.
 
 - Speed commits: `147e56d23be402a4feed68e0719d41636a74e3e4` and
   `dde9b204e426d28ee4a11586f68af2e8b4c8271c`. A speed action is now
@@ -251,7 +252,41 @@ that a connected Apple was active before the card or PS restarted.
 The user added the latched-selection requirement after this build began. Its
 bitstream and XSA do not contain checkpoint `36be6c5`, so no F0.9.80 firmware
 package was made from them. The final `36be6c5` plus documentation build
-remains pending.
+is recorded below.
+
+## F0.9.80 Final Test Image
+
+- Source commit used for the package:
+  `cd8e9b8eb6eacd7f4dabdfdcd04e84af292feb99`
+- Clean full build: `20260816T193636Z-cd8e9b8e-full`
+- Build status: full, clean, and exported
+- Route: WNS `+0.104 ns`, TNS `0`, WHS `+0.037 ns`, and WPWS `+0.265 ns`
+- Failures: zero setup, hold, or pulse-width failing endpoints; zero route
+  errors, missing constraint objects, or unconstrained internal endpoints
+- Bus skew: `PASS`, WNS `+5.957 ns`
+- Candidate DCP SHA-256:
+  `0c57a120686aa2536b34def9453aaaba195eece6ab6dd9d75eccd8451a7db6af`
+- Bitstream SHA-256:
+  `d4c2fd7c78db7ba52763b5dc9c5612fdde8f6ae52ff035e0cabf1c6ed418dab3`
+- XSA SHA-256:
+  `5d899fb3d018c121fa19b1127f8ed39c6827e76af8cc10276e3de056e3c14435`
+- Files: root `FIRMWARE.BIN` and
+  `.timing_runs/20260816T193636Z-cd8e9b8e-full/FIRMWARE_TEST.BIN`
+- Size: `4,257,036` bytes each
+- Firmware SHA-256:
+  `43a8eb8dca2816d065dbfbe0bde77ab6fac79b938a4d5321e51c819cdd771f3a`
+- Handoff record:
+  `.timing_runs/20260816T193636Z-cd8e9b8e-full/test_firmware_manifest.txt`
+
+A fresh Vitis workspace used the exact archived XSA. Platform export and all
+application builds report `SUCCESS`; the built strings are F0.9.80 and
+B1.1.0. Root/archive `fc /b` passed. Bootgen readback passed with three images
+and three partitions.
+
+This package uses the user's test-only waiver for the +0.300 ns setup-margin
+gate. WNS is positive, but the image is not a promoted release. Programming,
+the out-of-slot functional retest, and the Apple-connected electrical tests
+remain open.
 
 ## Detection Limit
 
@@ -292,9 +327,8 @@ output enable, leakage, back-power, and high impedance with test gear.
   repeat, and DHGRi faults above. The Apple-connected electrical checks remain
   pending.
 
-Root `FIRMWARE.BIN` remains the checked F0.9.79 file named above until the
-F0.9.80 build and package checks pass. Do not use it as the F0.9.80 retest.
-Keep the golden boot image unchanged.
+Root `FIRMWARE.BIN` is now the checked F0.9.80 test file recorded above. Keep
+the golden boot image unchanged.
 
 ## F0.9.80 Readiness
 
@@ -320,17 +354,19 @@ Keep the golden boot image unchanged.
 - [x] Complete timing-clean pre-latch build
   `20260816T185749Z-e7fe40a4-full` at `e7fe40a4`; do not package it because it
   predates the latch requirement.
-- [ ] Complete a clean full Vivado route and export for the combined F0.9.80
-  checkpoint `36be6c5` plus these documentation updates.
-- [ ] Build Vitis against that exact XSA.
-- [ ] Package F0.9.80, record its source commit, build, timing, size, hashes,
+- [x] Complete a clean full Vivado route and export for final F0.9.80 source
+  checkpoint `cd8e9b8eb6eacd7f4dabdfdcd04e84af292feb99`.
+- [x] Build Vitis against that exact XSA; platform export and all applications
+  report `SUCCESS`, with F0.9.80 and B1.1.0 strings.
+- [x] Package F0.9.80, record its source commit, build, timing, size, hashes,
   and Bootgen readback, then compare root and archived files byte for byte.
 - [ ] Program F0.9.80 and complete the out-of-slot retest below.
 
 ## Program the F0.9.80 Test Slot
 
-No checked F0.9.80 firmware file exists yet. Do not program the current root
-`FIRMWARE.BIN` as F0.9.80. After the build and package items above pass:
+The checked F0.9.80 test file is root `FIRMWARE.BIN`: 4,257,036 bytes, SHA-256
+`43a8eb8dca2816d065dbfbe0bde77ab6fac79b938a4d5321e51c819cdd771f3a`.
+Programming remains pending:
 
 1. Connect the card's update UART and its stand-alone power source.
 2. Find the port if needed:

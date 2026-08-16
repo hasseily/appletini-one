@@ -27,11 +27,12 @@ Last source audit: 2026-08-16
   key repeat used fast frontend poll counts instead of elapsed time, and the
   demo image viewer did not enable IOUDIS before selecting DHIRES, so DHGRi
   remained HGRi.
-- F0.9.80 is the next test image. The speed, repeat, and DHGRi fixes reached a
-  timing-clean baseline build, but that build was not packaged because the
+- F0.9.80 is the current test image. The speed, repeat, and DHGRi fixes reached
+  a timing-clean baseline build, but that build was not packaged because the
   user then required the manual ONE//e selection to stay latched. Checkpoint
-  `36be6c5` implements that rule. Its final full build, package, and board
-  retest are still pending.
+  `36be6c5` implements that rule. The final source checks, full build,
+  exact-XSA Vitis build, and test package are complete at `cd8e9b8`. Board
+  programming and retest are still pending.
 
 ## Goal and Supported Shape
 
@@ -480,7 +481,7 @@ The access therefore left DHIRES off, and the renderer correctly saw HGRi.
 Checkpoint `9cbf3e0` adds the missing `$C07E` write before the common DHGR
 mode setter. Its test runs the assembled HGRi and DHGRi setters against the
 Enhanced //e switches and requires distinct final modes. The demo disk image
-was rebuilt from that source and is ready for the F0.9.80 package.
+was rebuilt from that source and is ready alongside the F0.9.80 firmware.
 
 Each `$C03x` access toggles the motherboard speaker. `onee_speaker_audio.sv`
 turns that state into signed, DC-blocked, saturated 16-bit mono samples. The
@@ -791,8 +792,8 @@ one.
   fresh manual reselect, and no restart after a long quiet interval.
 - [x] Check that the XDC gives PHI0, 7M, Q3, M2SEL, M2B0, and DEVSEL# the same
   5 ns raw-input route bound.
-- [ ] Complete a clean full Vivado route and export for F0.9.80.
-- [ ] Build Vitis from that exact XSA and package the F0.9.80 test image.
+- [x] Complete a clean full Vivado route and export for F0.9.80.
+- [x] Build Vitis from that exact XSA and package the F0.9.80 test image.
 - [ ] Program F0.9.80 and run the out-of-slot hardware retest in
   `docs/ONE_IIE_HARDWARE_TEST.md`.
 
@@ -828,9 +829,9 @@ one.
   suites.
 - [ ] Promote a release build only after it reaches the project's +0.300 ns
   setup-margin gate, repeats cleanly at the same commit, and passes the board
-  checks below. The user waived that margin for the F0.9.77, F0.9.78, and
-  F0.9.79 test images and asked that F0.9.80 first work as a test image rather
-  than spend more time on the +0.300 ns target.
+  checks below. The user waived that margin for the F0.9.77 through F0.9.80
+  test images and asked that F0.9.80 first work as a test image rather than
+  spend more time on the +0.300 ns target. F0.9.80 is not a promoted release.
 - The first 2026-08-16 Vitis attempt made BSP content, but
   `vitis_workspace/appletini_platform/export/.buildstatus` reported
   `export=ERROR`. The expected
@@ -905,12 +906,30 @@ one.
   0, and WHS +0.019 ns. It was intentionally not packaged because the user
   added the latched-selection requirement after the build began. Do not use it
   as the F0.9.80 test image.
-- [ ] Build and export a clean F0.9.80 bitstream and XSA from checkpoint
-  `36be6c5` plus these documentation updates. No final build result or archive
-  has been recorded yet.
-- [ ] Build the firmware from that exact XSA, package F0.9.80, compare the
-  archived and root files byte for byte, and record size, hashes, version
-  strings, and Bootgen readback.
+- [x] The clean final source and package checkpoint
+  `cd8e9b8eb6eacd7f4dabdfdcd04e84af292feb99` exported as full build
+  `20260816T193636Z-cd8e9b8e-full`. It reports WNS +0.104 ns, TNS 0, WHS
+  +0.037 ns, and WPWS +0.265 ns. Setup, hold, and pulse-width failing
+  endpoints, route errors, missing constraint objects, and unconstrained
+  internal endpoints are all zero. Bus-skew status passes at +5.957 ns.
+- [x] The final candidate DCP SHA-256 is
+  `0c57a120686aa2536b34def9453aaaba195eece6ab6dd9d75eccd8451a7db6af`;
+  bitstream SHA-256 is
+  `d4c2fd7c78db7ba52763b5dc9c5612fdde8f6ae52ff035e0cabf1c6ed418dab3`;
+  XSA SHA-256 is
+  `5d899fb3d018c121fa19b1127f8ed39c6827e76af8cc10276e3de056e3c14435`.
+- [x] A fresh Vitis workspace used that exact XSA. Platform export and all
+  application builds report `SUCCESS`; the built strings are F0.9.80 and
+  B1.1.0.
+- [x] Root `FIRMWARE.BIN` and
+  `.timing_runs/20260816T193636Z-cd8e9b8e-full/FIRMWARE_TEST.BIN` are
+  byte-identical, each 4,257,036 bytes, with SHA-256
+  `43a8eb8dca2816d065dbfbe0bde77ab6fac79b938a4d5321e51c819cdd771f3a`.
+  Root/archive `fc /b` passed. Bootgen readback passed with three images and
+  three partitions. The handoff record is
+  `.timing_runs/20260816T193636Z-cd8e9b8e-full/test_firmware_manifest.txt`.
+  This is a test-only package under the user's +0.300 ns margin waiver, not a
+  promoted release.
 
 ### Missing Board and End-to-End Proof
 
@@ -922,8 +941,8 @@ one.
 - [x] Build and package the F0.9.79 functional retest image.
 - [x] Program and run F0.9.79 out of slot; it exposed the speed, key-repeat,
   and DHGRi faults recorded above.
-- [ ] Build and package the corrected F0.9.80 functional retest image from
-  `36be6c5` plus these documentation updates.
+- [x] Build and package the corrected F0.9.80 functional retest image from
+  final source checkpoint `cd8e9b8`.
 - [ ] Program and run the F0.9.80 functional retest.
 - [ ] Verify all physical Apple pins and translators while ONE//e starts,
   runs, faults, stops, and returns to host mode, including PL configuration and

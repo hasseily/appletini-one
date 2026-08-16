@@ -49,9 +49,10 @@ void vtw_service_set_disk2_config_enabled(uint8_t enable);
 void vtw_service_set_slowdown(uint16_t region_mask, uint16_t cycles);
 
 /* Runtime speed overrides (USB keymap actions; $C074-style, never
- * persisted, cleared by a configured speed change). They act on either a
- * live host-vTW session or the forced live ONE//e core; saved host intent
- * does not gate ONE//e controls. */
+ * persisted, cleared by a configured speed change or session stop). An
+ * action before takeover queues the requested rung for the next session;
+ * a live host-vTW or ONE//e core changes at once. The queued/live rung
+ * remains in force across a warm reset inside that session. */
 void vtw_service_speed_toggle(void);   /* 1 MHz <-> configured        */
 void vtw_service_speed_step(int8_t dir); /* preset ladder, +1/-1      */
 void vtw_service_slug_toggle(void);    /* 0.05 MHz <-> configured     */

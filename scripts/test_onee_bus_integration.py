@@ -177,6 +177,8 @@ def main() -> int:
         "hdl/reset_sync.sv",
         "hdl/apple/soft_switch_manager.sv",
         "hdl/apple/apple_virtual_bus.sv",
+        "hdl/apple/onee_input_bridge.sv",
+        "hdl/apple/onee_warm_reset_ctrl.sv",
         "hdl/apple/onee_motherboard_io.sv",
         "hdl/apple/onee_cold_slot_scan.sv",
         "hdl/apple/apple_bus_write_arbiter.sv",

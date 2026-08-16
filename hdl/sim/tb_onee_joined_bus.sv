@@ -13,8 +13,13 @@ module tb_onee_joined_bus;
     logic onee_enabled = 1'b0;
     // ONE//e resolves Disk II independently of the saved physical slot mask.
     logic configured_boot_target_disk2 = 1'b1;
-    logic vtw_enable = 1'b0;
-    logic core_run = 1'b0;
+    /* Model the exact VTW_CTRL register word that apple_top holds outside the
+     * virtual Apple reset domain. The joined test drives the core from the
+     * same fields as apple_top: enable/core-run in [1:0], speed in [3:2], and
+     * the divided-mode pace value in [31:16]. */
+    logic [31:0] vtw_ctrl_q = 32'h0000_0000;
+    wire vtw_enable = vtw_ctrl_q[0];
+    wire core_run = vtw_ctrl_q[1];
 
     globals::AppleBus_read  ab_read;
     globals::AppleBus_read  softswitch_ab_read;
@@ -34,6 +39,46 @@ module tb_onee_joined_bus;
     logic resp_valid;
     logic [7:0] resp_rdata;
 
+    logic        input_ps_wr_en = 1'b0;
+    logic [7:0]  input_ps_addr = 8'h00;
+    logic [31:0] input_ps_wdata = 32'h0000_0000;
+    wire         onee_warm_reset_request;
+    wire         onee_warm_reset_ack;
+    wire         onee_virtual_res_n;
+
+    onee_input_bridge input_bridge_i (
+        .clk                    (clk),
+        .resetn                 (resetn),
+        .enabled                (onee_enabled),
+        .ps_wr_en               (input_ps_wr_en),
+        .ps_addr                (input_ps_addr),
+        .ps_wdata               (input_ps_wdata),
+        .ps_read_addr           (8'h5F),
+        .ps_rdata               (),
+        .keyboard_event_valid   (),
+        .keyboard_event_ready   (1'b0),
+        .keyboard_event_code    (),
+        .keyboard_any_down      (),
+        .keyboard_modifiers     (),
+        .pushbuttons             (),
+        .paddle_values          (),
+        .warm_reset_request     (onee_warm_reset_request),
+        .warm_reset_ack         (onee_warm_reset_ack)
+    );
+
+    onee_warm_reset_ctrl #(
+        .MIN_NATIVE_CYCLES(8)
+    ) warm_reset_i (
+        .clk                    (clk),
+        .resetn                 (resetn),
+        .enabled                (onee_enabled),
+        .request                (onee_warm_reset_request),
+        .native_cycle_tick      (ab_read.data_en),
+        .virtual_res_n          (onee_virtual_res_n),
+        .acknowledge            (onee_warm_reset_ack),
+        .active                 ()
+    );
+
     apple_virtual_bus #(
         .CYCLE_CLKS(16),
         .PHI0_RISE_CLK(8),
@@ -45,7 +90,7 @@ module tb_onee_joined_bus;
     ) virtual_bus_i (
         .clk(clk),
         .resetn(resetn),
-        .res_n_in(1'b1),
+        .res_n_in(onee_virtual_res_n),
         .irq_n_in(1'b1),
         .nmi_n_in(1'b1),
         .rdy_n_in(1'b1),
@@ -259,8 +304,8 @@ module tb_onee_joined_bus;
         .virtual_motherboard(1'b1),
         .core_run(core_run),
         .assert_apple_res(1'b0),
-        .speed_mode(2'd0),
-        .pace_divider(16'd0),
+        .speed_mode(vtw_ctrl_q[3:2]),
+        .pace_divider(vtw_ctrl_q[31:16]),
         .ignore_c074(1'b0),
         .slow_region_en(10'd0),
         .slow_duration(16'd0),
@@ -417,6 +462,23 @@ module tb_onee_joined_bus;
         keyboard_event_valid = 1'b0;
     endtask
 
+    task automatic write_vtw_ctrl(input logic [31:0] value);
+        @(negedge clk);
+        vtw_ctrl_q = value;
+        @(posedge clk);
+        #1;
+    endtask
+
+    task automatic write_onee_control(input logic [31:0] value);
+        @(negedge clk);
+        input_ps_addr  = 8'h5F;
+        input_ps_wdata = value;
+        input_ps_wr_en = 1'b1;
+        @(posedge clk);
+        #1;
+        input_ps_wr_en = 1'b0;
+    endtask
+
     int physical_nonzero_cycles = 0;
     int private_smartport_cycles = 0;
     always @(posedge clk) begin
@@ -429,6 +491,9 @@ module tb_onee_joined_bus;
     logic [15:0] scan_pos;
     logic [15:0] scan_addr;
     logic [7:0] result [0:13];
+    logic [31:0] warm_reset_ctrl_before;
+    int warm_reset_fabric_clks;
+    int warm_reset_native_ticks;
 
     initial begin
         disk_as_common = '0;
@@ -476,7 +541,9 @@ module tb_onee_joined_bus;
               "internal INH escaped into the physical write record");
         inh_test_write = '0;
 
-        vtw_enable = 1'b1;
+        // ONE//e run word: enable, divided mode, forced native Disk II path,
+        // and a 37-clock (~3.6 MHz) pace. Keep the core held for bus acquire.
+        write_vtw_ctrl(32'h0025_0085);
         fork : wait_for_bus
             begin
                 wait (vtw_bus_owned);
@@ -487,7 +554,7 @@ module tb_onee_joined_bus;
                 $fatal(1, "vTW did not acquire the synthetic bus");
             end
         join
-        core_run = 1'b1;
+        write_vtw_ctrl(32'h0025_0087);
 
         fork : wait_for_program
             begin
@@ -502,7 +569,7 @@ module tb_onee_joined_bus;
             end
         join
 
-        core_run = 1'b0;
+        write_vtw_ctrl(32'h0025_0085);
         repeat (5) @(posedge clk);
         for (int i = 0; i < 14; i++)
             sh_read(18'(i), result[i]);
@@ -537,6 +604,59 @@ module tb_onee_joined_bus;
               "ONE//e entered vTW's private SmartPort path");
         check(physical_nonzero_cycles == 0 && physical_write == '0,
               "ONE//e virtual traffic reached the physical write record");
+
+        /* Re-run the core, then issue the same $5F bit-0 request used by the
+         * PS Ctrl-Alt-Pause path. The real input bridge holds the request,
+         * the real warm-reset controller counts virtual native cycles, and
+         * apple_virtual_bus drives ab_read.res low. VTW_CTRL must remain in
+         * its own global register domain throughout; neither speed field may
+         * fall back to the power-on MAX value. */
+        write_vtw_ctrl(32'h0025_0087);
+        warm_reset_ctrl_before = vtw_ctrl_q;
+        check(vtw_ctrl_q[3:2] == 2'd1 &&
+              vtw_ctrl_q[31:16] == 16'd37 &&
+              core_i.eff_mode == 2'd1,
+              "divided VTW_CTRL was not active before warm reset");
+        write_onee_control(32'h0000_0001);
+        warm_reset_fabric_clks = 0;
+        while (ab_read.res && warm_reset_fabric_clks < 16) begin
+            @(posedge clk);
+            #1;
+            warm_reset_fabric_clks++;
+            check(vtw_ctrl_q == warm_reset_ctrl_before,
+                  "warm-reset request changed VTW_CTRL before RESET fell");
+        end
+        check(onee_warm_reset_request && !ab_read.res,
+              "ONE//e control write did not start the virtual reset");
+
+        warm_reset_fabric_clks = 0;
+        warm_reset_native_ticks = 0;
+        while (!ab_read.res && warm_reset_fabric_clks < 512) begin
+            @(posedge clk);
+            #1;
+            warm_reset_fabric_clks++;
+            if (ab_read.data_en)
+                warm_reset_native_ticks++;
+            check(vtw_ctrl_q == warm_reset_ctrl_before &&
+                  vtw_ctrl_q[3:2] == 2'd1 &&
+                  vtw_ctrl_q[31:16] == 16'd37,
+                  "warm reset changed VTW_CTRL speed fields");
+        end
+        check(ab_read.res && warm_reset_native_ticks >= 8,
+              "virtual reset did not finish after eight native cycles");
+        check(!onee_warm_reset_request &&
+              vtw_ctrl_q == warm_reset_ctrl_before &&
+              vtw_ctrl_q[3:2] == 2'd1 &&
+              vtw_ctrl_q[31:16] == 16'd37,
+              "warm-reset release changed divided VTW_CTRL");
+        warm_reset_fabric_clks = 0;
+        while (!core_i.core_en && warm_reset_fabric_clks < 512) begin
+            @(posedge clk);
+            #1;
+            warm_reset_fabric_clks++;
+        end
+        check(core_i.core_en && core_i.eff_mode == 2'd1,
+              "core did not resume at divided speed after warm reset");
 
         $display("ONEE JOINED BUS PASS");
         $finish;

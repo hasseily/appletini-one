@@ -291,15 +291,23 @@ def test_live_speed_controls_share_one_verified_writer() -> None:
             "vtw_apply_ctrl_live()" in between(
                 source, "static uint8_t vtw_override_apply", "/* Nearest"),
             "menu, compatibility options, and USB overrides must use that writer")
-    require(all("g_intent_enabled == 0U" not in action
+    gate = between(source,
+                   "static uint8_t vtw_speed_request_allowed",
+                   "void vtw_service_set_slug_enabled")
+    require(all("vtw_speed_request_allowed() == 0U" in action
                 for action in (toggle, step, slug)) and
-            all("g_onee_running == 0U" in action
-                for action in (toggle, step, slug)),
-            "saved host intent must not gate speed keys on a live ONE//e core")
+            "g_intent_enabled != 0U" in gate and
+            "g_state != VTW_ST_IDLE" in gate and
+            "g_onee_running != 0U" in gate and
+            "vtw_onee_control_active() != 0U" in gate and
+            '"TW NEXT: %s"' in source and
+            "VTW_CTRL_LIVE_NONE" in between(
+                source, "static uint8_t vtw_override_apply", "/* Nearest"),
+            "requested sessions must queue a pre-takeover speed while true off stays off")
     require("TW: CONTROL WRITE FAILED" in source and
             all("vtw_override_apply(" in action
                 for action in (toggle, step, slug)),
-            "USB labels must report success only after a verified live write")
+            "live USB labels must report success only after a verified write")
 
 
 TESTS = [
@@ -384,10 +392,11 @@ def run_native_speed_control_test() -> bool:
         } write_event_t;
 
         static uint32_t registers[256];
-        static write_event_t writes[256];
+        static write_event_t writes[32768];
         static uint32_t write_count;
         static uint32_t ctrl_read_count;
         static uint8_t ctrl_write_sticks;
+        static uint32_t first_core_run_ctrl;
         static uint8_t machine_mode;
         static uint8_t disk2_enabled;
         static XTime fake_time;
@@ -414,6 +423,22 @@ def run_native_speed_control_test() -> bool:
             ++write_count;
             if (address != CARD_CTRL_VTW_CTRL_REG || ctrl_write_sticks != 0U) {
                 registers[reg_index(address)] = value;
+            }
+            if (address == CARD_CTRL_VTW_CTRL_REG && ctrl_write_sticks != 0U) {
+                uint32_t status = registers[reg_index(CARD_CTRL_VTW_STATUS_REG)] &
+                    ~(CARD_CTRL_VTW_STATUS_ENABLE_EFF |
+                      CARD_CTRL_VTW_STATUS_CORE_RUN);
+
+                if ((value & CARD_CTRL_VTW_CTRL_ENABLE_BIT) != 0U) {
+                    status |= CARD_CTRL_VTW_STATUS_ENABLE_EFF;
+                }
+                if ((value & CARD_CTRL_VTW_CTRL_CORE_RUN_BIT) != 0U) {
+                    status |= CARD_CTRL_VTW_STATUS_CORE_RUN;
+                    if (first_core_run_ctrl == 0U) {
+                        first_core_run_ctrl = value;
+                    }
+                }
+                registers[reg_index(CARD_CTRL_VTW_STATUS_REG)] = status;
             }
         }
 
@@ -486,6 +511,31 @@ def run_native_speed_control_test() -> bool:
             return 1;
         }
 
+        static int check_start_ctrl_words(uint32_t first_write,
+                                          uint32_t mode,
+                                          uint32_t divider,
+                                          const char *message)
+        {
+            uint32_t ctrl_count = 0U;
+
+            for (uint32_t i = first_write; i < write_count; ++i) {
+                uint32_t value;
+
+                if (writes[i].address != CARD_CTRL_VTW_CTRL_REG) {
+                    continue;
+                }
+                value = writes[i].value;
+                if (((value >> CARD_CTRL_VTW_CTRL_SPEED_SHIFT) &
+                     CARD_CTRL_VTW_CTRL_SPEED_MASK) != mode ||
+                    ((value >> CARD_CTRL_VTW_CTRL_DIVIDER_SHIFT) &
+                     CARD_CTRL_VTW_CTRL_DIVIDER_MASK) != divider) {
+                    return check(0U, message);
+                }
+                ++ctrl_count;
+            }
+            return check(ctrl_count == 3U, message);
+        }
+
         static void reset_fixture(void)
         {
             memset(registers, 0, sizeof(registers));
@@ -493,6 +543,7 @@ def run_native_speed_control_test() -> bool:
             write_count = 0U;
             ctrl_read_count = 0U;
             ctrl_write_sticks = 1U;
+            first_core_run_ctrl = 0U;
             machine_mode = CARD_MACHINE_MODE_IIE;
             disk2_enabled = 0U;
             fake_time = 0U;
@@ -521,6 +572,18 @@ def run_native_speed_control_test() -> bool:
             vtw_service_init(0U);
             write_count = 0U;
             ctrl_read_count = 0U;
+        }
+
+        static void set_onee_isolated(void)
+        {
+            registers[reg_index(CARD_CTRL_ONEE_MODE_REG)] =
+                CARD_CTRL_ONEE_STATUS_REQUEST_BIT |
+                CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT |
+                CARD_CTRL_ONEE_STATUS_ISOLATED_BIT |
+                CARD_CTRL_ONEE_STATUS_SELECTED_BIT |
+                CARD_CTRL_ONEE_STATUS_HDL_PRESENT_BIT |
+                (CARD_CTRL_ONEE_STATUS_SIGNATURE <<
+                 CARD_CTRL_ONEE_STATUS_SIGNATURE_SHIFT);
         }
 
         static int test_host_live_controls(void)
@@ -633,7 +696,7 @@ def run_native_speed_control_test() -> bool:
             return 1;
         }
 
-        static int test_failed_and_absent_live_writes_do_not_claim_success(void)
+        static int test_failed_live_writes_and_pending_choice(void)
         {
             uint32_t before;
 
@@ -654,13 +717,120 @@ def run_native_speed_control_test() -> bool:
 
             ctrl_write_sticks = 1U;
             g_onee_running = 0U;
-            g_intent_enabled = 1U;
+            g_intent_enabled = 0U;
             g_state = VTW_ST_IDLE;
             before = write_count;
             vtw_service_speed_toggle();
-            if (!check(write_count == before &&
+            if (!check(write_count == before && g_ovr_active == 0U &&
                        strcmp(vtw_service_last_action_text(), "TW: OFF") == 0,
-                       "saved intent without a live core claimed success")) {
+                       "truly inactive speed choice did not stay off")) {
+                return 0;
+            }
+
+            g_intent_enabled = 1U;
+            vtw_service_speed_toggle();
+            if (!check(write_count == before &&
+                       g_ovr_active != 0U &&
+                       g_ovr_mode == CARD_CTRL_VTW_SPEED_1MHZ &&
+                       strcmp(vtw_service_last_action_text(),
+                              "TW NEXT: 1 MHz default") == 0,
+                       "idle speed choice was not queued for takeover")) {
+                return 0;
+            }
+            return 1;
+        }
+
+        static int test_onee_configured_and_pending_speed_boundaries(void)
+        {
+            uint32_t run_ctrl;
+            uint32_t before;
+            uint32_t start_write;
+
+            /* A configured divided speed must be in the first control word
+             * that releases the ONE//e core. */
+            reset_fixture();
+            vtw_service_set_speed(CARD_CTRL_VTW_SPEED_DIVIDED, 37U);
+            set_onee_isolated();
+            start_write = write_count;
+            if (!check(vtw_service_onee_start(0U) != 0U &&
+                       first_core_run_ctrl != 0U &&
+                       ((first_core_run_ctrl >> CARD_CTRL_VTW_CTRL_SPEED_SHIFT) &
+                        CARD_CTRL_VTW_CTRL_SPEED_MASK) ==
+                           CARD_CTRL_VTW_SPEED_DIVIDED &&
+                       ((first_core_run_ctrl >> CARD_CTRL_VTW_CTRL_DIVIDER_SHIFT) &
+                        CARD_CTRL_VTW_CTRL_DIVIDER_MASK) == 37U &&
+                       ctrl_value() == first_core_run_ctrl,
+                       "configured speed was absent from first ONE//e release")) {
+                return 0;
+            }
+            if (!check_start_ctrl_words(start_write,
+                                        CARD_CTRL_VTW_SPEED_DIVIDED,
+                                        37U,
+                                        "configured speed changed during ONE//e start")) {
+                return 0;
+            }
+            vtw_service_onee_stop();
+
+            /* A key used after the ONE//e request becomes active but before
+             * core release must stage the first session speed. */
+            reset_fixture();
+            vtw_service_set_speed(CARD_CTRL_VTW_SPEED_DIVIDED, 37U);
+            set_onee_isolated();
+            vtw_service_speed_step(1);
+            if (!check(g_ovr_active != 0U &&
+                       g_ovr_mode == CARD_CTRL_VTW_SPEED_DIVIDED &&
+                       g_ovr_div == 19U &&
+                       strcmp(vtw_service_last_action_text(),
+                              "TW NEXT: 7 MHz") == 0,
+                       "ONE//e boot-window speed was not queued")) {
+                return 0;
+            }
+            start_write = write_count;
+            first_core_run_ctrl = 0U;
+            if (!check(vtw_service_onee_start(0U) != 0U,
+                       "ONE//e queued-speed start failed") ||
+                !check_start_ctrl_words(start_write,
+                                        CARD_CTRL_VTW_SPEED_DIVIDED,
+                                        19U,
+                                        "queued speed changed during ONE//e start")) {
+                return 0;
+            }
+
+            /* A runtime rung is session state. The PS service must not
+             * replace it during its normal polls; the RTL regression drives
+             * the private RESET line and proves the same word survives it. */
+            run_ctrl = ctrl_value();
+            before = write_count;
+            vtw_service_poll();
+            vtw_service_poll();
+            if (!check(write_count == before && ctrl_value() == run_ctrl &&
+                       ctrl_speed() == CARD_CTRL_VTW_SPEED_DIVIDED &&
+                       ctrl_divider() == 19U && g_ovr_active != 0U,
+                       "ONE//e warm-reset polls changed the runtime rung")) {
+                return 0;
+            }
+
+            /* Ending the session clears the non-persistent override. A new
+             * session returns to the configured 3.6 MHz baseline. */
+            vtw_service_onee_stop();
+            memset(writes, 0, sizeof(writes));
+            write_count = 0U;
+            ctrl_read_count = 0U;
+            first_core_run_ctrl = 0U;
+            set_onee_isolated();
+            start_write = write_count;
+            if (!check(g_ovr_active == 0U &&
+                       vtw_service_onee_start(0U) != 0U &&
+                       first_core_run_ctrl != 0U &&
+                       ctrl_speed() == CARD_CTRL_VTW_SPEED_DIVIDED &&
+                       ctrl_divider() == 37U,
+                       "new ONE//e session did not return to configured speed")) {
+                return 0;
+            }
+            if (!check_start_ctrl_words(start_write,
+                                        CARD_CTRL_VTW_SPEED_DIVIDED,
+                                        37U,
+                                        "new session start lost configured speed")) {
                 return 0;
             }
             return 1;
@@ -713,7 +883,8 @@ def run_native_speed_control_test() -> bool:
         {
             if (!test_host_live_controls() ||
                 !test_onee_live_controls_without_host_intent() ||
-                !test_failed_and_absent_live_writes_do_not_claim_success() ||
+                !test_failed_live_writes_and_pending_choice() ||
+                !test_onee_configured_and_pending_speed_boundaries() ||
                 !test_disk2_session_override_tracks_latest_config()) {
                 return 1;
             }

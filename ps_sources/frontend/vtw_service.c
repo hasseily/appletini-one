@@ -117,6 +117,14 @@ static uint8_t vtw_eff_is_slug(void)
     return (vtw_eff_mode() == CARD_CTRL_VTW_SPEED_DIVIDED &&
             vtw_eff_divider() >= VTW_SLUG_DIVIDER) ? 1U : 0U;
 }
+
+static void vtw_override_clear(void)
+{
+    g_ovr_active = 0U;
+    g_ovr_mode = 0U;
+    g_ovr_div = 0U;
+}
+
 static vtw_state_t g_state = VTW_ST_IDLE;
 static uint32_t g_take_polls;
 static uint32_t g_sessions_started;
@@ -370,6 +378,7 @@ static void vtw_session_stop(const char *reason)
     g_state = VTW_ST_IDLE;
     g_announced_wait = 0U;
     g_announced_handoff_wait = 0U;
+    vtw_override_clear();
 }
 
 void vtw_service_init(uint32_t uart_base)
@@ -379,6 +388,7 @@ void vtw_service_init(uint32_t uart_base)
     g_onee_running = 0U;
     g_onee_disk2_override_active = 0U;
     g_disk2_config_enabled = 0U;
+    vtw_override_clear();
     REG_WRITE(CARD_CTRL_VTW_CTRL_REG, 0U);
     uart_puts(uart_base, "vtw: virtual TransWarp service ready\r\n");
 }
@@ -418,7 +428,7 @@ void vtw_service_set_speed(uint8_t speed_mode, uint8_t pace_divider)
     }
     g_pace_divider = pace_divider;
     /* A configured (menu) speed change wins over any runtime override. */
-    g_ovr_active = 0U;
+    vtw_override_clear();
     /* Live update: rewrite CTRL with the current session bits intact. */
     (void)vtw_apply_ctrl_live();
 }
@@ -461,7 +471,10 @@ static const char *vtw_eff_speed_name(void)
 
 static uint8_t vtw_override_apply(const char *tag)
 {
-    if (vtw_apply_ctrl_live() != VTW_CTRL_LIVE_APPLIED) {
+    const vtw_ctrl_live_result_t applied = vtw_apply_ctrl_live();
+    const uint8_t queued = (applied == VTW_CTRL_LIVE_NONE) ? 1U : 0U;
+
+    if (applied == VTW_CTRL_LIVE_FAILED) {
         uart_puts(g_uart_base, "vtw: ");
         uart_puts(g_uart_base, tag);
         uart_puts(g_uart_base, " failed; speed unchanged\r\n");
@@ -471,12 +484,14 @@ static uint8_t vtw_override_apply(const char *tag)
     }
     uart_puts(g_uart_base, "vtw: ");
     uart_puts(g_uart_base, tag);
-    uart_puts(g_uart_base, " -> ");
+    uart_puts(g_uart_base,
+              queued == 0U ? " -> " : " queued -> ");
     uart_puts(g_uart_base, vtw_eff_speed_name());
     uart_puts(g_uart_base, g_ovr_active != 0U ? " (override)\r\n"
                                               : " (configured)\r\n");
     (void)snprintf(g_last_action_text, sizeof(g_last_action_text),
-                   "TW: %s", vtw_eff_speed_name());
+                   queued == 0U ? "TW: %s" : "TW NEXT: %s",
+                   vtw_eff_speed_name());
     return 1U;
 }
 
@@ -510,6 +525,12 @@ static int vtw_eff_ladder_index(void)
         }
     }
     return fastest_divided;
+}
+
+static uint8_t vtw_speed_request_allowed(void)
+{
+    return (g_intent_enabled != 0U || g_state != VTW_ST_IDLE ||
+            g_onee_running != 0U || vtw_onee_control_active() != 0U) ? 1U : 0U;
 }
 
 void vtw_service_set_slug_enabled(uint8_t enable)
@@ -553,7 +574,7 @@ void vtw_service_speed_toggle(void)
     const uint8_t old_ovr_mode = g_ovr_mode;
     const uint16_t old_ovr_div = g_ovr_div;
 
-    if (g_state != VTW_ST_RUN && g_onee_running == 0U) {
+    if (vtw_speed_request_allowed() == 0U) {
         uart_puts(g_uart_base, "vtw: speed toggle ignored (vtw off)\r\n");
         (void)snprintf(g_last_action_text, sizeof(g_last_action_text),
                        "TW: OFF");
@@ -584,7 +605,7 @@ void vtw_service_speed_step(int8_t dir)
     const uint8_t old_ovr_mode = g_ovr_mode;
     const uint16_t old_ovr_div = g_ovr_div;
 
-    if (g_state != VTW_ST_RUN && g_onee_running == 0U) {
+    if (vtw_speed_request_allowed() == 0U) {
         uart_puts(g_uart_base, "vtw: speed step ignored (vtw off)\r\n");
         (void)snprintf(g_last_action_text, sizeof(g_last_action_text),
                        "TW: OFF");
@@ -614,7 +635,7 @@ void vtw_service_slug_toggle(void)
     const uint8_t old_ovr_mode = g_ovr_mode;
     const uint16_t old_ovr_div = g_ovr_div;
 
-    if (g_state != VTW_ST_RUN && g_onee_running == 0U) {
+    if (vtw_speed_request_allowed() == 0U) {
         uart_puts(g_uart_base, "vtw: slug toggle ignored (vtw off)\r\n");
         (void)snprintf(g_last_action_text, sizeof(g_last_action_text),
                        "TW: OFF");
@@ -741,6 +762,7 @@ void vtw_service_onee_stop(void)
         uart_puts(g_uart_base, "vtw: ONE//e core stopped\r\n");
     }
     g_onee_running = 0U;
+    vtw_override_clear();
     if (g_onee_disk2_override_active != 0U) {
         g_onee_disk2_override_active = 0U;
         disk2_service_set_enabled(g_disk2_config_enabled);

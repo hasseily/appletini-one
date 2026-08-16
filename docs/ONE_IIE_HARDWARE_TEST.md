@@ -1,4 +1,4 @@
-# ONE//e Hardware Test Record and F0.9.79 Retest Plan
+# ONE//e Hardware Test Record and F0.9.80 Retest Plan
 
 ## F0.9.77 Test Result
 
@@ -130,7 +130,7 @@ The F0.9.79 source uses one clear rule at each boundary:
   shared slot and keep SmartPort's ROM invisible even after the cold-scan fix.
 
 The source correction, focused regression, full Vivado and Vitis build, and
-package are complete. The hardware retest remains pending.
+package are complete. The hardware retest result is recorded below.
 
 ## F0.9.79 Test Image
 
@@ -161,6 +161,67 @@ exact archived XSA; platform export and all application builds report
 This image is below the project's release-only +0.300 ns setup-margin gate.
 The user waived that gate for this test image; this is not a promoted release.
 
+## F0.9.79 Functional Retest Result
+
+The user ran F0.9.79 out of the Apple slot. ONE//e booted, but the test found
+three more faults:
+
+- A TransWarp speed selected with a bound key during the boot-menu/takeover
+  window did not reach the core. ONE//e started at full acceleration. After a
+  `Ctrl+Alt+Pause` virtual warm reset, it again ran at full acceleration. A
+  speed change made later on the config page did take effect.
+- A brief key tap could repeat many times. In the Appletini demo menu, one
+  Down tap could scroll to the last choice.
+- The new DHGRi image mode appeared as HGRi. The other new image modes worked.
+
+The speed fault extended the state-boundary error fixed in F0.9.79. With saved
+host TransWarp off, a key used in the open menu before ONE//e selection, or
+after the ONE//e request but before `g_onee_running` was set, still failed the
+old live-core gate. The requested rung was discarded, so the first core-release
+word kept full speed. The private warm reset did not choose a new speed; it
+exposed the speed word which the session had retained.
+
+Key repeat used 1,000 calls to `onee_input_service_poll()` for its first delay
+and 100 calls for its steady rate. The USB service can call that function
+twice in each fast frontend pass. Those call counts were not human-time delays
+and could expire before a short tap's release report was handled.
+
+The DHGRi fault was in the demo viewer, not the renderer or ONE//e switch
+model. `select_dhgr` set 80COL and accessed `$C05E`, but it did not write
+`$C07E` first. On an Enhanced //e, IOUDIS routes `$C05E/$C05F` to DHIRES;
+with IOUDIS off those addresses control AN3. DHIRES therefore stayed off and
+the renderer correctly saw HGRi.
+
+## F0.9.80 Source Corrections
+
+F0.9.80 is the next test image. Its full build, package, and board retest have
+not run yet.
+
+- Speed commits: `147e56d23be402a4feed68e0719d41636a74e3e4` and
+  `dde9b204e426d28ee4a11586f68af2e8b4c8271c`. A speed action is now
+  allowed while host TransWarp has saved intent, while ONE//e is requested,
+  effective, or running, or for a key event from an explicitly open Appletini
+  menu. If no core is live, the action queues the rung and reports `TW NEXT`.
+  This lets a menu-open key stage the upcoming ONE//e start even when saved
+  host TransWarp is off. The input handler passes menu context for that event
+  only; the same key with the menu closed still reports `TW: OFF` and queues
+  nothing. Each of the three ONE//e start control words uses the effective
+  speed and divider. The same word remains in `VTW_CTRL` across private warm
+  reset. Stopping the session clears the temporary override, so a later
+  session returns to its saved configured speed.
+- Key-repeat commit:
+  `3e978a10fa5cf975a69fa1d44cd4c983349901ee`. Repeat now uses the
+  CherryUSB millisecond clock: 500 ms before the first repeat and 100 ms
+  between later repeats. A late poll emits one event and starts a new interval
+  from the current time, so it cannot fill the queue to catch up. The native
+  test covers a short Down tap, exact deadlines, a long stall, release and
+  disconnect reselection, session stop, and 32-bit time wrap.
+- DHGRi commit:
+  `9cbf3e0dfdf4cfeb33b09c88a4e739959ddae82c`. The assembled viewer now
+  writes `$C07E` before it selects DHIRES, and the demo disk contains that
+  rebuilt viewer. Its regression executes the assembled HGRi and DHGRi mode
+  setters against Enhanced //e switches and requires `HGRi != DHGRi`.
+
 ## Detection Limit
 
 Slot +5 V cannot identify an Apple in this stand-alone setup because that same
@@ -187,7 +248,7 @@ output enable, leakage, back-power, and high impedance with test gear.
 - [x] Program F0.9.78 and start ONE//e out of the Apple slot. It reached the
   Enhanced //e screen and exposed the functional faults above.
 
-## F0.9.79 Readiness
+## F0.9.79 Result
 
 - [x] Pass the final cold-target, joined-bus, real-ROM, effective Disk II,
   SuperSprite override, storage-selection, and live-speed-control tests.
@@ -195,14 +256,35 @@ output enable, leakage, back-power, and high impedance with test gear.
 - [x] Build Vitis from the exact exported XSA.
 - [x] Package F0.9.79, record its source commit, size, SHA-256, timing result,
   and Bootgen readback, and compare the root and archived files byte for byte.
-- [ ] Program F0.9.79 and complete the hardware checks below.
+- [x] Program and run F0.9.79 out of the Apple slot. It exposed the speed,
+  repeat, and DHGRi faults above. The Apple-connected electrical checks remain
+  pending.
 
-Root `FIRMWARE.BIN` is the checked F0.9.79 test file named above. Keep the
-golden boot image unchanged.
+Root `FIRMWARE.BIN` remains the checked F0.9.79 file named above until the
+F0.9.80 build and package checks pass. Do not use it as the F0.9.80 retest.
+Keep the golden boot image unchanged.
 
-## Program the F0.9.79 Test Slot
+## F0.9.80 Readiness
 
-The package checks above passed. Programming remains pending.
+- [x] Correct and test menu-open and requested pre-takeover speed staging,
+  first-release speed, warm-reset retention, and closed-menu true-off behavior
+  at commits `147e56d23be402a4feed68e0719d41636a74e3e4` and
+  `dde9b204e426d28ee4a11586f68af2e8b4c8271c`.
+- [x] Correct and test elapsed key-repeat timing at commit
+  `3e978a10fa5cf975a69fa1d44cd4c983349901ee`.
+- [x] Correct and test the demo viewer's IOUDIS/DHGRi selection at commit
+  `9cbf3e0dfdf4cfeb33b09c88a4e739959ddae82c`.
+- [ ] Complete a clean full Vivado route and export for the combined F0.9.80
+  source checkpoint.
+- [ ] Build Vitis against that exact XSA.
+- [ ] Package F0.9.80, record its source commit, build, timing, size, hashes,
+  and Bootgen readback, then compare root and archived files byte for byte.
+- [ ] Program F0.9.80 and complete the out-of-slot retest below.
+
+## Program the F0.9.80 Test Slot
+
+No checked F0.9.80 firmware file exists yet. Do not program the current root
+`FIRMWARE.BIN` as F0.9.80. After the build and package items above pass:
 
 1. Connect the card's update UART and its stand-alone power source.
 2. Find the port if needed:
@@ -211,8 +293,8 @@ The package checks above passed. Programming remains pending.
    python scripts\serial_firmware_update.py --list-ports
    ```
 
-3. After checking that root `FIRMWARE.BIN` is the recorded F0.9.79 file,
-   upload it, replacing `COM3` with the update UART port:
+3. Check that root `FIRMWARE.BIN` matches the recorded F0.9.80 size and
+   SHA-256, then upload it, replacing `COM3` with the update UART port:
 
    ```powershell
    python scripts\serial_firmware_update.py .\FIRMWARE.BIN --port COM3 --reboot-golden
@@ -220,7 +302,7 @@ The package checks above passed. Programming remains pending.
 
 The updater writes the firmware slot and checks the full programmed image.
 
-## F0.9.79 Out-of-Slot Retest
+## F0.9.80 Out-of-Slot Retest
 
 This hardware retest is still pending.
 
@@ -228,7 +310,7 @@ Connect DVI, audio, a USB keyboard, and the SD card. A USB gamepad is optional.
 Keep the Apple slot edge disconnected and apply the same stand-alone supply
 used for the F0.9.77 test.
 
-1. Power the card and confirm the on-screen firmware version is `F0.9.79`.
+1. Power the card and confirm the on-screen firmware version is `F0.9.80`.
 2. Attach bootable images to both SmartPort SP1 and Disk II drive 1. Keep both
    available so the result proves the target choice rather than media fallback.
 3. Enable SuperSprite in saved config, select SmartPort as the boot target,
@@ -248,11 +330,28 @@ used for the F0.9.77 test.
    that the session Disk II service stays enabled. Stop ONE//e and confirm that
    the latest saved Slot 6 state, not the state from session start, takes
    effect.
-8. Press each bound TransWarp toggle, speed-up, and speed-down key. Confirm the
-   notice changes and time a fixed loop or other repeatable task at each speed;
-   the measured rate must change with the label. If the slug key is armed,
-   check it the same way.
-9. Turn ONE//e off, wait for the stable connector vector to pass the 96-cycle
+8. Set a divided configured speed, start ONE//e without a speed key, and time
+   a fixed loop. The first running core must use that configured speed, not
+   full acceleration.
+9. Stop ONE//e and leave saved host TransWarp off. Close the Appletini menu and
+   press a bound speed key; it must report `TW: OFF` and queue nothing. Open the
+   menu, press the same key before selecting ONE//e, and require `TW NEXT`.
+   Select ONE//e and confirm that its first running core uses that queued speed.
+   Repeat with the toggle, speed-up, speed-down, and armed slug actions. Also
+   use a key after the ONE//e request but before core takeover finishes and
+   confirm that it stages the first running speed.
+10. While ONE//e runs at a non-full speed, use `Ctrl+Alt+Pause`. Confirm that
+    only the virtual //e resets and that the timed rate stays the same after
+    reboot. Stop and start a new ONE//e session; it must return to the saved
+    configured speed rather than retain the prior session override.
+11. In the Appletini demo menu, tap Down once. The choice must move down one
+    row only. Hold Down: the first repeat should start near 500 ms and later
+    repeats should occur near 100 ms apart. Release it and confirm that repeat
+    stops at once.
+12. In the demo image viewer, show both HGRi and DHGRi samples. They must select
+    distinct modes, and DHGRi must show double-hi-res pixels rather than HGRi.
+    Recheck the other new image modes for regression.
+13. Turn ONE//e off, wait for the stable connector vector to pass the 96-cycle
    quiet check, and select it again.
 
 A request never restarts itself after a real activity lock.
@@ -264,7 +363,8 @@ Run these checks before any Apple-connected safety test:
 - Boot DOS and ProDOS to their ready screen.
 - Use a standard full-size USB HID keyboard. Type letters, numbers,
   punctuation, arrows, Return, Escape, Delete, and numeric keypad keys.
-- Check held-key repeat.
+- Check that a brief tap emits one key only. Hold a key and check the 500 ms
+  first delay, 100 ms steady repeat, and prompt stop on release.
 - Check Open Apple with left Alt or GUI, and Closed Apple with right Alt or
   GUI.
 - Confirm the fixed US layout. A boot-protocol keyboard has six-key rollover
@@ -273,10 +373,12 @@ Run these checks before any Apple-connected safety test:
   guaranteed.
 - Check a paddle or joystick program with all axes and the first three
   buttons.
-- Use `Ctrl+Pause` and confirm that only the virtual //e resets.
+- Use `Ctrl+Alt+Pause` and confirm that only the virtual //e resets and the
+  current session speed remains unchanged.
 - Run software which toggles the Apple speaker; check both audio channels,
   mute, and mix with card audio.
-- Check 40/80-column text, lores, hires, double-hires, and mixed video.
+- Check 40/80-column text, lores, hires, double-hires, HGRi, DHGRi, and mixed
+  video. HGRi and DHGRi must produce distinct switch states and images.
 - Reopen the menu, turn ONE//e off, and confirm the state returns to `OFF`.
 
 Record the UART log, disk image name, USB device names, DVI mode, and card

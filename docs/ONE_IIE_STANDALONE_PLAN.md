@@ -22,7 +22,14 @@ Last source audit: 2026-08-16
   the running core.
 - The F0.9.79 source changes correct those three faults. The focused source,
   native, ROM-path, and bus tests pass. The clean full build and test package
-  are complete. The board retest is still pending.
+  are complete. Its board retest exposed three later faults: a speed key used
+  during ONE//e takeover could be discarded and leave the core at full speed,
+  key repeat used fast frontend poll counts instead of elapsed time, and the
+  demo image viewer did not enable IOUDIS before selecting DHIRES, so DHGRi
+  remained HGRi.
+- F0.9.80 is the next test image. The three source fixes and their focused
+  checks are separate from the still-pending full build, package, and board
+  retest.
 
 ## Goal and Supported Shape
 
@@ -103,6 +110,14 @@ sections list the board and system tests which still need to run.
   96-cycle quiet interval, retain the main translators as an input-only clock
   monitor, disable auxiliary translator U234, and reserve F0.9.78.
 - `a94aefc`: reserve F0.9.79 and form its source and packaging checkpoint.
+- `3e978a1`: time ONE//e key repeat in milliseconds instead of frontend polls,
+  with a 500 ms first delay and 100 ms repeat interval.
+- `9cbf3e0`: make the demo viewer enable IOUDIS before DHIRES, rebuild its disk
+  image, and execute the assembled HGRi and DHGRi mode setters in a regression.
+- `147e56d`: retain a requested ONE//e speed through the pre-takeover window,
+  first core release, and virtual warm reset.
+- `dde9b20`: let an explicitly open Appletini menu stage the next ONE//e speed
+  while host TransWarp is off; the same key stays off when the menu is closed.
 
 ## Safety Contract
 
@@ -300,6 +315,29 @@ reports success. The ONE//e word keeps private Disk II acceleration disabled.
 On a failed readback, a USB speed action restores its prior override and shows
 `TW: CONTROL WRITE FAILED` instead of a false speed label.
 
+The F0.9.79 board test found another state boundary before that live writer
+could act. With saved host TransWarp off, the old speed-key gate discarded a
+choice made in the open Appletini menu before ONE//e selection. It also treated
+the core as off after the user requested ONE//e but before `g_onee_running`
+became true. The first released control word could therefore retain the
+configured full-speed value. A later virtual warm reset did not itself choose
+full speed; it exposed the speed which the session had actually retained.
+
+The F0.9.80 source accepts a speed request while host TransWarp has saved
+intent, while ONE//e is requested, effective, or running, or when the key event
+comes from an explicitly open Appletini menu. The input handler passes that
+menu context with only the current key event; it does not create a global
+enable. If no core is live, the action queues the override and reports
+`TW NEXT` instead of claiming a live write. The next ONE//e start uses it even
+when saved host TransWarp is off. The same key in a closed menu and true-off
+state still reports `TW: OFF` and queues nothing.
+
+All three ONE//e start control words use the effective mode and divider, so the
+first core release uses that queued or configured speed. The private warm
+reset does not rewrite `VTW_CTRL`, so the same session rung survives it. A
+session stop clears the temporary override, and a new session returns to the
+saved configured speed.
+
 Reset and config reapply paths also need the effective session state, not just
 saved host intent. One centralized Disk II setter now keeps the service on
 while `g_onee_running` owns the machine, without changing the saved Slot 6
@@ -337,12 +375,20 @@ checks `RUNNING`, effective mode, bridge enable, and the `0xE1` bridge
 signature before any write. Dropping effective mode masks the PL outputs at
 once and clears all queued, live, paddle, and reset state on the next clock.
 
-Mapped keys emit once on their press edge, then repeat after 1,000 active input
-service polls and every 100 polls after that. The newest held mapped key across
-all HID devices owns repeat. Releasing or disconnecting it selects the newest
-remaining held key. Repeat uses the current Shift, Control, and Caps Lock state.
-Caps Lock, Pause, modifier-only reports, and unmapped keys do not repeat. A
-session stop clears all repeat state.
+Mapped keys emit once on their press edge. F0.9.79 then waited 1,000 active
+input-service polls before repeat and 100 polls between repeats. The USB loop
+can call that service twice in each fast frontend pass, so those counts could
+expire during a brief tap and fill a menu with Down events.
+
+F0.9.80 uses the CherryUSB millisecond clock instead. Repeat starts after 500
+ms and continues every 100 ms. A late poll emits one event and starts the next
+interval from the current time; it does not catch up by filling the queue with
+missed events. The deadline check also works across the 32-bit clock wrap. The
+newest held mapped key across all HID devices owns repeat. Releasing or
+disconnecting it selects the newest remaining held key and starts a new 500 ms
+delay. Repeat uses the current Shift, Control, and Caps Lock state. Caps Lock,
+Pause, modifier-only reports, and unmapped keys do not repeat. A session stop
+clears all repeat state.
 
 Caps Lock state exists only in the ONE//e key translator. Firmware does not
 send a USB HID output report for it, so a keyboard's Caps Lock LED may not show
@@ -397,6 +443,15 @@ used by host mode. The focused video bench covers all 65 cycles across all 262
 NTSC lines, starts VBL at line 192 cycle 0, checks frame wrap and frame-zero
 reset, checks `$C050/$C057` state in renderer frame metadata, and checks that
 posted `$0400/$2000` writes reach renderer-input records.
+
+The F0.9.79 demo viewer selected 80COL and accessed `$C05E` for its DHGRi
+record, but it did not first write `$C07E` to turn IOUDIS on. On an Enhanced
+//e, `$C05E/$C05F` control AN3 while IOUDIS is off and DHIRES while it is on.
+The access therefore left DHIRES off, and the renderer correctly saw HGRi.
+Checkpoint `9cbf3e0` adds the missing `$C07E` write before the common DHGR
+mode setter. Its test runs the assembled HGRi and DHGRi setters against the
+Enhanced //e switches and requires distinct final modes. The demo disk image
+was rebuilt from that source and is ready for the F0.9.80 package.
 
 Each `$C03x` access toggles the motherboard speaker. `onee_speaker_audio.sv`
 turns that state into signed, DC-blocked, saturated 16-bit mono samples. The
@@ -476,11 +531,15 @@ mode is off.
   the production Disk II slot bus and enter each loaded boot sector at `$0801`
   in simulation.
 - [ ] Reach a BASIC prompt or a known monitor loop in a full-ROM system test.
-- [x] Add and test held-key repeat for mapped USB keyboard keys.
+- [x] Add and test elapsed-time held-key repeat for mapped USB keyboard keys,
+  including a one-event short tap and no catch-up burst after a late poll.
 - [x] Support standard full-size USB HID keyboards within the US-layout,
   six-key boot-report, and eight-key parsed-report limits.
 - [x] Route menu and USB speed changes through the same readback-checked live
   `VTW_CTRL` writer for host and ONE//e sessions.
+- [x] Queue a speed key from an open Appletini menu or requested/effective
+  ONE//e takeover, put that speed in the first core-release word, and preserve
+  it across a private warm reset. Keep true off closed-menu actions off.
 - [x] Reapply effective Disk II state through one setter on config and reset,
   and skip the host-only IIgs `$C029` DMA write for a ONE//e reset.
 
@@ -491,6 +550,8 @@ mode is off.
 - [x] Count paddle expiry in native bus cycles.
 - [x] Route a virtual warm reset to the motherboard and soft CPU only.
 - [x] Feed posted screen writes and switch state into normal renderer records.
+- [x] Enable IOUDIS before the demo viewer selects DHIRES and execute the
+  assembled HGRi and DHGRi setters in a distinct-mode regression.
 - [x] Mix the motherboard speaker into both audio channels.
 - [ ] Validate DVI text, lores, hires, double-hires, 40/80-column, mixed-mode,
   raster, and PAL output on a board.
@@ -648,8 +709,44 @@ choices remain intact after ONE//e stops.
   at the final F0.9.79 source checkpoint.
 - [x] Complete a full Vivado route and export, exact-XSA Vitis build, and
   F0.9.79 test package.
-- [ ] Program F0.9.79 and run the target, warm-reset, speed, storage-label,
-  keyboard, and safety checklist in `docs/ONE_IIE_HARDWARE_TEST.md`.
+- [x] Program and run F0.9.79 out of slot. That test exposed the later speed,
+  repeat, and DHGRi faults below; it did not complete the electrical safety
+  checklist.
+
+### F0.9.79 Runtime Test and F0.9.80 Fixes
+
+The F0.9.79 board test exposed three more boundary errors:
+
+- With saved host TransWarp off, a bound speed key used in the open menu before
+  ONE//e selection, or after the request but before `g_onee_running` was set,
+  could be discarded. The first release then used full speed, and a virtual
+  warm reset made that retained choice visible again. A config-page change
+  worked because it ran after takeover.
+- Key repeat counted service calls. A brief Down tap could outlive the count
+  on the fast USB/frontend loop and scroll the demo menu to its last row.
+- The demo viewer's DHGRi setter did not turn on IOUDIS. Its `$C05E` access
+  changed AN3 instead of DHIRES, so the resulting mode remained HGRi. The
+  other new image modes worked.
+
+F0.9.80 is the next planned test image. Checkpoint `3e978a1` replaces repeat
+poll counts with 500/100 ms deadlines. Checkpoint `9cbf3e0` adds the viewer's
+missing `$C07E` write, rebuilds the disk, and tests the assembled mode setters.
+Checkpoint `147e56d` queues a speed request during ONE//e takeover, applies it
+to the first core release, retains it across virtual warm reset, and clears the
+temporary override when the session stops. Checkpoint `dde9b20` also accepts
+the preselection while the Appletini menu is open and host TransWarp is off,
+without enabling that action when the menu is closed.
+
+- [x] Add focused source and native checks for a one-event short key tap,
+  elapsed repeat timing, clock wrap, and no repeat catch-up burst.
+- [x] Execute the assembled HGRi and DHGRi mode setters against Enhanced //e
+  IOUDIS/DHIRES behavior and require distinct results.
+- [x] Add focused firmware and joined-bus checks for configured and queued
+  start speed plus `VTW_CTRL` retention across virtual warm reset.
+- [ ] Complete a clean full Vivado route and export for F0.9.80.
+- [ ] Build Vitis from that exact XSA and package the F0.9.80 test image.
+- [ ] Program F0.9.80 and run the out-of-slot hardware retest in
+  `docs/ONE_IIE_HARDWARE_TEST.md`.
 
 ### Synthesis and Firmware Build State
 
@@ -684,7 +781,8 @@ choices remain intact after ONE//e stops.
 - [ ] Promote a release build only after it reaches the project's +0.300 ns
   setup-margin gate, repeats cleanly at the same commit, and passes the board
   checks below. The user waived that margin for the F0.9.77, F0.9.78, and
-  F0.9.79 test images only.
+  F0.9.79 test images and asked that F0.9.80 first work as a test image rather
+  than spend more time on the +0.300 ns target.
 - The first 2026-08-16 Vitis attempt made BSP content, but
   `vitis_workspace/appletini_platform/export/.buildstatus` reported
   `export=ERROR`. The expected
@@ -753,6 +851,11 @@ choices remain intact after ONE//e stops.
   `.timing_runs/20260816T180541Z-a94aefc2-full/test_firmware_manifest.txt`.
   This F0.9.79 image is a test image under the user's +0.300 ns margin waiver,
   not a promoted release.
+- [ ] Build and export a clean F0.9.80 bitstream and XSA. No timing result,
+  archive name, or source checkpoint has been recorded yet.
+- [ ] Build the firmware from that exact XSA, package F0.9.80, compare the
+  archived and root files byte for byte, and record size, hashes, version
+  strings, and Bootgen readback.
 
 ### Missing Board and End-to-End Proof
 
@@ -762,7 +865,10 @@ choices remain intact after ONE//e stops.
 - [x] Program F0.9.78 and start ONE//e out of the Apple slot; it booted the ROM
   and exposed the target, storage-label, and speed-control faults above.
 - [x] Build and package the F0.9.79 functional retest image.
-- [ ] Program and run the F0.9.79 functional retest.
+- [x] Program and run F0.9.79 out of slot; it exposed the speed, key-repeat,
+  and DHGRi faults recorded above.
+- [ ] Build and package the corrected F0.9.80 functional retest image.
+- [ ] Program and run the F0.9.80 functional retest.
 - [ ] Verify all physical Apple pins and translators while ONE//e starts,
   runs, faults, stops, and returns to host mode, including PL configuration and
   both card/Apple power orders.

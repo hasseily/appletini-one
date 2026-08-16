@@ -71,15 +71,16 @@ def static_checks() -> None:
         "wire       onee_speaker;" in top,
         "motherboard I/O must expose its speaker and use native VBL",
     )
-    for neutral in (
-        "onee_usb_keyboard_event_valid = 1'b0",
-        "onee_usb_keyboard_event_code = 7'h00",
-        "onee_usb_keyboard_any_down = 1'b0",
-        "onee_usb_keyboard_modifiers = 3'b000",
-        "onee_usb_pushbuttons = 3'b000",
-        "onee_usb_paddle_values = 32'h8080_8080",
-    ):
-        require(neutral in top, f"missing named neutral input: {neutral}")
+    require(
+        "onee_input_bridge onee_input_bridge_i" in top and
+        ".keyboard_event_valid   (onee_usb_keyboard_event_valid)" in top and
+        ".keyboard_event_code    (onee_usb_keyboard_event_code)" in top and
+        ".keyboard_any_down      (onee_usb_keyboard_any_down)" in top and
+        ".keyboard_modifiers     (onee_usb_keyboard_modifiers)" in top and
+        ".pushbuttons             (onee_usb_pushbuttons)" in top and
+        ".paddle_values          (onee_usb_paddle_values)" in top,
+        "motherboard inputs must come from the effective-only USB bridge",
+    )
 
     require(
         ".NUM_CLIENTS(13)" in top and

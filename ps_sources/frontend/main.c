@@ -2781,6 +2781,7 @@ static void ui_handle_usb_menu_event(ui_state_t *s,
                                      const usb_hid_menu_event_t *event)
 {
     ui_key_t key;
+    uint8_t allow_onee_preselect;
 
     if (event == NULL) {
         return;
@@ -2818,6 +2819,13 @@ static void ui_handle_usb_menu_event(ui_state_t *s,
         return;
     }
 
+    /* A speed key used while the Appletini menu is open may stage the
+     * upcoming ONE//e core even when saved host TransWarp is off. Keep this
+     * context local to the input event so the same key stays a true no-op
+     * when the menu is closed. */
+    allow_onee_preselect =
+        (uint8_t)(config_menu_is_active(menu) != 0U);
+
     switch (event->action) {
     case USB_HID_MENU_ACTION_SCREENSHOT_A2:
         ui_save_screenshot(SCREENSHOT_SERVICE_KIND_A2);
@@ -2826,19 +2834,19 @@ static void ui_handle_usb_menu_event(ui_state_t *s,
         ui_save_screenshot(SCREENSHOT_SERVICE_KIND_1080P);
         return;
     case USB_HID_MENU_ACTION_VTW_SPEED_TOGGLE:
-        vtw_service_speed_toggle();
+        vtw_service_speed_toggle(allow_onee_preselect);
         screenshot_service_show_notice(vtw_service_last_action_text());
         return;
     case USB_HID_MENU_ACTION_VTW_SPEED_UP:
-        vtw_service_speed_step(1);
+        vtw_service_speed_step(1, allow_onee_preselect);
         screenshot_service_show_notice(vtw_service_last_action_text());
         return;
     case USB_HID_MENU_ACTION_VTW_SPEED_DOWN:
-        vtw_service_speed_step(-1);
+        vtw_service_speed_step(-1, allow_onee_preselect);
         screenshot_service_show_notice(vtw_service_last_action_text());
         return;
     case USB_HID_MENU_ACTION_VTW_SLUG_TOGGLE:
-        vtw_service_slug_toggle();
+        vtw_service_slug_toggle(allow_onee_preselect);
         screenshot_service_show_notice(vtw_service_last_action_text());
         return;
     default:

@@ -49,13 +49,14 @@ void vtw_service_set_disk2_config_enabled(uint8_t enable);
 void vtw_service_set_slowdown(uint16_t region_mask, uint16_t cycles);
 
 /* Runtime speed overrides (USB keymap actions; $C074-style, never
- * persisted, cleared by a configured speed change or session stop). An
- * action before takeover queues the requested rung for the next session;
- * a live host-vTW or ONE//e core changes at once. The queued/live rung
- * remains in force across a warm reset inside that session. */
-void vtw_service_speed_toggle(void);   /* 1 MHz <-> configured        */
-void vtw_service_speed_step(int8_t dir); /* preset ladder, +1/-1      */
-void vtw_service_slug_toggle(void);    /* 0.05 MHz <-> configured     */
+ * persisted, cleared by a configured speed change or session stop). A live
+ * host-vTW or ONE//e core changes at once. Set allow_onee_preselect only for
+ * an event from the open Appletini menu; it lets that event queue a rung for
+ * the upcoming ONE//e session while saved host-vTW stays off. The
+ * queued/live rung remains in force across a warm reset in that session. */
+void vtw_service_speed_toggle(uint8_t allow_onee_preselect);
+void vtw_service_speed_step(int8_t dir, uint8_t allow_onee_preselect);
+void vtw_service_slug_toggle(uint8_t allow_onee_preselect);
 /* Slug key arming (TransWarp tab, default off). Disarming while slug
  * is active restores the configured speed. */
 void vtw_service_set_slug_enabled(uint8_t enable);

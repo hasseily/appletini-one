@@ -162,6 +162,22 @@ def static_checks() -> None:
         ".virtual_motherboard(onee_enable_effective)" in top,
         "apple_top must identify its virtual motherboard to vTW",
     )
+    require(
+        "onee_warm_reset_ctrl #(" in top and
+        ") onee_warm_reset_ctrl_i (" in top and
+        ".virtual_res_n          (onee_virtual_res_n)" in top and
+        ".res_n_in         (onee_virtual_res_n)" in top,
+        "Ctrl-Alt-Pause must reach only the virtual motherboard RESET path",
+    )
+    require(
+        ".speed_mode(vtw_ctrl_q[3:2])" in top and
+        ".pace_divider(vtw_ctrl_q[31:16])" in top and
+        top.count("vtw_ctrl_q                      <= 32'h0000_0000;") == 1 and
+        top.count("vtw_ctrl_q <= globals::apply_wstrb(") == 1 and
+        top.count("vtw_ctrl_q <=") == 1,
+        "VTW_CTRL speed must remain an AXI/global-reset register, outside "
+        "the virtual Apple reset path",
+    )
 
 
 def main() -> int:

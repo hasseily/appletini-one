@@ -527,9 +527,10 @@ static int vtw_eff_ladder_index(void)
     return fastest_divided;
 }
 
-static uint8_t vtw_speed_request_allowed(void)
+static uint8_t vtw_speed_request_allowed(uint8_t allow_onee_preselect)
 {
-    return (g_intent_enabled != 0U || g_state != VTW_ST_IDLE ||
+    return (allow_onee_preselect != 0U ||
+            g_intent_enabled != 0U || g_state != VTW_ST_IDLE ||
             g_onee_running != 0U || vtw_onee_control_active() != 0U) ? 1U : 0U;
 }
 
@@ -568,13 +569,13 @@ const char *vtw_service_last_action_text(void)
     return g_last_action_text;
 }
 
-void vtw_service_speed_toggle(void)
+void vtw_service_speed_toggle(uint8_t allow_onee_preselect)
 {
     const uint8_t old_ovr_active = g_ovr_active;
     const uint8_t old_ovr_mode = g_ovr_mode;
     const uint16_t old_ovr_div = g_ovr_div;
 
-    if (vtw_speed_request_allowed() == 0U) {
+    if (vtw_speed_request_allowed(allow_onee_preselect) == 0U) {
         uart_puts(g_uart_base, "vtw: speed toggle ignored (vtw off)\r\n");
         (void)snprintf(g_last_action_text, sizeof(g_last_action_text),
                        "TW: OFF");
@@ -598,14 +599,14 @@ void vtw_service_speed_toggle(void)
     }
 }
 
-void vtw_service_speed_step(int8_t dir)
+void vtw_service_speed_step(int8_t dir, uint8_t allow_onee_preselect)
 {
     int idx;
     const uint8_t old_ovr_active = g_ovr_active;
     const uint8_t old_ovr_mode = g_ovr_mode;
     const uint16_t old_ovr_div = g_ovr_div;
 
-    if (vtw_speed_request_allowed() == 0U) {
+    if (vtw_speed_request_allowed(allow_onee_preselect) == 0U) {
         uart_puts(g_uart_base, "vtw: speed step ignored (vtw off)\r\n");
         (void)snprintf(g_last_action_text, sizeof(g_last_action_text),
                        "TW: OFF");
@@ -629,13 +630,13 @@ void vtw_service_speed_step(int8_t dir)
     }
 }
 
-void vtw_service_slug_toggle(void)
+void vtw_service_slug_toggle(uint8_t allow_onee_preselect)
 {
     const uint8_t old_ovr_active = g_ovr_active;
     const uint8_t old_ovr_mode = g_ovr_mode;
     const uint16_t old_ovr_div = g_ovr_div;
 
-    if (vtw_speed_request_allowed() == 0U) {
+    if (vtw_speed_request_allowed(allow_onee_preselect) == 0U) {
         uart_puts(g_uart_base, "vtw: slug toggle ignored (vtw off)\r\n");
         (void)snprintf(g_last_action_text, sizeof(g_last_action_text),
                        "TW: OFF");

@@ -2292,15 +2292,15 @@ module apple_top(
                             vtw_slowdown_q, as_common.wdata, as_common.wstrb);
                     end
                     CARD_CTRL_REG_VTW_SYNC_CMD: begin
-                        vtw_arm_addr_q     <= as_common.wdata[15:0];
-                        vtw_arm_wdata_q    <= as_common.wdata[23:16];
-                        vtw_arm_rw_q       <= as_common.wdata[24];
+                        vtw_arm_addr_q     <= as_vtw_phasor_wdata[15:0];
+                        vtw_arm_wdata_q    <= as_vtw_phasor_wdata[23:16];
+                        vtw_arm_rw_q       <= as_vtw_phasor_wdata[24];
                         vtw_arm_go_pulse_q <= 1'b1;
                         vtw_sync_done_q    <= 1'b0;
                     end
                     CARD_CTRL_REG_VTW_POST_PUSH: begin
-                        vtw_arm_post_addr_q  <= as_common.wdata[15:0];
-                        vtw_arm_post_wdata_q <= as_common.wdata[23:16];
+                        vtw_arm_post_addr_q  <= as_vtw_phasor_wdata[15:0];
+                        vtw_arm_post_wdata_q <= as_vtw_phasor_wdata[23:16];
                         vtw_arm_post_pulse_q <= 1'b1;
                     end
                     CARD_CTRL_REG_VTW_RW_FLUSH: begin

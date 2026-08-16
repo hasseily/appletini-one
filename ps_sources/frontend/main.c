@@ -131,6 +131,7 @@ typedef struct {
     uint8_t source;
     uint8_t disk2_last_unit;
     uint8_t smartport_last_unit;
+    uint8_t smartport_status_unit;
     uint32_t disk2_last_read_count;
     uint32_t disk2_last_write_count;
     uint32_t disk2_read_until_frame;
@@ -2068,6 +2069,36 @@ static uint8_t ui_frame_active(uint32_t frame, uint32_t until_frame)
     return ((int32_t)(frame - until_frame) <= 0) ? 1U : 0U;
 }
 
+/* Pick the source that is doing useful work now. SmartPort data transfers
+ * may share a frame with a spinning Disk II drive, so they take first place.
+ * Disk II motor or data activity must, in turn, beat the STATUS calls made by
+ * SmartPort discovery. A STATUS call may light SP briefly, but it must not
+ * replace the last source that moved data. */
+static uint8_t ui_storage_choose_source(uint8_t disk2_valid,
+                                        uint8_t smartport_valid,
+                                        uint8_t disk2_active,
+                                        uint8_t smartport_data_active,
+                                        uint8_t smartport_status_active,
+                                        uint8_t retained_source)
+{
+    if (smartport_valid != 0U && smartport_data_active != 0U) {
+        return UI_STORAGE_SOURCE_SMARTPORT;
+    }
+    if (disk2_valid != 0U && disk2_active != 0U) {
+        return UI_STORAGE_SOURCE_DISK2;
+    }
+    if (smartport_valid != 0U && smartport_status_active != 0U) {
+        return UI_STORAGE_SOURCE_SMARTPORT;
+    }
+    if ((retained_source == UI_STORAGE_SOURCE_SMARTPORT &&
+         smartport_valid != 0U) ||
+        (retained_source == UI_STORAGE_SOURCE_DISK2 && disk2_valid != 0U)) {
+        return retained_source;
+    }
+    return (disk2_valid != 0U) ?
+        UI_STORAGE_SOURCE_DISK2 : UI_STORAGE_SOURCE_SMARTPORT;
+}
+
 static void ui_draw_disk_lock_icon(uint16_t *fb,
                                    int x,
                                    int y,
@@ -2115,6 +2146,13 @@ static void ui_draw_storage_activity(uint16_t *fb, const ui_state_t *s)
     uint8_t read_active = 0U;
     uint8_t write_active = 0U;
     uint8_t status_active = 0U;
+    uint8_t disk2_read_active = 0U;
+    uint8_t disk2_write_active = 0U;
+    uint8_t disk2_active = 0U;
+    uint8_t smartport_read_active = 0U;
+    uint8_t smartport_write_active = 0U;
+    uint8_t smartport_status_active = 0U;
+    uint8_t smartport_data_active = 0U;
     uint8_t unit;
     uint8_t present;
     uint8_t drive_active;
@@ -2126,9 +2164,11 @@ static void ui_draw_storage_activity(uint16_t *fb, const ui_state_t *s)
     int x = UI_DISK_ACTIVITY_X;
     int y = UI_DISK_ACTIVITY_Y;
 
-    if (control_get_slot_enabled(NULL, CARD_CTRL_SLOT_DISK2) != 0U &&
-        disk2_service_get_activity(&disk2_activity) == 0) {
-        disk2_valid = 1U;
+    /* The service snapshot reports the effective PL state. Do not gate it on
+     * the saved Slot 6 setting: ONE//e can enable its virtual Disk II for the
+     * current session without changing that setting. */
+    if (disk2_service_get_activity(&disk2_activity) == 0) {
+        disk2_valid = (disk2_activity.enabled != 0U) ? 1U : 0U;
     }
     if (smartport_service_get_activity(&smartport_activity) == 0) {
         smartport_valid = 1U;
@@ -2146,6 +2186,9 @@ static void ui_draw_storage_activity(uint16_t *fb, const ui_state_t *s)
             g_storage_activity.disk2_last_unit =
                 (disk2_activity.drive < DISK2_DRIVE_COUNT) ?
                 disk2_activity.drive : 0U;
+            g_storage_activity.source =
+                (disk2_activity.enabled != 0U) ?
+                UI_STORAGE_SOURCE_DISK2 : UI_STORAGE_SOURCE_SMARTPORT;
         }
         if (smartport_valid != 0U) {
             g_storage_activity.smartport_last_status_count = smartport_activity.status_count;
@@ -2154,6 +2197,8 @@ static void ui_draw_storage_activity(uint16_t *fb, const ui_state_t *s)
             g_storage_activity.smartport_last_unit =
                 (smartport_activity.device < SMARTPORT_SERVICE_DEVICE_COUNT) ?
                 smartport_activity.device : 0U;
+            g_storage_activity.smartport_status_unit =
+                g_storage_activity.smartport_last_unit;
         }
     }
 
@@ -2193,8 +2238,7 @@ static void ui_draw_storage_activity(uint16_t *fb, const ui_state_t *s)
                 smartport_activity.status_count;
             g_storage_activity.smartport_status_until_frame =
                 s->frame + UI_DISK_ACTIVITY_HOLD_FRAMES;
-            g_storage_activity.source = UI_STORAGE_SOURCE_SMARTPORT;
-            g_storage_activity.smartport_last_unit =
+            g_storage_activity.smartport_status_unit =
                 (smartport_activity.device < SMARTPORT_SERVICE_DEVICE_COUNT) ?
                 smartport_activity.device : 0U;
         }
@@ -2222,25 +2266,59 @@ static void ui_draw_storage_activity(uint16_t *fb, const ui_state_t *s)
         }
     }
 
-    source = g_storage_activity.source;
-    if (source == UI_STORAGE_SOURCE_SMARTPORT) {
-        status_active = ui_frame_active(
-            s->frame, g_storage_activity.smartport_status_until_frame);
-        read_active = ui_frame_active(
-            s->frame, g_storage_activity.smartport_read_until_frame);
-        write_active = ui_frame_active(
-            s->frame, g_storage_activity.smartport_write_until_frame);
-        if (smartport_valid == 0U) {
-            source = UI_STORAGE_SOURCE_DISK2;
+    if (disk2_valid != 0U) {
+        disk2_read_active = ui_frame_active(
+            s->frame, g_storage_activity.disk2_read_until_frame);
+        disk2_write_active = ui_frame_active(
+            s->frame, g_storage_activity.disk2_write_until_frame);
+        disk2_active = (disk2_activity.motor_on != 0U ||
+                        disk2_activity.spinning != 0U ||
+                        disk2_activity.write_busy != 0U ||
+                        disk2_activity.write_dirty != 0U ||
+                        disk2_read_active != 0U ||
+                        disk2_write_active != 0U) ? 1U : 0U;
+        if (disk2_active != 0U) {
+            g_storage_activity.source = UI_STORAGE_SOURCE_DISK2;
+            if (disk2_activity.motor_on != 0U ||
+                disk2_activity.spinning != 0U) {
+                g_storage_activity.disk2_last_unit =
+                    (disk2_activity.drive < DISK2_DRIVE_COUNT) ?
+                    disk2_activity.drive : 0U;
+            }
         }
-    } else if (disk2_valid == 0U) {
-        source = UI_STORAGE_SOURCE_SMARTPORT;
+    }
+    if (smartport_valid != 0U) {
+        smartport_status_active = ui_frame_active(
+            s->frame, g_storage_activity.smartport_status_until_frame);
+        smartport_read_active = ui_frame_active(
+            s->frame, g_storage_activity.smartport_read_until_frame);
+        smartport_write_active = ui_frame_active(
+            s->frame, g_storage_activity.smartport_write_until_frame);
+        smartport_data_active =
+            (smartport_read_active != 0U || smartport_write_active != 0U) ?
+            1U : 0U;
+        if (smartport_data_active != 0U) {
+            g_storage_activity.source = UI_STORAGE_SOURCE_SMARTPORT;
+        }
     }
 
+    source = ui_storage_choose_source(disk2_valid,
+                                      smartport_valid,
+                                      disk2_active,
+                                      smartport_data_active,
+                                      smartport_status_active,
+                                      g_storage_activity.source);
+
     if (source == UI_STORAGE_SOURCE_SMARTPORT && smartport_valid != 0U) {
-        unit = (g_storage_activity.smartport_last_unit <
+        status_active = smartport_status_active;
+        read_active = smartport_read_active;
+        write_active = smartport_write_active;
+        unit = ((smartport_data_active == 0U && status_active != 0U) ?
+                g_storage_activity.smartport_status_unit :
+                g_storage_activity.smartport_last_unit);
+        unit = (unit <
                 SMARTPORT_SERVICE_DEVICE_COUNT) ?
-            g_storage_activity.smartport_last_unit : 0U;
+            unit : 0U;
         present = ((smartport_activity.present_mask & (uint8_t)(1U << unit)) != 0U) ?
             1U : 0U;
         write_protected = smartport_activity.read_only;
@@ -2252,10 +2330,8 @@ static void ui_draw_storage_activity(uint16_t *fb, const ui_state_t *s)
         drive_color = FB16_COLOR_SKY;
         snprintf(line, sizeof(line), "SMARTPORT SP%u", (unsigned)unit + 1U);
     } else if (disk2_valid != 0U) {
-        read_active = ui_frame_active(
-            s->frame, g_storage_activity.disk2_read_until_frame);
-        write_active = ui_frame_active(
-            s->frame, g_storage_activity.disk2_write_until_frame);
+        read_active = disk2_read_active;
+        write_active = disk2_write_active;
         unit = (g_storage_activity.disk2_last_unit < DISK2_DRIVE_COUNT) ?
             g_storage_activity.disk2_last_unit : 0U;
         present = ((disk2_activity.present_mask & (uint8_t)(1U << unit)) != 0U) ?
@@ -2412,12 +2488,14 @@ static void ui_collect_debug_overlay_snapshot(debug_overlay_snapshot_t *snapshot
     snapshot->fb_debug2 = REG_READ(FB_DEBUG2_REG);
     snapshot->softswitch_state = ui_softswitch_state();
 
-    if (control_get_slot_enabled(NULL, CARD_CTRL_SLOT_DISK2) != 0U &&
-        disk2_service_get_activity(&snapshot->disk2_activity) == 0) {
-        snapshot->disk2_valid = 1U;
-        for (uint8_t drive = 0U; drive < DISK2_DRIVE_COUNT; ++drive) {
-            snapshot->disk2_read_only[drive] =
-                menu_platform_get_disk2_image_read_only(NULL, drive);
+    if (disk2_service_get_activity(&snapshot->disk2_activity) == 0) {
+        snapshot->disk2_valid =
+            (snapshot->disk2_activity.enabled != 0U) ? 1U : 0U;
+        if (snapshot->disk2_valid != 0U) {
+            for (uint8_t drive = 0U; drive < DISK2_DRIVE_COUNT; ++drive) {
+                snapshot->disk2_read_only[drive] =
+                    menu_platform_get_disk2_image_read_only(NULL, drive);
+            }
         }
     }
     if (smartport_service_get_activity(&snapshot->smartport_activity) == 0) {

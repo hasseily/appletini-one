@@ -16,6 +16,8 @@ apple/apple_top.sv
 apple/apple_bus_wrapper.sv
 apple/onee_mode_safety_guard.sv
 apple/apple_virtual_bus.sv
+apple/onee_motherboard_io.sv
+apple/onee_cold_slot_scan.sv
 apple/apple_bus_write_arbiter.sv
 apple/w65c02_core.sv
 apple/vtw_shadow.sv

@@ -180,7 +180,8 @@ module tb_vtw_disk2_woz_e2e;
 
     vtw_core_top core_i (
         .clk(clk), .rstn(rstn), .enable(enable),
-        .host_is_iiplus(1'b0), .core_run(core_run),
+        .host_is_iiplus(1'b0), .virtual_motherboard(1'b0),
+        .core_run(core_run),
         .assert_apple_res(1'b0), .speed_mode(speed_mode),
         .pace_divider(pace_divider), .ignore_c074(1'b0),
         .irq_assert_in(1'b0), .data_drive_in(vtw_write.wr_data_en),

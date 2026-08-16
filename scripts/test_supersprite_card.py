@@ -128,20 +128,23 @@ def test_apple_top_integration() -> None:
     s = read(APPLE_TOP_SV)
     require("supersprite_card supersprite_card_i (" in s,
             "SuperSprite must be instantiated in apple_top")
-    require(".ab_read(gate_ab(ab_read, card_supersprite_enable))" in s and
+    require("card_supersprite_enable && onee_slot7_cards_visible))" in s and
             ".slot_assign(3'h7)" in s,
-            "SuperSprite occupies hard slot 7 when its feature gate is enabled")
+            "SuperSprite occupies hard slot 7 after the ONE//e cold scan")
     require("card_feature_enable_mask_q[CARD_CTRL_FEATURE_SS_ENABLE_BIT]" in s,
             "enable comes from the feature-enable mask")
     require("wire vtw_smartport_visible =\n"
-            "        smartport_active && !card_supersprite_enable &&" in s and
+            "        !card_supersprite_enable &&\n"
+            "        (onee_enable_effective || smartport_active) &&\n"
+            "        !vtw_disk2_boot_scan_q &&\n"
+            "        onee_slot7_cards_visible;" in s and
             ".ab_read(gate_ab(ab_read, vtw_smartport_visible))" in s,
-            "SmartPort and its vTW shortcut must be gated off when SuperSprite is enabled")
+            "SmartPort must be gated off for SuperSprite and the ONE//e cold scan")
     require(".vblank_tick(bm_vbl_cmd_pulse)" in s,
             "frame tick reuses the boot ROM VBL command pulse")
-    require(".NUM_CLIENTS(12)" in s and
+    require(".NUM_CLIENTS(13)" in s and
             "supersprite_ab_write" in s,
-            "SuperSprite must be in the write arbiter (12 clients with the vTW)")
+            "SuperSprite must be in the write arbiter (13 clients with vTW and ONE//e)")
     # PS export window
     require("CARD_CTRL_REG_SS_REGS_LO" in s and "CARD_CTRL_REG_SS_VRAM_ADDR" in s and
             "CARD_CTRL_REG_SS_SPR_FLAGS" in s,

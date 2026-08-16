@@ -294,14 +294,17 @@ def test_boot_handoff_manufactures_target_slot_stack_frame() -> None:
 def test_disk2_slot6_uses_boot_handoff_gate() -> None:
     source = read(APPLE_TOP_SV)
 
-    require(".ab_read(gate_ab(" in source and
-            "card_slot6_enable && disk2_active_timing_q))" in source and
-            ".rom_serve_en(ab_read.serve_en &&" in source and
-            "card_slot6_enable && disk2_active &&" in source and
-            "!disk2_active_timing_q)" in source and
+    require("wire disk2_bus_visible =\n"
+            "        onee_enable_effective ||\n"
+            "        (card_slot6_enable && disk2_active_timing_q);" in source and
+            ".ab_read(gate_ab(ab_read, disk2_bus_visible))" in source and
+            "wire disk2_live_handoff_serve =\n"
+            "        !onee_enable_effective && card_slot6_enable && disk2_active &&\n"
+            "        !disk2_active_timing_q;" in source and
+            ".rom_serve_en(ab_read.serve_en && disk2_live_handoff_serve)" in source and
             ".slot_assign(3'h6)" in source,
-            "Disk II I/O and timing must use the registered handoff gate while "
-            "the first slot-ROM response keeps a live handoff bypass")
+            "Disk II must stay forced onto the ONE//e bus while the physical host "
+            "keeps the registered handoff gate and one-cycle live ROM bypass")
 
 
 def test_disk2_handoff_timing_gate_phase_contract() -> None:
@@ -332,11 +335,12 @@ def test_disk2_handoff_timing_gate_phase_contract() -> None:
             "if (rom_read_serve) begin" in disk2,
             "the live handoff bypass must terminate in the slot-ROM response")
 
-    require(".rom_serve_en(ab_read.serve_en &&\n"
-            "                      card_slot6_enable && disk2_active &&\n"
-            "                      !disk2_active_timing_q)" in top,
-            "the live slot-ROM bypass must exist only during the one-clock "
-            "handoff window and must keep the slot-disable gate")
+    require("wire disk2_live_handoff_serve =\n"
+            "        !onee_enable_effective && card_slot6_enable && disk2_active &&\n"
+            "        !disk2_active_timing_q;" in top and
+            ".rom_serve_en(ab_read.serve_en && disk2_live_handoff_serve)" in top,
+            "the live slot-ROM bypass must exist only during the physical host's "
+            "one-clock handoff window and must keep the slot-disable gate")
 
 
 def test_boot_debug_exposes_computed_apple_status() -> None:

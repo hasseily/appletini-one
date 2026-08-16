@@ -99,10 +99,35 @@ module apple_top(
     globals::AppleBus_read  ab_read;
     globals::AppleBus_read  physical_ab_read;
     globals::AppleBus_read  virtual_ab_read;
+    globals::AppleBus_read  onee_softswitch_ab_read;
     globals::AppleBus_write ab_write;
     globals::AppleBus_write ab_write_arb;
+    globals::AppleBus_write onee_motherboard_ab_write;
     globals::SoftSwitchState sss;
     logic ramworks_en_q;  // RamWorks 8 MB expansion, card-control register 0x62
+
+    // Named neutral inputs keep the motherboard-I/O boundary ready for a
+    // later USB/register bridge without putting PS policy in this checkpoint.
+    wire       onee_usb_keyboard_event_valid = 1'b0;
+    wire [6:0] onee_usb_keyboard_event_code = 7'h00;
+    wire       onee_usb_keyboard_any_down = 1'b0;
+    wire [2:0] onee_usb_keyboard_modifiers = 3'b000;
+    wire [2:0] onee_usb_pushbuttons = 3'b000;
+    wire       onee_usb_cassette_in = 1'b0;
+    wire [31:0] onee_usb_paddle_values = 32'h8080_8080;
+    wire [7:0] onee_floating_bus_data = 8'hFF;
+    wire       onee_usb_keyboard_event_ready;
+    wire [2:0] onee_keyboard_modifiers_state;
+    wire [7:0] onee_keyboard_latch;
+    wire       onee_keyboard_strobe;
+    wire       onee_cassette_out;
+    wire       onee_speaker;
+    wire       onee_utility_strobe_pulse;
+    wire [3:0] onee_annunciators;
+    wire       onee_ioudis;
+    wire [3:0] onee_paddle_active;
+    wire       onee_paddle_trigger_pulse;
+    wire       onee_video_vblank;
 
     // ONE//e stand-alone selection. This build has no Apple-slot power-sense
     // pin, so the guard's level veto is tied low and bit 13 of CARD_CTRL 0x5B
@@ -169,9 +194,39 @@ module apple_top(
         .req_wdata        (8'h00),
         .resp_valid       (virtual_resp_valid),
         .resp_rdata       (virtual_resp_rdata),
-        .floating_bus_data(8'hFF),
+        .floating_bus_data(onee_floating_bus_data),
         .ab_write         (ab_write_arb),
         .ab_read          (virtual_ab_read)
+    );
+
+    onee_motherboard_io onee_motherboard_io_i (
+        .clk                     (clk),
+        .resetn                  (rstn[1]),
+        .enabled                 (onee_enable_effective),
+        .ab_read                 (ab_read),
+        .sss                     (sss),
+        .softswitch_ab_read      (onee_softswitch_ab_read),
+        .ab_write                (onee_motherboard_ab_write),
+        .floating_bus_data       (onee_floating_bus_data),
+        .video_vblank            (onee_video_vblank),
+        .keyboard_event_valid    (onee_usb_keyboard_event_valid),
+        .keyboard_event_ready    (onee_usb_keyboard_event_ready),
+        .keyboard_event_code     (onee_usb_keyboard_event_code),
+        .keyboard_any_down       (onee_usb_keyboard_any_down),
+        .keyboard_modifiers_in   (onee_usb_keyboard_modifiers),
+        .keyboard_modifiers_state(onee_keyboard_modifiers_state),
+        .keyboard_latch          (onee_keyboard_latch),
+        .keyboard_strobe         (onee_keyboard_strobe),
+        .pushbuttons              (onee_usb_pushbuttons),
+        .cassette_in             (onee_usb_cassette_in),
+        .paddle_values           (onee_usb_paddle_values),
+        .cassette_out            (onee_cassette_out),
+        .speaker                 (onee_speaker),
+        .utility_strobe_pulse    (onee_utility_strobe_pulse),
+        .annunciators            (onee_annunciators),
+        .ioudis                  (onee_ioudis),
+        .paddle_active           (onee_paddle_active),
+        .paddle_trigger_pulse    (onee_paddle_trigger_pulse)
     );
 
     // Isolation asserts on the raw request before the guard may select the
@@ -186,7 +241,7 @@ module apple_top(
         .clk(clk),
         .rstn(rstn[1]),
         .ramworks_en(ramworks_en_q),
-        .ab_read(ab_read),
+        .ab_read(onee_softswitch_ab_read),
         .sss(sss)
     );
 
@@ -201,6 +256,7 @@ module apple_top(
     logic update_pulse;
     logic [8:0] line_in_frame;
     logic [6:0] cycle_in_line;
+    assign onee_video_vblank = (line_in_frame >= 9'd192);
     logic       video_mode_50hz_detected_q;
     logic       video_mode_50hz_valid_q;
     logic [6:0] detect_cycle_in_line;
@@ -415,6 +471,20 @@ module apple_top(
     wire card_slot4_enable = card_slot_enable_mask_q[4];
     wire card_slot5_enable = card_slot_enable_mask_q[5];
     wire card_slot6_enable = card_slot_enable_mask_q[6];
+    logic onee_slot7_cold_scan_q;
+    wire onee_slot7_cards_visible =
+        !onee_enable_effective || !onee_slot7_cold_scan_q;
+
+    // A stand-alone Enhanced //e scans down from slot 7. Keep all virtual
+    // slot-7 cards hidden until the first $C600 ROM probe lets Disk II answer.
+    onee_cold_slot_scan onee_cold_slot_scan_i (
+        .clk         (clk),
+        .resetn      (rstn[1]),
+        .enabled     (onee_enable_effective),
+        .ab_read     (ab_read),
+        .slot7_hidden(onee_slot7_cold_scan_q)
+    );
+
     // SuperSprite hardware and software require slot 7, which is also the
     // SmartPort slot. Enabling SuperSprite therefore gates off SmartPort, SD
     // storage, and the SmartPort GETDIB detection channel.
@@ -430,7 +500,7 @@ module apple_top(
         (card_slot2_enable ? 8'h04 : 8'h00) |
         (card_slot4_enable ? 8'h10 : 8'h00) |
         (card_slot6_enable ? 8'h40 : 8'h00) |
-        8'h80;
+        (onee_slot7_cards_visible ? 8'h80 : 8'h00);
     wire apple_reset_release =
         (reset_release_ready_q & RESET_RELEASE_READY_MASK) == RESET_RELEASE_READY_MASK;
     /* A2CTRL.RESET is the sole card-generated RESET assertion path. Merge
@@ -446,6 +516,12 @@ module apple_top(
     logic boot_target_disk2;
     logic vtw_core_run_eff_q;
     logic vtw_disk2_boot_scan_q;
+    wire disk2_bus_visible =
+        onee_enable_effective ||
+        (card_slot6_enable && disk2_active_timing_q);
+    wire disk2_live_handoff_serve =
+        !onee_enable_effective && card_slot6_enable && disk2_active &&
+        !disk2_active_timing_q;
     logic vtw_disk2_active;
     logic vtw_d2_req_valid;
     logic [3:0] vtw_d2_req_addr;
@@ -1141,7 +1217,9 @@ module apple_top(
         .ab_read(gate_ab(ab_read, card_slot5_enable)),
         .card_enabled(card_slot5_enable),
         .disk2_timing_active(disk2_sound_spinning),
-        .vtw_enabled(vtw_enable_eff),
+        // A stand-alone motherboard owns the only virtual bus even before
+        // vTW starts; the AD8088 bus-master path must stay stopped throughout.
+        .vtw_enabled(vtw_enable_eff || onee_enable_effective),
         .vtw_bus_owned(vtw_bus_owned),
         .slot_assign(3'h5),
         .as_common(as_common),
@@ -1204,7 +1282,9 @@ module apple_top(
     supersprite_card supersprite_card_i (
         .clk(clk),
         .rstn(rstn[2]),
-        .ab_read(gate_ab(ab_read, card_supersprite_enable)),
+        .ab_read(gate_ab(
+            ab_read,
+            card_supersprite_enable && onee_slot7_cards_visible)),
         .sss(sss),
         .slot_assign(3'h7),
         .vblank_tick(bm_vbl_cmd_pulse),
@@ -1225,12 +1305,8 @@ module apple_top(
     disk2_card disk2_card_i (
         .clk(clk),
         .rstn(rstn[2]),
-        .ab_read(gate_ab(
-            ab_read,
-            card_slot6_enable && disk2_active_timing_q)),
-        .rom_serve_en(ab_read.serve_en &&
-                      card_slot6_enable && disk2_active &&
-                      !disk2_active_timing_q),
+        .ab_read(gate_ab(ab_read, disk2_bus_visible)),
+        .rom_serve_en(ab_read.serve_en && disk2_live_handoff_serve),
         .sss(sss),
         .slot_assign(3'h6),
         .as_common(as_common),
@@ -1298,9 +1374,16 @@ module apple_top(
 
     /* vTW SmartPort short-circuit port (vtw_core_top <-> smartport_card). */
     wire vtw_smartport_visible =
-        smartport_active && !card_supersprite_enable &&
-        !vtw_disk2_boot_scan_q;
-    wire         vtw_sp_active = vtw_smartport_visible;
+        !card_supersprite_enable &&
+        (onee_enable_effective || smartport_active) &&
+        !vtw_disk2_boot_scan_q &&
+        onee_slot7_cards_visible;
+    // ONE//e keeps SmartPort on the synthetic slot-pin bus. Only a physical
+    // accelerated host may use vTW's private SmartPort shortcut.
+    wire         vtw_sp_active =
+        !onee_enable_effective && vtw_smartport_visible;
+    wire         vtw_sp_boot_suppress =
+        !onee_enable_effective && vtw_disk2_boot_scan_q;
     logic        vtw_sp_req_valid;
     logic [2:0]  vtw_sp_req_target;
     logic [10:0] vtw_sp_req_addr;
@@ -1402,7 +1485,9 @@ module apple_top(
     boot_menu_card boot_menu_card_i (
         .clk(clk),
         .rstn(rstn[2]),
-        .ab_read(ab_read),
+        // The stand-alone machine has its own cold slot order. Keep both the
+        // virtual cycles and resets out of the physical-host boot-menu state.
+        .ab_read(gate_ab(physical_ab_read, !onee_enable_effective)),
         .sss(sss),
         .disk2_enabled(card_slot6_enable),
         .apple_video_mode_valid(video_mode_50hz_valid_q),
@@ -1576,7 +1661,8 @@ module apple_top(
             disk2_active_timing_q <= disk2_active;
     end
 
-    assign vtw_disk2_active = vtw_core_run_eff && vtw_bus_owned &&
+    assign vtw_disk2_active = !onee_enable_effective &&
+                              vtw_core_run_eff && vtw_bus_owned &&
                               card_slot6_enable && disk2_active_timing_q &&
                               !vtw_ctrl_q[7];
     wire vtw_slot6_boot_probe =
@@ -1641,6 +1727,7 @@ module apple_top(
         .rstn(rstn[1]),
         .enable(vtw_enable_eff),
         .host_is_iiplus(vtw_host_is_iiplus_eff),
+        .virtual_motherboard(onee_enable_effective),
         .core_run(vtw_ctrl_q[1]),
         .assert_apple_res(vtw_ctrl_q[4]),
         .speed_mode(vtw_ctrl_q[3:2]),
@@ -1683,7 +1770,9 @@ module apple_top(
         .rw_resp_valid(vtw_rw_resp_valid),
         .rw_resp_rline(vtw_rw_resp_rline),
         .sp_active(vtw_sp_active),
-        .sp_boot_suppress(vtw_disk2_boot_scan_q),
+        // ONE//e hides slot 7 at the card bus gate, so its unclaimed reads
+        // still get scanner data. The private suppression is physical-only.
+        .sp_boot_suppress(vtw_sp_boot_suppress),
         .sp_req_valid(vtw_sp_req_valid),
         .sp_req_target(vtw_sp_req_target),
         .sp_req_addr(vtw_sp_req_addr),
@@ -1742,18 +1831,21 @@ module apple_top(
     );
 
     // apple_bus_write_arbiter merges virtual-card responses and control-line
-    // requests before they reach apple_bus_wrapper. The vTW is prepended so
-    // every existing client keeps its index. vTW and AD8088 can both drive
-    // address/RW, but applicard_card blocks AD8088 whenever vTW is enabled,
-    // so the two bus masters cannot contend at this priority mux.
+    // requests before they reach apple_bus_wrapper. ONE//e is appended at the
+    // high index, so every existing client keeps its index. vTW and AD8088 can
+    // both drive address/RW, but applicard_card blocks AD8088 whenever vTW or
+    // the stand-alone motherboard is enabled.
     apple_bus_write_arbiter #(
-        .NUM_CLIENTS(12),
+        .NUM_CLIENTS(13),
         .FAST_DATA_CLIENT(2),
         .FAST_ADDR_CLIENT(11)
     )
     apple_bus_write_arbiter_i(
-        .inh_allowed(machine_inh_allowed),
+        // INH is an internal virtual line in ONE//e. The physical wrapper
+        // still receives a zeroed write record while isolation is asserted.
+        .inh_allowed(machine_inh_allowed || onee_enable_effective),
         .client_writes({
+            onee_motherboard_ab_write,
             vtw_ab_write,
             brain_transplant_write,
             mb1_ab_write,

@@ -47,6 +47,10 @@ module vtw_core_top (
     /* Session-latched physical host type. It selects only the electrically
      * safe parked-bus address; the accelerated personality remains a //e. */
     input  logic                    host_is_iiplus,
+    /* The bus is the isolated ONE//e motherboard rather than a physical
+     * Apple. Motherboard keyboard/status/button reads must then use the
+     * shared responder, and every unclaimed bus read gets scanner data. */
+    input  logic                    virtual_motherboard,
     /* ARM releases the core after the boot ROM copy. While low the core
      * is held in reset and the ARM owns the sync-cycle port. */
     input  logic                    core_run,
@@ -502,7 +506,8 @@ module vtw_core_top (
      * even on a //e this saves a bus round-trip). These addresses have no
      * read side effects. $C000 (keyboard data) and $C010 (strobe clear)
      * keep their real-bus semantics and are excluded. */
-    wire xl_c01x_rd = xl_is_bus && cycle_rw_q &&
+    wire xl_c01x_rd = !virtual_motherboard &&
+                      xl_is_bus && cycle_rw_q &&
                       (cycle_addr_q[15:4] == 12'hC01) &&
                       (cycle_addr_q[3:0] != 4'h0);
 
@@ -511,7 +516,8 @@ module vtw_core_top (
      * iiplus_buttons_zero port comment). These reads have no side
      * effects, so skipping the bus cycle is faithful. $C060 (cassette
      * in) keeps real-bus semantics. */
-    wire xl_btn_rd = xl_is_bus && cycle_rw_q && iiplus_buttons_zero &&
+    wire xl_btn_rd = !virtual_motherboard &&
+                     xl_is_bus && cycle_rw_q && iiplus_buttons_zero &&
                      (cycle_addr_q[15:2] == 14'h3018) &&
                      (cycle_addr_q[1:0] != 2'b00);
 
@@ -1046,6 +1052,19 @@ module vtw_core_top (
         (cycle_addr_q[15:8] == 8'hC0) &&
         (cycle_addr_q[7:4] >= 4'h3) &&
         (cycle_addr_q[7:4] <= 4'h5);
+    // A physical host needs the scanner override only for the known fully
+    // floating range. ONE//e has no physical motherboard fallback, so fetch
+    // the scanner byte for every X_BUS read and use it whenever no merged
+    // client claimed the cycle.
+    wire scanner_bus_read = cycle_rw_q &&
+                            (full_floating_read || virtual_motherboard);
+    wire virtual_motherboard_status_read =
+        virtual_motherboard &&
+        (cycle_addr_q[15:8] == 8'hC0) &&
+        (((cycle_addr_q[7:4] == 4'h1) &&
+          (cycle_addr_q[3:0] != 4'h0)) ||
+         (cycle_addr_q[7:4] == 4'h6) ||
+         (cycle_addr_q[7:1] == 7'h3F));
     /* The byte a CPU sees during PHI0-high is the scanner fetch from two
      * native slots earlier. Rewind the complete position so cycle 0/1 also
      * select the correct previous scanline and NTSC/PAL frame. */
@@ -1061,13 +1080,14 @@ module vtw_core_top (
                             cycle_video_80store_q);
     logic [15:0] floating_scan_addr_q;
     wire floating_scan_addr_latch =
-        core_active && (xstate_q == X_BUS) && full_floating_read &&
+        core_active && (xstate_q == X_BUS) && scanner_bus_read &&
         ab_read.serve_en && ab_read.rw &&
         (ab_read.addr == cycle_addr_q);
     wire floating_scan_issue =
-        core_active && (xstate_q == X_BUS) && full_floating_read &&
+        core_active && (xstate_q == X_BUS) && scanner_bus_read &&
         ab_read.data_en && ab_read.rw &&
         (ab_read.addr == cycle_addr_q);
+    logic onee_bus_data_claimed_q;
     wire core_shadow_issue =
         (xstate_q == X_ROUTE) && xl_shadow_valid && core_res_n;
 
@@ -1082,9 +1102,18 @@ module vtw_core_top (
     always_ff @(posedge clk) begin
         if (!rstn) begin
             floating_scan_addr_q <= '0;
+            onee_bus_data_claimed_q <= 1'b0;
         end
         else if (floating_scan_addr_latch) begin
             floating_scan_addr_q <= floating_scan_addr;
+        end
+        if (!rstn || !virtual_motherboard) begin
+            onee_bus_data_claimed_q <= 1'b0;
+        end
+        else if (core_active && (xstate_q == X_BUS) &&
+                 ab_read.data_en && ab_read.rw &&
+                 (ab_read.addr == cycle_addr_q)) begin
+            onee_bus_data_claimed_q <= data_drive_in;
         end
     end
 
@@ -1577,7 +1606,14 @@ module vtw_core_top (
                          * The physical bus cycle still performed any side
                          * effect. The BRAM read was issued at data_en one
                          * fabric clock before this response is observed. */
-                        if (full_floating_read) begin
+                        if (virtual_motherboard &&
+                            !onee_bus_data_claimed_q) begin
+                            core_data_in_q <= shadow_a_rdata;
+                        end else if (virtual_motherboard_status_read) begin
+                            core_data_in_q <= {
+                                eng_resp_rdata[7], shadow_a_rdata[6:0]
+                            };
+                        end else if (full_floating_read) begin
                             core_data_in_q <= shadow_a_rdata;
                         end else begin
                             core_data_in_q <= eng_resp_rdata;

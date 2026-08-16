@@ -542,10 +542,10 @@ def test_no_vidhd_identity_and_slot_layout() -> None:
             "VidHD identity card must not be in the Vivado source list")
     require("vidhd_card" not in top,
             "no VidHD card may be instantiated")
-    # 12 clients = the post-VidHD clients, ImageWriter, and the virtual
-    # TransWarp bus master; the VidHD client itself must stay gone.
+    # 13 clients = the post-VidHD clients, ImageWriter, virtual TransWarp bus
+    # master, and ONE//e motherboard; the VidHD client itself must stay gone.
     require("apple_bus_write_arbiter #(" in top and
-            ".NUM_CLIENTS(12)" in top and
+            ".NUM_CLIENTS(13)" in top and
             "ssc_ab_write" in top and
             "vidhd_ab_write" not in top,
             "bus write arbiter must not include a VidHD client")

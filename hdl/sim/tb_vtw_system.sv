@@ -212,6 +212,7 @@ module tb_vtw_system;
         .rstn(rstn),
         .enable(enable),
         .host_is_iiplus(1'b0),
+        .virtual_motherboard(1'b0),
         .core_run(core_run),
         .assert_apple_res(tb_assert_res),
         .speed_mode(speed_mode),  // starts with full-rate bursts

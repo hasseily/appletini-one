@@ -165,11 +165,12 @@ def static_checks() -> None:
 
     # PL integration
     require("vtw_core_top vtw_core_top_i" in top and
-            ".NUM_CLIENTS(12)" in top and
+            ".NUM_CLIENTS(13)" in top and
             ".FAST_DATA_CLIENT(2)" in top and
             ".FAST_ADDR_CLIENT(11)" in top and
+            "onee_motherboard_ab_write," in top and
             "vtw_ab_write," in top,
-            "apple_top must instantiate the vTW in the 12-client arbiter")
+            "apple_top must retain the vTW indices in the 13-client ONE//e arbiter")
     require("parameter integer FAST_ADDR_CLIENT = -1" in arbiter and
             "logic other_addr_rw_en;" in arbiter and
             "LUT2 #(.INIT(4'hE)) apple_addr_enable_lut" in arbiter and
@@ -250,10 +251,11 @@ def static_checks() -> None:
                 r"\bsp_req_target_q\s*<=\s*sp_req_target_d\s*;",
                 core_top, re.DOTALL) is not None,
             "X_ROUTE must capture the SmartPort target before X_SP_ISSUE")
-    require("wire         vtw_sp_active = vtw_smartport_visible;" in top and
+    require("wire         vtw_sp_active =\n"
+            "        !onee_enable_effective && vtw_smartport_visible;" in top and
             ".sp_active(vtw_sp_active)" in top and
             ".vtw_valid(vtw_sp_req_valid)" in top,
-            "apple_top must gate the short-circuit on SmartPort owning slot 7 and wire the port")
+            "apple_top must limit the SmartPort shortcut to the physical host and wire the port")
     require("xl_is_overlay_post" in core_top and
             "overlay_capture_armed" in core_top and
             "xl_decoded[16] == overlay_capture_bank_aux" in core_top and
@@ -267,7 +269,9 @@ def static_checks() -> None:
             "vtw_disk2_boot_scan_q <= boot_target_disk2;" in top and
             "vtw_slot6_boot_probe" in top and
             "!vtw_disk2_boot_scan_q" in top and
-            ".sp_boot_suppress(vtw_disk2_boot_scan_q)" in top,
+            "wire         vtw_sp_boot_suppress =\n"
+            "        !onee_enable_effective && vtw_disk2_boot_scan_q;" in top and
+            ".sp_boot_suppress(vtw_sp_boot_suppress)" in top,
             "vTW Disk II cold boots must hide slot 7 only until the accelerated scan probes slot 6")
     require("assign boot_target_disk2 = handoff_disk2;" in boot_card,
             "boot_menu_card must export the resolved Disk II handoff target to vTW")
@@ -344,21 +348,24 @@ def static_checks() -> None:
     require("logic disk2_active_timing_q;" in top and
             "if (!rstn[1])\n            disk2_active_timing_q <= 1'b0;" in top and
             "disk2_active_timing_q <= disk2_active;" in top and
-            ".ab_read(gate_ab(" in top and
-            "card_slot6_enable && disk2_active_timing_q))" in top and
-            ".rom_serve_en(ab_read.serve_en &&" in top and
-            "card_slot6_enable && disk2_active &&" in top and
-            "!disk2_active_timing_q)" in top and
+            "wire disk2_bus_visible =\n"
+            "        onee_enable_effective ||\n"
+            "        (card_slot6_enable && disk2_active_timing_q);" in top and
+            ".ab_read(gate_ab(ab_read, disk2_bus_visible))" in top and
+            "wire disk2_live_handoff_serve =\n"
+            "        !onee_enable_effective && card_slot6_enable && disk2_active &&\n"
+            "        !disk2_active_timing_q;" in top and
+            ".rom_serve_en(ab_read.serve_en && disk2_live_handoff_serve)" in top and
             "wire rom_read_serve = ab_read.serve_en || rom_serve_en;" in disk2 and
             "wire ab_rom_read = rom_read_serve && ab_read.rw && slot_rom_hit;" in disk2 and
-            "assign vtw_disk2_active = vtw_core_run_eff && vtw_bus_owned" in top and
+            "assign vtw_disk2_active = !onee_enable_effective &&" in top and
+            "vtw_core_run_eff && vtw_bus_owned" in top and
             "card_slot6_enable && disk2_active_timing_q" in top and
             "!vtw_ctrl_q[7];" in top and
             ".vtw_active(vtw_disk2_active)" in top and
             ".d2_active(vtw_disk2_active)" in top,
-            "apple_top must stage the boot-menu Disk II gate for vTW, then enable both "
-            "private-port consumers only during bus ownership and while compatibility "
-            "disable is clear")
+            "apple_top must force slot 6 onto the ONE//e bus while keeping the physical "
+            "handoff staging and both vTW private-port consumers physical-host only")
     require("wire disk_cycle_tick" in disk2_card and
             "vtw_native_cycle_active" in disk2_card and
             "(vtw_cycle_tick || vtw_io_read);" in disk2_card and

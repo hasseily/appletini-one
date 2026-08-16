@@ -145,7 +145,8 @@ module tb_vtw_disk2_speed_matrix;
 
     vtw_core_top dut (
         .clk(clk), .rstn(rstn), .enable(enable),
-        .host_is_iiplus(1'b0), .core_run(core_run),
+        .host_is_iiplus(1'b0), .virtual_motherboard(1'b0),
+        .core_run(core_run),
         .assert_apple_res(1'b0),
         .speed_mode(speed_mode), .pace_divider(pace_divider),
         .ignore_c074(1'b0),

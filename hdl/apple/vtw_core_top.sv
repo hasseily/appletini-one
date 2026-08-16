@@ -968,6 +968,13 @@ module vtw_core_top (
      * per-cycle address; the counter is (re)loaded and decremented in the
      * main always_ff beside the $C074 latch. */
     logic [15:0] slow_cnt_q;
+    /* Apply slowdown bookkeeping one fabric clock after the accepted CPU
+     * cycle. The core cannot complete another cycle in that interval, so
+     * this preserves Apple-cycle timing while keeping Disk II readiness out
+     * of the wide slow-counter enable cone. */
+    (* KEEP = "TRUE" *) logic slow_update_valid_q;
+    logic                       slow_update_hit_q;
+    logic [15:0]                slow_update_duration_q;
     wire         slow_active = (slow_cnt_q != 16'd0);
 
     wire         sd_is_c0xx  = (cycle_addr_q[15:8] == 8'hC0);
@@ -1175,6 +1182,7 @@ module vtw_core_top (
                            (!status_vbl_data_phase_q ||
                             status_vbl_sampled_q);
     wire complete_dead   = (xstate_q == X_DEAD)        && pace_ok;
+
     assign core_en = core_res_n && !rw_hold_q &&
                      d2_time_ready &&
                      (complete_mem || complete_bus ||
@@ -1254,6 +1262,9 @@ module vtw_core_top (
             d2_cycle_tick_q     <= 1'b0;
             sp_inflight_q       <= 1'b0;
             slow_cnt_q          <= 16'd0;
+            slow_update_valid_q <= 1'b0;
+            slow_update_hit_q   <= 1'b0;
+            slow_update_duration_q <= 16'd0;
         end
         else begin
             arm_rw_flush_done <= 1'b0;
@@ -1423,18 +1434,24 @@ module vtw_core_top (
                     (cycle_wdata_q == 8'd1 || cycle_wdata_q == 8'd2);
             end
 
-            // Per-region slowdown one-shot: (re)arm to slow_duration when a
-            // completing cycle hits an enabled region, else count down. The
-            // counter meters Apple cycles: while it is nonzero the core is
-            // 1 MHz-locked, so one core_en fires per Apple cycle.
-            if (core_en && sd_hit) begin
-                slow_cnt_q <= slow_duration;
+            // Per-region slowdown one-shot: capture each completed cycle,
+            // then apply its update on the next fabric edge. X_CAPTURE and
+            // X_ROUTE separate CPU completions by more than one edge, so the
+            // counter is current before the next cycle can complete.
+            slow_update_valid_q <= core_en;
+            if (core_en) begin
+                slow_update_hit_q      <= sd_hit;
+                slow_update_duration_q <= slow_duration;
             end
-            else if (core_en && slow_cnt_q != 16'd0) begin
+            if (slow_update_valid_q && slow_update_hit_q) begin
+                slow_cnt_q <= slow_update_duration_q;
+            end
+            else if (slow_update_valid_q && slow_cnt_q != 16'd0) begin
                 slow_cnt_q <= slow_cnt_q - 16'd1;
             end
             if (!ab_read.res) begin
-                slow_cnt_q <= 16'd0;
+                slow_cnt_q          <= 16'd0;
+                slow_update_valid_q <= 1'b0;
             end
 
             unique case (xstate_q)

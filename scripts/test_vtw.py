@@ -328,6 +328,11 @@ def static_checks() -> None:
             "!cycle_addr_q[0] && !d2_write_timing_active" in core_top and
             "wire sd_disk2_native = sd_disk2 && !d2_fast_hit;" in core_top,
             "vTW may bypass the Apple bus only for even Disk II reads")
+    require("logic slow_update_valid_q;" in core_top and
+            "slow_update_valid_q <= core_en;" in core_top and
+            "if (slow_update_valid_q && slow_update_hit_q)" in core_top and
+            "d2_time_ready &&" in core_top,
+            "vTW must stage slowdown bookkeeping without delaying Disk II holds")
     require("wire d2_cycle_tick_accept =\n"
             "        core_en && d2_active && !private_d2_q && !sd_disk2_native;"
             in core_top and

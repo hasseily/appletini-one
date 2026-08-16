@@ -274,6 +274,9 @@ module appletini_yarz_top (
     logic signed [15:0] mockingboard_audio_r;
     logic signed [15:0] disk2_audio_l;
     logic signed [15:0] disk2_audio_r;
+    logic signed [15:0] onee_audio_mono;
+    logic signed [15:0] card_audio_l;
+    logic signed [15:0] card_audio_r;
     logic signed [15:0] mixed_audio_l;
     logic signed [15:0] mixed_audio_r;
     logic menu_chime_start;
@@ -783,6 +786,7 @@ module appletini_yarz_top (
         .mockingboard_audio_r(mockingboard_audio_r),
         .disk2_audio_l(disk2_audio_l),
         .disk2_audio_r(disk2_audio_r),
+        .onee_audio_mono(onee_audio_mono),
         .menu_chime_start(menu_chime_start),
         .audio_sample_tick(audio_sample_resend),
         .axi_hp1_read(s_axi_hp1_read),
@@ -847,8 +851,10 @@ module appletini_yarz_top (
         end
     end
 
-    assign mixed_audio_l = sat_add16(mockingboard_audio_l, disk2_audio_l);
-    assign mixed_audio_r = sat_add16(mockingboard_audio_r, disk2_audio_r);
+    assign card_audio_l = sat_add16(mockingboard_audio_l, disk2_audio_l);
+    assign card_audio_r = sat_add16(mockingboard_audio_r, disk2_audio_r);
+    assign mixed_audio_l = sat_add16(card_audio_l, onee_audio_mono);
+    assign mixed_audio_r = sat_add16(card_audio_r, onee_audio_mono);
     assign mockingboard_audio_24_fclk = {
         mixed_audio_l, 8'h00,
         mixed_audio_r, 8'h00

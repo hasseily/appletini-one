@@ -49,6 +49,7 @@ module apple_top(
     output logic signed [15:0] mockingboard_audio_r,
     output logic signed [15:0] disk2_audio_l,
     output logic signed [15:0] disk2_audio_r,
+    output logic signed [15:0] onee_audio_mono,
     output logic menu_chime_start,
     input  logic audio_sample_tick,
 
@@ -106,15 +107,13 @@ module apple_top(
     globals::SoftSwitchState sss;
     logic ramworks_en_q;  // RamWorks 8 MB expansion, card-control register 0x62
 
-    // Named neutral inputs keep the motherboard-I/O boundary ready for a
-    // later USB/register bridge without putting PS policy in this checkpoint.
-    wire       onee_usb_keyboard_event_valid = 1'b0;
-    wire [6:0] onee_usb_keyboard_event_code = 7'h00;
-    wire       onee_usb_keyboard_any_down = 1'b0;
-    wire [2:0] onee_usb_keyboard_modifiers = 3'b000;
-    wire [2:0] onee_usb_pushbuttons = 3'b000;
+    wire       onee_usb_keyboard_event_valid;
+    wire [6:0] onee_usb_keyboard_event_code;
+    wire       onee_usb_keyboard_any_down;
+    wire [2:0] onee_usb_keyboard_modifiers;
+    wire [2:0] onee_usb_pushbuttons;
     wire       onee_usb_cassette_in = 1'b0;
-    wire [31:0] onee_usb_paddle_values = 32'h8080_8080;
+    wire [31:0] onee_usb_paddle_values;
     wire [7:0] onee_floating_bus_data = 8'hFF;
     wire       onee_usb_keyboard_event_ready;
     wire [2:0] onee_keyboard_modifiers_state;
@@ -128,6 +127,11 @@ module apple_top(
     wire [3:0] onee_paddle_active;
     wire       onee_paddle_trigger_pulse;
     wire       onee_video_vblank;
+    wire       onee_warm_reset_request;
+    wire       onee_warm_reset_ack;
+    wire       onee_virtual_res_n;
+    logic [31:0] onee_input_ps_rdata;
+    logic signed [15:0] onee_audio_mono_raw;
 
     // ONE//e stand-alone selection. This build has no Apple-slot power-sense
     // pin, so the guard's level veto is tied low and bit 13 of CARD_CTRL 0x5B
@@ -178,10 +182,51 @@ module apple_top(
         .inhibit_reason         (onee_inhibit_reason)
     );
 
+    wire onee_input_ps_wr_en = as_client.awvalid &&
+        (as_common.awaddr >= 8'h5C) && (as_common.awaddr <= 8'h5F) &&
+        (as_common.wstrb != 4'b0000);
+
+    onee_input_bridge onee_input_bridge_i (
+        .clk                    (clk),
+        .resetn                 (rstn[1]),
+        .enabled                (onee_enable_effective),
+        .ps_wr_en               (onee_input_ps_wr_en),
+        .ps_addr                (as_common.awaddr),
+        .ps_wdata               (as_common.wdata),
+        .ps_read_addr           (as_common.araddr),
+        .ps_rdata               (onee_input_ps_rdata),
+        .keyboard_event_valid   (onee_usb_keyboard_event_valid),
+        .keyboard_event_ready   (onee_usb_keyboard_event_ready),
+        .keyboard_event_code    (onee_usb_keyboard_event_code),
+        .keyboard_any_down      (onee_usb_keyboard_any_down),
+        .keyboard_modifiers     (onee_usb_keyboard_modifiers),
+        .pushbuttons             (onee_usb_pushbuttons),
+        .paddle_values          (onee_usb_paddle_values),
+        .warm_reset_request     (onee_warm_reset_request),
+        .warm_reset_ack         (onee_warm_reset_ack)
+    );
+
+    // A warm reset remains on the private bus for eight complete 1 MHz
+    // cycles. The acknowledge clears the bridge's held request. This signal
+    // never enters apple_bus_wrapper or the physical RESET-pin path.
+    onee_warm_reset_ctrl #(
+        .MIN_NATIVE_CYCLES(8)
+    ) onee_warm_reset_ctrl_i (
+        .clk                    (clk),
+        .resetn                 (rstn[1]),
+        .enabled                (onee_enable_effective),
+        .request                (onee_warm_reset_request),
+        .native_cycle_tick      (virtual_ab_read.data_en &&
+                                 virtual_ab_read.cycle_valid),
+        .virtual_res_n          (onee_virtual_res_n),
+        .acknowledge            (onee_warm_reset_ack),
+        .active                 ()
+    );
+
     apple_virtual_bus apple_virtual_bus_i (
         .clk              (clk),
         .resetn           (rstn[1]),
-        .res_n_in         (1'b1),
+        .res_n_in         (onee_virtual_res_n),
         .irq_n_in         (1'b1),
         .nmi_n_in         (1'b1),
         .rdy_n_in         (1'b1),
@@ -228,6 +273,20 @@ module apple_top(
         .paddle_active           (onee_paddle_active),
         .paddle_trigger_pulse    (onee_paddle_trigger_pulse)
     );
+
+    onee_speaker_audio onee_speaker_audio_i (
+        .clk              (clk),
+        .resetn           (rstn[1]),
+        .enabled          (onee_enable_effective),
+        .speaker_level    (onee_speaker),
+        .audio_sample_tick(audio_sample_tick),
+        .audio_mono       (onee_audio_mono_raw)
+    );
+
+    // The raw activity guard can remove effective mode between clocks.
+    // Mask the audio at the same boundary as the virtual bus outputs.
+    assign onee_audio_mono = onee_enable_effective ? onee_audio_mono_raw :
+                                                      16'sd0;
 
     // Isolation asserts on the raw request before the guard may select the
     // virtual bus. The physical wrapper receives no requests while isolated;
@@ -325,6 +384,10 @@ module apple_top(
     // [13] power-sense pin fitted (0 on this board), [14] sensed power,
     // [15] ONE//e HDL present, [31:24] register signature/version 8'hE1.
     localparam logic [7:0] CARD_CTRL_REG_ONEE         = 8'h5B;
+    localparam logic [7:0] CARD_CTRL_REG_ONEE_KEY_FIFO = 8'h5C;
+    localparam logic [7:0] CARD_CTRL_REG_ONEE_LIVE     = 8'h5D;
+    localparam logic [7:0] CARD_CTRL_REG_ONEE_PADDLES  = 8'h5E;
+    localparam logic [7:0] CARD_CTRL_REG_ONEE_CONTROL  = 8'h5F;
     localparam logic [7:0] CARD_CTRL_REG_VTW_WR_CHECK = 8'h36;
     localparam logic [7:0] CARD_CTRL_REG_VTW_WR_ADDR  = 8'h37;
     localparam logic [7:0] CARD_CTRL_REG_VTW_C000_CTX = 8'h38;
@@ -1894,6 +1957,8 @@ module apple_top(
     //   araddr/awaddr 0x10: Disk II mechanical sound sample table base address.
     //   araddr/awaddr 0x11: Disk II mechanical sound control, bit 0 enables,
     //                         [11:8] volume, write-only [19:16] menu event.
+    //   araddr/awaddr 0x5C-0x5F: ONE//e USB key FIFO, live keys/buttons,
+    //                         paddles, and virtual warm-reset control.
     //
     // rdata MUST be registered (not always_comb): the axidouble crossbar's
     // addrdecode is OPT_REGISTERED=1 without OPT_LOWPOWER, so it advances
@@ -2362,6 +2427,14 @@ module apple_top(
                     onee_enable_effective,
                     onee_request_q
                 };
+                CARD_CTRL_REG_ONEE_KEY_FIFO:
+                    as_client_rdata_q <= onee_input_ps_rdata;
+                CARD_CTRL_REG_ONEE_LIVE:
+                    as_client_rdata_q <= onee_input_ps_rdata;
+                CARD_CTRL_REG_ONEE_PADDLES:
+                    as_client_rdata_q <= onee_input_ps_rdata;
+                CARD_CTRL_REG_ONEE_CONTROL:
+                    as_client_rdata_q <= onee_input_ps_rdata;
                 8'h60:   as_client_rdata_q <= {29'b0,
                                                machine_m2sel_active_high,
                                                machine_mode_q};

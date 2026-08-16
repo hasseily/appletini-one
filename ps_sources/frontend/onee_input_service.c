@@ -13,6 +13,11 @@
 
 #define ONEE_INPUT_KEY_TRACK_COUNT 8U
 #define ONEE_INPUT_QUEUE_DEPTH 32U
+/* Repeat timing counts active calls to onee_input_service_poll(). The USB HID
+ * loop calls it at stable points before and after report work. A held key gets
+ * its first repeat after 1000 polls, then one repeat every 100 polls. */
+#define ONEE_INPUT_REPEAT_DELAY_POLLS 1000U
+#define ONEE_INPUT_REPEAT_RATE_POLLS   100U
 
 #define ONEE_INPUT_KEY_FIFO_REG       CARD_CTRL_REG_ADDR(0x5CU)
 #define ONEE_INPUT_LIVE_REG           CARD_CTRL_REG_ADDR(0x5DU)
@@ -51,6 +56,7 @@ typedef struct {
     uint8_t modifier;
     uint8_t key_count;
     uint8_t keys[ONEE_INPUT_KEY_TRACK_COUNT];
+    uint32_t key_press_order[ONEE_INPUT_KEY_TRACK_COUNT];
     uint8_t reset_chord_down;
     uint8_t joystick_seen;
     uint8_t joystick_buttons;
@@ -69,6 +75,11 @@ static uint8_t g_session_active;
 static uint8_t g_live_dirty;
 static uint8_t g_paddles_dirty;
 static uint8_t g_reset_pending;
+static uint32_t g_repeat_press_sequence;
+static uint32_t g_repeat_countdown;
+static uint8_t g_repeat_valid;
+static uint8_t g_repeat_slot;
+static uint8_t g_repeat_usage;
 
 static uint8_t onee_key_in_report(uint8_t key,
                                   const uint8_t *keys,
@@ -200,6 +211,102 @@ static uint8_t onee_ascii_from_usage(uint8_t usage,
     }
 }
 
+static void onee_repeat_cancel(void)
+{
+    g_repeat_valid = 0U;
+    g_repeat_slot = 0U;
+    g_repeat_usage = 0U;
+    g_repeat_countdown = 0U;
+}
+
+static void onee_repeat_clear_press_orders(void)
+{
+    for (uint8_t slot = 0U; slot < ONEE_INPUT_DEVICE_SLOT_COUNT; ++slot) {
+        memset(g_slots[slot].key_press_order,
+               0,
+               sizeof(g_slots[slot].key_press_order));
+    }
+    g_repeat_press_sequence = 0U;
+    onee_repeat_cancel();
+}
+
+static uint8_t onee_repeatable_usage(uint8_t usage,
+                                     uint8_t modifier)
+{
+    if (usage == HID_KBD_USAGE_CAPSLOCK ||
+        usage == HID_KBD_USAGE_PAUSE) {
+        return 0U;
+    }
+    return (onee_ascii_from_usage(usage, modifier, g_caps_lock) != 0U) ?
+           1U : 0U;
+}
+
+static void onee_repeat_reselect(void)
+{
+    uint32_t best_order = 0U;
+    uint8_t best_slot = 0U;
+    uint8_t best_usage = 0U;
+
+    if (g_session_active == 0U) {
+        onee_repeat_cancel();
+        return;
+    }
+    for (uint8_t slot = 0U; slot < ONEE_INPUT_DEVICE_SLOT_COUNT; ++slot) {
+        const onee_input_slot_t *input = &g_slots[slot];
+        for (uint8_t key = 0U; key < input->key_count; ++key) {
+            const uint32_t order = input->key_press_order[key];
+            const uint8_t usage = input->keys[key];
+            if (order > best_order &&
+                onee_repeatable_usage(usage, input->modifier) != 0U) {
+                best_order = order;
+                best_slot = slot;
+                best_usage = usage;
+            }
+        }
+    }
+    if (best_order == 0U) {
+        onee_repeat_cancel();
+        return;
+    }
+    if (g_repeat_valid == 0U ||
+        g_repeat_slot != best_slot ||
+        g_repeat_usage != best_usage) {
+        g_repeat_valid = 1U;
+        g_repeat_slot = best_slot;
+        g_repeat_usage = best_usage;
+        g_repeat_countdown = ONEE_INPUT_REPEAT_DELAY_POLLS;
+    }
+}
+
+static void onee_repeat_poll(void)
+{
+    uint8_t code;
+
+    if (g_repeat_valid == 0U ||
+        g_repeat_slot >= ONEE_INPUT_DEVICE_SLOT_COUNT) {
+        return;
+    }
+    if (g_repeat_countdown > 1U) {
+        --g_repeat_countdown;
+        return;
+    }
+
+    /* Repeat uses the key's current modifier byte and the current Caps Lock
+     * state. Changing Shift or Control while a key stays down therefore
+     * changes the next repeated character without creating a new key edge. */
+    code = onee_ascii_from_usage(g_repeat_usage,
+                                  g_slots[g_repeat_slot].modifier,
+                                  g_caps_lock);
+    if (code == 0U ||
+        onee_repeatable_usage(g_repeat_usage,
+                              g_slots[g_repeat_slot].modifier) == 0U) {
+        onee_repeat_reselect();
+        return;
+    }
+    onee_key_queue_push(code);
+    g_repeat_countdown = ONEE_INPUT_REPEAT_RATE_POLLS;
+}
+
 static uint8_t onee_normalize_axis(int32_t value,
                                    int32_t logical_min,
                                    int32_t logical_max)
@@ -297,6 +404,7 @@ static void onee_input_session_stop(void)
     g_caps_lock = 0U;
     g_reset_pending = 0U;
     onee_key_queue_clear();
+    onee_repeat_clear_press_orders();
 }
 
 void onee_input_service_init(void)
@@ -309,6 +417,8 @@ void onee_input_service_init(void)
     g_live_dirty = 1U;
     g_paddles_dirty = 1U;
     g_reset_pending = 0U;
+    g_repeat_press_sequence = 0U;
+    onee_repeat_cancel();
     onee_key_queue_clear();
 }
 
@@ -328,6 +438,7 @@ void onee_input_service_poll(void)
         g_caps_lock = 0U;
         g_reset_pending = 0U;
         onee_key_queue_clear();
+        onee_repeat_clear_press_orders();
         REG_WRITE(ONEE_INPUT_CONTROL_REG,
                   ONEE_INPUT_CONTROL_OVERFLOW_CLEAR_BIT |
                   ONEE_INPUT_CONTROL_FIFO_FLUSH_BIT |
@@ -349,6 +460,8 @@ void onee_input_service_poll(void)
         g_reset_pending = 0U;
     }
 
+    onee_repeat_poll();
+
     if (g_key_queue_count == 0U) {
         return;
     }
@@ -368,6 +481,7 @@ uint8_t onee_input_service_keyboard_report(uint8_t slot_index,
 {
     onee_input_slot_t *slot;
     uint8_t next_keys[ONEE_INPUT_KEY_TRACK_COUNT];
+    uint32_t next_press_order[ONEE_INPUT_KEY_TRACK_COUNT];
     uint8_t next_count = 0U;
     uint8_t reset_chord;
 
@@ -380,6 +494,7 @@ uint8_t onee_input_service_keyboard_report(uint8_t slot_index,
     }
     slot = &g_slots[slot_index];
     memset(next_keys, 0, sizeof(next_keys));
+    memset(next_press_order, 0, sizeof(next_press_order));
     for (uint32_t i = 0U; i < key_count; ++i) {
         const uint8_t usage = keys[i];
         if (usage <= HID_KBD_USAGE_ERRUNDEF ||
@@ -388,6 +503,14 @@ uint8_t onee_input_service_keyboard_report(uint8_t slot_index,
             continue;
         }
         next_keys[next_count++] = usage;
+    }
+    for (uint8_t next = 0U; next < next_count; ++next) {
+        for (uint8_t old = 0U; old < slot->key_count; ++old) {
+            if (next_keys[next] == slot->keys[old]) {
+                next_press_order[next] = slot->key_press_order[old];
+                break;
+            }
+        }
     }
     reset_chord = (uint8_t)(g_session_active != 0U &&
         (modifier & HID_MOD_CTRL) != 0U &&
@@ -417,6 +540,13 @@ uint8_t onee_input_service_keyboard_report(uint8_t slot_index,
             }
             code = onee_ascii_from_usage(usage, modifier, g_caps_lock);
             onee_key_queue_push(code);
+            if (code != 0U) {
+                ++g_repeat_press_sequence;
+                if (g_repeat_press_sequence == 0U) {
+                    ++g_repeat_press_sequence;
+                }
+                next_press_order[i] = g_repeat_press_sequence;
+            }
         }
     }
 
@@ -427,7 +557,17 @@ uint8_t onee_input_service_keyboard_report(uint8_t slot_index,
     memset(slot->keys, 0, sizeof(slot->keys));
     if (next_count != 0U) {
         memcpy(slot->keys, next_keys, next_count);
+        memcpy(slot->key_press_order,
+               next_press_order,
+               next_count * sizeof(next_press_order[0]));
     }
+    if (next_count < ONEE_INPUT_KEY_TRACK_COUNT) {
+        memset(&slot->key_press_order[next_count],
+               0,
+               (ONEE_INPUT_KEY_TRACK_COUNT - next_count) *
+                   sizeof(slot->key_press_order[0]));
+    }
+    onee_repeat_reselect();
     g_live_dirty = 1U;
     return reset_chord;
 }
@@ -466,6 +606,7 @@ void onee_input_service_disconnect(uint8_t slot_index)
         return;
     }
     memset(&g_slots[slot_index], 0, sizeof(g_slots[slot_index]));
+    onee_repeat_reselect();
     g_live_dirty = 1U;
     g_paddles_dirty = 1U;
 }
@@ -475,6 +616,7 @@ void onee_input_service_release_all(void)
     memset(g_slots, 0, sizeof(g_slots));
     onee_key_queue_clear();
     g_reset_pending = 0U;
+    onee_repeat_clear_press_orders();
     g_live_dirty = 1U;
     g_paddles_dirty = 1U;
 }

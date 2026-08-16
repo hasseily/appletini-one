@@ -130,6 +130,45 @@ def test_apple_keys_caps_and_warm_reset_chord() -> None:
             "the consumed reset Pause key must not reach normal USB bindings")
 
 
+def test_held_key_repeat_contract() -> None:
+    source = read(SERVICE_C)
+    repeat_select = between(source,
+                            "static void onee_repeat_reselect",
+                            "static void onee_repeat_poll")
+    repeat_poll = between(source,
+                          "static void onee_repeat_poll",
+                          "static uint8_t onee_normalize_axis")
+    keyboard = between(source,
+                       "uint8_t onee_input_service_keyboard_report",
+                       "void onee_input_service_joystick_report")
+
+    require("ONEE_INPUT_REPEAT_DELAY_POLLS 1000U" in source and
+            "ONEE_INPUT_REPEAT_RATE_POLLS   100U" in source and
+            "g_repeat_countdown" in source,
+            "repeat delay and rate must be fixed active-poll counts")
+    require("key_press_order" in source and
+            "order > best_order" in repeat_select and
+            "g_repeat_slot = best_slot" in repeat_select and
+            "g_repeat_usage = best_usage" in repeat_select,
+            "the newest held repeatable key across all HID slots must win")
+    require("usage == HID_KBD_USAGE_CAPSLOCK" in source and
+            "usage == HID_KBD_USAGE_PAUSE" in source and
+            "onee_ascii_from_usage(usage, modifier, g_caps_lock) != 0U" in source,
+            "Caps Lock, Pause, and unmapped usages must never become repeat keys")
+    require("g_slots[g_repeat_slot].modifier" in repeat_poll and
+            "current modifier byte and the current Caps Lock" in repeat_poll and
+            "onee_key_queue_push(code);" in repeat_poll,
+            "each repeat must use current modifiers and Caps Lock")
+    require("next_press_order" in keyboard and
+            "onee_repeat_reselect();" in keyboard and
+            "onee_repeat_clear_press_orders();" in source and
+            "onee_repeat_reselect();" in between(
+                source,
+                "void onee_input_service_disconnect",
+                "void onee_input_service_release_all"),
+            "press, release, disconnect, and session transitions must reselect or cancel")
+
+
 def test_four_paddles_are_normalized_with_stable_fallbacks() -> None:
     source = read(SERVICE_C)
     normalize = between(source,
@@ -229,6 +268,7 @@ TESTS = (
     test_queue_is_edge_only_and_backpressured,
     test_ascii_control_and_navigation_mapping,
     test_apple_keys_caps_and_warm_reset_chord,
+    test_held_key_repeat_contract,
     test_four_paddles_are_normalized_with_stable_fallbacks,
     test_lowest_slot_owns_joystick_and_disconnect_recenters,
     test_hid_parser_feeds_boot_keyboard_and_absolute_joystick,
@@ -347,6 +387,10 @@ def run_native_behavior_test() -> bool:
         {
             uint8_t boot_keys[6] = { HID_KBD_USAGE_A, 0U, 0U, 0U, 0U, 0U };
             uint8_t pause_key[1] = { HID_KBD_USAGE_PAUSE };
+            uint8_t repeat_keys[2] = {
+                HID_KBD_USAGE_A, HID_KBD_USAGE_A + 1U
+            };
+            uint8_t other_key[1] = { HID_KBD_USAGE_A + 2U };
             uint32_t before;
             onee_input_joystick_report_t joystick;
 
@@ -390,6 +434,136 @@ def run_native_behavior_test() -> bool:
                 fail("held HID key emitted more than one Apple event");
                 return 1;
             }
+
+            /* Start a fresh repeat interval. The initial edge remains single,
+             * then the held key fires at the exact poll delay. */
+            release_keys(2U);
+            (void)onee_input_service_keyboard_report(
+                2U, HID_MOD_LSHIFT, boot_keys, 6U);
+            onee_input_service_poll();
+            before = writes_to(ONEE_INPUT_KEY_FIFO_REG);
+            for (uint32_t i = 1U;
+                 i < ONEE_INPUT_REPEAT_DELAY_POLLS - 1U;
+                 ++i) {
+                onee_input_service_poll();
+            }
+            if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before) {
+                fail("held key repeated before the initial poll delay");
+                return 1;
+            }
+            onee_input_service_poll();
+            if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before + 1U ||
+                last_write(ONEE_INPUT_KEY_FIFO_REG) != 'A') {
+                fail("held key did not repeat at the initial poll delay");
+                return 1;
+            }
+
+            /* Repeats intentionally use current modifiers, not the mapping
+             * captured on the original edge. */
+            (void)onee_input_service_keyboard_report(
+                2U, 0U, boot_keys, 6U);
+            before = writes_to(ONEE_INPUT_KEY_FIFO_REG);
+            for (uint32_t i = 1U; i < ONEE_INPUT_REPEAT_RATE_POLLS; ++i) {
+                onee_input_service_poll();
+            }
+            if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before) {
+                fail("held key repeated before the steady poll rate");
+                return 1;
+            }
+            onee_input_service_poll();
+            if (last_write(ONEE_INPUT_KEY_FIFO_REG) != 'a') {
+                fail("repeat did not apply the current Shift state");
+                return 1;
+            }
+
+            /* A newer repeatable key wins. Releasing it reselects the most
+             * recent repeatable key which remains held. */
+            (void)onee_input_service_keyboard_report(
+                2U, 0U, repeat_keys, 2U);
+            onee_input_service_poll();
+            before = writes_to(ONEE_INPUT_KEY_FIFO_REG);
+            for (uint32_t i = 1U;
+                 i < ONEE_INPUT_REPEAT_DELAY_POLLS - 1U;
+                 ++i) {
+                onee_input_service_poll();
+            }
+            onee_input_service_poll();
+            if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before + 1U ||
+                last_write(ONEE_INPUT_KEY_FIFO_REG) != 'b') {
+                fail("newest held repeatable key did not win");
+                return 1;
+            }
+            (void)onee_input_service_keyboard_report(
+                2U, 0U, boot_keys, 1U);
+            onee_input_service_poll();
+            before = writes_to(ONEE_INPUT_KEY_FIFO_REG);
+            for (uint32_t i = 1U;
+                 i < ONEE_INPUT_REPEAT_DELAY_POLLS - 1U;
+                 ++i) {
+                onee_input_service_poll();
+            }
+            onee_input_service_poll();
+            if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before + 1U ||
+                last_write(ONEE_INPUT_KEY_FIFO_REG) != 'a') {
+                fail("release did not reselect the newest remaining key");
+                return 1;
+            }
+
+            (void)onee_input_service_keyboard_report(
+                1U, 0U, other_key, 1U);
+            onee_input_service_poll();
+            if (last_write(ONEE_INPUT_KEY_FIFO_REG) != 'c') {
+                fail("newer key on another HID slot did not take ownership");
+                return 1;
+            }
+            onee_input_service_disconnect(1U);
+            onee_input_service_poll();
+            before = writes_to(ONEE_INPUT_KEY_FIFO_REG);
+            for (uint32_t i = 1U;
+                 i < ONEE_INPUT_REPEAT_DELAY_POLLS - 1U;
+                 ++i) {
+                onee_input_service_poll();
+            }
+            onee_input_service_poll();
+            if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before + 1U ||
+                last_write(ONEE_INPUT_KEY_FIFO_REG) != 'a') {
+                fail("disconnect did not reselect the newest remaining key");
+                return 1;
+            }
+
+            /* Caps Lock, Pause, an unmapped F1, and a modifier-only report
+             * must leave no repeat source once all mapped keys are up. */
+            release_keys(2U);
+            boot_keys[0] = HID_KBD_USAGE_CAPSLOCK;
+            (void)onee_input_service_keyboard_report(2U, 0U,
+                                                       boot_keys, 6U);
+            onee_input_service_poll();
+            boot_keys[0] = HID_KBD_USAGE_F1;
+            (void)onee_input_service_keyboard_report(2U, 0U,
+                                                       boot_keys, 6U);
+            onee_input_service_poll();
+            (void)onee_input_service_keyboard_report(2U, 0U,
+                                                       pause_key, 1U);
+            onee_input_service_poll();
+            (void)onee_input_service_keyboard_report(2U, HID_MOD_LSHIFT,
+                                                       NULL, 0U);
+            before = writes_to(ONEE_INPUT_KEY_FIFO_REG);
+            for (uint32_t i = 0U;
+                 i < ONEE_INPUT_REPEAT_DELAY_POLLS +
+                         ONEE_INPUT_REPEAT_RATE_POLLS;
+                 ++i) {
+                onee_input_service_poll();
+            }
+            if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before) {
+                fail("non-repeatable HID input generated a repeat");
+                return 1;
+            }
+
+            /* Restore Caps Lock for the remaining lower-case checks. */
+            boot_keys[0] = HID_KBD_USAGE_CAPSLOCK;
+            (void)onee_input_service_keyboard_report(2U, 0U,
+                                                       boot_keys, 6U);
+            onee_input_service_poll();
 
             release_keys(2U);
             boot_keys[0] = HID_KBD_USAGE_A + 1U;
@@ -480,6 +654,11 @@ def run_native_behavior_test() -> bool:
                 return 1;
             }
 
+            release_keys(2U);
+            boot_keys[0] = HID_KBD_USAGE_A + 3U;
+            (void)onee_input_service_keyboard_report(2U, 0U,
+                                                       boot_keys, 6U);
+            onee_input_service_poll();
             before = write_count;
             registers[0x5BU] = 0U;
             onee_input_service_poll();
@@ -487,7 +666,12 @@ def run_native_behavior_test() -> bool:
             boot_keys[0] = HID_KBD_USAGE_A + 2U;
             (void)onee_input_service_keyboard_report(2U, 0U,
                                                        boot_keys, 6U);
-            onee_input_service_poll();
+            for (uint32_t i = 0U;
+                 i < ONEE_INPUT_REPEAT_DELAY_POLLS +
+                         ONEE_INPUT_REPEAT_RATE_POLLS;
+                 ++i) {
+                onee_input_service_poll();
+            }
             if (write_count != before) {
                 fail("writes continued after EFFECTIVE dropped");
                 return 1;

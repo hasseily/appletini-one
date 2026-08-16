@@ -142,10 +142,12 @@ def test_held_key_repeat_contract() -> None:
                        "uint8_t onee_input_service_keyboard_report",
                        "void onee_input_service_joystick_report")
 
-    require("ONEE_INPUT_REPEAT_DELAY_POLLS 1000U" in source and
-            "ONEE_INPUT_REPEAT_RATE_POLLS   100U" in source and
-            "g_repeat_countdown" in source,
-            "repeat delay and rate must be fixed active-poll counts")
+    require("ONEE_INPUT_REPEAT_DELAY_MS 500U" in source and
+            "ONEE_INPUT_REPEAT_RATE_MS  100U" in source and
+            "cherryusb_baremetal_ms()" in source and
+            "onee_time_reached" in source and
+            "g_repeat_deadline_ms = now + ONEE_INPUT_REPEAT_RATE_MS" in source,
+            "repeat delay and rate must use wrap-safe wall time without catch-up")
     require("key_press_order" in source and
             "order > best_order" in repeat_select and
             "g_repeat_slot = best_slot" in repeat_select and
@@ -313,6 +315,12 @@ def run_native_behavior_test() -> bool:
 
         static uint32_t test_reg_read(uint32_t address);
         static void test_reg_write(uint32_t address, uint32_t value);
+        static uint32_t test_time_ms;
+
+        uint32_t cherryusb_baremetal_ms(void)
+        {
+            return test_time_ms;
+        }
 
         #define COMMON_H
         #define REG_READ(address) test_reg_read((uint32_t)(address))
@@ -435,26 +443,48 @@ def run_native_behavior_test() -> bool:
                 return 1;
             }
 
-            /* Start a fresh repeat interval. The initial edge remains single,
-             * then the held key fires at the exact poll delay. */
+            /* A short tap emits one edge even if the service polls many times
+             * before the USB release report arrives. */
             release_keys(2U);
+            boot_keys[0] = HID_KBD_USAGE_DOWN;
+            (void)onee_input_service_keyboard_report(
+                2U, 0U, boot_keys, 6U);
+            onee_input_service_poll();
+            before = writes_to(ONEE_INPUT_KEY_FIFO_REG);
+            for (uint32_t i = 0U; i < 10000U; ++i) {
+                onee_input_service_poll();
+            }
+            test_time_ms += 20U;
+            release_keys(2U);
+            onee_input_service_poll();
+            test_time_ms += ONEE_INPUT_REPEAT_DELAY_MS +
+                            ONEE_INPUT_REPEAT_RATE_MS;
+            onee_input_service_poll();
+            if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before ||
+                last_write(ONEE_INPUT_KEY_FIFO_REG) != 0x0AU) {
+                fail("brief Down tap generated extra Apple key events");
+                return 1;
+            }
+
+            /* Start a fresh repeat interval. The initial edge remains single,
+             * then the held key fires at the exact wall-time delay. */
+            release_keys(2U);
+            boot_keys[0] = HID_KBD_USAGE_A;
             (void)onee_input_service_keyboard_report(
                 2U, HID_MOD_LSHIFT, boot_keys, 6U);
             onee_input_service_poll();
             before = writes_to(ONEE_INPUT_KEY_FIFO_REG);
-            for (uint32_t i = 1U;
-                 i < ONEE_INPUT_REPEAT_DELAY_POLLS - 1U;
-                 ++i) {
-                onee_input_service_poll();
-            }
+            test_time_ms += ONEE_INPUT_REPEAT_DELAY_MS - 1U;
             if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before) {
-                fail("held key repeated before the initial poll delay");
+                fail("held key repeated before the initial wall-time delay");
                 return 1;
             }
             onee_input_service_poll();
+            test_time_ms += 1U;
+            onee_input_service_poll();
             if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before + 1U ||
                 last_write(ONEE_INPUT_KEY_FIFO_REG) != 'A') {
-                fail("held key did not repeat at the initial poll delay");
+                fail("held key did not repeat at the initial wall-time delay");
                 return 1;
             }
 
@@ -463,16 +493,51 @@ def run_native_behavior_test() -> bool:
             (void)onee_input_service_keyboard_report(
                 2U, 0U, boot_keys, 6U);
             before = writes_to(ONEE_INPUT_KEY_FIFO_REG);
-            for (uint32_t i = 1U; i < ONEE_INPUT_REPEAT_RATE_POLLS; ++i) {
-                onee_input_service_poll();
-            }
+            test_time_ms += ONEE_INPUT_REPEAT_RATE_MS - 1U;
+            onee_input_service_poll();
             if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before) {
-                fail("held key repeated before the steady poll rate");
+                fail("held key repeated before the steady wall-time rate");
                 return 1;
             }
+            test_time_ms += 1U;
             onee_input_service_poll();
             if (last_write(ONEE_INPUT_KEY_FIFO_REG) != 'a') {
                 fail("repeat did not apply the current Shift state");
+                return 1;
+            }
+
+            /* A long frontend stall emits one late repeat, not one event for
+             * every missed 100 ms interval. Repeated polls at the same wall
+             * time must remain quiet. */
+            before = writes_to(ONEE_INPUT_KEY_FIFO_REG);
+            test_time_ms += 1000U;
+            onee_input_service_poll();
+            for (uint32_t i = 0U; i < 10000U; ++i) {
+                onee_input_service_poll();
+            }
+            if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before + 1U) {
+                fail("late repeat tried to catch up from a frontend stall");
+                return 1;
+            }
+
+            /* The 32-bit millisecond clock wraps after about 49 days. Keep
+             * the same exact 500 ms delay across that wrap. */
+            release_keys(2U);
+            test_time_ms = UINT32_MAX - 200U;
+            (void)onee_input_service_keyboard_report(
+                2U, 0U, boot_keys, 6U);
+            onee_input_service_poll();
+            before = writes_to(ONEE_INPUT_KEY_FIFO_REG);
+            test_time_ms += ONEE_INPUT_REPEAT_DELAY_MS - 1U;
+            onee_input_service_poll();
+            if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before) {
+                fail("held key repeated early across millisecond wrap");
+                return 1;
+            }
+            test_time_ms += 1U;
+            onee_input_service_poll();
+            if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before + 1U) {
+                fail("held key did not repeat on time across millisecond wrap");
                 return 1;
             }
 
@@ -482,11 +547,13 @@ def run_native_behavior_test() -> bool:
                 2U, 0U, repeat_keys, 2U);
             onee_input_service_poll();
             before = writes_to(ONEE_INPUT_KEY_FIFO_REG);
-            for (uint32_t i = 1U;
-                 i < ONEE_INPUT_REPEAT_DELAY_POLLS - 1U;
-                 ++i) {
-                onee_input_service_poll();
+            test_time_ms += ONEE_INPUT_REPEAT_DELAY_MS - 1U;
+            onee_input_service_poll();
+            if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before) {
+                fail("newest key repeated before its initial delay");
+                return 1;
             }
+            test_time_ms += 1U;
             onee_input_service_poll();
             if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before + 1U ||
                 last_write(ONEE_INPUT_KEY_FIFO_REG) != 'b') {
@@ -497,11 +564,13 @@ def run_native_behavior_test() -> bool:
                 2U, 0U, boot_keys, 1U);
             onee_input_service_poll();
             before = writes_to(ONEE_INPUT_KEY_FIFO_REG);
-            for (uint32_t i = 1U;
-                 i < ONEE_INPUT_REPEAT_DELAY_POLLS - 1U;
-                 ++i) {
-                onee_input_service_poll();
+            test_time_ms += ONEE_INPUT_REPEAT_DELAY_MS - 1U;
+            onee_input_service_poll();
+            if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before) {
+                fail("reselected key repeated before a fresh delay");
+                return 1;
             }
+            test_time_ms += 1U;
             onee_input_service_poll();
             if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before + 1U ||
                 last_write(ONEE_INPUT_KEY_FIFO_REG) != 'a') {
@@ -519,11 +588,13 @@ def run_native_behavior_test() -> bool:
             onee_input_service_disconnect(1U);
             onee_input_service_poll();
             before = writes_to(ONEE_INPUT_KEY_FIFO_REG);
-            for (uint32_t i = 1U;
-                 i < ONEE_INPUT_REPEAT_DELAY_POLLS - 1U;
-                 ++i) {
-                onee_input_service_poll();
+            test_time_ms += ONEE_INPUT_REPEAT_DELAY_MS - 1U;
+            onee_input_service_poll();
+            if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before) {
+                fail("disconnect reselect repeated before a fresh delay");
+                return 1;
             }
+            test_time_ms += 1U;
             onee_input_service_poll();
             if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before + 1U ||
                 last_write(ONEE_INPUT_KEY_FIFO_REG) != 'a') {
@@ -548,12 +619,9 @@ def run_native_behavior_test() -> bool:
             (void)onee_input_service_keyboard_report(2U, HID_MOD_LSHIFT,
                                                        NULL, 0U);
             before = writes_to(ONEE_INPUT_KEY_FIFO_REG);
-            for (uint32_t i = 0U;
-                 i < ONEE_INPUT_REPEAT_DELAY_POLLS +
-                         ONEE_INPUT_REPEAT_RATE_POLLS;
-                 ++i) {
-                onee_input_service_poll();
-            }
+            test_time_ms += ONEE_INPUT_REPEAT_DELAY_MS +
+                            ONEE_INPUT_REPEAT_RATE_MS;
+            onee_input_service_poll();
             if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before) {
                 fail("non-repeatable HID input generated a repeat");
                 return 1;
@@ -666,12 +734,9 @@ def run_native_behavior_test() -> bool:
             boot_keys[0] = HID_KBD_USAGE_A + 2U;
             (void)onee_input_service_keyboard_report(2U, 0U,
                                                        boot_keys, 6U);
-            for (uint32_t i = 0U;
-                 i < ONEE_INPUT_REPEAT_DELAY_POLLS +
-                         ONEE_INPUT_REPEAT_RATE_POLLS;
-                 ++i) {
-                onee_input_service_poll();
-            }
+            test_time_ms += ONEE_INPUT_REPEAT_DELAY_MS +
+                            ONEE_INPUT_REPEAT_RATE_MS;
+            onee_input_service_poll();
             if (write_count != before) {
                 fail("writes continued after EFFECTIVE dropped");
                 return 1;

@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "card_control_regs.h"
+#include "cherryusb_platform.h"
 #include "onee_service.h"
 #include "usb_util.h"
 #include "usb_hid.h"
@@ -13,11 +14,10 @@
 
 #define ONEE_INPUT_KEY_TRACK_COUNT 8U
 #define ONEE_INPUT_QUEUE_DEPTH 32U
-/* Repeat timing counts active calls to onee_input_service_poll(). The USB HID
- * loop calls it at stable points before and after report work. A held key gets
- * its first repeat after 1000 polls, then one repeat every 100 polls. */
-#define ONEE_INPUT_REPEAT_DELAY_POLLS 1000U
-#define ONEE_INPUT_REPEAT_RATE_POLLS   100U
+/* Use wall time because the frontend poll rate changes with display, storage,
+ * and USB work. Poll counts made a short tap repeat on a fast main loop. */
+#define ONEE_INPUT_REPEAT_DELAY_MS 500U
+#define ONEE_INPUT_REPEAT_RATE_MS  100U
 
 #define ONEE_INPUT_KEY_FIFO_REG       CARD_CTRL_REG_ADDR(0x5CU)
 #define ONEE_INPUT_LIVE_REG           CARD_CTRL_REG_ADDR(0x5DU)
@@ -76,7 +76,7 @@ static uint8_t g_live_dirty;
 static uint8_t g_paddles_dirty;
 static uint8_t g_reset_pending;
 static uint32_t g_repeat_press_sequence;
-static uint32_t g_repeat_countdown;
+static uint32_t g_repeat_deadline_ms;
 static uint8_t g_repeat_valid;
 static uint8_t g_repeat_slot;
 static uint8_t g_repeat_usage;
@@ -216,7 +216,12 @@ static void onee_repeat_cancel(void)
     g_repeat_valid = 0U;
     g_repeat_slot = 0U;
     g_repeat_usage = 0U;
-    g_repeat_countdown = 0U;
+    g_repeat_deadline_ms = 0U;
+}
+
+static uint8_t onee_time_reached(uint32_t now, uint32_t deadline)
+{
+    return ((int32_t)(now - deadline) >= 0) ? 1U : 0U;
 }
 
 static void onee_repeat_clear_press_orders(void)
@@ -274,20 +279,22 @@ static void onee_repeat_reselect(void)
         g_repeat_valid = 1U;
         g_repeat_slot = best_slot;
         g_repeat_usage = best_usage;
-        g_repeat_countdown = ONEE_INPUT_REPEAT_DELAY_POLLS;
+        g_repeat_deadline_ms = cherryusb_baremetal_ms() +
+                               ONEE_INPUT_REPEAT_DELAY_MS;
     }
 }
 
 static void onee_repeat_poll(void)
 {
+    uint32_t now;
     uint8_t code;
 
     if (g_repeat_valid == 0U ||
         g_repeat_slot >= ONEE_INPUT_DEVICE_SLOT_COUNT) {
         return;
     }
-    if (g_repeat_countdown > 1U) {
-        --g_repeat_countdown;
+    now = cherryusb_baremetal_ms();
+    if (onee_time_reached(now, g_repeat_deadline_ms) == 0U) {
         return;
     }
 
@@ -304,7 +311,9 @@ static void onee_repeat_poll(void)
         return;
     }
     onee_key_queue_push(code);
-    g_repeat_countdown = ONEE_INPUT_REPEAT_RATE_POLLS;
+    /* Schedule from now, not the old deadline. If other frontend work stalls
+     * polling, resume with one repeat instead of a queue-filling catch-up. */
+    g_repeat_deadline_ms = now + ONEE_INPUT_REPEAT_RATE_MS;
 }
 
 static uint8_t onee_normalize_axis(int32_t value,

@@ -178,6 +178,50 @@ module tb_onee_mode_safety_guard;
         select_off_then_on();
     endtask
 
+    task automatic check_held_nonidle(input integer source_index);
+        case (source_index)
+            0: apple_phi0_raw     = 1'b1;
+            6: apple_reset_n_raw  = 1'b0;
+            default: $fatal(1, "bad held-level source index");
+        endcase
+        #1;
+
+        require_true(apple_activity_now,
+                     "held non-idle Apple level must stay live");
+        require_true(force_outputs_off,
+                     "held non-idle Apple level must keep output kill set");
+        require_false(onee_enable_effective,
+                      "held non-idle Apple level must keep ONE//e off");
+        require_true(apple_activity_lockout,
+                     "held non-idle Apple level must set sticky lockout");
+        require_true(physical_isolation_hold,
+                     "held non-idle Apple level must retain isolation");
+
+        manual_enable_request = 1'b0;
+        wait_clocks(QUIET_CYCLES + 6);
+        require_false(apple_activity_quiet,
+                      "held non-idle Apple level must block quiet state");
+        require_false(reselect_armed,
+                      "held non-idle Apple level must block reselect arm");
+        require_true(apple_activity_lockout,
+                     "held non-idle Apple level must retain lockout");
+        require_true(physical_bus_isolate,
+                     "held non-idle Apple level must retain physical isolation");
+
+        manual_enable_request = 1'b1;
+        wait_clocks(2);
+        require_false(onee_enable_effective,
+                      "manual request must not override held non-idle veto");
+        manual_enable_request = 1'b0;
+
+        case (source_index)
+            0: apple_phi0_raw     = 1'b0;
+            6: apple_reset_n_raw  = 1'b1;
+            default: $fatal(1, "bad held-level source index");
+        endcase
+        select_off_then_on();
+    endtask
+
     integer source_index;
 
     initial begin
@@ -214,6 +258,11 @@ module tb_onee_mode_safety_guard;
         for (source_index = 0; source_index < 12;
              source_index = source_index + 1)
             check_short_activity(source_index);
+
+        // A stopped-high clock and a held-low active control must never age
+        // into quiet/rearmed state. Both stay live until they return to idle.
+        check_held_nonidle(0);
+        check_held_nonidle(6);
 
         // Slot power is a continuous veto. Manual off cannot release the bus
         // or clear the lockout until power disappears and the quiet time runs.

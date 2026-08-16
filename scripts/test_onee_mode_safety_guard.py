@@ -74,13 +74,17 @@ def static_contract_checks() -> None:
         "raw Apple inputs must pass through marked synchronizers",
     )
     require(
-        "apple_power_present_raw || apple_input_transition_now;" in rtl,
-        "slot power must be a direct level-sensitive activity veto",
+        "wire apple_nonidle_level =" in rtl and
+        "|(apple_raw_levels ^ APPLE_IDLE_LEVELS);" in rtl and
+        "apple_power_present_raw || apple_input_transition_now ||" in rtl and
+        "apple_nonidle_level;" in rtl,
+        "every non-idle raw level must be a direct continuous veto",
     )
     require(
-        "~resetn | apple_power_present_raw | apple_input_transition_now;"
-        in rtl,
-        "reset and raw activity must asynchronously set the sticky lockout",
+        "~resetn | apple_power_present_raw | apple_input_transition_now |"
+        in rtl and "apple_nonidle_level;" in rtl,
+        "reset, raw transitions, and held non-idle levels must asynchronously "
+        "set the sticky lockout",
     )
     require(
         "always_ff @(posedge clk or posedge activity_lockout_set)" in rtl,

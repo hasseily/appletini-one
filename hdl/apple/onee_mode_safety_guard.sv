@@ -93,10 +93,17 @@ module onee_mode_safety_guard #(
     wire apple_input_transition_now =
         |(apple_raw_levels ^ apple_sync_level);
 
+    // A stable asserted control or stopped-high clock is still evidence of a
+    // connected Apple. Keep it as a continuous veto instead of allowing the
+    // quiet timer to age a non-idle level into a valid reselect state.
+    wire apple_nonidle_level =
+        |(apple_raw_levels ^ APPLE_IDLE_LEVELS);
+
     // Slot power is a level-sensitive veto, not just another transition. A
     // powered Apple must never share connector outputs with ONE//e mode.
     assign apple_activity_now =
-        apple_power_present_raw || apple_input_transition_now;
+        apple_power_present_raw || apple_input_transition_now ||
+        apple_nonidle_level;
 
     always_ff @(posedge clk or negedge resetn) begin
         if (!resetn) begin
@@ -128,7 +135,8 @@ module onee_mode_safety_guard #(
     // Clearing remains synchronous and is allowed only after a quiet interval
     // while the manual selection is off.
     wire activity_lockout_set =
-        ~resetn | apple_power_present_raw | apple_input_transition_now;
+        ~resetn | apple_power_present_raw | apple_input_transition_now |
+        apple_nonidle_level;
     wire activity_lockout_clear =
         apple_activity_quiet &&
         !manual_enable_request &&

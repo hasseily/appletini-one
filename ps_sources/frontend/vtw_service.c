@@ -124,7 +124,7 @@ static uint8_t g_announced_wait;
 static uint8_t g_announced_handoff_wait;
 static uint8_t g_onee_running;
 static uint8_t g_onee_disk2_override_active;
-static uint8_t g_onee_disk2_restore_enabled;
+static uint8_t g_disk2_config_enabled;
 static XTime g_res_phase_start;
 
 static const char *vtw_state_name(vtw_state_t st)
@@ -378,9 +378,23 @@ void vtw_service_init(uint32_t uart_base)
     g_state = VTW_ST_IDLE;
     g_onee_running = 0U;
     g_onee_disk2_override_active = 0U;
-    g_onee_disk2_restore_enabled = 0U;
+    g_disk2_config_enabled = 0U;
     REG_WRITE(CARD_CTRL_VTW_CTRL_REG, 0U);
     uart_puts(uart_base, "vtw: virtual TransWarp service ready\r\n");
+}
+
+void vtw_service_set_disk2_config_enabled(uint8_t enable)
+{
+    uint8_t effective_enable;
+
+    /* Keep the saved host setting separate from the ONE//e session override.
+     * Reset-time config reapply and live menu changes both pass here, so the
+     * virtual track service cannot be turned off under a running ONE//e. The
+     * latest saved value takes effect as soon as the override ends. */
+    g_disk2_config_enabled = (enable != 0U) ? 1U : 0U;
+    effective_enable = (g_onee_disk2_override_active != 0U) ?
+        1U : g_disk2_config_enabled;
+    disk2_service_set_enabled(effective_enable);
 }
 
 void vtw_service_set_enabled(uint8_t enable)
@@ -657,7 +671,7 @@ uint8_t vtw_service_session_active(void)
     return (g_state == VTW_ST_RUN || g_onee_running != 0U) ? 1U : 0U;
 }
 
-uint8_t vtw_service_onee_start(uint8_t disk2_restore_enabled)
+uint8_t vtw_service_onee_start(uint8_t disk2_config_enabled)
 {
     uint32_t poll;
 
@@ -670,9 +684,9 @@ uint8_t vtw_service_onee_start(uint8_t disk2_restore_enabled)
 
     /* ONE//e forces the virtual Disk II card into slot 6 even when the saved
      * slot mask leaves it off. Match that session-only PL override in the PS
-     * track service, then restore the saved bit-6 state on every exit. */
-    g_onee_disk2_restore_enabled =
-        (disk2_restore_enabled != 0U) ? 1U : 0U;
+     * track service, then apply the latest saved bit-6 state on every exit. */
+    g_disk2_config_enabled =
+        (disk2_config_enabled != 0U) ? 1U : 0U;
     g_onee_disk2_override_active = 1U;
     disk2_service_set_enabled(1U);
 
@@ -728,8 +742,8 @@ void vtw_service_onee_stop(void)
     }
     g_onee_running = 0U;
     if (g_onee_disk2_override_active != 0U) {
-        disk2_service_set_enabled(g_onee_disk2_restore_enabled);
         g_onee_disk2_override_active = 0U;
+        disk2_service_set_enabled(g_disk2_config_enabled);
     }
 }
 
@@ -918,8 +932,10 @@ void vtw_service_uart_status(uint32_t uart_base)
     };
 
     snprintf(line, sizeof(line),
-             "vtw: %s, intent=%s, machine=%s\r\n",
+             "vtw: %s, session=%s, host-intent=%s, machine=%s\r\n",
              vtw_state_name(g_state),
+             g_onee_running != 0U ? "ONE//e" :
+             (g_state == VTW_ST_IDLE ? "off" : "host"),
              g_intent_enabled != 0U ? "on" : "off",
              boot_menu_service_machine_name());
     uart_puts(uart_base, line);

@@ -895,8 +895,10 @@ static void control_set_slot_enabled(void *ctx, uint8_t slot, uint8_t enable)
     }
     if (slot == 6U) {
         /* Slot 6 is Disk II: keep the PS track loader in lockstep with the
-         * PL front end while still allowing it to drain a dirty track. */
-        disk2_service_set_enabled(enable);
+         * PL front end while still allowing it to drain a dirty track. The
+         * vTW service owns ONE//e's session-only override and applies the
+         * latest saved value when that override ends. */
+        vtw_service_set_disk2_config_enabled(enable);
     }
     slot_bit = 1UL << slot;
     slot_mask = g_card_slot_enable_mask;
@@ -2641,11 +2643,13 @@ static void ui_handle_apple_reset(ui_state_t *s, config_menu_t *menu)
     }
     boot_menu_service_refresh_machine_policy();
     smartport_service_apple_reset();
-    /* A IIgs clears NEWVIDEO on reset; mirror that for the fake-SHR
-     * path. One DMA bus write of $01 to $C029 clears the PL capture
-     * state and, through the captured record, CPU1's renderer too --
-     * every observer sees the same real bus write. */
-    (void)uart_control_dma_bus_write(0xC029U, 0x01U);
+    /* A physical IIgs clears NEWVIDEO on reset; mirror that for the fake-SHR
+     * path. ONE//e is a virtual Enhanced //e, so its private warm reset must
+     * not start a host DMA transaction or wait for a physical bus response. */
+    if ((onee_service_status() &
+         CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT) == 0U) {
+        (void)uart_control_dma_bus_write(0xC029U, 0x01U);
+    }
     if (config_menu_is_active(menu)) {
         g_usb_menu_owned = 0U;
         ui_set_boot_menu_visible(s, menu, 0U);

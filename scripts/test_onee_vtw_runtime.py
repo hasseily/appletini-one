@@ -127,18 +127,23 @@ def test_standalone_forces_synthetic_disk2_without_changing_options() -> None:
     stop = between(source,
                    "void vtw_service_onee_stop(void)",
                    "uint8_t vtw_service_onee_running(void)")
+    disk2_config = between(source,
+                           "void vtw_service_set_disk2_config_enabled",
+                           "void vtw_service_set_enabled")
     main = read(MAIN_C)
-    require("g_onee_disk2_restore_enabled" in start and
+    require("g_disk2_config_enabled" in start and
             "disk2_service_set_enabled(1U);" in start and
             start.find("disk2_service_set_enabled(1U);") <
             start.find("vtw_shadow_force_cold_start(1U)") and
-            "disk2_service_set_enabled(g_onee_disk2_restore_enabled);" in stop and
+            "disk2_service_set_enabled(g_disk2_config_enabled);" in stop and
+            "g_onee_disk2_override_active != 0U" in disk2_config and
+            "vtw_service_set_disk2_config_enabled(enable);" in main and
             "g_card_slot_enable_mask" in main and
             "CARD_CTRL_SLOT_DISK2" in main,
-            "ONE//e must session-enable Disk II and restore the saved bit-6 state")
+            "ONE//e must keep one effective Disk II service owner")
     require(start.count("vtw_service_onee_stop();") == 3 and
             stop.find("REG_WRITE(CARD_CTRL_VTW_CTRL_REG, 0U);") <
-            stop.find("disk2_service_set_enabled(g_onee_disk2_restore_enabled);"),
+            stop.find("disk2_service_set_enabled(g_disk2_config_enabled);"),
             "every failed start and stop must clear vTW before restoring Disk II")
     require("card_control_write_slot_mask" not in start and
             "control_set_slot_enabled" not in start and
@@ -153,6 +158,26 @@ def test_standalone_forces_synthetic_disk2_without_changing_options() -> None:
     )
     require(all(token not in start for token in mutations),
             "ONE//e must not overwrite the saved host-vTW intent or options")
+
+
+def test_onee_reset_uses_private_runtime_paths() -> None:
+    main = read(MAIN_C)
+    reset = between(main,
+                    "static void ui_handle_apple_reset",
+                    "static ui_input_t ui_make_input")
+    uart = read(FRONTEND / "uart_control.c")
+
+    require("config_menu_apply_boot_runtime(menu);" in reset and
+            "if ((onee_service_status() &\n"
+            "         CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT) == 0U) {\n"
+            "        (void)uart_control_dma_bus_write(0xC029U, 0x01U);\n"
+            "    }" in reset,
+            "ONE//e reset must reapply config without issuing host IIgs DMA")
+    require("ONE//e remains running" in uart and
+            "vtw_service_onee_running() != 0U" in uart,
+            "UART host-intent commands must report a live ONE//e session truthfully")
+    require('"vtw: %s, session=%s, host-intent=%s, machine=%s' in read(VTW_C),
+            "vtw status must separate the live session from saved host intent")
 
 
 def test_stop_and_effective_drop_clear_vtw_before_onee_request() -> None:
@@ -282,6 +307,7 @@ TESTS = [
     test_cold_start_is_direct_and_isolation_first,
     test_rom_and_cold_signature_helpers_are_shared,
     test_standalone_forces_synthetic_disk2_without_changing_options,
+    test_onee_reset_uses_private_runtime_paths,
     test_stop_and_effective_drop_clear_vtw_before_onee_request,
     test_running_state_requires_released_core_status,
     test_menu_closes_once_only_after_true_running,
@@ -490,7 +516,7 @@ def run_native_speed_control_test() -> bool:
             g_announced_handoff_wait = 0U;
             g_onee_running = 0U;
             g_onee_disk2_override_active = 0U;
-            g_onee_disk2_restore_enabled = 0U;
+            g_disk2_config_enabled = 0U;
             g_res_phase_start = 0U;
             vtw_service_init(0U);
             write_count = 0U;
@@ -640,11 +666,55 @@ def run_native_speed_control_test() -> bool:
             return 1;
         }
 
+        static int test_disk2_session_override_tracks_latest_config(void)
+        {
+            reset_fixture();
+            vtw_service_set_disk2_config_enabled(0U);
+            if (!check(disk2_enabled == 0U,
+                       "saved Disk II off did not reach an idle service")) {
+                return 0;
+            }
+
+            g_onee_disk2_override_active = 1U;
+            disk2_service_set_enabled(1U);
+            vtw_service_set_disk2_config_enabled(0U);
+            if (!check(disk2_enabled == 1U && g_disk2_config_enabled == 0U,
+                       "reset/config reapply disabled Disk II during ONE//e")) {
+                return 0;
+            }
+            vtw_service_set_disk2_config_enabled(1U);
+            if (!check(disk2_enabled == 1U && g_disk2_config_enabled == 1U,
+                       "live saved-state change defeated the ONE//e override")) {
+                return 0;
+            }
+
+            g_onee_running = 1U;
+            vtw_service_onee_stop();
+            if (!check(disk2_enabled == 1U &&
+                       g_onee_disk2_override_active == 0U,
+                       "ONE//e stop did not apply the latest saved on state")) {
+                return 0;
+            }
+
+            g_onee_disk2_override_active = 1U;
+            disk2_service_set_enabled(1U);
+            vtw_service_set_disk2_config_enabled(0U);
+            g_onee_running = 1U;
+            vtw_service_onee_stop();
+            if (!check(disk2_enabled == 0U &&
+                       g_onee_disk2_override_active == 0U,
+                       "ONE//e stop restored a stale rather than latest off state")) {
+                return 0;
+            }
+            return 1;
+        }
+
         int main(void)
         {
             if (!test_host_live_controls() ||
                 !test_onee_live_controls_without_host_intent() ||
-                !test_failed_and_absent_live_writes_do_not_claim_success()) {
+                !test_failed_and_absent_live_writes_do_not_claim_success() ||
+                !test_disk2_session_override_tracks_latest_config()) {
                 return 1;
             }
             puts("ONEE VTW LIVE CONTROL NATIVE PASS");

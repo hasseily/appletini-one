@@ -38,6 +38,11 @@ void vtw_service_set_ignore_c074(uint8_t ignore);
 /* Force virtual Disk II accesses through the original physical 1 MHz path. */
 void vtw_service_set_disk2_accel_disabled(uint8_t disable);
 
+/* Apply the saved Slot 6 service setting without defeating ONE//e's private
+ * session override. Changes made during ONE//e become effective when it
+ * stops; while it runs, the virtual Disk II service stays available. */
+void vtw_service_set_disk2_config_enabled(uint8_t enable);
+
 /* Per-region slowdown (TransWarp DIP block 2): region_mask bits are
  * CARD_CTRL_VTW_SLOWDOWN_* (slots 1-7, floating-bus/video timing, paddle);
  * cycles is the 1 MHz window per region access (0 disables). */
@@ -63,7 +68,7 @@ uint8_t vtw_service_session_active(void);
  * intent or options and never waits for host identity, /DMA ownership,
  * physical RESET, or slot-7 handoff. start() requires the ONE//e supervisor
  * to report an effective, isolated session. */
-uint8_t vtw_service_onee_start(uint8_t disk2_restore_enabled);
+uint8_t vtw_service_onee_start(uint8_t disk2_config_enabled);
 void vtw_service_onee_stop(void);
 uint8_t vtw_service_onee_running(void);
 

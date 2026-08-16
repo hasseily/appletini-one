@@ -1,331 +1,539 @@
-# ONE//e Stand-Alone Mode Plan
+# ONE//e Stand-Alone Mode Plan and Implementation Record
 
 Branch: `feature/self-contained-one-iie`
+
 Baseline: `a4c2d22fc6029263f61a5cfe1178a2ab3c6ef762`
 
-## Goal
+Last source audit: 2026-08-16
 
-Add a self-contained 128K Enhanced Apple //e mode that runs on Appletini ONE
-without using a powered Apple motherboard. The first supported setup uses DVI,
-USB keyboard, USB joystick, the existing audio outputs, and only Appletini's
-virtual slot devices.
+## Status Rules
 
-The mode reuses the current virtual TransWarp CPU, shadow RAM and ROM, Apple bus
-records, virtual-card decoders, video renderer, and audio path. It replaces the
-physical motherboard's timing, built-in I/O, and slot-pin signals with a virtual
-motherboard.
+- `[x]` means the named source path exists and the listed source check or
+  simulation has passed.
+- `[ ]` means the work or proof is still missing.
+- An RTL simulation or a clean build does not count as board proof.
 
-## Required Product Behavior
+## Goal and Supported Shape
 
-- ONE//e mode starts off after every card boot and reset.
-- The user starts it manually from the boot menu. It is a session action, not a
-  saved setting that can start on its own.
-- Starting ONE//e also starts the virtual TransWarp core. ONE//e has no native
-  physical-CPU mode.
-- Any sign of a live Apple on the edge connector disables ONE//e at once.
-- Apple activity latches a lockout. The mode stays off after the signal stops.
-  The user must return to the boot menu and select ONE//e again.
-- A manual selection succeeds only after the Apple inputs have stayed quiet for
-  a defined guard time.
-- No ONE//e path may drive the physical Apple address, data, control, reset,
-  interrupt, or DMA pins.
-- Slot 6 uses only the virtual Disk II. ONE//e never uses a physical Disk II
-  controller, cable, or drive.
-- Existing virtual cards receive virtual equivalents of the Apple slot signals
-  instead of private device-specific CPU connections wherever practical.
-- USB keyboard input supplies the Apple keyboard latch, modifiers, Reset, Open
-  Apple, and Closed Apple.
-- USB joystick axes supply four Apple paddle values. Its buttons may supply the
-  three pushbutton inputs, but keyboard Open/Closed Apple remain supported.
-- The Apple `$C030-$C03F` speaker toggle is mixed into the current digital audio
-  stream.
+ONE//e is a session-only, self-contained 128K Enhanced US Apple //e. It runs
+the existing soft 65C02/TransWarp core and uses Appletini's DVI output, USB
+host, virtual cards, and audio output. It does not use a host Apple CPU,
+motherboard I/O, or a physical Disk II controller.
+
+The source implementation now has these parts:
+
+- A fail-off supervisor which selects and isolates the virtual machine.
+- A free-running virtual Apple bus with the same `AppleBus_read` and
+  `AppleBus_write` records used by the physical slot path.
+- Built-in //e keyboard, status, video switch, annunciator, paddle, cassette
+  latch, utility-strobe, and speaker soft switches.
+- A direct Enhanced //e ROM cold-start path for the soft 65C02.
+- USB keyboard, Open Apple, Closed Apple, joystick, paddle, and warm-reset
+  input paths.
+- The existing renderer, virtual Disk II, SmartPort, card arbiter, and audio
+  mixer on the virtual bus.
+
+The source and simulation work is not a hardware safety sign-off. The final
+sections list the board and system tests which still need to run.
+
+### Implementation Checkpoints
+
+- `44dc002`: safety-guard and virtual-bus scaffold plus the first plan.
+- `2489298`: top-level safety interlock and physical output isolation.
+- `ca87e16`: built-in motherboard I/O and speaker sample blocks.
+- `8fec225`: joined virtual motherboard, cold slot scan, Disk II, SmartPort,
+  card arbiter, floating-bus, and vTW integration.
+- `4db50f9`: PS-to-PL keyboard, Apple key, joystick, paddle, and reset bridge.
+- `22b38a8`: boot-menu action, cold vTW runtime, and USB input services.
+- `1718b70`: input bridge, virtual warm reset, and speaker mixer top hookup.
+- `53e2f0e`: NTSC renderer-input and real-ROM cold-slot simulations.
+- `cd617e6`: held-key repeat with multi-key and multi-device selection.
+- `d57ffb2`: fail-fast checks for the Vitis platform export result and XPFM.
+- `ea39ff0`: reserve firmware version `F0.9.77` for this branch.
+- `72d299f`: continuously veto held non-idle Apple-side levels.
+- `b3d8391`: run the stock DOS 3.3 and ProDOS 2.4.3 boot sectors through the
+  production virtual Disk II path.
+- `0a155fa`: contain the immediate raw-input kill in one run-state flop so raw
+  Apple pins do not feed the full virtual-card data path.
+- `8550239`: shorten the unchanged ONE//e speaker high-pass calculation for
+  the 133 MHz timing path.
+- `9f3c259`: resolve and hold each virtual bus owner/address/R/W tuple before
+  the slot address phase.
+- `9a5deb8`: sample raw activity diagnostics before the AXI readback mux and
+  keep the remaining immediate safety path within sticky state.
+- `530b29e`: shorten the equivalent raw/synchronized activity detector without
+  dropping edge or held-level coverage.
+- `4a2d4d6`: retry one transient Vitis platform build, then keep the status and
+  exported-XPFM checks ahead of all application creation.
+- `a6cd13e`: preserve the CPU decimal-result timing stage and use exact
+  sign-extension checks in the unchanged speaker clamp.
+- `ad0f988`: carry validated ONE//e scanner-read state from `serve_en` to
+  `data_en` instead of repeating the address decode on the BRAM enable path.
+- `354cc9a`: use the existing east-side AXI write-data copy for vTW sync and
+  posted-write commands, with the same register values and strobes.
 
 ## Safety Contract
 
-Safety takes priority over starting or keeping ONE//e running.
+Safety has priority over keeping ONE//e running.
 
-There are three separate controls:
+The supervisor in `hdl/apple/onee_mode_safety_guard.sv` owns three separate
+states:
 
-1. `one_iie_request`: the user's current manual request.
-2. `apple_activity_latched`: sticky evidence that the Apple side became live.
-3. `one_iie_effective`: the only signal allowed to enable the virtual machine.
+1. `onee_request_q`: the user's current manual request.
+2. `onee_activity_lockout`: sticky evidence of Apple-side activity.
+3. `onee_enable_effective`: the only signal which may run the virtual machine.
 
-`one_iie_effective` must fall without waiting for firmware when any monitored
-Apple-side input shows activity. The same raw activity signal must block all
-physical output enables. Synchronized logic then records the event, clears the
-session request, and reports the lockout reason to firmware.
+The request itself asserts `physical_bus_isolate`. The supervisor does not set
+`onee_enable_effective` until every monitored input matches its reset idle level,
+the guard has seen no transition for its quiet interval, and a new selection is
+armed. This orders physical isolation before soft-CPU start. A stopped-high
+clock or held-low active control remains a continuous veto; it cannot age into
+the quiet state. The current guard interval is 2,048 clocks in the 133.333 MHz
+fabric domain, about 15.4 microseconds.
 
-The first activity detector will monitor all available motherboard timing and
-control inputs, including PHI0, 7M, Q3, reset, DMA, IRQ, NMI, RDY, device
-selects, and machine-mode inputs. Clock activity is the main powered-machine
-test; control inputs add coverage. A quiet counter prevents re-entry during a
-short gap between Apple clock edges.
+The guard watches raw PHI0, 7M, Q3, M2SEL, M2B0, DEVSEL#, RESET#, INH#, IRQ#,
+NMI#, RDY#, and DMA# inputs. A raw transition or non-idle level asynchronously
+sets the sticky activity lockout; that state asynchronously clears one
+contained run-state flop and sets the physical-isolation hold. This path does
+not wait for firmware or for the two-flop status synchronizer. The run-state
+flop's Q drives the high-fanout virtual machine selection. Software's live
+activity and inhibit fields use a one-clock sampled copy, not the raw pins.
 
-RTL activity sensing does not replace electrical protection. Before hardware
-use, the physical bus translators must have a fail-safe output-disable path that
-works during PL reset and while the Apple slot is unpowered. The current fixed
-translator-enable connections must not remain active in the completed mode.
-This safety promise requires a real slot-power sense that gates the translator
-output enables in hardware, unless board tests prove an existing independent
-signal provides the same protection. The PL also records that signal and stops
-the virtual machine. Until the hardware gate is present and proved, ONE//e may
-run only with the edge connector physically disconnected from an Apple or on a
-purpose-built safe carrier.
+After an activity stop:
 
-## Architecture
+- Effective mode drops at once.
+- Firmware clears the session request and stops vTW.
+- The request is never raised again by polling, startup, config load, or a
+  profile.
+- Quiet time alone cannot restart the machine.
+- The user must select the boot-menu item again after the request has gone off,
+  every monitored input has returned to its reset idle level, and the connector
+  has shown no transition for the quiet interval.
 
-### 1. Stand-Alone Supervisor
+While isolation is high, `apple_bus_wrapper` blocks address/R/W drive, data
+drive, IRQ#, INH#, DMA#, the address and data directions, and the main bus
+transceiver. `apple_top` sends an all-zero physical `AppleBus_write` record and
+releases the separate physical RESET output. The virtual warm-reset path does
+not connect to the physical RESET path.
 
-The supervisor owns:
+### Board Limit: No Slot-Power Sense
 
-- Manual request and cancel commands from the control register bank.
-- Apple-activity detection, sticky lockout, and quiet qualification.
-- Immediate `one_iie_effective` kill.
-- Stand-alone cold reset and warm reset.
-- Status and reason registers for the boot menu and UART.
-- A hard `physical_bus_isolate` output used by every edge-connector driver.
+This board revision has no physical Apple-slot power-sense input. The top level
+ties `apple_power_present_raw` low and reports both the power-sense-present and
+Apple-power bits as zero in card-control register `0x5B`.
 
-Firmware may request a state change, but firmware polling never forms part of
-the safety path.
+The activity detector catches clock or control transitions and continuously
+vetoes any monitored level which differs from the reset idle vector. It still
+cannot identify a powered host whose monitored slot pins all match the same
+idle vector as an unpowered host. The output-side design isolates the connector
+before ONE//e starts, but simulation cannot prove translator behavior, leakage,
+back-power, or board high impedance in that case. Until the board tests below
+pass, do not treat ONE//e as safe for use while it remains plugged into an
+Apple.
 
-Use card-control offset `0x5B` for the first control/status register. It is free
-between the current SDD readbacks and machine-mode registers. A write to bit 0
-is the manual session request. The proposed readback is:
+## Implemented Architecture
 
-- Bit 0: request.
-- Bit 1: effective enable.
-- Bit 2: live Apple activity.
-- Bit 3: activity lockout.
-- Bit 4: connector quiet.
-- Bit 5: reselect armed.
-- Bit 6: ONE//e selected.
-- Bit 7: physical bus isolated.
-- Bits 10:8: inhibit reason.
+### Virtual Bus and Slot Pins
 
-Activity has priority over a same-cycle ARM write. No startup, profile-load,
-generic apply, or polling path may write request bit 0 high.
+`hdl/apple/apple_virtual_bus.sv` generates the native phase contract:
+`drive_en`, `addr_en`, `sss_en`, `serve_en`, and `data_en`. Idle cycles keep the
+1 MHz card and scanner cadence running. The chosen bus record feeds the same
+soft-switch manager, capture path, and virtual card modules used in host mode.
+After `drive_en`, the bus samples the active owner/address/R/W tuple across a
+window which includes the vTW posted-write pipeline, then holds that tuple from
+`addr_en` through `data_en`. Slot decoders therefore do not use a live
+high-fanout owner mux during the visible cycle.
 
-### 2. Virtual Motherboard Timing
+`apple_top` keeps `physical_ab_read` and `virtual_ab_read` separate. Effective
+ONE//e selects the virtual record. All card replies enter the existing
+`apple_bus_write_arbiter`; its merged result returns to the virtual bus and the
+soft CPU. The physical wrapper receives a masked zero record while isolation
+is high.
 
-Generate the Apple native cadence from a local fabric clock. It must provide the
-same phase strobes used by `globals::AppleBus_read`:
+The shared records provide slot device select, slot ROM, expansion ROM,
+interrupt, inhibit, ready, reset, and bus-data behavior without a private
+CPU-to-card interface. The vTW core uses the scanner address and main shadow RAM
+for unclaimed floating reads. For status reads, it combines the claimed bit 7
+with scanner bits 6:0.
 
-- `drive_en`
-- `addr_en`
-- `sss_en`
-- `serve_en`
-- `data_en`
+`hdl/apple/onee_cold_slot_scan.sv` hides slot 7 at each ONE//e entry. The first
+`$C600` ROM probe ends the hold, so the cold scan reaches virtual Disk II in
+slot 6 first and slot 7 cards become visible after that probe.
 
-The generator also provides the 65-cycle line count, NTSC/PAL frame count, VBL,
-and scanner address. It continues to run while the accelerated CPU is stopped
-or executing only private RAM cycles.
+The Appli-Card/AD8088 bus-master path stays blocked for the whole ONE//e
+session. Virtual-card IRQ and NMI requests remain internal; physical DMA is not
+used.
 
-### 3. Virtual Slot Pins
+### Built-In Motherboard I/O
 
-Create one synthetic `globals::AppleBus_read` record for the virtual
-motherboard. Existing cards consume this record as though it came from
-`apple_bus_wrapper`.
+`hdl/apple/onee_motherboard_io.sv` implements the following shared-bus
+behavior:
 
-The virtual motherboard derives the same slot-facing selects from the CPU
-address and current soft-switch state:
+- `$C000`: keyboard code and strobe.
+- `$C010`: any-key state and keyboard-strobe clear. Writes anywhere in
+  `$C010-$C01F` also clear the strobe.
+- `$C011-$C01F`: non-destructive //e MMU/video status reads, with scanner low
+  bits.
+- `$C020-$C02F`: cassette-output latch toggle.
+- `$C030-$C03F`: speaker toggle.
+- `$C040-$C04F`: utility-strobe pulse mirrors.
+- `$C050-$C057`: existing video soft switches.
+- `$C058-$C05D`: AN0-AN2 when IOUDIS is off.
+- `$C05E/$C05F`: AN3 when IOUDIS is off and DHIRES when it is on.
+- `$C060-$C067` and mirrors `$C068-$C06F`: cassette input, Open Apple, Closed
+  Apple, PB2, and PDL0-PDL3 status.
+- `$C070-$C07F`: paddle-trigger mirrors, plus write-only IOUDIS control at
+  `$C07E/$C07F`, read status at the same addresses, and coexistence with the
+  existing RamWorks `$C071/$C073` bank writes.
+- Unclaimed reads: scanner/floating-bus data supplied by the vTW read path.
 
-- Per-slot device select for `$C080-$C0FF`.
-- Per-slot ROM select for `$C100-$C7FF`.
-- Shared expansion-ROM selection for `$C800-$CFFF`.
-- Slot `$C800` claim and `$CFFF` release.
-- `INTCXROM`, `SLOTC3ROM`, and internal slot-3 behavior.
+Paddle values are snapped on each `$C07x` access. Their counters expire on
+native Apple cycles, so TransWarp speed does not shorten the software-visible
+paddle time.
 
-Existing `globals::AppleBus_write` responses go through the current response
-arbiter. In ONE//e mode, the selected data returns to the soft CPU internally;
-it never enables a physical data-bus driver. Open-drain IRQ, NMI, and RDY
-requests become local CPU inputs. Any future virtual bus master must use an
-internal arbiter and may not reuse physical `/DMA` ownership.
+This models the base Enhanced //e utility strobe. It does not invent a
+motherboard VBL-interrupt enable which the base //e does not have.
 
-The first integration splits `apple_top` into physical and virtual bus records:
+### CPU, Memory, Menu, and Reset
 
-- `physical_ab_read` comes only from `apple_bus_wrapper`.
-- `virtual_ab_read` comes only from `apple_virtual_bus`.
-- ONE//e selects `virtual_ab_read` for the soft-switch manager, capture path,
-  virtual cards, and TransWarp bus engine.
-- The current merged `AppleBus_write` feeds `apple_virtual_bus` internally.
-- A separately masked write record feeds `apple_bus_wrapper`; it is all zero
-  while physical isolation is active.
+The Boot Settings page has a session-only row 2 named `ONE//e standalone`,
+before the USB binding rows. It reports `OFF`, `RUNNING`, or `LOCKED`. It does
+not enter config files, saved settings, or profiles.
 
-The existing TransWarp bus engine can act as the first virtual bus master. Its
-address, R/W, data, and `/DMA` requests already use `AppleBus_write`, so the
-stand-alone path need not add a private CPU-to-card bus.
-
-This shared bus is the main compatibility boundary. Private short paths may
-remain only when they produce the same visible slot behavior and timing.
-
-### 4. Built-In Motherboard I/O
-
-Add an IOU/MMU responder on the virtual bus for:
-
-- `$C000` keyboard data and strobe.
-- `$C010-$C01F` keyboard clear and IIe status reads.
-- `$C020-$C02F` cassette output state.
-- `$C030-$C03F` speaker toggle.
-- `$C040-$C04F` utility strobe and VBL interrupt controls.
-- `$C050-$C05F` video switches and annunciators.
-- `$C060-$C063` cassette input and pushbuttons.
-- `$C064-$C067` paddle timers.
-- `$C070-$C07F` paddle trigger aliases, IOUDIS, DHIRES status, and RamWorks
-  register coexistence.
-- Floating-bus data on every unclaimed read.
-
-The existing private TransWarp soft-switch state and address translator remain
-the authority for memory banking. New logic should extend them rather than
-create a second set of IIe memory state.
-
-### 5. CPU, Memory, and Boot
-
-ONE//e forces the supported machine identity to a 128K Enhanced US Apple //e.
-It uses the existing 65C02 core, 64K main shadow, 64K auxiliary shadow, 16K ROM
-shadow, and built-in character ROM.
-
-The boot service gets a separate stand-alone path:
-
-1. Verify the supervisor is quiet and unlocked.
-2. Assert local reset and physical isolation.
-3. Initialize cold-start state and load the Enhanced IIe ROM.
-4. Select virtual slot 6 Disk II or the requested virtual boot target.
-5. Enable and release the TransWarp core without machine detection, physical
-   DMA ownership, physical reset, or native slot-7 handoff.
-6. Stop at once if `one_iie_effective` falls.
-
-Do not force the existing external-host machine-mode register to IIe. That
-register also permits physical INH and DMA behavior. The ONE//e identity and
-TransWarp gate stay in their own control plane.
-
-Implement this as an explicit `vtw_service` stand-alone start mode or a small
-ONE//e service which calls shared ROM-load helpers. Do not call the current
-normal vTW enable path unchanged: it waits for host identification, physical
-slot-7 handoff, `/DMA` ownership, and physical RESET. The PL request register
-also clears itself on Apple activity; ARM then cancels its session intent rather
-than writing the request high again.
-
-Warm Reset preserves RAM. A new ONE//e session performs a defined cold start so
-old `$03F3/$03F4` values cannot skip initialization.
-
-### 6. Video
-
-Feed virtual native-cycle records into the existing capture and renderer path.
-Posted screen writes, soft-switch changes, scanner position, VBL, and frame
-markers must come from the virtual motherboard. This keeps current raster and
-mid-frame switch support without adding a second renderer.
-
-### 7. USB Keyboard and Joystick
-
-USB firmware translates HID key reports to Apple key codes and sends events to
-a small PL keyboard FIFO/latch. PL owns the software-visible `$C000/$C010`
-state. Firmware supplies modifier state, including Open Apple and Closed Apple,
-and requests local Reset for the correct key chord.
-
-USB joystick firmware publishes normalized axes and buttons. PL snapshots axis
-values when software accesses a paddle-trigger address, then expires each
-paddle against the native Apple cycle clock. This preserves timing-based paddle
-reads even when the CPU runs faster than 1 MHz.
-
-### 8. Speaker
-
-Every `$C030-$C03F` access toggles a one-bit speaker state. An edge accumulator
-or equivalent resampler converts native-cycle transitions to the existing audio
-sample rate. The result enters the current mixer beside Mockingboard and Disk II
-audio and follows the existing output volume and mute path.
-
-### 9. Virtual Disk II
-
-In ONE//e mode slot 6 always targets the existing virtual Disk II card. Complete
-the current private path so all slot-6 reads, writes, soft switches, sequencer
-timing, motor state, write data, WOZ timing, boot ROM, and drive sound work from
-the virtual bus. Physical Disk II access does not exist in this mode.
-
-## Delivery Stages
-
-### Stage 0: Safety and Control
-
-- [ ] Add and test the stand-alone safety supervisor.
-- [ ] Add control/status registers with sticky lockout reason.
-- [ ] Route one common isolation gate to all physical Apple outputs.
-- [ ] Prove reset defaults and raw-activity kill in simulation.
-- [ ] Resolve the board-level slot-power/interlock requirement.
-
-### Stage 1: Virtual Bus Skeleton
-
-- [ ] Generate local Apple bus phases and scanner cadence.
-- [ ] Create the synthetic `AppleBus_read` record.
-- [ ] Return virtual-card arbiter data to a test bus master.
-- [ ] Verify slot I/O, slot ROM, expansion ROM, IRQ, and floating-bus cases.
-- [ ] Keep every physical driver disabled throughout the test.
-
-### Stage 2: CPU and Boot Menu
-
-- [ ] Add a session-only row 2 on Boot Settings, between Boot Device and the USB
-  binding section: `ONE//e standalone: OFF / RUNNING / LOCKED - APPLE ACTIVE`.
-- [ ] Keep the action out of saved settings and profiles.
-- [ ] Refuse start while activity is present or latched.
-- [ ] Start TransWarp automatically through the stand-alone boot path.
-- [ ] Stop and lock out on simulated Apple activity.
-- [ ] Cold-boot the Enhanced IIe ROM to BASIC over the virtual bus.
-
-Planned item help:
+The item help is:
 
 > Runs the built-in Enhanced Apple //e on Appletini's soft 65C02 without an
 > Apple host. This mode is session-only and starts off after every card boot.
 > Any Apple-bus activity stops ONE//e and keeps it off. After the connector is
 > quiet, select this item again.
 
-### Stage 3: Video and Built-In I/O
+The sole high write to the ONE//e request register comes from an explicit menu
+selection. A request waits for PL effective state with a bounded timeout. The
+menu closes only when the vTW status confirms both effective enable and a
+released core; the user can reopen it to stop the session.
 
-- [ ] Feed the renderer from virtual cycles.
-- [ ] Implement complete keyboard and modifier behavior.
-- [ ] Implement video/status switches, VBL, and floating bus.
-- [ ] Implement USB paddles, buttons, and annunciators.
-- [ ] Mix the motherboard speaker into current audio.
+`vtw_service_onee_start()` then:
 
-### Stage 4: Storage and Cards
+1. Checks request, effective state, isolation, selection, signature, and
+   inhibit reason.
+2. Enables the Disk II service for this session without changing the saved
+   slot mask.
+3. Holds only the virtual machine in reset.
+4. Clears shadow `$03F3/$03F4` to force a cold start.
+5. Loads the fixed 16K Enhanced //e ROM into the existing ROM shadow, checking
+   isolation on every byte.
+6. Forces the private vTW Disk II shortcut off.
+7. Releases virtual reset and the soft core.
 
-- [ ] Finish virtual Disk II slot-6 reads, writes, and timing.
-- [ ] Boot DOS and ProDOS disk images.
-- [ ] Run SmartPort and each enabled virtual card on the synthetic slot bus.
-- [ ] Add internal arbitration or explicitly block virtual bus-master cards.
+The ONE//e start path does not wait for host-machine detection, physical DMA,
+physical RESET, or the normal slot-7 host handoff. It keeps the saved host-vTW
+intent, speed, divider, and compatibility options unchanged. Stopping writes a
+literal zero to vTW control before it clears the ONE//e request and restores
+the saved Disk II service state.
 
-### Stage 5: Hardware Safety and Compatibility
+Ctrl+Pause requests a virtual warm reset. The PL holds virtual RESET for at
+least eight full native cycles and acknowledges the input bridge. This resets
+the soft CPU and virtual motherboard I/O but preserves shadow RAM. It never
+asserts the Apple connector's RESET signal.
 
-- [ ] Prove all Apple connector pins remain high impedance in ONE//e mode.
-- [ ] Test Apple power-on while ONE//e runs: immediate stop, no pin contention,
-  no back-power, sticky lockout, and manual-only restart.
-- [ ] Test Apple already on when the user selects ONE//e: request refused.
-- [ ] Test normal Appletini mode after every ONE//e fault and reset case.
-- [ ] Run 40/80-column text, lores, hires, double-hires, raster, paddle,
-  speaker, Disk II, IRQ, warm-reset, and cold-reset compatibility tests.
+### USB Input
 
-## First Implementation Increment
+`onee_input_service` receives both boot-keyboard and parsed report-keyboard HID
+reports. It translates letters, Shift/Caps Lock, Ctrl-A through Ctrl-Z,
+numbers, punctuation, Return, Escape, Tab, Space, arrows, Delete, and keypad
+keys to 7-bit Apple codes. Left Alt or GUI maps to Open Apple; right Alt or GUI
+maps to Closed Apple. These Apple keys also feed PB0 and PB1.
 
-The first branch increment contains only logic that cannot enable the feature:
+The service recognizes report-protocol devices with at least two absolute
+axes as joysticks. It normalizes the HID logical range to 0-255 and maps:
 
-1. A stand-alone safety guard with a sticky Apple-activity lockout.
-2. Source-level and RTL tests for default-off, immediate kill, quiet-time
-   qualification, and manual reselect.
-3. A virtual-bus scaffold or interface contract that reuses `AppleBus_read` and
-   `AppleBus_write` without connecting it to physical pins.
+- X to PDL0.
+- Y to PDL1.
+- Rx, with Z fallback, to PDL2.
+- Ry, with Rz fallback, to PDL3.
+- The first three buttons to PB0-PB2.
 
-Boot-menu activation comes only after those tests pass and the common physical
-isolation gate exists.
+The lowest active HID slot owns the joystick. Disconnect releases its buttons
+and returns all paddles to `0x80` neutral.
 
-## Current Branch Status
+Firmware has a 32-entry key queue in front of the PL's eight-entry FIFO. It
+checks `RUNNING`, effective mode, bridge enable, and the `0xE1` bridge
+signature before any write. Dropping effective mode masks the PL outputs at
+once and clears all queued, live, paddle, and reset state on the next clock.
 
-Implemented, but deliberately not connected to the top level:
+Mapped keys emit once on their press edge, then repeat after 1,000 active input
+service polls and every 100 polls after that. The newest held mapped key across
+all HID devices owns repeat. Releasing or disconnecting it selects the newest
+remaining held key. Repeat uses the current Shift, Control, and Caps Lock state.
+Caps Lock, Pause, modifier-only reports, and unmapped keys do not repeat. A
+session stop clears all repeat state.
 
-- `onee_mode_safety_guard.sv`: default-off manual selection, direct slot-power
-  veto, activity monitoring, immediate virtual-machine kill, sticky lockout,
-  quiet-time reselect, and a separate sticky physical-isolation output.
-- `apple_virtual_bus.sv`: free-running Apple bus phases, idle native cycles,
-  the shared `AppleBus_read`/`AppleBus_write` contract, card read responses,
-  floating-bus fallback, RDY replay, and virtual DMA ownership.
-- Focused RTL benches and Python launchers for both modules.
+Caps Lock state exists only in the ONE//e key translator. Firmware does not
+send a USB HID output report for it, so a keyboard's Caps Lock LED may not show
+the current ONE//e state. This is an input-device limit, not a start or safety
+blocker.
 
-The branch does not yet expose a menu action, alter `apple_top`, enable the soft
-CPU, or drive any connector pin. This is intentional: top-level activation is
-blocked until the connector isolation path and real slot-power input exist.
+### Storage and Other Cards
+
+In ONE//e mode, slot 6 always selects `disk2_card`, even if the saved slot-6
+setting is off. Firmware also session-enables its track service. The vTW
+private Disk II shortcut is forced off, so slot ROM, `$C0E0-$C0EF` soft
+switches, sequencer, motor, write, WOZ timing, and drive-sound state all use
+the shared synthetic slot bus. ONE//e has no path to a physical Disk II card,
+cable, or drive.
+
+SmartPort appears in virtual slot 7 after the cold `$C600` probe. Its private
+vTW shortcut is disabled in ONE//e, so its slot ROM, `$C800` window, control,
+data, and interrupt behavior use the same synthetic slot bus. Other enabled
+virtual cards also see the selected bus record. Cards still need their own
+compatibility tests; sharing the record does not prove every card or external
+chip works without a host board.
+
+### Video and Speaker
+
+The virtual bus drives the existing native timing generator and normal cycle
+capture path. The vTW core posts screen writes through the same capture queue
+used by host mode. The focused video bench covers all 65 cycles across all 262
+NTSC lines, starts VBL at line 192 cycle 0, checks frame wrap and frame-zero
+reset, checks `$C050/$C057` state in renderer frame metadata, and checks that
+posted `$0400/$2000` writes reach renderer-input records.
+
+Each `$C03x` access toggles the motherboard speaker. `onee_speaker_audio.sv`
+turns that state into signed, DC-blocked, saturated 16-bit mono samples. The
+board top mixes the sample into both left and right channels after the existing
+Mockingboard plus Disk II mix, using the existing saturating adder and output
+volume/mute path. Effective-mode loss masks the ONE//e sample to zero.
+
+The cassette-output latch exists for software compatibility, and cassette
+input reads low. There is no analog cassette input or output path in this
+scope. Annunciator state and the utility-strobe pulse also have no external
+game-port output in this scope.
+
+## Card-Control Register Contract
+
+All offsets are in the existing card-control register bank.
+
+| Offset | Write contract | Read contract |
+| --- | --- | --- |
+| `0x5B` | Bit 0 is the manual session request. Only the explicit Boot Settings action may write it high. | Bit 0 request; 1 effective; 2 physical isolation; 3 outputs forced off; 4 live activity; 5 sticky activity lockout; 6 quiet; 7 reselect armed; 8 selected; 9 isolation hold; 12:10 inhibit reason; 13 power-sense pin present; 14 Apple power sensed; 15 HDL present; 31:24 signature `0xE1`. |
+| `0x5C` | Bits 6:0 enqueue one Apple key code. | Bits 6:0 FIFO head; 7 valid; 11:8 count; 12 full; 13 empty; 14 sticky overflow. |
+| `0x5D` | Bit 0 any key; 1 Open Apple; 2 Closed Apple; 5:3 joystick PB0-PB2. | The saved live-input word. Open/Closed Apple are also ORed into effective PB0/PB1. |
+| `0x5E` | Bytes 0-3 are PDL0-PDL3. | The four saved paddle bytes; neutral is `0x80808080`. |
+| `0x5F` | Bit 0 request warm reset; 1 clear FIFO overflow; 2 flush key FIFO; 3 release live inputs and recenter paddles. | Bit 0 reset request; 1 overflow; 2 empty; 3 full; 7:4 FIFO count; 8 reset acknowledge; 9 bridge enabled; 31:24 signature `0xE1`. |
+
+The `0x5B` inhibit values are 0 none, 1 reset, 2 Apple power, 3 live Apple
+activity, 4 activity lockout, 5 manual reselect required, and 6 manual off.
+
+The input bridge returns zero and exposes no consumer output when effective
+mode is off.
+
+## Delivery Checklist
+
+### Safety and Control
+
+- [x] Default the mode and firmware session request off.
+- [x] Isolate physical outputs before effective mode can start.
+- [x] Kill effective mode on raw Apple-side transitions without firmware.
+- [x] Keep a stopped-high clock or asserted active-low control from becoming
+  quiet until it returns to the reset idle level.
+- [x] Latch activity and require a later manual selection.
+- [x] Keep startup, profile, apply, and polling paths from raising request.
+- [x] Mask physical address, R/W, data, IRQ, INH, DMA, transceiver, and RESET
+  outputs in RTL.
+- [ ] Prove connector pin voltage, high impedance, leakage, and back-power on
+  a production board.
+- [ ] Prove external translator OE/DIR defaults while the PL is unconfigured,
+  configuring, or held in reset, under both Apple-first and card-first power
+  order.
+- [ ] Test an Apple already on and an Apple powered on during ONE//e.
+- [x] Document the missing slot-power input and the undetectable powered host
+  whose monitored pins all match the reset idle vector.
+- [ ] Add a board-level power interlock or power-sense input if ONE//e must
+  reject that all-idle powered-host case.
+
+### Virtual Motherboard and Boot
+
+- [x] Generate native virtual bus phases and scanner cadence.
+- [x] Return card-arbiter data and local IRQ/NMI/RDY/INH behavior to the soft
+  CPU without driving physical pins.
+- [x] Implement keyboard, status, video, annunciator, paddle, cassette-latch,
+  utility-strobe, and speaker soft switches.
+- [x] Add the session-only boot-menu action.
+- [x] Auto-start vTW through a stand-alone cold-ROM path.
+- [x] Run the real embedded ROM reset entry and cold slot scan in simulation
+  through the slot-6 `$C600` probe.
+- [x] Run the stock DOS 3.3 System Master and ProDOS 2.4.3 track-0 paths through
+  the production Disk II slot bus and enter each loaded boot sector at `$0801`
+  in simulation.
+- [ ] Reach a BASIC prompt or a known monitor loop in a full-ROM system test.
+- [x] Add and test held-key repeat for mapped USB keyboard keys.
+
+### Input, Video, and Audio
+
+- [x] Bridge USB keyboard data, Open Apple, Closed Apple, and Ctrl+Pause reset.
+- [x] Bridge four normalized USB joystick axes and three buttons.
+- [x] Count paddle expiry in native bus cycles.
+- [x] Route a virtual warm reset to the motherboard and soft CPU only.
+- [x] Feed posted screen writes and switch state into normal renderer records.
+- [x] Mix the motherboard speaker into both audio channels.
+- [ ] Validate DVI text, lores, hires, double-hires, 40/80-column, mixed-mode,
+  raster, and PAL output on a board.
+- [ ] Validate USB keyboard layouts, held-key behavior, and a range of real
+  joysticks/gamepads.
+- [ ] Validate speaker pitch, level, mute, and mixed card audio on the analog
+  output.
+- [ ] Add analog cassette and external annunciator/utility-strobe I/O if
+  connector-level //e game/cassette port compatibility enters the scope.
+
+### Storage and Cards
+
+- [x] Force only virtual Disk II into slot 6 for the ONE//e session.
+- [x] Keep Disk II on the shared synthetic slot bus and restore saved state on
+  exit.
+- [x] Keep SmartPort on the shared slot-7 bus after the slot-6 cold probe.
+- [x] Block the AD8088 virtual bus-master path during ONE//e.
+- [x] Load and enter the first sector from the stock DOS 3.3 System Master
+  image through virtual Disk II in simulation.
+- [x] Load and enter the first sector from the stock ProDOS 2.4.3 image through
+  virtual Disk II in simulation.
+- [ ] Complete a DOS 3.3 boot to an OS-ready prompt.
+- [ ] Complete a ProDOS boot to an OS-ready prompt.
+- [ ] Prove multi-track Disk II service beyond track 0.
+- [ ] Test Disk II reads, writes, WOZ timing, motor state, and sound on a board.
+- [ ] Run a compatibility pass for each supported virtual card and its backing
+  hardware or firmware service.
+
+## Validation Record
+
+### Passed Focused Checks
+
+The following focused checks have passed on this branch:
+
+- `python scripts/test_onee_mode_safety_guard.py`: source contract plus XSim
+  for reset-off, every monitored raw transition, modeled power veto, direct
+  kill, held-high PHI0, held-low RESET#, isolation hold, return-to-idle quiet
+  time, and manual reselect.
+- `python scripts/test_apple_virtual_bus.py`: native phase order, idle scanner
+  cadence, card response, floating-bus fallback, local RESET#/IRQ#/NMI#/INH#/
+  RDY#/DMA# returns, RDY replay, a late two-clock registered slot master,
+  owner/address/R/W stability through `data_en`, virtual DMA ownership, and CPU
+  resume after release.
+- `python scripts/test_onee_integration.py`: top-level source contract plus
+  `tb_apple_bus_isolation`; address, R/W, and data release, IRQ/DMA/INH release,
+  transceiver disable, and direction clears pass in simulation.
+- `python scripts/test_onee_motherboard_io.py`: keyboard clear rules, status
+  polarity and floating low bits, C02x/C03x/C04x mirrors, video switches,
+  IOUDIS/DHIRES, annunciators, C06x mirrors, and native paddle expiry.
+- `python scripts/test_onee_bus_integration.py`: joined vTW, virtual bus,
+  motherboard I/O, arbiter, Disk II, and SmartPort test. At commit `8fec225`,
+  it proved C000/C010, Apple keys, status/scanner merge, side effects, internal
+  INH, forced C600 Disk II ROM, slot-7 release, C7/C8 SmartPort bus access, no
+  private SmartPort cycles, and no physical writes.
+- `python scripts/test_onee_input_bridge.py`: FIFO, backpressure, simultaneous
+  full pop/push, sticky overflow, live keys/buttons, paddles, reset handshake,
+  disable masking, and isolated synthesis.
+- `python scripts/test_onee_config_menu.py`: seven menu, register, session-only,
+  manual-start, refusal, timeout, and runtime-binding checks.
+- `python scripts/test_onee_vtw_runtime.py`: eight cold start, isolation, ROM,
+  Disk II override, stop order, running-state, menu-close, and host-path checks.
+- `python scripts/test_onee_input_service.py`: ten source checks plus a native
+  host harness for key translation, initial edges, timed held-key repeat,
+  multi-key selection, FIFO backpressure, Ctrl+Pause, Apple keys, axes,
+  buttons, ownership, disconnect, and effective drop.
+- `python scripts/test_usb_hid_service.py`: all 13 existing USB HID, hub,
+  service-polling, Vitis-source, USB0 storage-priority, and diagnostic checks.
+- `python scripts/test_boot_menu_usb_keybindings.py`: all nine boot-menu USB
+  binding and input-capture checks.
+- `python scripts/test_onee_top_io.py`: top-level input bridge, eight-native-
+  cycle virtual reset, physical-reset separation, speaker hookup, and reset
+  controller XSim.
+- `python scripts/test_onee_speaker_audio.py`: signed waveform, DC removal,
+  saturation, sample hold, disable, and reset behavior.
+- `python scripts/test_onee_video_path.py`: passed; checks full NTSC
+  cadence, VBL, frame reset/wrap, C050/C057 frame state, posted screen-write
+  renderer-input records, and a real 16K ROM
+  smoke from reset vector `$FA62` through hidden slot 7 to `$C600` and slot-7
+  release.
+- `python scripts/test_onee_disk2_boot.py`: passed for
+  `software/DOS 3.3 System Master.dsk` in DOS sector order and
+  `software/ProDOS_2_4_3.po` in ProDOS sector order. It host-validates the
+  nibblized address and data fields, then runs the exact embedded 16K Enhanced
+  //e ROM, production 130-clock virtual-bus cadence, 13-client arbiter,
+  `disk2_slot6.mem`, and `disk2_card` with the private vTW Disk II port off.
+  Each XSim run completed the stock 80-step calibration and entered `$0801` at
+  130.77294375 ms. DOS matched `$0800-$0803` to `01 A5 27 C9`; ProDOS matched
+  `01 38 B0 03`. Each run counted 73,479 slot cycles, 5,764 I/O cycles, 5,599
+  data reads, 879 DDR reads, and 28 D5 prologs, with zero card-to-bus or engine
+  response mismatches.
+- The 20-test `python scripts/test_vtw.py` suite passed at commit `8fec225`.
+- ARM GCC syntax-only checks passed for the new frontend ONE//e service, input
+  service, USB HID changes, vTW service changes, config menu, and `main.c`.
+
+### Synthesis and Firmware Build State
+
+- Full `appletini_yarz_top` synthesis passed at commit `8fec225` with zero
+  errors and zero critical warnings.
+- [x] Candidate-source `appletini_yarz_top` synthesis at `530b29e`, including
+  the input bridge, warm reset, speaker mixer, video hookup, held-level safety
+  veto, virtual-cycle tuple, and contained diagnostic paths, passed on
+  2026-08-16 with zero errors and zero critical warnings.
+- Isolated `onee_input_bridge` synthesis passed with zero errors and zero
+  critical warnings.
+- The `72d299f` implementation routed and wrote a bitstream, but its final
+  extra post-route physical optimization still reported WNS -5.051 ns, TNS
+  -56007.917 ns, WHS +0.059 ns, and THS 0. The export script rejected the
+  timing failure. Do not use that failed-timing bitstream as a delivery image.
+- The next full implementation at `0a155fa` reduced the failure to WNS
+  -0.593 ns, TNS -122.695 ns, and 581 failing setup endpoints, with WHS
+  +0.020 ns. Analysis assigned 459 of those path objects to the live
+  13-client write-arbiter owner/address path feeding virtual slot decoders.
+  Commits `8550239`, `9f3c259`, `9a5deb8`, and `530b29e` shorten or contain
+  those paths.
+- [x] The full `530b29e` implementation met all reported setup, hold, and
+  pulse-width constraints with WNS +0.038 ns, TNS 0, WHS +0.051 ns, zero
+  critical warnings, and zero errors. It exported a same-source bitstream and
+  XSA to immutable archive
+  `.timing_runs/20260816T140140Z-530b29e5-full`.
+- [ ] Reach the project's +0.300 ns setup-margin promotion gate and repeat the
+  clean full build at the same commit. The +0.038 ns candidate proves that the
+  source can route and export, but it is not a promoted final image.
+- [ ] Synthesize and route current head `354cc9a`. The CPU arithmetic-stage,
+  speaker-clamp, scanner-read, and local AXI write-data changes in `a6cd13e`,
+  `ad0f988`, and `354cc9a` have focused test proof but no full-route result yet.
+- [ ] Run the final full source regression after all branch commits.
+- The first 2026-08-16 Vitis attempt made BSP content, but
+  `vitis_workspace/appletini_platform/export/.buildstatus` reported
+  `export=ERROR`. The expected
+  `export/appletini_platform/appletini_platform.xpfm` did not exist, so app
+  creation stopped before the frontend build. This run does not prove a
+  firmware link or produce a new firmware image.
+- `python scripts/test_vitis_platform_build_guard.py` passed. The workspace
+  script now permits one bounded retry of a transient platform-build failure,
+  then stops on another nonzero result or a missing exported XPFM instead of
+  continuing into app creation.
+- [x] A fresh Vitis 2025.2 workspace build after `4a2d4d6`, using the
+  `530b29e` hardware candidate, completed on 2026-08-16. Platform
+  `.buildstatus` reports `export=SUCCESS`, the XPFM exists, and the run linked
+  `fsbl.elf`, `bootloader.elf`, `frontend_core1.elf`, and `frontend.elf`.
+- [ ] Rebuild against the final promoted XSA, then package and byte-check the
+  final firmware image. The successful workspace build proves the PS source
+  and platform export; it is not a programmed or board-tested image.
+
+### Missing Board and End-to-End Proof
+
+- [ ] Program a final same-source bitstream and firmware image on an Appletini
+  ONE.
+- [ ] Verify all physical Apple pins and translators while ONE//e starts,
+  runs, faults, stops, and returns to host mode, including PL configuration and
+  both card/Apple power orders.
+- [ ] Verify a live-host event stops ONE//e with no contention, back-power, or
+  automatic restart.
+- [ ] Complete real DOS and ProDOS boots to their OS-ready states through
+  virtual Disk II.
+- [ ] Check a rendered frame, USB input, paddles, warm reset, speaker, Disk II,
+  SmartPort, interrupts, and normal host mode on hardware.
+
+The deepest real-ROM simulations currently enter the first DOS 3.3 and ProDOS
+2.4.3 boot sectors at `$0801`. They do not prove either OS-ready state,
+multi-track service beyond track 0, a BASIC prompt, rendered DVI output, or
+physical safety.

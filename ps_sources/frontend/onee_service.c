@@ -1,4 +1,4 @@
-/* Session-only ONE//e stand-alone supervisor client. */
+/* Persistent-intent ONE//e stand-alone supervisor client. */
 
 #include "onee_service.h"
 
@@ -12,6 +12,10 @@
 static uint8_t g_manual_request;
 static uint8_t g_lockout_latched;
 static uint8_t g_runtime_started;
+static uint8_t g_persisted_intent;
+static uint8_t g_restore_pending;
+static uint8_t g_persist_update_pending;
+static uint8_t g_persist_update_value;
 static uint32_t g_runtime_retry_polls;
 static uint32_t g_status;
 static onee_service_runtime_start_fn g_runtime_start;
@@ -77,6 +81,32 @@ static void onee_service_write_request(uint8_t enable)
               (enable != 0U) ? CARD_CTRL_ONEE_CTRL_REQUEST_BIT : 0U);
 }
 
+static void onee_service_mark_persisted(uint8_t enable)
+{
+    const uint8_t value = (enable != 0U) ? 1U : 0U;
+
+    if (g_persisted_intent == value &&
+        (g_persist_update_pending == 0U ||
+         g_persist_update_value == value)) {
+        return;
+    }
+    g_persisted_intent = value;
+    g_persist_update_value = value;
+    g_persist_update_pending = 1U;
+}
+
+static void onee_service_force_persisted(uint8_t enable)
+{
+    const uint8_t value = (enable != 0U) ? 1U : 0U;
+
+    /* The menu can have synced a new value before this service changes its
+     * in-memory intent. A safety event or manual OFF must still queue OFF in
+     * that window. */
+    g_persisted_intent = value;
+    g_persist_update_value = value;
+    g_persist_update_pending = 1U;
+}
+
 static void onee_service_suspend_runtime(void)
 {
     if (g_runtime_suspend != NULL) {
@@ -96,6 +126,7 @@ static void onee_service_stop_runtime(void)
 static void onee_service_disarm(uint8_t lock_out)
 {
     g_manual_request = 0U;
+    g_restore_pending = 0U;
     g_runtime_retry_polls = 0U;
     if (lock_out != 0U) {
         g_lockout_latched = 1U;
@@ -111,6 +142,10 @@ void onee_service_init(void)
     g_manual_request = 0U;
     g_lockout_latched = 0U;
     g_runtime_started = 0U;
+    g_persisted_intent = 0U;
+    g_restore_pending = 0U;
+    g_persist_update_pending = 0U;
+    g_persist_update_value = 0U;
     g_runtime_retry_polls = 0U;
     g_runtime_start = NULL;
     g_runtime_suspend = NULL;
@@ -118,7 +153,8 @@ void onee_service_init(void)
     g_runtime_running = NULL;
     g_runtime_ctx = NULL;
 
-    /* A card boot always starts with the session request off. */
+    /* A card boot starts with the PL request off. The saved intent is restored
+     * later, after the global configuration file has been read. */
     onee_service_write_request(0U);
     g_status = REG_READ(CARD_CTRL_ONEE_MODE_REG);
 }
@@ -139,6 +175,40 @@ void onee_service_bind_runtime(onee_service_runtime_start_fn start,
     g_runtime_ctx = ctx;
 }
 
+void onee_service_restore_persisted(uint8_t enable)
+{
+    /* A late SD-card attach may reload the global file. Never let that stale
+     * file replace a newer manual action or Apple-event update which has not
+     * yet reached storage. */
+    if (g_manual_request != 0U || g_persist_update_pending != 0U ||
+        g_lockout_latched != 0U) {
+        return;
+    }
+    g_persisted_intent = (enable != 0U) ? 1U : 0U;
+    g_restore_pending = g_persisted_intent;
+    g_persist_update_pending = 0U;
+    g_persist_update_value = g_persisted_intent;
+}
+
+uint8_t onee_service_persist_update_pending(uint8_t *enable)
+{
+    if (g_persist_update_pending == 0U) {
+        return 0U;
+    }
+    if (enable != NULL) {
+        *enable = g_persist_update_value;
+    }
+    return 1U;
+}
+
+void onee_service_persist_update_ack(uint8_t enable)
+{
+    if (g_persist_update_pending != 0U &&
+        g_persist_update_value == ((enable != 0U) ? 1U : 0U)) {
+        g_persist_update_pending = 0U;
+    }
+}
+
 uint8_t onee_service_request_start(void)
 {
     const uint32_t status = REG_READ(CARD_CTRL_ONEE_MODE_REG);
@@ -147,15 +217,22 @@ uint8_t onee_service_request_start(void)
     if (g_runtime_start == NULL || g_runtime_suspend == NULL ||
         g_runtime_stop == NULL || g_runtime_running == NULL ||
         onee_status_can_start(status) == 0U) {
+        if (onee_status_pl_ready(status) != 0U &&
+            onee_status_has_hazard(status) != 0U) {
+            onee_service_force_persisted(0U);
+        }
         onee_service_disarm(1U);
         return 0U;
     }
 
     g_lockout_latched = 0U;
     g_manual_request = 1U;
+    g_restore_pending = 0U;
     g_runtime_retry_polls = 0U;
+    onee_service_mark_persisted(1U);
 
-    /* This is the sole high write. It runs only for a fresh user action. */
+    /* This high write runs only for a fresh user action. The only other high
+     * write is the guarded one-shot restore in poll(). */
     onee_service_write_request(1U);
     return 1U;
 }
@@ -163,6 +240,10 @@ uint8_t onee_service_request_start(void)
 void onee_service_request_stop(void)
 {
     g_lockout_latched = 0U;
+    /* The menu may have saved ON before a start request which this service
+     * refused without first changing g_persisted_intent. Manual OFF must
+     * still replace that staged value on storage. */
+    onee_service_force_persisted(0U);
     onee_service_disarm(0U);
 }
 
@@ -171,7 +252,7 @@ void onee_service_poll(void)
     g_status = REG_READ(CARD_CTRL_ONEE_MODE_REG);
 
     if (g_manual_request == 0U) {
-        /* Keep stale PL state off. This path never writes a high request. */
+        /* Keep stale PL state off before considering a one-shot restore. */
         if ((g_status & (CARD_CTRL_ONEE_STATUS_REQUEST_BIT |
                          CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT)) != 0U) {
             onee_service_write_request(0U);
@@ -179,13 +260,48 @@ void onee_service_poll(void)
         if (g_runtime_started != 0U) {
             onee_service_stop_runtime();
         }
+
+        if (g_restore_pending != 0U) {
+            if (onee_status_pl_ready(g_status) == 0U) {
+                /* A missing or wrong PL image cannot run ONE//e. Preserve the
+                 * saved choice for a later good boot, but drive nothing. */
+                return;
+            }
+            if (onee_status_has_hazard(g_status) != 0U) {
+                /* An Apple-side event is the one condition which revokes the
+                 * saved ON choice. The PL kill/lockout has already won. */
+                onee_service_force_persisted(0U);
+                onee_service_disarm(1U);
+                return;
+            }
+            if (g_runtime_start == NULL || g_runtime_suspend == NULL ||
+                g_runtime_stop == NULL || g_runtime_running == NULL ||
+                onee_status_can_start(g_status) == 0U) {
+                return;
+            }
+
+            /* One automatic high write is allowed per restored ON intent,
+             * only after the exact same PL safety test as a manual start. */
+            g_lockout_latched = 0U;
+            g_manual_request = 1U;
+            g_restore_pending = 0U;
+            g_runtime_retry_polls = 0U;
+            onee_service_write_request(1U);
+        }
         return;
     }
 
-    if (onee_status_pl_ready(g_status) == 0U ||
-        onee_status_has_hazard(g_status) != 0U) {
+    if (onee_status_pl_ready(g_status) == 0U) {
+        /* Do not erase the saved choice for a missing or wrong PL image. The
+         * current run is still terminal and cannot auto-restart this boot. */
+        onee_service_disarm(1U);
+        return;
+    }
+
+    if (onee_status_has_hazard(g_status) != 0U) {
         /* Activity cancels intent and latches the UI off. Quiet later does
          * not restart it; the operator must select the item again. */
+        onee_service_force_persisted(0U);
         onee_service_disarm(1U);
         return;
     }
@@ -195,6 +311,7 @@ void onee_service_poll(void)
      * the live activity bit can return quiet before this slow poll runs. Never
      * turn REQUEST back on here. Only a fresh menu action may do that. */
     if ((g_status & CARD_CTRL_ONEE_STATUS_REQUEST_BIT) == 0U) {
+        onee_service_force_persisted(0U);
         onee_service_disarm(1U);
         return;
     }

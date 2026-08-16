@@ -24,6 +24,7 @@
 #include "usb_def.h"
 #include "usb_errno.h"
 #include "usb_hid.h"
+#include "onee_usb_controls.h"
 
 #include "../lib/uart.h"
 
@@ -76,6 +77,10 @@ typedef struct {
     uint8_t active;
     uint8_t boot_mouse;
     uint8_t boot_keyboard;
+    uint8_t keyboard_keys_down;
+    uint8_t raw_buttons_down;
+    uint8_t raw_axis_active_mask;
+    uint8_t raw_hat_active;
     uint8_t mouse_capable;
     uint8_t onee_joystick;
     uint8_t mouse_card;
@@ -95,6 +100,7 @@ typedef struct {
     uint8_t ok_hold_fired;
     XTime ok_down_tick;
     usb_hid_menu_source_t ok_down_source;
+    usb_hid_menu_action_t ok_down_action;
     struct usbh_hid *hid;
     struct usbh_hid_report_info report_info;
     uint32_t report_count;
@@ -111,6 +117,8 @@ static uint8_t g_ready;
 static uint8_t g_seq;
 static uint8_t g_sensitivity = MOUSE_SENSITIVITY_BASE;
 static uint8_t g_menu_capture;
+static uint8_t g_onee_fixed_mode;
+static uint8_t g_onee_input_blocked;
 static usb_hid_menu_event_t g_menu_events[MOUSE_MENU_EVENT_DEPTH];
 static uint8_t g_menu_event_rd;
 static uint8_t g_menu_event_wr;
@@ -507,6 +515,7 @@ static void hid_slot_reset_menu_state(usb_hid_slot_t *slot)
     slot->ok_hold_fired = 0U;
     slot->ok_down_tick = 0U;
     slot->ok_down_source = USB_HID_MENU_SOURCE_NONE;
+    slot->ok_down_action = USB_HID_MENU_ACTION_NONE;
 }
 
 static void hid_slot_reset(usb_hid_slot_t *slot)
@@ -656,6 +665,7 @@ static void mouse_menu_start_ok_hold(usb_hid_slot_t *slot)
     slot->ok_down = 1U;
     slot->ok_hold_fired = 0U;
     slot->ok_down_source = g_menu_ok_source;
+    slot->ok_down_action = USB_HID_MENU_ACTION_NONE;
     XTime_GetTime(&slot->ok_down_tick);
 }
 
@@ -674,6 +684,7 @@ static void mouse_menu_finish_ok_hold(usb_hid_slot_t *slot)
     slot->ok_hold_fired = 0U;
     slot->ok_down_tick = 0U;
     slot->ok_down_source = USB_HID_MENU_SOURCE_NONE;
+    slot->ok_down_action = USB_HID_MENU_ACTION_NONE;
 }
 
 static void mouse_menu_push_button_edge(usb_hid_slot_t *slot,
@@ -905,6 +916,7 @@ static void hid_process_boot_mouse_report(usb_hid_slot_t *slot,
     }
 
     buttons = report[0];
+    slot->raw_buttons_down = (buttons != 0U) ? 1U : 0U;
     raw_dx = (int8_t)report[1];
     raw_dy = (int8_t)report[2];
     wheel = (len > MOUSE_BOOT_WHEEL_INDEX) ? (int8_t)report[MOUSE_BOOT_WHEEL_INDEX] : 0;
@@ -959,7 +971,8 @@ static void hid_source_list_add(usb_hid_menu_source_t *sources,
 }
 
 static void keyboard_menu_start_ok_hold(usb_hid_slot_t *slot,
-                                        usb_hid_menu_source_t source)
+                                        usb_hid_menu_source_t source,
+                                        usb_hid_menu_action_t action)
 {
     if (slot == NULL) {
         return;
@@ -967,6 +980,7 @@ static void keyboard_menu_start_ok_hold(usb_hid_slot_t *slot,
     slot->ok_down = 1U;
     slot->ok_hold_fired = 0U;
     slot->ok_down_source = source;
+    slot->ok_down_action = action;
     XTime_GetTime(&slot->ok_down_tick);
 }
 
@@ -976,17 +990,50 @@ static void hid_process_keyboard_usages(usb_hid_slot_t *slot,
                                         uint32_t count)
 {
     usb_hid_menu_source_t next_sources[HID_SOURCE_TRACK_COUNT];
+    uint8_t onee_keys[HID_KEY_TRACK_COUNT];
     uint32_t next_count = 0U;
+    uint32_t onee_key_count = 0U;
+    uint8_t onee_modifier = modifier;
+    uint8_t onee_printscreen_down = 0U;
     uint8_t onee_reset_chord;
 
     if (slot == NULL || keys == NULL) {
         return;
     }
 
+    slot->keyboard_keys_down = (modifier != 0U) ? 1U : 0U;
+    memset(onee_keys, 0, sizeof(onee_keys));
+    for (uint32_t i = 0U; i < count; ++i) {
+        const uint8_t key = keys[i];
+
+        if (key > HID_KBD_USAGE_ERRUNDEF) {
+            slot->keyboard_keys_down = 1U;
+        }
+        if (key == HID_KBD_USAGE_PRINTSCN) {
+            onee_printscreen_down = 1U;
+        }
+        if (onee_key_count >= HID_KEY_TRACK_COUNT ||
+            key <= HID_KBD_USAGE_ERRUNDEF ||
+            (g_onee_fixed_mode != 0U &&
+             onee_usb_fixed_usage_reserved(key) != 0U)) {
+            continue;
+        }
+        onee_keys[onee_key_count++] = key;
+    }
+    if (g_onee_fixed_mode != 0U) {
+        /* Shift belongs to the fixed 1080p screenshot chord while PrintScreen
+         * is down. Do not let it alter the Apple keyboard modifier state. */
+        onee_modifier = onee_usb_fixed_apple_modifier(
+            onee_modifier, onee_printscreen_down);
+    }
+    if (g_onee_input_blocked != 0U) {
+        onee_modifier = 0U;
+        onee_key_count = 0U;
+    }
     onee_reset_chord = onee_input_service_keyboard_report(slot->index,
-                                                           modifier,
-                                                           keys,
-                                                           count);
+                                                           onee_modifier,
+                                                           onee_keys,
+                                                           onee_key_count);
 
     memset(next_sources, 0, sizeof(next_sources));
     for (uint8_t bit = 0U; bit < 8U; ++bit) {
@@ -1014,6 +1061,9 @@ static void hid_process_keyboard_usages(usb_hid_slot_t *slot,
     }
 
     for (uint32_t i = 0U; i < next_count; ++i) {
+        usb_hid_menu_action_t fixed_action;
+        uint8_t fixed_route;
+
         if (onee_reset_chord != 0U &&
             next_sources[i] ==
                 usb_hid_menu_source_from_keyboard_usage(
@@ -1025,6 +1075,35 @@ static void hid_process_keyboard_usages(usb_hid_slot_t *slot,
                                HID_SOURCE_TRACK_COUNT) != 0U) {
             continue;
         }
+        if (g_onee_fixed_mode != 0U) {
+            const uint8_t usage =
+                (uint8_t)(next_sources[i] & USB_HID_MENU_SOURCE_KEY_MASK);
+            fixed_action = onee_usb_fixed_keyboard_action(
+                usage, modifier, g_menu_capture);
+            fixed_route = onee_usb_fixed_route(
+                onee_usb_fixed_usage_reserved(usage),
+                fixed_action,
+                next_sources[i],
+                g_menu_open_close_source);
+            if ((fixed_route & ONEE_USB_ROUTE_PUSH_NOW) != 0U) {
+                mouse_menu_push_event(fixed_action, next_sources[i]);
+                continue;
+            }
+            /* The saved long-hold source remains the way to enter and leave
+             * the menu because the fixed set does not assign a new toggle.
+             * If that same key has a fixed menu action, delay its short press
+             * until release so a long close does not also move/select. */
+            if ((fixed_route & ONEE_USB_ROUTE_HOLD_TOGGLE) != 0U) {
+                menu_start_open_close_hold(slot, next_sources[i]);
+                if ((fixed_route & ONEE_USB_ROUTE_DELAY_ACTION) != 0U) {
+                    keyboard_menu_start_ok_hold(slot,
+                                                next_sources[i],
+                                                fixed_action);
+                }
+                continue;
+            }
+            continue;
+        }
         if (screenshot_push_source(next_sources[i]) != 0U) {
             continue;
         }
@@ -1034,10 +1113,14 @@ static void hid_process_keyboard_usages(usb_hid_slot_t *slot,
         if (next_sources[i] == g_menu_open_close_source) {
             menu_start_open_close_hold(slot, next_sources[i]);
             if (g_menu_capture != 0U && next_sources[i] == g_menu_ok_source) {
-                keyboard_menu_start_ok_hold(slot, next_sources[i]);
+                keyboard_menu_start_ok_hold(slot,
+                                            next_sources[i],
+                                            USB_HID_MENU_ACTION_NONE);
             }
         } else if (g_menu_capture != 0U && next_sources[i] == g_menu_ok_source) {
-            keyboard_menu_start_ok_hold(slot, next_sources[i]);
+            keyboard_menu_start_ok_hold(slot,
+                                        next_sources[i],
+                                        USB_HID_MENU_ACTION_NONE);
         } else if (g_menu_capture != 0U) {
             keyboard_menu_push_source(next_sources[i]);
         }
@@ -1046,7 +1129,12 @@ static void hid_process_keyboard_usages(usb_hid_slot_t *slot,
     if (slot->ok_down != 0U &&
         slot->ok_hold_fired == 0U &&
         hid_source_in_list(slot->ok_down_source, next_sources, next_count) == 0U) {
-        keyboard_menu_push_source(slot->ok_down_source);
+        if (slot->ok_down_action != USB_HID_MENU_ACTION_NONE) {
+            mouse_menu_push_event(slot->ok_down_action,
+                                  slot->ok_down_source);
+        } else {
+            keyboard_menu_push_source(slot->ok_down_source);
+        }
     }
     if (slot->ok_down != 0U &&
         hid_source_in_list(slot->ok_down_source, next_sources, next_count) == 0U) {
@@ -1054,6 +1142,7 @@ static void hid_process_keyboard_usages(usb_hid_slot_t *slot,
         slot->ok_hold_fired = 0U;
         slot->ok_down_tick = 0U;
         slot->ok_down_source = USB_HID_MENU_SOURCE_NONE;
+        slot->ok_down_action = USB_HID_MENU_ACTION_NONE;
     }
     if (slot->open_close_down != 0U &&
         hid_source_in_list(slot->open_close_down_source, next_sources, next_count) == 0U) {
@@ -1252,30 +1341,6 @@ static void hid_collect_button_item(usb_hid_slot_t *slot,
     }
 }
 
-static int8_t hid_axis_direction(int32_t value,
-                                 int32_t logical_min,
-                                 int32_t logical_max)
-{
-    int32_t span;
-    int32_t low;
-    int32_t high;
-
-    if (logical_max <= logical_min) {
-        return 0;
-    }
-
-    span = logical_max - logical_min;
-    low = logical_min + (span / 3);
-    high = logical_min + ((span * 2) / 3);
-    if (value < low) {
-        return -1;
-    }
-    if (value > high) {
-        return 1;
-    }
-    return 0;
-}
-
 static uint16_t hid_desktop_usage_for_field(const struct usbh_hid_report_item *item,
                                             uint32_t field)
 {
@@ -1411,13 +1476,26 @@ static void hid_collect_desktop_item(usb_hid_slot_t *slot,
         if (relative == 0U && onee_joystick != NULL) {
             onee_input_axis_t axis;
             if (hid_onee_axis_from_usage(usage, &axis) != 0U) {
+                const uint8_t axis_bit = (uint8_t)(1U << axis);
+                const int8_t direction = onee_usb_axis_direction(
+                    value,
+                    item->attribute.logical_min,
+                    item->attribute.logical_max);
+
                 onee_joystick->axis_valid_mask |=
-                    (uint8_t)(1U << axis);
+                    axis_bit;
                 onee_joystick->axis[axis] = value;
                 onee_joystick->logical_min[axis] =
                     item->attribute.logical_min;
                 onee_joystick->logical_max[axis] =
                     item->attribute.logical_max;
+                if (slot->onee_joystick != 0U) {
+                    if (direction == 0) {
+                        slot->raw_axis_active_mask &= (uint8_t)~axis_bit;
+                    } else {
+                        slot->raw_axis_active_mask |= axis_bit;
+                    }
+                }
             }
         }
         switch (usage) {
@@ -1428,9 +1506,10 @@ static void hid_collect_desktop_item(usb_hid_slot_t *slot,
             } else if (g_menu_capture != 0U) {
                 hid_menu_push_axis(slot,
                                    &slot->prev_x_dir,
-                                   hid_axis_direction(value,
-                                                      item->attribute.logical_min,
-                                                      item->attribute.logical_max),
+                                   onee_usb_axis_direction(
+                                       value,
+                                       item->attribute.logical_min,
+                                       item->attribute.logical_max),
                                    USB_HID_MENU_ACTION_LEFT,
                                    USB_HID_MENU_ACTION_RIGHT);
             }
@@ -1442,9 +1521,10 @@ static void hid_collect_desktop_item(usb_hid_slot_t *slot,
             } else if (g_menu_capture != 0U) {
                 hid_menu_push_axis(slot,
                                    &slot->prev_y_dir,
-                                   hid_axis_direction(value,
-                                                      item->attribute.logical_min,
-                                                      item->attribute.logical_max),
+                                   onee_usb_axis_direction(
+                                       value,
+                                       item->attribute.logical_min,
+                                       item->attribute.logical_max),
                                    USB_HID_MENU_ACTION_ITEM_UP,
                                    USB_HID_MENU_ACTION_ITEM_DOWN);
             }
@@ -1454,6 +1534,9 @@ static void hid_collect_desktop_item(usb_hid_slot_t *slot,
             *wheel_seen = 1U;
             break;
         case HID_DESKTOP_USAGE_HATSWITCH:
+            if (relative == 0U && slot->onee_joystick != 0U) {
+                slot->raw_hat_active = onee_usb_hat_active(value);
+            }
             if (g_menu_capture != 0U) {
                 hid_menu_push_hat(slot, (uint8_t)value);
             }
@@ -1593,6 +1676,9 @@ static void hid_process_report_protocol_report(usb_hid_slot_t *slot,
     }
 
     if (button_seen != 0U || wheel_seen != 0U) {
+        if (button_seen != 0U) {
+            slot->raw_buttons_down = (buttons != 0U) ? 1U : 0U;
+        }
         mouse_menu_process_buttons(slot,
                                    (button_seen != 0U) ? buttons : slot->prev_buttons,
                                    wheel);
@@ -1602,7 +1688,7 @@ static void hid_process_report_protocol_report(usb_hid_slot_t *slot,
         mouse_apply_motion(slot, dx, dy, (button_seen != 0U) ? buttons : slot->prev_buttons);
     }
 
-    if (slot->onee_joystick != 0U &&
+    if (g_onee_input_blocked == 0U && slot->onee_joystick != 0U &&
         (onee_joystick.axis_valid_mask != 0U || button_seen != 0U)) {
         onee_joystick.buttons_valid = button_seen;
         onee_joystick.buttons = buttons;
@@ -1920,6 +2006,8 @@ int usb_hid_service_init(void)
     g_seq = 0U;
     g_sensitivity = MOUSE_SENSITIVITY_BASE;
     g_menu_capture = 0U;
+    g_onee_fixed_mode = 0U;
+    g_onee_input_blocked = 0U;
     g_menu_ok_source = USB_HID_MENU_ACTION_SELECT;
     g_menu_open_close_source = USB_HID_MENU_ACTION_SELECT;
     g_screenshot_a2_source = USB_HID_MENU_SOURCE_NONE;
@@ -2020,6 +2108,46 @@ void usb_hid_service_set_menu_capture(uint8_t capture)
     }
 }
 
+void usb_hid_service_set_onee_fixed_mode(uint8_t enable)
+{
+    enable = (enable != 0U) ? 1U : 0U;
+    if (g_onee_fixed_mode == enable) {
+        return;
+    }
+
+    g_onee_fixed_mode = enable;
+    g_menu_event_rd = 0U;
+    g_menu_event_wr = 0U;
+    g_menu_event_count = 0U;
+    hid_slots_reset_menu_state();
+    /* Do not carry a key latched under one routing policy into the other. */
+    onee_input_service_release_all();
+}
+
+void usb_hid_service_set_onee_input_blocked(uint8_t blocked)
+{
+    blocked = (blocked != 0U) ? 1U : 0U;
+    if (g_onee_input_blocked == blocked) {
+        return;
+    }
+
+    g_onee_input_blocked = blocked;
+    onee_input_service_release_all();
+}
+
+uint8_t usb_hid_service_all_input_released(void)
+{
+    for (uint32_t i = 0U; i < USB_HID_SLOT_COUNT; ++i) {
+        if (g_hid_slots[i].keyboard_keys_down != 0U ||
+            g_hid_slots[i].raw_buttons_down != 0U ||
+            g_hid_slots[i].raw_axis_active_mask != 0U ||
+            g_hid_slots[i].raw_hat_active != 0U) {
+            return 0U;
+        }
+    }
+    return 1U;
+}
+
 void usb_hid_service_set_menu_ok_source(usb_hid_menu_source_t source)
 {
     if (menu_hold_source_valid(source) == 0U) {
@@ -2035,6 +2163,7 @@ void usb_hid_service_set_menu_ok_source(usb_hid_menu_source_t source)
         g_hid_slots[i].ok_hold_fired = 0U;
         g_hid_slots[i].ok_down_tick = 0U;
         g_hid_slots[i].ok_down_source = USB_HID_MENU_SOURCE_NONE;
+        g_hid_slots[i].ok_down_action = USB_HID_MENU_ACTION_NONE;
     }
 }
 
@@ -2134,6 +2263,8 @@ void usb_hid_service_get_status(usb_hid_service_status_t *status)
     status->started = g_started;
     status->ready = g_ready;
     status->menu_capture = g_menu_capture;
+    status->onee_fixed_mode = g_onee_fixed_mode;
+    status->onee_input_blocked = g_onee_input_blocked;
     status->active_count = active_count;
     status->keyboard_count = keyboard_count;
     status->mouse_count = mouse_count;

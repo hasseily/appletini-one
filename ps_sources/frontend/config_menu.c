@@ -26,8 +26,11 @@
 #include "video_output.h"
 
 #define APPLETINI_CFG_PATH "0:/appletini_cfg.txt"
+#define APPLETINI_CFG_TMP_PATH "0:/appletini_cfg.tmp"
+#define APPLETINI_CFG_BAK_PATH "0:/appletini_cfg.bak"
 #define APPLETINI_CFG_MAX 8192U
-#define APPLETINI_CFG_VERSION 114U
+#define APPLETINI_CFG_VERSION 115U
+#define ONEE_PERSIST_RETRY_POLL_LIMIT 4096U
 #define ETHERNET_CONTROL_SLOT 1U
 #define DISK2_CONTROL_SLOT 6U
 #define MOUSE_CONTROL_SLOT 2U
@@ -1298,9 +1301,54 @@ static FRESULT config_menu_open_path(FIL *file, const char *path, BYTE mode)
     return f_open(file, path, mode);
 }
 
+/* FatFs does not replace an existing name with f_rename(). Keep the prior
+ * synced global file as a backup while installing the new synced file. At
+ * every interruption point either the main name or the backup still holds
+ * the last committed settings. */
+static FRESULT config_menu_commit_global_cfg(void)
+{
+    FILINFO info;
+    FRESULT fr;
+    uint8_t moved_current = 0U;
+
+    fr = f_stat(APPLETINI_CFG_PATH, &info);
+    if (fr == FR_OK) {
+        fr = f_unlink(APPLETINI_CFG_BAK_PATH);
+        if (fr != FR_OK && fr != FR_NO_FILE) {
+            return fr;
+        }
+        fr = f_rename(APPLETINI_CFG_PATH, APPLETINI_CFG_BAK_PATH);
+        if (fr != FR_OK) {
+            return fr;
+        }
+        moved_current = 1U;
+    } else if (fr != FR_NO_FILE) {
+        return fr;
+    }
+
+    fr = f_rename(APPLETINI_CFG_TMP_PATH, APPLETINI_CFG_PATH);
+    if (fr != FR_OK && moved_current != 0U) {
+        /* Best effort only. If this restore is interrupted too, boot-time
+         * recovery below still promotes the retained backup. */
+        (void)f_rename(APPLETINI_CFG_BAK_PATH, APPLETINI_CFG_PATH);
+    }
+    return fr;
+}
+
 static FRESULT config_menu_open_cfg(FIL *file, BYTE mode)
 {
-    return config_menu_open_path(file, APPLETINI_CFG_PATH, mode);
+    FRESULT fr = config_menu_open_path(file, APPLETINI_CFG_PATH, mode);
+
+    if (fr == FR_NO_FILE && (mode & FA_READ) != 0U) {
+        /* A power cut can land between main->backup and temp->main. The temp
+         * was never committed, so restore the prior main file, not the temp. */
+        fr = f_rename(APPLETINI_CFG_BAK_PATH, APPLETINI_CFG_PATH);
+        if (fr == FR_OK) {
+            (void)f_unlink(APPLETINI_CFG_TMP_PATH);
+            return config_menu_open_path(file, APPLETINI_CFG_PATH, mode);
+        }
+    }
+    return fr;
 }
 
 const char *config_menu_boot_timeout_text(uint8_t mode)
@@ -2933,6 +2981,8 @@ static void config_menu_parse_key_value(config_menu_t *menu, const char *key, co
         } else {
             menu->boot_device = CONFIG_BOOT_DEVICE_SMARTPORT;
         }
+    } else if (strcmp(key, "onee.standalone.persisted") == 0) {
+        menu->onee_persisted_enabled = config_menu_bool_text(value);
     } else if (strcmp(key, "video.scanlines") == 0) {
         menu->scanlines_mode = config_menu_scanlines_text(value);
     } else if (strcmp(key, "video.output") == 0) {
@@ -3089,11 +3139,12 @@ static void config_menu_parse_key_value(config_menu_t *menu, const char *key, co
 }
 
 uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
-                                          const char *path,
-                                          const char *success_status)
+                                           const char *path,
+                                           const char *success_status)
 {
     FIL file;
     FRESULT fr;
+    FRESULT close_fr;
     UINT written = 0U;
     char buffer[APPLETINI_CFG_MAX];
     int len = 0;
@@ -3105,6 +3156,10 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
     /* Scratch for one quoted path value at a time (see config_menu_quote_path).
      * No single APPEND_CFG below passes two path args, so reuse is safe. */
     char path_val[CONFIG_MENU_PATH_LEN + 3U];
+    const uint8_t global_cfg =
+        (path != NULL && strcmp(path, APPLETINI_CFG_PATH) == 0) ? 1U : 0U;
+    const char *write_path =
+        (global_cfg != 0U) ? APPLETINI_CFG_TMP_PATH : path;
 
     if (menu == NULL || path == NULL || path[0] == '\0') {
         return 0U;
@@ -3172,6 +3227,13 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                    ? config_menu_quote_path(menu->bezel_path,
                                             path_val, sizeof(path_val))
                    : "FIRMWARE");
+
+    /* ONE//e selection is a global safety latch, not a profile choice. A
+     * profile load must never re-arm or disarm stand-alone mode. */
+    if (strcmp(path, APPLETINI_CFG_PATH) == 0) {
+        APPEND_CFG("onee.standalone.persisted=%s\n",
+                   config_menu_on_off(menu->onee_persisted_enabled));
+    }
 
     APPEND_CFG("video.rom=%s\n",
                (menu->video_rom_path[0] != '\0')
@@ -3298,7 +3360,7 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
         return 0U;
     }
 
-    fr = config_menu_open_path(&file, path, FA_WRITE | FA_CREATE_ALWAYS);
+    fr = config_menu_open_path(&file, write_path, FA_WRITE | FA_CREATE_ALWAYS);
     if (fr != FR_OK) {
         menu->session_only = 1U;
         config_menu_set_sd_error(menu, "CONFIG WRITE OPEN FAILED", fr);
@@ -3306,11 +3368,30 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
     }
 
     fr = f_write(&file, buffer, (UINT)len, &written);
-    (void)f_close(&file);
+    if (fr == FR_OK && written == (UINT)len) {
+        fr = f_sync(&file);
+    }
+    close_fr = f_close(&file);
+    if (fr == FR_OK && close_fr != FR_OK) {
+        fr = close_fr;
+    }
     if (fr != FR_OK || written != (UINT)len) {
+        if (global_cfg != 0U) {
+            (void)f_unlink(APPLETINI_CFG_TMP_PATH);
+        }
         menu->session_only = 1U;
         config_menu_set_sd_error(menu, "CONFIG WRITE FAILED", fr);
         return 0U;
+    }
+
+    if (global_cfg != 0U) {
+        fr = config_menu_commit_global_cfg();
+        if (fr != FR_OK) {
+            (void)f_unlink(APPLETINI_CFG_TMP_PATH);
+            menu->session_only = 1U;
+            config_menu_set_sd_error(menu, "CONFIG COMMIT FAILED", fr);
+            return 0U;
+        }
     }
 
     menu->settings_loaded = 1U;
@@ -3402,6 +3483,14 @@ static void config_menu_load_settings(config_menu_t *menu)
     }
 }
 
+static void config_menu_restore_onee_intent(config_menu_t *menu)
+{
+    if (menu != NULL && menu->platform.restore_onee_mode_intent != NULL) {
+        menu->platform.restore_onee_mode_intent(
+            menu->platform.ctx, menu->onee_persisted_enabled);
+    }
+}
+
 /* Retry an unloaded configuration when the menu opens or an SD card is
  * inserted. Either event may make 0:/appletini_cfg.txt readable. */
 void config_menu_retry_settings_if_needed(config_menu_t *menu)
@@ -3411,6 +3500,7 @@ void config_menu_retry_settings_if_needed(config_menu_t *menu)
     }
 
     config_menu_load_settings(menu);
+    config_menu_restore_onee_intent(menu);
     config_menu_apply_runtime(menu);
     if (menu->settings_loaded != 0U) {
         (void)config_menu_apply_ethernet_config(menu, 0U);
@@ -3694,7 +3784,11 @@ static uint8_t config_menu_read_settings_from_path(config_menu_t *menu,
             if (strcmp(key, "appletini.config.version") == 0) {
                 cfg_version = (uint32_t)strtoul(value, NULL, 10);
             }
-            config_menu_parse_key_value(menu, key, value);
+            /* ONE//e is a global safety latch. Ignore a copied, hand-edited,
+             * or future profile key so profile selection cannot change it. */
+            if (strcmp(key, "onee.standalone.persisted") != 0) {
+                config_menu_parse_key_value(menu, key, value);
+            }
         }
         line = strtok(NULL, "\r\n");
     }
@@ -4736,6 +4830,8 @@ static void config_menu_toggle_onee_mode(config_menu_t *menu)
         return;
     }
 
+    menu->onee_persist_write_failed = 0U;
+    menu->onee_persist_retry_polls = 0U;
     config_menu_poll_onee_mode(menu);
     if (menu->platform.set_onee_mode == NULL) {
         menu->onee_mode_state = CONFIG_MENU_ONEE_MODE_LOCKED;
@@ -4744,15 +4840,45 @@ static void config_menu_toggle_onee_mode(config_menu_t *menu)
     }
 
     if (menu->onee_mode_state == CONFIG_MENU_ONEE_MODE_RUNNING ||
-        (menu->onee_mode_status & CARD_CTRL_ONEE_STATUS_REQUEST_BIT) != 0U) {
+        (menu->onee_mode_status & CARD_CTRL_ONEE_STATUS_REQUEST_BIT) != 0U ||
+        menu->onee_persisted_enabled != 0U) {
         (void)menu->platform.set_onee_mode(menu->platform.ctx, 0U);
         config_menu_poll_onee_mode(menu);
+        if (menu->onee_persist_write_failed != 0U) {
+            return;
+        }
         config_menu_set_status(menu, 0U, "ONE//e OFF");
         return;
     }
 
+    if (menu->onee_persist_write_failed != 0U) {
+        config_menu_set_status(menu, 1U,
+                               "ONE//e ON REFUSED: OFF STATE NOT SAVED");
+        return;
+    }
+
+    /* Save and sync the global ON intent before the service can raise the PL
+     * REQUEST bit. If storage fails, keep both the persisted choice and the
+     * live machine OFF. */
+    menu->onee_persisted_enabled = 1U;
+    if (config_menu_save_settings_to_path(
+            menu, APPLETINI_CFG_PATH, NULL) == 0U) {
+        menu->onee_persisted_enabled = 0U;
+        config_menu_set_status(menu, 1U,
+                               "ONE//e ON REFUSED: STATE NOT SAVED");
+        return;
+    }
+
     accepted = menu->platform.set_onee_mode(menu->platform.ctx, 1U);
+    if (accepted != 0U &&
+        menu->platform.ack_onee_mode_persist_update != NULL) {
+        /* request_start() queues the same ON value. It is already durable. */
+        menu->platform.ack_onee_mode_persist_update(menu->platform.ctx, 1U);
+    }
     config_menu_poll_onee_mode(menu);
+    if (menu->onee_persist_write_failed != 0U) {
+        return;
+    }
     if (accepted == 0U) {
         config_menu_set_onee_refusal_status(menu);
     } else if (menu->onee_mode_state == CONFIG_MENU_ONEE_MODE_RUNNING) {
@@ -6374,6 +6500,9 @@ void config_menu_init(config_menu_t *menu)
     menu->boot_device = CONFIG_DEFAULT_BOOT_DEVICE;
     menu->onee_mode_state = CONFIG_MENU_ONEE_MODE_OFF;
     menu->onee_mode_status = 0U;
+    menu->onee_persisted_enabled = 0U;
+    menu->onee_persist_write_failed = 0U;
+    menu->onee_persist_retry_polls = 0U;
     menu->scanlines_mode = CONFIG_DEFAULT_SCANLINES_MODE;
     menu->video_output_mono = CONFIG_DEFAULT_VIDEO_OUTPUT_MONO;
     menu->video_mono_color = CONFIG_DEFAULT_VIDEO_MONO_COLOR;
@@ -6453,6 +6582,7 @@ void config_menu_bind_platform(config_menu_t *menu, const config_menu_platform_t
 
     config_menu_load_platform_defaults(menu);
     config_menu_load_settings(menu);
+    config_menu_restore_onee_intent(menu);
     config_menu_apply_boot_runtime_internal(menu, 1U);
     if (menu->ethernet_address_mode == CONFIG_MENU_ETHERNET_ADDRESS_STATIC) {
         (void)config_menu_apply_ethernet_config(menu, 0U);
@@ -6464,6 +6594,8 @@ void config_menu_bind_platform(config_menu_t *menu, const config_menu_platform_t
 void config_menu_poll_onee_mode(config_menu_t *menu)
 {
     uint8_t state;
+    uint8_t persist_enable;
+    uint8_t retrying_write = 0U;
 
     if (menu == NULL) {
         return;
@@ -6481,6 +6613,39 @@ void config_menu_poll_onee_mode(config_menu_t *menu)
             state : CONFIG_MENU_ONEE_MODE_LOCKED;
     menu->onee_mode_status =
         menu->platform.get_onee_mode_status(menu->platform.ctx);
+
+    if (menu->platform.get_onee_mode_persist_update == NULL ||
+        menu->platform.ack_onee_mode_persist_update == NULL ||
+        menu->platform.get_onee_mode_persist_update(
+            menu->platform.ctx, &persist_enable) == 0U) {
+        return;
+    }
+
+    menu->onee_persisted_enabled = (persist_enable != 0U) ? 1U : 0U;
+    if (menu->onee_persist_write_failed != 0U) {
+        if (menu->onee_persist_retry_polls != 0U) {
+            --menu->onee_persist_retry_polls;
+            return;
+        }
+        retrying_write = 1U;
+        menu->onee_persist_write_failed = 0U;
+    }
+
+    if (config_menu_save_settings_to_path(
+            menu, APPLETINI_CFG_PATH, NULL) == 0U) {
+        /* Do not acknowledge a failed write. After an Apple event the service
+         * remains locked, and the menu error states that OFF was not saved. */
+        menu->onee_persist_write_failed = 1U;
+        menu->onee_persist_retry_polls = ONEE_PERSIST_RETRY_POLL_LIMIT;
+        return;
+    }
+
+    menu->onee_persist_retry_polls = 0U;
+    menu->platform.ack_onee_mode_persist_update(
+        menu->platform.ctx, menu->onee_persisted_enabled);
+    if (retrying_write != 0U) {
+        config_menu_set_status(menu, 0U, "ONE//e STATE WRITE RECOVERED");
+    }
 }
 
 uint8_t config_menu_is_active(const config_menu_t *menu)
@@ -6510,6 +6675,9 @@ void config_menu_set_active(config_menu_t *menu, uint8_t active)
     }
     menu->active = (active != 0U) ? 1U : 0U;
     if (menu->active != 0U) {
+        /* A menu reopen prompts an immediate retry; background polling also
+         * retries after a bounded delay when the menu remains closed. */
+        menu->onee_persist_retry_polls = 0U;
         config_menu_retry_settings_if_needed(menu);
         config_menu_refresh_smartport_media_after_menu_sd(menu);
     } else {

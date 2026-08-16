@@ -132,8 +132,8 @@ def test_hdl() -> None:
             "sparse DMA must be blocked during Disk II timing")
     require(".vtw_bus_owned(vtw_bus_owned)" in top,
             "AD8088 sparse DMA must not contend with vTW")
-    require(".vtw_enabled(vtw_enable_eff)" in top,
-            "AD8088 sparse DMA must block before vTW bus acquisition")
+    require(".vtw_enabled(vtw_enable_eff || onee_enable_effective)" in top,
+            "AD8088 sparse DMA must block before vTW or ONE//e bus ownership")
     require("as_common.wdata[7]" in card and "AD8088_CONTROL_CANCEL_BUS" in
             text("ps_sources/frontend/ad8088_service.c"),
             "timed-out sparse DMA must have an explicit cancel path")
@@ -242,7 +242,7 @@ def test_ui_and_build() -> None:
     main_c = text("ps_sources/frontend/main.c")
     vitis = text("scripts/create_vitis_workspace.py")
 
-    require("#define APPLETINI_CFG_VERSION 114U" in config,
+    require("#define APPLETINI_CFG_VERSION 115U" in config,
             "slot-5 personality must remain in the current config schema")
     require('"slot5.processor"' in config and
             '"slot5.processor=%s' in config,

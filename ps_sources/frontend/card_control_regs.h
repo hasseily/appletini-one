@@ -143,7 +143,8 @@
  * session (the PL additionally gates on machine mode == IIe or II/II+),
  * bit1 releases the 65C02 core, [3:2] pick the speed mode, bit6 ignores
  * every software write to $C074, bit7 disables the private Disk II read
- * shortcut, and [31:16] holds the divided-mode pace.
+ * shortcut, bit8 pauses the core at a completed cycle without resetting it,
+ * and [31:16] holds the divided-mode pace.
  * SHADOW_ADDR/DATA expose the 144 KB shadow through an auto-incrementing
  * byte port; SYNC_CMD/STATUS issue single real bus cycles while the core is
  * held (the boot-time ROM copy path). */
@@ -315,6 +316,9 @@
 #define CARD_CTRL_VTW_CTRL_IGNORE_C074_BIT  (1UL << 6)
 /* Route virtual Disk II through the original physical 1 MHz path. */
 #define CARD_CTRL_VTW_CTRL_DISABLE_D2_ACCEL_BIT (1UL << 7)
+/* Freeze the 65C02 at a completed cycle without dropping CORE_RUN or reset.
+ * ONE//e uses this while the Appletini config menu owns USB input. */
+#define CARD_CTRL_VTW_CTRL_PAUSE_BIT       (1UL << 8)
 /* 16-bit pace divider at [31:16] (50 kHz slug mode needs divider 2667). */
 #define CARD_CTRL_VTW_CTRL_DIVIDER_SHIFT   16U
 #define CARD_CTRL_VTW_CTRL_DIVIDER_MASK    0xFFFFUL

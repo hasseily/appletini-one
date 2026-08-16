@@ -30,6 +30,7 @@ module tb_vtw_pc_event_pipeline;
         .host_is_iiplus(1'b0),
         .virtual_motherboard(1'b0),
         .core_run(1'b0),
+        .pause(1'b0),
         .assert_apple_res(1'b0),
         .speed_mode(2'd0),
         .pace_divider(16'd0),

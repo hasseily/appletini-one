@@ -24,15 +24,27 @@ void onee_service_bind_runtime(onee_service_runtime_start_fn start,
                                onee_service_runtime_running_fn running,
                                void *ctx);
 
-/* These are operator actions. request_start() is the only firmware path
- * allowed to write the PL request bit high. */
+/* Restore the global saved selection after the configuration file is read.
+ * A restored ON intent stays pending until the PL safety guard is valid,
+ * quiet, and reselect-armed. It never bypasses the guard. */
+void onee_service_restore_persisted(uint8_t enable);
+
+/* The configuration owner polls this edge-triggered update and acknowledges
+ * it only after the global file has been written. A failed write therefore
+ * leaves the update pending for a later retry. */
+uint8_t onee_service_persist_update_pending(uint8_t *enable);
+void onee_service_persist_update_ack(uint8_t enable);
+
+/* These are operator actions. Besides request_start(), the sole high write is
+ * the one-shot guarded restore performed by poll() after a card reboot. */
 uint8_t onee_service_request_start(void);
 void onee_service_request_stop(void);
 
-/* Polling may restart the private soft-machine runtime while the original
- * manual PL request remains high. It never writes that request high. Apple
- * activity, a lost PL request, or missing safety logic latches the mode off
- * until a fresh operator action. */
+/* Polling may issue one restored request, or restart the private soft-machine
+ * runtime while the original PL request remains high. Apple activity or a
+ * lost PL request clears the saved intent and requires a fresh operator
+ * action. Missing safety logic keeps all outputs off without erasing the
+ * saved choice. */
 void onee_service_poll(void);
 onee_service_state_t onee_service_state(void);
 uint32_t onee_service_status(void);

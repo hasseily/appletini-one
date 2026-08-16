@@ -15,8 +15,8 @@ module tb_onee_joined_bus;
     logic configured_boot_target_disk2 = 1'b1;
     /* Model the exact VTW_CTRL register word that apple_top holds outside the
      * virtual Apple reset domain. The joined test drives the core from the
-     * same fields as apple_top: enable/core-run in [1:0], speed in [3:2], and
-     * the divided-mode pace value in [31:16]. */
+     * same fields as apple_top: enable/core-run in [1:0], speed in [3:2],
+     * pause in bit 8, and the divided-mode pace value in [31:16]. */
     logic [31:0] vtw_ctrl_q = 32'h0000_0000;
     wire vtw_enable = vtw_ctrl_q[0];
     wire core_run = vtw_ctrl_q[1];
@@ -294,6 +294,7 @@ module tb_onee_joined_bus;
     logic [7:0] sh_wdata = '0;
     logic [7:0] sh_rdata;
     logic [15:0] dbg_core_pc;
+    logic [31:0] vtw_core_cycles;
     logic vtw_bus_owned;
 
     vtw_core_top core_i (
@@ -303,6 +304,7 @@ module tb_onee_joined_bus;
         .host_is_iiplus(1'b0),
         .virtual_motherboard(1'b1),
         .core_run(core_run),
+        .pause(vtw_ctrl_q[8]),
         .assert_apple_res(1'b0),
         .speed_mode(vtw_ctrl_q[3:2]),
         .pace_divider(vtw_ctrl_q[31:16]),
@@ -380,7 +382,7 @@ module tb_onee_joined_bus;
         .bus_owned(vtw_bus_owned),
         .video_phase_1mhz(),
         .dbg_core_pc(dbg_core_pc),
-        .cnt_core_cycles(),
+        .cnt_core_cycles(vtw_core_cycles),
         .cnt_bus_cycles(),
         .cnt_posted_writes(),
         .post_fill(),
@@ -492,6 +494,8 @@ module tb_onee_joined_bus;
     logic [15:0] scan_addr;
     logic [7:0] result [0:13];
     logic [31:0] warm_reset_ctrl_before;
+    logic [31:0] paused_core_cycles;
+    logic [15:0] paused_core_pc;
     int warm_reset_fabric_clks;
     int warm_reset_native_ticks;
 
@@ -568,6 +572,39 @@ module tb_onee_joined_bus;
                        dbg_core_pc, core_i.xstate_q);
             end
         join
+
+        /* The config menu pause keeps ENABLE, CORE_RUN, speed, and the CPU
+         * reset domain live. The current access may drain, but no completed
+         * 65C02 edge may occur after the pause has settled. Clearing only
+         * bit 8 must resume the same machine without a reset or ROM reload. */
+        write_vtw_ctrl(32'h0025_0187);
+        repeat (256) @(posedge clk);
+        paused_core_cycles = vtw_core_cycles;
+        paused_core_pc = dbg_core_pc;
+        repeat (128) begin
+            @(posedge clk);
+            check(vtw_core_cycles == paused_core_cycles &&
+                  dbg_core_pc == paused_core_pc &&
+                  !core_i.core_en,
+                  "ONE//e pause allowed the virtual CPU to advance");
+            check(core_i.core_res_n && core_run && vtw_ctrl_q[8] &&
+                  vtw_ctrl_q[3:2] == 2'd1 &&
+                  vtw_ctrl_q[31:16] == 16'd37,
+                  "ONE//e pause reset the core or changed its speed");
+        end
+        write_vtw_ctrl(32'h0025_0087);
+        fork : wait_for_pause_resume
+            begin
+                wait (vtw_core_cycles != paused_core_cycles);
+                disable wait_for_pause_resume;
+            end
+            begin
+                #20us;
+                $fatal(1, "ONE//e core did not resume after menu pause");
+            end
+        join
+        check(core_i.core_res_n && core_run && !vtw_ctrl_q[8],
+              "ONE//e resume changed run/reset state");
 
         write_vtw_ctrl(32'h0025_0085);
         repeat (5) @(posedge clk);

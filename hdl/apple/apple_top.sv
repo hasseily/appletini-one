@@ -425,6 +425,7 @@ module apple_top(
     //                     machine reset), bit5 II+ Apple-key synthesis,
     //                     bit6 ignore all $C074 speed-switch writes,
     //                     bit7 disable the private Disk II read shortcut,
+    //                     bit8 pause the core after its current bus cycle,
     //                     [31:16] pace divider (divided mode).
     //   VTW_SHADOW_ADDR : 18-bit shadow port-B pointer; writing it also
     //                     fetches that byte for VTW_SHADOW_DATA reads.
@@ -1828,6 +1829,7 @@ module apple_top(
         .host_is_iiplus(vtw_host_is_iiplus_eff),
         .virtual_motherboard(onee_enable_effective),
         .core_run(vtw_ctrl_q[1]),
+        .pause(vtw_ctrl_q[8]),
         .assert_apple_res(vtw_ctrl_q[4]),
         .speed_mode(vtw_ctrl_q[3:2]),
         .pace_divider(vtw_ctrl_q[31:16]),

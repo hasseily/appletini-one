@@ -54,6 +54,10 @@ module vtw_core_top (
     /* ARM releases the core after the boot ROM copy. While low the core
      * is held in reset and the ARM owns the sync-cycle port. */
     input  logic                    core_run,
+    /* Freeze the core without reset. Any in-flight access drains to its
+     * completed state; gating only core_en then parks the CPU and access FSM
+     * on the same cycle until pause clears. */
+    input  logic                    pause,
     /* Pull the Apple RES# line low (open-collector, like CTRL-RESET).
      * The takeover sequence asserts this for ~100 ms so the whole machine
      * -- cards, MMU, PS reset detection -- restarts coherently before
@@ -1183,7 +1187,7 @@ module vtw_core_top (
                             status_vbl_sampled_q);
     wire complete_dead   = (xstate_q == X_DEAD)        && pace_ok;
 
-    assign core_en = core_res_n && !rw_hold_q &&
+    assign core_en = core_res_n && !pause && !rw_hold_q &&
                      d2_time_ready &&
                      (complete_mem || complete_bus ||
                       complete_rw || complete_sp ||

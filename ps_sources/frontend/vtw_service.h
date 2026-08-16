@@ -72,6 +72,10 @@ uint8_t vtw_service_session_active(void);
  * physical RESET, or slot-7 handoff. start() requires the ONE//e supervisor
  * to report an effective, isolated session. */
 uint8_t vtw_service_onee_start(uint8_t disk2_config_enabled);
+/* Pause at a completed virtual CPU cycle without reset, ROM reload, or a
+ * change to the selected speed. Used while the Appletini menu owns input. */
+uint8_t vtw_service_onee_set_paused(uint8_t paused);
+uint8_t vtw_service_onee_paused(void);
 /* Stop a failed private runtime so the same manual ONE//e session can retry.
  * This keeps its queued/live speed override. */
 void vtw_service_onee_suspend(void);

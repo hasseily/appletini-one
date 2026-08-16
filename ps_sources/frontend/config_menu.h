@@ -99,6 +99,9 @@ typedef struct {
     void (*set_boot_timeout_ticks)(void *ctx, uint32_t ticks);
     void (*set_boot_handoff)(void *ctx, uint8_t handoff);
     uint8_t (*set_onee_mode)(void *ctx, uint8_t enable);
+    void (*restore_onee_mode_intent)(void *ctx, uint8_t enable);
+    uint8_t (*get_onee_mode_persist_update)(void *ctx, uint8_t *enable);
+    void (*ack_onee_mode_persist_update)(void *ctx, uint8_t enable);
     uint8_t (*get_onee_mode_state)(void *ctx);
     uint32_t (*get_onee_mode_status)(void *ctx);
     void (*set_clock_enabled)(void *ctx, uint8_t enable);
@@ -164,8 +167,11 @@ typedef struct {
     uint32_t item_focus;
     uint8_t boot_timeout_mode;
     uint8_t boot_device;
-    uint8_t onee_mode_state;     /* session-only; never saved or profiled */
+    uint8_t onee_mode_state;     /* live service state */
     uint32_t onee_mode_status;   /* live PL supervisor readback */
+    uint8_t onee_persisted_enabled; /* global config only; never profiled */
+    uint8_t onee_persist_write_failed;
+    uint32_t onee_persist_retry_polls;
     uint8_t scanlines_mode;
     uint8_t video_output_mono;
     uint8_t video_mono_color;

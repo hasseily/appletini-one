@@ -130,9 +130,9 @@ HELP(boot_device,
 
 HELP(boot_onee,
     "Runs the built-in Enhanced Apple //e on Appletini's soft 65C02 without an Apple host.",
-    "This mode is session-only and starts off after every card boot.",
-    "Any Apple-bus activity stops ONE//e and keeps it off.",
-    "After the connector is quiet, select this item again.");
+    "The selection survives a card power cycle and starts only after the connector is quiet.",
+    "Any Apple-bus activity stops ONE//e and saves it OFF.",
+    "After the connector is quiet, select this item again to save it ON.");
 
 HELP(boot_bind_reset,
     "Restores every USB menu binding below to its factory default.",

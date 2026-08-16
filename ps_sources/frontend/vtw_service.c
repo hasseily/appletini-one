@@ -131,6 +131,7 @@ static uint32_t g_sessions_started;
 static uint8_t g_announced_wait;
 static uint8_t g_announced_handoff_wait;
 static uint8_t g_onee_running;
+static uint8_t g_onee_pause_requested;
 static uint8_t g_onee_disk2_override_active;
 static uint8_t g_disk2_config_enabled;
 static XTime g_res_phase_start;
@@ -197,6 +198,9 @@ static uint32_t vtw_onee_ctrl_value(uint8_t core_run, uint8_t apple_res)
     v |= ((uint32_t)vtw_eff_divider()) << CARD_CTRL_VTW_CTRL_DIVIDER_SHIFT;
     if (g_ignore_c074 != 0U) {
         v |= CARD_CTRL_VTW_CTRL_IGNORE_C074_BIT;
+    }
+    if (g_onee_pause_requested != 0U) {
+        v |= CARD_CTRL_VTW_CTRL_PAUSE_BIT;
     }
     return v;
 }
@@ -386,6 +390,7 @@ void vtw_service_init(uint32_t uart_base)
     g_uart_base = uart_base;
     g_state = VTW_ST_IDLE;
     g_onee_running = 0U;
+    g_onee_pause_requested = 0U;
     g_onee_disk2_override_active = 0U;
     g_disk2_config_enabled = 0U;
     vtw_override_clear();
@@ -702,6 +707,7 @@ static void vtw_onee_shutdown(uint8_t clear_speed_override)
     }
     g_onee_running = 0U;
     if (clear_speed_override != 0U) {
+        g_onee_pause_requested = 0U;
         vtw_override_clear();
     }
     if (g_onee_disk2_override_active != 0U) {
@@ -720,7 +726,6 @@ uint8_t vtw_service_onee_start(uint8_t disk2_config_enabled)
     if (g_state != VTW_ST_IDLE || vtw_onee_isolation_confirmed() == 0U) {
         return 0U;
     }
-
     /* ONE//e forces the virtual Disk II card into slot 6 even when the saved
      * slot mask leaves it off. Match that session-only PL override in the PS
      * track service, then apply the latest saved bit-6 state on every exit. */
@@ -770,6 +775,55 @@ uint8_t vtw_service_onee_start(uint8_t disk2_config_enabled)
     vtw_service_onee_suspend();
     uart_puts(g_uart_base, "vtw: ONE//e core release failed\r\n");
     return 0U;
+}
+
+uint8_t vtw_service_onee_set_paused(uint8_t paused)
+{
+    uint8_t previous;
+    uint32_t status;
+
+    paused = (paused != 0U) ? 1U : 0U;
+    if (g_onee_running == 0U) {
+        /* Queue the desired state too. A persisted ONE//e request can become
+         * effective while the menu is already open; its first CORE_RUN word
+         * must then include PAUSE so no instruction escapes before CPU0's
+         * next UI poll. Recoverable start retries retain this request. */
+        g_onee_pause_requested = paused;
+        return 1U;
+    }
+    if (vtw_onee_isolation_confirmed() == 0U) {
+        return 0U;
+    }
+    if (g_onee_pause_requested == paused) {
+        return 1U;
+    }
+
+    previous = g_onee_pause_requested;
+    g_onee_pause_requested = paused;
+    if (vtw_apply_ctrl_live() != VTW_CTRL_LIVE_APPLIED) {
+        g_onee_pause_requested = previous;
+        (void)vtw_apply_ctrl_live();
+        return 0U;
+    }
+
+    /* PAUSE does not lower ENABLE or CORE_RUN. Keeping both status bits set
+     * tells the ONE//e supervisor that this is the same live machine, so it
+     * cannot cold-restart the core while the menu owns input. */
+    status = REG_READ(CARD_CTRL_VTW_STATUS_REG);
+    if ((status & (CARD_CTRL_VTW_STATUS_ENABLE_EFF |
+                   CARD_CTRL_VTW_STATUS_CORE_RUN)) !=
+                  (CARD_CTRL_VTW_STATUS_ENABLE_EFF |
+                   CARD_CTRL_VTW_STATUS_CORE_RUN)) {
+        g_onee_pause_requested = previous;
+        (void)vtw_apply_ctrl_live();
+        return 0U;
+    }
+    return 1U;
+}
+
+uint8_t vtw_service_onee_paused(void)
+{
+    return (g_onee_running != 0U && g_onee_pause_requested != 0U) ? 1U : 0U;
 }
 
 void vtw_service_onee_suspend(void)

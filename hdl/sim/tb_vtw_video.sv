@@ -102,6 +102,7 @@ module tb_vtw_video;
         .clk(clk), .rstn(rstn), .enable(enable),
         .host_is_iiplus(1'b0), .virtual_motherboard(1'b0),
         .core_run(core_run),
+        .pause(1'b0),
         .assert_apple_res(1'b0),
         .speed_mode(speed_mode),
         .pace_divider(16'd0),

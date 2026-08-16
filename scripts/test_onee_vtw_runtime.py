@@ -229,10 +229,13 @@ def test_stop_order_and_runtime_drop_preserves_request() -> None:
             "ONEE_EFFECTIVE_WAIT_POLL_LIMIT" not in onee and
             "g_effective_wait_polls" not in onee,
             "a private runtime drop must retain the selected PL request and retry")
-    require(onee.count("onee_service_write_request(1U);") == 1 and
+    require(onee.count("onee_service_write_request(1U);") == 2 and
+            "g_restore_pending != 0U" in poll and
+            "onee_status_can_start(g_status) == 0U" in poll and
             "(g_status & CARD_CTRL_ONEE_STATUS_REQUEST_BIT) == 0U" in poll and
+            "onee_service_force_persisted(0U);" in poll and
             "onee_service_disarm(1U);" in poll,
-            "a lost PL request must latch off and only manual start may write it high")
+            "a lost request must save OFF; only manual or guarded reboot restore may write high")
 
 
 def test_running_state_requires_released_core_status() -> None:
@@ -357,6 +360,51 @@ def test_live_speed_controls_share_one_verified_writer() -> None:
             "live USB labels must report success only after a verified write")
 
 
+def test_onee_menu_pause_preserves_the_live_machine() -> None:
+    source = read(VTW_C)
+    header = read(VTW_H)
+    regs = read(FRONTEND / "card_control_regs.h")
+    core = read(REPO_ROOT / "hdl" / "apple" / "vtw_core_top.sv")
+    top = read(REPO_ROOT / "hdl" / "apple" / "apple_top.sv")
+    main = read(MAIN_C)
+    setter = between(source,
+                     "uint8_t vtw_service_onee_set_paused(uint8_t paused)",
+                     "uint8_t vtw_service_onee_paused(void)")
+    onee_ctrl = between(source,
+                        "static uint32_t vtw_onee_ctrl_value",
+                        "typedef enum")
+    main_pause = between(main,
+                         "static void ui_sync_onee_menu_pause",
+                         "static void ui_set_boot_menu_visible")
+
+    require("CARD_CTRL_VTW_CTRL_PAUSE_BIT       (1UL << 8)" in regs and
+            "input  logic                    pause" in core and
+            "assign core_en = core_res_n && !pause && !rw_hold_q" in core and
+            ".pause(vtw_ctrl_q[8])" in top,
+            "VTW_CTRL bit 8 must gate only the 65C02 completion edge")
+    require("CARD_CTRL_VTW_CTRL_PAUSE_BIT" in onee_ctrl and
+            "g_onee_pause_requested" in onee_ctrl and
+            "vtw_apply_ctrl_live()" in setter and
+            "CARD_CTRL_VTW_STATUS_ENABLE_EFF" in setter and
+            "CARD_CTRL_VTW_STATUS_CORE_RUN" in setter,
+            "pause must preserve the live ONE//e control word and run status")
+    start = between(source,
+                    "uint8_t vtw_service_onee_start(",
+                    "uint8_t vtw_service_onee_set_paused(uint8_t paused)")
+    not_running = setter[setter.find("if (g_onee_running == 0U)"):
+                         setter.find("if (vtw_onee_isolation_confirmed()")]
+    require("g_onee_pause_requested = paused;" in not_running and
+            "g_onee_pause_requested = 0U;" not in start,
+            "a menu-open pause request must survive a delayed ONE//e start")
+    require("vtw_service_onee_set_paused(uint8_t paused)" in header and
+            "vtw_service_onee_paused(void)" in header and
+            "usb_hid_service_all_input_released()" in main_pause and
+            main_pause.find("usb_hid_service_all_input_released()") <
+            main_pause.find("vtw_service_onee_set_paused(0U)",
+                            main_pause.find("usb_hid_service_all_input_released()")),
+            "menu close must wait for USB key release before resuming")
+
+
 TESTS = [
     test_real_runtime_hooks_are_bound_after_vtw_init,
     test_cold_start_is_direct_and_isolation_first,
@@ -368,6 +416,7 @@ TESTS = [
     test_menu_closes_once_only_after_true_running,
     test_normal_host_state_machine_remains_after_onee_gate,
     test_live_speed_controls_share_one_verified_writer,
+    test_onee_menu_pause_preserves_the_live_machine,
 ]
 
 

@@ -41,6 +41,20 @@ def test_ftp_protocol_and_subnet_gate() -> None:
             "FTP paths must normalize parent traversal and reject drive prefixes")
 
 
+def test_directory_listing_finishes_with_tcp_eof() -> None:
+    source = read("ps_sources/frontend/ftp_sd_service.c")
+
+    start = source.index("static void ftp_finish_transfer")
+    end = source.index("static int normalize_virtual_path", start)
+    finish = source[start:end]
+    require("socket_disconnect(FTP_DATA_SOCKET);" in finish and
+            "socket_close(FTP_DATA_SOCKET);" not in finish and
+            "socket_command(socket, W5100_CR_DISCON)" in source,
+            "completed data transfers must send TCP FIN instead of dropping the socket")
+    require('strcmp(virtual_path, "/") != 0' in source,
+            "CWD / must accept the FTP volume root without relying on FatFs f_stat")
+
+
 def test_exclusive_ethernet_and_sd_ownership() -> None:
     main = read("ps_sources/frontend/main.c")
     smartport = read("ps_sources/frontend/smartport_service.c")
@@ -111,6 +125,7 @@ def test_ethernet_tab_modal_contract() -> None:
 def main() -> None:
     tests = [
         test_ftp_protocol_and_subnet_gate,
+        test_directory_listing_finishes_with_tcp_eof,
         test_exclusive_ethernet_and_sd_ownership,
         test_ethernet_tab_modal_contract,
     ]

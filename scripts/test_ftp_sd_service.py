@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+"""Source-contract checks for exclusive SD-card FTP sharing."""
+
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def read(path: str) -> str:
+    return (ROOT / path).read_text(encoding="utf-8")
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
+
+
+def test_ftp_protocol_and_subnet_gate() -> None:
+    source = read("ps_sources/frontend/ftp_sd_service.c")
+
+    require("FTP_CONTROL_PORT         21U" in source and
+            "FTP_PASSIVE_PORT         50000U" in source,
+            "FTP must use port 21 and one fixed passive data port")
+    require("peer_on_local_subnet(peer) == 0U" in source and
+            "memcmp(peer, g_ftp.control_peer, sizeof(peer)) != 0" in source,
+            "control and data connections must enforce the local subnet and same peer")
+    require("Active mode is disabled; use PASV or EPSV" in source and
+            "strcmp(line, \"PASV\")" in source and
+            "strcmp(line, \"EPSV\")" in source,
+            "the server must be passive-only")
+    for command in ("USER", "PASS", "LIST", "NLST", "RETR", "STOR",
+                    "DELE", "MKD", "RMD", "RNFR", "RNTO"):
+        require(f'strcmp(line, "{command}")' in source,
+                f"FTP read/write command {command} must be implemented")
+    require("Anonymous read/write access granted" in source,
+            "FTP login must expose anonymous read/write access")
+    require("segment[0] == '.' && segment[1] == '.'" in source and
+            "if (len > 1U)" in source and
+            "*p == ':'" in source,
+            "FTP paths must normalize parent traversal and reject drive prefixes")
+
+
+def test_exclusive_ethernet_and_sd_ownership() -> None:
+    main = read("ps_sources/frontend/main.c")
+    smartport = read("ps_sources/frontend/smartport_service.c")
+
+    start = main.index("static int control_set_ethernet_ftp_sd_remote")
+    end = main.index("static void control_set_applicard_resource_max", start)
+    body = main[start:end]
+    require("disk2_service_flush_dirty_now()" in body and
+            "smartport_service_suspend_sd();" in body and
+            "CARD_CTRL_SLOT_BIT(CARD_CTRL_SLOT_ETHERNET)" in body and
+            "CARD_CTRL_SLOT_BIT(CARD_CTRL_SLOT_DISK2)" in body and
+            "card_control_write_slot_mask(g_card_slot_enable_mask & ~suppressed_slots);" in body and
+            "ftp_sd_service_start(detail, detail_len)" in body,
+            "FTP start must flush Disk II, suspend SmartPort, hide Ethernet and Disk II, and then listen")
+    require(body.index("smartport_service_suspend_sd();") <
+            body.index("ftp_sd_service_start(detail, detail_len)"),
+            "all local SD file handles must close before FTP mounts the volume")
+    require("ftp_sd_service_stop();" in body and
+            "control_restore_ftp_slots();" in body and
+            "control_restore_ftp_sd_media();" in body,
+            "FTP stop must release TCP and restore local media and card slots")
+    require(body.index("control_restore_ftp_sd_media();", body.index("ftp_sd_service_stop();")) <
+            body.index("control_restore_ftp_slots();", body.index("ftp_sd_service_stop();")),
+            "FTP stop must reload Disk II before Apple-side slots return")
+    require("if (g_devices[i].is_ram == 0U)" in smartport and
+            "int smartport_service_resume_sd(void)" in smartport,
+            "SmartPort SD suspension must preserve the volatile RAM disk")
+
+
+def test_ethernet_tab_modal_contract() -> None:
+    menu = read("ps_sources/frontend/config_menu.c")
+    tabs = read("ps_sources/frontend/config_menu_device_tabs.c")
+    help_text = read("ps_sources/frontend/config_menu_help.c")
+    internal = read("ps_sources/frontend/config_menu_internal.h")
+    main = read("ps_sources/frontend/main.c")
+    vitis = read("scripts/create_vitis_workspace.py")
+
+    require("#define CONFIG_ETHERNET_ITEM_FTP_SD 11U" in internal and
+            "#define CONFIG_ETHERNET_ITEM_COUNT 12U" in internal,
+            "FTP sharing must be the final Ethernet-tab row")
+    require('"Test link"' in tabs and '"SD Card FTP Sharing"' in tabs and
+            tabs.index('"Test link"') < tabs.index('"SD Card FTP Sharing"'),
+            "FTP sharing must render below the existing Ethernet actions")
+    require("config_menu_start_ethernet_ftp_sd_remote(menu);" in menu and
+            "WAIT FOR DHCP TO FINISH" in menu and
+            "config_menu_stop_ethernet_ftp_sd_remote(menu);" in menu,
+            "the menu must start, guard, and stop the FTP modal")
+    require("config_menu_draw_ethernet_ftp_sd_modal" in menu and
+            '"SD Card FTP Sharing"' in menu and
+            "menu->ethernet_ftp_sd_remote_active != 0U" in menu,
+            "active FTP sharing must replace the tab page with a modal panel")
+    require("FTP owns Ethernet and the SD card until Enter" in help_text and
+            "FTP sends file data without encryption" in help_text,
+            "the Ethernet help must explain exclusive ownership and cleartext FTP")
+    require("config_menu_ethernet_ftp_sd_remote_active(&config_menu) != 0U" in main and
+            main.count("ftp_sd_service_poll();") >= 6,
+            "the main loop must give the modal frequent FTP service points")
+    require('"../../../ps_sources/frontend/ftp_sd_service.c"' in vitis,
+            "the Vitis frontend build must include the FTP service")
+
+
+def main() -> None:
+    tests = [
+        test_ftp_protocol_and_subnet_gate,
+        test_exclusive_ethernet_and_sd_ownership,
+        test_ethernet_tab_modal_contract,
+    ]
+    for test in tests:
+        test()
+        print(f"PASS {test.__name__}")
+    print(f"FTP SD service tests: {len(tests)} passed")
+
+
+if __name__ == "__main__":
+    main()

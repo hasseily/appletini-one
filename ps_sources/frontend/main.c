@@ -25,6 +25,7 @@
 #include "uart_control.h"
 #include "card_control_regs.h"
 #include "uthernet2_control.h"
+#include "ftp_sd_service.h"
 #include "bezel_default_png.h"
 #include "bezel_loader.h"
 #include "boot_menu_service.h"
@@ -190,6 +191,8 @@ static uint8_t g_apple_reset_seq_valid = 0U;
 static uint8_t g_apple_reset_seq_last = 0U;
 static uint8_t g_usb1_background_poll_active = 0U;
 static uint8_t g_usb1_background_compositor_ready = 0U;
+static uint8_t g_ftp_slots_suppressed = 0U;
+static uint32_t g_ftp_saved_slot_mask = 0U;
 
 static void ui_invalidate_static_backgrounds(void);
 
@@ -1506,6 +1509,88 @@ static void control_set_usb0_sd_remote_mount(void *ctx, uint8_t enable)
     }
 }
 
+static void control_restore_ftp_sd_media(void)
+{
+    int disk2_rc = 0;
+    int smartport_rc;
+
+    for (uint8_t drive = 0U; drive < DISK2_DRIVE_COUNT; ++drive) {
+        const int rc = disk2_service_reset_media(drive);
+        if (rc != 0 && disk2_rc == 0) {
+            disk2_rc = rc;
+        }
+    }
+    /* SmartPort owns long-lived FIL objects, so reopen it after every other
+     * service has finished its own FatFs mount and probe work. */
+    smartport_rc = smartport_service_resume_sd();
+    if (disk2_rc != 0 || smartport_rc != 0) {
+        xil_printf("ftp sd: media restore disk2=%d smartport=%d\r\n",
+                   disk2_rc,
+                   smartport_rc);
+    }
+}
+
+static void control_restore_ftp_slots(void)
+{
+    if (g_ftp_slots_suppressed == 0U) {
+        return;
+    }
+    card_control_write_slot_mask(g_ftp_saved_slot_mask);
+    g_ftp_slots_suppressed = 0U;
+}
+
+static int control_set_ethernet_ftp_sd_remote(void *ctx,
+                                               uint8_t enable,
+                                               char *detail,
+                                               size_t detail_len)
+{
+    const uint32_t suppressed_slots =
+        CARD_CTRL_SLOT_BIT(CARD_CTRL_SLOT_ETHERNET) |
+        CARD_CTRL_SLOT_BIT(CARD_CTRL_SLOT_DISK2);
+
+    (void)ctx;
+    if (enable != 0U) {
+        int flush_rc = 0;
+
+        if (ftp_sd_service_active() != 0U) {
+            return 0;
+        }
+        for (uint32_t attempt = 0U; attempt < 64U; ++attempt) {
+            flush_rc = disk2_service_flush_dirty_now();
+            if (flush_rc == 0) {
+                break;
+            }
+        }
+        if (flush_rc != 0) {
+            if (detail != NULL && detail_len != 0U) {
+                (void)snprintf(detail, detail_len,
+                               "FTP START FAILED: DISK II FLUSH RC=%d",
+                               flush_rc);
+            }
+            return -1;
+        }
+
+        smartport_service_suspend_sd();
+        g_ftp_saved_slot_mask = g_card_slot_enable_mask;
+        g_ftp_slots_suppressed = 1U;
+        card_control_write_slot_mask(g_card_slot_enable_mask & ~suppressed_slots);
+        if (ftp_sd_service_start(detail, detail_len) != 0) {
+            control_restore_ftp_sd_media();
+            control_restore_ftp_slots();
+            return -1;
+        }
+        return 0;
+    }
+
+    ftp_sd_service_stop();
+    control_restore_ftp_sd_media();
+    control_restore_ftp_slots();
+    if (detail != NULL && detail_len != 0U) {
+        (void)snprintf(detail, detail_len, "SD CARD FTP SHARING STOPPED");
+    }
+    return 0;
+}
+
 static void control_set_applicard_resource_max(void *ctx, uint8_t maximum)
 {
     (void)ctx;
@@ -2799,6 +2884,7 @@ static uint8_t ui_config_menu_has_close_consumer(const config_menu_t *menu)
         return 0U;
     }
     return (config_menu_usb0_sd_remote_active(menu) != 0U ||
+            config_menu_ethernet_ftp_sd_remote_active(menu) != 0U ||
             menu->usb_binding_capture != CONFIG_MENU_USB_BIND_CAPTURE_NONE ||
             menu->browser_active != 0U ||
             menu->profile_carousel_active != 0U ||
@@ -3235,6 +3321,8 @@ int main(void)
         menu_platform.set_ssc_enabled = control_set_ssc_enabled;
         menu_platform.set_sdd_stream_enabled = control_set_sdd_stream_enabled;
         menu_platform.set_usb0_sd_remote_mount = control_set_usb0_sd_remote_mount;
+        menu_platform.set_ethernet_ftp_sd_remote =
+            control_set_ethernet_ftp_sd_remote;
         menu_platform.set_slot_enabled = control_set_slot_enabled;
         menu_platform.get_slot_enabled = control_get_slot_enabled;
         menu_platform.set_slot5_processor = control_set_slot5_processor;
@@ -3429,6 +3517,9 @@ int main(void)
     uint8_t usb0_modal_was_active = 0U;
     uint8_t usb0_modal_redraw_pending = 0U;
     uint32_t usb0_modal_last_input_seq = 0U;
+    uint8_t ftp_modal_was_active = 0U;
+    uint8_t ftp_modal_redraw_pending = 0U;
+    uint32_t ftp_modal_last_input_seq = 0U;
 
     while (1) {
         uart_budget = 32U;
@@ -3437,6 +3528,140 @@ int main(void)
         ui_close_menu_on_onee_running(&ui, &config_menu);
         ui_sync_onee_menu_pause(&config_menu);
         config_menu_poll_ethernet(&config_menu);
+        if (config_menu_ethernet_ftp_sd_remote_active(&config_menu) != 0U) {
+            if (ftp_modal_was_active == 0U) {
+                ftp_modal_was_active = 1U;
+                ftp_modal_last_input_seq = ui.input_seq;
+                ftp_modal_redraw_pending = 1U;
+            }
+
+            ftp_sd_service_poll();
+            if (config_menu_ethernet_ftp_sd_remote_active(&config_menu) != 0U) {
+                usb_hid_service_poll();
+                usb1_boot_settle_poll(&config_menu);
+            }
+            if (config_menu_ethernet_ftp_sd_remote_active(&config_menu) != 0U) {
+                uint32_t boot_menu_budget = 8U;
+
+                do {
+                    const boot_menu_event_t boot_event = boot_menu_service_poll();
+
+                    if (boot_event.type == BOOT_MENU_EVENT_NONE) {
+                        break;
+                    }
+
+                    switch (boot_event.type) {
+                    case BOOT_MENU_EVENT_OPEN:
+                        g_usb_menu_owned = 0U;
+                        ui_set_boot_menu_visible(&ui, &config_menu, 1U);
+                        break;
+                    case BOOT_MENU_EVENT_CLOSE:
+                        ui_set_boot_menu_visible(&ui, &config_menu, 0U);
+                        ftp_modal_redraw_pending = 1U;
+                        break;
+                    case BOOT_MENU_EVENT_INPUT:
+                        ui_handle_input_with_config(&ui, &config_menu, boot_event.input);
+                        if (ui.input_seq != ftp_modal_last_input_seq) {
+                            ftp_modal_last_input_seq = ui.input_seq;
+                            ftp_modal_redraw_pending = 1U;
+                        }
+                        break;
+                    default:
+                        break;
+                    }
+
+                    ftp_sd_service_poll();
+                    if (config_menu_ethernet_ftp_sd_remote_active(&config_menu) == 0U) {
+                        ftp_modal_redraw_pending = 1U;
+                        break;
+                    }
+                    boot_menu_budget--;
+                } while (boot_menu_budget != 0U);
+            }
+            if (config_menu_ethernet_ftp_sd_remote_active(&config_menu) != 0U) {
+                uint32_t usb_menu_budget = 8U;
+
+                do {
+                    usb_hid_menu_event_t usb_event;
+
+                    if (!usb_hid_service_pop_menu_event(&usb_event)) {
+                        break;
+                    }
+
+                    ui_handle_usb_menu_event(&ui, &config_menu, &usb_event);
+                    if (ui.input_seq != ftp_modal_last_input_seq) {
+                        ftp_modal_last_input_seq = ui.input_seq;
+                        ftp_modal_redraw_pending = 1U;
+                    }
+                    ftp_sd_service_poll();
+                    if (config_menu_ethernet_ftp_sd_remote_active(&config_menu) == 0U) {
+                        ftp_modal_redraw_pending = 1U;
+                        break;
+                    }
+                    usb_menu_budget--;
+                } while (usb_menu_budget != 0U);
+            }
+            ui_sync_usb_menu_capture(&config_menu);
+            if (config_menu_ethernet_ftp_sd_remote_active(&config_menu) != 0U) {
+                do {
+                    uart_control_event_t control_event;
+                    ui_input_t in;
+
+                    control_event = uart_control_poll(&g_uart0_control, &g_uart_control_ops);
+                    in = control_event.input;
+                    ui_handle_input_with_config(&ui, &config_menu, in);
+                    if (ui.input_seq != ftp_modal_last_input_seq) {
+                        ftp_modal_last_input_seq = ui.input_seq;
+                        ftp_modal_redraw_pending = 1U;
+                    }
+                    ftp_sd_service_poll();
+                    if (config_menu_ethernet_ftp_sd_remote_active(&config_menu) == 0U) {
+                        ftp_modal_redraw_pending = 1U;
+                        break;
+                    }
+
+                    control_event = uart_control_poll(&g_uart_control, &g_uart_control_ops);
+                    in = control_event.input;
+                    ui_handle_input_with_config(&ui, &config_menu, in);
+                    if (ui.input_seq != ftp_modal_last_input_seq) {
+                        ftp_modal_last_input_seq = ui.input_seq;
+                        ftp_modal_redraw_pending = 1U;
+                    }
+                    ftp_sd_service_poll();
+                    if (config_menu_ethernet_ftp_sd_remote_active(&config_menu) == 0U) {
+                        ftp_modal_redraw_pending = 1U;
+                        break;
+                    }
+
+                    if (!uart_control_has_pending_input(&g_uart0_control) &&
+                        !uart_control_has_pending_input(&g_uart_control)) {
+                        break;
+                    }
+                    uart_budget--;
+                } while (uart_budget != 0U);
+            }
+            ui_sync_usb_menu_capture(&config_menu);
+            if (ftp_modal_redraw_pending != 0U) {
+                static uint32_t last_seen_vblank_ftp_modal = 0U;
+                const uint32_t cur_vblank = REG_READ(FB_STATUS_REG);
+
+                if (cur_vblank != last_seen_vblank_ftp_modal) {
+                    last_seen_vblank_ftp_modal = cur_vblank;
+                    ui.frame++;
+                    ui_update_fps(&ui);
+                    ftp_sd_service_poll();
+                    compositor_request_full_refresh();
+                    (void)compositor_tick();
+                    ftp_sd_service_poll();
+                    ftp_modal_redraw_pending = 0U;
+                }
+            }
+            if (config_menu_ethernet_ftp_sd_remote_active(&config_menu) == 0U) {
+                ftp_modal_was_active = 0U;
+                ftp_modal_last_input_seq = ui.input_seq;
+            }
+            continue;
+        }
         if (config_menu_usb0_sd_remote_active(&config_menu) != 0U) {
             if (usb0_modal_was_active == 0U) {
                 usb0_modal_was_active = 1U;

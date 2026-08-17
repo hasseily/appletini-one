@@ -218,6 +218,16 @@ static int w5100_write(uint16_t addr, const uint8_t *src, uint16_t len)
     return 0;
 }
 
+int uthernet2_read_block(uint16_t addr, uint8_t *dst, uint16_t len)
+{
+    return w5100_read(addr, dst, len);
+}
+
+int uthernet2_write_block(uint16_t addr, const uint8_t *src, uint16_t len)
+{
+    return w5100_write(addr, src, len);
+}
+
 static int w5100_read16(uint16_t addr, uint16_t *value)
 {
     uint8_t bytes[2];

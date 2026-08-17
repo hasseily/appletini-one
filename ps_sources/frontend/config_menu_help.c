@@ -433,6 +433,12 @@ HELP(ethernet_dhcp,
 HELP(ethernet_test,
     "Test link reads the W5100S identity/version, PHY link status, and current IP from the card.");
 
+HELP(ethernet_ftp_sd,
+    "Starts anonymous read/write FTP access to the SD card on TCP port 21.",
+    "Only clients in the configured local subnet can connect; active FTP mode is not supported.",
+    "FTP owns Ethernet and the SD card until Enter, Escape, Back, or Menu stops sharing.",
+    "Use this only on a trusted LAN: FTP sends file data without encryption.");
+
 static const help_override_t ethernet_overrides[] = {
     OVERRIDE(CONFIG_ETHERNET_ITEM_CONFIG_ENABLED, ethernet_config),
     OVERRIDE(CONFIG_ETHERNET_ITEM_MAC, ethernet_fields),
@@ -441,6 +447,7 @@ static const help_override_t ethernet_overrides[] = {
     OVERRIDE(CONFIG_ETHERNET_ITEM_GATEWAY, ethernet_fields),
     OVERRIDE(CONFIG_ETHERNET_ITEM_DHCP, ethernet_dhcp),
     OVERRIDE(CONFIG_ETHERNET_ITEM_TEST, ethernet_test),
+    OVERRIDE(CONFIG_ETHERNET_ITEM_FTP_SD, ethernet_ftp_sd),
 };
 
 /* ======================================================================== */

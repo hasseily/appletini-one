@@ -2324,6 +2324,45 @@ uint8_t smartport_service_has_pending(void)
     return (g_cmd_pending_count != 0U) ? 1U : 0U;
 }
 
+void smartport_service_suspend_sd(void)
+{
+    uint8_t i;
+
+    smartport_devices_ensure_defaults();
+    smartport_service_apple_reset();
+    for (i = 0U; i < SP_MAX_DEVICES; ++i) {
+        if (g_devices[i].is_ram == 0U) {
+            close_device(&g_devices[i]);
+            sp_cache_invalidate_device(i);
+        }
+    }
+    if (g_fs_mounted) {
+        (void)f_mount((FATFS *)0, "0:/", 0U);
+        g_fs_mounted = 0U;
+    }
+}
+
+int smartport_service_resume_sd(void)
+{
+    uint8_t i;
+    int first_error = 0;
+
+    smartport_devices_ensure_defaults();
+    for (i = 0U; i < SP_MAX_DEVICES; ++i) {
+        int rc;
+
+        if (g_devices[i].is_ram != 0U) {
+            continue;
+        }
+        rc = load_device(&g_devices[i]);
+        if (rc != 0 && first_error == 0) {
+            first_error = rc;
+        }
+    }
+    smartport_service_apple_reset();
+    return first_error;
+}
+
 int smartport_service_reset_media(uint8_t device)
 {
     uint8_t index;

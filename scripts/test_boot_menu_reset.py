@@ -221,8 +221,8 @@ def test_boot_menu_close_does_not_reprobe_storage_after_handoff() -> None:
         source,
         re.S,
     )
-    require(len(close_blocks) == 2,
-            "frontend must handle ROM close in both normal and USB0-modal loops")
+    require(len(close_blocks) == 3,
+            "frontend must handle ROM close in normal, USB0-modal, and FTP-modal loops")
     for close_block in close_blocks:
         require("ui_set_boot_menu_visible(&ui, &config_menu, 0U);" in close_block,
                 "ROM close must hide and clean up the PS menu")

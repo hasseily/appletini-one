@@ -1034,6 +1034,7 @@ run_step(
             "../../../ps_sources/frontend/profile_manager.c",
             "../../../ps_sources/frontend/screenshot_service.c",
             "../../../ps_sources/frontend/smartport_service.c",
+            "../../../ps_sources/frontend/ftp_sd_service.c",
             "../../../ps_sources/frontend/uthernet2_control.c",
             "../../../ps_sources/frontend/cherryusb_baremetal_osal.c",
             "../../../ps_sources/frontend/cherryusb_usbh_hub_poll.c",

@@ -51,6 +51,7 @@ module apple_top(
     output logic signed [15:0] disk2_audio_l,
     output logic signed [15:0] disk2_audio_r,
     output logic signed [15:0] onee_audio_mono,
+    output logic onee_menu_audio_mute,
     output logic menu_chime_start,
     input  logic audio_sample_tick,
 
@@ -306,7 +307,7 @@ module apple_top(
     onee_speaker_audio onee_speaker_audio_i (
         .clk              (clk),
         .resetn           (rstn[1]),
-        .enabled          (onee_enable_effective),
+        .enabled          (onee_enable_effective && !onee_menu_audio_mute),
         .speaker_level    (onee_speaker),
         .audio_sample_tick(audio_sample_tick),
         .audio_mono       (onee_audio_mono_raw)
@@ -1776,6 +1777,10 @@ module apple_top(
     assign vtw_enable_eff = vtw_ctrl_q[0] &&
         (onee_enable_effective ||
          (!physical_bus_isolate && vtw_machine_ok_q));
+    // The config menu uses the vTW pause bit to hold a live ONE//e machine.
+    // Export a mute only for that stand-alone case; a normal card-mode vTW
+    // pause must not silence audio from the physical Apple.
+    assign onee_menu_audio_mute = onee_enable_effective && vtw_ctrl_q[8];
     wire vtw_host_is_iiplus_eff =
         !onee_enable_effective && vtw_host_is_iiplus_q;
     wire vtw_core_run_eff = vtw_enable_eff && vtw_ctrl_q[1];

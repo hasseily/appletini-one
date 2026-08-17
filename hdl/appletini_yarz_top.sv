@@ -275,6 +275,8 @@ module appletini_yarz_top (
     logic signed [15:0] disk2_audio_l;
     logic signed [15:0] disk2_audio_r;
     logic signed [15:0] onee_audio_mono;
+    logic onee_menu_audio_mute;
+    logic onee_menu_audio_mute_bclk;
     logic signed [15:0] card_audio_l;
     logic signed [15:0] card_audio_r;
     logic signed [15:0] mixed_audio_l;
@@ -374,6 +376,13 @@ module appletini_yarz_top (
         .clk    (audio_bclk),
         .arst_n (audio_mclk_resetn),
         .srst_n (audio_bclk_resetn)
+    );
+
+    cdc_bit_sync onee_menu_audio_mute_cdc_i (
+        .clk   (audio_bclk),
+        .resetn(audio_bclk_resetn),
+        .din   (onee_menu_audio_mute),
+        .dout  (onee_menu_audio_mute_bclk)
     );
 
     // Status signals after CDC into AXI/control domain (owned by pl_cdc_status)
@@ -786,6 +795,7 @@ module appletini_yarz_top (
         .disk2_audio_l(disk2_audio_l),
         .disk2_audio_r(disk2_audio_r),
         .onee_audio_mono(onee_audio_mono),
+        .onee_menu_audio_mute(onee_menu_audio_mute),
         .menu_chime_start(menu_chime_start),
         .audio_sample_tick(audio_sample_resend),
         .axi_hp1_read(s_axi_hp1_read),
@@ -873,7 +883,7 @@ module appletini_yarz_top (
         .bclk_in      (audio_bclk),
         .resetn       (audio_bclk_resetn),
         .enable       (1'b1),
-        .mute         (1'b0),
+        .mute         (onee_menu_audio_mute_bclk),
         .sample_l     (mockingboard_audio_24_bclk[47:24]),
         .sample_r     (mockingboard_audio_24_bclk[23:0]),
         .i2s_bclk     (unused_mock_i2s_bclk),
@@ -897,7 +907,7 @@ module appletini_yarz_top (
         .clk       (fclk_clk0),
         .resetn    (peripheral_133M_aresetn[6]),
         .enable    (1'b1),
-        .mute      (1'b0),
+        .mute      (onee_menu_audio_mute),
         .sample_l  (mockingboard_audio_24_sampled_fclk[47:24]),
         .sample_r  (mockingboard_audio_24_sampled_fclk[23:0]),
         .spdif_out (audio_spdif_out)

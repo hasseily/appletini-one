@@ -110,7 +110,7 @@ def static_contract_checks() -> None:
 
     speaker = instance_text(apple, "onee_speaker_audio onee_speaker_audio_i")
     for token in (
-        ".enabled          (onee_enable_effective)",
+        ".enabled          (onee_enable_effective && !onee_menu_audio_mute)",
         ".speaker_level    (onee_speaker)",
         ".audio_sample_tick(audio_sample_tick)",
         ".audio_mono       (onee_audio_mono_raw)",
@@ -121,6 +121,32 @@ def static_contract_checks() -> None:
 
     require(".onee_audio_mono(onee_audio_mono)" in board,
             "board top must receive ONE//e speaker audio")
+    require(
+        "assign onee_menu_audio_mute = onee_enable_effective && vtw_ctrl_q[8];"
+        in apple,
+        "ONE//e menu pause must drive a stand-alone-only audio mute",
+    )
+    require(".onee_menu_audio_mute(onee_menu_audio_mute)" in board,
+            "board top must receive the ONE//e menu mute")
+    mute_cdc = instance_text(
+        board, "cdc_bit_sync onee_menu_audio_mute_cdc_i"
+    )
+    require(
+        ".clk   (audio_bclk)" in mute_cdc and
+        ".resetn(audio_bclk_resetn)" in mute_cdc and
+        ".din   (onee_menu_audio_mute)" in mute_cdc and
+        ".dout  (onee_menu_audio_mute_bclk)" in mute_cdc,
+        "ONE//e menu mute must cross into the I2S clock domain",
+    )
+    i2s = instance_text(board, "audio_i2s_pcm_tx audio_i2s_pcm_tx_i")
+    spdif = instance_text(board, "audio_spdif_pcm_tx audio_spdif_pcm_tx_i")
+    chime = instance_text(board, "audio_i2s_tone menu_chime_i2s_i")
+    require(".mute         (onee_menu_audio_mute_bclk)" in i2s,
+            "ONE//e menu pause must mute I2S emulation audio")
+    require(".mute      (onee_menu_audio_mute)" in spdif,
+            "ONE//e menu pause must mute S/PDIF emulation audio")
+    require(".mute         (1'b0)" in chime,
+            "the menu chime must remain audible while emulation is muted")
     require(
         "assign card_audio_l = sat_add16(mockingboard_audio_l, disk2_audio_l);"
         in board and

@@ -180,6 +180,11 @@ def static_checks() -> None:
         "VTW_CTRL speed must remain an AXI/global-reset register, outside "
         "the virtual Apple reset path",
     )
+    require(
+        "assign onee_menu_audio_mute = onee_enable_effective && vtw_ctrl_q[8];"
+        in top,
+        "ONE//e pause must export an effective-mode-only emulation audio mute",
+    )
 
 
 def main() -> int:

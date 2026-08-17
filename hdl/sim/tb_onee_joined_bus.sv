@@ -20,6 +20,7 @@ module tb_onee_joined_bus;
     logic [31:0] vtw_ctrl_q = 32'h0000_0000;
     wire vtw_enable = vtw_ctrl_q[0];
     wire core_run = vtw_ctrl_q[1];
+    wire onee_menu_audio_mute = onee_enabled && vtw_ctrl_q[8];
 
     globals::AppleBus_read  ab_read;
     globals::AppleBus_read  softswitch_ab_read;
@@ -580,6 +581,8 @@ module tb_onee_joined_bus;
          * bit 8 must resume the same machine without a reset or ROM reload. */
         write_vtw_ctrl(32'h0025_0187);
         repeat (256) @(posedge clk);
+        check(onee_menu_audio_mute,
+              "ONE//e menu pause did not assert emulation audio mute");
         paused_core_cycles = vtw_core_cycles;
         paused_core_pc = dbg_core_pc;
         repeat (128) begin
@@ -594,6 +597,9 @@ module tb_onee_joined_bus;
                   "ONE//e pause reset the core or changed its speed");
         end
         write_vtw_ctrl(32'h0025_0087);
+        #1;
+        check(!onee_menu_audio_mute,
+              "ONE//e menu resume did not release emulation audio mute");
         fork : wait_for_pause_resume
             begin
                 wait (vtw_core_cycles != paused_core_cycles);

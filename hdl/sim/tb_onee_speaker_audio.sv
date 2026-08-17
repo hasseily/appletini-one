@@ -166,6 +166,26 @@ module tb_onee_speaker_audio;
         check((sample_sum < 512) && (sample_sum > -512),
               "sustained square wave was not centered around zero");
 
+        // A menu pause can land while the two-stage sample path has a result
+        // pending. Disabling must cancel that result, track speaker changes
+        // during the pause, and resume at silence without leaking a tail.
+        speaker_level = ~speaker_level;
+        launch_sample_tick();
+        enabled = 1'b0;
+        @(posedge clk);
+        #1;
+        check(audio_mono == 16'sd0 && bounded_audio_mono == 16'sd0 &&
+              !dut.sample_pending_q && !bounds_dut.sample_pending_q,
+              "menu pause leaked a pending speaker sample");
+        speaker_level = ~speaker_level;
+        repeat (4) sample_tick();
+        check(audio_mono == 16'sd0 && bounded_audio_mono == 16'sd0,
+              "speaker output changed while menu-paused");
+        enabled = 1'b1;
+        sample_tick();
+        check(audio_mono == 16'sd0 && bounded_audio_mono == 16'sd0,
+              "speaker resume leaked a stale tail or static-level click");
+
         enabled = 1'b0;
         @(posedge clk);
         #1;

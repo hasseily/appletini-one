@@ -13,13 +13,14 @@
 #define FTP_CONTROL_PORT         21U
 #define FTP_PASSIVE_PORT         50000U
 #define FTP_CONTROL_BUFFER_LEN   512U
-#define FTP_DATA_BUFFER_LEN      1024U
+#define FTP_DATA_BUFFER_LEN      4096U
 #define FTP_PATH_LEN             256U
 #define FTP_FAT_PATH_LEN         (FTP_PATH_LEN + 3U)
 
 #define W5100_REG_RMSR           0x001AU
 #define W5100_REG_TMSR           0x001BU
 #define W5100_SOCKET_MEM_4_2_1_1 0x06U
+#define W5100_SOCKET_MEM_2_4_1_1 0x09U
 
 #define W5100_SN_MR              0x00U
 #define W5100_SN_CR              0x01U
@@ -51,11 +52,11 @@
 #define W5100_SR_CLOSE_WAIT      0x1CU
 
 #define W5100_TX_BASE_S0         0x4000U
-#define W5100_TX_BASE_S1         0x5000U
+#define W5100_TX_BASE_S1         0x4800U
 #define W5100_RX_BASE_S0         0x6000U
-#define W5100_RX_BASE_S1         0x7000U
-#define W5100_MASK_S0            0x0FFFU
-#define W5100_MASK_S1            0x07FFU
+#define W5100_RX_BASE_S1         0x6800U
+#define W5100_MASK_S0            0x07FFU
+#define W5100_MASK_S1            0x0FFFU
 
 typedef enum {
     FTP_TRANSFER_NONE = 0,
@@ -1165,9 +1166,13 @@ int ftp_sd_service_start(char *detail, size_t detail_len)
     for (uint8_t socket = 0U; socket < 4U; ++socket) {
         socket_close(socket);
     }
-    if (uthernet2_write_reg(W5100_REG_RMSR, W5100_SOCKET_MEM_4_2_1_1) != 0 ||
-        uthernet2_write_reg(W5100_REG_TMSR, W5100_SOCKET_MEM_4_2_1_1) != 0 ||
+    if (uthernet2_write_reg(W5100_REG_RMSR, W5100_SOCKET_MEM_2_4_1_1) != 0 ||
+        uthernet2_write_reg(W5100_REG_TMSR, W5100_SOCKET_MEM_2_4_1_1) != 0 ||
         socket_listen(FTP_CONTROL_SOCKET, FTP_CONTROL_PORT) != 0) {
+        (void)uthernet2_write_reg(W5100_REG_RMSR,
+                                  W5100_SOCKET_MEM_4_2_1_1);
+        (void)uthernet2_write_reg(W5100_REG_TMSR,
+                                  W5100_SOCKET_MEM_4_2_1_1);
         (void)f_mount((FATFS *)0, "0:/", 0U);
         set_detail(detail, detail_len, "FTP COULD NOT OPEN TCP PORT 21");
         return -1;
@@ -1193,6 +1198,10 @@ void ftp_sd_service_stop(void)
     }
     ftp_abort_transfer();
     socket_close(FTP_CONTROL_SOCKET);
+    (void)uthernet2_write_reg(W5100_REG_RMSR,
+                              W5100_SOCKET_MEM_4_2_1_1);
+    (void)uthernet2_write_reg(W5100_REG_TMSR,
+                              W5100_SOCKET_MEM_4_2_1_1);
     (void)f_mount((FATFS *)0, "0:/", 0U);
     memset(&g_ftp, 0, sizeof(g_ftp));
 }

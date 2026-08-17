@@ -55,6 +55,21 @@ def test_directory_listing_finishes_with_tcp_eof() -> None:
             "CWD / must accept the FTP volume root without relying on FatFs f_stat")
 
 
+def test_data_socket_buffering() -> None:
+    source = read("ps_sources/frontend/ftp_sd_service.c")
+
+    require("FTP_DATA_BUFFER_LEN      4096U" in source,
+            "FTP file transfers must use 4KB FatFs and socket chunks")
+    require("W5100_SOCKET_MEM_2_4_1_1 0x09U" in source and
+            "W5100_TX_BASE_S1         0x4800U" in source and
+            "W5100_RX_BASE_S1         0x6800U" in source and
+            "W5100_MASK_S0            0x07FFU" in source and
+            "W5100_MASK_S1            0x0FFFU" in source,
+            "FTP must assign 2KB to control socket 0 and 4KB to data socket 1")
+    require(source.count("W5100_SOCKET_MEM_4_2_1_1") >= 5,
+            "FTP failure and stop paths must restore the normal 4+2+1+1KB map")
+
+
 def test_exclusive_ethernet_and_sd_ownership() -> None:
     main = read("ps_sources/frontend/main.c")
     smartport = read("ps_sources/frontend/smartport_service.c")
@@ -126,6 +141,7 @@ def main() -> None:
     tests = [
         test_ftp_protocol_and_subnet_gate,
         test_directory_listing_finishes_with_tcp_eof,
+        test_data_socket_buffering,
         test_exclusive_ethernet_and_sd_ownership,
         test_ethernet_tab_modal_contract,
     ]

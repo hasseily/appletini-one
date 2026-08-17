@@ -151,9 +151,20 @@ def main():
             "Host accesses must share the physical W5100S bus operation states")
     require("start_host_mode_setup" in card and
             "w5100s_physical_mode_value(mode_q)" in card and
-            "host_write ? ETH_HOST_ADDR_RELOAD_WRITE :\n"
-            "                                         ETH_HOST_ADDR_RELOAD_READ" in card,
+            "host_pending_write_q ? ETH_HOST_ADDR_RELOAD_WRITE :" in card and
+            "host_write ? ETH_HOST_ADDR_RELOAD_WRITE :" in card and
+            card.count("ETH_HOST_ADDR_RELOAD_READ") >= 3,
             "Host commands must force W5100S indirect+AI mode without clobbering the W5100 mode shadow")
+    require("host_stream_valid_q" in card and
+            "host_stream_write_q" in card and
+            "host_stream_next_addr_q" in card and
+            "host_pending_addr_q == host_stream_next_addr_q" in card and
+            "host_phys_addr == host_stream_next_addr_q" in card,
+            "Sequential PS requests must reuse the W5100S auto-incremented pointer")
+    require("apple_io_read_start || apple_io_write_addr_start ||" in card and
+            "host_stream_valid_q <= !apple_waiting;" in card and
+            "host_stream_valid_q <= 1'b0;" in card,
+            "Apple traffic and host collisions must invalidate the PS sequential fast path")
     require("wire apple_io_write_addr_start" in card and
             "apple_write_reserved_q" in card and
             "wire host_can_start =\n"
@@ -176,7 +187,7 @@ def main():
             "start_addr_reload(access_addr_q, ETH_HOST_ADDR_LO_THEN_WRITE);" in card and
             "ETH_HOST_DATA_READ_START" in card and
             "ETH_HOST_DATA_WRITE_START" in card,
-            "Host register accesses must reload both W5100S indirect address bytes before data access")
+            "Non-sequential host register accesses must reload both W5100S indirect address bytes before data access")
     require("addr_synced_q <= 1'b0;" in card and
             "host_done_q <= 1'b1;" in card,
             "Host register accesses must invalidate pointer sync and signal completion")

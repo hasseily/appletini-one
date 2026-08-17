@@ -58,6 +58,9 @@
 #define HID_KEY_TRACK_COUNT 8U
 #define HID_SOURCE_TRACK_COUNT (HID_KEY_TRACK_COUNT + 8U)
 #define HID_HAT_NEUTRAL 8U
+#define HID_REPORT_RETRY_MS 10U
+#define HID_REPORT_RETRY_TICKS \
+    ((XTime)((COUNTS_PER_SECOND / 1000U) * HID_REPORT_RETRY_MS))
 
 #define MOUSE_MMIO_BASE 0x40050000U
 #define MOUSE_REG(idx) (MOUSE_MMIO_BASE + ((idx) * 4U))
@@ -86,6 +89,7 @@ typedef struct {
     uint8_t mouse_card;
     uint8_t report_info_valid;
     uint8_t report_pending;
+    uint8_t report_retry_armed;
     uint8_t prev_buttons;
     uint8_t apple_buttons;
     usb_hid_menu_source_t prev_sources[HID_SOURCE_TRACK_COUNT];
@@ -108,6 +112,7 @@ typedef struct {
     uint32_t transfer_error_count;
     int last_error;
     uint8_t error_log_suppressed;
+    XTime report_retry_started;
     uint8_t interface_subclass;
     uint8_t interface_protocol;
 } usb_hid_slot_t;
@@ -145,6 +150,7 @@ static uint32_t g_transfer_error_count;
 static int g_last_error;
 
 static void hid_resubmit_report(usb_hid_slot_t *slot);
+static void hid_slots_retry_reports(void);
 static uint8_t hid_source_in_list(usb_hid_menu_source_t source,
                                   const usb_hid_menu_source_t *sources,
                                   uint32_t count);
@@ -1792,9 +1798,21 @@ static void hid_resubmit_report(usb_hid_slot_t *slot)
     rc = usbh_submit_urb(&slot->hid->intin_urb);
     if (rc == 0) {
         slot->report_pending = 1U;
+        slot->report_retry_armed = 0U;
+        slot->report_retry_started = 0U;
         return;
     }
 
+    /* EHCI marks an URB busy before allocating its QH. If that allocation
+     * fails, the port returns NOMEM with no QH but leaves BUSY in the URB.
+     * Clear only that detached failure state so the timed retry can submit
+     * the same interrupt URB again. Never clear a live controller-owned URB. */
+    if (rc == -USB_ERR_NOMEM && slot->hid->intin_urb.hcpriv == NULL) {
+        slot->hid->intin_urb.errorcode = 0;
+    }
+
+    XTime_GetTime(&slot->report_retry_started);
+    slot->report_retry_armed = 1U;
     slot->submit_error_count++;
     g_submit_error_count++;
     slot->last_error = rc;
@@ -1806,6 +1824,29 @@ static void hid_resubmit_report(usb_hid_slot_t *slot)
         uart_putdec(UART0_BASE, (uint32_t)(-rc));
         uart_puts(UART0_BASE, "\r\n");
         slot->error_log_suppressed = 1U;
+    }
+}
+
+static void hid_slots_retry_reports(void)
+{
+    XTime now;
+
+    XTime_GetTime(&now);
+    for (uint32_t i = 0U; i < USB_HID_SLOT_COUNT; ++i) {
+        usb_hid_slot_t *slot = &g_hid_slots[i];
+
+        if (slot->active == 0U ||
+            slot->report_pending != 0U ||
+            slot->report_retry_armed == 0U ||
+            (now - slot->report_retry_started) < HID_REPORT_RETRY_TICKS) {
+            continue;
+        }
+
+        /* Clear first: a failed retry arms the next backoff itself. This
+         * makes a transient EHCI busy/error at cold enumeration recover
+         * without submitting the same interrupt URB on every fast poll. */
+        slot->report_retry_armed = 0U;
+        hid_resubmit_report(slot);
     }
 }
 
@@ -2420,6 +2461,7 @@ void usb_hid_service_poll(void)
     onee_input_service_poll();
     if (g_started != 0U) {
         cherryusb_host_poll(CHERRYUSB_USB1_BUSID);
+        hid_slots_retry_reports();
         hid_slots_poll_holds();
         onee_input_service_poll();
     }

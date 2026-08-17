@@ -122,6 +122,34 @@ def test_cherryusb_hid_backend_replaces_custom_enumerator() -> None:
     ]:
         require(token in source, f"USB1 HID service must support multi-HID frontend routing: {token}")
 
+
+def test_failed_hid_interrupt_submit_retries_after_backoff() -> None:
+    source = read(USB_HID_C)
+    submit = function_body(source, "hid_resubmit_report")
+    retry = function_body(source, "hid_slots_retry_reports")
+    poll = function_body(source, "usb_hid_service_poll")
+
+    require("#define HID_REPORT_RETRY_MS 10U" in source and
+            "uint8_t report_retry_armed;" in source and
+            "XTime report_retry_started;" in source,
+            "HID slots must retain a timed retry after a failed interrupt submit")
+    require("XTime_GetTime(&slot->report_retry_started);" in submit and
+            "slot->report_retry_armed = 1U;" in submit and
+            "slot->report_retry_armed = 0U;" in submit,
+            "interrupt submit failure must arm retry and success must cancel it")
+    require("rc == -USB_ERR_NOMEM" in submit and
+            "slot->hid->intin_urb.hcpriv == NULL" in submit and
+            "slot->hid->intin_urb.errorcode = 0;" in submit,
+            "QH allocation failure must clear EHCI's detached stale BUSY state")
+    require("slot->report_pending != 0U" in retry and
+            "(now - slot->report_retry_started) < HID_REPORT_RETRY_TICKS" in retry and
+            "slot->report_retry_armed = 0U;" in retry and
+            "hid_resubmit_report(slot);" in retry,
+            "retry poll must wait for backoff and never duplicate a pending URB")
+    require(poll.find("cherryusb_host_poll(CHERRYUSB_USB1_BUSID);") <
+            poll.find("hid_slots_retry_reports();"),
+            "HID retry must run after CherryUSB has reaped this poll's completions")
+
 def test_usb_keyboard_and_keypad_emit_bindable_sources() -> None:
     header = read(USB_HID_H)
     source = read(USB_HID_C)
@@ -907,6 +935,7 @@ def test_usb0_scsi_identity_and_format_capacities() -> None:
 TESTS = [
     test_slot_setting_does_not_control_physical_usb_mouse,
     test_cherryusb_hid_backend_replaces_custom_enumerator,
+    test_failed_hid_interrupt_submit_retries_after_backoff,
     test_usb_keyboard_and_keypad_emit_bindable_sources,
     test_onee_uses_fixed_keyboard_controls_and_blocks_menu_leakage,
     test_cherryusb_config_supports_hubs_and_zynq_ehci,

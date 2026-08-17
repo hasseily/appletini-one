@@ -84,6 +84,8 @@ def test_ethernet_tab_modal_contract() -> None:
     require('"Test link"' in tabs and '"SD Card FTP Sharing"' in tabs and
             tabs.index('"Test link"') < tabs.index('"SD Card FTP Sharing"'),
             "FTP sharing must render below the existing Ethernet actions")
+    require("y + (12 * row_h)" in tabs,
+            "FTP sharing must leave one blank row after the regular Ethernet actions")
     require("config_menu_start_ethernet_ftp_sd_remote(menu);" in menu and
             "WAIT FOR DHCP TO FINISH" in menu and
             "config_menu_stop_ethernet_ftp_sd_remote(menu);" in menu,
@@ -92,6 +94,10 @@ def test_ethernet_tab_modal_contract() -> None:
             '"SD Card FTP Sharing"' in menu and
             "menu->ethernet_ftp_sd_remote_active != 0U" in menu,
             "active FTP sharing must replace the tab page with a modal panel")
+    require("menu->usb_owned != 0U &&" in menu and
+            "config_menu_onee_fixed_bindings_active(menu) == 0U" in menu and
+            '"CARD ACCESS ONLY FROM BOOT MENU"' in menu,
+            "active ONE//e must bypass the USB-owned boot-menu access gate")
     require("FTP owns Ethernet and the SD card until Enter" in help_text and
             "FTP sends file data without encryption" in help_text,
             "the Ethernet help must explain exclusive ownership and cleartext FTP")

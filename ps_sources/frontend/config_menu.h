@@ -308,6 +308,7 @@ void config_menu_set_vtw_speed(config_menu_t *menu,
 void config_menu_stop_usb0_sd_remote(config_menu_t *menu);
 void config_menu_usb0_sd_remote_host_ejected(config_menu_t *menu);
 uint8_t config_menu_usb0_sd_remote_active(const config_menu_t *menu);
+void config_menu_start_ethernet_ftp_sd_remote(config_menu_t *menu);
 void config_menu_stop_ethernet_ftp_sd_remote(config_menu_t *menu);
 uint8_t config_menu_ethernet_ftp_sd_remote_active(const config_menu_t *menu);
 uint8_t config_menu_is_active(const config_menu_t *menu);

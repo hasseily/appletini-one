@@ -59,7 +59,11 @@ def test_data_socket_buffering() -> None:
     source = read("ps_sources/frontend/ftp_sd_service.c")
 
     require("FTP_DATA_BUFFER_LEN      4096U" in source,
-            "FTP file transfers must use 4KB FatFs and socket chunks")
+            "FTP file transfers must use 4KB FatFs chunks")
+    require("FTP_SEND_CHUNK_LEN       2048U" in source and
+            "g_ftp.data_buffer +" in source and
+            "g_ftp.data_buffer_offset" in source,
+            "FTP RETR must split each 4KB file read into 2KB W5100 sends")
     require("W5100_SOCKET_MEM_2_4_1_1 0x09U" in source and
             "W5100_TX_BASE_S1         0x4800U" in source and
             "W5100_RX_BASE_S1         0x6800U" in source and
@@ -137,6 +141,22 @@ def test_ethernet_tab_modal_contract() -> None:
             "the Vitis frontend build must include the FTP service")
 
 
+def test_uart_ftp_control() -> None:
+    menu = read("ps_sources/frontend/config_menu.c")
+    menu_h = read("ps_sources/frontend/config_menu.h")
+    uart = read("ps_sources/frontend/uart_control.c")
+
+    require("void config_menu_start_ethernet_ftp_sd_remote" in menu and
+            "void config_menu_start_ethernet_ftp_sd_remote" in menu_h,
+            "UART control needs a public config-menu FTP start path")
+    require('str_ieq(argv[0], "ftp")' in uart and
+            '"  ftp [status|on|off]\\r\\n"' in uart and
+            "config_menu_start_ethernet_ftp_sd_remote(g_config_menu);" in uart and
+            "config_menu_stop_ethernet_ftp_sd_remote(g_config_menu);" in uart and
+            "config_menu_ethernet_ftp_sd_remote_active(" in uart,
+            "UART must provide FTP status, start, and stop commands")
+
+
 def main() -> None:
     tests = [
         test_ftp_protocol_and_subnet_gate,
@@ -144,6 +164,7 @@ def main() -> None:
         test_data_socket_buffering,
         test_exclusive_ethernet_and_sd_ownership,
         test_ethernet_tab_modal_contract,
+        test_uart_ftp_control,
     ]
     for test in tests:
         test()

@@ -54,13 +54,13 @@ typedef struct {
     uint32_t exec_cnt;
     uint32_t dma_snap;
 } uart_control_dma_dbg_t;
-/* Bound by main.c so the 'sdd' command routes through the config menu
- * (personality switch + persisted setting stay in lockstep). */
-static config_menu_t *g_sdd_config_menu = NULL;
+/* Bound by main.c so service commands use the same ownership and saved-state
+ * paths as the config menu. */
+static config_menu_t *g_config_menu = NULL;
 
 void uart_control_bind_config_menu(void *menu)
 {
-    g_sdd_config_menu = (config_menu_t *)menu;
+    g_config_menu = (config_menu_t *)menu;
 }
 
 static int uart_try_getc(uint32_t base, char *out)
@@ -1688,6 +1688,7 @@ void uart_control_print_help(const uart_control_t *control, const uart_control_o
         "  disk2 wozwrite <d1|d2> <on|off|status>\r\n"
         "  usb [status|resetstats] | usb1 [status|start|stop]\r\n"
         "  sdd [status|on|off]\r\n"
+        "  ftp [status|on|off]\r\n"
         "Cards and acceleration:\r\n"
         "  z80 [status|on|off|reset]\r\n"
         "  z80 budget <tstates> | z80 wall <us> | z80 dump <hex-addr> [hex-len]\r\n"
@@ -2193,9 +2194,9 @@ static uart_control_event_t process_command(
     if (str_ieq(argv[0], "sdd")) {
         if (argc < 2 || str_ieq(argv[1], "status")) {
             usb_sdd_service_print_status(control->control_uart_base);
-            if (g_sdd_config_menu != NULL) {
+            if (g_config_menu != NULL) {
                 uart_puts(control->control_uart_base,
-                          g_sdd_config_menu->sdd_stream_enabled ?
+                          g_config_menu->sdd_stream_enabled ?
                               "sdd: persisted setting = ON (boots as SDD stream)\r\n" :
                               "sdd: persisted setting = OFF (USB0 detached by default)\r\n");
             }
@@ -2208,8 +2209,8 @@ static uart_control_event_t process_command(
              * never disagree with the live personality -- a stale saved
              * "on" would silently bring USB0 up as an FT601 on the next
              * boot and USB0 would unexpectedly enumerate on the host. */
-            if (g_sdd_config_menu != NULL) {
-                config_menu_set_sdd_stream(g_sdd_config_menu, enable);
+            if (g_config_menu != NULL) {
+                config_menu_set_sdd_stream(g_config_menu, enable);
             } else if (enable) {
                 (void)usb_sdd_service_start();
             } else {
@@ -2221,6 +2222,46 @@ static uart_control_event_t process_command(
             return event;
         }
         uart_puts(control->control_uart_base, "usage: sdd [status|on|off]\r\n");
+        return event;
+    }
+
+    if (str_ieq(argv[0], "ftp")) {
+        char line[CONFIG_MENU_STATUS_LEN + 32U];
+
+        if (g_config_menu == NULL) {
+            uart_puts(control->control_uart_base,
+                      "ftp: config menu is not bound\r\n");
+            return event;
+        }
+        if (argc < 2 || str_ieq(argv[1], "status")) {
+            uart_puts(control->control_uart_base,
+                      config_menu_ethernet_ftp_sd_remote_active(
+                          g_config_menu) != 0U ?
+                              "ftp: on (anonymous read/write, passive)\r\n" :
+                              "ftp: off\r\n");
+            return event;
+        }
+        if (str_ieq(argv[1], "on")) {
+            config_menu_start_ethernet_ftp_sd_remote(g_config_menu);
+            if (config_menu_ethernet_ftp_sd_remote_active(
+                    g_config_menu) != 0U) {
+                uart_puts(control->control_uart_base,
+                          "ftp: on (anonymous read/write, passive)\r\n");
+            } else {
+                (void)snprintf(line, sizeof(line),
+                               "ftp: start failed: %s\r\n",
+                               g_config_menu->status);
+                uart_puts(control->control_uart_base, line);
+            }
+            return event;
+        }
+        if (str_ieq(argv[1], "off")) {
+            config_menu_stop_ethernet_ftp_sd_remote(g_config_menu);
+            uart_puts(control->control_uart_base, "ftp: off\r\n");
+            return event;
+        }
+        uart_puts(control->control_uart_base,
+                  "usage: ftp [status|on|off]\r\n");
         return event;
     }
 
@@ -2258,9 +2299,9 @@ static uart_control_event_t process_command(
     if (str_ieq(argv[0], "z80")) {
         if (argc < 2 || str_ieq(argv[1], "status")) {
             applicard_service_uart_status(control->control_uart_base);
-            if (g_sdd_config_menu != NULL) {
+            if (g_config_menu != NULL) {
                 uart_puts(control->control_uart_base,
-                          g_sdd_config_menu->applicard_slot5_enabled != 0U ?
+                          g_config_menu->applicard_slot5_enabled != 0U ?
                               "z80: persisted setting = ON\r\n" :
                               "z80: persisted setting = OFF\r\n");
             }
@@ -2272,8 +2313,8 @@ static uart_control_event_t process_command(
             /* Route through the config menu so the persisted setting and
              * the live slot-5 enable stay in lockstep (same rationale as
              * the sdd command). */
-            if (g_sdd_config_menu != NULL) {
-                config_menu_set_applicard_enabled(g_sdd_config_menu, enable);
+            if (g_config_menu != NULL) {
+                config_menu_set_applicard_enabled(g_config_menu, enable);
             } else {
                 applicard_service_set_enabled(enable);
             }
@@ -2317,9 +2358,9 @@ static uart_control_event_t process_command(
     if (str_ieq(argv[0], "vtw")) {
         if (argc < 2 || str_ieq(argv[1], "status")) {
             vtw_service_uart_status(control->control_uart_base);
-            if (g_sdd_config_menu != NULL) {
+            if (g_config_menu != NULL) {
                 uart_puts(control->control_uart_base,
-                          g_sdd_config_menu->vtw_enabled != 0U ?
+                          g_config_menu->vtw_enabled != 0U ?
                               "vtw: persisted setting = ON\r\n" :
                               "vtw: persisted setting = OFF\r\n");
             }
@@ -2331,8 +2372,8 @@ static uart_control_event_t process_command(
             /* Route through the config menu so the persisted setting and
              * the live session stay in lockstep (same rationale as the
              * sdd and z80 commands). */
-            if (g_sdd_config_menu != NULL) {
-                config_menu_set_vtw_enabled(g_sdd_config_menu, enable);
+            if (g_config_menu != NULL) {
+                config_menu_set_vtw_enabled(g_config_menu, enable);
             } else {
                 vtw_service_set_enabled(enable);
             }
@@ -2370,8 +2411,8 @@ static uart_control_event_t process_command(
                           "usage: vtw speed full|1mhz|div <2-255>\r\n");
                 return event;
             }
-            if (g_sdd_config_menu != NULL) {
-                config_menu_set_vtw_speed(g_sdd_config_menu, mode, divider);
+            if (g_config_menu != NULL) {
+                config_menu_set_vtw_speed(g_config_menu, mode, divider);
             } else {
                 vtw_service_set_speed(mode, divider);
             }

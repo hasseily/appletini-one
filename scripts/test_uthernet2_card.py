@@ -84,6 +84,7 @@ def w5100s_physical_addr(addr):
 
 def main():
     card = read_text("hdl/apple/uthernet2_card.sv")
+    fifo = read_text("hdl/apple/uthernet2_host_fifo.sv")
     top = read_text("hdl/apple/apple_top.sv")
     wrapper = read_text("hdl/appletini_yarz_top.sv")
     xdc = read_text("hdl/constraints/appletini_yarz.xdc")
@@ -95,12 +96,24 @@ def main():
     regs = read_text("ps_sources/frontend/card_control_regs.h")
     eth_control = read_text("ps_sources/frontend/uthernet2_control.c")
     sim = read_text("hdl/sim/tb_uthernet2_card.sv")
+    fifo_sim = read_text("hdl/sim/tb_uthernet2_host_fifo.sv")
     vitis = read_text("scripts/create_vitis_workspace.py")
 
     require("apple/uthernet2_card.sv" in hdl_sources,
             "Uthernet II card source must be in hdl_sources.txt")
+    require("apple/uthernet2_host_fifo.sv" in hdl_sources,
+            "Uthernet II host FIFO source must be in hdl_sources.txt")
     require("module uthernet2_card" in card,
             "Uthernet II HDL module missing")
+    require("module uthernet2_host_fifo" in fifo and
+            "parameter int unsigned FIFO_DEPTH = 256" in fifo and
+            "host_req = active_q && !inflight_q && host_ready" in fifo and
+            "if (host_done && inflight_q)" in fifo,
+            "Uthernet II host FIFO must feed bounded sequential byte requests")
+    require("busy || direct_busy || !request_length_valid" in fifo and
+            "write_count_q < requested_length" in fifo and
+            "if (host_error)" in fifo,
+            "Uthernet II host FIFO must reject overlap, short writes, and host errors")
     require("ab_read.addr[7:4] == (4'h8 + {1'b0, slot_assign})" in card,
             "Uthernet II must decode the selected C0nX slot I/O page")
     require("(ab_read.addr[3:2] == 2'b01)" in card,
@@ -336,6 +349,11 @@ def main():
             ".FAST_DATA_CLIENT(2)" in top and
             "uthernet_ab_write" in top,
             "Apple bus arbiter must include the Uthernet writer")
+    require("uthernet2_host_fifo uthernet2_host_fifo_i" in top and
+            ".host_req(eth_fifo_host_req || eth_host_req_pulse)" in top and
+            "if (!eth_host_busy_q && !eth_fifo_busy)" in top and
+            "if (eth_host_done && eth_host_busy_q)" in top,
+            "Apple top must keep direct and FIFO W5100 host commands exclusive")
 
     for signal in [
         "eth_d", "eth_a", "eth_rd_n", "eth_wr_n",
@@ -355,6 +373,12 @@ def main():
             "CARD_CTRL_ETH_CMD_GO" in regs and
             "CARD_CTRL_ETH_STATUS_RDATA_SHIFT" in regs,
             "PS register header must expose Uthernet II host command registers")
+    require("#define CARD_CTRL_ETH_FIFO_ADDR_REG" in regs and
+            "#define CARD_CTRL_ETH_FIFO_CTRL_REG" in regs and
+            "#define CARD_CTRL_ETH_FIFO_DATA_REG" in regs and
+            "#define CARD_CTRL_ETH_FIFO_STATUS_REG" in regs and
+            "CARD_CTRL_ETH_FIFO_MAX_BYTES       256U" in regs,
+            "PS register header must expose the bounded Uthernet II FIFO")
     require("#define ETHERNET_CONTROL_SLOT 1U" in config,
             "Config menu must use Ethernet slot 1")
     require("#define CONFIG_DEFAULT_ETHERNET_SLOT1_ENABLED 1U" in config,
@@ -574,6 +598,12 @@ def main():
             "Reading an invalid card MAC must preserve the saved menu values")
     require('"../../../ps_sources/frontend/uthernet2_control.c"' in vitis,
             "Uthernet II control source must be registered in Vitis")
+    require("CARD_CTRL_ETH_FIFO_CTRL_FLUSH" in eth_control and
+            "CARD_CTRL_ETH_FIFO_CTRL_START | chunk" in eth_control and
+            "CARD_CTRL_ETH_FIFO_CTRL_WRITE |" in eth_control and
+            "REG_READ(CARD_CTRL_ETH_FIFO_DATA_REG)" in eth_control and
+            "REG_WRITE(CARD_CTRL_ETH_FIFO_DATA_REG, word)" in eth_control,
+            "PS block reads and writes must use the Ethernet FIFO")
     require("eth_host_error_q <= eth_host_error_q | eth_host_error;" in top and
             ".host_error(eth_host_error)" in top,
             "Host collision and overrun errors must remain sticky until the next GO")
@@ -581,6 +611,10 @@ def main():
             "colliding Apple read was lost" in sim and
             "host started inside Apple write" in sim,
             "Behavioral simulation must cover host/Apple arbitration collisions")
+    require("UTHERNET2 HOST FIFO PASS" in fifo_sim and
+            "direct-busy FIFO start was not rejected" in fifo_sim and
+            "host error did not stop the FIFO transfer" in fifo_sim,
+            "Behavioral simulation must cover FIFO packing, stalls, and failures")
 
     simulate()
 
@@ -628,13 +662,23 @@ def simulate():
     run([xvlog, "--sv",
          str(ROOT / "hdl" / "globals.sv"),
          str(ROOT / "hdl" / "apple" / "uthernet2_card.sv"),
-         str(ROOT / "hdl" / "sim" / "tb_uthernet2_card.sv")], "xvlog.log")
+         str(ROOT / "hdl" / "apple" / "uthernet2_host_fifo.sv"),
+         str(ROOT / "hdl" / "sim" / "tb_uthernet2_card.sv"),
+         str(ROOT / "hdl" / "sim" / "tb_uthernet2_host_fifo.sv")],
+        "xvlog.log")
     run([vivado_tool("xelab"), "tb_uthernet2_card", "-s",
          "tb_uthernet2_snap", "--timescale", "1ns/1ps"], "xelab.log")
     stdout = run([vivado_tool("xsim"), "tb_uthernet2_snap", "--runall"],
                  "xsim.log")
     require("UTHERNET2 ARBITRATION PASS" in stdout,
             "tb_uthernet2_card did not pass")
+    run([vivado_tool("xelab"), "tb_uthernet2_host_fifo", "-s",
+         "tb_uthernet2_fifo_snap", "--timescale", "1ns/1ps"],
+        "xelab_fifo.log")
+    stdout = run([vivado_tool("xsim"), "tb_uthernet2_fifo_snap", "--runall"],
+                 "xsim_fifo.log")
+    require("UTHERNET2 HOST FIFO PASS" in stdout,
+            "tb_uthernet2_host_fifo did not pass")
     print("PASS simulate")
 
 

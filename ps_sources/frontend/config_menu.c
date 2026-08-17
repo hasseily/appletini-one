@@ -4392,7 +4392,7 @@ void config_menu_stop_ethernet_ftp_sd_remote(config_menu_t *menu)
                                               "SD CARD FTP SHARING STOPPED");
 }
 
-static void config_menu_start_ethernet_ftp_sd_remote(config_menu_t *menu)
+void config_menu_start_ethernet_ftp_sd_remote(config_menu_t *menu)
 {
     char detail[CONFIG_MENU_STATUS_LEN];
 

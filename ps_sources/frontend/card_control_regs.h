@@ -59,6 +59,24 @@
 #define CARD_CTRL_ETH_STATUS_RDATA_SHIFT   8U
 #define CARD_CTRL_ETH_STATUS_RDATA_MASK    0xFFUL
 
+/* Bounded W5100S block-transfer FIFO. CPU0 stages or drains packed
+ * little-endian words while PL issues the byte transactions. CTRL bits:
+ * [31] start, [30] write, [29] flush, [8:0] length (1..256).
+ * STATUS: [31] busy, [30] done, [29] error, [28] write,
+ * [26:18] remaining, [17:9] read bytes, [8:0] staged write bytes. */
+#define CARD_CTRL_ETH_FIFO_ADDR_REG        CARD_CTRL_REG_ADDR(0xA3U)
+#define CARD_CTRL_ETH_FIFO_CTRL_REG        CARD_CTRL_REG_ADDR(0xA4U)
+#define CARD_CTRL_ETH_FIFO_DATA_REG        CARD_CTRL_REG_ADDR(0xA5U)
+#define CARD_CTRL_ETH_FIFO_STATUS_REG      CARD_CTRL_REG_ADDR(0xA6U)
+#define CARD_CTRL_ETH_FIFO_CTRL_START      (1UL << 31)
+#define CARD_CTRL_ETH_FIFO_CTRL_WRITE      (1UL << 30)
+#define CARD_CTRL_ETH_FIFO_CTRL_FLUSH      (1UL << 29)
+#define CARD_CTRL_ETH_FIFO_LENGTH_MASK     0x1FFUL
+#define CARD_CTRL_ETH_FIFO_STATUS_BUSY     (1UL << 31)
+#define CARD_CTRL_ETH_FIFO_STATUS_DONE     (1UL << 30)
+#define CARD_CTRL_ETH_FIFO_STATUS_ERROR    (1UL << 29)
+#define CARD_CTRL_ETH_FIFO_MAX_BYTES       256U
+
 /* Virtual SSC printer FIFO drain window (ssc_card, slot 1). Every byte the
  * Apple writes to the ACIA transmit register queues in a 2 KB PL FIFO;
  * the printer service pops one byte per SSC_CTRL_POP write.

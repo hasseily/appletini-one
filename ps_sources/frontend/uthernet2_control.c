@@ -58,6 +58,7 @@
 #define UDP_HEADER_LEN    8U
 
 #define UTHERNET2_CMD_TIMEOUT_POLLS 10000U
+#define UTHERNET2_FIFO_TIMEOUT_POLLS 1000000U
 #define UTHERNET2_READY_POLL_USEC   20U
 #define DHCP_POLL_USEC              10000U
 #define DHCP_RESET_WAIT_USEC        10000U
@@ -197,10 +198,56 @@ static int w5100_read(uint16_t addr, uint8_t *dst, uint16_t len)
     if (dst == NULL) {
         return -1;
     }
-    for (uint16_t i = 0U; i < len; ++i) {
-        if (uthernet2_read_reg((uint16_t)(addr + i), &dst[i]) != 0) {
-            return -1;
+
+    while (len != 0U) {
+        uint16_t chunk = len;
+        uint32_t status;
+
+        if (chunk > CARD_CTRL_ETH_FIFO_MAX_BYTES) {
+            chunk = CARD_CTRL_ETH_FIFO_MAX_BYTES;
         }
+        if (chunk < 8U) {
+            for (uint16_t i = 0U; i < chunk; ++i) {
+                if (uthernet2_read_reg((uint16_t)(addr + i), &dst[i]) != 0) {
+                    return -1;
+                }
+            }
+        } else {
+            REG_WRITE(CARD_CTRL_ETH_FIFO_CTRL_REG,
+                      CARD_CTRL_ETH_FIFO_CTRL_FLUSH);
+            REG_WRITE(CARD_CTRL_ETH_FIFO_ADDR_REG, addr);
+            uthernet2_io_barrier();
+            REG_WRITE(CARD_CTRL_ETH_FIFO_CTRL_REG,
+                      CARD_CTRL_ETH_FIFO_CTRL_START | chunk);
+            uthernet2_io_barrier();
+
+            status = 0U;
+            for (uint32_t poll = 0U;
+                 poll < UTHERNET2_FIFO_TIMEOUT_POLLS;
+                 ++poll) {
+                status = REG_READ(CARD_CTRL_ETH_FIFO_STATUS_REG);
+                if ((status & CARD_CTRL_ETH_FIFO_STATUS_DONE) != 0U) {
+                    break;
+                }
+            }
+            if ((status & CARD_CTRL_ETH_FIFO_STATUS_DONE) == 0U ||
+                (status & CARD_CTRL_ETH_FIFO_STATUS_ERROR) != 0U) {
+                return -1;
+            }
+
+            for (uint16_t i = 0U; i < chunk; i = (uint16_t)(i + 4U)) {
+                const uint32_t word = REG_READ(CARD_CTRL_ETH_FIFO_DATA_REG);
+                const uint16_t count =
+                    (uint16_t)((chunk - i) >= 4U ? 4U : (chunk - i));
+
+                for (uint16_t lane = 0U; lane < count; ++lane) {
+                    dst[i + lane] = (uint8_t)(word >> (lane * 8U));
+                }
+            }
+        }
+        addr = (uint16_t)(addr + chunk);
+        dst += chunk;
+        len = (uint16_t)(len - chunk);
     }
     return 0;
 }
@@ -210,10 +257,58 @@ static int w5100_write(uint16_t addr, const uint8_t *src, uint16_t len)
     if (src == NULL) {
         return -1;
     }
-    for (uint16_t i = 0U; i < len; ++i) {
-        if (uthernet2_write_reg((uint16_t)(addr + i), src[i]) != 0) {
-            return -1;
+
+    while (len != 0U) {
+        uint16_t chunk = len;
+        uint32_t status;
+
+        if (chunk > CARD_CTRL_ETH_FIFO_MAX_BYTES) {
+            chunk = CARD_CTRL_ETH_FIFO_MAX_BYTES;
         }
+        if (chunk < 8U) {
+            for (uint16_t i = 0U; i < chunk; ++i) {
+                if (uthernet2_write_reg((uint16_t)(addr + i), src[i]) != 0) {
+                    return -1;
+                }
+            }
+        } else {
+            REG_WRITE(CARD_CTRL_ETH_FIFO_CTRL_REG,
+                      CARD_CTRL_ETH_FIFO_CTRL_FLUSH);
+            REG_WRITE(CARD_CTRL_ETH_FIFO_ADDR_REG, addr);
+            for (uint16_t i = 0U; i < chunk; i = (uint16_t)(i + 4U)) {
+                uint32_t word = 0U;
+                const uint16_t count =
+                    (uint16_t)((chunk - i) >= 4U ? 4U : (chunk - i));
+
+                for (uint16_t lane = 0U; lane < count; ++lane) {
+                    word |= (uint32_t)src[i + lane] << (lane * 8U);
+                }
+                REG_WRITE(CARD_CTRL_ETH_FIFO_DATA_REG, word);
+            }
+            uthernet2_io_barrier();
+            REG_WRITE(CARD_CTRL_ETH_FIFO_CTRL_REG,
+                      CARD_CTRL_ETH_FIFO_CTRL_START |
+                      CARD_CTRL_ETH_FIFO_CTRL_WRITE |
+                      chunk);
+            uthernet2_io_barrier();
+
+            status = 0U;
+            for (uint32_t poll = 0U;
+                 poll < UTHERNET2_FIFO_TIMEOUT_POLLS;
+                 ++poll) {
+                status = REG_READ(CARD_CTRL_ETH_FIFO_STATUS_REG);
+                if ((status & CARD_CTRL_ETH_FIFO_STATUS_DONE) != 0U) {
+                    break;
+                }
+            }
+            if ((status & CARD_CTRL_ETH_FIFO_STATUS_DONE) == 0U ||
+                (status & CARD_CTRL_ETH_FIFO_STATUS_ERROR) != 0U) {
+                return -1;
+            }
+        }
+        addr = (uint16_t)(addr + chunk);
+        src += chunk;
+        len = (uint16_t)(len - chunk);
     }
     return 0;
 }

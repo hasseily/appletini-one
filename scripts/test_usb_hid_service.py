@@ -12,6 +12,7 @@ FRONTEND = REPO_ROOT / "ps_sources" / "frontend"
 USB_HID_C = FRONTEND / "usb_hid_service.c"
 USB_HID_H = FRONTEND / "usb_hid_service.h"
 ONEE_USB_CONTROLS_H = FRONTEND / "onee_usb_controls.h"
+ONEE_FIXED_MODE_H = FRONTEND / "onee_fixed_mode.h"
 USB_CONFIG_H = FRONTEND / "usb_config.h"
 CHERRY_PLATFORM_H = FRONTEND / "cherryusb_platform.h"
 CHERRY_OSAL_C = FRONTEND / "cherryusb_baremetal_osal.c"
@@ -150,9 +151,12 @@ def test_onee_uses_fixed_keyboard_controls_and_blocks_menu_leakage() -> None:
     header = read(USB_HID_H)
     source = read(USB_HID_C)
     controls = read(ONEE_USB_CONTROLS_H)
+    fixed_mode = read(ONEE_FIXED_MODE_H)
     frontend_main = read(FRONTEND_MAIN_C)
     fixed = function_body(controls, "onee_usb_fixed_keyboard_action")
+    active = function_body(fixed_mode, "onee_usb_fixed_mode_active")
     keyboard = function_body(source, "hid_process_keyboard_usages")
+    selection = function_body(frontend_main, "ui_onee_selected")
     pause = function_body(frontend_main, "ui_sync_onee_menu_pause")
     event = function_body(frontend_main, "ui_handle_usb_menu_event")
 
@@ -165,6 +169,7 @@ def test_onee_uses_fixed_keyboard_controls_and_blocks_menu_leakage() -> None:
                 f"ONE//e HID routing API must expose {token}")
 
     fixed_pairs = {
+        "HID_KBD_USAGE_PAUSE": "USB_HID_MENU_ACTION_OPEN",
         "HID_KBD_USAGE_PAGEUP": "USB_HID_MENU_ACTION_PREV_TAB",
         "HID_KBD_USAGE_PAGEDOWN": "USB_HID_MENU_ACTION_NEXT_TAB",
         "HID_KBD_USAGE_LEFT": "USB_HID_MENU_ACTION_LEFT",
@@ -190,15 +195,20 @@ def test_onee_uses_fixed_keyboard_controls_and_blocks_menu_leakage() -> None:
             "HID_KBD_USAGE_ESCAPE" in fixed and
             "USB_HID_MENU_ACTION_CLOSE" in fixed,
             "fixed menu control must retain Enter/KP Enter and Escape")
+    require("CARD_CTRL_ONEE_STATUS_REQUEST_BIT" in active and
+            "CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT" in active and
+            "CARD_CTRL_ONEE_STATUS_SELECTED_BIT" not in active and
+            "onee_usb_fixed_mode_active(onee_service_status())" in selection,
+            "live fixed routing must share the exact REQUEST/EFFECTIVE predicate")
 
     require("g_onee_input_blocked != 0U" in keyboard and
             "onee_modifier = 0U;" in keyboard and
             "onee_key_count = 0U;" in keyboard and
             "onee_input_service_keyboard_report(slot->index," in keyboard,
             "menu-owned reports must reach the Apple bridge only as releases")
-    require("onee_usb_fixed_usage_reserved(key)" in keyboard and
+    require("onee_usb_apple_usage_allowed(key, g_onee_fixed_mode)" in keyboard and
             "g_onee_fixed_mode != 0U" in keyboard,
-            "fixed screenshot and speed keys must not leak into Apple input")
+            "fixed Break, screenshot, and speed keys must not leak into Apple input")
     modifier_filter = keyboard.find("onee_usb_fixed_apple_modifier(")
     apple_report = keyboard.find("onee_input_service_keyboard_report(")
     require("onee_printscreen_down = 1U;" in keyboard and
@@ -214,20 +224,20 @@ def test_onee_uses_fixed_keyboard_controls_and_blocks_menu_leakage() -> None:
             "continue;" in keyboard[fixed_gate:configurable_screenshot],
             "fixed ONE//e controls must bypass every saved screenshot/speed binding")
     route_call = keyboard.find("onee_usb_fixed_route(", fixed_gate)
-    hold_route = keyboard.find(
-        "(fixed_route & ONEE_USB_ROUTE_HOLD_TOGGLE)", route_call)
-    require(fixed_gate < route_call < hold_route < configurable_screenshot and
-            "menu_start_open_close_hold(slot, next_sources[i]);" in
-            keyboard[hold_route:configurable_screenshot] and
-            "ONEE_USB_ROUTE_PUSH_NOW" in controls and
-            "source == open_close_source" in controls,
-            "ONE//e must preserve the saved long-hold menu toggle while using fixed controls")
+    require(fixed_gate < route_call < configurable_screenshot and
+            "onee_usb_fixed_route(fixed_action)" in
+            keyboard[route_call:configurable_screenshot] and
+            "menu_start_open_close_hold" not in
+            keyboard[fixed_gate:configurable_screenshot] and
+            "g_menu_open_close_source" not in
+            keyboard[fixed_gate:configurable_screenshot],
+            "fixed ONE//e routing must never consult the saved long-hold binding")
     route = function_body(controls, "onee_usb_fixed_route")
-    overlap = route.find("if (source == open_close_source)")
-    reserved = route.find("if (reserved != 0U")
-    require(0 <= overlap < reserved and
-            "ONEE_USB_ROUTE_DELAY_ACTION" in route[overlap:reserved],
-            "a saved PrintScreen or keypad speed toggle must delay its fixed short action while checking the long hold")
+    require("USB_HID_MENU_ACTION_NONE" in route and
+            "ONEE_USB_ROUTE_PUSH_NOW" in route and
+            "source" not in route and
+            "open_close" not in route,
+            "the pure fixed route must depend only on the fixed action")
 
     require("vtw_service_onee_set_paused(1U)" in pause and
             "usb_hid_service_set_onee_input_blocked(1U)" in pause and
@@ -236,6 +246,7 @@ def test_onee_uses_fixed_keyboard_controls_and_blocks_menu_leakage() -> None:
             "menu entry must pause and menu exit must wait for key release")
     released = function_body(source, "usb_hid_service_all_input_released")
     desktop = function_body(source, "hid_collect_desktop_item")
+    mouse_buttons = function_body(source, "mouse_menu_process_buttons")
     require("raw_buttons_down" in released and
             "raw_axis_active_mask" in released and
             "raw_hat_active" in released and
@@ -245,6 +256,10 @@ def test_onee_uses_fixed_keyboard_controls_and_blocks_menu_leakage() -> None:
             "onee_usb_hat_active(" in desktop and
             "g_onee_input_blocked == 0U && slot->onee_joystick" in source,
             "menu ownership must block joystick delivery and wait for buttons, axes, and hat release")
+    require("if (g_onee_fixed_mode != 0U)" in mouse_buttons and
+            "slot->prev_buttons = buttons;" in mouse_buttons and
+            desktop.count("g_menu_capture != 0U && g_onee_fixed_mode == 0U") >= 3,
+            "fixed ONE//e must ignore saved mouse, joystick, axis, and hat menu routes")
     require("ui_key_from_onee_fixed_action(event->action)" in event and
             "config_menu_capture_usb_binding" in event and
             "onee_fixed == 0U" in event,

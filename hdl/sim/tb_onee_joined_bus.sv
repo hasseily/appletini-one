@@ -643,7 +643,7 @@ module tb_onee_joined_bus;
               "ONE//e virtual traffic reached the physical write record");
 
         /* Re-run the core, then issue the same $5F bit-0 request used by the
-         * PS Ctrl-Alt-Pause path. The real input bridge holds the request,
+         * PS Ctrl-Alt-Delete path. The real input bridge holds the request,
          * the real warm-reset controller counts virtual native cycles, and
          * apple_virtual_bus drives ab_read.res low. VTW_CTRL must remain in
          * its own global register domain throughout; neither speed field may

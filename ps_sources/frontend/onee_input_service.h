@@ -32,8 +32,9 @@ void onee_input_service_poll(void);
 
 /* HID reports update saved physical state even while ONE//e is off, but the
  * service discards key edges and performs no input-bridge writes then.
- * The keyboard call returns one only when an active Ctrl+Pause reset chord
- * consumed Pause, so the normal USB binding path can omit that one key. */
+ * The keyboard call returns one only when an active Ctrl+Alt+Delete reset
+ * chord consumed forward Delete, so the normal USB binding path can omit
+ * that one key. */
 uint8_t onee_input_service_keyboard_report(uint8_t slot,
                                            uint8_t modifier,
                                            const uint8_t *keys,

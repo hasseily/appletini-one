@@ -50,6 +50,7 @@
 #define HID_MOD_RGUI   (1U << 7)
 #define HID_MOD_CTRL   (HID_MOD_LCTRL | HID_MOD_RCTRL)
 #define HID_MOD_SHIFT  (HID_MOD_LSHIFT | HID_MOD_RSHIFT)
+#define HID_MOD_ALT    (HID_MOD_LALT | HID_MOD_RALT)
 
 typedef struct {
     uint8_t keyboard_seen;
@@ -58,6 +59,8 @@ typedef struct {
     uint8_t keys[ONEE_INPUT_KEY_TRACK_COUNT];
     uint32_t key_press_order[ONEE_INPUT_KEY_TRACK_COUNT];
     uint8_t reset_chord_down;
+    uint8_t reset_delete_consumed;
+    uint8_t reset_modifier_consumed;
     uint8_t joystick_seen;
     uint8_t joystick_buttons;
     uint8_t joystick_axis_valid;
@@ -344,7 +347,16 @@ static uint32_t onee_live_word(void)
     for (uint8_t i = 0U; i < ONEE_INPUT_DEVICE_SLOT_COUNT; ++i) {
         const onee_input_slot_t *slot = &g_slots[i];
         if (slot->keyboard_seen != 0U) {
-            if (slot->key_count != 0U ||
+            uint8_t live_key = 0U;
+
+            for (uint8_t key = 0U; key < slot->key_count; ++key) {
+                if (slot->keys[key] != HID_KBD_USAGE_DELFWD ||
+                    slot->reset_delete_consumed == 0U) {
+                    live_key = 1U;
+                    break;
+                }
+            }
+            if (live_key != 0U ||
                 (slot->modifier & (HID_MOD_CTRL | HID_MOD_SHIFT)) != 0U) {
                 live |= ONEE_INPUT_LIVE_ANY_KEY_BIT;
             }
@@ -493,6 +505,8 @@ uint8_t onee_input_service_keyboard_report(uint8_t slot_index,
     uint32_t next_press_order[ONEE_INPUT_KEY_TRACK_COUNT];
     uint8_t next_count = 0U;
     uint8_t reset_chord;
+    uint8_t apple_modifier;
+    uint8_t delete_down;
 
     if (slot_index >= ONEE_INPUT_DEVICE_SLOT_COUNT ||
         (keys == NULL && key_count != 0U)) {
@@ -521,13 +535,41 @@ uint8_t onee_input_service_keyboard_report(uint8_t slot_index,
             }
         }
     }
+    delete_down = onee_key_in_report(HID_KBD_USAGE_DELFWD,
+                                     next_keys,
+                                     next_count);
     reset_chord = (uint8_t)(g_session_active != 0U &&
         (modifier & HID_MOD_CTRL) != 0U &&
-        onee_key_in_report(HID_KBD_USAGE_PAUSE,
-                            next_keys,
-                            next_count) != 0U);
+        (modifier & HID_MOD_ALT) != 0U &&
+        delete_down != 0U);
+
+    /* Once Ctrl+Alt+Delete forms, keep each chord member hidden from the
+     * Apple side until that member is released. This covers every release
+     * order and prevents Alt from appearing as an Apple key after reset. */
+    slot->reset_modifier_consumed &= modifier;
+    if (delete_down == 0U) {
+        slot->reset_delete_consumed = 0U;
+    }
+    if (reset_chord != 0U) {
+        slot->reset_modifier_consumed |=
+            (uint8_t)(modifier & (HID_MOD_CTRL | HID_MOD_ALT));
+        slot->reset_delete_consumed = 1U;
+    }
+    apple_modifier =
+        (uint8_t)(modifier & (uint8_t)~slot->reset_modifier_consumed);
+
     if (reset_chord != 0U && slot->reset_chord_down == 0U) {
+        /* A reset supersedes any translated key which has not reached PL. */
+        onee_key_queue_clear();
         g_reset_pending = 1U;
+    }
+
+    if (slot->reset_delete_consumed != 0U) {
+        for (uint8_t next = 0U; next < next_count; ++next) {
+            if (next_keys[next] == HID_KBD_USAGE_DELFWD) {
+                next_press_order[next] = 0U;
+            }
+        }
     }
 
     if (g_session_active != 0U) {
@@ -544,10 +586,13 @@ uint8_t onee_input_service_keyboard_report(uint8_t slot_index,
                 g_caps_lock ^= 1U;
                 continue;
             }
-            if (usage == HID_KBD_USAGE_PAUSE && reset_chord != 0U) {
+            if (usage == HID_KBD_USAGE_DELFWD &&
+                slot->reset_delete_consumed != 0U) {
                 continue;
             }
-            code = onee_ascii_from_usage(usage, modifier, g_caps_lock);
+            code = onee_ascii_from_usage(usage,
+                                         apple_modifier,
+                                         g_caps_lock);
             onee_key_queue_push(code);
             if (code != 0U) {
                 ++g_repeat_press_sequence;
@@ -560,7 +605,7 @@ uint8_t onee_input_service_keyboard_report(uint8_t slot_index,
     }
 
     slot->keyboard_seen = 1U;
-    slot->modifier = modifier;
+    slot->modifier = apple_modifier;
     slot->reset_chord_down = reset_chord;
     slot->key_count = next_count;
     memset(slot->keys, 0, sizeof(slot->keys));

@@ -111,8 +111,9 @@ def test_boot_settings_draws_binding_editor() -> None:
             "CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM (CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM + 1U)" in header and
             "CONFIG_MENU_BOOT_ITEM_COUNT" in header,
             "Boot Settings must reserve rows for the USB binding editor")
-    require("case CONFIG_TAB_BOOT_SETTINGS:\n        return CONFIG_MENU_BOOT_ITEM_COUNT;" in source,
-            "Boot Settings item count must include USB binding rows")
+    require("case CONFIG_TAB_BOOT_SETTINGS:" in source and
+            "return CONFIG_MENU_BOOT_ITEM_COUNT;" in source,
+            "normal Boot Settings must include the editable USB binding rows")
     require('"USB MENU BINDINGS"' in tabs and
             "usb_binding_draw_label(action)" in tabs and
             "config_menu_usb_binding_source_text(menu->usb_menu_bindings[action])" in tabs and
@@ -274,6 +275,55 @@ def test_usb_bindings_edit_only_from_apple_boot_menu() -> None:
             "Apple boot-menu opens and USB long-press opens must carry distinct ownership")
 
 
+def test_onee_draws_exact_fixed_read_only_bindings() -> None:
+    header = read(REPO_ROOT / "ps_sources" / "frontend" / "config_menu_internal.h")
+    source = read(CONFIG_MENU_C)
+    tabs = read(CONFIG_MENU_MAIN_TABS_C)
+    help_source = read(REPO_ROOT / "ps_sources" / "frontend" / "config_menu_help.c")
+
+    frontend_main = read(FRONTEND_MAIN_C)
+    fixed_mode = read(REPO_ROOT / "ps_sources" / "frontend" / "onee_fixed_mode.h")
+    require("uint8_t config_menu_onee_fixed_bindings_active(" in header and
+            "return onee_usb_fixed_mode_active(menu->onee_mode_status);" in source and
+            "onee_usb_fixed_mode_active(onee_service_status())" in frontend_main and
+            "CARD_CTRL_ONEE_STATUS_REQUEST_BIT" in fixed_mode and
+            "CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT" in fixed_mode and
+            "CARD_CTRL_ONEE_STATUS_SELECTED_BIT" not in
+            fixed_mode[fixed_mode.find("onee_usb_fixed_mode_active"):],
+            "the fixed guide and live routing must share REQUEST/EFFECTIVE selection")
+    expected_values = [
+        'return "Up";', 'return "Down";', 'return "Left";', 'return "Right";',
+        'return "PgUp";', 'return "PgDn";', 'return "Enter/KP Enter";', 'return "Esc";',
+        'return "PrtSc";', 'return "Shift+PrtSc";',
+        'return "KP 0";', 'return "KP +";', 'return "KP -";',
+    ]
+    require('"ONE//e FIXED USB BINDINGS - READ ONLY"' in tabs and
+            '"RESET: Ctrl+Alt+Del"' in tabs and
+            'snprintf(menu_value, sizeof(menu_value), "Break")' in tabs and
+            all(value in tabs for value in expected_values),
+            "ONE//e must draw the exact fixed keyboard guide, including Break")
+    require("action == CONFIG_MENU_USB_BIND_ACTION_VTW_SLUG_TOGGLE" in tabs and
+            "continue;" in tabs[tabs.find(
+                "action == CONFIG_MENU_USB_BIND_ACTION_VTW_SLUG_TOGGLE"):
+                tabs.find("action == CONFIG_MENU_USB_BIND_ACTION_VTW_SLUG_TOGGLE") + 160],
+            "the normal-only slug binding must not appear in the fixed ONE//e guide")
+    require("if (config_menu_onee_fixed_bindings_active(menu) != 0U) {\n"
+            "            return CONFIG_MENU_BOOT_ONEE_ITEM + 1U;" in source,
+            "ONE//e navigation must skip every read-only binding row")
+    require("config_menu_onee_fixed_bindings_active(menu) != 0U &&\n"
+            "        menu->item_focus > CONFIG_MENU_BOOT_ONEE_ITEM" in source and
+            "menu->item_focus = CONFIG_MENU_BOOT_ONEE_ITEM;" in source and
+            "config_menu_onee_fixed_bindings_active(menu) == 0U &&\n"
+            "        menu->item_focus >= CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM" in source,
+            "a live ONE//e transition must clamp stale focus and bypass binding-grid navigation")
+    require(source.count('"ONE//e USB CONTROLS ARE FIXED"') >= 3 and
+            "config_menu_onee_fixed_bindings_active(menu) == 0U" in source,
+            "reset, capture, activation, and editability must reject ONE//e changes")
+    require("ONE//e shows fixed read-only keys here; Break opens this menu and Ctrl+Alt+Del resets." in
+            help_source,
+            "Boot Settings help must explain the fixed guide, Break, and reset chord")
+
+
 def test_open_close_is_long_press_of_open_close_source() -> None:
     hid_service = read(REPO_ROOT / "ps_sources" / "frontend" / "usb_hid_service.c")
     hid_header = read(REPO_ROOT / "ps_sources" / "frontend" / "usb_hid_service.h")
@@ -375,6 +425,7 @@ TESTS = [
     test_only_usb_menu_events_are_remapped,
     test_binding_grid_navigation_requires_ok_for_edits,
     test_usb_bindings_edit_only_from_apple_boot_menu,
+    test_onee_draws_exact_fixed_read_only_bindings,
     test_open_close_is_long_press_of_open_close_source,
     test_usb_keyboard_uses_binding_sources_only,
     test_screenshot_usb_shortcuts_are_global_keyboard_bindings,

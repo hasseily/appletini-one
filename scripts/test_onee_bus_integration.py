@@ -167,7 +167,7 @@ def static_checks() -> None:
         ") onee_warm_reset_ctrl_i (" in top and
         ".virtual_res_n          (onee_virtual_res_n)" in top and
         ".res_n_in         (onee_virtual_res_n)" in top,
-        "Ctrl-Alt-Pause must reach only the virtual motherboard RESET path",
+        "Ctrl-Alt-Delete must reach only the virtual motherboard RESET path",
     )
     require(
         ".speed_mode(vtw_ctrl_q[3:2])" in top and

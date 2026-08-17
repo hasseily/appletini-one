@@ -281,8 +281,9 @@ def test_boot_menu_groups_boot_and_video_settings() -> None:
     require('"Profiles"' in source and '"Boot Settings"' in source and '"Video"' in source and
             source.index('"Profiles"') < source.index('"Boot Settings"') < source.index('"Video"'),
             "tab labels must draw Profiles above Boot Settings and Video pages")
-    require("case CONFIG_TAB_BOOT_SETTINGS:\n        return CONFIG_MENU_BOOT_ITEM_COUNT;" in source,
-            "boot settings tab must contain boot controls and USB menu bindings")
+    require("case CONFIG_TAB_BOOT_SETTINGS:" in source and
+            "return CONFIG_MENU_BOOT_ITEM_COUNT;" in source,
+            "normal boot settings must contain boot controls and USB menu bindings")
     require("case CONFIG_TAB_VIDEO:\n        return CONFIG_VIDEO_ITEM_COUNT;" in source and
             "#define CONFIG_VIDEO_ITEM_COUNT        16U" in internal,
             "video tab must contain output, effects, border, bezel, and ROM controls")

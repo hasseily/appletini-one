@@ -443,8 +443,9 @@ def test_settings_menu_controls_debug_overlay_and_bezel() -> None:
             'strcmp(key, "video.bezel.visible") == 0' in source and
             'strcmp(key, "video.bezel.path") == 0' in source,
             "config loader must parse debug visibility, bezel visibility, and bezel path without display_page")
-    require("case CONFIG_TAB_BOOT_SETTINGS:\n        return CONFIG_MENU_BOOT_ITEM_COUNT;" in source,
-            "boot settings tab must expose boot controls and USB menu binding rows")
+    require("case CONFIG_TAB_BOOT_SETTINGS:" in source and
+            "return CONFIG_MENU_BOOT_ITEM_COUNT;" in source,
+            "normal boot settings must expose boot controls and USB menu binding rows")
     require('"Boot menu"' in boot_draw and '"Boot device"' in boot_draw and
             '"USB MENU BINDINGS"' in boot_draw and
             '"Show debugging"' not in boot_draw and

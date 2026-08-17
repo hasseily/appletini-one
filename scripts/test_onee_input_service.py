@@ -120,14 +120,17 @@ def test_apple_keys_caps_and_warm_reset_chord() -> None:
     require("usage == HID_KBD_USAGE_CAPSLOCK" in keyboard and
             "g_caps_lock ^= 1U;" in keyboard,
             "Caps Lock must toggle on a new HID usage edge")
-    require("HID_KBD_USAGE_PAUSE" in keyboard and
+    require("HID_KBD_USAGE_DELFWD" in keyboard and
             "(modifier & HID_MOD_CTRL)" in keyboard and
+            "(modifier & HID_MOD_ALT)" in keyboard and
             "g_reset_pending = 1U;" in keyboard and
+            "reset_delete_consumed" in keyboard and
+            "reset_modifier_consumed" in keyboard and
             "ONEE_INPUT_CONTROL_RESET_BIT" in service,
-            "Ctrl+Pause must request a held warm reset through the bridge")
+            "Ctrl+Alt+forward Delete must request reset and consume the chord")
     require("onee_reset_chord" in usb and
-            "HID_KBD_USAGE_PAUSE" in usb,
-            "the consumed reset Pause key must not reach normal USB bindings")
+            "HID_KBD_USAGE_DELFWD" in usb,
+            "the consumed reset Delete key must not reach normal USB bindings")
 
 
 def test_held_key_repeat_contract() -> None:
@@ -395,6 +398,7 @@ def run_native_behavior_test() -> bool:
         {
             uint8_t boot_keys[6] = { HID_KBD_USAGE_A, 0U, 0U, 0U, 0U, 0U };
             uint8_t pause_key[1] = { HID_KBD_USAGE_PAUSE };
+            uint8_t delete_key[1] = { HID_KBD_USAGE_DELFWD };
             uint8_t repeat_keys[2] = {
                 HID_KBD_USAGE_A, HID_KBD_USAGE_A + 1U
             };
@@ -651,15 +655,32 @@ def run_native_behavior_test() -> bool:
             }
 
             release_keys(2U);
+            before = writes_to(ONEE_INPUT_KEY_FIFO_REG);
             if (onee_input_service_keyboard_report(
-                    2U, HID_MOD_LCTRL, pause_key, 1U) == 0U) {
-                fail("Ctrl+Pause was not consumed as a warm reset chord");
+                    2U, HID_MOD_LCTRL | HID_MOD_RALT,
+                    delete_key, 1U) == 0U) {
+                fail("Ctrl+Alt+Delete was not consumed as a warm reset chord");
                 return 1;
             }
             onee_input_service_poll();
             if (last_write(ONEE_INPUT_CONTROL_REG) !=
-                ONEE_INPUT_CONTROL_RESET_BIT) {
+                    ONEE_INPUT_CONTROL_RESET_BIT ||
+                writes_to(ONEE_INPUT_KEY_FIFO_REG) != before ||
+                (last_write(ONEE_INPUT_LIVE_REG) & 7U) != 0U) {
                 fail("warm reset chord did not reach bridge control");
+                return 1;
+            }
+
+            /* Every chord member stays hidden through any release order. */
+            (void)onee_input_service_keyboard_report(
+                2U, HID_MOD_RALT, delete_key, 1U);
+            onee_input_service_poll();
+            (void)onee_input_service_keyboard_report(
+                2U, 0U, delete_key, 1U);
+            onee_input_service_poll();
+            if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before ||
+                (last_write(ONEE_INPUT_LIVE_REG) & 7U) != 0U) {
+                fail("a released Ctrl+Alt+Delete member leaked to Apple input");
                 return 1;
             }
 

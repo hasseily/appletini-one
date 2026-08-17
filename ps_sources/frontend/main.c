@@ -44,6 +44,7 @@
 #include "screenshot_service.h"
 #include "smartport_service.h"
 #include "usb_hid_service.h"
+#include "onee_fixed_mode.h"
 #include "usb_storage_backend.h"
 #include "usb_storage_service.h"
 #include "usb_sdd_service.h"
@@ -2636,10 +2637,7 @@ static int ui_compose_thunk(uint16_t *fb,
 
 static uint8_t ui_onee_selected(void)
 {
-    const uint32_t status = onee_service_status();
-
-    return ((status & (CARD_CTRL_ONEE_STATUS_REQUEST_BIT |
-                       CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT)) != 0U) ? 1U : 0U;
+    return onee_usb_fixed_mode_active(onee_service_status());
 }
 
 static void ui_sync_onee_menu_pause(config_menu_t *menu)

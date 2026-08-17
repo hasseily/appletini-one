@@ -50,8 +50,6 @@ def main() -> int:
         #define __PACKED __attribute__((packed))
         #include "onee_usb_controls.h"
 
-        #define SOURCE(usage) ((usb_hid_menu_source_t)(USB_HID_MENU_SOURCE_KEY_BASE | (usage)))
-
         static int check(int condition, const char *message)
         {
             if (!condition) {
@@ -65,16 +63,38 @@ def main() -> int:
         {
             usb_hid_menu_action_t action;
             uint8_t route;
-            const usb_hid_menu_source_t f1 = SOURCE(HID_KBD_USAGE_F1);
-            const usb_hid_menu_source_t page_up = SOURCE(HID_KBD_USAGE_PAGEUP);
             const uint8_t reserved_usages[] = {
+                HID_KBD_USAGE_PAUSE,
                 HID_KBD_USAGE_PRINTSCN,
                 HID_KBD_USAGE_KPD0,
                 HID_KBD_USAGE_KPDPLUS,
                 HID_KBD_USAGE_KPDHMINUS
             };
 
-            if (!check(onee_usb_fixed_keyboard_action(
+            if (!check(onee_usb_fixed_mode_active(
+                           CARD_CTRL_ONEE_STATUS_REQUEST_BIT) != 0U &&
+                       onee_usb_fixed_mode_active(
+                           CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT) != 0U &&
+                       onee_usb_fixed_mode_active(
+                           CARD_CTRL_ONEE_STATUS_REQUEST_BIT |
+                           CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT) != 0U &&
+                       onee_usb_fixed_mode_active(
+                           CARD_CTRL_ONEE_STATUS_SELECTED_BIT) == 0U,
+                       "fixed routing must use only REQUEST/EFFECTIVE") ||
+                !check(onee_usb_keyboard_action(
+                           HID_KBD_USAGE_PAUSE, 0U, 0U, 1U) ==
+                           USB_HID_MENU_ACTION_OPEN,
+                       "Break must open the ONE//e menu") ||
+                !check(onee_usb_keyboard_action(
+                           HID_KBD_USAGE_PAUSE, 0U, 0U, 0U) ==
+                           USB_HID_MENU_ACTION_NONE,
+                       "Break must retain normal routing outside ONE//e") ||
+                !check(onee_usb_apple_usage_allowed(
+                           HID_KBD_USAGE_PAUSE, 1U) == 0U &&
+                       onee_usb_apple_usage_allowed(
+                           HID_KBD_USAGE_PAUSE, 0U) != 0U,
+                       "Break must be excluded only from fixed ONE//e Apple input") ||
+                !check(onee_usb_fixed_keyboard_action(
                            HID_KBD_USAGE_PAGEUP, 0U, 1U) ==
                            USB_HID_MENU_ACTION_PREV_TAB,
                        "PageUp must select the previous tab") ||
@@ -95,6 +115,16 @@ def main() -> int:
                            HID_KBD_USAGE_RIGHT, 0U, 1U) ==
                            USB_HID_MENU_ACTION_RIGHT,
                        "arrow keys must own menu movement") ||
+                !check(onee_usb_fixed_keyboard_action(
+                           HID_KBD_USAGE_ENTER, 0U, 1U) ==
+                           USB_HID_MENU_ACTION_SELECT &&
+                       onee_usb_fixed_keyboard_action(
+                           HID_KBD_USAGE_KPDEMTER, 0U, 1U) ==
+                           USB_HID_MENU_ACTION_SELECT &&
+                       onee_usb_fixed_keyboard_action(
+                           HID_KBD_USAGE_ESCAPE, 0U, 1U) ==
+                           USB_HID_MENU_ACTION_CLOSE,
+                       "Enter/KP Enter must select and Escape must close") ||
                 !check(onee_usb_fixed_keyboard_action(
                            HID_KBD_USAGE_PRINTSCN, 0U, 0U) ==
                            USB_HID_MENU_ACTION_SCREENSHOT_A2,
@@ -137,43 +167,37 @@ def main() -> int:
             }
 
             action = onee_usb_fixed_keyboard_action(HID_KBD_USAGE_F1, 0U, 0U);
-            route = onee_usb_fixed_route(0U, action, f1, f1);
-            if (!check(route == ONEE_USB_ROUTE_HOLD_TOGGLE,
-                       "saved long-hold key must still open ONE//e menu")) {
+            route = onee_usb_fixed_route(action);
+            if (!check(route == 0U,
+                       "an unassigned key must never use a saved ONE//e binding")) {
+                return 1;
+            }
+
+            action = onee_usb_fixed_keyboard_action(
+                HID_KBD_USAGE_PAUSE, 0U, 0U);
+            route = onee_usb_fixed_route(action);
+            if (!check(route == ONEE_USB_ROUTE_PUSH_NOW,
+                       "Break must open at once")) {
                 return 1;
             }
 
             for (size_t i = 0U;
                  i < sizeof(reserved_usages) / sizeof(reserved_usages[0]);
                  ++i) {
-                const usb_hid_menu_source_t source = SOURCE(reserved_usages[i]);
-
                 action = onee_usb_fixed_keyboard_action(
                     reserved_usages[i], 0U, 0U);
-                route = onee_usb_fixed_route(1U, action, source, source);
-                if (!check(route == (ONEE_USB_ROUTE_HOLD_TOGGLE |
-                                     ONEE_USB_ROUTE_DELAY_ACTION),
-                           "overlapping reserved toggle must delay its fixed short action")) {
-                    return 1;
-                }
-                route = onee_usb_fixed_route(1U, action, source, f1);
+                route = onee_usb_fixed_route(action);
                 if (!check(route == ONEE_USB_ROUTE_PUSH_NOW,
-                           "reserved fixed key must act at once when it is not the hold key")) {
+                           "every global fixed key must act at once")) {
                     return 1;
                 }
             }
 
             action = onee_usb_fixed_keyboard_action(
                 HID_KBD_USAGE_PAGEUP, 0U, 1U);
-            route = onee_usb_fixed_route(0U, action, page_up, page_up);
-            if (!check(route == (ONEE_USB_ROUTE_HOLD_TOGGLE |
-                                 ONEE_USB_ROUTE_DELAY_ACTION),
-                       "overlapping toggle must delay its fixed short action")) {
-                return 1;
-            }
-            route = onee_usb_fixed_route(0U, action, page_up, f1);
+            route = onee_usb_fixed_route(action);
             if (!check(route == ONEE_USB_ROUTE_PUSH_NOW,
-                       "fixed PageUp must act when it is not the hold key")) {
+                       "fixed PageUp must act at once")) {
                 return 1;
             }
 

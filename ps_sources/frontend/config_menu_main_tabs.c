@@ -1,6 +1,7 @@
 #include "config_menu_internal.h"
 
 #include <stdio.h>
+#include <string.h>
 
 #include "scanlines.h"
 
@@ -40,6 +41,40 @@ static const char *usb_binding_draw_label(uint32_t action)
     }
 }
 
+static const char *onee_fixed_binding_value(uint32_t action)
+{
+    switch (action) {
+    case CONFIG_MENU_USB_BIND_ACTION_UP:
+        return "Up";
+    case CONFIG_MENU_USB_BIND_ACTION_DOWN:
+        return "Down";
+    case CONFIG_MENU_USB_BIND_ACTION_LEFT:
+        return "Left";
+    case CONFIG_MENU_USB_BIND_ACTION_RIGHT:
+        return "Right";
+    case CONFIG_MENU_USB_BIND_ACTION_TAB_UP:
+        return "PgUp";
+    case CONFIG_MENU_USB_BIND_ACTION_TAB_DOWN:
+        return "PgDn";
+    case CONFIG_MENU_USB_BIND_ACTION_OK:
+        return "Enter/KP Enter";
+    case CONFIG_MENU_USB_BIND_ACTION_BACK:
+        return "Esc";
+    case CONFIG_MENU_USB_BIND_ACTION_SCREENSHOT_A2:
+        return "PrtSc";
+    case CONFIG_MENU_USB_BIND_ACTION_SCREENSHOT_1080P:
+        return "Shift+PrtSc";
+    case CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_TOGGLE:
+        return "KP 0";
+    case CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_UP:
+        return "KP +";
+    case CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_DOWN:
+        return "KP -";
+    default:
+        return "";
+    }
+}
+
 static void hgr_draw_usb_binding_item(uint16_t *fb,
                                       int x,
                                       int y,
@@ -66,7 +101,9 @@ void config_menu_draw_boot_settings(uint16_t *fb,
                                     int y,
                                     int w)
 {
-    const char heading_text[] = "USB MENU BINDINGS";
+    const uint8_t onee_fixed = config_menu_onee_fixed_bindings_active(menu);
+    const char *heading_text = (onee_fixed != 0U) ?
+        "ONE//e FIXED USB BINDINGS - READ ONLY" : "USB MENU BINDINGS";
     const int row_h = CMUI_ROW_H + CMUI_ROW_GAP;
     const int column_gap = 20;
     const int column_w = (w - (2 * column_gap)) / 3;
@@ -92,7 +129,7 @@ void config_menu_draw_boot_settings(uint16_t *fb,
     };
     const int heading_y = y + (row_h * 3);
     const int heading_text_w =
-        ((int)(sizeof(heading_text) - 1U) *
+        ((int)strlen(heading_text) *
          FB16_BUILTIN_FONT_ADVANCE_X *
          HGR_TEXT_SCALE_X) / HGR_SCALE;
     const int heading_line_x = x + 2 + heading_text_w + 4;
@@ -139,7 +176,14 @@ void config_menu_draw_boot_settings(uint16_t *fb,
                        2,
                        CMUI_COLOR_BORDER_SOFT);
     }
-    if (menu->usb_bindings_editable != 0U) {
+    if (onee_fixed != 0U) {
+        hgr_draw_item_dimmed(fb,
+                             x,
+                             reset_y,
+                             w,
+                             0U,
+                             "RESET: Ctrl+Alt+Del");
+    } else if (menu->usb_bindings_editable != 0U) {
         hgr_draw_item(fb,
                       x,
                       reset_y,
@@ -159,15 +203,17 @@ void config_menu_draw_boot_settings(uint16_t *fb,
 
     for (uint32_t i = 0U; i < (sizeof(left_actions) / sizeof(left_actions[0])); ++i) {
         const uint32_t action = left_actions[i];
-        const char *value = (menu->usb_binding_capture == action) ?
-            "Press USB" :
-            config_menu_usb_binding_source_text(menu->usb_menu_bindings[action]);
+        const char *value = (onee_fixed != 0U) ?
+            onee_fixed_binding_value(action) :
+            ((menu->usb_binding_capture == action) ?
+                "Press USB" :
+                config_menu_usb_binding_source_text(menu->usb_menu_bindings[action]));
 
         const uint8_t focused =
             (uint8_t)(menu->item_focus ==
                       config_menu_boot_usb_binding_item_for_action(action));
 
-        if (menu->usb_bindings_editable != 0U) {
+        if (onee_fixed == 0U && menu->usb_bindings_editable != 0U) {
             hgr_draw_usb_binding_item(
                 fb,
                 x,
@@ -194,14 +240,16 @@ void config_menu_draw_boot_settings(uint16_t *fb,
 
     for (uint32_t i = 0U; i < (sizeof(middle_actions) / sizeof(middle_actions[0])); ++i) {
         const uint32_t action = middle_actions[i];
-        const char *value = (menu->usb_binding_capture == action) ?
-            "Press USB" :
-            config_menu_usb_binding_source_text(menu->usb_menu_bindings[action]);
+        const char *value = (onee_fixed != 0U) ?
+            onee_fixed_binding_value(action) :
+            ((menu->usb_binding_capture == action) ?
+                "Press USB" :
+                config_menu_usb_binding_source_text(menu->usb_menu_bindings[action]));
         const uint8_t focused =
             (uint8_t)(menu->item_focus ==
                       config_menu_boot_usb_binding_item_for_action(action));
 
-        if (menu->usb_bindings_editable != 0U) {
+        if (onee_fixed == 0U && menu->usb_bindings_editable != 0U) {
             hgr_draw_usb_binding_item(
                 fb,
                 x + column_w + column_gap,
@@ -227,11 +275,15 @@ void config_menu_draw_boot_settings(uint16_t *fb,
     }
 
     // Draw the derived "MENU" binding at the top of the right column.
-    (void)snprintf(menu_value,
-                   sizeof(menu_value),
-                   "Long %s",
-                   config_menu_usb_binding_source_text(
-                       config_menu_usb_open_close_binding_source(menu)));
+    if (onee_fixed != 0U) {
+        (void)snprintf(menu_value, sizeof(menu_value), "Break");
+    } else {
+        (void)snprintf(menu_value,
+                       sizeof(menu_value),
+                       "Long %s",
+                       config_menu_usb_binding_source_text(
+                           config_menu_usb_open_close_binding_source(menu)));
+    }
     hgr_draw_usb_binding_item(
         fb,
         x + (column_w + column_gap) * 2,
@@ -245,9 +297,7 @@ void config_menu_draw_boot_settings(uint16_t *fb,
 
     for (uint32_t i = 0U; i < (sizeof(right_actions) / sizeof(right_actions[0])); ++i) {
         const uint32_t action = right_actions[i];
-        const char *value = (menu->usb_binding_capture == action) ?
-            "Press USB" :
-            config_menu_usb_binding_source_text(menu->usb_menu_bindings[action]);
+        const char *value;
         const uint8_t focused =
             (uint8_t)(menu->item_focus ==
                       config_menu_boot_usb_binding_item_for_action(action));
@@ -256,7 +306,17 @@ void config_menu_draw_boot_settings(uint16_t *fb,
         const int spacer = (i >= 2U) ? 1 : 0;
         const int row_y = binding_y + ((int)i + 1 + spacer) * row_h;
 
-        if (menu->usb_bindings_editable != 0U) {
+        if (onee_fixed != 0U &&
+            action == CONFIG_MENU_USB_BIND_ACTION_VTW_SLUG_TOGGLE) {
+            continue;
+        }
+        value = (onee_fixed != 0U) ?
+            onee_fixed_binding_value(action) :
+            ((menu->usb_binding_capture == action) ?
+                "Press USB" :
+                config_menu_usb_binding_source_text(menu->usb_menu_bindings[action]));
+
+        if (onee_fixed == 0U && menu->usb_bindings_editable != 0U) {
             hgr_draw_usb_binding_item(
                 fb,
                 x + (column_w + column_gap) * 2,

@@ -1,4 +1,4 @@
-# ONE//e Hardware Test Record and F0.9.82 Retest Plan
+# ONE//e Hardware Test Record and F0.9.83 Retest Plan
 
 ## F0.9.77 Test Result
 
@@ -669,3 +669,130 @@ remain open; this is not a promoted release.
 - [ ] Complete the Apple-connected high-impedance and live-clock stop tests.
   Apple activity must force OFF and keep it OFF through later card power
   cycles until a fresh manual selection.
+
+## F0.9.82 Functional Retest Result
+
+The user confirmed that DHGR and DHGRi worked, then found three faults:
+
+- Loading the DHGRi Video-7 MIX image while MIX was already active flickered
+  and showed bad pixels. Loading it first with MIX off and then enabling MIX
+  produced a stable image.
+- Ctrl+Alt+Delete skipped the normal `Apple //e` cold-start display, did not
+  load SmartPort correctly, and left a black screen.
+- ONE//e needed a Video setting for PAL and NTSC output.
+
+The MIX fault was an image transaction fault, not a DVI clock or AUX RAM
+fault. The viewer selected MIX and then replaced four live banks over several
+frames. The renderer could publish any of those partial states, while Video-7
+used each byte's high bit to select mono or color interpretation.
+
+The reset fault was an ordering fault. The short bridge reset left the valid
+Enhanced //e warm signature at `$03F3/$03F4`, so the ROM could use the prior
+warm vector and skip its slot scan. The accelerated ROM could also reach
+SmartPort before the later PS-side SmartPort reset completed.
+
+## F0.9.83 Corrections and Full Regression
+
+- `d416ea0a3c32fe200223b01d00e0ef857a9008d7` marks both A2Li pages open
+  before the first file write, stages the page-2 banks outside their live
+  addresses, clears the old marker, and commits the final mode once. The host
+  renderer holds its last complete published frame through all normal,
+  delayed, interlaced, and flip publication paths until that commit.
+- The same commit makes Ctrl+Alt+Delete queue one ordered cold reboot. It
+  holds private RES#, flushes pending keys, clears `$03F3/$03F4`, reapplies
+  the ROM patch and current boot target, resets SmartPort while reset remains
+  low, waits 100 ms, and then releases the existing session. The cold-slot
+  helper samples the selected Disk II or SmartPort target during reset.
+- It also adds the global `onee.video.standard=NTSC|PAL` choice. Profiles do
+  not change it. Its desired value is saved at once, but the active value can
+  change only while ONE//e is off or private RES# is low. The Video row is
+  ONE//e-only and shows a pending choice until reset. NTSC uses 130 fabric
+  clocks per Apple cycle and 262 lines; PAL uses 131 and 312. The active
+  choice drives the virtual bus, scanner, DVI cadence, capture, and renderer.
+- `78e6a3e2a5abf054c6607e14a7995ecf0169c651` reserves F0.9.83 and is the
+  clean build and package checkpoint.
+
+The full frontend run passed: ONE//e config 11/11; profiles 15/15; config
+paths 14/14; boot/reset 21/21; ONE//e input ten source checks plus native;
+ONE//e vTW runtime 11 source checks plus native; USB HID 14/14; boot USB
+bindings 10/10; SmartPort service 16/16, menu 15/15, and ROM 6/6; and Disk II
+DOS 3.3 and ProDOS boot-sector runs.
+
+The PAL/NTSC controller, 130/131-clock virtual bus, ONE//e video path, both
+real-ROM boot targets, joined-bus integration, top I/O, safety guard, full
+ONE//e integration, and all 20 vTW tests passed. Renderer T1-T8 and its pixel
+checker passed. T8 puts frame edges between the real loader's chunks and
+copies, proves that no partial frame reaches DVI, and requires one byte-clean
+final publish. The demo disk, video-output menu 13/13, and VidHD/SHR 17/17
+passed. Full top synthesis passed with zero errors and zero critical warnings,
+and the ARM frontend built successfully.
+
+## F0.9.83 Test Image
+
+- Source fixes: `d416ea0a3c32fe200223b01d00e0ef857a9008d7`
+- Version and clean build commit:
+  `78e6a3e2a5abf054c6607e14a7995ecf0169c651`
+- Clean full nonincremental build: `20260817T072840Z-78e6a3e2-full`
+- Build status: exported; `git_dirty=0`; `rescue_used=0`
+- Route: WNS `+0.172 ns`, TNS `0`, WHS `+0.009 ns`, THS `0`, and WPWS
+  `+0.265 ns`
+- Route and bus skew: `PASS`; bus-skew WNS `+5.788 ns`
+- Failures: zero setup, hold, or pulse-width failing endpoints; zero route
+  errors, missing constraint objects, or unconstrained internal endpoints
+- Candidate DCP SHA-256:
+  `7e7f6145acba0bbfdf77d6ff21db49e293f0af4664266d15e898249e2af724cb`
+- Bitstream SHA-256:
+  `5fc19f84a5301ce3e09cb6c4942622dfc29fb082dbcd8a60620157b3487e0e25`
+- XSA SHA-256:
+  `c10d130c05885ecd3577b9be65d7728862c3804326d27609c2c057a33153b9eb`
+- Files: root `FIRMWARE.BIN` and
+  `.timing_runs/20260817T072840Z-78e6a3e2-full/FIRMWARE_TEST.BIN`
+- Size: `4,268,492` bytes each
+- Firmware SHA-256:
+  `fada95192a28d23e0e5b8c66e99baf570400b7c373abb7ad54775019ae3c518f`
+- Handoff record:
+  `.timing_runs/20260817T072840Z-78e6a3e2-full/test_firmware_manifest.txt`
+
+A fresh Vitis build used the exact archived XSA. Platform export and all app
+builds report `SUCCESS`; the image contains F0.9.83, B1.1.0, and the
+`196684`-byte CPU1 blob. Root and archive firmware files are byte-identical.
+Bootgen readback passed with three named image headers, four total images, and
+four partitions.
+
+WNS is positive but below the project's +0.300 ns promotion gate. The user
+waived that gate for this test image only. Programming and hardware validation
+remain open; this is not a promoted release.
+
+## F0.9.83 Readiness and Focused Retest
+
+- [x] Complete and commit the MIX transaction, cold reboot, and PAL/NTSC
+  source fixes.
+- [x] Pass the full source, native, HDL, ROM, renderer, media, and top-synthesis
+  regression.
+- [x] Complete the clean full Vivado build and verify every timing and route
+  failure count is zero.
+- [x] Build Vitis from the exact archived XSA and require platform export and
+  every application build to report `SUCCESS`.
+- [x] Package F0.9.83, pass Bootgen readback, and compare the root and archive
+  firmware files byte for byte.
+- [ ] Reach the +0.300 ns release promotion margin in two same-commit clean
+  builds. This gate remains waived only for the F0.9.83 test image.
+- [ ] Program root `FIRMWARE.BIN` and confirm F0.9.83 on screen.
+- [ ] Enable Video-7 MIX first, then load the DHGRi Video-7 MIX demo. Require
+  no flicker or partial pixels. Change to another image and back; require both
+  images to stay clean.
+- [ ] Boot SmartPort, press Ctrl+Alt+Delete in several press and release
+  orders, and require the `Apple //e` cold-start display followed by a fresh
+  SmartPort boot. Require one reset, no black screen, no stale key, the saved
+  speed, and no physical RESET assertion. Repeat with Disk II selected.
+- [ ] Select PAL and reset ONE//e. Require the menu active readback and DVI
+  cadence to become PAL with a clean relock. Repeat for NTSC. Change the choice
+  while ONE//e runs and require the old active mode to remain stable until
+  reset. Power-cycle and prove the desired choice persists; load a profile and
+  prove it does not change the choice.
+- [ ] Recheck DHGR, DHGRi, HGRi, normal MIX, SmartPort and Disk II labels,
+  fixed input, speed, menu pause, key repeat, screenshots, audio, and normal
+  host video detection.
+- [ ] Complete the Apple-connected high-impedance and live-clock stop tests.
+  Apple activity must force OFF and keep it OFF until a fresh manual
+  selection.

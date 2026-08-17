@@ -39,10 +39,15 @@ Last source audit: 2026-08-17
   menu-pause work. Its board test then exposed an IIc-only IOUDIS gate in the
   virtual Enhanced //e, the old reset chord, and an incomplete fixed binding
   guide and route lockout.
-- F0.9.82 is the current test image. Checkpoints `4d2d9cb`, `546c66b`,
-  `04f21cc`, and `c99f36e` fix those faults. The full regression, clean full
-  build, exact-XSA Vitis build, and test package are complete. Programming and
-  board validation remain open.
+- F0.9.82 is a historical test image. Checkpoints `4d2d9cb`, `546c66b`,
+  `04f21cc`, and `c99f36e` fixed those faults. Its board test then exposed an
+  incomplete Video-7 MIX image-load handoff, a warm-reset path which could
+  skip the ROM cold scan and race SmartPort reset, and the need for a saved
+  ONE//e PAL/NTSC choice.
+- F0.9.83 is the current test image. Checkpoints `d416ea0` and `78e6a3e` fix
+  those faults. The full regression, clean full build, exact-XSA Vitis build,
+  and test package are complete. Programming and board validation remain
+  open.
 
 ## Goal and Supported Shape
 
@@ -153,6 +158,10 @@ sections list the board and system tests which still need to run.
   menu, and make the shown fixed binding set read-only with no saved route.
 - `04f21cc`: update the Disk II ownership regression for the fixed ONE//e map.
 - `c99f36e`: reserve firmware version `F0.9.82`.
+- `d416ea0`: hold a complete frame through Video-7 MIX image loads, make
+  Ctrl+Alt+Delete an ordered cold reboot, and add a saved ONE//e PAL/NTSC
+  choice which becomes active only at a virtual reset boundary.
+- `78e6a3e`: reserve firmware version `F0.9.83`.
 
 ## Safety Contract
 
@@ -930,8 +939,9 @@ not show and enforce the full fixed read-only ONE//e binding set.
   storage, and top-synthesis regression.
 - [x] Complete the clean full Vivado route, exact-XSA Vitis build, and F0.9.82
   test package.
-- [ ] Program F0.9.82 and run the focused DHGR, reset, fixed-binding, and
-  Apple-safety hardware retest.
+- [x] Program F0.9.82 and run the focused DHGR, reset, and fixed-binding
+  retest. It exposed the F0.9.83 MIX-load, cold-reboot, and PAL/NTSC work
+  below. The Apple-connected electrical safety proof remains open.
 
 ### F0.9.82 Full Regression
 
@@ -951,6 +961,65 @@ not show and enforce the full fixed read-only ONE//e binding set.
 - [x] Full top synthesis passed with zero errors and zero critical warnings.
   The ARM frontend linked with text `1,541,168`, data `4,000`, and bss
   `75,548,464` bytes.
+
+### F0.9.82 Runtime Test and F0.9.83 Fixes
+
+The F0.9.82 board test confirmed ordinary DHGR, DHGRi, the fixed bindings,
+and Break menu entry. It exposed three more faults:
+
+- With Video-7 MIX already active, the demo viewer selected MIX before it
+  replaced four DHGRi banks. The renderer could publish frames between those
+  writes. Video-7 uses each byte's high bit as its mono/color control, so a
+  partly old and partly new frame flickered and showed bad pixels. AUX RAM
+  was not the cause. `d416ea0` gives the loader a two-page A2Li transaction
+  marker, stages page-2 data away from the live marker, and commits the final
+  mode once. The renderer holds the last complete published frame through
+  every normal, delayed, interlaced, and flip publication path until commit.
+- Ctrl+Alt+Delete had only pulsed the input bridge reset. A valid Enhanced //e
+  warm signature at `$03F3/$03F4` could send the ROM through the old warm
+  vector, skip the slot scan, and leave a black screen. PL SmartPort reset
+  also ran before the later PS poll reset, which the accelerated ROM could
+  outrun. `d416ea0` queues one PS-owned cold reboot, holds private RES#,
+  flushes pending input, clears both warm-signature bytes, reapplies the boot
+  ROM patch and current target, resets SmartPort while reset is held, waits
+  100 ms, then releases the same session. The cold-slot helper samples the
+  live boot target during reset.
+- ONE//e had only the NTSC virtual timing. `d416ea0` adds the global
+  `onee.video.standard=NTSC|PAL` setting and desired/active readback. Profiles
+  neither save nor load it. The Video row appears only while ONE//e owns its
+  fixed controls. The active standard follows the desired choice only while
+  ONE//e is off or private RES# is low, so a live choice remains pending until
+  virtual reset instead of changing timing in mid-frame. NTSC uses 130 fabric
+  clocks per Apple cycle and 262 lines; PAL uses 131 and 312. The active bit
+  drives the virtual bus, scanner, DVI cadence, capture, and renderer.
+
+- [x] `d416ea0a3c32fe200223b01d00e0ef857a9008d7` contains the three source
+  fixes and their directed tests.
+- [x] `78e6a3e2a5abf054c6607e14a7995ecf0169c651` reserves F0.9.83 and is the
+  clean build and package checkpoint.
+- [x] Complete the F0.9.83 source, native, HDL, real-ROM, renderer, media, and
+  full top-synthesis regression.
+- [x] Complete the clean full Vivado route, exact-XSA Vitis build, and
+  F0.9.83 test package.
+- [ ] Program F0.9.83 and run the focused MIX-load, cold-reboot, PAL/NTSC,
+  regression, and Apple-safety hardware retest.
+
+### F0.9.83 Full Regression
+
+- [x] Frontend: ONE//e config passed 11/11; profiles 15/15; config paths
+  14/14; boot/reset 21/21; ONE//e input ten source checks plus native; ONE//e
+  vTW runtime 11 source checks plus native; USB HID 14/14; boot USB bindings
+  10/10; SmartPort service 16/16, menu 15/15, and ROM 6/6; and Disk II
+  DOS 3.3 and ProDOS boot-sector runs.
+- [x] HDL: the PAL/NTSC controller, 130/131-clock virtual bus, ONE//e video
+  path, both real-ROM boot targets, joined-bus integration, top I/O, safety
+  guard, and full ONE//e integration passed. All 20 vTW tests passed.
+- [x] Renderer and media: host renderer T1-T8 and its pixel checker passed.
+  T8 runs the real four-bank loader order with frame edges between chunks,
+  checks that no partial frame reaches DVI, then requires one byte-clean final
+  publish. The demo disk, video-output menu 13/13, and VidHD/SHR 17/17 passed.
+- [x] Full top synthesis passed with zero errors and zero critical warnings.
+  A fresh ARM frontend build and the later exact-XSA Vitis build succeeded.
 
 ### Synthesis and Firmware Build State
 
@@ -985,8 +1054,8 @@ not show and enforce the full fixed read-only ONE//e binding set.
 - [ ] Promote a release build only after it reaches the project's +0.300 ns
   setup-margin gate, repeats cleanly at the same commit, and passes the board
   checks below. The user waived that margin for the F0.9.77 through F0.9.80
-  test images and the F0.9.81 and F0.9.82 test images. The margin is waived for
-  test only; F0.9.82 is not a promoted release.
+  test images and the F0.9.81 through F0.9.83 test images. The margin is
+  waived for test only; F0.9.83 is not a promoted release.
 - The first 2026-08-16 Vitis attempt made BSP content, but
   `vitis_workspace/appletini_platform/export/.buildstatus` reported
   `export=ERROR`. The expected
@@ -1132,6 +1201,32 @@ not show and enforce the full fixed read-only ONE//e binding set.
   This is a test-only package under the user's +0.300 ns margin waiver, not a
   promoted release.
 
+- [x] The clean full nonincremental F0.9.83 build at
+  `78e6a3e2a5abf054c6607e14a7995ecf0169c651` exported as
+  `20260817T072840Z-78e6a3e2-full` with `git_dirty=0` and `rescue_used=0`. It
+  reports WNS +0.172 ns, TNS 0, WHS +0.009 ns, THS 0, and WPWS +0.265 ns.
+  Route and bus skew pass; bus-skew WNS is +5.788 ns; all setup, hold,
+  pulse-width, route, missing-constraint, and unconstrained-internal failure
+  counts are zero.
+- [x] Its candidate DCP SHA-256 is
+  `7e7f6145acba0bbfdf77d6ff21db49e293f0af4664266d15e898249e2af724cb`;
+  bitstream SHA-256 is
+  `5fc19f84a5301ce3e09cb6c4942622dfc29fb082dbcd8a60620157b3487e0e25`;
+  XSA SHA-256 is
+  `c10d130c05885ecd3577b9be65d7728862c3804326d27609c2c057a33153b9eb`.
+- [x] A fresh Vitis build used that exact archived XSA. Platform export and
+  all application builds report `SUCCESS`; the package contains F0.9.83,
+  B1.1.0, and the `196684`-byte CPU1 blob.
+- [x] Root `FIRMWARE.BIN` and
+  `.timing_runs/20260817T072840Z-78e6a3e2-full/FIRMWARE_TEST.BIN` are
+  byte-identical, each 4,268,492 bytes, with SHA-256
+  `fada95192a28d23e0e5b8c66e99baf570400b7c373abb7ad54775019ae3c518f`.
+  Bootgen readback passed with three named image headers, four total images,
+  and four partitions. The handoff file is
+  `.timing_runs/20260817T072840Z-78e6a3e2-full/test_firmware_manifest.txt`.
+  This is a test-only package under the user's +0.300 ns margin waiver, not a
+  promoted release.
+
 ### Missing Board and End-to-End Proof
 
 - [x] Run the archived F0.9.77 image on an Appletini ONE out of the Apple slot;
@@ -1150,7 +1245,10 @@ not show and enforce the full fixed read-only ONE//e binding set.
 - [x] Program and run the F0.9.81 functional retest; it exposed the F0.9.82
   work recorded above.
 - [x] Build and package F0.9.82 from checkpoint `c99f36e`.
-- [ ] Program and run the F0.9.82 functional retest.
+- [x] Program and run the F0.9.82 functional retest; it exposed the F0.9.83
+  work recorded above.
+- [x] Build and package F0.9.83 from checkpoint `78e6a3e`.
+- [ ] Program and run the F0.9.83 functional retest.
 - [ ] Verify all physical Apple pins and translators while ONE//e starts,
   runs, faults, stops, and returns to host mode, including PL configuration and
   both card/Apple power orders.

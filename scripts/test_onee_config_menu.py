@@ -13,6 +13,7 @@ CONFIG_H = FRONTEND / "config_menu.h"
 CONFIG_C = FRONTEND / "config_menu.c"
 CONFIG_TABS_C = FRONTEND / "config_menu_main_tabs.c"
 CONFIG_HELP_C = FRONTEND / "config_menu_help.c"
+CONFIG_INTERNAL_H = FRONTEND / "config_menu_internal.h"
 CONTROL_H = FRONTEND / "card_control_regs.h"
 ONEE_H = FRONTEND / "onee_service.h"
 ONEE_C = FRONTEND / "onee_service.c"
@@ -68,20 +69,44 @@ def test_control_register_contract() -> None:
 
 def test_menu_row_state_and_exact_help() -> None:
     header = read(CONFIG_H)
+    internal = read(CONFIG_INTERNAL_H)
+    source = read(CONFIG_C)
     tabs = read(CONFIG_TABS_C)
     help_source = read(CONFIG_HELP_C)
+    boot_draw = function_slice(tabs,
+                               "void config_menu_draw_boot_settings",
+                               "void config_menu_draw_video")
+    video_draw = function_slice(tabs,
+                                "void config_menu_draw_video",
+                                "void config_menu_draw_clock")
 
     require("CONFIG_MENU_BOOT_ONEE_ITEM 2U" in header and
-            "CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM 3U" in header,
+            "CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM 3U" in header and
+            "#define CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM \\\n"
+            "    CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM" in header,
             "ONE//e must occupy Boot Settings row 2 before USB bindings")
     require("CONFIG_MENU_ONEE_MODE_OFF = 0" in header and
             "CONFIG_MENU_ONEE_MODE_RUNNING" in header and
             "CONFIG_MENU_ONEE_MODE_LOCKED" in header,
             "the menu must expose OFF, RUNNING, and LOCKED states")
-    require('"ONE//e standalone"' in tabs and
-            "config_menu_onee_mode_text(menu)" in tabs and
-            "y + (row_h * 2)" in tabs,
+    require('"ONE//e standalone"' in boot_draw and
+            "config_menu_onee_mode_text(menu)" in boot_draw and
+            "y + (row_h * 2)" in boot_draw,
             "Boot Settings must draw the session action in the free third row")
+    require('"ONE//e video standard"' in boot_draw and
+            "config_menu_onee_video_standard_text(menu)" in boot_draw and
+            "y + (row_h * 3)" in boot_draw and
+            "if (onee_fixed != 0U)" in boot_draw and
+            '"ONE//e video standard"' not in video_draw and
+            "CONFIG_VIDEO_ITEM_ONEE_STANDARD" not in internal,
+            "the ONE//e-only video standard must sit below standalone, not on Video")
+    require("return CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM + 1U;" in source and
+            "case CONFIG_TAB_VIDEO:\n        return CONFIG_VIDEO_ITEM_COUNT;" in source,
+            "ONE//e Boot Settings navigation must include the standard while Video stays fixed")
+    require("standard_was_visible != 0U &&\n"
+            "        config_menu_onee_fixed_bindings_active(menu) == 0U" in source and
+            "menu->item_focus = CONFIG_MENU_BOOT_ONEE_ITEM;" in source,
+            "a stopped ONE//e must not turn focused PAL/NTSC into Reset USB Bindings")
 
     help_lines = [
         "Runs the built-in Enhanced Apple //e on Appletini's soft 65C02 without an Apple host.",
@@ -92,6 +117,39 @@ def test_menu_row_state_and_exact_help() -> None:
     require(all(f'"{line}"' in help_source for line in help_lines) and
             "OVERRIDE(2,  boot_onee)" in help_source,
             "row 2 help must match the stand-alone plan exactly")
+    require("HELP(boot_onee_standard," in help_source and
+            "OVERRIDE(CONFIG_MENU_BOOT_ONEE_STANDARD_HELP_ITEM, boot_onee_standard)" in
+            help_source and
+            "help_item = CONFIG_MENU_BOOT_ONEE_STANDARD_HELP_ITEM;" in source and
+            "help_item == CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM" in source,
+            "the shared item 3 must resolve ONE//e standard help only while active")
+
+
+def test_onee_standard_keeps_global_callback_and_actions() -> None:
+    source = read(CONFIG_C)
+    adjust = function_slice(source,
+                            "static uint8_t config_menu_adjust_focused_value",
+                            "static int config_menu_reload_smartport_device")
+    activate = function_slice(source,
+                              "static void config_menu_activate_item",
+                              "void config_menu_init")
+
+    require("menu->tab == CONFIG_TAB_BOOT_SETTINGS" in adjust and
+            "menu->item_focus == CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM" in adjust and
+            "config_menu_onee_fixed_bindings_active(menu) != 0U" in adjust and
+            "config_menu_toggle_onee_video_standard(menu);" in adjust,
+            "left/right must change the relocated standard only in active ONE//e")
+    boot_activate = activate[activate.index("case CONFIG_TAB_BOOT_SETTINGS:"):
+                             activate.index("case CONFIG_TAB_PROFILES:")]
+    require("menu->item_focus == CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM" in boot_activate and
+            "if (config_menu_onee_fixed_bindings_active(menu) != 0U) {\n"
+            "                config_menu_toggle_onee_video_standard(menu);" in boot_activate and
+            '"USB MENU BINDINGS RESET"' in boot_activate,
+            "Enter must toggle the standard in ONE//e and reset bindings outside it")
+    require("menu->platform.set_onee_video_50hz(menu->platform.ctx," in source and
+            "config_menu_save_settings_to_path(\n"
+            "            menu, APPLETINI_CFG_PATH, NULL)" in source,
+            "the relocated row must keep its live callback and global persistence")
 
 
 def test_global_persistent_action_is_not_profiled() -> None:
@@ -988,6 +1046,7 @@ def test_platform_polling_and_standalone_runtime_binding() -> None:
 TESTS = [
     test_control_register_contract,
     test_menu_row_state_and_exact_help,
+    test_onee_standard_keeps_global_callback_and_actions,
     test_global_persistent_action_is_not_profiled,
     test_global_persistence_is_synced_before_onee_request,
     test_disk2_boot_choice_is_independent_of_physical_slot6,

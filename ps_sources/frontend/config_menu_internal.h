@@ -84,8 +84,10 @@ typedef enum {
 #define CONFIG_VIDEO_ITEM_BEZEL        13U
 #define CONFIG_VIDEO_ITEM_DEBUG        14U
 #define CONFIG_VIDEO_ITEM_BADGE        15U
-#define CONFIG_VIDEO_ITEM_ONEE_STANDARD 16U
-#define CONFIG_VIDEO_ITEM_COUNT        17U
+#define CONFIG_VIDEO_ITEM_COUNT        16U
+/* This is a help-table key, not a selectable row. The live ONE//e standard
+ * shares the normal boot-menu reset index, whose help remains distinct. */
+#define CONFIG_MENU_BOOT_ONEE_STANDARD_HELP_ITEM CONFIG_MENU_BOOT_ITEM_COUNT
 #define CONFIG_TRANSWARP_ITEM_ENABLE       0U
 #define CONFIG_TRANSWARP_ITEM_SPEED        1U
 #define CONFIG_TRANSWARP_ITEM_IGNORE_C074  2U

@@ -4377,14 +4377,13 @@ static uint32_t config_menu_tab_item_count(const config_menu_t *menu)
     switch (menu->tab) {
     case CONFIG_TAB_BOOT_SETTINGS:
         if (config_menu_onee_fixed_bindings_active(menu) != 0U) {
-            return CONFIG_MENU_BOOT_ONEE_ITEM + 1U;
+            return CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM + 1U;
         }
         return CONFIG_MENU_BOOT_ITEM_COUNT;
     case CONFIG_TAB_PROFILES:
         return CONFIG_MENU_PROFILE_ITEM_COUNT;
     case CONFIG_TAB_VIDEO:
-        return (config_menu_onee_fixed_bindings_active(menu) != 0U) ?
-            CONFIG_VIDEO_ITEM_COUNT : CONFIG_VIDEO_ITEM_ONEE_STANDARD;
+        return CONFIG_VIDEO_ITEM_COUNT;
     case CONFIG_TAB_SMARTPORT:
         return SMARTPORT_DEVICE_COUNT + 3U; /* overlay + N slots + ram disk + SuperSprite */
     case CONFIG_TAB_USB:
@@ -5026,8 +5025,9 @@ static uint8_t config_menu_adjust_focused_value(config_menu_t *menu, int8_t delt
         config_menu_vtw_cycle_slowdown_window(menu, delta);
         return 1U;
     }
-    if (menu->tab == CONFIG_TAB_VIDEO &&
-        menu->item_focus == CONFIG_VIDEO_ITEM_ONEE_STANDARD) {
+    if (menu->tab == CONFIG_TAB_BOOT_SETTINGS &&
+        menu->item_focus == CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM &&
+        config_menu_onee_fixed_bindings_active(menu) != 0U) {
         (void)delta;
         config_menu_toggle_onee_video_standard(menu);
         return 1U;
@@ -6185,8 +6185,7 @@ static void config_menu_activate_item(config_menu_t *menu)
             break;
         } else if (menu->item_focus == CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM) {
             if (config_menu_onee_fixed_bindings_active(menu) != 0U) {
-                config_menu_set_status(menu, 1U,
-                                       "ONE//e USB CONTROLS ARE FIXED");
+                config_menu_toggle_onee_video_standard(menu);
                 break;
             }
             if (menu->usb_bindings_editable == 0U) {
@@ -6244,10 +6243,6 @@ static void config_menu_activate_item(config_menu_t *menu)
         break;
 
     case CONFIG_TAB_VIDEO:
-        if (menu->item_focus == CONFIG_VIDEO_ITEM_ONEE_STANDARD) {
-            config_menu_toggle_onee_video_standard(menu);
-            break;
-        }
         if (menu->border_flood != 0u &&
             menu->item_focus >= CONFIG_VIDEO_ITEM_SHOW_BEZEL &&
             menu->item_focus <= CONFIG_VIDEO_ITEM_DEBUG) {
@@ -6729,14 +6724,21 @@ void config_menu_poll_onee_mode(config_menu_t *menu)
     uint8_t state;
     uint8_t persist_enable;
     uint8_t retrying_write = 0U;
+    uint8_t standard_was_visible;
 
     if (menu == NULL) {
         return;
     }
+    standard_was_visible = config_menu_onee_fixed_bindings_active(menu);
     if (menu->platform.get_onee_mode_state == NULL ||
         menu->platform.get_onee_mode_status == NULL) {
         menu->onee_mode_state = CONFIG_MENU_ONEE_MODE_LOCKED;
         menu->onee_mode_status = 0U;
+        if (menu->tab == CONFIG_TAB_BOOT_SETTINGS &&
+            menu->item_focus == CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM &&
+            standard_was_visible != 0U) {
+            menu->item_focus = CONFIG_MENU_BOOT_ONEE_ITEM;
+        }
         return;
     }
 
@@ -6747,10 +6749,13 @@ void config_menu_poll_onee_mode(config_menu_t *menu)
     menu->onee_mode_status =
         menu->platform.get_onee_mode_status(menu->platform.ctx);
 
-    if (menu->tab == CONFIG_TAB_VIDEO &&
-        menu->item_focus == CONFIG_VIDEO_ITEM_ONEE_STANDARD &&
+    /* Item 3 becomes Reset USB Bindings when ONE//e stops. Do not let a
+     * focused standard row silently turn into that destructive action. */
+    if (menu->tab == CONFIG_TAB_BOOT_SETTINGS &&
+        menu->item_focus == CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM &&
+        standard_was_visible != 0U &&
         config_menu_onee_fixed_bindings_active(menu) == 0U) {
-        menu->item_focus = CONFIG_VIDEO_ITEM_BADGE;
+        menu->item_focus = CONFIG_MENU_BOOT_ONEE_ITEM;
     }
 
     if (menu->platform.get_onee_mode_persist_update == NULL ||
@@ -6953,8 +6958,8 @@ uint8_t config_menu_handle_input(config_menu_t *menu, ui_input_t input)
 
     if (menu->tab == CONFIG_TAB_BOOT_SETTINGS &&
         config_menu_onee_fixed_bindings_active(menu) != 0U &&
-        menu->item_focus > CONFIG_MENU_BOOT_ONEE_ITEM) {
-        menu->item_focus = CONFIG_MENU_BOOT_ONEE_ITEM;
+        menu->item_focus > CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM) {
+        menu->item_focus = CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM;
     }
 
     if (menu->tab == CONFIG_TAB_BOOT_SETTINGS &&
@@ -7516,6 +7521,7 @@ static void config_menu_draw_help(uint16_t *fb,
 {
     const char *lines[CONFIG_MENU_HELP_MAX_LINES];
     config_menu_help_block_t base;
+    uint32_t help_item;
     uint32_t count = 0U;
 
     if (menu == NULL || rect == NULL) {
@@ -7523,8 +7529,15 @@ static void config_menu_draw_help(uint16_t *fb,
     }
 
     /* Static text (tab default, or a per-item override) comes from the
-     * centralized table in config_menu_help.c. */
-    base = config_menu_help_resolve(menu->tab, menu->item_focus);
+     * centralized table in config_menu_help.c. The ONE//e standard reuses
+     * the reset row's focus index while that reset row is hidden. */
+    help_item = menu->item_focus;
+    if (menu->tab == CONFIG_TAB_BOOT_SETTINGS &&
+        help_item == CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM &&
+        config_menu_onee_fixed_bindings_active(menu) != 0U) {
+        help_item = CONFIG_MENU_BOOT_ONEE_STANDARD_HELP_ITEM;
+    }
+    base = config_menu_help_resolve(menu->tab, help_item);
 
     switch (menu->tab) {
     case CONFIG_TAB_VIDEO:

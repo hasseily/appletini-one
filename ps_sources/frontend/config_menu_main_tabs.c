@@ -127,7 +127,7 @@ void config_menu_draw_boot_settings(uint16_t *fb,
         CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_DOWN,
         CONFIG_MENU_USB_BIND_ACTION_VTW_SLUG_TOGGLE
     };
-    const int heading_y = y + (row_h * 3);
+    const int heading_y = y + (row_h * ((onee_fixed != 0U) ? 4 : 3));
     const int heading_text_w =
         ((int)strlen(heading_text) *
          FB16_BUILTIN_FONT_ADVANCE_X *
@@ -166,6 +166,17 @@ void config_menu_draw_boot_settings(uint16_t *fb,
                         (uint8_t)(menu->item_focus == CONFIG_MENU_BOOT_ONEE_ITEM),
                         "ONE//e standalone",
                         config_menu_onee_mode_text(menu));
+    if (onee_fixed != 0U) {
+        hgr_draw_value_item(
+            fb,
+            x,
+            y + (row_h * 3),
+            w,
+            (uint8_t)(menu->item_focus ==
+                      CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM),
+            "ONE//e video standard",
+            config_menu_onee_video_standard_text(menu));
+    }
     cmui_text(fb, x + 18, heading_y + 11, heading_text,
               CMUI_COLOR_ACCENT, CMUI_COLOR_BG, CMUI_BODY_SCALE);
     if (heading_line_w > 0) {
@@ -482,17 +493,6 @@ void config_menu_draw_video(uint16_t *fb,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BADGE),
                         menu->format_badge_enabled,
                         "Show video mode");
-    if (config_menu_onee_fixed_bindings_active(menu) != 0U) {
-        hgr_draw_value_item(
-            fb,
-            x,
-            y + (row_h * 13),
-            w,
-            (uint8_t)(menu->item_focus ==
-                      CONFIG_VIDEO_ITEM_ONEE_STANDARD),
-            "ONE//e video standard",
-            config_menu_onee_video_standard_text(menu));
-    }
 }
 
 void config_menu_draw_clock(uint16_t *fb,

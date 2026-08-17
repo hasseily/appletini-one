@@ -154,10 +154,10 @@ def test_boot_settings_draws_binding_editor() -> None:
             "config_menu_boot_usb_binding_item_for_action(action)" in tabs,
             "visible binding order must put OK/Back in the middle and PrtScr rows below Menu")
     require("const int row_h = CMUI_ROW_H + CMUI_ROW_GAP;" in tabs and
-            "const int heading_y = y + (row_h * 3);" in tabs and
+            "const int heading_y = y + (row_h * ((onee_fixed != 0U) ? 4 : 3));" in tabs and
             "CMUI_COLOR_ACCENT" in tabs and
             "CMUI_COLOR_BORDER_SOFT" in tabs,
-            "USB binding heading must use the modern row metrics, accent text, and muted rule")
+            "USB binding heading must leave the active ONE//e standard row clear")
     require("hgr_draw_item_dimmed(fb,\n"
             "                             x,\n"
             "                             reset_y" in tabs and
@@ -308,17 +308,17 @@ def test_onee_draws_exact_fixed_read_only_bindings() -> None:
                 tabs.find("action == CONFIG_MENU_USB_BIND_ACTION_VTW_SLUG_TOGGLE") + 160],
             "the normal-only slug binding must not appear in the fixed ONE//e guide")
     require("if (config_menu_onee_fixed_bindings_active(menu) != 0U) {\n"
-            "            return CONFIG_MENU_BOOT_ONEE_ITEM + 1U;" in source,
-            "ONE//e navigation must skip every read-only binding row")
+            "            return CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM + 1U;" in source,
+            "ONE//e navigation must include its standard and skip every read-only binding row")
     require("config_menu_onee_fixed_bindings_active(menu) != 0U &&\n"
-            "        menu->item_focus > CONFIG_MENU_BOOT_ONEE_ITEM" in source and
-            "menu->item_focus = CONFIG_MENU_BOOT_ONEE_ITEM;" in source and
+            "        menu->item_focus > CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM" in source and
+            "menu->item_focus = CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM;" in source and
             "config_menu_onee_fixed_bindings_active(menu) == 0U &&\n"
             "        menu->item_focus >= CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM" in source,
             "a live ONE//e transition must clamp stale focus and bypass binding-grid navigation")
-    require(source.count('"ONE//e USB CONTROLS ARE FIXED"') >= 3 and
+    require(source.count('"ONE//e USB CONTROLS ARE FIXED"') >= 2 and
             "config_menu_onee_fixed_bindings_active(menu) == 0U" in source,
-            "reset, capture, activation, and editability must reject ONE//e changes")
+            "capture, binding activation, and editability must reject ONE//e changes")
     require("ONE//e shows fixed read-only keys here; Break opens this menu and Ctrl+Alt+Del resets." in
             help_source,
             "Boot Settings help must explain the fixed guide, Break, and reset chord")

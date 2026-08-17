@@ -285,12 +285,14 @@ def test_boot_menu_groups_boot_and_video_settings() -> None:
             "return CONFIG_MENU_BOOT_ITEM_COUNT;" in source,
             "normal boot settings must contain boot controls and USB menu bindings")
     require("case CONFIG_TAB_VIDEO:\n"
-            "        return (config_menu_onee_fixed_bindings_active(menu) != 0U) ?\n"
-            "            CONFIG_VIDEO_ITEM_COUNT : CONFIG_VIDEO_ITEM_ONEE_STANDARD;" in source and
-            "#define CONFIG_VIDEO_ITEM_COUNT        17U" in internal,
-            "video tab must expose the extra standard row only in ONE//e")
+            "        return CONFIG_VIDEO_ITEM_COUNT;" in source and
+            "#define CONFIG_VIDEO_ITEM_COUNT        16U" in internal and
+            "CONFIG_VIDEO_ITEM_ONEE_STANDARD" not in internal and
+            '"ONE//e video standard"' not in video_draw,
+            "video tab must not own the ONE//e PAL/NTSC control")
     require('"Boot menu"' in boot_draw and
             '"Boot device"' in boot_draw and
+            '"ONE//e video standard"' in boot_draw and
             '"USB MENU BINDINGS"' in boot_draw and
             '"Show debugging"' not in boot_draw and
             '"Show bezel"' not in boot_draw and

@@ -176,10 +176,23 @@ def static_contract_checks() -> None:
     require("CONFIG_DEFAULT_ONEE_VIDEO_50HZ 0U" in menu and
             "menu->onee_video_50hz = CONFIG_DEFAULT_ONEE_VIDEO_50HZ;" in menu,
             "ONE//e video standard does not default to NTSC")
-    require("CONFIG_VIDEO_ITEM_ONEE_STANDARD 16U" in menu_internal and
-            "config_menu_onee_fixed_bindings_active(menu) != 0U" in menu_draw and
-            "CONFIG_VIDEO_ITEM_COUNT : CONFIG_VIDEO_ITEM_ONEE_STANDARD" in menu,
-            "ONE//e-only row visibility/item count is incomplete")
+    boot_draw = between(menu_draw,
+                        "void config_menu_draw_boot_settings",
+                        "void config_menu_draw_video")
+    video_draw = between(menu_draw,
+                         "void config_menu_draw_video",
+                         "void config_menu_draw_clock")
+    require("#define CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM" in menu_header and
+            "CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM" in menu_header and
+            "CONFIG_VIDEO_ITEM_ONEE_STANDARD" not in menu_internal and
+            "return CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM + 1U;" in menu and
+            '"ONE//e video standard"' in boot_draw and
+            "if (onee_fixed != 0U)" in boot_draw and
+            '"ONE//e video standard"' not in video_draw,
+            "ONE//e-only standard row must live below standalone in Boot Settings")
+    require("standard_was_visible != 0U" in menu and
+            "menu->item_focus = CONFIG_MENU_BOOT_ONEE_ITEM;" in menu,
+            "stopping ONE//e must not turn the standard row into USB reset")
     require("PAL (pending reset)" in menu and
             "NEXT VIRTUAL RESET OR RESTART" in menu and
             "next virtual reset or restart" in menu_help,

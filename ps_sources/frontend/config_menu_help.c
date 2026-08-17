@@ -135,6 +135,12 @@ HELP(boot_onee,
     "Any Apple-bus activity stops ONE//e and saves it OFF.",
     "After the connector is quiet, select this item again to save it ON.");
 
+HELP(boot_onee_standard,
+    "Chooses cadence for the built-in ONE//e only: NTSC has 262 lines and 130 fabric clocks per cycle.",
+    "PAL has 312 lines and 131 fabric clocks per cycle. Both begin vertical blank at scanner line 192.",
+    "The row shows the saved target. A live change stays pending until the next virtual reset or restart.",
+    "This row appears only while ONE//e is active. A physical Apple's video standard remains automatic.");
+
 HELP(boot_bind_reset,
     "Restores every USB menu binding below to its factory default.",
     "Bindings are editable only while the menu was opened from the Apple boot prompt ('A' + BOOT mode).");
@@ -164,9 +170,10 @@ HELP(boot_bind_tw_slug,
     "Toggles the 0.05 MHz slug speed for debugging, active at all times.",
     "The key works only when the slug debug key is armed on the TransWarp tab.");
 
-/* Item order: 0 boot wait, 1 boot device, 2 ONE//e, 3 reset bindings, then
- * the bindings in k_boot_usb_binding_action_order: 4-7 nav, 8-9 tabs,
- * 10 OK, 11 BACK, 12-13 screenshots, 14-16 TW speed, 17 TW slug. */
+/* Item order outside ONE//e: 0 boot wait, 1 boot device, 2 ONE//e, 3 reset
+ * bindings, then the bindings in k_boot_usb_binding_action_order: 4-7 nav,
+ * 8-9 tabs, 10 OK, 11 BACK, 12-13 screenshots, 14-16 TW speed, 17 TW slug.
+ * While ONE//e is active, item 3 becomes the video-standard row. */
 static const help_override_t boot_settings_overrides[] = {
     OVERRIDE(0,  boot_timeout),
     OVERRIDE(1,  boot_device),
@@ -186,6 +193,7 @@ static const help_override_t boot_settings_overrides[] = {
     OVERRIDE(15, boot_bind_tw_speed),
     OVERRIDE(16, boot_bind_tw_speed),
     OVERRIDE(17, boot_bind_tw_slug),
+    OVERRIDE(CONFIG_MENU_BOOT_ONEE_STANDARD_HELP_ITEM, boot_onee_standard),
 };
 
 /* ======================================================================== */
@@ -284,12 +292,6 @@ HELP(video_debug,
     "It adds overlay drawing. Border Flood forces it Off and disables this control.",
     "Debugging has a mild performance impact. Let us know if you want additional debug information.");
 
-HELP(video_onee_standard,
-    "Chooses cadence for the built-in ONE//e only: NTSC has 262 lines and 130 fabric clocks per cycle.",
-    "PAL has 312 lines and 131 fabric clocks per cycle. Both begin vertical blank at scanner line 192.",
-    "The row shows the saved target. A live change stays pending until the next virtual reset or restart.",
-    "This row is hidden outside ONE//e. A physical Apple's video standard remains automatic.");
-
 static const help_override_t video_overrides[] = {
     OVERRIDE(CONFIG_VIDEO_ITEM_OUTPUT, video_output),
     OVERRIDE(CONFIG_VIDEO_ITEM_VARIANT, video_variant),
@@ -307,7 +309,6 @@ static const help_override_t video_overrides[] = {
     OVERRIDE(CONFIG_VIDEO_ITEM_BEZEL, video_bezel),
     OVERRIDE(CONFIG_VIDEO_ITEM_DEBUG, video_debug),
     OVERRIDE(CONFIG_VIDEO_ITEM_BADGE, video_format_badge),
-    OVERRIDE(CONFIG_VIDEO_ITEM_ONEE_STANDARD, video_onee_standard),
 };
 
 /* ======================================================================== */

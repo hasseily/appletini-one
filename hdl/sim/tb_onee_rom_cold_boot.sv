@@ -19,6 +19,7 @@ module tb_onee_rom_cold_boot #(
     logic resetn = 1'b0;
     logic vtw_enable = 1'b0;
     logic core_run = 1'b0;
+    logic private_reset_assert = 1'b0;
 
     globals::AppleBus_read ab_read;
     globals::AppleBus_read softswitch_ab_read;
@@ -45,6 +46,7 @@ module tb_onee_rom_cold_boot #(
     ) virtual_bus_i (
         .clk(clk),
         .resetn(resetn),
+        .video_mode_50hz(1'b0),
         .res_n_in(1'b1),
         .irq_n_in(1'b1),
         .nmi_n_in(1'b1),
@@ -198,7 +200,7 @@ module tb_onee_rom_cold_boot #(
         .virtual_motherboard(1'b1),
         .core_run(core_run),
         .pause(1'b0),
-        .assert_apple_res(1'b0),
+        .assert_apple_res(private_reset_assert),
         .speed_mode(2'd0),
         .pace_divider(16'd0),
         .ignore_c074(1'b0),
@@ -303,27 +305,41 @@ module tb_onee_rom_cold_boot #(
     logic saw_slot6_probe = 1'b0;
     logic saw_slot7_entry = 1'b0;
     logic saw_slot6_entry = 1'b0;
+    logic saw_warm_vector = 1'b0;
+    logic clear_observation = 1'b0;
 
     always @(posedge clk) begin
-        if (core_run && dbg_core_pc == 16'hFA62)
-            saw_reset_entry <= 1'b1;
+        if (clear_observation) begin
+            saw_reset_entry <= 1'b0;
+            saw_slot7_probe_while_hidden <= 1'b0;
+            saw_slot7_probe_while_visible <= 1'b0;
+            saw_slot6_probe <= 1'b0;
+            saw_slot7_entry <= 1'b0;
+            saw_slot6_entry <= 1'b0;
+            saw_warm_vector <= 1'b0;
+        end else begin
+            if (core_run && dbg_core_pc == 16'hFA62)
+                saw_reset_entry <= 1'b1;
 
-        if (ab_read.serve_en && ab_read.rw &&
-            ab_read.addr[15:8] == 8'hC7 && slot7_hidden)
-            saw_slot7_probe_while_hidden <= 1'b1;
+            if (saw_reset_entry && ab_read.serve_en && ab_read.rw &&
+                ab_read.addr[15:8] == 8'hC7 && slot7_hidden)
+                saw_slot7_probe_while_hidden <= 1'b1;
 
-        if (ab_read.serve_en && ab_read.rw &&
-            ab_read.addr[15:8] == 8'hC7 && !slot7_hidden)
-            saw_slot7_probe_while_visible <= 1'b1;
+            if (saw_reset_entry && ab_read.serve_en && ab_read.rw &&
+                ab_read.addr[15:8] == 8'hC7 && !slot7_hidden)
+                saw_slot7_probe_while_visible <= 1'b1;
 
-        if (ab_read.serve_en && ab_read.rw &&
-            ab_read.addr[15:8] == 8'hC6 && slot7_hidden)
-            saw_slot6_probe <= 1'b1;
+            if (saw_reset_entry && ab_read.serve_en && ab_read.rw &&
+                ab_read.addr[15:8] == 8'hC6 && slot7_hidden)
+                saw_slot6_probe <= 1'b1;
 
-        if (core_run && dbg_core_pc == 16'hC700)
-            saw_slot7_entry <= 1'b1;
-        if (core_run && dbg_core_pc == 16'hC600)
-            saw_slot6_entry <= 1'b1;
+            if (saw_reset_entry && core_run && dbg_core_pc == 16'hC700)
+                saw_slot7_entry <= 1'b1;
+            if (saw_reset_entry && core_run && dbg_core_pc == 16'hC600)
+                saw_slot6_entry <= 1'b1;
+            if (saw_reset_entry && core_run && dbg_core_pc == 16'h0400)
+                saw_warm_vector <= 1'b1;
+        end
     end
 
     task automatic check(input logic condition, input string message);
@@ -354,6 +370,33 @@ module tb_onee_rom_cold_boot #(
                   $sformatf("%s fell through to Disk II", phase));
             check(!slot7_hidden,
                   $sformatf("%s did not keep slot 7 visible", phase));
+        end
+    endtask
+
+    task automatic clear_boot_observation;
+        begin
+            clear_observation = 1'b1;
+            @(posedge clk);
+            #1;
+            clear_observation = 1'b0;
+        end
+    endtask
+
+    task automatic pulse_private_reset(input logic force_cold);
+        begin
+            // Exercise the same vTW Apple-RES request which firmware drives
+            // through CARD_CTRL_VTW_CTRL, including its merged virtual-bus
+            // path, instead of forcing the base motherboard reset input.
+            private_reset_assert = 1'b1;
+            repeat (8 * 16) @(posedge clk);
+            if (force_cold) begin
+                // This is the exact pair cleared by CPU0 before it releases
+                // Ctrl+Alt+Delete. It defeats a valid stale warm vector.
+                core_i.shadow_i.mem_main[16'h03F3] = 8'h00;
+                core_i.shadow_i.mem_main[16'h03F4] = 8'h00;
+            end
+            repeat (16) @(posedge clk);
+            private_reset_assert = 1'b0;
         end
     endtask
 
@@ -421,6 +464,55 @@ module tb_onee_rom_cold_boot #(
         check(bus_cycles > 32'd10,
               "cold-reset smoke did not traverse the virtual Apple bus");
 
+        if (!BOOT_TARGET_DISK2) begin
+            // A valid warm signature and vector prove why a bare RES# pulse
+            // does not reboot SmartPort: the real ROM jumps back into stale
+            // software and never scans $C700.
+            core_i.shadow_i.mem_main[16'h03F2] = 8'h00;
+            core_i.shadow_i.mem_main[16'h03F3] = 8'h04;
+            core_i.shadow_i.mem_main[16'h03F4] = 8'hA1;
+            core_i.shadow_i.mem_main[16'h0400] = 8'h4C;
+            core_i.shadow_i.mem_main[16'h0401] = 8'h00;
+            core_i.shadow_i.mem_main[16'h0402] = 8'h04;
+
+            clear_boot_observation();
+            pulse_private_reset(1'b0);
+            fork : wait_for_warm_vector
+                begin
+                    wait (saw_warm_vector);
+                    disable wait_for_warm_vector;
+                end
+                begin
+                    #4ms;
+                    $fatal(1,
+                           "ONEE ROM BOOT FAIL: valid warm signature did not take stale $0400 vector PC=%04X",
+                           dbg_core_pc);
+                end
+            join
+            check(!saw_slot7_entry,
+                  "bare warm reset unexpectedly rescanned SmartPort");
+
+            // Ctrl+Alt+Delete clears the signature while RES# is held. The
+            // same Enhanced //e ROM must show its reset path and enter the
+            // production SmartPort slot ROM again.
+            clear_boot_observation();
+            pulse_private_reset(1'b1);
+            fork : wait_for_smartport_reboot
+                begin
+                    wait (saw_slot7_entry);
+                    repeat (4) @(posedge clk);
+                    disable wait_for_smartport_reboot;
+                end
+                begin
+                    #12ms;
+                    $fatal(1,
+                           "ONEE ROM BOOT FAIL: cold reboot did not re-enter SmartPort PC=%04X",
+                           dbg_core_pc);
+                end
+            join
+            check_selected_path("Ctrl+Alt+Delete cold reboot");
+        end
+
         if (BOOT_TARGET_DISK2)
             $display("ONEE ROM DISK2 BOOT PATH PASS");
         else
@@ -429,7 +521,7 @@ module tb_onee_rom_cold_boot #(
     end
 
     initial begin
-        #13ms;
+        #35ms;
         $fatal(1, "ONEE ROM BOOT FAIL: timeout");
     end
 

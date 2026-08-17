@@ -284,6 +284,12 @@ HELP(video_debug,
     "It adds overlay drawing. Border Flood forces it Off and disables this control.",
     "Debugging has a mild performance impact. Let us know if you want additional debug information.");
 
+HELP(video_onee_standard,
+    "Chooses cadence for the built-in ONE//e only: NTSC has 262 lines and 130 fabric clocks per cycle.",
+    "PAL has 312 lines and 131 fabric clocks per cycle. Both begin vertical blank at scanner line 192.",
+    "The row shows the saved target. A live change stays pending until the next virtual reset or restart.",
+    "This row is hidden outside ONE//e. A physical Apple's video standard remains automatic.");
+
 static const help_override_t video_overrides[] = {
     OVERRIDE(CONFIG_VIDEO_ITEM_OUTPUT, video_output),
     OVERRIDE(CONFIG_VIDEO_ITEM_VARIANT, video_variant),
@@ -301,6 +307,7 @@ static const help_override_t video_overrides[] = {
     OVERRIDE(CONFIG_VIDEO_ITEM_BEZEL, video_bezel),
     OVERRIDE(CONFIG_VIDEO_ITEM_DEBUG, video_debug),
     OVERRIDE(CONFIG_VIDEO_ITEM_BADGE, video_format_badge),
+    OVERRIDE(CONFIG_VIDEO_ITEM_ONEE_STANDARD, video_onee_standard),
 };
 
 /* ======================================================================== */

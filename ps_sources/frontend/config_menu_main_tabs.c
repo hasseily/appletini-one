@@ -482,6 +482,17 @@ void config_menu_draw_video(uint16_t *fb,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BADGE),
                         menu->format_badge_enabled,
                         "Show video mode");
+    if (config_menu_onee_fixed_bindings_active(menu) != 0U) {
+        hgr_draw_value_item(
+            fb,
+            x,
+            y + (row_h * 13),
+            w,
+            (uint8_t)(menu->item_focus ==
+                      CONFIG_VIDEO_ITEM_ONEE_STANDARD),
+            "ONE//e video standard",
+            config_menu_onee_video_standard_text(menu));
+    }
 }
 
 void config_menu_draw_clock(uint16_t *fb,

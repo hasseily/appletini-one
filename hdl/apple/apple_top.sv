@@ -131,6 +131,8 @@ module apple_top(
     wire       onee_warm_reset_request;
     wire       onee_warm_reset_ack;
     wire       onee_virtual_res_n;
+    logic      onee_video_50hz_desired;
+    logic      onee_video_50hz_active;
     logic [31:0] onee_input_ps_rdata;
     logic signed [15:0] onee_audio_mono_raw;
 
@@ -252,6 +254,7 @@ module apple_top(
     apple_virtual_bus apple_virtual_bus_i (
         .clk              (clk),
         .resetn           (rstn[1]),
+        .video_mode_50hz  (onee_video_50hz_active),
         .res_n_in         (onee_virtual_res_n),
         .irq_n_in         (1'b1),
         .nmi_n_in         (1'b1),
@@ -333,6 +336,7 @@ module apple_top(
     // Timing generator signals
     logic apple_bus_pulse;
     logic video_mode_50hz;
+    logic video_mode_50hz_valid;
     logic set_frame_zero_pulse;
     logic set_vblank_start_pulse;
     logic apple_vblank_lock_seen_q;
@@ -351,7 +355,13 @@ module apple_top(
     localparam [15:0] APPLE_LINE_PERIOD_50HZ_THRESHOLD = 16'd8513;
 
     assign apple_bus_pulse = ab_read.sss_en;
-    assign video_mode_50hz = video_mode_50hz_valid_q && video_mode_50hz_detected_q;
+    // The physical host keeps its measured standard. ONE//e instead uses the
+    // standard frozen for the current virtual session.
+    assign video_mode_50hz = onee_enable_effective ?
+        onee_video_50hz_active :
+        (video_mode_50hz_valid_q && video_mode_50hz_detected_q);
+    assign video_mode_50hz_valid = onee_enable_effective ||
+                                   video_mode_50hz_valid_q;
     assign video_mode_50hz_out = video_mode_50hz;
     assign mouse_vblank_start_pulse =
         update_pulse && (line_in_frame == 9'd192) && (cycle_in_line == 7'd0);
@@ -414,6 +424,9 @@ module apple_top(
     localparam logic [7:0] CARD_CTRL_REG_ONEE_LIVE     = 8'h5D;
     localparam logic [7:0] CARD_CTRL_REG_ONEE_PADDLES  = 8'h5E;
     localparam logic [7:0] CARD_CTRL_REG_ONEE_CONTROL  = 8'h5F;
+    // ONE//e video standard: write bit 0 (0 NTSC, 1 PAL); read bit 0 desired,
+    // bit 1 active. Active changes only while stopped or private RES# is low.
+    localparam logic [7:0] CARD_CTRL_REG_ONEE_VIDEO     = 8'hA2;
     localparam logic [7:0] CARD_CTRL_REG_VTW_WR_CHECK = 8'h36;
     localparam logic [7:0] CARD_CTRL_REG_VTW_WR_ADDR  = 8'h37;
     localparam logic [7:0] CARD_CTRL_REG_VTW_C000_CTX = 8'h38;
@@ -516,6 +529,22 @@ module apple_top(
         card_slot_enable_normalize =
             (value & CARD_CTRL_SLOT_ENABLE_VALID_MASK) | CARD_CTRL_SLOT_ENABLE_REQUIRED;
     endfunction
+
+    wire onee_video_config_write = as_client.awvalid &&
+        (as_common.awaddr == CARD_CTRL_REG_ONEE_VIDEO) && as_common.wstrb[0];
+
+    onee_video_standard_ctrl onee_video_standard_ctrl_i (
+        .clk            (clk),
+        .resetn         (rstn[1]),
+        .enabled        (onee_enable_effective),
+        // This resolved line includes both onee_warm_reset_ctrl and vTW's
+        // ab_write.assert_res cold-reset path.
+        .virtual_res_n  (virtual_ab_read.res),
+        .write_valid    (onee_video_config_write),
+        .write_50hz     (as_common.wdata[0]),
+        .desired_50hz   (onee_video_50hz_desired),
+        .active_50hz    (onee_video_50hz_active)
+    );
 
     logic [31:0] card_slot_enable_mask_q =
         CARD_CTRL_SLOT_ENABLE_RESET | CARD_CTRL_SLOT_ENABLE_REQUIRED;
@@ -1589,7 +1618,7 @@ module apple_top(
         .ab_read(gate_ab(physical_ab_read, !onee_enable_effective)),
         .sss(sss),
         .disk2_enabled(card_slot6_enable),
-        .apple_video_mode_valid(video_mode_50hz_valid_q),
+        .apple_video_mode_valid(video_mode_50hz_valid),
         .apple_video_mode_50hz(video_mode_50hz),
         .as_common(as_common),
         .as_client(boot_menu_as_client),
@@ -2475,6 +2504,10 @@ module apple_top(
                     as_client_rdata_q <= onee_input_ps_rdata;
                 CARD_CTRL_REG_ONEE_CONTROL:
                     as_client_rdata_q <= onee_input_ps_rdata;
+                CARD_CTRL_REG_ONEE_VIDEO:
+                    as_client_rdata_q <= {30'b0,
+                                          onee_video_50hz_active,
+                                          onee_video_50hz_desired};
                 8'h60:   as_client_rdata_q <= {29'b0,
                                                machine_m2sel_active_high,
                                                machine_mode_q};

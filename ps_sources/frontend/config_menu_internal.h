@@ -84,7 +84,8 @@ typedef enum {
 #define CONFIG_VIDEO_ITEM_BEZEL        13U
 #define CONFIG_VIDEO_ITEM_DEBUG        14U
 #define CONFIG_VIDEO_ITEM_BADGE        15U
-#define CONFIG_VIDEO_ITEM_COUNT        16U
+#define CONFIG_VIDEO_ITEM_ONEE_STANDARD 16U
+#define CONFIG_VIDEO_ITEM_COUNT        17U
 #define CONFIG_TRANSWARP_ITEM_ENABLE       0U
 #define CONFIG_TRANSWARP_ITEM_SPEED        1U
 #define CONFIG_TRANSWARP_ITEM_IGNORE_C074  2U
@@ -143,6 +144,7 @@ const char *config_menu_boot_timeout_text(uint8_t mode);
 const char *config_menu_boot_device_text(uint8_t device);
 const char *config_menu_onee_mode_text(const config_menu_t *menu);
 uint8_t config_menu_onee_fixed_bindings_active(const config_menu_t *menu);
+const char *config_menu_onee_video_standard_text(const config_menu_t *menu);
 const char *config_menu_video_output_text(uint8_t mono);
 const char *config_menu_video7_auto_mono_text(uint8_t enabled);
 const char *config_menu_border_color_text(uint8_t color);

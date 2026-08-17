@@ -30,7 +30,7 @@
 #define APPLETINI_CFG_TMP_PATH "0:/appletini_cfg.tmp"
 #define APPLETINI_CFG_BAK_PATH "0:/appletini_cfg.bak"
 #define APPLETINI_CFG_MAX 8192U
-#define APPLETINI_CFG_VERSION 115U
+#define APPLETINI_CFG_VERSION 116U
 #define ONEE_PERSIST_RETRY_POLL_LIMIT 4096U
 #define ETHERNET_CONTROL_SLOT 1U
 #define DISK2_CONTROL_SLOT 6U
@@ -39,6 +39,7 @@
 
 #define CONFIG_DEFAULT_BOOT_TIMEOUT_MODE CONFIG_BOOT_TIMEOUT_3S
 #define CONFIG_DEFAULT_BOOT_DEVICE CONFIG_BOOT_DEVICE_SMARTPORT
+#define CONFIG_DEFAULT_ONEE_VIDEO_50HZ 0U
 #define CONFIG_DEFAULT_SCANLINES_MODE APPLETINI_SCANLINES_OFF
 #define CONFIG_DEFAULT_VIDEO_OUTPUT_MONO 0U
 #define CONFIG_DEFAULT_VIDEO_MONO_COLOR APPLE_VIDEO_MONO_WHITE
@@ -1404,6 +1405,70 @@ uint8_t config_menu_onee_fixed_bindings_active(const config_menu_t *menu)
     return onee_usb_fixed_mode_active(menu->onee_mode_status);
 }
 
+const char *config_menu_onee_video_standard_text(const config_menu_t *menu)
+{
+    uint8_t active_50hz;
+
+    if (menu == NULL) {
+        return "NTSC";
+    }
+
+    active_50hz = menu->onee_video_50hz;
+    if (menu->platform.get_onee_video_active_50hz != NULL) {
+        active_50hz =
+            menu->platform.get_onee_video_active_50hz(menu->platform.ctx) != 0U;
+    }
+
+    if (active_50hz != menu->onee_video_50hz) {
+        return (menu->onee_video_50hz != 0U) ?
+            "PAL (pending reset)" : "NTSC (pending reset)";
+    }
+    return (menu->onee_video_50hz != 0U) ? "PAL" : "NTSC";
+}
+
+static void config_menu_set_onee_video_standard_status(config_menu_t *menu)
+{
+    const char *standard;
+
+    if (menu == NULL) {
+        return;
+    }
+    standard = (menu->onee_video_50hz != 0U) ? "PAL" : "NTSC";
+    if (menu->platform.get_onee_video_active_50hz != NULL &&
+        ((menu->platform.get_onee_video_active_50hz(menu->platform.ctx) != 0U) ?
+             1U : 0U) != menu->onee_video_50hz) {
+        char text[CONFIG_MENU_STATUS_LEN];
+        (void)snprintf(text,
+                       sizeof(text),
+                       "ONE//e %s SAVED - NEXT VIRTUAL RESET OR RESTART",
+                       standard);
+        config_menu_set_status(menu, 0U, text);
+    } else {
+        char text[CONFIG_MENU_STATUS_LEN];
+        (void)snprintf(text, sizeof(text), "ONE//e %s ACTIVE", standard);
+        config_menu_set_status(menu, 0U, text);
+    }
+}
+
+static void config_menu_toggle_onee_video_standard(config_menu_t *menu)
+{
+    if (menu == NULL ||
+        config_menu_onee_fixed_bindings_active(menu) == 0U) {
+        return;
+    }
+
+    menu->onee_video_50hz =
+        (menu->onee_video_50hz != 0U) ? 0U : 1U;
+    if (menu->platform.set_onee_video_50hz != NULL) {
+        menu->platform.set_onee_video_50hz(menu->platform.ctx,
+                                           menu->onee_video_50hz);
+    }
+    if (config_menu_save_settings_to_path(
+            menu, APPLETINI_CFG_PATH, NULL) != 0U) {
+        config_menu_set_onee_video_standard_status(menu);
+    }
+}
+
 static uint8_t config_menu_usb_binding_source_valid(usb_hid_menu_source_t source)
 {
     for (uint32_t i = 0U;
@@ -2506,6 +2571,11 @@ static void config_menu_load_platform_defaults(config_menu_t *menu)
         menu->pal_video_phase_cycles = apple_video_timing_phase_clamp(
             menu->platform.get_pal_video_phase_cycles(menu->platform.ctx));
     }
+    if (menu->platform.get_onee_video_50hz != NULL) {
+        menu->onee_video_50hz =
+            (menu->platform.get_onee_video_50hz(menu->platform.ctx) != 0U) ?
+                1U : 0U;
+    }
     if (menu->platform.get_slot_enabled != NULL) {
         menu->ethernet_slot1_enabled =
             menu->platform.get_slot_enabled(menu->platform.ctx, ETHERNET_CONTROL_SLOT);
@@ -2525,6 +2595,11 @@ static void config_menu_apply_boot_runtime_internal(config_menu_t *menu,
 {
     if (menu == NULL) {
         return;
+    }
+
+    if (menu->platform.set_onee_video_50hz != NULL) {
+        menu->platform.set_onee_video_50hz(menu->platform.ctx,
+                                           menu->onee_video_50hz);
     }
 
     if (menu->platform.set_slot_enabled != NULL) {
@@ -2998,6 +3073,9 @@ static void config_menu_parse_key_value(config_menu_t *menu, const char *key, co
         }
     } else if (strcmp(key, "onee.standalone.persisted") == 0) {
         menu->onee_persisted_enabled = config_menu_bool_text(value);
+    } else if (strcmp(key, "onee.video.standard") == 0) {
+        menu->onee_video_50hz =
+            (config_menu_str_ieq(value, "PAL") != 0U) ? 1U : 0U;
     } else if (strcmp(key, "video.scanlines") == 0) {
         menu->scanlines_mode = config_menu_scanlines_text(value);
     } else if (strcmp(key, "video.output") == 0) {
@@ -3243,11 +3321,13 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                                             path_val, sizeof(path_val))
                    : "FIRMWARE");
 
-    /* ONE//e selection is a global safety latch, not a profile choice. A
-     * profile load must never re-arm or disarm stand-alone mode. */
+    /* ONE//e selection and virtual video standard are global choices. A
+     * profile load must never change either one. */
     if (strcmp(path, APPLETINI_CFG_PATH) == 0) {
-        APPEND_CFG("onee.standalone.persisted=%s\n",
-                   config_menu_on_off(menu->onee_persisted_enabled));
+        APPEND_CFG("onee.standalone.persisted=%s\n"
+                   "onee.video.standard=%s\n",
+                   config_menu_on_off(menu->onee_persisted_enabled),
+                   (menu->onee_video_50hz != 0U) ? "PAL" : "NTSC");
     }
 
     APPEND_CFG("video.rom=%s\n",
@@ -3500,7 +3580,17 @@ static void config_menu_load_settings(config_menu_t *menu)
 
 static void config_menu_restore_onee_intent(config_menu_t *menu)
 {
-    if (menu != NULL && menu->platform.restore_onee_mode_intent != NULL) {
+    if (menu == NULL) {
+        return;
+    }
+
+    // Publish the saved standard while ONE//e is still stopped. The PL then
+    // starts a restored session with the right cadence from its first cycle.
+    if (menu->platform.set_onee_video_50hz != NULL) {
+        menu->platform.set_onee_video_50hz(menu->platform.ctx,
+                                           menu->onee_video_50hz);
+    }
+    if (menu->platform.restore_onee_mode_intent != NULL) {
         menu->platform.restore_onee_mode_intent(
             menu->platform.ctx, menu->onee_persisted_enabled);
     }
@@ -3682,6 +3772,8 @@ static void config_menu_reset_settings_only(config_menu_t *menu)
 
     menu->boot_timeout_mode = CONFIG_DEFAULT_BOOT_TIMEOUT_MODE;
     menu->boot_device = CONFIG_DEFAULT_BOOT_DEVICE;
+    /* Keep onee_video_50hz: like the ONE//e enable latch, it is global and a
+     * profile reset must not replace it with a profile-local default. */
     menu->scanlines_mode = CONFIG_DEFAULT_SCANLINES_MODE;
     menu->video_output_mono = CONFIG_DEFAULT_VIDEO_OUTPUT_MONO;
     menu->video_mono_color = CONFIG_DEFAULT_VIDEO_MONO_COLOR;
@@ -3799,9 +3891,10 @@ static uint8_t config_menu_read_settings_from_path(config_menu_t *menu,
             if (strcmp(key, "appletini.config.version") == 0) {
                 cfg_version = (uint32_t)strtoul(value, NULL, 10);
             }
-            /* ONE//e is a global safety latch. Ignore a copied, hand-edited,
-             * or future profile key so profile selection cannot change it. */
-            if (strcmp(key, "onee.standalone.persisted") != 0) {
+            /* ONE//e state and video standard are global. Ignore copied,
+             * hand-edited, or future profile keys for both choices. */
+            if (strcmp(key, "onee.standalone.persisted") != 0 &&
+                strcmp(key, "onee.video.standard") != 0) {
                 config_menu_parse_key_value(menu, key, value);
             }
         }
@@ -4290,7 +4383,8 @@ static uint32_t config_menu_tab_item_count(const config_menu_t *menu)
     case CONFIG_TAB_PROFILES:
         return CONFIG_MENU_PROFILE_ITEM_COUNT;
     case CONFIG_TAB_VIDEO:
-        return CONFIG_VIDEO_ITEM_COUNT;
+        return (config_menu_onee_fixed_bindings_active(menu) != 0U) ?
+            CONFIG_VIDEO_ITEM_COUNT : CONFIG_VIDEO_ITEM_ONEE_STANDARD;
     case CONFIG_TAB_SMARTPORT:
         return SMARTPORT_DEVICE_COUNT + 3U; /* overlay + N slots + ram disk + SuperSprite */
     case CONFIG_TAB_USB:
@@ -4930,6 +5024,12 @@ static uint8_t config_menu_adjust_focused_value(config_menu_t *menu, int8_t delt
     if (menu->tab == CONFIG_TAB_TRANSWARP &&
         menu->item_focus == CONFIG_TRANSWARP_ITEM_WINDOW) {
         config_menu_vtw_cycle_slowdown_window(menu, delta);
+        return 1U;
+    }
+    if (menu->tab == CONFIG_TAB_VIDEO &&
+        menu->item_focus == CONFIG_VIDEO_ITEM_ONEE_STANDARD) {
+        (void)delta;
+        config_menu_toggle_onee_video_standard(menu);
         return 1U;
     }
     if (menu->tab == CONFIG_TAB_VIDEO &&
@@ -6144,6 +6244,10 @@ static void config_menu_activate_item(config_menu_t *menu)
         break;
 
     case CONFIG_TAB_VIDEO:
+        if (menu->item_focus == CONFIG_VIDEO_ITEM_ONEE_STANDARD) {
+            config_menu_toggle_onee_video_standard(menu);
+            break;
+        }
         if (menu->border_flood != 0u &&
             menu->item_focus >= CONFIG_VIDEO_ITEM_SHOW_BEZEL &&
             menu->item_focus <= CONFIG_VIDEO_ITEM_DEBUG) {
@@ -6529,6 +6633,7 @@ void config_menu_init(config_menu_t *menu)
     menu->onee_mode_state = CONFIG_MENU_ONEE_MODE_OFF;
     menu->onee_mode_status = 0U;
     menu->onee_persisted_enabled = 0U;
+    menu->onee_video_50hz = CONFIG_DEFAULT_ONEE_VIDEO_50HZ;
     menu->onee_persist_write_failed = 0U;
     menu->onee_persist_retry_polls = 0U;
     menu->scanlines_mode = CONFIG_DEFAULT_SCANLINES_MODE;
@@ -6641,6 +6746,12 @@ void config_menu_poll_onee_mode(config_menu_t *menu)
             state : CONFIG_MENU_ONEE_MODE_LOCKED;
     menu->onee_mode_status =
         menu->platform.get_onee_mode_status(menu->platform.ctx);
+
+    if (menu->tab == CONFIG_TAB_VIDEO &&
+        menu->item_focus == CONFIG_VIDEO_ITEM_ONEE_STANDARD &&
+        config_menu_onee_fixed_bindings_active(menu) == 0U) {
+        menu->item_focus = CONFIG_VIDEO_ITEM_BADGE;
+    }
 
     if (menu->platform.get_onee_mode_persist_update == NULL ||
         menu->platform.ack_onee_mode_persist_update == NULL ||

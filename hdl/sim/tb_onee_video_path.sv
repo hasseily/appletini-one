@@ -49,6 +49,7 @@ module tb_onee_video_path;
     ) virtual_bus_i (
         .clk(clk),
         .resetn(resetn),
+        .video_mode_50hz(1'b0),
         .res_n_in(1'b1),
         .irq_n_in(1'b1),
         .nmi_n_in(1'b1),

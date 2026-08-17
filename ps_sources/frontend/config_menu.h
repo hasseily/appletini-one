@@ -96,6 +96,9 @@ typedef struct {
     int8_t (*get_clean_video_phase_cycles)(void *ctx);
     int8_t (*get_pal_video_phase_cycles)(void *ctx);
     uint8_t (*is_apple_video_50hz)(void *ctx);
+    void (*set_onee_video_50hz)(void *ctx, uint8_t enable);
+    uint8_t (*get_onee_video_50hz)(void *ctx);
+    uint8_t (*get_onee_video_active_50hz)(void *ctx);
     void (*set_boot_timeout_ticks)(void *ctx, uint32_t ticks);
     void (*set_boot_handoff)(void *ctx, uint8_t handoff);
     uint8_t (*set_onee_mode)(void *ctx, uint8_t enable);
@@ -170,6 +173,7 @@ typedef struct {
     uint8_t onee_mode_state;     /* live service state */
     uint32_t onee_mode_status;   /* live PL supervisor readback */
     uint8_t onee_persisted_enabled; /* global config only; never profiled */
+    uint8_t onee_video_50hz;     /* desired global standard; 0 NTSC, 1 PAL */
     uint8_t onee_persist_write_failed;
     uint32_t onee_persist_retry_polls;
     uint8_t scanlines_mode;

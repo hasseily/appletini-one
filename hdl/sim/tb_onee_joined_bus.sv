@@ -90,6 +90,7 @@ module tb_onee_joined_bus;
     ) virtual_bus_i (
         .clk(clk),
         .resetn(resetn),
+        .video_mode_50hz(1'b0),
         .res_n_in(onee_virtual_res_n),
         .irq_n_in(1'b1),
         .nmi_n_in(1'b1),
@@ -642,12 +643,12 @@ module tb_onee_joined_bus;
         check(physical_nonzero_cycles == 0 && physical_write == '0,
               "ONE//e virtual traffic reached the physical write record");
 
-        /* Re-run the core, then issue the same $5F bit-0 request used by the
-         * PS Ctrl-Alt-Delete path. The real input bridge holds the request,
-         * the real warm-reset controller counts virtual native cycles, and
-         * apple_virtual_bus drives ab_read.res low. VTW_CTRL must remain in
-         * its own global register domain throughout; neither speed field may
-         * fall back to the power-on MAX value. */
+        /* Re-run the core, then exercise the bridge's private $5F bit-0 reset
+         * primitive. The real input bridge holds the request, the real
+         * warm-reset controller counts virtual native cycles, and
+         * apple_virtual_bus drives ab_read.res low. Ctrl+Alt+Delete uses the
+         * ordered PS cold-reboot path; this lower-level fallback must still
+         * leave VTW_CTRL and both speed fields unchanged. */
         write_vtw_ctrl(32'h0025_0087);
         warm_reset_ctrl_before = vtw_ctrl_q;
         check(vtw_ctrl_q[3:2] == 2'd1 &&

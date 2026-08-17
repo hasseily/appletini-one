@@ -118,6 +118,14 @@
 #define CARD_CTRL_ONEE_INHIBIT_RESELECT_REQUIRED 5U
 #define CARD_CTRL_ONEE_INHIBIT_MANUAL_OFF        6U
 
+/* ONE//e virtual video standard. Write DESIRED_50HZ (0 NTSC, 1 PAL).
+ * Read DESIRED_50HZ for the saved request and ACTIVE_50HZ for the cadence
+ * held by the current session. ACTIVE changes only while ONE//e is stopped
+ * or its resolved private RESET line is low. */
+#define CARD_CTRL_ONEE_VIDEO_REG                  CARD_CTRL_REG_ADDR(0xA2U)
+#define CARD_CTRL_ONEE_VIDEO_DESIRED_50HZ_BIT     (1UL << 0)
+#define CARD_CTRL_ONEE_VIDEO_ACTIVE_50HZ_BIT      (1UL << 1)
+
 /* Written by the PS after the boot ROM reports the host machine. The PL
  * interlocks INH
  * and DMA on it. UNKNOWN is the reset state and is treated as a GS

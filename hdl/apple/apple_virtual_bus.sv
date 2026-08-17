@@ -9,6 +9,7 @@
 // Idle cycles read $FFFF so the 1 MHz card and scanner cadence never stops.
 module apple_virtual_bus #(
     parameter integer CYCLE_CLKS     = 130,
+    parameter integer PAL_CYCLE_CLKS = CYCLE_CLKS + 1,
     parameter integer PHI0_RISE_CLK  = 65,
     parameter integer DRIVE_CLK      = 8,
     parameter integer ADDR_CLK       = 25,
@@ -18,6 +19,7 @@ module apple_virtual_bus #(
 ) (
     input  logic                    clk,
     input  logic                    resetn,
+    input  logic                    video_mode_50hz,
 
     // Base active-low motherboard lines. Tie high when no local source owns
     // the line. Slot assertions in ab_write pull the same virtual lines low.
@@ -47,8 +49,10 @@ module apple_virtual_bus #(
     output globals::AppleBus_read   ab_read
 );
 
+    localparam integer MAX_CYCLE_CLKS =
+        (PAL_CYCLE_CLKS > CYCLE_CLKS) ? PAL_CYCLE_CLKS : CYCLE_CLKS;
     localparam integer PHASE_WIDTH =
-        (CYCLE_CLKS <= 2) ? 1 : $clog2(CYCLE_CLKS);
+        (MAX_CYCLE_CLKS <= 2) ? 1 : $clog2(MAX_CYCLE_CLKS);
 
     logic [PHASE_WIDTH-1:0] phase_q;
     logic                   cpu_cycle_q;
@@ -66,6 +70,8 @@ module apple_virtual_bus #(
     wire phase_sss   = (phase_q == PHASE_WIDTH'(SSS_CLK));
     wire phase_serve = (phase_q == PHASE_WIDTH'(SERVE_CLK));
     wire phase_data  = phase_data_q;
+    wire [PHASE_WIDTH-1:0] cycle_clks = video_mode_50hz ?
+        PHASE_WIDTH'(PAL_CYCLE_CLKS) : PHASE_WIDTH'(CYCLE_CLKS);
 
     // Apple slot control lines are open drain: a high assert_* request pulls
     // the corresponding active-low line down.
@@ -146,7 +152,9 @@ module apple_virtual_bus #(
             resp_valid <= 1'b0;
             phase_data_q <= (phase_q == PHASE_WIDTH'(DATA_CLK - 1));
 
-            if (phase_q == PHASE_WIDTH'(CYCLE_CLKS - 1)) begin
+            // Use >= so a PAL-to-NTSC switch during private RESET also
+            // recovers cleanly when the old phase was the PAL-only last tick.
+            if (phase_q >= (cycle_clks - PHASE_WIDTH'(1))) begin
                 phase_q <= '0;
             end else begin
                 phase_q <= phase_q + PHASE_WIDTH'(1);

@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 
-// ONE//e slot-order state across entry and Ctrl-Reset. Both instances stay
-// enabled throughout the warm-reset part; only the synthetic RES# changes.
+// ONE//e slot-order state across entry and an ordered cold reboot. Both
+// instances stay enabled while firmware changes the target under RES#.
 module tb_onee_cold_slot_scan;
 
     timeunit 1ns;
@@ -84,40 +84,45 @@ module tb_onee_cold_slot_scan;
               "Disk II target did not release slot 7 at $C600");
 
         // Editing the saved next-boot choice must not change who owns slot 7
-        // in the active session.
+        // before a cold-boot boundary.
         configured_disk2_target = 1'b0;
         configured_smartport_target = 1'b1;
         repeat (2) @(posedge clk);
         check(disk2_session_target && !smartport_session_target,
               "configured target changed active session ownership");
 
-        // A warm Ctrl-Reset must restore the same choice without toggling
-        // enabled. This catches a session-only latch that would boot the
-        // wrong card on the second reset.
+        // Ctrl+Alt+Delete holds private RES# while firmware publishes the
+        // current choice. The scan latch must accept it without toggling the
+        // ONE//e enable request.
         @(negedge clk);
         ab_read.res = 1'b0;
         repeat (2) @(posedge clk);
-        check(enabled, "test left ONE//e during warm reset");
-        check(disk2_session_target && !smartport_session_target,
-              "warm reset replaced the latched session targets");
-        check(disk2_slot7_hidden,
-              "warm reset did not re-hide slot 7 for Disk II");
-        check(!smartport_slot7_hidden,
-              "warm reset hid slot 7 for SmartPort");
+        check(enabled, "test left ONE//e during cold reboot");
+        check(!disk2_session_target && smartport_session_target,
+              "cold reboot did not sample the changed boot targets");
+        check(!disk2_slot7_hidden,
+              "cold reboot hid slot 7 for the new SmartPort target");
+        check(smartport_slot7_hidden,
+              "cold reboot did not hide slot 7 for the new Disk II target");
 
         @(negedge clk);
         ab_read.res = 1'b1;
         probe(16'hC700);
-        check(disk2_slot7_hidden,
-              "second Disk II scan exposed the first $C700 probe");
-        check(!smartport_slot7_hidden,
-              "second SmartPort scan hid the first $C700 probe");
-        probe(16'hC600);
         check(!disk2_slot7_hidden,
-              "second Disk II scan did not release slot 7 at $C600");
+              "new SmartPort target hid the first $C700 probe");
+        check(smartport_slot7_hidden,
+              "new Disk II target exposed the first $C700 probe");
+        probe(16'hC600);
+        check(!smartport_slot7_hidden,
+              "new Disk II target did not release slot 7 at $C600");
 
-        // A manual off/on selection starts a new session and accepts the
-        // configured choices that were edited above.
+        // A second edit still waits for the next boundary. A manual off/on
+        // selection remains a valid boundary and accepts it.
+        configured_disk2_target = 1'b1;
+        configured_smartport_target = 1'b0;
+        repeat (2) @(posedge clk);
+        check(!disk2_session_target && smartport_session_target,
+              "second edit changed the running scan target");
         @(negedge clk);
         enabled = 1'b0;
         manual_enable_request = 1'b0;
@@ -128,9 +133,9 @@ module tb_onee_cold_slot_scan;
         manual_enable_request = 1'b1;
         enabled = 1'b1;
         repeat (2) @(posedge clk);
-        check(!disk2_session_target && smartport_session_target,
+        check(disk2_session_target && !smartport_session_target,
               "manual reselect did not latch the new configured targets");
-        check(!disk2_slot7_hidden && smartport_slot7_hidden,
+        check(disk2_slot7_hidden && !smartport_slot7_hidden,
               "new session did not apply the new target visibility");
 
         $display("ONEE COLD SLOT SCAN RESET PASS");

@@ -105,7 +105,7 @@ def test_ascii_control_and_navigation_mapping() -> None:
             "ASCII, control, arrow, punctuation, and keypad maps are incomplete")
 
 
-def test_apple_keys_caps_and_warm_reset_chord() -> None:
+def test_apple_keys_caps_and_cold_reboot_chord() -> None:
     service = read(SERVICE_C)
     usb = read(USB_C)
     keyboard = between(service,
@@ -123,11 +123,15 @@ def test_apple_keys_caps_and_warm_reset_chord() -> None:
     require("HID_KBD_USAGE_DELFWD" in keyboard and
             "(modifier & HID_MOD_CTRL)" in keyboard and
             "(modifier & HID_MOD_ALT)" in keyboard and
-            "g_reset_pending = 1U;" in keyboard and
+            "g_cold_reboot_pending = 1U;" in keyboard and
             "reset_delete_consumed" in keyboard and
             "reset_modifier_consumed" in keyboard and
-            "ONEE_INPUT_CONTROL_RESET_BIT" in service,
-            "Ctrl+Alt+forward Delete must request reset and consume the chord")
+            "onee_input_service_take_cold_reboot_request" in service and
+            "void onee_input_service_prepare_cold_reboot" in service and
+            "ONEE_INPUT_CONTROL_FIFO_FLUSH_BIT |" in service and
+            "ONEE_INPUT_CONTROL_RELEASE_LIVE_BIT" in service and
+            "ONEE_INPUT_CONTROL_RESET_BIT" not in service,
+            "Ctrl+Alt+forward Delete must queue an ordered cold reboot and flush stale input")
     require("onee_reset_chord" in usb and
             "HID_KBD_USAGE_DELFWD" in usb,
             "the consumed reset Delete key must not reach normal USB bindings")
@@ -272,7 +276,7 @@ TESTS = (
     test_bridge_registers_and_hard_runtime_gate,
     test_queue_is_edge_only_and_backpressured,
     test_ascii_control_and_navigation_mapping,
-    test_apple_keys_caps_and_warm_reset_chord,
+    test_apple_keys_caps_and_cold_reboot_chord,
     test_held_key_repeat_contract,
     test_four_paddles_are_normalized_with_stable_fallbacks,
     test_lowest_slot_owns_joystick_and_disconnect_recenters,
@@ -404,6 +408,7 @@ def run_native_behavior_test() -> bool:
             };
             uint8_t other_key[1] = { HID_KBD_USAGE_A + 2U };
             uint32_t before;
+            uint32_t before_control;
             onee_input_joystick_report_t joystick;
 
             memset(registers, 0, sizeof(registers));
@@ -656,18 +661,32 @@ def run_native_behavior_test() -> bool:
 
             release_keys(2U);
             before = writes_to(ONEE_INPUT_KEY_FIFO_REG);
+            before_control = writes_to(ONEE_INPUT_CONTROL_REG);
             if (onee_input_service_keyboard_report(
                     2U, HID_MOD_LCTRL | HID_MOD_RALT,
                     delete_key, 1U) == 0U) {
-                fail("Ctrl+Alt+Delete was not consumed as a warm reset chord");
+                fail("Ctrl+Alt+Delete was not consumed as a cold reboot chord");
                 return 1;
             }
             onee_input_service_poll();
-            if (last_write(ONEE_INPUT_CONTROL_REG) !=
-                    ONEE_INPUT_CONTROL_RESET_BIT ||
+            if (writes_to(ONEE_INPUT_CONTROL_REG) != before_control ||
                 writes_to(ONEE_INPUT_KEY_FIFO_REG) != before ||
                 (last_write(ONEE_INPUT_LIVE_REG) & 7U) != 0U) {
-                fail("warm reset chord did not reach bridge control");
+                fail("cold reboot chord bypassed the ordered main-loop path");
+                return 1;
+            }
+            if (onee_input_service_take_cold_reboot_request() == 0U ||
+                onee_input_service_take_cold_reboot_request() != 0U) {
+                fail("cold reboot edge was not consumed exactly once");
+                return 1;
+            }
+            onee_input_service_prepare_cold_reboot();
+            if (writes_to(ONEE_INPUT_CONTROL_REG) != before_control + 1U ||
+                last_write(ONEE_INPUT_CONTROL_REG) !=
+                    (ONEE_INPUT_CONTROL_FIFO_FLUSH_BIT |
+                     ONEE_INPUT_CONTROL_RELEASE_LIVE_BIT) ||
+                writes_to(ONEE_INPUT_KEY_FIFO_REG) != before) {
+                fail("cold reboot did not flush queued PL and live input");
                 return 1;
             }
 

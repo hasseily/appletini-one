@@ -115,10 +115,11 @@ def static_checks() -> None:
         "assign configured_boot_target_disk2 =\n"
         "        handoff_mode_q == SLOT7_HANDOFF_DISK2;" in boot_card and
         "assign boot_target_disk2 = handoff_disk2;" in boot_card and
-        "else if (!ab_read.res)\n"
-        "                slot7_hidden <= session_boot_target_disk2;" in cold_scan and
+        "else if (!ab_read.res) begin" in cold_scan and
+        "session_boot_target_disk2 <= boot_target_disk2;" in cold_scan and
+        "slot7_hidden <= boot_target_disk2;" in cold_scan and
         ".ab_read(gate_ab(physical_ab_read, !onee_enable_effective))" in top,
-        "ONE//e must use and re-arm its target without changing host fallback",
+        "ONE//e must sample each cold-boot target without changing host fallback",
     )
     require(
         "wire onee_smartport_boot_owner =\n"
@@ -167,7 +168,8 @@ def static_checks() -> None:
         ") onee_warm_reset_ctrl_i (" in top and
         ".virtual_res_n          (onee_virtual_res_n)" in top and
         ".res_n_in         (onee_virtual_res_n)" in top,
-        "Ctrl-Alt-Delete must reach only the virtual motherboard RESET path",
+        "the bridge reset primitive must reach only the virtual motherboard "
+        "RESET path",
     )
     require(
         ".speed_mode(vtw_ctrl_q[3:2])" in top and

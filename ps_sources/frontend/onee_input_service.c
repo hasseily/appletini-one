@@ -29,7 +29,6 @@
 #define ONEE_INPUT_LIVE_CLOSED_APPLE_BIT  (1UL << 2)
 #define ONEE_INPUT_LIVE_BUTTON_SHIFT      3U
 
-#define ONEE_INPUT_CONTROL_RESET_BIT          (1UL << 0)
 #define ONEE_INPUT_CONTROL_OVERFLOW_CLEAR_BIT (1UL << 1)
 #define ONEE_INPUT_CONTROL_FIFO_FLUSH_BIT     (1UL << 2)
 #define ONEE_INPUT_CONTROL_RELEASE_LIVE_BIT   (1UL << 3)
@@ -77,7 +76,7 @@ static uint8_t g_caps_lock;
 static uint8_t g_session_active;
 static uint8_t g_live_dirty;
 static uint8_t g_paddles_dirty;
-static uint8_t g_reset_pending;
+static uint8_t g_cold_reboot_pending;
 static uint32_t g_repeat_press_sequence;
 static uint32_t g_repeat_deadline_ms;
 static uint8_t g_repeat_valid;
@@ -423,7 +422,7 @@ static void onee_input_session_stop(void)
 {
     g_session_active = 0U;
     g_caps_lock = 0U;
-    g_reset_pending = 0U;
+    g_cold_reboot_pending = 0U;
     onee_key_queue_clear();
     onee_repeat_clear_press_orders();
 }
@@ -437,7 +436,7 @@ void onee_input_service_init(void)
     g_session_active = 0U;
     g_live_dirty = 1U;
     g_paddles_dirty = 1U;
-    g_reset_pending = 0U;
+    g_cold_reboot_pending = 0U;
     g_repeat_press_sequence = 0U;
     onee_repeat_cancel();
     onee_key_queue_clear();
@@ -457,7 +456,7 @@ void onee_input_service_poll(void)
     if (g_session_active == 0U) {
         g_session_active = 1U;
         g_caps_lock = 0U;
-        g_reset_pending = 0U;
+        g_cold_reboot_pending = 0U;
         onee_key_queue_clear();
         onee_repeat_clear_press_orders();
         REG_WRITE(ONEE_INPUT_CONTROL_REG,
@@ -476,11 +475,6 @@ void onee_input_service_poll(void)
         REG_WRITE(ONEE_INPUT_PADDLES_REG, onee_paddles_word());
         g_paddles_dirty = 0U;
     }
-    if (g_reset_pending != 0U) {
-        REG_WRITE(ONEE_INPUT_CONTROL_REG, ONEE_INPUT_CONTROL_RESET_BIT);
-        g_reset_pending = 0U;
-    }
-
     onee_repeat_poll();
 
     if (g_key_queue_count == 0U) {
@@ -493,6 +487,27 @@ void onee_input_service_poll(void)
                                      ONEE_INPUT_QUEUE_DEPTH);
         --g_key_queue_count;
     }
+}
+
+uint8_t onee_input_service_take_cold_reboot_request(void)
+{
+    const uint8_t pending = g_cold_reboot_pending;
+
+    g_cold_reboot_pending = 0U;
+    return pending;
+}
+
+void onee_input_service_prepare_cold_reboot(void)
+{
+    onee_key_queue_clear();
+    onee_repeat_clear_press_orders();
+    if (onee_input_bridge_active() != 0U) {
+        REG_WRITE(ONEE_INPUT_CONTROL_REG,
+                  ONEE_INPUT_CONTROL_FIFO_FLUSH_BIT |
+                  ONEE_INPUT_CONTROL_RELEASE_LIVE_BIT);
+    }
+    g_live_dirty = 1U;
+    g_paddles_dirty = 1U;
 }
 
 uint8_t onee_input_service_keyboard_report(uint8_t slot_index,
@@ -561,7 +576,7 @@ uint8_t onee_input_service_keyboard_report(uint8_t slot_index,
     if (reset_chord != 0U && slot->reset_chord_down == 0U) {
         /* A reset supersedes any translated key which has not reached PL. */
         onee_key_queue_clear();
-        g_reset_pending = 1U;
+        g_cold_reboot_pending = 1U;
     }
 
     if (slot->reset_delete_consumed != 0U) {
@@ -669,7 +684,7 @@ void onee_input_service_release_all(void)
 {
     memset(g_slots, 0, sizeof(g_slots));
     onee_key_queue_clear();
-    g_reset_pending = 0U;
+    g_cold_reboot_pending = 0U;
     onee_repeat_clear_press_orders();
     g_live_dirty = 1U;
     g_paddles_dirty = 1U;

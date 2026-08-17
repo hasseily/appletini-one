@@ -44,6 +44,7 @@
 #include "screenshot_service.h"
 #include "smartport_service.h"
 #include "usb_hid_service.h"
+#include "onee_input_service.h"
 #include "onee_fixed_mode.h"
 #include "usb_storage_backend.h"
 #include "usb_storage_service.h"
@@ -1218,6 +1219,28 @@ static uint8_t menu_platform_is_apple_video_50hz(void *ctx)
 {
     (void)ctx;
     return boot_menu_service_is_apple_video_50hz();
+}
+
+static void menu_platform_set_onee_video_50hz(void *ctx, uint8_t enable)
+{
+    (void)ctx;
+    REG_WRITE(CARD_CTRL_ONEE_VIDEO_REG,
+              (enable != 0U) ?
+                  CARD_CTRL_ONEE_VIDEO_DESIRED_50HZ_BIT : 0U);
+}
+
+static uint8_t menu_platform_get_onee_video_50hz(void *ctx)
+{
+    (void)ctx;
+    return ((REG_READ(CARD_CTRL_ONEE_VIDEO_REG) &
+             CARD_CTRL_ONEE_VIDEO_DESIRED_50HZ_BIT) != 0U) ? 1U : 0U;
+}
+
+static uint8_t menu_platform_get_onee_video_active_50hz(void *ctx)
+{
+    (void)ctx;
+    return ((REG_READ(CARD_CTRL_ONEE_VIDEO_REG) &
+             CARD_CTRL_ONEE_VIDEO_ACTIVE_50HZ_BIT) != 0U) ? 1U : 0U;
 }
 
 static void menu_platform_set_boot_timeout(void *ctx, uint32_t ticks)
@@ -2721,12 +2744,39 @@ static void ui_handle_apple_reset(ui_state_t *s, config_menu_t *menu)
     boot_menu_service_refresh_machine_policy();
     smartport_service_apple_reset();
     /* A physical IIgs clears NEWVIDEO on reset; mirror that for the fake-SHR
-     * path. ONE//e is a virtual Enhanced //e, so its private warm reset must
+     * path. ONE//e is a virtual Enhanced //e, so its private cold reboot must
      * not start a host DMA transaction or wait for a physical bus response. */
     if ((onee_service_status() &
          CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT) == 0U) {
         (void)uart_control_dma_bus_write(0xC029U, 0x01U);
     }
+    if (config_menu_is_active(menu)) {
+        g_usb_menu_owned = 0U;
+        ui_set_boot_menu_visible(s, menu, 0U);
+    }
+}
+
+static void ui_start_onee_cold_reboot(ui_state_t *s, config_menu_t *menu)
+{
+    if (onee_input_service_take_cold_reboot_request() == 0U) {
+        return;
+    }
+    if (vtw_service_onee_cold_reboot() == 0U) {
+        uart_puts(UART0_BASE,
+                  "ONE//e cold reboot refused: runtime is not safe\r\n");
+        return;
+    }
+
+    onee_input_service_prepare_cold_reboot();
+
+    /* vTW now holds the private RES# line. Publish the selected cold-boot
+     * target and clear the PS command state before that line can release;
+     * the reset-sequence hook will repeat this harmlessly on its next poll. */
+    if (menu != NULL) {
+        config_menu_apply_boot_runtime(menu);
+    }
+    boot_menu_service_refresh_machine_policy();
+    smartport_service_apple_reset();
     if (config_menu_is_active(menu)) {
         g_usb_menu_owned = 0U;
         ui_set_boot_menu_visible(s, menu, 0U);
@@ -3192,6 +3242,12 @@ int main(void)
         menu_platform.get_pal_video_phase_cycles =
             menu_platform_get_pal_video_phase_cycles;
         menu_platform.is_apple_video_50hz = menu_platform_is_apple_video_50hz;
+        menu_platform.set_onee_video_50hz =
+            menu_platform_set_onee_video_50hz;
+        menu_platform.get_onee_video_50hz =
+            menu_platform_get_onee_video_50hz;
+        menu_platform.get_onee_video_active_50hz =
+            menu_platform_get_onee_video_active_50hz;
         menu_platform.set_boot_timeout_ticks = menu_platform_set_boot_timeout;
         menu_platform.set_boot_handoff = menu_platform_set_boot_handoff;
         menu_platform.set_onee_mode = menu_platform_set_onee_mode;
@@ -3564,6 +3620,7 @@ int main(void)
             usb_storage_service_needs_attention() == 0) {
             usb_hid_service_poll();
         }
+        ui_start_onee_cold_reboot(&ui, &config_menu);
         usb1_boot_settle_poll(&config_menu);
         usb0_priority_checkpoint();
         ui_poll_sensors();

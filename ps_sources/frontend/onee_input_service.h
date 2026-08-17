@@ -29,10 +29,16 @@ typedef struct {
 
 void onee_input_service_init(void);
 void onee_input_service_poll(void);
+/* Consume one Ctrl+Alt+Delete edge. The main loop uses this to order the
+ * private cold reboot with the SmartPort reset hook before RES# releases. */
+uint8_t onee_input_service_take_cold_reboot_request(void);
+/* Drop all queued Apple key data after private RES# is asserted. This keeps
+ * a key accepted just before Ctrl+Alt+Delete from reaching the new boot. */
+void onee_input_service_prepare_cold_reboot(void);
 
 /* HID reports update saved physical state even while ONE//e is off, but the
  * service discards key edges and performs no input-bridge writes then.
- * The keyboard call returns one only when an active Ctrl+Alt+Delete reset
+ * The keyboard call returns one only when an active Ctrl+Alt+Delete reboot
  * chord consumed forward Delete, so the normal USB binding path can omit
  * that one key. */
 uint8_t onee_input_service_keyboard_report(uint8_t slot,

@@ -108,9 +108,10 @@ def test_global_persistent_action_is_not_profiled() -> None:
             "menu->onee_persisted_enabled = config_menu_bool_text(value);" in source and
             'if (strcmp(path, APPLETINI_CFG_PATH) == 0)' in source,
             "ONE//e must serialize its latch only in the global config")
-    require('if (strcmp(key, "onee.standalone.persisted") != 0)' in source and
-            "global safety latch" in source,
-            "profile loads must ignore the global ONE//e latch")
+    require('if (strcmp(key, "onee.standalone.persisted") != 0 &&' in source and
+            'strcmp(key, "onee.video.standard") != 0' in source and
+            "ONE//e state and video standard are global" in source,
+            "profile loads must ignore global ONE//e choices")
     require("onee_persisted_enabled" in header and
             "onee_persist_write_failed" in header and
             "onee_persist_retry_polls" in header and

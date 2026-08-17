@@ -38,11 +38,17 @@ module onee_cold_slot_scan (
 
             if (!enabled)
                 slot7_hidden <= 1'b0;
+            else if (!ab_read.res) begin
+                // A held private RESET is also a new cold-boot boundary.
+                // Firmware publishes the current boot choice while RESET is
+                // low, so sample it until release instead of restoring the
+                // choice from the first ONE//e activation.
+                session_boot_target_disk2 <= boot_target_disk2;
+                slot7_hidden <= boot_target_disk2;
+            end
             else if (!enabled_q)
                 slot7_hidden <= (manual_enable_request && !request_q) ?
                     boot_target_disk2 : session_boot_target_disk2;
-            else if (!ab_read.res)
-                slot7_hidden <= session_boot_target_disk2;
             else if (slot6_probe)
                 slot7_hidden <= 1'b0;
         end

@@ -76,6 +76,11 @@ uint8_t vtw_service_onee_start(uint8_t disk2_config_enabled);
  * change to the selected speed. Used while the Appletini menu owns input. */
 uint8_t vtw_service_onee_set_paused(uint8_t paused);
 uint8_t vtw_service_onee_paused(void);
+/* Start an ordered cold reboot of the running private machine. The service
+ * holds virtual RES# while it invalidates the Enhanced //e warm-start
+ * signature, then releases the same session with its live speed and pause
+ * state intact. Returns zero without touching a host or unsafe session. */
+uint8_t vtw_service_onee_cold_reboot(void);
 /* Stop a failed private runtime so the same manual ONE//e session can retry.
  * This keeps its queued/live speed override. */
 void vtw_service_onee_suspend(void);

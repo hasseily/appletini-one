@@ -9,6 +9,7 @@ module tb_apple_virtual_bus;
     always #3.75 clk = ~clk;
 
     logic resetn = 1'b0;
+    logic video_mode_50hz = 1'b0;
     logic res_n_in = 1'b1;
     logic irq_n_in = 1'b1;
     logic nmi_n_in = 1'b1;
@@ -31,6 +32,7 @@ module tb_apple_virtual_bus;
     apple_virtual_bus dut (
         .clk(clk),
         .resetn(resetn),
+        .video_mode_50hz(video_mode_50hz),
         .res_n_in(res_n_in),
         .irq_n_in(irq_n_in),
         .nmi_n_in(nmi_n_in),
@@ -58,12 +60,14 @@ module tb_apple_virtual_bus;
     int phase_order = 0;
     int complete_cycles = 0;
     int strobe_count;
+    int fabric_clock_count = 0;
     logic [15:0] held_cycle_addr;
     logic        held_cycle_rw;
     logic        held_cycle_valid = 1'b0;
 
     // Check the public phase contract without reading internal state.
     always @(posedge clk) begin
+        fabric_clock_count++;
         if (resetn) begin
             strobe_count = ab_read.drive_en + ab_read.addr_en +
                            ab_read.sss_en + ab_read.serve_en +
@@ -115,6 +119,19 @@ module tb_apple_virtual_bus;
             end
         end
     end
+
+    task automatic check_cycle_cadence(input int expected_clocks);
+        int first_sss_clock;
+        int second_sss_clock;
+        @(posedge clk iff ab_read.sss_en);
+        first_sss_clock = fabric_clock_count;
+        @(posedge clk iff ab_read.sss_en);
+        second_sss_clock = fabric_clock_count;
+        check((second_sss_clock - first_sss_clock) == expected_clocks,
+              $sformatf("virtual bus cadence was %0d clocks, expected %0d",
+                        second_sss_clock - first_sss_clock,
+                        expected_clocks));
+    endtask
 
     task automatic submit_request(
         input logic [15:0] addr,
@@ -284,6 +301,11 @@ module tb_apple_virtual_bus;
         #1;
         check(resp_valid && resp_rdata == 8'h3C,
               "CPU request did not resume after DMA release");
+
+        video_mode_50hz <= 1'b0;
+        check_cycle_cadence(130);
+        video_mode_50hz <= 1'b1;
+        check_cycle_cadence(131);
 
         $display("APPLE VIRTUAL BUS PASS");
         $finish;

@@ -32,6 +32,9 @@ extern const uint8_t apple2e_cpu_rom[16384];
 #define VTW_RES_HOLD_MS        100U
 #define VTW_RES_SETTLE_MS      50U
 #define VTW_ONEE_RUN_POLL_LIMIT 64U
+/* Keep the private bus in reset long enough for the main-loop reset hook to
+ * discard any PS-side SmartPort command which overlapped the reset edge. */
+#define VTW_ONEE_COLD_REBOOT_HOLD_MS 100U
 
 typedef struct {
     uint16_t off;
@@ -132,9 +135,11 @@ static uint8_t g_announced_wait;
 static uint8_t g_announced_handoff_wait;
 static uint8_t g_onee_running;
 static uint8_t g_onee_pause_requested;
+static uint8_t g_onee_cold_reboot_active;
 static uint8_t g_onee_disk2_override_active;
 static uint8_t g_disk2_config_enabled;
 static XTime g_res_phase_start;
+static XTime g_onee_cold_reboot_start;
 
 static const char *vtw_state_name(vtw_state_t st)
 {
@@ -220,7 +225,11 @@ static vtw_ctrl_live_result_t vtw_apply_ctrl_live(void)
     uint32_t desired;
 
     if (g_onee_running != 0U) {
-        desired = vtw_onee_ctrl_value(1U, 0U);
+        /* A live option or speed reapply must not end an ordered reboot.
+         * CORE_RUN stays high as a supervisor-visible session echo, while
+         * virtual RES# itself keeps the 65C02 and all virtual cards reset. */
+        desired = vtw_onee_ctrl_value(
+            1U, g_onee_cold_reboot_active);
     } else if (g_state == VTW_ST_RUN) {
         desired = vtw_ctrl_value(1U, 1U, 0U);
     } else if (g_state == VTW_ST_RES_HOLD) {
@@ -312,7 +321,7 @@ static uint8_t vtw_shadow_force_cold_start(uint8_t require_onee_isolation)
         return 0U;
     }
 
-    /* Invalidate the autostart warm signature. In-session resets remain warm. */
+    /* Invalidate the autostart warm signature. */
     REG_WRITE(CARD_CTRL_VTW_SHADOW_ADDR_REG, 0x003F3U);
     REG_WRITE(CARD_CTRL_VTW_SHADOW_DATA_REG, 0x00U);  /* $03F3 */
     REG_WRITE(CARD_CTRL_VTW_SHADOW_DATA_REG, 0x00U);  /* $03F4 */
@@ -391,8 +400,10 @@ void vtw_service_init(uint32_t uart_base)
     g_state = VTW_ST_IDLE;
     g_onee_running = 0U;
     g_onee_pause_requested = 0U;
+    g_onee_cold_reboot_active = 0U;
     g_onee_disk2_override_active = 0U;
     g_disk2_config_enabled = 0U;
+    g_onee_cold_reboot_start = 0U;
     vtw_override_clear();
     REG_WRITE(CARD_CTRL_VTW_CTRL_REG, 0U);
     uart_puts(uart_base, "vtw: virtual TransWarp service ready\r\n");
@@ -700,6 +711,7 @@ uint8_t vtw_service_session_active(void)
 
 static void vtw_onee_shutdown(uint8_t clear_speed_override)
 {
+    g_onee_cold_reboot_active = 0U;
     /* Literal zero: do not leave a host option bit or core-run request set. */
     REG_WRITE(CARD_CTRL_VTW_CTRL_REG, 0U);
     if (g_onee_running != 0U) {
@@ -744,6 +756,11 @@ uint8_t vtw_service_onee_start(uint8_t disk2_config_enabled)
         vtw_service_onee_suspend();
         return 0U;
     }
+
+    /* The video-standard latch changes only under this private RES# hold.
+     * Patch the matching boot-menu delay before either RESET or CORE_RUN can
+     * release, so the first virtual boot cannot race an old PAL/NTSC byte. */
+    boot_menu_service_apply_video_rom_patch();
 
     /* Release virtual RESET while the core remains held, then release the
      * core. Disk II private acceleration stays forced off in both writes. */
@@ -826,6 +843,38 @@ uint8_t vtw_service_onee_paused(void)
     return (g_onee_running != 0U && g_onee_pause_requested != 0U) ? 1U : 0U;
 }
 
+uint8_t vtw_service_onee_cold_reboot(void)
+{
+    if (g_onee_cold_reboot_active != 0U) {
+        return 1U;
+    }
+    if (vtw_service_onee_running() == 0U ||
+        vtw_onee_isolation_confirmed() == 0U) {
+        return 0U;
+    }
+
+    /* Assert virtual RES# before touching the warm vector. Keeping CORE_RUN
+     * set makes this the same live ONE//e session to the supervisor; the
+     * reset input still holds the 65C02 and every virtual slot card. */
+    g_onee_cold_reboot_active = 1U;
+    if (vtw_apply_ctrl_live() != VTW_CTRL_LIVE_APPLIED ||
+        vtw_onee_isolation_confirmed() == 0U ||
+        vtw_shadow_force_cold_start(1U) == 0U) {
+        g_onee_cold_reboot_active = 0U;
+        (void)vtw_apply_ctrl_live();
+        return 0U;
+    }
+
+    /* RES# is still asserted and the pending standard is now active. Patch
+     * before the timed hold can expire and release the virtual machine. */
+    boot_menu_service_apply_video_rom_patch();
+
+    XTime_GetTime(&g_onee_cold_reboot_start);
+    uart_puts(g_uart_base,
+              "vtw: ONE//e cold reboot, virtual RESET held\r\n");
+    return 1U;
+}
+
 void vtw_service_onee_suspend(void)
 {
     vtw_onee_shutdown(0U);
@@ -852,6 +901,18 @@ void vtw_service_poll(void)
     if (g_onee_running != 0U) {
         if (vtw_service_onee_running() == 0U) {
             vtw_service_onee_suspend();
+        } else if (g_onee_cold_reboot_active != 0U &&
+                   vtw_ms_elapsed(g_onee_cold_reboot_start,
+                                  VTW_ONEE_COLD_REBOOT_HOLD_MS) != 0U) {
+            /* Clear the state first so the shared writer releases RES#.
+             * A failed readback leaves reset asserted and retries next poll. */
+            g_onee_cold_reboot_active = 0U;
+            if (vtw_apply_ctrl_live() != VTW_CTRL_LIVE_APPLIED) {
+                g_onee_cold_reboot_active = 1U;
+            } else {
+                uart_puts(g_uart_base,
+                          "vtw: ONE//e cold reboot released\r\n");
+            }
         }
         return;
     }

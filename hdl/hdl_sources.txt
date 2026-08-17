@@ -15,6 +15,7 @@ constraints/appletini_yarz.xdc
 apple/apple_top.sv
 apple/apple_bus_wrapper.sv
 apple/onee_mode_safety_guard.sv
+apple/onee_video_standard_ctrl.sv
 apple/apple_virtual_bus.sv
 apple/onee_motherboard_io.sv
 apple/onee_cold_slot_scan.sv

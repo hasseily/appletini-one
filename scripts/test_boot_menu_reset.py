@@ -437,9 +437,9 @@ def test_boot_rom_pal_patch_is_firmware_applied_before_release() -> None:
             "BM_REG_APPLE_TIMING  = 8'h06" in hdl and
             "BM_REG_C8_PATCH      = 8'h07" in hdl,
             "boot-menu PL must expose timing status and a C8 ROM patch register")
-    require(".apple_video_mode_valid(video_mode_50hz_valid_q)" in apple_top and
+    require(".apple_video_mode_valid(video_mode_50hz_valid)" in apple_top and
             ".apple_video_mode_50hz(video_mode_50hz)" in apple_top,
-            "apple_top must pass the measured PAL/NTSC mode into the boot-menu PL")
+            "apple_top must pass the active PAL/NTSC mode into the boot-menu PL")
     require("apple_timing_word = {\n"
             "            30'd0,\n"
             "            apple_video_mode_50hz,\n"

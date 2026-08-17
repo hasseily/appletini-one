@@ -60,16 +60,18 @@ def test_cold_start_is_direct_and_isolation_first() -> None:
     source = read(VTW_C)
     start = between(source,
                     "uint8_t vtw_service_onee_start(",
-                    "void vtw_service_onee_suspend(void)")
+                    "uint8_t vtw_service_onee_set_paused")
 
     isolate = start.find("vtw_onee_isolation_confirmed() == 0U")
     reset = start.find("vtw_onee_ctrl_value(0U, 1U)")
     cold = start.find("vtw_shadow_force_cold_start(1U)")
     rom = start.find("vtw_shadow_load_fixed_rom(0U, 1U)")
+    video_patch = start.find("boot_menu_service_apply_video_rom_patch();")
     reset_release = start.find("vtw_onee_ctrl_value(0U, 0U)")
     core_release = start.find("vtw_onee_ctrl_value(1U, 0U)")
-    require(0 <= isolate < reset < cold < rom < reset_release < core_release,
-            "ONE//e must confirm isolation, hold reset, cold-load, then release the core")
+    require(0 <= isolate < reset < cold < rom < video_patch <
+            reset_release < core_release,
+            "ONE//e must confirm isolation, hold reset, cold-load and patch, then release the core")
     require("g_state != VTW_ST_IDLE" in start and
             "CARD_CTRL_VTW_STATUS_ENABLE_EFF" in start and
             "CARD_CTRL_VTW_STATUS_CORE_RUN" in start,
@@ -91,7 +93,7 @@ def test_rom_and_cold_signature_helpers_are_shared() -> None:
     source = read(VTW_C)
     start = between(source,
                     "uint8_t vtw_service_onee_start(",
-                    "void vtw_service_onee_suspend(void)")
+                    "uint8_t vtw_service_onee_set_paused")
     host_load = between(source, "case VTW_ST_LOAD_ROM: {", "case VTW_ST_RUN:")
     rom_helper = between(source,
                          "static uint8_t vtw_shadow_load_fixed_rom",
@@ -121,7 +123,7 @@ def test_standalone_forces_synthetic_disk2_without_changing_options() -> None:
                    "static uint8_t vtw_onee_isolation_confirmed")
     start = between(source,
                     "uint8_t vtw_service_onee_start(",
-                    "void vtw_service_onee_suspend(void)")
+                    "uint8_t vtw_service_onee_set_paused")
 
     require("CARD_CTRL_VTW_CTRL_DISABLE_D2_ACCEL_BIT" in ctrl and
             "vtw_eff_mode()" in ctrl and "vtw_eff_divider()" in ctrl,
@@ -174,7 +176,18 @@ def test_onee_reset_uses_private_runtime_paths() -> None:
     main = read(MAIN_C)
     reset = between(main,
                     "static void ui_handle_apple_reset",
-                    "static ui_input_t ui_make_input")
+                    "static void ui_start_onee_cold_reboot")
+    cold_reboot = between(main,
+                          "static void ui_start_onee_cold_reboot",
+                          "static ui_input_t ui_make_input")
+    main_loop = main[main.index("int main(void)"):]
+    vtw = read(VTW_C)
+    reboot_service = between(vtw,
+                             "uint8_t vtw_service_onee_cold_reboot",
+                             "void vtw_service_onee_suspend")
+    vtw_poll = between(vtw,
+                       "void vtw_service_poll(void)",
+                       "void vtw_service_uart_status")
     uart = read(FRONTEND / "uart_control.c")
 
     require("config_menu_apply_boot_runtime(menu);" in reset and
@@ -183,6 +196,23 @@ def test_onee_reset_uses_private_runtime_paths() -> None:
             "        (void)uart_control_dma_bus_write(0xC029U, 0x01U);\n"
             "    }" in reset,
             "ONE//e reset must reapply config without issuing host IIgs DMA")
+    require("onee_input_service_take_cold_reboot_request()" in cold_reboot and
+            cold_reboot.find("vtw_service_onee_cold_reboot()") <
+            cold_reboot.find("onee_input_service_prepare_cold_reboot();") <
+            cold_reboot.find("smartport_service_apple_reset();") and
+            "config_menu_apply_boot_runtime(menu);" in cold_reboot and
+            main_loop.find("usb_hid_service_poll();") <
+            main_loop.find("ui_start_onee_cold_reboot(&ui, &config_menu);") <
+            main_loop.find("smartport_service_poll();"),
+            "Ctrl+Alt+Delete must hold reset before SmartPort cleanup and service")
+    require("g_onee_cold_reboot_active = 1U;" in reboot_service and
+            reboot_service.find("vtw_apply_ctrl_live()") <
+            reboot_service.find("vtw_shadow_force_cold_start(1U)") and
+            "XTime_GetTime(&g_onee_cold_reboot_start);" in reboot_service and
+            "VTW_ONEE_COLD_REBOOT_HOLD_MS" in vtw_poll and
+            "g_onee_cold_reboot_active = 0U;" in vtw_poll and
+            "vtw_apply_ctrl_live()" in vtw_poll,
+            "private cold reboot must assert RES#, invalidate warm start, then release")
     require("ONE//e remains running" in uart and
             "vtw_service_onee_running() != 0U" in uart,
             "UART host-intent commands must report a live ONE//e session truthfully")
@@ -317,7 +347,7 @@ def test_live_speed_controls_share_one_verified_writer() -> None:
                       "static uint8_t vtw_ms_elapsed")
 
     require("g_onee_running != 0U" in writer and
-            "vtw_onee_ctrl_value(1U, 0U)" in writer and
+            "g_onee_cold_reboot_active" in writer and
             "g_state == VTW_ST_RUN" in writer and
             "vtw_ctrl_value(1U, 1U, 0U)" in writer and
             "REG_WRITE(CARD_CTRL_VTW_CTRL_REG, desired);" in writer and
@@ -468,6 +498,7 @@ def run_native_speed_control_test() -> bool:
         uint8_t boot_menu_service_machine_mode(void);
         const char *boot_menu_service_machine_name(void);
         uint8_t boot_menu_service_slot7_handed_off(void);
+        void boot_menu_service_apply_video_rom_patch(void);
         void disk2_service_set_enabled(uint8_t enabled);
         void uart_puts(uint32_t base, const char *s);
 
@@ -495,6 +526,8 @@ def run_native_speed_control_test() -> bool:
         static uint32_t first_core_run_ctrl;
         static uint8_t machine_mode;
         static uint8_t disk2_enabled;
+        static uint32_t boot_patch_count;
+        static uint32_t boot_patch_reset_held_count;
         static XTime fake_time;
 
         static uint32_t reg_index(uint32_t address)
@@ -551,6 +584,15 @@ def run_native_speed_control_test() -> bool:
         uint8_t boot_menu_service_slot7_handed_off(void)
         {
             return 1U;
+        }
+
+        void boot_menu_service_apply_video_rom_patch(void)
+        {
+            ++boot_patch_count;
+            if ((registers[reg_index(CARD_CTRL_VTW_CTRL_REG)] &
+                 CARD_CTRL_VTW_CTRL_APPLE_RES_BIT) != 0U) {
+                ++boot_patch_reset_held_count;
+            }
         }
 
         void disk2_service_set_enabled(uint8_t enabled)
@@ -642,6 +684,8 @@ def run_native_speed_control_test() -> bool:
             first_core_run_ctrl = 0U;
             machine_mode = CARD_MACHINE_MODE_IIE;
             disk2_enabled = 0U;
+            boot_patch_count = 0U;
+            boot_patch_reset_held_count = 0U;
             fake_time = 0U;
             g_uart_base = 0U;
             g_intent_enabled = 0U;
@@ -662,9 +706,12 @@ def run_native_speed_control_test() -> bool:
             g_announced_wait = 0U;
             g_announced_handoff_wait = 0U;
             g_onee_running = 0U;
+            g_onee_pause_requested = 0U;
+            g_onee_cold_reboot_active = 0U;
             g_onee_disk2_override_active = 0U;
             g_disk2_config_enabled = 0U;
             g_res_phase_start = 0U;
+            g_onee_cold_reboot_start = 0U;
             vtw_service_init(0U);
             write_count = 0U;
             ctrl_read_count = 0U;
@@ -900,6 +947,8 @@ def run_native_speed_control_test() -> bool:
             start_write = write_count;
             if (!check(vtw_service_onee_start(0U) != 0U &&
                        first_core_run_ctrl != 0U &&
+                       boot_patch_count == 1U &&
+                       boot_patch_reset_held_count == 1U &&
                        ((first_core_run_ctrl >> CARD_CTRL_VTW_CTRL_SPEED_SHIFT) &
                         CARD_CTRL_VTW_CTRL_SPEED_MASK) ==
                            CARD_CTRL_VTW_SPEED_DIVIDED &&
@@ -952,7 +1001,7 @@ def run_native_speed_control_test() -> bool:
             if (!check(write_count == before && ctrl_value() == run_ctrl &&
                        ctrl_speed() == CARD_CTRL_VTW_SPEED_DIVIDED &&
                        ctrl_divider() == 19U && g_ovr_active != 0U,
-                       "ONE//e warm-reset polls changed the runtime rung")) {
+                       "ONE//e idle polls changed the runtime rung")) {
                 return 0;
             }
 
@@ -1053,6 +1102,90 @@ def run_native_speed_control_test() -> bool:
             return 1;
         }
 
+        static int test_onee_ordered_cold_reboot(void)
+        {
+            uint32_t before;
+            const XTime hold_ticks =
+                (XTime)VTW_ONEE_COLD_REBOOT_HOLD_MS *
+                (COUNTS_PER_SECOND / 1000U);
+
+            reset_fixture();
+            set_onee_isolated();
+            g_onee_running = 1U;
+            g_onee_pause_requested = 1U;
+            g_ovr_active = 1U;
+            g_ovr_mode = CARD_CTRL_VTW_SPEED_DIVIDED;
+            g_ovr_div = 19U;
+            registers[reg_index(CARD_CTRL_VTW_STATUS_REG)] =
+                CARD_CTRL_VTW_STATUS_ENABLE_EFF |
+                CARD_CTRL_VTW_STATUS_CORE_RUN;
+            before = write_count;
+
+            if (!check(vtw_service_onee_cold_reboot() != 0U &&
+                       g_onee_cold_reboot_active != 0U &&
+                       boot_patch_count == 1U &&
+                       boot_patch_reset_held_count == 1U &&
+                       write_count == before + 4U &&
+                       writes[before].address == CARD_CTRL_VTW_CTRL_REG &&
+                       (writes[before].value &
+                        (CARD_CTRL_VTW_CTRL_ENABLE_BIT |
+                         CARD_CTRL_VTW_CTRL_CORE_RUN_BIT |
+                         CARD_CTRL_VTW_CTRL_APPLE_RES_BIT |
+                         CARD_CTRL_VTW_CTRL_PAUSE_BIT |
+                         CARD_CTRL_VTW_CTRL_DISABLE_D2_ACCEL_BIT)) ==
+                        (CARD_CTRL_VTW_CTRL_ENABLE_BIT |
+                         CARD_CTRL_VTW_CTRL_CORE_RUN_BIT |
+                         CARD_CTRL_VTW_CTRL_APPLE_RES_BIT |
+                         CARD_CTRL_VTW_CTRL_PAUSE_BIT |
+                         CARD_CTRL_VTW_CTRL_DISABLE_D2_ACCEL_BIT) &&
+                       writes[before + 1U].address ==
+                           CARD_CTRL_VTW_SHADOW_ADDR_REG &&
+                       writes[before + 1U].value == 0x003F3U &&
+                       writes[before + 2U].address ==
+                           CARD_CTRL_VTW_SHADOW_DATA_REG &&
+                       writes[before + 2U].value == 0U &&
+                       writes[before + 3U].address ==
+                           CARD_CTRL_VTW_SHADOW_DATA_REG &&
+                       writes[before + 3U].value == 0U,
+                       "ONE//e reboot did not assert reset before cold signature clear")) {
+                return 0;
+            }
+            if (!check(vtw_service_onee_running() != 0U &&
+                       ctrl_speed() == CARD_CTRL_VTW_SPEED_DIVIDED &&
+                       ctrl_divider() == 19U && g_ovr_active != 0U,
+                       "ONE//e supervisor or live speed changed during reboot hold")) {
+                return 0;
+            }
+
+            before = write_count;
+            fake_time = hold_ticks - 1U;
+            vtw_service_poll();
+            if (!check(write_count == before &&
+                       (ctrl_value() & CARD_CTRL_VTW_CTRL_APPLE_RES_BIT) != 0U,
+                       "ONE//e cold reboot released RES# before its hold time")) {
+                return 0;
+            }
+
+            fake_time = hold_ticks;
+            vtw_service_poll();
+            if (!check(write_count == before + 1U &&
+                       g_onee_cold_reboot_active == 0U &&
+                       g_onee_running != 0U &&
+                       (ctrl_value() & CARD_CTRL_VTW_CTRL_APPLE_RES_BIT) == 0U &&
+                       (ctrl_value() & (CARD_CTRL_VTW_CTRL_ENABLE_BIT |
+                                        CARD_CTRL_VTW_CTRL_CORE_RUN_BIT |
+                                        CARD_CTRL_VTW_CTRL_PAUSE_BIT)) ==
+                                       (CARD_CTRL_VTW_CTRL_ENABLE_BIT |
+                                        CARD_CTRL_VTW_CTRL_CORE_RUN_BIT |
+                                        CARD_CTRL_VTW_CTRL_PAUSE_BIT) &&
+                       ctrl_speed() == CARD_CTRL_VTW_SPEED_DIVIDED &&
+                       ctrl_divider() == 19U && g_ovr_active != 0U,
+                       "ONE//e cold reboot release lost session, pause, or speed state")) {
+                return 0;
+            }
+            return 1;
+        }
+
         int main(void)
         {
             if (!test_host_live_controls() ||
@@ -1060,7 +1193,8 @@ def run_native_speed_control_test() -> bool:
                 !test_failed_live_writes_and_pending_choice() ||
                 !test_menu_preselect_context_boundary() ||
                 !test_onee_configured_and_pending_speed_boundaries() ||
-                !test_disk2_session_override_tracks_latest_config()) {
+                !test_disk2_session_override_tracks_latest_config() ||
+                !test_onee_ordered_cold_reboot()) {
                 return 1;
             }
             puts("ONEE VTW LIVE CONTROL NATIVE PASS");

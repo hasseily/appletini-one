@@ -91,8 +91,8 @@ def test_autosave_remains_working_config() -> None:
 def test_clean_config_schema_contract() -> None:
     source = read(CONFIG_MENU_C)
 
-    require("#define APPLETINI_CFG_VERSION 115U" in source,
-            "the global ONE//e persistence key must advance the config schema")
+    require("#define APPLETINI_CFG_VERSION 116U" in source,
+            "the global ONE//e video key must advance the config schema")
     require("config_menu_parse_config_line(line, &value)" in source and
             "hash = strchr(line, '#')" in source and
             "config_menu_ascii_lower_in_place(key)" in source,

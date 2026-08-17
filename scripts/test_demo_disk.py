@@ -115,9 +115,23 @@ def static_checks() -> None:
                   "DEVNUM = $BF30", "count_fail", "cmp #image_count"):
         require(token in viewer,
                 f"a2imgview must contain {token!r} (prefix + fail-out)")
-    require("sta $407C" in viewer and "sta $087C" in viewer and
+    require("A2LI_HOLD  = $FF" in viewer and
+            "sta $407C" in viewer and "sta $087C" in viewer and
             "$02E4" not in viewer,
-            "a2imgview must disarm the A2Li holes, not the old $02E0 signal")
+            "a2imgview must use the A2Li holes for its load transaction")
+    transaction = viewer.split("show_image:", 1)[1].split(
+        "; ---- open ----", 1)[0]
+    for sig_addr in ("$4078", "$4079", "$407A", "$407B",
+                     "$0878", "$0879", "$087A", "$087B"):
+        require(f"sta {sig_addr}" in transaction,
+                f"first-load transaction must stamp {sig_addr}")
+    require(transaction.index("sta $407B") <
+            transaction.index("lda #A2LI_HOLD") <
+            transaction.index("sta $407C") and
+            transaction.index("sta $087B") <
+            transaction.index("lda #A2LI_HOLD") <
+            transaction.index("sta $087C"),
+            "both A2Li signatures must be complete before either $FF marker")
     require("video7_select_mix:" in viewer and
             "video7_select_normal:" in viewer and
             "video7_modes,x" in viewer and
@@ -131,21 +145,37 @@ def static_checks() -> None:
             "MIX must clock !80COL=1 on the first $C05F edge and 0 on the "
             "second (AppleWin latch F2,F1), committing on the fifth toggle")
 
-    # Keep the visible paint-in, but never expose a half-loaded extended
-    # mode. HGRi/DHRi stage page 2 and write the mode byte after close;
-    # SHR copies its control block early but writes the magic last.
+    # Hold the last published frame and never expose a half-loaded extended
+    # mode. HGRi/DHRi stage page 2 with $FF and commit after close; SHR ends
+    # the unused legacy transaction when it takes over.
     require("prepare_hgri:" in viewer and viewer.count("jsr select_hgr") >= 2 and
             "prepare_dhgri:" in viewer and viewer.count("jsr select_dhgr") >= 2,
             "a2imgview must select each legacy mode before loading and restore it after MLI")
     require("copy_paged_main_disarmed:" in viewer and
-            "lda $607C" in viewer and "sta paged_mode" in viewer,
-            "a2imgview must stage legacy page 2 with A2Li disarmed")
+            "lda $607C" in viewer and "sta paged_mode" in viewer and
+            "lda #A2LI_HOLD" in viewer,
+            "a2imgview must stage legacy page 2 inside the load transaction")
+    dhgri_load = viewer.split("load_dhgri:", 1)[1].split("load_dhgr:", 1)[0]
+    require("lda #$60" in dhgri_load and
+            "jsr copy_paged_aux_from_6000" in dhgri_load and
+            "lda #$40" not in dhgri_load,
+            "DHGRi AUX page 2 must stage at $6000 without touching main $407C")
+    aux_page_copy = viewer.split("copy_paged_aux_from_6000:", 1)[1].split(
+        "; ---- MAIN $6000-$7FFF -> MAIN", 1)[0]
+    require("lda #$60" in aux_page_copy and "sta src_ptr+1" in aux_page_copy and
+            "lda #$40" in aux_page_copy and "sta dst_ptr+1" in aux_page_copy and
+            "sta RAMRDOFF" in aux_page_copy and "sta RAMWRTON" in aux_page_copy,
+            "page-2 AUX helper must copy MAIN $6000 to AUX $4000")
     paged_copy = viewer.split("copy_paged_main_disarmed:", 1)[1].split(
         "; ---- data ----", 1)[0]
     require("sta STORE80OFF" in paged_copy and
             paged_copy.index("sta RAMRDOFF") < paged_copy.index("lda $607C") and
             paged_copy.index("sta RAMWRTOFF") < paged_copy.index("lda $607C"),
             "legacy page-2 copy must force main reads and writes")
+    hold_store = paged_copy.index("sta $607C")
+    require(paged_copy.index("lda #0", hold_store) <
+            paged_copy.index("sta src_ptr", hold_store),
+            "page-2 copy must restore a zero pointer low byte after storing $FF")
     require(viewer.count("sta $407C               ; final write arms") == 2,
             "HGRi and DHRi must arm A2Li only after their file closes")
     hgr_show = viewer.split("show_hgr:", 1)[1].split("fail_load:", 1)[0]
@@ -153,24 +183,37 @@ def static_checks() -> None:
     require(hgr_show.index("jsr select_hgr") < hgr_show.index("sta $407C") and
             dhgr_show.index("jsr select_dhgr") < dhgr_show.index("sta $407C"),
             "A2Li mode must be the final write after the restored base mode")
+    require("sta $087C               ; close the unused lores transaction" in
+            hgr_show and
+            "sta $087C               ; close the unused lores transaction" in
+            dhgr_show,
+            "every successful hires load must close the other A2Li hole")
     for label in ("select_hgr:", "select_dhgr:"):
         routine = viewer.split(label, 1)[1].split("rts", 1)[0]
         require("sta RAMRDOFF" in routine and "sta RAMWRTOFF" in routine,
                 f"{label[:-1]} must restore main banking before A2Li arm")
-    disarm = viewer.split("show_image:", 1)[1].split("; ---- open ----", 1)[0]
-    require(disarm.index("sta RAMRDOFF") < disarm.index("sta $407C") and
-            disarm.index("sta RAMWRTOFF") < disarm.index("sta $407C"),
-            "A2Li disarm must target main memory")
+    require(transaction.index("sta RAMRDOFF") < transaction.index("sta $407C") and
+            transaction.index("sta RAMWRTOFF") < transaction.index("sta $407C"),
+            "A2Li transaction must target main memory")
     shr = viewer.split("load_shr:", 1)[1].split("wait_key:", 1)[0]
     require(shr.index("jsr read_chunk") < shr.index("sta NEWVIDEO") <
             shr.index("jsr copy_aux_range"),
             "SHR must be selected after staging and before the visible AUX copy")
+    require(shr.index("sta NEWVIDEO") < shr.index("sta $407C") <
+            shr.index("jsr copy_aux_range") and "sta $087C" in shr,
+            "SHR takeover must close both legacy load transactions")
     require("sta shr_magic,x" in shr and "sta $9DFC,x" in shr and
             shr.rindex("sta $9DFC,x") > shr.index("jsr mli_close"),
             "SHR extension magic must be restored only after close")
     require("No C029 edge here" in shr and
             "lda #$01\n    sta NEWVIDEO\n    lda #$C1\n    sta NEWVIDEO" not in shr,
             "SHR must stay active after magic; the uncached renderer redraws it")
+    quit_path = viewer.split("quit:", 1)[1].split("; ---- Prefix", 1)[0]
+    require("sta STORE80OFF" in quit_path and "sta RAMRDOFF" in quit_path and
+            "sta RAMWRTOFF" in quit_path and "sta $407C" in quit_path and
+            "sta $087C" in quit_path and
+            quit_path.index("sta $087C") < quit_path.index("bit TEXTON"),
+            "all-failed exit must close both transactions before ProDOS text")
     aux_copy = viewer.split("copy_aux_range:", 1)[1].split("rts", 1)[0]
     require(aux_copy.index("sta STORE80OFF") < aux_copy.index("sta RAMRDOFF") <
             aux_copy.index("sta RAMWRTON"),
@@ -327,22 +370,30 @@ def assembled_viewer_mode_checks(binary: Path, symbol_list: Path) -> None:
                          line)
         if match:
             symbols[match.group(1)] = int(match.group(2), 16)
-    for name in ("select_hgr", "select_dhgr", "cur_video7"):
+    for name in ("select_hgr", "select_dhgr", "cur_video7",
+                 "copy_paged_aux_from_6000", "copy_paged_main_disarmed",
+                 "paged_mode"):
         require(name in symbols, f"assembled viewer has no {name} symbol")
 
     class EnhancedIIeMemory:
         def __init__(self) -> None:
             self.data = bytearray(65536)
+            self.aux = bytearray(65536)
             self.text = True
             self.hires = False
             self.col80 = False
             self.dhires = False
+            self.ramwrt = False
 
         def _access(self, addr: int, write: bool) -> None:
             if write and addr == 0xC00C:
                 self.col80 = False
             elif write and addr == 0xC00D:
                 self.col80 = True
+            elif write and addr == 0xC004:
+                self.ramwrt = False
+            elif write and addr == 0xC005:
+                self.ramwrt = True
             elif addr == 0xC050:
                 self.text = False
             elif addr == 0xC051:
@@ -367,7 +418,10 @@ def assembled_viewer_mode_checks(binary: Path, symbol_list: Path) -> None:
                 self.data[key] = value
                 return
             self._access(key, True)
-            self.data[key] = value
+            if self.ramwrt and 0x0200 <= key < 0xC000:
+                self.aux[key] = value
+            else:
+                self.data[key] = value
 
     image = binary.read_bytes()
 
@@ -402,6 +456,55 @@ def assembled_viewer_mode_checks(binary: Path, symbol_list: Path) -> None:
     require(hgr_i == "HGRi" and dhgr_i == "DHGRi" and hgr_i != dhgr_i,
             "assembled viewer must leave HGRi and DHGRi in distinct modes")
     print(f"PASS assembled viewer modes: {hgr_i} != {dhgr_i}")
+
+    # Execute the real page-2 copy. This catches the load-hold marker's A=$FF
+    # leaking into src_ptr/dst_ptr: the former code relied on A already being
+    # zero when it initialized both pointer low bytes.
+    memory = EnhancedIIeMemory()
+    memory.data[0x2000:0x2000 + len(image)] = image
+    memory.data[0x1000:0x1800] = memory.data[0x2000:0x2800]
+    staged = bytearray(((i * 29 + 7) & 0xFF) for i in range(0x2000))
+    staged[0x78:0x7C] = bytes((0xC1, 0xB2, 0xCC, 0xE9))
+    staged[0x7C] = 1
+    memory.data[0x6000:0x8000] = staged
+    mpu = MPU(memory=memory, pc=symbols["copy_paged_main_disarmed"])
+    for _ in range(200000):
+        if memory.data[mpu.pc] == 0x60:      # outer RTS
+            break
+        mpu.step()
+    else:
+        raise TestFailure("assembled page-2 copy did not return")
+
+    expected = bytearray(staged)
+    expected[0x7C] = 0xFF
+    require(memory.data[0x4000:0x6000] == expected,
+            "assembled page-2 copy must stay page-aligned and preserve all bytes")
+    require(memory.data[symbols["paged_mode"]] == 1 and
+            memory.data[0x607C] == 0xFF,
+            "assembled page-2 copy must save mode 1 and stage $FF until commit")
+    print("PASS assembled A2Li $FF page-2 transaction copy")
+
+    # Execute the matching page-2 AUX staging helper. MAIN $407C must remain
+    # the live $FF marker while bytes move from spare MAIN $6000 to AUX $4000.
+    memory = EnhancedIIeMemory()
+    memory.data[0x2000:0x2000 + len(image)] = image
+    memory.data[0x1000:0x1800] = memory.data[0x2000:0x2800]
+    staged = bytes(((i * 17 + 3) & 0xFF) for i in range(0x2000))
+    memory.data[0x6000:0x8000] = staged
+    memory.data[0x4078:0x407D] = bytes((0xC1, 0xB2, 0xCC, 0xE9, 0xFF))
+    mpu = MPU(memory=memory, pc=symbols["copy_paged_aux_from_6000"])
+    for _ in range(200000):
+        if memory.data[mpu.pc] == 0x60:
+            break
+        mpu.step()
+    else:
+        raise TestFailure("assembled page-2 AUX copy did not return")
+    require(memory.aux[0x4000:0x6000] == staged,
+            "assembled AUX page-2 copy must map MAIN $6000 to AUX $4000")
+    require(memory.data[0x4078:0x407D] ==
+            bytes((0xC1, 0xB2, 0xCC, 0xE9, 0xFF)),
+            "assembled AUX page-2 copy must preserve the main A2Li hold")
+    print("PASS assembled DHGRi AUX page-2 staging copy")
 
 
 def assembly_checks() -> None:

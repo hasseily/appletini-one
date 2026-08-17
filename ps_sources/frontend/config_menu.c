@@ -2706,7 +2706,8 @@ static uint8_t config_menu_ethernet_card_access(config_menu_t *menu)
         config_menu_set_status(menu, 1U, "ENABLE UTHERNET II FIRST");
         return 0U;
     }
-    if (menu->usb_owned != 0U) {
+    if (menu->usb_owned != 0U &&
+        config_menu_onee_fixed_bindings_active(menu) == 0U) {
         config_menu_set_status(menu, 1U, "CARD ACCESS ONLY FROM BOOT MENU");
         return 0U;
     }

@@ -576,6 +576,17 @@ set a2_bus_in_ports [get_ports {a2fpga_a[*] a2fpga_d[*] a2fpga_rdwr_n \
     a2fpga_rdy_n a2fpga_dma_n}]
 set_max_delay -datapath_only 5.0 -from $a2_bus_in_ports
 
+# ONE//e menu mute crosses from the 133 MHz fabric into the unrelated external
+# audio BCLK through a 2-FF level synchronizer. Bound the route to the first
+# synchronizer flop without imposing a phase relation between those clocks.
+# Keeping this narrow exception avoids hiding any other audio-domain path.
+set_max_delay -datapath_only 10.0 \
+    -from [get_clocks clk_out1_zynq_ps_bd_clk_wiz_1_0] \
+    -to [get_pins -of_objects \
+        [get_cells -hierarchical -filter \
+            {NAME =~ *onee_menu_audio_mute_cdc_i/sync_meta_reg}] \
+        -filter {REF_PIN_NAME == D}]
+
 # The level-shifter direction outputs race the pad tristate enables at the
 # board transceivers by design; bound them so that race margin is
 # placement-independent as well. (Plain set_max_delay: -datapath_only is

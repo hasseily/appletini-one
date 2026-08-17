@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "build" / "onee_top_io_sim"
 APPLE_TOP = ROOT / "hdl" / "apple" / "apple_top.sv"
 BOARD_TOP = ROOT / "hdl" / "appletini_yarz_top.sv"
+XDC = ROOT / "hdl" / "constraints" / "appletini_yarz.xdc"
 SOURCES = ROOT / "hdl" / "hdl_sources.txt"
 RESET_RTL = ROOT / "hdl" / "apple" / "onee_warm_reset_ctrl.sv"
 RESET_BENCH = ROOT / "hdl" / "sim" / "tb_onee_warm_reset_ctrl.sv"
@@ -55,6 +56,7 @@ def instance_text(source: str, start: str) -> str:
 def static_contract_checks() -> None:
     apple = APPLE_TOP.read_text(encoding="utf-8")
     board = BOARD_TOP.read_text(encoding="utf-8")
+    xdc = XDC.read_text(encoding="utf-8")
     sources = SOURCES.read_text(encoding="utf-8")
 
     for name in (
@@ -122,9 +124,9 @@ def static_contract_checks() -> None:
     require(".onee_audio_mono(onee_audio_mono)" in board,
             "board top must receive ONE//e speaker audio")
     require(
-        "assign onee_menu_audio_mute = onee_enable_effective && vtw_ctrl_q[8];"
-        in apple,
-        "ONE//e menu pause must drive a stand-alone-only audio mute",
+        "onee_menu_audio_mute <=\n"
+        "                onee_enable_effective && vtw_ctrl_q[8];" in apple,
+        "ONE//e menu pause must drive a registered stand-alone-only audio mute",
     )
     require(".onee_menu_audio_mute(onee_menu_audio_mute)" in board,
             "board top must receive the ONE//e menu mute")
@@ -147,6 +149,11 @@ def static_contract_checks() -> None:
             "ONE//e menu pause must mute S/PDIF emulation audio")
     require(".mute         (1'b0)" in chime,
             "the menu chime must remain audible while emulation is muted")
+    require(
+        "set_max_delay -datapath_only 10.0" in xdc and
+        "onee_menu_audio_mute_cdc_i/sync_meta_reg" in xdc,
+        "the ONE//e mute CDC must have a narrow first-stage route bound",
+    )
     require(
         "assign card_audio_l = sat_add16(mockingboard_audio_l, disk2_audio_l);"
         in board and

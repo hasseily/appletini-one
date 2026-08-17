@@ -1779,8 +1779,16 @@ module apple_top(
          (!physical_bus_isolate && vtw_machine_ok_q));
     // The config menu uses the vTW pause bit to hold a live ONE//e machine.
     // Export a mute only for that stand-alone case; a normal card-mode vTW
-    // pause must not silence audio from the physical Apple.
-    assign onee_menu_audio_mute = onee_enable_effective && vtw_ctrl_q[8];
+    // pause must not silence audio from the physical Apple. Register this
+    // boundary so the safety/run fanout cannot enter either audio transmitter
+    // data path. One fabric-clock of mute latency is far below one PCM frame.
+    always_ff @(posedge clk) begin
+        if (!rstn[1])
+            onee_menu_audio_mute <= 1'b0;
+        else
+            onee_menu_audio_mute <=
+                onee_enable_effective && vtw_ctrl_q[8];
+    end
     wire vtw_host_is_iiplus_eff =
         !onee_enable_effective && vtw_host_is_iiplus_q;
     wire vtw_core_run_eff = vtw_enable_eff && vtw_ctrl_q[1];

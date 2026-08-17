@@ -20,7 +20,13 @@ module tb_onee_joined_bus;
     logic [31:0] vtw_ctrl_q = 32'h0000_0000;
     wire vtw_enable = vtw_ctrl_q[0];
     wire core_run = vtw_ctrl_q[1];
-    wire onee_menu_audio_mute = onee_enabled && vtw_ctrl_q[8];
+    logic onee_menu_audio_mute = 1'b0;
+    always_ff @(posedge clk) begin
+        if (!resetn)
+            onee_menu_audio_mute <= 1'b0;
+        else
+            onee_menu_audio_mute <= onee_enabled && vtw_ctrl_q[8];
+    end
 
     globals::AppleBus_read  ab_read;
     globals::AppleBus_read  softswitch_ab_read;

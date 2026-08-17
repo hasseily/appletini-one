@@ -181,9 +181,9 @@ def static_checks() -> None:
         "the virtual Apple reset path",
     )
     require(
-        "assign onee_menu_audio_mute = onee_enable_effective && vtw_ctrl_q[8];"
-        in top,
-        "ONE//e pause must export an effective-mode-only emulation audio mute",
+        "onee_menu_audio_mute <=\n"
+        "                onee_enable_effective && vtw_ctrl_q[8];" in top,
+        "ONE//e pause must register an effective-mode-only emulation audio mute",
     )
 
 

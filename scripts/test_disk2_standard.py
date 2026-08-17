@@ -604,8 +604,8 @@ def test_empty_or_disabled_disk2_track_requests_stay_quiet() -> None:
         re.S)
     require(slot_control is not None and
             "if (slot == 6U)" in slot_control.group(0) and
-            "disk2_service_set_enabled(enable);" in slot_control.group(0),
-            "Slot 6 config changes must enable or quiesce the Disk II track loader")
+            "vtw_service_set_disk2_config_enabled(enable);" in slot_control.group(0),
+            "Slot 6 config changes must flow through the effective Disk II owner")
 
 
 def test_pl_empty_drive_returns_changing_latch_noise() -> None:

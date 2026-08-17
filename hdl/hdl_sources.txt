@@ -43,7 +43,6 @@ apple/disk2_sound_player.sv
 apple/mouse_card.sv
 apple/applicard_card.sv
 apple/uthernet2_card.sv
-apple/uthernet2_host_fifo.sv
 apple/ssc_card.sv
 apple/supersprite_card.sv
 apple/linear_text_overlay_card.sv

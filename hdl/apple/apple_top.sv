@@ -428,10 +428,6 @@ module apple_top(
     // ONE//e video standard: write bit 0 (0 NTSC, 1 PAL); read bit 0 desired,
     // bit 1 active. Active changes only while stopped or private RES# is low.
     localparam logic [7:0] CARD_CTRL_REG_ONEE_VIDEO     = 8'hA2;
-    localparam logic [7:0] CARD_CTRL_REG_ETH_FIFO_ADDR  = 8'hA3;
-    localparam logic [7:0] CARD_CTRL_REG_ETH_FIFO_CTRL  = 8'hA4;
-    localparam logic [7:0] CARD_CTRL_REG_ETH_FIFO_DATA  = 8'hA5;
-    localparam logic [7:0] CARD_CTRL_REG_ETH_FIFO_STATUS = 8'hA6;
     localparam logic [7:0] CARD_CTRL_REG_VTW_WR_CHECK = 8'h36;
     localparam logic [7:0] CARD_CTRL_REG_VTW_WR_ADDR  = 8'h37;
     localparam logic [7:0] CARD_CTRL_REG_VTW_C000_CTX = 8'h38;
@@ -570,13 +566,6 @@ module apple_top(
     logic        eth_host_done;
     logic        eth_host_error;
     logic [7:0]  eth_host_rdata;
-    logic        eth_fifo_host_req;
-    logic        eth_fifo_host_write;
-    logic [15:0] eth_fifo_host_addr;
-    logic [7:0]  eth_fifo_host_wdata;
-    logic        eth_fifo_busy;
-    logic [31:0] eth_fifo_data_rdata;
-    logic [31:0] eth_fifo_status;
     logic        ssc_tx_pop_pulse = 1'b0;
     logic        ssc_tx_clear_pulse = 1'b0;
     logic        ssc_tx_ovf_clear_pulse = 1'b0;
@@ -1366,42 +1355,6 @@ module apple_top(
         .ab_write(applicard_ab_write)
     );
 
-    wire eth_fifo_addr_we = as_client.awvalid &&
-        (as_common.awaddr == CARD_CTRL_REG_ETH_FIFO_ADDR) &&
-        (as_common.wstrb != 4'b0000);
-    wire eth_fifo_control_we = as_client.awvalid &&
-        (as_common.awaddr == CARD_CTRL_REG_ETH_FIFO_CTRL) &&
-        (as_common.wstrb != 4'b0000);
-    wire eth_fifo_data_we = as_client.awvalid &&
-        (as_common.awaddr == CARD_CTRL_REG_ETH_FIFO_DATA) &&
-        (as_common.wstrb != 4'b0000);
-    wire eth_fifo_data_re = as_client.awvalid &&
-        (as_common.araddr == CARD_CTRL_REG_ETH_FIFO_DATA);
-
-    uthernet2_host_fifo uthernet2_host_fifo_i (
-        .clk(clk),
-        .rstn(rstn[3]),
-        .addr_we(eth_fifo_addr_we),
-        .addr_wdata(as_common.wdata[15:0]),
-        .control_we(eth_fifo_control_we),
-        .control_wdata(as_common.wdata),
-        .data_we(eth_fifo_data_we),
-        .data_wdata(as_common.wdata),
-        .data_re(eth_fifo_data_re),
-        .data_rdata(eth_fifo_data_rdata),
-        .status(eth_fifo_status),
-        .direct_busy(eth_host_busy_q),
-        .host_ready(eth_host_ready),
-        .host_done(eth_host_done),
-        .host_error(eth_host_error),
-        .host_rdata(eth_host_rdata),
-        .host_req(eth_fifo_host_req),
-        .host_write(eth_fifo_host_write),
-        .host_addr(eth_fifo_host_addr),
-        .host_wdata(eth_fifo_host_wdata),
-        .busy(eth_fifo_busy)
-    );
-
     uthernet2_card uthernet2_card_i (
         .clk(clk),
         .rstn(rstn[2]),
@@ -1418,10 +1371,10 @@ module apple_top(
         .eth_cs_n(eth_cs_n),
         .eth_rst_n(eth_rst_n),
         .eth_int_n(eth_int_n),
-        .host_req(eth_fifo_host_req || eth_host_req_pulse),
-        .host_write(eth_fifo_host_req ? eth_fifo_host_write : eth_host_write_q),
-        .host_addr(eth_fifo_host_req ? eth_fifo_host_addr : eth_host_addr_q),
-        .host_wdata(eth_fifo_host_req ? eth_fifo_host_wdata : eth_host_wdata_q),
+        .host_req(eth_host_req_pulse),
+        .host_write(eth_host_write_q),
+        .host_addr(eth_host_addr_q),
+        .host_wdata(eth_host_wdata_q),
         .host_ready(eth_host_ready),
         .host_done(eth_host_done),
         .host_error(eth_host_error),
@@ -2190,7 +2143,7 @@ module apple_top(
                 vtw_sync_done_q <= 1'b1;
             end
 
-            if (eth_host_done && eth_host_busy_q) begin
+            if (eth_host_done) begin
                 eth_host_rdata_q <= eth_host_rdata;
                 eth_host_busy_q <= 1'b0;
                 eth_host_done_q <= 1'b1;
@@ -2282,7 +2235,7 @@ module apple_top(
                              * so done always arrives; only a GO while a
                              * previous op is still in flight is an
                              * error. */
-                            if (!eth_host_busy_q && !eth_fifo_busy) begin
+                            if (!eth_host_busy_q) begin
                                 eth_host_write_q <=
                                     ((as_common.wdata & CARD_CTRL_ETH_CMD_WRITE) !=
                                      32'h0000_0000);
@@ -2482,10 +2435,6 @@ module apple_top(
                     eth_host_busy_q,
                     eth_host_ready
                 };
-                CARD_CTRL_REG_ETH_FIFO_ADDR:       as_client_rdata_q <= 32'h0000_0000;
-                CARD_CTRL_REG_ETH_FIFO_CTRL:       as_client_rdata_q <= 32'h0000_0000;
-                CARD_CTRL_REG_ETH_FIFO_DATA:       as_client_rdata_q <= eth_fifo_data_rdata;
-                CARD_CTRL_REG_ETH_FIFO_STATUS:     as_client_rdata_q <= eth_fifo_status;
                 CARD_CTRL_REG_SSC_STATUS:          as_client_rdata_q <= {
                     14'h0000, card_ssc_enable, ssc_tx_overflow,
                     4'h0, ssc_tx_count

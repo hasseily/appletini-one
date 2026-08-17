@@ -13,15 +13,13 @@
 #define FTP_CONTROL_PORT         21U
 #define FTP_PASSIVE_PORT         50000U
 #define FTP_CONTROL_BUFFER_LEN   512U
-#define FTP_DATA_BUFFER_LEN      4096U
-#define FTP_SEND_CHUNK_LEN       2048U
+#define FTP_DATA_BUFFER_LEN      1024U
 #define FTP_PATH_LEN             256U
 #define FTP_FAT_PATH_LEN         (FTP_PATH_LEN + 3U)
 
 #define W5100_REG_RMSR           0x001AU
 #define W5100_REG_TMSR           0x001BU
 #define W5100_SOCKET_MEM_4_2_1_1 0x06U
-#define W5100_SOCKET_MEM_2_4_1_1 0x09U
 
 #define W5100_SN_MR              0x00U
 #define W5100_SN_CR              0x01U
@@ -53,11 +51,11 @@
 #define W5100_SR_CLOSE_WAIT      0x1CU
 
 #define W5100_TX_BASE_S0         0x4000U
-#define W5100_TX_BASE_S1         0x4800U
+#define W5100_TX_BASE_S1         0x5000U
 #define W5100_RX_BASE_S0         0x6000U
-#define W5100_RX_BASE_S1         0x6800U
-#define W5100_MASK_S0            0x07FFU
-#define W5100_MASK_S1            0x0FFFU
+#define W5100_RX_BASE_S1         0x7000U
+#define W5100_MASK_S0            0x0FFFU
+#define W5100_MASK_S1            0x07FFU
 
 typedef enum {
     FTP_TRANSFER_NONE = 0,
@@ -93,7 +91,6 @@ typedef struct {
     char control_out[FTP_CONTROL_BUFFER_LEN];
     uint16_t control_out_len;
     uint8_t data_buffer[FTP_DATA_BUFFER_LEN];
-    uint16_t data_buffer_offset;
     uint16_t data_buffer_len;
 } ftp_sd_state_t;
 
@@ -442,7 +439,6 @@ static void ftp_abort_transfer(void)
     g_ftp.data_listening = 0U;
     g_ftp.data_connected = 0U;
     g_ftp.data_tx_pending = 0U;
-    g_ftp.data_buffer_offset = 0U;
     g_ftp.data_buffer_len = 0U;
     g_ftp.transfer_eof = 0U;
     g_ftp.transfer = FTP_TRANSFER_NONE;
@@ -463,7 +459,6 @@ static void ftp_finish_transfer(uint8_t success)
     g_ftp.data_listening = 0U;
     g_ftp.data_connected = 0U;
     g_ftp.data_tx_pending = 0U;
-    g_ftp.data_buffer_offset = 0U;
     g_ftp.data_buffer_len = 0U;
     g_ftp.transfer_eof = 0U;
     g_ftp.transfer = FTP_TRANSFER_NONE;
@@ -1020,25 +1015,15 @@ static void ftp_send_transfer_poll(void)
         return;
     }
     if (g_ftp.data_buffer_len != 0U) {
-        const uint16_t chunk =
-            g_ftp.data_buffer_len > FTP_SEND_CHUNK_LEN ?
-                FTP_SEND_CHUNK_LEN : g_ftp.data_buffer_len;
         const int sent = socket_send_start(FTP_DATA_SOCKET,
-                                           g_ftp.data_buffer +
-                                               g_ftp.data_buffer_offset,
-                                           chunk,
+                                           g_ftp.data_buffer,
+                                           g_ftp.data_buffer_len,
                                            &g_ftp.data_tx_pending);
 
         if (sent < 0) {
             ftp_finish_transfer(0U);
         } else if (sent > 0) {
-            g_ftp.data_buffer_offset =
-                (uint16_t)(g_ftp.data_buffer_offset + chunk);
-            g_ftp.data_buffer_len =
-                (uint16_t)(g_ftp.data_buffer_len - chunk);
-            if (g_ftp.data_buffer_len == 0U) {
-                g_ftp.data_buffer_offset = 0U;
-            }
+            g_ftp.data_buffer_len = 0U;
         }
         return;
     }
@@ -1056,8 +1041,18 @@ static void ftp_send_transfer_poll(void)
             ftp_finish_transfer(1U);
             return;
         }
-        g_ftp.data_buffer_offset = 0U;
         g_ftp.data_buffer_len = (uint16_t)bytes_read;
+        {
+            const int sent = socket_send_start(FTP_DATA_SOCKET,
+                                               g_ftp.data_buffer,
+                                               g_ftp.data_buffer_len,
+                                               &g_ftp.data_tx_pending);
+            if (sent < 0) {
+                ftp_finish_transfer(0U);
+            } else if (sent > 0) {
+                g_ftp.data_buffer_len = 0U;
+            }
+        }
         return;
     }
 
@@ -1083,8 +1078,18 @@ static void ftp_send_transfer_poll(void)
             ftp_finish_transfer(0U);
             return;
         }
-        g_ftp.data_buffer_offset = 0U;
         g_ftp.data_buffer_len = (uint16_t)len;
+        {
+            const int sent = socket_send_start(FTP_DATA_SOCKET,
+                                               g_ftp.data_buffer,
+                                               g_ftp.data_buffer_len,
+                                               &g_ftp.data_tx_pending);
+            if (sent < 0) {
+                ftp_finish_transfer(0U);
+            } else if (sent > 0) {
+                g_ftp.data_buffer_len = 0U;
+            }
+        }
     }
 }
 
@@ -1160,13 +1165,9 @@ int ftp_sd_service_start(char *detail, size_t detail_len)
     for (uint8_t socket = 0U; socket < 4U; ++socket) {
         socket_close(socket);
     }
-    if (uthernet2_write_reg(W5100_REG_RMSR, W5100_SOCKET_MEM_2_4_1_1) != 0 ||
-        uthernet2_write_reg(W5100_REG_TMSR, W5100_SOCKET_MEM_2_4_1_1) != 0 ||
+    if (uthernet2_write_reg(W5100_REG_RMSR, W5100_SOCKET_MEM_4_2_1_1) != 0 ||
+        uthernet2_write_reg(W5100_REG_TMSR, W5100_SOCKET_MEM_4_2_1_1) != 0 ||
         socket_listen(FTP_CONTROL_SOCKET, FTP_CONTROL_PORT) != 0) {
-        (void)uthernet2_write_reg(W5100_REG_RMSR,
-                                  W5100_SOCKET_MEM_4_2_1_1);
-        (void)uthernet2_write_reg(W5100_REG_TMSR,
-                                  W5100_SOCKET_MEM_4_2_1_1);
         (void)f_mount((FATFS *)0, "0:/", 0U);
         set_detail(detail, detail_len, "FTP COULD NOT OPEN TCP PORT 21");
         return -1;
@@ -1192,10 +1193,6 @@ void ftp_sd_service_stop(void)
     }
     ftp_abort_transfer();
     socket_close(FTP_CONTROL_SOCKET);
-    (void)uthernet2_write_reg(W5100_REG_RMSR,
-                              W5100_SOCKET_MEM_4_2_1_1);
-    (void)uthernet2_write_reg(W5100_REG_TMSR,
-                              W5100_SOCKET_MEM_4_2_1_1);
     (void)f_mount((FATFS *)0, "0:/", 0U);
     memset(&g_ftp, 0, sizeof(g_ftp));
 }

@@ -55,23 +55,27 @@ def test_directory_listing_finishes_with_tcp_eof() -> None:
             "CWD / must accept the FTP volume root without relying on FatFs f_stat")
 
 
-def test_data_socket_buffering() -> None:
+def test_proven_direct_transfer_path() -> None:
     source = read("ps_sources/frontend/ftp_sd_service.c")
+    control = read("ps_sources/frontend/uthernet2_control.c")
+    regs = read("ps_sources/frontend/card_control_regs.h")
+    hdl_sources = read("hdl/hdl_sources.txt")
 
-    require("FTP_DATA_BUFFER_LEN      4096U" in source,
-            "FTP file transfers must use 4KB FatFs chunks")
-    require("FTP_SEND_CHUNK_LEN       2048U" in source and
-            "g_ftp.data_buffer +" in source and
-            "g_ftp.data_buffer_offset" in source,
-            "FTP RETR must split each 4KB file read into 2KB W5100 sends")
-    require("W5100_SOCKET_MEM_2_4_1_1 0x09U" in source and
-            "W5100_TX_BASE_S1         0x4800U" in source and
-            "W5100_RX_BASE_S1         0x6800U" in source and
-            "W5100_MASK_S0            0x07FFU" in source and
-            "W5100_MASK_S1            0x0FFFU" in source,
-            "FTP must assign 2KB to control socket 0 and 4KB to data socket 1")
-    require(source.count("W5100_SOCKET_MEM_4_2_1_1") >= 5,
-            "FTP failure and stop paths must restore the normal 4+2+1+1KB map")
+    require("FTP_DATA_BUFFER_LEN      1024U" in source and
+            "FTP_SEND_CHUNK_LEN" not in source,
+            "FTP must use the proven 1KB transfer buffer")
+    require("W5100_SOCKET_MEM_4_2_1_1 0x06U" in source and
+            "W5100_SOCKET_MEM_2_4_1_1" not in source and
+            "W5100_TX_BASE_S1         0x5000U" in source and
+            "W5100_RX_BASE_S1         0x7000U" in source and
+            "W5100_MASK_S0            0x0FFFU" in source and
+            "W5100_MASK_S1            0x07FFU" in source,
+            "FTP must keep the proven 4+2+1+1KB socket map")
+    require("for (uint16_t i = 0U; i < len; ++i)" in control and
+            "CARD_CTRL_ETH_FIFO_" not in control and
+            "CARD_CTRL_ETH_FIFO_" not in regs and
+            "apple/uthernet2_host_fifo.sv" not in hdl_sources,
+            "FTP must use direct byte W5100S access with no FIFO")
 
 
 def test_exclusive_ethernet_and_sd_ownership() -> None:
@@ -161,7 +165,7 @@ def main() -> None:
     tests = [
         test_ftp_protocol_and_subnet_gate,
         test_directory_listing_finishes_with_tcp_eof,
-        test_data_socket_buffering,
+        test_proven_direct_transfer_path,
         test_exclusive_ethernet_and_sd_ownership,
         test_ethernet_tab_modal_contract,
         test_uart_ftp_control,

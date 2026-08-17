@@ -186,6 +186,21 @@ static void socket_close(uint8_t socket)
     (void)uthernet2_write_reg(socket_reg(socket, W5100_SN_IR), 0xFFU);
 }
 
+/* Complete the TCP close handshake so clients see EOF on a finished data
+ * transfer. W5100 CLOSE discards the socket immediately and does not send the
+ * FIN that FTP clients wait for after the final payload byte. */
+static void socket_disconnect(uint8_t socket)
+{
+    uint8_t status;
+
+    if (socket_status(socket, &status) == 0 &&
+        (status == W5100_SR_ESTABLISHED || status == W5100_SR_CLOSE_WAIT) &&
+        socket_command(socket, W5100_CR_DISCON) == 0) {
+        return;
+    }
+    socket_close(socket);
+}
+
 static int socket_listen(uint8_t socket, uint16_t port)
 {
     uint8_t status;
@@ -440,7 +455,7 @@ static void ftp_finish_transfer(uint8_t success)
     if (ftp_close_file_objects() != 0) {
         success = 0U;
     }
-    socket_close(FTP_DATA_SOCKET);
+    socket_disconnect(FTP_DATA_SOCKET);
     g_ftp.data_listening = 0U;
     g_ftp.data_connected = 0U;
     g_ftp.data_tx_pending = 0U;
@@ -674,7 +689,9 @@ static void ftp_handle_command(char *line)
         (void)ftp_reply("257 \"%s\" is the current directory.\r\n", g_ftp.cwd);
     } else if (strcmp(line, "CWD") == 0 || strcmp(line, "XCWD") == 0) {
         if (make_fat_path(argument, virtual_path, fat_path) != 0 ||
-            f_stat(fat_path, &info) != FR_OK || (info.fattrib & AM_DIR) == 0U) {
+            (strcmp(virtual_path, "/") != 0 &&
+             (f_stat(fat_path, &info) != FR_OK ||
+              (info.fattrib & AM_DIR) == 0U))) {
             (void)ftp_reply("550 Directory unavailable.\r\n");
         } else {
             (void)snprintf(g_ftp.cwd, sizeof(g_ftp.cwd), "%s", virtual_path);

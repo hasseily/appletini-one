@@ -25,8 +25,8 @@ Last source audit: 2026-08-17
   are complete. Its board retest exposed three later faults: a speed key used
   during ONE//e takeover could be discarded and leave the core at full speed,
   key repeat used fast frontend poll counts instead of elapsed time, and the
-  demo image viewer did not enable IOUDIS before selecting DHIRES, so DHGRi
-  remained HGRi.
+  demo viewer did not reach DHIRES through the then-current switch model, so
+  DHGRi remained HGRi.
 - F0.9.80 is a historical test image. The speed, repeat, and DHGRi fixes reached
   a timing-clean baseline build, but that build was not packaged because the
   user then required the manual ONE//e selection to stay latched. Checkpoint
@@ -34,10 +34,15 @@ Last source audit: 2026-08-17
   exact-XSA Vitis build, and test package are complete at `cd8e9b8`. Board
   programming and retest found the remaining persistence, interlaced-video,
   fixed-control, and menu-pause work recorded below.
-- F0.9.81 is the current test image. Checkpoints `e076280`, `9feaccd`, and
-  `b33b631` fix that work. The clean full nonincremental build, exact-XSA
-  Vitis build, and package are complete. Programming and board retest remain
-  open.
+- F0.9.81 is a historical test image. Checkpoints `e076280`, `9feaccd`, and
+  `b33b631` fixed the persistence, interlaced-video, first fixed-control, and
+  menu-pause work. Its board test then exposed an IIc-only IOUDIS gate in the
+  virtual Enhanced //e, the old reset chord, and an incomplete fixed binding
+  guide and route lockout.
+- F0.9.82 is the current test image. Checkpoints `4d2d9cb`, `546c66b`,
+  `04f21cc`, and `c99f36e` fix those faults. The full regression, clean full
+  build, exact-XSA Vitis build, and test package are complete. Programming and
+  board validation remain open.
 
 ## Goal and Supported Shape
 
@@ -122,8 +127,10 @@ sections list the board and system tests which still need to run.
 - `a94aefc`: reserve F0.9.79 and form its source and packaging checkpoint.
 - `3e978a1`: time ONE//e key repeat in milliseconds instead of frontend polls,
   with a 500 ms first delay and 100 ms repeat interval.
-- `9cbf3e0`: make the demo viewer enable IOUDIS before DHIRES, rebuild its disk
-  image, and execute the assembled HGRi and DHGRi mode setters in a regression.
+- `9cbf3e0`: add a demo-viewer `$C07E` compatibility access before DHIRES,
+  rebuild its disk image, and execute the assembled HGRi and DHGRi setters in
+  a regression. This made the viewer pass the then-current model but did not
+  fix its IIc-only IOUDIS gate.
 - `147e56d`: retain a requested ONE//e speed through the pre-takeover window,
   first core release, and virtual warm reset.
 - `dde9b20`: let an explicitly open Appletini menu stage the next ONE//e speed
@@ -140,6 +147,12 @@ sections list the board and system tests which still need to run.
   activity, add fixed ONE//e USB controls, and pause the soft CPU while the
   config menu owns input.
 - `b33b631`: reserve firmware version `F0.9.81`.
+- `4d2d9cb`: model real Enhanced //e DHIRES, AN3, and floating `$C07E/$C07F`
+  behavior, and test standard DHGR through the joined video and renderer paths.
+- `546c66b`: move warm reset to Ctrl+Alt+Delete, reserve Break for the ONE//e
+  menu, and make the shown fixed binding set read-only with no saved route.
+- `04f21cc`: update the Disk II ownership regression for the fixed ONE//e map.
+- `c99f36e`: reserve firmware version `F0.9.82`.
 
 ## Safety Contract
 
@@ -283,13 +296,16 @@ behavior:
 - `$C030-$C03F`: speaker toggle.
 - `$C040-$C04F`: utility-strobe pulse mirrors.
 - `$C050-$C057`: existing video soft switches.
-- `$C058-$C05D`: AN0-AN2 when IOUDIS is off.
-- `$C05E/$C05F`: AN3 when IOUDIS is off and DHIRES when it is on.
+- `$C058-$C05D`: AN0-AN2.
+- `$C05E/$C05F`: both AN3 and DHIRES on every access. The Enhanced //e has no
+  working IOUDIS gate; `$C05E` clears AN3 and sets DHIRES, while `$C05F` sets
+  AN3 and clears DHIRES.
 - `$C060-$C067` and mirrors `$C068-$C06F`: cassette input, Open Apple, Closed
   Apple, PB2, and PDL0-PDL3 status.
-- `$C070-$C07F`: paddle-trigger mirrors, plus write-only IOUDIS control at
-  `$C07E/$C07F`, read status at the same addresses, and coexistence with the
-  existing RamWorks `$C071/$C073` bank writes.
+- `$C070-$C07F`: paddle-trigger mirrors. Enhanced //e reads of `$C07E/$C07F`
+  remain unclaimed so they return the floating bus, and their writes create no
+  latch. The existing RamWorks `$C071/$C073` bank writes still coexist with
+  the paddle trigger.
 - Unclaimed reads: scanner/floating-bus data supplied by the vTW read path.
 
 Paddle values are snapped on each `$C07x` access. Their counters expire on
@@ -396,10 +412,13 @@ setting. On stop, the same setter applies the latest saved setting rather than
 a restore value captured when the session began. The ONE//e-private reset path
 skips the IIgs `$C029` DMA write, which belongs only to a physical-host reset.
 
-Ctrl+Pause requests a virtual warm reset. The PL holds virtual RESET for at
-least eight full native cycles and acknowledges the input bridge. This resets
-the soft CPU and virtual motherboard I/O but preserves shadow RAM. It never
-asserts the Apple connector's RESET signal.
+Ctrl+Alt+forward-Delete requests a virtual warm reset. The input service
+consumes every chord member through release, so Ctrl, Alt, and Delete do not
+leak into the soft Apple even when they are released in a different order.
+The PL holds virtual RESET for at least eight full native cycles and
+acknowledges the input bridge. This resets the soft CPU and virtual
+motherboard I/O but preserves shadow RAM. It never asserts the Apple
+connector's RESET signal.
 
 When the Appletini config menu opens during ONE//e, firmware blocks keyboard
 and joystick delivery and sets `VTW_CTRL.PAUSE`. The PL finishes any access in
@@ -446,7 +465,7 @@ missed events. The deadline check also works across the 32-bit clock wrap. The
 newest held mapped key across all HID devices owns repeat. Releasing or
 disconnecting it selects the newest remaining held key and starts a new 500 ms
 delay. Repeat uses the current Shift, Control, and Caps Lock state. Caps Lock,
-Pause, modifier-only reports, and unmapped keys do not repeat. A session stop
+Break, modifier-only reports, and unmapped keys do not repeat. A session stop
 clears all repeat state.
 
 Caps Lock state exists only in the ONE//e key translator. Firmware does not
@@ -463,13 +482,15 @@ guaranteed. Firmware sends no keyboard LED output reports, so Caps Lock and
 other lock LEDs do not track ONE//e state. Media and other extra keys have no
 Apple //e character unless the firmware gives them a separate binding.
 
-While ONE//e is selected, its fixed controls bypass the saved USB bindings
-and cannot be edited: Page Up/Page Down change tabs; arrows move in the menu;
-Enter or keypad Enter selects; Escape closes; Print Screen captures the Apple
-screen; Shift+Print Screen captures the 1080p output; keypad `+` and `-` step
-TransWarp speed; and keypad `0` toggles acceleration. Print Screen and the
-keypad speed keys work with the menu closed. The saved long-hold menu key still
-opens and closes the menu.
+While ONE//e is requested or effective, the Boot Settings page replaces the
+editable rows with `ONE//e FIXED USB BINDINGS - READ ONLY`. The exact set is:
+Ctrl+Alt+forward-Delete resets; Page Up/Page Down change tabs; arrows move;
+Enter or keypad Enter selects; Escape closes the open menu; Break opens it;
+Print Screen captures the Apple screen; Shift+Print Screen captures the 1080p
+output; keypad `+` and `-` step TransWarp speed; and keypad `0` toggles
+acceleration. Print Screen, Break, and the keypad speed keys work with the menu
+closed. Firmware does not consult saved keyboard, mouse, or joystick binding
+routes in this mode, and it does not show or run the normal slug binding.
 
 ### Storage and Other Cards
 
@@ -511,14 +532,20 @@ NTSC lines, starts VBL at line 192 cycle 0, checks frame wrap and frame-zero
 reset, checks `$C050/$C057` state in renderer frame metadata, and checks that
 posted `$0400/$2000` writes reach renderer-input records.
 
-The F0.9.79 demo viewer selected 80COL and accessed `$C05E` for its DHGRi
-record, but it did not first write `$C07E` to turn IOUDIS on. On an Enhanced
-//e, `$C05E/$C05F` control AN3 while IOUDIS is off and DHIRES while it is on.
-The access therefore left DHIRES off, and the renderer correctly saw HGRi.
-Checkpoint `9cbf3e0` adds the missing `$C07E` write before the common DHGR
-mode setter. Its test runs the assembled HGRi and DHGRi setters against the
-Enhanced //e switches and requires distinct final modes. The demo disk image
-was rebuilt from that source and remains part of the F0.9.81 retest.
+The earlier virtual motherboard applied an IIc-only IOUDIS gate to Enhanced
+//e `$C05E/$C05F`. Checkpoint `9cbf3e0` made the demo viewer write `$C07E`
+before its common DHGR setter, which made that one DHGRi path work against the
+wrong model. Standard DHGR software does not need or issue that write, so its
+later failure exposed the real fault.
+
+On real Enhanced //e hardware, `$C05E/$C05F` always update both DHIRES and
+AN3. `$C07E/$C07F` do not hold or report IOUDIS: reads float, writes create no
+latch, and every `$C07x` access still triggers the paddles. Checkpoint
+`4d2d9cb` removes the false gate. Its motherboard test covers both switch
+effects and all paddle aliases; the joined video test reaches ordinary DHGR
+with `$C00D` and `$C05E` and requires distinct HGR and DHGR metadata; and the
+host renderer test requires distinct standard DHGR, HGRi, and DHGRi output.
+The viewer keeps its harmless `$C07E` access for IIc compatibility.
 
 The later intermittent DHGRi lines were not an AUX RAM fault. Three timing
 faults could damage a displayed frame: DVI scanout reset its FIFO and AXI
@@ -639,13 +666,15 @@ mode is off.
 
 ### Input, Video, and Audio
 
-- [x] Bridge USB keyboard data, Open Apple, Closed Apple, and Ctrl+Pause reset.
+- [x] Bridge USB keyboard data, Open Apple, Closed Apple, and
+  Ctrl+Alt+forward-Delete reset; consume the full chord through release.
 - [x] Bridge four normalized USB joystick axes and three buttons.
 - [x] Count paddle expiry in native bus cycles.
 - [x] Route a virtual warm reset to the motherboard and soft CPU only.
 - [x] Feed posted screen writes and switch state into normal renderer records.
-- [x] Enable IOUDIS before the demo viewer selects DHIRES and execute the
-  assembled HGRi and DHGRi setters in a distinct-mode regression.
+- [x] Model the Enhanced //e dual `$C05E/$C05F` DHIRES and AN3 effects,
+  floating `$C07E/$C07F`, and all `$C07x` paddle triggers. Prove ordinary DHGR
+  and the assembled HGRi/DHGRi setters as distinct renderer modes.
 - [x] Drain late AXI reads on DVI restart, reserve and verify framebuffer
   claims, and cache unchanged full-shadow interlaced frames.
 - [x] Mix the motherboard speaker into both audio channels.
@@ -703,7 +732,8 @@ historical record and do not validate the later F0.9.78 correction:
   transceiver disable, and direction clears pass in simulation.
 - `python scripts/test_onee_motherboard_io.py`: keyboard clear rules, status
   polarity and floating low bits, C02x/C03x/C04x mirrors, video switches,
-  IOUDIS/DHIRES, annunciators, C06x mirrors, and native paddle expiry.
+  the then-current DHIRES/annunciator model, C06x mirrors, and native paddle
+  expiry. The F0.9.82 result below replaces its old IOUDIS assumption.
 - `python scripts/test_onee_bus_integration.py`: joined vTW, virtual bus,
   motherboard I/O, arbiter, Disk II, and SmartPort test. At commit `8fec225`,
   it proved C000/C010, Apple keys, status/scanner merge, side effects, internal
@@ -718,8 +748,8 @@ historical record and do not validate the later F0.9.78 correction:
   Disk II override, stop order, running-state, menu-close, and host-path checks.
 - `python scripts/test_onee_input_service.py`: ten source checks plus a native
   host harness for key translation, initial edges, timed held-key repeat,
-  multi-key selection, FIFO backpressure, Ctrl+Pause, Apple keys, axes,
-  buttons, ownership, disconnect, and effective drop.
+  multi-key selection, FIFO backpressure, the warm-reset chord, Apple keys,
+  axes, buttons, ownership, disconnect, and effective drop.
 - `python scripts/test_usb_hid_service.py`: all 13 existing USB HID, hub,
   service-polling, Vitis-source, USB0 storage-priority, and diagnostic checks.
 - `python scripts/test_boot_menu_usb_keybindings.py`: all nine boot-menu USB
@@ -820,13 +850,15 @@ The F0.9.79 board test exposed three more boundary errors:
   worked because it ran after takeover.
 - Key repeat counted service calls. A brief Down tap could outlive the count
   on the fast USB/frontend loop and scroll the demo menu to its last row.
-- The demo viewer's DHGRi setter did not turn on IOUDIS. Its `$C05E` access
-  changed AN3 instead of DHIRES, so the resulting mode remained HGRi. The
-  other new image modes worked.
+- The then-current virtual motherboard used an IIc-only IOUDIS gate, so the
+  demo viewer's direct `$C05E` access did not reach DHIRES and the resulting
+  mode remained HGRi. The other new image modes worked. F0.9.80 added a
+  `$C07E` software workaround; F0.9.82 removes the false hardware-model gate.
 
-F0.9.80 is the next planned test image. Checkpoint `3e978a1` replaces repeat
+F0.9.80 became the next test image. Checkpoint `3e978a1` replaces repeat
 poll counts with 500/100 ms deadlines. Checkpoint `9cbf3e0` adds the viewer's
-missing `$C07E` write, rebuilds the disk, and tests the assembled mode setters.
+`$C07E` compatibility write, rebuilds the disk, and tests the assembled mode
+setters against the then-current model.
 Checkpoint `147e56d` queues a speed request during ONE//e takeover, applies it
 to the first core release, retains it across virtual warm reset, and clears the
 temporary override when the session stops. Checkpoint `dde9b20` also accepts
@@ -840,8 +872,9 @@ one.
 
 - [x] Add focused source and native checks for a one-event short key tap,
   elapsed repeat timing, clock wrap, and no repeat catch-up burst.
-- [x] Execute the assembled HGRi and DHGRi mode setters against Enhanced //e
-  IOUDIS/DHIRES behavior and require distinct results.
+- [x] Execute the assembled HGRi and DHGRi mode setters against the
+  then-current switch model and require distinct results. F0.9.82 adds the
+  corrected Enhanced //e switch proof and ordinary DHGR path.
 - [x] Add focused firmware and joined-bus checks for configured and queued
   start speed plus `VTW_CTRL` retention across virtual warm reset.
 - [x] Add native and RTL checks for selection with no software expiry,
@@ -851,7 +884,7 @@ one.
   5 ns raw-input route bound.
 - [x] Complete a clean full Vivado route and export for F0.9.80.
 - [x] Build Vitis from that exact XSA and package the F0.9.80 test image.
-- [ ] Program F0.9.80 and run the out-of-slot hardware retest in
+- [x] Program F0.9.80 and run the out-of-slot hardware retest in
   `docs/ONE_IIE_HARDWARE_TEST.md`.
 
 ### F0.9.80 Runtime Test and F0.9.81 Fixes
@@ -871,8 +904,53 @@ Apple.
 - [x] `b33b631` reserves F0.9.81 and forms the build checkpoint.
 - [x] Complete the clean full Vivado route, exact-XSA Vitis build, and F0.9.81
   package.
-- [ ] Program F0.9.81 and run the focused persistence, video, input, pause,
-  and Apple-safety retest.
+- [x] Program F0.9.81 and run the focused persistence, video, input, and pause
+  retest; it exposed the F0.9.82 work below. The Apple-connected electrical
+  safety proof remains open.
+
+### F0.9.81 Runtime Test and F0.9.82 Fixes
+
+The F0.9.81 board test confirmed the persistence, interlaced-video,
+fixed-control, and menu-pause work. It exposed three remaining faults:
+ordinary DHGR still passed through an IIc-only IOUDIS gate; virtual reset used
+the old Ctrl+Alt+Break chord instead of Ctrl+Alt+Delete; and Boot Settings did
+not show and enforce the full fixed read-only ONE//e binding set.
+
+- [x] `4d2d9cb` gives `$C05E/$C05F` their real Enhanced //e dual DHIRES and
+  AN3 effects, leaves `$C07E/$C07F` floating, and keeps every `$C07x` access as
+  a paddle trigger. Joined-video and renderer checks cover ordinary DHGR.
+- [x] `546c66b` moves reset to Ctrl+Alt+forward-Delete, makes Break open the
+  ONE//e menu, shares the request/effective fixed-mode test between routing
+  and display, and blocks every saved keyboard, mouse, and joystick binding
+  route while the fixed set owns input.
+- [x] `04f21cc` updates the Disk II ownership regression for the effective
+  service path.
+- [x] `c99f36e` reserves F0.9.82 and forms the clean build checkpoint.
+- [x] Complete the full F0.9.82 source, native, HDL, ROM-path, renderer,
+  storage, and top-synthesis regression.
+- [x] Complete the clean full Vivado route, exact-XSA Vitis build, and F0.9.82
+  test package.
+- [ ] Program F0.9.82 and run the focused DHGR, reset, fixed-binding, and
+  Apple-safety hardware retest.
+
+### F0.9.82 Full Regression
+
+- [x] Frontend: ONE//e input passed ten source checks and its native harness;
+  fixed USB controls passed their native harness; USB HID passed 14/14; boot
+  USB bindings 10/10; ONE//e config 11/11; profiles 15/15; config paths 14/14;
+  boot/reset 21/21; SmartPort menu 15/15, service 16/16, and ROM 6/6; storage
+  activity four source checks plus native; screenshots 4/4; ONE//e vTW runtime
+  11 source checks plus native; and Disk II standard 20/20.
+- [x] HDL and video: motherboard I/O passed; the ONE//e video path and both
+  real-ROM `$C600`/`$C700` target paths passed; joined bus and HDL integration
+  passed; all 20 vTW tests passed; and the real Disk II DOS 3.3 and ProDOS
+  2.4.3 runs both entered `$0801`.
+- [x] Renderer and media: host renderer T1-T7 reported zero failures and the
+  pixel checker passed; the demo disk passed with HGRi distinct from DHGRi;
+  and VidHD/SHR passed 17/17.
+- [x] Full top synthesis passed with zero errors and zero critical warnings.
+  The ARM frontend linked with text `1,541,168`, data `4,000`, and bss
+  `75,548,464` bytes.
 
 ### Synthesis and Firmware Build State
 
@@ -907,8 +985,8 @@ Apple.
 - [ ] Promote a release build only after it reaches the project's +0.300 ns
   setup-margin gate, repeats cleanly at the same commit, and passes the board
   checks below. The user waived that margin for the F0.9.77 through F0.9.80
-  test images and F0.9.81 test image. The margin is waived for test only;
-  F0.9.81 is not a promoted release.
+  test images and the F0.9.81 and F0.9.82 test images. The margin is waived for
+  test only; F0.9.82 is not a promoted release.
 - The first 2026-08-16 Vitis attempt made BSP content, but
   `vitis_workspace/appletini_platform/export/.buildstatus` reported
   `export=ERROR`. The expected
@@ -1028,6 +1106,31 @@ Apple.
   Bootgen reports three named image headers but four total images and four
   partitions because `frontend.elf` has two load partitions. The handoff file
   is `.timing_runs/20260816T210350Z-b33b6317-full/test_firmware_manifest.txt`.
+- [x] The clean full nonincremental F0.9.82 build at
+  `c99f36eac06a4dbfef883273e2a0608297d6dfba` exported as
+  `20260817T050503Z-c99f36ea-full` with `git_dirty=0` and `rescue_used=0`. It
+  reports WNS +0.067 ns, TNS 0, WHS +0.039 ns, THS 0, and WPWS +0.265 ns.
+  Route and bus skew pass; bus-skew WNS is +5.578 ns; all setup, hold,
+  pulse-width, route, missing-constraint, and unconstrained-internal failure
+  counts are zero.
+- [x] Its candidate DCP SHA-256 is
+  `90bf549a9fd409bd71b761090afd652ca08d7237bdf4d067133d4c7fe6689411`;
+  bitstream SHA-256 is
+  `8962974eca66993ff471d6ac7b49a6f5e983067a350aaaf6cc0a81982271eb5c`;
+  XSA SHA-256 is
+  `f01661733b09ee1f8e2dfe0cd3a6246c899f5615031c372ecda112d2d0045fe9`.
+- [x] A fresh Vitis build used that exact archived XSA. Platform export and
+  all application builds report `SUCCESS`; the package contains F0.9.82,
+  B1.1.0, and the `196684`-byte CPU1 blob.
+- [x] Root `FIRMWARE.BIN` and
+  `.timing_runs/20260817T050503Z-c99f36ea-full/FIRMWARE_TEST.BIN` are
+  byte-identical, each 4,042,764 bytes, with SHA-256
+  `c021449b3433d305dfcc136933a91eaf25f824c06333812489d65745ddb96719`.
+  Bootgen readback passed with three named image headers, four total images,
+  and four partitions. The handoff file is
+  `.timing_runs/20260817T050503Z-c99f36ea-full/test_firmware_manifest.txt`.
+  This is a test-only package under the user's +0.300 ns margin waiver, not a
+  promoted release.
 
 ### Missing Board and End-to-End Proof
 
@@ -1044,7 +1147,10 @@ Apple.
 - [x] Program and run the F0.9.80 functional retest; it exposed the F0.9.81
   work recorded above.
 - [x] Build and package F0.9.81 from checkpoint `b33b631`.
-- [ ] Program and run the F0.9.81 functional retest.
+- [x] Program and run the F0.9.81 functional retest; it exposed the F0.9.82
+  work recorded above.
+- [x] Build and package F0.9.82 from checkpoint `c99f36e`.
+- [ ] Program and run the F0.9.82 functional retest.
 - [ ] Verify all physical Apple pins and translators while ONE//e starts,
   runs, faults, stops, and returns to host mode, including PL configuration and
   both card/Apple power orders.

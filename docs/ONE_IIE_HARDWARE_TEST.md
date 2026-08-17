@@ -1,4 +1,4 @@
-# ONE//e Hardware Test Record and F0.9.81 Retest Plan
+# ONE//e Hardware Test Record and F0.9.82 Retest Plan
 
 ## F0.9.77 Test Result
 
@@ -168,8 +168,8 @@ three more faults:
 
 - A TransWarp speed selected with a bound key during the boot-menu/takeover
   window did not reach the core. ONE//e started at full acceleration. After a
-  `Ctrl+Alt+Pause` virtual warm reset, it again ran at full acceleration. A
-  speed change made later on the config page did take effect.
+  virtual warm reset, it again ran at full acceleration. A speed change made
+  later on the config page did take effect.
 - A brief key tap could repeat many times. In the Appletini demo menu, one
   Down tap could scroll to the last choice.
 - The new DHGRi image mode appeared as HGRi. The other new image modes worked.
@@ -186,11 +186,12 @@ and 100 calls for its steady rate. The USB service can call that function
 twice in each fast frontend pass. Those call counts were not human-time delays
 and could expire before a short tap's release report was handled.
 
-The DHGRi fault was in the demo viewer, not the renderer or ONE//e switch
-model. `select_dhgr` set 80COL and accessed `$C05E`, but it did not write
-`$C07E` first. On an Enhanced //e, IOUDIS routes `$C05E/$C05F` to DHIRES;
-with IOUDIS off those addresses control AN3. DHIRES therefore stayed off and
-the renderer correctly saw HGRi.
+The then-current virtual motherboard applied an IIc-only IOUDIS gate to the
+Enhanced //e. `select_dhgr` set 80COL and accessed `$C05E`, but the false gate
+kept that access from DHIRES, so the renderer saw HGRi. The F0.9.80 viewer
+workaround wrote `$C07E` first and made that path pass. F0.9.82 fixes the
+underlying model: `$C05E/$C05F` always update DHIRES and AN3 on an Enhanced
+//e, while `$C07E/$C07F` float and remain paddle-trigger aliases.
 
 ## F0.9.80 Source Corrections
 
@@ -220,11 +221,12 @@ The board retest ran and its result is recorded below.
   from the current time, so it cannot fill the queue to catch up. The native
   test covers a short Down tap, exact deadlines, a long stall, release and
   disconnect reselection, session stop, and 32-bit time wrap.
-- DHGRi commit:
+- DHGRi compatibility commit:
   `9cbf3e0dfdf4cfeb33b09c88a4e739959ddae82c`. The assembled viewer now
   writes `$C07E` before it selects DHIRES, and the demo disk contains that
   rebuilt viewer. Its regression executes the assembled HGRi and DHGRi mode
-  setters against Enhanced //e switches and requires `HGRi != DHGRi`.
+  setters against the then-current switch model and requires `HGRi != DHGRi`.
+  This did not fix the model's IIc-only gate; F0.9.82 does.
 - Selection-latch commit:
   `36be6c5cf8f22796a986548482f994f48818e7e1`. A manual ONE//e selection
   has no software expiry. Stable quiet, including a long wait for effective
@@ -327,8 +329,9 @@ output enable, leakage, back-power, and high impedance with test gear.
   repeat, and DHGRi faults above. The Apple-connected electrical checks remain
   pending.
 
-Root `FIRMWARE.BIN` is now the checked F0.9.80 test file recorded above. Keep
-the golden boot image unchanged.
+At that checkpoint, root `FIRMWARE.BIN` held the checked F0.9.80 test file.
+Root now holds the F0.9.82 test file recorded below. Keep the golden boot image
+unchanged.
 
 ## F0.9.80 Readiness
 
@@ -338,7 +341,8 @@ the golden boot image unchanged.
   `dde9b204e426d28ee4a11586f68af2e8b4c8271c`.
 - [x] Correct and test elapsed key-repeat timing at commit
   `3e978a10fa5cf975a69fa1d44cd4c983349901ee`.
-- [x] Correct and test the demo viewer's IOUDIS/DHGRi selection at commit
+- [x] Add and test the demo viewer's `$C07E` DHGRi compatibility access at
+  commit
   `9cbf3e0dfdf4cfeb33b09c88a4e739959ddae82c`.
 - [x] Remove the selected-state software expiry and test long stable quiet at
   commit `36be6c5cf8f22796a986548482f994f48818e7e1`.
@@ -360,13 +364,13 @@ the golden boot image unchanged.
   report `SUCCESS`, with F0.9.80 and B1.1.0 strings.
 - [x] Package F0.9.80, record its source commit, build, timing, size, hashes,
   and Bootgen readback, then compare root and archived files byte for byte.
-- [ ] Program F0.9.80 and complete the out-of-slot retest below.
+- [x] Program F0.9.80 and complete the out-of-slot retest below.
 
 ## Program the F0.9.80 Test Slot
 
 The checked F0.9.80 test file is root `FIRMWARE.BIN`: 4,257,036 bytes, SHA-256
 `43a8eb8dca2816d065dbfbe0bde77ab6fac79b938a4d5321e51c819cdd771f3a`.
-Programming remains pending:
+This is the historical programming procedure which completed that test:
 
 1. Connect the card's update UART and its stand-alone power source.
 2. Find the port if needed:
@@ -386,7 +390,7 @@ The updater writes the firmware slot and checks the full programmed image.
 
 ## F0.9.80 Out-of-Slot Retest
 
-This hardware retest is still pending.
+The user completed this historical retest. Its result appears below.
 
 Connect DVI, audio, a USB keyboard, and the SD card. A USB gamepad is optional.
 Keep the Apple slot edge disconnected and apply the same stand-alone supply
@@ -403,10 +407,10 @@ used for the F0.9.77 test.
 4. Confirm that the item changes from `OFF` to `RUNNING`, not `LOCKED`, and
    that the ROM takes the first slot-7 SmartPort path and boots SP1. It must not
    fall through to Disk II.
-5. Confirm that SmartPort data work says `SMARTPORT SP1`. Use `Ctrl+Pause` and
-   confirm that the virtual warm reset keeps SmartPort as the target and boots
-   it again. The reset must not touch a physical host or run the IIgs `$C029`
-   DMA write.
+5. Confirm that SmartPort data work says `SMARTPORT SP1`. Request a virtual
+   warm reset and confirm that it keeps SmartPort as the target and boots it
+   again. The reset must not touch a physical host or run the IIgs `$C029` DMA
+   write.
 6. Stop ONE//e. Select Disk II as the boot target and start ONE//e again.
    Confirm that the ROM hides slot 7 for the cold scan, reaches `$C600`, and
    boots drive 1. The activity label must say `DISK II D1`, even if SmartPort
@@ -425,10 +429,10 @@ used for the F0.9.77 test.
    Repeat with the toggle, speed-up, speed-down, and armed slug actions. Also
    use a key after the ONE//e request but before core takeover finishes and
    confirm that it stages the first running speed.
-10. While ONE//e runs at a non-full speed, use `Ctrl+Alt+Pause`. Confirm that
-    only the virtual //e resets and that the timed rate stays the same after
-    reboot. Stop and start a new ONE//e session; it must return to the saved
-    configured speed rather than retain the prior session override.
+10. While ONE//e runs at a non-full speed, request a virtual warm reset.
+    Confirm that only the virtual //e resets and that the timed rate stays the
+    same after reboot. Stop and start a new ONE//e session; it must return to
+    the saved configured speed rather than retain the prior session override.
 11. In the Appletini demo menu, tap Down once. The choice must move down one
     row only. Hold Down: the first repeat should start near 500 ms and later
     repeats should occur near 100 ms apart. Release it and confirm that repeat
@@ -462,7 +466,7 @@ Run these checks before any Apple-connected safety test:
   guaranteed.
 - Check a paddle or joystick program with all axes and the first three
   buttons.
-- Use `Ctrl+Alt+Pause` and confirm that only the virtual //e resets and the
+- Use `Ctrl+Alt+forward-Delete` and confirm that only the virtual //e resets and the
   current session speed remains unchanged.
 - Run software which toggles the Apple speaker; check both audio channels,
   mute, and mix with card audio.
@@ -515,7 +519,7 @@ DHGRi shadow rebuilds could starve the CPU1 record drain.
   it only after boot safety checks. Apple activity or a lost request forces
   OFF and queues a synced, backed-up global write. Profiles cannot change the
   latch.
-- ONE//e fixed controls bypass saved bindings: Page Up/Page Down switch tabs;
+- The first ONE//e fixed controls map made Page Up/Page Down switch tabs;
   arrows move; Enter or keypad Enter selects; Escape closes; Print Screen
   captures the Apple screen; Shift+Print Screen captures 1080p; keypad `+` and
   `-` step speed; and keypad `0` toggles acceleration.
@@ -562,24 +566,106 @@ found three named image headers but four total images and four partitions
 because `frontend.elf` contributes two load partitions.
 
 WNS is positive but below the project's +0.300 ns promotion gate. The user
-waived that gate for this test image only. Programming and hardware retest are
-open; this is not a promoted release.
+waived that gate for this test image only. The functional board retest ran;
+the Apple-connected electrical checks remain open. This is not a promoted
+release.
 
-## F0.9.81 Focused Retest
+## F0.9.81 Functional Retest Result
 
-1. Program root `FIRMWARE.BIN` and confirm F0.9.81 on screen.
-2. Out of slot, select ONE//e ON, power-cycle the whole card, and confirm it
-   returns to RUNNING. Select OFF, power-cycle, and confirm it stays OFF.
-3. Run DHGRi and switch repeatedly among interlaced and prior images. Require
-   no stray lines and no new capture-gap, scanout-underrun, or AXI-error count.
-4. Confirm the fixed Page Up/Page Down, arrow, Enter, Escape, Print Screen,
-   Shift+Print Screen, keypad `+`, keypad `-`, and keypad `0` controls. Saved
-   USB bindings must not alter them in ONE//e.
-5. Open the config menu while code runs. Confirm the Apple CPU stops, no menu
-   key reaches Apple input, all menu controls work, and close resumes the same
-   state and speed only after input returns to neutral.
-6. Recheck SmartPort and Disk II boots, storage labels, warm-reset speed,
-   single-tap repeat, paddles, speaker, and normal host mode.
-7. Complete the Apple-connected high-impedance and live-clock stop tests. An
-   Apple event must force OFF and leave it OFF across later card power cycles
-   until manual reselect.
+The user confirmed that the prior persistence, interlaced-video, fixed-control,
+and menu-pause work ran. The test exposed three remaining faults:
+
+- Ordinary DHGR failed because the virtual Enhanced //e still gated DHIRES
+  with IIc-only IOUDIS behavior. The demo's `$C07E` workaround had hidden the
+  model fault from DHGRi, but standard DHGR software does not need that access.
+- Virtual reset still used Ctrl+Alt+Break. The required chord is
+  Ctrl+Alt+forward-Delete, and Break must open the ONE//e menu.
+- Boot Settings did not show the exact fixed set as read-only, and saved input
+  routes could still provide an alternate menu path.
+
+## F0.9.82 Corrections and Full Regression
+
+- `4d2d9cb` gives `$C05E/$C05F` both real Enhanced //e effects: `$C05E`
+  clears AN3 and sets DHIRES, while `$C05F` sets AN3 and clears DHIRES.
+  `$C07E/$C07F` reads float, writes create no latch, and all `$C07x` accesses
+  trigger the paddles. The joined video and host renderer tests now cover
+  standard DHGR as distinct from HGR, HGRi, and DHGRi.
+- `546c66b` moves virtual reset to Ctrl+Alt+forward-Delete and consumes every
+  chord member through release. Break opens the ONE//e menu. The shared
+  request/effective test selects both live routing and the shown guide.
+- Boot Settings shows `ONE//e FIXED USB BINDINGS - READ ONLY` with the exact
+  set: reset `Ctrl+Alt+Del`; arrows; Page Up/Page Down; Enter/keypad Enter;
+  Escape; Break; Print Screen; Shift+Print Screen; keypad `0`, `+`, and `-`.
+  It omits the normal slug row. No saved keyboard, mouse, or joystick binding
+  route runs while this set owns input.
+- `04f21cc` updates the Disk II ownership regression, and `c99f36e` reserves
+  F0.9.82.
+
+The full frontend run passed: ONE//e input ten source checks plus native;
+fixed USB native; USB HID 14/14; boot USB bindings 10/10; ONE//e config 11/11;
+profiles 15/15; config paths 14/14; boot/reset 21/21; SmartPort menu 15/15,
+service 16/16, and ROM 6/6; storage activity four source checks plus native;
+screenshots 4/4; ONE//e vTW runtime 11 source checks plus native; and Disk II
+standard 20/20.
+
+Motherboard I/O, joined bus, HDL integration, and the ONE//e video path passed.
+Both real-ROM `$C600` and `$C700` target paths passed; vTW passed 20/20; and
+the real Disk II DOS 3.3 and ProDOS 2.4.3 runs both entered `$0801`. Renderer
+T1-T7 reported zero failures and its pixel checker passed. The demo disk
+passed with HGRi distinct from DHGRi; VidHD/SHR passed 17/17. Full top
+synthesis passed with zero errors and zero critical warnings. The ARM frontend
+linked with text `1,541,168`, data `4,000`, and bss `75,548,464` bytes.
+
+## F0.9.82 Test Image
+
+- Source commit: `c99f36eac06a4dbfef883273e2a0608297d6dfba`
+- Clean full nonincremental build: `20260817T050503Z-c99f36ea-full`
+- Build status: exported; `git_dirty=0`; `rescue_used=0`
+- Route: WNS `+0.067 ns`, TNS `0`, WHS `+0.039 ns`, THS `0`, and WPWS
+  `+0.265 ns`
+- Route and bus skew: `PASS`; bus-skew WNS `+5.578 ns`
+- Failures: zero setup, hold, or pulse-width failing endpoints; zero route
+  errors, missing constraint objects, or unconstrained internal endpoints
+- Candidate DCP SHA-256:
+  `90bf549a9fd409bd71b761090afd652ca08d7237bdf4d067133d4c7fe6689411`
+- Bitstream SHA-256:
+  `8962974eca66993ff471d6ac7b49a6f5e983067a350aaaf6cc0a81982271eb5c`
+- XSA SHA-256:
+  `f01661733b09ee1f8e2dfe0cd3a6246c899f5615031c372ecda112d2d0045fe9`
+- Files: root `FIRMWARE.BIN` and
+  `.timing_runs/20260817T050503Z-c99f36ea-full/FIRMWARE_TEST.BIN`
+- Size: `4,042,764` bytes each
+- Firmware SHA-256:
+  `c021449b3433d305dfcc136933a91eaf25f824c06333812489d65745ddb96719`
+- Handoff record:
+  `.timing_runs/20260817T050503Z-c99f36ea-full/test_firmware_manifest.txt`
+
+A fresh Vitis build used the exact archived XSA. Platform export and all app
+builds report `SUCCESS`; the image contains F0.9.82, B1.1.0, and the
+`196684`-byte CPU1 blob. Root and archive files are byte-identical. Bootgen
+readback passed with three named image headers, four total images, and four
+partitions.
+
+WNS is positive but below the project's +0.300 ns promotion gate. The user
+waived that gate for this test image only. Programming and hardware validation
+remain open; this is not a promoted release.
+
+## F0.9.82 Focused Retest
+
+- [ ] Program root `FIRMWARE.BIN` and confirm F0.9.82 on screen.
+- [ ] Run ordinary DHGR software which writes `$C00D` and `$C05E` without a
+  `$C07E` pre-write. Require true double-hi-res output, then switch among HGR,
+  DHGR, HGRi, and DHGRi and require clean, distinct images.
+- [ ] Press Ctrl+Alt+forward-Delete in several press and release orders.
+  Require one virtual reset, unchanged session speed, no leaked Apple key, and
+  no physical RESET assertion.
+- [ ] With ONE//e selected and its menu closed, press Break and require the
+  menu to open. Press Escape to close it. Require the fixed read-only guide
+  above, no editable row, no slug row, and no saved keyboard, mouse, or
+  joystick route.
+- [ ] Recheck persistence, SmartPort and Disk II boot and labels, DVI frame
+  counters, key repeat, paddles, speaker mix, config-menu pause, and normal
+  host mode.
+- [ ] Complete the Apple-connected high-impedance and live-clock stop tests.
+  Apple activity must force OFF and keep it OFF through later card power
+  cycles until a fresh manual selection.

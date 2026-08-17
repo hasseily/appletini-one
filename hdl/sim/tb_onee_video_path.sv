@@ -21,9 +21,14 @@ module tb_onee_video_path;
     logic resetn = 1'b0;
     logic set_frame_zero = 1'b0;
     logic frame_en = 1'b0;
+    wire video_vblank;
 
     globals::AppleBus_read  ab_read;
+    globals::AppleBus_read  softswitch_ab_read;
+    globals::AppleBus_write motherboard_write;
     globals::AppleBus_write vtw_write;
+    globals::AppleBus_write [1:0] client_writes;
+    globals::AppleBus_write merged_write;
     globals::SoftSwitchState sss;
 
     logic req_ready;
@@ -58,14 +63,58 @@ module tb_onee_video_path;
         .resp_valid(resp_valid),
         .resp_rdata(resp_rdata),
         .floating_bus_data(8'hFF),
-        .ab_write(vtw_write),
+        .ab_write(merged_write),
         .ab_read(ab_read)
+    );
+
+    onee_motherboard_io motherboard_i (
+        .clk(clk),
+        .resetn(resetn),
+        .enabled(1'b1),
+        .ab_read(ab_read),
+        .sss(sss),
+        .softswitch_ab_read(softswitch_ab_read),
+        .ab_write(motherboard_write),
+        .floating_bus_data(8'hFF),
+        .video_vblank(video_vblank),
+        .keyboard_event_valid(1'b0),
+        .keyboard_event_ready(),
+        .keyboard_event_code(7'h00),
+        .keyboard_any_down(1'b0),
+        .keyboard_modifiers_in(3'b000),
+        .keyboard_modifiers_state(),
+        .keyboard_latch(),
+        .keyboard_strobe(),
+        .pushbuttons(3'b000),
+        .cassette_in(1'b0),
+        .paddle_values(32'h8080_8080),
+        .cassette_out(),
+        .speaker(),
+        .utility_strobe_pulse(),
+        .annunciators(),
+        .ioudis(),
+        .paddle_active(),
+        .paddle_trigger_pulse()
+    );
+
+    always_comb begin
+        client_writes = '{default: '0};
+        client_writes[0] = motherboard_write;
+        client_writes[1] = vtw_write;
+    end
+
+    apple_bus_write_arbiter #(
+        .NUM_CLIENTS(2)
+    ) arbiter_i (
+        .inh_allowed(1'b1),
+        .client_writes(client_writes),
+        .ab_write(merged_write)
     );
 
     logic update_pulse;
     logic [8:0] line_in_frame;
     logic [6:0] cycle_in_line;
-    wire video_vblank = (line_in_frame >= 9'd192);
+    assign video_vblank = (line_in_frame >= 9'd192);
 
     apple_timing_gen timing_i (
         .clk(clk),
@@ -83,7 +132,7 @@ module tb_onee_video_path;
         .clk(clk),
         .rstn(resetn),
         .ramworks_en(1'b0),
-        .ab_read(ab_read),
+        .ab_read(softswitch_ab_read),
         .sss(sss)
     );
 
@@ -163,8 +212,8 @@ module tb_onee_video_path;
         .ab_read(ab_read),
         .ab_write(vtw_write),
         .irq_assert_in(1'b0),
-        .data_drive_in(vtw_write.wr_data_en),
-        .data_drive_value_in(vtw_write.wr_data),
+        .data_drive_in(merged_write.wr_data_en),
+        .data_drive_value_in(merged_write.wr_data),
         .dbg_clear(1'b0),
         .iiplus_buttons_zero(1'b0),
         .rw_req_valid(),
@@ -234,14 +283,19 @@ module tb_onee_video_path;
     );
 
     localparam logic [17:0] ROM_BASE = 18'h20000;
-    localparam byte PROGRAM [0:18] = '{
+    localparam byte PROGRAM [0:30] = '{
         8'hAD, 8'h50, 8'hC0,             // LDA $C050: graphics
         8'hAD, 8'h57, 8'hC0,             // LDA $C057: hi-res
-        8'hA9, 8'h5A,                    // LDA #$5A
-        8'h8D, 8'h00, 8'h04,             // STA $0400
+        8'h8D, 8'h0C, 8'hC0,             // STA $C00C: 80COL off
+        8'hAD, 8'h5F, 8'hC0,             // LDA $C05F: HGR, AN3 on
         8'hA9, 8'hA5,                    // LDA #$A5
         8'h8D, 8'h00, 8'h20,             // STA $2000
-        8'h4C, 8'h10, 8'hF0              // JMP $F010
+        8'h8D, 8'h0D, 8'hC0,             // STA $C00D: 80COL on
+        8'hAD, 8'h5E, 8'hC0,             // LDA $C05E: normal //e DHGR
+                                             // (no //c-only IOUDIS write)
+        8'hA9, 8'h5A,                    // LDA #$5A
+        8'h8D, 8'h00, 8'h04,             // STA $0400
+        8'h4C, 8'h1C, 8'hF0              // JMP $F01C
     };
 
     task automatic check(input logic condition, input string message);
@@ -312,7 +366,8 @@ module tb_onee_video_path;
     logic saw_frame_wrap;
     logic saw_text_write;
     logic saw_hires_write;
-    logic saw_video_state;
+    logic saw_hgr_state;
+    logic saw_dhgr_state;
     AppleCycleRecord record;
     int records_read;
 
@@ -365,7 +420,7 @@ module tb_onee_video_path;
 
         // Load and run a small 65C02 program. Its screen writes use vTW's
         // posted queue; its C05x accesses use the shared virtual bus.
-        for (int i = 0; i < 19; i++)
+        for (int i = 0; i < 31; i++)
             sh_write(ROM_BASE + 18'h3000 + 18'(i), PROGRAM[i]);
         sh_write(ROM_BASE + 18'h3FFC, 8'h00);
         sh_write(ROM_BASE + 18'h3FFD, 8'hF0);
@@ -389,7 +444,7 @@ module tb_onee_video_path;
 
         fork : wait_for_program
             begin
-                wait (dbg_core_pc == 16'hF010 && posted_writes >= 32'd2);
+                wait (dbg_core_pc == 16'hF01C && posted_writes >= 32'd2);
                 repeat (8) wait_native_tick();
                 disable wait_for_program;
             end
@@ -405,13 +460,15 @@ module tb_onee_video_path;
         frame_en = 1'b0;
         repeat (8) @(posedge clk);
 
-        check(!sss.sw_text && sss.sw_hires,
-              "shared video soft-switch state did not follow vTW cycles");
+        check(!sss.sw_text && sss.sw_hires && sss.sw_80col &&
+              sss.sw_dhires,
+              "normal //e DHGR switches did not reach shared state");
         check(!capture_drop, "capture FIFO dropped ONE//e video records");
 
         saw_text_write = 1'b0;
         saw_hires_write = 1'b0;
-        saw_video_state = 1'b0;
+        saw_hgr_state = 1'b0;
+        saw_dhgr_state = 1'b0;
         records_read = 0;
         while (!capture_empty && records_read < 1024) begin
             pop_record(record);
@@ -429,9 +486,13 @@ module tb_onee_video_path;
                 record.data == 8'hA5)
                 saw_hires_write = 1'b1;
 
-            if (record.frame_en && !record.sw_text &&
-                record.sw_hires)
-                saw_video_state = 1'b1;
+            if (record.frame_en && !record.sw_text && record.sw_hires &&
+                !record.sw_80col && !record.sw_dhires)
+                saw_hgr_state = 1'b1;
+
+            if (record.frame_en && !record.sw_text && record.sw_hires &&
+                record.sw_80col && record.sw_dhires)
+                saw_dhgr_state = 1'b1;
 
             if (record.frame_en) begin
                 check(record.line_in_frame < 9'd262,
@@ -446,8 +507,10 @@ module tb_onee_video_path;
               "vTW $0400 write did not reach normal cycle capture");
         check(saw_hires_write,
               "vTW $2000 write did not reach normal cycle capture");
-        check(saw_video_state,
-              "C050/C057 state did not reach renderer frame metadata");
+        check(saw_hgr_state,
+              "normal HGR switch state did not reach renderer metadata");
+        check(saw_dhgr_state,
+              "C00D/C05E without IOUDIS did not reach DHGR metadata");
 
         $display("ONEE VIDEO PATH PASS");
         $finish;

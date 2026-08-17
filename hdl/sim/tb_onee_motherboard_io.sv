@@ -258,7 +258,7 @@ module tb_onee_motherboard_io;
         access(16'hC050, 1'b1, 8'h00, claimed, rdata, triggered);
         check(!last_utility_strobe, "$C050 falsely pulsed utility strobe");
 
-        // C050-C057 are not duplicated here; the filtered bus feeds the
+        // C050-C057 are not duplicated here; the forwarded bus feeds the
         // existing manager. Their reads remain floating.
         access(16'hC050, 1'b1, 8'h00, claimed, rdata, triggered);
         check(!claimed && !sss.sw_text, "$C050 TEXT off did not reach manager");
@@ -271,38 +271,40 @@ module tb_onee_motherboard_io;
         access(16'hC057, 1'b1, 8'h00, claimed, rdata, triggered);
         check(sss.sw_hires, "$C057 HIRES on did not reach manager");
 
-        // With IOUDIS off, C058-C05F operate annunciators and C05E/F must
-        // not alter the manager's DHIRES latch.
+        // A //e drives AN0-AN3 on every C058-C05F access. Unlike the //c,
+        // C05E/F also reach DHIRES at the same time and no IOUDIS write can
+        // gate either effect. This is the normal software path into DHGR.
         access(16'hC059, 1'b1, 8'h00, claimed, rdata, triggered);
         access(16'hC05B, 1'b0, 8'h00, claimed, rdata, triggered);
         access(16'hC05D, 1'b1, 8'h00, claimed, rdata, triggered);
         access(16'hC05F, 1'b1, 8'h00, claimed, rdata, triggered);
         check(annunciators == 4'hF && !sss.sw_dhires,
-              "IOUDIS-off annunciator/DHIRES split was wrong");
-        access(16'hC07E, 1'b1, 8'h00, claimed, rdata, triggered);
-        check(claimed && rdata == 8'hB5 && !ioudis && triggered,
-              "$C07E RDIOUDIS polarity/read side effect was wrong");
-
-        // Writes alone change IOUDIS. While on, annunciators hold and C05E/F
-        // reach the existing DHIRES latch.
-        access(16'hC07E, 1'b0, 8'h00, claimed, rdata, triggered);
-        check(ioudis && triggered, "$C07E write did not set IOUDIS/trigger");
-        access(16'hC058, 1'b1, 8'h00, claimed, rdata, triggered);
-        check(annunciators[0], "IOUDIS-on access changed AN0");
+              "//e C05F did not set AN3 and clear DHIRES");
         access(16'hC05E, 1'b1, 8'h00, claimed, rdata, triggered);
-        check(sss.sw_dhires && annunciators[3],
-              "IOUDIS-on C05E did not set only DHIRES");
+        check(!annunciators[3] && sss.sw_dhires,
+              "normal //e C05E did not clear AN3 and set DHIRES");
+
+        // C07E and C07F remain floating paddle triggers on the //e. Neither
+        // write creates the //c-only IOUDIS gate.
+        access(16'hC07E, 1'b1, 8'h00, claimed, rdata, triggered);
+        check(!claimed && !ioudis && triggered,
+              "//e $C07E was not a floating paddle trigger");
+        access(16'hC07E, 1'b0, 8'h00, claimed, rdata, triggered);
+        check(!ioudis && triggered,
+              "//e $C07E write created an IOUDIS gate");
+        access(16'hC058, 1'b1, 8'h00, claimed, rdata, triggered);
+        check(!annunciators[0], "//e $C058 did not clear AN0");
         access(16'hC07F, 1'b1, 8'h00, claimed, rdata, triggered);
-        check(claimed && rdata == 8'hB5 && triggered,
-              "$C07F did not report DHIRES and trigger paddles");
+        check(!claimed && triggered,
+              "//e $C07F was not a floating paddle trigger");
         access(16'hC05F, 1'b1, 8'h00, claimed, rdata, triggered);
         check(!sss.sw_dhires && annunciators[3],
-              "IOUDIS-on C05F did not clear only DHIRES");
+              "//e C05F did not set AN3 and clear DHIRES");
         access(16'hC07F, 1'b0, 8'h00, claimed, rdata, triggered);
-        check(!ioudis, "$C07F write did not clear IOUDIS");
+        check(!ioudis, "//e $C07F write created an IOUDIS gate");
         access(16'hC05E, 1'b1, 8'h00, claimed, rdata, triggered);
-        check(!annunciators[3] && !sss.sw_dhires,
-              "IOUDIS-off C05E did not clear only AN3");
+        check(!annunciators[3] && sss.sw_dhires,
+              "//e C05E did not still update AN3 and DHIRES");
 
         // Cassette, Apple keys, PB2, and paddle status drive only bit 7.
         // C068-C06F mirror C060-C067 because the selector ignores A3.

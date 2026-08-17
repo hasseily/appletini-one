@@ -4,8 +4,10 @@
 //
 // softswitch_ab_read must feed the existing soft_switch_manager. This module
 // owns only motherboard I/O state which is absent from SoftSwitchState. It
-// relies on that manager for MMU/video state and filters $C05E/$C05F so the
-// existing DHIRES latch observes the real IOUDIS rule.
+// relies on that manager for MMU/video state. On a //e, $C05E/$C05F always
+// reach both the DHIRES video latch and AN3. The IOUDIS gate described in
+// later Apple manuals belongs to the //c and must not suppress either //e
+// side effect.
 module onee_motherboard_io #(
     parameter integer PADDLE_BASE_CYCLES  = 4,
     parameter integer PADDLE_SCALE_CYCLES = 11
@@ -44,7 +46,9 @@ module onee_motherboard_io #(
     output logic                       speaker,
     output logic                       utility_strobe_pulse,
     output logic [3:0]                 annunciators,
-    output logic                       ioudis,
+    // The //e has no working IOUDIS latch. Keep this compatibility/debug
+    // output low; $C07E/$C07F remain paddle-trigger aliases.
+    output wire                        ioudis,
     output wire [3:0]                  paddle_active,
     output logic                       paddle_trigger_pulse
 );
@@ -68,16 +72,13 @@ module onee_motherboard_io #(
     assign keyboard_event_ready = resetn && enabled && ab_read.res &&
                                   (!keyboard_strobe || keyboard_clear_access);
 
-    // The current soft-switch manager treats every $C05E/$C05F access as a
-    // DHIRES change. Real //e hardware does so only while IOUDIS is on. With
-    // IOUDIS off those addresses control AN3 and must not reach that latch.
+    // A //e applies both effects of $C05E/$C05F: the shared manager tracks
+    // DHIRES and this module tracks AN3. Do not apply the //c IOUDIS gate.
     always_comb begin
         softswitch_ab_read = ab_read;
-        if (enabled && !ioudis &&
-            (ab_read.addr[15:1] == (16'hC05E >> 1))) begin
-            softswitch_ab_read.serve_en = 1'b0;
-        end
     end
+
+    assign ioudis = 1'b0;
 
     function automatic logic [15:0] paddle_reload(
         input logic [7:0] value
@@ -142,10 +143,9 @@ module onee_motherboard_io #(
                 8'h1D: status_bit = sss.sw_hires;
                 8'h1E: status_bit = sss.sw_altcharset;
                 8'h1F: status_bit = sss.sw_80col;
-                // RDIOUDIS is deliberately inverted: bit 7 is one when
-                // IOUDIS is off. RDDHIRES reports the manager-owned latch.
-                8'h7E: status_bit = ~ioudis;
-                8'h7F: status_bit = sss.sw_dhires;
+                // Enhanced //e $C07E/$C07F both return the floating bus.
+                // The documented RDIOUDIS/RDDHIRES bits exist on the //c,
+                // not on real //e hardware.
                 default: ;
             endcase
 
@@ -166,9 +166,7 @@ module onee_motherboard_io #(
 
             if (((ab_read.addr[7:0] >= 8'h11) &&
                  (ab_read.addr[7:0] <= 8'h1F)) ||
-                (ab_read.addr[7:4] == 4'h6) ||
-                (ab_read.addr[7:0] == 8'h7E) ||
-                (ab_read.addr[7:0] == 8'h7F)) begin
+                (ab_read.addr[7:4] == 4'h6)) begin
                 read_claim = 1'b1;
                 read_data  = {status_bit, floating_bus_data[6:0]};
             end
@@ -220,7 +218,6 @@ module onee_motherboard_io #(
             speaker             <= 1'b0;
             utility_strobe_pulse <= 1'b0;
             annunciators        <= 4'h0;
-            ioudis              <= 1'b0;
             paddle_count_q[0]   <= 16'd0;
             paddle_count_q[1]   <= 16'd0;
             paddle_count_q[2]   <= 16'd0;
@@ -267,29 +264,21 @@ module onee_motherboard_io #(
                 if (ab_read.addr[7:4] == 4'h4)
                     utility_strobe_pulse <= 1'b1;
 
-                // $C050-$C057 flow unchanged to soft_switch_manager. With
-                // IOUDIS off, $C058-$C05F instead select AN0 through AN3.
-                if (!ioudis &&
-                    (ab_read.addr[7:3] == 5'b01011)) begin
+                // On a //e, $C058-$C05F always select AN0 through AN3.
+                // $C05E/$C05F also reach the DHIRES latch through the
+                // shared soft-switch manager.
+                if (ab_read.addr[7:3] == 5'b01011) begin
                     annunciators[ab_read.addr[2:1]] <= ab_read.addr[0];
                 end
 
-                // Every $C070-$C07F access triggers all four timers. Writes
-                // to $C07E/$C07F additionally set/clear IOUDIS; reads only
-                // report RDIOUDIS/RDDHIRES and still trigger the paddles.
+                // Every $C070-$C07F access triggers all four timers. The
+                // //c-only IOUDIS write gate is absent on an Enhanced //e.
                 if (ab_read.addr[7:4] == 4'h7) begin
                     paddle_count_q[0] <= paddle_reload(paddle_values[7:0]);
                     paddle_count_q[1] <= paddle_reload(paddle_values[15:8]);
                     paddle_count_q[2] <= paddle_reload(paddle_values[23:16]);
                     paddle_count_q[3] <= paddle_reload(paddle_values[31:24]);
                     paddle_trigger_pulse <= 1'b1;
-
-                    if (!ab_read.rw &&
-                        (ab_read.addr[7:0] == 8'h7E))
-                        ioudis <= 1'b1;
-                    else if (!ab_read.rw &&
-                             (ab_read.addr[7:0] == 8'h7F))
-                        ioudis <= 1'b0;
                 end
             end
         end

@@ -100,14 +100,19 @@ def static_contract_checks() -> None:
 
     require(
         "softswitch_ab_read = ab_read;" in rtl and
-        "if (enabled && !ioudis &&" in rtl and
-        "softswitch_ab_read.serve_en = 1'b0;" in rtl,
-        "IOUDIS-off C05E/F must be filtered from the existing DHIRES latch",
+        "softswitch_ab_read.serve_en = 1'b0;" not in rtl and
+        "assign ioudis = 1'b0;" in rtl,
+        "Enhanced //e C05E/F must always reach DHIRES without a //c IOUDIS gate",
     )
     require(
-        "8'h7E: status_bit = ~ioudis;" in rtl and
-        "8'h7F: status_bit = sss.sw_dhires;" in rtl,
-        "RDIOUDIS/RDDHIRES status polarity must remain explicit",
+        "8'h7E: status_bit" not in rtl and
+        "8'h7F: status_bit" not in rtl,
+        "//e C07E/C07F must both return the floating bus",
+    )
+    require(
+        "if (ab_read.addr[7:3] == 5'b01011) begin" in rtl and
+        "annunciators[ab_read.addr[2:1]] <= ab_read.addr[0];" in rtl,
+        "//e C058-C05F must always update AN0-AN3 alongside DHIRES",
     )
     require(
         "if (ab_read.addr[7:4] == 4'h4)" in rtl,

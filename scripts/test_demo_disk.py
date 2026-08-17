@@ -337,14 +337,9 @@ def assembled_viewer_mode_checks(binary: Path, symbol_list: Path) -> None:
             self.hires = False
             self.col80 = False
             self.dhires = False
-            self.ioudis = False
 
         def _access(self, addr: int, write: bool) -> None:
-            if write and addr == 0xC07E:
-                self.ioudis = True
-            elif write and addr == 0xC07F:
-                self.ioudis = False
-            elif write and addr == 0xC00C:
+            if write and addr == 0xC00C:
                 self.col80 = False
             elif write and addr == 0xC00D:
                 self.col80 = True
@@ -356,7 +351,9 @@ def assembled_viewer_mode_checks(binary: Path, symbol_list: Path) -> None:
                 self.hires = False
             elif addr == 0xC057:
                 self.hires = True
-            elif addr in (0xC05E, 0xC05F) and self.ioudis:
+            elif addr in (0xC05E, 0xC05F):
+                # On a //e, C05E/F always update DHIRES as well as AN3.
+                # IOUDIS gates this path only on the //c.
                 self.dhires = addr == 0xC05E
 
         def __getitem__(self, key):

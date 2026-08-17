@@ -16,8 +16,9 @@
  *       load_shr streams them while SHR stays on. After each load the
  *       published frame and the shadow banks are dumped; the checker
  *       re-decodes the banks and compares.
- *   T4  Video-7 MIX (COL140M): state 10 and the UI gate must select
- *       monochrome and color across 8, 8, 8, and 4 dots per 28 dots.
+ *   T4  Standard DHGR must stay distinct from HGR and marked DHGRi;
+ *       Video-7 MIX state 10 and its UI gate must select monochrome and
+ *       color across 8, 8, 8, and 4 dots per 28 dots.
  *   T5  Per-switch scanner phase: TEXT/MIXED delay one cycle,
  *       80COL/DHIRES advance one, and ALTCHAR advances two, with and
  *       without the vTW capture normalization.
@@ -617,14 +618,25 @@ static void t4_dhgr_col140m(void)
     int color_unchanged = 1;
 
     printf("--- T4 Video-7 MIX (COL140M) state gate and 8+8+8+4 alignment ---\n");
+    apple_cycle_renderer_reset_local_video_state();
     feed(rec_io(0xC029u, 0x01u));
     memset(&s_aux_mem[0x2000u], 0x55, 0x2000u);
     memset(&s_main_mem[0x2000u], 0xAA, 0x2000u);
+    memset(&s_aux_mem[0x4000u], 0x00, 0x2000u);
+    memset(&s_main_mem[0x4000u], 0x00, 0x2000u);
 
     s_settings = apple_video_settings_pack_border_full(
         0u, 0u, APPLE_VIDEO_COLOR_RGB, 1u, 1u, 0, 0, 0u, 0u, 0u);
     legacy_full_frame(SW_DHGR);
     legacy_full_frame(SW_DHGR);
+    legacy_full_frame(SW_DHGR);
+    expect((s_pub_detail & APPLE_FB_FORMAT_BASE_MASK) ==
+               APPLE_FB_FORMAT_DHGR,
+           "T4 C00D/C05E mode is DHGR rather than HGR");
+    expect((s_pub_detail & APPLE_FB_FORMAT_PAGE_MASK) ==
+               (APPLE_FB_FORMAT_PAGE_NONE <<
+                APPLE_FB_FORMAT_PAGE_SHIFT),
+           "T4 unmarked DHGR remains standard rather than DHGRi");
     memcpy(color_pixels,
            s_slot_mem[s_pub_slot] +
                (row * ATN_SCRATCH_ROW_PIXELS +

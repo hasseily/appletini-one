@@ -44,10 +44,14 @@ Last source audit: 2026-08-17
   incomplete Video-7 MIX image-load handoff, a warm-reset path which could
   skip the ROM cold scan and race SmartPort reset, and the need for a saved
   ONE//e PAL/NTSC choice.
-- F0.9.83 is the current test image. Checkpoints `d416ea0` and `78e6a3e` fix
-  those faults. The full regression, clean full build, exact-XSA Vitis build,
-  and test package are complete. Programming and board validation remain
-  open.
+- F0.9.83 is a historical test image. Checkpoints `d416ea0` and `78e6a3e`
+  fix those faults. Its full regression, clean full build, exact-XSA Vitis
+  build, and test package are complete.
+- F0.9.86 is the current frontend-only test image. Checkpoints `acd47f1` and
+  `b1f3706` move the ONE//e video-standard selector from Video to Boot Settings
+  directly below ONE//e standalone. The row exists only while live
+  `REQUEST|EFFECTIVE` status says ONE//e is active. The exact F0.9.85 PL
+  artifact is reused; programming and hardware retest remain open.
 
 ## Goal and Supported Shape
 
@@ -162,6 +166,11 @@ sections list the board and system tests which still need to run.
   Ctrl+Alt+Delete an ordered cold reboot, and add a saved ONE//e PAL/NTSC
   choice which becomes active only at a virtual reset boundary.
 - `78e6a3e`: reserve firmware version `F0.9.83`.
+- `acd47f1`: move the ONE//e video-standard selector to Boot Settings below
+  ONE//e standalone, gate it on live `REQUEST|EFFECTIVE`, and remap focus to
+  the standalone row if ONE//e turns off while the selector has focus.
+- `b1f3706`: reserve firmware version `F0.9.86` and form the clean frontend
+  package checkpoint.
 
 ## Safety Contract
 
@@ -986,8 +995,9 @@ and Break menu entry. It exposed three more faults:
   live boot target during reset.
 - ONE//e had only the NTSC virtual timing. `d416ea0` adds the global
   `onee.video.standard=NTSC|PAL` setting and desired/active readback. Profiles
-  neither save nor load it. The Video row appears only while ONE//e owns its
-  fixed controls. The active standard follows the desired choice only while
+  neither save nor load it. F0.9.86 shows the row in Boot Settings directly
+  below ONE//e standalone, and only while live `REQUEST|EFFECTIVE` status says
+  ONE//e is active. The active standard follows the desired choice only while
   ONE//e is off or private RES# is low, so a live choice remains pending until
   virtual reset instead of changing timing in mid-frame. NTSC uses 130 fabric
   clocks per Apple cycle and 262 lines; PAL uses 131 and 312. The active bit
@@ -1021,6 +1031,23 @@ and Break menu entry. It exposed three more faults:
 - [x] Full top synthesis passed with zero errors and zero critical warnings.
   A fresh ARM frontend build and the later exact-XSA Vitis build succeeded.
 
+### F0.9.86 Frontend-Only Menu Move
+
+- [x] `acd47f1b51c06ac097c98fd128e47bdd4d30442c` removes the ONE//e
+  video-standard row from Video and puts it in Boot Settings directly below
+  ONE//e standalone.
+- [x] The row is present only while live `REQUEST|EFFECTIVE` is true. If that
+  state turns off while the row has focus, the menu moves focus to ONE//e
+  standalone instead of exposing the normal USB-binding reset action at the
+  reused item number.
+- [x] The selector remains a global setting outside profiles. A new desired
+  value is saved at once and takes effect at the next virtual reset or ONE//e
+  restart, so the move does not change the timing-boundary rule.
+- [x] `b1f3706e9b921f09acddd556b23d89808496b6f8` reserves F0.9.86 and is the
+  clean frontend build and package checkpoint.
+- [ ] Program F0.9.86 and run the focused menu-placement, visibility, focus,
+  persistence, reset/restart, and PAL/NTSC hardware retest.
+
 ### Synthesis and Firmware Build State
 
 - Full `appletini_yarz_top` synthesis passed at commit `8fec225` with zero
@@ -1053,9 +1080,9 @@ and Break menu entry. It exposed three more faults:
   suites.
 - [ ] Promote a release build only after it reaches the project's +0.300 ns
   setup-margin gate, repeats cleanly at the same commit, and passes the board
-  checks below. The user waived that margin for the F0.9.77 through F0.9.80
-  test images and the F0.9.81 through F0.9.83 test images. The margin is
-  waived for test only; F0.9.83 is not a promoted release.
+  checks below. The user waived that margin for the F0.9.77 through F0.9.86
+  test images. The margin is waived for test only; F0.9.86 is not a promoted
+  release.
 - The first 2026-08-16 Vitis attempt made BSP content, but
   `vitis_workspace/appletini_platform/export/.buildstatus` reported
   `export=ERROR`. The expected
@@ -1227,6 +1254,24 @@ and Break menu entry. It exposed three more faults:
   This is a test-only package under the user's +0.300 ns margin waiver, not a
   promoted release.
 
+- [x] F0.9.86 is a frontend-only build from clean HEAD
+  `b1f3706e9b921f09acddd556b23d89808496b6f8`. Its archive is
+  `.timing_runs/20260817T102409Z-b1f3706e-frontend`.
+- [x] It reuses the exact F0.9.85 PL run
+  `20260817T093102Z-ff19873c-full`; no PL source changed. That run reports WNS
+  +0.175 ns, WHS +0.053 ns, WPWS +0.265 ns, and passing bus skew at +5.514 ns.
+  It remains below the +0.300 ns release gate and uses the test-only waiver.
+- [x] The exact-XSA Vitis platform export and all application builds report
+  `SUCCESS`. Bootgen readback passed with three named image headers, four
+  total images, and four partitions.
+- [x] Root `FIRMWARE.BIN` and the archived `FIRMWARE_TEST.BIN` are
+  byte-identical, each 4,244,620 bytes, with SHA-256
+  `979cbe7f25192b9bb4b20889e05345b63f8605fbe2540891e5b3238b843f9d17`.
+  The handoff record is
+  `.timing_runs/20260817T102409Z-b1f3706e-frontend/test_firmware_manifest.txt`.
+  Programming and hardware retest remain open; this is not a promoted
+  release.
+
 ### Missing Board and End-to-End Proof
 
 - [x] Run the archived F0.9.77 image on an Appletini ONE out of the Apple slot;
@@ -1249,6 +1294,9 @@ and Break menu entry. It exposed three more faults:
   work recorded above.
 - [x] Build and package F0.9.83 from checkpoint `78e6a3e`.
 - [ ] Program and run the F0.9.83 functional retest.
+- [x] Build and package the frontend-only F0.9.86 image from checkpoint
+  `b1f3706` with the exact F0.9.85 PL artifact.
+- [ ] Program and run the F0.9.86 focused UI and PAL/NTSC retest.
 - [ ] Verify all physical Apple pins and translators while ONE//e starts,
   runs, faults, stops, and returns to host mode, including PL configuration and
   both card/Apple power orders.

@@ -1,4 +1,4 @@
-# ONE//e Hardware Test Record and F0.9.83 Retest Plan
+# ONE//e Hardware Test Record and F0.9.86 Retest Plan
 
 ## F0.9.77 Test Result
 
@@ -679,7 +679,7 @@ The user confirmed that DHGR and DHGRi worked, then found three faults:
   produced a stable image.
 - Ctrl+Alt+Delete skipped the normal `Apple //e` cold-start display, did not
   load SmartPort correctly, and left a black screen.
-- ONE//e needed a Video setting for PAL and NTSC output.
+- ONE//e needed a saved PAL and NTSC output choice.
 
 The MIX fault was an image transaction fault, not a DVI clock or AUX RAM
 fault. The viewer selected MIX and then replaced four live banks over several
@@ -705,10 +705,12 @@ SmartPort before the later PS-side SmartPort reset completed.
   helper samples the selected Disk II or SmartPort target during reset.
 - It also adds the global `onee.video.standard=NTSC|PAL` choice. Profiles do
   not change it. Its desired value is saved at once, but the active value can
-  change only while ONE//e is off or private RES# is low. The Video row is
-  ONE//e-only and shows a pending choice until reset. NTSC uses 130 fabric
-  clocks per Apple cycle and 262 lines; PAL uses 131 and 312. The active
-  choice drives the virtual bus, scanner, DVI cadence, capture, and renderer.
+  change only while ONE//e is off or private RES# is low. F0.9.86 shows the
+  row in Boot Settings directly below ONE//e standalone, and only while live
+  `REQUEST|EFFECTIVE` says ONE//e is active. It shows a pending choice until
+  reset. NTSC uses 130 fabric clocks per Apple cycle and 262 lines; PAL uses
+  131 and 312. The active choice drives the virtual bus, scanner, DVI cadence,
+  capture, and renderer.
 - `78e6a3e2a5abf054c6607e14a7995ecf0169c651` reserves F0.9.83 and is the
   clean build and package checkpoint.
 
@@ -796,3 +798,62 @@ remain open; this is not a promoted release.
 - [ ] Complete the Apple-connected high-impedance and live-clock stop tests.
   Apple activity must force OFF and keep it OFF until a fresh manual
   selection.
+
+## F0.9.86 Frontend Menu Correction
+
+- `acd47f1b51c06ac097c98fd128e47bdd4d30442c` removes the ONE//e
+  video-standard selector from Video and places it in Boot Settings directly
+  below ONE//e standalone.
+- The selector appears only while live `REQUEST|EFFECTIVE` is true. If ONE//e
+  turns off while the selector has focus, the menu moves focus to ONE//e
+  standalone. It cannot leave focus on the normal USB-binding reset action
+  which shares that item number while ONE//e is off.
+- The selector remains global and outside profiles. Firmware saves a desired
+  PAL or NTSC change at once. The active choice changes at the next virtual
+  reset or ONE//e restart, as before.
+- `b1f3706e9b921f09acddd556b23d89808496b6f8` reserves F0.9.86 and is the
+  clean frontend package checkpoint.
+
+## F0.9.86 Frontend-Only Test Image
+
+- UI source commit: `acd47f1b51c06ac097c98fd128e47bdd4d30442c`
+- Version and clean frontend HEAD:
+  `b1f3706e9b921f09acddd556b23d89808496b6f8`
+- Frontend archive: `.timing_runs/20260817T102409Z-b1f3706e-frontend`
+- Reused exact F0.9.85 PL run: `20260817T093102Z-ff19873c-full`
+- Route: WNS `+0.175 ns`, WHS `+0.053 ns`, and WPWS `+0.265 ns`
+- Route and bus skew: `PASS`; bus-skew WNS `+5.514 ns`
+- Files: root `FIRMWARE.BIN` and
+  `.timing_runs/20260817T102409Z-b1f3706e-frontend/FIRMWARE_TEST.BIN`
+- Size: `4,244,620` bytes each
+- Firmware SHA-256:
+  `979cbe7f25192b9bb4b20889e05345b63f8605fbe2540891e5b3238b843f9d17`
+- Handoff record:
+  `.timing_runs/20260817T102409Z-b1f3706e-frontend/test_firmware_manifest.txt`
+
+No PL source changed, so this package reuses the exact clean F0.9.85 XSA and
+bitstream. The exact-XSA Vitis platform export and every application build
+report `SUCCESS`. Root and archive firmware files are byte-identical. Bootgen
+readback passed with three named image headers, four total images, and four
+partitions.
+
+WNS is positive but below the project's +0.300 ns promotion gate. The user
+waived that gate for this test image only. Programming and hardware retest
+remain open; this is not a promoted release.
+
+## F0.9.86 Focused Retest
+
+- [ ] Program root `FIRMWARE.BIN` and confirm F0.9.86 on screen.
+- [ ] With ONE//e off, confirm that Video has no ONE//e PAL/NTSC row and Boot
+  Settings has no ONE//e video-standard row.
+- [ ] Select ONE//e. In Boot Settings, require `ONE//e video standard`
+  directly below `ONE//e standalone`, with no copy left in Video.
+- [ ] Move focus to the standard row, then make live `REQUEST|EFFECTIVE` turn
+  off. Require focus to move to ONE//e standalone and require no USB-binding
+  reset action.
+- [ ] Select PAL, reset or restart ONE//e, and require PAL to become active.
+  Repeat for NTSC. Power-cycle and prove the global desired choice persists;
+  load a profile and prove it does not change the choice.
+- [ ] Recheck fixed input ownership, menu pause and audio mute, SmartPort and
+  Disk II boot, screenshots, speed controls, key repeat, and host mode.
+- [ ] Complete the Apple-connected high-impedance and live-clock stop tests.

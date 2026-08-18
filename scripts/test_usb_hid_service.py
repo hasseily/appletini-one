@@ -196,33 +196,19 @@ def test_onee_uses_fixed_keyboard_controls_and_blocks_menu_leakage() -> None:
         require(token in header and token in source,
                 f"ONE//e HID routing API must expose {token}")
 
-    fixed_pairs = {
-        "HID_KBD_USAGE_PAUSE": "USB_HID_MENU_ACTION_OPEN",
-        "HID_KBD_USAGE_PAGEUP": "USB_HID_MENU_ACTION_PREV_TAB",
-        "HID_KBD_USAGE_PAGEDOWN": "USB_HID_MENU_ACTION_NEXT_TAB",
-        "HID_KBD_USAGE_LEFT": "USB_HID_MENU_ACTION_LEFT",
-        "HID_KBD_USAGE_RIGHT": "USB_HID_MENU_ACTION_RIGHT",
-        "HID_KBD_USAGE_UP": "USB_HID_MENU_ACTION_ITEM_UP",
-        "HID_KBD_USAGE_DOWN": "USB_HID_MENU_ACTION_ITEM_DOWN",
-        "HID_KBD_USAGE_PRINTSCN": "USB_HID_MENU_ACTION_SCREENSHOT_A2",
-        "HID_KBD_USAGE_KPD0": "USB_HID_MENU_ACTION_VTW_SPEED_TOGGLE",
-        "HID_KBD_USAGE_KPDPLUS": "USB_HID_MENU_ACTION_VTW_SPEED_UP",
-        "HID_KBD_USAGE_KPDHMINUS": "USB_HID_MENU_ACTION_VTW_SPEED_DOWN",
-    }
-    for usage, action in fixed_pairs.items():
-        require(usage in fixed and action in fixed,
-                f"fixed ONE//e map must route {usage} to {action}")
-    require("USB_HID_MENU_ACTION_SCREENSHOT_1080P" in fixed and
-            "modifier & ONEE_USB_MODIFIER_SHIFT" in fixed and
-            "HID_KBD_USAGE_LSHIFT" in controls and
-            "HID_KBD_USAGE_RSHIFT" in controls,
-            "Shift+PrintScreen must select the 1080p capture")
-    require("HID_KBD_USAGE_ENTER" in fixed and
-            "HID_KBD_USAGE_KPDEMTER" in fixed and
-            "USB_HID_MENU_ACTION_SELECT" in fixed and
-            "HID_KBD_USAGE_ESCAPE" in fixed and
-            "USB_HID_MENU_ACTION_CLOSE" in fixed,
-            "fixed menu control must retain Enter/KP Enter and Escape")
+    require("HID_KBD_USAGE_PAUSE" in fixed and
+            "USB_HID_MENU_ACTION_OPEN" in fixed and
+            "USB_HID_MENU_ACTION_CLOSE" in fixed and
+            "usage != HID_KBD_USAGE_PAUSE" in fixed,
+            "Pause/Break must be the only fixed ONE//e menu key")
+    for usage in ["HID_KBD_USAGE_PAGEUP", "HID_KBD_USAGE_PRINTSCN",
+                  "HID_KBD_USAGE_KPD0", "HID_KBD_USAGE_KPDPLUS"]:
+        require(usage not in fixed,
+                f"{usage} must fall through to the saved USB binding")
+    require("HID_KBD_USAGE_LALT" in controls and
+            "HID_KBD_USAGE_RALT" in controls and
+            "ONEE_USB_ROUTE_CONSUME_SOURCE" in controls,
+            "Left and Right Alt must remain fixed Apple-key sources")
     require("CARD_CTRL_ONEE_STATUS_REQUEST_BIT" in active and
             "CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT" in active and
             "CARD_CTRL_ONEE_STATUS_SELECTED_BIT" not in active and
@@ -236,36 +222,35 @@ def test_onee_uses_fixed_keyboard_controls_and_blocks_menu_leakage() -> None:
             "menu-owned reports must reach the Apple bridge only as releases")
     require("onee_usb_apple_usage_allowed(key, g_onee_fixed_mode)" in keyboard and
             "g_onee_fixed_mode != 0U" in keyboard,
-            "fixed Break, screenshot, and speed keys must not leak into Apple input")
+            "fixed Pause/Break must not leak into Apple input")
     modifier_filter = keyboard.find("onee_usb_fixed_apple_modifier(")
     apple_report = keyboard.find("onee_input_service_keyboard_report(")
-    require("onee_printscreen_down = 1U;" in keyboard and
-            0 <= modifier_filter < apple_report and
-            "ONEE_USB_MODIFIER_LSHIFT" in controls and
-            "ONEE_USB_MODIFIER_RSHIFT" in controls and
-            "modifier &= (uint8_t)~ONEE_USB_MODIFIER_SHIFT;" in controls,
-            "Shift+PrintScreen must consume both Shift bits before Apple input")
+    require(0 <= modifier_filter < apple_report and
+            "ONEE_USB_MODIFIER_LGUI" in controls and
+            "ONEE_USB_MODIFIER_RGUI" in controls and
+            "~ONEE_USB_MODIFIER_GUI" in controls,
+            "GUI modifiers must not duplicate the fixed Alt Apple keys")
     fixed_gate = keyboard.find("if (g_onee_fixed_mode != 0U) {")
     configurable_screenshot = keyboard.find("screenshot_push_source(")
     configurable_speed = keyboard.find("vtw_push_source(")
     require(0 <= fixed_gate < configurable_screenshot < configurable_speed and
+            "ONEE_USB_ROUTE_CONSUME_SOURCE" in
+            keyboard[fixed_gate:configurable_screenshot] and
             "continue;" in keyboard[fixed_gate:configurable_screenshot],
-            "fixed ONE//e controls must bypass every saved screenshot/speed binding")
+            "only fixed ONE//e sources may bypass saved bindings")
     route_call = keyboard.find("onee_usb_fixed_route(", fixed_gate)
     require(fixed_gate < route_call < configurable_screenshot and
-            "onee_usb_fixed_route(fixed_action)" in
+            "onee_usb_fixed_route(usage, fixed_action)" in
             keyboard[route_call:configurable_screenshot] and
-            "menu_start_open_close_hold" not in
-            keyboard[fixed_gate:configurable_screenshot] and
-            "g_menu_open_close_source" not in
-            keyboard[fixed_gate:configurable_screenshot],
-            "fixed ONE//e routing must never consult the saved long-hold binding")
+            "screenshot_push_source" in keyboard and
+            "vtw_push_source" in keyboard and
+            "menu_start_open_close_hold" in keyboard,
+            "non-fixed ONE//e keys must continue through the saved binding routes")
     route = function_body(controls, "onee_usb_fixed_route")
-    require("USB_HID_MENU_ACTION_NONE" in route and
+    require("onee_usb_fixed_usage_reserved(usage)" in route and
             "ONEE_USB_ROUTE_PUSH_NOW" in route and
-            "source" not in route and
-            "open_close" not in route,
-            "the pure fixed route must depend only on the fixed action")
+            "ONEE_USB_ROUTE_CONSUME_SOURCE" in route,
+            "the fixed route must consume only Pause and the two Alt sources")
 
     require("vtw_service_onee_set_paused(1U)" in pause and
             "usb_hid_service_set_onee_input_blocked(1U)" in pause and
@@ -284,14 +269,18 @@ def test_onee_uses_fixed_keyboard_controls_and_blocks_menu_leakage() -> None:
             "onee_usb_hat_active(" in desktop and
             "g_onee_input_blocked == 0U && slot->onee_joystick" in source,
             "menu ownership must block joystick delivery and wait for buttons, axes, and hat release")
-    require("if (g_onee_fixed_mode != 0U)" in mouse_buttons and
-            "slot->prev_buttons = buttons;" in mouse_buttons and
-            desktop.count("g_menu_capture != 0U && g_onee_fixed_mode == 0U") >= 3,
-            "fixed ONE//e must ignore saved mouse, joystick, axis, and hat menu routes")
-    require("ui_key_from_onee_fixed_action(event->action)" in event and
+    hold = function_body(source, "menu_poll_open_close_hold")
+    require("g_onee_fixed_mode" not in mouse_buttons and
+            "g_onee_fixed_mode" not in hold and
+            desktop.count("g_menu_capture != 0U") >= 3 and
+            "g_onee_fixed_mode == 0U" not in desktop,
+            "saved mouse, joystick, axis, hat, and long-OK routes must work in ONE//e")
+    sync = function_body(frontend_main, "ui_sync_usb_menu_capture")
+    require("g_usb_menu_owned == 0U || ui_onee_selected() != 0U" in sync and
             "config_menu_capture_usb_binding" in event and
-            "onee_fixed == 0U" in event,
-            "ONE//e menu input must bypass saved binding capture and translation")
+            "ui_key_from_usb_menu_source(menu, event->source)" in event and
+            "onee_fixed" not in event,
+            "ONE//e must allow capture and translate the saved bindings")
 
 def test_cherryusb_config_supports_hubs_and_zynq_ehci() -> None:
     config = read(USB_CONFIG_H)
@@ -530,6 +519,7 @@ def test_usb0_storage_priority_over_usb1_hid_poll() -> None:
             "modal SD remote mount must service the USB bridge, close on host eject, then handle USB input and boot-prompt settle")
     require("static uint8_t ui_config_menu_has_close_consumer(const config_menu_t *menu)" in frontend_main and
             "config_menu_usb0_sd_remote_active(menu) != 0U ||\n"
+            "            config_menu_ethernet_ftp_sd_remote_active(menu) != 0U ||\n"
             "            menu->usb_binding_capture != CONFIG_MENU_USB_BIND_CAPTURE_NONE ||\n"
             "            menu->browser_active != 0U ||\n"
             "            menu->profile_carousel_active != 0U ||\n"

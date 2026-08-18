@@ -634,8 +634,7 @@ static void menu_poll_open_close_hold(usb_hid_slot_t *slot)
 {
     XTime now_tick = 0U;
 
-    if (g_onee_fixed_mode != 0U ||
-        slot == NULL ||
+    if (slot == NULL ||
         slot->open_close_down == 0U ||
         slot->open_close_hold_fired != 0U ||
         slot->open_close_down_source != g_menu_open_close_source ||
@@ -738,13 +737,6 @@ static void mouse_menu_process_buttons(usb_hid_slot_t *slot,
                 MOUSE_BUTTON_5);
     edge_down = (uint8_t)(buttons & (uint8_t)~slot->prev_buttons);
     edge_up = (uint8_t)((uint8_t)~buttons & slot->prev_buttons);
-
-    /* ONE//e owns a fixed keyboard-only menu map. Keep mouse and joystick
-     * state current, but never let a saved button binding act on the menu. */
-    if (g_onee_fixed_mode != 0U) {
-        slot->prev_buttons = buttons;
-        return;
-    }
 
     if (g_menu_capture != 0U) {
         if (wheel > 0) {
@@ -1008,7 +1000,6 @@ static void hid_process_keyboard_usages(usb_hid_slot_t *slot,
     uint32_t next_count = 0U;
     uint32_t onee_key_count = 0U;
     uint8_t onee_modifier = modifier;
-    uint8_t onee_printscreen_down = 0U;
     uint8_t onee_reset_chord;
 
     if (slot == NULL || keys == NULL) {
@@ -1023,9 +1014,6 @@ static void hid_process_keyboard_usages(usb_hid_slot_t *slot,
         if (key > HID_KBD_USAGE_ERRUNDEF) {
             slot->keyboard_keys_down = 1U;
         }
-        if (key == HID_KBD_USAGE_PRINTSCN) {
-            onee_printscreen_down = 1U;
-        }
         if (onee_key_count >= HID_KEY_TRACK_COUNT ||
             key <= HID_KBD_USAGE_ERRUNDEF ||
             onee_usb_apple_usage_allowed(key, g_onee_fixed_mode) == 0U) {
@@ -1034,10 +1022,7 @@ static void hid_process_keyboard_usages(usb_hid_slot_t *slot,
         onee_keys[onee_key_count++] = key;
     }
     if (g_onee_fixed_mode != 0U) {
-        /* Shift belongs to the fixed 1080p screenshot chord while PrintScreen
-         * is down. Do not let it alter the Apple keyboard modifier state. */
-        onee_modifier = onee_usb_fixed_apple_modifier(
-            onee_modifier, onee_printscreen_down);
+        onee_modifier = onee_usb_fixed_apple_modifier(onee_modifier);
     }
     if (g_onee_input_blocked != 0U) {
         onee_modifier = 0U;
@@ -1092,13 +1077,14 @@ static void hid_process_keyboard_usages(usb_hid_slot_t *slot,
             const uint8_t usage =
                 (uint8_t)(next_sources[i] & USB_HID_MENU_SOURCE_KEY_MASK);
             fixed_action = onee_usb_keyboard_action(
-                usage, modifier, g_menu_capture, g_onee_fixed_mode);
-            fixed_route = onee_usb_fixed_route(fixed_action);
+                usage, g_menu_capture, g_onee_fixed_mode);
+            fixed_route = onee_usb_fixed_route(usage, fixed_action);
             if ((fixed_route & ONEE_USB_ROUTE_PUSH_NOW) != 0U) {
                 mouse_menu_push_event(fixed_action, next_sources[i]);
             }
-            /* Fixed mode never consults any saved USB binding. */
-            continue;
+            if ((fixed_route & ONEE_USB_ROUTE_CONSUME_SOURCE) != 0U) {
+                continue;
+            }
         }
         if (screenshot_push_source(next_sources[i]) != 0U) {
             continue;
@@ -1499,7 +1485,7 @@ static void hid_collect_desktop_item(usb_hid_slot_t *slot,
             if (relative != 0U) {
                 *dx += value;
                 *mouse_delta_seen = 1U;
-            } else if (g_menu_capture != 0U && g_onee_fixed_mode == 0U) {
+            } else if (g_menu_capture != 0U) {
                 hid_menu_push_axis(slot,
                                    &slot->prev_x_dir,
                                    onee_usb_axis_direction(
@@ -1514,7 +1500,7 @@ static void hid_collect_desktop_item(usb_hid_slot_t *slot,
             if (relative != 0U) {
                 *dy += value;
                 *mouse_delta_seen = 1U;
-            } else if (g_menu_capture != 0U && g_onee_fixed_mode == 0U) {
+            } else if (g_menu_capture != 0U) {
                 hid_menu_push_axis(slot,
                                    &slot->prev_y_dir,
                                    onee_usb_axis_direction(
@@ -1533,7 +1519,7 @@ static void hid_collect_desktop_item(usb_hid_slot_t *slot,
             if (relative == 0U && slot->onee_joystick != 0U) {
                 slot->raw_hat_active = onee_usb_hat_active(value);
             }
-            if (g_menu_capture != 0U && g_onee_fixed_mode == 0U) {
+            if (g_menu_capture != 0U) {
                 hid_menu_push_hat(slot, (uint8_t)value);
             }
             break;

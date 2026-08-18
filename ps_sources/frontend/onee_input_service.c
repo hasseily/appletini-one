@@ -359,10 +359,10 @@ static uint32_t onee_live_word(void)
                 (slot->modifier & (HID_MOD_CTRL | HID_MOD_SHIFT)) != 0U) {
                 live |= ONEE_INPUT_LIVE_ANY_KEY_BIT;
             }
-            if ((slot->modifier & (HID_MOD_LALT | HID_MOD_LGUI)) != 0U) {
+            if ((slot->modifier & HID_MOD_LALT) != 0U) {
                 live |= ONEE_INPUT_LIVE_OPEN_APPLE_BIT;
             }
-            if ((slot->modifier & (HID_MOD_RALT | HID_MOD_RGUI)) != 0U) {
+            if ((slot->modifier & HID_MOD_RALT) != 0U) {
                 live |= ONEE_INPUT_LIVE_CLOSED_APPLE_BIT;
             }
         }

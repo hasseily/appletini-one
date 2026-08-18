@@ -112,11 +112,13 @@ def test_apple_keys_caps_and_cold_reboot_chord() -> None:
                        "uint8_t onee_input_service_keyboard_report",
                        "void onee_input_service_joystick_report")
 
-    require("HID_MOD_LALT | HID_MOD_LGUI" in service and
+    require("slot->modifier & HID_MOD_LALT" in service and
             "ONEE_INPUT_LIVE_OPEN_APPLE_BIT" in service and
-            "HID_MOD_RALT | HID_MOD_RGUI" in service and
-            "ONEE_INPUT_LIVE_CLOSED_APPLE_BIT" in service,
-            "left and right Alt/GUI must map to Open and Closed Apple")
+            "slot->modifier & HID_MOD_RALT" in service and
+            "ONEE_INPUT_LIVE_CLOSED_APPLE_BIT" in service and
+            "HID_MOD_LALT | HID_MOD_LGUI" not in service and
+            "HID_MOD_RALT | HID_MOD_RGUI" not in service,
+            "only Left and Right Alt may map to Open and Closed Apple")
     require("usage == HID_KBD_USAGE_CAPSLOCK" in keyboard and
             "g_caps_lock ^= 1U;" in keyboard,
             "Caps Lock must toggle on a new HID usage edge")
@@ -705,10 +707,17 @@ def run_native_behavior_test() -> bool:
 
             release_keys(2U);
             (void)onee_input_service_keyboard_report(
-                2U, HID_MOD_LALT | HID_MOD_RGUI, NULL, 0U);
+                2U, HID_MOD_LALT | HID_MOD_RALT, NULL, 0U);
             onee_input_service_poll();
             if ((last_write(ONEE_INPUT_LIVE_REG) & 7U) != 6U) {
                 fail("Open and Closed Apple live bits are wrong");
+                return 1;
+            }
+            (void)onee_input_service_keyboard_report(
+                2U, HID_MOD_LGUI | HID_MOD_RGUI, NULL, 0U);
+            onee_input_service_poll();
+            if ((last_write(ONEE_INPUT_LIVE_REG) & 7U) != 0U) {
+                fail("GUI modifiers leaked into the fixed Apple keys");
                 return 1;
             }
 

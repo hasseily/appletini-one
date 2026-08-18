@@ -150,7 +150,7 @@ def test_boot_settings_draws_binding_editor() -> None:
             "        CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_DOWN,\n"
             "        CONFIG_MENU_USB_BIND_ACTION_VTW_SLUG_TOGGLE\n"
             "    };" in tabs and
-            "binding_y + ((int)i + 1 + spacer) * row_h" in tabs and
+            "((int)i + right_row_offset + spacer) * row_h" in tabs and
             "config_menu_boot_usb_binding_item_for_action(action)" in tabs,
             "visible binding order must put OK/Back in the middle and PrtScr rows below Menu")
     require("const int row_h = CMUI_ROW_H + CMUI_ROW_GAP;" in tabs and
@@ -164,14 +164,14 @@ def test_boot_settings_draws_binding_editor() -> None:
             "hgr_draw_usb_binding_item(" in tabs,
             "inactive USB binding rows must render grey")
     require("hgr_draw_usb_binding_item(\n"
-            "        fb,\n"
-            "        x + (column_w + column_gap) * 2,\n"
-            "        binding_y,\n"
-            "        column_w,\n"
-            "        0U,\n"
-            "        1U,\n"
-            "        \"MENU\"" in tabs,
-            "Menu open/close must render first in the right column and stay grey because it is derived from the open/close source")
+            "            fb,\n"
+            "            x + (column_w + column_gap) * 2,\n"
+            "            binding_y,\n"
+            "            column_w,\n"
+            "            0U,\n"
+            "            1U,\n"
+            "            \"MENU\"" in tabs,
+            "normal Menu open/close must render first in the right column and stay grey because it is derived from the open/close source")
     require("static const uint8_t k_boot_usb_binding_action_order[CONFIG_MENU_USB_BIND_ACTION_COUNT]" in source and
             "CONFIG_MENU_USB_BIND_ACTION_OK,\n"
             "    CONFIG_MENU_USB_BIND_ACTION_BACK,\n"
@@ -275,7 +275,7 @@ def test_usb_bindings_edit_only_from_apple_boot_menu() -> None:
             "Apple boot-menu opens and USB long-press opens must carry distinct ownership")
 
 
-def test_onee_draws_exact_fixed_read_only_bindings() -> None:
+def test_onee_draws_fixed_controls_and_editable_bindings() -> None:
     header = read(REPO_ROOT / "ps_sources" / "frontend" / "config_menu_internal.h")
     source = read(CONFIG_MENU_C)
     tabs = read(CONFIG_MENU_MAIN_TABS_C)
@@ -291,37 +291,36 @@ def test_onee_draws_exact_fixed_read_only_bindings() -> None:
             "CARD_CTRL_ONEE_STATUS_SELECTED_BIT" not in
             fixed_mode[fixed_mode.find("onee_usb_fixed_mode_active"):],
             "the fixed guide and live routing must share REQUEST/EFFECTIVE selection")
-    expected_values = [
-        'return "Up";', 'return "Down";', 'return "Left";', 'return "Right";',
-        'return "PgUp";', 'return "PgDn";', 'return "Enter/KP Enter";', 'return "Esc";',
-        'return "PrtSc";', 'return "Shift+PrtSc";',
-        'return "KP 0";', 'return "KP +";', 'return "KP -";',
-    ]
-    require('"ONE//e FIXED USB BINDINGS - READ ONLY"' in tabs and
+    require('const char *heading_text = "USB MENU BINDINGS";' in tabs and
             '"RESET: Ctrl+Alt+Del"' in tabs and
-            'snprintf(menu_value, sizeof(menu_value), "Break")' in tabs and
-            all(value in tabs for value in expected_values),
-            "ONE//e must draw the exact fixed keyboard guide, including Break")
-    require("action == CONFIG_MENU_USB_BIND_ACTION_VTW_SLUG_TOGGLE" in tabs and
-            "continue;" in tabs[tabs.find(
-                "action == CONFIG_MENU_USB_BIND_ACTION_VTW_SLUG_TOGGLE"):
-                tabs.find("action == CONFIG_MENU_USB_BIND_ACTION_VTW_SLUG_TOGGLE") + 160],
-            "the normal-only slug binding must not appear in the fixed ONE//e guide")
-    require("if (config_menu_onee_fixed_bindings_active(menu) != 0U) {\n"
-            "            return CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM + 1U;" in source,
-            "ONE//e navigation must include its standard and skip every read-only binding row")
-    require("config_menu_onee_fixed_bindings_active(menu) != 0U &&\n"
-            "        menu->item_focus > CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM" in source and
-            "menu->item_focus = CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM;" in source and
+            '"OPEN APPLE: Left Alt"' in tabs and
+            '"CLOSED APPLE: Right Alt"' in tabs and
+            '"MENU: Pause/Break + Long OK"' in tabs and
+            "const int fixed_menu_y = reset_y + row_h;" in tabs and
+            "fixed_menu_y,\n"
+            "                             w," in tabs and
+            "const int right_row_offset = (onee_fixed != 0U) ? 0 : 1;" in tabs,
+            "ONE//e must show its four fixed controls as read-only")
+    require("onee_fixed_binding_value" not in tabs and
+            "config_menu_usb_binding_source_text(menu->usb_menu_bindings[action])" in tabs and
+            tabs.count("if (menu->usb_bindings_editable != 0U)") == 4,
+            "ONE//e must draw saved values and keep every binding column editable")
+    require("case CONFIG_TAB_BOOT_SETTINGS:\n"
+            "        return CONFIG_MENU_BOOT_ITEM_COUNT;" in source and
             "config_menu_onee_fixed_bindings_active(menu) == 0U &&\n"
-            "        menu->item_focus >= CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM" in source,
-            "a live ONE//e transition must clamp stale focus and bypass binding-grid navigation")
-    require(source.count('"ONE//e USB CONTROLS ARE FIXED"') >= 2 and
-            "config_menu_onee_fixed_bindings_active(menu) == 0U" in source,
-            "capture, binding activation, and editability must reject ONE//e changes")
-    require("ONE//e shows fixed read-only keys here; Break opens this menu and Ctrl+Alt+Del resets." in
+            "        menu->item_focus >= CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM" not in source and
+            "menu->item_focus > CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM" not in source,
+            "ONE//e navigation must include the full binding grid")
+    require('"ONE//e USB CONTROLS ARE FIXED"' not in source and
+            "menu->usb_bindings_editable = (editable != 0U) ? 1U : 0U;" in source and
+            "config_menu_capture_usb_binding(menu, event->source)" in frontend_main and
+            "g_usb_menu_owned == 0U || ui_onee_selected() != 0U" in frontend_main,
+            "ONE//e must allow binding capture even when USB opened the menu")
+    require("ONE//e fixes Reset, Open Apple, Closed Apple, and Pause/Break. Other USB bindings stay editable." in
+            help_source and
+            "Pause/Break and a long press of the saved OK binding both open or close the ONE//e menu." in
             help_source,
-            "Boot Settings help must explain the fixed guide, Break, and reset chord")
+            "Boot Settings help must explain the fixed controls and both Menu routes")
 
 
 def test_open_close_is_long_press_of_open_close_source() -> None:
@@ -425,7 +424,7 @@ TESTS = [
     test_only_usb_menu_events_are_remapped,
     test_binding_grid_navigation_requires_ok_for_edits,
     test_usb_bindings_edit_only_from_apple_boot_menu,
-    test_onee_draws_exact_fixed_read_only_bindings,
+    test_onee_draws_fixed_controls_and_editable_bindings,
     test_open_close_is_long_press_of_open_close_source,
     test_usb_keyboard_uses_binding_sources_only,
     test_screenshot_usb_shortcuts_are_global_keyboard_bindings,

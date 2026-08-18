@@ -115,7 +115,8 @@ HELP(boot_settings,
     "In normal use the USB device's MENU key opens USB mode, and the USB keys drive the menu.",
     "Leave the Apple keyboard alone in USB mode: it reaches the running program.",
     "In USB bindings, Up/Down move within a column, Left/Right move columns, and Enter captures a new input.",
-    "ONE//e shows fixed read-only keys here; Break opens this menu and Ctrl+Alt+Del resets.",
+    "ONE//e fixes Reset, Open Apple, Closed Apple, and Pause/Break. Other USB bindings stay editable.",
+    "Pause/Break and a long press of the saved OK binding both open or close the ONE//e menu.",
     "TW keys change TransWarp speed any time: toggle 1 MHz, step the preset, toggle the 0.05 MHz slug.");
 
 HELP(boot_timeout,

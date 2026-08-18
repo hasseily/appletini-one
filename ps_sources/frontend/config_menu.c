@@ -1879,11 +1879,6 @@ uint8_t config_menu_capture_usb_binding(config_menu_t *menu,
     if (menu == NULL || action == CONFIG_MENU_USB_BIND_CAPTURE_NONE) {
         return 0U;
     }
-    if (config_menu_onee_fixed_bindings_active(menu) != 0U) {
-        menu->usb_binding_capture = CONFIG_MENU_USB_BIND_CAPTURE_NONE;
-        config_menu_set_status(menu, 1U, "ONE//e USB CONTROLS ARE FIXED");
-        return 1U;
-    }
     if (menu->usb_bindings_editable == 0U) {
         menu->usb_binding_capture = CONFIG_MENU_USB_BIND_CAPTURE_NONE;
         config_menu_set_status(menu, 1U, "USB BINDINGS EDITABLE AT BOOT");
@@ -4376,9 +4371,6 @@ static uint32_t config_menu_tab_item_count(const config_menu_t *menu)
 
     switch (menu->tab) {
     case CONFIG_TAB_BOOT_SETTINGS:
-        if (config_menu_onee_fixed_bindings_active(menu) != 0U) {
-            return CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM + 1U;
-        }
         return CONFIG_MENU_BOOT_ITEM_COUNT;
     case CONFIG_TAB_PROFILES:
         return CONFIG_MENU_PROFILE_ITEM_COUNT;
@@ -6202,11 +6194,6 @@ static void config_menu_activate_item(config_menu_t *menu)
                 config_menu_boot_usb_binding_action_for_item(menu->item_focus);
             char text[CONFIG_MENU_STATUS_LEN];
 
-            if (config_menu_onee_fixed_bindings_active(menu) != 0U) {
-                config_menu_set_status(menu, 1U,
-                                       "ONE//e USB CONTROLS ARE FIXED");
-                break;
-            }
             if (menu->usb_bindings_editable == 0U) {
                 config_menu_set_status(menu, 1U, "USB BINDINGS EDITABLE AT BOOT");
                 break;
@@ -6849,9 +6836,7 @@ void config_menu_set_usb_bindings_editable(config_menu_t *menu, uint8_t editable
         return;
     }
 
-    menu->usb_bindings_editable =
-        (editable != 0U &&
-         config_menu_onee_fixed_bindings_active(menu) == 0U) ? 1U : 0U;
+    menu->usb_bindings_editable = (editable != 0U) ? 1U : 0U;
     if (menu->usb_bindings_editable == 0U) {
         menu->usb_binding_capture = CONFIG_MENU_USB_BIND_CAPTURE_NONE;
     }
@@ -6864,7 +6849,8 @@ void config_menu_set_usb_owned(config_menu_t *menu, uint8_t usb_owned)
     }
 
     menu->usb_owned = (usb_owned != 0U) ? 1U : 0U;
-    if (menu->usb_owned != 0U) {
+    if (menu->usb_owned != 0U &&
+        config_menu_onee_fixed_bindings_active(menu) == 0U) {
         menu->usb_binding_capture = CONFIG_MENU_USB_BIND_CAPTURE_NONE;
     }
 }
@@ -6957,13 +6943,6 @@ uint8_t config_menu_handle_input(config_menu_t *menu, ui_input_t input)
     }
 
     if (menu->tab == CONFIG_TAB_BOOT_SETTINGS &&
-        config_menu_onee_fixed_bindings_active(menu) != 0U &&
-        menu->item_focus > CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM) {
-        menu->item_focus = CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM;
-    }
-
-    if (menu->tab == CONFIG_TAB_BOOT_SETTINGS &&
-        config_menu_onee_fixed_bindings_active(menu) == 0U &&
         menu->item_focus >= CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM &&
         menu->item_focus < CONFIG_MENU_BOOT_ITEM_COUNT) {
         switch (input.key) {

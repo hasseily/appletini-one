@@ -100,9 +100,9 @@ def test_menu_row_state_and_exact_help() -> None:
             '"ONE//e video standard"' not in video_draw and
             "CONFIG_VIDEO_ITEM_ONEE_STANDARD" not in internal,
             "the ONE//e-only video standard must sit below standalone, not on Video")
-    require("return CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM + 1U;" in source and
+    require("case CONFIG_TAB_BOOT_SETTINGS:\n        return CONFIG_MENU_BOOT_ITEM_COUNT;" in source and
             "case CONFIG_TAB_VIDEO:\n        return CONFIG_VIDEO_ITEM_COUNT;" in source,
-            "ONE//e Boot Settings navigation must include the standard while Video stays fixed")
+            "ONE//e Boot Settings navigation must include the standard and bindings while Video stays fixed")
     require("standard_was_visible != 0U &&\n"
             "        config_menu_onee_fixed_bindings_active(menu) == 0U" in source and
             "menu->item_focus = CONFIG_MENU_BOOT_ONEE_ITEM;" in source,

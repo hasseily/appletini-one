@@ -2826,28 +2826,6 @@ static ui_key_t ui_key_from_usb_menu_source(const config_menu_t *menu,
     return config_menu_translate_usb_binding(menu, source);
 }
 
-static ui_key_t ui_key_from_onee_fixed_action(usb_hid_menu_action_t action)
-{
-    switch (action) {
-    case USB_HID_MENU_ACTION_LEFT:
-        return UI_KEY_LEFT;
-    case USB_HID_MENU_ACTION_RIGHT:
-        return UI_KEY_RIGHT;
-    case USB_HID_MENU_ACTION_ITEM_UP:
-        return UI_KEY_UP;
-    case USB_HID_MENU_ACTION_ITEM_DOWN:
-        return UI_KEY_DOWN;
-    case USB_HID_MENU_ACTION_SELECT:
-        return UI_KEY_ENTER;
-    case USB_HID_MENU_ACTION_NEXT_TAB:
-        return UI_KEY_TAB;
-    case USB_HID_MENU_ACTION_PREV_TAB:
-        return UI_KEY_SHIFT_TAB;
-    default:
-        return UI_KEY_NONE;
-    }
-}
-
 static void ui_sync_usb_menu_capture(config_menu_t *menu)
 {
     if (!config_menu_is_active(menu)) {
@@ -2858,10 +2836,8 @@ static void ui_sync_usb_menu_capture(config_menu_t *menu)
         (uint8_t)(config_menu_is_active(menu) && g_usb_menu_owned != 0U));
     config_menu_set_usb_bindings_editable(
         menu,
-        (uint8_t)(config_menu_is_active(menu) && g_usb_menu_owned == 0U));
-    if (ui_onee_selected() != 0U) {
-        config_menu_set_usb_bindings_editable(menu, 0U);
-    }
+        (uint8_t)(config_menu_is_active(menu) &&
+                  (g_usb_menu_owned == 0U || ui_onee_selected() != 0U)));
     usb_hid_service_set_menu_ok_source(config_menu_usb_ok_binding_source(menu));
     usb_hid_service_set_menu_open_close_source(
         config_menu_usb_open_close_binding_source(menu));
@@ -2935,13 +2911,10 @@ static void ui_handle_usb_menu_event(ui_state_t *s,
 {
     ui_key_t key;
     uint8_t allow_onee_preselect;
-    uint8_t onee_fixed;
 
     if (event == NULL) {
         return;
     }
-    onee_fixed = (uint8_t)(ui_onee_selected() != 0U ||
-                           g_onee_menu_paused != 0U);
 
     switch (event->action) {
     case USB_HID_MENU_ACTION_OPEN:
@@ -2968,7 +2941,7 @@ static void ui_handle_usb_menu_event(ui_state_t *s,
         break;
     }
 
-    if (onee_fixed == 0U && config_menu_is_active(menu) &&
+    if (config_menu_is_active(menu) &&
         config_menu_usb_binding_capture_action(menu) !=
         CONFIG_MENU_USB_BIND_CAPTURE_NONE) {
         (void)config_menu_capture_usb_binding(menu, event->source);
@@ -3013,9 +2986,7 @@ static void ui_handle_usb_menu_event(ui_state_t *s,
         return;
     }
 
-    key = (onee_fixed != 0U) ?
-        ui_key_from_onee_fixed_action(event->action) :
-        ui_key_from_usb_menu_source(menu, event->source);
+    key = ui_key_from_usb_menu_source(menu, event->source);
     if (key == UI_KEY_NONE) {
         return;
     }

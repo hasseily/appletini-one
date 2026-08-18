@@ -58,6 +58,8 @@
 #define CARD_CTRL_ETH_STATUS_ERROR         (1UL << 3)
 #define CARD_CTRL_ETH_STATUS_RDATA_SHIFT   8U
 #define CARD_CTRL_ETH_STATUS_RDATA_MASK    0xFFUL
+#define CARD_CTRL_ETH_STATUS_SEQ_SHIFT     16U
+#define CARD_CTRL_ETH_STATUS_SEQ_MASK      0xFFUL
 
 /* Virtual SSC printer FIFO drain window (ssc_card, slot 1). Every byte the
  * Apple writes to the ACIA transmit register queues in a 2 KB PL FIFO;

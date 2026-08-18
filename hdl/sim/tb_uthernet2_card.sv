@@ -23,6 +23,15 @@ module tb_uthernet2_card;
     logic host_done;
     logic host_error;
     logic [7:0] host_rdata;
+    logic eth_cs_n_q = 1'b1;
+    int bus_op_count = 0;
+
+    always @(posedge clk) begin
+        eth_cs_n_q <= eth_cs_n;
+        if (eth_cs_n_q && !eth_cs_n) begin
+            bus_op_count <= bus_op_count + 1;
+        end
+    end
 
     uthernet2_card #(
         .CLK_HZ(1_000_000),
@@ -86,6 +95,16 @@ module tb_uthernet2_card;
         host_req = 1'b0;
     endtask
 
+    task automatic pulse_host_write(input logic [7:0] data);
+        @(negedge clk);
+        host_req = 1'b1;
+        host_write = 1'b1;
+        host_wdata = data;
+        @(negedge clk);
+        host_req = 1'b0;
+        host_write = 1'b0;
+    endtask
+
     task automatic pulse_apple_read(input logic [1:0] reg_sel);
         @(negedge clk);
         ab_read.addr = 16'hC094 | reg_sel;
@@ -121,6 +140,45 @@ module tb_uthernet2_card;
         repeat (3) @(posedge clk);
         rstn = 1'b1;
         wait_ready();
+
+        // The first host byte sets indirect mode and reloads both address
+        // bytes. Consecutive bytes reuse the W5100S auto-incremented pointer.
+        host_addr = 16'h0080;
+        pulse_host_read();
+        wait_host_done(1'b0);
+        wait_ready();
+        if (bus_op_count != 4) $fatal(1, "initial host read used %0d bus ops", bus_op_count);
+
+        host_addr = 16'h0081;
+        pulse_host_read();
+        wait_host_done(1'b0);
+        wait_ready();
+        if (bus_op_count != 5) $fatal(1, "sequential host read did not use one bus op");
+
+        // Even a shadow-only Apple access invalidates the host stream. This
+        // keeps the optimization safe when the Apple Uthernet slot is active.
+        pulse_apple_read(2'b00);
+        finish_apple_cycle(8'h00);
+        wait_ready();
+        host_addr = 16'h0082;
+        pulse_host_read();
+        wait_host_done(1'b0);
+        wait_ready();
+        if (bus_op_count != 9) $fatal(1, "Apple access did not force host reload");
+
+        // Switching direction reloads once, then sequential writes also use
+        // one physical data-port operation per byte.
+        host_addr = 16'h0083;
+        pulse_host_write(8'h5A);
+        wait_host_done(1'b0);
+        wait_ready();
+        if (bus_op_count != 13) $fatal(1, "host direction change did not reload");
+
+        host_addr = 16'h0084;
+        pulse_host_write(8'hA5);
+        wait_host_done(1'b0);
+        wait_ready();
+        if (bus_op_count != 14) $fatal(1, "sequential host write did not use one bus op");
 
         // A simultaneous Apple read wins; the one-cycle host request is queued.
         @(negedge clk);

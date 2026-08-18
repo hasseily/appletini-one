@@ -562,6 +562,7 @@ module apple_top(
     logic        eth_host_busy_q = 1'b0;
     logic        eth_host_done_q = 1'b0;
     logic        eth_host_error_q = 1'b0;
+    logic [7:0]  eth_host_seq_q = 8'h00;
     logic        eth_host_ready;
     logic        eth_host_done;
     logic        eth_host_error;
@@ -2063,6 +2064,7 @@ module apple_top(
             eth_host_busy_q <= 1'b0;
             eth_host_done_q <= 1'b0;
             eth_host_error_q <= 1'b0;
+            eth_host_seq_q <= 8'h00;
             disk2_sound_sample_base_q <= 32'h0000_0000;
             disk2_sound_control_q <= 32'h0000_0000;
             disk2_menu_sound_event_q <= 4'd0;
@@ -2148,6 +2150,7 @@ module apple_top(
                 eth_host_busy_q <= 1'b0;
                 eth_host_done_q <= 1'b1;
                 eth_host_error_q <= eth_host_error_q | eth_host_error;
+                eth_host_seq_q <= eth_host_seq_q + 8'd1;
             end
 
             if (apple_reset_assert_pulse) begin
@@ -2246,6 +2249,7 @@ module apple_top(
                             end else begin
                                 eth_host_done_q <= 1'b1;
                                 eth_host_error_q <= 1'b1;
+                                eth_host_seq_q <= eth_host_seq_q + 8'd1;
                             end
                         end
                     end
@@ -2427,7 +2431,8 @@ module apple_top(
                                                                          eth_host_write_q,
                                                                          1'b0};
                 CARD_CTRL_REG_ETH_STATUS:          as_client_rdata_q <= {
-                    16'h0000,
+                    8'h00,
+                    eth_host_seq_q,
                     eth_host_rdata_q,
                     4'h0,
                     eth_host_error_q,

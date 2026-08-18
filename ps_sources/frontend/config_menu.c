@@ -2706,7 +2706,8 @@ static uint8_t config_menu_ethernet_card_access(config_menu_t *menu)
         config_menu_set_status(menu, 1U, "ENABLE UTHERNET II FIRST");
         return 0U;
     }
-    if (menu->usb_owned != 0U) {
+    if (menu->usb_owned != 0U &&
+        config_menu_onee_fixed_bindings_active(menu) == 0U) {
         config_menu_set_status(menu, 1U, "CARD ACCESS ONLY FROM BOOT MENU");
         return 0U;
     }
@@ -3830,6 +3831,7 @@ static void config_menu_reset_settings_only(config_menu_t *menu)
     menu->ethernet_edit_index = 0U;
     menu->ethernet_dhcp_pending = 0U;
     menu->ethernet_dhcp_report = 0U;
+    menu->ethernet_ftp_sd_remote_active = 0U;
     uthernet2_default_config(&menu->ethernet_config);
     menu->clock_enabled = CONFIG_DEFAULT_CLOCK_ENABLED;
     menu->ram_enabled = CONFIG_DEFAULT_RAM_ENABLED;
@@ -4361,6 +4363,74 @@ static void config_menu_start_usb0_sd_remote(config_menu_t *menu)
 uint8_t config_menu_usb0_sd_remote_active(const config_menu_t *menu)
 {
     return (menu != NULL && menu->usb0_sd_remote_active != 0U) ? 1U : 0U;
+}
+
+static void config_menu_close_ethernet_ftp_sd_remote(config_menu_t *menu,
+                                                      const char *status)
+{
+    char detail[CONFIG_MENU_STATUS_LEN];
+
+    if (menu == NULL || menu->ethernet_ftp_sd_remote_active == 0U) {
+        return;
+    }
+    detail[0] = '\0';
+    if (menu->platform.set_ethernet_ftp_sd_remote != NULL) {
+        (void)menu->platform.set_ethernet_ftp_sd_remote(menu->platform.ctx,
+                                                        0U,
+                                                        detail,
+                                                        sizeof(detail));
+    }
+    menu->ethernet_ftp_sd_remote_active = 0U;
+    config_menu_set_status(menu,
+                           0U,
+                           status != NULL ? status : "SD CARD FTP SHARING STOPPED");
+}
+
+void config_menu_stop_ethernet_ftp_sd_remote(config_menu_t *menu)
+{
+    config_menu_close_ethernet_ftp_sd_remote(menu,
+                                              "SD CARD FTP SHARING STOPPED");
+}
+
+void config_menu_start_ethernet_ftp_sd_remote(config_menu_t *menu)
+{
+    char detail[CONFIG_MENU_STATUS_LEN];
+
+    if (menu == NULL) {
+        return;
+    }
+    if (config_menu_ethernet_card_access(menu) == 0U) {
+        return;
+    }
+    if (menu->ethernet_dhcp_pending != 0U) {
+        config_menu_set_status(menu, 1U, "WAIT FOR DHCP TO FINISH");
+        return;
+    }
+    if (menu->platform.set_ethernet_ftp_sd_remote == NULL) {
+        config_menu_set_status(menu, 1U, "SD CARD FTP SHARING UNAVAILABLE");
+        return;
+    }
+    detail[0] = '\0';
+    if (menu->platform.set_ethernet_ftp_sd_remote(menu->platform.ctx,
+                                                  1U,
+                                                  detail,
+                                                  sizeof(detail)) != 0) {
+        config_menu_set_status(menu,
+                               1U,
+                               detail[0] != '\0' ? detail :
+                                   "SD CARD FTP SHARING FAILED");
+        return;
+    }
+    menu->ethernet_ftp_sd_remote_active = 1U;
+    config_menu_set_status(menu,
+                           0U,
+                           detail[0] != '\0' ? detail :
+                               "SD CARD FTP SHARING - ENTER/ESC EXITS");
+}
+
+uint8_t config_menu_ethernet_ftp_sd_remote_active(const config_menu_t *menu)
+{
+    return (menu != NULL && menu->ethernet_ftp_sd_remote_active != 0U) ? 1U : 0U;
 }
 
 static uint32_t config_menu_tab_item_count(const config_menu_t *menu)
@@ -6409,14 +6479,17 @@ static void config_menu_activate_item(config_menu_t *menu)
         case CONFIG_ETHERNET_ITEM_WRITE:
         case CONFIG_ETHERNET_ITEM_DHCP:
         case CONFIG_ETHERNET_ITEM_TEST:
+        case CONFIG_ETHERNET_ITEM_FTP_SD:
             if (menu->item_focus == CONFIG_ETHERNET_ITEM_READ) {
                 config_menu_ethernet_read_from_card(menu);
             } else if (menu->item_focus == CONFIG_ETHERNET_ITEM_WRITE) {
                 config_menu_ethernet_write_to_card(menu);
             } else if (menu->item_focus == CONFIG_ETHERNET_ITEM_DHCP) {
                 config_menu_ethernet_dhcp(menu);
-            } else {
+            } else if (menu->item_focus == CONFIG_ETHERNET_ITEM_TEST) {
                 config_menu_ethernet_test(menu);
+            } else {
+                config_menu_start_ethernet_ftp_sd_remote(menu);
             }
             break;
         default:
@@ -6859,6 +6932,17 @@ uint8_t config_menu_handle_input(config_menu_t *menu, ui_input_t input)
 {
     if (menu == NULL || input.pressed == 0U) {
         return 0U;
+    }
+
+    if (config_menu_is_active(menu) &&
+        menu->ethernet_ftp_sd_remote_active != 0U) {
+        if (input.key == UI_KEY_ENTER ||
+            input.key == UI_KEY_BACK ||
+            input.key == UI_KEY_ESC ||
+            input.key == UI_KEY_MENU) {
+            config_menu_stop_ethernet_ftp_sd_remote(menu);
+        }
+        return 1U;
     }
 
     if (config_menu_is_active(menu) &&
@@ -7846,6 +7930,58 @@ static void config_menu_draw_usb0_sd_remote_modal(uint16_t *fb,
                         CMUI_BODY_SCALE);
     }
 
+static void config_menu_draw_ethernet_ftp_sd_modal(uint16_t *fb,
+                                                    const cmui_rect_t *body,
+                                                    uint8_t usb_owned)
+{
+    static const char * const lines[] = {
+        "Ethernet is sharing the SD card by anonymous read/write FTP.",
+        "Only the control client on the configured local subnet may connect.",
+        "FTP is not encrypted; use this mode only on a trusted network."
+    };
+    const char *keys_respond;
+    cmui_rect_t panel;
+
+    if (fb == NULL || body == NULL) {
+        return;
+    }
+
+    panel.x = body->x;
+    panel.y = body->y + 56;
+    panel.w = body->w;
+    panel.h = 280;
+    cmui_panel(fb, &panel, CMUI_COLOR_PANEL);
+    cmui_text(fb,
+              panel.x + 28,
+              panel.y + 28,
+              "SD Card FTP Sharing",
+              CMUI_COLOR_WARN,
+              CMUI_COLOR_PANEL,
+              CMUI_TITLE_SCALE);
+    for (uint32_t i = 0U; i < (sizeof(lines) / sizeof(lines[0])); ++i) {
+        cmui_text_clipped(fb,
+                          panel.x + 28,
+                          panel.y + 88 + ((int)i * 38),
+                          panel.w - 56,
+                          lines[i],
+                          CMUI_COLOR_TEXT,
+                          CMUI_COLOR_PANEL,
+                          CMUI_BODY_SCALE);
+    }
+    keys_respond = (usb_owned != 0U) ?
+        "Press USB OK, BACK or MENU to stop FTP sharing." :
+        "Press Enter, Esc, Back, or Menu to stop FTP sharing.";
+    cmui_text_clipped(fb,
+                      panel.x + 28,
+                      panel.y + 88 +
+                          ((int)(sizeof(lines) / sizeof(lines[0])) * 38),
+                      panel.w - 56,
+                      keys_respond,
+                      CMUI_COLOR_ACCENT,
+                      CMUI_COLOR_PANEL,
+                      CMUI_BODY_SCALE);
+}
+
 static void config_menu_draw_page(uint16_t *fb, const config_menu_t *menu,
                                   int x, int y, int w, int h)
 {
@@ -7946,7 +8082,9 @@ void config_menu_draw(uint16_t *fb, const config_menu_t *menu, uint8_t usb_owned
                    nav.h,
                    CMUI_COLOR_BORDER_SOFT);
 
-    if (menu->usb0_sd_remote_active != 0U) {
+    if (menu->ethernet_ftp_sd_remote_active != 0U) {
+        config_menu_draw_ethernet_ftp_sd_modal(fb, &body, usb_owned);
+    } else if (menu->usb0_sd_remote_active != 0U) {
         config_menu_draw_usb0_sd_remote_modal(fb, &body, usb_owned);
     } else {
         config_menu_draw_tabs(fb, menu, nav.x, nav.y, nav.w);
@@ -7959,7 +8097,8 @@ void config_menu_draw(uint16_t *fb, const config_menu_t *menu, uint8_t usb_owned
                 usb_owned,
                 (uint8_t)(boot_menu_service_machine_mode() ==
                           CARD_MACHINE_MODE_IIPLUS));
-    if (menu->usb0_sd_remote_active == 0U) {
+    if (menu->usb0_sd_remote_active == 0U &&
+        menu->ethernet_ftp_sd_remote_active == 0U) {
         config_menu_draw_browser(fb, menu, body.x, body.y - 4, body.w);
         /* Printout rename editor / delete confirm draw over the browser. */
         config_menu_printing_draw_overlays(fb, menu, body.x, body.y, body.w);

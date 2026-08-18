@@ -530,7 +530,7 @@ def static_checks() -> None:
             "menu_platform.set_vtw_config = control_set_vtw_config;" in main_c,
             "main.c must init, poll, and bind the vTW service")
     require('str_ieq(argv[0], "vtw")' in uart and
-            "config_menu_set_vtw_enabled(g_sdd_config_menu, enable);" in uart,
+            "config_menu_set_vtw_enabled(g_config_menu, enable);" in uart,
             "uart vtw command must route enable through the config menu")
     require('"vtw.enabled=%s\\n"' in menu_c and
             '"vtw.c074.ignore=%s\\n"' in menu_c and

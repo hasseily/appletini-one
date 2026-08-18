@@ -168,6 +168,9 @@ module uthernet2_card #(
     logic host_error_q;
     logic [7:0] host_rdata_q;
     logic host_active_q;
+    logic host_stream_valid_q;
+    logic host_stream_write_q;
+    logic [15:0] host_stream_next_addr_q;
     /* host_req is a one-cycle pulse from apple_top. If an Apple I/O
      * access starts in that exact cycle the IDLE dispatch takes the
      * Apple branch -- without this latch the request would be lost
@@ -398,6 +401,7 @@ module uthernet2_card #(
             host_done_q <= 1'b1;
             host_error_q <= 1'b1;
             addr_synced_q <= 1'b0;
+            host_stream_valid_q <= 1'b0;
             eth_state_q <= ETH_IDLE;
         end
     endtask
@@ -451,6 +455,9 @@ module uthernet2_card #(
             host_error_q <= 1'b0;
             host_rdata_q <= 8'h00;
             host_active_q <= 1'b0;
+            host_stream_valid_q <= 1'b0;
+            host_stream_write_q <= 1'b0;
+            host_stream_next_addr_q <= 16'h0000;
             host_pending_q <= 1'b0;
             host_pending_write_q <= 1'b0;
             host_pending_addr_q <= 16'h0000;
@@ -472,6 +479,12 @@ module uthernet2_card #(
 
             if (apple_io_write_addr_start) begin
                 apple_write_reserved_q <= 1'b1;
+            end
+            if (apple_io_read_start || apple_io_write_addr_start ||
+                apple_io_write_start) begin
+                /* Apple-side traffic can change the physical indirect pointer.
+                 * The next PS request must reload it before using the host path. */
+                host_stream_valid_q <= 1'b0;
             end
             if (apple_io_write_start) begin
                 apple_write_reserved_q <= 1'b0;
@@ -612,18 +625,40 @@ module uthernet2_card #(
                         host_active_q <= 1'b1;
                         access_addr_q <= host_pending_addr_q;
                         payload_data_q <= host_pending_wdata_q;
-                        start_host_mode_setup(
-                            host_pending_write_q ? ETH_HOST_ADDR_RELOAD_WRITE :
-                                                   ETH_HOST_ADDR_RELOAD_READ
-                        );
+                        if (host_stream_valid_q &&
+                            host_pending_addr_q == host_stream_next_addr_q &&
+                            host_pending_write_q == host_stream_write_q) begin
+                            if (host_pending_write_q) begin
+                                start_host_write(host_pending_wdata_q);
+                            end else begin
+                                start_host_read();
+                            end
+                        end else begin
+                            host_stream_valid_q <= 1'b0;
+                            start_host_mode_setup(
+                                host_pending_write_q ? ETH_HOST_ADDR_RELOAD_WRITE :
+                                                       ETH_HOST_ADDR_RELOAD_READ
+                            );
+                        end
                     end else if (host_can_start && host_req) begin
                         host_active_q <= 1'b1;
                         access_addr_q <= host_phys_addr;
                         payload_data_q <= host_wdata;
-                        start_host_mode_setup(
-                            host_write ? ETH_HOST_ADDR_RELOAD_WRITE :
-                                         ETH_HOST_ADDR_RELOAD_READ
-                        );
+                        if (host_stream_valid_q &&
+                            host_phys_addr == host_stream_next_addr_q &&
+                            host_write == host_stream_write_q) begin
+                            if (host_write) begin
+                                start_host_write(host_wdata);
+                            end else begin
+                                start_host_read();
+                            end
+                        end else begin
+                            host_stream_valid_q <= 1'b0;
+                            start_host_mode_setup(
+                                host_write ? ETH_HOST_ADDR_RELOAD_WRITE :
+                                             ETH_HOST_ADDR_RELOAD_READ
+                            );
+                        end
                     end
                 end
 
@@ -742,6 +777,9 @@ module uthernet2_card #(
                                 host_active_q <= 1'b0;
                                 phys_addr_q <= access_addr_q + 16'h0001;
                                 addr_synced_q <= 1'b0;
+                                host_stream_valid_q <= !apple_waiting;
+                                host_stream_write_q <= 1'b0;
+                                host_stream_next_addr_q <= access_addr_q + 16'h0001;
                             end
 
                             BUS_KIND_HOST_WRITE: begin
@@ -749,6 +787,9 @@ module uthernet2_card #(
                                 host_active_q <= 1'b0;
                                 phys_addr_q <= access_addr_q + 16'h0001;
                                 addr_synced_q <= 1'b0;
+                                host_stream_valid_q <= !apple_waiting;
+                                host_stream_write_q <= 1'b1;
+                                host_stream_next_addr_q <= access_addr_q + 16'h0001;
                             end
 
                             default: begin

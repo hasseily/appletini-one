@@ -116,6 +116,10 @@ typedef struct {
     void (*set_ssc_enabled)(void *ctx, uint8_t enable);
     void (*set_sdd_stream_enabled)(void *ctx, uint8_t enable);
     void (*set_usb0_sd_remote_mount)(void *ctx, uint8_t enable);
+    int (*set_ethernet_ftp_sd_remote)(void *ctx,
+                                      uint8_t enable,
+                                      char *detail,
+                                      size_t detail_len);
     void (*set_slot_enabled)(void *ctx, uint8_t slot, uint8_t enable);
     uint8_t (*get_slot_enabled)(void *ctx, uint8_t slot);
     void (*set_slot5_processor)(void *ctx, uint8_t processor);
@@ -238,6 +242,7 @@ typedef struct {
     uint8_t ethernet_edit_index;
     uint8_t ethernet_dhcp_pending;
     uint8_t ethernet_dhcp_report;
+    uint8_t ethernet_ftp_sd_remote_active;
     uthernet2_network_config_t ethernet_config;
     uint8_t clock_enabled;
     uint8_t ram_enabled;
@@ -303,6 +308,9 @@ void config_menu_set_vtw_speed(config_menu_t *menu,
 void config_menu_stop_usb0_sd_remote(config_menu_t *menu);
 void config_menu_usb0_sd_remote_host_ejected(config_menu_t *menu);
 uint8_t config_menu_usb0_sd_remote_active(const config_menu_t *menu);
+void config_menu_start_ethernet_ftp_sd_remote(config_menu_t *menu);
+void config_menu_stop_ethernet_ftp_sd_remote(config_menu_t *menu);
+uint8_t config_menu_ethernet_ftp_sd_remote_active(const config_menu_t *menu);
 uint8_t config_menu_is_active(const config_menu_t *menu);
 uint8_t config_menu_storage_activity_page_visible(const config_menu_t *menu);
 void config_menu_set_active(config_menu_t *menu, uint8_t active);

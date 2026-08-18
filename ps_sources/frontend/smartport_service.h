@@ -50,6 +50,12 @@ void smartport_service_uart_status(uint32_t uart_base);
  * Returns 0 on success, negative FatFS code on failure. */
 int smartport_service_reset_media(uint8_t device);
 
+/* Give a file-level remote service sole use of the SD volume without
+ * destroying RAM32. suspend closes each SD-backed FIL and unmounts FatFs;
+ * resume remounts and reopens the configured files. */
+void smartport_service_suspend_sd(void);
+int smartport_service_resume_sd(void);
+
 /* Read up to count bytes starting at logical block_num*512 from the mounted
  * disk image into buffer. *actual_out gets the actual bytes read. Returns 0
  * on success, negative FatFS code otherwise. */

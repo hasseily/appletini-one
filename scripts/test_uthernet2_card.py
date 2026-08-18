@@ -151,9 +151,20 @@ def main():
             "Host accesses must share the physical W5100S bus operation states")
     require("start_host_mode_setup" in card and
             "w5100s_physical_mode_value(mode_q)" in card and
-            "host_write ? ETH_HOST_ADDR_RELOAD_WRITE :\n"
-            "                                         ETH_HOST_ADDR_RELOAD_READ" in card,
+            "host_pending_write_q ? ETH_HOST_ADDR_RELOAD_WRITE :" in card and
+            "host_write ? ETH_HOST_ADDR_RELOAD_WRITE :" in card and
+            card.count("ETH_HOST_ADDR_RELOAD_READ") >= 3,
             "Host commands must force W5100S indirect+AI mode without clobbering the W5100 mode shadow")
+    require("host_stream_valid_q" in card and
+            "host_stream_write_q" in card and
+            "host_stream_next_addr_q" in card and
+            "host_pending_addr_q == host_stream_next_addr_q" in card and
+            "host_phys_addr == host_stream_next_addr_q" in card,
+            "Sequential PS requests must reuse the W5100S auto-incremented pointer")
+    require("apple_io_read_start || apple_io_write_addr_start ||" in card and
+            "host_stream_valid_q <= !apple_waiting;" in card and
+            "host_stream_valid_q <= 1'b0;" in card,
+            "Apple traffic and host collisions must invalidate the PS sequential fast path")
     require("wire apple_io_write_addr_start" in card and
             "apple_write_reserved_q" in card and
             "wire host_can_start =\n"
@@ -176,7 +187,7 @@ def main():
             "start_addr_reload(access_addr_q, ETH_HOST_ADDR_LO_THEN_WRITE);" in card and
             "ETH_HOST_DATA_READ_START" in card and
             "ETH_HOST_DATA_WRITE_START" in card,
-            "Host register accesses must reload both W5100S indirect address bytes before data access")
+            "Non-sequential host register accesses must reload both W5100S indirect address bytes before data access")
     require("addr_synced_q <= 1'b0;" in card and
             "host_done_q <= 1'b1;" in card,
             "Host register accesses must invalidate pointer sync and signal completion")
@@ -342,8 +353,23 @@ def main():
             "#define CARD_CTRL_ETH_CMD_REG" in regs and
             "#define CARD_CTRL_ETH_STATUS_REG" in regs and
             "CARD_CTRL_ETH_CMD_GO" in regs and
-            "CARD_CTRL_ETH_STATUS_RDATA_SHIFT" in regs,
+            "CARD_CTRL_ETH_STATUS_RDATA_SHIFT" in regs and
+            "CARD_CTRL_ETH_STATUS_SEQ_SHIFT" in regs and
+            "CARD_CTRL_ETH_STATUS_SEQ_MASK" in regs,
             "PS register header must expose Uthernet II host command registers")
+    require("logic [7:0]  eth_host_seq_q" in top and
+            "eth_host_seq_q <= eth_host_seq_q + 8'd1;" in top and
+            "eth_host_seq_q," in top and
+            "sequence != start_sequence" in eth_control and
+            "CARD_CTRL_ETH_STATUS_DONE" in eth_control,
+            "Host commands must wait for a tagged current completion rather than stale DONE")
+    command_start = eth_control.find("static int uthernet2_command")
+    command_end = eth_control.find("int uthernet2_read_reg", command_start)
+    command_body = eth_control[command_start:command_end]
+    require(command_start >= 0 and command_end > command_start and
+            "if (write != 0U)" in command_body and
+            "REG_WRITE(CARD_CTRL_ETH_DATA_REG, wdata);" in command_body,
+            "Host reads must skip the unused Ethernet data-register write")
     require("#define ETHERNET_CONTROL_SLOT 1U" in config,
             "Config menu must use Ethernet slot 1")
     require("#define CONFIG_DEFAULT_ETHERNET_SLOT1_ENABLED 1U" in config,
@@ -563,6 +589,11 @@ def main():
             "Reading an invalid card MAC must preserve the saved menu values")
     require('"../../../ps_sources/frontend/uthernet2_control.c"' in vitis,
             "Uthernet II control source must be registered in Vitis")
+    require("CARD_CTRL_ETH_FIFO_" not in regs and
+            "CARD_CTRL_ETH_FIFO_" not in eth_control and
+            "uthernet2_host_fifo" not in top and
+            "apple/uthernet2_host_fifo.sv" not in hdl_sources,
+            "The proven direct W5100S host path must not include the failed FIFO")
     require("eth_host_error_q <= eth_host_error_q | eth_host_error;" in top and
             ".host_error(eth_host_error)" in top,
             "Host collision and overrun errors must remain sticky until the next GO")

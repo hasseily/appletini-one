@@ -405,6 +405,13 @@ void config_menu_draw_ethernet(uint16_t *fb,
                   (uint8_t)(menu->item_focus == CONFIG_ETHERNET_ITEM_TEST),
                   "Test link",
                   HGR_WHITE);
+    /* Leave one blank row between the regular Ethernet actions and FTP. */
+    hgr_draw_item(fb, x, y + (12 * row_h), w,
+                  (uint8_t)(menu->item_focus == CONFIG_ETHERNET_ITEM_FTP_SD),
+                  menu->ethernet_ftp_sd_remote_active ?
+                      "SD Card FTP Sharing [ACTIVE]" :
+                      "SD Card FTP Sharing",
+                  HGR_WHITE);
 }
 
 void config_menu_draw_transwarp(uint16_t *fb,

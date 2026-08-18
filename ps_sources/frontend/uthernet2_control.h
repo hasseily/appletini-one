@@ -25,6 +25,8 @@ void uthernet2_default_config(uthernet2_network_config_t *config);
 uint8_t uthernet2_mac_is_valid(const uint8_t mac[UTHERNET2_MAC_LEN]);
 int uthernet2_read_reg(uint16_t addr, uint8_t *value);
 int uthernet2_write_reg(uint16_t addr, uint8_t value);
+int uthernet2_read_block(uint16_t addr, uint8_t *dst, uint16_t len);
+int uthernet2_write_block(uint16_t addr, const uint8_t *src, uint16_t len);
 int uthernet2_read_network_config(uthernet2_network_config_t *config);
 int uthernet2_write_network_config(const uthernet2_network_config_t *config);
 int uthernet2_test(uthernet2_test_result_t *result);

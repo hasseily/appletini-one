@@ -98,7 +98,7 @@ module tb_w65c02_directed;
             $display("  state PC=%04x S=%02x A=%02x X=%02x Y=%02x P=%02x wait=%0d stop=%0d",
                      debug_pc, debug_s, debug_a, debug_x, debug_y, debug_p,
                      waiting, stopped);
-            $finish;
+            $fatal(1, "W65C02 directed mismatch");
         end
     endtask
 
@@ -294,6 +294,97 @@ module tb_w65c02_directed;
         check_write(16'hC444, 8'hC7, 1'b1); tick();
         check(memory[16'hC444] == 8'hC7 && instruction_done,
               "same-page STA abs,Y false-read/write sequence incorrect");
+
+        // Decimal ADC commits A/P only when its extra cycle completes.  RDY
+        // must hold that cycle, its dummy bus read, and instruction_done.
+        memory[16'h6600] = 8'h69; // ADC #$01: $99 + $01 = $00, C/Z set
+        memory[16'h6601] = 8'h01;
+        load_state(16'h6600, 8'hFF, 8'h99, 8'h00, 8'h00, 8'h28);
+        check_read(16'h6600, 1'b1, 1'b1, 1'b1); tick();
+        check_read(16'h6601, 1'b0, 1'b1, 1'b1); tick();
+        check_read(16'h007F, 1'b0, 1'b1, 1'b1);
+        check(debug_pc == 16'h6602 && debug_a == 8'h99 && debug_p == 8'h28,
+              "decimal ADC changed state before its extra cycle");
+        check(instruction_done === 1'b0,
+              "decimal ADC completed before its extra cycle");
+        ready = 1'b0;
+        tick();
+        check_read(16'h007F, 1'b0, 1'b1, 1'b1);
+        check(debug_pc == 16'h6602 && debug_a == 8'h99 && debug_p == 8'h28,
+              "RDY-low decimal ADC extra cycle changed state");
+        check(instruction_done === 1'b0,
+              "RDY-low decimal ADC asserted instruction_done");
+        tick();
+        check_read(16'h007F, 1'b0, 1'b1, 1'b1);
+        check(debug_pc == 16'h6602 && debug_a == 8'h99 && debug_p == 8'h28,
+              "second RDY-low decimal ADC cycle changed state");
+        check(instruction_done === 1'b0,
+              "second RDY-low decimal ADC cycle asserted instruction_done");
+        ready = 1'b1;
+        tick();
+        check_read(16'h6602, 1'b1, 1'b1, 1'b1);
+        check(debug_pc == 16'h6602 && debug_a == 8'h00 && debug_p == 8'h2B,
+              "decimal ADC extra-cycle commit was incorrect");
+        check(instruction_done === 1'b1,
+              "decimal ADC completion did not assert instruction_done");
+
+        // The same commit rule applies to SBC, including a clock-enable hold.
+        memory[16'h6610] = 8'hE9; // SBC #$01: $00 - $01 = $99, C clear
+        memory[16'h6611] = 8'h01;
+        load_state(16'h6610, 8'hFF, 8'h00, 8'h00, 8'h00, 8'h29);
+        check_read(16'h6610, 1'b1, 1'b1, 1'b1); tick();
+        check_read(16'h6611, 1'b0, 1'b1, 1'b1); tick();
+        check_read(16'h0000, 1'b0, 1'b1, 1'b1);
+        check(debug_pc == 16'h6612 && debug_a == 8'h00 && debug_p == 8'h29,
+              "decimal SBC changed state before its extra cycle");
+        check(instruction_done === 1'b0,
+              "decimal SBC completed before its extra cycle");
+        enable = 1'b0;
+        tick();
+        check_read(16'h0000, 1'b0, 1'b1, 1'b1);
+        check(debug_pc == 16'h6612 && debug_a == 8'h00 && debug_p == 8'h29,
+              "disabled decimal SBC extra cycle changed state");
+        check(instruction_done === 1'b0,
+              "disabled decimal SBC asserted instruction_done");
+        tick();
+        check_read(16'h0000, 1'b0, 1'b1, 1'b1);
+        check(debug_pc == 16'h6612 && debug_a == 8'h00 && debug_p == 8'h29,
+              "second disabled decimal SBC cycle changed state");
+        check(instruction_done === 1'b0,
+              "second disabled decimal SBC cycle asserted instruction_done");
+        enable = 1'b1;
+        tick();
+        check_read(16'h6612, 1'b1, 1'b1, 1'b1);
+        check(debug_pc == 16'h6612 && debug_a == 8'h99 && debug_p == 8'hA8,
+              "decimal SBC extra-cycle commit was incorrect");
+        check(instruction_done === 1'b1,
+              "decimal SBC completion did not assert instruction_done");
+
+        // An SO edge during a stalled decimal extra cycle must survive the
+        // pending arithmetic commit instead of being overwritten by its V.
+        memory[16'h6620] = 8'h69; // ADC #$27: $15 + $27 = $42, V clear
+        memory[16'h6621] = 8'h27;
+        load_state(16'h6620, 8'hFF, 8'h15, 8'h00, 8'h00, 8'h28);
+        check_read(16'h6620, 1'b1, 1'b1, 1'b1); tick();
+        check_read(16'h6621, 1'b0, 1'b1, 1'b1); tick();
+        ready = 1'b0;
+        check_read(16'h007F, 1'b0, 1'b1, 1'b1); tick();
+        so_n = 1'b0;
+        check_read(16'h007F, 1'b0, 1'b1, 1'b1); tick();
+        so_n = 1'b1;
+        check_read(16'h007F, 1'b0, 1'b1, 1'b1); tick();
+        check_read(16'h007F, 1'b0, 1'b1, 1'b1);
+        check(debug_pc == 16'h6622 && debug_a == 8'h15,
+              "stalled decimal ADC with SO changed PC or A");
+        check(instruction_done === 1'b0,
+              "stalled decimal ADC with SO asserted instruction_done");
+        ready = 1'b1;
+        tick();
+        check_read(16'h6622, 1'b1, 1'b1, 1'b1);
+        check(debug_a == 8'h42 && debug_p == 8'h68,
+              "SO edge was lost at decimal ADC completion");
+        check(instruction_done === 1'b1,
+              "decimal ADC with SO did not complete exactly once released");
 
         // SO is edge-sensitive and is sampled even while the bus is stalled.
         load_state(16'h6400, 8'hFF, 8'h00, 8'h00, 8'h00, 8'h24);

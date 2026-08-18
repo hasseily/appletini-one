@@ -30,6 +30,7 @@ module tb_vtw_drivehold;
     assign (weak0, weak1) apple_nmi_pin  = 1'b1;
 
     logic host_is_iiplus = 1'b1;
+    logic inh_allowed = 1'b1;
     logic tini_oe_pin, tini_addr_dir_pin, tini_data_dir_pin;
     globals::AppleBus_read  ab_read;
     globals::AppleBus_write ab_write;
@@ -40,7 +41,7 @@ module tb_vtw_drivehold;
         .dbg_bus_quality(), .dbg_tap_mismatch(),
         .dbg_strobe_anom(), .dbg_tap_last(), .dbg_ghost_write(),
         .dbg_clear(1'b0),
-        .inh_allowed(1'b1), .gs_m2_qualify(1'b0), .m2sel_active_high(1'b0),
+        .inh_allowed(inh_allowed), .gs_m2_qualify(1'b0), .m2sel_active_high(1'b0),
         .host_is_iiplus(host_is_iiplus),
         .iiplus_dma_refresh_active(1'b0),
         .apple_data_pin(apple_data_pin), .apple_addr_pin(apple_addr_pin),
@@ -72,6 +73,93 @@ module tb_vtw_drivehold;
 
         // Let the PHI0 filter lock over a few idle cycles.
         repeat (4) @(negedge phi0);
+
+        // The ordinary physical data request has one register stage. Its
+        // byte and ownership metadata must move together; the source may
+        // change only after the staged request has captured the old tuple.
+        @(negedge clk);
+        ab_write.wr_addr_rw_en = 1'b1;
+        ab_write.wr_rw = 1'b1;
+        ab_write.wr_data = 8'hE1;
+        ab_write.wr_data_en = 1'b1;
+        #1;
+        check(wrapper_i.physical_data_en_q === 1'b0,
+              "physical response enable changed before its register edge");
+        @(posedge clk);
+        #1;
+        check(wrapper_i.physical_data_en_q === 1'b1 &&
+              wrapper_i.physical_data_q === 8'hE1 &&
+              wrapper_i.physical_addr_rw_en_q === 1'b1 &&
+              wrapper_i.physical_rw_q === 1'b1 &&
+              wrapper_i.physical_inh_dependent_q === 1'b0,
+              "physical response tuple did not register together");
+        @(negedge clk);
+        ab_write.wr_addr_rw_en = 1'b0;
+        ab_write.wr_rw = 1'b0;
+        ab_write.wr_data = 8'h1E;
+        ab_write.wr_data_en = 1'b0;
+        #1;
+        check(wrapper_i.physical_data_en_q === 1'b1 &&
+              wrapper_i.physical_data_q === 8'hE1,
+              "physical response tuple changed before its register edge");
+        @(posedge clk);
+        #1;
+        check(wrapper_i.physical_data_en_q === 1'b0 &&
+              wrapper_i.physical_data_q === 8'h1E &&
+              wrapper_i.physical_addr_rw_en_q === 1'b0 &&
+              wrapper_i.physical_rw_q === 1'b0 &&
+              wrapper_i.physical_inh_dependent_q === 1'b0,
+              "physical response clear did not preserve tuple alignment");
+
+        // A card may assert its registered response after serve_en. Prove
+        // that the added stage still reaches the physical data window, and
+        // that two consecutive Apple cycles cannot exchange their bytes.
+        host_is_iiplus = 1'b0;
+        for (int response = 0; response < 2; response++) begin
+            automatic logic [7:0] expected = response ? 8'hB5 : 8'h4A;
+            @(posedge ab_read.serve_en);
+            ab_write.wr_addr_rw_en = 1'b0;
+            ab_write.wr_rw = 1'b1;
+            ab_write.wr_data = expected;
+            ab_write.wr_data_en = 1'b1;
+            #1;
+            check(tini_data_dir_pin === 1'b0,
+                  "staged response drove before the physical data window");
+            @(posedge wrapper_i.bus_emit_state);
+            #1;
+            check(tini_data_dir_pin === 1'b1 &&
+                  apple_data_pin === expected,
+                  $sformatf("staged response %0d missed data window: expected=%02X pin=%02X",
+                            response, expected, apple_data_pin));
+            @(posedge ab_read.data_en);
+            ab_write.wr_data_en = 1'b0;
+        end
+
+        // If machine mode becomes unsafe after an INH-backed response was
+        // staged, both INH and data must release in the same fabric cycle.
+        @(negedge phi0);
+        ab_write.wr_addr_rw_en = 1'b0;
+        ab_write.wr_rw = 1'b1;
+        ab_write.wr_data = 8'h87;
+        ab_write.wr_data_en = 1'b1;
+        ab_write.assert_inh = 1'b1;
+        wait (apple_inh_pin === 1'b0);
+        @(posedge phi0);
+        #300;
+        check(apple_data_pin === 8'h87 && tini_data_dir_pin === 1'b1,
+              "INH-backed response was not driven");
+        inh_allowed = 1'b0;
+        #1;
+        check(apple_inh_pin === 1'b1,
+              "INH remained asserted after machine interlock closed");
+        check(apple_data_pin === 8'hFF && tini_data_dir_pin === 1'b0,
+              "INH-backed response remained driven after interlock closed");
+        ab_write.wr_data_en = 1'b0;
+        ab_write.assert_inh = 1'b0;
+        @(negedge phi0);
+        wait (wrapper_i.apple_inh_assert === 1'b0);
+        inh_allowed = 1'b1;
+        host_is_iiplus = 1'b1;
 
         ab_write.wr_addr_rw_en = 1'b1;
         ab_write.wr_addr = 16'h0400;
@@ -175,7 +263,40 @@ module tb_vtw_drivehold;
         check(tini_data_dir_pin === 1'b0,
               "II+ native read direction held past filtered fall");
 
-        // 5. A vTW-owned read has address/R-W ownership but R/W=1. It gets
+        // 5. An INH-backed saved read must retain its dependency after the
+        // live client tuple clears. Closing the machine interlock must then
+        // release both the saved byte and INH at once.
+        @(negedge phi0);
+        ab_write.wr_addr_rw_en = 1'b0;
+        ab_write.wr_rw = 1'b1;
+        ab_write.wr_data = 8'h78;
+        ab_write.wr_data_en = 1'b1;
+        ab_write.assert_inh = 1'b1;
+        wait (apple_inh_pin === 1'b0);
+        @(posedge phi0);
+        #300;
+        check(apple_data_pin === 8'h78,
+              "II+ INH-backed read was not driven");
+        ab_write.wr_data_en = 1'b0;
+        ab_write.assert_inh = 1'b0;
+        repeat (2) @(posedge clk);
+        #1;
+        check(wrapper_i.physical_inh_dependent_q === 1'b0 &&
+              wrapper_i.iiplus_read_inh_dependent_q === 1'b1,
+              "II+ saved read lost its INH dependency with the live tuple");
+        @(negedge phi0);
+        #12;
+        check(apple_data_pin === 8'h78 && tini_data_dir_pin === 1'b1,
+              "II+ INH-backed saved byte ended before its hold point");
+        inh_allowed = 1'b0;
+        #1;
+        check(apple_inh_pin === 1'b1 && apple_data_pin === 8'hFF &&
+              tini_data_dir_pin === 1'b0,
+              "II+ INH-backed saved byte outlived the machine interlock");
+        wait (wrapper_i.apple_inh_assert === 1'b0);
+        inh_allowed = 1'b1;
+
+        // 6. A vTW-owned read has address/R-W ownership but R/W=1. It gets
         // the same saved-byte read margin.
         ab_write.wr_addr_rw_en = 1'b1;
         ab_write.wr_addr = 16'hC0EC;
@@ -210,7 +331,7 @@ module tb_vtw_drivehold;
               $sformatf("II+ read hold re-armed during PHI1 (pin=%02X)",
                         apple_data_pin));
 
-        // 6. A native //e read keeps the established raw-PHI0 release. Keep
+        // 7. A native //e read keeps the established raw-PHI0 release. Keep
         // wr_data_en high past the fall to prove no II+ hold can arm.
         host_is_iiplus = 1'b0;
         ab_write.wr_addr_rw_en = 1'b0;
@@ -231,7 +352,7 @@ module tb_vtw_drivehold;
               "//e native read direction did not release at raw fall");
         ab_write.wr_data_en = 1'b0;
 
-        // 7. A //e vTW-owned read retains the engine's explicit window: with
+        // 8. A //e vTW-owned read retains the engine's explicit window: with
         // addr/R-W owned and wr_data_en high it may drive across raw PHI0.
         ab_write.wr_addr_rw_en = 1'b1;
         ab_write.wr_addr = 16'hC0EC;

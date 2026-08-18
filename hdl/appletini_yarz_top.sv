@@ -662,6 +662,8 @@ module appletini_yarz_top (
 
     globals::AxiSimple_common as_common;
     AxiSimple_if as_clients[7:0]();
+    wire [31:0] as_vtw_phasor_wdata;
+    wire [3:0]  as_vtw_phasor_wstrb;
 
     // as_clients[7] is the Applicard register file inside apple_top.
 
@@ -705,6 +707,8 @@ module appletini_yarz_top (
 		.S_AXI_RDATA(M_AXI_GP0_0_rdata),
 		.S_AXI_RLAST(M_AXI_GP0_0_rlast),
 		.S_AXI_RRESP(M_AXI_GP0_0_rresp),
+        .as_vtw_phasor_wdata(as_vtw_phasor_wdata),
+        .as_vtw_phasor_wstrb(as_vtw_phasor_wstrb),
         .as_common(as_common),
         .as_clients(as_clients)
     );
@@ -743,6 +747,8 @@ module appletini_yarz_top (
         .clk(fclk_clk0),
         .rstn(peripheral_133M_aresetn[3:0]),
         .as_common(as_common),
+        .as_vtw_phasor_wdata(as_vtw_phasor_wdata),
+        .as_vtw_phasor_wstrb(as_vtw_phasor_wstrb),
         .as_client(as_clients[0]),
         .smartport_as_client(as_clients[2]),
         .boot_menu_as_client(as_clients[4]),

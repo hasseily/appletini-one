@@ -90,6 +90,9 @@ module tb_vtw_slowdown;
     logic [3:0]  disk2_req_addr;
     logic        disk2_resp_valid = 1'b0;
     logic [31:0] disk2_req_count = 32'd0;
+    logic        disk2_cycle_tick;
+    logic        disk2_native_cycle_active;
+    logic        disk2_time_ready = 1'b1;
 
     always_ff @(posedge clk) begin
         if (!rstn) begin
@@ -120,8 +123,9 @@ module tb_vtw_slowdown;
         .d2_req_valid(disk2_req_valid), .d2_req_addr(disk2_req_addr),
         .d2_req_ready(1'b1),
         .d2_resp_valid(disk2_resp_valid), .d2_resp_rdata(8'hA5),
-        .d2_cycle_tick(), .d2_native_cycle_active(),
-        .d2_time_ready(1'b1),
+        .d2_cycle_tick(disk2_cycle_tick),
+        .d2_native_cycle_active(disk2_native_cycle_active),
+        .d2_time_ready(disk2_time_ready),
         .d2_write_timing_active(disk2_write_timing_active),
         .ramworks_en(1'b0),
         .video_vbl(1'b0),
@@ -223,6 +227,7 @@ module tb_vtw_slowdown;
                                input logic [15:0] duration);
         core_run = 0; enable = 0;
         rstn = 0; res_drive_low = 1;
+        disk2_time_ready = 1'b1;
         sd_region_en = region_en; sd_duration = duration;
         repeat (20) @(posedge clk);
         rstn = 1;
@@ -236,6 +241,7 @@ module tb_vtw_slowdown;
                                   input logic [15:0] tgt);
         core_run = 0; enable = 0;
         rstn = 0; res_drive_low = 1;
+        disk2_time_ready = 1'b1;
         sd_region_en = 10'd0; sd_duration = 16'd0;
         repeat (20) @(posedge clk);
         rstn = 1;
@@ -253,12 +259,67 @@ module tb_vtw_slowdown;
         end
     endtask
 
+    /* The registered normal tick must equal the prior edge's accepted
+     * virtual cycle. This point-by-point check proves that the stage neither
+     * merges nor loses a tick across the whole bench. */
+    wire d2_normal_tick_accept =
+        dut.core_en && disk2_active &&
+        !dut.private_d2_q && !dut.sd_disk2_native;
+    logic d2_tick_expected_q = 1'b0;
+    int d2_accept_count = 0;
+    int d2_tick_count = 0;
+    int d2_private_done_count = 0;
+    int d2_native_done_count = 0;
+    int d2_native_active_count = 0;
+
+    always @(posedge clk) begin
+        if (!rstn) begin
+            d2_tick_expected_q      <= 1'b0;
+            d2_accept_count         <= 0;
+            d2_tick_count           <= 0;
+            d2_private_done_count   <= 0;
+            d2_native_done_count    <= 0;
+            d2_native_active_count  <= 0;
+        end else begin
+            if (disk2_cycle_tick !== d2_tick_expected_q) begin
+                fails++;
+                $display("VTW SLOWDOWN FAIL: staged Disk II tick mismatch (got=%0b expected=%0b)",
+                         disk2_cycle_tick, d2_tick_expected_q);
+            end
+            d2_tick_expected_q <= d2_normal_tick_accept;
+            if (d2_normal_tick_accept)
+                d2_accept_count <= d2_accept_count + 1;
+            if (disk2_cycle_tick)
+                d2_tick_count <= d2_tick_count + 1;
+            if (dut.core_en && disk2_active && dut.private_d2_q) begin
+                d2_private_done_count <= d2_private_done_count + 1;
+                if (disk2_cycle_tick) begin
+                    fails++;
+                    $display("VTW SLOWDOWN FAIL: private Disk II completion also emitted a normal tick");
+                end
+            end
+            if (dut.core_en && disk2_active && dut.sd_disk2_native) begin
+                d2_native_done_count <= d2_native_done_count + 1;
+                if (disk2_cycle_tick) begin
+                    fails++;
+                    $display("VTW SLOWDOWN FAIL: native Disk II completion also emitted a normal tick");
+                end
+            end
+            if (disk2_native_cycle_active)
+                d2_native_active_count <= d2_native_active_count + 1;
+        end
+    end
+
     localparam int WINDOW = 200;
     int off_core, on_core, other_core;
     int iosel_on_core, iosel_off_core;
     int video_on_core, video_off_core;
     int disk2_on_core, disk2_off_core;
     int disk2_direct_before, disk2_bus_before;
+    int d2_accept_before, d2_tick_before;
+    int d2_private_done_before, d2_native_done_before;
+    int d2_native_active_before;
+    int d2_wait_cycles;
 
     initial begin
         // ---- 1. Baseline WARP: slowdown disabled ----
@@ -398,38 +459,127 @@ module tb_vtw_slowdown;
         check(!video_phase_1mhz,
               "leaving the 1 MHz interlock disables renderer lookahead");
 
-        // ---- 9. Disk II route split. Even reads use the private card port;
-        //         writes and odd reads still emit real Apple bus cycles. ----
+        // ---- 9. Normal Disk II virtual-time tick stage. First drain the
+        //         stage into a readiness stall, then run a burst and prove
+        //         exact accepted/output counts. A tick accepted just before
+        //         a later stall must still drain once. ----
         disk2_active = 1'b1;
+        reboot_with(16'hC030, 10'd0, 16'd0);
+        while (!dut.core_en)
+            @(negedge clk);
+        disk2_time_ready = 1'b0;
+        repeat (4) @(posedge clk);
+        #1ps;
+        check(d2_accept_count == d2_tick_count,
+              "normal Disk II tick stage did not drain into readiness stall");
+        d2_accept_before = d2_accept_count;
+        d2_tick_before = d2_tick_count;
+        repeat (16) @(posedge clk);
+        #1ps;
+        check(d2_accept_count == d2_accept_before &&
+              d2_tick_count == d2_tick_before && !dut.core_en,
+              "Disk II readiness stall admitted a virtual cycle or tick");
+
+        @(negedge clk);
+        disk2_time_ready = 1'b1;
+        d2_wait_cycles = 0;
+        while ((d2_accept_count - d2_accept_before) < 32 &&
+               d2_wait_cycles < 20000) begin
+            @(posedge clk);
+            d2_wait_cycles++;
+        end
+        @(negedge clk);
+        disk2_time_ready = 1'b0;
+        repeat (4) @(posedge clk);
+        #1ps;
+        check((d2_accept_count - d2_accept_before) >= 32,
+              $sformatf("normal Disk II tick burst accepted only %0d cycles (xstate=%0d core_res_n=%0b core_en=%0b pc=%04X)",
+                        d2_accept_count - d2_accept_before,
+                        dut.xstate_q, dut.core_res_n, dut.core_en,
+                        dut.core_addr));
+        check((d2_accept_count - d2_accept_before) ==
+              (d2_tick_count - d2_tick_before),
+              "normal Disk II tick burst did not keep exact pulse count");
+
+        @(negedge clk);
+        disk2_time_ready = 1'b1;
+        while (!d2_normal_tick_accept)
+            @(negedge clk);
+        @(posedge clk);
+        @(negedge clk);
+        disk2_time_ready = 1'b0;
+        d2_accept_before = d2_accept_count;
+        d2_tick_before = d2_tick_count;
+        repeat (2) @(posedge clk);
+        #1ps;
+        check(d2_accept_count == d2_accept_before &&
+              d2_tick_count == d2_tick_before + 1,
+              "readiness stall cancelled or duplicated an accepted tick");
+        repeat (16) @(posedge clk);
+        #1ps;
+        check(d2_accept_count == d2_accept_before &&
+              d2_tick_count == d2_tick_before + 1,
+              "readiness stall emitted an extra delayed tick");
+        disk2_time_ready = 1'b1;
+
+        // Ending the core session between acceptance and consumption clears
+        // the staged output. The card also leaves virtual-time mode then.
+        while (!d2_normal_tick_accept)
+            @(negedge clk);
+        @(posedge clk);
+        @(negedge clk);
+        check(disk2_cycle_tick,
+              "normal Disk II tick was not pending before reset");
+        core_run = 1'b0;
+        @(posedge clk);
+        #1ps;
+        check(!disk2_cycle_tick,
+              "core-session reset did not clear the pending Disk II tick");
+
+        // ---- 10. Disk II route split. Even reads use the private card port;
+        //         writes and odd reads still emit real Apple bus cycles. ----
         reboot_op_with(8'hAD, 16'hC0EC); // LDA $C0EC
         repeat (80) @(negedge phi0);
         disk2_direct_before = int'(disk2_req_count);
         disk2_bus_before = int'(cnt_bus_cycles);
+        d2_private_done_before = d2_private_done_count;
         repeat (80) @(negedge phi0);
         check(int'(disk2_req_count) > disk2_direct_before,
               "even Disk II reads did not use the private port");
         check(int'(cnt_bus_cycles) == disk2_bus_before,
               "even Disk II reads leaked onto the physical Apple bus");
+        check(d2_private_done_count > d2_private_done_before,
+              "even Disk II reads did not complete as private cycles");
 
         reboot_op_with(8'h8D, 16'hC0EC); // STA $C0EC
         repeat (80) @(negedge phi0);
         disk2_direct_before = int'(disk2_req_count);
         disk2_bus_before = int'(cnt_bus_cycles);
+        d2_native_done_before = d2_native_done_count;
+        d2_native_active_before = d2_native_active_count;
         repeat (80) @(negedge phi0);
         check(int'(disk2_req_count) == disk2_direct_before,
               "Disk II write used the private read port");
         check(int'(cnt_bus_cycles) > disk2_bus_before,
               "Disk II write did not use the physical 1 MHz bus path");
+        check(d2_native_done_count > d2_native_done_before &&
+              d2_native_active_count > d2_native_active_before,
+              "Disk II write did not keep its native tick path");
 
         reboot_op_with(8'hAD, 16'hC0ED); // odd read needs floating bus
         repeat (80) @(negedge phi0);
         disk2_direct_before = int'(disk2_req_count);
         disk2_bus_before = int'(cnt_bus_cycles);
+        d2_native_done_before = d2_native_done_count;
+        d2_native_active_before = d2_native_active_count;
         repeat (80) @(negedge phi0);
         check(int'(disk2_req_count) == disk2_direct_before,
               "odd Disk II read used the private port");
         check(int'(cnt_bus_cycles) > disk2_bus_before,
               "odd Disk II read did not use the physical Apple bus");
+        check(d2_native_done_count > d2_native_done_before &&
+              d2_native_active_count > d2_native_active_before,
+              "odd Disk II read did not keep its native tick path");
 
         if (fails == 0) $display("VTW SLOWDOWN PASS");
         else            $display("VTW SLOWDOWN FAILED: %0d checks", fails);

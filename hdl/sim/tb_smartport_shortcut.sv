@@ -135,6 +135,26 @@ module tb_smartport_shortcut;
         repeat (4) @(posedge clk);
     endtask
 
+    task automatic apple_read(input logic [15:0] addr,
+                              output logic [7:0] d);
+        @(posedge clk);
+        ab_read.addr <= addr;
+        ab_read.rw   <= 1'b1;
+        @(posedge clk);
+        ab_read.serve_en <= 1'b1;
+        @(posedge clk);
+        ab_read.serve_en <= 1'b0;
+        @(posedge clk);
+        #1;
+        check(ab_write.wr_data_en,
+              $sformatf("bus read %h produced no response", addr));
+        d = ab_write.wr_data;
+        ab_read.data_en <= 1'b1;
+        @(posedge clk);
+        ab_read.data_en <= 1'b0;
+        repeat (2) @(posedge clk);
+    endtask
+
     /* A DEVSEL reply must stay live from its address decode through the
      * wrapper's later data-drive window. A one-clock pulse can pass a unit
      * test but never reach the Apple bus. */
@@ -179,6 +199,27 @@ module tb_smartport_shortcut;
         @(posedge clk);
         as_common.araddr <= a;
         repeat (2) @(posedge clk);
+        d = as_if.rdata;
+    endtask
+
+    /* Drive a FIFO pop and its next head read with no idle transfer between
+     * them. The read address is already selected when the write is accepted;
+     * the sample waits only the one clock required by the registered BRAM
+     * read. This catches a stale head without relying on the relaxed delays in
+     * axi_write() and axi_read(). */
+    task automatic axi_pop_read_tight(input logic [31:0] pop_control,
+                                      input logic [7:0]  head_reg,
+                                      output logic [31:0] d);
+        @(posedge clk);
+        as_common.awaddr <= R_CONTROL;
+        as_common.wdata  <= pop_control;
+        as_common.wstrb  <= 4'hF;
+        as_common.araddr <= head_reg;
+        as_if.awvalid    <= 1'b1;
+        @(posedge clk);
+        as_if.awvalid <= 1'b0;
+        @(posedge clk);
+        #1;
         d = as_if.rdata;
     endtask
 
@@ -230,8 +271,12 @@ module tb_smartport_shortcut;
         vtw_access(T_DATA, 1'b0, 11'h7F0, 8'h55, rd);
         vtw_access(T_DATA, 1'b0, 11'h7F0, 8'h66, rd);
         vtw_access(T_DATA, 1'b0, 11'h7F0, 8'h77, rd);
+        vtw_access(T_DATA, 1'b0, 11'h7F0, 8'h88, rd);
+        vtw_access(T_DATA, 1'b0, 11'h7F0, 8'h99, rd);
+        vtw_access(T_DATA, 1'b0, 11'h7F0, 8'hAA, rd);
+        vtw_access(T_DATA, 1'b0, 11'h7F0, 8'hBB, rd);
         axi_read(R_STATUS, st);
-        check(st_in(st) == 8, "fast-port DATA writes reached the IN FIFO");
+        check(st_in(st) == 12, "fast-port DATA writes reached the IN FIFO");
 
         irq_count = 0;
         vtw_access(T_CTRL, 1'b0, 11'h7F1, 8'h02, rd);   // EXECUTE
@@ -247,9 +292,30 @@ module tb_smartport_shortcut;
         // Apple still sees four bytes in least-significant-first order.
         axi_read(R_IN_HEAD4, st);
         check(st == 32'h332211A1, "packed IN head returns first four bytes");
-        axi_write(R_CONTROL, CTL_POP_IN4);
+        axi_pop_read_tight(CTL_POP_IN4, R_IN_HEAD4, st);
+        check(st == 32'h77665544,
+              "packed IN pop exposes the next word at the minimum gap");
+
+        // The byte view must follow the same registered word. Walk every lane
+        // of word two, then cross into word three with the same minimum gap.
+        axi_read(R_IN_HEAD, st);
+        check(st[8:0] == {1'b1, 8'h44},
+              "scalar IN head starts at packed word lane zero");
+        axi_pop_read_tight(CTL_POP_IN, R_IN_HEAD, st);
+        check(st[8:0] == {1'b1, 8'h55},
+              "scalar IN pop advances to lane one");
+        axi_pop_read_tight(CTL_POP_IN, R_IN_HEAD, st);
+        check(st[8:0] == {1'b1, 8'h66},
+              "scalar IN pop advances to lane two");
+        axi_pop_read_tight(CTL_POP_IN, R_IN_HEAD, st);
+        check(st[8:0] == {1'b1, 8'h77},
+              "scalar IN pop advances to lane three");
+        axi_pop_read_tight(CTL_POP_IN, R_IN_HEAD, st);
+        check(st[8:0] == {1'b1, 8'h88},
+              "scalar IN pop crosses the registered word boundary");
         axi_read(R_IN_HEAD4, st);
-        check(st == 32'h77665544, "packed IN pop prefetched the next word");
+        check(st == 32'hBBAA9988,
+              "packed IN head matches the scalar word-boundary result");
         axi_write(R_CONTROL, CTL_POP_IN4);
         axi_write(R_OUT_PUSH4, 32'h8D7C6B5A);
         axi_read(R_STATUS, st);
@@ -313,6 +379,21 @@ module tb_smartport_shortcut;
         axi_read(R_STATUS, st);
         check(st_out(st) == 0,
               "direct response has no hidden 512-byte FIFO payload");
+
+        // Native DATA/DPOP also crosses a packed-word boundary. Each Apple
+        // cycle leaves ample time for the registered BRAM word to catch up.
+        axi_write(R_CONTROL, CTL_CLR_OUT);
+        axi_write(R_OUT_PUSH4, 32'h14131211);
+        axi_write(R_OUT_PUSH, 8'h15);
+        for (int i = 1; i <= 5; i++) begin
+            apple_read(16'hCFF0, rd);
+            check(rd == 8'(8'h10 + i),
+                  $sformatf("native response byte %0d crosses word boundary (got %02h)",
+                            i, rd));
+            apple_write(16'hCFF2, 8'h00);
+        end
+        axi_read(R_STATUS, st);
+        check(st_out(st) == 0, "native word plus scalar tail drains exactly");
 
         // ---- 5. Bus path still works after fast-port traffic ----
         sss.sw_ramworks_bank = 7'h12;

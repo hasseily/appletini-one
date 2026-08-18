@@ -2,14 +2,16 @@
 """Build and run the focused virtual TransWarp simulation benches.
 
 The suite covers the full vTW path plus its SmartPort shortcut, RamWorks
-flush/hold protocol, PS-DMA abort path, video timing, II+ bus rules, and reset
-handling. It does not run the large standalone 65C02 instruction suites.
+flush/hold protocol, PS-DMA abort path, video timing, II+ bus rules, Disk II
+physical/WOZ paths at every vTW speed, and reset handling. It does not run the
+large standalone 65C02 instruction suites.
 
 Requires the Xilinx simulation tools (xvlog/xelab/xsim) on PATH.
 """
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
@@ -36,7 +38,9 @@ SOURCES = [
     "hdl/apple/disk2_card.sv",
     "hdl/apple/linear_text_overlay_card.sv",
     "hdl/apple/smartport_card.sv",
+    "hdl/sim/tb_apple_bus_addr_enable.sv",
     "hdl/sim/tb_vtw_engine_unit.sv",
+    "hdl/sim/tb_vtw_pc_event_pipeline.sv",
     "hdl/sim/tb_vtw_system.sv",
     "hdl/sim/tb_smartport_reset.sv",
     "hdl/sim/tb_smartport_shortcut.sv",
@@ -50,6 +54,10 @@ SOURCES = [
     "hdl/sim/tb_ps_dma_command.sv",
     "hdl/sim/tb_vtw_shadow_host_port.sv",
     "hdl/sim/tb_disk2_vtw_read.sv",
+    "hdl/sim/tb_disk2_physical_bus.sv",
+    "hdl/sim/tb_disk2_woz_rw.sv",
+    "hdl/sim/tb_vtw_disk2_speed_matrix.sv",
+    "hdl/sim/tb_vtw_disk2_woz_e2e.sv",
 ]
 
 # Card-ROM $readmemh calls resolve against the simulation cwd.
@@ -60,7 +68,9 @@ MEM_FILES = [
 ]
 
 BENCHES = [
+    ("tb_apple_bus_addr_enable", "APPLE BUS ADDR ENABLE PASS"),
     ("tb_vtw_engine_unit", "VTW ENGINE UNIT PASS"),
+    ("tb_vtw_pc_event_pipeline", "VTW PC EVENT PIPELINE PASS"),
     ("tb_vtw_system", "VTW SYSTEM PASS"),
     ("tb_smartport_reset", "SP RESET PASS"),
     ("tb_smartport_shortcut", "SP SHORTCUT PASS"),
@@ -74,6 +84,10 @@ BENCHES = [
     ("tb_ps_dma_command", "PS DMA COMMAND PASS"),
     ("tb_vtw_shadow_host_port", "VTW SHADOW HOST PASS"),
     ("tb_disk2_vtw_read", "DISK2 VTW READ PASS"),
+    ("tb_disk2_physical_bus", "DISK2 PHYSICAL BUS PASS"),
+    ("tb_disk2_woz_rw", "DISK2 WOZ RW PASS"),
+    ("tb_vtw_disk2_speed_matrix", "VTW DISK2 SPEED MATRIX PASS"),
+    ("tb_vtw_disk2_woz_e2e", "VTW DISK2 WOZ E2E PASS"),
 ]
 
 
@@ -115,6 +129,8 @@ def read(rel_path: str) -> str:
 
 def static_checks() -> None:
     top = read("hdl/apple/apple_top.sv")
+    arbiter = read("hdl/apple/apple_bus_write_arbiter.sv")
+    disk2 = read("hdl/apple/disk2_card.sv")
     sources = read("hdl/hdl_sources.txt")
     xdc = read("hdl/constraints/appletini_yarz.xdc")
     regs = read("ps_sources/frontend/card_control_regs.h")
@@ -124,12 +140,51 @@ def static_checks() -> None:
     menu_h = read("ps_sources/frontend/config_menu.h")
     main_c = read("ps_sources/frontend/main.c")
 
+    ladder_match = re.search(
+        r"} k_vtw_ladder\[\] = \{(.*?)\n\};", service, re.DOTALL
+    )
+    require(ladder_match is not None,
+            "vtw_service must keep a readable speed-ladder table")
+    ladder = re.findall(
+        r"\{\s*(CARD_CTRL_VTW_SPEED_[A-Z0-9_]+),\s*(\d+)U,\s*\"[^\"]+\"\s*\}",
+        ladder_match.group(1) if ladder_match is not None else "",
+    )
+    require(
+        ladder == [
+            ("CARD_CTRL_VTW_SPEED_1MHZ", "0"),
+            ("CARD_CTRL_VTW_SPEED_DIVIDED", "51"),
+            ("CARD_CTRL_VTW_SPEED_DIVIDED", "37"),
+            ("CARD_CTRL_VTW_SPEED_DIVIDED", "19"),
+            ("CARD_CTRL_VTW_SPEED_DIVIDED", "10"),
+            ("CARD_CTRL_VTW_SPEED_DIVIDED", "5"),
+            ("CARD_CTRL_VTW_SPEED_FULL", "0"),
+        ] and "#define VTW_SLUG_DIVIDER 2667U" in service,
+        "the dynamic Disk II speed matrix must match every vTW ladder preset "
+        "and the slug override",
+    )
+
     # PL integration
     require("vtw_core_top vtw_core_top_i" in top and
             ".NUM_CLIENTS(12)" in top and
             ".FAST_DATA_CLIENT(2)" in top and
+            ".FAST_ADDR_CLIENT(11)" in top and
             "vtw_ab_write," in top,
             "apple_top must instantiate the vTW in the 12-client arbiter")
+    require("parameter integer FAST_ADDR_CLIENT = -1" in arbiter and
+            "logic other_addr_rw_en;" in arbiter and
+            "LUT2 #(.INIT(4'hE)) apple_addr_enable_lut" in arbiter and
+            'LOC = "SLICE_X112Y23"' in arbiter and
+            'BEL = "A6LUT"' in arbiter and
+            ".I0(gated_writes[FAST_ADDR_CLIENT].wr_addr_rw_en)" in arbiter and
+            ".I1(other_addr_rw_en)" in arbiter and
+            ".O(ab_write.wr_addr_rw_en)" in arbiter,
+            "the production address-direction OR must stay same-cycle and "
+            "placed near U17")
+    require("set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_dir_a]" in xdc and
+            xdc.count("[get_ports a2fpga_dir_a]") == 2 and
+            "set_max_delay 10.0 -to [get_ports {a2fpga_dir_a a2fpga_dir_d}]" in xdc and
+            "SLEW FAST} [get_ports a2fpga_dir_a]" not in xdc,
+            "DIR_A must keep its slow electrical edge and 10 ns output bound")
     require("logic vtw_machine_ok_q;" in top and
             "if (machine_mode_q == 2'd1)" in top and
             "else if (machine_mode_q == 2'd2)" in top and
@@ -142,6 +197,13 @@ def static_checks() -> None:
             read("hdl/apple/vtw_bus_engine.sv"),
             "vTW must latch II/II+ host type and park that host in ordinary "
             "main RAM rather than I/O or Language Card space")
+    require("(* DONT_TOUCH = \"TRUE\" *) logic machine_inh_allowed_wrapper_q;" in top and
+            ".inh_allowed(machine_inh_allowed_wrapper_q)" in top and
+            "machine_inh_allowed_wrapper_q   <= 1'b0;" in top and
+            "machine_inh_allowed_wrapper_q <=" in top and
+            "(as_common.wdata[1:0] == 2'd1) ||" in top and
+            "(as_common.wdata[1:0] == 2'd2);" in top,
+            "the wrapper machine interlock needs a preserved same-edge local copy")
 
     # SmartPort short-circuit: vtw_core_top fast port wired to the card.
     core_top = read("hdl/apple/vtw_core_top.sv")
@@ -156,6 +218,35 @@ def static_checks() -> None:
             "X_SP_ISSUE" in core_top and "wire sp_hit" in core_top and
             "cycle_sp_iosel7_q" in core_top,
             "vtw_core_top must classify and short-circuit SmartPort accesses")
+    require(re.search(
+                r"\blogic\s*\[\s*2\s*:\s*0\s*\]\s+sp_req_target_q\s*;",
+                core_top) is not None and
+            re.search(
+                r"\b(?:wire|logic)\s*\[\s*2\s*:\s*0\s*\]\s+"
+                r"sp_req_target_d\s*=\s*"
+                r"sp_slot_rom\s*\?\s*SP_TGT_SLOT_ROM\s*:\s*"
+                r"sp_data_reg\s*\?\s*SP_TGT_DATA\s*:\s*"
+                r"sp_ctrl_reg\s*\?\s*SP_TGT_CTRL\s*:\s*"
+                r"sp_pop_reg\s*\?\s*SP_TGT_DPOP\s*:\s*"
+                r"SP_TGT_C8_ROM\s*;",
+                core_top, re.DOTALL) is not None,
+            "vTW must decode each SmartPort request into a captured target")
+    require(re.search(
+                r"\bassign\s+sp_req_target\s*=\s*sp_req_target_q\s*;",
+                core_top) is not None,
+            "the vTW SmartPort output must use the captured request target")
+    require(re.search(
+                r"if\s*\(\s*!rstn\s*\)\s*begin"
+                r"(?:(?!\n\s*end\s*\n\s*else\s+begin).)*"
+                r"\bsp_req_target_q\s*<=\s*SP_TGT_C8_ROM\s*;",
+                core_top, re.DOTALL) is not None,
+            "the captured vTW SmartPort target must have a reset value")
+    require(re.search(
+                r"else\s+if\s*\(\s*sp_hit\s*\)\s*begin"
+                r"(?:(?!\n\s*end\b).)*"
+                r"\bsp_req_target_q\s*<=\s*sp_req_target_d\s*;",
+                core_top, re.DOTALL) is not None,
+            "X_ROUTE must capture the SmartPort target before X_SP_ISSUE")
     require("wire         vtw_sp_active = vtw_smartport_visible;" in top and
             ".sp_active(vtw_sp_active)" in top and
             ".vtw_valid(vtw_sp_req_valid)" in top,
@@ -180,6 +271,38 @@ def static_checks() -> None:
     require("sp_boot_suppress_hit" in core_top and
             "core_data_in_q <= 8'hFF;" in core_top,
             "vTW must return deterministic no-card data while slot 7 is hidden")
+    require("logic                    ssm_apply_pulse;" in core_top and
+            "core_ab.addr        = cycle_addr_q;" in core_top and
+            "core_ab.rw          = cycle_rw_q;" in core_top and
+            "core_ab.data        = cycle_wdata_q;" in core_top and
+            "core_ab.serve_en    = ssm_apply_pulse;" in core_top and
+            "core_ab.data_en     = ssm_apply_pulse;" in core_top and
+            "assign ssm_pulse       = core_active && (xstate_q == X_CAPTURE);"
+            in core_top and
+            "assign ssm_apply_pulse = core_active && (xstate_q == X_ROUTE);"
+            in core_top and
+            "else if (ssm_pulse && !core_rwb && core_addr == 16'hC074 &&"
+            in core_top and
+            "core_ab.addr        = core_addr;" not in core_top,
+            "the private soft-switch manager must apply the captured cycle at "
+            "X_ROUTE while $C074 keeps the raw X_CAPTURE pulse")
+    require("logic [31:0]       capture_xl_decoded_d;" in core_top and
+            "apple_route_kind_e capture_xl_route_d;" in core_top and
+            "logic [31:0]       cycle_xl_decoded_q;" in core_top and
+            "apple_route_kind_e cycle_xl_route_q;" in core_top and
+            "translate_apple_addr(translate_state_from_sss(vsss)," in core_top and
+            "core_addr, core_rwb," in core_top and
+            "vtw_shadow_map(cycle_xl_route_q, cycle_xl_decoded_q," in core_top and
+            "xl_decoded      = cycle_xl_decoded_q" in core_top and
+            "xl_route        = cycle_xl_route_q" in core_top and
+            "cycle_xl_route_q        <= APPLE_ROUTE_INVALID;" in core_top and
+            "cycle_xl_decoded_q      <= capture_xl_decoded_d;" in core_top and
+            "cycle_xl_route_q        <= capture_xl_route_d;" in core_top and
+            "capture_xl_shadow_" not in core_top and
+            "cycle_xl_shadow_" not in core_top and
+            "translate_apple_addr(cycle_translate_state_q" not in core_top,
+            "X_CAPTURE must save the pre-access translator result and X_ROUTE "
+            "must map that registered tuple before it drives shadow memory")
 
     # Per-region slowdown (TW DIP block 2).
     require("slow_region_en" in core_top and "slow_duration" in core_top and
@@ -198,21 +321,50 @@ def static_checks() -> None:
             "!cycle_addr_q[0] && !d2_write_timing_active" in core_top and
             "wire sd_disk2_native = sd_disk2 && !d2_fast_hit;" in core_top,
             "vTW may bypass the Apple bus only for even Disk II reads")
+    require("wire d2_cycle_tick_accept =\n"
+            "        core_en && d2_active && !private_d2_q && !sd_disk2_native;"
+            in core_top and
+            "logic d2_cycle_tick_q;" in core_top and
+            "assign d2_cycle_tick = d2_cycle_tick_q;" in core_top and
+            "d2_cycle_tick_q     <= 1'b0;" in core_top and
+            "if (!core_active)\n                d2_cycle_tick_q <= 1'b0;"
+            in core_top and
+            "d2_cycle_tick_q <= d2_cycle_tick_accept;" in core_top and
+            "assign d2_cycle_tick =\n        core_en" not in core_top,
+            "vTW must stage each accepted normal Disk II tick for one fabric "
+            "clock without changing private or native tick selection")
     require("d2_write_timing_active" in core_top and
             "sd_disk2_native ||" in core_top and
             ".d2_write_timing_active(vtw_d2_write_timing_active)" in top and
             "disk2_timing_active" not in core_top,
             "physical Disk II accesses and Q7 write mode must force 1 MHz")
-    require("assign vtw_disk2_active = vtw_core_run_eff && vtw_bus_owned" in top and
+    require("logic disk2_active_timing_q;" in top and
+            "if (!rstn[1])\n            disk2_active_timing_q <= 1'b0;" in top and
+            "disk2_active_timing_q <= disk2_active;" in top and
+            ".ab_read(gate_ab(" in top and
+            "card_slot6_enable && disk2_active_timing_q))" in top and
+            ".rom_serve_en(ab_read.serve_en &&" in top and
+            "card_slot6_enable && disk2_active &&" in top and
+            "!disk2_active_timing_q)" in top and
+            "wire rom_read_serve = ab_read.serve_en || rom_serve_en;" in disk2 and
+            "wire ab_rom_read = rom_read_serve && ab_read.rw && slot_rom_hit;" in disk2 and
+            "assign vtw_disk2_active = vtw_core_run_eff && vtw_bus_owned" in top and
+            "card_slot6_enable && disk2_active_timing_q" in top and
             "!vtw_ctrl_q[7];" in top and
             ".vtw_active(vtw_disk2_active)" in top and
             ".d2_active(vtw_disk2_active)" in top,
-            "apple_top must enable the private Disk II port only during vTW bus ownership "
-            "and while its compatibility disable is clear")
+            "apple_top must stage the boot-menu Disk II gate for vTW, then enable both "
+            "private-port consumers only during bus ownership and while compatibility "
+            "disable is clear")
     require("wire disk_cycle_tick" in disk2_card and
             "vtw_native_cycle_active" in disk2_card and
+            "(vtw_cycle_tick || vtw_io_read);" in disk2_card and
             "assign vtw_time_ready" in disk2_card and
             "assign vtw_write_timing_active" in disk2_card and
+            "logic       vtw_drive_spinning_q;" in disk2_card and
+            "vtw_drive_spinning_q <= drive_spinning;" in disk2_card and
+            "enabled && ab_read.res && vtw_drive_spinning_q && q7_q" in disk2_card and
+            "!vtw_drive_spinning_q || !drive_has_media" in disk2_card and
             "logic        vtw_req_pending_q;" in disk2_card and
             "wire vtw_io_read = vtw_req_pending_q;" in disk2_card and
             "vtw_resp_valid <= 1'b1;" in disk2_card,
@@ -322,6 +474,30 @@ def static_checks() -> None:
             "input logic wide_main" in engine,
             "vTW must extend the aux posted-write window for Super Hi-Res "
             "and arm the main interlace window from its private ctrl write")
+    require("wire core_post_accept = core_post_req && !eng_post_full;"
+            in core_top and
+            "wire arm_post_accept = arm_post_we && arm_post_ready;"
+            in core_top and
+            "logic        post_stage_valid_q;" in core_top and
+            "logic [15:0] post_stage_addr_q;" in core_top and
+            "logic [7:0]  post_stage_wdata_q;" in core_top and
+            "post_stage_valid_q <= core_post_accept || arm_post_accept;"
+            in core_top and
+            "post_stage_addr_q  <= arm_post_accept ? arm_post_addr"
+            in core_top and
+            "post_stage_wdata_q <= arm_post_accept ? arm_post_wdata"
+            in core_top and
+            "assign eng_post_we    = post_stage_valid_q && rstn && enable && ab_read.res;"
+            in core_top and
+            "assign eng_post_addr  = post_stage_addr_q;" in core_top and
+            "assign eng_post_wdata = post_stage_wdata_q;" in core_top and
+            "if (!rstn || !enable || !ab_read.res) begin\n"
+            "            post_stage_valid_q <= 1'b0;" in core_top and
+            "assign arm_post_ready = core_active && !eng_post_full && !core_post_req;"
+            in core_top and
+            "assign eng_post_we    = core_post_push" not in core_top,
+            "vTW must register the final accepted core-or-ARM posted tuple "
+            "for one clock, keep core priority, and cancel it with queue clear")
     require("vtw_service_init(UART0_BASE);" in main_c and
             "vtw_service_poll();" in main_c and
             "menu_platform.set_vtw_config = control_set_vtw_config;" in main_c,
@@ -408,21 +584,31 @@ def static_checks() -> None:
     # writes must still release directly at raw PHI0.
     require("LUT6 #(.INIT(64'hFFFF_FFFF_8088_8080)) apple_data_enable_lut" in wrapper and
             ".I0(bus_emit_state)," in wrapper and
-            ".I1(ab_write.wr_data_en)," in wrapper and
+            ".I1(physical_data_en_safe)," in wrapper and
             ".I2(apple_phi0_pin)," in wrapper and
             ".I3(host_is_iiplus)," in wrapper and
-            ".I4(apple_addr_rw_enable)," in wrapper and
-            ".I5(data_override_q)," in wrapper and
-            "drive_live && (!apple_addr_rw_enable || ab_write.wr_rw)" in wrapper and
+            ".I4(physical_addr_rw_en_q)," in wrapper and
+            ".I5(data_override_safe)," in wrapper and
+            "physical_data_en_q    <= ab_write.wr_data_en;" in wrapper and
+            "physical_data_q <= ab_write.wr_data;" in wrapper and
+            "physical_inh_dependent_q <= ab_write.assert_inh;" in wrapper and
+            "iiplus_read_inh_dependent_q <=" in wrapper and
+            "physical_inh_dependent_q;" in wrapper and
+            "(!physical_inh_dependent_q || inh_allowed)" in wrapper and
+            "drive_live && (!physical_addr_rw_en_q || physical_rw_q)" in wrapper and
             "DMA_WRITE_START_CLKS = 18" in wrapper and
             "DMA_WRITE_END_CLKS   = 40" in wrapper and
             "ab_write.wr_dma_data_en" in wrapper and
             "else if (phi0_fall)" in wrapper and
             "else if (read_response_live && phi0_filt)" in wrapper and
             "data_override_q && data_override_saved_q" in wrapper and
-            "iiplus_read_hold_active ? iiplus_read_data_q : ab_write.wr_data" in wrapper,
+            "iiplus_read_hold_active ? iiplus_read_data_q : physical_data_q" in wrapper,
             "placed data-enable LUT must absorb the phase/data-enable AND "
-            "while preserving the II+ saved-read hold and timed DMA write window")
+            "from a staged physical response while preserving the II+ saved-read hold "
+            "and timed DMA write window with an INH fail-safe")
+    require("{IOSTANDARD LVCMOS33 DRIVE 12 SLEW FAST}" in xdc and
+            "[get_ports a2fpga_dir_d]" in xdc,
+            "the raw-PHI0 data-direction release must use the timed fast pad edge")
     require("TAP_IRQ_REARM_RELEASE = TAP_DATA_SNAP - 8;" in wrapper and
             "TAP_IRQ_REARM_ASSERT  = TAP_DATA_SNAP - 4;" in wrapper and
             "always_ff @(posedge clk)" in wrapper and
@@ -473,6 +659,45 @@ def static_checks() -> None:
             "dbg_trace_selftest_event" in core,
             "vTW must preserve an instruction trail through RESET and freeze "
             "on phantom keyboard input or internal self-test entry")
+    trace_marker = core.find("/* Instruction history is passive")
+    require(trace_marker >= 0,
+            "vTW PC trace must retain its instruction-history block")
+    trace_history = core[trace_marker:] if trace_marker >= 0 else ""
+    trace_branches = re.search(
+        r"always_ff\s*@\(posedge clk\)\s*begin\s*"
+        r"if\s*\(!rstn\)\s*begin(?P<reset>.*?)"
+        r"\bend\s*else if\s*\(dbg_clear\)\s*begin(?P<clear>.*?)"
+        r"\bend\s*else\s*begin",
+        trace_history,
+        re.DOTALL,
+    )
+    require(trace_branches is not None,
+            "vTW PC trace must keep explicit hard-reset and dbg-clear branches")
+    if trace_branches is not None:
+        pending_regs = (
+            "dbg_trace_event_pending_q",
+            "dbg_trace_pc_pending_q",
+            "dbg_trace_freeze_pending_q",
+            "dbg_trace_reason_pending_q",
+        )
+        for branch_name in ("reset", "clear"):
+            branch = trace_branches.group(branch_name)
+            for pending_reg in pending_regs:
+                require(
+                    re.search(
+                        rf"\b{pending_reg}\s*<=\s*(?:'0|\d+'[bdh]0)\s*;",
+                        branch,
+                    ) is not None,
+                    f"vTW PC trace {branch_name} must clear {pending_reg}",
+                )
+    trace_zero_writes = re.findall(
+        r"dbg_pc_trace_q\s*\[\s*0\s*\]\s*<=\s*([^;]+);",
+        trace_history,
+    )
+    require(trace_zero_writes == ["dbg_trace_pc_pending_q"] and
+            "if (dbg_trace_event_pending_q) begin" in trace_history and
+            "dbg_pc_trace_q[0] <= core_addr;" not in trace_history,
+            "vTW PC history must shift only a queued event and queued PC")
     require("dbg_bad_c000_event" in engine and
             "dbg_self_data_bad" in engine and
             "dbg_addr_bad" in engine and

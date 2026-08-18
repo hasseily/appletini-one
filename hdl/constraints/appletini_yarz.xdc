@@ -66,7 +66,10 @@ set_property PACKAGE_PIN U17 [get_ports a2fpga_dir_a]
 set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_dir_a]
 
 set_property PACKAGE_PIN V17 [get_ports a2fpga_dir_d]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_dir_d]
+# DIR_D closes the data-drive window from raw PHI0. Keep its current 12 mA
+# drive and use the fast output edge to cut the pad delay on that release.
+set_property -dict {IOSTANDARD LVCMOS33 DRIVE 12 SLEW FAST} \
+    [get_ports a2fpga_dir_d]
 
 ## Apple //e Address Bus (Bidirectional)
 set_property PACKAGE_PIN AA13 [get_ports {a2fpga_a[0]}]

@@ -142,7 +142,7 @@ module tb_w65c02_vectors;
                      addr, rwb, data_in, data_out, sync);
             $display("  state PC=%04x S=%02x A=%02x X=%02x Y=%02x P=%02x",
                      debug_pc, debug_s, debug_a, debug_x, debug_y, debug_p);
-            $finish;
+            $fatal(1, "W65C02 vector mismatch");
         end
     endtask
 

@@ -354,28 +354,32 @@ module vtw_core_top (
 
     // ------------------------------------------------------------------
     // Private //e switch state, tracked from the core's own accesses.
-    // One synthetic serve_en pulse per core cycle; the manager ignores
-    // non-$Cxxx addresses by construction, so pulsing unconditionally
-    // reproduces stock //e semantics exactly (including INTC8ROM claims
-    // from shadow-served $C3xx ROM reads that never reach the bus).
-    // The RamWorks bank latch inside the manager keys on data_en (on the
-    // real bus the bank value is only on the wires at the data snap); the
-    // core's write data is valid at the synthetic pulse, so data_en fires
-    // with serve_en and carries core_data_out.
+    // X_CAPTURE saves the cycle and its pre-access bank state. X_ROUTE then
+    // gives the private manager one synthetic serve_en/data_en pulse from
+    // that saved tuple. The manager ignores non-$Cxxx addresses, so pulsing
+    // every cycle preserves stock //e behavior, including shadow-served C3
+    // claims, CFFF releases, and language-card double-access rules. Keeping
+    // this apply pulse off the live core state also removes the CPU-state to
+    // RamWorks-bank enable path.
     // ------------------------------------------------------------------
     globals::SoftSwitchState vsss;
     logic                    ssm_pulse;
+    logic                    ssm_apply_pulse;
     globals::AppleBus_read   core_ab;
+    logic [15:0]             cycle_addr_q;
+    logic [7:0]              cycle_wdata_q;
+    logic                    cycle_rw_q;
+    TranslateState           cycle_translate_state_q;
 
     always_comb begin
         core_ab             = '0;
         core_ab.res         = ab_read.res && enable;
-        core_ab.addr        = core_addr;
-        core_ab.rw          = core_rwb;
-        core_ab.data        = core_data_out;
+        core_ab.addr        = cycle_addr_q;
+        core_ab.rw          = cycle_rw_q;
+        core_ab.data        = cycle_wdata_q;
         core_ab.cycle_valid = 1'b1;
-        core_ab.serve_en    = ssm_pulse;
-        core_ab.data_en     = ssm_pulse;
+        core_ab.serve_en    = ssm_apply_pulse;
+        core_ab.data_en     = ssm_apply_pulse;
     end
 
     soft_switch_manager vtw_ssm (
@@ -409,19 +413,23 @@ module vtw_core_top (
     assign dbg_irq_edges = irq_edge_cnt_q;
 
     // ------------------------------------------------------------------
-    // Routing: one translate per core cycle, against a snapshot of the
-    // private state.  The raw core cycle is registered before translation;
-    // this breaks the core-address -> banking -> BRAM control timing path.
+    // Routing: translate the stable core outputs during X_CAPTURE and save
+    // the complete result beside the raw cycle. X_ROUTE maps that registered
+    // tuple onto the shadow address, keeping the address/bank decode off the
+    // shadow BRAM controls without adding an FSM state or changing which
+    // pre-access soft-switch snapshot owns the cycle.
     // ------------------------------------------------------------------
-    logic [31:0]       xl_decoded;
+    logic [31:0]       capture_xl_decoded_d;
+    apple_route_kind_e capture_xl_route_d;
+    logic [31:0]       cycle_xl_decoded_q;
+    apple_route_kind_e cycle_xl_route_q;
+
+    wire [31:0]       xl_decoded      = cycle_xl_decoded_q;
     apple_route_kind_e xl_route;
+    assign             xl_route        = cycle_xl_route_q;
     logic              xl_shadow_valid;
     logic [17:0]       xl_shadow_phys;
 
-    logic [15:0]       cycle_addr_q;
-    logic [7:0]        cycle_wdata_q;
-    logic              cycle_rw_q;
-    TranslateState     cycle_translate_state_q;
     logic              cycle_video_text_q;
     logic              cycle_video_mixed_q;
     logic              cycle_video_page2_q;
@@ -429,10 +437,14 @@ module vtw_core_top (
     logic              cycle_video_80store_q;
 
     always_comb begin
-        translate_apple_addr(cycle_translate_state_q,
-                             cycle_addr_q, cycle_rw_q,
-                             xl_decoded, xl_route);
-        vtw_shadow_map(xl_route, xl_decoded, xl_shadow_valid, xl_shadow_phys);
+        translate_apple_addr(translate_state_from_sss(vsss),
+                             core_addr, core_rwb,
+                             capture_xl_decoded_d, capture_xl_route_d);
+    end
+
+    always_comb begin
+        vtw_shadow_map(cycle_xl_route_q, cycle_xl_decoded_q,
+                       xl_shadow_valid, xl_shadow_phys);
     end
 
     wire xl_is_bus   = (xl_route == APPLE_ROUTE_BUS);
@@ -561,6 +573,7 @@ module vtw_core_top (
      * with the same access; the slot-ROM read that sets it uses the
      * address decode, not this bit. */
     logic cycle_sp_iosel7_q;
+    logic [2:0] sp_req_target_q;
 
     wire sp_intcxrom = cycle_translate_state_q.sw_intcxrom;
     wire sp_is_cxxx  = (cycle_addr_q[15:12] == 4'hC);
@@ -581,11 +594,13 @@ module vtw_core_top (
     wire sp_pop_reg  = sp_c8_win && (cycle_addr_q[10:0] == 11'h7F2);
     wire sp_hit      = sp_slot_rom || sp_c8_win;
 
-    assign sp_req_target = sp_slot_rom ? SP_TGT_SLOT_ROM :
-                           sp_data_reg ? SP_TGT_DATA     :
-                           sp_ctrl_reg ? SP_TGT_CTRL     :
-                           sp_pop_reg  ? SP_TGT_DPOP     :
-                                         SP_TGT_C8_ROM;
+    wire [2:0] sp_req_target_d =
+        sp_slot_rom ? SP_TGT_SLOT_ROM :
+        sp_data_reg ? SP_TGT_DATA     :
+        sp_ctrl_reg ? SP_TGT_CTRL     :
+        sp_pop_reg  ? SP_TGT_DPOP     :
+                      SP_TGT_C8_ROM;
+    assign sp_req_target = sp_req_target_q;
     assign sp_req_addr   = cycle_addr_q[10:0];
     assign sp_req_rw     = cycle_rw_q;
     assign sp_req_wdata  = cycle_wdata_q;
@@ -621,6 +636,10 @@ module vtw_core_top (
     logic [15:0] dbg_pc_trace_q [0:15];
     logic        dbg_trace_frozen_q;
     logic [1:0]  dbg_trace_reason_q;
+    logic        dbg_trace_event_pending_q;
+    logic [15:0] dbg_trace_pc_pending_q;
+    logic        dbg_trace_freeze_pending_q;
+    logic [1:0]  dbg_trace_reason_pending_q;
     wire dbg_trace_selftest_event =
         core_en && core_sync && (core_addr == 16'hC600) &&
         vsss.sw_intcxrom;
@@ -704,10 +723,13 @@ module vtw_core_top (
     assign dbg_trace_status = {29'b0, dbg_trace_reason_q,
                                dbg_trace_frozen_q};
 
-    /* Instruction history is passive and event-frozen. It deliberately
-     * continues across Apple RESET so a later $C600 trigger preserves the
-     * reset-handler path. A phantom keyboard strobe wins over the later
-     * consequence of entering self-test. */
+    /* Instruction history is passive and event-frozen. Queue the PC and
+     * freeze reason together so Disk II readiness does not drive all 256
+     * history clock enables. The queue accepts one fetch per clock and adds
+     * only one debug clock; it does not pace the core. It deliberately drains
+     * across Apple RESET so a later $C600 trigger preserves the reset-handler
+     * path. A phantom keyboard strobe wins over the later consequence of
+     * entering self-test. */
     always_ff @(posedge clk) begin
         if (!rstn) begin
             for (int i = 0; i < 16; i++) begin
@@ -715,6 +737,10 @@ module vtw_core_top (
             end
             dbg_trace_frozen_q <= 1'b0;
             dbg_trace_reason_q <= 2'd0;
+            dbg_trace_event_pending_q <= 1'b0;
+            dbg_trace_pc_pending_q <= 16'd0;
+            dbg_trace_freeze_pending_q <= 1'b0;
+            dbg_trace_reason_pending_q <= 2'd0;
         end
         else if (dbg_clear) begin
             for (int i = 0; i < 16; i++) begin
@@ -722,23 +748,47 @@ module vtw_core_top (
             end
             dbg_trace_frozen_q <= 1'b0;
             dbg_trace_reason_q <= 2'd0;
+            dbg_trace_event_pending_q <= 1'b0;
+            dbg_trace_pc_pending_q <= 16'd0;
+            dbg_trace_freeze_pending_q <= 1'b0;
+            dbg_trace_reason_pending_q <= 2'd0;
         end
         else begin
             if (!dbg_trace_frozen_q) begin
-                if (core_en && core_sync) begin
+                if (dbg_trace_event_pending_q) begin
                     for (int i = 15; i > 0; i--) begin
                         dbg_pc_trace_q[i] <= dbg_pc_trace_q[i-1];
                     end
-                    dbg_pc_trace_q[0] <= core_addr;
+                    dbg_pc_trace_q[0] <= dbg_trace_pc_pending_q;
                 end
 
-                if (eng_bad_c000_pulse) begin
+                if (dbg_trace_freeze_pending_q) begin
                     dbg_trace_frozen_q <= 1'b1;
-                    dbg_trace_reason_q <= 2'd2;
+                    dbg_trace_reason_q <= dbg_trace_reason_pending_q;
+                end
+            end
+
+            /* A pending freeze commits on this edge. Do not accept the next
+             * fetch behind it: the old direct path was already frozen then. */
+            if (dbg_trace_frozen_q || dbg_trace_freeze_pending_q) begin
+                dbg_trace_event_pending_q <= 1'b0;
+                dbg_trace_pc_pending_q <= 16'd0;
+                dbg_trace_freeze_pending_q <= 1'b0;
+                dbg_trace_reason_pending_q <= 2'd0;
+            end
+            else begin
+                dbg_trace_event_pending_q <= core_en && core_sync;
+                dbg_trace_pc_pending_q <= core_addr;
+                dbg_trace_freeze_pending_q <=
+                    eng_bad_c000_pulse || dbg_trace_selftest_event;
+                if (eng_bad_c000_pulse) begin
+                    dbg_trace_reason_pending_q <= 2'd2;
                 end
                 else if (dbg_trace_selftest_event) begin
-                    dbg_trace_frozen_q <= 1'b1;
-                    dbg_trace_reason_q <= 2'd3;
+                    dbg_trace_reason_pending_q <= 2'd3;
+                end
+                else begin
+                    dbg_trace_reason_pending_q <= 2'd0;
                 end
             end
         end
@@ -821,15 +871,15 @@ module vtw_core_top (
     );
 
     // ------------------------------------------------------------------
-    // Core cycle FSM. X_CAPTURE snapshots the core outputs and banking
-    // state. X_ROUTE performs translation and issues the BRAM access from
-    // those registers. X_MEM_CAPTURE adds a register between the BRAM and
-    // the core ALU. These two explicit cuts keep both sides of the inferred
-    // BRAM inside the 133.333 MHz fabric-clock budget.
+    // Core cycle FSM. X_CAPTURE translates and saves the core outputs with
+    // their banking state. X_ROUTE maps the saved tuple and issues the BRAM
+    // access. X_MEM_CAPTURE adds a register between the BRAM and the core
+    // ALU. These two explicit cuts keep both sides of the inferred BRAM
+    // inside the 133.333 MHz fabric-clock budget.
     // ------------------------------------------------------------------
     typedef enum logic [3:0] {
         X_CAPTURE,
-        X_ROUTE,      // translate registered cycle + issue shadow access
+        X_ROUTE,      // map registered route tuple + issue shadow access
         X_MEM_CAPTURE,// capture synchronous BRAM output
         X_MEM_DONE,   // registered read data ready / waiting for pace
         X_POST_STALL, // posted queue full: push pending
@@ -978,7 +1028,8 @@ module vtw_core_top (
      * held core's cycles are served $FF instead of reaching the bus. */
     wire core_active = enable && core_run && ab_read.res;
 
-    assign ssm_pulse   = core_active && (xstate_q == X_CAPTURE);
+    assign ssm_pulse       = core_active && (xstate_q == X_CAPTURE);
+    assign ssm_apply_pulse = core_active && (xstate_q == X_ROUTE);
     /* Reads from the fully floating motherboard-I/O region $C030-$C05F
      * execute their physical bus cycle for any speaker/video/annunciator
      * side effect, but the return byte is the main-memory byte fetched by
@@ -1040,16 +1091,43 @@ module vtw_core_top (
     assign fsm_req_valid = (xstate_q == X_BUS) && core_run && ab_read.res;
     wire core_post_req = (core_active && (xstate_q == X_ROUTE) &&
                           xl_is_posted) || (xstate_q == X_POST_STALL);
-    wire core_post_push = core_post_req && !eng_post_full;
+    wire core_post_accept = core_post_req && !eng_post_full;
     /* SmartPort holds the core outside X_ROUTE until READY, so contention is
      * not expected. Keeping it in the handshake still makes a stray CPU0
      * request fail closed instead of replacing a core write. */
     assign arm_post_ready = core_active && !eng_post_full && !core_post_req;
-    assign eng_post_we    = core_post_push || (arm_post_we && arm_post_ready);
-    assign eng_post_addr  = (arm_post_we && arm_post_ready)
-                          ? arm_post_addr : cycle_addr_q;
-    assign eng_post_wdata = (arm_post_we && arm_post_ready)
-                          ? arm_post_wdata : cycle_wdata_q;
+    wire arm_post_accept = arm_post_we && arm_post_ready;
+
+    /* Register the final accepted tuple before the queue. This cuts address
+     * translation and core/ARM arbitration away from the inferred BRAM write
+     * and fill-count enables. The queue's early-full margin reserves room for
+     * this one in-flight entry, so an accepted tuple drains on the next edge
+     * even if the early-full flag rises meanwhile. */
+    logic        post_stage_valid_q;
+    logic [15:0] post_stage_addr_q;
+    logic [7:0]  post_stage_wdata_q;
+
+    assign eng_post_we    = post_stage_valid_q && rstn && enable && ab_read.res;
+    assign eng_post_addr  = post_stage_addr_q;
+    assign eng_post_wdata = post_stage_wdata_q;
+
+    always_ff @(posedge clk) begin
+        if (!rstn || !enable || !ab_read.res) begin
+            post_stage_valid_q <= 1'b0;
+            post_stage_addr_q  <= '0;
+            post_stage_wdata_q <= '0;
+        end
+        else begin
+            post_stage_valid_q <= core_post_accept || arm_post_accept;
+            /* Capture the core tuple without the posted classifier as a
+             * register enable. ARM wins this data mux only when its handshake
+             * is accepted; core_post_req already makes the cases exclusive. */
+            post_stage_addr_q  <= arm_post_accept ? arm_post_addr
+                                                  : cycle_addr_q;
+            post_stage_wdata_q <= arm_post_accept ? arm_post_wdata
+                                                  : cycle_wdata_q;
+        end
+    end
 
     /* Completing edge: enable seen high by the core at the clock edge. */
     wire complete_mem    = (xstate_q == X_MEM_DONE)    && pace_ok;
@@ -1067,14 +1145,17 @@ module vtw_core_top (
                       complete_status || complete_dead);
     assign arm_rw_hold_state = rw_hold_q;
 
-    /* One Disk II time tick per virtual 65C02 cycle. Normal cycles tick when
-     * the core completes. disk2_card adds the direct-access tick when its
-     * registered private request executes, keeping the tick and soft-switch
-     * side effect on the same edge. Physical Disk II cycles use
-     * ab_read.sss_en inside disk2_card and are suppressed here. */
+    /* One Disk II time tick per virtual 65C02 cycle. Stage the accepted
+     * normal-cycle predicate for one fabric clock so the card's readiness
+     * feedback does not feed its own rotation enables on the same edge.
+     * disk2_card adds the direct-access tick when its registered private
+     * request executes. Physical Disk II cycles use ab_read.sss_en inside
+     * disk2_card and are suppressed here. */
     wire d2_req_fire = d2_req_valid && d2_req_ready;
-    assign d2_cycle_tick =
+    wire d2_cycle_tick_accept =
         core_en && d2_active && !private_d2_q && !sd_disk2_native;
+    logic d2_cycle_tick_q;
+    assign d2_cycle_tick = d2_cycle_tick_q;
     assign d2_native_cycle_active =
         core_active && (xstate_q == X_BUS) && sd_disk2_native;
 
@@ -1107,6 +1188,8 @@ module vtw_core_top (
             cycle_wdata_q       <= '0;
             cycle_rw_q          <= 1'b1;
             cycle_translate_state_q <= '0;
+            cycle_xl_decoded_q      <= '0;
+            cycle_xl_route_q        <= APPLE_ROUTE_INVALID;
             cycle_video_text_q   <= 1'b0;
             cycle_video_mixed_q  <= 1'b0;
             cycle_video_page2_q  <= 1'b0;
@@ -1129,12 +1212,18 @@ module vtw_core_top (
             rw_hold_q           <= 1'b0;
             arm_rw_flush_done   <= 1'b0;
             cycle_sp_iosel7_q   <= 1'b0;
+            sp_req_target_q     <= SP_TGT_C8_ROM;
             private_d2_q        <= 1'b0;
+            d2_cycle_tick_q     <= 1'b0;
             sp_inflight_q       <= 1'b0;
             slow_cnt_q          <= 16'd0;
         end
         else begin
             arm_rw_flush_done <= 1'b0;
+            if (!core_active)
+                d2_cycle_tick_q <= 1'b0;
+            else
+                d2_cycle_tick_q <= d2_cycle_tick_accept;
 
             if (arm_rw_flush_req) begin
                 rw_flush_pending_q <= 1'b1;
@@ -1326,6 +1415,8 @@ module vtw_core_top (
                         // //e switches and the private tracker follows them,
                         // so the full MMU model always applies.
                         cycle_translate_state_q <= translate_state_from_sss(vsss);
+                        cycle_xl_decoded_q      <= capture_xl_decoded_d;
+                        cycle_xl_route_q        <= capture_xl_route_d;
                         cycle_video_text_q       <= vsss.sw_text;
                         cycle_video_mixed_q      <= vsss.sw_mixed;
                         cycle_video_page2_q      <= vsss.sw_page2;
@@ -1359,8 +1450,9 @@ module vtw_core_top (
                             xstate_q     <= X_SP_ISSUE;
                         end
                         else if (sp_hit) begin
-                            private_d2_q <= 1'b0;
-                            xstate_q <= X_SP_ISSUE;
+                            sp_req_target_q <= sp_req_target_d;
+                            private_d2_q    <= 1'b0;
+                            xstate_q        <= X_SP_ISSUE;
                         end
                         else if (xl_c01x_rd) begin
                             core_data_in_q <= status_byte;

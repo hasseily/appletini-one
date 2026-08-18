@@ -225,7 +225,19 @@ def prepare_suites(klaus_dir: Path) -> dict[str, Suite]:
         klaus_dir,
         "decimal",
         "6502_decimal_test.a65",
-        {"cputype": 1},
+        {
+            # Check every W65C02 decimal result bit for all accumulator,
+            # operand, and carry-in values, including invalid BCD digits.
+            # patch_assignment() also makes each setting a required source
+            # guard: a missing or renamed upstream switch fails the run.
+            "cputype": 1,
+            "vld_bcd": 0,
+            "chk_a": 1,
+            "chk_n": 1,
+            "chk_v": 1,
+            "chk_z": 1,
+            "chk_c": 1,
+        },
     )
     interrupt = assemble_variant(
         klaus_dir,

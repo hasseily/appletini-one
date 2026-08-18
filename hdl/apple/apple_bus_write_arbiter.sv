@@ -10,7 +10,8 @@
 
 module apple_bus_write_arbiter #(
     parameter NUM_CLIENTS = 1,
-    parameter integer FAST_DATA_CLIENT = -1
+    parameter integer FAST_DATA_CLIENT = -1,
+    parameter integer FAST_ADDR_CLIENT = -1
 ) (
     /* Machine-mode interlock: when low, any
      * client serve that DEPENDS on INH (assert_inh + data drive in the
@@ -116,12 +117,43 @@ module apple_bus_write_arbiter #(
 
     always_comb begin
         ab_write.wr_dma_data_en = 1'b0;
-        ab_write.wr_addr_rw_en = 1'b0;
         for (int i = 0; i < NUM_CLIENTS; i++) begin
             ab_write.wr_dma_data_en |= gated_writes[i].wr_dma_data_en;
-            ab_write.wr_addr_rw_en |= gated_writes[i].wr_addr_rw_en;
         end
     end
+
+    /* The production address-direction pin is far from the vTW bus engine.
+     * Keep the final, Boolean-equivalent two-input OR near that pin: vTW is
+     * one input and every other client is reduced into the other. This adds
+     * no state or bus phase. The fallback keeps the arbiter generic. */
+    generate
+        if ((FAST_ADDR_CLIENT >= 0) &&
+            (FAST_ADDR_CLIENT < NUM_CLIENTS)) begin : gen_fast_addr_enable
+            (* keep = "true" *) logic other_addr_rw_en;
+            always_comb begin
+                other_addr_rw_en = 1'b0;
+                for (int i = 0; i < NUM_CLIENTS; i++) begin
+                    if (i != FAST_ADDR_CLIENT) begin
+                        other_addr_rw_en |= gated_writes[i].wr_addr_rw_en;
+                    end
+                end
+            end
+
+            (* LOC = "SLICE_X112Y23", BEL = "A6LUT", DONT_TOUCH = "TRUE" *)
+            LUT2 #(.INIT(4'hE)) apple_addr_enable_lut (
+                .I0(gated_writes[FAST_ADDR_CLIENT].wr_addr_rw_en),
+                .I1(other_addr_rw_en),
+                .O(ab_write.wr_addr_rw_en)
+            );
+        end else begin : gen_normal_addr_enable
+            always_comb begin
+                ab_write.wr_addr_rw_en = 1'b0;
+                for (int i = 0; i < NUM_CLIENTS; i++) begin
+                    ab_write.wr_addr_rw_en |= gated_writes[i].wr_addr_rw_en;
+                end
+            end
+        end
+    endgenerate
 
     // ---- Open-drain OR for assert lines ----
     always_comb begin

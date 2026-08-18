@@ -72,6 +72,7 @@ Key files:
 - Keep async clock groups and generated-clock constraints bound to stable object names/queries; timing failures can be false if constraints silently fail to bind.
 - Prefer shared CDC/reset helpers in `hdl/` for new crossings (`cdc_bit_sync.sv`, `cdc_bus_sampled.sv`, `reset_sync.sv`) instead of ad hoc inline synchronizers.
 - `cdc_bus_sampled.sv` is for debug/status sampling only (non-coherent multi-bit capture); do not use it for functional buses.
+- For new RTL, share clock enables and use synchronous resets when behavior permits. Do not change required reset behavior only to cut control sets.
 
 ## Coding Style & Naming Conventions
 - Use 4-space indentation and keep alignment readable in HDL port lists and C macros.

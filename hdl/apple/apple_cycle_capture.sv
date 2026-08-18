@@ -219,6 +219,30 @@ module apple_cycle_capture (
         end
     end
 
+    // Register each cycle's complete record set before FIFO arbitration. This
+    // keeps Apple-bus decode and record packing out of the BRAM write path.
+    AppleCycleRecord apple_record_q;
+    AppleCycleRecord io_record_q;
+    logic            apple_push_request_q;
+    logic            io_push_request_q;
+    logic            overlay_drop_source_q;
+
+    always_ff @(posedge clk) begin
+        apple_record_q <= apple_record_din;
+        io_record_q    <= io_record_din;
+
+        if (~resetn || soft_reset) begin
+            apple_push_request_q <= 1'b0;
+            io_push_request_q    <= 1'b0;
+            overlay_drop_source_q <= 1'b0;
+        end else begin
+            apple_push_request_q <= apple_push_request;
+            io_push_request_q    <= io_push_request;
+            overlay_drop_source_q <=
+                overlay_rule_valid || overlay_command_write;
+        end
+    end
+
     logic                  fifo_full;
     logic                  fifo_empty;
     logic [FIFO_WIDTH-1:0] fifo_dout;
@@ -231,17 +255,17 @@ module apple_cycle_capture (
     always_comb begin
         if (pending_record_valid)
             record_din = pending_record_q;
-        else if (io_push_request)
-            record_din = io_record_din;
+        else if (io_push_request_q)
+            record_din = io_record_q;
         else
-            record_din = apple_record_din;
+            record_din = apple_record_q;
     end
 
     // Combined push request -- used for the drop-sticky check below.
     wire push_request =
         pending_record_valid ||
-        io_push_request ||
-        apple_push_request;
+        io_push_request_q ||
+        apple_push_request_q;
 
     assign fifo_wr_en = push_request && !fifo_full;
     assign fifo_rd_en = cycle_capture_rd_en && !fifo_empty;
@@ -259,14 +283,15 @@ module apple_cycle_capture (
                 pending_record_valid <= 1'b0;
             end
 
-            if (io_push_request && apple_push_request && !pending_record_valid && !fifo_full) begin
-                pending_record_q     <= apple_record_din;
+            if (io_push_request_q && apple_push_request_q &&
+                !pending_record_valid && !fifo_full) begin
+                pending_record_q     <= apple_record_q;
                 pending_record_valid <= 1'b1;
             end
 
             if ((push_request && fifo_full && !pending_record_valid) ||
                 (pending_record_valid &&
-                 (io_push_request || apple_push_request)))
+                 (io_push_request_q || apple_push_request_q)))
                 capture_drop_sticky_q <= 1'b1;
             else if (capture_drop_ack)
                 capture_drop_sticky_q <= 1'b0;
@@ -284,7 +309,7 @@ module apple_cycle_capture (
         end else begin
             if (((!pending_record_valid && fifo_full) ||
                  pending_record_valid) &&
-                (overlay_rule_valid || overlay_command_write)) begin
+                overlay_drop_source_q) begin
                 overlay_capture_drop_sticky_q <= 1'b1;
             end else if (capture_drop_ack) begin
                 overlay_capture_drop_sticky_q <= 1'b0;

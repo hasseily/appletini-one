@@ -294,6 +294,7 @@
  * 2) Never use memcpy/memset on MMIO register windows.
  * 3) Map register windows as MMIO/Device in MMU setup.
  * 4) For write-then-poll flows, add barriers if you introduce out-of-order risks.
+ * 5) Do not use atomic or exclusive accesses on the GP0 PL register window.
  */
 
 #endif

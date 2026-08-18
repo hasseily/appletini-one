@@ -268,15 +268,52 @@ module apple_bus_wrapper (
     // Address and R/W drive only while an arbiter client explicitly requests
     // ownership; otherwise both buses remain tri-stated.
     wire apple_addr_rw_enable = ab_write.wr_addr_rw_en;
-    wire drive_live = bus_emit_state && ab_write.wr_data_en;
+
+    /* Card responses settle many fabric clocks before TAP_DATA_EMIT. Register
+     * the physical data tuple so the 12-client arbiter does not remain on the
+     * data or direction-pin paths. Address ownership, control lines,
+     * and the early motherboard-RAM DMA write-window control stay live. DMA
+     * clients hold their registered byte long before that window opens, so
+     * the byte can share this stage. Keep the ownership metadata aligned with
+     * the byte for the II+ read-hold test. */
+    logic       physical_data_en_q;
+    logic [7:0] physical_data_q = 8'h00;
+    logic       physical_addr_rw_en_q;
+    logic       physical_rw_q;
+    logic       physical_inh_dependent_q;
+    always_ff @(posedge clk) begin
+        /* The cleared enable masks this byte during reset, so the data flops
+         * need no reset input or extra control set. */
+        physical_data_q <= ab_write.wr_data;
+        if (!rstn) begin
+            physical_data_en_q    <= 1'b0;
+            physical_addr_rw_en_q <= 1'b0;
+            physical_rw_q         <= 1'b1;
+            physical_inh_dependent_q <= 1'b0;
+        end else begin
+            physical_data_en_q    <= ab_write.wr_data_en;
+            physical_addr_rw_en_q <= ab_write.wr_addr_rw_en;
+            physical_rw_q         <= ab_write.wr_rw;
+            physical_inh_dependent_q <= ab_write.assert_inh;
+        end
+    end
+
+    /* machine_inh_allowed may drop after this stage captures an INH-backed
+     * response. Release that response with INH so motherboard RAM cannot
+     * contend with the card for the rest of the Apple cycle. */
+    wire physical_data_en_safe =
+        physical_data_en_q &&
+        (!physical_inh_dependent_q || inh_allowed);
+    wire drive_live = bus_emit_state && physical_data_en_safe;
     wire read_response_live =
-        drive_live && (!apple_addr_rw_enable || ab_write.wr_rw);
+        drive_live && (!physical_addr_rw_en_q || physical_rw_q);
     localparam int DMA_WRITE_START_CLKS = 18;
     localparam int DMA_WRITE_END_CLKS   = 40;
 
     logic       data_override_q;
     logic       data_override_saved_q;
     logic [7:0] iiplus_read_data_q;
+    logic       iiplus_read_inh_dependent_q;
     logic       phi0_clean_q;
     logic [5:0] dma_write_phase_q;
 
@@ -299,6 +336,7 @@ module apple_bus_wrapper (
             data_override_q       <= 1'b0;
             data_override_saved_q <= 1'b0;
             iiplus_read_data_q    <= 8'h00;
+            iiplus_read_inh_dependent_q <= 1'b0;
             phi0_clean_q          <= 1'b0;
             dma_write_phase_q     <= 6'd0;
         end else begin
@@ -306,6 +344,7 @@ module apple_bus_wrapper (
 
             if (dma_write_request) begin
                 data_override_saved_q <= 1'b0;
+                iiplus_read_inh_dependent_q <= 1'b0;
                 if (phi0_clean_rise) begin
                     dma_write_phase_q <= 6'd1;
                     data_override_q   <= 1'b0;
@@ -328,21 +367,32 @@ module apple_bus_wrapper (
                 dma_write_phase_q     <= 6'd0;
                 data_override_q       <= 1'b0;
                 data_override_saved_q <= 1'b0;
+                iiplus_read_inh_dependent_q <= 1'b0;
             end else if (!host_is_iiplus) begin
                 data_override_q       <= 1'b0;
                 data_override_saved_q <= 1'b0;
+                iiplus_read_inh_dependent_q <= 1'b0;
             end else if (phi0_fall) begin
                 data_override_q       <= 1'b0;
                 data_override_saved_q <= 1'b0;
+                iiplus_read_inh_dependent_q <= 1'b0;
             end else if (read_response_live && phi0_filt) begin
                 data_override_q       <= 1'b1;
                 data_override_saved_q <= 1'b1;
-                iiplus_read_data_q    <= ab_write.wr_data;
+                iiplus_read_data_q    <= physical_data_q;
+                iiplus_read_inh_dependent_q <=
+                    physical_inh_dependent_q;
             end
         end
     end
+    wire iiplus_read_hold_allowed =
+        !iiplus_read_inh_dependent_q || inh_allowed;
     wire iiplus_read_hold_active =
-        host_is_iiplus && data_override_q && data_override_saved_q;
+        host_is_iiplus && data_override_q && data_override_saved_q &&
+        iiplus_read_hold_allowed;
+    wire data_override_safe =
+        data_override_q &&
+        (!data_override_saved_q || iiplus_read_hold_allowed);
 
     /* The direction-output route is bounded in the XDC so the asynchronous
      * raw-PHI0 release remains placement-independent. Keep this one gate at
@@ -350,29 +400,28 @@ module apple_bus_wrapper (
      * unconstrained incremental run moved the equivalent inferred LUT seven
      * columns away and changed this path from +0.362 ns to -0.052 ns.
      *
-     * Keep the bus phase and client data-enable as separate LUT inputs. If
-     * they are ANDed first, small unrelated netlist changes can prevent
-     * synthesis from absorbing that AND into the arbiter cone and insert an
-     * extra LUT on this bounded register-to-pad path.
+     * Keep the bus phase and staged response enable as separate LUT inputs.
+     * This keeps raw PHI0 as the release input of the placed LUT. INH safety
+     * stays in a small pre-gate fed by the staged response tag.
      *
      * LUT inputs implement:
-     *   (bus_emit_state && wr_data_en &&
+     *   (bus_emit_state && physical_data_en_safe &&
      *       (PHI0 || (!host_is_iiplus && addr_rw_enable))) ||
-     *   data_override_q
+     *   data_override_safe
      * INIT bit order is {I5,I4,I3,I2,I1,I0}. */
     wire apple_data_enable;
     (* LOC = "SLICE_X104Y23", BEL = "A6LUT", DONT_TOUCH = "TRUE" *)
     LUT6 #(.INIT(64'hFFFF_FFFF_8088_8080)) apple_data_enable_lut (
         .I0(bus_emit_state),
-        .I1(ab_write.wr_data_en),
+        .I1(physical_data_en_safe),
         .I2(apple_phi0_pin),
         .I3(host_is_iiplus),
-        .I4(apple_addr_rw_enable),
-        .I5(data_override_q),
+        .I4(physical_addr_rw_en_q),
+        .I5(data_override_safe),
         .O(apple_data_enable)
     );
     wire [7:0] apple_data_out =
-        iiplus_read_hold_active ? iiplus_read_data_q : ab_write.wr_data;
+        iiplus_read_hold_active ? iiplus_read_data_q : physical_data_q;
 
     assign apple_data_pin = apple_data_enable ? apple_data_out : 8'hzz;
     assign apple_addr_pin = apple_addr_rw_enable ? ab_write.wr_addr : 16'hzzzz;

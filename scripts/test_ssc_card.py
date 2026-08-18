@@ -71,7 +71,9 @@ def test_sources():
             ".slot_assign(3'h1)" in top and
             "gate_ab(ab_read, card_ssc_enable)" in top,
             "apple_top must place the SSC in slot 1 behind its feature bit")
-    require("apple_bus_write_arbiter #(.NUM_CLIENTS(12))" in top and
+    require("apple_bus_write_arbiter #(" in top and
+            ".NUM_CLIENTS(12)" in top and
+            ".FAST_DATA_CLIENT(2)" in top and
             "ssc_ab_write," in top,
             "the bus arbiter must include the SSC writer")
     require("CARD_CTRL_FEATURE_SSC_ENABLE_BIT = 2" in top,

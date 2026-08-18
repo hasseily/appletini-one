@@ -62,7 +62,7 @@ module sdd_bus_tap (
                          ab_read.m2b0, ab_read.m2sel, ab_read.res, ab_read.rw,
                          ab_read.addr};
 
-    wire [FIFO_WIDTH-1:0] record_din =
+    wire [FIFO_WIDTH-1:0] assembled_record =
         {SDD_RECORD_KIND, {(FIFO_WIDTH - 3 - 32){1'b0}}, event_word};
 
     /* Hardware storm trap: a BRK/IRQ storm fetches $FFFE every few
@@ -119,11 +119,26 @@ module sdd_bus_tap (
 
     wire push_request = enable && ab_read.data_en && !storm_frozen_q;
 
+    // Keep record assembly off the FIFO input path. A valid bit carries each
+    // event through the stage, including the event that trips a fault trap.
+    logic [FIFO_WIDTH-1:0] record_din_q;
+    logic                  record_valid_q;
+    always_ff @(posedge clk) begin
+        if (!resetn || !enable) begin
+            record_din_q   <= '0;
+            record_valid_q <= 1'b0;
+        end else begin
+            record_valid_q <= push_request;
+            if (push_request)
+                record_din_q <= assembled_record;
+        end
+    end
+
     logic                  fifo_full;
     logic                  fifo_empty;
     logic [FIFO_WIDTH-1:0] fifo_dout;
 
-    wire fifo_wr_en = push_request && !fifo_full;
+    wire fifo_wr_en = record_valid_q && !fifo_full;
     wire fifo_rd_en = cycle_capture_rd_en && !fifo_empty;
 
     // Overflow latches until the egress acks (it emits a gap marker into
@@ -134,7 +149,7 @@ module sdd_bus_tap (
         if (~resetn || !enable) begin
             capture_drop_sticky_q <= 1'b0;
         end else begin
-            if (push_request && fifo_full)
+            if (record_valid_q && fifo_full)
                 capture_drop_sticky_q <= 1'b1;
             else if (capture_drop_ack)
                 capture_drop_sticky_q <= 1'b0;
@@ -164,7 +179,7 @@ module sdd_bus_tap (
     ) sdd_fifo_inst (
         .rst            (~resetn || !enable),
         .wr_clk         (clk),
-        .din            (record_din),
+        .din            (record_din_q),
         .wr_en          (fifo_wr_en),
         .rd_en          (fifo_rd_en),
         .dout           (fifo_dout),

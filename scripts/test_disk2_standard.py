@@ -784,6 +784,94 @@ def test_disk2_sound_recal_and_volume_contract() -> None:
             "Disk II tab must draw the activity toggle and volume control, with supported format help in the shared help panel")
 
 
+def test_disk2_sound_zero_length_retime_contract() -> None:
+    """Prove that the seek zero test may move to the position stage.
+
+    The direct predicate is kept here as an independent check of the old
+    arithmetic.  The RTL uses the safer registered-position equality so it
+    keeps the same event pipeline latency.
+    """
+    sound_player = DISK2_SOUND_PLAYER_SV.read_text(encoding="utf-8")
+
+    event_seek_outward = 1
+    event_seek_inward = 2
+    full_qtrack_distance = 140
+
+    def old_zero_length(event: int, raw_qtrack: int, distance: int) -> bool:
+        seek_event = event in (event_seek_outward, event_seek_inward)
+        start_pos = min(raw_qtrack, full_qtrack_distance)
+        sample_start_pos = start_pos
+        sample_end_pos = start_pos
+        if event == event_seek_outward:
+            sample_end_pos = min(start_pos + distance,
+                                 full_qtrack_distance)
+        elif event == event_seek_inward:
+            end_pos = 0 if distance >= start_pos else start_pos - distance
+            sample_start_pos = full_qtrack_distance - start_pos
+            sample_end_pos = full_qtrack_distance - end_pos
+        return seek_event and sample_end_pos == sample_start_pos
+
+    def direct_zero_length(event: int, raw_qtrack: int, distance: int) -> bool:
+        if event == event_seek_outward:
+            return distance == 0 or raw_qtrack >= full_qtrack_distance
+        if event == event_seek_inward:
+            return distance == 0 or raw_qtrack == 0
+        return False
+
+    zero_counts = {event_seek_outward: 0, event_seek_inward: 0}
+    for event in range(16):
+        for raw_qtrack in range(256):
+            for distance in range(256):
+                old_zero = old_zero_length(event, raw_qtrack, distance)
+                direct_zero = direct_zero_length(event, raw_qtrack, distance)
+                require(
+                    old_zero == direct_zero,
+                    f"seek zero predicate changed for event={event}, "
+                    f"start={raw_qtrack}, distance={distance}",
+                )
+                if event in zero_counts and old_zero:
+                    zero_counts[event] += 1
+
+    require(zero_counts[event_seek_outward] == 29_836,
+            "outward exhaustive sweep did not cover both zero-distance and outer-stop cases")
+    require(zero_counts[event_seek_inward] == 511,
+            "inward exhaustive sweep did not cover both zero-distance and track-zero cases")
+
+    require("logic               event_pos_zero_length_q;" not in sound_player and
+            "event_pos_zero_length_q <=" not in sound_player,
+            "seek zero length must not retain a separate position-stage register")
+    pos_stage = re.search(
+        r"if \(event_pos_valid_q\) begin(?P<body>.*?)"
+        r"\n\s*end\n\n\s*if \(event_setup_valid_q\) begin",
+        sound_player,
+        re.S,
+    )
+    require(pos_stage is not None,
+            "Disk II sound position-to-offset pipeline stage not found")
+    pos_body = pos_stage.group("body")
+    require(re.search(
+                r"event_calc_zero_length_q\s*<=\s*"
+                r"event_pos_seek_q\s*&&\s*"
+                r"\(event_pos_sample_end_pos_q\s*==\s*"
+                r"event_pos_sample_start_pos_q\)\s*;",
+                pos_body,
+                re.S) is not None,
+            "seek zero equality must move with its registered positions into the calculation stage")
+    require(sound_player.count("event_calc_zero_length_q <=") == 2 and
+            "if (event_calc_zero_length_q)" in sound_player,
+            "the retimed zero flag must have one reset, one position-stage assignment, and one use")
+
+    setup_stage = re.search(
+        r"if \(event_setup_valid_q\) begin(?P<body>.*?)"
+        r"\n\s*end\n\n\s*if \(sound_event != EVENT_NONE",
+        sound_player,
+        re.S,
+    )
+    require(setup_stage is not None and
+            "zero_length" not in setup_stage.group("body"),
+            "the start/end arithmetic stage must not rebuild a zero-length compare")
+
+
 def test_disk2_write_protect_visual_contract() -> None:
     config_h = CONFIG_MENU_H.read_text(encoding="utf-8")
     config_c = CONFIG_MENU_C.read_text(encoding="utf-8")
@@ -1138,6 +1226,7 @@ def run() -> int:
         test_empty_or_disabled_disk2_track_requests_stay_quiet,
         test_pl_empty_drive_returns_changing_latch_noise,
         test_disk2_sound_recal_and_volume_contract,
+        test_disk2_sound_zero_length_retime_contract,
         test_disk2_write_protect_visual_contract,
         test_sector_order_tables_match_applewin,
         test_6and2_round_trip_for_varied_sector_data,

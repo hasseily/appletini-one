@@ -188,7 +188,9 @@ def test_vtw_uses_readahead_and_word_wide_response_buffer() -> None:
             "exec_vtw_q     <= vtw_ctrl_write;" in gateware and
             "logic [31:0] out_fifo" in gateware and
             "out_mem_we    = 4'b1111;" in gateware and
-            "out_head = out_word_q[8*out_rd_q[1:0] +: 8]" in gateware,
+            "out_head = out_word_q[8*out_rd_q[1:0] +: 8]" in gateware and
+            "out_word_q <= out_fifo[out_rd_q[FIFO_AW-1:2]];" in gateware and
+            "out_rd_prefetch" not in gateware,
             "gateware must store whole words and expose them byte-wise to the Apple")
     require("out_pack" not in gateware and
             "exec_vtw_q, 1'b0, ready_q" in gateware,
@@ -199,9 +201,11 @@ def test_vtw_uses_readahead_and_word_wide_response_buffer() -> None:
             "sp_ctl(SP_CTL_POP_IN4);" in source and
             "logic [31:0] in_fifo" in gateware and
             "SP_REG_IN_HEAD4" in gateware and
-            "axi_pop_in4_accept" in gateware,
+            "axi_pop_in4_accept" in gateware and
+            "in_word_q <= in_fifo[in_rd_q[FIFO_AW-1:2]];" in gateware and
+            "in_rd_prefetch" not in gateware,
             "accelerated writes must drain aligned IN words without changing "
-            "the Apple byte protocol")
+            "the Apple byte protocol or putting the pop decode on BRAM address pins")
 
 
 def test_vtw_direct_read_is_complete_and_fail_closed() -> None:

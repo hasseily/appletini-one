@@ -316,7 +316,10 @@ module psram_driver (
                 .C (clk),
                 .CE(1'b1),
                 .D (a_dly1[gi]),
-                .R (~resetn),
+                // GSR and INIT set both phases to zero at configuration.
+                // Later fabric resets clear the read tape and shift word; the
+                // live IDDR samples stay unused until a new read window.
+                .R (1'b0),
                 .S (1'b0)
             );
 
@@ -331,7 +334,7 @@ module psram_driver (
                 .C (clk),
                 .CE(1'b1),
                 .D (b_dly1[gi]),
-                .R (~resetn),
+                .R (1'b0),
                 .S (1'b0)
             );
         end

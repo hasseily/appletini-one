@@ -104,7 +104,9 @@ def build_events(args: argparse.Namespace) -> list[PhoneEvent]:
     phones = parse_phone_list(args.phones)
     return [
         PhoneEvent(phone & 0x3F, args.inflect, args.rateinf, args.ctrlamp,
-                   args.filfreq, segment_samples, f"ssi{phone & 0x3F:02X}")
+                   args.filfreq, segment_samples,
+                   (f"votrax_sc01{phone & 0x3F:02X}" if args.votrax
+                    else f"ssi{phone & 0x3F:02X}"))
         for phone in phones
     ]
 
@@ -118,7 +120,7 @@ def int_array(values: list[int]) -> str:
 
 
 def write_testbench(path: Path, events: list[PhoneEvent], sample_txt: Path,
-                    tick_cycles: int, sc01_map: str) -> None:
+                    tick_cycles: int, sc01_map: str, votrax: bool) -> None:
     dur = [event.durphon for event in events]
     inf = [event.inflect for event in events]
     rate = [event.rateinf for event in events]
@@ -126,7 +128,9 @@ def write_testbench(path: Path, events: list[PhoneEvent], sample_txt: Path,
     filt = [event.filfreq for event in events]
     samples = [event.samples for event in events]
     sample_path = sample_txt.as_posix()
-    sc01_expr = "dur[5:0]" if sc01_map == "identity" else "ssi263_to_sc01_phone(dur[5:0])"
+    sc01_expr = ("dur[5:0]" if votrax or sc01_map == "identity"
+                 else "ssi263_to_sc01_phone(dur[5:0])")
+    votrax_expr = "1'b1" if votrax else "1'b0"
 
     path.write_text(f"""`timescale 1ns / 1ps
 
@@ -144,7 +148,7 @@ module ssi263_formant_audio_tb;
     logic start = 1'b0;
     logic [5:0] start_phoneme = 6'd0;
     logic [5:0] start_sc01_phone = 6'd0;
-    logic start_votrax = 1'b0;
+    logic start_votrax = {votrax_expr};
     logic [1:0] current_function = 2'd0;
     logic [7:0] duration_phoneme = 8'd0;
     logic [7:0] inflection = 8'd0;
@@ -216,7 +220,7 @@ module ssi263_formant_audio_tb;
             filter_freq <= filt;
             start_phoneme <= dur[5:0];
             start_sc01_phone <= {sc01_expr};
-            start_votrax <= 1'b0;
+            start_votrax <= {votrax_expr};
             start <= 1'b1;
             @(posedge clk);
             start <= 1'b0;
@@ -380,11 +384,11 @@ def correlation(a: list[int], b: list[int]) -> float:
 
 
 def write_metadata(path: Path, events: list[PhoneEvent], phone_map: dict[int, int],
-                   duration_phone_map: dict[int, int]) -> None:
+                   duration_phone_map: dict[int, int], votrax: bool) -> None:
     offset = 0
     with path.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=[
-            "index", "label", "ssi_phone", "sc01_phone", "durphon", "inflect",
+            "index", "label", "mode", "ssi_phone", "sc01_phone", "durphon", "inflect",
             "rateinf", "ctrlamp", "filfreq", "start_sample", "sample_count",
         ])
         writer.writeheader()
@@ -393,8 +397,10 @@ def write_metadata(path: Path, events: list[PhoneEvent], phone_map: dict[int, in
             writer.writerow({
                 "index": index,
                 "label": event.label,
-                "ssi_phone": f"{phone:02X}",
-                "sc01_phone": f"{audio_sc01_for_event(event, phone_map, duration_phone_map):02X}",
+                "mode": "votrax" if votrax else "ssi263",
+                "ssi_phone": "" if votrax else f"{phone:02X}",
+                "sc01_phone": (f"{phone:02X}" if votrax else
+                               f"{audio_sc01_for_event(event, phone_map, duration_phone_map):02X}"),
                 "durphon": f"{event.durphon:02X}",
                 "inflect": f"{event.inflect:02X}",
                 "rateinf": f"{event.rateinf:02X}",
@@ -407,11 +413,12 @@ def write_metadata(path: Path, events: list[PhoneEvent], phone_map: dict[int, in
 
 
 def write_metrics(path: Path, events: list[PhoneEvent], phone_map: dict[int, int],
-                  duration_phone_map: dict[int, int], samples: list[int]) -> None:
+                  duration_phone_map: dict[int, int], samples: list[int],
+                  votrax: bool) -> None:
     offset = 0
     with path.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=[
-            "index", "label", "ssi_phone", "sc01_phone", "rms", "peak",
+            "index", "label", "mode", "ssi_phone", "sc01_phone", "rms", "peak",
             "pitch_hz", "pitch_conf", "centroid_hz",
         ])
         writer.writeheader()
@@ -425,8 +432,10 @@ def write_metrics(path: Path, events: list[PhoneEvent], phone_map: dict[int, int
             writer.writerow({
                 "index": index,
                 "label": event.label,
-                "ssi_phone": f"{phone:02X}",
-                "sc01_phone": f"{audio_sc01_for_event(event, phone_map, duration_phone_map):02X}",
+                "mode": "votrax" if votrax else "ssi263",
+                "ssi_phone": "" if votrax else f"{phone:02X}",
+                "sc01_phone": (f"{phone:02X}" if votrax else
+                               f"{audio_sc01_for_event(event, phone_map, duration_phone_map):02X}"),
                 "rms": f"{rms(segment):.2f}",
                 "peak": peak(segment),
                 "pitch_hz": f"{pitch_hz:.2f}",
@@ -439,7 +448,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--preset", choices=["classic", "phones"], default="classic")
     parser.add_argument("--phones", default="05,08,0A,0C,0D,10,16,18,29,33",
-                        help="SSI263 phone IDs for --preset phones.")
+                        help="Six-bit SSI263 IDs, or direct SC-01 IDs with --votrax.")
     parser.add_argument("--segment-ms", type=float, default=90.0,
                         help="Samples captured per event.")
     parser.add_argument("--inflect", type=lambda v: int(v, 0), default=0x52)
@@ -456,6 +465,11 @@ def main() -> int:
                              "sim-only constraint.")
     parser.add_argument("--sc01-map", choices=["pkg", "identity"], default="pkg",
                         help="How the testbench maps SSI263 phones to the SC-01 backend input.")
+    parser.add_argument("--votrax", action="store_true",
+                        help="Drive native Votrax mode; --phones are direct SC-01 IDs.")
+    parser.add_argument("--backend-source", type=Path,
+                        default=ROOT / "hdl" / "apple" / "ssi263_formant_backend.sv",
+                        help="Backend RTL source to compile (defaults to the working tree).")
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT)
     args = parser.parse_args()
 
@@ -470,8 +484,9 @@ def main() -> int:
         duration_phone_map = {}
     tb = args.out_dir / "ssi263_formant_audio_tb.sv"
     sample_txt = args.out_dir / "rtl_audio_i16.txt"
-    write_testbench(tb, events, sample_txt, args.tick_cycles, args.sc01_map)
-    write_metadata(args.out_dir / "segments.csv", events, phone_map, duration_phone_map)
+    write_testbench(tb, events, sample_txt, args.tick_cycles, args.sc01_map, args.votrax)
+    write_metadata(args.out_dir / "segments.csv", events, phone_map,
+                   duration_phone_map, args.votrax)
 
     xvlog_log = args.out_dir / "xvlog.log"
     xelab_log = args.out_dir / "xelab.log"
@@ -480,7 +495,7 @@ def main() -> int:
     run([vivado_tool("xvlog"), "-sv",
          str(ROOT / "hdl" / "apple" / "ssi263_formant_pkg.sv"),
          str(ROOT / "hdl" / "apple" / "sc01a_digital_core.sv"),
-         str(ROOT / "hdl" / "apple" / "ssi263_formant_backend.sv"),
+         str(args.backend_source.resolve()),
          str(tb)], ROOT, xvlog_log)
     run([vivado_tool("xelab"), "ssi263_formant_audio_tb", "-s", snapshot], ROOT, xelab_log)
     run([vivado_tool("xsim"), snapshot, "-runall"], ROOT, xsim_log)
@@ -488,7 +503,8 @@ def main() -> int:
     samples = read_samples(sample_txt)
     wav_path = args.out_dir / "rtl_formant_audio.wav"
     write_wav(wav_path, samples)
-    write_metrics(args.out_dir / "metrics.csv", events, phone_map, duration_phone_map, samples)
+    write_metrics(args.out_dir / "metrics.csv", events, phone_map,
+                  duration_phone_map, samples, args.votrax)
 
     print(f"Wrote {wav_path}")
     print(f"Wrote {args.out_dir / 'segments.csv'}")

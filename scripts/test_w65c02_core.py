@@ -243,6 +243,11 @@ def run_directed() -> str:
     pass_lines = [
         line for line in output.splitlines() if "W65C02 DIRECTED PASS" in line
     ]
+    fail_lines = [
+        line for line in output.splitlines() if "W65C02 DIRECTED FAIL" in line
+    ]
+    if fail_lines:
+        raise RuntimeError(fail_lines[-1].strip())
     if not pass_lines:
         raise RuntimeError("directed simulator did not report PASS")
     return pass_lines[-1].strip()
@@ -286,6 +291,9 @@ def run_suite(packed: Path) -> str:
             f"{Path(command[0]).name} failed with exit code {return_code}"
         )
     pass_lines = [line for line in output.splitlines() if "W65C02 PASS" in line]
+    fail_lines = [line for line in output.splitlines() if "W65C02 FAIL" in line]
+    if fail_lines:
+        raise RuntimeError(fail_lines[-1].strip())
     if not pass_lines:
         raise RuntimeError("simulator did not report PASS")
     return pass_lines[-1].strip()

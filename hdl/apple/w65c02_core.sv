@@ -206,6 +206,11 @@ module w65c02_core #(
     logic [7:0]  hi_q;
     logic [7:0]  data_q;
     logic [7:0]  result_q;
+    /* W65C02 decimal ADC/SBC already owns ST_DECIMAL_EXTRA. Save the exact
+     * arithmetic result at the operand edge, then commit A/P on that existing
+     * extra cycle so the BCD carry chains do not feed the shared flag mux. */
+    logic [15:0] decimal_result_q;
+    logic        decimal_so_pending_q;
     logic [7:0]  ptr_q;
     logic [15:0] ea_q;
     logic [15:0] target_q;
@@ -1082,6 +1087,8 @@ module w65c02_core #(
             hi_q <= 8'h00;
             data_q <= 8'h00;
             result_q <= 8'h00;
+            decimal_result_q <= 16'h0000;
+            decimal_so_pending_q <= 1'b0;
             ptr_q <= 8'h00;
             ea_q <= 16'h0000;
             target_q <= 16'h0000;
@@ -1108,6 +1115,8 @@ module w65c02_core #(
             hi_q <= 8'h00;
             data_q <= 8'h00;
             result_q <= 8'h00;
+            decimal_result_q <= 16'h0000;
+            decimal_so_pending_q <= 1'b0;
             ptr_q <= 8'h00;
             ea_q <= 16'h0000;
             target_q <= 16'h0000;
@@ -1124,8 +1133,14 @@ module w65c02_core #(
 
             if (nmi_edge)
                 nmi_pending_q <= 1'b1;
-            if (so_last_q && !so_n)
+            if (so_last_q && !so_n) begin
                 p_q[P_V] <= 1'b1;
+                /* Arithmetic wins when SO falls on the operand edge, as it
+                 * did before the retime. During the extra cycle SO wins,
+                 * including while RDY or enable holds that cycle. */
+                if (state_q == ST_DECIMAL_EXTRA)
+                    decimal_so_pending_q <= 1'b1;
+            end
 
             if (enable && ready) begin
                 case (state_q)
@@ -1199,11 +1214,16 @@ module w65c02_core #(
 
                         case (mode_q)
                             AM_IMM: begin
-                                apply_read_value(data_in);
                                 if ((op_q == OP_ADC || op_q == OP_SBC) && p_q[P_D]) begin
+                                    if (op_q == OP_ADC)
+                                        decimal_result_q <= adc_result(a_q, data_in, p_q);
+                                    else
+                                        decimal_result_q <= sbc_result(a_q, data_in, p_q);
+                                    decimal_so_pending_q <= 1'b0;
                                     ea_q <= (op_q == OP_ADC) ? 16'h007F : 16'h0000;
                                     state_q <= ST_DECIMAL_EXTRA;
                                 end else begin
+                                    apply_read_value(data_in);
                                     instruction_done <= 1'b1;
                                     state_q <= ST_FETCH;
                                 end
@@ -1357,16 +1377,26 @@ module w65c02_core #(
                     end
 
                     ST_MEM_READ: begin
-                        apply_read_value(data_in);
                         if ((op_q == OP_ADC || op_q == OP_SBC) && p_q[P_D]) begin
+                            if (op_q == OP_ADC)
+                                decimal_result_q <= adc_result(a_q, data_in, p_q);
+                            else
+                                decimal_result_q <= sbc_result(a_q, data_in, p_q);
+                            decimal_so_pending_q <= 1'b0;
                             state_q <= ST_DECIMAL_EXTRA;
                         end else begin
+                            apply_read_value(data_in);
                             instruction_done <= 1'b1;
                             state_q <= ST_FETCH;
                         end
                     end
 
                     ST_DECIMAL_EXTRA: begin
+                        a_q <= decimal_result_q[7:0];
+                        p_q <= decimal_result_q[15:8];
+                        if (decimal_so_pending_q || (so_last_q && !so_n))
+                            p_q[P_V] <= 1'b1;
+                        decimal_so_pending_q <= 1'b0;
                         instruction_done <= 1'b1;
                         state_q <= ST_FETCH;
                     end

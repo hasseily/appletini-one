@@ -709,6 +709,10 @@ set_property strategy "Vivado Synthesis Defaults" [get_runs synth_1]
 # timing-oriented placement/routing and retain the post-route phys-opt pass.
 set_property strategy "Performance_ExplorePostRoutePhysOpt" [get_runs impl_1]
 set_property steps.phys_opt_design.is_enabled true [get_runs impl_1]
+set_property -dict \
+    [list {steps.route_design.args.more options} {-tns_cleanup}] [get_runs impl_1]
+set_property steps.post_route_phys_opt_design.is_enabled true [get_runs impl_1]
+set_property steps.post_route_phys_opt_design.args.directive Explore [get_runs impl_1]
 
 puts "Strategies configured"
 puts ""

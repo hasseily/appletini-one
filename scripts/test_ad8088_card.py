@@ -242,8 +242,8 @@ def test_ui_and_build() -> None:
     main_c = text("ps_sources/frontend/main.c")
     vitis = text("scripts/create_vitis_workspace.py")
 
-    require("#define APPLETINI_CFG_VERSION 113U" in config,
-            "slot-5 personality on current main needs config schema version 113")
+    require("#define APPLETINI_CFG_VERSION 114U" in config,
+            "slot-5 personality must remain in the current config schema")
     require('"slot5.processor"' in config and
             '"slot5.processor=%s' in config,
             "slot-5 personality must load and save")

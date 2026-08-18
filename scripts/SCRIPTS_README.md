@@ -26,6 +26,11 @@ vivado -mode batch -source scripts/build_and_export_xsa.tcl
 Remove-Item Env:APPLETINI_FULL_BUILD
 ```
 
+Set `APPLETINI_TIMING_DIAGNOSTICS=1` on a full build to add congestion,
+high-fanout-net, and QoR reports. Each build writes an immutable record under
+`.timing_runs/<build-id>/`. The two CSV files at the root of that directory
+track build results and the top ten setup paths.
+
 The generated project must keep the `Performance_ExplorePostRoutePhysOpt`
 implementation strategy. Its Explore placement, physical optimization, route,
 and post-route physical optimization settings are part of the timing flow. Do
@@ -41,8 +46,36 @@ package a bitstream from a run that stopped at that timing gate.
 
 An incremental run can fail placement when the known-good checkpoint predates
 a large change. In that case, do not weaken timing settings or promote the
-failed run. Use the fresh full-build sequence above. Promote a new candidate
-checkpoint only after the firmware passes hardware tests.
+failed run. Use the fresh full-build sequence above.
+
+Promotion requires two consecutive clean full builds of the same commit. Both
+must have setup WNS of at least `+0.300 ns`, nonnegative hold and pulse width,
+no timing failure, no bad route or bus skew, no missing XDC object, and no
+extra rescue pass. Both builds must also use the same Vivado version and the
+same synthesis, placement, route, and physical-optimization settings. Package
+the first build's exact XSA and bitstream, test its named firmware on hardware,
+then bind that firmware hash to the build:
+
+```powershell
+python scripts/package_timing_firmware.py <tested-build-id>
+
+vivado -mode batch -source scripts/mark_timing_hardware_validated.tcl `
+  -tclargs <tested-build-id> `
+  boot-menu,disk-ii,smartport,vtw,mb-audit,linear-overlay,sdd,uthernet,ssc,reset
+
+vivado -mode batch -source scripts/promote_timing_candidate.tcl `
+  -tclargs <tested-build-id> <confirm-build-id>
+```
+
+Promotion copies the tested build's checkpoint to the known-good incremental
+reference. See `docs/FABRIC_TIMING_MARGIN_PLAN.md` for the full process.
+
+Run the timing-tool tests after changing this flow:
+
+```powershell
+vivado -mode batch -source scripts/test_timing_tooling.tcl
+vivado -mode batch -source scripts/test_timing_run_properties.tcl
+```
 
 ## Images and Programming
 
@@ -80,6 +113,28 @@ python scripts\test_applicard_card.py
 python scripts\test_uthernet2_card.py
 python scripts\test_config_profiles.py
 ```
+
+Run `python scripts\test_vtw.py` for the simulator-backed vTW gate. It includes
+pin-level Disk II response timing, native and vTW raw WOZ read/write, and an
+end-to-end vTW-core-to-Disk-II run at every speed preset plus the slug override.
+
+Run `python scripts\test_axisimple_wrapper.py` after PS-to-PL AXI write-path
+changes. It checks write-address/data skew, bursts, backpressure, reset, client
+selection, and write-response order through the real AxiSimple wrapper.
+
+Run `python scripts\test_psram_driver_iddr_reset.py` after PSRAM capture or
+reset changes. It compares reset modes, both capture phases, a mid-read reset,
+and the first read after reset through the real tape and input-DDR path.
+
+Run `python scripts\test_ssi263_start_timing.py` after SSI263, Votrax, or
+formant-start changes. It checks the same-edge backend start and VIA clear,
+the saved phoneme tuple, reset cancellation, and formant pipeline restart.
+
+Run `python scripts\test_ssi263_filter_finalize.py` after SSI263 formant MAC or
+filter-pipeline changes. It checks every filter stage, exact accumulator and
+history timing, saturation limits, reset/restart cancellation, and sample output.
+Use `python scripts\sim_ssi263_formant_rtl.py --votrax ...` for direct SC-01
+phone sweeps; omit `--votrax` for SSI263 mode.
 
 Simulator-backed checks require the Xilinx simulation tools on `PATH`.
 Hardware-facing scripts document their required UART, JTAG, SD, or USB setup in

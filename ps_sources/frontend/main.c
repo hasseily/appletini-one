@@ -15,6 +15,7 @@
 #include "../lib/framebuffer.h"
 #include "../lib/uart.h"
 #include "../lib/common.h"
+#include "../lib/axisimple_mmio.h"
 #include "../lib/i2c.h"
 #include "../lib/dac_ak4493.h"
 #include "../lib/tmp102.h"
@@ -2859,6 +2860,7 @@ int main(void)
     uint8_t smartport_service_started = 0U;
     XTime boot_stage_started = 0U;
 
+    axisimple_mmio_mmu_init();
     uart_init_both(921600U);
 
     memset(&ui, 0, sizeof(ui));
@@ -3027,22 +3029,6 @@ int main(void)
     uart_control_print_help(&g_uart_control, &g_uart_control_ops);
     uart_control_print_help(&g_uart0_control, &g_uart_control_ops);
 
-    /* MMU MMIO marking for the AXI register region. The compositor
-     * picks up its own slot setup from compositor_init() below. */
-    {
-#if defined(DEVICE_MEMORY)
-        const uint32_t mmu_attr = DEVICE_MEMORY;
-#elif defined(STRONG_ORDERED)
-        const uint32_t mmu_attr = STRONG_ORDERED;
-#else
-        const uint32_t mmu_attr = NORM_NONCACHE;
-#endif
-        const uint32_t section_size = 0x00100000U;
-        const uint32_t bytes = 0x40000000U;
-        for (uint32_t off = 0; off < bytes; off += section_size) {
-            Xil_SetTlbAttributes(0x40000000U + off, mmu_attr);
-        }
-    }
     control_set_scanlines(NULL, config_menu.scanlines_mode);
     control_set_video_ghosting(NULL, config_menu.video_ghosting_strength);
     control_set_video_blur(NULL, config_menu.video_blur_strength);

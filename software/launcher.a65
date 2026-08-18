@@ -8,7 +8,7 @@
 ;
 ; Loads at $4000: HGR page 1 ($2000-$3FFF) is the framebuffer.
 ;
-; Keys: Up/Down or Left/Right move, 0-9 jump, RETURN launches, ESC quits.
+; Keys: Up/Down or Left/Right move, 0-9/T jump, RETURN launches, ESC quits.
 ;
 ; Assemble:  acme -f plain -o LAUNCHER launcher.a65
 
@@ -32,9 +32,9 @@ SCRPTR    = $08            ; HGR line pointer
 FONTPTR   = $EB            ; glyph/source pointer
 TMP       = $ED
 
-ITEMS      = 10
+ITEMS      = 11
 FIRST_BAND = 6             ; 8-pixel band of item 1
-DESC_BAND  = 17
+DESC_BAND  = 18
 STAT_BAND  = 4
 FOOT_BAND  = 22
 
@@ -70,6 +70,10 @@ main_loop:
     beq move_down
     cmp #'0'
     beq select_ad8088
+    cmp #'T'
+    beq select_text_overlay
+    cmp #'t'
+    beq select_text_overlay
     cmp #'1'
     bcc main_loop
     cmp #':'                ; numeric shortcuts stop at 9
@@ -80,7 +84,12 @@ main_loop:
     jmp main_loop
 
 select_ad8088:
-    lda #ITEMS - 1
+    lda #9
+    jsr select_item
+    jmp main_loop
+
+select_text_overlay:
+    lda #10
     jsr select_item
     jmp main_loop
 
@@ -496,11 +505,11 @@ border_colors_end:
 item_lo:
     !byte <item0, <item1, <item2, <item3
     !byte <item4, <item5, <item6, <item7
-    !byte <item8, <item9
+    !byte <item8, <item9, <item10
 item_hi:
     !byte >item0, >item1, >item2, >item3
     !byte >item4, >item5, >item6, >item7
-    !byte >item8, >item9
+    !byte >item8, >item9, >item10
 
 item0: !text "1  New Image Modes", 0
 item1: !text "2  Speed Race: 1 MHz vs Warp", 0
@@ -512,15 +521,16 @@ item6: !text "7  Web Browser", 0
 item7: !text "8  Web Server", 0
 item8: !text "9  Internet Image Viewer", 0
 item9: !text "0  AD8088 MS-DOS HGR Cube", 0
+item10: !text "T  Linear Text Overlay", 0
 
 desc_lo:
     !byte <d0a, <d0b, <d1a, <d1b, <d2a, <d2b, <d3a, <d3b
     !byte <d4a, <d4b, <d5a, <d5b, <d6a, <d6b, <d7a, <d7b
-    !byte <d8a, <d8b, <d9a, <d9b
+    !byte <d8a, <d8b, <d9a, <d9b, <d10a, <d10b
 desc_hi:
     !byte >d0a, >d0b, >d1a, >d1b, >d2a, >d2b, >d3a, >d3b
     !byte >d4a, >d4b, >d5a, >d5b, >d6a, >d6b, >d7a, >d7b
-    !byte >d8a, >d8b, >d9a, >d9b
+    !byte >d8a, >d8b, >d9a, >d9b, >d10a, >d10b
 
 d0a: !text "A slideshow of HGR, DHGR, SHR4 and", 0
 d0b: !text "3200 art, interlaced modes included.", 0
@@ -542,10 +552,12 @@ d8a: !text "Streams any web image into 256-color", 0
 d8b: !text "SHR4. Needs SHR4 firmware + ethernet.", 0
 d9a: !text "MS-DOS 2.0 runs on the virtual 8088,", 0
 d9b: !text "then draws an animated Apple HGR cube.", 0
+d10a: !text "80x24 VGA color text from linear RAM.", 0
+d10b: !text "Shows VT underline, CP437 and alpha.", 0
 
 msg_found:   !text "Appletini ONE detected", 0
 msg_missing: !text "No Appletini found - demos need one", 0
-msg_keys:    !text "Arrows/0-9 select Return run Esc end", 0
+msg_keys:    !text "Arrows 0-9/T select Return run Esc end", 0
 
 ; ------------------------------------------------------------------
 !source "launcher_assets.a65"

@@ -120,6 +120,10 @@ module tb_vtw_system;
     logic        video_mode_50hz = 1'b0;
     logic [8:0]  video_line = 9'd253;
     logic [6:0]  video_cycle = 7'd27;
+    logic        overlay_capture_armed = 1'b0;
+    logic        overlay_capture_bank_aux = 1'b0;
+    logic [15:0] overlay_capture_base = 16'h6000;
+    logic [15:0] overlay_capture_limit = 16'h6001;
     logic        sh_en = 0;
     logic [17:0] sh_addr = '0;
     logic        sh_we = 0;
@@ -227,6 +231,10 @@ module tb_vtw_system;
         .ramworks_en(1'b1),
         .video_vbl(1'b0),
         .post_main_wide(1'b0),
+        .overlay_capture_armed(overlay_capture_armed),
+        .overlay_capture_bank_aux(overlay_capture_bank_aux),
+        .overlay_capture_base(overlay_capture_base),
+        .overlay_capture_limit(overlay_capture_limit),
         .video_mode_50hz(video_mode_50hz),
         .video_line(video_line),
         .video_cycle(video_cycle),
@@ -339,6 +347,186 @@ module tb_vtw_system;
         end
     endtask
 
+    /* X_CAPTURE must save the same translator result that the old X_ROUTE
+     * combinational path produced from the captured cycle and its pre-access
+     * switch state. X_ROUTE must then map that saved tuple to the exact shadow
+     * address and write control. Count each route class so this assertion is
+     * not satisfied by only the boot-ROM path. */
+    int route_tuple_checks = 0;
+    int route_bus_checks = 0;
+    int route_rom_checks = 0;
+    int route_main_checks = 0;
+    int route_aux_checks = 0;
+    int route_ramworks_checks = 0;
+    int route_lc_bank1_checks = 0;
+
+    always @(posedge clk) begin : route_tuple_monitor
+        globals::apple_route_kind_e ref_route;
+        logic [31:0] ref_decoded;
+        logic        ref_shadow_valid;
+        logic [17:0] ref_shadow_phys;
+
+        if (rstn && dut.ssm_apply_pulse) begin
+            globals::translate_apple_addr(
+                dut.cycle_translate_state_q,
+                dut.cycle_addr_q,
+                dut.cycle_rw_q,
+                ref_decoded,
+                ref_route);
+            vtw_shadow_pkg::vtw_shadow_map(
+                ref_route,
+                ref_decoded,
+                ref_shadow_valid,
+                ref_shadow_phys);
+
+            check(dut.cycle_xl_decoded_q === ref_decoded &&
+                  dut.cycle_xl_route_q === ref_route &&
+                  dut.xl_shadow_valid === ref_shadow_valid &&
+                  dut.xl_shadow_phys === ref_shadow_phys,
+                  "X_CAPTURE saves and X_ROUTE maps the pre-access tuple");
+            check(dut.core_shadow_issue === ref_shadow_valid,
+                  "only shadow-backed X_ROUTE cycles issue port A");
+            if (ref_shadow_valid) begin
+                check(dut.shadow_a_en &&
+                      dut.shadow_a_addr === ref_shadow_phys &&
+                      dut.shadow_a_we === !dut.cycle_rw_q,
+                      "X_ROUTE drives the exact shadow address and write control");
+                if (dut.cycle_addr_q == 16'hD022 &&
+                    ref_shadow_phys == 18'h0C022)
+                    route_lc_bank1_checks++;
+            end
+            route_tuple_checks++;
+
+            unique case (ref_route)
+                globals::APPLE_ROUTE_BUS: route_bus_checks++;
+                globals::APPLE_ROUTE_ROM: route_rom_checks++;
+                globals::APPLE_ROUTE_CACHE: begin
+                    if (!ref_shadow_valid)
+                        route_ramworks_checks++;
+                    else if (ref_shadow_phys[16])
+                        route_aux_checks++;
+                    else
+                        route_main_checks++;
+                end
+                default: ;
+            endcase
+        end
+    end
+
+    /* Private RamWorks switch phase checks. The manager must keep the old
+     * bank through X_CAPTURE, apply the saved C071/C073 tuple at X_ROUTE,
+     * and expose the new bank to the next captured access. */
+    logic       bank_apply_pending = 1'b0;
+    logic       bank_next_pending  = 1'b0;
+    logic [6:0] bank_old_q          = 7'd0;
+    logic [6:0] bank_new_q          = 7'd0;
+    logic [15:0] bank_switch_addr_q = 16'h0000;
+    int c071_capture_checks = 0;
+    int c071_apply_checks   = 0;
+    int c071_next_checks    = 0;
+    int c073_capture_checks = 0;
+    int c073_apply_checks   = 0;
+    int c073_next_checks    = 0;
+
+    always @(posedge clk) begin
+        if (!rstn) begin
+            bank_apply_pending = 1'b0;
+            bank_next_pending  = 1'b0;
+        end
+        else if (dut.ssm_pulse && !dut.core_rwb &&
+                 (dut.core_addr == 16'hC071 ||
+                  dut.core_addr == 16'hC073)) begin
+            check(!bank_apply_pending && !bank_next_pending,
+                  "RamWorks switch capture has no prior phase pending");
+            bank_old_q          = dut.vsss.sw_ramworks_bank;
+            bank_new_q          = dut.core_data_out[6:0];
+            bank_switch_addr_q  = dut.core_addr;
+            bank_apply_pending  = 1'b1;
+            if (dut.core_addr == 16'hC071)
+                c071_capture_checks++;
+            else
+                c073_capture_checks++;
+            #1ps;
+            check(dut.vsss.sw_ramworks_bank == bank_old_q,
+                  "RamWorks bank stays old at X_CAPTURE");
+            check(dut.cycle_addr_q == bank_switch_addr_q &&
+                  !dut.cycle_rw_q &&
+                  dut.cycle_wdata_q[6:0] == bank_new_q,
+                  "X_CAPTURE saves the complete RamWorks switch tuple");
+            check(dut.cycle_translate_state_q.sw_ramworks_bank == bank_old_q,
+                  "RamWorks switch access snapshots the pre-access bank");
+        end
+        else if (dut.ssm_apply_pulse && !dut.cycle_rw_q &&
+                 (dut.cycle_addr_q == 16'hC071 ||
+                  dut.cycle_addr_q == 16'hC073)) begin
+            check(bank_apply_pending &&
+                  dut.cycle_addr_q == bank_switch_addr_q &&
+                  dut.cycle_wdata_q[6:0] == bank_new_q,
+                  "X_ROUTE applies the pending RamWorks switch tuple");
+            #1ps;
+            check(dut.vsss.sw_ramworks_bank == bank_new_q,
+                  "RamWorks bank changes at X_ROUTE");
+            check(dut.cycle_translate_state_q.sw_ramworks_bank == bank_old_q,
+                  "current RamWorks switch cycle keeps its old-bank snapshot");
+            bank_apply_pending = 1'b0;
+            bank_next_pending  = 1'b1;
+            if (bank_switch_addr_q == 16'hC071)
+                c071_apply_checks++;
+            else
+                c073_apply_checks++;
+        end
+        else if (bank_next_pending && dut.ssm_pulse) begin
+            #1ps;
+            check(dut.cycle_translate_state_q.sw_ramworks_bank == bank_new_q,
+                  "next vTW access snapshots the new RamWorks bank");
+            bank_next_pending = 1'b0;
+            if (bank_switch_addr_q == 16'hC071)
+                c071_next_checks++;
+            else
+                c073_next_checks++;
+        end
+    end
+
+    /* Every accepted core or ARM post must emerge from the new boundary on
+     * exactly the next fabric edge with the same tuple. This point-by-point
+     * check catches loss, duplication, and address/data mixing. */
+    logic        post_expected_valid_q = 1'b0;
+    logic [15:0] post_expected_addr_q  = 16'h0000;
+    logic [7:0]  post_expected_data_q  = 8'h00;
+    int          post_accept_checks    = 0;
+    int          post_emit_checks      = 0;
+
+    always @(posedge clk) begin
+        if (!rstn || !enable || !ab_read.res) begin
+            check(!dut.eng_post_we,
+                  "posted boundary emits no tuple across a clear boundary");
+            post_expected_valid_q = 1'b0;
+        end
+        else begin
+            check(dut.eng_post_we === post_expected_valid_q,
+                  "posted boundary valid is delayed by exactly one clock");
+            if (post_expected_valid_q) begin
+                check(dut.eng_post_addr == post_expected_addr_q &&
+                      dut.eng_post_wdata == post_expected_data_q,
+                      "posted boundary keeps the accepted address/data tuple");
+                post_emit_checks++;
+            end
+
+            post_expected_valid_q = dut.core_post_accept ||
+                                    dut.arm_post_accept;
+            if (dut.core_post_accept) begin
+                post_expected_addr_q = dut.cycle_addr_q;
+                post_expected_data_q = dut.cycle_wdata_q;
+                post_accept_checks++;
+            end
+            else if (dut.arm_post_accept) begin
+                post_expected_addr_q = arm_post_addr;
+                post_expected_data_q = arm_post_wdata;
+                post_accept_checks++;
+            end
+        end
+    end
+
     logic monitors_armed = 0;
     realtime last_fall = 0;
     always @(negedge phi0) last_fall = $realtime;
@@ -381,12 +569,33 @@ module tb_vtw_system;
 
     task automatic arm_post_push(input logic [15:0] a,
                                  input logic [7:0] d);
-        while (!arm_post_ready) @(posedge clk);
-        arm_post_addr  <= a;
-        arm_post_wdata <= d;
-        arm_post_we    <= 1'b1;
-        @(posedge clk);
-        arm_post_we    <= 1'b0;
+        @(negedge clk);
+        arm_post_addr  = a;
+        arm_post_wdata = d;
+        arm_post_we    = 1'b1;
+        do @(posedge clk); while (!arm_post_ready);
+        @(negedge clk);
+        arm_post_we = 1'b0;
+    endtask
+
+    task automatic arm_post_burst(input logic [15:0] base,
+                                  input logic [7:0] first_data,
+                                  input int count);
+        @(negedge clk);
+        arm_post_we    = 1'b1;
+        arm_post_addr  = base;
+        arm_post_wdata = first_data;
+        for (int i = 0; i < count; i++) begin
+            do @(posedge clk); while (!arm_post_ready);
+            @(negedge clk);
+            if (i + 1 < count) begin
+                arm_post_addr  = base + 16'(i + 1);
+                arm_post_wdata = first_data + 8'(i + 1);
+            end
+            else begin
+                arm_post_we = 1'b0;
+            end
+        end
     endtask
 
     // ------------------------------------------------------------------
@@ -497,9 +706,9 @@ module tb_vtw_system;
      * the data switches point at aux -- main-RAM code would vanish mid-
      * segment the instant RAMRD turns on. Covers write-allocate misses,
      * a cache-hit write, flush-on-eviction chains, bank isolation via
-     * $C073, and read-back through fills; results land in main ZP $20-$23
+     * $C071/$C073, and read-back through fills; results land in main ZP $20-$23
      * and the flushed lines in the TB's PSRAM model. */
-    localparam byte RW_PROG [0:79] = '{
+    localparam byte RW_PROG [0:93] = '{
         8'hA9, 8'h02,               // 0180 LDA #$02
         8'h8D, 8'h73, 8'hC0,        // 0182 STA $C073  bank 2 (decode bank 3)
         8'h8D, 8'h05, 8'hC0,        // 0185 STA $C005  RAMWRT on
@@ -510,7 +719,7 @@ module tb_vtw_system;
         8'hA9, 8'h5A,               // 0192 LDA #$5A
         8'h8D, 8'h08, 8'h18,        // 0194 STA $1808  next line: flush + fill
         8'hA9, 8'h05,               // 0197 LDA #$05
-        8'h8D, 8'h73, 8'hC0,        // 0199 STA $C073  bank 5 (decode bank 6)
+        8'h8D, 8'h71, 8'hC0,        // 0199 STA $C071  bank 5 (decode bank 6)
         8'hA9, 8'h3C,               // 019C LDA #$3C
         8'h8D, 8'h00, 8'h18,        // 019E STA $1800  other bank, same address
         8'h8D, 8'h04, 8'hC0,        // 01A1 STA $C004  RAMWRT off
@@ -530,7 +739,14 @@ module tb_vtw_system;
         8'h8D, 8'h02, 8'hC0,        // 01C5 STA $C002  RAMRD off
         8'hA9, 8'h00,               // 01C8 LDA #$00
         8'h8D, 8'h73, 8'hC0,        // 01CA STA $C073  bank 0
-        8'h4C, 8'h2C, 8'h03         // 01CD JMP $032C  floating-read probe
+        /* Select LC bank 1 and prove its $Dxxx bit-12 remap reaches physical
+         * $Cxxx, then restore ROM before the long timing loop. */
+        8'hAD, 8'h8B, 8'hC0,        // 01CD LDA $C08B  LC bank 1 read (1st)
+        8'hAD, 8'h8B, 8'hC0,        // 01D0 LDA $C08B  LC bank 1 read+write
+        8'hAD, 8'h22, 8'hD0,        // 01D3 LDA $D022  -> physical $C022
+        8'h85, 8'h1C,               // 01D6 STA $1C
+        8'hAD, 8'h82, 8'hC0,        // 01D8 LDA $C082  LC bank 2 ROM
+        8'h4C, 8'h2C, 8'h03         // 01DB JMP $032C  floating-read probe
     };
 
     task automatic load_program();
@@ -550,7 +766,7 @@ module tb_vtw_system;
             sh_write(18'(i), 8'h00);
         end
         // RamWorks segment in the stack page (after the zero sweep).
-        for (int i = 0; i < 80; i++) begin
+        for (int i = 0; i < 94; i++) begin
             sh_write(18'h00180 + 18'(i), RW_PROG[i]);
         end
         // Discriminator landmarks in the shadow's "internal ROM" copy and
@@ -562,6 +778,7 @@ module tb_vtw_system;
         sh_write(ROM_BASE + 18'h1022, 8'h99);  // ROM $D022
         sh_write(ROM_BASE + 18'h0FFF, 8'h00);  // internal $CFFF (release read)
         sh_write(18'h0D022, 8'h42);            // main-bank LC RAM $D022 (bank 2)
+        sh_write(18'h0C022, 8'h6D);            // main-bank LC RAM $D022 (bank 1)
         /* Address-sensitive scanner landmarks. Only $37F8 is correct for
          * HGR page 1 at raw line 253/cycle 27 after the two-cycle rewind;
          * adjacent cycles and the text-page address carry different values
@@ -579,6 +796,8 @@ module tb_vtw_system;
     int c074_seen;
     int c006_seen;
     int c007_seen;
+    int c071_seen;
+    int c073_seen;
     int idx_aux, idx_main, idx_c054;
     logic [7:0] rd;
     int cyc_a, cyc_b;
@@ -642,7 +861,7 @@ module tb_vtw_system;
         // Wait for the whole program to retire on the bus: 788 write
         // records (1 + 768 + 2 posted; sync writes $C074, $C006 x2,
         // $C007, $C001, $C055, $C054, $C000, then the RamWorks segment's
-        // $C073 x5 and $C005/$C004/$C003/$C002).
+        // $C071 x1, $C073 x4, and $C005/$C004/$C003/$C002).
         fork : prog_wait
             begin
                 wait (wrecs.size() >= 788);
@@ -668,6 +887,8 @@ module tb_vtw_system;
             c074_seen  = 0;
             c006_seen  = 0;
             c007_seen  = 0;
+            c071_seen  = 0;
+            c073_seen  = 0;
             for (int i = 1; i < wrecs.size(); i++) begin
                 if (wrecs[i].addr == 16'hC074) begin
                     check(wrecs[i].data == 8'h01, "$C074 write data");
@@ -695,8 +916,13 @@ module tb_vtw_system;
                     check(wrecs[i].data == 8'h78, "main posted write data");
                     idx_main = i;
                 end
-                else if (wrecs[i].addr == 16'hC073 ||
-                         wrecs[i].addr == 16'hC005 ||
+                else if (wrecs[i].addr == 16'hC071) begin
+                    c071_seen++;
+                end
+                else if (wrecs[i].addr == 16'hC073) begin
+                    c073_seen++;
+                end
+                else if (wrecs[i].addr == 16'hC005 ||
                          wrecs[i].addr == 16'hC004 ||
                          wrecs[i].addr == 16'hC003 ||
                          wrecs[i].addr == 16'hC002) begin
@@ -720,6 +946,8 @@ module tb_vtw_system;
             check(c074_seen == 1, "$C074 written exactly once");
             check(c006_seen == 2 && c007_seen == 1,
                   "INTCXROM switch writes reached the real MMU");
+            check(c071_seen == 1 && c073_seen == 4,
+                  "both RamWorks bank-select addresses reached the real MMU");
             // Aux write-through: the aux-window write reaches the bus, and
             // the bank-steer flush keeps it ahead of the PAGE2 change.
             check(idx_aux > 0 && idx_c054 > 0 && idx_main > 0,
@@ -764,7 +992,6 @@ module tb_vtw_system;
         check(rd == 8'h42, $sformatf("LC RAM read: $D022 from shadow RAM (got %h)", rd));
         sh_read(18'h00019, rd);
         check(rd == 8'h99, $sformatf("LC ROM read: $D022 from shadow ROM copy (got %h)", rd));
-
         // Aux write landed in the vTW's own aux shadow too.
         sh_read(18'h10427, rd);
         check(rd == 8'h77, $sformatf("aux write in shadow aux bank (got %h)", rd));
@@ -798,6 +1025,9 @@ module tb_vtw_system;
         // Seven 4-cycle reads plus their stores and setup take roughly
         // 64 native Apple cycles; leave enough room for the whole sequence.
         #100us;
+        sh_read(18'h0001C, rd);
+        check(rd == 8'h6D,
+              $sformatf("LC bank-1 $D022 maps to physical $C022 (got %h)", rd));
         sh_read(18'h00012, rd);
         check(rd == 8'hD7,
               $sformatf("floating $C030 read returns scanner $37F8 byte (got %h)",
@@ -826,6 +1056,19 @@ module tb_vtw_system;
         check(rd == 8'hD7,
               $sformatf("floating $C05A read returns scanner $37F8 byte (got %h)",
                         rd));
+        check(c071_capture_checks == 1 && c071_apply_checks == 1 &&
+              c071_next_checks == 1,
+              "C071 changes at X_ROUTE and reaches the next access");
+        check(c073_capture_checks == 4 && c073_apply_checks == 4 &&
+              c073_next_checks == 4,
+              "C073 changes at X_ROUTE and reaches each next access");
+        check(!bank_apply_pending && !bank_next_pending,
+              "RamWorks switch phase monitor is idle after the program");
+        check(route_tuple_checks > 100 &&
+              route_bus_checks > 0 && route_rom_checks > 0 &&
+              route_main_checks > 0 && route_aux_checks > 0 &&
+              route_ramworks_checks > 0 && route_lc_bank1_checks > 0,
+              "route tuple covers bus, ROM, main, aux, RamWorks, and LC bank 1");
 
         // Engine health.
         check(cnt_post_drops == 32'd0, "no posted-queue drops");
@@ -841,12 +1084,10 @@ module tb_vtw_system;
          * every address and byte and must not count a drop. */
         arm_rec_base = wrecs.size();
         arm_post_before = int'(cnt_posted_writes);
-        for (int i = 0; i < 4; i++) begin
-            arm_post_push(16'h6000 + 16'(i), 8'hD0 + 8'(i));
-        end
+        arm_post_burst(16'h6000, 8'hD0, 8);
         fork : arm_post_wait
             begin
-                wait (cnt_posted_writes == arm_post_before + 32'd4);
+                wait (cnt_posted_writes == arm_post_before + 32'd8);
                 disable arm_post_wait;
             end
             begin
@@ -858,16 +1099,100 @@ module tb_vtw_system;
                 disable arm_post_wait;
             end
         join
-        check(wrecs.size() >= arm_rec_base + 4,
-              "CPU0 injected all four physical writes");
-        if (wrecs.size() >= arm_rec_base + 4) begin
-            for (int i = 0; i < 4; i++) begin
+        check(wrecs.size() >= arm_rec_base + 8,
+              "CPU0 injected all eight physical writes");
+        if (wrecs.size() >= arm_rec_base + 8) begin
+            for (int i = 0; i < 8; i++) begin
                 check(wrecs[arm_rec_base + i].addr == 16'h6000 + 16'(i) &&
                       wrecs[arm_rec_base + i].data == 8'hD0 + 8'(i),
                       $sformatf("CPU0 post %0d kept address/data", i));
             end
         end
         check(cnt_post_drops == 32'd0, "CPU0 post injection has no drops");
+
+        /* An armed main-RAM text buffer must become a vTW write-through
+         * window even though $6000 is ordinary program RAM. The following
+         * DEVSEL command must wait behind that posted byte. */
+        begin
+            int overlay_rec_base = wrecs.size();
+            overlay_capture_armed = 1'b1;
+            sh_write(18'h00500, 8'hA9); // LDA #$5A
+            sh_write(18'h00501, 8'h5A);
+            sh_write(18'h00502, 8'h8D); // STA $6000
+            sh_write(18'h00503, 8'h00);
+            sh_write(18'h00504, 8'h60);
+            sh_write(18'h00505, 8'hA9); // LDA #$02
+            sh_write(18'h00506, 8'h02);
+            sh_write(18'h00507, 8'h8D); // STA $C0F3 (SHOW)
+            sh_write(18'h00508, 8'hF3);
+            sh_write(18'h00509, 8'hC0);
+            sh_write(18'h0050A, 8'h4C); // wait at $050A
+            sh_write(18'h0050B, 8'h0A);
+            sh_write(18'h0050C, 8'h05);
+            // The live loop is LDA $C000 at $0358. Its low byte is already 0.
+            sh_write(18'h0035A, 8'h05);
+            sh_write(18'h00358, 8'h4C); // JMP $0500
+
+            /* Hold one ARM post valid on the exact core-post edge. The core
+             * tuple must win this capture; the held ARM tuple follows on the
+             * next accepted edge. Both must drain before the DEVSEL command. */
+            do @(negedge clk); while (!dut.core_post_accept);
+            arm_post_addr  = 16'h6FFD;
+            arm_post_wdata = 8'hA6;
+            arm_post_we    = 1'b1;
+            check(!arm_post_ready,
+                  "core posted write has priority over a simultaneous ARM post");
+            @(posedge clk);
+            #1ps;
+            check(dut.post_stage_valid_q &&
+                  dut.post_stage_addr_q == 16'h6000 &&
+                  dut.post_stage_wdata_q == 8'h5A,
+                  "core tuple occupies the posted boundary after collision");
+            do @(negedge clk); while (!arm_post_ready);
+            @(posedge clk);
+            #1ps;
+            check(dut.post_stage_valid_q &&
+                  dut.post_stage_addr_q == 16'h6FFD &&
+                  dut.post_stage_wdata_q == 8'hA6,
+                  "held ARM tuple follows the core tuple without mixing");
+            @(negedge clk);
+            arm_post_we = 1'b0;
+
+            fork : overlay_post_wait
+                begin
+                    wait (wrecs.size() >= overlay_rec_base + 3);
+                    disable overlay_post_wait;
+                end
+                begin
+                    #200us;
+                    check(0, $sformatf(
+                        "vTW overlay timeout pc=%h state=%0d cycle=%h fill=%0d records=%0d",
+                        dbg_core_pc, dut.xstate_q, dut.cycle_addr_q,
+                        post_fill, wrecs.size()));
+                    disable overlay_post_wait;
+                end
+            join
+            check(wrecs.size() >= overlay_rec_base + 3,
+                  "vTW emitted both queued RAM writes and DEVSEL command");
+            if (wrecs.size() >= overlay_rec_base + 3) begin
+                check(wrecs[overlay_rec_base].addr == 16'h6000 &&
+                      wrecs[overlay_rec_base].data == 8'h5A,
+                      "vTW posts armed main-RAM overlay byte");
+                check(wrecs[overlay_rec_base + 1].addr == 16'h6FFD &&
+                      wrecs[overlay_rec_base + 1].data == 8'hA6,
+                      "ARM post follows the simultaneous core post");
+                check(wrecs[overlay_rec_base + 2].addr == 16'hC0F3 &&
+                      wrecs[overlay_rec_base + 2].data == 8'h02,
+                      "vTW orders SHOW after overlay bytes");
+            end
+            // Restore the live loop, then let the wait loop return to it.
+            sh_write(18'h0035A, 8'hC0);
+            sh_write(18'h00358, 8'hAD);
+            sh_write(18'h0050B, 8'h5A);
+            sh_write(18'h0050C, 8'h03);
+            overlay_capture_armed = 1'b0;
+            repeat (20) @(posedge clk);
+        end
 
         /* Hold the core on one internal SmartPort access, seed a dirty
          * RamWorks cache line, and issue the same flush request CPU0 uses
@@ -880,6 +1205,14 @@ module tb_vtw_system;
                 wait (sp_req_valid);
                 check(sp_req_target == 3'd0 && sp_req_rw,
                       "SmartPort test access reaches slot-ROM read target");
+                /* Ownership may change once X_ROUTE has accepted the
+                 * access. The issued request must keep its captured target
+                 * until the next handshake edge. */
+                sp_active = 1'b0;
+                #1ps;
+                check(sp_req_valid && sp_req_target == 3'd0,
+                      "SmartPort issue keeps its captured target");
+                sp_active = 1'b1;
                 @(posedge clk);
                 disable sp_wait_enter;
             end
@@ -1141,6 +1474,41 @@ module tb_vtw_system;
               "$C074=$03 write still reaches the physical bus while ignored");
         check(c074_state == 2'd0,
               "$C074 override ignores off-until-reset value 3");
+
+        /* Cancel one accepted-but-not-yet-emitted ARM tuple with hard reset.
+         * It must neither reach the engine nor appear on the Apple bus. */
+        begin
+            int reset_rec_base;
+            int reset_accept_base;
+            int reset_emit_base;
+            do @(negedge clk); while (!arm_post_ready ||
+                                      dut.post_stage_valid_q);
+            reset_accept_base = post_accept_checks;
+            reset_emit_base = post_emit_checks;
+            arm_post_addr  = 16'h6FFE;
+            arm_post_wdata = 8'hE7;
+            arm_post_we    = 1'b1;
+            @(posedge clk);
+            #1ps;
+            check(dut.post_stage_valid_q &&
+                  dut.post_stage_addr_q == 16'h6FFE &&
+                  dut.post_stage_wdata_q == 8'hE7,
+                  "reset test captures one pending ARM post");
+            reset_rec_base = wrecs.size();
+            rstn = 1'b0;
+            arm_post_we = 1'b0;
+            repeat (4) @(posedge clk);
+            #1ps;
+            check(!dut.post_stage_valid_q && !dut.eng_post_we,
+                  "hard reset clears the pending posted tuple");
+            for (int i = reset_rec_base; i < wrecs.size(); i++) begin
+                check(wrecs[i].addr != 16'h6FFE,
+                      "reset-cancelled posted tuple never reaches the bus");
+            end
+            check(post_accept_checks == reset_accept_base + 1 &&
+                  post_emit_checks == reset_emit_base,
+                  "reset cancels exactly one accepted tuple before emission");
+        end
 
         if (fails == 0) $display("VTW SYSTEM PASS");
         else            $display("VTW SYSTEM FAILED: %0d checks", fails);

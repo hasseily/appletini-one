@@ -10,6 +10,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APPLE_TOP_SV = REPO_ROOT / "hdl" / "apple" / "apple_top.sv"
 APPLE_BUS_WRAPPER_SV = REPO_ROOT / "hdl" / "apple" / "apple_bus_wrapper.sv"
+DISK2_CARD_SV = REPO_ROOT / "hdl" / "apple" / "disk2_card.sv"
 APPLE_TIMING_GEN_SV = REPO_ROOT / "hdl" / "apple" / "apple_timing_gen.sv"
 BOOT_MENU_CARD_SV = REPO_ROOT / "hdl" / "apple" / "boot_menu_card.sv"
 BOOT_MENU_SERVICE_C = REPO_ROOT / "ps_sources" / "frontend" / "boot_menu_service.c"
@@ -100,6 +101,7 @@ def test_apple_bus_res_is_not_address_phase_sampled() -> None:
 
 def test_frontend_tracks_apple_reset_sequence() -> None:
     source = read(FRONTEND_MAIN_C)
+    main_source = source[source.index("int main(void)"):]
     regs = read(CARD_CONTROL_REGS_H)
     boot_service = read(BOOT_MENU_SERVICE_C)
     boot_service_h = read(BOOT_MENU_SERVICE_H)
@@ -124,8 +126,8 @@ def test_frontend_tracks_apple_reset_sequence() -> None:
             "void boot_menu_service_refresh_machine_policy(void)" in boot_service and
             "boot_menu_service_refresh_machine_policy();" in source,
             "Apple reset path must refresh machine aux/RamWorks policy")
-    require(source.index("ui_handle_apple_reset(&ui, &config_menu);") <
-            source.index("smartport_service_poll();"),
+    require(main_source.index("ui_handle_apple_reset(&ui, &config_menu);") <
+            main_source.index("smartport_service_poll();"),
             "Apple reset config reapply must run before SmartPort command service")
 
 
@@ -292,9 +294,49 @@ def test_boot_handoff_manufactures_target_slot_stack_frame() -> None:
 def test_disk2_slot6_uses_boot_handoff_gate() -> None:
     source = read(APPLE_TOP_SV)
 
-    require(".ab_read(gate_ab(ab_read, card_slot6_enable && disk2_active))" in source and
+    require(".ab_read(gate_ab(" in source and
+            "card_slot6_enable && disk2_active_timing_q))" in source and
+            ".rom_serve_en(ab_read.serve_en &&" in source and
+            "card_slot6_enable && disk2_active &&" in source and
+            "!disk2_active_timing_q)" in source and
             ".slot_assign(3'h6)" in source,
-            "Disk II slot 6 bus visibility must remain under boot-menu handoff control")
+            "Disk II I/O and timing must use the registered handoff gate while "
+            "the first slot-ROM response keeps a live handoff bypass")
+
+
+def test_disk2_handoff_timing_gate_phase_contract() -> None:
+    top = read(APPLE_TOP_SV)
+    boot = read(BOOT_MENU_CARD_SV)
+    bus = read(APPLE_BUS_WRAPPER_SV)
+    disk2 = read(DISK2_CARD_SV)
+
+    require("if (!rstn[1])\n"
+            "            disk2_active_timing_q <= 1'b0;\n"
+            "        else\n"
+            "            disk2_active_timing_q <= disk2_active;" in top,
+            "Disk II timing enable must be a one-fabric-clock register of the "
+            "live handoff enable")
+    require("handoff_entry_read = handoff_pending_q &&\n"
+            "                             slot_resolved &&\n"
+            "                             ab_read.serve_en" in boot and
+            "if (handoff_entry_read) begin\n"
+            "                    slot7_mode_q <= SLOT_MODE_SMARTPORT;" in boot,
+            "Disk II handoff activation must occur at the late serve phase, "
+            "after that Apple cycle's early timing strobe")
+    require(bus.index("else if (addr_phase_sss_ready)") <
+            bus.index("else if (addr_phase_snap_late)"),
+            "Apple bus timing must emit sss_en before the handoff serve phase")
+    require("input  logic                     rom_serve_en," in disk2 and
+            "wire rom_read_serve = ab_read.serve_en || rom_serve_en;" in disk2 and
+            "wire ab_rom_read = rom_read_serve && ab_read.rw && slot_rom_hit;" in disk2 and
+            "if (rom_read_serve) begin" in disk2,
+            "the live handoff bypass must terminate in the slot-ROM response")
+
+    require(".rom_serve_en(ab_read.serve_en &&\n"
+            "                      card_slot6_enable && disk2_active &&\n"
+            "                      !disk2_active_timing_q)" in top,
+            "the live slot-ROM bypass must exist only during the one-clock "
+            "handoff window and must keep the slot-disable gate")
 
 
 def test_boot_debug_exposes_computed_apple_status() -> None:
@@ -700,6 +742,7 @@ TESTS = [
     test_menu_sd_access_refreshes_smartport_media_before_handoff,
     test_boot_handoff_manufactures_target_slot_stack_frame,
     test_disk2_slot6_uses_boot_handoff_gate,
+    test_disk2_handoff_timing_gate_phase_contract,
     test_boot_debug_exposes_computed_apple_status,
     test_boot_config_writes_are_accepted_during_apple_reset,
     test_aux_probe_drops_provided_ram_and_rejects_floating_echo,

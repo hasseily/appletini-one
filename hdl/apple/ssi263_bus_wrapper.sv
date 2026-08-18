@@ -75,7 +75,11 @@ module ssi263_bus_wrapper #(
     logic [2:0] card_mode_prev_q;
     logic       direct_irq_q;
 
-    logic       backend_start_q;
+    /* The secondary Votrax instance produces its VIA CB1 clear on the same
+     * edge as this private backend-start pulse. Keep the audio pulse as its
+     * own register so synthesis cannot merge it into the outward IRQ clear.
+     * Placement may then keep the audio-only pulse near its consumers. */
+    (* KEEP = "TRUE" *) logic backend_start_q;
     logic [5:0] backend_phoneme_q;
     logic [5:0] backend_sc01_phone_q;
     logic       backend_votrax_q;

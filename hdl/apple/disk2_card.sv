@@ -9,6 +9,7 @@ module disk2_card (
     input  logic                     clk,
     input  logic                     rstn,
     input  globals::AppleBus_read    ab_read,
+    input  logic                     rom_serve_en,
     input  globals::SoftSwitchState  sss,
     input  logic [2:0]               slot_assign,
     input  globals::AxiSimple_common as_common,
@@ -145,6 +146,7 @@ module disk2_card (
     logic       motor_on_q;
     logic       drive_select_q;
     logic [27:0] spin_countdown_q [0:1];
+    logic       vtw_drive_spinning_q;
     logic       step_pending_q;
     logic [3:0] step_pending_addr_q;
     logic [3:0] step_delay_q;
@@ -282,7 +284,11 @@ module disk2_card (
         apple_bus_active &&
         (ab_read.addr[15:8] == 8'hC0) &&
         (ab_read.addr[7:4] == (4'h8 + {1'b0, slot_assign}));
-    wire ab_rom_read = ab_read.serve_en && ab_read.rw && slot_rom_hit;
+    /* Normal card service arrives through the registered top-level enable.
+     * rom_serve_en is the sole live handoff bypass: it lets the first C600
+     * read return the slot ROM while the registered enable catches up. */
+    wire rom_read_serve = ab_read.serve_en || rom_serve_en;
+    wire ab_rom_read = rom_read_serve && ab_read.rw && slot_rom_hit;
     wire ab_io_read  = ab_read.serve_en && ab_read.rw && slot_io_hit;
     wire ab_io_write = ab_read.data_en && !ab_read.rw && slot_io_hit;
 
@@ -331,11 +337,22 @@ module disk2_card (
     wire woz_track_stream_ready = woz_alias_loaded;
     wire drive_spinning = motor_on_q || (spin_countdown_q[drive_select_q] != 28'd0);
 
+    /* Rotation state feeds vTW speed control, then returns as a Disk II tick.
+     * Register only this outbound view to break that long feedback path. Q7
+     * and every local sequencer condition stay live. Motor and drive changes
+     * occur on physical Disk II cycles, well before the next vTW cycle. */
+    always_ff @(posedge clk) begin
+        if (!rstn)
+            vtw_drive_spinning_q <= 1'b0;
+        else
+            vtw_drive_spinning_q <= drive_spinning;
+    end
+
     /* Q7 is the Disk II write-mode latch. Preserve the old physical timing
      * for the whole write interval; the vTW also routes every CPU write and
      * every odd-address read through the Apple bus. */
     assign vtw_write_timing_active =
-        enabled && ab_read.res && drive_spinning && q7_q;
+        enabled && ab_read.res && vtw_drive_spinning_q && q7_q;
 
     /* A read-accelerated session may pause virtual time while CPU0 stages a
      * new track or while the DDR line cache catches up. This is a transparent
@@ -344,7 +361,7 @@ module disk2_card (
      * behavior is visible. */
     assign vtw_time_ready =
         !vtw_active || !enabled || !ab_read.res ||
-        vtw_write_timing_active || !drive_spinning || !drive_has_media ||
+        vtw_write_timing_active || !vtw_drive_spinning_q || !drive_has_media ||
         active_track_unavailable ||
         (active_drive_loaded && stream_line_hit_q);
 
@@ -1972,7 +1989,7 @@ module disk2_card (
         ab_write_d.assert_nmi = 1'b0;
         ab_write_d.assert_dma = 1'b0;
 
-        if (ab_read.serve_en) begin
+        if (rom_read_serve) begin
             if (ab_rom_read) begin
                 ab_write_d.wr_data = slot_rom_byte(ab_read.addr[7:0]);
                 ab_write_d.wr_data_en = 1'b1;

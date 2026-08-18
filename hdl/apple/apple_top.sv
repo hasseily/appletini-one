@@ -13,6 +13,8 @@ module apple_top(
     //       card_feature_enable, reset_release_ready, etc.)
     input [3:0] rstn,
     input globals::AxiSimple_common as_common,
+    input [31:0] as_vtw_phasor_wdata,
+    input [3:0] as_vtw_phasor_wstrb,
     AxiSimple_if.client as_client,
     AxiSimple_if.client smartport_as_client,
     AxiSimple_if.client boot_menu_as_client,
@@ -350,6 +352,7 @@ module apple_top(
     assign menu_chime_start = menu_chime_start_q;
     logic smartport_active;
     logic disk2_active;
+    logic disk2_active_timing_q;
     logic boot_target_disk2;
     logic vtw_core_run_eff_q;
     logic vtw_disk2_boot_scan_q;
@@ -471,6 +474,12 @@ module apple_top(
     logic                                     cycle_capture_empty_internal;
     logic                                     cycle_capture_rd_en_internal;
     logic                                     capture_drop_sticky_internal;
+    logic                                     overlay_capture_drop_internal;
+    logic                                     overlay_devsel_enabled;
+    logic                                     overlay_capture_armed;
+    logic                                     overlay_capture_bank_aux;
+    logic [15:0]                              overlay_capture_base;
+    logic [15:0]                              overlay_capture_limit;
 
     logic        egress_cfg_enable_q;
     logic [31:0] egress_cfg_ring_base_q;
@@ -497,11 +506,17 @@ module apple_top(
         .line_in_frame(line_in_frame),
         .cycle_in_line(cycle_in_line),
         .frame_en(frame_en),
+        .overlay_devsel_enabled(overlay_devsel_enabled),
+        .overlay_capture_armed(overlay_capture_armed),
+        .overlay_capture_bank_aux(overlay_capture_bank_aux),
+        .overlay_capture_base(overlay_capture_base),
+        .overlay_capture_limit(overlay_capture_limit),
         .cycle_capture_data(cycle_capture_data_internal),
         .cycle_capture_rd_en(cycle_capture_rd_en_internal),
         .cycle_capture_empty(cycle_capture_empty_internal),
         .capture_drop_sticky(capture_drop_sticky_internal),
         .capture_drop_ack(egress_capture_drop_ack),
+        .overlay_capture_drop_sticky(overlay_capture_drop_internal),
         .shr_capture_active(shr_capture_active_w)
     );
 
@@ -561,6 +576,9 @@ module apple_top(
     logic        psram_dcount_edge_q;
     logic        psram_dcount_wr_pulse_q;
     logic        machine_inh_allowed;
+    /* Give the wrapper a same-edge copy that the placer can keep near its
+     * loads. The wrapper still sees each mode change on its original edge. */
+    (* DONT_TOUCH = "TRUE" *) logic machine_inh_allowed_wrapper_q;
     logic        machine_m2sel_active_high;
     logic        machine_gs_m2_qualify;
     logic        machine_is_iiplus;
@@ -719,7 +737,7 @@ module apple_top(
         .dbg_clear(busdbg_clear_pulse),
         .clk(clk),
         .rstn(rstn[1]),
-        .inh_allowed(machine_inh_allowed),
+        .inh_allowed(machine_inh_allowed_wrapper_q),
         .gs_m2_qualify(machine_gs_m2_qualify),
         .m2sel_active_high(machine_m2sel_active_high),
         .host_is_iiplus(machine_is_iiplus),
@@ -1116,7 +1134,12 @@ module apple_top(
     disk2_card disk2_card_i (
         .clk(clk),
         .rstn(rstn[2]),
-        .ab_read(gate_ab(ab_read, card_slot6_enable && disk2_active)),
+        .ab_read(gate_ab(
+            ab_read,
+            card_slot6_enable && disk2_active_timing_q)),
+        .rom_serve_en(ab_read.serve_en &&
+                      card_slot6_enable && disk2_active &&
+                      !disk2_active_timing_q),
         .sss(sss),
         .slot_assign(3'h6),
         .as_common(as_common),
@@ -1208,6 +1231,13 @@ module apple_top(
         .as_client(smartport_as_client),
         .ab_write(smartport_ab_write),
         .smartport_irq(smartport_irq),
+        .overlay_capture_drop(overlay_capture_drop_internal),
+        .overlay_canvas_shr_active(shr_capture_active_w),
+        .overlay_devsel_enabled(overlay_devsel_enabled),
+        .overlay_capture_armed(overlay_capture_armed),
+        .overlay_capture_bank_aux(overlay_capture_bank_aux),
+        .overlay_capture_base(overlay_capture_base),
+        .overlay_capture_limit(overlay_capture_limit),
         .vtw_valid(vtw_sp_req_valid),
         .vtw_target(vtw_sp_req_target),
         .vtw_addr(vtw_sp_req_addr),
@@ -1381,16 +1411,16 @@ module apple_top(
 
     wire vtw_sh_addr_set = as_client.awvalid &&
                            (as_common.awaddr == CARD_CTRL_REG_VTW_SHADOW_ADDR) &&
-                           (as_common.wstrb != 4'b0000);
+                           (as_vtw_phasor_wstrb != 4'b0000);
     wire vtw_sh_byte_write = as_client.awvalid &&
                              (as_common.awaddr == CARD_CTRL_REG_VTW_SHADOW_DATA) &&
-                             as_common.wstrb[0];
+                             as_vtw_phasor_wstrb[0];
     wire vtw_sh_word_write = as_client.awvalid &&
                              (as_common.awaddr == CARD_CTRL_REG_VTW_SHADOW_DATA4) &&
-                             (as_common.wstrb == 4'b1111);
+                             (as_vtw_phasor_wstrb == 4'b1111);
     wire vtw_sh_word_read = as_client.awvalid &&
                             (as_common.awaddr == CARD_CTRL_REG_VTW_SHADOW_READ4) &&
-                            as_common.wstrb[0] && as_common.wdata[0];
+                            as_vtw_phasor_wstrb[0] && as_vtw_phasor_wdata[0];
 
     /* Machine gate, latched for the lifetime of the enable request. The
      * PS re-identifies the machine on every Apple reset (machine_mode
@@ -1435,8 +1465,19 @@ module apple_top(
     wire vtw_video_vbl = (line_in_frame >= 9'd192);
     assign vtw_enable_eff = vtw_ctrl_q[0] && vtw_machine_ok_q;
     wire vtw_core_run_eff = vtw_enable_eff && vtw_ctrl_q[1];
+
+    // The first slot-ROM handoff read needs the live gate. Normal Disk II I/O,
+    // timing, and vTW can take it one fabric clock later, cutting the slot-7
+    // decode from the controller's rotation and stepper enables.
+    always_ff @(posedge clk) begin
+        if (!rstn[1])
+            disk2_active_timing_q <= 1'b0;
+        else
+            disk2_active_timing_q <= disk2_active;
+    end
+
     assign vtw_disk2_active = vtw_core_run_eff && vtw_bus_owned &&
-                              card_slot6_enable && disk2_active &&
+                              card_slot6_enable && disk2_active_timing_q &&
                               !vtw_ctrl_q[7];
     wire vtw_slot6_boot_probe =
         vtw_disk2_boot_scan_q && vtw_bus_owned &&
@@ -1473,11 +1514,11 @@ module apple_top(
         .clk(clk),
         .rstn(rstn[3]),
         .addr_set(vtw_sh_addr_set),
-        .addr_value(as_common.wdata[17:0]),
+        .addr_value(as_vtw_phasor_wdata[17:0]),
         .byte_write(vtw_sh_byte_write),
-        .byte_wdata(as_common.wdata[7:0]),
+        .byte_wdata(as_vtw_phasor_wdata[7:0]),
         .word_write(vtw_sh_word_write),
-        .word_wdata(as_common.wdata),
+        .word_wdata(as_vtw_phasor_wdata),
         .word_read(vtw_sh_word_read),
         .pointer(vtw_sh_addr_q),
         .read_data(vtw_sh_rdata_q),
@@ -1525,6 +1566,10 @@ module apple_top(
         .ramworks_en(ramworks_en_q),
         .video_vbl(vtw_video_vbl),
         .post_main_wide(post_main_wide_q),
+        .overlay_capture_armed(overlay_capture_armed),
+        .overlay_capture_bank_aux(overlay_capture_bank_aux),
+        .overlay_capture_base(overlay_capture_base),
+        .overlay_capture_limit(overlay_capture_limit),
         .video_mode_50hz(video_mode_50hz),
         .video_line(line_in_frame),
         .video_cycle(cycle_in_line),
@@ -1601,7 +1646,11 @@ module apple_top(
     // every existing client keeps its index. vTW and AD8088 can both drive
     // address/RW, but applicard_card blocks AD8088 whenever vTW is enabled,
     // so the two bus masters cannot contend at this priority mux.
-    apple_bus_write_arbiter #(.NUM_CLIENTS(12))
+    apple_bus_write_arbiter #(
+        .NUM_CLIENTS(12),
+        .FAST_DATA_CLIENT(2),
+        .FAST_ADDR_CLIENT(11)
+    )
     apple_bus_write_arbiter_i(
         .inh_allowed(machine_inh_allowed),
         .client_writes({
@@ -1703,6 +1752,7 @@ module apple_top(
             sdd_cfg_consumer_ptr_q          <= 32'h0;
             sdd_cfg_reset_pulse             <= 1'b0;
             machine_mode_q                  <= 2'd0;
+            machine_inh_allowed_wrapper_q   <= 1'b0;
             machine_m2sel_active_high       <= 1'b0;
             aux_provide_en_q                <= 1'b0;
             psram_dcount_q                  <= 5'd0;
@@ -1814,17 +1864,19 @@ module apple_top(
                     end
                     CARD_CTRL_REG_PHASOR_PAN_LO: begin
                         automatic logic [31:0] pan_tmp = globals::apply_wstrb(
-                            {8'h00, phasor_pan_q[23:0]}, as_common.wdata, as_common.wstrb);
+                            {8'h00, phasor_pan_q[23:0]},
+                            as_vtw_phasor_wdata, as_vtw_phasor_wstrb);
                         phasor_pan_q[23:0] <= pan_tmp[23:0];
                     end
                     CARD_CTRL_REG_PHASOR_PAN_HI: begin
                         automatic logic [31:0] pan_tmp = globals::apply_wstrb(
-                            {8'h00, phasor_pan_q[47:24]}, as_common.wdata, as_common.wstrb);
+                            {8'h00, phasor_pan_q[47:24]},
+                            as_vtw_phasor_wdata, as_vtw_phasor_wstrb);
                         phasor_pan_q[47:24] <= pan_tmp[23:0];
                     end
                     CARD_CTRL_REG_PHASOR_AUDIO: begin
                         phasor_audio_q <= globals::apply_wstrb(
-                            phasor_audio_q, as_common.wdata, as_common.wstrb);
+                            phasor_audio_q, as_vtw_phasor_wdata, as_vtw_phasor_wstrb);
                     end
                     CARD_CTRL_REG_ETH_ADDR: begin
                         automatic logic [31:0] tmp = globals::apply_wstrb(
@@ -1924,6 +1976,9 @@ module apple_top(
                     8'h55: sdd_cfg_reset_pulse <= as_common.wdata[0];
                     8'h60: begin
                         machine_mode_q            <= as_common.wdata[1:0];
+                        machine_inh_allowed_wrapper_q <=
+                            (as_common.wdata[1:0] == 2'd1) ||
+                            (as_common.wdata[1:0] == 2'd2);
                         machine_m2sel_active_high <= as_common.wdata[2];
                     end
                     8'h61: aux_provide_en_q <= as_common.wdata[0];

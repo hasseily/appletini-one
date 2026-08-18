@@ -163,7 +163,9 @@ static int uthernet2_command(uint16_t addr,
     }
 
     REG_WRITE(CARD_CTRL_ETH_ADDR_REG, addr);
-    REG_WRITE(CARD_CTRL_ETH_DATA_REG, wdata);
+    if (write != 0U) {
+        REG_WRITE(CARD_CTRL_ETH_DATA_REG, wdata);
+    }
     uthernet2_io_barrier();
     REG_WRITE(CARD_CTRL_ETH_CMD_REG,
               CARD_CTRL_ETH_CMD_GO |

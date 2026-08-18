@@ -14,7 +14,6 @@
 #define FTP_PASSIVE_PORT         50000U
 #define FTP_CONTROL_BUFFER_LEN   512U
 #define FTP_DATA_BUFFER_LEN      1024U
-#define FTP_SD_READ_VERIFY_ATTEMPTS 4U
 #define FTP_PATH_LEN             256U
 #define FTP_FAT_PATH_LEN         (FTP_PATH_LEN + 3U)
 
@@ -91,47 +90,11 @@ typedef struct {
     uint16_t control_rx_len;
     char control_out[FTP_CONTROL_BUFFER_LEN];
     uint16_t control_out_len;
-    uint8_t data_buffer[FTP_DATA_BUFFER_LEN];
-    uint8_t read_verify_buffer[FTP_DATA_BUFFER_LEN];
+    uint8_t data_buffer[FTP_DATA_BUFFER_LEN] __attribute__((aligned(32)));
     uint16_t data_buffer_len;
 } ftp_sd_state_t;
 
 static ftp_sd_state_t g_ftp;
-
-static int ftp_read_verified(FIL *file,
-                             uint8_t *dst,
-                             UINT capacity,
-                             UINT *bytes_read)
-{
-    FSIZE_t offset;
-    UINT first_len;
-    UINT verify_len;
-
-    if (file == NULL || dst == NULL || bytes_read == NULL ||
-        capacity > sizeof(g_ftp.read_verify_buffer)) {
-        return -1;
-    }
-    offset = f_tell(file);
-    for (uint8_t attempt = 0U;
-         attempt < FTP_SD_READ_VERIFY_ATTEMPTS;
-         ++attempt) {
-        if (f_lseek(file, offset) != FR_OK ||
-            f_read(file, dst, capacity, &first_len) != FR_OK ||
-            f_lseek(file, offset) != FR_OK ||
-            f_read(file,
-                   g_ftp.read_verify_buffer,
-                   capacity,
-                   &verify_len) != FR_OK) {
-            return -1;
-        }
-        if (first_len == verify_len &&
-            memcmp(dst, g_ftp.read_verify_buffer, first_len) == 0) {
-            *bytes_read = first_len;
-            return 0;
-        }
-    }
-    return -1;
-}
 
 static uint16_t socket_reg(uint8_t socket, uint16_t offset)
 {
@@ -1066,10 +1029,10 @@ static void ftp_send_transfer_poll(void)
     }
 
     if (g_ftp.transfer == FTP_TRANSFER_RETR) {
-        if (ftp_read_verified(&g_ftp.file,
-                              g_ftp.data_buffer,
-                              sizeof(g_ftp.data_buffer),
-                              &bytes_read) != 0) {
+        if (f_read(&g_ftp.file,
+                   g_ftp.data_buffer,
+                   sizeof(g_ftp.data_buffer),
+                   &bytes_read) != FR_OK) {
             ftp_finish_transfer(0U);
             return;
         }

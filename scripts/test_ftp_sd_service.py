@@ -81,14 +81,12 @@ def test_direct_transfer_path_with_tagged_completion() -> None:
             "logic [7:0]  eth_host_seq_q" in top and
             "sequence != start_sequence" in control,
             "Each direct W5100S command must wait for its own tagged completion")
-    require("FTP_SD_READ_VERIFY_ATTEMPTS 4U" in source and
-            "read_verify_buffer[FTP_DATA_BUFFER_LEN]" in source and
-            "offset = f_tell(file);" in source and
-            source.count("f_lseek(file, offset)") >= 2 and
-            "memcmp(dst, g_ftp.read_verify_buffer, first_len) == 0" in source and
-            "ftp_read_verified(&g_ftp.file" in source and
+    require("data_buffer[FTP_DATA_BUFFER_LEN] __attribute__((aligned(32)))" in source and
+            "read_verify_buffer" not in source and
+            "ftp_read_verified" not in source and
+            "f_read(&g_ftp.file" in source and
             "FTP_TX_VERIFY_ATTEMPTS" not in source,
-            "FTP RETR must retry until two reads of the same SD block match")
+            "FTP must read each block once into a cache-line-aligned DMA buffer")
 
 
 def test_exclusive_ethernet_and_sd_ownership() -> None:

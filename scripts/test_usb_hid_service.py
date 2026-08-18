@@ -519,7 +519,6 @@ def test_usb0_storage_priority_over_usb1_hid_poll() -> None:
             "modal SD remote mount must service the USB bridge, close on host eject, then handle USB input and boot-prompt settle")
     require("static uint8_t ui_config_menu_has_close_consumer(const config_menu_t *menu)" in frontend_main and
             "config_menu_usb0_sd_remote_active(menu) != 0U ||\n"
-            "            config_menu_ethernet_ftp_sd_remote_active(menu) != 0U ||\n"
             "            menu->usb_binding_capture != CONFIG_MENU_USB_BIND_CAPTURE_NONE ||\n"
             "            menu->browser_active != 0U ||\n"
             "            menu->profile_carousel_active != 0U ||\n"

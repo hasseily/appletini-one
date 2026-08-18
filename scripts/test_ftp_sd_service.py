@@ -55,10 +55,11 @@ def test_directory_listing_finishes_with_tcp_eof() -> None:
             "CWD / must accept the FTP volume root without relying on FatFs f_stat")
 
 
-def test_proven_direct_transfer_path() -> None:
+def test_direct_transfer_path_with_tagged_completion() -> None:
     source = read("ps_sources/frontend/ftp_sd_service.c")
     control = read("ps_sources/frontend/uthernet2_control.c")
     regs = read("ps_sources/frontend/card_control_regs.h")
+    top = read("hdl/apple/apple_top.sv")
     hdl_sources = read("hdl/hdl_sources.txt")
 
     require("FTP_DATA_BUFFER_LEN      1024U" in source and
@@ -76,6 +77,10 @@ def test_proven_direct_transfer_path() -> None:
             "CARD_CTRL_ETH_FIFO_" not in regs and
             "apple/uthernet2_host_fifo.sv" not in hdl_sources,
             "FTP must use direct byte W5100S access with no FIFO")
+    require("CARD_CTRL_ETH_STATUS_SEQ_SHIFT" in regs and
+            "logic [7:0]  eth_host_seq_q" in top and
+            "sequence != start_sequence" in control,
+            "Each direct W5100S command must wait for its own tagged completion")
 
 
 def test_exclusive_ethernet_and_sd_ownership() -> None:
@@ -165,7 +170,7 @@ def main() -> None:
     tests = [
         test_ftp_protocol_and_subnet_gate,
         test_directory_listing_finishes_with_tcp_eof,
-        test_proven_direct_transfer_path,
+        test_direct_transfer_path_with_tagged_completion,
         test_exclusive_ethernet_and_sd_ownership,
         test_ethernet_tab_modal_contract,
         test_uart_ftp_control,

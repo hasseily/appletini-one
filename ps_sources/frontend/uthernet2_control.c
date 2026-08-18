@@ -145,11 +145,15 @@ static int uthernet2_command(uint16_t addr,
                              uint8_t *rdata)
 {
     uint32_t status;
+    uint8_t start_sequence;
 
     for (uint32_t poll = 0U; poll < UTHERNET2_CMD_TIMEOUT_POLLS; ++poll) {
         status = REG_READ(CARD_CTRL_ETH_STATUS_REG);
         if ((status & CARD_CTRL_ETH_STATUS_READY) != 0U &&
             (status & CARD_CTRL_ETH_STATUS_BUSY) == 0U) {
+            start_sequence = (uint8_t)(
+                (status >> CARD_CTRL_ETH_STATUS_SEQ_SHIFT) &
+                CARD_CTRL_ETH_STATUS_SEQ_MASK);
             break;
         }
         if (poll == UTHERNET2_CMD_TIMEOUT_POLLS - 1U) {
@@ -167,8 +171,14 @@ static int uthernet2_command(uint16_t addr,
     uthernet2_io_barrier();
 
     for (uint32_t poll = 0U; poll < UTHERNET2_CMD_TIMEOUT_POLLS; ++poll) {
+        uint8_t sequence;
+
         status = REG_READ(CARD_CTRL_ETH_STATUS_REG);
-        if ((status & CARD_CTRL_ETH_STATUS_DONE) != 0U) {
+        sequence = (uint8_t)(
+            (status >> CARD_CTRL_ETH_STATUS_SEQ_SHIFT) &
+            CARD_CTRL_ETH_STATUS_SEQ_MASK);
+        if (sequence != start_sequence &&
+            (status & CARD_CTRL_ETH_STATUS_DONE) != 0U) {
             if ((status & CARD_CTRL_ETH_STATUS_ERROR) != 0U) {
                 return -2;
             }

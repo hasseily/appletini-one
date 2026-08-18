@@ -342,8 +342,16 @@ def main():
             "#define CARD_CTRL_ETH_CMD_REG" in regs and
             "#define CARD_CTRL_ETH_STATUS_REG" in regs and
             "CARD_CTRL_ETH_CMD_GO" in regs and
-            "CARD_CTRL_ETH_STATUS_RDATA_SHIFT" in regs,
+            "CARD_CTRL_ETH_STATUS_RDATA_SHIFT" in regs and
+            "CARD_CTRL_ETH_STATUS_SEQ_SHIFT" in regs and
+            "CARD_CTRL_ETH_STATUS_SEQ_MASK" in regs,
             "PS register header must expose Uthernet II host command registers")
+    require("logic [7:0]  eth_host_seq_q" in top and
+            "eth_host_seq_q <= eth_host_seq_q + 8'd1;" in top and
+            "eth_host_seq_q," in top and
+            "sequence != start_sequence" in eth_control and
+            "CARD_CTRL_ETH_STATUS_DONE" in eth_control,
+            "Host commands must wait for a tagged current completion rather than stale DONE")
     require("#define ETHERNET_CONTROL_SLOT 1U" in config,
             "Config menu must use Ethernet slot 1")
     require("#define CONFIG_DEFAULT_ETHERNET_SLOT1_ENABLED 1U" in config,

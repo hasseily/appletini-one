@@ -17,6 +17,7 @@
 #include "compositor_layout.h"
 #include "printer_service.h"
 #include "profile_manager.h"
+#include "onee_fixed_mode.h"
 #include "../image_versions.h"
 #include "xil_cache.h"
 #include "usb_hid_service.h"
@@ -26,8 +27,11 @@
 #include "video_output.h"
 
 #define APPLETINI_CFG_PATH "0:/appletini_cfg.txt"
+#define APPLETINI_CFG_TMP_PATH "0:/appletini_cfg.tmp"
+#define APPLETINI_CFG_BAK_PATH "0:/appletini_cfg.bak"
 #define APPLETINI_CFG_MAX 8192U
-#define APPLETINI_CFG_VERSION 114U
+#define APPLETINI_CFG_VERSION 116U
+#define ONEE_PERSIST_RETRY_POLL_LIMIT 4096U
 #define ETHERNET_CONTROL_SLOT 1U
 #define DISK2_CONTROL_SLOT 6U
 #define MOUSE_CONTROL_SLOT 2U
@@ -35,6 +39,7 @@
 
 #define CONFIG_DEFAULT_BOOT_TIMEOUT_MODE CONFIG_BOOT_TIMEOUT_3S
 #define CONFIG_DEFAULT_BOOT_DEVICE CONFIG_BOOT_DEVICE_SMARTPORT
+#define CONFIG_DEFAULT_ONEE_VIDEO_50HZ 0U
 #define CONFIG_DEFAULT_SCANLINES_MODE APPLETINI_SCANLINES_OFF
 #define CONFIG_DEFAULT_VIDEO_OUTPUT_MONO 0U
 #define CONFIG_DEFAULT_VIDEO_MONO_COLOR APPLE_VIDEO_MONO_WHITE
@@ -1298,9 +1303,54 @@ static FRESULT config_menu_open_path(FIL *file, const char *path, BYTE mode)
     return f_open(file, path, mode);
 }
 
+/* FatFs does not replace an existing name with f_rename(). Keep the prior
+ * synced global file as a backup while installing the new synced file. At
+ * every interruption point either the main name or the backup still holds
+ * the last committed settings. */
+static FRESULT config_menu_commit_global_cfg(void)
+{
+    FILINFO info;
+    FRESULT fr;
+    uint8_t moved_current = 0U;
+
+    fr = f_stat(APPLETINI_CFG_PATH, &info);
+    if (fr == FR_OK) {
+        fr = f_unlink(APPLETINI_CFG_BAK_PATH);
+        if (fr != FR_OK && fr != FR_NO_FILE) {
+            return fr;
+        }
+        fr = f_rename(APPLETINI_CFG_PATH, APPLETINI_CFG_BAK_PATH);
+        if (fr != FR_OK) {
+            return fr;
+        }
+        moved_current = 1U;
+    } else if (fr != FR_NO_FILE) {
+        return fr;
+    }
+
+    fr = f_rename(APPLETINI_CFG_TMP_PATH, APPLETINI_CFG_PATH);
+    if (fr != FR_OK && moved_current != 0U) {
+        /* Best effort only. If this restore is interrupted too, boot-time
+         * recovery below still promotes the retained backup. */
+        (void)f_rename(APPLETINI_CFG_BAK_PATH, APPLETINI_CFG_PATH);
+    }
+    return fr;
+}
+
 static FRESULT config_menu_open_cfg(FIL *file, BYTE mode)
 {
-    return config_menu_open_path(file, APPLETINI_CFG_PATH, mode);
+    FRESULT fr = config_menu_open_path(file, APPLETINI_CFG_PATH, mode);
+
+    if (fr == FR_NO_FILE && (mode & FA_READ) != 0U) {
+        /* A power cut can land between main->backup and temp->main. The temp
+         * was never committed, so restore the prior main file, not the temp. */
+        fr = f_rename(APPLETINI_CFG_BAK_PATH, APPLETINI_CFG_PATH);
+        if (fr == FR_OK) {
+            (void)f_unlink(APPLETINI_CFG_TMP_PATH);
+            return config_menu_open_path(file, APPLETINI_CFG_PATH, mode);
+        }
+    }
+    return fr;
 }
 
 const char *config_menu_boot_timeout_text(uint8_t mode)
@@ -1326,6 +1376,96 @@ const char *config_menu_boot_device_text(uint8_t device)
     case CONFIG_BOOT_DEVICE_SMARTPORT:
     default:
         return "SmartPort";
+    }
+}
+
+const char *config_menu_onee_mode_text(const config_menu_t *menu)
+{
+    if (menu == NULL) {
+        return "LOCKED";
+    }
+
+    switch (menu->onee_mode_state) {
+    case CONFIG_MENU_ONEE_MODE_OFF:
+        return "OFF";
+    case CONFIG_MENU_ONEE_MODE_RUNNING:
+        return "RUNNING";
+    case CONFIG_MENU_ONEE_MODE_LOCKED:
+    default:
+        return "LOCKED";
+    }
+}
+
+uint8_t config_menu_onee_fixed_bindings_active(const config_menu_t *menu)
+{
+    if (menu == NULL) {
+        return 0U;
+    }
+
+    return onee_usb_fixed_mode_active(menu->onee_mode_status);
+}
+
+const char *config_menu_onee_video_standard_text(const config_menu_t *menu)
+{
+    uint8_t active_50hz;
+
+    if (menu == NULL) {
+        return "NTSC";
+    }
+
+    active_50hz = menu->onee_video_50hz;
+    if (menu->platform.get_onee_video_active_50hz != NULL) {
+        active_50hz =
+            menu->platform.get_onee_video_active_50hz(menu->platform.ctx) != 0U;
+    }
+
+    if (active_50hz != menu->onee_video_50hz) {
+        return (menu->onee_video_50hz != 0U) ?
+            "PAL (pending reset)" : "NTSC (pending reset)";
+    }
+    return (menu->onee_video_50hz != 0U) ? "PAL" : "NTSC";
+}
+
+static void config_menu_set_onee_video_standard_status(config_menu_t *menu)
+{
+    const char *standard;
+
+    if (menu == NULL) {
+        return;
+    }
+    standard = (menu->onee_video_50hz != 0U) ? "PAL" : "NTSC";
+    if (menu->platform.get_onee_video_active_50hz != NULL &&
+        ((menu->platform.get_onee_video_active_50hz(menu->platform.ctx) != 0U) ?
+             1U : 0U) != menu->onee_video_50hz) {
+        char text[CONFIG_MENU_STATUS_LEN];
+        (void)snprintf(text,
+                       sizeof(text),
+                       "ONE//e %s SAVED - NEXT VIRTUAL RESET OR RESTART",
+                       standard);
+        config_menu_set_status(menu, 0U, text);
+    } else {
+        char text[CONFIG_MENU_STATUS_LEN];
+        (void)snprintf(text, sizeof(text), "ONE//e %s ACTIVE", standard);
+        config_menu_set_status(menu, 0U, text);
+    }
+}
+
+static void config_menu_toggle_onee_video_standard(config_menu_t *menu)
+{
+    if (menu == NULL ||
+        config_menu_onee_fixed_bindings_active(menu) == 0U) {
+        return;
+    }
+
+    menu->onee_video_50hz =
+        (menu->onee_video_50hz != 0U) ? 0U : 1U;
+    if (menu->platform.set_onee_video_50hz != NULL) {
+        menu->platform.set_onee_video_50hz(menu->platform.ctx,
+                                           menu->onee_video_50hz);
+    }
+    if (config_menu_save_settings_to_path(
+            menu, APPLETINI_CFG_PATH, NULL) != 0U) {
+        config_menu_set_onee_video_standard_status(menu);
     }
 }
 
@@ -2102,15 +2242,6 @@ static uint32_t config_menu_boot_timeout_ticks(uint8_t mode)
     }
 }
 
-static void config_menu_coerce_boot_device(config_menu_t *menu)
-{
-    if (menu != NULL &&
-        menu->boot_device == CONFIG_BOOT_DEVICE_DISK2 &&
-        menu->disk2_slot6_enabled == 0U) {
-        menu->boot_device = CONFIG_BOOT_DEVICE_SMARTPORT;
-    }
-}
-
 static void config_menu_coerce_video_output(config_menu_t *menu)
 {
     if (menu == NULL) {
@@ -2435,6 +2566,11 @@ static void config_menu_load_platform_defaults(config_menu_t *menu)
         menu->pal_video_phase_cycles = apple_video_timing_phase_clamp(
             menu->platform.get_pal_video_phase_cycles(menu->platform.ctx));
     }
+    if (menu->platform.get_onee_video_50hz != NULL) {
+        menu->onee_video_50hz =
+            (menu->platform.get_onee_video_50hz(menu->platform.ctx) != 0U) ?
+                1U : 0U;
+    }
     if (menu->platform.get_slot_enabled != NULL) {
         menu->ethernet_slot1_enabled =
             menu->platform.get_slot_enabled(menu->platform.ctx, ETHERNET_CONTROL_SLOT);
@@ -2456,7 +2592,11 @@ static void config_menu_apply_boot_runtime_internal(config_menu_t *menu,
         return;
     }
 
-    config_menu_coerce_boot_device(menu);
+    if (menu->platform.set_onee_video_50hz != NULL) {
+        menu->platform.set_onee_video_50hz(menu->platform.ctx,
+                                           menu->onee_video_50hz);
+    }
+
     if (menu->platform.set_slot_enabled != NULL) {
         menu->platform.set_slot_enabled(menu->platform.ctx,
                                         DISK2_CONTROL_SLOT,
@@ -2465,8 +2605,10 @@ static void config_menu_apply_boot_runtime_internal(config_menu_t *menu,
     if (menu->platform.set_boot_handoff != NULL) {
         uint8_t handoff = CONFIG_BOOT_HANDOFF_SMARTPORT;
 
-        if (menu->boot_device == CONFIG_BOOT_DEVICE_DISK2 &&
-            menu->disk2_slot6_enabled != 0U) {
+        /* Publish the saved choice without the physical Slot 6 mask. The PL
+         * applies that mask to an Apple host, while ONE//e uses the same raw
+         * choice with its always-present virtual Disk II card. */
+        if (menu->boot_device == CONFIG_BOOT_DEVICE_DISK2) {
             handoff = CONFIG_BOOT_HANDOFF_DISK2;
         }
         menu->platform.set_boot_handoff(menu->platform.ctx, handoff);
@@ -2924,6 +3066,11 @@ static void config_menu_parse_key_value(config_menu_t *menu, const char *key, co
         } else {
             menu->boot_device = CONFIG_BOOT_DEVICE_SMARTPORT;
         }
+    } else if (strcmp(key, "onee.standalone.persisted") == 0) {
+        menu->onee_persisted_enabled = config_menu_bool_text(value);
+    } else if (strcmp(key, "onee.video.standard") == 0) {
+        menu->onee_video_50hz =
+            (config_menu_str_ieq(value, "PAL") != 0U) ? 1U : 0U;
     } else if (strcmp(key, "video.scanlines") == 0) {
         menu->scanlines_mode = config_menu_scanlines_text(value);
     } else if (strcmp(key, "video.output") == 0) {
@@ -3080,11 +3227,12 @@ static void config_menu_parse_key_value(config_menu_t *menu, const char *key, co
 }
 
 uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
-                                          const char *path,
-                                          const char *success_status)
+                                           const char *path,
+                                           const char *success_status)
 {
     FIL file;
     FRESULT fr;
+    FRESULT close_fr;
     UINT written = 0U;
     char buffer[APPLETINI_CFG_MAX];
     int len = 0;
@@ -3096,6 +3244,10 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
     /* Scratch for one quoted path value at a time (see config_menu_quote_path).
      * No single APPEND_CFG below passes two path args, so reuse is safe. */
     char path_val[CONFIG_MENU_PATH_LEN + 3U];
+    const uint8_t global_cfg =
+        (path != NULL && strcmp(path, APPLETINI_CFG_PATH) == 0) ? 1U : 0U;
+    const char *write_path =
+        (global_cfg != 0U) ? APPLETINI_CFG_TMP_PATH : path;
 
     if (menu == NULL || path == NULL || path[0] == '\0') {
         return 0U;
@@ -3163,6 +3315,15 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                    ? config_menu_quote_path(menu->bezel_path,
                                             path_val, sizeof(path_val))
                    : "FIRMWARE");
+
+    /* ONE//e selection and virtual video standard are global choices. A
+     * profile load must never change either one. */
+    if (strcmp(path, APPLETINI_CFG_PATH) == 0) {
+        APPEND_CFG("onee.standalone.persisted=%s\n"
+                   "onee.video.standard=%s\n",
+                   config_menu_on_off(menu->onee_persisted_enabled),
+                   (menu->onee_video_50hz != 0U) ? "PAL" : "NTSC");
+    }
 
     APPEND_CFG("video.rom=%s\n",
                (menu->video_rom_path[0] != '\0')
@@ -3289,7 +3450,7 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
         return 0U;
     }
 
-    fr = config_menu_open_path(&file, path, FA_WRITE | FA_CREATE_ALWAYS);
+    fr = config_menu_open_path(&file, write_path, FA_WRITE | FA_CREATE_ALWAYS);
     if (fr != FR_OK) {
         menu->session_only = 1U;
         config_menu_set_sd_error(menu, "CONFIG WRITE OPEN FAILED", fr);
@@ -3297,11 +3458,30 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
     }
 
     fr = f_write(&file, buffer, (UINT)len, &written);
-    (void)f_close(&file);
+    if (fr == FR_OK && written == (UINT)len) {
+        fr = f_sync(&file);
+    }
+    close_fr = f_close(&file);
+    if (fr == FR_OK && close_fr != FR_OK) {
+        fr = close_fr;
+    }
     if (fr != FR_OK || written != (UINT)len) {
+        if (global_cfg != 0U) {
+            (void)f_unlink(APPLETINI_CFG_TMP_PATH);
+        }
         menu->session_only = 1U;
         config_menu_set_sd_error(menu, "CONFIG WRITE FAILED", fr);
         return 0U;
+    }
+
+    if (global_cfg != 0U) {
+        fr = config_menu_commit_global_cfg();
+        if (fr != FR_OK) {
+            (void)f_unlink(APPLETINI_CFG_TMP_PATH);
+            menu->session_only = 1U;
+            config_menu_set_sd_error(menu, "CONFIG COMMIT FAILED", fr);
+            return 0U;
+        }
     }
 
     menu->settings_loaded = 1U;
@@ -3372,7 +3552,6 @@ static void config_menu_load_settings(config_menu_t *menu)
         line = strtok(NULL, "\r\n");
     }
 
-    config_menu_coerce_boot_device(menu);
     config_menu_coerce_video_output(menu);
     config_menu_coerce_video_ghosting(menu);
     config_menu_coerce_video_blur(menu);
@@ -3394,6 +3573,24 @@ static void config_menu_load_settings(config_menu_t *menu)
     }
 }
 
+static void config_menu_restore_onee_intent(config_menu_t *menu)
+{
+    if (menu == NULL) {
+        return;
+    }
+
+    // Publish the saved standard while ONE//e is still stopped. The PL then
+    // starts a restored session with the right cadence from its first cycle.
+    if (menu->platform.set_onee_video_50hz != NULL) {
+        menu->platform.set_onee_video_50hz(menu->platform.ctx,
+                                           menu->onee_video_50hz);
+    }
+    if (menu->platform.restore_onee_mode_intent != NULL) {
+        menu->platform.restore_onee_mode_intent(
+            menu->platform.ctx, menu->onee_persisted_enabled);
+    }
+}
+
 /* Retry an unloaded configuration when the menu opens or an SD card is
  * inserted. Either event may make 0:/appletini_cfg.txt readable. */
 void config_menu_retry_settings_if_needed(config_menu_t *menu)
@@ -3403,6 +3600,7 @@ void config_menu_retry_settings_if_needed(config_menu_t *menu)
     }
 
     config_menu_load_settings(menu);
+    config_menu_restore_onee_intent(menu);
     config_menu_apply_runtime(menu);
     if (menu->settings_loaded != 0U) {
         (void)config_menu_apply_ethernet_config(menu, 0U);
@@ -3569,6 +3767,8 @@ static void config_menu_reset_settings_only(config_menu_t *menu)
 
     menu->boot_timeout_mode = CONFIG_DEFAULT_BOOT_TIMEOUT_MODE;
     menu->boot_device = CONFIG_DEFAULT_BOOT_DEVICE;
+    /* Keep onee_video_50hz: like the ONE//e enable latch, it is global and a
+     * profile reset must not replace it with a profile-local default. */
     menu->scanlines_mode = CONFIG_DEFAULT_SCANLINES_MODE;
     menu->video_output_mono = CONFIG_DEFAULT_VIDEO_OUTPUT_MONO;
     menu->video_mono_color = CONFIG_DEFAULT_VIDEO_MONO_COLOR;
@@ -3686,12 +3886,16 @@ static uint8_t config_menu_read_settings_from_path(config_menu_t *menu,
             if (strcmp(key, "appletini.config.version") == 0) {
                 cfg_version = (uint32_t)strtoul(value, NULL, 10);
             }
-            config_menu_parse_key_value(menu, key, value);
+            /* ONE//e state and video standard are global. Ignore copied,
+             * hand-edited, or future profile keys for both choices. */
+            if (strcmp(key, "onee.standalone.persisted") != 0 &&
+                strcmp(key, "onee.video.standard") != 0) {
+                config_menu_parse_key_value(menu, key, value);
+            }
         }
         line = strtok(NULL, "\r\n");
     }
 
-    config_menu_coerce_boot_device(menu);
     config_menu_coerce_video_output(menu);
     config_menu_coerce_video_ghosting(menu);
     config_menu_coerce_video_blur(menu);
@@ -4673,6 +4877,120 @@ static void config_menu_ethernet_test(config_menu_t *menu)
     config_menu_set_status(menu, (result.link_up != 0U) ? 0U : 1U, text);
 }
 
+static uint32_t config_menu_onee_inhibit_reason(const config_menu_t *menu)
+{
+    if (menu == NULL) {
+        return CARD_CTRL_ONEE_INHIBIT_RESET;
+    }
+    return (menu->onee_mode_status >> CARD_CTRL_ONEE_STATUS_INHIBIT_SHIFT) &
+           CARD_CTRL_ONEE_STATUS_INHIBIT_MASK;
+}
+
+static void config_menu_set_onee_refusal_status(config_menu_t *menu)
+{
+    const uint32_t status = (menu != NULL) ? menu->onee_mode_status : 0U;
+    const uint32_t reason = config_menu_onee_inhibit_reason(menu);
+    const uint32_t signature =
+        (status >> CARD_CTRL_ONEE_STATUS_SIGNATURE_SHIFT) &
+        CARD_CTRL_ONEE_STATUS_SIGNATURE_MASK;
+    const char *text;
+
+    if ((status & CARD_CTRL_ONEE_STATUS_HDL_PRESENT_BIT) == 0U ||
+        signature != CARD_CTRL_ONEE_STATUS_SIGNATURE) {
+        text = "ONE//e LOCKED: PL MODE NOT READY";
+    } else if ((status & CARD_CTRL_ONEE_STATUS_APPLE_POWER_BIT) != 0U ||
+               reason == CARD_CTRL_ONEE_INHIBIT_APPLE_POWER) {
+        text = "ONE//e LOCKED: APPLE POWER PRESENT";
+    } else if ((status & CARD_CTRL_ONEE_STATUS_ACTIVITY_BIT) != 0U ||
+               reason == CARD_CTRL_ONEE_INHIBIT_APPLE_ACTIVITY) {
+        text = "ONE//e LOCKED: APPLE BUS ACTIVE";
+    } else if ((status & CARD_CTRL_ONEE_STATUS_LOCKOUT_BIT) != 0U ||
+               reason == CARD_CTRL_ONEE_INHIBIT_ACTIVITY_LOCKOUT) {
+        text = "ONE//e LOCKED: APPLE ACTIVITY LOCKOUT";
+    } else if ((status & CARD_CTRL_ONEE_STATUS_QUIET_BIT) == 0U) {
+        text = "ONE//e LOCKED: WAITING FOR APPLE BUS QUIET";
+    } else if ((status & CARD_CTRL_ONEE_STATUS_RESELECT_ARMED_BIT) == 0U ||
+               reason == CARD_CTRL_ONEE_INHIBIT_RESELECT_REQUIRED) {
+        text = "ONE//e LOCKED: RESELECT NOT ARMED";
+    } else if (reason == CARD_CTRL_ONEE_INHIBIT_RESET) {
+        text = "ONE//e LOCKED: PL RESET";
+    } else if ((status & (CARD_CTRL_ONEE_STATUS_REQUEST_BIT |
+                          CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT |
+                          CARD_CTRL_ONEE_STATUS_SELECTED_BIT |
+                          CARD_CTRL_ONEE_STATUS_ISOLATED_BIT)) != 0U) {
+        text = "ONE//e LOCKED: PL MODE BUSY";
+    } else {
+        text = "ONE//e REQUEST REFUSED";
+    }
+    config_menu_set_status(menu, 1U, text);
+}
+
+static void config_menu_toggle_onee_mode(config_menu_t *menu)
+{
+    uint8_t accepted;
+
+    if (menu == NULL) {
+        return;
+    }
+
+    menu->onee_persist_write_failed = 0U;
+    menu->onee_persist_retry_polls = 0U;
+    config_menu_poll_onee_mode(menu);
+    if (menu->platform.set_onee_mode == NULL) {
+        menu->onee_mode_state = CONFIG_MENU_ONEE_MODE_LOCKED;
+        config_menu_set_status(menu, 1U, "ONE//e SERVICE UNAVAILABLE");
+        return;
+    }
+
+    if (menu->onee_mode_state == CONFIG_MENU_ONEE_MODE_RUNNING ||
+        (menu->onee_mode_status & CARD_CTRL_ONEE_STATUS_REQUEST_BIT) != 0U ||
+        menu->onee_persisted_enabled != 0U) {
+        (void)menu->platform.set_onee_mode(menu->platform.ctx, 0U);
+        config_menu_poll_onee_mode(menu);
+        if (menu->onee_persist_write_failed != 0U) {
+            return;
+        }
+        config_menu_set_status(menu, 0U, "ONE//e OFF");
+        return;
+    }
+
+    if (menu->onee_persist_write_failed != 0U) {
+        config_menu_set_status(menu, 1U,
+                               "ONE//e ON REFUSED: OFF STATE NOT SAVED");
+        return;
+    }
+
+    /* Save and sync the global ON intent before the service can raise the PL
+     * REQUEST bit. If storage fails, keep both the persisted choice and the
+     * live machine OFF. */
+    menu->onee_persisted_enabled = 1U;
+    if (config_menu_save_settings_to_path(
+            menu, APPLETINI_CFG_PATH, NULL) == 0U) {
+        menu->onee_persisted_enabled = 0U;
+        config_menu_set_status(menu, 1U,
+                               "ONE//e ON REFUSED: STATE NOT SAVED");
+        return;
+    }
+
+    accepted = menu->platform.set_onee_mode(menu->platform.ctx, 1U);
+    if (accepted != 0U &&
+        menu->platform.ack_onee_mode_persist_update != NULL) {
+        /* request_start() queues the same ON value. It is already durable. */
+        menu->platform.ack_onee_mode_persist_update(menu->platform.ctx, 1U);
+    }
+    config_menu_poll_onee_mode(menu);
+    if (menu->onee_persist_write_failed != 0U) {
+        return;
+    }
+    if (accepted == 0U) {
+        config_menu_set_onee_refusal_status(menu);
+    } else if (menu->onee_mode_state == CONFIG_MENU_ONEE_MODE_RUNNING) {
+        config_menu_set_status(menu, 0U, "ONE//e RUNNING");
+    } else {
+        config_menu_set_status(menu, 0U, "ONE//e START REQUESTED");
+    }
+}
+
 static uint8_t config_menu_adjust_focused_value(config_menu_t *menu, int8_t delta)
 {
     uint32_t index;
@@ -4697,6 +5015,13 @@ static uint8_t config_menu_adjust_focused_value(config_menu_t *menu, int8_t delt
     if (menu->tab == CONFIG_TAB_TRANSWARP &&
         menu->item_focus == CONFIG_TRANSWARP_ITEM_WINDOW) {
         config_menu_vtw_cycle_slowdown_window(menu, delta);
+        return 1U;
+    }
+    if (menu->tab == CONFIG_TAB_BOOT_SETTINGS &&
+        menu->item_focus == CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM &&
+        config_menu_onee_fixed_bindings_active(menu) != 0U) {
+        (void)delta;
+        config_menu_toggle_onee_video_standard(menu);
         return 1U;
     }
     if (menu->tab == CONFIG_TAB_VIDEO &&
@@ -4835,13 +5160,6 @@ static uint8_t config_menu_adjust_focused_value(config_menu_t *menu, int8_t delt
     }
 
     if (menu->tab == CONFIG_TAB_BOOT_SETTINGS && menu->item_focus == 1U) {
-        if (menu->disk2_slot6_enabled == 0U) {
-            menu->boot_device = CONFIG_BOOT_DEVICE_SMARTPORT;
-            config_menu_apply_runtime(menu);
-            config_menu_save_settings(menu);
-            config_menu_set_status(menu, 1U, "ENABLE DISK II TO BOOT SLOT 6");
-            return 1U;
-        }
         if (menu->boot_device == CONFIG_BOOT_DEVICE_SMARTPORT) {
             menu->boot_device = CONFIG_BOOT_DEVICE_DISK2;
         } else {
@@ -4849,6 +5167,13 @@ static uint8_t config_menu_adjust_focused_value(config_menu_t *menu, int8_t delt
         }
         config_menu_apply_runtime(menu);
         config_menu_save_settings(menu);
+        return 1U;
+    }
+
+    if (menu->tab == CONFIG_TAB_BOOT_SETTINGS &&
+        menu->item_focus == CONFIG_MENU_BOOT_ONEE_ITEM) {
+        (void)delta;
+        config_menu_toggle_onee_mode(menu);
         return 1U;
     }
 
@@ -5846,15 +6171,15 @@ static void config_menu_activate_item(config_menu_t *menu)
         if (menu->item_focus == 0U) {
             menu->boot_timeout_mode = (uint8_t)((menu->boot_timeout_mode + 1U) % CONFIG_BOOT_TIMEOUT_COUNT);
         } else if (menu->item_focus == 1U) {
-            if (menu->disk2_slot6_enabled == 0U) {
-                menu->boot_device = CONFIG_BOOT_DEVICE_SMARTPORT;
-                config_menu_apply_runtime(menu);
-                config_menu_save_settings(menu);
-                config_menu_set_status(menu, 1U, "ENABLE DISK II TO BOOT SLOT 6");
+            menu->boot_device = (uint8_t)((menu->boot_device + 1U) % CONFIG_BOOT_DEVICE_COUNT);
+        } else if (menu->item_focus == CONFIG_MENU_BOOT_ONEE_ITEM) {
+            config_menu_toggle_onee_mode(menu);
+            break;
+        } else if (menu->item_focus == CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM) {
+            if (config_menu_onee_fixed_bindings_active(menu) != 0U) {
+                config_menu_toggle_onee_video_standard(menu);
                 break;
             }
-            menu->boot_device = (uint8_t)((menu->boot_device + 1U) % CONFIG_BOOT_DEVICE_COUNT);
-        } else if (menu->item_focus == CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM) {
             if (menu->usb_bindings_editable == 0U) {
                 config_menu_set_status(menu, 1U, "USB BINDINGS EDITABLE AT BOOT");
                 break;
@@ -6019,7 +6344,6 @@ static void config_menu_activate_item(config_menu_t *menu)
     case CONFIG_TAB_DISK2:
         if (menu->item_focus == 0U) {
             menu->disk2_slot6_enabled = menu->disk2_slot6_enabled ? 0U : 1U;
-            config_menu_coerce_boot_device(menu);
             config_menu_apply_runtime(menu);
             config_menu_save_settings(menu);
         } else if (menu->item_focus == 1U) {
@@ -6288,6 +6612,12 @@ void config_menu_init(config_menu_t *menu)
     memset(menu, 0, sizeof(*menu));
     menu->boot_timeout_mode = CONFIG_DEFAULT_BOOT_TIMEOUT_MODE;
     menu->boot_device = CONFIG_DEFAULT_BOOT_DEVICE;
+    menu->onee_mode_state = CONFIG_MENU_ONEE_MODE_OFF;
+    menu->onee_mode_status = 0U;
+    menu->onee_persisted_enabled = 0U;
+    menu->onee_video_50hz = CONFIG_DEFAULT_ONEE_VIDEO_50HZ;
+    menu->onee_persist_write_failed = 0U;
+    menu->onee_persist_retry_polls = 0U;
     menu->scanlines_mode = CONFIG_DEFAULT_SCANLINES_MODE;
     menu->video_output_mono = CONFIG_DEFAULT_VIDEO_OUTPUT_MONO;
     menu->video_mono_color = CONFIG_DEFAULT_VIDEO_MONO_COLOR;
@@ -6367,12 +6697,86 @@ void config_menu_bind_platform(config_menu_t *menu, const config_menu_platform_t
 
     config_menu_load_platform_defaults(menu);
     config_menu_load_settings(menu);
+    config_menu_restore_onee_intent(menu);
     config_menu_apply_boot_runtime_internal(menu, 1U);
     if (menu->ethernet_address_mode == CONFIG_MENU_ETHERNET_ADDRESS_STATIC) {
         (void)config_menu_apply_ethernet_config(menu, 0U);
     }
     config_menu_apply_disk2_sound(menu);
     config_menu_apply_smartport_paths(menu);
+}
+
+void config_menu_poll_onee_mode(config_menu_t *menu)
+{
+    uint8_t state;
+    uint8_t persist_enable;
+    uint8_t retrying_write = 0U;
+    uint8_t standard_was_visible;
+
+    if (menu == NULL) {
+        return;
+    }
+    standard_was_visible = config_menu_onee_fixed_bindings_active(menu);
+    if (menu->platform.get_onee_mode_state == NULL ||
+        menu->platform.get_onee_mode_status == NULL) {
+        menu->onee_mode_state = CONFIG_MENU_ONEE_MODE_LOCKED;
+        menu->onee_mode_status = 0U;
+        if (menu->tab == CONFIG_TAB_BOOT_SETTINGS &&
+            menu->item_focus == CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM &&
+            standard_was_visible != 0U) {
+            menu->item_focus = CONFIG_MENU_BOOT_ONEE_ITEM;
+        }
+        return;
+    }
+
+    state = menu->platform.get_onee_mode_state(menu->platform.ctx);
+    menu->onee_mode_state =
+        (state <= CONFIG_MENU_ONEE_MODE_LOCKED) ?
+            state : CONFIG_MENU_ONEE_MODE_LOCKED;
+    menu->onee_mode_status =
+        menu->platform.get_onee_mode_status(menu->platform.ctx);
+
+    /* Item 3 becomes Reset USB Bindings when ONE//e stops. Do not let a
+     * focused standard row silently turn into that destructive action. */
+    if (menu->tab == CONFIG_TAB_BOOT_SETTINGS &&
+        menu->item_focus == CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM &&
+        standard_was_visible != 0U &&
+        config_menu_onee_fixed_bindings_active(menu) == 0U) {
+        menu->item_focus = CONFIG_MENU_BOOT_ONEE_ITEM;
+    }
+
+    if (menu->platform.get_onee_mode_persist_update == NULL ||
+        menu->platform.ack_onee_mode_persist_update == NULL ||
+        menu->platform.get_onee_mode_persist_update(
+            menu->platform.ctx, &persist_enable) == 0U) {
+        return;
+    }
+
+    menu->onee_persisted_enabled = (persist_enable != 0U) ? 1U : 0U;
+    if (menu->onee_persist_write_failed != 0U) {
+        if (menu->onee_persist_retry_polls != 0U) {
+            --menu->onee_persist_retry_polls;
+            return;
+        }
+        retrying_write = 1U;
+        menu->onee_persist_write_failed = 0U;
+    }
+
+    if (config_menu_save_settings_to_path(
+            menu, APPLETINI_CFG_PATH, NULL) == 0U) {
+        /* Do not acknowledge a failed write. After an Apple event the service
+         * remains locked, and the menu error states that OFF was not saved. */
+        menu->onee_persist_write_failed = 1U;
+        menu->onee_persist_retry_polls = ONEE_PERSIST_RETRY_POLL_LIMIT;
+        return;
+    }
+
+    menu->onee_persist_retry_polls = 0U;
+    menu->platform.ack_onee_mode_persist_update(
+        menu->platform.ctx, menu->onee_persisted_enabled);
+    if (retrying_write != 0U) {
+        config_menu_set_status(menu, 0U, "ONE//e STATE WRITE RECOVERED");
+    }
 }
 
 uint8_t config_menu_is_active(const config_menu_t *menu)
@@ -6402,6 +6806,9 @@ void config_menu_set_active(config_menu_t *menu, uint8_t active)
     }
     menu->active = (active != 0U) ? 1U : 0U;
     if (menu->active != 0U) {
+        /* A menu reopen prompts an immediate retry; background polling also
+         * retries after a bounded delay when the menu remains closed. */
+        menu->onee_persist_retry_polls = 0U;
         config_menu_retry_settings_if_needed(menu);
         config_menu_refresh_smartport_media_after_menu_sd(menu);
     } else {
@@ -6442,7 +6849,8 @@ void config_menu_set_usb_owned(config_menu_t *menu, uint8_t usb_owned)
     }
 
     menu->usb_owned = (usb_owned != 0U) ? 1U : 0U;
-    if (menu->usb_owned != 0U) {
+    if (menu->usb_owned != 0U &&
+        config_menu_onee_fixed_bindings_active(menu) == 0U) {
         menu->usb_binding_capture = CONFIG_MENU_USB_BIND_CAPTURE_NONE;
     }
 }
@@ -7092,6 +7500,7 @@ static void config_menu_draw_help(uint16_t *fb,
 {
     const char *lines[CONFIG_MENU_HELP_MAX_LINES];
     config_menu_help_block_t base;
+    uint32_t help_item;
     uint32_t count = 0U;
 
     if (menu == NULL || rect == NULL) {
@@ -7099,8 +7508,15 @@ static void config_menu_draw_help(uint16_t *fb,
     }
 
     /* Static text (tab default, or a per-item override) comes from the
-     * centralized table in config_menu_help.c. */
-    base = config_menu_help_resolve(menu->tab, menu->item_focus);
+     * centralized table in config_menu_help.c. The ONE//e standard reuses
+     * the reset row's focus index while that reset row is hidden. */
+    help_item = menu->item_focus;
+    if (menu->tab == CONFIG_TAB_BOOT_SETTINGS &&
+        help_item == CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM &&
+        config_menu_onee_fixed_bindings_active(menu) != 0U) {
+        help_item = CONFIG_MENU_BOOT_ONEE_STANDARD_HELP_ITEM;
+    }
+    base = config_menu_help_resolve(menu->tab, help_item);
 
     switch (menu->tab) {
     case CONFIG_TAB_VIDEO:

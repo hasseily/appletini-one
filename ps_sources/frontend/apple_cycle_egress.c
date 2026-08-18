@@ -32,6 +32,7 @@ volatile uint32_t g_records_processed  = 0U;
 volatile uint32_t g_gap_markers_seen   = 0U;
 volatile uint32_t g_bus_writes_seen    = 0U;
 volatile uint32_t g_video_shadow_generation = 1U;
+volatile uint32_t g_legacy_video_shadow_generation = 1U;
 volatile uint32_t g_frame_records_seen = 0U;
 volatile uint32_t g_poll_calls         = 0U;
 volatile uint32_t g_oversized_drains   = 0U;
@@ -284,6 +285,14 @@ void apple_cycle_egress_poll(void)
                         if ((uint16_t)(a & 0xFFFFU) >= 0x2000U &&
                             (uint16_t)(a & 0xFFFFU) <= 0x9FFFU) {
                             g_video_shadow_generation++;
+                        }
+                        const uint16_t video_addr =
+                            (uint16_t)(a & 0xFFFFU);
+                        if ((video_addr >= 0x0400U &&
+                             video_addr <= 0x0BFFU) ||
+                            (video_addr >= 0x2000U &&
+                             video_addr <= 0x9FFFU)) {
+                            g_legacy_video_shadow_generation++;
                         }
                         g_bus_writes_seen++;
                     }

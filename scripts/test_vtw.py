@@ -165,11 +165,12 @@ def static_checks() -> None:
 
     # PL integration
     require("vtw_core_top vtw_core_top_i" in top and
-            ".NUM_CLIENTS(12)" in top and
+            ".NUM_CLIENTS(13)" in top and
             ".FAST_DATA_CLIENT(2)" in top and
             ".FAST_ADDR_CLIENT(11)" in top and
+            "onee_motherboard_ab_write," in top and
             "vtw_ab_write," in top,
-            "apple_top must instantiate the vTW in the 12-client arbiter")
+            "apple_top must retain the vTW indices in the 13-client ONE//e arbiter")
     require("parameter integer FAST_ADDR_CLIENT = -1" in arbiter and
             "logic other_addr_rw_en;" in arbiter and
             "LUT2 #(.INIT(4'hE)) apple_addr_enable_lut" in arbiter and
@@ -189,10 +190,13 @@ def static_checks() -> None:
             "if (machine_mode_q == 2'd1)" in top and
             "else if (machine_mode_q == 2'd2)" in top and
             "vtw_machine_ok_q       <= 1'b1;" in top and
-            "vtw_ctrl_q[0] && vtw_machine_ok_q" in top,
-            "vTW enable must latch the machine verdict so sessions survive CTRL-RESET")
+            "(!physical_bus_isolate && vtw_machine_ok_q)" in top and
+            "onee_enable_effective ||" in top,
+            "vTW enable must latch the physical-machine verdict while also "
+            "allowing a guarded virtual //e session")
     require("vtw_host_is_iiplus_q" in top and
-            ".host_is_iiplus(vtw_host_is_iiplus_q)" in top and
+            "vtw_host_is_iiplus_eff" in top and
+            ".host_is_iiplus(vtw_host_is_iiplus_eff)" in top and
             "IIPLUS_PARK_ADDR = 16'h0200" in
             read("hdl/apple/vtw_bus_engine.sv"),
             "vTW must latch II/II+ host type and park that host in ordinary "
@@ -247,10 +251,11 @@ def static_checks() -> None:
                 r"\bsp_req_target_q\s*<=\s*sp_req_target_d\s*;",
                 core_top, re.DOTALL) is not None,
             "X_ROUTE must capture the SmartPort target before X_SP_ISSUE")
-    require("wire         vtw_sp_active = vtw_smartport_visible;" in top and
+    require("wire         vtw_sp_active =\n"
+            "        !onee_enable_effective && vtw_smartport_visible;" in top and
             ".sp_active(vtw_sp_active)" in top and
             ".vtw_valid(vtw_sp_req_valid)" in top,
-            "apple_top must gate the short-circuit on SmartPort owning slot 7 and wire the port")
+            "apple_top must limit the SmartPort shortcut to the physical host and wire the port")
     require("xl_is_overlay_post" in core_top and
             "overlay_capture_armed" in core_top and
             "xl_decoded[16] == overlay_capture_bank_aux" in core_top and
@@ -264,7 +269,9 @@ def static_checks() -> None:
             "vtw_disk2_boot_scan_q <= boot_target_disk2;" in top and
             "vtw_slot6_boot_probe" in top and
             "!vtw_disk2_boot_scan_q" in top and
-            ".sp_boot_suppress(vtw_disk2_boot_scan_q)" in top,
+            "wire         vtw_sp_boot_suppress =\n"
+            "        !onee_enable_effective && vtw_disk2_boot_scan_q;" in top and
+            ".sp_boot_suppress(vtw_sp_boot_suppress)" in top,
             "vTW Disk II cold boots must hide slot 7 only until the accelerated scan probes slot 6")
     require("assign boot_target_disk2 = handoff_disk2;" in boot_card,
             "boot_menu_card must export the resolved Disk II handoff target to vTW")
@@ -321,6 +328,11 @@ def static_checks() -> None:
             "!cycle_addr_q[0] && !d2_write_timing_active" in core_top and
             "wire sd_disk2_native = sd_disk2 && !d2_fast_hit;" in core_top,
             "vTW may bypass the Apple bus only for even Disk II reads")
+    require("logic slow_update_valid_q;" in core_top and
+            "slow_update_valid_q <= core_en;" in core_top and
+            "if (slow_update_valid_q && slow_update_hit_q)" in core_top and
+            "d2_time_ready &&" in core_top,
+            "vTW must stage slowdown bookkeeping without delaying Disk II holds")
     require("wire d2_cycle_tick_accept =\n"
             "        core_en && d2_active && !private_d2_q && !sd_disk2_native;"
             in core_top and
@@ -341,21 +353,24 @@ def static_checks() -> None:
     require("logic disk2_active_timing_q;" in top and
             "if (!rstn[1])\n            disk2_active_timing_q <= 1'b0;" in top and
             "disk2_active_timing_q <= disk2_active;" in top and
-            ".ab_read(gate_ab(" in top and
-            "card_slot6_enable && disk2_active_timing_q))" in top and
-            ".rom_serve_en(ab_read.serve_en &&" in top and
-            "card_slot6_enable && disk2_active &&" in top and
-            "!disk2_active_timing_q)" in top and
+            "wire disk2_bus_visible =\n"
+            "        onee_enable_effective ||\n"
+            "        (card_slot6_enable && disk2_active_timing_q);" in top and
+            ".ab_read(gate_ab(ab_read, disk2_bus_visible))" in top and
+            "wire disk2_live_handoff_serve =\n"
+            "        !onee_enable_effective && card_slot6_enable && disk2_active &&\n"
+            "        !disk2_active_timing_q;" in top and
+            ".rom_serve_en(ab_read.serve_en && disk2_live_handoff_serve)" in top and
             "wire rom_read_serve = ab_read.serve_en || rom_serve_en;" in disk2 and
             "wire ab_rom_read = rom_read_serve && ab_read.rw && slot_rom_hit;" in disk2 and
-            "assign vtw_disk2_active = vtw_core_run_eff && vtw_bus_owned" in top and
+            "assign vtw_disk2_active = !onee_enable_effective &&" in top and
+            "vtw_core_run_eff && vtw_bus_owned" in top and
             "card_slot6_enable && disk2_active_timing_q" in top and
             "!vtw_ctrl_q[7];" in top and
             ".vtw_active(vtw_disk2_active)" in top and
             ".d2_active(vtw_disk2_active)" in top,
-            "apple_top must stage the boot-menu Disk II gate for vTW, then enable both "
-            "private-port consumers only during bus ownership and while compatibility "
-            "disable is clear")
+            "apple_top must force slot 6 onto the ONE//e bus while keeping the physical "
+            "handoff staging and both vTW private-port consumers physical-host only")
     require("wire disk_cycle_tick" in disk2_card and
             "vtw_native_cycle_active" in disk2_card and
             "(vtw_cycle_tick || vtw_io_read);" in disk2_card and
@@ -387,10 +402,20 @@ def static_checks() -> None:
     # Takeover machine reset (RES#-at-takeover)
     wrapper = read("hdl/apple/apple_bus_wrapper.sv")
     service = read("ps_sources/frontend/vtw_service.c")
+    irq_pad_match = re.search(
+        r"set_property\s+-dict\s+\{([^}]*)\}\s*\\\s*"
+        r"\[get_ports\s+a2fpga_irq_n\]",
+        xdc,
+    )
+    irq_pad_tokens = irq_pad_match.group(1).split() if irq_pad_match else []
+    irq_pad_properties = set(zip(irq_pad_tokens[0::2],
+                                 irq_pad_tokens[1::2]))
     require("assign apple_res_pin = 1'bz;" in wrapper and
-            "apple_reset_release && !ab_write_arb.assert_res;" in top,
+            "assign apple_reset_n_out = physical_bus_isolate ? 1'b1 :" in top and
+            "(apple_reset_release && !ab_write_arb.assert_res);" in top,
             "all internal RESET requests must use the dedicated A2CTRL "
-            "transistor while A2FPGA.RESET remains observation-only")
+            "transistor while A2FPGA.RESET remains observation-only and "
+            "ONE//e isolation releases the transistor")
     require(".assert_apple_res(vtw_ctrl_q[4])" in top,
             "apple_top must wire VTW_CTRL bit4 to the takeover reset")
     require("VTW_ST_RES_HOLD" in service and
@@ -455,6 +480,8 @@ def static_checks() -> None:
             "floating_scan_pos" in core_top and
             "video_cycle, 2'd2" in core_top and
             "floating_scan_issue" in core_top and
+            "floating_scan_pending_q && ab_read.data_en" in core_top and
+            "floating_scan_pending_q <= 1'b1;" in core_top and
             "full_floating_read" in core_top and
             "(cycle_addr_q[7:4] >= 4'h3)" in core_top and
             "(cycle_addr_q[7:4] <= 4'h5)" in core_top and
@@ -614,14 +641,17 @@ def static_checks() -> None:
             "always_ff @(posedge clk)" in wrapper and
             "(!host_is_iiplus || !irq_rearm_release_q);" in wrapper and
             "{NAME =~ *apple_bus_wrapper_i/irq_rearm_release_q_reg}" in xdc and
-            "{IOSTANDARD LVCMOS33 DRIVE 16 SLEW FAST}" in xdc and
+            {("IOSTANDARD", "LVCMOS33"),
+             ("DRIVE", "16"),
+             ("SLEW", "FAST"),
+             ("PULLTYPE", "PULLUP")} <= irq_pad_properties and
             "-to [get_ports a2fpga_irq_n]" in xdc,
             "II+ IRQ must use a mostly-low re-arm waveform with a bounded "
-            "register-to-pad route and the strongest IRQ-pad edge")
+            "register-to-pad route, strongest IRQ-pad edge, and safe pull-up")
     require("TAP_DMA_REARM_RELEASE = TAP_DATA_SNAP - 8;" in wrapper and
             "TAP_DMA_REARM_ASSERT  = TAP_DATA_SNAP - 4;" in wrapper and
             "iiplus_dma_refresh_active && dma_rearm_release_q" in wrapper and
-            "assign vtw_iiplus_dma_refresh_active = vtw_host_is_iiplus_q;" in top and
+            "!physical_bus_isolate && vtw_host_is_iiplus_q;" in top and
             ".iiplus_dma_refresh_active(vtw_iiplus_dma_refresh_active)" in top and
             "{NAME =~ *apple_bus_wrapper_i/dma_rearm_release_q_reg}" in xdc and
             "-to [get_ports a2fpga_dma_n]" in xdc,

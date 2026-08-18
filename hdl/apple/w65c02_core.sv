@@ -209,7 +209,10 @@ module w65c02_core #(
     /* W65C02 decimal ADC/SBC already owns ST_DECIMAL_EXTRA. Save the exact
      * arithmetic result at the operand edge, then commit A/P on that existing
      * extra cycle so the BCD carry chains do not feed the shared flag mux. */
-    logic [15:0] decimal_result_q;
+    // A/P and the captured operand stay stable through ST_DECIMAL_EXTRA, so
+    // synthesis can otherwise rebuild this result at the commit edge. Keep
+    // the register as the timing stage that the extra cycle provides.
+    (* DONT_TOUCH = "TRUE" *) logic [15:0] decimal_result_q;
     logic        decimal_so_pending_q;
     logic [7:0]  ptr_q;
     logic [15:0] ea_q;

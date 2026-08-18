@@ -250,6 +250,8 @@ def check_masked_wskid_copy() -> None:
         r"CARD_CTRL_REG_PHASOR_PAN_LO\s*:\s*begin.*?end",
         r"CARD_CTRL_REG_PHASOR_PAN_HI\s*:\s*begin.*?end",
         r"CARD_CTRL_REG_PHASOR_AUDIO\s*:\s*begin.*?end",
+        r"CARD_CTRL_REG_VTW_SYNC_CMD\s*:\s*begin.*?end",
+        r"CARD_CTRL_REG_VTW_POST_PUSH\s*:\s*begin.*?end",
     ]
     allowed_spans: list[tuple[int, int]] = []
     for pattern in allowed_patterns:
@@ -328,6 +330,21 @@ def check_masked_wskid_copy() -> None:
         if re.search(r"as_common\.w(?:data|strb)", match.group(1)):
             raise AssertionError(
                 f"{register} must not retain a canonical WDATA/WSTRB load"
+            )
+
+    for register in ("VTW_SYNC_CMD", "VTW_POST_PUSH"):
+        match = re.search(
+            rf"CARD_CTRL_REG_{register}\s*:\s*begin(.*?)end",
+            apple_source,
+            re.MULTILINE | re.DOTALL,
+        )
+        if not match or "as_vtw_phasor_wdata" not in match.group(1):
+            raise AssertionError(
+                f"{register} must use the east-side copied WDATA"
+            )
+        if "as_common.wdata" in match.group(1):
+            raise AssertionError(
+                f"{register} must not retain a canonical WDATA load"
             )
 
 

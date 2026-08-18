@@ -220,8 +220,9 @@ def check_hdl():
     require(".slot_assign(3'h5)" in top, "applicard must claim slot 5")
     require("applicard_ab_write" in top.split("client_writes")[1],
             "applicard_ab_write missing from write arbiter")
-    require(".NUM_CLIENTS(12)" in top,
-            "arbiter NUM_CLIENTS must be 12 (11 cards + the vTW bus master)")
+    require(".NUM_CLIENTS(13)" in top and
+            ".vtw_enabled(vtw_enable_eff || onee_enable_effective)" in top,
+            "arbiter must add the ONE//e motherboard and block AppliCard bus mastering")
 
     # Crossbar slave 7 handoff.
     require(".applicard_as_client(as_clients[7])" in wrapper,

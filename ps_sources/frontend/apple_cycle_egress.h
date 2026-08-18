@@ -250,6 +250,12 @@ extern volatile uint32_t g_resync_pending;
  * on CPU1, so this counter needs no cross-core lock. */
 extern volatile uint32_t g_video_shadow_generation;
 
+/* Advances after each captured write that can affect a full-shadow legacy
+ * frame. In addition to HGR/DHGR at $2000-$9FFF, this includes both text/
+ * lores pages at $0400-$0BFF. It stays separate from the SHR generation so
+ * ordinary text traffic cannot force an unrelated SHR cache rebuild. */
+extern volatile uint32_t g_legacy_video_shadow_generation;
+
 /* --- Diagnostic counters ----------------------------------------------- */
 extern volatile uint32_t g_records_processed;
 extern volatile uint32_t g_gap_markers_seen;

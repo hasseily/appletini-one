@@ -40,6 +40,8 @@ typedef struct {
     uint8_t started;
     uint8_t ready;
     uint8_t menu_capture;
+    uint8_t onee_fixed_mode;
+    uint8_t onee_input_blocked;
     uint8_t active_count;
     uint8_t keyboard_count;
     uint8_t mouse_count;
@@ -59,6 +61,11 @@ void usb_hid_service_poll(void);
 uint32_t usb_hid_service_activity_count(void);
 void usb_hid_service_set_sensitivity(uint8_t sensitivity);
 void usb_hid_service_set_menu_capture(uint8_t capture);
+/* ONE//e replaces saved key bindings with a fixed control set. Blocking the
+ * Apple bridge releases all live keys and keeps reports confined to the menu. */
+void usb_hid_service_set_onee_fixed_mode(uint8_t enable);
+void usb_hid_service_set_onee_input_blocked(uint8_t blocked);
+uint8_t usb_hid_service_all_input_released(void);
 void usb_hid_service_set_menu_ok_source(usb_hid_menu_source_t source);
 void usb_hid_service_set_menu_open_close_source(usb_hid_menu_source_t source);
 void usb_hid_service_set_screenshot_sources(usb_hid_menu_source_t a2_source,

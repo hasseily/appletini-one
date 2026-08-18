@@ -80,6 +80,7 @@ module tb_applicard_bus_master;
     apple_bus_wrapper wrapper_i (
         .clk(clk),
         .rstn(rstn),
+        .physical_bus_isolate(1'b0),
         .res_filtered_out(),
         .dbg_lost_cycle_count(),
         .dbg_bus_quality(),

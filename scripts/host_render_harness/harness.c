@@ -4,7 +4,7 @@
  * Compiles the REAL apple_cycle_renderer.c + appletini_ntsc.c +
  * appletini_csbits.c for x86 and drives them with synthetic capture
  * records, mimicking apple_cycle_egress.c's shadow-write + dispatch
- * order exactly. Five scenarios, mirroring hardware reports:
+ * order exactly. Eight scenarios, mirroring hardware reports:
  *
  *   T1  dragons.shr4i (interlaced R4G4B4): full-frame decode dumped
  *       for pixel-exact comparison against scripts/render_shr4.py.
@@ -16,11 +16,21 @@
  *       load_shr streams them while SHR stays on. After each load the
  *       published frame and the shadow banks are dumped; the checker
  *       re-decodes the banks and compares.
- *   T4  Video-7 MIX (COL140M): state 10 and the UI gate must select
- *       monochrome and color across 8, 8, 8, and 4 dots per 28 dots.
+ *   T4  Standard DHGR must stay distinct from HGR and marked DHGRi;
+ *       Video-7 MIX state 10 and its UI gate must select monochrome and
+ *       color across 8, 8, 8, and 4 dots per 28 dots.
  *   T5  Per-switch scanner phase: TEXT/MIXED delay one cycle,
  *       80COL/DHIRES advance one, and ALTCHAR advances two, with and
  *       without the vTW capture normalization.
+ *   T6  Static DHGRi cadence: a settled 384-row double-hires weave
+ *       publishes once, holds that slot across frame markers, and rebuilds
+ *       exactly once after a shadow write settles.
+ *   T7  Static DLORESi invalidation: writes to either low-resolution page
+ *       advance the legacy cache generation without churning the SHR cache.
+ *   T8  Video-7 MIX load transaction: with MIX selected before the first
+ *       write, stream all four DHGRi banks across frame edges. The $FF A2Li
+ *       marker must hold the old published slot until mode 1 commits the
+ *       complete pair, then publish one pixel-identical settled weave.
  *
  * Usage: harness.exe <repo_root> <out_dir>
  * Then:  python scripts/host_render_harness/check_output.py <out_dir>
@@ -48,6 +58,7 @@ volatile uint8_t *const g_main_bank = s_main_mem;
 volatile uint8_t *const g_aux_bank  = s_aux_mem;
 volatile uint32_t g_resync_pending  = 0u;
 volatile uint32_t g_video_shadow_generation = 1u;
+volatile uint32_t g_legacy_video_shadow_generation = 1u;
 
 static uint8_t s_slot_mem[COMP_APPLE_SLOT_COUNT][COMP_APPLE_SLOT_BYTES];
 const uint32_t comp_apple_slot_addr[COMP_APPLE_SLOT_COUNT] = {
@@ -157,6 +168,8 @@ static uint64_t rec_softswitch(uint16_t addr, uint32_t sw11)
 #define SW_HGR        (1u << ACE_SWB_HIRES_BIT)
 #define SW_DHGR       ((1u << ACE_SWB_HIRES_BIT) | (1u << ACE_SWB_80COL_BIT) | \
                        (1u << ACE_SWB_DHIRES_BIT))
+#define SW_DLORES     ((1u << ACE_SWB_80COL_BIT) | \
+                       (1u << ACE_SWB_DHIRES_BIT))
 
 /* ---------- egress mimic (apple_cycle_egress.c drain body) ---------- */
 
@@ -176,9 +189,13 @@ static void feed(uint64_t rec)
         } else {
             g_main_bank[a & 0xFFFFu] = d;
         }
-        if ((uint16_t)(a & 0xFFFFu) >= 0x2000u &&
-            (uint16_t)(a & 0xFFFFu) <= 0x9FFFu) {
+        const uint16_t video_addr = (uint16_t)(a & 0xFFFFu);
+        if (video_addr >= 0x2000u && video_addr <= 0x9FFFu) {
             g_video_shadow_generation++;
+        }
+        if ((video_addr >= 0x0400u && video_addr <= 0x0BFFu) ||
+            (video_addr >= 0x2000u && video_addr <= 0x9FFFu)) {
+            g_legacy_video_shadow_generation++;
         }
     }
     apple_cycle_renderer_on_record(rec);
@@ -605,14 +622,25 @@ static void t4_dhgr_col140m(void)
     int color_unchanged = 1;
 
     printf("--- T4 Video-7 MIX (COL140M) state gate and 8+8+8+4 alignment ---\n");
+    apple_cycle_renderer_reset_local_video_state();
     feed(rec_io(0xC029u, 0x01u));
     memset(&s_aux_mem[0x2000u], 0x55, 0x2000u);
     memset(&s_main_mem[0x2000u], 0xAA, 0x2000u);
+    memset(&s_aux_mem[0x4000u], 0x00, 0x2000u);
+    memset(&s_main_mem[0x4000u], 0x00, 0x2000u);
 
     s_settings = apple_video_settings_pack_border_full(
         0u, 0u, APPLE_VIDEO_COLOR_RGB, 1u, 1u, 0, 0, 0u, 0u, 0u);
     legacy_full_frame(SW_DHGR);
     legacy_full_frame(SW_DHGR);
+    legacy_full_frame(SW_DHGR);
+    expect((s_pub_detail & APPLE_FB_FORMAT_BASE_MASK) ==
+               APPLE_FB_FORMAT_DHGR,
+           "T4 C00D/C05E mode is DHGR rather than HGR");
+    expect((s_pub_detail & APPLE_FB_FORMAT_PAGE_MASK) ==
+               (APPLE_FB_FORMAT_PAGE_NONE <<
+                APPLE_FB_FORMAT_PAGE_SHIFT),
+           "T4 unmarked DHGR remains standard rather than DHGRi");
     memcpy(color_pixels,
            s_slot_mem[s_pub_slot] +
                (row * ATN_SCRATCH_ROW_PIXELS +
@@ -768,6 +796,320 @@ static void t5_switch_phase(void)
     apple_cycle_renderer_set_vtw_1mhz(0u);
 }
 
+static void t6_dhgri_static_cache(void)
+{
+    size_t len;
+    uint8_t *f = load_file("software/legacy_demo_images/face.dhri", &len);
+    const uint8_t mode = f[0x607Cu];
+    uint32_t published;
+    uint32_t skipped;
+    uint32_t rebuilt;
+
+    printf("--- T6 static DHGRi render cadence ---\n");
+    expect(len == 0x8000u, "T6 DHGRi source is four 8K banks");
+
+    memset(s_main_mem, 0, sizeof(s_main_mem));
+    memset(s_aux_mem, 0, sizeof(s_aux_mem));
+    apple_cycle_renderer_reset_local_video_state();
+
+    /* File layout matches A2IMGVIEW: page-1 AUX/main, then page-2
+     * AUX/main. Hold the A2Li mode byte at zero until all four banks have
+     * reached the renderer shadow. */
+    for (size_t i = 0u; i < 0x2000u; ++i) {
+        feed(rec_write(0x012000u + (uint32_t)i, f[i]));
+        feed(rec_write(0x002000u + (uint32_t)i, f[0x2000u + i]));
+        feed(rec_write(0x014000u + (uint32_t)i, f[0x4000u + i]));
+        feed(rec_write(0x004000u + (uint32_t)i,
+                       (i == 0x7Cu) ? 0u : f[0x6000u + i]));
+    }
+    legacy_frame(SW_DHGR);
+    legacy_frame(SW_DHGR);
+    feed(rec_write(0x00407Cu, mode));
+
+    legacy_frame(SW_DHGR);  /* observe mode and arm settling */
+    legacy_frame(SW_DHGR);  /* render and publish once */
+    expect(s_pub_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I,
+           "T6 publishes the settled DHGRi weave");
+    expect((s_pub_detail & APPLE_FB_FORMAT_BASE_MASK) ==
+               APPLE_FB_FORMAT_DHGR,
+           "T6 publishes DHGR rather than HGR detail");
+
+    published = s_pub_count;
+    skipped = g_acr_legacy_frames_skipped;
+    rebuilt = g_acr_legacy_cache_rebuilds;
+    for (uint32_t frame = 0u; frame < 64u; ++frame) {
+        legacy_frame(SW_DHGR);
+    }
+    expect(s_pub_count == published,
+           "T6 64 unchanged frame markers reuse one complete DHGRi slot");
+    expect(g_acr_legacy_frames_skipped - skipped == 64u,
+           "T6 static cadence skips all 64 costly DHGRi rebuilds");
+    expect(g_acr_legacy_cache_rebuilds == rebuilt,
+           "T6 static cadence does not report a hidden rebuild");
+
+    /* A real shadow change must wait one quiet marker, rebuild once, then
+     * return to the static hold. */
+    feed(rec_write(0x012000u, (uint8_t)(g_aux_bank[0x2000u] ^ 0x7Fu)));
+    legacy_frame(SW_DHGR);
+    expect(s_pub_count == published,
+           "T6 changed DHGRi shadow waits one settling frame");
+    legacy_frame(SW_DHGR);
+    expect(s_pub_count == published + 1u,
+           "T6 changed DHGRi shadow rebuilds exactly once");
+    published = s_pub_count;
+    for (uint32_t frame = 0u; frame < 16u; ++frame) {
+        legacy_frame(SW_DHGR);
+    }
+    expect(s_pub_count == published,
+           "T6 rebuilt DHGRi frame returns to a stable hold");
+
+    free(f);
+}
+
+static void t7_dloresi_cache_invalidation(void)
+{
+    uint32_t published;
+    uint32_t shr_generation;
+    uint32_t legacy_generation;
+
+    printf("--- T7 DLORESi cache invalidation ---\n");
+    memset(s_main_mem, 0, sizeof(s_main_mem));
+    memset(s_aux_mem, 0, sizeof(s_aux_mem));
+    apple_cycle_renderer_reset_local_video_state();
+
+    /* Seed both text/lores pages and arm A2Li interlace through the page-2
+     * screen hole. The final mode-byte write is the commit edge. */
+    for (uint32_t i = 0u; i < 0x400u; ++i) {
+        feed(rec_write(0x010400u + i, (uint8_t)(i ^ 0x55u)));
+        feed(rec_write(0x000400u + i, (uint8_t)(i ^ 0xAAu)));
+        feed(rec_write(0x010800u + i, (uint8_t)(i + 0x31u)));
+        feed(rec_write(0x000800u + i, (uint8_t)(i + 0x73u)));
+    }
+    feed(rec_write(0x000878u, 0xC1u));
+    feed(rec_write(0x000879u, 0xB2u));
+    feed(rec_write(0x00087Au, 0xCCu));
+    feed(rec_write(0x00087Bu, 0xE9u));
+    feed(rec_write(0x00087Cu, 0x00u));
+    legacy_frame(SW_DLORES);
+    legacy_frame(SW_DLORES);
+    feed(rec_write(0x00087Cu, 0x01u));
+    legacy_frame(SW_DLORES);
+    legacy_frame(SW_DLORES);
+    expect(s_pub_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I,
+           "T7 publishes the settled DLORESi weave");
+    expect((s_pub_detail & APPLE_FB_FORMAT_BASE_MASK) ==
+               APPLE_FB_FORMAT_DGR,
+           "T7 publishes DGR interlace detail");
+
+    published = s_pub_count;
+    legacy_frame(SW_DLORES);
+    legacy_frame(SW_DLORES);
+    expect(s_pub_count == published,
+           "T7 unchanged DLORESi markers hold the cached frame");
+
+    shr_generation = g_video_shadow_generation;
+    legacy_generation = g_legacy_video_shadow_generation;
+    feed(rec_write(0x010400u, (uint8_t)(g_aux_bank[0x0400u] ^ 0x0Fu)));
+    expect(g_video_shadow_generation == shr_generation,
+           "T7 lores write does not invalidate the SHR cache");
+    expect(g_legacy_video_shadow_generation == legacy_generation + 1u,
+           "T7 lores write advances the legacy cache generation");
+    legacy_frame(SW_DLORES);
+    expect(s_pub_count == published,
+           "T7 changed DLORESi shadow waits one settling frame");
+    legacy_frame(SW_DLORES);
+    expect(s_pub_count == published + 1u,
+           "T7 changed DLORESi shadow rebuilds exactly once");
+}
+
+static void stream_dhgr_bank_with_frame_edges(uint32_t addr24,
+                                               const uint8_t *data,
+                                               uint8_t hold_mode_byte)
+{
+    for (size_t chunk = 0u; chunk < 0x2000u; chunk += 0x400u) {
+        for (size_t i = chunk; i < chunk + 0x400u; ++i) {
+            uint8_t value = data[i];
+
+            if (hold_mode_byte != 0u && i == 0x7Cu) {
+                value = 0xFFu;
+            }
+            feed(rec_write(addr24 + (uint32_t)i, value));
+        }
+        legacy_frame(SW_DHGR);
+    }
+}
+
+static void t8_video7_mix_load_hold(void)
+{
+    size_t len;
+    uint8_t *f = load_file("software/legacy_demo_images/face.dhri", &len);
+    uint8_t *held_frame;
+    uint8_t *committed_frame;
+    const uint8_t mode = f[0x607Cu];
+    uint32_t published;
+    uint32_t committed_slot;
+
+    printf("--- T8 active Video-7 MIX DHGRi load hold ---\n");
+    expect(len == 0x8000u, "T8 source is four DHGRi 8K banks");
+
+    held_frame = (uint8_t *)malloc(COMP_APPLE_SLOT_BYTES);
+    committed_frame = (uint8_t *)malloc(COMP_APPLE_SLOT_BYTES);
+    if (held_frame == NULL || committed_frame == NULL) {
+        fprintf(stderr, "T8 allocation failed\n");
+        exit(2);
+    }
+
+    memset(s_main_mem, 0xAA, sizeof(s_main_mem));
+    memset(s_aux_mem, 0x55, sizeof(s_aux_mem));
+    apple_cycle_renderer_reset_local_video_state();
+    s_settings = apple_video_settings_pack_border_full(
+        0u, 0u, APPLE_VIDEO_COLOR_RGB, 1u, 1u, 0, 0, 0u, 0u, 0u);
+
+    /* Match the user's order: Video-7 MIX is already selected before any
+     * field bytes move. Publish one complete old MIX frame to hold. */
+    video7_select_mode(2u);
+    legacy_full_frame(SW_DHGR);
+    legacy_full_frame(SW_DHGR);
+    legacy_full_frame(SW_DHGR);
+    expect((s_pub_detail & APPLE_FB_FORMAT_SELECTORS_MASK) ==
+               (APPLE_FB_FORMAT_LEGACY_VIDEO7_MIX <<
+                APPLE_FB_FORMAT_SELECTORS_SHIFT),
+           "T8 starts with Video-7 MIX selected");
+    published = s_pub_count;
+    memcpy(held_frame, s_slot_mem[s_pub_slot], COMP_APPLE_SLOT_BYTES);
+
+    /* First viewer entry starts in TEXT. Reset local mode state, then prove a
+     * frame edge during MLI open cannot clear the transaction before the
+     * loader selects Video-7 MIX and DHGR. */
+    apple_cycle_renderer_reset_local_video_state();
+
+    /* First-ever load: there is no old A2Li marker. Stamp both signatures
+     * before the $FF mode writes, exactly as A2IMGVIEW does. */
+    feed(rec_write(0x004078u, 0xC1u));
+    feed(rec_write(0x004079u, 0xB2u));
+    feed(rec_write(0x00407Au, 0xCCu));
+    feed(rec_write(0x00407Bu, 0xE9u));
+    feed(rec_write(0x000878u, 0xC1u));
+    feed(rec_write(0x000879u, 0xB2u));
+    feed(rec_write(0x00087Au, 0xCCu));
+    feed(rec_write(0x00087Bu, 0xE9u));
+    feed(rec_write(0x00407Cu, 0xFFu));
+    feed(rec_write(0x00087Cu, 0xFFu));
+    legacy_frame(SW_TEXT_ONLY);
+    expect(s_pub_count == published,
+           "T8 TEXT/open frame edge preserves the first-load hold");
+    video7_select_mode(2u);
+    legacy_frame(SW_DHGR);
+    expect(s_pub_count == published,
+           "T8 MIX/DHGR select stays private before the first field write");
+
+    /* A wide MAIN staging read may replace the active hires marker. The
+     * matching lores sentinel is part of the same transaction and must keep
+     * publication held until the loader closes it. */
+    for (uint32_t i = 0u; i < 5u; ++i) {
+        feed(rec_write(0x004078u + i, 0u));
+    }
+    legacy_frame(SW_DHGR);
+    expect(s_pub_count == published,
+           "T8 surviving lores sentinel holds after MAIN $4078 is staged over");
+    feed(rec_write(0x004078u, 0xC1u));
+    feed(rec_write(0x004079u, 0xB2u));
+    feed(rec_write(0x00407Au, 0xCCu));
+    feed(rec_write(0x00407Bu, 0xE9u));
+    feed(rec_write(0x00407Cu, 0xFFu));
+
+    /* Replay A2IMGVIEW's exact DHGRi order and cross a frame edge after every
+     * 1K read/copy chunk. Bank 0 first lands in MAIN $2000, then copies to
+     * AUX $2000. Bank 2 stages in spare MAIN $6000 before its AUX $4000 copy,
+     * preserving MAIN $407C. Bank 3 also stages at $6000; only the destination
+     * MAIN $407C is forced to $FF until the final commit. */
+    stream_dhgr_bank_with_frame_edges(0x002000u, f + 0x0000u, 0u);
+    stream_dhgr_bank_with_frame_edges(0x012000u, f + 0x0000u, 0u);
+    stream_dhgr_bank_with_frame_edges(0x002000u, f + 0x2000u, 0u);
+    stream_dhgr_bank_with_frame_edges(0x006000u, f + 0x4000u, 0u);
+    stream_dhgr_bank_with_frame_edges(0x014000u, f + 0x4000u, 0u);
+    stream_dhgr_bank_with_frame_edges(0x006000u, f + 0x6000u, 0u);
+    feed(rec_write(0x00607Cu, 0xFFu));
+    legacy_frame(SW_DHGR);
+    stream_dhgr_bank_with_frame_edges(0x004000u, f + 0x6000u, 1u);
+    expect(s_pub_count == published,
+           "T8 partial active-MIX load publishes no interim frame");
+    expect(memcmp(held_frame, s_slot_mem[s_pub_slot],
+                  COMP_APPLE_SLOT_BYTES) == 0,
+           "T8 DVI reader slot remains byte-stable throughout the load");
+
+    /* Match show_dhgr: close the unused lores sentinel first. Even if a frame
+     * edge lands between these writes, MAIN $407C=$FF still holds the slot. */
+    feed(rec_write(0x00087Cu, 0u));
+    legacy_frame(SW_DHGR);
+    expect(s_pub_count == published,
+           "T8 hires sentinel holds between lores close and final commit");
+
+    /* The hires mode byte is the transaction commit. One marker observes the
+     * new weave and arms settling; the next publishes the complete shadow. */
+    feed(rec_write(0x00407Cu, mode));
+    legacy_frame(SW_DHGR);
+    expect(s_pub_count == published,
+           "T8 A2Li commit waits for one quiet frame marker");
+    legacy_frame(SW_DHGR);
+    expect(s_pub_count == published + 1u,
+           "T8 settled active-MIX DHGRi publishes exactly once");
+    expect(s_pub_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I &&
+           (s_pub_detail & APPLE_FB_FORMAT_BASE_MASK) ==
+               APPLE_FB_FORMAT_DHGR &&
+           (s_pub_detail & APPLE_FB_FORMAT_SELECTORS_MASK) ==
+               (APPLE_FB_FORMAT_LEGACY_VIDEO7_MIX <<
+                APPLE_FB_FORMAT_SELECTORS_SHIFT) &&
+           (s_pub_detail & APPLE_FB_FORMAT_PAGE_MASK) ==
+               (APPLE_FB_FORMAT_PAGE_INTERLACE <<
+                APPLE_FB_FORMAT_PAGE_SHIFT),
+           "T8 committed frame is Video-7 MIX DHGRi");
+    committed_slot = s_pub_slot;
+    memcpy(committed_frame, s_slot_mem[committed_slot],
+           COMP_APPLE_SLOT_BYTES);
+
+    for (uint32_t frame = 0u; frame < 16u; ++frame) {
+        legacy_frame(SW_DHGR);
+    }
+    expect(s_pub_count == published + 1u,
+           "T8 settled MIX frame stays cached without flicker");
+    expect(memcmp(committed_frame, s_slot_mem[committed_slot],
+                  COMP_APPLE_SLOT_BYTES) == 0,
+           "T8 committed DVI source slot stays byte-stable");
+
+    /* Re-render the same complete banks without a load transaction. This is
+     * the reference for the post-commit pixels and catches a hidden partial
+     * bank even if the cadence checks above pass. */
+    apple_cycle_renderer_reset_local_video_state();
+    video7_select_mode(2u);
+    legacy_frame(SW_DHGR);
+    legacy_frame(SW_DHGR);
+    legacy_frame(SW_DHGR);
+    expect(memcmp(committed_frame, s_slot_mem[s_pub_slot],
+                  COMP_APPLE_SLOT_BYTES) == 0,
+           "T8 committed load matches a clean complete-shadow render");
+
+    /* Reset aborts an interrupted loader. A stale $FF in retained Apple RAM
+     * must not freeze the post-reset TEXT screen. */
+    feed(rec_write(0x000878u, 0xC1u));
+    feed(rec_write(0x000879u, 0xB2u));
+    feed(rec_write(0x00087Au, 0xCCu));
+    feed(rec_write(0x00087Bu, 0xE9u));
+    feed(rec_write(0x00087Cu, 0xFFu));
+    feed(rec_write(0x004078u, 0xC1u));
+    feed(rec_write(0x004079u, 0xB2u));
+    feed(rec_write(0x00407Au, 0xCCu));
+    feed(rec_write(0x00407Bu, 0xE9u));
+    feed(rec_write(0x00407Cu, 0xFFu));
+    apple_cycle_renderer_reset_local_video_state();
+    expect(g_main_bank[0x087Cu] == 0u && g_main_bank[0x407Cu] == 0u,
+           "T8 Apple reset clears an interrupted $FF transaction");
+
+    free(committed_frame);
+    free(held_frame);
+    free(f);
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 3) {
@@ -791,6 +1133,9 @@ int main(int argc, char **argv)
     t3_shr_transitions();
     t4_dhgr_col140m();
     t5_switch_phase();
+    t6_dhgri_static_cache();
+    t7_dloresi_cache_invalidation();
+    t8_video7_mix_load_hold();
 
     printf("harness: %d failure(s)\n", s_failures);
     return s_failures ? 1 : 0;

@@ -24,8 +24,8 @@
 ; docs/LEGACY_PAGED_VIDEO_MODES.md: the A2Li signature + mode byte
 ; ride in page 2's first screen hole (file page-2 offset +$78), so
 ; staging page 2 arms the renderer with no loader side channel. The
-; loader disarms between images and writes each mode byte last, after
-; both pages are complete.
+; loader uses mode $FF as a private load transaction, then writes 0,
+; 1, or 2 once, after all required pages are complete.
 ;
 ; The MLI prefix is set at startup when empty: booting leaves it on
 ; the boot volume, but BASIC.SYSTEM's dash launch leaves it EMPTY (it
@@ -34,9 +34,10 @@
 ; RIGHT arrow (or any other key) advances, LEFT arrow goes back, ESC
 ; quits. After a key is consumed the loader waits for release, so
 ; auto-repeat cannot machine-gun the slideshow. There is NO text-mode
-; gap between images: the previous image stays on screen while the
-; next loads over it (the paint-in is intentional); only the very
-; first load shows the blanked black text page. No status text, ever.
+; gap between images. Legacy loads hold the previous complete published
+; frame until their final A2Li commit; SHR keeps its visible AUX paint-in
+; after $C029 takes over. The first load starts from the blanked black
+; text page. No status text, ever.
 ; If a full pass over the deck loads nothing, the viewer QUITs to
 ; ProDOS instead of spinning on a black screen. The on-screen format
 ; badge is drawn by the Appletini compositor (Video > Format badge),
@@ -63,6 +64,7 @@ PAGE1    = $C054
 HIRESON  = $C057
 DHGRON   = $C05E            ; access: AN3 low = DHGR on (with 80COL set)
 DHGROFF  = $C05F            ; access: AN3 high = DHGR off
+IOUDISON = $C07E            ; //c compatibility; floating paddle trigger on //e
 NEWVIDEO = $C029
 TEXTPAGE = $0400
 
@@ -73,6 +75,7 @@ FMT_DHGR  = 3
 FMT_DHGRI = 4
 V7_NONE    = 0
 V7_MIX     = 2
+A2LI_HOLD  = $FF            ; keep the last complete host frame while loading
 
 KEY_LEFT  = $88
 KEY_ESC   = $9B
@@ -125,17 +128,30 @@ main:
     sta fail_count
 
 show_image:
-    ; No text-mode gap: the previous image stays up while the next
-    ; loads over it. Only disarm the legacy paged modes (A2Li signal
-    ; in page 2's first screen hole, main bank) so a half-loaded pair
-    ; never weaves with stale data. Mode byte 0 = off; the signature
-    ; bytes may stay. A paged image re-arms only after page 2 is done.
+    ; No text-mode gap: the previous complete image stays up while the next
+    ; loads. Stamp both A2Li signatures first, then write the $FF load-hold
+    ; marker last. The host does not publish the partly replaced shadow until
+    ; show_hgr/show_dhgr commits 0, 1, or 2. The holes are not visible pixels.
+    ; Stamping them makes the first-ever load safe as well as later loads.
     lda #0
     sta STORE80OFF
     sta RAMRDOFF
     sta RAMWRTOFF            ; A2Li always lives in main memory
-    sta $407C               ; hires pair mode byte
-    sta $087C               ; lores pair mode byte
+    lda #$C1
+    sta $4078
+    sta $0878
+    lda #$B2
+    sta $4079
+    sta $0879
+    lda #$CC
+    sta $407A
+    sta $087A
+    lda #$E9
+    sta $407B
+    sta $087B
+    lda #A2LI_HOLD
+    sta $407C               ; hires load transaction begins
+    sta $087C               ; lores load transaction begins
 
     ; ---- open ----
     ldx img_index
@@ -180,8 +196,8 @@ prepare_dhgri:
     jsr select_dhgr
     jmp load_dhgri
 
-; Select the base mode before the first disk read. The old image stays
-; visible, then the new bytes paint over it as ProDOS fills the screen.
+; Select the base mode before the first disk read. The $FF A2Li transaction
+; keeps the old published frame visible until the final loader commit.
 select_hgr:
     sta STORE80OFF          ; ProDOS does not preserve video bank switches
     sta RAMRDOFF
@@ -209,6 +225,7 @@ select_dhgr:
     bit MIXEDOFF
     bit PAGE1
     bit HIRESON
+    sta IOUDISON             ; //c gate; //e C05E/F always drive DHIRES + AN3
     jsr video7_select_dhgr  ; commits the mode with 80COL and DHGR on
     rts
 
@@ -247,7 +264,7 @@ load_hgri:
     jsr read_chunk
     bcs fail_load
     ; Read page 2 into spare memory, then copy it to $4000 with the
-    ; A2Li mode held at zero. This keeps a partial pair disarmed.
+    ; A2Li mode held at $FF. This keeps the partial pair private.
     lda #$60
     ldy #$20
     jsr read_chunk
@@ -266,12 +283,17 @@ show_hgr:
     ; final state change, so the next frame cannot sample an armed pair
     ; with stale TEXT/HIRES/page switches from ProDOS.
     jsr select_hgr
+    lda #0
+    sta $087C               ; close the unused lores transaction
     lda cur_fmt
     cmp #FMT_HGRI
-    bne +
+    beq hgr_paged_commit
+    lda #0
+    sta $407C               ; ordinary HGR commits its complete page
+    jmp wait_key
+hgr_paged_commit:
     lda paged_mode
     sta $407C               ; final write arms the complete page pair
-+
     jmp wait_key
 
 fail_load:
@@ -280,14 +302,14 @@ fail_load:
 load_dhgri:
     jsr read_pair_to_page2000
     bcs fail_load
-    ; Page-2 pair: stage AUX $4000 through MAIN $4000, then main.
-    lda #$40
+    ; Page-2 pair: stage AUX $4000 in spare MAIN $6000, not MAIN $4000.
+    ; MAIN $4078-$407C carries the live A2Li $FF transaction marker; using
+    ; $4000 as scratch would overwrite it and let a partial MIX frame publish.
+    lda #$60
     ldy #$20
     jsr read_chunk
     bcs fail_load
-    lda #$40
-    ldy #$60
-    jsr copy_aux_range
+    jsr copy_paged_aux_from_6000
     lda #$60
     ldy #$20
     jsr read_chunk
@@ -301,12 +323,17 @@ load_dhgr:
 show_dhgr:
     jsr mli_close
     jsr select_dhgr
+    lda #0
+    sta $087C               ; close the unused lores transaction
     lda cur_fmt
     cmp #FMT_DHGRI
-    bne +
+    beq dhgr_paged_commit
+    lda #0
+    sta $407C               ; ordinary DHGR commits its complete page pair
+    jmp wait_key
+dhgr_paged_commit:
     lda paged_mode
     sta $407C               ; final write arms the complete page pair
-+
     jmp wait_key
 
 load_shr:
@@ -346,6 +373,11 @@ load_shr:
     ; extension magic is invalid, so the AUX copy paints in on screen.
     lda #$C1
     sta NEWVIDEO
+    ; SHR now owns publication. End the unused legacy transaction so a later
+    ; SHR exit cannot inherit a stale hold if this deck is interrupted.
+    lda #0
+    sta $407C
+    sta $087C
     lda #$20
     ldy #$A0
     jsr copy_aux_range
@@ -442,6 +474,15 @@ count_fail:
 +   jmp next_or_quit
 
 quit:
+    ; Every open/read failure either advances to another image or reaches
+    ; here. End both transactions before returning to ProDOS text, so a bad
+    ; deck cannot leave the last graphics frame frozen.
+    lda #0
+    sta STORE80OFF
+    sta RAMRDOFF
+    sta RAMWRTOFF
+    sta $407C
+    sta $087C
     lda #$01
     sta NEWVIDEO            ; SHR off
     bit DHGROFF
@@ -555,8 +596,35 @@ copy_page:
     sta RAMWRTOFF
     rts
 
-; ---- MAIN $6000-$7FFF -> MAIN $4000-$5FFF, A2Li held off ----
-; Save the staged mode byte, copy the signature and pixels with mode 0,
+; ---- MAIN $6000-$7FFF -> AUX $4000-$5FFF, preserve main A2Li hold ----
+copy_paged_aux_from_6000:
+    lda #0
+    sta STORE80OFF          ; RAMWRT must own the page-2 destination
+    sta RAMRDOFF            ; source is the MAIN staging bank
+    sta src_ptr
+    sta dst_ptr
+    lda #$60
+    sta src_ptr+1
+    lda #$40
+    sta dst_ptr+1
+    lda #0
+    sta RAMWRTON
+    ldx #$20
+copy_paged_aux_page:
+    ldy #0
+-   lda (src_ptr),y
+    sta (dst_ptr),y
+    iny
+    bne -
+    inc src_ptr+1
+    inc dst_ptr+1
+    dex
+    bne copy_paged_aux_page
+    sta RAMWRTOFF
+    rts
+
+; ---- MAIN $6000-$7FFF -> MAIN $4000-$5FFF, A2Li held private ----
+; Save the staged mode byte, copy the signature and pixels with mode $FF,
 ; then let show_hgr/show_dhgr write the saved mode after close.
 copy_paged_main_disarmed:
     lda #0
@@ -565,8 +633,9 @@ copy_paged_main_disarmed:
     sta RAMWRTOFF            ; source and destination are both main
     lda $607C
     sta paged_mode
-    lda #0
+    lda #A2LI_HOLD
     sta $607C
+    lda #0
     sta src_ptr
     sta dst_ptr
     lda #$60

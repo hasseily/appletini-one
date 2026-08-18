@@ -2336,9 +2336,16 @@ static uart_control_event_t process_command(
             } else {
                 vtw_service_set_enabled(enable);
             }
-            uart_puts(control->control_uart_base,
-                      enable ? "vtw: on (saved)\r\n"
-                             : "vtw: off (saved); CTRL-RESET the Apple\r\n");
+            if (vtw_service_onee_running() != 0U) {
+                uart_puts(control->control_uart_base,
+                          enable ?
+                              "vtw: host setting on (saved); ONE//e remains running\r\n" :
+                              "vtw: host setting off (saved); ONE//e remains running\r\n");
+            } else {
+                uart_puts(control->control_uart_base,
+                          enable ? "vtw: on (saved)\r\n" :
+                                   "vtw: off (saved); CTRL-RESET the Apple\r\n");
+            }
             return event;
         }
         if (str_ieq(argv[1], "speed") && argc >= 3) {

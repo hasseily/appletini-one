@@ -9,6 +9,7 @@
 
 #include "card_control_regs.h"
 #include "boot_menu_service.h"
+#include "disk2_service.h"
 #include "../lib/common.h"
 #include "../lib/uart.h"
 
@@ -30,6 +31,22 @@ extern const uint8_t apple2e_cpu_rom[16384];
  * settle before the ROM copy starts. */
 #define VTW_RES_HOLD_MS        100U
 #define VTW_RES_SETTLE_MS      50U
+#define VTW_ONEE_RUN_POLL_LIMIT 64U
+/* Keep the private bus in reset long enough for the main-loop reset hook to
+ * discard any PS-side SmartPort command which overlapped the reset edge. */
+#define VTW_ONEE_COLD_REBOOT_HOLD_MS 100U
+
+typedef struct {
+    uint16_t off;
+    uint8_t val;
+} vtw_rom_patch_t;
+
+/* Enhanced //e reset-path Apple-key reads. Only physical II/II+ host
+ * sessions use these patches; ONE//e is a native Enhanced //e. */
+static const vtw_rom_patch_t k_iiplus_rom_patches[] = {
+    { 0x02BBU, 0xA9U }, { 0x02BCU, 0x00U }, { 0x02BDU, 0xEAU },
+    { 0x02C3U, 0xA9U }, { 0x02C4U, 0x00U }, { 0x02C5U, 0xEAU },
+};
 
 typedef enum {
     VTW_ST_IDLE = 0,     /* disabled, or waiting for machine identification */
@@ -103,12 +120,26 @@ static uint8_t vtw_eff_is_slug(void)
     return (vtw_eff_mode() == CARD_CTRL_VTW_SPEED_DIVIDED &&
             vtw_eff_divider() >= VTW_SLUG_DIVIDER) ? 1U : 0U;
 }
+
+static void vtw_override_clear(void)
+{
+    g_ovr_active = 0U;
+    g_ovr_mode = 0U;
+    g_ovr_div = 0U;
+}
+
 static vtw_state_t g_state = VTW_ST_IDLE;
 static uint32_t g_take_polls;
 static uint32_t g_sessions_started;
 static uint8_t g_announced_wait;
 static uint8_t g_announced_handoff_wait;
+static uint8_t g_onee_running;
+static uint8_t g_onee_pause_requested;
+static uint8_t g_onee_cold_reboot_active;
+static uint8_t g_onee_disk2_override_active;
+static uint8_t g_disk2_config_enabled;
 static XTime g_res_phase_start;
+static XTime g_onee_cold_reboot_start;
 
 static const char *vtw_state_name(vtw_state_t st)
 {
@@ -156,17 +187,187 @@ static uint32_t vtw_ctrl_value(uint8_t enable, uint8_t core_run,
     return v;
 }
 
+static uint32_t vtw_onee_ctrl_value(uint8_t core_run, uint8_t apple_res)
+{
+    uint32_t v = CARD_CTRL_VTW_CTRL_ENABLE_BIT |
+                 CARD_CTRL_VTW_CTRL_DISABLE_D2_ACCEL_BIT;
+
+    if (core_run != 0U) {
+        v |= CARD_CTRL_VTW_CTRL_CORE_RUN_BIT;
+    }
+    if (apple_res != 0U) {
+        v |= CARD_CTRL_VTW_CTRL_APPLE_RES_BIT;
+    }
+    v |= ((uint32_t)(vtw_eff_mode() & CARD_CTRL_VTW_CTRL_SPEED_MASK))
+         << CARD_CTRL_VTW_CTRL_SPEED_SHIFT;
+    v |= ((uint32_t)vtw_eff_divider()) << CARD_CTRL_VTW_CTRL_DIVIDER_SHIFT;
+    if (g_ignore_c074 != 0U) {
+        v |= CARD_CTRL_VTW_CTRL_IGNORE_C074_BIT;
+    }
+    if (g_onee_pause_requested != 0U) {
+        v |= CARD_CTRL_VTW_CTRL_PAUSE_BIT;
+    }
+    return v;
+}
+
+typedef enum {
+    VTW_CTRL_LIVE_NONE = 0,
+    VTW_CTRL_LIVE_APPLIED,
+    VTW_CTRL_LIVE_FAILED
+} vtw_ctrl_live_result_t;
+
+/* Apply the current speed and option state without changing the phase of the
+ * active host or ONE//e session. All menu, option, and USB-key live updates
+ * pass through this writer so they cannot disagree about which control word
+ * owns the running core. */
+static vtw_ctrl_live_result_t vtw_apply_ctrl_live(void)
+{
+    uint32_t desired;
+
+    if (g_onee_running != 0U) {
+        /* A live option or speed reapply must not end an ordered reboot.
+         * CORE_RUN stays high as a supervisor-visible session echo, while
+         * virtual RES# itself keeps the 65C02 and all virtual cards reset. */
+        desired = vtw_onee_ctrl_value(
+            1U, g_onee_cold_reboot_active);
+    } else if (g_state == VTW_ST_RUN) {
+        desired = vtw_ctrl_value(1U, 1U, 0U);
+    } else if (g_state == VTW_ST_RES_HOLD) {
+        desired = vtw_ctrl_value(1U, 0U, 1U);
+    } else if (g_state != VTW_ST_IDLE) {
+        desired = vtw_ctrl_value(1U, 0U, 0U);
+    } else {
+        return VTW_CTRL_LIVE_NONE;
+    }
+
+    REG_WRITE(CARD_CTRL_VTW_CTRL_REG, desired);
+    if (REG_READ(CARD_CTRL_VTW_CTRL_REG) != desired) {
+        uart_puts(g_uart_base, "vtw: CTRL write readback failed\r\n");
+        return VTW_CTRL_LIVE_FAILED;
+    }
+    return VTW_CTRL_LIVE_APPLIED;
+}
+
+static uint8_t vtw_onee_isolation_confirmed(void)
+{
+    const uint32_t status = REG_READ(CARD_CTRL_ONEE_MODE_REG);
+    const uint32_t signature =
+        (status >> CARD_CTRL_ONEE_STATUS_SIGNATURE_SHIFT) &
+        CARD_CTRL_ONEE_STATUS_SIGNATURE_MASK;
+    const uint32_t inhibit =
+        (status >> CARD_CTRL_ONEE_STATUS_INHIBIT_SHIFT) &
+        CARD_CTRL_ONEE_STATUS_INHIBIT_MASK;
+    const uint32_t required =
+        CARD_CTRL_ONEE_STATUS_REQUEST_BIT |
+        CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT |
+        CARD_CTRL_ONEE_STATUS_ISOLATED_BIT |
+        CARD_CTRL_ONEE_STATUS_SELECTED_BIT |
+        CARD_CTRL_ONEE_STATUS_HDL_PRESENT_BIT;
+    const uint32_t blocked =
+        CARD_CTRL_ONEE_STATUS_OUTPUTS_OFF_BIT |
+        CARD_CTRL_ONEE_STATUS_ACTIVITY_BIT |
+        CARD_CTRL_ONEE_STATUS_LOCKOUT_BIT |
+        CARD_CTRL_ONEE_STATUS_APPLE_POWER_BIT;
+
+    return ((status & required) == required &&
+            (status & blocked) == 0U &&
+            signature == CARD_CTRL_ONEE_STATUS_SIGNATURE &&
+            inhibit == CARD_CTRL_ONEE_INHIBIT_NONE) ? 1U : 0U;
+}
+
+static uint8_t vtw_onee_control_active(void)
+{
+    const uint32_t status = REG_READ(CARD_CTRL_ONEE_MODE_REG);
+    const uint32_t active =
+        CARD_CTRL_ONEE_STATUS_REQUEST_BIT |
+        CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT |
+        CARD_CTRL_ONEE_STATUS_ISOLATED_BIT |
+        CARD_CTRL_ONEE_STATUS_ISOLATION_HOLD_BIT |
+        CARD_CTRL_ONEE_STATUS_SELECTED_BIT;
+
+    return ((status & active) != 0U) ? 1U : 0U;
+}
+
+static uint8_t vtw_iiplus_rom_patch_enabled(void)
+{
+    if (boot_menu_service_machine_mode() == CARD_MACHINE_MODE_IIPLUS) {
+        /* Continue with the guarded patch below. */
+    } else {
+        return 0U;
+    }
+
+    /* Guard the exact LDA $C062 / LDA $C061 bytes. A future ROM image swap
+     * must be re-audited rather than patched at stale offsets. */
+    if ((apple2e_cpu_rom[0x02BBU] != 0xADU) ||
+        (apple2e_cpu_rom[0x02BCU] != 0x62U) ||
+        (apple2e_cpu_rom[0x02BDU] != 0xC0U) ||
+        (apple2e_cpu_rom[0x02C3U] != 0xADU) ||
+        (apple2e_cpu_rom[0x02C4U] != 0x61U) ||
+        (apple2e_cpu_rom[0x02C5U] != 0xC0U)) {
+        uart_puts(g_uart_base,
+                  "vtw: ROM image changed, II+ button patch SKIPPED\r\n");
+        return 0U;
+    }
+
+    uart_puts(g_uart_base,
+              "vtw: II+ host, patching //e ROM reset button checks\r\n");
+    return 1U;
+}
+
+static uint8_t vtw_shadow_force_cold_start(uint8_t require_onee_isolation)
+{
+    if (require_onee_isolation != 0U &&
+        vtw_onee_isolation_confirmed() == 0U) {
+        return 0U;
+    }
+
+    /* Invalidate the autostart warm signature. */
+    REG_WRITE(CARD_CTRL_VTW_SHADOW_ADDR_REG, 0x003F3U);
+    REG_WRITE(CARD_CTRL_VTW_SHADOW_DATA_REG, 0x00U);  /* $03F3 */
+    REG_WRITE(CARD_CTRL_VTW_SHADOW_DATA_REG, 0x00U);  /* $03F4 */
+
+    return (require_onee_isolation == 0U ||
+            vtw_onee_isolation_confirmed() != 0U) ? 1U : 0U;
+}
+
+static uint8_t vtw_shadow_load_fixed_rom(uint8_t iiplus_patch,
+                                         uint8_t require_onee_isolation)
+{
+    uint32_t i;
+
+    REG_WRITE(CARD_CTRL_VTW_SHADOW_ADDR_REG, VTW_SHADOW_ROM_PHYS);
+    for (i = 0U; i < VTW_ROM_BYTES; ++i) {
+        uint8_t b = apple2e_cpu_rom[i];
+
+        /* Check every byte. If the connector state changes during this
+         * blocking copy, the caller clears VTW CTRL at the first failed
+         * check instead of waiting for the next main-loop poll. */
+        if (require_onee_isolation != 0U &&
+            vtw_onee_isolation_confirmed() == 0U) {
+            return 0U;
+        }
+        if (iiplus_patch != 0U) {
+            uint32_t p;
+
+            for (p = 0U;
+                 p < (sizeof(k_iiplus_rom_patches) /
+                      sizeof(k_iiplus_rom_patches[0]));
+                 ++p) {
+                if ((uint32_t)k_iiplus_rom_patches[p].off == i) {
+                    b = k_iiplus_rom_patches[p].val;
+                }
+            }
+        }
+        REG_WRITE(CARD_CTRL_VTW_SHADOW_DATA_REG, (uint32_t)b);
+    }
+
+    return (require_onee_isolation == 0U ||
+            vtw_onee_isolation_confirmed() != 0U) ? 1U : 0U;
+}
+
 static void vtw_apply_ctrl_options_live(void)
 {
-    /* Preserve the current session and reset phase while changing either
-     * compatibility option. */
-    if (g_state == VTW_ST_RUN) {
-        REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(1U, 1U, 0U));
-    } else if (g_state == VTW_ST_RES_HOLD) {
-        REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(1U, 0U, 1U));
-    } else if (g_state != VTW_ST_IDLE) {
-        REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(1U, 0U, 0U));
-    }
+    (void)vtw_apply_ctrl_live();
 }
 
 static uint8_t vtw_ms_elapsed(XTime since, uint32_t ms)
@@ -190,13 +391,36 @@ static void vtw_session_stop(const char *reason)
     g_state = VTW_ST_IDLE;
     g_announced_wait = 0U;
     g_announced_handoff_wait = 0U;
+    vtw_override_clear();
 }
 
 void vtw_service_init(uint32_t uart_base)
 {
     g_uart_base = uart_base;
+    g_state = VTW_ST_IDLE;
+    g_onee_running = 0U;
+    g_onee_pause_requested = 0U;
+    g_onee_cold_reboot_active = 0U;
+    g_onee_disk2_override_active = 0U;
+    g_disk2_config_enabled = 0U;
+    g_onee_cold_reboot_start = 0U;
+    vtw_override_clear();
     REG_WRITE(CARD_CTRL_VTW_CTRL_REG, 0U);
     uart_puts(uart_base, "vtw: virtual TransWarp service ready\r\n");
+}
+
+void vtw_service_set_disk2_config_enabled(uint8_t enable)
+{
+    uint8_t effective_enable;
+
+    /* Keep the saved host setting separate from the ONE//e session override.
+     * Reset-time config reapply and live menu changes both pass here, so the
+     * virtual track service cannot be turned off under a running ONE//e. The
+     * latest saved value takes effect as soon as the override ends. */
+    g_disk2_config_enabled = (enable != 0U) ? 1U : 0U;
+    effective_enable = (g_onee_disk2_override_active != 0U) ?
+        1U : g_disk2_config_enabled;
+    disk2_service_set_enabled(effective_enable);
 }
 
 void vtw_service_set_enabled(uint8_t enable)
@@ -220,13 +444,9 @@ void vtw_service_set_speed(uint8_t speed_mode, uint8_t pace_divider)
     }
     g_pace_divider = pace_divider;
     /* A configured (menu) speed change wins over any runtime override. */
-    g_ovr_active = 0U;
+    vtw_override_clear();
     /* Live update: rewrite CTRL with the current session bits intact. */
-    if (g_state == VTW_ST_RUN) {
-        REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(1U, 1U, 0U));
-    } else if (g_state != VTW_ST_IDLE) {
-        REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(1U, 0U, 0U));
-    }
+    (void)vtw_apply_ctrl_live();
 }
 
 void vtw_service_set_ignore_c074(uint8_t ignore)
@@ -265,19 +485,30 @@ static const char *vtw_eff_speed_name(void)
     return "custom divider";
 }
 
-static void vtw_override_apply(const char *tag)
+static uint8_t vtw_override_apply(const char *tag)
 {
-    if (g_state == VTW_ST_RUN) {
-        REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(1U, 1U, 0U));
+    const vtw_ctrl_live_result_t applied = vtw_apply_ctrl_live();
+    const uint8_t queued = (applied == VTW_CTRL_LIVE_NONE) ? 1U : 0U;
+
+    if (applied == VTW_CTRL_LIVE_FAILED) {
+        uart_puts(g_uart_base, "vtw: ");
+        uart_puts(g_uart_base, tag);
+        uart_puts(g_uart_base, " failed; speed unchanged\r\n");
+        (void)snprintf(g_last_action_text, sizeof(g_last_action_text),
+                       "TW: CONTROL WRITE FAILED");
+        return 0U;
     }
     uart_puts(g_uart_base, "vtw: ");
     uart_puts(g_uart_base, tag);
-    uart_puts(g_uart_base, " -> ");
+    uart_puts(g_uart_base,
+              queued == 0U ? " -> " : " queued -> ");
     uart_puts(g_uart_base, vtw_eff_speed_name());
     uart_puts(g_uart_base, g_ovr_active != 0U ? " (override)\r\n"
                                               : " (configured)\r\n");
     (void)snprintf(g_last_action_text, sizeof(g_last_action_text),
-                   "TW: %s", vtw_eff_speed_name());
+                   queued == 0U ? "TW: %s" : "TW NEXT: %s",
+                   vtw_eff_speed_name());
+    return 1U;
 }
 
 /* Nearest ladder index for the current effective speed; slug maps below
@@ -312,17 +543,40 @@ static int vtw_eff_ladder_index(void)
     return fastest_divided;
 }
 
+static uint8_t vtw_speed_request_allowed(uint8_t allow_onee_preselect)
+{
+    return (allow_onee_preselect != 0U ||
+            g_intent_enabled != 0U || g_state != VTW_ST_IDLE ||
+            g_onee_running != 0U || vtw_onee_control_active() != 0U) ? 1U : 0U;
+}
+
 void vtw_service_set_slug_enabled(uint8_t enable)
 {
     g_slug_enabled = enable ? 1U : 0U;
     /* Disarming the key also drops an active slug override: the setting
      * must leave no way to be stuck at 0.05 MHz unknowingly. */
     if (g_slug_enabled == 0U && vtw_eff_is_slug() != 0U) {
+        const uint8_t old_ovr_active = g_ovr_active;
+        const uint8_t old_ovr_mode = g_ovr_mode;
+        const uint16_t old_ovr_div = g_ovr_div;
+        vtw_ctrl_live_result_t applied;
+
         g_ovr_active = 0U;
-        if (g_state == VTW_ST_RUN) {
-            REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(1U, 1U, 0U));
+        applied = vtw_apply_ctrl_live();
+        if (applied == VTW_CTRL_LIVE_FAILED) {
+            g_ovr_active = old_ovr_active;
+            g_ovr_mode = old_ovr_mode;
+            g_ovr_div = old_ovr_div;
+            uart_puts(g_uart_base,
+                      "vtw: slug disable CTRL write failed; speed unchanged\r\n");
+            return;
         }
-        uart_puts(g_uart_base, "vtw: slug disabled, speed restored\r\n");
+        if (applied == VTW_CTRL_LIVE_APPLIED) {
+            uart_puts(g_uart_base, "vtw: slug disabled, speed restored\r\n");
+        } else {
+            uart_puts(g_uart_base,
+                      "vtw: slug disabled for the next session\r\n");
+        }
     }
 }
 
@@ -331,9 +585,13 @@ const char *vtw_service_last_action_text(void)
     return g_last_action_text;
 }
 
-void vtw_service_speed_toggle(void)
+void vtw_service_speed_toggle(uint8_t allow_onee_preselect)
 {
-    if (g_intent_enabled == 0U) {
+    const uint8_t old_ovr_active = g_ovr_active;
+    const uint8_t old_ovr_mode = g_ovr_mode;
+    const uint16_t old_ovr_div = g_ovr_div;
+
+    if (vtw_speed_request_allowed(allow_onee_preselect) == 0U) {
         uart_puts(g_uart_base, "vtw: speed toggle ignored (vtw off)\r\n");
         (void)snprintf(g_last_action_text, sizeof(g_last_action_text),
                        "TW: OFF");
@@ -350,14 +608,21 @@ void vtw_service_speed_toggle(void)
         g_ovr_mode = CARD_CTRL_VTW_SPEED_1MHZ;
         g_ovr_div = 0U;
     }
-    vtw_override_apply("speed toggle");
+    if (vtw_override_apply("speed toggle") == 0U) {
+        g_ovr_active = old_ovr_active;
+        g_ovr_mode = old_ovr_mode;
+        g_ovr_div = old_ovr_div;
+    }
 }
 
-void vtw_service_speed_step(int8_t dir)
+void vtw_service_speed_step(int8_t dir, uint8_t allow_onee_preselect)
 {
     int idx;
+    const uint8_t old_ovr_active = g_ovr_active;
+    const uint8_t old_ovr_mode = g_ovr_mode;
+    const uint16_t old_ovr_div = g_ovr_div;
 
-    if (g_intent_enabled == 0U) {
+    if (vtw_speed_request_allowed(allow_onee_preselect) == 0U) {
         uart_puts(g_uart_base, "vtw: speed step ignored (vtw off)\r\n");
         (void)snprintf(g_last_action_text, sizeof(g_last_action_text),
                        "TW: OFF");
@@ -374,12 +639,20 @@ void vtw_service_speed_step(int8_t dir)
     g_ovr_mode = k_vtw_ladder[idx].mode;
     g_ovr_div = (k_vtw_ladder[idx].divider != 0U)
                     ? k_vtw_ladder[idx].divider : (uint16_t)g_pace_divider;
-    vtw_override_apply(dir > 0 ? "speed +" : "speed -");
+    if (vtw_override_apply(dir > 0 ? "speed +" : "speed -") == 0U) {
+        g_ovr_active = old_ovr_active;
+        g_ovr_mode = old_ovr_mode;
+        g_ovr_div = old_ovr_div;
+    }
 }
 
-void vtw_service_slug_toggle(void)
+void vtw_service_slug_toggle(uint8_t allow_onee_preselect)
 {
-    if (g_intent_enabled == 0U) {
+    const uint8_t old_ovr_active = g_ovr_active;
+    const uint8_t old_ovr_mode = g_ovr_mode;
+    const uint16_t old_ovr_div = g_ovr_div;
+
+    if (vtw_speed_request_allowed(allow_onee_preselect) == 0U) {
         uart_puts(g_uart_base, "vtw: slug toggle ignored (vtw off)\r\n");
         (void)snprintf(g_last_action_text, sizeof(g_last_action_text),
                        "TW: OFF");
@@ -399,7 +672,11 @@ void vtw_service_slug_toggle(void)
         g_ovr_mode = CARD_CTRL_VTW_SPEED_DIVIDED;
         g_ovr_div = VTW_SLUG_DIVIDER;
     }
-    vtw_override_apply("slug toggle");
+    if (vtw_override_apply("slug toggle") == 0U) {
+        g_ovr_active = old_ovr_active;
+        g_ovr_mode = old_ovr_mode;
+        g_ovr_div = old_ovr_div;
+    }
 }
 
 void vtw_service_set_slowdown(uint16_t region_mask, uint16_t cycles)
@@ -429,11 +706,223 @@ uint8_t vtw_service_pace_divider(void)
 
 uint8_t vtw_service_session_active(void)
 {
-    return (g_state == VTW_ST_RUN) ? 1U : 0U;
+    return (g_state == VTW_ST_RUN || g_onee_running != 0U) ? 1U : 0U;
+}
+
+static void vtw_onee_shutdown(uint8_t clear_speed_override)
+{
+    g_onee_cold_reboot_active = 0U;
+    /* Literal zero: do not leave a host option bit or core-run request set. */
+    REG_WRITE(CARD_CTRL_VTW_CTRL_REG, 0U);
+    if (g_onee_running != 0U) {
+        uart_puts(g_uart_base, "vtw: ONE//e core stopped\r\n");
+    }
+    g_onee_running = 0U;
+    if (clear_speed_override != 0U) {
+        g_onee_pause_requested = 0U;
+        vtw_override_clear();
+    }
+    if (g_onee_disk2_override_active != 0U) {
+        g_onee_disk2_override_active = 0U;
+        disk2_service_set_enabled(g_disk2_config_enabled);
+    }
+}
+
+uint8_t vtw_service_onee_start(uint8_t disk2_config_enabled)
+{
+    uint32_t poll;
+
+    if (g_onee_running != 0U) {
+        return vtw_service_onee_running();
+    }
+    if (g_state != VTW_ST_IDLE || vtw_onee_isolation_confirmed() == 0U) {
+        return 0U;
+    }
+    /* ONE//e forces the virtual Disk II card into slot 6 even when the saved
+     * slot mask leaves it off. Match that session-only PL override in the PS
+     * track service, then apply the latest saved bit-6 state on every exit. */
+    g_disk2_config_enabled =
+        (disk2_config_enabled != 0U) ? 1U : 0U;
+    g_onee_disk2_override_active = 1U;
+    disk2_service_set_enabled(1U);
+
+    /* Only this confirmed-isolation branch asserts the virtual reset. The
+     * physical wrapper is already cut off, while ab_write_arb still carries
+     * assert_res into apple_virtual_bus. Keep the soft core held too. */
+    REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_onee_ctrl_value(0U, 1U));
+    if (vtw_onee_isolation_confirmed() == 0U ||
+        vtw_shadow_force_cold_start(1U) == 0U ||
+        vtw_shadow_load_fixed_rom(0U, 1U) == 0U) {
+        vtw_service_onee_suspend();
+        return 0U;
+    }
+
+    /* The video-standard latch changes only under this private RES# hold.
+     * Patch the matching boot-menu delay before either RESET or CORE_RUN can
+     * release, so the first virtual boot cannot race an old PAL/NTSC byte. */
+    boot_menu_service_apply_video_rom_patch();
+
+    /* Release virtual RESET while the core remains held, then release the
+     * core. Disk II private acceleration stays forced off in both writes. */
+    REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_onee_ctrl_value(0U, 0U));
+    if (vtw_onee_isolation_confirmed() == 0U) {
+        vtw_service_onee_suspend();
+        return 0U;
+    }
+    REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_onee_ctrl_value(1U, 0U));
+
+    for (poll = 0U; poll < VTW_ONEE_RUN_POLL_LIMIT; ++poll) {
+        const uint32_t status = REG_READ(CARD_CTRL_VTW_STATUS_REG);
+
+        if (vtw_onee_isolation_confirmed() == 0U) {
+            break;
+        }
+        if ((status & (CARD_CTRL_VTW_STATUS_ENABLE_EFF |
+                       CARD_CTRL_VTW_STATUS_CORE_RUN)) ==
+                      (CARD_CTRL_VTW_STATUS_ENABLE_EFF |
+                       CARD_CTRL_VTW_STATUS_CORE_RUN)) {
+            g_onee_running = 1U;
+            ++g_sessions_started;
+            uart_puts(g_uart_base,
+                      "vtw: ONE//e cold ROM loaded, core released\r\n");
+            return 1U;
+        }
+    }
+
+    vtw_service_onee_suspend();
+    uart_puts(g_uart_base, "vtw: ONE//e core release failed\r\n");
+    return 0U;
+}
+
+uint8_t vtw_service_onee_set_paused(uint8_t paused)
+{
+    uint8_t previous;
+    uint32_t status;
+
+    paused = (paused != 0U) ? 1U : 0U;
+    if (g_onee_running == 0U) {
+        /* Queue the desired state too. A persisted ONE//e request can become
+         * effective while the menu is already open; its first CORE_RUN word
+         * must then include PAUSE so no instruction escapes before CPU0's
+         * next UI poll. Recoverable start retries retain this request. */
+        g_onee_pause_requested = paused;
+        return 1U;
+    }
+    if (vtw_onee_isolation_confirmed() == 0U) {
+        return 0U;
+    }
+    if (g_onee_pause_requested == paused) {
+        return 1U;
+    }
+
+    previous = g_onee_pause_requested;
+    g_onee_pause_requested = paused;
+    if (vtw_apply_ctrl_live() != VTW_CTRL_LIVE_APPLIED) {
+        g_onee_pause_requested = previous;
+        (void)vtw_apply_ctrl_live();
+        return 0U;
+    }
+
+    /* PAUSE does not lower ENABLE or CORE_RUN. Keeping both status bits set
+     * tells the ONE//e supervisor that this is the same live machine, so it
+     * cannot cold-restart the core while the menu owns input. */
+    status = REG_READ(CARD_CTRL_VTW_STATUS_REG);
+    if ((status & (CARD_CTRL_VTW_STATUS_ENABLE_EFF |
+                   CARD_CTRL_VTW_STATUS_CORE_RUN)) !=
+                  (CARD_CTRL_VTW_STATUS_ENABLE_EFF |
+                   CARD_CTRL_VTW_STATUS_CORE_RUN)) {
+        g_onee_pause_requested = previous;
+        (void)vtw_apply_ctrl_live();
+        return 0U;
+    }
+    return 1U;
+}
+
+uint8_t vtw_service_onee_paused(void)
+{
+    return (g_onee_running != 0U && g_onee_pause_requested != 0U) ? 1U : 0U;
+}
+
+uint8_t vtw_service_onee_cold_reboot(void)
+{
+    if (g_onee_cold_reboot_active != 0U) {
+        return 1U;
+    }
+    if (vtw_service_onee_running() == 0U ||
+        vtw_onee_isolation_confirmed() == 0U) {
+        return 0U;
+    }
+
+    /* Assert virtual RES# before touching the warm vector. Keeping CORE_RUN
+     * set makes this the same live ONE//e session to the supervisor; the
+     * reset input still holds the 65C02 and every virtual slot card. */
+    g_onee_cold_reboot_active = 1U;
+    if (vtw_apply_ctrl_live() != VTW_CTRL_LIVE_APPLIED ||
+        vtw_onee_isolation_confirmed() == 0U ||
+        vtw_shadow_force_cold_start(1U) == 0U) {
+        g_onee_cold_reboot_active = 0U;
+        (void)vtw_apply_ctrl_live();
+        return 0U;
+    }
+
+    /* RES# is still asserted and the pending standard is now active. Patch
+     * before the timed hold can expire and release the virtual machine. */
+    boot_menu_service_apply_video_rom_patch();
+
+    XTime_GetTime(&g_onee_cold_reboot_start);
+    uart_puts(g_uart_base,
+              "vtw: ONE//e cold reboot, virtual RESET held\r\n");
+    return 1U;
+}
+
+void vtw_service_onee_suspend(void)
+{
+    vtw_onee_shutdown(0U);
+}
+
+void vtw_service_onee_stop(void)
+{
+    vtw_onee_shutdown(1U);
+}
+
+uint8_t vtw_service_onee_running(void)
+{
+    const uint32_t status = REG_READ(CARD_CTRL_VTW_STATUS_REG);
+    const uint32_t required = CARD_CTRL_VTW_STATUS_ENABLE_EFF |
+                              CARD_CTRL_VTW_STATUS_CORE_RUN;
+
+    return (g_onee_running != 0U &&
+            vtw_onee_isolation_confirmed() != 0U &&
+            (status & required) == required) ? 1U : 0U;
 }
 
 void vtw_service_poll(void)
 {
+    if (g_onee_running != 0U) {
+        if (vtw_service_onee_running() == 0U) {
+            vtw_service_onee_suspend();
+        } else if (g_onee_cold_reboot_active != 0U &&
+                   vtw_ms_elapsed(g_onee_cold_reboot_start,
+                                  VTW_ONEE_COLD_REBOOT_HOLD_MS) != 0U) {
+            /* Clear the state first so the shared writer releases RES#.
+             * A failed readback leaves reset asserted and retries next poll. */
+            g_onee_cold_reboot_active = 0U;
+            if (vtw_apply_ctrl_live() != VTW_CTRL_LIVE_APPLIED) {
+                g_onee_cold_reboot_active = 1U;
+            } else {
+                uart_puts(g_uart_base,
+                          "vtw: ONE//e cold reboot released\r\n");
+            }
+        }
+        return;
+    }
+
+    /* A manual ONE//e request owns the vTW control plane from request until
+     * isolation fully clears. The saved host intent resumes only later. */
+    if (vtw_onee_control_active() != 0U) {
+        return;
+    }
+
     switch (g_state) {
     case VTW_ST_IDLE:
         if (g_intent_enabled == 0U) {
@@ -522,7 +1011,6 @@ void vtw_service_poll(void)
         break;
 
     case VTW_ST_LOAD_ROM: {
-        uint32_t i;
         /* Enhanced //e reset-path Apple-key checks, patched out on II/II+
          * hosts. The //e RESET routine reads Closed-Apple ($C062: pressed
          * -> JMP $C600 self-test) and Open-Apple ($C061: pressed -> forced
@@ -535,31 +1023,7 @@ void vtw_service_poll(void)
          * so the checks read "not pressed". Gameplay button reads
          * elsewhere still hit the real bus, so attached controllers keep
          * working; //e hosts get the unmodified ROM. */
-        static const struct { uint16_t off; uint8_t val; }
-        k_iiplus_rom_patches[] = {
-            { 0x02BBU, 0xA9U }, { 0x02BCU, 0x00U }, { 0x02BDU, 0xEAU },
-            { 0x02C3U, 0xA9U }, { 0x02C4U, 0x00U }, { 0x02C5U, 0xEAU },
-        };
-        uint8_t iiplus_patch =
-            (boot_menu_service_machine_mode() == CARD_MACHINE_MODE_IIPLUS)
-                ? 1U : 0U;
-        /* Guard: only patch the bytes we decoded (LDA $C062 / LDA $C061).
-         * A future ROM image swap must be re-audited, not blind-patched. */
-        if ((iiplus_patch != 0U) &&
-            ((apple2e_cpu_rom[0x02BBU] != 0xADU) ||
-             (apple2e_cpu_rom[0x02BCU] != 0x62U) ||
-             (apple2e_cpu_rom[0x02BDU] != 0xC0U) ||
-             (apple2e_cpu_rom[0x02C3U] != 0xADU) ||
-             (apple2e_cpu_rom[0x02C4U] != 0x61U) ||
-             (apple2e_cpu_rom[0x02C5U] != 0xC0U))) {
-            iiplus_patch = 0U;
-            uart_puts(g_uart_base,
-                      "vtw: ROM image changed, II+ button patch SKIPPED\r\n");
-        }
-        if (iiplus_patch != 0U) {
-            uart_puts(g_uart_base,
-                      "vtw: II+ host, patching //e ROM reset button checks\r\n");
-        }
+        const uint8_t iiplus_patch = vtw_iiplus_rom_patch_enabled();
 
         /* Force the autostart COLD path: the shadow persists across
          * sessions, so a re-takeover would otherwise warm-vector through
@@ -567,30 +1031,14 @@ void vtw_service_poll(void)
          * re-booted cards. A real TW powers up with fresh RAM; this is
          * the equivalent. In-session CTRL-RESETs stay warm, as on a real
          * machine. */
-        REG_WRITE(CARD_CTRL_VTW_SHADOW_ADDR_REG, 0x003F3U);
-        REG_WRITE(CARD_CTRL_VTW_SHADOW_DATA_REG, 0x00U);  /* $03F3 */
-        REG_WRITE(CARD_CTRL_VTW_SHADOW_DATA_REG, 0x00U);  /* $03F4 */
+        (void)vtw_shadow_force_cold_start(0U);
 
         /* Load the fixed Enhanced //e ROM into the shadow ROM region. The
          * image is embedded, so the takeover no longer reads the
          * motherboard ROM over the bus -- and every machine, //e or II+,
          * runs this same Enhanced //e ROM when accelerated. The shadow
          * data pointer auto-increments on each write. */
-        REG_WRITE(CARD_CTRL_VTW_SHADOW_ADDR_REG, VTW_SHADOW_ROM_PHYS);
-        for (i = 0U; i < VTW_ROM_BYTES; i++) {
-            uint8_t b = apple2e_cpu_rom[i];
-            if (iiplus_patch != 0U) {
-                uint32_t p;
-                for (p = 0U;
-                     p < (sizeof(k_iiplus_rom_patches) /
-                          sizeof(k_iiplus_rom_patches[0])); p++) {
-                    if ((uint32_t)k_iiplus_rom_patches[p].off == i) {
-                        b = k_iiplus_rom_patches[p].val;
-                    }
-                }
-            }
-            REG_WRITE(CARD_CTRL_VTW_SHADOW_DATA_REG, (uint32_t)b);
-        }
+        (void)vtw_shadow_load_fixed_rom(iiplus_patch, 0U);
 
         REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(1U, 1U, 0U));
         g_sessions_started++;
@@ -634,8 +1082,10 @@ void vtw_service_uart_status(uint32_t uart_base)
     };
 
     snprintf(line, sizeof(line),
-             "vtw: %s, intent=%s, machine=%s\r\n",
+             "vtw: %s, session=%s, host-intent=%s, machine=%s\r\n",
              vtw_state_name(g_state),
+             g_onee_running != 0U ? "ONE//e" :
+             (g_state == VTW_ST_IDLE ? "off" : "host"),
              g_intent_enabled != 0U ? "on" : "off",
              boot_menu_service_machine_name());
     uart_puts(uart_base, line);

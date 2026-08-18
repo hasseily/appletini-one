@@ -53,7 +53,7 @@ module tb_vtw_disk2_speed_matrix;
     logic tini_data_dir_pin;
 
     apple_bus_wrapper wrapper_i (
-        .clk(clk), .rstn(rstn),
+        .clk(clk), .rstn(rstn), .physical_bus_isolate(1'b0),
         .res_filtered_out(), .dbg_lost_cycle_count(), .dbg_clear(1'b0),
         .dbg_bus_quality(), .dbg_tap_mismatch(), .dbg_strobe_anom(),
         .dbg_tap_last(), .dbg_ghost_write(),
@@ -145,7 +145,9 @@ module tb_vtw_disk2_speed_matrix;
 
     vtw_core_top dut (
         .clk(clk), .rstn(rstn), .enable(enable),
-        .host_is_iiplus(1'b0), .core_run(core_run),
+        .host_is_iiplus(1'b0), .virtual_motherboard(1'b0),
+        .core_run(core_run),
+        .pause(1'b0),
         .assert_apple_res(1'b0),
         .speed_mode(speed_mode), .pace_divider(pace_divider),
         .ignore_c074(1'b0),

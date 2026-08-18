@@ -321,7 +321,7 @@ def test_vtw_ramworks_dma_freezes_core_and_bounds_polls() -> None:
     dma_command = read(PS_DMA_SV)
     psdma = read(PSDMA_C)
 
-    require("core_res_n && !rw_hold_q" in vtw_core and
+    require("core_res_n && !pause && !rw_hold_q" in vtw_core and
             "arm_rw_hold_release" in vtw_core and
             "assign arm_rw_hold_state = rw_hold_q;" in vtw_core,
             "a RamWorks flush must freeze the core via core_en until CPU0 "

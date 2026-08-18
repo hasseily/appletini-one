@@ -85,6 +85,7 @@ module fb_reader (
     localparam S_IDLE        = 3'd0;
     localparam S_RESET_FIFO  = 3'd1;
     localparam S_BURST       = 3'd2;
+    localparam S_DRAIN       = 3'd3;
     localparam int MAX_OUTSTANDING = 8;
 
     reg [2:0]  state;
@@ -109,8 +110,11 @@ module fb_reader (
     reg  fifo_reset_axi;
     reg [3:0] fifo_reset_count;
 
-    // Write side: accept AXI read data directly into FIFO.
-    assign fifo_wr_en   = axi_read_if.rvalid && !fifo_full;
+    // Write side: accept only data that belongs to the frame now being
+    // fetched. S_DRAIN consumes a cancelled frame's AXI responses without
+    // letting any of those old beats enter the next frame's FIFO image.
+    assign fifo_wr_en   = axi_read_if.rvalid && !fifo_full
+                          && (state == S_BURST) && !vblank_latched;
     assign fifo_wr_data = axi_read_if.rdata;
 
     /* AXI read-response error counter (wrapping). axi_read_err is the
@@ -261,14 +265,15 @@ module fb_reader (
                  * handshakes and rlast acceptances independently
                  * to know when the frame is complete.
                  *
-                 * On vblank, abandon the in-flight bursts and bail
-                 * back to S_IDLE. The PL FIFO will be reset at the
-                 * start of the next frame; outstanding R-channel
-                 * data is silently absorbed by the FIFO until the
-                 * reset clears it. */
+                 * On vblank, stop issuing and drain every accepted burst
+                 * before resetting the FIFO or the outstanding count. AXI
+                 * read requests cannot be cancelled. Resetting the count
+                 * early lets old RLAST responses wrap it and lets old data
+                 * arrive after the FIFO reset, corrupting following frames. */
                 S_BURST: begin
-                    if (vblank_latched) begin
-                        state <= S_IDLE;
+                    if (vblank_latched ||
+                        (vblank_start && base_addr_in != 32'h0)) begin
+                        state <= S_DRAIN;
                     end else begin
                         if (can_issue_burst) begin
                             axi_read_if.araddr  <= burst_addr;
@@ -284,6 +289,27 @@ module fb_reader (
                                 state <= S_IDLE;
                             end
                         end
+                    end
+                end
+
+                /* Finish all AXI requests accepted for the cancelled frame.
+                 * Keep RREADY asserted, but discard their data. An ARVALID
+                 * already raised before vblank must also handshake before the
+                 * drain can finish, so wait for both ARVALID and outstanding
+                 * to reach zero. The most recent base_addr_in is then safe to
+                 * start with a clean FIFO and clean counters. */
+                S_DRAIN: begin
+                    if (!axi_read_if.arvalid && outstanding == 4'd0) begin
+                        vblank_latched       <= 1'b0;
+                        burst_addr           <= base_addr_in;
+                        last_latched_addr    <= base_addr_in;
+                        vblank_latched_pulse <= 1'b1;
+                        bursts_issued        <= 18'd0;
+                        bursts_completed     <= 18'd0;
+                        outstanding          <= 4'd0;
+                        fifo_reset_axi       <= 1'b1;
+                        fifo_reset_count     <= 4'd8;
+                        state                <= S_RESET_FIFO;
                     end
                 end
 

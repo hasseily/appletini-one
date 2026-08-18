@@ -18,8 +18,8 @@
  *                                // displaying (or 0xFF before first claim)
  *
  * Writer logic on each on_frame_end:
- *   1. publish_seq++ (sequence is updated AFTER pixel writes via dmb).
- *   2. published_slot = the slot we just painted.
+ *   1. published_slot = the slot we just painted.
+ *   2. publish_seq++ (sequence is updated AFTER pixel writes via dmb).
  *   3. Pick the NEXT writer slot: any of {0,1,2} that's neither
  *      `published_slot` (just published; reader will likely claim it)
  *      nor `reader_active` (the reader's current display slot, if any).
@@ -29,8 +29,10 @@
  *   1. Snapshot publish_seq. If unchanged since last claim, return
  *      the same slot we displayed last time (frame-hold under
  *      reader-faster-than-writer).
- *   2. Otherwise: read published_slot, set reader_active = that slot,
- *      remember publish_seq as last_claimed_seq. Return the slot.
+ *   2. Otherwise: read published_slot and reserve it through reader_active.
+ *   3. Re-read the published word and sequence. If either changed while the
+ *      reservation was crossing cores, retry without reading the old slot.
+ *   4. Remember publish_seq as last_claimed_seq and return the stable slot.
  *
  * Memory layout (high OCM, marked strongly ordered on both cores
  * by the handoff init functions so reads/writes hit a single coherent
@@ -325,51 +327,65 @@ void apple_fb_writer_publish_frame_detail(uint32_t display_mode,
     __asm__ volatile ("dsb sy" ::: "memory");
 
     /* Pick the next writer slot: anything that is neither the slot
-     * we just published nor the slot the reader is currently
-     * displaying. Reader-active is updated by the reader and may
-     * be one frame stale here -- the worst case is we pick a slot
-     * the reader has just claimed, which causes one frame of
-     * tearing on the reader's blit before it picks up the next
-     * publish. Acceptable. */
+     * we just published nor the slot the reader has reserved. The reader
+     * validates its reservation after publishing it; if this load raced an
+     * in-progress claim, that reader retries the newer published slot before
+     * touching pixels. Thus a stale value here can cost a retry, never a
+     * torn source frame. */
     uint32_t reader_active = *s_reader_active;
     s_writer_current_slot = pick_third(s_writer_current_slot, reader_active);
 }
 
 uint8_t apple_fb_reader_claim(void)
 {
-    uint32_t seq = *s_publish_seq;
+    for (;;) {
+        const uint32_t seq = *s_publish_seq;
+        __asm__ volatile ("dmb sy" ::: "memory");
 
-    /* No frame published yet -- caller should skip the blit. */
-    if (seq == 0u) {
-        return APPLE_FB_NO_SLOT;
-    }
+        /* No frame published yet -- caller should skip the blit. */
+        if (seq == 0u) {
+            return APPLE_FB_NO_SLOT;
+        }
 
-    /* If sequence has not advanced since our last claim, return the
-     * same slot. Caller re-blits stale-but-stable last frame. */
-    if (seq == s_reader_last_seq && s_reader_current_slot != APPLE_FB_NO_SLOT) {
+        /* If sequence has not advanced since our last claim, return the
+         * same slot. reader_active still protects it from the writer. */
+        if (seq == s_reader_last_seq &&
+            s_reader_current_slot != APPLE_FB_NO_SLOT) {
+            return s_reader_current_slot;
+        }
+
+        const uint32_t published = *s_published_slot;
+        const uint32_t slot = handoff_published_slot(published);
+        if (slot >= 3u) {
+            /* Defensive: garbage from uninitialized memory. Skip. */
+            return APPLE_FB_NO_SLOT;
+        }
+
+        /* Reserve before reading pixels. A writer may have selected this
+         * slot using the old reader_active just before this store became
+         * visible, so a reservation alone is not enough. Complete the store,
+         * then prove that both halves of the publication stayed unchanged.
+         * If the writer advanced, its newly published slot is safe and this
+         * loop claims that one instead; the failed candidate is never read. */
+        *s_reader_active = slot;
+        __asm__ volatile ("dsb sy" ::: "memory");
+
+        const uint32_t published_after = *s_published_slot;
+        __asm__ volatile ("dmb sy" ::: "memory");
+        const uint32_t seq_after = *s_publish_seq;
+        __asm__ volatile ("dmb sy" ::: "memory");
+
+        if (published_after != published || seq_after != seq) {
+            continue;
+        }
+
+        s_reader_last_seq     = seq;
+        s_reader_current_slot = (uint8_t)slot;
+        s_reader_display_mode = handoff_published_mode(published);
+        s_reader_border_color = handoff_published_border_color(published);
+        s_reader_format_detail = handoff_published_format_detail(published);
         return s_reader_current_slot;
     }
-
-    /* New frame available. Snapshot the slot and ack the sequence. */
-    uint32_t published = *s_published_slot;
-    uint32_t slot = handoff_published_slot(published);
-    if (slot >= 3u) {
-        /* Defensive: garbage from uninitialized memory. Skip. */
-        return APPLE_FB_NO_SLOT;
-    }
-
-    s_reader_last_seq     = seq;
-    s_reader_current_slot = (uint8_t)slot;
-    s_reader_display_mode = handoff_published_mode(published);
-    s_reader_border_color = handoff_published_border_color(published);
-    s_reader_format_detail = handoff_published_format_detail(published);
-
-    /* Tell the writer which slot the reader is now displaying so
-     * it can avoid stomping it on the next paint. */
-    *s_reader_active = slot;
-    __asm__ volatile ("dmb sy" ::: "memory");
-
-    return s_reader_current_slot;
 }
 
 uint32_t apple_fb_reader_display_mode(void)

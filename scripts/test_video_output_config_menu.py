@@ -281,13 +281,18 @@ def test_boot_menu_groups_boot_and_video_settings() -> None:
     require('"Profiles"' in source and '"Boot Settings"' in source and '"Video"' in source and
             source.index('"Profiles"') < source.index('"Boot Settings"') < source.index('"Video"'),
             "tab labels must draw Profiles above Boot Settings and Video pages")
-    require("case CONFIG_TAB_BOOT_SETTINGS:\n        return CONFIG_MENU_BOOT_ITEM_COUNT;" in source,
-            "boot settings tab must contain boot controls and USB menu bindings")
-    require("case CONFIG_TAB_VIDEO:\n        return CONFIG_VIDEO_ITEM_COUNT;" in source and
-            "#define CONFIG_VIDEO_ITEM_COUNT        16U" in internal,
-            "video tab must contain output, effects, border, bezel, and ROM controls")
+    require("case CONFIG_TAB_BOOT_SETTINGS:" in source and
+            "return CONFIG_MENU_BOOT_ITEM_COUNT;" in source,
+            "normal boot settings must contain boot controls and USB menu bindings")
+    require("case CONFIG_TAB_VIDEO:\n"
+            "        return CONFIG_VIDEO_ITEM_COUNT;" in source and
+            "#define CONFIG_VIDEO_ITEM_COUNT        16U" in internal and
+            "CONFIG_VIDEO_ITEM_ONEE_STANDARD" not in internal and
+            '"ONE//e video standard"' not in video_draw,
+            "video tab must not own the ONE//e PAL/NTSC control")
     require('"Boot menu"' in boot_draw and
             '"Boot device"' in boot_draw and
+            '"ONE//e video standard"' in boot_draw and
             '"USB MENU BINDINGS"' in boot_draw and
             '"Show debugging"' not in boot_draw and
             '"Show bezel"' not in boot_draw and
@@ -886,7 +891,8 @@ def test_pal_accurate_renderer_model_is_registered() -> None:
             "apple_pal_video_preroll_line0_cycle(pal_preroll_cycle, sw);" in renderer and
             "raw_line < (uint32_t)ATN_SCANNER_Y_DISPLAY" in renderer and
             "const uint8_t synthesized =" in renderer and
-            "synthesized ? 0u : apple_pal_video_end_frame();" in renderer and
+            "(synthesized || s_legacy_load_hold_q != 0u) ?" in renderer and
+            "0u : apple_pal_video_end_frame();" in renderer and
             "if (frame_ready != 0u) {" in renderer and
             "s_pal_capture_phase_cycles" in renderer and
             "capture_to_scanner_phase(line,\n"

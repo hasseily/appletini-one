@@ -74,6 +74,7 @@ module tb_vtw_system;
     apple_bus_wrapper wrapper_i (
         .clk(clk),
         .rstn(rstn),
+        .physical_bus_isolate(1'b0),
         .res_filtered_out(),
         .dbg_lost_cycle_count(), .dbg_clear(1'b0),
         .inh_allowed(1'b1),
@@ -211,7 +212,9 @@ module tb_vtw_system;
         .rstn(rstn),
         .enable(enable),
         .host_is_iiplus(1'b0),
+        .virtual_motherboard(1'b0),
         .core_run(core_run),
+        .pause(1'b0),
         .assert_apple_res(tb_assert_res),
         .speed_mode(speed_mode),  // starts with full-rate bursts
         .pace_divider(16'd0),

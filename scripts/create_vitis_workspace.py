@@ -43,6 +43,18 @@ def require_path(step, p: Path):
     return p
 
 
+def require_platform_build_success(status):
+    """Reject the Vitis API's numeric FAILURE/IN_PROGRESS results.
+
+    Platform.build() streams its log but returns the final protobuf enum
+    instead of raising when the build fails: SUCCESS=0, FAILURE=1, and
+    IN_PROGRESS=2.  Do not continue to app creation with a missing XPFM.
+    """
+    if status != 0:
+        raise RuntimeError(f"Vitis platform build returned status {status}")
+    return status
+
+
 def generate_default_bezel_png_sources():
     subprocess.run([sys.executable, "scripts/generate_default_bezel_png.py"], check=True)
 
@@ -717,7 +729,36 @@ run_step(
     lambda: domain_core1.regenerate(),
 )
 
-run_step("Build platform", lambda: platform.build())
+platform_build_status = run_step("Build platform", lambda: platform.build())
+if platform_build_status != 0:
+    # Vitis 2025.2 can return FAILURE after the first platform build even
+    # though all three BSPs finished. A second build of that same generated
+    # component completes the FSBL and export. Keep this retry bounded: a
+    # real or repeatable fault must still stop before application creation.
+    print(
+        f"Platform build returned status {platform_build_status}; "
+        "retrying once.",
+        flush=True,
+    )
+    platform_build_status = run_step(
+        "Retry platform build",
+        lambda: platform.build(),
+    )
+run_step(
+    "Verify platform build status",
+    lambda: require_platform_build_success(platform_build_status),
+)
+run_step(
+    "Verify exported platform XPFM",
+    lambda: require_path(
+        "Find exported platform XPFM",
+        Path("vitis_workspace")
+        / "appletini_platform"
+        / "export"
+        / "appletini_platform"
+        / "appletini_platform.xpfm",
+    ),
+)
 
 # Create application components
 
@@ -987,6 +1028,8 @@ run_step(
             "../../../ps_sources/frontend/linear_text_overlay_capture.c",
             "../../../ps_sources/frontend/linear_text_overlay_font.c",
             "../../../ps_sources/frontend/no_slot_clock_control.c",
+            "../../../ps_sources/frontend/onee_service.c",
+            "../../../ps_sources/frontend/onee_input_service.c",
             "../../../ps_sources/frontend/printer_service.c",
             "../../../ps_sources/frontend/profile_manager.c",
             "../../../ps_sources/frontend/screenshot_service.c",

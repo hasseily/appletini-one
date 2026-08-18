@@ -37,22 +37,27 @@ set_property IOSTANDARD LVCMOS33 [get_ports a2ctrl_reset_n]
 
 ## Apple //e Control Signals - Observe (Input to FPGA)
 set_property PACKAGE_PIN U22 [get_ports a2fpga_dma_n]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_dma_n]
+set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLUP} \
+    [get_ports a2fpga_dma_n]
 
 set_property PACKAGE_PIN V22 [get_ports a2fpga_rdy_n]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_rdy_n]
+set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLUP} \
+    [get_ports a2fpga_rdy_n]
 
 set_property PACKAGE_PIN W21 [get_ports a2fpga_inh_n]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_inh_n]
+set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLUP} \
+    [get_ports a2fpga_inh_n]
 
 set_property PACKAGE_PIN U20 [get_ports a2fpga_nmi_n]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_nmi_n]
+set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLUP} \
+    [get_ports a2fpga_nmi_n]
 
 set_property PACKAGE_PIN V20 [get_ports a2fpga_reset_n]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_reset_n]
+set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLUP} \
+    [get_ports a2fpga_reset_n]
 
 set_property PACKAGE_PIN V19 [get_ports a2fpga_irq_n]
-set_property -dict {IOSTANDARD LVCMOS33 DRIVE 16 SLEW FAST} \
+set_property -dict {IOSTANDARD LVCMOS33 DRIVE 16 SLEW FAST PULLTYPE PULLUP} \
     [get_ports a2fpga_irq_n]
 
 ## Apple //e Bus Transceiver Control
@@ -151,23 +156,29 @@ set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_rdwr_n]
 
 ## Apple //e Clock Inputs
 set_property PACKAGE_PIN Y18 [get_ports a2fpga_clk]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_clk]
+set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLDOWN} \
+    [get_ports a2fpga_clk]
 
 set_property PACKAGE_PIN AA18 [get_ports a2fpga_7m]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_7m]
+set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLDOWN} \
+    [get_ports a2fpga_7m]
 
 set_property PACKAGE_PIN W17 [get_ports a2fpga_q3]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_q3]
+set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLDOWN} \
+    [get_ports a2fpga_q3]
 
 ## Apple //e Status/Select Signals
 set_property PACKAGE_PIN W18 [get_ports a2fpga_m2b0]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_m2b0]
+set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLDOWN} \
+    [get_ports a2fpga_m2b0]
 
 set_property PACKAGE_PIN AA17 [get_ports a2fpga_m2sel]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_m2sel]
+set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLDOWN} \
+    [get_ports a2fpga_m2sel]
 
 set_property PACKAGE_PIN AB17 [get_ports a2fpga_devsel_n]
-set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_devsel_n]
+set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLUP} \
+    [get_ports a2fpga_devsel_n]
 
 ################################################################################
 # DVI Video Output - Bank 34
@@ -556,11 +567,25 @@ set_output_delay -clock dvi_clk_out -min -1.4 \
 #
 # -datapath_only bounds the pad -> first-FF route without pretending these
 # async pins are synchronous to the fabric clock. 5 ns is comfortable for
-# an IBUF plus a short route and collapses the differential to ~2-3 ns.
+# an IBUF plus a short route and collapses the differential to ~2-3 ns. Keep
+# all six always-watched ONE//e safety lanes (PHI0, 7M, Q3, M2SEL, M2B0, and
+# DEVSEL#) in this set so every host-activity kill path has the same bound.
 set a2_bus_in_ports [get_ports {a2fpga_a[*] a2fpga_d[*] a2fpga_rdwr_n \
-    a2fpga_clk a2fpga_m2sel a2fpga_m2b0 a2fpga_inh_n a2fpga_reset_n \
-    a2fpga_irq_n a2fpga_rdy_n a2fpga_dma_n}]
+    a2fpga_clk a2fpga_7m a2fpga_q3 a2fpga_m2sel a2fpga_m2b0 \
+    a2fpga_devsel_n a2fpga_inh_n a2fpga_reset_n a2fpga_irq_n \
+    a2fpga_rdy_n a2fpga_dma_n}]
 set_max_delay -datapath_only 5.0 -from $a2_bus_in_ports
+
+# ONE//e menu mute crosses from the 133 MHz fabric into the unrelated external
+# audio BCLK through a 2-FF level synchronizer. Bound the route to the first
+# synchronizer flop without imposing a phase relation between those clocks.
+# Keeping this narrow exception avoids hiding any other audio-domain path.
+set_max_delay -datapath_only 10.0 \
+    -from [get_clocks clk_out1_zynq_ps_bd_clk_wiz_1_0] \
+    -to [get_pins -of_objects \
+        [get_cells -hierarchical -filter \
+            {NAME =~ *onee_menu_audio_mute_cdc_i/sync_meta_reg}] \
+        -filter {REF_PIN_NAME == D}]
 
 # The level-shifter direction outputs race the pad tristate enables at the
 # board transceivers by design; bound them so that race margin is

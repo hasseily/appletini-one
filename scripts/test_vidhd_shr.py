@@ -311,23 +311,28 @@ def test_renderer_implements_applewin_shr_decode() -> None:
     require("const uint8_t synthesized =" in source and
             "s_frame_display_mode == APPLE_FB_DISPLAY_MODE_SHR ||" in source and
             "s_frame_display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I ||" in source and
-            "synthesized ? 0u : apple_pal_video_end_frame();" in source and
+            "(synthesized || s_legacy_load_hold_q != 0u) ?" in source and
             "} else if (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I) {\n"
-            "        if (legacy_shadow_is_settled() != 0u) {\n"
+            "        if (legacy_shadow_cache_matches() != 0u) {\n"
+            "            s_legacy_settle_armed = 0u;\n"
+            "            g_acr_legacy_frames_skipped++;\n"
+            "        } else if (legacy_shadow_is_settled() != 0u) {\n"
             "            render_legacy_weave_frame_full();\n"
             "            publish_current_frame();\n"
-            "        }\n"
-            "    } else if (s_legacy_flip_q != 0u) {\n"
-            "        if (legacy_shadow_is_settled() != 0u) {\n"
+            "            legacy_shadow_cache_commit();\n" in source and
+            "} else if (s_legacy_flip_q != 0u) {\n"
+            "        if (legacy_shadow_cache_matches() != 0u) {" in source and
+            "} else if (legacy_shadow_is_settled() != 0u) {\n"
             "            render_legacy_flip_merge_frame_full();\n"
             "            publish_current_frame();\n"
-            "        }\n"
-            "    } else {\n"
-            "        s_legacy_settle_armed = 0u;\n"
-            "        apple_pal_video_begin_frame();\n"
-            "    }" in source,
+            "            legacy_shadow_cache_commit();" in source and
+            "if (!vidhd_shr_enabled() && s_legacy_load_hold_q != 0u) {" in source and
+            "        s_legacy_cache_valid = 0u;\n"
+            "        apple_pal_video_resync();" in source and
+            "        apple_pal_video_begin_frame();" in source,
             "full shadow modes must publish at frame start and never publish "
-            "an untouched writer slot at frame end")
+            "an untouched writer slot at frame end; unchanged frames must "
+            "reuse the last complete publish")
     require("void apple_cycle_renderer_reset_local_video_state(void)" in source and
             "const uint32_t text_sw = SW_BIT(TEXT);" in source and
             "s_current_sw          = text_sw;" in source and
@@ -489,8 +494,18 @@ def test_shr_generation_cache() -> None:
                      renderer.index("volatile uint32_t g_acr_shr_mode_resyncs")],
             "ROM, settings, reset, and mode resync must invalidate cached SHR")
     require("const uint8_t frame_ready =\n"
-            "        synthesized ? 0u : apple_pal_video_end_frame();" in renderer,
-            "frame end must not publish a stale synthesized writer slot")
+            "        (synthesized || s_legacy_load_hold_q != 0u) ?\n"
+            "            0u : apple_pal_video_end_frame();" in renderer,
+            "frame end must not publish a stale synthesized or load-held writer slot")
+    require("#define LEGACY_A2LI_LOAD_HOLD 0xFFu" in renderer and
+            "static uint8_t legacy_load_hold_requested(void)" in renderer and
+            "g_main_bank[0x087Cu] == LEGACY_A2LI_LOAD_HOLD" in renderer and
+            "g_main_bank[0x407Cu] == LEGACY_A2LI_LOAD_HOLD" in renderer and
+            "if (g_main_bank[0x087Cu] == LEGACY_A2LI_LOAD_HOLD)" in renderer and
+            "if (g_main_bank[0x407Cu] == LEGACY_A2LI_LOAD_HOLD)" in renderer and
+            "if (!shr_active && s_legacy_load_hold_q != 0u)" in renderer and
+            "s_current_sw = sw;" in renderer,
+            "A2Li $FF must hold publication while still tracking frame switches")
     marker = renderer[
         renderer.index("if (shr_frame_marker) {"):
         renderer.index("} else {", renderer.index("if (shr_frame_marker) {"))
@@ -542,10 +557,10 @@ def test_no_vidhd_identity_and_slot_layout() -> None:
             "VidHD identity card must not be in the Vivado source list")
     require("vidhd_card" not in top,
             "no VidHD card may be instantiated")
-    # 12 clients = the post-VidHD clients, ImageWriter, and the virtual
-    # TransWarp bus master; the VidHD client itself must stay gone.
+    # 13 clients = the post-VidHD clients, ImageWriter, virtual TransWarp bus
+    # master, and ONE//e motherboard; the VidHD client itself must stay gone.
     require("apple_bus_write_arbiter #(" in top and
-            ".NUM_CLIENTS(12)" in top and
+            ".NUM_CLIENTS(13)" in top and
             "ssc_ab_write" in top and
             "vidhd_ab_write" not in top,
             "bus write arbiter must not include a VidHD client")
@@ -785,7 +800,7 @@ def test_page_flip_removed() -> None:
         require(obsolete not in combined,
                 f"obsolete page-flip path remains: {obsolete}")
     require("CONFIG_VIDEO_ITEM_COUNT        16U" in menu_internal,
-            "Video menu must contain the current 16 controls")
+            "Video menu must contain its 16 video-only controls")
 
 
 TESTS = [

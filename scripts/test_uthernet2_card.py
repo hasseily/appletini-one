@@ -321,7 +321,7 @@ def main():
             ".slot_assign(3'h1)" in top,
             "Uthernet II card must be gated by slot 1 enable and assigned to slot 1")
     require("apple_bus_write_arbiter #(" in top and
-            ".NUM_CLIENTS(12)" in top and
+            ".NUM_CLIENTS(13)" in top and
             ".FAST_DATA_CLIENT(2)" in top and
             "uthernet_ab_write" in top,
             "Apple bus arbiter must include the Uthernet writer")

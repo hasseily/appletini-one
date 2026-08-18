@@ -43,6 +43,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -224,13 +225,25 @@ def ac(*args: str, stdin: bytes | None = None,
        capture: bool = False) -> bytes:
     command = ["java", "-jar", str(AC_JAR), *args]
     print("+", " ".join(command))
-    result = subprocess.run(
-        command,
-        input=stdin,
-        stdout=subprocess.PIPE if capture else None,
-        check=True,
-    )
-    return result.stdout if capture else b""
+    for attempt in range(6):
+        result = subprocess.run(
+            command,
+            input=stdin,
+            stdout=subprocess.PIPE if capture else None,
+            check=False,
+        )
+        if result.returncode == 0:
+            return result.stdout if capture else b""
+        if attempt == 5:
+            result.check_returncode()
+        # AppleCommander maps the 32 MB disk on Windows. Virus scanning can
+        # retain that section briefly after Java exits, making the next save
+        # fail with ERROR_USER_MAPPED_FILE. Retry the same atomic operation
+        # after the mapping is released.
+        delay = 0.25 * (attempt + 1)
+        print(f"  AppleCommander retry {attempt + 1}/5 after {delay:.2f}s")
+        time.sleep(delay)
+    raise AssertionError("unreachable")
 
 
 def _fat12_root_entry(image: bytes | bytearray, dos_name: bytes) -> tuple[int, int, int, int]:

@@ -79,6 +79,53 @@
 #define CARD_CTRL_SSC_CTRL_CLEAR           (1UL << 1)
 #define CARD_CTRL_SSC_CTRL_OVF_CLEAR       (1UL << 2)
 
+/* Session-only ONE//e stand-alone supervisor. A write to bit 0 is the
+ * operator's current request. Readback reports the PL safety interlock:
+ *   [0] request, [1] effective, [2] physical bus isolated,
+ *   [3] outputs forced off, [4] live Apple activity,
+ *   [5] sticky activity lockout, [6] connector quiet,
+ *   [7] a new manual selection is armed, [8] ONE//e selected,
+ *   [9] isolation hold, [12:10] inhibit reason,
+ *   [13] power-sense pin fitted, [14] Apple power sensed,
+ *   [15] ONE//e HDL present, [31:24] signature/version (0xE1).
+ * Firmware may write REQUEST high only from the explicit Boot Settings
+ * action. Polling and startup paths may only clear it. */
+#define CARD_CTRL_ONEE_MODE_REG                  CARD_CTRL_REG_ADDR(0x5BU)
+#define CARD_CTRL_ONEE_CTRL_REQUEST_BIT          (1UL << 0)
+#define CARD_CTRL_ONEE_STATUS_REQUEST_BIT        (1UL << 0)
+#define CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT      (1UL << 1)
+#define CARD_CTRL_ONEE_STATUS_ISOLATED_BIT       (1UL << 2)
+#define CARD_CTRL_ONEE_STATUS_OUTPUTS_OFF_BIT     (1UL << 3)
+#define CARD_CTRL_ONEE_STATUS_ACTIVITY_BIT       (1UL << 4)
+#define CARD_CTRL_ONEE_STATUS_LOCKOUT_BIT        (1UL << 5)
+#define CARD_CTRL_ONEE_STATUS_QUIET_BIT          (1UL << 6)
+#define CARD_CTRL_ONEE_STATUS_RESELECT_ARMED_BIT (1UL << 7)
+#define CARD_CTRL_ONEE_STATUS_SELECTED_BIT       (1UL << 8)
+#define CARD_CTRL_ONEE_STATUS_ISOLATION_HOLD_BIT (1UL << 9)
+#define CARD_CTRL_ONEE_STATUS_INHIBIT_SHIFT      10U
+#define CARD_CTRL_ONEE_STATUS_INHIBIT_MASK       0x7UL
+#define CARD_CTRL_ONEE_STATUS_POWER_SENSE_PRESENT_BIT (1UL << 13)
+#define CARD_CTRL_ONEE_STATUS_APPLE_POWER_BIT    (1UL << 14)
+#define CARD_CTRL_ONEE_STATUS_HDL_PRESENT_BIT    (1UL << 15)
+#define CARD_CTRL_ONEE_STATUS_SIGNATURE_SHIFT    24U
+#define CARD_CTRL_ONEE_STATUS_SIGNATURE_MASK     0xFFUL
+#define CARD_CTRL_ONEE_STATUS_SIGNATURE          0xE1UL
+#define CARD_CTRL_ONEE_INHIBIT_NONE              0U
+#define CARD_CTRL_ONEE_INHIBIT_RESET             1U
+#define CARD_CTRL_ONEE_INHIBIT_APPLE_POWER       2U
+#define CARD_CTRL_ONEE_INHIBIT_APPLE_ACTIVITY    3U
+#define CARD_CTRL_ONEE_INHIBIT_ACTIVITY_LOCKOUT  4U
+#define CARD_CTRL_ONEE_INHIBIT_RESELECT_REQUIRED 5U
+#define CARD_CTRL_ONEE_INHIBIT_MANUAL_OFF        6U
+
+/* ONE//e virtual video standard. Write DESIRED_50HZ (0 NTSC, 1 PAL).
+ * Read DESIRED_50HZ for the saved request and ACTIVE_50HZ for the cadence
+ * held by the current session. ACTIVE changes only while ONE//e is stopped
+ * or its resolved private RESET line is low. */
+#define CARD_CTRL_ONEE_VIDEO_REG                  CARD_CTRL_REG_ADDR(0xA2U)
+#define CARD_CTRL_ONEE_VIDEO_DESIRED_50HZ_BIT     (1UL << 0)
+#define CARD_CTRL_ONEE_VIDEO_ACTIVE_50HZ_BIT      (1UL << 1)
+
 /* Written by the PS after the boot ROM reports the host machine. The PL
  * interlocks INH
  * and DMA on it. UNKNOWN is the reset state and is treated as a GS
@@ -104,7 +151,8 @@
  * session (the PL additionally gates on machine mode == IIe or II/II+),
  * bit1 releases the 65C02 core, [3:2] pick the speed mode, bit6 ignores
  * every software write to $C074, bit7 disables the private Disk II read
- * shortcut, and [31:16] holds the divided-mode pace.
+ * shortcut, bit8 pauses the core at a completed cycle without resetting it,
+ * and [31:16] holds the divided-mode pace.
  * SHADOW_ADDR/DATA expose the 144 KB shadow through an auto-incrementing
  * byte port; SYNC_CMD/STATUS issue single real bus cycles while the core is
  * held (the boot-time ROM copy path). */
@@ -276,6 +324,9 @@
 #define CARD_CTRL_VTW_CTRL_IGNORE_C074_BIT  (1UL << 6)
 /* Route virtual Disk II through the original physical 1 MHz path. */
 #define CARD_CTRL_VTW_CTRL_DISABLE_D2_ACCEL_BIT (1UL << 7)
+/* Freeze the 65C02 at a completed cycle without dropping CORE_RUN or reset.
+ * ONE//e uses this while the Appletini config menu owns USB input. */
+#define CARD_CTRL_VTW_CTRL_PAUSE_BIT       (1UL << 8)
 /* 16-bit pace divider at [31:16] (50 kHz slug mode needs divider 2667). */
 #define CARD_CTRL_VTW_CTRL_DIVIDER_SHIFT   16U
 #define CARD_CTRL_VTW_CTRL_DIVIDER_MASK    0xFFFFUL

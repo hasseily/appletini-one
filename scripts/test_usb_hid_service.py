@@ -11,6 +11,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = REPO_ROOT / "ps_sources" / "frontend"
 USB_HID_C = FRONTEND / "usb_hid_service.c"
 USB_HID_H = FRONTEND / "usb_hid_service.h"
+ONEE_USB_CONTROLS_H = FRONTEND / "onee_usb_controls.h"
+ONEE_FIXED_MODE_H = FRONTEND / "onee_fixed_mode.h"
 USB_CONFIG_H = FRONTEND / "usb_config.h"
 CHERRY_PLATFORM_H = FRONTEND / "cherryusb_platform.h"
 CHERRY_OSAL_C = FRONTEND / "cherryusb_baremetal_osal.c"
@@ -120,6 +122,34 @@ def test_cherryusb_hid_backend_replaces_custom_enumerator() -> None:
     ]:
         require(token in source, f"USB1 HID service must support multi-HID frontend routing: {token}")
 
+
+def test_failed_hid_interrupt_submit_retries_after_backoff() -> None:
+    source = read(USB_HID_C)
+    submit = function_body(source, "hid_resubmit_report")
+    retry = function_body(source, "hid_slots_retry_reports")
+    poll = function_body(source, "usb_hid_service_poll")
+
+    require("#define HID_REPORT_RETRY_MS 10U" in source and
+            "uint8_t report_retry_armed;" in source and
+            "XTime report_retry_started;" in source,
+            "HID slots must retain a timed retry after a failed interrupt submit")
+    require("XTime_GetTime(&slot->report_retry_started);" in submit and
+            "slot->report_retry_armed = 1U;" in submit and
+            "slot->report_retry_armed = 0U;" in submit,
+            "interrupt submit failure must arm retry and success must cancel it")
+    require("rc == -USB_ERR_NOMEM" in submit and
+            "slot->hid->intin_urb.hcpriv == NULL" in submit and
+            "slot->hid->intin_urb.errorcode = 0;" in submit,
+            "QH allocation failure must clear EHCI's detached stale BUSY state")
+    require("slot->report_pending != 0U" in retry and
+            "(now - slot->report_retry_started) < HID_REPORT_RETRY_TICKS" in retry and
+            "slot->report_retry_armed = 0U;" in retry and
+            "hid_resubmit_report(slot);" in retry,
+            "retry poll must wait for backoff and never duplicate a pending URB")
+    require(poll.find("cherryusb_host_poll(CHERRYUSB_USB1_BUSID);") <
+            poll.find("hid_slots_retry_reports();"),
+            "HID retry must run after CherryUSB has reaped this poll's completions")
+
 def test_usb_keyboard_and_keypad_emit_bindable_sources() -> None:
     header = read(USB_HID_H)
     source = read(USB_HID_C)
@@ -143,6 +173,114 @@ def test_usb_keyboard_and_keypad_emit_bindable_sources() -> None:
         "HID_KBD_USAGE_F24",
     ]:
         require(token in source, f"USB HID service must capture keyboard/keypad sources: {token}")
+
+
+def test_onee_uses_fixed_keyboard_controls_and_blocks_menu_leakage() -> None:
+    header = read(USB_HID_H)
+    source = read(USB_HID_C)
+    controls = read(ONEE_USB_CONTROLS_H)
+    fixed_mode = read(ONEE_FIXED_MODE_H)
+    frontend_main = read(FRONTEND_MAIN_C)
+    fixed = function_body(controls, "onee_usb_fixed_keyboard_action")
+    active = function_body(fixed_mode, "onee_usb_fixed_mode_active")
+    keyboard = function_body(source, "hid_process_keyboard_usages")
+    selection = function_body(frontend_main, "ui_onee_selected")
+    pause = function_body(frontend_main, "ui_sync_onee_menu_pause")
+    event = function_body(frontend_main, "ui_handle_usb_menu_event")
+
+    for token in [
+        "usb_hid_service_set_onee_fixed_mode(uint8_t enable)",
+        "usb_hid_service_set_onee_input_blocked(uint8_t blocked)",
+        "usb_hid_service_all_input_released(void)",
+    ]:
+        require(token in header and token in source,
+                f"ONE//e HID routing API must expose {token}")
+
+    require("HID_KBD_USAGE_PAUSE" in fixed and
+            "USB_HID_MENU_ACTION_OPEN" in fixed and
+            "USB_HID_MENU_ACTION_CLOSE" in fixed and
+            "usage != HID_KBD_USAGE_PAUSE" in fixed,
+            "Pause/Break must be the only fixed ONE//e menu key")
+    for usage in ["HID_KBD_USAGE_PAGEUP", "HID_KBD_USAGE_PRINTSCN",
+                  "HID_KBD_USAGE_KPD0", "HID_KBD_USAGE_KPDPLUS"]:
+        require(usage not in fixed,
+                f"{usage} must fall through to the saved USB binding")
+    require("HID_KBD_USAGE_LALT" in controls and
+            "HID_KBD_USAGE_RALT" in controls and
+            "ONEE_USB_ROUTE_CONSUME_SOURCE" in controls,
+            "Left and Right Alt must remain fixed Apple-key sources")
+    require("CARD_CTRL_ONEE_STATUS_REQUEST_BIT" in active and
+            "CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT" in active and
+            "CARD_CTRL_ONEE_STATUS_SELECTED_BIT" not in active and
+            "onee_usb_fixed_mode_active(onee_service_status())" in selection,
+            "live fixed routing must share the exact REQUEST/EFFECTIVE predicate")
+
+    require("g_onee_input_blocked != 0U" in keyboard and
+            "onee_modifier = 0U;" in keyboard and
+            "onee_key_count = 0U;" in keyboard and
+            "onee_input_service_keyboard_report(slot->index," in keyboard,
+            "menu-owned reports must reach the Apple bridge only as releases")
+    require("onee_usb_apple_usage_allowed(key, g_onee_fixed_mode)" in keyboard and
+            "g_onee_fixed_mode != 0U" in keyboard,
+            "fixed Pause/Break must not leak into Apple input")
+    modifier_filter = keyboard.find("onee_usb_fixed_apple_modifier(")
+    apple_report = keyboard.find("onee_input_service_keyboard_report(")
+    require(0 <= modifier_filter < apple_report and
+            "ONEE_USB_MODIFIER_LGUI" in controls and
+            "ONEE_USB_MODIFIER_RGUI" in controls and
+            "~ONEE_USB_MODIFIER_GUI" in controls,
+            "GUI modifiers must not duplicate the fixed Alt Apple keys")
+    fixed_gate = keyboard.find("if (g_onee_fixed_mode != 0U) {")
+    configurable_screenshot = keyboard.find("screenshot_push_source(")
+    configurable_speed = keyboard.find("vtw_push_source(")
+    require(0 <= fixed_gate < configurable_screenshot < configurable_speed and
+            "ONEE_USB_ROUTE_CONSUME_SOURCE" in
+            keyboard[fixed_gate:configurable_screenshot] and
+            "continue;" in keyboard[fixed_gate:configurable_screenshot],
+            "only fixed ONE//e sources may bypass saved bindings")
+    route_call = keyboard.find("onee_usb_fixed_route(", fixed_gate)
+    require(fixed_gate < route_call < configurable_screenshot and
+            "onee_usb_fixed_route(usage, fixed_action)" in
+            keyboard[route_call:configurable_screenshot] and
+            "screenshot_push_source" in keyboard and
+            "vtw_push_source" in keyboard and
+            "menu_start_open_close_hold" in keyboard,
+            "non-fixed ONE//e keys must continue through the saved binding routes")
+    route = function_body(controls, "onee_usb_fixed_route")
+    require("onee_usb_fixed_usage_reserved(usage)" in route and
+            "ONEE_USB_ROUTE_PUSH_NOW" in route and
+            "ONEE_USB_ROUTE_CONSUME_SOURCE" in route,
+            "the fixed route must consume only Pause and the two Alt sources")
+
+    require("vtw_service_onee_set_paused(1U)" in pause and
+            "usb_hid_service_set_onee_input_blocked(1U)" in pause and
+            "usb_hid_service_all_input_released()" in pause and
+            "vtw_service_onee_set_paused(0U)" in pause,
+            "menu entry must pause and menu exit must wait for key release")
+    released = function_body(source, "usb_hid_service_all_input_released")
+    desktop = function_body(source, "hid_collect_desktop_item")
+    mouse_buttons = function_body(source, "mouse_menu_process_buttons")
+    require("raw_buttons_down" in released and
+            "raw_axis_active_mask" in released and
+            "raw_hat_active" in released and
+            "slot->raw_axis_active_mask" in desktop and
+            "slot->raw_hat_active" in desktop and
+            "onee_usb_axis_direction(" in desktop and
+            "onee_usb_hat_active(" in desktop and
+            "g_onee_input_blocked == 0U && slot->onee_joystick" in source,
+            "menu ownership must block joystick delivery and wait for buttons, axes, and hat release")
+    hold = function_body(source, "menu_poll_open_close_hold")
+    require("g_onee_fixed_mode" not in mouse_buttons and
+            "g_onee_fixed_mode" not in hold and
+            desktop.count("g_menu_capture != 0U") >= 3 and
+            "g_onee_fixed_mode == 0U" not in desktop,
+            "saved mouse, joystick, axis, hat, and long-OK routes must work in ONE//e")
+    sync = function_body(frontend_main, "ui_sync_usb_menu_capture")
+    require("g_usb_menu_owned == 0U || ui_onee_selected() != 0U" in sync and
+            "config_menu_capture_usb_binding" in event and
+            "ui_key_from_usb_menu_source(menu, event->source)" in event and
+            "onee_fixed" not in event,
+            "ONE//e must allow capture and translate the saved bindings")
 
 def test_cherryusb_config_supports_hubs_and_zynq_ehci() -> None:
     config = read(USB_CONFIG_H)
@@ -786,7 +924,9 @@ def test_usb0_scsi_identity_and_format_capacities() -> None:
 TESTS = [
     test_slot_setting_does_not_control_physical_usb_mouse,
     test_cherryusb_hid_backend_replaces_custom_enumerator,
+    test_failed_hid_interrupt_submit_retries_after_backoff,
     test_usb_keyboard_and_keypad_emit_bindable_sources,
+    test_onee_uses_fixed_keyboard_controls_and_blocks_menu_leakage,
     test_cherryusb_config_supports_hubs_and_zynq_ehci,
     test_baremetal_osal_pumps_polled_irq_during_waits,
     test_usb1_waits_keep_frontend_services_running,

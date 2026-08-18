@@ -115,6 +115,8 @@ HELP(boot_settings,
     "In normal use the USB device's MENU key opens USB mode, and the USB keys drive the menu.",
     "Leave the Apple keyboard alone in USB mode: it reaches the running program.",
     "In USB bindings, Up/Down move within a column, Left/Right move columns, and Enter captures a new input.",
+    "ONE//e fixes Reset, Open Apple, Closed Apple, and Pause/Break. Other USB bindings stay editable.",
+    "Pause/Break and a long press of the saved OK binding both open or close the ONE//e menu.",
     "TW keys change TransWarp speed any time: toggle 1 MHz, step the preset, toggle the 0.05 MHz slug.");
 
 HELP(boot_timeout,
@@ -124,7 +126,21 @@ HELP(boot_timeout,
 
 HELP(boot_device,
     "Which drive the Appletini boots from: the SmartPort drives or the Disk II drives.",
-    "SmartPort boots the images on the SmartPort tab; Disk II boots the floppy images on the Disk II tab.");
+    "SmartPort boots the images on the SmartPort tab; Disk II boots the floppy images on the Disk II tab.",
+    "ONE//e always has virtual Disk II. It keeps this choice even when physical Slot 6 is off.",
+    "An Apple host falls back to SmartPort when Disk II is selected but physical Slot 6 is off.");
+
+HELP(boot_onee,
+    "Runs the built-in Enhanced Apple //e on Appletini's soft 65C02 without an Apple host.",
+    "The selection survives a card power cycle and starts only after the connector is quiet.",
+    "Any Apple-bus activity stops ONE//e and saves it OFF.",
+    "After the connector is quiet, select this item again to save it ON.");
+
+HELP(boot_onee_standard,
+    "Chooses cadence for the built-in ONE//e only: NTSC has 262 lines and 130 fabric clocks per cycle.",
+    "PAL has 312 lines and 131 fabric clocks per cycle. Both begin vertical blank at scanner line 192.",
+    "The row shows the saved target. A live change stays pending until the next virtual reset or restart.",
+    "This row appears only while ONE//e is active. A physical Apple's video standard remains automatic.");
 
 HELP(boot_bind_reset,
     "Restores every USB menu binding below to its factory default.",
@@ -155,27 +171,30 @@ HELP(boot_bind_tw_slug,
     "Toggles the 0.05 MHz slug speed for debugging, active at all times.",
     "The key works only when the slug debug key is armed on the TransWarp tab.");
 
-/* Item order: 0 boot wait, 1 boot device, 2 reset bindings, then the
- * bindings in k_boot_usb_binding_action_order: 3-6 nav, 7-8 tabs,
- * 9 OK, 10 BACK, 11-12 screenshots, 13-15 TW speed, 16 TW slug. */
+/* Item order outside ONE//e: 0 boot wait, 1 boot device, 2 ONE//e, 3 reset
+ * bindings, then the bindings in k_boot_usb_binding_action_order: 4-7 nav,
+ * 8-9 tabs, 10 OK, 11 BACK, 12-13 screenshots, 14-16 TW speed, 17 TW slug.
+ * While ONE//e is active, item 3 becomes the video-standard row. */
 static const help_override_t boot_settings_overrides[] = {
     OVERRIDE(0,  boot_timeout),
     OVERRIDE(1,  boot_device),
-    OVERRIDE(2,  boot_bind_reset),
-    OVERRIDE(3,  boot_bind_nav),
+    OVERRIDE(2,  boot_onee),
+    OVERRIDE(3,  boot_bind_reset),
     OVERRIDE(4,  boot_bind_nav),
     OVERRIDE(5,  boot_bind_nav),
     OVERRIDE(6,  boot_bind_nav),
-    OVERRIDE(7,  boot_bind_tabs),
+    OVERRIDE(7,  boot_bind_nav),
     OVERRIDE(8,  boot_bind_tabs),
-    OVERRIDE(9,  boot_bind_ok_back),
+    OVERRIDE(9,  boot_bind_tabs),
     OVERRIDE(10, boot_bind_ok_back),
-    OVERRIDE(11, boot_bind_prtscr),
+    OVERRIDE(11, boot_bind_ok_back),
     OVERRIDE(12, boot_bind_prtscr),
-    OVERRIDE(13, boot_bind_tw_speed),
+    OVERRIDE(13, boot_bind_prtscr),
     OVERRIDE(14, boot_bind_tw_speed),
     OVERRIDE(15, boot_bind_tw_speed),
-    OVERRIDE(16, boot_bind_tw_slug),
+    OVERRIDE(16, boot_bind_tw_speed),
+    OVERRIDE(17, boot_bind_tw_slug),
+    OVERRIDE(CONFIG_MENU_BOOT_ONEE_STANDARD_HELP_ITEM, boot_onee_standard),
 };
 
 /* ======================================================================== */

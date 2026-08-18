@@ -32,6 +32,7 @@
 #include "ad8088_service.h"
 #include "applicard_regs.h"
 #include "vtw_service.h"
+#include "onee_service.h"
 #include "compositor.h"
 #include "compositor_layout.h"
 #include "config_menu.h"
@@ -43,6 +44,8 @@
 #include "screenshot_service.h"
 #include "smartport_service.h"
 #include "usb_hid_service.h"
+#include "onee_input_service.h"
+#include "onee_fixed_mode.h"
 #include "usb_storage_backend.h"
 #include "usb_storage_service.h"
 #include "usb_sdd_service.h"
@@ -114,6 +117,8 @@ static usb1_boot_settle_t g_usb1_boot_settle = {0};
 static fw_update_metadata_t g_update_meta = {0};
 static uint8_t g_update_meta_valid = 0U;
 static uint8_t g_usb_menu_owned = 0U;
+static uint8_t g_onee_ui_running_seen = 0U;
+static uint8_t g_onee_menu_paused = 0U;
 static uint16_t *g_bezel_565 = NULL;
 static unsigned g_bezel_width = 0U;
 static unsigned g_bezel_height = 0U;
@@ -129,6 +134,7 @@ typedef struct {
     uint8_t source;
     uint8_t disk2_last_unit;
     uint8_t smartport_last_unit;
+    uint8_t smartport_status_unit;
     uint32_t disk2_last_read_count;
     uint32_t disk2_last_write_count;
     uint32_t disk2_read_until_frame;
@@ -892,8 +898,10 @@ static void control_set_slot_enabled(void *ctx, uint8_t slot, uint8_t enable)
     }
     if (slot == 6U) {
         /* Slot 6 is Disk II: keep the PS track loader in lockstep with the
-         * PL front end while still allowing it to drain a dirty track. */
-        disk2_service_set_enabled(enable);
+         * PL front end while still allowing it to drain a dirty track. The
+         * vTW service owns ONE//e's session-only override and applies the
+         * latest saved value when that override ends. */
+        vtw_service_set_disk2_config_enabled(enable);
     }
     slot_bit = 1UL << slot;
     slot_mask = g_card_slot_enable_mask;
@@ -1213,6 +1221,28 @@ static uint8_t menu_platform_is_apple_video_50hz(void *ctx)
     return boot_menu_service_is_apple_video_50hz();
 }
 
+static void menu_platform_set_onee_video_50hz(void *ctx, uint8_t enable)
+{
+    (void)ctx;
+    REG_WRITE(CARD_CTRL_ONEE_VIDEO_REG,
+              (enable != 0U) ?
+                  CARD_CTRL_ONEE_VIDEO_DESIRED_50HZ_BIT : 0U);
+}
+
+static uint8_t menu_platform_get_onee_video_50hz(void *ctx)
+{
+    (void)ctx;
+    return ((REG_READ(CARD_CTRL_ONEE_VIDEO_REG) &
+             CARD_CTRL_ONEE_VIDEO_DESIRED_50HZ_BIT) != 0U) ? 1U : 0U;
+}
+
+static uint8_t menu_platform_get_onee_video_active_50hz(void *ctx)
+{
+    (void)ctx;
+    return ((REG_READ(CARD_CTRL_ONEE_VIDEO_REG) &
+             CARD_CTRL_ONEE_VIDEO_ACTIVE_50HZ_BIT) != 0U) ? 1U : 0U;
+}
+
 static void menu_platform_set_boot_timeout(void *ctx, uint32_t ticks)
 {
     (void)ctx;
@@ -1223,6 +1253,74 @@ static void menu_platform_set_boot_handoff(void *ctx, uint8_t handoff)
 {
     (void)ctx;
     boot_menu_service_set_handoff((boot_menu_handoff_t)handoff);
+}
+
+static uint8_t menu_platform_set_onee_mode(void *ctx, uint8_t enable)
+{
+    (void)ctx;
+    if (enable != 0U) {
+        return onee_service_request_start();
+    }
+    onee_service_request_stop();
+    return 1U;
+}
+
+static void menu_platform_restore_onee_mode_intent(void *ctx, uint8_t enable)
+{
+    (void)ctx;
+    onee_service_restore_persisted(enable);
+}
+
+static uint8_t menu_platform_get_onee_mode_persist_update(void *ctx,
+                                                           uint8_t *enable)
+{
+    (void)ctx;
+    return onee_service_persist_update_pending(enable);
+}
+
+static void menu_platform_ack_onee_mode_persist_update(void *ctx,
+                                                        uint8_t enable)
+{
+    (void)ctx;
+    onee_service_persist_update_ack(enable);
+}
+
+static uint8_t menu_platform_get_onee_mode_state(void *ctx)
+{
+    (void)ctx;
+    return (uint8_t)onee_service_state();
+}
+
+static uint32_t menu_platform_get_onee_mode_status(void *ctx)
+{
+    (void)ctx;
+    return onee_service_status();
+}
+
+static uint8_t onee_runtime_start(void *ctx)
+{
+    (void)ctx;
+    return vtw_service_onee_start(
+        ((g_card_slot_enable_mask & (1UL << CARD_CTRL_SLOT_DISK2)) != 0U) ?
+            1U : 0U);
+}
+
+static void onee_runtime_suspend(void *ctx)
+{
+    (void)ctx;
+    vtw_service_onee_suspend();
+}
+
+static void onee_runtime_stop(void *ctx)
+{
+    (void)ctx;
+    vtw_service_onee_stop();
+}
+
+static uint8_t onee_runtime_running(void *ctx)
+{
+    (void)ctx;
+    return vtw_service_onee_running();
 }
 
 static int menu_platform_read_rtc(void *ctx, rtc_pcf8563_time_t *t)
@@ -2024,6 +2122,36 @@ static uint8_t ui_frame_active(uint32_t frame, uint32_t until_frame)
     return ((int32_t)(frame - until_frame) <= 0) ? 1U : 0U;
 }
 
+/* Pick the source that is doing useful work now. SmartPort data transfers
+ * may share a frame with a spinning Disk II drive, so they take first place.
+ * Disk II motor or data activity must, in turn, beat the STATUS calls made by
+ * SmartPort discovery. A STATUS call may light SP briefly, but it must not
+ * replace the last source that moved data. */
+static uint8_t ui_storage_choose_source(uint8_t disk2_valid,
+                                        uint8_t smartport_valid,
+                                        uint8_t disk2_active,
+                                        uint8_t smartport_data_active,
+                                        uint8_t smartport_status_active,
+                                        uint8_t retained_source)
+{
+    if (smartport_valid != 0U && smartport_data_active != 0U) {
+        return UI_STORAGE_SOURCE_SMARTPORT;
+    }
+    if (disk2_valid != 0U && disk2_active != 0U) {
+        return UI_STORAGE_SOURCE_DISK2;
+    }
+    if (smartport_valid != 0U && smartport_status_active != 0U) {
+        return UI_STORAGE_SOURCE_SMARTPORT;
+    }
+    if ((retained_source == UI_STORAGE_SOURCE_SMARTPORT &&
+         smartport_valid != 0U) ||
+        (retained_source == UI_STORAGE_SOURCE_DISK2 && disk2_valid != 0U)) {
+        return retained_source;
+    }
+    return (disk2_valid != 0U) ?
+        UI_STORAGE_SOURCE_DISK2 : UI_STORAGE_SOURCE_SMARTPORT;
+}
+
 static void ui_draw_disk_lock_icon(uint16_t *fb,
                                    int x,
                                    int y,
@@ -2071,6 +2199,13 @@ static void ui_draw_storage_activity(uint16_t *fb, const ui_state_t *s)
     uint8_t read_active = 0U;
     uint8_t write_active = 0U;
     uint8_t status_active = 0U;
+    uint8_t disk2_read_active = 0U;
+    uint8_t disk2_write_active = 0U;
+    uint8_t disk2_active = 0U;
+    uint8_t smartport_read_active = 0U;
+    uint8_t smartport_write_active = 0U;
+    uint8_t smartport_status_active = 0U;
+    uint8_t smartport_data_active = 0U;
     uint8_t unit;
     uint8_t present;
     uint8_t drive_active;
@@ -2082,9 +2217,11 @@ static void ui_draw_storage_activity(uint16_t *fb, const ui_state_t *s)
     int x = UI_DISK_ACTIVITY_X;
     int y = UI_DISK_ACTIVITY_Y;
 
-    if (control_get_slot_enabled(NULL, CARD_CTRL_SLOT_DISK2) != 0U &&
-        disk2_service_get_activity(&disk2_activity) == 0) {
-        disk2_valid = 1U;
+    /* The service snapshot reports the effective PL state. Do not gate it on
+     * the saved Slot 6 setting: ONE//e can enable its virtual Disk II for the
+     * current session without changing that setting. */
+    if (disk2_service_get_activity(&disk2_activity) == 0) {
+        disk2_valid = (disk2_activity.enabled != 0U) ? 1U : 0U;
     }
     if (smartport_service_get_activity(&smartport_activity) == 0) {
         smartport_valid = 1U;
@@ -2102,6 +2239,9 @@ static void ui_draw_storage_activity(uint16_t *fb, const ui_state_t *s)
             g_storage_activity.disk2_last_unit =
                 (disk2_activity.drive < DISK2_DRIVE_COUNT) ?
                 disk2_activity.drive : 0U;
+            g_storage_activity.source =
+                (disk2_activity.enabled != 0U) ?
+                UI_STORAGE_SOURCE_DISK2 : UI_STORAGE_SOURCE_SMARTPORT;
         }
         if (smartport_valid != 0U) {
             g_storage_activity.smartport_last_status_count = smartport_activity.status_count;
@@ -2110,6 +2250,8 @@ static void ui_draw_storage_activity(uint16_t *fb, const ui_state_t *s)
             g_storage_activity.smartport_last_unit =
                 (smartport_activity.device < SMARTPORT_SERVICE_DEVICE_COUNT) ?
                 smartport_activity.device : 0U;
+            g_storage_activity.smartport_status_unit =
+                g_storage_activity.smartport_last_unit;
         }
     }
 
@@ -2149,8 +2291,7 @@ static void ui_draw_storage_activity(uint16_t *fb, const ui_state_t *s)
                 smartport_activity.status_count;
             g_storage_activity.smartport_status_until_frame =
                 s->frame + UI_DISK_ACTIVITY_HOLD_FRAMES;
-            g_storage_activity.source = UI_STORAGE_SOURCE_SMARTPORT;
-            g_storage_activity.smartport_last_unit =
+            g_storage_activity.smartport_status_unit =
                 (smartport_activity.device < SMARTPORT_SERVICE_DEVICE_COUNT) ?
                 smartport_activity.device : 0U;
         }
@@ -2178,25 +2319,59 @@ static void ui_draw_storage_activity(uint16_t *fb, const ui_state_t *s)
         }
     }
 
-    source = g_storage_activity.source;
-    if (source == UI_STORAGE_SOURCE_SMARTPORT) {
-        status_active = ui_frame_active(
-            s->frame, g_storage_activity.smartport_status_until_frame);
-        read_active = ui_frame_active(
-            s->frame, g_storage_activity.smartport_read_until_frame);
-        write_active = ui_frame_active(
-            s->frame, g_storage_activity.smartport_write_until_frame);
-        if (smartport_valid == 0U) {
-            source = UI_STORAGE_SOURCE_DISK2;
+    if (disk2_valid != 0U) {
+        disk2_read_active = ui_frame_active(
+            s->frame, g_storage_activity.disk2_read_until_frame);
+        disk2_write_active = ui_frame_active(
+            s->frame, g_storage_activity.disk2_write_until_frame);
+        disk2_active = (disk2_activity.motor_on != 0U ||
+                        disk2_activity.spinning != 0U ||
+                        disk2_activity.write_busy != 0U ||
+                        disk2_activity.write_dirty != 0U ||
+                        disk2_read_active != 0U ||
+                        disk2_write_active != 0U) ? 1U : 0U;
+        if (disk2_active != 0U) {
+            g_storage_activity.source = UI_STORAGE_SOURCE_DISK2;
+            if (disk2_activity.motor_on != 0U ||
+                disk2_activity.spinning != 0U) {
+                g_storage_activity.disk2_last_unit =
+                    (disk2_activity.drive < DISK2_DRIVE_COUNT) ?
+                    disk2_activity.drive : 0U;
+            }
         }
-    } else if (disk2_valid == 0U) {
-        source = UI_STORAGE_SOURCE_SMARTPORT;
+    }
+    if (smartport_valid != 0U) {
+        smartport_status_active = ui_frame_active(
+            s->frame, g_storage_activity.smartport_status_until_frame);
+        smartport_read_active = ui_frame_active(
+            s->frame, g_storage_activity.smartport_read_until_frame);
+        smartport_write_active = ui_frame_active(
+            s->frame, g_storage_activity.smartport_write_until_frame);
+        smartport_data_active =
+            (smartport_read_active != 0U || smartport_write_active != 0U) ?
+            1U : 0U;
+        if (smartport_data_active != 0U) {
+            g_storage_activity.source = UI_STORAGE_SOURCE_SMARTPORT;
+        }
     }
 
+    source = ui_storage_choose_source(disk2_valid,
+                                      smartport_valid,
+                                      disk2_active,
+                                      smartport_data_active,
+                                      smartport_status_active,
+                                      g_storage_activity.source);
+
     if (source == UI_STORAGE_SOURCE_SMARTPORT && smartport_valid != 0U) {
-        unit = (g_storage_activity.smartport_last_unit <
+        status_active = smartport_status_active;
+        read_active = smartport_read_active;
+        write_active = smartport_write_active;
+        unit = ((smartport_data_active == 0U && status_active != 0U) ?
+                g_storage_activity.smartport_status_unit :
+                g_storage_activity.smartport_last_unit);
+        unit = (unit <
                 SMARTPORT_SERVICE_DEVICE_COUNT) ?
-            g_storage_activity.smartport_last_unit : 0U;
+            unit : 0U;
         present = ((smartport_activity.present_mask & (uint8_t)(1U << unit)) != 0U) ?
             1U : 0U;
         write_protected = smartport_activity.read_only;
@@ -2208,10 +2383,8 @@ static void ui_draw_storage_activity(uint16_t *fb, const ui_state_t *s)
         drive_color = FB16_COLOR_SKY;
         snprintf(line, sizeof(line), "SMARTPORT SP%u", (unsigned)unit + 1U);
     } else if (disk2_valid != 0U) {
-        read_active = ui_frame_active(
-            s->frame, g_storage_activity.disk2_read_until_frame);
-        write_active = ui_frame_active(
-            s->frame, g_storage_activity.disk2_write_until_frame);
+        read_active = disk2_read_active;
+        write_active = disk2_write_active;
         unit = (g_storage_activity.disk2_last_unit < DISK2_DRIVE_COUNT) ?
             g_storage_activity.disk2_last_unit : 0U;
         present = ((disk2_activity.present_mask & (uint8_t)(1U << unit)) != 0U) ?
@@ -2368,12 +2541,14 @@ static void ui_collect_debug_overlay_snapshot(debug_overlay_snapshot_t *snapshot
     snapshot->fb_debug2 = REG_READ(FB_DEBUG2_REG);
     snapshot->softswitch_state = ui_softswitch_state();
 
-    if (control_get_slot_enabled(NULL, CARD_CTRL_SLOT_DISK2) != 0U &&
-        disk2_service_get_activity(&snapshot->disk2_activity) == 0) {
-        snapshot->disk2_valid = 1U;
-        for (uint8_t drive = 0U; drive < DISK2_DRIVE_COUNT; ++drive) {
-            snapshot->disk2_read_only[drive] =
-                menu_platform_get_disk2_image_read_only(NULL, drive);
+    if (disk2_service_get_activity(&snapshot->disk2_activity) == 0) {
+        snapshot->disk2_valid =
+            (snapshot->disk2_activity.enabled != 0U) ? 1U : 0U;
+        if (snapshot->disk2_valid != 0U) {
+            for (uint8_t drive = 0U; drive < DISK2_DRIVE_COUNT; ++drive) {
+                snapshot->disk2_read_only[drive] =
+                    menu_platform_get_disk2_image_read_only(NULL, drive);
+            }
         }
     }
     if (smartport_service_get_activity(&snapshot->smartport_activity) == 0) {
@@ -2483,6 +2658,51 @@ static int ui_compose_thunk(uint16_t *fb,
                             phase);
 }
 
+static uint8_t ui_onee_selected(void)
+{
+    return onee_usb_fixed_mode_active(onee_service_status());
+}
+
+static void ui_sync_onee_menu_pause(config_menu_t *menu)
+{
+    const uint8_t selected = ui_onee_selected();
+    const uint8_t menu_active = config_menu_is_active(menu);
+
+    usb_hid_service_set_onee_fixed_mode(
+        (uint8_t)(selected != 0U || g_onee_menu_paused != 0U));
+
+    if (selected == 0U) {
+        if (g_onee_menu_paused != 0U) {
+            (void)vtw_service_onee_set_paused(0U);
+            g_onee_menu_paused = 0U;
+        }
+        usb_hid_service_set_onee_input_blocked(0U);
+        usb_hid_service_set_onee_fixed_mode(0U);
+        return;
+    }
+
+    if (menu_active != 0U) {
+        usb_hid_service_set_onee_input_blocked(1U);
+        if (g_onee_menu_paused == 0U &&
+            vtw_service_onee_set_paused(1U) != 0U) {
+            g_onee_menu_paused = 1U;
+        }
+        return;
+    }
+
+    if (g_onee_menu_paused != 0U) {
+        usb_hid_service_set_onee_input_blocked(1U);
+        if (usb_hid_service_all_input_released() != 0U &&
+            vtw_service_onee_set_paused(0U) != 0U) {
+            g_onee_menu_paused = 0U;
+            usb_hid_service_set_onee_input_blocked(0U);
+        }
+        return;
+    }
+
+    usb_hid_service_set_onee_input_blocked(0U);
+}
+
 static void ui_set_boot_menu_visible(ui_state_t *s,
                                      config_menu_t *menu,
                                      uint8_t active)
@@ -2494,10 +2714,14 @@ static void ui_set_boot_menu_visible(ui_state_t *s,
     config_menu_set_usb_bindings_editable(
         menu,
         (uint8_t)(active != 0U && g_usb_menu_owned == 0U));
+    if (ui_onee_selected() != 0U) {
+        config_menu_set_usb_bindings_editable(menu, 0U);
+    }
     if (active != 0U) {
         menu_chime_play();
     }
     config_menu_set_active(menu, active);
+    ui_sync_onee_menu_pause(menu);
 }
 
 static void ui_handle_apple_reset(ui_state_t *s, config_menu_t *menu)
@@ -2519,11 +2743,40 @@ static void ui_handle_apple_reset(ui_state_t *s, config_menu_t *menu)
     }
     boot_menu_service_refresh_machine_policy();
     smartport_service_apple_reset();
-    /* A IIgs clears NEWVIDEO on reset; mirror that for the fake-SHR
-     * path. One DMA bus write of $01 to $C029 clears the PL capture
-     * state and, through the captured record, CPU1's renderer too --
-     * every observer sees the same real bus write. */
-    (void)uart_control_dma_bus_write(0xC029U, 0x01U);
+    /* A physical IIgs clears NEWVIDEO on reset; mirror that for the fake-SHR
+     * path. ONE//e is a virtual Enhanced //e, so its private cold reboot must
+     * not start a host DMA transaction or wait for a physical bus response. */
+    if ((onee_service_status() &
+         CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT) == 0U) {
+        (void)uart_control_dma_bus_write(0xC029U, 0x01U);
+    }
+    if (config_menu_is_active(menu)) {
+        g_usb_menu_owned = 0U;
+        ui_set_boot_menu_visible(s, menu, 0U);
+    }
+}
+
+static void ui_start_onee_cold_reboot(ui_state_t *s, config_menu_t *menu)
+{
+    if (onee_input_service_take_cold_reboot_request() == 0U) {
+        return;
+    }
+    if (vtw_service_onee_cold_reboot() == 0U) {
+        uart_puts(UART0_BASE,
+                  "ONE//e cold reboot refused: runtime is not safe\r\n");
+        return;
+    }
+
+    onee_input_service_prepare_cold_reboot();
+
+    /* vTW now holds the private RES# line. Publish the selected cold-boot
+     * target and clear the PS command state before that line can release;
+     * the reset-sequence hook will repeat this harmlessly on its next poll. */
+    if (menu != NULL) {
+        config_menu_apply_boot_runtime(menu);
+    }
+    boot_menu_service_refresh_machine_policy();
+    smartport_service_apple_reset();
     if (config_menu_is_active(menu)) {
         g_usb_menu_owned = 0U;
         ui_set_boot_menu_visible(s, menu, 0U);
@@ -2583,7 +2836,8 @@ static void ui_sync_usb_menu_capture(config_menu_t *menu)
         (uint8_t)(config_menu_is_active(menu) && g_usb_menu_owned != 0U));
     config_menu_set_usb_bindings_editable(
         menu,
-        (uint8_t)(config_menu_is_active(menu) && g_usb_menu_owned == 0U));
+        (uint8_t)(config_menu_is_active(menu) &&
+                  (g_usb_menu_owned == 0U || ui_onee_selected() != 0U)));
     usb_hid_service_set_menu_ok_source(config_menu_usb_ok_binding_source(menu));
     usb_hid_service_set_menu_open_close_source(
         config_menu_usb_open_close_binding_source(menu));
@@ -2604,6 +2858,27 @@ static void ui_sync_usb_menu_capture(config_menu_t *menu)
         usb_hid_service_set_vtw_sources(vtw_sources);
     }
     usb_hid_service_set_menu_capture(config_menu_is_active(menu));
+    ui_sync_onee_menu_pause(menu);
+}
+
+static void ui_close_menu_on_onee_running(ui_state_t *s,
+                                          config_menu_t *menu)
+{
+    const uint8_t running =
+        (menu != NULL &&
+         menu->onee_mode_state == CONFIG_MENU_ONEE_MODE_RUNNING) ? 1U : 0U;
+
+    /* Close once, only after the soft core reports released. Keeping a
+     * transition latch lets the user open the menu again while ONE//e runs
+     * and select the same row to stop it. */
+    if (running != 0U && g_onee_ui_running_seen == 0U &&
+        config_menu_is_active(menu) != 0U) {
+        g_usb_menu_owned = 0U;
+        ui_set_boot_menu_visible(s, menu, 0U);
+        ui_sync_usb_menu_capture(menu);
+        compositor_request_full_refresh();
+    }
+    g_onee_ui_running_seen = running;
 }
 
 static void ui_save_screenshot(screenshot_service_kind_t kind)
@@ -2635,6 +2910,7 @@ static void ui_handle_usb_menu_event(ui_state_t *s,
                                      const usb_hid_menu_event_t *event)
 {
     ui_key_t key;
+    uint8_t allow_onee_preselect;
 
     if (event == NULL) {
         return;
@@ -2672,6 +2948,13 @@ static void ui_handle_usb_menu_event(ui_state_t *s,
         return;
     }
 
+    /* A speed key used while the Appletini menu is open may stage the
+     * upcoming ONE//e core even when saved host TransWarp is off. Keep this
+     * context local to the input event so the same key stays a true no-op
+     * when the menu is closed. */
+    allow_onee_preselect =
+        (uint8_t)(config_menu_is_active(menu) != 0U);
+
     switch (event->action) {
     case USB_HID_MENU_ACTION_SCREENSHOT_A2:
         ui_save_screenshot(SCREENSHOT_SERVICE_KIND_A2);
@@ -2680,19 +2963,19 @@ static void ui_handle_usb_menu_event(ui_state_t *s,
         ui_save_screenshot(SCREENSHOT_SERVICE_KIND_1080P);
         return;
     case USB_HID_MENU_ACTION_VTW_SPEED_TOGGLE:
-        vtw_service_speed_toggle();
+        vtw_service_speed_toggle(allow_onee_preselect);
         screenshot_service_show_notice(vtw_service_last_action_text());
         return;
     case USB_HID_MENU_ACTION_VTW_SPEED_UP:
-        vtw_service_speed_step(1);
+        vtw_service_speed_step(1, allow_onee_preselect);
         screenshot_service_show_notice(vtw_service_last_action_text());
         return;
     case USB_HID_MENU_ACTION_VTW_SPEED_DOWN:
-        vtw_service_speed_step(-1);
+        vtw_service_speed_step(-1, allow_onee_preselect);
         screenshot_service_show_notice(vtw_service_last_action_text());
         return;
     case USB_HID_MENU_ACTION_VTW_SLUG_TOGGLE:
-        vtw_service_slug_toggle();
+        vtw_service_slug_toggle(allow_onee_preselect);
         screenshot_service_show_notice(vtw_service_last_action_text());
         return;
     default:
@@ -2893,6 +3176,7 @@ int main(void)
     XTime_GetTime(&boot_stage_started);
     card_control_init();
     boot_timing_log("card_control_init", boot_stage_started);
+    onee_service_init();
     screenshot_service_init();
     screenshot_service_set_sd_write_hook(ui_screenshot_sd_write_complete, NULL);
     printer_service_init();
@@ -2929,8 +3213,23 @@ int main(void)
         menu_platform.get_pal_video_phase_cycles =
             menu_platform_get_pal_video_phase_cycles;
         menu_platform.is_apple_video_50hz = menu_platform_is_apple_video_50hz;
+        menu_platform.set_onee_video_50hz =
+            menu_platform_set_onee_video_50hz;
+        menu_platform.get_onee_video_50hz =
+            menu_platform_get_onee_video_50hz;
+        menu_platform.get_onee_video_active_50hz =
+            menu_platform_get_onee_video_active_50hz;
         menu_platform.set_boot_timeout_ticks = menu_platform_set_boot_timeout;
         menu_platform.set_boot_handoff = menu_platform_set_boot_handoff;
+        menu_platform.set_onee_mode = menu_platform_set_onee_mode;
+        menu_platform.restore_onee_mode_intent =
+            menu_platform_restore_onee_mode_intent;
+        menu_platform.get_onee_mode_persist_update =
+            menu_platform_get_onee_mode_persist_update;
+        menu_platform.ack_onee_mode_persist_update =
+            menu_platform_ack_onee_mode_persist_update;
+        menu_platform.get_onee_mode_state = menu_platform_get_onee_mode_state;
+        menu_platform.get_onee_mode_status = menu_platform_get_onee_mode_status;
         menu_platform.set_clock_enabled = control_set_clock_enabled;
         menu_platform.set_supersprite_enabled = control_set_supersprite_enabled;
         menu_platform.set_ssc_enabled = control_set_ssc_enabled;
@@ -3025,6 +3324,11 @@ int main(void)
     ad8088_service_init(UART0_BASE);
     ad8088_service_set_checkpoint(usb0_priority_checkpoint);
     vtw_service_init(UART0_BASE);
+    onee_service_bind_runtime(onee_runtime_start,
+                              onee_runtime_suspend,
+                              onee_runtime_stop,
+                              onee_runtime_running,
+                              NULL);
 
     uart_control_print_help(&g_uart_control, &g_uart_control_ops);
     uart_control_print_help(&g_uart0_control, &g_uart_control_ops);
@@ -3128,6 +3432,10 @@ int main(void)
 
     while (1) {
         uart_budget = 32U;
+        onee_service_poll();
+        config_menu_poll_onee_mode(&config_menu);
+        ui_close_menu_on_onee_running(&ui, &config_menu);
+        ui_sync_onee_menu_pause(&config_menu);
         config_menu_poll_ethernet(&config_menu);
         if (config_menu_usb0_sd_remote_active(&config_menu) != 0U) {
             if (usb0_modal_was_active == 0U) {
@@ -3283,6 +3591,7 @@ int main(void)
             usb_storage_service_needs_attention() == 0) {
             usb_hid_service_poll();
         }
+        ui_start_onee_cold_reboot(&ui, &config_menu);
         usb1_boot_settle_poll(&config_menu);
         usb0_priority_checkpoint();
         ui_poll_sensors();

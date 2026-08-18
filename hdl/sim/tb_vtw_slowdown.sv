@@ -51,7 +51,7 @@ module tb_vtw_slowdown;
     logic tini_oe_pin, tini_addr_dir_pin, tini_data_dir_pin;
 
     apple_bus_wrapper wrapper_i (
-        .clk(clk), .rstn(rstn),
+        .clk(clk), .rstn(rstn), .physical_bus_isolate(1'b0),
         .res_filtered_out(), .dbg_lost_cycle_count(), .dbg_clear(1'b0),
         .inh_allowed(1'b1), .gs_m2_qualify(1'b0), .m2sel_active_high(1'b0),
         .host_is_iiplus(1'b0),
@@ -107,7 +107,9 @@ module tb_vtw_slowdown;
 
     vtw_core_top dut (
         .clk(clk), .rstn(rstn), .enable(enable),
-        .host_is_iiplus(1'b0), .core_run(core_run),
+        .host_is_iiplus(1'b0), .virtual_motherboard(1'b0),
+        .core_run(core_run),
+        .pause(1'b0),
         .assert_apple_res(1'b0),
         .speed_mode(2'd0),        // WARP baseline
         .pace_divider(16'd0),
@@ -259,6 +261,92 @@ module tb_vtw_slowdown;
         end
     endtask
 
+    localparam logic [15:0] PIPELINE_DURATION = 16'h0037;
+    int pipeline_accept_count = 0;
+    int pipeline_apply_count = 0;
+    logic pipeline_watch = 1'b0;
+
+    /* Count the two sides of the slowdown update stage at their accepting
+     * edges. The directed checks below keep the watch window short enough
+     * that one CPU completion must yield exactly one counter update. */
+    always @(posedge clk) begin
+        if (pipeline_watch) begin
+            if (dut.core_en && dut.sd_hit)
+                pipeline_accept_count++;
+            if (dut.slow_update_valid_q && dut.slow_update_hit_q &&
+                ab_read.res)
+                pipeline_apply_count++;
+        end
+    end
+
+    task automatic check_slow_update_pipeline;
+        int wait_cycles;
+
+        // Start with an empty counter and accept one matching $C030 cycle.
+        reboot_with(16'hC030, 10'b00_1000_0000, PIPELINE_DURATION);
+        pipeline_accept_count = 0;
+        pipeline_apply_count = 0;
+        pipeline_watch = 1'b1;
+        wait_cycles = 0;
+        while (pipeline_accept_count == 0 && wait_cycles < 20000) begin
+            @(posedge clk);
+            #1ps;
+            wait_cycles++;
+        end
+        check(wait_cycles < 20000,
+              "timed out waiting for a matching slowdown cycle");
+        check(pipeline_accept_count == 1,
+              "the directed window accepted more than one slowdown hit");
+        check(dut.slow_update_valid_q && dut.slow_update_hit_q,
+              "accepted slowdown hit was not captured in the update stage");
+        check(dut.slow_update_duration_q == PIPELINE_DURATION,
+              "slowdown stage did not capture the accepted duration");
+        check(dut.slow_cnt_q == 16'd0,
+              "accepted slowdown hit changed the counter immediately");
+
+        // Changing the live input now must not change the captured update.
+        sd_duration = 16'h005A;
+        @(posedge clk);
+        #1ps;
+        check(dut.slow_cnt_q == PIPELINE_DURATION,
+              "next fabric edge did not load the captured duration");
+        check(pipeline_accept_count == 1 && pipeline_apply_count == 1,
+              "one accepted slowdown hit did not produce one update");
+        @(posedge clk);
+        #1ps;
+        check(dut.slow_cnt_q == PIPELINE_DURATION,
+              "one accepted slowdown hit updated the counter more than once");
+        check(pipeline_accept_count == 1 && pipeline_apply_count == 1,
+              "slowdown update stage duplicated an accepted hit");
+        pipeline_watch = 1'b0;
+
+        // Present an Apple reset between capture and apply. Force the DUT's
+        // filtered reset input low for this one-edge test so the 2.1 us pin
+        // filter does not hide the single-clock cancellation case.
+        reboot_with(16'hC030, 10'b00_1000_0000, PIPELINE_DURATION);
+        wait_cycles = 0;
+        while (!(dut.slow_update_valid_q && dut.slow_update_hit_q) &&
+               wait_cycles < 20000) begin
+            @(posedge clk);
+            #1ps;
+            wait_cycles++;
+        end
+        check(wait_cycles < 20000,
+              "timed out waiting for the reset-cancel slowdown hit");
+        check(dut.slow_cnt_q == 16'd0,
+              "reset-cancel test did not start with an empty counter");
+        res_drive_low = 1'b1;
+        force dut.ab_read.res = 1'b0;
+        @(posedge clk);
+        #1ps;
+        check(dut.slow_cnt_q == 16'd0,
+              "Apple reset did not cancel the pending slowdown update");
+        check(!dut.slow_update_valid_q,
+              "Apple reset did not clear the pending slowdown valid bit");
+        release dut.ab_read.res;
+        res_drive_low = 1'b0;
+    endtask
+
     /* The registered normal tick must equal the prior edge's accepted
      * virtual cycle. This point-by-point check proves that the stage neither
      * merges nor loses a tick across the whole bench. */
@@ -322,6 +410,9 @@ module tb_vtw_slowdown;
     int d2_wait_cycles;
 
     initial begin
+        // ---- 0. Slowdown bookkeeping pipeline ----
+        check_slow_update_pipeline();
+
         // ---- 1. Baseline WARP: slowdown disabled ----
         // Preload the speaker program, then boot with the feature OFF.
         rstn = 0; res_drive_low = 1; enable = 0; core_run = 0;

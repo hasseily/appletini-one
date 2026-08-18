@@ -14,6 +14,14 @@ irq_pulse_stretcher.sv
 constraints/appletini_yarz.xdc
 apple/apple_top.sv
 apple/apple_bus_wrapper.sv
+apple/onee_mode_safety_guard.sv
+apple/onee_video_standard_ctrl.sv
+apple/apple_virtual_bus.sv
+apple/onee_motherboard_io.sv
+apple/onee_cold_slot_scan.sv
+apple/onee_input_bridge.sv
+apple/onee_warm_reset_ctrl.sv
+apple/onee_speaker_audio.sv
 apple/apple_bus_write_arbiter.sv
 apple/w65c02_core.sv
 apple/vtw_shadow.sv

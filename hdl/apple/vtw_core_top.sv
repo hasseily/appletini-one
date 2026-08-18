@@ -47,9 +47,17 @@ module vtw_core_top (
     /* Session-latched physical host type. It selects only the electrically
      * safe parked-bus address; the accelerated personality remains a //e. */
     input  logic                    host_is_iiplus,
+    /* The bus is the isolated ONE//e motherboard rather than a physical
+     * Apple. Motherboard keyboard/status/button reads must then use the
+     * shared responder, and every unclaimed bus read gets scanner data. */
+    input  logic                    virtual_motherboard,
     /* ARM releases the core after the boot ROM copy. While low the core
      * is held in reset and the ARM owns the sync-cycle port. */
     input  logic                    core_run,
+    /* Freeze the core without reset. Any in-flight access drains to its
+     * completed state; gating only core_en then parks the CPU and access FSM
+     * on the same cycle until pause clears. */
+    input  logic                    pause,
     /* Pull the Apple RES# line low (open-collector, like CTRL-RESET).
      * The takeover sequence asserts this for ~100 ms so the whole machine
      * -- cards, MMU, PS reset detection -- restarts coherently before
@@ -502,7 +510,8 @@ module vtw_core_top (
      * even on a //e this saves a bus round-trip). These addresses have no
      * read side effects. $C000 (keyboard data) and $C010 (strobe clear)
      * keep their real-bus semantics and are excluded. */
-    wire xl_c01x_rd = xl_is_bus && cycle_rw_q &&
+    wire xl_c01x_rd = !virtual_motherboard &&
+                      xl_is_bus && cycle_rw_q &&
                       (cycle_addr_q[15:4] == 12'hC01) &&
                       (cycle_addr_q[3:0] != 4'h0);
 
@@ -511,7 +520,8 @@ module vtw_core_top (
      * iiplus_buttons_zero port comment). These reads have no side
      * effects, so skipping the bus cycle is faithful. $C060 (cassette
      * in) keeps real-bus semantics. */
-    wire xl_btn_rd = xl_is_bus && cycle_rw_q && iiplus_buttons_zero &&
+    wire xl_btn_rd = !virtual_motherboard &&
+                     xl_is_bus && cycle_rw_q && iiplus_buttons_zero &&
                      (cycle_addr_q[15:2] == 14'h3018) &&
                      (cycle_addr_q[1:0] != 2'b00);
 
@@ -962,6 +972,13 @@ module vtw_core_top (
      * per-cycle address; the counter is (re)loaded and decremented in the
      * main always_ff beside the $C074 latch. */
     logic [15:0] slow_cnt_q;
+    /* Apply slowdown bookkeeping one fabric clock after the accepted CPU
+     * cycle. The core cannot complete another cycle in that interval, so
+     * this preserves Apple-cycle timing while keeping Disk II readiness out
+     * of the wide slow-counter enable cone. */
+    (* KEEP = "TRUE" *) logic slow_update_valid_q;
+    logic                       slow_update_hit_q;
+    logic [15:0]                slow_update_duration_q;
     wire         slow_active = (slow_cnt_q != 16'd0);
 
     wire         sd_is_c0xx  = (cycle_addr_q[15:8] == 8'hC0);
@@ -1046,6 +1063,19 @@ module vtw_core_top (
         (cycle_addr_q[15:8] == 8'hC0) &&
         (cycle_addr_q[7:4] >= 4'h3) &&
         (cycle_addr_q[7:4] <= 4'h5);
+    // A physical host needs the scanner override only for the known fully
+    // floating range. ONE//e has no physical motherboard fallback, so fetch
+    // the scanner byte for every X_BUS read and use it whenever no merged
+    // client claimed the cycle.
+    wire scanner_bus_read = cycle_rw_q &&
+                            (full_floating_read || virtual_motherboard);
+    wire virtual_motherboard_status_read =
+        virtual_motherboard &&
+        (cycle_addr_q[15:8] == 8'hC0) &&
+        (((cycle_addr_q[7:4] == 4'h1) &&
+          (cycle_addr_q[3:0] != 4'h0)) ||
+         (cycle_addr_q[7:4] == 4'h6) ||
+         (cycle_addr_q[7:1] == 7'h3F));
     /* The byte a CPU sees during PHI0-high is the scanner fetch from two
      * native slots earlier. Rewind the complete position so cycle 0/1 also
      * select the correct previous scanline and NTSC/PAL frame. */
@@ -1061,13 +1091,16 @@ module vtw_core_top (
                             cycle_video_80store_q);
     logic [15:0] floating_scan_addr_q;
     wire floating_scan_addr_latch =
-        core_active && (xstate_q == X_BUS) && full_floating_read &&
+        core_active && (xstate_q == X_BUS) && scanner_bus_read &&
         ab_read.serve_en && ab_read.rw &&
         (ab_read.addr == cycle_addr_q);
+    logic floating_scan_pending_q;
+    /* SERVE already proves this is the matching floating read. Carry that
+     * fact to DATA in one bit instead of repeating the address/scanner decode
+     * in the BRAM enable path. SERVE and DATA are distinct on both buses. */
     wire floating_scan_issue =
-        core_active && (xstate_q == X_BUS) && full_floating_read &&
-        ab_read.data_en && ab_read.rw &&
-        (ab_read.addr == cycle_addr_q);
+        floating_scan_pending_q && ab_read.data_en;
+    logic onee_bus_data_claimed_q;
     wire core_shadow_issue =
         (xstate_q == X_ROUTE) && xl_shadow_valid && core_res_n;
 
@@ -1082,9 +1115,24 @@ module vtw_core_top (
     always_ff @(posedge clk) begin
         if (!rstn) begin
             floating_scan_addr_q <= '0;
+            floating_scan_pending_q <= 1'b0;
+            onee_bus_data_claimed_q <= 1'b0;
         end
-        else if (floating_scan_addr_latch) begin
-            floating_scan_addr_q <= floating_scan_addr;
+        else begin
+            if (floating_scan_addr_latch) begin
+                floating_scan_addr_q <= floating_scan_addr;
+                floating_scan_pending_q <= 1'b1;
+            end
+            if (!core_active || (xstate_q != X_BUS) || ab_read.data_en)
+                floating_scan_pending_q <= 1'b0;
+        end
+        if (!rstn || !virtual_motherboard) begin
+            onee_bus_data_claimed_q <= 1'b0;
+        end
+        else if (core_active && (xstate_q == X_BUS) &&
+                 ab_read.data_en && ab_read.rw &&
+                 (ab_read.addr == cycle_addr_q)) begin
+            onee_bus_data_claimed_q <= data_drive_in;
         end
     end
 
@@ -1138,7 +1186,8 @@ module vtw_core_top (
                            (!status_vbl_data_phase_q ||
                             status_vbl_sampled_q);
     wire complete_dead   = (xstate_q == X_DEAD)        && pace_ok;
-    assign core_en = core_res_n && !rw_hold_q &&
+
+    assign core_en = core_res_n && !pause && !rw_hold_q &&
                      d2_time_ready &&
                      (complete_mem || complete_bus ||
                       complete_rw || complete_sp ||
@@ -1217,6 +1266,9 @@ module vtw_core_top (
             d2_cycle_tick_q     <= 1'b0;
             sp_inflight_q       <= 1'b0;
             slow_cnt_q          <= 16'd0;
+            slow_update_valid_q <= 1'b0;
+            slow_update_hit_q   <= 1'b0;
+            slow_update_duration_q <= 16'd0;
         end
         else begin
             arm_rw_flush_done <= 1'b0;
@@ -1386,18 +1438,24 @@ module vtw_core_top (
                     (cycle_wdata_q == 8'd1 || cycle_wdata_q == 8'd2);
             end
 
-            // Per-region slowdown one-shot: (re)arm to slow_duration when a
-            // completing cycle hits an enabled region, else count down. The
-            // counter meters Apple cycles: while it is nonzero the core is
-            // 1 MHz-locked, so one core_en fires per Apple cycle.
-            if (core_en && sd_hit) begin
-                slow_cnt_q <= slow_duration;
+            // Per-region slowdown one-shot: capture each completed cycle,
+            // then apply its update on the next fabric edge. X_CAPTURE and
+            // X_ROUTE separate CPU completions by more than one edge, so the
+            // counter is current before the next cycle can complete.
+            slow_update_valid_q <= core_en;
+            if (core_en) begin
+                slow_update_hit_q      <= sd_hit;
+                slow_update_duration_q <= slow_duration;
             end
-            else if (core_en && slow_cnt_q != 16'd0) begin
+            if (slow_update_valid_q && slow_update_hit_q) begin
+                slow_cnt_q <= slow_update_duration_q;
+            end
+            else if (slow_update_valid_q && slow_cnt_q != 16'd0) begin
                 slow_cnt_q <= slow_cnt_q - 16'd1;
             end
             if (!ab_read.res) begin
-                slow_cnt_q <= 16'd0;
+                slow_cnt_q          <= 16'd0;
+                slow_update_valid_q <= 1'b0;
             end
 
             unique case (xstate_q)
@@ -1577,7 +1635,14 @@ module vtw_core_top (
                          * The physical bus cycle still performed any side
                          * effect. The BRAM read was issued at data_en one
                          * fabric clock before this response is observed. */
-                        if (full_floating_read) begin
+                        if (virtual_motherboard &&
+                            !onee_bus_data_claimed_q) begin
+                            core_data_in_q <= shadow_a_rdata;
+                        end else if (virtual_motherboard_status_read) begin
+                            core_data_in_q <= {
+                                eng_resp_rdata[7], shadow_a_rdata[6:0]
+                            };
+                        end else if (full_floating_read) begin
                             core_data_in_q <= shadow_a_rdata;
                         end else begin
                             core_data_in_q <= eng_resp_rdata;

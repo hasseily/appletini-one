@@ -72,7 +72,7 @@ module appletini_yarz_top (
 
     // Bus Transceiver Control
     output logic        a2fpga_oe_n,          // Main transceiver output enable
-    output logic        a2fpga_oe_n_aux,      // Auxiliary transceiver output enable
+    output logic        a2fpga_oe_n_aux,      // Auxiliary OE (active high; legacy name)
     output logic        a2fpga_dir_a,         // Address bus direction control
     output logic        a2fpga_dir_d,         // Data bus direction control
 
@@ -274,6 +274,11 @@ module appletini_yarz_top (
     logic signed [15:0] mockingboard_audio_r;
     logic signed [15:0] disk2_audio_l;
     logic signed [15:0] disk2_audio_r;
+    logic signed [15:0] onee_audio_mono;
+    logic onee_menu_audio_mute;
+    logic onee_menu_audio_mute_bclk;
+    logic signed [15:0] card_audio_l;
+    logic signed [15:0] card_audio_r;
     logic signed [15:0] mixed_audio_l;
     logic signed [15:0] mixed_audio_r;
     logic menu_chime_start;
@@ -371,6 +376,13 @@ module appletini_yarz_top (
         .clk    (audio_bclk),
         .arst_n (audio_mclk_resetn),
         .srst_n (audio_bclk_resetn)
+    );
+
+    cdc_bit_sync onee_menu_audio_mute_cdc_i (
+        .clk   (audio_bclk),
+        .resetn(audio_bclk_resetn),
+        .din   (onee_menu_audio_mute),
+        .dout  (onee_menu_audio_mute_bclk)
     );
 
     // Status signals after CDC into AXI/control domain (owned by pl_cdc_status)
@@ -732,8 +744,6 @@ module appletini_yarz_top (
     assign a2ctrl_dma_n = 1'b1;
     assign a2ctrl_inh_n = 1'b1;
     assign a2ctrl_reset_n = apple_reset_n_out;
-    assign a2fpga_oe_n_aux = 1'b1;
-
     wire [3:0] psram_oe;
     wire [3:0] psram_a_i;
     wire [3:0] psram_a_o;
@@ -760,8 +770,11 @@ module appletini_yarz_top (
         .apple_addr_pin(a2fpga_a),
         .apple_rw_pin(a2fpga_rdwr_n),
         .apple_phi0_pin(a2fpga_clk),
+        .apple_7m_pin(a2fpga_7m),
+        .apple_q3_pin(a2fpga_q3),
         .apple_m2sel_pin(a2fpga_m2sel),
         .apple_m2b0_pin(a2fpga_m2b0),
+        .apple_devsel_n_pin(a2fpga_devsel_n),
         .apple_inh_pin(a2fpga_inh_n),
         .apple_res_pin(a2fpga_reset_n),
         .apple_irq_pin(a2fpga_irq_n),
@@ -769,6 +782,7 @@ module appletini_yarz_top (
         .apple_dma_pin(a2fpga_dma_n),
         .apple_nmi_pin(a2fpga_nmi_n),
         .tini_oe_pin(a2fpga_oe_n),
+        .tini_aux_oe_pin(a2fpga_oe_n_aux),
         .tini_5v_pin(1'b0),
         .tini_addr_dir_pin(a2fpga_dir_a),
         .tini_data_dir_pin(a2fpga_dir_d),
@@ -780,6 +794,8 @@ module appletini_yarz_top (
         .mockingboard_audio_r(mockingboard_audio_r),
         .disk2_audio_l(disk2_audio_l),
         .disk2_audio_r(disk2_audio_r),
+        .onee_audio_mono(onee_audio_mono),
+        .onee_menu_audio_mute(onee_menu_audio_mute),
         .menu_chime_start(menu_chime_start),
         .audio_sample_tick(audio_sample_resend),
         .axi_hp1_read(s_axi_hp1_read),
@@ -844,8 +860,10 @@ module appletini_yarz_top (
         end
     end
 
-    assign mixed_audio_l = sat_add16(mockingboard_audio_l, disk2_audio_l);
-    assign mixed_audio_r = sat_add16(mockingboard_audio_r, disk2_audio_r);
+    assign card_audio_l = sat_add16(mockingboard_audio_l, disk2_audio_l);
+    assign card_audio_r = sat_add16(mockingboard_audio_r, disk2_audio_r);
+    assign mixed_audio_l = sat_add16(card_audio_l, onee_audio_mono);
+    assign mixed_audio_r = sat_add16(card_audio_r, onee_audio_mono);
     assign mockingboard_audio_24_fclk = {
         mixed_audio_l, 8'h00,
         mixed_audio_r, 8'h00
@@ -865,7 +883,7 @@ module appletini_yarz_top (
         .bclk_in      (audio_bclk),
         .resetn       (audio_bclk_resetn),
         .enable       (1'b1),
-        .mute         (1'b0),
+        .mute         (onee_menu_audio_mute_bclk),
         .sample_l     (mockingboard_audio_24_bclk[47:24]),
         .sample_r     (mockingboard_audio_24_bclk[23:0]),
         .i2s_bclk     (unused_mock_i2s_bclk),
@@ -889,7 +907,7 @@ module appletini_yarz_top (
         .clk       (fclk_clk0),
         .resetn    (peripheral_133M_aresetn[6]),
         .enable    (1'b1),
-        .mute      (1'b0),
+        .mute      (onee_menu_audio_mute),
         .sample_l  (mockingboard_audio_24_sampled_fclk[47:24]),
         .sample_r  (mockingboard_audio_24_sampled_fclk[23:0]),
         .spdif_out (audio_spdif_out)

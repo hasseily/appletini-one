@@ -42,7 +42,8 @@
 #define FB_DEBUG_REG        (FB_CONTROL_BASE + 0x10)
 #define FB_DEBUG2_REG       (FB_CONTROL_BASE + 0x14)
 /* FB_DEBUG_REG layout (read-only):
- *   [2:0]   fb_reader FSM state (S_IDLE=0, S_RESET_FIFO=1, S_BURST=2)
+ *   [2:0]   fb_reader FSM state (S_IDLE=0, S_RESET_FIFO=1, S_BURST=2,
+ *                                S_DRAIN=3)
  *   [3]     axi_read_err sticky -- SLVERR/DECERR seen on a read beat
  *   [25:8]  burst_count -- bursts completed within current frame
  * FB_DEBUG2_REG layout (read-only):

@@ -14,6 +14,7 @@
 #define FTP_PASSIVE_PORT         50000U
 #define FTP_CONTROL_BUFFER_LEN   512U
 #define FTP_DATA_BUFFER_LEN      1024U
+#define FTP_TX_VERIFY_ATTEMPTS   4U
 #define FTP_PATH_LEN             256U
 #define FTP_FAT_PATH_LEN         (FTP_PATH_LEN + 3U)
 
@@ -91,6 +92,7 @@ typedef struct {
     char control_out[FTP_CONTROL_BUFFER_LEN];
     uint16_t control_out_len;
     uint8_t data_buffer[FTP_DATA_BUFFER_LEN];
+    uint8_t tx_verify_buffer[FTP_DATA_BUFFER_LEN];
     uint16_t data_buffer_len;
 } ftp_sd_state_t;
 
@@ -246,7 +248,8 @@ static int socket_ring_read(uint8_t socket,
 static int socket_ring_write(uint8_t socket,
                              uint16_t pointer,
                              const uint8_t *src,
-                             uint16_t len)
+                             uint16_t len,
+                             uint8_t verify)
 {
     const uint16_t base = socket_tx_base(socket);
     const uint16_t mask = socket_mask(socket);
@@ -258,8 +261,22 @@ static int socket_ring_write(uint8_t socket,
         if (chunk > len) {
             chunk = len;
         }
-        if (uthernet2_write_block((uint16_t)(base + offset), src, chunk) != 0) {
-            return -1;
+        for (uint8_t attempt = 0U; ; ++attempt) {
+            if (uthernet2_write_block((uint16_t)(base + offset), src, chunk) != 0) {
+                return -1;
+            }
+            if (verify == 0U) {
+                break;
+            }
+            if (uthernet2_read_block((uint16_t)(base + offset),
+                                     g_ftp.tx_verify_buffer,
+                                     chunk) == 0 &&
+                memcmp(g_ftp.tx_verify_buffer, src, chunk) == 0) {
+                break;
+            }
+            if (attempt == FTP_TX_VERIFY_ATTEMPTS - 1U) {
+                return -1;
+            }
         }
         pointer = (uint16_t)(pointer + chunk);
         src += chunk;
@@ -343,7 +360,11 @@ static int socket_send_start(uint8_t socket,
         return 0;
     }
     if (w5100_read16(socket_reg(socket, W5100_SN_TX_WR), &pointer) != 0 ||
-        socket_ring_write(socket, pointer, src, len) != 0 ||
+        socket_ring_write(socket,
+                          pointer,
+                          src,
+                          len,
+                          (uint8_t)(socket == FTP_DATA_SOCKET)) != 0 ||
         w5100_write16(socket_reg(socket, W5100_SN_TX_WR),
                       (uint16_t)(pointer + len)) != 0 ||
         uthernet2_write_reg(socket_reg(socket, W5100_SN_IR),

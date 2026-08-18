@@ -81,6 +81,12 @@ def test_direct_transfer_path_with_tagged_completion() -> None:
             "logic [7:0]  eth_host_seq_q" in top and
             "sequence != start_sequence" in control,
             "Each direct W5100S command must wait for its own tagged completion")
+    require("FTP_TX_VERIFY_ATTEMPTS   4U" in source and
+            "tx_verify_buffer[FTP_DATA_BUFFER_LEN]" in source and
+            "uthernet2_read_block((uint16_t)(base + offset)" in source and
+            "memcmp(g_ftp.tx_verify_buffer, src, chunk) == 0" in source and
+            "(uint8_t)(socket == FTP_DATA_SOCKET)" in source,
+            "FTP data must prove each W5100S transmit-ring block before SEND")
 
 
 def test_exclusive_ethernet_and_sd_ownership() -> None:

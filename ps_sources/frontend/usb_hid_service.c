@@ -83,6 +83,7 @@ typedef struct {
     uint8_t keyboard_keys_down;
     uint8_t raw_buttons_down;
     uint8_t raw_axis_active_mask;
+    uint8_t raw_axis_rest_valid_mask;
     uint8_t raw_hat_active;
     uint8_t mouse_capable;
     uint8_t onee_joystick;
@@ -105,6 +106,7 @@ typedef struct {
     XTime ok_down_tick;
     usb_hid_menu_source_t ok_down_source;
     usb_hid_menu_action_t ok_down_action;
+    int32_t raw_axis_rest[ONEE_INPUT_AXIS_COUNT];
     struct usbh_hid *hid;
     struct usbh_hid_report_info report_info;
     uint32_t report_count;
@@ -1381,6 +1383,23 @@ static uint8_t hid_onee_axis_from_usage(uint16_t usage,
     }
 }
 
+static uint8_t hid_axis_active_from_rest(int32_t value,
+                                         int32_t rest,
+                                         int32_t logical_min,
+                                         int32_t logical_max)
+{
+    const int64_t span = (int64_t)logical_max - (int64_t)logical_min;
+    int64_t delta = (int64_t)value - (int64_t)rest;
+
+    if (delta < 0) {
+        delta = -delta;
+    }
+    if (span <= 0) {
+        return (value != rest) ? 1U : 0U;
+    }
+    return (delta > (span / 8)) ? 1U : 0U;
+}
+
 static void hid_menu_push_hat(usb_hid_slot_t *slot, uint8_t hat)
 {
     if (slot == NULL || hat == slot->prev_hat) {
@@ -1459,10 +1478,6 @@ static void hid_collect_desktop_item(usb_hid_slot_t *slot,
             onee_input_axis_t axis;
             if (hid_onee_axis_from_usage(usage, &axis) != 0U) {
                 const uint8_t axis_bit = (uint8_t)(1U << axis);
-                const int8_t direction = onee_usb_axis_direction(
-                    value,
-                    item->attribute.logical_min,
-                    item->attribute.logical_max);
 
                 onee_joystick->axis_valid_mask |=
                     axis_bit;
@@ -1471,8 +1486,17 @@ static void hid_collect_desktop_item(usb_hid_slot_t *slot,
                     item->attribute.logical_min;
                 onee_joystick->logical_max[axis] =
                     item->attribute.logical_max;
+                if ((slot->raw_axis_rest_valid_mask & axis_bit) == 0U) {
+                    slot->raw_axis_rest[axis] = value;
+                    slot->raw_axis_rest_valid_mask |= axis_bit;
+                    slot->raw_axis_active_mask &= (uint8_t)~axis_bit;
+                }
                 if (slot->onee_joystick != 0U) {
-                    if (direction == 0) {
+                    if (hid_axis_active_from_rest(
+                            value,
+                            slot->raw_axis_rest[axis],
+                            item->attribute.logical_min,
+                            item->attribute.logical_max) == 0U) {
                         slot->raw_axis_active_mask &= (uint8_t)~axis_bit;
                     } else {
                         slot->raw_axis_active_mask |= axis_bit;
@@ -2137,6 +2161,12 @@ void usb_hid_service_set_onee_fixed_mode(uint8_t enable)
     g_menu_event_wr = 0U;
     g_menu_event_count = 0U;
     hid_slots_reset_menu_state();
+    if (enable != 0U) {
+        for (uint32_t i = 0U; i < USB_HID_SLOT_COUNT; ++i) {
+            g_hid_slots[i].raw_axis_active_mask = 0U;
+            g_hid_slots[i].raw_axis_rest_valid_mask = 0U;
+        }
+    }
     /* Do not carry a key latched under one routing policy into the other. */
     onee_input_service_release_all();
 }

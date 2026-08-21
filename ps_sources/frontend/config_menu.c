@@ -6826,6 +6826,11 @@ void config_menu_poll_onee_mode(config_menu_t *menu)
     }
 
     menu->onee_persisted_enabled = (persist_enable != 0U) ? 1U : 0U;
+    /* FTP owns the SD volume. Keep the pending update live and save it after
+     * the modal releases the volume. */
+    if (menu->ethernet_ftp_sd_remote_active != 0U) {
+        return;
+    }
     if (menu->onee_persist_write_failed != 0U) {
         if (menu->onee_persist_retry_polls != 0U) {
             --menu->onee_persist_retry_polls;

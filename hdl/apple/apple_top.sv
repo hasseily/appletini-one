@@ -131,6 +131,7 @@ module apple_top(
     wire       onee_video_vblank;
     wire       onee_warm_reset_request;
     wire       onee_warm_reset_ack;
+    wire       onee_warm_reset_active;
     wire       onee_virtual_res_n;
     logic      onee_video_50hz_desired;
     logic      onee_video_50hz_active;
@@ -194,13 +195,13 @@ module apple_top(
     /* U234 is the bidirectional auxiliary control-line translator. Disable it
      * while ONE//e owns the card so no auxiliary lane can couple to the slot.
      * The main U133-U533 translators remain enabled in forced input direction;
-     * U533 must stay live so PHI0, 7M, and Q3 can stop ONE//e on the first
-     * observed Apple clock edge. */
+     * U533 must stay live so PHI0, 7M, and Q3 can request a guarded ONE//e
+     * stop on the first observed Apple clock edge. */
     assign tini_aux_oe_pin = !physical_bus_isolate;
 
     // Keep live raw-pin diagnostics out of the large AXI readback mux. Safety
-    // still acts asynchronously inside the guard; software sees the sampled
-    // activity and reason one fabric clock later.
+    // captures short events inside the guard; its machine-wide state changes
+    // only after that request crosses into the fabric clock domain.
     always_ff @(posedge clk) begin
         if (!rstn[1]) begin
             onee_activity_status_q       <= 1'b0;
@@ -211,8 +212,24 @@ module apple_top(
         end
     end
 
+    // ONE//e stand-alone request/status. Write bit 0 to request the mode.
+    // Read: [0] request, [1] effective, [2] physical isolate, [3] forced off,
+    // [4] live activity, [5] lockout, [6] quiet, [7] reselect armed,
+    // [8] selected, [9] isolation hold, [12:10] inhibit reason,
+    // [13] power-sense pin fitted (0 on this board), [14] sensed power,
+    // [15] ONE//e HDL present, [31:24] register signature/version 8'hE1.
+    localparam logic [7:0] CARD_CTRL_REG_ONEE          = 8'h5B;
+    localparam logic [7:0] CARD_CTRL_REG_ONEE_KEY_FIFO = 8'h5C;
+    localparam logic [7:0] CARD_CTRL_REG_ONEE_LIVE     = 8'h5D;
+    localparam logic [7:0] CARD_CTRL_REG_ONEE_PADDLES  = 8'h5E;
+    localparam logic [7:0] CARD_CTRL_REG_ONEE_CONTROL  = 8'h5F;
+    // ONE//e video standard: write bit 0 (0 NTSC, 1 PAL); read bit 0 desired,
+    // bit 1 active. Active changes only while stopped or private RES# is low.
+    localparam logic [7:0] CARD_CTRL_REG_ONEE_VIDEO    = 8'hA2;
+
     wire onee_input_ps_wr_en = as_client.awvalid &&
-        (as_common.awaddr >= 8'h5C) && (as_common.awaddr <= 8'h5F) &&
+        (as_common.awaddr >= CARD_CTRL_REG_ONEE_KEY_FIFO) &&
+        (as_common.awaddr <= CARD_CTRL_REG_ONEE_CONTROL) &&
         (as_common.wstrb != 4'b0000);
 
     onee_input_bridge onee_input_bridge_i (
@@ -249,7 +266,7 @@ module apple_top(
                                  virtual_ab_read.cycle_valid),
         .virtual_res_n          (onee_virtual_res_n),
         .acknowledge            (onee_warm_reset_ack),
-        .active                 ()
+        .active                 (onee_warm_reset_active)
     );
 
     apple_virtual_bus apple_virtual_bus_i (
@@ -414,20 +431,6 @@ module apple_top(
     localparam logic [7:0] CARD_CTRL_REG_SSC_HEAD     = 8'h4B; // [7:0] oldest byte, [8] valid
     localparam logic [7:0] CARD_CTRL_REG_SSC_CTRL     = 8'h4C; // bit0 pop, bit1 clear, bit2 overflow clear
     localparam logic [7:0] CARD_CTRL_REG_SSC_ACIA     = 8'h4D; // [7:0] command, [15:8] control latch
-    // ONE//e stand-alone request/status. Write bit 0 to request the mode.
-    // Read: [0] request, [1] effective, [2] physical isolate, [3] forced off,
-    // [4] live activity, [5] lockout, [6] quiet, [7] reselect armed,
-    // [8] selected, [9] isolation hold, [12:10] inhibit reason,
-    // [13] power-sense pin fitted (0 on this board), [14] sensed power,
-    // [15] ONE//e HDL present, [31:24] register signature/version 8'hE1.
-    localparam logic [7:0] CARD_CTRL_REG_ONEE         = 8'h5B;
-    localparam logic [7:0] CARD_CTRL_REG_ONEE_KEY_FIFO = 8'h5C;
-    localparam logic [7:0] CARD_CTRL_REG_ONEE_LIVE     = 8'h5D;
-    localparam logic [7:0] CARD_CTRL_REG_ONEE_PADDLES  = 8'h5E;
-    localparam logic [7:0] CARD_CTRL_REG_ONEE_CONTROL  = 8'h5F;
-    // ONE//e video standard: write bit 0 (0 NTSC, 1 PAL); read bit 0 desired,
-    // bit 1 active. Active changes only while stopped or private RES# is low.
-    localparam logic [7:0] CARD_CTRL_REG_ONEE_VIDEO     = 8'hA2;
     localparam logic [7:0] CARD_CTRL_REG_VTW_WR_CHECK = 8'h36;
     localparam logic [7:0] CARD_CTRL_REG_VTW_WR_ADDR  = 8'h37;
     localparam logic [7:0] CARD_CTRL_REG_VTW_C000_CTX = 8'h38;
@@ -605,6 +608,7 @@ module apple_top(
         .enabled     (onee_enable_effective),
         .manual_enable_request(onee_request_q),
         .boot_target_disk2(configured_boot_target_disk2),
+        .warm_reset_active(onee_warm_reset_active),
         .ab_read     (ab_read),
         .session_boot_target_disk2(onee_boot_target_disk2),
         .slot7_hidden(onee_slot7_cold_scan_q)
@@ -645,6 +649,36 @@ module apple_top(
     logic disk2_active_timing_q;
     logic vtw_core_run_eff_q;
     logic vtw_disk2_boot_scan_q;
+    /* Slot-7 ownership may change through PS control or ONE//e boot state.
+     * Sample it at the address boundary and hold it for the whole Apple
+     * cycle. The address strobe sees the new policy at once; all later phase
+     * strobes use the saved choice. This prevents a response owner from
+     * disappearing between serve_en and data_en. */
+    wire vtw_smartport_visible_desired =
+        (!card_supersprite_enable || onee_smartport_boot_owner) &&
+        (onee_enable_effective || smartport_active) &&
+        !vtw_disk2_boot_scan_q &&
+        onee_slot7_cards_visible;
+    wire supersprite_visible_desired =
+        card_supersprite_enable && !onee_smartport_boot_owner &&
+        onee_slot7_cards_visible;
+    logic vtw_smartport_visible_q;
+    logic supersprite_visible_q;
+    wire vtw_smartport_visible = ab_read.addr_en
+        ? vtw_smartport_visible_desired : vtw_smartport_visible_q;
+    wire supersprite_bus_visible = ab_read.addr_en
+        ? supersprite_visible_desired : supersprite_visible_q;
+
+    always_ff @(posedge clk) begin
+        if (!rstn[1]) begin
+            vtw_smartport_visible_q <= 1'b0;
+            supersprite_visible_q   <= 1'b0;
+        end else if (ab_read.addr_en) begin
+            vtw_smartport_visible_q <= vtw_smartport_visible_desired;
+            supersprite_visible_q   <= supersprite_visible_desired;
+        end
+    end
+
     wire disk2_bus_visible =
         onee_enable_effective ||
         (card_slot6_enable && disk2_active_timing_q);
@@ -1411,10 +1445,7 @@ module apple_top(
     supersprite_card supersprite_card_i (
         .clk(clk),
         .rstn(rstn[2]),
-        .ab_read(gate_ab(
-            ab_read,
-            card_supersprite_enable && !onee_smartport_boot_owner &&
-            onee_slot7_cards_visible)),
+        .ab_read(gate_ab(ab_read, supersprite_bus_visible)),
         .sss(sss),
         .slot_assign(3'h7),
         .vblank_tick(bm_vbl_cmd_pulse),
@@ -1503,11 +1534,6 @@ module apple_top(
     assign axi_audio_read.rready = disk2_sound_read.rready;
 
     /* vTW SmartPort short-circuit port (vtw_core_top <-> smartport_card). */
-    wire vtw_smartport_visible =
-        (!card_supersprite_enable || onee_smartport_boot_owner) &&
-        (onee_enable_effective || smartport_active) &&
-        !vtw_disk2_boot_scan_q &&
-        onee_slot7_cards_visible;
     // ONE//e keeps SmartPort on the synthetic slot-pin bus. Only a physical
     // accelerated host may use vTW's private SmartPort shortcut.
     wire         vtw_sp_active =
@@ -1528,6 +1554,7 @@ module apple_top(
         .clk(clk),
         .rstn(rstn[2]),
         .ab_read(gate_ab(ab_read, vtw_smartport_visible)),
+        .apple_bus_visible(vtw_smartport_visible),
         .sss(sss),
         // SuperSprite wins the shared slot when enabled.
         .slot_assign(3'h7),

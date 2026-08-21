@@ -261,7 +261,7 @@ def test_stop_order_and_runtime_drop_preserves_request() -> None:
             "a private runtime drop must retain the selected PL request and retry")
     require(onee.count("onee_service_write_request(1U);") == 2 and
             "g_restore_pending != 0U" in poll and
-            "onee_status_can_start(g_status) == 0U" in poll and
+            "onee_service_check_start(g_status)" in poll and
             "(g_status & CARD_CTRL_ONEE_STATUS_REQUEST_BIT) == 0U" in poll and
             "onee_service_force_persisted(0U);" in poll and
             "onee_service_disarm(1U);" in poll,
@@ -397,6 +397,7 @@ def test_onee_menu_pause_preserves_the_live_machine() -> None:
     core = read(REPO_ROOT / "hdl" / "apple" / "vtw_core_top.sv")
     top = read(REPO_ROOT / "hdl" / "apple" / "apple_top.sv")
     main = read(MAIN_C)
+    onee = read(ONEE_C)
     setter = between(source,
                      "uint8_t vtw_service_onee_set_paused(uint8_t paused)",
                      "uint8_t vtw_service_onee_paused(void)")
@@ -406,6 +407,9 @@ def test_onee_menu_pause_preserves_the_live_machine() -> None:
     main_pause = between(main,
                          "static void ui_sync_onee_menu_pause",
                          "static void ui_set_boot_menu_visible")
+    policy = between(onee,
+                     "static void onee_service_update_ui_policy",
+                     "static void onee_service_write_request")
 
     require("CARD_CTRL_VTW_CTRL_PAUSE_BIT       (1UL << 8)" in regs and
             "input  logic                    pause" in core and
@@ -428,10 +432,13 @@ def test_onee_menu_pause_preserves_the_live_machine() -> None:
             "a menu-open pause request must survive a delayed ONE//e start")
     require("vtw_service_onee_set_paused(uint8_t paused)" in header and
             "vtw_service_onee_paused(void)" in header and
-            "usb_hid_service_all_input_released()" in main_pause and
-            main_pause.find("usb_hid_service_all_input_released()") <
-            main_pause.find("vtw_service_onee_set_paused(0U)",
-                            main_pause.find("usb_hid_service_all_input_released()")),
+            "onee_service_sync_menu_policy(config_menu_is_active(menu))" in
+            main_pause and
+            "g_ui_input_released(g_ui_ctx)" in policy and
+            policy.find("g_ui_input_released(g_ui_ctx)") <
+            policy.find("g_ui_pause(g_ui_ctx, 0U)",
+                        policy.find("g_ui_input_released(g_ui_ctx)")) and
+            "onee_service_bind_ui_policy(onee_ui_set_paused," in main,
             "menu close must wait for USB key release before resuming")
 
 

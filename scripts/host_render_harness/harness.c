@@ -268,13 +268,49 @@ static uint8_t *load_file(const char *rel, size_t *out_len)
     snprintf(path, sizeof path, "%s/%s", s_repo, rel);
     f = fopen(path, "rb");
     if (!f) { fprintf(stderr, "cannot open %s\n", path); exit(2); }
-    fseek(f, 0, SEEK_END);
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fprintf(stderr, "cannot seek %s\n", path);
+        fclose(f);
+        exit(2);
+    }
     n = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    buf = (uint8_t *)malloc((size_t)n);
-    if (fread(buf, 1, (size_t)n, f) != (size_t)n) { exit(2); }
-    fclose(f);
+    if (n < 0 || fseek(f, 0, SEEK_SET) != 0) {
+        fprintf(stderr, "cannot measure %s\n", path);
+        fclose(f);
+        exit(2);
+    }
+    buf = (uint8_t *)malloc((n != 0) ? (size_t)n : 1u);
+    if (buf == NULL) {
+        fprintf(stderr, "cannot allocate %ld bytes for %s\n", n, path);
+        fclose(f);
+        exit(2);
+    }
+    if (fread(buf, 1, (size_t)n, f) != (size_t)n) {
+        fprintf(stderr, "cannot read %s\n", path);
+        free(buf);
+        fclose(f);
+        exit(2);
+    }
+    if (fclose(f) != 0) {
+        fprintf(stderr, "cannot close %s\n", path);
+        free(buf);
+        exit(2);
+    }
     *out_len = (size_t)n;
+    return buf;
+}
+
+static uint8_t *load_file_exact(const char *rel, size_t expected_len)
+{
+    size_t actual_len;
+    uint8_t *buf = load_file(rel, &actual_len);
+
+    if (actual_len != expected_len) {
+        fprintf(stderr, "%s has %zu bytes; expected %zu\n",
+                rel, actual_len, expected_len);
+        free(buf);
+        exit(2);
+    }
     return buf;
 }
 
@@ -369,8 +405,8 @@ static void expect(int cond, const char *what)
 
 static void t1_dragons(void)
 {
-    size_t len;
-    uint8_t *f = load_file("software/shr4_demo_images/dragons.shr4i", &len);
+    uint8_t *f = load_file_exact(
+        "software/shr4_demo_images/dragons.shr4i", 0x10000u);
     size_t i;
 
     printf("--- T1 dragons.shr4i (interlaced R4G4B4) ---\n");
@@ -394,8 +430,8 @@ static void t1_dragons(void)
 
 static void t2_legacy_weave(void)
 {
-    size_t len;
-    uint8_t *f = load_file("software/legacy_demo_images/eye.hgri", &len);
+    uint8_t *f = load_file_exact(
+        "software/legacy_demo_images/eye.hgri", 0x4000u);
     size_t i;
     uint32_t weave_probe;
     int distinct_field_rows = 0;
@@ -798,16 +834,14 @@ static void t5_switch_phase(void)
 
 static void t6_dhgri_static_cache(void)
 {
-    size_t len;
-    uint8_t *f = load_file("software/legacy_demo_images/face.dhri", &len);
+    uint8_t *f = load_file_exact(
+        "software/legacy_demo_images/face.dhri", 0x8000u);
     const uint8_t mode = f[0x607Cu];
     uint32_t published;
     uint32_t skipped;
     uint32_t rebuilt;
 
     printf("--- T6 static DHGRi render cadence ---\n");
-    expect(len == 0x8000u, "T6 DHGRi source is four 8K banks");
-
     memset(s_main_mem, 0, sizeof(s_main_mem));
     memset(s_aux_mem, 0, sizeof(s_aux_mem));
     apple_cycle_renderer_reset_local_video_state();
@@ -941,8 +975,8 @@ static void stream_dhgr_bank_with_frame_edges(uint32_t addr24,
 
 static void t8_video7_mix_load_hold(void)
 {
-    size_t len;
-    uint8_t *f = load_file("software/legacy_demo_images/face.dhri", &len);
+    uint8_t *f = load_file_exact(
+        "software/legacy_demo_images/face.dhri", 0x8000u);
     uint8_t *held_frame;
     uint8_t *committed_frame;
     const uint8_t mode = f[0x607Cu];
@@ -950,8 +984,6 @@ static void t8_video7_mix_load_hold(void)
     uint32_t committed_slot;
 
     printf("--- T8 active Video-7 MIX DHGRi load hold ---\n");
-    expect(len == 0x8000u, "T8 source is four DHGRi 8K banks");
-
     held_frame = (uint8_t *)malloc(COMP_APPLE_SLOT_BYTES);
     committed_frame = (uint8_t *)malloc(COMP_APPLE_SLOT_BYTES);
     if (held_frame == NULL || committed_frame == NULL) {
@@ -1112,8 +1144,19 @@ static void t8_video7_mix_load_hold(void)
 
 int main(int argc, char **argv)
 {
+    if (argc == 5 && strcmp(argv[1], "--check-exact-file") == 0) {
+        const size_t expected_len = (size_t)strtoul(argv[4], NULL, 0);
+        uint8_t *file;
+
+        snprintf(s_repo, sizeof s_repo, "%s", argv[2]);
+        file = load_file_exact(argv[3], expected_len);
+        free(file);
+        return 0;
+    }
     if (argc != 3) {
-        fprintf(stderr, "usage: harness <repo_root> <out_dir>\n");
+        fprintf(stderr,
+                "usage: harness <repo_root> <out_dir>\n"
+                "       harness --check-exact-file <root> <file> <bytes>\n");
         return 2;
     }
     snprintf(s_repo, sizeof s_repo, "%s", argv[1]);

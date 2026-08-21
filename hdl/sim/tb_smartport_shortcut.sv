@@ -14,6 +14,7 @@ module tb_smartport_shortcut;
     always #3.75 clk = ~clk;   // 133.333 MHz
 
     logic rstn = 0;
+    logic apple_bus_visible = 1;
 
     globals::AppleBus_read   ab_read;
     globals::SoftSwitchState sss;
@@ -37,6 +38,7 @@ module tb_smartport_shortcut;
         .clk(clk),
         .rstn(rstn),
         .ab_read(ab_read),
+        .apple_bus_visible(apple_bus_visible),
         .sss(sss),
         .slot_assign(3'h7),
         .as_common(as_common),
@@ -251,6 +253,26 @@ module tb_smartport_shortcut;
 
         // The v1.0 MAGIC byte lives at slot-7 DEVSEL +$E.
         apple_overlay_read(16'hC0FE, 8'h4C);
+
+        // apple_top changes visibility only at an address boundary. The card
+        // must discard a held reply on that clock, before any data emit.
+        @(posedge clk);
+        ab_read.addr <= 16'hC0FE;
+        ab_read.rw <= 1'b1;
+        @(posedge clk);
+        ab_read.serve_en <= 1'b1;
+        @(posedge clk);
+        ab_read.serve_en <= 1'b0;
+        repeat (4) @(posedge clk);
+        check(ab_write.wr_data_en, "overlay reply is held before visibility loss");
+        apple_bus_visible <= 1'b0;
+        @(posedge clk);
+        #1;
+        check(!ab_write.wr_data_en, "cycle-boundary visibility loss clears held reply");
+        @(posedge clk);
+        apple_bus_visible <= 1'b1;
+        #1;
+        check(!ab_write.wr_data_en, "hidden reply stays cleared after re-enable");
 
         // ---- 1. ROM reads are stable and side-effect-free ----
         vtw_access(T_SLOT_ROM, 1'b1, 11'h000, 8'h00, rom0);

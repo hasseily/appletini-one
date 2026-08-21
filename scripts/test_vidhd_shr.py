@@ -569,7 +569,8 @@ def test_no_vidhd_identity_and_slot_layout() -> None:
             "SoftSwitchState must expose SLOTC3ROM so slot-3 cards can avoid the internal //e ROM/IO personality")
     require("sss.slot_access &&" in mouse and
             "((slot_assign != 3'h3) || sss.sw_slotc3rom)" in mouse and
-            "apple_bus_enabled = configured &&" in smartport and
+            "apple_bus_enabled = configured && ab_read.res" in smartport and
+            "if (!apple_bus_visible) begin" in smartport and
             "((slot_assign != 3'h3) || sss.sw_slotc3rom)" in smartport and
             "apple_bus_active = enabled &&" in disk2 and
             "((slot_assign != 3'h3) || sss.sw_slotc3rom)" in disk2,

@@ -94,6 +94,7 @@ def main():
     frontend = read_text("ps_sources/frontend/main.c")
     regs = read_text("ps_sources/frontend/card_control_regs.h")
     eth_control = read_text("ps_sources/frontend/uthernet2_control.c")
+    eth_header = read_text("ps_sources/frontend/uthernet2_control.h")
     sim = read_text("hdl/sim/tb_uthernet2_card.sv")
     vitis = read_text("scripts/create_vitis_workspace.py")
 
@@ -517,7 +518,7 @@ def main():
     require("DHCP_DISCOVER" in eth_control and
             "DHCP_REQUEST" in eth_control and
             "DHCP_ACK" in eth_control and
-            "W5100_S0_MR_MACRAW_MF" in eth_control and
+            "W5100_SN_MR_MACRAW_MF" in eth_header and
             "w5100_raw_open" in eth_control and
             "uthernet2_dhcp_start" in eth_control and
             "uthernet2_dhcp_poll" in eth_control,
@@ -555,11 +556,11 @@ def main():
             "w5100_write_network_config(&g_dhcp.previous)" in
             eth_control[fail_start:fail_end],
             "A failed DHCP request must not erase the active card configuration")
-    require("W5100_SOCKET_MEM_4_2_1_1 0x06U" in eth_control and
+    require("W5100_SOCKET_MEM_4_2_1_1 0x06U" in eth_header and
             "state != W5100_S0_SR_MACRAW" in eth_control,
             "MACRAW must use a valid 8KB Contiki-compatible map and verify OPEN state")
-    require("w5100_read16_stable" in eth_control and
-            "w5100_read16_stable(W5100_S0_RX_RSR, &received_size)" in eth_control,
+    require("uthernet2_w5100_read16_stable" in eth_control and
+            "W5100_SN_RX_RSR" in eth_control,
             "MACRAW receive polling must use a stable W5100 byte-count read")
     require("DHCP_PACKET_MIN" not in eth_control and
             "DHCP_OPTION(61U" not in eth_control and
@@ -571,7 +572,7 @@ def main():
             "DHCP OFFER NO RX" in eth_control and
             "DHCP OFFER INVALID RX" in eth_control,
             "DHCP failure must restore config and distinguish no RX from invalid RX")
-    require("w5100_read16_stable(W5100_S0_TX_FSR, &free_size)" in eth_control and
+    require("W5100_SN_TX_FSR" in eth_control and
             "if (free_size >= len)" in eth_control and
             "if (free_size < len ||" in eth_control,
             "MACRAW transmit must wait for stable W5100 TX space before SEND")

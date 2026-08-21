@@ -54,6 +54,7 @@ def static_checks() -> None:
     sources = SOURCES_LIST.read_text(encoding="utf-8")
 
     for source in (
+        "apple/apple_c01x_status_decode.sv",
         "apple/onee_motherboard_io.sv",
         "apple/onee_cold_slot_scan.sv",
     ):
@@ -115,7 +116,7 @@ def static_checks() -> None:
         "assign configured_boot_target_disk2 =\n"
         "        handoff_mode_q == SLOT7_HANDOFF_DISK2;" in boot_card and
         "assign boot_target_disk2 = handoff_disk2;" in boot_card and
-        "else if (!ab_read.res) begin" in cold_scan and
+        "else if (!ab_read.res && !warm_reset_active) begin" in cold_scan and
         "session_boot_target_disk2 <= boot_target_disk2;" in cold_scan and
         "slot7_hidden <= boot_target_disk2;" in cold_scan and
         ".ab_read(gate_ab(physical_ab_read, !onee_enable_effective))" in top,
@@ -125,9 +126,12 @@ def static_checks() -> None:
         "wire onee_smartport_boot_owner =\n"
         "        onee_enable_effective && !onee_boot_target_disk2;" in top and
         "card_supersprite_enable && !onee_smartport_boot_owner &&\n"
-        "            onee_slot7_cards_visible))" in top and
+        "        onee_slot7_cards_visible;" in top and
         "(!card_supersprite_enable || onee_smartport_boot_owner) &&\n"
-        "        (onee_enable_effective || smartport_active)" in top,
+        "        (onee_enable_effective || smartport_active)" in top and
+        "else if (ab_read.addr_en) begin\n"
+        "            vtw_smartport_visible_q <= vtw_smartport_visible_desired;" in top and
+        ".ab_read(gate_ab(ab_read, supersprite_bus_visible))" in top,
         "SmartPort-selected ONE//e must own slot 7 over saved SuperSprite",
     )
     require(
@@ -156,7 +160,9 @@ def static_checks() -> None:
         "full_floating_read || virtual_motherboard" in core and
         "onee_bus_data_claimed_q <= data_drive_in;" in core and
         "!onee_bus_data_claimed_q" in core and
-        "eng_resp_rdata[7], shadow_a_rdata[6:0]" in core,
+        "eng_resp_rdata[7], shadow_a_rdata[6:0]" in core and
+        "virtual_motherboard_floating_status_read" in core and
+        "((cycle_addr_q[7:4] == 4'h1)" not in core,
         "standalone reads must select claimed data or scanner fallback/low bits",
     )
     require(
@@ -167,6 +173,8 @@ def static_checks() -> None:
         "onee_warm_reset_ctrl #(" in top and
         ") onee_warm_reset_ctrl_i (" in top and
         ".virtual_res_n          (onee_virtual_res_n)" in top and
+        ".active                 (onee_warm_reset_active)" in top and
+        ".warm_reset_active(onee_warm_reset_active)" in top and
         ".res_n_in         (onee_virtual_res_n)" in top,
         "the bridge reset primitive must reach only the virtual motherboard "
         "RESET path",
@@ -200,6 +208,7 @@ def main() -> int:
         "hdl/reset_sync.sv",
         "hdl/apple/soft_switch_manager.sv",
         "hdl/apple/apple_virtual_bus.sv",
+        "hdl/apple/apple_c01x_status_decode.sv",
         "hdl/apple/onee_input_bridge.sv",
         "hdl/apple/onee_warm_reset_ctrl.sv",
         "hdl/apple/onee_motherboard_io.sv",

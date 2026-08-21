@@ -119,12 +119,26 @@ proc timing_run::sha256_file {path} {
     return "unavailable"
 }
 
+proc timing_run::validate_manifest_entry {key value} {
+    if {![regexp {^[A-Za-z][A-Za-z0-9_.-]*$} $key]} {
+        error "Invalid manifest key: $key"
+    }
+    if {[string first "\r" $value] >= 0 ||
+        [string first "\n" $value] >= 0 ||
+        [string first "\0" $value] >= 0} {
+        error "Manifest value for $key contains a line break or NUL"
+    }
+}
+
 proc timing_run::write_manifest {path values} {
+    foreach key [dict keys $values] {
+        validate_manifest_entry $key [dict get $values $key]
+    }
     set handle [open $path w]
+    fconfigure $handle -encoding utf-8 -translation lf
     try {
         foreach key [lsort [dict keys $values]] {
             set value [dict get $values $key]
-            set value [string map {"\r" " " "\n" " "} $value]
             puts $handle "$key=$value"
         }
     } finally {
@@ -147,8 +161,16 @@ proc timing_run::read_manifest {path} {
     }
     set values [dict create]
     set handle [open $path r]
+    fconfigure $handle -encoding utf-8 -translation binary
     try {
-        while {[gets $handle line] >= 0} {
+        set text [read $handle]
+        if {[string first "\r" $text] >= 0 ||
+            [string first "\0" $text] >= 0} {
+            error "Manifest must contain UTF-8 LF text only: $path"
+        }
+        set line_number 0
+        foreach line [split $text "\n"] {
+            incr line_number
             if {$line eq "" || [string index $line 0] eq "#"} {
                 continue
             }
@@ -158,6 +180,10 @@ proc timing_run::read_manifest {path} {
             }
             set key [string range $line 0 [expr {$separator - 1}]]
             set value [string range $line [expr {$separator + 1}] end]
+            validate_manifest_entry $key $value
+            if {[dict exists $values $key]} {
+                error "Duplicate manifest key $key on line $line_number in $path"
+            }
             dict set values $key $value
         }
     } finally {
@@ -236,7 +262,8 @@ proc timing_run::parse_timing_summary {text} {
 
 proc timing_run::parse_used_value {text label} {
     set escaped [regsub -all {([][(){}.^$*+?|\\])} $label {\\\1}]
-    if {[regexp -line "^\\|\\s*$escaped\\s*\\|\\s*([0-9.]+)\\s*\\|" $text -> used]} {
+    set pattern [format {^\|\s*%s\s*\|\s*([0-9.]+)\s*\|} $escaped]
+    if {[regexp -line $pattern $text -> used]} {
         return $used
     }
     return ""
@@ -452,6 +479,14 @@ proc timing_run::validate_hardware_tests {tests_text} {
     return $completed_tests
 }
 
+proc timing_run::compare_build_order {left right} {
+    set time_order [string compare [lindex $left 0] [lindex $right 0]]
+    if {$time_order != 0} {
+        return $time_order
+    }
+    return [string compare [lindex $left 1] [lindex $right 1]]
+}
+
 proc timing_run::require_latest_full_pair {timing_root tested_id confirm_id} {
     set full_builds {}
     foreach run_dir [glob -nocomplain -types d [file join $timing_root *]] {
@@ -478,7 +513,7 @@ proc timing_run::require_latest_full_pair {timing_root tested_id confirm_id} {
         }
         lappend full_builds [list [dict get $build utc_start] $build_id]
     }
-    set full_builds [lsort -dictionary -index 0 $full_builds]
+    set full_builds [lsort -command timing_run::compare_build_order $full_builds]
     if {[llength $full_builds] < 2 ||
         [lindex $full_builds end-1 1] ne $tested_id ||
         [lindex $full_builds end 1] ne $confirm_id} {

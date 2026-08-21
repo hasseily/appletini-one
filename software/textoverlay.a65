@@ -125,8 +125,8 @@ clear_overlay:
 ; ----------------------------------------------------------------------
 ; Read-only card detection
 ; ----------------------------------------------------------------------
-; Scan slots 7 down to 1. Probe +$E/+F first because DEVSEL reads can have
-; side effects on unrelated cards. Only read +$8..+$D after both match.
+; Scan slots 7 down to 1. Read the slot-ROM marker first; unlike DEVSEL,
+; CnXX ROM reads do not touch registers on an unrelated card.
 find_overlay:
     lda RDCXROM            ; save the caller's Cx ROM state in bit 7
     pha
@@ -134,6 +134,25 @@ find_overlay:
     lda #7
     sta candidate
 scan_slot:
+    ; SRC = $Cn00 for this slot. The Appletini ROM reserves CnB0..CnB7 for
+    ; the overlay marker and version.
+    lda #0
+    sta SRC
+    lda candidate
+    clc
+    adc #$C0
+    sta SRC + 1
+    ldx #0
+    ldy #$B0
+scan_rom_sig:
+    lda (SRC),y
+    cmp signature,x
+    bne next_slot
+    iny
+    inx
+    cpx #8
+    bne scan_rom_sig
+
     ; DEV = $C080 + slot * $10: $C090 for slot 1 through $C0F0 for slot 7.
     lda candidate
     asl
@@ -144,24 +163,6 @@ scan_slot:
     sta DEV
     lda #$C0
     sta DEV + 1
-    ldy #$0E               ; fixed SIG byte, $4C
-    lda (DEV),y
-    cmp signature + 6
-    bne next_slot
-    iny
-    lda (DEV),y
-    cmp signature + 7
-    bne next_slot
-    ldx #0                 ; compare "LINTXT" at offsets $8..$D
-    ldy #8
-scan_sig:
-    lda (DEV),y
-    cmp signature,x
-    bne next_slot
-    iny
-    inx
-    cpx #6
-    bne scan_sig
     pla                    ; restore internal Cx ROM only if it was set
     bpl +
     sta SETINTCXROM
@@ -667,8 +668,8 @@ print_z:
 ; ----------------------------------------------------------------------
 ; Constant data
 ; ----------------------------------------------------------------------
-signature: !text "LINTXT" ; DEV +$8..+$D
-           !byte $4C, $10  ; DEV +$E signature, +$F version 1.0
+signature: !text "LINTXT" ; slot ROM CnB0..CnB5
+           !byte $4C, $10  ; marker and interface version 1.0
 native_msg:  !text "LINEAR TEXT OVERLAY DEMO", $0D
              !text "NATIVE APPLE VIDEO REMAINS UNDER IT.", $0D, 0
 missing_msg: !text "NO LINTXT V1.0 CARD FOUND.", $0D, 0

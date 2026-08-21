@@ -128,19 +128,22 @@ def test_apple_top_integration() -> None:
     s = read(APPLE_TOP_SV)
     require("supersprite_card supersprite_card_i (" in s,
             "SuperSprite must be instantiated in apple_top")
-    require("card_supersprite_enable && !onee_smartport_boot_owner &&\n"
-            "            onee_slot7_cards_visible))" in s and
+    require("wire supersprite_visible_desired =\n"
+            "        card_supersprite_enable && !onee_smartport_boot_owner &&\n"
+            "        onee_slot7_cards_visible;" in s and
+            ".ab_read(gate_ab(ab_read, supersprite_bus_visible))" in s and
             ".slot_assign(3'h7)" in s,
             "SuperSprite occupies slot 7 except for a SmartPort ONE//e boot")
     require("card_feature_enable_mask_q[CARD_CTRL_FEATURE_SS_ENABLE_BIT]" in s,
             "enable comes from the feature-enable mask")
-    require("wire vtw_smartport_visible =\n"
+    require("wire vtw_smartport_visible_desired =\n"
             "        (!card_supersprite_enable || onee_smartport_boot_owner) &&\n"
             "        (onee_enable_effective || smartport_active) &&\n"
             "        !vtw_disk2_boot_scan_q &&\n"
             "        onee_slot7_cards_visible;" in s and
+            "wire vtw_smartport_visible = ab_read.addr_en" in s and
             ".ab_read(gate_ab(ab_read, vtw_smartport_visible))" in s,
-            "SmartPort must override saved SuperSprite only for its ONE//e boot")
+            "slot-7 ownership must be stable for each Apple bus cycle")
     require(".vblank_tick(bm_vbl_cmd_pulse)" in s,
             "frame tick reuses the boot ROM VBL command pulse")
     require(".NUM_CLIENTS(13)" in s and

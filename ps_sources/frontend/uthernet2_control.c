@@ -13,32 +13,10 @@
 #define W5100_REG_SUBR      0x0005U
 #define W5100_REG_SHAR      0x0009U
 #define W5100_REG_SIPR      0x000FU
-#define W5100_REG_RMSR      0x001AU
-#define W5100_REG_TMSR      0x001BU
 #define W5100S_REG_PHYSR    0x003CU
 #define W5100S_REG_VERR     0x0080U
 
-#define W5100_S0_MR         0x0400U
-#define W5100_S0_CR         0x0401U
-#define W5100_S0_IR         0x0402U
-#define W5100_S0_SR         0x0403U
-#define W5100_S0_TX_FSR     0x0420U
-#define W5100_S0_TX_WR      0x0424U
-#define W5100_S0_RX_RSR     0x0426U
-#define W5100_S0_RX_RD      0x0428U
-#define W5100_TX_BASE       0x4000U
-#define W5100_RX_BASE       0x6000U
-#define W5100_RAW_MASK      0x0FFFU
-
-#define W5100_SOCKET_MEM_4_2_1_1 0x06U
-#define W5100_S0_MR_MACRAW_MF    0x44U
 #define W5100_S0_SR_MACRAW       0x42U
-#define W5100_CR_OPEN            0x01U
-#define W5100_CR_SEND            0x20U
-#define W5100_CR_RECV            0x40U
-#define W5100_CR_CLOSE           0x10U
-#define W5100_IR_TIMEOUT         0x08U
-#define W5100_IR_SENDOK          0x10U
 #define W5100S_PHYSR_LINK        0x01U
 
 #define DHCP_CLIENT_PORT  68U
@@ -240,7 +218,23 @@ int uthernet2_write_block(uint16_t addr, const uint8_t *src, uint16_t len)
     return w5100_write(addr, src, len);
 }
 
-static int w5100_read16(uint16_t addr, uint16_t *value)
+static const uint16_t w5100_tx_base_4_2_1_1[4] = {
+    0x4000U, 0x5000U, 0x5800U, 0x5C00U
+};
+static const uint16_t w5100_rx_base_4_2_1_1[4] = {
+    0x6000U, 0x7000U, 0x7800U, 0x7C00U
+};
+static const uint16_t w5100_mask_4_2_1_1[4] = {
+    0x0FFFU, 0x07FFU, 0x03FFU, 0x03FFU
+};
+
+uint16_t uthernet2_w5100_socket_reg(uint8_t socket, uint16_t offset)
+{
+    return socket < 4U ?
+        (uint16_t)(0x0400U + ((uint16_t)socket * 0x0100U) + offset) : 0U;
+}
+
+int uthernet2_w5100_read16(uint16_t addr, uint16_t *value)
 {
     uint8_t bytes[2];
 
@@ -251,16 +245,16 @@ static int w5100_read16(uint16_t addr, uint16_t *value)
     return 0;
 }
 
-static int w5100_read16_stable(uint16_t addr, uint16_t *value)
+int uthernet2_w5100_read16_stable(uint16_t addr, uint16_t *value)
 {
     uint16_t previous;
     uint16_t current;
 
-    if (value == NULL || w5100_read16(addr, &previous) != 0) {
+    if (value == NULL || uthernet2_w5100_read16(addr, &previous) != 0) {
         return -1;
     }
     for (uint8_t i = 0U; i < 8U; ++i) {
-        if (w5100_read16(addr, &current) != 0) {
+        if (uthernet2_w5100_read16(addr, &current) != 0) {
             return -1;
         }
         if (current == previous) {
@@ -272,13 +266,20 @@ static int w5100_read16_stable(uint16_t addr, uint16_t *value)
     return -1;
 }
 
-static int w5100_write16(uint16_t addr, uint16_t value)
+int uthernet2_w5100_write16(uint16_t addr, uint16_t value)
 {
     const uint8_t bytes[2] = {
         (uint8_t)(value >> 8), (uint8_t)value
     };
 
     return w5100_write(addr, bytes, sizeof(bytes));
+}
+
+int uthernet2_w5100_socket_status(uint8_t socket, uint8_t *status)
+{
+    return socket < 4U && status != NULL ?
+        uthernet2_read_reg(
+            uthernet2_w5100_socket_reg(socket, W5100_SN_SR), status) : -1;
 }
 
 int uthernet2_read_network_config(uthernet2_network_config_t *config)
@@ -325,21 +326,25 @@ int uthernet2_test(uthernet2_test_result_t *result)
     return 0;
 }
 
-static int w5100_command(uint16_t command_reg, uint8_t command)
+int uthernet2_w5100_socket_command(uint8_t socket, uint8_t command)
 {
     uint8_t value;
+    uint16_t command_reg;
 
+    if (socket >= 4U) {
+        return -1;
+    }
+    command_reg = uthernet2_w5100_socket_reg(socket, W5100_SN_CR);
     if (uthernet2_write_reg(command_reg, command) != 0) {
         return -1;
     }
-    for (uint16_t poll = 0U; poll < 100U; ++poll) {
+    for (uint16_t poll = 0U; poll < 1000U; ++poll) {
         if (uthernet2_read_reg(command_reg, &value) != 0) {
             return -1;
         }
         if (value == 0U) {
             return 0;
         }
-        usleep(1000U);
     }
     return -1;
 }
@@ -349,10 +354,9 @@ static int w5100_close_sockets(void)
     int result = 0;
 
     for (uint8_t socket = 0U; socket < 4U; ++socket) {
-        const uint16_t base = (uint16_t)(0x0400U + (uint16_t)socket * 0x0100U);
-
-        if (w5100_command((uint16_t)(base + 1U), W5100_CR_CLOSE) != 0 ||
-            uthernet2_write_reg((uint16_t)(base + 2U), 0xFFU) != 0) {
+        if (uthernet2_w5100_socket_command(socket, W5100_CR_CLOSE) != 0 ||
+            uthernet2_write_reg(
+                uthernet2_w5100_socket_reg(socket, W5100_SN_IR), 0xFFU) != 0) {
             result = -1;
         }
     }
@@ -367,23 +371,33 @@ static int w5100_raw_open(const uint8_t mac[UTHERNET2_MAC_LEN])
         uthernet2_write_reg(W5100_REG_RMSR, W5100_SOCKET_MEM_4_2_1_1) != 0 ||
         uthernet2_write_reg(W5100_REG_TMSR, W5100_SOCKET_MEM_4_2_1_1) != 0 ||
         w5100_write(W5100_REG_SHAR, mac, UTHERNET2_MAC_LEN) != 0 ||
-        uthernet2_write_reg(W5100_S0_MR, W5100_S0_MR_MACRAW_MF) != 0 ||
-        w5100_command(W5100_S0_CR, W5100_CR_OPEN) != 0 ||
-        uthernet2_read_reg(W5100_S0_SR, &state) != 0 ||
+        uthernet2_write_reg(
+            uthernet2_w5100_socket_reg(0U, W5100_SN_MR),
+            W5100_SN_MR_MACRAW_MF) != 0 ||
+        uthernet2_w5100_socket_command(0U, W5100_CR_OPEN) != 0 ||
+        uthernet2_w5100_socket_status(0U, &state) != 0 ||
         state != W5100_S0_SR_MACRAW) {
         return -1;
     }
     return 0;
 }
 
-static int w5100_ring_write(uint16_t base,
-                            uint16_t pointer,
-                            const uint8_t *src,
-                            uint16_t len)
+int uthernet2_w5100_socket_ring_write(uint8_t socket,
+                                      uint16_t pointer,
+                                      const uint8_t *src,
+                                      uint16_t len)
 {
+    const uint16_t base = socket < 4U ?
+        w5100_tx_base_4_2_1_1[socket] : 0U;
+    const uint16_t mask = socket < 4U ?
+        w5100_mask_4_2_1_1[socket] : 0U;
+
+    if (socket >= 4U || (src == NULL && len != 0U)) {
+        return -1;
+    }
     while (len != 0U) {
-        const uint16_t offset = (uint16_t)(pointer & W5100_RAW_MASK);
-        uint16_t chunk = (uint16_t)((W5100_RAW_MASK + 1U) - offset);
+        const uint16_t offset = (uint16_t)(pointer & mask);
+        uint16_t chunk = (uint16_t)((mask + 1U) - offset);
 
         if (chunk > len) {
             chunk = len;
@@ -398,14 +412,22 @@ static int w5100_ring_write(uint16_t base,
     return 0;
 }
 
-static int w5100_ring_read(uint16_t base,
-                           uint16_t pointer,
-                           uint8_t *dst,
-                           uint16_t len)
+int uthernet2_w5100_socket_ring_read(uint8_t socket,
+                                     uint16_t pointer,
+                                     uint8_t *dst,
+                                     uint16_t len)
 {
+    const uint16_t base = socket < 4U ?
+        w5100_rx_base_4_2_1_1[socket] : 0U;
+    const uint16_t mask = socket < 4U ?
+        w5100_mask_4_2_1_1[socket] : 0U;
+
+    if (socket >= 4U || (dst == NULL && len != 0U)) {
+        return -1;
+    }
     while (len != 0U) {
-        const uint16_t offset = (uint16_t)(pointer & W5100_RAW_MASK);
-        uint16_t chunk = (uint16_t)((W5100_RAW_MASK + 1U) - offset);
+        const uint16_t offset = (uint16_t)(pointer & mask);
+        uint16_t chunk = (uint16_t)((mask + 1U) - offset);
 
         if (chunk > len) {
             chunk = len;
@@ -427,7 +449,9 @@ static int w5100_raw_send(const uint8_t *frame, uint16_t len)
     uint8_t interrupt;
 
     for (uint16_t poll = 0U; poll < 200U; ++poll) {
-        if (w5100_read16_stable(W5100_S0_TX_FSR, &free_size) != 0) {
+        if (uthernet2_w5100_read16_stable(
+                uthernet2_w5100_socket_reg(0U, W5100_SN_TX_FSR),
+                &free_size) != 0) {
             return -1;
         }
         if (free_size >= len) {
@@ -436,25 +460,37 @@ static int w5100_raw_send(const uint8_t *frame, uint16_t len)
         usleep(1000U);
     }
     if (free_size < len ||
-        w5100_read16(W5100_S0_TX_WR, &write_pointer) != 0 ||
-        w5100_ring_write(W5100_TX_BASE, write_pointer, frame, len) != 0 ||
-        w5100_write16(W5100_S0_TX_WR, (uint16_t)(write_pointer + len)) != 0 ||
-        uthernet2_write_reg(W5100_S0_IR,
+        uthernet2_w5100_read16(
+            uthernet2_w5100_socket_reg(0U, W5100_SN_TX_WR),
+            &write_pointer) != 0 ||
+        uthernet2_w5100_socket_ring_write(
+            0U, write_pointer, frame, len) != 0 ||
+        uthernet2_w5100_write16(
+            uthernet2_w5100_socket_reg(0U, W5100_SN_TX_WR),
+            (uint16_t)(write_pointer + len)) != 0 ||
+        uthernet2_write_reg(
+            uthernet2_w5100_socket_reg(0U, W5100_SN_IR),
                            W5100_IR_SENDOK | W5100_IR_TIMEOUT) != 0 ||
-        w5100_command(W5100_S0_CR, W5100_CR_SEND) != 0) {
+        uthernet2_w5100_socket_command(0U, W5100_CR_SEND) != 0) {
         return -1;
     }
 
     for (uint16_t poll = 0U; poll < 200U; ++poll) {
-        if (uthernet2_read_reg(W5100_S0_IR, &interrupt) != 0) {
+        if (uthernet2_read_reg(
+                uthernet2_w5100_socket_reg(0U, W5100_SN_IR),
+                &interrupt) != 0) {
             return -1;
         }
         if ((interrupt & W5100_IR_SENDOK) != 0U) {
-            (void)uthernet2_write_reg(W5100_S0_IR, W5100_IR_SENDOK);
+            (void)uthernet2_write_reg(
+                uthernet2_w5100_socket_reg(0U, W5100_SN_IR),
+                W5100_IR_SENDOK);
             return 0;
         }
         if ((interrupt & W5100_IR_TIMEOUT) != 0U) {
-            (void)uthernet2_write_reg(W5100_S0_IR, W5100_IR_TIMEOUT);
+            (void)uthernet2_write_reg(
+                uthernet2_w5100_socket_reg(0U, W5100_SN_IR),
+                W5100_IR_TIMEOUT);
             return -1;
         }
         usleep(1000U);
@@ -473,17 +509,19 @@ static int w5100_raw_receive(uint8_t *frame,
     uint16_t copy_len;
 
     *frame_len = 0U;
-    if (w5100_read16_stable(W5100_S0_RX_RSR, &received_size) != 0) {
+    if (uthernet2_w5100_read16_stable(
+            uthernet2_w5100_socket_reg(0U, W5100_SN_RX_RSR),
+            &received_size) != 0) {
         return -1;
     }
     if (received_size < 2U) {
         return 1;
     }
-    if (w5100_read16(W5100_S0_RX_RD, &read_pointer) != 0 ||
-        w5100_ring_read(W5100_RX_BASE,
-                        read_pointer,
-                        length_header,
-                        sizeof(length_header)) != 0) {
+    if (uthernet2_w5100_read16(
+            uthernet2_w5100_socket_reg(0U, W5100_SN_RX_RD),
+            &read_pointer) != 0 ||
+        uthernet2_w5100_socket_ring_read(
+            0U, read_pointer, length_header, sizeof(length_header)) != 0) {
         return -1;
     }
     packet_size = (uint16_t)(((uint16_t)length_header[0] << 8) |
@@ -495,13 +533,12 @@ static int w5100_raw_receive(uint8_t *frame,
     if (copy_len > capacity) {
         copy_len = capacity;
     }
-    if (w5100_ring_read(W5100_RX_BASE,
-                        (uint16_t)(read_pointer + 2U),
-                        frame,
-                        copy_len) != 0 ||
-        w5100_write16(W5100_S0_RX_RD,
-                      (uint16_t)(read_pointer + packet_size)) != 0 ||
-        w5100_command(W5100_S0_CR, W5100_CR_RECV) != 0) {
+    if (uthernet2_w5100_socket_ring_read(
+            0U, (uint16_t)(read_pointer + 2U), frame, copy_len) != 0 ||
+        uthernet2_w5100_write16(
+            uthernet2_w5100_socket_reg(0U, W5100_SN_RX_RD),
+            (uint16_t)(read_pointer + packet_size)) != 0 ||
+        uthernet2_w5100_socket_command(0U, W5100_CR_RECV) != 0) {
         return -1;
     }
     *frame_len = copy_len;

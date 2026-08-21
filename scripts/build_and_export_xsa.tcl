@@ -30,7 +30,7 @@ proc finish_timing_build {} {
     timing_run::append_build $build_info
 }
 
-dict set build_info vivado_version [version]
+dict set build_info vivado_version [version -short]
 dict set build_info jobs 8
 dict set build_info rescue_used 0
 dict set build_info seed_control "Vivado default"

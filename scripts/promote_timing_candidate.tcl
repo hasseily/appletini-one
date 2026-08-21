@@ -43,8 +43,10 @@ timing_run::require_manifest_value $current_git git_sha $tested_sha \
     "Current Git commit"
 timing_run::require_manifest_value $current_git git_dirty 0 \
     "Current Git dirty flag"
-if {[string compare [dict get $tested utc_start] [dict get $confirm utc_start]] >= 0} {
-    error "The confirm build must start after the tested build."
+set tested_order [list [dict get $tested utc_start] $tested_build_id]
+set confirm_order [list [dict get $confirm utc_start] $confirm_build_id]
+if {[timing_run::compare_build_order $tested_order $confirm_order] >= 0} {
+    error "The confirm build must sort after the tested build."
 }
 
 # A build from another commit, or a failed or partial full build, breaks the

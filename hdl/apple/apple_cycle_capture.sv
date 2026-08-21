@@ -239,7 +239,8 @@ module apple_cycle_capture (
             apple_push_request_q <= apple_push_request;
             io_push_request_q    <= io_push_request;
             overlay_drop_source_q <=
-                overlay_rule_valid || overlay_command_write;
+                (apple_push_request && overlay_rule_valid) ||
+                overlay_command_write;
         end
     end
 

@@ -70,6 +70,8 @@ def test_prodos_and_smartport_entries() -> None:
             "Cn0D must be an executable SmartPort dispatcher trampoline")
     require(slot[0x57:0x5A] == bytearray([0x4C, 0x2D, 0xC7]),
             "Cn00 autostart BVC must land on a boot-entry trampoline")
+    require(slot[0xB0:0xB8] == b"LINTXT\x4c\x10",
+            "CnB0 must publish the side-effect-free overlay probe marker")
     require(slot[0xFF] == 0x0A,
             "CnFF must publish the Appletini ProDOS entry offset Cn0A")
 

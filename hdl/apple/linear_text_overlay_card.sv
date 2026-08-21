@@ -310,7 +310,11 @@ module linear_text_overlay_card (
                                     show_drained_q  <= 1'b1;
                                 end
                                 CMD_ARM: begin
-                                    if (!staged_static_valid) begin
+                                    /* A pending frame command still owns the
+                                     * armed snapshot until CPU0 acks it. */
+                                    if (frame_pending_q) begin
+                                        // Ignore ARM until that frame edge.
+                                    end else if (!staged_static_valid) begin
                                         config_error_q <= 1'b1;
                                     end else begin
                                         busy_q            <= 1'b1;

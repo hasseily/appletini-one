@@ -208,6 +208,31 @@ def test_vtw_uses_readahead_and_word_wide_response_buffer() -> None:
             "the Apple byte protocol or putting the pop decode on BRAM address pins")
 
 
+def test_ps_register_windows_are_bounded() -> None:
+    gateware = read(SMARTPORT_SV)
+    apple_top = read(APPLE_TOP_SV)
+
+    require("SP_REG_OVERLAY_FIRST = 8'h20;" in gateware and
+            "SP_REG_OVERLAY_LAST  = 8'h28;" in gateware and
+            "overlay_ps_write_addr" in gateware and
+            "(as_common.awaddr <= SP_REG_OVERLAY_LAST)" in gateware and
+            "overlay_ps_read_addr" in gateware and
+            "? overlay_ps_rdata : 32'h00000000" in gateware,
+            "SmartPort must route only overlay registers 0x20 through 0x28")
+
+    constants_at = apple_top.find(
+        "localparam logic [7:0] CARD_CTRL_REG_ONEE_KEY_FIFO")
+    decode_at = apple_top.find("wire onee_input_ps_wr_en")
+    require(constants_at >= 0 and constants_at < decode_at,
+            "ONE//e input register constants must be declared before decode")
+    decode = apple_top[decode_at:apple_top.find(
+        "onee_input_bridge onee_input_bridge_i", decode_at)]
+    require("CARD_CTRL_REG_ONEE_KEY_FIFO" in decode and
+            "CARD_CTRL_REG_ONEE_CONTROL" in decode and
+            "8'h5C" not in decode and "8'h5F" not in decode,
+            "ONE//e input bridge must use the named bounded register window")
+
+
 def test_vtw_direct_read_is_complete_and_fail_closed() -> None:
     source = read(SMARTPORT_C)
     gateware = read(SMARTPORT_SV)
@@ -564,6 +589,7 @@ TESTS = [
     test_status_reports_present_devices_and_per_device_geometry,
     test_command_path_uses_cache_for_reads_and_writes,
     test_vtw_uses_readahead_and_word_wide_response_buffer,
+    test_ps_register_windows_are_bounded,
     test_vtw_direct_read_is_complete_and_fail_closed,
     test_vtw_ramworks_dma_freezes_core_and_bounds_polls,
     test_smartport_latency_and_cache_measurements,

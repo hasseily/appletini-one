@@ -107,20 +107,29 @@ module onee_motherboard_io #(
 
     logic       read_claim;
     logic [7:0] read_data;
-    logic       status_bit;
+    logic       peripheral_status_bit;
+    wire [7:0]  c01x_status_byte;
 
-    // Owned reads drive only the bits which real motherboard logic defines.
-    // Status, cassette, button, and paddle reads preserve floating-bus bits
-    // 6:0. All other reads remain unclaimed so apple_virtual_bus supplies its
-    // full floating/scanner byte.
+    apple_c01x_status_decode c01x_status_decode_i (
+        .selector   (ab_read.addr[3:0]),
+        .sss        (sss),
+        .vbl_bar    (~video_vblank),
+        .low_bits   (keyboard_code_q),
+        .status_byte(c01x_status_byte)
+    );
+
+    // Keyboard and soft-switch status reads keep the last key code in bits
+    // 6:0, as the Enhanced //e IOU does. Cassette, button, and paddle reads
+    // preserve floating-bus bits 6:0. All other reads remain unclaimed so
+    // apple_virtual_bus supplies its full floating/scanner byte.
     always_comb begin
         read_claim = 1'b0;
         read_data  = floating_bus_data;
-        status_bit = 1'b0;
+        peripheral_status_bit = 1'b0;
 
         if (bus_active && ab_read.rw && is_c0xx) begin
-            unique case (ab_read.addr[7:0])
-                8'h00: begin
+            unique casez (ab_read.addr[7:0])
+                8'h0?: begin
                     read_claim = 1'b1;
                     read_data  = keyboard_latch;
                 end
@@ -128,47 +137,35 @@ module onee_motherboard_io #(
                     read_claim = 1'b1;
                     read_data  = {keyboard_any_down, keyboard_code_q};
                 end
-                8'h11: status_bit = sss.sw_lcram_bank2;
-                8'h12: status_bit = sss.sw_lcram_read;
-                8'h13: status_bit = sss.sw_ramrd;
-                8'h14: status_bit = sss.sw_ramwrt;
-                8'h15: status_bit = sss.sw_intcxrom;
-                8'h16: status_bit = sss.sw_altzp;
-                8'h17: status_bit = sss.sw_slotc3rom;
-                8'h18: status_bit = sss.sw_80store;
-                8'h19: status_bit = ~video_vblank;
-                8'h1A: status_bit = sss.sw_text;
-                8'h1B: status_bit = sss.sw_mixed;
-                8'h1C: status_bit = sss.sw_page2;
-                8'h1D: status_bit = sss.sw_hires;
-                8'h1E: status_bit = sss.sw_altcharset;
-                8'h1F: status_bit = sss.sw_80col;
                 // Enhanced //e $C07E/$C07F both return the floating bus.
                 // The documented RDIOUDIS/RDDHIRES bits exist on the //c,
                 // not on real //e hardware.
                 default: ;
             endcase
 
+            if ((ab_read.addr[7:4] == 4'h1) &&
+                (ab_read.addr[3:0] != 4'h0)) begin
+                read_claim = 1'b1;
+                read_data  = c01x_status_byte;
+            end
+
             // The motherboard C06X selector ignores A3, so C068-C06F mirror
             // the cassette, button, and paddle reads at C060-C067.
             if (ab_read.addr[7:4] == 4'h6) begin
                 unique case (ab_read.addr[2:0])
-                    3'h0: status_bit = cassette_in;
-                    3'h1: status_bit = pushbuttons[0];
-                    3'h2: status_bit = pushbuttons[1];
-                    3'h3: status_bit = pushbuttons[2];
-                    3'h4: status_bit = paddle_active[0];
-                    3'h5: status_bit = paddle_active[1];
-                    3'h6: status_bit = paddle_active[2];
-                    3'h7: status_bit = paddle_active[3];
+                    3'h0: peripheral_status_bit = cassette_in;
+                    3'h1: peripheral_status_bit = pushbuttons[0];
+                    3'h2: peripheral_status_bit = pushbuttons[1];
+                    3'h3: peripheral_status_bit = pushbuttons[2];
+                    3'h4: peripheral_status_bit = paddle_active[0];
+                    3'h5: peripheral_status_bit = paddle_active[1];
+                    3'h6: peripheral_status_bit = paddle_active[2];
+                    3'h7: peripheral_status_bit = paddle_active[3];
                 endcase
-            end
-
-            if (((ab_read.addr[7:0] >= 8'h11) &&
-                 (ab_read.addr[7:0] <= 8'h1F)) ||
-                (ab_read.addr[7:4] == 4'h6)) begin
                 read_claim = 1'b1;
-                read_data  = {status_bit, floating_bus_data[6:0]};
+                read_data  = {
+                    peripheral_status_bit, floating_bus_data[6:0]
+                };
             end
         end
     end

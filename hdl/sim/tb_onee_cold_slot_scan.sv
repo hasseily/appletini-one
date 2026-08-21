@@ -15,6 +15,7 @@ module tb_onee_cold_slot_scan;
     logic manual_enable_request = 1'b1;
     logic configured_disk2_target = 1'b1;
     logic configured_smartport_target = 1'b0;
+    logic warm_reset_active = 1'b0;
     globals::AppleBus_read ab_read = '0;
     logic disk2_session_target;
     logic smartport_session_target;
@@ -27,6 +28,7 @@ module tb_onee_cold_slot_scan;
         .enabled(enabled),
         .manual_enable_request(manual_enable_request),
         .boot_target_disk2(configured_disk2_target),
+        .warm_reset_active(warm_reset_active),
         .ab_read(ab_read),
         .session_boot_target_disk2(disk2_session_target),
         .slot7_hidden(disk2_slot7_hidden)
@@ -38,6 +40,7 @@ module tb_onee_cold_slot_scan;
         .enabled(enabled),
         .manual_enable_request(manual_enable_request),
         .boot_target_disk2(configured_smartport_target),
+        .warm_reset_active(warm_reset_active),
         .ab_read(ab_read),
         .session_boot_target_disk2(smartport_session_target),
         .slot7_hidden(smartport_slot7_hidden)
@@ -91,12 +94,22 @@ module tb_onee_cold_slot_scan;
         check(disk2_session_target && !smartport_session_target,
               "configured target changed active session ownership");
 
-        // Ctrl+Alt+Delete holds private RES# while firmware publishes the
-        // current choice. The scan latch must accept it without toggling the
-        // ONE//e enable request.
+        // A marked warm reset must not restart the cold scan or apply a newly
+        // saved boot target, regardless of how long RESET remains low.
         @(negedge clk);
+        warm_reset_active = 1'b1;
         ab_read.res = 1'b0;
-        repeat (2) @(posedge clk);
+        repeat (10) @(posedge clk);
+        check(disk2_session_target && !smartport_session_target,
+              "warm reset changed the active boot targets");
+        check(!disk2_slot7_hidden && !smartport_slot7_hidden,
+              "warm reset re-hid slot 7");
+
+        // An unmarked low RESET is an explicit cold-boot boundary.
+        @(negedge clk);
+        warm_reset_active = 1'b0;
+        @(posedge clk);
+        @(negedge clk);
         check(enabled, "test left ONE//e during cold reboot");
         check(!disk2_session_target && smartport_session_target,
               "cold reboot did not sample the changed boot targets");

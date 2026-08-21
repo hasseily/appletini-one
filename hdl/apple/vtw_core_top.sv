@@ -536,27 +536,16 @@ module vtw_core_top (
     wire status_video_vbl = (video_cycle == 7'd0)
                           ? (status_video_pos[15:7] >= 9'd192)
                           : video_vbl;
-    logic [7:0] status_byte;
-    always_comb begin
-        unique case (cycle_addr_q[3:0])
-            4'h1:    status_byte = {vsss.sw_lcram_bank2, 7'b0}; // $C011 RDLCBNK2
-            4'h2:    status_byte = {vsss.sw_lcram_read,  7'b0}; // $C012 RDLCRAM
-            4'h3:    status_byte = {vsss.sw_ramrd,       7'b0}; // $C013 RDRAMRD
-            4'h4:    status_byte = {vsss.sw_ramwrt,      7'b0}; // $C014 RDRAMWRT
-            4'h5:    status_byte = {vsss.sw_intcxrom,    7'b0}; // $C015 RDCXROM
-            4'h6:    status_byte = {vsss.sw_altzp,       7'b0}; // $C016 RDALTZP
-            4'h7:    status_byte = {vsss.sw_slotc3rom,   7'b0}; // $C017 RDC3ROM
-            4'h8:    status_byte = {vsss.sw_80store,     7'b0}; // $C018 RD80STORE
-            4'h9:    status_byte = {~status_video_vbl,   7'b0}; // $C019 RDVBLBAR
-            4'hA:    status_byte = {vsss.sw_text,        7'b0}; // $C01A RDTEXT
-            4'hB:    status_byte = {vsss.sw_mixed,       7'b0}; // $C01B RDMIXED
-            4'hC:    status_byte = {vsss.sw_page2,       7'b0}; // $C01C RDPAGE2
-            4'hD:    status_byte = {vsss.sw_hires,       7'b0}; // $C01D RDHIRES
-            4'hE:    status_byte = {vsss.sw_altcharset,  7'b0}; // $C01E RDALTCHAR
-            4'hF:    status_byte = {vsss.sw_80col,       7'b0}; // $C01F RD80COL
-            default: status_byte = 8'h00;
-        endcase
-    end
+    wire [7:0] status_byte;
+    apple_c01x_status_decode c01x_status_decode_i (
+        .selector   (cycle_addr_q[3:0]),
+        .sss        (vsss),
+        .vbl_bar    (~status_video_vbl),
+        // The physical-host shortcut has no keyboard-latch input. Keep its
+        // prior low-bit behavior; ONE//e supplies its real key code.
+        .low_bits   (7'b0000000),
+        .status_byte(status_byte)
+    );
     /* RamWorks banks 2..128: CACHE-routed decodes with no shadow backing
      * exist only when the private translator's RamWorks banking is armed.
      * Served from PSRAM through the line cache below. */
@@ -1069,12 +1058,10 @@ module vtw_core_top (
     // client claimed the cycle.
     wire scanner_bus_read = cycle_rw_q &&
                             (full_floating_read || virtual_motherboard);
-    wire virtual_motherboard_status_read =
+    wire virtual_motherboard_floating_status_read =
         virtual_motherboard &&
         (cycle_addr_q[15:8] == 8'hC0) &&
-        (((cycle_addr_q[7:4] == 4'h1) &&
-          (cycle_addr_q[3:0] != 4'h0)) ||
-         (cycle_addr_q[7:4] == 4'h6) ||
+        ((cycle_addr_q[7:4] == 4'h6) ||
          (cycle_addr_q[7:1] == 7'h3F));
     /* The byte a CPU sees during PHI0-high is the scanner fetch from two
      * native slots earlier. Rewind the complete position so cycle 0/1 also
@@ -1638,7 +1625,7 @@ module vtw_core_top (
                         if (virtual_motherboard &&
                             !onee_bus_data_claimed_q) begin
                             core_data_in_q <= shadow_a_rdata;
-                        end else if (virtual_motherboard_status_read) begin
+                        end else if (virtual_motherboard_floating_status_read) begin
                             core_data_in_q <= {
                                 eng_resp_rdata[7], shadow_a_rdata[6:0]
                             };
@@ -1708,7 +1695,7 @@ module vtw_core_top (
              * interval before the W65C02 consumes it. */
             if ((xstate_q == X_STATUS_DONE) &&
                 status_vbl_data_phase_q && ab_read.data_en) begin
-                core_data_in_q       <= {~status_video_vbl, 7'b0};
+                core_data_in_q       <= status_byte;
                 status_vbl_sampled_q <= 1'b1;
             end
 

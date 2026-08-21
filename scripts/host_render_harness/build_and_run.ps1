@@ -29,6 +29,16 @@ $sources = @(
 cmd /c "`"$vcvars`" >nul 2>&1 && cl /nologo /W3 /O2 /std:c11 /D_CRT_SECURE_NO_WARNINGS /FI $repo\scripts\host_render_harness\harness_prefix.h /I $repo\scripts\host_render_harness /I $repo\scripts\host_render_harness\xil_stub /I $repo\ps_sources\frontend /Fo$work\build\ /Fe$work\build\harness.exe $sources"
 if ($LASTEXITCODE -ne 0) { throw "compile failed" }
 
+$shortRoot = Join-Path $work "short asset root"
+New-Item -ItemType Directory -Force $shortRoot | Out-Null
+$shortAsset = Join-Path $shortRoot "truncated asset.bin"
+[System.IO.File]::WriteAllBytes($shortAsset, [byte[]](0..31))
+& "$work\build\harness.exe" --check-exact-file `
+    $shortRoot "truncated asset.bin" 0x8000
+if ($LASTEXITCODE -eq 0) {
+    throw "harness accepted a truncated fixed-size asset"
+}
+
 & "$work\build\harness.exe" $repo "$work\out"
 if ($LASTEXITCODE -ne 0) { throw "harness reported failures" }
 

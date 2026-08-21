@@ -365,6 +365,17 @@ module tb_apple_cycle_capture;
             sss.addr_decode_late = 24'h001000;
             ab_read.addr = 16'h1000;
             ab_read.data = 8'hE2;
+
+            // The address decode remains valid for most of a native cycle.
+            // FIFO full outside data_en must not invent a lost overlay write.
+            ab_read.data_en = 1'b0;
+            repeat (2) begin
+                @(posedge clk);
+                #1;
+            end
+            check(!overlay_capture_drop_sticky,
+                  "full FIFO without an overlay push leaves overlay clean");
+
             capture_drop_ack = 1'b1;
             push_cycle();
             @(posedge clk);

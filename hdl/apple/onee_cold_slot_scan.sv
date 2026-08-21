@@ -12,6 +12,7 @@ module onee_cold_slot_scan (
     input  logic                  enabled,
     input  logic                  manual_enable_request,
     input  logic                  boot_target_disk2,
+    input  logic                  warm_reset_active,
     input  globals::AppleBus_read ab_read,
     output logic                  session_boot_target_disk2,
     output logic                  slot7_hidden
@@ -36,20 +37,18 @@ module onee_cold_slot_scan (
             if (manual_enable_request && !request_q)
                 session_boot_target_disk2 <= boot_target_disk2;
 
-            if (!enabled)
+            if (!enabled) begin
                 slot7_hidden <= 1'b0;
-            else if (!ab_read.res) begin
-                // A held private RESET is also a new cold-boot boundary.
-                // Firmware publishes the current boot choice while RESET is
-                // low, so sample it until release instead of restoring the
-                // choice from the first ONE//e activation.
-                session_boot_target_disk2 <= boot_target_disk2;
-                slot7_hidden <= boot_target_disk2;
-            end
-            else if (!enabled_q)
+            end else if (!enabled_q) begin
                 slot7_hidden <= (manual_enable_request && !request_q) ?
                     boot_target_disk2 : session_boot_target_disk2;
-            else if (slot6_probe)
+            end else if (!ab_read.res && !warm_reset_active) begin
+                // A cold restart publishes its boot choice while RESET is
+                // low. The separate warm-reset controller marks private warm
+                // resets, so they cannot restart this slot scan.
+                session_boot_target_disk2 <= boot_target_disk2;
+                slot7_hidden <= boot_target_disk2;
+            end else if (slot6_probe)
                 slot7_hidden <= 1'b0;
         end
     end

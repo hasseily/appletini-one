@@ -13,6 +13,7 @@ USB_HID_C = FRONTEND / "usb_hid_service.c"
 USB_HID_H = FRONTEND / "usb_hid_service.h"
 ONEE_USB_CONTROLS_H = FRONTEND / "onee_usb_controls.h"
 ONEE_FIXED_MODE_H = FRONTEND / "onee_fixed_mode.h"
+ONEE_SERVICE_C = FRONTEND / "onee_service.c"
 USB_CONFIG_H = FRONTEND / "usb_config.h"
 CHERRY_PLATFORM_H = FRONTEND / "cherryusb_platform.h"
 CHERRY_OSAL_C = FRONTEND / "cherryusb_baremetal_osal.c"
@@ -180,12 +181,14 @@ def test_onee_uses_fixed_keyboard_controls_and_blocks_menu_leakage() -> None:
     source = read(USB_HID_C)
     controls = read(ONEE_USB_CONTROLS_H)
     fixed_mode = read(ONEE_FIXED_MODE_H)
+    onee_service = read(ONEE_SERVICE_C)
     frontend_main = read(FRONTEND_MAIN_C)
     fixed = function_body(controls, "onee_usb_fixed_keyboard_action")
     active = function_body(fixed_mode, "onee_usb_fixed_mode_active")
     keyboard = function_body(source, "hid_process_keyboard_usages")
     selection = function_body(frontend_main, "ui_onee_selected")
-    pause = function_body(frontend_main, "ui_sync_onee_menu_pause")
+    pause_sync = function_body(frontend_main, "ui_sync_onee_menu_pause")
+    policy = function_body(onee_service, "onee_service_update_ui_policy")
     event = function_body(frontend_main, "ui_handle_usb_menu_event")
 
     for token in [
@@ -252,11 +255,13 @@ def test_onee_uses_fixed_keyboard_controls_and_blocks_menu_leakage() -> None:
             "ONEE_USB_ROUTE_CONSUME_SOURCE" in route,
             "the fixed route must consume only Pause and the two Alt sources")
 
-    require("vtw_service_onee_set_paused(1U)" in pause and
-            "usb_hid_service_set_onee_input_blocked(1U)" in pause and
-            "usb_hid_service_all_input_released()" in pause and
-            "vtw_service_onee_set_paused(0U)" in pause,
-            "menu entry must pause and menu exit must wait for key release")
+    require("onee_service_sync_menu_policy(config_menu_is_active(menu))" in
+            pause_sync and
+            "g_ui_pause(g_ui_ctx, 1U)" in policy and
+            "onee_service_publish_input_policy(1U, 1U)" in policy and
+            "g_ui_input_released(g_ui_ctx)" in policy and
+            "g_ui_pause(g_ui_ctx, 0U)" in policy,
+            "ONE//e service must own menu pause and release-wait policy")
     released = function_body(source, "usb_hid_service_all_input_released")
     desktop = function_body(source, "hid_collect_desktop_item")
     mouse_buttons = function_body(source, "mouse_menu_process_buttons")
@@ -264,6 +269,9 @@ def test_onee_uses_fixed_keyboard_controls_and_blocks_menu_leakage() -> None:
             "raw_axis_active_mask" in released and
             "raw_hat_active" in released and
             "slot->raw_axis_active_mask" in desktop and
+            "slot->raw_axis_rest[axis]" in desktop and
+            "hid_axis_active_from_rest(" in desktop and
+            "raw_axis_rest_valid_mask" in source and
             "slot->raw_hat_active" in desktop and
             "onee_usb_axis_direction(" in desktop and
             "onee_usb_hat_active(" in desktop and

@@ -576,6 +576,18 @@ set a2_bus_in_ports [get_ports {a2fpga_a[*] a2fpga_d[*] a2fpga_rdwr_n \
     a2fpga_rdy_n a2fpga_dma_n}]
 set_max_delay -datapath_only 5.0 -from $a2_bus_in_ports
 
+# The six ONE//e watched lanes also drive one dedicated async-set capture flop
+# per lane. The capture Qs feed only a 2-FF synchronizer. Their async controls
+# retain short events; recovery/removal at those capture flops has no effect on
+# machine state because the flops clear only after quiet, manual-off clocks.
+# Keep the raw assertion route under the bus-input bound above and exempt the
+# intentional async control timing check.
+set_false_path -to \
+    [get_pins -of_objects \
+        [get_cells -hierarchical -filter \
+            {NAME =~ *onee_mode_safety_guard_i/generate_raw_transition_capture*.raw_transition_latched_reg*}] \
+        -filter {REF_PIN_NAME == PRE}]
+
 # ONE//e menu mute crosses from the 133 MHz fabric into the unrelated external
 # audio BCLK through a 2-FF level synchronizer. Bound the route to the first
 # synchronizer flop without imposing a phase relation between those clocks.

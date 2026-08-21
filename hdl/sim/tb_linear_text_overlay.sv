@@ -166,6 +166,8 @@ module tb_linear_text_overlay;
 
         bus_write(16'hC0F3, 8'h02);
         expect_status(8'h13, 8'h12, "SHOW pending");
+        bus_write(16'hC0F3, 8'h01);
+        expect_status(8'h93, 8'h12, "ARM ignored while SHOW pending");
         ps_write(8'h28, 32'h00000004);
         ps_write(8'h28, 32'h00000008);
         expect_status(8'h13, 8'h03, "SHOW complete");

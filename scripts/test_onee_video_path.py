@@ -19,6 +19,7 @@ SOURCES = [
     "hdl/sim/xpm_fifo_sync_model.sv",
     "hdl/apple/apple_timing_gen.sv",
     "hdl/apple/apple_virtual_bus.sv",
+    "hdl/apple/apple_c01x_status_decode.sv",
     "hdl/apple/apple_bus_write_arbiter.sv",
     "hdl/apple/soft_switch_manager.sv",
     "hdl/apple/onee_motherboard_io.sv",

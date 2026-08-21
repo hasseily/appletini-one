@@ -11,6 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "build" / "onee_motherboard_io_sim"
 RTL = ROOT / "hdl" / "apple" / "onee_motherboard_io.sv"
+DECODER = ROOT / "hdl" / "apple" / "apple_c01x_status_decode.sv"
 BENCH = ROOT / "hdl" / "sim" / "tb_onee_motherboard_io.sv"
 
 
@@ -45,6 +46,7 @@ def run(command: list[str], log_name: str) -> str:
 
 def static_contract_checks() -> None:
     rtl = RTL.read_text(encoding="utf-8")
+    decoder = DECODER.read_text(encoding="utf-8")
 
     require(
         "input  globals::AppleBus_read      ab_read" in rtl and
@@ -96,7 +98,8 @@ def static_contract_checks() -> None:
         "sss.sw_altcharset",
         "sss.sw_80col",
     ):
-        require(state in rtl, f"missing existing SoftSwitchState use: {state}")
+        require(state in decoder,
+                f"missing shared SoftSwitchState use: {state}")
 
     require(
         "softswitch_ab_read = ab_read;" in rtl and
@@ -130,9 +133,14 @@ def static_contract_checks() -> None:
         "all C07x aliases must snapshot paddles which expire on native cycles",
     )
     require(
-        "read_data  = {status_bit, floating_bus_data[6:0]};" in rtl and
+        "apple_c01x_status_decode c01x_status_decode_i" in rtl and
+        ".low_bits   (keyboard_code_q)" in rtl and
+        "8'h0?: begin" in rtl and
+        "read_data  = keyboard_latch;" in rtl and
+        "read_data  = c01x_status_byte;" in rtl and
+        "peripheral_status_bit, floating_bus_data[6:0]" in rtl and
         "ab_write_d.wr_data_en = read_claim;" in rtl,
-        "defined bit-7 reads and unclaimed floating-bus fallback must differ",
+        "keyboard mirrors, status key bits, and floating status reads must differ",
     )
 
 
@@ -147,6 +155,7 @@ def main() -> int:
         vivado_tool("xvlog"), "--sv",
         str(ROOT / "hdl" / "globals.sv"),
         str(ROOT / "hdl" / "apple" / "soft_switch_manager.sv"),
+        str(DECODER),
         str(RTL),
         str(BENCH),
     ], "xvlog.log")

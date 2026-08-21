@@ -28,6 +28,7 @@ module tb_smartport_reset;
         .clk(clk),
         .rstn(rstn),
         .ab_read(ab_read),
+        .apple_bus_visible(1'b1),
         .sss(sss),
         .slot_assign(3'h7),
         .as_common(as_common),

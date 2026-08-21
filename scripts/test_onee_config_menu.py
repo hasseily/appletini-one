@@ -291,7 +291,8 @@ def test_only_manual_or_guarded_restore_can_start() -> None:
     require(source.count("onee_service_write_request(1U);") == 2 and
             "onee_service_write_request(1U);" in start and
             "g_restore_pending != 0U" in poll and
-            "onee_status_can_start(g_status) == 0U" in poll,
+            "onee_service_check_start(g_status)" in poll and
+            "start_check != ONEE_START_CHECK_OK" in poll,
             "only manual start or one safety-checked reboot restore may write high")
     require("onee_service_force_persisted(0U);" in poll and
             "onee_service_disarm(1U);" in poll and
@@ -302,8 +303,19 @@ def test_only_manual_or_guarded_restore_can_start() -> None:
     require("g_lockout_latched = 1U;" in source and
             "g_lockout_latched = 0U;" in start,
             "an activity stop must stay locally locked until a new user start")
-    require("onee_service_force_persisted(0U);" in start,
-            "a hazard during manual ON must queue OFF even before service intent changes")
+    refusal = start[start.find("onee_service_check_start(status)"):]
+    require("onee_service_force_persisted(0U);" in refusal and
+            "onee_status_has_hazard(status)" not in refusal.split(
+                "onee_service_force_persisted(0U);", 1)[0],
+            "every refused manual ON must queue OFF before disarming")
+    require("typedef enum {\n"
+            "    ONEE_START_CHECK_OK = 0," in source and
+            "static onee_start_check_t onee_service_check_start" in source and
+            "ONEE_START_CHECK_PL_MISSING" in poll and
+            "ONEE_START_CHECK_HAZARD" in poll and
+            "ONEE_START_CHECK_RUNTIME_UNBOUND" in source and
+            "ONEE_START_CHECK_NOT_READY" in source,
+            "manual and restored starts must share one reason-coded validator")
 
 
 def test_start_refuses_unsafe_or_missing_pl() -> None:
@@ -821,19 +833,19 @@ def test_native_persistent_reboot_lifecycle() -> None:
             }
             onee_service_persist_update_ack(0U);
 
-            /* The menu saves ON before it asks the service to start. Model a
-             * non-hazard refusal while the service still holds reset-time
-             * OFF, then prove that a later manual OFF still queues storage
-             * OFF instead of being dropped as a duplicate. */
+            /* The menu saves ON before it asks the service to start. A
+             * non-hazard refusal must queue an immediate durable OFF too. */
             mode_status = status_safe_off();
             onee_service_init();
             high_before = high_writes;
             if (!check(onee_service_request_start() == 0U &&
                        high_writes == high_before &&
-                       onee_service_persist_update_pending(NULL) == 0U,
-                       "unbound runtime did not refuse staged ON cleanly")) {
+                       onee_service_persist_update_pending(&persist_value) != 0U &&
+                       persist_value == 0U,
+                       "unbound runtime refusal did not roll staged ON back")) {
                 return 1;
             }
+            onee_service_persist_update_ack(0U);
             onee_service_request_stop();
             if (!check(onee_service_persist_update_pending(&persist_value) != 0U &&
                        persist_value == 0U,
@@ -1039,6 +1051,18 @@ def test_platform_polling_and_standalone_runtime_binding() -> None:
             frontend.index("onee_service_bind_runtime(onee_runtime_start,") and
             "vtw_service" not in service,
             "stand-alone startup must bind the real vTW ONE//e entry after vTW init")
+    require("onee_service_ui_pause_fn" in service_header and
+            "onee_service_ui_input_policy_fn" in service_header and
+            "onee_service_ui_input_released_fn" in service_header and
+            "onee_service_bind_ui_policy" in service_header and
+            "onee_service_sync_menu_policy" in service_header and
+            "g_ui_menu_paused" in service and
+            "g_ui_input_release_wait" in service and
+            "g_onee_menu_paused" not in frontend and
+            "onee_service_sync_menu_policy(config_menu_is_active(menu));" in
+            frontend and
+            "onee_service_bind_ui_policy(onee_ui_set_paused," in frontend,
+            "ONE//e service must own menu pause, input block, and release wait")
     require('"../../../ps_sources/frontend/onee_service.c"' in vitis,
             "the Vitis frontend build must include the ONE//e service")
 

@@ -164,27 +164,31 @@ module tb_onee_mode_safety_guard;
     endtask
 
     task automatic check_short_activity(input integer source_index);
-        // Start between local clock edges and finish before the next edge. The
-        // raw fail-safe and asynchronous lockout must still catch the event.
-        #1;
+        // Sweep the pulse phase across the local clock. Each event ends before
+        // a fabric edge, so only the per-lane async capture can retain it.
+        #(source_index + 1);
         toggle_activity_source(source_index);
         #1;
 
         require_true(apple_activity_now,
                      "raw Apple transition must assert activity at once");
-        require_true(force_outputs_off,
-                     "raw Apple transition must assert output kill at once");
-        require_false(onee_enable_effective,
-                      "raw Apple transition must drop effective enable at once");
-        require_true(apple_activity_lockout,
-                     "raw Apple transition must set sticky lockout");
-        require_true(physical_isolation_hold,
-                     "activity during ONE//e must latch physical isolation");
-        require_true(inhibit_reason == 3'd3,
-                     "live Apple transition must report activity reason");
+        require_true(physical_bus_isolate,
+                     "the active ONE//e selection must already isolate the bus");
 
         toggle_activity_source(source_index);
         #1;
+
+        wait_clocks(3);
+        require_true(force_outputs_off,
+                     "captured Apple transition must clock the output kill");
+        require_false(onee_enable_effective,
+                      "captured Apple transition must stop effective mode");
+        require_true(apple_activity_lockout,
+                     "captured Apple transition must set sticky lockout");
+        require_true(physical_isolation_hold,
+                     "activity during ONE//e must latch physical isolation");
+        require_true(inhibit_reason == 3'd4,
+                     "captured Apple transition must report lockout reason");
 
         wait_clocks(QUIET_CYCLES + 4);
         require_true(apple_activity_lockout,
@@ -225,10 +229,10 @@ module tb_onee_mode_safety_guard;
         #1;
         apple_phi0_raw = ~apple_phi0_raw;
         #1;
+        apple_phi0_raw = ~apple_phi0_raw;
+        wait_clocks(3);
         require_false(onee_enable_effective,
                       "activity must kill the running mode before request clear");
-        apple_phi0_raw = ~apple_phi0_raw;
-        wait_clocks(1);
         manual_enable_request = 1'b0;
 
         wait_clocks(QUIET_CYCLES + 8);
@@ -284,6 +288,7 @@ module tb_onee_mode_safety_guard;
     task automatic check_periodic_clocks_block_arm;
         periodic_clocks = 1'b1;
         #3;
+        wait_clocks(3);
 
         require_true(apple_activity_lockout,
                      "continuous Apple clocks must set sticky lockout");
@@ -351,12 +356,11 @@ module tb_onee_mode_safety_guard;
         // A reset with the request still on must kill the VM. Isolation stays
         // asserted because this is not ordinary host mode.
         resetn = 1'b0;
-        #1;
+        wait_clocks(1);
         require_false(onee_enable_effective,
                       "reset must kill an enabled ONE//e mode");
         require_true(physical_bus_isolate,
                      "request high during reset must retain isolation");
-        #9;
         resetn = 1'b1;
         wait_clocks(QUIET_CYCLES + 6);
         require_false(onee_enable_effective,
@@ -388,9 +392,9 @@ module tb_onee_mode_safety_guard;
         // Slot power is a continuous veto. Manual off cannot release the bus
         // or clear the lockout until power disappears and the quiet time runs.
         apple_power_present_raw = 1'b1;
-        #1;
+        wait_clocks(3);
         require_false(onee_enable_effective,
-                      "Apple slot power must kill ONE//e at once");
+                      "Apple slot power must stop ONE//e after synchronization");
         require_true(physical_bus_isolate,
                      "Apple slot power during ONE//e must retain isolation");
         require_true(physical_isolation_hold,
@@ -434,13 +438,13 @@ module tb_onee_mode_safety_guard;
         require_true(onee_enable_effective,
                      "new off-on selection after power loss must enable mode");
 
-        // Manual off is also a direct fail-safe path.
+        // Manual off is a same-domain fail-safe path.
         manual_enable_request = 1'b0;
-        #1;
+        wait_clocks(1);
         require_true(force_outputs_off,
-                     "manual off must assert output kill without a clock");
+                     "manual off must assert output kill on the next clock");
         require_false(onee_enable_effective,
-                      "manual off must drop effective enable without a clock");
+                      "manual off must drop effective enable on the next clock");
         require_true(inhibit_reason == 3'd6,
                      "manual off must report its reason");
         wait_clocks(2);

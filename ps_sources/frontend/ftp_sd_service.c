@@ -17,46 +17,6 @@
 #define FTP_PATH_LEN             256U
 #define FTP_FAT_PATH_LEN         (FTP_PATH_LEN + 3U)
 
-#define W5100_REG_RMSR           0x001AU
-#define W5100_REG_TMSR           0x001BU
-#define W5100_SOCKET_MEM_4_2_1_1 0x06U
-
-#define W5100_SN_MR              0x00U
-#define W5100_SN_CR              0x01U
-#define W5100_SN_IR              0x02U
-#define W5100_SN_SR              0x03U
-#define W5100_SN_PORT            0x04U
-#define W5100_SN_DIPR            0x0CU
-#define W5100_SN_TX_FSR          0x20U
-#define W5100_SN_TX_WR           0x24U
-#define W5100_SN_RX_RSR          0x26U
-#define W5100_SN_RX_RD           0x28U
-
-#define W5100_SN_MR_TCP          0x01U
-#define W5100_CR_OPEN            0x01U
-#define W5100_CR_LISTEN          0x02U
-#define W5100_CR_DISCON          0x08U
-#define W5100_CR_CLOSE           0x10U
-#define W5100_CR_SEND            0x20U
-#define W5100_CR_RECV            0x40U
-#define W5100_IR_CON             0x01U
-#define W5100_IR_DISCON          0x02U
-#define W5100_IR_RECV            0x04U
-#define W5100_IR_TIMEOUT         0x08U
-#define W5100_IR_SENDOK          0x10U
-#define W5100_SR_CLOSED          0x00U
-#define W5100_SR_INIT            0x13U
-#define W5100_SR_LISTEN          0x14U
-#define W5100_SR_ESTABLISHED     0x17U
-#define W5100_SR_CLOSE_WAIT      0x1CU
-
-#define W5100_TX_BASE_S0         0x4000U
-#define W5100_TX_BASE_S1         0x5000U
-#define W5100_RX_BASE_S0         0x6000U
-#define W5100_RX_BASE_S1         0x7000U
-#define W5100_MASK_S0            0x0FFFU
-#define W5100_MASK_S1            0x07FFU
-
 typedef enum {
     FTP_TRANSFER_NONE = 0,
     FTP_TRANSFER_LIST,
@@ -74,7 +34,6 @@ typedef struct {
     uint8_t data_listening;
     uint8_t data_connected;
     uint8_t data_tx_pending;
-    uint8_t transfer_eof;
     uint8_t file_open;
     uint8_t dir_open;
     uint8_t write_changed;
@@ -86,6 +45,7 @@ typedef struct {
     uint8_t control_peer[UTHERNET2_IPV4_LEN];
     char cwd[FTP_PATH_LEN];
     char rename_from[FTP_PATH_LEN];
+    char pending_stor_path[FTP_FAT_PATH_LEN];
     char control_rx[FTP_CONTROL_BUFFER_LEN];
     uint16_t control_rx_len;
     char control_out[FTP_CONTROL_BUFFER_LEN];
@@ -96,94 +56,11 @@ typedef struct {
 
 static ftp_sd_state_t g_ftp;
 
-static uint16_t socket_reg(uint8_t socket, uint16_t offset)
-{
-    return (uint16_t)(0x0400U + ((uint16_t)socket * 0x0100U) + offset);
-}
-
-static uint16_t socket_tx_base(uint8_t socket)
-{
-    return socket == FTP_CONTROL_SOCKET ? W5100_TX_BASE_S0 : W5100_TX_BASE_S1;
-}
-
-static uint16_t socket_rx_base(uint8_t socket)
-{
-    return socket == FTP_CONTROL_SOCKET ? W5100_RX_BASE_S0 : W5100_RX_BASE_S1;
-}
-
-static uint16_t socket_mask(uint8_t socket)
-{
-    return socket == FTP_CONTROL_SOCKET ? W5100_MASK_S0 : W5100_MASK_S1;
-}
-
-static int w5100_read16(uint16_t addr, uint16_t *value)
-{
-    uint8_t bytes[2];
-
-    if (value == NULL || uthernet2_read_block(addr, bytes, sizeof(bytes)) != 0) {
-        return -1;
-    }
-    *value = (uint16_t)(((uint16_t)bytes[0] << 8U) | bytes[1]);
-    return 0;
-}
-
-static int w5100_read16_stable(uint16_t addr, uint16_t *value)
-{
-    uint16_t previous;
-    uint16_t current;
-
-    if (value == NULL || w5100_read16(addr, &previous) != 0) {
-        return -1;
-    }
-    for (uint8_t attempt = 0U; attempt < 8U; ++attempt) {
-        if (w5100_read16(addr, &current) != 0) {
-            return -1;
-        }
-        if (current == previous) {
-            *value = current;
-            return 0;
-        }
-        previous = current;
-    }
-    return -1;
-}
-
-static int w5100_write16(uint16_t addr, uint16_t value)
-{
-    const uint8_t bytes[2] = {
-        (uint8_t)(value >> 8U), (uint8_t)value
-    };
-
-    return uthernet2_write_block(addr, bytes, sizeof(bytes));
-}
-
-static int socket_command(uint8_t socket, uint8_t command)
-{
-    uint8_t value;
-
-    if (uthernet2_write_reg(socket_reg(socket, W5100_SN_CR), command) != 0) {
-        return -1;
-    }
-    for (uint16_t poll = 0U; poll < 1000U; ++poll) {
-        if (uthernet2_read_reg(socket_reg(socket, W5100_SN_CR), &value) != 0) {
-            return -1;
-        }
-        if (value == 0U) {
-            return 0;
-        }
-    }
-    return -1;
-}
-
-static int socket_status(uint8_t socket, uint8_t *status)
-{
-    return uthernet2_read_reg(socket_reg(socket, W5100_SN_SR), status);
-}
-
 static void socket_close(uint8_t socket)
 {
-    (void)socket_command(socket, W5100_CR_CLOSE);
-    (void)uthernet2_write_reg(socket_reg(socket, W5100_SN_IR), 0xFFU);
+    (void)uthernet2_w5100_socket_command(socket, W5100_CR_CLOSE);
+    (void)uthernet2_write_reg(
+        uthernet2_w5100_socket_reg(socket, W5100_SN_IR), 0xFFU);
 }
 
 /* Complete the TCP close handshake so clients see EOF on a finished data
@@ -193,9 +70,9 @@ static void socket_disconnect(uint8_t socket)
 {
     uint8_t status;
 
-    if (socket_status(socket, &status) == 0 &&
+    if (uthernet2_w5100_socket_status(socket, &status) == 0 &&
         (status == W5100_SR_ESTABLISHED || status == W5100_SR_CLOSE_WAIT) &&
-        socket_command(socket, W5100_CR_DISCON) == 0) {
+        uthernet2_w5100_socket_command(socket, W5100_CR_DISCON) == 0) {
         return;
     }
     socket_close(socket);
@@ -206,64 +83,19 @@ static int socket_listen(uint8_t socket, uint16_t port)
     uint8_t status;
 
     socket_close(socket);
-    if (uthernet2_write_reg(socket_reg(socket, W5100_SN_MR), W5100_SN_MR_TCP) != 0 ||
-        w5100_write16(socket_reg(socket, W5100_SN_PORT), port) != 0 ||
-        socket_command(socket, W5100_CR_OPEN) != 0 ||
-        socket_status(socket, &status) != 0 || status != W5100_SR_INIT ||
-        socket_command(socket, W5100_CR_LISTEN) != 0 ||
-        socket_status(socket, &status) != 0 || status != W5100_SR_LISTEN) {
+    if (uthernet2_write_reg(
+            uthernet2_w5100_socket_reg(socket, W5100_SN_MR),
+            W5100_SN_MR_TCP) != 0 ||
+        uthernet2_w5100_write16(
+            uthernet2_w5100_socket_reg(socket, W5100_SN_PORT), port) != 0 ||
+        uthernet2_w5100_socket_command(socket, W5100_CR_OPEN) != 0 ||
+        uthernet2_w5100_socket_status(socket, &status) != 0 ||
+        status != W5100_SR_INIT ||
+        uthernet2_w5100_socket_command(socket, W5100_CR_LISTEN) != 0 ||
+        uthernet2_w5100_socket_status(socket, &status) != 0 ||
+        status != W5100_SR_LISTEN) {
         socket_close(socket);
         return -1;
-    }
-    return 0;
-}
-
-static int socket_ring_read(uint8_t socket,
-                            uint16_t pointer,
-                            uint8_t *dst,
-                            uint16_t len)
-{
-    const uint16_t base = socket_rx_base(socket);
-    const uint16_t mask = socket_mask(socket);
-
-    while (len != 0U) {
-        const uint16_t offset = (uint16_t)(pointer & mask);
-        uint16_t chunk = (uint16_t)((mask + 1U) - offset);
-
-        if (chunk > len) {
-            chunk = len;
-        }
-        if (uthernet2_read_block((uint16_t)(base + offset), dst, chunk) != 0) {
-            return -1;
-        }
-        pointer = (uint16_t)(pointer + chunk);
-        dst += chunk;
-        len = (uint16_t)(len - chunk);
-    }
-    return 0;
-}
-
-static int socket_ring_write(uint8_t socket,
-                             uint16_t pointer,
-                             const uint8_t *src,
-                             uint16_t len)
-{
-    const uint16_t base = socket_tx_base(socket);
-    const uint16_t mask = socket_mask(socket);
-
-    while (len != 0U) {
-        const uint16_t offset = (uint16_t)(pointer & mask);
-        uint16_t chunk = (uint16_t)((mask + 1U) - offset);
-
-        if (chunk > len) {
-            chunk = len;
-        }
-        if (uthernet2_write_block((uint16_t)(base + offset), src, chunk) != 0) {
-            return -1;
-        }
-        pointer = (uint16_t)(pointer + chunk);
-        src += chunk;
-        len = (uint16_t)(len - chunk);
     }
     return 0;
 }
@@ -280,7 +112,9 @@ static int socket_receive(uint8_t socket,
         return -1;
     }
     *received = 0U;
-    if (w5100_read16_stable(socket_reg(socket, W5100_SN_RX_RSR), &available) != 0) {
+    if (uthernet2_w5100_read16_stable(
+            uthernet2_w5100_socket_reg(socket, W5100_SN_RX_RSR),
+            &available) != 0) {
         return -1;
     }
     if (available == 0U) {
@@ -289,12 +123,18 @@ static int socket_receive(uint8_t socket,
     if (available > capacity) {
         available = capacity;
     }
-    if (w5100_read16(socket_reg(socket, W5100_SN_RX_RD), &pointer) != 0 ||
-        socket_ring_read(socket, pointer, dst, available) != 0 ||
-        w5100_write16(socket_reg(socket, W5100_SN_RX_RD),
-                      (uint16_t)(pointer + available)) != 0 ||
-        uthernet2_write_reg(socket_reg(socket, W5100_SN_IR), W5100_IR_RECV) != 0 ||
-        socket_command(socket, W5100_CR_RECV) != 0) {
+    if (uthernet2_w5100_read16(
+            uthernet2_w5100_socket_reg(socket, W5100_SN_RX_RD),
+            &pointer) != 0 ||
+        uthernet2_w5100_socket_ring_read(
+            socket, pointer, dst, available) != 0 ||
+        uthernet2_w5100_write16(
+            uthernet2_w5100_socket_reg(socket, W5100_SN_RX_RD),
+            (uint16_t)(pointer + available)) != 0 ||
+        uthernet2_write_reg(
+            uthernet2_w5100_socket_reg(socket, W5100_SN_IR),
+            W5100_IR_RECV) != 0 ||
+        uthernet2_w5100_socket_command(socket, W5100_CR_RECV) != 0) {
         return -1;
     }
     *received = available;
@@ -310,19 +150,23 @@ static int socket_send_ready(uint8_t socket, uint8_t *pending)
     if (pending == NULL || *pending == 0U) {
         return 1;
     }
-    if (uthernet2_read_reg(socket_reg(socket, W5100_SN_IR), &interrupt) != 0) {
+    if (uthernet2_read_reg(
+            uthernet2_w5100_socket_reg(socket, W5100_SN_IR),
+            &interrupt) != 0) {
         return -1;
     }
     if ((interrupt & W5100_IR_TIMEOUT) != 0U) {
-        (void)uthernet2_write_reg(socket_reg(socket, W5100_SN_IR),
-                                 W5100_IR_TIMEOUT);
+        (void)uthernet2_write_reg(
+            uthernet2_w5100_socket_reg(socket, W5100_SN_IR),
+            W5100_IR_TIMEOUT);
         *pending = 0U;
         return -1;
     }
     if ((interrupt & W5100_IR_SENDOK) == 0U) {
         return 0;
     }
-    (void)uthernet2_write_reg(socket_reg(socket, W5100_SN_IR), W5100_IR_SENDOK);
+    (void)uthernet2_write_reg(
+        uthernet2_w5100_socket_reg(socket, W5100_SN_IR), W5100_IR_SENDOK);
     *pending = 0U;
     return 1;
 }
@@ -336,23 +180,46 @@ static int socket_send_start(uint8_t socket,
     uint16_t pointer;
 
     if (src == NULL || len == 0U || pending == NULL || *pending != 0U ||
-        w5100_read16_stable(socket_reg(socket, W5100_SN_TX_FSR), &free_size) != 0) {
+        uthernet2_w5100_read16_stable(
+            uthernet2_w5100_socket_reg(socket, W5100_SN_TX_FSR),
+            &free_size) != 0) {
         return -1;
     }
     if (free_size < len) {
         return 0;
     }
-    if (w5100_read16(socket_reg(socket, W5100_SN_TX_WR), &pointer) != 0 ||
-        socket_ring_write(socket, pointer, src, len) != 0 ||
-        w5100_write16(socket_reg(socket, W5100_SN_TX_WR),
-                      (uint16_t)(pointer + len)) != 0 ||
-        uthernet2_write_reg(socket_reg(socket, W5100_SN_IR),
-                           W5100_IR_SENDOK | W5100_IR_TIMEOUT) != 0 ||
-        socket_command(socket, W5100_CR_SEND) != 0) {
+    if (uthernet2_w5100_read16(
+            uthernet2_w5100_socket_reg(socket, W5100_SN_TX_WR),
+            &pointer) != 0 ||
+        uthernet2_w5100_socket_ring_write(socket, pointer, src, len) != 0 ||
+        uthernet2_w5100_write16(
+            uthernet2_w5100_socket_reg(socket, W5100_SN_TX_WR),
+            (uint16_t)(pointer + len)) != 0 ||
+        uthernet2_write_reg(
+            uthernet2_w5100_socket_reg(socket, W5100_SN_IR),
+            W5100_IR_SENDOK | W5100_IR_TIMEOUT) != 0 ||
+        uthernet2_w5100_socket_command(socket, W5100_CR_SEND) != 0) {
         return -1;
     }
     *pending = 1U;
     return 1;
+}
+
+static int socket_send_buffer(uint8_t socket,
+                              const uint8_t *src,
+                              uint16_t *len,
+                              uint8_t *pending)
+{
+    int sent;
+
+    if (len == NULL || *len == 0U) {
+        return -1;
+    }
+    sent = socket_send_start(socket, src, *len, pending);
+    if (sent > 0) {
+        *len = 0U;
+    }
+    return sent;
 }
 
 static uint8_t ip_is_nonzero(const uint8_t ip[UTHERNET2_IPV4_LEN])
@@ -376,9 +243,10 @@ static uint8_t peer_on_local_subnet(const uint8_t peer[UTHERNET2_IPV4_LEN])
 
 static int socket_peer(uint8_t socket, uint8_t peer[UTHERNET2_IPV4_LEN])
 {
-    return uthernet2_read_block(socket_reg(socket, W5100_SN_DIPR),
-                                peer,
-                                UTHERNET2_IPV4_LEN);
+    return uthernet2_read_block(
+        uthernet2_w5100_socket_reg(socket, W5100_SN_DIPR),
+        peer,
+        UTHERNET2_IPV4_LEN);
 }
 
 static void set_detail(char *detail, size_t detail_len, const char *text)
@@ -430,42 +298,47 @@ static int ftp_close_file_objects(void)
     return failed != 0 ? -1 : 0;
 }
 
-static void ftp_abort_transfer(void)
+static uint8_t ftp_reset_transfer_state(void)
 {
     const uint8_t changed = g_ftp.write_changed;
 
-    (void)ftp_close_file_objects();
-    socket_close(FTP_DATA_SOCKET);
     g_ftp.data_listening = 0U;
     g_ftp.data_connected = 0U;
     g_ftp.data_tx_pending = 0U;
     g_ftp.data_buffer_len = 0U;
-    g_ftp.transfer_eof = 0U;
     g_ftp.transfer = FTP_TRANSFER_NONE;
     g_ftp.write_changed = 0U;
+    g_ftp.pending_stor_path[0] = '\0';
+    return changed;
+}
+
+static void ftp_note_transfer_write(uint8_t changed)
+{
     if (changed != 0U) {
         screenshot_service_note_local_sd_write_complete();
     }
 }
 
+static void ftp_abort_transfer(void)
+{
+    uint8_t changed;
+
+    (void)ftp_close_file_objects();
+    socket_close(FTP_DATA_SOCKET);
+    changed = ftp_reset_transfer_state();
+    ftp_note_transfer_write(changed);
+}
+
 static void ftp_finish_transfer(uint8_t success)
 {
-    const uint8_t changed = g_ftp.write_changed;
+    uint8_t changed;
 
     if (ftp_close_file_objects() != 0) {
         success = 0U;
     }
     socket_disconnect(FTP_DATA_SOCKET);
-    g_ftp.data_listening = 0U;
-    g_ftp.data_connected = 0U;
-    g_ftp.data_tx_pending = 0U;
-    g_ftp.data_buffer_len = 0U;
-    g_ftp.transfer_eof = 0U;
-    g_ftp.transfer = FTP_TRANSFER_NONE;
-    g_ftp.write_changed = 0U;
-    if (changed != 0U) {
-        screenshot_service_note_local_sd_write_complete();
-    }
+    changed = ftp_reset_transfer_state();
+    ftp_note_transfer_write(changed);
     (void)ftp_reply(success != 0U ?
                     "226 Transfer complete.\r\n" :
                     "426 Transfer aborted.\r\n");
@@ -564,11 +437,27 @@ static uint8_t data_socket_available(void)
 {
     uint8_t status;
 
-    if (socket_status(FTP_DATA_SOCKET, &status) != 0) {
+    if (uthernet2_w5100_socket_status(FTP_DATA_SOCKET, &status) != 0) {
         return 0U;
     }
     return (uint8_t)(status == W5100_SR_LISTEN ||
                      status == W5100_SR_ESTABLISHED);
+}
+
+static int ftp_open_store_file(void)
+{
+    if (g_ftp.file_open != 0U) {
+        return 0;
+    }
+    if (g_ftp.pending_stor_path[0] == '\0' ||
+        f_open(&g_ftp.file,
+               g_ftp.pending_stor_path,
+               FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) {
+        return -1;
+    }
+    g_ftp.file_open = 1U;
+    g_ftp.write_changed = 1U;
+    return 0;
 }
 
 static int ftp_open_passive(void)
@@ -610,16 +499,18 @@ static int ftp_prepare_transfer(ftp_transfer_t transfer, const char *argument)
         }
         g_ftp.file_open = 1U;
     } else if (transfer == FTP_TRANSFER_STOR) {
-        fr = f_open(&g_ftp.file, fat_path, FA_CREATE_ALWAYS | FA_WRITE);
-        if (fr != FR_OK) {
-            (void)ftp_reply("550 Cannot create file.\r\n");
-            return -1;
-        }
-        g_ftp.file_open = 1U;
-        g_ftp.write_changed = 1U;
+        (void)snprintf(g_ftp.pending_stor_path,
+                       sizeof(g_ftp.pending_stor_path),
+                       "%s",
+                       fat_path);
     }
     g_ftp.transfer = transfer;
-    g_ftp.transfer_eof = 0U;
+    if (transfer == FTP_TRANSFER_STOR && g_ftp.data_connected != 0U &&
+        ftp_open_store_file() != 0) {
+        ftp_abort_transfer();
+        (void)ftp_reply("550 Cannot create file.\r\n");
+        return -1;
+    }
     (void)ftp_reply("150 Opening passive data connection.\r\n");
     return 0;
 }
@@ -827,20 +718,20 @@ static void ftp_control_output_poll(void)
         return;
     }
     if (g_ftp.control_out_len != 0U) {
-        const int sent = socket_send_start(FTP_CONTROL_SOCKET,
-                                           (const uint8_t *)g_ftp.control_out,
-                                           g_ftp.control_out_len,
-                                           &g_ftp.control_tx_pending);
+        const int sent = socket_send_buffer(
+            FTP_CONTROL_SOCKET,
+            (const uint8_t *)g_ftp.control_out,
+            &g_ftp.control_out_len,
+            &g_ftp.control_tx_pending);
         if (sent < 0) {
             socket_close(FTP_CONTROL_SOCKET);
             g_ftp.control_connected = 0U;
-        } else if (sent > 0) {
-            g_ftp.control_out_len = 0U;
         }
         return;
     }
     if (g_ftp.close_control_after_tx != 0U) {
-        (void)socket_command(FTP_CONTROL_SOCKET, W5100_CR_DISCON);
+        (void)uthernet2_w5100_socket_command(FTP_CONTROL_SOCKET,
+                                             W5100_CR_DISCON);
         socket_close(FTP_CONTROL_SOCKET);
         g_ftp.control_connected = 0U;
         g_ftp.close_control_after_tx = 0U;
@@ -899,7 +790,7 @@ static void ftp_control_poll(void)
 {
     uint8_t status;
 
-    if (socket_status(FTP_CONTROL_SOCKET, &status) != 0) {
+    if (uthernet2_w5100_socket_status(FTP_CONTROL_SOCKET, &status) != 0) {
         return;
     }
     if (status == W5100_SR_CLOSED) {
@@ -952,15 +843,30 @@ static void ftp_data_accept_poll(void)
     uint8_t peer[UTHERNET2_IPV4_LEN];
 
     if (g_ftp.data_listening == 0U || g_ftp.data_connected != 0U ||
-        socket_status(FTP_DATA_SOCKET, &status) != 0 ||
+        uthernet2_w5100_socket_status(FTP_DATA_SOCKET, &status) != 0 ||
         status != W5100_SR_ESTABLISHED) {
         return;
     }
     if (socket_peer(FTP_DATA_SOCKET, peer) != 0 ||
         peer_on_local_subnet(peer) == 0U ||
         memcmp(peer, g_ftp.control_peer, sizeof(peer)) != 0) {
+        /* Reject only the rogue socket. Keep the command, open file or
+         * directory, and passive transfer ready for the control client. */
+        socket_close(FTP_DATA_SOCKET);
+        g_ftp.data_connected = 0U;
+        g_ftp.data_tx_pending = 0U;
+        if (socket_listen(FTP_DATA_SOCKET, FTP_PASSIVE_PORT) != 0) {
+            ftp_abort_transfer();
+            (void)ftp_reply("425 Cannot reopen passive data socket.\r\n");
+            return;
+        }
+        g_ftp.data_listening = 1U;
+        return;
+    }
+    if (g_ftp.transfer == FTP_TRANSFER_STOR &&
+        ftp_open_store_file() != 0) {
         ftp_abort_transfer();
-        (void)ftp_reply("425 Data connection must come from the control client.\r\n");
+        (void)ftp_reply("550 Cannot create file.\r\n");
         return;
     }
     g_ftp.data_connected = 1U;
@@ -997,6 +903,16 @@ static int ftp_format_list_line(const FILINFO *info,
                     info->fname);
 }
 
+static void ftp_send_data_buffer(void)
+{
+    if (socket_send_buffer(FTP_DATA_SOCKET,
+                           g_ftp.data_buffer,
+                           &g_ftp.data_buffer_len,
+                           &g_ftp.data_tx_pending) < 0) {
+        ftp_finish_transfer(0U);
+    }
+}
+
 static void ftp_send_transfer_poll(void)
 {
     int ready;
@@ -1010,21 +926,8 @@ static void ftp_send_transfer_poll(void)
     if (ready == 0) {
         return;
     }
-    if (g_ftp.transfer_eof != 0U) {
-        ftp_finish_transfer(1U);
-        return;
-    }
     if (g_ftp.data_buffer_len != 0U) {
-        const int sent = socket_send_start(FTP_DATA_SOCKET,
-                                           g_ftp.data_buffer,
-                                           g_ftp.data_buffer_len,
-                                           &g_ftp.data_tx_pending);
-
-        if (sent < 0) {
-            ftp_finish_transfer(0U);
-        } else if (sent > 0) {
-            g_ftp.data_buffer_len = 0U;
-        }
+        ftp_send_data_buffer();
         return;
     }
 
@@ -1037,22 +940,11 @@ static void ftp_send_transfer_poll(void)
             return;
         }
         if (bytes_read == 0U) {
-            g_ftp.transfer_eof = 1U;
             ftp_finish_transfer(1U);
             return;
         }
         g_ftp.data_buffer_len = (uint16_t)bytes_read;
-        {
-            const int sent = socket_send_start(FTP_DATA_SOCKET,
-                                               g_ftp.data_buffer,
-                                               g_ftp.data_buffer_len,
-                                               &g_ftp.data_tx_pending);
-            if (sent < 0) {
-                ftp_finish_transfer(0U);
-            } else if (sent > 0) {
-                g_ftp.data_buffer_len = 0U;
-            }
-        }
+        ftp_send_data_buffer();
         return;
     }
 
@@ -1066,7 +958,6 @@ static void ftp_send_transfer_poll(void)
             return;
         }
         if (info.fname[0] == '\0') {
-            g_ftp.transfer_eof = 1U;
             ftp_finish_transfer(1U);
             return;
         }
@@ -1079,17 +970,7 @@ static void ftp_send_transfer_poll(void)
             return;
         }
         g_ftp.data_buffer_len = (uint16_t)len;
-        {
-            const int sent = socket_send_start(FTP_DATA_SOCKET,
-                                               g_ftp.data_buffer,
-                                               g_ftp.data_buffer_len,
-                                               &g_ftp.data_tx_pending);
-            if (sent < 0) {
-                ftp_finish_transfer(0U);
-            } else if (sent > 0) {
-                g_ftp.data_buffer_len = 0U;
-            }
-        }
+        ftp_send_data_buffer();
     }
 }
 
@@ -1113,7 +994,7 @@ static void ftp_store_transfer_poll(void)
         }
         return;
     }
-    if (socket_status(FTP_DATA_SOCKET, &status) != 0) {
+    if (uthernet2_w5100_socket_status(FTP_DATA_SOCKET, &status) != 0) {
         ftp_finish_transfer(0U);
     } else if (status == W5100_SR_CLOSE_WAIT || status == W5100_SR_CLOSED) {
         ftp_finish_transfer(1U);
@@ -1128,16 +1009,17 @@ static void ftp_data_poll(void)
     if (g_ftp.transfer == FTP_TRANSFER_NONE || g_ftp.data_connected == 0U) {
         return;
     }
-    if (socket_status(FTP_DATA_SOCKET, &status) != 0 ||
+    if (uthernet2_w5100_socket_status(FTP_DATA_SOCKET, &status) != 0 ||
         (status != W5100_SR_ESTABLISHED && status != W5100_SR_CLOSE_WAIT)) {
         ftp_finish_transfer(0U);
         return;
     }
     if (g_ftp.transfer == FTP_TRANSFER_STOR) {
         ftp_store_transfer_poll();
-    } else if (status == W5100_SR_CLOSE_WAIT) {
-        ftp_finish_transfer(0U);
     } else {
+        /* A client may half-close its write side after issuing RETR or LIST.
+         * W5100S still permits server-to-client sends in CLOSE_WAIT, so keep
+         * draining the transfer until EOF and the final SEND completes. */
         ftp_send_transfer_poll();
     }
 }

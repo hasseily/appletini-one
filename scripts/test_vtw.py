@@ -28,6 +28,7 @@ SOURCES = [
     "hdl/apple/soft_switch_manager.sv",
     "hdl/apple/apple_bus_wrapper.sv",
     "hdl/apple/apple_bus_write_arbiter.sv",
+    "hdl/apple/apple_c01x_status_decode.sv",
     "hdl/apple/vtw_shadow.sv",
     "hdl/apple/vtw_shadow_host_port.sv",
     "hdl/apple/vtw_bus_engine.sv",
@@ -467,7 +468,8 @@ def static_checks() -> None:
             "status_vbl_data_phase_q && ab_read.data_en" in core_top and
             "vtw_video_position_rewind" in core_top and
             "video_cycle, 2'd1" in core_top and
-            "core_data_in_q       <= {~status_video_vbl, 7'b0};" in core_top,
+            "apple_c01x_status_decode c01x_status_decode_i" in core_top and
+            "core_data_in_q       <= status_byte;" in core_top,
             "exact-1 MHz $C019 reads must use the one-cycle-lagged data phase")
     engine = read("hdl/apple/vtw_bus_engine.sv")
     require("wire vtw_video_vbl = (line_in_frame >= 9'd192);" in top and

@@ -598,6 +598,8 @@ def apply_appletini_entries(slot_data: bytearray,
     dsetup_off = dsetup_addr - base
     relocated_bsetup_off = 0xA0
     boot_trampoline_off = 0x57
+    overlay_probe_off = 0xB0
+    overlay_probe_signature = b"LINTXT\x4c\x10"
 
     if not (0 <= disk_off <= 0xFF and 0 <= smartport_off <= 0xFF and
             0 <= dentry_off <= 0xFF and 0 <= bsetup_off <= 0xFF and
@@ -649,6 +651,12 @@ def apply_appletini_entries(slot_data: bytearray,
     slot_data[boot_trampoline_off:boot_trampoline_off + 3] = bytearray([
         0x4C, dentry_off, 0xC7
     ])
+    if any(slot_data[overlay_probe_off:
+                     overlay_probe_off + len(overlay_probe_signature)]):
+        raise ValueError("overlay probe area is not empty")
+    slot_data[overlay_probe_off:
+              overlay_probe_off + len(overlay_probe_signature)] = \
+        overlay_probe_signature
     slot_data[0xFF] = 0x0A
 
     bvc_target = 0x0B + (slot_data[0x0A] if slot_data[0x0A] < 0x80 else slot_data[0x0A] - 0x100)

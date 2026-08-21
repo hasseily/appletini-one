@@ -16,6 +16,11 @@ typedef uint8_t (*onee_service_runtime_start_fn)(void *ctx);
 typedef void (*onee_service_runtime_suspend_fn)(void *ctx);
 typedef void (*onee_service_runtime_stop_fn)(void *ctx);
 typedef uint8_t (*onee_service_runtime_running_fn)(void *ctx);
+typedef uint8_t (*onee_service_ui_pause_fn)(void *ctx, uint8_t pause);
+typedef void (*onee_service_ui_input_policy_fn)(void *ctx,
+                                                uint8_t fixed_mode,
+                                                uint8_t blocked);
+typedef uint8_t (*onee_service_ui_input_released_fn)(void *ctx);
 
 void onee_service_init(void);
 void onee_service_bind_runtime(onee_service_runtime_start_fn start,
@@ -23,6 +28,17 @@ void onee_service_bind_runtime(onee_service_runtime_start_fn start,
                                onee_service_runtime_stop_fn stop,
                                onee_service_runtime_running_fn running,
                                void *ctx);
+void onee_service_bind_ui_policy(
+    onee_service_ui_pause_fn pause,
+    onee_service_ui_input_policy_fn set_input_policy,
+    onee_service_ui_input_released_fn input_released,
+    void *ctx);
+
+/* The service owns the menu-pause, input-block, and release-wait state. The
+ * UI reports only current menu visibility and may read state for status. */
+void onee_service_sync_menu_policy(uint8_t menu_active);
+uint8_t onee_service_menu_paused(void);
+uint8_t onee_service_input_release_wait(void);
 
 /* Restore the global saved selection after the configuration file is read.
  * A restored ON intent stays pending until the PL safety guard is valid,

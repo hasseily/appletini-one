@@ -22,6 +22,16 @@ def main() -> int:
     build_id = "20260812T180800Z-a3d71d3f-full"
     with tempfile.TemporaryDirectory() as temp_name:
         run_dir = Path(temp_name)
+        spaced_dir = run_dir / "batch path with spaces"
+        spaced_dir.mkdir()
+        batch = spaced_dir / "check argument.cmd"
+        batch.write_text(
+            '@echo off\nif not "%~1"=="argument with spaces" exit /b 9\n'
+            'exit /b 0\n',
+            encoding="utf-8",
+        )
+        pack.run_batch([str(batch), "argument with spaces"])
+
         artifacts = {
             "candidate_dcp_sha256": run_dir / "candidate.dcp",
             "bitstream_sha256": run_dir / "appletini_yarz_top.bit",

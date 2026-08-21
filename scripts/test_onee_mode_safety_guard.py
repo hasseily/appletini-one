@@ -99,6 +99,14 @@ def static_contract_checks() -> None:
         "set_max_delay -datapath_only 5.0 -from $a2_bus_in_ports" in xdc,
         "every watched U533 input must retain the 5 ns route bound",
     )
+    require(
+        "generate_raw_transition_capture" in xdc and
+        "generate_raw_transition_capture*.raw_transition_latched_reg*" in xdc and
+        "REF_PIN_NAME == PRE" in xdc and
+        "set_false_path -to" in xdc,
+        "intentional raw-event capture controls must have an explicit timing "
+        "exception",
+    )
 
     raw_vector_start = rtl.index("wire [5:0] apple_raw_levels = {")
     raw_vector_end = rtl.index("};", raw_vector_start)
@@ -141,13 +149,31 @@ def static_contract_checks() -> None:
         "slot power must remain a synchronized level veto for the quiet timer",
     )
     require(
-        "wire activity_lockout_set = ~resetn | apple_activity_now;" in rtl,
-        "reset, raw change, or slot power must asynchronously set the sticky "
-        "lockout",
+        "wire [5:0] raw_transition_async =" in rtl and
+        "logic [5:0] raw_transition_latched" in rtl and
+        "posedge raw_transition_async[raw_lane]" in rtl and
+        "raw_transition_latched[raw_lane] <= 1'b1;" in rtl,
+        "each watched pin must have a dedicated sticky async-event capture",
     )
     require(
-        "always_ff @(posedge clk or posedge activity_lockout_set)" in rtl,
-        "sticky lockout must use the fail-safe asynchronous set",
+        "raw_kill_sync_meta  <= raw_transition_latched;" in rtl and
+        "raw_kill_sync_level <= raw_kill_sync_meta;" in rtl and
+        "wire safety_kill_synchronized =" in rtl,
+        "raw event capture must cross a two-flop synchronizer before use",
+    )
+    require(
+        "always_ff @(posedge clk or posedge activity_lockout_set)" not in rtl and
+        "always_ff @(posedge clk or posedge mode_kill_async)" not in rtl and
+        "always_ff @(posedge clk or posedge physical_isolation_set)" not in rtl,
+        "machine-wide lockout, run, and isolation state must not use async "
+        "combinational controls",
+    )
+    require(
+        "always_ff @(posedge clk) begin\n"
+        "        if (!resetn) begin\n"
+        "            apple_activity_lockout <= 1'b1;" in rtl and
+        "else if (safety_kill_synchronized)" in rtl,
+        "sticky lockout must consume only the clock-domain kill request",
     )
     require(
         "assign physical_bus_isolate =" in rtl and
@@ -156,27 +182,28 @@ def static_contract_checks() -> None:
         "physical bus isolation must assert on request and remain held",
     )
     require(
-        "always_ff @(posedge clk or posedge physical_isolation_set)" in rtl and
-        "(manual_enable_request || onee_selected);" in rtl and
-        "else if (!resetn)" in rtl and
+        "else if (safety_kill_synchronized &&" in rtl and
+        "(manual_enable_request || onee_selected))" in rtl and
         "else if (activity_lockout_clear)" in rtl,
-        "physical isolation hold must catch activity and clear only on rearm",
+        "physical isolation hold must latch synchronized activity and clear "
+        "only on rearm",
     )
     require(
-        "wire mode_kill_async =" in rtl and
+        "wire mode_kill_synchronized =" in rtl and
         "!resetn ||" in rtl and
         "!manual_enable_request ||" in rtl and
-        "apple_activity_lockout;" in rtl,
-        "one fail-off term must contain reset, request, and the asynchronously "
-        "set sticky lockout",
+        "apple_activity_lockout ||" in rtl and
+        "safety_kill_synchronized;" in rtl,
+        "one clock-domain fail-off term must contain every machine kill "
+        "condition",
     )
     require(
-        "always_ff @(posedge clk or posedge mode_kill_async)" in rtl and
+        "if (mode_kill_synchronized)" in rtl and
         "onee_run_q <= 1'b0;" in rtl and
         "else if (onee_selected)" in rtl and
         "onee_run_q <= 1'b1;" in rtl,
-        "raw activity must asynchronously clear one contained run flop and "
-        "only selected state may restart it",
+        "synchronized safety state must clear the run flop and only selected "
+        "state may restart it",
     )
     require(
         "assign onee_enable_effective = onee_run_q;" in rtl and
@@ -186,7 +213,7 @@ def static_contract_checks() -> None:
     require(
         "wire apple_activity_synchronized =" in rtl and
         "apple_activity_sampled || apple_power_present_sync;" in rtl and
-        "apple_activity_lockout &&" in rtl,
+        "safety_kill_synchronized" in rtl,
         "quiet/reselect logic must use synchronized changes, synchronized "
         "power, or contained sticky state",
     )

@@ -68,6 +68,7 @@ module smartport_card (
     input  logic                     clk,
     input  logic                     rstn,
     input  globals::AppleBus_read    ab_read,
+    input  logic                     apple_bus_visible,
     input  globals::SoftSwitchState  sss,
     input  logic [2:0]               slot_assign,
     input  globals::AxiSimple_common as_common,
@@ -109,6 +110,8 @@ module smartport_card (
     localparam logic [2:0] VTW_TGT_DATA     = 3'd2;
     localparam logic [2:0] VTW_TGT_CTRL     = 3'd3;
     localparam logic [2:0] VTW_TGT_DPOP     = 3'd4;
+    localparam logic [7:0] SP_REG_OVERLAY_FIRST = 8'h20;
+    localparam logic [7:0] SP_REG_OVERLAY_LAST  = 8'h28;
 
     // ---- ROMs ----
     logic [7:0] slot_rom [0:255];
@@ -170,6 +173,9 @@ module smartport_card (
 
     // ---- Apple-bus decode ----
     wire configured = (slot_assign != 3'd0);
+    /* apple_top already removes every bus phase strobe while this card is
+     * hidden. Keep visibility out of the shared decode tree; the output mask
+     * and state clear below handle a late ownership loss. */
     wire apple_bus_enabled = configured && ab_read.res &&
                              ((slot_assign != 3'h3) || sss.sw_slotc3rom);
 
@@ -177,6 +183,12 @@ module smartport_card (
     logic [31:0] overlay_ps_rdata;
     logic overlay_io_read_valid;
     logic [7:0] overlay_io_read_data;
+    wire overlay_ps_write_addr =
+        (as_common.awaddr >= SP_REG_OVERLAY_FIRST) &&
+        (as_common.awaddr <= SP_REG_OVERLAY_LAST);
+    wire overlay_ps_read_addr =
+        (axi_read_addr_q >= SP_REG_OVERLAY_FIRST) &&
+        (axi_read_addr_q <= SP_REG_OVERLAY_LAST);
 
     linear_text_overlay_card linear_text_overlay_card_i (
         .clk(clk),
@@ -186,7 +198,7 @@ module smartport_card (
         .slot_assign(slot_assign),
         .capture_drop_sticky(overlay_capture_drop),
         .canvas_shr_active(overlay_canvas_shr_active),
-        .ps_wr_en(as_client.awvalid && (as_common.awaddr >= 8'h20) &&
+        .ps_wr_en(as_client.awvalid && overlay_ps_write_addr &&
                   (|as_common.wstrb)),
         .ps_addr(as_common.awaddr),
         .ps_wdata(as_common.wdata),
@@ -369,6 +381,11 @@ module smartport_card (
     globals::AppleBus_write ab_write_d;
     globals::AppleBus_write ab_write_q;
     logic overlay_reply_hold_q;
+    /* apple_top holds visibility constant from addr_en through data_en. A
+     * new owner therefore starts only at a cycle boundary, where the state
+     * block below clears any reply before the physical emit window. Keep the
+     * registered response direct so ownership policy is not part of every
+     * downstream bus-data path. */
     assign ab_write = ab_write_q;
 
     always_comb begin
@@ -448,13 +465,18 @@ module smartport_card (
             vtw_data_snap_q <= 8'd0;
             vtw_ctrl_snap_q <= 8'd0;
         end else begin
-            ab_write_q    <= ab_write_d;
             smartport_irq <= 1'b0;
+            ab_write_q    <= ab_write_d;
 
-            if (overlay_io_read_valid)
-                overlay_reply_hold_q <= 1'b1;
-            else if (ab_read.data_en || !ab_read.res)
+            if (!apple_bus_visible) begin
+                ab_write_q.wr_data_en <= 1'b0;
                 overlay_reply_hold_q <= 1'b0;
+            end else begin
+                if (overlay_io_read_valid)
+                    overlay_reply_hold_q <= 1'b1;
+                else if (ab_read.data_en || !ab_read.res)
+                    overlay_reply_hold_q <= 1'b0;
+            end
 
             // Apple side (bus or vTW short-circuit) ---------------------
             if (data_write_ev && !in_full) begin
@@ -599,7 +621,8 @@ module smartport_card (
                     {23'h0, !in_empty, in_head};
                 SP_REG_IN_HEAD4: as_client.rdata = in_word_q;
                 SP_REG_SSS: as_client.rdata = {10'h0, sss_snapshot_q};
-                default: as_client.rdata = overlay_ps_rdata;
+                default: as_client.rdata = overlay_ps_read_addr
+                    ? overlay_ps_rdata : 32'h00000000;
             endcase
         end
     end

@@ -171,6 +171,7 @@ module tb_onee_joined_bus;
         .enabled(onee_enabled),
         .manual_enable_request(onee_enabled),
         .boot_target_disk2(configured_boot_target_disk2),
+        .warm_reset_active(1'b0),
         .ab_read(ab_read),
         .session_boot_target_disk2(),
         .slot7_hidden(slot7_hidden)
@@ -632,8 +633,9 @@ module tb_onee_joined_bus;
               "Open Apple did not merge bit 7 over scanner low bits");
         check(result[4] == 8'h2D,
               "Closed Apple did not merge bit 7 over scanner low bits");
-        check(result[5] == 8'hAD,
-              "C011 status did not merge over scanner low bits");
+        check(result[5] == 8'hC1,
+              $sformatf("C011 status did not keep the last key code: %02X",
+                        result[5]));
         check(result[6] == 8'h2D && cassette_out,
               "unclaimed cassette read lost scanner data or side effect");
         check(result[7] == 8'h2D && speaker,

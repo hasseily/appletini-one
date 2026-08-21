@@ -4,9 +4,9 @@
 //
 // This block does not drive Apple-side pins. Gate virtual-machine activity with
 // onee_enable_effective/force_outputs_off. Disable every physical Apple-edge
-// output while physical_bus_isolate is asserted. Raw Apple inputs may set the
-// sticky safety state at once, but never feed the broad virtual-machine muxes
-// as combinational data paths.
+// output while physical_bus_isolate is asserted. Raw Apple transitions may
+// set only dedicated capture flops. A two-flop synchronizer moves that sticky
+// kill request into the local clock domain before it changes machine state.
 //
 // The local clock must run continuously while the board is powered. Set
 // QUIET_CYCLES longer than the largest valid gap between Apple bus transitions.
@@ -38,9 +38,9 @@ module onee_mode_safety_guard #(
     output wire        physical_bus_isolate,
     output logic       physical_isolation_hold = 1'b0,
     output wire        apple_activity_now,
-    output logic       apple_activity_lockout,
-    output logic       reselect_armed,
-    output logic       onee_selected,
+    output logic       apple_activity_lockout = 1'b1,
+    output logic       reselect_armed = 1'b0,
+    output logic       onee_selected = 1'b0,
     output wire        apple_activity_quiet,
     output logic [2:0] inhibit_reason
 );
@@ -94,6 +94,48 @@ module onee_mode_safety_guard #(
     wire apple_activity_synchronized =
         apple_activity_sampled || apple_power_present_sync;
 
+    // Each watched pin gets its own async-set capture flop. This avoids a
+    // reduction-LUT cone on an async control. The capture Qs feed only this
+    // synchronizer, never the machine-wide enable or data muxes. A short pin
+    // pulse is therefore sticky but can change internal mode only on clk.
+    wire [5:0] raw_transition_async =
+        apple_raw_levels ^ apple_sync_level;
+    logic [5:0] raw_transition_latched = 6'b000000;
+    (* ASYNC_REG = "TRUE" *) logic [5:0] raw_kill_sync_meta;
+    (* ASYNC_REG = "TRUE" *) logic [5:0] raw_kill_sync_level;
+
+    wire raw_transition_latch_clear =
+        apple_activity_quiet &&
+        !manual_enable_request &&
+        !apple_activity_synchronized;
+
+    genvar raw_lane;
+    generate
+        for (raw_lane = 0; raw_lane < 6; raw_lane = raw_lane + 1) begin :
+                generate_raw_transition_capture
+            always_ff @(posedge clk or
+                        posedge raw_transition_async[raw_lane]) begin
+                if (raw_transition_async[raw_lane])
+                    raw_transition_latched[raw_lane] <= 1'b1;
+                else if (!resetn || raw_transition_latch_clear)
+                    raw_transition_latched[raw_lane] <= 1'b0;
+            end
+        end
+    endgenerate
+
+    always_ff @(posedge clk) begin
+        if (!resetn) begin
+            raw_kill_sync_meta  <= 6'b000000;
+            raw_kill_sync_level <= 6'b000000;
+        end else begin
+            raw_kill_sync_meta  <= raw_transition_latched;
+            raw_kill_sync_level <= raw_kill_sync_meta;
+        end
+    end
+
+    wire safety_kill_synchronized =
+        (|raw_kill_sync_level) || apple_activity_synchronized;
+
     // Slot power is a separate level-sensitive veto. It must never age into
     // the learned bus baseline. Normal Apple clocks keep producing changes, so
     // a powered and running host cannot reach the quiet state.
@@ -130,19 +172,17 @@ module onee_mode_safety_guard #(
         end
     end
 
-    // Reset and any raw transition asynchronously set the sticky lockout.
-    // Clearing remains synchronous and is allowed only after a quiet interval
-    // while the manual selection is off.
-    wire activity_lockout_set = ~resetn | apple_activity_now;
+    // Machine-visible lockout state changes only on the local clock. The raw
+    // capture flops retain sub-clock events until this state sees them.
     wire activity_lockout_clear =
         apple_activity_quiet &&
         !manual_enable_request &&
         !apple_activity_synchronized;
 
-    always_ff @(posedge clk or posedge activity_lockout_set) begin
-        if (activity_lockout_set) begin
+    always_ff @(posedge clk) begin
+        if (!resetn) begin
             apple_activity_lockout <= 1'b1;
-        end else if (apple_activity_synchronized) begin
+        end else if (safety_kill_synchronized) begin
             apple_activity_lockout <= 1'b1;
         end else if (activity_lockout_clear) begin
             apple_activity_lockout <= 1'b0;
@@ -154,15 +194,12 @@ module onee_mode_safety_guard #(
     // Raising the manual request isolates at once. If Apple activity is then
     // seen, the hold keeps the connector isolated even after manual off until
     // the same quiet manual-off condition which clears the activity lockout.
-    wire physical_isolation_set =
-        apple_activity_lockout &&
-        (manual_enable_request || onee_selected);
-
-    always_ff @(posedge clk or posedge physical_isolation_set) begin
-        if (physical_isolation_set)
-            physical_isolation_hold <= 1'b1;
-        else if (!resetn)
+    always_ff @(posedge clk) begin
+        if (!resetn)
             physical_isolation_hold <= 1'b0;
+        else if (safety_kill_synchronized &&
+                 (manual_enable_request || onee_selected))
+            physical_isolation_hold <= 1'b1;
         else if (activity_lockout_clear)
             physical_isolation_hold <= 1'b0;
     end
@@ -170,12 +207,12 @@ module onee_mode_safety_guard #(
     // A request which remains on across an activity event cannot restart the
     // mode. The user must first leave the request off after the quiet interval,
     // then make a new on selection.
-    always_ff @(posedge clk or negedge resetn) begin
+    always_ff @(posedge clk) begin
         if (!resetn) begin
             reselect_armed <= 1'b0;
             onee_selected  <= 1'b0;
         end else if (apple_activity_lockout ||
-                     apple_activity_synchronized) begin
+                     safety_kill_synchronized) begin
             reselect_armed <= 1'b0;
             onee_selected  <= 1'b0;
         end else if (!manual_enable_request) begin
@@ -188,18 +225,21 @@ module onee_mode_safety_guard #(
         end
     end
 
-    // Contain every immediate fail-off source at one flop. Its Q is the only
-    // high-fanout virtual-machine enable, so raw slot pins cannot become data
-    // paths through every emulated card. Any pulse can only clear the mode.
-    // Re-entry stays synchronous and still requires the guard's selected state.
-    logic onee_run_q = 1'b0;
-    wire mode_kill_async =
+    // Keep the high-fanout virtual-machine enable fully synchronous. A raw
+    // input can set only its capture flop; it must cross raw_kill_sync before
+    // this run state changes. Physical isolation is already high whenever a
+    // ONE//e request or selection is active.
+    // Replicate this mode bit before it reaches the many virtual-bus clients.
+    // A bounded fanout cuts route delay without adding a mode-change cycle.
+    (* max_fanout = 32 *) logic onee_run_q = 1'b0;
+    wire mode_kill_synchronized =
         !resetn ||
         !manual_enable_request ||
-        apple_activity_lockout;
+        apple_activity_lockout ||
+        safety_kill_synchronized;
 
-    always_ff @(posedge clk or posedge mode_kill_async) begin
-        if (mode_kill_async)
+    always_ff @(posedge clk) begin
+        if (mode_kill_synchronized)
             onee_run_q <= 1'b0;
         else if (onee_selected)
             onee_run_q <= 1'b1;

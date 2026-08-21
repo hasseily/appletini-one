@@ -76,12 +76,12 @@ def static_contract_checks() -> None:
 
     require(sources.count("apple/onee_video_standard_ctrl.sv") == 1,
             "ONE//e standard latch must appear once in hdl_sources.txt")
-    require("CARD_CTRL_REG_ONEE_VIDEO     = 8'hA2" in top,
+    require(re.search(r"CARD_CTRL_REG_ONEE_VIDEO\s*=\s*8'hA2", top) is not None,
             "card-control offset 0xA2 is not assigned to ONE//e video")
     a2_card_regs = re.findall(
-        r"CARD_CTRL_REG_[A-Z0-9_]+\s*=\s*8'hA2", top
+        r"(CARD_CTRL_REG_[A-Z0-9_]+)\s*=\s*8'hA2", top
     )
-    require(a2_card_regs == ["CARD_CTRL_REG_ONEE_VIDEO     = 8'hA2"],
+    require(a2_card_regs == ["CARD_CTRL_REG_ONEE_VIDEO"],
             "card-control offset 0xA2 has another owner")
     require("CARD_CTRL_ONEE_VIDEO_REG" in regs and
             "CARD_CTRL_REG_ADDR(0xA2U)" in regs,
@@ -184,8 +184,12 @@ def static_contract_checks() -> None:
                          "void config_menu_draw_clock")
     require("#define CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM" in menu_header and
             "CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM" in menu_header and
+            re.search(
+                r"#define\s+CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM\s+"
+                r"\\\s+CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM",
+                menu_header,
+            ) is not None and
             "CONFIG_VIDEO_ITEM_ONEE_STANDARD" not in menu_internal and
-            "return CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM + 1U;" in menu and
             '"ONE//e video standard"' in boot_draw and
             "if (onee_fixed != 0U)" in boot_draw and
             '"ONE//e video standard"' not in video_draw,

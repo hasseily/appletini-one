@@ -119,7 +119,6 @@ static fw_update_metadata_t g_update_meta = {0};
 static uint8_t g_update_meta_valid = 0U;
 static uint8_t g_usb_menu_owned = 0U;
 static uint8_t g_onee_ui_running_seen = 0U;
-static uint8_t g_onee_menu_paused = 0U;
 static uint16_t *g_bezel_565 = NULL;
 static unsigned g_bezel_width = 0U;
 static unsigned g_bezel_height = 0U;
@@ -1324,6 +1323,27 @@ static uint8_t onee_runtime_running(void *ctx)
 {
     (void)ctx;
     return vtw_service_onee_running();
+}
+
+static uint8_t onee_ui_set_paused(void *ctx, uint8_t pause)
+{
+    (void)ctx;
+    return vtw_service_onee_set_paused(pause);
+}
+
+static void onee_ui_set_input_policy(void *ctx,
+                                     uint8_t fixed_mode,
+                                     uint8_t blocked)
+{
+    (void)ctx;
+    usb_hid_service_set_onee_fixed_mode(fixed_mode);
+    usb_hid_service_set_onee_input_blocked(blocked);
+}
+
+static uint8_t onee_ui_input_released(void *ctx)
+{
+    (void)ctx;
+    return usb_hid_service_all_input_released();
 }
 
 static int menu_platform_read_rtc(void *ctx, rtc_pcf8563_time_t *t)
@@ -2750,42 +2770,7 @@ static uint8_t ui_onee_selected(void)
 
 static void ui_sync_onee_menu_pause(config_menu_t *menu)
 {
-    const uint8_t selected = ui_onee_selected();
-    const uint8_t menu_active = config_menu_is_active(menu);
-
-    usb_hid_service_set_onee_fixed_mode(
-        (uint8_t)(selected != 0U || g_onee_menu_paused != 0U));
-
-    if (selected == 0U) {
-        if (g_onee_menu_paused != 0U) {
-            (void)vtw_service_onee_set_paused(0U);
-            g_onee_menu_paused = 0U;
-        }
-        usb_hid_service_set_onee_input_blocked(0U);
-        usb_hid_service_set_onee_fixed_mode(0U);
-        return;
-    }
-
-    if (menu_active != 0U) {
-        usb_hid_service_set_onee_input_blocked(1U);
-        if (g_onee_menu_paused == 0U &&
-            vtw_service_onee_set_paused(1U) != 0U) {
-            g_onee_menu_paused = 1U;
-        }
-        return;
-    }
-
-    if (g_onee_menu_paused != 0U) {
-        usb_hid_service_set_onee_input_blocked(1U);
-        if (usb_hid_service_all_input_released() != 0U &&
-            vtw_service_onee_set_paused(0U) != 0U) {
-            g_onee_menu_paused = 0U;
-            usb_hid_service_set_onee_input_blocked(0U);
-        }
-        return;
-    }
-
-    usb_hid_service_set_onee_input_blocked(0U);
+    onee_service_sync_menu_policy(config_menu_is_active(menu));
 }
 
 static void ui_set_boot_menu_visible(ui_state_t *s,
@@ -3445,6 +3430,10 @@ int main(void)
         }
     }
     (void)usb_hid_service_init();
+    onee_service_bind_ui_policy(onee_ui_set_paused,
+                                onee_ui_set_input_policy,
+                                onee_ui_input_released,
+                                NULL);
     int hid_rc = usb_hid_service_start();
     if (hid_rc == 0) {
         uart_puts(UART0_BASE, "usb1 start: ok\r\n");

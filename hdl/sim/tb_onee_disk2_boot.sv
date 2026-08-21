@@ -120,6 +120,7 @@ module tb_onee_disk2_boot;
         .enabled(1'b1),
         .manual_enable_request(1'b1),
         .boot_target_disk2(1'b1),
+        .warm_reset_active(1'b0),
         .ab_read(ab_read),
         .session_boot_target_disk2(),
         .slot7_hidden(slot7_hidden)

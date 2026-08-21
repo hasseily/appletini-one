@@ -54,7 +54,7 @@ def static_checks() -> None:
     xdc = XDC.read_text(encoding="utf-8")
 
     require(
-        "CARD_CTRL_REG_ONEE         = 8'h5B" in apple_top,
+        re.search(r"CARD_CTRL_REG_ONEE\s*=\s*8'h5B", apple_top) is not None,
         "CARD_CTRL 0x5B must be the ONE//e request/status register",
     )
     require(

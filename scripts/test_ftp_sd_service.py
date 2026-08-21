@@ -40,6 +40,24 @@ def test_ftp_protocol_and_subnet_gate() -> None:
             "*p == ':'" in source,
             "FTP paths must normalize parent traversal and reject drive prefixes")
 
+    prepare_start = source.index("static int ftp_prepare_transfer")
+    prepare_end = source.index("static void command_upper", prepare_start)
+    prepare = source[prepare_start:prepare_end]
+    accept_start = source.index("static void ftp_data_accept_poll")
+    accept_end = source.index("static int ftp_format_list_line", accept_start)
+    accept = source[accept_start:accept_end]
+    peer_check = accept.index("memcmp(peer, g_ftp.control_peer")
+    store_open = accept.index("ftp_open_store_file()", peer_check)
+    require("FA_CREATE_ALWAYS" not in prepare and
+            "pending_stor_path" in prepare and
+            peer_check < store_open,
+            "STOR must create its file only after the data peer is verified")
+    reject = accept[peer_check:store_open]
+    require("socket_listen(FTP_DATA_SOCKET, FTP_PASSIVE_PORT)" in reject and
+            "ftp_abort_transfer();" not in reject.split(
+                "if (socket_listen", 1)[0],
+            "a wrong data peer must be dropped and the passive transfer kept")
+
 
 def test_directory_listing_finishes_with_tcp_eof() -> None:
     source = read("ps_sources/frontend/ftp_sd_service.c")
@@ -49,15 +67,25 @@ def test_directory_listing_finishes_with_tcp_eof() -> None:
     finish = source[start:end]
     require("socket_disconnect(FTP_DATA_SOCKET);" in finish and
             "socket_close(FTP_DATA_SOCKET);" not in finish and
-            "socket_command(socket, W5100_CR_DISCON)" in source,
+            "uthernet2_w5100_socket_command(socket, W5100_CR_DISCON)" in source,
             "completed data transfers must send TCP FIN instead of dropping the socket")
     require('strcmp(virtual_path, "/") != 0' in source,
             "CWD / must accept the FTP volume root without relying on FatFs f_stat")
+
+    poll_start = source.index("static void ftp_data_poll")
+    poll_end = source.index("int ftp_sd_service_start", poll_start)
+    poll = source[poll_start:poll_end]
+    require("status != W5100_SR_ESTABLISHED && "
+            "status != W5100_SR_CLOSE_WAIT" in poll and
+            "ftp_send_transfer_poll();" in poll and
+            "else if (status == W5100_SR_CLOSE_WAIT)" not in poll,
+            "RETR and LIST must keep sending after the client half-closes")
 
 
 def test_direct_transfer_path_with_tagged_completion() -> None:
     source = read("ps_sources/frontend/ftp_sd_service.c")
     control = read("ps_sources/frontend/uthernet2_control.c")
+    control_h = read("ps_sources/frontend/uthernet2_control.h")
     regs = read("ps_sources/frontend/card_control_regs.h")
     top = read("hdl/apple/apple_top.sv")
     hdl_sources = read("hdl/hdl_sources.txt")
@@ -65,13 +93,18 @@ def test_direct_transfer_path_with_tagged_completion() -> None:
     require("FTP_DATA_BUFFER_LEN      1024U" in source and
             "FTP_SEND_CHUNK_LEN" not in source,
             "FTP must use the proven 1KB transfer buffer")
-    require("W5100_SOCKET_MEM_4_2_1_1 0x06U" in source and
-            "W5100_SOCKET_MEM_2_4_1_1" not in source and
-            "W5100_TX_BASE_S1         0x5000U" in source and
-            "W5100_RX_BASE_S1         0x7000U" in source and
-            "W5100_MASK_S0            0x0FFFU" in source and
-            "W5100_MASK_S1            0x07FFU" in source,
-            "FTP must keep the proven 4+2+1+1KB socket map")
+    require("W5100_SOCKET_MEM_4_2_1_1 0x06U" in control_h and
+            "0x4000U, 0x5000U, 0x5800U, 0x5C00U" in control and
+            "0x6000U, 0x7000U, 0x7800U, 0x7C00U" in control and
+            "0x0FFFU, 0x07FFU, 0x03FFU, 0x03FFU" in control,
+            "the shared driver must keep the proven 4+2+1+1KB socket map")
+    require("static int w5100_read16" not in source and
+            "static int socket_command" not in source and
+            "static int socket_ring_read" not in source and
+            "uthernet2_w5100_read16_stable" in source and
+            "uthernet2_w5100_socket_ring_read" in source and
+            "uthernet2_w5100_socket_command" in source,
+            "FTP must use the shared W5100 word, ring, and command helpers")
     require("for (uint16_t i = 0U; i < len; ++i)" in control and
             "CARD_CTRL_ETH_FIFO_" not in control and
             "CARD_CTRL_ETH_FIFO_" not in regs and
@@ -87,11 +120,18 @@ def test_direct_transfer_path_with_tagged_completion() -> None:
             "f_read(&g_ftp.file" in source and
             "FTP_TX_VERIFY_ATTEMPTS" not in source,
             "FTP must read each block once into a cache-line-aligned DMA buffer")
+    require("transfer_eof" not in source and
+            source.count("socket_send_start(") == 2 and
+            "static int socket_send_buffer" in source and
+            "static void ftp_send_data_buffer" in source and
+            source.count("ftp_reset_transfer_state();") == 2,
+            "FTP must share send/reset helpers and remove the dead EOF flag")
 
 
 def test_exclusive_ethernet_and_sd_ownership() -> None:
     main = read("ps_sources/frontend/main.c")
     smartport = read("ps_sources/frontend/smartport_service.c")
+    menu = read("ps_sources/frontend/config_menu.c")
 
     start = main.index("static int control_set_ethernet_ftp_sd_remote")
     end = main.index("static void control_set_applicard_resource_max", start)
@@ -116,6 +156,17 @@ def test_exclusive_ethernet_and_sd_ownership() -> None:
     require("if (g_devices[i].is_ram == 0U)" in smartport and
             "int smartport_service_resume_sd(void)" in smartport,
             "SmartPort SD suspension must preserve the volatile RAM disk")
+
+    poll_start = menu.index("void config_menu_poll_onee_mode")
+    poll_end = menu.index("void config_menu_set_active", poll_start)
+    poll = menu[poll_start:poll_end]
+    update_pos = poll.index("menu->onee_persisted_enabled =")
+    ftp_gate_pos = poll.index("menu->ethernet_ftp_sd_remote_active != 0U")
+    save_pos = poll.index("config_menu_save_settings_to_path(")
+    require(update_pos < ftp_gate_pos < save_pos and
+            "ack_onee_mode_persist_update" in poll[save_pos:],
+            "ONE//e persistence must update RAM but defer SD save and ack "
+            "while FTP owns the volume")
 
 
 def test_ethernet_tab_modal_contract() -> None:

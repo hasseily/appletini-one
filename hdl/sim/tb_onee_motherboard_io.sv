@@ -213,29 +213,32 @@ module tb_onee_motherboard_io;
         access(16'hC010, 1'b1, 8'h00, claimed, rdata, triggered);
         check(rdata == 8'h41,
               "$C010 any-key-down did not follow the live key level");
+        push_key(7'h42);
+        access(16'hC001, 1'b1, 8'h00, claimed, rdata, triggered);
+        check(claimed && rdata == 8'hC2 && keyboard_strobe,
+              "$C001 keyboard mirror did not return the key latch");
 
         // Existing SoftSwitchState owns all MMU/video status. Reads at
         // C011-C01F do not clear the keyboard strobe. Writes anywhere in
         // C010-C01F do clear it.
         access(16'hC001, 1'b0, 8'h00, claimed, rdata, triggered);
         check(sss.sw_80store, "$C001 did not reach soft_switch_manager");
-        push_key(7'h42);
         access(16'hC018, 1'b1, 8'h00, claimed, rdata, triggered);
-        check(claimed && rdata == 8'hB5 && keyboard_strobe &&
+        check(claimed && rdata == 8'hC2 && keyboard_strobe &&
               !last_keyboard_ready,
-              "$C018 status/floating bits or non-destructive read was wrong");
+              "$C018 status/key bits or non-destructive read was wrong");
         access(16'hC018, 1'b0, 8'h00, claimed, rdata, triggered);
         check(last_keyboard_ready && !keyboard_strobe,
               "$C018 write did not clear the strobe or ready the event input");
         push_key(7'h43);
         access(16'hC01A, 1'b1, 8'h00, claimed, rdata, triggered);
-        check(rdata == 8'hB5 && keyboard_strobe,
+        check(rdata == 8'hC3 && keyboard_strobe,
               "$C01A did not report TEXT without clearing the keyboard");
         access(16'hC01F, 1'b0, 8'h00, claimed, rdata, triggered);
         check(!keyboard_strobe, "$C01F write did not clear keyboard strobe");
         video_vblank = 1'b1;
         access(16'hC019, 1'b1, 8'h00, claimed, rdata, triggered);
-        check(rdata == 8'h35, "$C019 RDVBLBAR polarity was wrong");
+        check(rdata == 8'h43, "$C019 RDVBLBAR/key code was wrong");
         video_vblank = 1'b0;
 
         // Legacy toggles leave reads floating. The C04X motherboard decoder

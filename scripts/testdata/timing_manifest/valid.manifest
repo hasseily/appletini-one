@@ -1,0 +1,6 @@
+# shared parser fixture
+alpha=1
+empty=
+path=value with spaces
+token=a=b
+zeta=last

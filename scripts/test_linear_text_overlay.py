@@ -93,8 +93,15 @@ def static_checks() -> None:
     require("linear_text_overlay_capture.c" in vitis and
             "linear_text_overlay_font.c" in vitis,
             "Vitis build must include both CPU overlay halves")
-    require(demo.index("ldy #$0E") < demo.index("ldy #8\nscan_sig:"),
-            "demo detection must read SIG/VER before MAGIC")
+    find_start = demo.index("find_overlay:")
+    find_end = demo.index("configure_and_arm:", find_start)
+    probe = demo[find_start:find_end]
+    require("ldy #$B0" in probe and "lda (SRC),y" in probe and
+            "cpx #8" in probe and
+            probe.index("lda (SRC),y") < probe.index("sta DEV"),
+            "demo must identify the slot ROM before it forms a DEVSEL pointer")
+    require("lda (DEV),y" not in probe,
+            "demo detection must not read unknown DEVSEL registers")
     for token in ("cp437_font_8x14[256][14]",
                   "dec_font_8x14[32][14]",
                   "cp437_font_8x16[256][16]",

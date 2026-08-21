@@ -153,6 +153,29 @@ if {![catch {timing_run::require_latest_full_pair \
 }
 file delete -force $timing_history_root
 
+set temp_channel [file tempfile timing_history_root]
+close $temp_channel
+file delete -force $timing_history_root
+file mkdir $timing_history_root
+set same_second_base 20260812T181800Z-aaaaaaaa-full
+set same_second_first ${same_second_base}-01
+set same_second_second ${same_second_base}-02
+foreach build_id [list \
+    $same_second_base $same_second_first $same_second_second] {
+    set run_dir [file join $timing_history_root $build_id]
+    file mkdir $run_dir
+    timing_run::write_manifest [file join $run_dir manifest.txt] [dict create \
+        build_id $build_id build_mode full git_sha [string repeat a 40] \
+        utc_start 2026-08-12T18:18:00Z]
+}
+timing_run::require_latest_full_pair \
+    $timing_history_root $same_second_first $same_second_second
+if {![catch {timing_run::require_latest_full_pair \
+    $timing_history_root $same_second_base $same_second_first}]} {
+    error "Promotion history accepted the older same-second pair."
+}
+file delete -force $timing_history_root
+
 set temp_channel [file tempfile hash_fixture]
 puts -nonewline $temp_channel "timing artifact"
 close $temp_channel

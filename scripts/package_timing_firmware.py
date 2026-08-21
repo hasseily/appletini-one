@@ -16,22 +16,42 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD_ID_RE = re.compile(
     r"^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}-full(?:-[0-9]{2})?$"
 )
+MANIFEST_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]*$")
+
+
+def validate_manifest_entry(key: str, value: str) -> None:
+    if not MANIFEST_KEY_RE.fullmatch(key):
+        raise ValueError(f"invalid manifest key: {key!r}")
+    if any(character in value for character in ("\r", "\n", "\0")):
+        raise ValueError(f"manifest value for {key!r} contains a line break or NUL")
 
 
 def read_manifest(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        text = handle.read()
+    if "\r" in text or "\0" in text:
+        raise ValueError(f"manifest must contain UTF-8 LF text only: {path}")
+    for line_number, line in enumerate(text.split("\n"), start=1):
         if not line or line.startswith("#"):
             continue
         if "=" not in line:
-            raise ValueError(f"malformed manifest line in {path}: {raw_line}")
+            raise ValueError(
+                f"malformed manifest line {line_number} in {path}: {line}"
+            )
         key, value = line.split("=", 1)
+        validate_manifest_entry(key, value)
+        if key in values:
+            raise ValueError(
+                f"duplicate manifest key {key!r} on line {line_number} in {path}"
+            )
         values[key] = value
     return values
 
 
 def write_manifest(path: Path, values: dict[str, str]) -> None:
+    for key, value in values.items():
+        validate_manifest_entry(key, value)
     text = "".join(f"{key}={values[key]}\n" for key in sorted(values))
     path.write_text(text, encoding="utf-8", newline="\n")
 
@@ -101,10 +121,13 @@ def git_output(*args: str) -> str:
 
 
 def run_batch(args: list[str]) -> None:
-    command = "call " + subprocess.list2cmdline(args)
-    subprocess.run(
-        ["cmd.exe", "/d", "/c", command], cwd=ROOT, check=True
-    )
+    if not args:
+        raise ValueError("batch command must not be empty")
+    # Give cmd.exe one quoted command line. Passing that prequoted line as an
+    # item in another argv list makes subprocess quote it a second time and
+    # leaves literal backslashes before quotes on paths such as Program Files.
+    command = subprocess.list2cmdline([str(arg) for arg in args])
+    subprocess.run(command, cwd=ROOT, check=True, shell=True)
 
 
 def main() -> int:

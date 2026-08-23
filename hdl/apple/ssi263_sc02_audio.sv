@@ -141,6 +141,7 @@ module ssi263_sc02_audio #(
     logic signed [23:0] rotated_q_q;
     logic signed [23:0] damped_i_q;
     logic signed [23:0] damped_q_q;
+    logic signed [23:0] output_sum_q;
     logic signed [23:0] engine_next_i;
     logic signed [47:0] engine_product_a_ext;
     logic signed [47:0] engine_product_b_ext;
@@ -767,12 +768,11 @@ module ssi263_sc02_audio #(
                 engine_operand_a = engine_input;
                 engine_coefficient_a = SECTION_DRIVE_Q14;
             end
-            3'd4: begin
+            3'd5: begin
                 // Reuse the first resonator multiplier for final Q12 gain.
-                engine_operand_a = sat24_add(
-                    f5_state_q,
-                    sat24_add(fric1_state_q, fric2_state_q)
-                );
+                // Stage 4 registered the saturating source sum, so this path
+                // contains one multiply and output saturation but no adder.
+                engine_operand_a = output_sum_q;
                 engine_coefficient_a = $signed(
                     {4'b0000, filter_amp_gain(filter_amp_code)}
                 );
@@ -846,6 +846,7 @@ module ssi263_sc02_audio #(
             rotated_q_q <= 24'sd0;
             damped_i_q <= 24'sd0;
             damped_q_q <= 24'sd0;
+            output_sum_q <= 24'sd0;
             audio_sample <= 16'sd0;
         end else begin
             // U61 samples the core's held U62 Q on Phi0_X; U34A recognizes
@@ -913,8 +914,8 @@ module ssi263_sc02_audio #(
             end
 
             // One resonator uses four MAC clocks: rotate, damp, drive, commit.
-            // Seven sections plus one output clock take 29 clocks.  Only the
-            // two multipliers above run in any stage.
+            // Seven sections plus sum and gain clocks take 30 clocks.  Only
+            // the two multipliers above run in any stage.
             if (engine_busy_q) begin
                 case (engine_stage_q)
                     3'd0: begin
@@ -978,6 +979,15 @@ module ssi263_sc02_audio #(
                             engine_section_q <= engine_section_q + 3'd1;
                             engine_stage_q <= 3'd0;
                         end
+                    end
+                    3'd4: begin
+                        // Isolate the two saturating 24-bit additions from the
+                        // final multiply to keep the 133.333 MHz path short.
+                        output_sum_q <= sat24_add(
+                            f5_state_q,
+                            sat24_add(fric1_state_q, fric2_state_q)
+                        );
+                        engine_stage_q <= 3'd5;
                     end
                     default: begin
                         if (!closure) begin

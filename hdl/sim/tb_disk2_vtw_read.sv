@@ -98,6 +98,10 @@ module tb_disk2_vtw_read;
         ab_read.addr = {12'hC0E, io_addr};
         ab_read.rw = 1'b0;
         ab_read.data = value;
+        ab_read.serve_en = 1'b1;
+        ab_read.data_en = 1'b0;
+        @(negedge clk);
+        ab_read.serve_en = 1'b0;
         ab_read.data_en = 1'b1;
         @(negedge clk);
         ab_read.data_en = 1'b0;
@@ -185,6 +189,7 @@ module tb_disk2_vtw_read;
 
         // Drive 1 has standard media. Track 0 is staged, but its first DDR
         // line has not reached the local cache yet.
+        mc_ready = 1'b0;
         axi_write(8'h10, 32'h0000_0001); // D1_INFO: media present
         axi_write(8'h07, 32'd16);        // TRACK_LENGTH
         axi_write(8'h06, 32'h0000_0001);// TRACK_INFO: drive 1, qtrack 0
@@ -194,6 +199,10 @@ module tb_disk2_vtw_read;
         @(negedge clk);
         ab_read.addr = 16'hC0E9;
         ab_read.rw = 1'b0;
+        ab_read.serve_en = 1'b1;
+        ab_read.data_en = 1'b0;
+        @(negedge clk);
+        ab_read.serve_en = 1'b0;
         ab_read.data_en = 1'b1;
         @(posedge clk);
         #1;
@@ -211,6 +220,7 @@ module tb_disk2_vtw_read;
         @(negedge clk);
         check(!vtw_time_ready,
               "vTW time ran before the active track line was cached");
+        mc_ready = 1'b1;
 
         // Keep the read asserted across the miss. It must not complete with
         // stale data; cache fill makes it ready and returns the first byte.

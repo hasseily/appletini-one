@@ -140,6 +140,29 @@ def static_checks(source: str) -> None:
     if "for (gi = 0; gi < 4; gi = gi + 1)" not in source:
         raise RuntimeError("PSRAM input PHY must retain four generated A/B lanes")
 
+    for signal in ("psram_oe_launch_q", "psram_a_launch_q",
+                   "psram_b_launch_q"):
+        declaration = (
+            '(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) logic [3:0] '
+            f'{signal};'
+        )
+        if declaration not in source:
+            raise RuntimeError(
+                f"PSRAM half-cycle launch register is not preserved: {signal}"
+            )
+    for assignment in (
+        "psram_oe  <= psram_oe_launch_q;",
+        "psram_a_o <= psram_a_launch_q;",
+        "psram_b_o <= psram_b_launch_q;",
+        "sh_oe_tape <= sh_oe_tape_d;",
+        "sh_wr_a_tape <= sh_wr_a_tape_d;",
+        "sh_wr_b_tape <= sh_wr_b_tape_d;",
+    ):
+        if assignment not in source:
+            raise RuntimeError(
+                f"PSRAM post-rising-edge launch contract lost: {assignment}"
+            )
+
     apple_top = APPLE_TOP.read_text(encoding="utf-8")
     reset_wiring = re.search(
         r"psram_driver\s+psram_driver_i\s*\(.*?"

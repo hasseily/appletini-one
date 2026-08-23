@@ -1249,7 +1249,8 @@ def test_pl_woz_write_uses_post_access_q_state() -> None:
         "automatic logic load_drive_v = as_common.wdata[20];", 1)[1]
     track_commit = track_commit.split("prefetch_valid_q <= '0;", 1)[0]
     woz_commit = track_commit.split("end else if (load_woz_v) begin", 1)[1]
-    woz_commit = woz_commit.split("end else begin", 1)[0]
+    woz_commit = woz_commit.split("woz_bit_accum_q <= 16'd0;", 1)[0] + \
+        "woz_bit_accum_q <= 16'd0;"
     require("if (!same_rotation_v)" in woz_commit and
             "drive_woz_head_window_q[load_drive_v] <= 4'd0;" in woz_commit and
             "woz_bit_accum_q <= 16'd0;" in woz_commit,

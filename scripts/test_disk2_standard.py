@@ -546,7 +546,9 @@ def test_media_change_flush_duplicate_and_rotation_contract() -> None:
             "logic [16:0] drive_bit_offset_q [0:1];" in hdl and
             "logic [3:0] drive_woz_head_window_q [0:1];" in hdl,
             "each drive must retain independent byte, bit, and head-window rotation")
-    warm_reset = hdl.split("if (!enabled || !ab_read.res) begin", 1)[1]
+    # The physical-I/O tuple has its own fail-closed enable/reset guard near
+    # the decoder.  Inspect the later controller warm-reset block here.
+    warm_reset = hdl.rsplit("if (!enabled || !ab_read.res) begin", 1)[1]
     warm_reset = warm_reset.split("if (!enabled) begin", 1)[0]
     for assignment in ("drive_stream_pos_q[", "drive_bit_offset_q[",
                        "drive_woz_head_window_q[", "spin_countdown_q[",
@@ -1203,6 +1205,36 @@ def test_pl_pending_track_and_standard_miss_are_retryable() -> None:
             "the registered underrun event must update the diagnostic counter")
 
 
+def test_pl_stages_physical_io_and_keeps_drive_wraps_separate() -> None:
+    source = DISK2_CARD_SV.read_text(encoding="utf-8")
+
+    require("if (ab_read.serve_en) begin\n"
+            "                physical_io_hit_q  <= slot_io_hit;" in source and
+            "physical_io_read_q <= ab_read.rw && slot_io_hit;" in source,
+            "physical Disk II I/O must stage the authoritative serve tuple")
+    require("wire ab_io_read = physical_io_read_q && apple_bus_active;" in source and
+            "wire ab_io_write = ab_read.data_en && !physical_io_rw_q &&" in source and
+            "wire [3:0] io_idx = vtw_io_read ? vtw_req_addr_q : physical_io_idx_q;"
+            in source,
+            "physical reads/writes must use the staged tuple while vTW stays private")
+    require("else if (ab_io_read && !physical_io_idx_q[0]) begin" in source,
+            "the delayed physical read must remain in the Apple response path")
+    require("wire ab_io_read  = ab_read.serve_en" not in source,
+            "the raw serve decode must not feed Disk II state enables")
+
+    require("drive_bit_offset_q[drive_select_q] <=" not in source and
+            "drive_bit_offset_q[load_drive_v] <=" not in source,
+            "raw-bit updates must not use a shared selected-array write")
+    tick = source.split("if (!skip_bit_advance_v) begin", 1)[1]
+    tick = tick.split("accum_after_tick_v =", 1)[0]
+    require("if (drive_select_q) begin" in tick and
+            "raw_bit_offset_next(\n"
+            "                                drive_bit_offset_q[1]" in tick and
+            "raw_bit_offset_next(\n"
+            "                                drive_bit_offset_q[0]" in tick,
+            "each drive must own its raw-bit wrap arithmetic cone")
+
+
 def test_qtrack_mapping_leaves_outer_tracks_unavailable() -> None:
     image = StandardImage.with_tracks("dsk", [make_sector_track(track) for track in range(TRACK_COUNT)])
     expected = {
@@ -1246,6 +1278,7 @@ def run() -> int:
         test_pl_standard_stream_advance_matches_applewin_readwrite,
         test_pl_standard_partial_read_matches_applewin_threshold,
         test_pl_pending_track_and_standard_miss_are_retryable,
+        test_pl_stages_physical_io_and_keeps_drive_wraps_separate,
         test_qtrack_mapping_leaves_outer_tracks_unavailable,
     ]
     failures = []

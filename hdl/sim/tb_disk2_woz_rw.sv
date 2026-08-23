@@ -139,23 +139,30 @@ module tb_disk2_woz_rw;
                                    input logic is_read,
                                    input logic [7:0] write_data,
                                    output logic [7:0] read_data);
+        // Match the physical wrapper phases: the cycle tick comes first,
+        // then the authoritative address/serve sample, then write data.
         @(negedge clk);
         ab_read.addr = {12'hC0E, io_addr};
         ab_read.rw = is_read;
         ab_read.data = write_data;
-        ab_read.serve_en = is_read;
-        ab_read.data_en = !is_read;
+        ab_read.serve_en = 1'b0;
+        ab_read.data_en = 1'b0;
         ab_read.sss_en = 1'b1;
         vtw_native_cycle_active = vtw_active;
+        @(negedge clk);
+        ab_read.sss_en = 1'b0;
+        vtw_native_cycle_active = 1'b0;
+        ab_read.serve_en = 1'b1;
+        @(posedge clk);
+        @(negedge clk);
+        ab_read.serve_en = 1'b0;
+        ab_read.data_en = !is_read;
         @(posedge clk);
         #1;
         read_data = ab_write.wr_data;
         @(negedge clk);
-        ab_read.serve_en = 1'b0;
         ab_read.data_en = 1'b0;
-        ab_read.sss_en = 1'b0;
         ab_read.rw = 1'b1;
-        vtw_native_cycle_active = 1'b0;
     endtask
 
     task automatic physical_tick;

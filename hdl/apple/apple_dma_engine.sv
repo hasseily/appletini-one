@@ -96,7 +96,7 @@ module apple_dma_engine #(
         S_W_LINE_BEGIN,
         S_W_DDR_AR, S_W_DDR_R,
         S_W_RMW_REQ, S_W_RMW_WAIT,
-        S_W_MC_WRITE, S_W_MC_WRITE_WAIT,
+        S_W_MC_PREP, S_W_MC_WRITE, S_W_MC_WRITE_WAIT,
         // PSRAM to DDR
         S_R_AW_PREP,    // settle aw_burst_size_q before issuing AW
         S_R_AW,
@@ -146,6 +146,7 @@ module apple_dma_engine #(
     logic [63:0] mc_old_q;
     logic [63:0] ddr_lo_q, ddr_hi_q;
     logic [63:0] mc_lo_q,  mc_hi_q;
+    logic [63:0] mc_write_data_q;
 
     // ---------------- Per-line / per-beat byte boundaries ----------------
     // Used by the byte-selection helpers and the partial-line merge. Driven
@@ -295,7 +296,7 @@ module apple_dma_engine #(
             S_W_MC_WRITE: begin
                 dma_line_addr        = first_mc_line + 21'(line_idx_q);
                 dma_rw               = 1'b0;
-                dma_wdata            = merged_mc_line;
+                dma_wdata            = mc_write_data_q;
                 dma_valid            = 1'b1;
             end
             S_R_MC_REQ: begin
@@ -347,6 +348,7 @@ module apple_dma_engine #(
             ar_beat_addr_q            <= '0;
             aw_beat_addr_q            <= '0;
             beat_ddr_data_q           <= '0;
+            mc_write_data_q           <= '0;
 
             mc_offset_q               <= '0;
             first_mc_line_q           <= '0;
@@ -501,7 +503,7 @@ module apple_dma_engine #(
                     end else if (cur_line_is_partial_q)
                         state_q <= S_W_RMW_REQ;
                     else
-                        state_q <= S_W_MC_WRITE;
+                        state_q <= S_W_MC_PREP;
                 end
 
                 S_W_DDR_AR: begin
@@ -534,8 +536,17 @@ module apple_dma_engine #(
                 S_W_RMW_WAIT: begin
                     if (dma_rvalid) begin
                         mc_old_q <= dma_rdata;
-                        state_q  <= S_W_MC_WRITE;
+                        state_q  <= S_W_MC_PREP;
                     end
+                end
+
+                // merged_mc_line contains the byte-select and partial-line
+                // merge network.  Finish it before presenting a request to
+                // the shared PSRAM port so that port acceptance sees only a
+                // registered 64-bit line.
+                S_W_MC_PREP: begin
+                    mc_write_data_q <= merged_mc_line;
+                    state_q         <= S_W_MC_WRITE;
                 end
 
                 S_W_MC_WRITE: begin

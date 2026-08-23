@@ -284,6 +284,10 @@ module disk2_card (
     logic [12:0] active_stream_pos;
     logic        vtw_req_pending_q;
     logic [3:0]  vtw_req_addr_q;
+    logic        physical_io_hit_q;
+    logic        physical_io_rw_q;
+    logic        physical_io_read_q;
+    logic [3:0]  physical_io_idx_q;
 
     wire enabled = (slot_assign != 3'h0);
     wire apple_bus_active = enabled &&
@@ -305,8 +309,36 @@ module disk2_card (
      * read return the slot ROM while the registered enable catches up. */
     wire rom_read_serve = ab_read.serve_en || rom_serve_en;
     wire ab_rom_read = rom_read_serve && ab_read.rw && slot_rom_hit;
-    wire ab_io_read  = ab_read.serve_en && ab_read.rw && slot_io_hit;
-    wire ab_io_write = ab_read.data_en && !ab_read.rw && slot_io_hit;
+
+    // Capture the physical I/O tuple at the authoritative serve sample.
+    // The wrapper's early address can still hold the prior DMA address, and
+    // the raw decode otherwise reaches the WOZ state enables in one cycle.
+    // A physical Apple bus cycle has ample serve-to-data time for this one
+    // fabric-clock stage.  The private vTW request path stays unchanged.
+    always_ff @(posedge clk) begin
+        if (!rstn) begin
+            physical_io_hit_q  <= 1'b0;
+            physical_io_rw_q   <= 1'b1;
+            physical_io_read_q <= 1'b0;
+            physical_io_idx_q  <= 4'h0;
+        end else begin
+            physical_io_read_q <= 1'b0;
+            if (ab_read.serve_en) begin
+                physical_io_hit_q  <= slot_io_hit;
+                physical_io_rw_q   <= ab_read.rw;
+                physical_io_idx_q  <= ab_read.addr[3:0];
+                physical_io_read_q <= ab_read.rw && slot_io_hit;
+            end
+            if (!enabled || !ab_read.res) begin
+                physical_io_hit_q  <= 1'b0;
+                physical_io_read_q <= 1'b0;
+            end
+        end
+    end
+
+    wire ab_io_read = physical_io_read_q && apple_bus_active;
+    wire ab_io_write = ab_read.data_en && !physical_io_rw_q &&
+                       physical_io_hit_q && apple_bus_active;
 
     wire vtw_q6_after_access =
         (vtw_req_addr == IO_Q6_LOW)  ? 1'b0 :
@@ -396,7 +428,7 @@ module disk2_card (
     wire vtw_io_read = vtw_req_pending_q;
     wire io_read = ab_io_read || vtw_io_read;
     wire io_write = ab_io_write;
-    wire [3:0] io_idx = vtw_io_read ? vtw_req_addr_q : ab_read.addr[3:0];
+    wire [3:0] io_idx = vtw_io_read ? vtw_req_addr_q : physical_io_idx_q;
     wire stepper_io_access =
         (io_read || io_write) && (io_idx <= IO_PHASE3_ON);
 
@@ -1395,7 +1427,6 @@ module disk2_card (
             end
 
             if (woz_stream_active) begin
-                automatic logic [16:0] next_bit_offset;
                 automatic logic [8:0] cached_v;
                 automatic logic [7:0] byte_v;
                 automatic logic [7:0] mask_v;
@@ -1526,15 +1557,25 @@ module disk2_card (
                          woz_write_started_q);
                     if (!skip_bit_advance_v) begin
                         seam_slip_v = woz_seam_arm_q && woz_rand_5_10(woz_weak_rand_q);
-                        next_bit_offset =
-                            raw_bit_offset_next(selected_bit_offset, track_bit_count_q, seam_slip_v);
                         if (woz_seam_arm_q) begin
                             woz_weak_rand_q <= woz_weak_next_rand_q;
                             woz_weak_rand_bit_q <= woz_weak_next_rand_bit_q;
                             woz_weak_refill_pending_q <= 1'b1;
                         end
                         woz_seam_arm_q <= 1'b0;
-                        drive_bit_offset_q[drive_select_q] <= next_bit_offset;
+                        // Keep each drive's wrap arithmetic in its own cone.
+                        // A selected-array read followed by a selected-array
+                        // write lets synthesis create false drive-0 to
+                        // drive-1 carry paths.
+                        if (drive_select_q) begin
+                            drive_bit_offset_q[1] <= raw_bit_offset_next(
+                                drive_bit_offset_q[1], track_bit_count_q,
+                                seam_slip_v);
+                        end else begin
+                            drive_bit_offset_q[0] <= raw_bit_offset_next(
+                                drive_bit_offset_q[0], track_bit_count_q,
+                                seam_slip_v);
+                        end
                         accum_after_tick_v =
                             woz_accum_plus_cycle - {9'h000, woz_effective_bit_timing};
                         woz_bit_accum_q <= accum_after_tick_v[15:0];
@@ -1696,12 +1737,20 @@ module disk2_card (
                                 standard_spin_reload_q <= 1'b1;
                                 standard_read_gap_q <= STANDARD_READ_GAP_LIMIT;
                             end else if (load_woz_v) begin
-                                automatic logic [16:0] bit_offset_next =
-                                    drive_bit_offset_q[load_drive_v];
-                                if (track_bit_count_q != 17'd0 &&
-                                    bit_offset_next >= track_bit_count_q)
-                                    bit_offset_next = 17'd0;
-                                drive_bit_offset_q[load_drive_v] <= bit_offset_next;
+                                automatic logic [16:0] bit_offset_next;
+                                if (load_drive_v) begin
+                                    bit_offset_next = drive_bit_offset_q[1];
+                                    if (track_bit_count_q != 17'd0 &&
+                                        bit_offset_next >= track_bit_count_q)
+                                        bit_offset_next = 17'd0;
+                                    drive_bit_offset_q[1] <= bit_offset_next;
+                                end else begin
+                                    bit_offset_next = drive_bit_offset_q[0];
+                                    if (track_bit_count_q != 17'd0 &&
+                                        bit_offset_next >= track_bit_count_q)
+                                        bit_offset_next = 17'd0;
+                                    drive_bit_offset_q[0] <= bit_offset_next;
+                                end
                                 prefetch_current_line_q <= 21'd0;
                                 prefetch_next_line_q <= 21'd0;
                                 if (!same_rotation_v)
@@ -1784,14 +1833,27 @@ module disk2_card (
                         woz_cached_ready_q <= 1'b0;
                     end
                     D2_REG_TRACK_BIT_OFFSET: begin
-                        automatic logic [31:0] bit_offset_tmp = globals::apply_wstrb(
-                            {15'h0000, selected_bit_offset}, as_common.wdata, as_common.wstrb);
+                        automatic logic [31:0] bit_offset_tmp;
                         automatic logic [16:0] bit_offset_next;
-                        if (bit_offset_tmp > 32'd65535)
-                            bit_offset_next = 17'd65535;
-                        else
-                            bit_offset_next = bit_offset_tmp[16:0];
-                        drive_bit_offset_q[drive_select_q] <= bit_offset_next;
+                        if (drive_select_q) begin
+                            bit_offset_tmp = globals::apply_wstrb(
+                                {15'h0000, drive_bit_offset_q[1]},
+                                as_common.wdata, as_common.wstrb);
+                            if (bit_offset_tmp > 32'd65535)
+                                bit_offset_next = 17'd65535;
+                            else
+                                bit_offset_next = bit_offset_tmp[16:0];
+                            drive_bit_offset_q[1] <= bit_offset_next;
+                        end else begin
+                            bit_offset_tmp = globals::apply_wstrb(
+                                {15'h0000, drive_bit_offset_q[0]},
+                                as_common.wdata, as_common.wstrb);
+                            if (bit_offset_tmp > 32'd65535)
+                                bit_offset_next = 17'd65535;
+                            else
+                                bit_offset_next = bit_offset_tmp[16:0];
+                            drive_bit_offset_q[0] <= bit_offset_next;
+                        end
                         woz_seam_arm_q <= 1'b0;
                         woz_cached_valid_q <= 1'b0;
                         woz_cached_ready_q <= 1'b0;
@@ -2010,17 +2072,15 @@ module disk2_card (
         ab_write_d.assert_nmi = 1'b0;
         ab_write_d.assert_dma = 1'b0;
 
-        if (rom_read_serve) begin
-            if (ab_rom_read) begin
-                ab_write_d.wr_data = slot_rom_byte(ab_read.addr[7:0]);
-                ab_write_d.wr_data_en = 1'b1;
-            end else if (ab_io_read && !ab_read.addr[0]) begin
-                ab_write_d.wr_data = disk_read_byte;
-                ab_write_d.wr_data_en = 1'b1;
-            end else begin
-                ab_write_d.wr_data = 8'h00;
-                ab_write_d.wr_data_en = 1'b0;
-            end
+        if (ab_rom_read) begin
+            ab_write_d.wr_data = slot_rom_byte(ab_read.addr[7:0]);
+            ab_write_d.wr_data_en = 1'b1;
+        end else if (ab_io_read && !physical_io_idx_q[0]) begin
+            ab_write_d.wr_data = disk_read_byte;
+            ab_write_d.wr_data_en = 1'b1;
+        end else if (rom_read_serve || ab_io_read) begin
+            ab_write_d.wr_data = 8'h00;
+            ab_write_d.wr_data_en = 1'b0;
         end else if (ab_read.data_en) begin
             ab_write_d.wr_data = 8'h00;
             ab_write_d.wr_data_en = 1'b0;

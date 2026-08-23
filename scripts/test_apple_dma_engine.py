@@ -59,6 +59,30 @@ def test_ddr_to_apple_writes_wait_for_memory_completion() -> None:
             "DDR-to-Apple writes may only advance or finish after dma_rvalid")
 
 
+def test_ddr_to_apple_write_data_is_registered_before_request() -> None:
+    source = read(APPLE_DMA_ENGINE_SV)
+    output_drive = source[source.find("// ---------------- Output drives"):
+                          source.find("// ---------------- FSM update")]
+
+    require("S_W_MC_PREP, S_W_MC_WRITE, S_W_MC_WRITE_WAIT," in source,
+            "DDR-to-Apple writes must have an assembly stage before request")
+    require("state_q <= S_W_MC_PREP;" in
+            state_block(source, "S_W_LINE_BEGIN"),
+            "full lines must pass through the write-data assembly stage")
+    require("mc_old_q <= dma_rdata;" in
+            state_block(source, "S_W_RMW_WAIT") and
+            "state_q  <= S_W_MC_PREP;" in
+            state_block(source, "S_W_RMW_WAIT"),
+            "partial lines must latch RMW data before the assembly stage")
+    prep_block = state_block(source, "S_W_MC_PREP")
+    require("mc_write_data_q <= merged_mc_line;" in prep_block and
+            "state_q         <= S_W_MC_WRITE;" in prep_block,
+            "the prep state must register the complete merged line")
+    require("dma_wdata            = mc_write_data_q;" in output_drive and
+            "dma_wdata            = merged_mc_line;" not in output_drive,
+            "the shared PSRAM port must see only registered write data")
+
+
 def test_abort_drains_accepted_work_before_acknowledging() -> None:
     source = read(APPLE_DMA_ENGINE_SV)
 
@@ -90,6 +114,7 @@ def test_abort_drains_accepted_work_before_acknowledging() -> None:
 
 TESTS = [
     test_ddr_to_apple_writes_wait_for_memory_completion,
+    test_ddr_to_apple_write_data_is_registered_before_request,
     test_abort_drains_accepted_work_before_acknowledging,
 ]
 

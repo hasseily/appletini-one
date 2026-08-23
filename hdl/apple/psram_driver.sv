@@ -80,6 +80,18 @@ module psram_driver (
     logic [2:0] ce_rest_cycles;
     logic [63:0] read_shift_q;
     logic launch_quad_q;
+    logic launch_quad_d;
+
+    // Prepare the exact values that the falling-edge IOB registers must
+    // launch after the current rising edge.  These registers cut the short
+    // half-cycle path from the wide tape shifters and mode mux to the pins.
+    (* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) logic [3:0] psram_oe_launch_q;
+    (* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) logic [3:0] psram_a_launch_q;
+    (* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) logic [3:0] psram_b_launch_q;
+
+    logic [31:0] sh_oe_tape_d;
+    logic [63:0] sh_wr_a_tape_d;
+    logic [63:0] sh_wr_b_tape_d;
 
     // Registered command captured on the cycle of valid && ready. The
     // master is then free to change the inputs.
@@ -123,6 +135,21 @@ module psram_driver (
     // ce_rest_cycles holds ready low while the CE-high tail is in flight.
     assign ready = (state == IDLE) && (ce_rest_cycles == 0) && !rvalid;
 
+    always_comb begin
+        launch_quad_d = launch_quad_q;
+        if ((state == IDLE) && valid && ready) begin
+            unique case (cmd)
+                ENTER_QPI:    launch_quad_d = CMD_S_QUAD;
+                RESET_ENABLE,
+                RESET,
+                TOGGLE_WRAP:  launch_quad_d = CMD_Q_QUAD;
+                QPI_WRITE:    launch_quad_d = QPIW_QUAD;
+                QPI_READ:     launch_quad_d = QPIR_QUAD;
+                default:      launch_quad_d = is_quad;
+            endcase
+        end
+    end
+
     always @(posedge clk) begin
         if (!resetn) begin
             state <= IDLE;
@@ -143,6 +170,7 @@ module psram_driver (
             prev_ce_n   <= sh_ce_n_tape[31];
             prev_clken_q <= sh_clken_tape[31];
             prev_rd_en_q <= sh_rd_en_tape[31];
+            launch_quad_q <= launch_quad_d;
             if (!prev_ce_n && sh_ce_n_tape[31]) begin
                 // 50 ns (7 cycles rounded up) must pass
                 // between assertions of psram_ce_n.
@@ -165,15 +193,6 @@ module psram_driver (
                     wdata_q     <= wdata;
                     start_pulse <= 1;
                     state       <= BUSY;
-                    case (cmd)
-                        ENTER_QPI:     launch_quad_q <= CMD_S_QUAD;
-                        RESET_ENABLE,
-                        RESET,
-                        TOGGLE_WRAP:   launch_quad_q <= CMD_Q_QUAD;
-                        QPI_WRITE:     launch_quad_q <= QPIW_QUAD;
-                        QPI_READ:      launch_quad_q <= QPIR_QUAD;
-                        default:       launch_quad_q <= is_quad;
-                    endcase
                 end
             end
             BUSY: begin
@@ -231,6 +250,54 @@ module psram_driver (
     // The eight-sample capture window starts after 16 idle tape slots to align
     // with valid PSRAM data on the positive IDDR phase.
     localparam [31:0] QPIR_RD_EN_TAPE  = {{16{1'b0}}, { 8{1'b1}}, { 8{1'b0}}};
+
+    // Post-rising-edge values for the output tapes.  The falling-edge pins
+    // used these values directly before the launch-prep stage was added, so
+    // start_pulse must override the normal shift exactly as it does below in
+    // the main tape engine.
+    always_comb begin
+        sh_oe_tape_d   = {sh_oe_tape[30:0], 1'b0};
+        sh_wr_a_tape_d = sh_wr_a_tape;
+        sh_wr_b_tape_d = sh_wr_b_tape;
+
+        if (sh_oe_tape[31]) begin
+            if (is_quad) begin
+                sh_wr_a_tape_d = {sh_wr_a_tape[59:0], 4'b0};
+                sh_wr_b_tape_d = {sh_wr_b_tape[59:0], 4'b0};
+            end else begin
+                sh_wr_a_tape_d = {sh_wr_a_tape[62:0], 1'b0};
+                sh_wr_b_tape_d = {sh_wr_b_tape[62:0], 1'b0};
+            end
+        end
+
+        if (start_pulse) begin
+            unique case (cmd_q)
+                ENTER_QPI: begin
+                    sh_oe_tape_d   = CMD_S_OE_TAPE;
+                    sh_wr_a_tape_d = {cmd_q, 56'b0};
+                    sh_wr_b_tape_d = {cmd_q, 56'b0};
+                end
+                RESET_ENABLE,
+                RESET,
+                TOGGLE_WRAP: begin
+                    sh_oe_tape_d   = CMD_Q_OE_TAPE;
+                    sh_wr_a_tape_d = {cmd_q, 56'b0};
+                    sh_wr_b_tape_d = {cmd_q, 56'b0};
+                end
+                QPI_WRITE: begin
+                    sh_oe_tape_d   = QPIW_OE_TAPE;
+                    sh_wr_a_tape_d = {cmd_q, addr_q, wdata_q[31:0]};
+                    sh_wr_b_tape_d = {cmd_q, addr_q, wdata_q[63:32]};
+                end
+                QPI_READ: begin
+                    sh_oe_tape_d   = QPIR_OE_TAPE;
+                    sh_wr_a_tape_d = {cmd_q, addr_q, 32'b0};
+                    sh_wr_b_tape_d = {cmd_q, addr_q, 32'b0};
+                end
+                default: ;
+            endcase
+        end
+    end
 
     // ------------------------------------------------------------------------
     // Capture path: IDELAYE2 + IDDR
@@ -369,15 +436,9 @@ module psram_driver (
     end
 
     always @(negedge clk) begin
-        if (launch_quad_q) begin
-            psram_oe <= {4{sh_oe_tape[31]}};
-            psram_a_o <= sh_wr_a_tape[63:60];
-            psram_b_o <= sh_wr_b_tape[63:60];
-        end else begin
-            psram_oe <= {3'b0, sh_oe_tape[31]};
-            psram_a_o <= {3'b0, sh_wr_a_tape[63]};
-            psram_b_o <= {3'b0, sh_wr_b_tape[63]};
-        end
+        psram_oe  <= psram_oe_launch_q;
+        psram_a_o <= psram_a_launch_q;
+        psram_b_o <= psram_b_launch_q;
     end
 
     // ------------------------------------------------------------------------
@@ -392,24 +453,27 @@ module psram_driver (
             sh_rd_en_tape <= 0;
             sh_wr_a_tape <= 0;
             sh_wr_b_tape <= 0;
+            psram_oe_launch_q <= 4'b0000;
+            psram_a_launch_q  <= 4'b0000;
+            psram_b_launch_q  <= 4'b0000;
             read_shift_q <= 64'd0;
             // (rdata is owned by the FSM always_ff above — its reset
             // and update both live there to avoid a multi-driver.)
         end else begin
             sh_ce_n_tape <= {sh_ce_n_tape[30:0],1'b1};
             sh_clken_tape <= {sh_clken_tape[30:0],1'b0};
-            sh_oe_tape <= {sh_oe_tape[30:0],1'b0};
+            sh_oe_tape <= sh_oe_tape_d;
             sh_rd_en_tape <= {sh_rd_en_tape[30:0],1'b0};
-            if (sh_oe_tape[31]) begin
-                // if oe is enabled this cycle, shift the
-                // wr tapes by 1/4 bits based on is_quad
-                if (is_quad) begin
-                    sh_wr_a_tape <= {sh_wr_a_tape[59:0],4'b0};
-                    sh_wr_b_tape <= {sh_wr_b_tape[59:0],4'b0};
-                end else begin
-                    sh_wr_a_tape <= {sh_wr_a_tape[62:0],1'b0};
-                    sh_wr_b_tape <= {sh_wr_b_tape[62:0],1'b0};
-                end
+            sh_wr_a_tape <= sh_wr_a_tape_d;
+            sh_wr_b_tape <= sh_wr_b_tape_d;
+            if (launch_quad_d) begin
+                psram_oe_launch_q <= {4{sh_oe_tape_d[31]}};
+                psram_a_launch_q  <= sh_wr_a_tape_d[63:60];
+                psram_b_launch_q  <= sh_wr_b_tape_d[63:60];
+            end else begin
+                psram_oe_launch_q <= {3'b000, sh_oe_tape_d[31]};
+                psram_a_launch_q  <= {3'b000, sh_wr_a_tape_d[63]};
+                psram_b_launch_q  <= {3'b000, sh_wr_b_tape_d[63]};
             end
             if (sh_rd_en_tape[31]) begin
                 read_shift_q <= read_word_next;
@@ -425,55 +489,37 @@ module psram_driver (
                         is_quad <= CMD_S_QUAD;
                         sh_ce_n_tape <= CMD_S_CE_N_TAPE;
                         sh_clken_tape <= CMD_S_CLKEN_TAPE;
-                        sh_oe_tape <= CMD_S_OE_TAPE;
                         sh_rd_en_tape <= CMD_S_RD_EN_TAPE;
-                        sh_wr_a_tape <= {cmd_q, 56'b0};
-                        sh_wr_b_tape <= {cmd_q, 56'b0};
                     end
                     RESET_ENABLE: begin // CMD_Q template
                         is_quad <= CMD_Q_QUAD;
                         sh_ce_n_tape <= CMD_Q_CE_N_TAPE;
                         sh_clken_tape <= CMD_Q_CLKEN_TAPE;
-                        sh_oe_tape <= CMD_Q_OE_TAPE;
                         sh_rd_en_tape <= CMD_Q_RD_EN_TAPE;
-                        sh_wr_a_tape <= {cmd_q, 56'b0};
-                        sh_wr_b_tape <= {cmd_q, 56'b0};
                     end
                     RESET: begin // CMD_Q template
                         is_quad <= CMD_Q_QUAD;
                         sh_ce_n_tape <= CMD_Q_CE_N_TAPE;
                         sh_clken_tape <= CMD_Q_CLKEN_TAPE;
-                        sh_oe_tape <= CMD_Q_OE_TAPE;
                         sh_rd_en_tape <= CMD_Q_RD_EN_TAPE;
-                        sh_wr_a_tape <= {cmd_q, 56'b0};
-                        sh_wr_b_tape <= {cmd_q, 56'b0};
                     end
                     TOGGLE_WRAP: begin // CMD_Q template
                         is_quad <= CMD_Q_QUAD;
                         sh_ce_n_tape <= CMD_Q_CE_N_TAPE;
                         sh_clken_tape <= CMD_Q_CLKEN_TAPE;
-                        sh_oe_tape <= CMD_Q_OE_TAPE;
                         sh_rd_en_tape <= CMD_Q_RD_EN_TAPE;
-                        sh_wr_a_tape <= {cmd_q, 56'b0};
-                        sh_wr_b_tape <= {cmd_q, 56'b0};
                     end
                     QPI_WRITE: begin // QPIW_QUAD template
                         is_quad <= QPIW_QUAD;
                         sh_ce_n_tape <= QPIW_CE_N_TAPE;
                         sh_clken_tape <= QPIW_CLKEN_TAPE;
-                        sh_oe_tape <= QPIW_OE_TAPE;
                         sh_rd_en_tape <= QPIW_RD_EN_TAPE;
-                        sh_wr_a_tape <= {cmd_q, addr_q, wdata_q[31:0]};
-                        sh_wr_b_tape <= {cmd_q, addr_q, wdata_q[63:32]};
                     end
                     QPI_READ: begin // QPIR_QUAD template
                         is_quad <= QPIR_QUAD;
                         sh_ce_n_tape <= QPIR_CE_N_TAPE;
                         sh_clken_tape <= QPIR_CLKEN_TAPE;
-                        sh_oe_tape <= QPIR_OE_TAPE;
                         sh_rd_en_tape <= QPIR_RD_EN_TAPE;
-                        sh_wr_a_tape <= {cmd_q, addr_q, 32'b0};
-                        sh_wr_b_tape <= {cmd_q, addr_q, 32'b0};
                     end
                     default: ; // do nothing on other commands
                 endcase

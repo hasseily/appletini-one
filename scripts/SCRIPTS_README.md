@@ -130,6 +130,11 @@ Run `python scripts\test_ssi263_start_timing.py` after SSI263, Votrax, or
 formant-start changes. It checks the same-edge backend start and VIA clear,
 the saved phoneme tuple, reset cancellation, and formant pipeline restart.
 
+Run `python scripts\test_ssi263_sc02_reference.py` after native SSI-263 ROM,
+register, request, clock, timing, or selector changes. It hash-checks the SC-02
+ROM and tests write-end capture, XCK/DIV2, frame and phoneme timing, continuous
+repeat, D7 versus A/R behavior, and the proved selector destinations.
+
 Run `python scripts\test_ssi263_filter_finalize.py` after SSI263 formant MAC or
 filter-pipeline changes. It checks every filter stage, exact accumulator and
 history timing, saturation limits, reset/restart cancellation, and sample output.

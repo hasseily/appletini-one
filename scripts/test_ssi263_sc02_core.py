@@ -26,6 +26,10 @@ def static_checks() -> None:
         "output logic        ar_drive_low",
         "output logic [11:0] pitch_inflection",
         "output logic [7:0]  transitioned_inflection_state",
+        "output logic        voice_clock_ce",
+        "output logic        voice_toggle",
+        "output logic        pitch_period_ce",
+        "output logic        noise_clock_ce",
         "output logic        phone_fricative",
         "output logic        phone_voiced",
         "output logic        fric1_sw",
@@ -37,7 +41,9 @@ def static_checks() -> None:
         "assign write_end = write_active_q && !write_active;",
         "assign rom_address = {duration_phoneme_q[5:0], selector_q};",
         "parameter_sweep_q <= 7'h7F;",
-        "pitch_ticks_left_q <= pitch_tick_count(",
+        "voice_clock_ticks_left_q <= voice_clock_tick_count(",
+        "assign closure = filter_phase_ce_q && !filter_phase_q;",
+        "assign write_commit = write_end && (pd_rst_n || !REVISION_AP);",
     )
     for text in required:
         if text not in source:

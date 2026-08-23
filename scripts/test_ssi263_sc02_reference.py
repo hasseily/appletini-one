@@ -21,6 +21,7 @@ from ssi263_sc02_reference import (
     pitch_period_ticks,
     rom_address,
     verify_rom,
+    voice_clock_period_ticks,
 )
 
 
@@ -52,6 +53,7 @@ class RomTests(unittest.TestCase):
 class FormulaTests(unittest.TestCase):
     def test_register_and_timing_formulas(self) -> None:
         self.assertEqual(inflection_word(0x50, 0x08), 0xA80)
+        self.assertEqual(voice_clock_period_ticks(0xA80), 0x1600)
         self.assertEqual(pitch_period_ticks(0xA80), 0x2C00)
         self.assertEqual(frame_ticks(0x0A), 4096 * 6)
         self.assertEqual(phoneme_ticks(0x0A, 3), 4096 * 6)
@@ -166,6 +168,67 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(chip.filter_frequency, 0xE9)
         self.assertTrue(chip.powered_down)
         self.assertFalse(chip.ar_drive_low)
+
+    def test_pd_rst_owns_a_colliding_or_held_ap_write(self) -> None:
+        chip = SSI263Reference(revision_ap=True, div2=False)
+        chip.inflection_high = 0x25
+        chip.step_effective_tick(
+            write_end=(1, 0xAA), assert_pd_rst=True
+        )
+        self.assertEqual(chip.inflection_high, 0x25)
+        self.assertTrue(chip.powered_down)
+
+        chip.write(1, 0x55)
+        self.assertEqual(chip.inflection_high, 0x25)
+
+        faulty_p = SSI263Reference(revision_ap=False, div2=False)
+        faulty_p.inflection_high = 0x25
+        faulty_p.control_articulation_amplitude = 0x00
+        faulty_p.step_effective_tick(
+            write_end=(1, 0xAA), assert_pd_rst=True
+        )
+        self.assertEqual(faulty_p.inflection_high, 0xAA)
+        self.assertFalse(faulty_p.powered_down)
+
+    def test_voice_and_glottal_cadence(self) -> None:
+        chip = SSI263Reference(div2=False)
+        chip.write(0, 0x80)
+        chip.write(1, 0xFF)
+        chip.write(2, 0x0F)
+        chip.write(3, 0x00)
+        chip.voice_ticks_to_edge = voice_clock_period_ticks(
+            chip.pitch_inflection
+        )
+        chip.advance_effective_ticks(20)
+        self.assertEqual(chip.voice_clock_edges, 5)
+        self.assertEqual(chip.pitch_events, 3)
+
+        first = chip.last_pitch_event_tick
+        chip.advance_effective_ticks(8)
+        self.assertEqual(chip.last_pitch_event_tick - first, 8)
+
+    def test_held_pw3_produces_sustained_u41c_edges(self) -> None:
+        chip = SSI263Reference(div2=False)
+        chip.write(0, 0x80)
+        chip.write(1, 0xFF)
+        chip.write(2, 0x0F)
+        chip.write(3, 0x00)
+        chip.pw_3 = True
+        chip.parameter_values["fric_amp"] = 1
+        chip.voice_ticks_to_edge = voice_clock_period_ticks(
+            chip.pitch_inflection
+        )
+        chip.advance_effective_ticks(24)
+        self.assertTrue(chip.pw_3)
+        self.assertGreaterEqual(chip.noise_clock_edges, 2)
+
+    def test_closure_is_u49_terminal_gated_by_filter_phase(self) -> None:
+        chip = SSI263Reference(div2=False)
+        chip.write(4, 0xFF)
+        chip.advance_effective_ticks(6)
+        self.assertEqual(chip.filter_phase_edges, 6)
+        self.assertEqual(chip.closure_events, 3)
+        self.assertEqual(chip.last_closure_tick, 6)
 
     def test_filter_write_preserves_current_divider_count(self) -> None:
         chip = SSI263Reference()

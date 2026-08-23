@@ -94,6 +94,12 @@ def pitch_period_ticks(inflection: int) -> int:
     return 8 * (4096 - (inflection & 0xFFF))
 
 
+def voice_clock_period_ticks(inflection: int) -> int:
+    """Return one raw U59 VOICECLK period in effective XCK ticks."""
+
+    return 4 * (4096 - (inflection & 0xFFF))
+
+
 def filter_period_ticks(filter_frequency: int) -> int:
     """Return one full Phi0/Phi1 filter period in effective XCK ticks."""
 
@@ -178,6 +184,18 @@ class SSI263Reference:
     filter_ticks_to_toggle: int = 1
     filter_phase: int = 0
     filter_phase_edges: int = 0
+    closure_events: int = 0
+    last_closure_tick: int | None = None
+
+    voice_ticks_to_edge: int = 16384
+    voice_clock_edges: int = 0
+    pitch_events: int = 0
+    last_pitch_event_tick: int | None = None
+    # Hard-reset phase only. The reconstructed U85C reset path combines
+    # U104C.10 with U68 /CO but has unresolved, self-locking polarity.
+    u62_q: bool = False
+    u41c_level: bool = False
+    noise_clock_edges: int = 0
 
     selector: int = 0
     selector_subphase: int = 0
@@ -221,6 +239,9 @@ class SSI263Reference:
         if self.xck_edges_per_bus_cycle <= 0:
             raise ValueError("XCK edges per bus cycle must be positive")
         self.filter_ticks_to_toggle = 256 - self.filter_frequency
+        self.voice_ticks_to_edge = voice_clock_period_ticks(
+            self.pitch_inflection
+        )
 
     @property
     def powered_down(self) -> bool:
@@ -296,6 +317,9 @@ class SSI263Reference:
         self.d7_pending = False
 
     def _latch_write(self, register: int, data: int) -> None:
+        if self.revision_ap and self.pd_rst_asserted:
+            return
+
         if register <= 2 or (register == 3 and (data & 0x80)):
             self._acknowledge()
 
@@ -379,7 +403,9 @@ class SSI263Reference:
     ) -> None:
         self.effective_xck_ticks += 1
         self._advance_filter_clock(1)
+        self._advance_voice_clock()
         self._advance_selector_tick(suppress_slot_write=suppress_slot_write)
+        self._update_u41c_edge()
 
         if not self.phone_active:
             return
@@ -405,13 +431,39 @@ class SSI263Reference:
         the planned RTL event table.
         """
 
-        self._advance_one_effective_tick(
-            suppress_slot_write=write_end is not None
+        write_commit = write_end is not None and not (
+            self.revision_ap and (assert_pd_rst or self.pd_rst_asserted)
         )
-        if write_end is not None:
+        self._advance_one_effective_tick(suppress_slot_write=write_commit)
+        if write_commit and write_end is not None:
             self._latch_write(write_end[0] & 7, write_end[1] & 0xFF)
         if assert_pd_rst:
             self.assert_pd_rst()
+
+    def _advance_voice_clock(self) -> None:
+        self.voice_ticks_to_edge -= 1
+        if self.voice_ticks_to_edge:
+            return
+        self.voice_clock_edges += 1
+        self.u62_q = not self.u62_q
+        if self.u62_q:
+            self.pitch_events += 1
+            self.last_pitch_event_tick = self.effective_xck_ticks
+        self.voice_ticks_to_edge = voice_clock_period_ticks(
+            self.pitch_inflection
+        )
+
+    def _update_u41c_edge(self) -> None:
+        # U104C.8 is U62 /Q. U72A inverts PW3 & /Q; U42D is the
+        # NOR of SEL1 and FRIC_AMP_ZERO; U41C clocks U75 and U73.
+        level = (
+            not (self.pw_3 and not self.u62_q)
+            and not bool(self.selector & 0x02)
+            and self.parameter_values["fric_amp"] != 0
+        )
+        if level and not self.u41c_level:
+            self.noise_clock_edges += 1
+        self.u41c_level = level
 
     def _advance_filter_clock(self, ticks: int) -> None:
         remaining = ticks
@@ -419,6 +471,9 @@ class SSI263Reference:
             remaining -= self.filter_ticks_to_toggle
             self.filter_phase ^= 1
             self.filter_phase_edges += 1
+            if self.filter_phase == 0:
+                self.closure_events += 1
+                self.last_closure_tick = self.effective_xck_ticks
             self.filter_ticks_to_toggle = 256 - self.filter_frequency
         self.filter_ticks_to_toggle -= remaining
 

@@ -42,7 +42,10 @@ module ssi263_sc02_core #(
 
     output logic        effective_xck_ce,
     output logic        response_boundary_ce,
+    output logic        voice_clock_ce,
+    output logic        voice_toggle,
     output logic        pitch_period_ce,
+    output logic        noise_clock_ce,
     output logic        filter_phase_ce,
     output logic        filter_phase,
 
@@ -118,8 +121,13 @@ module ssi263_sc02_core #(
 
     logic [16:0] frame_ticks_left_q;
     logic [2:0]  frames_left_q;
-    logic [15:0] pitch_ticks_left_q;
+    logic [15:0] voice_clock_ticks_left_q;
     logic [8:0]  filter_ticks_left_q;
+    // Hard reset gives U62 a known phase. The reconstruction's U85C reset
+    // combines U104C.10 with U68 /CO, but that drawn path self-locks when
+    // PW3=1 and its carry polarity is unresolved. Do not invent a CTL/PD gate.
+    logic        u62_q;
+    logic        u41c_level_q;
 
     logic [4:0] rate_edges_left_q;
     logic       rate_clock_q;
@@ -152,7 +160,9 @@ module ssi263_sc02_core #(
     logic fric2_sw_q;
 
     logic       response_boundary_ce_q;
+    logic       voice_clock_ce_q;
     logic       pitch_period_ce_q;
+    logic       noise_clock_ce_q;
     logic       filter_phase_ce_q;
     logic       filter_phase_q;
     logic       selector_step_ce_q;
@@ -167,9 +177,9 @@ module ssi263_sc02_core #(
     logic [3:0] selector_target;
     logic [7:0] transitioned_inflection_target;
     logic [11:0] transitioned_inflection_word;
-    logic        wake_transitioned_pitch;
-    logic [11:0] wake_pitch_inflection;
     logic       write_end;
+    logic       write_commit;
+    logic       u41c_level;
 
     initial begin
         $readmemh(ROM_FILE, rom_q);
@@ -196,13 +206,13 @@ module ssi263_sc02_core #(
         end
     endfunction
 
-    function automatic logic [15:0] pitch_tick_count(
+    function automatic logic [15:0] voice_clock_tick_count(
         input logic [11:0] value
     );
         logic [12:0] delta;
         begin
             delta = 13'd4096 - {1'b0, value};
-            pitch_tick_count = {delta, 3'b0};
+            voice_clock_tick_count = {1'b0, delta, 2'b0};
         end
     endfunction
 
@@ -279,13 +289,6 @@ module ssi263_sc02_core #(
     assign transitioned_inflection_state = transitioned_inflection_q;
     assign pitch_inflection = transitioned_pitch_q ?
                               transitioned_inflection_word : inflection;
-    assign wake_transitioned_pitch =
-        (duration_phoneme_q[7:6] == MODE_PHONEME_TRANSITIONED) ? 1'b1 :
-        ((duration_phoneme_q[7:6] == MODE_PHONEME_IMMEDIATE) ||
-         (duration_phoneme_q[7:6] == MODE_FRAME_IMMEDIATE)) ? 1'b0 :
-        transitioned_pitch_q;
-    assign wake_pitch_inflection = wake_transitioned_pitch ?
-                                   transitioned_inflection_word : inflection;
     assign articulation = control_articulation_amplitude_q[6:4];
     assign amplitude = control_articulation_amplitude_q[3:0];
     assign filter_frequency = filter_frequency_q;
@@ -303,7 +306,10 @@ module ssi263_sc02_core #(
                               ((div2 == div2_q) || !rstn) &&
                               (!div2 || div2_phase_q);
     assign response_boundary_ce = response_boundary_ce_q;
+    assign voice_clock_ce = voice_clock_ce_q;
+    assign voice_toggle = u62_q;
     assign pitch_period_ce = pitch_period_ce_q;
+    assign noise_clock_ce = noise_clock_ce_q;
     assign filter_phase_ce = filter_phase_ce_q;
     assign filter_phase = filter_phase_q;
 
@@ -341,9 +347,10 @@ module ssi263_sc02_core #(
                         (fric_amp_code_q != 4'd0) && !powered_down;
     assign voiced = phone_voiced_q &&
                     (voice_amp_code_q != 4'd0) && !powered_down;
-    // Sheet 3 derives CLOSURE from the pitch terminal and its phase gate.
-    // A one-clk pulse is the useful synchronous form of that signal.
-    assign closure = pitch_period_ce_q && phone_active_q && !powered_down;
+    // Sheet 3 U52C is U49 TC AND U43B Q. The model toggles filter_phase_q at
+    // the end of each TC interval, so !filter_phase_q names the Q-high
+    // interval that just ended. This is a timing pulse, not a phone closure.
+    assign closure = filter_phase_ce_q && !filter_phase_q;
 
     assign rate_clock_ce = rate_clock_ce_q;
     assign rate_clock_div2_ce = rate_clock_div2_ce_q;
@@ -353,10 +360,21 @@ module ssi263_sc02_core #(
     assign parameter_write_selector = parameter_write_selector_q;
 
     assign write_end = write_active_q && !write_active;
+    // AP PD/RST owns the whole edge. The faulty P revision ignores PD/RST,
+    // including when it collides with the falling edge of a host write.
+    assign write_commit = write_end && (pd_rst_n || !REVISION_AP);
+    // Sheet 6: U104C.8 is U62 /Q (also tied to U62 D), not U41C
+    // feedback. U72A inverts U104C, U42D is NOR(SEL1, FRIC_AMP_ZERO),
+    // and U41C ANDs those two terms before clocking U75 and U73.
+    assign u41c_level = !(pw_3_q && !u62_q) &&
+                        !selector_q[1] &&
+                        (fric_amp_code_q != 4'd0);
 
     always_ff @(posedge clk) begin
         response_boundary_ce_q <= 1'b0;
+        voice_clock_ce_q <= 1'b0;
         pitch_period_ce_q <= 1'b0;
+        noise_clock_ce_q <= 1'b0;
         filter_phase_ce_q <= 1'b0;
         selector_step_ce_q <= 1'b0;
         rate_clock_ce_q <= 1'b0;
@@ -388,8 +406,10 @@ module ssi263_sc02_core #(
 
             frame_ticks_left_q <= frame_tick_count(4'h0);
             frames_left_q <= 3'd1;
-            pitch_ticks_left_q <= pitch_tick_count(12'h000);
+            voice_clock_ticks_left_q <= voice_clock_tick_count(12'h000);
             filter_ticks_left_q <= filter_half_tick_count(8'hFF);
+            u62_q <= 1'b0;
+            u41c_level_q <= 1'b0;
 
             rate_edges_left_q <= rate_edge_count(4'h0);
             rate_clock_q <= 1'b0;
@@ -429,6 +449,11 @@ module ssi263_sc02_core #(
             pd_rst_n_q <= pd_rst_n;
             div2_q <= div2;
 
+            // Preserve the positive edges of the gated U41C waveform as
+            // one-clk enables. Its sources change only in this clock domain.
+            noise_clock_ce_q <= u41c_level && !u41c_level_q;
+            u41c_level_q <= u41c_level;
+
             if (write_active) begin
                 write_reg_hold_q <= write_reg;
                 write_data_hold_q <= write_data;
@@ -445,6 +470,21 @@ module ssi263_sc02_core #(
             end
 
             if (effective_xck_ce) begin
+                // U58/U59 have no phone-active or CTL/PD gate. Their raw
+                // VOICECLK keeps running; U62 divides every rising edge.
+                if (voice_clock_ticks_left_q == 16'd1) begin
+                    voice_clock_ticks_left_q <= voice_clock_tick_count(
+                        pitch_inflection
+                    );
+                    voice_clock_ce_q <= 1'b1;
+                    u62_q <= ~u62_q;
+                    if (!u62_q)
+                        pitch_period_ce_q <= 1'b1;
+                end else begin
+                    voice_clock_ticks_left_q <=
+                        voice_clock_ticks_left_q - 16'd1;
+                end
+
                 // Filter divider state is not reset by an FF register write.
                 // U48/U49 use the new parallel value at the next reload.
                 if (filter_ticks_left_q == 9'd1) begin
@@ -458,15 +498,6 @@ module ssi263_sc02_core #(
                 end
 
                 if (phone_active_q && !powered_down) begin
-                    if (pitch_ticks_left_q == 16'd1) begin
-                        pitch_ticks_left_q <= pitch_tick_count(
-                            pitch_inflection
-                        );
-                        pitch_period_ce_q <= 1'b1;
-                    end else begin
-                        pitch_ticks_left_q <= pitch_ticks_left_q - 16'd1;
-                    end
-
                     if (frame_ticks_left_q == 17'd1) begin
                         frame_ticks_left_q <= frame_tick_count(
                             rate_inflection_q[7:4]
@@ -503,7 +534,7 @@ module ssi263_sc02_core #(
                             parameter_sweep_q[selector_q] <= 1'b0;
                         end
 
-                        if (!write_end) begin
+                        if (!write_commit) begin
                             // Sheets 5 and 7 hold the low-ROM source controls
                             // when their three input slots pass.
                             case (selector_q)
@@ -678,7 +709,7 @@ module ssi263_sc02_core #(
 
             // Writes come after background work so an acknowledgment wins a
             // collision with a response boundary on the same fabric edge.
-            if (write_end) begin
+            if (write_commit) begin
                 if (write_reg_hold_q <= 3'd2 ||
                     (write_reg_hold_q == 3'd3 && write_data_hold_q[7])) begin
                     pending_q <= 1'b0;
@@ -695,9 +726,6 @@ module ssi263_sc02_core #(
                             frames_left_q <= boundary_frame_count(
                                 response_phoneme_q,
                                 write_data_hold_q[7:6]
-                            );
-                            pitch_ticks_left_q <= pitch_tick_count(
-                                pitch_inflection
                             );
                         end
                     end
@@ -723,9 +751,6 @@ module ssi263_sc02_core #(
                             phone_active_q <= 1'b1;
                             frame_ticks_left_q <= frame_tick_count(
                                 rate_inflection_q[7:4]
-                            );
-                            pitch_ticks_left_q <= pitch_tick_count(
-                                wake_pitch_inflection
                             );
 
                             case (duration_phoneme_q[7:6])

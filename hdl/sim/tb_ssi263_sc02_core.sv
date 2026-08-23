@@ -29,7 +29,10 @@ module tb_ssi263_sc02_core;
     logic [7:0] filter_frequency;
     logic effective_xck_ce;
     logic response_boundary_ce;
+    logic voice_clock_ce;
+    logic voice_toggle;
     logic pitch_period_ce;
+    logic noise_clock_ce;
     logic filter_phase_ce;
     logic filter_phase;
     logic [2:0] selector;
@@ -68,6 +71,7 @@ module tb_ssi263_sc02_core;
     logic p_ar_drive_low;
     logic p_powered_down;
     logic p_phone_active;
+    logic [11:0] p_inflection;
 
     integer failures = 0;
     integer effective_ticks_seen = 0;
@@ -81,6 +85,13 @@ module tb_ssi263_sc02_core;
     integer state_before;
     integer steps_before;
     integer filter_before;
+    integer voice_edges_seen = 0;
+    integer pitch_events_seen = 0;
+    integer noise_edges_seen = 0;
+    integer closure_events_seen = 0;
+    integer voice_before;
+    integer pitch_before;
+    integer noise_before;
 
     always #5 clk = ~clk;
 
@@ -114,7 +125,10 @@ module tb_ssi263_sc02_core;
         .filter_frequency(filter_frequency),
         .effective_xck_ce(effective_xck_ce),
         .response_boundary_ce(response_boundary_ce),
+        .voice_clock_ce(voice_clock_ce),
+        .voice_toggle(voice_toggle),
         .pitch_period_ce(pitch_period_ce),
+        .noise_clock_ce(noise_clock_ce),
         .filter_phase_ce(filter_phase_ce),
         .filter_phase(filter_phase),
         .selector(selector),
@@ -172,7 +186,7 @@ module tb_ssi263_sc02_core;
         .phoneme(),
         .duration(),
         .rate(),
-        .inflection(),
+        .inflection(p_inflection),
         .pitch_inflection(),
         .transitioned_inflection_state(),
         .articulation(),
@@ -180,7 +194,10 @@ module tb_ssi263_sc02_core;
         .filter_frequency(),
         .effective_xck_ce(),
         .response_boundary_ce(),
+        .voice_clock_ce(),
+        .voice_toggle(),
         .pitch_period_ce(),
+        .noise_clock_ce(),
         .filter_phase_ce(),
         .filter_phase(),
         .selector(),
@@ -225,6 +242,18 @@ module tb_ssi263_sc02_core;
         end
         if (filter_phase_ce) begin
             filter_edges_seen <= filter_edges_seen + 1;
+        end
+        if (voice_clock_ce) begin
+            voice_edges_seen <= voice_edges_seen + 1;
+        end
+        if (pitch_period_ce) begin
+            pitch_events_seen <= pitch_events_seen + 1;
+        end
+        if (noise_clock_ce) begin
+            noise_edges_seen <= noise_edges_seen + 1;
+        end
+        if (closure) begin
+            closure_events_seen <= closure_events_seen + 1;
         end
         if (inflection_step_ce) begin
             inflection_steps_seen <= inflection_steps_seen + 1;
@@ -474,8 +503,9 @@ module tb_ssi263_sc02_core;
                   "transition state did not drive pitch");
         end
 
-        // Immediate mode bypasses the transitioned I10:I3 state. A maximum
-        // immediate inflection also proves the eight-tick CLOSURE period.
+        // Immediate mode bypasses the transitioned I10:I3 state. The raw U59
+        // VOICECLK is /4 and U62-Q rising is the final /8 pitch event. U58,
+        // U59, and U62 keep running while the phone is down.
         reset_chips();
         write_register(3'd1, 8'hFF);
         write_register(3'd2, 8'h0F);
@@ -483,8 +513,38 @@ module tb_ssi263_sc02_core;
         write_register(3'd3, 8'h00);
         check(!transitioned_pitch && pitch_inflection == inflection,
                "immediate pitch bypass");
+        raw_xck_edges(16384);
+        voice_before = voice_edges_seen;
+        pitch_before = pitch_events_seen;
+        raw_xck_edges(16);
+        check(voice_edges_seen - voice_before == 4,
+               "raw VOICECLK cadence");
+        check(pitch_events_seen - pitch_before == 2,
+               "U62 final pitch cadence");
+
+        // U52C is U49 terminal count gated by U43B Q. With FF=FF, its
+        // one-clock synchronous form occurs every two effective ticks.
+        reset_chips();
+        write_register(3'd4, 8'hFF);
         wait_closure_pulse(first_wait);
-        check(first_wait == 8, "CLOSURE pitch terminal period");
+        wait_closure_pulse(second_wait);
+        check(first_wait == 2 && second_wait == 2,
+               "CLOSURE U49/U43 cadence");
+
+        // PW3 is held phone state. U41C still produces recurring positive
+        // edges from the SEL1/U62 qualification; it is not a PW3 edge clock.
+        reset_chips();
+        write_register(3'd1, 8'hFF);
+        write_register(3'd2, 8'hFF);
+        write_register(3'd0, 8'hB0);
+        write_register(3'd3, 8'h70);
+        raw_xck_edges(17000);
+        check(pw_3 && fric_amp_code != 4'd0,
+               "noise test controls did not settle");
+        noise_before = noise_edges_seen;
+        raw_xck_edges(128);
+        check(noise_edges_seen - noise_before > 2,
+               "held PW3 did not produce sustained U41C edges");
 
         // Selector 3 feeds both F3 and F4. Selector 7 is absent from the
         // seven-bit sweep mask, so a complete sweep cannot write it.
@@ -561,6 +621,32 @@ module tb_ssi263_sc02_core;
         pd_rst_n = 1'b1;
         repeat (2) @(negedge clk);
         check(powered_down, "AP must remain down after PD/RST release");
+
+        // AP PD/RST owns the complete edge, so no retained register may
+        // change on a colliding write end or while reset stays asserted. The
+        // faulty P revision still accepts both writes.
+        reset_chips();
+        write_register(3'd3, 8'h00);
+        write_register(3'd1, 8'h25);
+        @(negedge clk);
+        write_reg = 3'd1;
+        write_data = 8'hAA;
+        write_active = 1'b1;
+        repeat (2) @(negedge clk);
+        pd_rst_n = 1'b0;
+        write_active = 1'b0;
+        @(negedge clk);
+        check(inflection[10:3] == 8'h25 && powered_down,
+               "AP reset/write collision changed a retained register");
+        check(p_inflection[10:3] == 8'hAA && !p_powered_down,
+               "P reset bug did not accept colliding write");
+        write_register(3'd1, 8'h55);
+        check(inflection[10:3] == 8'h25,
+               "AP accepted a write while PD/RST was held");
+        check(p_inflection[10:3] == 8'h55,
+               "P rejected a write while PD/RST was held");
+        pd_rst_n = 1'b1;
+        repeat (2) @(negedge clk);
 
         if (failures == 0) begin
             $display("SSI263 SC02 CORE PASS");

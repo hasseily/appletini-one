@@ -116,9 +116,9 @@ module ssi263_sc02_audio #(
     logic signed [23:0] output_hold_q;
     logic [7:0] filter_frequency_q;
 
-    // Two registered RTL product lanes form a 53-cycle scheduler. Vivado
-    // 2025.2 maps the registered sum/difference uses to four DSP48E1 cells;
-    // the key bound is one DSP operation between fabric registers.
+    // Two registered RTL product lanes form a 53-cycle scheduler.  A shared
+    // registered rotate accumulator cuts the product/add/saturate chain while
+    // preserving the seven-clock section schedule and its exact arithmetic.
     // The default XCK/DIV2 profile leaves 149 fabric clocks between the
     // fastest filter phases, with margin for two independent instances.
     logic engine_busy_q;
@@ -149,8 +149,8 @@ module ssi263_sc02_audio #(
     logic signed [23:0] engine_next_i;
     logic signed [47:0] product_a_q_ext;
     logic signed [47:0] product_b_q_ext;
-    logic signed [47:0] rotate_i_accumulator;
-    logic signed [47:0] rotate_q_accumulator;
+    logic signed [47:0] rotate_accumulator;
+    logic signed [47:0] rotate_accumulator_q;
 
     function automatic logic signed [23:0] sat24_from48(
         input logic signed [47:0] value
@@ -765,7 +765,10 @@ module ssi263_sc02_audio #(
             end
             4'd3: begin
                 engine_operand_a = rotated_i_q;
-                engine_operand_b = rotated_q_q;
+                // The Q value reaches the radius lane on the same edge that
+                // records its debug/state copy.  Both uses see the same
+                // registered accumulator and the same saturation function.
+                engine_operand_b = sat24_from48(rotate_accumulator_q);
                 engine_coefficient_a = $signed({2'b00, engine_radius});
                 engine_coefficient_b = $signed({2'b00, engine_radius});
             end
@@ -789,8 +792,10 @@ module ssi263_sc02_audio #(
         engine_product_b = engine_operand_b * engine_coefficient_b;
         product_a_q_ext = {{7{product_a_q[40]}}, product_a_q};
         product_b_q_ext = {{7{product_b_q[40]}}, product_b_q};
-        rotate_i_accumulator = product_a_q_ext - product_b_q_ext;
-        rotate_q_accumulator = product_a_q_ext + product_b_q_ext;
+        if (engine_stage_q == 4'd1)
+            rotate_accumulator = product_a_q_ext - product_b_q_ext;
+        else
+            rotate_accumulator = product_a_q_ext + product_b_q_ext;
         engine_next_i = sat24_add(damped_i_q, drive_i_q);
     end
 
@@ -838,6 +843,7 @@ module ssi263_sc02_audio #(
             engine_stage_q <= 4'd0;
             product_a_q <= 41'sd0;
             product_b_q <= 41'sd0;
+            rotate_accumulator_q <= 48'sd0;
             rotated_i_q <= 24'sd0;
             rotated_q_q <= 24'sd0;
             damped_i_q <= 24'sd0;
@@ -925,18 +931,16 @@ module ssi263_sc02_audio #(
                     4'd1: begin
                         product_a_q <= engine_product_a;
                         product_b_q <= engine_product_b;
-                        rotated_i_q <= sat24_from48(
-                            rotate_i_accumulator >>> 14
-                        );
+                        rotate_accumulator_q <= rotate_accumulator >>> 14;
                         engine_stage_q <= 4'd2;
                     end
                     4'd2: begin
-                        rotated_q_q <= sat24_from48(
-                            rotate_q_accumulator >>> 14
-                        );
+                        rotated_i_q <= sat24_from48(rotate_accumulator_q);
+                        rotate_accumulator_q <= rotate_accumulator >>> 14;
                         engine_stage_q <= 4'd3;
                     end
                     4'd3: begin
+                        rotated_q_q <= sat24_from48(rotate_accumulator_q);
                         product_a_q <= engine_product_a;
                         product_b_q <= engine_product_b;
                         engine_stage_q <= 4'd4;

@@ -213,9 +213,10 @@ The current filter uses seven stable fixed-point resonators. Source capacitor
 totals set each code ordering, F2 resonance changes decay, and FILT changes the
 phase rate for every section. A 53-clock scheduler performs the seven section
 updates, a registered output sum, and output gain. Vivado maps the two
-registered RTL product lanes to four DSP48E1 cells per chip. The default
-fastest phase gap is 149 fabric clocks; the fastest intended comparison profile
-still leaves 133 clocks. An overrun latch is checked in simulation.
+registered RTL product lanes and a shared registered rotate accumulator to
+three DSP48E1 cells per chip. The default fastest phase gap is 149 fabric
+clocks; the fastest intended comparison profile still leaves 133 clocks. An
+overrun latch is checked in simulation.
 
 The first scheduler draft passed XSim but failed a 7.500 ns out-of-context
 synthesis check with `WNS=-5.105 ns`. Registering every multiply result before
@@ -225,10 +226,17 @@ the full placed-and-routed design remains the release gate.
 
 The final saturation test checks whether bits 46:23 extend bit 47 instead of
 using a wide signed magnitude comparison. This gives the same 24-bit clamp at
-both limits without a second carry chain after the rotation DSP. A fresh check
-of the exact RTL still gives `WNS=+0.602 ns`; it uses 790 packed LUTs, 716
-flip-flops, three shift-register LUTs, four DSP48E1 cells, and no block RAM per
-chip.
+both limits without a second carry chain after the rotation DSP. A first clean
+full route of that version reached `WNS=+0.170 ns`; the release gate rejected
+it because the product-DSP to rotate-DSP and saturation path remained below
+the required `+0.300 ns` margin. The final scheduler registers the shared
+48-bit rotate accumulator between those operations, feeds its saturated Q
+value to the radius lane on the next stage, and keeps the same 53-clock result
+schedule. Focused XSim still produces the same checked stream and exact engine
+latency. A fresh 7.500 ns out-of-context synthesis of this RTL gives
+`WNS=+0.514 ns`; it uses 810 packed LUTs, 692 flip-flops, three shift-register
+LUTs, three DSP48E1 cells, and no block RAM per chip. The full placed-and-routed
+design remains the release gate.
 
 This is a large gain over the SC-01-based sound path, but it remains the least
 proved part. Pole angles, radii, section drive, output scale, and the mapping

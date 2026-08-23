@@ -2,9 +2,9 @@
 """Cycle reference for the native SSI-263A / SC-02 control interface.
 
 This model contains only behavior supported by the manufacturer documents,
-the supplied SC-02 reconstruction, or real-card mb-audit results.  The ROM
-lower-nibble pulse decoder and the analog state equations are added in later
-checkpoints; callers supply an explicit transition pulse in this version.
+the supplied SC-02 reconstruction, or real-card mb-audit results.  It models
+the reconstructed rate, articulation, inflection, ROM scan, and held control
+state.  It does not model the analog filter and source equations.
 """
 
 from __future__ import annotations
@@ -108,9 +108,37 @@ def phoneme_ticks(rate: int, duration: int) -> int:
     return frame_ticks(rate) * (4 - (duration & 0x03))
 
 
+def rate_clock_ticks(rate: int) -> int:
+    """Return the effective ticks between RATECLK rising edges."""
+
+    return 128 * (16 - (rate & 0x0F))
+
+
+def articulation_step_ticks(rate: int, articulation: int) -> int:
+    """Return the steady-state ticks between U94 terminal pulses."""
+
+    return 2 * rate_clock_ticks(rate) * (8 - (articulation & 0x07))
+
+
+def inflection_step_ticks(rate: int, slope: int) -> int:
+    """Return the steady-state ticks between U66 terminal pulses."""
+
+    return rate_clock_ticks(rate) * (8 - (slope & 0x07))
+
+
 def move_one_toward(value: int, target: int) -> int:
     value &= 0x0F
     target &= 0x0F
+    if value < target:
+        return value + 1
+    if value > target:
+        return value - 1
+    return value
+
+
+def move_one_toward_byte(value: int, target: int) -> int:
+    value &= 0xFF
+    target &= 0xFF
     if value < target:
         return value + 1
     if value > target:
@@ -153,10 +181,36 @@ class SSI263Reference:
 
     selector: int = 0
     selector_subphase: int = 0
-    selector_pulse_seen: bool = False
+    selector_fast_phase: int = 0
+    selector_steps: int = 0
     parameter_values: dict[str, int] = field(
         default_factory=lambda: {name: 0 for name in PARAMETER_NAMES}
     )
+    parameter_sweep_mask: int = 0
+    parameter_write_log: list[tuple[int, int]] = field(default_factory=list)
+
+    rate_edges_left: int = 16
+    rate_clock: int = 0
+    rate_clock_div2: int = 0
+    articulation_edges_left: int = 8
+    inflection_edges_left: int = 8
+    rate_clock_rises: int = 0
+    rate_clock_div2_rises: int = 0
+    articulation_steps: int = 0
+    inflection_steps: int = 0
+    last_articulation_tick: int | None = None
+    last_inflection_tick: int | None = None
+
+    transitioned_inflection: int = 0
+    phone_fricative: bool = False
+    phone_voiced: bool = False
+    pw_0: bool = False
+    pw_1: bool = False
+    pw_2: bool = False
+    pw_3: bool = False
+    pw_5: bool = True
+    fric1_sw: bool = False
+    fric2_sw: bool = True
 
     _write_active: bool = False
     _write_register: int = 0
@@ -170,7 +224,7 @@ class SSI263Reference:
 
     @property
     def powered_down(self) -> bool:
-        return self.pd_rst_asserted or bool(
+        return (self.revision_ap and self.pd_rst_asserted) or bool(
             self.control_articulation_amplitude & 0x80
         )
 
@@ -193,6 +247,20 @@ class SSI263Reference:
     @property
     def inflection(self) -> int:
         return inflection_word(self.inflection_high, self.rate_inflection)
+
+    @property
+    def transitioned_inflection_target(self) -> int:
+        return self.inflection_high & 0xF8
+
+    @property
+    def pitch_inflection(self) -> int:
+        if self.response_mode != MODE_PHONEME_TRANSITIONED:
+            return self.inflection
+        return (
+            ((self.rate_inflection & 0x08) << 8)
+            | ((self.transitioned_inflection & 0xFF) << 3)
+            | (self.rate_inflection & 0x07)
+        )
 
     @property
     def articulation(self) -> int:
@@ -262,10 +330,11 @@ class SSI263Reference:
         """Assert active-low PD/RST while retaining non-control registers."""
 
         self.pd_rst_asserted = True
-        self.control_articulation_amplitude |= 0x80
-        self.d7_pending = False
-        self.ar_enabled = False
-        self.phone_active = False
+        if self.revision_ap:
+            self.control_articulation_amplitude |= 0x80
+            self.d7_pending = False
+            self.ar_enabled = False
+            self.phone_active = False
 
     def release_pd_rst(self) -> None:
         self.pd_rst_asserted = False
@@ -300,17 +369,24 @@ class SSI263Reference:
     def advance_effective_ticks(self, ticks: int) -> None:
         if ticks < 0:
             raise ValueError("tick count must not be negative")
-        self.effective_xck_ticks += ticks
-        self._advance_filter_clock(ticks)
+        for _ in range(ticks):
+            self._advance_one_effective_tick()
 
-        remaining = ticks
-        while self.phone_active and remaining:
-            if self.ticks_to_boundary == 0:
-                self.ticks_to_boundary = self._boundary_period()
-            if remaining < self.ticks_to_boundary:
-                self.ticks_to_boundary -= remaining
-                break
-            remaining -= self.ticks_to_boundary
+    def _advance_one_effective_tick(
+        self,
+        *,
+        suppress_slot_write: bool = False,
+    ) -> None:
+        self.effective_xck_ticks += 1
+        self._advance_filter_clock(1)
+        self._advance_selector_tick(suppress_slot_write=suppress_slot_write)
+
+        if not self.phone_active:
+            return
+        if self.ticks_to_boundary == 0:
+            self.ticks_to_boundary = self._boundary_period()
+        self.ticks_to_boundary -= 1
+        if self.ticks_to_boundary == 0:
             self.completed_boundaries += 1
             self.d7_pending = True
             self.ticks_to_boundary = self._boundary_period()
@@ -329,7 +405,9 @@ class SSI263Reference:
         the planned RTL event table.
         """
 
-        self.advance_effective_ticks(1)
+        self._advance_one_effective_tick(
+            suppress_slot_write=write_end is not None
+        )
         if write_end is not None:
             self._latch_write(write_end[0] & 7, write_end[1] & 0xFF)
         if assert_pd_rst:
@@ -358,7 +436,7 @@ class SSI263Reference:
         return self.rom_byte(selector) & 0x0F
 
     def _apply_selected_transition(self) -> None:
-        """Apply the provisional one-count target move for the active slot."""
+        """Apply one sheet-4/6 RAM move for the selected sweep slot."""
 
         selector = self.selector & 7
         target = self.target_for_selector(selector)
@@ -379,34 +457,113 @@ class SSI263Reference:
             destinations = ("fric_amp",)
         else:
             destinations = ()
+        changed = False
         for name in destinations:
-            self.parameter_values[name] = move_one_toward(
-                self.parameter_values[name], target
+            value = self.parameter_values[name]
+            next_value = move_one_toward(value, target)
+            self.parameter_values[name] = next_value
+            changed |= next_value != value
+        if changed:
+            self.parameter_write_log.append(
+                (self.effective_xck_ticks, selector)
             )
 
-    def advance_selector_slow_edge(self, pulse: bool = False) -> None:
-        """Advance one SLOWCLK edge without guessing the pulse decoder.
+    def advance_selector_slow_edge(
+        self,
+        *,
+        suppress_slot_write: bool = False,
+    ) -> None:
+        """Advance one of the four SLOWCLK edges in a selector slot."""
 
-        Sheet 3 holds each selector value for four SLOWCLK edges, or sixteen
-        FASTCLK ticks.  ``pulse`` records that the lower-nibble decoder selected
-        a write during the slot.  The exact pulse subphase remains subject to
-        the sheets 4-6 gate transcription.
-        """
-
-        self.selector_pulse_seen |= pulse
         self.selector_subphase += 1
         if self.selector_subphase == SELECTOR_SLOW_EDGES:
-            if self.selector_pulse_seen:
-                self._apply_selected_transition()
-            self.selector = (self.selector + 1) & 7
             self.selector_subphase = 0
-            self.selector_pulse_seen = False
+            self._complete_selector_slot(
+                suppress_slot_write=suppress_slot_write
+            )
 
-    def transition_step(self, pulse: bool = True) -> None:
-        """Advance one full selector slot for vector-generation convenience."""
+    def transition_step(self) -> None:
+        """Advance one full selector slot for vector generation."""
 
-        for subphase in range(SELECTOR_SLOW_EDGES):
-            self.advance_selector_slow_edge(pulse and subphase == 0)
+        for _ in range(SELECTOR_SLOW_EDGES):
+            self.advance_selector_slow_edge()
+
+    def _advance_selector_tick(self, *, suppress_slot_write: bool) -> None:
+        self.selector_fast_phase += 1
+        if self.selector_fast_phase == SLOWCLOCK_FAST_TICKS:
+            self.selector_fast_phase = 0
+            self.advance_selector_slow_edge(
+                suppress_slot_write=suppress_slot_write
+            )
+
+    def _complete_selector_slot(self, *, suppress_slot_write: bool) -> None:
+        selector = self.selector & 7
+        sweep_slot = (
+            selector <= 6 and bool(self.parameter_sweep_mask & (1 << selector))
+        )
+        if sweep_slot:
+            self.parameter_sweep_mask &= ~(1 << selector)
+
+        if not suppress_slot_write:
+            flags = self.flags_for_selector(selector)
+            if selector == 0:
+                self.phone_fricative = bool(flags & 0x01)
+                self.pw_0 = self.phone_fricative
+            elif selector == 1:
+                self.phone_voiced = bool(flags & 0x01)
+                self.pw_1 = self.phone_voiced
+            elif selector == 2:
+                self.pw_2 = bool(flags & 0x04)
+                self.pw_3 = bool(flags & 0x02)
+                self.pw_5 = not self.pw_2
+                self.fric1_sw = bool(flags & 0x08)
+                self.fric2_sw = not self.fric1_sw
+
+            if sweep_slot:
+                self._apply_selected_transition()
+
+        self.selector = (selector + 1) & 7
+        self.selector_steps += 1
+
+        # SEL1 rises as the three-bit selector moves 1->2 and 5->6.
+        if selector in (1, 5):
+            self._advance_rate_edge()
+
+    def _advance_rate_edge(self) -> None:
+        self.rate_edges_left -= 1
+        if self.rate_edges_left:
+            return
+        self.rate_edges_left = 16 - self.rate
+        old_rate_clock = self.rate_clock
+        self.rate_clock ^= 1
+        if old_rate_clock:
+            return
+
+        self.rate_clock_rises += 1
+        self.inflection_edges_left -= 1
+        if self.inflection_edges_left == 0:
+            self.inflection_edges_left = 8 - (self.inflection_high & 0x07)
+            target = self.transitioned_inflection_target
+            next_value = move_one_toward_byte(
+                self.transitioned_inflection, target
+            )
+            if next_value != self.transitioned_inflection:
+                self.transitioned_inflection = next_value
+                self.inflection_steps += 1
+                self.last_inflection_tick = self.effective_xck_ticks
+
+        old_div2 = self.rate_clock_div2
+        self.rate_clock_div2 ^= 1
+        if old_div2:
+            return
+
+        self.rate_clock_div2_rises += 1
+        self.articulation_edges_left -= 1
+        if self.articulation_edges_left == 0:
+            self.articulation_edges_left = 8 - self.articulation
+            self.articulation_steps += 1
+            self.last_articulation_tick = self.effective_xck_ticks
+            self.parameter_sweep_mask = 0x7F
 
 
 def main() -> int:

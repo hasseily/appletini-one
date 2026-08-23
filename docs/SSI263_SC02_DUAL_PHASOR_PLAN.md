@@ -73,20 +73,27 @@ not fold them into a guessed 20 kHz update clock.
 
 Initial card configuration:
 
-- use a fabric-clock phase accumulator to create evenly spaced XCK edge enables
-  at twice the nominal Apple bus rate;
-- set SSI DIV2 high;
-- obtain an effective SSI time base near one Apple bus cycle rate;
-- allow a build parameter or test override for one-XCK-edge-per-bus-cycle with
-  DIV2 low;
-- keep a two-times effective mode available for scope comparison.
+- use a fabric-clock rational accumulator to create evenly spaced XCK edge
+  enables at 3,579,545 / 2 Hz;
+- set SSI DIV2 high, which gives an effective 894,886.25 Hz time base;
+- keep a raw two-times-Apple-bus XCK profile with DIV2 high for direct Phasor
+  comparison;
+- keep a 1 MHz effective profile for the data-sheet nominal case;
+- keep a 3,579,545 / 4 Hz raw profile with DIV2 high, which gives the supplied
+  reconstruction's literal 447,443.125 Hz internal FASTCLK.
 
-This represents the likely case where the external pin sees about twice the bus
-clock but the chip divides it by two.  It also agrees with existing real-card
-phrase timing, which is close to a 1 MHz effective SSI time base.  Do not fix the
-setting as a hardware fact until a scope or continuity test proves the Phasor
-XCK and DIV2 nets.  Do not change SSI XCK when Phasor mode changes; the proved
+The default follows the data sheet's suggested colorburst-derived source and
+its desired 800 to 1000 kHz effective time base.  A raw clock near twice the
+Apple bus rate with DIV2 high remains plausible and gives a similar effective
+rate, but no physical Phasor XCK or DIV2 trace proves it yet.  The reconstruction
+divides its crystal down one stage further and conflicts with the published
+pitch and time-base range, so it remains a comparison profile instead of the
+firmware default.  Do not change SSI XCK when Phasor mode changes; the proved
 native-mode clock doubling applies to the AY chips.
+
+The generated Zynq fabric clock resolves to 133,333,344 Hz.  The XCK accumulator
+uses that generated value rather than the rounded 133 MHz label used in
+comments elsewhere in the design.
 
 The core must use these laws:
 

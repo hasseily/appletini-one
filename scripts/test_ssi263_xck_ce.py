@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""Compile and run the SSI-263 rational XCK clock-enable bench."""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+BUILD_DIR = REPO_ROOT / "build" / "test_ssi263_xck_ce"
+
+
+def run(command: list[str]) -> None:
+    print("+", " ".join(command))
+    subprocess.run(command, cwd=BUILD_DIR, check=True)
+
+
+def vivado_tool(name: str) -> str:
+    tool = shutil.which(f"{name}.bat") or shutil.which(name)
+    if tool:
+        return tool
+    raise FileNotFoundError(f"unable to locate Vivado tool {name}")
+
+
+def main() -> int:
+    BUILD_DIR.mkdir(parents=True, exist_ok=True)
+
+    run([
+        vivado_tool("xvlog"), "--sv",
+        str(REPO_ROOT / "hdl" / "apple" / "ssi263_xck_ce.sv"),
+        str(REPO_ROOT / "hdl" / "sim" / "tb_ssi263_xck_ce.sv"),
+    ])
+    run([
+        vivado_tool("xelab"), "tb_ssi263_xck_ce",
+        "-s", "tb_ssi263_xck_ce_sim",
+    ])
+    run([vivado_tool("xsim"), "tb_ssi263_xck_ce_sim", "--runall"])
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

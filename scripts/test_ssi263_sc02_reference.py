@@ -11,8 +11,10 @@ from ssi263_sc02_reference import (
     ROM_ACTIVE_SIZE,
     SELECTOR_SLOW_EDGES,
     SSI263Reference,
+    articulation_step_ticks,
     filter_period_ticks,
     frame_ticks,
+    inflection_step_ticks,
     inflection_word,
     load_active_rom,
     phoneme_ticks,
@@ -56,6 +58,8 @@ class FormulaTests(unittest.TestCase):
         self.assertEqual(phoneme_ticks(0x0A, 0), 4096 * 6 * 4)
         self.assertEqual(filter_period_ticks(0x00), 512)
         self.assertEqual(filter_period_ticks(0xFF), 2)
+        self.assertEqual(articulation_step_ticks(0x0F, 7), 256)
+        self.assertEqual(inflection_step_ticks(0x0F, 7), 128)
 
     def test_two_xck_edges_with_div2_make_one_effective_tick(self) -> None:
         chip = SSI263Reference(xck_edges_per_bus_cycle=2, div2=True)
@@ -100,6 +104,17 @@ class InterfaceTests(unittest.TestCase):
         chip.step_effective_tick(write_end=(1, 0x00))
         self.assertEqual(chip.completed_boundaries, 1)
         self.assertEqual(chip.read_d7(), 0)
+
+    def test_host_write_consumes_colliding_parameter_slot(self) -> None:
+        chip = SSI263Reference(div2=False)
+        chip.parameter_sweep_mask = 0x01
+        chip.selector_subphase = SELECTOR_SLOW_EDGES - 1
+        chip.selector_fast_phase = 3
+        chip.step_effective_tick(write_end=(0, 0x01))
+        self.assertEqual(chip.selector, 1)
+        self.assertEqual(chip.parameter_sweep_mask & 0x01, 0)
+        self.assertEqual(chip.parameter_values["f1"], 0)
+        self.assertEqual(chip.duration_phoneme, 0x01)
 
     def test_phoneme_timing_and_continuous_repeat(self) -> None:
         chip = SSI263Reference()
@@ -161,6 +176,32 @@ class InterfaceTests(unittest.TestCase):
         chip.advance_effective_ticks(123)
         self.assertEqual(chip.filter_ticks_to_toggle, 1)
 
+    def test_power_down_keeps_free_digital_state_running(self) -> None:
+        chip = SSI263Reference(div2=False)
+        chip.write(0, 0x00)
+        chip.write(1, 0xFF)
+        chip.write(2, 0xF0)
+        chip.write(4, 0xFF)
+        self.assertTrue(chip.powered_down)
+
+        chip.advance_effective_ticks(4097)
+        self.assertGreater(chip.selector_steps, 0)
+        self.assertGreater(chip.filter_phase_edges, 0)
+        self.assertGreater(chip.transitioned_inflection, 0)
+        self.assertGreater(chip.articulation_steps, 0)
+        self.assertEqual(chip.duration_phoneme, 0x00)
+        self.assertEqual(chip.inflection_high, 0xFF)
+        self.assertEqual(chip.rate_inflection, 0xF0)
+
+        state = chip.transitioned_inflection
+        steps = chip.selector_steps
+        chip.write(3, 0x00)
+        self.assertFalse(chip.powered_down)
+        self.assertEqual(chip.transitioned_inflection, state)
+        self.assertEqual(chip.selector_steps, steps)
+        chip.advance_effective_ticks(128)
+        self.assertGreater(chip.selector_steps, steps)
+
 
 class SelectorTests(unittest.TestCase):
     def test_selector_three_updates_f3_and_f4(self) -> None:
@@ -168,6 +209,7 @@ class SelectorTests(unittest.TestCase):
         chip.duration_phoneme = 0x00
         chip.selector = 3
         target = chip.target_for_selector()
+        chip.parameter_sweep_mask = 1 << 3
         chip.transition_step()
         self.assertEqual(chip.parameter_values["f3"], min(target, 1))
         self.assertEqual(chip.parameter_values["f4"], min(target, 1))
@@ -177,7 +219,7 @@ class SelectorTests(unittest.TestCase):
         chip = SSI263Reference()
         start = chip.selector
         for edge in range(SELECTOR_SLOW_EDGES - 1):
-            chip.advance_selector_slow_edge(pulse=edge == 0)
+            chip.advance_selector_slow_edge()
             self.assertEqual(chip.selector, start)
         chip.advance_selector_slow_edge()
         self.assertEqual(chip.selector, start + 1)
@@ -188,6 +230,7 @@ class SelectorTests(unittest.TestCase):
         chip.selector = 4
         self.assertEqual(chip.rom_byte(), 0)
         self.assertEqual(chip.target_for_selector(), 0x0C)
+        chip.parameter_sweep_mask = 1 << 4
         chip.transition_step()
         self.assertEqual(chip.parameter_values["filter_amp"], 1)
 
@@ -198,6 +241,116 @@ class SelectorTests(unittest.TestCase):
         chip.transition_step()
         self.assertEqual(chip.parameter_values["f4"], 9)
         self.assertEqual(chip.selector, 0)
+
+    def test_slots_do_not_move_without_an_articulation_sweep(self) -> None:
+        chip = SSI263Reference()
+        chip.duration_phoneme = 0x00
+        target = chip.target_for_selector(0)
+        self.assertGreater(target, 0)
+        chip.transition_step()
+        self.assertEqual(chip.parameter_values["f1"], 0)
+
+    def test_all_observed_lower_rom_codes(self) -> None:
+        observed = {
+            selector: {
+                self.rom_nibble(phone, selector)
+                for phone in range(64)
+            }
+            for selector in range(8)
+        }
+        self.assertEqual(observed[0], {0x0, 0x1})
+        self.assertEqual(observed[1], {0x0, 0x1})
+        self.assertEqual(observed[2], {0x4, 0x6, 0x8, 0xA, 0xC, 0xE})
+        self.assertTrue(all(observed[index] == {0} for index in range(3, 8)))
+
+        for phone, code in (
+            (0x28, 0x4),
+            (0x2F, 0x6),
+            (0x2B, 0x8),
+            (0x00, 0xA),
+            (0x24, 0xC),
+            (0x01, 0xE),
+        ):
+            with self.subTest(phone=phone, code=code):
+                chip = SSI263Reference(div2=False)
+                chip.duration_phoneme = phone
+                chip.advance_effective_ticks(48)
+                self.assertEqual(chip.pw_2, bool(code & 0x4))
+                self.assertEqual(chip.pw_3, bool(code & 0x2))
+                self.assertEqual(chip.pw_5, not bool(code & 0x4))
+                self.assertEqual(chip.fric1_sw, bool(code & 0x8))
+                self.assertEqual(chip.fric2_sw, not bool(code & 0x8))
+
+        chip = SSI263Reference(div2=False)
+        chip.duration_phoneme = 0x27
+        chip.advance_effective_ticks(32)
+        self.assertTrue(chip.phone_fricative)
+        self.assertFalse(chip.phone_voiced)
+        chip = SSI263Reference(div2=False)
+        chip.duration_phoneme = 0x01
+        chip.advance_effective_ticks(32)
+        self.assertFalse(chip.phone_fricative)
+        self.assertTrue(chip.phone_voiced)
+
+    @staticmethod
+    def rom_nibble(phone: int, selector: int) -> int:
+        chip = SSI263Reference()
+        return chip.rom[rom_address(phone, selector)] & 0x0F
+
+
+class TransitionTimingTests(unittest.TestCase):
+    @staticmethod
+    def wait_for(chip: SSI263Reference, field: str, count: int) -> int:
+        while getattr(chip, field) < count:
+            chip.advance_effective_ticks(1)
+        return chip.effective_xck_ticks
+
+    def test_every_articulation_setting_has_exact_steady_pace(self) -> None:
+        for setting in range(8):
+            with self.subTest(articulation=setting):
+                chip = SSI263Reference(div2=False)
+                chip.write(2, 0xF0)
+                chip.write(3, 0x80 | (setting << 4))
+                self.wait_for(chip, "articulation_steps", 1)
+                first = chip.last_articulation_tick
+                self.wait_for(chip, "articulation_steps", 2)
+                self.assertEqual(
+                    chip.last_articulation_tick - first,
+                    articulation_step_ticks(0x0F, setting),
+                )
+
+    def test_every_inflection_slope_has_exact_steady_pace(self) -> None:
+        for slope in range(8):
+            with self.subTest(slope=slope):
+                chip = SSI263Reference(div2=False)
+                chip.write(1, 0xF8 | slope)
+                chip.write(2, 0xF0)
+                self.wait_for(chip, "inflection_steps", 1)
+                first = chip.last_inflection_tick
+                first_value = chip.transitioned_inflection
+                self.wait_for(chip, "inflection_steps", 2)
+                self.assertEqual(
+                    chip.last_inflection_tick - first,
+                    inflection_step_ticks(0x0F, slope),
+                )
+                self.assertEqual(
+                    chip.transitioned_inflection,
+                    first_value + 1,
+                )
+
+    def test_transitioned_pitch_uses_transition_state(self) -> None:
+        chip = SSI263Reference(div2=False)
+        chip.write(1, 0xF8 | 7)
+        chip.write(2, 0xF5)
+        self.wait_for(chip, "inflection_steps", 1)
+        chip.write(0, 0xC0)
+        chip.write(3, 0x00)
+        self.assertEqual(chip.response_mode, MODE_PHONEME_TRANSITIONED)
+        self.assertEqual(
+            (chip.pitch_inflection >> 3) & 0xFF,
+            chip.transitioned_inflection,
+        )
+        self.assertEqual(chip.pitch_inflection & 0x807, 0x005)
 
 
 if __name__ == "__main__":

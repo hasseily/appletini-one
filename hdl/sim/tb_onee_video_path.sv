@@ -34,6 +34,7 @@ module tb_onee_video_path;
     logic req_ready;
     logic resp_valid;
     logic [7:0] resp_rdata;
+    logic [7:0] sampled_data;
 
     // Short phases keep the full-frame cadence check quick. Leave three
     // clocks between drive_en and addr_en so the production vTW posted-write
@@ -65,7 +66,8 @@ module tb_onee_video_path;
         .resp_rdata(resp_rdata),
         .floating_bus_data(8'hFF),
         .ab_write(merged_write),
-        .ab_read(ab_read)
+        .ab_read(ab_read),
+        .sampled_data(sampled_data)
     );
 
     onee_motherboard_io motherboard_i (
@@ -147,6 +149,7 @@ module tb_onee_video_path;
         .resetn(resetn),
         .soft_reset(!ab_read.res),
         .ab_read(ab_read),
+        .capture_data(sampled_data),
         .sss(sss),
         .line_in_frame(line_in_frame),
         .cycle_in_line(cycle_in_line),

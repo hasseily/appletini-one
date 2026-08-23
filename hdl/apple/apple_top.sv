@@ -168,6 +168,7 @@ module apple_top(
     logic virtual_req_ready;
     logic virtual_resp_valid;
     logic [7:0] virtual_resp_rdata;
+    logic [7:0] virtual_sampled_data;
 
     onee_mode_safety_guard onee_mode_safety_guard_i (
         .clk                    (clk),
@@ -297,7 +298,8 @@ module apple_top(
         .resp_rdata       (virtual_resp_rdata),
         .floating_bus_data(onee_floating_bus_data),
         .ab_write         (ab_write_arb),
-        .ab_read          (virtual_ab_read)
+        .ab_read          (virtual_ab_read),
+        .sampled_data     (virtual_sampled_data)
     );
 
     onee_motherboard_io onee_motherboard_io_i (
@@ -348,9 +350,17 @@ module apple_top(
     // virtual bus. The physical wrapper receives no requests while isolated;
     // its own direct kill also clears every pin driver without waiting for
     // another Apple clock edge.
-    assign ab_read  = onee_enable_effective ? virtual_ab_read
-                                             : physical_ab_read;
-    assign ab_write = physical_bus_isolate ? '0 : ab_write_arb;
+    assign ab_read = onee_enable_effective ? virtual_ab_read
+                                            : physical_ab_read;
+    always_comb begin
+        ab_write = physical_bus_isolate ? '0 : ab_write_arb;
+        // The physical wrapper applies its private, low-fanout isolation copy
+        // to this ownership request at the pin gate.  Preserve the raw bit so
+        // the same isolation term is not placed twice in the address-direction
+        // path.  Every data and control request remains masked here, and the
+        // wrapper still forces the address, R/W, and direction pins off.
+        ab_write.wr_addr_rw_en = ab_write_arb.wr_addr_rw_en;
+    end
 
     soft_switch_manager ssm(
         .clk(clk),
@@ -835,11 +845,14 @@ module apple_top(
     logic        egress_capture_drop_ack;
 
     logic shr_capture_active_w;
+    wire [7:0] cycle_capture_bus_data = onee_enable_effective ?
+        virtual_sampled_data : physical_ab_read.data;
     apple_cycle_capture apple_cycle_capture_i (
         .clk(clk),
         .resetn(rstn[0]),
         .soft_reset(!ab_read.res),
         .ab_read(ab_read),
+        .capture_data(cycle_capture_bus_data),
         .sss(sss),
         .line_in_frame(line_in_frame),
         .cycle_in_line(cycle_in_line),
@@ -1698,6 +1711,7 @@ module apple_top(
     logic [31:0] vtw_ctrl_q;
     logic [31:0] vtw_slowdown_q;   // [9:0] region enables, [31:16] duration
     logic [17:0] vtw_sh_addr_q;
+    logic [17:0] vtw_sh_port_addr;
     logic [7:0]  vtw_sh_rdata;
     logic [7:0]  vtw_sh_rdata_q;
     logic        vtw_sh_port_en;
@@ -1897,7 +1911,7 @@ module apple_top(
         .word_read_busy(vtw_sh_word_read_busy),
         .word_read_count(vtw_sh_word_read_count),
         .sh_en(vtw_sh_port_en),
-        .sh_addr(),
+        .sh_addr(vtw_sh_port_addr),
         .sh_we(vtw_sh_port_we),
         .sh_wdata(vtw_sh_port_wdata),
         .sh_rdata(vtw_sh_rdata)
@@ -1965,7 +1979,7 @@ module apple_top(
         .sp_resp_rdata(vtw_sp_resp_rdata),
         .sp_sss_snapshot(vtw_sp_sss_snapshot),
         .sh_en(vtw_sh_port_en),
-        .sh_addr(vtw_sh_addr_q),
+        .sh_addr(vtw_sh_port_addr),
         .sh_we(vtw_sh_port_we),
         .sh_wdata(vtw_sh_port_wdata),
         .sh_rdata(vtw_sh_rdata),

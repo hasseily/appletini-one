@@ -4,6 +4,7 @@ module apple_cycle_capture (
     input  logic                            resetn,
     input  logic                            soft_reset,
     input  globals::AppleBus_read           ab_read,
+    input  logic [7:0]                      capture_data,
     input  globals::SoftSwitchState         sss,
     input  logic [8:0]                      line_in_frame,
     input  logic [6:0]                      cycle_in_line,
@@ -113,7 +114,7 @@ module apple_cycle_capture (
         ab_read.data_en &&
         (cap_rw == 1'b0) &&
         (cap_addr == 16'hC0F3) &&
-        (ab_read.data == 8'h02);
+        (capture_data == 8'h02);
 
     logic io_push_request;
     assign io_push_request =
@@ -130,7 +131,7 @@ module apple_cycle_capture (
         ab_read.data_en &&
         (cap_rw == 1'b0) &&
         (cap_addr == 16'hC029);
-    wire c029_write_shr_active = (ab_read.data[7:6] == 2'b11);
+    wire c029_write_shr_active = (capture_data[7:6] == 2'b11);
     wire shr_capture_active_next =
         c029_write_cycle ? c029_write_shr_active : shr_capture_active_q;
     wire shr_frame_marker =
@@ -154,36 +155,33 @@ module apple_cycle_capture (
     logic apple_push_request;
     assign apple_push_request = ab_read.data_en && (rule1_valid || capture_frame_en);
 
-    // Apple-bus record (frame and bus-write halves; each gated to zero when
-    // its triggering condition isn't met).
-    AppleCycleRecord apple_record_din;
+    // Capture the raw Apple-bus fields first.  Mask the two nullable halves
+    // from the registered valid bits below, before the record reaches the
+    // FIFO.  This keeps the late, card-arbitrated data bus out of the clear
+    // controls for every frame field while preserving the exact packed FIFO
+    // format.
+    AppleCycleRecord apple_record_raw_din;
 
     always_comb begin
-        apple_record_din = '0;
-        apple_record_din.record_kind = RECORD_KIND_LEGACY;
-
-        if (capture_frame_en) begin
-            apple_record_din.frame_en      = 1'b1;
-            apple_record_din.line_in_frame = line_in_frame;
-            apple_record_din.cycle_in_line = cycle_in_line;
-            apple_record_din.sw_80store    = sss.sw_80store;
-            apple_record_din.sw_ramrd      = sss.sw_ramrd;
-            apple_record_din.sw_ramwrt     = sss.sw_ramwrt;
-            apple_record_din.sw_altzp      = sss.sw_altzp;
-            apple_record_din.sw_text       = sss.sw_text;
-            apple_record_din.sw_mixed      = sss.sw_mixed;
-            apple_record_din.sw_page2      = sss.sw_page2;
-            apple_record_din.sw_hires      = sss.sw_hires;
-            apple_record_din.sw_altcharset = sss.sw_altcharset;
-            apple_record_din.sw_80col      = sss.sw_80col;
-            apple_record_din.sw_dhires     = sss.sw_dhires;
-        end
-
-        if (rule1_valid) begin
-            apple_record_din.addr_decode    = cap_addr_decode;
-            apple_record_din.addr_decode_en = 1'b1;
-            apple_record_din.data           = ab_read.data;
-        end
+        apple_record_raw_din = '0;
+        apple_record_raw_din.record_kind   = RECORD_KIND_LEGACY;
+        apple_record_raw_din.frame_en      = capture_frame_en;
+        apple_record_raw_din.line_in_frame = line_in_frame;
+        apple_record_raw_din.cycle_in_line = cycle_in_line;
+        apple_record_raw_din.sw_80store    = sss.sw_80store;
+        apple_record_raw_din.sw_ramrd      = sss.sw_ramrd;
+        apple_record_raw_din.sw_ramwrt     = sss.sw_ramwrt;
+        apple_record_raw_din.sw_altzp      = sss.sw_altzp;
+        apple_record_raw_din.sw_text       = sss.sw_text;
+        apple_record_raw_din.sw_mixed      = sss.sw_mixed;
+        apple_record_raw_din.sw_page2      = sss.sw_page2;
+        apple_record_raw_din.sw_hires      = sss.sw_hires;
+        apple_record_raw_din.sw_altcharset = sss.sw_altcharset;
+        apple_record_raw_din.sw_80col      = sss.sw_80col;
+        apple_record_raw_din.sw_dhires     = sss.sw_dhires;
+        apple_record_raw_din.addr_decode   = cap_addr_decode;
+        apple_record_raw_din.addr_decode_en = rule1_valid;
+        apple_record_raw_din.data          = capture_data;
     end
 
     AppleCycleRecord io_record_din;
@@ -212,7 +210,7 @@ module apple_cycle_capture (
         end else begin
             io_record_din = pack_io_write_record(
                 cap_addr,
-                ab_read.data,
+                capture_data,
                 line_in_frame,
                 cycle_in_line
             );
@@ -221,6 +219,7 @@ module apple_cycle_capture (
 
     // Register each cycle's complete record set before FIFO arbitration. This
     // keeps Apple-bus decode and record packing out of the BRAM write path.
+    (* EXTRACT_RESET = "NO" *) AppleCycleRecord apple_record_raw_q;
     AppleCycleRecord apple_record_q;
     AppleCycleRecord io_record_q;
     logic            apple_push_request_q;
@@ -228,8 +227,8 @@ module apple_cycle_capture (
     logic            overlay_drop_source_q;
 
     always_ff @(posedge clk) begin
-        apple_record_q <= apple_record_din;
-        io_record_q    <= io_record_din;
+        apple_record_raw_q <= apple_record_raw_din;
+        io_record_q        <= io_record_din;
 
         if (~resetn || soft_reset) begin
             apple_push_request_q <= 1'b0;
@@ -241,6 +240,37 @@ module apple_cycle_capture (
             overlay_drop_source_q <=
                 (apple_push_request && overlay_rule_valid) ||
                 overlay_command_write;
+        end
+    end
+
+    // Restore the wire format promised by apple_cycle_capture_pkg: invalid
+    // halves contain zero, and the valid bits select the registered payload.
+    // The mask now has a full fabric cycle before the FIFO write edge.
+    always_comb begin
+        apple_record_q = '0;
+        apple_record_q.record_kind = apple_record_raw_q.record_kind;
+
+        if (apple_record_raw_q.frame_en) begin
+            apple_record_q.frame_en      = 1'b1;
+            apple_record_q.line_in_frame = apple_record_raw_q.line_in_frame;
+            apple_record_q.cycle_in_line = apple_record_raw_q.cycle_in_line;
+            apple_record_q.sw_80store    = apple_record_raw_q.sw_80store;
+            apple_record_q.sw_ramrd      = apple_record_raw_q.sw_ramrd;
+            apple_record_q.sw_ramwrt     = apple_record_raw_q.sw_ramwrt;
+            apple_record_q.sw_altzp      = apple_record_raw_q.sw_altzp;
+            apple_record_q.sw_text       = apple_record_raw_q.sw_text;
+            apple_record_q.sw_mixed      = apple_record_raw_q.sw_mixed;
+            apple_record_q.sw_page2      = apple_record_raw_q.sw_page2;
+            apple_record_q.sw_hires      = apple_record_raw_q.sw_hires;
+            apple_record_q.sw_altcharset = apple_record_raw_q.sw_altcharset;
+            apple_record_q.sw_80col      = apple_record_raw_q.sw_80col;
+            apple_record_q.sw_dhires     = apple_record_raw_q.sw_dhires;
+        end
+
+        if (apple_record_raw_q.addr_decode_en) begin
+            apple_record_q.addr_decode    = apple_record_raw_q.addr_decode;
+            apple_record_q.addr_decode_en = 1'b1;
+            apple_record_q.data           = apple_record_raw_q.data;
         end
     end
 

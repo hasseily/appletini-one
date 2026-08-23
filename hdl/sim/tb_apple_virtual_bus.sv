@@ -28,6 +28,7 @@ module tb_apple_virtual_bus;
 
     globals::AppleBus_write slot_write = '0;
     globals::AppleBus_read  ab_read;
+    logic [7:0]             sampled_data;
 
     apple_virtual_bus dut (
         .clk(clk),
@@ -48,7 +49,8 @@ module tb_apple_virtual_bus;
         .resp_rdata(resp_rdata),
         .floating_bus_data(floating_bus_data),
         .ab_write(slot_write),
-        .ab_read(ab_read)
+        .ab_read(ab_read),
+        .sampled_data(sampled_data)
     );
 
     task automatic check(input logic condition, input string message);
@@ -109,6 +111,8 @@ module tb_apple_virtual_bus;
             if (ab_read.data_en) begin
                 check(phase_order == 4, "data_en phase order");
                 check(ab_read.phi0, "data_en must occur in PHI0");
+                check(sampled_data == ab_read.data,
+                      "sampled data must match the public data phase");
                 check(held_cycle_valid &&
                       (ab_read.addr == held_cycle_addr) &&
                       (ab_read.rw == held_cycle_rw),

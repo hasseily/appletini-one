@@ -132,6 +132,7 @@ def static_checks() -> None:
     top = read("hdl/apple/apple_top.sv")
     arbiter = read("hdl/apple/apple_bus_write_arbiter.sv")
     disk2 = read("hdl/apple/disk2_card.sv")
+    shadow_host = read("hdl/apple/vtw_shadow_host_port.sv")
     sources = read("hdl/hdl_sources.txt")
     xdc = read("hdl/constraints/appletini_yarz.xdc")
     regs = read("ps_sources/frontend/card_control_regs.h")
@@ -438,6 +439,11 @@ def static_checks() -> None:
     for src in ("apple/w65c02_core.sv", "apple/vtw_shadow.sv",
                 "apple/vtw_bus_engine.sv", "apple/vtw_core_top.sv"):
         require(src in sources, f"hdl_sources.txt must list {src}")
+    require(top.count(".sh_addr(vtw_sh_port_addr)") == 2 and
+            ".sh_addr(vtw_sh_addr_q)" not in top and
+            "EQUIVALENT_REGISTER_REMOVAL = \"NO\"" in shadow_host and
+            "MAX_FANOUT = 6" in shadow_host,
+            "the vTW BRAM port must use its preserved, replicated pointer copy")
 
     # Register window agreement (PL 0x70-0x7A <-> PS defines)
     require("CARD_CTRL_REG_VTW_CTRL        = 8'h70" in top and

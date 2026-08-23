@@ -46,7 +46,12 @@ module apple_virtual_bus #(
     input  logic [7:0]              floating_bus_data,
 
     input  globals::AppleBus_write  ab_write,
-    output globals::AppleBus_read   ab_read
+    output globals::AppleBus_read   ab_read,
+
+    // Final registered byte for the public data phase.  Capture clients use
+    // this output so the pre-data live card mux remains available at serve_en
+    // without entering their data-phase timing paths.
+    output logic [7:0]              sampled_data
 );
 
     localparam integer MAX_CYCLE_CLKS =
@@ -70,6 +75,7 @@ module apple_virtual_bus #(
     wire phase_sss   = (phase_q == PHASE_WIDTH'(SSS_CLK));
     wire phase_serve = (phase_q == PHASE_WIDTH'(SERVE_CLK));
     wire phase_data  = phase_data_q;
+    assign sampled_data = cycle_data_q;
     wire [PHASE_WIDTH-1:0] cycle_clks = video_mode_50hz ?
         PHASE_WIDTH'(PAL_CYCLE_CLKS) : PHASE_WIDTH'(CYCLE_CLKS);
 

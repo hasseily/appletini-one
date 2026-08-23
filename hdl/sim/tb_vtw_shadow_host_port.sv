@@ -58,6 +58,14 @@ module tb_vtw_shadow_host_port;
         end
     end
 
+    // The dedicated BRAM address copy must remain cycle-exact with the
+    // host-visible pointer through loads, scalar traffic, and packed traffic.
+    always @(negedge clk) begin
+        if (rstn) begin
+            check(sh_addr == pointer, "memory address copy follows pointer");
+        end
+    end
+
     task automatic check(input bit cond, input string msg);
         if (!cond) begin
             fails++;

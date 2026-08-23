@@ -147,13 +147,15 @@ def static_checks() -> None:
         "virtual bus must use merged card writes with its CPU request tied off",
     )
     require(
-        "assign ab_read  = onee_enable_effective ? virtual_ab_read" in apple_top and
+        "assign ab_read = onee_enable_effective ? virtual_ab_read" in apple_top and
         ": physical_ab_read;" in apple_top,
         "effective ONE//e mode must select the virtual bus record",
     )
     require(
-        "assign ab_write = physical_bus_isolate ? '0 : ab_write_arb;" in apple_top,
-        "physical wrapper requests must be zero while isolated",
+        "ab_write = physical_bus_isolate ? '0 : ab_write_arb;" in apple_top and
+        "ab_write.wr_addr_rw_en = ab_write_arb.wr_addr_rw_en;" in apple_top,
+        "physical wrapper requests must be isolated with only raw address ownership "
+        "left for its final pin gate",
     )
     require(
         ".ab_read(physical_ab_read)" in apple_top and

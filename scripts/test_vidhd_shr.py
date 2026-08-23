@@ -115,7 +115,7 @@ def test_capture_emits_two_records_for_vidhd_io_plus_frame() -> None:
             "else\n            record_din = apple_record_q;" in source,
             "capture arbitration must emit pending, then I/O, then normal Apple records")
     require("logic shr_capture_active_q;" in source and
-            "wire c029_write_shr_active = (ab_read.data[7:6] == 2'b11);" in source,
+            "wire c029_write_shr_active = (capture_data[7:6] == 2'b11);" in source,
             "capture must track the C029 fake-SHR enable bit pattern")
     require("wire shr_frame_marker =" in source and
             "(line_in_frame == 9'd0)" in source and
@@ -151,7 +151,7 @@ def test_shr_capture_uses_aux_shadow_without_m2b0() -> None:
             "24'h0107FF" not in capture,
             "capture must include AUX text page 2 for DLORES/TEXT80 PAGE2")
     require("in_video_range(cap_addr_decode)" in capture and
-            "apple_record_din.addr_decode    = cap_addr_decode;" in capture and
+            "apple_record_raw_din.addr_decode   = cap_addr_decode;" in capture and
             "cap_addr_decode    = sss.addr_decode_late" in capture,
             "capture records must use the observation decode of the "
             "authoritative address sample")

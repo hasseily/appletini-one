@@ -34,6 +34,7 @@ module tb_apple_cycle_capture;
         .resetn(resetn),
         .soft_reset(soft_reset),
         .ab_read(ab_read),
+        .capture_data(ab_read.data),
         .sss(sss),
         .line_in_frame(line_in_frame),
         .cycle_in_line(cycle_in_line),
@@ -171,6 +172,8 @@ module tb_apple_cycle_capture;
             check(got.record_kind == RECORD_KIND_LEGACY,
                   "watched write kind");
             check(!got.frame_en, "watched write has no frame half");
+            check(got[60:33] == 28'd0,
+                  "watched write zeroes the invalid frame half");
             check(got.addr_decode_en && got.addr_decode == 24'h000400,
                   "watched write address");
             check(got.data == 8'h5A, "watched write data");
@@ -273,6 +276,8 @@ module tb_apple_cycle_capture;
                   second.frame_en && second.line_in_frame == 9'd17 &&
                   second.cycle_in_line == 7'd61,
                   "Apple frame record comes second");
+            check(second[32:0] == 33'd0,
+                  "frame-only record zeroes the invalid write half");
             #1 check(cycle_capture_empty,
                      "simultaneous event makes exactly two records");
         end
@@ -404,16 +409,43 @@ module tb_apple_cycle_capture;
         begin
             $display("TEST: C029 state, SHR marker, and soft reset");
             soft_reset_dut();
+
+            // A same-cycle line-zero entry emits the ordered C029 record and
+            // the one sparse frame marker selected by the new SHR state.
+            ab_read.addr = 16'hC029;
+            ab_read.rw = 1'b0;
+            ab_read.data = 8'hC0;
+            line_in_frame = 9'd0;
+            cycle_in_line = 7'd0;
+            frame_en = 1'b1;
+            push_cycle();
+            check(shr_capture_active, "line-zero C029 enters SHR capture");
+            pop_record(got);
+            check(got == pack_io_write_record(16'hC029, 8'hC0, 9'd0, 7'd0),
+                  "line-zero C029 transition record comes first");
+            pop_record(got);
+            check(got.record_kind == RECORD_KIND_LEGACY && got.frame_en &&
+                  got.line_in_frame == 9'd0 && got.cycle_in_line == 7'd0,
+                  "line-zero C029 entry keeps the sparse marker");
+
+            soft_reset_dut();
             ab_read.addr = 16'hC029;
             ab_read.rw = 1'b0;
             ab_read.data = 8'hC0;
             line_in_frame = 9'd4;
             cycle_in_line = 7'd7;
+            frame_en = 1'b1;
             push_cycle();
             check(shr_capture_active, "C029 C0 enters SHR capture");
             pop_record(got);
             check(got == pack_io_write_record(16'hC029, 8'hC0, 9'd4, 7'd7),
                   "C029 transition record");
+            repeat (2) begin
+                @(posedge clk);
+                #1;
+            end
+            check(cycle_capture_empty,
+                  "non-marker C029 entry emits no legacy frame record");
 
             // SHR suppresses ordinary frame pulses.
             ab_read.addr = 16'hFFFF;
@@ -438,6 +470,24 @@ module tb_apple_cycle_capture;
             check(got.record_kind == RECORD_KIND_LEGACY && got.frame_en &&
                   got.line_in_frame == 9'd0 && got.cycle_in_line == 7'd0,
                   "SHR keeps line-zero frame marker");
+
+            // Leaving SHR takes effect on this same data phase. The I/O
+            // record keeps priority and the restored legacy frame follows.
+            ab_read.addr = 16'hC029;
+            ab_read.rw = 1'b0;
+            ab_read.data = 8'h00;
+            line_in_frame = 9'd6;
+            cycle_in_line = 7'd3;
+            frame_en = 1'b1;
+            push_cycle();
+            check(!shr_capture_active, "C029 00 leaves SHR capture");
+            pop_record(got);
+            check(got == pack_io_write_record(16'hC029, 8'h00, 9'd6, 7'd3),
+                  "C029 exit record comes first");
+            pop_record(got);
+            check(got.record_kind == RECORD_KIND_LEGACY && got.frame_en &&
+                  got.line_in_frame == 9'd6 && got.cycle_in_line == 7'd3,
+                  "C029 exit restores the same-cycle legacy frame");
 
             // Queue one record, then prove soft reset clears data and state.
             ab_read.addr = 16'h0400;

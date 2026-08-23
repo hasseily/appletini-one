@@ -55,6 +55,12 @@ module vtw_shadow_host_port (
     logic [1:0]  word_count_q;
     logic [1:0]  word_lane_q;
     logic [1:0]  word_read_lane_q;
+    // The host-visible pointer also feeds 21 shadow-BRAM address loads.  Keep
+    // a bit-identical memory-side copy so synthesis can place and replicate it
+    // with those BRAMs instead of routing the AXI readback register across the
+    // device.  This is a physical copy, not a pipeline stage.
+    (* EQUIVALENT_REGISTER_REMOVAL = "NO", MAX_FANOUT = 6 *)
+    logic [17:0] sh_addr_q;
 
     wire word_push = word_write && !addr_set && !byte_write &&
                      (word_count_q != 2'd2);
@@ -75,7 +81,7 @@ module vtw_shadow_host_port (
                    (state_q == SH_READ) ||
                    (state_q == SH_WORD_WRITE) ||
                    (state_q == SH_WORD_READ);
-    assign sh_addr = pointer;
+    assign sh_addr = sh_addr_q;
     assign sh_we = (state_q == SH_BYTE_WRITE) ||
                    (state_q == SH_WORD_WRITE);
     always_comb begin
@@ -95,6 +101,7 @@ module vtw_shadow_host_port (
         if (!rstn) begin
             state_q          <= SH_IDLE;
             pointer          <= 18'd0;
+            sh_addr_q        <= 18'd0;
             read_data        <= 8'd0;
             byte_wdata_q     <= 8'd0;
             word_fifo_q[0]   <= 32'd0;
@@ -133,6 +140,7 @@ module vtw_shadow_host_port (
                 end
                 SH_BYTE_WRITE: begin
                     pointer <= pointer + 18'd1;
+                    sh_addr_q <= sh_addr_q + 18'd1;
                     state_q <= SH_READ;
                 end
                 SH_READ: state_q <= SH_CAPTURE;
@@ -142,6 +150,7 @@ module vtw_shadow_host_port (
                 end
                 SH_WORD_WRITE: begin
                     pointer <= pointer + 18'd1;
+                    sh_addr_q <= sh_addr_q + 18'd1;
                     if (word_lane_q == 2'd3) begin
                         state_q <= SH_IDLE;
                     end else begin
@@ -159,6 +168,7 @@ module vtw_shadow_host_port (
                         2'd3: word_read_data[31:24] <= sh_rdata;
                     endcase
                     pointer <= pointer + 18'd1;
+                    sh_addr_q <= sh_addr_q + 18'd1;
                     if (word_read_lane_q == 2'd3) begin
                         word_read_count <= word_read_count + 30'd1;
                         state_q <= SH_IDLE;
@@ -180,6 +190,7 @@ module vtw_shadow_host_port (
              * rewrites the full destination, so that partial byte is safe. */
             if (addr_set) begin
                 pointer      <= addr_value;
+                sh_addr_q    <= addr_value;
                 state_q      <= SH_READ;
                 word_wr_q    <= 1'b0;
                 word_rd_q    <= 1'b0;

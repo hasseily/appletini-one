@@ -116,13 +116,15 @@ module ssi263_sc02_audio #(
     logic signed [23:0] output_hold_q;
     logic [7:0] filter_frequency_q;
 
-    // A two-multiplier, 29-cycle scheduler avoids a wide parallel DSP path.
-    // The minimum phase spacing is 149 fabric clocks in the supported XCK
-    // profiles, leaving margin for two independent chip instances.
+    // Two registered RTL product lanes form a 53-cycle scheduler. Vivado
+    // 2025.2 maps the registered sum/difference uses to four DSP48E1 cells;
+    // the key bound is one DSP operation between fabric registers.
+    // The default XCK/DIV2 profile leaves 149 fabric clocks between the
+    // fastest filter phases, with margin for two independent instances.
     logic engine_busy_q;
     logic engine_overrun_q;
     logic [2:0] engine_section_q;
-    logic [2:0] engine_stage_q;
+    logic [3:0] engine_stage_q;
     logic signed [23:0] engine_state_i;
     logic signed [23:0] engine_state_q;
     logic signed [23:0] engine_input;
@@ -135,18 +137,18 @@ module ssi263_sc02_audio #(
     logic signed [16:0] engine_coefficient_b;
     logic signed [40:0] engine_product_a;
     logic signed [40:0] engine_product_b;
-    logic signed [40:0] product_i_cos_q;
-    logic signed [40:0] product_q_sin_q;
+    logic signed [40:0] product_a_q;
+    logic signed [40:0] product_b_q;
     logic signed [23:0] rotated_i_q;
     logic signed [23:0] rotated_q_q;
     logic signed [23:0] damped_i_q;
     logic signed [23:0] damped_q_q;
+    logic signed [23:0] drive_i_q;
+    logic signed [23:0] fric_sum_q;
     logic signed [23:0] output_sum_q;
     logic signed [23:0] engine_next_i;
-    logic signed [47:0] engine_product_a_ext;
-    logic signed [47:0] engine_product_b_ext;
-    logic signed [47:0] saved_product_i_cos_ext;
-    logic signed [47:0] saved_product_q_sin_ext;
+    logic signed [47:0] product_a_q_ext;
+    logic signed [47:0] product_b_q_ext;
     logic signed [47:0] rotate_i_accumulator;
     logic signed [47:0] rotate_q_accumulator;
 
@@ -746,32 +748,32 @@ module ssi263_sc02_audio #(
         engine_coefficient_a = 17'sd0;
         engine_coefficient_b = 17'sd0;
         case (engine_stage_q)
-            3'd0: begin
+            4'd0: begin
                 engine_operand_a = engine_state_i;
                 engine_operand_b = engine_state_q;
                 engine_coefficient_a = {{1{engine_cosine[15]}}, engine_cosine};
                 engine_coefficient_b = {{1{engine_sine[15]}}, engine_sine};
             end
-            3'd1: begin
+            4'd1: begin
                 engine_operand_a = engine_state_i;
                 engine_operand_b = engine_state_q;
                 engine_coefficient_a = {{1{engine_sine[15]}}, engine_sine};
                 engine_coefficient_b = {{1{engine_cosine[15]}}, engine_cosine};
             end
-            3'd2: begin
+            4'd3: begin
                 engine_operand_a = rotated_i_q;
                 engine_operand_b = rotated_q_q;
                 engine_coefficient_a = $signed({2'b00, engine_radius});
                 engine_coefficient_b = $signed({2'b00, engine_radius});
             end
-            3'd3: begin
+            4'd4: begin
                 engine_operand_a = engine_input;
                 engine_coefficient_a = SECTION_DRIVE_Q14;
             end
-            3'd5: begin
-                // Reuse the first resonator multiplier for final Q12 gain.
-                // Stage 4 registered the saturating source sum, so this path
-                // contains one multiply and output saturation but no adder.
+            4'd9: begin
+                // Reuse RTL product lane A for final Q12 gain. Stages 7/8
+                // registered the source sum, and stage 10 saturates this
+                // registered product on a separate clock.
                 engine_operand_a = output_sum_q;
                 engine_coefficient_a = $signed(
                     {4'b0000, filter_amp_gain(filter_amp_code)}
@@ -782,20 +784,11 @@ module ssi263_sc02_audio #(
         endcase
         engine_product_a = engine_operand_a * engine_coefficient_a;
         engine_product_b = engine_operand_b * engine_coefficient_b;
-        engine_product_a_ext = {{7{engine_product_a[40]}}, engine_product_a};
-        engine_product_b_ext = {{7{engine_product_b[40]}}, engine_product_b};
-        saved_product_i_cos_ext = {
-            {7{product_i_cos_q[40]}}, product_i_cos_q
-        };
-        saved_product_q_sin_ext = {
-            {7{product_q_sin_q[40]}}, product_q_sin_q
-        };
-        rotate_i_accumulator = saved_product_i_cos_ext -
-                               saved_product_q_sin_ext;
-        rotate_q_accumulator = engine_product_a_ext + engine_product_b_ext;
-        engine_next_i = sat24_add(
-            damped_i_q, sat24_from48(engine_product_a_ext >>> 14)
-        );
+        product_a_q_ext = {{7{product_a_q[40]}}, product_a_q};
+        product_b_q_ext = {{7{product_b_q[40]}}, product_b_q};
+        rotate_i_accumulator = product_a_q_ext - product_b_q_ext;
+        rotate_q_accumulator = product_a_q_ext + product_b_q_ext;
+        engine_next_i = sat24_add(damped_i_q, drive_i_q);
     end
 
     always_ff @(posedge clk) begin
@@ -839,13 +832,15 @@ module ssi263_sc02_audio #(
             engine_busy_q <= 1'b0;
             engine_overrun_q <= 1'b0;
             engine_section_q <= 3'd0;
-            engine_stage_q <= 3'd0;
-            product_i_cos_q <= 41'sd0;
-            product_q_sin_q <= 41'sd0;
+            engine_stage_q <= 4'd0;
+            product_a_q <= 41'sd0;
+            product_b_q <= 41'sd0;
             rotated_i_q <= 24'sd0;
             rotated_q_q <= 24'sd0;
             damped_i_q <= 24'sd0;
             damped_q_q <= 24'sd0;
+            drive_i_q <= 24'sd0;
+            fric_sum_q <= 24'sd0;
             output_sum_q <= 24'sd0;
             audio_sample <= 16'sd0;
         end else begin
@@ -909,39 +904,55 @@ module ssi263_sc02_audio #(
                 if (filter_phase && !engine_busy_q) begin
                     engine_busy_q <= 1'b1;
                     engine_section_q <= 3'd0;
-                    engine_stage_q <= 3'd0;
+                    engine_stage_q <= 4'd0;
                 end
             end
 
-            // One resonator uses four MAC clocks: rotate, damp, drive, commit.
-            // Seven sections plus sum and gain clocks take 30 clocks.  Only
-            // the two multipliers above run in any stage.
+            // Every DSP result first enters product_a_q/product_b_q.  Adds,
+            // saturation, and state commits occur only on later clocks.  One
+            // section takes seven clocks; seven sections plus four output
+            // clocks take 53 clocks.  The fastest intended phase gap is 133.
             if (engine_busy_q) begin
                 case (engine_stage_q)
-                    3'd0: begin
-                        product_i_cos_q <= engine_product_a;
-                        product_q_sin_q <= engine_product_b;
-                        engine_stage_q <= 3'd1;
+                    4'd0: begin
+                        product_a_q <= engine_product_a;
+                        product_b_q <= engine_product_b;
+                        engine_stage_q <= 4'd1;
                     end
-                    3'd1: begin
+                    4'd1: begin
+                        product_a_q <= engine_product_a;
+                        product_b_q <= engine_product_b;
                         rotated_i_q <= sat24_from48(
                             rotate_i_accumulator >>> 14
                         );
+                        engine_stage_q <= 4'd2;
+                    end
+                    4'd2: begin
                         rotated_q_q <= sat24_from48(
                             rotate_q_accumulator >>> 14
                         );
-                        engine_stage_q <= 3'd2;
+                        engine_stage_q <= 4'd3;
                     end
-                    3'd2: begin
+                    4'd3: begin
+                        product_a_q <= engine_product_a;
+                        product_b_q <= engine_product_b;
+                        engine_stage_q <= 4'd4;
+                    end
+                    4'd4: begin
+                        product_a_q <= engine_product_a;
                         damped_i_q <= sat24_from48(
-                            engine_product_a_ext >>> 14
+                            product_a_q_ext >>> 14
                         );
                         damped_q_q <= sat24_from48(
-                            engine_product_b_ext >>> 14
+                            product_b_q_ext >>> 14
                         );
-                        engine_stage_q <= 3'd3;
+                        engine_stage_q <= 4'd5;
                     end
-                    3'd3: begin
+                    4'd5: begin
+                        drive_i_q <= sat24_from48(product_a_q_ext >>> 14);
+                        engine_stage_q <= 4'd6;
+                    end
+                    4'd6: begin
                         case (engine_section_q)
                             3'd0: begin
                                 f1_state_q <= engine_next_i;
@@ -974,29 +985,34 @@ module ssi263_sc02_audio #(
                         endcase
 
                         if (engine_section_q == 3'd6)
-                            engine_stage_q <= 3'd4;
+                            engine_stage_q <= 4'd7;
                         else begin
                             engine_section_q <= engine_section_q + 3'd1;
-                            engine_stage_q <= 3'd0;
+                            engine_stage_q <= 4'd0;
                         end
                     end
-                    3'd4: begin
-                        // Isolate the two saturating 24-bit additions from the
-                        // final multiply to keep the 133.333 MHz path short.
-                        output_sum_q <= sat24_add(
-                            f5_state_q,
-                            sat24_add(fric1_state_q, fric2_state_q)
+                    4'd7: begin
+                        fric_sum_q <= sat24_add(
+                            fric1_state_q, fric2_state_q
                         );
-                        engine_stage_q <= 3'd5;
+                        engine_stage_q <= 4'd8;
+                    end
+                    4'd8: begin
+                        output_sum_q <= sat24_add(f5_state_q, fric_sum_q);
+                        engine_stage_q <= 4'd9;
+                    end
+                    4'd9: begin
+                        product_a_q <= engine_product_a;
+                        engine_stage_q <= 4'd10;
                     end
                     default: begin
                         if (!closure) begin
                             output_hold_q <= sat24_from48(
-                                engine_product_a_ext >>> 12
+                                product_a_q_ext >>> 12
                             );
                         end
                         engine_busy_q <= 1'b0;
-                        engine_stage_q <= 3'd0;
+                        engine_stage_q <= 4'd0;
                     end
                 endcase
             end

@@ -581,8 +581,10 @@ def test_no_vidhd_identity_and_slot_layout() -> None:
             "wire card_slot4_enable = card_slot_enable_mask_q[4];" in top,
             "PL default slot mask must enable Ethernet slot 1, mouse slot 2 and Phasor slot 4")
     require("localparam logic [2:0] MB1_SLOT_ASSIGN = 3'h4;" in top and
-            ".slot_assign(MB1_SLOT_ASSIGN)" in top,
-            "Phasor must be controlled as slot 4")
+            ".slot_assign(MB1_SLOT_ASSIGN)" in top and
+            ".card_enable(card_slot4_enable)" in top and
+            ".ab_read(gate_ab(ab_read, card_slot4_enable))" in top,
+            "Phasor must be controlled and fully removed by the slot-4 enable bit")
     require("mouse_card mouse_card_i" in top and
             ".ab_read(gate_ab(ab_read, card_slot2_enable))" in top and
             ".slot_assign(3'h2)" in top,

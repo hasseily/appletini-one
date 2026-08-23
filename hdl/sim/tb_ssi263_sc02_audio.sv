@@ -54,6 +54,7 @@ module tb_ssi263_sc02_audio;
     integer interval;
     integer energy_low;
     integer energy_high;
+    integer engine_cycles;
     integer voice_signature;
     integer fric_signature;
     integer phase_noise_edges = 0;
@@ -346,9 +347,9 @@ module tb_ssi263_sc02_audio;
     task automatic pulse_phase_xck_slow(output logic saw_phase);
         begin
             pulse_phase_xck(saw_phase);
-            // The real 133.333 MHz design gives at least 149 clocks between
-            // phase CEs.  Forty clocks also exceed this engine's 29 clocks.
-            repeat (40) @(negedge clk);
+            // Even the fastest intended profile gives 133 fabric clocks
+            // between phase CEs.  The registered engine takes 53 clocks.
+            repeat (140) @(negedge clk);
         end
     endtask
 
@@ -411,6 +412,14 @@ module tb_ssi263_sc02_audio;
               "negative fricative capacitor total is not 4042 pF");
         check(dut.filter_amp_capacitance(4'hF) == 13'd1126,
               "filter amplitude capacitor total is not 1126 pF");
+        check(dut.sat24_from48(48'sd8388608) == 24'sh7FFFFF,
+              "positive internal saturation limit wrapped");
+        check(dut.sat24_from48(-48'sd8388609) == -24'sd8388608,
+              "negative internal saturation limit wrapped");
+        check(dut.sat24_add(24'sh7FFFFF, 24'sd1) == 24'sh7FFFFF,
+              "positive saturating add wrapped");
+        check(dut.sat24_add(-24'sd8388608, -24'sd1) == -24'sd8388608,
+              "negative saturating add wrapped");
 
         // Every formant code moves its resonant center in one direction.
         for (i = 1; i < 16; i = i + 1) begin
@@ -551,7 +560,41 @@ module tb_ssi263_sc02_audio;
         check(phase_voice_gap == 8,
               "I=FFF U60 excitation interval was not eight XCK ticks");
 
-        // Run all seven persistent resonators through the two-MAC scheduler.
+        // A high phase starts exactly 53 registered engine clocks.  A phase
+        // inside that window must set the sticky diagnostic, not restart it.
+        reset_all();
+        phone_active = 1'b1;
+        voiced = 1'b1;
+        voice_amp_code = 4'hF;
+        filter_amp_code = 4'hF;
+        pulse_filter(1'b0);
+        @(negedge clk);
+        filter_phase = 1'b1;
+        filter_phase_ce = 1'b1;
+        @(negedge clk);
+        filter_phase_ce = 1'b0;
+        engine_cycles = 0;
+        while (dut.engine_busy_q) begin
+            @(negedge clk);
+            engine_cycles = engine_cycles + 1;
+        end
+        check(engine_cycles == 53,
+              "registered resonator engine did not take 53 clocks");
+
+        @(negedge clk);
+        filter_phase_ce = 1'b1;
+        @(negedge clk);
+        filter_phase_ce = 1'b0;
+        repeat (4) @(negedge clk);
+        filter_phase = 1'b0;
+        filter_phase_ce = 1'b1;
+        @(negedge clk);
+        filter_phase_ce = 1'b0;
+        check(dut.engine_overrun_q,
+              "phase collision did not set the scheduler diagnostic");
+        wait_engine_idle();
+
+        // Run all seven persistent resonators through the registered lanes.
         reset_all();
         phone_active = 1'b1;
         voiced = 1'b1;

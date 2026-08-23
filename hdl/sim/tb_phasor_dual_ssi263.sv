@@ -17,6 +17,7 @@ module tb_phasor_dual_ssi263;
     globals::SoftSwitchState sss = '0;
     globals::AppleBus_write ab_write;
     logic [2:0] slot_assign = SLOT;
+    logic card_enable = 1'b1;
     logic [47:0] pan = 48'h5555_5555_5555;
     logic [31:0] audio_control = 32'h0204_0000;
     logic audio_sample_tick = 1'b0;
@@ -54,6 +55,7 @@ module tb_phasor_dual_ssi263;
         .ab_read(ab_read),
         .sss(sss),
         .slot_assign(slot_assign),
+        .card_enable(card_enable),
         .pan(pan),
         .audio_control(audio_control),
         .audio_sample_tick(audio_sample_tick),
@@ -96,6 +98,7 @@ module tb_phasor_dual_ssi263;
             drive_idle();
             ab_read.res = 1'b1;
             slot_assign = SLOT;
+            card_enable = 1'b1;
             rstn = 1'b0;
             repeat (6) @(posedge clk);
             @(negedge clk);
@@ -244,6 +247,194 @@ module tb_phasor_dual_ssi263;
             #1;
             check(timeout < 500_000,
                   "secondary held voiced phone did not reach the audio source");
+        end
+    endtask
+
+    task automatic wait_for_primary_voiced;
+        integer timeout;
+        begin
+            timeout = 0;
+            while (!(dut.ssi263_primary_i.core_i.phone_voiced &&
+                     dut.ssi263_primary_i.core_i.voiced) &&
+                   timeout < 500_000) begin
+                @(posedge clk);
+                timeout = timeout + 1;
+            end
+            #1;
+            check(timeout < 500_000,
+                  "primary held voiced phone did not reach the audio source");
+        end
+    endtask
+
+    task automatic wait_for_a5_left_audio;
+        integer timeout;
+        logic saw_chip_audio;
+        logic saw_left_audio;
+        logic saw_filter_state;
+        logic leaked_right;
+        begin
+            timeout = 0;
+            saw_chip_audio = 1'b0;
+            saw_left_audio = 1'b0;
+            saw_filter_state = 1'b0;
+            leaked_right = 1'b0;
+            while (!(saw_chip_audio && saw_left_audio && saw_filter_state) &&
+                   timeout < 3_000_000) begin
+                @(posedge clk);
+                #1;
+                if (dut.ssi0_audio != 16'sd0)
+                    saw_chip_audio = 1'b1;
+                if (audio_l != 16'sd0)
+                    saw_left_audio = 1'b1;
+                if (dut.ssi263_secondary_i.audio_i.f1_state_q != 24'sd0 &&
+                    dut.ssi263_secondary_i.audio_i.f5_state_q != 24'sd0)
+                    saw_filter_state = 1'b1;
+                if (dut.ssi1_audio != 16'sd0 || audio_r != 16'sd0 ||
+                    dut.ssi263_primary_i.audio_i.f1_state_q != 24'sd0 ||
+                    dut.ssi263_primary_i.audio_i.f5_state_q != 24'sd0)
+                    leaked_right = 1'b1;
+                timeout = timeout + 1;
+            end
+            check(timeout < 3_000_000 && saw_chip_audio && saw_left_audio &&
+                  saw_filter_state && !leaked_right,
+                  "A5 speech did not remain on the left channel only");
+            check(!dut.ssi263_secondary_i.audio_i.engine_overrun_q &&
+                  !dut.ssi263_primary_i.audio_i.engine_overrun_q,
+                  "A5-only speech overran an actual audio engine");
+        end
+    endtask
+
+    task automatic wait_for_a6_right_audio;
+        integer timeout;
+        logic saw_chip_audio;
+        logic saw_right_audio;
+        logic saw_filter_state;
+        logic leaked_left;
+        begin
+            timeout = 0;
+            saw_chip_audio = 1'b0;
+            saw_right_audio = 1'b0;
+            saw_filter_state = 1'b0;
+            leaked_left = 1'b0;
+            while (!(saw_chip_audio && saw_right_audio && saw_filter_state) &&
+                   timeout < 3_000_000) begin
+                @(posedge clk);
+                #1;
+                if (dut.ssi1_audio != 16'sd0)
+                    saw_chip_audio = 1'b1;
+                if (audio_r != 16'sd0)
+                    saw_right_audio = 1'b1;
+                if (dut.ssi263_primary_i.audio_i.f1_state_q != 24'sd0 &&
+                    dut.ssi263_primary_i.audio_i.f5_state_q != 24'sd0)
+                    saw_filter_state = 1'b1;
+                if (dut.ssi0_audio != 16'sd0 || audio_l != 16'sd0 ||
+                    dut.ssi263_secondary_i.audio_i.f1_state_q != 24'sd0 ||
+                    dut.ssi263_secondary_i.audio_i.f5_state_q != 24'sd0)
+                    leaked_left = 1'b1;
+                timeout = timeout + 1;
+            end
+            check(timeout < 3_000_000 && saw_chip_audio && saw_right_audio &&
+                  saw_filter_state && !leaked_left,
+                  "A6 speech did not remain on the right channel only");
+            check(!dut.ssi263_secondary_i.audio_i.engine_overrun_q &&
+                  !dut.ssi263_primary_i.audio_i.engine_overrun_q,
+                  "A6-only speech overran an actual audio engine");
+        end
+    endtask
+
+    task automatic wait_for_dual_stereo_audio;
+        integer timeout;
+        logic saw_both_chip_audio;
+        logic saw_both_card_audio;
+        logic saw_both_filter_states;
+        begin
+            timeout = 0;
+            saw_both_chip_audio = 1'b0;
+            saw_both_card_audio = 1'b0;
+            saw_both_filter_states = 1'b0;
+            while (!(saw_both_chip_audio && saw_both_card_audio &&
+                     saw_both_filter_states) && timeout < 3_000_000) begin
+                @(posedge clk);
+                #1;
+                if (dut.ssi0_audio != 16'sd0 && dut.ssi1_audio != 16'sd0)
+                    saw_both_chip_audio = 1'b1;
+                if (audio_l != 16'sd0 && audio_r != 16'sd0)
+                    saw_both_card_audio = 1'b1;
+                if (dut.ssi263_secondary_i.audio_i.f1_state_q != 24'sd0 &&
+                    dut.ssi263_secondary_i.audio_i.f5_state_q != 24'sd0 &&
+                    dut.ssi263_primary_i.audio_i.f1_state_q != 24'sd0 &&
+                    dut.ssi263_primary_i.audio_i.f5_state_q != 24'sd0)
+                    saw_both_filter_states = 1'b1;
+                timeout = timeout + 1;
+            end
+            check(timeout < 3_000_000 && saw_both_chip_audio &&
+                  saw_both_card_audio && saw_both_filter_states &&
+                  dut.ssi263_secondary_i.core_i.phone_active &&
+                  dut.ssi263_primary_i.core_i.phone_active,
+                  "both SSI audio engines did not run independently");
+            check(!dut.ssi263_secondary_i.audio_i.engine_overrun_q &&
+                  !dut.ssi263_primary_i.audio_i.engine_overrun_q,
+                  "simultaneous speech overran an actual audio engine");
+        end
+    endtask
+
+    task automatic disable_card_during_native_read;
+        begin
+            @(negedge clk);
+            ab_read.addr = SLOT_BASE + 16'h0060;
+            ab_read.data = 8'h35;
+            ab_read.rw = 1'b1;
+            ab_read.serve_en = 1'b1;
+            ab_read.data_en = 1'b1;
+            ab_read.addr_en = 1'b0;
+            ab_read.cycle_valid = 1'b1;
+            sss.slot_access = 1'b1;
+            @(posedge clk);
+            #1;
+            check(ab_write.wr_data_en && dut.ssi_read_drive &&
+                  ab_write.assert_irq && dbg_ssi_irq,
+                  "disable test did not start with an active native read and IRQ");
+            check(audio_l != 16'sd0 && audio_r != 16'sd0,
+                  "disable test did not start with live stereo speech");
+
+            @(negedge clk);
+            drive_idle();
+            card_enable = 1'b0;
+            repeat (8) @(posedge clk);
+            #1;
+            check(!dut.card_enabled && !ab_write.wr_data_en &&
+                  !ab_write.assert_irq && !dbg_ssi_irq &&
+                  !dut.ssi_read_drive,
+                  "slot disable did not clear IRQ and registered read drive");
+            check(audio_l == 16'sd0 && audio_r == 16'sd0 &&
+                  dut.ssi0_audio == 16'sd0 && dut.ssi1_audio == 16'sd0,
+                  "slot disable did not mute both card and SSI audio outputs");
+            check(dut.phasor_mode_q == 3'd0 &&
+                  dut.ssi263_secondary_i.core_i.powered_down &&
+                  dut.ssi263_primary_i.core_i.powered_down &&
+                  !dut.ssi0_d7 && !dut.ssi1_d7 &&
+                  !dut.ssi263_secondary_i.audio_i.engine_busy_q &&
+                  !dut.ssi263_primary_i.audio_i.engine_busy_q,
+                  "slot disable did not reset both SSI sockets and card mode");
+
+            @(negedge clk);
+            card_enable = 1'b1;
+            repeat (8) @(posedge clk);
+            #1;
+            check(dut.card_enabled && dut.phasor_mode_q == 3'd0 &&
+                  dut.ssi263_secondary_i.core_i.powered_down &&
+                  dut.ssi263_primary_i.core_i.powered_down &&
+                  !dut.ssi0_d7 && !dut.ssi1_d7 &&
+                  !ab_write.wr_data_en && !ab_write.assert_irq &&
+                  audio_l == 16'sd0 && audio_r == 16'sd0,
+                  "slot re-enable did not start from clean reset state");
+
+            apple_write(SLOT_BASE + 16'h0021, 8'h52);
+            apple_write(SLOT_BASE + 16'h0041, 8'h64);
+            check(dut.ssi263_secondary_i.core_i.inflection_high_q == 8'h52 &&
+                  dut.ssi263_primary_i.core_i.inflection_high_q == 8'h64 &&
+                  !ab_write.assert_irq,
+                  "slot re-enable did not restore clean independent bus writes");
         end
     endtask
 
@@ -505,8 +696,8 @@ module tb_phasor_dual_ssi263;
         check(dut.phasor_mode_q == 3'd0,
               "Apple RESET collision did not restore Mockingboard mode");
 
-        // End-to-end excitation uses one socket only.  The other real core
-        // and audio block remain at their reset host/excitation state.
+        // Start end-to-end excitation on A5 only.  The other real core and
+        // audio block must remain at their reset host/excitation state.
         hard_reset();
         primary_hcc_before = {
             dut.ssi263_primary_i.audio_i.noise_d1_q,
@@ -554,6 +745,34 @@ module tb_phasor_dual_ssi263;
               dut.ssi263_primary_i.audio_i.voice_source == 24'sd0 &&
               dut.ssi263_primary_i.audio_i.fric_source == 24'sd0,
               "secondary voiced events changed the other SSI socket");
+        wait_for_a5_left_audio();
+
+        // Reset, then excite A6 alone to prove the opposite fixed stereo
+        // route through the actual core, filter engine, and card mixer.
+        hard_reset();
+        apple_write(SLOT_BASE + 16'h0041, 8'hFF);
+        apple_write(SLOT_BASE + 16'h0042, 8'hFD);
+        apple_write(SLOT_BASE + 16'h0040, 8'h41); // DR=01, voiced phone $01
+        apple_write(SLOT_BASE + 16'h0043, 8'h7F);
+        wait_for_primary_voiced();
+        wait_for_a6_right_audio();
+
+        // Leave A6 running and start A5.  Both independent filter engines and
+        // both final card channels must carry speech at the same time.
+        apple_write(SLOT_BASE + 16'h0021, 8'hFF);
+        apple_write(SLOT_BASE + 16'h0022, 8'hFD);
+        apple_write(SLOT_BASE + 16'h0020, 8'h41); // DR=01, voiced phone $01
+        apple_write(SLOT_BASE + 16'h0023, 8'h7F);
+        wait_for_secondary_voiced();
+        wait_for_dual_stereo_audio();
+
+        // Disable slot 4 while both chips have pending native requests, an
+        // active read drive, and live stereo output.  This models a runtime
+        // menu disable and then proves a clean card insertion on re-enable.
+        mode_access(MODE_NATIVE);
+        wait_for_both_pending();
+        wait_for_dual_stereo_audio();
+        disable_card_during_native_read();
 
         if (failures == 0) begin
             $display("PHASOR DUAL SSI263 PASS checks=%0d hcc_shifts=%0d voiced_reloads=%0d",

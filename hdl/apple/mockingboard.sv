@@ -14,6 +14,7 @@ module mockingboard(
     input globals::AppleBus_read ab_read,
     input globals::SoftSwitchState sss,
     input logic [2:0] slot_assign,
+    input logic card_enable,
     input logic [47:0] pan,
     input logic [31:0] audio_control,
     input logic audio_sample_tick,
@@ -43,7 +44,7 @@ globals::AppleBus_write ab_write_q = 0;
 logic [2:0] phasor_mode_q = PH_MOCKINGBOARD;
 logic psg_ce_extra_q = 1'b0;
 
-wire card_enabled = (slot_assign != 3'd0);
+wire card_enabled = card_enable && (slot_assign != 3'd0);
 wire mockingboard_mode = (phasor_mode_q == PH_MOCKINGBOARD);
 wire phasor_native = (phasor_mode_q == PH_PHASOR);
 wire echo_plus = (phasor_mode_q == PH_ECHOPLUS);

@@ -458,6 +458,28 @@ def test_phasor_irq_is_suppressed_during_apple_reset() -> None:
             "Mockingboard must not drive IRQ while Apple RESET is asserted")
 
 
+def test_phasor_slot4_disable_removes_the_card() -> None:
+    source = read(MOCKINGBOARD_SV)
+    top = read(APPLE_TOP_SV)
+    instance = sv_instance_block(top, "mockingboard mb1(")
+
+    require("input logic card_enable" in source and
+            "wire card_enabled = card_enable && (slot_assign != 3'd0);" in source,
+            "Phasor must combine the slot-4 enable bit with its assigned slot")
+    require(".card_enable(card_slot4_enable)" in instance and
+            ".ab_read(gate_ab(ab_read, card_slot4_enable))" in instance,
+            "apple_top must remove both the Phasor bus and card state when slot 4 is disabled")
+    require("wire card_reset = !rstn || !card_enabled;" in source and
+            "if (!rstn || !card_enabled) begin" in source and
+            "audio_l <= '0;" in source and
+            "audio_r <= '0;" in source,
+            "slot disable must reset the card and mute both audio channels")
+    require("ab_write_q.assert_irq <= card_enabled && ab_read.res &&" in source and
+            "if (!card_enabled || ab_read.data_en || ab_read.addr_en) begin" in source and
+            "ab_write_q.wr_data_en <= 1'b0;" in source,
+            "slot disable must release IRQ and any registered Apple-bus read drive")
+
+
 def test_phasor_pan_registers_and_menu_schema() -> None:
     top = read(APPLE_TOP_SV)
     header = read(CONFIG_MENU_H)
@@ -673,6 +695,7 @@ TESTS = [
     test_via_timer_reads_preserve_pre_tick_value,
     test_via_apple_reset_preserves_timer_latches,
     test_phasor_irq_is_suppressed_during_apple_reset,
+    test_phasor_slot4_disable_removes_the_card,
     test_phasor_pan_registers_and_menu_schema,
     test_phasor_is_apple_bus_driven,
     test_virtual_irq_uses_bidirectional_open_collector_lane,

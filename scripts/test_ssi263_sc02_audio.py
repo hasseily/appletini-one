@@ -45,6 +45,11 @@ def static_checks() -> None:
         "engine_busy_q",
         "engine_overrun_q",
         "engine_stage_q",
+        "53-cycle scheduler",
+        "four DSP48E1 cells",
+        "product_a_q <= engine_product_a;",
+        "product_b_q <= engine_product_b;",
+        "drive_i_q <= sat24_from48(product_a_q_ext >>> 14);",
         "engine_product_a = engine_operand_a * engine_coefficient_a;",
         "engine_product_b = engine_operand_b * engine_coefficient_b;",
     )
@@ -63,7 +68,9 @@ def static_checks() -> None:
     if source.count("engine_operand_a * engine_coefficient_a") != 1 or source.count(
         "engine_operand_b * engine_coefficient_b"
     ) != 1:
-        raise RuntimeError("resonator scheduler must expose exactly two MAC products")
+        raise RuntimeError("resonator scheduler must expose two RTL product lanes")
+    if re.search(r"sat24_from48\s*\(\s*engine_product_[ab]", source):
+        raise RuntimeError("every DSP product must be registered before saturation")
 
 
 def vivado_tool(name: str) -> str:

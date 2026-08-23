@@ -34,6 +34,7 @@ def static_checks() -> None:
     bench = RTL_SOURCES[-1].read_text(encoding="utf-8")
     required = (
         "mockingboard dut (",
+        ".card_enable(card_enable)",
         "A5+A6 write did not update both independent SSI registers",
         "dual native read did not give cleared A5 priority over A6",
         "Echo+ read selected an SSI data driver",
@@ -43,6 +44,11 @@ def static_checks() -> None:
         "held fricative phone did not cause repeated HCC4006 shifts",
         "8 *\n                (4096 - dut.ssi263_secondary_i.core_i.pitch_inflection)",
         "secondary voiced events changed the other SSI socket",
+        "A5 speech did not remain on the left channel only",
+        "A6 speech did not remain on the right channel only",
+        "both SSI audio engines did not run independently",
+        "slot disable did not clear IRQ and registered read drive",
+        "slot re-enable did not start from clean reset state",
     )
     for text in required:
         if text not in bench:

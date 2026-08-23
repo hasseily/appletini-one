@@ -1223,6 +1223,7 @@ module apple_top(
         .clk(clk),
         .rstn(rstn[2]),
         .slot_assign(MB1_SLOT_ASSIGN),
+        .card_enable(card_slot4_enable),
         .pan(phasor_pan_q),
         .audio_control(phasor_audio_q),
         .audio_sample_tick(audio_sample_tick),

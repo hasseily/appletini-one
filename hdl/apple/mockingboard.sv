@@ -7,8 +7,7 @@
 // the Phasor C0nX mode switch and adds a second AY behind each VIA. In native
 // mode VIA ORB bit 4 selects the primary AY and bit 3 selects the secondary AY;
 // both chip selects are active-low, matching the Phasor GAL behavior documented
-// by AppleWin. The SSI263/SC-01 speech side preserves AppleWin's bus-visible
-// edge cases and uses the local formant backend for audio.
+// by AppleWin. Two fixed SSI-263AP sockets provide native speech on A5 and A6.
 module mockingboard(
     input clk,
     input rstn,
@@ -108,39 +107,33 @@ wire ssi_secondary_read = ssi_native_read_region && ab_read.addr[5];
 
 logic via0_irq;
 logic via1_irq;
-logic [6:0] via0_ifr_set;
-logic [6:0] via0_ifr_clr;
-logic [6:0] via1_ifr_set;
-logic [6:0] via1_ifr_clr;
 logic [7:0] via0_data_out;
 logic [7:0] via0_porta_in;
 logic [7:0] via0_porta_out;
 logic [7:0] via0_portb_out;
 logic [7:0] via0_portb_bus;
-logic [7:0] via0_pcr;
-logic [7:0] via0_ddrb;
 logic [7:0] via1_data_out;
 logic [7:0] via1_porta_in;
 logic [7:0] via1_porta_out;
 logic [7:0] via1_portb_out;
 logic [7:0] via1_portb_bus;
-logic [7:0] via1_pcr;
-logic [7:0] via1_ddrb;
 
 logic ssi0_d7;
 logic ssi1_d7;
-logic ssi0_direct_irq;
-logic ssi1_direct_irq;
+logic ssi0_ar_drive_low;
+logic ssi1_ar_drive_low;
 logic ssi0_backend_done;
 logic ssi1_backend_done;
 logic ssi0_enable_ints;
 logic ssi1_enable_ints;
+wire ssi0_direct_irq = phasor_native && ssi0_ar_drive_low;
+wire ssi1_direct_irq = phasor_native && ssi1_ar_drive_low;
 assign dbg_ssi_irq          = ssi0_direct_irq | ssi1_direct_irq;
 assign dbg_ssi_backend_done = ssi0_backend_done | ssi1_backend_done;
 assign dbg_ssi_enable_ints  = ssi0_enable_ints | ssi1_enable_ints;
 logic signed [15:0] ssi0_audio;
 logic signed [15:0] ssi1_audio;
-logic signed [15:0] speech_audio_q;
+logic ssi_xck_ce;
 logic signed [31:0] tone_l_low_q;
 logic signed [31:0] tone_l_warm_lp_q;
 logic signed [31:0] tone_l_mid_lp_q;
@@ -183,7 +176,7 @@ logic signed [20:0] tone_shaped_r_q;
 logic signed [20:0] tone_warm_shaped_l_q;
 logic signed [20:0] tone_warm_shaped_r_q;
 
-wire ssi_read_drive = ssi_secondary_read ? 1'b0 : ssi_primary_read;
+wire ssi_read_drive = ssi_secondary_read || ssi_primary_read;
 wire [7:0] ssi_read_data = {ssi_secondary_read ? ssi0_d7 : ssi1_d7, ab_read.data[6:0]};
 
 logic [7:0] psg0_data_out;
@@ -258,10 +251,6 @@ wire via0_psg_latch_func = via0_portb_bus[2] && (via0_portb_bus[1:0] == 2'b11);
 wire via1_psg_latch_func = via1_portb_bus[2] && (via1_portb_bus[1:0] == 2'b11);
 wire via0_psg_read_write_func = via0_portb_bus[2] && (via0_portb_bus[1] ^ via0_portb_bus[0]);
 wire via1_psg_read_write_func = via1_portb_bus[2] && (via1_portb_bus[1] ^ via1_portb_bus[0]);
-wire via0_votrax_mode = (via0_pcr == 8'hB0);
-wire via0_votrax_write =
-    via0_strobe && !ab_read.rw && (ab_read.addr[3:0] == 4'h0) && via0_votrax_mode;
-wire [7:0] via0_votrax_wdata = (ab_read.data & via0_ddrb) | (via0_ddrb ^ 8'hFF);
 wire psg_clock = via_bus_clock || psg_ce_extra_q;
 
 wire via0_ay0_drive_native =
@@ -278,11 +267,9 @@ wire via1_ay1_drive_native =
     (via1_psg_read_write_func && (via1_ay0_cs || via1_ay1_cs) && via1_ay1_selected_q);
 
 wire via0_ay0_drive =
-    !via0_votrax_mode &&
     !echo_plus &&
     (!phasor_native || via0_ay0_drive_native);
 wire via0_ay1_drive =
-    !via0_votrax_mode &&
     !echo_plus &&
     phasor_native &&
     via0_ay1_drive_native;
@@ -598,9 +585,9 @@ via6522 via0(
     .we(!ab_read.rw),
     .porta_in(via0_porta_in),
     .portb_in(8'hFF),
-    .ifr_set_ext(via0_ifr_set),
-    .ifr_clr_ext(via0_ifr_clr),
-    .ca1_in(1'b1),
+    .ifr_set_ext(7'd0),
+    .ifr_clr_ext(7'd0),
+    .ca1_in(mockingboard_mode ? !ssi0_ar_drive_low : 1'b1),
     .ca2_in(1'b0),
     .cb1_in(1'b0),
     .cb2_in(1'b0),
@@ -614,8 +601,8 @@ via6522 via0(
     .porta_out(via0_porta_out),
     .portb_out(via0_portb_out),
     .portb_bus(via0_portb_bus),
-    .pcr_out(via0_pcr),
-    .ddrb_out(via0_ddrb),
+    .pcr_out(),
+    .ddrb_out(),
     .ca2_out(),
     .cb1_out(),
     .cb2_out()
@@ -628,9 +615,9 @@ via6522 via1(
     .we(!ab_read.rw),
     .porta_in(via1_porta_in),
     .portb_in(8'hFF),
-    .ifr_set_ext(via1_ifr_set),
-    .ifr_clr_ext(via1_ifr_clr),
-    .ca1_in(1'b1),
+    .ifr_set_ext(7'd0),
+    .ifr_clr_ext(7'd0),
+    .ca1_in(mockingboard_mode ? !ssi1_ar_drive_low : 1'b1),
     .ca2_in(1'b0),
     .cb1_in(1'b0),
     .cb2_in(1'b0),
@@ -644,61 +631,54 @@ via6522 via1(
     .porta_out(via1_porta_out),
     .portb_out(via1_portb_out),
     .portb_bus(via1_portb_bus),
-    .pcr_out(via1_pcr),
-    .ddrb_out(via1_ddrb),
+    .pcr_out(),
+    .ddrb_out(),
     .ca2_out(),
     .cb1_out(),
     .cb2_out()
 );
 
-// AppleWin default Phasor population: subunit 0 has no SSI263 socket chip but
-// does have the SC-01/Votrax path; subunit 1 is the main SSI263AP.
-ssi263_voice #(
-    .SSI263_TYPE(0),
-    .HAS_SC01(1'b1)
-) ssi263_secondary_i (
+// One colorburst-derived XCK pin clock feeds both fixed AP-revision sockets.
+// Each voice applies its own asserted DIV2 strap, so both effective chip time
+// bases are 894,886.25 Hz and remain unchanged by the card mode switch.
+ssi263_xck_ce ssi_xck_ce_i (
+    .clk(clk),
+    .rstn(rstn),
+    .xck_ce(ssi_xck_ce)
+);
+
+// A5 is the secondary, channel-A socket.
+ssi263_voice ssi263_secondary_i (
     .clk(clk),
     .rstn(rstn),
     .apple_res(ab_read.res),
     .card_enabled(card_enabled),
-    .card_mode(phasor_mode_q),
     .audio_tick(audio_sample_tick),
-    .ssi_write_strobe(ssi_secondary_write),
+    .xck_ce(ssi_xck_ce),
+    .ssi_write_active(ssi_secondary_write),
     .ssi_reg(ab_read.addr[2:0]),
     .ssi_wdata(ab_read.data),
     .ssi_d7(ssi0_d7),
-    .votrax_write_strobe(via0_votrax_write),
-    .votrax_wdata(via0_votrax_wdata),
-    .via_pcr(via0_pcr),
-    .via_ifr_set(via0_ifr_set),
-    .via_ifr_clr(via0_ifr_clr),
+    .ar_drive_low(ssi0_ar_drive_low),
     .audio(ssi0_audio),
-    .direct_irq(ssi0_direct_irq),
     .dbg_backend_done(ssi0_backend_done),
     .dbg_enable_ints(ssi0_enable_ints)
 );
 
-ssi263_voice #(
-    .SSI263_TYPE(2),
-    .HAS_SC01(1'b0)
-) ssi263_primary_i (
+// A6 is the primary, channel-B socket.
+ssi263_voice ssi263_primary_i (
     .clk(clk),
     .rstn(rstn),
     .apple_res(ab_read.res),
     .card_enabled(card_enabled),
-    .card_mode(phasor_mode_q),
     .audio_tick(audio_sample_tick),
-    .ssi_write_strobe(ssi_primary_write),
+    .xck_ce(ssi_xck_ce),
+    .ssi_write_active(ssi_primary_write),
     .ssi_reg(ab_read.addr[2:0]),
     .ssi_wdata(ab_read.data),
     .ssi_d7(ssi1_d7),
-    .votrax_write_strobe(1'b0),
-    .votrax_wdata(8'h00),
-    .via_pcr(via1_pcr),
-    .via_ifr_set(via1_ifr_set),
-    .via_ifr_clr(via1_ifr_clr),
+    .ar_drive_low(ssi1_ar_drive_low),
     .audio(ssi1_audio),
-    .direct_irq(ssi1_direct_irq),
     .dbg_backend_done(ssi1_backend_done),
     .dbg_enable_ints(ssi1_enable_ints)
 );
@@ -706,7 +686,7 @@ ssi263_voice #(
 YM2149 psg0(
     .CLK(clk),
     .CE(psg_clock),
-    .RESET(via_reset || (!via0_votrax_mode && !via0_portb_bus[2])),
+    .RESET(via_reset || !via0_portb_bus[2]),
     .BDIR(via0_ay0_drive ? via0_portb_bus[1] : 1'b0),
     .BC(via0_ay0_drive ? via0_portb_bus[0] : 1'b0),
     .DI(via0_porta_out),
@@ -746,7 +726,7 @@ YM2149 psg1(
 YM2149 psg2(
     .CLK(clk),
     .CE(psg_clock),
-    .RESET(via_reset || (!via0_votrax_mode && !via0_portb_bus[2])),
+    .RESET(via_reset || !via0_portb_bus[2]),
     .BDIR(via0_ay1_drive ? via0_portb_bus[1] : 1'b0),
     .BC(via0_ay1_drive ? via0_portb_bus[0] : 1'b0),
     .DI(via0_porta_out),
@@ -823,7 +803,6 @@ always_ff @(posedge clk) begin
         psg_echo_r_mix_q <= '0;
         psg_phasor_l_mix_q <= '0;
         psg_phasor_r_mix_q <= '0;
-        speech_audio_q <= '0;
         tone_l_low_q <= '0;
         tone_l_warm_lp_q <= '0;
         tone_l_mid_lp_q <= '0;
@@ -913,8 +892,6 @@ always_ff @(posedge clk) begin
                                       psg1_r_sum_q,
                                       psg2_r_sum_q,
                                       psg3_r_sum_q);
-        speech_audio_q <= sat_add16(ssi0_audio, ssi1_audio);
-
         begin : final_audio_mix
             logic signed [15:0] base_l_next;
             logic signed [15:0] base_r_next;
@@ -940,24 +917,24 @@ always_ff @(posedge clk) begin
             if (phasor_native) begin
                 base_l_next = mix_speech(
                     mix4_to_pcm(psg_phasor_l_mix_q),
-                    speech_audio_q);
+                    ssi0_audio);
                 base_r_next = mix_speech(
                     mix4_to_pcm(psg_phasor_r_mix_q),
-                    speech_audio_q);
+                    ssi1_audio);
             end else if (echo_plus) begin
                 base_l_next = mix_speech(
                     mix2_to_pcm(psg_echo_l_mix_q),
-                    speech_audio_q);
+                    ssi0_audio);
                 base_r_next = mix_speech(
                     mix2_to_pcm(psg_echo_r_mix_q),
-                    speech_audio_q);
+                    ssi1_audio);
             end else begin
                 base_l_next = mix_speech(
                     mix2_to_pcm(psg_mockingboard_l_mix_q),
-                    speech_audio_q);
+                    ssi0_audio);
                 base_r_next = mix_speech(
                     mix2_to_pcm(psg_mockingboard_r_mix_q),
-                    speech_audio_q);
+                    ssi1_audio);
             end
 
             tone_base_l_q <= base_l_next;

@@ -9,7 +9,7 @@ and higher-level peripheral emulation.
 
 - SmartPort storage and Disk II disk-image support
 - Selectable slot-5 coprocessor: PCPI-compatible Z80 Appli-Card or 640 KB ALF AD8088 Plus
-- Phasor/Mockingboard audio with SSI-263/SC-01 speech
+- Phasor/Mockingboard audio with two SSI-263AP (SC-02) speech chips
 - Uthernet II compatible W5100 interface
 - Mouse card, RamWorks memory, and no-slot clock
 - VidHD-compatible video controls and SuperSprite graphics

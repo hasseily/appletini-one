@@ -361,7 +361,7 @@ HELP(mouse,
 /*  MOCKINGBOARD / PHASOR                                                   */
 /* ======================================================================== */
 HELP(phasor,
-    "Phasor sound card: four YM2149 chips, 12 channels. 2x SSI-263/SC-01 speech chips.",
+    "Phasor sound card: four YM2149 chips, 12 channels. Two SSI-263AP (SC-02) speech chips.",
     "The Phasor is essentially 2 Mockingboard cards in one slot. It should run all Mockingboard software.",
     "Pan sliders position the 12 channels; audio sliders tune bass, mid, treble, and volume.",
     "The Appletini's audio is very clean, so you can push the volume up high.");

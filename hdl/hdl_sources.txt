@@ -34,12 +34,11 @@ apple/ps_dma_command.sv
 apple/soft_switch_manager.sv
 apple/YM2149.sv
 apple/ssi263_sc02_rom.mem
-apple/ssi263_formant_pkg.sv
-apple/disk2_sound_pkg.sv
-apple/sc01a_digital_core.sv
-apple/ssi263_formant_backend.sv
-apple/ssi263_bus_wrapper.sv
+apple/ssi263_xck_ce.sv
+apple/ssi263_sc02_core.sv
+apple/ssi263_sc02_audio.sv
 apple/ssi263_voice.sv
+apple/disk2_sound_pkg.sv
 apple/mockingboard.sv
 apple/disk2_sound_player.sv
 apple/mouse_card.sv

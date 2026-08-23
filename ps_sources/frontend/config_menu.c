@@ -273,7 +273,6 @@ static const char * const k_about_third_party[] = {
     "A2RetroNet project - Oliver Schmidt",
     "AppleWin reference - AppleWin emulator by Tom Charlesworth, Michael Pohoreski and others",
     "Accurate PAL video timing reference - Stephane Champailler",
-    "SC-01 Speech chip emulation reference - Olivier Galibert",
     "Mockingboard/Phasor reference - Tom Charlesworth",
     "z80emu - Lin Ke-Fong",
     "AD8088 Reboot Camp '83 - Seth Kushniryk",

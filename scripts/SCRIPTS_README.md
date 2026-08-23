@@ -126,20 +126,32 @@ Run `python scripts\test_psram_driver_iddr_reset.py` after PSRAM capture or
 reset changes. It compares reset modes, both capture phases, a mid-read reset,
 and the first read after reset through the real tape and input-DDR path.
 
-Run `python scripts\test_ssi263_start_timing.py` after SSI263, Votrax, or
-formant-start changes. It checks the same-edge backend start and VIA clear,
-the saved phoneme tuple, reset cancellation, and formant pipeline restart.
-
 Run `python scripts\test_ssi263_sc02_reference.py` after native SSI-263 ROM,
 register, request, clock, timing, or selector changes. It hash-checks the SC-02
 ROM and tests write-end capture, XCK/DIV2, frame and phoneme timing, continuous
 repeat, D7 versus A/R behavior, and the proved selector destinations.
 
-Run `python scripts\test_ssi263_filter_finalize.py` after SSI263 formant MAC or
-filter-pipeline changes. It checks every filter stage, exact accumulator and
-history timing, saturation limits, reset/restart cancellation, and sample output.
-Use `python scripts\sim_ssi263_formant_rtl.py --votrax ...` for direct SC-01
-phone sweeps; omit `--votrax` for SSI263 mode.
+Run `python scripts\test_ssi263_xck_ce.py` after SSI-263 clock changes. It checks
+the shared rational XCK enable generator and its short/long interval pattern.
+
+Run `python scripts\test_ssi263_sc02_core.py` after SSI-263 register, request,
+phoneme, pitch, filter-clock, or control changes. It compiles and runs the
+native digital-core bench against the SC-02 ROM.
+
+Run `python scripts\test_ssi263_sc02_audio.py` after SSI-263 excitation,
+resonator, gain, or sample-scheduler changes. It checks source routing, the
+noise-shift sequence, filter scheduling, saturation, and held audio output.
+The resonator checks validate this circuit-guided digital model; they do not
+claim a phase-by-phase analog simulation of the original chip.
+
+Run `python scripts\test_phasor_card.py` after Phasor decode, dual-SSI, VIA,
+PSG, mixing, or configuration changes. It runs the source and protocol model
+checks without Vivado or hardware.
+
+Run `python scripts\test_phasor_dual_ssi263.py` after card-level speech changes.
+It compiles the Phasor with only the native SSI-263 speech path and checks the
+two sockets, A5/A6 access, independent requests, IRQ/CA1 routing, reset-edge
+capture, noise shifts, pitch timing, and cross-chip isolation.
 
 Simulator-backed checks require the Xilinx simulation tools on `PATH`.
 Hardware-facing scripts document their required UART, JTAG, SD, or USB setup in

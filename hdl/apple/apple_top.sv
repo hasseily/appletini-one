@@ -150,6 +150,12 @@ module apple_top(
     logic configured_boot_target_disk2;
     logic onee_force_outputs_off;
     logic physical_bus_isolate;
+    /* Keep a private copy of the three-way isolation gate for the physical
+     * wrapper. The global net also feeds many virtual-machine safety loads;
+     * sharing that cone pulled the address-direction path away from its IOB.
+     * This copy is combinational, so isolation still asserts in the same
+     * fabric cycle as the manual request or either held safety state. */
+    (* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) logic physical_bus_isolate_wrapper;
     logic onee_physical_isolation_hold;
     logic onee_activity_now;
     logic onee_activity_lockout;
@@ -191,6 +197,9 @@ module apple_top(
         .apple_activity_quiet   (onee_activity_quiet),
         .inhibit_reason         (onee_inhibit_reason)
     );
+
+    assign physical_bus_isolate_wrapper =
+        onee_request_q || onee_selected || onee_physical_isolation_hold;
 
     /* U234 is the bidirectional auxiliary control-line translator. Disable it
      * while ONE//e owns the card so no auxiliary lane can couple to the slot.
@@ -905,9 +914,10 @@ module apple_top(
     logic        psram_dcount_edge_q;
     logic        psram_dcount_wr_pulse_q;
     logic        machine_inh_allowed;
-    /* Give the wrapper a same-edge copy that the placer can keep near its
+    /* Give the wrapper same-edge copies that the placer can keep near its
      * loads. The wrapper still sees each mode change on its original edge. */
     (* DONT_TOUCH = "TRUE" *) logic machine_inh_allowed_wrapper_q;
+    (* DONT_TOUCH = "TRUE" *) logic machine_is_iiplus_wrapper_q;
     logic        machine_m2sel_active_high;
     logic        machine_gs_m2_qualify;
     logic        machine_is_iiplus;
@@ -1066,11 +1076,11 @@ module apple_top(
         .dbg_clear(busdbg_clear_pulse),
         .clk(clk),
         .rstn(rstn[1]),
-        .physical_bus_isolate(physical_bus_isolate),
+        .physical_bus_isolate(physical_bus_isolate_wrapper),
         .inh_allowed(machine_inh_allowed_wrapper_q),
         .gs_m2_qualify(machine_gs_m2_qualify),
         .m2sel_active_high(machine_m2sel_active_high),
-        .host_is_iiplus(machine_is_iiplus),
+        .host_is_iiplus(machine_is_iiplus_wrapper_q),
         .iiplus_dma_refresh_active(vtw_iiplus_dma_refresh_active),
         .apple_data_pin(apple_data_pin),
         .apple_addr_pin(apple_addr_pin),
@@ -2118,6 +2128,7 @@ module apple_top(
             onee_request_q                  <= 1'b0;
             machine_mode_q                  <= 2'd0;
             machine_inh_allowed_wrapper_q   <= 1'b0;
+            machine_is_iiplus_wrapper_q     <= 1'b0;
             machine_m2sel_active_high       <= 1'b0;
             aux_provide_en_q                <= 1'b0;
             psram_dcount_q                  <= 5'd0;
@@ -2352,6 +2363,8 @@ module apple_top(
                         machine_inh_allowed_wrapper_q <=
                             (as_common.wdata[1:0] == 2'd1) ||
                             (as_common.wdata[1:0] == 2'd2);
+                        machine_is_iiplus_wrapper_q <=
+                            (as_common.wdata[1:0] == 2'd1);
                         machine_m2sel_active_high <= as_common.wdata[2];
                     end
                     8'h61: aux_provide_en_q <= as_common.wdata[0];

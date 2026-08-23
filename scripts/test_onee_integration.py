@@ -157,8 +157,10 @@ def static_checks() -> None:
     )
     require(
         ".ab_read(physical_ab_read)" in apple_top and
-        ".physical_bus_isolate(physical_bus_isolate)" in apple_top,
-        "physical wrapper must remain separate and receive the direct kill",
+        ".physical_bus_isolate(physical_bus_isolate_wrapper)" in apple_top and
+        "assign physical_bus_isolate_wrapper =" in apple_top and
+        "onee_request_q || onee_selected || onee_physical_isolation_hold;" in apple_top,
+        "physical wrapper must remain separate and receive an exact private copy of the direct kill",
     )
     require(
         "assign apple_reset_n_out = physical_bus_isolate ? 1'b1 :" in apple_top,

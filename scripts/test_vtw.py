@@ -209,6 +209,18 @@ def static_checks() -> None:
             "(as_common.wdata[1:0] == 2'd1) ||" in top and
             "(as_common.wdata[1:0] == 2'd2);" in top,
             "the wrapper machine interlock needs a preserved same-edge local copy")
+    require("(* DONT_TOUCH = \"TRUE\" *) logic machine_is_iiplus_wrapper_q;" in top and
+            ".host_is_iiplus(machine_is_iiplus_wrapper_q)" in top and
+            "machine_is_iiplus_wrapper_q     <= 1'b0;" in top and
+            "machine_is_iiplus_wrapper_q <=" in top and
+            "(as_common.wdata[1:0] == 2'd1);" in top,
+            "the II/II+ direction path needs a preserved same-edge local copy")
+    require("(* KEEP = \"TRUE\", DONT_TOUCH = \"TRUE\" *) logic "
+            "physical_bus_isolate_wrapper;" in top and
+            "assign physical_bus_isolate_wrapper =" in top and
+            "onee_request_q || onee_selected || onee_physical_isolation_hold;" in top and
+            ".physical_bus_isolate(physical_bus_isolate_wrapper)" in top,
+            "the wrapper isolation path needs a private same-cycle gate")
 
     # SmartPort short-circuit: vtw_core_top fast port wired to the card.
     core_top = read("hdl/apple/vtw_core_top.sv")

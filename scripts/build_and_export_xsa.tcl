@@ -1,6 +1,7 @@
 set xpr_path "project/appletini_yarz.xpr"
 set xsa_out  "project/appletini_yarz_top.xsa"
 set incremental_ref       ".vivado_cache/appletini_yarz_top_known_good.dcp"
+set release_setup_margin_ns 0.300
 source [file join [file dirname [info script]] timing_run_helpers.tcl]
 set force_full_build [expr {
     [info exists ::env(APPLETINI_FULL_BUILD)] &&
@@ -317,7 +318,11 @@ foreach path [get_timing_paths -delay_type max -max_paths 10 -sort_by slack] {
 
 # Keep reports and CSV values for failed attempts, but never export hardware
 # from a design with a timing, route, bus-skew, or constraint fault.
-foreach key {wns_ns whs_ns wpws_ns} {
+if {![string is double -strict [dict get $build_info wns_ns]] ||
+    [dict get $build_info wns_ns] < $release_setup_margin_ns} {
+    error "Setup margin is below ${release_setup_margin_ns} ns; refusing to export hardware."
+}
+foreach key {whs_ns wpws_ns} {
     if {![string is double -strict [dict get $build_info $key]] ||
         [dict get $build_info $key] < 0.0} {
         error "Timing failed ($key); refusing to export hardware."

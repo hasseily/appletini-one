@@ -169,6 +169,14 @@ module mouse_card (
     wire ab_io_write = ab_read.data_en && !ab_read.rw && slot_io_hit;
     wire [3:0] io_idx = ab_read.addr[3:0];
 
+    /* The merged physical/virtual Apple record crosses several card muxes.
+     * Capture its completed mouse write before feeding the position and clamp
+     * D paths. One 133 MHz tick is far shorter than an Apple bus cycle, and
+     * the pending flag preserves back-to-back fabric writes. */
+    logic       apple_write_pending_q;
+    logic [3:0] apple_write_idx_q;
+    logic [7:0] apple_write_data_q;
+
     wire [7:0] mouse_status_byte = {
         buttons_q[0],
         prev_buttons_q[0],
@@ -271,11 +279,19 @@ module mouse_card (
             ps_y_shadow_q <= 16'd0;
             ps_buttons_shadow_q <= 8'd0;
             ps_connected_shadow_q <= 1'b0;
+            apple_write_pending_q <= 1'b0;
+            apple_write_idx_q <= 4'd0;
+            apple_write_data_q <= 8'd0;
             ab_write_q <= '0;
             axi_read_addr_q <= 8'd0;
         end else begin
             ab_write_q <= ab_write_d;
             axi_read_addr_q <= as_common.araddr;
+            apple_write_pending_q <= ab_io_write;
+            if (ab_io_write) begin
+                apple_write_idx_q <= io_idx;
+                apple_write_data_q <= ab_read.data;
+            end
 
             if (clamp_apply_pending_q) begin
                 mouse_x_q <= clamp16(clamp_apply_x_q,
@@ -339,48 +355,48 @@ module mouse_card (
                 endcase
             end
 
-            if (ab_io_write) begin
-                case (io_idx)
+            if (apple_write_pending_q) begin
+                case (apple_write_idx_q)
                     /* Absolute position writes store RAW values: the manual
                      * requires CLEARMOUSE to set the position to zero even
                      * with a nonzero clamp minimum, and AppleWin's
                      * SetPositionAbs does not clamp either. Clamping happens
                      * on PS delta commits, CMD_HOME, and clamp commits. */
-                    IO_X_LO: mouse_x_q[7:0] <= ab_read.data;
-                    IO_X_HI: mouse_x_q[15:8] <= ab_read.data;
-                    IO_Y_LO: mouse_y_q[7:0] <= ab_read.data;
-                    IO_Y_HI: mouse_y_q[15:8] <= ab_read.data;
-                    IO_CLAMP_AXIS: clamp_axis_q <= ab_read.data[0];
+                    IO_X_LO: mouse_x_q[7:0] <= apple_write_data_q;
+                    IO_X_HI: mouse_x_q[15:8] <= apple_write_data_q;
+                    IO_Y_LO: mouse_y_q[7:0] <= apple_write_data_q;
+                    IO_Y_HI: mouse_y_q[15:8] <= apple_write_data_q;
+                    IO_CLAMP_AXIS: clamp_axis_q <= apple_write_data_q[0];
                     IO_CLAMP_MIN_LO: begin
                         if (clamp_axis_q)
-                            clamp_y_min_q[7:0] <= ab_read.data;
+                            clamp_y_min_q[7:0] <= apple_write_data_q;
                         else
-                            clamp_x_min_q[7:0] <= ab_read.data;
+                            clamp_x_min_q[7:0] <= apple_write_data_q;
                     end
                     IO_CLAMP_MIN_HI: begin
                         if (clamp_axis_q)
-                            clamp_y_min_q[15:8] <= ab_read.data;
+                            clamp_y_min_q[15:8] <= apple_write_data_q;
                         else
-                            clamp_x_min_q[15:8] <= ab_read.data;
+                            clamp_x_min_q[15:8] <= apple_write_data_q;
                     end
                     IO_CLAMP_MAX_LO: begin
                         if (clamp_axis_q)
-                            clamp_y_max_q[7:0] <= ab_read.data;
+                            clamp_y_max_q[7:0] <= apple_write_data_q;
                         else
-                            clamp_x_max_q[7:0] <= ab_read.data;
+                            clamp_x_max_q[7:0] <= apple_write_data_q;
                     end
                     IO_CLAMP_MAX_HI: begin
                         if (clamp_axis_q)
-                            clamp_y_max_q[15:8] <= ab_read.data;
+                            clamp_y_max_q[15:8] <= apple_write_data_q;
                         else
-                            clamp_x_max_q[15:8] <= ab_read.data;
+                            clamp_x_max_q[15:8] <= apple_write_data_q;
                     end
                     IO_COMMAND: begin
-                        if (ab_read.data == CMD_HOME) begin
+                        if (apple_write_data_q == CMD_HOME) begin
                             mouse_x_q <= clamp_x_min_q;
                             mouse_y_q <= clamp_y_min_q;
                             clamp_apply_pending_q <= 1'b0;
-                        end else if (ab_read.data == CMD_CLAMP_CURRENT) begin
+                        end else if (apple_write_data_q == CMD_CLAMP_CURRENT) begin
                             /* Commit the freshly written window: normalize
                              * min > max AppleWin-style. Capture both windows
                              * and the current position; the short clamp stage
@@ -399,7 +415,7 @@ module mouse_card (
                             clamp_apply_x_max_q <= clamp_x_norm[15:0];
                             clamp_apply_y_min_q <= clamp_y_norm[31:16];
                             clamp_apply_y_max_q <= clamp_y_norm[15:0];
-                        end else if (ab_read.data == CMD_CLAMP_DEFAULTS) begin
+                        end else if (apple_write_data_q == CMD_CLAMP_DEFAULTS) begin
                             /* INITMOUSE: both windows back to 0..1023. */
                             clamp_x_min_q <= 16'd0;
                             clamp_x_max_q <= 16'd1023;
@@ -415,7 +431,7 @@ module mouse_card (
                         end
                     end
                     IO_MODE: begin
-                        mode_q <= ab_read.data[3:0];
+                        mode_q <= apple_write_data_q[3:0];
                         /* SETMOUSE changes only the mode. Pending status and
                          * IRQ state remain owned by READMOUSE/SERVEMOUSE. */
                     end
@@ -428,14 +444,14 @@ module mouse_card (
                          * SERVE and READ, READ clears its cause but the new
                          * IRQ remains asserted; the next SERVE releases it
                          * and correctly reports a reasonless interrupt. */
-                        if (ab_read.data[0]) begin
+                        if (apple_write_data_q[0]) begin
                             movement_since_read_q <= 1'b0;
                             movement_irq_pending_q <= 1'b0;
                             button_pending_q <= 1'b0;
                             vbl_pending_q <= 1'b0;
                             prev_buttons_q <= buttons_q;
                         end
-                        if (ab_read.data[1]) begin
+                        if (apple_write_data_q[1]) begin
                             irq_pending_q <= 1'b0;
                         end
                     end
@@ -464,6 +480,7 @@ module mouse_card (
                 clamp_y_min_q <= 16'd0;
                 clamp_y_max_q <= 16'd1023;
                 clamp_apply_pending_q <= 1'b0;
+                apple_write_pending_q <= 1'b0;
                 ab_write_q <= '0;
             end
         end

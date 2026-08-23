@@ -156,9 +156,12 @@ module ssi263_sc02_audio #(
         input logic signed [47:0] value
     );
         begin
-            if (value > 48'sd8388607)
+            /* A value fits in 24 bits exactly when bits 46:23 extend its
+             * sign. Test those bits directly instead of inferring a wide
+             * signed magnitude compare and its carry chain. */
+            if (!value[47] && (|value[46:23]))
                 sat24_from48 = 24'sh7FFFFF;
-            else if (value < -48'sd8388608)
+            else if (value[47] && !(&value[46:23]))
                 sat24_from48 = -24'sd8388608;
             else
                 sat24_from48 = value[23:0];

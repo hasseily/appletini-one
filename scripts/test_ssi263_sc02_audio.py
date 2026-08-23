@@ -52,6 +52,8 @@ def static_checks() -> None:
         "drive_i_q <= sat24_from48(product_a_q_ext >>> 14);",
         "engine_product_a = engine_operand_a * engine_coefficient_a;",
         "engine_product_b = engine_operand_b * engine_coefficient_b;",
+        "if (!value[47] && (|value[46:23]))",
+        "else if (value[47] && !(&value[46:23]))",
     )
     for text in required:
         if text not in source:

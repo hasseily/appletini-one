@@ -80,10 +80,10 @@ def static_checks() -> bytes:
     require(ack_match is not None, "mouse_card IO_ACK case not found")
     ack_body = ack_match.group(1)
     status_ack = re.search(
-        r"if\s*\(\s*ab_read\.data\[0\]\s*\)\s*begin(.*?)\bend\b",
+        r"if\s*\(\s*apple_write_data_q\[0\]\s*\)\s*begin(.*?)\bend\b",
         ack_body, flags=re.DOTALL)
     irq_ack = re.search(
-        r"if\s*\(\s*ab_read\.data\[1\]\s*\)\s*begin(.*?)\bend\b",
+        r"if\s*\(\s*apple_write_data_q\[1\]\s*\)\s*begin(.*?)\bend\b",
         ack_body, flags=re.DOTALL)
     require(status_ack is not None and irq_ack is not None,
             "mouse_card must decode both ACK bits independently")
@@ -105,8 +105,12 @@ def static_checks() -> bytes:
             "SERVEMOUSE IRQ ACK incorrectly consumes status causes")
     require("ab_write_d.assert_irq = apple_bus_active && irq_pending_q;" in rtl,
             "mouse IRQ output must be driven by its independent IRQ latch")
-    require("IO_X_HI: mouse_x_q[15:8] <= ab_read.data;" in core and
-            "IO_Y_HI: mouse_y_q[15:8] <= ab_read.data;" in core,
+    require("apple_write_pending_q <= ab_io_write;" in core and
+            "apple_write_data_q <= ab_read.data;" in core and
+            "if (apple_write_pending_q) begin" in core,
+            "Apple register writes must cross a one-tick local capture stage")
+    require("IO_X_HI: mouse_x_q[15:8] <= apple_write_data_q;" in core and
+            "IO_Y_HI: mouse_y_q[15:8] <= apple_write_data_q;" in core,
             "absolute position writes must store raw (CLEARMOUSE sets 0,0 "
             "regardless of the clamp minimum)")
     usb = (ROOT / "ps_sources" / "frontend" / "usb_hid_service.c").read_text(

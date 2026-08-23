@@ -55,6 +55,9 @@ module tb_mouse_card;
         ab_read.data_en = 1'b0;
         ab_read.rw      = 1'b1;
         @(posedge clk);
+        // The card applies the captured write on this edge; return only after
+        // its nonblocking assignments have been visible for a full clock.
+        @(posedge clk);
     endtask
 
     // One register read (serve_en-keyed; response registers next clock).
@@ -204,13 +207,21 @@ module tb_mouse_card;
         ab_read.data_en = 1'b1;
         @(posedge clk);
         #1;
-        check(dut.clamp_apply_pending_q === 1'b1,
-              "clamp command did not arm the apply stage");
+        check(dut.apple_write_pending_q === 1'b1,
+              "clamp command did not enter the Apple write stage");
+        check(dut.clamp_apply_pending_q === 1'b0,
+              "clamp command bypassed the Apple write stage");
         check(dut.mouse_x_q === 16'h0234,
-              "clamp changed X on the normalization edge");
+              "clamp changed X on the capture edge");
         @(negedge clk);
         ab_read.data_en = 1'b0;
         ab_read.rw      = 1'b1;
+        @(posedge clk);
+        #1;
+        check(dut.clamp_apply_pending_q === 1'b1,
+              "staged clamp command did not arm the apply stage");
+        check(dut.mouse_x_q === 16'h0234,
+              "clamp changed X on the normalization edge");
         @(posedge clk);
         #1;
         check(dut.clamp_apply_pending_q === 1'b0,

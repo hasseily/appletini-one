@@ -223,6 +223,13 @@ rotation, saturation, addition, or state commit changed the same check to
 `WNS=+0.602 ns` on `xc7z020clg484-2`. That result is only a local timing check;
 the full placed-and-routed design remains the release gate.
 
+The final saturation test checks whether bits 46:23 extend bit 47 instead of
+using a wide signed magnitude comparison. This gives the same 24-bit clamp at
+both limits without a second carry chain after the rotation DSP. A fresh check
+of the exact RTL still gives `WNS=+0.602 ns`; it uses 790 packed LUTs, 716
+flip-flops, three shift-register LUTs, four DSP48E1 cells, and no block RAM per
+chip.
+
 This is a large gain over the SC-01-based sound path, but it remains the least
 proved part. Pole angles, radii, section drive, output scale, and the mapping
 from capacitor ratio to a discrete resonator are engineering estimates. They

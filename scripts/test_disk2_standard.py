@@ -666,8 +666,16 @@ def test_disk2_sound_recal_and_volume_contract() -> None:
 
     require("RECAL_REARM_QTRACK     = 8'd4" in disk2_card,
             "track-zero recal sound must not re-arm on tiny qtrack bounces")
-    require(disk2_card.count("step_next[15:8] >= RECAL_REARM_QTRACK") == 2,
-            "both immediate and delayed step paths must use the recal re-arm threshold")
+    require(disk2_card.count(
+                "sound_step_end_qtrack_q >= RECAL_REARM_QTRACK") == 2 and
+            disk2_card.count(
+                "sound_step_drive_q <= drive_select_q") == 2 and
+            disk2_card.count(
+                "sound_step_recal_armed_q <= selected_recal_sound_armed") == 2 and
+            "sound_step_drive_q == drive_select_q" in disk2_card and
+            "recal_sound_armed_q[sound_step_drive_q] <= 1'b1;" in disk2_card and
+            "recal_sound_armed_q[sound_step_drive_q] <= 1'b0;" in disk2_card,
+            "both step paths must stage their drive and update recal state from the registered result")
     require("stepper_hits_track0_stop" in disk2_card and
             "if (track0_stop_hit && recal_armed)" in disk2_card,
             "track-zero recal sound must play only when the head hits the track-0 stop")

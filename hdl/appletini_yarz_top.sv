@@ -275,6 +275,7 @@ module appletini_yarz_top (
     logic signed [15:0] disk2_audio_l;
     logic signed [15:0] disk2_audio_r;
     logic signed [15:0] onee_audio_mono;
+    logic signed [15:0] onee_audio_mono_q;
     logic onee_menu_audio_mute;
     logic onee_menu_audio_mute_bclk;
     logic signed [15:0] card_audio_l;
@@ -288,6 +289,7 @@ module appletini_yarz_top (
     logic [23:0] menu_chime_amplitude;
     logic [31:0] audio_sample_acc_q;
     logic audio_sample_resend;
+    logic audio_sample_capture_q;
     logic [47:0] mockingboard_audio_24_fclk;
     logic [47:0] mockingboard_audio_24_sampled_fclk;
     logic [47:0] mockingboard_audio_24_bclk;
@@ -851,19 +853,34 @@ module appletini_yarz_top (
         if (!peripheral_133M_aresetn[6]) begin
             audio_sample_acc_q <= 32'd0;
             audio_sample_resend <= 1'b0;
+            audio_sample_capture_q <= 1'b0;
             mockingboard_audio_24_sampled_fclk <= 48'd0;
         end else begin
             audio_sample_acc_q <= audio_sample_acc_next[31:0];
             audio_sample_resend <= audio_sample_acc_next[32];
-            if (audio_sample_acc_next[32])
+            audio_sample_capture_q <= audio_sample_acc_next[32];
+            if (audio_sample_capture_q)
                 mockingboard_audio_24_sampled_fclk <= mockingboard_audio_24_fclk;
         end
     end
 
-    assign card_audio_l = sat_add16(mockingboard_audio_l, disk2_audio_l);
-    assign card_audio_r = sat_add16(mockingboard_audio_r, disk2_audio_r);
-    assign mixed_audio_l = sat_add16(card_audio_l, onee_audio_mono);
-    assign mixed_audio_r = sat_add16(card_audio_r, onee_audio_mono);
+    // Register the card mix and a matching ONE//e speaker sample before the
+    // final add. The capture pulse above is delayed by the same fclk, so the
+    // channels stay aligned while two signed saturating adders no longer form
+    // one 133 MHz path.
+    always_ff @(posedge fclk_clk0 or negedge peripheral_133M_aresetn[6]) begin
+        if (!peripheral_133M_aresetn[6]) begin
+            card_audio_l <= 16'sd0;
+            card_audio_r <= 16'sd0;
+            onee_audio_mono_q <= 16'sd0;
+        end else begin
+            card_audio_l <= sat_add16(mockingboard_audio_l, disk2_audio_l);
+            card_audio_r <= sat_add16(mockingboard_audio_r, disk2_audio_r);
+            onee_audio_mono_q <= onee_audio_mono;
+        end
+    end
+    assign mixed_audio_l = sat_add16(card_audio_l, onee_audio_mono_q);
+    assign mixed_audio_r = sat_add16(card_audio_r, onee_audio_mono_q);
     assign mockingboard_audio_24_fclk = {
         mixed_audio_l, 8'h00,
         mixed_audio_r, 8'h00

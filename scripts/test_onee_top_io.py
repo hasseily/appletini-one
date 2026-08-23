@@ -155,13 +155,16 @@ def static_contract_checks() -> None:
         "the ONE//e mute CDC must have a narrow first-stage route bound",
     )
     require(
-        "assign card_audio_l = sat_add16(mockingboard_audio_l, disk2_audio_l);"
+        "card_audio_l <= sat_add16(mockingboard_audio_l, disk2_audio_l);"
         in board and
-        "assign card_audio_r = sat_add16(mockingboard_audio_r, disk2_audio_r);"
+        "card_audio_r <= sat_add16(mockingboard_audio_r, disk2_audio_r);"
         in board and
-        "assign mixed_audio_l = sat_add16(card_audio_l, onee_audio_mono);"
+        "onee_audio_mono_q <= onee_audio_mono;" in board and
+        "audio_sample_capture_q <= audio_sample_acc_next[32];" in board and
+        "if (audio_sample_capture_q)" in board and
+        "assign mixed_audio_l = sat_add16(card_audio_l, onee_audio_mono_q);"
         in board and
-        "assign mixed_audio_r = sat_add16(card_audio_r, onee_audio_mono);"
+        "assign mixed_audio_r = sat_add16(card_audio_r, onee_audio_mono_q);"
         in board,
         "speaker mono must enter both stereo channels through signed saturation",
     )

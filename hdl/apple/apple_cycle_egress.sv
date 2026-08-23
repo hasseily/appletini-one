@@ -74,6 +74,7 @@ module apple_cycle_egress
     logic [31:0] producer_ptr_q;
     logic [31:0] consumer_ptr_q;
     logic [31:0] used_bytes;
+    logic [31:0] used_bytes_q;
     logic [31:0] free_bytes;
 
     always_ff @(posedge clk) begin
@@ -87,6 +88,18 @@ module apple_cycle_egress
     // Computed as a positive value via masked subtraction.
     assign used_bytes = (producer_ptr_q - consumer_ptr_q) & ring_mask;
 
+    /* Register the pointer subtraction before it feeds the ring-full
+     * comparisons and free-space subtraction. Producer updates are followed
+     * by a notify burst, so the value settles well before S_DRAIN can issue
+     * another ring burst. A consumer advance may take one extra clock to free
+     * space, which is conservative. */
+    always_ff @(posedge clk) begin
+        if (~resetn)
+            used_bytes_q <= 32'd0;
+        else
+            used_bytes_q <= used_bytes;
+    end
+
     // Two slots reserved at the high-water mark. One for the gap marker,
     // one to disambiguate full vs empty (producer == consumer always means
     // empty; we never let producer reach consumer with normal records).
@@ -99,13 +112,13 @@ module apple_cycle_egress
     logic ring_full_for_records_q;
     logic ring_full_for_gap_q;
     assign ring_full_for_records_now =
-        (used_bytes >= (ring_size_bytes - 32'd16));
+        (used_bytes_q >= (ring_size_bytes - 32'd16));
     assign ring_full_for_gap_now =
-        (used_bytes >= (ring_size_bytes - 32'd8));
+        (used_bytes_q >= (ring_size_bytes - 32'd8));
     // Burst-cap free space clamps at zero to prevent unsigned underflow from
     // being interpreted as available room. Caps at ring_size-16.
     assign free_bytes = ring_full_for_records_now ? 32'd0
-                       : ((ring_size_bytes - 32'd16) - used_bytes);
+                       : ((ring_size_bytes - 32'd16) - used_bytes_q);
 
     // ---------------- Stage register file ----------------
     // 16x64 distributed RAM; two head pointers form a circular buffer.

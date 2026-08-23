@@ -222,7 +222,23 @@ module disk2_card (
     logic [7:0]  sound_step_end_qtrack_q;
     logic        sound_step_track0_stop_q;
     logic        sound_step_recal_armed_q;
+    logic        sound_step_drive_q;
     logic        recal_sound_armed_q [0:1];
+
+    // Forward the pending sound-only arm update if a second step for the same
+    // drive completes on the next fabric clock. Normal Apple steps are much
+    // farther apart, but this also keeps the private vTW path exact.
+    logic selected_recal_sound_armed;
+    always_comb begin
+        selected_recal_sound_armed = recal_sound_armed_q[drive_select_q];
+        if (sound_step_valid_q && sound_step_drive_q == drive_select_q) begin
+            if (sound_step_end_qtrack_q >= RECAL_REARM_QTRACK)
+                selected_recal_sound_armed = 1'b1;
+            else if (sound_step_track0_stop_q &&
+                     sound_step_recal_armed_q)
+                selected_recal_sound_armed = 1'b0;
+        end
+    end
 
     logic [20:0] prefetch_line_q [0:PREFETCH_LINES-1];
     logic [63:0] prefetch_data_q [0:PREFETCH_LINES-1];
@@ -900,6 +916,7 @@ module disk2_card (
             sound_step_end_qtrack_q <= 8'd0;
             sound_step_track0_stop_q <= 1'b0;
             sound_step_recal_armed_q <= 1'b0;
+            sound_step_drive_q <= 1'b0;
             recal_sound_armed_q[0] <= 1'b1;
             recal_sound_armed_q[1] <= 1'b1;
             prefetch_valid_q <= '0;
@@ -984,6 +1001,17 @@ module disk2_card (
                 sound_seek_distance_q <= sound_seek_distance_for_step(
                     sound_step_start_qtrack_q,
                     sound_step_end_qtrack_q);
+                // Update recalibration state from the registered step result.
+                // The current event already carries the pre-step armed state,
+                // and a new physical step cannot arrive within this fclk.
+                // This keeps the bus decode and stepper math out of the
+                // recalibration flag input path.
+                if (sound_step_end_qtrack_q >= RECAL_REARM_QTRACK) begin
+                    recal_sound_armed_q[sound_step_drive_q] <= 1'b1;
+                end else if (sound_step_track0_stop_q &&
+                             sound_step_recal_armed_q) begin
+                    recal_sound_armed_q[sound_step_drive_q] <= 1'b0;
+                end
                 sound_step_valid_q <= 1'b0;
             end
             if (disk_cycle_tick && empty_drive_lss_settle_q != 10'd0)
@@ -1144,6 +1172,7 @@ module disk2_card (
                 sound_step_end_qtrack_q <= 8'd0;
                 sound_step_track0_stop_q <= 1'b0;
                 sound_step_recal_armed_q <= 1'b0;
+                sound_step_drive_q <= 1'b0;
                 recal_sound_armed_q[0] <= 1'b1;
                 recal_sound_armed_q[1] <= 1'b1;
                 standard_spin_countdown_q <= STANDARD_SPIN_FIRST_IDLE;
@@ -1235,13 +1264,9 @@ module disk2_card (
                                     sound_step_start_qtrack_q <= drive_qtrack_q[drive_select_q];
                                     sound_step_end_qtrack_q <= step_next[15:8];
                                     sound_step_track0_stop_q <= track0_stop_hit;
-                                    sound_step_recal_armed_q <= recal_sound_armed_q[drive_select_q];
+                                    sound_step_recal_armed_q <= selected_recal_sound_armed;
+                                    sound_step_drive_q <= drive_select_q;
                                     sound_step_valid_q <= 1'b1;
-                                    if (step_next[15:8] >= RECAL_REARM_QTRACK) begin
-                                        recal_sound_armed_q[drive_select_q] <= 1'b1;
-                                    end else if (track0_stop_hit && recal_sound_armed_q[drive_select_q]) begin
-                                        recal_sound_armed_q[drive_select_q] <= 1'b0;
-                                    end
                                 end
                                 step_pending_q <= 1'b1;
                                 step_pending_addr_q <= io_idx;
@@ -1347,13 +1372,9 @@ module disk2_card (
                     sound_step_start_qtrack_q <= drive_qtrack_q[drive_select_q];
                     sound_step_end_qtrack_q <= step_next[15:8];
                     sound_step_track0_stop_q <= track0_stop_hit;
-                    sound_step_recal_armed_q <= recal_sound_armed_q[drive_select_q];
+                    sound_step_recal_armed_q <= selected_recal_sound_armed;
+                    sound_step_drive_q <= drive_select_q;
                     sound_step_valid_q <= 1'b1;
-                    if (step_next[15:8] >= RECAL_REARM_QTRACK) begin
-                        recal_sound_armed_q[drive_select_q] <= 1'b1;
-                    end else if (track0_stop_hit && recal_sound_armed_q[drive_select_q]) begin
-                        recal_sound_armed_q[drive_select_q] <= 1'b0;
-                    end
                     step_pending_q <= 1'b0;
                     step_delay_q <= 4'd0;
                 end else begin

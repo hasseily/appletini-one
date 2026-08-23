@@ -343,15 +343,25 @@ module psram_driver (
     // ------------------------------------------------------------------------
     // Falling edge: launch outputs
     //
-    // psram_ce_n keeps its synchronous reset (must be deasserted/high out of
+    // psram_ce_n uses a local reset copy (must be deasserted/high out of
     // reset). psram_oe / psram_a_o / psram_b_o intentionally have no reset:
     // the posedge FSM holds the sh_*_tape registers cleared during reset, so
     // these flops naturally launch zeros once the clock starts running. This
     // avoids a high-fanout (~2800 loads) reset broadcast through the OLOGIC
     // R pins on a half-cycle (negedge) launch path.
     // ------------------------------------------------------------------------
+    // Assert at once and release on a rising edge. The single local load keeps
+    // the system reset net off the half-cycle path to the CE output flop.
+    (* ASYNC_REG = "TRUE" *) logic psram_ce_resetn_q = 1'b0;
+    always @(posedge clk or negedge resetn) begin
+        if (!resetn)
+            psram_ce_resetn_q <= 1'b0;
+        else
+            psram_ce_resetn_q <= 1'b1;
+    end
+
     always @(negedge clk) begin
-        if (!resetn) begin
+        if (!psram_ce_resetn_q) begin
             psram_ce_n <= 1;
         end else begin
             psram_ce_n <= sh_ce_n_tape[31];

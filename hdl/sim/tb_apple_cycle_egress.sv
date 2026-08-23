@@ -1,8 +1,9 @@
 `timescale 1ns / 1ps
 
-// Focused checks for the registered ring-space guards. The guards may lag a
-// consumer advance by one fabric clock, but must preserve the two reserved
-// eight-byte slots at the end of the ring.
+// Focused checks for the registered ring-space guards. The pointer-difference
+// stage makes a consumer advance take one more fabric clock to reach the
+// guards, but the stale value is conservative and must preserve the two
+// reserved eight-byte slots at the end of the ring.
 module tb_apple_cycle_egress;
 
     import apple_cycle_capture_pkg::*;
@@ -87,11 +88,11 @@ module tb_apple_cycle_egress;
 
         // A consumer advance is sampled, then reaches the registered flags.
         cfg_consumer_ptr = 32'd8;
-        repeat (2) @(posedge clk);
+        repeat (3) @(posedge clk);
         #1 check_flags(1'b1, 1'b0, "consumer frees gap slot");
 
         cfg_consumer_ptr = 32'd16;
-        repeat (2) @(posedge clk);
+        repeat (3) @(posedge clk);
         #1 check_flags(1'b0, 1'b0, "consumer frees record slot");
 
         if (failures == 0)

@@ -12,6 +12,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "build" / "phasor_dual_ssi263_sim"
 PASS_MARKER = "PHASOR DUAL SSI263 PASS"
+LEGACY_SPEECH_RE = re.compile(
+    r"(?i)(?<![a-z0-9])(?:sc(?:[-_ ]?0?1)a?|votrax)(?![a-z0-9])"
+)
 ACOUSTIC_MARKERS = (
     "PHASOR SSI263 ACOUSTIC S",
     "PHASOR SSI263 ACOUSTIC F",
@@ -92,7 +95,8 @@ def static_checks() -> None:
         )
 
     compiled_names = "\n".join(path.name.lower() for path in RTL_SOURCES)
-    if re.search(r"(?:sc01|votrax|formant_backend|bus_wrapper)", compiled_names):
+    if (LEGACY_SPEECH_RE.search(compiled_names) or
+            re.search(r"(?:formant_backend|bus_wrapper)", compiled_names)):
         raise RuntimeError("card-level test must compile only native SSI-263 speech RTL")
 
 

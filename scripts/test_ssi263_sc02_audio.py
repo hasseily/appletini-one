@@ -14,6 +14,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "build" / "ssi263_sc02_audio_sim"
 PASS_MARKER = "SSI263 SC02 AUDIO PASS"
+LEGACY_SPEECH_RE = re.compile(
+    r"(?i)(?<![a-z0-9])(?:sc(?:[-_ ]?0?1)a?|votrax)(?![a-z0-9])"
+)
+
+
+def strip_verilog_comments(source: str) -> str:
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
+    return re.sub(r"//[^\r\n]*", "", source)
 
 
 def parse_case_table(source: str, name: str) -> list[int]:
@@ -570,7 +578,7 @@ def static_checks() -> None:
         if text in source:
             raise RuntimeError(f"native audio contract retains stale path: {text}")
 
-    if re.search(r"\b(?:sc01|votrax)\b", source, re.IGNORECASE):
+    if LEGACY_SPEECH_RE.search(strip_verilog_comments(source)):
         raise RuntimeError("native SC-02 audio must not depend on legacy speech")
     if re.search(r"\bfric_source\b", source):
         raise RuntimeError("U157 and U152 must not collapse into one source")

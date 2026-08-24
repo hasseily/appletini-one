@@ -29,6 +29,17 @@ CARD_CONTROL_REGS_H = REPO_ROOT / "ps_sources" / "frontend" / "card_control_regs
 IMAGE_VERSIONS_H = REPO_ROOT / "ps_sources" / "image_versions.h"
 CREATE_VITIS_WORKSPACE_PY = REPO_ROOT / "scripts" / "create_vitis_workspace.py"
 CREATE_PROJECT_TCL = REPO_ROOT / "scripts" / "create_project.tcl"
+HDL_SOURCES_TXT = REPO_ROOT / "hdl" / "hdl_sources.txt"
+
+LEGACY_SPEECH_RE = re.compile(
+    r"(?i)(?<![a-z0-9])(?:sc(?:[-_ ]?0?1)a?|votrax)(?![a-z0-9])"
+)
+LEGACY_IMPLEMENTATION_NAMES = (
+    "ssi263_type",
+    "ssi263_formant_pkg",
+    "ssi263_formant_backend",
+    "ssi263_bus_wrapper",
+)
 
 
 class TestFailure(Exception):
@@ -44,9 +55,52 @@ def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def implementation_text(path: Path) -> str:
+    source = read(path)
+    if path.suffix.lower() in {".sv", ".svh", ".v", ".vh"}:
+        source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
+        source = re.sub(r"//[^\r\n]*", "", source)
+    elif path.suffix.lower() == ".xdc":
+        source = re.sub(r"(?m)#.*$", "", source)
+    return source
+
+
+def hdl_source_closure() -> list[Path]:
+    entries = [
+        line.strip()
+        for line in read(HDL_SOURCES_TXT).splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    paths = [REPO_ROOT / "hdl" / entry for entry in entries]
+    missing = [str(path) for path in paths if not path.is_file()]
+    require(not missing, f"Vivado HDL source closure has missing files: {missing}")
+    return paths
+
+
 def sv_instance_block(source: str, instance_header: str) -> str:
     require(instance_header in source, f"missing SystemVerilog instance: {instance_header}")
     return source.split(instance_header, 1)[1].split(");", 1)[0]
+
+
+def test_native_ssi263_hdl_source_closure() -> None:
+    paths = hdl_source_closure()
+    closure_names = "\n".join(
+        path.relative_to(REPO_ROOT / "hdl").as_posix() for path in paths
+    )
+    closure_text = "\n".join(implementation_text(path) for path in paths)
+    closure = f"{closure_names}\n{closure_text}"
+
+    legacy_match = LEGACY_SPEECH_RE.search(closure)
+    if legacy_match:
+        raise TestFailure(
+            "Vivado HDL source closure retains legacy speech name "
+            f"{legacy_match.group(0)!r}"
+        )
+    closure_lower = closure.lower()
+    require(
+        all(name not in closure_lower for name in LEGACY_IMPLEMENTATION_NAMES),
+        "Vivado HDL source closure retains a removed speech implementation",
+    )
 
 
 def test_phasor_mode_switch_and_reset_contract() -> None:
@@ -711,6 +765,7 @@ def test_virtual_irq_uses_bidirectional_open_collector_lane() -> None:
 
 
 TESTS = [
+    test_native_ssi263_hdl_source_closure,
     test_phasor_mode_switch_and_reset_contract,
     test_four_ay_chips_and_phasor_chip_selects,
     test_dual_native_ssi263_contract,

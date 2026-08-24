@@ -43,6 +43,7 @@ utils_1/
 # Build output directories
 build/
 export/
+/build_*.out
 
 # Object files and dependency files
 *.o

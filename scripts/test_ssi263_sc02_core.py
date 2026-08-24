@@ -12,6 +12,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "build" / "ssi263_sc02_core_sim"
 PASS_MARKER = "SSI263 SC02 CORE PASS"
+LEGACY_SPEECH_RE = re.compile(
+    r"(?i)(?<![a-z0-9])(?:sc(?:[-_ ]?0?1)a?|votrax)(?![a-z0-9])"
+)
+
+
+def strip_verilog_comments(source: str) -> str:
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
+    return re.sub(r"//[^\r\n]*", "", source)
 
 
 def static_checks() -> None:
@@ -48,7 +56,7 @@ def static_checks() -> None:
     for text in required:
         if text not in source:
             raise RuntimeError(f"native core contract is missing: {text}")
-    if re.search(r"\b(?:sc01|votrax)\b", source, re.IGNORECASE):
+    if LEGACY_SPEECH_RE.search(strip_verilog_comments(source)):
         raise RuntimeError("native SSI-263 core must not depend on legacy speech")
     if "provisional" in source.lower():
         raise RuntimeError("native SSI-263 core still describes provisional logic")

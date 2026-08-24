@@ -279,22 +279,30 @@ def test_dual_native_ssi263_contract() -> None:
             "HAS_SC01" not in source,
             "A5 and A6 must each have one fixed SSI-263AP voice")
     require("ssi263_sc02_core #(" in voice and
-            ".REVISION_AP(1'b1)" in voice and
-            "ssi263_sc02_audio audio_i" in voice and
-            ".div2(1'b1)" in voice,
-            "the voice wrapper must bind one AP-revision native core and its native audio block")
-    require(".write_active(ssi_write_active)" in voice and
-            "assign write_end = write_active_q && !write_active;" in core,
+             ".REVISION_AP(1'b1)" in voice and
+             "ssi263_sc02_audio audio_i" in voice and
+             voice.count(".div2(1'b1)") == 1,
+            "each voice wrapper must bind one AP core, one DIV2 strap, and its native audio block")
+    require(".write_active(ssi_write_active && card_enabled)" in voice and
+             "assign write_end = write_active_q && !write_active;" in core,
             "the selected write level must latch in the native core on its falling edge")
+    secondary_instance = sv_instance_block(source, "ssi263_voice ssi263_secondary_i")
+    primary_instance = sv_instance_block(source, "ssi263_voice ssi263_primary_i")
     require(source.count(".apple_res(ab_read.res)") == 2 and
-            ".rstn(rstn && card_enabled)" in voice and
-            ".pd_rst_n(apple_res)" in voice,
-            "card removal must hard-reset each core while Apple RESET uses the AP PD/RST pin")
-    require(".d7_pending(ssi_d7)" in voice and
-            ".ar_drive_low(ar_drive_low)" in voice and
-            "assign d7_pending = pending_q;" in core and
-            "assign ar_drive_low = pending_q && ar_enabled_q && !powered_down;" in core,
-            "D7 pending state and the enabled active-low A/R pin must remain distinct")
+             ".rstn(rstn)" in secondary_instance and
+             ".rstn(rstn)" in primary_instance and
+             ".card_enabled(card_enabled)" in secondary_instance and
+             ".card_enabled(card_enabled)" in primary_instance and
+             ".rstn(rstn)" in voice and ".pd_rst_n(apple_res)" in voice and
+             ".rstn(rstn && card_enabled)" not in voice,
+            "card visibility must mask the wrapper while Apple RESET alone drives AP PD/RST")
+    require(".d7_pending(core_d7)" in voice and
+             ".ar_drive_low(core_ar_drive_low)" in voice and
+             "assign ssi_d7 = card_enabled ? core_d7 : 1'b0;" in voice and
+             "assign ar_drive_low = card_enabled && core_ar_drive_low;" in voice and
+             "assign d7_pending = pending_q;" in core and
+             "assign ar_drive_low = pending_q && ar_enabled_q && !powered_down;" in core,
+            "the wrapper must mask distinct D7 and active-low A/R die outputs")
 
     xck_instance = sv_instance_block(source, "ssi263_xck_ce ssi_xck_ce_i")
     card_instance = sv_instance_block(top, "mockingboard mb1(")
@@ -308,8 +316,9 @@ def test_dual_native_ssi263_contract() -> None:
             source.count(".xck_ce(ssi_xck_ce)") == 3,
             "physical Apple Q3 must cross two synchronizer flops and feed both voices")
     require("phasor_native" not in xck_instance and
-            "card_mode" not in voice,
-            "XCK and chip state must run independently of the Phasor mode switch")
+             "card_mode" not in voice and
+             voice.count(".div2(1'b1)") == 1,
+            "Q3 must feed one mode-independent DIV2 stage in each SSI die")
 
     require("wire ssi_primary_write = ab_read.data_en && ssi_primary_cycle_hit_q;" in source and
             "wire ssi_secondary_write = ab_read.data_en && ssi_secondary_cycle_hit_q;" in source and
@@ -338,21 +347,29 @@ def test_dual_native_ssi263_contract() -> None:
             "VIA PCR state must not alter VIA0 AY drive or reset behavior")
 
     require(source.count("                    ssi0_audio);") == 3 and
-            source.count("                    ssi1_audio);") == 3 and
-            "speech_audio_q" not in source and
-            "sat_add16(ssi0_audio, ssi1_audio)" not in source,
-            "A5 speech must remain left and A6 speech right in all three card modes")
-    require("assign dbg_backend_done = response_boundary_ce;" in voice and
-            "assign dbg_enable_ints = ar_enabled;" in voice,
-            "speech debug taps must expose response boundaries and the A/R enable state")
-    require(".fricative(fricative)" in voice and
-            ".voiced(voiced)" in voice and
-            ".noise_clock_ce(noise_clock_ce)" in voice and
-            ".voice_toggle(voice_toggle)" in voice and
-            ".fric1_sw(fric1_sw)" in voice and
-            ".fric2_sw(fric2_sw)" in voice and
-            ".closure(closure)" in voice,
-            "the wrapper must carry the proved native source, switch, and closure controls into audio")
+             source.count("                    ssi1_audio);") == 3 and
+             "speech_audio_q" not in source and
+             "sat_add16(ssi0_audio, ssi1_audio)" not in source,
+            "A5 secondary/channel A and A6 primary/channel B must never cross-sum")
+    require("assign dbg_backend_done = card_enabled && response_boundary_ce;" in voice and
+             "assign dbg_enable_ints = card_enabled && ar_enabled;" in voice,
+            "card-visible debug taps must mask the die response and A/R state")
+    require(".noise_clock_ce(noise_clock_ce)" in voice and
+             ".noise_shift_ce(noise_shift_ce)" in voice and
+             ".voice_toggle(voice_toggle)" in voice and
+             ".fric1_sw(fric1_sw)" in voice and
+             ".fric2_sw(fric2_sw)" in voice and
+             ".closure(closure)" in voice,
+            "the wrapper must carry separate drawn counter, shift, switch, and closure controls")
+    invented_controls = (
+        "phone_voiced",
+        "phone_fricative",
+        "stop_class",
+        "source_voiced",
+        "source_fricative",
+    )
+    require(all(name not in active_implementation for name in invented_controls),
+            "the active SSI path must not decode invented phone or source classes")
 
 
 def test_ssi263_exhaustive_address_decode_model() -> None:
@@ -592,7 +609,7 @@ def test_phasor_pan_registers_and_menu_schema() -> None:
     require(version_match is not None and int(version_match.group(1)) >= 100 and
             "#define MOCKINGBOARD_CHANNEL_COUNT 12U" in internal and
             "#define PHASOR_AUDIO_CONTROL_COUNT 4U" in internal and
-            "#define PHASOR_WARMTH_DEFAULT 8" in internal and
+            "#define PHASOR_WARMTH_DEFAULT 0" in internal and
             "#define PHASOR_PSG_MODE_YM2149 0U" in internal and
             "#define PHASOR_PSG_MODE_AY8913 1U" in internal and
             '"Phasor"' in config and
@@ -690,7 +707,7 @@ def test_phasor_pan_registers_and_menu_schema() -> None:
             "tone_warm_control_q <= clamp_audio_control(audio_control[19:15]);" in mockingboard and
             "tone_volume_control_q <= clamp_audio_control(audio_control[24:20]);" in mockingboard,
             "PL must decode five packed signed 5-bit Phasor audio controls")
-    require("PHASOR_AUDIO_RESET               = 32'h0204_0000" in top and
+    require("PHASOR_AUDIO_RESET               = 32'h0200_0000" in top and
             "bit 25 selects PSG volume table (0=YM, 1=AY)." in top and
             "bit 26 selects SSI263 backend" not in top,
             "PL reset/default register value must keep AY PSG mode and the current audio-control layout")

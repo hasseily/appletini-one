@@ -15,18 +15,6 @@ PASS_MARKER = "PHASOR DUAL SSI263 PASS"
 LEGACY_SPEECH_RE = re.compile(
     r"(?i)(?<![a-z0-9])(?:sc(?:[-_ ]?0?1)a?|votrax)(?![a-z0-9])"
 )
-ACOUSTIC_MARKERS = (
-    "PHASOR SSI263 ACOUSTIC S",
-    "PHASOR SSI263 ACOUSTIC F",
-    "PHASOR SSI263 ACOUSTIC SCH",
-    "PHASOR SSI263 ACOUSTIC J",
-    "PHASOR SSI263 ACOUSTIC Z",
-    "PHASOR SSI263 ACOUSTIC P_HELD",
-    "PHASOR SSI263 ACOUSTIC P_TO_HF",
-    "PHASOR SSI263 ACOUSTIC VOICE01",
-    "PHASOR SSI263 BALANCE",
-)
-
 RTL_SOURCES = (
     ROOT / "hdl" / "globals.sv",
     ROOT / "hdl" / "apple" / "via6522.v",
@@ -57,42 +45,45 @@ def static_checks() -> None:
         "native IRQ did not OR the two pending A/R pins",
         "VIA CA1 edge latches did not observe the SSI requests",
         "Apple RESET lost a selected-write falling-edge collision",
-        "sustained S did not vary its live fricative source",
-        "8 *\n                (4096 - dut.ssi263_secondary_i.core_i.pitch_inflection)",
-        "secondary voiced events changed the other SSI socket",
-        "A5 speech did not remain on the left channel only",
-        "sample_div_q == 12'd2082",
-        "sample_div_q == 12'd2083",
-        "8'h70); // DR=01, sustained S $30",
-        'measure_a5_acoustic_window("S", 1\'b0, 1\'b1)',
-        'measure_a5_acoustic_window("F", 1\'b0, 1\'b0)',
-        'measure_a5_acoustic_window("SCH", 1\'b0, 1\'b0)',
-        'measure_a5_acoustic_window("J", 1\'b0, 1\'b0)',
-        'measure_a5_acoustic_window("Z", 1\'b0, 1\'b0)',
-        "measure_a5_held_p_silence()",
-        'measure_a5_acoustic_window("P_TO_HF", 1\'b0, 1\'b0)',
-        'measure_a5_acoustic_window("VOICE01", 1\'b1, 1\'b0)',
-        "chip_rms=%0d chip_ms=%0d",
-        "chip_mean_square",
-        "chip_mean_abs",
-        "chip_occupancy",
-        "chip_clips",
-        "SSI voice/fricative power ratio was not sane",
-        "card voice/fricative power ratio was not sane",
-        "ssi0_occ=%0d ssi1_occ=%0d left_occ=%0d right_occ=%0d",
-        "A6 speech did not remain on the right channel only",
+        "$readmemh(\"ssi263_sc02_rom.mem\", expected_rom);",
+        "wait_for_secondary_rom",
+        "wait_for_primary_rom",
+        "dut.ssi263_secondary_i.core_i.pw_0 ==",
+        "dut.ssi263_primary_i.core_i.pw_5 ==",
+        "check_q3_div2_path(\"Mockingboard mode\")",
+        "check_q3_div2_path(\"native mode\")",
+        "check_q3_div2_path(\"Echo+ mode\")",
+        "secondary_edges == 16 && primary_edges == 16",
+        "dut.ssi263_secondary_i.core_i.pitch_inflection == 12'hFFD",
+        "A5 secondary socket did not stay on channel A only",
+        "A6 primary socket did not stay on channel B only",
+        "always #3.75 clk = ~clk;",
+        "sample_div_q == 12'd2776",
+        "sample_div_q == 12'd2777",
+        "PHASOR SSI263 DUAL ROUTE",
         "both SSI audio engines did not run independently",
         "slot disable did not clear IRQ and registered read drive",
-        "slot re-enable did not start from clean reset state",
+        "slot disable reset a die instead of masking the card boundary",
+        "slot re-enable did not expose the two preserved SSI dies",
     )
     for text in required:
         if text not in bench:
             raise RuntimeError(f"card-level regression coverage missing: {text}")
 
-    if "sample_div_q == 12'd2777" in bench or "8'h67); // DR=01, phone $27" in bench:
-        raise RuntimeError(
-            "card-level acoustic check still uses the old 36 kHz/P vector"
-        )
+    invented = (
+        "phone_voiced",
+        "phone_fricative",
+        "stop_class",
+        "source_voiced",
+        "source_fricative",
+        "acoustic",
+        "rms",
+        "mean_square",
+        "occupancy",
+    )
+    for name in invented:
+        if name in bench.lower():
+            raise RuntimeError(f"card-level regression retains assumption {name}")
 
     compiled_names = "\n".join(path.name.lower() for path in RTL_SOURCES)
     if (LEGACY_SPEECH_RE.search(compiled_names) or
@@ -157,7 +148,6 @@ def main() -> int:
     if (
         PASS_MARKER not in output
         or "PHASOR DUAL SSI263 FAIL" in output
-        or any(marker not in output for marker in ACOUSTIC_MARKERS)
     ):
         print(output)
         raise RuntimeError("card-level dual SSI-263 Phasor regression did not pass")

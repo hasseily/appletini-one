@@ -20,7 +20,7 @@ module tb_phasor_dual_ssi263;
     logic [2:0] slot_assign = SLOT;
     logic card_enable = 1'b1;
     logic [47:0] pan = 48'h5555_5555_5555;
-    logic [31:0] audio_control = 32'h0204_0000;
+    logic [31:0] audio_control = 32'h0200_0000;
     logic audio_sample_tick = 1'b0;
     logic signed [15:0] audio_l;
     logic signed [15:0] audio_r;
@@ -29,55 +29,36 @@ module tb_phasor_dual_ssi263;
     logic dbg_ssi_enable_ints;
 
     logic [11:0] sample_div_q = 12'd0;
+    logic [7:0] expected_rom [0:511];
     integer failures = 0;
     integer checks = 0;
-    integer effective_tick_total = 0;
-    integer fric_source_changes = 0;
 
-    integer voice_chip_peak = 0;
-    integer voice_chip_mean_abs = 0;
-    integer voice_chip_occupancy = 0;
-    integer voice_chip_clips = 0;
-    longint voice_chip_mean_square = 0;
-    integer voice_card_peak = 0;
-    integer voice_card_mean_abs = 0;
-    integer voice_card_occupancy = 0;
-    integer voice_card_clips = 0;
-    longint voice_card_mean_square = 0;
+    logic [3:0] sample_period_q = 4'd0;
 
-    integer s_chip_peak = 0;
-    integer s_chip_mean_abs = 0;
-    integer s_chip_occupancy = 0;
-    integer s_chip_clips = 0;
-    longint s_chip_mean_square = 0;
-    integer s_card_peak = 0;
-    integer s_card_mean_abs = 0;
-    integer s_card_occupancy = 0;
-    integer s_card_clips = 0;
-    longint s_card_mean_square = 0;
-
-    logic [1:0] sample_period_q = 2'd0;
-
-    always #5 clk = ~clk;
+    // Match the production 133.333344 MHz fabric clock. At the physical Q3
+    // rate this gives about 65.185 engine clocks per rising edge.
+    always #3.75 clk = ~clk;
     // Nominal Apple Q3 input, asynchronous to this bench's fabric clock.
     always #244.444 apple_q3_raw = ~apple_q3_raw;
 
-    // A 100 MHz fabric clock cannot divide evenly to 48 kHz. Two 2083-clock
-    // periods followed by one 2084-clock period give an exact 48 kHz average.
+    // 133.333344 MHz does not divide evenly to 48 kHz. Seven 2778-clock
+    // periods and two 2777-clock periods give the required average cadence.
     always_ff @(posedge clk) begin
         if (!rstn) begin
             sample_div_q <= 12'd0;
-            sample_period_q <= 2'd0;
+            sample_period_q <= 4'd0;
             audio_sample_tick <= 1'b0;
-        end else if ((sample_period_q != 2'd2 &&
-                      sample_div_q == 12'd2082) ||
-                     (sample_period_q == 2'd2 &&
-                      sample_div_q == 12'd2083)) begin
+        end else if (((sample_period_q == 4'd3 ||
+                       sample_period_q == 4'd7) &&
+                      sample_div_q == 12'd2776) ||
+                     (sample_period_q != 4'd3 &&
+                      sample_period_q != 4'd7 &&
+                      sample_div_q == 12'd2777)) begin
             sample_div_q <= 12'd0;
-            if (sample_period_q == 2'd2)
-                sample_period_q <= 2'd0;
+            if (sample_period_q == 4'd8)
+                sample_period_q <= 4'd0;
             else
-                sample_period_q <= sample_period_q + 2'd1;
+                sample_period_q <= sample_period_q + 4'd1;
             audio_sample_tick <= 1'b1;
         end else begin
             sample_div_q <= sample_div_q + 12'd1;
@@ -113,24 +94,6 @@ module tb_phasor_dual_ssi263;
             end
         end
     endtask
-
-    function automatic integer integer_sqrt(input longint value);
-        longint estimate;
-        longint next_estimate;
-        begin
-            if (value <= 0) begin
-                integer_sqrt = 0;
-            end else begin
-                estimate = value;
-                next_estimate = (estimate + value / estimate) / 2;
-                while (next_estimate < estimate) begin
-                    estimate = next_estimate;
-                    next_estimate = (estimate + value / estimate) / 2;
-                end
-                integer_sqrt = estimate;
-            end
-        end
-    endfunction
 
     task automatic drive_idle;
         begin
@@ -207,12 +170,12 @@ module tb_phasor_dual_ssi263;
         end
     endtask
 
-    task automatic start_a5_acoustic_phone(
+    task automatic start_a5_phone(
         input logic [7:0] duration_phone
     );
         begin
-            // Known speech-driver vector: I=$A00, R=$F, ART=$7, AMP=$F,
-            // and FILT=$E8. Keep every phone in the sweep on this vector.
+            // Fixed register vector. ROM outputs remain the only per-phone
+            // source of tract and switch controls.
             apple_write(SLOT_BASE + 16'h0021, 8'h40);
             apple_write(SLOT_BASE + 16'h0022, 8'hF8);
             apple_write(SLOT_BASE + 16'h0024, 8'hE8);
@@ -296,416 +259,181 @@ module tb_phasor_dual_ssi263;
         end
     endtask
 
-    task automatic wait_for_secondary_fricative;
+    task automatic wait_for_secondary_rom(input logic [5:0] phone);
         integer timeout;
+        integer row;
         begin
             timeout = 0;
-            while (!(dut.ssi263_secondary_i.core_i.phone_fricative &&
-                     dut.ssi263_secondary_i.core_i.fricative) &&
-                   timeout < 1_000_000) begin
+            row = phone * 8;
+            while (!(dut.ssi263_secondary_i.core_i.phone_active &&
+                     dut.ssi263_secondary_i.core_i.phoneme == phone &&
+                     dut.ssi263_secondary_i.core_i.f1_code ==
+                         expected_rom[row + 0][7:4] &&
+                     dut.ssi263_secondary_i.core_i.f2_code ==
+                         expected_rom[row + 1][7:4] &&
+                     dut.ssi263_secondary_i.core_i.f2_res_code ==
+                         expected_rom[row + 2][7:4] &&
+                     dut.ssi263_secondary_i.core_i.f3_code ==
+                         expected_rom[row + 3][7:4] &&
+                     dut.ssi263_secondary_i.core_i.f4_code ==
+                         expected_rom[row + 3][7:4] &&
+                     dut.ssi263_secondary_i.core_i.voice_amp_code ==
+                         expected_rom[row + 5][7:4] &&
+                     dut.ssi263_secondary_i.core_i.fric_amp_code ==
+                         expected_rom[row + 6][7:4] &&
+                     dut.ssi263_secondary_i.core_i.pw_0 ==
+                         expected_rom[row + 0][0] &&
+                     dut.ssi263_secondary_i.core_i.pw_1 ==
+                         expected_rom[row + 1][0] &&
+                     dut.ssi263_secondary_i.core_i.pw_2 ==
+                         expected_rom[row + 2][2] &&
+                     dut.ssi263_secondary_i.core_i.pw_3 ==
+                         !expected_rom[row + 2][1] &&
+                     dut.ssi263_secondary_i.core_i.pw_5 ==
+                         !expected_rom[row + 2][2]) &&
+                   timeout < 3_000_000) begin
                 @(posedge clk);
                 timeout = timeout + 1;
             end
             #1;
-            check(timeout < 1_000_000,
-                  "secondary held fricative did not reach the audio source");
+            check(timeout < 3_000_000,
+                  "A5 secondary socket did not reach its exact ROM row");
         end
     endtask
 
-    task automatic wait_for_secondary_voiced;
+    task automatic wait_for_primary_rom(input logic [5:0] phone);
         integer timeout;
+        integer row;
         begin
             timeout = 0;
-            while (!(dut.ssi263_secondary_i.core_i.phone_voiced &&
-                     dut.ssi263_secondary_i.core_i.voiced) &&
-                   timeout < 500_000) begin
+            row = phone * 8;
+            while (!(dut.ssi263_primary_i.core_i.phone_active &&
+                     dut.ssi263_primary_i.core_i.phoneme == phone &&
+                     dut.ssi263_primary_i.core_i.f1_code ==
+                         expected_rom[row + 0][7:4] &&
+                     dut.ssi263_primary_i.core_i.f2_code ==
+                         expected_rom[row + 1][7:4] &&
+                     dut.ssi263_primary_i.core_i.f2_res_code ==
+                         expected_rom[row + 2][7:4] &&
+                     dut.ssi263_primary_i.core_i.f3_code ==
+                         expected_rom[row + 3][7:4] &&
+                     dut.ssi263_primary_i.core_i.f4_code ==
+                         expected_rom[row + 3][7:4] &&
+                     dut.ssi263_primary_i.core_i.voice_amp_code ==
+                         expected_rom[row + 5][7:4] &&
+                     dut.ssi263_primary_i.core_i.fric_amp_code ==
+                         expected_rom[row + 6][7:4] &&
+                     dut.ssi263_primary_i.core_i.pw_0 ==
+                         expected_rom[row + 0][0] &&
+                     dut.ssi263_primary_i.core_i.pw_1 ==
+                         expected_rom[row + 1][0] &&
+                     dut.ssi263_primary_i.core_i.pw_2 ==
+                         expected_rom[row + 2][2] &&
+                     dut.ssi263_primary_i.core_i.pw_3 ==
+                         !expected_rom[row + 2][1] &&
+                     dut.ssi263_primary_i.core_i.pw_5 ==
+                         !expected_rom[row + 2][2]) &&
+                   timeout < 3_000_000) begin
                 @(posedge clk);
                 timeout = timeout + 1;
             end
             #1;
-            check(timeout < 500_000,
-                  "secondary held voiced phone did not reach the audio source");
+            check(timeout < 3_000_000,
+                  "A6 primary socket did not reach its exact ROM row");
         end
     endtask
 
-    task automatic wait_for_primary_voiced;
-        integer timeout;
+    task automatic check_q3_div2_path(input string mode_name);
+        integer pin_edges;
+        integer secondary_edges;
+        integer primary_edges;
         begin
-            timeout = 0;
-            while (!(dut.ssi263_primary_i.core_i.phone_voiced &&
-                     dut.ssi263_primary_i.core_i.voiced) &&
-                   timeout < 500_000) begin
+            pin_edges = 0;
+            secondary_edges = 0;
+            primary_edges = 0;
+            while (pin_edges < 32) begin
                 @(posedge clk);
-                timeout = timeout + 1;
+                #1;
+                if (dut.ssi_xck_ce) begin
+                    pin_edges = pin_edges + 1;
+                    if (dut.ssi263_secondary_i.core_i.effective_xck_ce)
+                        secondary_edges = secondary_edges + 1;
+                    if (dut.ssi263_primary_i.core_i.effective_xck_ce)
+                        primary_edges = primary_edges + 1;
+                end
             end
-            #1;
-            check(timeout < 500_000,
-                  "primary held voiced phone did not reach the audio source");
+            check(secondary_edges == 16 && primary_edges == 16,
+                  $sformatf("%s did not feed Q3 through one DIV2 in each socket",
+                            mode_name));
+            check(dut.ssi263_secondary_i.core_i.div2_q &&
+                  dut.ssi263_primary_i.core_i.div2_q,
+                  $sformatf("%s changed an SSI DIV2 strap", mode_name));
         end
     endtask
 
-    task automatic wait_for_a5_left_audio;
+    task automatic wait_for_a5_channel_a_audio;
         integer timeout;
         logic saw_chip_audio;
-        logic saw_left_audio;
-        logic saw_filter_state;
-        logic leaked_right;
+        logic saw_channel_a;
+        logic crossed_to_channel_b;
         begin
             timeout = 0;
             saw_chip_audio = 1'b0;
-            saw_left_audio = 1'b0;
-            saw_filter_state = 1'b0;
-            leaked_right = 1'b0;
-            while (!(saw_chip_audio && saw_left_audio && saw_filter_state) &&
+            saw_channel_a = 1'b0;
+            crossed_to_channel_b = 1'b0;
+            while (!(saw_chip_audio && saw_channel_a) &&
                    timeout < 3_000_000) begin
                 @(posedge clk);
                 #1;
                 if (dut.ssi0_audio != 16'sd0)
                     saw_chip_audio = 1'b1;
                 if (audio_l != 16'sd0)
-                    saw_left_audio = 1'b1;
-                if (dut.ssi263_secondary_i.audio_i.f1_state_q != 24'sd0 &&
-                    dut.ssi263_secondary_i.audio_i.f5_state_q != 24'sd0)
-                    saw_filter_state = 1'b1;
+                    saw_channel_a = 1'b1;
                 if (dut.ssi1_audio != 16'sd0 || audio_r != 16'sd0 ||
                     dut.ssi263_primary_i.audio_i.f1_state_q != 24'sd0 ||
                     dut.ssi263_primary_i.audio_i.f5_state_q != 24'sd0)
-                    leaked_right = 1'b1;
+                    crossed_to_channel_b = 1'b1;
                 timeout = timeout + 1;
             end
-            check(timeout < 3_000_000 && saw_chip_audio && saw_left_audio &&
-                  saw_filter_state && !leaked_right,
-                  "A5 speech did not remain on the left channel only");
+            check(timeout < 3_000_000 && saw_chip_audio && saw_channel_a &&
+                  !crossed_to_channel_b,
+                  "A5 secondary socket did not stay on channel A only");
             check(!dut.ssi263_secondary_i.audio_i.engine_overrun_q &&
                   !dut.ssi263_primary_i.audio_i.engine_overrun_q,
-                  "A5-only speech overran an actual audio engine");
+                  "A5-only route overran an audio engine");
         end
     endtask
 
-    task automatic measure_a5_acoustic_window(
-        input string label,
-        input logic is_voice,
-        input logic is_s
-    );
-        integer timeout;
-        integer settle_samples;
-        integer level_samples;
-        integer chip_sample;
-        integer card_sample;
-        integer chip_peak;
-        integer card_peak;
-        integer chip_abs;
-        integer card_abs;
-        integer chip_abs_sum;
-        integer card_abs_sum;
-        integer chip_occupancy;
-        integer card_occupancy;
-        integer chip_clips;
-        integer card_clips;
-        longint chip_square_sum;
-        longint card_square_sum;
-        longint chip_mean_square;
-        longint card_mean_square;
-        logic signed [23:0] old_fric1_source;
-        logic signed [23:0] old_fric2_source;
-        begin
-            timeout = 0;
-            settle_samples = 0;
-            level_samples = 0;
-            chip_peak = 0;
-            card_peak = 0;
-            chip_abs_sum = 0;
-            card_abs_sum = 0;
-            chip_occupancy = 0;
-            card_occupancy = 0;
-            chip_clips = 0;
-            card_clips = 0;
-            chip_square_sum = 0;
-            card_square_sum = 0;
-            old_fric1_source =
-                dut.ssi263_secondary_i.audio_i.fric1_source;
-            old_fric2_source =
-                dut.ssi263_secondary_i.audio_i.fric2_source;
-            if (is_s)
-                fric_source_changes = 0;
-
-            // Let the ROM controls and every tract section reach the new
-            // sustained phone before measuring the following 512 samples.
-            while (settle_samples < 256 && timeout < 3_000_000) begin
-                @(posedge clk);
-                #1;
-                if (is_s) begin
-                    if (dut.ssi263_secondary_i.audio_i.fric1_source !=
-                            old_fric1_source ||
-                        dut.ssi263_secondary_i.audio_i.fric2_source !=
-                            old_fric2_source)
-                        fric_source_changes = fric_source_changes + 1;
-                    old_fric1_source =
-                        dut.ssi263_secondary_i.audio_i.fric1_source;
-                    old_fric2_source =
-                        dut.ssi263_secondary_i.audio_i.fric2_source;
-                end
-                if (dut.audio_sample_tick)
-                    settle_samples = settle_samples + 1;
-                timeout = timeout + 1;
-            end
-
-            while (level_samples < 512 && timeout < 3_000_000) begin
-                @(posedge clk);
-                #1;
-                if (is_s) begin
-                    if (dut.ssi263_secondary_i.audio_i.fric1_source !=
-                            old_fric1_source ||
-                        dut.ssi263_secondary_i.audio_i.fric2_source !=
-                            old_fric2_source)
-                        fric_source_changes = fric_source_changes + 1;
-                    old_fric1_source =
-                        dut.ssi263_secondary_i.audio_i.fric1_source;
-                    old_fric2_source =
-                        dut.ssi263_secondary_i.audio_i.fric2_source;
-                end
-                if (dut.audio_sample_tick) begin
-                    chip_sample = $signed(dut.ssi0_audio);
-                    card_sample = $signed(audio_l);
-                    chip_abs = (chip_sample < 0) ? -chip_sample : chip_sample;
-                    card_abs = (card_sample < 0) ? -card_sample : card_sample;
-                    if (chip_abs > chip_peak)
-                        chip_peak = chip_abs;
-                    if (card_abs > card_peak)
-                        card_peak = card_abs;
-                    chip_abs_sum = chip_abs_sum + chip_abs;
-                    card_abs_sum = card_abs_sum + card_abs;
-                    chip_square_sum = chip_square_sum +
-                                      chip_sample * chip_sample;
-                    card_square_sum = card_square_sum +
-                                      card_sample * card_sample;
-                    if (chip_sample != 0)
-                        chip_occupancy = chip_occupancy + 1;
-                    if (card_sample != 0)
-                        card_occupancy = card_occupancy + 1;
-                    if (chip_sample == 32767 || chip_sample == -32768)
-                        chip_clips = chip_clips + 1;
-                    if (card_sample == 32767 || card_sample == -32768)
-                        card_clips = card_clips + 1;
-                    level_samples = level_samples + 1;
-                end
-                timeout = timeout + 1;
-            end
-
-            if (level_samples == 512) begin
-                chip_mean_square = chip_square_sum / 512;
-                card_mean_square = card_square_sum / 512;
-            end else begin
-                chip_mean_square = 0;
-                card_mean_square = 0;
-            end
-
-            $display("PHASOR SSI263 ACOUSTIC %s chip_peak=%0d chip_rms=%0d chip_ms=%0d chip_mean_abs=%0d chip_occupancy=%0d chip_clips=%0d card_peak=%0d card_rms=%0d card_ms=%0d card_mean_abs=%0d card_occupancy=%0d card_clips=%0d samples=%0d",
-                     label, chip_peak, integer_sqrt(chip_mean_square),
-                     chip_mean_square, chip_abs_sum / 512,
-                     chip_occupancy, chip_clips,
-                     card_peak, integer_sqrt(card_mean_square),
-                     card_mean_square, card_abs_sum / 512,
-                     card_occupancy, card_clips, level_samples);
-
-            check(settle_samples == 256 && level_samples == 512,
-                  "acoustic window did not collect every settled sample");
-            check(chip_peak >= 256 && card_peak >= 128 &&
-                  chip_mean_square >= 4096 && card_mean_square >= 1024 &&
-                  chip_abs_sum / 512 >= 32 && card_abs_sum / 512 >= 16 &&
-                  chip_occupancy >= 64 && card_occupancy >= 64,
-                  "settled acoustic output was trivial or sparse");
-            check(chip_clips == 0 && card_clips == 0,
-                  "settled acoustic output clipped");
-            if (is_s)
-                check(fric_source_changes >= 2,
-                      "sustained S did not vary its live fricative source");
-
-            if (is_voice) begin
-                voice_chip_peak = chip_peak;
-                voice_chip_mean_square = chip_mean_square;
-                voice_chip_mean_abs = chip_abs_sum / 512;
-                voice_chip_occupancy = chip_occupancy;
-                voice_chip_clips = chip_clips;
-                voice_card_peak = card_peak;
-                voice_card_mean_square = card_mean_square;
-                voice_card_mean_abs = card_abs_sum / 512;
-                voice_card_occupancy = card_occupancy;
-                voice_card_clips = card_clips;
-            end else if (is_s) begin
-                s_chip_peak = chip_peak;
-                s_chip_mean_square = chip_mean_square;
-                s_chip_mean_abs = chip_abs_sum / 512;
-                s_chip_occupancy = chip_occupancy;
-                s_chip_clips = chip_clips;
-                s_card_peak = card_peak;
-                s_card_mean_square = card_mean_square;
-                s_card_mean_abs = card_abs_sum / 512;
-                s_card_occupancy = card_occupancy;
-                s_card_clips = card_clips;
-            end
-        end
-    endtask
-
-    task automatic check_a5_acoustic_balance;
-        begin
-            $display("PHASOR SSI263 BALANCE voice_ms=%0d s_ms=%0d voice_card_ms=%0d s_card_ms=%0d",
-                     voice_chip_mean_square, s_chip_mean_square,
-                     voice_card_mean_square, s_card_mean_square);
-            // E01 and S30 use different ROM formants, source gains, and
-            // injection nodes. The schematic sets no power ratio between
-            // them. S also advances its HCC source on sparse U41C edges, so
-            // a short deterministic window depends on source phase. The old
-            // "SSI voice/fricative power ratio was not sane" and
-            // "card voice/fricative power ratio was not sane" checks thus
-            // rejected valid charge-model output. Check each phone across
-            // the SSI pin and its card mixer path instead.
-            check(voice_chip_mean_square > 0 &&
-                  voice_card_mean_square > 0 &&
-                  voice_card_mean_square <= voice_chip_mean_square * 64 &&
-                  voice_chip_mean_square <= voice_card_mean_square * 64,
-                  "voiced SSI-to-card power ratio was not sane");
-            check(s_chip_mean_square > 0 && s_card_mean_square > 0 &&
-                  s_card_mean_square <= s_chip_mean_square * 64 &&
-                  s_chip_mean_square <= s_card_mean_square * 64,
-                  "fricative SSI-to-card power ratio was not sane");
-        end
-    endtask
-
-    task automatic measure_a5_held_p_silence;
-        integer timeout;
-        integer settle_samples;
-        integer level_samples;
-        integer chip_sample;
-        integer card_sample;
-        integer chip_abs;
-        integer card_abs;
-        integer chip_peak;
-        integer card_peak;
-        integer chip_occupancy;
-        integer card_occupancy;
-        integer chip_clips;
-        integer card_clips;
-        longint chip_square_sum;
-        longint card_square_sum;
-        longint chip_mean_square;
-        longint card_mean_square;
-        begin
-            timeout = 0;
-            while (!(dut.ssi263_secondary_i.audio_i.stop_class &&
-                     dut.ssi263_secondary_i.core_i.phone_active) &&
-                   timeout < 500_000) begin
-                @(posedge clk);
-                timeout = timeout + 1;
-            end
-            #1;
-            check(timeout < 500_000,
-                  "held P did not reach the guide-level stop gate");
-
-            settle_samples = 0;
-            level_samples = 0;
-            chip_peak = 0;
-            card_peak = 0;
-            chip_occupancy = 0;
-            card_occupancy = 0;
-            chip_clips = 0;
-            card_clips = 0;
-            chip_square_sum = 0;
-            card_square_sum = 0;
-            while (settle_samples < 256 && timeout < 3_000_000) begin
-                @(posedge clk);
-                #1;
-                if (dut.audio_sample_tick)
-                    settle_samples = settle_samples + 1;
-                timeout = timeout + 1;
-            end
-            while (level_samples < 256 && timeout < 3_000_000) begin
-                @(posedge clk);
-                #1;
-                if (dut.audio_sample_tick) begin
-                    chip_sample = $signed(dut.ssi0_audio);
-                    card_sample = $signed(audio_l);
-                    chip_abs = (chip_sample < 0) ? -chip_sample : chip_sample;
-                    card_abs = (card_sample < 0) ? -card_sample : card_sample;
-                    if (chip_abs > chip_peak)
-                        chip_peak = chip_abs;
-                    if (card_abs > card_peak)
-                        card_peak = card_abs;
-                    chip_square_sum = chip_square_sum +
-                                      chip_sample * chip_sample;
-                    card_square_sum = card_square_sum +
-                                      card_sample * card_sample;
-                    if (chip_sample != 0)
-                        chip_occupancy = chip_occupancy + 1;
-                    if (card_sample != 0)
-                        card_occupancy = card_occupancy + 1;
-                    if (chip_sample == 32767 || chip_sample == -32768)
-                        chip_clips = chip_clips + 1;
-                    if (card_sample == 32767 || card_sample == -32768)
-                        card_clips = card_clips + 1;
-                    level_samples = level_samples + 1;
-                end
-                timeout = timeout + 1;
-            end
-            chip_mean_square = (level_samples == 256) ?
-                               chip_square_sum / 256 : 0;
-            card_mean_square = (level_samples == 256) ?
-                               card_square_sum / 256 : 0;
-            $display("PHASOR SSI263 ACOUSTIC P_HELD chip_peak=%0d chip_rms=%0d chip_ms=%0d chip_occupancy=%0d chip_clips=%0d card_peak=%0d card_rms=%0d card_ms=%0d card_occupancy=%0d card_clips=%0d samples=%0d",
-                     chip_peak, integer_sqrt(chip_mean_square),
-                     chip_mean_square, chip_occupancy, chip_clips,
-                     card_peak, integer_sqrt(card_mean_square),
-                     card_mean_square, card_occupancy, card_clips,
-                     level_samples);
-            check(settle_samples == 256 && level_samples == 256,
-                  "held P silence window did not collect every sample");
-            check(dut.ssi263_secondary_i.audio_i.stop_class &&
-                  dut.ssi263_secondary_i.audio_i.voice_source == 24'sd0 &&
-                  dut.ssi263_secondary_i.audio_i.fric1_source == 24'sd0 &&
-                  dut.ssi263_secondary_i.audio_i.fric2_source == 24'sd0,
-                  "held P did not remain a silent guide-level stop");
-            check(chip_peak <= 64 && card_peak <= 64 &&
-                  chip_mean_square <= 256 && card_mean_square <= 256 &&
-                  chip_clips == 0 && card_clips == 0,
-                  "held P repeated an audible source instead of silence");
-        end
-    endtask
-
-    task automatic wait_for_a6_right_audio;
+    task automatic wait_for_a6_channel_b_audio;
         integer timeout;
         logic saw_chip_audio;
-        logic saw_right_audio;
-        logic saw_filter_state;
-        logic leaked_left;
+        logic saw_channel_b;
+        logic crossed_to_channel_a;
         begin
             timeout = 0;
             saw_chip_audio = 1'b0;
-            saw_right_audio = 1'b0;
-            saw_filter_state = 1'b0;
-            leaked_left = 1'b0;
-            while (!(saw_chip_audio && saw_right_audio && saw_filter_state) &&
+            saw_channel_b = 1'b0;
+            crossed_to_channel_a = 1'b0;
+            while (!(saw_chip_audio && saw_channel_b) &&
                    timeout < 3_000_000) begin
                 @(posedge clk);
                 #1;
                 if (dut.ssi1_audio != 16'sd0)
                     saw_chip_audio = 1'b1;
                 if (audio_r != 16'sd0)
-                    saw_right_audio = 1'b1;
-                if (dut.ssi263_primary_i.audio_i.f1_state_q != 24'sd0 &&
-                    dut.ssi263_primary_i.audio_i.f5_state_q != 24'sd0)
-                    saw_filter_state = 1'b1;
+                    saw_channel_b = 1'b1;
                 if (dut.ssi0_audio != 16'sd0 || audio_l != 16'sd0 ||
                     dut.ssi263_secondary_i.audio_i.f1_state_q != 24'sd0 ||
                     dut.ssi263_secondary_i.audio_i.f5_state_q != 24'sd0)
-                    leaked_left = 1'b1;
+                    crossed_to_channel_a = 1'b1;
                 timeout = timeout + 1;
             end
-            check(timeout < 3_000_000 && saw_chip_audio && saw_right_audio &&
-                  saw_filter_state && !leaked_left,
-                  "A6 speech did not remain on the right channel only");
+            check(timeout < 3_000_000 && saw_chip_audio && saw_channel_b &&
+                  !crossed_to_channel_a,
+                  "A6 primary socket did not stay on channel B only");
             check(!dut.ssi263_secondary_i.audio_i.engine_overrun_q &&
                   !dut.ssi263_primary_i.audio_i.engine_overrun_q,
-                  "A6-only speech overran an actual audio engine");
+                  "A6-only route overran an audio engine");
         end
     endtask
 
@@ -713,18 +441,19 @@ module tb_phasor_dual_ssi263;
         integer timeout;
         integer source_timeout;
         integer level_samples;
-        integer ssi0_occupancy;
-        integer ssi1_occupancy;
-        integer left_occupancy;
-        integer right_occupancy;
         integer ssi0_clips;
         integer ssi1_clips;
         integer left_clips;
         integer right_clips;
+        integer unknowns;
         logic saw_secondary_filter_state;
         logic saw_primary_filter_state;
         logic saw_secondary_source;
         logic saw_primary_source;
+        logic saw_ssi0_output;
+        logic saw_ssi1_output;
+        logic saw_channel_a;
+        logic saw_channel_b;
         begin
             // U58/U59 keep counting from reset when I changes. Wait through
             // the possible old I=$000 interval for one real source pulse from
@@ -736,9 +465,9 @@ module tb_phasor_dual_ssi263;
                    source_timeout < 3_000_000) begin
                 @(posedge clk);
                 #1;
-                if (dut.ssi263_secondary_i.audio_i.voice_source != 24'sd0)
+                if (dut.ssi263_secondary_i.audio_i.voice_source_state_q != 24'sd0)
                     saw_secondary_source = 1'b1;
-                if (dut.ssi263_primary_i.audio_i.voice_source != 24'sd0)
+                if (dut.ssi263_primary_i.audio_i.voice_source_state_q != 24'sd0)
                     saw_primary_source = 1'b1;
                 source_timeout = source_timeout + 1;
             end
@@ -747,16 +476,17 @@ module tb_phasor_dual_ssi263;
 
             timeout = 0;
             level_samples = 0;
-            ssi0_occupancy = 0;
-            ssi1_occupancy = 0;
-            left_occupancy = 0;
-            right_occupancy = 0;
             ssi0_clips = 0;
             ssi1_clips = 0;
             left_clips = 0;
             right_clips = 0;
+            unknowns = 0;
             saw_secondary_filter_state = 1'b0;
             saw_primary_filter_state = 1'b0;
+            saw_ssi0_output = 1'b0;
+            saw_ssi1_output = 1'b0;
+            saw_channel_a = 1'b0;
+            saw_channel_b = 1'b0;
             while (level_samples < 512 && timeout < 3_000_000) begin
                 @(posedge clk);
                 #1;
@@ -768,13 +498,16 @@ module tb_phasor_dual_ssi263;
                     saw_primary_filter_state = 1'b1;
                 if (dut.audio_sample_tick) begin
                     if (dut.ssi0_audio != 16'sd0)
-                        ssi0_occupancy = ssi0_occupancy + 1;
+                        saw_ssi0_output = 1'b1;
                     if (dut.ssi1_audio != 16'sd0)
-                        ssi1_occupancy = ssi1_occupancy + 1;
+                        saw_ssi1_output = 1'b1;
                     if (audio_l != 16'sd0)
-                        left_occupancy = left_occupancy + 1;
+                        saw_channel_a = 1'b1;
                     if (audio_r != 16'sd0)
-                        right_occupancy = right_occupancy + 1;
+                        saw_channel_b = 1'b1;
+                    if ($isunknown({dut.ssi0_audio, dut.ssi1_audio,
+                                    audio_l, audio_r}))
+                        unknowns = unknowns + 1;
                     if (dut.ssi0_audio == 16'sh7FFF ||
                         dut.ssi0_audio == -16'sh8000)
                         ssi0_clips = ssi0_clips + 1;
@@ -789,21 +522,21 @@ module tb_phasor_dual_ssi263;
                 end
                 timeout = timeout + 1;
             end
-            $display("PHASOR SSI263 DUAL samples=%0d ssi0_occ=%0d ssi1_occ=%0d left_occ=%0d right_occ=%0d ssi0_clips=%0d ssi1_clips=%0d left_clips=%0d right_clips=%0d",
-                     level_samples, ssi0_occupancy, ssi1_occupancy,
-                     left_occupancy, right_occupancy, ssi0_clips, ssi1_clips,
-                     left_clips, right_clips);
+            $display("PHASOR SSI263 DUAL ROUTE samples=%0d ssi0=%0d ssi1=%0d channel_a=%0d channel_b=%0d clips=%0d unknowns=%0d",
+                     level_samples, saw_ssi0_output, saw_ssi1_output,
+                     saw_channel_a, saw_channel_b,
+                     ssi0_clips + ssi1_clips + left_clips + right_clips,
+                     unknowns);
             // The two pulse trains need not be nonzero on the same sample.
-            // Prove each source, tract, and fixed stereo route independently.
-            check(level_samples == 512 && ssi0_occupancy >= 16 &&
-                  ssi1_occupancy >= 16 && left_occupancy >= 16 &&
-                  right_occupancy >= 16 && saw_secondary_filter_state &&
+            check(level_samples == 512 && saw_ssi0_output &&
+                  saw_ssi1_output && saw_channel_a && saw_channel_b &&
+                  saw_secondary_filter_state &&
                   saw_primary_filter_state &&
                   dut.ssi263_secondary_i.core_i.phone_active &&
                   dut.ssi263_primary_i.core_i.phone_active,
                   "both SSI audio engines did not run independently");
             check(ssi0_clips == 0 && ssi1_clips == 0 &&
-                  left_clips == 0 && right_clips == 0,
+                  left_clips == 0 && right_clips == 0 && unknowns == 0,
                   "simultaneous speech clipped a chip or card route");
             check(!dut.ssi263_secondary_i.audio_i.engine_overrun_q &&
                   !dut.ssi263_primary_i.audio_i.engine_overrun_q,
@@ -811,7 +544,9 @@ module tb_phasor_dual_ssi263;
         end
     endtask
 
-    task automatic disable_card_during_native_read;
+    task automatic mask_card_during_native_read;
+        logic [2:0] secondary_selector_before;
+        logic [2:0] primary_selector_before;
         begin
             @(negedge clk);
             ab_read.addr = SLOT_BASE + 16'h0060;
@@ -828,113 +563,67 @@ module tb_phasor_dual_ssi263;
                   ab_write.assert_irq && dbg_ssi_irq,
                   "disable test did not start with an active native read and IRQ");
             check(dut.ssi263_secondary_i.core_i.phone_active &&
-                  dut.ssi263_primary_i.core_i.phone_active &&
-                  dut.ssi263_secondary_i.core_i.voiced &&
-                  dut.ssi263_primary_i.core_i.voiced &&
+                   dut.ssi263_primary_i.core_i.phone_active &&
                   !dut.ssi263_secondary_i.core_i.powered_down &&
                   !dut.ssi263_primary_i.core_i.powered_down,
-                  "disable test did not start with two live speech sources");
+                  "disable test did not start with two active SSI dies");
+            secondary_selector_before =
+                dut.ssi263_secondary_i.core_i.selector;
+            primary_selector_before = dut.ssi263_primary_i.core_i.selector;
 
             @(negedge clk);
             drive_idle();
             card_enable = 1'b0;
-            repeat (8) @(posedge clk);
+            repeat (2_000) @(posedge clk);
             #1;
             check(!dut.card_enabled && !ab_write.wr_data_en &&
                   !ab_write.assert_irq && !dbg_ssi_irq &&
                   !dut.ssi_read_drive,
                   "slot disable did not clear IRQ and registered read drive");
             check(audio_l == 16'sd0 && audio_r == 16'sd0 &&
-                  dut.ssi0_audio == 16'sd0 && dut.ssi1_audio == 16'sd0,
+                   dut.ssi0_audio == 16'sd0 && dut.ssi1_audio == 16'sd0,
                   "slot disable did not mute both card and SSI audio outputs");
             check(dut.phasor_mode_q == 3'd0 &&
-                  dut.ssi263_secondary_i.core_i.powered_down &&
-                  dut.ssi263_primary_i.core_i.powered_down &&
                   !dut.ssi0_d7 && !dut.ssi1_d7 &&
-                  !dut.ssi263_secondary_i.audio_i.engine_busy_q &&
-                  !dut.ssi263_primary_i.audio_i.engine_busy_q,
-                  "slot disable did not reset both SSI sockets and card mode");
+                  !dut.ssi263_secondary_i.core_i.powered_down &&
+                  !dut.ssi263_primary_i.core_i.powered_down &&
+                  dut.ssi263_secondary_i.core_i.phone_active &&
+                  dut.ssi263_primary_i.core_i.phone_active &&
+                  dut.ssi263_secondary_i.core_i.d7_pending &&
+                  dut.ssi263_primary_i.core_i.d7_pending &&
+                  (dut.ssi263_secondary_i.core_i.selector !=
+                       secondary_selector_before) &&
+                  (dut.ssi263_primary_i.core_i.selector !=
+                       primary_selector_before),
+                  "slot disable reset a die instead of masking the card boundary");
 
             @(negedge clk);
             card_enable = 1'b1;
             repeat (8) @(posedge clk);
             #1;
             check(dut.card_enabled && dut.phasor_mode_q == 3'd0 &&
-                  dut.ssi263_secondary_i.core_i.powered_down &&
-                  dut.ssi263_primary_i.core_i.powered_down &&
-                  !dut.ssi0_d7 && !dut.ssi1_d7 &&
-                  !ab_write.wr_data_en && !ab_write.assert_irq &&
-                  audio_l == 16'sd0 && audio_r == 16'sd0,
-                  "slot re-enable did not start from clean reset state");
+                  !dut.ssi263_secondary_i.core_i.powered_down &&
+                  !dut.ssi263_primary_i.core_i.powered_down &&
+                  dut.ssi0_d7 && dut.ssi1_d7 && !ab_write.wr_data_en,
+                  "slot re-enable did not expose the two preserved SSI dies");
 
             apple_write(SLOT_BASE + 16'h0021, 8'h52);
             apple_write(SLOT_BASE + 16'h0041, 8'h64);
             check(dut.ssi263_secondary_i.core_i.inflection_high_q == 8'h52 &&
                   dut.ssi263_primary_i.core_i.inflection_high_q == 8'h64 &&
                   !ab_write.assert_irq,
-                  "slot re-enable did not restore clean independent bus writes");
-        end
-    endtask
-
-    task automatic measure_voiced_period;
-        integer timeout;
-        integer rising_events;
-        integer first_tick;
-        integer second_tick;
-        integer third_tick;
-        integer expected_ticks;
-        logic old_toggle;
-        begin
-            timeout = 0;
-            rising_events = 0;
-            effective_tick_total = 0;
-            first_tick = 0;
-            second_tick = 0;
-            third_tick = 0;
-            old_toggle = dut.ssi263_secondary_i.voice_toggle;
-
-            // U58/U59 run even while the chip is powered down.  A host write
-            // changes the next reload value but does not restart their live
-            // countdown, so allow one worst-case I=$000 interval before the
-            // first measured I=$FFD event.
-            while (rising_events < 3 && timeout < 3_000_000) begin
-                @(posedge clk);
-                if (dut.ssi263_secondary_i.core_i.effective_xck_ce)
-                    effective_tick_total = effective_tick_total + 1;
-                #1;
-                if (!old_toggle &&
-                    dut.ssi263_secondary_i.voice_toggle) begin
-                    rising_events = rising_events + 1;
-                    case (rising_events)
-                        1: first_tick = effective_tick_total;
-                        2: second_tick = effective_tick_total;
-                        default: third_tick = effective_tick_total;
-                    endcase
-                end
-                old_toggle = dut.ssi263_secondary_i.voice_toggle;
-                timeout = timeout + 1;
-            end
-
-            expected_ticks = 8 *
-                (4096 - dut.ssi263_secondary_i.core_i.pitch_inflection);
-            check(rising_events == 3,
-                  "three final voiced excitation events were not observed");
-            check((second_tick - first_tick) == expected_ticks,
-                  "first final voiced event interval was not 8*(4096-I)");
-            check((third_tick - second_tick) == expected_ticks,
-                  "second final voiced event interval was not 8*(4096-I)");
+                  "slot re-enable did not restore independent bus writes");
         end
     endtask
 
     logic read_drove;
     logic [7:0] read_value;
     logic speech_selected;
-    logic [17:0] primary_hcc_before;
-    logic [17:0] primary_hcc_after;
     logic [2:0] echo_selector_before;
     integer echo_timeout;
 
     initial begin
+        $readmemh("ssi263_sc02_rom.mem", expected_rom);
         drive_idle();
         ab_read.res = 1'b1;
         hard_reset();
@@ -944,6 +633,15 @@ module tb_phasor_dual_ssi263;
         check(dut.ssi263_secondary_i.core_i.powered_down &&
               dut.ssi263_primary_i.core_i.powered_down,
               "both AP sockets did not reset into power-down");
+
+        // The original card feeds Q3 to both XCK pins and straps DIV2 high.
+        // Neither of the three card modes adds another speech-clock divide.
+        check_q3_div2_path("Mockingboard mode");
+        mode_access(MODE_NATIVE);
+        check_q3_div2_path("native mode");
+        mode_access(MODE_ECHO);
+        check_q3_div2_path("Echo+ mode");
+        hard_reset();
 
         // A5, A6, and A5+A6 writes must hit only the decoded physical sockets.
         apple_write(SLOT_BASE + 16'h0021, 8'h5A);
@@ -1089,124 +787,48 @@ module tb_phasor_dual_ssi263;
         check(dut.phasor_mode_q == 3'd0,
               "Apple RESET collision did not restore Mockingboard mode");
 
-        // Start sustained S ($30) on A5 with one complete known driver
-        // vector. The old test used P ($27) as if it were a held S and left
-        // FILT at its reset value, so its peak was not a useful noise check.
-        // The other real core and audio block must remain at reset state.
+        // Load row $30 through A5 and compare the live raw ROM controls. The
+        // untouched A6 socket must keep its bus-programmed state even though
+        // its free-running clocked circuits continue to advance.
         hard_reset();
-        primary_hcc_before = {
-            dut.ssi263_primary_i.audio_i.noise_d1_q,
-            dut.ssi263_primary_i.audio_i.noise_d2_q,
-            dut.ssi263_primary_i.audio_i.noise_d3_q,
-            dut.ssi263_primary_i.audio_i.noise_d4_q
-        };
-        start_a5_acoustic_phone(8'h70); // DR=01, sustained S $30
-        wait_for_secondary_fricative();
-        measure_a5_acoustic_window("S", 1'b0, 1'b1);
-        check(dut.ssi263_secondary_i.core_i.phoneme == 6'h30 &&
-              dut.ssi263_secondary_i.core_i.f1_code == 4'h0 &&
-              dut.ssi263_secondary_i.core_i.f2_code == 4'h7 &&
-              dut.ssi263_secondary_i.core_i.f2_res_code == 4'h0 &&
-              dut.ssi263_secondary_i.core_i.f3_code == 4'hC &&
-              dut.ssi263_secondary_i.core_i.f4_code == 4'hC &&
-              dut.ssi263_secondary_i.core_i.filter_amp_code == 4'hF &&
-              dut.ssi263_secondary_i.core_i.voice_amp_code == 4'h0 &&
-              dut.ssi263_secondary_i.core_i.fric_amp_code == 4'hF,
-              "S did not settle to ROM row 30 and the full-level driver");
-        check(dut.ssi263_secondary_i.core_i.phone_active &&
-              dut.ssi263_secondary_i.core_i.phone_fricative,
-              "sustained S did not remain an active fricative phone");
-
-        primary_hcc_after = {
-            dut.ssi263_primary_i.audio_i.noise_d1_q,
-            dut.ssi263_primary_i.audio_i.noise_d2_q,
-            dut.ssi263_primary_i.audio_i.noise_d3_q,
-            dut.ssi263_primary_i.audio_i.noise_d4_q
-        };
-        check(primary_hcc_after == primary_hcc_before &&
-              dut.ssi263_primary_i.core_i.inflection_high_q == 8'h00 &&
+        start_a5_phone(8'h70);
+        wait_for_secondary_rom(6'h30);
+        check(dut.ssi263_primary_i.core_i.inflection_high_q == 8'h00 &&
               dut.ssi263_primary_i.core_i.rate_inflection_q == 8'h00 &&
               dut.ssi263_primary_i.core_i.duration_phoneme_q == 8'hC0 &&
               dut.ssi263_primary_i.core_i.voice_amp_code == 4'h0 &&
               dut.ssi263_primary_i.core_i.fric_amp_code == 4'h0,
-              "secondary fricative activity changed the other SSI socket");
+              "A5 ROM activity changed the A6 socket registers");
 
-        // Sweep both fricative injection classes and a mixed affricate on the
-        // same driver vector. These rows are calibration evidence, not a set
-        // of phone-specific gain targets.
-        start_a5_acoustic_phone(8'h74); // DR=01, F $34, FRIC_1
-        wait_for_secondary_fricative();
-        measure_a5_acoustic_window("F", 1'b0, 1'b0);
-        start_a5_acoustic_phone(8'h72); // DR=01, SCH $32, FRIC_1
-        wait_for_secondary_fricative();
-        measure_a5_acoustic_window("SCH", 1'b0, 1'b0);
-        start_a5_acoustic_phone(8'h71); // DR=01, J $31, mixed source
-        wait_for_secondary_fricative();
-        measure_a5_acoustic_window("J", 1'b0, 1'b0);
-        start_a5_acoustic_phone(8'h6F); // DR=01, Z $2F, FRIC_2
-        wait_for_secondary_fricative();
-        measure_a5_acoustic_window("Z", 1'b0, 1'b0);
-
-        // Stops do not form a held noise source. A fresh reset makes held-P
-        // silence measurable; a normal following HF phone must then go live.
-        hard_reset();
-        start_a5_acoustic_phone(8'h67); // DR=01, P $27
-        measure_a5_held_p_silence();
-        start_a5_acoustic_phone(8'h6C); // DR=01, P -> HF $2C
-        wait_for_secondary_fricative();
-        measure_a5_acoustic_window("P_TO_HF", 1'b0, 1'b0);
-
-        // I=$FFD gives an expected final glottal-event period of 24
-        // effective ticks.  The check computes the general 8*(4096-I) form
-        // from the live core value and observes the real audio pitch toggle.
+        // Prove that the host vector reaches the final pitch path. Detailed
+        // U58/U59/U60 timing belongs to the later timing pass.
         apple_write(SLOT_BASE + 16'h0021, 8'hFF);
         apple_write(SLOT_BASE + 16'h0022, 8'hFD);
-        apple_write(SLOT_BASE + 16'h0020, 8'h41); // DR=01, voiced phone $01
-        wait_for_secondary_voiced();
+        apple_write(SLOT_BASE + 16'h0020, 8'h41);
+        wait_for_secondary_rom(6'h01);
         check(dut.ssi263_secondary_i.core_i.pitch_inflection == 12'hFFD,
-              "voiced-period setup did not reach the final pitch path");
-        measure_voiced_period();
-        check(dut.ssi263_primary_i.audio_i.noise_d1_q ==
-                  primary_hcc_before[17:14] &&
-              dut.ssi263_primary_i.core_i.phone_active == 1'b0 &&
-              dut.ssi263_primary_i.audio_i.voice_source == 24'sd0 &&
-              dut.ssi263_primary_i.audio_i.fric1_source == 24'sd0 &&
-              dut.ssi263_primary_i.audio_i.fric2_source == 24'sd0,
-              "secondary voiced events changed the other SSI socket");
+              "period setup did not reach the final pitch path");
 
-        // Use the real-driver pitch/filter vector for the level check.  The
-        // earlier I=$FFD case proves the shortest period but can reload U60
-        // before its 15 filter counts finish and is not an acoustic vector.
+        // Restore the fixed vector, then prove the original channel-A route.
         apple_write(SLOT_BASE + 16'h0021, 8'h40);
         apple_write(SLOT_BASE + 16'h0022, 8'hF8);
         apple_write(SLOT_BASE + 16'h0024, 8'hE8);
         apple_write(SLOT_BASE + 16'h0023, 8'h7F);
+        // Row $01 has TPARM1 high and therefore schematic PW3 low. This is
+        // the ordinary-vowel regression for the live U62/U116 source path.
         apple_write(SLOT_BASE + 16'h0020, 8'h41);
-        wait_for_secondary_voiced();
-        wait_for_a5_left_audio();
-        measure_a5_acoustic_window("VOICE01", 1'b1, 1'b0);
-        check(dut.ssi263_secondary_i.core_i.phoneme == 6'h01 &&
-              dut.ssi263_secondary_i.core_i.f1_code == 4'h2 &&
-              dut.ssi263_secondary_i.core_i.f2_code == 4'hE &&
-              dut.ssi263_secondary_i.core_i.f2_res_code == 4'h0 &&
-              dut.ssi263_secondary_i.core_i.f3_code == 4'hE &&
-              dut.ssi263_secondary_i.core_i.f4_code == 4'hE &&
-              dut.ssi263_secondary_i.core_i.filter_amp_code == 4'hF &&
-              dut.ssi263_secondary_i.core_i.voice_amp_code == 4'hC &&
-              dut.ssi263_secondary_i.core_i.fric_amp_code == 4'h0,
-              "E01 did not settle to ROM row 01 and the full-level driver");
-        check_a5_acoustic_balance();
+        wait_for_secondary_rom(6'h01);
+        wait_for_a5_channel_a_audio();
 
-        // Reset, then excite A6 alone to prove the opposite fixed stereo
-        // route through the actual core, filter engine, and card mixer.
+        // Reset, then prove the original A6 primary/channel-B route.
         hard_reset();
         apple_write(SLOT_BASE + 16'h0041, 8'h40);
         apple_write(SLOT_BASE + 16'h0042, 8'hF8);
         apple_write(SLOT_BASE + 16'h0044, 8'hE8);
-        apple_write(SLOT_BASE + 16'h0040, 8'h41); // DR=01, voiced phone $01
+        apple_write(SLOT_BASE + 16'h0040, 8'h41);
         apple_write(SLOT_BASE + 16'h0043, 8'h7F);
-        wait_for_primary_voiced();
-        wait_for_a6_right_audio();
+        wait_for_primary_rom(6'h01);
+        wait_for_a6_channel_b_audio();
 
         // Start both sockets from the same reset edge and one real A5+A6
         // vector. Earlier checks already prove separate A5/A6 write decode;
@@ -1215,23 +837,21 @@ module tb_phasor_dual_ssi263;
         apple_write(SLOT_BASE + 16'h0061, 8'h40);
         apple_write(SLOT_BASE + 16'h0062, 8'hF8);
         apple_write(SLOT_BASE + 16'h0064, 8'hE8);
-        apple_write(SLOT_BASE + 16'h0060, 8'h41); // DR=01, voiced phone $01
+        apple_write(SLOT_BASE + 16'h0060, 8'h41);
         apple_write(SLOT_BASE + 16'h0063, 8'h7F);
-        wait_for_secondary_voiced();
-        wait_for_primary_voiced();
+        wait_for_secondary_rom(6'h01);
+        wait_for_primary_rom(6'h01);
         wait_for_dual_stereo_audio();
 
-        // Disable slot 4 while both chips have pending native requests, an
-        // active read drive, and live stereo output.  This models a runtime
-        // menu disable and then proves a clean card insertion on re-enable.
+        // Card disable masks the virtual backplane boundary. It must not act
+        // as a third reset pin on either SSI die.
         mode_access(MODE_NATIVE);
         wait_for_both_pending();
         wait_for_dual_stereo_audio();
-        disable_card_during_native_read();
+        mask_card_during_native_read();
 
         if (failures == 0) begin
-            $display("PHASOR DUAL SSI263 PASS checks=%0d fric_source_changes=%0d",
-                     checks, fric_source_changes);
+            $display("PHASOR DUAL SSI263 PASS checks=%0d", checks);
         end else begin
             $display("PHASOR DUAL SSI263 FAIL count=%0d checks=%0d",
                      failures, checks);

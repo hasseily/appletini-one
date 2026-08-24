@@ -198,9 +198,9 @@ def check_masked_wskid_copy() -> None:
     )
     require(
         r"\.OPT_COPY_MASK\s*\(\s*"
-        r"\{\s*1'b0\s*,\s*4'b1111\s*,\s*32'h0000_2526\s*\}\s*\)",
+        r"\{\s*1'b0\s*,\s*4'b1111\s*,\s*32'h0040_2526\s*\}\s*\)",
         wrapper_source,
-        "copy mask must select WDATA bits 1, 2, 5, 8, 10, 13 and WSTRB bits 0-3",
+        "copy mask must select WDATA bits 1, 2, 5, 8, 10, 13, 22 and WSTRB bits 0-3",
     )
     require(
         r"assign\s+as_vtw_phasor_wdata\s*=\s*"

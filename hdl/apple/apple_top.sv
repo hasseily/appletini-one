@@ -1461,7 +1461,11 @@ module apple_top(
     uthernet2_card uthernet2_card_i (
         .clk(clk),
         .rstn(rstn[2]),
-        .ab_read(gate_ab(ab_read, card_slot1_enable)),
+        // Uthernet consumes the write byte only under data_en. For virtual
+        // cycles use the byte captured one fabric clock before DATA; physical
+        // cycles still use the live pin byte. This keeps the DATA update edge
+        // while removing the virtual card-data arbiter from its write cone.
+        .ab_read(gate_ab(sampled_ab_read, card_slot1_enable)),
         .sss(sss),
         .slot_assign(3'h1),
         .ab_write(uthernet_ab_write),

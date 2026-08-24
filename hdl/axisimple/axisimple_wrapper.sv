@@ -117,7 +117,7 @@ module axisimple_wrapper(
     skidbuffer #(
         .OPT_LOWPOWER(1'b1),
         .OPT_OUTREG(1'b1),
-        .OPT_COPY_MASK({1'b0, 4'b1111, 32'h0000_2526}),
+        .OPT_COPY_MASK({1'b0, 4'b1111, 32'h0040_2526}),
         .DW(37)
     )
     wchannel_skid_i (

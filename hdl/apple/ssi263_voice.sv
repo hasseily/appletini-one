@@ -36,6 +36,8 @@ module ssi263_voice (
     logic       filter_phase;
     logic       fricative;
     logic       voiced;
+    logic       pw_2;
+    logic       pw_3;
     logic       fric1_sw;
     logic       fric2_sw;
     logic       closure;
@@ -96,8 +98,8 @@ module ssi263_voice (
         .phone_voiced(),
         .pw_0(),
         .pw_1(),
-        .pw_2(),
-        .pw_3(),
+        .pw_2(pw_2),
+        .pw_3(pw_3),
         .pw_5(),
         .fric1_sw(fric1_sw),
         .fric2_sw(fric2_sw),
@@ -128,6 +130,8 @@ module ssi263_voice (
         .powered_down(powered_down),
         .fricative(fricative),
         .voiced(voiced),
+        .pw_2(pw_2),
+        .pw_3(pw_3),
         .noise_clock_ce(noise_clock_ce),
         .fric1_sw(fric1_sw),
         .fric2_sw(fric2_sw),

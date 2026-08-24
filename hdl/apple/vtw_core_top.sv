@@ -1496,7 +1496,6 @@ module vtw_core_top (
                         end
                         else if (sp_hit) begin
                             sp_req_target_q <= sp_req_target_d;
-                            private_d2_q    <= 1'b0;
                             xstate_q        <= X_SP_ISSUE;
                         end
                         else if (xl_c01x_rd) begin

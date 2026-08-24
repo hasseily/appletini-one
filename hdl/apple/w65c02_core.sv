@@ -199,7 +199,9 @@ module w65c02_core #(
     (* MAX_FANOUT = 8 *) logic [7:0] p_q;
     logic [7:0]  ir_q;
 
-    state_t      state_q;
+    /* State feeds address formation, debug, and control across the core.
+     * Bound each physical copy so those same-edge cones stay local. */
+    (* MAX_FANOUT = 8 *) state_t state_q;
     op_t         op_q;
     addr_mode_t  mode_q;
     kind_t       kind_q;

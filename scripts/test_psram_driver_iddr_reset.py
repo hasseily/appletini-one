@@ -22,6 +22,7 @@ DRIVER = ROOT / "hdl" / "apple" / "psram_driver.sv"
 APPLE_TOP = ROOT / "hdl" / "apple" / "apple_top.sv"
 BENCH = ROOT / "hdl" / "sim" / "tb_psram_driver_iddr_reset.sv"
 SIMPLE_BENCH = ROOT / "hdl" / "sim" / "tb_psram_simple.sv"
+XDC = ROOT / "hdl" / "constraints" / "appletini_yarz.xdc"
 
 IDDR_BLOCK = re.compile(
     r"(?ms)^\s{12}IDDR #\(.*?^\s{12}\) u_[ab]_iddr \(.*?^\s{12}\);"
@@ -172,6 +173,24 @@ def static_checks(source: str) -> None:
     )
     if reset_wiring is None:
         raise RuntimeError("apple_top must keep the PSRAM engine on rstn[0]")
+
+    xdc = XDC.read_text(encoding="utf-8")
+    timing_contract = (
+        "set psram_launch_regs [get_cells -hierarchical",
+        "*psram_a_launch_q_reg* *psram_b_launch_q_reg* *psram_oe_launch_q_reg*",
+        "set psram_output_regs [get_cells -hierarchical",
+        "*psram_a_o_reg* *psram_b_o_reg* *psram_oe_reg*",
+        "[llength $psram_launch_regs] != 12",
+        "[llength $psram_output_regs] != 12",
+        "[llength $psram_output_regs] != 16",
+        "set_max_delay -datapath_only 2.75",
+        "-from $psram_launch_regs -to $psram_output_regs",
+    )
+    for text in timing_contract:
+        if text not in xdc:
+            raise RuntimeError(
+                f"PSRAM launch placement timing contract lost: {text}"
+            )
 
 
 def check_production_contract(source: str) -> None:

@@ -80,6 +80,9 @@ module tb_disk2_vtw_read;
             $fatal(1, "FAIL: vTW drive selector diverged from Disk II state");
         if (rstn && dut.vtw_track_bit_count_q !== dut.track_bit_count_q)
             $fatal(1, "FAIL: vTW bit count diverged from Disk II state");
+        if (rstn && (dut.vtw_drive_qtrack_q[0] !== dut.drive_qtrack_q[0] ||
+                     dut.vtw_drive_qtrack_q[1] !== dut.drive_qtrack_q[1]))
+            $fatal(1, "FAIL: vTW qtrack copy diverged from Disk II state");
     end
 
     task automatic check(input bit cond, input string msg);

@@ -183,11 +183,11 @@ def static_checks() -> None:
             ".O(ab_write.wr_addr_rw_en)" in arbiter,
             "the production address-direction OR must stay same-cycle and "
             "placed near U17")
-    require("set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_dir_a]" in xdc and
+    require("{IOSTANDARD LVCMOS33 DRIVE 12 SLEW FAST}" in xdc and
+            "[get_ports a2fpga_dir_a]" in xdc and
             xdc.count("[get_ports a2fpga_dir_a]") == 2 and
-            "set_max_delay 10.0 -to [get_ports {a2fpga_dir_a a2fpga_dir_d}]" in xdc and
-            "SLEW FAST} [get_ports a2fpga_dir_a]" not in xdc,
-            "DIR_A must keep its slow electrical edge and 10 ns output bound")
+            "set_max_delay 10.0 -to [get_ports {a2fpga_dir_a a2fpga_dir_d}]" in xdc,
+            "DIR_A must keep its fast 12 mA edge and 10 ns output bound")
     require("logic vtw_machine_ok_q;" in top and
             "if (machine_mode_q == 2'd1)" in top and
             "else if (machine_mode_q == 2'd2)" in top and
@@ -228,6 +228,8 @@ def static_checks() -> None:
     core = read("hdl/apple/w65c02_core.sv")
     require("(* MAX_FANOUT = 8 *) logic [7:0] p_q;" in core,
             "the decimal carry/status source needs bounded local fanout")
+    require("(* MAX_FANOUT = 8 *) state_t state_q;" in core,
+            "the CPU state source needs bounded local fanout")
     require("function automatic logic [15:0] adc_binary_result" in core and
             "function automatic logic [15:0] sbc_binary_result" in core and
             "arithmetic = adc_binary_result(a_q, value, p_q);" in core and
@@ -245,6 +247,22 @@ def static_checks() -> None:
     require(drive_select_updates == vtw_drive_select_updates and
             drive_select_updates == ["1'b0", "1'b0", "1'b0", "1'b1"],
             "Disk II and vTW drive selectors must update in exact lockstep")
+    qtrack_updates = re.findall(
+        r"(?<!vtw_)drive_qtrack_q(\[[^\]]+\]\s*<=\s*[^;]+;)",
+        disk2_card,
+    )
+    vtw_qtrack_updates = re.findall(
+        r"vtw_drive_qtrack_q(\[[^\]]+\]\s*<=\s*[^;]+;)",
+        disk2_card,
+    )
+    require(qtrack_updates == vtw_qtrack_updates and
+            len(qtrack_updates) == 6 and
+            '(* EQUIVALENT_REGISTER_REMOVAL = "NO", MAX_FANOUT = 8 *)\n'
+            "    logic [7:0] vtw_drive_qtrack_q [0:1];" in disk2_card and
+            "wire [7:0] vtw_current_qtrack = "
+            "vtw_drive_qtrack_q[vtw_drive_select_q];" in disk2_card and
+            "logic vtw_time_ready_q" not in disk2_card,
+            "Disk II and vTW qtrack bytes must update in exact lockstep")
     require("vtw_valid," in card and "vtw_resp_valid" in card and
             "data_write_ev" in card and "vtw_data_write" in card and
             "vtw_pop_write" in card,
@@ -282,6 +300,17 @@ def static_checks() -> None:
                 r"\bsp_req_target_q\s*<=\s*sp_req_target_d\s*;",
                 core_top, re.DOTALL) is not None,
             "X_ROUTE must capture the SmartPort target before X_SP_ISSUE")
+    sp_hit_branch = re.search(
+        r"else\s+if\s*\(\s*sp_hit\s*\)\s*begin"
+        r"(?P<body>(?:(?!\n\s*end\b).)*)",
+        core_top,
+        re.DOTALL,
+    )
+    require(sp_hit_branch is not None and
+            "private_d2_q" not in sp_hit_branch.group("body") and
+            re.search(r"private_d2_q\s*<=\s*1'b1\s*;", core_top) is not None and
+            len(re.findall(r"private_d2_q\s*<=\s*1'b0\s*;", core_top)) == 3,
+            "SmartPort issue must rely on the X_ROUTE private-Disk-II invariant")
     require("wire         vtw_sp_active =\n"
             "        !onee_enable_effective && vtw_smartport_visible;" in top and
             ".sp_active(vtw_sp_active)" in top and

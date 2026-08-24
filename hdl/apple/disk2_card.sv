@@ -161,6 +161,10 @@ module disk2_card (
     logic [31:0] io_access_count_q;
     logic [7:0] drive_phase_q [0:1];
     logic [7:0] drive_qtrack_q [0:1];
+    /* Private lockstep copy for the vTW readiness cone. The canonical head
+     * position also feeds cache, sound, and status logic across the card. */
+    (* EQUIVALENT_REGISTER_REMOVAL = "NO", MAX_FANOUT = 8 *)
+    logic [7:0] vtw_drive_qtrack_q [0:1];
     logic       track_loaded_q;
     logic       track_woz_q;
     logic       track_unavailable_q;
@@ -397,7 +401,7 @@ module disk2_card (
     /* These are bit-for-bit copies of the selected-drive readiness terms, but
      * use the low-fanout lockstep selector above. */
     wire vtw_drive_has_media = drive_info_q[vtw_drive_select_q][0];
-    wire [7:0] vtw_current_qtrack = drive_qtrack_q[vtw_drive_select_q];
+    wire [7:0] vtw_current_qtrack = vtw_drive_qtrack_q[vtw_drive_select_q];
     wire vtw_selected_track_loaded =
         track_loaded_q &&
         (loaded_drive_q == vtw_drive_select_q) &&
@@ -911,6 +915,8 @@ module disk2_card (
             drive_phase_q[1] <= 8'h00;
             drive_qtrack_q[0] <= 8'h00;
             drive_qtrack_q[1] <= 8'h00;
+            vtw_drive_qtrack_q[0] <= 8'h00;
+            vtw_drive_qtrack_q[1] <= 8'h00;
             track_loaded_q <= 1'b0;
             track_woz_q <= 1'b0;
             track_unavailable_q <= 1'b0;
@@ -1276,6 +1282,8 @@ module disk2_card (
                 drive_phase_q[1] <= 8'h00;
                 drive_qtrack_q[0] <= 8'h00;
                 drive_qtrack_q[1] <= 8'h00;
+                vtw_drive_qtrack_q[0] <= 8'h00;
+                vtw_drive_qtrack_q[1] <= 8'h00;
                 drive_stream_pos_q[0] <= 13'd0;
                 drive_stream_pos_q[1] <= 13'd0;
                 drive_bit_offset_q[0] <= 17'd0;
@@ -1331,6 +1339,7 @@ module disk2_card (
                                         next_phase_on);
                                     drive_phase_q[drive_select_q] <= step_next[7:0];
                                     drive_qtrack_q[drive_select_q] <= step_next[15:8];
+                                    vtw_drive_qtrack_q[drive_select_q] <= step_next[15:8];
                                     sound_step_start_qtrack_q <= drive_qtrack_q[drive_select_q];
                                     sound_step_end_qtrack_q <= step_next[15:8];
                                     sound_step_track0_stop_q <= track0_stop_hit;
@@ -1441,6 +1450,7 @@ module disk2_card (
                         phase_on_q);
                     drive_phase_q[drive_select_q] <= step_next[7:0];
                     drive_qtrack_q[drive_select_q] <= step_next[15:8];
+                    vtw_drive_qtrack_q[drive_select_q] <= step_next[15:8];
                     sound_step_start_qtrack_q <= drive_qtrack_q[drive_select_q];
                     sound_step_end_qtrack_q <= step_next[15:8];
                     sound_step_track0_stop_q <= track0_stop_hit;

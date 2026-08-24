@@ -60,6 +60,15 @@ def spectral_checks(source: str) -> None:
     }
     f2_radius = parse_case_table(source, "f2_radius_q14")
     f5_cosine = parse_constant(source, "F5_COS_Q14")
+    filter_amplitude = parse_case_table(source, "filter_amp_gain")
+
+    if filter_amplitude[0] != 0 or filter_amplitude[-1] != 4096:
+        raise RuntimeError("filter-amplitude endpoints are not zero and unity")
+    if any(
+        filter_amplitude[index] <= filter_amplitude[index - 1]
+        for index in range(1, 16)
+    ):
+        raise RuntimeError("filter-amplitude codes are not strictly monotonic")
 
     def coefficients(cos_q14: int, radius_q14: int) -> tuple[int, int, int]:
         a1 = (cos_q14 * radius_q14 + 4096) // 8192
@@ -100,6 +109,14 @@ def spectral_checks(source: str) -> None:
             "PW2&&!PW3 no longer selects exactly B/D/P/T/K: "
             f"{sorted(stop_phones)}"
         )
+
+    f_f34 = rom[0x34 * 8 + 3] >> 4
+    sch_f34 = rom[0x32 * 8 + 3] >> 4
+    if f_f34 == sch_f34 or (
+        cosine["f3"][f_f34] == cosine["f3"][sch_f34]
+        and cosine["f4"][f_f34] == cosine["f4"][sch_f34]
+    ):
+        raise RuntimeError("F and SCH collapsed onto one fixed hiss spectrum")
 
     phase_rate_hz = 894886.25 / (2 * (256 - 0xE8))
 

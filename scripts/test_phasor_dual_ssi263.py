@@ -12,6 +12,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "build" / "phasor_dual_ssi263_sim"
 PASS_MARKER = "PHASOR DUAL SSI263 PASS"
+ACOUSTIC_MARKERS = (
+    "PHASOR SSI263 ACOUSTIC S",
+    "PHASOR SSI263 ACOUSTIC F",
+    "PHASOR SSI263 ACOUSTIC SCH",
+    "PHASOR SSI263 ACOUSTIC J",
+    "PHASOR SSI263 ACOUSTIC Z",
+    "PHASOR SSI263 ACOUSTIC P_HELD",
+    "PHASOR SSI263 ACOUSTIC P_TO_HF",
+    "PHASOR SSI263 ACOUSTIC VOICE01",
+    "PHASOR SSI263 BALANCE",
+)
 
 RTL_SOURCES = (
     ROOT / "hdl" / "globals.sv",
@@ -41,10 +52,29 @@ def static_checks() -> None:
         "native IRQ did not OR the two pending A/R pins",
         "VIA CA1 edge latches did not observe the SSI requests",
         "Apple RESET lost a selected-write falling-edge collision",
-        "held fricative phone did not cause repeated HCC4006 shifts",
+        "sustained S did not vary its live fricative source",
         "8 *\n                (4096 - dut.ssi263_secondary_i.core_i.pitch_inflection)",
         "secondary voiced events changed the other SSI socket",
         "A5 speech did not remain on the left channel only",
+        "sample_div_q == 12'd2082",
+        "sample_div_q == 12'd2083",
+        "8'h70); // DR=01, sustained S $30",
+        'measure_a5_acoustic_window("S", 1\'b0, 1\'b1)',
+        'measure_a5_acoustic_window("F", 1\'b0, 1\'b0)',
+        'measure_a5_acoustic_window("SCH", 1\'b0, 1\'b0)',
+        'measure_a5_acoustic_window("J", 1\'b0, 1\'b0)',
+        'measure_a5_acoustic_window("Z", 1\'b0, 1\'b0)',
+        "measure_a5_held_p_silence()",
+        'measure_a5_acoustic_window("P_TO_HF", 1\'b0, 1\'b0)',
+        'measure_a5_acoustic_window("VOICE01", 1\'b1, 1\'b0)',
+        "chip_rms=%0d chip_ms=%0d",
+        "chip_mean_square",
+        "chip_mean_abs",
+        "chip_occupancy",
+        "chip_clips",
+        "SSI voice/fricative power ratio was not sane",
+        "card voice/fricative power ratio was not sane",
+        "ssi0_occ=%0d ssi1_occ=%0d left_occ=%0d right_occ=%0d",
         "A6 speech did not remain on the right channel only",
         "both SSI audio engines did not run independently",
         "slot disable did not clear IRQ and registered read drive",
@@ -53,6 +83,11 @@ def static_checks() -> None:
     for text in required:
         if text not in bench:
             raise RuntimeError(f"card-level regression coverage missing: {text}")
+
+    if "sample_div_q == 12'd2777" in bench or "8'h67); // DR=01, phone $27" in bench:
+        raise RuntimeError(
+            "card-level acoustic check still uses the old 36 kHz/P vector"
+        )
 
     compiled_names = "\n".join(path.name.lower() for path in RTL_SOURCES)
     if re.search(r"(?:sc01|votrax|formant_backend|bus_wrapper)", compiled_names):
@@ -113,7 +148,11 @@ def main() -> int:
         [vivado_tool("xsim"), "tb_phasor_dual_ssi263_snap", "--runall"],
         "xsim.log",
     )
-    if PASS_MARKER not in output or "PHASOR DUAL SSI263 FAIL" in output:
+    if (
+        PASS_MARKER not in output
+        or "PHASOR DUAL SSI263 FAIL" in output
+        or any(marker not in output for marker in ACOUSTIC_MARKERS)
+    ):
         print(output)
         raise RuntimeError("card-level dual SSI-263 Phasor regression did not pass")
     print(next(line for line in output.splitlines() if PASS_MARKER in line))

@@ -209,6 +209,20 @@ The audio engine will use the SC-02 topology and controls:
 - persistent filter state;
 - one signed output sample per existing audio tick.
 
+The F0.9.99 hardware correction uses this exact section graph while the full
+nodal work remains open:
+
+```text
+VOICE -> F1 -> F2 -> (+FRIC1) -> F3 -> F4 -> (+FRIC2) -> F5
+```
+
+It also uses the unipolar U60 voice pulse, the inverted HCC D4+5 noise tap,
+the PW3/U62 polarity gate, a 48 kHz output hold, and C381-style DC blocking.
+`PW2 && !PW3` marks exactly B, D, P, T, and K. Keep those held sources silent
+and let a following live phone drive the transitioning tract. Do not add a
+guessed stop burst. Treat U68/U85C and the T-to-HF FRIC2 handoff as open until
+a corrected net list or chip trace settles them.
+
 Development order for the filter:
 
 1. derive double-precision state equations from each capacitor and switch
@@ -321,7 +335,8 @@ targets a Speech-I / SC-01 interface will no longer produce speech.
 - full source regressions;
 - fresh Vivado synthesis and implementation;
 - routed timing with no unbound constraint warnings;
-- two clean full builds from the same commit before firmware packaging.
+- one clean full build from the final source commit before firmware packaging;
+  keep that route if it passes instead of running a duplicate full build.
 
 ## Acceptance gate
 
@@ -338,10 +353,12 @@ The work is complete only when:
 - all SC-01/Votrax firmware code and tests are gone;
 - focused and full source regressions pass;
 - routed timing passes;
-- real-chip captures confirm the remaining analog and clock choices.
+- the F0.9.99 test image passes the source and route gates, with any remaining
+  real-chip analog and clock choices stated as hardware follow-up work.
 
-If real hardware is not attached, the build can reach `implemented, simulated,
-hardware validation pending`; it must not claim measured SSI-263 audio fidelity.
+The user's attached Appletini listen test is the F0.9.99 hardware gate. It can
+confirm that a fault is fixed, but it cannot prove exact SSI-263 analog match
+without a same-vector capture from a real SSI-263AP.
 
 ## Commit checkpoints
 
@@ -352,3 +369,5 @@ hardware validation pending`; it must not claim measured SSI-263 audio fidelity.
 5. `Use two SSI-263 chips in Phasor`
 6. `Remove SC-01 speech support`
 7. `Complete dual SSI-263 verification`
+8. `Correct SSI-263 tract and source response`
+9. `Package F0.9.99 SSI-263 test firmware`

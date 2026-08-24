@@ -862,6 +862,29 @@ module tb_ssi263_sc02_audio;
         check(energy_high > energy_low,
               "F2 resonance code did not lengthen resonator decay");
 
+        // FL_AMP is the sheet-2 output gain after F5.  Code zero must mute
+        // that node without erasing charge held by the five tract sections.
+        reset_all();
+        phone_active = 1'b1;
+        voiced = 1'b1;
+        voice_amp_code = 4'hF;
+        filter_amp_code = 4'hF;
+        f1_code = 4'h8;
+        f2_code = 4'h8;
+        f2_res_code = 4'h8;
+        f3_code = 4'h8;
+        f4_code = 4'h8;
+        set_voice_toggle(1'b1);
+        repeat (48) pulse_filter_pair();
+        check(dut.f5_state_q != 0 && dut.reconstruction_hold_q != 0,
+              "full filter-amplitude code produced no tract output");
+        filter_amp_code = 4'h0;
+        pulse_filter_pair();
+        check(dut.output_hold_q == 0 && dut.reconstruction_hold_q == 0,
+              "filter-amplitude code zero did not mute after F5");
+        check(dut.f1_state_q != 0 && dut.f5_state_q != 0,
+              "filter-amplitude code zero erased tract state");
+
         // Held sample, one-clock closure discharge, and saturation.
         reset_all();
         phone_active = 1'b1;

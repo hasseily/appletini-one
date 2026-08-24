@@ -197,83 +197,155 @@ settle this conflict.
 
 ## Excitation and audio path
 
-The native audio block has no SC-01 phone map or coefficient table. It uses:
+The native audio block has no SC-01 phone map, SC-01 coefficient table, or
+phone-name sound fix. It uses the source bits, values, and switch controls
+from the SSI ROM and transition engine.
 
-- the U59 VOICECLK event, U62 toggle, U61 sampling, and U60 voice shape;
-- the U41C noise clock gate, U75 counter, and HCC4006 recurrence;
-- independent positive and negative fricative amplitude paths;
-- separate FRIC1 and FRIC2 paths;
-- persistent F1, F2, F3, F4, fixed F5, FRIC1, and FRIC2 section state;
-- F2 resonance as a real pole-radius control;
-- one filter phase source shared by every section;
-- a separate reconstructed chip-output hold sampled at the existing 48 kHz
-  board rate.
+### Source circuits
 
-The noise clock is not the edge of the held PW3 value. The traced gate is
-`~(PW3 & U62_/Q) & ~SEL1 & ~FRIC_AMP_ZERO`; its rising edges clock U75 and the
-HCC4006 path. The regression test requires many HCC shifts while one
-fricative phone keeps PW3 high.
+The voiced source follows U59, U62, U61, U34, and U60. The prior model drove
+`+A` and `-A`, which made a two-amplitude step and a large DC term. The drawn
+source is unipolar: it is zero while U60 rests at terminal count and `+A`
+during the 15-count pulse. The focused test checks the load, count, terminal
+hold, and rising-edge-only reload.
 
-One digital detail remains uncertain in the reconstruction. U85C combines an
-U104C term with U68 carry to reset U62, but the shown polarity self-locks for
-one PW3/U62 state and the U68 carry state has not yet been transcribed. The
-RTL therefore initializes U62 only on FPGA reset or Slot-4 disable through the
-chip enable, then lets it free-run. It does not invent an Apple RESET / PD-RST,
-CTL, or phone-active reset. `FRIC_AMP_ZERO` currently means that the held
-fricative-amplitude code is zero. This gap can change excitation and
-gated-noise phase, not just an unseen internal phase. A real-chip logic trace
-or a corrected schematic net is needed to close it.
+The fricative source follows U41C, U75, and the four HCC4006 stages. Its output
+tap is the inverted U73 D4+5 output, not the adjacent D3+4 tap used before.
+The PW3/U62 gate sets its polarity. The positive and negative amplitude banks
+remain separate because their capacitor totals differ. Tests compare the full
+HCC recurrence with an independent bit model and check the tap and gate
+directly.
 
-The current filter uses seven stable fixed-point resonators. Source capacitor
-totals set each code ordering, F2 resonance changes decay, and FILT changes the
-phase rate for every section. A 53-clock scheduler performs the seven section
-updates, a registered output sum, and output gain. Vivado maps the two
-registered RTL product lanes and a shared registered rotate accumulator to
-three DSP48E1 cells per chip. The default fastest phase gap is 149 fabric
-clocks; the fastest intended comparison profile still leaves 133 clocks. An
-overrun latch is checked in simulation.
+The programming guide says B, D, P, T, and K make no output unless another
+phone follows. In the ROM, `PW2 && !PW3` selects exactly those five phones.
+The RTL mutes their held source and lets the next phone's live source pass
+through the tract while its values move away from the stop target. It does not
+add a fixed, repeated, or articulation-timed burst. This rule removes the
+standalone P/T/K exhaust heard from the first F0.9.99 image.
 
-The first hardware image exposed an absolute-level fault that nonzero-only
-tests missed. One quarter-scale drive was applied to every section. Voice
-crosses F1, F2, F3, F4, and F5, so it received `0.25^5`, while a fricative
-crosses one noise section and received `0.25`. Focused phone 01 therefore
-peaked at only 289 signed PCM counts while S peaked at 19,766. The corrected
-model uses half-scale drive for the five serial voice sections and retains
-quarter-scale drive for FRIC1 and FRIC2. Phone 01 now peaks at 9,266 counts,
-S remains at 19,766, and neither path clips. A real-driver card vector reaches
-11,202 counts at the SSI output and 14,342 on its final channel; the settled
-fricative vector reaches 18,748 and 17,226 respectively.
+This stop rule is guide-correct but not yet a proved gate copy. The drawn
+U68/AMPCT and U85C paths do not yield one clear stop envelope: the shown U85C
+polarity would hold U62 reset for most U68 counts, while a settled pure stop
+leaves the drawn noise gate open. The delayed U183 route latch also affects
+whether T keeps its FRIC2 path during a following phone. A real-chip trace or
+a corrected net list must settle U68, U85C, and the T-to-HF route handoff.
 
-U52C also clears a switched filter node on each low phase. Sampling that raw
-node directly at 48 kHz made the result depend on which high-rate Phi phase
-met the board tick and forced most live samples to zero. The RTL now retains
-that internal discharge but updates a separate reconstruction hold after each
-completed filter pass. The 48 kHz output samples the reconstructed value, as
-the external analog path does, rather than exporting the switch carrier.
+### Filter graph
 
-The first scheduler draft passed XSim but failed a 7.500 ns out-of-context
-synthesis check with `WNS=-5.105 ns`. Registering every multiply result before
-rotation, saturation, addition, or state commit changed the same check to
-`WNS=+0.602 ns` on `xc7z020clg484-2`. This local check found the first long
-paths; the clean full-design routes below remain the release evidence.
+The schematic gives one serial tract, not three output paths:
 
-The final saturation test checks whether bits 46:23 extend bit 47 instead of
-using a wide signed magnitude comparison. This gives the same 24-bit clamp at
-both limits without a second carry chain after the rotation DSP. A first clean
-full route of that version reached `WNS=+0.170 ns`; the release gate rejected
-it because the product-DSP to rotate-DSP and saturation path remained below
-the required `+0.300 ns` margin. The final scheduler registers the shared
-48-bit rotate accumulator between those operations, feeds its saturated Q
-value to the radius lane on the next stage, and keeps the same 53-clock result
-schedule. Focused XSim still produces the same checked stream and exact engine
-latency. A fresh 7.500 ns out-of-context synthesis of this RTL gives
-`WNS=+0.514 ns`; it uses 810 packed LUTs, 692 flip-flops, three shift-register
-LUTs, three DSP48E1 cells, and no block RAM per chip.
+```text
+VOICE -> F1 -> F2 -> (+FRIC1) -> F3 -> F4 -> (+FRIC2) -> F5 -> output
+```
 
-This is a large gain over the SC-01-based sound path, but it remains the least
-proved part. Pole angles, radii, section drive, output scale, and the mapping
-from capacitor ratio to a discrete resonator are engineering estimates. They
-do not yet solve charge transfer on each Phi0/Phi1 switch state.
+FRIC1 enters through 1000 pF at the F2/F3 node. FRIC2 enters through
+2700+1000 pF at the F4/F5 node. Their digital coupling gains keep that 1:3.7
+ratio. The old implementation made FRIC1 and FRIC2 separate fixed resonators
+and added them after F5. That bypassed the ROM-selected F3/F4 tract for many
+P/F/K-class phones and made them share a loud broad hiss. The corrected graph
+removes both extra resonators and injects noise at the two drawn nodes.
+
+The capacitor audit also corrected two F2 values: frequency bit 0 is 280 pF,
+for a 4260 pF full-scale total, and the resonance bank is 220, 430, 870, and
+2300 pF, for a 3820 pF total.
+
+The four filter-amplitude caps are 76, 150, 300, and 600 pF. Their gain is
+applied after F5 and before closure/output. A final nodal model must also
+include C172A at 2700 pF, C173A at 50 pF, and the U145 phase switches; the
+current normalized gain table is still a calibrated stand-in for that node.
+
+Each tract section now uses this stable two-pole low-pass form:
+
+```text
+y[n] = 2*r*cos(theta)*y[n-1] - r*r*y[n-2]
+       + (1 - 2*r*cos(theta) + r*r)*x[n]
+```
+
+The unity-DC numerator takes the second-integrator-style output. The former
+complex rotation exposed a first-integrator-like zero and made many vowels
+peak around one common medium frequency. Static checks parse the exact RTL
+tables and ROM, prove every pole stays inside the unit circle, check each code
+ordering, and require distinct low formant ranges for E, I, A, EH, AE, AH, O,
+and UH. The current radii still set estimated bandwidths; component totals set
+the frequency order, but no phase-by-phase charge solve yet proves the exact
+Q or gain.
+
+At the usual `FILT=E8` test rate, the current calibrated tables span these
+centres and widths:
+
+| Section | Centre range | Estimated bandwidth |
+| --- | ---: | ---: |
+| F1 | 177-890 Hz | 367 Hz |
+| F2 | 534-2536 Hz | 759-120 Hz from minimum to maximum resonance |
+| F3 | 1335-3412 Hz | 431 Hz |
+| F4 | 2225-4302 Hz | 495 Hz |
+| F5 | fixed 4451 Hz | 625 Hz |
+
+These are useful speech ranges, but the source caps do not prove the radius
+values. Changing a radius would alter voiced formants and the SCH/J noise gain
+at once, so this checkpoint keeps all five radii until a chip capture or nodal
+solve supplies a better value.
+
+Two registered multiplier lanes update five sections in 32 fabric clocks.
+The fastest supported phase gap is 133 clocks, and an overrun latch covers
+both chips in focused and card tests. The final filter-amplitude value applies
+after F5, as shown on sheet 2.
+
+### Reconstruction, level, and hardware fault trail
+
+U52C clears a switched node during one phase. The board output sees a
+reconstructed analog value, not a random switch phase. The RTL therefore
+keeps the internal clear but samples the last completed F5 result at the
+48 kHz board tick.
+
+C381 AC-couples the chip output. A 255/256 digital high-pass gives a pole near
+30 Hz at 48 kHz. Its input difference and feedback sum stay wider than the
+24-bit tract; it applies the leak before one clamp. Full-scale reversal tests
+guard against the early-clamp fault.
+
+The hardware reports separated three faults:
+
+- image 1 was almost silent except for weak T/S/Z/C-class traces because five
+  serial quarter-scale gains suppressed voice far more than a short noise
+  path;
+- image 2 made P/F/C-class phones produce a strong exhaust while most voiced
+  phones stayed weak and shared a medium-pitch robotic ring;
+- the current source fixes remove the bipolar DC step, the serial graph removes
+  the post-F5 noise bypass, the stop rule removes repeated stop noise, and the
+  normalized all-pole sections separate the low vowel peaks.
+
+The current direct focused vector reaches 11,179 PCM for phone 01 and 794 for
+S, but that loop advances one noise edge per filter pair and must not set an
+absolute balance. The final true 48 kHz card-rate sweep passes 103 checks and
+gives these settled chip-level results:
+
+| Phone | Peak | RMS | Occupied samples | Clips |
+| --- | ---: | ---: | ---: | ---: |
+| phone 01, voiced | 1,203 | 540 | 512/512 | 0 |
+| S | 615 | 277 | 512/512 | 0 |
+| F | 2,879 | 868 | 512/512 | 0 |
+| SCH | 10,581 | 3,949 | 509/512 | 0 |
+| J | 15,630 | 5,066 | 512/512 | 0 |
+| Z | 6,565 | 1,667 | 512/512 | 0 |
+| held P | 0 | 0 | 0/256 | 0 |
+| P followed by HF | 4,973 | 1,110 | 456/512 | 0 |
+
+These results reject a common fricative gain increase: SCH and J already use
+much more of the range than S. The absolute coupling stays at its calibrated
+208/768 Q14 values, with the physical 1:3.7 cap ratio and no phone-specific
+boost. The matching card-output paths also have zero clips. Dual-socket windows
+fill 494/512 then 512/512 samples per chip and channel, with all eight chip and
+card clip counters at zero.
+
+An independent core-plus-audio sweep passes 277 checks across all 64 phones.
+It finds no PCM rails or unknown samples, proves the exact five-phone stop
+mask, keeps S/F/SCH sustained, decays a voiced tract through held P from an F5
+peak of 39,268 to 35, and gives a normal 256/256-sample P-to-HF onset.
+
+This audio model is much closer to the source circuit than the SC-01 path or
+the first SSI checkpoint. It still is not an exact analog copy. Exact radii,
+section gain, output voltage, U68 behavior, and route handoff need a two-phase
+nodal solve plus captures from a real SSI-263AP.
 
 ## Dual-chip Phasor integration
 
@@ -315,11 +387,13 @@ and disables and re-enables Slot 4 during a live native read and IRQ.
 | Public pitch, filter, frame, and duration laws | Implemented and simulated | Boundary and full-range timing tests |
 | Reconstructed selector and transition logic | Synchronous state equivalent | All selector targets, low-ROM classes, and cadence settings tested |
 | Voiced and noise digital recurrences | Source-derived and cycle-tested | Raw/final pitch and sustained noise tests pass; unresolved U62 reset phase can alter excitation and the noise gate |
+| Held-stop behavior | Guide-correct checkpoint | B/D/P/T/K mask, held decay, and P-to-HF pass; U68/U85C and T route handoff remain unproved |
 | Phasor address and request routing | Implemented and exhaustively modeled | 256 offsets per mode and two-chip request model |
-| Dual audio and state isolation | Implemented and simulated | A5-only, A6-only, simultaneous stereo, no-overrun, and disable/re-enable checks; hardware listen test pending |
-| Switched-capacitor analog response | Approximate | Stable resonators use source controls and capacitor ordering, not a nodal solve |
+| Dual audio and state isolation | Implemented and simulated | 103 card checks: A5-only, A6-only, simultaneous stereo, no-overrun, zero clipping, and disable/re-enable; corrected-image listen pending |
+| Switched-capacitor analog response | Approximate | Correct serial graph and injection nodes use stable all-poles and cap ordering, not a nodal solve |
 | XCK and DIV2 straps on an original Phasor | Unproved | Default follows data sheet; continuity or scope capture needed |
-| Absolute level, spectrum, and analog tolerance | Unproved | Real SSI-263AP captures needed |
+| Digital level and spectrum guards | Implemented and simulated | 64-phone zero-rail sweep, ROM phone metrics, low-vowel peak separation, F/SCH tract split |
+| Absolute voltage and analog tolerance | Unproved | AO/post-C381 captures from real SSI-263AP parts needed |
 
 The U85C/U68 reset term described above is the one known digital-circuit gap;
 it prevents an unconditional claim that every internal phase matches a die.
@@ -341,12 +415,14 @@ filter extremes, spectra, level, part tolerance, and the U85C/U68 behavior.
    DR modes, every rate, every articulation value, immediate and transitioned
    inflection, filter values `00`, `01`, `7F`, `E9`, `FE`, and `FF`, and reset
    collisions.
-3. Capture isolated voiced and fricative phones at fixed amplitude. Include
-   phone 01 and phone 30, then all 64 phones. Record the chip output before the
-   Phasor output amplifier when possible.
+3. Capture isolated phones at fixed amplitude and 96 or 192 kHz. Include E,
+   A, AE, AH, and O; F and SCH on FRIC1; S and TH on FRIC2; J and Z with mixed
+   excitation; held P/T/K; and stop-to-voice and stop-to-noise transitions.
+   Record AO before C381 and the post-C381 signal, then repeat enough vectors
+   on a second part to expose chip spread.
 4. Build a double-precision two-phase nodal model from the LF356, CD4016, and
    capacitor network. Solve Phi0 and Phi1 charge transfer for each section,
-   including the fixed F5 and the two noise sections.
+   including fixed F5 and both noise-injection nodes.
 5. Compare impulse response, peak frequency, bandwidth, decay, DC bias, and
    level for every four-bit code against SPICE and real captures.
 6. Quantize the proved state equations and reuse the current scheduled-MAC
@@ -382,9 +458,11 @@ FIFO and shadow-memory behavior; they do not relax a speech path or hide one
 with a false or multicycle path. The Apple bus direction outputs keep their
 real raw-PHI0 limit as a separate constraint.
 
-This qualifying route proves that the full design can clear the margin. Final
-firmware promotion still requires two clean full builds from the same final
-commit, with the same settings, and each must clear `+0.300 ns` on its own.
+This qualifying route proves that the full design can clear the normal margin.
+For this F0.9.99 speech checkpoint, the user set a temporary routed-WNS gate of
+`+0.100 ns` and asked for one clean full build only. Keep that first route if
+it passes; do not spend a second full build on duplicate timing evidence while
+hardware speech work remains.
 
 The final branch gate includes:
 
@@ -392,14 +470,15 @@ The final branch gate includes:
 - native digital-core XSim;
 - XCK rational-enable XSim;
 - excitation/filter XSim;
-- absolute voiced and fricative PCM floors, ratio, and clipping checks;
+- all-64-phone PCM rails, unknown, stop, sustained-source, RMS, occupancy, and
+  representative level checks;
 - mixed-phone source-class checks for the active-low PW0/PW1 decode;
 - closure/reconstruction checks that keep the filter carrier out of PCM;
 - exhaustive Phasor source and address tests;
 - all relevant repository regressions listed in the validation record;
 - fresh Vivado synthesis and implementation;
-- two clean full builds at the same commit with routed WNS at or above
-  `+0.300 ns`;
+- one clean full build from the final commit with routed WNS at or above
+  `+0.100 ns`;
 - firmware packaging from the named accepted timing run, not from a stale
   project bitstream;
 - source and synthesis-log checks that no SC-01/Votrax implementation enters
@@ -410,6 +489,8 @@ timing run's exact XSA and bitstream; the root `FIRMWARE.BIN` and any Vitis IDE
 fallback bitstream are not source evidence and must not replace it.
 
 The first `F0.9.99` hardware run proved card detection, VIA/request handling,
-and Phasor mode, but speech was inaudible apart from weak fricatives. That run
-identified the level and reconstruction faults above. Hardware listening and
-real-chip matching remain pending for the corrected `F0.9.99` image.
+and Phasor mode, but speech was inaudible apart from weak fricatives. The next
+image made P/F/C-class noise far too strong and left most voiced phones weak
+with a common medium-pitch ring. Those two listen tests led to the source,
+tract, stop, formant, and output fixes above. Hardware listening and real-chip
+matching remain pending for the corrected `F0.9.99` image.

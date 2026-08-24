@@ -488,6 +488,25 @@ For this F0.9.99 speech checkpoint, the user set a temporary routed-WNS gate of
 it passes; do not spend a second full build on duplicate timing evidence while
 hardware speech work remains.
 
+That single pitch build is `20260824T075008Z-cdb43efd-full` at speech commit
+`cdb43efd062731ec5b215debac755ab0d4312cf6`. It ran without an incremental
+reference and recorded:
+
+- setup WNS `+0.243 ns`, hold WHS `+0.063 ns`, and pulse-width WPWS
+  `+0.265 ns`;
+- zero setup, hold, pulse-width, route, unconstrained-endpoint, and missing
+  constraint faults;
+- route and bus-skew status `PASS`, with bus-skew slack `+5.638 ns`;
+- 14 DSP48 blocks in the full design, including the two five-DSP SSI audio
+  engines;
+- synthesis of the native SSI clock, core, ROM, and audio modules, with no
+  SC-01 or Votrax module in the synthesis log or tracked HDL source.
+
+The normal build command stopped at its `+0.300 ns` release gate after it had
+written the bitstream. The test export reopened that same completed route,
+matched every timing and route value, and accepted it at the user's
+`+0.100 ns` floor. It did not run synthesis or implementation again.
+
 Full build `20260824T055427Z-a335e4e2-full` tested the corrected serial tract
 before the input retiming. It routed with no failed nets and passed hold,
 pulse-width, bus-skew, and constraint checks, but setup WNS was `-1.058 ns`.
@@ -497,8 +516,8 @@ slot-decode path into SSI core write enables. The source now splits the F3/F5
 math across the unused phase gap and holds each SSI socket select from SERVE
 through DATA. A fresh out-of-context synthesis of one audio core now reports
 `+0.976 ns` WNS at 7.500 ns, with five DSP48 blocks and a 3.318 ns worst data
-path. The accepted package must still come from a full-card run that clears
-the temporary `+0.100 ns` gate.
+path. The accepted pitch package comes from the full-card run above, which
+clears the temporary `+0.100 ns` gate.
 
 The final branch gate includes:
 
@@ -520,9 +539,18 @@ The final branch gate includes:
 - source and synthesis-log checks that no SC-01/Votrax implementation enters
   the image.
 
-The test firmware version is `F0.9.99`. The package must use an accepted
-timing run's exact XSA and bitstream; the root `FIRMWARE.BIN` and any Vitis IDE
-fallback bitstream are not source evidence and must not replace it.
+The test firmware version is `F0.9.99`. Vitis rebuilt the software once from
+the accepted run's exact XSA, and Bootgen used that run's exact bitstream. Use:
+
+```text
+.timing_runs/20260824T075008Z-cdb43efd-full/
+FIRMWARE_F0.9.99_SSI263_TEST_WNS0p243.BIN
+```
+
+The file is 3,810,188 bytes and has SHA-256
+`361CD9E71E33724E20E04D1FCA87E8AF11D44455C590303BC5E747928ABB54AD`.
+The unlabelled run-local `FIRMWARE.BIN` is byte-identical. A root
+`FIRMWARE.BIN` or a Vitis IDE fallback bitstream is not this test artifact.
 
 The first `F0.9.99` hardware run proved card detection, VIA/request handling,
 and Phasor mode, but speech was inaudible apart from weak fricatives. The next

@@ -36,7 +36,7 @@ module tb_ssi263_sc02_core;
     logic filter_phase_ce;
     logic filter_phase;
     logic [2:0] selector;
-    logic [1:0] selector_phase;
+    logic selector_phase;
     logic selector_step_ce;
     logic [7:0] selector_rom_data;
     logic [3:0] selector_flags;
@@ -464,24 +464,26 @@ module tb_ssi263_sc02_core;
         raw_xck_edges(20);
         check(effective_ticks_seen == 10, "DIV2 effective XCK count");
 
-        // Sheet 3: a selector lasts 16 effective FASTCLK ticks. Parameter RAM
+        // Sheet 3: U44 divides by four, U45 Q1 is the hidden phase bit, and
+        // Q2/Q3/Q4 select the ROM column. A selector lasts eight FASTCLK ticks.
+        // Parameter RAM
         // state must not move until U94 launches an articulation sweep.
         reset_chips();
-        raw_xck_edges(15);
-        check(selector == 3'd0, "selector advanced before 16 ticks");
+        raw_xck_edges(7);
+        check(selector == 3'd0, "selector advanced before eight ticks");
         raw_xck_edges(1);
         check(selector == 3'd1 && f1_code == 4'd0,
                "selector moved a parameter without a sweep");
 
         // Every articulation code reloads U94. Its steady pulse interval is
-        // 256 * (16-R) * (8-T) effective ticks.
+        // 128 * (16-R) * (8-T) effective ticks.
         for (setting = 0; setting < 8; setting = setting + 1) begin
             reset_chips();
             write_register(3'd2, 8'hF0);
             write_register(3'd3, 8'h80 | (setting << 4));
             wait_articulation_pulse(first_wait);
             wait_articulation_pulse(second_wait);
-            check(second_wait == 256 * (8 - setting),
+            check(second_wait == 128 * (8 - setting),
                    "articulation terminal pace");
         end
 
@@ -494,7 +496,7 @@ module tb_ssi263_sc02_core;
             wait_inflection_pulse(first_wait);
             state_before = transitioned_inflection_state;
             wait_inflection_pulse(second_wait);
-            check(second_wait == 128 * (8 - setting),
+            check(second_wait == 64 * (8 - setting),
                    "inflection terminal pace");
             check(transitioned_inflection_state == state_before + 1,
                    "transitioned inflection count");

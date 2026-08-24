@@ -929,7 +929,7 @@ module ssi263_sc02_audio #(
                 end
             end
 
-            // U75 advances on the rising edge.  U73 shifts on the following
+            // U75 advances on the rising edge. U73 shifts on the following
             // falling edge, so the forcing term uses the new U75 count while
             // every HCC4006 feedback tap uses the old register state.
             if (noise_advance) begin

@@ -49,10 +49,10 @@ module ssi263_sc02_core #(
     output logic        filter_phase_ce,
     output logic        filter_phase,
 
-    // The SC-02 scans eight ROM columns. Q1/Q2 of the sheet-3 counter are the
-    // four micro-phases; Q3/Q4/Q5 select the ROM column.
+    // The SC-02 scans eight ROM columns. U45 Q1 is the one unconnected phase
+    // bit; Q2/Q3/Q4 drive SEL0/SEL1/SEL2.
     output logic [2:0]  selector,
-    output logic [1:0]  selector_phase,
+    output logic        selector_phase,
     output logic        selector_step_ce,
     output logic [7:0]  selector_rom_data,
     output logic [3:0]  selector_flags,
@@ -138,7 +138,7 @@ module ssi263_sc02_core #(
     logic [6:0] parameter_sweep_q;
 
     logic [1:0] slow_div_q;
-    logic [1:0] selector_phase_q;
+    logic       selector_phase_q;
     logic [2:0] selector_q;
 
     logic [3:0] f1_code_q;
@@ -422,7 +422,7 @@ module ssi263_sc02_core #(
             parameter_sweep_q <= 7'h00;
 
             slow_div_q <= 2'd0;
-            selector_phase_q <= 2'd0;
+            selector_phase_q <= 1'b0;
             selector_q <= 3'd0;
 
             f1_code_q <= 4'd0;
@@ -519,12 +519,13 @@ module ssi263_sc02_core #(
                     end
                 end
 
-                // U44A/U44B divide FASTCLK by four. U45 Q1/Q2 form four
-                // sub-phases and Q3/Q4/Q5 select the eight ROM columns.
+                // U44A/U44B divide FASTCLK by four. U45 Q1 is not connected;
+                // Q2/Q3/Q4 are SEL0/SEL1/SEL2. One selector slot therefore
+                // spans two SLOWCLK edges, or eight effective FASTCLK ticks.
                 if (slow_div_q == 2'd3) begin
                     slow_div_q <= 2'd0;
-                    if (selector_phase_q == 2'd3) begin
-                        selector_phase_q <= 2'd0;
+                    if (selector_phase_q) begin
+                        selector_phase_q <= 1'b0;
                         selector_q <= selector_q + 3'd1;
                         selector_step_ce_q <= 1'b1;
 
@@ -702,7 +703,7 @@ module ssi263_sc02_core #(
                             end
                         end
                     end else begin
-                        selector_phase_q <= selector_phase_q + 2'd1;
+                        selector_phase_q <= 1'b1;
                     end
                 end else begin
                     slow_div_q <= slow_div_q + 2'd1;

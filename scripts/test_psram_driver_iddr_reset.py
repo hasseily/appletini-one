@@ -23,6 +23,7 @@ APPLE_TOP = ROOT / "hdl" / "apple" / "apple_top.sv"
 BENCH = ROOT / "hdl" / "sim" / "tb_psram_driver_iddr_reset.sv"
 SIMPLE_BENCH = ROOT / "hdl" / "sim" / "tb_psram_simple.sv"
 XDC = ROOT / "hdl" / "constraints" / "appletini_yarz.xdc"
+BUILD_SCRIPT = ROOT / "scripts" / "build_and_export_xsa.tcl"
 
 IDDR_BLOCK = re.compile(
     r"(?ms)^\s{12}IDDR #\(.*?^\s{12}\) u_[ab]_iddr \(.*?^\s{12}\);"
@@ -176,21 +177,45 @@ def static_checks(source: str) -> None:
 
     xdc = XDC.read_text(encoding="utf-8")
     timing_contract = (
-        "set psram_launch_regs [get_cells -hierarchical",
-        "*psram_a_launch_q_reg* *psram_b_launch_q_reg* *psram_oe_launch_q_reg*",
-        "set psram_output_regs [get_cells -hierarchical",
-        "*psram_a_o_reg* *psram_b_o_reg* *psram_oe_reg*",
-        "[llength $psram_launch_regs] != 12",
-        "[llength $psram_output_regs] != 12",
-        "[llength $psram_output_regs] != 16",
+        "*psram_a_launch_q_reg*",
+        "*psram_b_launch_q_reg*",
+        "*psram_oe_launch_q_reg*",
+        "*psram_a_o_reg*",
+        "*psram_b_o_reg*",
+        "*psram_oe_reg*",
         "set_max_delay -datapath_only 2.75",
-        "-from $psram_launch_regs -to $psram_output_regs",
+        "-from [get_cells -hierarchical",
+        "-to [get_cells -hierarchical",
     )
     for text in timing_contract:
         if text not in xdc:
             raise RuntimeError(
                 f"PSRAM launch placement timing contract lost: {text}"
             )
+
+    build_script = BUILD_SCRIPT.read_text(encoding="utf-8")
+    build_contract = (
+        "set psram_launch_cells [get_cells -hierarchical",
+        "set psram_output_cells [get_cells -hierarchical",
+        "[llength $psram_launch_cells] != 12",
+        "[llength $psram_output_cells] != 16",
+        "Routed PSRAM launch/output timing cell query no longer matches the PHY",
+    )
+    for text in build_contract:
+        if text not in build_script:
+            raise RuntimeError(
+                f"PSRAM routed-cell count check lost: {text}"
+            )
+    if re.search(
+        r"wait_on_run\s+impl_1.*?open_run\s+impl_1.*?"
+        r"set\s+psram_launch_cells.*?set\s+psram_output_cells.*?"
+        r"if\s*\{\[llength\s+\$psram_launch_cells\]",
+        build_script,
+        re.DOTALL,
+    ) is None:
+        raise RuntimeError(
+            "PSRAM routed-cell count check must run after implementation opens"
+        )
 
 
 def check_production_contract(source: str) -> None:

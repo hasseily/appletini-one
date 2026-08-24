@@ -223,6 +223,22 @@ wait_on_run impl_1
 # not prove that the image boots on hardware, so only the explicit promotion
 # script may replace the known-good incremental reference.
 open_run impl_1
+
+# XDC files accept timing commands but not Tcl flow control. Check the exact
+# routed PSRAM PHY collections here so a hierarchy or OE-replication change
+# cannot silently weaken the half-cycle launch bound.
+set psram_launch_cells [get_cells -hierarchical \
+    {*psram_a_launch_q_reg* *psram_b_launch_q_reg* \
+     *psram_oe_launch_q_reg*}]
+set psram_output_cells [get_cells -hierarchical \
+    {*psram_a_o_reg* *psram_b_o_reg* *psram_oe_reg*}]
+if {[llength $psram_launch_cells] != 12 ||
+    [llength $psram_output_cells] != 16} {
+    error "Routed PSRAM launch/output timing cell query no longer matches the PHY"
+}
+unset psram_launch_cells
+unset psram_output_cells
+
 set worst_setup_path [get_timing_paths -quiet -delay_type max -max_paths 1]
 set worst_hold_path  [get_timing_paths -quiet -delay_type min -max_paths 1]
 if {[llength $worst_setup_path] == 0 || [llength $worst_hold_path] == 0} {

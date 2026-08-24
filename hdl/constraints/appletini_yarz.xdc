@@ -492,19 +492,12 @@ set_property IOB TRUE [get_cells -hierarchical {*psram_b_o_reg*}]
 # register. This changes neither edge nor the pin waveform. Synthesis has 12
 # output registers before OE replication, while implementation has 16 after
 # each OE bit is copied into both TFFs.
-set psram_launch_regs [get_cells -hierarchical \
-    {*psram_a_launch_q_reg* *psram_b_launch_q_reg* *psram_oe_launch_q_reg*}]
-set psram_output_regs [get_cells -hierarchical \
-    {*psram_a_o_reg* *psram_b_o_reg* *psram_oe_reg*}]
-if {[llength $psram_launch_regs] != 12 ||
-    ([llength $psram_output_regs] != 12 &&
-     [llength $psram_output_regs] != 16)} {
-    error "PSRAM launch/output timing cell query no longer matches the PHY"
-}
 set_max_delay -datapath_only 2.75 \
-    -from $psram_launch_regs -to $psram_output_regs
-unset psram_launch_regs
-unset psram_output_regs
+    -from [get_cells -hierarchical \
+        {*psram_a_launch_q_reg* *psram_b_launch_q_reg* \
+         *psram_oe_launch_q_reg*}] \
+    -to [get_cells -hierarchical \
+        {*psram_a_o_reg* *psram_b_o_reg* *psram_oe_reg*}]
 
 # psram io outputs have common setup/hold requirements
 set_output_delay -clock psram_clk_out -max [expr $To_sp + $Tskew_max] [get_ports "psram_a_io[*]"]

@@ -9,12 +9,15 @@ transition state, source state, filter state, and audio output. The active
 build inputs no longer include the SC-01 core, SC-01 coefficient ROM,
 SSI-to-SC-01 phone map, or Votrax interface.
 
-The register, bus, request, ROM, and reconstructed digital timing paths now
-follow SSI-263 sources directly. The audio path follows the SC-02 source and
-filter controls, but its resonators are still a stable fixed-point model of the
-analog network. It is not a transistor-level or phase-by-phase nodal copy of
-the LF356/CD4016 switched-capacitor circuit. Real-chip captures remain the
-final test for clock straps, spectra, level, and part tolerance.
+ROM contents and addressing, plus the public pitch, filter, frame, and
+duration laws, are exact to the supplied sources. Register, D7/A-R, selector,
+transition, excitation, and Phasor routing are source-derived synchronous
+models checked in simulation. They are not yet proved against SSI silicon,
+chiefly because the U85C/U68 reset path remains unresolved. The resonators,
+section gain, output scale, and analog response are circuit-guided fixed-point
+approximations. They are not a transistor-level or phase-by-phase nodal copy
+of the LF356/CD4016 switched-capacitor circuit. Real-chip captures remain the
+final test for clock straps, timing phase, spectra, level, and part tolerance.
 
 ## Sources and what each one proves
 
@@ -137,7 +140,11 @@ does not instantiate a P part.
 ## Clock findings
 
 The well-known Phasor clock doubling applies to its AY chips in native mode.
-It does not prove that SSI XCK changes with card mode.
+The AY base enable comes from the Apple bus cadence. Native mode inserts one
+extra AY enable after each base enable, so the AY cadence is twice the
+Mockingboard cadence, about twice the Apple 1 MHz bus rate. This is not the
+133 MHz fabric clock, and it does not prove that SSI XCK changes with card
+mode.
 
 The firmware uses one shared rational clock-enable source for the two SSI XCK
 pins. The default pin rate is `3,579,545 / 2 = 1,789,772.5 Hz`; each AP core has
@@ -204,10 +211,12 @@ fricative phone keeps PW3 high.
 One digital detail remains uncertain in the reconstruction. U85C combines an
 U104C term with U68 carry to reset U62, but the shown polarity self-locks for
 one PW3/U62 state and the U68 carry state has not yet been transcribed. The
-RTL therefore initializes U62 only on hard reset and then lets it free-run. It
-does not invent a CTL, phone-active, or PD/RST reset. `FRIC_AMP_ZERO` currently
-uses the held fricative-amplitude code being zero. A real-chip logic trace or
-a corrected schematic net is needed to close this point.
+RTL therefore initializes U62 only on FPGA reset or Slot-4 disable through the
+chip enable, then lets it free-run. It does not invent an Apple RESET / PD-RST,
+CTL, or phone-active reset. `FRIC_AMP_ZERO` currently means that the held
+fricative-amplitude code is zero. This gap can change excitation and
+gated-noise phase, not just an unseen internal phase. A real-chip logic trace
+or a corrected schematic net is needed to close it.
 
 The current filter uses seven stable fixed-point resonators. Source capacitor
 totals set each code ordering, F2 resonance changes decay, and FILT changes the
@@ -221,8 +230,8 @@ overrun latch is checked in simulation.
 The first scheduler draft passed XSim but failed a 7.500 ns out-of-context
 synthesis check with `WNS=-5.105 ns`. Registering every multiply result before
 rotation, saturation, addition, or state commit changed the same check to
-`WNS=+0.602 ns` on `xc7z020clg484-2`. That result is only a local timing check;
-the full placed-and-routed design remains the release gate.
+`WNS=+0.602 ns` on `xc7z020clg484-2`. This local check found the first long
+paths; the clean full-design routes below remain the release evidence.
 
 The final saturation test checks whether bits 46:23 extend bit 47 instead of
 using a wide signed magnitude comparison. This gives the same 24-bit clamp at
@@ -235,8 +244,7 @@ value to the radius lane on the next stage, and keeps the same 53-clock result
 schedule. Focused XSim still produces the same checked stream and exact engine
 latency. A fresh 7.500 ns out-of-context synthesis of this RTL gives
 `WNS=+0.514 ns`; it uses 810 packed LUTs, 692 flip-flops, three shift-register
-LUTs, three DSP48E1 cells, and no block RAM per chip. The full placed-and-routed
-design remains the release gate.
+LUTs, three DSP48E1 cells, and no block RAM per chip.
 
 This is a large gain over the SC-01-based sound path, but it remains the least
 proved part. Pole angles, radii, section drive, output scale, and the mapping
@@ -244,6 +252,12 @@ from capacitor ratio to a discrete resonator are engineering estimates. They
 do not yet solve charge transfer on each Phi0/Phi1 switch state.
 
 ## Dual-chip Phasor integration
+
+The design has two fixed `ssi263_voice` instances. Both set `REVISION_AP=1`
+and `DIV2=1`. They share only the rational XCK enable; each retains separate
+core, request, transition, excitation, filter, and audio state. A5 maps to the
+secondary channel-A chip, VIA0 CA1, and left audio. A6 maps to the primary
+channel-B chip, VIA1 CA1, and right audio.
 
 The card implementation now has these rules:
 
@@ -276,7 +290,7 @@ and disables and re-enables Slot 4 during a live native read and IRQ.
 | Register and D7/A-R rules | Implemented and simulated | Write-end, aliases, DR modes, repeat, collisions, P/AP tests |
 | Public pitch, filter, frame, and duration laws | Implemented and simulated | Boundary and full-range timing tests |
 | Reconstructed selector and transition logic | Synchronous state equivalent | All selector targets, low-ROM classes, and cadence settings tested |
-| Voiced and noise digital recurrences | Synchronous state equivalent | Raw/final pitch and sustained noise sequence tests |
+| Voiced and noise digital recurrences | Source-derived and cycle-tested | Raw/final pitch and sustained noise tests pass; unresolved U62 reset phase can alter excitation and the noise gate |
 | Phasor address and request routing | Implemented and exhaustively modeled | 256 offsets per mode and two-chip request model |
 | Dual audio and state isolation | Implemented and simulated | A5-only, A6-only, simultaneous stereo, no-overrun, and disable/re-enable checks; hardware listen test pending |
 | Switched-capacitor analog response | Approximate | Stable resonators use source controls and capacitor ordering, not a nodal solve |
@@ -289,6 +303,12 @@ it prevents an unconditional claim that every internal phase matches a die.
 ## What should be done next for closer analog fidelity
 
 The next work should improve evidence, not add phone-specific tuning:
+
+Two test levels remain. Appletini validation must cover boot, both chip
+selects, simultaneous stereo, left/right routing, CA1 and native IRQ, all
+three card modes, reset, clipping, and long-run stability. Original SSI-263AP
+and Phasor comparison must cover XCK/DIV2, A/R and D7 timing, all phones,
+filter extremes, spectra, level, part tolerance, and the U85C/U68 behavior.
 
 1. Measure an original Phasor's XCK and DIV2 pins in Mockingboard and native
    modes. Record raw XCK, effective clock, and phase continuity across mode
@@ -318,6 +338,30 @@ hardware validation pending." It should not be called a perfect analog copy.
 
 ## Verification and firmware
 
+The first clean full build to clear the release margin is
+`20260824T023831Z-941d6531-full` at commit
+`941d6531c11d68468bb7c2efc7cc56808eac59c9`. It used no incremental
+checkpoint and recorded:
+
+- setup WNS `+0.316 ns`, hold WHS `+0.058 ns`, and pulse-width WPWS
+  `+0.265 ns`;
+- zero setup, hold, pulse-width, route, unconstrained-endpoint, and missing
+  constraint faults;
+- route and bus-skew status `PASS`, with bus-skew slack `+5.948 ns`;
+- a clean Git tree and an exported, hash-recorded bitstream and XSA.
+
+The build also guards two timing fixes outside speech that the larger SSI
+design exposed. It requires all 16 width-parallel frame-reader FIFO RAM blocks
+to belong to their placement block. It also requires 36 independent vTW
+shadow RAM blocks with no depth cascade. These changes preserve the tested
+FIFO and shadow-memory behavior; they do not relax a speech path or hide one
+with a false or multicycle path. The Apple bus direction outputs keep their
+real raw-PHI0 limit as a separate constraint.
+
+This qualifying route proves that the full design can clear the margin. Final
+firmware promotion still requires two clean full builds from the same final
+commit, with the same settings, and each must clear `+0.300 ns` on its own.
+
 The final branch gate includes:
 
 - native ROM/reference tests;
@@ -325,7 +369,7 @@ The final branch gate includes:
 - XCK rational-enable XSim;
 - excitation/filter XSim;
 - exhaustive Phasor source and address tests;
-- all repository source regressions;
+- all relevant repository regressions listed in the validation record;
 - fresh Vivado synthesis and implementation;
 - two clean full builds at the same commit with routed WNS at or above
   `+0.300 ns`;
@@ -334,5 +378,9 @@ The final branch gate includes:
 - source and synthesis-log checks that no SC-01/Votrax implementation enters
   the image.
 
-Hardware speech quality and real-chip matching remain pending until the new
+The test firmware version is `F0.9.99`. The package must use an accepted
+timing run's exact XSA and bitstream; the root `FIRMWARE.BIN` and any Vitis IDE
+fallback bitstream are not source evidence and must not replace it.
+
+Hardware speech quality and real-chip matching remain pending until this
 firmware runs on an Appletini and the test vectors above are captured.

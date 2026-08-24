@@ -5,7 +5,7 @@
 // real core and its 512-byte ROM before reaching the audio block.
 module tb_ssi263_phone_sweep;
 
-    localparam integer RAW_XCK_HZ = 1789773;
+    localparam integer RAW_XCK_HZ = 2045454;
     localparam integer AUDIO_HZ = 48000;
     localparam integer SETTLE_SAMPLES = 128;
     localparam integer LEVEL_SAMPLES = 256;
@@ -58,7 +58,7 @@ module tb_ssi263_phone_sweep;
     assign xck_ce = rstn && xck_run;
 
     // One fabric cycle represents one raw XCK edge.  This accumulator keeps
-    // the 48 kHz observation cadence tied to the 1.789773 MHz pin clock while
+    // the 48 kHz observation cadence tied to the 2.045454 MHz pin clock while
     // allowing the test to run much faster than the 100 MHz card simulation.
     always_ff @(posedge clk) begin
         if (!rstn || !xck_run) begin

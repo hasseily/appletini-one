@@ -241,11 +241,11 @@ def test_dual_native_ssi263_contract() -> None:
             "assign ar_drive_low = pending_q && ar_enabled_q && !powered_down;" in core,
             "D7 pending state and the enabled active-low A/R pin must remain distinct")
 
-    require("parameter longint unsigned XCK_NUMERATOR_HZ = 3_579_545" in xck and
-            "parameter longint unsigned XCK_DENOMINATOR = 2" in xck and
+    require("parameter longint unsigned XCK_NUMERATOR_HZ = 14_318_180" in xck and
+            "parameter longint unsigned XCK_DENOMINATOR = 7" in xck and
             "ssi263_xck_ce ssi_xck_ce_i" in source and
             source.count(".xck_ce(ssi_xck_ce)") == 3,
-            "one default 3,579,545/2 Hz XCK source must feed both voices")
+            "one nominal Apple Q3 XCK source must feed both voices")
     require("phasor_native" not in sv_instance_block(source, "ssi263_xck_ce ssi_xck_ce_i") and
             "card_mode" not in voice,
             "XCK and chip state must run independently of the Phasor mode switch")

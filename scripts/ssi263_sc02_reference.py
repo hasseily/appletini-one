@@ -157,8 +157,8 @@ class SSI263Reference:
     """Pin and control reference for one SSI-263AP instance."""
 
     rom: tuple[int, ...] = field(default_factory=load_active_rom)
-    # Provisional Phasor card wiring: about 2x bus at XCK, then DIV2 in the
-    # chip.  These are card assumptions, not intrinsic SSI-263 defaults.
+    # Phasor card profile: Apple Q3 at XCK, then DIV2 in the chip.  These are
+    # card settings, not intrinsic SSI-263 defaults.
     xck_edges_per_bus_cycle: int = 2
     div2: bool = True
     revision_ap: bool = True

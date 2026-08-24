@@ -152,16 +152,29 @@ Mockingboard cadence, about twice the Apple 1 MHz bus rate. This is not the
 mode.
 
 The firmware uses one shared rational clock-enable source for the two SSI XCK
-pins. The default pin rate is `3,579,545 / 2 = 1,789,772.5 Hz`; each AP core has
-DIV2 high, so its effective time base is `894,886.25 Hz`. This is within the
-data sheet's stated 800-1000 kHz range and follows its colorburst-derived
-clock suggestion. The SSI clock does not change when software switches the
-Phasor mode.
+pins. Its Phasor profile is the nominal Apple Q3 rate,
+`14,318,180 / 7 = 2,045,454.29 Hz`. Each AP core keeps DIV2 high, so its
+effective time base is `1,022,727.14 Hz`. The SSI clock does not change when
+software switches the Phasor mode.
+
+This changes the card input, not the SSI circuit. The reconstruction's local
+crystal path divides `3.579545 MHz` by four and reaches `894,886.25 Hz` at
+FASTCLK. Its explicit external path accepts TCLKIN and divides it by two before
+that same node. Apple Q3 on TCLKIN therefore reaches `1,022,727.14 Hz` without
+removing a drawn divider. The standard Mockingboard uses the numerically
+equivalent choice of PHI2 at XCK with DIV2 low. The Phasor board has no separate
+speech crystal, so the slot-clock profile is the better card model.
+
+The former profile made the common programming-guide inflection `I=$A80`
+settle at `79.4466 Hz`. The Q3 profile makes it `90.7961 Hz`, an exact `8/7`
+rise. This corrects the reported low pitch by changing only XCK. The drawn
+FASTCLK-to-SLOWCLK divide by four, the 12-bit pitch counter, U62's final divide
+by two, transition timing, ROM data, and register packing remain unchanged.
 
 The XCK source uses the exact generated fabric rate, 133,333,344 Hz, and emits
-evenly spaced one-cycle enables. It does not create an FPGA clock net. Build
-parameters permit direct tests of a raw two-times-Apple-bus clock, a 1 MHz
-effective clock, and the reconstruction's lower external-clock profile.
+evenly spaced one-cycle enables. It does not create an FPGA clock net. The
+default-rate bench checks the exact rational count and both 65- and 66-cycle
+spacing values.
 
 These public laws are implemented in effective XCK ticks:
 
@@ -402,7 +415,7 @@ and disables and re-enables Slot 4 during a live native read and IRQ.
 | Phasor address and request routing | Implemented and exhaustively modeled | 256 offsets per mode and two-chip request model |
 | Dual audio and state isolation | Implemented and simulated | 103 card checks: A5-only, A6-only, simultaneous stereo, no-overrun, zero clipping, and disable/re-enable; corrected-image listen pending |
 | Switched-capacitor analog response | Approximate | Correct serial graph and injection nodes use stable all-poles and cap ordering, not a nodal solve |
-| XCK and DIV2 straps on an original Phasor | Unproved | Default follows data sheet; continuity or scope capture needed |
+| XCK and DIV2 straps on an original Phasor | Effective profile implemented; exact board trace unproved | Q3 plus DIV2 gives the standard Apple-card time base and follows the reconstruction's external path; continuity or scope capture remains useful |
 | Digital level and spectrum guards | Implemented and simulated | 64-phone zero-rail sweep, ROM phone metrics, low-vowel peak separation, F/SCH tract split |
 | Absolute voltage and analog tolerance | Unproved | AO/post-C381 captures from real SSI-263AP parts needed |
 
@@ -514,6 +527,9 @@ fallback bitstream are not source evidence and must not replace it.
 The first `F0.9.99` hardware run proved card detection, VIA/request handling,
 and Phasor mode, but speech was inaudible apart from weak fricatives. The next
 image made P/F/C-class noise far too strong and left most voiced phones weak
-with a common medium-pitch ring. Those two listen tests led to the source,
-tract, stop, formant, and output fixes above. Hardware listening and real-chip
-matching remain pending for the corrected `F0.9.99` image.
+with a common medium-pitch ring. After the source, tract, stop, formant, output,
+and input-timing fixes, the user could hear the phones but reported that the
+settled pitch was much too low. The clock audit found the exact `8/7` error
+described above. This checkpoint changes only the external XCK profile so the
+user can judge pitch before more tract or level work. Hardware listening and
+real-chip matching remain pending for the new `F0.9.99` image.

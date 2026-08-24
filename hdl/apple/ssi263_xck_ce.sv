@@ -4,13 +4,14 @@
 //
 // Keep XCK in the fabric clock domain.  The accumulator emits evenly spaced
 // one-cycle enables and never creates a generated FPGA clock.  The default
-// 3,579,545 / 2 Hz pin rate is the colorburst-derived Phasor candidate; an AP
-// core with DIV2 high sees an effective 894,886.25 Hz time base.
+// Apple Q3 is nominally four times colorburst divided by seven.  The default
+// 14,318,180 / 7 Hz pin rate follows that Phasor card input; an AP core with
+// DIV2 high sees an effective 1,022,727.14 Hz time base.
 module ssi263_xck_ce #(
     // The Zynq clock wizard resolves the requested fabric clock to this rate.
     parameter longint unsigned FABRIC_HZ = 133_333_344,
-    parameter longint unsigned XCK_NUMERATOR_HZ = 3_579_545,
-    parameter longint unsigned XCK_DENOMINATOR = 2
+    parameter longint unsigned XCK_NUMERATOR_HZ = 14_318_180,
+    parameter longint unsigned XCK_DENOMINATOR = 7
 ) (
     input  logic clk,
     input  logic rstn,

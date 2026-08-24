@@ -163,8 +163,8 @@ module ssi263_sc02_audio #(
     // section first derives a1=2*r*cos(theta), r2=r*r, and
     // b0=1-a1+r2, then evaluates y=a1*y1-r2*y2+b0*x.  The normalized
     // numerator removes the unwanted zero from the old complex-rotation tap.
-    // The default XCK/DIV2 profile leaves 149 fabric clocks between the
-    // fastest filter phases, with margin for two independent instances.
+    // The default XCK/DIV2 profile leaves at least 130 fabric clocks between
+    // the fastest filter phases, with margin for two independent instances.
     logic engine_busy_q;
     logic engine_overrun_q;
     logic [2:0] engine_section_q;

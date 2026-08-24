@@ -118,7 +118,7 @@ def spectral_checks(source: str) -> None:
     ):
         raise RuntimeError("F and SCH collapsed onto one fixed hiss spectrum")
 
-    phase_rate_hz = 894886.25 / (2 * (256 - 0xE8))
+    phase_rate_hz = (14_318_180 / 14) / (2 * (256 - 0xE8))
 
     def section_response(
         frequency_hz: float, cos_q14: int, radius_q14: int

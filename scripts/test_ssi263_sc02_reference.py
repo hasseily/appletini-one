@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import unittest
+from fractions import Fraction
 
 from ssi263_sc02_reference import (
     MODE_FRAME_IMMEDIATE,
@@ -68,6 +69,16 @@ class FormulaTests(unittest.TestCase):
         chip.feed_bus_cycles(1234)
         self.assertEqual(chip.xck_pin_edges, 2468)
         self.assertEqual(chip.effective_xck_ticks, 1234)
+
+    def test_phasor_q3_pitch_profile(self) -> None:
+        raw_xck = Fraction(14_318_180, 7)
+        effective_xck = raw_xck / 2
+        old_effective_xck = Fraction(3_579_545, 4)
+        pitch_hz = effective_xck / pitch_period_ticks(0xA80)
+
+        self.assertEqual(effective_xck / old_effective_xck, Fraction(8, 7))
+        self.assertGreater(float(pitch_hz), 90.0)
+        self.assertLess(float(pitch_hz), 91.0)
 
 
 class InterfaceTests(unittest.TestCase):

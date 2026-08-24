@@ -71,25 +71,27 @@ does not, by itself, prove the SSI-263 XCK pin rate.
 The new core will model both the external XCK and the SSI DIV2 input.  It will
 not fold them into a guessed 20 kHz update clock.
 
-Initial card configuration:
+Final card configuration:
 
 - use a fabric-clock rational accumulator to create evenly spaced XCK edge
-  enables at 3,579,545 / 2 Hz;
-- set SSI DIV2 high, which gives an effective 894,886.25 Hz time base;
-- keep a raw two-times-Apple-bus XCK profile with DIV2 high for direct Phasor
-  comparison;
-- keep a 1 MHz effective profile for the data-sheet nominal case;
-- keep a 3,579,545 / 4 Hz raw profile with DIV2 high, which gives the supplied
-  reconstruction's literal 447,443.125 Hz internal FASTCLK.
+  enables at nominal Apple Q3, `14,318,180 / 7 = 2,045,454.29 Hz`;
+- keep SSI DIV2 high, which gives an effective `1,022,727.14 Hz` time base;
+- keep the effective clock constant when Phasor mode changes.
 
-The default follows the data sheet's suggested colorburst-derived source and
-its desired 800 to 1000 kHz effective time base.  A raw clock near twice the
-Apple bus rate with DIV2 high remains plausible and gives a similar effective
-rate, but no physical Phasor XCK or DIV2 trace proves it yet.  The reconstruction
-divides its crystal down one stage further and conflicts with the published
-pitch and time-base range, so it remains a comparison profile instead of the
-firmware default.  Do not change SSI XCK when Phasor mode changes; the proved
-native-mode clock doubling applies to the AY chips.
+This choice follows the reconstruction rather than changing it. Its local
+crystal path divides `3.579545 MHz` by four to `894,886.25 Hz` FASTCLK. P4
+also provides an external TCLKIN path, and U62B divides that input by two
+before FASTCLK. Apple Q3 through that path gives `1,022,727.14 Hz`. The RTL's
+XCK input and asserted DIV2 model the same two stages. The internal
+FASTCLK-to-SLOWCLK divider, pitch counter, and U62 voice divider stay intact.
+
+The standard Mockingboard instead feeds about 1 MHz PHI2 to XCK with DIV2 low;
+the effective rate is the same. The prior `894,886.25 Hz` default made `I=$A80`
+produce `79.4466 Hz`. The final profile produces `90.7961 Hz`, exactly `8/7`
+higher. This matches the reported low-pitch error without a phone, ROM, or
+internal-divider adjustment. The exact original Phasor strap still merits a
+continuity or scope check. Do not change SSI XCK when Phasor mode changes; the
+proved native-mode clock doubling applies to the AY chips.
 
 The generated Zynq fabric clock resolves to 133,333,344 Hz.  The XCK accumulator
 uses that generated value rather than the rounded 133 MHz label used in

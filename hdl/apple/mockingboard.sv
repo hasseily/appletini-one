@@ -670,9 +670,9 @@ via6522 via1(
     .cb2_out()
 );
 
-// One colorburst-derived XCK pin clock feeds both fixed AP-revision sockets.
-// Each voice applies its own asserted DIV2 strap, so both effective chip time
-// bases are 894,886.25 Hz and remain unchanged by the card mode switch.
+// One nominal Apple Q3 XCK pin clock feeds both fixed AP-revision sockets.
+// Each voice keeps its asserted DIV2 strap, so both effective chip time bases
+// are 1,022,727.14 Hz and remain unchanged by the card mode switch.
 ssi263_xck_ce ssi_xck_ce_i (
     .clk(clk),
     .rstn(rstn),

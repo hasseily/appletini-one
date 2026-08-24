@@ -107,8 +107,9 @@ def main():
     require("(ab_read.addr[3:2] == 2'b01)" in card,
             "Uthernet II must answer only C0n4-C0n7 so a virtual SSC can "
             "share the same slot's DEVSEL page")
-    require("wire [1:0] apple_io_reg = ab_read.addr[1:0];" in card,
-            "Uthernet II must select its register through A0/A1")
+    require("wire [1:0] apple_io_reg = apple_io_write_start ?" in card and
+            "apple_write_reg_q : ab_read.addr[1:0];" in card,
+            "Uthernet II must use live A0/A1 for reads and the retained A0/A1 for writes")
     require("slot_rom" not in card and "slot_access" not in card,
             "Uthernet II implementation should not add a slot ROM")
     require("function automatic logic [7:0] next_mode_value" in card,
@@ -168,6 +169,13 @@ def main():
             "Apple traffic and host collisions must invalidate the PS sequential fast path")
     require("wire apple_io_write_addr_start" in card and
             "apple_write_reserved_q" in card and
+            "logic [1:0] apple_write_reg_q;" in card and
+            "wire apple_io_write_start = ab_read.data_en && apple_write_reserved_q;" in card and
+            "apple_write_reg_q <= ab_read.addr[1:0];" in card and
+            "apple_io_write_start ?\n"
+            "                              apple_write_reg_q : ab_read.addr[1:0]" in card and
+            "ab_read.addr = 16'h0000;" in sim and
+            "ab_read.rw = 1'b1;" in sim and
             "wire host_can_start =\n"
             "        reset_done_q && (eth_state_q == ETH_IDLE) && !apple_waiting &&\n"
             "        !host_pending_q;" in card,

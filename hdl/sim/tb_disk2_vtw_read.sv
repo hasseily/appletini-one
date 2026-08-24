@@ -78,6 +78,8 @@ module tb_disk2_vtw_read;
     always @(negedge clk) begin
         if (rstn && dut.vtw_drive_select_q !== dut.drive_select_q)
             $fatal(1, "FAIL: vTW drive selector diverged from Disk II state");
+        if (rstn && dut.vtw_track_bit_count_q !== dut.track_bit_count_q)
+            $fatal(1, "FAIL: vTW bit count diverged from Disk II state");
     end
 
     task automatic check(input bit cond, input string msg);
@@ -167,6 +169,17 @@ module tb_disk2_vtw_read;
         repeat (5) @(posedge clk);
         rstn = 1'b1;
         repeat (4) @(posedge clk);
+
+        // Exercise both non-reset updates of the vTW-local count copy before
+        // the rest of this standard-track test leaves it at zero.
+        axi_write(8'h0E, 32'd128);
+        check(dut.track_bit_count_q == 17'd128 &&
+              dut.vtw_track_bit_count_q == 17'd128,
+              "vTW bit count copy did not follow a nonzero AXI write");
+        axi_write(8'h0E, 32'd0);
+        check(dut.track_bit_count_q == 17'd0 &&
+              dut.vtw_track_bit_count_q == 17'd0,
+              "vTW bit count copy did not follow a zero AXI write");
 
         // The live handoff bypass may serve only the first slot-ROM read. It
         // must not turn a C0Ex access into a controller event while normal

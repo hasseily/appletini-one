@@ -1324,6 +1324,16 @@ module apple_top(
     assign mockingboard_audio_l = mockingboard_audio_l_q;
     assign mockingboard_audio_r = mockingboard_audio_r_q;
 
+    /* Mouse coordinate writes need WDATA bit 10 at the far card region. The
+     * shared skid copy is the same registered payload; only selected bits use
+     * local copy flops, while every other bit remains a canonical alias. */
+    globals::AxiSimple_common mouse_as_common;
+    always_comb begin
+        mouse_as_common       = as_common;
+        mouse_as_common.wdata = as_vtw_phasor_wdata;
+        mouse_as_common.wstrb = as_vtw_phasor_wstrb;
+    end
+
     mouse_card mouse_card_i (
         .clk(clk),
         .rstn(rstn[2]),
@@ -1331,7 +1341,7 @@ module apple_top(
         .ab_read(gate_ab(ab_read, card_slot2_enable)),
         .sss(sss),
         .slot_assign(3'h2),
-        .as_common(as_common),
+        .as_common(mouse_as_common),
         .as_client(mouse_as_client),
         .ab_write(mouse_ab_write),
         .dbg_mode(mouse_dbg_mode),
@@ -1503,7 +1513,7 @@ module apple_top(
     supersprite_card supersprite_card_i (
         .clk(clk),
         .rstn(rstn[2]),
-        .ab_read(gate_ab(ab_read, supersprite_bus_visible)),
+        .ab_read(gate_ab(sampled_ab_read, supersprite_bus_visible)),
         .sss(sss),
         .slot_assign(3'h7),
         .vblank_tick(bm_vbl_cmd_pulse),

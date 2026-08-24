@@ -415,25 +415,21 @@ module apple_bus_wrapper #(
      * stays in a small pre-gate fed by the staged response tag.
      *
      * LUT inputs implement:
-     *   (bus_emit_state && physical_data_en_safe &&
-     *       (PHI0 || (!host_is_iiplus && addr_rw_enable))) ||
-     *   data_override_safe
-     * INIT bit order is {I5,I4,I3,I2,I1,I0}. */
-    /* Fold the direct output kill into the two request inputs. Raw PHI0 then
-     * reaches the direction pin through only the placed LUT and pad, while
-     * isolation still removes both the normal and override drive terms in
-     * the same combinational cycle. */
-    wire bus_emit_state_active = bus_emit_state && !physical_bus_isolate;
-    wire data_override_active  = data_override_safe && !physical_bus_isolate;
+     *   !physical_bus_isolate &&
+     *   (data_override_safe ||
+     *       (drive_live &&
+     *        (PHI0 || (!host_is_iiplus && addr_rw_enable))))
+     * INIT bit order is {I5,I4,I3,I2,I1,I0}. Isolation is a direct input of
+     * the placed output LUT, so it does not add a gate after raw PHI0. */
     wire apple_data_enable;
     (* LOC = "SLICE_X104Y23", BEL = "A6LUT", DONT_TOUCH = "TRUE" *)
-    LUT6 #(.INIT(64'hFFFF_FFFF_8088_8080)) apple_data_enable_lut (
-        .I0(bus_emit_state_active),
-        .I1(physical_data_en_safe),
-        .I2(apple_phi0_pin),
-        .I3(host_is_iiplus),
-        .I4(physical_addr_rw_en_q),
-        .I5(data_override_active),
+    LUT6 #(.INIT(64'h0000_0000_FFFF_8A88)) apple_data_enable_lut (
+        .I0(drive_live),
+        .I1(apple_phi0_pin),
+        .I2(host_is_iiplus),
+        .I3(physical_addr_rw_en_q),
+        .I4(data_override_safe),
+        .I5(physical_bus_isolate),
         .O(apple_data_enable)
     );
     wire [7:0] apple_data_out =

@@ -198,9 +198,9 @@ def check_masked_wskid_copy() -> None:
     )
     require(
         r"\.OPT_COPY_MASK\s*\(\s*"
-        r"\{\s*1'b0\s*,\s*4'b1111\s*,\s*32'h0000_2126\s*\}\s*\)",
+        r"\{\s*1'b0\s*,\s*4'b1111\s*,\s*32'h0000_2526\s*\}\s*\)",
         wrapper_source,
-        "copy mask must select WDATA bits 1, 2, 5, 8, 13 and WSTRB bits 0-3",
+        "copy mask must select WDATA bits 1, 2, 5, 8, 10, 13 and WSTRB bits 0-3",
     )
     require(
         r"assign\s+as_vtw_phasor_wdata\s*=\s*"
@@ -254,6 +254,7 @@ def check_masked_wskid_copy() -> None:
         r"CARD_CTRL_REG_NSC_TIME_HI\s*:\s*begin.*?end",
         r"CARD_CTRL_REG_VTW_SYNC_CMD\s*:\s*begin.*?end",
         r"CARD_CTRL_REG_VTW_POST_PUSH\s*:\s*begin.*?end",
+        r"always_comb\s+begin\s*mouse_as_common\s*=\s*as_common\s*;.*?end",
     ]
     allowed_spans: list[tuple[int, int]] = []
     for pattern in allowed_patterns:
@@ -364,6 +365,16 @@ def check_masked_wskid_copy() -> None:
             raise AssertionError(
                 f"{register} must not retain a canonical WDATA load"
             )
+
+    require(
+        r"globals::AxiSimple_common\s+mouse_as_common\s*;.*?"
+        r"mouse_as_common\.wdata\s*=\s*as_vtw_phasor_wdata\s*;.*?"
+        r"mouse_as_common\.wstrb\s*=\s*as_vtw_phasor_wstrb\s*;.*?"
+        r"mouse_card\s+mouse_card_i\s*\(.*?"
+        r"\.as_common\s*\(\s*mouse_as_common\s*\)",
+        apple_source,
+        "mouse AXI writes must use the local same-stage WDATA/WSTRB copy",
+    )
 
 
 def check_no_exclusive_mmio_contract() -> None:

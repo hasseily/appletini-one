@@ -649,15 +649,13 @@ def static_checks() -> None:
     # synthesis, OA-window machine gate): the wiring must stay intact end
     # to end. The II+-specific hold is permitted only for read responses;
     # writes must still release directly at raw PHI0.
-    require("LUT6 #(.INIT(64'hFFFF_FFFF_8088_8080)) apple_data_enable_lut" in wrapper and
-            ".I0(bus_emit_state_active)," in wrapper and
-            ".I1(physical_data_en_safe)," in wrapper and
-            ".I2(apple_phi0_pin)," in wrapper and
-            ".I3(host_is_iiplus)," in wrapper and
-            ".I4(physical_addr_rw_en_q)," in wrapper and
-            ".I5(data_override_active)," in wrapper and
-            "bus_emit_state && !physical_bus_isolate" in wrapper and
-            "data_override_safe && !physical_bus_isolate" in wrapper and
+    require("LUT6 #(.INIT(64'h0000_0000_FFFF_8A88)) apple_data_enable_lut" in wrapper and
+            ".I0(drive_live)," in wrapper and
+            ".I1(apple_phi0_pin)," in wrapper and
+            ".I2(host_is_iiplus)," in wrapper and
+            ".I3(physical_addr_rw_en_q)," in wrapper and
+            ".I4(data_override_safe)," in wrapper and
+            ".I5(physical_bus_isolate)," in wrapper and
             "physical_data_en_q    <= ab_write.wr_data_en;" in wrapper and
             "physical_data_q <= ab_write.wr_data;" in wrapper and
             "physical_inh_dependent_q <= ab_write.assert_inh;" in wrapper and

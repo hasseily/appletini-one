@@ -133,7 +133,7 @@ def static_checks() -> None:
         "        (onee_enable_effective || smartport_active)" in top and
         "else if (ab_read.addr_en) begin\n"
         "            vtw_smartport_visible_q <= vtw_smartport_visible_desired;" in top and
-        ".ab_read(gate_ab(ab_read, supersprite_bus_visible))" in top,
+        ".ab_read(gate_ab(sampled_ab_read, supersprite_bus_visible))" in top,
         "SmartPort-selected ONE//e must own slot 7 over saved SuperSprite",
     )
     require(

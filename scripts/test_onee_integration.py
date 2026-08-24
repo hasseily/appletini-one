@@ -179,8 +179,10 @@ def static_checks() -> None:
 
     for contract in (
         "ADDR_OWNER_PREISOLATED || !physical_bus_isolate",
-        "bus_emit_state && !physical_bus_isolate",
-        "data_override_safe && !physical_bus_isolate",
+        "LUT6 #(.INIT(64'h0000_0000_FFFF_8A88)) apple_data_enable_lut",
+        ".I0(drive_live)",
+        ".I4(data_override_safe)",
+        ".I5(physical_bus_isolate)",
         "wire apple_irq_drive_low = !physical_bus_isolate",
         "assign apple_inh_pin = (!physical_bus_isolate",
         "wire apple_dma_requested = !physical_bus_isolate",

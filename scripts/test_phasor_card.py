@@ -99,6 +99,19 @@ def test_four_ay_chips_and_phasor_chip_selects() -> None:
             "via0_data_out | via1_data_out" in source and
             "ab_read.serve_en && ab_read.rw && (via0_hit || via1_hit)" in source,
             "Phasor native I/O must use AppleWin's bit4/bit7 VIA select and OR-read semantics")
+    require("wire slot_rom_visible =" in source and
+            "!sss.sw_intcxrom" in source and
+            "((slot_assign != 3'd3) || sss.sw_slotc3rom)" in source and
+            "sss.slot_access &&" not in source,
+            "Phasor slot visibility must keep the motherboard ROM policy without the duplicate live decode")
+    require("logic via0_cycle_hit_q;" in source and
+            "logic via1_cycle_hit_q;" in source and
+            "else if (ab_read.serve_en) begin" in source and
+            "via0_cycle_hit_q <= via0_hit;" in source and
+            "via1_cycle_hit_q <= via1_hit;" in source and
+            "wire via0_strobe = ab_read.data_en && via0_cycle_hit_q;" in source and
+            "wire via1_strobe = ab_read.data_en && via1_cycle_hit_q;" in source,
+            "VIA writes must retain the authoritative SERVE decode through DATA")
     require("logic via0_ay0_selected_q = 1'b0;" in source and
             "logic via0_ay1_selected_q = 1'b0;" in source and
             "logic via1_ay0_selected_q = 1'b0;" in source and

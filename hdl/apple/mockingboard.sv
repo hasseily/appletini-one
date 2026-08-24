@@ -56,9 +56,15 @@ wire [3:0] phasor_mode_nibble = {1'b1, slot_assign};
  * and DMA masters alike). Read serving keys on serve_en; register-write
  * side effects key on data_en; via_timer_clock keeps sss_en as its pure
  * 1 MHz cadence tick. */
+/* sss.slot_access repeats the full live Cnxx decode. The card already checks
+ * that address below, so use only the two motherboard ROM-visibility bits
+ * here. This is the same slot policy with a shorter DATA-phase cone. */
+wire slot_rom_visible =
+    !sss.sw_intcxrom &&
+    ((slot_assign != 3'd3) || sss.sw_slotc3rom);
 wire slot_io_hit =
     card_enabled &&
-    sss.slot_access &&
+    slot_rom_visible &&
     (ab_read.addr[15:12] == 4'hC) &&
     (ab_read.addr[11] == 1'b0) &&
     (ab_read.addr[10:8] == slot_assign);
@@ -94,8 +100,26 @@ wire via_timer_clock = card_enabled && ab_read.sss_en;
 // It also let MB-mode ISR T1C_l reads (the standard IFR-clear) consume
 // real counts. Mockingboard-only mode keeps the plain timing as well.
 wire phasor_timer_read_extra_clock = !mockingboard_only && phasor_native;
-wire via0_strobe = ab_read.data_en && via0_hit;
-wire via1_strobe = ab_read.data_en && via1_hit;
+/* Decode each VIA from the authoritative SERVE sample, then retain only the
+ * two hit bits until DATA. Address, R/W, and write data stay live through the
+ * Apple cycle; the registered selects remove the long live slot-decode cone
+ * from the VIA state enables without moving the VIA side effect. */
+logic via0_cycle_hit_q;
+logic via1_cycle_hit_q;
+always_ff @(posedge clk) begin
+    if (via_reset) begin
+        via0_cycle_hit_q <= 1'b0;
+        via1_cycle_hit_q <= 1'b0;
+    end else if (ab_read.data_en) begin
+        via0_cycle_hit_q <= 1'b0;
+        via1_cycle_hit_q <= 1'b0;
+    end else if (ab_read.serve_en) begin
+        via0_cycle_hit_q <= via0_hit;
+        via1_cycle_hit_q <= via1_hit;
+    end
+end
+wire via0_strobe = ab_read.data_en && via0_cycle_hit_q;
+wire via1_strobe = ab_read.data_en && via1_cycle_hit_q;
 wire ssi_write_region =
     slot_io_hit && ab_read.data_en && !ab_read.rw && ssi_visible_mode;
 wire ssi_primary_write = ssi_write_region && ab_read.addr[6];

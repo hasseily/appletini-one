@@ -121,6 +121,10 @@ module tb_uthernet2_card;
         ab_read.serve_en = 1'b1;
         @(negedge clk);
         ab_read.serve_en = 1'b0;
+        // The DATA edge must use the retained SERVE register, not this later
+        // address/RW tuple.
+        ab_read.addr = 16'h0000;
+        ab_read.rw = 1'b1;
     endtask
 
     task automatic finish_apple_cycle(input logic [7:0] data);

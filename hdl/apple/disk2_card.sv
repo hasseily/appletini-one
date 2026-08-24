@@ -179,6 +179,10 @@ module disk2_card (
     logic [9:0]  empty_drive_lss_settle_q;
     logic [15:0] empty_drive_lfsr_q;
     logic [16:0] track_bit_count_q;
+    /* vTW readiness gets a local lockstep copy. It changes on the same two
+     * edges as the canonical count and must not merge back into that bus. */
+    (* EQUIVALENT_REGISTER_REMOVAL = "NO", MAX_FANOUT = 8 *)
+    logic [16:0] vtw_track_bit_count_q;
     logic [16:0] drive_bit_offset_q [0:1];
     logic [7:0] disk_latch_q;
     logic [7:0] woz_shift_q;
@@ -398,7 +402,7 @@ module disk2_card (
         track_loaded_q &&
         (loaded_drive_q == vtw_drive_select_q) &&
         (track_length_q != 14'd0) &&
-        (!track_woz_q || (track_bit_count_q != 17'd0));
+        (!track_woz_q || (vtw_track_bit_count_q != 17'd0));
     wire vtw_exact_drive_loaded =
         vtw_selected_track_loaded &&
         (loaded_qtrack_q == vtw_current_qtrack);
@@ -926,7 +930,8 @@ module disk2_card (
             standard_read_gap_q <= STANDARD_READ_GAP_LIMIT;
             empty_drive_lss_settle_q <= 10'd0;
             empty_drive_lfsr_q <= EMPTY_DRIVE_LFSR_SEED;
-            track_bit_count_q <= 17'd0;
+            track_bit_count_q     <= 17'd0;
+            vtw_track_bit_count_q <= 17'd0;
             drive_bit_offset_q[0] <= 17'd0;
             drive_bit_offset_q[1] <= 17'd0;
             track_bit_timing_q <= 8'd32;
@@ -1861,7 +1866,8 @@ module disk2_card (
                             bit_count_next = 17'd65536;
                         else
                             bit_count_next = bit_count_tmp[16:0];
-                        track_bit_count_q <= bit_count_next;
+                        track_bit_count_q     <= bit_count_next;
+                        vtw_track_bit_count_q <= bit_count_next;
                         woz_seam_recalc_q <= 1'b1;
                         woz_seam_arm_q <= 1'b0;
                         woz_cached_valid_q <= 1'b0;

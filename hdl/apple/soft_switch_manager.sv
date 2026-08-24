@@ -45,6 +45,10 @@ module soft_switch_manager (
     logic [2:0]  ss_c8_select;
     logic [7:0]  ss_io_select;
     logic        ss_c8_internal_rom;
+    /* The early decode fans into the PSRAM forwarding CAM and several bus
+     * observers. Let synthesis make local, bit-for-bit copies rather than
+     * route one launch flop across those regions. This adds no cycle. */
+    (* EQUIVALENT_REGISTER_REMOVAL = "NO", MAX_FANOUT = 4 *)
     logic [23:0] ss_addr_decode;
     logic        ss_addr_decode_en;
     logic [23:0] ss_addr_decode_late;

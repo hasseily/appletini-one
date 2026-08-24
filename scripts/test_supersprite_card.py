@@ -131,7 +131,7 @@ def test_apple_top_integration() -> None:
     require("wire supersprite_visible_desired =\n"
             "        card_supersprite_enable && !onee_smartport_boot_owner &&\n"
             "        onee_slot7_cards_visible;" in s and
-            ".ab_read(gate_ab(ab_read, supersprite_bus_visible))" in s and
+            ".ab_read(gate_ab(sampled_ab_read, supersprite_bus_visible))" in s and
             ".slot_assign(3'h7)" in s,
             "SuperSprite occupies slot 7 except for a SmartPort ONE//e boot")
     require("card_feature_enable_mask_q[CARD_CTRL_FEATURE_SS_ENABLE_BIT]" in s,
@@ -142,7 +142,8 @@ def test_apple_top_integration() -> None:
             "        !vtw_disk2_boot_scan_q &&\n"
             "        onee_slot7_cards_visible;" in s and
             "wire vtw_smartport_visible = ab_read.addr_en" in s and
-            ".ab_read(gate_ab(ab_read, vtw_smartport_visible))" in s,
+            ".ab_read(gate_ab_cycle(\n"
+            "            sampled_ab_read," in s,
             "slot-7 ownership must be stable for each Apple bus cycle")
     require(".vblank_tick(bm_vbl_cmd_pulse)" in s,
             "frame tick reuses the boot ROM VBL command pulse")

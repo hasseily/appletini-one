@@ -183,6 +183,7 @@ module uthernet2_card #(
     logic apple_read_pending_q;
     logic [1:0] apple_read_pending_reg_q;
     logic apple_write_reserved_q;
+    logic [1:0] apple_write_reg_q;
 
     wire enabled = (slot_assign != 3'h0);
     wire apple_bus_active = enabled &&
@@ -198,9 +199,12 @@ module uthernet2_card #(
                                 ab_read.rw && slot_io_hit;
     wire apple_io_write_addr_start = ab_read.serve_en && ab_read.cycle_valid &&
                                       !ab_read.rw && slot_io_hit;
-    wire apple_io_write_start = ab_read.data_en && !ab_read.rw && slot_io_hit;
+    /* Reserve and retain the selected register at SERVE. DATA then needs only
+     * the retained hit and the valid write byte, not a second live slot decode. */
+    wire apple_io_write_start = ab_read.data_en && apple_write_reserved_q;
     wire apple_io_start = apple_io_read_start || apple_io_write_start;
-    wire [1:0] apple_io_reg = ab_read.addr[1:0];
+    wire [1:0] apple_io_reg = apple_io_write_start ?
+                              apple_write_reg_q : ab_read.addr[1:0];
     wire apple_waiting = apple_io_start || apple_io_write_addr_start ||
                          apple_read_pending_q || apple_write_reserved_q;
     wire host_can_start =
@@ -465,6 +469,7 @@ module uthernet2_card #(
             apple_read_pending_q <= 1'b0;
             apple_read_pending_reg_q <= U2_REG_MODE;
             apple_write_reserved_q <= 1'b0;
+            apple_write_reg_q <= U2_REG_MODE;
             eth_d_o <= 8'h00;
             eth_d_oe <= 1'b0;
             eth_a <= U2_REG_MODE;
@@ -479,6 +484,7 @@ module uthernet2_card #(
 
             if (apple_io_write_addr_start) begin
                 apple_write_reserved_q <= 1'b1;
+                apple_write_reg_q <= ab_read.addr[1:0];
             end
             if (apple_io_read_start || apple_io_write_addr_start ||
                 apple_io_write_start) begin

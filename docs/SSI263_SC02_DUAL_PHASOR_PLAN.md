@@ -408,8 +408,9 @@ Before the final build, require source and cycle tests for:
 
 Then run all relevant source regressions and focused XSim benches. The final
 full Vivado build must start from the final source commit. Run one full build,
-not two. Keep it if synthesis, implementation, route, constraints, and the
-temporary user-approved timing floor pass.
+not two. Keep it if synthesis, implementation, route, constraints, and
+positive setup, hold, and pulse-width timing pass. Timing margin work follows
+only after the SSI-263 logic and sound pass on hardware.
 
 ## Firmware rule
 
@@ -421,15 +422,21 @@ as the current artifact.
 
 ```text
 Final pre-build suite:  passed
-Final full build:       pending
-Final F0.9.99 firmware: pending
-Final routed timing:    pending
-Final firmware size:    pending
-Final SHA-256:          pending
+Final source commit:    54b961b6842f1c7a3b6be9ecff4b9597c06eb022
+Final full build:       20260824T190142Z-54b961b6-full (one full build)
+Final routed timing:    WNS +0.005 ns, WHS +0.057 ns, WPWS +0.265 ns
+Route / bus skew:       PASS / PASS (+5.948 ns worst bus-skew slack)
+Final F0.9.99 firmware: FIRMWARE_F0.9.99_DUAL_SSI263_SC02_SCHEMATIC_WNS0p005.BIN
+Final firmware size:    4,297,036 bytes
+Final SHA-256:          E18BA078521EC2473F0CE1DE8F19381887CFE16E2D19E85D1945DDBD8B462BCE
+Hardware listen:        pending
 ```
 
-Package only the bitstream from the one named passing timing run. Verify that
-packaging did not fall back to a stale root or project bitstream.
+The full build clears timing but does not meet the normal `+0.300 ns` release
+margin. It is a positive-slack hardware test image, not a timing-promoted
+release. Packaging used the archived bitstream explicitly. Bootgen readback
+names `appletini_yarz_top_F0.9.99_dual_ssi263_positive_slack_test.bit.0`, so it
+did not fall back to a stale root, project, or Vitis bitstream.
 
 ## Acceptance gate
 

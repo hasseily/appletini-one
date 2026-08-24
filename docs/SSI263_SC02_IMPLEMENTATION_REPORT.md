@@ -286,8 +286,9 @@ reciprocal product returns the exact quotient or one less; a registered
 fabric clocks. Phi1 and code jobs need at most 101 clocks, and the worst Phi0
 job needs 110 clocks before the next event can pop. A 16-entry FIFO preserves
 event order. Routed out-of-context verification at a 7.500 ns fabric period
-uses 11 DSP48E1 blocks and reports `+0.641 ns` WNS. This does not replace the
-pending full-card timing result.
+uses 11 DSP48E1 blocks and reports `+0.641 ns` WNS. The one final full-card
+build uses 26 DSP48E1 blocks in all, including 22 for the two SSI engines, and
+reports `+0.005 ns` WNS, `+0.057 ns` WHS, and `+0.265 ns` WPWS.
 
 The chip drawing includes C381 but omits its external load. It therefore does
 not define a high-pass pole. The model exports the reconstructed AO/U148 node
@@ -436,24 +437,41 @@ a nonideal term only when the part model and same-vector capture support it.
 
 ## Firmware and build status
 
-The version is fixed at `F0.9.99`. The user asked for one final full build. The
-build must run only after the exact-circuit RTL, independent tests, source
-audit, and documents are committed. Keep the first full build if it passes; do
-not run a second full build for duplicate evidence.
+The version is fixed at `F0.9.99`. One full Vivado build ran from the clean
+hardware source commit. It cleared setup, hold, and pulse-width timing, routed
+all 49,923 routable nets, passed every bus-skew constraint, and found no
+unconstrained internal endpoint or missing constraint object. The normal
+`+0.300 ns` release-margin gate rejected promotion, but the user chose the
+positive-slack result for SSI-263 hardware validation before timing work.
 
 ```text
 Final pre-build suite:  passed
-Final source commit:    pending
-Final full build:       pending
-Final routed timing:    pending
-Final F0.9.99 firmware: pending
-Final firmware size:    pending
-Final SHA-256:          pending
+Final source commit:    54b961b6842f1c7a3b6be9ecff4b9597c06eb022
+Final full build:       20260824T190142Z-54b961b6-full
+Final routed timing:    WNS +0.005 ns, WHS +0.057 ns, WPWS +0.265 ns
+Route status:           PASS, 49,923/49,923 routable nets, 0 errors
+Bus-skew status:        PASS, +5.948 ns worst slack
+Archived BIT SHA-256:   F56164036FA1458643B49E7E5C53EC0CAECB59E9C00391993BB388DD36975C84
+Archived XSA SHA-256:   31F191DF8447849B4DE6021C275FBEC387ABCD8941FE1F401C19B09C05494549
+Rebuilt frontend SHA:   339B492E66C2D6A3A65448E958103A07AF326CC25665DAEE784680C646C8D72C
+Final F0.9.99 firmware: FIRMWARE_F0.9.99_DUAL_SSI263_SC02_SCHEMATIC_WNS0p005.BIN
+Final firmware size:    4,297,036 bytes
+Final SHA-256:          E18BA078521EC2473F0CE1DE8F19381887CFE16E2D19E85D1945DDBD8B462BCE
 Hardware listen:        pending
 ```
 
-Packaging must name the archived bitstream from that passing run. It must not
-fall back to a stale root `FIRMWARE.BIN` or a prior project bitstream.
+The F0.9.99 frontend was rebuilt once from the matching archived XSA after the
+final neutral Phasor warmth default. Packaging then named the archived bit as
+an explicit input. Bootgen partition readback shows
+`appletini_yarz_top_F0.9.99_dual_ssi263_positive_slack_test.bit.0`, `fsbl.elf`,
+and both `frontend.elf` partitions. This proves the image did not use a stale
+root, project, or Vitis fallback bitstream.
+
+The firmware path is:
+
+```text
+C:\Users\hasse\source\repos\hasseily\appletini-one\.timing_runs\20260824T190142Z-54b961b6-full\FIRMWARE_F0.9.99_DUAL_SSI263_SC02_SCHEMATIC_WNS0p005.BIN
+```
 
 ## Hardware validation after the build
 

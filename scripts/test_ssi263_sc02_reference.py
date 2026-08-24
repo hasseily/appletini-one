@@ -355,6 +355,28 @@ class SelectorTests(unittest.TestCase):
         self.assertFalse(chip.phone_fricative)
         self.assertTrue(chip.phone_voiced)
 
+        chip = SSI263Reference(div2=False)
+        chip.duration_phoneme = 0x2F
+        chip.advance_effective_ticks(32)
+        self.assertFalse(chip.pw_0)
+        self.assertFalse(chip.pw_1)
+        self.assertTrue(chip.phone_fricative)
+        self.assertTrue(chip.phone_voiced)
+
+        for phone in range(64):
+            with self.subTest(phone=phone):
+                chip = SSI263Reference(div2=False)
+                chip.duration_phoneme = phone
+                chip.advance_effective_ticks(32)
+                self.assertEqual(
+                    chip.phone_voiced,
+                    not bool(chip.rom[rom_address(phone, 0)] & 0x01),
+                )
+                self.assertEqual(
+                    chip.phone_fricative,
+                    not bool(chip.rom[rom_address(phone, 1)] & 0x01),
+                )
+
     @staticmethod
     def rom_nibble(phone: int, selector: int) -> int:
         chip = SSI263Reference()

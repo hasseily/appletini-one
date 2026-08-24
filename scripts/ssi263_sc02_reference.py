@@ -562,11 +562,11 @@ class SSI263Reference:
         if not suppress_slot_write:
             flags = self.flags_for_selector(selector)
             if selector == 0:
-                self.phone_fricative = bool(flags & 0x01)
-                self.pw_0 = self.phone_fricative
+                self.pw_0 = bool(flags & 0x01)
+                self.phone_voiced = not self.pw_0
             elif selector == 1:
-                self.phone_voiced = bool(flags & 0x01)
-                self.pw_1 = self.phone_voiced
+                self.pw_1 = bool(flags & 0x01)
+                self.phone_fricative = not self.pw_1
             elif selector == 2:
                 self.pw_2 = bool(flags & 0x04)
                 self.pw_3 = bool(flags & 0x02)

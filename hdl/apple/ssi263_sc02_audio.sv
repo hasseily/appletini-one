@@ -62,10 +62,14 @@ module ssi263_sc02_audio #(
     localparam logic [14:0] F5_RADIUS_Q14 = 15'd14746;   // 0.900
     localparam logic [14:0] FRIC1_RADIUS_Q14 = 15'd14090; // 0.860
     localparam logic [14:0] FRIC2_RADIUS_Q14 = 15'd13107; // 0.800
-    // The analog op-amp network supplies inter-section gain that a pole-only
-    // model does not contain.  A fixed 0.25 injection keeps a five-section
-    // cascade above fixed-point quantization without changing pole centers.
-    localparam logic signed [16:0] SECTION_DRIVE_Q14 = 17'sd4096;
+    // The voiced path crosses five serial sections, while each fricative path
+    // crosses only one.  A shared 0.25 drive attenuates voice by 0.25^5 and
+    // leaves noise down by only 0.25.  Keep the proved poles and source gains,
+    // but restore the op-amp makeup that the pole-only model omits.  Half-scale
+    // drive in the serial tract gives 32 times the former F5 level; the noise
+    // sections retain their prior quarter-scale drive and headroom.
+    localparam logic signed [16:0] VOICE_SECTION_DRIVE_Q14 = 17'sd8192;
+    localparam logic signed [16:0] NOISE_SECTION_DRIVE_Q14 = 17'sd4096;
 
     logic pitch_sync1_q;
     logic pitch_sync2_q;
@@ -114,6 +118,7 @@ module ssi263_sc02_audio #(
     logic signed [23:0] fric2_input_q;
 
     logic signed [23:0] output_hold_q;
+    logic signed [23:0] reconstruction_hold_q;
     logic [7:0] filter_frequency_q;
 
     // Two registered RTL product lanes form a 53-cycle scheduler.  A shared
@@ -147,6 +152,7 @@ module ssi263_sc02_audio #(
     logic signed [23:0] fric_sum_q;
     logic signed [23:0] output_sum_q;
     logic signed [23:0] engine_next_i;
+    logic signed [23:0] engine_output_next;
     logic signed [47:0] product_a_q_ext;
     logic signed [47:0] product_b_q_ext;
     logic signed [47:0] rotate_accumulator;
@@ -774,7 +780,9 @@ module ssi263_sc02_audio #(
             end
             4'd4: begin
                 engine_operand_a = engine_input;
-                engine_coefficient_a = SECTION_DRIVE_Q14;
+                engine_coefficient_a = (engine_section_q <= 3'd4) ?
+                                       VOICE_SECTION_DRIVE_Q14 :
+                                       NOISE_SECTION_DRIVE_Q14;
             end
             4'd9: begin
                 // Reuse RTL product lane A for final Q12 gain. Stages 7/8
@@ -797,6 +805,7 @@ module ssi263_sc02_audio #(
         else
             rotate_accumulator = product_a_q_ext + product_b_q_ext;
         engine_next_i = sat24_add(damped_i_q, drive_i_q);
+        engine_output_next = sat24_from48(product_a_q_ext >>> 12);
     end
 
     always_ff @(posedge clk) begin
@@ -836,6 +845,7 @@ module ssi263_sc02_audio #(
             fric2_input_q <= 24'sd0;
 
             output_hold_q <= 24'sd0;
+            reconstruction_hold_q <= 24'sd0;
             filter_frequency_q <= 8'hFF;
             engine_busy_q <= 1'b0;
             engine_overrun_q <= 1'b0;
@@ -1014,9 +1024,12 @@ module ssi263_sc02_audio #(
                     end
                     default: begin
                         if (!closure) begin
-                            output_hold_q <= sat24_from48(
-                                product_a_q_ext >>> 12
-                            );
+                            output_hold_q <= engine_output_next;
+                            // output_hold_q is the recurring switched node.
+                            // The external analog output reconstructs completed
+                            // section results; it does not expose a random Phi
+                            // carrier phase to the board's 48 kHz sampler.
+                            reconstruction_hold_q <= engine_output_next;
                         end
                         engine_busy_q <= 1'b0;
                         engine_stage_q <= 4'd0;
@@ -1024,13 +1037,13 @@ module ssi263_sc02_audio #(
                 endcase
             end
 
-            // The chip-side value is a held charge-domain output.  The board's
-            // 48 kHz request samples it; no state interpolation occurs here.
+            // The board's 48 kHz request samples the reconstructed output
+            // hold, not the high-rate Phi switch state in output_hold_q.
             if (audio_tick) begin
-                if (!phone_active || powered_down || closure)
+                if (!phone_active || powered_down)
                     audio_sample <= 16'sd0;
                 else
-                    audio_sample <= sat16_from24_q16(output_hold_q);
+                    audio_sample <= sat16_from24_q16(reconstruction_hold_q);
             end
         end
     end

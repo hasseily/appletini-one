@@ -277,6 +277,11 @@ module tb_phasor_dual_ssi263;
 
     task automatic wait_for_a5_left_audio;
         integer timeout;
+        integer chip_peak;
+        integer card_peak;
+        integer chip_level;
+        integer card_level;
+        integer level_samples;
         logic saw_chip_audio;
         logic saw_left_audio;
         logic saw_filter_state;
@@ -287,6 +292,9 @@ module tb_phasor_dual_ssi263;
             saw_left_audio = 1'b0;
             saw_filter_state = 1'b0;
             leaked_right = 1'b0;
+            chip_peak = 0;
+            card_peak = 0;
+            level_samples = 0;
             while (!(saw_chip_audio && saw_left_audio && saw_filter_state) &&
                    timeout < 3_000_000) begin
                 @(posedge clk);
@@ -304,12 +312,75 @@ module tb_phasor_dual_ssi263;
                     leaked_right = 1'b1;
                 timeout = timeout + 1;
             end
+            while (level_samples < 512 && timeout < 3_000_000) begin
+                @(posedge clk);
+                #1;
+                if (dut.audio_sample_tick) begin
+                    chip_level = dut.ssi0_audio;
+                    card_level = audio_l;
+                    if (chip_level < 0)
+                        chip_level = -chip_level;
+                    if (card_level < 0)
+                        card_level = -card_level;
+                    if (chip_level > chip_peak)
+                        chip_peak = chip_level;
+                    if (card_level > card_peak)
+                        card_peak = card_level;
+                    level_samples = level_samples + 1;
+                end
+                timeout = timeout + 1;
+            end
+            $display("PHASOR SSI263 LEVEL A5 chip=%0d card=%0d samples=%0d",
+                     chip_peak, card_peak, level_samples);
+            check(chip_peak >= 16'sd2000 && card_peak >= 16'sd1500 &&
+                  chip_peak < 16'sd32767 && card_peak < 16'sd32767,
+                  "settled A5 voice missed its audible unclipped range");
             check(timeout < 3_000_000 && saw_chip_audio && saw_left_audio &&
                   saw_filter_state && !leaked_right,
                   "A5 speech did not remain on the left channel only");
             check(!dut.ssi263_secondary_i.audio_i.engine_overrun_q &&
                   !dut.ssi263_primary_i.audio_i.engine_overrun_q,
                   "A5-only speech overran an actual audio engine");
+        end
+    endtask
+
+    task automatic measure_a5_fricative_level;
+        integer timeout;
+        integer chip_peak;
+        integer card_peak;
+        integer chip_level;
+        integer card_level;
+        integer level_samples;
+        begin
+            timeout = 0;
+            chip_peak = 0;
+            card_peak = 0;
+            level_samples = 0;
+            while (level_samples < 512 && timeout < 3_000_000) begin
+                @(posedge clk);
+                #1;
+                if (dut.audio_sample_tick) begin
+                    chip_level = dut.ssi0_audio;
+                    card_level = audio_l;
+                    if (chip_level < 0)
+                        chip_level = -chip_level;
+                    if (card_level < 0)
+                        card_level = -card_level;
+                    if (chip_level > chip_peak)
+                        chip_peak = chip_level;
+                    if (card_level > card_peak)
+                        card_peak = card_level;
+                    level_samples = level_samples + 1;
+                end
+                timeout = timeout + 1;
+            end
+            $display("PHASOR SSI263 LEVEL fric chip=%0d card=%0d samples=%0d",
+                     chip_peak, card_peak, level_samples);
+            check(level_samples == 512,
+                  "fricative level window did not collect every sample");
+            check(chip_peak >= 16'sd5000 && card_peak >= 16'sd4000 &&
+                  chip_peak < 16'sd32767 && card_peak < 16'sd32767,
+                  "settled A5 fricative missed its audible unclipped range");
         end
     endtask
 
@@ -720,6 +791,7 @@ module tb_phasor_dual_ssi263;
         apple_write(SLOT_BASE + 16'h0023, 8'h7F);
         wait_for_secondary_fricative();
         count_hcc_shifts(8);
+        measure_a5_fricative_level();
         check(dut.ssi263_secondary_i.core_i.phone_active &&
               dut.ssi263_secondary_i.core_i.phone_fricative,
               "fricative phone was not held while HCC state advanced");
@@ -754,6 +826,15 @@ module tb_phasor_dual_ssi263;
               dut.ssi263_primary_i.audio_i.voice_source == 24'sd0 &&
               dut.ssi263_primary_i.audio_i.fric_source == 24'sd0,
               "secondary voiced events changed the other SSI socket");
+
+        // Use the real-driver pitch/filter vector for the level check.  The
+        // earlier I=$FFD case proves the shortest period but can reload U60
+        // before its 15 filter counts finish and is not an acoustic vector.
+        apple_write(SLOT_BASE + 16'h0021, 8'h40);
+        apple_write(SLOT_BASE + 16'h0022, 8'hF8);
+        apple_write(SLOT_BASE + 16'h0024, 8'hE8);
+        apple_write(SLOT_BASE + 16'h0020, 8'h41);
+        wait_for_secondary_voiced();
         wait_for_a5_left_audio();
 
         // Reset, then excite A6 alone to prove the opposite fixed stereo

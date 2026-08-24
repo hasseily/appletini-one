@@ -578,6 +578,11 @@ module tb_ssi263_sc02_core;
         raw_xck_edges(32);
         check(!phone_fricative && phone_voiced && !pw_0 && pw_1,
                "voiced lower-ROM source flag");
+        reset_chips();
+        write_register(3'd0, 8'h2F);
+        raw_xck_edges(32);
+        check(phone_fricative && phone_voiced && !pw_0 && !pw_1,
+               "mixed lower-ROM source flags");
 
         // CTL/PD gates the request and analog source paths. The schematic has
         // no CTL/PD gate on U44/U45, U48/U49, U66, or U94, so those digital

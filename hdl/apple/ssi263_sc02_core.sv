@@ -149,6 +149,8 @@ module ssi263_sc02_core #(
     logic [3:0] voice_amp_code_q;
     logic [3:0] fric_amp_code_q;
 
+    // Selector 0 holds active-low voiced class PW0; selector 1 holds
+    // active-low fricative class PW1.  The classes cross those ROM slots.
     logic phone_fricative_q;
     logic phone_voiced_q;
     logic pw_0_q;
@@ -539,12 +541,12 @@ module ssi263_sc02_core #(
                             // when their three input slots pass.
                             case (selector_q)
                                 3'd0: begin
-                                    phone_fricative_q <= selector_flags[0];
+                                    phone_voiced_q <= !selector_flags[0];
                                     pw_0_q <= selector_flags[0];
                                 end
 
                                 3'd1: begin
-                                    phone_voiced_q <= selector_flags[0];
+                                    phone_fricative_q <= !selector_flags[0];
                                     pw_1_q <= selector_flags[0];
                                 end
 

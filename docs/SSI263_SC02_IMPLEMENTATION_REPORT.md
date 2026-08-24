@@ -91,8 +91,8 @@ except selector 4 uses the host amplitude. The implemented stores are:
 
 | Selector | State or action |
 | ---: | --- |
-| 0 | F1 target and fricative source flag |
-| 1 | F2 target and voiced source flag |
+| 0 | F1 target and active-low voiced-class bit PW0 |
+| 1 | F2 target and active-low fricative-class bit PW1 |
 | 2 | F2 resonance plus PW and FRIC switch controls |
 | 3 | shared F3 and F4 target |
 | 4 | filter-amplitude target from the host amplitude |
@@ -106,8 +106,13 @@ fabric edge owns the data path and consumes the old sweep slot. The F3 and F4
 sections share selector-3 state as shown on the reconstruction.
 
 The lower-ROM values present in the source are `0, 1, 4, 6, 8, A, C, E`.
-They now drive the held voiced, fricative, PW, and FRIC controls. U52C CLOSURE
-is U49 terminal count gated by U43B Q. The RTL exposes it as the matching
+PW0 and PW1 cross the two source paths and are active low: voiced is
+`!PW0 && VOICE_AMP != 0`, while fricative is
+`!PW1 && FRIC_AMP != 0`. Thus `01` selects voiced, `10` selects fricative,
+and `00` permits a mixed phone when both amplitude targets are nonzero. This
+is required for Z, J, V, and voiced TH; treating each bit as a same-slot,
+active-high enable muted both sources for those four phones. U52C CLOSURE is
+U49 terminal count gated by U43B Q. The RTL keeps it as the matching internal
 filter-phase pulse; it is neither a pitch-terminal signal nor a phone-name
 flag.
 
@@ -201,7 +206,8 @@ The native audio block has no SC-01 phone map or coefficient table. It uses:
 - persistent F1, F2, F3, F4, fixed F5, FRIC1, and FRIC2 section state;
 - F2 resonance as a real pole-radius control;
 - one filter phase source shared by every section;
-- a held chip-side output sampled at the existing 48 kHz board rate.
+- a separate reconstructed chip-output hold sampled at the existing 48 kHz
+  board rate.
 
 The noise clock is not the edge of the held PW3 value. The traced gate is
 `~(PW3 & U62_/Q) & ~SEL1 & ~FRIC_AMP_ZERO`; its rising edges clock U75 and the
@@ -226,6 +232,24 @@ registered RTL product lanes and a shared registered rotate accumulator to
 three DSP48E1 cells per chip. The default fastest phase gap is 149 fabric
 clocks; the fastest intended comparison profile still leaves 133 clocks. An
 overrun latch is checked in simulation.
+
+The first hardware image exposed an absolute-level fault that nonzero-only
+tests missed. One quarter-scale drive was applied to every section. Voice
+crosses F1, F2, F3, F4, and F5, so it received `0.25^5`, while a fricative
+crosses one noise section and received `0.25`. Focused phone 01 therefore
+peaked at only 289 signed PCM counts while S peaked at 19,766. The corrected
+model uses half-scale drive for the five serial voice sections and retains
+quarter-scale drive for FRIC1 and FRIC2. Phone 01 now peaks at 9,266 counts,
+S remains at 19,766, and neither path clips. A real-driver card vector reaches
+11,202 counts at the SSI output and 14,342 on its final channel; the settled
+fricative vector reaches 18,748 and 17,226 respectively.
+
+U52C also clears a switched filter node on each low phase. Sampling that raw
+node directly at 48 kHz made the result depend on which high-rate Phi phase
+met the board tick and forced most live samples to zero. The RTL now retains
+that internal discharge but updates a separate reconstruction hold after each
+completed filter pass. The 48 kHz output samples the reconstructed value, as
+the external analog path does, rather than exporting the switch carrier.
 
 The first scheduler draft passed XSim but failed a 7.500 ns out-of-context
 synthesis check with `WNS=-5.105 ns`. Registering every multiply result before
@@ -368,6 +392,9 @@ The final branch gate includes:
 - native digital-core XSim;
 - XCK rational-enable XSim;
 - excitation/filter XSim;
+- absolute voiced and fricative PCM floors, ratio, and clipping checks;
+- mixed-phone source-class checks for the active-low PW0/PW1 decode;
+- closure/reconstruction checks that keep the filter carrier out of PCM;
 - exhaustive Phasor source and address tests;
 - all relevant repository regressions listed in the validation record;
 - fresh Vivado synthesis and implementation;
@@ -382,5 +409,7 @@ The test firmware version is `F0.9.99`. The package must use an accepted
 timing run's exact XSA and bitstream; the root `FIRMWARE.BIN` and any Vitis IDE
 fallback bitstream are not source evidence and must not replace it.
 
-Hardware speech quality and real-chip matching remain pending until this
-firmware runs on an Appletini and the test vectors above are captured.
+The first `F0.9.99` hardware run proved card detection, VIA/request handling,
+and Phasor mode, but speech was inaudible apart from weak fricatives. That run
+identified the level and reconstruction faults above. Hardware listening and
+real-chip matching remain pending for the corrected `F0.9.99` image.

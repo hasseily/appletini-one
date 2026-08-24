@@ -57,6 +57,11 @@ module tb_ssi263_sc02_audio;
     integer engine_cycles;
     integer voice_signature;
     integer fric_signature;
+    integer voice_peak;
+    integer fric_peak;
+    integer voice_hold_peak;
+    integer voice_f1_peak;
+    integer voice_f5_peak;
     integer phase_noise_edges = 0;
     integer phase_voice_loads;
     integer phase_voice_gap;
@@ -227,6 +232,14 @@ module tb_ssi263_sc02_audio;
             magnitude_i = (state_i < 0) ? -state_i : state_i;
             magnitude_q = (state_q < 0) ? -state_q : state_q;
             pair_magnitude = magnitude_i + magnitude_q;
+        end
+    endfunction
+
+    function automatic integer sample_magnitude(
+        input logic signed [23:0] sample
+    );
+        begin
+            sample_magnitude = (sample < 0) ? -sample : sample;
         end
     endfunction
 
@@ -695,27 +708,33 @@ module tb_ssi263_sc02_audio;
         repeat (4) pulse_filter_pair();
         check(audio_sample == held_sample,
               "sample changed without an audio tick");
+        pulse_audio_tick();
+        held_sample = audio_sample;
         closure = 1'b1;
         @(negedge clk);
         pulse_audio_tick();
         closure = 1'b0;
-        check(audio_sample == 0, "closure pulse did not discharge output");
+        check(dut.output_hold_q == 0,
+              "closure pulse did not discharge the switched output node");
+        check(audio_sample == held_sample &&
+              dut.reconstruction_hold_q != 0,
+              "closure pulse leaked the filter carrier into reconstructed PCM");
         check(dut.f1_state_q != 0 && dut.f4_state_q != 0,
               "closure erased persistent formant state");
         pulse_filter_pair();
         pulse_audio_tick();
         check(audio_sample != 0, "output did not resume after closure");
 
-        force dut.output_hold_q = 24'sh7FFFFF;
+        force dut.reconstruction_hold_q = 24'sh7FFFFF;
         pulse_audio_tick();
         check(audio_sample == 16'sh7FFF,
               "positive held output wrapped instead of saturating");
-        release dut.output_hold_q;
-        force dut.output_hold_q = -24'sd8388608;
+        release dut.reconstruction_hold_q;
+        force dut.reconstruction_hold_q = -24'sd8388608;
         pulse_audio_tick();
         check(audio_sample == -16'sd32768,
               "negative held output wrapped instead of saturating");
-        release dut.output_hold_q;
+        release dut.reconstruction_hold_q;
 
         // Exhaust every FILT divider code through the native core boundary.
         reset_all();
@@ -762,21 +781,41 @@ module tb_ssi263_sc02_audio;
         voice_amp_code = phase_core.rom_q[9'd13][7:4];
         fric_amp_code = phase_core.rom_q[9'd14][7:4];
         filter_amp_code = 4'hF;
-        voiced = phase_core.rom_q[9'd9][0];
-        fricative = phase_core.rom_q[9'd8][0];
+        voiced = !phase_core.rom_q[9'd8][0];
+        fricative = !phase_core.rom_q[9'd9][0];
         fric1_sw = phase_core.rom_q[9'd10][3];
         fric2_sw = !phase_core.rom_q[9'd10][3];
         check(voiced && !fricative,
               "native phone 01 source flags were not voiced-only");
         repeat (64) pulse_filter_pair();
         voice_signature = 0;
+        voice_peak = 0;
+        voice_hold_peak = 0;
+        voice_f1_peak = 0;
+        voice_f5_peak = 0;
         for (i = 0; i < 24; i = i + 1) begin
+            if ((i & 7) == 0)
+                set_voice_toggle(!voice_toggle);
             pulse_filter_pair();
             pulse_audio_tick();
             voice_signature = voice_signature + audio_sample * (i + 1);
+            if (sample_magnitude(audio_sample) > voice_peak)
+                voice_peak = sample_magnitude(audio_sample);
+            if (sample_magnitude(dut.output_hold_q) > voice_hold_peak)
+                voice_hold_peak = sample_magnitude(dut.output_hold_q);
+            if (sample_magnitude(dut.f1_state_q) > voice_f1_peak)
+                voice_f1_peak = sample_magnitude(dut.f1_state_q);
+            if (sample_magnitude(dut.f5_state_q) > voice_f5_peak)
+                voice_f5_peak = sample_magnitude(dut.f5_state_q);
         end
+        $display("SSI263 LEVEL voice peak=%0d hold=%0d f1=%0d f5=%0d",
+                 voice_peak, voice_hold_peak, voice_f1_peak, voice_f5_peak);
         check(voice_signature != 0,
               "native voiced phone produced no output");
+        check(voice_peak >= 8192 && voice_hold_peak >= 16384,
+              "native voiced phone remained below an audible PCM floor");
+        check(voice_peak < 32767,
+              "native voiced phone clipped its PCM output");
 
         reset_all();
         phone_active = 1'b1;
@@ -788,8 +827,8 @@ module tb_ssi263_sc02_audio;
         voice_amp_code = phase_core.rom_q[9'd389][7:4];
         fric_amp_code = phase_core.rom_q[9'd390][7:4];
         filter_amp_code = 4'hF;
-        voiced = phase_core.rom_q[9'd385][0];
-        fricative = phase_core.rom_q[9'd384][0];
+        voiced = !phase_core.rom_q[9'd384][0];
+        fricative = !phase_core.rom_q[9'd385][0];
         fric1_sw = phase_core.rom_q[9'd386][3];
         fric2_sw = !phase_core.rom_q[9'd386][3];
         check(!voiced && fricative,
@@ -799,16 +838,25 @@ module tb_ssi263_sc02_audio;
             pulse_filter_pair();
         end
         fric_signature = 0;
+        fric_peak = 0;
         for (i = 0; i < 24; i = i + 1) begin
             pulse_noise();
             pulse_filter_pair();
             pulse_audio_tick();
             fric_signature = fric_signature + audio_sample * (i + 1);
+            if (sample_magnitude(audio_sample) > fric_peak)
+                fric_peak = sample_magnitude(audio_sample);
         end
+        $display("SSI263 LEVEL fric peak=%0d", fric_peak);
         check(fric_signature != 0,
               "native fricative phone produced no output");
         check(fric_signature != voice_signature,
               "native voiced and fricative outputs were not distinct");
+        check(fric_peak >= 8192 && fric_peak < 32767,
+              "native fricative phone missed its unclipped PCM range");
+        check(voice_peak * 4 >= fric_peak &&
+              fric_peak * 4 >= voice_peak,
+              "native voiced/fricative balance exceeded 12 dB");
         check(!dut.engine_overrun_q,
               "scheduled engine overran during native phone tests");
 

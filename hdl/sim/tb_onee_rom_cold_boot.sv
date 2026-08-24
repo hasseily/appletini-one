@@ -393,8 +393,8 @@ module tb_onee_rom_cold_boot #(
             if (force_cold) begin
                 // This is the exact pair cleared by CPU0 before it releases
                 // Ctrl+Alt+Delete. It defeats a valid stale warm vector.
-                core_i.shadow_i.mem_main[16'h03F3] = 8'h00;
-                core_i.shadow_i.mem_main[16'h03F4] = 8'h00;
+                core_i.shadow_i.mem_main_lo[15'h03F3] = 8'h00;
+                core_i.shadow_i.mem_main_lo[15'h03F4] = 8'h00;
             end
             repeat (16) @(posedge clk);
             private_reset_assert = 1'b0;
@@ -406,9 +406,11 @@ module tb_onee_rom_cold_boot #(
         // not a reduced test program. Direct hierarchy keeps test setup from
         // spending 16K two-clock ARM writes before the first reset fetch.
         $readmemh("onee_enhanced_cpu_rom.mem", core_i.shadow_i.mem_rom);
-        for (int i = 0; i < 65536; i++) begin
-            core_i.shadow_i.mem_main[i] = 8'h00;
-            core_i.shadow_i.mem_aux[i]  = 8'h00;
+        for (int i = 0; i < 32768; i++) begin
+            core_i.shadow_i.mem_main_lo[i] = 8'h00;
+            core_i.shadow_i.mem_main_hi[i] = 8'h00;
+            core_i.shadow_i.mem_aux_lo[i]  = 8'h00;
+            core_i.shadow_i.mem_aux_hi[i]  = 8'h00;
         end
 
         #1;
@@ -469,12 +471,12 @@ module tb_onee_rom_cold_boot #(
             // A valid warm signature and vector prove why a bare RES# pulse
             // does not reboot SmartPort: the real ROM jumps back into stale
             // software and never scans $C700.
-            core_i.shadow_i.mem_main[16'h03F2] = 8'h00;
-            core_i.shadow_i.mem_main[16'h03F3] = 8'h04;
-            core_i.shadow_i.mem_main[16'h03F4] = 8'hA1;
-            core_i.shadow_i.mem_main[16'h0400] = 8'h4C;
-            core_i.shadow_i.mem_main[16'h0401] = 8'h00;
-            core_i.shadow_i.mem_main[16'h0402] = 8'h04;
+            core_i.shadow_i.mem_main_lo[15'h03F2] = 8'h00;
+            core_i.shadow_i.mem_main_lo[15'h03F3] = 8'h04;
+            core_i.shadow_i.mem_main_lo[15'h03F4] = 8'hA1;
+            core_i.shadow_i.mem_main_lo[15'h0400] = 8'h4C;
+            core_i.shadow_i.mem_main_lo[15'h0401] = 8'h00;
+            core_i.shadow_i.mem_main_lo[15'h0402] = 8'h04;
 
             clear_boot_observation();
             pulse_private_reset(1'b0);

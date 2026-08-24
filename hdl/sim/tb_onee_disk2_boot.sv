@@ -388,9 +388,11 @@ module tb_onee_disk2_boot;
         // not a reduced test program. Direct hierarchy keeps test setup from
         // spending 16K two-clock ARM writes before the first reset fetch.
         $readmemh("onee_enhanced_cpu_rom.mem", core_i.shadow_i.mem_rom);
-        for (int i = 0; i < 65536; i++) begin
-            core_i.shadow_i.mem_main[i] = 8'h00;
-            core_i.shadow_i.mem_aux[i]  = 8'h00;
+        for (int i = 0; i < 32768; i++) begin
+            core_i.shadow_i.mem_main_lo[i] = 8'h00;
+            core_i.shadow_i.mem_main_hi[i] = 8'h00;
+            core_i.shadow_i.mem_aux_lo[i]  = 8'h00;
+            core_i.shadow_i.mem_aux_hi[i]  = 8'h00;
         end
 
         #1;
@@ -458,10 +460,10 @@ module tb_onee_disk2_boot;
               "boot did not exercise the full slot-ROM/card/staging path");
         check(bus_data_mismatches == 0,
               "disk2_card and vTW bus-engine response bytes differed");
-        check(core_i.shadow_i.mem_main[16'h0800] == expected_boot[0] &&
-              core_i.shadow_i.mem_main[16'h0801] == expected_boot[1] &&
-              core_i.shadow_i.mem_main[16'h0802] == expected_boot[2] &&
-              core_i.shadow_i.mem_main[16'h0803] == expected_boot[3],
+        check(core_i.shadow_i.mem_main_lo[15'h0800] == expected_boot[0] &&
+              core_i.shadow_i.mem_main_lo[15'h0801] == expected_boot[1] &&
+              core_i.shadow_i.mem_main_lo[15'h0802] == expected_boot[2] &&
+              core_i.shadow_i.mem_main_lo[15'h0803] == expected_boot[3],
               "selected boot-sector signature was not loaded at $0800");
 
         $display("ONEE DISK2 BOOT PASS slot=%0d io=%0d reads=%0d ddr=%0d d5=%0d",

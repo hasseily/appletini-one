@@ -53,6 +53,7 @@ SOURCES = [
     "hdl/sim/tb_iiplus_dma_refresh.sv",
     "hdl/sim/tb_apple_dma_abort.sv",
     "hdl/sim/tb_ps_dma_command.sv",
+    "hdl/sim/tb_vtw_shadow_banks.sv",
     "hdl/sim/tb_vtw_shadow_host_port.sv",
     "hdl/sim/tb_disk2_vtw_read.sv",
     "hdl/sim/tb_disk2_physical_bus.sv",
@@ -83,6 +84,7 @@ BENCHES = [
     ("tb_iiplus_dma_refresh", "IIPLUS DMA REFRESH PASS"),
     ("tb_apple_dma_abort", "APPLE DMA ABORT PASS"),
     ("tb_ps_dma_command", "PS DMA COMMAND PASS"),
+    ("tb_vtw_shadow_banks", "VTW SHADOW BANKS PASS"),
     ("tb_vtw_shadow_host_port", "VTW SHADOW HOST PASS"),
     ("tb_disk2_vtw_read", "DISK2 VTW READ PASS"),
     ("tb_disk2_physical_bus", "DISK2 PHYSICAL BUS PASS"),
@@ -132,7 +134,9 @@ def static_checks() -> None:
     top = read("hdl/apple/apple_top.sv")
     arbiter = read("hdl/apple/apple_bus_write_arbiter.sv")
     disk2 = read("hdl/apple/disk2_card.sv")
+    shadow = read("hdl/apple/vtw_shadow.sv")
     shadow_host = read("hdl/apple/vtw_shadow_host_port.sv")
+    build_tcl = read("scripts/build_and_export_xsa.tcl")
     sources = read("hdl/hdl_sources.txt")
     xdc = read("hdl/constraints/appletini_yarz.xdc")
     regs = read("ps_sources/frontend/card_control_regs.h")
@@ -186,8 +190,13 @@ def static_checks() -> None:
     require("{IOSTANDARD LVCMOS33 DRIVE 12 SLEW FAST}" in xdc and
             "[get_ports a2fpga_dir_a]" in xdc and
             xdc.count("[get_ports a2fpga_dir_a]") == 2 and
-            "set_max_delay 10.0 -to [get_ports {a2fpga_dir_a a2fpga_dir_d}]" in xdc,
-            "DIR_A must keep its fast 12 mA edge and 10 ns output bound")
+            "set_max_delay -datapath_only 10.0" in xdc and
+            "-from [get_clocks clk_out1_zynq_ps_bd_clk_wiz_1_0]" in xdc and
+            "-to [get_ports {a2fpga_dir_a a2fpga_dir_d}]" in xdc and
+            "set_max_delay -datapath_only 8.0" in xdc and
+            "-from [get_ports a2fpga_clk] -to [get_ports a2fpga_dir_d]" in xdc,
+            "DIR_A/D must keep their fast 12 mA edges, synchronous 10 ns "
+            "datapath bound, and raw-PHI0 8 ns release bound")
     require("logic vtw_machine_ok_q;" in top and
             "if (machine_mode_q == 2'd1)" in top and
             "else if (machine_mode_q == 2'd2)" in top and
@@ -370,6 +379,21 @@ def static_checks() -> None:
             "translate_apple_addr(cycle_translate_state_q" not in core_top,
             "X_CAPTURE must save the pre-access translator result and X_ROUTE "
             "must map that registered tuple before it drives shadow memory")
+    require("mem_main_lo [0:32767]" in shadow and
+            "mem_main_hi [0:32767]" in shadow and
+            "mem_aux_lo  [0:32767]" in shadow and
+            "mem_aux_hi  [0:32767]" in shadow and
+            "a_sel_hi_q" in shadow and "b_sel_hi_q" in shadow and
+            "mem_main [0:65535]" not in shadow and
+            "mem_aux  [0:65535]" not in shadow,
+            "7-series shadow RAM must use explicit 32 KiB banks without "
+            "64 KiB hardware cascades")
+    require("set vtw_shadow_ramb_cells" in build_tcl and
+            "[llength $vtw_shadow_ramb_cells] != 36" in build_tcl and
+            "RAM_EXTENSION_A $vtw_shadow_ramb_cell" in build_tcl and
+            "RAM_EXTENSION_B $vtw_shadow_ramb_cell" in build_tcl and
+            "vTW shadow RAM depth cascade returned" in build_tcl,
+            "the release build must reject a returned shadow-RAM cascade")
 
     # Per-region slowdown (TW DIP block 2).
     require("slow_region_en" in core_top and "slow_duration" in core_top and

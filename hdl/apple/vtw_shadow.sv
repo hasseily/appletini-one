@@ -92,9 +92,16 @@ module vtw_shadow (
     // Three inferred true-dual-port BRAM groups. No reset: contents are
     // ARM-initialized (ROM copy) or software-written; the core is held in
     // reset until the ARM releases it.
-    logic [7:0] mem_main [0:65535];
-    logic [7:0] mem_aux  [0:65535];
-    logic [7:0] mem_rom  [0:16383];
+    // Split the 64 KiB memories at address bit 15. A 64Kx8 inference on a
+    // 7-series part uses two RAMB36E1s in a hardware depth cascade for every
+    // data bit. That fixed cascade delay consumes most of the core read
+    // interval. Explicit 32 KiB banks retain the same RAM count and one-clock
+    // read contract while selecting the bank in fabric.
+    (* ram_style = "block" *) logic [7:0] mem_main_lo [0:32767];
+    (* ram_style = "block" *) logic [7:0] mem_main_hi [0:32767];
+    (* ram_style = "block" *) logic [7:0] mem_aux_lo  [0:32767];
+    (* ram_style = "block" *) logic [7:0] mem_aux_hi  [0:32767];
+    (* ram_style = "block" *) logic [7:0] mem_rom     [0:16383];
 
     wire        a_is_rom  = a_addr[17];              // 0x20000-0x23FFF
     wire        a_is_aux  = !a_addr[17] && a_addr[16];
@@ -103,24 +110,45 @@ module vtw_shadow (
     wire        b_is_aux  = !b_addr[17] && b_addr[16];
     wire        b_is_main = !b_addr[17] && !b_addr[16];
 
-    logic [7:0] a_rdata_main, a_rdata_aux, a_rdata_rom;
-    logic [7:0] b_rdata_main, b_rdata_aux, b_rdata_rom;
+    logic [7:0] a_rdata_main_lo, a_rdata_main_hi;
+    logic [7:0] a_rdata_aux_lo, a_rdata_aux_hi, a_rdata_rom;
+    logic [7:0] b_rdata_main_lo, b_rdata_main_hi;
+    logic [7:0] b_rdata_aux_lo, b_rdata_aux_hi, b_rdata_rom;
     logic       a_sel_rom_q, a_sel_aux_q;
     logic       b_sel_rom_q, b_sel_aux_q;
+    logic       a_sel_hi_q, b_sel_hi_q;
+
+    wire [7:0] a_rdata_main = a_sel_hi_q ? a_rdata_main_hi :
+                                               a_rdata_main_lo;
+    wire [7:0] a_rdata_aux  = a_sel_hi_q ? a_rdata_aux_hi :
+                                               a_rdata_aux_lo;
+    wire [7:0] b_rdata_main = b_sel_hi_q ? b_rdata_main_hi :
+                                               b_rdata_main_lo;
+    wire [7:0] b_rdata_aux  = b_sel_hi_q ? b_rdata_aux_hi :
+                                               b_rdata_aux_lo;
 
     // ---- Port A ----
     always_ff @(posedge clk) begin
         if (a_en) begin
             if (a_we) begin
-                if (a_is_main) mem_main[a_addr[15:0]] <= a_wdata;
-                if (a_is_aux)  mem_aux[a_addr[15:0]]  <= a_wdata;
+                if (a_is_main && !a_addr[15])
+                    mem_main_lo[a_addr[14:0]] <= a_wdata;
+                if (a_is_main && a_addr[15])
+                    mem_main_hi[a_addr[14:0]] <= a_wdata;
+                if (a_is_aux && !a_addr[15])
+                    mem_aux_lo[a_addr[14:0]] <= a_wdata;
+                if (a_is_aux && a_addr[15])
+                    mem_aux_hi[a_addr[14:0]] <= a_wdata;
                 // ROM region: read-only from the core side.
             end
-            a_rdata_main <= mem_main[a_addr[15:0]];
-            a_rdata_aux  <= mem_aux[a_addr[15:0]];
-            a_rdata_rom  <= mem_rom[a_addr[13:0]];
-            a_sel_rom_q  <= a_is_rom;
-            a_sel_aux_q  <= a_is_aux;
+            a_rdata_main_lo <= mem_main_lo[a_addr[14:0]];
+            a_rdata_main_hi <= mem_main_hi[a_addr[14:0]];
+            a_rdata_aux_lo  <= mem_aux_lo[a_addr[14:0]];
+            a_rdata_aux_hi  <= mem_aux_hi[a_addr[14:0]];
+            a_rdata_rom     <= mem_rom[a_addr[13:0]];
+            a_sel_rom_q     <= a_is_rom;
+            a_sel_aux_q     <= a_is_aux;
+            a_sel_hi_q      <= a_addr[15];
         end
     end
     assign a_rdata = a_sel_rom_q ? a_rdata_rom :
@@ -130,15 +158,24 @@ module vtw_shadow (
     always_ff @(posedge clk) begin
         if (b_en) begin
             if (b_we) begin
-                if (b_is_main) mem_main[b_addr[15:0]] <= b_wdata;
-                if (b_is_aux)  mem_aux[b_addr[15:0]]  <= b_wdata;
+                if (b_is_main && !b_addr[15])
+                    mem_main_lo[b_addr[14:0]] <= b_wdata;
+                if (b_is_main && b_addr[15])
+                    mem_main_hi[b_addr[14:0]] <= b_wdata;
+                if (b_is_aux && !b_addr[15])
+                    mem_aux_lo[b_addr[14:0]] <= b_wdata;
+                if (b_is_aux && b_addr[15])
+                    mem_aux_hi[b_addr[14:0]] <= b_wdata;
                 if (b_is_rom)  mem_rom[b_addr[13:0]]  <= b_wdata;
             end
-            b_rdata_main <= mem_main[b_addr[15:0]];
-            b_rdata_aux  <= mem_aux[b_addr[15:0]];
-            b_rdata_rom  <= mem_rom[b_addr[13:0]];
-            b_sel_rom_q  <= b_is_rom;
-            b_sel_aux_q  <= b_is_aux;
+            b_rdata_main_lo <= mem_main_lo[b_addr[14:0]];
+            b_rdata_main_hi <= mem_main_hi[b_addr[14:0]];
+            b_rdata_aux_lo  <= mem_aux_lo[b_addr[14:0]];
+            b_rdata_aux_hi  <= mem_aux_hi[b_addr[14:0]];
+            b_rdata_rom     <= mem_rom[b_addr[13:0]];
+            b_sel_rom_q     <= b_is_rom;
+            b_sel_aux_q     <= b_is_aux;
+            b_sel_hi_q      <= b_addr[15];
         end
     end
     assign b_rdata = b_sel_rom_q ? b_rdata_rom :

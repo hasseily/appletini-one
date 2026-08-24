@@ -239,6 +239,44 @@ if {[llength $psram_launch_cells] != 12 ||
 unset psram_launch_cells
 unset psram_output_cells
 
+# The scanout FIFO's read pointer and read-reset register share one clock
+# region with a RAM-only pblock. Fail the release build if an XPM hierarchy
+# change makes the pblock query incomplete or leaves any bank unassigned.
+set fb_fifo_ramb_cells [get_cells -hierarchical -filter \
+    {NAME =~ *video_top_i/fb_reader_i/fifo_inst/gnuram_async_fifo.xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_wide.mem_reg_* && REF_NAME == RAMB36E1}]
+set fb_fifo_pblock [get_pblocks -quiet pblock_fb_reader_fifo_bram]
+if {[llength $fb_fifo_ramb_cells] != 16 ||
+    [llength $fb_fifo_pblock] != 1} {
+    error "Routed fb_reader FIFO pblock query no longer matches 16 RAMB36 banks"
+}
+foreach fb_fifo_ramb_cell $fb_fifo_ramb_cells {
+    if {[lsearch -exact \
+            [get_pblocks -quiet -of_objects $fb_fifo_ramb_cell] \
+            pblock_fb_reader_fifo_bram] < 0} {
+        error "FIFO RAMB36 bank escaped pblock: $fb_fifo_ramb_cell"
+    }
+}
+unset fb_fifo_ramb_cell
+unset fb_fifo_ramb_cells
+unset fb_fifo_pblock
+
+# Explicit 32 KiB main/aux banks must remain 36 uncascaded RAMB36s in all:
+# 16 main, 16 aux, and four ROM. A returned depth cascade would restore the
+# fixed RAMB36E1 cascade delay on the virtual CPU read path.
+set vtw_shadow_ramb_cells [get_cells -hierarchical -filter \
+    {NAME =~ *vtw_core_top_i/shadow_i/mem_* && REF_NAME == RAMB36E1}]
+if {[llength $vtw_shadow_ramb_cells] != 36} {
+    error "Routed vTW shadow query no longer matches 36 RAMB36 banks"
+}
+foreach vtw_shadow_ramb_cell $vtw_shadow_ramb_cells {
+    if {[get_property RAM_EXTENSION_A $vtw_shadow_ramb_cell] ne "NONE" ||
+        [get_property RAM_EXTENSION_B $vtw_shadow_ramb_cell] ne "NONE"} {
+        error "vTW shadow RAM depth cascade returned: $vtw_shadow_ramb_cell"
+    }
+}
+unset vtw_shadow_ramb_cell
+unset vtw_shadow_ramb_cells
+
 set worst_setup_path [get_timing_paths -quiet -delay_type max -max_paths 1]
 set worst_hold_path  [get_timing_paths -quiet -delay_type min -max_paths 1]
 if {[llength $worst_setup_path] == 0 || [llength $worst_hold_path] == 0} {

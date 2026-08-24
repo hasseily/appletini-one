@@ -499,6 +499,19 @@ set_max_delay -datapath_only 2.75 \
     -to [get_cells -hierarchical \
         {*psram_a_o_reg* *psram_b_o_reg* *psram_oe_reg*}]
 
+# The 8192x64 / 32768x16 scanout FIFO maps to 16 width-parallel RAMB36s.
+# Keep those banks in the same lower-left physical region as the XPM read
+# pointer and read-reset logic. Without this RAM-only pblock the placer can
+# scatter banks into the upper clock region, leaving zero-logic address and
+# reset paths dominated by route delay. Do not exclude other cells from the
+# region: the placer may move the unconstrained shadow/capture RAMs as needed.
+create_pblock pblock_fb_reader_fifo_bram
+resize_pblock [get_pblocks pblock_fb_reader_fifo_bram] -add \
+    {RAMB36_X0Y0:RAMB36_X2Y9}
+add_cells_to_pblock [get_pblocks pblock_fb_reader_fifo_bram] \
+    [get_cells -hierarchical -filter \
+        {NAME =~ *video_top_i/fb_reader_i/fifo_inst/gnuram_async_fifo.xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_wide.mem_reg_* && REF_NAME == RAMB36E1}]
+
 # psram io outputs have common setup/hold requirements
 set_output_delay -clock psram_clk_out -max [expr $To_sp + $Tskew_max] [get_ports "psram_a_io[*]"]
 set_output_delay -clock psram_clk_out -max [expr $To_sp + $Tskew_max] [get_ports "psram_b_io[*]"]
@@ -612,11 +625,14 @@ set_max_delay -datapath_only 10.0 \
         -filter {REF_PIN_NAME == D}]
 
 # The level-shifter direction outputs race the pad tristate enables at the
-# board transceivers by design; bound them so that race margin is
-# placement-independent as well. (Plain set_max_delay: -datapath_only is
-# invalid without -from and Vivado drops the constraint. The oe_n pins are
-# static pass-throughs of the 5V presence detect and need no bound.)
-set_max_delay 10.0 -to [get_ports {a2fpga_dir_a a2fpga_dir_d}]
+# board transceivers by design. Bound each synchronous launch from the fabric
+# clock edge to its output pad without charging the path for source-clock
+# insertion. (Plain set_max_delay -datapath_only without -from is invalid and
+# Vivado drops it.) The oe_n pins are static pass-throughs of the 5V presence
+# detect and need no bound.
+set_max_delay -datapath_only 10.0 \
+    -from [get_clocks clk_out1_zynq_ps_bd_clk_wiz_1_0] \
+    -to [get_ports {a2fpga_dir_a a2fpga_dir_d}]
 
 # In //e mode the physical PHI0 input directly closes the data-bus drive
 # window. Bound that release path separately so the level translator turns

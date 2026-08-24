@@ -20,6 +20,8 @@ LAYOUT_C = REPO_ROOT / "ps_sources" / "frontend" / "compositor_layout.c"
 FB_READER = REPO_ROOT / "hdl" / "video2" / "fb_reader.sv"
 VIDEO_TOP = REPO_ROOT / "hdl" / "video2" / "video_top.sv"
 VIDEO_PKG = REPO_ROOT / "hdl" / "video2" / "video_pkg.sv"
+XDC = REPO_ROOT / "hdl" / "constraints" / "appletini_yarz.xdc"
+BUILD_TCL = REPO_ROOT / "scripts" / "build_and_export_xsa.tcl"
 
 
 class TestFailure(AssertionError):
@@ -121,12 +123,32 @@ def test_no_fb32_remnants_in_output_consumers():
             f"fb32 symbols must not survive the port: {offenders}")
 
 
+def test_fifo_bram_floorplan_is_guarded():
+    xdc = read(XDC)
+    build = read(BUILD_TCL)
+    query = ("*video_top_i/fb_reader_i/fifo_inst/gnuram_async_fifo."
+             "xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/"
+             "gen_wr_a.gen_word_wide.mem_reg_*")
+    require("create_pblock pblock_fb_reader_fifo_bram" in xdc and
+            "{RAMB36_X0Y0:RAMB36_X2Y9}" in xdc and
+            "add_cells_to_pblock [get_pblocks "
+            "pblock_fb_reader_fifo_bram]" in xdc and
+            query in xdc,
+            "the 16 scanout FIFO RAM banks need their routed read-side pblock")
+    require("set fb_fifo_ramb_cells" in build and
+            "[llength $fb_fifo_ramb_cells] != 16" in build and
+            "get_pblocks -quiet -of_objects $fb_fifo_ramb_cell" in build and
+            "FIFO RAMB36 bank escaped pblock" in build,
+            "the release build must reject an incomplete FIFO pblock")
+
+
 TESTS = [
     test_fb16_pixel_format,
     test_fb16_blits_narrow_at_store,
     test_output_layout_is_565,
     test_pl_scanout_is_565,
     test_no_fb32_remnants_in_output_consumers,
+    test_fifo_bram_floorplan_is_guarded,
 ]
 
 

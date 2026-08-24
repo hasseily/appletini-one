@@ -918,13 +918,14 @@ module ssi263_sc02_audio #(
                     voice_load_pending_q <= 1'b1;
             end
 
-            // U60 clocks on the opposite Phi0_X edge, loads zero, counts to
-            // 15, and then holds through its terminal-count feedback.
+            // U60 clocks on the opposite Phi0_X edge. U34A drives only its
+            // active-low parallel enable: a synchronized rising U62.Q loads
+            // zero, and every other edge advances the free-running counter.
             if (filter_phase_ce && filter_phase) begin
                 if (voice_load_pending_q) begin
                     voice_shape_q <= 4'h0;
                     voice_load_pending_q <= 1'b0;
-                end else if (voice_shape_q != 4'hF) begin
+                end else begin
                     voice_shape_q <= voice_shape_q + 4'h1;
                 end
             end

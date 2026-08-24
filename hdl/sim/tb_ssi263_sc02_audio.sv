@@ -73,7 +73,7 @@ module tb_ssi263_sc02_audio;
     integer phase_voice_gap;
     integer phase_ticks_since_load;
     logic phase_seen;
-    logic [3:0] phase_prior_voice_shape;
+    logic phase_prior_load_pending;
     logic signed [15:0] held_sample;
     logic signed [23:0] held_f1;
     logic signed [23:0] held_f1_charge;
@@ -773,7 +773,8 @@ module tb_ssi263_sc02_audio;
               "sustained S/F/SCH was mistaken for a stop");
         reset_all();
 
-        // U62/U61/U34/U60: a rising held U62 level loads a 16-phase notch.
+        // U62/U61/U34/U60: a rising held U62 level loads zero. U60 then
+        // free-runs modulo 16 and makes VOICED a one-phase TC pulse.
         phone_active = 1'b1;
         voiced = 1'b1;
         voice_amp_code = 4'hF;
@@ -790,13 +791,16 @@ module tb_ssi263_sc02_audio;
         end
         pulse_filter(1'b1);
         check(dut.voice_shape_q == 4'hF && dut.voiced_q,
-              "U60 did not hold at terminal count");
+              "U60 terminal-count pulse missing");
         set_voice_toggle(1'b0);
         pulse_filter(1'b0);
         pulse_filter(1'b0);
         pulse_filter(1'b1);
-        check(dut.voice_shape_q == 4'hF,
-              "falling pitch-toggle edge reloaded U60");
+        check(dut.voice_shape_q == 4'h0 && !dut.voiced_q,
+              "U60 did not wrap after terminal count");
+        pulse_filter(1'b1);
+        check(dut.voice_shape_q == 4'h1 && !dut.voiced_q,
+              "U60 did not free-run after wrap");
 
         // Exact HCC4006/U75 recurrence against an independent reference.
         reset_all();
@@ -873,12 +877,13 @@ module tb_ssi263_sc02_audio;
         phase_voice_loads = 0;
         phase_voice_gap = 0;
         phase_ticks_since_load = 0;
-        phase_prior_voice_shape = phase_audio.voice_shape_q;
+        phase_prior_load_pending = phase_audio.voice_load_pending_q;
         for (i = 0; i < 64; i = i + 1) begin
             pulse_phase_xck(phase_seen);
             phase_ticks_since_load = phase_ticks_since_load + 1;
-            if (phase_audio.voice_shape_q == 4'h0 &&
-                phase_prior_voice_shape != 4'h0) begin
+            if (phase_prior_load_pending &&
+                !phase_audio.voice_load_pending_q &&
+                phase_audio.voice_shape_q == 4'h0) begin
                 phase_voice_loads = phase_voice_loads + 1;
                 // Ignore the two-stage U61 synchronizer fill event.  The next
                 // full core-driven rising-to-rising interval must be exact.
@@ -886,7 +891,7 @@ module tb_ssi263_sc02_audio;
                     phase_voice_gap = phase_ticks_since_load;
                 phase_ticks_since_load = 0;
             end
-            phase_prior_voice_shape = phase_audio.voice_shape_q;
+            phase_prior_load_pending = phase_audio.voice_load_pending_q;
         end
         check(phase_voice_loads >= 3,
               "integrated U62/U61/U60 did not make repeated excitation events");

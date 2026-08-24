@@ -626,7 +626,7 @@ class SSI263Reference:
                 if u20_clock_enable:
                     self.u20b_q = bool(flags & 0x08)
                 self.pw_2 = bool(flags & 0x04)
-                self.pw_3 = bool(flags & 0x02)
+                self.pw_3 = not bool(flags & 0x02)
                 self.pw_5 = not self.pw_2
 
             if sweep_slot:

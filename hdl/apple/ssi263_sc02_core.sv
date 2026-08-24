@@ -603,7 +603,9 @@ module ssi263_sc02_core #(
 
                                 3'd2: begin
                                     pw_2_q <= selector_flags[2];
-                                    pw_3_q <= selector_flags[1];
+                                    // Sheet 5 U30E/U11A/U11C and the U34C/D
+                                    // cross-NAND latch invert TPARM1 at PW3.
+                                    pw_3_q <= !selector_flags[1];
                                     pw_5_q <= !selector_flags[2];
                                     if (u20_clock_enable)
                                         u20b_q <= selector_flags[3];

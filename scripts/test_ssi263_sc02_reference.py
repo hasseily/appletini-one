@@ -361,7 +361,7 @@ class SelectorTests(unittest.TestCase):
                 chip.duration_phoneme = phone
                 chip.advance_effective_ticks(48)
                 self.assertEqual(chip.pw_2, bool(code & 0x4))
-                self.assertEqual(chip.pw_3, bool(code & 0x2))
+                self.assertEqual(chip.pw_3, not bool(code & 0x2))
                 self.assertEqual(chip.pw_5, not bool(code & 0x4))
 
         for phone in range(64):

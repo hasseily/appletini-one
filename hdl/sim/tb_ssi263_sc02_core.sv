@@ -358,7 +358,7 @@ module tb_ssi263_sc02_core;
             write_register(3'd0, {2'b00, phone});
             raw_xck_edges(48);
             check(pw_2 == code[2], "lower code PW2");
-            check(pw_3 == code[1], "lower code PW3");
+            check(pw_3 == !code[1], "lower code PW3");
             check(pw_5 == !code[2], "lower code PW5");
         end
     endtask
@@ -528,7 +528,7 @@ module tb_ssi263_sc02_core;
         write_register(3'd0, 8'hB0);
         write_register(3'd3, 8'h70);
         raw_xck_edges(17000);
-        check(pw_3 && fric_amp_code != 4'd0,
+        check(!pw_3 && fric_amp_code != 4'd0,
                "noise test controls did not settle");
         // U68/U85C now owns the U62 reset phase. Do not impose a pitch or
         // HCC edge rate here; the direct circuit checks below own that path.

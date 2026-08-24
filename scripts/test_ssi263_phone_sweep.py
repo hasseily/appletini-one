@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -12,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "build" / "ssi263_phone_sweep_sim"
 PASS_MARKER = "SSI263 PHONE SWEEP PASS"
-REPRESENTATIVE_PHONES = {0x01, 0x24, 0x25, 0x27, 0x28, 0x29, 0x2C, 0x30, 0x32, 0x34}
+SELECTED_ROWS = {0x00, 0x01, 0x27, 0x30, 0x3F}
 
 
 def read_rom() -> list[int]:
@@ -29,31 +28,23 @@ def read_rom() -> list[int]:
 
 
 def static_checks() -> None:
-    rom = read_rom()
-    stops = {
-        phone
-        for phone in range(64)
-        if rom[phone * 8 + 2] & 0x04 and not rom[phone * 8 + 2] & 0x02
-    }
-    expected_stops = {0x24, 0x25, 0x27, 0x28, 0x29}
-    if stops != expected_stops:
-        raise RuntimeError(
-            f"ROM PW2/PW3 stop set is {sorted(stops)}, expected "
-            f"{sorted(expected_stops)}"
-        )
-
+    read_rom()
     audio_source = (
         ROOT / "hdl" / "apple" / "ssi263_sc02_audio.sv"
     ).read_text(encoding="utf-8")
-    if re.search(r"stop_(?:armed|release)", audio_source):
-        raise RuntimeError("stop phones must not use an invented burst state")
-    for required in (
-        "stop_class = pw_2 && !pw_3;",
-        "source_voiced = stop_class ? 1'b0 : voiced;",
-        "source_fricative = stop_class ? 1'b0 : fricative;",
-    ):
-        if required not in audio_source:
-            raise RuntimeError(f"native stop-source contract is missing: {required}")
+    core_source = (
+        ROOT / "hdl" / "apple" / "ssi263_sc02_core.sv"
+    ).read_text(encoding="utf-8")
+    invented = (
+        "phone_voiced",
+        "phone_fricative",
+        "stop_class",
+        "source_voiced",
+        "source_fricative",
+    )
+    for name in invented:
+        if name in audio_source or name in core_source:
+            raise RuntimeError(f"native circuit retains invented control {name}")
 
     testbench = (
         ROOT / "hdl" / "sim" / "tb_ssi263_phone_sweep.sv"
@@ -62,11 +53,16 @@ def static_checks() -> None:
         "ssi263_voice dut (",
         "$readmemh(\"ssi263_sc02_rom.mem\", expected_rom);",
         "phone_index < 64",
-        "stop_mask == 64'h000003B000000000",
-        "test_held_stop_and_following_phone();",
+        "dut.core_i.pw_0 == expected_rom[row + 0][0]",
+        "dut.core_i.pw_1 == expected_rom[row + 1][0]",
+        "dut.core_i.pw_5 == !expected_rom[row + 2][2]",
+        "SSI263 ROM ROW",
     ):
         if required not in testbench:
             raise RuntimeError(f"integrated phone sweep is missing: {required}")
+    for name in (*invented, "acoustic", "rms", "occupancy"):
+        if name in testbench.lower():
+            raise RuntimeError(f"integrated sweep retains acoustic assumption {name}")
 
 
 def vivado_tool(name: str) -> str:
@@ -95,14 +91,14 @@ def run(command: list[str], log_name: str) -> str:
     return output
 
 
-def representative_lines(output: str) -> list[str]:
+def selected_lines(output: str) -> list[str]:
     selected = []
-    pattern = re.compile(r"SSI263 PHONE phone=([0-9a-fA-F]{2})\b")
     for line in output.splitlines():
-        match = pattern.search(line)
-        if match and int(match.group(1), 16) in REPRESENTATIVE_PHONES:
-            selected.append(line)
-        elif line.startswith(("SSI263 STOP ", "SSI263 REPRESENTATIVE")):
+        if not line.startswith("SSI263 ROM ROW phone="):
+            continue
+        phone = int(line.split("phone=", 1)[1][:2], 16)
+        if (phone in SELECTED_ROWS or
+                "positive_rails=0 negative_rails=0" not in line):
             selected.append(line)
     return selected
 
@@ -143,7 +139,7 @@ def main() -> int:
     if PASS_MARKER not in output or "SSI263 PHONE SWEEP FAIL" in output:
         print(output)
         raise RuntimeError("integrated SSI-263 phone sweep did not pass")
-    for line in representative_lines(output):
+    for line in selected_lines(output):
         print(line)
     print(next(line for line in output.splitlines() if PASS_MARKER in line))
     return 0

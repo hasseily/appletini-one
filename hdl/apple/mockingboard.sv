@@ -11,6 +11,7 @@
 module mockingboard(
     input clk,
     input rstn,
+    input logic apple_q3_raw,
     input globals::AppleBus_read ab_read,
     input globals::SoftSwitchState sss,
     input logic [2:0] slot_assign,
@@ -670,12 +671,13 @@ via6522 via1(
     .cb2_out()
 );
 
-// One nominal Apple Q3 XCK pin clock feeds both fixed AP-revision sockets.
-// Each voice keeps its asserted DIV2 strap, so both effective chip time bases
-// are 1,022,727.14 Hz and remain unchanged by the card mode switch.
+// The physical Apple Q3 pin feeds both fixed AP-revision sockets.  Convert its
+// rising edges to fabric-clock enables; each voice keeps its asserted DIV2
+// strap, and the clock path remains independent of the card mode switch.
 ssi263_xck_ce ssi_xck_ce_i (
     .clk(clk),
     .rstn(rstn),
+    .q3_raw(apple_q3_raw),
     .xck_ce(ssi_xck_ce)
 );
 

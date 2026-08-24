@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile and run the SSI-263 rational XCK clock-enable bench."""
+"""Compile and run the physical-Q3 SSI-263 clock-enable bench."""
 
 from __future__ import annotations
 
@@ -10,6 +10,33 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BUILD_DIR = REPO_ROOT / "build" / "test_ssi263_xck_ce"
+
+
+def static_checks() -> None:
+    source = (REPO_ROOT / "hdl" / "apple" / "ssi263_xck_ce.sv").read_text(
+        encoding="utf-8"
+    )
+    required = (
+        "input  logic q3_raw",
+        "q3_sync1_q",
+        "q3_sync2_q",
+        "q3_sync2_d_q",
+        '(* ASYNC_REG = "TRUE" *)',
+        "assign xck_ce = q3_sync2_q && !q3_sync2_d_q;",
+    )
+    missing = [item for item in required if item not in source]
+    if missing:
+        raise RuntimeError(f"physical-Q3 XCK contract missing: {missing}")
+    forbidden = (
+        "XCK_NUMERATOR_HZ",
+        "XCK_DENOMINATOR",
+        "FABRIC_HZ",
+        "accumulator_q",
+        "MODULUS",
+    )
+    leaked = [item for item in forbidden if item in source]
+    if leaked:
+        raise RuntimeError(f"nominal XCK oscillator leaked into RTL: {leaked}")
 
 
 def run(command: list[str]) -> None:
@@ -25,6 +52,7 @@ def vivado_tool(name: str) -> str:
 
 
 def main() -> int:
+    static_checks()
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
 
     run([

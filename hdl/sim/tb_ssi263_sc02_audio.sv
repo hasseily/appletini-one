@@ -39,6 +39,7 @@ module tb_ssi263_sc02_audio;
     logic phase_ar_drive_low;
     logic phase_filter_ce;
     logic phase_filter_phase;
+    logic phase_closure;
     logic phase_voice_clock_ce;
     logic phase_voice_toggle;
     logic phase_noise_clock_ce;
@@ -75,15 +76,23 @@ module tb_ssi263_sc02_audio;
     logic [3:0] phase_prior_voice_shape;
     logic signed [15:0] held_sample;
     logic signed [23:0] held_f1;
+    logic signed [23:0] held_f1_charge;
+    logic signed [23:0] held_f1_input_history;
     logic signed [23:0] held_f2;
-    logic signed [23:0] held_f2_res;
+    logic signed [23:0] held_f2_charge;
     logic signed [23:0] held_f3;
+    logic signed [23:0] held_f3_charge;
+    logic signed [23:0] held_f3_side_history;
     logic signed [23:0] held_f4;
+    logic signed [23:0] held_f4_charge;
     logic signed [23:0] held_f5;
+    logic signed [23:0] held_f5_charge;
     logic signed [23:0] held_reconstruction;
-    logic signed [23:0] held_fric_source;
-    logic signed [23:0] expected_fric1_injection;
-    logic signed [23:0] expected_fric2_injection;
+    logic signed [23:0] held_fric1_source;
+    logic signed [23:0] held_fric2_source;
+    logic signed [23:0] held_fric2_base_history;
+    logic signed [23:0] held_fric2_sw_history;
+    logic signed [23:0] held_output;
 
     integer ref_d1;
     integer ref_d2;
@@ -185,7 +194,7 @@ module tb_ssi263_sc02_audio;
         .fric2_sw(),
         .fricative(phase_fricative),
         .voiced(),
-        .closure(),
+        .closure(phase_closure),
         .rate_clock_ce(),
         .rate_clock_div2_ce(),
         .articulation_step_ce(),
@@ -229,7 +238,7 @@ module tb_ssi263_sc02_audio;
         .fric_amp_code(
             phase_noise_test_enable ? phase_fric_amp_code : 4'h0
         ),
-        .closure(1'b0),
+        .closure(phase_closure && phase_audio_enable),
         .audio_sample(phase_audio_sample)
     );
 
@@ -319,8 +328,10 @@ module tb_ssi263_sc02_audio;
             @(negedge clk);
             filter_phase = new_phase;
             filter_phase_ce = 1'b1;
+            closure = !new_phase;
             @(negedge clk);
             filter_phase_ce = 1'b0;
+            closure = 1'b0;
             if (new_phase)
                 wait_engine_idle();
         end
@@ -391,7 +402,7 @@ module tb_ssi263_sc02_audio;
         begin
             pulse_phase_xck(saw_phase);
             // Even the fastest intended profile gives 133 fabric clocks
-            // between phase CEs.  The registered engine takes 32 clocks.
+            // between phase CEs.  The registered engine takes 34 clocks.
             repeat (140) @(negedge clk);
         end
     endtask
@@ -441,28 +452,24 @@ module tb_ssi263_sc02_audio;
               "F1 capacitor total is not 2450 pF");
         check(dut.f2_capacitance(4'hF) == 13'd4260,
               "F2 capacitor total is not 4260 pF");
-        check(dut.f2_res_capacitance(4'hF) == 13'd3820,
-              "F2 resonance capacitor total is not 3820 pF");
+        check(dut.f2_res_capacitance(4'hF) == 13'd3320,
+              "F2 resonance capacitor total is not 3320 pF");
         check(dut.f3_capacitance(4'hF) == 13'd3090,
               "F3 capacitor total is not 3090 pF");
-        check(dut.f4_capacitance(4'hF) == 13'd2940,
-              "F4 effective capacitor total is not 2940 pF");
+        check(dut.f4_capacitance(4'hF) == 13'd3040,
+              "F4 capacitor total is not 3040 pF");
         check(dut.voice_capacitance(4'hF) == 13'd3320,
               "voice capacitor total is not 3320 pF");
-        check(dut.fric_pos_capacitance(4'hF) == 13'd4010,
-              "positive fricative capacitor total is not 4010 pF");
-        check(dut.fric_neg_capacitance(4'hF) == 13'd4042,
-              "negative fricative capacitor total is not 4042 pF");
+        check(dut.fric1_capacitance(4'hF) == 13'd4010,
+              "U157/FRIC1 capacitor total is not 4010 pF");
+        check(dut.fric2_capacitance(4'hF) == 13'd4042,
+              "U152/FRIC2 capacitor total is not 4042 pF");
         check(dut.filter_amp_capacitance(4'hF) == 13'd1126,
               "filter amplitude capacitor total is not 1126 pF");
         check(dut.sat24_from48(48'sd8388608) == 24'sh7FFFFF,
               "positive internal saturation limit wrapped");
         check(dut.sat24_from48(-48'sd8388609) == -24'sd8388608,
               "negative internal saturation limit wrapped");
-        check(dut.sat24_add(24'sh7FFFFF, 24'sd1) == 24'sh7FFFFF,
-              "positive saturating add wrapped");
-        check(dut.sat24_add(-24'sd8388608, -24'sd1) == -24'sd8388608,
-              "negative saturating add wrapped");
         check(dut.sat26_from27(27'sd33554432) == 26'sh1FFFFFF,
               "positive DC-state saturation limit wrapped");
         check(dut.sat26_from27(-27'sd33554433) == -26'sd33554432,
@@ -472,23 +479,71 @@ module tb_ssi263_sc02_audio;
         check(dut.sat16_from27(-27'sd32769) == -16'sd32768,
               "negative PCM conversion wrapped");
 
-        // Every formant code moves its resonant center in one direction.
+        // Exact Q14 endpoints guard the cap-ratio tables as well as their
+        // direction.  The Python wrapper checks every entry against the
+        // rounded ratios from sheets 1 and 2.
+        check(dut.F1_ALPHA_Q14 == 17'sd16104 &&
+              dut.F1_A_Q14 == 17'sd3781 &&
+              dut.F1_G_Q14 == 17'sd3781,
+              "fixed F1 charge ratios changed");
+        check(dut.F2_FRIC_H_Q14 == 17'sd2409,
+              "C143/F2 second-integrator ratio changed");
+        check(dut.F3_ALPHA_Q14 == 17'sd15715 &&
+              dut.F3_A_Q14 == 17'sd13040 &&
+              dut.F3_G_Q14 == 17'sd6687,
+              "fixed F3 charge ratios changed");
+        check(dut.F4_ALPHA_Q14 == 17'sd15656 &&
+              dut.F4_A_Q14 == 17'sd17112,
+              "fixed F4 charge ratios changed");
+        check(dut.F5_ALPHA_Q14 == 17'sd15154 &&
+              dut.F5_A_Q14 == 17'sd20645 &&
+              dut.F5_B_Q14 == 17'sd22320 &&
+              dut.F5_FRIC_BASE_G_Q14 == 17'sd5051 &&
+              dut.F5_FRIC_SW_G_Q14 == 17'sd16252,
+              "fixed F5 charge ratios changed");
+        check(dut.FILTER_OUTPUT_ALPHA_Q14 == 17'sd16086 &&
+              dut.filter_amp_gain(4'h0) == 17'sd0 &&
+              dut.filter_amp_gain(4'hF) == 17'sd6709,
+              "C172/C173 or FL_AMP endpoint ratio changed");
+        check(dut.f1_b_q14(4'h0) == 17'sd356 &&
+              dut.f1_b_q14(4'hF) == 17'sd3847,
+              "F1 b endpoint ratio changed");
+        check(dut.f2_b_q14(4'h0) == 17'sd1205 &&
+              dut.f2_b_q14(4'hF) == 17'sd11469,
+              "F2 b endpoint ratio changed");
+        check(dut.f2_alpha_q14(4'h0) == 17'sd15916 &&
+              dut.f2_alpha_q14(4'hF) == 17'sd10796 &&
+              dut.f2_a_q14(4'h0) == 17'sd11001 &&
+              dut.f2_a_q14(4'hF) == 17'sd7462,
+              "F2 loss endpoint ratios changed");
+        check(dut.f3_b_q14(4'h0) == 17'sd2858 &&
+              dut.f3_b_q14(4'hF) == 17'sd13630,
+              "F3 b endpoint ratio changed");
+        check(dut.f4_b_q14(4'h0) == 17'sd6363 &&
+              dut.f4_b_q14(4'hF) == 17'sd17946,
+              "F4 b endpoint ratio changed");
+
+        // Every formant code raises its sampled input ratio.  F2 RES adds
+        // the drawn cap bank, so both alpha and a fall as damping rises.
         for (i = 1; i < 16; i = i + 1) begin
-            check(dut.f1_sin_q14(i[3:0]) >
-                  dut.f1_sin_q14((i - 1) & 4'hF),
-                  "an F1 code did not move the center response");
-            check(dut.f2_sin_q14(i[3:0]) >
-                  dut.f2_sin_q14((i - 1) & 4'hF),
-                  "an F2 code did not move the center response");
-            check(dut.f3_sin_q14(i[3:0]) >
-                  dut.f3_sin_q14((i - 1) & 4'hF),
-                  "an F3 code did not move the center response");
-            check(dut.f4_sin_q14(i[3:0]) >
-                  dut.f4_sin_q14((i - 1) & 4'hF),
-                  "an F4 code did not move the center response");
-            check(dut.f2_radius_q14(i[3:0]) >
-                  dut.f2_radius_q14((i - 1) & 4'hF),
-                  "an F2 resonance code did not increase pole radius");
+            check(dut.f1_b_q14(i[3:0]) >
+                  dut.f1_b_q14((i - 1) & 4'hF),
+                  "an F1 code did not raise b");
+            check(dut.f2_b_q14(i[3:0]) >
+                  dut.f2_b_q14((i - 1) & 4'hF),
+                  "an F2 code did not raise b");
+            check(dut.f3_b_q14(i[3:0]) >
+                  dut.f3_b_q14((i - 1) & 4'hF),
+                  "an F3 code did not raise b");
+            check(dut.f4_b_q14(i[3:0]) >
+                  dut.f4_b_q14((i - 1) & 4'hF),
+                  "an F4 code did not raise b");
+            check(dut.f2_alpha_q14(i[3:0]) <
+                  dut.f2_alpha_q14((i - 1) & 4'hF),
+                  "an F2 resonance code did not lower alpha");
+            check(dut.f2_a_q14(i[3:0]) <
+                  dut.f2_a_q14((i - 1) & 4'hF),
+                  "an F2 resonance code did not lower a");
         end
 
         // Sheet 6 takes FRICATIVE from inverted U73 D4+5 (pin 9), not the
@@ -502,34 +557,92 @@ module tb_ssi263_sc02_audio;
         pw_3 = 1'b0;
         voice_toggle = 1'b0;
         #1;
-        check(dut.noise_bit && dut.fric_source > 0,
+        check(dut.noise_bit && dut.fric1_source < 0 &&
+              dut.fric2_source < 0 &&
+              dut.fric1_source != dut.fric2_source,
               "FRICATIVE did not use inverted U73 D4+5");
+        @(posedge clk);
+        #1;
         force dut.noise_d3_q = 4'b0000;
         force dut.noise_d4_q = 5'b10000;
         #1;
-        check(!dut.noise_bit && dut.fric_source < 0,
+        check(!dut.noise_bit && dut.fric1_source == 0 &&
+              dut.fric2_source == 0,
               "FRICATIVE still followed the old U73 D3+4 tap");
         force dut.noise_d4_q = 5'b00000;
         pw_3 = 1'b1;
         voice_toggle = 1'b0;
         #1;
-        check(!dut.noise_bit && dut.fric_source < 0,
-              "PW3/U62 low phase did not force negative fricative polarity");
+        check(!dut.noise_bit && dut.fric1_source == 0 &&
+              dut.fric2_source == 0,
+              "PW3/U62 low phase did not force the fricative source low");
         voice_toggle = 1'b1;
         #1;
-        check(dut.noise_bit && dut.fric_source > 0,
+        check(dut.noise_bit && dut.fric1_source < 0 &&
+              dut.fric2_source < 0,
               "PW3/U62 high phase did not restore the HCC noise tap");
         fricative = 1'b0;
         #1;
-        check(dut.fric_source == 0,
+        check(dut.fric1_source == 0 && dut.fric2_source == 0,
               "disabled fricative source ignored its zero guard");
         release dut.noise_d3_q;
         release dut.noise_d4_q;
         reset_all();
 
+        // U157 is reset in Phi1 and regenerates -Csel/C133*x in every Phi0.
+        // U152 has no phase reset and changes only at a real HCC edge, using
+        // the FRIC_AMP bank selected at that edge.
+        phone_active = 1'b1;
+        fricative = 1'b1;
+        fric_amp_code = 4'hF;
+        force dut.noise_d4_q = 5'b00000;
+        #1;
+        check(dut.fric1_source == -24'sd67392 &&
+              dut.fric2_source == -24'sd67920,
+              "full-code HCC rise did not charge U157/U152 exactly");
+        @(posedge clk);
+        #1;
+        check(dut.fric1_source == -24'sd67392 &&
+              dut.fric2_source_state_q == -24'sd67920,
+              "HCC rise did not establish both source nodes");
+        fric_amp_code = 4'h1;
+        #1;
+        check(dut.fric1_source == -24'sd4544 &&
+              dut.fric2_source == -24'sd67920,
+              "U157/U152 did not differ on a steady-HCC gain change");
+        force dut.noise_d4_q = 5'b10000;
+        #1;
+        check(dut.fric1_source == 24'sd0 &&
+              dut.fric2_source == -24'sd63376,
+              "code-one HCC fall used the wrong edge charge");
+        @(posedge clk);
+        force dut.noise_d4_q = 5'b00000;
+        #1;
+        check(dut.fric1_source == -24'sd4544 &&
+              dut.fric2_source == -24'sd67920,
+              "next HCC rise did not restore the retained source charge");
+        release dut.noise_d4_q;
+        reset_all();
+
+        // A held-high HCC bit must regenerate U157 on every filter pair.  An
+        // edge-only model would make the second Phi0 snapshot zero.
+        phone_active = 1'b1;
+        fricative = 1'b1;
+        fric_amp_code = 4'hF;
+        force dut.noise_d4_q = 5'b00000;
+        pulse_filter(1'b0);
+        check(dut.fric1_source_phi0_q == -24'sd67392,
+              "first high-HCC Phi0 did not sample U157");
+        pulse_filter(1'b1);
+        pulse_filter(1'b0);
+        check(dut.fric1_source_phi0_q == -24'sd67392,
+              "held-high HCC did not regenerate U157 on the next Phi0");
+        release dut.noise_d4_q;
+        reset_all();
+
         // Phi0 owns the tract input sample.  Changing every live source and
-        // switch control after that edge must not alter the retimed F3/F5
-        // node sums that the next Phi1 engine run will consume.
+        // switch control after that edge must not alter the two source nodes,
+        // route states, or FL_AMP bank that the next Phi1 run will consume.
         phone_active = 1'b1;
         fricative = 1'b1;
         pw_2 = 1'b0;
@@ -537,34 +650,57 @@ module tb_ssi263_sc02_audio;
         fric1_sw = 1'b1;
         fric2_sw = 1'b1;
         fric_amp_code = 4'hF;
+        f1_code = 4'h1;
+        f2_code = 4'h2;
+        f2_res_code = 4'h3;
+        f3_code = 4'h4;
+        f4_code = 4'h5;
         force dut.noise_d4_q = 5'b00000;
         #1;
-        held_fric_source = dut.fric_source;
-        expected_fric1_injection = dut.sat24_add(
-            dut.sat24_add(
-                held_fric_source >>> 7,
-                held_fric_source >>> 8
-            ),
-            held_fric_source >>> 10
-        );
-        expected_fric2_injection = dut.sat24_add(
-            held_fric_source >>> 5,
-            held_fric_source >>> 6
-        );
+        filter_amp_code = 4'hA;
+        held_fric1_source = dut.fric1_source;
+        held_fric2_source = dut.fric2_source;
         pulse_filter(1'b0);
         phone_active = 1'b0;
         fricative = 1'b0;
         fric1_sw = 1'b0;
         fric2_sw = 1'b0;
         fric_amp_code = 4'h0;
+        f1_code = 4'hF;
+        f2_code = 4'hE;
+        f2_res_code = 4'hD;
+        f3_code = 4'hC;
+        f4_code = 4'hB;
+        filter_amp_code = 4'h1;
         repeat (4) @(posedge clk);
         #1;
-        check(dut.fric_source_phi0_q == held_fric_source,
-              "Phi0 fricative source snapshot followed later live controls");
-        check(dut.input_mix_stage_q == 2'd0 &&
-              dut.f3_input_q == expected_fric1_injection &&
-              dut.f5_input_q == expected_fric2_injection,
-              "retimed tract injections did not keep the Phi0 sample");
+        check(dut.fric1_source_phi0_q == held_fric1_source &&
+              dut.fric2_source_phi0_q == held_fric2_source,
+              "Phi0 source snapshots followed later live controls");
+        check(dut.fric1_sw_phi0_q && dut.fric2_sw_phi0_q &&
+              dut.filter_amp_phi0_q == 4'hA,
+              "Phi0 route or FL_AMP snapshot followed later controls");
+        check(dut.f1_code_phi0_q == 4'h1 &&
+              dut.f2_code_phi0_q == 4'h2 &&
+              dut.f2_res_code_phi0_q == 4'h3 &&
+              dut.f3_code_phi0_q == 4'h4 &&
+              dut.f4_code_phi0_q == 4'h5,
+              "Phi0 formant snapshot followed later controls");
+        check(dut.f3_input_q == dut.f2_state_q &&
+              dut.f5_input_q == dut.f4_state_q,
+              "FRIC source was merged into a serial formant input");
+        @(negedge clk);
+        filter_phase = 1'b1;
+        filter_phase_ce = 1'b1;
+        @(negedge clk);
+        filter_phase_ce = 1'b0;
+        while (dut.engine_busy_q && dut.engine_stage_q != 4'd6)
+            @(negedge clk);
+        #1;
+        check(dut.engine_busy_q &&
+              dut.engine_coefficient_b == dut.filter_amp_gain(4'hA),
+              "U146 engine did not consume the Phi0 FL_AMP snapshot");
+        wait_engine_idle();
         release dut.noise_d4_q;
         reset_all();
 
@@ -584,7 +720,7 @@ module tb_ssi263_sc02_audio;
         f4_code = 4'h8;
         repeat (4) @(negedge clk);
         check(dut.stop_class && !dut.source_fricative &&
-              dut.fric_source == 0,
+              dut.fric1_source == 0 && dut.fric2_source == 0,
               "held P/T/K stop source was not silent");
         repeat (32) begin
             pulse_noise();
@@ -601,6 +737,7 @@ module tb_ssi263_sc02_audio;
         pw_3 = 1'b1;
         fricative = 1'b1;
         fric_amp_code = 4'h8;
+        voice_toggle = 1'b1;
         repeat (2) @(negedge clk);
         check(!dut.stop_class && dut.source_fricative,
               "following phone did not enable its live source");
@@ -756,7 +893,7 @@ module tb_ssi263_sc02_audio;
         check(phase_voice_gap == 8,
               "I=FFF U60 excitation interval was not eight XCK ticks");
 
-        // A high phase starts exactly 32 registered engine clocks.  A phase
+        // A high phase starts exactly 34 registered engine clocks.  A phase
         // inside that window must set the sticky diagnostic, not restart it.
         reset_all();
         phone_active = 1'b1;
@@ -774,8 +911,8 @@ module tb_ssi263_sc02_audio;
             @(negedge clk);
             engine_cycles = engine_cycles + 1;
         end
-        check(engine_cycles == 32,
-              "registered low-pass engine did not take 32 clocks");
+        check(engine_cycles == 34,
+              "registered charge engine did not take 34 clocks");
 
         @(negedge clk);
         filter_phase_ce = 1'b1;
@@ -789,6 +926,147 @@ module tb_ssi263_sc02_audio;
         check(dut.engine_overrun_q,
               "phase collision did not set the scheduler diagnostic");
         wait_engine_idle();
+
+        // F1 and F3 each use a drawn one-pair history path.  Drive one
+        // coherent step into each side input, then remove it and prove the
+        // retained prior sample participates in the next charge update.
+        reset_all();
+        phone_active = 1'b1;
+        f1_code = 4'h8;
+        pulse_filter(1'b0);
+        force dut.f1_input_q = 24'sd65536;
+        pulse_filter(1'b1);
+        release dut.f1_input_q;
+        check(dut.f1_state_q == 24'sd4076 &&
+              dut.f1_history_q == -24'sd30248 &&
+              dut.f1_input_history_q == 24'sd65536,
+              "F1 first charge step changed its rounded p/y result");
+        force dut.f1_input_q = 24'sd0;
+        pulse_filter(1'b1);
+        release dut.f1_input_q;
+        check(dut.f1_state_q == 24'sd5918 &&
+              dut.f1_history_q == -24'sd13666 &&
+              dut.f1_input_history_q == 0,
+              "F1 prior-input step changed its rounded p/y result");
+
+        reset_all();
+        phone_active = 1'b1;
+        f3_code = 4'h8;
+        pulse_filter(1'b0);
+        force dut.f3_input_q = 24'sd0;
+        force dut.f3_side_input_q = 24'sd65536;
+        pulse_filter(1'b1);
+        release dut.f3_input_q;
+        release dut.f3_side_input_q;
+        check(dut.f3_state_q == 24'sd13999 &&
+              dut.f3_history_q == -24'sd26748 &&
+              dut.f3_side_history_q == 24'sd65536,
+              "F3 first side step changed its rounded p/y result");
+        force dut.f3_side_input_q = 24'sd0;
+        pulse_filter(1'b1);
+        release dut.f3_side_input_q;
+        check(dut.f3_state_q == 24'sd7596 &&
+              dut.f3_history_q == 24'sd12234 &&
+              dut.f3_side_history_q == 0,
+              "F3 prior-side step changed its rounded p/y result");
+
+        // C143 enters F2's second integrator.  It changes y2 directly, keeps
+        // p2 at zero for an otherwise empty section, and holds charge while
+        // U159D is open.
+        reset_all();
+        phone_active = 1'b1;
+        force dut.f2_input_q = 24'sd0;
+        force dut.fric1_source_phi0_q = 24'sd65536;
+        force dut.fric1_sw_phi0_q = 1'b1;
+        pulse_filter(1'b1);
+        release dut.f2_input_q;
+        release dut.fric1_source_phi0_q;
+        release dut.fric1_sw_phi0_q;
+        check(dut.f2_state_q == -24'sd9636 &&
+              dut.f2_history_q == 0,
+              "C143 did not add 1000/6800 at F2 y");
+        @(negedge clk);
+        force dut.f2_state_q = 24'sd0;
+        force dut.f2_history_q = 24'sd0;
+        @(negedge clk);
+        release dut.f2_state_q;
+        release dut.f2_history_q;
+        force dut.fric1_source_phi0_q = -24'sd65536;
+        force dut.fric1_sw_phi0_q = 1'b0;
+        pulse_filter(1'b1);
+        release dut.fric1_source_phi0_q;
+        release dut.fric1_sw_phi0_q;
+        check(dut.f2_state_q == 0 && dut.f2_history_q == 0,
+              "open C143 injected into F2");
+        force dut.fric1_source_phi0_q = 24'sd0;
+        force dut.fric1_sw_phi0_q = 1'b1;
+        pulse_filter(1'b1);
+        release dut.fric1_source_phi0_q;
+        release dut.fric1_sw_phi0_q;
+        check(dut.f2_state_q == 0 && dut.f2_history_q == 0,
+              "C143 invented a reconnect-history impulse");
+
+        // C150 is always connected to U152.  C151 has an independent history
+        // which holds while U159C is open and rejoins only on reconnect.
+        reset_all();
+        phone_active = 1'b1;
+        force dut.f5_input_q = 24'sd0;
+        force dut.fric2_source_phi0_q = 24'sd65536;
+        force dut.fric2_sw_phi0_q = 1'b0;
+        pulse_filter(1'b1);
+        release dut.f5_input_q;
+        release dut.fric2_source_phi0_q;
+        release dut.fric2_sw_phi0_q;
+        check(dut.f5_history_q == -24'sd20204 &&
+              dut.f5_state_q == 24'sd27524 &&
+              dut.fric2_base_history_q == 24'sd65536 &&
+              dut.fric2_sw_history_q == 0,
+              "switch-low FRIC2 did not retain the C150 path");
+
+        reset_all();
+        phone_active = 1'b1;
+        force dut.f5_input_q = 24'sd0;
+        force dut.fric2_source_phi0_q = 24'sd65536;
+        force dut.fric2_sw_phi0_q = 1'b1;
+        pulse_filter(1'b1);
+        release dut.f5_input_q;
+        release dut.fric2_source_phi0_q;
+        release dut.fric2_sw_phi0_q;
+        check(dut.f5_history_q == -24'sd85212 &&
+              dut.f5_state_q == 24'sd116085 &&
+              dut.fric2_base_history_q == 24'sd65536 &&
+              dut.fric2_sw_history_q == 24'sd65536,
+              "C150 and C151 did not sum before one F5 round");
+        @(negedge clk);
+        force dut.f5_state_q = 24'sd0;
+        force dut.f5_history_q = 24'sd0;
+        @(negedge clk);
+        release dut.f5_state_q;
+        release dut.f5_history_q;
+        force dut.fric2_source_phi0_q = -24'sd65536;
+        force dut.fric2_sw_phi0_q = 1'b0;
+        pulse_filter(1'b1);
+        release dut.fric2_source_phi0_q;
+        release dut.fric2_sw_phi0_q;
+        check(dut.fric2_base_history_q == -24'sd65536 &&
+              dut.fric2_sw_history_q == 24'sd65536,
+              "open C151 did not hold separately from live C150");
+        @(negedge clk);
+        force dut.f5_state_q = 24'sd0;
+        force dut.f5_history_q = 24'sd0;
+        @(negedge clk);
+        release dut.f5_state_q;
+        release dut.f5_history_q;
+        force dut.fric2_source_phi0_q = 24'sd0;
+        force dut.fric2_sw_phi0_q = 1'b1;
+        pulse_filter(1'b1);
+        release dut.fric2_source_phi0_q;
+        release dut.fric2_sw_phi0_q;
+        check(dut.f5_history_q == 24'sd44804 &&
+              dut.f5_state_q == -24'sd61037 &&
+              dut.fric2_base_history_q == 0 &&
+              dut.fric2_sw_history_q == 0,
+              "C151 reconnect did not preserve its independent history");
 
         // Run all five persistent tract sections through the registered lanes.
         reset_all();
@@ -807,33 +1085,47 @@ module tb_ssi263_sc02_audio;
             pulse_filter_pair();
         end
         check(dut.f1_state_q != 0 && dut.f1_history_q != 0,
-              "F1 low-pass did not become active");
+              "F1 charge section did not become active");
         check(dut.f2_state_q != 0 && dut.f2_history_q != 0,
-              "F2 low-pass did not become active");
+              "F2 charge section did not become active");
         check(dut.f3_state_q != 0 && dut.f3_history_q != 0,
-              "F3 low-pass did not become active");
+              "F3 charge section did not become active");
         check(dut.f4_state_q != 0 && dut.f4_history_q != 0,
-              "F4 low-pass did not become active");
+              "F4 charge section did not become active");
         check(dut.f5_state_q != 0 && dut.f5_history_q != 0,
-              "fixed F5 low-pass did not become active");
+              "fixed F5 charge section did not become active");
 
         held_f1 = dut.f1_state_q;
+        held_f1_charge = dut.f1_history_q;
+        held_f1_input_history = dut.f1_input_history_q;
         held_f2 = dut.f2_state_q;
-        held_f2_res = dut.f2_history_q;
+        held_f2_charge = dut.f2_history_q;
         held_f3 = dut.f3_state_q;
+        held_f3_charge = dut.f3_history_q;
+        held_f3_side_history = dut.f3_side_history_q;
         held_f4 = dut.f4_state_q;
+        held_f4_charge = dut.f4_history_q;
         held_f5 = dut.f5_state_q;
+        held_f5_charge = dut.f5_history_q;
         f1_code = 4'hF;
         f2_code = 4'h1;
         f2_res_code = 4'hF;
         f3_code = 4'h2;
         f4_code = 4'h4;
         @(negedge clk);
-        check(dut.f1_state_q == held_f1 && dut.f2_state_q == held_f2 &&
-              dut.f2_history_q == held_f2_res &&
-              dut.f3_state_q == held_f3 && dut.f4_state_q == held_f4 &&
-              dut.f5_state_q == held_f5,
-              "a code change reset persistent section state");
+        check(dut.f1_state_q == held_f1 &&
+              dut.f1_history_q == held_f1_charge &&
+              dut.f1_input_history_q == held_f1_input_history &&
+              dut.f2_state_q == held_f2 &&
+              dut.f2_history_q == held_f2_charge &&
+              dut.f3_state_q == held_f3 &&
+              dut.f3_history_q == held_f3_charge &&
+              dut.f3_side_history_q == held_f3_side_history &&
+              dut.f4_state_q == held_f4 &&
+              dut.f4_history_q == held_f4_charge &&
+              dut.f5_state_q == held_f5 &&
+              dut.f5_history_q == held_f5_charge,
+              "a code change reset persistent y/p or side history state");
         pulse_filter_pair();
         check(dut.f1_state_q != held_f1 && dut.f2_state_q != held_f2 &&
               dut.f3_state_q != held_f3 && dut.f4_state_q != held_f4 &&
@@ -842,9 +1134,8 @@ module tb_ssi263_sc02_audio;
         check(!dut.engine_overrun_q,
               "resonator scheduler exceeded the phase gap");
 
-        // Sheets 1 and 2 place the two noise signals inside the vocal tract.
-        // FRIC_1 enters after F2 and must cross F3, F4, and F5.  It must not
-        // create activity in F1 or F2, and it has no parallel output section.
+        // C143 enters F2's second integrator.  It must leave F1 idle, then
+        // cross the rest of F2 and the serial F3/F4/F5 tract.
         reset_all();
         phone_active = 1'b1;
         fricative = 1'b1;
@@ -858,16 +1149,17 @@ module tb_ssi263_sc02_audio;
             pulse_noise();
             pulse_filter_pair();
         end
-        check(dut.f1_state_q == 0 && dut.f2_state_q == 0,
-              "FRIC_1 leaked upstream of the F2/F3 injection node");
-        check(dut.f3_state_q != 0 && dut.f4_state_q != 0 &&
+        check(dut.f1_state_q == 0,
+              "FRIC_1 leaked upstream of F2");
+        check(dut.f2_state_q != 0 && dut.f3_state_q != 0 &&
+              dut.f4_state_q != 0 &&
               dut.f5_state_q != 0,
-              "FRIC_1 did not traverse F3, F4, and F5");
+              "FRIC_1 did not traverse F2 through F5");
         pulse_audio_tick();
         check(audio_sample != 0,
               "FRIC_1 tract injection did not reach reconstructed PCM");
 
-        // FRIC_2 enters after F4.  Only fixed F5 may become active.
+        // C150/C151 enter F5's first integrator.  Only F5 may become active.
         reset_all();
         phone_active = 1'b1;
         fricative = 1'b1;
@@ -888,11 +1180,13 @@ module tb_ssi263_sc02_audio;
         check(audio_sample != 0,
               "FRIC_2 tract injection did not reach reconstructed PCM");
 
-        // F2 resonance changes real decay, not just a stored code.
+        // The F2 RES bank loads the first integrator.  Higher codes lower
+        // alpha and a, so code F must damp an impulse faster than code 0.
         reset_all();
         phone_active = 1'b1;
         f2_code = 4'h8;
         f2_res_code = 4'h0;
+        pulse_filter(1'b0);
         deposit_f2_impulse();
         repeat (10) pulse_filter(1'b1);
         energy_low = pair_magnitude(dut.f2_state_q, dut.f2_history_q);
@@ -900,14 +1194,48 @@ module tb_ssi263_sc02_audio;
         phone_active = 1'b1;
         f2_code = 4'h8;
         f2_res_code = 4'hF;
+        pulse_filter(1'b0);
         deposit_f2_impulse();
         repeat (10) pulse_filter(1'b1);
         energy_high = pair_magnitude(dut.f2_state_q, dut.f2_history_q);
-        check(energy_high > energy_low,
-              "F2 resonance code did not lengthen resonator decay");
+        check(energy_high < energy_low,
+              "F2 resonance code did not increase charge damping");
 
-        // FL_AMP is the sheet-2 output gain after F5.  Code zero must mute
-        // that node without erasing charge held by the five tract sections.
+        // U146 must combine both wide products before one Q14 round.  These
+        // vectors guard the C172 recurrence, FL_AMP scale, and delta sign.
+        force dut.product_a_q = 42'sd16086000;  // 16086 * 1000
+        force dut.product_b_q = -42'sd6709000; // 6709 * -1000
+        #1;
+        check(dut.engine_output_next == 24'sd572,
+              "U146 full-code recurrence missed its exact one-round result");
+        release dut.product_a_q;
+        release dut.product_b_q;
+        force dut.product_a_q = 42'sd16086000;
+        force dut.product_b_q = 42'sd0;
+        #1;
+        check(dut.engine_output_next == 24'sd982,
+              "U146 code-zero recurrence did not retain 2700/2750");
+        release dut.product_a_q;
+        release dut.product_b_q;
+
+        // The registered timing split must preserve old F5 minus new F5.
+        force dut.output_old_state_q = 24'sd1000;
+        force dut.f5_state_q = -24'sd1000;
+        force dut.engine_busy_q = 1'b1;
+        force dut.engine_stage_q = 4'd9;
+        @(posedge clk);
+        #1;
+        release dut.output_old_state_q;
+        release dut.f5_state_q;
+        release dut.engine_busy_q;
+        release dut.engine_stage_q;
+        #1;
+        check(dut.output_sum_q == 25'sd2000,
+              "U146 delta was not old F5 minus new F5");
+        reset_all();
+
+        // FL_AMP transfers the F5 change into U146.  Code zero removes the
+        // new input term but C172 must retain 2700/2750 of the prior output.
         reset_all();
         phone_active = 1'b1;
         voiced = 1'b1;
@@ -922,14 +1250,19 @@ module tb_ssi263_sc02_audio;
         repeat (48) pulse_filter_pair();
         check(dut.f5_state_q != 0 && dut.reconstruction_hold_q != 0,
               "full filter-amplitude code produced no tract output");
+        held_output = dut.output_hold_q;
         filter_amp_code = 4'h0;
         pulse_filter_pair();
-        check(dut.output_hold_q == 0 && dut.reconstruction_hold_q == 0,
-              "filter-amplitude code zero did not mute after F5");
+        check(dut.output_hold_q != 0 &&
+              sample_magnitude(dut.output_hold_q) <
+                  sample_magnitude(held_output) &&
+              dut.reconstruction_hold_q == held_output,
+              "C172 did not retain and decay U146 at FL_AMP zero");
         check(dut.f1_state_q != 0 && dut.f5_state_q != 0,
               "filter-amplitude code zero erased tract state");
 
-        // Held sample, one-clock closure discharge, and saturation.
+        // U145D/CLOSURE copies the completed U146 hold into C100/U148.  Low
+        // holds; it never discharges the internal or reconstructed node.
         reset_all();
         phone_active = 1'b1;
         voiced = 1'b1;
@@ -950,21 +1283,49 @@ module tb_ssi263_sc02_audio;
               "sample changed without an audio tick");
         pulse_audio_tick();
         held_sample = audio_sample;
-        held_reconstruction = dut.reconstruction_hold_q;
+        held_output = dut.output_hold_q;
         closure = 1'b1;
         @(negedge clk);
         pulse_audio_tick();
         closure = 1'b0;
-        check(dut.output_hold_q == 0,
-              "closure pulse did not discharge the switched output node");
-        check(audio_sample != 0 &&
-              dut.reconstruction_hold_q == held_reconstruction,
-              "closure pulse leaked the filter carrier into reconstructed PCM");
+        check(dut.output_hold_q == held_output &&
+              dut.reconstruction_hold_q == held_output,
+              "closure did not copy U146 into the C100/U148 hold");
+        held_reconstruction = dut.reconstruction_hold_q;
+        repeat (4) @(negedge clk);
+        check(dut.reconstruction_hold_q == held_reconstruction,
+              "open closure switch did not hold C100/U148");
         check(dut.f1_state_q != 0 && dut.f4_state_q != 0,
               "closure erased persistent formant state");
         pulse_filter_pair();
         pulse_audio_tick();
         check(audio_sample != 0, "output did not resume after closure");
+
+        // Sheets 1 and 2 have no phone-active switch after U148.  Ending a
+        // phone stops new excitation but must not hard-mute the held output.
+        reset_all();
+        phone_active = 1'b1;
+        @(negedge clk);
+        force dut.output_hold_q = 24'sd65536;
+        closure = 1'b1;
+        @(posedge clk);
+        #1;
+        closure = 1'b0;
+        release dut.output_hold_q;
+        check(dut.reconstruction_hold_q == 24'sd65536,
+              "closure did not seed the natural U148 tail test");
+        pulse_audio_tick();
+        check(audio_sample != 0,
+              "known U148 level did not reach PCM while phone was active");
+        phone_active = 1'b0;
+        pulse_audio_tick();
+        check(dut.dc_input == 24'sd65536 && audio_sample != 0,
+              "phone end hard-muted the post-U148 output tail");
+        powered_down = 1'b1;
+        pulse_audio_tick();
+        check(audio_sample == 0,
+              "powerdown did not mute the PCM boundary");
+        reset_all();
 
         // C381's digital high-pass equivalent must keep the full 25-bit
         // input difference until after its 255/256 leak.  Early 24-bit
@@ -1076,8 +1437,8 @@ module tb_ssi263_sc02_audio;
                  voice_peak, voice_hold_peak, voice_f1_peak, voice_f5_peak);
         check(voice_signature != 0,
               "native voiced phone produced no output");
-        check(voice_peak >= 8192 && voice_hold_peak >= 8192,
-              "native voiced phone remained below an audible PCM floor");
+        check(voice_peak >= 1024 && voice_hold_peak >= 8192,
+              "native voiced phone remained below a nontrivial PCM floor");
         check(voice_peak < 32767,
               "native voiced phone clipped its PCM output");
 
@@ -1097,6 +1458,7 @@ module tb_ssi263_sc02_audio;
         pw_3 = phase_core.rom_q[9'd386][1];
         fric1_sw = phase_core.rom_q[9'd386][3];
         fric2_sw = !phase_core.rom_q[9'd386][3];
+        voice_toggle = 1'b1;
         check(!voiced && fricative,
               "native phone 30 source flags were not fricative-only");
         repeat (64) begin

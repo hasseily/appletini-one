@@ -1,22 +1,21 @@
 `timescale 1ns / 1ps
 
-// Native SSI-263A / SC-02 excitation and switched-capacitor audio checkpoint.
+// Native SSI-263A / SC-02 excitation and switched-capacitor audio model.
 //
 // This block deliberately has no SC-01 phone map or coefficient tables.  It
 // consumes the persistent controls and clock enables produced by
 // ssi263_sc02_core.  The pitch shaper and HCC4006 recurrence follow sheets 3
-// and 6 structurally.  Each analog section is a stable, phase-held, two-pole
-// low-pass whose angle follows the source capacitor totals; F2 resonance
-// controls its pole radius.  The unity-DC numerator models the output of the
-// second switched integrator instead of the first-integrator tap used by the
-// old complex-rotation checkpoint.
-// The tract follows sheets 1 and 2 exactly at section level:
+// and 6 structurally.  Each formant section keeps the charge state p and
+// output state y of the two switched integrators.  Its alpha, a, b, and g
+// coefficients are the exact capacitor ratios drawn on sheets 1 and 2.  F2
+// includes the charge load from its fixed and selected resonance capacitors.
+// The ideal tract follows the section topology on sheets 1 and 2:
 //
-//   VOICED -> F1 -> F2 -> (+FRIC_1) -> F3 -> F4 -> (+FRIC_2) -> F5
+//   VOICED -> F1 -> F2(+FRIC_1) -> F3 -> F4 -> F5(+FRIC_2)
 //
 // FRIC_1 and FRIC_2 are injection nodes, not independent output resonators.
-// This gives usable formant peaks without borrowing SC-01 tables, but it is
-// not yet the final phase-by-phase nodal solution of the LF356/CD4016 network.
+// LF356 bandwidth, CD4016 resistance, and stray capacitance remain outside the
+// ideal charge model.  The section graph and terms are independent of SC-01.
 module ssi263_sc02_audio #(
     parameter logic [3:0] NOISE_D1_SEED = 4'h1,
     parameter logic [4:0] NOISE_D2_SEED = 5'h00,
@@ -64,21 +63,27 @@ module ssi263_sc02_audio #(
     output logic signed [15:0] audio_sample
 );
 
-    localparam logic [14:0] F1_RADIUS_Q14 = 15'd15401;   // 0.940
-    localparam logic [14:0] F3_RADIUS_Q14 = 15'd15237;   // 0.930
-    localparam logic [14:0] F4_RADIUS_Q14 = 15'd15073;   // 0.920
-    localparam logic [14:0] F5_RADIUS_Q14 = 15'd14746;   // 0.900
-    localparam logic signed [15:0] F5_COS_Q14 = 16'sd1159;
-    // Sheets 1 and 2 couple FRIC_1 through 1000 pF and FRIC_2 through
-    // 2700+1000 pF.  These calibrated Q14 gains preserve that 3.7:1 ratio
-    // while an all-phone sweep sets the absolute scale below clipping.  The
-    // final two-phase nodal model can replace the absolute calibration.
-    localparam integer FRIC1_COUPLING_Q14 = 208;
-    localparam integer FRIC2_COUPLING_Q14 = 768;
-    // Leave 12 dB of line-output headroom for the largest ROM/formant pair and
-    // for the card's later PSG/speech mix.  Internal tract state remains full
-    // precision; an exhaustive all-phone model found no rail hits at 1/4.
-    localparam integer LINE_OUTPUT_SHIFT = 2;
+    // Signed 17-bit values with fourteen fractional bits.  Values above one
+    // occur in the drawn F4/F5 charge ratios, so keep the full signed range.
+    localparam logic signed [16:0] F1_ALPHA_Q14 = 17'sd16104;
+    localparam logic signed [16:0] F1_A_Q14     = 17'sd3781;
+    localparam logic signed [16:0] F1_G_Q14     = 17'sd3781;
+    localparam logic signed [16:0] F2_FRIC_H_Q14 = 17'sd2409;
+    localparam logic signed [16:0] F3_ALPHA_Q14 = 17'sd15715;
+    localparam logic signed [16:0] F3_A_Q14     = 17'sd13040;
+    localparam logic signed [16:0] F3_G_Q14     = 17'sd6687;
+    localparam logic signed [16:0] F4_ALPHA_Q14 = 17'sd15656;
+    localparam logic signed [16:0] F4_A_Q14     = 17'sd17112;
+    localparam logic signed [16:0] F5_ALPHA_Q14 = 17'sd15154;
+    localparam logic signed [16:0] F5_A_Q14     = 17'sd20645;
+    localparam logic signed [16:0] F5_B_Q14     = 17'sd22320;
+    localparam logic signed [16:0] F5_FRIC_BASE_G_Q14 = 17'sd5051;
+    localparam logic signed [16:0] F5_FRIC_SW_G_Q14   = 17'sd16252;
+    localparam logic signed [16:0] FILTER_OUTPUT_ALPHA_Q14 = 17'sd16086;
+    // Leave 18 dB of line-output headroom for the largest ROM/formant pair and
+    // for the card's later PSG/speech mix.  The schematic charge-state tract
+    // and DC blocker stay at full precision; only the AO-to-PCM map uses 1/8.
+    localparam integer LINE_OUTPUT_SHIFT = 3;
 
     logic pitch_sync1_q;
     logic pitch_sync2_q;
@@ -99,24 +104,34 @@ module ssi263_sc02_audio #(
     logic noise_advance;
 
     logic signed [23:0] voice_source;
-    logic signed [23:0] fric_source;
+    logic signed [23:0] fric1_source;
+    logic signed [23:0] fric2_source;
     logic signed [23:0] voice_magnitude;
-    logic signed [23:0] fric_positive_magnitude;
-    logic signed [23:0] fric_negative_magnitude;
+    logic signed [17:0] fric_drive;
+    logic signed [17:0] fric_drive_history_q;
+    logic signed [18:0] fric_drive_delta;
+    logic signed [18:0] fric1_gain_extended;
+    logic signed [18:0] fric2_gain_extended;
+    logic signed [18:0] fric2_drive_charge;
+    logic signed [47:0] fric2_source_accumulator;
+    logic signed [23:0] fric2_source_state_q;
+    logic signed [23:0] fric2_source_next;
 
-    // Phi0 samples the complete noise source and both tract nodes.  The
-    // following idle clocks split the two injection sums from the final node
-    // sums.  F3 and F5 do not consume these values until clocks 16 and 28 of
-    // the next Phi1 engine run, so this retiming changes no filter sample.
-    logic signed [23:0] fric_source_phi0_q;
-    logic signed [23:0] f3_mix_base_q;
-    logic signed [23:0] f5_mix_base_q;
-    logic signed [23:0] fric1_partial_q;
-    logic signed [23:0] fric1_injection_q;
-    logic signed [23:0] fric2_injection_q;
+    // Phi0 samples both noise amplifier nodes and route switches.  U156C and
+    // U129D reset both C143 plates each pair, while C150 follows unreset U152
+    // and switched C151 retains a separate source-side charge while open.
+    logic signed [23:0] fric1_source_phi0_q;
+    logic signed [23:0] fric2_source_phi0_q;
+    logic signed [23:0] fric2_base_history_q;
+    logic signed [23:0] fric2_sw_history_q;
     logic               fric1_sw_phi0_q;
     logic               fric2_sw_phi0_q;
-    logic [1:0]         input_mix_stage_q;
+    logic [3:0]         filter_amp_phi0_q;
+    logic [3:0]         f1_code_phi0_q;
+    logic [3:0]         f2_code_phi0_q;
+    logic [3:0]         f2_res_code_phi0_q;
+    logic [3:0]         f3_code_phi0_q;
+    logic [3:0]         f4_code_phi0_q;
 
     // B/D/P/T/K are silent stops (PW2=1, PW3=0).  The following phone's
     // normal source passes through parameters that start at the stop's tract
@@ -145,6 +160,9 @@ module ssi263_sc02_audio #(
     logic signed [23:0] f3_input_q;
     logic signed [23:0] f4_input_q;
     logic signed [23:0] f5_input_q;
+    logic signed [23:0] f1_input_history_q;
+    logic signed [23:0] f3_side_input_q;
+    logic signed [23:0] f3_side_history_q;
     logic signed [23:0] output_hold_q;
     logic signed [23:0] reconstruction_hold_q;
     logic signed [23:0] dc_previous_input_q;
@@ -157,46 +175,56 @@ module ssi263_sc02_audio #(
     logic dc_stage2_pending_q;
     logic dc_active_stage1_q;
     logic dc_active_stage2_q;
-    logic [7:0] filter_frequency_q;
-
-    // Two registered RTL product lanes form a 32-cycle scheduler.  Each
-    // section first derives a1=2*r*cos(theta), r2=r*r, and
-    // b0=1-a1+r2, then evaluates y=a1*y1-r2*y2+b0*x.  The normalized
-    // numerator removes the unwanted zero from the old complex-rotation tap.
-    // The default XCK/DIV2 profile leaves at least 130 fabric clocks between
+    // Two registered logical product lanes form a 34-cycle scheduler.  Each
+    // section keeps six fixed slots.  F5 takes one slot for the independent
+    // C150/C151 histories and one to register its completed state before the
+    // U146 delta subtraction.  fN_state_q is y; fN_history_q is the matching
+    // p charge state so existing focused probes remain useful.
+    // The default XCK/DIV2 profile leaves at least 133 fabric clocks between
     // the fastest filter phases, with margin for two independent instances.
     logic engine_busy_q;
     logic engine_overrun_q;
     logic [2:0] engine_section_q;
     logic [3:0] engine_stage_q;
-    logic signed [23:0] engine_state_y1;
-    logic signed [23:0] engine_state_y2;
-    logic signed [23:0] engine_input;
-    logic signed [15:0] engine_cosine;
-    logic [14:0] engine_radius;
-    logic signed [23:0] engine_operand_a;
-    logic signed [23:0] engine_operand_b;
+    logic signed [23:0] engine_state_y_q;
+    logic signed [23:0] engine_state_p_q;
+    logic signed [24:0] engine_main_delta_q;
+    logic signed [16:0] engine_alpha_q;
+    logic signed [16:0] engine_a_q;
+    logic signed [16:0] engine_b_q;
+    logic signed [24:0] engine_side_delta_q;
+    logic signed [16:0] engine_g_q;
+    logic signed [24:0] engine_side2_delta_q;
+    logic signed [16:0] engine_g2_q;
+    logic signed [24:0] engine_output_delta_q;
+    logic signed [16:0] engine_h_q;
+    logic signed [24:0] engine_operand_a;
+    logic signed [24:0] engine_operand_b;
     logic signed [16:0] engine_coefficient_a;
     logic signed [16:0] engine_coefficient_b;
-    logic signed [40:0] engine_product_a;
-    logic signed [40:0] engine_product_b;
-    logic signed [40:0] product_a_q;
-    logic signed [40:0] product_b_q;
-    logic signed [16:0] pole_a1_q;
-    logic signed [16:0] pole_r2_q;
-    logic signed [16:0] pole_b0_q;
-    logic signed [16:0] pole_a1_next;
-    logic signed [16:0] pole_r2_next;
-    logic signed [17:0] pole_b0_wide;
-    logic signed [23:0] output_sum_q;
+    logic signed [41:0] engine_product_a;
+    logic signed [41:0] engine_product_b;
+    logic signed [41:0] product_a_q;
+    logic signed [41:0] product_b_q;
+    logic signed [24:0] output_sum_q;
+    logic signed [23:0] output_old_state_q;
+    logic signed [23:0] engine_charge_next;
     logic signed [23:0] engine_section_next;
     logic signed [23:0] engine_output_next;
     logic signed [47:0] product_a_q_ext;
     logic signed [47:0] product_b_q_ext;
     logic signed [47:0] recurrence_accumulator;
     logic signed [47:0] recurrence_accumulator_q;
+    logic signed [47:0] charge_accumulator;
+    logic signed [47:0] rounded_charge_accumulator;
+    logic signed [47:0] state_y_q14;
+    logic signed [47:0] section_accumulator;
     logic signed [47:0] section_accumulator_q;
+    logic signed [47:0] complete_section_accumulator;
     logic signed [47:0] rounded_section_accumulator;
+    logic signed [47:0] output_accumulator;
+    logic signed [47:0] rounded_output_accumulator;
+    logic signed [23:0] charge_work_q;
 
     function automatic logic signed [23:0] sat24_from48(
         input logic signed [47:0] value
@@ -211,22 +239,6 @@ module ssi263_sc02_audio #(
                 sat24_from48 = -24'sd8388608;
             else
                 sat24_from48 = value[23:0];
-        end
-    endfunction
-
-    function automatic logic signed [23:0] sat24_add(
-        input logic signed [23:0] a,
-        input logic signed [23:0] b
-    );
-        logic signed [24:0] sum;
-        begin
-            sum = {a[23], a} + {b[23], b};
-            if (sum > 25'sd8388607)
-                sat24_add = 24'sh7FFFFF;
-            else if (sum < -25'sd8388608)
-                sat24_add = -24'sd8388608;
-            else
-                sat24_add = sum[23:0];
         end
     endfunction
 
@@ -257,8 +269,7 @@ module ssi263_sc02_audio #(
     endfunction
 
     // Physical switched-capacitor totals in pF.  The small integer arithmetic
-    // remains exact; mapping those totals to stable resonator poles is the
-    // fixed-point approximation documented at the top of this block.
+    // remains exact and feeds the Q14 charge-ratio tables below.
     function automatic logic [12:0] f1_capacitance(input logic [3:0] code);
         integer total;
         begin
@@ -290,7 +301,7 @@ module ssi263_sc02_audio #(
             if (code[0]) total = total + 220;
             if (code[1]) total = total + 430;
             if (code[2]) total = total + 870;
-            if (code[3]) total = total + 2300;
+            if (code[3]) total = total + 1800;
             f2_res_capacitance = total[12:0];
         end
     endfunction
@@ -311,12 +322,169 @@ module ssi263_sc02_audio #(
         integer total;
         begin
             total = 0;
-            // The code-0 branch is two 200 pF banks in series: 100 pF.
-            if (code[0]) total = total + 100;
+            if (code[0]) total = total + 200;
             if (code[1]) total = total + 400;
             if (code[2]) total = total + 820;
             if (code[3]) total = total + 1620;
             f4_capacitance = total[12:0];
+        end
+    endfunction
+
+    // Exact rounded capacitor ratios in Q14.  Keeping these as named case
+    // tables avoids synthesizing constant dividers and makes the schematic
+    // values directly checkable in the focused bench.
+    function automatic logic signed [16:0] f1_b_q14(
+        input logic [3:0] code
+    );
+        begin
+            case (code)
+                4'h0: f1_b_q14 = 17'sd356;
+                4'h1: f1_b_q14 = 17'sd584;
+                4'h2: f1_b_q14 = 17'sd826;
+                4'h3: f1_b_q14 = 17'sd1054;
+                4'h4: f1_b_q14 = 17'sd1296;
+                4'h5: f1_b_q14 = 17'sd1524;
+                4'h6: f1_b_q14 = 17'sd1767;
+                4'h7: f1_b_q14 = 17'sd1995;
+                4'h8: f1_b_q14 = 17'sd2208;
+                4'h9: f1_b_q14 = 17'sd2436;
+                4'hA: f1_b_q14 = 17'sd2678;
+                4'hB: f1_b_q14 = 17'sd2906;
+                4'hC: f1_b_q14 = 17'sd3149;
+                4'hD: f1_b_q14 = 17'sd3377;
+                4'hE: f1_b_q14 = 17'sd3619;
+                default: f1_b_q14 = 17'sd3847;
+            endcase
+        end
+    endfunction
+
+    function automatic logic signed [16:0] f2_b_q14(
+        input logic [3:0] code
+    );
+        begin
+            case (code)
+                4'h0: f2_b_q14 = 17'sd1205;
+                4'h1: f2_b_q14 = 17'sd1879;
+                4'h2: f2_b_q14 = 17'sd2554;
+                4'h3: f2_b_q14 = 17'sd3229;
+                4'h4: f2_b_q14 = 17'sd3903;
+                4'h5: f2_b_q14 = 17'sd4578;
+                4'h6: f2_b_q14 = 17'sd5253;
+                4'h7: f2_b_q14 = 17'sd5927;
+                4'h8: f2_b_q14 = 17'sd6746;
+                4'h9: f2_b_q14 = 17'sd7421;
+                4'hA: f2_b_q14 = 17'sd8096;
+                4'hB: f2_b_q14 = 17'sd8770;
+                4'hC: f2_b_q14 = 17'sd9445;
+                4'hD: f2_b_q14 = 17'sd10120;
+                4'hE: f2_b_q14 = 17'sd10794;
+                default: f2_b_q14 = 17'sd11469;
+            endcase
+        end
+    endfunction
+
+    function automatic logic signed [16:0] f2_alpha_q14(
+        input logic [3:0] code
+    );
+        begin
+            // 6800/(6800 + 200 + CRES_selected).  The 200 pF fixed load
+            // and selected RES bank bound the otherwise lossless ideal F2.
+            case (code)
+                4'h0: f2_alpha_q14 = 17'sd15916;
+                4'h1: f2_alpha_q14 = 17'sd15431;
+                4'h2: f2_alpha_q14 = 17'sd14995;
+                4'h3: f2_alpha_q14 = 17'sd14564;
+                4'h4: f2_alpha_q14 = 17'sd14156;
+                4'h5: f2_alpha_q14 = 17'sd13771;
+                4'h6: f2_alpha_q14 = 17'sd13423;
+                4'h7: f2_alpha_q14 = 17'sd13076;
+                4'h8: f2_alpha_q14 = 17'sd12660;
+                4'h9: f2_alpha_q14 = 17'sd12352;
+                4'hA: f2_alpha_q14 = 17'sd12071;
+                4'hB: f2_alpha_q14 = 17'sd11790;
+                4'hC: f2_alpha_q14 = 17'sd11521;
+                4'hD: f2_alpha_q14 = 17'sd11265;
+                4'hE: f2_alpha_q14 = 17'sd11031;
+                default: f2_alpha_q14 = 17'sd10796;
+            endcase
+        end
+    endfunction
+
+    function automatic logic signed [16:0] f2_a_q14(
+        input logic [3:0] code
+    );
+        begin
+            // 4700/(6800 + 200 + CRES_selected).  Use the same loaded
+            // denominator as alpha so the first integrator conserves charge.
+            case (code)
+                4'h0: f2_a_q14 = 17'sd11001;
+                4'h1: f2_a_q14 = 17'sd10665;
+                4'h2: f2_a_q14 = 17'sd10364;
+                4'h3: f2_a_q14 = 17'sd10066;
+                4'h4: f2_a_q14 = 17'sd9785;
+                4'h5: f2_a_q14 = 17'sd9519;
+                4'h6: f2_a_q14 = 17'sd9278;
+                4'h7: f2_a_q14 = 17'sd9038;
+                4'h8: f2_a_q14 = 17'sd8751;
+                4'h9: f2_a_q14 = 17'sd8537;
+                4'hA: f2_a_q14 = 17'sd8343;
+                4'hB: f2_a_q14 = 17'sd8149;
+                4'hC: f2_a_q14 = 17'sd7963;
+                4'hD: f2_a_q14 = 17'sd7786;
+                4'hE: f2_a_q14 = 17'sd7624;
+                default: f2_a_q14 = 17'sd7462;
+            endcase
+        end
+    endfunction
+
+    function automatic logic signed [16:0] f3_b_q14(
+        input logic [3:0] code
+    );
+        begin
+            case (code)
+                4'h0: f3_b_q14 = 17'sd2858;
+                4'h1: f3_b_q14 = 17'sd3591;
+                4'h2: f3_b_q14 = 17'sd4323;
+                4'h3: f3_b_q14 = 17'sd5055;
+                4'h4: f3_b_q14 = 17'sd5717;
+                4'h5: f3_b_q14 = 17'sd6449;
+                4'h6: f3_b_q14 = 17'sd7181;
+                4'h7: f3_b_q14 = 17'sd7913;
+                4'h8: f3_b_q14 = 17'sd8575;
+                4'h9: f3_b_q14 = 17'sd9308;
+                4'hA: f3_b_q14 = 17'sd10040;
+                4'hB: f3_b_q14 = 17'sd10772;
+                4'hC: f3_b_q14 = 17'sd11434;
+                4'hD: f3_b_q14 = 17'sd12166;
+                4'hE: f3_b_q14 = 17'sd12898;
+                default: f3_b_q14 = 17'sd13630;
+            endcase
+        end
+    endfunction
+
+    function automatic logic signed [16:0] f4_b_q14(
+        input logic [3:0] code
+    );
+        begin
+            // The second sample always includes C155=1200+470=1670 pF.
+            case (code)
+                4'h0: f4_b_q14 = 17'sd6363;
+                4'h1: f4_b_q14 = 17'sd7125;
+                4'h2: f4_b_q14 = 17'sd7887;
+                4'h3: f4_b_q14 = 17'sd8649;
+                4'h4: f4_b_q14 = 17'sd9487;
+                4'h5: f4_b_q14 = 17'sd10250;
+                4'h6: f4_b_q14 = 17'sd11012;
+                4'h7: f4_b_q14 = 17'sd11774;
+                4'h8: f4_b_q14 = 17'sd12536;
+                4'h9: f4_b_q14 = 17'sd13298;
+                4'hA: f4_b_q14 = 17'sd14060;
+                4'hB: f4_b_q14 = 17'sd14822;
+                4'hC: f4_b_q14 = 17'sd15660;
+                4'hD: f4_b_q14 = 17'sd16422;
+                4'hE: f4_b_q14 = 17'sd17184;
+                default: f4_b_q14 = 17'sd17946;
+            endcase
         end
     endfunction
 
@@ -332,7 +500,7 @@ module ssi263_sc02_audio #(
         end
     endfunction
 
-    function automatic logic [12:0] fric_pos_capacitance(input logic [3:0] code);
+    function automatic logic [12:0] fric1_capacitance(input logic [3:0] code);
         integer total;
         begin
             total = 0;
@@ -340,11 +508,11 @@ module ssi263_sc02_audio #(
             if (code[1]) total = total + 512;
             if (code[2]) total = total + 1068;
             if (code[3]) total = total + 2160;
-            fric_pos_capacitance = total[12:0];
+            fric1_capacitance = total[12:0];
         end
     endfunction
 
-    function automatic logic [12:0] fric_neg_capacitance(input logic [3:0] code);
+    function automatic logic [12:0] fric2_capacitance(input logic [3:0] code);
         integer total;
         begin
             total = 0;
@@ -352,7 +520,7 @@ module ssi263_sc02_audio #(
             if (code[1]) total = total + 530;
             if (code[2]) total = total + 1082;
             if (code[3]) total = total + 2160;
-            fric_neg_capacitance = total[12:0];
+            fric2_capacitance = total[12:0];
         end
     endfunction
 
@@ -367,217 +535,6 @@ module ssi263_sc02_audio #(
             if (code[2]) total = total + 300;
             if (code[3]) total = total + 600;
             filter_amp_capacitance = total[12:0];
-        end
-    endfunction
-
-    // Q2.14 sine/cosine pairs.  Angles increase with the exact capacitor
-    // totals above, so changing a code moves the section's normalized center.
-    // The live FILT divider changes the rate of every complete Phi0/Phi1 pair,
-    // scaling every center in wall-clock Hz without changing these ratios.
-    function automatic logic signed [15:0] f1_cos_q14(input logic [3:0] code);
-        begin
-            case (code)
-                4'h0: f1_cos_q14 = 16'sd16355;
-                4'h1: f1_cos_q14 = 16'sd16337;
-                4'h2: f1_cos_q14 = 16'sd16314;
-                4'h3: f1_cos_q14 = 16'sd16289;
-                4'h4: f1_cos_q14 = 16'sd16257;
-                4'h5: f1_cos_q14 = 16'sd16223;
-                4'h6: f1_cos_q14 = 16'sd16183;
-                4'h7: f1_cos_q14 = 16'sd16140;
-                4'h8: f1_cos_q14 = 16'sd16097;
-                4'h9: f1_cos_q14 = 16'sd16048;
-                4'hA: f1_cos_q14 = 16'sd15990;
-                4'hB: f1_cos_q14 = 16'sd15932;
-                4'hC: f1_cos_q14 = 16'sd15867;
-                4'hD: f1_cos_q14 = 16'sd15801;
-                4'hE: f1_cos_q14 = 16'sd15726;
-                default: f1_cos_q14 = 16'sd15652;
-            endcase
-        end
-    endfunction
-
-    function automatic logic signed [15:0] f1_sin_q14(input logic [3:0] code);
-        begin
-            case (code)
-                4'h0: f1_sin_q14 = 16'sd982;
-                4'h1: f1_sin_q14 = 16'sd1239;
-                4'h2: f1_sin_q14 = 16'sd1511;
-                4'h3: f1_sin_q14 = 16'sd1766;
-                4'h4: f1_sin_q14 = 16'sd2037;
-                4'h5: f1_sin_q14 = 16'sd2292;
-                4'h6: f1_sin_q14 = 16'sd2561;
-                4'h7: f1_sin_q14 = 16'sd2815;
-                4'h8: f1_sin_q14 = 16'sd3052;
-                4'h9: f1_sin_q14 = 16'sd3303;
-                4'hA: f1_sin_q14 = 16'sd3570;
-                4'hB: f1_sin_q14 = 16'sd3820;
-                4'hC: f1_sin_q14 = 16'sd4085;
-                4'hD: f1_sin_q14 = 16'sd4333;
-                4'hE: f1_sin_q14 = 16'sd4596;
-                default: f1_sin_q14 = 16'sd4842;
-            endcase
-        end
-    endfunction
-
-    function automatic logic signed [15:0] f2_cos_q14(input logic [3:0] code);
-        begin
-            case (code)
-                4'h0: f2_cos_q14 = 16'sd16119;
-                4'h1: f2_cos_q14 = 16'sd15973;
-                4'h2: f2_cos_q14 = 16'sd15796;
-                4'h3: f2_cos_q14 = 16'sd15588;
-                4'h4: f2_cos_q14 = 16'sd15349;
-                4'h5: f2_cos_q14 = 16'sd15079;
-                4'h6: f2_cos_q14 = 16'sd14781;
-                4'h7: f2_cos_q14 = 16'sd14453;
-                4'h8: f2_cos_q14 = 16'sd14016;
-                4'h9: f2_cos_q14 = 16'sd13626;
-                4'hA: f2_cos_q14 = 16'sd13209;
-                4'hB: f2_cos_q14 = 16'sd12767;
-                4'hC: f2_cos_q14 = 16'sd12299;
-                4'hD: f2_cos_q14 = 16'sd11807;
-                4'hE: f2_cos_q14 = 16'sd11292;
-                default: f2_cos_q14 = 16'sd10754;
-            endcase
-        end
-    endfunction
-
-    function automatic logic signed [15:0] f2_sin_q14(input logic [3:0] code);
-        begin
-            case (code)
-                4'h0: f2_sin_q14 = 16'sd2933;
-                4'h1: f2_sin_q14 = 16'sd3645;
-                4'h2: f2_sin_q14 = 16'sd4350;
-                4'h3: f2_sin_q14 = 16'sd5046;
-                4'h4: f2_sin_q14 = 16'sd5732;
-                4'h5: f2_sin_q14 = 16'sd6407;
-                4'h6: f2_sin_q14 = 16'sd7069;
-                4'h7: f2_sin_q14 = 16'sd7717;
-                4'h8: f2_sin_q14 = 16'sd8484;
-                4'h9: f2_sin_q14 = 16'sd9097;
-                4'hA: f2_sin_q14 = 16'sd9693;
-                4'hB: f2_sin_q14 = 16'sd10269;
-                4'hC: f2_sin_q14 = 16'sd10825;
-                4'hD: f2_sin_q14 = 16'sd11359;
-                4'hE: f2_sin_q14 = 16'sd11872;
-                default: f2_sin_q14 = 16'sd12361;
-            endcase
-        end
-    endfunction
-
-    function automatic logic signed [15:0] f3_cos_q14(input logic [3:0] code);
-        begin
-            case (code)
-                4'h0: f3_cos_q14 = 16'sd14753;
-                4'h1: f3_cos_q14 = 16'sd14397;
-                4'h2: f3_cos_q14 = 16'sd14009;
-                4'h3: f3_cos_q14 = 16'sd13589;
-                4'h4: f3_cos_q14 = 16'sd13183;
-                4'h5: f3_cos_q14 = 16'sd12705;
-                4'h6: f3_cos_q14 = 16'sd12199;
-                4'h7: f3_cos_q14 = 16'sd11665;
-                4'h8: f3_cos_q14 = 16'sd11159;
-                4'h9: f3_cos_q14 = 16'sd10576;
-                4'hA: f3_cos_q14 = 16'sd9969;
-                4'hB: f3_cos_q14 = 16'sd9340;
-                4'hC: f3_cos_q14 = 16'sd8752;
-                4'hD: f3_cos_q14 = 16'sd8083;
-                4'hE: f3_cos_q14 = 16'sd7396;
-                default: f3_cos_q14 = 16'sd6693;
-            endcase
-        end
-    endfunction
-
-    function automatic logic signed [15:0] f3_sin_q14(input logic [3:0] code);
-        begin
-            case (code)
-                4'h0: f3_sin_q14 = 16'sd7126;
-                4'h1: f3_sin_q14 = 16'sd7820;
-                4'h2: f3_sin_q14 = 16'sd8496;
-                4'h3: f3_sin_q14 = 16'sd9152;
-                4'h4: f3_sin_q14 = 16'sd9729;
-                4'h5: f3_sin_q14 = 16'sd10345;
-                4'h6: f3_sin_q14 = 16'sd10937;
-                4'h7: f3_sin_q14 = 16'sd11505;
-                4'h8: f3_sin_q14 = 16'sd11996;
-                4'h9: f3_sin_q14 = 16'sd12513;
-                4'hA: f3_sin_q14 = 16'sd13002;
-                4'hB: f3_sin_q14 = 16'sd13461;
-                4'hC: f3_sin_q14 = 16'sd13851;
-                4'hD: f3_sin_q14 = 16'sd14251;
-                4'hE: f3_sin_q14 = 16'sd14620;
-                default: f3_sin_q14 = 16'sd14955;
-            endcase
-        end
-    endfunction
-
-    function automatic logic signed [15:0] f4_cos_q14(input logic [3:0] code);
-        begin
-            case (code)
-                4'h0: f4_cos_q14 = 16'sd11988;
-                4'h1: f4_cos_q14 = 16'sd11719;
-                4'h2: f4_cos_q14 = 16'sd10872;
-                4'h3: f4_cos_q14 = 16'sd10577;
-                4'h4: f4_cos_q14 = 16'sd9594;
-                4'h5: f4_cos_q14 = 16'sd9275;
-                4'h6: f4_cos_q14 = 16'sd8287;
-                4'h7: f4_cos_q14 = 16'sd7948;
-                4'h8: f4_cos_q14 = 16'sd6906;
-                4'h9: f4_cos_q14 = 16'sd6550;
-                4'hA: f4_cos_q14 = 16'sd5461;
-                4'hB: f4_cos_q14 = 16'sd5092;
-                4'hC: f4_cos_q14 = 16'sd3892;
-                4'hD: f4_cos_q14 = 16'sd3512;
-                4'hE: f4_cos_q14 = 16'sd2361;
-                default: f4_cos_q14 = 16'sd1974;
-            endcase
-        end
-    endfunction
-
-    function automatic logic signed [15:0] f4_sin_q14(input logic [3:0] code);
-        begin
-            case (code)
-                4'h0: f4_sin_q14 = 16'sd11168;
-                4'h1: f4_sin_q14 = 16'sd11450;
-                4'h2: f4_sin_q14 = 16'sd12257;
-                4'h3: f4_sin_q14 = 16'sd12513;
-                4'h4: f4_sin_q14 = 16'sd13281;
-                4'h5: f4_sin_q14 = 16'sd13506;
-                4'h6: f4_sin_q14 = 16'sd14134;
-                4'h7: f4_sin_q14 = 16'sd14327;
-                4'h8: f4_sin_q14 = 16'sd14858;
-                4'h9: f4_sin_q14 = 16'sd15018;
-                4'hA: f4_sin_q14 = 16'sd15447;
-                4'hB: f4_sin_q14 = 16'sd15573;
-                4'hC: f4_sin_q14 = 16'sd15915;
-                4'hD: f4_sin_q14 = 16'sd16003;
-                4'hE: f4_sin_q14 = 16'sd16213;
-                default: f4_sin_q14 = 16'sd16265;
-            endcase
-        end
-    endfunction
-
-    function automatic logic [14:0] f2_radius_q14(input logic [3:0] code);
-        begin
-            case (code)
-                4'h0: f2_radius_q14 = 15'd14418;
-                4'h1: f2_radius_q14 = 15'd14512;
-                4'h2: f2_radius_q14 = 15'd14602;
-                4'h3: f2_radius_q14 = 15'd14697;
-                4'h4: f2_radius_q14 = 15'd14791;
-                4'h5: f2_radius_q14 = 15'd14885;
-                4'h6: f2_radius_q14 = 15'd14975;
-                4'h7: f2_radius_q14 = 15'd15070;
-                4'h8: f2_radius_q14 = 15'd15404;
-                4'h9: f2_radius_q14 = 15'd15499;
-                4'hA: f2_radius_q14 = 15'd15589;
-                4'hB: f2_radius_q14 = 15'd15683;
-                4'hC: f2_radius_q14 = 15'd15778;
-                4'hD: f2_radius_q14 = 15'd15872;
-                4'hE: f2_radius_q14 = 15'd15962;
-                default: f2_radius_q14 = 15'd16056;
-            endcase
         end
     endfunction
 
@@ -605,83 +562,85 @@ module ssi263_sc02_audio #(
         end
     endfunction
 
-    function automatic logic [12:0] fric_pos_gain(input logic [3:0] code);
+    function automatic logic [12:0] fric1_gain(input logic [3:0] code);
         begin
             // Exact rounded Cselected/C133 values in Q12; C133 is 3900 pF.
             case (code)
-                4'h0: fric_pos_gain = 13'd0;
-                4'h1: fric_pos_gain = 13'd284;
-                4'h2: fric_pos_gain = 13'd538;
-                4'h3: fric_pos_gain = 13'd821;
-                4'h4: fric_pos_gain = 13'd1122;
-                4'h5: fric_pos_gain = 13'd1405;
-                4'h6: fric_pos_gain = 13'd1659;
-                4'h7: fric_pos_gain = 13'd1943;
-                4'h8: fric_pos_gain = 13'd2269;
-                4'h9: fric_pos_gain = 13'd2552;
-                4'hA: fric_pos_gain = 13'd2806;
-                4'hB: fric_pos_gain = 13'd3090;
-                4'hC: fric_pos_gain = 13'd3390;
-                4'hD: fric_pos_gain = 13'd3674;
-                4'hE: fric_pos_gain = 13'd3928;
-                default: fric_pos_gain = 13'd4212;
+                4'h0: fric1_gain = 13'd0;
+                4'h1: fric1_gain = 13'd284;
+                4'h2: fric1_gain = 13'd538;
+                4'h3: fric1_gain = 13'd821;
+                4'h4: fric1_gain = 13'd1122;
+                4'h5: fric1_gain = 13'd1405;
+                4'h6: fric1_gain = 13'd1659;
+                4'h7: fric1_gain = 13'd1943;
+                4'h8: fric1_gain = 13'd2269;
+                4'h9: fric1_gain = 13'd2552;
+                4'hA: fric1_gain = 13'd2806;
+                4'hB: fric1_gain = 13'd3090;
+                4'hC: fric1_gain = 13'd3390;
+                4'hD: fric1_gain = 13'd3674;
+                4'hE: fric1_gain = 13'd3928;
+                default: fric1_gain = 13'd4212;
             endcase
         end
     endfunction
 
-    function automatic logic [12:0] fric_neg_gain(input logic [3:0] code);
+    function automatic logic [12:0] fric2_gain(input logic [3:0] code);
         begin
             // Exact rounded Cselected/C138 values in Q12; C138 is 3900 pF.
             case (code)
-                4'h0: fric_neg_gain = 13'd0;
-                4'h1: fric_neg_gain = 13'd284;
-                4'h2: fric_neg_gain = 13'd557;
-                4'h3: fric_neg_gain = 13'd840;
-                4'h4: fric_neg_gain = 13'd1136;
-                4'h5: fric_neg_gain = 13'd1420;
-                4'h6: fric_neg_gain = 13'd1693;
-                4'h7: fric_neg_gain = 13'd1977;
-                4'h8: fric_neg_gain = 13'd2269;
-                4'h9: fric_neg_gain = 13'd2552;
-                4'hA: fric_neg_gain = 13'd2825;
-                4'hB: fric_neg_gain = 13'd3109;
-                4'hC: fric_neg_gain = 13'd3405;
-                4'hD: fric_neg_gain = 13'd3689;
-                4'hE: fric_neg_gain = 13'd3962;
-                default: fric_neg_gain = 13'd4245;
+                4'h0: fric2_gain = 13'd0;
+                4'h1: fric2_gain = 13'd284;
+                4'h2: fric2_gain = 13'd557;
+                4'h3: fric2_gain = 13'd840;
+                4'h4: fric2_gain = 13'd1136;
+                4'h5: fric2_gain = 13'd1420;
+                4'h6: fric2_gain = 13'd1693;
+                4'h7: fric2_gain = 13'd1977;
+                4'h8: fric2_gain = 13'd2269;
+                4'h9: fric2_gain = 13'd2552;
+                4'hA: fric2_gain = 13'd2825;
+                4'hB: fric2_gain = 13'd3109;
+                4'hC: fric2_gain = 13'd3405;
+                4'hD: fric2_gain = 13'd3689;
+                4'hE: fric2_gain = 13'd3962;
+                default: fric2_gain = 13'd4245;
             endcase
         end
     endfunction
 
-    function automatic logic [12:0] filter_amp_gain(input logic [3:0] code);
+    function automatic logic signed [16:0] filter_amp_gain(
+        input logic [3:0] code
+    );
         begin
-            // Normalize the four controlled branches to their 1126 pF sum.
-            // C172/C173 and the final nodal solution will set the final gain.
+            // Exact rounded Cselected/(C172+C173) values in Q14.  U145A
+            // resets the feedback path in Phi0; U145B inserts 2700 pF in
+            // Phi1, while the 50 pF C173 branch remains present.
             case (code)
-                4'h0: filter_amp_gain = 13'd0;
-                4'h1: filter_amp_gain = 13'd276;
-                4'h2: filter_amp_gain = 13'd546;
-                4'h3: filter_amp_gain = 13'd822;
-                4'h4: filter_amp_gain = 13'd1091;
-                4'h5: filter_amp_gain = 13'd1368;
-                4'h6: filter_amp_gain = 13'd1637;
-                4'h7: filter_amp_gain = 13'd1913;
-                4'h8: filter_amp_gain = 13'd2183;
-                4'h9: filter_amp_gain = 13'd2459;
-                4'hA: filter_amp_gain = 13'd2728;
-                4'hB: filter_amp_gain = 13'd3005;
-                4'hC: filter_amp_gain = 13'd3274;
-                4'hD: filter_amp_gain = 13'd3550;
-                4'hE: filter_amp_gain = 13'd3820;
-                default: filter_amp_gain = 13'd4096;
+                4'h0: filter_amp_gain = 17'sd0;
+                4'h1: filter_amp_gain = 17'sd453;
+                4'h2: filter_amp_gain = 17'sd894;
+                4'h3: filter_amp_gain = 17'sd1346;
+                4'h4: filter_amp_gain = 17'sd1787;
+                4'h5: filter_amp_gain = 17'sd2240;
+                4'h6: filter_amp_gain = 17'sd2681;
+                4'h7: filter_amp_gain = 17'sd3134;
+                4'h8: filter_amp_gain = 17'sd3575;
+                4'h9: filter_amp_gain = 17'sd4027;
+                4'hA: filter_amp_gain = 17'sd4468;
+                4'hB: filter_amp_gain = 17'sd4921;
+                4'hC: filter_amp_gain = 17'sd5362;
+                4'hD: filter_amp_gain = 17'sd5815;
+                4'hE: filter_amp_gain = 17'sd6256;
+                default: filter_amp_gain = 17'sd6709;
             endcase
         end
     endfunction
 
     always_comb begin
         voiced_q = (voice_shape_q == 4'hF);
-        dc_input = (phone_active && !powered_down) ?
-                   reconstruction_hold_q : 24'sd0;
+        dc_input = powered_down ? 24'sd0 : reconstruction_hold_q;
         dc_filtered_wide = dc_sum_q - (dc_sum_q >>> 8);
         stop_class = pw_2 && !pw_3;
         source_voiced = stop_class ? 1'b0 : voiced;
@@ -706,17 +665,45 @@ module ssi263_sc02_audio #(
         // gate.  The core has already resolved that physical clock edge.
         noise_advance = noise_clock_ce;
 
-        // Unit amplitude is exactly 2^16, so Q12 gain becomes gain << 4.
-        // Keep these source paths free of general multipliers.
+        // The normalized unit amplitude is 2^16, so Q12 gain becomes
+        // gain << 4.  Keep these source paths free of general multipliers.
         voice_magnitude = $signed(
             {11'd0, voice_gain(source_voice_amp_code)}
         ) <<< 4;
-        fric_positive_magnitude = $signed(
-            {11'd0, fric_pos_gain(source_fric_amp_code)}
-        ) <<< 4;
-        fric_negative_magnitude = $signed(
-            {11'd0, fric_neg_gain(source_fric_amp_code)}
-        ) <<< 4;
+        // U157 and U152 are distinct switched-capacitor amplifiers.  Their
+        // selected banks differ, and sheets 1/2 route them to C143 and
+        // C150/C151 respectively; do not merge them into two polarities of
+        // one synthetic source.
+        // Use a normalized 0/2^16 HCC drive so the drawn capacitor ratios
+        // and signs remain exact in fixed point.  The schematic does not set
+        // the absolute U150 pulse swing or LF356/CD4016 nonideal response.
+        fric_drive = 18'sd0;
+        if (source_fricative && phone_active && !powered_down)
+            fric_drive = noise_bit ? 18'sd65536 : 18'sd0;
+        fric_drive_delta =
+            $signed({fric_drive[17], fric_drive}) -
+            $signed({fric_drive_history_q[17], fric_drive_history_q});
+        fric1_gain_extended = $signed(
+            {6'd0, fric1_gain(source_fric_amp_code)}
+        );
+        fric2_gain_extended = $signed(
+            {6'd0, fric2_gain(source_fric_amp_code)}
+        );
+        case (fric_drive_delta)
+            19'sd65536: begin
+                fric2_drive_charge = fric2_gain_extended <<< 4;
+            end
+            -19'sd65536: begin
+                fric2_drive_charge = -(fric2_gain_extended <<< 4);
+            end
+            default: begin
+                fric2_drive_charge = 19'sd0;
+            end
+        endcase
+        fric2_source_accumulator =
+            {{24{fric2_source_state_q[23]}}, fric2_source_state_q} -
+            {{29{fric2_drive_charge[18]}}, fric2_drive_charge};
+        fric2_source_next = sat24_from48(fric2_source_accumulator);
 
         if (!source_voiced || !phone_active || powered_down) begin
             voice_source = 24'sd0;
@@ -730,124 +717,115 @@ module ssi263_sc02_audio #(
             voice_source = voice_magnitude;
         end
 
-        if (!source_fricative || !phone_active || powered_down) begin
-            fric_source = 24'sd0;
-        end else if (noise_bit) begin
-            fric_source = fric_positive_magnitude;
-        end else begin
-            fric_source = -fric_negative_magnitude;
-        end
+        // U156B grounds the selected input bank and U156C resets C133/U157
+        // in Phi1.  U156A therefore regenerates this level from the current
+        // HCC bit in every Phi0; it is not an HCC-edge accumulator.
+        fric1_source = (fric_drive == 18'sd65536) ?
+            -$signed({5'd0, fric1_gain_extended}) <<< 4 : 24'sd0;
+        // U152 retains charge across FRIC_AMP code changes; expose the value
+        // that the next Phi0 edge will commit and snapshot.
+        fric2_source = fric2_source_next;
 
     end
 
     always_comb begin
-        engine_state_y1 = 24'sd0;
-        engine_state_y2 = 24'sd0;
-        engine_input = 24'sd0;
-        engine_cosine = 16'sd16384;
-        engine_radius = 15'd0;
+        // Derive every value that consumes a registered DSP result before
+        // selecting the next DSP operands.  Stage 2 uses engine_charge_next;
+        // computing it later in this same procedural block would make the
+        // multiplier see the prior section's value for one evaluation.
+        product_a_q_ext = {{6{product_a_q[41]}}, product_a_q};
+        product_b_q_ext = {{6{product_b_q[41]}}, product_b_q};
 
-        case (engine_section_q)
-            3'd0: begin
-                engine_state_y1 = f1_state_q;
-                engine_state_y2 = f1_history_q;
-                engine_input = f1_input_q;
-                engine_cosine = f1_cos_q14(f1_code);
-                engine_radius = F1_RADIUS_Q14;
-            end
-            3'd1: begin
-                engine_state_y1 = f2_state_q;
-                engine_state_y2 = f2_history_q;
-                engine_input = f2_input_q;
-                engine_cosine = f2_cos_q14(f2_code);
-                engine_radius = f2_radius_q14(f2_res_code);
-            end
-            3'd2: begin
-                engine_state_y1 = f3_state_q;
-                engine_state_y2 = f3_history_q;
-                engine_input = f3_input_q;
-                engine_cosine = f3_cos_q14(f3_code);
-                engine_radius = F3_RADIUS_Q14;
-            end
-            3'd3: begin
-                engine_state_y1 = f4_state_q;
-                engine_state_y2 = f4_history_q;
-                engine_input = f4_input_q;
-                engine_cosine = f4_cos_q14(f4_code);
-                engine_radius = F4_RADIUS_Q14;
-            end
-            default: begin
-                engine_state_y1 = f5_state_q;
-                engine_state_y2 = f5_history_q;
-                engine_input = f5_input_q;
-                engine_cosine = F5_COS_Q14;
-                engine_radius = F5_RADIUS_Q14;
-            end
-        endcase
+        // Stage 1 stores the two main p products without rounding.  Stage 2
+        // adds the registered side product and rounds the complete p sum.
+        recurrence_accumulator = product_a_q_ext + product_b_q_ext;
+        charge_accumulator = recurrence_accumulator_q + product_a_q_ext;
+        rounded_charge_accumulator = charge_accumulator +
+            (charge_accumulator[47] ? 48'sd8191 : 48'sd8192);
+        engine_charge_next = sat24_from48(
+            rounded_charge_accumulator >>> 14
+        );
 
-        engine_operand_a = 24'sd0;
-        engine_operand_b = 24'sd0;
+        // Stage 3 subtracts b*p from y in Q14.  Stage 4 rounds and clamps the
+        // complete output update once; no intermediate product is saturated.
+        state_y_q14 =
+            $signed({{24{engine_state_y_q[23]}}, engine_state_y_q}) <<< 14;
+        section_accumulator = state_y_q14 - product_a_q_ext;
+        // F2 adds the C143 charge directly at its second integrator.  The
+        // output-side product is zero for the other four sections.  Round
+        // after the complete y update so the capacitor terms share one
+        // quantization point.
+        complete_section_accumulator = section_accumulator_q +
+            product_a_q_ext;
+        rounded_section_accumulator = complete_section_accumulator +
+            (complete_section_accumulator[47] ? 48'sd8191 : 48'sd8192);
+        engine_section_next = sat24_from48(
+            rounded_section_accumulator >>> 14
+        );
+        output_accumulator = product_a_q_ext + product_b_q_ext;
+        rounded_output_accumulator = output_accumulator +
+            (output_accumulator[47] ? 48'sd8191 : 48'sd8192);
+        engine_output_next = sat24_from48(
+            rounded_output_accumulator >>> 14
+        );
+
+        engine_operand_a = 25'sd0;
+        engine_operand_b = 25'sd0;
         engine_coefficient_a = 17'sd0;
         engine_coefficient_b = 17'sd0;
         case (engine_stage_q)
             4'd0: begin
-                // Coefficient setup: r*cos(theta) and r*r are Q28.
+                // Main charge update: alpha*p + a*(y-main input).
                 engine_operand_a = {
-                    {8{engine_cosine[15]}}, engine_cosine
+                    engine_state_p_q[23], engine_state_p_q
                 };
-                engine_operand_b = $signed({9'd0, engine_radius});
-                engine_coefficient_a = $signed({2'b00, engine_radius});
-                engine_coefficient_b = $signed({2'b00, engine_radius});
+                engine_operand_b = engine_main_delta_q;
+                engine_coefficient_a = engine_alpha_q;
+                engine_coefficient_b = engine_a_q;
+            end
+            4'd1: begin
+                // F1 adds a*(x[n-1]-x[n]); F3 adds the C127 F1-history
+                // term; F5 adds the always-connected C150 FRIC2-history
+                // term.  Other sections load zero.
+                engine_operand_a = engine_side_delta_q;
+                engine_coefficient_a = engine_g_q;
             end
             4'd2: begin
-                // Pole recurrence: a1*y[n-1] and r2*y[n-2].
-                engine_operand_a = engine_state_y1;
-                engine_operand_b = engine_state_y2;
-                engine_coefficient_a = pole_a1_q;
-                engine_coefficient_b = pole_r2_q;
+                // F5 has an always-connected C150 path and a separately
+                // switched C151 path.  This slot launches C151 after C150
+                // has entered the accumulator.
+                engine_operand_a = engine_side2_delta_q;
+                engine_coefficient_a = engine_g2_q;
             end
             4'd3: begin
-                // Unity-DC input term: b0*x[n].
-                engine_operand_a = engine_input;
-                engine_coefficient_a = pole_b0_q;
+                // The second switched integrator consumes the registered,
+                // fully rounded first-integrator charge.  Keeping the DSP in
+                // this slot removes it from the wide charge-add path.
+                engine_operand_a = {
+                    charge_work_q[23], charge_work_q
+                };
+                engine_coefficient_a = engine_b_q;
+            end
+            4'd4: begin
+                // C143 enters F2 at the second integrator, after b*p.  Its
+                // current U157 level joins y before the one final round.
+                engine_operand_a = engine_output_delta_q;
+                engine_coefficient_a = engine_h_q;
             end
             4'd6: begin
-                // Reuse lane A for the final sheet-2 filter amplitude.
-                engine_operand_a = output_sum_q;
-                engine_coefficient_a = $signed(
-                    {4'b0000, filter_amp_gain(filter_amp_code)}
-                );
+                // C172 retains 2700/2750 of U146's prior output.  The selected
+                // FL_AMP bank adds Csel/2750 of the F5 transition.  C173 is
+                // the always-connected 50 pF feedback branch.
+                engine_operand_a = {output_hold_q[23], output_hold_q};
+                engine_coefficient_a = FILTER_OUTPUT_ALPHA_Q14;
+                engine_operand_b = output_sum_q;
+                engine_coefficient_b = filter_amp_gain(filter_amp_phi0_q);
             end
             default: begin
             end
         endcase
         engine_product_a = engine_operand_a * engine_coefficient_a;
         engine_product_b = engine_operand_b * engine_coefficient_b;
-        product_a_q_ext = {{7{product_a_q[40]}}, product_a_q};
-        product_b_q_ext = {{7{product_b_q[40]}}, product_b_q};
-
-        // Stage 1 consumes the Q28 coefficient products registered at stage
-        // 0.  All three coefficients fit a signed Q3.14 value.
-        pole_a1_next = $signed(
-            (product_a_q_ext + 48'sd4096) >>> 13
-        );
-        pole_r2_next = $signed(
-            (product_b_q_ext + 48'sd8192) >>> 14
-        );
-        pole_b0_wide = 18'sd16384 -
-                       {{1{pole_a1_next[16]}}, pole_a1_next} +
-                       {{1{pole_r2_next[16]}}, pole_r2_next};
-
-        recurrence_accumulator = product_a_q_ext - product_b_q_ext;
-        // Round the complete recurrence once, then saturate once.  Keeping
-        // both pole terms and the input term in Q14 until this point avoids
-        // the level and bias errors caused by saturating each term alone.
-        rounded_section_accumulator = section_accumulator_q +
-            (section_accumulator_q[47] ? 48'sd8191 : 48'sd8192);
-        engine_section_next = sat24_from48(
-            rounded_section_accumulator >>> 14
-        );
-        engine_output_next = sat24_from48(product_a_q_ext >>> 12);
     end
 
     always_ff @(posedge clk) begin
@@ -862,6 +840,8 @@ module ssi263_sc02_audio #(
             noise_d3_q <= NOISE_D3_SEED;
             noise_d4_q <= NOISE_D4_SEED;
             noise_count_q <= NOISE_COUNT_SEED;
+            fric_drive_history_q <= 18'sd0;
+            fric2_source_state_q <= 24'sd0;
 
             f1_state_q <= 24'sd0;
             f1_history_q <= 24'sd0;
@@ -878,15 +858,21 @@ module ssi263_sc02_audio #(
             f3_input_q <= 24'sd0;
             f4_input_q <= 24'sd0;
             f5_input_q <= 24'sd0;
-            fric_source_phi0_q <= 24'sd0;
-            f3_mix_base_q <= 24'sd0;
-            f5_mix_base_q <= 24'sd0;
-            fric1_partial_q <= 24'sd0;
-            fric1_injection_q <= 24'sd0;
-            fric2_injection_q <= 24'sd0;
+            f1_input_history_q <= 24'sd0;
+            f3_side_input_q <= 24'sd0;
+            f3_side_history_q <= 24'sd0;
+            fric1_source_phi0_q <= 24'sd0;
+            fric2_source_phi0_q <= 24'sd0;
+            fric2_base_history_q <= 24'sd0;
+            fric2_sw_history_q <= 24'sd0;
             fric1_sw_phi0_q <= 1'b0;
             fric2_sw_phi0_q <= 1'b0;
-            input_mix_stage_q <= 2'd0;
+            filter_amp_phi0_q <= 4'h0;
+            f1_code_phi0_q <= 4'h0;
+            f2_code_phi0_q <= 4'h0;
+            f2_res_code_phi0_q <= 4'h0;
+            f3_code_phi0_q <= 4'h0;
+            f4_code_phi0_q <= 4'h0;
             output_hold_q <= 24'sd0;
             reconstruction_hold_q <= 24'sd0;
             dc_previous_input_q <= 24'sd0;
@@ -897,19 +883,29 @@ module ssi263_sc02_audio #(
             dc_stage2_pending_q <= 1'b0;
             dc_active_stage1_q <= 1'b0;
             dc_active_stage2_q <= 1'b0;
-            filter_frequency_q <= 8'hFF;
             engine_busy_q <= 1'b0;
             engine_overrun_q <= 1'b0;
             engine_section_q <= 3'd0;
             engine_stage_q <= 4'd0;
-            product_a_q <= 41'sd0;
-            product_b_q <= 41'sd0;
-            pole_a1_q <= 17'sd0;
-            pole_r2_q <= 17'sd0;
-            pole_b0_q <= 17'sd0;
+            product_a_q <= 42'sd0;
+            product_b_q <= 42'sd0;
             recurrence_accumulator_q <= 48'sd0;
             section_accumulator_q <= 48'sd0;
-            output_sum_q <= 24'sd0;
+            charge_work_q <= 24'sd0;
+            engine_state_y_q <= 24'sd0;
+            engine_state_p_q <= 24'sd0;
+            engine_main_delta_q <= 25'sd0;
+            engine_alpha_q <= 17'sd0;
+            engine_a_q <= 17'sd0;
+            engine_b_q <= 17'sd0;
+            engine_side_delta_q <= 25'sd0;
+            engine_g_q <= 17'sd0;
+            engine_side2_delta_q <= 25'sd0;
+            engine_g2_q <= 17'sd0;
+            engine_output_delta_q <= 25'sd0;
+            engine_h_q <= 17'sd0;
+            output_sum_q <= 25'sd0;
+            output_old_state_q <= 24'sd0;
             audio_sample <= 16'sd0;
         end else begin
             // U61 samples the core's held U62 Q on Phi0_X; U34A recognizes
@@ -944,59 +940,22 @@ module ssi263_sc02_audio #(
                 noise_d4_q <= {noise_d4_q[3:0], noise_feedback};
             end
 
-            // CLOSURE lasts for one fabric clock.  It discharges the held
-            // output but does not erase the filter's persistent charge.
-            if (closure)
-                output_hold_q <= 24'sd0;
-
-            // Exact shift/add forms for Q14 208 and 768 avoid general
-            // multipliers: 208=128+64+16 and 768=512+256.  Keep one
-            // saturating add in each stage so the 133 MHz path never spans
-            // source gain, both coupling sums, and a tract-node sum.
-            if (!(filter_phase_ce && !filter_phase)) begin
-                case (input_mix_stage_q)
-                    2'd1: begin
-                        fric1_partial_q <= sat24_add(
-                            fric_source_phi0_q >>> 7,
-                            fric_source_phi0_q >>> 8
-                        );
-                        fric2_injection_q <= sat24_add(
-                            fric_source_phi0_q >>> 5,
-                            fric_source_phi0_q >>> 6
-                        );
-                        input_mix_stage_q <= 2'd2;
-                    end
-
-                    2'd2: begin
-                        fric1_injection_q <= sat24_add(
-                            fric1_partial_q,
-                            fric_source_phi0_q >>> 10
-                        );
-                        input_mix_stage_q <= 2'd3;
-                    end
-
-                    2'd3: begin
-                        f3_input_q <= sat24_add(
-                            f3_mix_base_q,
-                            fric1_sw_phi0_q ?
-                                fric1_injection_q : 24'sd0
-                        );
-                        f5_input_q <= sat24_add(
-                            f5_mix_base_q,
-                            fric2_sw_phi0_q ?
-                                fric2_injection_q : 24'sd0
-                        );
-                        input_mix_stage_q <= 2'd0;
-                    end
-
-                    default: begin
-                    end
-                endcase
+            // U152 has no phase reset.  Update its charge state whenever the
+            // shared HCC drive changes, using the FRIC_AMP code held at that
+            // edge.  A code change at a steady drive creates no false level
+            // jump; the next real source edge uses the new capacitor bank.
+            if (fric_drive != fric_drive_history_q) begin
+                fric2_source_state_q <= fric2_source_next;
+                fric_drive_history_q <= fric_drive;
             end
 
-            if (filter_phase_ce) begin
-                filter_frequency_q <= filter_frequency;
+            // U145D closes at the Phi1-to-Phi0 boundary.  It copies the U146
+            // result completed during the prior Phi1 into C100/U148.  Low
+            // holds the prior sample; CLOSURE never discharges either node.
+            if (closure)
+                reconstruction_hold_q <= output_hold_q;
 
+            if (filter_phase_ce) begin
                 if (engine_busy_q)
                     engine_overrun_q <= 1'b1;
 
@@ -1005,102 +964,246 @@ module ssi263_sc02_audio #(
                     // states then stay fixed while the MAC scheduler works.
                     f1_input_q <= voice_source;
                     f2_input_q <= f1_state_q;
-                    // Sheet 1 ties FRIC_1 to the F2-output/F3-input node.
-                    f3_mix_base_q <= f2_state_q;
-                    fric_source_phi0_q <= fric_source;
+                    // C127 carries F1 into the first F3 integrator.  Keep
+                    // this sample separate from the serial F2 input so
+                    // its one-pair difference term uses one coherent Phi0.
+                    f3_side_input_q <= f1_state_q;
+                    f3_input_q <= f2_state_q;
+                    fric1_source_phi0_q <= fric1_source;
+                    fric2_source_phi0_q <= fric2_source_next;
                     fric1_sw_phi0_q <= source_fric1_sw;
                     f4_input_q <= f3_state_q;
-                    // Sheet 2 ties FRIC_2 to the F4-output/F5-input node.
-                    f5_mix_base_q <= f4_state_q;
+                    f5_input_q <= f4_state_q;
                     fric2_sw_phi0_q <= source_fric2_sw;
-                    input_mix_stage_q <= 2'd1;
+                    filter_amp_phi0_q <= filter_amp_code;
+                    f1_code_phi0_q <= f1_code;
+                    f2_code_phi0_q <= f2_code;
+                    f2_res_code_phi0_q <= f2_res_code;
+                    f3_code_phi0_q <= f3_code;
+                    f4_code_phi0_q <= f4_code;
                 end
 
                 if (filter_phase && !engine_busy_q) begin
                     engine_busy_q <= 1'b1;
                     engine_section_q <= 3'd0;
                     engine_stage_q <= 4'd0;
+                    // Load all F1 operands before stage 0.  No section select,
+                    // subtraction, or coefficient table remains at a DSP pin.
+                    engine_state_y_q <= f1_state_q;
+                    engine_state_p_q <= f1_history_q;
+                    engine_main_delta_q <=
+                        $signed({f1_state_q[23], f1_state_q}) -
+                        $signed({f1_input_q[23], f1_input_q});
+                    engine_alpha_q <= F1_ALPHA_Q14;
+                    engine_a_q <= F1_A_Q14;
+                    engine_b_q <= f1_b_q14(f1_code_phi0_q);
+                    engine_side_delta_q <=
+                        $signed({f1_input_history_q[23],
+                                 f1_input_history_q}) -
+                        $signed({f1_input_q[23], f1_input_q});
+                    engine_g_q <= F1_G_Q14;
+                    engine_side2_delta_q <= 25'sd0;
+                    engine_g2_q <= 17'sd0;
+                    engine_output_delta_q <= 25'sd0;
+                    engine_h_q <= 17'sd0;
                 end
             end
 
             // Every DSP result first enters product_a_q/product_b_q.  Adds,
             // saturation, and state commits occur only on later clocks.  One
-            // section takes six clocks; five sections plus two output clocks
-            // take 32 clocks.  The fastest intended phase gap is 133.
+            // section takes six clocks.  F5's separate C150/C151 terms and
+            // registered U146 delta take eight; the engine takes 34 clocks.
+            // The fastest intended phase gap is 133.
             if (engine_busy_q) begin
                 case (engine_stage_q)
                     4'd0: begin
+                        // alpha*p and a*(y-main input)
                         product_a_q <= engine_product_a;
                         product_b_q <= engine_product_b;
                         engine_stage_q <= 4'd1;
                     end
                     4'd1: begin
-                        pole_a1_q <= pole_a1_next;
-                        pole_r2_q <= pole_r2_next;
-                        pole_b0_q <= pole_b0_wide[16:0];
+                        // Save both main products and launch the optional
+                        // F1/F3 side-history product.
+                        recurrence_accumulator_q <= recurrence_accumulator;
+                        product_a_q <= engine_product_a;
                         engine_stage_q <= 4'd2;
                     end
                     4'd2: begin
-                        product_a_q <= engine_product_a;
-                        product_b_q <= engine_product_b;
+                        if (engine_section_q == 3'd4) begin
+                            // F5 first accumulates always-connected C150,
+                            // then launches separately switched C151.  Keep
+                            // both products wide until stage 8 rounds once.
+                            recurrence_accumulator_q <= charge_accumulator;
+                            product_a_q <= engine_product_a;
+                            engine_stage_q <= 4'd8;
+                        end else begin
+                            // Round and register the complete p update.  The
+                            // next slot launches b*p from this short path.
+                            charge_work_q <= engine_charge_next;
+                            engine_stage_q <= 4'd3;
+                        end
+                    end
+                    4'd8: begin
+                        charge_work_q <= engine_charge_next;
                         engine_stage_q <= 4'd3;
                     end
                     4'd3: begin
+                        // Register b*p before the wide y subtraction.
                         product_a_q <= engine_product_a;
-                        recurrence_accumulator_q <= recurrence_accumulator;
                         engine_stage_q <= 4'd4;
                     end
                     4'd4: begin
-                        section_accumulator_q <= recurrence_accumulator_q +
-                                                 product_a_q_ext;
+                        // Keep y-b*p wide and launch the optional C143 term.
+                        section_accumulator_q <= section_accumulator;
+                        product_a_q <= engine_product_a;
                         engine_stage_q <= 4'd5;
                     end
                     4'd5: begin
                         case (engine_section_q)
                             3'd0: begin
                                 f1_state_q <= engine_section_next;
-                                f1_history_q <= engine_state_y1;
+                                f1_history_q <= charge_work_q;
+                                f1_input_history_q <= f1_input_q;
+                                // Hand off the old F2 state and Phi0 input.
+                                engine_state_y_q <= f2_state_q;
+                                engine_state_p_q <= f2_history_q;
+                                engine_main_delta_q <=
+                                    $signed({f2_state_q[23], f2_state_q}) -
+                                    $signed({f2_input_q[23], f2_input_q});
+                                engine_alpha_q <=
+                                    f2_alpha_q14(f2_res_code_phi0_q);
+                                engine_a_q <= f2_a_q14(f2_res_code_phi0_q);
+                                engine_b_q <= f2_b_q14(f2_code_phi0_q);
+                                engine_side_delta_q <= 25'sd0;
+                                engine_g_q <= 17'sd0;
+                                engine_side2_delta_q <= 25'sd0;
+                                engine_g2_q <= 17'sd0;
+                                engine_output_delta_q <=
+                                    fric1_sw_phi0_q ?
+                                    -$signed({fric1_source_phi0_q[23],
+                                              fric1_source_phi0_q}) :
+                                    25'sd0;
+                                engine_h_q <= fric1_sw_phi0_q ?
+                                    F2_FRIC_H_Q14 : 17'sd0;
                             end
                             3'd1: begin
                                 f2_state_q <= engine_section_next;
-                                f2_history_q <= engine_state_y1;
+                                f2_history_q <= charge_work_q;
+                                // Hand off F3, including the drawn C127 path.
+                                engine_state_y_q <= f3_state_q;
+                                engine_state_p_q <= f3_history_q;
+                                engine_main_delta_q <=
+                                    $signed({f3_state_q[23], f3_state_q}) -
+                                    $signed({f3_input_q[23], f3_input_q});
+                                engine_alpha_q <= F3_ALPHA_Q14;
+                                engine_a_q <= F3_A_Q14;
+                                engine_b_q <= f3_b_q14(f3_code_phi0_q);
+                                engine_side_delta_q <=
+                                    $signed({f3_side_history_q[23],
+                                             f3_side_history_q}) -
+                                    $signed({f3_side_input_q[23],
+                                             f3_side_input_q});
+                                engine_g_q <= F3_G_Q14;
+                                engine_side2_delta_q <= 25'sd0;
+                                engine_g2_q <= 17'sd0;
+                                engine_output_delta_q <= 25'sd0;
+                                engine_h_q <= 17'sd0;
                             end
                             3'd2: begin
                                 f3_state_q <= engine_section_next;
-                                f3_history_q <= engine_state_y1;
+                                f3_history_q <= charge_work_q;
+                                f3_side_history_q <= f3_side_input_q;
+                                // Hand off the old F4 state and Phi0 input.
+                                engine_state_y_q <= f4_state_q;
+                                engine_state_p_q <= f4_history_q;
+                                engine_main_delta_q <=
+                                    $signed({f4_state_q[23], f4_state_q}) -
+                                    $signed({f4_input_q[23], f4_input_q});
+                                engine_alpha_q <= F4_ALPHA_Q14;
+                                engine_a_q <= F4_A_Q14;
+                                engine_b_q <= f4_b_q14(f4_code_phi0_q);
+                                engine_side_delta_q <= 25'sd0;
+                                engine_g_q <= 17'sd0;
+                                engine_side2_delta_q <= 25'sd0;
+                                engine_g2_q <= 17'sd0;
+                                engine_output_delta_q <= 25'sd0;
+                                engine_h_q <= 17'sd0;
                             end
                             3'd3: begin
                                 f4_state_q <= engine_section_next;
-                                f4_history_q <= engine_state_y1;
+                                f4_history_q <= charge_work_q;
+                                // Hand off the fixed F5 state and Phi0 input.
+                                engine_state_y_q <= f5_state_q;
+                                engine_state_p_q <= f5_history_q;
+                                engine_main_delta_q <=
+                                    $signed({f5_state_q[23], f5_state_q}) -
+                                    $signed({f5_input_q[23], f5_input_q});
+                                engine_alpha_q <= F5_ALPHA_Q14;
+                                engine_a_q <= F5_A_Q14;
+                                engine_b_q <= F5_B_Q14;
+                                // C150 is always connected to U152.  C151
+                                // has its own charge history and contributes
+                                // only while U159C is closed.
+                                engine_side_delta_q <=
+                                    $signed({fric2_base_history_q[23],
+                                             fric2_base_history_q}) -
+                                    $signed({fric2_source_phi0_q[23],
+                                             fric2_source_phi0_q});
+                                engine_g_q <= F5_FRIC_BASE_G_Q14;
+                                engine_side2_delta_q <=
+                                    fric2_sw_phi0_q ?
+                                    $signed({fric2_sw_history_q[23],
+                                             fric2_sw_history_q}) -
+                                    $signed({fric2_source_phi0_q[23],
+                                             fric2_source_phi0_q}) :
+                                    25'sd0;
+                                engine_g2_q <= fric2_sw_phi0_q ?
+                                    F5_FRIC_SW_G_Q14 : 17'sd0;
+                                engine_output_delta_q <= 25'sd0;
+                                engine_h_q <= 17'sd0;
                             end
                             default: begin
                                 f5_state_q <= engine_section_next;
-                                f5_history_q <= engine_state_y1;
+                                f5_history_q <= charge_work_q;
+                                fric2_base_history_q <=
+                                    fric2_source_phi0_q;
+                                if (fric2_sw_phi0_q)
+                                    fric2_sw_history_q <=
+                                        fric2_source_phi0_q;
                             end
                         endcase
 
                         if (engine_section_q == 3'd4) begin
-                            output_sum_q <= engine_section_next;
-                            engine_stage_q <= 4'd6;
+                            // Save old F5 beside the committed new state.  A
+                            // short next slot forms the U146 delta without
+                            // extending the saturated section-result path.
+                            output_old_state_q <= engine_state_y_q;
+                            engine_stage_q <= 4'd9;
                         end
                         else begin
                             engine_section_q <= engine_section_q + 3'd1;
                             engine_stage_q <= 4'd0;
                         end
                     end
+                    4'd9: begin
+                        // U146 sees old F5 minus new F5 through the selected
+                        // FL_AMP bank, not the held F5 level.
+                        output_sum_q <=
+                            $signed({output_old_state_q[23],
+                                     output_old_state_q}) -
+                            $signed({f5_state_q[23], f5_state_q});
+                        engine_stage_q <= 4'd6;
+                    end
                     4'd6: begin
                         product_a_q <= engine_product_a;
+                        product_b_q <= engine_product_b;
                         engine_stage_q <= 4'd7;
                     end
                     default: begin
-                        if (!closure) begin
-                            output_hold_q <= engine_output_next;
-                            // output_hold_q is the recurring switched node.
-                            // The external analog output reconstructs completed
-                            // section results; it does not expose a random Phi
-                            // carrier phase to the board's 48 kHz sampler.
-                            reconstruction_hold_q <= engine_output_next;
-                        end
+                        // U146 completes during Phi1.  C100/U148 will copy
+                        // this internal hold only on the next CLOSURE pulse.
+                        output_hold_q <= engine_output_next;
                         engine_busy_q <= 1'b0;
                         engine_stage_q <= 4'd0;
                     end
@@ -1110,16 +1213,18 @@ module ssi263_sc02_audio #(
             // C381 AC-couples the reconstructed output.  Spread its one-pole
             // DC blocker over two fabric clocks so it cannot add a long carry
             // chain to the tract scheduler.  At 48 kHz, 255/256 gives a pole
-            // near 30 Hz.  Keep x-x[n-1] and y+delta wide, apply the leak,
+            // near 30 Hz as a boundary model; the external load, which sets
+            // the real C381 pole, is not drawn.  Keep x-x[n-1] and y+delta
+            // wide, apply the leak,
             // then clamp once; early 24-bit clamps distort large reversals.
-            // Inactive samples feed zero so the stored offset decays without
-            // exposing a tail on the PCM output.
+            // Phone end does not mute U148, so the formant and output holds
+            // may ring down.  Powerdown alone forces the boundary input low.
             if (audio_tick) begin
                 dc_delta_q <= {dc_input[23], dc_input} -
                               {dc_previous_input_q[23],
                                dc_previous_input_q};
                 dc_previous_input_q <= dc_input;
-                dc_active_stage1_q <= phone_active && !powered_down;
+                dc_active_stage1_q <= !powered_down;
                 dc_stage1_pending_q <= 1'b1;
             end
 

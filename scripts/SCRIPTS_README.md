@@ -132,17 +132,20 @@ ROM and tests write-end capture, XCK/DIV2, frame and phoneme timing, continuous
 repeat, D7 versus A/R behavior, and the proved selector destinations.
 
 Run `python scripts\test_ssi263_xck_ce.py` after SSI-263 clock changes. It checks
-the shared rational XCK enable generator and its short/long interval pattern.
+the two-flop physical-Q3 synchronizer, rising-edge enable, and held-level
+behavior.
 
 Run `python scripts\test_ssi263_sc02_core.py` after SSI-263 register, request,
 phoneme, pitch, filter-clock, or control changes. It compiles and runs the
 native digital-core bench against the SC-02 ROM.
 
-Run `python scripts\test_ssi263_sc02_audio.py` after SSI-263 excitation,
-resonator, gain, or sample-scheduler changes. It checks source routing, the
-noise-shift sequence, filter scheduling, saturation, and held audio output.
-The resonator checks validate this circuit-guided digital model; they do not
-claim a phase-by-phase analog simulation of the original chip.
+Run `python scripts\test_ssi263_sc02_audio.py` after SSI-263 excitation, charge
+filter, gain, or sample-scheduler changes. It checks source routing, the noise
+shift sequence, distinct U157/U152 behavior, C143 and C150/C151 charge paths,
+Phi0 control snapshots, the 34-clock schedule, U146/CLOSURE, output tails,
+saturation, and held audio output. The charge checks validate the ideal
+capacitor-ratio model; they do not claim an exact model of op-amp, switch,
+external C381 load, or stray effects in the original chip.
 
 Run `python scripts\test_phasor_card.py` after Phasor decode, dual-SSI, VIA,
 PSG, mixing, or configuration changes. It runs the source and protocol model

@@ -13,6 +13,7 @@ module tb_phasor_dual_ssi263;
 
     logic clk = 1'b0;
     logic rstn = 1'b0;
+    logic apple_q3_raw = 1'b0;
     globals::AppleBus_read ab_read = '0;
     globals::SoftSwitchState sss = '0;
     globals::AppleBus_write ab_write;
@@ -58,6 +59,8 @@ module tb_phasor_dual_ssi263;
     logic [1:0] sample_period_q = 2'd0;
 
     always #5 clk = ~clk;
+    // Nominal Apple Q3 input, asynchronous to this bench's fabric clock.
+    always #244.444 apple_q3_raw = ~apple_q3_raw;
 
     // A 100 MHz fabric clock cannot divide evenly to 48 kHz. Two 2083-clock
     // periods followed by one 2084-clock period give an exact 48 kHz average.
@@ -85,6 +88,7 @@ module tb_phasor_dual_ssi263;
     mockingboard dut (
         .clk(clk),
         .rstn(rstn),
+        .apple_q3_raw(apple_q3_raw),
         .ab_read(ab_read),
         .sss(sss),
         .slot_assign(slot_assign),
@@ -402,7 +406,8 @@ module tb_phasor_dual_ssi263;
         longint card_square_sum;
         longint chip_mean_square;
         longint card_mean_square;
-        logic signed [23:0] old_fric_source;
+        logic signed [23:0] old_fric1_source;
+        logic signed [23:0] old_fric2_source;
         begin
             timeout = 0;
             settle_samples = 0;
@@ -417,7 +422,10 @@ module tb_phasor_dual_ssi263;
             card_clips = 0;
             chip_square_sum = 0;
             card_square_sum = 0;
-            old_fric_source = dut.ssi263_secondary_i.audio_i.fric_source;
+            old_fric1_source =
+                dut.ssi263_secondary_i.audio_i.fric1_source;
+            old_fric2_source =
+                dut.ssi263_secondary_i.audio_i.fric2_source;
             if (is_s)
                 fric_source_changes = 0;
 
@@ -427,11 +435,15 @@ module tb_phasor_dual_ssi263;
                 @(posedge clk);
                 #1;
                 if (is_s) begin
-                    if (dut.ssi263_secondary_i.audio_i.fric_source !=
-                        old_fric_source)
+                    if (dut.ssi263_secondary_i.audio_i.fric1_source !=
+                            old_fric1_source ||
+                        dut.ssi263_secondary_i.audio_i.fric2_source !=
+                            old_fric2_source)
                         fric_source_changes = fric_source_changes + 1;
-                    old_fric_source =
-                        dut.ssi263_secondary_i.audio_i.fric_source;
+                    old_fric1_source =
+                        dut.ssi263_secondary_i.audio_i.fric1_source;
+                    old_fric2_source =
+                        dut.ssi263_secondary_i.audio_i.fric2_source;
                 end
                 if (dut.audio_sample_tick)
                     settle_samples = settle_samples + 1;
@@ -442,11 +454,15 @@ module tb_phasor_dual_ssi263;
                 @(posedge clk);
                 #1;
                 if (is_s) begin
-                    if (dut.ssi263_secondary_i.audio_i.fric_source !=
-                        old_fric_source)
+                    if (dut.ssi263_secondary_i.audio_i.fric1_source !=
+                            old_fric1_source ||
+                        dut.ssi263_secondary_i.audio_i.fric2_source !=
+                            old_fric2_source)
                         fric_source_changes = fric_source_changes + 1;
-                    old_fric_source =
-                        dut.ssi263_secondary_i.audio_i.fric_source;
+                    old_fric1_source =
+                        dut.ssi263_secondary_i.audio_i.fric1_source;
+                    old_fric2_source =
+                        dut.ssi263_secondary_i.audio_i.fric2_source;
                 end
                 if (dut.audio_sample_tick) begin
                     chip_sample = $signed(dut.ssi0_audio);
@@ -536,16 +552,23 @@ module tb_phasor_dual_ssi263;
             $display("PHASOR SSI263 BALANCE voice_ms=%0d s_ms=%0d voice_card_ms=%0d s_card_ms=%0d",
                      voice_chip_mean_square, s_chip_mean_square,
                      voice_card_mean_square, s_card_mean_square);
-            // A specific phone may differ in level, but neither source class
-            // should overwhelm the other by more than 18 dB RMS.
-            check(voice_chip_mean_square > 0 && s_chip_mean_square > 0 &&
-                  s_chip_mean_square <= voice_chip_mean_square * 64 &&
-                  voice_chip_mean_square <= s_chip_mean_square * 64,
-                  "SSI voice/fricative power ratio was not sane");
-            check(voice_card_mean_square > 0 && s_card_mean_square > 0 &&
-                  s_card_mean_square <= voice_card_mean_square * 64 &&
-                  voice_card_mean_square <= s_card_mean_square * 64,
-                  "card voice/fricative power ratio was not sane");
+            // E01 and S30 use different ROM formants, source gains, and
+            // injection nodes. The schematic sets no power ratio between
+            // them. S also advances its HCC source on sparse U41C edges, so
+            // a short deterministic window depends on source phase. The old
+            // "SSI voice/fricative power ratio was not sane" and
+            // "card voice/fricative power ratio was not sane" checks thus
+            // rejected valid charge-model output. Check each phone across
+            // the SSI pin and its card mixer path instead.
+            check(voice_chip_mean_square > 0 &&
+                  voice_card_mean_square > 0 &&
+                  voice_card_mean_square <= voice_chip_mean_square * 64 &&
+                  voice_chip_mean_square <= voice_card_mean_square * 64,
+                  "voiced SSI-to-card power ratio was not sane");
+            check(s_chip_mean_square > 0 && s_card_mean_square > 0 &&
+                  s_card_mean_square <= s_chip_mean_square * 64 &&
+                  s_chip_mean_square <= s_card_mean_square * 64,
+                  "fricative SSI-to-card power ratio was not sane");
         end
     endtask
 
@@ -638,7 +661,8 @@ module tb_phasor_dual_ssi263;
                   "held P silence window did not collect every sample");
             check(dut.ssi263_secondary_i.audio_i.stop_class &&
                   dut.ssi263_secondary_i.audio_i.voice_source == 24'sd0 &&
-                  dut.ssi263_secondary_i.audio_i.fric_source == 24'sd0,
+                  dut.ssi263_secondary_i.audio_i.fric1_source == 24'sd0 &&
+                  dut.ssi263_secondary_i.audio_i.fric2_source == 24'sd0,
                   "held P did not remain a silent guide-level stop");
             check(chip_peak <= 64 && card_peak <= 64 &&
                   chip_mean_square <= 256 && card_mean_square <= 256 &&
@@ -1079,6 +1103,16 @@ module tb_phasor_dual_ssi263;
         start_a5_acoustic_phone(8'h70); // DR=01, sustained S $30
         wait_for_secondary_fricative();
         measure_a5_acoustic_window("S", 1'b0, 1'b1);
+        check(dut.ssi263_secondary_i.core_i.phoneme == 6'h30 &&
+              dut.ssi263_secondary_i.core_i.f1_code == 4'h0 &&
+              dut.ssi263_secondary_i.core_i.f2_code == 4'h7 &&
+              dut.ssi263_secondary_i.core_i.f2_res_code == 4'h0 &&
+              dut.ssi263_secondary_i.core_i.f3_code == 4'hC &&
+              dut.ssi263_secondary_i.core_i.f4_code == 4'hC &&
+              dut.ssi263_secondary_i.core_i.filter_amp_code == 4'hF &&
+              dut.ssi263_secondary_i.core_i.voice_amp_code == 4'h0 &&
+              dut.ssi263_secondary_i.core_i.fric_amp_code == 4'hF,
+              "S did not settle to ROM row 30 and the full-level driver");
         check(dut.ssi263_secondary_i.core_i.phone_active &&
               dut.ssi263_secondary_i.core_i.phone_fricative,
               "sustained S did not remain an active fricative phone");
@@ -1136,7 +1170,8 @@ module tb_phasor_dual_ssi263;
                   primary_hcc_before[17:14] &&
               dut.ssi263_primary_i.core_i.phone_active == 1'b0 &&
               dut.ssi263_primary_i.audio_i.voice_source == 24'sd0 &&
-              dut.ssi263_primary_i.audio_i.fric_source == 24'sd0,
+              dut.ssi263_primary_i.audio_i.fric1_source == 24'sd0 &&
+              dut.ssi263_primary_i.audio_i.fric2_source == 24'sd0,
               "secondary voiced events changed the other SSI socket");
 
         // Use the real-driver pitch/filter vector for the level check.  The
@@ -1150,6 +1185,16 @@ module tb_phasor_dual_ssi263;
         wait_for_secondary_voiced();
         wait_for_a5_left_audio();
         measure_a5_acoustic_window("VOICE01", 1'b1, 1'b0);
+        check(dut.ssi263_secondary_i.core_i.phoneme == 6'h01 &&
+              dut.ssi263_secondary_i.core_i.f1_code == 4'h2 &&
+              dut.ssi263_secondary_i.core_i.f2_code == 4'hE &&
+              dut.ssi263_secondary_i.core_i.f2_res_code == 4'h0 &&
+              dut.ssi263_secondary_i.core_i.f3_code == 4'hE &&
+              dut.ssi263_secondary_i.core_i.f4_code == 4'hE &&
+              dut.ssi263_secondary_i.core_i.filter_amp_code == 4'hF &&
+              dut.ssi263_secondary_i.core_i.voice_amp_code == 4'hC &&
+              dut.ssi263_secondary_i.core_i.fric_amp_code == 4'h0,
+              "E01 did not settle to ROM row 01 and the full-level driver");
         check_a5_acoustic_balance();
 
         // Reset, then excite A6 alone to prove the opposite fixed stereo

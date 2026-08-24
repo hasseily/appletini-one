@@ -426,7 +426,8 @@ module tb_ssi263_phone_sweep;
                 if (dut.audio_i.source_voiced ||
                     dut.audio_i.source_fricative ||
                     dut.audio_i.voice_source != 24'sd0 ||
-                    dut.audio_i.fric_source != 24'sd0)
+                    dut.audio_i.fric1_source != 24'sd0 ||
+                    dut.audio_i.fric2_source != 24'sd0)
                     source_stayed_silent = 1'b0;
             end
             check(source_stayed_silent,

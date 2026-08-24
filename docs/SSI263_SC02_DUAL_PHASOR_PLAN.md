@@ -73,8 +73,8 @@ not fold them into a guessed 20 kHz update clock.
 
 Final card configuration:
 
-- use a fabric-clock rational accumulator to create evenly spaced XCK edge
-  enables at nominal Apple Q3, `14,318,180 / 7 = 2,045,454.29 Hz`;
+- synchronize the physical Apple Q3 pin into the fabric domain and create one
+  XCK enable for each observed rising edge;
 - keep SSI DIV2 high, which gives an effective `1,022,727.14 Hz` time base;
 - keep the effective clock constant when Phasor mode changes.
 
@@ -84,18 +84,22 @@ also provides an external TCLKIN path, and U62B divides that input by two
 before FASTCLK. Apple Q3 through that path gives `1,022,727.14 Hz`. The RTL's
 XCK input and asserted DIV2 model the same two stages. The internal
 FASTCLK-to-SLOWCLK divider, pitch counter, and U62 voice divider stay intact.
+The two-flop input synchronizer can move an edge by one fabric clock, but it
+tracks the card's real Q3 rate and creates no generated FPGA clock.
 
 The standard Mockingboard instead feeds about 1 MHz PHI2 to XCK with DIV2 low;
 the effective rate is the same. The prior `894,886.25 Hz` default made `I=$A80`
 produce `79.4466 Hz`. The final profile produces `90.7961 Hz`, exactly `8/7`
-higher. This matches the reported low-pitch error without a phone, ROM, or
-internal-divider adjustment. The exact original Phasor strap still merits a
-continuity or scope check. Do not change SSI XCK when Phasor mode changes; the
-proved native-mode clock doubling applies to the AY chips.
+higher. This fixes the measured fundamental without a phone, ROM, or
+internal-divider adjustment. It does not validate a tract model: the rejected
+Q3/all-pole firmware still sounded low, monotonous, and muffled. The exact
+original Phasor strap still merits a continuity or scope check. Do not change
+SSI XCK when Phasor mode changes; the proved native-mode clock doubling applies
+to the AY chips.
 
-The generated Zynq fabric clock resolves to 133,333,344 Hz.  The XCK accumulator
-uses that generated value rather than the rounded 133 MHz label used in
-comments elsewhere in the design.
+The generated Zynq fabric clock resolves to 133,333,344 Hz and samples Q3 more
+than 65 times per nominal cycle. It does not synthesize or replace the card
+clock.
 
 The core must use these laws:
 
@@ -211,11 +215,10 @@ The audio engine will use the SC-02 topology and controls:
 - persistent filter state;
 - one signed output sample per existing audio tick.
 
-The F0.9.99 hardware correction uses this exact section graph while the full
-nodal work remains open:
+The current source planned for F0.9.99 uses this exact section graph:
 
 ```text
-VOICE -> F1 -> F2 -> (+FRIC1) -> F3 -> F4 -> (+FRIC2) -> F5
+VOICE -> F1 -> F2(+FRIC1) -> F3 -> F4 -> F5(+FRIC2) -> U146
 ```
 
 It also uses the unipolar U60 voice pulse, the inverted HCC D4+5 noise tap,
@@ -225,15 +228,65 @@ and let a following live phone drive the transitioning tract. Do not add a
 guessed stop burst. Treat U68/U85C and the T-to-HF FRIC2 handoff as open until
 a corrected net list or chip trace settles them.
 
-Development order for the filter:
+The ideal filter model must use the charge state of the two switched
+integrators, not guessed pole radii:
+
+```text
+p[n] = alpha*p[n-1] + a*(y[n-1] - u[n])
+       + g*(v[n-1] - v[n])
+y[n] = y[n-1] - b*p[n]
+```
+
+Derive `alpha`, `a`, `b`, and `g` from the drawn capacitor ratios. F1 uses its
+prior voice sample for `v`; F3 uses the direct C127 F1 path. F2 resonance loads
+the first integrator, so both its `alpha` and `a` share the loaded denominator.
+Do not change a ratio to tune a phone.
+
+Keep the two fricative amplifiers distinct. U157 resets in Phi1 and must
+regenerate `-(Cselected/3900)*HCC` on every Phi0, including repeated high HCC
+samples. Its switched 1000 pF C143 path enters F2's second integrator as
+`-(1000/6800)*U157`; it has no cross-pair route history. U152 does not reset.
+It keeps the edge recurrence
+`U152'=U152-(Cselected/3900)*(HCC-HCC_previous)`. Its 1150 pF C150 path always
+enters F5's first integrator, while the switched 3700 pF C151 path keeps a
+separate history while open.
+
+Model U146 with the drawn output capacitors:
+
+```text
+out[n] = (2700/2750)*out[n-1]
+         + (Cselected/2750)*(F5[n-1] - F5[n])
+```
+
+CLOSURE copies the completed U146 hold to C100/U148 and otherwise holds it.
+Phone end must not mute the post-U148 path. Snapshot all formant, resonance,
+route, source, and FL_AMP controls at Phi0 so one transfer uses one phone
+state.
+
+Completed filter work:
 
 1. derive double-precision state equations from each capacitor and switch
    section;
-2. compare phase-by-phase results with a direct circuit reference;
+2. check all capacitor values and ratios from source in an independent test;
 3. quantize coefficients and state widths;
 4. use shared DSP multipliers without sharing chip state;
 5. filter and resample the phase-domain output to 48 kHz;
-6. set final level from real-chip captures, not phone-specific boosts.
+6. guard the harmonic response, all 64 phones, route isolation, and PCM rails.
+
+The final isolated out-of-context route used a 7.500 ns clock, mapped one audio
+instance to five DSP48E1 blocks, and met setup with WNS `+0.113 ns`. This route
+includes the final U157, U146, output-tail, Phi0 control snapshots, and the
+registered F5 output-delta stage. The isolated check has no board input/output
+delays or `HD.CLK_SRC`; use it only to screen internal audio paths. The one full
+card route remains the timing signoff. The engine takes 34 clocks, well below
+the 133-clock minimum phase gap.
+
+Remaining analog work:
+
+1. add LF356 bandwidth, CD4016 on-resistance, and stray capacitance to a direct
+   circuit model;
+2. compare the model with AO and post-C381 real-chip captures;
+3. set final level from measured voltage, not phone-specific boosts.
 
 Do not include the reconstruction board's AD817, LM386, pots, speaker, or line
 drivers in the chip model.
@@ -340,6 +393,21 @@ targets a Speech-I / SC-01 interface will no longer produce speech.
 - one clean full build from the final source commit before firmware packaging;
   keep that route if it passes instead of running a duplicate full build.
 
+## Firmware checkpoint status
+
+The Q3/all-pole firmware from commit `cdb43efd` is rejected. Hardware speech
+sounded worse: low, monotonous, and muffled. It must not be named or used as
+the current test image.
+
+The version remains `F0.9.99`. The next firmware must come from the final charge
+engine and one clean passing full build. Until that run and package step finish:
+
+```text
+Final F0.9.99 firmware path: pending
+Final routed WNS: pending
+Final firmware SHA-256: pending
+```
+
 ## Acceptance gate
 
 The work is complete only when:
@@ -374,3 +442,5 @@ without a same-vector capture from a real SSI-263AP.
 8. `Correct SSI-263 tract and source response`
 9. `Retiming SSI-263 input and bus selects`
 10. `Package F0.9.99 SSI-263 test firmware`
+11. `Implement schematic SSI-263 charge filters`
+12. `Package final F0.9.99 SSI-263 firmware`

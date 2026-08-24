@@ -185,6 +185,7 @@ def test_four_ay_chips_and_phasor_chip_selects() -> None:
 
 def test_dual_native_ssi263_contract() -> None:
     source = read(MOCKINGBOARD_SV)
+    top = read(APPLE_TOP_SV)
     voice = read(REPO_ROOT / "hdl" / "apple" / "ssi263_voice.sv")
     core = read(REPO_ROOT / "hdl" / "apple" / "ssi263_sc02_core.sv")
     audio = read(REPO_ROOT / "hdl" / "apple" / "ssi263_sc02_audio.sv")
@@ -241,12 +242,18 @@ def test_dual_native_ssi263_contract() -> None:
             "assign ar_drive_low = pending_q && ar_enabled_q && !powered_down;" in core,
             "D7 pending state and the enabled active-low A/R pin must remain distinct")
 
-    require("parameter longint unsigned XCK_NUMERATOR_HZ = 14_318_180" in xck and
-            "parameter longint unsigned XCK_DENOMINATOR = 7" in xck and
-            "ssi263_xck_ce ssi_xck_ce_i" in source and
+    xck_instance = sv_instance_block(source, "ssi263_xck_ce ssi_xck_ce_i")
+    card_instance = sv_instance_block(top, "mockingboard mb1(")
+    require("input logic apple_q3_raw" in source and
+            ".apple_q3_raw(apple_q3_pin)" in card_instance and
+            ".q3_raw(apple_q3_raw)" in xck_instance and
+            "(* ASYNC_REG = \"TRUE\" *) logic q3_sync1_q;" in xck and
+            "(* ASYNC_REG = \"TRUE\" *) logic q3_sync2_q;" in xck and
+            "assign xck_ce = q3_sync2_q && !q3_sync2_d_q;" in xck and
+            "XCK_NUMERATOR_HZ" not in xck and "accumulator_q" not in xck and
             source.count(".xck_ce(ssi_xck_ce)") == 3,
-            "one nominal Apple Q3 XCK source must feed both voices")
-    require("phasor_native" not in sv_instance_block(source, "ssi263_xck_ce ssi_xck_ce_i") and
+            "physical Apple Q3 must cross two synchronizer flops and feed both voices")
+    require("phasor_native" not in xck_instance and
             "card_mode" not in voice,
             "XCK and chip state must run independently of the Phasor mode switch")
 

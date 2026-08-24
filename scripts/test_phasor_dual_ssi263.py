@@ -45,6 +45,8 @@ def static_checks() -> None:
     bench = RTL_SOURCES[-1].read_text(encoding="utf-8")
     required = (
         "mockingboard dut (",
+        ".apple_q3_raw(apple_q3_raw)",
+        "always #244.444 apple_q3_raw = ~apple_q3_raw;",
         ".card_enable(card_enable)",
         "A5+A6 write did not update both independent SSI registers",
         "dual native read did not give cleared A5 priority over A6",

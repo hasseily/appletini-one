@@ -106,12 +106,18 @@ def test_four_ay_chips_and_phasor_chip_selects() -> None:
             "Phasor slot visibility must keep the motherboard ROM policy without the duplicate live decode")
     require("logic via0_cycle_hit_q;" in source and
             "logic via1_cycle_hit_q;" in source and
+            "logic ssi_primary_cycle_hit_q;" in source and
+            "logic ssi_secondary_cycle_hit_q;" in source and
             "else if (ab_read.serve_en) begin" in source and
             "via0_cycle_hit_q <= via0_hit;" in source and
             "via1_cycle_hit_q <= via1_hit;" in source and
+            "ssi_primary_cycle_hit_q <= ssi_write_hit && ab_read.addr[6];" in source and
+            "ssi_secondary_cycle_hit_q <= ssi_write_hit && ab_read.addr[5];" in source and
             "wire via0_strobe = ab_read.data_en && via0_cycle_hit_q;" in source and
-            "wire via1_strobe = ab_read.data_en && via1_cycle_hit_q;" in source,
-            "VIA writes must retain the authoritative SERVE decode through DATA")
+            "wire via1_strobe = ab_read.data_en && via1_cycle_hit_q;" in source and
+            "wire ssi_primary_write = ab_read.data_en && ssi_primary_cycle_hit_q;" in source and
+            "wire ssi_secondary_write = ab_read.data_en && ssi_secondary_cycle_hit_q;" in source,
+            "VIA and SSI writes must retain the authoritative SERVE decode through DATA")
     require("logic via0_ay0_selected_q = 1'b0;" in source and
             "logic via0_ay1_selected_q = 1'b0;" in source and
             "logic via1_ay0_selected_q = 1'b0;" in source and
@@ -244,8 +250,8 @@ def test_dual_native_ssi263_contract() -> None:
             "card_mode" not in voice,
             "XCK and chip state must run independently of the Phasor mode switch")
 
-    require("wire ssi_primary_write = ssi_write_region && ab_read.addr[6];" in source and
-            "wire ssi_secondary_write = ssi_write_region && ab_read.addr[5];" in source and
+    require("wire ssi_primary_write = ab_read.data_en && ssi_primary_cycle_hit_q;" in source and
+            "wire ssi_secondary_write = ab_read.data_en && ssi_secondary_cycle_hit_q;" in source and
             ".ssi_write_active(ssi_secondary_write)" in source and
             ".ssi_write_active(ssi_primary_write)" in source,
             "A5 and A6 must select the secondary and primary write sockets")

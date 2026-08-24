@@ -100,11 +100,23 @@ module ssi263_sc02_audio #(
 
     logic signed [23:0] voice_source;
     logic signed [23:0] fric_source;
-    logic signed [23:0] fric1_injection;
-    logic signed [23:0] fric2_injection;
     logic signed [23:0] voice_magnitude;
     logic signed [23:0] fric_positive_magnitude;
     logic signed [23:0] fric_negative_magnitude;
+
+    // Phi0 samples the complete noise source and both tract nodes.  The
+    // following idle clocks split the two injection sums from the final node
+    // sums.  F3 and F5 do not consume these values until clocks 16 and 28 of
+    // the next Phi1 engine run, so this retiming changes no filter sample.
+    logic signed [23:0] fric_source_phi0_q;
+    logic signed [23:0] f3_mix_base_q;
+    logic signed [23:0] f5_mix_base_q;
+    logic signed [23:0] fric1_partial_q;
+    logic signed [23:0] fric1_injection_q;
+    logic signed [23:0] fric2_injection_q;
+    logic               fric1_sw_phi0_q;
+    logic               fric2_sw_phi0_q;
+    logic [1:0]         input_mix_stage_q;
 
     // B/D/P/T/K are silent stops (PW2=1, PW3=0).  The following phone's
     // normal source passes through parameters that start at the stop's tract
@@ -726,16 +738,6 @@ module ssi263_sc02_audio #(
             fric_source = -fric_negative_magnitude;
         end
 
-        // Exact shift/add forms for Q14 208 and 768 avoid two more general
-        // multipliers: 208=128+64+16 and 768=512+256.
-        fric1_injection = sat24_add(
-            sat24_add(fric_source >>> 7, fric_source >>> 8),
-            fric_source >>> 10
-        );
-        fric2_injection = sat24_add(
-            fric_source >>> 5,
-            fric_source >>> 6
-        );
     end
 
     always_comb begin
@@ -876,6 +878,15 @@ module ssi263_sc02_audio #(
             f3_input_q <= 24'sd0;
             f4_input_q <= 24'sd0;
             f5_input_q <= 24'sd0;
+            fric_source_phi0_q <= 24'sd0;
+            f3_mix_base_q <= 24'sd0;
+            f5_mix_base_q <= 24'sd0;
+            fric1_partial_q <= 24'sd0;
+            fric1_injection_q <= 24'sd0;
+            fric2_injection_q <= 24'sd0;
+            fric1_sw_phi0_q <= 1'b0;
+            fric2_sw_phi0_q <= 1'b0;
+            input_mix_stage_q <= 2'd0;
             output_hold_q <= 24'sd0;
             reconstruction_hold_q <= 24'sd0;
             dc_previous_input_q <= 24'sd0;
@@ -938,6 +949,51 @@ module ssi263_sc02_audio #(
             if (closure)
                 output_hold_q <= 24'sd0;
 
+            // Exact shift/add forms for Q14 208 and 768 avoid general
+            // multipliers: 208=128+64+16 and 768=512+256.  Keep one
+            // saturating add in each stage so the 133 MHz path never spans
+            // source gain, both coupling sums, and a tract-node sum.
+            if (!(filter_phase_ce && !filter_phase)) begin
+                case (input_mix_stage_q)
+                    2'd1: begin
+                        fric1_partial_q <= sat24_add(
+                            fric_source_phi0_q >>> 7,
+                            fric_source_phi0_q >>> 8
+                        );
+                        fric2_injection_q <= sat24_add(
+                            fric_source_phi0_q >>> 5,
+                            fric_source_phi0_q >>> 6
+                        );
+                        input_mix_stage_q <= 2'd2;
+                    end
+
+                    2'd2: begin
+                        fric1_injection_q <= sat24_add(
+                            fric1_partial_q,
+                            fric_source_phi0_q >>> 10
+                        );
+                        input_mix_stage_q <= 2'd3;
+                    end
+
+                    2'd3: begin
+                        f3_input_q <= sat24_add(
+                            f3_mix_base_q,
+                            fric1_sw_phi0_q ?
+                                fric1_injection_q : 24'sd0
+                        );
+                        f5_input_q <= sat24_add(
+                            f5_mix_base_q,
+                            fric2_sw_phi0_q ?
+                                fric2_injection_q : 24'sd0
+                        );
+                        input_mix_stage_q <= 2'd0;
+                    end
+
+                    default: begin
+                    end
+                endcase
+            end
+
             if (filter_phase_ce) begin
                 filter_frequency_q <= filter_frequency;
 
@@ -950,16 +1006,14 @@ module ssi263_sc02_audio #(
                     f1_input_q <= voice_source;
                     f2_input_q <= f1_state_q;
                     // Sheet 1 ties FRIC_1 to the F2-output/F3-input node.
-                    f3_input_q <= sat24_add(
-                        f2_state_q,
-                        source_fric1_sw ? fric1_injection : 24'sd0
-                    );
+                    f3_mix_base_q <= f2_state_q;
+                    fric_source_phi0_q <= fric_source;
+                    fric1_sw_phi0_q <= source_fric1_sw;
                     f4_input_q <= f3_state_q;
                     // Sheet 2 ties FRIC_2 to the F4-output/F5-input node.
-                    f5_input_q <= sat24_add(
-                        f4_state_q,
-                        source_fric2_sw ? fric2_injection : 24'sd0
-                    );
+                    f5_mix_base_q <= f4_state_q;
+                    fric2_sw_phi0_q <= source_fric2_sw;
+                    input_mix_stage_q <= 2'd1;
                 end
 
                 if (filter_phase && !engine_busy_q) begin

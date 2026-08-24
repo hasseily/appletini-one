@@ -291,6 +291,15 @@ The fastest supported phase gap is 133 clocks, and an overrun latch covers
 both chips in focused and card tests. The final filter-amplitude value applies
 after F5, as shown on sheet 2.
 
+The first route of this corrected graph exposed one 8.948 ns Phi0 input path:
+fricative gain and sign, both FRIC1 coupling sums, and the final F2/F3 node sum
+had become one 18-level chain. Phi0 now saves the resolved source, F2/F4 node
+values, and both switch states. Three idle clocks then run the same saturated
+adds one at a time. F3 first uses its saved input at engine clock 16 and F5 at
+clock 28, so the values and 32-clock output time do not change. A focused test
+changes every live source control after Phi0 and proves that both node sums
+still use the saved sample.
+
 ### Reconstruction, level, and hardware fault trail
 
 U52C clears a switched node during one phase. The board output sees a
@@ -357,6 +366,8 @@ channel-B chip, VIA1 CA1, and right audio.
 
 The card implementation now has these rules:
 
+- each SSI write select is decoded at SERVE and held through DATA, while its
+  register number and data remain live for the same Apple cycle;
 - A5 writes the secondary/channel-A SSI; A6 writes the primary/channel-B SSI;
 - A5+A6 writes both chips;
 - in native mode, A5 and A6 reads expose the matching D7 status;
@@ -463,6 +474,18 @@ For this F0.9.99 speech checkpoint, the user set a temporary routed-WNS gate of
 `+0.100 ns` and asked for one clean full build only. Keep that first route if
 it passes; do not spend a second full build on duplicate timing evidence while
 hardware speech work remains.
+
+Full build `20260824T055427Z-a335e4e2-full` tested the corrected serial tract
+before the input retiming. It routed with no failed nets and passed hold,
+pulse-width, bus-skew, and constraint checks, but setup WNS was `-1.058 ns`.
+The image was rejected and no firmware was packaged from it. Its ten worst
+reported paths all ended at an SSI F3 input. It also found a `-0.791 ns` live
+slot-decode path into SSI core write enables. The source now splits the F3/F5
+math across the unused phase gap and holds each SSI socket select from SERVE
+through DATA. A fresh out-of-context synthesis of one audio core now reports
+`+0.976 ns` WNS at 7.500 ns, with five DSP48 blocks and a 3.318 ns worst data
+path. The accepted package must still come from a full-card run that clears
+the temporary `+0.100 ns` gate.
 
 The final branch gate includes:
 

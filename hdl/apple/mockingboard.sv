@@ -100,30 +100,37 @@ wire via_timer_clock = card_enabled && ab_read.sss_en;
 // It also let MB-mode ISR T1C_l reads (the standard IFR-clear) consume
 // real counts. Mockingboard-only mode keeps the plain timing as well.
 wire phasor_timer_read_extra_clock = !mockingboard_only && phasor_native;
-/* Decode each VIA from the authoritative SERVE sample, then retain only the
- * two hit bits until DATA. Address, R/W, and write data stay live through the
- * Apple cycle; the registered selects remove the long live slot-decode cone
- * from the VIA state enables without moving the VIA side effect. */
+/* Decode each VIA and SSI socket from the authoritative SERVE sample, then
+ * retain only the hit bits until DATA. Address, R/W, and write data stay live
+ * through the Apple cycle; the registered selects remove the long live
+ * slot-decode cone without moving a write side effect. */
 logic via0_cycle_hit_q;
 logic via1_cycle_hit_q;
+logic ssi_primary_cycle_hit_q;
+logic ssi_secondary_cycle_hit_q;
+wire ssi_write_hit = slot_io_hit && !ab_read.rw && ssi_visible_mode;
 always_ff @(posedge clk) begin
     if (via_reset) begin
         via0_cycle_hit_q <= 1'b0;
         via1_cycle_hit_q <= 1'b0;
+        ssi_primary_cycle_hit_q <= 1'b0;
+        ssi_secondary_cycle_hit_q <= 1'b0;
     end else if (ab_read.data_en) begin
         via0_cycle_hit_q <= 1'b0;
         via1_cycle_hit_q <= 1'b0;
+        ssi_primary_cycle_hit_q <= 1'b0;
+        ssi_secondary_cycle_hit_q <= 1'b0;
     end else if (ab_read.serve_en) begin
         via0_cycle_hit_q <= via0_hit;
         via1_cycle_hit_q <= via1_hit;
+        ssi_primary_cycle_hit_q <= ssi_write_hit && ab_read.addr[6];
+        ssi_secondary_cycle_hit_q <= ssi_write_hit && ab_read.addr[5];
     end
 end
 wire via0_strobe = ab_read.data_en && via0_cycle_hit_q;
 wire via1_strobe = ab_read.data_en && via1_cycle_hit_q;
-wire ssi_write_region =
-    slot_io_hit && ab_read.data_en && !ab_read.rw && ssi_visible_mode;
-wire ssi_primary_write = ssi_write_region && ab_read.addr[6];
-wire ssi_secondary_write = ssi_write_region && ab_read.addr[5];
+wire ssi_primary_write = ab_read.data_en && ssi_primary_cycle_hit_q;
+wire ssi_secondary_write = ab_read.data_en && ssi_secondary_cycle_hit_q;
 wire ssi_native_read_region =
     slot_io_hit && ab_read.serve_en && ab_read.rw && phasor_native &&
     !ab_read.addr[4] && !ab_read.addr[7] && (ab_read.addr[6] || ab_read.addr[5]);

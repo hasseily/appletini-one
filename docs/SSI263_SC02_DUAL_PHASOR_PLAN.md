@@ -370,4 +370,5 @@ without a same-vector capture from a real SSI-263AP.
 6. `Remove SC-01 speech support`
 7. `Complete dual SSI-263 verification`
 8. `Correct SSI-263 tract and source response`
-9. `Package F0.9.99 SSI-263 test firmware`
+9. `Retiming SSI-263 input and bus selects`
+10. `Package F0.9.99 SSI-263 test firmware`

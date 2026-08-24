@@ -81,6 +81,9 @@ module tb_ssi263_sc02_audio;
     logic signed [23:0] held_f4;
     logic signed [23:0] held_f5;
     logic signed [23:0] held_reconstruction;
+    logic signed [23:0] held_fric_source;
+    logic signed [23:0] expected_fric1_injection;
+    logic signed [23:0] expected_fric2_injection;
 
     integer ref_d1;
     integer ref_d2;
@@ -521,6 +524,47 @@ module tb_ssi263_sc02_audio;
         check(dut.fric_source == 0,
               "disabled fricative source ignored its zero guard");
         release dut.noise_d3_q;
+        release dut.noise_d4_q;
+        reset_all();
+
+        // Phi0 owns the tract input sample.  Changing every live source and
+        // switch control after that edge must not alter the retimed F3/F5
+        // node sums that the next Phi1 engine run will consume.
+        phone_active = 1'b1;
+        fricative = 1'b1;
+        pw_2 = 1'b0;
+        pw_3 = 1'b0;
+        fric1_sw = 1'b1;
+        fric2_sw = 1'b1;
+        fric_amp_code = 4'hF;
+        force dut.noise_d4_q = 5'b00000;
+        #1;
+        held_fric_source = dut.fric_source;
+        expected_fric1_injection = dut.sat24_add(
+            dut.sat24_add(
+                held_fric_source >>> 7,
+                held_fric_source >>> 8
+            ),
+            held_fric_source >>> 10
+        );
+        expected_fric2_injection = dut.sat24_add(
+            held_fric_source >>> 5,
+            held_fric_source >>> 6
+        );
+        pulse_filter(1'b0);
+        phone_active = 1'b0;
+        fricative = 1'b0;
+        fric1_sw = 1'b0;
+        fric2_sw = 1'b0;
+        fric_amp_code = 4'h0;
+        repeat (4) @(posedge clk);
+        #1;
+        check(dut.fric_source_phi0_q == held_fric_source,
+              "Phi0 fricative source snapshot followed later live controls");
+        check(dut.input_mix_stage_q == 2'd0 &&
+              dut.f3_input_q == expected_fric1_injection &&
+              dut.f5_input_q == expected_fric2_injection,
+              "retimed tract injections did not keep the Phi0 sample");
         release dut.noise_d4_q;
         reset_all();
 

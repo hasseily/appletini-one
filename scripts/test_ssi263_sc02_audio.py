@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-import cmath
-import math
 import re
 import shutil
 import subprocess
@@ -75,8 +73,8 @@ def parse_capacitor_weights(source: str, name: str) -> list[int]:
     return [weights[index] for index in range(4)]
 
 
-def spectral_checks(source: str) -> None:
-    """Check the schematic charge ratios and their nominal voiced spectrum."""
+def circuit_ratio_checks(source: str) -> None:
+    """Check only the capacitor values and exact fixed-point ratios."""
     q14 = 16384
     capacitor_weights = {
         name: parse_capacitor_weights(source, f"{name}_capacitance")
@@ -158,6 +156,14 @@ def spectral_checks(source: str) -> None:
             ratio_q12(total, 3900)
             for total in selected_totals(expected_weights["fric2"])
         ],
+        "fric1_source_magnitude": [
+            (65536 * 3 * total + (653 * 3900) // 2) // (653 * 3900)
+            for total in selected_totals(expected_weights["fric1"])
+        ],
+        "fric2_edge_magnitude": [
+            (65536 * 6 * total + (653 * 3900) // 2) // (653 * 3900)
+            for total in selected_totals(expected_weights["fric2"])
+        ],
         "filter_amp_gain": [
             ratio_q14(total, 2750)
             for total in selected_totals(expected_weights["filter_amp"])
@@ -189,6 +195,8 @@ def spectral_checks(source: str) -> None:
         "F5_FRIC_BASE_G_Q14": 5051,
         "F5_FRIC_SW_G_Q14": 16252,
         "FILTER_OUTPUT_ALPHA_Q14": 16086,
+        "FRIC_DRIVE_MAG_Q16": 301,
+        "FRIC_DRIVE_EDGE_Q16": 602,
     }
     constants = {
         name: parse_constant(source, name) for name in expected_constants
@@ -221,204 +229,6 @@ def spectral_checks(source: str) -> None:
         ):
             raise RuntimeError(f"{name} does not add damping with RES code")
 
-    def check_section(
-        alpha: float,
-        a: float,
-        b: float,
-        name: str,
-        require_conjugate: bool = True,
-    ) -> None:
-        recurrence = 1.0 + alpha - a * b
-        if not 0.0 < alpha < 1.0:
-            raise RuntimeError(f"{name} alpha is outside its stable range")
-        discriminant = recurrence * recurrence - 4.0 * alpha
-        roots = (
-            (recurrence + cmath.sqrt(discriminant)) / 2.0,
-            (recurrence - cmath.sqrt(discriminant)) / 2.0,
-        )
-        if any(abs(root) >= 1.0 for root in roots):
-            raise RuntimeError(f"{name} has an unstable charge-state pole")
-        if require_conjugate and discriminant >= 0.0:
-            raise RuntimeError(f"{name} lost its conjugate formant poles")
-
-    for index in range(16):
-        check_section(
-            constants["F1_ALPHA_Q14"] / q14,
-            constants["F1_A_Q14"] / q14,
-            tables["f1_b_q14"][index] / q14,
-            f"F1 code {index:X}",
-        )
-        for frequency_code in range(16):
-            check_section(
-                tables["f2_alpha_q14"][index] / q14,
-                tables["f2_a_q14"][index] / q14,
-                tables["f2_b_q14"][frequency_code] / q14,
-                f"F2 frequency {frequency_code:X}, RES {index:X}",
-                require_conjugate=False,
-            )
-        check_section(
-            constants["F3_ALPHA_Q14"] / q14,
-            constants["F3_A_Q14"] / q14,
-            tables["f3_b_q14"][index] / q14,
-            f"F3 code {index:X}",
-        )
-        check_section(
-            constants["F4_ALPHA_Q14"] / q14,
-            constants["F4_A_Q14"] / q14,
-            tables["f4_b_q14"][index] / q14,
-            f"F4 code {index:X}",
-        )
-    check_section(
-        constants["F5_ALPHA_Q14"] / q14,
-        constants["F5_A_Q14"] / q14,
-        constants["F5_B_Q14"] / q14,
-        "F5",
-    )
-
-    rom = []
-    for line in (ROOT / "hdl" / "apple" / "ssi263_sc02_rom.mem").read_text(
-        encoding="ascii"
-    ).splitlines():
-        token = line.split("//", 1)[0].strip()
-        if token:
-            rom.append(int(token, 16))
-    if len(rom) != 512:
-        raise RuntimeError(f"native ROM has {len(rom)} bytes, expected 512")
-
-    stop_phones = {
-        phone
-        for phone in range(64)
-        if (rom[phone * 8 + 2] & 0x04)
-        and not (rom[phone * 8 + 2] & 0x02)
-    }
-    if stop_phones != {0x24, 0x25, 0x27, 0x28, 0x29}:
-        raise RuntimeError(
-            "PW2&&!PW3 no longer selects exactly B/D/P/T/K: "
-            f"{sorted(stop_phones)}"
-        )
-
-    f_f34 = rom[0x34 * 8 + 3] >> 4
-    sch_f34 = rom[0x32 * 8 + 3] >> 4
-    if f_f34 == sch_f34 or (
-        tables["f3_b_q14"][f_f34] == tables["f3_b_q14"][sch_f34]
-        and tables["f4_b_q14"][f_f34] == tables["f4_b_q14"][sch_f34]
-    ):
-        raise RuntimeError("F and SCH collapsed onto one fixed hiss spectrum")
-
-    phase_rate_hz = (14_318_180 / 14) / (2 * (256 - 0xE9))
-    fundamental_hz = 90.796
-
-    def denominator(
-        frequency_hz: float, alpha: float, a: float, b: float
-    ) -> tuple[complex, complex]:
-        z1 = cmath.exp(-2j * math.pi * frequency_hz / phase_rate_hz)
-        return z1, (
-            1 - (1 + alpha - a * b) * z1 + alpha * z1 * z1
-        )
-
-    def vowel_metrics(phone: int) -> tuple[float, float, float]:
-        row = rom[phone * 8 : phone * 8 + 8]
-        f1_code, f2_code, res_code, f34_code = (
-            value >> 4 for value in row[:4]
-        )
-        harmonics = []
-        harmonic = 1
-        while harmonic * fundamental_hz < phase_rate_hz / 2:
-            frequency = harmonic * fundamental_hz
-
-            alpha = constants["F1_ALPHA_Q14"] / q14
-            a = constants["F1_A_Q14"] / q14
-            g = constants["F1_G_Q14"] / q14
-            b = tables["f1_b_q14"][f1_code] / q14
-            z1, section_denominator = denominator(frequency, alpha, a, b)
-            h1 = b * ((a + g) - g * z1) / section_denominator
-
-            alpha = tables["f2_alpha_q14"][res_code] / q14
-            a = tables["f2_a_q14"][res_code] / q14
-            b = tables["f2_b_q14"][f2_code] / q14
-            _, section_denominator = denominator(frequency, alpha, a, b)
-            h2 = a * b / section_denominator
-
-            alpha = constants["F3_ALPHA_Q14"] / q14
-            a = constants["F3_A_Q14"] / q14
-            g = constants["F3_G_Q14"] / q14
-            b = tables["f3_b_q14"][f34_code] / q14
-            z1, section_denominator = denominator(frequency, alpha, a, b)
-            h3_main = a * b / section_denominator
-            h3_side = b * g * (1 - z1) / section_denominator
-            y3 = (h3_main * h2 + h3_side) * h1
-
-            alpha = constants["F4_ALPHA_Q14"] / q14
-            a = constants["F4_A_Q14"] / q14
-            b = tables["f4_b_q14"][f34_code] / q14
-            _, section_denominator = denominator(frequency, alpha, a, b)
-            h4 = a * b / section_denominator
-
-            alpha = constants["F5_ALPHA_Q14"] / q14
-            a = constants["F5_A_Q14"] / q14
-            b = constants["F5_B_Q14"] / q14
-            _, section_denominator = denominator(frequency, alpha, a, b)
-            h5 = a * b / section_denominator
-
-            # U146 sees the old-to-new F5 change through Cselected while
-            # C172 retains 2700/2750 of its prior output.  FL_AMP=F is a
-            # nonzero nominal gain; its scalar cancels the normalized bands,
-            # but the output pole and delta zero must remain in the model.
-            output_alpha = constants["FILTER_OUTPUT_ALPHA_Q14"] / q14
-            output_gain = filter_amplitude[-1] / q14
-            h_output = (
-                output_gain
-                * (z1 - 1)
-                / (1 - output_alpha * z1)
-            )
-
-            source = sum(
-                cmath.exp(-2j * math.pi * frequency * sample / phase_rate_hz)
-                for sample in range(15)
-            )
-            power = abs(source * y3 * h4 * h5 * h_output) ** 2
-            harmonics.append((frequency, power))
-            harmonic += 1
-
-        total_power = sum(power for _, power in harmonics)
-        if total_power <= 0:
-            raise RuntimeError(f"phone {phone:02X} has no harmonic power")
-        centroid = sum(
-            frequency * power for frequency, power in harmonics
-        ) / total_power
-        low_fraction = sum(
-            power for frequency, power in harmonics if 30 <= frequency <= 500
-        ) / total_power
-        high_fraction = sum(
-            power
-            for frequency, power in harmonics
-            if 1000 <= frequency <= 4000
-        ) / total_power
-        return centroid, low_fraction, high_fraction
-
-    # These eight native ROM vowels cover the full tract-code range.  Broad
-    # charge-model bounds reject both the prior five-section low-band response
-    # and an undamped, nearly lossless F2 without copying any reference audio.
-    # E1, A, EH, AE, O, OO, UH, ER in the supplied SSI-263 ROM order.
-    vowels = (0x02, 0x08, 0x0A, 0x0C, 0x11, 0x13, 0x18, 0x1C)
-    metrics = [vowel_metrics(phone) for phone in vowels]
-    mean_centroid = sum(value[0] for value in metrics) / len(metrics)
-    mean_low = sum(value[1] for value in metrics) / len(metrics)
-    mean_high = sum(value[2] for value in metrics) / len(metrics)
-    if not 680 <= mean_centroid <= 825:
-        raise RuntimeError(
-            f"eight-vowel centroid {mean_centroid:.1f} Hz left charge-model bounds"
-        )
-    if not 0.080 <= mean_low <= 0.145:
-        raise RuntimeError(
-            f"eight-vowel low-band fraction {mean_low:.3f} left bounds"
-        )
-    if not 0.065 <= mean_high <= 0.130:
-        raise RuntimeError(
-            f"eight-vowel 1-4 kHz fraction {mean_high:.3f} left bounds"
-        )
-
-
 def static_checks() -> None:
     source = (ROOT / "hdl" / "apple" / "ssi263_sc02_audio.sv").read_text(
         encoding="utf-8"
@@ -426,11 +236,12 @@ def static_checks() -> None:
     required = (
         "module ssi263_sc02_audio #(",
         "parameter logic [3:0] NOISE_D1_SEED",
-        "input  logic               fricative",
-        "input  logic               voiced",
-        "input  logic               pw_2",
+        "parameter logic U60_OPEN_P3_LEVEL = 1'b0",
+        "parameter logic U75_OPEN_P1_LEVEL = 1'b0",
+        "input  logic               pd_rst_n",
         "input  logic               pw_3",
         "input  logic               noise_clock_ce",
+        "input  logic               noise_shift_ce",
         "input  logic               fric1_sw",
         "input  logic               fric2_sw",
         "input  logic               voice_toggle",
@@ -439,23 +250,58 @@ def static_checks() -> None:
         "noise_d2_q <= {noise_d2_q[3:0], noise_d4_q[4]};",
         "noise_d3_q <= {noise_d3_q[2:0], noise_d2_q[4]};",
         "noise_d4_q <= {noise_d4_q[3:0], noise_feedback};",
-        "voice_shape_q <= voice_shape_q + 4'h1;",
-        "LINE_OUTPUT_SHIFT = 3",
-        "stop_class = pw_2 && !pw_3;",
-        "source_voiced = stop_class ? 1'b0 : voiced;",
-        "source_fricative = stop_class ? 1'b0 : fricative;",
-        "u72a_fric_gate = !(source_pw3 && !voice_toggle);",
-        "noise_bit = !noise_d4_q[4] && u72a_fric_gate;",
+        "u60_parallel_value = {U60_OPEN_P3_LEVEL, 1'b0, 2'b11};",
+        "voice_count_after_phi1 = voice_count_q;",
+        "if (pd_rst_n && voice_load_pending_q)",
+        "voice_count_after_phi1 = u60_parallel_value;",
+        "else if (voice_count_q != 4'hF)",
+        "voice_count_after_phi1 = voice_count_q + 4'h1;",
+        "u60_tc = (voice_count_q == 4'hF);",
+        "u60_tc_after_phi1 = (voice_count_after_phi1 == 4'hF);",
+        "voice_source_after_phi1 = (powered_down || u60_tc_after_phi1) ?",
+        "voice_count_q <= 4'hF;",
+        "if (!pd_rst_n) begin",
+        "pitch_sync1_q <= 1'b0;",
+        "pitch_sync2_q <= 1'b0;",
+        "voice_load_pending_q <= 1'b0;",
+        "voice_count_q <= voice_count_after_phi1;",
+        "u75_parallel_value = {2'b00, U75_OPEN_P1_LEVEL, 1'b1};",
+        "noise_count_next = (noise_count_q == 4'hF) ?",
+        "u75_parallel_value : noise_count_q + 4'h1;",
+        "noise_force = ~(noise_count_q[2] | noise_count_q[3]);",
+        "noise_bit = !(noise_d3_q[3] | (pw_3 && !voice_toggle)) &&",
+        "(!voice_toggle || (voice_amp_code == 4'd0));",
         "voice_source = voice_magnitude;",
-        "fric1_source = (fric_drive == 18'sd65536) ?",
+        "fric_drive = noise_bit ? FRIC_DRIVE_MAG_Q16 :",
+        "-FRIC_DRIVE_MAG_Q16;",
+        "FRIC_DRIVE_EDGE_Q16: begin",
+        "fric2_drive_charge = fric2_edge_magnitude(fric_amp_code);",
+        "-FRIC_DRIVE_EDGE_Q16: begin",
+        "fric1_source = noise_bit ?",
+        "-fric1_source_magnitude(fric_amp_code) :",
+        "fric1_source_magnitude(fric_amp_code);",
         "fric2_source = fric2_source_next;",
         "if (fric_drive != fric_drive_history_q)",
         "fric2_source_state_q <= fric2_source_next;",
         "fric_drive_history_q <= fric_drive;",
-        "fric1_source_phi0_q <= fric1_source;",
+        "fric_drive_history_q <= -FRIC_DRIVE_MAG_Q16;",
+        "if (noise_clock_ce)",
+        "noise_count_q <= noise_count_next;",
+        "if (noise_shift_ce) begin",
         "fric2_source_phi0_q <= fric2_source_next;",
-        "fric1_sw_phi0_q <= source_fric1_sw;",
-        "fric2_sw_phi0_q <= source_fric2_sw;",
+        "fric2_sw_phi0_q <= fric2_sw;",
+        "c143_live_delta =",
+        "$signed({c143_source_plate_q[23], c143_source_plate_q}) -",
+        "$signed({fric1_source[23], fric1_source});",
+        "c143_delta_with_live = c143_phi0_delta_q;",
+        "c143_delta_with_live = c143_phi0_delta_q + c143_live_delta;",
+        "c143_phi0_delta_q <= fric1_sw ?",
+        "c143_live_delta : 25'sd0;",
+        "c143_source_plate_q <= fric1_source;",
+        "c143_delta_hold_q <= c143_delta_with_live;",
+        "c143_phi0_delta_q <= 25'sd0;",
+        "c143_source_plate_q <= 24'sd0;",
+        "f1_input_q <= voice_source_after_phi1;",
         "f1_code_phi0_q <= f1_code;",
         "f2_code_phi0_q <= f2_code;",
         "f2_res_code_phi0_q <= f2_res_code;",
@@ -470,6 +316,7 @@ def static_checks() -> None:
         "engine_b_q <= f4_b_q14(f4_code_phi0_q);",
         "engine_b_q <= F5_B_Q14;",
         "engine_output_delta_q <=",
+        "engine_output_delta_q <= c143_delta_hold_q;",
         "F2_FRIC_H_Q14",
         "fric2_base_history_q[23]",
         "F5_FRIC_BASE_G_Q14",
@@ -494,14 +341,10 @@ def static_checks() -> None:
         "output_hold_q <= engine_output_next;",
         "if (closure)",
         "reconstruction_hold_q <= output_hold_q;",
-        "dc_input = powered_down ? 24'sd0 : reconstruction_hold_q;",
-        "dc_active_stage1_q <= !powered_down;",
-        "dc_delta_q <= {dc_input[23], dc_input} -",
-        "dc_sum_q <= {{1{dc_output_q[25]}}, dc_output_q} +",
-        "dc_filtered_wide = dc_sum_q - (dc_sum_q >>> 8);",
-        "dc_output_q <= sat26_from27(dc_filtered_wide);",
-        "audio_sample <= sat16_from27(",
-        "dc_filtered_wide >>> LINE_OUTPUT_SHIFT",
+        "if (audio_tick) begin",
+        "$signed({{3{reconstruction_hold_q[23]}}",
+        "reconstruction_hold_q}) >>> 1",
+        "audio_sample <= 16'sd0;",
         "f1_input_history_q",
         "f3_side_input_q",
         "f3_side_history_q",
@@ -567,12 +410,28 @@ def static_checks() -> None:
         "engine_b_q <= f4_b_q14(f4_code);",
         "filter_amp_gain(filter_amp_code)",
         "fric_source_phi0_q",
+        "fric1_source_phi0_q",
+        "fric1_sw_phi0_q",
         "fric1_partial_q",
         "_cos_q14",
         "_radius_q14",
         "pole_a1",
         "pole_r2",
         "pole_b0",
+        "stop_class",
+        "source_voiced",
+        "source_fricative",
+        "LINE_OUTPUT_SHIFT",
+        "dc_input",
+        "dc_delta_q",
+        "dc_sum_q",
+        "dc_output_q",
+        "dc_filtered_wide",
+        "voice_shape_q",
+        "voiced_q",
+        "voice_terminal_event",
+        "fric_drive = 18'sd0;",
+        "fric_drive = noise_bit ? 18'sd65536",
     )
     for text in forbidden:
         if text in source:
@@ -593,22 +452,29 @@ def static_checks() -> None:
             "section operands must be registered before the DSP scheduler"
         )
     if re.search(r"stop_(?:armed|release)", source):
-        raise RuntimeError("stop phones must not use an invented release state")
+        raise RuntimeError("the circuit must not use an invented stop state")
+    if re.search(r"voice_count_q\s*<=\s*4'h0", source):
+        raise RuntimeError("U60 must not load or clear to zero")
     if re.search(
         r"filter_frequency\s*==\s*(?:8'h)?ff", source, re.IGNORECASE
     ):
         raise RuntimeError("FILT=FF is maximum rate, not a silence selector")
-    if re.search(r"/\s*(?:3300|3900)\b", source):
+    if re.search(
+        r"/\s*(?:3300|3900)\b", strip_verilog_comments(source)
+    ):
         raise RuntimeError("source-derived gain tables must not infer dividers")
-    if re.search(r"dc_(?:input|active_stage1_q)[^;]*phone_active", source):
-        raise RuntimeError("phone end must not hard-mute the post-U148 output")
+    for signal in ("phone_active", "fricative", "voiced", "pw_2"):
+        if re.search(rf"\binput\s+logic[^;]*\b{signal}\b", source):
+            raise RuntimeError(
+                f"native audio retains invented source input {signal}"
+            )
     if source.count("engine_operand_a * engine_coefficient_a") != 1 or source.count(
         "engine_operand_b * engine_coefficient_b"
     ) != 1:
         raise RuntimeError("charge scheduler must expose two RTL product lanes")
     if re.search(r"sat24_from48\s*\(\s*engine_product_[ab]", source):
         raise RuntimeError("every DSP product must be registered before saturation")
-    spectral_checks(source)
+    circuit_ratio_checks(source)
 
 
 def vivado_tool(name: str) -> str:

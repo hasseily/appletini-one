@@ -27,16 +27,13 @@ module ssi263_voice (
 );
 
     logic       powered_down;
-    logic       phone_active;
     logic       ar_enabled;
     logic       response_boundary_ce;
     logic       voice_toggle;
     logic       noise_clock_ce;
+    logic       noise_shift_ce;
     logic       filter_phase_ce;
     logic       filter_phase;
-    logic       fricative;
-    logic       voiced;
-    logic       pw_2;
     logic       pw_3;
     logic       fric1_sw;
     logic       fric2_sw;
@@ -50,25 +47,33 @@ module ssi263_voice (
     logic [3:0] filter_amp_code;
     logic [3:0] voice_amp_code;
     logic [3:0] fric_amp_code;
+    logic       core_d7;
+    logic       core_ar_drive_low;
+    logic signed [15:0] core_audio;
 
-    assign dbg_backend_done = response_boundary_ce;
-    assign dbg_enable_ints = ar_enabled;
+    // card_enabled is a virtual backplane boundary, not an SSI reset pin.
+    // Keep both die models running and mask only their exposed card signals.
+    assign ssi_d7 = card_enabled ? core_d7 : 1'b0;
+    assign ar_drive_low = card_enabled && core_ar_drive_low;
+    assign audio = card_enabled ? core_audio : 16'sd0;
+    assign dbg_backend_done = card_enabled && response_boundary_ce;
+    assign dbg_enable_ints = card_enabled && ar_enabled;
 
     ssi263_sc02_core #(
         .REVISION_AP(1'b1)
     ) core_i (
         .clk(clk),
-        .rstn(rstn && card_enabled),
+        .rstn(rstn),
         .pd_rst_n(apple_res),
         .xck_ce(xck_ce),
         .div2(1'b1),
-        .write_active(ssi_write_active),
+        .write_active(ssi_write_active && card_enabled),
         .write_reg(ssi_reg),
         .write_data(ssi_wdata),
-        .d7_pending(ssi_d7),
-        .ar_drive_low(ar_drive_low),
+        .d7_pending(core_d7),
+        .ar_drive_low(core_ar_drive_low),
         .powered_down(powered_down),
-        .phone_active(phone_active),
+        .phone_active(),
         .ar_enabled(ar_enabled),
         .response_phoneme(),
         .transitioned_pitch(),
@@ -87,6 +92,7 @@ module ssi263_voice (
         .voice_toggle(voice_toggle),
         .pitch_period_ce(),
         .noise_clock_ce(noise_clock_ce),
+        .noise_shift_ce(noise_shift_ce),
         .filter_phase_ce(filter_phase_ce),
         .filter_phase(filter_phase),
         .selector(),
@@ -94,17 +100,13 @@ module ssi263_voice (
         .selector_step_ce(),
         .selector_rom_data(),
         .selector_flags(),
-        .phone_fricative(),
-        .phone_voiced(),
         .pw_0(),
         .pw_1(),
-        .pw_2(pw_2),
+        .pw_2(),
         .pw_3(pw_3),
         .pw_5(),
         .fric1_sw(fric1_sw),
         .fric2_sw(fric2_sw),
-        .fricative(fricative),
-        .voiced(voiced),
         .closure(closure),
         .rate_clock_ce(),
         .rate_clock_div2_ce(),
@@ -124,15 +126,13 @@ module ssi263_voice (
 
     ssi263_sc02_audio audio_i (
         .clk(clk),
-        .rstn(rstn && card_enabled),
+        .rstn(rstn),
+        .pd_rst_n(apple_res),
         .audio_tick(audio_tick),
-        .phone_active(phone_active),
         .powered_down(powered_down),
-        .fricative(fricative),
-        .voiced(voiced),
-        .pw_2(pw_2),
         .pw_3(pw_3),
         .noise_clock_ce(noise_clock_ce),
+        .noise_shift_ce(noise_shift_ce),
         .fric1_sw(fric1_sw),
         .fric2_sw(fric2_sw),
         .voice_toggle(voice_toggle),
@@ -148,7 +148,7 @@ module ssi263_voice (
         .voice_amp_code(voice_amp_code),
         .fric_amp_code(fric_amp_code),
         .closure(closure),
-        .audio_sample(audio)
+        .audio_sample(core_audio)
     );
 
 endmodule

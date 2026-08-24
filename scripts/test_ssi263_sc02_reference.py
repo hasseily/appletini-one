@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import unittest
 from fractions import Fraction
+from hashlib import sha256
 
 from ssi263_sc02_reference import (
     MODE_FRAME_IMMEDIATE,
     MODE_PHONEME_TRANSITIONED,
+    ROM_ACTIVE_SHA256,
     ROM_ACTIVE_SIZE,
     SELECTOR_SLOW_EDGES,
     SSI263Reference,
@@ -20,6 +22,7 @@ from ssi263_sc02_reference import (
     load_active_rom,
     phoneme_ticks,
     pitch_period_ticks,
+    reconstructed_source_image,
     rom_address,
     verify_rom,
     voice_clock_period_ticks,
@@ -31,6 +34,13 @@ class RomTests(unittest.TestCase):
         rom = load_active_rom()
         self.assertEqual(len(rom), ROM_ACTIVE_SIZE)
         verify_rom(rom)
+        self.assertEqual(
+            sha256(bytes(rom)).hexdigest(),
+            ROM_ACTIVE_SHA256,
+        )
+        image = reconstructed_source_image(rom)
+        self.assertEqual(image[:ROM_ACTIVE_SIZE], bytes(rom))
+        self.assertEqual(set(image[ROM_ACTIVE_SIZE:]), {0})
         for phone in range(64):
             for selector in range(8):
                 self.assertEqual(rom_address(phone, selector), phone * 8 + selector)
@@ -207,6 +217,10 @@ class InterfaceTests(unittest.TestCase):
         chip.write(1, 0xFF)
         chip.write(2, 0x0F)
         chip.write(3, 0x00)
+        chip.parameter_values["voice_amp"] = 1
+        chip.ampct_count = 15
+        chip.pw_3 = False
+        chip.selector = 3
         chip.voice_ticks_to_edge = voice_clock_period_ticks(
             chip.pitch_inflection
         )
@@ -218,20 +232,17 @@ class InterfaceTests(unittest.TestCase):
         chip.advance_effective_ticks(8)
         self.assertEqual(chip.last_pitch_event_tick - first, 8)
 
-    def test_held_pw3_produces_sustained_u41c_edges(self) -> None:
+    def test_u104c_gates_u41c_without_phone_class_decode(self) -> None:
         chip = SSI263Reference(div2=False)
-        chip.write(0, 0x80)
-        chip.write(1, 0xFF)
-        chip.write(2, 0x0F)
-        chip.write(3, 0x00)
         chip.pw_3 = True
         chip.parameter_values["fric_amp"] = 1
-        chip.voice_ticks_to_edge = voice_clock_period_ticks(
-            chip.pitch_inflection
-        )
-        chip.advance_effective_ticks(24)
-        self.assertTrue(chip.pw_3)
-        self.assertGreaterEqual(chip.noise_clock_edges, 2)
+        chip.selector = 0
+        chip.u62_q = False
+        chip._update_u41c_edge()
+        self.assertEqual(chip.noise_clock_edges, 0)
+        chip.pw_3 = False
+        chip._update_u41c_edge()
+        self.assertEqual(chip.noise_clock_edges, 1)
 
     def test_closure_is_u49_terminal_gated_by_filter_phase(self) -> None:
         chip = SSI263Reference(div2=False)
@@ -352,27 +363,6 @@ class SelectorTests(unittest.TestCase):
                 self.assertEqual(chip.pw_2, bool(code & 0x4))
                 self.assertEqual(chip.pw_3, bool(code & 0x2))
                 self.assertEqual(chip.pw_5, not bool(code & 0x4))
-                self.assertEqual(chip.fric1_sw, bool(code & 0x8))
-                self.assertEqual(chip.fric2_sw, not bool(code & 0x8))
-
-        chip = SSI263Reference(div2=False)
-        chip.duration_phoneme = 0x27
-        chip.advance_effective_ticks(32)
-        self.assertTrue(chip.phone_fricative)
-        self.assertFalse(chip.phone_voiced)
-        chip = SSI263Reference(div2=False)
-        chip.duration_phoneme = 0x01
-        chip.advance_effective_ticks(32)
-        self.assertFalse(chip.phone_fricative)
-        self.assertTrue(chip.phone_voiced)
-
-        chip = SSI263Reference(div2=False)
-        chip.duration_phoneme = 0x2F
-        chip.advance_effective_ticks(32)
-        self.assertFalse(chip.pw_0)
-        self.assertFalse(chip.pw_1)
-        self.assertTrue(chip.phone_fricative)
-        self.assertTrue(chip.phone_voiced)
 
         for phone in range(64):
             with self.subTest(phone=phone):
@@ -380,13 +370,69 @@ class SelectorTests(unittest.TestCase):
                 chip.duration_phoneme = phone
                 chip.advance_effective_ticks(32)
                 self.assertEqual(
-                    chip.phone_voiced,
-                    not bool(chip.rom[rom_address(phone, 0)] & 0x01),
+                    chip.pw_0,
+                    bool(chip.rom[rom_address(phone, 0)] & 0x01),
                 )
                 self.assertEqual(
-                    chip.phone_fricative,
-                    not bool(chip.rom[rom_address(phone, 1)] & 0x01),
+                    chip.pw_1,
+                    bool(chip.rom[rom_address(phone, 1)] & 0x01),
                 )
+
+    def test_u68_u85_and_route_latches_follow_drawn_gates(self) -> None:
+        chip = SSI263Reference(div2=False)
+        chip.parameter_values["voice_amp"] = 1
+        chip.pw_3 = False
+        chip.selector = 3
+        chip._update_amplitude_counter()
+        chip.selector = 4
+        chip._update_amplitude_counter()
+        self.assertEqual(chip.ampct_count, 1)
+        self.assertTrue(chip.ampct_zero)
+        self.assertTrue(chip.u62_reset)
+
+        chip.ampct_count = 14
+        chip.u68_clock_level = False
+        chip.selector = 3
+        chip._update_amplitude_counter()
+        chip.selector = 4
+        chip._update_amplitude_counter()
+        self.assertEqual(chip.ampct_count, 15)
+        self.assertFalse(chip.ampct_nco)
+        self.assertFalse(chip.u62_reset)
+
+        chip.duration_phoneme = 0x01
+        chip.selector = 2
+        chip.pw_0 = True
+        chip.pw_1 = True
+        chip.pw_2 = True
+        chip.ampct_count = 0
+        chip.parameter_values["fric_amp"] = 0
+        expected_tparm3 = bool(chip.flags_for_selector(2) & 0x08)
+        chip._complete_selector_slot(suppress_slot_write=False)
+        self.assertEqual(chip.u20b_q, expected_tparm3)
+        chip.filter_phase = 0
+        chip._advance_filter_clock(0)
+        self.assertEqual(chip.fric1_sw, chip.u20b_q)
+        chip.filter_ticks_to_toggle = 1
+        chip.filter_phase = 1
+        chip._advance_filter_clock(1)
+        self.assertEqual(chip.fric2_sw, not chip.u20b_q)
+
+    def test_u20_first_selector_two_scan_uses_settling_pw2_gate(self) -> None:
+        chip = SSI263Reference(div2=False)
+        chip.duration_phoneme = 0x01
+        chip.selector = 2
+        chip.pw_0 = True
+        chip.pw_1 = True
+        chip.pw_2 = False
+        chip.ampct_count = 0
+        chip.parameter_values["fric_amp"] = 0
+        flags = chip.flags_for_selector(2)
+        self.assertTrue(flags & 0x04)
+        expected_tparm3 = bool(flags & 0x08)
+        chip._complete_selector_slot(suppress_slot_write=False)
+        self.assertTrue(chip.pw_2)
+        self.assertEqual(chip.u20b_q, expected_tparm3)
 
     @staticmethod
     def rom_nibble(phone: int, selector: int) -> int:

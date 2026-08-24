@@ -46,6 +46,7 @@ module ssi263_sc02_core #(
     output logic        voice_toggle,
     output logic        pitch_period_ce,
     output logic        noise_clock_ce,
+    output logic        noise_shift_ce,
     output logic        filter_phase_ce,
     output logic        filter_phase,
 
@@ -59,8 +60,6 @@ module ssi263_sc02_core #(
 
     // Sheet 5 stores the low-ROM control bits while selectors 0, 1, and 2
     // pass. Sheet 6 and the audio sheets consume these held controls.
-    output logic        phone_fricative,
-    output logic        phone_voiced,
     output logic        pw_0,
     output logic        pw_1,
     output logic        pw_2,
@@ -68,8 +67,6 @@ module ssi263_sc02_core #(
     output logic        pw_5,
     output logic        fric1_sw,
     output logic        fric2_sw,
-    output logic        fricative,
-    output logic        voiced,
     output logic        closure,
 
     // These pulses expose the sheet-3/4/6 control state for the audio core
@@ -123,11 +120,12 @@ module ssi263_sc02_core #(
     logic [2:0]  frames_left_q;
     logic [15:0] voice_clock_ticks_left_q;
     logic [8:0]  filter_ticks_left_q;
-    // Hard reset gives U62 a known phase. The reconstruction's U85C reset
-    // combines U104C.10 with U68 /CO, but that drawn path self-locks when
-    // PW3=1 and its carry polarity is unresolved. Do not invent a CTL/PD gate.
+    // Sheet 6 amplitude counter and glottal divider.
     logic        u62_q;
     logic        u41c_level_q;
+    logic [3:0]  ampct_q;
+    logic        u68_clock_level_q;
+    logic        u20b_q;
 
     logic [4:0] rate_edges_left_q;
     logic       rate_clock_q;
@@ -149,10 +147,6 @@ module ssi263_sc02_core #(
     logic [3:0] voice_amp_code_q;
     logic [3:0] fric_amp_code_q;
 
-    // Selector 0 holds active-low voiced class PW0; selector 1 holds
-    // active-low fricative class PW1.  The classes cross those ROM slots.
-    logic phone_fricative_q;
-    logic phone_voiced_q;
     logic pw_0_q;
     logic pw_1_q;
     logic pw_2_q;
@@ -165,6 +159,7 @@ module ssi263_sc02_core #(
     logic       voice_clock_ce_q;
     logic       pitch_period_ce_q;
     logic       noise_clock_ce_q;
+    logic       noise_shift_ce_q;
     logic       filter_phase_ce_q;
     logic       filter_phase_q;
     logic       selector_step_ce_q;
@@ -182,6 +177,15 @@ module ssi263_sc02_core #(
     logic       write_end;
     logic       write_commit;
     logic       u41c_level;
+    logic       u104c;
+    logic       ampct0;
+    logic       ampct_zero;
+    logic       ampct_enable;
+    logic       ampct_up;
+    logic       ampct_nco;
+    logic       u68_clock_level;
+    logic       u62_reset;
+    logic       u20_clock_enable;
 
     initial begin
         $readmemh(ROM_FILE, rom_q);
@@ -312,6 +316,7 @@ module ssi263_sc02_core #(
     assign voice_toggle = u62_q;
     assign pitch_period_ce = pitch_period_ce_q;
     assign noise_clock_ce = noise_clock_ce_q;
+    assign noise_shift_ce = noise_shift_ce_q;
     assign filter_phase_ce = filter_phase_ce_q;
     assign filter_phase = filter_phase_q;
 
@@ -334,8 +339,6 @@ module ssi263_sc02_core #(
     assign voice_amp_code = voice_amp_code_q;
     assign fric_amp_code = fric_amp_code_q;
 
-    assign phone_fricative = phone_fricative_q;
-    assign phone_voiced = phone_voiced_q;
     assign pw_0 = pw_0_q;
     assign pw_1 = pw_1_q;
     assign pw_2 = pw_2_q;
@@ -343,12 +346,6 @@ module ssi263_sc02_core #(
     assign pw_5 = pw_5_q;
     assign fric1_sw = fric1_sw_q;
     assign fric2_sw = fric2_sw_q;
-    // These are source enables, not the U60/HCC source waveforms. The audio
-    // core owns those recurrences and applies the parameter codes.
-    assign fricative = phone_fricative_q &&
-                        (fric_amp_code_q != 4'd0) && !powered_down;
-    assign voiced = phone_voiced_q &&
-                    (voice_amp_code_q != 4'd0) && !powered_down;
     // Sheet 3 U52C is U49 TC AND U43B Q. The model toggles filter_phase_q at
     // the end of each TC interval, so !filter_phase_q names the Q-high
     // interval that just ended. This is a timing pulse, not a phone closure.
@@ -372,11 +369,41 @@ module ssi263_sc02_core #(
                         !selector_q[1] &&
                         (fric_amp_code_q != 4'd0);
 
+    // Sheet 6 U68/U85 amplitude counter. U68 pin 9 (B/D) is tied to the
+    // VCC loop, so the CD4029 runs in binary mode. Carry-in and preset-enable
+    // are low and all jam inputs are grounded.
+    // Q1 is not used; Q2..Q4 form AMPCT1..3. /CO is low only at the binary
+    // terminal selected by U/D. U85C resets U62 everywhere except the
+    // terminal phase allowed by U104C.
+    assign u104c = pw_3_q && !u62_q;
+    assign ampct0 = !u104c;
+    assign ampct_zero = !(ampct_q[1] | ampct_q[2] | ampct_q[3]);
+    assign ampct_enable = !(voice_amp_code_q == 4'd0 &&
+                            fric_amp_code_q == 4'd0);
+    assign ampct_up = ampct0 && ampct_enable;
+    assign ampct_nco = ampct_up ? (ampct_q != 4'd15) :
+                                  (ampct_q != 4'd0);
+    assign u68_clock_level = selector_q[2] &&
+                             !((!ampct_nco && ampct_up) ||
+                               (!ampct_up && ampct_zero));
+    assign u62_reset = u104c || ampct_nco;
+
+    // Sheet 7 U20B samples TPARM3 only on the gated WR_SEL2 edge. WR_SEL2
+    // also updates the sheet-5 PW2 latch: old PW2=1 passes the early edge,
+    // while TPARM2=1 opens the gate later in the same slot. Their OR is the
+    // exact settled-slot condition for whether U20 receives a rising edge.
+    assign u20_clock_enable =
+        ((pw_0_q && pw_1_q && ampct_zero) ||
+         (fric_amp_code_q == 4'd0)) &&
+        pw_1_q &&
+        (pw_2_q || ((selector_q == 3'd2) && selector_flags[2]));
+
     always_ff @(posedge clk) begin
         response_boundary_ce_q <= 1'b0;
         voice_clock_ce_q <= 1'b0;
         pitch_period_ce_q <= 1'b0;
         noise_clock_ce_q <= 1'b0;
+        noise_shift_ce_q <= 1'b0;
         filter_phase_ce_q <= 1'b0;
         selector_step_ce_q <= 1'b0;
         rate_clock_ce_q <= 1'b0;
@@ -412,6 +439,9 @@ module ssi263_sc02_core #(
             filter_ticks_left_q <= filter_half_tick_count(8'hFF);
             u62_q <= 1'b0;
             u41c_level_q <= 1'b0;
+            ampct_q <= 4'd0;
+            u68_clock_level_q <= 1'b0;
+            u20b_q <= 1'b0;
 
             rate_edges_left_q <= rate_edge_count(4'h0);
             rate_clock_q <= 1'b0;
@@ -433,8 +463,6 @@ module ssi263_sc02_core #(
             voice_amp_code_q <= 4'd0;
             fric_amp_code_q <= 4'd0;
 
-            phone_fricative_q <= 1'b0;
-            phone_voiced_q <= 1'b0;
             pw_0_q <= 1'b0;
             pw_1_q <= 1'b0;
             pw_2_q <= 1'b0;
@@ -454,7 +482,28 @@ module ssi263_sc02_core #(
             // Preserve the positive edges of the gated U41C waveform as
             // one-clk enables. Its sources change only in this clock domain.
             noise_clock_ce_q <= u41c_level && !u41c_level_q;
+            noise_shift_ce_q <= !u41c_level && u41c_level_q;
             u41c_level_q <= u41c_level;
+
+            // U68 counts on each positive edge of its gated SEL2 clock.
+            // The gate can itself open while SEL2 is high, so detect the
+            // complete drawn clock level rather than only selector changes.
+            if (u68_clock_level && !u68_clock_level_q) begin
+                if (ampct_up)
+                    ampct_q <= ampct_q + 4'd1;
+                else
+                    ampct_q <= ampct_q - 4'd1;
+            end
+            u68_clock_level_q <= u68_clock_level;
+
+            // U112 is transparent while Phi1_X is low. U166A captures the
+            // complementary U20B output on the positive Phi0_X edge.
+            if (!filter_phase_q)
+                fric1_sw_q <= u20b_q;
+
+            // U85C drives U62's active-high asynchronous reset.
+            if (u62_reset)
+                u62_q <= 1'b0;
 
             if (write_active) begin
                 write_reg_hold_q <= write_reg;
@@ -479,8 +528,9 @@ module ssi263_sc02_core #(
                         pitch_inflection
                     );
                     voice_clock_ce_q <= 1'b1;
-                    u62_q <= ~u62_q;
-                    if (!u62_q)
+                    if (!u62_reset)
+                        u62_q <= ~u62_q;
+                    if (!u62_reset && !u62_q)
                         pitch_period_ce_q <= 1'b1;
                 end else begin
                     voice_clock_ticks_left_q <=
@@ -495,6 +545,8 @@ module ssi263_sc02_core #(
                     );
                     filter_phase_q <= ~filter_phase_q;
                     filter_phase_ce_q <= 1'b1;
+                    if (filter_phase_q)
+                        fric2_sw_q <= !u20b_q;
                 end else begin
                     filter_ticks_left_q <= filter_ticks_left_q - 9'd1;
                 end
@@ -542,12 +594,10 @@ module ssi263_sc02_core #(
                             // when their three input slots pass.
                             case (selector_q)
                                 3'd0: begin
-                                    phone_voiced_q <= !selector_flags[0];
                                     pw_0_q <= selector_flags[0];
                                 end
 
                                 3'd1: begin
-                                    phone_fricative_q <= !selector_flags[0];
                                     pw_1_q <= selector_flags[0];
                                 end
 
@@ -555,8 +605,8 @@ module ssi263_sc02_core #(
                                     pw_2_q <= selector_flags[2];
                                     pw_3_q <= selector_flags[1];
                                     pw_5_q <= !selector_flags[2];
-                                    fric1_sw_q <= selector_flags[3];
-                                    fric2_sw_q <= !selector_flags[3];
+                                    if (u20_clock_enable)
+                                        u20b_q <= selector_flags[3];
                                 end
 
                                 default: begin

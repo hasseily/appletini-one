@@ -38,8 +38,7 @@ def static_checks() -> None:
         "output logic        voice_toggle",
         "output logic        pitch_period_ce",
         "output logic        noise_clock_ce",
-        "output logic        phone_fricative",
-        "output logic        phone_voiced",
+        "output logic        noise_shift_ce",
         "output logic        fric1_sw",
         "output logic        fric2_sw",
         "output logic        closure",
@@ -52,6 +51,25 @@ def static_checks() -> None:
         "voice_clock_ticks_left_q <= voice_clock_tick_count(",
         "assign closure = filter_phase_ce_q && !filter_phase_q;",
         "assign write_commit = write_end && (pd_rst_n || !REVISION_AP);",
+        "assign u104c = pw_3_q && !u62_q;",
+        "assign ampct0 = !u104c;",
+        "assign ampct_zero = !(ampct_q[1] | ampct_q[2] | ampct_q[3]);",
+        "assign ampct_up = ampct0 && ampct_enable;",
+        "assign ampct_nco = ampct_up ? (ampct_q != 4'd15) :",
+        "(ampct_q != 4'd0);",
+        "assign u62_reset = u104c || ampct_nco;",
+        "noise_clock_ce_q <= u41c_level && !u41c_level_q;",
+        "noise_shift_ce_q <= !u41c_level && u41c_level_q;",
+        "if (u68_clock_level && !u68_clock_level_q) begin",
+        "ampct_q <= ampct_q + 4'd1;",
+        "ampct_q <= ampct_q - 4'd1;",
+        "assign u20_clock_enable =",
+        "if (u20_clock_enable)",
+        "u20b_q <= selector_flags[3];",
+        "if (!filter_phase_q)",
+        "fric1_sw_q <= u20b_q;",
+        "if (filter_phase_q)",
+        "fric2_sw_q <= !u20b_q;",
     )
     for text in required:
         if text not in source:
@@ -60,6 +78,14 @@ def static_checks() -> None:
         raise RuntimeError("native SSI-263 core must not depend on legacy speech")
     if "provisional" in source.lower():
         raise RuntimeError("native SSI-263 core still describes provisional logic")
+    for signal in ("phone_fricative", "phone_voiced", "fricative", "voiced"):
+        if re.search(rf"\boutput\s+logic[^;]*\b{signal}\b", source):
+            raise RuntimeError(f"native core retains invented output {signal}")
+    stripped_source = strip_verilog_comments(source)
+    if "ampct_q != 4'd9" in stripped_source or re.search(
+        r"ampct_q\s*<=\s*\(ampct_q\s*==", stripped_source
+    ):
+        raise RuntimeError("U68 retains an invented BCD terminal or wrap")
 
     checked_paths = (
         ROOT / "hdl" / "apple" / "ssi263_sc02_core.sv",

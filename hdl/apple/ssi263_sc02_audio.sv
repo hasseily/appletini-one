@@ -2,8 +2,7 @@
 
 // Native SSI-263A / SC-02 excitation and switched-capacitor audio model.
 //
-// This block deliberately has no SC-01 phone map or coefficient tables.  It
-// consumes the persistent controls and clock enables produced by
+// This block consumes the persistent controls and clock enables produced by
 // ssi263_sc02_core.  The pitch shaper and HCC4006 recurrence follow sheets 3
 // and 6 structurally.  Each formant section keeps the charge state p and
 // output state y of the two switched integrators.  Its alpha, a, b, and g
@@ -15,29 +14,38 @@
 //
 // FRIC_1 and FRIC_2 are injection nodes, not independent output resonators.
 // LF356 bandwidth, CD4016 resistance, and stray capacitance remain outside the
-// ideal charge model.  The section graph and terms are independent of SC-01.
+// ideal charge model.  The section graph and terms come from the SC-02 sheets.
 module ssi263_sc02_audio #(
     parameter logic [3:0] NOISE_D1_SEED = 4'h1,
     parameter logic [4:0] NOISE_D2_SEED = 5'h00,
     parameter logic [3:0] NOISE_D3_SEED = 4'h0,
     parameter logic [4:0] NOISE_D4_SEED = 5'h00,
-    parameter logic [3:0] NOISE_COUNT_SEED = 4'hF
+    parameter logic [3:0] NOISE_COUNT_SEED = 4'hF,
+    // The drawing gives no POT3 wiper position. This explicit virtual trim is
+    // U116's full selected-source step after its inversion. +65536 chooses
+    // the GND-end POT3 setting relative to AGND; zero is the midpoint and a
+    // negative value represents the VCC side. It is not a phone adjustment.
+    parameter logic signed [17:0] VOICE_TRIM_U116_STEP_Q16 = 18'sd65536,
+    // The supplied PDF leaves U60 P3 and U75 P1 visibly open. Hardware cannot
+    // reproduce an unknown floating CMOS level, so keep each as an explicit
+    // build-time assumption. Low preserves the apparent intended load values
+    // U60=3 and U75=1 without claiming that the drawing grounds these pins.
+    parameter logic U60_OPEN_P3_LEVEL = 1'b0,
+    parameter logic U75_OPEN_P1_LEVEL = 1'b0
 ) (
     input  logic               clk,
     input  logic               rstn,
+    input  logic               pd_rst_n,
 
     input  logic               audio_tick,
-    input  logic               phone_active,
     input  logic               powered_down,
 
-    // Proved sheet-6 source and switch controls from ssi263_sc02_core.
-    input  logic               fricative,
-    input  logic               voiced,
-    input  logic               pw_2,
+    // Sheet-6 source and switch controls from ssi263_sc02_core.
     input  logic               pw_3,
-    // Rising edge of the gated U41C clock that drives U75 and U73 together.
-    // PW3 is held phone state; the core resolves its recurring SEL1/U62 gate.
+    // U75 counts on U41C rising; HCC4006 U73 shifts on U41C falling.
+    // The core resolves both edges of the recurring SEL1/U62 gated clock.
     input  logic               noise_clock_ce,
+    input  logic               noise_shift_ce,
     input  logic               fric1_sw,
     input  logic               fric2_sw,
     // Held U62 Q from the core.  U62 already divides raw U59 VOICECLK by two;
@@ -80,51 +88,61 @@ module ssi263_sc02_audio #(
     localparam logic signed [16:0] F5_FRIC_BASE_G_Q14 = 17'sd5051;
     localparam logic signed [16:0] F5_FRIC_SW_G_Q14   = 17'sd16252;
     localparam logic signed [16:0] FILTER_OUTPUT_ALPHA_Q14 = 17'sd16086;
-    // Leave 18 dB of line-output headroom for the largest ROM/formant pair and
-    // for the card's later PSG/speech mix.  The schematic charge-state tract
-    // and DC blocker stay at full precision; only the AO-to-PCM map uses 1/8.
-    localparam integer LINE_OUTPUT_SHIFT = 3;
-
+    // Sheets 1 and 2 bias each FRICATIVE input through 1.8 kohm to AGND
+    // and feed the CMOS source through 390 kohm.  With one Q16 unit from
+    // AGND to either rail, the exact divider is 1800/(390000+1800)=3/653.
+    localparam logic signed [17:0] FRIC_DRIVE_MAG_Q16 = 18'sd301;
+    localparam logic signed [18:0] FRIC_DRIVE_EDGE_Q16 = 19'sd602;
     logic pitch_sync1_q;
     logic pitch_sync2_q;
     logic voice_load_pending_q;
-    logic [3:0] voice_shape_q;
-    logic voiced_q;
+    logic [3:0] voice_count_q;
+    logic [3:0] u60_parallel_value;
+    logic [3:0] voice_count_after_phi1;
+    logic u60_tc;
+    logic u60_tc_after_phi1;
+    logic signed [23:0] voice_source_after_phi1;
 
     logic [3:0] noise_d1_q;
     logic [4:0] noise_d2_q;
     logic [3:0] noise_d3_q;
     logic [4:0] noise_d4_q;
     logic [3:0] noise_count_q;
+    logic [3:0] u75_parallel_value;
     logic [3:0] noise_count_next;
     logic noise_force;
     logic noise_feedback;
     logic noise_bit;
-    logic u72a_fric_gate;
-    logic noise_advance;
 
     logic signed [23:0] voice_source;
     logic signed [23:0] fric1_source;
     logic signed [23:0] fric2_source;
     logic signed [23:0] voice_magnitude;
+    logic signed [31:0] voice_magnitude_product;
     logic signed [17:0] fric_drive;
     logic signed [17:0] fric_drive_history_q;
     logic signed [18:0] fric_drive_delta;
-    logic signed [18:0] fric1_gain_extended;
-    logic signed [18:0] fric2_gain_extended;
     logic signed [18:0] fric2_drive_charge;
     logic signed [47:0] fric2_source_accumulator;
     logic signed [23:0] fric2_source_state_q;
     logic signed [23:0] fric2_source_next;
 
-    // Phi0 samples both noise amplifier nodes and route switches.  U156C and
-    // U129D reset both C143 plates each pair, while C150 follows unreset U152
-    // and switched C151 retains a separate source-side charge while open.
-    logic signed [23:0] fric1_source_phi0_q;
+    // C143 keeps an independent source-plate voltage behind U159D. U129D
+    // grounds only its F2-side plate in Phi1. While U159D is open, the source
+    // plate floats and retains its last level. During Phi0, every connected
+    // U157 change contributes L(old)-L(new) charge to F2; the accumulated
+    // delta telescopes to the exact boundary result used by the F2 MAC.
+    logic signed [23:0] c143_source_plate_q;
+    logic signed [24:0] c143_phi0_delta_q;
+    logic signed [24:0] c143_delta_hold_q;
+    logic signed [24:0] c143_live_delta;
+    logic signed [24:0] c143_delta_with_live;
+
+    // Phi0 samples the unreset U152 source. C150 follows it at all times,
+    // while switched C151 retains a separate source-side charge while open.
     logic signed [23:0] fric2_source_phi0_q;
     logic signed [23:0] fric2_base_history_q;
     logic signed [23:0] fric2_sw_history_q;
-    logic               fric1_sw_phi0_q;
     logic               fric2_sw_phi0_q;
     logic [3:0]         filter_amp_phi0_q;
     logic [3:0]         f1_code_phi0_q;
@@ -132,18 +150,6 @@ module ssi263_sc02_audio #(
     logic [3:0]         f2_res_code_phi0_q;
     logic [3:0]         f3_code_phi0_q;
     logic [3:0]         f4_code_phi0_q;
-
-    // B/D/P/T/K are silent stops (PW2=1, PW3=0).  The following phone's
-    // normal source passes through parameters that start at the stop's tract
-    // shape; no periodic or guessed stop-source burst is added here.
-    logic stop_class;
-    logic source_voiced;
-    logic source_fricative;
-    logic source_pw3;
-    logic source_fric1_sw;
-    logic source_fric2_sw;
-    logic [3:0] source_voice_amp_code;
-    logic [3:0] source_fric_amp_code;
 
     logic signed [23:0] f1_state_q;
     logic signed [23:0] f1_history_q;
@@ -165,16 +171,6 @@ module ssi263_sc02_audio #(
     logic signed [23:0] f3_side_history_q;
     logic signed [23:0] output_hold_q;
     logic signed [23:0] reconstruction_hold_q;
-    logic signed [23:0] dc_previous_input_q;
-    logic signed [23:0] dc_input;
-    logic signed [24:0] dc_delta_q;
-    logic signed [26:0] dc_sum_q;
-    logic signed [26:0] dc_filtered_wide;
-    logic signed [25:0] dc_output_q;
-    logic dc_stage1_pending_q;
-    logic dc_stage2_pending_q;
-    logic dc_active_stage1_q;
-    logic dc_active_stage2_q;
     // Two registered logical product lanes form a 34-cycle scheduler.  Each
     // section keeps six fixed slots.  F5 takes one slot for the independent
     // C150/C151 histories and one to register its completed state before the
@@ -239,19 +235,6 @@ module ssi263_sc02_audio #(
                 sat24_from48 = -24'sd8388608;
             else
                 sat24_from48 = value[23:0];
-        end
-    endfunction
-
-    function automatic logic signed [25:0] sat26_from27(
-        input logic signed [26:0] value
-    );
-        begin
-            if (!value[26] && value[25])
-                sat26_from27 = {1'b0, 25'h1FFFFFF};
-            else if (value[26] && !value[25])
-                sat26_from27 = {1'b1, 25'd0};
-            else
-                sat26_from27 = value[25:0];
         end
     endfunction
 
@@ -610,6 +593,59 @@ module ssi263_sc02_audio #(
         end
     endfunction
 
+    function automatic logic signed [23:0] fric1_source_magnitude(
+        input logic [3:0] code
+    );
+        begin
+            // round(2^16 * (3/653) * Cselected/3900 pF).
+            case (code)
+                4'h0: fric1_source_magnitude = 24'sd0;
+                4'h1: fric1_source_magnitude = 24'sd21;
+                4'h2: fric1_source_magnitude = 24'sd40;
+                4'h3: fric1_source_magnitude = 24'sd60;
+                4'h4: fric1_source_magnitude = 24'sd82;
+                4'h5: fric1_source_magnitude = 24'sd103;
+                4'h6: fric1_source_magnitude = 24'sd122;
+                4'h7: fric1_source_magnitude = 24'sd143;
+                4'h8: fric1_source_magnitude = 24'sd167;
+                4'h9: fric1_source_magnitude = 24'sd188;
+                4'hA: fric1_source_magnitude = 24'sd206;
+                4'hB: fric1_source_magnitude = 24'sd227;
+                4'hC: fric1_source_magnitude = 24'sd249;
+                4'hD: fric1_source_magnitude = 24'sd270;
+                4'hE: fric1_source_magnitude = 24'sd289;
+                default: fric1_source_magnitude = 24'sd310;
+            endcase
+        end
+    endfunction
+
+    function automatic logic signed [18:0] fric2_edge_magnitude(
+        input logic [3:0] code
+    );
+        begin
+            // A CMOS transition crosses both sides of AGND:
+            // round(2^16 * (6/653) * Cselected/3900 pF).
+            case (code)
+                4'h0: fric2_edge_magnitude = 19'sd0;
+                4'h1: fric2_edge_magnitude = 19'sd42;
+                4'h2: fric2_edge_magnitude = 19'sd82;
+                4'h3: fric2_edge_magnitude = 19'sd124;
+                4'h4: fric2_edge_magnitude = 19'sd167;
+                4'h5: fric2_edge_magnitude = 19'sd209;
+                4'h6: fric2_edge_magnitude = 19'sd249;
+                4'h7: fric2_edge_magnitude = 19'sd291;
+                4'h8: fric2_edge_magnitude = 19'sd334;
+                4'h9: fric2_edge_magnitude = 19'sd375;
+                4'hA: fric2_edge_magnitude = 19'sd415;
+                4'hB: fric2_edge_magnitude = 19'sd457;
+                4'hC: fric2_edge_magnitude = 19'sd501;
+                4'hD: fric2_edge_magnitude = 19'sd542;
+                4'hE: fric2_edge_magnitude = 19'sd582;
+                default: fric2_edge_magnitude = 19'sd624;
+            endcase
+        end
+    endfunction
+
     function automatic logic signed [16:0] filter_amp_gain(
         input logic [3:0] code
     );
@@ -639,62 +675,54 @@ module ssi263_sc02_audio #(
     endfunction
 
     always_comb begin
-        voiced_q = (voice_shape_q == 4'hF);
-        dc_input = powered_down ? 24'sd0 : reconstruction_hold_q;
-        dc_filtered_wide = dc_sum_q - (dc_sum_q >>> 8);
-        stop_class = pw_2 && !pw_3;
-        source_voiced = stop_class ? 1'b0 : voiced;
-        source_fricative = stop_class ? 1'b0 : fricative;
-        source_pw3 = pw_3;
-        source_fric1_sw = fric1_sw;
-        source_fric2_sw = fric2_sw;
-        source_voice_amp_code = voice_amp_code;
-        source_fric_amp_code = fric_amp_code;
-
+        // Sheet 6 ties U60 /RST and CET high, /VOICED to CEP, P0/P1 high,
+        // and P2 low; P3 is open in the supplied PDF. The explicit open-pin
+        // assumption above therefore controls the top jam bit.
+        u60_parallel_value = {U60_OPEN_P3_LEVEL, 1'b0, 2'b11};
+        voice_count_after_phi1 = voice_count_q;
+        if (pd_rst_n && voice_load_pending_q)
+            voice_count_after_phi1 = u60_parallel_value;
+        else if (voice_count_q != 4'hF)
+            voice_count_after_phi1 = voice_count_q + 4'h1;
+        u60_tc = (voice_count_q == 4'hF);
+        u60_tc_after_phi1 = (voice_count_after_phi1 == 4'hF);
+        // U75 P0 is high and P2/P3 are low; P1 is the second open jam pin.
+        u75_parallel_value = {2'b00, U75_OPEN_P1_LEVEL, 1'b1};
         noise_count_next = (noise_count_q == 4'hF) ?
-                           4'h0 : noise_count_q + 4'h1;
-        noise_force = ~(noise_count_next[2] | noise_count_next[3]);
+                           u75_parallel_value : noise_count_q + 4'h1;
+        noise_force = ~(noise_count_q[2] | noise_count_q[3]);
         noise_feedback = noise_force ^ noise_d1_q[3] ^ noise_d2_q[4] ^
                          noise_d4_q[3] ^ noise_d4_q[4];
-        // U73 pin 9 is D4+5.  U163F inverts the U51D result, and U149C
-        // applies the PW3/U62 gate.  Pure fricatives have VOICE_AMP_ZERO=1,
-        // so the unresolved U68/AMPCT0 term cannot suppress this path.
-        u72a_fric_gate = !(source_pw3 && !voice_toggle);
-        noise_bit = !noise_d4_q[4] && u72a_fric_gate;
-        // U41C clocks U75 and U73 without a CTL, PD, phone, or FRICATIVE
-        // gate.  The core has already resolved that physical clock edge.
-        noise_advance = noise_clock_ce;
-
-        // The normalized unit amplitude is 2^16, so Q12 gain becomes
-        // gain << 4.  Keep these source paths free of general multipliers.
-        voice_magnitude = $signed(
-            {11'd0, voice_gain(source_voice_amp_code)}
-        ) <<< 4;
+        // Sheet 6: U104C = PW3 AND U62./Q; U163F inverts the OR of that
+        // term and U73 D3+4; U51C then requires U62./Q or VOICE_AMP_ZERO.
+        // U149C is only a buffer.  This is the complete drawn source gate;
+        // no decoded phone class or invented stop flag participates.
+        noise_bit = !(noise_d3_q[3] | (pw_3 && !voice_toggle)) &&
+                    (!voice_toggle || (voice_amp_code == 4'd0));
+        // U116 applies Cselected/C205 to the explicit POT3-derived step.
+        // VOICE_TRIM_U116_STEP_Q16 is an elaboration-time constant, so this
+        // remains a constant multiply after synthesis.
+        voice_magnitude_product = VOICE_TRIM_U116_STEP_Q16 *
+            $signed({1'b0, voice_gain(voice_amp_code)});
+        voice_magnitude = voice_magnitude_product >>> 12;
         // U157 and U152 are distinct switched-capacitor amplifiers.  Their
         // selected banks differ, and sheets 1/2 route them to C143 and
         // C150/C151 respectively; do not merge them into two polarities of
         // one synthetic source.
-        // Use a normalized 0/2^16 HCC drive so the drawn capacitor ratios
-        // and signs remain exact in fixed point.  The schematic does not set
-        // the absolute U150 pulse swing or LF356/CD4016 nonideal response.
-        fric_drive = 18'sd0;
-        if (source_fricative && phone_active && !powered_down)
-            fric_drive = noise_bit ? 18'sd65536 : 18'sd0;
+        // R102/R103 and R101/R100 reduce the CMOS source to 3/653 of an
+        // AGND-to-rail span.  CMOS low and high lie on opposite sides of
+        // AGND, so the two source nodes are bipolar, not zero/full-scale.
+        fric_drive = noise_bit ? FRIC_DRIVE_MAG_Q16 :
+                                 -FRIC_DRIVE_MAG_Q16;
         fric_drive_delta =
             $signed({fric_drive[17], fric_drive}) -
             $signed({fric_drive_history_q[17], fric_drive_history_q});
-        fric1_gain_extended = $signed(
-            {6'd0, fric1_gain(source_fric_amp_code)}
-        );
-        fric2_gain_extended = $signed(
-            {6'd0, fric2_gain(source_fric_amp_code)}
-        );
         case (fric_drive_delta)
-            19'sd65536: begin
-                fric2_drive_charge = fric2_gain_extended <<< 4;
+            FRIC_DRIVE_EDGE_Q16: begin
+                fric2_drive_charge = fric2_edge_magnitude(fric_amp_code);
             end
-            -19'sd65536: begin
-                fric2_drive_charge = -(fric2_gain_extended <<< 4);
+            -FRIC_DRIVE_EDGE_Q16: begin
+                fric2_drive_charge = -fric2_edge_magnitude(fric_amp_code);
             end
             default: begin
                 fric2_drive_charge = 19'sd0;
@@ -705,26 +733,33 @@ module ssi263_sc02_audio #(
             {{29{fric2_drive_charge[18]}}, fric2_drive_charge};
         fric2_source_next = sat24_from48(fric2_source_accumulator);
 
-        if (!source_voiced || !phone_active || powered_down) begin
-            voice_source = 24'sd0;
-        end else if (voiced_q) begin
-            // Sheet 1 selects the AGND follower while VOICED is high.  This
-            // is the zero source level, not the positive half of a square.
+        if (powered_down || u60_tc) begin
+            // U60 TC/VOICED holds high at 15 and selects the AGND follower.
             voice_source = 24'sd0;
         end else begin
-            // /VOICED selects the adjustable source for the 15-count U60
-            // pulse.  Its step is one source magnitude, not a 2A bipolar step.
+            // /VOICED selects the adjustable source before terminal count.
+            // Its step is one source magnitude, not a 2A bipolar step.
             voice_source = voice_magnitude;
         end
+        voice_source_after_phi1 = (powered_down || u60_tc_after_phi1) ?
+                                  24'sd0 : voice_magnitude;
 
         // U156B grounds the selected input bank and U156C resets C133/U157
         // in Phi1.  U156A therefore regenerates this level from the current
         // HCC bit in every Phi0; it is not an HCC-edge accumulator.
-        fric1_source = (fric_drive == 18'sd65536) ?
-            -$signed({5'd0, fric1_gain_extended}) <<< 4 : 24'sd0;
+        fric1_source = noise_bit ?
+            -fric1_source_magnitude(fric_amp_code) :
+             fric1_source_magnitude(fric_amp_code);
         // U152 retains charge across FRIC_AMP code changes; expose the value
         // that the next Phi0 edge will commit and snapshot.
         fric2_source = fric2_source_next;
+
+        c143_live_delta =
+            $signed({c143_source_plate_q[23], c143_source_plate_q}) -
+            $signed({fric1_source[23], fric1_source});
+        c143_delta_with_live = c143_phi0_delta_q;
+        if (fric1_sw)
+            c143_delta_with_live = c143_phi0_delta_q + c143_live_delta;
 
     end
 
@@ -833,14 +868,16 @@ module ssi263_sc02_audio #(
             pitch_sync1_q <= 1'b0;
             pitch_sync2_q <= 1'b0;
             voice_load_pending_q <= 1'b0;
-            voice_shape_q <= 4'hF;
+            voice_count_q <= 4'hF;
 
             noise_d1_q <= NOISE_D1_SEED;
             noise_d2_q <= NOISE_D2_SEED;
             noise_d3_q <= NOISE_D3_SEED;
             noise_d4_q <= NOISE_D4_SEED;
             noise_count_q <= NOISE_COUNT_SEED;
-            fric_drive_history_q <= 18'sd0;
+            // Seed the unreset U152 history at the CMOS-low divider level so
+            // deterministic FPGA reset does not invent a first source edge.
+            fric_drive_history_q <= -FRIC_DRIVE_MAG_Q16;
             fric2_source_state_q <= 24'sd0;
 
             f1_state_q <= 24'sd0;
@@ -861,11 +898,12 @@ module ssi263_sc02_audio #(
             f1_input_history_q <= 24'sd0;
             f3_side_input_q <= 24'sd0;
             f3_side_history_q <= 24'sd0;
-            fric1_source_phi0_q <= 24'sd0;
+            c143_source_plate_q <= 24'sd0;
+            c143_phi0_delta_q <= 25'sd0;
+            c143_delta_hold_q <= 25'sd0;
             fric2_source_phi0_q <= 24'sd0;
             fric2_base_history_q <= 24'sd0;
             fric2_sw_history_q <= 24'sd0;
-            fric1_sw_phi0_q <= 1'b0;
             fric2_sw_phi0_q <= 1'b0;
             filter_amp_phi0_q <= 4'h0;
             f1_code_phi0_q <= 4'h0;
@@ -875,14 +913,6 @@ module ssi263_sc02_audio #(
             f4_code_phi0_q <= 4'h0;
             output_hold_q <= 24'sd0;
             reconstruction_hold_q <= 24'sd0;
-            dc_previous_input_q <= 24'sd0;
-            dc_delta_q <= 25'sd0;
-            dc_sum_q <= 27'sd0;
-            dc_output_q <= 26'sd0;
-            dc_stage1_pending_q <= 1'b0;
-            dc_stage2_pending_q <= 1'b0;
-            dc_active_stage1_q <= 1'b0;
-            dc_active_stage2_q <= 1'b0;
             engine_busy_q <= 1'b0;
             engine_overrun_q <= 1'b0;
             engine_section_q <= 3'd0;
@@ -909,32 +939,43 @@ module ssi263_sc02_audio #(
             audio_sample <= 16'sd0;
         end else begin
             // U61 samples the core's held U62 Q on Phi0_X; U34A recognizes
-            // its rising transition only.  These counters keep running while
-            // the source is muted.  VOICED/phone/PD gate only the analog feed.
-            if (filter_phase_ce && !filter_phase) begin
+            // its rising transition only. U60 keeps its own held state while
+            // power-down clears U61 and mutes the analog feed.
+            // Sheet 6 U61 /CLR is the physical T/PD_/RST net. It clears U61
+            // and removes U34's parallel-load request; it does not clear U60.
+            if (!pd_rst_n) begin
+                pitch_sync1_q <= 1'b0;
+                pitch_sync2_q <= 1'b0;
+                voice_load_pending_q <= 1'b0;
+            end else if (filter_phase_ce && !filter_phase) begin
                 pitch_sync1_q <= voice_toggle;
                 pitch_sync2_q <= pitch_sync1_q;
-                if (pitch_sync1_q && !pitch_sync2_q)
+                // U61 Q1 takes U62.Q and Q2 takes the prior Q1 on this
+                // edge. U34A therefore sees its active load condition from
+                // the new Q1 and new /Q2 values: U62.Q & /old-Q1.
+                if (voice_toggle && !pitch_sync1_q)
                     voice_load_pending_q <= 1'b1;
             end
 
-            // U60 clocks on the opposite Phi0_X edge. U34A drives only its
-            // active-low parallel enable: a synchronized rising U62.Q loads
-            // zero, and every other edge advances the free-running counter.
+            // U60 clocks on the opposite Phi0_X edge. U34A drives its
+            // active-low parallel enable. With the explicit low assumption
+            // for the open P3 pin, a synchronized rising U62.Q loads 3.
+            // /RST and CET are high.
+            // At 15, U53C drives /VOICED low into CEP and holds the count
+            // until the next parallel load.
             if (filter_phase_ce && filter_phase) begin
-                if (voice_load_pending_q) begin
-                    voice_shape_q <= 4'h0;
+                voice_count_q <= voice_count_after_phi1;
+                if (pd_rst_n && voice_load_pending_q)
                     voice_load_pending_q <= 1'b0;
-                end else begin
-                    voice_shape_q <= voice_shape_q + 4'h1;
-                end
             end
 
-            // U75 advances on the rising edge. U73 shifts on the following
-            // falling edge, so the forcing term uses the new U75 count while
-            // every HCC4006 feedback tap uses the old register state.
-            if (noise_advance) begin
+            // U75 advances on U41C rising. U73 shifts only on the later
+            // falling edge, using the then-current U75 count and old HCC
+            // taps, as specified for the HCC4006.
+            if (noise_clock_ce)
                 noise_count_q <= noise_count_next;
+
+            if (noise_shift_ce) begin
                 noise_d1_q <= {noise_d1_q[2:0], noise_d3_q[3]};
                 noise_d2_q <= {noise_d2_q[3:0], noise_d4_q[4]};
                 noise_d3_q <= {noise_d3_q[2:0], noise_d2_q[4]};
@@ -950,6 +991,29 @@ module ssi263_sc02_audio #(
                 fric_drive_history_q <= fric_drive;
             end
 
+            // Ideal C143 source-plate recurrence. The phase-entry cases
+            // include an event that coincides with the boundary. During
+            // Phi1 a closed U159D lets U156C reset both U157 and this plate;
+            // an open U159D leaves the plate floating and unchanged.
+            if (filter_phase_ce && !filter_phase) begin
+                c143_phi0_delta_q <= fric1_sw ?
+                    c143_live_delta : 25'sd0;
+                if (fric1_sw)
+                    c143_source_plate_q <= fric1_source;
+            end else if (filter_phase_ce && filter_phase) begin
+                c143_delta_hold_q <= c143_delta_with_live;
+                c143_phi0_delta_q <= 25'sd0;
+                if (fric1_sw)
+                    c143_source_plate_q <= 24'sd0;
+            end else if (!filter_phase) begin
+                if (fric1_sw) begin
+                    c143_phi0_delta_q <= c143_delta_with_live;
+                    c143_source_plate_q <= fric1_source;
+                end
+            end else if (fric1_sw) begin
+                c143_source_plate_q <= 24'sd0;
+            end
+
             // U145D closes at the Phi1-to-Phi0 boundary.  It copies the U146
             // result completed during the prior Phi1 into C100/U148.  Low
             // holds the prior sample; CLOSURE never discharges either node.
@@ -963,19 +1027,16 @@ module ssi263_sc02_audio #(
                 if (!filter_phase) begin
                     // Phi0 holds one input sample per physical section.  The
                     // states then stay fixed while the MAC scheduler works.
-                    f1_input_q <= voice_source;
                     f2_input_q <= f1_state_q;
                     // C127 carries F1 into the first F3 integrator.  Keep
                     // this sample separate from the serial F2 input so
                     // its one-pair difference term uses one coherent Phi0.
                     f3_side_input_q <= f1_state_q;
                     f3_input_q <= f2_state_q;
-                    fric1_source_phi0_q <= fric1_source;
                     fric2_source_phi0_q <= fric2_source_next;
-                    fric1_sw_phi0_q <= source_fric1_sw;
                     f4_input_q <= f3_state_q;
                     f5_input_q <= f4_state_q;
-                    fric2_sw_phi0_q <= source_fric2_sw;
+                    fric2_sw_phi0_q <= fric2_sw;
                     filter_amp_phi0_q <= filter_amp_code;
                     f1_code_phi0_q <= f1_code;
                     f2_code_phi0_q <= f2_code;
@@ -985,6 +1046,11 @@ module ssi263_sc02_audio #(
                 end
 
                 if (filter_phase && !engine_busy_q) begin
+                    // U60 and the U118A Phi1 switch act at this boundary.
+                    // Use the post-clock U60 state: a 14->15 edge selects
+                    // AGND, while a parallel load from 15 selects the pitch
+                    // source during this same C205 transfer.
+                    f1_input_q <= voice_source_after_phi1;
                     engine_busy_q <= 1'b1;
                     engine_section_q <= 3'd0;
                     engine_stage_q <= 4'd0;
@@ -994,14 +1060,16 @@ module ssi263_sc02_audio #(
                     engine_state_p_q <= f1_history_q;
                     engine_main_delta_q <=
                         $signed({f1_state_q[23], f1_state_q}) -
-                        $signed({f1_input_q[23], f1_input_q});
+                        $signed({voice_source_after_phi1[23],
+                                  voice_source_after_phi1});
                     engine_alpha_q <= F1_ALPHA_Q14;
                     engine_a_q <= F1_A_Q14;
                     engine_b_q <= f1_b_q14(f1_code_phi0_q);
                     engine_side_delta_q <=
                         $signed({f1_input_history_q[23],
                                  f1_input_history_q}) -
-                        $signed({f1_input_q[23], f1_input_q});
+                        $signed({voice_source_after_phi1[23],
+                                  voice_source_after_phi1});
                     engine_g_q <= F1_G_Q14;
                     engine_side2_delta_q <= 25'sd0;
                     engine_g2_q <= 17'sd0;
@@ -1080,13 +1148,12 @@ module ssi263_sc02_audio #(
                                 engine_g_q <= 17'sd0;
                                 engine_side2_delta_q <= 25'sd0;
                                 engine_g2_q <= 17'sd0;
-                                engine_output_delta_q <=
-                                    fric1_sw_phi0_q ?
-                                    -$signed({fric1_source_phi0_q[23],
-                                              fric1_source_phi0_q}) :
-                                    25'sd0;
-                                engine_h_q <= fric1_sw_phi0_q ?
-                                    F2_FRIC_H_Q14 : 17'sd0;
+                                // C143 has already accumulated every
+                                // source-plate change from the completed
+                                // Phi0 interval, including a reconnect after
+                                // U159D held the plate floating.
+                                engine_output_delta_q <= c143_delta_hold_q;
+                                engine_h_q <= F2_FRIC_H_Q14;
                             end
                             3'd1: begin
                                 f2_state_q <= engine_section_next;
@@ -1211,41 +1278,19 @@ module ssi263_sc02_audio #(
                 endcase
             end
 
-            // C381 AC-couples the reconstructed output.  Spread its one-pole
-            // DC blocker over two fabric clocks so it cannot add a long carry
-            // chain to the tract scheduler.  At 48 kHz, 255/256 gives a pole
-            // near 30 Hz as a boundary model; the external load, which sets
-            // the real C381 pole, is not drawn.  Keep x-x[n-1] and y+delta
-            // wide, apply the leak,
-            // then clamp once; early 24-bit clamps distort large reversals.
-            // Phone end does not mute U148, so the formant and output holds
-            // may ring down.  Powerdown alone forces the boundary input low.
+            // The schematic gives C381 but no external load, so it does not
+            // define an AC-coupling pole. Export the reconstructed AO node
+            // before that board boundary. The tract uses Q16 (1.0=65536);
+            // shifting once is the exact Q16-to-signed-Q15 PCM conversion,
+            // not an added gain or acoustic adjustment.
             if (audio_tick) begin
-                dc_delta_q <= {dc_input[23], dc_input} -
-                              {dc_previous_input_q[23],
-                               dc_previous_input_q};
-                dc_previous_input_q <= dc_input;
-                dc_active_stage1_q <= !powered_down;
-                dc_stage1_pending_q <= 1'b1;
-            end
-
-            if (dc_stage1_pending_q) begin
-                dc_sum_q <= {{1{dc_output_q[25]}}, dc_output_q} +
-                            {{2{dc_delta_q[24]}}, dc_delta_q};
-                dc_active_stage2_q <= dc_active_stage1_q;
-                dc_stage1_pending_q <= 1'b0;
-                dc_stage2_pending_q <= 1'b1;
-            end
-
-            if (dc_stage2_pending_q) begin
-                dc_output_q <= sat26_from27(dc_filtered_wide);
-                if (dc_active_stage2_q)
+                if (!powered_down)
                     audio_sample <= sat16_from27(
-                        dc_filtered_wide >>> LINE_OUTPUT_SHIFT
+                        $signed({{3{reconstruction_hold_q[23]}},
+                                  reconstruction_hold_q}) >>> 1
                     );
                 else
                     audio_sample <= 16'sd0;
-                dc_stage2_pending_q <= 1'b0;
             end
         end
     end

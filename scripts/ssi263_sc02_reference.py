@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ROM_PATH = ROOT / "hdl" / "apple" / "ssi263_sc02_rom.mem"
 ROM_SOURCE_SIZE = 2048
 ROM_ACTIVE_SIZE = 512
+ROM_ACTIVE_SHA256 = "101d129a5f104e6190f2eca518bbf9ef65bf4ff92684d29eba56d9641aa02b0a"
 ROM_SHA256 = "9c3bba73319e1ed3652c85dac19874df04cbb72e62fdd63d6cbd7b34ff81f941"
 ROM_CRC32 = 0xCC0A72EE
 
@@ -67,6 +68,9 @@ def reconstructed_source_image(rom: tuple[int, ...]) -> bytes:
 
 
 def verify_rom(rom: tuple[int, ...]) -> None:
+    active_digest = sha256(bytes(rom)).hexdigest()
+    if active_digest != ROM_ACTIVE_SHA256:
+        raise ValueError(f"SSI-263 active ROM SHA-256 mismatch: {active_digest}")
     image = reconstructed_source_image(rom)
     digest = sha256(image).hexdigest()
     crc = zlib.crc32(image) & 0xFFFFFFFF
@@ -191,9 +195,11 @@ class SSI263Reference:
     voice_clock_edges: int = 0
     pitch_events: int = 0
     last_pitch_event_tick: int | None = None
-    # Hard-reset phase only. The reconstructed U85C reset path combines
-    # U104C.10 with U68 /CO but has unresolved, self-locking polarity.
+    # Deterministic FPGA power-up seeds for physical counters with no reset
+    # pin. Runtime behavior follows the sheet-6 U68/U85C network.
     u62_q: bool = False
+    ampct_count: int = 0
+    u68_clock_level: bool = False
     u41c_level: bool = False
     noise_clock_edges: int = 0
 
@@ -220,8 +226,6 @@ class SSI263Reference:
     last_inflection_tick: int | None = None
 
     transitioned_inflection: int = 0
-    phone_fricative: bool = False
-    phone_voiced: bool = False
     pw_0: bool = False
     pw_1: bool = False
     pw_2: bool = False
@@ -229,6 +233,7 @@ class SSI263Reference:
     pw_5: bool = True
     fric1_sw: bool = False
     fric2_sw: bool = True
+    u20b_q: bool = False
 
     _write_active: bool = False
     _write_register: int = 0
@@ -405,6 +410,7 @@ class SSI263Reference:
         self._advance_filter_clock(1)
         self._advance_voice_clock()
         self._advance_selector_tick(suppress_slot_write=suppress_slot_write)
+        self._update_amplitude_counter()
         self._update_u41c_edge()
 
         if not self.phone_active:
@@ -441,12 +447,15 @@ class SSI263Reference:
             self.assert_pd_rst()
 
     def _advance_voice_clock(self) -> None:
+        if self.u62_reset:
+            self.u62_q = False
         self.voice_ticks_to_edge -= 1
         if self.voice_ticks_to_edge:
             return
         self.voice_clock_edges += 1
-        self.u62_q = not self.u62_q
-        if self.u62_q:
+        if not self.u62_reset:
+            self.u62_q = not self.u62_q
+        if not self.u62_reset and self.u62_q:
             self.pitch_events += 1
             self.last_pitch_event_tick = self.effective_xck_ticks
         self.voice_ticks_to_edge = voice_clock_period_ticks(
@@ -465,6 +474,42 @@ class SSI263Reference:
             self.noise_clock_edges += 1
         self.u41c_level = level
 
+    @property
+    def ampct_zero(self) -> bool:
+        return (self.ampct_count & 0x0E) == 0
+
+    @property
+    def ampct_up(self) -> bool:
+        ampct0 = not (self.pw_3 and not self.u62_q)
+        any_amplitude = (
+            self.parameter_values["voice_amp"] != 0
+            or self.parameter_values["fric_amp"] != 0
+        )
+        return ampct0 and any_amplitude
+
+    @property
+    def ampct_nco(self) -> bool:
+        if self.ampct_up:
+            return self.ampct_count != 15
+        return self.ampct_count != 0
+
+    @property
+    def u62_reset(self) -> bool:
+        u104c = self.pw_3 and not self.u62_q
+        return u104c or self.ampct_nco
+
+    def _update_amplitude_counter(self) -> None:
+        u71c = (not self.ampct_nco) and self.ampct_up
+        u71d = (not self.ampct_up) and self.ampct_zero
+        u69a = not (u71c or u71d)
+        level = bool(self.selector & 0x04) and u69a
+        if level and not self.u68_clock_level:
+            if self.ampct_up:
+                self.ampct_count = (self.ampct_count + 1) & 0x0F
+            else:
+                self.ampct_count = (self.ampct_count - 1) & 0x0F
+        self.u68_clock_level = level
+
     def _advance_filter_clock(self, ticks: int) -> None:
         remaining = ticks
         while remaining >= self.filter_ticks_to_toggle:
@@ -474,7 +519,11 @@ class SSI263Reference:
             if self.filter_phase == 0:
                 self.closure_events += 1
                 self.last_closure_tick = self.effective_xck_ticks
+                self.fric2_sw = not self.u20b_q
             self.filter_ticks_to_toggle = 256 - self.filter_frequency
+        if self.filter_phase == 0:
+            # U112 is transparent while Phi1_X is low.
+            self.fric1_sw = self.u20b_q
         self.filter_ticks_to_toggle -= remaining
 
     def rom_byte(self, selector: int | None = None) -> int:
@@ -563,16 +612,22 @@ class SSI263Reference:
             flags = self.flags_for_selector(selector)
             if selector == 0:
                 self.pw_0 = bool(flags & 0x01)
-                self.phone_voiced = not self.pw_0
             elif selector == 1:
                 self.pw_1 = bool(flags & 0x01)
-                self.phone_fricative = not self.pw_1
             elif selector == 2:
+                u20_clock_enable = (
+                    (
+                        (self.pw_0 and self.pw_1 and self.ampct_zero)
+                        or self.parameter_values["fric_amp"] == 0
+                    )
+                    and self.pw_1
+                    and (self.pw_2 or bool(flags & 0x04))
+                )
+                if u20_clock_enable:
+                    self.u20b_q = bool(flags & 0x08)
                 self.pw_2 = bool(flags & 0x04)
                 self.pw_3 = bool(flags & 0x02)
                 self.pw_5 = not self.pw_2
-                self.fric1_sw = bool(flags & 0x08)
-                self.fric2_sw = not self.fric1_sw
 
             if sweep_slot:
                 self._apply_selected_transition()

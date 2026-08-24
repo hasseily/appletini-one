@@ -33,6 +33,7 @@ module tb_ssi263_sc02_core;
     logic voice_toggle;
     logic pitch_period_ce;
     logic noise_clock_ce;
+    logic noise_shift_ce;
     logic filter_phase_ce;
     logic filter_phase;
     logic [2:0] selector;
@@ -40,8 +41,6 @@ module tb_ssi263_sc02_core;
     logic selector_step_ce;
     logic [7:0] selector_rom_data;
     logic [3:0] selector_flags;
-    logic phone_fricative;
-    logic phone_voiced;
     logic pw_0;
     logic pw_1;
     logic pw_2;
@@ -49,8 +48,6 @@ module tb_ssi263_sc02_core;
     logic pw_5;
     logic fric1_sw;
     logic fric2_sw;
-    logic fricative;
-    logic voiced;
     logic closure;
     logic rate_clock_ce;
     logic rate_clock_div2_ce;
@@ -129,6 +126,7 @@ module tb_ssi263_sc02_core;
         .voice_toggle(voice_toggle),
         .pitch_period_ce(pitch_period_ce),
         .noise_clock_ce(noise_clock_ce),
+        .noise_shift_ce(noise_shift_ce),
         .filter_phase_ce(filter_phase_ce),
         .filter_phase(filter_phase),
         .selector(selector),
@@ -136,8 +134,6 @@ module tb_ssi263_sc02_core;
         .selector_step_ce(selector_step_ce),
         .selector_rom_data(selector_rom_data),
         .selector_flags(selector_flags),
-        .phone_fricative(phone_fricative),
-        .phone_voiced(phone_voiced),
         .pw_0(pw_0),
         .pw_1(pw_1),
         .pw_2(pw_2),
@@ -145,8 +141,6 @@ module tb_ssi263_sc02_core;
         .pw_5(pw_5),
         .fric1_sw(fric1_sw),
         .fric2_sw(fric2_sw),
-        .fricative(fricative),
-        .voiced(voiced),
         .closure(closure),
         .rate_clock_ce(rate_clock_ce),
         .rate_clock_div2_ce(rate_clock_div2_ce),
@@ -198,6 +192,7 @@ module tb_ssi263_sc02_core;
         .voice_toggle(),
         .pitch_period_ce(),
         .noise_clock_ce(),
+        .noise_shift_ce(),
         .filter_phase_ce(),
         .filter_phase(),
         .selector(),
@@ -205,8 +200,6 @@ module tb_ssi263_sc02_core;
         .selector_step_ce(),
         .selector_rom_data(),
         .selector_flags(),
-        .phone_fricative(),
-        .phone_voiced(),
         .pw_0(),
         .pw_1(),
         .pw_2(),
@@ -214,8 +207,6 @@ module tb_ssi263_sc02_core;
         .pw_5(),
         .fric1_sw(),
         .fric2_sw(),
-        .fricative(),
-        .voiced(),
         .closure(),
         .rate_clock_ce(),
         .rate_clock_div2_ce(),
@@ -369,8 +360,6 @@ module tb_ssi263_sc02_core;
             check(pw_2 == code[2], "lower code PW2");
             check(pw_3 == code[1], "lower code PW3");
             check(pw_5 == !code[2], "lower code PW5");
-            check(fric1_sw == code[3], "lower code FRIC1");
-            check(fric2_sw == !code[3], "lower code FRIC2");
         end
     endtask
 
@@ -521,8 +510,6 @@ module tb_ssi263_sc02_core;
         raw_xck_edges(16);
         check(voice_edges_seen - voice_before == 4,
                "raw VOICECLK cadence");
-        check(pitch_events_seen - pitch_before == 2,
-               "U62 final pitch cadence");
 
         // U52C is U49 terminal count gated by U43B Q. With FF=FF, its
         // one-clock synchronous form occurs every two effective ticks.
@@ -543,10 +530,8 @@ module tb_ssi263_sc02_core;
         raw_xck_edges(17000);
         check(pw_3 && fric_amp_code != 4'd0,
                "noise test controls did not settle");
-        noise_before = noise_edges_seen;
-        raw_xck_edges(128);
-        check(noise_edges_seen - noise_before > 2,
-               "held PW3 did not produce sustained U41C edges");
+        // U68/U85C now owns the U62 reset phase. Do not impose a pitch or
+        // HCC edge rate here; the direct circuit checks below own that path.
 
         // Selector 3 feeds both F3 and F4. Selector 7 is absent from the
         // seven-bit sweep mask, so a complete sweep cannot write it.
@@ -573,18 +558,202 @@ module tb_ssi263_sc02_core;
         reset_chips();
         write_register(3'd0, 8'h27);
         raw_xck_edges(32);
-        check(phone_fricative && !phone_voiced && pw_0 && !pw_1,
-               "fricative lower-ROM source flag");
+        check(pw_0 && !pw_1,
+              "phone 27 low-ROM slots 0/1 did not latch exactly");
         reset_chips();
         write_register(3'd0, 8'h01);
         raw_xck_edges(32);
-        check(!phone_fricative && phone_voiced && !pw_0 && pw_1,
-               "voiced lower-ROM source flag");
+        check(!pw_0 && pw_1,
+              "phone 01 low-ROM slots 0/1 did not latch exactly");
         reset_chips();
         write_register(3'd0, 8'h2F);
         raw_xck_edges(32);
-        check(phone_fricative && phone_voiced && !pw_0 && !pw_1,
-               "mixed lower-ROM source flags");
+        check(!pw_0 && !pw_1,
+              "phone 2F low-ROM slots 0/1 did not latch exactly");
+
+        // Sheet 6 ties U68 B/D to VCC, so the CD4029 counts in binary. In the
+        // up direction /CO is active only at F; down remains terminal at 0.
+        // U85C ORs that terminal signal with U104C before resetting U62.
+        reset_chips();
+        force dut.voice_amp_code_q = 4'hF;
+        force dut.fric_amp_code_q = 4'h0;
+        force dut.pw_3_q = 1'b0;
+        force dut.u62_q = 1'b0;
+        force dut.selector_q = 3'd4;
+        force dut.ampct_q = 4'd14;
+        #1;
+        check(dut.ampct_up && dut.ampct_nco &&
+              dut.u68_clock_level && dut.u62_reset,
+              "U68 up-count nonterminal or U85C state is wrong");
+        force dut.ampct_q = 4'd15;
+        #1;
+        check(dut.ampct_up && !dut.ampct_nco &&
+              !dut.u68_clock_level && !dut.u62_reset,
+              "U68 did not stop at the binary up terminal F");
+        force dut.pw_3_q = 1'b1;
+        force dut.ampct_q = 4'd2;
+        #1;
+        check(!dut.ampct_up && dut.ampct_nco &&
+              dut.u68_clock_level && dut.u62_reset,
+              "U68 down-count nonterminal or U85C state is wrong");
+        force dut.ampct_q = 4'd0;
+        #1;
+        check(!dut.ampct_up && !dut.ampct_nco &&
+              !dut.u68_clock_level && dut.u62_reset,
+              "U68 did not stop at binary zero or U104C missed U85C");
+        release dut.voice_amp_code_q;
+        release dut.fric_amp_code_q;
+        release dut.pw_3_q;
+        release dut.u62_q;
+        release dut.selector_q;
+        release dut.ampct_q;
+
+        // Prove the actual four-bit recurrence across the old BCD boundary.
+        // A low/high SEL2 pair supplies one drawn U68 positive clock edge.
+        reset_chips();
+        force dut.voice_amp_code_q = 4'hF;
+        force dut.fric_amp_code_q = 4'h0;
+        force dut.pw_3_q = 1'b0;
+        force dut.u62_q = 1'b0;
+        force dut.selector_q = 3'd0;
+        @(posedge clk);
+        #1;
+        for (setting = 1; setting <= 15; setting = setting + 1) begin
+            force dut.selector_q = 3'd4;
+            @(posedge clk);
+            #1;
+            check(dut.ampct_q == setting[3:0],
+                  "U68 binary up-count recurrence changed");
+            force dut.selector_q = 3'd0;
+            @(posedge clk);
+            #1;
+        end
+        check(dut.ampct_q == 4'hF && !dut.ampct_nco,
+              "U68 did not reach and hold binary terminal F");
+
+        force dut.pw_3_q = 1'b1;
+        for (setting = 14; setting >= 1; setting = setting - 1) begin
+            force dut.selector_q = 3'd4;
+            @(posedge clk);
+            #1;
+            check(dut.ampct_q == setting[3:0],
+                  "U68 binary down-count recurrence changed");
+            force dut.selector_q = 3'd0;
+            @(posedge clk);
+            #1;
+        end
+        check(dut.ampct_q == 4'h1 && dut.ampct_nco && dut.ampct_zero,
+              "drawn AMPCT_ZERO gate did not stop the live down count at 1");
+        release dut.voice_amp_code_q;
+        release dut.fric_amp_code_q;
+        release dut.pw_3_q;
+        release dut.u62_q;
+        release dut.selector_q;
+
+        // U75 counts on the U41C rise; U73 shifts on its fall. The two chip
+        // edges must never collapse into one enable.
+        reset_chips();
+        force dut.pw_3_q = 1'b0;
+        force dut.fric_amp_code_q = 4'hF;
+        force dut.selector_q = 3'd0;
+        #1;
+        check(dut.u41c_level,
+              "U41C high level was not formed from its drawn inputs");
+        @(posedge clk);
+        #1;
+        check(noise_clock_ce && !noise_shift_ce,
+              "U41C rise did not select U75 alone");
+        force dut.selector_q = 3'd2;
+        #1;
+        check(!dut.u41c_level,
+              "SEL1 did not pull U41C low");
+        @(posedge clk);
+        #1;
+        check(!noise_clock_ce && noise_shift_ce,
+              "U41C fall did not select U73 alone");
+        release dut.pw_3_q;
+        release dut.fric_amp_code_q;
+        release dut.selector_q;
+
+        // Sheet 7 U20B samples TPARM3 only at the gated WR_SEL2 edge.
+        // First open the literal PW0/PW1/PW2/AMPCT_ZERO gate and sample one.
+        reset_chips();
+        force dut.pw_0_q = 1'b1;
+        force dut.pw_1_q = 1'b1;
+        force dut.pw_2_q = 1'b1;
+        force dut.ampct_q = 4'd0;
+        force dut.fric_amp_code_q = 4'hF;
+        force dut.selector_q = 3'd2;
+        force dut.selector_phase_q = 1'b1;
+        force dut.slow_div_q = 2'd3;
+        force dut.selector_flags = 4'h8;
+        #1;
+        check(dut.u20_clock_enable,
+              "U20B WR_SEL2 gate did not open on its literal inputs");
+        raw_xck_edges(1);
+        check(dut.u20b_q,
+              "U20B did not sample TPARM3 high at WR_SEL2");
+
+        // A nonzero AMPCT closes that gate when FRIC_AMP is nonzero, so a
+        // later zero TPARM3 must leave U20B unchanged.
+        force dut.ampct_q = 4'd2;
+        force dut.selector_flags = 4'h0;
+        #1;
+        check(!dut.u20_clock_enable,
+              "U20B WR_SEL2 gate ignored AMPCT_ZERO");
+        raw_xck_edges(1);
+        check(dut.u20b_q,
+              "closed WR_SEL2 gate changed U20B");
+
+        // FRIC_AMP_ZERO is the alternate gate term. It permits the same
+        // WR_SEL2 edge to sample TPARM3 low.
+        force dut.fric_amp_code_q = 4'h0;
+        #1;
+        check(dut.u20_clock_enable,
+              "FRIC_AMP_ZERO did not open the U20B gate");
+        raw_xck_edges(1);
+        check(!dut.u20b_q,
+              "U20B did not sample TPARM3 low at WR_SEL2");
+        release dut.pw_0_q;
+        release dut.pw_1_q;
+        release dut.pw_2_q;
+        release dut.ampct_q;
+        release dut.fric_amp_code_q;
+        release dut.selector_q;
+        release dut.selector_phase_q;
+        release dut.slow_div_q;
+        release dut.selector_flags;
+
+        // U112 follows U20B only in Phi1_X. U166A samples !U20B only on the
+        // positive Phi0_X boundary; both outputs hold through the other phase.
+        force dut.filter_phase_q = 1'b0;
+        force dut.u20b_q = 1'b1;
+        @(posedge clk);
+        #1;
+        check(fric1_sw,
+              "U112 did not follow U20B during Phi1_X");
+        force dut.filter_phase_q = 1'b1;
+        force dut.u20b_q = 1'b0;
+        @(posedge clk);
+        #1;
+        check(fric1_sw,
+              "U112 did not hold FRIC1_SW outside Phi1_X");
+        force dut.filter_ticks_left_q = 9'd1;
+        raw_xck_edges(1);
+        check(fric2_sw,
+              "U166A did not sample complementary U20B at Phi0_X");
+        force dut.u20b_q = 1'b1;
+        @(posedge clk);
+        #1;
+        check(fric2_sw,
+              "U166A did not hold FRIC2_SW between Phi0_X edges");
+        raw_xck_edges(1);
+        check(!fric2_sw,
+              "U166A did not resample complementary U20B");
+        release dut.filter_phase_q;
+        release dut.filter_ticks_left_q;
+        release dut.u20b_q;
+        reset_chips();
 
         // CTL/PD gates the request and analog source paths. The schematic has
         // no CTL/PD gate on U44/U45, U48/U49, U66, or U94, so those digital

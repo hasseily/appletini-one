@@ -559,7 +559,7 @@ module apple_top(
     localparam logic [31:0] CARD_CTRL_SLOT_ENABLE_VALID_MASK = 32'h0000_007E;
     localparam logic [31:0] CARD_CTRL_SLOT_ENABLE_REQUIRED   = 32'h0000_0080;
     localparam logic [47:0] PHASOR_PAN_RESET                 = 48'h5B5B5B5B5B5B;
-    localparam logic [31:0] PHASOR_AUDIO_RESET               = 32'h0204_0000;
+    localparam logic [31:0] PHASOR_AUDIO_RESET               = 32'h0200_0000;
 
     function automatic logic [31:0] card_slot_enable_normalize(input logic [31:0] value);
         card_slot_enable_normalize =

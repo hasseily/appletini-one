@@ -516,7 +516,7 @@ and the 36 vTW shadow RAM blocks must remain independent with no depth cascade.
 These fixes do not relax a speech path or hide one with a false or multicycle
 constraint. The Apple bus direction outputs retain their raw-PHI0 limit.
 
-### Current source and pending firmware
+### Current source and final test firmware
 
 The current audio source uses the exact capacitor-ratio charge equations above,
 not the rejected all-pole tables. Each chip keeps independent `p`, `y`, input,
@@ -548,21 +548,32 @@ The final branch gate includes:
 - source and synthesis-log checks that no SC-01/Votrax implementation enters
   the image.
 
-The test firmware version remains `F0.9.99`. No firmware made from the current
-charge engine has yet passed the clean full-build and package gate. Run exactly
-one clean full build from the final source, keep it if it passes the temporary
-`+0.100 ns` routed-WNS floor, and package from that run's exact XSA and
-bitstream.
+The test firmware version remains `F0.9.99`. Clean source commit
+`9297eb3dfddbd5e5b8a8d0689680f27005571dd4` supplied the charge engine to the
+single full build `20260824T112723Z-9297eb3d-full`. The normal `+0.300 ns`
+release gate stopped the base post-route result at WNS `+0.012 ns`. The same
+post-route checkpoint then received one physical-optimization pass under a
+temporary `0.100 ns` setup uncertainty. The script restored the uncertainty to
+`0.000 ns` before it wrote the final reports, checkpoint, and bitstream. This
+was not a second synthesis, placement, route, or full build.
+
+The manual test checkpoint is fully routed and has setup WNS `+0.100 ns`, hold
+WHS `+0.047 ns`, pulse-width WPWS `+0.265 ns`, zero route errors, no
+unconstrained internal endpoints, and a passing bus-skew report. It meets the
+user's temporary `+0.100 ns` test floor but not the normal `+0.300 ns` release
+gate. Firmware packaging named the accepted archived bitstream, so it did not
+fall back to a stale project bitstream.
 
 ```text
-Final F0.9.99 firmware path: pending
-Final routed WNS: pending
-Final firmware SHA-256: pending
+Final F0.9.99 firmware path: .timing_runs\20260824T112723Z-9297eb3d-full\FIRMWARE_F0.9.99_SSI263_SCHEMATIC_WNS0p100.BIN
+Final routed WNS: +0.100 ns
+Final firmware size: 3,752,332 bytes
+Final firmware SHA-256: EE8FE36167953B08F7E944574645CB66C9FC79DEE8829B2EB411670E250A41B7
 ```
 
 Earlier `F0.9.99` hardware runs proved card detection, VIA/request handling,
 and Phasor mode. They did not validate the current tract: one was almost silent,
 one made P/F/C-class noise far too strong, and the Q3/all-pole image sounded
-low, monotonous, and muffled. The next image must contain the charge engine,
-the scheduler-order and timing fixes, both independent SSI-263 instances, and
-no SC-01 path. Hardware listening and real-chip analog matching remain pending.
+low, monotonous, and muffled. The final image contains the charge engine, the
+scheduler-order and timing fixes, both independent SSI-263 instances, and no
+SC-01 path. Hardware listening and real-chip analog matching remain pending.

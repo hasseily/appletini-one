@@ -399,13 +399,25 @@ The Q3/all-pole firmware from commit `cdb43efd` is rejected. Hardware speech
 sounded worse: low, monotonous, and muffled. It must not be named or used as
 the current test image.
 
-The version remains `F0.9.99`. The next firmware must come from the final charge
-engine and one clean passing full build. Until that run and package step finish:
+The version remains `F0.9.99`. Commit
+`9297eb3dfddbd5e5b8a8d0689680f27005571dd4` supplied the final charge engine to
+one clean, non-incremental full build, `20260824T112723Z-9297eb3d-full`. The
+normal `+0.300 ns` release gate rejected the first post-route result at
+`+0.012 ns`. The same routed checkpoint then received one physical
+optimization pass under temporary setup uncertainty. The script restored
+uncertainty to `0.000 ns` before the final reports and bitstream. No second
+synthesis, placement, route, or full build ran.
+
+The final manual test checkpoint has setup WNS `+0.100 ns`, hold WHS
+`+0.047 ns`, pulse-width WPWS `+0.265 ns`, no unconstrained internal endpoints,
+no route errors, and a passing bus-skew report. This meets the temporary
+`+0.100 ns` test floor. It is not a normal `+0.300 ns` timing promotion.
 
 ```text
-Final F0.9.99 firmware path: pending
-Final routed WNS: pending
-Final firmware SHA-256: pending
+Final F0.9.99 firmware path: .timing_runs\20260824T112723Z-9297eb3d-full\FIRMWARE_F0.9.99_SSI263_SCHEMATIC_WNS0p100.BIN
+Final routed WNS: +0.100 ns
+Final firmware size: 3,752,332 bytes
+Final firmware SHA-256: EE8FE36167953B08F7E944574645CB66C9FC79DEE8829B2EB411670E250A41B7
 ```
 
 ## Acceptance gate

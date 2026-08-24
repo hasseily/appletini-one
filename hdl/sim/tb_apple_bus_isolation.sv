@@ -91,8 +91,10 @@ module tb_apple_bus_isolation;
         ab_write.assert_irq    = 1'b1;
         ab_write.assert_dma    = 1'b1;
         force dut.apple_inh_assert = 1'b1;
-        force dut.apple_data_enable_unisolated = 1'b1;
+        force dut.bus_emit_state = 1'b1;
+        force dut.physical_data_en_safe = 1'b1;
         force dut.physical_data_q = 8'hA5;
+        apple_phi0_pin = 1'b1;
         #1;
 
         check(tini_oe_pin == 1'b0, "host mode must enable main transceiver");
@@ -130,7 +132,8 @@ module tb_apple_bus_isolation;
               "control request escaped physical isolation");
 
         release dut.apple_inh_assert;
-        release dut.apple_data_enable_unisolated;
+        release dut.bus_emit_state;
+        release dut.physical_data_en_safe;
         release dut.physical_data_q;
         $display("APPLE BUS ISOLATION PASS");
         $finish;

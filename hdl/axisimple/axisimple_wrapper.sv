@@ -111,13 +111,13 @@ module axisimple_wrapper(
 
     assign S_AXI_WREADY = S_AXI_ARESETN && wskid_input_ready;
 
-    /* Give the east-side vTW shadow and Phasor loads their own same-stage
-     * launch flops for the routed data bits and all write strobes. Unselected
-     * payload bits remain direct aliases of the canonical skid output. */
+    /* Give long vTW, Phasor, and no-slot-clock routes their own same-stage
+     * launch flops for the selected data bits and all write strobes.
+     * Unselected payload bits remain aliases of the canonical skid output. */
     skidbuffer #(
         .OPT_LOWPOWER(1'b1),
         .OPT_OUTREG(1'b1),
-        .OPT_COPY_MASK({1'b0, 4'b1111, 32'h0000_2122}),
+        .OPT_COPY_MASK({1'b0, 4'b1111, 32'h0000_2126}),
         .DW(37)
     )
     wchannel_skid_i (

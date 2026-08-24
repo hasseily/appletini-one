@@ -103,6 +103,7 @@ module apple_top(
     globals::AppleBus_read  physical_ab_read;
     globals::AppleBus_read  virtual_ab_read;
     globals::AppleBus_read  onee_softswitch_ab_read;
+    globals::AppleBus_read  sampled_ab_read;
     globals::AppleBus_write ab_write;
     globals::AppleBus_write ab_write_arb;
     globals::AppleBus_write onee_motherboard_ab_write;
@@ -347,19 +348,31 @@ module apple_top(
                                                       16'sd0;
 
     // Isolation asserts on the raw request before the guard may select the
-    // virtual bus. The physical wrapper receives no requests while isolated;
-    // its own direct kill also clears every pin driver without waiting for
-    // another Apple clock edge.
+    // virtual bus. The physical wrapper receives no data or control requests
+    // while isolated. The address-owner request below includes the same raw
+    // kill terms before it reaches the wrapper direction pin.
     assign ab_read = onee_enable_effective ? virtual_ab_read
                                             : physical_ab_read;
     always_comb begin
         ab_write = physical_bus_isolate ? '0 : ab_write_arb;
-        // The physical wrapper applies its private, low-fanout isolation copy
-        // to this ownership request at the pin gate.  Preserve the raw bit so
-        // the same isolation term is not placed twice in the address-direction
-        // path.  Every data and control request remains masked here, and the
-        // wrapper still forces the address, R/W, and direction pins off.
-        ab_write.wr_addr_rw_en = ab_write_arb.wr_addr_rw_en;
+        // Form the final address-owner kill in one LUT. The integrated wrapper
+        // is told this bit is pre-isolated, so it does not add the same safety
+        // term again on the direction-pin path. Data and control requests keep
+        // the full-record mask above.
+        ab_write.wr_addr_rw_en = ab_write_arb.wr_addr_rw_en &&
+            !onee_request_q && !onee_selected &&
+            !onee_physical_isolation_hold;
+    end
+
+    // The virtual bus keeps live card data visible before DATA so cards can
+    // form a serve response. Clients which only consume the byte under
+    // data_en use this copy instead. Its virtual byte is the registered DATA
+    // sample, which removes the invalid pre-data mux branch from their timing
+    // cones. The physical byte and every phase/control field stay unchanged.
+    always_comb begin
+        sampled_ab_read      = ab_read;
+        sampled_ab_read.data = onee_enable_effective ?
+            virtual_sampled_data : physical_ab_read.data;
     end
 
     soft_switch_manager ssm(
@@ -845,8 +858,7 @@ module apple_top(
     logic        egress_capture_drop_ack;
 
     logic shr_capture_active_w;
-    wire [7:0] cycle_capture_bus_data = onee_enable_effective ?
-        virtual_sampled_data : physical_ab_read.data;
+    wire [7:0] cycle_capture_bus_data = sampled_ab_read.data;
     apple_cycle_capture apple_cycle_capture_i (
         .clk(clk),
         .resetn(rstn[0]),
@@ -1078,7 +1090,9 @@ module apple_top(
     logic [31:0] busdbg_ghost_write;
     logic        busdbg_clear_pulse;
     logic        vtw_iiplus_dma_refresh_active;
-    apple_bus_wrapper apple_bus_wrapper_i (
+    apple_bus_wrapper #(
+        .ADDR_OWNER_PREISOLATED(1'b1)
+    ) apple_bus_wrapper_i (
         .res_filtered_out(res_filtered_dbg),
         .dbg_lost_cycle_count(dbg_lost_cycle_count),
         .dbg_bus_quality(busdbg_quality),
@@ -1236,6 +1250,26 @@ module apple_top(
             g.data_en       = 1'b0;
             g.sss_en        = 1'b0;
             g.serve_en      = 1'b0;
+        end
+        return g;
+    endfunction
+
+    /* Slot 7 ownership is sampled at ADDR and held for the later strobes.
+     * Keep those two enables separate in the netlist so DATA users do not
+     * inherit the live slot-policy decode through a phase-select mux. */
+    function automatic globals::AppleBus_read gate_ab_cycle(
+        input globals::AppleBus_read ab,
+        input logic addr_en,
+        input logic later_en
+    );
+        globals::AppleBus_read g;
+        g = ab;
+        if (!addr_en)
+            g.addr_en = 1'b0;
+        if (!later_en) begin
+            g.data_en  = 1'b0;
+            g.sss_en   = 1'b0;
+            g.serve_en = 1'b0;
         end
         return g;
     endfunction
@@ -1577,7 +1611,11 @@ module apple_top(
     smartport_card smartport_card_i (
         .clk(clk),
         .rstn(rstn[2]),
-        .ab_read(gate_ab(ab_read, vtw_smartport_visible)),
+        .ab_read(gate_ab_cycle(
+            sampled_ab_read,
+            vtw_smartport_visible_desired,
+            vtw_smartport_visible_q
+        )),
         .apple_bus_visible(vtw_smartport_visible),
         .sss(sss),
         // SuperSprite wins the shared slot when enabled.
@@ -1956,7 +1994,7 @@ module apple_top(
         .video_mode_50hz(video_mode_50hz),
         .video_line(line_in_frame),
         .video_cycle(cycle_in_line),
-        .ab_read(ab_read),
+        .ab_read(sampled_ab_read),
         .ab_write(vtw_ab_write),
         .rw_req_valid(vtw_rw_req_valid),
         .rw_req_rw(vtw_rw_req_rw),
@@ -2237,15 +2275,15 @@ module apple_top(
                     CARD_CTRL_REG_NSC_TIME_LO: begin
                         nsc_time_shadow_q[31:0] <= globals::apply_wstrb(
                             nsc_time_shadow_q[31:0],
-                            as_common.wdata,
-                            as_common.wstrb
+                            as_vtw_phasor_wdata,
+                            as_vtw_phasor_wstrb
                         );
                     end
                     CARD_CTRL_REG_NSC_TIME_HI: begin
                         automatic logic [31:0] nsc_hi = globals::apply_wstrb(
                             nsc_time_shadow_q[63:32],
-                            as_common.wdata,
-                            as_common.wstrb
+                            as_vtw_phasor_wdata,
+                            as_vtw_phasor_wstrb
                         );
                         nsc_time_shadow_q[63:32] <= nsc_hi;
                         nsc_time_bcd_q <= {nsc_hi, nsc_time_shadow_q[31:0]};

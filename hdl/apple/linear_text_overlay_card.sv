@@ -113,6 +113,8 @@ module linear_text_overlay_card (
     logic show_drained_q;
     logic capture_drop_seen_q;
     logic [1:0] frame_command_q;
+    logic       io_write_pending_q;
+    logic [3:0] io_write_idx_q;
 
     wire enabled = (slot_assign != 3'd0);
     wire apple_bus_active = enabled && ab_read.res &&
@@ -121,8 +123,8 @@ module linear_text_overlay_card (
                        (ab_read.addr[15:8] == 8'hC0) &&
                        (ab_read.addr[7:4] == (4'h8 + {1'b0, slot_assign}));
     wire ab_io_read  = ab_read.serve_en && ab_read.rw && slot_io_hit;
-    wire ab_io_write = ab_read.data_en && !ab_read.rw && slot_io_hit;
-    wire [3:0] io_idx = ab_read.addr[3:0];
+    wire ab_io_write = ab_read.data_en && io_write_pending_q;
+    wire [3:0] io_idx = ab_io_write ? io_write_idx_q : ab_read.addr[3:0];
 
     /* The parent gates both phase strobes when SmartPort does not own slot 7.
      * Export a cycle-qualified enable so the separate capture tap cannot
@@ -263,6 +265,8 @@ module linear_text_overlay_card (
             show_drained_q      <= 1'b0;
             capture_drop_seen_q <= 1'b0;
             frame_command_q     <= FRAME_NONE;
+            io_write_pending_q  <= 1'b0;
+            io_write_idx_q      <= 4'h0;
         end
     endtask
 
@@ -272,10 +276,21 @@ module linear_text_overlay_card (
         end else if (!ab_read.res) begin
             reset_overlay_state();
         end else begin
+            /* SERVE and DATA are separate on both Apple buses. Latch the
+             * write decode at SERVE so the stable data byte does not carry
+             * the full slot/address decode into every write register. */
+            if (ab_read.serve_en) begin
+                io_write_pending_q <= !ab_read.rw && slot_io_hit;
+                io_write_idx_q     <= ab_read.addr[3:0];
+            end
+
             if (!capture_drop_sticky)
                 capture_drop_seen_q <= 1'b0;
 
             if (ab_io_write) begin
+                // Consume the SERVE token once. A duplicate DATA strobe is a
+                // bus fault and must not replay a command or indexed write.
+                io_write_pending_q <= 1'b0;
                 case (io_idx)
                     4'h0: index_q <= ab_read.data;
                     4'h1,

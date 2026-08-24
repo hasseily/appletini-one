@@ -145,6 +145,11 @@ module disk2_card (
     logic [3:0] phase_on_q;
     logic       motor_on_q;
     logic       drive_select_q;
+    /* Private lockstep copy for the vTW readiness cone. The main selector has
+     * many local mechanical, cache, sound, and status loads; keeping this copy
+     * distinct lets Vivado place the accelerator test beside its consumer. */
+    (* EQUIVALENT_REGISTER_REMOVAL = "NO", MAX_FANOUT = 8 *)
+    logic       vtw_drive_select_q;
     logic [27:0] spin_countdown_q [0:1];
     logic       vtw_drive_spinning_q;
     logic       step_pending_q;
@@ -385,6 +390,32 @@ module disk2_card (
     wire woz_track_stream_ready = woz_alias_loaded;
     wire drive_spinning = motor_on_q || (spin_countdown_q[drive_select_q] != 28'd0);
 
+    /* These are bit-for-bit copies of the selected-drive readiness terms, but
+     * use the low-fanout lockstep selector above. */
+    wire vtw_drive_has_media = drive_info_q[vtw_drive_select_q][0];
+    wire [7:0] vtw_current_qtrack = drive_qtrack_q[vtw_drive_select_q];
+    wire vtw_selected_track_loaded =
+        track_loaded_q &&
+        (loaded_drive_q == vtw_drive_select_q) &&
+        (track_length_q != 14'd0) &&
+        (!track_woz_q || (track_bit_count_q != 17'd0));
+    wire vtw_exact_drive_loaded =
+        vtw_selected_track_loaded &&
+        (loaded_qtrack_q == vtw_current_qtrack);
+    wire vtw_woz_alias_loaded =
+        vtw_selected_track_loaded &&
+        woz_alias_drive_q[vtw_drive_select_q];
+    wire vtw_active_drive_loaded =
+        track_woz_q ? vtw_woz_alias_loaded : vtw_exact_drive_loaded;
+    wire vtw_active_track_unavailable =
+        track_unavailable_q &&
+        (loaded_drive_q == vtw_drive_select_q) &&
+        (loaded_qtrack_q == vtw_current_qtrack);
+    wire vtw_track_data_pending =
+        vtw_drive_has_media &&
+        !vtw_active_drive_loaded &&
+        !vtw_active_track_unavailable;
+
     /* Rotation state feeds vTW speed control, then returns as a Disk II tick.
      * Register only this outbound view to break that long feedback path. Q7
      * and every local sequencer condition stay live. Motor and drive changes
@@ -409,14 +440,14 @@ module disk2_card (
      * behavior is visible. */
     assign vtw_time_ready =
         !vtw_active || !enabled || !ab_read.res ||
-        vtw_write_timing_active || !vtw_drive_spinning_q || !drive_has_media ||
-        active_track_unavailable ||
-        (active_drive_loaded && stream_line_hit_q);
+        vtw_write_timing_active || !vtw_drive_spinning_q ||
+        !vtw_drive_has_media || vtw_active_track_unavailable ||
+        (vtw_active_drive_loaded && stream_line_hit_q);
 
     wire vtw_read_not_ready =
         !vtw_q6_after_access && !vtw_q7_after_access &&
-        (track_data_pending ||
-         (!track_woz_q && active_drive_loaded && !stream_line_hit_q));
+        (vtw_track_data_pending ||
+         (!track_woz_q && vtw_active_drive_loaded && !stream_line_hit_q));
     /* Register the private request before it touches the controller state.
      * This keeps the vTW classifier and boot-menu ownership decode out of
      * the Disk II stepper, LSS, write, and sound update cones. The response
@@ -862,6 +893,7 @@ module disk2_card (
             phase_on_q <= 4'h0;
             motor_on_q <= 1'b0;
             drive_select_q <= 1'b0;
+            vtw_drive_select_q <= 1'b0;
             spin_countdown_q[0] <= 28'd0;
             spin_countdown_q[1] <= 28'd0;
             step_pending_q <= 1'b0;
@@ -1193,6 +1225,7 @@ module disk2_card (
                 phase_on_q <= 4'h0;
                 motor_on_q <= 1'b0;
                 drive_select_q <= 1'b0;
+                vtw_drive_select_q <= 1'b0;
                 step_pending_q <= 1'b0;
                 step_pending_addr_q <= 4'h0;
                 step_delay_q <= 4'd0;
@@ -1336,6 +1369,7 @@ module disk2_card (
                                 disk_latch_q <= 8'h80;
                         end
                         drive_select_q <= 1'b0;
+                        vtw_drive_select_q <= 1'b0;
                         spin_countdown_q[1] <= 28'd0;
                         if (motor_on_q)
                             spin_countdown_q[0] <= SPIN_DOWN_TICKS;
@@ -1351,6 +1385,7 @@ module disk2_card (
                                 disk_latch_q <= 8'h80;
                         end
                         drive_select_q <= 1'b1;
+                        vtw_drive_select_q <= 1'b1;
                         spin_countdown_q[0] <= 28'd0;
                         if (motor_on_q)
                             spin_countdown_q[1] <= SPIN_DOWN_TICKS;

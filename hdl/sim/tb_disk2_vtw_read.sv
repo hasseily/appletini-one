@@ -75,6 +75,11 @@ module tb_disk2_vtw_read;
         end
     end
 
+    always @(negedge clk) begin
+        if (rstn && dut.vtw_drive_select_q !== dut.drive_select_q)
+            $fatal(1, "FAIL: vTW drive selector diverged from Disk II state");
+    end
+
     task automatic check(input bit cond, input string msg);
         if (!cond)
             $fatal(1, "FAIL: %s", msg);
@@ -216,6 +221,17 @@ module tb_disk2_vtw_read;
         ab_read.data_en = 1'b0;
         ab_read.rw = 1'b1;
         repeat (2) @(negedge clk);
+
+        // Both drive-select copies must move together, and readiness must use
+        // the selected drive's own media/cache state.
+        physical_write(4'hB, 8'h00);
+        check(dut.drive_select_q && dut.vtw_drive_select_q,
+              "DRIVE2 did not update both selector copies");
+        check(vtw_time_ready,
+              "empty DRIVE2 incorrectly held virtual time");
+        physical_write(4'hA, 8'h00);
+        check(!dut.drive_select_q && !dut.vtw_drive_select_q,
+              "DRIVE1 did not update both selector copies");
 
         @(negedge clk);
         check(!vtw_time_ready,

@@ -153,9 +153,11 @@ def static_checks() -> None:
     )
     require(
         "ab_write = physical_bus_isolate ? '0 : ab_write_arb;" in apple_top and
-        "ab_write.wr_addr_rw_en = ab_write_arb.wr_addr_rw_en;" in apple_top,
-        "physical wrapper requests must be isolated with only raw address ownership "
-        "left for its final pin gate",
+        "ab_write.wr_addr_rw_en = ab_write_arb.wr_addr_rw_en &&" in apple_top and
+        "!onee_request_q && !onee_selected &&" in apple_top and
+        "!onee_physical_isolation_hold;" in apple_top and
+        ".ADDR_OWNER_PREISOLATED(1'b1)" in apple_top,
+        "physical requests must use a single final address-owner isolation cone",
     )
     require(
         ".ab_read(physical_ab_read)" in apple_top and
@@ -176,8 +178,9 @@ def static_checks() -> None:
     )
 
     for contract in (
-        "ab_write.wr_addr_rw_en &&\n                                !physical_bus_isolate",
-        "apple_data_enable_unisolated &&\n                             !physical_bus_isolate",
+        "ADDR_OWNER_PREISOLATED || !physical_bus_isolate",
+        "bus_emit_state && !physical_bus_isolate",
+        "data_override_safe && !physical_bus_isolate",
         "wire apple_irq_drive_low = !physical_bus_isolate",
         "assign apple_inh_pin = (!physical_bus_isolate",
         "wire apple_dma_requested = !physical_bus_isolate",

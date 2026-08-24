@@ -133,6 +133,20 @@ module tb_linear_text_overlay;
         read_indexed(8'h11); if (rd !== 8'h04) $fatal(1, "legacy width hi");
         read_indexed(8'h12); if (rd !== 8'h00) $fatal(1, "legacy height lo");
         read_indexed(8'h13); if (rd !== 8'h03) $fatal(1, "legacy height hi");
+
+        // A second DATA phase without a new SERVE must not replay the last
+        // auto-incrementing write.
+        bus_write(16'hC0F0, 8'h03);
+        bus_write(16'hC0F2, 8'h50);
+        @(negedge clk);
+        ab_read.data = 8'h18;
+        ab_read.data_en = 1'b1;
+        @(negedge clk);
+        ab_read.data_en = 1'b0;
+        bus_read(16'hC0F0);
+        if (rd !== 8'h04)
+            $fatal(1, "duplicate DATA replayed indexed write: %02x", rd);
+
         canvas_shr_active = 1'b1;
         read_indexed(8'h10); if (rd !== 8'h00) $fatal(1, "SHR width lo");
         read_indexed(8'h11); if (rd !== 8'h05) $fatal(1, "SHR width hi");

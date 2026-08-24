@@ -103,9 +103,23 @@ def static_contract_checks() -> None:
             ".enabled                 (onee_enable_effective)" in motherboard,
             "virtual RESET must reach enabled motherboard state through ab_read")
     vtw = instance_text(apple, "vtw_core_top vtw_core_top_i")
-    require(".ab_read(ab_read)" in vtw,
-            "virtual RESET must reach the soft CPU through ab_read")
-    physical_bus = instance_text(apple, "apple_bus_wrapper apple_bus_wrapper_i")
+    require(".ab_read(sampled_ab_read)" in vtw,
+            "the soft CPU must use registered virtual DATA samples")
+    require("sampled_ab_read      = ab_read;" in apple and
+            "sampled_ab_read.data = onee_enable_effective ?" in apple and
+            "virtual_sampled_data : physical_ab_read.data;" in apple,
+            "sampled Apple bus copy must preserve controls and select the "
+            "registered virtual DATA byte")
+    smartport = instance_text(apple, "smartport_card smartport_card_i")
+    require("gate_ab_cycle(" in smartport and
+            "sampled_ab_read" in smartport and
+            "vtw_smartport_visible_desired" in smartport and
+            "vtw_smartport_visible_q" in smartport,
+            "SmartPort and overlay must use registered DATA samples with "
+            "separate address and held later-phase visibility")
+    physical_bus = instance_text(apple, "apple_bus_wrapper #(")
+    require(".ADDR_OWNER_PREISOLATED(1'b1)" in physical_bus,
+            "integrated wrapper must receive pre-isolated address ownership")
     require("onee_virtual_res_n" not in physical_bus and
             ".apple_res_pin(apple_res_pin)" in physical_bus,
             "virtual warm reset must not enter the physical RESET path")

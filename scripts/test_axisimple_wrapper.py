@@ -198,9 +198,9 @@ def check_masked_wskid_copy() -> None:
     )
     require(
         r"\.OPT_COPY_MASK\s*\(\s*"
-        r"\{\s*1'b0\s*,\s*4'b1111\s*,\s*32'h0000_2122\s*\}\s*\)",
+        r"\{\s*1'b0\s*,\s*4'b1111\s*,\s*32'h0000_2126\s*\}\s*\)",
         wrapper_source,
-        "copy mask must select only WDATA bits 1, 5, 8, 13 and WSTRB bits 0-3",
+        "copy mask must select WDATA bits 1, 2, 5, 8, 13 and WSTRB bits 0-3",
     )
     require(
         r"assign\s+as_vtw_phasor_wdata\s*=\s*"
@@ -250,6 +250,8 @@ def check_masked_wskid_copy() -> None:
         r"CARD_CTRL_REG_PHASOR_PAN_LO\s*:\s*begin.*?end",
         r"CARD_CTRL_REG_PHASOR_PAN_HI\s*:\s*begin.*?end",
         r"CARD_CTRL_REG_PHASOR_AUDIO\s*:\s*begin.*?end",
+        r"CARD_CTRL_REG_NSC_TIME_LO\s*:\s*begin.*?end",
+        r"CARD_CTRL_REG_NSC_TIME_HI\s*:\s*begin.*?end",
         r"CARD_CTRL_REG_VTW_SYNC_CMD\s*:\s*begin.*?end",
         r"CARD_CTRL_REG_VTW_POST_PUSH\s*:\s*begin.*?end",
     ]
@@ -317,6 +319,22 @@ def check_masked_wskid_copy() -> None:
             )
 
     for register in ("PHASOR_PAN_LO", "PHASOR_PAN_HI", "PHASOR_AUDIO"):
+        match = re.search(
+            rf"CARD_CTRL_REG_{register}\s*:\s*begin(.*?)end",
+            apple_source,
+            re.MULTILINE | re.DOTALL,
+        )
+        if not match or "as_vtw_phasor_wdata" not in match.group(1) or \
+                "as_vtw_phasor_wstrb" not in match.group(1):
+            raise AssertionError(
+                f"{register} must use both shared copied buses"
+            )
+        if re.search(r"as_common\.w(?:data|strb)", match.group(1)):
+            raise AssertionError(
+                f"{register} must not retain a canonical WDATA/WSTRB load"
+            )
+
+    for register in ("NSC_TIME_LO", "NSC_TIME_HI"):
         match = re.search(
             rf"CARD_CTRL_REG_{register}\s*:\s*begin(.*?)end",
             apple_source,

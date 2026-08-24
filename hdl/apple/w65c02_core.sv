@@ -193,7 +193,10 @@ module w65c02_core #(
     logic [7:0]  a_q;
     logic [7:0]  x_q;
     logic [7:0]  y_q;
-    logic [7:0]  p_q;
+    /* Carry feeds the decimal ADC/SBC correction network as well as normal
+     * flag users. Let synthesis make local copies instead of routing one
+     * status flop across the whole core. */
+    (* MAX_FANOUT = 8 *) logic [7:0] p_q;
     logic [7:0]  ir_q;
 
     state_t      state_q;
@@ -677,6 +680,45 @@ module w65c02_core #(
         end
     endfunction
 
+    /* The caller diverts decimal arithmetic to ST_DECIMAL_EXTRA before the
+     * normal read path runs. Keep compact branch-free binary helpers here so
+     * that path cannot inherit the decimal correction network. */
+    function automatic logic [15:0] adc_binary_result(
+        input logic [7:0] accum,
+        input logic [7:0] value,
+        input logic [7:0] flags
+    );
+        logic [8:0] binary_sum;
+        logic [7:0] next_p;
+        begin
+            binary_sum = {1'b0, accum} + {1'b0, value} + flags[P_C];
+            next_p = with_nz(flags, binary_sum[7:0]);
+            next_p[P_C] = binary_sum[8];
+            next_p[P_V] = (~(accum[7] ^ value[7])) &
+                          (accum[7] ^ binary_sum[7]);
+            adc_binary_result = {next_p, binary_sum[7:0]};
+        end
+    endfunction
+
+    function automatic logic [15:0] sbc_binary_result(
+        input logic [7:0] accum,
+        input logic [7:0] value,
+        input logic [7:0] flags
+    );
+        logic signed [9:0] binary_diff;
+        logic [7:0] next_p;
+        begin
+            binary_diff = $signed({1'b0, accum}) -
+                          $signed({1'b0, value}) -
+                          (flags[P_C] ? 10'sd0 : 10'sd1);
+            next_p = with_nz(flags, binary_diff[7:0]);
+            next_p[P_C] = !binary_diff[9];
+            next_p[P_V] = (accum[7] ^ value[7]) &
+                          (accum[7] ^ binary_diff[7]);
+            sbc_binary_result = {next_p, binary_diff[7:0]};
+        end
+    endfunction
+
     function automatic logic branch_taken(input op_t op, input logic [7:0] flags);
         case (op)
             OP_BPL: branch_taken = !flags[P_N];
@@ -733,12 +775,12 @@ module w65c02_core #(
                     p_q <= with_nz(p_q, next_value);
                 end
                 OP_ADC: begin
-                    arithmetic = adc_result(a_q, value, p_q);
+                    arithmetic = adc_binary_result(a_q, value, p_q);
                     p_q <= arithmetic[15:8];
                     a_q <= arithmetic[7:0];
                 end
                 OP_SBC: begin
-                    arithmetic = sbc_result(a_q, value, p_q);
+                    arithmetic = sbc_binary_result(a_q, value, p_q);
                     p_q <= arithmetic[15:8];
                     a_q <= arithmetic[7:0];
                 end

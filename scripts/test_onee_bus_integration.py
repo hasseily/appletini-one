@@ -97,7 +97,9 @@ def static_checks() -> None:
     )
     require(
         ".inh_allowed(machine_inh_allowed || onee_enable_effective)" in top and
-        "assign ab_write = physical_bus_isolate ? '0 : ab_write_arb;" in top,
+        "ab_write = physical_bus_isolate ? '0 : ab_write_arb;" in top and
+        "ab_write.wr_addr_rw_en = ab_write_arb.wr_addr_rw_en &&" in top and
+        ".ADDR_OWNER_PREISOLATED(1'b1)" in top,
         "ONE//e must allow internal INH while preserving physical masking",
     )
     require(

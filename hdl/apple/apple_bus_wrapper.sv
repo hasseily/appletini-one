@@ -9,7 +9,12 @@
 // 6502 bus timing windows.
 //////////////////////////////////////////////////////////////////////////////////
 
-module apple_bus_wrapper (
+module apple_bus_wrapper #(
+    /* The integrated top can isolate the address-owner bit in its final
+     * low-fanout cone. Stand-alone benches and other users keep the wrapper's
+     * own direct address kill. */
+    parameter bit ADDR_OWNER_PREISOLATED = 1'b0
+) (
     input  logic                  clk,
     input  logic                  rstn,
     /* Direct physical-output kill for stand-alone ONE//e mode. This gate
@@ -272,7 +277,7 @@ module apple_bus_wrapper (
     // Address and R/W drive only while an arbiter client explicitly requests
     // ownership; otherwise both buses remain tri-stated.
     wire apple_addr_rw_enable = ab_write.wr_addr_rw_en &&
-                                !physical_bus_isolate;
+        (ADDR_OWNER_PREISOLATED || !physical_bus_isolate);
 
     /* Card responses settle many fabric clocks before TAP_DATA_EMIT. Register
      * the physical data tuple so the 12-client arbiter does not remain on the
@@ -414,19 +419,23 @@ module apple_bus_wrapper (
      *       (PHI0 || (!host_is_iiplus && addr_rw_enable))) ||
      *   data_override_safe
      * INIT bit order is {I5,I4,I3,I2,I1,I0}. */
-    wire apple_data_enable_unisolated;
+    /* Fold the direct output kill into the two request inputs. Raw PHI0 then
+     * reaches the direction pin through only the placed LUT and pad, while
+     * isolation still removes both the normal and override drive terms in
+     * the same combinational cycle. */
+    wire bus_emit_state_active = bus_emit_state && !physical_bus_isolate;
+    wire data_override_active  = data_override_safe && !physical_bus_isolate;
+    wire apple_data_enable;
     (* LOC = "SLICE_X104Y23", BEL = "A6LUT", DONT_TOUCH = "TRUE" *)
     LUT6 #(.INIT(64'hFFFF_FFFF_8088_8080)) apple_data_enable_lut (
-        .I0(bus_emit_state),
+        .I0(bus_emit_state_active),
         .I1(physical_data_en_safe),
         .I2(apple_phi0_pin),
         .I3(host_is_iiplus),
         .I4(physical_addr_rw_en_q),
-        .I5(data_override_safe),
-        .O(apple_data_enable_unisolated)
+        .I5(data_override_active),
+        .O(apple_data_enable)
     );
-    wire apple_data_enable = apple_data_enable_unisolated &&
-                             !physical_bus_isolate;
     wire [7:0] apple_data_out =
         iiplus_read_hold_active ? iiplus_read_data_q : physical_data_q;
 

@@ -225,9 +225,26 @@ def static_checks() -> None:
 
     # SmartPort short-circuit: vtw_core_top fast port wired to the card.
     core_top = read("hdl/apple/vtw_core_top.sv")
+    core = read("hdl/apple/w65c02_core.sv")
+    require("(* MAX_FANOUT = 8 *) logic [7:0] p_q;" in core,
+            "the decimal carry/status source needs bounded local fanout")
+    require("function automatic logic [15:0] adc_binary_result" in core and
+            "function automatic logic [15:0] sbc_binary_result" in core and
+            "arithmetic = adc_binary_result(a_q, value, p_q);" in core and
+            "arithmetic = sbc_binary_result(a_q, value, p_q);" in core,
+            "normal ADC/SBC reads must bypass the decimal correction cone")
     card = read("hdl/apple/smartport_card.sv")
     disk2_card = read("hdl/apple/disk2_card.sv")
     boot_card = read("hdl/apple/boot_menu_card.sv")
+    drive_select_updates = re.findall(
+        r"(?<!vtw_)drive_select_q\s*<=\s*(1'b[01])\s*;", disk2_card
+    )
+    vtw_drive_select_updates = re.findall(
+        r"vtw_drive_select_q\s*<=\s*(1'b[01])\s*;", disk2_card
+    )
+    require(drive_select_updates == vtw_drive_select_updates and
+            drive_select_updates == ["1'b0", "1'b0", "1'b0", "1'b1"],
+            "Disk II and vTW drive selectors must update in exact lockstep")
     require("vtw_valid," in card and "vtw_resp_valid" in card and
             "data_write_ev" in card and "vtw_data_write" in card and
             "vtw_pop_write" in card,
@@ -393,7 +410,10 @@ def static_checks() -> None:
             "logic       vtw_drive_spinning_q;" in disk2_card and
             "vtw_drive_spinning_q <= drive_spinning;" in disk2_card and
             "enabled && ab_read.res && vtw_drive_spinning_q && q7_q" in disk2_card and
-            "!vtw_drive_spinning_q || !drive_has_media" in disk2_card and
+            "!vtw_drive_spinning_q ||" in disk2_card and
+            "!vtw_drive_has_media || vtw_active_track_unavailable" in disk2_card and
+            "(* EQUIVALENT_REGISTER_REMOVAL = \"NO\", MAX_FANOUT = 8 *)" in disk2_card and
+            "logic       vtw_drive_select_q;" in disk2_card and
             "logic        vtw_req_pending_q;" in disk2_card and
             "wire vtw_io_read = vtw_req_pending_q;" in disk2_card and
             "vtw_resp_valid <= 1'b1;" in disk2_card,
@@ -630,12 +650,14 @@ def static_checks() -> None:
     # to end. The II+-specific hold is permitted only for read responses;
     # writes must still release directly at raw PHI0.
     require("LUT6 #(.INIT(64'hFFFF_FFFF_8088_8080)) apple_data_enable_lut" in wrapper and
-            ".I0(bus_emit_state)," in wrapper and
+            ".I0(bus_emit_state_active)," in wrapper and
             ".I1(physical_data_en_safe)," in wrapper and
             ".I2(apple_phi0_pin)," in wrapper and
             ".I3(host_is_iiplus)," in wrapper and
             ".I4(physical_addr_rw_en_q)," in wrapper and
-            ".I5(data_override_safe)," in wrapper and
+            ".I5(data_override_active)," in wrapper and
+            "bus_emit_state && !physical_bus_isolate" in wrapper and
+            "data_override_safe && !physical_bus_isolate" in wrapper and
             "physical_data_en_q    <= ab_write.wr_data_en;" in wrapper and
             "physical_data_q <= ab_write.wr_data;" in wrapper and
             "physical_inh_dependent_q <= ab_write.assert_inh;" in wrapper and

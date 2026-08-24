@@ -54,7 +54,8 @@ def static_checks() -> None:
                   'io_read_data = "L"', "LEGACY_CANVAS_WIDTH  = 16'd1120",
                   "SHR_CANVAS_WIDTH     = 16'd1280",
                   "canvas_shr_active ?",
-                  "capture_drop_sticky && !capture_drop_seen_q"):
+                  "capture_drop_sticky && !capture_drop_seen_q",
+                  "io_write_pending_q <= 1'b0;"):
         require(token in card, f"card lacks {token}")
     require("overlay_command_write" in capture and
             "cap_addr_decode[16] == overlay_capture_bank_aux" in capture,

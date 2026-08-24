@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and run the focused native SSI-263 / SC-02 audio test."""
+"""Build and run the schematic-derived SSI-263 / SC-02 audio test."""
 
 from __future__ import annotations
 
@@ -10,10 +10,53 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT_DIR = ROOT / "build" / "ssi263_sc02_audio_sim"
+OUT_DIR = ROOT / "build" / "ssi263_sc02_audio_charge_sim"
 PASS_MARKER = "SSI263 SC02 AUDIO PASS"
 LEGACY_SPEECH_RE = re.compile(
     r"(?i)(?<![a-z0-9])(?:sc(?:[-_ ]?0?1)a?|votrax)(?![a-z0-9])"
+)
+
+CAPACITOR_BANKS = {
+    "f1": [160, 330, 660, 1300],
+    "f2": [280, 560, 1120, 2300],
+    "f2_res": [220, 430, 870, 1800],
+    "f3": [210, 420, 820, 1640],
+    "f4": [200, 400, 820, 1620],
+    "voice": [220, 430, 870, 1800],
+    "fric1": [270, 512, 1068, 2160],
+    "fric2": [270, 530, 1082, 2160],
+    "filter_amp": [76, 150, 300, 600],
+}
+
+DIVIDER_DENOMINATORS = (
+    2750,
+    3300,
+    3450,
+    3730,
+    3900,
+    4300,
+    4500,
+    4700,
+    4900,
+    6800,
+    7000,
+    7220,
+    7430,
+    7650,
+    7870,
+    8090,
+    8300,
+    8520,
+    8800,
+    9020,
+    9230,
+    9450,
+    9670,
+    9890,
+    10100,
+    10320,
+    11500,
+    11700,
 )
 
 
@@ -22,459 +65,325 @@ def strip_verilog_comments(source: str) -> str:
     return re.sub(r"//[^\r\n]*", "", source)
 
 
-def parse_case_table(source: str, name: str) -> list[int]:
+def require_all(source: str, strings: tuple[str, ...], contract: str) -> None:
+    for item in strings:
+        if item not in source:
+            raise RuntimeError(f"{contract} is missing: {item}")
+
+
+def compact(source: str) -> str:
+    return re.sub(r"\s+", "", strip_verilog_comments(source))
+
+
+def engine_stage_blocks(source: str) -> dict[int, str]:
     match = re.search(
-        rf"function automatic[^;]+\b{re.escape(name)}\s*\([^;]*;"
-        rf"(?P<body>.*?)endfunction",
+        r"case\s*\(\s*engine_stage_q\s*\)(.*?)\n\s*endcase",
         source,
         re.DOTALL,
     )
     if not match:
-        raise RuntimeError(f"unable to find RTL coefficient table {name}")
-    values = [
-        int(value)
-        for value in re.findall(
-            rf"\b{re.escape(name)}\s*=\s*\d+'s?d(\d+)",
-            match.group("body"),
+        raise RuntimeError("charge engine stage selector is missing")
+    case_body = match.group(1)
+    starts = list(re.finditer(r"(?m)^\s*(\d+)\s*:", case_body))
+    blocks: dict[int, str] = {}
+    for index, stage_match in enumerate(starts):
+        end = starts[index + 1].start() if index + 1 < len(starts) else len(case_body)
+        blocks[int(stage_match.group(1))] = compact(
+            case_body[stage_match.end() : end]
         )
-    ]
-    if len(values) != 16:
-        raise RuntimeError(f"{name} has {len(values)} entries, expected 16")
-    return values
+    return blocks
 
 
-def parse_constant(source: str, name: str) -> int:
-    match = re.search(
-        rf"\b{re.escape(name)}\s*=\s*\d+'s?d(\d+)", source
-    )
-    if not match:
-        raise RuntimeError(f"unable to find RTL coefficient {name}")
-    return int(match.group(1))
-
-
-def parse_capacitor_weights(source: str, name: str) -> list[int]:
-    match = re.search(
-        rf"function automatic[^;]+\b{re.escape(name)}\s*\([^;]*;"
-        rf"(?P<body>.*?)endfunction",
-        source,
-        re.DOTALL,
-    )
-    if not match:
-        raise RuntimeError(f"unable to find RTL capacitor table {name}")
-    weights = {
-        int(bit): int(value)
-        for bit, value in re.findall(
-            r"if\s*\(code\[(\d)\]\)\s*total\s*=\s*total\s*\+\s*(\d+)",
-            match.group("body"),
+def require_bank(
+    stage_source: str,
+    mask: str,
+    plates: tuple[str, ...],
+    weights: list[int],
+    name: str,
+) -> None:
+    for plate in plates:
+        if plate not in stage_source:
+            raise RuntimeError(f"{name} is missing retained plate {plate}")
+    for bit, weight in enumerate(weights):
+        pattern = (
+            rf"{re.escape(mask)}\[{bit}\]\?[^;]{{0,160}}?"
+            rf"-?16'sd{weight}(?=[:;])"
         )
-    }
-    if set(weights) != {0, 1, 2, 3}:
-        raise RuntimeError(f"{name} does not define all four capacitor bits")
-    return [weights[index] for index in range(4)]
-
-
-def circuit_ratio_checks(source: str) -> None:
-    """Check only the capacitor values and exact fixed-point ratios."""
-    q14 = 16384
-    capacitor_weights = {
-        name: parse_capacitor_weights(source, f"{name}_capacitance")
-        for name in (
-            "f1",
-            "f2",
-            "f2_res",
-            "f3",
-            "f4",
-            "voice",
-            "fric1",
-            "fric2",
-            "filter_amp",
-        )
-    }
-    expected_weights = {
-        "f1": [160, 330, 660, 1300],
-        "f2": [280, 560, 1120, 2300],
-        "f2_res": [220, 430, 870, 1800],
-        "f3": [210, 420, 820, 1640],
-        "f4": [200, 400, 820, 1620],
-        "voice": [220, 430, 870, 1800],
-        "fric1": [270, 512, 1068, 2160],
-        "fric2": [270, 530, 1082, 2160],
-        "filter_amp": [76, 150, 300, 600],
-    }
-    if capacitor_weights != expected_weights:
-        raise RuntimeError(
-            "formant capacitor banks no longer match sheets 1 and 2: "
-            f"{capacitor_weights}"
-        )
-
-    def selected_totals(weights: list[int]) -> list[int]:
-        return [
-            sum(value for bit, value in enumerate(weights) if code & (1 << bit))
-            for code in range(16)
-        ]
-
-    def ratio_q14(numerator: int, denominator: int) -> int:
-        return (numerator * q14 + denominator // 2) // denominator
-
-    def ratio_q12(numerator: int, denominator: int) -> int:
-        return (numerator * 4096 + denominator // 2) // denominator
-
-    expected_tables = {
-        "f1_b_q14": [
-            ratio_q14(250 + total, 11500)
-            for total in selected_totals(expected_weights["f1"])
-        ],
-        "f2_b_q14": [
-            ratio_q14(500 + total, 6800)
-            for total in selected_totals(expected_weights["f2"])
-        ],
-        "f2_alpha_q14": [
-            ratio_q14(6800, 7000 + total)
-            for total in selected_totals(expected_weights["f2_res"])
-        ],
-        "f2_a_q14": [
-            ratio_q14(4700, 7000 + total)
-            for total in selected_totals(expected_weights["f2_res"])
-        ],
-        "f3_b_q14": [
-            ratio_q14(820 + total, 4700)
-            for total in selected_totals(expected_weights["f3"])
-        ],
-        "f4_b_q14": [
-            ratio_q14(1670 + total, 4300)
-            for total in selected_totals(expected_weights["f4"])
-        ],
-        "voice_gain": [
-            ratio_q12(total, 3300)
-            for total in selected_totals(expected_weights["voice"])
-        ],
-        "fric1_gain": [
-            ratio_q12(total, 3900)
-            for total in selected_totals(expected_weights["fric1"])
-        ],
-        "fric2_gain": [
-            ratio_q12(total, 3900)
-            for total in selected_totals(expected_weights["fric2"])
-        ],
-        "fric1_source_magnitude": [
-            (65536 * 3 * total + (653 * 3900) // 2) // (653 * 3900)
-            for total in selected_totals(expected_weights["fric1"])
-        ],
-        "fric2_edge_magnitude": [
-            (65536 * 6 * total + (653 * 3900) // 2) // (653 * 3900)
-            for total in selected_totals(expected_weights["fric2"])
-        ],
-        "filter_amp_gain": [
-            ratio_q14(total, 2750)
-            for total in selected_totals(expected_weights["filter_amp"])
-        ],
-    }
-    tables = {
-        name: parse_case_table(source, name) for name in expected_tables
-    }
-    for name, expected in expected_tables.items():
-        if tables[name] != expected:
+        if not re.search(pattern, stage_source):
             raise RuntimeError(
-                f"{name} no longer equals its rounded capacitor ratios: "
-                f"{tables[name]}"
+                f"{name} bit {bit} does not use schematic capacitor {weight} pF"
             )
 
-    expected_constants = {
-        "F1_ALPHA_Q14": 16104,
-        "F1_A_Q14": 3781,
-        "F1_G_Q14": 3781,
-        "F2_FRIC_H_Q14": 2409,
-        "F3_ALPHA_Q14": 15715,
-        "F3_A_Q14": 13040,
-        "F3_G_Q14": 6687,
-        "F4_ALPHA_Q14": 15656,
-        "F4_A_Q14": 17112,
-        "F5_ALPHA_Q14": 15154,
-        "F5_A_Q14": 20645,
-        "F5_B_Q14": 22320,
-        "F5_FRIC_BASE_G_Q14": 5051,
-        "F5_FRIC_SW_G_Q14": 16252,
-        "FILTER_OUTPUT_ALPHA_Q14": 16086,
-        "FRIC_DRIVE_MAG_Q16": 301,
-        "FRIC_DRIVE_EDGE_Q16": 602,
+
+def circuit_checks(source: str) -> None:
+    """Check the net-derived values, not sampled audio or acoustic tuning."""
+    stages = engine_stage_blocks(source)
+    bank_anchors = {
+        "f1": (6, "active_event_q.f1_mask", "f1_plate"),
+        "f2": (6, "active_event_q.f2_mask", "f2_plate"),
+        "f2_res": (5, "active_event_q.f2_res_mask", "f2_res_plate"),
+        "f3": (8, "active_event_q.f3_mask", "f3_plate"),
+        "f4": (8, "active_event_q.f4_mask", "f4_plate"),
+        "voice": (4, "active_event_q.voice_mask", "voice_plate"),
+        "fric1": (4, "active_event_q.fric_mask", "fric1_plate"),
+        "fric2": (2, "active_event_q.fric_mask", None),
+        "filter_amp": (11, "active_event_q.filter_mask", "filter_plate"),
     }
-    constants = {
-        name: parse_constant(source, name) for name in expected_constants
-    }
-    if constants != expected_constants:
-        raise RuntimeError(
-            "fixed formant charge ratios no longer match the schematic: "
-            f"{constants}"
+    for name, weights in CAPACITOR_BANKS.items():
+        stage, mask, plate_prefix = bank_anchors[name]
+        plates = (
+            tuple(f"{plate_prefix}{bit}_q" for bit in range(4))
+            if plate_prefix
+            else ()
         )
+        require_bank(stages[stage], mask, plates, weights, name)
 
-    filter_amplitude = tables["filter_amp_gain"]
+    if "job_old_fric_source_q" not in stages[2]:
+        raise RuntimeError("U152 edge does not use the prior physical drive")
 
-    if filter_amplitude[0] != 0 or filter_amplitude[-1] != 6709:
-        raise RuntimeError("filter-amplitude endpoints are not 0 and 6709")
-    if any(
-        filter_amplitude[index] <= filter_amplitude[index - 1]
-        for index in range(1, 16)
+    # These are the fixed feedback and cross-coupling capacitors used by the
+    # charge equations. Dynamic tests below check their signs and phase use.
+    require_all(
+        compact(source),
+        (
+            "functionautomaticlogic[13:0]cap_sum4",
+            "numerator_denominator=14'd3300",
+            "numerator_denominator=14'd3900",
+            "numerator_coefficient0=16'sd3600",
+            "numerator_coefficient0=-16'sd3600",
+            "numerator_coefficient0=-16'sd5700",
+            "numerator_coefficient0=active_event_q.phase?-16'sd9300:-16'sd5700",
+            "numerator_input_denominator_q<=numerator_denominator",
+            "numerator_input_valid_q<=1",
+            "numerator_denominator_q<=numerator_input_denominator_q",
+            "products_valid_q<=1",
+            "engine_div_numerator_q<=numerator_sum",
+            "engine_div_denominator_q<=numerator_denominator_q",
+            "numerator_valid_q<=1",
+        ),
+        "U116/U157/U152/U154 charge equation",
+    )
+
+    for lane in range(6):
+        require_all(
+            compact(source),
+            (
+                f"numerator_operand{lane}_q<=numerator_operand{lane}",
+                f"numerator_coefficient{lane}_q<=numerator_coefficient{lane}",
+                f"numerator_product{lane}=numerator_operand{lane}_q*"
+                f"numerator_coefficient{lane}_q",
+                f"numerator_product{lane}_q<=numerator_product{lane}",
+            ),
+            "shared charge multiplier",
+        )
+    synthesizable = re.sub(
+        r"(?m)^\s*`[^\r\n]*", "", strip_verilog_comments(source)
+    )
+    if re.search(r"(?<!/)/(?![/*])", synthesizable):
+        raise RuntimeError("production charge engine contains a runtime divide")
+
+    compact_source = compact(source)
+    require_all(
+        compact_source,
+        (
+            "reciprocal_product=reciprocal_operand_q*reciprocal_multiplier_q",
+            "reciprocal_q0=reciprocal_product_q[60:37]",
+            "correction_operand={1'b0,reciprocal_q0}+25'd1",
+            "correction_operand_q<=correction_operand",
+            "correction_input_denominator_q<=reciprocal_denominator_q",
+            "correction_input_q0_q<=reciprocal_q0",
+            "correction_input_absolute_q<=reciprocal_absolute_q",
+            "correction_input_negative_q<=reciprocal_negative_q",
+            "correction_input_zero_q<=reciprocal_zero_q",
+            "correction_input_overflow_q<=reciprocal_overflow_q",
+            "correction_input_denominator_valid_q<="
+            "reciprocal_denominator_valid_q",
+            "correction_input_valid_q<=1",
+            "correction_product=correction_operand_q*"
+            "correction_input_denominator_q",
+            "if(correction_product_q<={{2{1'b0}},correction_absolute_q})",
+            "engine_step_valid=divider_result_valid_q",
+            "divider_invalid_denominator_q",
+        ),
+        "exact reciprocal divider pipeline",
+    )
+    for old_state in (
+        "divider_busy_q",
+        "divider_iteration_q",
+        "divider_remainder_q",
+        "divider_quotient_q",
     ):
-        raise RuntimeError("filter-amplitude codes are not strictly monotonic")
-    for name in ("f1_b_q14", "f2_b_q14", "f3_b_q14", "f4_b_q14"):
-        if any(
-            tables[name][index] <= tables[name][index - 1]
-            for index in range(1, 16)
-        ):
-            raise RuntimeError(f"{name} is not strictly increasing")
-    for name in ("f2_alpha_q14", "f2_a_q14"):
-        if any(
-            tables[name][index] >= tables[name][index - 1]
-            for index in range(1, 16)
-        ):
-            raise RuntimeError(f"{name} does not add damping with RES code")
+        if re.search(rf"\b{old_state}\b", source):
+            raise RuntimeError(f"removed radix divider state returned: {old_state}")
+    for denominator in DIVIDER_DENOMINATORS:
+        multiplier = (1 << 37) // denominator
+        pattern = (
+            rf"14'd{denominator}:reciprocal_multiplier="
+            rf"26'h0*{multiplier:X};"
+        )
+        if not re.search(pattern, compact_source, re.IGNORECASE):
+            raise RuntimeError(
+                f"reciprocal constant is wrong or missing for {denominator}"
+            )
+
+    require_all(
+        source,
+        (
+            "voice_plate0_q",
+            "voice_plate1_q",
+            "voice_plate2_q",
+            "voice_plate3_q",
+            "fric1_plate0_q",
+            "fric1_plate1_q",
+            "fric1_plate2_q",
+            "fric1_plate3_q",
+            "fric2_source_state_q",
+            "fric2_shape_state_q",
+            "c150_phi1_delta_q",
+            "c150_phi1_delta_hold_q",
+            "c151_source_plate_q",
+            "c151_phi1_delta_q",
+            "c151_phi1_delta_hold_q",
+            "f1_fixed_plate_q",
+            "f1_plate0_q",
+            "f1_plate1_q",
+            "f1_plate2_q",
+            "f1_plate3_q",
+            "f2_res_plate0_q",
+            "f2_res_plate1_q",
+            "f2_res_plate2_q",
+            "f2_res_plate3_q",
+            "f2_fixed_plate_q",
+            "f2_plate0_q",
+            "f2_plate1_q",
+            "f2_plate2_q",
+            "f2_plate3_q",
+            "f3_fixed_plate_q",
+            "f3_plate0_q",
+            "f3_plate1_q",
+            "f3_plate2_q",
+            "f3_plate3_q",
+            "f4_fixed_plate_q",
+            "f4_plate0_q",
+            "f4_plate1_q",
+            "f4_plate2_q",
+            "f4_plate3_q",
+            "f5_fixed_plate_q",
+            "filter_plate0_q",
+            "filter_plate1_q",
+            "filter_plate2_q",
+            "filter_plate3_q",
+        ),
+        "retained switched-capacitor state",
+    )
+
+    # C128 resets in Phi0. At a Phi1 boundary it adds an absolute -2700*x
+    # term; a live Phi1 U116 change adds -5400*dx with C205. C127 consumes
+    # the resulting same-event F1 change.
+    if "f1_input_history_q" in source:
+        raise RuntimeError("C128 still uses an invented prior-cycle history")
+    require_all(
+        compact(source),
+        (
+            "numerator_coefficient1=16'sd2700",
+            "numerator_coefficient2=-16'sd2700",
+            "numerator_coefficient0=-16'sd5400",
+            "numerator_coefficient0=-16'sd2000",
+            "$signed({f1_state_q[23],f1_state_q})-"
+            "$signed({f1_old_for_c127_q[23],f1_old_for_c127_q})",
+        ),
+        "C128/C127 same-event charge path",
+    )
+
+    # These tables hid switch-plate memory and must never return. A selected
+    # code is a set of switches, not one acoustic gain value.
+    forbidden_tables = (
+        "voice_gain",
+        "fric1_source_magnitude",
+        "fric2_edge_magnitude",
+        "f1_b_q14",
+        "f2_b_q14",
+        "f2_alpha_q14",
+        "f2_a_q14",
+        "f3_b_q14",
+        "f4_b_q14",
+        "fric1_gain",
+        "fric2_gain",
+        "filter_amp_gain",
+    )
+    for name in forbidden_tables:
+        if re.search(rf"function automatic[^;]+\b{re.escape(name)}\b", source):
+            raise RuntimeError(f"aggregate source table returned: {name}")
+
+    forbidden_state = (
+        "fric2_source_phi0_q",
+        "fric2_base_history_q",
+        "fric2_sw_history_q",
+        "fric2_sw_phi0_q",
+    )
+    for name in forbidden_state:
+        if re.search(rf"\b{re.escape(name)}\b", source):
+            raise RuntimeError(
+                f"C150/C151 still use an absolute per-cycle source: {name}"
+            )
+
 
 def static_checks() -> None:
     source = (ROOT / "hdl" / "apple" / "ssi263_sc02_audio.sv").read_text(
         encoding="utf-8"
     )
-    required = (
-        "module ssi263_sc02_audio #(",
-        "parameter logic [3:0] NOISE_D1_SEED",
-        "parameter logic U60_OPEN_P3_LEVEL = 1'b0",
-        "parameter logic U75_OPEN_P1_LEVEL = 1'b0",
-        "input  logic               pd_rst_n",
-        "input  logic               pw_3",
-        "input  logic               noise_clock_ce",
-        "input  logic               noise_shift_ce",
-        "input  logic               fric1_sw",
-        "input  logic               fric2_sw",
-        "input  logic               voice_toggle",
-        "input  logic               filter_phase_ce",
-        "noise_d1_q <= {noise_d1_q[2:0], noise_d3_q[3]};",
-        "noise_d2_q <= {noise_d2_q[3:0], noise_d4_q[4]};",
-        "noise_d3_q <= {noise_d3_q[2:0], noise_d2_q[4]};",
-        "noise_d4_q <= {noise_d4_q[3:0], noise_feedback};",
-        "u60_parallel_value = {U60_OPEN_P3_LEVEL, 1'b0, 2'b11};",
-        "voice_count_after_phi1 = voice_count_q;",
-        "if (pd_rst_n && voice_load_pending_q)",
-        "voice_count_after_phi1 = u60_parallel_value;",
-        "else if (voice_count_q != 4'hF)",
-        "voice_count_after_phi1 = voice_count_q + 4'h1;",
-        "u60_tc = (voice_count_q == 4'hF);",
-        "u60_tc_after_phi1 = (voice_count_after_phi1 == 4'hF);",
-        "voice_source_after_phi1 = (powered_down || u60_tc_after_phi1) ?",
-        "voice_count_q <= 4'hF;",
-        "if (!pd_rst_n) begin",
-        "pitch_sync1_q <= 1'b0;",
-        "pitch_sync2_q <= 1'b0;",
-        "voice_load_pending_q <= 1'b0;",
-        "voice_count_q <= voice_count_after_phi1;",
-        "u75_parallel_value = {2'b00, U75_OPEN_P1_LEVEL, 1'b1};",
-        "noise_count_next = (noise_count_q == 4'hF) ?",
-        "u75_parallel_value : noise_count_q + 4'h1;",
-        "noise_force = ~(noise_count_q[2] | noise_count_q[3]);",
-        "noise_bit = !(noise_d3_q[3] | (pw_3 && !voice_toggle)) &&",
-        "(!voice_toggle || (voice_amp_code == 4'd0));",
-        "voice_source = voice_magnitude;",
-        "fric_drive = noise_bit ? FRIC_DRIVE_MAG_Q16 :",
-        "-FRIC_DRIVE_MAG_Q16;",
-        "FRIC_DRIVE_EDGE_Q16: begin",
-        "fric2_drive_charge = fric2_edge_magnitude(fric_amp_code);",
-        "-FRIC_DRIVE_EDGE_Q16: begin",
-        "fric1_source = noise_bit ?",
-        "-fric1_source_magnitude(fric_amp_code) :",
-        "fric1_source_magnitude(fric_amp_code);",
-        "fric2_source = fric2_source_next;",
-        "if (fric_drive != fric_drive_history_q)",
-        "fric2_source_state_q <= fric2_source_next;",
-        "fric_drive_history_q <= fric_drive;",
-        "fric_drive_history_q <= -FRIC_DRIVE_MAG_Q16;",
-        "if (noise_clock_ce)",
-        "noise_count_q <= noise_count_next;",
-        "if (noise_shift_ce) begin",
-        "fric2_source_phi0_q <= fric2_source_next;",
-        "fric2_sw_phi0_q <= fric2_sw;",
-        "c143_live_delta =",
-        "$signed({c143_source_plate_q[23], c143_source_plate_q}) -",
-        "$signed({fric1_source[23], fric1_source});",
-        "c143_delta_with_live = c143_phi0_delta_q;",
-        "c143_delta_with_live = c143_phi0_delta_q + c143_live_delta;",
-        "c143_phi0_delta_q <= fric1_sw ?",
-        "c143_live_delta : 25'sd0;",
-        "c143_source_plate_q <= fric1_source;",
-        "c143_delta_hold_q <= c143_delta_with_live;",
-        "c143_phi0_delta_q <= 25'sd0;",
-        "c143_source_plate_q <= 24'sd0;",
-        "f1_input_q <= voice_source_after_phi1;",
-        "f1_code_phi0_q <= f1_code;",
-        "f2_code_phi0_q <= f2_code;",
-        "f2_res_code_phi0_q <= f2_res_code;",
-        "f3_code_phi0_q <= f3_code;",
-        "f4_code_phi0_q <= f4_code;",
-        "filter_amp_phi0_q <= filter_amp_code;",
-        "engine_b_q <= f1_b_q14(f1_code_phi0_q);",
-        "f2_alpha_q14(f2_res_code_phi0_q)",
-        "f2_a_q14(f2_res_code_phi0_q)",
-        "engine_b_q <= f2_b_q14(f2_code_phi0_q);",
-        "engine_b_q <= f3_b_q14(f3_code_phi0_q);",
-        "engine_b_q <= f4_b_q14(f4_code_phi0_q);",
-        "engine_b_q <= F5_B_Q14;",
-        "engine_output_delta_q <=",
-        "engine_output_delta_q <= c143_delta_hold_q;",
-        "F2_FRIC_H_Q14",
-        "fric2_base_history_q[23]",
-        "F5_FRIC_BASE_G_Q14",
-        "fric2_sw_history_q[23]",
-        "F5_FRIC_SW_G_Q14",
-        "fric2_base_history_q <=",
-        "if (fric2_sw_phi0_q)",
-        "fric2_sw_history_q <=",
-        "engine_stage_q <= 4'd8;",
-        "34-cycle scheduler",
-        "engine_operand_a = engine_output_delta_q;",
-        "engine_coefficient_a = engine_h_q;",
-        "engine_operand_a = {output_hold_q[23], output_hold_q};",
-        "engine_coefficient_a = FILTER_OUTPUT_ALPHA_Q14;",
-        "engine_operand_b = output_sum_q;",
-        "engine_coefficient_b = filter_amp_gain(filter_amp_phi0_q);",
-        "output_sum_q <=",
-        "output_old_state_q <= engine_state_y_q;",
-        "engine_stage_q <= 4'd9;",
-        "output_old_state_q[23]",
-        "f5_state_q[23]",
-        "output_hold_q <= engine_output_next;",
-        "if (closure)",
-        "reconstruction_hold_q <= output_hold_q;",
-        "if (audio_tick) begin",
-        "$signed({{3{reconstruction_hold_q[23]}}",
-        "reconstruction_hold_q}) >>> 1",
-        "audio_sample <= 16'sd0;",
-        "f1_input_history_q",
-        "f3_side_input_q",
-        "f3_side_history_q",
-        "engine_busy_q",
-        "engine_overrun_q",
-        "engine_state_y_q <= f1_state_q;",
-        "engine_state_p_q <= f1_history_q;",
-        "engine_state_y_q <= f2_state_q;",
-        "engine_state_p_q <= f2_history_q;",
-        "engine_state_y_q <= f3_state_q;",
-        "engine_state_p_q <= f3_history_q;",
-        "engine_state_y_q <= f4_state_q;",
-        "engine_state_p_q <= f4_history_q;",
-        "engine_state_y_q <= f5_state_q;",
-        "engine_state_p_q <= f5_history_q;",
-        "engine_operand_b = engine_main_delta_q;",
-        "engine_coefficient_a = engine_alpha_q;",
-        "engine_coefficient_b = engine_a_q;",
-        "engine_coefficient_a = engine_b_q;",
-        "engine_operand_a = engine_side_delta_q;",
-        "engine_coefficient_a = engine_g_q;",
-        "engine_g_q <= F1_G_Q14;",
-        "engine_g_q <= F3_G_Q14;",
-        "recurrence_accumulator = product_a_q_ext + product_b_q_ext;",
-        "charge_accumulator = recurrence_accumulator_q + product_a_q_ext;",
-        "rounded_charge_accumulator = charge_accumulator +",
-        "engine_charge_next = sat24_from48(",
-        "state_y_q14 =",
-        "section_accumulator = state_y_q14 - product_a_q_ext;",
-        "complete_section_accumulator = section_accumulator_q +",
-        "rounded_section_accumulator = complete_section_accumulator +",
-        "engine_section_next = sat24_from48(",
-        "output_accumulator = product_a_q_ext + product_b_q_ext;",
-        "rounded_output_accumulator = output_accumulator +",
-        "engine_output_next = sat24_from48(",
-        "engine_product_a = engine_operand_a * engine_coefficient_a;",
-        "engine_product_b = engine_operand_b * engine_coefficient_b;",
-        "if (!value[47] && (|value[46:23]))",
-        "else if (value[47] && !(&value[46:23]))",
-    )
-    for text in required:
-        if text not in source:
-            raise RuntimeError(f"native audio contract is missing: {text}")
+    uncommented = strip_verilog_comments(source)
 
-    forbidden = (
-        "FRIC1_COUPLING_Q14",
-        "FRIC2_COUPLING_Q14",
-        "F3_FRIC_G_Q14",
-        "fric1_injection_q",
-        "fric2_injection_q",
-        "fric1_history_q",
-        "fric1_edge_q",
-        "fric1_edge_accumulator",
-        "input_mix_stage_q",
-        "33-cycle scheduler",
-        "32-cycle scheduler",
-        "reconstruction_hold_q <= engine_output_next",
-        "engine_b_q <= f1_b_q14(f1_code);",
-        "f2_alpha_q14(f2_res_code)",
-        "f2_a_q14(f2_res_code)",
-        "engine_b_q <= f2_b_q14(f2_code);",
-        "engine_b_q <= f3_b_q14(f3_code);",
-        "engine_b_q <= f4_b_q14(f4_code);",
-        "filter_amp_gain(filter_amp_code)",
-        "fric_source_phi0_q",
-        "fric1_source_phi0_q",
-        "fric1_sw_phi0_q",
-        "fric1_partial_q",
-        "_cos_q14",
-        "_radius_q14",
-        "pole_a1",
-        "pole_r2",
-        "pole_b0",
-        "stop_class",
-        "source_voiced",
-        "source_fricative",
-        "LINE_OUTPUT_SHIFT",
-        "dc_input",
-        "dc_delta_q",
-        "dc_sum_q",
-        "dc_output_q",
-        "dc_filtered_wide",
-        "voice_shape_q",
-        "voiced_q",
-        "voice_terminal_event",
-        "fric_drive = 18'sd0;",
-        "fric_drive = noise_bit ? 18'sd65536",
+    require_all(
+        source,
+        (
+            "module ssi263_sc02_audio #(",
+            "parameter logic [3:0] NOISE_D1_SEED",
+            "parameter logic U60_OPEN_P3_LEVEL = 1'b0",
+            "parameter logic U75_OPEN_P1_LEVEL = 1'b0",
+            "noise_d1_q<={noise_d1_q[2:0],noise_d3_q[3]};",
+            "noise_d2_q<={noise_d2_q[3:0],noise_d4_q[4]};",
+            "noise_d3_q<={noise_d3_q[2:0],noise_d2_q[4]};",
+            "noise_d4_q<={noise_d4_q[3:0],noise_feedback};",
+            "voice_count_after_phi1=u60_parallel_value;",
+            "noise_count_next=(noise_count_q==4'hf)?",
+            "noise_bit=!(noise_d3_q[3]|(pw_3&&!voice_toggle))&&",
+            "fric_drive=noise_bit?FRIC_DRIVE_MAG_Q16:-FRIC_DRIVE_MAG_Q16;",
+            "engine_overrun_q",
+            "reconstruction_hold_q",
+            "if(!powered_down)audio_sample<=sat16_from27(",
+            "else audio_sample<=0;",
+        ),
+        "native SSI-263 audio contract",
     )
-    for text in forbidden:
-        if text in source:
-            raise RuntimeError(f"native audio contract retains stale path: {text}")
 
-    if LEGACY_SPEECH_RE.search(strip_verilog_comments(source)):
-        raise RuntimeError("native SC-02 audio must not depend on legacy speech")
-    if re.search(r"\bfric_source\b", source):
-        raise RuntimeError("U157 and U152 must not collapse into one source")
-    if re.search(r"fric[12]_(?:state|quadrature|input)_q", source):
-        raise RuntimeError(
-            "FRIC_1 and FRIC_2 are tract injections, not output resonators"
-        )
-    if re.search(
-        r"\bengine_(?:state_y1|state_y2|input|alpha|a|b)\b", source
+    for signal in (
+        "pd_rst_n",
+        "noise_clock_ce",
+        "noise_shift_ce",
+        "fric1_sw",
+        "fric2_sw",
+        "filter_phase_ce",
+        "filter_phase",
     ):
-        raise RuntimeError(
-            "section operands must be registered before the DSP scheduler"
-        )
-    if re.search(r"stop_(?:armed|release)", source):
-        raise RuntimeError("the circuit must not use an invented stop state")
-    if re.search(r"voice_count_q\s*<=\s*4'h0", source):
+        if not re.search(rf"\binput\s+logic[^,;]*\b{signal}\b", source):
+            raise RuntimeError(f"native SSI-263 audio input is missing: {signal}")
+
+    if LEGACY_SPEECH_RE.search(uncommented):
+        raise RuntimeError("native SSI-263 audio depends on legacy speech")
+    if re.search(r"stop_(?:armed|release)", uncommented):
+        raise RuntimeError("the circuit contains an invented stop state")
+    if re.search(r"voice_count_q\s*<=\s*4'h0", uncommented):
         raise RuntimeError("U60 must not load or clear to zero")
     if re.search(
-        r"filter_frequency\s*==\s*(?:8'h)?ff", source, re.IGNORECASE
+        r"filter_frequency\s*==\s*(?:8'h)?ff", uncommented, re.IGNORECASE
     ):
-        raise RuntimeError("FILT=FF is maximum rate, not a silence selector")
-    if re.search(
-        r"/\s*(?:3300|3900)\b", strip_verilog_comments(source)
-    ):
-        raise RuntimeError("source-derived gain tables must not infer dividers")
+        raise RuntimeError("FILT=FF is maximum rate, not a mute selector")
     for signal in ("phone_active", "fricative", "voiced", "pw_2"):
-        if re.search(rf"\binput\s+logic[^;]*\b{signal}\b", source):
-            raise RuntimeError(
-                f"native audio retains invented source input {signal}"
-            )
-    if source.count("engine_operand_a * engine_coefficient_a") != 1 or source.count(
-        "engine_operand_b * engine_coefficient_b"
-    ) != 1:
-        raise RuntimeError("charge scheduler must expose two RTL product lanes")
-    if re.search(r"sat24_from48\s*\(\s*engine_product_[ab]", source):
-        raise RuntimeError("every DSP product must be registered before saturation")
-    circuit_ratio_checks(source)
+        if re.search(rf"\binput\s+logic[^;]*\b{signal}\b", uncommented):
+            raise RuntimeError(f"invented source input remains: {signal}")
+
+    circuit_checks(source)
 
 
 def vivado_tool(name: str) -> str:
@@ -505,6 +414,8 @@ def run(command: list[str], log_name: str) -> str:
 
 def main() -> int:
     static_checks()
+    if OUT_DIR.exists():
+        shutil.rmtree(OUT_DIR)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(
         ROOT / "hdl" / "apple" / "ssi263_sc02_rom.mem",
@@ -532,12 +443,18 @@ def main() -> int:
         "xelab.log",
     )
     output = run(
-        [vivado_tool("xsim"), "tb_ssi263_sc02_audio_snap", "--runall"],
+        [
+            vivado_tool("xsim"),
+            "tb_ssi263_sc02_audio_snap",
+            "--maxdeltaid",
+            "100",
+            "--runall",
+        ],
         "xsim.log",
     )
     if PASS_MARKER not in output or "SSI263 SC02 AUDIO FAIL" in output:
         print(output)
-        raise RuntimeError("native SSI-263 / SC-02 audio test did not pass")
+        raise RuntimeError("schematic SSI-263 / SC-02 audio test did not pass")
     print(next(line for line in output.splitlines() if PASS_MARKER in line))
     return 0
 

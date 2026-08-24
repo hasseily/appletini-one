@@ -5,14 +5,13 @@ module tb_ssi263_sc02_audio;
     logic clk = 1'b0;
     logic rstn = 1'b0;
     logic pd_rst_n = 1'b1;
-
     logic audio_tick = 1'b0;
     logic powered_down = 1'b0;
     logic pw_3 = 1'b0;
     logic noise_clock_ce = 1'b0;
     logic noise_shift_ce = 1'b0;
-    logic fric1_sw = 1'b1;
-    logic fric2_sw = 1'b1;
+    logic fric1_sw = 1'b0;
+    logic fric2_sw = 1'b0;
     logic voice_toggle = 1'b0;
     logic filter_phase_ce = 1'b0;
     logic filter_phase = 1'b0;
@@ -28,82 +27,35 @@ module tb_ssi263_sc02_audio;
     logic closure = 1'b0;
     logic signed [15:0] audio_sample;
 
-    logic phase_xck_ce = 1'b0;
-    logic phase_write_active = 1'b0;
-    logic [2:0] phase_write_reg = 3'd0;
-    logic [7:0] phase_write_data = 8'd0;
-    logic [7:0] phase_filter_frequency;
-    logic phase_d7_pending;
-    logic phase_ar_drive_low;
-    logic phase_filter_ce;
-    logic phase_filter_phase;
-    logic phase_closure;
-    logic phase_voice_clock_ce;
-    logic phase_voice_toggle;
-    logic phase_noise_clock_ce;
-    logic phase_noise_shift_ce;
-    logic phase_pw_3;
-    logic [3:0] phase_fric_amp_code;
-    logic phase_audio_enable = 1'b0;
-    logic phase_noise_test_enable = 1'b0;
-    logic signed [15:0] phase_audio_sample;
-
     integer failures = 0;
+    integer expected_value;
+    integer expected_first;
+    integer expected_second;
+    integer held_value;
     integer i;
-    integer previous_value;
-    integer interval;
-    integer energy_low;
-    integer energy_high;
-    integer engine_cycles;
-    integer phase_noise_edges = 0;
-    integer phase_voice_loads;
-    integer phase_voice_gap;
-    integer phase_ticks_since_load;
-    integer phase_u62_rises;
-    integer phase_u62_gap;
-    integer phase_ticks_since_u62;
-    logic phase_seen;
-    logic phase_prior_load_pending;
-    logic phase_prior_voice_toggle;
-    logic signed [15:0] held_sample;
-    logic signed [23:0] held_f1;
-    logic signed [23:0] held_f1_charge;
-    logic signed [23:0] held_f1_input_history;
-    logic signed [23:0] held_f2;
-    logic signed [23:0] held_f2_charge;
-    logic signed [23:0] held_f3;
-    logic signed [23:0] held_f3_charge;
-    logic signed [23:0] held_f3_side_history;
-    logic signed [23:0] held_f4;
-    logic signed [23:0] held_f4_charge;
-    logic signed [23:0] held_f5;
-    logic signed [23:0] held_f5_charge;
-    logic signed [23:0] held_reconstruction;
-    logic signed [23:0] held_fric1_source;
-    logic signed [23:0] held_fric2_source;
-    logic signed [24:0] held_c143_delta;
-    logic signed [23:0] held_fric2_base_history;
-    logic signed [23:0] held_fric2_sw_history;
-    logic signed [23:0] held_output;
-
-    integer ref_d1;
-    integer ref_d2;
-    integer ref_d3;
-    integer ref_d4;
-    integer ref_count;
-    integer ref_count_next;
-    integer ref_feedback;
+    integer checkpoint = 0;
+    integer divider_cases = 0;
+    integer divider_boundary_cases = 0;
+    integer divider_random_cases = 0;
+    integer reciprocal_constant_cases = 0;
+    integer reciprocal_bound_cases = 0;
+    integer correction_input_cases = 0;
+    integer numerator_alignment_cases = 0;
+    logic [11:0] numerator_stages_seen = 12'h000;
+    integer divider_denominator;
+    integer random_index;
+    longint signed divider_random_state;
+    logic signed [47:0] divider_test_numerator;
+    logic [13:0] divider_test_denominator;
 
     always #5 clk = ~clk;
 
-    always_ff @(posedge clk) begin
-        if (!rstn)
-            phase_noise_edges <= 0;
-        else if (phase_noise_clock_ce)
-            phase_noise_edges <= phase_noise_edges + 1;
-    end
-
-    ssi263_sc02_audio dut (
+    // With all four U119 capacitors selected, a POT3 step of 65141 produces
+    // exactly +65536 at U116: round(3320*65141/3300). The exact unit vector
+    // makes the mid-Phi1 C128/C127 causal result independent of a trim guess.
+    ssi263_sc02_audio #(
+        .VOICE_TRIM_U116_STEP_Q16(18'sd65141)
+    ) dut (
         .clk(clk),
         .rstn(rstn),
         .pd_rst_n(pd_rst_n),
@@ -130,121 +82,39 @@ module tb_ssi263_sc02_audio;
         .audio_sample(audio_sample)
     );
 
-    // This core instance proves the complete 00-FF FILT divider.  A second
-    // audio instance consumes that same phase boundary for the FF rate test.
-    ssi263_sc02_core #(
-        .REVISION_AP(1'b1),
-        .ROM_FILE("ssi263_sc02_rom.mem")
-    ) phase_core (
-        .clk(clk),
-        .rstn(rstn),
-        .pd_rst_n(1'b1),
-        .xck_ce(phase_xck_ce),
-        .div2(1'b0),
-        .write_active(phase_write_active),
-        .write_reg(phase_write_reg),
-        .write_data(phase_write_data),
-        .d7_pending(phase_d7_pending),
-        .ar_drive_low(phase_ar_drive_low),
-        .powered_down(),
-        .phone_active(),
-        .ar_enabled(),
-        .response_phoneme(),
-        .transitioned_pitch(),
-        .phoneme(),
-        .duration(),
-        .rate(),
-        .inflection(),
-        .pitch_inflection(),
-        .transitioned_inflection_state(),
-        .articulation(),
-        .amplitude(),
-        .filter_frequency(phase_filter_frequency),
-        .effective_xck_ce(),
-        .response_boundary_ce(),
-        .voice_clock_ce(phase_voice_clock_ce),
-        .voice_toggle(phase_voice_toggle),
-        .pitch_period_ce(),
-        .noise_clock_ce(phase_noise_clock_ce),
-        .noise_shift_ce(phase_noise_shift_ce),
-        .filter_phase_ce(phase_filter_ce),
-        .filter_phase(phase_filter_phase),
-        .selector(),
-        .selector_phase(),
-        .selector_step_ce(),
-        .selector_rom_data(),
-        .selector_flags(),
-        .pw_0(),
-        .pw_1(),
-        .pw_2(),
-        .pw_3(phase_pw_3),
-        .pw_5(),
-        .fric1_sw(),
-        .fric2_sw(),
-        .closure(phase_closure),
-        .rate_clock_ce(),
-        .rate_clock_div2_ce(),
-        .articulation_step_ce(),
-        .inflection_step_ce(),
-        .parameter_write_ce(),
-        .parameter_write_selector(),
-        .f1_code(),
-        .f2_code(),
-        .f2_res_code(),
-        .f3_code(),
-        .f4_code(),
-        .filter_amp_code(),
-        .voice_amp_code(),
-        .fric_amp_code(phase_fric_amp_code)
+    function automatic integer round_divide_ref(
+        input integer numerator,
+        input integer denominator
     );
-
-    ssi263_sc02_audio phase_audio (
-        .clk(clk),
-        .rstn(rstn),
-        .pd_rst_n(1'b1),
-        .audio_tick(audio_tick),
-        .powered_down(1'b0),
-        .pw_3(phase_noise_test_enable ? phase_pw_3 : 1'b0),
-        .noise_clock_ce(phase_noise_clock_ce && phase_noise_test_enable),
-        .noise_shift_ce(phase_noise_shift_ce && phase_noise_test_enable),
-        .fric1_sw(1'b0),
-        .fric2_sw(1'b0),
-        .voice_toggle(phase_voice_toggle),
-        .filter_phase_ce(phase_filter_ce && phase_audio_enable),
-        .filter_phase(phase_filter_phase),
-        .filter_frequency(phase_filter_frequency),
-        .f1_code(4'hF),
-        .f2_code(4'hF),
-        .f2_res_code(4'hF),
-        .f3_code(4'hF),
-        .f4_code(4'hF),
-        .filter_amp_code(4'hF),
-        .voice_amp_code(4'hF),
-        .fric_amp_code(
-            phase_noise_test_enable ? phase_fric_amp_code : 4'h0
-        ),
-        .closure(phase_closure && phase_audio_enable),
-        .audio_sample(phase_audio_sample)
-    );
-
-    function automatic integer pair_magnitude(
-        input logic signed [23:0] state_i,
-        input logic signed [23:0] state_q
-    );
-        integer magnitude_i;
-        integer magnitude_q;
         begin
-            magnitude_i = (state_i < 0) ? -state_i : state_i;
-            magnitude_q = (state_q < 0) ? -state_q : state_q;
-            pair_magnitude = magnitude_i + magnitude_q;
+            if (numerator < 0)
+                round_divide_ref =
+                    (numerator - (denominator / 2)) / denominator;
+            else
+                round_divide_ref =
+                    (numerator + (denominator / 2)) / denominator;
         end
     endfunction
 
-    function automatic integer sample_magnitude(
-        input logic signed [23:0] sample
+    function automatic logic signed [23:0] divider_ref48(
+        input logic signed [47:0] numerator,
+        input integer denominator
     );
+        logic signed [63:0] rounded;
+        logic signed [63:0] quotient;
         begin
-            sample_magnitude = (sample < 0) ? -sample : sample;
+            rounded = numerator;
+            if (rounded < 0)
+                rounded = rounded - (denominator / 2);
+            else
+                rounded = rounded + (denominator / 2);
+            quotient = rounded / denominator;
+            if (quotient > 64'sd8388607)
+                divider_ref48 = 24'sh7FFFFF;
+            else if (quotient < -64'sd8388608)
+                divider_ref48 = 24'sh800000;
+            else
+                divider_ref48 = quotient[23:0];
         end
     endfunction
 
@@ -257,6 +127,307 @@ module tb_ssi263_sc02_audio;
         end
     endtask
 
+    task automatic wait_engine_idle;
+        integer guard;
+        begin
+            guard = 0;
+            while (dut.engine_busy_q || dut.fifo_count_q != 0 ||
+                   dut.numerator_input_valid_q || dut.products_valid_q ||
+                   dut.numerator_valid_q ||
+                   dut.reciprocal_input_valid_q ||
+                   dut.reciprocal_product_valid_q ||
+                   dut.correction_input_valid_q || dut.correction_valid_q ||
+                   dut.divider_result_valid_q) begin
+                @(negedge clk);
+                guard = guard + 1;
+                if (dut.numerator_input_valid_q) begin
+                    if (dut.numerator_operand0_q !== dut.numerator_operand0 ||
+                        dut.numerator_operand1_q !== dut.numerator_operand1 ||
+                        dut.numerator_operand2_q !== dut.numerator_operand2 ||
+                        dut.numerator_operand3_q !== dut.numerator_operand3 ||
+                        dut.numerator_operand4_q !== dut.numerator_operand4 ||
+                        dut.numerator_operand5_q !== dut.numerator_operand5 ||
+                        dut.numerator_coefficient0_q !==
+                            dut.numerator_coefficient0 ||
+                        dut.numerator_coefficient1_q !==
+                            dut.numerator_coefficient1 ||
+                        dut.numerator_coefficient2_q !==
+                            dut.numerator_coefficient2 ||
+                        dut.numerator_coefficient3_q !==
+                            dut.numerator_coefficient3 ||
+                        dut.numerator_coefficient4_q !==
+                            dut.numerator_coefficient4 ||
+                        dut.numerator_coefficient5_q !==
+                            dut.numerator_coefficient5 ||
+                        dut.numerator_input_denominator_q !==
+                            dut.numerator_denominator) begin
+                        $display("SSI263 SC02 AUDIO FAIL: pre-numerator register misaligned checkpoint=%0d stage=%0d",
+                                 checkpoint, dut.engine_stage_q);
+                        failures = failures + 1;
+                    end
+                    numerator_alignment_cases = numerator_alignment_cases + 1;
+                    if (dut.engine_stage_q < 12)
+                        numerator_stages_seen[dut.engine_stage_q] = 1'b1;
+                end
+                if (guard == 5000) begin
+                    $display("SSI263 SC02 AUDIO FAIL: wait timeout checkpoint=%0d busy=%b fifo=%0d stage=%0d pipe=%b%b%b%b%b%b%b%b",
+                             checkpoint, dut.engine_busy_q, dut.fifo_count_q,
+                             dut.engine_stage_q,
+                             dut.numerator_input_valid_q,
+                             dut.products_valid_q,
+                             dut.numerator_valid_q,
+                             dut.reciprocal_input_valid_q,
+                             dut.reciprocal_product_valid_q,
+                             dut.correction_input_valid_q,
+                             dut.correction_valid_q,
+                             dut.divider_result_valid_q);
+                    $finish;
+                end
+            end
+        end
+    endtask
+
+    task automatic check_reciprocal_constant(input integer denominator);
+        longint signed power_of_two;
+        longint signed expected_multiplier;
+        longint signed remainder;
+        longint signed maximum_input;
+        begin
+            wait_engine_idle();
+            @(negedge clk);
+            divider_test_denominator = denominator[13:0];
+            force dut.engine_div_denominator_q = divider_test_denominator;
+            #1;
+
+            power_of_two = 64'sd1 << 37;
+            expected_multiplier = power_of_two / denominator;
+            remainder = power_of_two - denominator * expected_multiplier;
+            maximum_input = denominator * 64'sd8388608 - 1;
+            if (!dut.reciprocal_denominator_valid ||
+                $unsigned(dut.reciprocal_multiplier) != expected_multiplier) begin
+                $display("SSI263 SC02 AUDIO FAIL: reciprocal constant d=%0d got=%0d expected=%0d",
+                         denominator, $unsigned(dut.reciprocal_multiplier),
+                         expected_multiplier);
+                failures = failures + 1;
+            end
+            if (remainder < 0 || remainder >= denominator ||
+                maximum_input * remainder >= denominator * power_of_two) begin
+                $display("SSI263 SC02 AUDIO FAIL: reciprocal proof bound d=%0d M=%0d r=%0d",
+                         denominator, expected_multiplier, remainder);
+                failures = failures + 1;
+            end
+            reciprocal_constant_cases = reciprocal_constant_cases + 1;
+
+            release dut.engine_div_denominator_q;
+            @(negedge clk);
+        end
+    endtask
+
+    // Drive the production reciprocal-product, q0, correction-product, and
+    // signed-result registers. Stage 12 has no charge-node write, so each
+    // vector tests only the divider and cannot alter the charge fixtures.
+    task automatic check_divider48(
+        input logic signed [47:0] numerator,
+        input integer denominator,
+        input string label_text
+    );
+        logic signed [23:0] expected;
+        logic proof_seen;
+        logic correction_input_seen;
+        logic correction_seen;
+        integer guard;
+        longint signed rounded_value;
+        longint signed absolute_value;
+        longint signed quotient_value;
+        longint signed q0_value;
+        longint signed expected_multiplier;
+        begin
+            wait_engine_idle();
+            @(negedge clk);
+            divider_test_numerator = numerator;
+            divider_test_denominator = denominator[13:0];
+            force dut.engine_div_numerator_q = divider_test_numerator;
+            force dut.engine_div_denominator_q = divider_test_denominator;
+            force dut.numerator_valid_q = 1'b1;
+            force dut.engine_stage_q = 4'd12;
+            force dut.engine_busy_q = 1'b1;
+            #1;
+
+            rounded_value = numerator;
+            if (rounded_value < 0)
+                rounded_value = rounded_value - (denominator / 2);
+            else
+                rounded_value = rounded_value + (denominator / 2);
+            absolute_value = (rounded_value < 0) ?
+                -rounded_value : rounded_value;
+            quotient_value = absolute_value / denominator;
+            expected_multiplier = (64'sd1 << 37) / denominator;
+            proof_seen = 1'b0;
+            correction_input_seen = 1'b0;
+            correction_seen = 1'b0;
+            guard = 0;
+            while (!dut.engine_step_valid && guard < 20) begin
+                @(negedge clk);
+                guard = guard + 1;
+                if (dut.reciprocal_product_valid_q &&
+                    absolute_value < denominator * 64'sd8388608) begin
+                    q0_value = $unsigned(dut.reciprocal_q0);
+                    if (!dut.reciprocal_denominator_valid_q ||
+                        dut.reciprocal_denominator_q != denominator ||
+                        $unsigned(dut.reciprocal_product_q) !=
+                            absolute_value * expected_multiplier ||
+                        !((q0_value == quotient_value) ||
+                          (q0_value + 1 == quotient_value))) begin
+                        $display("SSI263 SC02 AUDIO FAIL: reciprocal q/q-1 bound %s n=%0d d=%0d q0=%0d q=%0d",
+                                 label_text, numerator, denominator,
+                                 q0_value, quotient_value);
+                        failures = failures + 1;
+                    end
+                    proof_seen = 1'b1;
+                    reciprocal_bound_cases = reciprocal_bound_cases + 1;
+                end
+                if (dut.correction_input_valid_q) begin
+                    q0_value = $unsigned(dut.correction_input_q0_q);
+                    if ($unsigned(dut.correction_operand_q) != q0_value + 1 ||
+                        dut.correction_input_denominator_q != denominator ||
+                        $unsigned(dut.correction_input_absolute_q) !=
+                            absolute_value ||
+                        dut.correction_input_negative_q !=
+                            (rounded_value < 0) ||
+                        dut.correction_input_zero_q != (numerator == 0) ||
+                        dut.correction_input_overflow_q !=
+                            (absolute_value >= denominator * 64'sd8388608) ||
+                        !dut.correction_input_denominator_valid_q) begin
+                        $display("SSI263 SC02 AUDIO FAIL: pre-correction register %s n=%0d d=%0d q0=%0d",
+                                 label_text, numerator, denominator, q0_value);
+                        failures = failures + 1;
+                    end
+                    correction_input_seen = 1'b1;
+                    correction_input_cases = correction_input_cases + 1;
+                end
+                if (dut.correction_valid_q &&
+                    absolute_value < denominator * 64'sd8388608) begin
+                    q0_value = $unsigned(dut.correction_q0_q);
+                    if ($unsigned(dut.correction_product_q) !=
+                            (q0_value + 1) * denominator ||
+                        ((q0_value + 1 == quotient_value) !=
+                         (dut.correction_product_q <= absolute_value))) begin
+                        $display("SSI263 SC02 AUDIO FAIL: reciprocal correction %s n=%0d d=%0d q0=%0d q=%0d",
+                                 label_text, numerator, denominator,
+                                 q0_value, quotient_value);
+                        failures = failures + 1;
+                    end
+                    correction_seen = 1'b1;
+                end
+            end
+            if (!dut.engine_step_valid) begin
+                $display("SSI263 SC02 AUDIO FAIL: divider timeout %s n=%0d d=%0d",
+                         label_text, numerator, denominator);
+                $finish;
+            end
+            if (absolute_value < denominator * 64'sd8388608 &&
+                (!proof_seen || !correction_seen)) begin
+                $display("SSI263 SC02 AUDIO FAIL: reciprocal proof stages not observed %s n=%0d d=%0d",
+                         label_text, numerator, denominator);
+                failures = failures + 1;
+            end
+            if (!correction_input_seen) begin
+                $display("SSI263 SC02 AUDIO FAIL: pre-correction stage not observed %s n=%0d d=%0d",
+                         label_text, numerator, denominator);
+                failures = failures + 1;
+            end
+
+            expected = divider_ref48(numerator, denominator);
+            if ($signed(dut.engine_step_result) !== expected) begin
+                $display("SSI263 SC02 AUDIO FAIL: divider %s n=%0d d=%0d got=%0d expected=%0d",
+                         label_text, numerator, denominator,
+                         $signed(dut.engine_step_result), expected);
+                failures = failures + 1;
+            end
+            divider_cases = divider_cases + 1;
+
+            // Keep the forced engine active for the result edge so the real
+            // divider clears its busy state before the next vector.
+            @(posedge clk);
+            #1;
+            release dut.numerator_valid_q;
+            release dut.engine_busy_q;
+            release dut.engine_stage_q;
+            release dut.engine_div_denominator_q;
+            release dut.engine_div_numerator_q;
+            @(negedge clk);
+        end
+    endtask
+
+    task automatic run_divider_denominator(input integer denominator);
+        longint signed half_value;
+        longint signed edge_value;
+        longint signed random_value;
+        longint signed random_quotient;
+        longint signed random_remainder;
+        integer boundary_start;
+        integer random_start;
+        begin
+            check_reciprocal_constant(denominator);
+            boundary_start = divider_cases;
+            half_value = denominator / 2;
+            check_divider48(48'sd0, denominator, "zero");
+            check_divider48(half_value - 1, denominator, "positive below half");
+            check_divider48(half_value, denominator, "positive half");
+            check_divider48(half_value + 1, denominator, "positive above half");
+            check_divider48(-(half_value - 1), denominator, "negative below half");
+            check_divider48(-half_value, denominator, "negative half");
+            check_divider48(-(half_value + 1), denominator, "negative above half");
+            check_divider48(3 * denominator + half_value - 1,
+                            denominator, "positive quotient and remainder");
+            check_divider48(-(3 * denominator + half_value - 1),
+                            denominator, "negative quotient and remainder");
+
+            divider_random_state =
+                (divider_random_state * 64'sd48271) % 64'sd2147483647;
+            random_value = divider_random_state;
+            check_divider48(random_value, denominator, "seeded positive random");
+            divider_random_state =
+                (divider_random_state * 64'sd48271) % 64'sd2147483647;
+            random_value = -divider_random_state;
+            check_divider48(random_value, denominator, "seeded negative random");
+
+            edge_value = 64'sd8388607 * denominator;
+            check_divider48(edge_value, denominator, "positive maximum");
+            check_divider48(edge_value + half_value - 1,
+                            denominator, "positive saturation below edge");
+            check_divider48(edge_value + half_value,
+                            denominator, "positive saturation edge");
+            check_divider48(-(64'sd8388608 * denominator),
+                            denominator, "negative minimum");
+            check_divider48(-(64'sd8388609 * denominator),
+                            denominator, "negative saturation");
+            divider_boundary_cases = divider_boundary_cases +
+                divider_cases - boundary_start;
+
+            random_start = divider_cases;
+            for (random_index = 0; random_index < 128;
+                 random_index = random_index + 1) begin
+                divider_random_state =
+                    (divider_random_state * 64'sd48271) % 64'sd2147483647;
+                random_quotient = divider_random_state % 64'sd8000000;
+                divider_random_state =
+                    (divider_random_state * 64'sd48271) % 64'sd2147483647;
+                random_remainder = divider_random_state % denominator;
+                random_value = random_quotient * denominator +
+                    random_remainder - half_value;
+                if (random_value == 0)
+                    random_value = 1;
+                if (random_index[0])
+                    random_value = -random_value;
+                check_divider48(random_value, denominator,
+                                "deterministic randomized in-range");
+            end
+            divider_random_cases = divider_random_cases +
+                divider_cases - random_start;
+        end
+    endtask
+
     task automatic reset_all;
         begin
             @(negedge clk);
@@ -265,8 +436,13 @@ module tb_ssi263_sc02_audio;
             audio_tick = 1'b0;
             powered_down = 1'b0;
             pw_3 = 1'b0;
+            noise_clock_ce = 1'b0;
+            noise_shift_ce = 1'b0;
             fric1_sw = 1'b0;
             fric2_sw = 1'b0;
+            voice_toggle = 1'b0;
+            filter_phase_ce = 1'b0;
+            filter_phase = 1'b0;
             filter_frequency = 8'hE9;
             f1_code = 4'h0;
             f2_code = 4'h0;
@@ -276,1220 +452,556 @@ module tb_ssi263_sc02_audio;
             filter_amp_code = 4'h0;
             voice_amp_code = 4'h0;
             fric_amp_code = 4'h0;
-            voice_toggle = 1'b0;
-            filter_phase_ce = 1'b0;
-            noise_clock_ce = 1'b0;
-            noise_shift_ce = 1'b0;
             closure = 1'b0;
-            phase_xck_ce = 1'b0;
-            phase_write_active = 1'b0;
-            phase_audio_enable = 1'b0;
-            phase_noise_test_enable = 1'b0;
             repeat (4) @(negedge clk);
             rstn = 1'b1;
             repeat (2) @(negedge clk);
         end
     endtask
 
-    task automatic wait_engine_idle;
-        begin
-            while (dut.engine_busy_q)
-                @(negedge clk);
-        end
-    endtask
-
-    task automatic set_voice_toggle(input logic new_value);
-        begin
-            @(negedge clk);
-            voice_toggle = new_value;
-        end
-    endtask
-
-    task automatic pulse_filter(input logic new_phase);
+    task automatic phase_event(input logic new_phase);
         begin
             wait_engine_idle();
             @(negedge clk);
             filter_phase = new_phase;
             filter_phase_ce = 1'b1;
             closure = !new_phase;
+            @(posedge clk);
+            #1;
             @(negedge clk);
             filter_phase_ce = 1'b0;
             closure = 1'b0;
-            if (new_phase)
-                wait_engine_idle();
+            wait_engine_idle();
         end
     endtask
 
-    task automatic pulse_filter_pair;
+    task automatic phase_pair;
         begin
-            pulse_filter(1'b0);
-            pulse_filter(1'b1);
+            phase_event(1'b0);
+            phase_event(1'b1);
         end
     endtask
 
-    task automatic pulse_noise_count;
+    task automatic source_clock;
+        begin
+            @(posedge clk);
+            #1;
+            wait_engine_idle();
+        end
+    endtask
+
+    task automatic pulse_noise;
         begin
             @(negedge clk);
             noise_clock_ce = 1'b1;
             @(negedge clk);
             noise_clock_ce = 1'b0;
-        end
-    endtask
-
-    task automatic pulse_noise_shift;
-        begin
-            @(negedge clk);
             noise_shift_ce = 1'b1;
             @(negedge clk);
             noise_shift_ce = 1'b0;
         end
     endtask
 
-    task automatic pulse_noise;
-        begin
-            pulse_noise_count();
-            pulse_noise_shift();
-        end
-    endtask
-
-    task automatic pulse_audio_tick;
-        begin
-            @(negedge clk);
-            audio_tick = 1'b1;
-            @(negedge clk);
-            audio_tick = 1'b0;
-            // The AC-coupling/DC-blocker path completes on two fabric clocks.
-            repeat (3) @(negedge clk);
-        end
-    endtask
-
-    task automatic write_phase_register(
-        input logic [2:0] address,
-        input logic [7:0] value
-    );
-        begin
-            @(negedge clk);
-            phase_write_reg = address;
-            phase_write_data = value;
-            phase_write_active = 1'b1;
-            repeat (2) @(negedge clk);
-            phase_write_active = 1'b0;
-            repeat (2) @(negedge clk);
-        end
-    endtask
-
-    task automatic write_phase_filter(input logic [7:0] value);
-        begin
-            write_phase_register(3'd4, value);
-        end
-    endtask
-
-    task automatic pulse_phase_xck(output logic saw_phase);
-        begin
-            @(negedge clk);
-            phase_xck_ce = 1'b1;
-            @(posedge clk);
-            #1 saw_phase = phase_filter_ce;
-            @(negedge clk);
-            phase_xck_ce = 1'b0;
-            @(posedge clk);
-            #1;
-        end
-    endtask
-
-    task automatic pulse_phase_xck_slow(output logic saw_phase);
-        begin
-            pulse_phase_xck(saw_phase);
-            // Even the fastest intended profile gives 133 fabric clocks
-            // between phase CEs.  The registered engine takes 34 clocks.
-            repeat (140) @(negedge clk);
-        end
-    endtask
-
-    task automatic wait_phase_terminal;
-        begin
-            phase_seen = 1'b0;
-            while (!phase_seen)
-                pulse_phase_xck(phase_seen);
-        end
-    endtask
-
-    task automatic step_noise_count_reference;
-        begin
-            ref_count_next = (ref_count == 15) ? 1 : ref_count + 1;
-            ref_count = ref_count_next;
-        end
-    endtask
-
-    task automatic step_noise_shift_reference;
-        begin
-            ref_feedback = ((ref_count < 4) ? 1 : 0) ^
-                           ((ref_d1 >> 3) & 1) ^
-                           ((ref_d2 >> 4) & 1) ^
-                           ((ref_d4 >> 3) & 1) ^
-                           ((ref_d4 >> 4) & 1);
-            ref_d1 = ((ref_d1 << 1) & 15) | ((ref_d3 >> 3) & 1);
-            ref_d3 = ((ref_d3 << 1) & 15) | ((ref_d2 >> 4) & 1);
-            ref_d2 = ((ref_d2 << 1) & 31) | ((ref_d4 >> 4) & 1);
-            ref_d4 = ((ref_d4 << 1) & 31) | ref_feedback;
-        end
-    endtask
-
-    task automatic step_noise_reference;
-        begin
-            step_noise_count_reference();
-            step_noise_shift_reference();
-        end
-    endtask
-
-    task automatic deposit_f2_impulse;
-        begin
-            @(negedge clk);
-            force dut.f2_state_q = 24'sd65536;
-            force dut.f2_history_q = 24'sd0;
-            force dut.f2_input_q = 24'sd0;
-            @(negedge clk);
-            release dut.f2_state_q;
-            release dut.f2_history_q;
-            release dut.f2_input_q;
-        end
-    endtask
-
     initial begin
         reset_all();
 
-        // Exact source-derived switched-capacitor totals.
-        check(dut.f1_capacitance(4'hF) == 13'd2450,
-              "F1 capacitor total is not 2450 pF");
-        check(dut.f2_capacitance(4'hF) == 13'd4260,
-              "F2 capacitor total is not 4260 pF");
-        check(dut.f2_res_capacitance(4'hF) == 13'd3320,
-              "F2 resonance capacitor total is not 3320 pF");
-        check(dut.f3_capacitance(4'hF) == 13'd3090,
-              "F3 capacitor total is not 3090 pF");
-        check(dut.f4_capacitance(4'hF) == 13'd3040,
-              "F4 capacitor total is not 3040 pF");
-        check(dut.voice_capacitance(4'hF) == 13'd3320,
-              "voice capacitor total is not 3320 pF");
-        check(dut.fric1_capacitance(4'hF) == 13'd4010,
-              "U157/FRIC1 capacitor total is not 4010 pF");
-        check(dut.fric2_capacitance(4'hF) == 13'd4042,
-              "U152/FRIC2 capacitor total is not 4042 pF");
-        check(dut.filter_amp_capacitance(4'hF) == 13'd1126,
-              "filter amplitude capacitor total is not 1126 pF");
-        check(dut.sat24_from48(48'sd8388608) == 24'sh7FFFFF,
-              "positive internal saturation limit wrapped");
-        check(dut.sat24_from48(-48'sd8388609) == -24'sd8388608,
-              "negative internal saturation limit wrapped");
-        check(dut.sat16_from27(27'sd32768) == 16'sh7FFF,
-              "positive PCM conversion wrapped");
-        check(dut.sat16_from27(-27'sd32769) == -16'sd32768,
-              "negative PCM conversion wrapped");
+        // Check every selected bank against the capacitor values drawn on
+        // sheets 1 and 2. cap_sum4 exposes pF, not an acoustic coefficient.
+        check(dut.cap_sum4(4'h1,160,330,660,1300) == 14'd160 &&
+              dut.cap_sum4(4'h2,160,330,660,1300) == 14'd330 &&
+              dut.cap_sum4(4'h4,160,330,660,1300) == 14'd660 &&
+              dut.cap_sum4(4'h8,160,330,660,1300) == 14'd1300 &&
+              dut.cap_sum4(4'hF,160,330,660,1300) == 14'd2450,
+              "F1 capacitor bank does not match C120/C119/C118/C117");
+        check(dut.cap_sum4(4'h1,280,560,1120,2300) == 14'd280 &&
+              dut.cap_sum4(4'h2,280,560,1120,2300) == 14'd560 &&
+              dut.cap_sum4(4'h4,280,560,1120,2300) == 14'd1120 &&
+              dut.cap_sum4(4'h8,280,560,1120,2300) == 14'd2300 &&
+              dut.cap_sum4(4'hF,280,560,1120,2300) == 14'd4260,
+              "F2 frequency capacitor bank is wrong");
+        check(dut.cap_sum4(4'h1,220,430,870,1800) == 14'd220 &&
+              dut.cap_sum4(4'h2,220,430,870,1800) == 14'd430 &&
+              dut.cap_sum4(4'h4,220,430,870,1800) == 14'd870 &&
+              dut.cap_sum4(4'h8,220,430,870,1800) == 14'd1800 &&
+              dut.cap_sum4(4'hF,220,430,870,1800) == 14'd3320,
+              "F2 resonance capacitor bank is wrong");
+        check(dut.cap_sum4(4'h1,210,420,820,1640) == 14'd210 &&
+              dut.cap_sum4(4'h2,210,420,820,1640) == 14'd420 &&
+              dut.cap_sum4(4'h4,210,420,820,1640) == 14'd820 &&
+              dut.cap_sum4(4'h8,210,420,820,1640) == 14'd1640 &&
+              dut.cap_sum4(4'hF,210,420,820,1640) == 14'd3090,
+              "F3 capacitor bank is wrong");
+        check(dut.cap_sum4(4'h1,200,400,820,1620) == 14'd200 &&
+              dut.cap_sum4(4'h2,200,400,820,1620) == 14'd400 &&
+              dut.cap_sum4(4'h4,200,400,820,1620) == 14'd820 &&
+              dut.cap_sum4(4'h8,200,400,820,1620) == 14'd1620 &&
+              dut.cap_sum4(4'hF,200,400,820,1620) == 14'd3040,
+              "F4 capacitor bank is wrong");
+        check(dut.cap_sum4(4'h1,220,430,870,1800) == 14'd220 &&
+              dut.cap_sum4(4'h2,220,430,870,1800) == 14'd430 &&
+              dut.cap_sum4(4'h4,220,430,870,1800) == 14'd870 &&
+              dut.cap_sum4(4'h8,220,430,870,1800) == 14'd1800 &&
+              dut.cap_sum4(4'hF,220,430,870,1800) == 14'd3320,
+              "U116 source capacitor bank is wrong");
+        check(dut.cap_sum4(4'h1,270,512,1068,2160) == 14'd270 &&
+              dut.cap_sum4(4'h2,270,512,1068,2160) == 14'd512 &&
+              dut.cap_sum4(4'h4,270,512,1068,2160) == 14'd1068 &&
+              dut.cap_sum4(4'h8,270,512,1068,2160) == 14'd2160 &&
+              dut.cap_sum4(4'hF,270,512,1068,2160) == 14'd4010,
+              "U157 source capacitor bank is wrong");
+        check(dut.cap_sum4(4'h1,270,530,1082,2160) == 14'd270 &&
+              dut.cap_sum4(4'h2,270,530,1082,2160) == 14'd530 &&
+              dut.cap_sum4(4'h4,270,530,1082,2160) == 14'd1082 &&
+              dut.cap_sum4(4'h8,270,530,1082,2160) == 14'd2160 &&
+              dut.cap_sum4(4'hF,270,530,1082,2160) == 14'd4042,
+              "U152 source capacitor bank is wrong");
+        check(dut.cap_sum4(4'h1,76,150,300,600) == 14'd76 &&
+              dut.cap_sum4(4'h2,76,150,300,600) == 14'd150 &&
+              dut.cap_sum4(4'h4,76,150,300,600) == 14'd300 &&
+              dut.cap_sum4(4'h8,76,150,300,600) == 14'd600 &&
+              dut.cap_sum4(4'hF,76,150,300,600) == 14'd1126,
+              "U146 amplitude capacitor bank is wrong");
 
-        // Exact Q14 endpoints guard the cap-ratio tables as well as their
-        // direction.  The Python wrapper checks every entry against the
-        // rounded ratios from sheets 1 and 2.
-        check(dut.F1_ALPHA_Q14 == 17'sd16104 &&
-              dut.F1_A_Q14 == 17'sd3781 &&
-              dut.F1_G_Q14 == 17'sd3781,
-              "fixed F1 charge ratios changed");
-        check(dut.F2_FRIC_H_Q14 == 17'sd2409,
-              "C143/F2 second-integrator ratio changed");
-        check(dut.F3_ALPHA_Q14 == 17'sd15715 &&
-              dut.F3_A_Q14 == 17'sd13040 &&
-              dut.F3_G_Q14 == 17'sd6687,
-              "fixed F3 charge ratios changed");
-        check(dut.F4_ALPHA_Q14 == 17'sd15656 &&
-              dut.F4_A_Q14 == 17'sd17112,
-              "fixed F4 charge ratios changed");
-        check(dut.F5_ALPHA_Q14 == 17'sd15154 &&
-              dut.F5_A_Q14 == 17'sd20645 &&
-              dut.F5_B_Q14 == 17'sd22320 &&
-              dut.F5_FRIC_BASE_G_Q14 == 17'sd5051 &&
-              dut.F5_FRIC_SW_G_Q14 == 17'sd16252,
-              "fixed F5 charge ratios changed");
-        check(dut.FILTER_OUTPUT_ALPHA_Q14 == 17'sd16086 &&
-              dut.filter_amp_gain(4'h0) == 17'sd0 &&
-              dut.filter_amp_gain(4'hF) == 17'sd6709,
-              "C172/C173 or FL_AMP endpoint ratio changed");
-        check(dut.f1_b_q14(4'h0) == 17'sd356 &&
-              dut.f1_b_q14(4'hF) == 17'sd3847,
-              "F1 b endpoint ratio changed");
-        check(dut.f2_b_q14(4'h0) == 17'sd1205 &&
-              dut.f2_b_q14(4'hF) == 17'sd11469,
-              "F2 b endpoint ratio changed");
-        check(dut.f2_alpha_q14(4'h0) == 17'sd15916 &&
-              dut.f2_alpha_q14(4'hF) == 17'sd10796 &&
-              dut.f2_a_q14(4'h0) == 17'sd11001 &&
-              dut.f2_a_q14(4'hF) == 17'sd7462,
-              "F2 loss endpoint ratios changed");
-        check(dut.f3_b_q14(4'h0) == 17'sd2858 &&
-              dut.f3_b_q14(4'hF) == 17'sd13630,
-              "F3 b endpoint ratio changed");
-        check(dut.f4_b_q14(4'h0) == 17'sd6363 &&
-              dut.f4_b_q14(4'hF) == 17'sd17946,
-              "F4 b endpoint ratio changed");
+        check(dut.sat24_from48(48'sd8388608) == 24'sh7FFFFF &&
+              dut.sat24_from48(-48'sd8388609) == -24'sd8388608,
+              "24-bit charge saturation wrapped");
 
-        // Every formant code raises its sampled input ratio.  F2 RES adds
-        // the drawn cap bank, so both alpha and a fall as damping rises.
-        for (i = 1; i < 16; i = i + 1) begin
-            check(dut.f1_b_q14(i[3:0]) >
-                  dut.f1_b_q14((i - 1) & 4'hF),
-                  "an F1 code did not raise b");
-            check(dut.f2_b_q14(i[3:0]) >
-                  dut.f2_b_q14((i - 1) & 4'hF),
-                  "an F2 code did not raise b");
-            check(dut.f3_b_q14(i[3:0]) >
-                  dut.f3_b_q14((i - 1) & 4'hF),
-                  "an F3 code did not raise b");
-            check(dut.f4_b_q14(i[3:0]) >
-                  dut.f4_b_q14((i - 1) & 4'hF),
-                  "an F4 code did not raise b");
-            check(dut.f2_alpha_q14(i[3:0]) <
-                  dut.f2_alpha_q14((i - 1) & 4'hF),
-                  "an F2 resonance code did not lower alpha");
-            check(dut.f2_a_q14(i[3:0]) <
-                  dut.f2_a_q14((i - 1) & 4'hF),
-                  "an F2 resonance code did not lower a");
+        // The finite-denominator reciprocal divider must match exact signed
+        // round-to-nearest arithmetic at every live capacitance total.
+        checkpoint = 0;
+        reset_all();
+        divider_random_state = 64'sd104729;
+        run_divider_denominator(2750);
+        run_divider_denominator(3300);
+        run_divider_denominator(3450);
+        run_divider_denominator(3730);
+        run_divider_denominator(3900);
+        run_divider_denominator(4300);
+        run_divider_denominator(4500);
+        run_divider_denominator(4700);
+        run_divider_denominator(4900);
+        run_divider_denominator(6800);
+        run_divider_denominator(11500);
+        run_divider_denominator(11700);
+        for (i = 0; i < 16; i = i + 1) begin
+            divider_denominator = 7000 +
+                dut.cap_sum4(i, 220, 430, 870, 1800);
+            run_divider_denominator(divider_denominator);
         end
+        check(divider_boundary_cases == 448,
+              "reciprocal divider lost one of 448 boundary vectors");
+        check(divider_random_cases == 3584 && divider_cases == 4032,
+              "reciprocal divider did not cover 128 random values per denominator");
+        check(reciprocal_constant_cases == 28,
+              "reciprocal constants did not cover every live denominator");
+        check(reciprocal_bound_cases == 3948,
+              "reciprocal q/q-1 proof did not cover every in-range vector");
+        check(correction_input_cases == 4032,
+              "pre-correction register was not observed for every vector");
 
-        // Sheet 6 U51D takes U73 D3+4. U104C is PW3 AND U62./Q;
-        // U163F, U51C, and U41D form the complete FRICATIVE equation. Sheets
-        // 1/2 then bias both CMOS levels through 390 kohm and 1.8 kohm, so
-        // high and low are the exact bipolar +/-3/653 source drive.
-        fric_amp_code = 4'hF;
+        // U60 and U118A act on the same Phi1 edge. A 14->15 count must pick
+        // AGND for that U116 transfer, not retain one extra voiced event.
+        checkpoint = 1;
+        reset_all();
         voice_amp_code = 4'hF;
-        force dut.noise_d3_q = 4'b0000;
-        pw_3 = 1'b0;
-        voice_toggle = 1'b0;
-        #1;
-        check(dut.noise_bit && dut.fric_drive == 18'sd301 &&
-              dut.fric1_source == -24'sd310,
-              "D3+4 low did not select the exact CMOS-high source");
-        @(posedge clk);
-        #1;
-        force dut.noise_d3_q = 4'b1000;
-        #1;
-        check(!dut.noise_bit && dut.fric_drive == -18'sd301 &&
-              dut.fric1_source == 24'sd310,
-              "D3+4 high did not select the exact CMOS-low source");
-        force dut.noise_d3_q = 4'b0000;
-        pw_3 = 1'b1;
-        voice_toggle = 1'b0;
-        #1;
-        check(!dut.noise_bit && dut.fric1_source == 24'sd310,
-              "PW3 AND U62./Q did not select the CMOS-low source");
-        voice_toggle = 1'b1;
-        #1;
-        check(!dut.noise_bit && dut.fric1_source == 24'sd310,
-              "U62.Q high ignored the VOICE_AMP nonzero term");
-        voice_amp_code = 4'h0;
-        #1;
-        check(dut.noise_bit && dut.fric1_source == -24'sd310,
-              "VOICE_AMP_ZERO did not restore FRICATIVE");
-        force dut.noise_d4_q = 5'b11111;
-        #1;
-        check(dut.noise_bit,
-              "FRICATIVE followed D4+5 instead of D3+4");
-        release dut.noise_d3_q;
-        release dut.noise_d4_q;
-        reset_all();
-
-        // U157 is reset in Phi1 and regenerates -Csel/C133*x in every Phi0.
-        // U152 has no phase reset and changes only at a real HCC edge, using
-        // the FRIC_AMP bank selected at that edge. Combined rounding must use
-        // the exact 3/653 level and 6/653 edge ratios, not staged gain math.
-        force dut.noise_d3_q = 4'b1000;
-        @(posedge clk);
-        fric_amp_code = 4'hF;
-        force dut.noise_d3_q = 4'b0000;
-        #1;
-        check(dut.fric_drive == 18'sd301 &&
-              dut.fric_drive_delta == 19'sd602 &&
-              dut.fric1_source == -24'sd310 &&
-              dut.fric2_source == -24'sd624,
-              "full-code HCC rise did not charge U157/U152 exactly");
-        @(posedge clk);
-        #1;
-        check(dut.fric1_source == -24'sd310 &&
-              dut.fric2_source_state_q == -24'sd624,
-              "HCC rise did not establish both source nodes");
-        fric_amp_code = 4'h1;
-        #1;
-        check(dut.fric1_source == -24'sd21 &&
-              dut.fric2_source == -24'sd624,
-              "U157/U152 did not differ on a steady-HCC gain change");
-        force dut.noise_d3_q = 4'b1000;
-        #1;
-        check(dut.fric_drive == -18'sd301 &&
-              dut.fric_drive_delta == -19'sd602 &&
-              dut.fric1_source == 24'sd21 &&
-              dut.fric2_source == -24'sd582,
-              "code-one HCC fall used the wrong edge charge");
-        @(posedge clk);
-        force dut.noise_d3_q = 4'b0000;
-        #1;
-        check(dut.fric1_source == -24'sd21 &&
-              dut.fric2_source == -24'sd624,
-              "next HCC rise did not restore the retained source charge");
-        release dut.noise_d3_q;
-        reset_all();
-
-        // A held-high HCC bit must regenerate U157 on every filter pair.  An
-        // edge-only model would make the second Phi0 snapshot zero.
-        fric_amp_code = 4'hF;
-        fric1_sw = 1'b1;
-        force dut.noise_d3_q = 4'b0000;
-        pulse_filter(1'b0);
-        check(dut.c143_source_plate_q == -24'sd310,
-              "first high-HCC Phi0 did not charge C143 from U157");
-        pulse_filter(1'b1);
-        pulse_filter(1'b0);
-        check(dut.c143_source_plate_q == -24'sd310 &&
-              dut.c143_phi0_delta_q == 25'sd310,
-              "held-high HCC did not recharge C143 on the next Phi0");
-        release dut.noise_d3_q;
-        reset_all();
-
-        // Phi0 owns the tract input sample.  Changing every live source and
-        // switch control after that edge must not alter the two source nodes,
-        // route states, or FL_AMP bank that the next Phi1 run will consume.
-        pw_3 = 1'b0;
-        fric1_sw = 1'b1;
-        fric2_sw = 1'b1;
-        fric_amp_code = 4'hF;
-        f1_code = 4'h1;
-        f2_code = 4'h2;
-        f2_res_code = 4'h3;
-        f3_code = 4'h4;
-        f4_code = 4'h5;
-        force dut.noise_d3_q = 4'b0000;
-        #1;
-        filter_amp_code = 4'hA;
-        held_fric1_source = dut.fric1_source;
-        held_fric2_source = dut.fric2_source;
-        pulse_filter(1'b0);
-        held_c143_delta = dut.c143_phi0_delta_q;
-        fric1_sw = 1'b0;
-        fric2_sw = 1'b0;
-        fric_amp_code = 4'h0;
-        f1_code = 4'hF;
-        f2_code = 4'hE;
-        f2_res_code = 4'hD;
-        f3_code = 4'hC;
-        f4_code = 4'hB;
-        filter_amp_code = 4'h1;
-        repeat (4) @(posedge clk);
-        #1;
-        check(dut.c143_source_plate_q == held_fric1_source &&
-              dut.c143_phi0_delta_q == held_c143_delta &&
-              dut.fric2_source_phi0_q == held_fric2_source,
-              "Phi0 source plates followed later live controls");
-        check(dut.fric2_sw_phi0_q && dut.filter_amp_phi0_q == 4'hA,
-              "Phi0 FRIC2 route or FL_AMP snapshot followed live controls");
-        check(dut.f1_code_phi0_q == 4'h1 &&
-              dut.f2_code_phi0_q == 4'h2 &&
-              dut.f2_res_code_phi0_q == 4'h3 &&
-              dut.f3_code_phi0_q == 4'h4 &&
-              dut.f4_code_phi0_q == 4'h5,
-              "Phi0 formant snapshot followed later controls");
-        check(dut.f3_input_q == dut.f2_state_q &&
-              dut.f5_input_q == dut.f4_state_q,
-              "FRIC source was merged into a serial formant input");
+        phase_event(1'b0);
         @(negedge clk);
-        filter_phase = 1'b1;
-        filter_phase_ce = 1'b1;
-        @(negedge clk);
-        filter_phase_ce = 1'b0;
-        check(dut.c143_delta_hold_q == held_c143_delta &&
-              dut.fric2_sw_phi0_q,
-              "FRIC paths missed their separate phase boundaries");
-        while (dut.engine_busy_q && dut.engine_stage_q != 4'd6)
-            @(negedge clk);
+        force dut.voice_count_q = 4'hE;
         #1;
-        check(dut.engine_busy_q &&
-              dut.engine_coefficient_b == dut.filter_amp_gain(4'hA),
-              "U146 engine did not consume the Phi0 FL_AMP snapshot");
-        wait_engine_idle();
-        release dut.noise_d3_q;
-        reset_all();
-
-        // Sheet 6 ties U60 /RST and CET high, CEP to /VOICED, and P0/P1 high.
-        // U34 /PE therefore loads 3. Normal Phi1 clocks count to F; CEP then
-        // holds F until the next U34 load.
-        voice_amp_code = 4'hF;
-        set_voice_toggle(1'b1);
-        pulse_filter(1'b0);
-        check(dut.pitch_sync1_q && !dut.pitch_sync2_q &&
-              dut.voice_load_pending_q,
-              "U61/U34 did not detect new Q1 with new /Q2");
-        held_f1 = dut.f1_state_q;
-        held_f1_input_history = dut.f1_input_history_q;
-        @(negedge clk);
-        filter_phase = 1'b1;
-        filter_phase_ce = 1'b1;
-        #1;
-        check(dut.voice_count_q == 4'hF &&
-              dut.voice_count_after_phi1 == 4'h3 &&
-              !dut.u60_tc_after_phi1 &&
-              dut.voice_source_after_phi1 == dut.voice_magnitude,
-              "U34 /PE did not form the post-clock U60 load value 3");
-        @(posedge clk);
-        #1;
-        check(dut.voice_count_q == 4'h3 &&
-              dut.f1_input_q == dut.voice_magnitude && dut.engine_busy_q &&
-              dut.engine_main_delta_q ==
-                  $signed({held_f1[23], held_f1}) -
-                  $signed({dut.voice_magnitude[23], dut.voice_magnitude}) &&
-              dut.engine_side_delta_q ==
-                  $signed({held_f1_input_history[23],
-                            held_f1_input_history}) -
-                  $signed({dut.voice_magnitude[23], dut.voice_magnitude}),
-              "F->3 load did not feed magnitude to F1 on that Phi1");
-        @(negedge clk);
-        filter_phase_ce = 1'b0;
-        wait_engine_idle();
-
-        for (i = 4; i <= 14; i = i + 1) begin
-            pulse_filter(1'b0);
-            pulse_filter(1'b1);
-            check(dut.voice_count_q == i[3:0] &&
-                  !dut.u60_tc &&
-                  dut.f1_input_q == dut.voice_magnitude,
-                  "U60 normal 3..E recurrence changed");
-        end
-
-        // U60 and U118A act on the same Phi1 boundary. Use post-clock state:
-        // E->F must select zero for the F1 operand on that edge.
-        pulse_filter(1'b0);
-        held_f1 = dut.f1_state_q;
-        held_f1_input_history = dut.f1_input_history_q;
-        @(negedge clk);
-        filter_phase = 1'b1;
-        filter_phase_ce = 1'b1;
-        #1;
-        check(dut.voice_count_q == 4'hE &&
-              dut.voice_count_after_phi1 == 4'hF &&
-              dut.u60_tc_after_phi1 &&
-              dut.voice_source == dut.voice_magnitude &&
-              dut.voice_source_after_phi1 == 24'sd0,
-              "U60 E->F did not select the post-clock zero source");
-        @(posedge clk);
-        #1;
-        check(dut.voice_count_q == 4'hF && dut.u60_tc &&
-              dut.f1_input_q == 24'sd0 && dut.engine_busy_q &&
-              dut.engine_main_delta_q ==
-                  $signed({held_f1[23], held_f1}) &&
-              dut.engine_side_delta_q ==
-                  $signed({held_f1_input_history[23],
-                            held_f1_input_history}),
-              "F1 did not consume the terminal-selected zero on that edge");
-        @(negedge clk);
-        filter_phase_ce = 1'b0;
-        wait_engine_idle();
-
-        // /VOICED drives CEP low at F. With no load, the next Phi1 must hold
-        // both the count and the zero F1 source.
-        pulse_filter(1'b0);
-        held_f1 = dut.f1_state_q;
-        held_f1_input_history = dut.f1_input_history_q;
-        @(negedge clk);
+        release dut.voice_count_q;
         filter_phase = 1'b1;
         filter_phase_ce = 1'b1;
         #1;
         check(dut.voice_count_after_phi1 == 4'hF &&
-              dut.u60_tc_after_phi1 &&
-              dut.voice_source_after_phi1 == 24'sd0,
-              "U60 CEP did not hold the terminal F state");
+              dut.voice_target_now == 0,
+              "U60 14->15 did not select same-edge AGND");
         @(posedge clk);
         #1;
-        check(dut.voice_count_q == 4'hF && dut.f1_input_q == 24'sd0 &&
-              dut.engine_main_delta_q ==
-                  $signed({held_f1[23], held_f1}) &&
-              dut.engine_side_delta_q ==
-                  $signed({held_f1_input_history[23],
-                            held_f1_input_history}),
-              "held F did not keep the same-edge F1 source at zero");
         @(negedge clk);
         filter_phase_ce = 1'b0;
         wait_engine_idle();
+        check(dut.voice_count_q == 4'hF && dut.voice_source_state_q == 0,
+              "U116 transferred a stale voiced level on U60 14->15");
 
-        // Clear the U61 history, then present a new U62 rise. The resulting
-        // F->3 parallel load must restore magnitude on that same Phi1 edge.
-        set_voice_toggle(1'b0);
-        pulse_filter(1'b0);
-        pulse_filter(1'b0);
-        set_voice_toggle(1'b1);
-        pulse_filter(1'b0);
-        check(dut.voice_load_pending_q,
-              "second U62 rise did not arm the U60 parallel load");
-        held_f1 = dut.f1_state_q;
-        held_f1_input_history = dut.f1_input_history_q;
+        // The inverse race is a parallel load from held F to 3. U118A must
+        // select the physical source on that same Phi1 edge.
+        phase_event(1'b0);
         @(negedge clk);
+        force dut.voice_count_q = 4'hF;
+        force dut.voice_load_pending_q = 1'b1;
+        #1;
+        release dut.voice_count_q;
+        release dut.voice_load_pending_q;
         filter_phase = 1'b1;
         filter_phase_ce = 1'b1;
         #1;
+        expected_value = -round_divide_ref(3320 * -65141, 3300);
         check(dut.voice_count_after_phi1 == 4'h3 &&
-              dut.voice_source_after_phi1 == dut.voice_magnitude,
-              "F->3 load did not select post-clock magnitude");
+              dut.voice_target_now == -24'sd65141,
+              "U60 F->3 did not select the same-edge source charge");
         @(posedge clk);
         #1;
-        check(dut.voice_count_q == 4'h3 &&
-              dut.f1_input_q == dut.voice_magnitude &&
-              dut.engine_main_delta_q ==
-                  $signed({held_f1[23], held_f1}) -
-                  $signed({dut.voice_magnitude[23], dut.voice_magnitude}) &&
-              dut.engine_side_delta_q ==
-                  $signed({held_f1_input_history[23],
-                            held_f1_input_history}) -
-                  $signed({dut.voice_magnitude[23], dut.voice_magnitude}),
-              "F->3 load did not restore the same-edge F1 operand");
         @(negedge clk);
         filter_phase_ce = 1'b0;
         wait_engine_idle();
+        check(dut.voice_count_q == 4'h3 &&
+              dut.voice_source_state_q == expected_value,
+              "U116 missed the same-edge U60 F->3 source transfer");
 
-        // CTL/PD drives U61 clear only. Make every cleared U61 state high,
-        // then prove the same PD edge neither clears nor loads U60.
-        set_voice_toggle(1'b0);
-        pulse_filter(1'b0);
-        pulse_filter(1'b0);
-        set_voice_toggle(1'b1);
-        pulse_filter(1'b0);
-        pulse_filter(1'b0);
-        check(dut.pitch_sync1_q && dut.pitch_sync2_q &&
-              dut.voice_load_pending_q &&
-              dut.voice_count_q == 4'h3,
-              "PD/RST test did not establish the drawn U61/U60 state");
+        // U116: each selected U119 capacitor keeps its own source-side plate.
+        // C205=3300 pF is the feedback capacitor. This test's exact virtual
+        // POT3 fixture drives U201 to -65141.
+        checkpoint = 2;
+        reset_all();
+        force dut.voice_count_q = 4'h3;
+        voice_amp_code = 4'h1;
+        phase_event(1'b0);
+        phase_event(1'b1);
+        expected_value = -round_divide_ref(220 * -65141, 3300);
+        check(dut.voice_source_state_q == expected_value &&
+              dut.voice_plate0_q == -24'sd65141 &&
+              dut.voice_plate1_q == 0 &&
+              dut.voice_plate2_q == 0 &&
+              dut.voice_plate3_q == 0,
+              "U116 bit 0 did not transfer C201 charge independently");
+
+        // Open C201 in Phi0. Its plate must retain -65141. Reconnect it with
+        // the drive at AGND and check the equal and opposite retained charge.
+        voice_amp_code = 4'h0;
+        phase_event(1'b0);
+        check(dut.voice_source_state_q == 0 &&
+              dut.voice_plate0_q == -24'sd65141,
+              "open U116 plate lost charge during Phi0 reset");
+        powered_down = 1'b1;
+        phase_event(1'b1);
+        @(negedge clk);
+        voice_amp_code = 4'h1;
+        source_clock();
+        expected_value = -round_divide_ref(220 * 65141, 3300);
+        check(dut.voice_source_state_q == expected_value &&
+              dut.voice_plate0_q == 0,
+              "U116 reconnect did not use the retained C201 plate");
+        release dut.voice_count_q;
+
+        // A simultaneous 7->8 code transition must operate four switches.
+        // It must not use one aggregate code-step table. Bits 0..2 retain
+        // their target plates while bit 3 contributes its own new charge.
+        checkpoint = 3;
+        reset_all();
+        force dut.voice_count_q = 4'h3;
+        voice_amp_code = 4'h7;
+        phase_event(1'b0);
+        phase_event(1'b1);
+        expected_first = -round_divide_ref(1520 * -65141, 3300);
+        check(dut.voice_source_state_q == expected_first,
+              "U116 code 7 did not sum three physical capacitors");
+        @(negedge clk);
+        voice_amp_code = 4'h8;
+        source_clock();
+        expected_second = expected_first -
+            round_divide_ref(1800 * -65141, 3300);
+        check(dut.voice_source_state_q == expected_second &&
+              dut.voice_plate0_q == -24'sd65141 &&
+              dut.voice_plate1_q == -24'sd65141 &&
+              dut.voice_plate2_q == -24'sd65141 &&
+              dut.voice_plate3_q == -24'sd65141,
+              "simultaneous U116 7->8 transition lost retained plate charge");
+        held_value = dut.voice_source_state_q;
+        @(negedge clk);
+        voice_amp_code = 4'h7;
+        source_clock();
+        check(dut.voice_source_state_q == held_value,
+              "disconnecting U116 bit 3 invented a charge transfer");
+        release dut.voice_count_q;
+
+        // U157 has the opposite phase: Phi1 resets selected U158 plates and
+        // Phi0 transfers the bipolar divider drive into C133=3900 pF.
+        checkpoint = 4;
+        reset_all();
+        force dut.noise_d3_q = 4'h0;
+        fric_amp_code = 4'h1;
+        phase_event(1'b1);
+        phase_event(1'b0);
+        expected_value = -round_divide_ref(270 * 301, 3900);
+        check(dut.fric1_source_state_q == expected_value &&
+              dut.fric1_plate0_q == 24'sd301,
+              "U157 bit 0 did not transfer its physical charge");
+
+        // Open C132 for the reset, invert the divider, then reconnect. The
+        // full +301 to -301 plate step must appear once and only once.
+        fric_amp_code = 4'h0;
+        phase_event(1'b1);
+        check(dut.fric1_source_state_q == 0 &&
+              dut.fric1_plate0_q == 24'sd301,
+              "open U157 plate lost charge during Phi1 reset");
+        force dut.noise_d3_q = 4'h8;
+        phase_event(1'b0);
+        @(negedge clk);
+        fric_amp_code = 4'h1;
+        source_clock();
+        expected_value = -round_divide_ref(270 * -602, 3900);
+        check(dut.fric1_source_state_q == expected_value &&
+              dut.fric1_plate0_q == -24'sd301,
+              "U157 reconnect did not transfer its retained plate step");
+        release dut.noise_d3_q;
+
+        // The FL_AMP bank also keeps one plate per switch. Phi0 precharges a
+        // selected plate to raw F5 y. An open plate must keep that voltage
+        // through later y changes and both phases, then reconnect only once.
+        checkpoint = 5;
+        reset_all();
+        force dut.f5_state_q = 24'sd4096;
+        filter_amp_code = 4'h1;
+        source_clock();
+        check(dut.filter_plate0_q == 24'sd4096 &&
+              dut.filter_plate1_q == 0 && dut.filter_plate2_q == 0 &&
+              dut.filter_plate3_q == 0,
+              "FL_AMP bit 0 did not precharge to F5 during Phi0");
+        @(negedge clk);
+        filter_amp_code = 4'h0;
+        source_clock();
+        check(dut.filter_plate0_q == 24'sd4096,
+              "open FL_AMP plate lost its precharged voltage");
+        release dut.f5_state_q;
+        force dut.f5_state_q = -24'sd2048;
+        source_clock();
+        check(dut.filter_plate0_q == 24'sd4096,
+              "open FL_AMP plate followed a Phi0 F5 change");
+        phase_event(1'b1);
+        check(dut.filter_plate0_q == 24'sd4096,
+              "open FL_AMP plate changed at the Phi1 boundary");
+        @(negedge clk);
+        filter_amp_code = 4'h1;
+        source_clock();
+        check(dut.filter_plate0_q == -24'sd2048,
+              "active-Phi1 FL_AMP reconnect did not capture F5");
+        @(negedge clk);
+        filter_amp_code = 4'h0;
+        source_clock();
+        release dut.f5_state_q;
+        force dut.f5_state_q = 24'sd8192;
+        source_clock();
+        check(dut.filter_plate0_q == -24'sd2048,
+              "open FL_AMP plate followed a later Phi1 F5 change");
+        phase_event(1'b0);
+        check(dut.filter_plate0_q == -24'sd2048,
+              "open FL_AMP plate changed at the Phi0 boundary");
+        @(negedge clk);
+        filter_amp_code = 4'h1;
+        source_clock();
+        check(dut.filter_plate0_q == 24'sd8192,
+              "reselected FL_AMP plate did not precharge in Phi0");
+        release dut.f5_state_q;
+
+        // U154/C139-C142 feedback shaper, independent of U152 input drive.
+        // Phi0: s += 12/13*z, then z -= 19/13*delta_s.
+        checkpoint = 6;
+        reset_all();
+        force dut.fric2_source_state_q = 24'sd0;
+        force dut.fric2_shape_state_q = 24'sd1300;
+        #1;
+        release dut.fric2_source_state_q;
+        release dut.fric2_shape_state_q;
+        phase_event(1'b0);
+        check(dut.fric2_source_state_q == 24'sd1200 &&
+              dut.fric2_shape_state_q == -24'sd454,
+              "U154 Phi0 12/13 and 19/13 recurrence is wrong");
+
+        // Phi1 entry leaves s fixed and applies z -= 12/13*s.
+        reset_all();
+        force dut.fric2_source_state_q = 24'sd1300;
+        force dut.fric2_shape_state_q = 24'sd0;
+        #1;
+        release dut.fric2_source_state_q;
+        release dut.fric2_shape_state_q;
+        phase_event(1'b1);
+        check(dut.fric2_source_state_q == 24'sd1300 &&
+              dut.fric2_shape_state_q == -24'sd1200,
+              "U154 Phi1 12/13 transfer is wrong");
+
+        // One full-bank HCC edge gives e=-Csel/3900*delta_d. C140 makes the
+        // U154 response -19/13*e in Phi0 and C140+C141 make it -31/13*e in
+        // Phi1. These checks use the pF values, not expected sound samples.
+        checkpoint = 7;
+        reset_all();
+        force dut.noise_d3_q = 4'h8;
+        source_clock();
+        @(negedge clk);
+        fric_amp_code = 4'hF;
+        source_clock();
+        expected_first = -round_divide_ref(4042 * 602, 3900);
+        force dut.noise_d3_q = 4'h0;
+        source_clock();
+        expected_second = round_divide_ref(-5700 * expected_first, 3900);
+        check(dut.fric2_source_state_q == expected_first &&
+              dut.fric2_shape_state_q == expected_second,
+              "U152/U154 Phi0 HCC edge recurrence is wrong");
+        release dut.noise_d3_q;
+
+        reset_all();
+        force dut.noise_d3_q = 4'h8;
+        source_clock();
+        @(negedge clk);
+        fric_amp_code = 4'hF;
+        source_clock();
+        phase_event(1'b1);
+        force dut.noise_d3_q = 4'h0;
+        source_clock();
+        expected_second = round_divide_ref(-9300 * expected_first, 3900);
+        check(dut.fric2_source_state_q == expected_first &&
+              dut.fric2_shape_state_q == expected_second,
+              "U152/U154 Phi1 HCC edge recurrence is wrong");
+        release dut.noise_d3_q;
+
+        // C150 and C151 see only changes of U152 while Phi1 is active. A
+        // steady absolute U152 level must not be transferred once per phase.
+        checkpoint = 8;
+        reset_all();
+        force dut.noise_d3_q = 4'h8;
+        source_clock();
+        @(negedge clk);
+        fric_amp_code = 4'hF;
+        fric2_sw = 1'b1;
+        source_clock(); // U159C closes and precharges on the grounded bus.
+        phase_event(1'b1);
+        force dut.noise_d3_q = 4'h0;
+        source_clock();
+        expected_value = -round_divide_ref(4042 * 602, 3900);
+        check(dut.c150_phi1_delta_q == expected_value &&
+              dut.c151_phi1_delta_q == expected_value &&
+              dut.c151_source_plate_q == dut.fric2_source_state_q,
+              "C150/C151 did not capture the live Phi1 U152 edge");
+        held_value = dut.c150_phi1_delta_q;
+        source_clock();
+        check(dut.c150_phi1_delta_q == held_value &&
+              dut.c151_phi1_delta_q == held_value,
+              "steady U152 level caused an absolute C150/C151 transfer");
+        phase_event(1'b0);
+        check(dut.c150_phi1_delta_hold_q == 0 &&
+              dut.c151_phi1_delta_hold_q == 0 &&
+              dut.c150_phi1_delta_q == 0 &&
+              dut.c151_phi1_delta_q == 0,
+              "Phi0 created a C150/C151 transfer");
+        force dut.noise_d3_q = 4'h8;
+        source_clock();
+        check(dut.c150_phi1_delta_q == 0 &&
+              dut.c151_phi1_delta_q == 0,
+              "a Phi0 U152 edge leaked into C150/C151");
+        release dut.noise_d3_q;
+
+        // With U159C open, the always-connected C150 path remains and C151
+        // contributes no live delta.
+        reset_all();
+        force dut.noise_d3_q = 4'h8;
+        source_clock();
+        @(negedge clk);
+        fric_amp_code = 4'hF;
+        fric2_sw = 1'b0;
+        source_clock();
+        phase_event(1'b1);
+        force dut.noise_d3_q = 4'h0;
+        source_clock();
+        expected_value = -round_divide_ref(4042 * 602, 3900);
+        check(dut.c150_phi1_delta_q == expected_value &&
+              dut.c151_phi1_delta_q == 0 &&
+              dut.c151_source_plate_q == 0,
+              "open U159C did not isolate C151 from a Phi1 U152 edge");
+        release dut.noise_d3_q;
+
+        // C128 is discharged in Phi0. The same steady U116 output must enter
+        // F1 on every Phi1 as an absolute -2700*x term, never as x[n-1]-x.
+        checkpoint = 9;
+        reset_all();
+        voice_amp_code = 4'hF;
+        force dut.voice_count_q = 4'h3;
+        phase_event(1'b0);
+        phase_event(1'b1);
+        check(dut.voice_source_state_q == 24'sd65536 &&
+              dut.engine_side_delta_q == -25'sd65536,
+              "first C128 transfer was not the absolute U116 level");
+        phase_event(1'b0);
+        phase_event(1'b1);
+        check(dut.voice_source_state_q == 24'sd65536 &&
+              dut.engine_side_delta_q == -25'sd65536,
+              "repeated steady C128 transfer collapsed to zero");
+        release dut.voice_count_q;
+
+        // A U116 switch event may occur while Phi1 is already active. With
+        // zero p/y and code-zero F1/F3 banks, x:0->65536 must first update F1
+        // through C205+C128, then pass that same rounded y1 change through
+        // C127 into F3. A prior-cycle snapshot would leave F3 at zero here.
+        checkpoint = 10;
+        reset_all();
+        f1_code = 4'h0;
+        f3_code = 4'h0;
+        voice_amp_code = 4'h0;
+        force dut.voice_count_q = 4'h3;
+        phase_event(1'b0);
+        phase_event(1'b1);
+        check(dut.f1_state_q == 0 && dut.f1_history_q == 0 &&
+              dut.f3_state_q == 0 && dut.f3_history_q == 0,
+              "mid-Phi1 fixture did not begin with zero F1/F3 charge");
+        @(negedge clk);
+        voice_amp_code = 4'hF;
+        source_clock();
+        check(dut.voice_source_state_q == 24'sd65536,
+              "exact U116 fixture did not produce a +65536 source step");
+        wait_engine_idle();
+        check(dut.f1_history_q == -24'sd30247 &&
+              dut.f1_state_q == 24'sd658,
+              "mid-Phi1 C205/C128 event did not update F1 exactly");
+        check(dut.f3_history_q == -24'sd269 &&
+              dut.f3_state_q == 24'sd47,
+              "C127 did not receive the same-event rounded F1 change");
+        release dut.voice_count_q;
+
+        // Keep one broad run as a topology smoke test. It only checks that
+        // schematic charge reaches every serial formant and U146; it does not
+        // prescribe a pitch, volume, waveform, or tuned sample value.
+        checkpoint = 11;
+        reset_all();
+        force dut.voice_count_q = 4'h3;
+        voice_amp_code = 4'hF;
+        filter_amp_code = 4'hF;
+        f1_code = 4'h8;
+        f2_code = 4'h8;
+        f2_res_code = 4'h8;
+        f3_code = 4'h8;
+        f4_code = 4'h8;
+        repeat (32) begin
+            pulse_noise();
+            phase_pair();
+        end
+        check(dut.f1_state_q != 0 && dut.f2_state_q != 0 &&
+              dut.f3_state_q != 0 && dut.f4_state_q != 0 &&
+              dut.f5_state_q != 0,
+              "U116 charge did not cross the five serial formants");
+        check(dut.output_hold_q != 0 && !dut.engine_overrun_q,
+              "U146 produced no held output or the engine overran");
+        release dut.voice_count_q;
+
+        // PD/RST clears U61 only. It must not reset U60 or the HCC4006/U75
+        // recurrence. This guards the digital source gates used above.
+        reset_all();
+        force dut.voice_count_q = 4'h3;
         @(negedge clk);
         pd_rst_n = 1'b0;
         @(posedge clk);
         #1;
-        check(!dut.pitch_sync1_q && !dut.pitch_sync2_q &&
-              !dut.voice_load_pending_q && dut.voice_count_q == 4'h3,
-              "PD/RST did not clear only U61 while holding U60");
-        @(negedge clk);
+        check(dut.voice_count_q == 4'h3 &&
+              !dut.pitch_sync1_q && !dut.pitch_sync2_q &&
+              !dut.voice_load_pending_q,
+              "PD/RST changed U60 or failed to clear U61");
+        release dut.voice_count_q;
         pd_rst_n = 1'b1;
 
-        // Exact HCC4006/U75 recurrence against an independent reference.
-        reset_all();
-        fric_amp_code = 4'hF;
-        ref_d1 = 1;
-        ref_d2 = 0;
-        ref_d3 = 0;
-        ref_d4 = 0;
-        ref_count = 15;
-        step_noise_count_reference();
-        pulse_noise_count();
-        check(dut.noise_count_q == 4'h1 &&
-              dut.noise_d1_q == 4'h1 &&
-              dut.noise_d2_q == 5'h00 &&
-              dut.noise_d3_q == 4'h0 &&
-              dut.noise_d4_q == 5'h00,
-              "U41C rise did not advance only U75 from F to 1");
-        step_noise_shift_reference();
-        pulse_noise_shift();
-        check(dut.noise_count_q == ref_count[3:0] &&
-              dut.noise_d1_q == ref_d1[3:0] &&
-              dut.noise_d2_q == ref_d2[4:0] &&
-              dut.noise_d3_q == ref_d3[3:0] &&
-              dut.noise_d4_q == ref_d4[4:0],
-              "U41C fall did not shift only U73 with the new U75 force");
-        for (i = 1; i < 8192; i = i + 1) begin
-            step_noise_reference();
-            pulse_noise();
-            check(dut.noise_count_q == ref_count[3:0],
-                  "U75 reference count mismatch");
-            check(dut.noise_count_q >= 4'h1,
-                  "U75 entered the forbidden zero count");
-            check(dut.noise_d1_q == ref_d1[3:0],
-                  "HCC4006 D1 mismatch");
-            check(dut.noise_d2_q == ref_d2[4:0],
-                  "HCC4006 D2 mismatch");
-            check(dut.noise_d3_q == ref_d3[3:0],
-                  "HCC4006 D3 mismatch");
-            check(dut.noise_d4_q == ref_d4[4:0],
-                  "HCC4006 D4 mismatch");
-        end
-        step_noise_reference();
-        pulse_noise();
-        check(dut.noise_count_q == ref_count[3:0] &&
-              dut.noise_d1_q == ref_d1[3:0] &&
-              dut.noise_d2_q == ref_d2[4:0] &&
-              dut.noise_d3_q == ref_d3[3:0] &&
-              dut.noise_d4_q == ref_d4[4:0],
-              "next U41C rise/fall pair left the exact recurrence");
-        powered_down = 1'b1;
-        step_noise_reference();
-        pulse_noise();
-        check(dut.noise_count_q == ref_count[3:0] &&
-              dut.noise_d4_q == ref_d4[4:0],
-              "power-down incorrectly froze digital noise state");
-        powered_down = 1'b0;
-
-        // With PW3 high and U62.Q low, exact U104C/U85C holds U62 reset and
-        // suppresses U41C. A phone name does not override those gates.
-        reset_all();
-        phase_noise_test_enable = 1'b1;
-        write_phase_register(3'd1, 8'hFF);
-        write_phase_register(3'd2, 8'hFF);
-        // DR=10 selects immediate pitch so I=FFF reaches U59 at once.
-        write_phase_register(3'd0, 8'hB0);
-        write_phase_register(3'd3, 8'h70);
-        // Reset loads the first raw-voice interval for I=000.  Cross that
-        // retained interval, then prove the direct I=FFF reload repeats.
-        for (i = 0; i < 20000; i = i + 1)
-            pulse_phase_xck(phase_seen);
-        check(phase_pw_3,
-              "native S phone did not hold the PW3 lower-ROM state");
-        check(phase_fric_amp_code != 4'h0,
-              "native S phone left the FRIC_AMP bank at zero");
-        previous_value = phase_noise_edges;
-        repeat (128)
-            pulse_phase_xck(phase_seen);
-        check(phase_core.u104c && phase_core.u62_reset &&
-              !phase_core.u41c_level &&
-              phase_noise_edges == previous_value,
-              "PW3/U62 reset phase did not suppress U41C exactly");
-
-        // Isolate the exact prerequisites for a free U62: U68 at its binary up
-        // terminal, PW3 low, and a nonzero voice bank. With I=FFF, U62 rises
-        // every eight effective XCK ticks and U60 loads on the next Phi1.
-        force phase_core.ampct_q = 4'd15;
-        force phase_core.pw_3_q = 1'b0;
-        force phase_core.voice_amp_code_q = 4'hF;
-        #1;
-        check(!phase_core.u62_reset,
-              "exact U68 terminal prerequisites did not release U62");
-        phase_audio_enable = 1'b1;
-        phase_voice_loads = 0;
-        phase_voice_gap = 0;
-        phase_ticks_since_load = 0;
-        phase_u62_rises = 0;
-        phase_u62_gap = 0;
-        phase_ticks_since_u62 = 0;
-        phase_prior_load_pending = phase_audio.voice_load_pending_q;
-        phase_prior_voice_toggle = phase_voice_toggle;
-        for (i = 0; i < 64; i = i + 1) begin
-            pulse_phase_xck(phase_seen);
-            phase_ticks_since_load = phase_ticks_since_load + 1;
-            phase_ticks_since_u62 = phase_ticks_since_u62 + 1;
-            if (!phase_prior_voice_toggle && phase_voice_toggle) begin
-                phase_u62_rises = phase_u62_rises + 1;
-                if (phase_u62_rises == 2)
-                    phase_u62_gap = phase_ticks_since_u62;
-                phase_ticks_since_u62 = 0;
-            end
-            if (phase_prior_load_pending &&
-                !phase_audio.voice_load_pending_q &&
-                phase_audio.voice_count_q == 4'h3) begin
-                phase_voice_loads = phase_voice_loads + 1;
-                // Ignore the two-stage U61 synchronizer fill event.  The next
-                // full core-driven rising-to-rising interval must be exact.
-                if (phase_voice_loads == 3)
-                    phase_voice_gap = phase_ticks_since_load;
-                phase_ticks_since_load = 0;
-            end
-            phase_prior_load_pending = phase_audio.voice_load_pending_q;
-            phase_prior_voice_toggle = phase_voice_toggle;
-        end
-        check(phase_u62_rises >= 2 && phase_u62_gap == 8,
-              "I=FFF U62 rising interval was not eight XCK ticks");
-        check(phase_voice_loads >= 3,
-              "U61/U34 did not load U60 on repeated Phi1 boundaries");
-        check(phase_voice_gap == 8,
-              "I=FFF U60 excitation interval was not eight XCK ticks");
-        release phase_core.ampct_q;
-        release phase_core.pw_3_q;
-        release phase_core.voice_amp_code_q;
-
-        // A high phase starts exactly 34 registered engine clocks.  A phase
-        // inside that window must set the sticky diagnostic, not restart it.
-        reset_all();
-        voice_amp_code = 4'hF;
-        filter_amp_code = 4'hF;
-        pulse_filter(1'b0);
-        @(negedge clk);
-        filter_phase = 1'b1;
-        filter_phase_ce = 1'b1;
-        @(negedge clk);
-        filter_phase_ce = 1'b0;
-        engine_cycles = 0;
-        while (dut.engine_busy_q) begin
-            @(negedge clk);
-            engine_cycles = engine_cycles + 1;
-        end
-        check(engine_cycles == 34,
-              "registered charge engine did not take 34 clocks");
-
-        @(negedge clk);
-        filter_phase_ce = 1'b1;
-        @(negedge clk);
-        filter_phase_ce = 1'b0;
-        repeat (4) @(negedge clk);
-        filter_phase = 1'b0;
-        filter_phase_ce = 1'b1;
-        @(negedge clk);
-        filter_phase_ce = 1'b0;
-        check(dut.engine_overrun_q,
-              "phase collision did not set the scheduler diagnostic");
-        wait_engine_idle();
-
-        // F1 and F3 each use a drawn one-pair history path.  Drive one
-        // coherent step into each side input, then remove it and prove the
-        // retained prior sample participates in the next charge update.
-        reset_all();
-        f1_code = 4'h8;
-        pulse_filter(1'b0);
-        force dut.voice_source_after_phi1 = 24'sd65536;
-        pulse_filter(1'b1);
-        release dut.voice_source_after_phi1;
-        check(dut.f1_state_q == 24'sd4076 &&
-              dut.f1_history_q == -24'sd30248 &&
-              dut.f1_input_history_q == 24'sd65536,
-              "F1 first charge step changed its rounded p/y result");
-        force dut.voice_source_after_phi1 = 24'sd0;
-        pulse_filter(1'b1);
-        release dut.voice_source_after_phi1;
-        check(dut.f1_state_q == 24'sd5918 &&
-              dut.f1_history_q == -24'sd13666 &&
-              dut.f1_input_history_q == 0,
-              "F1 prior-input step changed its rounded p/y result");
-
-        reset_all();
-        f3_code = 4'h8;
-        pulse_filter(1'b0);
-        force dut.f3_input_q = 24'sd0;
-        force dut.f3_side_input_q = 24'sd65536;
-        pulse_filter(1'b1);
-        release dut.f3_input_q;
-        release dut.f3_side_input_q;
-        check(dut.f3_state_q == 24'sd13999 &&
-              dut.f3_history_q == -24'sd26748 &&
-              dut.f3_side_history_q == 24'sd65536,
-              "F3 first side step changed its rounded p/y result");
-        force dut.f3_side_input_q = 24'sd0;
-        pulse_filter(1'b1);
-        release dut.f3_side_input_q;
-        check(dut.f3_state_q == 24'sd7596 &&
-              dut.f3_history_q == 24'sd12234 &&
-              dut.f3_side_history_q == 0,
-              "F3 prior-side step changed its rounded p/y result");
-
-        // C143 keeps the U157-side plate behind U159D. Closed, a steady source
-        // s produces exactly 0-s after the Phi1 reset. Open, the plate floats
-        // and produces no delta. Reconnect contributes held-s once.
-        reset_all();
-        force dut.f2_input_q = 24'sd0;
-        force dut.fric1_source = 24'sd65536;
-        fric1_sw = 1'b1;
-        pulse_filter(1'b0);
-        check(dut.c143_source_plate_q == 24'sd65536 &&
-              dut.c143_phi0_delta_q == -25'sd65536,
-              "closed C143 did not accumulate exact 0-s charge");
-        repeat (2) @(posedge clk);
-        #1;
-        check(dut.c143_source_plate_q == 24'sd65536 &&
-              dut.c143_phi0_delta_q == -25'sd65536,
-              "closed steady C143 source added more than 0-s");
-        pulse_filter(1'b1);
-        check(dut.c143_delta_hold_q == -25'sd65536 &&
-              dut.c143_source_plate_q == 24'sd0 &&
-              dut.f2_state_q == -24'sd9636 &&
-              dut.f2_history_q == 0,
-              "closed Phi1 did not snapshot C143 and reset its source plate");
-
-        // Open U159D before Phi1. The reset cannot reach the held source
-        // plate, even though the completed Phi0 delta still reaches F2.
-        pulse_filter(1'b0);
-        fric1_sw = 1'b0;
-        pulse_filter(1'b1);
-        check(dut.c143_source_plate_q == 24'sd65536 &&
-              dut.c143_delta_hold_q == -25'sd65536,
-              "open C143 source plate did not survive Phi1");
-
-        // While open, a new U157 level must neither move the plate nor add
-        // charge at the next boundary.
-        force dut.fric1_source = -24'sd65536;
-        pulse_filter(1'b0);
-        repeat (2) @(posedge clk);
-        #1;
-        check(dut.c143_source_plate_q == 24'sd65536 &&
-              dut.c143_phi0_delta_q == 25'sd0,
-              "open C143 did not hold its plate with zero delta");
-        pulse_filter(1'b1);
-        check(dut.c143_source_plate_q == 24'sd65536 &&
-              dut.c143_delta_hold_q == 25'sd0,
-              "open Phi1 reset or injected C143 charge");
-
-        // Reconnect in Phi0 with held=+65536 and s=-65536. The one retained
-        // source-plate difference is +131072; closed Phi1 then resets it.
-        pulse_filter(1'b0);
-        fric1_sw = 1'b1;
-        @(posedge clk);
-        #1;
-        check(dut.c143_source_plate_q == -24'sd65536 &&
-              dut.c143_phi0_delta_q == 25'sd131072,
-              "C143 reconnect did not inject exact held-s charge");
-        pulse_filter(1'b1);
-        check(dut.c143_delta_hold_q == 25'sd131072 &&
-              dut.c143_source_plate_q == 24'sd0,
-              "closed Phi1 did not snapshot and reset reconnected C143");
-        release dut.f2_input_q;
-        release dut.fric1_source;
-
-        // C150 is always connected to U152.  C151 has an independent history
-        // which holds while U159C is open and rejoins only on reconnect.
-        reset_all();
-        force dut.f5_input_q = 24'sd0;
-        force dut.fric2_source_phi0_q = 24'sd65536;
-        force dut.fric2_sw_phi0_q = 1'b0;
-        pulse_filter(1'b1);
-        release dut.f5_input_q;
-        release dut.fric2_source_phi0_q;
-        release dut.fric2_sw_phi0_q;
-        check(dut.f5_history_q == -24'sd20204 &&
-              dut.f5_state_q == 24'sd27524 &&
-              dut.fric2_base_history_q == 24'sd65536 &&
-              dut.fric2_sw_history_q == 0,
-              "switch-low FRIC2 did not retain the C150 path");
-
-        reset_all();
-        force dut.f5_input_q = 24'sd0;
-        force dut.fric2_source_phi0_q = 24'sd65536;
-        force dut.fric2_sw_phi0_q = 1'b1;
-        pulse_filter(1'b1);
-        release dut.f5_input_q;
-        release dut.fric2_source_phi0_q;
-        release dut.fric2_sw_phi0_q;
-        check(dut.f5_history_q == -24'sd85212 &&
-              dut.f5_state_q == 24'sd116085 &&
-              dut.fric2_base_history_q == 24'sd65536 &&
-              dut.fric2_sw_history_q == 24'sd65536,
-              "C150 and C151 did not sum before one F5 round");
-        @(negedge clk);
-        force dut.f5_state_q = 24'sd0;
-        force dut.f5_history_q = 24'sd0;
-        @(negedge clk);
-        release dut.f5_state_q;
-        release dut.f5_history_q;
-        force dut.fric2_source_phi0_q = -24'sd65536;
-        force dut.fric2_sw_phi0_q = 1'b0;
-        pulse_filter(1'b1);
-        release dut.fric2_source_phi0_q;
-        release dut.fric2_sw_phi0_q;
-        check(dut.fric2_base_history_q == -24'sd65536 &&
-              dut.fric2_sw_history_q == 24'sd65536,
-              "open C151 did not hold separately from live C150");
-        @(negedge clk);
-        force dut.f5_state_q = 24'sd0;
-        force dut.f5_history_q = 24'sd0;
-        @(negedge clk);
-        release dut.f5_state_q;
-        release dut.f5_history_q;
-        force dut.fric2_source_phi0_q = 24'sd0;
-        force dut.fric2_sw_phi0_q = 1'b1;
-        pulse_filter(1'b1);
-        release dut.fric2_source_phi0_q;
-        release dut.fric2_sw_phi0_q;
-        check(dut.f5_history_q == 24'sd44804 &&
-              dut.f5_state_q == -24'sd61037 &&
-              dut.fric2_base_history_q == 0 &&
-              dut.fric2_sw_history_q == 0,
-              "C151 reconnect did not preserve its independent history");
-
-        // Run all five persistent tract sections through the registered lanes.
-        reset_all();
-        voice_amp_code = 4'hF;
-        filter_amp_code = 4'hF;
-        f1_code = 4'h8;
-        f2_code = 4'h8;
-        f2_res_code = 4'h8;
-        f3_code = 4'h8;
-        f4_code = 4'h8;
-        set_voice_toggle(1'b1);
-        repeat (48) begin
-            pulse_noise();
-            pulse_filter_pair();
-        end
-        check(dut.f1_state_q != 0 && dut.f1_history_q != 0,
-              "F1 charge section did not become active");
-        check(dut.f2_state_q != 0 && dut.f2_history_q != 0,
-              "F2 charge section did not become active");
-        check(dut.f3_state_q != 0 && dut.f3_history_q != 0,
-              "F3 charge section did not become active");
-        check(dut.f4_state_q != 0 && dut.f4_history_q != 0,
-              "F4 charge section did not become active");
-        check(dut.f5_state_q != 0 && dut.f5_history_q != 0,
-              "fixed F5 charge section did not become active");
-
-        held_f1 = dut.f1_state_q;
-        held_f1_charge = dut.f1_history_q;
-        held_f1_input_history = dut.f1_input_history_q;
-        held_f2 = dut.f2_state_q;
-        held_f2_charge = dut.f2_history_q;
-        held_f3 = dut.f3_state_q;
-        held_f3_charge = dut.f3_history_q;
-        held_f3_side_history = dut.f3_side_history_q;
-        held_f4 = dut.f4_state_q;
-        held_f4_charge = dut.f4_history_q;
-        held_f5 = dut.f5_state_q;
-        held_f5_charge = dut.f5_history_q;
-        f1_code = 4'hF;
-        f2_code = 4'h1;
-        f2_res_code = 4'hF;
-        f3_code = 4'h2;
-        f4_code = 4'h4;
-        @(negedge clk);
-        check(dut.f1_state_q == held_f1 &&
-              dut.f1_history_q == held_f1_charge &&
-              dut.f1_input_history_q == held_f1_input_history &&
-              dut.f2_state_q == held_f2 &&
-              dut.f2_history_q == held_f2_charge &&
-              dut.f3_state_q == held_f3 &&
-              dut.f3_history_q == held_f3_charge &&
-              dut.f3_side_history_q == held_f3_side_history &&
-              dut.f4_state_q == held_f4 &&
-              dut.f4_history_q == held_f4_charge &&
-              dut.f5_state_q == held_f5 &&
-              dut.f5_history_q == held_f5_charge,
-              "a code change reset persistent y/p or side history state");
-        pulse_filter_pair();
-        check(dut.f1_state_q != held_f1 && dut.f2_state_q != held_f2 &&
-              dut.f3_state_q != held_f3 && dut.f4_state_q != held_f4 &&
-              dut.f5_state_q != held_f5,
-              "one shared FILT phase did not update every section");
-        check(!dut.engine_overrun_q,
-              "resonator scheduler exceeded the phase gap");
-
-        // C143 enters F2's second integrator.  It must leave F1 idle, then
-        // cross the rest of F2 and the serial F3/F4/F5 tract.
-        reset_all();
-        fric1_sw = 1'b1;
-        fric2_sw = 1'b0;
-        fric_amp_code = 4'hF;
-        filter_amp_code = 4'hF;
-        f3_code = 4'h8;
-        f4_code = 4'h8;
-        repeat (64) begin
-            pulse_noise();
-            pulse_filter_pair();
-        end
-        check(dut.f1_state_q == 0,
-              "FRIC_1 leaked upstream of F2");
-        check(dut.f2_state_q != 0 && dut.f3_state_q != 0 &&
-              dut.f4_state_q != 0 &&
-              dut.f5_state_q != 0,
-              "FRIC_1 did not traverse F2 through F5");
-        pulse_audio_tick();
-        check(audio_sample != 0,
-              "FRIC_1 tract injection did not reach reconstructed PCM");
-
-        // C150/C151 enter F5's first integrator.  Only F5 may become active.
-        reset_all();
-        fric1_sw = 1'b0;
-        fric2_sw = 1'b1;
-        fric_amp_code = 4'hF;
-        filter_amp_code = 4'hF;
-        repeat (64) begin
-            pulse_noise();
-            pulse_filter_pair();
-        end
-        check(dut.f1_state_q == 0 && dut.f2_state_q == 0 &&
-              dut.f3_state_q == 0 && dut.f4_state_q == 0,
-              "FRIC_2 leaked upstream of the F4/F5 injection node");
-        check(dut.f5_state_q != 0,
-              "FRIC_2 did not traverse fixed F5");
-        pulse_audio_tick();
-        check(audio_sample != 0,
-              "FRIC_2 tract injection did not reach reconstructed PCM");
-
-        // The F2 RES bank loads the first integrator.  Higher codes lower
-        // alpha and a, so code F must damp an impulse faster than code 0.
-        reset_all();
-        f2_code = 4'h8;
-        f2_res_code = 4'h0;
-        pulse_filter(1'b0);
-        deposit_f2_impulse();
-        repeat (10) pulse_filter(1'b1);
-        energy_low = pair_magnitude(dut.f2_state_q, dut.f2_history_q);
-        reset_all();
-        f2_code = 4'h8;
-        f2_res_code = 4'hF;
-        pulse_filter(1'b0);
-        deposit_f2_impulse();
-        repeat (10) pulse_filter(1'b1);
-        energy_high = pair_magnitude(dut.f2_state_q, dut.f2_history_q);
-        check(energy_high < energy_low,
-              "F2 resonance code did not increase charge damping");
-
-        // U146 must combine both wide products before one Q14 round.  These
-        // vectors guard the C172 recurrence, FL_AMP scale, and delta sign.
-        force dut.product_a_q = 42'sd16086000;  // 16086 * 1000
-        force dut.product_b_q = -42'sd6709000; // 6709 * -1000
-        #1;
-        check(dut.engine_output_next == 24'sd572,
-              "U146 full-code recurrence missed its exact one-round result");
-        release dut.product_a_q;
-        release dut.product_b_q;
-        force dut.product_a_q = 42'sd16086000;
-        force dut.product_b_q = 42'sd0;
-        #1;
-        check(dut.engine_output_next == 24'sd982,
-              "U146 code-zero recurrence did not retain 2700/2750");
-        release dut.product_a_q;
-        release dut.product_b_q;
-
-        // The registered timing split must preserve old F5 minus new F5.
-        force dut.output_old_state_q = 24'sd1000;
-        force dut.f5_state_q = -24'sd1000;
-        force dut.engine_busy_q = 1'b1;
-        force dut.engine_stage_q = 4'd9;
-        @(posedge clk);
-        #1;
-        release dut.output_old_state_q;
-        release dut.f5_state_q;
-        release dut.engine_busy_q;
-        release dut.engine_stage_q;
-        #1;
-        check(dut.output_sum_q == 25'sd2000,
-              "U146 delta was not old F5 minus new F5");
-        reset_all();
-
-        // FL_AMP transfers the F5 change into U146.  Code zero removes the
-        // new input term but C172 must retain 2700/2750 of the prior output.
-        reset_all();
-        voice_amp_code = 4'hF;
-        filter_amp_code = 4'hF;
-        f1_code = 4'h8;
-        f2_code = 4'h8;
-        f2_res_code = 4'h8;
-        f3_code = 4'h8;
-        f4_code = 4'h8;
-        set_voice_toggle(1'b1);
-        repeat (48) pulse_filter_pair();
-        check(dut.f5_state_q != 0 && dut.reconstruction_hold_q != 0,
-              "full filter-amplitude code produced no tract output");
-        held_output = dut.output_hold_q;
-        filter_amp_code = 4'h0;
-        pulse_filter_pair();
-        check(dut.output_hold_q != 0 &&
-              sample_magnitude(dut.output_hold_q) <
-                  sample_magnitude(held_output) &&
-              dut.reconstruction_hold_q == held_output,
-              "C172 did not retain and decay U146 at FL_AMP zero");
-        check(dut.f1_state_q != 0 && dut.f5_state_q != 0,
-              "filter-amplitude code zero erased tract state");
-
-        // U145D/CLOSURE copies the completed U146 hold into C100/U148.  Low
-        // holds; it never discharges the internal or reconstructed node.
-        reset_all();
-        voice_amp_code = 4'hF;
-        filter_amp_code = 4'hF;
-        f1_code = 4'h8;
-        f2_code = 4'h8;
-        f2_res_code = 4'h8;
-        f3_code = 4'h8;
-        f4_code = 4'h8;
-        set_voice_toggle(1'b1);
-        repeat (48) pulse_filter_pair();
-        pulse_audio_tick();
-        held_sample = audio_sample;
-        check(held_sample != 0, "active filter produced no held output");
-        repeat (4) pulse_filter_pair();
-        check(audio_sample == held_sample,
-              "sample changed without an audio tick");
-        pulse_audio_tick();
-        held_sample = audio_sample;
-        held_output = dut.output_hold_q;
-        closure = 1'b1;
-        @(negedge clk);
-        pulse_audio_tick();
-        closure = 1'b0;
-        check(dut.output_hold_q == held_output &&
-              dut.reconstruction_hold_q == held_output,
-              "closure did not copy U146 into the C100/U148 hold");
-        held_reconstruction = dut.reconstruction_hold_q;
-        repeat (4) @(negedge clk);
-        check(dut.reconstruction_hold_q == held_reconstruction,
-              "open closure switch did not hold C100/U148");
-        check(dut.f1_state_q != 0 && dut.f4_state_q != 0,
-              "closure erased persistent formant state");
-        pulse_filter_pair();
-        pulse_audio_tick();
-        check(audio_sample != 0, "output did not resume after closure");
-
-        // Sheets 1 and 2 have no decoded-phone switch after U148. Only the
-        // chip power state may mute the held output at the PCM boundary.
-        reset_all();
-        @(negedge clk);
-        force dut.output_hold_q = 24'sd65536;
-        closure = 1'b1;
-        @(posedge clk);
-        #1;
-        closure = 1'b0;
-        release dut.output_hold_q;
-        check(dut.reconstruction_hold_q == 24'sd65536,
-              "closure did not seed the natural U148 tail test");
-        pulse_audio_tick();
-        check(audio_sample != 0,
-              "known U148 level did not reach the PCM boundary");
-        powered_down = 1'b1;
-        pulse_audio_tick();
-        check(audio_sample == 0,
-              "powerdown did not mute the PCM boundary");
-        reset_all();
-
-        // Exhaust every FILT divider code through the native core boundary.
-        reset_all();
-        write_phase_register(3'd1, 8'hFF);
-        write_phase_register(3'd2, 8'h0F);
-        write_phase_register(3'd0, 8'h80);
-        write_phase_register(3'd3, 8'h00);
-        for (i = 0; i < 256; i = i + 1) begin
-            write_phase_filter(i[7:0]);
-            wait_phase_terminal();
-            interval = 0;
-            phase_seen = 1'b0;
-            while (!phase_seen) begin
-                pulse_phase_xck(phase_seen);
-                interval = interval + 1;
-            end
-            check(interval == (256 - i),
-                  "FILT divider interval was not 256-FF");
-        end
-
-        // FF is maximum phase rate, never a mute shortcut.  Slow the test's
-        // artificial XCK pulses enough to model the real fabric-clock gap.
-        write_phase_filter(8'hFF);
-        wait_phase_terminal();
-        // Hold the same exact U68 terminal prerequisites used above, then
-        // stop on a fresh U62 rise so Phi sampling sees one real voice pulse.
-        force phase_core.ampct_q = 4'd15;
-        force phase_core.pw_3_q = 1'b0;
-        force phase_core.voice_amp_code_q = 4'hF;
-        while (phase_voice_toggle)
-            pulse_phase_xck(phase_seen);
-        while (!phase_voice_toggle)
-            pulse_phase_xck(phase_seen);
-        phase_audio_enable = 1'b1;
-        repeat (96) begin
-            pulse_phase_xck_slow(phase_seen);
-            check(phase_seen, "FILT=FF missed an XCK phase event");
-        end
-        pulse_audio_tick();
-        check(phase_audio.f1_state_q != 0 &&
-              phase_audio.f5_state_q != 0,
-              "FILT=FF did not update every voice section");
-        check(phase_audio_sample != 0,
-              "FILT=FF incorrectly muted the held output");
-        check(!phase_audio.engine_overrun_q,
-              "FF phase rate overran the scheduled engine");
-        release phase_core.ampct_q;
-        release phase_core.pw_3_q;
-        release phase_core.voice_amp_code_q;
+        check(numerator_alignment_cases != 0 &&
+              numerator_stages_seen == 12'hFFF,
+              "pre-numerator register alignment did not cover all engine stages");
 
         if (failures == 0)
-            $display("SSI263 SC02 AUDIO PASS");
+            $display("SSI263 SC02 AUDIO PASS: %0d divider vectors, %0d reciprocal constants",
+                     divider_cases, reciprocal_constant_cases);
         else
             $display("SSI263 SC02 AUDIO FAIL: %0d checks", failures);
         $finish;

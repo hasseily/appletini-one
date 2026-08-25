@@ -135,6 +135,7 @@ module ssi263_sc02_core #(
     logic [3:0] articulation_edges_left_q;
     logic [3:0] inflection_edges_left_q;
     logic [7:0] transitioned_inflection_q;
+    logic       transitioned_inflection_seeded_q;
     logic [1:0] slow_div_q;
     logic       selector_phase_q;
     logic       selector_latch_phase_q;
@@ -584,6 +585,7 @@ module ssi263_sc02_core #(
             articulation_edges_left_q <= movement_edge_count(3'h0);
             inflection_edges_left_q <= movement_edge_count(3'h0);
             transitioned_inflection_q <= 8'h00;
+            transitioned_inflection_seeded_q <= 1'b0;
 
             slow_div_q <= 2'd0;
             selector_phase_q <= 1'b0;
@@ -1030,6 +1032,24 @@ module ssi263_sc02_core #(
                             control_articulation_amplitude_q <=
                                 write_data_hold_q;
                             phone_active_q <= 1'b1;
+
+                            // U65/U64 have no reset input, so their physical
+                            // power-up count is undefined. Seed the FPGA once
+                            // from the current register target rather than
+                            // turn the arbitrary zero into an audible glide.
+                            // DR=00 retains the prior pitch mode; include it
+                            // when that mode is transitioned so the same cold
+                            // state cannot leak through its compatibility path.
+                            if (!transitioned_inflection_seeded_q &&
+                                (duration_phoneme_q[7:6] ==
+                                     MODE_PHONEME_TRANSITIONED ||
+                                 (duration_phoneme_q[7:6] == 2'b00 &&
+                                  transitioned_pitch_q))) begin
+                                transitioned_inflection_q <=
+                                    transitioned_inflection_target;
+                                transitioned_inflection_seeded_q <= 1'b1;
+                                inflection_step_ce_q <= 1'b0;
+                            end
 
                             case (duration_phoneme_q[7:6])
                                 MODE_PHONEME_TRANSITIONED: begin

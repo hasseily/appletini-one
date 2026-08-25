@@ -811,6 +811,36 @@ module tb_phasor_dual_ssi263;
         check_q3_div2_path("Echo+ mode");
         hard_reset();
 
+        // Each physical socket owns its undefined U65/U64 cold-state seed.
+        // Waking one die must not consume or change the other die's seed.
+        apple_write(SLOT_BASE + 16'h0021, 8'h50);
+        apple_write(SLOT_BASE + 16'h0022, 8'hA8);
+        apple_write(SLOT_BASE + 16'h0020, 8'hC0);
+        apple_write(SLOT_BASE + 16'h0041, 8'hA0);
+        apple_write(SLOT_BASE + 16'h0042, 8'h57);
+        apple_write(SLOT_BASE + 16'h0040, 8'hC0);
+        check(!dut.ssi263_secondary_i.core_i.transitioned_inflection_seeded_q &&
+              !dut.ssi263_primary_i.core_i.transitioned_inflection_seeded_q,
+              "hard reset did not arm both independent pitch seeds");
+        apple_write(SLOT_BASE + 16'h0023, 8'h5C);
+        check(dut.ssi263_secondary_i.core_i.transitioned_inflection_seeded_q &&
+              dut.ssi263_secondary_i.core_i.transitioned_inflection_state ==
+                  8'h50 &&
+              dut.ssi263_secondary_i.core_i.pitch_inflection == 12'hA80 &&
+              !dut.ssi263_primary_i.core_i.transitioned_inflection_seeded_q &&
+              dut.ssi263_primary_i.core_i.powered_down,
+              "A5 wake consumed or changed the A6 pitch seed");
+        apple_write(SLOT_BASE + 16'h0043, 8'h5C);
+        check(dut.ssi263_primary_i.core_i.transitioned_inflection_seeded_q &&
+              dut.ssi263_primary_i.core_i.transitioned_inflection_state ==
+                  8'hA0 &&
+              dut.ssi263_primary_i.core_i.pitch_inflection == 12'h507 &&
+              dut.ssi263_secondary_i.core_i.transitioned_inflection_state ==
+                  8'h50 &&
+              dut.ssi263_secondary_i.core_i.pitch_inflection == 12'hA80,
+              "A6 wake did not keep both pitch seeds independent");
+        hard_reset();
+
         // A5, A6, and A5+A6 writes must hit only the decoded physical sockets.
         apple_write(SLOT_BASE + 16'h0021, 8'h5A);
         check(dut.ssi263_secondary_i.core_i.inflection_high_q == 8'h5A,

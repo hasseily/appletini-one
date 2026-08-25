@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Cycle reference for the native SSI-263A / SC-02 control interface.
 
-This model contains only behavior supported by the manufacturer documents,
-the supplied SC-02 reconstruction, or real-card mb-audit results.  It models
-the reconstructed rate, articulation, inflection, ROM scan, and held control
-state.  It does not model the analog filter and source equations.
+This model contains behavior supported by the manufacturer documents, the
+supplied SC-02 reconstruction, or real-card mb-audit results, plus explicitly
+marked deterministic FPGA states where the physical part powers up undefined.
+It models the reconstructed rate, articulation, inflection, ROM scan, and held
+control state.  It does not model the analog filter and source equations.
 """
 
 from __future__ import annotations
@@ -259,6 +260,7 @@ class SSI263Reference:
     last_inflection_tick: int | None = None
 
     transitioned_inflection: int = 0
+    transitioned_inflection_seeded: bool = False
     u37_count: int = 0
     u29a_level: bool = True
     u183a_q: bool = True
@@ -531,6 +533,24 @@ class SSI263Reference:
                 self.ar_enabled = False
             elif old_power_down:
                 requested_mode = self.duration
+                uses_transitioned_pitch = (
+                    requested_mode == MODE_PHONEME_TRANSITIONED
+                    or (
+                        requested_mode == MODE_REQUEST_DISABLED
+                        and self.response_mode == MODE_PHONEME_TRANSITIONED
+                    )
+                )
+                if (
+                    uses_transitioned_pitch
+                    and not self.transitioned_inflection_seeded
+                ):
+                    # U65/U64 have no physical reset. Use the current
+                    # register target as the deterministic FPGA power-up
+                    # state, then retain normal movement for the die lifetime.
+                    self.transitioned_inflection = (
+                        self.transitioned_inflection_target
+                    )
+                    self.transitioned_inflection_seeded = True
                 if requested_mode != MODE_REQUEST_DISABLED:
                     self.response_mode = requested_mode
                     self.ar_enabled = True

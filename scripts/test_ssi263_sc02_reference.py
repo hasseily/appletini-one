@@ -9,6 +9,7 @@ from hashlib import sha256
 
 from ssi263_sc02_reference import (
     MODE_FRAME_IMMEDIATE,
+    MODE_PHONEME_IMMEDIATE,
     MODE_PHONEME_TRANSITIONED,
     ROM_ACTIVE_SHA256,
     ROM_ACTIVE_SIZE,
@@ -270,6 +271,103 @@ class InterfaceTests(unittest.TestCase):
         chip.end_write()
         self.assertEqual(chip.filter_frequency, 0xE9)
 
+    def test_first_transitioned_wake_seeds_programmed_pitch_once(self) -> None:
+        chip = SSI263Reference(div2=False)
+        chip.write(1, 0x50)
+        chip.write(2, 0xA8)
+        self.assertFalse(chip.transitioned_inflection_seeded)
+        self.assertEqual(chip.transitioned_inflection, 0)
+
+        self.wake(chip, 0xC0)
+
+        self.assertTrue(chip.transitioned_inflection_seeded)
+        self.assertEqual(chip.transitioned_inflection, 0x50)
+        self.assertEqual(chip.pitch_inflection, 0xA80)
+        for _ in range(5):
+            chip.write(1, 0x50)
+            chip.write(2, 0xA8)
+            chip.write(0, 0x0E)
+            chip.advance_effective_ticks(frame_ticks(0x0A))
+            self.assertEqual(chip.transitioned_inflection, 0x50)
+            self.assertEqual(chip.pitch_inflection, 0xA80)
+
+        chip.write(3, 0x80)
+        chip.write(1, 0x20)
+        self.wake(chip, 0xC0)
+        self.assertEqual(chip.transitioned_inflection, 0x50)
+        chip.advance_effective_ticks(inflection_step_ticks(0x0A, 0))
+        self.assertEqual(chip.transitioned_inflection, 0x4F)
+
+    def test_transition_wake_before_pitch_write_consumes_zero_seed(self) -> None:
+        chip = SSI263Reference(div2=False)
+
+        self.wake(chip, 0xC0)
+
+        self.assertTrue(chip.transitioned_inflection_seeded)
+        self.assertEqual(chip.transitioned_inflection, 0)
+        chip.write(1, 0x50)
+        chip.write(2, 0xA8)
+        self.assertEqual(chip.transitioned_inflection, 0)
+
+    def test_immediate_and_frame_wakes_defer_transition_seed(self) -> None:
+        for mode in (MODE_PHONEME_IMMEDIATE, MODE_FRAME_IMMEDIATE):
+            with self.subTest(mode=mode):
+                chip = SSI263Reference(div2=False)
+                chip.write(1, 0x50)
+                chip.write(2, 0xA8)
+                self.wake(chip, mode << 6)
+                self.assertEqual(chip.response_mode, mode)
+                self.assertFalse(chip.transitioned_inflection_seeded)
+                self.assertEqual(chip.pitch_inflection, 0xA80)
+
+                chip.write(3, 0x80)
+                self.wake(chip, 0xC0)
+                self.assertEqual(
+                    chip.response_mode, MODE_PHONEME_TRANSITIONED
+                )
+                self.assertTrue(chip.transitioned_inflection_seeded)
+                self.assertEqual(chip.transitioned_inflection, 0x50)
+
+    def test_dr_zero_wake_seeds_retained_transition_mode(self) -> None:
+        chip = SSI263Reference(div2=False)
+        chip.write(1, 0x50)
+        chip.write(2, 0xA8)
+
+        self.wake(chip, 0x00)
+
+        self.assertEqual(chip.response_mode, MODE_PHONEME_TRANSITIONED)
+        self.assertFalse(chip.ar_enabled)
+        self.assertTrue(chip.transitioned_inflection_seeded)
+        self.assertEqual(chip.transitioned_inflection, 0x50)
+        self.assertEqual(chip.pitch_inflection, 0xA80)
+
+    def test_dr_zero_wake_retains_immediate_mode_without_seed(self) -> None:
+        chip = SSI263Reference(div2=False)
+        chip.write(1, 0x50)
+        chip.write(2, 0xA8)
+        self.wake(chip, MODE_PHONEME_IMMEDIATE << 6)
+        chip.write(3, 0x80)
+
+        self.wake(chip, 0x00)
+
+        self.assertEqual(chip.response_mode, MODE_PHONEME_IMMEDIATE)
+        self.assertFalse(chip.transitioned_inflection_seeded)
+        self.assertEqual(chip.transitioned_inflection, 0)
+        self.assertEqual(chip.pitch_inflection, 0xA80)
+
+    def test_pd_rst_retains_consumed_transition_seed(self) -> None:
+        chip = SSI263Reference(div2=False)
+        chip.write(1, 0x50)
+        chip.write(2, 0xA8)
+        self.wake(chip, 0xC0)
+        self.assertTrue(chip.transitioned_inflection_seeded)
+
+        chip.assert_pd_rst()
+        chip.release_pd_rst()
+
+        self.assertTrue(chip.transitioned_inflection_seeded)
+        self.assertEqual(chip.transitioned_inflection, 0x50)
+
     def test_acknowledgment_rules(self) -> None:
         for response_mode, register, data, clears in (
             (MODE_PHONEME_TRANSITIONED, 0, 0xC0, True),
@@ -410,6 +508,20 @@ class InterfaceTests(unittest.TestCase):
         chip.write(1, 0x55)
         self.assertEqual(chip.inflection_high, 0x25)
 
+        cold_chip = SSI263Reference(revision_ap=True, div2=False)
+        cold_chip.write(0, 0xC0)
+        cold_chip.write(1, 0x50)
+        cold_chip.write(2, 0xA8)
+        cold_chip.step_effective_tick(
+            write_end=(3, 0x5C), assert_pd_rst=True
+        )
+        self.assertFalse(cold_chip.transitioned_inflection_seeded)
+        self.assertEqual(cold_chip.transitioned_inflection, 0)
+        cold_chip.release_pd_rst()
+        cold_chip.write(3, 0x5C)
+        self.assertTrue(cold_chip.transitioned_inflection_seeded)
+        self.assertEqual(cold_chip.transitioned_inflection, 0x50)
+
         faulty_p = SSI263Reference(revision_ap=False, div2=False)
         faulty_p.inflection_high = 0x25
         faulty_p.control_articulation_amplitude = 0x00
@@ -488,11 +600,14 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(chip.inflection_high, 0xFF)
         self.assertEqual(chip.rate_inflection, 0xF0)
 
-        state = chip.transitioned_inflection
         steps = chip.selector_steps
         chip.write(3, 0x00)
         self.assertFalse(chip.powered_down)
-        self.assertEqual(chip.transitioned_inflection, state)
+        self.assertTrue(chip.transitioned_inflection_seeded)
+        self.assertEqual(
+            chip.transitioned_inflection,
+            chip.transitioned_inflection_target,
+        )
         self.assertEqual(chip.selector_steps, steps)
         chip.advance_effective_ticks(128)
         self.assertGreater(chip.selector_steps, steps)

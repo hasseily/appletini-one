@@ -515,6 +515,164 @@ module tb_ssi263_sc02_core;
         raw_xck_edges(20);
         check(effective_ticks_seen == 10, "DIV2 effective XCK count");
 
+        // U65/U64 have no physical reset, so their FPGA power-up seed must
+        // not create an audible glide across the first several phones. The
+        // first transitioned wake adopts the already-programmed target once.
+        reset_chips();
+        write_register(3'd3, 8'h80);
+        write_register(3'd0, 8'hC0);
+        write_register(3'd1, 8'h50);
+        write_register(3'd2, 8'hA8);
+        write_register(3'd3, 8'h5C);
+        check(transitioned_inflection_state == 8'h50 &&
+              pitch_inflection == 12'hA80 &&
+              dut.transitioned_inflection_seeded_q &&
+              !inflection_step_ce,
+              "first transitioned wake did not seed the pitch target");
+        for (setting = 0; setting < 5; setting = setting + 1) begin
+            write_register(3'd1, 8'h50);
+            write_register(3'd2, 8'hA8);
+            write_register(3'd0, 8'h0E);
+            raw_xck_edges(24576);
+            check(transitioned_inflection_state == 8'h50 &&
+                  pitch_inflection == 12'hA80,
+                  "cold-start pitch drifted across repeated phones");
+        end
+
+        // Later power-down/wake cycles retain the live state. A new target
+        // must use normal U66 movement rather than consuming the seed again.
+        state_before = transitioned_inflection_state;
+        write_register(3'd3, 8'h80);
+        write_register(3'd1, 8'h20);
+        write_register(3'd0, 8'hC0);
+        write_register(3'd3, 8'h5C);
+        check(transitioned_inflection_state == state_before &&
+              dut.transitioned_inflection_seeded_q,
+              "later transitioned wake reseeded retained pitch");
+        first_wait = 0;
+        while (transitioned_inflection_state == state_before &&
+               first_wait < 8192) begin
+            raw_xck_edges(1);
+            first_wait = first_wait + 1;
+        end
+        check(transitioned_inflection_state == state_before - 1,
+              "seeded pitch did not resume normal downward movement");
+
+        // An immediate-mode wake must leave the one-time transition seed
+        // armed. The later first transitioned wake consumes it.
+        reset_chips();
+        write_register(3'd1, 8'h50);
+        write_register(3'd2, 8'hA8);
+        write_register(3'd0, 8'h80);
+        write_register(3'd3, 8'h5C);
+        check(!transitioned_pitch &&
+              !dut.transitioned_inflection_seeded_q &&
+              pitch_inflection == 12'hA80,
+              "immediate wake consumed transitioned pitch seed");
+        write_register(3'd3, 8'h80);
+        write_register(3'd0, 8'hC0);
+        write_register(3'd3, 8'h5C);
+        check(transitioned_pitch &&
+              transitioned_inflection_state == 8'h50 &&
+              dut.transitioned_inflection_seeded_q,
+              "later first transitioned wake did not seed pitch");
+
+        // DR=00 retains an immediate pitch mode too. In that case the live
+        // pitch bypasses U65/U64, so the later wake must leave the seed armed.
+        reset_chips();
+        write_register(3'd1, 8'h50);
+        write_register(3'd2, 8'hA8);
+        write_register(3'd0, 8'h80);
+        write_register(3'd3, 8'h5C);
+        write_register(3'd3, 8'h80);
+        write_register(3'd0, 8'h00);
+        write_register(3'd3, 8'h5C);
+        check(!transitioned_pitch &&
+              !dut.transitioned_inflection_seeded_q &&
+              transitioned_inflection_state == 8'h00,
+              "DR=00 consumed an immediate-mode transition seed");
+
+        // Global fabric reset, unlike PD/RST, creates a new FPGA die lifetime
+        // and must rearm the one-time deterministic seed.
+        write_register(3'd3, 8'h80);
+        write_register(3'd0, 8'hC0);
+        write_register(3'd3, 8'h5C);
+        check(dut.transitioned_inflection_seeded_q,
+              "transitioned wake did not consume the armed seed");
+        reset_chips();
+        check(!dut.transitioned_inflection_seeded_q &&
+              transitioned_inflection_state == 8'h00,
+              "global reset did not rearm transitioned pitch seed");
+        write_register(3'd1, 8'hA0);
+        write_register(3'd2, 8'h57);
+        write_register(3'd0, 8'hC0);
+        write_register(3'd3, 8'h5C);
+        check(dut.transitioned_inflection_seeded_q &&
+              transitioned_inflection_state == 8'hA0 &&
+              pitch_inflection == 12'h507,
+              "new die lifetime did not seed its current pitch target");
+
+        // AP PD/RST owns a write-end collision. A blocked first wake cannot
+        // consume the seed; the next valid control wake must still seed it.
+        reset_chips();
+        write_register(3'd1, 8'h50);
+        write_register(3'd2, 8'hA8);
+        write_register(3'd0, 8'hC0);
+        @(negedge clk);
+        write_reg = 3'd3;
+        write_data = 8'h5C;
+        write_active = 1'b1;
+        repeat (2) @(negedge clk);
+        pd_rst_n = 1'b0;
+        write_active = 1'b0;
+        @(negedge clk);
+        check(powered_down &&
+              !dut.transitioned_inflection_seeded_q &&
+              transitioned_inflection_state == 8'h00,
+              "AP reset collision consumed transitioned pitch seed");
+        pd_rst_n = 1'b1;
+        repeat (2) @(negedge clk);
+        write_register(3'd3, 8'h5C);
+        check(dut.transitioned_inflection_seeded_q &&
+              transitioned_inflection_state == 8'h50,
+              "valid wake after AP reset collision did not seed pitch");
+
+        // A first wake may land on the same edge as a normal U66 movement.
+        // The deterministic seed owns that edge and is not a movement pulse.
+        reset_chips();
+        write_register(3'd1, 8'h50);
+        write_register(3'd2, 8'hA8);
+        write_register(3'd0, 8'hC0);
+        @(negedge clk);
+        write_reg = 3'd3;
+        write_data = 8'h5C;
+        write_active = 1'b1;
+        repeat (2) @(negedge clk);
+        force dut.slow_div_q = 2'd3;
+        force dut.selector_phase_q = 1'b1;
+        force dut.selector_latch_phase_q = 1'b1;
+        force dut.selector_q = 3'd1;
+        force dut.rate_edges_left_q = 5'd1;
+        force dut.rate_clock_q = 1'b0;
+        force dut.inflection_edges_left_q = 4'd1;
+        xck_ce = 1'b1;
+        write_active = 1'b0;
+        @(posedge clk);
+        #1;
+        check(dut.transitioned_inflection_seeded_q &&
+              transitioned_inflection_state == 8'h50 &&
+              !inflection_step_ce,
+              "first pitch seed lost a coincident U66 movement edge");
+        @(negedge clk);
+        xck_ce = 1'b0;
+        release dut.slow_div_q;
+        release dut.selector_phase_q;
+        release dut.selector_latch_phase_q;
+        release dut.selector_q;
+        release dut.rate_edges_left_q;
+        release dut.rate_clock_q;
+        release dut.inflection_edges_left_q;
+
         // Sheet 3: U44 divides by four, U45 Q1/Q2 form the WRITE/LATCH
         // phases, and Q3/Q4/Q5 select the ROM column. A selector lasts
         // sixteen FASTCLK ticks.
@@ -1391,11 +1549,11 @@ module tb_ssi263_sc02_core;
                "filter divider stopped in power down");
         check(transitioned_inflection_state != 8'h00,
                "transitioned inflection stopped in power down");
-        state_before = transitioned_inflection_state;
         steps_before = selector_steps_seen;
         write_register(3'd3, 8'h00);
-        check(transitioned_inflection_state == state_before,
-               "wake reset transitioned inflection");
+        check(transitioned_inflection_state == 8'hF8 &&
+              dut.transitioned_inflection_seeded_q,
+              "DR=00 wake did not seed retained transitioned pitch");
         raw_xck_edges(128);
         check(selector_steps_seen > steps_before,
                "selector did not continue after wake");

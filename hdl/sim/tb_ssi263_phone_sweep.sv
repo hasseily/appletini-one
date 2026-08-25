@@ -392,7 +392,7 @@ module tb_ssi263_phone_sweep;
 
     // Sample the exact inputs seen by the core's sequential logic, then check
     // its outputs after nonblocking assignments settle. This checks the timed
-    // PW latches and proves that U96-denied WRITE pulses hold every RESA RAM.
+    // PW latches and checks every U83/U84 A/B/C/CY update or hold.
     always @(posedge clk) begin : schematic_timing_monitor
         integer ram_index;
         integer sampled_selector;
@@ -402,6 +402,7 @@ module tb_ssi263_phone_sweep;
         logic sampled_phone_pending;
         logic sampled_resa_equal;
         logic sampled_u96_permit;
+        logic sampled_write_commit;
         logic expected_u96_permit;
         logic sampled_pw0;
         logic sampled_pw1;
@@ -412,7 +413,17 @@ module tb_ssi263_phone_sweep;
         logic sampled_phone_write_low;
         logic sampled_pw3_data;
         logic [3:0] sampled_resa [0:7];
+        logic [3:0] sampled_resb [0:7];
+        logic [3:0] sampled_resc [0:7];
+        logic [7:0] sampled_rescy;
+        logic [3:0] expected_resa;
+        logic [3:0] expected_resb;
+        logic [3:0] expected_resc;
+        logic       expected_rescy;
+        logic [4:0] expected_bc_sum;
         logic [3:0] expected_target;
+        logic [3:0] sampled_target;
+        logic       expected_parameter_write;
 
         if (rstn) begin
             sampled_selector = dut.core_i.selector_q;
@@ -422,6 +433,7 @@ module tb_ssi263_phone_sweep;
             sampled_phone_pending = dut.core_i.phone_setup_pending_q;
             sampled_resa_equal = dut.core_i.transition_resa_equal;
             sampled_u96_permit = dut.core_i.u96_write_permit;
+            sampled_write_commit = dut.core_i.write_commit;
             sampled_pw0 = dut.core_i.pw_0_q;
             sampled_pw1 = dut.core_i.pw_1_q;
             sampled_pw3 = dut.core_i.pw_3_q;
@@ -431,9 +443,16 @@ module tb_ssi263_phone_sweep;
             sampled_phone_write_low = dut.core_i.phone_write_active;
             sampled_pw3_data = dut.core_i.u183a_q ||
                                !dut.core_i.selector_flags[1];
-            for (ram_index = 0; ram_index < 8; ram_index = ram_index + 1)
+            sampled_rescy = dut.core_i.parameter_rescy_q;
+            sampled_target = dut.core_i.selector_target;
+            for (ram_index = 0; ram_index < 8; ram_index = ram_index + 1) begin
                 sampled_resa[ram_index] =
                     dut.core_i.parameter_resa_q[ram_index];
+                sampled_resb[ram_index] =
+                    dut.core_i.parameter_resb_q[ram_index];
+                sampled_resc[ram_index] =
+                    dut.core_i.parameter_resc_q[ram_index];
+            end
 
             case (sampled_selector)
                 0, 1, 3:
@@ -504,31 +523,67 @@ module tb_ssi263_phone_sweep;
             if (sampled_effective_xck && sampled_selector_write) begin
                 check(sampled_u96_permit == expected_u96_permit,
                       "U96 write-mux truth table mismatch");
-                check(dut.core_i.selector_target == expected_target,
+                check(sampled_target == expected_target,
                       "schematic selector target mismatch");
                 target_checks = target_checks + 1;
 
+                expected_resa = sampled_resa[sampled_selector];
+                expected_resb = sampled_resb[sampled_selector];
+                expected_resc = sampled_resc[sampled_selector];
+                expected_rescy = sampled_rescy[sampled_selector];
+                expected_parameter_write = 1'b0;
+                if (!sampled_write_commit && sampled_transition_clear) begin
+                    expected_resb = sampled_target - expected_resa;
+                    expected_resc = 4'd8;
+                    expected_rescy = sampled_target >= expected_resa;
+                end else if (!sampled_write_commit &&
+                             !sampled_phone_pending &&
+                             sampled_u96_permit &&
+                             !sampled_resa_equal) begin
+                    expected_bc_sum =
+                        {1'b0, sampled_resb[sampled_selector]} +
+                        {1'b0, sampled_resc[sampled_selector]};
+                    expected_resc = expected_bc_sum[3:0];
+                    if (sampled_rescy[sampled_selector] &&
+                        expected_bc_sum[4])
+                        expected_resa = expected_resa + 4'd1;
+                    else if (!sampled_rescy[sampled_selector] &&
+                             !expected_bc_sum[4])
+                        expected_resa = expected_resa - 4'd1;
+                    expected_parameter_write = 1'b1;
+                end
+
+                check(dut.core_i.parameter_resa_q[sampled_selector] ==
+                          expected_resa &&
+                      dut.core_i.parameter_resb_q[sampled_selector] ==
+                          expected_resb &&
+                      dut.core_i.parameter_resc_q[sampled_selector] ==
+                          expected_resc &&
+                      dut.core_i.parameter_rescy_q[sampled_selector] ==
+                          expected_rescy,
+                      "U83/U84 DDA selected-state mismatch");
+                check(dut.core_i.parameter_write_ce_q ==
+                          expected_parameter_write,
+                      "U83/U84 parameter_write_ce mismatch");
+
                 if (!sampled_transition_clear &&
-                    !sampled_phone_pending && !sampled_u96_permit) begin
-                    check(dut.core_i.parameter_resa_q[sampled_selector] ==
-                          sampled_resa[sampled_selector],
-                          "U96-denied WRITE changed its RESA slot");
+                    !sampled_phone_pending && !sampled_u96_permit &&
+                    !sampled_write_commit) begin
                     u96_hold_events = u96_hold_events + 1;
                 end
 
                 for (ram_index = 0; ram_index < 8;
                      ram_index = ram_index + 1) begin
-                    if (dut.core_i.parameter_resa_q[ram_index] !=
-                        sampled_resa[ram_index]) begin
-                        check(ram_index == sampled_selector,
-                              "WRITE changed a nonselected RESA slot");
-                        check(!sampled_transition_clear &&
-                              !sampled_phone_pending &&
-                              sampled_u96_permit && !sampled_resa_equal,
-                              "RESA changed without a legal U96 write");
-                        check(dut.core_i.parameter_write_ce_q,
-                              "RESA changed without parameter_write_ce");
-                    end
+                    if (ram_index != sampled_selector)
+                        check(dut.core_i.parameter_resa_q[ram_index] ==
+                                  sampled_resa[ram_index] &&
+                              dut.core_i.parameter_resb_q[ram_index] ==
+                                  sampled_resb[ram_index] &&
+                              dut.core_i.parameter_resc_q[ram_index] ==
+                                  sampled_resc[ram_index] &&
+                              dut.core_i.parameter_rescy_q[ram_index] ==
+                                  sampled_rescy[ram_index],
+                              "WRITE changed nonselected U83/U84 state");
                 end
 
                 check(dut.core_i.parameter_resa_q[7] == sampled_resa[7],

@@ -904,6 +904,40 @@ module tb_ssi263_sc02_core;
         #1;
         check(!dut.u96_write_permit,
               "U32B failed to hold selector 3");
+
+        // U32B ORs three independent source-active terms. Prove each one,
+        // the all-zero allow state, and the slot-2 bypass of U32B.
+        force dut.selector_q = 3'd0;
+        force dut.duration_phoneme_q = 8'h00;
+        force dut.voice_amp_code_q = 4'hF;
+        force dut.fric_amp_code_q = 4'h0;
+        #1;
+        check(!dut.u96_write_permit,
+              "U32B ignored nonzero voice amplitude");
+        force dut.voice_amp_code_q = 4'h0;
+        force dut.fric_amp_code_q = 4'hF;
+        #1;
+        check(!dut.u96_write_permit,
+              "U32B ignored nonzero fricative amplitude");
+        force dut.fric_amp_code_q = 4'h0;
+        #1;
+        check(dut.u96_write_permit,
+              "U32B rejected the all-zero source state");
+
+        force dut.tc_edge_window_q = 1'b0;
+        for (setting = 0; setting < 4; setting = setting + 1) begin
+            force dut.selector_q = setting[2:0];
+            #1;
+            check(!dut.u96_write_permit,
+                  "U96 accepted selector 0-3 without TCEDGE");
+        end
+        force dut.tc_edge_window_q = 1'b1;
+        force dut.selector_q = 3'd2;
+        force dut.voice_amp_code_q = 4'hF;
+        #1;
+        check(dut.u96_write_permit,
+              "U96 selector 2 incorrectly passed through U32B");
+
         force dut.selector_q = 3'd4;
         force dut.duration_edge_window_q = 1'b0;
         force dut.u166b_nq_q = 1'b1;
@@ -955,6 +989,8 @@ module tb_ssi263_sc02_core;
         release dut.u93_rate_q1;
         release dut.u93_rate_q2;
         release dut.pw_1_q;
+        release dut.voice_amp_code_q;
+        release dut.fric_amp_code_q;
         reset_chips();
 
         // Sheet 6 ties U68 B/D to VCC, so the CD4029 counts in binary. In the

@@ -32,6 +32,12 @@ module tb_phasor_dual_ssi263;
     logic [7:0] expected_rom [0:511];
     integer failures = 0;
     integer checks = 0;
+    logic [6:0] secondary_latch_coverage = 7'h00;
+    logic [6:0] primary_latch_coverage = 7'h00;
+    logic [1:0] secondary_phase_coverage = 2'b00;
+    logic [1:0] primary_phase_coverage = 2'b00;
+    logic secondary_latch_error = 1'b0;
+    logic primary_latch_error = 1'b0;
 
     logic [3:0] sample_period_q = 4'd0;
 
@@ -94,6 +100,166 @@ module tb_phasor_dual_ssi263;
             end
         end
     endtask
+
+    // Prove both live dies carry each selected RESA value through the
+    // transparent U106-U114 layer and then through the Phi0/Phi1 U170-U176
+    // layer. These checks accept every legal intermediate DDA value; they do
+    // not turn the rate-gated transition RAM into an immediate ROM copy.
+    always @(posedge clk) begin : secondary_latch_monitor
+        integer sampled_selector;
+        logic sampled_latch_level;
+        logic [3:0] sampled_resa;
+        logic sampled_phase;
+        logic [3:0] sampled_f1_first;
+        logic [3:0] sampled_f2_first;
+        logic [3:0] sampled_f2_res_first;
+        logic [3:0] sampled_f3_first;
+        logic [3:0] sampled_f4_first;
+        logic [3:0] sampled_voice_first;
+        logic [3:0] sampled_fric_first;
+
+        if (rstn) begin
+            sampled_selector = dut.ssi263_secondary_i.core_i.selector_q;
+            sampled_latch_level =
+                dut.ssi263_secondary_i.core_i.selector_latch_level;
+            sampled_resa = dut.ssi263_secondary_i.core_i.parameter_resa_q[
+                sampled_selector];
+            sampled_phase = dut.ssi263_secondary_i.core_i.filter_phase_q;
+            sampled_f1_first = dut.ssi263_secondary_i.core_i.f1_first_q;
+            sampled_f2_first = dut.ssi263_secondary_i.core_i.f2_first_q;
+            sampled_f2_res_first =
+                dut.ssi263_secondary_i.core_i.f2_res_first_q;
+            sampled_f3_first = dut.ssi263_secondary_i.core_i.f3_first_q;
+            sampled_f4_first = dut.ssi263_secondary_i.core_i.f4_first_q;
+            sampled_voice_first =
+                dut.ssi263_secondary_i.core_i.voice_amp_first_q;
+            sampled_fric_first =
+                dut.ssi263_secondary_i.core_i.fric_amp_first_q;
+            #1;
+
+            if (sampled_latch_level && sampled_selector < 7) begin
+                secondary_latch_coverage[sampled_selector] = 1'b1;
+                case (sampled_selector)
+                    0: if (dut.ssi263_secondary_i.core_i.f1_first_q !=
+                           sampled_resa) secondary_latch_error = 1'b1;
+                    1: if (dut.ssi263_secondary_i.core_i.f2_first_q !=
+                           sampled_resa) secondary_latch_error = 1'b1;
+                    2: if (dut.ssi263_secondary_i.core_i.f2_res_first_q !=
+                           sampled_resa) secondary_latch_error = 1'b1;
+                    3: if (dut.ssi263_secondary_i.core_i.f3_first_q !=
+                           sampled_resa ||
+                           dut.ssi263_secondary_i.core_i.f4_first_q !=
+                           sampled_resa) secondary_latch_error = 1'b1;
+                    4: if (dut.ssi263_secondary_i.core_i.filter_amp_first_q !=
+                           sampled_resa) secondary_latch_error = 1'b1;
+                    5: if (dut.ssi263_secondary_i.core_i.voice_amp_first_q !=
+                           sampled_resa) secondary_latch_error = 1'b1;
+                    6: if (dut.ssi263_secondary_i.core_i.fric_amp_first_q !=
+                           sampled_resa) secondary_latch_error = 1'b1;
+                    default: begin
+                    end
+                endcase
+            end
+
+            secondary_phase_coverage[sampled_phase] = 1'b1;
+            if (!sampled_phase) begin
+                if (dut.ssi263_secondary_i.core_i.f1_code_q !=
+                        sampled_f1_first ||
+                    dut.ssi263_secondary_i.core_i.f3_code_q !=
+                        sampled_f3_first ||
+                    dut.ssi263_secondary_i.core_i.voice_amp_code_q !=
+                        sampled_voice_first)
+                    secondary_latch_error = 1'b1;
+            end else if (dut.ssi263_secondary_i.core_i.f2_code_q !=
+                             sampled_f2_first ||
+                         dut.ssi263_secondary_i.core_i.f2_res_code_q !=
+                             sampled_f2_res_first ||
+                         dut.ssi263_secondary_i.core_i.f4_code_q !=
+                             sampled_f4_first ||
+                         dut.ssi263_secondary_i.core_i.fric_amp_code_q !=
+                             sampled_fric_first) begin
+                secondary_latch_error = 1'b1;
+            end
+        end
+    end
+
+    always @(posedge clk) begin : primary_latch_monitor
+        integer sampled_selector;
+        logic sampled_latch_level;
+        logic [3:0] sampled_resa;
+        logic sampled_phase;
+        logic [3:0] sampled_f1_first;
+        logic [3:0] sampled_f2_first;
+        logic [3:0] sampled_f2_res_first;
+        logic [3:0] sampled_f3_first;
+        logic [3:0] sampled_f4_first;
+        logic [3:0] sampled_voice_first;
+        logic [3:0] sampled_fric_first;
+
+        if (rstn) begin
+            sampled_selector = dut.ssi263_primary_i.core_i.selector_q;
+            sampled_latch_level =
+                dut.ssi263_primary_i.core_i.selector_latch_level;
+            sampled_resa = dut.ssi263_primary_i.core_i.parameter_resa_q[
+                sampled_selector];
+            sampled_phase = dut.ssi263_primary_i.core_i.filter_phase_q;
+            sampled_f1_first = dut.ssi263_primary_i.core_i.f1_first_q;
+            sampled_f2_first = dut.ssi263_primary_i.core_i.f2_first_q;
+            sampled_f2_res_first =
+                dut.ssi263_primary_i.core_i.f2_res_first_q;
+            sampled_f3_first = dut.ssi263_primary_i.core_i.f3_first_q;
+            sampled_f4_first = dut.ssi263_primary_i.core_i.f4_first_q;
+            sampled_voice_first =
+                dut.ssi263_primary_i.core_i.voice_amp_first_q;
+            sampled_fric_first =
+                dut.ssi263_primary_i.core_i.fric_amp_first_q;
+            #1;
+
+            if (sampled_latch_level && sampled_selector < 7) begin
+                primary_latch_coverage[sampled_selector] = 1'b1;
+                case (sampled_selector)
+                    0: if (dut.ssi263_primary_i.core_i.f1_first_q !=
+                           sampled_resa) primary_latch_error = 1'b1;
+                    1: if (dut.ssi263_primary_i.core_i.f2_first_q !=
+                           sampled_resa) primary_latch_error = 1'b1;
+                    2: if (dut.ssi263_primary_i.core_i.f2_res_first_q !=
+                           sampled_resa) primary_latch_error = 1'b1;
+                    3: if (dut.ssi263_primary_i.core_i.f3_first_q !=
+                           sampled_resa ||
+                           dut.ssi263_primary_i.core_i.f4_first_q !=
+                           sampled_resa) primary_latch_error = 1'b1;
+                    4: if (dut.ssi263_primary_i.core_i.filter_amp_first_q !=
+                           sampled_resa) primary_latch_error = 1'b1;
+                    5: if (dut.ssi263_primary_i.core_i.voice_amp_first_q !=
+                           sampled_resa) primary_latch_error = 1'b1;
+                    6: if (dut.ssi263_primary_i.core_i.fric_amp_first_q !=
+                           sampled_resa) primary_latch_error = 1'b1;
+                    default: begin
+                    end
+                endcase
+            end
+
+            primary_phase_coverage[sampled_phase] = 1'b1;
+            if (!sampled_phase) begin
+                if (dut.ssi263_primary_i.core_i.f1_code_q !=
+                        sampled_f1_first ||
+                    dut.ssi263_primary_i.core_i.f3_code_q !=
+                        sampled_f3_first ||
+                    dut.ssi263_primary_i.core_i.voice_amp_code_q !=
+                        sampled_voice_first)
+                    primary_latch_error = 1'b1;
+            end else if (dut.ssi263_primary_i.core_i.f2_code_q !=
+                             sampled_f2_first ||
+                         dut.ssi263_primary_i.core_i.f2_res_code_q !=
+                             sampled_f2_res_first ||
+                         dut.ssi263_primary_i.core_i.f4_code_q !=
+                             sampled_f4_first ||
+                         dut.ssi263_primary_i.core_i.fric_amp_code_q !=
+                             sampled_fric_first) begin
+                primary_latch_error = 1'b1;
+            end
+        end
+    end
 
     task automatic drive_idle;
         begin
@@ -849,6 +1015,15 @@ module tb_phasor_dual_ssi263;
         wait_for_both_pending();
         wait_for_dual_stereo_audio();
         mask_card_during_native_read();
+
+        check(secondary_latch_coverage == 7'h7F &&
+              primary_latch_coverage == 7'h7F,
+              "both SSI dies did not exercise all U106-U114 latches");
+        check(secondary_phase_coverage == 2'b11 &&
+              primary_phase_coverage == 2'b11,
+              "both SSI dies did not exercise both phase latch banks");
+        check(!secondary_latch_error && !primary_latch_error,
+              "RESA did not cross both live SSI latch layers exactly");
 
         if (failures == 0) begin
             $display("PHASOR DUAL SSI263 PASS checks=%0d", checks);

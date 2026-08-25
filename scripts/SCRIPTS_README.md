@@ -147,6 +147,11 @@ saturation, and held audio output. The charge checks validate the ideal
 capacitor-ratio model; they do not claim an exact model of op-amp, switch,
 external C381 load, or stray effects in the original chip.
 
+Run `python scripts\test_phasor_ssi263_output_stage.py` after POT3 or Phasor
+speech-output gain changes. It locks the `2048` voice trim, unchanged `301`
+fricative divider, exact `x32` card gain, both saturation edges, and card
+disable masking.
+
 Run `python scripts\test_phasor_card.py` after Phasor decode, dual-SSI, VIA,
 PSG, mixing, or configuration changes. It runs the source and protocol model
 checks without Vivado or hardware.

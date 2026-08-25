@@ -363,6 +363,14 @@ Use wide signed charge sums and round once after each complete node equation.
 The output operation is only a one-bit Q16-to-signed-Q15 number conversion.
 There is no `LINE_OUTPUT_SHIFT=3` gain control.
 
+POT3 is adjustable and has no drawn wiper value. The current hardware-test
+calibration sets its voice-only Q16 step to `2048`, while the fixed fricative
+divider remains `301`. After each raw SSI wrapper output, one separate Phasor
+card stage applies common saturating `x32` gain before the PSG mixer. Thus the
+voiced product remains `2048*32=65536`, while the fricative path rises by 30.1
+dB. The gain is not part of the tract equations and never touches PSG audio.
+The final pot and gain values still need a same-vector real-card capture.
+
 The exact FPGA engine uses six shared 25-by-16 signed product lanes. Every
 physical division uses one of the 28 live schematic denominators. A 37-bit
 reciprocal product gives `q` or `q-1`; one registered `(q+1)*d` check selects
@@ -375,8 +383,9 @@ period. This is an engine check, not final full-card timing.
 
 C381 is outside the present chip output model. The drawing gives its
 capacitance but not the load, so it does not define an RC pole. Export the
-reconstructed AO/U148 node. Add a board-level C381 term only after the load is
-known; do not use the rejected 255/256 digital high-pass estimate.
+reconstructed U148 node into the gain-only card stage. Add the coupling and
+load response only after the load is known; do not use the rejected 255/256
+digital high-pass estimate.
 
 ## Deliberately absent behavior
 
@@ -460,22 +469,22 @@ as the current artifact.
 
 ```text
 Current pre-build suite: passed
-Current full build:      20260825T085343Z-bf0d8d29-full; one run
-Source commit:           bf0d8d293afc676dbd13a1ff8f1dd9fce357d088
-Build mode:              full, clean tree, no incremental reference
-Route and bus skew:      PASS
-Timing:                  WNS +0.039, WHS +0.061, WPWS +0.265 ns
-Current F0.9.99 image:   FIRMWARE_F0.9.99_DUAL_SSI263_SC02_WNS0p039.BIN
-Firmware SHA-256:        096d9bf884156a041ecb60a34113a67c9e02bb15560e83540fed1f8b44b527ed
+Current full build:      pending; run exactly one
+Source commit:           pending documentation checkpoint
+Build mode:              full, clean tree, no incremental reference required
+Route and bus skew:      pending
+Timing:                  positive WNS, WHS, and WPWS required
+Current F0.9.99 image:   pending
+Firmware SHA-256:        pending
 Hardware listen:         pending
 ```
 
-Every prior F0.9.99 image predates the corrected
-U21B/U28/U29A/U36/U37/U23B path. It is rejected and must not be offered for
-this listen. The next image must come from the exact archived bitstream and one
-Vitis and package run. The latest test rule asks only for positive setup, hold,
-and pulse-width slack while SSI-263 logic and sound are checked. The normal
-release margin remains `+0.300 ns` WNS and is a later timing task.
+Every prior F0.9.99 image predates the POT3/card-gain split. It is rejected and
+must not be offered for this listen. The next image must come from the exact
+archived bitstream and one Vitis and package run. The latest test rule asks only
+for positive setup, hold, and pulse-width slack while SSI-263 logic and sound
+are checked. The normal release margin remains `+0.300 ns` WNS and is a later
+timing task.
 
 ## Acceptance gate
 
@@ -492,14 +501,9 @@ The branch is ready for the next hardware listen only when:
 - all focused and source tests pass;
 - the one final F0.9.99 build passes and yields a named, hashed firmware image.
 
-All source, test, build, and package conditions above are complete. The result
-is a positive-slack test candidate, not a timing-promoted release. The one full
-build used clean source commit `bf0d8d293afc676dbd13a1ff8f1dd9fce357d088`.
-It passed route and bus-skew checks with `+0.039 ns` WNS, `+0.061 ns` WHS, and
-`+0.265 ns` WPWS. The named firmware is 4,309,964 bytes and has SHA-256
-`096d9bf884156a041ecb60a34113a67c9e02bb15560e83540fed1f8b44b527ed`.
-One Vitis run and one Bootgen package run made it from the matching archived
-XSA and BIT.
+The source and focused test conditions are complete. The one full build and
+package remain pending. The result will be a positive-slack test candidate,
+not a timing-promoted release.
 
 Hardware listening can find a fault, but it cannot by itself prove an exact
 SSI-263 analog match. That claim needs same-vector AO captures from a real
@@ -517,4 +521,5 @@ SSI-263AP.
 8. Update the implementation report and source audit.
 9. Replace the duration/DONE abstraction with U21B/U28/U29A/U36/U37/U23B and
    prove natural sixteen-DURCLK phone cycles.
-10. Run one final full build and package F0.9.99. Pending.
+10. Calibrate POT3 and add the per-socket Phasor output stage.
+11. Run one final full build and package F0.9.99. Pending.

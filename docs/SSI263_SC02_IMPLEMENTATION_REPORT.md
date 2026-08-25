@@ -177,9 +177,11 @@ U61 stages and removes a pending U34 load, but leaves U60 unchanged.
 
 The drawing includes POT3 in the U3C/U117/U3B voiced-source path but gives no
 wiper setting. `VOICE_TRIM_U116_STEP_Q16` keeps that one physical calibration
-value explicit. Its default is one normalized rail step; it is not selected by
-phone and is not changed to improve a listen test. A real-chip AO capture is
-needed to set the absolute voltage.
+value explicit. Its provisional hardware-test default is `2048`, one
+thirty-second of the former normalized rail step. POT3 still affects only the
+drawn voiced-source path. The resistor-defined fricative source remains `301`
+Q16 and no phone selects either level. A same-vector real-chip capture is still
+needed to set the final wiper value.
 
 ### U75 and CD4006 U73
 
@@ -327,6 +329,24 @@ only at the 24-bit state rail. There are no Q14 pole or gain tables. The PCM
 boundary shifts once from Q16 to signed Q15; it adds no output gain. The
 removed `LINE_OUTPUT_SHIFT=3` had no schematic basis.
 
+The card now treats this PCM value as the reconstructed low-level U148 `Line
+Out` node. Each SSI socket then enters one `phasor_ssi263_output_stage` before
+the PSG mixer. That stage applies a common saturating `x32` gain and registers
+the result for one 7.5 ns fabric cycle. It preserves the prior voiced product:
+
+```text
+POT3:             2048
+card gain:        32
+voiced product:   2048 * 32 = 65536
+fricative source: 301 * 32 = 9632
+```
+
+This separates the adjustable voice/noise balance from total output level.
+The common stage raises the unchanged fricative path by 30.1 dB while leaving
+the former voiced scale in place. It sits before the speech-plus-PSG sum, so it
+cannot change AY/YM gain. The values are a hardware-test calibration, not a
+claim that the schematic fixes either pot setting.
+
 The FPGA arithmetic keeps the charge result exact for the drawn integer
 capacitors. Six shared 25-by-16 signed lanes form each numerator. The only live
 denominators are the 28 schematic capacitance sums. For each, a 37-bit
@@ -340,9 +360,10 @@ this hardware test uses 26 DSP48E1 blocks in all, including 22 for the two SSI
 engines, and reports `+0.039 ns` WNS, `+0.061 ns` WHS, and `+0.265 ns` WPWS.
 
 The chip drawing includes C381 but omits its external load. It therefore does
-not define a high-pass pole. The model exports the reconstructed AO/U148 node
-without the old 255/256 digital high-pass. A later board model may add C381
-only after the load and capture point are known.
+not define a high-pass pole. The tract exports reconstructed U148 without the
+old 255/256 digital high-pass, and the present card stage adds gain only. A
+later board model may add the coupling and load response only after the load
+and capture point are known.
 
 ## Original Phasor integration
 
@@ -454,6 +475,8 @@ final pre-build suite now checks:
 - U68/U85 count, direction, terminal, and U62 reset traces;
 - U20B/U112/U166 clock and hold behavior;
 - all filter cap tables, ratios, signs, route histories, and persistent state;
+- the `2048` POT3 setting, unchanged `301` fricative divider, exact `x32` card
+  gain, both saturation edges, and immediate card-disable masking;
 - no non-schematic CTL hard clamp on the source or PCM output;
 - boundary-only `card_enabled` behavior;
 - A5/A6 decode, both VIA CA1 paths, native IRQ, A/B isolation, and two-chip
@@ -469,8 +492,11 @@ The current source checkpoint passes:
 - 1,745,273 checks over all 64 phone rows plus the natural ten-phone
   `HF EH1 L O OU PA E N D PA` sequence at the physical fabric/Q3/DIV2 rates;
 - 15 Phasor source and decode tests;
+- 17 exact card-output checks across zero, sign, gain, both saturation edges,
+  and card masking;
 - 74 dual-card checks for A5/A6, channel A/B, request, mode, reset, both RESA
-  latch layers, row `$01`, simultaneous audio, and both engine-overrun flags.
+  latch layers, row `$01`, simultaneous audio, both engine-overrun flags, and
+  separate card-stage clip flags.
 
 The phone sweep checks the timed PW, DDA, route, and output invariants without
 assuming that every settled parameter must equal its ROM target in one scan.
@@ -485,7 +511,7 @@ Source closure finds zero tracked or production SC-01/Votrax paths.
 | Selector and transition | Drawn U44/U45 cadence, U83/U84 DDA, and prototype U96 routes | FPGA enables do not model CMOS propagation delay |
 | U60/U68/U75/U73 routes | Drawn counter, gate, and held-state recurrences | Deterministic seeds are emulator choices for unreset state |
 | Filter topology and ratios | Ideal schematic charge equations with one retained state per switch | Q16 voltage units and finite 24-bit state width add small numeric error |
-| Source and output level | Unit Q16 normalization | Absolute U150/AO voltage needs a real-chip capture |
+| Source and output level | Adjustable POT3 at 1/32 rail plus common x32 per-socket card gain | Final POT3, card gain, and absolute AO voltage need a same-vector real-chip capture |
 | Nonideal analog behavior | Not modeled | LF356 slew/bandwidth, CD4016 resistance and charge injection, parasitics, tolerance, temperature, and chip spread remain |
 | C381 | Omitted from chip output | External load and desired capture point are not given |
 | Phasor clock | Q3 plus DIV2-high source route | Pin-22 continuity or scope capture remains useful physical proof |
@@ -496,48 +522,24 @@ a nonideal term only when the part model and same-vector capture support it.
 
 ## Firmware and build status
 
-The version is fixed at `F0.9.99`. Every prior firmware image is rejected: each
-predates the corrected U21B/U28/U29A/U36/U37/U23B path and its natural-phone
-proof. Do not use the earlier WNS `+0.013 ns` image. The new image comes from
-one clean, full, non-incremental Vivado build. Positive setup, hold, and
-pulse-width slack is the hardware-listen gate; the normal `+0.300 ns` release
-margin remains a later timing task.
+The version remains `F0.9.99`. Every prior image, including the WNS `+0.039 ns`
+duration image, predates the POT3/card-gain split and is rejected for this
+listen. The replacement must come from one clean, full, non-incremental Vivado
+build. Positive setup, hold, and pulse-width slack is the hardware-listen gate;
+the normal `+0.300 ns` release margin remains a later timing task.
 
 ```text
 Current pre-build suite: passed
-Current full build:      20260825T085343Z-bf0d8d29-full; one run
-Source commit:           bf0d8d293afc676dbd13a1ff8f1dd9fce357d088
-Build mode:              full, clean tree, no incremental reference
-Route and bus skew:      PASS
-Timing:                  WNS +0.039, WHS +0.061, WPWS +0.265 ns
-Current F0.9.99 image:   FIRMWARE_F0.9.99_DUAL_SSI263_SC02_WNS0p039.BIN
-Firmware size:           4,309,964 bytes
-Firmware SHA-256:        096d9bf884156a041ecb60a34113a67c9e02bb15560e83540fed1f8b44b527ed
+Current full build:      pending; run exactly one
+Source commit:           pending documentation checkpoint
+Build mode:              full, clean tree, no incremental reference required
+Route and bus skew:      pending
+Timing:                  positive WNS, WHS, and WPWS required
+Current F0.9.99 image:   pending
+Firmware size:           pending
+Firmware SHA-256:        pending
 Hardware listen:         pending
 ```
-
-The normal export flow kept the `+0.300 ns` release gate and stopped after the
-one implementation. The guarded test export reopened that same final
-checkpoint and made no placement or routing change. Its checks found zero
-setup, hold, pulse-width, route, constraint, or unconstrained-endpoint faults.
-The candidate DCP, route, and bus-skew reports all passed.
-
-Artifact hashes are:
-
-```text
-BIT:            bfa19f921bbec2bbcec593b0e2b328696b24a36b54197575595fb6ca038593b0
-XSA:            bcb2622fb6206275ecc8bf3ac0f771c72af2d5c5ea75006a9a6e6f816a096375
-FSBL ELF:       7e47637e290b70701381d8ac3c91c267129dde7e4b12e172e76b4634786f7079
-Core-1 ELF:     cba77543cece3125c6d06e8561a8e7b6e7c8a50000ec6e1c010881d93144271e
-Frontend ELF:   339b492e66c2d6a3a65448e958103a07af326cc25665daee784680c646c8d72c
-Firmware BIN:   096d9bf884156a041ecb60a34113a67c9e02bb15560e83540fed1f8b44b527ed
-```
-
-The archived XSA and the Vitis input XSA have the same SHA-256. One Vitis run
-built the platform and all applications. One Bootgen run used the archived BIT
-path explicitly. Bootgen readback names that BIT and shows two frontend load
-partitions at `0x00100000` and `0x0027c000`. The frontend ELF contains
-`F0.9.99`.
 
 ## Hardware validation for this candidate
 

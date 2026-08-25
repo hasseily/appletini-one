@@ -40,7 +40,7 @@ PARAMETER_NAMES = (
 )
 
 SLOWCLOCK_FAST_TICKS = 4
-SELECTOR_SLOW_EDGES = 2
+SELECTOR_SLOW_EDGES = 4
 SELECTOR_FAST_TICKS = SLOWCLOCK_FAST_TICKS * SELECTOR_SLOW_EDGES
 
 
@@ -121,7 +121,7 @@ def phoneme_ticks(rate: int, duration: int) -> int:
 def rate_clock_ticks(rate: int) -> int:
     """Return the effective ticks between RATECLK rising edges."""
 
-    return 64 * (16 - (rate & 0x0F))
+    return 128 * (16 - (rate & 0x0F))
 
 
 def articulation_step_ticks(rate: int, articulation: int) -> int:
@@ -577,7 +577,7 @@ class SSI263Reference:
         *,
         suppress_slot_write: bool = False,
     ) -> None:
-        """Advance one of the two SLOWCLK edges in a selector slot."""
+        """Advance one of the four SLOWCLK edges in a selector slot."""
 
         self.selector_subphase += 1
         if self.selector_subphase == SELECTOR_SLOW_EDGES:

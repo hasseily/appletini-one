@@ -453,26 +453,27 @@ module tb_ssi263_sc02_core;
         raw_xck_edges(20);
         check(effective_ticks_seen == 10, "DIV2 effective XCK count");
 
-        // Sheet 3: U44 divides by four, U45 Q1 is the hidden phase bit, and
-        // Q2/Q3/Q4 select the ROM column. A selector lasts eight FASTCLK ticks.
+        // Sheet 3: U44 divides by four, U45 Q1/Q2 form the WRITE/LATCH
+        // phases, and Q3/Q4/Q5 select the ROM column. A selector lasts
+        // sixteen FASTCLK ticks.
         // Parameter RAM
         // state must not move until U94 launches an articulation sweep.
         reset_chips();
-        raw_xck_edges(7);
-        check(selector == 3'd0, "selector advanced before eight ticks");
+        raw_xck_edges(15);
+        check(selector == 3'd0, "selector advanced before sixteen ticks");
         raw_xck_edges(1);
         check(selector == 3'd1 && f1_code == 4'd0,
                "selector moved a parameter without a sweep");
 
         // Every articulation code reloads U94. Its steady pulse interval is
-        // 128 * (16-R) * (8-T) effective ticks.
+        // 256 * (16-R) * (8-T) effective ticks.
         for (setting = 0; setting < 8; setting = setting + 1) begin
             reset_chips();
             write_register(3'd2, 8'hF0);
             write_register(3'd3, 8'h80 | (setting << 4));
             wait_articulation_pulse(first_wait);
             wait_articulation_pulse(second_wait);
-            check(second_wait == 128 * (8 - setting),
+            check(second_wait == 256 * (8 - setting),
                    "articulation terminal pace");
         end
 
@@ -485,7 +486,7 @@ module tb_ssi263_sc02_core;
             wait_inflection_pulse(first_wait);
             state_before = transitioned_inflection_state;
             wait_inflection_pulse(second_wait);
-            check(second_wait == 64 * (8 - setting),
+            check(second_wait == 128 * (8 - setting),
                    "inflection terminal pace");
             check(transitioned_inflection_state == state_before + 1,
                    "transitioned inflection count");
@@ -539,7 +540,7 @@ module tb_ssi263_sc02_core;
         write_register(3'd2, 8'hF0);
         write_register(3'd3, 8'hF0);
         wait_articulation_pulse(first_wait);
-        raw_xck_edges(128);
+        raw_xck_edges(256);
         check(f1_code == 4'd1, "selector 0 sweep write");
         check(f3_code == 4'd1 && f4_code == 4'd1,
                "selector 3 must update F3 and F4");
@@ -685,6 +686,7 @@ module tb_ssi263_sc02_core;
         force dut.fric_amp_code_q = 4'hF;
         force dut.selector_q = 3'd2;
         force dut.selector_phase_q = 1'b1;
+        force dut.selector_latch_phase_q = 1'b1;
         force dut.slow_div_q = 2'd3;
         force dut.selector_flags = 4'h8;
         #1;
@@ -721,6 +723,7 @@ module tb_ssi263_sc02_core;
         release dut.fric_amp_code_q;
         release dut.selector_q;
         release dut.selector_phase_q;
+        release dut.selector_latch_phase_q;
         release dut.slow_div_q;
         release dut.selector_flags;
 

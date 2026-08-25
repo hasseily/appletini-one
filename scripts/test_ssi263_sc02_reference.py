@@ -71,8 +71,8 @@ class FormulaTests(unittest.TestCase):
         self.assertEqual(phoneme_ticks(0x0A, 0), 4096 * 6 * 4)
         self.assertEqual(filter_period_ticks(0x00), 512)
         self.assertEqual(filter_period_ticks(0xFF), 2)
-        self.assertEqual(articulation_step_ticks(0x0F, 7), 128)
-        self.assertEqual(inflection_step_ticks(0x0F, 7), 64)
+        self.assertEqual(articulation_step_ticks(0x0F, 7), 256)
+        self.assertEqual(inflection_step_ticks(0x0F, 7), 128)
 
     def test_two_xck_edges_with_div2_make_one_effective_tick(self) -> None:
         chip = SSI263Reference(xck_edges_per_bus_cycle=2, div2=True)
@@ -300,7 +300,7 @@ class SelectorTests(unittest.TestCase):
         self.assertEqual(chip.parameter_values["f4"], min(target, 1))
         self.assertEqual(chip.selector, 4)
 
-    def test_selector_holds_for_two_slow_edges(self) -> None:
+    def test_selector_holds_for_four_slow_edges(self) -> None:
         chip = SSI263Reference()
         start = chip.selector
         for edge in range(SELECTOR_SLOW_EDGES - 1):

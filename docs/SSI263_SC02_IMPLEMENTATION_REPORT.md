@@ -108,10 +108,11 @@ The prior selector scan included one extra divide-by-two. The corrected trace
 is:
 
 - U44A/U44B divide FASTCLK by four;
-- U45 Q1 is the hidden phase bit;
-- U45 Q2/Q3/Q4 drive SEL0/SEL1/SEL2;
-- one selector slot spans two SLOWCLK edges, or eight effective FASTCLK ticks;
-- all eight selector slots span 64 effective FASTCLK ticks.
+- U45 Q1 and Q2 drive the WRITE/LATCH timing gates;
+- U45 Q3/Q4/Q5 drive SEL0/SEL1/SEL2;
+- one selector slot spans four SLOWCLK edges, or sixteen effective FASTCLK
+  ticks;
+- all eight selector slots span 128 effective FASTCLK ticks.
 
 The transition stores still move only through the lower-ROM pulse and gate
 paths. A host write owns a same-edge data-path collision.
@@ -121,16 +122,15 @@ paths. A host write owns a same-edge data-path collision.
 ### U60 glottal path
 
 U60 `/RST` and CET are tied high, while U53C feeds `/VOICED` back to CEP. P0
-and P1 are tied high, P2 is grounded, and P3 is visibly open. The FPGA cannot
-model a floating CMOS input, so `U60_OPEN_P3_LEVEL=0` records the current
-explicit assumption and U34A loads `0011` after the applicable U61/U62 edge.
-Normal Phi1 clocks advance `3..15`; at 15,
+and P1 are tied high, P2 is grounded, and P3 is tied high. U34A therefore
+loads `1011` after the applicable U61/U62 edge. Normal Phi1 clocks advance
+`11..15`; at 15,
 `/VOICED` lowers CEP and U60 holds terminal count until the next parallel load.
 There is no asynchronous clear and no free-running wrap.
 
 U118A connects U201 to the selected C205 voice-amplitude bank at the same Phi1
 boundary. The model uses U60's post-clock state for that transfer: `14->15`
-selects AGND immediately, while a `15->3` load selects the positive source
+selects AGND immediately, while a `15->11` load selects the positive source
 immediately. This fixes the counter start, stop, and source edge from the
 drawn pins; it is not a pitch or timbre setting.
 
@@ -145,9 +145,8 @@ needed to set the absolute voltage.
 
 ### U75 and CD4006 U73
 
-U75 counts on U41C rising edges. P0 is high, P2/P3 are low, and P1 is visibly
-open. `U75_OPEN_P1_LEVEL=0` records the same required FPGA assumption. Its
-terminal-load path then jams one, so the steady counter sequence is `1..15`.
+U75 counts on U41C rising edges. P0 is high and P1/P2/P3 are grounded. Its
+terminal-load path jams one, so the steady counter sequence is `1..15`.
 The post-rise counter state forms:
 
 ```text

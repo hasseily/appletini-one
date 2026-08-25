@@ -132,10 +132,11 @@ phone_ticks   = frame_ticks * (4 - D)
 Follow sheets 3-7 as a clocked circuit:
 
 - U44 divides FASTCLK by four.
-- U45 Q1 is an internal phase bit. U45 Q2, Q3, and Q4 drive SEL0, SEL1, and
-  SEL2.
-- One selector slot lasts two SLOWCLK edges, or eight effective FASTCLK ticks.
-- The full eight-slot scan lasts 64 effective FASTCLK ticks.
+- U45 Q1 and Q2 drive the WRITE/LATCH timing gates. U45 Q3, Q4, and Q5 drive
+  SEL0, SEL1, and SEL2.
+- One selector slot lasts four SLOWCLK edges, or sixteen effective FASTCLK
+  ticks.
+- The full eight-slot scan lasts 128 effective FASTCLK ticks.
 - The seven parameter stores move by the lower-ROM pulse and gate paths. A
   host write wins a same-edge data-path collision.
 - Selector 3 writes the one shared F3/F4 code. Selector 7 writes no parameter
@@ -148,14 +149,12 @@ Follow sheets 3-7 as a clocked circuit:
 ### U60 glottal counter
 
 U60 `/RST` and CET are tied high. U53C feeds `/VOICED` to CEP. P0 and P1 are
-tied high, P2 is grounded, and P3 is visibly open in the supplied drawing.
-The digital model keeps that unknown CMOS input as the explicit build-time
-assumption `U60_OPEN_P3_LEVEL`; the current low setting makes U34A's active
-parallel load jam `0011`, not zero. The exact Phi1 recurrence for that setting
-is:
+tied high, P2 is grounded, and P3 is tied high in the supplied drawing. U34A's
+active parallel load therefore jams `1011`, not zero. The exact Phi1
+recurrence is:
 
 ```text
-q_next = U34_load ? 3 : (q == 15 ? 15 : q + 1)
+q_next = U34_load ? 11 : (q == 15 ? 15 : q + 1)
 VOICED = (q == 15)
 ```
 

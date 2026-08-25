@@ -50,8 +50,8 @@ module ssi263_sc02_core #(
     output logic        filter_phase_ce,
     output logic        filter_phase,
 
-    // The SC-02 scans eight ROM columns. U45 Q1 is the one unconnected phase
-    // bit; Q2/Q3/Q4 drive SEL0/SEL1/SEL2.
+    // The SC-02 scans eight ROM columns. U45 Q1 and Q2 form the WRITE/LATCH
+    // timing phases; Q3/Q4/Q5 drive SEL0/SEL1/SEL2.
     output logic [2:0]  selector,
     output logic        selector_phase,
     output logic        selector_step_ce,
@@ -137,6 +137,7 @@ module ssi263_sc02_core #(
 
     logic [1:0] slow_div_q;
     logic       selector_phase_q;
+    logic       selector_latch_phase_q;
     logic [2:0] selector_q;
 
     logic [3:0] f1_code_q;
@@ -453,6 +454,7 @@ module ssi263_sc02_core #(
 
             slow_div_q <= 2'd0;
             selector_phase_q <= 1'b0;
+            selector_latch_phase_q <= 1'b0;
             selector_q <= 3'd0;
 
             f1_code_q <= 4'd0;
@@ -571,25 +573,28 @@ module ssi263_sc02_core #(
                     end
                 end
 
-                // U44A/U44B divide FASTCLK by four. U45 Q1 is not connected;
-                // Q2/Q3/Q4 are SEL0/SEL1/SEL2. One selector slot therefore
-                // spans two SLOWCLK edges, or eight effective FASTCLK ticks.
+                // U44A/U44B divide FASTCLK by four. U45 Q1/Q2 drive the
+                // WRITE/LATCH timing gates and Q3/Q4/Q5 are SEL0/SEL1/SEL2.
+                // One selector slot therefore spans four SLOWCLK edges, or
+                // sixteen effective FASTCLK ticks.
                 if (slow_div_q == 2'd3) begin
                     slow_div_q <= 2'd0;
                     if (selector_phase_q) begin
                         selector_phase_q <= 1'b0;
-                        selector_q <= selector_q + 3'd1;
-                        selector_step_ce_q <= 1'b1;
+                        if (selector_latch_phase_q) begin
+                            selector_latch_phase_q <= 1'b0;
+                            selector_q <= selector_q + 3'd1;
+                            selector_step_ce_q <= 1'b1;
 
-                        // A same-edge host write owns the data path. Consume
-                        // this sweep slot but do not defer its old target to
-                        // the next scan.
-                        if (selector_q <= 3'd6 &&
-                            parameter_sweep_q[selector_q]) begin
-                            parameter_sweep_q[selector_q] <= 1'b0;
-                        end
+                            // A same-edge host write owns the data path.
+                            // Consume this sweep slot but do not defer its old
+                            // target to the next scan.
+                            if (selector_q <= 3'd6 &&
+                                parameter_sweep_q[selector_q]) begin
+                                parameter_sweep_q[selector_q] <= 1'b0;
+                            end
 
-                        if (!write_commit) begin
+                            if (!write_commit) begin
                             // Sheets 5 and 7 hold the low-ROM source controls
                             // when their three input slots pass.
                             case (selector_q)
@@ -698,11 +703,12 @@ module ssi263_sc02_core #(
                                     end
                                 endcase
                             end
-                        end
+                            end
 
-                        // SEL1 rises at the 1->2 and 5->6 boundaries. U27
-                        // divides those edges by 16-R and U21 makes RATECLK.
-                        if (selector_q == 3'd1 || selector_q == 3'd5) begin
+                            // SEL1 rises at the 1->2 and 5->6 boundaries. U27
+                            // divides those edges by 16-R and U21 makes
+                            // RATECLK.
+                            if (selector_q == 3'd1 || selector_q == 3'd5) begin
                             if (rate_edges_left_q == 5'd1) begin
                                 rate_edges_left_q <= rate_edge_count(
                                     rate_inflection_q[7:4]
@@ -753,6 +759,9 @@ module ssi263_sc02_core #(
                             end else begin
                                 rate_edges_left_q <= rate_edges_left_q - 5'd1;
                             end
+                            end
+                        end else begin
+                            selector_latch_phase_q <= 1'b1;
                         end
                     end else begin
                         selector_phase_q <= 1'b1;

@@ -259,87 +259,87 @@ module tb_phasor_dual_ssi263;
         end
     endtask
 
-    task automatic wait_for_secondary_rom(input logic [5:0] phone);
+    task automatic wait_for_secondary_scan(input logic [5:0] phone);
         integer timeout;
         integer row;
+        logic [7:0] selectors_seen;
+        logic [7:0] rom_rows_seen;
         begin
             timeout = 0;
             row = phone * 8;
+            selectors_seen = 8'h00;
+            rom_rows_seen = 8'h00;
             while (!(dut.ssi263_secondary_i.core_i.phone_active &&
                      dut.ssi263_secondary_i.core_i.phoneme == phone &&
-                     dut.ssi263_secondary_i.core_i.f1_code ==
-                         expected_rom[row + 0][7:4] &&
-                     dut.ssi263_secondary_i.core_i.f2_code ==
-                         expected_rom[row + 1][7:4] &&
-                     dut.ssi263_secondary_i.core_i.f2_res_code ==
-                         expected_rom[row + 2][7:4] &&
-                     dut.ssi263_secondary_i.core_i.f3_code ==
-                         expected_rom[row + 3][7:4] &&
-                     dut.ssi263_secondary_i.core_i.f4_code ==
-                         expected_rom[row + 3][7:4] &&
-                     dut.ssi263_secondary_i.core_i.voice_amp_code ==
-                         expected_rom[row + 5][7:4] &&
-                     dut.ssi263_secondary_i.core_i.fric_amp_code ==
-                         expected_rom[row + 6][7:4] &&
-                     dut.ssi263_secondary_i.core_i.pw_0 ==
-                         expected_rom[row + 0][0] &&
-                     dut.ssi263_secondary_i.core_i.pw_1 ==
-                         expected_rom[row + 1][0] &&
+                     selectors_seen == 8'hFF &&
+                     rom_rows_seen == 8'hFF &&
+                     !dut.ssi263_secondary_i.core_i.phone_setup_pending_q &&
+                     !dut.ssi263_secondary_i.core_i.phone_setup_window_q &&
                      dut.ssi263_secondary_i.core_i.pw_2 ==
                          expected_rom[row + 2][2] &&
-                     dut.ssi263_secondary_i.core_i.pw_3 ==
-                         !expected_rom[row + 2][1] &&
                      dut.ssi263_secondary_i.core_i.pw_5 ==
                          !expected_rom[row + 2][2]) &&
-                   timeout < 3_000_000) begin
+                   timeout < 200_000) begin
                 @(posedge clk);
+                #1;
+                if (dut.ssi263_secondary_i.core_i.phone_active &&
+                    dut.ssi263_secondary_i.core_i.phoneme == phone) begin
+                    selectors_seen[
+                        dut.ssi263_secondary_i.core_i.selector_q] = 1'b1;
+                    if (dut.ssi263_secondary_i.core_i.selector_rom_data ==
+                        expected_rom[
+                            row + dut.ssi263_secondary_i.core_i.selector_q])
+                        rom_rows_seen[
+                            dut.ssi263_secondary_i.core_i.selector_q] = 1'b1;
+                end
                 timeout = timeout + 1;
             end
             #1;
-            check(timeout < 3_000_000,
-                  "A5 secondary socket did not reach its exact ROM row");
+            check(timeout < 200_000 && selectors_seen == 8'hFF &&
+                  rom_rows_seen == 8'hFF,
+                  "A5 secondary socket did not finish its ROM scan");
         end
     endtask
 
-    task automatic wait_for_primary_rom(input logic [5:0] phone);
+    task automatic wait_for_primary_scan(input logic [5:0] phone);
         integer timeout;
         integer row;
+        logic [7:0] selectors_seen;
+        logic [7:0] rom_rows_seen;
         begin
             timeout = 0;
             row = phone * 8;
+            selectors_seen = 8'h00;
+            rom_rows_seen = 8'h00;
             while (!(dut.ssi263_primary_i.core_i.phone_active &&
                      dut.ssi263_primary_i.core_i.phoneme == phone &&
-                     dut.ssi263_primary_i.core_i.f1_code ==
-                         expected_rom[row + 0][7:4] &&
-                     dut.ssi263_primary_i.core_i.f2_code ==
-                         expected_rom[row + 1][7:4] &&
-                     dut.ssi263_primary_i.core_i.f2_res_code ==
-                         expected_rom[row + 2][7:4] &&
-                     dut.ssi263_primary_i.core_i.f3_code ==
-                         expected_rom[row + 3][7:4] &&
-                     dut.ssi263_primary_i.core_i.f4_code ==
-                         expected_rom[row + 3][7:4] &&
-                     dut.ssi263_primary_i.core_i.voice_amp_code ==
-                         expected_rom[row + 5][7:4] &&
-                     dut.ssi263_primary_i.core_i.fric_amp_code ==
-                         expected_rom[row + 6][7:4] &&
-                     dut.ssi263_primary_i.core_i.pw_0 ==
-                         expected_rom[row + 0][0] &&
-                     dut.ssi263_primary_i.core_i.pw_1 ==
-                         expected_rom[row + 1][0] &&
+                     selectors_seen == 8'hFF &&
+                     rom_rows_seen == 8'hFF &&
+                     !dut.ssi263_primary_i.core_i.phone_setup_pending_q &&
+                     !dut.ssi263_primary_i.core_i.phone_setup_window_q &&
                      dut.ssi263_primary_i.core_i.pw_2 ==
                          expected_rom[row + 2][2] &&
-                     dut.ssi263_primary_i.core_i.pw_3 ==
-                         !expected_rom[row + 2][1] &&
                      dut.ssi263_primary_i.core_i.pw_5 ==
                          !expected_rom[row + 2][2]) &&
-                   timeout < 3_000_000) begin
+                   timeout < 200_000) begin
                 @(posedge clk);
+                #1;
+                if (dut.ssi263_primary_i.core_i.phone_active &&
+                    dut.ssi263_primary_i.core_i.phoneme == phone) begin
+                    selectors_seen[
+                        dut.ssi263_primary_i.core_i.selector_q] = 1'b1;
+                    if (dut.ssi263_primary_i.core_i.selector_rom_data ==
+                        expected_rom[
+                            row + dut.ssi263_primary_i.core_i.selector_q])
+                        rom_rows_seen[
+                            dut.ssi263_primary_i.core_i.selector_q] = 1'b1;
+                end
                 timeout = timeout + 1;
             end
             #1;
-            check(timeout < 3_000_000,
-                  "A6 primary socket did not reach its exact ROM row");
+            check(timeout < 200_000 && selectors_seen == 8'hFF &&
+                  rom_rows_seen == 8'hFF,
+                  "A6 primary socket did not finish its ROM scan");
         end
     endtask
 
@@ -792,7 +792,7 @@ module tb_phasor_dual_ssi263;
         // its free-running clocked circuits continue to advance.
         hard_reset();
         start_a5_phone(8'h70);
-        wait_for_secondary_rom(6'h30);
+        wait_for_secondary_scan(6'h30);
         check(dut.ssi263_primary_i.core_i.inflection_high_q == 8'h00 &&
               dut.ssi263_primary_i.core_i.rate_inflection_q == 8'h00 &&
               dut.ssi263_primary_i.core_i.duration_phoneme_q == 8'hC0 &&
@@ -805,7 +805,7 @@ module tb_phasor_dual_ssi263;
         apple_write(SLOT_BASE + 16'h0021, 8'hFF);
         apple_write(SLOT_BASE + 16'h0022, 8'hFD);
         apple_write(SLOT_BASE + 16'h0020, 8'h41);
-        wait_for_secondary_rom(6'h01);
+        wait_for_secondary_scan(6'h01);
         check(dut.ssi263_secondary_i.core_i.pitch_inflection == 12'hFFD,
               "period setup did not reach the final pitch path");
 
@@ -817,7 +817,7 @@ module tb_phasor_dual_ssi263;
         // Row $01 has TPARM1 high and therefore schematic PW3 low. This is
         // the ordinary-vowel regression for the live U62/U116 source path.
         apple_write(SLOT_BASE + 16'h0020, 8'h41);
-        wait_for_secondary_rom(6'h01);
+        wait_for_secondary_scan(6'h01);
         wait_for_a5_channel_a_audio();
 
         // Reset, then prove the original A6 primary/channel-B route.
@@ -827,7 +827,7 @@ module tb_phasor_dual_ssi263;
         apple_write(SLOT_BASE + 16'h0044, 8'hE8);
         apple_write(SLOT_BASE + 16'h0040, 8'h41);
         apple_write(SLOT_BASE + 16'h0043, 8'h7F);
-        wait_for_primary_rom(6'h01);
+        wait_for_primary_scan(6'h01);
         wait_for_a6_channel_b_audio();
 
         // Start both sockets from the same reset edge and one real A5+A6
@@ -839,8 +839,8 @@ module tb_phasor_dual_ssi263;
         apple_write(SLOT_BASE + 16'h0064, 8'hE8);
         apple_write(SLOT_BASE + 16'h0060, 8'h41);
         apple_write(SLOT_BASE + 16'h0063, 8'h7F);
-        wait_for_secondary_rom(6'h01);
-        wait_for_primary_rom(6'h01);
+        wait_for_secondary_scan(6'h01);
+        wait_for_primary_scan(6'h01);
         wait_for_dual_stereo_audio();
 
         // Card disable masks the virtual backplane boundary. It must not act

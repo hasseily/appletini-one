@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -53,6 +54,18 @@ def static_checks() -> None:
         "ssi263_voice dut (",
         "$readmemh(\"ssi263_sc02_rom.mem\", expected_rom);",
         "phone_index < 64",
+        "GUIDE_PHONE_COUNT = 10",
+        "task automatic observe_guide_phone(",
+        "write_register(3'd1, 8'h50);",
+        "write_register(3'd2, 8'hA8);",
+        "write_register(3'd4, 8'hE9);",
+        "write_register(3'd3, 8'h5C);",
+        "duration_events == 16",
+        "guide phone %02h missed a qualified PW gate",
+        "guide HF phone did not open the fricative amplitude",
+        "guide EH1 phone did not open the voice amplitude",
+        "guide HF phone did not advance U68",
+        "guide HF phone did not advance filter amplitude",
         "check_ampzero_targets();",
         "U32 timed PW0 latch update mismatch",
         "U33 timed PW1 latch update mismatch",
@@ -61,6 +74,8 @@ def static_checks() -> None:
         "U83/U84 parameter_write_ce mismatch",
         "WRITE changed nonselected U83/U84 state",
         "parameter_write_ce escaped the U96 write gate",
+        "U96 slot 2 did not use the TC window",
+        "grounded prototype RATE=F override became active",
         "64-phone sweep did not exercise the voice U96 write",
         "64-phone sweep did not exercise the fricative U96 write",
         "dut.core_i.pw_2_q == expected_rom[row + 2][2]",
@@ -70,6 +85,7 @@ def static_checks() -> None:
         "phone %02h reached a 24-bit internal rail",
         "phone %02h produced unknown PCM",
         "SSI263 ROM ROW",
+        "SSI263 GUIDE PHONE",
     ):
         if required not in testbench:
             raise RuntimeError(f"integrated phone sweep is missing: {required}")
@@ -92,6 +108,12 @@ def static_checks() -> None:
                 "integrated sweep still requires a direct ROM output: "
                 f"{forbidden}"
             )
+    code_only = re.sub(r"/\*.*?\*/", "", testbench, flags=re.DOTALL)
+    code_only = re.sub(r"//[^\r\n]*", "", code_only)
+    if re.search(r"\b(?:force|release)\b", code_only):
+        raise RuntimeError(
+            "integrated duration proof must not force internal timing state"
+        )
     for name in (*invented, "acoustic", "rms", "occupancy"):
         if name in testbench.lower():
             raise RuntimeError(f"integrated sweep retains acoustic assumption {name}")
@@ -126,6 +148,9 @@ def run(command: list[str], log_name: str) -> str:
 def selected_lines(output: str) -> list[str]:
     selected = []
     for line in output.splitlines():
+        if line.startswith("SSI263 GUIDE PHONE"):
+            selected.append(line)
+            continue
         if not line.startswith("SSI263 ROM ROW phone="):
             continue
         phone = int(line.split("phone=", 1)[1][:2], 16)

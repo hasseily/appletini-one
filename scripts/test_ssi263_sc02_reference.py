@@ -15,6 +15,7 @@ from ssi263_sc02_reference import (
     SELECTOR_SLOW_EDGES,
     SSI263Reference,
     articulation_step_ticks,
+    duration_clock_period_ticks,
     filter_period_ticks,
     frame_ticks,
     inflection_step_ticks,
@@ -69,6 +70,7 @@ class FormulaTests(unittest.TestCase):
         self.assertEqual(frame_ticks(0x0A), 4096 * 6)
         self.assertEqual(phoneme_ticks(0x0A, 3), 4096 * 6)
         self.assertEqual(phoneme_ticks(0x0A, 0), 4096 * 6 * 4)
+        self.assertEqual(duration_clock_period_ticks(0x0A, 0), 256 * 6 * 4)
         self.assertEqual(filter_period_ticks(0x00), 512)
         self.assertEqual(filter_period_ticks(0xFF), 2)
         self.assertEqual(articulation_step_ticks(0x0F, 7), 256)
@@ -91,6 +93,171 @@ class FormulaTests(unittest.TestCase):
         self.assertLess(float(pitch_hz), 91.0)
 
 
+class DurationClockTests(unittest.TestCase):
+    @staticmethod
+    def configured_chip(rate: int, duration: int) -> SSI263Reference:
+        return SSI263Reference(
+            div2=False,
+            duration_phoneme=(duration << 6),
+            rate_inflection=(rate << 4),
+            control_articulation_amplitude=0,
+        )
+
+    @staticmethod
+    def wait_for_duration_rise(chip: SSI263Reference) -> int:
+        target = chip.duration_clock_rises + 1
+        while chip.duration_clock_rises < target:
+            chip.advance_effective_ticks(1)
+        assert chip.last_duration_clock_tick is not None
+        return chip.last_duration_clock_tick
+
+    @staticmethod
+    def prime_duration_rise_next_tick(chip: SSI263Reference) -> None:
+        # Complete selector slot 1 on the next effective tick. Its SEL1 rise
+        # clocks RATECLK high, U21B Q high, and exposes terminal U28 as DURCLK.
+        chip.selector = 1
+        chip.selector_subphase = 3
+        chip.selector_fast_phase = 3
+        chip.rate_edges_left = 1
+        chip.rate_clock = 0
+        chip.rate_clock_div2 = 0
+        chip.u28_count = 15
+        chip.duration_clock = False
+        chip.u29a_level = not (
+            chip._write_active and chip._write_register == 0
+        )
+
+    def test_all_rate_duration_pairs_have_exact_u28_cadence(self) -> None:
+        for rate in range(16):
+            for duration in range(4):
+                with self.subTest(rate=rate, duration=duration):
+                    chip = self.configured_chip(rate, duration)
+                    first = self.wait_for_duration_rise(chip)
+                    second = self.wait_for_duration_rise(chip)
+                    expected = duration_clock_period_ticks(rate, duration)
+                    self.assertEqual(second - first, expected)
+                    self.assertEqual(phoneme_ticks(rate, duration), 16 * expected)
+
+    def test_every_full_phoneme_contains_sixteen_durclk_rises(self) -> None:
+        for rate in range(16):
+            for duration in range(4):
+                with self.subTest(rate=rate, duration=duration):
+                    chip = self.configured_chip(rate, duration)
+                    self.wait_for_duration_rise(chip)
+                    rise_base = chip.duration_clock_rises
+                    chip.response_mode = MODE_PHONEME_TRANSITIONED
+                    chip.u37_count = 0
+                    chip.d7_pending = False
+                    chip.completed_boundaries = 0
+
+                    chip.advance_effective_ticks(
+                        phoneme_ticks(rate, duration) - 1
+                    )
+                    self.assertEqual(chip.duration_clock_rises - rise_base, 15)
+                    self.assertEqual(chip.u37_count, 15)
+                    self.assertEqual(chip.completed_boundaries, 0)
+                    self.assertFalse(chip.d7_pending)
+
+                    chip.advance_effective_ticks(1)
+                    self.assertEqual(chip.duration_clock_rises - rise_base, 16)
+                    self.assertEqual(chip.u37_count, 0)
+                    self.assertEqual(chip.completed_boundaries, 1)
+                    self.assertTrue(chip.d7_pending)
+
+    def test_frame_response_is_separate_from_u28_phoneme_cadence(self) -> None:
+        rate = 0x0F
+        for duration in range(4):
+            with self.subTest(duration=duration):
+                chip = self.configured_chip(rate, duration)
+                self.wait_for_duration_rise(chip)
+                rise_base = chip.duration_clock_rises
+                chip.response_mode = MODE_FRAME_IMMEDIATE
+                chip.u36_count = 0
+                chip.d7_pending = False
+                chip.completed_boundaries = 0
+                chip.u36_eq15_entries = 0
+
+                chip.advance_effective_ticks(phoneme_ticks(rate, duration))
+
+                self.assertEqual(chip.duration_clock_rises - rise_base, 16)
+                self.assertEqual(chip.u36_eq15_entries, 4 - duration)
+                self.assertEqual(chip.completed_boundaries, 4 - duration)
+                self.assertTrue(chip.d7_pending)
+
+    def test_response_acknowledgment_wins_with_same_tick_durclk(self) -> None:
+        chip = self.configured_chip(0x0F, 3)
+        chip.response_mode = MODE_FRAME_IMMEDIATE
+        chip.u36_count = 14
+        self.prime_duration_rise_next_tick(chip)
+
+        chip.step_effective_tick(write_end=(1, 0x00))
+
+        self.assertTrue(chip.duration_clock_rise_this_tick)
+        self.assertEqual(chip.duration_clock_rises, 1)
+        self.assertTrue(chip.u36_eq15_this_tick)
+        self.assertEqual(chip.u36_count, 15)
+        self.assertEqual(chip.completed_boundaries, 1)
+        self.assertFalse(chip.d7_pending)
+
+    def test_done_zero_hold_uses_pre_edge_response_state(self) -> None:
+        chip = self.configured_chip(0x0F, 3)
+        chip.u37_count = 15
+        self.prime_duration_rise_next_tick(chip)
+        chip.advance_effective_ticks(1)
+
+        self.assertEqual(chip.u37_count, 0)
+        self.assertTrue(chip.d7_pending)
+
+        self.prime_duration_rise_next_tick(chip)
+        chip.advance_effective_ticks(1)
+        self.assertTrue(chip.duration_clock_rise_this_tick)
+        self.assertEqual(chip.u37_count, 0)
+
+    def test_phone_write_reset_wins_its_u37_wrap_collision(self) -> None:
+        chip = self.configured_chip(0x0F, 3)
+        chip.u37_count = 15
+
+        chip.begin_write(0, 0xC0)
+
+        self.assertEqual(chip.u37_count, 0)
+        self.assertEqual(chip.completed_boundaries, 1)
+        self.assertFalse(chip.d7_pending)
+        chip.end_write()
+
+    def test_u36_resets_for_full_phone_write_and_release_edge(self) -> None:
+        chip = self.configured_chip(0x0F, 3)
+        chip.u36_count = 0x123
+        chip.begin_write(0, 0xC0)
+        self.assertEqual(chip.u36_count, 0)
+
+        chip.u36_count = 14
+        self.prime_duration_rise_next_tick(chip)
+        chip.step_effective_tick(write_end=(0, 0xC0))
+
+        self.assertTrue(chip.duration_clock_rise_this_tick)
+        self.assertEqual(chip.u36_count, 0)
+        self.assertEqual(chip.u36_eq15_entries, 0)
+
+        chip._clock_u36()
+        self.assertEqual(chip.u36_count, 1)
+
+    def test_u36_eq15_is_an_entry_pulse_on_u21b_q_rises(self) -> None:
+        chip = self.configured_chip(0x0F, 3)
+        chip.response_mode = MODE_FRAME_IMMEDIATE
+        chip.u36_count = 13
+
+        chip._clock_u36()
+        self.assertEqual(chip.u36_count, 14)
+        self.assertEqual(chip.u36_eq15_entries, 0)
+        chip._clock_u36()
+        self.assertEqual(chip.u36_count, 15)
+        self.assertEqual(chip.u36_eq15_entries, 1)
+        self.assertEqual(chip.completed_boundaries, 1)
+        chip._clock_u36()
+        self.assertEqual(chip.u36_count, 16)
+        self.assertEqual(chip.u36_eq15_entries, 1)
+
+
 class InterfaceTests(unittest.TestCase):
     def wake(self, chip: SSI263Reference, duration_phoneme: int = 0xC0) -> None:
         chip.write(0, duration_phoneme)
@@ -104,27 +271,44 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(chip.filter_frequency, 0xE9)
 
     def test_acknowledgment_rules(self) -> None:
-        for register, data, clears in (
-            (0, 0xC0, True),
-            (1, 0x00, True),
-            (2, 0xA0, True),
-            (3, 0x00, False),
-            (3, 0x80, True),
-            (4, 0xE9, False),
-            (7, 0xE9, False),
+        for response_mode, register, data, clears in (
+            (MODE_PHONEME_TRANSITIONED, 0, 0xC0, True),
+            (MODE_PHONEME_TRANSITIONED, 1, 0x00, False),
+            (MODE_PHONEME_TRANSITIONED, 2, 0xA0, False),
+            (MODE_PHONEME_TRANSITIONED, 3, 0x00, False),
+            (MODE_PHONEME_TRANSITIONED, 3, 0x80, True),
+            (MODE_PHONEME_TRANSITIONED, 4, 0xE9, False),
+            (MODE_PHONEME_TRANSITIONED, 7, 0xE9, False),
+            (MODE_FRAME_IMMEDIATE, 0, 0x40, True),
+            (MODE_FRAME_IMMEDIATE, 1, 0x00, True),
+            (MODE_FRAME_IMMEDIATE, 2, 0xA0, True),
+            (MODE_FRAME_IMMEDIATE, 3, 0x00, False),
+            (MODE_FRAME_IMMEDIATE, 3, 0x80, True),
+            (MODE_FRAME_IMMEDIATE, 4, 0xE9, False),
         ):
-            with self.subTest(register=register, data=data):
-                chip = SSI263Reference()
+            with self.subTest(
+                response_mode=response_mode,
+                register=register,
+                data=data,
+            ):
+                chip = SSI263Reference(
+                    control_articulation_amplitude=0,
+                    response_mode=response_mode,
+                )
                 chip.d7_pending = True
                 chip.write(register, data)
                 self.assertEqual(chip.d7_pending, not clears)
 
     def test_acknowledgment_wins_on_completion_edge(self) -> None:
-        chip = SSI263Reference()
-        chip.write(2, 0xF0)
-        self.wake(chip, 0x40)
-        chip.advance_effective_ticks(frame_ticks(0x0F) - 1)
-        chip.step_effective_tick(write_end=(1, 0x00))
+        chip = SSI263Reference(
+            div2=False,
+            control_articulation_amplitude=0,
+            response_mode=MODE_FRAME_IMMEDIATE,
+        )
+        chip.u36_count = 14
+        DurationClockTests.prime_duration_rise_next_tick(chip)
+        chip.step_effective_tick(assert_pd_rst=True)
+        self.assertTrue(chip.u36_eq15_this_tick)
         self.assertEqual(chip.completed_boundaries, 1)
         self.assertEqual(chip.read_d7(), 0)
 
@@ -149,27 +333,39 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(chip.parameter_write_log, [])
 
     def test_phoneme_timing_and_continuous_repeat(self) -> None:
-        chip = SSI263Reference()
-        chip.write(2, 0xA0)
-        self.wake(chip, 0xC1)
-        period = phoneme_ticks(0x0A, 3)
-        chip.advance_effective_ticks(period - 1)
+        chip = SSI263Reference(
+            div2=False,
+            duration_phoneme=0xC1,
+            rate_inflection=0xF0,
+            control_articulation_amplitude=0,
+            response_mode=MODE_PHONEME_TRANSITIONED,
+            ar_enabled=True,
+            phone_active=True,
+        )
+        chip.u37_count = 0
+        for _ in range(15):
+            DurationClockTests.wait_for_duration_rise(chip)
         self.assertEqual(chip.read_d7(), 0)
-        chip.advance_effective_ticks(1)
+        self.assertEqual(chip.u37_count, 15)
+        DurationClockTests.wait_for_duration_rise(chip)
         self.assertEqual(chip.read_d7(), 1)
         self.assertTrue(chip.ar_drive_low)
         self.assertEqual(chip.completed_boundaries, 1)
 
-        chip.advance_effective_ticks(period)
-        self.assertEqual(chip.completed_boundaries, 2)
+        DurationClockTests.wait_for_duration_rise(chip)
+        self.assertEqual(chip.u37_count, 0)
+        self.assertEqual(chip.completed_boundaries, 1)
         self.assertEqual(chip.read_d7(), 1)
 
         chip.write(1, 0x00)
+        self.assertEqual(chip.read_d7(), 1)
+        chip.write(0, 0xC1)
         self.assertEqual(chip.read_d7(), 0)
         self.assertTrue(chip.phone_active)
-        chip.advance_effective_ticks(period)
+        for _ in range(16):
+            DurationClockTests.wait_for_duration_rise(chip)
         self.assertEqual(chip.read_d7(), 1)
-        self.assertEqual(chip.completed_boundaries, 3)
+        self.assertEqual(chip.completed_boundaries, 2)
 
     def test_dr_zero_sets_d7_but_blocks_ar(self) -> None:
         chip = SSI263Reference()
@@ -181,7 +377,10 @@ class InterfaceTests(unittest.TestCase):
         chip.write(3, 0x00)
         self.assertEqual(chip.response_mode, MODE_FRAME_IMMEDIATE)
         self.assertFalse(chip.ar_enabled)
-        chip.advance_effective_ticks(frame_ticks(0x0F))
+        chip.u36_count = 14
+        DurationClockTests.prime_duration_rise_next_tick(chip)
+        chip.advance_effective_ticks(1)
+        self.assertTrue(chip.u36_eq15_this_tick)
         self.assertEqual(chip.read_d7(), 1)
         self.assertFalse(chip.ar_drive_low)
 
@@ -214,10 +413,12 @@ class InterfaceTests(unittest.TestCase):
         faulty_p = SSI263Reference(revision_ap=False, div2=False)
         faulty_p.inflection_high = 0x25
         faulty_p.control_articulation_amplitude = 0x00
+        faulty_p.d7_pending = True
         faulty_p.step_effective_tick(
             write_end=(1, 0xAA), assert_pd_rst=True
         )
         self.assertEqual(faulty_p.inflection_high, 0xAA)
+        self.assertTrue(faulty_p.d7_pending)
         self.assertFalse(faulty_p.powered_down)
 
     def test_voice_and_glottal_cadence(self) -> None:
@@ -477,6 +678,61 @@ class SelectorTests(unittest.TestCase):
 
 
 class DdaAndU96Tests(unittest.TestCase):
+    def test_all_rom_rows_reach_pw_phases_from_natural_durclk(self) -> None:
+        for phone in range(64):
+            with self.subTest(phone=phone):
+                data = 0xC0 | phone
+                chip = SSI263Reference(
+                    div2=False,
+                    duration_phoneme=data,
+                    rate_inflection=0xF0,
+                    control_articulation_amplitude=0,
+                )
+                flags0 = chip.rom[rom_address(phone, 0)] & 0x0F
+                flags1 = chip.rom[rom_address(phone, 1)] & 0x0F
+                flags2 = chip.rom[rom_address(phone, 2)] & 0x0F
+                expected_phase0 = 2 if flags0 & 0x01 else 6
+                expected_phase1 = 2 if flags1 & 0x01 else 6
+                expected_pw3 = not bool(flags2 & 0x02)
+
+                chip.d7_pending = True
+                chip.u37_count = 0
+                chip.pw_0 = True
+                chip.pw_1 = True
+                chip.pw_3 = not expected_pw3
+                chip.begin_write(0, data)
+                self.assertEqual(chip.u37_count, 0)
+                self.assertFalse(chip.pw_0)
+                self.assertFalse(chip.pw_1)
+                chip.end_write()
+                self.assertFalse(chip.d7_pending)
+
+                start_rises = chip.duration_clock_rises
+                previous_pw0 = chip.pw_0
+                previous_pw1 = chip.pw_1
+                previous_pw3 = chip.pw_3
+                pw0_phase = None
+                pw1_phase = None
+                pw3_phase = None
+                while chip.duration_clock_rises - start_rises < 7:
+                    chip.advance_effective_ticks(1)
+                    if chip.pw_0 != previous_pw0:
+                        pw0_phase = chip.u37_count
+                    if chip.pw_1 != previous_pw1:
+                        pw1_phase = chip.u37_count
+                    if chip.pw_3 != previous_pw3:
+                        pw3_phase = chip.u37_count
+                    previous_pw0 = chip.pw_0
+                    previous_pw1 = chip.pw_1
+                    previous_pw3 = chip.pw_3
+
+                self.assertEqual(pw0_phase, expected_phase0)
+                self.assertEqual(pw1_phase, expected_phase1)
+                self.assertEqual(pw3_phase, 6)
+                self.assertTrue(chip.pw_0)
+                self.assertTrue(chip.pw_1)
+                self.assertEqual(chip.pw_3, expected_pw3)
+
     def test_u37_zero_hold_and_timed_pw_latches(self) -> None:
         chip = SSI263Reference(div2=False)
         chip.d7_pending = True
@@ -513,15 +769,18 @@ class DdaAndU96Tests(unittest.TestCase):
     def test_u29a_overlap_set_wins_and_u183_retention(self) -> None:
         chip = SSI263Reference(div2=False)
         chip.control_articulation_amplitude = 0
-        chip.phone_active = True
-        chip.ticks_to_boundary = 1
+        DurationClockTests.prime_duration_rise_next_tick(chip)
         chip.begin_write(0, 0x01)
         self.assertEqual(chip.u37_count, 1)
         self.assertFalse(chip.u29a_level)
-        chip.advance_effective_ticks(1)
+        chip.step_effective_tick(write_end=(0, 0x01))
+        self.assertTrue(chip.duration_clock_rise_this_tick)
         self.assertEqual(chip.u37_count, 1)
         self.assertFalse(chip.u29a_level)
-        chip.end_write()
+        self.assertTrue(chip.duration_clock)
+        chip._u21b_nq_rise()
+        self.assertEqual(chip.u28_count, 12)
+        self.assertFalse(chip.duration_clock)
         self.assertTrue(chip.u29a_level)
 
         chip = SSI263Reference(div2=False)

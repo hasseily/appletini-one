@@ -118,6 +118,12 @@ def phoneme_ticks(rate: int, duration: int) -> int:
     return frame_ticks(rate) * (4 - (duration & 0x03))
 
 
+def duration_clock_period_ticks(rate: int, duration: int) -> int:
+    """Return the interval between U28 DURCLK rises in effective ticks."""
+
+    return 256 * (16 - (rate & 0x0F)) * (4 - (duration & 0x03))
+
+
 def rate_clock_ticks(rate: int) -> int:
     """Return the effective ticks between RATECLK rising edges."""
 
@@ -172,8 +178,24 @@ class SSI263Reference:
     xck_pin_edges: int = 0
     effective_xck_ticks: int = 0
     div2_phase: int = 0
-    ticks_to_boundary: int = 0
     completed_boundaries: int = 0
+
+    # Sheet 5 U36 counts U21B Q rises. U35B/U29B make one pulse when
+    # the low nibble enters F; that pulse requests DONE in frame mode.
+    u36_count: int = 0
+    u36_eq15_this_tick: bool = False
+    u36_eq15_entries: int = 0
+    last_u36_eq15_tick: int | None = None
+
+    # Sheet 5 U21B/U28. U21B Q is RATECLK/2 and U28 clocks from /Q.
+    # U28 has no useful reset; 15 is the deterministic FPGA seed. DURCLK
+    # rises on the following U21B Q rise, then remains high until /Q rises
+    # and the active-low U29A /PE input reloads 12+D.
+    u28_count: int = 15
+    duration_clock: bool = False
+    duration_clock_rise_this_tick: bool = False
+    duration_clock_rises: int = 0
+    last_duration_clock_tick: int | None = None
 
     filter_ticks_to_toggle: int = 1
     filter_phase: int = 0
@@ -252,11 +274,14 @@ class SSI263Reference:
     _write_active: bool = False
     _write_register: int = 0
     _write_data: int = 0
+    _u23b_reset_override: bool = False
+    _u36_reset_override: bool = False
 
     def __post_init__(self) -> None:
         verify_rom(self.rom)
         if self.xck_edges_per_bus_cycle <= 0:
             raise ValueError("XCK edges per bus cycle must be positive")
+        self.rate_edges_left = 16 - self.rate
         self.filter_ticks_to_toggle = 256 - self.filter_frequency
         self.voice_ticks_to_edge = voice_clock_period_ticks(
             self.pitch_inflection
@@ -271,6 +296,38 @@ class SSI263Reference:
     @property
     def ar_drive_low(self) -> bool:
         return self.d7_pending and self.ar_enabled and not self.powered_down
+
+    @property
+    def response_phoneme(self) -> bool:
+        return self.response_mode in (
+            MODE_PHONEME_IMMEDIATE,
+            MODE_PHONEME_TRANSITIONED,
+        )
+
+    @property
+    def phone_write_active(self) -> bool:
+        return self._write_active and self._write_register == 0
+
+    @property
+    def frame_acknowledge_active(self) -> bool:
+        return (
+            self._write_active
+            and self._write_register in (1, 2)
+            and not self.response_phoneme
+        )
+
+    @property
+    def u23b_reset_active(self) -> bool:
+        return (
+            self._u23b_reset_override
+            or self.powered_down
+            or self.phone_write_active
+            or self.frame_acknowledge_active
+        )
+
+    @property
+    def u36_reset_active(self) -> bool:
+        return self._u36_reset_override or self.phone_write_active
 
     @property
     def phoneme(self) -> int:
@@ -333,14 +390,20 @@ class SSI263Reference:
         self._write_register = register
         self._write_data = data & 0xFF
         if self._write_register == 0:
+            # /PHO WRITE asserts U36 reset and U23B reset. U37 sees the
+            # U29A falling edge with the old DONE state before U23B clears.
+            self.u36_count = 0
             # U29A falls as the decoded phone-write condition asserts.
             self._update_u29a(duration_edge=False)
+            self._acknowledge()
             self.pw_0 = False
             self.pw_1 = False
             if pw0_set:
                 self.pw_0 = True
             if pw1_set:
                 self.pw_1 = True
+        elif self.frame_acknowledge_active:
+            self._acknowledge()
 
     def end_write(self) -> None:
         """Latch the address and data when the active write condition ends."""
@@ -358,21 +421,76 @@ class SSI263Reference:
     def _acknowledge(self) -> None:
         self.d7_pending = False
 
+    def _request_done(self) -> None:
+        """Apply one physical SET request to U23B, with reset priority."""
+
+        self.completed_boundaries += 1
+        if not self.u23b_reset_active:
+            self.d7_pending = True
+
     def _clock_u37(self) -> None:
         """Apply one falling U29A edge to the sheet-5 MC14040."""
 
         if self.d7_pending and self.u37_count == 0:
             return
+        old_count = self.u37_count
         self.u37_count = (self.u37_count + 1) & 0x0F
+        if (
+            old_count == 0x0F
+            and self.u37_count == 0
+            and self.response_phoneme
+        ):
+            self._request_done()
 
-    def _update_u29a(self, *, duration_edge: bool) -> None:
+    def _clock_u36(self) -> None:
+        """Clock U36 from one U21B Q rise and decode entry into xF."""
+
+        if self.u36_reset_active:
+            self.u36_count = 0
+            return
+        old_count = self.u36_count
+        self.u36_count = (old_count + 1) & 0x0FFF
+        if (old_count & 0x0F) != 0x0E:
+            return
+        self.u36_eq15_this_tick = True
+        self.u36_eq15_entries += 1
+        self.last_u36_eq15_tick = self.effective_xck_ticks
+        if not self.response_phoneme:
+            self._request_done()
+
+    def _update_u29a(self, *, duration_edge: bool = False) -> None:
         phone_write_active = (
             self._write_active and self._write_register == 0
         )
-        new_level = not (duration_edge or phone_write_active)
+        new_level = not (
+            self.duration_clock or duration_edge or phone_write_active
+        )
         if self.u29a_level and not new_level:
             self._clock_u37()
         self.u29a_level = new_level
+
+    def _u21b_q_rise(self) -> None:
+        """Expose U28 terminal count as the DURCLK rising half-cycle."""
+
+        self._clock_u36()
+        if self.u28_count != 15 or self.duration_clock:
+            return
+        self.duration_clock = True
+        self.duration_clock_rise_this_tick = True
+        self.duration_clock_rises += 1
+        self.last_duration_clock_tick = self.effective_xck_ticks
+        self.duration_edge_pending = True
+        self._update_u29a()
+
+    def _u21b_nq_rise(self) -> None:
+        """Clock U28, using U29A as its active-low parallel enable."""
+
+        if not self.u29a_level:
+            self.u28_count = 12 + self.duration
+        else:
+            self.u28_count = (self.u28_count + 1) & 0x0F
+        self.duration_clock = False
+        self._update_u29a()
 
     def u38_equal(self, selector: int | None = None) -> bool:
         flags = self.flags_for_selector(selector)
@@ -382,7 +500,14 @@ class SSI263Reference:
         if self.revision_ap and self.pd_rst_asserted:
             return
 
-        if register <= 2 or (register == 3 and (data & 0x80)):
+        if (
+            register == 0
+            or (
+                register in (1, 2)
+                and not self.response_phoneme
+            )
+            or (register == 3 and (data & 0x80))
+        ):
             self._acknowledge()
 
         if register == 0:
@@ -429,14 +554,8 @@ class SSI263Reference:
     def release_pd_rst(self) -> None:
         self.pd_rst_asserted = False
 
-    def _boundary_period(self) -> int:
-        if self.response_mode == MODE_FRAME_IMMEDIATE:
-            return frame_ticks(self.rate)
-        return phoneme_ticks(self.rate, self.duration)
-
     def _start_or_replace_phone(self) -> None:
         self.phone_active = True
-        self.ticks_to_boundary = self._boundary_period()
 
     def feed_bus_cycles(self, cycles: int) -> None:
         if cycles < 0:
@@ -468,17 +587,12 @@ class SSI263Reference:
         suppress_slot_write: bool = False,
     ) -> None:
         self.effective_xck_ticks += 1
-
-        if self.phone_active and self.ticks_to_boundary == 0:
-            self.ticks_to_boundary = self._boundary_period()
-        duration_edge_now = (
-            self.phone_active and self.ticks_to_boundary == 1
-        )
-        if duration_edge_now:
-            # U169 keeps DUREDGE until U93 samples it at SEL2. Setting the
-            # pending bit before the selector tick also covers a same-tick
-            # DUREDGE/SEL2 collision.
-            self.duration_edge_pending = True
+        self.duration_clock_rise_this_tick = False
+        self.u36_eq15_this_tick = False
+        if self.u36_reset_active:
+            self.u36_count = 0
+        if self.u23b_reset_active:
+            self._acknowledge()
 
         self._advance_filter_clock(1)
         self._advance_voice_clock()
@@ -489,21 +603,17 @@ class SSI263Reference:
         # U29A, U37, U183A, and the selected LATCH clocks are parallel
         # physical edges. Keep the old U37/U183 state visible to latch work
         # above, then apply their edge updates.
-        self._update_u29a(duration_edge=duration_edge_now)
+        self._update_u29a()
         if self.pd_rst_asserted:
             self.u183a_q = True
         else:
             self.u183a_q = bool(
                 self.control_articulation_amplitude & 0x80
             )
-
-        if not self.phone_active:
-            return
-        self.ticks_to_boundary -= 1
-        if self.ticks_to_boundary == 0:
-            self.completed_boundaries += 1
-            self.d7_pending = True
-            self.ticks_to_boundary = self._boundary_period()
+        if self.u36_reset_active:
+            self.u36_count = 0
+        if self.u23b_reset_active:
+            self._acknowledge()
 
     def step_effective_tick(
         self,
@@ -511,22 +621,43 @@ class SSI263Reference:
         write_end: tuple[int, int] | None = None,
         assert_pd_rst: bool = False,
     ) -> None:
-        """Advance one effective tick with explicit same-edge priority.
-
-        Timer and filter work occur first in the software model, then the
-        higher-priority write or PD/RST event overrides their visible result.
-        This makes an acknowledgment on a completion edge win, as it does in
-        the planned RTL event table.
-        """
+        """Advance one effective tick with sheet-5 reset priority."""
 
         write_commit = write_end is not None and not (
             self.revision_ap and (assert_pd_rst or self.pd_rst_asserted)
         )
+        write_register = (write_end[0] & 7) if write_end is not None else 0
+        write_data = (write_end[1] & 0xFF) if write_end is not None else 0
+        self._u36_reset_override = (
+            write_end is not None and write_register == 0
+        )
+        self._u23b_reset_override = bool(
+            (self.revision_ap and assert_pd_rst)
+            or (
+                write_end is not None
+                and (
+                    write_register == 0
+                    or (
+                        write_register in (1, 2)
+                        and not self.response_phoneme
+                    )
+                    or (write_register == 3 and bool(write_data & 0x80))
+                )
+            )
+        )
+        if write_end is not None and self._write_active:
+            self._write_active = False
         self._advance_one_effective_tick(suppress_slot_write=write_commit)
         if write_commit and write_end is not None:
-            self._latch_write(write_end[0] & 7, write_end[1] & 0xFF)
+            self._latch_write(write_register, write_data)
         if assert_pd_rst:
             self.assert_pd_rst()
+        if self._u36_reset_override:
+            self.u36_count = 0
+        if self._u23b_reset_override:
+            self._acknowledge()
+        self._u36_reset_override = False
+        self._u23b_reset_override = False
 
     def _advance_voice_clock(self) -> None:
         if self.u62_reset:
@@ -868,9 +999,11 @@ class SSI263Reference:
         old_div2 = self.rate_clock_div2
         self.rate_clock_div2 ^= 1
         if old_div2:
+            self._u21b_nq_rise()
             return
 
         self.rate_clock_div2_rises += 1
+        self._u21b_q_rise()
         self.articulation_edges_left -= 1
         if self.articulation_edges_left == 0:
             self.articulation_edges_left = 8 - self.articulation

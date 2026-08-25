@@ -9,6 +9,7 @@ module tb_ssi263_phone_sweep;
     localparam integer RAW_XCK_HZ = 2045454;
     localparam integer AUDIO_HZ = 48000;
     localparam integer OBSERVE_SAMPLES = 384;
+    localparam integer GUIDE_PHONE_COUNT = 10;
 
     logic clk = 1'b0;
     logic rstn = 1'b0;
@@ -39,6 +40,7 @@ module tb_ssi263_phone_sweep;
     integer phone_reconstruction_min [0:63];
 
     integer phone_index;
+    integer guide_index;
     integer transient_positive_rails;
     integer transient_negative_rails;
     integer transient_unknowns;
@@ -58,6 +60,48 @@ module tb_ssi263_phone_sweep;
     integer noise_rise_events = 0;
     integer noise_fall_events = 0;
     integer routed_fric_events = 0;
+    integer guide_duration_phone_checks = 0;
+    integer guide_pw_phone_checks = 0;
+    integer guide_voice_progress_phones = 0;
+    integer guide_fric_progress_phones = 0;
+    integer guide_u68_progress_phones = 0;
+    integer guide_filter_progress_phones = 0;
+    integer slot2_tc_checks = 0;
+    integer prototype_x_zero_checks = 0;
+
+    function automatic logic [5:0] guide_phone(input integer index);
+        begin
+            case (index)
+                0: guide_phone = 6'h2C; // HF
+                1: guide_phone = 6'h0B; // EH1
+                2: guide_phone = 6'h20; // L
+                3: guide_phone = 6'h11; // O
+                4: guide_phone = 6'h12; // OU
+                5: guide_phone = 6'h00; // PA
+                6: guide_phone = 6'h01; // E
+                7: guide_phone = 6'h38; // N
+                8: guide_phone = 6'h25; // D
+                default: guide_phone = 6'h00; // PA
+            endcase
+        end
+    endfunction
+
+    function automatic logic moved_toward_4(
+        input logic [3:0] start_value,
+        input logic [3:0] end_value,
+        input logic [3:0] target_value
+    );
+        begin
+            if (target_value > start_value)
+                moved_toward_4 = end_value > start_value &&
+                                 end_value <= target_value;
+            else if (target_value < start_value)
+                moved_toward_4 = end_value < start_value &&
+                                 end_value >= target_value;
+            else
+                moved_toward_4 = end_value == start_value;
+        end
+    endfunction
 
     always #5 clk = ~clk;
 
@@ -167,6 +211,246 @@ module tb_ssi263_phone_sweep;
             write_register(3'd3, 8'h7F);
             @(negedge clk);
             xck_run = 1'b1;
+        end
+    endtask
+
+    task automatic start_guide_sequence;
+        integer prime_ticks;
+        begin
+            // Programming-guide defaults: IS=$50, RE=$A8, TA=$5C, FF=$E9.
+            // First establish a real DONE-held U37 zero with a silent PA and
+            // zero amplitude. A phone write from that drawn state resets DONE
+            // without advancing U37, so every observed D=0 phone has the
+            // schematic's full sixteen DURCLK edges. No core state is forced.
+            reset_dut();
+            write_register(3'd1, 8'h50);
+            write_register(3'd2, 8'hA8);
+            write_register(3'd4, 8'hE9);
+            write_register(3'd0, 8'hC0);
+            write_register(3'd3, 8'h50);
+            @(negedge clk);
+            xck_run = 1'b1;
+            prime_ticks = 0;
+            while (!ssi_d7 && prime_ticks < 65536) begin
+                @(posedge clk);
+                if (xck_ce)
+                    prime_ticks = prime_ticks + 1;
+            end
+            check(ssi_d7 && prime_ticks < 65536,
+                  "guide sequence could not establish DONE/U37 zero");
+            write_register(3'd3, 8'h5C);
+            write_register(3'd0, {2'b00, guide_phone(0)});
+        end
+    endtask
+
+    // Follow one complete, naturally clocked D=0 guide phone. U28 must make
+    // exactly sixteen DURCLK rises before the response boundary. The timed
+    // PW gates and all amplitude state below must come from those rises; this
+    // task does not force any core state or timing window.
+    task automatic observe_guide_phone(
+        input integer sequence_index,
+        input logic [5:0] phone
+    );
+        integer timeout;
+        integer duration_events;
+        integer drain_selector_steps;
+        logic boundary_seen;
+        logic sampled_duration_event;
+        logic sampled_xck;
+        logic pw0_qualified;
+        logic pw1_qualified;
+        logic pw3_qualified;
+        logic voice_ram_changed;
+        logic fric_ram_changed;
+        logic filter_ram_changed;
+        logic voice_code_changed;
+        logic fric_code_changed;
+        logic filter_code_changed;
+        logic u68_changed;
+        logic [3:0] start_voice_ram;
+        logic [3:0] start_fric_ram;
+        logic [3:0] start_filter_ram;
+        logic [3:0] start_voice_code;
+        logic [3:0] start_fric_code;
+        logic [3:0] start_filter_code;
+        logic [3:0] start_u68;
+        logic [3:0] voice_target;
+        logic [3:0] fric_target;
+        logic [3:0] filter_target;
+        begin
+            timeout = 0;
+            duration_events = 0;
+            drain_selector_steps = 0;
+            boundary_seen = 1'b0;
+            pw0_qualified = 1'b0;
+            pw1_qualified = 1'b0;
+            pw3_qualified = 1'b0;
+            voice_ram_changed = 1'b0;
+            fric_ram_changed = 1'b0;
+            filter_ram_changed = 1'b0;
+            voice_code_changed = 1'b0;
+            fric_code_changed = 1'b0;
+            filter_code_changed = 1'b0;
+            u68_changed = 1'b0;
+            start_voice_ram = dut.core_i.parameter_resa_q[5];
+            start_fric_ram = dut.core_i.parameter_resa_q[6];
+            start_filter_ram = dut.core_i.parameter_resa_q[4];
+            start_voice_code = dut.core_i.voice_amp_code_q;
+            start_fric_code = dut.core_i.fric_amp_code_q;
+            start_filter_code = dut.core_i.filter_amp_code_q;
+            start_u68 = dut.core_i.ampct_q;
+            voice_target = expected_rom[(phone * 8) + 5][7:4];
+            fric_target = expected_rom[(phone * 8) + 6][7:4];
+            filter_target = 4'hC;
+
+            while (!boundary_seen && timeout < 300000) begin
+                @(posedge clk);
+                sampled_duration_event = dut.core_i.duration_clock_rise;
+                sampled_xck = xck_ce;
+                if (dut.core_i.pw0_set_level)
+                    pw0_qualified = 1'b1;
+                if (dut.core_i.pw1_set_level)
+                    pw1_qualified = 1'b1;
+                if (dut.core_i.pw3_load_level)
+                    pw3_qualified = 1'b1;
+                #1;
+                if (sampled_duration_event)
+                    duration_events = duration_events + 1;
+                if (dut.core_i.parameter_resa_q[5] != start_voice_ram)
+                    voice_ram_changed = 1'b1;
+                if (dut.core_i.parameter_resa_q[6] != start_fric_ram)
+                    fric_ram_changed = 1'b1;
+                if (dut.core_i.parameter_resa_q[4] != start_filter_ram)
+                    filter_ram_changed = 1'b1;
+                if (dut.core_i.voice_amp_code_q != start_voice_code)
+                    voice_code_changed = 1'b1;
+                if (dut.core_i.fric_amp_code_q != start_fric_code)
+                    fric_code_changed = 1'b1;
+                if (dut.core_i.filter_amp_code_q != start_filter_code)
+                    filter_code_changed = 1'b1;
+                if (dut.core_i.ampct_q != start_u68)
+                    u68_changed = 1'b1;
+                if (dut.core_i.response_boundary_ce_q)
+                    boundary_seen = 1'b1;
+                if (sampled_xck)
+                    timeout = timeout + 1;
+            end
+
+            // Drain two selector scans. The sixteenth DUREDGE can occur on
+            // the response-boundary tick and is then consumed in slot 4.
+            while (boundary_seen && drain_selector_steps < 16 &&
+                   timeout < 300000) begin
+                @(posedge clk);
+                sampled_xck = xck_ce;
+                #1;
+                if (dut.core_i.selector_step_ce_q)
+                    drain_selector_steps = drain_selector_steps + 1;
+                if (dut.core_i.parameter_resa_q[5] != start_voice_ram)
+                    voice_ram_changed = 1'b1;
+                if (dut.core_i.parameter_resa_q[6] != start_fric_ram)
+                    fric_ram_changed = 1'b1;
+                if (dut.core_i.parameter_resa_q[4] != start_filter_ram)
+                    filter_ram_changed = 1'b1;
+                if (dut.core_i.voice_amp_code_q != start_voice_code)
+                    voice_code_changed = 1'b1;
+                if (dut.core_i.fric_amp_code_q != start_fric_code)
+                    fric_code_changed = 1'b1;
+                if (dut.core_i.filter_amp_code_q != start_filter_code)
+                    filter_code_changed = 1'b1;
+                if (dut.core_i.ampct_q != start_u68)
+                    u68_changed = 1'b1;
+                if (sampled_xck)
+                    timeout = timeout + 1;
+            end
+
+            check(boundary_seen && timeout < 300000,
+                  $sformatf("guide phone %02h missed its response boundary",
+                            phone));
+            check(duration_events == 16,
+                  $sformatf("guide phone %02h had %0d DURCLK rises, not 16",
+                            phone, duration_events));
+            guide_duration_phone_checks =
+                guide_duration_phone_checks + 1;
+            check(pw0_qualified && pw1_qualified && pw3_qualified,
+                  $sformatf("guide phone %02h missed a qualified PW gate",
+                            phone));
+            guide_pw_phone_checks = guide_pw_phone_checks + 1;
+
+            if (voice_target != start_voice_ram) begin
+                check(voice_ram_changed && voice_code_changed &&
+                      moved_toward_4(start_voice_ram,
+                                     dut.core_i.parameter_resa_q[5],
+                                     voice_target),
+                      $sformatf("guide phone %02h made no VA progress",
+                                phone));
+                guide_voice_progress_phones =
+                    guide_voice_progress_phones + 1;
+            end else begin
+                check(dut.core_i.parameter_resa_q[5] == voice_target,
+                      $sformatf("guide phone %02h VA drifted from target",
+                                phone));
+            end
+            check(dut.core_i.voice_amp_code_q ==
+                      dut.core_i.parameter_resa_q[5],
+                  $sformatf("guide phone %02h VA latch lagged the DDA",
+                            phone));
+
+            if (fric_target != start_fric_ram) begin
+                check(fric_ram_changed && fric_code_changed &&
+                      moved_toward_4(start_fric_ram,
+                                     dut.core_i.parameter_resa_q[6],
+                                     fric_target),
+                      $sformatf("guide phone %02h made no FA progress",
+                                phone));
+                guide_fric_progress_phones =
+                    guide_fric_progress_phones + 1;
+            end else begin
+                check(dut.core_i.parameter_resa_q[6] == fric_target,
+                      $sformatf("guide phone %02h FA drifted from target",
+                                phone));
+            end
+            check(dut.core_i.fric_amp_code_q ==
+                      dut.core_i.parameter_resa_q[6],
+                  $sformatf("guide phone %02h FA latch lagged the DDA",
+                            phone));
+
+            check(dut.core_i.parameter_resa_q[4] == filter_target,
+                  $sformatf("guide phone %02h filter-amplitude DDA did not finish",
+                            phone));
+            if (filter_target != start_filter_ram) begin
+                check(filter_ram_changed,
+                      $sformatf("guide phone %02h made no filter-amplitude progress",
+                                phone));
+                guide_filter_progress_phones =
+                    guide_filter_progress_phones + 1;
+            end
+            if (filter_code_changed)
+                guide_filter_progress_phones =
+                    guide_filter_progress_phones + 1;
+            if (u68_changed)
+                guide_u68_progress_phones =
+                    guide_u68_progress_phones + 1;
+
+            if (sequence_index == 0) begin
+                check(fric_target != 4'd0 && fric_ram_changed &&
+                      fric_code_changed,
+                      "guide HF phone did not open the fricative amplitude");
+                check(filter_ram_changed && filter_code_changed,
+                      "guide HF phone did not advance filter amplitude");
+                check(u68_changed && dut.core_i.ampct_q != 4'd0,
+                      "guide HF phone did not advance U68");
+            end
+            if (sequence_index == 1)
+                check(voice_target != 4'd0 && voice_ram_changed &&
+                      voice_code_changed,
+                      "guide EH1 phone did not open the voice amplitude");
+
+            $display("SSI263 GUIDE PHONE index=%0d phone=%02h durclk=%0d pw=%0d%0d%0d va=%0h fa=%0h u68=%0h filter=%0h",
+                     sequence_index, phone, duration_events, pw3_qualified,
+                     pw1_qualified, pw0_qualified,
+                     dut.core_i.voice_amp_code_q,
+                     dut.core_i.fric_amp_code_q, dut.core_i.ampct_q,
+                     dut.core_i.filter_amp_code_q);
         end
     endtask
 
@@ -412,6 +696,8 @@ module tb_ssi263_phone_sweep;
         logic sampled_pw3_load;
         logic sampled_phone_write_low;
         logic sampled_pw3_data;
+        logic sampled_rate_edge;
+        logic prototype_x_base_off;
         logic [3:0] sampled_resa [0:7];
         logic [3:0] sampled_resb [0:7];
         logic [3:0] sampled_resc [0:7];
@@ -443,6 +729,8 @@ module tb_ssi263_phone_sweep;
             sampled_phone_write_low = dut.core_i.phone_write_active;
             sampled_pw3_data = dut.core_i.u183a_q ||
                                !dut.core_i.selector_flags[1];
+            sampled_rate_edge = dut.core_i.u93_rate_q1 &&
+                                !dut.core_i.u93_rate_q2;
             sampled_rescy = dut.core_i.parameter_rescy_q;
             sampled_target = dut.core_i.selector_target;
             for (ram_index = 0; ram_index < 8; ram_index = ram_index + 1) begin
@@ -523,6 +811,49 @@ module tb_ssi263_phone_sweep;
             if (sampled_effective_xck && sampled_selector_write) begin
                 check(sampled_u96_permit == expected_u96_permit,
                       "U96 write-mux truth table mismatch");
+                if (sampled_selector == 2) begin
+                    check(sampled_u96_permit ==
+                              dut.core_i.tc_edge_window_q,
+                          "U96 slot 2 did not use the TC window");
+                    slot2_tc_checks = slot2_tc_checks + 1;
+                end
+
+                // P2.2 was grounded on the prototype. At RATE=F, an
+                // ungrounded U177A would override U208B/C/D. Find natural
+                // cycles where the selected source is low and prove that no
+                // such extra permit appears.
+                prototype_x_base_off = 1'b0;
+                if (dut.core_i.rate_inflection_q[7:4] == 4'hF) begin
+                    case (sampled_selector)
+                        0, 1, 3:
+                            prototype_x_base_off =
+                                dut.core_i.u32b_write_gate &&
+                                !dut.core_i.tc_edge_window_q;
+                        2:
+                            prototype_x_base_off =
+                                !dut.core_i.tc_edge_window_q;
+                        4:
+                            prototype_x_base_off =
+                                dut.core_i.u166b_nq_q &&
+                                dut.core_i.control_articulation_amplitude_q[3:0]
+                                    != 4'd0 &&
+                                !dut.core_i.duration_edge_window_q;
+                        5:
+                            prototype_x_base_off = dut.core_i.pw_0_q &&
+                                                   !sampled_rate_edge;
+                        6:
+                            prototype_x_base_off = dut.core_i.pw_1_q &&
+                                                   !sampled_rate_edge;
+                        default:
+                            prototype_x_base_off = 1'b0;
+                    endcase
+                end
+                if (prototype_x_base_off) begin
+                    check(!sampled_u96_permit,
+                          "grounded prototype RATE=F override became active");
+                    prototype_x_zero_checks =
+                        prototype_x_zero_checks + 1;
+                end
                 check(sampled_target == expected_target,
                       "schematic selector target mismatch");
                 target_checks = target_checks + 1;
@@ -608,6 +939,15 @@ module tb_ssi263_phone_sweep;
     initial begin
         $readmemh("ssi263_sc02_rom.mem", expected_rom);
 
+        start_guide_sequence();
+        for (guide_index = 0; guide_index < GUIDE_PHONE_COUNT;
+             guide_index = guide_index + 1) begin
+            if (guide_index != 0)
+                write_register(3'd0,
+                               {2'b00, guide_phone(guide_index)});
+            observe_guide_phone(guide_index, guide_phone(guide_index));
+        end
+
         check_ampzero_targets();
         start_phone(6'h00);
         for (phone_index = 0; phone_index < 64;
@@ -644,6 +984,18 @@ module tb_ssi263_phone_sweep;
               noise_rise_events > 0 && noise_fall_events > 0 &&
               routed_fric_events > 0,
               "64-phone sweep did not carry fricative state into audio");
+        check(guide_duration_phone_checks == GUIDE_PHONE_COUNT &&
+              guide_pw_phone_checks == GUIDE_PHONE_COUNT,
+              "guide sequence did not prove every DURCLK/PW phone path");
+        check(guide_voice_progress_phones > 0 &&
+              guide_fric_progress_phones > 0 &&
+              guide_u68_progress_phones > 0 &&
+              guide_filter_progress_phones > 0,
+              "guide sequence did not move every amplitude path");
+        check(slot2_tc_checks > 0,
+              "integrated run did not prove U96 slot 2 uses TC");
+        check(prototype_x_zero_checks > 0,
+              "integrated run did not prove prototype RATE=F override is zero");
 
         if (failures == 0) begin
             $display("SSI263 PHONE SWEEP PASS (%0d checks, 64 phones)", checks);

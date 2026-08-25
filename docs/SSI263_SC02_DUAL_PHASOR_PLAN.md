@@ -469,13 +469,14 @@ as the current artifact.
 
 ```text
 Current pre-build suite: passed
-Current full build:      pending; run exactly one
-Source commit:           pending documentation checkpoint
-Build mode:              full, clean tree, no incremental reference required
-Route and bus skew:      pending
-Timing:                  positive WNS, WHS, and WPWS required
-Current F0.9.99 image:   pending
-Firmware SHA-256:        pending
+Current full build:      20260825T104946Z-92aa867b-full
+Source commit:           92aa867bbfafecef0dcfbc01cbdefefd29b1ea31
+Build mode:              full, clean tree, no incremental reference
+Route and bus skew:      PASS; route errors 0; bus-skew slack +5.940 ns
+Timing:                  WNS +0.009, WHS +0.018, WPWS +0.265 ns
+Current F0.9.99 image:   FIRMWARE_F0.9.99_DUAL_SSI263_SC02_POT3_CARD_GAIN_WNS0p009.BIN
+Firmware size:           4,282,764 bytes
+Firmware SHA-256:        ba2c9930c031e1965e63b8f5eb8d847250fff98f024d59ae71eb26a5b3764b59
 Hardware listen:         pending
 ```
 
@@ -501,9 +502,18 @@ The branch is ready for the next hardware listen only when:
 - all focused and source tests pass;
 - the one final F0.9.99 build passes and yields a named, hashed firmware image.
 
-The source and focused test conditions are complete. The one full build and
-package remain pending. The result will be a positive-slack test candidate,
-not a timing-promoted release.
+The source and focused test conditions are complete. The one full
+implementation, same-checkpoint positive-slack export, one Vitis build, and one
+package run are complete. The result is a positive-slack test candidate, not a
+timing-promoted release. The build wrapper stopped at its `+0.300 ns` release
+gate, then the test export accepted the same final checkpoint without another
+place or route run.
+
+The first launch created `20260825T104813Z-92aa867b-full` but stopped at RTL
+elaboration because the generated Vivado project lacked the new tracked output
+stage. It did not reach synthesis or implementation. The project was then
+regenerated from the tracked source list. `20260825T104946Z-92aa867b-full` was
+the only full implementation.
 
 Hardware listening can find a fault, but it cannot by itself prove an exact
 SSI-263 analog match. That claim needs same-vector AO captures from a real
@@ -522,4 +532,5 @@ SSI-263AP.
 9. Replace the duration/DONE abstraction with U21B/U28/U29A/U36/U37/U23B and
    prove natural sixteen-DURCLK phone cycles.
 10. Calibrate POT3 and add the per-socket Phasor output stage.
-11. Run one final full build and package F0.9.99. Pending.
+11. Run one final full implementation and package F0.9.99. Complete at source
+    commit `92aa867bbfafecef0dcfbc01cbdefefd29b1ea31`.

@@ -524,21 +524,52 @@ a nonideal term only when the part model and same-vector capture support it.
 
 The version remains `F0.9.99`. Every prior image, including the WNS `+0.039 ns`
 duration image, predates the POT3/card-gain split and is rejected for this
-listen. The replacement must come from one clean, full, non-incremental Vivado
-build. Positive setup, hold, and pulse-width slack is the hardware-listen gate;
-the normal `+0.300 ns` release margin remains a later timing task.
+listen. The replacement comes from one clean, full, non-incremental Vivado
+implementation. Positive setup, hold, and pulse-width slack is the current
+hardware-listen gate; the normal `+0.300 ns` release margin remains a later
+timing task.
 
 ```text
 Current pre-build suite: passed
-Current full build:      pending; run exactly one
-Source commit:           pending documentation checkpoint
-Build mode:              full, clean tree, no incremental reference required
-Route and bus skew:      pending
-Timing:                  positive WNS, WHS, and WPWS required
-Current F0.9.99 image:   pending
-Firmware size:           pending
-Firmware SHA-256:        pending
+Current full build:      20260825T104946Z-92aa867b-full
+Source commit:           92aa867bbfafecef0dcfbc01cbdefefd29b1ea31
+Build mode:              full, clean tree, no incremental reference
+Route:                   PASS, 0 routing errors
+Bus skew:                PASS, +5.940 ns worst slack
+Timing:                  WNS +0.009, WHS +0.018, WPWS +0.265 ns
+Timing totals:           TNS 0, THS 0, TPWS 0 ns
+Failing endpoints:       setup 0, hold 0, pulse width 0
+Constraint checks:       unconstrained 0, missing objects 0
+Bitstream SHA-256:       86b16c44e468cb3507b2717997e78261ad739aab006a347a7000c7f455e561ea
+XSA SHA-256:             ff78bdf0158a0e7325f9e56de1de2f448758e4b6c1310f642e797232a0453786
+Current F0.9.99 image:   FIRMWARE_F0.9.99_DUAL_SSI263_SC02_POT3_CARD_GAIN_WNS0p009.BIN
+Firmware size:           4,282,764 bytes
+Firmware SHA-256:        ba2c9930c031e1965e63b8f5eb8d847250fff98f024d59ae71eb26a5b3764b59
 Hardware listen:         pending
+```
+
+The normal build wrapper recorded the parent run as `failed` only because WNS
+is below its `+0.300 ns` release gate. The positive-slack export reopened the
+same final checkpoint and made no new place or route run. Its manifest reports
+`positive_slack_test_exported`, with all values above. The archived XSA and the
+XSA supplied to Vitis have the same SHA-256. One Vitis run and one Bootgen run
+made the image. Bootgen names the archived SSI-263 bitstream and places the two
+frontend sections at `0x00100000` and `0x0027c000`. The frontend ELF contains
+`Firmware F0.9.99`.
+
+One earlier command created the directory
+`20260825T104813Z-92aa867b-full`, but stopped at RTL elaboration because the
+generated Vivado project had not yet imported the new tracked output-stage
+source. It did not reach synthesis, placement, or routing. Regenerating the
+project from `hdl/hdl_sources.txt` fixed source closure. The run listed above
+was the only full implementation.
+
+Package input hashes:
+
+```text
+FSBL ELF:           7e47637e290b70701381d8ac3c91c267129dde7e4b12e172e76b4634786f7079
+Frontend core 1:   cba77543cece3125c6d06e8561a8e7b6e7c8a50000ec6e1c010881d93144271e
+Frontend core 0:   339b492e66c2d6a3a65448e958103a07af326cc25665daee784680c646c8d72c
 ```
 
 ## Hardware validation for this candidate

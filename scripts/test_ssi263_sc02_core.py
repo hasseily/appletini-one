@@ -64,11 +64,20 @@ def static_checks() -> None:
         "ampct_q <= ampct_q + 4'd1;",
         "ampct_q <= ampct_q - 4'd1;",
         "assign u20_clock_enable =",
+        "logic [3:0] parameter_resa_q [0:6];",
+        "assign selector_write_level = slow_div_q[1]",
+        "assign selector_latch_level = slow_div_q[1]",
+        "if (selector_latch_level) begin",
+        "3'd4: filter_amp_first_q <= parameter_resa_q[4];",
+        "f1_code_q <= f1_first_q;",
+        "f2_code_q <= f2_first_q;",
+        "filter_amp_code_q <= filter_amp_masked;",
         "if (u20_clock_enable)",
         "u20b_q <= selector_flags[3];",
         "if (!filter_phase_q)",
-        "fric1_sw_q <= u20b_q;",
         "if (filter_phase_q)",
+        "fric_amp_code_q <= fric_amp_first_q;\n"
+        "                fric1_sw_q <= u20b_q;",
         "fric2_sw_q <= !u20b_q;",
     )
     for text in required:
@@ -86,6 +95,8 @@ def static_checks() -> None:
         r"ampct_q\s*<=\s*\(ampct_q\s*==", stripped_source
     ):
         raise RuntimeError("U68 retains an invented BCD terminal or wrap")
+    if "f3_f4_code_q" in stripped_source:
+        raise RuntimeError("F3/F4 still share a phase-latch register")
 
     checked_paths = (
         ROOT / "hdl" / "apple" / "ssi263_sc02_core.sv",

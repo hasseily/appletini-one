@@ -216,13 +216,22 @@ Implement the sheet-6 counter and reset path, not a decoded stop rule:
 Test the complete count, direction, terminal, and U62-reset trace. No phone
 name or `PW2 && !PW3` shortcut may replace it.
 
+### Parameter and phase latches
+
+Keep the three drawn storage layers: per-selector RESA in U89, the selected
+U106-U114 first-stage latch during LATCH, and the U170-U176 phase latch. Pass
+F1/F3/voice only in Phi0_X and F2/F2-res/F4/fricative only in Phi1_X.
+
+Gate raw U111 filter amplitude through U70 with AMPCT3:0, then capture it in
+U206 only on the positive Phi0 edge.
+
 ### U20B, U112, and U166 route state
 
 Keep the two fricative switches as separate state:
 
 - the gated WR_SEL2 edge clocks TPARM3 into U20B through the shown PW0, PW1,
   PW2, `AMPCT_ZERO`, and `FRIC_AMP_ZERO` terms;
-- U112 is transparent while Phi1_X is low and produces `FRIC1_SW` from U20B;
+- U112 is transparent while Phi1_X is high and produces `FRIC1_SW` from U20B;
 - U166A samples the complement of U20B on the positive Phi0_X edge and holds
   `FRIC2_SW`.
 

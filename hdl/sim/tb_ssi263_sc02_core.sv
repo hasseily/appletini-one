@@ -465,6 +465,26 @@ module tb_ssi263_sc02_core;
         check(selector == 3'd1 && f1_code == 4'd0,
                "selector moved a parameter without a sweep");
 
+        // The complete U44/U45/U46/U47 waveform has one 16-tick slot per
+        // selector. WRITE is high at r=2/3 and LATCH at r=10/11.
+        reset_chips();
+        for (setting = 0; setting < 128; setting = setting + 1) begin
+            check(selector == setting / 16,
+                  "selector changed inside a 16-tick slot");
+            check(dut.selector_write_level ==
+                  ((setting % 16) == 2 || (setting % 16) == 3),
+                  "U46/U47 WRITE waveform mismatch");
+            check(dut.selector_latch_level ==
+                  ((setting % 16) == 10 || (setting % 16) == 11),
+                  "U46/U47 LATCH waveform mismatch");
+            check(!(dut.selector_write_level &&
+                    dut.selector_latch_level),
+                  "WRITE and LATCH overlapped");
+            raw_xck_edges(1);
+        end
+        check(selector == 3'd0,
+              "128-tick selector scan did not wrap exactly");
+
         // Every articulation code reloads U94. Its steady pulse interval is
         // 256 * (16-R) * (8-T) effective ticks.
         for (setting = 0; setting < 8; setting = setting + 1) begin
@@ -527,7 +547,7 @@ module tb_ssi263_sc02_core;
         write_register(3'd1, 8'hFF);
         write_register(3'd2, 8'hFF);
         write_register(3'd0, 8'hB0);
-        write_register(3'd3, 8'h70);
+        write_register(3'd3, 8'h7F);
         raw_xck_edges(17000);
         check(!pw_3 && fric_amp_code != 4'd0,
                "noise test controls did not settle");
@@ -685,9 +705,9 @@ module tb_ssi263_sc02_core;
         force dut.ampct_q = 4'd0;
         force dut.fric_amp_code_q = 4'hF;
         force dut.selector_q = 3'd2;
-        force dut.selector_phase_q = 1'b1;
+        force dut.selector_phase_q = 1'b0;
         force dut.selector_latch_phase_q = 1'b1;
-        force dut.slow_div_q = 2'd3;
+        force dut.slow_div_q = 2'd1;
         force dut.selector_flags = 4'h8;
         #1;
         check(dut.u20_clock_enable,
@@ -733,29 +753,131 @@ module tb_ssi263_sc02_core;
         force dut.u20b_q = 1'b1;
         @(posedge clk);
         #1;
-        check(fric1_sw,
-              "U112 did not follow U20B during Phi1_X");
+        check(!fric1_sw,
+              "U112 changed while Phi1_X was low");
         force dut.filter_phase_q = 1'b1;
-        force dut.u20b_q = 1'b0;
         @(posedge clk);
         #1;
         check(fric1_sw,
-              "U112 did not hold FRIC1_SW outside Phi1_X");
+              "U112 did not follow U20B during Phi1_X");
+        force dut.u20b_q = 1'b0;
+        @(posedge clk);
+        #1;
+        check(!fric1_sw,
+              "U112 did not remain transparent in Phi1_X");
         force dut.filter_ticks_left_q = 9'd1;
         raw_xck_edges(1);
         check(fric2_sw,
               "U166A did not sample complementary U20B at Phi0_X");
         force dut.u20b_q = 1'b1;
-        @(posedge clk);
-        #1;
-        check(fric2_sw,
-              "U166A did not hold FRIC2_SW between Phi0_X edges");
+        force dut.filter_phase_q = 1'b1;
+        force dut.filter_ticks_left_q = 9'd1;
         raw_xck_edges(1);
         check(!fric2_sw,
               "U166A did not resample complementary U20B");
         release dut.filter_phase_q;
         release dut.filter_ticks_left_q;
         release dut.u20b_q;
+        reset_chips();
+
+        // U106-U114 first-stage latches follow RESA only during the selected
+        // slot's LATCH window and retain it after the window closes.
+        @(negedge clk);
+        dut.parameter_resa_q[0] = 4'hA;
+        force dut.selector_q = 3'd0;
+        force dut.selector_phase_q = 1'b0;
+        force dut.selector_latch_phase_q = 1'b1;
+        force dut.slow_div_q = 2'd2;
+        @(posedge clk);
+        #1;
+        check(dut.f1_first_q == 4'hA,
+              "U106 did not follow RESA during LATCH");
+        force dut.slow_div_q = 2'd0;
+        @(negedge clk);
+        dut.parameter_resa_q[0] = 4'h5;
+        @(posedge clk);
+        #1;
+        check(dut.f1_first_q == 4'hA,
+              "U106 changed after LATCH closed");
+        release dut.selector_q;
+        release dut.selector_phase_q;
+        release dut.selector_latch_phase_q;
+        release dut.slow_div_q;
+
+        // Phi0_X owns F1/F3/voice; Phi1_X owns F2/F2_RES/F4/fricative.
+        force dut.f1_first_q = 4'hA;
+        force dut.f3_first_q = 4'hB;
+        force dut.voice_amp_first_q = 4'hC;
+        force dut.filter_phase_q = 1'b0;
+        @(posedge clk);
+        #1;
+        check(f1_code == 4'hA && f3_code == 4'hB &&
+              voice_amp_code == 4'hC,
+              "Phi0_X latches did not follow their first stages");
+        force dut.filter_phase_q = 1'b1;
+        force dut.f1_first_q = 4'h1;
+        force dut.f3_first_q = 4'h2;
+        force dut.voice_amp_first_q = 4'h3;
+        @(posedge clk);
+        #1;
+        check(f1_code == 4'hA && f3_code == 4'hB &&
+              voice_amp_code == 4'hC,
+              "Phi0_X latches changed during Phi1");
+
+        force dut.f2_first_q = 4'h4;
+        force dut.f2_res_first_q = 4'h5;
+        force dut.f4_first_q = 4'h6;
+        force dut.fric_amp_first_q = 4'h7;
+        @(posedge clk);
+        #1;
+        check(f2_code == 4'h4 && f2_res_code == 4'h5 &&
+              f4_code == 4'h6 && fric_amp_code == 4'h7,
+              "Phi1_X latches did not follow their first stages");
+        force dut.filter_phase_q = 1'b0;
+        force dut.f2_first_q = 4'h8;
+        force dut.f2_res_first_q = 4'h9;
+        force dut.f4_first_q = 4'hA;
+        force dut.fric_amp_first_q = 4'hB;
+        @(posedge clk);
+        #1;
+        check(f2_code == 4'h4 && f2_res_code == 4'h5 &&
+              f4_code == 4'h6 && fric_amp_code == 4'h7,
+              "Phi1_X latches changed during Phi0");
+        release dut.f1_first_q;
+        release dut.f2_first_q;
+        release dut.f2_res_first_q;
+        release dut.f3_first_q;
+        release dut.f4_first_q;
+        release dut.voice_amp_first_q;
+        release dut.fric_amp_first_q;
+        release dut.filter_phase_q;
+        reset_chips();
+
+        // U206 samples raw filter amplitude AND AMPCT only on Phi0 entry.
+        force dut.filter_amp_first_q = 4'hF;
+        force dut.ampct_q = 4'b1010;
+        force dut.pw_3_q = 1'b0;
+        force dut.filter_phase_q = 1'b1;
+        force dut.filter_ticks_left_q = 9'd1;
+        raw_xck_edges(1);
+        check(filter_amp_code == 4'hB,
+              "U206 did not capture U111 AND AMPCT on Phi0 entry");
+        force dut.filter_amp_first_q = 4'h5;
+        force dut.ampct_q = 4'hF;
+        @(posedge clk);
+        #1;
+        check(filter_amp_code == 4'hB,
+              "U206 changed after the Phi0 capture edge");
+        force dut.filter_phase_q = 1'b1;
+        force dut.filter_ticks_left_q = 9'd1;
+        raw_xck_edges(1);
+        check(filter_amp_code == 4'h5,
+              "U206 missed the next Phi0 capture edge");
+        release dut.filter_amp_first_q;
+        release dut.ampct_q;
+        release dut.pw_3_q;
+        release dut.filter_phase_q;
+        release dut.filter_ticks_left_q;
         reset_chips();
 
         // CTL/PD gates the request and analog source paths. The schematic has

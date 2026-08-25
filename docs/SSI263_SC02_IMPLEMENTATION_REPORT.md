@@ -192,13 +192,25 @@ The source now follows the sheet-6 amplitude counter instead of
 This path now decides the source envelope and U62 state. There is no special
 B/D/P/T/K mute and no synthetic stop burst.
 
+### Parameter and phase latch layers
+
+The selector path has three distinct storage layers. U89 holds RESA for each
+selector. U106-U114 follow only during that selector's LATCH window, eight
+FASTCLK ticks after WRITE. U170-U176 then pass the first-stage code only while
+the matching capacitor bank is grounded: F1/F3/voice in Phi0_X and
+F2/F2-res/F4/fricative in Phi1_X.
+
+U111 holds raw filter amplitude. U70 gates its four bits with
+`{AMPCT3, AMPCT2, AMPCT1, AMPCT0}`, and U206 captures that result only on the
+positive Phi0 edge. It does not follow later U111 or AMPCT changes in Phi0.
+
 ### U20B/U112/U166 route state
 
 The two fricative routes are not one ROM bit and its live complement.
 
 The gated WR_SEL2 path clocks TPARM3 into U20B. Its clock gate contains the
 drawn PW0, PW1, PW2, `AMPCT_ZERO`, and `FRIC_AMP_ZERO` terms. U112 remains
-transparent while Phi1_X is low and supplies `FRIC1_SW` from U20B. U166A
+transparent while Phi1_X is high and supplies `FRIC1_SW` from U20B. U166A
 samples `/U20B` on the positive Phi0_X edge and holds `FRIC2_SW`. Their
 different clocks preserve the route handoff drawn on sheet 7.
 

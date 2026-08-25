@@ -116,8 +116,6 @@ module ssi263_sc02_core #(
     logic       div2_q;
     logic       div2_phase_q;
 
-    logic [16:0] frame_ticks_left_q;
-    logic [2:0]  frames_left_q;
     logic [15:0] voice_clock_ticks_left_q;
     logic [8:0]  filter_ticks_left_q;
     // Sheet 6 amplitude counter and glottal divider.
@@ -130,6 +128,10 @@ module ssi263_sc02_core #(
     logic [4:0] rate_edges_left_q;
     logic       rate_clock_q;
     logic       rate_clock_div2_q;
+    logic [3:0] u28_q;
+    logic       u28_tc_level;
+    logic       u28_tc_level_q;
+    logic [3:0] u36_q;
     logic [3:0] articulation_edges_left_q;
     logic [3:0] inflection_edges_left_q;
     logic [7:0] transitioned_inflection_q;
@@ -210,6 +212,9 @@ module ssi263_sc02_core #(
     logic [3:0] u37_q;
     logic       u183a_q;
     logic       phone_write_active;
+    logic       phone_write_release;
+    logic       frame_ack_active;
+    logic       response_reset_level;
     logic       duration_clock_rise;
     logic       u29a_level;
     logic       u29a_level_q;
@@ -240,27 +245,6 @@ module ssi263_sc02_core #(
     initial begin
         $readmemh(ROM_FILE, rom_q);
     end
-
-    function automatic logic [16:0] frame_tick_count(input logic [3:0] value);
-        logic [4:0] factor;
-        begin
-            factor = 5'd16 - {1'b0, value};
-            frame_tick_count = {factor, 12'b0};
-        end
-    endfunction
-
-    function automatic logic [2:0] boundary_frame_count(
-        input logic       use_phoneme_timing,
-        input logic [1:0] duration_value
-    );
-        begin
-            if (use_phoneme_timing) begin
-                boundary_frame_count = 3'd4 - {1'b0, duration_value};
-            end else begin
-                boundary_frame_count = 3'd1;
-            end
-        end
-    endfunction
 
     function automatic logic [15:0] voice_clock_tick_count(
         input logic [11:0] value
@@ -401,6 +385,20 @@ module ssi263_sc02_core #(
     // AP PD/RST owns the whole edge. The faulty P revision ignores PD/RST,
     // including when it collides with the falling edge of a host write.
     assign write_commit = write_end && (pd_rst_n || !REVISION_AP);
+    // Sheet 5 U23B reset has priority over its response-set clock. A phone
+    // write always acknowledges DONE. WR1/WR2 acknowledge only the retained
+    // frame-response mode. Keep the just-ended strobe active for this model
+    // edge so an acknowledgment cannot re-set DONE in the same fabric tick.
+    assign phone_write_release = write_commit &&
+                                 write_reg_hold_q == 3'd0;
+    assign frame_ack_active =
+        (write_active && (write_reg == 3'd1 || write_reg == 3'd2)) ||
+        (write_commit && (write_reg_hold_q == 3'd1 ||
+                          write_reg_hold_q == 3'd2));
+    assign response_reset_level = powered_down || u183a_q ||
+                                  phone_write_active ||
+                                  phone_write_release ||
+                                  (!response_phoneme_q && frame_ack_active);
     // Sheet 6: U104C.8 is U62 /Q (also tied to U62 D), not U41C
     // feedback. U72A inverts U104C, U42D is NOR(SEL1, FRIC_AMP_ZERO),
     // and U41C ANDs those two terms before clocking U75 and U73.
@@ -462,17 +460,17 @@ module ssi263_sc02_core #(
         filter_amp_first_q[0] && ampct0
     };
 
-    // Sheet 5 U37/U38. U9C inverts the raw active-low PHO WRITE decode before
-    // U29A, so the U29A input is high while a phone write is active; the same
-    // level drives the active-high resets at U66 and U23B. U29A then falls at
-    // the negative-edge CD4040 advances at write assertion or DURCLK rise.
+    // Sheet 5 duration and parameter timing. U21B Q is RATECLK/2 and drives
+    // U28 CET; U21B /Q clocks U28. U28 therefore counts on each Q falling
+    // edge, loads 12+D while U29A /PE is low, and asserts TC only while Q is
+    // high with a count of 15. This produces 16 DURCLK rises per phoneme.
+    // U9C inverts the raw active-low PHO WRITE decode before U29A, so U29A
+    // falls at write assertion or DURCLK rise. U37 advances on that fall.
     // U38's inverted-nibble compare reduces to q=2 or q=6.
     assign phone_write_active = write_active && write_reg == 3'd0;
-    assign duration_clock_rise = effective_xck_ce && phone_active_q &&
-                                 !powered_down &&
-                                 frame_ticks_left_q == 17'd1 &&
-                                 frames_left_q == 3'd1;
-    assign u29a_level = !(duration_clock_rise || phone_write_active);
+    assign u28_tc_level = (&u28_q) && rate_clock_div2_q;
+    assign duration_clock_rise = u28_tc_level && !u28_tc_level_q;
+    assign u29a_level = !(u28_tc_level || phone_write_active);
     assign u38_equal = (u37_q == (selector_flags[0] ? 4'd2 : 4'd6));
     assign pw0_set_level = selector_latch_level && selector_q == 3'd0 &&
                            u38_equal;
@@ -567,8 +565,6 @@ module ssi263_sc02_core #(
             div2_q <= div2;
             div2_phase_q <= 1'b0;
 
-            frame_ticks_left_q <= frame_tick_count(4'h0);
-            frames_left_q <= 3'd1;
             voice_clock_ticks_left_q <= voice_clock_tick_count(12'h000);
             filter_ticks_left_q <= filter_half_tick_count(8'hFF);
             u62_q <= 1'b0;
@@ -580,6 +576,9 @@ module ssi263_sc02_core #(
             rate_edges_left_q <= rate_edge_count(4'h0);
             rate_clock_q <= 1'b0;
             rate_clock_div2_q <= 1'b0;
+            u28_q <= 4'hF;
+            u28_tc_level_q <= 1'b0;
+            u36_q <= 4'd0;
             articulation_edges_left_q <= movement_edge_count(3'h0);
             inflection_edges_left_q <= movement_edge_count(3'h0);
             transitioned_inflection_q <= 8'h00;
@@ -662,13 +661,21 @@ module ssi263_sc02_core #(
             pd_rst_n_q <= pd_rst_n;
             div2_q <= div2;
 
-            // U183A is set by T/PD /RST and otherwise samples CTRL on the
-            // falling FASTCLK edge. One effective-edge sample preserves the
-            // drawn stable value used by the later slot-2 latch.
-            if (!pd_rst_n)
+            // U183A is set by the corrected AP T/PD /RST path and otherwise
+            // samples CTRL on the falling FASTCLK edge. The faulty P revision
+            // ignores that pin, matching its retained running/request state.
+            if (!pd_rst_n && REVISION_AP)
                 u183a_q <= 1'b1;
             else if (effective_xck_ce)
                 u183a_q <= control_articulation_amplitude_q[7];
+
+            // U23B is the physical DONE_RB latch. Its asynchronous reset
+            // wins any response event on the same modeled edge. U36's reset
+            // is the active phone-write level and likewise wins its clock.
+            if (response_reset_level)
+                pending_q <= 1'b0;
+            if (phone_write_active || phone_write_release)
+                u36_q <= 4'd0;
 
             // U35A/U30D/U33B/U30C hold U37 at zero while DONE_RB is high.
             // That asynchronous zero hold wins a coincident U29A falling
@@ -676,9 +683,18 @@ module ssi263_sc02_core #(
             // produces only one falling edge.
             if (pending_q && u37_q == 4'd0)
                 u37_q <= 4'd0;
-            else if (u29a_level_q && !u29a_level)
+            else if (u29a_level_q && !u29a_level) begin
                 u37_q <= u37_q + 4'd1;
+                // In retained phoneme-response mode, U25C clocks DONE when
+                // U37 enters zero on its sixteenth U29A falling edge.
+                if (response_phoneme_q && u37_q == 4'hF &&
+                    !pending_q && !response_reset_level) begin
+                    pending_q <= 1'b1;
+                    response_boundary_ce_q <= 1'b1;
+                end
+            end
             u29a_level_q <= u29a_level;
+            u28_tc_level_q <= u28_tc_level;
 
             if (duration_clock_rise)
                 duration_edge_pending_q <= 1'b1;
@@ -822,26 +838,6 @@ module ssi263_sc02_core #(
                     filter_ticks_left_q <= filter_ticks_left_q - 9'd1;
                 end
 
-                if (phone_active_q && !powered_down) begin
-                    if (frame_ticks_left_q == 17'd1) begin
-                        frame_ticks_left_q <= frame_tick_count(
-                            rate_inflection_q[7:4]
-                        );
-                        if (frames_left_q == 3'd1) begin
-                            frames_left_q <= boundary_frame_count(
-                                response_phoneme_q,
-                                duration_phoneme_q[7:6]
-                            );
-                            pending_q <= 1'b1;
-                            response_boundary_ce_q <= 1'b1;
-                        end else begin
-                            frames_left_q <= frames_left_q - 3'd1;
-                        end
-                    end else begin
-                        frame_ticks_left_q <= frame_ticks_left_q - 17'd1;
-                    end
-                end
-
                 // Sheet 4 U83/U84/U87-U90 form an eight-address DDA. A_CLR
                 // writes B=(target-A), direction carry, and C=8 without
                 // changing A. Later U96-permitted WRITE pulses accumulate B
@@ -936,9 +932,42 @@ module ssi263_sc02_core #(
                                             inflection_edges_left_q - 4'd1;
                                     end
 
+                                    // U28 clocks from U21B /Q, so its active
+                                    // edge occurs when RATECLK/2 Q falls. Its
+                                    // synchronous /PE sees U29A low at TC, or
+                                    // during a coincident phone write.
+                                    if (rate_clock_div2_q) begin
+                                        if (!u29a_level)
+                                            u28_q <= {
+                                                2'b11,
+                                                duration_phoneme_q[7:6]
+                                            };
+                                        else
+                                            u28_q <= u28_q + 4'd1;
+                                    end
+
                                     rate_clock_div2_q <= !rate_clock_div2_q;
                                     if (!rate_clock_div2_q) begin
                                         rate_clock_div2_ce_q <= 1'b1;
+
+                                        // U36 is a negative-edge CD4040
+                                        // clocked by U21B /Q, so it advances
+                                        // when U21B Q rises. U35B/U29B decode
+                                        // entry into low-nibble F. In frame
+                                        // mode that edge clocks U23B DONE.
+                                        if (!phone_write_active &&
+                                            !phone_write_release) begin
+                                            u36_q <= u36_q + 4'd1;
+                                            if (!response_phoneme_q &&
+                                                u36_q == 4'hE &&
+                                                !pending_q &&
+                                                !response_reset_level) begin
+                                                pending_q <= 1'b1;
+                                                response_boundary_ce_q <=
+                                                    1'b1;
+                                            end
+                                        end
+
                                         if (articulation_edges_left_q == 4'd1) begin
                                             articulation_edges_left_q <=
                                                 movement_edge_count(
@@ -970,25 +999,12 @@ module ssi263_sc02_core #(
             // Writes come after background work so an acknowledgment wins a
             // collision with a response boundary on the same fabric edge.
             if (write_commit) begin
-                if (write_reg_hold_q <= 3'd2 ||
-                    (write_reg_hold_q == 3'd3 && write_data_hold_q[7])) begin
-                    pending_q <= 1'b0;
-                end
-
                 case (write_reg_hold_q)
                     3'd0: begin
                         duration_phoneme_q <= write_data_hold_q;
                         phone_setup_pending_q <= 1'b1;
-                        if (!powered_down) begin
+                        if (!powered_down)
                             phone_active_q <= 1'b1;
-                            frame_ticks_left_q <= frame_tick_count(
-                                rate_inflection_q[7:4]
-                            );
-                            frames_left_q <= boundary_frame_count(
-                                response_phoneme_q,
-                                write_data_hold_q[7:6]
-                            );
-                        end
                     end
 
                     3'd1: begin
@@ -1012,44 +1028,30 @@ module ssi263_sc02_core #(
                             control_articulation_amplitude_q <=
                                 write_data_hold_q;
                             phone_active_q <= 1'b1;
-                            frame_ticks_left_q <= frame_tick_count(
-                                rate_inflection_q[7:4]
-                            );
 
                             case (duration_phoneme_q[7:6])
                                 MODE_PHONEME_TRANSITIONED: begin
                                     response_phoneme_q <= 1'b1;
                                     transitioned_pitch_q <= 1'b1;
                                     ar_enabled_q <= 1'b1;
-                                    frames_left_q <= boundary_frame_count(
-                                        1'b1, duration_phoneme_q[7:6]
-                                    );
                                 end
 
                                 MODE_PHONEME_IMMEDIATE: begin
                                     response_phoneme_q <= 1'b1;
                                     transitioned_pitch_q <= 1'b0;
                                     ar_enabled_q <= 1'b1;
-                                    frames_left_q <= boundary_frame_count(
-                                        1'b1, duration_phoneme_q[7:6]
-                                    );
                                 end
 
                                 MODE_FRAME_IMMEDIATE: begin
                                     response_phoneme_q <= 1'b0;
                                     transitioned_pitch_q <= 1'b0;
                                     ar_enabled_q <= 1'b1;
-                                    frames_left_q <= 3'd1;
                                 end
 
                                 default: begin
                                     // DR=00 only disables A/R. It keeps the
                                     // prior response and inflection modes.
                                     ar_enabled_q <= 1'b0;
-                                    frames_left_q <= boundary_frame_count(
-                                        response_phoneme_q,
-                                        duration_phoneme_q[7:6]
-                                    );
                                 end
                             endcase
                         end else begin

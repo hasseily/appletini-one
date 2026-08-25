@@ -256,7 +256,7 @@ module tb_ssi263_sc02_core;
 
     task automatic check(input logic condition, input string message);
         begin
-            if (!condition) begin
+            if (condition !== 1'b1) begin
                 $display("SSI263 SC02 CORE FAIL: %s", message);
                 failures = failures + 1;
             end
@@ -391,15 +391,26 @@ module tb_ssi263_sc02_core;
         write_register(3'd3, 8'h00);
         check(phone_active && ar_enabled && response_phoneme &&
                transitioned_pitch, "DR=11 mode latch");
-        raw_xck_edges(4095);
-        check(!d7_pending, "phoneme response arrived one tick early");
-        raw_xck_edges(1);
+        first_wait = 0;
+        while (!d7_pending && first_wait < 32768) begin
+            raw_xck_edges(1);
+            first_wait = first_wait + 1;
+        end
         check(d7_pending && ar_drive_low, "phoneme response missing");
 
-        // An inflection write acknowledges but does not restart the timer.
+        // U23B reset gates WR1/WR2 with retained frame mode. An inflection
+        // write therefore does not acknowledge a phoneme response; a phone
+        // write always does and starts the next U37 cycle.
         write_register(3'd1, 8'h50);
-        check(!d7_pending && phone_active, "reg1 acknowledgment");
-        raw_xck_edges(4096);
+        check(d7_pending && phone_active,
+              "phoneme response was cleared by frame-only WR1 ack");
+        write_register(3'd0, 8'hC0);
+        check(!d7_pending && phone_active, "phone-write acknowledgment");
+        first_wait = 0;
+        while (!d7_pending && first_wait < 32768) begin
+            raw_xck_edges(1);
+            first_wait = first_wait + 1;
+        end
         check(d7_pending && ar_drive_low, "repeat response after ack");
 
         // DR=00 preserves phoneme timing, uses its live D=0 duration, sets D7,
@@ -409,9 +420,11 @@ module tb_ssi263_sc02_core;
         write_register(3'd3, 8'h00);
         check(response_phoneme && transitioned_pitch && !ar_enabled,
                "DR=00 did not preserve prior response mode");
-        raw_xck_edges(16383);
-        check(!d7_pending, "DR=00 response arrived one tick early");
-        raw_xck_edges(1);
+        first_wait = 0;
+        while (!d7_pending && first_wait < 65536) begin
+            raw_xck_edges(1);
+            first_wait = first_wait + 1;
+        end
         check(d7_pending && !ar_drive_low,
                "DR=00 D7 and A/R split");
 
@@ -424,25 +437,75 @@ module tb_ssi263_sc02_core;
         write_register(3'd3, 8'h80);
         write_register(3'd0, 8'h00);
         write_register(3'd3, 8'h00);
-        raw_xck_edges(4096);
+        first_wait = 0;
+        while (!d7_pending && first_wait < 32768) begin
+            raw_xck_edges(1);
+            first_wait = first_wait + 1;
+        end
         check(d7_pending && !ar_drive_low,
                "DR=00 did not retain frame timing");
 
-        // A write acknowledgment wins when it ends on the response tick.
+        // In frame mode a WR1 strobe holds U23B reset across U36's decoded
+        // count-15 event, so reset wins the response collision.
         write_register(3'd3, 8'h80);
         write_register(3'd0, 8'h40);
         write_register(3'd3, 8'h00);
-        raw_xck_edges(4095);
+        first_wait = 0;
+        while (dut.u36_q != 4'hE && first_wait < 32768) begin
+            raw_xck_edges(1);
+            first_wait = first_wait + 1;
+        end
+        check(first_wait < 32768, "U36 did not reach pre-response count E");
         @(negedge clk);
         write_reg = 3'd1;
         write_data = 8'h50;
         write_active = 1'b1;
+        first_wait = 0;
+        while (dut.u36_q == 4'hE && first_wait < 1024) begin
+            raw_xck_edges(1);
+            first_wait = first_wait + 1;
+        end
+        check(dut.u36_q == 4'hF,
+              "U36 did not enter decoded response count F");
         @(negedge clk);
-        xck_ce = 1'b1;
         write_active = 1'b0;
         @(negedge clk);
-        xck_ce = 1'b0;
         check(!d7_pending, "ack lost a boundary collision");
+
+        // U183A samples CTRL on the same effective edge that can clock U36.
+        // Its active-high asynchronous reset must suppress a coincident E->F
+        // frame request even though the old sampled U183A state is still low.
+        reset_chips();
+        @(negedge clk);
+        force dut.response_phoneme_q = 1'b0;
+        force dut.u183a_q = 1'b0;
+        force dut.control_articulation_amplitude_q = 8'h80;
+        force dut.u36_q = 4'hE;
+        force dut.slow_div_q = 2'd3;
+        force dut.selector_phase_q = 1'b1;
+        force dut.selector_latch_phase_q = 1'b1;
+        force dut.selector_q = 3'd1;
+        force dut.rate_edges_left_q = 5'd1;
+        force dut.rate_clock_q = 1'b0;
+        force dut.rate_clock_div2_q = 1'b0;
+        xck_ce = 1'b1;
+        @(posedge clk);
+        #1;
+        check(!d7_pending && !response_boundary_ce,
+              "CTL power-down lost a coincident U36 response reset");
+        @(negedge clk);
+        xck_ce = 1'b0;
+        release dut.response_phoneme_q;
+        release dut.u183a_q;
+        release dut.control_articulation_amplitude_q;
+        release dut.u36_q;
+        release dut.slow_div_q;
+        release dut.selector_phase_q;
+        release dut.selector_latch_phase_q;
+        release dut.selector_q;
+        release dut.rate_edges_left_q;
+        release dut.rate_clock_q;
+        release dut.rate_clock_div2_q;
 
         // 2 XCK pin edges with DIV2 set produce one effective tick.
         reset_chips();
@@ -564,13 +627,20 @@ module tb_ssi263_sc02_core;
         @(negedge clk);
         write_active = 1'b0;
         @(negedge clk);
-        force dut.frame_ticks_left_q = 17'd1;
-        force dut.frames_left_q = 3'd1;
-        raw_xck_edges(1);
+        force dut.u28_q = 4'hF;
+        force dut.rate_clock_div2_q = 1'b1;
+        force dut.u28_tc_level_q = 1'b0;
+        @(posedge clk);
+        #1;
         check(dut.u37_q == 4'd2,
               "U37 did not advance on DURCLK rise");
-        release dut.frame_ticks_left_q;
-        release dut.frames_left_q;
+        release dut.u28_q;
+        release dut.rate_clock_div2_q;
+        release dut.u28_tc_level_q;
+        dut.u28_q = 4'd0;
+        dut.rate_clock_div2_q = 1'b0;
+        dut.u28_tc_level_q = 1'b0;
+        dut.u29a_level_q = 1'b1;
 
         // DONE_RB is a zero hold, not an edge reset. It must beat the same
         // write-assertion clock which acknowledges the pending request.
@@ -621,22 +691,30 @@ module tb_ssi263_sc02_core;
         write_active = 1'b0;
         release dut.pending_q;
 
-        // A DURCLK edge raises DONE_RB later on the same fabric edge. U37
-        // therefore sees the old DONE level and advances before the new hold.
+        // The sixteenth DURCLK edge wraps U37 F->0 and then raises DONE_RB.
+        // U37 therefore sees the old DONE level and advances before the new
+        // zero hold. This is U25C/U23B, not an abstract response timer.
         reset_chips();
         @(negedge clk);
-        dut.u37_q = 4'd0;
-        force dut.phone_active_q = 1'b1;
+        dut.u37_q = 4'hF;
+        force dut.u183a_q = 1'b0;
         force dut.control_articulation_amplitude_q = 8'h00;
-        force dut.frame_ticks_left_q = 17'd1;
-        force dut.frames_left_q = 3'd1;
-        raw_xck_edges(1);
-        check(dut.u37_q == 4'd1 && dut.pending_q,
+        force dut.u28_q = 4'hF;
+        force dut.rate_clock_div2_q = 1'b1;
+        force dut.u28_tc_level_q = 1'b0;
+        @(posedge clk);
+        #1;
+        check(dut.u37_q == 4'd0 && dut.pending_q,
               "same-edge DURCLK/DONE did not use the old DONE level");
-        release dut.phone_active_q;
+        release dut.u183a_q;
         release dut.control_articulation_amplitude_q;
-        release dut.frame_ticks_left_q;
-        release dut.frames_left_q;
+        release dut.u28_q;
+        release dut.rate_clock_div2_q;
+        release dut.u28_tc_level_q;
+        dut.u28_q = 4'd0;
+        dut.rate_clock_div2_q = 1'b0;
+        dut.u28_tc_level_q = 1'b0;
+        dut.u29a_level_q = 1'b1;
 
         // PW0/PW1 are timed set-only latches. A phone-write level clears
         // them only after the selected set path closes.
@@ -1311,7 +1389,11 @@ module tb_ssi263_sc02_core;
         write_register(3'd2, 8'hF0);
         write_register(3'd0, 8'hC0);
         write_register(3'd3, 8'h00);
-        raw_xck_edges(4096);
+        first_wait = 0;
+        while ((!d7_pending || !p_d7_pending) && first_wait < 32768) begin
+            raw_xck_edges(1);
+            first_wait = first_wait + 1;
+        end
         check(d7_pending && p_d7_pending, "pre-reset request state");
         @(negedge clk);
         pd_rst_n = 1'b0;

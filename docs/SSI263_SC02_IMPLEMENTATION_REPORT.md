@@ -80,7 +80,9 @@ SC-01-like phone traits.
 Sheet 5 gives these timed rules:
 
 ```text
-U37 advances on /PHO_WRITE assertion at write start and each DURCLK rise
+decoded /PHO_WRITE is high at U29A while the phone write is active
+U37 advances on U29A's falling edge at write assertion or DURCLK rise
+DONE_RB holds U37 at zero while its low nibble is zero; that hold wins a clock
 U38 equal = U37.low == (TPARM0 ? 2 : 6)
 PW0 set = U38_equal AND WR_SEL0
 PW1 set = U38_equal AND WR_SEL1
@@ -117,8 +119,18 @@ is:
   ticks;
 - all eight selector slots span 128 effective FASTCLK ticks.
 
-The transition stores still move only through the lower-ROM pulse and gate
-paths. A host write owns a same-edge data-path collision.
+The transition path now keeps the four storage terms drawn on sheet 4 for all
+eight selectors: U89 `RESA`, U88 `RESB`, U90 `RESC`, and U87 direction carry.
+An `A_CLR` setup holds A, writes `B=(target-A) mod 16`, writes `C=8`, and stores
+`CY=(target>=A)`. Each later permitted pulse adds B to C. An upward transition
+increments A on carry; a downward transition decrements A on no carry;
+`RESA_EQUALS` stops the write path at the target.
+
+The prototype U96 route is also explicit. Slots 0, 1, and 3 use
+`TCEDGE AND U32B`; slot 2 uses `TCEDGE`; slot 4 uses
+`DUREDGE AND U166B./Q AND AMP_NONZERO`; slots 5 and 6 use `PW0 AND RATEEDGE`
+and `PW1 AND RATEEDGE`; slot 7 is grounded. The fitted prototype state grounds the
+P2/R301 RATE=F option. A host write owns a same-edge data-path collision.
 
 ## Exact source circuit
 
@@ -404,15 +416,17 @@ final pre-build suite now checks:
 - ROM identity, padding, and all 64 by 8 addresses;
 - register, D7, A/R, repeat, DR, CTL, AP reset, and collision traces;
 - U44/U45 selector cadence;
-- sheet-5 PW0/PW1/PW2/PW5 polarity and inverted U34D `PW3`, including the
-  voiced row `$01` path;
-- U61 `PD/RST` clear without U60 clear, U60 load to 3, `3..15`, terminal hold,
+- upward and downward U83/U84 DDA vectors and the full prototype U96 route;
+- sheet-5 timed PW0/PW1, PW2/PW5 polarity, and comparator-gated CTRL/TPARM1
+  load into `PW3`;
+- U61 `PD/RST` clear without U60 clear, U60 load to 11, `11..15`, terminal hold,
   and post-clock Phi1 source selection;
 - U75 rising count, U73 falling shift, post-rise U42C, feedback taps, D3+4
   source, and the full FRICATIVE gate;
 - U68/U85 count, direction, terminal, and U62 reset traces;
 - U20B/U112/U166 clock and hold behavior;
 - all filter cap tables, ratios, signs, route histories, and persistent state;
+- no non-schematic CTL hard clamp on the source or PCM output;
 - boundary-only `card_enabled` behavior;
 - A5/A6 decode, both VIA CA1 paths, native IRQ, A/B isolation, and two-chip
   concurrent speech;
@@ -420,24 +434,25 @@ final pre-build suite now checks:
 
 The current source checkpoint passes:
 
-- 29 ROM, interface, formula, selector, and transition reference tests;
+- 39 ROM, interface, formula, selector, DDA, and U96 reference tests;
 - the raw-Q3 XCK edge bench and the complete native core bench;
 - 4,032 exact-divider vectors across all 28 live denominators;
-- 256 checks over all 64 phone rows at the physical fabric/Q3/DIV2 rates;
+- 596,023 checks over all 64 phone rows at the physical fabric/Q3/DIV2 rates;
 - 15 Phasor source and decode tests;
-- 71 dual-card checks for A5/A6, channel A/B, request, mode, reset, row `$01`,
-  simultaneous audio, and both engine-overrun flags.
+- 74 dual-card checks for A5/A6, channel A/B, request, mode, reset, both RESA
+  latch layers, row `$01`, simultaneous audio, and both engine-overrun flags.
 
-The phone sweep records row `$01` with `PW3=0` and nonzero reconstructed
-output. Source closure finds zero tracked or production SC-01/Votrax paths.
+The phone sweep checks the timed PW, DDA, route, and output invariants without
+assuming that every settled parameter must equal its ROM target in one scan.
+Source closure finds zero tracked or production SC-01/Votrax paths.
 
 ## Fidelity limits
 
 | Area | Current claim | Limit |
 | --- | --- | --- |
 | ROM | Exact to the supplied binary | Does not prove the binary matches every mask-ROM revision |
-| Register and timing behavior | Source-derived synchronous model | Final independent collision and boundary vectors pending |
-| Selector and transition | Drawn U44/U45 cadence and ROM controls | FPGA enable model does not reproduce analog edge delay |
+| Register and timing behavior | Source-derived synchronous model with independent collision and boundary vectors | CMOS gate delay and pin captures remain unmodeled |
+| Selector and transition | Drawn U44/U45 cadence, U83/U84 DDA, and prototype U96 routes | FPGA enables do not model CMOS propagation delay |
 | U60/U68/U75/U73 routes | Drawn counter, gate, and held-state recurrences | Deterministic seeds are emulator choices for unreset state |
 | Filter topology and ratios | Ideal schematic charge equations with one retained state per switch | Q16 voltage units and finite 24-bit state width add small numeric error |
 | Source and output level | Unit Q16 normalization | Absolute U150/AO voltage needs a real-chip capture |
@@ -451,41 +466,26 @@ a nonideal term only when the part model and same-vector capture support it.
 
 ## Firmware and build status
 
-The version is fixed at `F0.9.99`. One full Vivado build ran from the clean
-hardware source commit. It cleared setup, hold, and pulse-width timing, routed
-all 49,923 routable nets, passed every bus-skew constraint, and found no
-unconstrained internal endpoint or missing constraint object. The normal
-`+0.300 ns` release-margin gate rejected promotion, but the user chose the
-positive-slack result for SSI-263 hardware validation before timing work.
+The version is fixed at `F0.9.99`. The prior firmware predates the current
+U83/U84 DDA, prototype U96, U37, and audio-route fixes and is rejected. Run
+exactly one new full Vivado build from the clean checkpoint. For this SSI-263
+listen, require WNS greater than `+0.100 ns` and positive hold and pulse-width
+slack. Timing promotion remains a later task.
 
 ```text
-Final pre-build suite:  passed
-Final source commit:    54b961b6842f1c7a3b6be9ecff4b9597c06eb022
-Final full build:       20260824T190142Z-54b961b6-full
-Final routed timing:    WNS +0.005 ns, WHS +0.057 ns, WPWS +0.265 ns
-Route status:           PASS, 49,923/49,923 routable nets, 0 errors
-Bus-skew status:        PASS, +5.948 ns worst slack
-Archived BIT SHA-256:   F56164036FA1458643B49E7E5C53EC0CAECB59E9C00391993BB388DD36975C84
-Archived XSA SHA-256:   31F191DF8447849B4DE6021C275FBEC387ABCD8941FE1F401C19B09C05494549
-Rebuilt frontend SHA:   339B492E66C2D6A3A65448E958103A07AF326CC25665DAEE784680C646C8D72C
-Final F0.9.99 firmware: FIRMWARE_F0.9.99_DUAL_SSI263_SC02_SCHEMATIC_WNS0p005.BIN
-Final firmware size:    4,297,036 bytes
-Final SHA-256:          E18BA078521EC2473F0CE1DE8F19381887CFE16E2D19E85D1945DDBD8B462BCE
-Hardware listen:        pending
+Current pre-build suite: passed
+Current full build:      pending; run exactly once from the clean checkpoint
+Required timing:         WNS greater than +0.100 ns, WHS/WPWS positive
+Route and bus skew:      pending
+Archived BIT/XSA hashes: pending
+Current F0.9.99 image:   pending one Vitis and package run
+Firmware SHA-256:        pending
+Hardware listen:         pending
 ```
 
-The F0.9.99 frontend was rebuilt once from the matching archived XSA after the
-final neutral Phasor warmth default. Packaging then named the archived bit as
-an explicit input. Bootgen partition readback shows
-`appletini_yarz_top_F0.9.99_dual_ssi263_positive_slack_test.bit.0`, `fsbl.elf`,
-and both `frontend.elf` partitions. This proves the image did not use a stale
-root, project, or Vitis fallback bitstream.
-
-The firmware path is:
-
-```text
-C:\Users\hasse\source\repos\hasseily\appletini-one\.timing_runs\20260824T190142Z-54b961b6-full\FIRMWARE_F0.9.99_DUAL_SSI263_SC02_SCHEMATIC_WNS0p005.BIN
-```
+After the build passes, package only the named archived bitstream and matching
+XSA. Record Bootgen partition readback so the image cannot fall back to a stale
+root, project, or Vitis bitstream.
 
 ## Hardware validation after the build
 

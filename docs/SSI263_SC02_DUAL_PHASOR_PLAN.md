@@ -76,8 +76,11 @@ PW3 load = latched_CTRL OR NOT TPARM1
     when U38_equal AND WR_SEL2; otherwise hold
 ```
 
-U37 advances on the falling U29A edge made by /PHO_WRITE assertion or DURCLK
-rise. TPARM0 chooses the compare delay; it is not PW0/PW1 data. The low bits
+The decoded `/PHO_WRITE` condition at U29A is high while a phone write is
+active; this is confirmed by its active-high U66/U23B reset uses. U37 advances
+on U29A's falling edge at write assertion or DURCLK rise. DONE_RB holds a zero
+U37 count at zero and wins a coincident clock. TPARM0 chooses the compare
+delay; it is not PW0/PW1 data. The low bits
 must not become an abstract voiced, fricative, stop, or phone-class decoder.
 
 ## Original Phasor wiring
@@ -139,10 +142,23 @@ Follow sheets 3-7 as a clocked circuit:
 - One selector slot lasts four SLOWCLK edges, or sixteen effective FASTCLK
   ticks.
 - The full eight-slot scan lasts 128 effective FASTCLK ticks.
-- The seven parameter stores move by the lower-ROM pulse and gate paths. A
-  host write wins a same-edge data-path collision.
-- Selector 3 writes the one shared F3/F4 code. Selector 7 writes no parameter
-  store.
+- U89, U88, U90, and U87 hold one `A`, `B`, `C`, and direction carry for each
+  of the eight selector addresses. Selector 3 supplies the shared F3/F4 code;
+  selector 7 still has DDA state but U96 never permits an `A` write there.
+- During `A_CLR`, the circuit holds `A`, writes `B=(target-A) mod 16`, writes
+  `C=8`, and records `CY=(target>=A)`. A phone write sets up all slots except
+  slot 4. A control write sets up slots 5 and 6, and slot 4 when host amplitude
+  is nonzero.
+- On each later U96-permitted WRITE, `sum=B+C`, the low nibble returns to `C`,
+  and `A` rises on carry when `CY=1` or falls on no carry when `CY=0`.
+  `RESA_EQUALS` blocks writes after the target is reached.
+- Prototype U96 uses `TCEDGE AND U32B` for slots 0, 1, and 3; `TCEDGE` for
+  slot 2; `DUREDGE AND U166B./Q AND AMP_NONZERO` for slot 4;
+  `PW0 AND RATEEDGE` and `PW1 AND RATEEDGE` for slots 5 and 6; and ground for
+  slot 7. `U32B=NOT(PW5 AND (TPHO5 OR voice_nonzero OR fric_nonzero))`.
+  `RATEEDGE=U93.Q3 AND NOT U93.Q4`, the sampled selected-rate rising edge.
+- P2/R301 grounds the prototype's RATE=F option, so it contributes no U96
+  override. A host write wins a same-edge data-path collision.
 - Rate, duration, filter divider, inflection, and articulation follow their
   drawn immediate or stepped paths. Do not replace them with a smooth curve.
 
@@ -160,10 +176,10 @@ q_next = U34_load ? 11 : (q == 15 ? 15 : q + 1)
 VOICED = (q == 15)
 ```
 
-U60 therefore advances `3..15`, then `/VOICED` lowers CEP and holds 15 until
+U60 therefore advances `11..15`, then `/VOICED` lowers CEP and holds 15 until
 the next U61/U34 load. The U118A/U201/C205 Phi1 transfer uses the post-clock
 state at that same boundary: `14->15` selects the AGND source at once, and a
-`15->3` parallel load selects the positive voice-amplitude source at once.
+`15->11` parallel load selects the positive voice-amplitude source at once.
 Do not add an asynchronous clear or a free-running wrap.
 
 U61 `/CLR` is the physical `T/PD_/RST` net. Asserting `PD/RST` clears U61 and
@@ -171,10 +187,9 @@ the pending U34 load condition. It does not clear U60.
 
 ### U75 and U73 noise recurrence
 
-U75 counts on each rising U41C edge. P0 is high, P2/P3 are low, and P1 is
-visibly open. The model exposes P1 as `U75_OPEN_P1_LEVEL`; the current low
-setting jams `0001` after terminal count, so the steady sequence is `1..15`,
-not `0..15`. Use the post-rise U75 state for U42C:
+U75 counts on each rising U41C edge. P0 is high and P1/P2/P3 are grounded, so
+it jams `0001` after terminal count and the steady sequence is `1..15`, not
+`0..15`. Use the post-rise U75 state for U42C:
 
 ```text
 U42C = NOT(U75.Q2 OR U75.Q3)
@@ -394,10 +409,12 @@ Before the final build, require source and cycle tests for:
 - every phone/selector address and target;
 - register write-end capture, aliases, D7, A/R, DR modes, repeat, CTL, and AP
   `PD/RST` collisions;
-- U44/U45 eight-tick selector slots and the full transition traces;
-- the sheet-5 PW0/PW1/PW2/PW5 latch polarities and inverted U34D `PW3`,
-  including row `$01` slot-2 byte `$0E` producing `PW3=0`;
-- U61 `PD/RST` clear without U60 clear, U60 load to 3, `3..15`, terminal hold,
+- U44/U45 sixteen-tick selector slots and the full 128-tick scan;
+- all upward and downward U83/U84 DDA vectors, all setup slots, and every U96
+  route including grounded selector 7 and prototype RATE=F disabled;
+- the sheet-5 timed PW0/PW1 latches, PW2/PW5 polarities, and comparator-gated
+  CTRL/TPARM1 load into `PW3`;
+- U61 `PD/RST` clear without U60 clear, U60 load to 11, `11..15`, terminal hold,
   and post-clock Phi1 source selection;
 - U75 `1..15`, post-rise U42C, CD4006 falling-edge recurrence, D3+4 source tap,
   and the full FRICATIVE equation;
@@ -411,6 +428,7 @@ Before the final build, require source and cycle tests for:
   new F5 to U146;
 - pending-event and engine-overrun checks at the fastest filter setting;
 - persistent tract/output state across phone and card-mode boundaries;
+- no CTL or `PD/RST` hard clamp on the voice source or reconstructed PCM;
 - `card_enabled` boundary masking without die reset;
 - A5/A6 writes, reads, A/R-to-VIA and native IRQ paths, A/B audio isolation,
   and simultaneous speech;
@@ -431,22 +449,17 @@ and must not be offered for testing. Do not retain an old firmware path or hash
 as the current artifact.
 
 ```text
-Final pre-build suite:  passed
-Final source commit:    54b961b6842f1c7a3b6be9ecff4b9597c06eb022
-Final full build:       20260824T190142Z-54b961b6-full (one full build)
-Final routed timing:    WNS +0.005 ns, WHS +0.057 ns, WPWS +0.265 ns
-Route / bus skew:       PASS / PASS (+5.948 ns worst bus-skew slack)
-Final F0.9.99 firmware: FIRMWARE_F0.9.99_DUAL_SSI263_SC02_SCHEMATIC_WNS0p005.BIN
-Final firmware size:    4,297,036 bytes
-Final SHA-256:          E18BA078521EC2473F0CE1DE8F19381887CFE16E2D19E85D1945DDBD8B462BCE
-Hardware listen:        pending
+Current pre-build suite: passed
+Current full build:      pending; run exactly once from the clean checkpoint
+Required timing:         WNS greater than +0.100 ns, WHS/WPWS positive
+Current F0.9.99 image:   pending the current full build and one package run
+Hardware listen:         pending
 ```
 
-The full build clears timing but does not meet the normal `+0.300 ns` release
-margin. It is a positive-slack hardware test image, not a timing-promoted
-release. Packaging used the archived bitstream explicitly. Bootgen readback
-names `appletini_yarz_top_F0.9.99_dual_ssi263_positive_slack_test.bit.0`, so it
-did not fall back to a stale root, project, or Vitis bitstream.
+The prior F0.9.99 image predates the current U83/U84, U96, U37, and audio-path
+fixes. It is rejected and must not be offered for this listen. Record the new
+build ID, timing, exact archived bitstream, firmware size, and SHA-256 here
+only after the one current build and package run pass.
 
 ## Acceptance gate
 

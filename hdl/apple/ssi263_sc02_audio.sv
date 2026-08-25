@@ -15,7 +15,6 @@ module ssi263_sc02_audio #(
     input  logic               rstn,
     input  logic               pd_rst_n,
     input  logic               audio_tick,
-    input  logic               powered_down,
     input  logic               pw_3,
     input  logic               noise_clock_ce,
     input  logic               noise_shift_ce,
@@ -325,7 +324,7 @@ module ssi263_sc02_audio #(
                   (!voice_toggle||(voice_amp_code==0));
         fric_drive=noise_bit?FRIC_DRIVE_MAG_Q16:-FRIC_DRIVE_MAG_Q16;
         fric_drive_q16={{6{fric_drive[17]}},fric_drive};
-        if(powered_down||((filter_phase_ce&&filter_phase)?u60_tc_after_phi1:u60_tc))
+        if((filter_phase_ce&&filter_phase)?u60_tc_after_phi1:u60_tc)
             voice_target_now=0;
         else voice_target_now=-$signed({{6{VOICE_TRIM_U116_STEP_Q16[17]}},VOICE_TRIM_U116_STEP_Q16});
 
@@ -1246,11 +1245,8 @@ module ssi263_sc02_audio #(
         end
 
         if(closure)reconstruction_hold_q<=output_hold_q;
-        if(audio_tick) begin
-          if(!powered_down)audio_sample<=sat16_from27(
-            $signed({{3{reconstruction_hold_q[23]}},reconstruction_hold_q})>>>1);
-          else audio_sample<=0;
-        end
+        if(audio_tick)audio_sample<=sat16_from27(
+          $signed({{3{reconstruction_hold_q[23]}},reconstruction_hold_q})>>>1);
       end
     end
 

@@ -129,7 +129,6 @@ module ssi263_voice (
         .rstn(rstn),
         .pd_rst_n(apple_res),
         .audio_tick(audio_tick),
-        .powered_down(powered_down),
         .pw_3(pw_3),
         .noise_clock_ce(noise_clock_ce),
         .noise_shift_ce(noise_shift_ce),

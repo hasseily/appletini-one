@@ -6,7 +6,6 @@ module tb_ssi263_sc02_audio;
     logic rstn = 1'b0;
     logic pd_rst_n = 1'b1;
     logic audio_tick = 1'b0;
-    logic powered_down = 1'b0;
     logic pw_3 = 1'b0;
     logic noise_clock_ce = 1'b0;
     logic noise_shift_ce = 1'b0;
@@ -60,7 +59,6 @@ module tb_ssi263_sc02_audio;
         .rstn(rstn),
         .pd_rst_n(pd_rst_n),
         .audio_tick(audio_tick),
-        .powered_down(powered_down),
         .pw_3(pw_3),
         .noise_clock_ce(noise_clock_ce),
         .noise_shift_ce(noise_shift_ce),
@@ -434,7 +432,6 @@ module tb_ssi263_sc02_audio;
             rstn = 1'b0;
             pd_rst_n = 1'b1;
             audio_tick = 1'b0;
-            powered_down = 1'b0;
             pw_3 = 1'b0;
             noise_clock_ce = 1'b0;
             noise_shift_ce = 1'b0;
@@ -672,7 +669,7 @@ module tb_ssi263_sc02_audio;
         check(dut.voice_source_state_q == 0 &&
               dut.voice_plate0_q == -24'sd65141,
               "open U116 plate lost charge during Phi0 reset");
-        powered_down = 1'b1;
+        force dut.voice_count_q = 4'hf;
         phase_event(1'b1);
         @(negedge clk);
         voice_amp_code = 4'h1;
@@ -744,6 +741,38 @@ module tb_ssi263_sc02_audio;
               dut.fric1_plate0_q == -24'sd301,
               "U157 reconnect did not transfer its retained plate step");
         release dut.noise_d3_q;
+
+        // Close the actual FRIC1 route (U159D/C143) with the voice source at
+        // AGND. A bipolar HCC edge must enter F2 and then reach U146/U148.
+        // This is a circuit-path check, not an output-level threshold.
+        reset_all();
+        force dut.voice_count_q = 4'hF;
+        voice_amp_code = 4'h0;
+        fric_amp_code = 4'hF;
+        fric1_sw = 1'b1;
+        fric2_sw = 1'b0;
+        f1_code = 4'h8;
+        f2_code = 4'h8;
+        f2_res_code = 4'h8;
+        f3_code = 4'h8;
+        f4_code = 4'h8;
+        filter_amp_code = 4'hF;
+        force dut.noise_d3_q = 4'h0;
+        phase_event(1'b1);
+        phase_event(1'b0);
+        force dut.noise_d3_q = 4'h8;
+        source_clock();
+        check(dut.voice_source_state_q == 0 &&
+              dut.fric1_source_state_q != 0 &&
+              dut.c143_source_plate_q == dut.fric1_source_state_q &&
+              dut.f2_state_q != 0,
+              "FRIC1 HCC edge did not enter F2 through U159D/C143");
+        repeat (16)
+            phase_pair();
+        check(dut.reconstruction_hold_q != 0,
+              "fric-only FRIC1 charge did not reach U146/U148");
+        release dut.noise_d3_q;
+        release dut.voice_count_q;
 
         // The FL_AMP bank also keeps one plate per switch. Phi0 precharges a
         // selected plate to raw F5 y. An open plate must keep that voltage
@@ -993,6 +1022,23 @@ module tb_ssi263_sc02_audio;
               !dut.voice_load_pending_q,
               "PD/RST changed U60 or failed to clear U61");
         release dut.voice_count_q;
+        pd_rst_n = 1'b1;
+
+        // PD/RST reaches the drawn source/reset network, not a hard PCM mute.
+        // A reconstructed AO value already held by U148 must still cross the
+        // output conversion while reset is asserted.
+        reset_all();
+        @(negedge clk);
+        dut.reconstruction_hold_q = 24'sd20000;
+        pd_rst_n = 1'b0;
+        audio_tick = 1'b1;
+        @(posedge clk);
+        #1;
+        check(dut.reconstruction_hold_q == 24'sd20000 &&
+              audio_sample == 16'sd10000,
+              "PD/RST hard-clamped the held reconstructed output");
+        @(negedge clk);
+        audio_tick = 1'b0;
         pd_rst_n = 1'b1;
 
         check(numerator_alignment_cases != 0 &&

@@ -351,8 +351,7 @@ def static_checks() -> None:
             "fric_drive=noise_bit?FRIC_DRIVE_MAG_Q16:-FRIC_DRIVE_MAG_Q16;",
             "engine_overrun_q",
             "reconstruction_hold_q",
-            "if(!powered_down)audio_sample<=sat16_from27(",
-            "else audio_sample<=0;",
+            "if(audio_tick)audio_sample<=sat16_from27(",
         ),
         "native SSI-263 audio contract",
     )
@@ -381,6 +380,8 @@ def static_checks() -> None:
         r"filter_frequency\s*==\s*(?:8'h)?ff", uncommented, re.IGNORECASE
     ):
         raise RuntimeError("FILT=FF is maximum rate, not a mute selector")
+    if re.search(r"\binput\s+logic[^;]*\bpowered_down\b", uncommented):
+        raise RuntimeError("the schematic audio path must not hard-mute on CTL")
     for signal in ("phone_active", "fricative", "voiced", "pw_2"):
         if re.search(rf"\binput\s+logic[^;]*\b{signal}\b", uncommented):
             raise RuntimeError(f"invented source input remains: {signal}")

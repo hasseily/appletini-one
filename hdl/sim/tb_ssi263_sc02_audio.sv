@@ -623,7 +623,7 @@ module tb_ssi263_sc02_audio;
         check(dut.voice_count_q == 4'hF && dut.voice_source_state_q == 0,
               "U116 transferred a stale voiced level on U60 14->15");
 
-        // The inverse race is a parallel load from held F to 3. U118A must
+        // The inverse race is a parallel load from held F to B. U118A must
         // select the physical source on that same Phi1 edge.
         phase_event(1'b0);
         @(negedge clk);
@@ -636,17 +636,17 @@ module tb_ssi263_sc02_audio;
         filter_phase_ce = 1'b1;
         #1;
         expected_value = -round_divide_ref(3320 * -65141, 3300);
-        check(dut.voice_count_after_phi1 == 4'h3 &&
+        check(dut.voice_count_after_phi1 == 4'hB &&
               dut.voice_target_now == -24'sd65141,
-              "U60 F->3 did not select the same-edge source charge");
+              "U60 F->B did not select the same-edge source charge");
         @(posedge clk);
         #1;
         @(negedge clk);
         filter_phase_ce = 1'b0;
         wait_engine_idle();
-        check(dut.voice_count_q == 4'h3 &&
+        check(dut.voice_count_q == 4'hB &&
               dut.voice_source_state_q == expected_value,
-              "U116 missed the same-edge U60 F->3 source transfer");
+              "U116 missed the same-edge U60 F->B source transfer");
 
         // U116: each selected U119 capacitor keeps its own source-side plate.
         // C205=3300 pF is the feedback capacitor. This test's exact virtual

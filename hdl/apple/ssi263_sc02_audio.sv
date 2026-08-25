@@ -9,9 +9,7 @@ module ssi263_sc02_audio #(
     parameter logic [3:0] NOISE_D3_SEED = 4'h0,
     parameter logic [4:0] NOISE_D4_SEED = 5'h00,
     parameter logic [3:0] NOISE_COUNT_SEED = 4'hF,
-    parameter logic signed [17:0] VOICE_TRIM_U116_STEP_Q16 = 18'sd65536,
-    parameter logic U60_OPEN_P3_LEVEL = 1'b0,
-    parameter logic U75_OPEN_P1_LEVEL = 1'b0
+    parameter logic signed [17:0] VOICE_TRIM_U116_STEP_Q16 = 18'sd65536
 ) (
     input  logic               clk,
     input  logic               rstn,
@@ -311,13 +309,15 @@ module ssi263_sc02_audio #(
 
     // Excitation logic and final event snapshot.
     always_comb begin
-        u60_parallel_value={U60_OPEN_P3_LEVEL,1'b0,2'b11};
+        // Sheet 6: U60 P0/P1/P3 are tied to VCC and P2 is grounded.
+        u60_parallel_value=4'b1011;
         voice_count_after_phi1=voice_count_q;
         if(pd_rst_n&&voice_load_pending_q) voice_count_after_phi1=u60_parallel_value;
         else if(voice_count_q!=4'hf) voice_count_after_phi1=voice_count_q+1'b1;
         u60_tc=(voice_count_q==4'hf);
         u60_tc_after_phi1=(voice_count_after_phi1==4'hf);
-        u75_parallel_value={2'b00,U75_OPEN_P1_LEVEL,1'b1};
+        // Sheet 6: U75 P0 is tied to VCC and P1/P2/P3 are grounded.
+        u75_parallel_value=4'b0001;
         noise_count_next=(noise_count_q==4'hf)?u75_parallel_value:noise_count_q+1'b1;
         noise_force=~(noise_count_q[2]|noise_count_q[3]);
         noise_feedback=noise_force^noise_d1_q[3]^noise_d2_q[4]^noise_d4_q[3]^noise_d4_q[4];

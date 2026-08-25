@@ -339,8 +339,8 @@ def static_checks() -> None:
         (
             "module ssi263_sc02_audio #(",
             "parameter logic [3:0] NOISE_D1_SEED",
-            "parameter logic U60_OPEN_P3_LEVEL = 1'b0",
-            "parameter logic U75_OPEN_P1_LEVEL = 1'b0",
+            "u60_parallel_value=4'b1011;",
+            "u75_parallel_value=4'b0001;",
             "noise_d1_q<={noise_d1_q[2:0],noise_d3_q[3]};",
             "noise_d2_q<={noise_d2_q[3:0],noise_d4_q[4]};",
             "noise_d3_q<={noise_d3_q[2:0],noise_d2_q[4]};",
@@ -375,6 +375,8 @@ def static_checks() -> None:
         raise RuntimeError("the circuit contains an invented stop state")
     if re.search(r"voice_count_q\s*<=\s*4'h0", uncommented):
         raise RuntimeError("U60 must not load or clear to zero")
+    if "U60_OPEN_P3_LEVEL" in source or "U75_OPEN_P1_LEVEL" in source:
+        raise RuntimeError("schematic-tied counter presets remain configurable")
     if re.search(
         r"filter_frequency\s*==\s*(?:8'h)?ff", uncommented, re.IGNORECASE
     ):

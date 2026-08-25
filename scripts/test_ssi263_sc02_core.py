@@ -47,7 +47,6 @@ def static_checks() -> None:
         "output logic        parameter_write_ce",
         "assign write_end = write_active_q && !write_active;",
         "assign rom_address = {duration_phoneme_q[5:0], selector_q};",
-        "parameter_sweep_q <= 7'h7F;",
         "voice_clock_ticks_left_q <= voice_clock_tick_count(",
         "assign closure = filter_phase_ce_q && !filter_phase_q;",
         "assign write_commit = write_end && (pd_rst_n || !REVISION_AP);",
@@ -64,17 +63,31 @@ def static_checks() -> None:
         "ampct_q <= ampct_q + 4'd1;",
         "ampct_q <= ampct_q - 4'd1;",
         "assign u20_clock_enable =",
-        "logic [3:0] parameter_resa_q [0:6];",
+        "logic [3:0] parameter_resa_q [0:7];",
+        "logic [3:0] parameter_resb_q [0:7];",
+        "logic [3:0] parameter_resc_q [0:7];",
+        "logic [7:0] parameter_rescy_q;",
+        "assign transition_a_clr =",
+        "assign transition_bc_sum =",
+        "u96_write_permit = tc_edge_window_q && u32b_write_gate;",
+        "u96_write_permit = duration_edge_window_q &&",
+        "3'd5:\n                u96_write_permit = pw_0_q &&",
+        "3'd6:\n                u96_write_permit = pw_1_q &&",
+        "parameter_resb_q[selector_q] <=",
+        "parameter_resc_q[selector_q] <= 4'd8;",
+        "parameter_rescy_q[selector_q] <=",
+        "transition_bc_sum[3:0];",
         "assign selector_write_level = slow_div_q[1]",
         "assign selector_latch_level = slow_div_q[1]",
         "assign duration_clock_rise = effective_xck_ce && phone_active_q",
+        "assign u29a_level = !(duration_clock_rise || phone_write_active);",
         "assign u38_equal = (u37_q == (selector_flags[0] ? 4'd2 : 4'd6));",
         "assign pw0_set_level = selector_latch_level && selector_q == 3'd0",
         "assign pw1_set_level = selector_latch_level && selector_q == 3'd1",
         "assign pw3_load_level = selector_latch_level && selector_q == 3'd2",
         "u37_q <= u37_q + 4'd1;",
-        "else if (pho_write_low)\n                pw_0_q <= 1'b0;",
-        "else if (pho_write_low)\n                pw_1_q <= 1'b0;",
+        "else if (phone_write_active)\n                pw_0_q <= 1'b0;",
+        "else if (phone_write_active)\n                pw_1_q <= 1'b0;",
         "pw_3_q <= u183a_q || !selector_flags[1];",
         "if (selector_latch_level) begin",
         "3'd4: filter_amp_first_q <= parameter_resa_q[4];",
@@ -108,6 +121,11 @@ def static_checks() -> None:
         raise RuntimeError("F3/F4 still share a phase-latch register")
     if re.search(r"pw_[013]_q\s*<=\s*!?selector_flags", stripped_source):
         raise RuntimeError("timed PW latch still follows a ROM flag directly")
+    if "parameter_sweep_q" in stripped_source or re.search(
+        r"function\s+automatic\s+logic\s+\[3:0\]\s+move_one_toward\b",
+        stripped_source,
+    ):
+        raise RuntimeError("parameter transition still uses the move-one guess")
 
     checked_paths = (
         ROOT / "hdl" / "apple" / "ssi263_sc02_core.sv",

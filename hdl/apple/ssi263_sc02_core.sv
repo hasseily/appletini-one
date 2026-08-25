@@ -133,8 +133,6 @@ module ssi263_sc02_core #(
     logic [3:0] articulation_edges_left_q;
     logic [3:0] inflection_edges_left_q;
     logic [7:0] transitioned_inflection_q;
-    logic [6:0] parameter_sweep_q;
-
     logic [1:0] slow_div_q;
     logic       selector_phase_q;
     logic       selector_latch_phase_q;
@@ -143,7 +141,10 @@ module ssi263_sc02_core #(
     // Sheet 4 U89 RESA stores one transition result per selector. Sheets 7
     // U106-U114 then latch the selected slot, and U170-U176 form the separate
     // filter-phase latch layer consumed by the analog switches.
-    logic [3:0] parameter_resa_q [0:6];
+    logic [3:0] parameter_resa_q [0:7];
+    logic [3:0] parameter_resb_q [0:7];
+    logic [3:0] parameter_resc_q [0:7];
+    logic [7:0] parameter_rescy_q;
     logic [3:0] f1_first_q;
     logic [3:0] f2_first_q;
     logic [3:0] f2_res_first_q;
@@ -208,7 +209,7 @@ module ssi263_sc02_core #(
     logic [3:0] filter_amp_masked;
     logic [3:0] u37_q;
     logic       u183a_q;
-    logic       pho_write_low;
+    logic       phone_write_active;
     logic       duration_clock_rise;
     logic       u29a_level;
     logic       u29a_level_q;
@@ -216,6 +217,25 @@ module ssi263_sc02_core #(
     logic       pw0_set_level;
     logic       pw1_set_level;
     logic       pw3_load_level;
+    logic       selector_advance_event;
+    logic       sel2_rise_event;
+    logic       phone_setup_pending_q;
+    logic       control_setup_pending_q;
+    logic       phone_setup_window_q;
+    logic       control_setup_window_q;
+    logic       tc_edge_pending_q;
+    logic       tc_edge_window_q;
+    logic       duration_edge_pending_q;
+    logic       duration_edge_window_q;
+    logic       u93_rate_q1;
+    logic       u93_rate_q2;
+    logic       u166b_nq_q;
+    logic       selected_rate_clock;
+    logic       transition_a_clr;
+    logic       transition_resa_equal;
+    logic       u32b_write_gate;
+    logic       u96_write_permit;
+    logic [4:0] transition_bc_sum;
 
     initial begin
         $readmemh(ROM_FILE, rom_q);
@@ -257,21 +277,6 @@ module ssi263_sc02_core #(
     );
         begin
             filter_half_tick_count = 9'd256 - {1'b0, value};
-        end
-    endfunction
-
-    function automatic logic [3:0] move_one_toward(
-        input logic [3:0] value,
-        input logic [3:0] target
-    );
-        begin
-            if (value < target) begin
-                move_one_toward = value + 4'd1;
-            end else if (value > target) begin
-                move_one_toward = value - 4'd1;
-            end else begin
-                move_one_toward = value;
-            end
         end
     endfunction
 
@@ -457,16 +462,17 @@ module ssi263_sc02_core #(
         filter_amp_first_q[0] && ampct0
     };
 
-    // Sheet 5 U37/U38. U37 advances on the falling edge of
-    // U29A=NOT(DURCLK OR /PHO_WRITE): once when a phoneme write starts and once
-    // at a duration boundary. U38 compares the inverted low nibble against
-    // {1,TPARM0,0,1}, which reduces to q=2 or q=6.
-    assign pho_write_low = write_active && write_reg == 3'd0;
+    // Sheet 5 U37/U38. U9C inverts the raw active-low PHO WRITE decode before
+    // U29A, so the U29A input is high while a phone write is active; the same
+    // level drives the active-high resets at U66 and U23B. U29A then falls at
+    // the negative-edge CD4040 advances at write assertion or DURCLK rise.
+    // U38's inverted-nibble compare reduces to q=2 or q=6.
+    assign phone_write_active = write_active && write_reg == 3'd0;
     assign duration_clock_rise = effective_xck_ce && phone_active_q &&
                                  !powered_down &&
                                  frame_ticks_left_q == 17'd1 &&
                                  frames_left_q == 3'd1;
-    assign u29a_level = !(duration_clock_rise || pho_write_low);
+    assign u29a_level = !(duration_clock_rise || phone_write_active);
     assign u38_equal = (u37_q == (selector_flags[0] ? 4'd2 : 4'd6));
     assign pw0_set_level = selector_latch_level && selector_q == 3'd0 &&
                            u38_equal;
@@ -474,6 +480,57 @@ module ssi263_sc02_core #(
                            u38_equal;
     assign pw3_load_level = selector_latch_level && selector_q == 3'd2 &&
                             u38_equal;
+
+    assign selector_advance_event = effective_xck_ce &&
+                                    slow_div_q == 2'd3 &&
+                                    selector_phase_q &&
+                                    selector_latch_phase_q;
+    assign sel2_rise_event = selector_advance_event && selector_q == 3'd3;
+
+    // Sheet 6 U93/U169/U166B timing and the prototype U96 truth table.
+    // P2/R301 is grounded on the prototype, so the RATE=F override is zero.
+    assign selected_rate_clock = duration_phoneme_q[7] ?
+                                 rate_clock_q : rate_clock_div2_q;
+    assign u32b_write_gate = !(pw_5_q &&
+                               (duration_phoneme_q[5] ||
+                                voice_amp_code_q != 4'd0 ||
+                                fric_amp_code_q != 4'd0));
+
+    always_comb begin
+        case (selector_q)
+            3'd0, 3'd1, 3'd3:
+                u96_write_permit = tc_edge_window_q && u32b_write_gate;
+            3'd2:
+                u96_write_permit = tc_edge_window_q;
+            3'd4:
+                u96_write_permit = duration_edge_window_q &&
+                                   u166b_nq_q &&
+                                   control_articulation_amplitude_q[3:0] !=
+                                   4'd0;
+            3'd5:
+                u96_write_permit = pw_0_q &&
+                                   u93_rate_q1 && !u93_rate_q2;
+            3'd6:
+                u96_write_permit = pw_1_q &&
+                                   u93_rate_q1 && !u93_rate_q2;
+            default:
+                u96_write_permit = 1'b0;
+        endcase
+    end
+
+    // U76/U169 make one-scan setup windows after phoneme/control writes.
+    // State 4 is filter amplitude; states 5/6 are voice/fricative amplitude.
+    assign transition_a_clr =
+        (phone_setup_window_q && selector_q != 3'd4) ||
+        (control_setup_window_q &&
+         (((control_articulation_amplitude_q[3:0] != 4'd0) &&
+           selector_q == 3'd4) ||
+          selector_q == 3'd5 || selector_q == 3'd6));
+    assign transition_resa_equal =
+        parameter_resa_q[selector_q] == selector_target;
+    assign transition_bc_sum =
+        {1'b0, parameter_resb_q[selector_q]} +
+        {1'b0, parameter_resc_q[selector_q]};
 
     always_ff @(posedge clk) begin
         response_boundary_ce_q <= 1'b0;
@@ -526,7 +583,6 @@ module ssi263_sc02_core #(
             articulation_edges_left_q <= movement_edge_count(3'h0);
             inflection_edges_left_q <= movement_edge_count(3'h0);
             transitioned_inflection_q <= 8'h00;
-            parameter_sweep_q <= 7'h00;
 
             slow_div_q <= 2'd0;
             selector_phase_q <= 1'b0;
@@ -540,6 +596,24 @@ module ssi263_sc02_core #(
             parameter_resa_q[4] <= 4'd0;
             parameter_resa_q[5] <= 4'd0;
             parameter_resa_q[6] <= 4'd0;
+            parameter_resa_q[7] <= 4'd0;
+            parameter_resb_q[0] <= 4'd0;
+            parameter_resb_q[1] <= 4'd0;
+            parameter_resb_q[2] <= 4'd0;
+            parameter_resb_q[3] <= 4'd0;
+            parameter_resb_q[4] <= 4'd0;
+            parameter_resb_q[5] <= 4'd0;
+            parameter_resb_q[6] <= 4'd0;
+            parameter_resb_q[7] <= 4'd0;
+            parameter_resc_q[0] <= 4'd8;
+            parameter_resc_q[1] <= 4'd8;
+            parameter_resc_q[2] <= 4'd8;
+            parameter_resc_q[3] <= 4'd8;
+            parameter_resc_q[4] <= 4'd8;
+            parameter_resc_q[5] <= 4'd8;
+            parameter_resc_q[6] <= 4'd8;
+            parameter_resc_q[7] <= 4'd8;
+            parameter_rescy_q <= 8'hFF;
             f1_first_q <= 4'd0;
             f2_first_q <= 4'd0;
             f2_res_first_q <= 4'd0;
@@ -568,6 +642,17 @@ module ssi263_sc02_core #(
             u37_q <= 4'd0;
             u183a_q <= 1'b1;
             u29a_level_q <= 1'b1;
+            phone_setup_pending_q <= 1'b0;
+            control_setup_pending_q <= 1'b0;
+            phone_setup_window_q <= 1'b0;
+            control_setup_window_q <= 1'b0;
+            tc_edge_pending_q <= 1'b0;
+            tc_edge_window_q <= 1'b0;
+            duration_edge_pending_q <= 1'b0;
+            duration_edge_window_q <= 1'b0;
+            u93_rate_q1 <= 1'b0;
+            u93_rate_q2 <= 1'b0;
+            u166b_nq_q <= 1'b1;
 
             parameter_write_selector_q <= 3'd0;
 
@@ -585,14 +670,37 @@ module ssi263_sc02_core #(
             else if (effective_xck_ce)
                 u183a_q <= control_articulation_amplitude_q[7];
 
-            // U37 is a negative-edge CD4040. Retain U29A's full level so an
-            // overlapping phone-write/DURCLK condition still creates only
-            // one falling edge.
-            if (u29a_level_q && !u29a_level)
-                u37_q <= u37_q + 4'd1;
-            else if (pending_q && u37_q == 4'd0)
+            // U35A/U30D/U33B/U30C hold U37 at zero while DONE_RB is high.
+            // That asynchronous zero hold wins a coincident U29A falling
+            // edge. Retain U29A's full level so a DURCLK/write overlap still
+            // produces only one falling edge.
+            if (pending_q && u37_q == 4'd0)
                 u37_q <= 4'd0;
+            else if (u29a_level_q && !u29a_level)
+                u37_q <= u37_q + 4'd1;
             u29a_level_q <= u29a_level;
+
+            if (duration_clock_rise)
+                duration_edge_pending_q <= 1'b1;
+
+            // U93 and U169 sample on the positive SEL2 boundary. Their Q1/Q2
+            // pairs turn pending terminal/write events into one-scan windows;
+            // Q3/Q4 retain the selected rate-clock history for U95A.
+            if (sel2_rise_event) begin
+                phone_setup_window_q <= phone_setup_pending_q;
+                control_setup_window_q <= control_setup_pending_q;
+                tc_edge_window_q <= tc_edge_pending_q;
+                duration_edge_window_q <= duration_edge_pending_q ||
+                                          duration_clock_rise;
+                phone_setup_pending_q <= 1'b0;
+                control_setup_pending_q <= 1'b0;
+                tc_edge_pending_q <= 1'b0;
+                duration_edge_pending_q <= 1'b0;
+                u93_rate_q2 <= u93_rate_q1;
+                u93_rate_q1 <= selected_rate_clock;
+                if (control_setup_pending_q)
+                    u166b_nq_q <= 1'b1;
+            end
 
             // U32/U33 are set-only cross-NAND latches. /PHO_WRITE low clears
             // them unless the selected comparator set path is active. U34
@@ -600,11 +708,11 @@ module ssi263_sc02_core #(
             // while the slot-2 comparator path is active.
             if (pw0_set_level)
                 pw_0_q <= 1'b1;
-            else if (pho_write_low)
+            else if (phone_write_active)
                 pw_0_q <= 1'b0;
             if (pw1_set_level)
                 pw_1_q <= 1'b1;
-            else if (pho_write_low)
+            else if (phone_write_active)
                 pw_1_q <= 1'b0;
             if (pw3_load_level)
                 pw_3_q <= u183a_q || !selector_flags[1];
@@ -734,16 +842,30 @@ module ssi263_sc02_core #(
                     end
                 end
 
-                // U46/U47 WRITE rises at selector sub-tick 2. Sheet-4 RAM
-                // work completes here, eight FASTCLK ticks before LATCH.
-                if (selector_write_rise && selector_q <= 3'd6 &&
-                    parameter_sweep_q[selector_q]) begin
-                    parameter_sweep_q[selector_q] <= 1'b0;
-                    if (!write_commit &&
-                        parameter_resa_q[selector_q] != selector_target) begin
-                        parameter_resa_q[selector_q] <= move_one_toward(
-                            parameter_resa_q[selector_q], selector_target
-                        );
+                // Sheet 4 U83/U84/U87-U90 form an eight-address DDA. A_CLR
+                // writes B=(target-A), direction carry, and C=8 without
+                // changing A. Later U96-permitted WRITE pulses accumulate B
+                // into C and change A only on the resulting carry condition.
+                if (selector_write_rise && !write_commit) begin
+                    if (transition_a_clr) begin
+                        parameter_resb_q[selector_q] <=
+                            selector_target - parameter_resa_q[selector_q];
+                        parameter_resc_q[selector_q] <= 4'd8;
+                        parameter_rescy_q[selector_q] <=
+                            selector_target >= parameter_resa_q[selector_q];
+                    end else if (!phone_setup_pending_q &&
+                                 u96_write_permit &&
+                                 !transition_resa_equal) begin
+                        parameter_resc_q[selector_q] <=
+                            transition_bc_sum[3:0];
+                        if (parameter_rescy_q[selector_q] &&
+                            transition_bc_sum[4])
+                            parameter_resa_q[selector_q] <=
+                                parameter_resa_q[selector_q] + 4'd1;
+                        else if (!parameter_rescy_q[selector_q] &&
+                                 !transition_bc_sum[4])
+                            parameter_resa_q[selector_q] <=
+                                parameter_resa_q[selector_q] - 4'd1;
                         parameter_write_ce_q <= 1'b1;
                         parameter_write_selector_q <= selector_q;
                     end
@@ -821,9 +943,9 @@ module ssi263_sc02_core #(
                                             articulation_edges_left_q <=
                                                 movement_edge_count(
                                                     control_articulation_amplitude_q[6:4]
-                                                );
+                                            );
                                             articulation_step_ce_q <= 1'b1;
-                                            parameter_sweep_q <= 7'h7F;
+                                            tc_edge_pending_q <= 1'b1;
                                         end else begin
                                             articulation_edges_left_q <=
                                                 articulation_edges_left_q - 4'd1;
@@ -856,6 +978,7 @@ module ssi263_sc02_core #(
                 case (write_reg_hold_q)
                     3'd0: begin
                         duration_phoneme_q <= write_data_hold_q;
+                        phone_setup_pending_q <= 1'b1;
                         if (!powered_down) begin
                             phone_active_q <= 1'b1;
                             frame_ticks_left_q <= frame_tick_count(
@@ -877,6 +1000,8 @@ module ssi263_sc02_core #(
                     end
 
                     3'd3: begin
+                        control_setup_pending_q <= 1'b1;
+                        u166b_nq_q <= 1'b0;
                         if (write_data_hold_q[7]) begin
                             control_articulation_amplitude_q <=
                                 write_data_hold_q;

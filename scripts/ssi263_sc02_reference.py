@@ -136,16 +136,6 @@ def inflection_step_ticks(rate: int, slope: int) -> int:
     return rate_clock_ticks(rate) * (8 - (slope & 0x07))
 
 
-def move_one_toward(value: int, target: int) -> int:
-    value &= 0x0F
-    target &= 0x0F
-    if value < target:
-        return value + 1
-    if value > target:
-        return value - 1
-    return value
-
-
 def move_one_toward_byte(value: int, target: int) -> int:
     value &= 0xFF
     target &= 0xFF
@@ -210,8 +200,29 @@ class SSI263Reference:
     parameter_values: dict[str, int] = field(
         default_factory=lambda: {name: 0 for name in PARAMETER_NAMES}
     )
-    parameter_sweep_mask: int = 0
+    # Sheet 4 U87-U90 contain eight addressed DDA states. RESA is the value
+    # later copied to the parameter latches. RESB holds target-A modulo 16,
+    # RESC is the four-bit accumulator, and RESCY retains the setup carry as
+    # the direction bit.
+    parameter_resa: list[int] = field(default_factory=lambda: [0] * 8)
+    parameter_resb: list[int] = field(default_factory=lambda: [0] * 8)
+    parameter_resc: list[int] = field(default_factory=lambda: [8] * 8)
+    parameter_rescy: list[bool] = field(default_factory=lambda: [True] * 8)
     parameter_write_log: list[tuple[int, int]] = field(default_factory=list)
+
+    # U76/U93/U169/U166 retain asynchronous events until the positive SEL2
+    # boundary, then expose them for one complete selector scan.
+    phone_setup_pending: bool = False
+    control_setup_pending: bool = False
+    phone_setup_window: bool = False
+    control_setup_window: bool = False
+    tc_edge_pending: bool = False
+    tc_edge_window: bool = False
+    duration_edge_pending: bool = False
+    duration_edge_window: bool = False
+    u93_rate_q1: bool = False
+    u93_rate_q2: bool = False
+    u166b_nq: bool = True
 
     rate_edges_left: int = 16
     rate_clock: int = 0
@@ -226,6 +237,9 @@ class SSI263Reference:
     last_inflection_tick: int | None = None
 
     transitioned_inflection: int = 0
+    u37_count: int = 0
+    u29a_level: bool = True
+    u183a_q: bool = True
     pw_0: bool = False
     pw_1: bool = False
     pw_2: bool = False
@@ -302,9 +316,31 @@ class SSI263Reference:
     def begin_write(self, register: int, data: int) -> None:
         """Present a selected write without latching it yet."""
 
+        register &= 7
+        pw0_set = (
+            register == 0
+            and self.selector_latch_level
+            and self.selector == 0
+            and self.u38_equal(0)
+        )
+        pw1_set = (
+            register == 0
+            and self.selector_latch_level
+            and self.selector == 1
+            and self.u38_equal(1)
+        )
         self._write_active = True
-        self._write_register = register & 7
+        self._write_register = register
         self._write_data = data & 0xFF
+        if self._write_register == 0:
+            # U29A falls as the decoded phone-write condition asserts.
+            self._update_u29a(duration_edge=False)
+            self.pw_0 = False
+            self.pw_1 = False
+            if pw0_set:
+                self.pw_0 = True
+            if pw1_set:
+                self.pw_1 = True
 
     def end_write(self) -> None:
         """Latch the address and data when the active write condition ends."""
@@ -312,6 +348,7 @@ class SSI263Reference:
         if not self._write_active:
             return
         self._write_active = False
+        self._update_u29a(duration_edge=False)
         self._latch_write(self._write_register, self._write_data)
 
     def write(self, register: int, data: int) -> None:
@@ -320,6 +357,26 @@ class SSI263Reference:
 
     def _acknowledge(self) -> None:
         self.d7_pending = False
+
+    def _clock_u37(self) -> None:
+        """Apply one falling U29A edge to the sheet-5 MC14040."""
+
+        if self.d7_pending and self.u37_count == 0:
+            return
+        self.u37_count = (self.u37_count + 1) & 0x0F
+
+    def _update_u29a(self, *, duration_edge: bool) -> None:
+        phone_write_active = (
+            self._write_active and self._write_register == 0
+        )
+        new_level = not (duration_edge or phone_write_active)
+        if self.u29a_level and not new_level:
+            self._clock_u37()
+        self.u29a_level = new_level
+
+    def u38_equal(self, selector: int | None = None) -> bool:
+        flags = self.flags_for_selector(selector)
+        return self.u37_count == (2 if flags & 0x01 else 6)
 
     def _latch_write(self, register: int, data: int) -> None:
         if self.revision_ap and self.pd_rst_asserted:
@@ -330,6 +387,7 @@ class SSI263Reference:
 
         if register == 0:
             self.duration_phoneme = data
+            self.phone_setup_pending = True
             if not self.powered_down:
                 self._start_or_replace_phone()
         elif register == 1:
@@ -339,6 +397,8 @@ class SSI263Reference:
         elif register == 3:
             old_control = self.control_articulation_amplitude
             self.control_articulation_amplitude = data
+            self.control_setup_pending = True
+            self.u166b_nq = False
             old_power_down = bool(old_control & 0x80)
             new_power_down = bool(data & 0x80)
             if new_power_down:
@@ -359,6 +419,7 @@ class SSI263Reference:
         """Assert active-low PD/RST while retaining non-control registers."""
 
         self.pd_rst_asserted = True
+        self.u183a_q = True
         if self.revision_ap:
             self.control_articulation_amplitude |= 0x80
             self.d7_pending = False
@@ -407,16 +468,37 @@ class SSI263Reference:
         suppress_slot_write: bool = False,
     ) -> None:
         self.effective_xck_ticks += 1
+
+        if self.phone_active and self.ticks_to_boundary == 0:
+            self.ticks_to_boundary = self._boundary_period()
+        duration_edge_now = (
+            self.phone_active and self.ticks_to_boundary == 1
+        )
+        if duration_edge_now:
+            # U169 keeps DUREDGE until U93 samples it at SEL2. Setting the
+            # pending bit before the selector tick also covers a same-tick
+            # DUREDGE/SEL2 collision.
+            self.duration_edge_pending = True
+
         self._advance_filter_clock(1)
         self._advance_voice_clock()
         self._advance_selector_tick(suppress_slot_write=suppress_slot_write)
         self._update_amplitude_counter()
         self._update_u41c_edge()
 
+        # U29A, U37, U183A, and the selected LATCH clocks are parallel
+        # physical edges. Keep the old U37/U183 state visible to latch work
+        # above, then apply their edge updates.
+        self._update_u29a(duration_edge=duration_edge_now)
+        if self.pd_rst_asserted:
+            self.u183a_q = True
+        else:
+            self.u183a_q = bool(
+                self.control_articulation_amplitude & 0x80
+            )
+
         if not self.phone_active:
             return
-        if self.ticks_to_boundary == 0:
-            self.ticks_to_boundary = self._boundary_period()
         self.ticks_to_boundary -= 1
         if self.ticks_to_boundary == 0:
             self.completed_boundaries += 1
@@ -521,8 +603,8 @@ class SSI263Reference:
                 self.last_closure_tick = self.effective_xck_ticks
                 self.fric2_sw = not self.u20b_q
             self.filter_ticks_to_toggle = 256 - self.filter_frequency
-        if self.filter_phase == 0:
-            # U112 is transparent while Phi1_X is low.
+        if self.filter_phase == 1:
+            # U112 is transparent while Phi1_X is high.
             self.fric1_sw = self.u20b_q
         self.filter_ticks_to_toggle -= remaining
 
@@ -534,43 +616,154 @@ class SSI263Reference:
         active_selector = self.selector if selector is None else selector & 7
         if active_selector == 4:
             return self.amplitude
+        if active_selector in (5, 6) and self.amplitude == 0:
+            # U79B/U79C and U78A-D force both source-amplitude targets low
+            # when AMPZERO is true.
+            return 0
         return self.rom_byte(active_selector) >> 4
 
     def flags_for_selector(self, selector: int | None = None) -> int:
         return self.rom_byte(selector) & 0x0F
 
-    def _apply_selected_transition(self) -> None:
-        """Apply one sheet-4/6 RAM move for the selected sweep slot."""
+    @property
+    def selector_latch_level(self) -> bool:
+        return self.selector_subphase == 2 and self.selector_fast_phase >= 2
+
+    @property
+    def selected_rate_clock(self) -> bool:
+        if self.duration_phoneme & 0x80:
+            return bool(self.rate_clock)
+        return bool(self.rate_clock_div2)
+
+    @property
+    def u32b_write_gate(self) -> bool:
+        source_active = (
+            bool(self.duration_phoneme & 0x20)
+            or self.parameter_values["voice_amp"] != 0
+            or self.parameter_values["fric_amp"] != 0
+        )
+        return not (self.pw_5 and source_active)
+
+    def u96_write_permit(self, selector: int | None = None) -> bool:
+        """Return the prototype U96 output for one selector address."""
+
+        active_selector = self.selector if selector is None else selector & 7
+        if active_selector in (0, 1, 3):
+            return self.tc_edge_window and self.u32b_write_gate
+        if active_selector == 2:
+            return self.tc_edge_window
+        if active_selector == 4:
+            return (
+                self.duration_edge_window
+                and self.u166b_nq
+                and self.amplitude != 0
+            )
+        rate_edge = self.u93_rate_q1 and not self.u93_rate_q2
+        if active_selector == 5:
+            return self.pw_0 and rate_edge
+        if active_selector == 6:
+            return self.pw_1 and rate_edge
+        return False
+
+    def transition_a_clr(self, selector: int | None = None) -> bool:
+        """Return the sheet-4 A_CLR setup condition for an address."""
+
+        active_selector = self.selector if selector is None else selector & 7
+        phone_setup = (
+            self.phone_setup_window and active_selector != 4
+        )
+        control_setup = self.control_setup_window and (
+            (active_selector == 4 and self.amplitude != 0)
+            or active_selector in (5, 6)
+        )
+        return phone_setup or control_setup
+
+    def _selector_write_event(self, *, suppress_write: bool = False) -> None:
+        """Clock the selected U87-U90 DDA state on the WRITE edge."""
+
+        if suppress_write:
+            return
 
         selector = self.selector & 7
-        target = self.target_for_selector(selector)
-        destinations: tuple[str, ...]
+        target = self.target_for_selector(selector) & 0x0F
+        resa = self.parameter_resa[selector] & 0x0F
+
+        if self.transition_a_clr(selector):
+            self.parameter_resb[selector] = (target - resa) & 0x0F
+            self.parameter_resc[selector] = 8
+            self.parameter_rescy[selector] = target >= resa
+            return
+
+        if (
+            self.phone_setup_pending
+            or not self.u96_write_permit(selector)
+            or resa == target
+        ):
+            return
+
+        total = (
+            (self.parameter_resb[selector] & 0x0F)
+            + (self.parameter_resc[selector] & 0x0F)
+        )
+        carry = bool(total & 0x10)
+        self.parameter_resc[selector] = total & 0x0F
+        if self.parameter_rescy[selector] and carry:
+            self.parameter_resa[selector] = (resa + 1) & 0x0F
+        elif not self.parameter_rescy[selector] and not carry:
+            self.parameter_resa[selector] = (resa - 1) & 0x0F
+        self.parameter_write_log.append(
+            (self.effective_xck_ticks, selector)
+        )
+
+    def _latch_selected_parameter(self, selector: int) -> None:
+        value = self.parameter_resa[selector] & 0x0F
         if selector == 0:
-            destinations = ("f1",)
+            self.parameter_values["f1"] = value
         elif selector == 1:
-            destinations = ("f2",)
+            self.parameter_values["f2"] = value
         elif selector == 2:
-            destinations = ("f2_res",)
+            self.parameter_values["f2_res"] = value
         elif selector == 3:
-            destinations = ("f3", "f4")
+            self.parameter_values["f3"] = value
+            self.parameter_values["f4"] = value
         elif selector == 4:
-            destinations = ("filter_amp",)
+            self.parameter_values["filter_amp"] = value
         elif selector == 5:
-            destinations = ("voice_amp",)
+            self.parameter_values["voice_amp"] = value
         elif selector == 6:
-            destinations = ("fric_amp",)
-        else:
-            destinations = ()
-        changed = False
-        for name in destinations:
-            value = self.parameter_values[name]
-            next_value = move_one_toward(value, target)
-            self.parameter_values[name] = next_value
-            changed |= next_value != value
-        if changed:
-            self.parameter_write_log.append(
-                (self.effective_xck_ticks, selector)
+            self.parameter_values["fric_amp"] = value
+
+    def _selector_latch_event(self, *, suppress_control_latch: bool) -> None:
+        selector = self.selector & 7
+        self._latch_selected_parameter(selector)
+        if suppress_control_latch:
+            return
+
+        flags = self.flags_for_selector(selector)
+        if selector == 0:
+            if self.u38_equal(selector):
+                self.pw_0 = True
+        elif selector == 1:
+            if self.u38_equal(selector):
+                self.pw_1 = True
+        elif selector == 2:
+            if self.u38_equal(selector):
+                self.pw_3 = (
+                    self.u183a_q
+                    or not bool(flags & 0x02)
+                )
+            u20_clock_enable = (
+                (
+                    (self.pw_0 and self.pw_1 and self.ampct_zero)
+                    or self.parameter_values["fric_amp"] == 0
+                )
+                and self.pw_1
+                and (self.pw_2 or bool(flags & 0x04))
             )
+            if u20_clock_enable:
+                self.u20b_q = bool(flags & 0x08)
+            self.pw_2 = bool(flags & 0x04)
+            self.pw_5 = not self.pw_2
 
     def advance_selector_slow_edge(
         self,
@@ -579,6 +772,15 @@ class SSI263Reference:
     ) -> None:
         """Advance one of the four SLOWCLK edges in a selector slot."""
 
+        # This public helper advances a complete quarter-slot without the
+        # intervening FASTCLK calls. Reproduce the r=2 WRITE and r=10 LATCH
+        # events before their respective SLOWCLK edges.
+        if self.selector_subphase == 0:
+            self._selector_write_event(suppress_write=suppress_slot_write)
+        elif self.selector_subphase == 2:
+            self._selector_latch_event(
+                suppress_control_latch=suppress_slot_write
+            )
         self.selector_subphase += 1
         if self.selector_subphase == SELECTOR_SLOW_EDGES:
             self.selector_subphase = 0
@@ -594,43 +796,42 @@ class SSI263Reference:
 
     def _advance_selector_tick(self, *, suppress_slot_write: bool) -> None:
         self.selector_fast_phase += 1
+        if self.selector_fast_phase == 2:
+            if self.selector_subphase == 0:
+                self._selector_write_event(
+                    suppress_write=suppress_slot_write
+                )
+            elif self.selector_subphase == 2:
+                self._selector_latch_event(
+                    suppress_control_latch=suppress_slot_write
+                )
         if self.selector_fast_phase == SLOWCLOCK_FAST_TICKS:
             self.selector_fast_phase = 0
-            self.advance_selector_slow_edge(
-                suppress_slot_write=suppress_slot_write
-            )
+            self.selector_subphase += 1
+            if self.selector_subphase == SELECTOR_SLOW_EDGES:
+                self.selector_subphase = 0
+                self._complete_selector_slot(
+                    suppress_slot_write=suppress_slot_write
+                )
 
     def _complete_selector_slot(self, *, suppress_slot_write: bool) -> None:
         selector = self.selector & 7
-        sweep_slot = (
-            selector <= 6 and bool(self.parameter_sweep_mask & (1 << selector))
-        )
-        if sweep_slot:
-            self.parameter_sweep_mask &= ~(1 << selector)
 
-        if not suppress_slot_write:
-            flags = self.flags_for_selector(selector)
-            if selector == 0:
-                self.pw_0 = bool(flags & 0x01)
-            elif selector == 1:
-                self.pw_1 = bool(flags & 0x01)
-            elif selector == 2:
-                u20_clock_enable = (
-                    (
-                        (self.pw_0 and self.pw_1 and self.ampct_zero)
-                        or self.parameter_values["fric_amp"] == 0
-                    )
-                    and self.pw_1
-                    and (self.pw_2 or bool(flags & 0x04))
-                )
-                if u20_clock_enable:
-                    self.u20b_q = bool(flags & 0x08)
-                self.pw_2 = bool(flags & 0x04)
-                self.pw_3 = not bool(flags & 0x02)
-                self.pw_5 = not self.pw_2
-
-            if sweep_slot:
-                self._apply_selected_transition()
+        # U93/U169 sample at the positive SEL2 boundary, which is the 3->4
+        # selector transition. Each sampled level remains valid for one scan.
+        if selector == 3:
+            self.phone_setup_window = self.phone_setup_pending
+            self.control_setup_window = self.control_setup_pending
+            self.tc_edge_window = self.tc_edge_pending
+            self.duration_edge_window = self.duration_edge_pending
+            self.phone_setup_pending = False
+            self.control_setup_pending = False
+            self.tc_edge_pending = False
+            self.duration_edge_pending = False
+            self.u93_rate_q2 = self.u93_rate_q1
+            self.u93_rate_q1 = self.selected_rate_clock
+            if self.control_setup_window:
+                self.u166b_nq = True
 
         self.selector = (selector + 1) & 7
         self.selector_steps += 1
@@ -673,7 +874,7 @@ class SSI263Reference:
             self.articulation_edges_left = 8 - self.articulation
             self.articulation_steps += 1
             self.last_articulation_tick = self.effective_xck_ticks
-            self.parameter_sweep_mask = 0x7F
+            self.tc_edge_pending = True
 
 
 def main() -> int:

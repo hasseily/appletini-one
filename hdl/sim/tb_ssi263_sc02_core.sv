@@ -540,32 +540,6 @@ module tb_ssi263_sc02_core;
         check(first_wait == 2 && second_wait == 2,
                "CLOSURE U49/U43 cadence");
 
-        // PW3 is held phone state. U41C still produces recurring positive
-        // edges from the SEL1/U62 qualification; it is not a PW3 edge clock.
-        reset_chips();
-        write_register(3'd1, 8'hFF);
-        write_register(3'd2, 8'hFF);
-        write_register(3'd0, 8'hB0);
-        write_register(3'd3, 8'h7F);
-        raw_xck_edges(17000);
-        check(!pw_3 && fric_amp_code != 4'd0,
-               "noise test controls did not settle");
-        // U68/U85C now owns the U62 reset phase. Do not impose a pitch or
-        // HCC edge rate here; the direct circuit checks below own that path.
-
-        // Selector 3 feeds both F3 and F4. Selector 7 is absent from the
-        // seven-bit sweep mask, so a complete sweep cannot write it.
-        reset_chips();
-        write_register(3'd2, 8'hF0);
-        write_register(3'd3, 8'hF0);
-        wait_articulation_pulse(first_wait);
-        raw_xck_edges(256);
-        check(f1_code == 4'd1, "selector 0 sweep write");
-        check(f3_code == 4'd1 && f4_code == 4'd1,
-               "selector 3 must update F3 and F4");
-        check(f3_code == f4_code,
-               "selector 7 changed only one F3/F4 path");
-
         // The only low nibbles present in active ROM are 0/1 in slots 0/1
         // and 4/6/8/A/C/E in slot 2. Check every slot-2 code.
         check_lower_code(6'h28, 4'h4);
@@ -575,8 +549,8 @@ module tb_ssi263_sc02_core;
         check_lower_code(6'h24, 4'hC);
         check_lower_code(6'h01, 4'hE);
 
-        // U37 starts when /PHO_WRITE asserts and advances on DURCLK. U38's
-        // equality is q=2 for TPARM0=1 and q=6 for TPARM0=0.
+        // U29A falls when the decoded /PHO_WRITE condition asserts and on a
+        // DURCLK rise. U38 equality is q=2 for TPARM0=1 and q=6 otherwise.
         reset_chips();
         write_register(3'd3, 8'h00);
         @(negedge clk);
@@ -586,7 +560,7 @@ module tb_ssi263_sc02_core;
         @(posedge clk);
         #1;
         check(dut.u37_q == 4'd1,
-              "U37 did not advance at phoneme-write start");
+              "U37 did not advance at phoneme-write assertion");
         @(negedge clk);
         write_active = 1'b0;
         @(negedge clk);
@@ -595,6 +569,72 @@ module tb_ssi263_sc02_core;
         raw_xck_edges(1);
         check(dut.u37_q == 4'd2,
               "U37 did not advance on DURCLK rise");
+        release dut.frame_ticks_left_q;
+        release dut.frames_left_q;
+
+        // DONE_RB is a zero hold, not an edge reset. It must beat the same
+        // write-assertion clock which acknowledges the pending request.
+        @(negedge clk);
+        dut.u37_q = 4'd0;
+        force dut.pending_q = 1'b1;
+        write_active = 1'b1;
+        @(posedge clk);
+        #1;
+        check(dut.u37_q == 4'd0,
+              "DONE_RB zero hold lost a coincident U37 clock");
+        @(negedge clk);
+        write_active = 1'b0;
+        release dut.pending_q;
+        @(posedge clk);
+        @(negedge clk);
+        dut.u37_q = 4'd0;
+        write_active = 1'b1;
+        @(posedge clk);
+        #1;
+        check(dut.u37_q == 4'd1,
+              "U37 zero state did not advance without DONE_RB hold");
+        @(negedge clk);
+        write_active = 1'b0;
+
+        // DONE high does not reset a nonzero count. It can wrap F->0 on one
+        // falling edge, after which the zero hold blocks the next edge.
+        reset_chips();
+        @(negedge clk);
+        dut.u37_q = 4'hF;
+        force dut.pending_q = 1'b1;
+        write_reg = 3'd0;
+        write_active = 1'b1;
+        @(posedge clk);
+        #1;
+        check(dut.u37_q == 4'd0,
+              "DONE_RB stopped nonzero U37 before modulo wrap");
+        @(negedge clk);
+        write_active = 1'b0;
+        @(posedge clk);
+        @(negedge clk);
+        write_active = 1'b1;
+        @(posedge clk);
+        #1;
+        check(dut.u37_q == 4'd0,
+              "DONE_RB did not hold U37 after wrap reached zero");
+        @(negedge clk);
+        write_active = 1'b0;
+        release dut.pending_q;
+
+        // A DURCLK edge raises DONE_RB later on the same fabric edge. U37
+        // therefore sees the old DONE level and advances before the new hold.
+        reset_chips();
+        @(negedge clk);
+        dut.u37_q = 4'd0;
+        force dut.phone_active_q = 1'b1;
+        force dut.control_articulation_amplitude_q = 8'h00;
+        force dut.frame_ticks_left_q = 17'd1;
+        force dut.frames_left_q = 3'd1;
+        raw_xck_edges(1);
+        check(dut.u37_q == 4'd1 && dut.pending_q,
+              "same-edge DURCLK/DONE did not use the old DONE level");
+        release dut.phone_active_q;
+        release dut.control_articulation_amplitude_q;
         release dut.frame_ticks_left_q;
         release dut.frames_left_q;
 
@@ -655,6 +695,266 @@ module tb_ssi263_sc02_core;
         release dut.selector_q;
         release dut.selector_flags;
         release dut.u183a_q;
+        reset_chips();
+
+        // Sheet-4 setup is target-A modulo 16 with C=8 and a stored direction
+        // carry. The following WRITE events run the exact U83/U84 DDA.
+        @(negedge clk);
+        dut.parameter_resa_q[0] = 4'h3;
+        dut.parameter_resb_q[0] = 4'h0;
+        dut.parameter_resc_q[0] = 4'h0;
+        dut.parameter_rescy_q[0] = 1'b0;
+        force dut.selector_q = 3'd0;
+        force dut.selector_phase_q = 1'b0;
+        force dut.selector_latch_phase_q = 1'b0;
+        force dut.slow_div_q = 2'd1;
+        force dut.selector_target = 4'hB;
+        force dut.phone_setup_window_q = 1'b1;
+        raw_xck_edges(1);
+        check(dut.parameter_resa_q[0] == 4'h3 &&
+              dut.parameter_resb_q[0] == 4'h8 &&
+              dut.parameter_resc_q[0] == 4'h8 &&
+              dut.parameter_rescy_q[0],
+              "U83/U84 upward setup vector mismatch");
+        force dut.phone_setup_window_q = 1'b0;
+        force dut.phone_setup_pending_q = 1'b0;
+        force dut.u96_write_permit = 1'b1;
+        raw_xck_edges(1);
+        check(dut.parameter_resa_q[0] == 4'h4 &&
+              dut.parameter_resc_q[0] == 4'h0,
+              "DDA upward event 1 mismatch");
+        raw_xck_edges(1);
+        check(dut.parameter_resa_q[0] == 4'h4 &&
+              dut.parameter_resc_q[0] == 4'h8,
+              "DDA upward event 2 mismatch");
+        raw_xck_edges(1);
+        check(dut.parameter_resa_q[0] == 4'h5 &&
+              dut.parameter_resc_q[0] == 4'h0,
+              "DDA upward event 3 mismatch");
+        for (setting = 0; setting < 12; setting = setting + 1)
+            raw_xck_edges(1);
+        check(dut.parameter_resa_q[0] == 4'hB &&
+              dut.parameter_resc_q[0] == 4'h0,
+              "DDA upward vector did not reach target on event 15");
+        raw_xck_edges(1);
+        check(dut.parameter_resa_q[0] == 4'hB &&
+              dut.parameter_resc_q[0] == 4'h0,
+              "RESA_EQUALS failed to block the next DDA write");
+
+        @(negedge clk);
+        dut.parameter_resa_q[0] = 4'hC;
+        force dut.selector_target = 4'h3;
+        force dut.phone_setup_window_q = 1'b1;
+        raw_xck_edges(1);
+        check(dut.parameter_resb_q[0] == 4'h7 &&
+              dut.parameter_resc_q[0] == 4'h8 &&
+              !dut.parameter_rescy_q[0] &&
+              dut.parameter_resa_q[0] == 4'hC,
+              "U83/U84 downward setup vector mismatch");
+        force dut.phone_setup_window_q = 1'b0;
+        raw_xck_edges(1);
+        check(dut.parameter_resa_q[0] == 4'hB &&
+              dut.parameter_resc_q[0] == 4'hF,
+              "DDA downward event 1 mismatch");
+        raw_xck_edges(1);
+        check(dut.parameter_resa_q[0] == 4'hB &&
+              dut.parameter_resc_q[0] == 4'h6,
+              "DDA downward event 2 mismatch");
+        for (setting = 0; setting < 14; setting = setting + 1)
+            raw_xck_edges(1);
+        check(dut.parameter_resa_q[0] == 4'h3 &&
+              dut.parameter_resc_q[0] == 4'h8,
+              "DDA downward vector did not reach target on event 16");
+
+        // A host write ending on r=2 owns both forms of the sheet-4 collision:
+        // neither A_CLR setup nor a normal U96 write may touch the DDA RAMs.
+        @(negedge clk);
+        dut.parameter_resa_q[0] = 4'h3;
+        dut.parameter_resb_q[0] = 4'h2;
+        dut.parameter_resc_q[0] = 4'hE;
+        dut.parameter_rescy_q[0] = 1'b1;
+        force dut.phone_setup_window_q = 1'b1;
+        dut.write_reg_hold_q = 3'd4;
+        dut.write_data_hold_q = 8'h80;
+        write_active = 1'b0;
+        @(negedge clk);
+        dut.write_active_q = 1'b1;
+        xck_ce = 1'b1;
+        @(negedge clk);
+        xck_ce = 1'b0;
+        check(dut.parameter_resa_q[0] == 4'h3 &&
+              dut.parameter_resb_q[0] == 4'h2 &&
+              dut.parameter_resc_q[0] == 4'hE,
+              "host write did not suppress colliding A_CLR setup");
+        force dut.phone_setup_window_q = 1'b0;
+        force dut.u96_write_permit = 1'b1;
+        @(negedge clk);
+        dut.write_active_q = 1'b1;
+        xck_ce = 1'b1;
+        @(negedge clk);
+        xck_ce = 1'b0;
+        check(dut.parameter_resa_q[0] == 4'h3 &&
+              dut.parameter_resc_q[0] == 4'hE,
+              "host write did not suppress colliding U96 write");
+        release dut.selector_q;
+        release dut.selector_phase_q;
+        release dut.selector_latch_phase_q;
+        release dut.slow_div_q;
+        release dut.selector_target;
+        release dut.phone_setup_window_q;
+        release dut.phone_setup_pending_q;
+        release dut.u96_write_permit;
+        reset_chips();
+
+        // A control write clocks U166B, pulling /Q low. The next sampled
+        // control-write window at SEL2 resets it and restores /Q without any
+        // DURCLK dependency.
+        write_register(3'd3, 8'h0F);
+        check(!dut.u166b_nq_q,
+              "WR3 did not pull U166B./Q low");
+        force dut.selector_q = 3'd3;
+        force dut.selector_phase_q = 1'b1;
+        force dut.selector_latch_phase_q = 1'b1;
+        force dut.slow_div_q = 2'd3;
+        raw_xck_edges(1);
+        check(dut.control_setup_window_q && dut.u166b_nq_q,
+              "SEL2 setup window did not reset U166B");
+        release dut.selector_q;
+        release dut.selector_phase_q;
+        release dut.selector_latch_phase_q;
+        release dut.slow_div_q;
+        reset_chips();
+
+        // U93 Q3/Q4 sample the selected rate on SEL2. A 0->1 sample produces
+        // one scan of RATEEDGE; steady high, falling, and steady low do not.
+        force dut.duration_phoneme_q = 8'h80;
+        force dut.rate_clock_q = 1'b1;
+        force dut.selector_q = 3'd3;
+        force dut.selector_phase_q = 1'b1;
+        force dut.selector_latch_phase_q = 1'b1;
+        force dut.slow_div_q = 2'd3;
+        raw_xck_edges(1);
+        check(dut.u93_rate_q1 && !dut.u93_rate_q2,
+              "U93 missed selected-rate rising sample");
+        raw_xck_edges(1);
+        check(dut.u93_rate_q1 && dut.u93_rate_q2,
+              "U93 steady-high sample made a second RATEEDGE");
+        force dut.rate_clock_q = 1'b0;
+        raw_xck_edges(1);
+        check(!dut.u93_rate_q1 && dut.u93_rate_q2,
+              "U93 falling sample decoded as RATEEDGE");
+        raw_xck_edges(1);
+        check(!dut.u93_rate_q1 && !dut.u93_rate_q2,
+              "U93 stable-low sample did not settle");
+        release dut.duration_phoneme_q;
+        release dut.rate_clock_q;
+        release dut.selector_q;
+        release dut.selector_phase_q;
+        release dut.selector_latch_phase_q;
+        release dut.slow_div_q;
+        reset_chips();
+
+        // Prototype U96 routing: TCEDGE owns 0-3, DUREDGE owns 4, RATEEDGE
+        // plus PW0/PW1 own 5/6, and selector 7 is grounded.
+        force dut.tc_edge_window_q = 1'b1;
+        force dut.pw_5_q = 1'b0;
+        for (setting = 0; setting < 4; setting = setting + 1) begin
+            force dut.selector_q = setting[2:0];
+            #1;
+            check(dut.u96_write_permit,
+                  "U96 rejected a TCEDGE parameter slot");
+        end
+        force dut.selector_q = 3'd7;
+        #1;
+        check(!dut.u96_write_permit,
+              "U96 selector 7 was not grounded");
+        force dut.selector_q = 3'd4;
+        force dut.duration_edge_window_q = 1'b1;
+        force dut.u166b_nq_q = 1'b1;
+        force dut.control_articulation_amplitude_q = 8'h0F;
+        #1;
+        check(dut.u96_write_permit,
+              "U96 rejected filter amplitude DUREDGE");
+        force dut.selector_q = 3'd5;
+        force dut.pw_0_q = 1'b1;
+        force dut.u93_rate_q1 = 1'b1;
+        force dut.u93_rate_q2 = 1'b0;
+        #1;
+        check(dut.u96_write_permit,
+              "U96 rejected voice amplitude RATEEDGE");
+        force dut.selector_q = 3'd6;
+        force dut.pw_1_q = 1'b1;
+        #1;
+        check(dut.u96_write_permit,
+              "U96 rejected fricative amplitude RATEEDGE");
+
+        // Exercise every input denial, not just the selected positive route.
+        force dut.pw_5_q = 1'b1;
+        force dut.duration_phoneme_q = 8'h20;
+        force dut.tc_edge_window_q = 1'b1;
+        force dut.selector_q = 3'd0;
+        #1;
+        check(!dut.u96_write_permit,
+              "U32B failed to hold selector 0");
+        force dut.selector_q = 3'd1;
+        #1;
+        check(!dut.u96_write_permit,
+              "U32B failed to hold selector 1");
+        force dut.selector_q = 3'd3;
+        #1;
+        check(!dut.u96_write_permit,
+              "U32B failed to hold selector 3");
+        force dut.selector_q = 3'd4;
+        force dut.duration_edge_window_q = 1'b0;
+        force dut.u166b_nq_q = 1'b1;
+        force dut.control_articulation_amplitude_q = 8'h0F;
+        #1;
+        check(!dut.u96_write_permit,
+              "selector 4 ignored missing DUREDGE");
+        force dut.duration_edge_window_q = 1'b1;
+        force dut.u166b_nq_q = 1'b0;
+        #1;
+        check(!dut.u96_write_permit,
+              "selector 4 ignored U166B./Q low");
+        force dut.u166b_nq_q = 1'b1;
+        force dut.control_articulation_amplitude_q = 8'h00;
+        #1;
+        check(!dut.u96_write_permit,
+              "selector 4 ignored AMPZERO");
+        force dut.selector_q = 3'd5;
+        force dut.pw_0_q = 1'b0;
+        force dut.u93_rate_q1 = 1'b1;
+        force dut.u93_rate_q2 = 1'b0;
+        #1;
+        check(!dut.u96_write_permit,
+              "selector 5 ignored PW0 low");
+        force dut.pw_0_q = 1'b1;
+        force dut.u93_rate_q1 = 1'b0;
+        #1;
+        check(!dut.u96_write_permit,
+              "selector 5 ignored missing RATEEDGE");
+        force dut.selector_q = 3'd6;
+        force dut.pw_1_q = 1'b0;
+        force dut.u93_rate_q1 = 1'b1;
+        #1;
+        check(!dut.u96_write_permit,
+              "selector 6 ignored PW1 low");
+        force dut.pw_1_q = 1'b1;
+        force dut.u93_rate_q2 = 1'b1;
+        #1;
+        check(!dut.u96_write_permit,
+              "selector 6 ignored missing RATEEDGE");
+        release dut.tc_edge_window_q;
+        release dut.pw_5_q;
+        release dut.selector_q;
+        release dut.duration_phoneme_q;
+        release dut.duration_edge_window_q;
+        release dut.u166b_nq_q;
+        release dut.control_articulation_amplitude_q;
+        release dut.pw_0_q;
+        release dut.u93_rate_q1;
+        release dut.u93_rate_q2;
+        release dut.pw_1_q;
         reset_chips();
 
         // Sheet 6 ties U68 B/D to VCC, so the CD4029 counts in binary. In the

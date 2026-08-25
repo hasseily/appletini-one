@@ -44,6 +44,20 @@ module tb_ssi263_phone_sweep;
     integer transient_unknowns;
     integer transient_reconstruction_max;
     integer transient_reconstruction_min;
+    integer active_phone_count = 0;
+    integer pw0_set_events = 0;
+    integer pw1_set_events = 0;
+    integer pw3_load_events = 0;
+    integer u96_hold_events = 0;
+    integer u96_write_events = 0;
+    integer u96_voice_write_events = 0;
+    integer u96_fric_write_events = 0;
+    integer target_checks = 0;
+    integer ampzero_target_checks = 0;
+    integer nonzero_fric_phone_count = 0;
+    integer noise_rise_events = 0;
+    integer noise_fall_events = 0;
+    integer routed_fric_events = 0;
 
     always #5 clk = ~clk;
 
@@ -194,6 +208,7 @@ module tb_ssi263_phone_sweep;
     );
         integer timeout;
         integer row;
+        logic [7:0] selectors_seen;
         logic controls_match;
         begin
             timeout = 0;
@@ -203,35 +218,87 @@ module tb_ssi263_phone_sweep;
             reconstruction_max = -8_388_608;
             reconstruction_min = 8_388_607;
             row = phone * 8;
+            selectors_seen = 8'h00;
             controls_match = 1'b0;
-            while (!controls_match && timeout < 200000) begin
+            while (!controls_match && timeout < 8192) begin
                 @(posedge clk);
                 #1;
                 if (audio_tick)
                     note_pcm_state(positive_rails, negative_rails, unknowns,
                                    reconstruction_max, reconstruction_min);
+                if (dut.core_i.phone_active &&
+                    dut.core_i.phoneme == phone)
+                    selectors_seen[dut.core_i.selector_q] = 1'b1;
+
+                // U37/U38 and U32/U33/U34 make PW0, PW1, and PW3 timed
+                // state. They need not, and usually do not, equal the low
+                // ROM bits as soon as a phone is written. PW2/PW5 are the
+                // only pair loaded directly in the slot-2 LATCH window.
                 controls_match =
                     dut.core_i.phone_active &&
                     dut.core_i.phoneme == phone &&
-                    dut.core_i.f1_code == expected_rom[row + 0][7:4] &&
-                    dut.core_i.f2_code == expected_rom[row + 1][7:4] &&
-                    dut.core_i.f2_res_code == expected_rom[row + 2][7:4] &&
-                    dut.core_i.f3_code == expected_rom[row + 3][7:4] &&
-                    dut.core_i.f4_code == expected_rom[row + 3][7:4] &&
-                    dut.core_i.filter_amp_code == 4'hF &&
-                    dut.core_i.voice_amp_code == expected_rom[row + 5][7:4] &&
-                    dut.core_i.fric_amp_code == expected_rom[row + 6][7:4] &&
-                    dut.core_i.pw_0 == expected_rom[row + 0][0] &&
-                    dut.core_i.pw_1 == expected_rom[row + 1][0] &&
-                    dut.core_i.pw_2 == expected_rom[row + 2][2] &&
-                    dut.core_i.pw_3 == !expected_rom[row + 2][1] &&
-                    dut.core_i.pw_5 == !expected_rom[row + 2][2];
+                    selectors_seen == 8'hFF &&
+                    !dut.core_i.phone_setup_pending_q &&
+                    !dut.core_i.phone_setup_window_q &&
+                    dut.core_i.pw_2_q == expected_rom[row + 2][2] &&
+                    dut.core_i.pw_5_q == !expected_rom[row + 2][2];
                 if (xck_ce)
                     timeout = timeout + 1;
             end
-            check(timeout < 200000,
-                  $sformatf("phone %02h controls did not reach its ROM row",
+            check(timeout < 8192,
+                  $sformatf("phone %02h setup did not cross a full scan",
                             phone));
+        end
+    endtask
+
+    // Check the two U79/U78 amplitude-target gates through the bus-visible
+    // core. Phone $2F has nonzero voice and fricative ROM targets, so zeroing
+    // host amplitude must mask both targets without demanding an immediate
+    // change from the U83/U84 transition RAM.
+    task automatic check_ampzero_targets;
+        integer timeout;
+        logic voice_target_seen;
+        logic fric_target_seen;
+        begin
+            start_phone(6'h2F);
+            wait_phone_controls(6'h2F,
+                                transient_positive_rails,
+                                transient_negative_rails,
+                                transient_unknowns,
+                                transient_reconstruction_max,
+                                transient_reconstruction_min);
+            check(expected_rom[(6'h2F * 8) + 5][7:4] != 4'd0 &&
+                  expected_rom[(6'h2F * 8) + 6][7:4] != 4'd0,
+                  "AMPZERO vector does not have two nonzero ROM targets");
+            write_register(3'd3, 8'h70);
+            timeout = 0;
+            voice_target_seen = 1'b0;
+            fric_target_seen = 1'b0;
+            while (!(voice_target_seen && fric_target_seen) &&
+                   timeout < 2048) begin
+                @(posedge clk);
+                #1;
+                if (!voice_target_seen &&
+                    dut.core_i.phoneme == 6'h2F &&
+                    dut.core_i.selector_q == 3'd5) begin
+                    check(dut.core_i.selector_target == 4'd0,
+                          "AMPZERO did not mask the voice target");
+                    voice_target_seen = 1'b1;
+                    ampzero_target_checks = ampzero_target_checks + 1;
+                end
+                if (!fric_target_seen &&
+                    dut.core_i.phoneme == 6'h2F &&
+                    dut.core_i.selector_q == 3'd6) begin
+                    check(dut.core_i.selector_target == 4'd0,
+                          "AMPZERO did not mask the fricative target");
+                    fric_target_seen = 1'b1;
+                    ampzero_target_checks = ampzero_target_checks + 1;
+                end
+                if (xck_ce)
+                    timeout = timeout + 1;
+            end
+            check(voice_target_seen && fric_target_seen,
+                  "AMPZERO target slots did not appear in one scan");
         end
     endtask
 
@@ -279,6 +346,10 @@ module tb_ssi263_phone_sweep;
             phone_unknowns[phone] = unknowns;
             phone_reconstruction_max[phone] = reconstruction_max;
             phone_reconstruction_min[phone] = reconstruction_min;
+            if (reconstruction_max > reconstruction_min)
+                active_phone_count = active_phone_count + 1;
+            if (dut.core_i.fric_amp_code != 0)
+                nonzero_fric_phone_count = nonzero_fric_phone_count + 1;
 
             $display("SSI263 ROM ROW phone=%02h pw=%0d%0d%0d%0d%0d voice_amp=%0h fric_amp=%0h recon_min=%0d recon_max=%0d positive_rails=%0d negative_rails=%0d unknowns=%0d",
                      phone[5:0], dut.core_i.pw_5, dut.core_i.pw_3,
@@ -301,9 +372,188 @@ module tb_ssi263_phone_sweep;
         end
     endtask
 
+    // Cross the core/audio boundary: require the real U41C rise and fall
+    // pulses, and require at least one routed nonzero fricative event to enter
+    // the charge engine. The audio bench separately proves a voice-zero
+    // FRIC1 event reaches U148.
+    always @(negedge clk) begin
+        if (rstn) begin
+            if (dut.core_i.noise_clock_ce_q)
+                noise_rise_events = noise_rise_events + 1;
+            if (dut.core_i.noise_shift_ce_q)
+                noise_fall_events = noise_fall_events + 1;
+            if (dut.audio_i.engine_busy_q &&
+                dut.audio_i.active_event_q.fric_mask != 0 &&
+                (dut.audio_i.active_event_q.fric1_route ||
+                 dut.audio_i.active_event_q.fric2_route))
+                routed_fric_events = routed_fric_events + 1;
+        end
+    end
+
+    // Sample the exact inputs seen by the core's sequential logic, then check
+    // its outputs after nonblocking assignments settle. This checks the timed
+    // PW latches and proves that U96-denied WRITE pulses hold every RESA RAM.
+    always @(posedge clk) begin : schematic_timing_monitor
+        integer ram_index;
+        integer sampled_selector;
+        logic sampled_effective_xck;
+        logic sampled_selector_write;
+        logic sampled_transition_clear;
+        logic sampled_phone_pending;
+        logic sampled_resa_equal;
+        logic sampled_u96_permit;
+        logic expected_u96_permit;
+        logic sampled_pw0;
+        logic sampled_pw1;
+        logic sampled_pw3;
+        logic sampled_pw0_set;
+        logic sampled_pw1_set;
+        logic sampled_pw3_load;
+        logic sampled_phone_write_low;
+        logic sampled_pw3_data;
+        logic [3:0] sampled_resa [0:7];
+        logic [3:0] expected_target;
+
+        if (rstn) begin
+            sampled_selector = dut.core_i.selector_q;
+            sampled_effective_xck = dut.core_i.effective_xck_ce;
+            sampled_selector_write = dut.core_i.selector_write_rise;
+            sampled_transition_clear = dut.core_i.transition_a_clr;
+            sampled_phone_pending = dut.core_i.phone_setup_pending_q;
+            sampled_resa_equal = dut.core_i.transition_resa_equal;
+            sampled_u96_permit = dut.core_i.u96_write_permit;
+            sampled_pw0 = dut.core_i.pw_0_q;
+            sampled_pw1 = dut.core_i.pw_1_q;
+            sampled_pw3 = dut.core_i.pw_3_q;
+            sampled_pw0_set = dut.core_i.pw0_set_level;
+            sampled_pw1_set = dut.core_i.pw1_set_level;
+            sampled_pw3_load = dut.core_i.pw3_load_level;
+            sampled_phone_write_low = dut.core_i.phone_write_active;
+            sampled_pw3_data = dut.core_i.u183a_q ||
+                               !dut.core_i.selector_flags[1];
+            for (ram_index = 0; ram_index < 8; ram_index = ram_index + 1)
+                sampled_resa[ram_index] =
+                    dut.core_i.parameter_resa_q[ram_index];
+
+            case (sampled_selector)
+                0, 1, 3:
+                    expected_u96_permit = dut.core_i.tc_edge_window_q &&
+                        !(dut.core_i.pw_5_q &&
+                          (dut.core_i.duration_phoneme_q[5] ||
+                           dut.core_i.voice_amp_code_q != 4'd0 ||
+                           dut.core_i.fric_amp_code_q != 4'd0));
+                2:
+                    expected_u96_permit = dut.core_i.tc_edge_window_q;
+                4:
+                    expected_u96_permit =
+                        dut.core_i.duration_edge_window_q &&
+                        dut.core_i.u166b_nq_q &&
+                        dut.core_i.control_articulation_amplitude_q[3:0] !=
+                        4'd0;
+                5:
+                    expected_u96_permit = dut.core_i.pw_0_q &&
+                        dut.core_i.u93_rate_q1 &&
+                        !dut.core_i.u93_rate_q2;
+                6:
+                    expected_u96_permit = dut.core_i.pw_1_q &&
+                        dut.core_i.u93_rate_q1 &&
+                        !dut.core_i.u93_rate_q2;
+                default:
+                    expected_u96_permit = 1'b0;
+            endcase
+
+            if (sampled_selector == 4)
+                expected_target =
+                    dut.core_i.control_articulation_amplitude_q[3:0];
+            else if ((sampled_selector == 5 || sampled_selector == 6) &&
+                     dut.core_i.control_articulation_amplitude_q[3:0] == 0)
+                expected_target = 4'd0;
+            else
+                expected_target =
+                    expected_rom[(dut.core_i.phoneme * 8) +
+                                 sampled_selector][7:4];
+
+            #1;
+
+            if (sampled_pw0_set || sampled_phone_write_low ||
+                dut.core_i.pw_0_q != sampled_pw0) begin
+                check(dut.core_i.pw_0_q ==
+                      (sampled_pw0_set ? 1'b1 :
+                       (sampled_phone_write_low ? 1'b0 : sampled_pw0)),
+                      "U32 timed PW0 latch update mismatch");
+                if (sampled_pw0_set)
+                    pw0_set_events = pw0_set_events + 1;
+            end
+            if (sampled_pw1_set || sampled_phone_write_low ||
+                dut.core_i.pw_1_q != sampled_pw1) begin
+                check(dut.core_i.pw_1_q ==
+                      (sampled_pw1_set ? 1'b1 :
+                       (sampled_phone_write_low ? 1'b0 : sampled_pw1)),
+                      "U33 timed PW1 latch update mismatch");
+                if (sampled_pw1_set)
+                    pw1_set_events = pw1_set_events + 1;
+            end
+            if (sampled_pw3_load || dut.core_i.pw_3_q != sampled_pw3) begin
+                check(dut.core_i.pw_3_q ==
+                      (sampled_pw3_load ? sampled_pw3_data : sampled_pw3),
+                      "U34 timed PW3 latch update mismatch");
+                if (sampled_pw3_load)
+                    pw3_load_events = pw3_load_events + 1;
+            end
+
+            if (sampled_effective_xck && sampled_selector_write) begin
+                check(sampled_u96_permit == expected_u96_permit,
+                      "U96 write-mux truth table mismatch");
+                check(dut.core_i.selector_target == expected_target,
+                      "schematic selector target mismatch");
+                target_checks = target_checks + 1;
+
+                if (!sampled_transition_clear &&
+                    !sampled_phone_pending && !sampled_u96_permit) begin
+                    check(dut.core_i.parameter_resa_q[sampled_selector] ==
+                          sampled_resa[sampled_selector],
+                          "U96-denied WRITE changed its RESA slot");
+                    u96_hold_events = u96_hold_events + 1;
+                end
+
+                for (ram_index = 0; ram_index < 8;
+                     ram_index = ram_index + 1) begin
+                    if (dut.core_i.parameter_resa_q[ram_index] !=
+                        sampled_resa[ram_index]) begin
+                        check(ram_index == sampled_selector,
+                              "WRITE changed a nonselected RESA slot");
+                        check(!sampled_transition_clear &&
+                              !sampled_phone_pending &&
+                              sampled_u96_permit && !sampled_resa_equal,
+                              "RESA changed without a legal U96 write");
+                        check(dut.core_i.parameter_write_ce_q,
+                              "RESA changed without parameter_write_ce");
+                    end
+                end
+
+                check(dut.core_i.parameter_resa_q[7] == sampled_resa[7],
+                      "grounded U96 selector 7 changed RESA7");
+            end
+
+            if (dut.core_i.parameter_write_ce_q) begin
+                check(sampled_effective_xck && sampled_selector_write &&
+                      !sampled_transition_clear &&
+                      !sampled_phone_pending && sampled_u96_permit &&
+                      !sampled_resa_equal,
+                      "parameter_write_ce escaped the U96 write gate");
+                u96_write_events = u96_write_events + 1;
+                if (sampled_selector == 5)
+                    u96_voice_write_events = u96_voice_write_events + 1;
+                if (sampled_selector == 6)
+                    u96_fric_write_events = u96_fric_write_events + 1;
+            end
+        end
+    end
+
     initial begin
         $readmemh("ssi263_sc02_rom.mem", expected_rom);
 
+        check_ampzero_targets();
         start_phone(6'h00);
         for (phone_index = 0; phone_index < 64;
              phone_index = phone_index + 1) begin
@@ -319,6 +569,26 @@ module tb_ssi263_phone_sweep;
                           transient_reconstruction_max,
                           transient_reconstruction_min);
         end
+
+        check(pw0_set_events > 0 && pw1_set_events > 0 &&
+              pw3_load_events > 0,
+              "64-phone sweep did not exercise all timed PW latches");
+        check(u96_hold_events > 0,
+              "64-phone sweep did not exercise a U96 hold");
+        check(u96_write_events > 0,
+              "64-phone sweep did not exercise a U96 write");
+        check(u96_voice_write_events > 0,
+              "64-phone sweep did not exercise the voice U96 write");
+        check(u96_fric_write_events > 0,
+              "64-phone sweep did not exercise the fricative U96 write");
+        check(target_checks > 0 && ampzero_target_checks == 2,
+              "64-phone sweep did not check schematic targets");
+        check(active_phone_count > 0,
+              "64-phone sweep produced no reconstructed audio activity");
+        check(nonzero_fric_phone_count > 0 &&
+              noise_rise_events > 0 && noise_fall_events > 0 &&
+              routed_fric_events > 0,
+              "64-phone sweep did not carry fricative state into audio");
 
         if (failures == 0) begin
             $display("SSI263 PHONE SWEEP PASS (%0d checks, 64 phones)", checks);

@@ -53,13 +53,43 @@ def static_checks() -> None:
         "ssi263_voice dut (",
         "$readmemh(\"ssi263_sc02_rom.mem\", expected_rom);",
         "phone_index < 64",
-        "dut.core_i.pw_0 == expected_rom[row + 0][0]",
-        "dut.core_i.pw_1 == expected_rom[row + 1][0]",
-        "dut.core_i.pw_5 == !expected_rom[row + 2][2]",
+        "check_ampzero_targets();",
+        "U32 timed PW0 latch update mismatch",
+        "U33 timed PW1 latch update mismatch",
+        "U34 timed PW3 latch update mismatch",
+        "U96-denied WRITE changed its RESA slot",
+        "parameter_write_ce escaped the U96 write gate",
+        "64-phone sweep did not exercise the voice U96 write",
+        "64-phone sweep did not exercise the fricative U96 write",
+        "dut.core_i.pw_2_q == expected_rom[row + 2][2]",
+        "dut.core_i.pw_5_q == !expected_rom[row + 2][2]",
+        "64-phone sweep produced no reconstructed audio activity",
+        "64-phone sweep did not carry fricative state into audio",
+        "phone %02h reached a 24-bit internal rail",
+        "phone %02h produced unknown PCM",
         "SSI263 ROM ROW",
     ):
         if required not in testbench:
             raise RuntimeError(f"integrated phone sweep is missing: {required}")
+    forbidden_direct_matches = (
+        "dut.core_i.f1_code == expected_rom",
+        "dut.core_i.f2_code == expected_rom",
+        "dut.core_i.f2_res_code == expected_rom",
+        "dut.core_i.f3_code == expected_rom",
+        "dut.core_i.f4_code == expected_rom",
+        "dut.core_i.voice_amp_code == expected_rom",
+        "dut.core_i.fric_amp_code == expected_rom",
+        "dut.core_i.pw_0 == expected_rom",
+        "dut.core_i.pw_1 == expected_rom",
+        "dut.core_i.pw_3 == !expected_rom",
+        "controls did not reach its ROM row",
+    )
+    for forbidden in forbidden_direct_matches:
+        if forbidden in testbench:
+            raise RuntimeError(
+                "integrated sweep still requires a direct ROM output: "
+                f"{forbidden}"
+            )
     for name in (*invented, "acoustic", "rms", "occupancy"):
         if name in testbench.lower():
             raise RuntimeError(f"integrated sweep retains acoustic assumption {name}")

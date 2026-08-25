@@ -128,16 +128,25 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(chip.completed_boundaries, 1)
         self.assertEqual(chip.read_d7(), 0)
 
-    def test_host_write_consumes_colliding_parameter_slot(self) -> None:
+    def test_phone_write_blocks_dda_until_sel2_samples_setup(self) -> None:
         chip = SSI263Reference(div2=False)
-        chip.parameter_sweep_mask = 0x01
-        chip.selector_subphase = SELECTOR_SLOW_EDGES - 1
-        chip.selector_fast_phase = 3
-        chip.step_effective_tick(write_end=(0, 0x01))
-        self.assertEqual(chip.selector, 1)
-        self.assertEqual(chip.parameter_sweep_mask & 0x01, 0)
-        self.assertEqual(chip.parameter_values["f1"], 0)
-        self.assertEqual(chip.duration_phoneme, 0x01)
+        chip.write(0, 0x01)
+        chip.selector = 0
+        chip.selector_subphase = 0
+        chip.selector_fast_phase = 1
+        chip.tc_edge_window = True
+        chip.pw_5 = False
+        chip.parameter_resa[0] = 0
+        chip.parameter_resb[0] = 2
+        chip.parameter_resc[0] = 14
+        chip.parameter_rescy[0] = True
+
+        chip.advance_effective_ticks(1)
+
+        self.assertTrue(chip.phone_setup_pending)
+        self.assertEqual(chip.parameter_resa[0], 0)
+        self.assertEqual(chip.parameter_resc[0], 14)
+        self.assertEqual(chip.parameter_write_log, [])
 
     def test_phoneme_timing_and_continuous_repeat(self) -> None:
         chip = SSI263Reference()
@@ -289,16 +298,24 @@ class InterfaceTests(unittest.TestCase):
 
 
 class SelectorTests(unittest.TestCase):
-    def test_selector_three_updates_f3_and_f4(self) -> None:
+    def test_selector_three_latches_one_resa_into_f3_and_f4(self) -> None:
         chip = SSI263Reference()
-        chip.duration_phoneme = 0x00
         chip.selector = 3
-        target = chip.target_for_selector()
-        chip.parameter_sweep_mask = 1 << 3
+        chip.parameter_resa[3] = 9
         chip.transition_step()
-        self.assertEqual(chip.parameter_values["f3"], min(target, 1))
-        self.assertEqual(chip.parameter_values["f4"], min(target, 1))
+        self.assertEqual(chip.parameter_values["f3"], 9)
+        self.assertEqual(chip.parameter_values["f4"], 9)
         self.assertEqual(chip.selector, 4)
+
+    def test_parameter_latch_occurs_at_r10_not_slot_end(self) -> None:
+        chip = SSI263Reference(div2=False)
+        chip.selector = 3
+        chip.parameter_resa[3] = 9
+        chip.advance_effective_ticks(9)
+        self.assertEqual(chip.parameter_values["f3"], 0)
+        chip.advance_effective_ticks(1)
+        self.assertEqual(chip.parameter_values["f3"], 9)
+        self.assertEqual(chip.parameter_values["f4"], 9)
 
     def test_selector_holds_for_four_slow_edges(self) -> None:
         chip = SSI263Reference()
@@ -315,9 +332,14 @@ class SelectorTests(unittest.TestCase):
         chip.selector = 4
         self.assertEqual(chip.rom_byte(), 0)
         self.assertEqual(chip.target_for_selector(), 0x0C)
-        chip.parameter_sweep_mask = 1 << 4
+        chip.parameter_resa[4] = 2
+        chip.control_setup_window = True
         chip.transition_step()
-        self.assertEqual(chip.parameter_values["filter_amp"], 1)
+        self.assertEqual(chip.parameter_resa[4], 2)
+        self.assertEqual(chip.parameter_resb[4], 0x0A)
+        self.assertEqual(chip.parameter_resc[4], 8)
+        self.assertTrue(chip.parameter_rescy[4])
+        self.assertEqual(chip.parameter_values["filter_amp"], 2)
 
     def test_selector_seven_is_idle(self) -> None:
         chip = SSI263Reference()
@@ -327,13 +349,17 @@ class SelectorTests(unittest.TestCase):
         self.assertEqual(chip.parameter_values["f4"], 9)
         self.assertEqual(chip.selector, 0)
 
-    def test_slots_do_not_move_without_an_articulation_sweep(self) -> None:
+    def test_slots_do_not_move_without_u96_permit(self) -> None:
         chip = SSI263Reference()
         chip.duration_phoneme = 0x00
         target = chip.target_for_selector(0)
         self.assertGreater(target, 0)
+        chip.parameter_resb[0] = target
+        chip.parameter_resc[0] = 16 - target
+        chip.parameter_rescy[0] = True
         chip.transition_step()
-        self.assertEqual(chip.parameter_values["f1"], 0)
+        self.assertEqual(chip.parameter_resa[0], 0)
+        self.assertEqual(chip.parameter_write_log, [])
 
     def test_all_observed_lower_rom_codes(self) -> None:
         observed = {
@@ -359,6 +385,8 @@ class SelectorTests(unittest.TestCase):
             with self.subTest(phone=phone, code=code):
                 chip = SSI263Reference(div2=False)
                 chip.duration_phoneme = phone
+                chip.control_articulation_amplitude = 0
+                chip.u37_count = 6
                 chip.advance_effective_ticks(48)
                 self.assertEqual(chip.pw_2, bool(code & 0x4))
                 self.assertEqual(chip.pw_3, not bool(code & 0x2))
@@ -368,15 +396,23 @@ class SelectorTests(unittest.TestCase):
             with self.subTest(phone=phone):
                 chip = SSI263Reference(div2=False)
                 chip.duration_phoneme = phone
+                chip.u37_count = (
+                    2
+                    if chip.rom[rom_address(phone, 0)] & 0x01
+                    else 6
+                )
                 chip.advance_effective_ticks(32)
-                self.assertEqual(
-                    chip.pw_0,
-                    bool(chip.rom[rom_address(phone, 0)] & 0x01),
+                self.assertTrue(chip.pw_0)
+
+                chip = SSI263Reference(div2=False)
+                chip.duration_phoneme = phone
+                chip.u37_count = (
+                    2
+                    if chip.rom[rom_address(phone, 1)] & 0x01
+                    else 6
                 )
-                self.assertEqual(
-                    chip.pw_1,
-                    bool(chip.rom[rom_address(phone, 1)] & 0x01),
-                )
+                chip.advance_effective_ticks(32)
+                self.assertTrue(chip.pw_1)
 
     def test_u68_u85_and_route_latches_follow_drawn_gates(self) -> None:
         chip = SSI263Reference(div2=False)
@@ -408,9 +444,9 @@ class SelectorTests(unittest.TestCase):
         chip.ampct_count = 0
         chip.parameter_values["fric_amp"] = 0
         expected_tparm3 = bool(chip.flags_for_selector(2) & 0x08)
-        chip._complete_selector_slot(suppress_slot_write=False)
+        chip.transition_step()
         self.assertEqual(chip.u20b_q, expected_tparm3)
-        chip.filter_phase = 0
+        chip.filter_phase = 1
         chip._advance_filter_clock(0)
         self.assertEqual(chip.fric1_sw, chip.u20b_q)
         chip.filter_ticks_to_toggle = 1
@@ -430,7 +466,7 @@ class SelectorTests(unittest.TestCase):
         flags = chip.flags_for_selector(2)
         self.assertTrue(flags & 0x04)
         expected_tparm3 = bool(flags & 0x08)
-        chip._complete_selector_slot(suppress_slot_write=False)
+        chip.transition_step()
         self.assertTrue(chip.pw_2)
         self.assertEqual(chip.u20b_q, expected_tparm3)
 
@@ -438,6 +474,283 @@ class SelectorTests(unittest.TestCase):
     def rom_nibble(phone: int, selector: int) -> int:
         chip = SSI263Reference()
         return chip.rom[rom_address(phone, selector)] & 0x0F
+
+
+class DdaAndU96Tests(unittest.TestCase):
+    def test_u37_zero_hold_and_timed_pw_latches(self) -> None:
+        chip = SSI263Reference(div2=False)
+        chip.d7_pending = True
+        chip.u37_count = 0
+        chip.pw_0 = True
+        chip.pw_1 = True
+        chip.begin_write(0, 0x01)
+        self.assertEqual(chip.u37_count, 0)
+        self.assertFalse(chip.pw_0)
+        self.assertFalse(chip.pw_1)
+        chip.end_write()
+
+        chip.begin_write(0, 0x01)
+        self.assertEqual(chip.u37_count, 1)
+        chip.end_write()
+        chip.selector = 0
+        chip.u37_count = 2 if chip.flags_for_selector() & 1 else 6
+        chip._selector_latch_event(suppress_control_latch=False)
+        self.assertTrue(chip.pw_0)
+
+        chip.selector = 1
+        chip.u37_count = 2 if chip.flags_for_selector() & 1 else 6
+        chip._selector_latch_event(suppress_control_latch=False)
+        self.assertTrue(chip.pw_1)
+
+        chip.control_articulation_amplitude = 0
+        chip.u183a_q = False
+        chip.duration_phoneme = 0x01
+        chip.u37_count = 6
+        chip.selector = 2
+        chip._selector_latch_event(suppress_control_latch=False)
+        self.assertFalse(chip.pw_3)
+
+    def test_u29a_overlap_set_wins_and_u183_retention(self) -> None:
+        chip = SSI263Reference(div2=False)
+        chip.control_articulation_amplitude = 0
+        chip.phone_active = True
+        chip.ticks_to_boundary = 1
+        chip.begin_write(0, 0x01)
+        self.assertEqual(chip.u37_count, 1)
+        self.assertFalse(chip.u29a_level)
+        chip.advance_effective_ticks(1)
+        self.assertEqual(chip.u37_count, 1)
+        self.assertFalse(chip.u29a_level)
+        chip.end_write()
+        self.assertTrue(chip.u29a_level)
+
+        chip = SSI263Reference(div2=False)
+        chip.duration_phoneme = 0x01
+        chip.selector = 0
+        chip.selector_subphase = 2
+        chip.selector_fast_phase = 2
+        chip.u37_count = (
+            2 if chip.flags_for_selector(0) & 1 else 6
+        )
+        chip.begin_write(0, 0x01)
+        self.assertTrue(chip.pw_0)
+
+        chip = SSI263Reference(div2=False)
+        chip.control_articulation_amplitude = 0
+        chip.assert_pd_rst()
+        chip.release_pd_rst()
+        chip.control_articulation_amplitude = 0
+        chip.duration_phoneme = 0x01
+        chip.selector = 2
+        chip.u37_count = 6
+        chip._selector_latch_event(suppress_control_latch=False)
+        self.assertTrue(chip.pw_3)
+        chip.advance_effective_ticks(1)
+        chip._selector_latch_event(suppress_control_latch=False)
+        self.assertFalse(chip.pw_3)
+        chip.u37_count = 5
+        chip.duration_phoneme = 0x00
+        chip._selector_latch_event(suppress_control_latch=False)
+        self.assertFalse(chip.pw_3)
+
+    def test_upward_dda_vector_reaches_target_on_event_fifteen(self) -> None:
+        chip = SSI263Reference(div2=False)
+        chip.duration_phoneme = 0x04  # ROM selector 3 target is B.
+        chip.selector = 3
+        chip.parameter_resa[3] = 0x3
+        chip.phone_setup_window = True
+
+        chip._selector_write_event()
+
+        self.assertEqual(chip.parameter_resa[3], 0x3)
+        self.assertEqual(chip.parameter_resb[3], 0x8)
+        self.assertEqual(chip.parameter_resc[3], 0x8)
+        self.assertTrue(chip.parameter_rescy[3])
+
+        chip.phone_setup_window = False
+        chip.tc_edge_window = True
+        chip.pw_5 = False
+        observed: list[tuple[int, int]] = []
+        for _ in range(15):
+            chip._selector_write_event()
+            observed.append(
+                (chip.parameter_resa[3], chip.parameter_resc[3])
+            )
+
+        self.assertEqual(observed[:3], [(0x4, 0x0), (0x4, 0x8), (0x5, 0x0)])
+        self.assertEqual(observed[-1], (0xB, 0x0))
+        self.assertEqual(len(chip.parameter_write_log), 15)
+
+        chip._selector_write_event()
+        self.assertEqual(chip.parameter_resa[3], 0xB)
+        self.assertEqual(chip.parameter_resc[3], 0x0)
+        self.assertEqual(len(chip.parameter_write_log), 15)
+
+    def test_downward_dda_vector_reaches_target_on_event_sixteen(self) -> None:
+        chip = SSI263Reference(div2=False)
+        chip.duration_phoneme = 0x05  # ROM selector 0 target is 3.
+        chip.selector = 0
+        chip.parameter_resa[0] = 0xC
+        chip.phone_setup_window = True
+
+        chip._selector_write_event()
+
+        self.assertEqual(chip.parameter_resa[0], 0xC)
+        self.assertEqual(chip.parameter_resb[0], 0x7)
+        self.assertEqual(chip.parameter_resc[0], 0x8)
+        self.assertFalse(chip.parameter_rescy[0])
+
+        chip.phone_setup_window = False
+        chip.tc_edge_window = True
+        chip.pw_5 = False
+        observed: list[tuple[int, int]] = []
+        for _ in range(16):
+            chip._selector_write_event()
+            observed.append(
+                (chip.parameter_resa[0], chip.parameter_resc[0])
+            )
+
+        self.assertEqual(observed[:2], [(0xB, 0xF), (0xB, 0x6)])
+        self.assertEqual(observed[-1], (0x3, 0x8))
+        self.assertEqual(len(chip.parameter_write_log), 16)
+
+    def test_host_write_suppresses_setup_and_normal_dda_write(self) -> None:
+        chip = SSI263Reference(div2=False)
+        chip.duration_phoneme = 0x04
+        chip.selector = 3
+        chip.parameter_resa[3] = 3
+        chip.parameter_resb[3] = 2
+        chip.parameter_resc[3] = 14
+        chip.parameter_rescy[3] = True
+        chip.phone_setup_window = True
+
+        chip._selector_write_event(suppress_write=True)
+        self.assertEqual(chip.parameter_resa[3], 3)
+        self.assertEqual(chip.parameter_resb[3], 2)
+        self.assertEqual(chip.parameter_resc[3], 14)
+
+        chip.phone_setup_window = False
+        chip.tc_edge_window = True
+        chip.pw_5 = False
+        chip._selector_write_event(suppress_write=True)
+        self.assertEqual(chip.parameter_resa[3], 3)
+        self.assertEqual(chip.parameter_resc[3], 14)
+        self.assertEqual(chip.parameter_write_log, [])
+
+    def test_setup_decode_matches_phone_and_control_windows(self) -> None:
+        chip = SSI263Reference()
+        chip.control_articulation_amplitude = 0x0F
+        chip.phone_setup_window = True
+        self.assertEqual(
+            [chip.transition_a_clr(selector) for selector in range(8)],
+            [True, True, True, True, False, True, True, True],
+        )
+
+        chip.phone_setup_window = False
+        chip.control_setup_window = True
+        self.assertEqual(
+            [chip.transition_a_clr(selector) for selector in range(8)],
+            [False, False, False, False, True, True, True, False],
+        )
+
+        chip.control_articulation_amplitude = 0x00
+        self.assertFalse(chip.transition_a_clr(4))
+        self.assertTrue(chip.transition_a_clr(5))
+        self.assertTrue(chip.transition_a_clr(6))
+
+    def test_u96_prototype_truth_table(self) -> None:
+        chip = SSI263Reference()
+        chip.tc_edge_window = True
+        chip.pw_5 = False
+        self.assertEqual(
+            [chip.u96_write_permit(selector) for selector in range(8)],
+            [True, True, True, True, False, False, False, False],
+        )
+
+        chip.pw_5 = True
+        chip.duration_phoneme = 0x20
+        self.assertFalse(chip.u96_write_permit(0))
+        self.assertFalse(chip.u96_write_permit(1))
+        self.assertTrue(chip.u96_write_permit(2))
+        self.assertFalse(chip.u96_write_permit(3))
+
+        chip.control_articulation_amplitude = 0x0F
+        chip.duration_edge_window = True
+        chip.u166b_nq = True
+        self.assertTrue(chip.u96_write_permit(4))
+        chip.u166b_nq = False
+        self.assertFalse(chip.u96_write_permit(4))
+        chip.u166b_nq = True
+        chip.control_articulation_amplitude = 0x00
+        self.assertFalse(chip.u96_write_permit(4))
+
+        chip.pw_0 = True
+        chip.pw_1 = True
+        chip.u93_rate_q1 = True
+        chip.u93_rate_q2 = False
+        self.assertTrue(chip.u96_write_permit(5))
+        self.assertTrue(chip.u96_write_permit(6))
+        chip.u93_rate_q2 = True
+        self.assertFalse(chip.u96_write_permit(5))
+        self.assertFalse(chip.u96_write_permit(6))
+        self.assertFalse(chip.u96_write_permit(7))
+
+    def test_sel2_samples_pending_events_for_one_scan(self) -> None:
+        chip = SSI263Reference()
+        chip.selector = 3
+        chip.duration_phoneme = 0x80
+        chip.rate_clock = 1
+        chip.phone_setup_pending = True
+        chip.control_setup_pending = True
+        chip.tc_edge_pending = True
+        chip.duration_edge_pending = True
+        chip.u166b_nq = False
+
+        chip._complete_selector_slot(suppress_slot_write=False)
+
+        self.assertEqual(chip.selector, 4)
+        self.assertTrue(chip.phone_setup_window)
+        self.assertTrue(chip.control_setup_window)
+        self.assertTrue(chip.tc_edge_window)
+        self.assertTrue(chip.duration_edge_window)
+        self.assertFalse(chip.phone_setup_pending)
+        self.assertFalse(chip.control_setup_pending)
+        self.assertFalse(chip.tc_edge_pending)
+        self.assertFalse(chip.duration_edge_pending)
+        self.assertTrue(chip.u93_rate_q1)
+        self.assertFalse(chip.u93_rate_q2)
+        self.assertTrue(chip.u166b_nq)
+
+        chip.u166b_nq = False
+        chip.selector = 3
+        chip.control_setup_pending = True
+        chip.duration_edge_pending = False
+        chip._complete_selector_slot(suppress_slot_write=False)
+        self.assertTrue(chip.u166b_nq)
+
+        chip.selector = 3
+        chip.rate_clock = 0
+        chip._complete_selector_slot(suppress_slot_write=False)
+        self.assertFalse(chip.phone_setup_window)
+        self.assertFalse(chip.control_setup_window)
+        self.assertFalse(chip.tc_edge_window)
+        self.assertFalse(chip.duration_edge_window)
+        self.assertFalse(chip.u93_rate_q1)
+        self.assertTrue(chip.u93_rate_q2)
+
+    def test_ampzero_masks_voice_and_fricative_targets(self) -> None:
+        chip = SSI263Reference()
+        chip.control_articulation_amplitude = 0x00
+        nonzero = [
+            (phone, selector)
+            for phone in range(64)
+            for selector in (5, 6)
+            if chip.rom[rom_address(phone, selector)] >> 4
+        ]
+        self.assertTrue(nonzero)
+        for phone, selector in nonzero:
+            chip.duration_phoneme = phone
+            self.assertEqual(chip.target_for_selector(selector), 0)
 
 
 class TransitionTimingTests(unittest.TestCase):

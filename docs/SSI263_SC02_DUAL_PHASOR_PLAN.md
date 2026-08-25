@@ -473,14 +473,14 @@ as the current artifact.
 
 ```text
 Current pre-build suite: passed
-Current full build:      pending; run exactly one
-Source commit:           pending PW1-gate checkpoint
-Build mode:              full, clean tree, no incremental reference required
-Route and bus skew:      pending
-Timing:                  positive WNS, WHS, and WPWS required
-Current F0.9.99 image:   pending
-Firmware size:           pending
-Firmware SHA-256:        pending
+Current full build:      20260825T132135Z-47003c7d-full; run once
+Source commit:           47003c7dd7dbc58b657b064161e3b5cfb2f626ca
+Build mode:              full, clean tree, no incremental reference
+Route and bus skew:      PASS; 0 route errors; +5.887 ns bus-skew slack
+Timing:                  WNS +0.007; WHS +0.009; WPWS +0.265 ns
+Current F0.9.99 image:   FIRMWARE_F0.9.99_DUAL_SSI263_SC02_PW1_PW3_GATE_WNS0p007.BIN
+Firmware size:           4,257,356 bytes
+Firmware SHA-256:        1f049c469cee4be84dc5b4509cb9f34c1d4a529288c4eea2a97075da9a801f12
 Hardware listen:         pending
 ```
 
@@ -529,4 +529,4 @@ SSI-263AP.
 10. Calibrate POT3 and add the per-socket Phasor output stage.
 11. Run the POT3/card-gain F0.9.99 candidate. Superseded by the PW3 gate fix.
 12. Correct U11 PW1-to-PW3 gating and rebuild F0.9.99. Source and tests
-    complete; build pending.
+    complete; one positive-slack firmware candidate packaged.

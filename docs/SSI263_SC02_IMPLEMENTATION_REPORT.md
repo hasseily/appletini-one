@@ -15,7 +15,8 @@ sound-driven shortcuts: it has no invented stop mask, abstract phone-class
 source gate, direct ROM/inverse fricative-switch pair, guessed C381 high-pass,
 or three-bit output-level shift. Source and simulation closure are complete.
 The prior firmware package used U38 instead of PW1 at the PW3 load gate and is
-rejected. One replacement build and package are pending.
+rejected. Build `20260825T132135Z-47003c7d-full` supplies its replacement for
+the next hardware listen.
 
 The target version remains `F0.9.99`.
 
@@ -359,6 +360,8 @@ event order. Routed out-of-context verification at a 7.500 ns fabric period
 uses 11 DSP48E1 blocks and reports `+0.641 ns` WNS. The one full-card build for
 this hardware test uses 26 DSP48E1 blocks in all, including 22 for the two SSI
 engines, and reports `+0.039 ns` WNS, `+0.061 ns` WHS, and `+0.265 ns` WPWS.
+The current PW1-gate full-card build still uses 26 DSP48E1 blocks and reports
+`+0.007 ns` WNS, `+0.009 ns` WHS, and `+0.265 ns` WPWS.
 
 The chip drawing includes C381 but omits its external load. It therefore does
 not define a high-pass pole. The tract exports reconstructed U148 without the
@@ -525,23 +528,34 @@ a nonideal term only when the part model and same-vector capture support it.
 
 The version remains `F0.9.99`. The WNS `+0.009 ns` POT3/card-gain image has the
 wrong U38-to-PW3 load gate and is rejected, along with every older image. The
-replacement must come from one clean, full, non-incremental Vivado
-implementation. Positive setup, hold, and pulse-width slack is the current
-hardware-listen gate; the normal `+0.300 ns` release margin remains a later
-timing task.
+replacement comes from one clean, full, non-incremental Vivado implementation.
+Its final checkpoint has positive setup, hold, and pulse-width slack, which is
+the current hardware-listen gate. The normal `+0.300 ns` release margin remains
+a later timing task.
 
 ```text
 Current pre-build suite: passed
-Current full build:      pending; run exactly one
-Source commit:           pending PW1-gate checkpoint
-Build mode:              full, clean tree, no incremental reference required
-Route and bus skew:      pending
-Timing:                  positive WNS, WHS, and WPWS required
-Current F0.9.99 image:   pending
-Firmware size:           pending
-Firmware SHA-256:        pending
+Current full build:      20260825T132135Z-47003c7d-full; run once
+Source commit:           47003c7dd7dbc58b657b064161e3b5cfb2f626ca
+Build mode:              full, clean tree, no incremental reference
+Route and bus skew:      PASS; 0 route errors; +5.887 ns bus-skew slack
+Timing:                  WNS +0.007; WHS +0.009; WPWS +0.265 ns
+Failing/unconstrained:   0 setup, hold, pulse-width, and unconstrained endpoints
+Archived bit SHA-256:    0650c4dd690bc073b88854dbb1a2f1b4e632f4484c7bf3ee258557a91cd6cb69
+Archived XSA SHA-256:    50365c6c8d1755849d79d62f8062dbfca421a31d17e3669ddb372d86ecda28ab
+Vitis and packaging:     one run each; archived bit passed explicitly
+Current F0.9.99 image:   FIRMWARE_F0.9.99_DUAL_SSI263_SC02_PW1_PW3_GATE_WNS0p007.BIN
+Firmware size:           4,257,356 bytes
+Firmware SHA-256:        1f049c469cee4be84dc5b4509cb9f34c1d4a529288c4eea2a97075da9a801f12
 Hardware listen:         pending
 ```
+
+The normal exporter stopped after implementation because `+0.007 ns` is below
+the later `+0.300 ns` release gate. The positive-slack exporter then opened the
+same final checkpoint without another implementation and recorded
+`status=positive_slack_test_exported`. Bootgen identifies the archived
+bitstream by name and the two frontend sections at `0x00100000` and
+`0x0027c000`. The frontend ELF contains `Firmware F0.9.99`.
 
 The rejected predecessor is build `20260825T104946Z-92aa867b-full`, source
 commit `92aa867bbfafecef0dcfbc01cbdefefd29b1ea31`, with WNS `+0.009 ns` and

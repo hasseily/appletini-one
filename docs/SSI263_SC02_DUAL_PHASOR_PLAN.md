@@ -73,8 +73,12 @@ PW0/PW1 clear while /PHO_WRITE is low, otherwise hold
 PW2 = selector-2 TPARM2
 PW5 = NOT selector-2 TPARM2
 PW3 load = latched_CTRL OR NOT TPARM1
-    when U38_equal AND WR_SEL2; otherwise hold
+    when PW1 AND WR_SEL2; otherwise hold
 ```
+
+U38 pin 6 reaches the U32A/U33A PW0/PW1 set-gate junction only. U11C pin 11
+and U11A pin 8 share the PW1 net from U33D pin 11, so PW1, not U38, qualifies
+the slot-2 PW3 load.
 
 The decoded `/PHO_WRITE` condition at U29A is high while a phone write is
 active; this is confirmed by its active-high U66/U23B reset uses. U37 advances
@@ -431,7 +435,7 @@ Before the final build, require source and cycle tests for:
 - U44/U45 sixteen-tick selector slots and the full 128-tick scan;
 - all upward and downward U83/U84 DDA vectors, all setup slots, and every U96
   route including grounded selector 7 and prototype RATE=F disabled;
-- the sheet-5 timed PW0/PW1 latches, PW2/PW5 polarities, and comparator-gated
+- the sheet-5 timed PW0/PW1 latches, PW2/PW5 polarities, and PW1-gated
   CTRL/TPARM1 load into `PW3`;
 - U61 `PD/RST` clear without U60 clear, U60 load to 11, `11..15`, terminal hold,
   and post-clock Phi1 source selection;
@@ -469,23 +473,23 @@ as the current artifact.
 
 ```text
 Current pre-build suite: passed
-Current full build:      20260825T104946Z-92aa867b-full
-Source commit:           92aa867bbfafecef0dcfbc01cbdefefd29b1ea31
-Build mode:              full, clean tree, no incremental reference
-Route and bus skew:      PASS; route errors 0; bus-skew slack +5.940 ns
-Timing:                  WNS +0.009, WHS +0.018, WPWS +0.265 ns
-Current F0.9.99 image:   FIRMWARE_F0.9.99_DUAL_SSI263_SC02_POT3_CARD_GAIN_WNS0p009.BIN
-Firmware size:           4,282,764 bytes
-Firmware SHA-256:        ba2c9930c031e1965e63b8f5eb8d847250fff98f024d59ae71eb26a5b3764b59
+Current full build:      pending; run exactly one
+Source commit:           pending PW1-gate checkpoint
+Build mode:              full, clean tree, no incremental reference required
+Route and bus skew:      pending
+Timing:                  positive WNS, WHS, and WPWS required
+Current F0.9.99 image:   pending
+Firmware size:           pending
+Firmware SHA-256:        pending
 Hardware listen:         pending
 ```
 
-Every prior F0.9.99 image predates the POT3/card-gain split. It is rejected and
-must not be offered for this listen. The next image must come from the exact
-archived bitstream and one Vitis and package run. The latest test rule asks only
-for positive setup, hold, and pulse-width slack while SSI-263 logic and sound
-are checked. The normal release margin remains `+0.300 ns` WNS and is a later
-timing task.
+Every prior F0.9.99 image, including the WNS `+0.009 ns` POT3/card-gain image,
+uses the wrong U38-to-PW3 load gate. It is rejected and must not be offered for
+this listen. The next image must come from the exact archived bitstream and one
+Vitis and package run. The latest test rule asks only for positive setup, hold,
+and pulse-width slack while SSI-263 logic and sound are checked. The normal
+release margin remains `+0.300 ns` WNS and is a later timing task.
 
 ## Acceptance gate
 
@@ -502,18 +506,9 @@ The branch is ready for the next hardware listen only when:
 - all focused and source tests pass;
 - the one final F0.9.99 build passes and yields a named, hashed firmware image.
 
-The source and focused test conditions are complete. The one full
-implementation, same-checkpoint positive-slack export, one Vitis build, and one
-package run are complete. The result is a positive-slack test candidate, not a
-timing-promoted release. The build wrapper stopped at its `+0.300 ns` release
-gate, then the test export accepted the same final checkpoint without another
-place or route run.
-
-The first launch created `20260825T104813Z-92aa867b-full` but stopped at RTL
-elaboration because the generated Vivado project lacked the new tracked output
-stage. It did not reach synthesis or implementation. The project was then
-regenerated from the tracked source list. `20260825T104946Z-92aa867b-full` was
-the only full implementation.
+The corrected source and focused test conditions are complete. One replacement
+full implementation, one Vitis build, and one package run remain. The result
+will be a positive-slack test candidate, not a timing-promoted release.
 
 Hardware listening can find a fault, but it cannot by itself prove an exact
 SSI-263 analog match. That claim needs same-vector AO captures from a real
@@ -532,5 +527,6 @@ SSI-263AP.
 9. Replace the duration/DONE abstraction with U21B/U28/U29A/U36/U37/U23B and
    prove natural sixteen-DURCLK phone cycles.
 10. Calibrate POT3 and add the per-socket Phasor output stage.
-11. Run one final full implementation and package F0.9.99. Complete at source
-    commit `92aa867bbfafecef0dcfbc01cbdefefd29b1ea31`.
+11. Run the POT3/card-gain F0.9.99 candidate. Superseded by the PW3 gate fix.
+12. Correct U11 PW1-to-PW3 gating and rebuild F0.9.99. Source and tests
+    complete; build pending.

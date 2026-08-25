@@ -69,6 +69,7 @@ def static_checks() -> None:
         "check_ampzero_targets();",
         "U32 timed PW0 latch update mismatch",
         "U33 timed PW1 latch update mismatch",
+        "U11 PW1-gated PW3 load mismatch",
         "U34 timed PW3 latch update mismatch",
         "U83/U84 DDA selected-state mismatch",
         "U83/U84 parameter_write_ce mismatch",

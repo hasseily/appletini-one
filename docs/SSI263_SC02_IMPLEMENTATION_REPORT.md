@@ -9,14 +9,13 @@ sockets instantiate `ssi263_voice`, which joins the native SC-02 digital core
 to the ideal schematic charge model.
 
 The sheet-5 control path now follows U37/U38 and the three timed cross-NAND
-latches. PW0/PW1 are set-only states, while PW3 loads the CTRL/TPARM1 result
-only at the comparator-qualified slot. The source also removes the prior
+latches. PW0/PW1 are set-only states, while PW1 gates the slot-2 PW3 load of
+the CTRL/TPARM1 result. The source also removes the prior
 sound-driven shortcuts: it has no invented stop mask, abstract phone-class
 source gate, direct ROM/inverse fricative-switch pair, guessed C381 high-pass,
 or three-bit output-level shift. Source and simulation closure are complete.
-The one full build and matching firmware package are complete. The routed test
-candidate has positive setup, hold, and pulse-width slack. Hardware listening
-is the next checkpoint.
+The prior firmware package used U38 instead of PW1 at the PW3 load gate and is
+rejected. One replacement build and package are pending.
 
 The target version remains `F0.9.99`.
 
@@ -92,11 +91,13 @@ PW0/PW1 clear while /PHO_WRITE is low, otherwise hold
 PW2 = selector-2 TPARM2
 PW5 = NOT selector-2 TPARM2
 PW3 loads (latched_CTRL OR NOT TPARM1)
-    only when U38_equal AND WR_SEL2; otherwise it holds
+    only when PW1 AND WR_SEL2; otherwise it holds
 ```
 
 TPARM0 chooses the comparator delay; it does not become PW0 or PW1 data.
-TPARM1 reaches PW3 through U180C/U30E/U11/U34 only on the qualified load.
+U38 pin 6 reaches only U32A pin 2 and U33A pin 1. PW1 from U33D pin 11
+reaches U11C pin 11 and U11A pin 8, so it qualifies the U34 load independently
+of U38. TPARM1 reaches PW3 through U180C/U30E/U11/U34 only on that load.
 Static per-selector ROM assignments do not reproduce these held states.
 
 U21B, U28, U29A, U36, U37, and U23B now run as the sheet-5 circuit rather
@@ -464,8 +465,8 @@ final pre-build suite now checks:
 - register, D7, A/R, repeat, DR, CTL, AP reset, and collision traces;
 - U44/U45 selector cadence;
 - upward and downward U83/U84 DDA vectors and the full prototype U96 route;
-- sheet-5 timed PW0/PW1, PW2/PW5 polarity, and comparator-gated CTRL/TPARM1
-  load into `PW3`;
+- sheet-5 timed PW0/PW1, PW2/PW5 polarity, and PW1-gated CTRL/TPARM1 load into
+  `PW3`;
 - all 64 rate/duration U28 recurrences, sixteen DURCLK rises per full phone,
   U36 count-15 frame response, U37 wrap phoneme response, and reset collisions;
 - U61 `PD/RST` clear without U60 clear, U60 load to 11, `11..15`, terminal hold,
@@ -522,55 +523,31 @@ a nonideal term only when the part model and same-vector capture support it.
 
 ## Firmware and build status
 
-The version remains `F0.9.99`. Every prior image, including the WNS `+0.039 ns`
-duration image, predates the POT3/card-gain split and is rejected for this
-listen. The replacement comes from one clean, full, non-incremental Vivado
+The version remains `F0.9.99`. The WNS `+0.009 ns` POT3/card-gain image has the
+wrong U38-to-PW3 load gate and is rejected, along with every older image. The
+replacement must come from one clean, full, non-incremental Vivado
 implementation. Positive setup, hold, and pulse-width slack is the current
 hardware-listen gate; the normal `+0.300 ns` release margin remains a later
 timing task.
 
 ```text
 Current pre-build suite: passed
-Current full build:      20260825T104946Z-92aa867b-full
-Source commit:           92aa867bbfafecef0dcfbc01cbdefefd29b1ea31
-Build mode:              full, clean tree, no incremental reference
-Route:                   PASS, 0 routing errors
-Bus skew:                PASS, +5.940 ns worst slack
-Timing:                  WNS +0.009, WHS +0.018, WPWS +0.265 ns
-Timing totals:           TNS 0, THS 0, TPWS 0 ns
-Failing endpoints:       setup 0, hold 0, pulse width 0
-Constraint checks:       unconstrained 0, missing objects 0
-Bitstream SHA-256:       86b16c44e468cb3507b2717997e78261ad739aab006a347a7000c7f455e561ea
-XSA SHA-256:             ff78bdf0158a0e7325f9e56de1de2f448758e4b6c1310f642e797232a0453786
-Current F0.9.99 image:   FIRMWARE_F0.9.99_DUAL_SSI263_SC02_POT3_CARD_GAIN_WNS0p009.BIN
-Firmware size:           4,282,764 bytes
-Firmware SHA-256:        ba2c9930c031e1965e63b8f5eb8d847250fff98f024d59ae71eb26a5b3764b59
+Current full build:      pending; run exactly one
+Source commit:           pending PW1-gate checkpoint
+Build mode:              full, clean tree, no incremental reference required
+Route and bus skew:      pending
+Timing:                  positive WNS, WHS, and WPWS required
+Current F0.9.99 image:   pending
+Firmware size:           pending
+Firmware SHA-256:        pending
 Hardware listen:         pending
 ```
 
-The normal build wrapper recorded the parent run as `failed` only because WNS
-is below its `+0.300 ns` release gate. The positive-slack export reopened the
-same final checkpoint and made no new place or route run. Its manifest reports
-`positive_slack_test_exported`, with all values above. The archived XSA and the
-XSA supplied to Vitis have the same SHA-256. One Vitis run and one Bootgen run
-made the image. Bootgen names the archived SSI-263 bitstream and places the two
-frontend sections at `0x00100000` and `0x0027c000`. The frontend ELF contains
-`Firmware F0.9.99`.
-
-One earlier command created the directory
-`20260825T104813Z-92aa867b-full`, but stopped at RTL elaboration because the
-generated Vivado project had not yet imported the new tracked output-stage
-source. It did not reach synthesis, placement, or routing. Regenerating the
-project from `hdl/hdl_sources.txt` fixed source closure. The run listed above
-was the only full implementation.
-
-Package input hashes:
-
-```text
-FSBL ELF:           7e47637e290b70701381d8ac3c91c267129dde7e4b12e172e76b4634786f7079
-Frontend core 1:   cba77543cece3125c6d06e8561a8e7b6e7c8a50000ec6e1c010881d93144271e
-Frontend core 0:   339b492e66c2d6a3a65448e958103a07af326cc25665daee784680c646c8d72c
-```
+The rejected predecessor is build `20260825T104946Z-92aa867b-full`, source
+commit `92aa867bbfafecef0dcfbc01cbdefefd29b1ea31`, with WNS `+0.009 ns` and
+firmware SHA-256
+`ba2c9930c031e1965e63b8f5eb8d847250fff98f024d59ae71eb26a5b3764b59`.
+Do not flash it for the PW1-gate listen.
 
 ## Hardware validation for this candidate
 

@@ -878,7 +878,7 @@ class SSI263Reference:
             if self.u38_equal(selector):
                 self.pw_1 = True
         elif selector == 2:
-            if self.u38_equal(selector):
+            if self.pw_1:
                 self.pw_3 = (
                     self.u183a_q
                     or not bool(flags & 0x02)

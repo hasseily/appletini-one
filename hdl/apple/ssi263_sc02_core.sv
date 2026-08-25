@@ -466,7 +466,9 @@ module ssi263_sc02_core #(
     // high with a count of 15. This produces 16 DURCLK rises per phoneme.
     // U9C inverts the raw active-low PHO WRITE decode before U29A, so U29A
     // falls at write assertion or DURCLK rise. U37 advances on that fall.
-    // U38's inverted-nibble compare reduces to q=2 or q=6.
+    // U38's inverted-nibble compare reduces to q=2 or q=6 and feeds only
+    // the U32A/U33A PW0/PW1 set gates. U11C.11 and U11A.8 take PW1 from
+    // U33D, so PW1 gates the slot-2 U34 load independently of U38.
     assign phone_write_active = write_active && write_reg == 3'd0;
     assign u28_tc_level = (&u28_q) && rate_clock_div2_q;
     assign duration_clock_rise = u28_tc_level && !u28_tc_level_q;
@@ -477,7 +479,7 @@ module ssi263_sc02_core #(
     assign pw1_set_level = selector_latch_level && selector_q == 3'd1 &&
                            u38_equal;
     assign pw3_load_level = selector_latch_level && selector_q == 3'd2 &&
-                            u38_equal;
+                            pw_1_q;
 
     assign selector_advance_event = effective_xck_ce &&
                                     slow_div_q == 2'd3 &&

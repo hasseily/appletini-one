@@ -748,16 +748,30 @@ module tb_ssi263_sc02_core;
         #1;
         check(pw_1, "U33 PW1 did not retain outside its set window");
 
-        // U34 loads Qctrl OR /TPARM1 only at the timed slot-2 equality.
+        // U11C.11/U11A.8 use PW1, not U38 A=B. Prove both distinguishing
+        // cases before checking the two U34 data paths.
         force dut.slow_div_q = 2'd2;
         force dut.u37_q = 4'd2;
         force dut.selector_q = 3'd2;
         force dut.selector_flags = 4'b0011;
+        force dut.u183a_q = 1'b1;
+        force dut.pw_1_q = 1'b1;
+        @(posedge clk);
+        #1;
+        check(pw_3, "U34 PW3 seed load failed");
+        force dut.u37_q = 4'd5;
         force dut.u183a_q = 1'b0;
         @(posedge clk);
         #1;
-        check(!pw_3, "U34 PW3 did not load low for CTRL=0/TPARM1=1");
+        check(!pw_3, "U34 PW3 did not load with PW1 high/U38 low");
+        force dut.u37_q = 4'd2;
+        force dut.pw_1_q = 1'b0;
         force dut.u183a_q = 1'b1;
+        @(posedge clk);
+        #1;
+        check(!pw_3, "U34 PW3 loaded with PW1 low/U38 high");
+        force dut.u37_q = 4'd5;
+        force dut.pw_1_q = 1'b1;
         @(posedge clk);
         #1;
         check(pw_3, "U34 PW3 did not load high from CTRL");
@@ -773,6 +787,7 @@ module tb_ssi263_sc02_core;
         release dut.selector_q;
         release dut.selector_flags;
         release dut.u183a_q;
+        release dut.pw_1_q;
         reset_chips();
 
         // Sheet-4 setup is target-A modulo 16 with C=8 and a stored direction

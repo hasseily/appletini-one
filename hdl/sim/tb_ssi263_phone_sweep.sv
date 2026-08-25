@@ -514,10 +514,10 @@ module tb_ssi263_phone_sweep;
                     dut.core_i.phoneme == phone)
                     selectors_seen[dut.core_i.selector_q] = 1'b1;
 
-                // U37/U38 and U32/U33/U34 make PW0, PW1, and PW3 timed
-                // state. They need not, and usually do not, equal the low
-                // ROM bits as soon as a phone is written. PW2/PW5 are the
-                // only pair loaded directly in the slot-2 LATCH window.
+                // U37/U38 qualify the U32/U33 PW0/PW1 set gates. PW1 then
+                // qualifies the U34 PW3 load in slot 2. These timed states
+                // need not equal the low ROM bits as soon as a phone is
+                // written. PW2/PW5 load directly in the slot-2 LATCH window.
                 controls_match =
                     dut.core_i.phone_active &&
                     dut.core_i.phoneme == phone &&
@@ -694,6 +694,7 @@ module tb_ssi263_phone_sweep;
         logic sampled_pw0_set;
         logic sampled_pw1_set;
         logic sampled_pw3_load;
+        logic expected_pw3_load;
         logic sampled_phone_write_low;
         logic sampled_pw3_data;
         logic sampled_rate_edge;
@@ -726,6 +727,9 @@ module tb_ssi263_phone_sweep;
             sampled_pw0_set = dut.core_i.pw0_set_level;
             sampled_pw1_set = dut.core_i.pw1_set_level;
             sampled_pw3_load = dut.core_i.pw3_load_level;
+            expected_pw3_load = dut.core_i.selector_latch_level &&
+                                dut.core_i.selector_q == 3'd2 &&
+                                dut.core_i.pw_1_q;
             sampled_phone_write_low = dut.core_i.phone_write_active;
             sampled_pw3_data = dut.core_i.u183a_q ||
                                !dut.core_i.selector_flags[1];
@@ -781,6 +785,9 @@ module tb_ssi263_phone_sweep;
                                  sampled_selector][7:4];
 
             #1;
+
+            check(sampled_pw3_load == expected_pw3_load,
+                  "U11 PW1-gated PW3 load mismatch");
 
             if (sampled_pw0_set || sampled_phone_write_low ||
                 dut.core_i.pw_0_q != sampled_pw0) begin

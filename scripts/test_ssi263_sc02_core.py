@@ -98,7 +98,8 @@ def static_checks() -> None:
         "assign u38_equal = (u37_q == (selector_flags[0] ? 4'd2 : 4'd6));",
         "assign pw0_set_level = selector_latch_level && selector_q == 3'd0",
         "assign pw1_set_level = selector_latch_level && selector_q == 3'd1",
-        "assign pw3_load_level = selector_latch_level && selector_q == 3'd2",
+        "assign pw3_load_level = selector_latch_level && selector_q == 3'd2 &&\n"
+        "                            pw_1_q;",
         "u37_q <= u37_q + 4'd1;",
         "else if (phone_write_active)\n                pw_0_q <= 1'b0;",
         "else if (phone_write_active)\n                pw_1_q <= 1'b0;",
@@ -145,6 +146,12 @@ def static_checks() -> None:
             )
     if re.search(r"pw_[013]_q\s*<=\s*!?selector_flags", stripped_source):
         raise RuntimeError("timed PW latch still follows a ROM flag directly")
+    if re.search(
+        r"assign\s+pw3_load_level\s*=.*?u38_equal\s*;",
+        stripped_source,
+        flags=re.DOTALL,
+    ):
+        raise RuntimeError("U34 PW3 load still uses U38 instead of PW1")
     if "parameter_sweep_q" in stripped_source or re.search(
         r"function\s+automatic\s+logic\s+\[3:0\]\s+move_one_toward\b",
         stripped_source,

@@ -587,6 +587,7 @@ class SelectorTests(unittest.TestCase):
                 chip = SSI263Reference(div2=False)
                 chip.duration_phoneme = phone
                 chip.control_articulation_amplitude = 0
+                chip.pw_1 = True
                 chip.u37_count = 6
                 chip.advance_effective_ticks(48)
                 self.assertEqual(chip.pw_2, bool(code & 0x4))
@@ -728,7 +729,7 @@ class DdaAndU96Tests(unittest.TestCase):
 
                 self.assertEqual(pw0_phase, expected_phase0)
                 self.assertEqual(pw1_phase, expected_phase1)
-                self.assertEqual(pw3_phase, 6)
+                self.assertEqual(pw3_phase, expected_phase1)
                 self.assertTrue(chip.pw_0)
                 self.assertTrue(chip.pw_1)
                 self.assertEqual(chip.pw_3, expected_pw3)
@@ -761,8 +762,16 @@ class DdaAndU96Tests(unittest.TestCase):
         chip.control_articulation_amplitude = 0
         chip.u183a_q = False
         chip.duration_phoneme = 0x01
-        chip.u37_count = 6
         chip.selector = 2
+
+        chip.pw_3 = True
+        chip.pw_1 = False
+        chip.u37_count = 2 if chip.flags_for_selector() & 1 else 6
+        chip._selector_latch_event(suppress_control_latch=False)
+        self.assertTrue(chip.pw_3)
+
+        chip.pw_1 = True
+        chip.u37_count = 5
         chip._selector_latch_event(suppress_control_latch=False)
         self.assertFalse(chip.pw_3)
 
@@ -803,6 +812,7 @@ class DdaAndU96Tests(unittest.TestCase):
         chip.selector = 2
         chip.selector_subphase = 2
         chip.selector_fast_phase = 1
+        chip.pw_1 = True
         chip.u37_count = 6
         chip.advance_effective_ticks(1)
         self.assertTrue(chip.pw_3)

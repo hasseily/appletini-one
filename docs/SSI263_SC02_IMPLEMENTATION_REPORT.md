@@ -13,8 +13,8 @@ latches. PW0/PW1 are set-only states, while PW3 loads the CTRL/TPARM1 result
 only at the comparator-qualified slot. The source also removes the prior
 sound-driven shortcuts: it has no invented stop mask, abstract phone-class
 source gate, direct ROM/inverse fricative-switch pair, guessed C381 high-pass,
-or three-bit output-level shift. The remaining work is final source closure,
-one full build, firmware packaging, and hardware listening.
+or three-bit output-level shift. Source closure, the one full build, and the
+firmware package are complete. Hardware listening is the remaining step.
 
 The target version remains `F0.9.99`.
 
@@ -312,9 +312,9 @@ reciprocal product returns the exact quotient or one less; a registered
 fabric clocks. Phi1 and code jobs need at most 101 clocks, and the worst Phi0
 job needs 110 clocks before the next event can pop. A 16-entry FIFO preserves
 event order. Routed out-of-context verification at a 7.500 ns fabric period
-uses 11 DSP48E1 blocks and reports `+0.641 ns` WNS. The one final full-card
-build uses 26 DSP48E1 blocks in all, including 22 for the two SSI engines, and
-reports `+0.005 ns` WNS, `+0.057 ns` WHS, and `+0.265 ns` WPWS.
+uses 11 DSP48E1 blocks and reports `+0.641 ns` WNS. The one full-card build for
+this hardware test uses 26 DSP48E1 blocks in all, including 22 for the two SSI
+engines, and reports `+0.013 ns` WNS, `+0.023 ns` WHS, and `+0.265 ns` WPWS.
 
 The chip drawing includes C381 but omits its external load. It therefore does
 not define a high-pass pole. The model exports the reconstructed AO/U148 node
@@ -467,25 +467,40 @@ a nonideal term only when the part model and same-vector capture support it.
 ## Firmware and build status
 
 The version is fixed at `F0.9.99`. The prior firmware predates the current
-U83/U84 DDA, prototype U96, U37, and audio-route fixes and is rejected. Run
-exactly one new full Vivado build from the clean checkpoint. For this SSI-263
-listen, require WNS greater than `+0.100 ns` and positive hold and pulse-width
-slack. Timing promotion remains a later task.
+U83/U84 DDA, prototype U96, U37, and audio-route fixes and is rejected. Exactly
+one full Vivado build ran from clean commit
+`1870454fc7782846989a91aa8001bfdf9e4ebdf9`. Build
+`20260825T063812Z-1870454f-full` has positive setup, hold, and pulse-width
+slack. It meets the latest hardware-listen rule. The normal release flow still
+requires `+0.300 ns` WNS, so it withheld its release export. The guarded
+export-only pass then opened the same final checkpoint, repeated all checks,
+and wrote the test BIT and XSA without synthesis, placement, routing, or
+another timing change. Timing promotion remains a later task.
 
 ```text
 Current pre-build suite: passed
-Current full build:      pending; run exactly once from the clean checkpoint
-Required timing:         WNS greater than +0.100 ns, WHS/WPWS positive
-Route and bus skew:      pending
-Archived BIT/XSA hashes: pending
-Current F0.9.99 image:   pending one Vitis and package run
-Firmware SHA-256:        pending
+Current full build:      20260825T063812Z-1870454f-full; exactly one run
+Source commit:           1870454fc7782846989a91aa8001bfdf9e4ebdf9; clean
+Test-candidate timing:   WNS +0.013 ns; WHS +0.023 ns; WPWS +0.265 ns
+Timing failures:         TNS/THS/TPWS 0; failing and unconstrained endpoints 0
+Route and bus skew:      PASS; 0 route errors; worst bus-skew slack +5.484 ns
+BIT SHA-256:             9882ef5b8251f5822c8c4ae3f82a3d285e058122877d6136e03df808396345b2
+XSA SHA-256:             145c983e1d2f8cda07cbe52742afe03671aab722346a628182e3e53a8b2b48bd
+Current F0.9.99 image:   FIRMWARE_F0.9.99_DUAL_SSI263_SC02_WNS0p013.BIN
+Firmware size:           4,277,196 bytes
+Firmware SHA-256:        5a3c02a9c01166a61a74e439ebd58d05107354ac74a7351c1b8901d3f37e4fca
 Hardware listen:         pending
 ```
 
-After the build passes, package only the named archived bitstream and matching
-XSA. Record Bootgen partition readback so the image cannot fall back to a stale
-root, project, or Vitis bitstream.
+The single Vitis run used the matching XSA. The single package run named the
+archived BIT explicitly, so it could not select a stale root, project, or Vitis
+bitstream. The frontend ELF contains `Firmware F0.9.99` and has SHA-256
+`339b492e66c2d6a3a65448e958103a07af326cc25665daee784680c646c8d72c`.
+Bootgen readback lists `fsbl.elf.0`,
+`appletini_yarz_top_F0.9.99_dual_ssi263_positive_slack_test.bit.0`, and the two
+load sections `frontend.elf.0` and `frontend.elf.1`. Core 1 is embedded in the
+frontend image; its source ELF has SHA-256
+`cba77543cece3125c6d06e8561a8e7b6e7c8a50000ec6e1c010881d93144271e`.
 
 ## Hardware validation after the build
 

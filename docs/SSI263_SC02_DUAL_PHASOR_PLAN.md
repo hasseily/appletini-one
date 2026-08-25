@@ -450,16 +450,24 @@ as the current artifact.
 
 ```text
 Current pre-build suite: passed
-Current full build:      pending; run exactly once from the clean checkpoint
-Required timing:         WNS greater than +0.100 ns, WHS/WPWS positive
-Current F0.9.99 image:   pending the current full build and one package run
+Current full build:      20260825T063812Z-1870454f-full; exactly one run
+Source commit:           1870454fc7782846989a91aa8001bfdf9e4ebdf9; clean
+Test-candidate timing:   WNS +0.013 ns; WHS +0.023 ns; WPWS +0.265 ns
+Route and bus skew:      PASS; 0 route errors; worst bus-skew slack +5.484 ns
+BIT SHA-256:             9882ef5b8251f5822c8c4ae3f82a3d285e058122877d6136e03df808396345b2
+XSA SHA-256:             145c983e1d2f8cda07cbe52742afe03671aab722346a628182e3e53a8b2b48bd
+Current F0.9.99 image:   FIRMWARE_F0.9.99_DUAL_SSI263_SC02_WNS0p013.BIN
+Firmware size:           4,277,196 bytes
+Firmware SHA-256:        5a3c02a9c01166a61a74e439ebd58d05107354ac74a7351c1b8901d3f37e4fca
 Hardware listen:         pending
 ```
 
 The prior F0.9.99 image predates the current U83/U84, U96, U37, and audio-path
-fixes. It is rejected and must not be offered for this listen. Record the new
-build ID, timing, exact archived bitstream, firmware size, and SHA-256 here
-only after the one current build and package run pass.
+fixes. It is rejected and must not be offered for this listen. The named image
+above comes from the exact archived bitstream and one Vitis and package run.
+The latest test rule asks only for positive setup, hold, and pulse-width slack
+while SSI-263 logic and sound are checked. The normal release margin remains
+`+0.300 ns` WNS and is a later timing task.
 
 ## Acceptance gate
 
@@ -476,6 +484,10 @@ The branch is ready for the next hardware listen only when:
 - all focused and source tests pass;
 - the one final F0.9.99 build passes and yields a named, hashed firmware image.
 
+All source, test, build, and package conditions above are complete. The named
+image is ready for the hardware listen. It is a positive-slack test candidate,
+not a timing-promoted release.
+
 Hardware listening can find a fault, but it cannot by itself prove an exact
 SSI-263 analog match. That claim needs same-vector AO captures from a real
 SSI-263AP.
@@ -490,4 +502,5 @@ SSI-263AP.
 6. Replace mirrored tests with exact circuit traces.
 7. Lock original Phasor wiring and two-chip isolation.
 8. Update the implementation report and source audit.
-9. Run one final full build and package F0.9.99.
+9. Run one final full build and package F0.9.99. Complete with build
+   `20260825T063812Z-1870454f-full` and the named positive-slack test image.

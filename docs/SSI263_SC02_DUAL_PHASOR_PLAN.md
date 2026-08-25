@@ -418,6 +418,15 @@ U20B=`0`, FRIC1_SW=`0`, and FRIC2_SW=`1`. These seeds define emulator power-up;
 they do not claim that every SSI-263 die powers up with those analog or digital
 states. Tests must prove the recurrence after the seed.
 
+U65/U64 also have no reset pin. A fixed zero FPGA seed creates an artificial
+low-to-high glide over the first several phones. Each die must instead adopt
+its current aligned `{I10:I6,000}` target once, when transitioned pitch first
+becomes live on a CTL wake. Do not reload this state on phone, IS/RE, later CTL,
+or SSI `PD/RST` events. Immediate and frame modes leave the seed armed. DR=00
+consumes it only when it retains transitioned pitch. All later movement remains
+the drawn U66 recurrence. Treat this rule only as deterministic handling of an
+undefined silicon power-up state.
+
 The charge model uses ideal components and rounded fixed-point math. It does
 not yet model LF356 bandwidth and slew, CD4016 resistance and charge injection,
 stray capacitance, source pulse voltage, temperature, component tolerance, or
@@ -432,6 +441,9 @@ Before the final build, require source and cycle tests for:
 - every phone/selector address and target;
 - register write-end capture, aliases, D7, A/R, DR modes, repeat, CTL, and AP
   `PD/RST` collisions;
+- the U65/U64 first transitioned wake, fixed pitch across at least five phones,
+  later rise/fall through U66, AP reset and U66 same-edge collisions, global
+  rearm, and staggered independent A5/A6 seed use;
 - U44/U45 sixteen-tick selector slots and the full 128-tick scan;
 - all upward and downward U83/U84 DDA vectors, all setup slots, and every U96
   route including grounded selector 7 and prototype RATE=F disabled;
@@ -473,23 +485,23 @@ as the current artifact.
 
 ```text
 Current pre-build suite: passed
-Current full build:      20260825T132135Z-47003c7d-full; run once
-Source commit:           47003c7dd7dbc58b657b064161e3b5cfb2f626ca
+Current full build:      20260825T171810Z-2a4a8c64-full; run once
+Source commit:           2a4a8c645c92c0340d9e7620274184e413a0641a
 Build mode:              full, clean tree, no incremental reference
-Route and bus skew:      PASS; 0 route errors; +5.887 ns bus-skew slack
-Timing:                  WNS +0.007; WHS +0.009; WPWS +0.265 ns
-Current F0.9.99 image:   FIRMWARE_F0.9.99_DUAL_SSI263_SC02_PW1_PW3_GATE_WNS0p007.BIN
-Firmware size:           4,257,356 bytes
-Firmware SHA-256:        1f049c469cee4be84dc5b4509cb9f34c1d4a529288c4eea2a97075da9a801f12
+Route and bus skew:      PASS; 0 route errors; +5.431 ns bus-skew slack
+Timing:                  WNS +0.015; WHS +0.019; WPWS +0.265 ns
+Current F0.9.99 image:   FIRMWARE_F0.9.99_DUAL_SSI263_SC02_COLD_PITCH_SEED_WNS0p015.BIN
+Firmware size:           4,264,652 bytes
+Firmware SHA-256:        7e16601cb141e96ce5f7f5d986c6f089d858e29640035e4904c7fe405141318d
 Hardware listen:         pending
 ```
 
-Every prior F0.9.99 image, including the WNS `+0.009 ns` POT3/card-gain image,
-uses the wrong U38-to-PW3 load gate. It is rejected and must not be offered for
-this listen. The next image must come from the exact archived bitstream and one
-Vitis and package run. The latest test rule asks only for positive setup, hold,
-and pulse-width slack while SSI-263 logic and sound are checked. The normal
-release margin remains `+0.300 ns` WNS and is a later timing task.
+Every prior F0.9.99 image is rejected for this listen. The former WNS
+`+0.007 ns` image has the corrected PW1 gate but still starts U65/U64 from the
+bad zero seed. The current image comes from the exact archived bitstream and
+one Vitis and package run. The latest test rule asks only for positive setup,
+hold, and pulse-width slack while SSI-263 logic and sound are checked. The
+normal release margin remains `+0.300 ns` WNS and is a later timing task.
 
 ## Acceptance gate
 
@@ -506,9 +518,9 @@ The branch is ready for the next hardware listen only when:
 - all focused and source tests pass;
 - the one final F0.9.99 build passes and yields a named, hashed firmware image.
 
-The corrected source and focused test conditions are complete. One replacement
-full implementation, one Vitis build, and one package run remain. The result
-will be a positive-slack test candidate, not a timing-promoted release.
+The corrected source, focused tests, one full implementation, one Vitis build,
+and one package run are complete. The result is a positive-slack test
+candidate, not a timing-promoted release. Hardware sound validation remains.
 
 Hardware listening can find a fault, but it cannot by itself prove an exact
 SSI-263 analog match. That claim needs same-vector AO captures from a real
@@ -530,3 +542,5 @@ SSI-263AP.
 11. Run the POT3/card-gain F0.9.99 candidate. Superseded by the PW3 gate fix.
 12. Correct U11 PW1-to-PW3 gating and rebuild F0.9.99. Source and tests
     complete; one positive-slack firmware candidate packaged.
+13. Remove the FPGA-only U65/U64 zero cold-start glide, prove one-time and
+    dual-die seed behavior, and package the current F0.9.99 candidate.

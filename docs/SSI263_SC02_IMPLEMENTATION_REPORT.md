@@ -14,9 +14,11 @@ the CTRL/TPARM1 result. The source also removes the prior
 sound-driven shortcuts: it has no invented stop mask, abstract phone-class
 source gate, direct ROM/inverse fricative-switch pair, guessed C381 high-pass,
 or three-bit output-level shift. Source and simulation closure are complete.
-The prior firmware package used U38 instead of PW1 at the PW3 load gate and is
-rejected. Build `20260825T132135Z-47003c7d-full` supplies its replacement for
-the next hardware listen.
+The prior PW1-gate firmware still exposed an FPGA-only zero seed in the
+unreset U65/U64 transitioned-inflection counters. That made the first phones
+rise from the lowest pitch toward the programmed target. It is rejected.
+Build `20260825T171810Z-2a4a8c64-full` supplies its replacement for the next
+hardware listen.
 
 The target version remains `F0.9.99`.
 
@@ -360,8 +362,8 @@ event order. Routed out-of-context verification at a 7.500 ns fabric period
 uses 11 DSP48E1 blocks and reports `+0.641 ns` WNS. The one full-card build for
 this hardware test uses 26 DSP48E1 blocks in all, including 22 for the two SSI
 engines, and reports `+0.039 ns` WNS, `+0.061 ns` WHS, and `+0.265 ns` WPWS.
-The current PW1-gate full-card build still uses 26 DSP48E1 blocks and reports
-`+0.007 ns` WNS, `+0.009 ns` WHS, and `+0.265 ns` WPWS.
+The current cold-pitch-seed full-card build still uses 26 DSP48E1 blocks and
+reports `+0.015 ns` WNS, `+0.019 ns` WHS, and `+0.265 ns` WPWS.
 
 The chip drawing includes C381 but omits its external load. It therefore does
 not define a high-pass pole. The tract exports reconstructed U148 without the
@@ -448,6 +450,7 @@ U20B      = 0
 U28       = F
 U36 low   = 0
 U37 low   = 0
+U65/U64   = current {I10:I6,000} target at the first transitioned CTL wake
 FRIC1_SW  = 0
 FRIC2_SW  = 1
 filter and charge state = 0
@@ -458,6 +461,16 @@ not assert that all SSI-263AP dies start at the same unreset state. Verification
 must compare the recurrence after initialization, not use the seed as proof of
 silicon power-up.
 
+U65/U64 have no reset pin in the reconstruction. Resetting them to zero in the
+FPGA turned that arbitrary state into a repeatable low-to-high glide. Each
+virtual die now adopts its current aligned I10:I6 target once, on the first CTL
+high-to-low wake that exposes transitioned pitch. Phone writes, IS/RE writes,
+later CTL wakes, and SSI `PD/RST` do not reload it. Immediate and frame modes
+leave the seed armed; DR=00 consumes it only when it retains transitioned
+pitch. After the one initialization edge, all rise and fall movement still
+comes from the drawn U66 rate path. This is a deterministic FPGA policy for an
+undefined chip power-up state, not a claimed schematic reset connection.
+
 ## Verification status
 
 The source corrections now cover the full known digital path. Tests based on
@@ -466,6 +479,9 @@ final pre-build suite now checks:
 
 - ROM identity, padding, and all 64 by 8 addresses;
 - register, D7, A/R, repeat, DR, CTL, AP reset, and collision traces;
+- one-time U65/U64 cold-state initialization, five-phone fixed-pitch hold,
+  later U66 rise/fall, first-wake/reset collision priority, global rearm, and
+  independent staggered A5/A6 seeds;
 - U44/U45 selector cadence;
 - upward and downward U83/U84 DDA vectors and the full prototype U96 route;
 - sheet-5 timed PW0/PW1, PW2/PW5 polarity, and PW1-gated CTRL/TPARM1 load into
@@ -489,18 +505,18 @@ final pre-build suite now checks:
 
 The current source checkpoint passes:
 
-- 48 ROM, interface, formula, selector, duration, DONE, DDA, and U96 reference
+- 54 ROM, interface, formula, selector, duration, DONE, DDA, and U96 reference
   tests;
 - the raw-Q3 XCK edge bench and the complete native core bench;
 - 4,032 exact-divider vectors across all 28 live denominators;
-- 1,745,273 checks over all 64 phone rows plus the natural ten-phone
+- 204,210,708 checks over all 64 phone rows plus the natural ten-phone
   `HF EH1 L O OU PA E N D PA` sequence at the physical fabric/Q3/DIV2 rates;
 - 15 Phasor source and decode tests;
 - 17 exact card-output checks across zero, sign, gain, both saturation edges,
   and card masking;
-- 74 dual-card checks for A5/A6, channel A/B, request, mode, reset, both RESA
+- 77 dual-card checks for A5/A6, channel A/B, request, mode, reset, both RESA
   latch layers, row `$01`, simultaneous audio, both engine-overrun flags, and
-  separate card-stage clip flags.
+  separate card-stage clip flags, including staggered independent pitch seeds.
 
 The phone sweep checks the timed PW, DDA, route, and output invariants without
 assuming that every settled parameter must equal its ROM target in one scan.
@@ -526,49 +542,52 @@ a nonideal term only when the part model and same-vector capture support it.
 
 ## Firmware and build status
 
-The version remains `F0.9.99`. The WNS `+0.009 ns` POT3/card-gain image has the
-wrong U38-to-PW3 load gate and is rejected, along with every older image. The
-replacement comes from one clean, full, non-incremental Vivado implementation.
-Its final checkpoint has positive setup, hold, and pulse-width slack, which is
-the current hardware-listen gate. The normal `+0.300 ns` release margin remains
-a later timing task.
+The version remains `F0.9.99`. Every image before the U65/U64 cold-state fix is
+rejected. The replacement comes from one clean, full, non-incremental Vivado
+implementation. Its final checkpoint has positive setup, hold, and pulse-width
+slack, which is the current hardware-listen gate. The normal `+0.300 ns`
+release margin remains a later timing task.
 
 ```text
 Current pre-build suite: passed
-Current full build:      20260825T132135Z-47003c7d-full; run once
-Source commit:           47003c7dd7dbc58b657b064161e3b5cfb2f626ca
+Current full build:      20260825T171810Z-2a4a8c64-full; run once
+Source commit:           2a4a8c645c92c0340d9e7620274184e413a0641a
 Build mode:              full, clean tree, no incremental reference
-Route and bus skew:      PASS; 0 route errors; +5.887 ns bus-skew slack
-Timing:                  WNS +0.007; WHS +0.009; WPWS +0.265 ns
+Route and bus skew:      PASS; 0 route errors; +5.431 ns bus-skew slack
+Timing:                  WNS +0.015; WHS +0.019; WPWS +0.265 ns
 Failing/unconstrained:   0 setup, hold, pulse-width, and unconstrained endpoints
-Archived bit SHA-256:    0650c4dd690bc073b88854dbb1a2f1b4e632f4484c7bf3ee258557a91cd6cb69
-Archived XSA SHA-256:    50365c6c8d1755849d79d62f8062dbfca421a31d17e3669ddb372d86ecda28ab
+Archived bit SHA-256:    1e59cd22dbed741f13f3559c6132876dda0a241c50cb4589a6ee7bd0ec50ff5c
+Archived XSA SHA-256:    021f7d6e8950331515d8ed1f87645b8f046e3982ad2a73f7ca28a0a811628784
 Vitis and packaging:     one run each; archived bit passed explicitly
-Current F0.9.99 image:   FIRMWARE_F0.9.99_DUAL_SSI263_SC02_PW1_PW3_GATE_WNS0p007.BIN
-Firmware size:           4,257,356 bytes
-Firmware SHA-256:        1f049c469cee4be84dc5b4509cb9f34c1d4a529288c4eea2a97075da9a801f12
+Current F0.9.99 image:   FIRMWARE_F0.9.99_DUAL_SSI263_SC02_COLD_PITCH_SEED_WNS0p015.BIN
+Firmware size:           4,264,652 bytes
+Firmware SHA-256:        7e16601cb141e96ce5f7f5d986c6f089d858e29640035e4904c7fe405141318d
 Hardware listen:         pending
 ```
 
-The normal exporter stopped after implementation because `+0.007 ns` is below
+The normal exporter stopped after implementation because `+0.015 ns` is below
 the later `+0.300 ns` release gate. The positive-slack exporter then opened the
 same final checkpoint without another implementation and recorded
 `status=positive_slack_test_exported`. Bootgen identifies the archived
 bitstream by name and the two frontend sections at `0x00100000` and
 `0x0027c000`. The frontend ELF contains `Firmware F0.9.99`.
 
-The rejected predecessor is build `20260825T104946Z-92aa867b-full`, source
-commit `92aa867bbfafecef0dcfbc01cbdefefd29b1ea31`, with WNS `+0.009 ns` and
+The rejected predecessor is build `20260825T132135Z-47003c7d-full`, source
+commit `47003c7dd7dbc58b657b064161e3b5cfb2f626ca`, with WNS `+0.007 ns` and
 firmware SHA-256
-`ba2c9930c031e1965e63b8f5eb8d847250fff98f024d59ae71eb26a5b3764b59`.
-Do not flash it for the PW1-gate listen.
+`1f049c469cee4be84dc5b4509cb9f34c1d4a529288c4eea2a97075da9a801f12`.
+It has the corrected PW1 gate but the bad zero cold-pitch seed. Do not flash it
+for this listen.
 
 ## Hardware validation for this candidate
 
 The next Appletini test should first check that the new image boots, Phasor is
 seen, both SSI chips respond, A5/A6 route to separate channels, both request
 paths work, and simultaneous speech stays independent. Then listen to fixed
-register vectors across voiced, fricative, mixed, and transition phones.
+register vectors across voiced, fricative, mixed, and transition phones. Start
+with a fixed-pitch phrase and confirm that its first five phones no longer rise
+in pitch. Then use a deliberate IS target change and confirm that the normal
+drawn transition still moves in both directions.
 
 For a real-chip match, capture XCK, DIV2, A/R, D7, U150 or AO, and post-C381
 audio from an original SSI-263AP Phasor with the same vectors. Measure source

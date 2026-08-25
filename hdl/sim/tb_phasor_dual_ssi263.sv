@@ -671,14 +671,16 @@ module tb_phasor_dual_ssi263;
                         saw_channel_a = 1'b1;
                     if (audio_r != 16'sd0)
                         saw_channel_b = 1'b1;
-                    if ($isunknown({dut.ssi0_audio, dut.ssi1_audio,
+                    if ($isunknown({dut.ssi0_line_audio,
+                                    dut.ssi1_line_audio,
+                                    dut.ssi0_audio, dut.ssi1_audio,
+                                    dut.ssi0_output_clipped,
+                                    dut.ssi1_output_clipped,
                                     audio_l, audio_r}))
                         unknowns = unknowns + 1;
-                    if (dut.ssi0_audio == 16'sh7FFF ||
-                        dut.ssi0_audio == -16'sh8000)
+                    if (dut.ssi0_output_clipped)
                         ssi0_clips = ssi0_clips + 1;
-                    if (dut.ssi1_audio == 16'sh7FFF ||
-                        dut.ssi1_audio == -16'sh8000)
+                    if (dut.ssi1_output_clipped)
                         ssi1_clips = ssi1_clips + 1;
                     if (audio_l == 16'sh7FFF || audio_l == -16'sh8000)
                         left_clips = left_clips + 1;

@@ -9,7 +9,11 @@ module ssi263_sc02_audio #(
     parameter logic [3:0] NOISE_D3_SEED = 4'h0,
     parameter logic [4:0] NOISE_D4_SEED = 5'h00,
     parameter logic [3:0] NOISE_COUNT_SEED = 4'hF,
-    parameter logic signed [17:0] VOICE_TRIM_U116_STEP_Q16 = 18'sd65536
+    // POT3 is an adjustable voice-only trim.  The schematic fixes the
+    // fricative divider but gives no POT3 wiper setting.  One thirty-second
+    // rail is the provisional hardware-test setting; the socket output
+    // stage restores the common signal level after voice and noise combine.
+    parameter logic signed [17:0] VOICE_TRIM_U116_STEP_Q16 = 18'sd2048
 ) (
     input  logic               clk,
     input  logic               rstn,

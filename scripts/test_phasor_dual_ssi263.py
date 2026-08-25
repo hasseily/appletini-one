@@ -23,6 +23,7 @@ RTL_SOURCES = (
     ROOT / "hdl" / "apple" / "ssi263_sc02_core.sv",
     ROOT / "hdl" / "apple" / "ssi263_sc02_audio.sv",
     ROOT / "hdl" / "apple" / "ssi263_voice.sv",
+    ROOT / "hdl" / "apple" / "phasor_ssi263_output_stage.sv",
     ROOT / "hdl" / "apple" / "mockingboard.sv",
     ROOT / "hdl" / "sim" / "tb_phasor_dual_ssi263.sv",
 )

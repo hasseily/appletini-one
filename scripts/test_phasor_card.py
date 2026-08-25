@@ -243,6 +243,9 @@ def test_dual_native_ssi263_contract() -> None:
     voice = read(REPO_ROOT / "hdl" / "apple" / "ssi263_voice.sv")
     core = read(REPO_ROOT / "hdl" / "apple" / "ssi263_sc02_core.sv")
     audio = read(REPO_ROOT / "hdl" / "apple" / "ssi263_sc02_audio.sv")
+    output_stage = read(
+        REPO_ROOT / "hdl" / "apple" / "phasor_ssi263_output_stage.sv"
+    )
     xck = read(REPO_ROOT / "hdl" / "apple" / "ssi263_xck_ce.sv")
     sources = read(REPO_ROOT / "hdl" / "hdl_sources.txt")
 
@@ -252,6 +255,7 @@ def test_dual_native_ssi263_contract() -> None:
         "apple/ssi263_sc02_audio.sv",
         "apple/ssi263_xck_ce.sv",
         "apple/ssi263_voice.sv",
+        "apple/phasor_ssi263_output_stage.sv",
     )
     require(all(path in sources for path in required_sources),
             "Vivado must include the native SC-02 ROM, core, audio, clock, and voice sources")
@@ -264,7 +268,9 @@ def test_dual_native_ssi263_contract() -> None:
     require(all(path not in sources for path in removed_sources),
             "Vivado must not retain the former speech implementation sources")
 
-    active_implementation = "\n".join((source, voice, core, audio)).lower()
+    active_implementation = "\n".join(
+        (source, voice, core, audio, output_stage)
+    ).lower()
     require("start_votrax" not in active_implementation and
             "has_sc01" not in active_implementation and
             "sc01a_digital_core" not in active_implementation and
@@ -348,9 +354,12 @@ def test_dual_native_ssi263_contract() -> None:
 
     require(source.count("                    ssi0_audio);") == 3 and
              source.count("                    ssi1_audio);") == 3 and
+             source.count("phasor_ssi263_output_stage ssi263_") == 2 and
+             ".line_audio(ssi0_line_audio)" in source and
+             ".line_audio(ssi1_line_audio)" in source and
              "speech_audio_q" not in source and
              "sat_add16(ssi0_audio, ssi1_audio)" not in source,
-            "A5 secondary/channel A and A6 primary/channel B must never cross-sum")
+            "A5/A6 output stages must remain separate before the channel mixer")
     require("assign dbg_backend_done = card_enabled && response_boundary_ce;" in voice and
              "assign dbg_enable_ints = card_enabled && ar_enabled;" in voice,
             "card-visible debug taps must mask the die response and A/R state")

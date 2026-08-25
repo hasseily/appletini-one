@@ -38,6 +38,7 @@ apple/ssi263_xck_ce.sv
 apple/ssi263_sc02_core.sv
 apple/ssi263_sc02_audio.sv
 apple/ssi263_voice.sv
+apple/phasor_ssi263_output_stage.sv
 apple/disk2_sound_pkg.sv
 apple/mockingboard.sv
 apple/disk2_sound_player.sv

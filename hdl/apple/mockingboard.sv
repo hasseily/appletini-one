@@ -164,8 +164,12 @@ wire ssi1_direct_irq = phasor_native && ssi1_ar_drive_low;
 assign dbg_ssi_irq          = ssi0_direct_irq | ssi1_direct_irq;
 assign dbg_ssi_backend_done = ssi0_backend_done | ssi1_backend_done;
 assign dbg_ssi_enable_ints  = ssi0_enable_ints | ssi1_enable_ints;
+logic signed [15:0] ssi0_line_audio;
+logic signed [15:0] ssi1_line_audio;
 logic signed [15:0] ssi0_audio;
 logic signed [15:0] ssi1_audio;
+logic ssi0_output_clipped;
+logic ssi1_output_clipped;
 logic ssi_xck_ce;
 logic signed [31:0] tone_l_low_q;
 logic signed [31:0] tone_l_warm_lp_q;
@@ -694,7 +698,7 @@ ssi263_voice ssi263_secondary_i (
     .ssi_wdata(ab_read.data),
     .ssi_d7(ssi0_d7),
     .ar_drive_low(ssi0_ar_drive_low),
-    .audio(ssi0_audio),
+    .audio(ssi0_line_audio),
     .dbg_backend_done(ssi0_backend_done),
     .dbg_enable_ints(ssi0_enable_ints)
 );
@@ -712,9 +716,30 @@ ssi263_voice ssi263_primary_i (
     .ssi_wdata(ab_read.data),
     .ssi_d7(ssi1_d7),
     .ar_drive_low(ssi1_ar_drive_low),
-    .audio(ssi1_audio),
+    .audio(ssi1_line_audio),
     .dbg_backend_done(ssi1_backend_done),
     .dbg_enable_ints(ssi1_enable_ints)
+);
+
+// The SC-02 POT3 trim sets only the voice/noise ratio.  Apply the matching
+// common output gain once per SSI socket, before either speech path meets its
+// Phasor PSG channel.
+phasor_ssi263_output_stage ssi263_secondary_output_i (
+    .clk(clk),
+    .rstn(rstn),
+    .card_enabled(card_enabled),
+    .line_audio(ssi0_line_audio),
+    .card_audio(ssi0_audio),
+    .clipped(ssi0_output_clipped)
+);
+
+phasor_ssi263_output_stage ssi263_primary_output_i (
+    .clk(clk),
+    .rstn(rstn),
+    .card_enabled(card_enabled),
+    .line_audio(ssi1_line_audio),
+    .card_audio(ssi1_audio),
+    .clipped(ssi1_output_clipped)
 );
 
 YM2149 psg0(

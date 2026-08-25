@@ -338,6 +338,8 @@ def static_checks() -> None:
         source,
         (
             "module ssi263_sc02_audio #(",
+            "parameter logic signed [17:0] VOICE_TRIM_U116_STEP_Q16 = 18'sd2048",
+            "localparam logic signed [17:0] FRIC_DRIVE_MAG_Q16 = 18'sd301;",
             "parameter logic [3:0] NOISE_D1_SEED",
             "u60_parallel_value=4'b1011;",
             "u75_parallel_value=4'b0001;",

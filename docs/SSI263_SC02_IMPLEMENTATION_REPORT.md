@@ -80,7 +80,7 @@ SC-01-like phone traits.
 Sheet 5 gives these timed rules:
 
 ```text
-U37 advances on /PHO_WRITE release and each DURCLK rise
+U37 advances on /PHO_WRITE assertion at write start and each DURCLK rise
 U38 equal = U37.low == (TPARM0 ? 2 : 6)
 PW0 set = U38_equal AND WR_SEL0
 PW1 set = U38_equal AND WR_SEL1

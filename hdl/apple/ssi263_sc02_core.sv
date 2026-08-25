@@ -210,6 +210,8 @@ module ssi263_sc02_core #(
     logic       u183a_q;
     logic       pho_write_low;
     logic       duration_clock_rise;
+    logic       u29a_level;
+    logic       u29a_level_q;
     logic       u38_equal;
     logic       pw0_set_level;
     logic       pw1_set_level;
@@ -456,7 +458,7 @@ module ssi263_sc02_core #(
     };
 
     // Sheet 5 U37/U38. U37 advances on the falling edge of
-    // U29A=NOT(DURCLK OR /PHO_WRITE): once when a phoneme write ends and once
+    // U29A=NOT(DURCLK OR /PHO_WRITE): once when a phoneme write starts and once
     // at a duration boundary. U38 compares the inverted low nibble against
     // {1,TPARM0,0,1}, which reduces to q=2 or q=6.
     assign pho_write_low = write_active && write_reg == 3'd0;
@@ -464,6 +466,7 @@ module ssi263_sc02_core #(
                                  !powered_down &&
                                  frame_ticks_left_q == 17'd1 &&
                                  frames_left_q == 3'd1;
+    assign u29a_level = !(duration_clock_rise || pho_write_low);
     assign u38_equal = (u37_q == (selector_flags[0] ? 4'd2 : 4'd6));
     assign pw0_set_level = selector_latch_level && selector_q == 3'd0 &&
                            u38_equal;
@@ -564,6 +567,7 @@ module ssi263_sc02_core #(
             fric2_sw_q <= 1'b1;
             u37_q <= 4'd0;
             u183a_q <= 1'b1;
+            u29a_level_q <= 1'b1;
 
             parameter_write_selector_q <= 3'd0;
 
@@ -581,14 +585,14 @@ module ssi263_sc02_core #(
             else if (effective_xck_ce)
                 u183a_q <= control_articulation_amplitude_q[7];
 
-            // U37 is a negative-edge CD4040. The phone-write release and
-            // DURCLK rise each make U29A fall once. DONE_RB holds a wrapped
-            // zero count, while either real edge starts/continues the count.
-            if ((write_commit && write_reg_hold_q == 3'd0) ||
-                duration_clock_rise)
+            // U37 is a negative-edge CD4040. Retain U29A's full level so an
+            // overlapping phone-write/DURCLK condition still creates only
+            // one falling edge.
+            if (u29a_level_q && !u29a_level)
                 u37_q <= u37_q + 4'd1;
             else if (pending_q && u37_q == 4'd0)
                 u37_q <= 4'd0;
+            u29a_level_q <= u29a_level;
 
             // U32/U33 are set-only cross-NAND latches. /PHO_WRITE low clears
             // them unless the selected comparator set path is active. U34

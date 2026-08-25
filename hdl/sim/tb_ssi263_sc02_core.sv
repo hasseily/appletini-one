@@ -575,13 +575,21 @@ module tb_ssi263_sc02_core;
         check_lower_code(6'h24, 4'hC);
         check_lower_code(6'h01, 4'hE);
 
-        // U37 starts on /PHO_WRITE release and advances on DURCLK. U38's
+        // U37 starts when /PHO_WRITE asserts and advances on DURCLK. U38's
         // equality is q=2 for TPARM0=1 and q=6 for TPARM0=0.
         reset_chips();
         write_register(3'd3, 8'h00);
-        write_register(3'd0, 8'h00);
+        @(negedge clk);
+        write_reg = 3'd0;
+        write_data = 8'h00;
+        write_active = 1'b1;
+        @(posedge clk);
+        #1;
         check(dut.u37_q == 4'd1,
-              "U37 did not advance on phoneme-write release");
+              "U37 did not advance at phoneme-write start");
+        @(negedge clk);
+        write_active = 1'b0;
+        @(negedge clk);
         force dut.frame_ticks_left_q = 17'd1;
         force dut.frames_left_q = 3'd1;
         raw_xck_edges(1);

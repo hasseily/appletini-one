@@ -76,7 +76,7 @@ PW3 load = latched_CTRL OR NOT TPARM1
     when U38_equal AND WR_SEL2; otherwise hold
 ```
 
-U37 advances on the falling U29A edge made by /PHO_WRITE release or DURCLK
+U37 advances on the falling U29A edge made by /PHO_WRITE assertion or DURCLK
 rise. TPARM0 chooses the compare delay; it is not PW0/PW1 data. The low bits
 must not become an abstract voiced, fricative, stop, or phone-class decoder.
 

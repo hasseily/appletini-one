@@ -460,9 +460,13 @@ as the current artifact.
 
 ```text
 Current pre-build suite: passed
-Current full build:      pending; exactly one run authorized
-Source commit:           pending clean documentation checkpoint
-Current F0.9.99 image:   none; all earlier images rejected
+Current full build:      20260825T085343Z-bf0d8d29-full; one run
+Source commit:           bf0d8d293afc676dbd13a1ff8f1dd9fce357d088
+Build mode:              full, clean tree, no incremental reference
+Route and bus skew:      PASS
+Timing:                  WNS +0.039, WHS +0.061, WPWS +0.265 ns
+Current F0.9.99 image:   FIRMWARE_F0.9.99_DUAL_SSI263_SC02_WNS0p039.BIN
+Firmware SHA-256:        096d9bf884156a041ecb60a34113a67c9e02bb15560e83540fed1f8b44b527ed
 Hardware listen:         pending
 ```
 
@@ -488,9 +492,14 @@ The branch is ready for the next hardware listen only when:
 - all focused and source tests pass;
 - the one final F0.9.99 build passes and yields a named, hashed firmware image.
 
-All source and test conditions above are complete. The one build and package
-step remains. Its result will be a positive-slack test candidate, not a
-timing-promoted release.
+All source, test, build, and package conditions above are complete. The result
+is a positive-slack test candidate, not a timing-promoted release. The one full
+build used clean source commit `bf0d8d293afc676dbd13a1ff8f1dd9fce357d088`.
+It passed route and bus-skew checks with `+0.039 ns` WNS, `+0.061 ns` WHS, and
+`+0.265 ns` WPWS. The named firmware is 4,309,964 bytes and has SHA-256
+`096d9bf884156a041ecb60a34113a67c9e02bb15560e83540fed1f8b44b527ed`.
+One Vitis run and one Bootgen package run made it from the matching archived
+XSA and BIT.
 
 Hardware listening can find a fault, but it cannot by itself prove an exact
 SSI-263 analog match. That claim needs same-vector AO captures from a real

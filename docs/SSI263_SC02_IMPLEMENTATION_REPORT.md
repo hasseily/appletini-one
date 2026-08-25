@@ -14,8 +14,9 @@ only at the comparator-qualified slot. The source also removes the prior
 sound-driven shortcuts: it has no invented stop mask, abstract phone-class
 source gate, direct ROM/inverse fricative-switch pair, guessed C381 high-pass,
 or three-bit output-level shift. Source and simulation closure are complete.
-The one full build and matching firmware package are the next checkpoint;
-hardware listening follows that package.
+The one full build and matching firmware package are complete. The routed test
+candidate has positive setup, hold, and pulse-width slack. Hardware listening
+is the next checkpoint.
 
 The target version remains `F0.9.99`.
 
@@ -336,7 +337,7 @@ job needs 110 clocks before the next event can pop. A 16-entry FIFO preserves
 event order. Routed out-of-context verification at a 7.500 ns fabric period
 uses 11 DSP48E1 blocks and reports `+0.641 ns` WNS. The one full-card build for
 this hardware test uses 26 DSP48E1 blocks in all, including 22 for the two SSI
-engines, and reports `+0.013 ns` WNS, `+0.023 ns` WHS, and `+0.265 ns` WPWS.
+engines, and reports `+0.039 ns` WNS, `+0.061 ns` WHS, and `+0.265 ns` WPWS.
 
 The chip drawing includes C381 but omits its external load. It therefore does
 not define a high-pass pole. The model exports the reconstructed AO/U148 node
@@ -497,20 +498,48 @@ a nonideal term only when the part model and same-vector capture support it.
 
 The version is fixed at `F0.9.99`. Every prior firmware image is rejected: each
 predates the corrected U21B/U28/U29A/U36/U37/U23B path and its natural-phone
-proof. Do not use the earlier WNS `+0.013 ns` image. The next step is exactly
-one full Vivado build from the clean final source checkpoint. Positive setup,
-hold, and pulse-width slack is the hardware-listen gate; the normal `+0.300 ns`
-release margin remains a later timing task.
+proof. Do not use the earlier WNS `+0.013 ns` image. The new image comes from
+one clean, full, non-incremental Vivado build. Positive setup, hold, and
+pulse-width slack is the hardware-listen gate; the normal `+0.300 ns` release
+margin remains a later timing task.
 
 ```text
 Current pre-build suite: passed
-Current full build:      pending; exactly one run authorized
-Source commit:           pending clean documentation checkpoint
-Current F0.9.99 image:   none; all earlier images rejected
+Current full build:      20260825T085343Z-bf0d8d29-full; one run
+Source commit:           bf0d8d293afc676dbd13a1ff8f1dd9fce357d088
+Build mode:              full, clean tree, no incremental reference
+Route and bus skew:      PASS
+Timing:                  WNS +0.039, WHS +0.061, WPWS +0.265 ns
+Current F0.9.99 image:   FIRMWARE_F0.9.99_DUAL_SSI263_SC02_WNS0p039.BIN
+Firmware size:           4,309,964 bytes
+Firmware SHA-256:        096d9bf884156a041ecb60a34113a67c9e02bb15560e83540fed1f8b44b527ed
 Hardware listen:         pending
 ```
 
-## Hardware validation after the build
+The normal export flow kept the `+0.300 ns` release gate and stopped after the
+one implementation. The guarded test export reopened that same final
+checkpoint and made no placement or routing change. Its checks found zero
+setup, hold, pulse-width, route, constraint, or unconstrained-endpoint faults.
+The candidate DCP, route, and bus-skew reports all passed.
+
+Artifact hashes are:
+
+```text
+BIT:            bfa19f921bbec2bbcec593b0e2b328696b24a36b54197575595fb6ca038593b0
+XSA:            bcb2622fb6206275ecc8bf3ac0f771c72af2d5c5ea75006a9a6e6f816a096375
+FSBL ELF:       7e47637e290b70701381d8ac3c91c267129dde7e4b12e172e76b4634786f7079
+Core-1 ELF:     cba77543cece3125c6d06e8561a8e7b6e7c8a50000ec6e1c010881d93144271e
+Frontend ELF:   339b492e66c2d6a3a65448e958103a07af326cc25665daee784680c646c8d72c
+Firmware BIN:   096d9bf884156a041ecb60a34113a67c9e02bb15560e83540fed1f8b44b527ed
+```
+
+The archived XSA and the Vitis input XSA have the same SHA-256. One Vitis run
+built the platform and all applications. One Bootgen run used the archived BIT
+path explicitly. Bootgen readback names that BIT and shows two frontend load
+partitions at `0x00100000` and `0x0027c000`. The frontend ELF contains
+`F0.9.99`.
+
+## Hardware validation for this candidate
 
 The next Appletini test should first check that the new image boots, Phasor is
 seen, both SSI chips respond, A5/A6 route to separate channels, both request

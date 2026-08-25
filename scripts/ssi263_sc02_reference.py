@@ -796,15 +796,17 @@ class SSI263Reference:
 
     def _advance_selector_tick(self, *, suppress_slot_write: bool) -> None:
         self.selector_fast_phase += 1
-        if self.selector_fast_phase == 2:
-            if self.selector_subphase == 0:
-                self._selector_write_event(
-                    suppress_write=suppress_slot_write
-                )
-            elif self.selector_subphase == 2:
-                self._selector_latch_event(
-                    suppress_control_latch=suppress_slot_write
-                )
+        if self.selector_subphase == 0 and self.selector_fast_phase == 2:
+            self._selector_write_event(
+                suppress_write=suppress_slot_write
+            )
+        elif (
+            self.selector_subphase == 2
+            and self.selector_fast_phase in (2, 3)
+        ):
+            self._selector_latch_event(
+                suppress_control_latch=suppress_slot_write
+            )
         if self.selector_fast_phase == SLOWCLOCK_FAST_TICKS:
             self.selector_fast_phase = 0
             self.selector_subphase += 1

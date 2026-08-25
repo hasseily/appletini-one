@@ -542,11 +542,12 @@ class DdaAndU96Tests(unittest.TestCase):
         chip.control_articulation_amplitude = 0
         chip.duration_phoneme = 0x01
         chip.selector = 2
+        chip.selector_subphase = 2
+        chip.selector_fast_phase = 1
         chip.u37_count = 6
-        chip._selector_latch_event(suppress_control_latch=False)
+        chip.advance_effective_ticks(1)
         self.assertTrue(chip.pw_3)
         chip.advance_effective_ticks(1)
-        chip._selector_latch_event(suppress_control_latch=False)
         self.assertFalse(chip.pw_3)
         chip.u37_count = 5
         chip.duration_phoneme = 0x00

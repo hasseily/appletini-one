@@ -62,21 +62,23 @@ The target slots are:
 | 6 | fricative amplitude |
 | 7 | no parameter-state write |
 
-The low ROM bits feed the drawn pulse and route logic. Sheet 5 stores them with
-these exact latch polarities:
+The low ROM bits feed the drawn pulse and route logic. Sheet 5 uses these
+timed latch rules:
 
 ```text
-PW0 = selector-0 TPARM0
-PW1 = selector-1 TPARM0
+U38_equal = (U37.low == (TPARM0 ? 2 : 6))
+PW0 set = U38_equal AND WR_SEL0
+PW1 set = U38_equal AND WR_SEL1
+PW0/PW1 clear while /PHO_WRITE is low, otherwise hold
 PW2 = selector-2 TPARM2
 PW5 = NOT selector-2 TPARM2
-PW3 = NOT selector-2 TPARM1
+PW3 load = latched_CTRL OR NOT TPARM1
+    when U38_equal AND WR_SEL2; otherwise hold
 ```
 
-U34D pin 11 is the `PW3` output. U180C feeds TPARM1 to U11C, while U30E
-inverts it for U11A; the U34C/U34D cross-NAND latch therefore stores the
-complement. The low bits must not become an abstract voiced, fricative, stop,
-or phone-class decoder.
+U37 advances on the falling U29A edge made by /PHO_WRITE release or DURCLK
+rise. TPARM0 chooses the compare delay; it is not PW0/PW1 data. The low bits
+must not become an abstract voiced, fricative, stop, or phone-class decoder.
 
 ## Original Phasor wiring
 

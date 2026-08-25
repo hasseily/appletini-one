@@ -67,6 +67,15 @@ def static_checks() -> None:
         "logic [3:0] parameter_resa_q [0:6];",
         "assign selector_write_level = slow_div_q[1]",
         "assign selector_latch_level = slow_div_q[1]",
+        "assign duration_clock_rise = effective_xck_ce && phone_active_q",
+        "assign u38_equal = (u37_q == (selector_flags[0] ? 4'd2 : 4'd6));",
+        "assign pw0_set_level = selector_latch_level && selector_q == 3'd0",
+        "assign pw1_set_level = selector_latch_level && selector_q == 3'd1",
+        "assign pw3_load_level = selector_latch_level && selector_q == 3'd2",
+        "u37_q <= u37_q + 4'd1;",
+        "else if (pho_write_low)\n                pw_0_q <= 1'b0;",
+        "else if (pho_write_low)\n                pw_1_q <= 1'b0;",
+        "pw_3_q <= u183a_q || !selector_flags[1];",
         "if (selector_latch_level) begin",
         "3'd4: filter_amp_first_q <= parameter_resa_q[4];",
         "f1_code_q <= f1_first_q;",
@@ -97,6 +106,8 @@ def static_checks() -> None:
         raise RuntimeError("U68 retains an invented BCD terminal or wrap")
     if "f3_f4_code_q" in stripped_source:
         raise RuntimeError("F3/F4 still share a phase-latch register")
+    if re.search(r"pw_[013]_q\s*<=\s*!?selector_flags", stripped_source):
+        raise RuntimeError("timed PW latch still follows a ROM flag directly")
 
     checked_paths = (
         ROOT / "hdl" / "apple" / "ssi263_sc02_core.sv",

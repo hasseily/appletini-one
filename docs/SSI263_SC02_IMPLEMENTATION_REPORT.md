@@ -8,9 +8,9 @@ timing rule, decoder, Votrax interface, or compatibility path. Both speech
 sockets instantiate `ssi263_voice`, which joins the native SC-02 digital core
 to the ideal schematic charge model.
 
-The latest correction fixes the sheet-5 `PW3` latch polarity. The former direct
-TPARM1 load held the U68/U85/U62 voiced path in reset for ordinary vowel rows;
-U34D pin 11 must store the complement. The source also removes the prior
+The sheet-5 control path now follows U37/U38 and the three timed cross-NAND
+latches. PW0/PW1 are set-only states, while PW3 loads the CTRL/TPARM1 result
+only at the comparator-qualified slot. The source also removes the prior
 sound-driven shortcuts: it has no invented stop mask, abstract phone-class
 source gate, direct ROM/inverse fricative-switch pair, guessed C381 high-pass,
 or three-bit output-level shift. The remaining work is final source closure,
@@ -77,20 +77,23 @@ amplitude for the upper ROM nibble. Selector 7 writes no parameter state. The
 low nibble remains a set of circuit controls; the model does not turn it into
 SC-01-like phone traits.
 
-Sheet 5 gives these stored outputs:
+Sheet 5 gives these timed rules:
 
 ```text
-PW0 = selector-0 TPARM0
-PW1 = selector-1 TPARM0
+U37 advances on /PHO_WRITE release and each DURCLK rise
+U38 equal = U37.low == (TPARM0 ? 2 : 6)
+PW0 set = U38_equal AND WR_SEL0
+PW1 set = U38_equal AND WR_SEL1
+PW0/PW1 clear while /PHO_WRITE is low, otherwise hold
 PW2 = selector-2 TPARM2
 PW5 = NOT selector-2 TPARM2
-PW3 = NOT selector-2 TPARM1
+PW3 loads (latched_CTRL OR NOT TPARM1)
+    only when U38_equal AND WR_SEL2; otherwise it holds
 ```
 
-The last polarity matters. U180C sends TPARM1 to U11C and U30E sends its
-inverse to U11A; the U34C/U34D cross-NAND latch exposes U34D pin 11 as `PW3`.
-For phone `$01`, selector 2 is `$0E`, so the physical result is `PW3=0`. U68
-can then count to its terminal and U85C can release U62 reset.
+TPARM0 chooses the comparator delay; it does not become PW0 or PW1 data.
+TPARM1 reaches PW3 through U180C/U30E/U11/U34 only on the qualified load.
+Static per-selector ROM assignments do not reproduce these held states.
 
 ## Clock and selector correction
 

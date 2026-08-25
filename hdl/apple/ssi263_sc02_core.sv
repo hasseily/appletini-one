@@ -206,6 +206,14 @@ module ssi263_sc02_core #(
     logic       selector_latch_rise;
     logic       selector_latch_level;
     logic [3:0] filter_amp_masked;
+    logic [3:0] u37_q;
+    logic       u183a_q;
+    logic       pho_write_low;
+    logic       duration_clock_rise;
+    logic       u38_equal;
+    logic       pw0_set_level;
+    logic       pw1_set_level;
+    logic       pw3_load_level;
 
     initial begin
         $readmemh(ROM_FILE, rom_q);
@@ -447,6 +455,23 @@ module ssi263_sc02_core #(
         filter_amp_first_q[0] && ampct0
     };
 
+    // Sheet 5 U37/U38. U37 advances on the falling edge of
+    // U29A=NOT(DURCLK OR /PHO_WRITE): once when a phoneme write ends and once
+    // at a duration boundary. U38 compares the inverted low nibble against
+    // {1,TPARM0,0,1}, which reduces to q=2 or q=6.
+    assign pho_write_low = write_active && write_reg == 3'd0;
+    assign duration_clock_rise = effective_xck_ce && phone_active_q &&
+                                 !powered_down &&
+                                 frame_ticks_left_q == 17'd1 &&
+                                 frames_left_q == 3'd1;
+    assign u38_equal = (u37_q == (selector_flags[0] ? 4'd2 : 4'd6));
+    assign pw0_set_level = selector_latch_level && selector_q == 3'd0 &&
+                           u38_equal;
+    assign pw1_set_level = selector_latch_level && selector_q == 3'd1 &&
+                           u38_equal;
+    assign pw3_load_level = selector_latch_level && selector_q == 3'd2 &&
+                            u38_equal;
+
     always_ff @(posedge clk) begin
         response_boundary_ce_q <= 1'b0;
         voice_clock_ce_q <= 1'b0;
@@ -537,6 +562,8 @@ module ssi263_sc02_core #(
             pw_5_q <= 1'b1;
             fric1_sw_q <= 1'b0;
             fric2_sw_q <= 1'b1;
+            u37_q <= 4'd0;
+            u183a_q <= 1'b1;
 
             parameter_write_selector_q <= 3'd0;
 
@@ -545,6 +572,38 @@ module ssi263_sc02_core #(
             write_active_q <= write_active;
             pd_rst_n_q <= pd_rst_n;
             div2_q <= div2;
+
+            // U183A is set by T/PD /RST and otherwise samples CTRL on the
+            // falling FASTCLK edge. One effective-edge sample preserves the
+            // drawn stable value used by the later slot-2 latch.
+            if (!pd_rst_n)
+                u183a_q <= 1'b1;
+            else if (effective_xck_ce)
+                u183a_q <= control_articulation_amplitude_q[7];
+
+            // U37 is a negative-edge CD4040. The phone-write release and
+            // DURCLK rise each make U29A fall once. DONE_RB holds a wrapped
+            // zero count, while either real edge starts/continues the count.
+            if ((write_commit && write_reg_hold_q == 3'd0) ||
+                duration_clock_rise)
+                u37_q <= u37_q + 4'd1;
+            else if (pending_q && u37_q == 4'd0)
+                u37_q <= 4'd0;
+
+            // U32/U33 are set-only cross-NAND latches. /PHO_WRITE low clears
+            // them unless the selected comparator set path is active. U34
+            // has no phone-write clear; it loads the CTRL/TPARM1 result only
+            // while the slot-2 comparator path is active.
+            if (pw0_set_level)
+                pw_0_q <= 1'b1;
+            else if (pho_write_low)
+                pw_0_q <= 1'b0;
+            if (pw1_set_level)
+                pw_1_q <= 1'b1;
+            else if (pho_write_low)
+                pw_1_q <= 1'b0;
+            if (pw3_load_level)
+                pw_3_q <= u183a_q || !selector_flags[1];
 
             // Preserve the positive edges of the gated U41C waveform as
             // one-clk enables. Its sources change only in this clock domain.
@@ -692,13 +751,10 @@ module ssi263_sc02_core #(
                 // data latch is transparent.
                 if (selector_latch_rise && !write_commit) begin
                     case (selector_q)
-                        3'd0: pw_0_q <= selector_flags[0];
-                        3'd1: pw_1_q <= selector_flags[0];
                         3'd2: begin
                             if (u20_clock_enable)
                                 u20b_q <= selector_flags[3];
                             pw_2_q <= selector_flags[2];
-                            pw_3_q <= !selector_flags[1];
                             pw_5_q <= !selector_flags[2];
                         end
                         default: begin

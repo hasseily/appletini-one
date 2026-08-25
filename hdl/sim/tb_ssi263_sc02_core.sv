@@ -358,7 +358,6 @@ module tb_ssi263_sc02_core;
             write_register(3'd0, {2'b00, phone});
             raw_xck_edges(48);
             check(pw_2 == code[2], "lower code PW2");
-            check(pw_3 == !code[1], "lower code PW3");
             check(pw_5 == !code[2], "lower code PW5");
         end
     endtask
@@ -576,21 +575,79 @@ module tb_ssi263_sc02_core;
         check_lower_code(6'h24, 4'hC);
         check_lower_code(6'h01, 4'hE);
 
+        // U37 starts on /PHO_WRITE release and advances on DURCLK. U38's
+        // equality is q=2 for TPARM0=1 and q=6 for TPARM0=0.
         reset_chips();
-        write_register(3'd0, 8'h27);
-        raw_xck_edges(32);
-        check(pw_0 && !pw_1,
-              "phone 27 low-ROM slots 0/1 did not latch exactly");
+        write_register(3'd3, 8'h00);
+        write_register(3'd0, 8'h00);
+        check(dut.u37_q == 4'd1,
+              "U37 did not advance on phoneme-write release");
+        force dut.frame_ticks_left_q = 17'd1;
+        force dut.frames_left_q = 3'd1;
+        raw_xck_edges(1);
+        check(dut.u37_q == 4'd2,
+              "U37 did not advance on DURCLK rise");
+        release dut.frame_ticks_left_q;
+        release dut.frames_left_q;
+
+        // PW0/PW1 are timed set-only latches. A phone-write level clears
+        // them only after the selected set path closes.
+        force dut.selector_phase_q = 1'b0;
+        force dut.selector_latch_phase_q = 1'b1;
+        force dut.slow_div_q = 2'd2;
+        force dut.u37_q = 4'd2;
+        force dut.selector_q = 3'd0;
+        force dut.selector_flags = 4'b0001;
+        @(posedge clk);
+        #1;
+        check(pw_0, "U32 PW0 set path missed q=2");
+        force dut.slow_div_q = 2'd0;
+        write_reg = 3'd0;
+        write_active = 1'b1;
+        @(posedge clk);
+        #1;
+        check(!pw_0, "U32 PW0 did not clear during /PHO_WRITE low");
+        write_active = 1'b0;
+
+        force dut.slow_div_q = 2'd2;
+        force dut.u37_q = 4'd6;
+        force dut.selector_q = 3'd1;
+        force dut.selector_flags = 4'b0000;
+        @(posedge clk);
+        #1;
+        check(pw_1, "U33 PW1 set path missed q=6");
+        force dut.slow_div_q = 2'd0;
+        force dut.selector_flags = 4'b0001;
+        @(posedge clk);
+        #1;
+        check(pw_1, "U33 PW1 did not retain outside its set window");
+
+        // U34 loads Qctrl OR /TPARM1 only at the timed slot-2 equality.
+        force dut.slow_div_q = 2'd2;
+        force dut.u37_q = 4'd2;
+        force dut.selector_q = 3'd2;
+        force dut.selector_flags = 4'b0011;
+        force dut.u183a_q = 1'b0;
+        @(posedge clk);
+        #1;
+        check(!pw_3, "U34 PW3 did not load low for CTRL=0/TPARM1=1");
+        force dut.u183a_q = 1'b1;
+        @(posedge clk);
+        #1;
+        check(pw_3, "U34 PW3 did not load high from CTRL");
+        force dut.u183a_q = 1'b0;
+        force dut.selector_flags = 4'b0001;
+        @(posedge clk);
+        #1;
+        check(pw_3, "U34 PW3 did not load high from /TPARM1");
+        release dut.selector_phase_q;
+        release dut.selector_latch_phase_q;
+        release dut.slow_div_q;
+        release dut.u37_q;
+        release dut.selector_q;
+        release dut.selector_flags;
+        release dut.u183a_q;
         reset_chips();
-        write_register(3'd0, 8'h01);
-        raw_xck_edges(32);
-        check(!pw_0 && pw_1,
-              "phone 01 low-ROM slots 0/1 did not latch exactly");
-        reset_chips();
-        write_register(3'd0, 8'h2F);
-        raw_xck_edges(32);
-        check(!pw_0 && !pw_1,
-              "phone 2F low-ROM slots 0/1 did not latch exactly");
 
         // Sheet 6 ties U68 B/D to VCC, so the CD4029 counts in binary. In the
         // up direction /CO is active only at F; down remains terminal at 0.

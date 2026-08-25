@@ -13,8 +13,9 @@ latches. PW0/PW1 are set-only states, while PW3 loads the CTRL/TPARM1 result
 only at the comparator-qualified slot. The source also removes the prior
 sound-driven shortcuts: it has no invented stop mask, abstract phone-class
 source gate, direct ROM/inverse fricative-switch pair, guessed C381 high-pass,
-or three-bit output-level shift. Source closure, the one full build, and the
-firmware package are complete. Hardware listening is the remaining step.
+or three-bit output-level shift. Source and simulation closure are complete.
+The one full build and matching firmware package are the next checkpoint;
+hardware listening follows that package.
 
 The target version remains `F0.9.99`.
 
@@ -96,6 +97,27 @@ PW3 loads (latched_CTRL OR NOT TPARM1)
 TPARM0 chooses the comparator delay; it does not become PW0 or PW1 data.
 TPARM1 reaches PW3 through U180C/U30E/U11/U34 only on the qualified load.
 Static per-selector ROM assignments do not reproduce these held states.
+
+U21B, U28, U29A, U36, U37, and U23B now run as the sheet-5 circuit rather
+than from a phoneme-end timer. U21B Q is `RATECLK/2`; its complement clocks
+U28 and U36. U28 loads `12+D`, counts only on the Q-falling half-cycle, and
+holds terminal count through the Q-high half-cycle. Thus:
+
+```text
+DURCLK period = (4-D) * 256 * (16-R) effective FASTCLK ticks
+frame period  =          4096 * (16-R) effective FASTCLK ticks
+phoneme       = (4-D) * 4096 * (16-R) effective FASTCLK ticks
+phoneme       = 16 DURCLK rises
+```
+
+U28, U36, and U37 have no phone-active or power-down clock gate. A phone
+write resets U36 and drives the shared U29A level; it does not force an
+unconditional U28 reload. U36 enters low-nibble `F` on its fifteenth count
+after reset and requests DONE in retained frame mode. In retained phoneme
+mode, the sixteenth DURCLK wraps U37 from `F` to zero and requests DONE.
+Phone-write reset, CTL/power-down reset, and frame-mode WR1/WR2 acknowledge
+reset U23B with priority over a same-edge request. DR=00 keeps the prior
+frame/phoneme selection.
 
 ## Clock and selector correction
 
@@ -397,6 +419,9 @@ U73 D3    = 0000
 U73 D4    = 00000
 U68       = 0
 U20B      = 0
+U28       = F
+U36 low   = 0
+U37 low   = 0
 FRIC1_SW  = 0
 FRIC2_SW  = 1
 filter and charge state = 0
@@ -419,6 +444,8 @@ final pre-build suite now checks:
 - upward and downward U83/U84 DDA vectors and the full prototype U96 route;
 - sheet-5 timed PW0/PW1, PW2/PW5 polarity, and comparator-gated CTRL/TPARM1
   load into `PW3`;
+- all 64 rate/duration U28 recurrences, sixteen DURCLK rises per full phone,
+  U36 count-15 frame response, U37 wrap phoneme response, and reset collisions;
 - U61 `PD/RST` clear without U60 clear, U60 load to 11, `11..15`, terminal hold,
   and post-clock Phi1 source selection;
 - U75 rising count, U73 falling shift, post-rise U42C, feedback taps, D3+4
@@ -434,10 +461,12 @@ final pre-build suite now checks:
 
 The current source checkpoint passes:
 
-- 39 ROM, interface, formula, selector, DDA, and U96 reference tests;
+- 48 ROM, interface, formula, selector, duration, DONE, DDA, and U96 reference
+  tests;
 - the raw-Q3 XCK edge bench and the complete native core bench;
 - 4,032 exact-divider vectors across all 28 live denominators;
-- 596,023 checks over all 64 phone rows at the physical fabric/Q3/DIV2 rates;
+- 1,745,273 checks over all 64 phone rows plus the natural ten-phone
+  `HF EH1 L O OU PA E N D PA` sequence at the physical fabric/Q3/DIV2 rates;
 - 15 Phasor source and decode tests;
 - 74 dual-card checks for A5/A6, channel A/B, request, mode, reset, both RESA
   latch layers, row `$01`, simultaneous audio, and both engine-overrun flags.
@@ -466,41 +495,20 @@ a nonideal term only when the part model and same-vector capture support it.
 
 ## Firmware and build status
 
-The version is fixed at `F0.9.99`. The prior firmware predates the current
-U83/U84 DDA, prototype U96, U37, and audio-route fixes and is rejected. Exactly
-one full Vivado build ran from clean commit
-`1870454fc7782846989a91aa8001bfdf9e4ebdf9`. Build
-`20260825T063812Z-1870454f-full` has positive setup, hold, and pulse-width
-slack. It meets the latest hardware-listen rule. The normal release flow still
-requires `+0.300 ns` WNS, so it withheld its release export. The guarded
-export-only pass then opened the same final checkpoint, repeated all checks,
-and wrote the test BIT and XSA without synthesis, placement, routing, or
-another timing change. Timing promotion remains a later task.
+The version is fixed at `F0.9.99`. Every prior firmware image is rejected: each
+predates the corrected U21B/U28/U29A/U36/U37/U23B path and its natural-phone
+proof. Do not use the earlier WNS `+0.013 ns` image. The next step is exactly
+one full Vivado build from the clean final source checkpoint. Positive setup,
+hold, and pulse-width slack is the hardware-listen gate; the normal `+0.300 ns`
+release margin remains a later timing task.
 
 ```text
 Current pre-build suite: passed
-Current full build:      20260825T063812Z-1870454f-full; exactly one run
-Source commit:           1870454fc7782846989a91aa8001bfdf9e4ebdf9; clean
-Test-candidate timing:   WNS +0.013 ns; WHS +0.023 ns; WPWS +0.265 ns
-Timing failures:         TNS/THS/TPWS 0; failing and unconstrained endpoints 0
-Route and bus skew:      PASS; 0 route errors; worst bus-skew slack +5.484 ns
-BIT SHA-256:             9882ef5b8251f5822c8c4ae3f82a3d285e058122877d6136e03df808396345b2
-XSA SHA-256:             145c983e1d2f8cda07cbe52742afe03671aab722346a628182e3e53a8b2b48bd
-Current F0.9.99 image:   FIRMWARE_F0.9.99_DUAL_SSI263_SC02_WNS0p013.BIN
-Firmware size:           4,277,196 bytes
-Firmware SHA-256:        5a3c02a9c01166a61a74e439ebd58d05107354ac74a7351c1b8901d3f37e4fca
+Current full build:      pending; exactly one run authorized
+Source commit:           pending clean documentation checkpoint
+Current F0.9.99 image:   none; all earlier images rejected
 Hardware listen:         pending
 ```
-
-The single Vitis run used the matching XSA. The single package run named the
-archived BIT explicitly, so it could not select a stale root, project, or Vitis
-bitstream. The frontend ELF contains `Firmware F0.9.99` and has SHA-256
-`339b492e66c2d6a3a65448e958103a07af326cc25665daee784680c646c8d72c`.
-Bootgen readback lists `fsbl.elf.0`,
-`appletini_yarz_top_F0.9.99_dual_ssi263_positive_slack_test.bit.0`, and the two
-load sections `frontend.elf.0` and `frontend.elf.1`. Core 1 is embedded in the
-frontend image; its source ELF has SHA-256
-`cba77543cece3125c6d06e8561a8e7b6e7c8a50000ec6e1c010881d93144271e`.
 
 ## Hardware validation after the build
 

@@ -128,9 +128,19 @@ Keep these public timing laws:
 ```text
 pitch_hz      = effective_XCK / (8 * (4096 - I))
 filter_hz     = effective_XCK / (2 * (256 - FF))
+durclk_ticks  = (4 - D) * 256 * (16 - R)
 frame_ticks   = 4096 * (16 - R)
 phone_ticks   = frame_ticks * (4 - D)
+phone_ticks   = 16 * durclk_ticks
 ```
+
+Sheet 5 supplies the request events directly. U28 loads `12+D` and makes the
+sixteen DURCLK rises. U36 resets for a phone write and requests DONE when its
+low nibble enters `F` in retained frame mode. U37 advances on the combined
+U29A phone-write/DURCLK falling edge and requests DONE on `F->0` in retained
+phoneme mode. U23B reset wins every collision. WR1/WR2 acknowledge only frame
+mode; a phone write acknowledges both modes. These counters run without a
+phone-active or power-down clock gate.
 
 ## Exact selector and transition work
 
@@ -450,24 +460,18 @@ as the current artifact.
 
 ```text
 Current pre-build suite: passed
-Current full build:      20260825T063812Z-1870454f-full; exactly one run
-Source commit:           1870454fc7782846989a91aa8001bfdf9e4ebdf9; clean
-Test-candidate timing:   WNS +0.013 ns; WHS +0.023 ns; WPWS +0.265 ns
-Route and bus skew:      PASS; 0 route errors; worst bus-skew slack +5.484 ns
-BIT SHA-256:             9882ef5b8251f5822c8c4ae3f82a3d285e058122877d6136e03df808396345b2
-XSA SHA-256:             145c983e1d2f8cda07cbe52742afe03671aab722346a628182e3e53a8b2b48bd
-Current F0.9.99 image:   FIRMWARE_F0.9.99_DUAL_SSI263_SC02_WNS0p013.BIN
-Firmware size:           4,277,196 bytes
-Firmware SHA-256:        5a3c02a9c01166a61a74e439ebd58d05107354ac74a7351c1b8901d3f37e4fca
+Current full build:      pending; exactly one run authorized
+Source commit:           pending clean documentation checkpoint
+Current F0.9.99 image:   none; all earlier images rejected
 Hardware listen:         pending
 ```
 
-The prior F0.9.99 image predates the current U83/U84, U96, U37, and audio-path
-fixes. It is rejected and must not be offered for this listen. The named image
-above comes from the exact archived bitstream and one Vitis and package run.
-The latest test rule asks only for positive setup, hold, and pulse-width slack
-while SSI-263 logic and sound are checked. The normal release margin remains
-`+0.300 ns` WNS and is a later timing task.
+Every prior F0.9.99 image predates the corrected
+U21B/U28/U29A/U36/U37/U23B path. It is rejected and must not be offered for
+this listen. The next image must come from the exact archived bitstream and one
+Vitis and package run. The latest test rule asks only for positive setup, hold,
+and pulse-width slack while SSI-263 logic and sound are checked. The normal
+release margin remains `+0.300 ns` WNS and is a later timing task.
 
 ## Acceptance gate
 
@@ -484,9 +488,9 @@ The branch is ready for the next hardware listen only when:
 - all focused and source tests pass;
 - the one final F0.9.99 build passes and yields a named, hashed firmware image.
 
-All source, test, build, and package conditions above are complete. The named
-image is ready for the hardware listen. It is a positive-slack test candidate,
-not a timing-promoted release.
+All source and test conditions above are complete. The one build and package
+step remains. Its result will be a positive-slack test candidate, not a
+timing-promoted release.
 
 Hardware listening can find a fault, but it cannot by itself prove an exact
 SSI-263 analog match. That claim needs same-vector AO captures from a real
@@ -502,5 +506,6 @@ SSI-263AP.
 6. Replace mirrored tests with exact circuit traces.
 7. Lock original Phasor wiring and two-chip isolation.
 8. Update the implementation report and source audit.
-9. Run one final full build and package F0.9.99. Complete with build
-   `20260825T063812Z-1870454f-full` and the named positive-slack test image.
+9. Replace the duration/DONE abstraction with U21B/U28/U29A/U36/U37/U23B and
+   prove natural sixteen-DURCLK phone cycles.
+10. Run one final full build and package F0.9.99. Pending.

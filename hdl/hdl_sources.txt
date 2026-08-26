@@ -33,7 +33,9 @@ apple/apple_dma_engine.sv
 apple/ps_dma_command.sv
 apple/soft_switch_manager.sv
 apple/YM2149.sv
+apple/ssi263_xck_ce.sv
 apple/ssi263_formant_pkg.sv
+apple/ssi263_sc02_rom.mem
 apple/disk2_sound_pkg.sv
 apple/sc01a_digital_core.sv
 apple/ssi263_formant_backend.sv

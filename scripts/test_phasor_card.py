@@ -152,7 +152,11 @@ def test_four_ay_chips_and_phasor_chip_selects() -> None:
             "native Phasor gain must use Mockingboard scale with positive saturation")
     require("if (phasor_native) begin\n"
             "                base_l_next = mix_speech(" in source and
-            "speech_audio_q <= sat_add16(ssi0_audio, ssi1_audio);" in source and
+            "mix4_to_pcm(psg_phasor_l_mix_q),\n"
+            "                    ssi0_audio);" in source and
+            "mix4_to_pcm(psg_phasor_r_mix_q),\n"
+            "                    ssi1_audio);" in source and
+            "speech_audio_q" not in source and
             "psg_phasor_l_mix_q <= sum4_10(psg0_l_sum_q," in source and
             "mix4_to_pcm(psg_phasor_l_mix_q)" in source and
             "end else if (echo_plus) begin\n"
@@ -212,12 +216,16 @@ def test_ssi263_applewin_behavior_contract() -> None:
             "wire ssi_native_read_region =" in source and
             "!ab_read.addr[4] && !ab_read.addr[7]" in source,
             "SSI263 writes and native D7 reads must use AppleWin's Phasor address decode")
-    require(".SSI263_TYPE(0)" in source and ".HAS_SC01(1'b1)" in source and
-            ".SSI263_TYPE(2)" in source and ".HAS_SC01(1'b0)" in source,
-            "default Phasor population must match AppleWin: secondary SSI empty, SC-01, primary SSI263AP")
-    require("via0_votrax_write" in source and
-            "via0_votrax_wdata = (ab_read.data & via0_ddrb) | (via0_ddrb ^ 8'hFF)" in source,
-            "SC-01 writes must use AppleWin's DDRB-masked VIA-A ORB bus view")
+    require(source.count(".SSI263_TYPE(2)") == 2 and
+            source.count(".HAS_SC01(1'b0)") == 2 and
+            ".SSI263_TYPE(0)" not in source and
+            ".HAS_SC01(1'b1)" not in source,
+            "Phasor must expose two SSI263AP sockets while retaining the SC-01 synthesis backend")
+    require("via0_votrax_mode" not in source and
+            "via0_votrax_write" not in source and
+            source.count(".votrax_write_strobe(1'b0)") == 2 and
+            source.count(".votrax_wdata(8'h00)") == 2,
+            "dual-SSI Phasor wiring must not expose a Votrax bus device or alter AY control")
     require("input wire [6:0] ifr_set_ext" in via and
             "input wire [6:0] ifr_clr_ext" in via and
             "output wire [7:0] pcr_out" in via and
@@ -239,28 +247,34 @@ def test_ssi263_applewin_behavior_contract() -> None:
             "assign audio = formant_audio;" in bus_wrapper and
             "assign formant_backend_start = backend_start_q;" in bus_wrapper and
             "assign formant_backend_reset = backend_warm_reset;" in bus_wrapper and
-            "assign backend_done = formant_backend_done;" in bus_wrapper and
+            "assign backend_done = formant_backend_response;" in bus_wrapper and
             ".audio_tick(audio_tick)" in formant_instance and
             ".warm_reset(formant_backend_reset)" in formant_instance and
             ".start(formant_backend_start)" in formant_instance and
             ".phoneme_done(formant_backend_done)" in formant_instance and
+            ".response_done(formant_backend_response)" in formant_instance and
             ".audio(formant_audio)" in formant_instance and
             ".start_sc01_phone(backend_sc01_phone_q)" in formant_instance and
             "backend_phoneme_q <= votrax ? votrax_to_ssi263(phoneme) : phoneme;" in bus_wrapper and
             "backend_sc01_phone_q <= votrax ? phoneme : ssi263_to_sc01_phone(phoneme);" in bus_wrapper and
             "logic backend_started_this_cycle;" in bus_wrapper and
             "backend_started_this_cycle = 1'b1;" in bus_wrapper and
-            "if (backend_done && !backend_started_this_cycle) begin" in bus_wrapper and
+            "if (backend_done && !backend_started_this_cycle &&" in bus_wrapper and
+            "!(ssi_write_strobe && ssi_reg <= SSI_RATEINF)) begin" in bus_wrapper and
             "output logic        phoneme_done" in formant_backend and
+            "output logic        response_done" in formant_backend and
             "assign phoneme_done = phoneme_done_q;" in formant_backend and
+            "assign response_done = response_done_q;" in formant_backend and
             ".phoneme_done(core_phoneme_done)" in formant_backend and
+            ".response_done(core_response_done)" in formant_backend and
             "output logic       phoneme_done" in sc01a_core and
+            "output logic       response_done" in sc01a_core and
             "phoneme_done <= 1'b1;" in sc01a_core and
             "end else if (audio_tick) begin" in sc01a_core and
             "ssi263_phoneme_length" not in formant_backend and
             "sample_remaining_q" not in formant_backend and
             "repeat_phoneme" not in formant_backend,
-            "SSI263 formant mode must use independent formant-duration completion, not sample lengths")
+            "SSI263 formant mode must keep audio completion separate from A/R response timing")
     require("CRC32 fc416227" in formant_pkg and
             "SHA1 1d6da90b1807a01b5e186ef08476119a862b5e6d" in formant_pkg and
             "function automatic logic [63:0] sc01a_word_by_phone" in formant_pkg and
@@ -273,7 +287,7 @@ def test_ssi263_applewin_behavior_contract() -> None:
             "sc01a_cld = {word[34], word[32], word[30], word[28]};" in formant_pkg and
             "sc01a_duration = {~word[37], ~word[38], ~word[39], ~word[40]," in formant_pkg and
             "sc01a_formant_duration" not in formant_pkg and
-            "rom_duration <= sc01a_duration(phone);" in sc01a_core and
+            "rom_duration <= sc01a_duration(legacy_phone);" in sc01a_core and
             "sc01a_pause = (phone == 6'h03) || (phone == 6'h3E);" in formant_pkg and
             "import ssi263_formant_pkg::*;" in formant_backend and
             "sc01a_digital_core digital_core_i" in formant_backend and
@@ -292,12 +306,9 @@ def test_ssi263_applewin_behavior_contract() -> None:
             "FORMANT_IDLE_DECAY_SAMPLES = 10'd512" in formant_backend and
             "function automatic logic signed [15:0] slew_limit16" in formant_backend and
             "function automatic logic [2:0] noise_stop_burst_gain;" in formant_backend and
-            "function automatic logic [2:0] duration_speed_step;" in sc01a_core and
-            "function automatic logic [4:0] rate_period_units;" in sc01a_core and
-            "task automatic rate_scaled_speed_step" in sc01a_core and
-            "rate = rate_inflection[7:4];" in sc01a_core and
-            "speed_step = 6'd1;" in sc01a_core and
-            "rate_scaled_speed_step(base_speed_step, speed_step);" in sc01a_core and
+            "function automatic logic [2:0] duration_speed_step;" not in sc01a_core and
+            "task automatic rate_scaled_speed_step" not in sc01a_core and
+            "control_speed_step_q <= 6'd1;" in sc01a_core and
             "input  logic [2:0] articulation," in sc01a_core and
             "function automatic logic [2:0] articulation_shift;" in sc01a_core and
             "logic [11:0] target_inflection_q;" in sc01a_core and
@@ -309,17 +320,19 @@ def test_ssi263_applewin_behavior_contract() -> None:
             "base_limit = 8'hE0 ^ {infl[11:10], 5'd0};" in sc01a_core and
             "pitch_noise_gate <= is_votrax_q ?" in sc01a_core and
             ".articulation((start_votrax || is_votrax_q) ? 3'd5 : ctrl_art_amp[6:4])," in formant_backend and
-            "ssi263_to_sc01_audio_phone(duration_phoneme," in formant_backend and
+            "ssi263_sc02_target(phone, 3'd0)" in sc01a_core and
+            "ssi263_native_f1_to_sc01" in formant_pkg and
             "localparam int NOISE_SHAPER_INPUT_SHIFT = 6;" in formant_backend and
             "noise_shaper_input = sat24_from56(shifted);" in formant_backend and
             "SYNTH_BYPASS_APPLY" in formant_backend and
             "synth_bypass_high_q <=" in formant_backend and
             "task automatic clear_synth_pipeline;" in formant_backend and
             "task automatic clear_filter_history;" in formant_backend and
+            "task automatic invalidate_filter_history;" in formant_backend and
             "clear_synth_pipeline();" in formant_backend and
-            "if (!votrax) begin\n                clear_filter_history();\n            end" in formant_backend and
+            "if (!votrax) begin\n                invalidate_filter_history();\n            end" in formant_backend and
             "clear_pipeline();" in formant_backend and
-            "rom_silence <= sc01a_pause(phone);" in sc01a_core and
+            "rom_silence <= next_silence;" in sc01a_core and
             "if (pause_q) begin" not in formant_backend and
             "idle_decay_count_q <= 10'd0;" in formant_backend and
             "stop_audio();" in formant_backend and
@@ -387,17 +400,14 @@ def test_ssi263_applewin_behavior_contract() -> None:
             "audio_q <= slew_limit16(audio_q," in formant_backend and
             "start_synth_sample(4'd0," in formant_backend and
             "end else if (ticks_q == 5'h10) begin" in formant_backend,
-            "SSI263 formant backend must use the MAME SC-01-A ROM decode and timing edge cases")
+            "SSI263 must use native ROM targets and timing while retaining the SC-01 formant pipeline")
     require("MameLikeVotrax" in formant_compare and
             "HdlLikeFormant" in formant_compare and
             "HDL_CONTROL_RATE = 20_000" in formant_compare and
             "def advance_pitch_noise(self) -> None:" in formant_compare and
-            "def duration_speed_step(self) -> int:" in formant_compare and
-            "def rate_period_units(self) -> int:" in formant_compare and
-            "def rate_scaled_speed_step(self, base_step: int) -> int:" in formant_compare and
             "def control_speed_step(self) -> int:" in formant_compare and
-            "if self.is_votrax:" in formant_compare and
-            "return self.rate_scaled_speed_step(self.duration_speed_step())" in formant_compare and
+            "return 1" in formant_compare and
+            "def rate_scaled_speed_step(self, base_step: int) -> int:" not in formant_compare and
             "self.advance_inflection()" in formant_compare and
             "self.advance_pitch_noise()" in formant_compare and
             "self.rate_inflection = rate_inflection & 0xFF" in formant_compare and
@@ -439,7 +449,6 @@ def test_ssi263_applewin_behavior_contract() -> None:
             "mixed = sat24(f3 + scale20(fn, self.noise_mix_gain()))" in formant_compare and
             "if self.ch_fricative_phone():" in formant_compare and
             "return 5 + (0xF ^ self.filt_fc)" in formant_compare and
-            "return 16 if rate == 0 else 16 - rate" in formant_compare and
             "enhanced = presence_bypass(fx, closed)" in formant_compare and
             "enhanced = fricative_bypass(fx, closed)" in formant_compare and
             "enhanced = self.consonant_attack_boost(enhanced)" in formant_compare and
@@ -475,12 +484,13 @@ def test_ssi263_applewin_behavior_contract() -> None:
             "SSI263 mode changes must re-route a pending D7 request into the new "
             "mode's IRQ path (mb-audit T263_8: PH->MB sets IFR.IxR_SSI263, "
             "->PH asserts the direct IRQ) while masking the direct IRQ outside PH")
-    require("task automatic repeat_completed_ssi263;" in bus_wrapper and
-            "start_backend(duration_phoneme_q[5:0], 1'b0);" in bus_wrapper and
+    require("task automatic repeat_completed_ssi263;" not in bus_wrapper and
             "SSI_INFLECT: begin" in bus_wrapper and
             "SSI_RATEINF: begin" in bus_wrapper and
-            bus_wrapper.count("repeat_completed_ssi263();") == 2,
-            "SSI263 reg1/reg2 completion clears must restart the active phoneme for repeated D7/IRQ completion")
+            ".rate_inflection(formant_rate_inflection)" in formant_instance and
+            "ssi_reg == SSI_RATEINF" in bus_wrapper and
+            "ssi_wdata : rate_inflection_q" in bus_wrapper,
+            "SSI263 reg1/reg2 ACKs must not restart the repeating phone, and RATE must feed the next boundary")
     require("input logic [31:0] ssi_sample_base_addr" not in source and
             "Axi3_read_if.master ssi_sample_read" not in source and
             "ssi263_ddr_fetcher" not in source,
@@ -504,55 +514,24 @@ def test_ssi263_rate_and_inflection_affect_hdl_model() -> None:
     formant_compare = load_formant_compare_module()
     data = formant_compare.parse_generated_data(formant_compare.FORMANT_PKG)
 
-    def samples_until_done(rate_inflection: int) -> int:
-        model = formant_compare.HdlLikeFormant(data.phones,
-                                               inflection=0x20,
-                                               rate_inflection=rate_inflection,
-                                               amplitude=15)
+    control_steps = []
+    for rate_inflection in (0x08, 0xA8, 0xF8):
+        model = formant_compare.HdlLikeFormant(
+            data.phones,
+            inflection=0x20,
+            rate_inflection=rate_inflection,
+            amplitude=15,
+        )
         model.start_phone(0x00, 0xC0)
-        samples = 0
-        while model.ticks != 0x10 and samples < 200000:
-            model.chip_accum += formant_compare.HDL_CONTROL_RATE
-            if model.chip_accum >= formant_compare.HDL_SAMPLE_RATE:
-                model.chip_accum -= formant_compare.HDL_SAMPLE_RATE
-                model.advance_inflection()
-                speed_step = model.control_speed_step()
-                if speed_step:
-                    model.chip_update(speed_step)
-                model.advance_pitch_noise()
-            samples += 1
-        return samples
+        control_steps.append(model.control_speed_step())
+    require(control_steps == [1, 1, 1],
+            "SSI263 RATE must not change articulation cadence")
 
-    slow = samples_until_done(0x08)
-    default = samples_until_done(0xA8)
-    fast = samples_until_done(0xB8)
-    require(slow > default > fast,
-            "SSI263 RATE high nibble must change HDL-like phoneme duration")
-
-    def sc01_samples_until_done(rate_inflection: int) -> int:
-        model = formant_compare.HdlLikeFormant(data.phones,
-                                               inflection=0x20,
-                                               rate_inflection=rate_inflection,
-                                               amplitude=15,
-                                               votrax=True)
-        model.start_phone(0x00)
-        samples = 0
-        while model.ticks != 0x10 and samples < 200000:
-            model.chip_accum += formant_compare.HDL_CONTROL_RATE
-            if model.chip_accum >= formant_compare.HDL_SAMPLE_RATE:
-                model.chip_accum -= formant_compare.HDL_SAMPLE_RATE
-                model.advance_inflection()
-                speed_step = model.control_speed_step()
-                if speed_step:
-                    model.chip_update(speed_step)
-                model.advance_pitch_noise()
-            samples += 1
-        return samples
-
-    sc01_slow_rate = sc01_samples_until_done(0x08)
-    sc01_fast_rate = sc01_samples_until_done(0xB8)
-    require(sc01_slow_rate == sc01_fast_rate and sc01_slow_rate < 200000,
-            "SC-01/Votrax native playback must ignore SSI263 RATE and keep the default speed")
+    frame_ticks = [4096 * (16 - rate) for rate in range(16)]
+    require(all(left > right for left, right in
+                zip(frame_ticks, frame_ticks[1:])) and
+            frame_ticks[0] == 65536 and frame_ticks[-1] == 4096,
+            "SSI263 RATE frame formula must cover R=0 through R=15")
 
     periods = [
         formant_compare.HdlLikeFormant(data.phones,

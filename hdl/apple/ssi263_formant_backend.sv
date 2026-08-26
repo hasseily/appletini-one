@@ -13,6 +13,7 @@ module ssi263_formant_backend (
     input  logic        card_enabled,
     input  logic        warm_reset,
     input  logic        audio_tick,
+    input  logic        xck_ce,
 
     input  logic        start,
     input  logic [5:0]  start_phoneme,
@@ -27,12 +28,12 @@ module ssi263_formant_backend (
     input  logic [7:0]  filter_freq,
 
     output logic        phoneme_done,
+    output logic        response_done,
     output logic signed [15:0] audio
 );
 
     localparam logic [7:0] CONTROL_MASK        = 8'h80;
     localparam logic [7:0] AMPLITUDE_MASK      = 8'h0F;
-    localparam logic [7:0] FILTER_FREQ_SILENCE = 8'hFF;
     // Fixed formant backend tuning, derived from hardware listening tests.
     localparam logic [3:0] VOTRAX_OUTPUT_SCALE = 4'd4;
     localparam logic [3:0] SSI263_OUTPUT_SCALE = 4'd10;
@@ -129,7 +130,6 @@ module ssi263_formant_backend (
     logic [3:0] filt_f3_q;
 
     logic signed [15:0] audio_q;
-    logic unused_phoneme_controls;
 
     synth_state_t synth_state_q;
     filter_stage_t filter_stage_q;
@@ -221,6 +221,21 @@ module ssi263_formant_backend (
     logic signed [23:0] fx_y1_q;
     logic signed [23:0] presence_low_q;
 
+    // A new SSI phone changes the switched filter coefficients.  The retained
+    // SC-01 delay-line values must therefore look clear to the new phone.  Do
+    // not fan a phone-start clear into every 24-bit history register: keep a
+    // small valid mask per delay line and expose a stored tap only after a
+    // sample from the new phone has shifted into that position.  Once all bits
+    // are valid, the masks have no effect on normal filter continuity.
+    logic [2:0] f1_history_valid_q;
+    logic [2:0] f2_history_valid_q;
+    logic [2:0] f2n_history_valid_q;
+    logic [2:0] f3_history_valid_q;
+    logic [2:0] f4_history_valid_q;
+    logic [1:0] fn_history_valid_q;
+    logic       fx_history_valid_q;
+    logic       presence_history_valid_q;
+
     logic [5:0] core_start_phone;
     logic [4:0] core_ticks;
     logic [9:0] core_pitch;
@@ -255,21 +270,23 @@ module ssi263_formant_backend (
     logic [3:0] core_filt_f2q;
     logic [3:0] core_filt_f3;
     logic       core_phoneme_done;
+    logic       core_response_done;
     logic       phoneme_done_q;
+    logic       response_done_q;
 
     assign audio = audio_q;
     assign phoneme_done = phoneme_done_q;
-    assign unused_phoneme_controls = ^start_phoneme;
+    assign response_done = response_done_q;
     assign core_start_phone = start_votrax ?
                               start_sc01_phone :
-                              ssi263_to_sc01_audio_phone(duration_phoneme,
-                                                         current_function);
+                              start_phoneme;
 
     sc01a_digital_core digital_core_i (
         .clk(clk),
         .rstn(rstn),
         .reset(!card_enabled || warm_reset),
         .audio_tick(audio_tick),
+        .xck_ce(xck_ce),
         .start(start),
         .start_phone(core_start_phone),
         .start_votrax(start_votrax),
@@ -279,6 +296,7 @@ module ssi263_formant_backend (
         .rate_inflection(rate_inflection),
         .articulation((start_votrax || is_votrax_q) ? 3'd5 : ctrl_art_amp[6:4]),
         .phoneme_done(core_phoneme_done),
+        .response_done(core_response_done),
         .ticks(core_ticks),
         .pitch(core_pitch),
         .pitch_noise_gate(core_pitch_noise_gate),
@@ -843,6 +861,7 @@ module ssi263_formant_backend (
 
     function automatic logic signed [23:0] filter4_tap_sample(
         input logic [2:0] tap,
+        input logic [2:0] history_valid,
         input logic signed [23:0] x0,
         input logic signed [23:0] x1,
         input logic signed [23:0] x2,
@@ -854,12 +873,12 @@ module ssi263_formant_backend (
         begin
             case (tap)
                 3'd0:    filter4_tap_sample = x0;
-                3'd1:    filter4_tap_sample = x1;
-                3'd2:    filter4_tap_sample = x2;
-                3'd3:    filter4_tap_sample = x3;
-                3'd4:    filter4_tap_sample = y1;
-                3'd5:    filter4_tap_sample = y2;
-                3'd6:    filter4_tap_sample = y3;
+                3'd1:    filter4_tap_sample = history_valid[0] ? x1 : 24'sd0;
+                3'd2:    filter4_tap_sample = history_valid[1] ? x2 : 24'sd0;
+                3'd3:    filter4_tap_sample = history_valid[2] ? x3 : 24'sd0;
+                3'd4:    filter4_tap_sample = history_valid[0] ? y1 : 24'sd0;
+                3'd5:    filter4_tap_sample = history_valid[1] ? y2 : 24'sd0;
+                3'd6:    filter4_tap_sample = history_valid[2] ? y3 : 24'sd0;
                 default: filter4_tap_sample = 24'sd0;
             endcase
         end
@@ -867,6 +886,7 @@ module ssi263_formant_backend (
 
     function automatic logic signed [23:0] filter3_tap_sample(
         input logic [2:0] tap,
+        input logic [1:0] history_valid,
         input logic signed [23:0] x0,
         input logic signed [23:0] x1,
         input logic signed [23:0] x2,
@@ -876,10 +896,10 @@ module ssi263_formant_backend (
         begin
             case (tap)
                 3'd0:    filter3_tap_sample = x0;
-                3'd1:    filter3_tap_sample = x1;
-                3'd2:    filter3_tap_sample = x2;
-                3'd3:    filter3_tap_sample = y1;
-                3'd4:    filter3_tap_sample = y2;
+                3'd1:    filter3_tap_sample = history_valid[0] ? x1 : 24'sd0;
+                3'd2:    filter3_tap_sample = history_valid[1] ? x2 : 24'sd0;
+                3'd3:    filter3_tap_sample = history_valid[0] ? y1 : 24'sd0;
+                3'd4:    filter3_tap_sample = history_valid[1] ? y2 : 24'sd0;
                 default: filter3_tap_sample = 24'sd0;
             endcase
         end
@@ -887,17 +907,31 @@ module ssi263_formant_backend (
 
     function automatic logic signed [23:0] filter1_tap_sample(
         input logic [2:0] tap,
+        input logic history_valid,
         input logic signed [23:0] x0,
         input logic signed [23:0] y1
     );
         begin
             case (tap)
                 3'd0:    filter1_tap_sample = x0;
-                3'd1:    filter1_tap_sample = y1;
+                3'd1:    filter1_tap_sample = history_valid ? y1 : 24'sd0;
                 default: filter1_tap_sample = 24'sd0;
             endcase
         end
     endfunction
+
+    task automatic invalidate_filter_history;
+        begin
+            f1_history_valid_q <= 3'b000;
+            f2_history_valid_q <= 3'b000;
+            f2n_history_valid_q <= 3'b000;
+            f3_history_valid_q <= 3'b000;
+            f4_history_valid_q <= 3'b000;
+            fn_history_valid_q <= 2'b00;
+            fx_history_valid_q <= 1'b0;
+            presence_history_valid_q <= 1'b0;
+        end
+    endtask
 
     task automatic clear_synth_pipeline;
         begin
@@ -984,6 +1018,7 @@ module ssi263_formant_backend (
             fn_y2_q <= 24'sd0;
             fx_y1_q <= 24'sd0;
             presence_low_q <= 24'sd0;
+            invalidate_filter_history();
         end
     endtask
 
@@ -1029,8 +1064,13 @@ module ssi263_formant_backend (
             is_votrax_q <= votrax;
             idle_decay_count_q <= 10'd0;
             clear_synth_pipeline();
+            // Each SSI phone selects a new fixed-point coefficient set.  Old
+            // SC-01 IIR state is not valid under that new set and builds DC.
+            // Mask it until normal delay-line shifts have overwritten it; this
+            // has the same sample values as a bulk clear without its wide
+            // phone-start reset cone.
             if (!votrax) begin
-                clear_filter_history();
+                invalidate_filter_history();
             end
         end
     endtask
@@ -1111,6 +1151,7 @@ module ssi263_formant_backend (
             filt_f2q_q <= 4'd0;
             filt_f3_q <= 4'd0;
             phoneme_done_q <= 1'b0;
+            response_done_q <= 1'b0;
             stop_audio();
         end
     endtask
@@ -1127,15 +1168,22 @@ module ssi263_formant_backend (
             reset_power_state();
         end else if (warm_reset) begin
             phoneme_done_q <= 1'b0;
+            response_done_q <= 1'b0;
             stop_audio();
         end else begin
             phoneme_done_q <= 1'b0;
+            response_done_q <= 1'b0;
             mirror_digital_core_state();
             if (start) begin
                 play_phoneme(start_votrax);
             end else begin
             if (active_valid_q && core_phoneme_done) begin
                 phoneme_done_q <= 1'b1;
+            end
+            // Frame responses keep running while CTL stays low, even if the
+            // retained phone has reached an internal duration boundary.
+            if (core_response_done) begin
+                response_done_q <= 1'b1;
             end
 
             if (!audio_tick) begin
@@ -1155,6 +1203,7 @@ module ssi263_formant_backend (
                         case (filter_stage_q)
                             FILTER_F1: begin
                                 mac_sample_q <= filter4_tap_sample(mac_tap_q,
+                                                                   f1_history_valid_q,
                                                                    synth_voice_input_q,
                                                                    f1_x1_q,
                                                                    f1_x2_q,
@@ -1167,6 +1216,7 @@ module ssi263_formant_backend (
 
                             FILTER_F2: begin
                                 mac_sample_q <= filter4_tap_sample(mac_tap_q,
+                                                                   f2_history_valid_q,
                                                                    synth_f1_q,
                                                                    f2_x1_q,
                                                                    f2_x2_q,
@@ -1181,6 +1231,7 @@ module ssi263_formant_backend (
 
                             FILTER_F2N: begin
                                 mac_sample_q <= filter4_tap_sample(mac_tap_q,
+                                                                   f2n_history_valid_q,
                                                                    synth_f2n_in_q,
                                                                    f2n_x1_q,
                                                                    f2n_x2_q,
@@ -1195,6 +1246,7 @@ module ssi263_formant_backend (
 
                             FILTER_F3: begin
                                 mac_sample_q <= filter4_tap_sample(mac_tap_q,
+                                                                   f3_history_valid_q,
                                                                    synth_vn_q,
                                                                    f3_x1_q,
                                                                    f3_x2_q,
@@ -1207,6 +1259,7 @@ module ssi263_formant_backend (
 
                             FILTER_FN: begin
                                 mac_sample_q <= filter3_tap_sample(mac_tap_q,
+                                                                   fn_history_valid_q,
                                                                    synth_noise_input_q,
                                                                    fn_x1_q,
                                                                    fn_x2_q,
@@ -1217,6 +1270,7 @@ module ssi263_formant_backend (
 
                             FILTER_F4: begin
                                 mac_sample_q <= filter4_tap_sample(mac_tap_q,
+                                                                   f4_history_valid_q,
                                                                    synth_mixed_q,
                                                                    f4_x1_q,
                                                                    f4_x2_q,
@@ -1229,6 +1283,7 @@ module ssi263_formant_backend (
 
                             FILTER_FX: begin
                                 mac_sample_q <= filter1_tap_sample(mac_tap_q,
+                                                                   fx_history_valid_q,
                                                                    synth_closed_q,
                                                                    fx_y1_q);
                                 mac_coeff_q <= sc01a_fx_coeff(mac_tap_q);
@@ -1272,6 +1327,7 @@ module ssi263_formant_backend (
                                 f1_y3_q <= f1_y2_q;
                                 f1_y2_q <= f1_y1_q;
                                 f1_y1_q <= filter_out;
+                                f1_history_valid_q <= {f1_history_valid_q[1:0], 1'b1};
                                 filter_stage_q <= FILTER_F2;
                                 synth_state_q <= SYNTH_FILTER_PREP;
                             end
@@ -1284,6 +1340,7 @@ module ssi263_formant_backend (
                                 f2_y3_q <= f2_y2_q;
                                 f2_y2_q <= f2_y1_q;
                                 f2_y1_q <= filter_out;
+                                f2_history_valid_q <= {f2_history_valid_q[1:0], 1'b1};
                                 filter_stage_q <= FILTER_FN;
                                 synth_state_q <= SYNTH_FILTER_PREP;
                             end
@@ -1296,6 +1353,7 @@ module ssi263_formant_backend (
                                 f3_y3_q <= f3_y2_q;
                                 f3_y2_q <= f3_y1_q;
                                 f3_y1_q <= filter_out;
+                                f3_history_valid_q <= {f3_history_valid_q[1:0], 1'b1};
                                 // F3 done -> step-11 secondary noise insertion.
                                 synth_state_q <= SYNTH_NOISE_GAIN;
                             end
@@ -1306,6 +1364,7 @@ module ssi263_formant_backend (
                                 fn_x1_q <= synth_noise_input_q;
                                 fn_y2_q <= fn_y1_q;
                                 fn_y1_q <= filter_out;
+                                fn_history_valid_q <= {fn_history_valid_q[0], 1'b1};
                                 // Pipeline the MAME step-7 gain so the FN
                                 // MAC result does not feed scale/saturate
                                 // logic in the same 133 MHz cycle.
@@ -1320,6 +1379,7 @@ module ssi263_formant_backend (
                                 f2n_y3_q <= f2n_y2_q;
                                 f2n_y2_q <= f2n_y1_q;
                                 f2n_y1_q <= filter_out;
+                                f2n_history_valid_q <= {f2n_history_valid_q[1:0], 1'b1};
                                 // Pipeline the MAME step-9 mix so the F2N
                                 // MAC result does not feed adder/saturate
                                 // logic in the same 133 MHz cycle.
@@ -1334,12 +1394,14 @@ module ssi263_formant_backend (
                                 f4_y3_q <= f4_y2_q;
                                 f4_y2_q <= f4_y1_q;
                                 f4_y1_q <= filter_out;
+                                f4_history_valid_q <= {f4_history_valid_q[1:0], 1'b1};
                                 synth_state_q <= SYNTH_CLOSURE;
                             end
 
                             FILTER_FX: begin
                                 synth_fx_q <= filter_out;
                                 fx_y1_q <= filter_out;
+                                fx_history_valid_q <= 1'b1;
                                 synth_state_q <= SYNTH_SCALE;
                             end
 
@@ -1473,9 +1535,12 @@ module ssi263_formant_backend (
 
                     SYNTH_PRESENCE: begin
                         synth_presence_q <= presence_boost_from24(synth_scaled_q,
-                                                                  presence_low_q);
+                                                                  presence_history_valid_q ?
+                                                                  presence_low_q : 24'sd0);
                         presence_low_q <= presence_low_next_from24(synth_scaled_q,
-                                                                   presence_low_q);
+                                                                   presence_history_valid_q ?
+                                                                   presence_low_q : 24'sd0);
+                        presence_history_valid_q <= 1'b1;
                         synth_state_q <= SYNTH_OUTPUT_SCALE;
                     end
 
@@ -1519,7 +1584,6 @@ module ssi263_formant_backend (
                 end else begin
                     if (!is_votrax_q &&
                         ((ctrl_art_amp & CONTROL_MASK) != 8'd0 ||
-                         filter_freq == FILTER_FREQ_SILENCE ||
                          (ctrl_art_amp & AMPLITUDE_MASK) == 8'd0)) begin
                         start_synth_sample(4'd0,
                                            4'd0,

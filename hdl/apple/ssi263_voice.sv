@@ -14,6 +14,7 @@ module ssi263_voice #(
     input  logic               card_enabled,
     input  logic [2:0]         card_mode,
     input  logic               audio_tick,
+    input  logic               xck_ce,
 
     input  logic               ssi_write_strobe,
     input  logic [2:0]         ssi_reg,
@@ -45,6 +46,7 @@ module ssi263_voice #(
         .card_enabled(card_enabled),
         .card_mode(card_mode),
         .audio_tick(audio_tick),
+        .xck_ce(xck_ce),
         .ssi_write_strobe(ssi_write_strobe),
         .ssi_reg(ssi_reg),
         .ssi_wdata(ssi_wdata),

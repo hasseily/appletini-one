@@ -18,6 +18,7 @@ module ssi263_bus_wrapper #(
     input  logic               card_enabled,
     input  logic [2:0]         card_mode,
     input  logic               audio_tick,
+    input  logic               xck_ce,
 
     input  logic               ssi_write_strobe,
     input  logic [2:0]         ssi_reg,
@@ -56,7 +57,6 @@ module ssi263_bus_wrapper #(
     localparam logic [7:0] MODE_PHONEME_TRANSITIONED_INFLECTION = 8'hC0;
     localparam logic [7:0] MODE_IRQ_DISABLED                    = 8'h00;
     localparam logic [7:0] CONTROL_MASK                         = 8'h80;
-    localparam logic [7:0] FILTER_FREQ_SILENCE                  = 8'hFF;
 
     localparam int unsigned IFR_CA1_SSI263 = 1;
     localparam int unsigned IFR_CB1_VOTRAX = 4;
@@ -87,7 +87,9 @@ module ssi263_bus_wrapper #(
     logic       formant_backend_start;
     logic       formant_backend_reset;
     logic       formant_backend_done;
+    logic       formant_backend_response;
     logic       backend_done;
+    logic [7:0] formant_rate_inflection;
     logic signed [15:0] formant_audio;
 
     assign ssi_d7 = d7_q;
@@ -97,7 +99,12 @@ module ssi263_bus_wrapper #(
     assign audio = formant_audio;
     assign formant_backend_start = backend_start_q;
     assign formant_backend_reset = backend_warm_reset;
-    assign backend_done = formant_backend_done;
+    assign backend_done = formant_backend_response;
+    // Present a reg2 write to the timing core on its accepted edge so a frame
+    // boundary on that same clock reloads from the new RATE value.
+    assign formant_rate_inflection =
+        (ssi_write_strobe && ssi_reg == SSI_RATEINF) ?
+        ssi_wdata : rate_inflection_q;
 
     assign backend_warm_reset =
         !apple_res && (SSI263_TYPE != SSI263_P) && (SSI263_TYPE != SSI263_EMPTY);
@@ -204,22 +211,13 @@ module ssi263_bus_wrapper #(
                         direct_irq_q <= 1'b1;
                     end
                 end
+                // DR=00 masks the external A/R line but the status bit still
+                // records the response at the retained mode's boundary.
                 d7_q <= 1'b1;
             end
 
             if (active_is_votrax_q && via_pcr == 8'hB0) begin
                 via_ifr_set[IFR_CB1_VOTRAX] <= 1'b1;
-            end
-        end
-    endtask
-
-    // A completed SSI263 phoneme remains ready; clearing A/!R by writing reg1
-    // or reg2 lets the same phoneme run to completion again.
-    task automatic repeat_completed_ssi263;
-        begin
-            if (d7_q && !active_is_votrax_q &&
-                (ctrl_art_amp_q & CONTROL_MASK) == 8'd0) begin
-                start_backend(duration_phoneme_q[5:0], 1'b0);
             end
         end
     endtask
@@ -230,7 +228,8 @@ module ssi263_bus_wrapper #(
             inflection_q <= 8'd0;
             rate_inflection_q <= 8'd0;
             ctrl_art_amp_q <= CONTROL_MASK;
-            filter_freq_q <= FILTER_FREQ_SILENCE;
+            // FF is the fastest filter-clock setting, not a mute command.
+            filter_freq_q <= 8'd0;
             current_function_q <= 2'd0;
             current_enable_ints_q <= 1'b0;
             d7_q <= 1'b0;
@@ -246,14 +245,14 @@ module ssi263_bus_wrapper #(
 
     task automatic reset_warm_state;
         begin
-            duration_phoneme_q <= MODE_PHONEME_TRANSITIONED_INFLECTION;
-            inflection_q <= 8'd0;
-            rate_inflection_q <= 8'd0;
+            // SSI-263AP PD/RST powers the part down and releases A/R, but the
+            // programming registers remain latched. Keep DUR, INF, RATE, and
+            // FF so software can resume by lowering CTL without rebuilding
+            // the whole voice state.
             ctrl_art_amp_q <= (SSI263_TYPE == SSI263_AP) ? CONTROL_MASK : 8'd0;
-            filter_freq_q <= 8'd0;
-            current_function_q <= 2'd0;
             current_enable_ints_q <= 1'b0;
             d7_q <= 1'b0;
+            active_is_votrax_q <= 1'b0;
             direct_irq_q <= 1'b0;
             backend_start_q <= 1'b0;
         end
@@ -265,6 +264,7 @@ module ssi263_bus_wrapper #(
         .card_enabled(card_enabled),
         .warm_reset(formant_backend_reset),
         .audio_tick(audio_tick),
+        .xck_ce(xck_ce),
         .start(formant_backend_start),
         .start_phoneme(backend_phoneme_q),
         .start_sc01_phone(backend_sc01_phone_q),
@@ -272,10 +272,11 @@ module ssi263_bus_wrapper #(
         .current_function(current_function_q),
         .duration_phoneme(duration_phoneme_q),
         .inflection(inflection_q),
-        .rate_inflection(rate_inflection_q),
+        .rate_inflection(formant_rate_inflection),
         .ctrl_art_amp(ctrl_art_amp_q),
         .filter_freq(filter_freq_q),
         .phoneme_done(formant_backend_done),
+        .response_done(formant_backend_response),
         .audio(formant_audio)
     );
 
@@ -340,20 +341,10 @@ module ssi263_bus_wrapper #(
 
                         SSI_INFLECT: begin
                             inflection_q <= ssi_wdata;
-                            repeat_completed_ssi263();
-                            if (d7_q && !active_is_votrax_q &&
-                                (ctrl_art_amp_q & CONTROL_MASK) == 8'd0) begin
-                                backend_started_this_cycle = 1'b1;
-                            end
                         end
 
                         SSI_RATEINF: begin
                             rate_inflection_q <= ssi_wdata;
-                            repeat_completed_ssi263();
-                            if (d7_q && !active_is_votrax_q &&
-                                (ctrl_art_amp_q & CONTROL_MASK) == 8'd0) begin
-                                backend_started_this_cycle = 1'b1;
-                            end
                         end
 
                         SSI_CTTRAMP: begin
@@ -383,7 +374,12 @@ module ssi263_bus_wrapper #(
                     backend_started_this_cycle = 1'b1;
                 end
 
-                if (backend_done && !backend_started_this_cycle) begin
+                // A host ACK on reg1/reg2 wins if it lands on the same fabric
+                // clock as a response pulse. The next response boundary may
+                // set D7 again; this edge must leave the request cleared.
+                if (backend_done && !backend_started_this_cycle &&
+                    !backend_start_q &&
+                    !(ssi_write_strobe && ssi_reg <= SSI_RATEINF)) begin
                     set_speech_irq();
                 end
             end

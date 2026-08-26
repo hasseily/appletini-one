@@ -1222,6 +1222,7 @@ module apple_top(
     mockingboard mb1(
         .clk(clk),
         .rstn(rstn[2]),
+        .apple_q3_raw(apple_q3_pin),
         .slot_assign(MB1_SLOT_ASSIGN),
         .pan(phasor_pan_q),
         .audio_control(phasor_audio_q),

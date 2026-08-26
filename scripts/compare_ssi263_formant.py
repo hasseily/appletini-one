@@ -658,8 +658,6 @@ class HdlLikeFormant:
         self.closure = 0
         self.update_counter = 0
         self.noise = 0
-        self.duration_mod4 = 0
-        self.rate_accum = 0
         self.is_votrax = self.default_votrax
         self.target_inflection = self.ssi263_inflection12()
         self.active_inflection = self.target_inflection
@@ -702,8 +700,6 @@ class HdlLikeFormant:
         self.params = self.phones[phone & 0x3F]
         self.phonetick = 0
         self.ticks = 0
-        self.duration_mod4 = 0
-        self.rate_accum = 0
         self.idle_decay_count = 0
         self.is_votrax = self.default_votrax if votrax is None else votrax
         if self.is_votrax and duration_phoneme is None:
@@ -754,36 +750,9 @@ class HdlLikeFormant:
             step = 1
         return max(0, current - step)
 
-    def duration_one_skip_mode(self) -> bool:
-        return self.current_function != 1 and ((self.duration_phoneme >> 6) & 0x3) == 1
-
-    def duration_speed_step(self) -> int:
-        dur = 3 if self.current_function == 1 else ((self.duration_phoneme >> 6) & 0x3)
-        if dur == 2:
-            step = 2
-        elif dur == 3:
-            step = 4
-        else:
-            step = 1
-        if self.duration_one_skip_mode() and self.duration_mod4 == 2:
-            step = 2
-        return step
-
-    def rate_period_units(self) -> int:
-        rate = (self.rate_inflection >> 4) & 0xF
-        return 16 if rate == 0 else 16 - rate
-
-    def rate_scaled_speed_step(self, base_step: int) -> int:
-        numerator = self.rate_accum + base_step * 6
-        period = self.rate_period_units()
-        scaled = numerator // period
-        self.rate_accum = numerator - scaled * period
-        return scaled
-
     def control_speed_step(self) -> int:
-        if self.is_votrax:
-            return 1
-        return self.rate_scaled_speed_step(self.duration_speed_step())
+        # SSI RATE changes phone/response timing, not articulation cadence.
+        return 1
 
     def chip_update(self, speed_step: int) -> None:
         if self.ticks != 0x10:
@@ -818,11 +787,6 @@ class HdlLikeFormant:
             self.closure = 0
         elif self.closure != (7 << 2):
             self.closure += 1
-
-        if self.duration_one_skip_mode():
-            self.duration_mod4 = (self.duration_mod4 + 1) & 0x3
-        else:
-            self.duration_mod4 = 0
 
     def advance_pitch_noise(self) -> None:
         pitch_limit = self.pitch_period_limit()

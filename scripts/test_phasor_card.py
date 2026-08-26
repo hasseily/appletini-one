@@ -329,7 +329,7 @@ def test_ssi263_applewin_behavior_contract() -> None:
             "task automatic clear_synth_pipeline;" in formant_backend and
             "task automatic clear_filter_history;" in formant_backend and
             "clear_synth_pipeline();" in formant_backend and
-            "if (!votrax) begin\n                clear_filter_history();\n            end" not in formant_backend and
+            "if (!votrax) begin\n                clear_filter_history();\n            end" in formant_backend and
             "clear_pipeline();" in formant_backend and
             "rom_silence <= next_silence;" in sc01a_core and
             "if (pause_q) begin" not in formant_backend and

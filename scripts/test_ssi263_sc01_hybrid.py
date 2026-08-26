@@ -244,12 +244,17 @@ def _task_body(source: str, name: str) -> str:
     return match.group("body")
 
 
-def test_ssi_phone_start_preserves_filter_history() -> None:
+def test_ssi_phone_start_resets_switched_filter_history() -> None:
     source = without_sv_comments(read(BACKEND))
     play_body = _task_body(source, "play_phoneme")
     require(
-        "clear_filter_history();" not in play_body,
-        "starting a phone must not clear the shared tract filter history",
+        re.search(
+            r"if\s*\(\s*!votrax\s*\)\s*begin\s*"
+            r"clear_filter_history\s*\(\s*\)\s*;\s*end",
+            play_body,
+            flags=re.DOTALL,
+        ) is not None,
+        "each SSI phone must reset coefficient-dependent SC-01 IIR history",
     )
 
 
@@ -428,7 +433,7 @@ TESTS = (
     test_canonical_rom_and_addressing,
     test_native_rows_do_not_fall_back_to_sc01_stop,
     test_two_native_ssi_sockets,
-    test_ssi_phone_start_preserves_filter_history,
+    test_ssi_phone_start_resets_switched_filter_history,
     test_ff_is_not_a_hard_mute_code,
     test_hybrid_sources_are_in_the_build,
     test_response_and_phone_repeat_contract,

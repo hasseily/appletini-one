@@ -1032,6 +1032,11 @@ module ssi263_formant_backend (
             is_votrax_q <= votrax;
             idle_decay_count_q <= 10'd0;
             clear_synth_pipeline();
+            // Each SSI phone selects a new fixed-point coefficient set.  Old
+            // SC-01 IIR state is not valid under that new set and builds DC.
+            if (!votrax) begin
+                clear_filter_history();
+            end
         end
     endtask
 

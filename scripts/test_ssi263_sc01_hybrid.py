@@ -244,18 +244,115 @@ def _task_body(source: str, name: str) -> str:
     return match.group("body")
 
 
-def test_ssi_phone_start_resets_switched_filter_history() -> None:
+def test_ssi_phone_start_masks_switched_filter_history() -> None:
     source = without_sv_comments(read(BACKEND))
     play_body = _task_body(source, "play_phoneme")
     require(
         re.search(
             r"if\s*\(\s*!votrax\s*\)\s*begin\s*"
-            r"clear_filter_history\s*\(\s*\)\s*;\s*end",
+            r"invalidate_filter_history\s*\(\s*\)\s*;\s*end",
             play_body,
             flags=re.DOTALL,
         ) is not None,
-        "each SSI phone must reset coefficient-dependent SC-01 IIR history",
+        "each SSI phone must invalidate coefficient-dependent SC-01 IIR history",
     )
+    require(
+        "clear_filter_history();" not in play_body,
+        "SSI phone start must not add a bulk clear to every history register",
+    )
+
+    invalidate_body = _task_body(source, "invalidate_filter_history")
+    for name in (
+        "f1_history_valid_q", "f2_history_valid_q", "f2n_history_valid_q",
+        "f3_history_valid_q", "f4_history_valid_q", "fn_history_valid_q",
+        "fx_history_valid_q", "presence_history_valid_q",
+    ):
+        require(
+            re.search(rf"\b{re.escape(name)}\s*<=\s*[^;]*'b0+\s*;",
+                      invalidate_body) is not None,
+            f"phone-start invalidation must clear {name}",
+        )
+
+    require(
+        "history_valid[0] ? x1 : 24'sd0" in source and
+        "history_valid[1] ? x2 : 24'sd0" in source and
+        "history_valid[2] ? x3 : 24'sd0" in source and
+        "history_valid[0] ? y1 : 24'sd0" in source and
+        "history_valid[1] ? y2 : 24'sd0" in source and
+        "history_valid[2] ? y3 : 24'sd0" in source,
+        "invalid stored taps must read as zero until overwritten",
+    )
+    for name, shift in (
+        ("f1_history_valid_q", "{f1_history_valid_q[1:0], 1'b1}"),
+        ("f2_history_valid_q", "{f2_history_valid_q[1:0], 1'b1}"),
+        ("f2n_history_valid_q", "{f2n_history_valid_q[1:0], 1'b1}"),
+        ("f3_history_valid_q", "{f3_history_valid_q[1:0], 1'b1}"),
+        ("f4_history_valid_q", "{f4_history_valid_q[1:0], 1'b1}"),
+        ("fn_history_valid_q", "{fn_history_valid_q[0], 1'b1}"),
+    ):
+        require(
+            f"{name} <= {shift};" in source,
+            f"normal filter shifts must validate newly written taps for {name}",
+        )
+    require(
+        "fx_history_valid_q <= 1'b1;" in source and
+        "presence_history_valid_q <= 1'b1;" in source,
+        "one-sample histories must become valid after their first update",
+    )
+
+
+def test_timing_refactor_is_exhaustively_equivalent() -> None:
+    source = without_sv_comments(read(CORE))
+    load_body = _task_body(source, "load_phone")
+    require(
+        load_body.count("pitch_limit_q <=") == 1,
+        "load_phone must select inflection before its sole pitch-limit write",
+    )
+    require(
+        re.search(
+            r"ssi_response_subticks_minus_one\s*=\s*"
+            r"\{\s*~rate_inflection\[7:4\]\s*,\s*8'hFF\s*\}\s*;",
+            source,
+        ) is not None,
+        "response reload must use the exact shallow RATE identity",
+    )
+
+    for rate in range(16):
+        arithmetic = (16 - rate) * 256 - 1
+        concatenated = (((~rate) & 0x0F) << 8) | 0xFF
+        require(
+            concatenated == arithmetic,
+            f"response concat differs from arithmetic at RATE {rate}",
+        )
+
+    # Prove the consolidated load_phone selection matches every old branch
+    # for all SSI words, modes, seed states, and retained transition targets.
+    for function in range(4):
+        for votrax in (False, True):
+            transitioned = not votrax and function == 3
+            for seeded in (False, True):
+                for active_target in range(32):
+                    active_bits = active_target << 6
+                    for live in range(4096):
+                        if transitioned and seeded:
+                            old_selected = (live & ~0x07C0) | active_bits
+                        else:
+                            old_selected = live
+                        old_seeded = seeded or (transitioned and not seeded)
+
+                        new_selected = live
+                        new_seeded = seeded
+                        if transitioned:
+                            if not seeded:
+                                new_seeded = True
+                            else:
+                                new_selected = (live & ~0x07C0) | active_bits
+
+                        require(
+                            new_selected == old_selected and
+                            new_seeded == old_seeded,
+                            "consolidated pitch selection changed a load case",
+                        )
 
 
 def test_ff_is_not_a_hard_mute_code() -> None:
@@ -433,7 +530,8 @@ TESTS = (
     test_canonical_rom_and_addressing,
     test_native_rows_do_not_fall_back_to_sc01_stop,
     test_two_native_ssi_sockets,
-    test_ssi_phone_start_resets_switched_filter_history,
+    test_ssi_phone_start_masks_switched_filter_history,
+    test_timing_refactor_is_exhaustively_equivalent,
     test_ff_is_not_a_hard_mute_code,
     test_hybrid_sources_are_in_the_build,
     test_response_and_phone_repeat_contract,

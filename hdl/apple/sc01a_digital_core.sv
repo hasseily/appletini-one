@@ -172,12 +172,12 @@ module sc01a_digital_core (
     // 256*(16-R) effective XCK edges, so a RATE write takes effect at the next
     // slot reload without disturbing the slot already in progress.
     function automatic logic [11:0] ssi_response_subticks_minus_one;
-        logic [4:0] rate_units;
-        logic [12:0] effective_ticks;
         begin
-            rate_units = 5'd16 - {1'b0, rate_inflection[7:4]};
-            effective_ticks = {rate_units, 8'd0};
-            ssi_response_subticks_minus_one = effective_ticks - 13'd1;
+            // (16-R)*256-1 is exactly {~R, 8'hFF} for R=0..15.
+            // Keep this path shallow because a RATE write can feed a slot
+            // reload on the same fabric edge.
+            ssi_response_subticks_minus_one =
+                {~rate_inflection[7:4], 8'hFF};
         end
     endfunction
 
@@ -419,26 +419,19 @@ module sc01a_digital_core (
             ssi_response_slot_q <= 4'd0;
             next_inflection = ssi263_inflection12();
             target_inflection_q <= next_inflection;
-            if (!start_votrax && transitioned_inflection_mode(1'b0) &&
-                !transitioned_inflection_seeded_q) begin
-                // U65/U64 have no useful reset. Seed their FPGA model once
-                // from the first live transitioned target instead of gliding
-                // upward from an artificial zero state.
-                active_inflection_q <= next_inflection;
-                transitioned_inflection_seeded_q <= 1'b1;
-                pitch_limit_q <= pitch_period_limit_for(1'b0, next_inflection);
-            end else if (start_votrax || !transitioned_inflection_mode(start_votrax)) begin
-                active_inflection_q <= next_inflection;
-                pitch_limit_q <= pitch_period_limit_for(start_votrax, next_inflection);
-            end else begin
-                active_inflection_q <= {next_inflection[11],
-                                        active_inflection_q[10:6],
-                                        next_inflection[5:0]};
-                pitch_limit_q <= pitch_period_limit_for(1'b0,
-                                                        {next_inflection[11],
-                                                         active_inflection_q[10:6],
-                                                         next_inflection[5:0]});
+            if (!start_votrax && transitioned_inflection_mode(1'b0)) begin
+                if (!transitioned_inflection_seeded_q) begin
+                    // U65/U64 have no useful reset. Seed their FPGA model once
+                    // from the first live transitioned target instead of
+                    // gliding upward from an artificial zero state.
+                    transitioned_inflection_seeded_q <= 1'b1;
+                end else begin
+                    next_inflection[10:6] = active_inflection_q[10:6];
+                end
             end
+            active_inflection_q <= next_inflection;
+            pitch_limit_q <=
+                pitch_period_limit_for(start_votrax, next_inflection);
 
             if (next_cld == 4'd0) begin
                 closure_active_q <= next_closure;

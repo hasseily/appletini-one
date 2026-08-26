@@ -421,6 +421,72 @@ module tb_ssi263_start_timing;
         end
     endtask
 
+    task automatic test_coincident_rate_write_uses_live_value;
+        integer raw_pulses;
+        begin
+            write_stopped_ssi(SSI_CTTRAMP, 8'h80,
+                              "live-RATE CTL stop");
+            write_stopped_ssi(SSI_DURPHON, 8'h71,
+                              "live-RATE DURPHON setup");
+            write_stopped_ssi(SSI_RATEINF, 8'hF0,
+                              "live-RATE initial setup");
+            issue_ssi(SSI_CTTRAMP, 8'h00, 6'h31, 6'h3F,
+                      "live-RATE CTL start");
+
+            require(
+                dut.formant_backend_i.digital_core_i.
+                    ssi_response_subticks_left_q == 12'd255,
+                "initial R=15 response reload is wrong");
+
+            // Reach zero without crossing the slot boundary. The effective
+            // edge which decrements one to zero leaves DIV2 phase low.
+            raw_pulses = 0;
+            while (dut.formant_backend_i.digital_core_i.
+                       ssi_response_subticks_left_q != 12'd0 &&
+                   raw_pulses < 512) begin
+                pulse_xck();
+                raw_pulses = raw_pulses + 1;
+            end
+            require(
+                dut.formant_backend_i.digital_core_i.
+                    ssi_response_subticks_left_q == 12'd0,
+                "response counter did not reach the live-RATE boundary");
+
+            if (!dut.formant_backend_i.digital_core_i.ssi_div2_phase_q) begin
+                pulse_xck();
+            end
+            require(
+                dut.formant_backend_i.digital_core_i.ssi_div2_phase_q &&
+                dut.formant_backend_i.digital_core_i.
+                    ssi_response_subticks_left_q == 12'd0,
+                "could not align the live-RATE effective edge");
+
+            // Accept R=5 on the same effective XCK edge that reloads the
+            // response slot. The core must see the write data, not stale R=15.
+            @(negedge clk);
+            ssi_reg = SSI_RATEINF;
+            ssi_wdata = 8'h50;
+            ssi_write_strobe = 1'b1;
+            xck_ce = 1'b1;
+            @(posedge clk);
+            #1;
+            require(dut.rate_inflection_q == 8'h50,
+                    "coincident RATE write was not accepted");
+            require(
+                dut.formant_backend_i.digital_core_i.
+                    ssi_response_subticks_left_q == 12'd2815 &&
+                dut.formant_backend_i.digital_core_i.ssi_response_slot_q ==
+                    4'd1,
+                "slot boundary did not reload from the coincident live RATE");
+
+            @(negedge clk);
+            ssi_write_strobe = 1'b0;
+            xck_ce = 1'b0;
+            @(posedge clk);
+            #1;
+        end
+    endtask
+
     task automatic inject_response_then_start(input logic target_votrax,
                                               input string label);
         begin
@@ -518,6 +584,7 @@ module tb_ssi263_start_timing;
         test_frame_ack_does_not_restart();
         test_dr00_disables_response_not_mode();
         test_phone_ack_does_not_restart();
+        test_coincident_rate_write_uses_live_value();
         test_response_start_generation_guard();
 
         drive_idle();

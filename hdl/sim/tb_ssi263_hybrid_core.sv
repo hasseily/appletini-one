@@ -138,6 +138,21 @@ module tb_ssi263_hybrid_core;
         end
     endtask
 
+    function automatic logic [9:0] expected_ssi_pitch_limit(
+        input logic [11:0] value
+    );
+        logic [12:0] span;
+        logic [15:0] scaled;
+        logic [9:0] period;
+        begin
+            span = 13'd4096 - {1'b0, value};
+            scaled = {3'd0, span} * 16'd5;
+            period = scaled[14:5];
+            expected_ssi_pitch_limit =
+                (period == 10'd0) ? 10'd1 : period;
+        end
+    endfunction
+
     task automatic start_core_phone(input logic [5:0] phone,
                                     input logic votrax);
         begin
@@ -326,6 +341,26 @@ module tb_ssi263_hybrid_core;
         end
     endtask
 
+    task automatic test_all_ssi_start_pitch_limits;
+        integer value;
+        logic [11:0] target;
+        begin
+            cold_reset();
+            current_function = 2'd2;
+            duration_phoneme = 8'h80 | 8'h0B;
+            for (value = 0; value < 4096; value = value + 1) begin
+                target = value[11:0];
+                set_inflection_word(target, 4'h0);
+                start_core_phone(6'h0B, 1'b0);
+                require(dut.target_inflection_q == target &&
+                        dut.active_inflection_q == target,
+                        "non-transitioned start changed the inflection word");
+                require(dut.pitch_limit_q == expected_ssi_pitch_limit(target),
+                        "SSI start pitch limit changed during refactor");
+            end
+        end
+    endtask
+
     task automatic test_rate_change_waits_for_slot_reload;
         integer raw_pulses;
         logic effective;
@@ -491,6 +526,7 @@ module tb_ssi263_hybrid_core;
         test_frame_response_is_not_phone_end();
         test_disabled_mode_has_no_response();
         test_all_rate_and_duration_reloads();
+        test_all_ssi_start_pitch_limits();
         test_rate_change_waits_for_slot_reload();
         test_idle_restart_duration();
         test_transitioned_inflection_seed();

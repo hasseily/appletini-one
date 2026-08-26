@@ -290,12 +290,13 @@ def check_ps():
     require("APPLICARD_CONTROL_SLOT" in config,
             "config must apply slot 5 at boot")
 
-    # Config-menu tab (below Ethernet) with enable toggle + help entry.
+    # Config-menu tab (after Disk II) with enable toggle + help entry.
     internal_h = read_text("ps_sources/frontend/config_menu_internal.h")
     help_c = read_text("ps_sources/frontend/config_menu_help.c")
     tabs_c = read_text("ps_sources/frontend/config_menu_device_tabs.c")
-    require("CONFIG_TAB_ETHERNET,\n    CONFIG_TAB_APPLICARD," in internal_h,
-            "Applicard tab must sit below Ethernet")
+    require("CONFIG_TAB_DISK2,\n    CONFIG_TAB_APPLICARD,\n"
+            "    CONFIG_TAB_MOCKINGBOARD," in internal_h,
+            "slot-5 processor tab must sit between Disk II and Phasor")
     require('"Slot 5 Processor"' in config, "tab label missing")
     require("config_menu_draw_applicard(fb, menu, x, y, w);" in config,
             "tab draw dispatch missing")

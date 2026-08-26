@@ -281,6 +281,26 @@ def test_boot_menu_groups_boot_and_video_settings() -> None:
     require('"Profiles"' in source and '"Boot Settings"' in source and '"Video"' in source and
             source.index('"Profiles"') < source.index('"Boot Settings"') < source.index('"Video"'),
             "tab labels must draw Profiles above Boot Settings and Video pages")
+    require(
+        "    CONFIG_TAB_VIDEO,\n"
+        "    CONFIG_TAB_SMARTPORT,\n"
+        "    CONFIG_TAB_DISK2,\n"
+        "    CONFIG_TAB_APPLICARD,\n"
+        "    CONFIG_TAB_MOCKINGBOARD,\n"
+        "    CONFIG_TAB_MOUSE,\n"
+        "    CONFIG_TAB_ETHERNET,\n"
+        "    CONFIG_TAB_TRANSWARP," in internal,
+        "slot-card tabs must sit between Video and TransWarp in slot order")
+    require(
+        '    "Video",\n'
+        '    "Slot 7 Smartport",\n'
+        '    "Slot 6 Disk II",\n'
+        '    "Slot 5 Processor",\n'
+        '    "Slot 4 Phasor",\n'
+        '    "Slot 2 Mouse",\n'
+        '    "Slot 1 Ethernet",\n'
+        '    "TransWarp",' in source,
+        "slot-card tab titles and order must match their physical slots")
     require("case CONFIG_TAB_BOOT_SETTINGS:" in source and
             "return CONFIG_MENU_BOOT_ITEM_COUNT;" in source,
             "normal boot settings must contain boot controls and USB menu bindings")

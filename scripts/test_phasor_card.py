@@ -705,7 +705,7 @@ def test_phasor_pan_registers_and_menu_schema() -> None:
             "#define PHASOR_WARMTH_DEFAULT 8" in internal and
             "#define PHASOR_PSG_MODE_YM2149 0U" in internal and
             "#define PHASOR_PSG_MODE_AY8913 1U" in internal and
-            '"Phasor"' in config and
+            '"Slot 4 Phasor"' in config and
             '"phasor.slot4.enabled=%s\\n"' in phasor_config and
             '"phasor.pan.%u=%u\\n"' in phasor_config and
             "11U, 5U, 11U," in phasor_config and

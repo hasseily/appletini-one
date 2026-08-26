@@ -117,6 +117,7 @@ dfx_runtime.txt
 **/.cache/
 
 **/__pycache__/
+scripts/sc02_dot_renderer/node_modules/
 hdl/sim/*
 !hdl/sim/tb_*.sv
 !hdl/sim/xpm_fifo_sync_model.sv

@@ -1,0 +1,12 @@
+{
+  "name": "appletini-sc02-dot-renderer",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Pinned Viz.js runtime for the SC-02 schematic archive",
+  "dependencies": {
+    "@viz-js/viz": "3.25.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

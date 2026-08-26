@@ -7,11 +7,12 @@
 // the Phasor C0nX mode switch and adds a second AY behind each VIA. In native
 // mode VIA ORB bit 4 selects the primary AY and bit 3 selects the secondary AY;
 // both chip selects are active-low, matching the Phasor GAL behavior documented
-// by AppleWin. The SSI263/SC-01 speech side preserves AppleWin's bus-visible
-// edge cases and uses the local formant backend for audio.
+// by AppleWin. Both speech sockets expose SSI263AP bus behavior and use the
+// retained SC-01 formant engine for audio.
 module mockingboard(
     input clk,
     input rstn,
+    input logic apple_q3_raw,
     input globals::AppleBus_read ab_read,
     input globals::SoftSwitchState sss,
     input logic [2:0] slot_assign,
@@ -140,7 +141,7 @@ assign dbg_ssi_backend_done = ssi0_backend_done | ssi1_backend_done;
 assign dbg_ssi_enable_ints  = ssi0_enable_ints | ssi1_enable_ints;
 logic signed [15:0] ssi0_audio;
 logic signed [15:0] ssi1_audio;
-logic signed [15:0] speech_audio_q;
+logic ssi_xck_ce;
 logic signed [31:0] tone_l_low_q;
 logic signed [31:0] tone_l_warm_lp_q;
 logic signed [31:0] tone_l_mid_lp_q;
@@ -183,7 +184,7 @@ logic signed [20:0] tone_shaped_r_q;
 logic signed [20:0] tone_warm_shaped_l_q;
 logic signed [20:0] tone_warm_shaped_r_q;
 
-wire ssi_read_drive = ssi_secondary_read ? 1'b0 : ssi_primary_read;
+wire ssi_read_drive = ssi_secondary_read || ssi_primary_read;
 wire [7:0] ssi_read_data = {ssi_secondary_read ? ssi0_d7 : ssi1_d7, ab_read.data[6:0]};
 
 logic [7:0] psg0_data_out;
@@ -258,10 +259,6 @@ wire via0_psg_latch_func = via0_portb_bus[2] && (via0_portb_bus[1:0] == 2'b11);
 wire via1_psg_latch_func = via1_portb_bus[2] && (via1_portb_bus[1:0] == 2'b11);
 wire via0_psg_read_write_func = via0_portb_bus[2] && (via0_portb_bus[1] ^ via0_portb_bus[0]);
 wire via1_psg_read_write_func = via1_portb_bus[2] && (via1_portb_bus[1] ^ via1_portb_bus[0]);
-wire via0_votrax_mode = (via0_pcr == 8'hB0);
-wire via0_votrax_write =
-    via0_strobe && !ab_read.rw && (ab_read.addr[3:0] == 4'h0) && via0_votrax_mode;
-wire [7:0] via0_votrax_wdata = (ab_read.data & via0_ddrb) | (via0_ddrb ^ 8'hFF);
 wire psg_clock = via_bus_clock || psg_ce_extra_q;
 
 wire via0_ay0_drive_native =
@@ -278,11 +275,9 @@ wire via1_ay1_drive_native =
     (via1_psg_read_write_func && (via1_ay0_cs || via1_ay1_cs) && via1_ay1_selected_q);
 
 wire via0_ay0_drive =
-    !via0_votrax_mode &&
     !echo_plus &&
     (!phasor_native || via0_ay0_drive_native);
 wire via0_ay1_drive =
-    !via0_votrax_mode &&
     !echo_plus &&
     phasor_native &&
     via0_ay1_drive_native;
@@ -651,11 +646,18 @@ via6522 via1(
     .cb2_out()
 );
 
-// AppleWin default Phasor population: subunit 0 has no SSI263 socket chip but
-// does have the SC-01/Votrax path; subunit 1 is the main SSI263AP.
+// Both physical Phasor speech sockets contain SSI263AP devices. They use the
+// same SC-01-backed SSI263 synthesis path, but expose no SC-01/Votrax device.
+ssi263_xck_ce ssi_xck_ce_i (
+    .clk(clk),
+    .rstn(rstn),
+    .q3_raw(apple_q3_raw),
+    .xck_ce(ssi_xck_ce)
+);
+
 ssi263_voice #(
-    .SSI263_TYPE(0),
-    .HAS_SC01(1'b1)
+    .SSI263_TYPE(2),
+    .HAS_SC01(1'b0)
 ) ssi263_secondary_i (
     .clk(clk),
     .rstn(rstn),
@@ -663,12 +665,13 @@ ssi263_voice #(
     .card_enabled(card_enabled),
     .card_mode(phasor_mode_q),
     .audio_tick(audio_sample_tick),
+    .xck_ce(ssi_xck_ce),
     .ssi_write_strobe(ssi_secondary_write),
     .ssi_reg(ab_read.addr[2:0]),
     .ssi_wdata(ab_read.data),
     .ssi_d7(ssi0_d7),
-    .votrax_write_strobe(via0_votrax_write),
-    .votrax_wdata(via0_votrax_wdata),
+    .votrax_write_strobe(1'b0),
+    .votrax_wdata(8'h00),
     .via_pcr(via0_pcr),
     .via_ifr_set(via0_ifr_set),
     .via_ifr_clr(via0_ifr_clr),
@@ -688,6 +691,7 @@ ssi263_voice #(
     .card_enabled(card_enabled),
     .card_mode(phasor_mode_q),
     .audio_tick(audio_sample_tick),
+    .xck_ce(ssi_xck_ce),
     .ssi_write_strobe(ssi_primary_write),
     .ssi_reg(ab_read.addr[2:0]),
     .ssi_wdata(ab_read.data),
@@ -706,7 +710,7 @@ ssi263_voice #(
 YM2149 psg0(
     .CLK(clk),
     .CE(psg_clock),
-    .RESET(via_reset || (!via0_votrax_mode && !via0_portb_bus[2])),
+    .RESET(via_reset || !via0_portb_bus[2]),
     .BDIR(via0_ay0_drive ? via0_portb_bus[1] : 1'b0),
     .BC(via0_ay0_drive ? via0_portb_bus[0] : 1'b0),
     .DI(via0_porta_out),
@@ -746,7 +750,7 @@ YM2149 psg1(
 YM2149 psg2(
     .CLK(clk),
     .CE(psg_clock),
-    .RESET(via_reset || (!via0_votrax_mode && !via0_portb_bus[2])),
+    .RESET(via_reset || !via0_portb_bus[2]),
     .BDIR(via0_ay1_drive ? via0_portb_bus[1] : 1'b0),
     .BC(via0_ay1_drive ? via0_portb_bus[0] : 1'b0),
     .DI(via0_porta_out),
@@ -823,7 +827,6 @@ always_ff @(posedge clk) begin
         psg_echo_r_mix_q <= '0;
         psg_phasor_l_mix_q <= '0;
         psg_phasor_r_mix_q <= '0;
-        speech_audio_q <= '0;
         tone_l_low_q <= '0;
         tone_l_warm_lp_q <= '0;
         tone_l_mid_lp_q <= '0;
@@ -913,8 +916,6 @@ always_ff @(posedge clk) begin
                                       psg1_r_sum_q,
                                       psg2_r_sum_q,
                                       psg3_r_sum_q);
-        speech_audio_q <= sat_add16(ssi0_audio, ssi1_audio);
-
         begin : final_audio_mix
             logic signed [15:0] base_l_next;
             logic signed [15:0] base_r_next;
@@ -940,24 +941,24 @@ always_ff @(posedge clk) begin
             if (phasor_native) begin
                 base_l_next = mix_speech(
                     mix4_to_pcm(psg_phasor_l_mix_q),
-                    speech_audio_q);
+                    ssi0_audio);
                 base_r_next = mix_speech(
                     mix4_to_pcm(psg_phasor_r_mix_q),
-                    speech_audio_q);
+                    ssi1_audio);
             end else if (echo_plus) begin
                 base_l_next = mix_speech(
                     mix2_to_pcm(psg_echo_l_mix_q),
-                    speech_audio_q);
+                    ssi0_audio);
                 base_r_next = mix_speech(
                     mix2_to_pcm(psg_echo_r_mix_q),
-                    speech_audio_q);
+                    ssi1_audio);
             end else begin
                 base_l_next = mix_speech(
                     mix2_to_pcm(psg_mockingboard_l_mix_q),
-                    speech_audio_q);
+                    ssi0_audio);
                 base_r_next = mix_speech(
                     mix2_to_pcm(psg_mockingboard_r_mix_q),
-                    speech_audio_q);
+                    ssi1_audio);
             end
 
             tone_base_l_q <= base_l_next;

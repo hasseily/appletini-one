@@ -72,11 +72,15 @@ filter hardware.
 - Use `4096 * (16 - R)` effective ticks for a frame.
 - Use `(4 - D) * 4096 * (16 - R)` effective ticks for a phoneme.
 - Latch the requested DR behavior on CTL falling edge. DR `00` disables A/R and
-  keeps the prior response and inflection mode.
+  keeps the prior response and inflection mode; D7 still records the response.
 - Treat completion as a request boundary. Do not clear the audio tract or stop
   filter clocks when D7 changes.
-- Reset the response phase on CTL stop and phone start. A long CTL stop must not
-  cut the first phone that follows it.
+- Keep the current phone and response phase running until a new phone or CTL
+  start replaces it. A reg1/reg2 ACK clears D7 without restarting the tract.
+- Load a new RATE at the next 1/16-frame counter reload. Do not rewrite the
+  response slot in progress.
+- Reset the response phase on phone start. A long CTL stop must not cut the
+  first phone that follows it.
 
 The bus wrapper may keep its current AppleWin address and IRQ routing. Tests
 must cover all `R=0..15`, all DR modes, request acknowledge writes, and a CTL

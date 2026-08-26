@@ -177,6 +177,7 @@ module ssi263_formant_audio_tb;
         .card_enabled(card_enabled),
         .warm_reset(warm_reset),
         .audio_tick(audio_tick),
+        .xck_ce(1'b0),
         .start(start),
         .start_phoneme(start_phoneme),
         .start_sc01_phone(start_sc01_phone),
@@ -188,6 +189,7 @@ module ssi263_formant_audio_tb;
         .ctrl_art_amp(ctrl_art_amp),
         .filter_freq(filter_freq),
         .phoneme_done(phoneme_done),
+        .response_done(),
         .audio(audio)
     );
 

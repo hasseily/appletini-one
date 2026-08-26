@@ -18,10 +18,13 @@ module tb_ssi263_filter_finalize;
     logic card_enabled = 1'b1;
     logic warm_reset = 1'b0;
     logic audio_tick = 1'b0;
+    logic xck_ce = 1'b0;
     logic start = 1'b0;
     logic [5:0] start_phoneme = 6'h24;
     logic [5:0] start_sc01_phone = 6'h0E;
-    logic start_votrax = 1'b0;
+    // Keep this pipeline golden-vector bench on the unchanged SC-01 path.
+    // Native SSI ROM and timing have their own focused checks.
+    logic start_votrax = 1'b1;
     logic [1:0] current_function = 2'd0;
     logic [7:0] duration_phoneme = 8'h24;
     logic [7:0] inflection = 8'h52;
@@ -29,6 +32,7 @@ module tb_ssi263_filter_finalize;
     logic [7:0] ctrl_art_amp = 8'h0F;
     logic [7:0] filter_freq = 8'hE6;
     logic phoneme_done;
+    logic response_done;
     logic signed [15:0] audio;
 
     // Filled from the uncut pipeline. The finalize state may change fabric
@@ -60,6 +64,7 @@ module tb_ssi263_filter_finalize;
         .card_enabled(card_enabled),
         .warm_reset(warm_reset),
         .audio_tick(audio_tick),
+        .xck_ce(xck_ce),
         .start(start),
         .start_phoneme(start_phoneme),
         .start_sc01_phone(start_sc01_phone),
@@ -71,6 +76,7 @@ module tb_ssi263_filter_finalize;
         .ctrl_art_amp(ctrl_art_amp),
         .filter_freq(filter_freq),
         .phoneme_done(phoneme_done),
+        .response_done(response_done),
         .audio(audio)
     );
 

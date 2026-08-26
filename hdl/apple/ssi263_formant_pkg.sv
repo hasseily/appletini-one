@@ -89,6 +89,271 @@ package ssi263_formant_pkg;
         end
     endfunction
 
+    // Native SSI-263A parameter ROM.  Each 64-bit row contains selector
+    // bytes 7..0, while ssi263_sc02_rom_byte returns one byte in the original
+    // {phone, selector} address order.  These constants are the active first
+    // 512 bytes of the verified SC-02 dump (active-table SHA-256
+    // 101d129a5f104e6190f2eca518bbf9ef65bf4ff92684d29eba56d9641aa02b0;
+    // full 2 KiB source SHA-256
+    // 9c3bba73319e1ed3652c85dac19874df04cbb72e62fdd63d6cbd7b34ff81f941).
+    // The SC-01 ROM below remains the source for direct Votrax playback.
+    function automatic logic [63:0] ssi263_sc02_rom_row(input logic [5:0] phone);
+        case (phone)
+            6'h00: ssi263_sc02_rom_row = 64'h00000000C00A9070;
+            6'h01: ssi263_sc02_rom_row = 64'h0000C000E00EE120;
+            6'h02: ssi263_sc02_rom_row = 64'h0000A000D00EE150;
+            6'h03: ssi263_sc02_rom_row = 64'h0000B000E00ED110;
+            6'h04: ssi263_sc02_rom_row = 64'h00006000B00EC120;
+            6'h05: ssi263_sc02_rom_row = 64'h0000C000E00EE130;
+            6'h06: ssi263_sc02_rom_row = 64'h00009000F00EF110;
+            6'h07: ssi263_sc02_rom_row = 64'h00008000C00EA150;
+            6'h08: ssi263_sc02_rom_row = 64'h00008000B00EB160;
+            6'h09: ssi263_sc02_rom_row = 64'h00008000A00E9160;
+            6'h0A: ssi263_sc02_rom_row = 64'h00008000B00E8190;
+            6'h0B: ssi263_sc02_rom_row = 64'h00008000B00E91A0;
+            6'h0C: ssi263_sc02_rom_row = 64'h00006000B00E91D0;
+            6'h0D: ssi263_sc02_rom_row = 64'h00006000B00E71F0;
+            6'h0E: ssi263_sc02_rom_row = 64'h00006000B00E31F0;
+            6'h0F: ssi263_sc02_rom_row = 64'h00007000B00E41F0;
+            6'h10: ssi263_sc02_rom_row = 64'h00006000A00E21D0;
+            6'h11: ssi263_sc02_rom_row = 64'h00008000B00E1170;
+            6'h12: ssi263_sc02_rom_row = 64'h00009000B00E1150;
+            6'h13: ssi263_sc02_rom_row = 64'h00008000A00E2180;
+            6'h14: ssi263_sc02_rom_row = 64'h0000A000A00E6130;
+            6'h15: ssi263_sc02_rom_row = 64'h00009000A00E4140;
+            6'h16: ssi263_sc02_rom_row = 64'h0000A000800E1130;
+            6'h17: ssi263_sc02_rom_row = 64'h0000A000700E0110;
+            6'h18: ssi263_sc02_rom_row = 64'h0000A000B00E4180;
+            6'h19: ssi263_sc02_rom_row = 64'h00008000B00E31A0;
+            6'h1A: ssi263_sc02_rom_row = 64'h00006000B00E31C0;
+            6'h1B: ssi263_sc02_rom_row = 64'h00007000B00E51C0;
+            6'h1C: ssi263_sc02_rom_row = 64'h00008000300E4160;
+            6'h1D: ssi263_sc02_rom_row = 64'h00008000100E1130;
+            6'h1E: ssi263_sc02_rom_row = 64'h00008000400E3120;
+            6'h1F: ssi263_sc02_rom_row = 64'h00006000900E6170;
+            6'h20: ssi263_sc02_rom_row = 64'h00007000E00E3130;
+            6'h21: ssi263_sc02_rom_row = 64'h0000F000F00E5110;
+            6'h22: ssi263_sc02_rom_row = 64'h00009000E00E1150;
+            6'h23: ssi263_sc02_rom_row = 64'h00008000900E0130;
+            6'h24: ssi263_sc02_rom_row = 64'h00008000C00C3110;
+            6'h25: ssi263_sc02_rom_row = 64'h00008000E00C9110;
+            6'h26: ssi263_sc02_rom_row = 64'h0000A000800EA130;
+            6'h27: ssi263_sc02_rom_row = 64'h00F00000800C2041;
+            6'h28: ssi263_sc02_rom_row = 64'h00F00000E0049041;
+            6'h29: ssi263_sc02_rom_row = 64'h00400000800CA031;
+            6'h2A: ssi263_sc02_rom_row = 64'h00006000C00A9170;
+            6'h2B: ssi263_sc02_rom_row = 64'h0000F000C0089170;
+            6'h2C: ssi263_sc02_rom_row = 64'h00800000C00A9071;
+            6'h2D: ssi263_sc02_rom_row = 64'h00800000C0089071;
+            6'h2E: ssi263_sc02_rom_row = 64'h00004000C03A9170;
+            6'h2F: ssi263_sc02_rom_row = 64'h00F02000D0062030;
+            6'h30: ssi263_sc02_rom_row = 64'h00F00000C0067001;
+            6'h31: ssi263_sc02_rom_row = 64'h00F02000E00EB020;
+            6'h32: ssi263_sc02_rom_row = 64'h00900000E00EB021;
+            6'h33: ssi263_sc02_rom_row = 64'h00806000900E3020;
+            6'h34: ssi263_sc02_rom_row = 64'h00800000900E3021;
+            6'h35: ssi263_sc02_rom_row = 64'h00402000E0067030;
+            6'h36: ssi263_sc02_rom_row = 64'h00600000A0068051;
+            6'h37: ssi263_sc02_rom_row = 64'h0000F000903E3100;
+            6'h38: ssi263_sc02_rom_row = 64'h0000F000D03E8100;
+            6'h39: ssi263_sc02_rom_row = 64'h00008000E03EC120;
+            6'h3A: ssi263_sc02_rom_row = 64'h00008000A00E9170;
+            6'h3B: ssi263_sc02_rom_row = 64'h00006000900E8120;
+            6'h3C: ssi263_sc02_rom_row = 64'h0000A000900E7110;
+            6'h3D: ssi263_sc02_rom_row = 64'h0000A000A00E9100;
+            6'h3E: ssi263_sc02_rom_row = 64'h00007000A00E7160;
+            default: ssi263_sc02_rom_row = 64'h0000F000E00E1110;
+        endcase
+    endfunction
+
+    function automatic logic [7:0] ssi263_sc02_rom_byte(
+        input logic [5:0] phone,
+        input logic [2:0] selector
+    );
+        logic [63:0] row;
+        begin
+            row = ssi263_sc02_rom_row(phone);
+            case (selector)
+                3'd0: ssi263_sc02_rom_byte = row[7:0];
+                3'd1: ssi263_sc02_rom_byte = row[15:8];
+                3'd2: ssi263_sc02_rom_byte = row[23:16];
+                3'd3: ssi263_sc02_rom_byte = row[31:24];
+                3'd4: ssi263_sc02_rom_byte = row[39:32];
+                3'd5: ssi263_sc02_rom_byte = row[47:40];
+                3'd6: ssi263_sc02_rom_byte = row[55:48];
+                default: ssi263_sc02_rom_byte = row[63:56];
+            endcase
+        end
+    endfunction
+
+    function automatic logic [3:0] ssi263_sc02_target(
+        input logic [5:0] phone,
+        input logic [2:0] selector
+    );
+        logic [7:0] rom_byte;
+        begin
+            rom_byte = ssi263_sc02_rom_byte(phone, selector);
+            ssi263_sc02_target = rom_byte[7:4];
+        end
+    endfunction
+
+    // The native and SC-01 banks use different capacitor values.  These
+    // tables compare selected-capacitance / full-bank-capacitance for every
+    // native code with every usable SC-01 target and choose the nearest one
+    // (lower target on a tie).  Native values come from the SC-02 schematic;
+    // SC-01 values come from build_ssi263_formant_rom.py:
+    //
+    //              native pF                 SC-01 pF
+    // F1       160, 330, 660, 1300       2546, 4973, 9861, 19724
+    // F2       280, 560, 1120, 2300       833, 1663, 3164, 6327, 12654
+    // F2Q      220, 430, 870, 1800       1390, 2965, 5875, 11297
+    // F3       210, 420, 820, 1640       2226, 4485, 9056, 18111
+    //
+    // F1, F2Q, and F3 land on the same numeric code after that comparison;
+    // their named tables record that result rather than assuming matching
+    // code laws.  F2 must use even five-bit indices because the retained
+    // interpolation path turns its four-bit target into cur_f2[7:3].
+    function automatic logic [3:0] ssi263_native_f1_to_sc01(
+        input logic [3:0] native_code
+    );
+        case (native_code)
+            4'h0: ssi263_native_f1_to_sc01 = 4'h0;
+            4'h1: ssi263_native_f1_to_sc01 = 4'h1;
+            4'h2: ssi263_native_f1_to_sc01 = 4'h2;
+            4'h3: ssi263_native_f1_to_sc01 = 4'h3;
+            4'h4: ssi263_native_f1_to_sc01 = 4'h4;
+            4'h5: ssi263_native_f1_to_sc01 = 4'h5;
+            4'h6: ssi263_native_f1_to_sc01 = 4'h6;
+            4'h7: ssi263_native_f1_to_sc01 = 4'h7;
+            4'h8: ssi263_native_f1_to_sc01 = 4'h8;
+            4'h9: ssi263_native_f1_to_sc01 = 4'h9;
+            4'hA: ssi263_native_f1_to_sc01 = 4'hA;
+            4'hB: ssi263_native_f1_to_sc01 = 4'hB;
+            4'hC: ssi263_native_f1_to_sc01 = 4'hC;
+            4'hD: ssi263_native_f1_to_sc01 = 4'hD;
+            4'hE: ssi263_native_f1_to_sc01 = 4'hE;
+            default: ssi263_native_f1_to_sc01 = 4'hF;
+        endcase
+    endfunction
+
+    function automatic logic [3:0] ssi263_native_f2_to_sc01(
+        input logic [3:0] native_code
+    );
+        case (native_code)
+            4'h0: ssi263_native_f2_to_sc01 = 4'h0;
+            4'h1: ssi263_native_f2_to_sc01 = 4'h1;
+            4'h2: ssi263_native_f2_to_sc01 = 4'h2;
+            4'h3: ssi263_native_f2_to_sc01 = 4'h3;
+            4'h4: ssi263_native_f2_to_sc01 = 4'h4;
+            4'h5: ssi263_native_f2_to_sc01 = 4'h5;
+            4'h6: ssi263_native_f2_to_sc01 = 4'h6;
+            4'h7: ssi263_native_f2_to_sc01 = 4'h7;
+            4'h8: ssi263_native_f2_to_sc01 = 4'h8;
+            4'h9: ssi263_native_f2_to_sc01 = 4'h9;
+            4'hA: ssi263_native_f2_to_sc01 = 4'hA;
+            4'hB: ssi263_native_f2_to_sc01 = 4'hB;
+            4'hC: ssi263_native_f2_to_sc01 = 4'hC;
+            4'hD: ssi263_native_f2_to_sc01 = 4'hE;
+            4'hE: ssi263_native_f2_to_sc01 = 4'hF;
+            default: ssi263_native_f2_to_sc01 = 4'hF;
+        endcase
+    endfunction
+
+    function automatic logic [3:0] ssi263_native_f2q_to_sc01(
+        input logic [3:0] native_code
+    );
+        case (native_code)
+            4'h0: ssi263_native_f2q_to_sc01 = 4'h0;
+            4'h1: ssi263_native_f2q_to_sc01 = 4'h1;
+            4'h2: ssi263_native_f2q_to_sc01 = 4'h2;
+            4'h3: ssi263_native_f2q_to_sc01 = 4'h3;
+            4'h4: ssi263_native_f2q_to_sc01 = 4'h4;
+            4'h5: ssi263_native_f2q_to_sc01 = 4'h5;
+            4'h6: ssi263_native_f2q_to_sc01 = 4'h6;
+            4'h7: ssi263_native_f2q_to_sc01 = 4'h7;
+            4'h8: ssi263_native_f2q_to_sc01 = 4'h8;
+            4'h9: ssi263_native_f2q_to_sc01 = 4'h9;
+            4'hA: ssi263_native_f2q_to_sc01 = 4'hA;
+            4'hB: ssi263_native_f2q_to_sc01 = 4'hB;
+            4'hC: ssi263_native_f2q_to_sc01 = 4'hC;
+            4'hD: ssi263_native_f2q_to_sc01 = 4'hD;
+            4'hE: ssi263_native_f2q_to_sc01 = 4'hE;
+            default: ssi263_native_f2q_to_sc01 = 4'hF;
+        endcase
+    endfunction
+
+    function automatic logic [3:0] ssi263_native_f3_to_sc01(
+        input logic [3:0] native_code
+    );
+        case (native_code)
+            4'h0: ssi263_native_f3_to_sc01 = 4'h0;
+            4'h1: ssi263_native_f3_to_sc01 = 4'h1;
+            4'h2: ssi263_native_f3_to_sc01 = 4'h2;
+            4'h3: ssi263_native_f3_to_sc01 = 4'h3;
+            4'h4: ssi263_native_f3_to_sc01 = 4'h4;
+            4'h5: ssi263_native_f3_to_sc01 = 4'h5;
+            4'h6: ssi263_native_f3_to_sc01 = 4'h6;
+            4'h7: ssi263_native_f3_to_sc01 = 4'h7;
+            4'h8: ssi263_native_f3_to_sc01 = 4'h8;
+            4'h9: ssi263_native_f3_to_sc01 = 4'h9;
+            4'hA: ssi263_native_f3_to_sc01 = 4'hA;
+            4'hB: ssi263_native_f3_to_sc01 = 4'hB;
+            4'hC: ssi263_native_f3_to_sc01 = 4'hC;
+            4'hD: ssi263_native_f3_to_sc01 = 4'hD;
+            4'hE: ssi263_native_f3_to_sc01 = 4'hE;
+            default: ssi263_native_f3_to_sc01 = 4'hF;
+        endcase
+    endfunction
+
+    // VOICE (220,430,870,1800 pF) and FRIC1 (270,512,1068,2160 pF)
+    // are input-capacitor banks, while scale4 is linear n/15 gain.  Nearest
+    // normalized gain also lands on the same numeric code for all 16 entries.
+    function automatic logic [3:0] ssi263_native_va_to_sc01(
+        input logic [3:0] native_code
+    );
+        case (native_code)
+            4'h0: ssi263_native_va_to_sc01 = 4'h0;
+            4'h1: ssi263_native_va_to_sc01 = 4'h1;
+            4'h2: ssi263_native_va_to_sc01 = 4'h2;
+            4'h3: ssi263_native_va_to_sc01 = 4'h3;
+            4'h4: ssi263_native_va_to_sc01 = 4'h4;
+            4'h5: ssi263_native_va_to_sc01 = 4'h5;
+            4'h6: ssi263_native_va_to_sc01 = 4'h6;
+            4'h7: ssi263_native_va_to_sc01 = 4'h7;
+            4'h8: ssi263_native_va_to_sc01 = 4'h8;
+            4'h9: ssi263_native_va_to_sc01 = 4'h9;
+            4'hA: ssi263_native_va_to_sc01 = 4'hA;
+            4'hB: ssi263_native_va_to_sc01 = 4'hB;
+            4'hC: ssi263_native_va_to_sc01 = 4'hC;
+            4'hD: ssi263_native_va_to_sc01 = 4'hD;
+            4'hE: ssi263_native_va_to_sc01 = 4'hE;
+            default: ssi263_native_va_to_sc01 = 4'hF;
+        endcase
+    endfunction
+
+    function automatic logic [3:0] ssi263_native_fa_to_sc01(
+        input logic [3:0] native_code
+    );
+        case (native_code)
+            4'h0: ssi263_native_fa_to_sc01 = 4'h0;
+            4'h1: ssi263_native_fa_to_sc01 = 4'h1;
+            4'h2: ssi263_native_fa_to_sc01 = 4'h2;
+            4'h3: ssi263_native_fa_to_sc01 = 4'h3;
+            4'h4: ssi263_native_fa_to_sc01 = 4'h4;
+            4'h5: ssi263_native_fa_to_sc01 = 4'h5;
+            4'h6: ssi263_native_fa_to_sc01 = 4'h6;
+            4'h7: ssi263_native_fa_to_sc01 = 4'h7;
+            4'h8: ssi263_native_fa_to_sc01 = 4'h8;
+            4'h9: ssi263_native_fa_to_sc01 = 4'h9;
+            4'hA: ssi263_native_fa_to_sc01 = 4'hA;
+            4'hB: ssi263_native_fa_to_sc01 = 4'hB;
+            4'hC: ssi263_native_fa_to_sc01 = 4'hC;
+            4'hD: ssi263_native_fa_to_sc01 = 4'hD;
+            4'hE: ssi263_native_fa_to_sc01 = 4'hE;
+            default: ssi263_native_fa_to_sc01 = 4'hF;
+        endcase
+    endfunction
+
     function automatic logic [63:0] sc01a_word_by_phone(input logic [5:0] phone);
         case (phone)
             6'h00: sc01a_word_by_phone = 64'h0000036174688127;

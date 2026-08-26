@@ -13,6 +13,9 @@ module sc01a_digital_core (
     input  logic       rstn,
     input  logic       reset,
     input  logic       audio_tick,
+    // Raw SSI XCK rising-edge enable.  The Phasor straps DIV2 high, so the
+    // SSI-only duration path consumes every second enable.
+    input  logic       xck_ce,
 
     input  logic       start,
     input  logic [5:0] start_phone,
@@ -24,6 +27,7 @@ module sc01a_digital_core (
     input  logic [2:0] articulation,
 
     output logic       phoneme_done,
+    output logic       response_done,
 
     output logic [4:0] ticks,
     output logic [9:0] pitch,
@@ -76,15 +80,25 @@ module sc01a_digital_core (
     logic [15:0] chip_accum_q;
     logic [8:0]  phonetick_q;
     logic [5:0]  update_counter_q;
-    logic [1:0]  duration_mod4_q;
     logic        closure_active_q;
     logic        filter_commit_pending_q;
-    logic [4:0]  rate_accum_q;
     logic        control_update_pending_q;
     logic [5:0]  control_speed_step_q;
     logic [9:0]  pitch_limit_q;
     logic [11:0] target_inflection_q;
     logic [11:0] active_inflection_q;
+    logic        transitioned_inflection_seeded_q;
+
+    // Native SSI duration/DONE path. One interval is
+    // (4-D)*256*(16-R) effective XCK edges and one phone is 16 intervals.
+    logic        ssi_div2_phase_q;
+    logic        ssi_duration_active_q;
+    logic [13:0] ssi_durclk_ticks_left_q;
+    logic [3:0]  ssi_duration_frame_q;
+    logic        ssi_response_active_q;
+    logic [11:0] ssi_response_subticks_left_q;
+    logic [3:0]  ssi_response_slot_q;
+    wire         ssi_effective_xck_ce = xck_ce && ssi_div2_phase_q;
 
     // Galibert's MAME model uses the SC-01A 15-bit NXOR noise register.
     logic [14:0] noise_q;
@@ -140,124 +154,32 @@ module sc01a_digital_core (
         end
     endfunction
 
-    function automatic logic duration_one_skip_mode;
-        duration_one_skip_mode = (current_function != 2'd1) &&
-                                 (duration_phoneme[7:6] == 2'd1);
-    endfunction
-
-    function automatic logic [2:0] duration_speed_step;
-        logic [1:0] dur;
+    function automatic logic [13:0] ssi_durclk_ticks_minus_one;
+        logic [2:0] duration_units;
+        logic [4:0] rate_units;
+        logic [7:0] unit_product;
+        logic [14:0] effective_ticks;
         begin
-            dur = (current_function == 2'd1) ? 2'd3 : duration_phoneme[7:6];
-            case (dur)
-                2'd2:    duration_speed_step = 3'd2;
-                2'd3:    duration_speed_step = 3'd4;
-                default: duration_speed_step = 3'd1;
-            endcase
-
-            if (duration_one_skip_mode() && duration_mod4_q == 2'd2) begin
-                duration_speed_step = 3'd2;
-            end
+            duration_units = 3'd4 - {1'b0, duration_phoneme[7:6]};
+            rate_units = 5'd16 - {1'b0, rate_inflection[7:4]};
+            unit_product = duration_units * rate_units;
+            effective_ticks = {unit_product, 8'd0};
+            ssi_durclk_ticks_minus_one = effective_ticks - 15'd1;
         end
     endfunction
 
-    function automatic logic [4:0] rate_period_units;
-        logic [3:0] rate;
+    // U36 divides each response frame into sixteen slots. Each slot lasts
+    // 256*(16-R) effective XCK edges, so a RATE write takes effect at the next
+    // slot reload without disturbing the slot already in progress.
+    function automatic logic [11:0] ssi_response_subticks_minus_one;
+        logic [4:0] rate_units;
+        logic [12:0] effective_ticks;
         begin
-            rate = rate_inflection[7:4];
-            rate_period_units = (rate == 4'd0) ? 5'd16 :
-                (5'd16 - {1'b0, rate});
+            rate_units = 5'd16 - {1'b0, rate_inflection[7:4]};
+            effective_ticks = {rate_units, 8'd0};
+            ssi_response_subticks_minus_one = effective_ticks - 13'd1;
         end
     endfunction
-
-    task automatic rate_divmod_units(input logic [5:0] numerator,
-                                     input logic [4:0] period,
-                                     output logic [5:0] quotient,
-                                     output logic [4:0] remainder);
-        begin
-            case (period)
-                5'd1: begin
-                    quotient = numerator;
-                    remainder = 5'd0;
-                end
-                5'd2: begin
-                    quotient = {1'b0, numerator[5:1]};
-                    remainder = {4'd0, numerator[0]};
-                end
-                5'd3: begin
-                    quotient = numerator / 6'd3;
-                    remainder = numerator % 6'd3;
-                end
-                5'd4: begin
-                    quotient = {2'd0, numerator[5:2]};
-                    remainder = {3'd0, numerator[1:0]};
-                end
-                5'd5: begin
-                    quotient = numerator / 6'd5;
-                    remainder = numerator % 6'd5;
-                end
-                5'd6: begin
-                    quotient = numerator / 6'd6;
-                    remainder = numerator % 6'd6;
-                end
-                5'd7: begin
-                    quotient = numerator / 6'd7;
-                    remainder = numerator % 6'd7;
-                end
-                5'd8: begin
-                    quotient = {3'd0, numerator[5:3]};
-                    remainder = {2'd0, numerator[2:0]};
-                end
-                5'd9: begin
-                    quotient = numerator / 6'd9;
-                    remainder = numerator % 6'd9;
-                end
-                5'd10: begin
-                    quotient = numerator / 6'd10;
-                    remainder = numerator % 6'd10;
-                end
-                5'd11: begin
-                    quotient = numerator / 6'd11;
-                    remainder = numerator % 6'd11;
-                end
-                5'd12: begin
-                    quotient = numerator / 6'd12;
-                    remainder = numerator % 6'd12;
-                end
-                5'd13: begin
-                    quotient = numerator / 6'd13;
-                    remainder = numerator % 6'd13;
-                end
-                5'd14: begin
-                    quotient = numerator / 6'd14;
-                    remainder = numerator % 6'd14;
-                end
-                5'd15: begin
-                    quotient = numerator / 6'd15;
-                    remainder = numerator % 6'd15;
-                end
-                default: begin
-                    quotient = {3'd0, numerator[5:4]};
-                    remainder = {1'd0, numerator[3:0]};
-                end
-            endcase
-        end
-    endtask
-
-    task automatic rate_scaled_speed_step(input logic [2:0] base_step,
-                                          output logic [5:0] scaled_step);
-        logic [5:0] numerator;
-        logic [4:0] period;
-        logic [5:0] quotient;
-        logic [5:0] remainder;
-        begin
-            period = rate_period_units();
-            numerator = {1'b0, rate_accum_q} + ({3'd0, base_step} * 6'd6);
-            rate_divmod_units(numerator, period, quotient, remainder);
-            scaled_step = quotient;
-            rate_accum_q <= remainder[4:0];
-        end
-    endtask
 
     function automatic logic [11:0] ssi263_inflection12;
         begin
@@ -403,6 +325,7 @@ module sc01a_digital_core (
     endtask
 
     task automatic load_phone(input logic [5:0] phone);
+        logic [5:0] legacy_phone;
         logic [3:0] next_fa;
         logic [3:0] next_fc;
         logic [3:0] next_va;
@@ -411,23 +334,65 @@ module sc01a_digital_core (
         logic [3:0] next_f2q;
         logic [3:0] next_f3;
         logic [3:0] next_cld;
+        logic [3:0] next_vd;
         logic       next_closure;
+        logic       next_silence;
         logic [11:0] next_inflection;
         begin
-            next_f1 = sc01a_f1(phone);
-            next_va = sc01a_va(phone);
-            next_f2 = sc01a_f2(phone);
-            next_fc = sc01a_fc(phone);
-            next_f2q = sc01a_f2q(phone);
-            next_f3 = sc01a_f3(phone);
-            next_fa = sc01a_fa(phone);
-            next_cld = sc01a_cld(phone);
-            next_closure = sc01a_closure(phone);
+            legacy_phone = start_votrax ? phone : ssi263_to_sc01_phone(phone);
+            if (start_votrax) begin
+                next_f1 = sc01a_f1(legacy_phone);
+                next_va = sc01a_va(legacy_phone);
+                next_f2 = sc01a_f2(legacy_phone);
+                next_fc = sc01a_fc(legacy_phone);
+                next_f2q = sc01a_f2q(legacy_phone);
+                next_f3 = sc01a_f3(legacy_phone);
+                next_fa = sc01a_fa(legacy_phone);
+                next_cld = sc01a_cld(legacy_phone);
+                next_vd = sc01a_vd(legacy_phone);
+                next_closure = sc01a_closure(legacy_phone);
+                next_silence = sc01a_pause(legacy_phone);
+            end else begin
+                // Keep the exact native row, then translate each physical
+                // capacitor-bank code into the nearest retained SC-01 target.
+                next_f1 = ssi263_native_f1_to_sc01(
+                    ssi263_sc02_target(phone, 3'd0));
+                next_f2 = ssi263_native_f2_to_sc01(
+                    ssi263_sc02_target(phone, 3'd1));
+                next_f2q = ssi263_native_f2q_to_sc01(
+                    ssi263_sc02_target(phone, 3'd2));
+                next_f3 = ssi263_native_f3_to_sc01(
+                    ssi263_sc02_target(phone, 3'd3));
+                next_va = ssi263_native_va_to_sc01(
+                    ssi263_sc02_target(phone, 3'd5));
+                next_fa = ssi263_native_fa_to_sc01(
+                    ssi263_sc02_target(phone, 3'd6));
+                // SSI has no SC-01 FC field. Full-scale is the neutral setting
+                // for the retained SC-01 F2-noise gain path; FA remains the
+                // native per-phone noise-amplitude control.
+                next_fc = 4'hF;
+
+                // The old map sends phones with no SC-01 peer to 3F. Do not
+                // let that fallback impose stop closure/delay on native VA or
+                // FA. Mapped phones may still use SC-01 timing traits until
+                // the native selector-4 control path replaces them.
+                if (legacy_phone == 6'h3F) begin
+                    next_cld = 4'd0;
+                    next_vd = 4'd0;
+                    next_closure = 1'b0;
+                end else begin
+                    next_cld = sc01a_cld(legacy_phone);
+                    next_vd = sc01a_vd(legacy_phone);
+                    next_closure = sc01a_closure(legacy_phone);
+                end
+                // Silence is a native energy property, not a trait inherited
+                // from the mapped SC-01 phone. Phone 00 naturally has VA=FA=0.
+                next_silence = (next_va == 4'd0) && (next_fa == 4'd0);
+            end
 
             phonetick_q <= 9'd0;
             ticks <= 5'd0;
             filter_commit_pending_q <= 1'b0;
-            rate_accum_q <= 5'd0;
             control_update_pending_q <= 1'b0;
             control_speed_step_q <= 6'd0;
 
@@ -439,15 +404,30 @@ module sc01a_digital_core (
             rom_f3 <= next_f3;
             rom_fa <= next_fa;
             rom_cld <= next_cld;
-            rom_vd <= sc01a_vd(phone);
+            rom_vd <= next_vd;
             rom_closure <= next_closure;
-            rom_duration <= sc01a_duration(phone);
-            rom_silence <= sc01a_pause(phone);
-            rom_phone <= phone;
+            rom_duration <= sc01a_duration(legacy_phone);
+            rom_silence <= next_silence;
+            rom_phone <= legacy_phone;
             is_votrax_q <= start_votrax;
+            ssi_duration_active_q <= !start_votrax;
+            ssi_durclk_ticks_left_q <= ssi_durclk_ticks_minus_one();
+            ssi_duration_frame_q <= 4'd0;
+            ssi_response_active_q <= !start_votrax;
+            ssi_response_subticks_left_q <=
+                ssi_response_subticks_minus_one();
+            ssi_response_slot_q <= 4'd0;
             next_inflection = ssi263_inflection12();
             target_inflection_q <= next_inflection;
-            if (start_votrax || !transitioned_inflection_mode(start_votrax)) begin
+            if (!start_votrax && transitioned_inflection_mode(1'b0) &&
+                !transitioned_inflection_seeded_q) begin
+                // U65/U64 have no useful reset. Seed their FPGA model once
+                // from the first live transitioned target instead of gliding
+                // upward from an artificial zero state.
+                active_inflection_q <= next_inflection;
+                transitioned_inflection_seeded_q <= 1'b1;
+                pitch_limit_q <= pitch_period_limit_for(1'b0, next_inflection);
+            end else if (start_votrax || !transitioned_inflection_mode(start_votrax)) begin
                 active_inflection_q <= next_inflection;
                 pitch_limit_q <= pitch_period_limit_for(start_votrax, next_inflection);
             end else begin
@@ -476,7 +456,9 @@ module sc01a_digital_core (
         logic [4:0] ticks_next;
         logic [8:0] tick_limit;
         begin
-            if (ticks != 5'h10) begin
+            // Direct Votrax playback keeps the original SC-01 ROM-duration
+            // path. SSI ticks/DONE come from the independent XCK/DIV2 counter.
+            if (is_votrax_q && ticks != 5'h10) begin
                 tick_limit = {rom_duration, 2'b00} | 9'd1;
                 tick_limit_ext = {2'b0, tick_limit};
                 phonetick_next = {2'b0, phonetick_q} + {5'd0, speed_step};
@@ -487,6 +469,7 @@ module sc01a_digital_core (
                     ticks <= ticks_next;
                     if (ticks_next == 5'h10) begin
                         phoneme_done <= 1'b1;
+                        response_done <= 1'b1;
                     end
                     if (ticks_next == {1'b0, rom_cld}) begin
                         closure_active_q <= rom_closure;
@@ -527,11 +510,6 @@ module sc01a_digital_core (
                 closure_age <= closure_age + 5'd1;
             end
 
-            if (duration_one_skip_mode()) begin
-                duration_mod4_q <= duration_mod4_q + 2'd1;
-            end else begin
-                duration_mod4_q <= 2'd0;
-            end
         end
     endtask
 
@@ -570,24 +548,33 @@ module sc01a_digital_core (
         end
     endtask
 
-    task automatic reset_state;
+    task automatic reset_state(input logic cold_reset);
         begin
             chip_accum_q <= 16'd0;
             phonetick_q <= 9'd0;
             update_counter_q <= 6'd0;
-            duration_mod4_q <= 2'd0;
             closure_active_q <= 1'b1;
             filter_commit_pending_q <= 1'b0;
             is_votrax_q <= 1'b0;
-            rate_accum_q <= 5'd0;
             control_update_pending_q <= 1'b0;
             control_speed_step_q <= 6'd0;
             pitch_limit_q <= 10'd255;
             target_inflection_q <= 12'd0;
-            active_inflection_q <= 12'd0;
+            if (cold_reset) begin
+                active_inflection_q <= 12'd0;
+                transitioned_inflection_seeded_q <= 1'b0;
+            end
+            ssi_div2_phase_q <= 1'b0;
+            ssi_duration_active_q <= 1'b0;
+            ssi_durclk_ticks_left_q <= 14'd0;
+            ssi_duration_frame_q <= 4'd0;
+            ssi_response_active_q <= 1'b0;
+            ssi_response_subticks_left_q <= 12'd0;
+            ssi_response_slot_q <= 4'd0;
             noise_q <= 15'd0;
 
             phoneme_done <= 1'b0;
+            response_done <= 1'b0;
             ticks <= 5'd0;
             pitch <= 10'd0;
             pitch_noise_gate <= 1'b0;
@@ -628,13 +615,20 @@ module sc01a_digital_core (
 
     always_ff @(posedge clk) begin
         logic [16:0] chip_accum_next;
-        logic [2:0] base_speed_step;
-        logic [5:0] speed_step;
 
-        if (!rstn || reset) begin
-            reset_state();
+        if (!rstn) begin
+            reset_state(1'b1);
+        end else if (reset) begin
+            // The transitioned-pitch counter has no SSI PD/RST input. Keep its
+            // one-time seed and running value across a warm chip reset.
+            reset_state(1'b0);
         end else begin
             phoneme_done <= 1'b0;
+            response_done <= 1'b0;
+
+            if (xck_ce) begin
+                ssi_div2_phase_q <= ~ssi_div2_phase_q;
+            end
 
             if (filter_commit_pending_q) begin
                 commit_filters();
@@ -643,29 +637,75 @@ module sc01a_digital_core (
 
             if (start) begin
                 load_phone(start_phone);
-                duration_mod4_q <= 2'd0;
-            end else if (control_update_pending_q) begin
-                control_update_pending_q <= 1'b0;
-                if (control_speed_step_q != 6'd0) begin
-                    advance_control(control_speed_step_q);
-                end
-                advance_pitch_noise();
-            end else if (audio_tick) begin
-                chip_accum_next = {1'b0, chip_accum_q} + SC01_CONTROL_UPDATE_RATE;
-                if (chip_accum_next >= 17'd48000) begin
-                    chip_accum_q <= chip_accum_next - 17'd48000;
-                    advance_inflection();
-                    pitch_limit_q <= pitch_period_limit();
-                    base_speed_step = duration_speed_step();
-                    if (is_votrax_q) begin
-                        speed_step = 6'd1;
+            end else begin
+                if (ssi_effective_xck_ce && ssi_response_active_q) begin
+                    if (ssi_response_subticks_left_q == 12'd0) begin
+                        ssi_response_subticks_left_q <=
+                            ssi_response_subticks_minus_one();
+                        if (ssi_response_slot_q == 4'hF) begin
+                            ssi_response_slot_q <= 4'd0;
+                            if (current_function == 2'd1) begin
+                                response_done <= 1'b1;
+                            end
+                        end else begin
+                            ssi_response_slot_q <=
+                                ssi_response_slot_q + 4'd1;
+                        end
                     end else begin
-                        rate_scaled_speed_step(base_speed_step, speed_step);
+                        ssi_response_subticks_left_q <=
+                            ssi_response_subticks_left_q - 12'd1;
                     end
-                    control_speed_step_q <= speed_step;
-                    control_update_pending_q <= 1'b1;
-                end else begin
-                    chip_accum_q <= chip_accum_next[15:0];
+                end
+
+                if (ssi_effective_xck_ce && ssi_duration_active_q) begin
+                    if (ssi_durclk_ticks_left_q == 14'd0) begin
+                        // D comes from the active phone. RATE is control data,
+                        // so a new R applies to the next internal duration slot
+                        // without resetting this phone.
+                        ssi_durclk_ticks_left_q <= ssi_durclk_ticks_minus_one();
+                        if (ssi_duration_frame_q == 4'hF) begin
+                            // The SSI repeats the current phone until the host
+                            // supplies a new one or powers it down. Keep the
+                            // tract active and wrap its timing phase.
+                            ssi_duration_frame_q <= 4'd0;
+                            ticks <= 5'd0;
+                            phoneme_done <= 1'b1;
+                            if (current_function == 2'd2 ||
+                                current_function == 2'd3) begin
+                                response_done <= 1'b1;
+                            end
+                        end else begin
+                            ssi_duration_frame_q <= ssi_duration_frame_q + 4'd1;
+                            ticks <= {1'b0, ssi_duration_frame_q} + 5'd1;
+                            if (({1'b0, ssi_duration_frame_q} + 5'd1) ==
+                                {1'b0, rom_cld}) begin
+                                closure_active_q <= rom_closure;
+                            end
+                        end
+                    end else begin
+                        ssi_durclk_ticks_left_q <= ssi_durclk_ticks_left_q - 14'd1;
+                    end
+                end
+
+                if (control_update_pending_q) begin
+                    control_update_pending_q <= 1'b0;
+                    if (control_speed_step_q != 6'd0) begin
+                        advance_control(control_speed_step_q);
+                    end
+                    advance_pitch_noise();
+                end else if (audio_tick) begin
+                    chip_accum_next = {1'b0, chip_accum_q} + SC01_CONTROL_UPDATE_RATE;
+                    if (chip_accum_next >= 17'd48000) begin
+                        chip_accum_q <= chip_accum_next - 17'd48000;
+                        advance_inflection();
+                        pitch_limit_q <= pitch_period_limit();
+                        // RATE controls response and phone duration only.
+                        // Articulation is independent of R.
+                        control_speed_step_q <= 6'd1;
+                        control_update_pending_q <= 1'b1;
+                    end else begin
+                        chip_accum_q <= chip_accum_next[15:0];
+                    end
                 end
             end
         end

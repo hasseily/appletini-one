@@ -1,0 +1,59 @@
+{
+  "schema": "appletini.sc02_kicad_validation.v1",
+  "validator": {
+    "name": "kicad-cli",
+    "version": "10.0.5",
+    "container_image": "kicad/kicad:10.0.5",
+    "container_digest": "sha256:182c8005cb775a2c448a4c18681d489f1ff472a761885eba3e08b07e3c0564de"
+  },
+  "input": {
+    "project": "kicad/sc02_prototype.kicad_sch",
+    "symbol_library": "kicad/sc02_generic.kicad_sym",
+    "source_model_sha256": "9b28e9bb51a613fe5808ad301d5b7ba44d55a2eacb4fded82d9e0427c71bdeb6",
+    "source_membership_sha256": "b13d422a2b0338a3080a5e16b092374ad5afddbb8699cf532b3d418d7cdd208f",
+    "kicad_file_count": 11,
+    "kicad_tree_sha256": "dee5e218a980887482379c481e0f0ae8a328e5709b0ead2d4e165ceb7000cbf6",
+    "validated_on_disposable_copy": true
+  },
+  "checks": {
+    "symbol_library_load": "passed",
+    "hierarchy_load_and_upgrade": "passed",
+    "hierarchical_svg_export": {
+      "status": "passed",
+      "page_count": 8,
+      "child_page_count": 7
+    },
+    "xml_netlist": {
+      "status": "passed",
+      "component_count": 785,
+      "net_count": 1088,
+      "node_count": 3519,
+      "unconnected_net_count": 0,
+      "single_node_net_count": 414,
+      "multi_node_net_count": 674
+    },
+    "erc": {
+      "status": "expected_warnings_only",
+      "total": 1199,
+      "categories": [
+        {
+          "type": "endpoint_off_grid",
+          "severity": "warning",
+          "count": 785,
+          "reason": "Generated symbols retain exact PDF anchor coordinates instead of moving them to KiCad's connection grid."
+        },
+        {
+          "type": "isolated_pin_label",
+          "severity": "warning",
+          "count": 414,
+          "reason": "The extracted source has 414 named nets with one pin membership."
+        }
+      ],
+      "other_violation_count": 0
+    }
+  },
+  "annotation_note": {
+    "netlist_export_warning": true,
+    "reason": "The exact source unit references include names such as U117A and C10B, which do not follow KiCad's automatic annotation form. They remain unique and are kept unchanged on purpose."
+  }
+}

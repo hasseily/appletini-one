@@ -1,0 +1,4 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "SC02_Generic")(type "KiCad")(uri "${KIPRJMOD}/sc02_generic.kicad_sym")(options "")(descr "SC-02 source-geometry generic symbols"))
+)

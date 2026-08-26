@@ -1,0 +1,124 @@
+{
+  "board": {},
+  "boards": [],
+  "component_class_settings": {
+    "assignments": [],
+    "meta": {
+      "version": 0
+    },
+    "sheet_component_classes": {
+      "enabled": false
+    }
+  },
+  "cvpcb": {},
+  "erc": {},
+  "libraries": {},
+  "meta": {
+    "filename": "sc02_prototype.kicad_pro",
+    "version": 3
+  },
+  "net_settings": {
+    "classes": [
+      {
+        "bus_width": 12,
+        "clearance": 0.2,
+        "diff_pair_gap": 0.25,
+        "diff_pair_via_gap": 0.25,
+        "diff_pair_width": 0.2,
+        "line_style": 0,
+        "microvia_diameter": 0.3,
+        "microvia_drill": 0.1,
+        "name": "Default",
+        "pcb_color": "rgba(0, 0, 0, 0.000)",
+        "priority": 2147483647,
+        "schematic_color": "rgba(0, 0, 0, 0.000)",
+        "track_width": 0.25,
+        "via_diameter": 0.8,
+        "via_drill": 0.4,
+        "wire_width": 6
+      }
+    ],
+    "meta": {
+      "version": 5
+    },
+    "net_colors": null,
+    "netclass_assignments": {},
+    "netclass_patterns": []
+  },
+  "pcbnew": {},
+  "schematic": {
+    "annotate_start_num": 0,
+    "drawing": {},
+    "legacy_lib_dir": "",
+    "legacy_lib_list": [],
+    "meta": {
+      "version": 1
+    },
+    "net_format_name": "",
+    "ngspice": {},
+    "page_layout_descr_file": "",
+    "plot_directory": "",
+    "spice_adjust_passive_values": false,
+    "spice_current_sheet_as_root": false,
+    "spice_external_command": "spice \"%I\"",
+    "spice_model_current_sheet_as_root": true,
+    "spice_save_all_currents": false,
+    "spice_save_all_dissipations": false,
+    "spice_save_all_voltages": false,
+    "subpart_first_id": 65,
+    "subpart_id_separator": 0,
+    "top_level_sheets": [
+      {
+        "filename": "sc02_prototype.kicad_sch",
+        "name": "Root",
+        "uuid": "0caa363e-c9dd-57bc-b374-24c26e0d0f6f"
+      }
+    ],
+    "variants": []
+  },
+  "sheets": [
+    [
+      "0caa363e-c9dd-57bc-b374-24c26e0d0f6f",
+      "Root"
+    ],
+    [
+      "054e9309-75d8-5329-8b34-5a9ccbef7386",
+      "analog_1.SchDoc"
+    ],
+    [
+      "95f1be04-8da7-5e23-b4c7-5eca2607e6ee",
+      "analog_2.SchDoc"
+    ],
+    [
+      "413cd335-10de-5b0c-a4bf-d8d5235c6578",
+      "digital_1.SchDoc"
+    ],
+    [
+      "d61cffe8-5975-588a-9959-e3822e6abe05",
+      "digital_2.SchDoc"
+    ],
+    [
+      "a1da1138-1799-5653-8f05-9e3a189757d1",
+      "digital_3.SchDoc"
+    ],
+    [
+      "f880202a-0fdf-55c5-a247-da183e35ede2",
+      "digital_4.SchDoc"
+    ],
+    [
+      "8759a975-6873-5b81-9959-320beb5c993e",
+      "digital_5.SchDoc"
+    ]
+  ],
+  "text_variables": {
+    "SC02_GENERATOR": "sc02_kicad_generate 1.0",
+    "SC02_SOURCE": "{\"byte_length\":5080426,\"filename\":\"sc-02_Final_Schematic_V1.00.pdf\",\"path\":\"sc-02_Final_Schematic_V1.00.pdf\",\"pdf_metadata\":{\"author\":\"\",\"creationDate\":\"D:20200920000000\",\"creator\":\"Altium Designer\",\"encryption\":\"\",\"format\":\"PDF 1.4\",\"keywords\":\"Altium\",\"modDate\":\"\",\"producer\":\"llPDFLib 3.x\",\"subject\":\"\",\"title\":\"New Output\",\"trapped\":\"\"},\"sha256\":\"d0e05ea01fc5e823571e140fce5ce9f12a48f1993484d683f075151382adba35\"}",
+    "SC02_VISUAL_LABEL_PLACEMENT": "pin-attached global labels define connectivity; representative visual labels remain in JSON/SVG only"
+  },
+  "tuning_profiles": {
+    "meta": {
+      "version": 0
+    },
+    "tuning_profiles_impedance_geometric": []
+  }
+}

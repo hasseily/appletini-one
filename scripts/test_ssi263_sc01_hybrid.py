@@ -304,9 +304,80 @@ def test_ssi_phone_start_masks_switched_filter_history() -> None:
 def test_timing_refactor_is_exhaustively_equivalent() -> None:
     source = without_sv_comments(read(CORE))
     load_body = _task_body(source, "load_phone")
+    reset_body = _task_body(source, "reset_state")
+
+    require(
+        re.search(r"\blogic\s+pitch_reload_pending_q\s*;", source) is not None,
+        "the SSI pitch reload must have an explicit pending register",
+    )
+
+    pitch_start = re.search(
+        r"active_inflection_q\s*<=\s*next_inflection\s*;\s*"
+        r"if\s*\(\s*start_votrax\s*\)\s*begin"
+        r"(?P<votrax>.*?)\bend\b\s*else\s*begin(?P<ssi>.*?)\bend\b",
+        load_body,
+        flags=re.DOTALL,
+    )
+    require(
+        pitch_start is not None,
+        "load_phone must split immediate Votrax pitch from deferred SSI pitch",
+    )
+    votrax_start = pitch_start.group("votrax")
+    ssi_start = pitch_start.group("ssi")
+    require(
+        re.search(
+            r"pitch_limit_q\s*<=\s*"
+            r"pitch_period_limit_for\s*\(\s*1'b1\s*,\s*next_inflection\s*\)\s*;",
+            votrax_start,
+        ) is not None and
+        re.search(r"pitch_reload_pending_q\s*<=\s*1'b0\s*;",
+                  votrax_start) is not None,
+        "Votrax phone start must still load its pitch immediately and cancel SSI reload",
+    )
+    require(
+        "pitch_limit_q <=" not in ssi_start and
+        re.search(r"pitch_reload_pending_q\s*<=\s*1'b1\s*;",
+                  ssi_start) is not None,
+        "SSI phone start must defer pitch arithmetic by exactly one fabric edge",
+    )
     require(
         load_body.count("pitch_limit_q <=") == 1,
-        "load_phone must select inflection before its sole pitch-limit write",
+        "load_phone must contain only the immediate Votrax pitch write",
+    )
+
+    reload_after_start = re.search(
+        r"if\s*\(\s*start\s*\)\s*begin\s*"
+        r"load_phone\s*\(\s*start_phone\s*\)\s*;\s*"
+        r"end\s*else\s*begin\s*"
+        r"if\s*\(\s*pitch_reload_pending_q\s*\)\s*begin"
+        r"(?P<reload>.*?)\bend\b",
+        source,
+        flags=re.DOTALL,
+    )
+    require(
+        reload_after_start is not None,
+        "the first non-start edge must service a pending SSI pitch reload",
+    )
+    reload_body = reload_after_start.group("reload")
+    require(
+        re.search(
+            r"pitch_limit_q\s*<=\s*ssi263_pitch_period_limit\s*\(\s*"
+            r"active_inflection_q\s*\)\s*;",
+            reload_body,
+        ) is not None and
+        re.search(r"pitch_reload_pending_q\s*<=\s*1'b0\s*;",
+                  reload_body) is not None,
+        "deferred SSI reload must use the captured inflection and clear its pending bit",
+    )
+    require(
+        re.search(r"pitch_reload_pending_q\s*<=\s*1'b0\s*;",
+                  reset_body) is not None,
+        "reset_state must cancel a pending SSI pitch reload",
+    )
+    require(
+        re.search(r"control_update_pending_q\s*<=\s*1'b0\s*;",
+                  load_body) is not None,
+        "phone start must block pitch consumption until after the deferred reload",
     )
     require(
         re.search(

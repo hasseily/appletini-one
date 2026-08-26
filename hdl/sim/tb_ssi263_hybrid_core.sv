@@ -153,6 +153,22 @@ module tb_ssi263_hybrid_core;
         end
     endfunction
 
+    function automatic logic [9:0] expected_votrax_pitch_limit(
+        input logic [11:0] value,
+        input logic [3:0] f1_value
+    );
+        logic [7:0] base_limit;
+        logic [8:0] period_ext;
+        begin
+            base_limit = 8'hE0 ^ {value[11:10], 5'd0};
+            period_ext = {1'b0, (base_limit ^ {f1_value, 1'b0})} +
+                         9'd2;
+            expected_votrax_pitch_limit = period_ext[8] ?
+                                           10'd255 :
+                                           {2'd0, period_ext[7:0]};
+        end
+    endfunction
+
     task automatic start_core_phone(input logic [5:0] phone,
                                     input logic votrax);
         begin
@@ -163,6 +179,22 @@ module tb_ssi263_hybrid_core;
             #1;
             @(negedge clk);
             start = 1'b0;
+        end
+    endtask
+
+    task automatic finish_ssi_pitch_reload(
+        input logic [9:0] expected_limit
+    );
+        begin
+            require(dut.pitch_reload_pending_q,
+                    "SSI start did not arm the deferred pitch reload");
+            @(posedge clk);
+            #1;
+            require(!dut.pitch_reload_pending_q,
+                    "SSI pitch reload remained pending after its idle edge");
+            require(dut.pitch_limit_q == expected_limit,
+                    "SSI pitch reload produced the wrong period limit");
+            @(negedge clk);
         end
     endtask
 
@@ -355,9 +387,231 @@ module tb_ssi263_hybrid_core;
                 require(dut.target_inflection_q == target &&
                         dut.active_inflection_q == target,
                         "non-transitioned start changed the inflection word");
-                require(dut.pitch_limit_q == expected_ssi_pitch_limit(target),
-                        "SSI start pitch limit changed during refactor");
+                require(dut.pitch_reload_pending_q,
+                        "SSI start did not defer its pitch calculation");
+                finish_ssi_pitch_reload(expected_ssi_pitch_limit(target));
             end
+        end
+    endtask
+
+    task automatic test_ssi_pitch_reload_is_audio_idle;
+        logic [9:0]  pitch_before;
+        logic        pitch_gate_before;
+        logic        noise_bit_before;
+        logic [14:0] noise_before;
+        logic [4:0]  ticks_before;
+        logic [4:0]  closure_age_before;
+        logic [55:0] cur_before;
+        logic [28:0] filt_before;
+        logic [11:0] target;
+        begin
+            cold_reset();
+            current_function = 2'd2;
+            duration_phoneme = 8'h80 | 8'h0B;
+            target = 12'hA20;
+            set_inflection_word(target, 4'h0);
+            start_core_phone(6'h0B, 1'b0);
+
+            require(dut.pitch_reload_pending_q,
+                    "SSI start did not expose its one-cycle reload state");
+            pitch_before = pitch;
+            pitch_gate_before = pitch_noise_gate;
+            noise_bit_before = noise_bit;
+            noise_before = dut.noise_q;
+            ticks_before = ticks;
+            closure_age_before = closure_age;
+            cur_before = {cur_fa, cur_fc, cur_va, cur_f1,
+                          cur_f2, cur_f2q, cur_f3};
+            filt_before = {filt_fa, filt_fc, filt_va, filt_f1,
+                           filt_f2, filt_f2q, filt_f3};
+
+            @(posedge clk);
+            #1;
+            require(!dut.pitch_reload_pending_q &&
+                    dut.pitch_limit_q == expected_ssi_pitch_limit(target),
+                    "idle reload edge did not commit the SSI pitch period");
+            require(pitch == pitch_before &&
+                    pitch_noise_gate == pitch_gate_before &&
+                    noise_bit == noise_bit_before &&
+                    dut.noise_q == noise_before,
+                    "SSI pitch reload advanced pitch or noise state");
+            require(ticks == ticks_before &&
+                    closure_age == closure_age_before &&
+                    {cur_fa, cur_fc, cur_va, cur_f1,
+                     cur_f2, cur_f2q, cur_f3} == cur_before &&
+                    {filt_fa, filt_fc, filt_va, filt_f1,
+                     filt_f2, filt_f2q, filt_f3} == filt_before,
+                    "SSI pitch reload changed audio-visible tract state");
+            @(negedge clk);
+        end
+    endtask
+
+    task automatic test_back_to_back_ssi_pitch_reload;
+        logic [11:0] first_target;
+        logic [11:0] final_target;
+        begin
+            cold_reset();
+            current_function = 2'd2;
+            duration_phoneme = 8'h80 | 8'h0B;
+            first_target = 12'h000;
+            final_target = 12'hFFF;
+
+            set_inflection_word(first_target, 4'h0);
+            start_core_phone(6'h0B, 1'b0);
+            require(dut.pitch_reload_pending_q &&
+                    dut.active_inflection_q == first_target,
+                    "first back-to-back SSI start was not retained");
+
+            // Do not give the first start an idle reload edge. The second
+            // start must replace its word before pitch arithmetic runs.
+            set_inflection_word(final_target, 4'h0);
+            start_core_phone(6'h0C, 1'b0);
+            require(dut.pitch_reload_pending_q &&
+                    dut.target_inflection_q == final_target &&
+                    dut.active_inflection_q == final_target,
+                    "final back-to-back SSI start did not win");
+            require(dut.pitch_limit_q !=
+                    expected_ssi_pitch_limit(first_target),
+                    "superseded SSI start updated pitch before an idle edge");
+
+            finish_ssi_pitch_reload(
+                expected_ssi_pitch_limit(final_target));
+            require(dut.pitch_limit_q !=
+                    expected_ssi_pitch_limit(first_target),
+                    "back-to-back reload used the superseded pitch word");
+        end
+    endtask
+
+    task automatic test_ssi_pending_then_votrax_start;
+        logic [9:0] expected_votrax_limit;
+        begin
+            cold_reset();
+            current_function = 2'd2;
+            duration_phoneme = 8'h80 | 8'h0B;
+            set_inflection_word(12'hFFF, 4'h0);
+            start_core_phone(6'h0B, 1'b0);
+            require(dut.pitch_reload_pending_q,
+                    "cross-mode test did not arm the SSI pitch reload");
+
+            // A direct Votrax start on the next edge must cancel the deferred
+            // SSI work and load its SC-01 pitch on that same start edge.
+            current_function = 2'd0;
+            duration_phoneme = 8'd0;
+            set_inflection_word(12'h000, 4'h0);
+            expected_votrax_limit =
+                expected_votrax_pitch_limit(12'h000, filt_f1);
+            start_core_phone(6'h25, 1'b1);
+            require(dut.is_votrax_q && !dut.pitch_reload_pending_q &&
+                    dut.pitch_limit_q == expected_votrax_limit,
+                    "Votrax start did not replace a pending SSI pitch reload");
+
+            @(posedge clk);
+            #1;
+            require(!dut.pitch_reload_pending_q &&
+                    dut.pitch_limit_q == expected_votrax_limit,
+                    "cancelled SSI pitch reload overwrote the Votrax period");
+            @(negedge clk);
+        end
+    endtask
+
+    task automatic test_pitch_reload_audio_tick_collision;
+        logic [11:0] target;
+        logic [9:0] pitch_before;
+        logic       pitch_gate_before;
+        logic       noise_bit_before;
+        begin
+            cold_reset();
+            current_function = 2'd2;
+            duration_phoneme = 8'h80 | 8'h0B;
+            // I=FFF produces a one-count pitch period. It makes the following
+            // control update distinguish the reloaded value from reset's 255.
+            target = 12'hFFF;
+            set_inflection_word(target, 4'h0);
+            start_core_phone(6'h0B, 1'b0);
+            require(dut.pitch_reload_pending_q,
+                    "collision test did not arm the SSI pitch reload");
+
+            pitch_before = pitch;
+            pitch_gate_before = pitch_noise_gate;
+            noise_bit_before = noise_bit;
+            // Make this reload edge also cross the 20 kHz control threshold.
+            // The edge may arm a control update, but it cannot consume pitch.
+            dut.chip_accum_q = 16'd30000;
+            audio_tick = 1'b1;
+            @(posedge clk);
+            #1;
+            require(!dut.pitch_reload_pending_q &&
+                    dut.control_update_pending_q &&
+                    dut.pitch_limit_q == expected_ssi_pitch_limit(target),
+                    "audio-tick collision lost the pending pitch reload");
+            require(pitch == pitch_before &&
+                    pitch_noise_gate == pitch_gate_before &&
+                    noise_bit == noise_bit_before,
+                    "reload/audio-tick collision consumed pitch too early");
+
+            @(negedge clk);
+            audio_tick = 1'b0;
+            @(posedge clk);
+            #1;
+            require(!dut.control_update_pending_q && pitch == 10'd0,
+                    "first control update did not use the reloaded period");
+            @(negedge clk);
+        end
+    endtask
+
+    task automatic test_reset_clears_pitch_reload;
+        begin
+            cold_reset();
+            current_function = 2'd2;
+            duration_phoneme = 8'h80 | 8'h0B;
+            set_inflection_word(12'hA20, 4'h0);
+            start_core_phone(6'h0B, 1'b0);
+            require(dut.pitch_reload_pending_q,
+                    "reset test did not arm the SSI pitch reload");
+
+            reset = 1'b1;
+            @(posedge clk);
+            #1;
+            require(!dut.pitch_reload_pending_q &&
+                    dut.pitch_limit_q == 10'd255,
+                    "warm reset did not cancel the pending pitch reload");
+            @(negedge clk);
+            reset = 1'b0;
+            @(posedge clk);
+            #1;
+            require(!dut.pitch_reload_pending_q &&
+                    dut.pitch_limit_q == 10'd255,
+                    "cancelled pitch reload ran after reset release");
+            @(negedge clk);
+        end
+    endtask
+
+    task automatic test_cold_reset_clears_pitch_reload;
+        begin
+            cold_reset();
+            current_function = 2'd2;
+            duration_phoneme = 8'h80 | 8'h0B;
+            set_inflection_word(12'hA20, 4'h0);
+            start_core_phone(6'h0B, 1'b0);
+            require(dut.pitch_reload_pending_q,
+                    "cold-reset test did not arm the SSI pitch reload");
+
+            rstn = 1'b0;
+            @(posedge clk);
+            #1;
+            require(!dut.pitch_reload_pending_q &&
+                    dut.pitch_limit_q == 10'd255 &&
+                    dut.active_inflection_q == 12'd0 &&
+                    !dut.transitioned_inflection_seeded_q,
+                    "cold reset did not cancel and clear pending pitch state");
+            @(negedge clk);
+            rstn = 1'b1;
+            @(posedge clk);
+            #1;
+            require(!dut.pitch_reload_pending_q &&
+                    dut.pitch_limit_q == 10'd255,
+                    "cancelled pitch reload ran after cold-reset release");
+            @(negedge clk);
         end
     endtask
 
@@ -487,6 +741,11 @@ module tb_ssi263_hybrid_core;
             require(dut.active_inflection_q == expected_active &&
                     dut.active_inflection_q != second_target,
                     "later transitioned phone incorrectly reseeded pitch");
+            finish_ssi_pitch_reload(
+                expected_ssi_pitch_limit(expected_active));
+            require(dut.pitch_limit_q !=
+                    expected_ssi_pitch_limit(second_target),
+                    "transitioned reload used the target instead of mixed pitch word");
         end
     endtask
 
@@ -502,6 +761,10 @@ module tb_ssi263_hybrid_core;
 
             require(dut.is_votrax_q && rom_phone == phone,
                     "Votrax phone did not stay on the SC-01 path");
+            require(!dut.pitch_reload_pending_q &&
+                    dut.pitch_limit_q ==
+                        expected_votrax_pitch_limit(12'h000, 4'd0),
+                    "Votrax start no longer loaded pitch on its start edge");
             require(rom_f1 == sc01a_f1(phone) &&
                     rom_f2 == sc01a_f2(phone) &&
                     rom_f2q == sc01a_f2q(phone) &&
@@ -526,6 +789,12 @@ module tb_ssi263_hybrid_core;
         test_frame_response_is_not_phone_end();
         test_disabled_mode_has_no_response();
         test_all_rate_and_duration_reloads();
+        test_ssi_pitch_reload_is_audio_idle();
+        test_back_to_back_ssi_pitch_reload();
+        test_ssi_pending_then_votrax_start();
+        test_pitch_reload_audio_tick_collision();
+        test_reset_clears_pitch_reload();
+        test_cold_reset_clears_pitch_reload();
         test_all_ssi_start_pitch_limits();
         test_rate_change_waits_for_slot_reload();
         test_idle_restart_duration();

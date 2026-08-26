@@ -85,6 +85,7 @@ module sc01a_digital_core (
     logic        control_update_pending_q;
     logic [5:0]  control_speed_step_q;
     logic [9:0]  pitch_limit_q;
+    logic        pitch_reload_pending_q;
     logic [11:0] target_inflection_q;
     logic [11:0] active_inflection_q;
     logic        transitioned_inflection_seeded_q;
@@ -430,8 +431,20 @@ module sc01a_digital_core (
                 end
             end
             active_inflection_q <= next_inflection;
-            pitch_limit_q <=
-                pitch_period_limit_for(start_votrax, next_inflection);
+            if (start_votrax) begin
+                // Preserve the direct SC-01/Votrax start behavior. Its pitch
+                // also depends on the current F1 filter value.
+                pitch_limit_q <=
+                    pitch_period_limit_for(1'b1, next_inflection);
+                pitch_reload_pending_q <= 1'b0;
+            end else begin
+                // The SSI start word is now local in active_inflection_q.
+                // Reload its period on the next fabric edge to keep the Apple
+                // write/decode path out of the pitch arithmetic. A start edge
+                // clears control_update_pending_q, so no pitch consumer can
+                // run until one edge after this reload has completed.
+                pitch_reload_pending_q <= 1'b1;
+            end
 
             if (next_cld == 4'd0) begin
                 closure_active_q <= next_closure;
@@ -552,6 +565,7 @@ module sc01a_digital_core (
             control_update_pending_q <= 1'b0;
             control_speed_step_q <= 6'd0;
             pitch_limit_q <= 10'd255;
+            pitch_reload_pending_q <= 1'b0;
             target_inflection_q <= 12'd0;
             if (cold_reset) begin
                 active_inflection_q <= 12'd0;
@@ -631,6 +645,12 @@ module sc01a_digital_core (
             if (start) begin
                 load_phone(start_phone);
             end else begin
+                if (pitch_reload_pending_q) begin
+                    pitch_limit_q <=
+                        ssi263_pitch_period_limit(active_inflection_q);
+                    pitch_reload_pending_q <= 1'b0;
+                end
+
                 if (ssi_effective_xck_ce && ssi_response_active_q) begin
                     if (ssi_response_subticks_left_q == 12'd0) begin
                         ssi_response_subticks_left_q <=

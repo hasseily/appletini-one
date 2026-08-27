@@ -127,13 +127,25 @@ void config_menu_draw_boot_settings(uint16_t *fb,
                         (uint8_t)(menu->item_focus == 1U),
                         "Boot device",
                         config_menu_boot_device_text(menu->boot_device));
-    hgr_draw_value_item(fb,
-                        x,
-                        y + (row_h * 2),
-                        w,
-                        (uint8_t)(menu->item_focus == CONFIG_MENU_BOOT_ONEE_ITEM),
-                        "ONE//e standalone",
-                        config_menu_onee_mode_text(menu));
+    if (menu->onee_mode_state == CONFIG_MENU_ONEE_MODE_LOCKED) {
+        hgr_draw_value_item_dimmed(
+            fb,
+            x,
+            y + (row_h * 2),
+            w,
+            (uint8_t)(menu->item_focus == CONFIG_MENU_BOOT_ONEE_ITEM),
+            "ONE//e standalone",
+            config_menu_onee_mode_text(menu));
+    } else {
+        hgr_draw_value_item(
+            fb,
+            x,
+            y + (row_h * 2),
+            w,
+            (uint8_t)(menu->item_focus == CONFIG_MENU_BOOT_ONEE_ITEM),
+            "ONE//e standalone",
+            config_menu_onee_mode_text(menu));
+    }
     if (onee_fixed != 0U) {
         hgr_draw_value_item(
             fb,

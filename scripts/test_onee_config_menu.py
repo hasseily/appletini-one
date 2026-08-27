@@ -93,6 +93,9 @@ def test_menu_row_state_and_exact_help() -> None:
             "config_menu_onee_mode_text(menu)" in boot_draw and
             "y + (row_h * 2)" in boot_draw,
             "Boot Settings must draw the session action in the free third row")
+    require("if (menu->onee_mode_state == CONFIG_MENU_ONEE_MODE_LOCKED) {\n"
+            "        hgr_draw_value_item_dimmed(" in boot_draw,
+            "the ONE//e standalone row must be dimmed while LOCKED")
     require('"ONE//e video standard"' in boot_draw and
             "config_menu_onee_video_standard_text(menu)" in boot_draw and
             "y + (row_h * 3)" in boot_draw and
@@ -109,12 +112,20 @@ def test_menu_row_state_and_exact_help() -> None:
             "a stopped ONE//e must not turn focused PAL/NTSC into Reset USB Bindings")
 
     help_lines = [
-        "Runs the built-in Enhanced Apple //e on Appletini's soft 65C02 without an Apple host.",
-        "The selection survives a card power cycle and starts only after the connector is quiet.",
-        "Any Apple-bus activity stops ONE//e and saves it OFF.",
-        "After the connector is quiet, select this item again to save it ON.",
+        "Runs the Appletini without the Apple //e, using the built in 65c02 accelerator",
+        "and a virtual motherboard.",
+        "This mode is only available when there is no Apple bus activity detected.",
+        "Any such activity disables this mode.",
+        "The standalone mode requires a jumper on the card. Read the documentation for more detail.",
+        "For additional safety, only run the standalone mode when the card is out of the Apple.",
     ]
-    require(all(f'"{line}"' in help_source for line in help_lines) and
+    onee_help = function_slice(help_source,
+                               "HELP(boot_onee,",
+                               "HELP(boot_onee_standard,")
+    help_positions = [onee_help.find(f'"{line}"') for line in help_lines]
+    require(all(position >= 0 for position in help_positions) and
+            help_positions == sorted(help_positions) and
+            onee_help.count('\n    "') == len(help_lines) and
             "OVERRIDE(2,  boot_onee)" in help_source,
             "row 2 help must match the stand-alone plan exactly")
     require("HELP(boot_onee_standard," in help_source and

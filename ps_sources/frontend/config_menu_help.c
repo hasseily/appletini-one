@@ -131,10 +131,12 @@ HELP(boot_device,
     "An Apple host falls back to SmartPort when Disk II is selected but physical Slot 6 is off.");
 
 HELP(boot_onee,
-    "Runs the built-in Enhanced Apple //e on Appletini's soft 65C02 without an Apple host.",
-    "The selection survives a card power cycle and starts only after the connector is quiet.",
-    "Any Apple-bus activity stops ONE//e and saves it OFF.",
-    "After the connector is quiet, select this item again to save it ON.");
+    "Runs the Appletini without the Apple //e, using the built in 65c02 accelerator",
+    "and a virtual motherboard.",
+    "This mode is only available when there is no Apple bus activity detected.",
+    "Any such activity disables this mode.",
+    "The standalone mode requires a jumper on the card. Read the documentation for more detail.",
+    "For additional safety, only run the standalone mode when the card is out of the Apple.");
 
 HELP(boot_onee_standard,
     "Chooses cadence for the built-in ONE//e only: NTSC has 262 lines and 130 fabric clocks per cycle.",

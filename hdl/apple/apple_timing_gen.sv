@@ -35,6 +35,9 @@ module apple_timing_gen (
     // Confirmed with cycle-accurate mid-scanline mode-switch demos.
     localparam logic [6:0] VBL_LOCK_CYCLE = 7'd15;
 
+    /* Wrap on >= not ==: if the standard verdict steps 50 -> 60 Hz while
+     * the counter sits in 262..311, an equality wrap would run the frame
+     * on to 511 before it came back to 0. */
     wire [8:0] line_max = video_mode_50hz ? 9'd311 : 9'd261;
     logic [8:0] current_line_in_frame;
     logic [6:0] current_cycle_in_line;
@@ -65,7 +68,7 @@ module apple_timing_gen (
             line_in_frame <= current_line_in_frame;
             if (current_cycle_in_line == 7'd64) begin
                 current_cycle_in_line <= 7'd0;
-                if (current_line_in_frame == line_max)
+                if (current_line_in_frame >= line_max)
                     current_line_in_frame <= 9'd0;
                 else
                     current_line_in_frame <= current_line_in_frame + 9'd1;

@@ -527,13 +527,15 @@ HELP(transwarp_slowdown_slots,
     "cycle-counting detection. This includes disk controllers, mouse cards, music cards and other",
     "peripherals that expect the Apple bus to run at 1 MHz.",
     "Per-slot slowdown mirrors the real TransWarp's DIP block 2: after the core touches an enabled",
-    "timing-sensitive region, it drops to 1 MHz for the slowdown window, then resumes full speed.");
+    "timing-sensitive region, it drops to 1 MHz for the slowdown window, then resumes full speed.",
+    "Slot 4 is automatically slowed down when the virtual Phasor is active.");
 
 HELP(transwarp_slowdown_window,
     "Controls the duration of the slowdown window for all slowdown regions.",
     "The window is how long (in cycles) each touch stays at 1 MHz. The default of 512 cycles",
-    "should be long enough for most software; pick 16k or 32k when a very fast core needs to",
-    "stay locked through longer stretches, like a beam-synced effect or a long device loop.");
+    "should be long enough for most software; pick 16k, 32k, or the maximum 65535 cycles when",
+    "a very fast core needs to stay locked through longer stretches, like a beam-synced effect",
+    "or a long device loop.");
 
 static const help_override_t transwarp_overrides[] = {
     OVERRIDE(1, transwarp_speed),
@@ -613,8 +615,9 @@ HELP(printing,
     "Each printed page becomes a PNG file in 0:/printouts on the SD card.");
 
 HELP(printing_browse,
-    "Browse the saved printouts with a preview. ENTER renames the selected printout,",
-    "SPACE deletes it after a confirmation. A print job closes a few seconds after the",
+    "Browse the saved printouts with a preview. ENTER opens actions for the selected printout.",
+    "Choose Rename, or choose Delete and confirm it. SPACE remains a direct Delete shortcut.",
+    "A print job closes a few seconds after the",
     "Apple stops sending data; the last partial page is saved at that point.");
 
 static const help_override_t printing_overrides[] = {

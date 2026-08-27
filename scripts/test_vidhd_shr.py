@@ -596,7 +596,7 @@ def test_no_vidhd_identity_and_slot_layout() -> None:
             "firmware slot-control constants must match the PL slot layout")
     require("#define MOUSE_CONTROL_SLOT 2U" in config_menu and
             "#define MOCKINGBOARD_CONTROL_SLOT 4U" in config_menu_internal and
-            '"Phasor"' in config_menu and
+            '"Slot 4 Phasor"' in config_menu and
             "phasor.slot4.enabled=%s\\n" in config_menu_phasor and
             "phasor.pan.%u=%u\\n" in config_menu_phasor and
             "for (uint32_t channel = 0U; channel < MOCKINGBOARD_CHANNEL_COUNT; ++channel)" in config_menu_phasor and

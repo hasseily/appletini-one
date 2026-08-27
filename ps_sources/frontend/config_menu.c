@@ -77,7 +77,7 @@
 #define VTW_SLOW_SLOT_BIT(s)      (1U << ((s) - 1U))   /* s = 1..7 */
 /* Duration presets the menu cycles through (Apple cycles). */
 static const uint16_t k_vtw_slowdown_cycle_presets[] = {
-    256U, 512U, 1024U, 2048U, 4096U, 8192U, 16384U, 32768U
+    256U, 512U, 1024U, 2048U, 4096U, 8192U, 16384U, 32768U, 65535U
 };
 #define CONFIG_DEFAULT_DISK2_ACTIVITY_VISIBLE 1U
 #define CONFIG_DEFAULT_DISK2_SOUND_VOLUME 5U
@@ -4277,6 +4277,12 @@ static uint8_t config_menu_vtw_toggle_focused_slot(config_menu_t *menu)
 
     slot = (uint8_t)(menu->item_focus -
                      CONFIG_TRANSWARP_ITEM_SLOT_FIRST + 1U);
+    if (slot == VTW_MOCKINGBOARD_SLOT &&
+        menu->mockingboard_slot4_enabled != 0U) {
+        config_menu_set_status(menu, 0U,
+            "SLOT 4 AUTO-SLOWED WHILE VIRTUAL PHASOR IS ACTIVE");
+        return 1U;
+    }
     (void)snprintf(name, sizeof(name), "SLOT %u", (unsigned)slot);
     config_menu_vtw_toggle_slowdown_region(menu,
                                            VTW_SLOW_SLOT_BIT(slot), name);
@@ -5558,7 +5564,7 @@ static const char *config_menu_browser_title(uint8_t target)
     case CONFIG_BROWSER_TARGET_PROFILE_IMAGE:
         return "Profile Image PNG";
     case CONFIG_BROWSER_TARGET_PRINTOUT:
-        return "Printouts  ENTER=Rename SPACE=Delete";
+        return "Printouts  -  Select a file for actions";
     default:
         if (config_menu_browser_is_smartport_target(target) != 0U) {
             (void)snprintf(title,
@@ -5810,6 +5816,8 @@ static void config_menu_browser_preview_clear(void)
     memset(&g_browser_preview_cache, 0, sizeof(g_browser_preview_cache));
 }
 
+static void config_menu_browser_preview_prepare(config_menu_t *menu);
+
 /* Re-list the open browser after a printout delete/rename so the entries
  * and the preview match the directory again. */
 void config_menu_browser_reload_after_fileop(config_menu_t *menu)
@@ -5818,7 +5826,9 @@ void config_menu_browser_reload_after_fileop(config_menu_t *menu)
         return;
     }
     config_menu_browser_preview_clear();
-    (void)config_menu_browser_refresh(menu);
+    if (config_menu_browser_refresh(menu) == FR_OK) {
+        config_menu_browser_preview_prepare(menu);
+    }
     config_menu_refresh_smartport_media_after_menu_sd(menu);
 }
 
@@ -6106,10 +6116,10 @@ static uint8_t config_menu_browser_apply_file(config_menu_t *menu, const char *p
     } else if (menu->browser_target == CONFIG_BROWSER_TARGET_PROFILE_IMAGE) {
         config_menu_profiles_set_image_from_png(menu, path);
     } else if (menu->browser_target == CONFIG_BROWSER_TARGET_PRINTOUT) {
-        /* Selecting a printout starts the rename editor over the browser. */
-        config_menu_printing_start_rename(menu,
-                                          config_menu_basename(path),
-                                          path);
+        /* Selecting a printout opens its Rename/Delete action panel. */
+        config_menu_printing_start_actions(menu,
+                                           config_menu_basename(path),
+                                           path);
         return 0U;
     }
     return 1U;
@@ -6981,8 +6991,8 @@ uint8_t config_menu_handle_input(config_menu_t *menu, ui_input_t input)
         return 1U;
     }
 
-    /* Printout rename editor / delete confirm run over the browser, so
-     * they must consume input before the browser block does. */
+    /* Printout action picker / rename editor / delete confirm run over the
+     * browser, so they must consume input before the browser block does. */
     if (config_menu_printing_handle_input(menu, input) != 0U) {
         return 1U;
     }

@@ -561,6 +561,14 @@ def test_transwarp_slot_slowdown_rows() -> None:
             'snprintf(slot_label, sizeof(slot_label), "%u"' in device_tabs and
             "fb, slot_x, y + (6 * row_h), slot_w" in device_tabs,
             "TransWarp tab must show slots 1-7 as checkbox cells under one heading")
+    require("slot == MOCKINGBOARD_CONTROL_SLOT" in device_tabs and
+            "menu->mockingboard_slot4_enabled != 0U" in device_tabs and
+            "const uint8_t checked =\n"
+            "            (uint8_t)(phasor_auto_slow != 0U ||" in device_tabs and
+            "hgr_draw_check_item_dimmed(\n"
+            "                fb, slot_x, y + (6 * row_h), slot_w" in device_tabs and
+            "(uint8_t)(menu->item_focus == item), checked, slot_label);" in device_tabs,
+            "active virtual Phasor must show slot 4 checked and disabled")
     require('"Slowdown window:", win_val' in device_tabs and
             "hgr_draw_value_item(fb, x, y + (7 * row_h), w" in device_tabs,
             "slowdown window must follow the compact physical-slot row")
@@ -576,9 +584,11 @@ def test_transwarp_slot_slowdown_rows() -> None:
     require("static uint8_t config_menu_vtw_toggle_focused_slot" in source and
             "menu->item_focus -\n"
             "                     CONFIG_TRANSWARP_ITEM_SLOT_FIRST + 1U" in source and
+            "slot == VTW_MOCKINGBOARD_SLOT" in source and
+            "SLOT 4 AUTO-SLOWED WHILE VIRTUAL PHASOR IS ACTIVE" in source and
             "config_menu_vtw_toggle_focused_slot(menu)" not in adjust and
             "(void)config_menu_vtw_toggle_focused_slot(menu);" in activate,
-            "only OK may toggle the focused TransWarp slot checkbox")
+            "only OK may toggle an available focused TransWarp slot checkbox")
     require("vtw_slowdown_slot_cursor" not in header + source + device_tabs,
             "TransWarp slowdown UI must not retain the hidden slot selector")
     require("OVERRIDE(2, transwarp_ignore_c074)" in help_source and
@@ -591,6 +601,9 @@ def test_transwarp_slot_slowdown_rows() -> None:
     for item in range(7, 14):
         require(f"OVERRIDE({item}, transwarp_slowdown_slots)" in help_source,
                 f"TransWarp slot slowdown row {item} must retain contextual help")
+    require("Slot 4 is automatically slowed down when the virtual Phasor is active." in
+            help_source,
+            "TransWarp slot help must explain the automatic virtual Phasor slowdown")
     require('"Slow Floating bus ($C019,$C030-$C05F)"' in device_tabs and
             "CONFIG_TRANSWARP_ITEM_SPEAKER" not in internal + source + device_tabs and
             "CONFIG_TRANSWARP_ITEM_VIDEO" not in internal + source + device_tabs,
@@ -600,6 +613,28 @@ def test_transwarp_slot_slowdown_rows() -> None:
             "menu->vtw_slowdown_mask |= VTW_SLOW_FLOATBUS_BIT;" in source and
             "menu->vtw_slowdown_mask &= VTW_SLOW_VALID_MASK;" in source,
             "config 104 Speaker/Video selections must migrate to Floating-bus I/O")
+
+
+def test_transwarp_slowdown_cycle_presets() -> None:
+    source = read(CONFIG_MENU_C)
+    help_source = read(CONFIG_MENU_HELP_C)
+    match = re.search(
+        r"static const uint16_t k_vtw_slowdown_cycle_presets\[\]\s*=\s*"
+        r"\{(?P<body>[^}]*)\};",
+        source,
+        re.DOTALL,
+    )
+
+    require(match is not None,
+            "TransWarp slowdown presets must remain a 16-bit table")
+    values = [int(value) for value in re.findall(r"(\d+)U", match.group("body"))]
+    require(values == [256, 512, 1024, 2048, 4096, 8192,
+                       16384, 32768, 65535],
+            "TransWarp slowdown presets must end with the 65535-cycle maximum")
+    require("idx = (idx + count + (uint32_t)(delta < 0 ? -1 : 1)) % count;" in source,
+            "TransWarp slowdown preset navigation must wrap in both directions")
+    require("maximum 65535 cycles" in help_source,
+            "TransWarp slowdown help must describe the maximum window")
 
 
 def test_checkbox_rows_ignore_left_right() -> None:
@@ -642,6 +677,7 @@ def main() -> int:
         test_modern_config_menu_ui_contract,
         test_usb_owned_menu_disables_ram_checkbox,
         test_transwarp_slot_slowdown_rows,
+        test_transwarp_slowdown_cycle_presets,
         test_checkbox_rows_ignore_left_right,
     ]
     for test in tests:

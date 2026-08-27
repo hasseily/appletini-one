@@ -43,6 +43,7 @@ def test_sources():
     frontend = read_text("ps_sources/frontend/main.c")
     config = read_text("ps_sources/frontend/config_menu.c")
     printing = read_text("ps_sources/frontend/config_menu_printing.c")
+    printing_help = read_text("ps_sources/frontend/config_menu_help.c")
     service = read_text("ps_sources/frontend/printer_service.c")
 
     require("apple/ssc_card.sv" in hdl_sources and
@@ -102,11 +103,27 @@ def test_sources():
             "CONFIG_BROWSER_TARGET_PRINTOUT" in config and
             '"Printing",' in config,
             "config menu must persist and surface the Printing tab")
+    require("config_menu_printing_start_actions" in config and
+            "Printouts  -  Select a file for actions" in config and
+            '"Rename"' in printing and '"Delete"' in printing and
+            "printout_action_active" in printing and
+            "printout_action_focus" in printing,
+            "selecting a printout must open visible Rename/Delete actions")
     require("config_menu_printing_start_delete" in config and
-            "config_menu_printing_start_rename" in config,
-            "printout browser must route delete/rename actions")
+            "config_menu_printing_start_rename" in printing,
+            "printout action panel must route delete and rename actions")
+    reload_start = config.find("void config_menu_browser_reload_after_fileop")
+    reload_end = config.find("uint8_t config_menu_browser_selected_file",
+                             reload_start)
+    reload_body = config[reload_start:reload_end]
+    require(reload_start >= 0 and reload_end > reload_start and
+            "config_menu_browser_refresh(menu) == FR_OK" in reload_body and
+            "config_menu_browser_preview_prepare(menu);" in reload_body,
+            "printout file changes must reload the selected preview")
     require("f_unlink" in printing and "f_rename" in printing,
             "printout actions must delete and rename through FatFs")
+    require("Choose Rename, or choose Delete and confirm it." in printing_help,
+            "Printing help must describe the visible Rename/Delete actions")
     require("PRINTER_SERVICE_DIR" in service and
             "lodepng_encode_memory" in service and
             "LCT_RGB" in service and

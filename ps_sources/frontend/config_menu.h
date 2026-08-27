@@ -276,7 +276,9 @@ typedef struct {
     uint8_t profile_name_editor_vk_index;
     char profile_name_editor_text[CONFIG_MENU_PATH_LEN];
     char profile_name_editor_target_dir[CONFIG_MENU_PATH_LEN];
-    /* Printout browser file actions (rename editor + delete confirm). */
+    /* Printout browser file actions (action picker, rename, delete confirm). */
+    uint8_t printout_action_active;
+    uint8_t printout_action_focus;
     uint8_t printout_editor_active;
     uint8_t printout_editor_virtual;
     uint8_t printout_editor_vk_index;

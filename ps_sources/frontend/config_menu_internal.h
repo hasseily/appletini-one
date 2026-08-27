@@ -259,6 +259,9 @@ void config_menu_printing_draw_overlays(uint16_t *fb,
                                         int x,
                                         int y,
                                         int w);
+void config_menu_printing_start_actions(config_menu_t *menu,
+                                        const char *name,
+                                        const char *path);
 void config_menu_printing_start_rename(config_menu_t *menu,
                                        const char *name,
                                        const char *path);

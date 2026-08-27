@@ -366,11 +366,8 @@ module apple_top(
     assign onee_video_vblank = (line_in_frame >= 9'd192);
     logic       video_mode_50hz_detected_q;
     logic       video_mode_50hz_valid_q;
-    logic [6:0] detect_cycle_in_line;
-    logic [15:0] detect_line_clk_count;
     logic mouse_vblank_start_pulse;
     logic bm_vbl_cmd_pulse;   // boot ROM CMD_VBL_START (software-paced)
-    localparam [15:0] APPLE_LINE_PERIOD_50HZ_THRESHOLD = 16'd8513;
 
     assign apple_bus_pulse = ab_read.sss_en;
     // The physical host keeps its measured standard. ONE//e instead uses the
@@ -726,36 +723,30 @@ module apple_top(
             apple_reset_prev_q          <= 1'b1;
             apple_reset_release_q       <= 1'b0;
             apple_vblank_lock_seen_q    <= 1'b0;
-            detect_cycle_in_line       <= 7'd0;
-            detect_line_clk_count      <= 16'd0;
-            video_mode_50hz_detected_q <= 1'b0;
-            video_mode_50hz_valid_q    <= 1'b0;
         end else begin
             // Apple RES# is not a PSRAM coherency boundary. Cache contents
             // remain valid across CTRL+RESET.
             apple_reset_release_q     <= !apple_reset_prev_q && ab_read.res;
             apple_reset_prev_q <= ab_read.res;
-            detect_line_clk_count <= detect_line_clk_count + 16'd1;
 
             if (!ab_read.res) begin
                 apple_vblank_lock_seen_q <= 1'b0;
             end else if (set_vblank_start_pulse) begin
                 apple_vblank_lock_seen_q <= 1'b1;
             end
-
-            if (apple_bus_pulse) begin
-                if (detect_cycle_in_line == 7'd64) begin
-                    detect_cycle_in_line       <= 7'd0;
-                    detect_line_clk_count      <= 16'd0;
-                    video_mode_50hz_detected_q <=
-                        ((detect_line_clk_count + 16'd1) >= APPLE_LINE_PERIOD_50HZ_THRESHOLD);
-                    video_mode_50hz_valid_q    <= 1'b1;
-                end else begin
-                    detect_cycle_in_line <= detect_cycle_in_line + 7'd1;
-                end
-            end
         end
     end
+
+    /* Physical host standard from the PHI0 line period, with a 64-line
+     * flip hysteresis: one phantom or missing PHI0 edge must not step the
+     * HDMI mode (video_timing_gen latches this at every frame end). */
+    apple_video_standard_detect apple_video_standard_detect_i (
+        .clk(clk),
+        .resetn(rstn[1]),
+        .apple_bus_pulse(apple_bus_pulse),
+        .video_mode_50hz(video_mode_50hz_detected_q),
+        .video_mode_valid(video_mode_50hz_valid_q)
+    );
 
     apple_timing_gen apple_timing_gen_i (
         .clk(clk),

@@ -67,6 +67,7 @@ apple/ssc_c800.mem
 apple/psram_driver.sv
 apple/psram_simple.sv
 apple/apple_timing_gen.sv
+apple/apple_video_standard_detect.sv
 apple/apple_cycle_capture_pkg.sv
 apple/apple_cycle_capture.sv
 apple/apple_cycle_egress.sv

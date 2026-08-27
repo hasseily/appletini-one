@@ -208,6 +208,23 @@ module apple_bus_wrapper (
     logic [4:0] phi0_maj_hist;
     logic       phi0_filt;
     logic       prev_phi0_filt;
+    /* PHI0 edge lockout. Our own address/park drive (fall+8), INH assert
+     * (fall+32) and DMA write data drive (rise+18..40) couple back into the
+     * PHI0 input through the edge-connector translators. Under a fabric bus
+     * master (vTW) that ringing lasts long enough to beat the majority
+     * filter: thousands of phantom edges per session (busdbg short edges,
+     * extra/missing data_en), each one an extra sss_en that skews the
+     * 50/60 Hz line-period verdict and flaps the HDMI mode.
+     *
+     * After an accepted edge the filtered level is held for
+     * PHI0_EDGE_LOCKOUT_CLKS and the majority output is ignored. The
+     * accepted edge itself is not delayed, so every TAP_* constant holds.
+     * The shortest legal half-period is 7 dots = 489 ns = 65 clocks; 48
+     * clocks (360 ns) covers all of our drive activity and leaves 17 clocks
+     * for filter lag. Legitimate edges can never fall inside the window. */
+    localparam int PHI0_EDGE_LOCKOUT_CLKS = 48;
+    logic [5:0] phi0_lock_cnt_q;
+    wire        phi0_lockout_active = (phi0_lock_cnt_q != 6'd0);
     /* Cycle-integrity forensics: every phi0 fall must be followed by
      * exactly one addr_en strobe before the next fall. A fall arriving
      * with the previous cycle's strobe never emitted = one silently
@@ -350,7 +367,12 @@ module apple_bus_wrapper (
             if (dma_write_request) begin
                 data_override_saved_q <= 1'b0;
                 iiplus_read_inh_dependent_q <= 1'b0;
-                if (phi0_clean_rise) begin
+                /* Raw rise for tight timing, but not inside the edge
+                 * lockout: a phantom rise in the ringing after our own
+                 * address drive would start the data drive ~470 ns early
+                 * (and ring PHI0 again). The real rise arrives 65 clocks
+                 * after the fall, well past the 48-clock window. */
+                if (phi0_clean_rise && !phi0_lockout_active) begin
                     dma_write_phase_q <= 6'd1;
                     data_override_q   <= 1'b0;
                 end else if (dma_write_phase_q != 6'd0) begin
@@ -524,6 +546,7 @@ module apple_bus_wrapper (
             phi0_maj_hist    <= '0;
             phi0_filt        <= 1'b0;
             prev_phi0_filt   <= 1'b0;
+            phi0_lock_cnt_q  <= 6'd0;
             addr_pipe        <= '0;
             data_pipe        <= '0;
             ab_read_r        <= '0;
@@ -538,7 +561,15 @@ module apple_bus_wrapper (
         else begin
             // Track phi0 and inject edge markers into the timing pipes
             phi0_maj_hist  <= {phi0_maj_hist[3:0], phi0_clean};
-            phi0_filt      <= (phi0_ones >= 3'd3);
+            /* Majority output gated by the edge lockout: the flip happens
+             * on the same clock it always did unless a lockout is running,
+             * and a running lockout freezes the filtered level. */
+            if (phi0_lockout_active) begin
+                phi0_lock_cnt_q <= phi0_lock_cnt_q - 6'd1;
+            end else if ((phi0_ones >= 3'd3) != phi0_filt) begin
+                phi0_filt       <= (phi0_ones >= 3'd3);
+                phi0_lock_cnt_q <= 6'(PHI0_EDGE_LOCKOUT_CLKS);
+            end
             prev_phi0_filt <= phi0_filt;
             addr_pipe <= {addr_pipe[ADDR_PIPE_DEPTH-2:0], phi0_fall};
             if (phi0_fall) begin

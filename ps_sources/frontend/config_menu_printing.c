@@ -1,7 +1,7 @@
 /* Printing tab: virtual SSC enable plus the printout browser's file
- * actions. The rename editor and delete confirm draw over the jailed
- * printout browser (config_menu.c routes their input here first). The
- * editor mirrors the profile name editor: raw ASCII when a USB keyboard
+ * actions. The action picker, rename editor, and delete confirm draw over
+ * the jailed printout browser (config_menu.c routes their input here first).
+ * The editor mirrors the profile name editor: raw ASCII when a USB keyboard
  * drives the menu, an on-screen keyboard otherwise. */
 
 #include "config_menu_internal.h"
@@ -24,6 +24,8 @@
 #define CONFIG_PRINTOUT_VK_KEY_H 54
 #define CONFIG_PRINTOUT_VK_KEY_GAP 8
 #define CONFIG_PRINTOUT_VK_KEY_SCALE 2
+#define CONFIG_PRINTOUT_ACTION_RENAME 0U
+#define CONFIG_PRINTOUT_ACTION_DELETE 1U
 
 static const char * const k_printout_vk_keys[CONFIG_PRINTOUT_VK_KEY_COUNT] = {
     "A", "B", "C", "D", "E", "F", "G", "H", "I", "J",
@@ -124,30 +126,43 @@ static void printout_editor_delete(config_menu_t *menu)
     }
 }
 
-static void printout_editor_close(config_menu_t *menu)
+static uint8_t printout_action_set_target(config_menu_t *menu,
+                                          const char *name,
+                                          const char *path)
 {
-    menu->printout_editor_active = 0U;
-    menu->printout_editor_text[0] = '\0';
-    menu->printout_action_name[0] = '\0';
-    menu->printout_action_path[0] = '\0';
-}
-
-void config_menu_printing_start_rename(config_menu_t *menu,
-                                       const char *name,
-                                       const char *path)
-{
-    size_t len;
-
     if (menu == NULL || name == NULL || path == NULL) {
-        return;
+        return 0U;
     }
     (void)snprintf(menu->printout_action_name,
                    sizeof(menu->printout_action_name), "%s", name);
     (void)snprintf(menu->printout_action_path,
                    sizeof(menu->printout_action_path), "%s", path);
+    return 1U;
+}
+
+static void printout_action_close(config_menu_t *menu)
+{
+    menu->printout_action_active = 0U;
+    menu->printout_action_focus = CONFIG_PRINTOUT_ACTION_RENAME;
+    menu->printout_action_name[0] = '\0';
+    menu->printout_action_path[0] = '\0';
+}
+
+static void printout_editor_close(config_menu_t *menu)
+{
+    menu->printout_editor_active = 0U;
+    menu->printout_editor_text[0] = '\0';
+    printout_action_close(menu);
+}
+
+static void printout_editor_open(config_menu_t *menu)
+{
+    size_t len;
+
     /* Prefill without the .png suffix; the commit puts it back. */
     (void)snprintf(menu->printout_editor_text,
-                   sizeof(menu->printout_editor_text), "%s", name);
+                   sizeof(menu->printout_editor_text), "%s",
+                   menu->printout_action_name);
     len = strlen(menu->printout_editor_text);
     if (len > 4U &&
         strcasecmp(&menu->printout_editor_text[len - 4U], ".png") == 0) {
@@ -156,6 +171,8 @@ void config_menu_printing_start_rename(config_menu_t *menu,
     if (len >= CONFIG_PRINTOUT_NAME_MAX) {
         menu->printout_editor_text[CONFIG_PRINTOUT_NAME_MAX - 1U] = '\0';
     }
+    menu->printout_action_active = 0U;
+    menu->printout_action_focus = CONFIG_PRINTOUT_ACTION_RENAME;
     menu->printout_delete_confirm_active = 0U;
     menu->printout_editor_virtual =
         (menu->usb_bindings_editable == 0U) ? 1U : 0U;
@@ -163,19 +180,44 @@ void config_menu_printing_start_rename(config_menu_t *menu,
     menu->printout_editor_active = 1U;
 }
 
+static void printout_delete_confirm_open(config_menu_t *menu)
+{
+    menu->printout_action_active = 0U;
+    menu->printout_action_focus = CONFIG_PRINTOUT_ACTION_DELETE;
+    menu->printout_editor_active = 0U;
+    menu->printout_delete_confirm_active = 1U;
+}
+
+void config_menu_printing_start_actions(config_menu_t *menu,
+                                        const char *name,
+                                        const char *path)
+{
+    if (printout_action_set_target(menu, name, path) == 0U) {
+        return;
+    }
+    menu->printout_editor_text[0] = '\0';
+    menu->printout_editor_active = 0U;
+    menu->printout_delete_confirm_active = 0U;
+    menu->printout_action_focus = CONFIG_PRINTOUT_ACTION_RENAME;
+    menu->printout_action_active = 1U;
+}
+
+void config_menu_printing_start_rename(config_menu_t *menu,
+                                       const char *name,
+                                       const char *path)
+{
+    if (printout_action_set_target(menu, name, path) != 0U) {
+        printout_editor_open(menu);
+    }
+}
+
 void config_menu_printing_start_delete(config_menu_t *menu,
                                        const char *name,
                                        const char *path)
 {
-    if (menu == NULL || name == NULL || path == NULL) {
-        return;
+    if (printout_action_set_target(menu, name, path) != 0U) {
+        printout_delete_confirm_open(menu);
     }
-    (void)snprintf(menu->printout_action_name,
-                   sizeof(menu->printout_action_name), "%s", name);
-    (void)snprintf(menu->printout_action_path,
-                   sizeof(menu->printout_action_path), "%s", path);
-    menu->printout_editor_active = 0U;
-    menu->printout_delete_confirm_active = 1U;
 }
 
 static void printout_status_fresult(config_menu_t *menu,
@@ -206,8 +248,7 @@ static void printout_delete_commit(config_menu_t *menu)
         config_menu_set_status(menu, 0U, text);
     }
     config_menu_browser_reload_after_fileop(menu);
-    menu->printout_action_name[0] = '\0';
-    menu->printout_action_path[0] = '\0';
+    printout_action_close(menu);
 }
 
 static void printout_rename_commit(config_menu_t *menu)
@@ -360,8 +401,34 @@ uint8_t config_menu_printing_handle_input(config_menu_t *menu,
         case UI_KEY_BACK:
         case UI_KEY_ESC:
             menu->printout_delete_confirm_active = 0U;
-            menu->printout_action_name[0] = '\0';
-            menu->printout_action_path[0] = '\0';
+            printout_action_close(menu);
+            return 1U;
+        default:
+            return 1U;
+        }
+    }
+
+    if (menu->printout_action_active != 0U) {
+        switch (input.key) {
+        case UI_KEY_UP:
+        case UI_KEY_PAGE_UP:
+        case UI_KEY_DOWN:
+        case UI_KEY_PAGE_DOWN:
+            menu->printout_action_focus =
+                (menu->printout_action_focus == CONFIG_PRINTOUT_ACTION_RENAME) ?
+                    CONFIG_PRINTOUT_ACTION_DELETE :
+                    CONFIG_PRINTOUT_ACTION_RENAME;
+            return 1U;
+        case UI_KEY_ENTER:
+            if (menu->printout_action_focus == CONFIG_PRINTOUT_ACTION_DELETE) {
+                printout_delete_confirm_open(menu);
+            } else {
+                printout_editor_open(menu);
+            }
+            return 1U;
+        case UI_KEY_BACK:
+        case UI_KEY_ESC:
+            printout_action_close(menu);
             return 1U;
         default:
             return 1U;
@@ -442,6 +509,40 @@ static void printout_fit_text(char *dst, size_t dst_len,
         return;
     }
     (void)snprintf(dst, dst_len, "%s", src);
+}
+
+static void printout_draw_actions(uint16_t *fb,
+                                  const config_menu_t *menu,
+                                  int x,
+                                  int y,
+                                  int w)
+{
+    const int panel_w = 760;
+    const int panel_h = 270;
+    const int panel_x = x + ((w - panel_w) / 2);
+    const int panel_y = y + 70;
+    const int row_h = CMUI_ROW_H + CMUI_ROW_GAP;
+    char line[96];
+
+    fb16_fill_rect(fb, panel_x, panel_y, panel_w, panel_h, CMUI_COLOR_PANEL);
+    fb16_rect(fb, panel_x, panel_y, panel_w, panel_h, CMUI_COLOR_BORDER);
+    cmui_text(fb, panel_x + 20, panel_y + 18, "PRINTOUT ACTIONS",
+              CMUI_COLOR_WARN, CMUI_COLOR_PANEL, CMUI_BODY_SCALE);
+    printout_fit_text(line, sizeof(line), menu->printout_action_name, 44U);
+    cmui_text_clipped(fb, panel_x + 20, panel_y + 58, panel_w - 40,
+                      line, CMUI_COLOR_TEXT, CMUI_COLOR_PANEL,
+                      CMUI_BODY_SCALE);
+    hgr_draw_item(fb, panel_x + 20, panel_y + 100, panel_w - 40,
+                  (uint8_t)(menu->printout_action_focus ==
+                            CONFIG_PRINTOUT_ACTION_RENAME),
+                  "Rename", HGR_WHITE);
+    hgr_draw_item(fb, panel_x + 20, panel_y + 100 + row_h, panel_w - 40,
+                  (uint8_t)(menu->printout_action_focus ==
+                            CONFIG_PRINTOUT_ACTION_DELETE),
+                  "Delete", HGR_ORANGE);
+    cmui_text(fb, panel_x + 20, panel_y + 230,
+              "ENTER = Select    ESC = Back",
+              CMUI_COLOR_MUTED, CMUI_COLOR_PANEL, CMUI_BODY_SCALE);
 }
 
 static void printout_draw_delete_confirm(uint16_t *fb,
@@ -557,5 +658,7 @@ void config_menu_printing_draw_overlays(uint16_t *fb,
         printout_draw_delete_confirm(fb, menu, x, y, w);
     } else if (menu->printout_editor_active != 0U) {
         printout_draw_editor(fb, menu, x, y, w);
+    } else if (menu->printout_action_active != 0U) {
+        printout_draw_actions(fb, menu, x, y, w);
     }
 }

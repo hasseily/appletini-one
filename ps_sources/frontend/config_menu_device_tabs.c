@@ -500,14 +500,25 @@ void config_menu_draw_transwarp(uint16_t *fb,
     for (uint8_t slot = 1U; slot <= CONFIG_TRANSWARP_SLOT_COUNT; ++slot) {
         const uint32_t item = CONFIG_TRANSWARP_ITEM_SLOT_FIRST + slot - 1U;
         const int slot_x = x + ((int)(slot - 1U) * (slot_w + slot_gap));
+        const uint8_t phasor_auto_slow =
+            (uint8_t)(slot == MOCKINGBOARD_CONTROL_SLOT &&
+                      menu->mockingboard_slot4_enabled != 0U);
+        const uint8_t checked =
+            (uint8_t)(phasor_auto_slow != 0U ||
+                      (menu->vtw_slowdown_mask &
+                       (1U << (slot - 1U))) != 0U);
         char slot_label[4];
 
         (void)snprintf(slot_label, sizeof(slot_label), "%u", (unsigned)slot);
-        hgr_draw_check_item(
-            fb, slot_x, y + (6 * row_h), slot_w,
-            (uint8_t)(menu->item_focus == item),
-            (uint8_t)((menu->vtw_slowdown_mask & (1U << (slot - 1U))) != 0U),
-            slot_label);
+        if (phasor_auto_slow != 0U) {
+            hgr_draw_check_item_dimmed(
+                fb, slot_x, y + (6 * row_h), slot_w,
+                (uint8_t)(menu->item_focus == item), checked, slot_label);
+        } else {
+            hgr_draw_check_item(
+                fb, slot_x, y + (6 * row_h), slot_w,
+                (uint8_t)(menu->item_focus == item), checked, slot_label);
+        }
     }
     {
         char win_val[16];

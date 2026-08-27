@@ -104,8 +104,11 @@ def static_contract_checks() -> None:
             "VBL_START_LINE = 9'd192" in timing,
             "scanner is not fixed at 312/262 lines with VBL line 192")
 
-    # This digest covers the pre-existing physical period detector and reset
-    # calibration block. The ONE//e override must route around it, not edit it.
+    # These digests cover the reset calibration block, the physical period
+    # detector instance, and the detector module itself (65-pulse line
+    # period, 8513-clock threshold, 64-line flip hysteresis). The ONE//e
+    # override must route around them, not edit them. Recompute on
+    # deliberate edits.
     detector_start = top.index(
         "    always_ff @(posedge clk) begin\n"
         "        if (!rstn[1]) begin\n"
@@ -115,8 +118,19 @@ def static_contract_checks() -> None:
     detector = top[detector_start:detector_end]
     require(
         hashlib.sha256(detector.encode("utf-8")).hexdigest() ==
-        "2bcd79d884a3b6fa054191ef2df05e79396b58308fd93a142fd167f09ee9408b",
-        "physical Apple PAL/NTSC detector changed",
+        "5bcca128fb9527445e1f17031a6a124900b46134fbeee6af4b48fce466067dde",
+        "physical Apple PAL/NTSC detector block changed",
+    )
+    require(sources.count("apple/apple_video_standard_detect.sv") == 1,
+            "physical standard detector must appear once in hdl_sources.txt")
+    require(".video_mode_50hz(video_mode_50hz_detected_q)" in detector and
+            ".video_mode_valid(video_mode_50hz_valid_q)" in detector,
+            "physical standard detector outputs are not wired")
+    detector_module = read("hdl/apple/apple_video_standard_detect.sv")
+    require(
+        hashlib.sha256(detector_module.encode("utf-8")).hexdigest() ==
+        "40a53e8c62f7f3ed2695d595e9087ba489a60ae1892cf9777931f47f88add59a",
+        "physical Apple PAL/NTSC detector module changed",
     )
     require(
         "assign video_mode_50hz = onee_enable_effective ?\n"

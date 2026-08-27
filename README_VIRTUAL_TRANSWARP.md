@@ -198,6 +198,34 @@ the last real address with R/W=1 with the same `fall+TAP_DRIVE_ADDR`
 discipline. Every cycle on the bus is a clean, fully-driven cycle for the
 motherboard, our own snoop path, and any third-party card.
 
+**PHI0 edge lockout (`apple_bus_wrapper.sv`):** the vTW's own drive
+activity rings the PHI0 input through the edge-connector translators. On a
+PAL //e at Warp speed `busdbg` logged ring events saturated, 2576 short
+edges (filtered PHI0 edges < 300 ns apart) and ~7.5k extra/missing
+`data_en` pairs per session; stock mode logs 0 short edges. Each phantom
+fall is an extra `sss_en`, so the 65-pulse line-period window closed one
+cycle early (8402 < 8513 clocks) and the host standard read 60 Hz for one
+line. `video_timing_gen` latches that verdict at every HDMI frame end, and a
+frame end inside such a line switched H_TOTAL 2640 -> 2200 for one frame:
+the monitor dropped sync for about a second (worse at higher speeds, never
+in stock mode). The wrapper now holds the majority-filtered PHI0 level for
+48 clocks (360 ns) after every accepted edge. The accepted edge itself is
+not delayed, so every `TAP_*` constant holds; the shortest legal half-period
+is 65 clocks, so no real edge can fall inside the window. The DMA write
+phaser's raw-rise start is gated by the same window. Verification:
+`busdbg clear`, run at Warp, `busdbg` must show `short edges=0` and
+`extra/missing data_en=0` while ring events keep counting
+(`tb_phi0_edge_lockout`).
+
+**Host standard hysteresis (`apple_video_standard_detect.sv`):** the
+PAL/NTSC verdict is a physical constant. The first complete line after
+reset decides at once; after that the verdict changes only after 64
+consecutive lines (~4 ms) that all measure the other standard, so no single
+bad line can step the HDMI mode again. `apple_timing_gen` wraps on
+`>= line_max` so a 50 -> 60 Hz step with the scanner above line 261 wraps
+on the next line instead of running to 511 (`tb_apple_video_standard_detect`,
+`tb_apple_timing_gen_wrap`).
+
 **/DMA protocol:** assert during PHI1 following reset-release (TN#2), hold
 until disabled+reset — with one exception: every Apple RES# window releases
 the bus completely (MMU/IOU reset processing requires stock conditions),

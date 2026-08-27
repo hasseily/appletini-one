@@ -39,7 +39,12 @@ SOURCES = [
     "hdl/apple/disk2_card.sv",
     "hdl/apple/linear_text_overlay_card.sv",
     "hdl/apple/smartport_card.sv",
+    "hdl/apple/apple_timing_gen.sv",
+    "hdl/apple/apple_video_standard_detect.sv",
     "hdl/sim/tb_apple_bus_addr_enable.sv",
+    "hdl/sim/tb_phi0_edge_lockout.sv",
+    "hdl/sim/tb_apple_video_standard_detect.sv",
+    "hdl/sim/tb_apple_timing_gen_wrap.sv",
     "hdl/sim/tb_vtw_engine_unit.sv",
     "hdl/sim/tb_vtw_pc_event_pipeline.sv",
     "hdl/sim/tb_vtw_system.sv",
@@ -70,6 +75,9 @@ MEM_FILES = [
 
 BENCHES = [
     ("tb_apple_bus_addr_enable", "APPLE BUS ADDR ENABLE PASS"),
+    ("tb_phi0_edge_lockout", "PHI0 EDGE LOCKOUT PASS"),
+    ("tb_apple_video_standard_detect", "APPLE VIDEO STANDARD DETECT PASS"),
+    ("tb_apple_timing_gen_wrap", "APPLE TIMING GEN WRAP PASS"),
     ("tb_vtw_engine_unit", "VTW ENGINE UNIT PASS"),
     ("tb_vtw_pc_event_pipeline", "VTW PC EVENT PIPELINE PASS"),
     ("tb_vtw_system", "VTW SYSTEM PASS"),

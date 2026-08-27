@@ -25,6 +25,9 @@ Use the sources in this order:
 4. Real Phasor captures settle sound level and any production detail that the
    prototype cannot prove.
 
+The ROM address, byte layout, and prototype-derived `TPARM` control paths are
+recorded in [SSI263_SC02_ROM_FORMAT.md](SSI263_SC02_ROM_FORMAT.md).
+
 Do not add a sound tweak that conflicts with one of the first three sources.
 Do not move a chip fault into the Phasor card mix or output stage.
 

@@ -112,9 +112,8 @@ def test_menu_row_state_and_exact_help() -> None:
             "a stopped ONE//e must not turn focused PAL/NTSC into Reset USB Bindings")
 
     help_lines = [
-        "Runs the Appletini without the Apple //e, using the built in 65c02 accelerator",
-        "and a virtual motherboard.",
-        "This mode is only available when there is no Apple bus activity detected.",
+        "Runs the Appletini without the Apple //e, using the built-in 65c02 accelerator and a virtual",
+        "motherboard. This mode is only available when there is no Apple bus activity detected.",
         "Any such activity disables this mode.",
         "The standalone mode requires a jumper on the card. Read the documentation for more detail.",
         "For additional safety, only run the standalone mode when the card is out of the Apple.",

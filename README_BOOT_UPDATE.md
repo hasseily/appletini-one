@@ -37,7 +37,9 @@ It works even when the golden boot already on the card predates B1.2.0.
 2. Put the matching `BOOT.BIN` in the root of the card's SD volume.
 3. Stop USB SD sharing and FTP SD sharing if either is active.
 4. Connect USB0 and open its control serial port at `921600` baud, 8 data bits,
-   no parity, 1 stop bit, and no flow control.
+   no parity, 1 stop bit, and no flow control. You may need the
+   [Silicon Labs CP210x USB-to-UART VCP drivers](https://www.silabs.com/software-and-tools/usb-to-uart-bridge-vcp-drivers?tab=downloads)
+   for the port to appear.
 5. Enter `:selfupdate` and press Enter.
 6. Keep the card powered until all automatic reboots finish and the normal
    frontend starts again.

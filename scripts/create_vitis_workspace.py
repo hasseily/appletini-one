@@ -316,6 +316,178 @@ def enable_fatfs_lfn(domain_bsp: Path):
         print(f"  Patched {bsp_yaml}", flush=True)
 
 
+def enable_fatfs_exfat(domain_bsp: Path):
+    """Keep Vitis 2025.2's exported and build-tree exFAT config in sync.
+
+    domain.set_config() updates bsp.yaml, CMakeCache.txt, and the gen_bsp
+    header, but this Vitis release leaves the exported include header and
+    cmake_lib_configs.txt at their old defaults.
+    """
+    patches = {
+        Path("include") / "xilffs_config.h": [
+            ("/* #undef FILE_SYSTEM_FS_EXFAT */", "#define FILE_SYSTEM_FS_EXFAT"),
+        ],
+        Path("libsrc") / "build_configs" / "gen_bsp" / "include" / "xilffs_config.h": [
+            ("/* #undef FILE_SYSTEM_FS_EXFAT */", "#define FILE_SYSTEM_FS_EXFAT"),
+        ],
+        Path("libsrc") / "build_configs" / "gen_bsp" / "CMakeCache.txt": [
+            ("XILFFS_enable_exfat:BOOL=OFF", "XILFFS_enable_exfat:BOOL=ON"),
+        ],
+        Path("libsrc") / "build_configs" / "gen_bsp" / "cmake_lib_configs.txt": [
+            ("XILFFS_enable_exfat:BOOL=OFF", "XILFFS_enable_exfat:BOOL=ON"),
+        ],
+    }
+
+    for rel_path, replacements in patches.items():
+        path = require_path(f"Find {rel_path}", domain_bsp / rel_path)
+        text = path.read_text()
+        updated = text
+        for old, new in replacements:
+            updated = updated.replace(old, new)
+        if updated != text:
+            path.write_text(updated)
+            print(f"  Patched {path}", flush=True)
+
+
+def patch_fatfs_media_validation(domain_bsp: Path):
+    """Backport the FatFs R0.16 patch-2 media validation checks.
+
+    Vitis 2025.2 supplies xilffs 5.5 with FatFs R0.15a.  FatFs published
+    these bounds checks for R0.16 and earlier in July 2026.  Keep the patch
+    in the reproducible BSP build instead of changing the machine-wide
+    Xilinx install.
+    """
+    path = require_path(
+        "Find FatFs ff.c",
+        domain_bsp / "libsrc" / "xilffs" / "src" / "ff.c",
+    )
+    text = path.read_text()
+
+    patched_checks = (
+        "#define MIN_EXFAT\t0x00000100",
+        "nclst < MIN_EXFAT || nclst > MAX_EXFAT",
+        "fasize >= 0x200000U",
+        "si < dj.dir[XDIR_NumLabel] && si < 11U",
+    )
+    if all(check in text for check in patched_checks):
+        return
+
+    replacements = [
+        (
+            "#define MAX_EXFAT\t0x7FFFFFFD\t\t/* Max exFAT clusters (differs from specs, implementation limit) */\n",
+            "#define MAX_EXFAT\t0x7FFFFFFD\t\t/* Max exFAT clusters (differs from specs, implementation limit) */\n"
+            "#define MIN_EXFAT\t0x00000100\t\t/* Min exFAT clusters (implementation limit) */\n",
+        ),
+        (
+            "\t\tnclst = ld_dword(fs->win + BPB_NumClusEx);\t\t/* Number of clusters */\n"
+            "\t\tif (nclst > MAX_EXFAT) {\n"
+            "\t\t\treturn FR_NO_FILESYSTEM;        /* (Too many clusters) */\n"
+            "\t\t}\n",
+            "\t\tnclst = ld_dword(fs->win + BPB_NumClusEx);\t\t/* Number of clusters */\n"
+            "\t\tif (nclst < MIN_EXFAT || nclst > MAX_EXFAT) {\n"
+            "\t\t\treturn FR_NO_FILESYSTEM;        /* (Wrong cluster count) */\n"
+            "\t\t}\n",
+        ),
+        (
+            "\t\tif (fasize == 0) {\n"
+            "\t\t\tfasize = ld_dword(fs->win + BPB_FATSz32);\n"
+            "\t\t}\n"
+            "\t\tfs->fsize = fasize;\n",
+            "\t\tif (fasize == 0) {\n"
+            "\t\t\tfasize = ld_dword(fs->win + BPB_FATSz32);\n"
+            "\t\t}\n"
+            "\t\tif (fasize >= 0x200000U) {\n"
+            "\t\t\treturn FR_NO_FILESYSTEM;        /* (FAT is too large) */\n"
+            "\t\t}\n"
+            "\t\tfs->fsize = fasize;\n",
+        ),
+        (
+            "\t\t\t\t\tfor (si = di = hs = 0; si < dj.dir[XDIR_NumLabel]; si++) {\t/* Extract volume label from 83 entry */\n",
+            "\t\t\t\t\tfor (si = di = hs = 0; si < dj.dir[XDIR_NumLabel] && si < 11U; si++) {\t/* Extract volume label from 83 entry */\n",
+        ),
+    ]
+
+    for old, new in replacements:
+        if old not in text:
+            raise RuntimeError(
+                f"Could not find expected FatFs media-validation code in {path}:\n{old!r}"
+            )
+        text = text.replace(old, new, 1)
+
+    if not all(check in text for check in patched_checks):
+        raise RuntimeError(f"FatFs media-validation patch is incomplete in {path}")
+    path.write_text(text)
+    print(f"  Patched {path}", flush=True)
+
+
+def verify_fatfs_exfat_configuration(domain_bsp: Path):
+    """Stop if Vitis did not apply exFAT to the shared core-0 BSP."""
+    config_paths = (
+        domain_bsp / "include" / "xilffs_config.h",
+        domain_bsp
+        / "libsrc"
+        / "build_configs"
+        / "gen_bsp"
+        / "include"
+        / "xilffs_config.h",
+    )
+    for path in config_paths:
+        text = require_path("Find generated xilffs_config.h", path).read_text()
+        for marker in (
+            "#define FILE_SYSTEM_FS_EXFAT",
+            "#define FILE_SYSTEM_USE_LFN 1",
+        ):
+            if marker not in text:
+                raise RuntimeError(f"Missing {marker!r} in {path}")
+
+    cache_path = require_path(
+        "Find generated BSP CMake cache",
+        domain_bsp
+        / "libsrc"
+        / "build_configs"
+        / "gen_bsp"
+        / "CMakeCache.txt",
+    )
+    if "XILFFS_enable_exfat:BOOL=ON" not in cache_path.read_text():
+        raise RuntimeError(f"exFAT is not enabled in {cache_path}")
+
+    lib_config_path = require_path(
+        "Find generated BSP library config",
+        domain_bsp
+        / "libsrc"
+        / "build_configs"
+        / "gen_bsp"
+        / "cmake_lib_configs.txt",
+    )
+    if "XILFFS_enable_exfat:BOOL=ON" not in lib_config_path.read_text():
+        raise RuntimeError(f"exFAT is not enabled in {lib_config_path}")
+
+    yaml_path = require_path("Find BSP yaml", domain_bsp / "bsp.yaml")
+    yaml = yaml_path.read_text()
+    option_start = yaml.find("    XILFFS_enable_exfat:")
+    option_end = yaml.find("\n    XILFFS_", option_start + 1)
+    if option_start < 0:
+        raise RuntimeError(f"Missing XILFFS_enable_exfat in {yaml_path}")
+    if option_end < 0:
+        option_end = len(yaml)
+    if "value: 'true'" not in yaml[option_start:option_end]:
+        raise RuntimeError(f"exFAT is not enabled in {yaml_path}")
+
+    ff_path = require_path(
+        "Find patched FatFs ff.c",
+        domain_bsp / "libsrc" / "xilffs" / "src" / "ff.c",
+    )
+    ff_source = ff_path.read_text()
+    for marker in (
+        "#define MIN_EXFAT\t0x00000100",
+        "nclst < MIN_EXFAT || nclst > MAX_EXFAT",
+        "fasize >= 0x200000U",
+        "si < dj.dir[XDIR_NumLabel] && si < 11U",
+    ):
+        if marker not in ff_source:
+            raise RuntimeError(f"Missing FatFs media guard {marker!r} in {ff_path}")
+
+
 def enable_fatfs_timestamp_hook(domain_bsp: Path):
     """Patch generated FatFs get_fattime() to allow a frontend override."""
     path = require_path("Find FatFs diskio.c",
@@ -655,10 +827,39 @@ run_step(
 run_step("Add BSP library xilffs", lambda: domain.set_lib(lib_name="xilffs", path=str(libsw_path / "xilffs_v5_5")))
 run_step("Add BSP library xilflash", lambda: domain.set_lib(lib_name="xilflash", path=str(libsw_path / "xilflash_v4_12")))
 run_step("Add BSP library xilrsa", lambda: domain.set_lib(lib_name="xilrsa", path=str(libsw_path / "xilrsa_v1_8")))
+run_step(
+    "Enable BSP FatFs exFAT support",
+    lambda: domain.set_config(
+        option="lib",
+        param="XILFFS_enable_exfat",
+        value="true",
+        lib_name="xilffs",
+    ),
+)
 run_step("Regenerate standalone_ps7_cortexa9_0 BSP", lambda: domain.regenerate())
+run_step(
+    "Sync generated FatFs exFAT files",
+    lambda: enable_fatfs_exfat(
+        Path("vitis_workspace")
+        / "appletini_platform"
+        / "ps7_cortexa9_0"
+        / "standalone_ps7_cortexa9_0"
+        / "bsp"
+    ),
+)
 run_step(
     "Enable frontend FatFs long filenames",
     lambda: enable_fatfs_lfn(
+        Path("vitis_workspace")
+        / "appletini_platform"
+        / "ps7_cortexa9_0"
+        / "standalone_ps7_cortexa9_0"
+        / "bsp"
+    ),
+)
+run_step(
+    "Patch FatFs media validation",
+    lambda: patch_fatfs_media_validation(
         Path("vitis_workspace")
         / "appletini_platform"
         / "ps7_cortexa9_0"
@@ -679,6 +880,16 @@ run_step(
 run_step(
     "Patch FatFs no-SD-card boot hang",
     lambda: patch_fatfs_no_card_hang(
+        Path("vitis_workspace")
+        / "appletini_platform"
+        / "ps7_cortexa9_0"
+        / "standalone_ps7_cortexa9_0"
+        / "bsp"
+    ),
+)
+run_step(
+    "Verify shared BSP exFAT configuration",
+    lambda: verify_fatfs_exfat_configuration(
         Path("vitis_workspace")
         / "appletini_platform"
         / "ps7_cortexa9_0"
@@ -828,6 +1039,13 @@ def create_and_build_app(name, src_subdir, domain="standalone_ps7_cortexa9_0"):
             ),
         )
     if name == "frontend_core1":
+        run_step(
+            "Remove golden self-update source from frontend_core1",
+            lambda: ensure_userconfig_sources_absent(
+                "frontend_core1",
+                ["../../../ps_sources/lib/golden_self_update.c"],
+            ),
+        )
         # AMP core-1 firmware lives in upper DDR so it does not
         # overlap the much larger core-0 frontend image.
         run_step(

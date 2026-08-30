@@ -5,11 +5,11 @@
  * Manually bump these when generating a new boot image or firmware image.
  * They are displayed by boot_updater (UART) and text_ui_test (UART + Home UI).
  */
-#define APPLETINI_BOOT_IMAGE_VERSION_SHORT      "B1.1.0"
-#define APPLETINI_BOOT_IMAGE_VERSION_FULL       "Boot B1.1.0"
+#define APPLETINI_BOOT_IMAGE_VERSION_SHORT      "B1.2.0"
+#define APPLETINI_BOOT_IMAGE_VERSION_FULL       "Boot B1.2.0"
 
-#define APPLETINI_FIRMWARE_IMAGE_VERSION_SHORT  "F1.0.0"
-#define APPLETINI_FIRMWARE_IMAGE_VERSION_FULL   "Firmware F1.0.0"
+#define APPLETINI_FIRMWARE_IMAGE_VERSION_SHORT  "F1.0.1"
+#define APPLETINI_FIRMWARE_IMAGE_VERSION_FULL   "Firmware F1.0.1"
 
 /* Current updater/flash layout configuration shown in firmware UI. */
 #define APPLETINI_FLASH_LAYOUT_LABEL            "QSPI 16MB single-slot"

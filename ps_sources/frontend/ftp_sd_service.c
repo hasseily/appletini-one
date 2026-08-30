@@ -633,7 +633,8 @@ static void ftp_handle_command(char *line)
             f_stat(fat_path, &info) != FR_OK || (info.fattrib & AM_DIR) != 0U) {
             (void)ftp_reply("550 File unavailable.\r\n");
         } else {
-            (void)ftp_reply("213 %lu\r\n", (unsigned long)info.fsize);
+            (void)ftp_reply("213 %llu\r\n",
+                            (unsigned long long)info.fsize);
         }
     } else if (strcmp(line, "MDTM") == 0) {
         if (make_fat_path(argument, virtual_path, fat_path) != 0 ||
@@ -892,10 +893,10 @@ static int ftp_format_list_line(const FILINFO *info,
     }
     return snprintf((char *)out,
                     out_len,
-                    "%s 1 ftp ftp %10lu %s %02u %02u:%02u %s\r\n",
+                    "%s 1 ftp ftp %10llu %s %02u %02u:%02u %s\r\n",
                     (info->fattrib & AM_DIR) != 0U ?
                         "drwxrwxrwx" : "-rw-rw-rw-",
-                    (unsigned long)info->fsize,
+                    (unsigned long long)info->fsize,
                     (month >= 1U && month <= 12U) ? months[month - 1U] : "Jan",
                     day,
                     hour,

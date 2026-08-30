@@ -1668,7 +1668,7 @@ void uart_control_print_help(const uart_control_t *control, const uart_control_o
         "  L=scanlines  M=menu  Tab/Space/Esc and terminal arrows work\r\n"
         "  : or ; starts a command; ENTER runs it; ? prints this help\r\n"
         "General:\r\n"
-        "  help | status | temp | reboot | reset\r\n"
+        "  help | status | temp | selfupdate | reboot | reset\r\n"
         "  nav <up|down|left|right|e|select|action|back|home|toggle|scanlines|tab|shift-tab|pgup|pgdn|space|esc|menu>\r\n"
         "  machine [auto|force <unknown|iiplus|iie|iigs>]\r\n"
         "Video and audio:\r\n"
@@ -3079,6 +3079,48 @@ static uart_control_event_t process_command(
             snprintf(line, sizeof(line), "0x%08lX: 0x%08lX\r\n",
                      (unsigned long)cur_addr, (unsigned long)value);
             uart_puts(control->control_uart_base, line);
+        }
+        return event;
+    }
+
+    if (str_ieq(argv[0], "selfupdate")) {
+        uint32_t boot_offset = 0U;
+
+        if (argc != 1) {
+            uart_puts(control->control_uart_base,
+                      "usage: selfupdate\r\n");
+            return event;
+        }
+        if (g_config_menu != NULL &&
+            (config_menu_usb0_sd_remote_active(g_config_menu) != 0U ||
+             config_menu_ethernet_ftp_sd_remote_active(g_config_menu) != 0U)) {
+            uart_puts(control->control_uart_base,
+                      "selfupdate: stop USB or FTP SD sharing first\r\n");
+            return event;
+        }
+        if (ops->self_update_boot == NULL) {
+            uart_puts(control->control_uart_base,
+                      "selfupdate: unavailable\r\n");
+            return event;
+        }
+
+        uart_puts(control->control_uart_base,
+                  "selfupdate: checking 0:/BOOT.BIN and recovery firmware\r\n");
+        if (ops->self_update_boot(ops->ctx,
+                                  control->control_uart_base,
+                                  control->debug_uart_base,
+                                  &boot_offset) == 0) {
+            uart_puts(control->control_uart_base,
+                      "selfupdate: trial verified; rebooting into golden B\r\n");
+            if (ops->reboot_qspi_image != NULL) {
+                ops->reboot_qspi_image(ops->ctx, boot_offset);
+            } else {
+                uart_puts(control->control_uart_base,
+                          "selfupdate: reboot-to-trial service unavailable\r\n");
+            }
+        } else {
+            uart_puts(control->control_uart_base,
+                      "selfupdate: failed; see the update log\r\n");
         }
         return event;
     }

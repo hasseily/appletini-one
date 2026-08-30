@@ -84,6 +84,11 @@ typedef struct {
     void (*set_audio_mute)(void *ctx, uint8_t mute);
     void (*set_audio_tone_hz)(void *ctx, uint32_t tone_hz);
     void (*set_audio_amp)(void *ctx, uint32_t amp);
+    int (*self_update_boot)(void *ctx,
+                            uint32_t control_uart_base,
+                            uint32_t mirror_uart_base,
+                            uint32_t *boot_offset_out);
+    void (*reboot_qspi_image)(void *ctx, uint32_t boot_offset);
     void (*reboot_system)(void *ctx);
     void (*psram_qpi)(void *ctx);
     void (*psram_qpi_exit)(void *ctx);

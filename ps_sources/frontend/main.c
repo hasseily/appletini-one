@@ -21,6 +21,7 @@
 #include "../lib/tmp102.h"
 #include "../lib/rtc_pcf8563.h"
 #include "../lib/qspi_nor.h"
+#include "../lib/golden_self_update.h"
 
 #include "uart_control.h"
 #include "card_control_regs.h"
@@ -1707,7 +1708,7 @@ static int control_smartport_read_block(void *ctx,
     return smartport_service_read_block(1U, block_num, buffer, count, actual_out);
 }
 
-static void control_reboot_system(void *ctx)
+static void control_reboot_qspi_image(void *ctx, uint32_t boot_offset)
 {
     const uint32_t slcr_unlock = 0xF8000008U;
     const uint32_t slcr_lock = 0xF8000004U;
@@ -1715,12 +1716,13 @@ static void control_reboot_system(void *ctx)
     const uint32_t slcr_lock_key = 0x0000767BU;
     const uint32_t devcfg_multiboot = 0xF800702CU;
     const uint32_t ps_rst_ctrl = 0xF8000200U;
+    const uint32_t multiboot = boot_offset / 0x00008000U;
 
     (void)ctx;
 
-    /* Force next boot from flash base (golden image) by clearing multiboot offset. */
+    /* Select the 32 KiB-aligned QSPI image used by the next soft reset. */
     REG_WRITE(slcr_unlock, slcr_unlock_key);
-    REG_WRITE(devcfg_multiboot, 0x00000000U);
+    REG_WRITE(devcfg_multiboot, multiboot & 0x1FFFU);
 
     /* Zynq PS soft reset via SLCR. */
     REG_WRITE(ps_rst_ctrl, 0x00000001U);
@@ -1728,6 +1730,36 @@ static void control_reboot_system(void *ctx)
     for (;;) {
         __asm__ volatile("wfi");
     }
+}
+
+static void control_reboot_system(void *ctx)
+{
+    control_reboot_qspi_image(ctx, GOLDEN_SELF_UPDATE_PRIMARY_OFFSET);
+}
+
+static int control_self_update_boot(void *ctx,
+                                    uint32_t control_uart_base,
+                                    uint32_t mirror_uart_base,
+                                    uint32_t *boot_offset_out)
+{
+    golden_self_update_result_t result;
+    int rc;
+
+    (void)ctx;
+    if (boot_offset_out == NULL) {
+        return -1;
+    }
+    rc = golden_self_update_run("0:/BOOT.BIN",
+                                control_uart_base,
+                                mirror_uart_base,
+                                &result);
+    if (rc != 0 || result.updated == 0 || result.verified == 0 ||
+        result.reset_required == 0 ||
+        result.boot_offset != GOLDEN_SELF_UPDATE_TRIAL_OFFSET) {
+        return -1;
+    }
+    *boot_offset_out = result.boot_offset;
+    return 0;
 }
 
 static const uart_control_ops_t g_uart_control_ops = {
@@ -1742,6 +1774,8 @@ static const uart_control_ops_t g_uart_control_ops = {
     .set_audio_mute = control_set_audio_mute,
     .set_audio_tone_hz = control_set_audio_tone_hz,
     .set_audio_amp = control_set_audio_amp,
+    .self_update_boot = control_self_update_boot,
+    .reboot_qspi_image = control_reboot_qspi_image,
     .reboot_system = control_reboot_system,
     .psram_qpi = psram_qpi,
     .psram_qpi_exit = psram_qpi_exit,

@@ -1827,8 +1827,12 @@ static int image_parse_layout(sp_device_t *dev,
     uint8_t header[SP_2MG_HEADER_SIZE];
     UINT br = 0U;
     FRESULT fr;
-    uint32_t raw_bytes = (file_size > (FSIZE_t)UINT32_MAX) ?
-                         UINT32_MAX : (uint32_t)file_size;
+    uint32_t raw_bytes;
+
+    if (file_size > (FSIZE_t)UINT32_MAX) {
+        return -2;
+    }
+    raw_bytes = (uint32_t)file_size;
 
     *data_offset = 0U;
     *data_bytes = raw_bytes - (raw_bytes % SP_BLOCK_SIZE);

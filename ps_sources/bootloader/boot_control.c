@@ -25,13 +25,26 @@ void boot_control_soft_reset(void)
     }
 }
 
-void boot_control_boot_qspi_image_offset(uint32_t image_offset_bytes)
+uint32_t boot_control_current_qspi_image_offset(void)
+{
+    return (REG_READ(DEVCFG_MULTIBOOT) & 0x1FFFU) *
+           ZYNQ_MULTIBOOT_GRANULARITY_BYTES;
+}
+
+void boot_control_select_qspi_image_offset(uint32_t image_offset_bytes)
 {
     uint32_t mb = image_offset_bytes / ZYNQ_MULTIBOOT_GRANULARITY_BYTES;
 
-    /* Zynq FSBL computes image start = multiboot_reg * 0x8000. */
     REG_WRITE(SLCR_UNLOCK, SLCR_UNLOCK_KEY);
     REG_WRITE(DEVCFG_MULTIBOOT, mb & 0x1FFFU);
+    REG_WRITE(SLCR_LOCK, SLCR_LOCK_KEY);
+}
+
+void boot_control_boot_qspi_image_offset(uint32_t image_offset_bytes)
+{
+    /* Zynq FSBL computes image start = multiboot_reg * 0x8000. */
+    boot_control_select_qspi_image_offset(image_offset_bytes);
+    REG_WRITE(SLCR_UNLOCK, SLCR_UNLOCK_KEY);
     REG_WRITE(PS_RST_CTRL_REG, PS_RST_MASK);
     REG_WRITE(SLCR_LOCK, SLCR_LOCK_KEY);
     for (;;) {

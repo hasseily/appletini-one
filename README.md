@@ -36,7 +36,7 @@ USB behavior, and named profiles. Settings are stored on the card's SD volume.
 
 - Vivado 2025.2
 - Vitis 2025.2
-- A compatible JTAG programmer for hardware generation or direct flash recovery
+- A compatible JTAG programmer for hardware generation and bench work
 - UART access for diagnostics and serial firmware recovery
 
 ## Build
@@ -59,12 +59,17 @@ scripts\make_firmware_bin.bat
 - `BOOT.BIN` contains the FSBL and golden updater.
 - `FIRMWARE.BIN` contains the FSBL, PL bitstream, CPU1 renderer, and frontend.
 
+Both build scripts append an image-role, recovery, size, and CRC32 manifest.
+Use matched `BOOT.BIN` and `FIRMWARE.BIN` files from one release. The BOOT
+build fails if the final file exceeds either 1 MiB golden slot.
+
 C-only frontend changes require a Vitis rebuild and a new `FIRMWARE.BIN`; HDL,
 clock, AXI, or constraint changes require the full Vivado and Vitis sequence.
 
 See [README_VIVADO.md](README_VIVADO.md) for hardware-build details and
-[README_BOOT_UPDATE.md](README_BOOT_UPDATE.md) for the flash layout and recovery
-flow. Script-specific usage is in [scripts/SCRIPTS_README.md](scripts/SCRIPTS_README.md).
+[README_BOOT_UPDATE.md](README_BOOT_UPDATE.md) for the flash layout and update
+steps. Script-specific usage is in
+[scripts/SCRIPTS_README.md](scripts/SCRIPTS_README.md).
 
 ## Firmware Installation
 
@@ -81,12 +86,17 @@ Serial recovery is available through the golden monitor:
 python scripts\serial_firmware_update.py .\FIRMWARE.BIN --port COM3 --reboot-golden
 ```
 
-Direct QSPI programming scripts are available for recovery and bring-up:
+### Golden Boot Update
 
-```bat
-scripts\program_boot.bat .\BOOT.BIN
-scripts\program_firmware_slot.bat .\FIRMWARE.BIN
-```
+Frontend Firmware F1.0.1 and later update golden boot through the running
+frontend. Put the matching `BOOT.BIN` in the SD root, stop USB or FTP SD
+sharing, connect to the USB0 control serial port, and enter `:selfupdate`.
+Keep power on until all automatic reboots finish and the normal frontend
+returns.
+
+This is the supported field procedure, including for cards with an older
+golden boot. See the exact steps in
+[README_BOOT_UPDATE.md](README_BOOT_UPDATE.md#golden-boot-update).
 
 ## Validation
 

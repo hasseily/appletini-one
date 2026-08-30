@@ -41,6 +41,7 @@ if not exist "%APP_ELF%" (
 )
 
 set TMP_BIF=%TEMP%\appletini_golden_%RANDOM%%RANDOM%.bif
+set TMP_RAW=%TEMP%\appletini_golden_raw_%RANDOM%%RANDOM%.bin
 
 (
 echo the_ROM_image:
@@ -58,15 +59,26 @@ echo OUT : %OUT_BIN%
 echo FSBL: %FSBL_ELF%
 echo APP : %APP_ELF%
 echo BIF : %TMP_BIF%
+echo RAW : %TMP_RAW%
 echo.
 
-call "%BOOTGEN%" -arch zynq -image "%TMP_BIF%" -o "%OUT_BIN%" -w on
+call "%BOOTGEN%" -arch zynq -image "%TMP_BIF%" -o "%TMP_RAW%" -w on
 set RC=%ERRORLEVEL%
 
 del /q "%TMP_BIF%" >nul 2>nul
 
 if not "%RC%"=="0" (
+    del /q "%TMP_RAW%" >nul 2>nul
     echo ERROR: bootgen failed ^(errorlevel %RC%^)
+    exit /b %RC%
+)
+
+python "%~dp0image_manifest.py" append "%TMP_RAW%" "%OUT_BIN%" --role golden --recovery-capable --max-size 0x100000
+set RC=%ERRORLEVEL%
+del /q "%TMP_RAW%" >nul 2>nul
+
+if not "%RC%"=="0" (
+    echo ERROR: image manifest packaging failed ^(errorlevel %RC%^)
     exit /b %RC%
 )
 

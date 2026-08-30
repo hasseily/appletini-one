@@ -11,6 +11,8 @@
 
 #include "../image_versions.h"
 #include "../lib/crc32.h"
+#include "../lib/golden_self_update.h"
+#include "../lib/number_parse.h"
 #include "../lib/qspi_nor.h"
 #include "../lib/uart.h"
 
@@ -19,6 +21,7 @@
 #define SERIAL_BOOT_SD_ROOT           "0:/"
 #define SERIAL_BOOT_FW_PATH           "0:/FIRMWARE.BIN"
 #define SERIAL_BOOT_RX_TMP_PATH       "0:/FIRMWARE.RX"
+#define SERIAL_BOOT_GOLDEN_PATH       "0:/BOOT.BIN"
 #define SERIAL_BOOT_XMODEM_MAX_RETRY  20U
 #define SERIAL_BOOT_XMODEM_START_TRY  60U
 #define SERIAL_BOOT_XMODEM_BYTE_MS    1000U
@@ -33,6 +36,25 @@
 
 static FATFS g_serial_fs;
 static uint8_t g_xmodem_buf[1024] __attribute__((aligned(64)));
+/* The linker places .bss in DDR. Keep the full golden image out of SD so a
+ * selfrx recovery also works when no card is mounted. */
+static uint8_t g_golden_rx_buf[GOLDEN_SELF_UPDATE_SLOT_SIZE] __attribute__((aligned(64)));
+static uint32_t g_staged_boot_offset = GOLDEN_SELF_UPDATE_TRIAL_OFFSET;
+
+typedef enum {
+    SERIAL_RX_TARGET_SD_FILE = 0,
+    SERIAL_RX_TARGET_MEMORY
+} serial_rx_target_kind_t;
+
+typedef struct {
+    serial_rx_target_kind_t kind;
+    const char *command_name;
+    const char *limit_name;
+    uint32_t max_size;
+    uint8_t *memory;
+    const char *tmp_path;
+    const char *final_path;
+} serial_rx_target_t;
 
 static uint32_t other_uart(uint32_t base)
 {
@@ -74,58 +96,6 @@ static int str_ieq(const char *a, const char *b)
         ++b;
     }
     return (*a == '\0' && *b == '\0') ? 1 : 0;
-}
-
-static uint8_t hex_digit_value(char c, uint8_t *value)
-{
-    if (c >= '0' && c <= '9') {
-        *value = (uint8_t)(c - '0');
-        return 1U;
-    }
-    if (c >= 'a' && c <= 'f') {
-        *value = (uint8_t)(c - 'a' + 10);
-        return 1U;
-    }
-    if (c >= 'A' && c <= 'F') {
-        *value = (uint8_t)(c - 'A' + 10);
-        return 1U;
-    }
-    return 0U;
-}
-
-static int parse_u32(const char *text, uint32_t *out)
-{
-    uint32_t base = 10U;
-    uint64_t value = 0U;
-    uint32_t digits = 0U;
-
-    if (text == NULL || *text == '\0' || out == NULL) {
-        return -1;
-    }
-
-    if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
-        base = 16U;
-        text += 2;
-    }
-
-    while (*text != '\0') {
-        uint8_t digit;
-        if (!hex_digit_value(*text, &digit) || digit >= base) {
-            return -1;
-        }
-        value = (value * base) + digit;
-        if (value > 0xFFFFFFFFULL) {
-            return -1;
-        }
-        ++digits;
-        ++text;
-    }
-
-    if (digits == 0U) {
-        return -1;
-    }
-    *out = (uint32_t)value;
-    return 0;
 }
 
 static int split_args(char *line, char **argv, int max_args)
@@ -228,7 +198,10 @@ static void print_help(void)
     serial_puts_both("[SER]   boot          - boot firmware slot without SD update\r\n");
     serial_puts_both("[SER]   reboot        - reboot back through golden image\r\n");
     serial_puts_both("[SER]   rx [size] [crc32] - receive FIRMWARE.BIN by XMODEM-CRC to SD, then update\r\n");
+    serial_puts_both("[SER]   selfupdate    - stage SD BOOT.BIN in the golden trial slot\r\n");
+    serial_puts_both("[SER]   selfrx <size> <crc32> - receive BOOT.BIN by XMODEM-CRC, then stage it\r\n");
     serial_puts_both("[SER] Size and CRC accept decimal or 0xHEX. Size is recommended to trim XMODEM padding.\r\n");
+    serial_puts_both("[SER] selfrx requires a nonzero size and an explicit CRC32.\r\n");
 }
 
 static void print_status(const flash_layout_t *layout)
@@ -271,12 +244,23 @@ static void print_status(const flash_layout_t *layout)
 
     fr = f_stat(SERIAL_BOOT_FW_PATH, &fi);
     if (fr == FR_OK) {
-        serial_logf("[SER] SD: %s size=%lu\r\n",
+        serial_logf("[SER] SD: %s size=%llu\r\n",
                     SERIAL_BOOT_FW_PATH,
-                    (unsigned long)fi.fsize);
+                    (unsigned long long)fi.fsize);
     } else {
         serial_logf("[SER] SD: no %s fr=%d\r\n",
                     SERIAL_BOOT_FW_PATH,
+                    (int)fr);
+    }
+
+    fr = f_stat(SERIAL_BOOT_GOLDEN_PATH, &fi);
+    if (fr == FR_OK) {
+        serial_logf("[SER] SD: %s size=%llu\r\n",
+                    SERIAL_BOOT_GOLDEN_PATH,
+                    (unsigned long long)fi.fsize);
+    } else {
+        serial_logf("[SER] SD: no %s fr=%d\r\n",
+                    SERIAL_BOOT_GOLDEN_PATH,
                     (int)fr);
     }
 }
@@ -300,12 +284,12 @@ static int receive_block_bytes(uint32_t uart_base, uint8_t *buf, uint32_t len)
     return 0;
 }
 
-static int receive_firmware_xmodem(uint32_t uart_base,
-                                   const flash_layout_t *layout,
-                                   uint8_t have_size,
-                                   uint32_t expected_size,
-                                   uint8_t have_crc,
-                                   uint32_t expected_crc)
+static int receive_xmodem(uint32_t uart_base,
+                          const serial_rx_target_t *target,
+                          uint8_t have_size,
+                          uint32_t expected_size,
+                          uint8_t have_crc,
+                          uint32_t expected_crc)
 {
     FIL f;
     FRESULT fr;
@@ -317,30 +301,51 @@ static int receive_firmware_xmodem(uint32_t uart_base,
     uint8_t file_open = 0U;
     int result = -1;
 
-    if (layout == NULL) {
-        serial_puts_both("[SER] rx failed: no flash layout\r\n");
+    if (target == NULL || target->command_name == NULL || target->limit_name == NULL ||
+        target->max_size == 0U) {
+        serial_puts_both("[SER] rx failed: invalid receive target\r\n");
         return -1;
     }
-    if (have_size != 0U && expected_size > layout->firmware.size) {
-        serial_logf("[SER] rx failed: size %lu exceeds firmware slot %lu\r\n",
+    if (have_size != 0U && expected_size > target->max_size) {
+        serial_logf("[SER] %s failed: size %lu exceeds %s %lu\r\n",
+                    target->command_name,
                     (unsigned long)expected_size,
-                    (unsigned long)layout->firmware.size);
+                    target->limit_name,
+                    (unsigned long)target->max_size);
         return -1;
     }
 
-    fr = serial_sd_mount();
-    if (fr != FR_OK) {
-        serial_logf("[SER] rx failed: SD mount fr=%d\r\n", (int)fr);
-        return -1;
-    }
+    if (target->kind == SERIAL_RX_TARGET_SD_FILE) {
+        if (target->tmp_path == NULL || target->final_path == NULL) {
+            serial_puts_both("[SER] rx failed: invalid SD receive target\r\n");
+            return -1;
+        }
+        fr = serial_sd_mount();
+        if (fr != FR_OK) {
+            serial_logf("[SER] %s failed: SD mount fr=%d\r\n",
+                        target->command_name,
+                        (int)fr);
+            return -1;
+        }
 
-    (void)f_unlink(SERIAL_BOOT_RX_TMP_PATH);
-    fr = f_open(&f, SERIAL_BOOT_RX_TMP_PATH, FA_CREATE_ALWAYS | FA_WRITE);
-    if (fr != FR_OK) {
-        serial_logf("[SER] rx failed: open temp fr=%d\r\n", (int)fr);
+        (void)f_unlink(target->tmp_path);
+        fr = f_open(&f, target->tmp_path, FA_CREATE_ALWAYS | FA_WRITE);
+        if (fr != FR_OK) {
+            serial_logf("[SER] %s failed: open temp fr=%d\r\n",
+                        target->command_name,
+                        (int)fr);
+            return -1;
+        }
+        file_open = 1U;
+    } else if (target->kind == SERIAL_RX_TARGET_MEMORY) {
+        if (target->memory == NULL) {
+            serial_puts_both("[SER] selfrx failed: no receive buffer\r\n");
+            return -1;
+        }
+    } else {
+        serial_puts_both("[SER] rx failed: invalid receive target kind\r\n");
         return -1;
     }
-    file_open = 1U;
 
     uart_puts(uart_base, "\r\n[SER] Start XMODEM-CRC sender now.\r\n");
     uart_puts(uart_base, "[SER] Protocol bytes will follow on this UART.\r\n");
@@ -385,7 +390,6 @@ static int receive_firmware_xmodem(uint32_t uart_base,
         }
 
         if (header == XMODEM_EOT) {
-            uart_putc_one(uart_base, (char)XMODEM_ACK);
             if (have_size != 0U && total_written != expected_size) {
                 uart_puts(uart_base, "\r\n[SER] rx failed: short transfer\r\n");
                 goto out_abort;
@@ -395,23 +399,27 @@ static int receive_firmware_xmodem(uint32_t uart_base,
                 uart_puts(uart_base, "\r\n[SER] rx failed: CRC32 mismatch\r\n");
                 goto out_abort;
             }
-            if (f_sync(&f) != FR_OK) {
-                uart_puts(uart_base, "\r\n[SER] rx failed: f_sync\r\n");
-                goto out_abort;
-            }
-            if (f_close(&f) != FR_OK) {
-                uart_puts(uart_base, "\r\n[SER] rx failed: close\r\n");
+            if (target->kind == SERIAL_RX_TARGET_SD_FILE) {
+                if (f_sync(&f) != FR_OK) {
+                    uart_puts(uart_base, "\r\n[SER] rx failed: f_sync\r\n");
+                    goto out_abort;
+                }
+                if (f_close(&f) != FR_OK) {
+                    uart_puts(uart_base, "\r\n[SER] rx failed: close\r\n");
+                    file_open = 0U;
+                    goto out_abort;
+                }
                 file_open = 0U;
-                goto out_unlink;
+                (void)f_unlink(target->final_path);
+                fr = f_rename(target->tmp_path, target->final_path);
+                if (fr != FR_OK) {
+                    serial_logf("\r\n[SER] rx failed: rename fr=%d\r\n", (int)fr);
+                    goto out_abort;
+                }
             }
-            file_open = 0U;
-            (void)f_unlink(SERIAL_BOOT_FW_PATH);
-            fr = f_rename(SERIAL_BOOT_RX_TMP_PATH, SERIAL_BOOT_FW_PATH);
-            if (fr != FR_OK) {
-                serial_logf("\r\n[SER] rx failed: rename fr=%d\r\n", (int)fr);
-                goto out_unlink;
-            }
-            serial_logf("\r\n[SER] rx complete: wrote %lu bytes crc32=0x%08lX\r\n",
+            uart_putc_one(uart_base, (char)XMODEM_ACK);
+            serial_logf("\r\n[SER] %s complete: wrote %lu bytes crc32=0x%08lX\r\n",
+                        target->command_name,
                         (unsigned long)total_written,
                         (unsigned long)crc32);
             result = 0;
@@ -482,14 +490,18 @@ static int receive_firmware_xmodem(uint32_t uart_base,
             if (have_size != 0U && (total_written + to_write) > expected_size) {
                 to_write = expected_size - total_written;
             }
-            if ((total_written + to_write) > layout->firmware.size) {
-                uart_puts(uart_base, "\r\n[SER] rx failed: file exceeds firmware slot\r\n");
+            if ((total_written + to_write) > target->max_size) {
+                uart_puts(uart_base, "\r\n[SER] rx failed: file exceeds target\r\n");
                 goto out_abort;
             }
-            fr = f_write(&f, g_xmodem_buf, (UINT)to_write, &wrote);
-            if (fr != FR_OK || wrote != to_write) {
-                uart_puts(uart_base, "\r\n[SER] rx failed: SD write\r\n");
-                goto out_abort;
+            if (target->kind == SERIAL_RX_TARGET_MEMORY) {
+                memcpy(&target->memory[total_written], g_xmodem_buf, to_write);
+            } else {
+                fr = f_write(&f, g_xmodem_buf, (UINT)to_write, &wrote);
+                if (fr != FR_OK || wrote != to_write) {
+                    uart_puts(uart_base, "\r\n[SER] rx failed: SD write\r\n");
+                    goto out_abort;
+                }
             }
             crc32 = crc32_update(crc32, g_xmodem_buf, to_write);
             total_written += to_write;
@@ -505,10 +517,113 @@ out_abort:
     if (file_open != 0U) {
         (void)f_close(&f);
     }
-out_unlink:
-    (void)f_unlink(SERIAL_BOOT_RX_TMP_PATH);
+    if (target->kind == SERIAL_RX_TARGET_SD_FILE) {
+        (void)f_unlink(target->tmp_path);
+    }
 out_done:
     return result;
+}
+
+static int receive_firmware_xmodem(uint32_t uart_base,
+                                   const flash_layout_t *layout,
+                                   uint8_t have_size,
+                                   uint32_t expected_size,
+                                   uint8_t have_crc,
+                                   uint32_t expected_crc)
+{
+    serial_rx_target_t target;
+
+    if (layout == NULL) {
+        serial_puts_both("[SER] rx failed: no flash layout\r\n");
+        return -1;
+    }
+
+    target.kind = SERIAL_RX_TARGET_SD_FILE;
+    target.command_name = "rx";
+    target.limit_name = "firmware slot";
+    target.max_size = layout->firmware.size;
+    target.memory = NULL;
+    target.tmp_path = SERIAL_BOOT_RX_TMP_PATH;
+    target.final_path = SERIAL_BOOT_FW_PATH;
+    return receive_xmodem(uart_base,
+                          &target,
+                          have_size,
+                          expected_size,
+                          have_crc,
+                          expected_crc);
+}
+
+static int receive_golden_xmodem(uint32_t uart_base,
+                                 uint32_t expected_size,
+                                 uint32_t expected_crc)
+{
+    serial_rx_target_t target;
+
+    target.kind = SERIAL_RX_TARGET_MEMORY;
+    target.command_name = "selfrx";
+    target.limit_name = "golden slot";
+    target.max_size = GOLDEN_SELF_UPDATE_SLOT_SIZE;
+    target.memory = g_golden_rx_buf;
+    target.tmp_path = NULL;
+    target.final_path = NULL;
+    return receive_xmodem(uart_base,
+                          &target,
+                          1U,
+                          expected_size,
+                          1U,
+                          expected_crc);
+}
+
+static serial_boot_action_t run_golden_self_update_from_sd(uint32_t uart_base)
+{
+    golden_self_update_result_t result;
+    FRESULT fr;
+
+    fr = serial_sd_mount();
+    if (fr != FR_OK) {
+        serial_logf("[SER] selfupdate failed: SD mount fr=%d\r\n", (int)fr);
+        return SERIAL_BOOT_ACTION_NONE;
+    }
+
+    serial_logf("[SER] Staging %s in the golden trial slot\r\n",
+                SERIAL_BOOT_GOLDEN_PATH);
+    if (golden_self_update_run(SERIAL_BOOT_GOLDEN_PATH,
+                               uart_base,
+                               other_uart(uart_base),
+                               &result) != 0 ||
+        result.updated == 0 || result.verified == 0 ||
+        result.reset_required == 0 ||
+        result.boot_offset != GOLDEN_SELF_UPDATE_TRIAL_OFFSET) {
+        serial_puts_both("[SER] selfupdate failed; staying in monitor\r\n");
+        return SERIAL_BOOT_ACTION_NONE;
+    }
+
+    g_staged_boot_offset = result.boot_offset;
+    serial_puts_both("[SER] Golden trial verified; booting trial slot\r\n");
+    return SERIAL_BOOT_ACTION_BOOT_GOLDEN_TRIAL;
+}
+
+static serial_boot_action_t run_golden_self_update_from_memory(uint32_t uart_base,
+                                                               uint32_t image_size)
+{
+    golden_self_update_result_t result;
+
+    serial_puts_both("[SER] Staging received image in the golden trial slot\r\n");
+    if (golden_self_update_run_memory(g_golden_rx_buf,
+                                      image_size,
+                                      uart_base,
+                                      other_uart(uart_base),
+                                      &result) != 0 ||
+        result.updated == 0 || result.verified == 0 ||
+        result.reset_required == 0 ||
+        result.boot_offset != GOLDEN_SELF_UPDATE_TRIAL_OFFSET) {
+        serial_puts_both("[SER] selfrx update failed; staying in monitor\r\n");
+        return SERIAL_BOOT_ACTION_NONE;
+    }
+
+    g_staged_boot_offset = result.boot_offset;
+    serial_puts_both("[SER] Golden trial verified; booting trial slot\r\n");
+    return SERIAL_BOOT_ACTION_BOOT_GOLDEN_TRIAL;
 }
 
 static serial_boot_action_t process_command(uint32_t uart_base,
@@ -546,6 +661,36 @@ static serial_boot_action_t process_command(uint32_t uart_base,
         serial_puts_both("[SER] Rebooting through golden image\r\n");
         return SERIAL_BOOT_ACTION_REBOOT_GOLDEN;
     }
+    if (str_ieq(argv[0], "selfupdate")) {
+        if (argc != 1) {
+            serial_puts_both("[SER] usage: selfupdate\r\n");
+            return SERIAL_BOOT_ACTION_NONE;
+        }
+        return run_golden_self_update_from_sd(uart_base);
+    }
+    if (str_ieq(argv[0], "selfrx")) {
+        uint32_t expected_size;
+        uint32_t expected_crc;
+
+        if (argc != 3 ||
+            appletini_parse_u32(argv[1], &expected_size) != 0 ||
+            appletini_parse_u32(argv[2], &expected_crc) != 0 ||
+            expected_size == 0U) {
+            serial_puts_both("[SER] usage: selfrx <nonzero-size> <crc32>\r\n");
+            return SERIAL_BOOT_ACTION_NONE;
+        }
+        if (expected_size > GOLDEN_SELF_UPDATE_SLOT_SIZE) {
+            serial_logf("[SER] selfrx failed: size %lu exceeds golden slot %lu\r\n",
+                        (unsigned long)expected_size,
+                        (unsigned long)GOLDEN_SELF_UPDATE_SLOT_SIZE);
+            return SERIAL_BOOT_ACTION_NONE;
+        }
+        if (receive_golden_xmodem(uart_base, expected_size, expected_crc) != 0) {
+            serial_puts_both("[SER] selfrx failed; staying in monitor\r\n");
+            return SERIAL_BOOT_ACTION_NONE;
+        }
+        return run_golden_self_update_from_memory(uart_base, expected_size);
+    }
     if (str_ieq(argv[0], "rx") || str_ieq(argv[0], "receive")) {
         uint32_t expected_size = 0U;
         uint32_t expected_crc = 0U;
@@ -553,14 +698,14 @@ static serial_boot_action_t process_command(uint32_t uart_base,
         uint8_t have_crc = 0U;
 
         if (argc >= 2) {
-            if (parse_u32(argv[1], &expected_size) != 0) {
+            if (appletini_parse_u32(argv[1], &expected_size) != 0) {
                 serial_puts_both("[SER] usage: rx [size] [crc32]\r\n");
                 return SERIAL_BOOT_ACTION_NONE;
             }
             have_size = 1U;
         }
         if (argc >= 3) {
-            if (parse_u32(argv[2], &expected_crc) != 0) {
+            if (appletini_parse_u32(argv[2], &expected_crc) != 0) {
                 serial_puts_both("[SER] usage: rx [size] [crc32]\r\n");
                 return SERIAL_BOOT_ACTION_NONE;
             }
@@ -575,6 +720,11 @@ static serial_boot_action_t process_command(uint32_t uart_base,
 
     serial_puts_both("[SER] Unknown command. Use ? or :help\r\n");
     return SERIAL_BOOT_ACTION_NONE;
+}
+
+uint32_t serial_boot_staged_boot_offset(void)
+{
+    return g_staged_boot_offset;
 }
 
 serial_boot_action_t serial_boot_menu(const flash_layout_t *layout,
@@ -603,6 +753,9 @@ serial_boot_action_t serial_boot_menu(const flash_layout_t *layout,
 
         if (poll_any_uart(&base, &c)) {
             if (cmd_mode != 0U) {
+                if (cmd_len == 0U && (c == ':' || c == ';')) {
+                    continue;
+                }
                 if (c == '\r' || c == '\n') {
                     serial_boot_action_t action;
                     uart_puts(cmd_uart, "\r\n");

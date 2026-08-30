@@ -472,6 +472,11 @@ static int profile_read_file(const char *path,
         profile_set_error(errbuf, errbuf_size, "PNG file is empty: %s", path);
         return -1;
     }
+    if (file_size > (FSIZE_t)SIZE_MAX) {
+        (void)f_close(&file);
+        profile_set_error(errbuf, errbuf_size, "PNG file is too large: %s", path);
+        return -1;
+    }
 
     data = (unsigned char *)malloc((size_t)file_size);
     if (data == NULL) {

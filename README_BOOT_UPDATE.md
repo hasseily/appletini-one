@@ -1,62 +1,59 @@
 # Boot and Firmware Update
 
-Appletini One uses a permanent golden updater and one firmware slot in the
-production 128 Mbit / 16 MB Quad SPI flash.
+Appletini One uses two golden-boot slots and one firmware slot in its
+128 Mbit / 16 MB Quad SPI flash.
 
 ## Flash Layout
 
 | Region | Offset | Size | Contents |
 | --- | ---: | ---: | --- |
-| Golden | `0x00000000` | `0x00200000` | `BOOT.BIN`: FSBL + `bootloader.elf` |
-| Firmware | `0x00200000` | `0x00DF0000` | `FIRMWARE.BIN`: FSBL + bitstream + frontend |
-| Metadata | `0x00FF0000` | `0x00010000` | Last verified update record |
+| Golden A | `0x00000000` | `0x00100000` | Primary `BOOT.BIN` |
+| Golden B | `0x00100000` | `0x00100000` | Trial and backup `BOOT.BIN` |
+| Firmware | `0x00200000` | `0x00DF0000` | `FIRMWARE.BIN`: FSBL, bitstream, and apps |
+| Metadata | `0x00FF0000` | `0x00010000` | Last checked firmware record |
 
-The flash is configured as `qspi-x4-single`. Layout constants are defined in
-`ps_sources/bootloader/updater_layout.c` and mirrored for the frontend in
-`ps_sources/image_versions.h`.
+The image build scripts add a 32-byte manifest to each file. It records the
+image role, recovery flag, payload size, and payload CRC32. Use `BOOT.BIN` and
+`FIRMWARE.BIN` from the same release.
 
-## Boot Flow
+## Firmware Update
 
-1. Zynq BootROM loads the golden image at flash offset `0x00000000`.
-2. Golden initializes UART, SD, and QSPI.
-3. If the SD root contains `FIRMWARE.BIN`, golden validates and installs it.
-4. Otherwise, golden boots the verified firmware slot.
-5. If no verified firmware is available, golden remains in the serial monitor.
+1. Put `FIRMWARE.BIN` in the root of the card's SD volume.
+2. Reboot the card.
+3. Let golden boot write and check the firmware slot.
+4. Wait for the updater to rename the file to `FIRMWARE.OK` and start the
+   frontend.
 
-Golden selects the firmware slot through the Zynq multiboot register and a
-software reset. The BootROM then loads the image at `0x00200000`.
+The firmware update path does not write either golden-boot slot. It checks the
+whole flash copy before it marks the firmware as valid.
 
-## Update Guarantees
+## Golden Boot Update
 
-- The SD update path never erases or programs the golden region.
-- The image must fit entirely inside the firmware slot.
-- Every programmed byte is read back and checked before metadata is committed.
-- A successful update renames `FIRMWARE.BIN` to `FIRMWARE.OK`.
-- A failed update keeps `FIRMWARE.BIN` in place and does not mark the slot valid.
-- Metadata is advisory; installation verifies the complete image.
+This is the supported field procedure for frontend Firmware F1.0.1 and later.
+It works even when the golden boot already on the card predates B1.2.0.
 
-Power loss can invalidate the single firmware slot. Recovery uses a valid
-`FIRMWARE.BIN` on SD, the golden serial monitor, or direct QSPI programming.
+1. Install and boot the matching `FIRMWARE.BIN`. Confirm that the normal
+   frontend is F1.0.1 or later.
+2. Put the matching `BOOT.BIN` in the root of the card's SD volume.
+3. Stop USB SD sharing and FTP SD sharing if either is active.
+4. Connect USB0 and open its control serial port at `921600` baud, 8 data bits,
+   no parity, 1 stop bit, and no flow control.
+5. Enter `:selfupdate` and press Enter.
+6. Keep the card powered until all automatic reboots finish and the normal
+   frontend starts again.
 
-## Serial Recovery
+The frontend checks `BOOT.BIN` and the installed recovery firmware before it
+starts an update. It writes and checks Golden B, boots that copy, then repairs
+and checks Golden A. Do not remove power before the normal frontend returns.
 
-During golden's serial window, the host can interrupt automatic boot and send
-an image with XMODEM-CRC. The helper handles the monitor protocol and can reboot
-the running frontend into golden:
-
-```bat
-python scripts\serial_firmware_update.py .\FIRMWARE.BIN --port COM3 --reboot-golden
-```
-
-The uploaded image is written to SD and installed through the same verified
-update path as a manually copied file.
+If a check fails before the first write, the command stops without changing
+either golden-boot slot and reports the cause on USB0.
 
 ## Release Check
 
-1. Regenerate the Vivado project and export a fresh XSA.
-2. Regenerate and build the Vitis workspace.
-3. Build `BOOT.BIN` and `FIRMWARE.BIN` from those outputs.
-4. Install `FIRMWARE.BIN` through golden and confirm readback verification.
-5. Confirm `FIRMWARE.OK`, metadata, frontend version, golden version, and RTL version.
-6. Reboot without an update file and confirm a direct firmware-slot boot.
-7. Confirm that an invalid image is rejected without changing verified metadata.
+1. Build matched `BOOT.BIN` and `FIRMWARE.BIN` files.
+2. Install `FIRMWARE.BIN` and boot its F1.0.1-or-later frontend.
+3. Follow the Golden Boot Update steps above.
+4. Confirm that the log shows the Golden B trial, the Golden A repair and
+   check, and the final boot through Golden A.
+5. Confirm that the normal frontend starts and reports the new golden version.

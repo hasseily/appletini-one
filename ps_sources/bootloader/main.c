@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "../image_versions.h"
+#include "../lib/golden_self_update.h"
 #include "../lib/uart.h"
 
 #include "updater.h"
@@ -61,23 +62,63 @@ static void boot_firmware_slot(const flash_layout_t *layout)
 int main(void)
 {
     updater_result_t res;
+    golden_self_update_result_t repair_result;
     const flash_layout_t *layout = updater_layout_active();
     serial_boot_action_t action;
+    uint32_t current_boot_offset;
     uint8_t metadata_sync_attempted = 0U;
     int run_rc;
 
     uart_init_both(GOLDEN_UART_BAUD);
     golden_led_init();   /* MIO0 status LED, default off */
+    current_boot_offset = boot_control_current_qspi_image_offset();
+    /* Any reset after this point starts its search at primary. If primary is
+     * being repaired, BootROM advances to the still-valid trial slot. */
+    boot_control_select_qspi_image_offset(GOLDEN_SELF_UPDATE_PRIMARY_OFFSET);
     uart_puts(UART0_BASE, "\r\n[GOLDEN] boot_updater start @921600\r\n");
     uart_puts(UART1_BASE, "\r\n[GOLDEN] boot_updater start @921600\r\n");
     uart_puts(UART0_BASE, "[GOLDEN] Boot image version: " APPLETINI_BOOT_IMAGE_VERSION_FULL "\r\n");
     uart_puts(UART1_BASE, "[GOLDEN] Boot image version: " APPLETINI_BOOT_IMAGE_VERSION_FULL "\r\n");
 
-    action = serial_boot_menu(layout, GOLDEN_SERIAL_BOOT_WINDOW_SECONDS);
+    if (current_boot_offset == GOLDEN_SELF_UPDATE_TRIAL_OFFSET) {
+        uart_puts(UART0_BASE, "[GOLDEN] Running golden trial; repairing primary now\r\n");
+        uart_puts(UART1_BASE, "[GOLDEN] Running golden trial; repairing primary now\r\n");
+        if (golden_self_update_repair_primary(current_boot_offset,
+                                              UART0_BASE,
+                                              UART1_BASE,
+                                              &repair_result) == 0 &&
+            repair_result.updated != 0 && repair_result.verified != 0 &&
+            repair_result.reset_required != 0 &&
+            repair_result.boot_offset == GOLDEN_SELF_UPDATE_PRIMARY_OFFSET) {
+            uart_puts(UART0_BASE, "[GOLDEN] Primary repair verified; booting @0x");
+            uart_puts(UART1_BASE, "[GOLDEN] Primary repair verified; booting @0x");
+            print_hex32(repair_result.boot_offset);
+            uart_puts(UART0_BASE, "\r\n");
+            uart_puts(UART1_BASE, "\r\n");
+            golden_led_off();
+            boot_control_boot_qspi_image_offset(repair_result.boot_offset);
+        }
+        uart_puts(UART0_BASE, "[GOLDEN] Primary repair failed; staying in monitor\r\n");
+        uart_puts(UART1_BASE, "[GOLDEN] Primary repair failed; staying in monitor\r\n");
+        action = serial_boot_menu(layout, 0U);
+    } else {
+        action = serial_boot_menu(layout, GOLDEN_SERIAL_BOOT_WINDOW_SECONDS);
+    }
 
     for (;;) {
         if (action == SERIAL_BOOT_ACTION_REBOOT_GOLDEN) {
             boot_control_soft_reset();
+        }
+
+        if (action == SERIAL_BOOT_ACTION_BOOT_GOLDEN_TRIAL) {
+            uint32_t boot_offset = serial_boot_staged_boot_offset();
+            uart_puts(UART0_BASE, "[GOLDEN] Starting verified golden trial @0x");
+            uart_puts(UART1_BASE, "[GOLDEN] Starting verified golden trial @0x");
+            print_hex32(boot_offset);
+            uart_puts(UART0_BASE, "\r\n");
+            uart_puts(UART1_BASE, "\r\n");
+            golden_led_off();
+            boot_control_boot_qspi_image_offset(boot_offset);
         }
 
         if (action == SERIAL_BOOT_ACTION_BOOT_FIRMWARE) {

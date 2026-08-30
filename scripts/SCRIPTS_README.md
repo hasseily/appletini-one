@@ -79,22 +79,39 @@ vivado -mode batch -source scripts/test_timing_run_properties.tcl
 
 ## Images and Programming
 
-- `make_boot_bin.bat`: create `BOOT.BIN` from the FSBL and golden updater.
+- `make_boot_bin.bat`: create manifest-appended `BOOT.BIN` from the FSBL and
+  golden updater; fail if the final file exceeds a 1 MiB golden slot.
 - `make_firmware_bin.bat`: create `FIRMWARE.BIN` from the FSBL, bitstream,
-  CPU1 renderer, and frontend.
-- `program_boot.bat`: program `BOOT.BIN` at QSPI offset `0x00000000`.
+  CPU1 renderer, and frontend, then append its manifest.
+- `image_manifest.py`: append or verify the fixed image role, recovery, size,
+  and CRC32 manifest.
+- `program_boot.bat`: factory and bench recovery tool that programs `BOOT.BIN`
+  at QSPI offset `0x00000000`; it is not the field-update path.
 - `program_firmware_slot.bat`: program `FIRMWARE.BIN` at `0x00200000`.
 - `serial_firmware_update.py`: upload `FIRMWARE.BIN` through the golden UART
-  monitor using XMODEM-CRC.
+  monitor with XMODEM-CRC.
 
 ```bat
 scripts\make_boot_bin.bat
 scripts\make_firmware_bin.bat
+python scripts\image_manifest.py verify .\BOOT.BIN --role golden --require-recovery-capable
+python scripts\image_manifest.py verify .\FIRMWARE.BIN --role firmware --require-recovery-capable
 python scripts\serial_firmware_update.py .\FIRMWARE.BIN --port COM3 --reboot-golden
 ```
 
 The serial updater requires pyserial. The normal field-update path installs
 `FIRMWARE.BIN` from the SD root and verifies the complete programmed image.
+`make_boot_bin.bat` passes `--max-size 0x100000`; this limit includes the
+32-byte manifest.
+
+The field path for every golden-boot update uses frontend Firmware F1.0.1 or
+later. Boot the matching frontend, put `BOOT.BIN` in the SD root, stop USB or
+FTP SD sharing, and enter `:selfupdate` on USB0. See the
+[Golden Boot Update guide](../README_BOOT_UPDATE.md#golden-boot-update).
+
+Self-update stages and checks the new file in golden B at `0x00100000`. B must
+boot and validate itself before it copies the image to golden A at offset zero.
+B stays valid as A's backup.
 
 ## Generated Apple II Artifacts
 
@@ -144,7 +161,8 @@ their command-line help.
 
 | Region | Offset | Size |
 | --- | ---: | ---: |
-| Golden | `0x00000000` | `0x00200000` |
+| Golden A | `0x00000000` | `0x00100000` |
+| Golden B | `0x00100000` | `0x00100000` |
 | Firmware | `0x00200000` | `0x00DF0000` |
 | Metadata | `0x00FF0000` | `0x00010000` |
 

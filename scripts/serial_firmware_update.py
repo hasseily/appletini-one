@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Upload FIRMWARE.BIN through the golden serial monitor.
+"""Upload firmware or golden boot images through the serial monitor.
 
 The golden monitor accepts:
 
     rx <size> <crc32>
+    selfrx <size> <crc32>
 
-and then receives the file with XMODEM-CRC. This script provides the host
-side so reset capture, command entry, CRC calculation, and XMODEM transfer
-all happen in one process.
+and then receives the image with XMODEM-CRC. This script provides the host
+side so reset capture, command entry, local validation, CRC calculation, and
+XMODEM transfer all happen in one process.
 """
 
 from __future__ import annotations
@@ -17,6 +18,11 @@ import sys
 import time
 import zlib
 from pathlib import Path
+
+try:
+    from . import image_manifest
+except ImportError:  # Direct script execution.
+    import image_manifest
 
 try:
     import serial
@@ -33,6 +39,7 @@ XMODEM_CAN = 0x18
 XMODEM_CRC_REQ = ord("C")
 XMODEM_BLOCK_BYTES = 1024
 XMODEM_PAD = 0x1A
+GOLDEN_IMAGE_MAX_BYTES = 0x00100000
 
 
 def crc16_ccitt(data: bytes) -> int:
@@ -278,9 +285,29 @@ def read_after_update(ser: "serial.Serial", timeout_s: float, quiet: bool) -> No
             print_target(data, quiet)
 
 
+def load_upload_image(image_arg: str | None, golden: bool) -> tuple[Path, bytes]:
+    default_name = "BOOT.BIN" if golden else "FIRMWARE.BIN"
+    image_path = Path(image_arg if image_arg is not None else default_name)
+
+    if golden:
+        image_manifest.verify_image(
+            image_path,
+            expected_role=image_manifest.ROLE_GOLDEN,
+            expected_recovery=True,
+        )
+        image_size = image_path.stat().st_size
+        if image_size > GOLDEN_IMAGE_MAX_BYTES:
+            raise image_manifest.ManifestError(
+                f"golden image is {image_size} bytes, exceeds "
+                f"0x{GOLDEN_IMAGE_MAX_BYTES:X}-byte slot"
+            )
+    return image_path, image_path.read_bytes()
+
+
 def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Upload firmware through the golden serial monitor")
-    ap.add_argument("firmware", nargs="?", default="FIRMWARE.BIN", help="firmware image to send")
+    ap = argparse.ArgumentParser(description="Upload an image through the golden serial monitor")
+    ap.add_argument("image", nargs="?", help="image to send (default: FIRMWARE.BIN or BOOT.BIN with --golden)")
+    ap.add_argument("--golden", action="store_true", help="validate a recovery-capable golden image and send selfrx")
     ap.add_argument("--port", default="COM3", help="golden firmware-update UART port")
     ap.add_argument("--baud", type=int, default=921600, help="UART baud rate")
     ap.add_argument("--list-ports", action="store_true", help="list serial ports and exit")
@@ -308,8 +335,11 @@ def main() -> int:
         print("pyserial is required: python -m pip install pyserial", file=sys.stderr)
         return 2
 
-    firmware_path = Path(args.firmware)
-    payload = firmware_path.read_bytes()
+    try:
+        image_path, payload = load_upload_image(args.image, args.golden)
+    except (image_manifest.ManifestError, OSError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
     crc32 = zlib.crc32(payload) & 0xFFFFFFFF
     expected_crc32 = crc32
     if args.expected_crc32 is not None:
@@ -317,7 +347,8 @@ def main() -> int:
     if args.bad_crc:
         expected_crc32 = (crc32 ^ 0x00000001) & 0xFFFFFFFF
 
-    print(f"[host] firmware={firmware_path} size={len(payload)} crc32=0x{crc32:08X}")
+    image_kind = "golden" if args.golden else "firmware"
+    print(f"[host] {image_kind}={image_path} size={len(payload)} crc32=0x{crc32:08X}")
     if expected_crc32 != crc32:
         print(f"[host] sending expected crc32=0x{expected_crc32:08X}")
     print(f"[host] opening {args.port} @ {args.baud}")
@@ -335,9 +366,10 @@ def main() -> int:
         dsrdtr=False,
     ) as ser:
         wait_for_monitor(ser, args)
-        command = f"rx {len(payload)} 0x{expected_crc32:08X}\r".encode("ascii")
+        command_name = "selfrx" if args.golden else "rx"
+        command = f"{command_name} {len(payload)} 0x{expected_crc32:08X}\r".encode("ascii")
         if not write_bytes(ser, command, args.quiet):
-            raise RuntimeError("serial write failed while sending rx command")
+            raise RuntimeError(f"serial write failed while sending {command_name} command")
         wait_for_xmodem_request(ser, args.command_timeout, args.quiet)
         completed = send_xmodem_1k(ser,
                                    payload,

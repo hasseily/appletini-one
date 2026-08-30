@@ -197,14 +197,14 @@ static int write_update_metadata(qspi_nor_t *nor, const flash_layout_t *layout, 
     return metadata_write_record(nor, layout, &next);
 }
 
-static int file_size_of(const char *path, uint32_t *size_out)
+static int file_size_of(const char *path, FSIZE_t *size_out)
 {
     FILINFO fi;
     FRESULT fr = f_stat(path, &fi);
     if (fr != FR_OK) {
         return XST_FAILURE;
     }
-    *size_out = (uint32_t)fi.fsize;
+    *size_out = fi.fsize;
     return XST_SUCCESS;
 }
 
@@ -457,6 +457,7 @@ int updater_has_verified_firmware(void)
 int updater_run(updater_result_t *r)
 {
     const flash_layout_t *layout = updater_layout_active();
+    FSIZE_t sd_file_size = 0U;
     uint32_t file_size = 0U;
 
     if (!r) {
@@ -472,7 +473,7 @@ int updater_run(updater_result_t *r)
     }
     log_puts("[UPD] SD mounted\r\n");
 
-    if (file_size_of(UPDATE_FILE_PATH, &file_size) != XST_SUCCESS) {
+    if (file_size_of(UPDATE_FILE_PATH, &sd_file_size) != XST_SUCCESS) {
         r->found_file = 0;
         r->error_code = 0;
         r->error_msg[0] = '\0';
@@ -480,12 +481,13 @@ int updater_run(updater_result_t *r)
     }
 
     r->found_file = 1;
-    r->file_size = file_size;
-
-    if (file_size == 0U || file_size > layout->firmware.size) {
+    if (sd_file_size == 0U ||
+        sd_file_size > (FSIZE_t)layout->firmware.size) {
         set_err(r, UPD_E_FILE_SIZE, "invalid file size for firmware region");
         return XST_FAILURE;
     }
+    file_size = (uint32_t)sd_file_size;
+    r->file_size = file_size;
 
     upd_logf("[UPD] Found FIRMWARE.BIN size=%lu bytes\r\n", (unsigned long)file_size);
     return program_firmware_from_sd(layout, r);

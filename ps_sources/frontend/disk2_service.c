@@ -378,6 +378,21 @@ static int file_write_exact_at(FIL *file, uint32_t offset, const void *buf, UINT
     return (wrote == len) ? 0 : -2;
 }
 
+static int file_size_u32(FIL *file, uint32_t *size_out)
+{
+    FSIZE_t size;
+
+    if (file == NULL || size_out == NULL) {
+        return -1;
+    }
+    size = f_size(file);
+    if (size > (FSIZE_t)UINT32_MAX) {
+        return -2;
+    }
+    *size_out = (uint32_t)size;
+    return 0;
+}
+
 static int read_drive_bytes(uint8_t drive, uint32_t offset, void *buf, uint32_t len)
 {
     FIL file;
@@ -1046,7 +1061,11 @@ static int probe_file(uint8_t drive)
     info.read_only = 0U;
     info.volume_number = DISK2_DEFAULT_VOLUME_NUMBER;
     info.format = format;
-    info.file_size = (uint32_t)f_size(&file);
+    if (file_size_u32(&file, &info.file_size) != 0) {
+        (void)f_close(&file);
+        clear_drive_state(drive);
+        return -2;
+    }
     info.image_data_offset = 0U;
     info.image_data_size = info.file_size;
 
@@ -2184,7 +2203,11 @@ static int write_woz_physical_qtrack(uint8_t drive,
     if (fr != FR_OK) {
         return -(int)fr;
     }
-    file_size = (uint32_t)f_size(&file);
+    rc = file_size_u32(&file, &file_size);
+    if (rc != 0) {
+        (void)f_close(&file);
+        return rc;
+    }
 
     if (info->woz_version == 1U) {
         rc = write_woz1_track(&file, info, tmap_index, trk_index, existing,
@@ -2197,8 +2220,10 @@ static int write_woz_physical_qtrack(uint8_t drive,
     }
 
     if (rc == 0) {
-        file_size = (uint32_t)f_size(&file);
-        rc = woz_write_header_crc(&file, file_size);
+        rc = file_size_u32(&file, &file_size);
+        if (rc == 0) {
+            rc = woz_write_header_crc(&file, file_size);
+        }
     }
     if (rc == 0) {
         FRESULT sync_fr = f_sync(&file);

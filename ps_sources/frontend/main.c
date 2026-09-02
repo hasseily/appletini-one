@@ -1300,6 +1300,24 @@ static uint32_t menu_platform_get_onee_mode_status(void *ctx)
     return onee_service_status();
 }
 
+static uint8_t menu_platform_get_onee_restore_pending(void *ctx)
+{
+    (void)ctx;
+    return onee_service_restore_pending();
+}
+
+/* One line per ONE//e stop or durable-OFF decision, with the raw PL status
+ * word, so a session loss or a rewritten saved choice can be traced. */
+static void onee_platform_log(void *ctx, const char *event, uint32_t status)
+{
+    (void)ctx;
+    uart_puts(UART0_BASE, "onee: ");
+    uart_puts(UART0_BASE, event);
+    uart_puts(UART0_BASE, " status=0x");
+    uart_puthex(UART0_BASE, status);
+    uart_puts(UART0_BASE, "\r\n");
+}
+
 static uint8_t onee_runtime_start(void *ctx)
 {
     (void)ctx;
@@ -3282,6 +3300,7 @@ int main(void)
     card_control_init();
     boot_timing_log("card_control_init", boot_stage_started);
     onee_service_init();
+    onee_service_bind_log(onee_platform_log, NULL);
     screenshot_service_init();
     screenshot_service_set_sd_write_hook(ui_screenshot_sd_write_complete, NULL);
     printer_service_init();
@@ -3335,6 +3354,8 @@ int main(void)
             menu_platform_ack_onee_mode_persist_update;
         menu_platform.get_onee_mode_state = menu_platform_get_onee_mode_state;
         menu_platform.get_onee_mode_status = menu_platform_get_onee_mode_status;
+        menu_platform.get_onee_restore_pending =
+            menu_platform_get_onee_restore_pending;
         menu_platform.set_clock_enabled = control_set_clock_enabled;
         menu_platform.set_supersprite_enabled = control_set_supersprite_enabled;
         menu_platform.set_ssc_enabled = control_set_ssc_enabled;

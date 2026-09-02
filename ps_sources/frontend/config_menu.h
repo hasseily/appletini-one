@@ -111,6 +111,9 @@ typedef struct {
     void (*ack_onee_mode_persist_update)(void *ctx, uint8_t enable);
     uint8_t (*get_onee_mode_state)(void *ctx);
     uint32_t (*get_onee_mode_status)(void *ctx);
+    /* Non-zero while the service still holds a saved ON as a pending restore
+     * which has not yet passed the PL safety check. */
+    uint8_t (*get_onee_restore_pending)(void *ctx);
     void (*set_clock_enabled)(void *ctx, uint8_t enable);
     void (*set_supersprite_enabled)(void *ctx, uint8_t enable);
     void (*set_ssc_enabled)(void *ctx, uint8_t enable);

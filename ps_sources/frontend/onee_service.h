@@ -22,6 +22,12 @@ typedef void (*onee_service_ui_input_policy_fn)(void *ctx,
                                                 uint8_t blocked);
 typedef uint8_t (*onee_service_ui_input_released_fn)(void *ctx);
 
+/* Every stop and every durable-OFF decision reports a short event text and
+ * the raw PL status word it acted on. The platform routes it to a UART. */
+typedef void (*onee_service_log_fn)(void *ctx,
+                                    const char *event,
+                                    uint32_t status);
+
 void onee_service_init(void);
 void onee_service_bind_runtime(onee_service_runtime_start_fn start,
                                onee_service_runtime_suspend_fn suspend,
@@ -33,6 +39,7 @@ void onee_service_bind_ui_policy(
     onee_service_ui_input_policy_fn set_input_policy,
     onee_service_ui_input_released_fn input_released,
     void *ctx);
+void onee_service_bind_log(onee_service_log_fn log, void *ctx);
 
 /* The service owns the menu-pause, input-block, and release-wait state. The
  * UI reports only current menu visibility and may read state for status. */
@@ -42,8 +49,10 @@ uint8_t onee_service_input_release_wait(void);
 
 /* Restore the global saved selection after the configuration file is read.
  * A restored ON intent stays pending until the PL safety guard is valid,
- * quiet, and reselect-armed. It never bypasses the guard. */
+ * quiet, and reselect-armed. It never bypasses the guard. A hazard revokes
+ * it only after a grace window of consecutive hazard polls. */
 void onee_service_restore_persisted(uint8_t enable);
+uint8_t onee_service_restore_pending(void);
 
 /* The configuration owner polls this edge-triggered update and acknowledges
  * it only after the global file has been written. A failed write therefore
@@ -58,9 +67,11 @@ void onee_service_request_stop(void);
 
 /* Polling may issue one restored request, or restart the private soft-machine
  * runtime while the original PL request remains high. Apple activity or a
- * lost PL request clears the saved intent and requires a fresh operator
- * action. Missing safety logic keeps all outputs off without erasing the
- * saved choice. */
+ * lost PL request stops the session at once and requires a fresh operator
+ * action. The saved intent is cleared only when the guard still reports the
+ * hazard on consecutive later polls; a single connector glitch keeps it.
+ * Missing safety logic keeps all outputs off without erasing the saved
+ * choice. */
 void onee_service_poll(void);
 onee_service_state_t onee_service_state(void);
 uint32_t onee_service_status(void);

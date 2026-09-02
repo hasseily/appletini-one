@@ -5001,6 +5001,15 @@ static void config_menu_set_onee_refusal_status(config_menu_t *menu)
     config_menu_set_status(menu, 1U, text);
 }
 
+static uint8_t config_menu_onee_restore_pending(const config_menu_t *menu)
+{
+    if (menu->platform.get_onee_restore_pending == NULL) {
+        /* Without the hook, keep the conservative cancel behaviour. */
+        return 1U;
+    }
+    return menu->platform.get_onee_restore_pending(menu->platform.ctx);
+}
+
 static void config_menu_toggle_onee_mode(config_menu_t *menu)
 {
     uint8_t accepted;
@@ -5018,9 +5027,14 @@ static void config_menu_toggle_onee_mode(config_menu_t *menu)
         return;
     }
 
+    /* A saved ON which the service still holds as a pending restore is a
+     * cancel action. A saved ON left behind by a transient hazard stop is
+     * not: the service has already dropped that session, so the same row
+     * starts the machine again. */
     if (menu->onee_mode_state == CONFIG_MENU_ONEE_MODE_RUNNING ||
         (menu->onee_mode_status & CARD_CTRL_ONEE_STATUS_REQUEST_BIT) != 0U ||
-        menu->onee_persisted_enabled != 0U) {
+        (menu->onee_persisted_enabled != 0U &&
+         config_menu_onee_restore_pending(menu) != 0U)) {
         (void)menu->platform.set_onee_mode(menu->platform.ctx, 0U);
         config_menu_poll_onee_mode(menu);
         if (menu->onee_persist_write_failed != 0U) {

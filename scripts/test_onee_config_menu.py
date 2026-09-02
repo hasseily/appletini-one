@@ -190,8 +190,11 @@ def test_global_persistent_action_is_not_profiled() -> None:
     require("config_menu_apply_runtime" not in toggle and
             "config_menu_poll_onee_mode(menu);" in toggle,
             "the ONE//e action must persist through the service update path")
-    require("menu->onee_persisted_enabled != 0U" in toggle,
-            "a saved but safety-blocked ON intent must still allow manual OFF")
+    require("menu->onee_persisted_enabled != 0U" in toggle and
+            "config_menu_onee_restore_pending(menu) != 0U" in toggle and
+            "get_onee_restore_pending" in header,
+            "a saved ON still pending restore must allow manual OFF; a saved ON "
+            "left by a transient hazard stop must restart from the same row")
     query_pos = poll.find("get_onee_mode_persist_update(")
     save_pos = poll.find("config_menu_save_settings_to_path(")
     ack_pos = poll.find("ack_onee_mode_persist_update(")
@@ -295,7 +298,7 @@ def test_only_manual_or_guarded_restore_can_start() -> None:
                            "uint8_t onee_service_request_start",
                            "void onee_service_request_stop")
     poll = function_slice(source,
-                          "void onee_service_poll",
+                          "void onee_service_poll(void)",
                           "onee_service_state_t onee_service_state")
 
     require(source.count("onee_service_write_request(1U);") == 2 and
@@ -309,7 +312,31 @@ def test_only_manual_or_guarded_restore_can_start() -> None:
             "onee_status_pl_ready(g_status) == 0U" in poll and
             "onee_status_has_hazard(g_status)" in poll and
             "(g_status & CARD_CTRL_ONEE_STATUS_REQUEST_BIT) == 0U" in poll,
-            "polling must revoke persistence for activity or a lost request")
+            "polling must stop the session for activity or a lost request")
+    confirm = function_slice(source,
+                             "static void onee_service_hazard_confirm_poll",
+                             "void onee_service_init(void)")
+    session = poll[poll.find("if (onee_status_pl_ready(g_status) == 0U)"):]
+    require("onee_service_stop_for_hazard(" in session and
+            "onee_service_force_persisted(0U);" not in session and
+            "ONEE_HAZARD_CONFIRM_POLLS" in confirm and
+            "onee_service_force_persisted(0U);" in confirm and
+            "onee_service_clear_hazard_confirm();" in confirm and
+            "onee_service_hazard_confirm_poll();" in poll,
+            "a session hazard must stop at once and save OFF only after the "
+            "guard confirms it on consecutive polls")
+    restore = poll[poll.find("g_restore_pending != 0U"):
+                   poll.find("if (onee_status_pl_ready(g_status) == 0U)")]
+    require("ONEE_RESTORE_HAZARD_GRACE_POLLS" in restore and
+            "g_restore_hazard_polls = 0U;" in restore and
+            "onee_service_force_persisted(0U);" in restore,
+            "a restored ON must tolerate intermittent hazard polls before it "
+            "is revoked")
+    require("onee_service_bind_log" in source and
+            "onee_service_log(" in confirm and
+            source.count("\"durable OFF:") == 4 and
+            source.count("\"session stop:") == 3,
+            "every stop and durable-OFF decision must log its reason")
     require("g_lockout_latched = 1U;" in source and
             "g_lockout_latched = 0U;" in start,
             "an activity stop must stay locally locked until a new user start")
@@ -354,7 +381,7 @@ def test_start_refuses_unsafe_or_missing_pl() -> None:
 def test_selected_request_has_no_software_expiry() -> None:
     source = read(ONEE_C)
     poll = function_slice(source,
-                          "void onee_service_poll",
+                          "void onee_service_poll(void)",
                           "onee_service_state_t onee_service_state")
     pending = poll[poll.find("REQUEST is still high"):]
 
@@ -807,10 +834,21 @@ def test_native_persistent_reboot_lifecycle() -> None:
             return runtime_live;
         }
 
+        static uint32_t log_calls;
+
+        static void test_log(void *ctx, const char *event, uint32_t status)
+        {
+            (void)ctx;
+            (void)event;
+            (void)status;
+            ++log_calls;
+        }
+
         static void bind_runtime(void)
         {
             onee_service_bind_runtime(runtime_start, runtime_suspend,
                                       runtime_stop, runtime_running, NULL);
+            onee_service_bind_log(test_log, NULL);
         }
 
         static int check(int condition, const char *message)
@@ -906,15 +944,73 @@ def test_native_persistent_reboot_lifecycle() -> None:
             mode_status = status_effective();
             onee_service_poll();
 
-            /* PL activity wins first, stops the core, revokes saved ON, and
-             * queues an OFF write. Later quiet time cannot reassert REQUEST. */
+            /* A single connector glitch: the PL kills the session and the
+             * guard is quiet again before the next poll. The session stops
+             * at once, but the saved ON survives and quiet time cannot
+             * restart it. */
             mode_status = status_activity();
+            onee_service_poll();
+            if (!check(g_manual_request == 0U && g_persisted_intent != 0U &&
+                       g_hazard_confirm_pending != 0U &&
+                       onee_service_persist_update_pending(NULL) == 0U &&
+                       onee_service_state() == ONEE_SERVICE_STATE_LOCKED,
+                       "hazard stop did not wait for confirmation")) {
+                return 1;
+            }
+            mode_status = status_safe_off();
+            high_before = high_writes;
+            for (uint32_t i = 0U; i < 256U; ++i) {
+                onee_service_poll();
+            }
+            if (!check(high_writes == high_before &&
+                       g_persisted_intent != 0U &&
+                       g_hazard_confirm_pending == 0U &&
+                       onee_service_persist_update_pending(NULL) == 0U &&
+                       onee_service_state() == ONEE_SERVICE_STATE_LOCKED,
+                       "transient glitch erased saved ON or restarted the mode")) {
+                return 1;
+            }
+            onee_service_restore_persisted(0U);
+            if (!check(g_persisted_intent != 0U && g_restore_pending == 0U,
+                       "late stale config replaced saved ON after a glitch")) {
+                return 1;
+            }
+
+            /* A fresh manual selection restarts after the glitch without a
+             * redundant write: the saved ON is already durable. */
+            if (!check(onee_service_request_start() == 1U &&
+                       high_writes == high_before + 1U &&
+                       onee_service_persist_update_pending(NULL) == 0U,
+                       "reselect after a glitch did not restart cleanly")) {
+                return 1;
+            }
+            mode_status = status_effective();
+            onee_service_poll();
+
+            /* A running Apple keeps the hazard set on every poll. The stop is
+             * immediate; the durable OFF follows once the hazard is
+             * confirmed. Later quiet time cannot reassert REQUEST. */
+            mode_status = status_activity();
+            onee_service_poll();
+            if (!check(g_manual_request == 0U && g_persisted_intent != 0U &&
+                       onee_service_persist_update_pending(NULL) == 0U,
+                       "sustained hazard saved OFF before confirmation")) {
+                return 1;
+            }
+            for (uint32_t i = 0U; i + 1U < ONEE_HAZARD_CONFIRM_POLLS; ++i) {
+                onee_service_poll();
+            }
+            if (!check(g_persisted_intent != 0U &&
+                       onee_service_persist_update_pending(NULL) == 0U,
+                       "hazard confirmation fired one poll early")) {
+                return 1;
+            }
             onee_service_poll();
             if (!check(g_manual_request == 0U && g_persisted_intent == 0U &&
                        onee_service_persist_update_pending(&persist_value) != 0U &&
                        persist_value == 0U &&
                        onee_service_state() == ONEE_SERVICE_STATE_LOCKED,
-                       "Apple activity did not revoke and queue saved OFF")) {
+                       "sustained Apple activity did not revoke and queue saved OFF")) {
                 return 1;
             }
             onee_service_restore_persisted(1U);
@@ -987,19 +1083,62 @@ def test_native_persistent_reboot_lifecycle() -> None:
                 return 1;
             }
 
-            /* Activity already present at restore time clears the saved value
-             * without issuing even a transient high request. */
+            /* Intermittent hazard polls at restore time, such as connector
+             * settling after power-up, must not erase the saved value. The
+             * restore waits and then starts once the guard is safe. */
+            high_before = high_writes;
+            onee_service_init();
+            onee_service_restore_persisted(1U);
+            bind_runtime();
+            for (uint32_t i = 0U; i + 1U < ONEE_RESTORE_HAZARD_GRACE_POLLS; ++i) {
+                mode_status = status_activity();
+                onee_service_poll();
+            }
+            if (!check(high_writes == high_before &&
+                       g_restore_pending != 0U && g_persisted_intent != 0U &&
+                       onee_service_persist_update_pending(NULL) == 0U,
+                       "restore hazard grace revoked the saved ON too early")) {
+                return 1;
+            }
+            mode_status = status_safe_off();
+            onee_service_poll();
+            if (!check(high_writes == high_before + 1U &&
+                       g_manual_request != 0U && g_restore_pending == 0U &&
+                       g_persisted_intent != 0U,
+                       "restore did not start once the settling hazard cleared")) {
+                return 1;
+            }
+
+            /* A running Apple at restore time keeps the hazard on every poll.
+             * After the grace window the saved value is cleared without
+             * issuing even a transient high request. */
+            runtime_live = 0U;
             mode_status = status_activity();
             high_before = high_writes;
             onee_service_init();
             onee_service_restore_persisted(1U);
             bind_runtime();
+            for (uint32_t i = 0U; i + 1U < ONEE_RESTORE_HAZARD_GRACE_POLLS; ++i) {
+                onee_service_poll();
+            }
+            if (!check(high_writes == high_before &&
+                       g_restore_pending != 0U && g_persisted_intent != 0U &&
+                       onee_service_persist_update_pending(NULL) == 0U,
+                       "sustained restore hazard revoked one poll early")) {
+                return 1;
+            }
             onee_service_poll();
             if (!check(high_writes == high_before &&
-                       g_persisted_intent == 0U &&
+                       g_persisted_intent == 0U && g_restore_pending == 0U &&
                        onee_service_persist_update_pending(&persist_value) != 0U &&
-                       persist_value == 0U,
+                       persist_value == 0U &&
+                       onee_service_state() == ONEE_SERVICE_STATE_LOCKED,
                        "unsafe reboot restore wrote high or failed to save OFF")) {
+                return 1;
+            }
+
+            if (!check(log_calls != 0U,
+                       "stops and durable decisions were not logged")) {
                 return 1;
             }
 

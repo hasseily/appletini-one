@@ -223,9 +223,18 @@ and explicit manual OFF are terminal stops. On a terminal stop:
 - Effective mode drops at once.
 - Firmware stops vTW, clears the session request, and clears session-only
   speed state.
-- The request is never raised again by polling, startup, config load, or a
-  profile.
+- The request is never raised again in this session by polling, config load,
+  or a profile. A later card boot restores a saved ON only through the same
+  guarded one-shot path.
 - Quiet time alone cannot restart the machine.
+- The saved ON choice becomes a durable OFF only when the guard still reports
+  the hazard on `ONEE_HAZARD_CONFIRM_POLLS` consecutive polls after the stop.
+  A running Apple keeps the sticky lockout set on every poll. A single
+  connector glitch clears within a microsecond once the request is low, so
+  the saved choice survives it while the session still needs a fresh manual
+  selection. Missing safety logic neither confirms nor cancels.
+- Every stop and every durable-OFF decision writes one line on UART0 with its
+  reason and the raw ONE//e status word.
 - The user must select the boot-menu item again after the request has gone off
   and the learned U533 input vector has shown no transition for the quiet
   interval.
@@ -355,8 +364,13 @@ enable and a released core; the user can reopen it to stop the session.
 F0.9.81 saves manual ON to the global config before it raises the PL request.
 After a card boot it restores that intent only when the safety signature is
 valid, the connector is quiet, reselect is armed, and no activity, power, or
-lockout bit is set. Apple activity or a lost request forces a terminal stop
-and queues a durable OFF write. The writer syncs a temporary file, keeps the
+lockout bit is set. A hazard seen while that restore is pending revokes the
+saved choice only after `ONEE_RESTORE_HAZARD_GRACE_POLLS` consecutive hazard
+polls; a quiet poll resets the count, so connector settling at power-up cannot
+erase it, while a running Apple still does. Apple activity or a lost request
+forces a terminal stop at once and queues a durable OFF write only after the
+guard confirms the hazard on consecutive polls. The writer syncs a temporary
+file, keeps the
 last committed file as a backup, and then installs the new global file. A
 failed write stays pending and retries. A profile cannot arm or disarm ONE//e.
 
@@ -628,8 +642,11 @@ mode is off.
 - [x] Suspend and retry a failed private runtime without clearing its exact
   queued or live speed override.
 - [x] Treat watched Apple activity, lost request echo, and manual OFF as
-  terminal saved-OFF stops; missing safety logic keeps outputs off without
-  erasing the saved choice.
+  terminal stops; save OFF at once for manual OFF, and for an Apple hazard
+  only after the guard confirms it on consecutive polls; a transient glitch
+  and missing safety logic keep outputs off without erasing the saved choice.
+- [x] Log every ONE//e stop and durable-OFF decision with its reason and the
+  raw PL status word on UART0.
 - [x] Bind all six watched U533 inputs to the 5 ns raw-input route constraint.
 - [x] Persist manual ON across card power cycles, persist terminal Apple stops
   as OFF, and keep the latch out of profiles.

@@ -9,6 +9,19 @@
 
 #define ONEE_RUNTIME_RETRY_POLL_LIMIT 64U
 
+/* Consecutive polls after a safety stop on which the guard must still report
+ * an Apple hazard before the saved ON choice becomes a durable OFF. A powered
+ * Apple keeps the sticky lockout set on every poll. A single connector glitch
+ * clears within a microsecond once the request is low, so the next poll
+ * cancels the pending OFF and the saved choice survives. */
+#define ONEE_HAZARD_CONFIRM_POLLS 64U
+
+/* Consecutive hazard polls a restored ON intent tolerates after a card boot
+ * before the saved choice is revoked. Connector settling at power-up gives
+ * intermittent activity, which resets this count. A running Apple gives a
+ * hazard on every poll and still revokes the choice. */
+#define ONEE_RESTORE_HAZARD_GRACE_POLLS 256U
+
 static uint8_t g_manual_request;
 static uint8_t g_lockout_latched;
 static uint8_t g_runtime_started;
@@ -16,6 +29,10 @@ static uint8_t g_persisted_intent;
 static uint8_t g_restore_pending;
 static uint8_t g_persist_update_pending;
 static uint8_t g_persist_update_value;
+static uint8_t g_hazard_confirm_pending;
+static uint8_t g_restore_hazard_logged;
+static uint32_t g_hazard_confirm_polls;
+static uint32_t g_restore_hazard_polls;
 static uint32_t g_runtime_retry_polls;
 static uint32_t g_status;
 static onee_service_runtime_start_fn g_runtime_start;
@@ -27,6 +44,8 @@ static onee_service_ui_pause_fn g_ui_pause;
 static onee_service_ui_input_policy_fn g_ui_set_input_policy;
 static onee_service_ui_input_released_fn g_ui_input_released;
 static void *g_ui_ctx;
+static onee_service_log_fn g_log;
+static void *g_log_ctx;
 static uint8_t g_ui_menu_active;
 static uint8_t g_ui_menu_paused;
 static uint8_t g_ui_input_release_wait;
@@ -41,6 +60,13 @@ typedef enum {
     ONEE_START_CHECK_RUNTIME_UNBOUND,
     ONEE_START_CHECK_NOT_READY
 } onee_start_check_t;
+
+static void onee_service_log(const char *event)
+{
+    if (g_log != NULL) {
+        g_log(g_log_ctx, event, g_status);
+    }
+}
 
 static uint32_t onee_inhibit_reason(uint32_t status)
 {
@@ -180,6 +206,12 @@ static void onee_service_write_request(uint8_t enable)
               (enable != 0U) ? CARD_CTRL_ONEE_CTRL_REQUEST_BIT : 0U);
 }
 
+static void onee_service_clear_hazard_confirm(void)
+{
+    g_hazard_confirm_pending = 0U;
+    g_hazard_confirm_polls = 0U;
+}
+
 static void onee_service_mark_persisted(uint8_t enable)
 {
     const uint8_t value = (enable != 0U) ? 1U : 0U;
@@ -200,7 +232,9 @@ static void onee_service_force_persisted(uint8_t enable)
 
     /* The menu can have synced a new value before this service changes its
      * in-memory intent. A safety event or manual OFF must still queue OFF in
-     * that window. */
+     * that window. A durable decision also supersedes any hazard
+     * confirmation still in progress. */
+    onee_service_clear_hazard_confirm();
     g_persisted_intent = value;
     g_persist_update_value = value;
     g_persist_update_pending = 1U;
@@ -226,6 +260,7 @@ static void onee_service_disarm(uint8_t lock_out)
 {
     g_manual_request = 0U;
     g_restore_pending = 0U;
+    g_restore_hazard_polls = 0U;
     g_runtime_retry_polls = 0U;
     if (lock_out != 0U) {
         g_lockout_latched = 1U;
@@ -234,6 +269,37 @@ static void onee_service_disarm(uint8_t lock_out)
      * queued before the soft core managed to start. */
     onee_service_stop_runtime();
     onee_service_write_request(0U);
+}
+
+/* Stop the session at once and latch the UI off. The durable OFF waits until
+ * onee_service_hazard_confirm_poll() has seen the hazard on enough further
+ * polls to rule out a single connector glitch. */
+static void onee_service_stop_for_hazard(const char *event)
+{
+    onee_service_log(event);
+    onee_service_disarm(1U);
+    g_hazard_confirm_pending = 1U;
+    g_hazard_confirm_polls = 0U;
+}
+
+static void onee_service_hazard_confirm_poll(void)
+{
+    if (onee_status_pl_ready(g_status) == 0U) {
+        /* Missing safety logic can neither confirm nor cancel the hazard. */
+        return;
+    }
+    if (onee_status_has_hazard(g_status) == 0U) {
+        /* The guard went quiet with the request low: a connector glitch, not
+         * a running Apple. Keep the saved choice. The stopped session still
+         * needs a fresh manual selection. */
+        onee_service_log("saved ON kept: transient hazard");
+        onee_service_clear_hazard_confirm();
+        return;
+    }
+    if (++g_hazard_confirm_polls >= ONEE_HAZARD_CONFIRM_POLLS) {
+        onee_service_log("durable OFF: sustained Apple hazard");
+        onee_service_force_persisted(0U);
+    }
 }
 
 void onee_service_init(void)
@@ -245,6 +311,10 @@ void onee_service_init(void)
     g_restore_pending = 0U;
     g_persist_update_pending = 0U;
     g_persist_update_value = 0U;
+    g_hazard_confirm_pending = 0U;
+    g_restore_hazard_logged = 0U;
+    g_hazard_confirm_polls = 0U;
+    g_restore_hazard_polls = 0U;
     g_runtime_retry_polls = 0U;
     g_runtime_start = NULL;
     g_runtime_suspend = NULL;
@@ -255,6 +325,8 @@ void onee_service_init(void)
     g_ui_set_input_policy = NULL;
     g_ui_input_released = NULL;
     g_ui_ctx = NULL;
+    g_log = NULL;
+    g_log_ctx = NULL;
     g_ui_menu_active = 0U;
     g_ui_menu_paused = 0U;
     g_ui_input_release_wait = 0U;
@@ -298,6 +370,12 @@ void onee_service_bind_ui_policy(
     onee_service_update_ui_policy();
 }
 
+void onee_service_bind_log(onee_service_log_fn log, void *ctx)
+{
+    g_log = log;
+    g_log_ctx = ctx;
+}
+
 void onee_service_sync_menu_policy(uint8_t menu_active)
 {
     g_ui_menu_active = (menu_active != 0U) ? 1U : 0U;
@@ -317,16 +395,26 @@ uint8_t onee_service_input_release_wait(void)
 void onee_service_restore_persisted(uint8_t enable)
 {
     /* A late SD-card attach may reload the global file. Never let that stale
-     * file replace a newer manual action or Apple-event update which has not
-     * yet reached storage. */
+     * file replace a newer manual action, an Apple-event update which has not
+     * yet reached storage, or a hazard which is still being confirmed. */
     if (g_manual_request != 0U || g_persist_update_pending != 0U ||
-        g_lockout_latched != 0U) {
+        g_lockout_latched != 0U || g_hazard_confirm_pending != 0U) {
         return;
     }
     g_persisted_intent = (enable != 0U) ? 1U : 0U;
     g_restore_pending = g_persisted_intent;
+    g_restore_hazard_polls = 0U;
+    g_restore_hazard_logged = 0U;
     g_persist_update_pending = 0U;
     g_persist_update_value = g_persisted_intent;
+    if (g_restore_pending != 0U) {
+        onee_service_log("restore armed from saved ON");
+    }
+}
+
+uint8_t onee_service_restore_pending(void)
+{
+    return g_restore_pending;
 }
 
 uint8_t onee_service_persist_update_pending(uint8_t *enable)
@@ -357,6 +445,7 @@ uint8_t onee_service_request_start(void)
         /* The menu has already synced ON before asking us to raise REQUEST.
          * Every manual refusal must therefore queue a matching durable OFF,
          * not just refusals caused by live Apple-bus hazards. */
+        onee_service_log("durable OFF: manual start refused");
         onee_service_force_persisted(0U);
         onee_service_disarm(1U);
         return 0U;
@@ -366,7 +455,10 @@ uint8_t onee_service_request_start(void)
     g_manual_request = 1U;
     g_restore_pending = 0U;
     g_runtime_retry_polls = 0U;
+    /* A new session supersedes a hazard confirmation left by the last one. */
+    onee_service_clear_hazard_confirm();
     onee_service_mark_persisted(1U);
+    onee_service_log("manual start accepted");
 
     /* This high write runs only for a fresh user action. The only other high
      * write is the guarded one-shot restore in poll(). */
@@ -380,6 +472,7 @@ void onee_service_request_stop(void)
     /* The menu may have saved ON before a start request which this service
      * refused without first changing g_persisted_intent. Manual OFF must
      * still replace that staged value on storage. */
+    onee_service_log("durable OFF: manual stop");
     onee_service_force_persisted(0U);
     onee_service_disarm(0U);
 }
@@ -398,6 +491,11 @@ void onee_service_poll(void)
             onee_service_stop_runtime();
         }
 
+        if (g_hazard_confirm_pending != 0U) {
+            onee_service_hazard_confirm_poll();
+            return;
+        }
+
         if (g_restore_pending != 0U) {
             const onee_start_check_t start_check =
                 onee_service_check_start(g_status);
@@ -409,11 +507,21 @@ void onee_service_poll(void)
             }
             if (start_check == ONEE_START_CHECK_HAZARD) {
                 /* An Apple-side event is the one condition which revokes the
-                 * saved ON choice. The PL kill/lockout has already won. */
-                onee_service_force_persisted(0U);
-                onee_service_disarm(1U);
+                 * saved ON choice. Connector settling after power-up can look
+                 * like one for a few polls, so require a sustained hazard. */
+                if (g_restore_hazard_logged == 0U) {
+                    g_restore_hazard_logged = 1U;
+                    onee_service_log("restore waits: hazard");
+                }
+                if (++g_restore_hazard_polls >=
+                    ONEE_RESTORE_HAZARD_GRACE_POLLS) {
+                    onee_service_log("durable OFF: restore hazard sustained");
+                    onee_service_force_persisted(0U);
+                    onee_service_disarm(1U);
+                }
                 return;
             }
+            g_restore_hazard_polls = 0U;
             if (start_check != ONEE_START_CHECK_OK) {
                 return;
             }
@@ -424,6 +532,7 @@ void onee_service_poll(void)
             g_manual_request = 1U;
             g_restore_pending = 0U;
             g_runtime_retry_polls = 0U;
+            onee_service_log("restore raised request");
             onee_service_write_request(1U);
         }
         return;
@@ -432,15 +541,16 @@ void onee_service_poll(void)
     if (onee_status_pl_ready(g_status) == 0U) {
         /* Do not erase the saved choice for a missing or wrong PL image. The
          * current run is still terminal and cannot auto-restart this boot. */
+        onee_service_log("session stop: PL missing");
         onee_service_disarm(1U);
         return;
     }
 
     if (onee_status_has_hazard(g_status) != 0U) {
-        /* Activity cancels intent and latches the UI off. Quiet later does
-         * not restart it; the operator must select the item again. */
-        onee_service_force_persisted(0U);
-        onee_service_disarm(1U);
+        /* Activity stops the session at once and latches the UI off. Quiet
+         * later does not restart it; the operator must select the item again.
+         * The saved choice changes only once the hazard is confirmed. */
+        onee_service_stop_for_hazard("session stop: Apple hazard");
         return;
     }
 
@@ -449,8 +559,7 @@ void onee_service_poll(void)
      * the live activity bit can return quiet before this slow poll runs. Never
      * turn REQUEST back on here. Only a fresh menu action may do that. */
     if ((g_status & CARD_CTRL_ONEE_STATUS_REQUEST_BIT) == 0U) {
-        onee_service_force_persisted(0U);
-        onee_service_disarm(1U);
+        onee_service_stop_for_hazard("session stop: lost request echo");
         return;
     }
 

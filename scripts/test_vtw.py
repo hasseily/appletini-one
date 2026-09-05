@@ -174,7 +174,8 @@ def static_checks() -> None:
 
     # PL integration
     require("vtw_core_top vtw_core_top_i" in top and
-            ".NUM_CLIENTS(13)" in top and
+            "APPLE_BUS_CLIENT_COUNT = 13" in top and
+            ".NUM_CLIENTS(APPLE_BUS_CLIENT_COUNT)" in top and
             ".FAST_DATA_CLIENT(2)" in top and
             ".FAST_ADDR_CLIENT(11)" in top and
             "onee_motherboard_ab_write," in top and
@@ -196,12 +197,12 @@ def static_checks() -> None:
             "SLEW FAST} [get_ports a2fpga_dir_a]" not in xdc,
             "DIR_A must keep its slow electrical edge and 10 ns output bound")
     require("logic vtw_machine_ok_q;" in top and
-            "if (machine_mode_q == 2'd1)" in top and
-            "else if (machine_mode_q == 2'd2)" in top and
+            "if (machine_is_iiplus)" in top and
+            "else if (machine_identity_legacy)" in top and
             "vtw_machine_ok_q       <= 1'b1;" in top and
             "(!physical_bus_isolate && vtw_machine_ok_q)" in top and
             "onee_enable_effective ||" in top,
-            "vTW enable must latch the physical-machine verdict while also "
+            "vTW enable must latch the direct PL machine verdict while also "
             "allowing a guarded virtual //e session")
     require("vtw_host_is_iiplus_q" in top and
             "vtw_host_is_iiplus_eff" in top and
@@ -211,12 +212,11 @@ def static_checks() -> None:
             "vTW must latch II/II+ host type and park that host in ordinary "
             "main RAM rather than I/O or Language Card space")
     require("(* DONT_TOUCH = \"TRUE\" *) logic machine_inh_allowed_wrapper_q;" in top and
-            ".inh_allowed(machine_inh_allowed_wrapper_q)" in top and
-            "machine_inh_allowed_wrapper_q   <= 1'b0;" in top and
-            "machine_inh_allowed_wrapper_q <=" in top and
-            "(as_common.wdata[1:0] == 2'd1) ||" in top and
-            "(as_common.wdata[1:0] == 2'd2);" in top,
-            "the wrapper machine interlock needs a preserved same-edge local copy")
+            ".inh_allowed(machine_inh_allowed_wrapper_q && machine_inh_allowed)" in top and
+            "machine_inh_allowed_wrapper_q <= 1'b0;" in top and
+            "machine_inh_allowed_wrapper_q <= machine_inh_allowed;" in top and
+            "apple_machine_safety_policy apple_machine_safety_policy_i" in top,
+            "the wrapper machine interlock needs a direct, registered PL safety fact")
 
     # SmartPort short-circuit: vtw_core_top fast port wired to the card.
     core_top = read("hdl/apple/vtw_core_top.sv")
@@ -364,17 +364,17 @@ def static_checks() -> None:
             "disk2_active_timing_q <= disk2_active;" in top and
             "wire disk2_bus_visible =\n"
             "        onee_enable_effective ||\n"
-            "        (card_slot6_enable && disk2_active_timing_q);" in top and
+            "        (card_slot6_bus_enable && disk2_active_timing_q);" in top and
             ".ab_read(gate_ab(ab_read, disk2_bus_visible))" in top and
             "wire disk2_live_handoff_serve =\n"
-            "        !onee_enable_effective && card_slot6_enable && disk2_active &&\n"
+            "        !onee_enable_effective && card_slot6_bus_enable && disk2_active &&\n"
             "        !disk2_active_timing_q;" in top and
             ".rom_serve_en(ab_read.serve_en && disk2_live_handoff_serve)" in top and
             "wire rom_read_serve = ab_read.serve_en || rom_serve_en;" in disk2 and
             "wire ab_rom_read = rom_read_serve && ab_read.rw && slot_rom_hit;" in disk2 and
             "assign vtw_disk2_active = !onee_enable_effective &&" in top and
             "vtw_core_run_eff && vtw_bus_owned" in top and
-            "card_slot6_enable && disk2_active_timing_q" in top and
+            "card_slot6_bus_enable && disk2_active_timing_q" in top and
             "!vtw_ctrl_q[7];" in top and
             ".vtw_active(vtw_disk2_active)" in top and
             ".d2_active(vtw_disk2_active)" in top,
@@ -452,8 +452,8 @@ def static_checks() -> None:
             "the persisted Disk II compatibility switch must reach VTW_CTRL bit7")
 
     # PS service + wiring
-    require("boot_menu_service_machine_mode() != CARD_MACHINE_MODE_IIE" in service,
-            "vtw_service must wait for the //e machine report")
+    require("boot_menu_service_host_bus_master_allowed() == 0U" in service,
+            "vtw_service must wait for a legacy-safe machine report")
     require("boot_menu_service_slot7_handed_off()" in service,
             "vtw_service must wait for the boot menu handoff before taking the "
             "bus, so the boot menu never re-runs on the vTW core")
@@ -687,7 +687,7 @@ def static_checks() -> None:
     require("xl_btn_rd" in core and
             "iiplus_buttons_zero" in core,
             "vTW core must synthesize $C061-$C063 reads on II/II+ hosts")
-    require(".irq_assert_in(ab_write_arb.assert_irq)" in top and
+    require(".irq_assert_in(virtual_ab_write_arb.assert_irq)" in top and
             ".iiplus_buttons_zero(vtw_ctrl_q[5])" in top,
             "apple_top must wire the vTW IRQ merge and button-synthesis controls")
     require("CARD_CTRL_VTW_CTRL_IIPLUS_BTNS_BIT (1UL << 5)" in regs,
@@ -748,7 +748,7 @@ def static_checks() -> None:
     require("CARD_CTRL_VTW_TRACE_STATUS_REG" in regs and
             "CARD_CTRL_VTW_IO_TRACE_REG(n)" in regs and
             "CARD_CTRL_VTW_PC_TRACE_REG(n)" in regs and
-            ".data_drive_value_in(ab_write_arb.wr_data)" in top,
+            ".data_drive_value_in(virtual_ab_write_arb.wr_data)" in top,
             "event trace must be wired through the card-control window")
     require("CARD_CTRL_RESET_FORENSICS_INTERNAL_BIT" in regs and
             "CARD_CTRL_RESET_FORENSICS_EXTERNAL_BIT" in regs and

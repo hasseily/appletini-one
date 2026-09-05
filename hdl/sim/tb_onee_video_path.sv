@@ -151,6 +151,7 @@ module tb_onee_video_path;
         .line_in_frame(line_in_frame),
         .cycle_in_line(cycle_in_line),
         .frame_en(frame_en),
+        .fake_shr_allowed(1'b1),
         .overlay_devsel_enabled(1'b0),
         .overlay_capture_armed(1'b0),
         .overlay_capture_bank_aux(1'b0),

@@ -88,12 +88,17 @@ def static_checks() -> None:
     )
 
     require(
-        ".NUM_CLIENTS(13)" in top and
+        "localparam int APPLE_BUS_CLIENT_COUNT = 13;" in top and
+        top.count(".NUM_CLIENTS(APPLE_BUS_CLIENT_COUNT)") >= 3 and
         ".FAST_DATA_CLIENT(2)" in top and
         ".FAST_ADDR_CLIENT(11)" in top and
+        "apple_bus_client_policy_gate" in top and
+        "apple_virtual_bus_write_arbiter_i" in top and
+        ".ab_write         (virtual_ab_write_arb)" in top and
+        ".inh_allowed(1'b1)" in top and
         ".client_writes({\n            onee_motherboard_ab_write,\n"
         "            vtw_ab_write," in top,
-        "motherboard client must append at index 12 without moving old clients",
+        "split virtual and physical arbiters must keep the motherboard at index 12",
     )
     require(
         ".inh_allowed(machine_inh_allowed || onee_enable_effective)" in top and
@@ -119,19 +124,23 @@ def static_checks() -> None:
         "else if (!ab_read.res && !warm_reset_active) begin" in cold_scan and
         "session_boot_target_disk2 <= boot_target_disk2;" in cold_scan and
         "slot7_hidden <= boot_target_disk2;" in cold_scan and
-        ".ab_read(gate_ab(physical_ab_read, !onee_enable_effective))" in top,
+        ".ab_read(boot_menu_ab_read)" in top and
+        "boot_menu_ab_read = gate_ab(slot7_devsel_ab_read," in top and
+        "boot_menu_ab_read.data_en = 1'b0;" in top and
+        ".onee_enable_effective        (onee_enable_effective)" in top,
         "ONE//e must sample each cold-boot target without changing host fallback",
     )
     require(
         "wire onee_smartport_boot_owner =\n"
         "        onee_enable_effective && !onee_boot_target_disk2;" in top and
         "card_supersprite_enable && !onee_smartport_boot_owner &&\n"
-        "        onee_slot7_cards_visible;" in top and
+        "        ((onee_slot7_cards_visible && card_slot7_bus_enable) ||" in top and
         "(!card_supersprite_enable || onee_smartport_boot_owner) &&\n"
         "        (onee_enable_effective || smartport_active)" in top and
         "else if (ab_read.addr_en) begin\n"
         "            vtw_smartport_visible_q <= vtw_smartport_visible_desired;" in top and
-        ".ab_read(gate_ab(ab_read, supersprite_bus_visible))" in top,
+        ".ab_read(gate_ab(slot7_devsel_ab_read," in top and
+        "supersprite_bus_visible))" in top,
         "SmartPort-selected ONE//e must own slot 7 over saved SuperSprite",
     )
     require(

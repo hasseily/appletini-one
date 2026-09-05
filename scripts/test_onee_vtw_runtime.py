@@ -141,16 +141,39 @@ def test_standalone_forces_synthetic_disk2_without_changing_options() -> None:
                            "void vtw_service_set_disk2_config_enabled",
                            "void vtw_service_set_enabled")
     main = read(MAIN_C)
+    onee = read(ONEE_C)
+    slot_policy = between(main,
+                          "static void card_control_apply_slot_policy",
+                          "static void card_control_write_slot_mask")
+    machine_policy = between(main,
+                             "static void control_refresh_machine_policy",
+                             "static uint8_t menu_platform_get_scanlines")
+    isolation = between(onee,
+                        "uint8_t onee_service_isolation_confirmed",
+                        "\n}\n")
     require("g_disk2_config_enabled" in start and
             "disk2_service_set_enabled(1U);" in start and
             start.find("disk2_service_set_enabled(1U);") <
             start.find("vtw_shadow_force_cold_start(1U)") and
             "disk2_service_set_enabled(g_disk2_config_enabled);" in shutdown and
             "g_onee_disk2_override_active != 0U" in disk2_config and
-            "vtw_service_set_disk2_config_enabled(enable);" in main and
+            "vtw_service_set_disk2_config_enabled(" in main and
             "g_card_slot_enable_mask" in main and
+            "g_card_slot_effective_mask" in main and
             "CARD_CTRL_SLOT_DISK2" in main,
             "ONE//e must keep one effective Disk II service owner")
+    require("control_onee_isolated()" in slot_policy and
+            "effective = g_card_slot_enable_mask;" in slot_policy and
+            "((uint16_t)onee_isolated << 15)" in machine_policy,
+            "ONE//e isolation changes must restore or remove its requested slots")
+    require("CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT" in isolation and
+            "CARD_CTRL_ONEE_STATUS_ISOLATED_BIT" in isolation and
+            "CARD_CTRL_ONEE_STATUS_HDL_PRESENT_BIT" in isolation and
+            "CARD_CTRL_ONEE_STATUS_ACTIVITY_BIT" in isolation and
+            "CARD_CTRL_ONEE_STATUS_LOCKOUT_BIT" in isolation and
+            "CARD_CTRL_ONEE_STATUS_APPLE_POWER_BIT" in isolation and
+            "onee_inhibit_reason(g_status) == CARD_CTRL_ONEE_INHIBIT_NONE" in isolation,
+            "the private-slot bypass must require confirmed PL isolation")
     require(start.count("vtw_service_onee_suspend();") == 3 and
             "vtw_onee_shutdown(0U);" in suspend and
             "vtw_onee_shutdown(1U);" in stop and
@@ -192,7 +215,8 @@ def test_onee_reset_uses_private_runtime_paths() -> None:
 
     require("config_menu_apply_boot_runtime(menu);" in reset and
             "if ((onee_service_status() &\n"
-            "         CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT) == 0U) {\n"
+            "         CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT) == 0U &&\n"
+            "        boot_menu_service_host_bus_master_allowed() != 0U) {\n"
             "        (void)uart_control_dma_bus_write(0xC029U, 0x01U);\n"
             "    }" in reset,
             "ONE//e reset must reapply config without issuing host IIgs DMA")
@@ -318,7 +342,7 @@ def test_normal_host_state_machine_remains_after_onee_gate() -> None:
 
     require(poll.find("vtw_onee_control_active()") < poll.find("switch (g_state)") and
             "g_intent_enabled == 0U" in poll and
-            "boot_menu_service_machine_mode()" in poll and
+            "boot_menu_service_host_bus_master_allowed()" in poll and
             "boot_menu_service_slot7_handed_off()" in poll and
             "CARD_CTRL_VTW_STATUS_BUS_OWNED" in poll,
             "the saved host intent must resume through the unchanged host takeover path")
@@ -503,6 +527,7 @@ def run_native_speed_control_test() -> bool:
         static uint32_t test_reg_read(uint32_t address);
         static void test_reg_write(uint32_t address, uint32_t value);
         uint8_t boot_menu_service_machine_mode(void);
+        uint8_t boot_menu_service_host_bus_master_allowed(void);
         const char *boot_menu_service_machine_name(void);
         uint8_t boot_menu_service_slot7_handed_off(void);
         void boot_menu_service_apply_video_rom_patch(void);
@@ -581,6 +606,12 @@ def run_native_speed_control_test() -> bool:
         uint8_t boot_menu_service_machine_mode(void)
         {
             return machine_mode;
+        }
+
+        uint8_t boot_menu_service_host_bus_master_allowed(void)
+        {
+            return (machine_mode == CARD_MACHINE_MODE_IIPLUS ||
+                    machine_mode == CARD_MACHINE_MODE_IIE) ? 1U : 0U;
         }
 
         const char *boot_menu_service_machine_name(void)

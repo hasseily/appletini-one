@@ -746,8 +746,13 @@ static void uart_control_dump_bytes(uint32_t uart_base,
 
 static void dma_hold_set(uint8_t enable)
 {
-    uint32_t ctrl = REG_READ(AT_DMA_CTRL_REG);
+    uint32_t ctrl;
 
+    if (enable != 0U &&
+        boot_menu_service_host_bus_master_allowed() == 0U) {
+        return;
+    }
+    ctrl = REG_READ(AT_DMA_CTRL_REG);
     if (enable != 0U) {
         ctrl |= AT_DMA_CTRL_HOLD_REQ_BIT;
     } else {
@@ -810,6 +815,12 @@ static int dma_peek_raw_read(uint16_t addr, uint16_t count, uint8_t *out_buf, ui
     uint16_t i;
     int rc;
 
+    if (boot_menu_service_host_bus_master_allowed() == 0U) {
+        if (done_out != NULL) {
+            *done_out = 0U;
+        }
+        return -2;
+    }
     REG_WRITE(AT_PROBE_PARAMS_REG, params);
     REG_WRITE(AT_PROBE_COUNT_REG, (uint32_t)count);
     REG_WRITE(AT_PROBE_CTRL_REG, AT_PROBE_CTRL_GO_BIT);
@@ -840,6 +851,12 @@ static int dma_probe_write(uint16_t addr, uint8_t pattern, uint16_t count, uint1
     uint32_t ctrl = 0U;
     int rc;
 
+    if (boot_menu_service_host_bus_master_allowed() == 0U) {
+        if (done_count_out != NULL) {
+            *done_count_out = 0U;
+        }
+        return -2;
+    }
     REG_WRITE(AT_PROBE_PARAMS_REG, params);
     REG_WRITE(AT_PROBE_COUNT_REG, (uint32_t)count);
     REG_WRITE(AT_PROBE_CTRL_REG, AT_PROBE_CTRL_GO_BIT);
@@ -856,7 +873,12 @@ static int dma_probe_write(uint16_t addr, uint8_t pattern, uint16_t count, uint1
 int uart_control_dma_bus_write(uint16_t addr, uint8_t value)
 {
     uint16_t done = 0U;
-    int rc = dma_probe_write(addr, value, 1U, &done);
+    int rc;
+
+    if (boot_menu_service_host_bus_master_allowed() == 0U) {
+        return -2;
+    }
+    rc = dma_probe_write(addr, value, 1U, &done);
     return (rc == 0 && done == 1U) ? 0 : -1;
 }
 
@@ -2770,11 +2792,25 @@ static uart_control_event_t process_command(
             }
             if (mode == -2) {
                 uart_puts(control->control_uart_base,
-                          "usage: machine force <unknown|iiplus|iie|iigs>\r\n");
+                          "usage: machine force iigs | machine auto\r\n");
+                return event;
+            }
+            if (mode != (int)CARD_MACHINE_MODE_IIGS) {
+                if (mode == (int)CARD_MACHINE_MODE_IIE) {
+                    uart_puts(control->control_uart_base,
+                              "machine force iie: REFUSED (unsafe)\r\n");
+                } else if (mode == (int)CARD_MACHINE_MODE_IIPLUS) {
+                    uart_puts(control->control_uart_base,
+                              "machine force iiplus: REFUSED (unsafe)\r\n");
+                } else {
+                    uart_puts(control->control_uart_base,
+                              "machine force unknown: REFUSED; use auto\r\n");
+                }
                 return event;
             }
             boot_menu_service_force_machine_mode(mode);
-            uart_puts(control->control_uart_base, "machine: forced\r\n");
+            uart_puts(control->control_uart_base,
+                      "machine: forced strict IIgs policy\r\n");
             return event;
         }
         if (argc >= 2 && str_ieq(argv[1], "auto")) {
@@ -3480,6 +3516,16 @@ static uart_control_event_t process_command(
         if (argc < 2) {
             uart_puts(control->control_uart_base,
                       "usage: dma <hold on|hold off|status|blocks|tail|peek|reset|probe|trace>\r\n");
+            return event;
+        }
+
+        if (boot_menu_service_host_bus_master_allowed() == 0U &&
+            (str_ieq(argv[1], "peek") || str_ieq(argv[1], "probe") ||
+             str_ieq(argv[1], "write") ||
+             (str_ieq(argv[1], "hold") && argc >= 3 &&
+              !str_ieq(argv[2], "off")))) {
+            uart_puts(control->control_uart_base,
+                      "dma host access: BLOCKED by machine policy\r\n");
             return event;
         }
 

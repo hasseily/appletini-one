@@ -14,6 +14,10 @@ irq_pulse_stretcher.sv
 constraints/appletini_yarz.xdc
 apple/apple_top.sv
 apple/apple_bus_wrapper.sv
+apple/apple_bus_client_policy_gate.sv
+apple/apple_machine_safety_policy.sv
+apple/apple_bootstrap_guard.sv
+apple/apple_slot7_devsel_guard.sv
 apple/onee_mode_safety_guard.sv
 apple/onee_video_standard_ctrl.sv
 apple/apple_virtual_bus.sv

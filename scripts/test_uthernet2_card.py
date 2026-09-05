@@ -329,14 +329,16 @@ def main():
 
     require("wire card_slot1_enable = card_slot_enable_mask_q[1];" in top,
             "Apple top must expose slot 1 enable")
-    require(".ab_read(gate_ab(ab_read, card_slot1_enable))" in top and
+    require(".ab_read(gate_ab(ab_read, card_slot1_bus_enable))" in top and
             ".slot_assign(3'h1)" in top,
             "Uthernet II card must be gated by slot 1 enable and assigned to slot 1")
-    require("apple_bus_write_arbiter #(" in top and
-            ".NUM_CLIENTS(13)" in top and
+    require("apple_bus_client_policy_gate #(" in top and
+            "APPLE_BUS_CLIENT_COUNT = 13" in top and
+            ".NUM_CLIENTS(APPLE_BUS_CLIENT_COUNT)" in top and
             ".FAST_DATA_CLIENT(2)" in top and
-            "uthernet_ab_write" in top,
-            "Apple bus arbiter must include the Uthernet writer")
+            "uthernet_ab_write" in top and
+            ".client_writes(policy_gated_client_writes)" in top,
+            "Uthernet writer must reach the arbiter through the safety gate")
 
     for signal in [
         "eth_d", "eth_a", "eth_rd_n", "eth_wr_n",

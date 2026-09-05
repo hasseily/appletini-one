@@ -8,6 +8,10 @@ module apple_cycle_capture (
     input  logic [8:0]                      line_in_frame,
     input  logic [6:0]                      cycle_in_line,
     input  logic                            frame_en,
+    /* C029 selects Appletini's synthetic SHR only on a locked legacy host
+     * or the isolated ONE//e. Never interpret a physical IIgs C029 write as
+     * this IIe-only mode. */
+    input  logic                            fake_shr_allowed,
 
     // Slot-7 linear text overlay capture window. The bank bit matches
     // addr_decode_late[16]; limit is exclusive.
@@ -100,7 +104,8 @@ module apple_cycle_capture (
     assign vidhd_register_write =
         ab_read.data_en &&
         (cap_rw == 1'b0) &&
-        is_vidhd_register_write(cap_addr);
+        is_vidhd_register_write(cap_addr) &&
+        ((cap_addr != 16'hC029) || fake_shr_allowed);
 
     logic video7_softswitch_access;
     assign video7_softswitch_access =
@@ -127,12 +132,13 @@ module apple_cycle_capture (
     // memory/IO write records, and emit one frame marker per Apple frame.
     logic shr_capture_active_q;
     wire c029_write_cycle =
+        fake_shr_allowed &&
         ab_read.data_en &&
         (cap_rw == 1'b0) &&
         (cap_addr == 16'hC029);
     wire c029_write_shr_active = (ab_read.data[7:6] == 2'b11);
-    wire shr_capture_active_next =
-        c029_write_cycle ? c029_write_shr_active : shr_capture_active_q;
+    wire shr_capture_active_next = !fake_shr_allowed ? 1'b0 :
+        (c029_write_cycle ? c029_write_shr_active : shr_capture_active_q);
     wire shr_frame_marker =
         shr_capture_active_next &&
         (line_in_frame == 9'd0) &&
@@ -143,6 +149,8 @@ module apple_cycle_capture (
 
     always_ff @(posedge clk) begin
         if (~resetn || soft_reset) begin
+            shr_capture_active_q <= 1'b0;
+        end else if (!fake_shr_allowed) begin
             shr_capture_active_q <= 1'b0;
         end else if (c029_write_cycle) begin
             shr_capture_active_q <= c029_write_shr_active;

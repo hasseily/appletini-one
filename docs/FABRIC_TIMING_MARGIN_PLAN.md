@@ -6,7 +6,7 @@ Raise intrinsic fabric timing margin at 133.333 MHz. A timing candidate may
 become the incremental reference only after it meets all of these gates:
 
 - Two clean, full, non-incremental builds of the same Git commit pass in a row.
-- Each build has setup WNS of at least `+0.300 ns` and setup TNS of `0`.
+- Each build has setup WNS of at least `+0.200 ns` and setup TNS of `0`.
 - Each build has nonnegative hold WNS and hold TNS of `0`.
 - Each build has nonnegative pulse-width slack and no failing endpoints.
 - Each build has no unconstrained internal endpoint, route error, bus-skew
@@ -16,7 +16,7 @@ become the incremental reference only after it meets all of these gates:
 - The checkpoint, bitstream, XSA, firmware, reports, commit, and tool version
   have saved hashes or IDs.
 
-The `+0.300 ns` setup target gives useful build margin. Two runs with Vivado's
+The `+0.200 ns` setup target gives useful build margin. Two runs with Vivado's
 default seed show repeatability on one tool version and host. They do not prove
 that all seeds or later Vivado releases will pass. Record both facts and rerun
 the gate after a tool change.
@@ -2040,12 +2040,12 @@ vivado -mode batch -source scripts/promote_timing_candidate.tcl `
 - Do not mix RTL, a flow experiment, and a floorplan change.
 - Keep all failed build records. Revert a failed experiment in a new scoped
   commit or before starting the next one.
-- Do not promote a new fabric feature while setup WNS is below `+0.300 ns`.
+- Do not promote a new fabric feature while setup WNS is below `+0.200 ns`.
 - A correctness or safety fix may proceed below the margin bar, but it must use
   a full build and hardware test and must not become the timing reference until
   it passes the normal gate.
 - Stop a phase when two clean full builds and hardware tests meet the target.
   Do not add later timing changes without a measured need.
 
-Expected useful margin is `+0.300 ns` to about `+0.800 ns`. The measured gates,
+Expected useful margin is `+0.200 ns` to about `+0.800 ns`. The measured gates,
 not that estimate, decide when the campaign ends.

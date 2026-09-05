@@ -70,13 +70,15 @@ def test_sources():
 
     require("ssc_card ssc_card_i" in top and
             ".slot_assign(3'h1)" in top and
-            "gate_ab(ab_read, card_ssc_enable)" in top,
+            "gate_ab(ab_read, card_ssc_bus_enable)" in top,
             "apple_top must place the SSC in slot 1 behind its feature bit")
-    require("apple_bus_write_arbiter #(" in top and
-            ".NUM_CLIENTS(13)" in top and
+    require("apple_bus_client_policy_gate #(" in top and
+            "APPLE_BUS_CLIENT_COUNT = 13" in top and
+            ".NUM_CLIENTS(APPLE_BUS_CLIENT_COUNT)" in top and
             ".FAST_DATA_CLIENT(2)" in top and
-            "ssc_ab_write," in top,
-            "the bus arbiter must include the SSC writer")
+            "ssc_ab_write," in top and
+            ".client_writes(policy_gated_client_writes)" in top,
+            "the SSC writer must reach the arbiter through the safety gate")
     require("CARD_CTRL_FEATURE_SSC_ENABLE_BIT = 2" in top,
             "SSC enable must be feature bit 2 (slot 1 stays the Uthernet mask bit)")
     require("CARD_CTRL_REG_SSC_STATUS" in top and

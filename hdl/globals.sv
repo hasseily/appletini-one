@@ -50,6 +50,9 @@ package globals;
         logic phi0;
         logic m2sel;
         logic m2b0;
+        /* Sampled active-low slot device select. This PCB routes /DEVSEL but
+         * not /IOSEL or /IOSTRB; physical IIgs slot-7 I/O must require it. */
+        logic devsel_n;
         /* A decodable Apple bus cycle. Identified IIgs machines require
          * M2SEL at the address sample; IIe, II+, and unidentified machines
          * accept every sampled cycle. addr_en still fires for an invalid
@@ -90,6 +93,7 @@ package globals;
          * master the motherboard itself can accept has the bus valid. */
         logic [15:0] addr_early;
         logic rw_early;
+        logic devsel_n_early;
     } AppleBus_read;
 
     typedef struct packed {

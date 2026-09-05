@@ -46,6 +46,14 @@ void boot_menu_service_refresh_machine_policy(void);
  * 3=enhanced IIe, 4=IIgs, 5=IIc. */
 uint8_t boot_menu_service_machine_id(void);
 uint8_t boot_menu_service_machine_mode(void);
+/* Host bus masters are allowed only after a II/II+ or IIe report. UNKNOWN,
+ * IIgs, and conflicting reports fail closed. */
+uint8_t boot_menu_service_host_bus_master_allowed(void);
+/* True when this logical slot may answer the detected host. On an IIgs only
+ * physical slot 7 can pass, after a valid boot-time $C02D report. */
+uint8_t boot_menu_service_slot_allowed(uint8_t slot);
+/* bits 7:0 = last IIgs $C02D value, bit 8 = valid. */
+uint16_t boot_menu_service_iigs_slot_config(void);
 const char *boot_menu_service_machine_name(void);
 uint8_t boot_menu_service_aux_card_present(void);
 /* True once the boot menu has handed slot 7 off to a boot target (SmartPort
@@ -53,8 +61,8 @@ uint8_t boot_menu_service_aux_card_present(void);
  * in boot-menu mode and force the //e ROM to re-run the boot menu on the vTW
  * core -- which misbehaves on a II+. Target-agnostic. */
 uint8_t boot_menu_service_slot7_handed_off(void);
-/* mode >= 0: force that CARD_MACHINE_MODE_* (bench testing);
- * mode < 0: return to automatic (reported-id-driven) policy. */
+/* mode == IIGS: force the strict policy for bench testing;
+ * mode < 0: return to automatic policy. Other modes are refused. */
 void boot_menu_service_force_machine_mode(int mode);
 uint8_t boot_menu_service_machine_forced(void);
 

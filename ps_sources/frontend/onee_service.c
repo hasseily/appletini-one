@@ -630,3 +630,24 @@ uint32_t onee_service_status(void)
 {
     return g_status;
 }
+
+uint8_t onee_service_isolation_confirmed(void)
+{
+    const uint32_t required =
+        CARD_CTRL_ONEE_STATUS_REQUEST_BIT |
+        CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT |
+        CARD_CTRL_ONEE_STATUS_ISOLATED_BIT |
+        CARD_CTRL_ONEE_STATUS_SELECTED_BIT |
+        CARD_CTRL_ONEE_STATUS_HDL_PRESENT_BIT;
+    const uint32_t blocked =
+        CARD_CTRL_ONEE_STATUS_OUTPUTS_OFF_BIT |
+        CARD_CTRL_ONEE_STATUS_ACTIVITY_BIT |
+        CARD_CTRL_ONEE_STATUS_LOCKOUT_BIT |
+        CARD_CTRL_ONEE_STATUS_APPLE_POWER_BIT;
+
+    return ((g_status & required) == required &&
+            (g_status & blocked) == 0U &&
+            onee_status_pl_ready(g_status) != 0U &&
+            onee_inhibit_reason(g_status) == CARD_CTRL_ONEE_INHIBIT_NONE) ?
+        1U : 0U;
+}

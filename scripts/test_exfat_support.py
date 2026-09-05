@@ -87,7 +87,7 @@ def main() -> int:
     require(ftp.count("(unsigned long long)") >= 2,
             "FTP SIZE and LIST must pass a wide size value")
 
-    require('"B1.2.0"' in versions and '"F1.0.1"' in versions,
+    require('"B1.2.0"' in versions and '"F1.0.2"' in versions,
             "both image versions must identify this exFAT build")
 
     print("exFAT support source checks passed")

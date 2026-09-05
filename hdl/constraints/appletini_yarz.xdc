@@ -173,7 +173,10 @@ set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLDOWN} \
     [get_ports a2fpga_m2b0]
 
 set_property PACKAGE_PIN AA17 [get_ports a2fpga_m2sel]
-set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLDOWN} \
+# Fail closed at the FPGA when U533 disables its A-side output. IIe /PSYNC
+# and IIgs /M2SEL drive through U533 when enabled. This IOB pull cannot bias
+# a floating II/II+ bus-side pin through the push-pull level translator.
+set_property -dict {IOSTANDARD LVCMOS33 PULLTYPE PULLUP} \
     [get_ports a2fpga_m2sel]
 
 set_property PACKAGE_PIN AB17 [get_ports a2fpga_devsel_n]

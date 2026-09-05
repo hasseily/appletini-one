@@ -215,12 +215,18 @@ def check_hdl():
     # apple_top wiring: enable bit 5, gate_ab, arbiter membership.
     require("wire card_slot5_enable = card_slot_enable_mask_q[5];" in top,
             "slot 5 enable wire missing")
-    require("gate_ab(ab_read, card_slot5_enable)" in top,
+    require("gate_ab(ab_read, card_slot5_bus_enable)" in top,
             "applicard must be gated bus-deaf when disabled")
     require(".slot_assign(3'h5)" in top, "applicard must claim slot 5")
-    require("applicard_ab_write" in top.split("client_writes")[1],
-            "applicard_ab_write missing from write arbiter")
-    require(".NUM_CLIENTS(13)" in top and
+    policy_path = top.split("apple_bus_client_policy_gate #(", 1)[1].split(
+        "apple_bus_write_arbiter #(", 1)[0]
+    arbiter_path = top.split("apple_bus_write_arbiter_i(", 1)[1]
+    require("applicard_ab_write" in policy_path and
+            ".client_writes(policy_gated_client_writes)" in arbiter_path,
+            "applicard writer must reach the arbiter through the safety gate")
+    require("APPLE_BUS_CLIENT_COUNT = 13" in top and
+            top.count("apple_bus_write_arbiter #(") == 2 and
+            "apple_virtual_bus_write_arbiter_i" in top and
             ".vtw_enabled(vtw_enable_eff || onee_enable_effective)" in top,
             "arbiter must add the ONE//e motherboard and block AppliCard bus mastering")
 

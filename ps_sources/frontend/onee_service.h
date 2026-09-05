@@ -75,5 +75,9 @@ void onee_service_request_stop(void);
 void onee_service_poll(void);
 onee_service_state_t onee_service_state(void);
 uint32_t onee_service_status(void);
+/* True only while the PL confirms a selected, hazard-free, isolated private
+ * bus. Host-machine policy may use this for ONE//e-only service paths; it must
+ * never grant access to the physical Apple bus. */
+uint8_t onee_service_isolation_confirmed(void);
 
 #endif /* ONEE_SERVICE_H */

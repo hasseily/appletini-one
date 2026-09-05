@@ -307,15 +307,17 @@ module psram_simple (
             // ---- Apple bus serve lifecycle ----
             // A new address phase clears any stale serve drive (the
             // same contract every card follows).
-            if (ab_read.addr_en) begin
+            if (ab_read.addr_en || ab_read.data_en) begin
                 ab_write.assert_inh <= 1'b0;
                 ab_write.wr_data_en <= 1'b0;
-                // Arm the background admission window for addr_en+3
-                // (sss_en = addr_en+1, so the serve decision is
-                // settled before the window opens).
-                admit_delay_q <= 2'd3;
-                admit_armed_q <= 1'b0;
-                admit_window_q <= ADMIT_WINDOW_TAPS;
+                if (ab_read.addr_en) begin
+                    // Arm the background admission window for addr_en+3
+                    // (sss_en = addr_en+1, so the serve decision is
+                    // settled before the window opens).
+                    admit_delay_q <= 2'd3;
+                    admit_armed_q <= 1'b0;
+                    admit_window_q <= ADMIT_WINDOW_TAPS;
+                end
             end else if (admit_delay_q != 2'd0) begin
                 admit_delay_q <= admit_delay_q - 2'd1;
                 if (admit_delay_q == 2'd1) begin

@@ -14,6 +14,7 @@ module tb_apple_cycle_capture;
     logic [8:0]      line_in_frame = '0;
     logic [6:0]      cycle_in_line = '0;
     logic            frame_en = 1'b0;
+    logic            fake_shr_allowed = 1'b1;
     logic            overlay_devsel_enabled = 1'b0;
     logic            overlay_capture_armed = 1'b0;
     logic            overlay_capture_bank_aux = 1'b0;
@@ -38,6 +39,7 @@ module tb_apple_cycle_capture;
         .line_in_frame(line_in_frame),
         .cycle_in_line(cycle_in_line),
         .frame_en(frame_en),
+        .fake_shr_allowed(fake_shr_allowed),
         .overlay_devsel_enabled(overlay_devsel_enabled),
         .overlay_capture_armed(overlay_capture_armed),
         .overlay_capture_bank_aux(overlay_capture_bank_aux),
@@ -409,11 +411,41 @@ module tb_apple_cycle_capture;
             ab_read.data = 8'hC0;
             line_in_frame = 9'd4;
             cycle_in_line = 7'd7;
+
+            // UNKNOWN and IIgs physical hosts cannot enter the IIe-only
+            // fake-SHR mode or send its C029 record to the PS renderer.
+            fake_shr_allowed = 1'b0;
+            push_cycle();
+            check(!shr_capture_active,
+                  "blocked C029 leaves fake-SHR state clear");
+            check(cycle_capture_empty,
+                  "blocked C029 does not emit a fake-SHR register record");
+
+            fake_shr_allowed = 1'b1;
             push_cycle();
             check(shr_capture_active, "C029 C0 enters SHR capture");
             pop_record(got);
             check(got == pack_io_write_record(16'hC029, 8'hC0, 9'd4, 7'd7),
                   "C029 transition record");
+
+            // A direct machine-policy change must clear a mode already set;
+            // waiting for another C029 write would leave GS/fault state stale.
+            @(negedge clk);
+            fake_shr_allowed = 1'b0;
+            @(posedge clk);
+            #1;
+            check(!shr_capture_active,
+                  "permission loss clears an active fake-SHR mode");
+            @(negedge clk);
+            fake_shr_allowed = 1'b1;
+            ab_read.data_en = 1'b1;
+            @(posedge clk);
+            #1;
+            @(negedge clk);
+            ab_read.data_en = 1'b0;
+            pop_record(got);
+            check(shr_capture_active,
+                  "permitted C029 can re-enter fake-SHR after policy return");
 
             // SHR suppresses ordinary frame pulses.
             ab_read.addr = 16'hFFFF;

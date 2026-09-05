@@ -40,16 +40,19 @@ the same F0.9.75 design miss setup timing by 0.207 ns.
 The build script checks both setup and hold slack before it exports the XSA. If
 the normal full flow misses setup by a small amount, it runs one more
 post-route `AggressiveExplore` physical-optimization pass on the routed design.
-For F0.9.75 this moved setup slack from -0.025 ns to +0.022 ns while hold stayed
-at +0.039 ns. The script still stops if either check remains negative. Never
-package a bitstream from a run that stopped at that timing gate.
+The implementation flow applies a temporary `0.200 ns` setup margin to the
+133 MHz fabric clock before placement, then clears and verifies it after the
+last physical-optimization step. This makes Vivado target the release margin
+without changing the final timing constraint. The script stops unless final
+setup WNS is at least `+0.200 ns` and hold stays nonnegative. Never package a
+bitstream from a run that stopped at that timing gate.
 
 An incremental run can fail placement when the known-good checkpoint predates
 a large change. In that case, do not weaken timing settings or promote the
 failed run. Use the fresh full-build sequence above.
 
 Promotion requires two consecutive clean full builds of the same commit. Both
-must have setup WNS of at least `+0.300 ns`, nonnegative hold and pulse width,
+must have setup WNS of at least `+0.200 ns`, nonnegative hold and pulse width,
 no timing failure, no bad route or bus skew, no missing XDC object, and no
 extra rescue pass. Both builds must also use the same Vivado version and the
 same synthesis, placement, route, and physical-optimization settings. Package

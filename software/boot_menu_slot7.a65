@@ -75,6 +75,8 @@ CMD_MID_IIFAMILY = $21
 CMD_MID_IIE      = $22
 CMD_MID_IIE_ENH  = $23
 CMD_MID_IIGS     = $24
+CMD_IIGS_SLOT_MASK = $27
+IIGS_SLOT_REG     = $C02D
 
 ; Aux-slot card probe. CMD_AUX_PROBE makes the PL drop aux_provide the
 ; same cycle it is decoded, so the write/read test below sees the raw
@@ -416,9 +418,20 @@ mid_iie_enh:
           lda #CMD_MID_IIE_ENH
           jmp mid_aux_probe
 mid_gs:
+          ; Report GS first so the PL arms active-low /M2SEL qualification.
+          ; $27 escapes the next command byte as the raw $C02D external-slot
+          ; mask. The PL locks the first pair and accepts exact warm repeats.
           lda #CMD_MID_IIGS
+          jsr bm_cmd
+          lda #CMD_IIGS_SLOT_MASK
+          jsr bm_cmd
+          lda IIGS_SLOT_REG
+          ; bm_cmd left Y at SLOT16. A valid external slot-7 mask is nonzero,
+          ; so skip the reload in the normal case; zero still falls through.
+          bne mid_send_y
 mid_send:
           ldy SLOT16
+mid_send_y:
           sta BM_IO,y
           rts
 

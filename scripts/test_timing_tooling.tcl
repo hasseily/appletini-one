@@ -69,6 +69,10 @@ set signoff [dict create \
     place_directive Explore phys_opt_directive Explore \
     route_directive {directive=Explore;more_options=-tns_cleanup} \
     post_route_phys_opt_directive {enabled=1;directive=Explore} jobs 8 \
+    minimum_wns_ns 0.200 implementation_setup_margin_ns 0.200 \
+    margin_apply_hook_sha256 [string repeat d 64] \
+    margin_clear_hook_sha256 [string repeat e 64] \
+    final_fabric_user_uncertainty_ns 0.000 \
     wns_ns 0.312 tns_ns 0.000 whs_ns 0.061 ths_ns 0.000 \
     setup_failing_endpoints 0 hold_failing_endpoints 0 \
     pulse_width_failing_endpoints 0 \
@@ -79,6 +83,21 @@ set signoff [dict create \
     bitstream_sha256 [string repeat b 64] \
     xsa_sha256 [string repeat c 64]]
 timing_run::validate_signoff_manifest $signoff
+set low_setup $signoff
+dict set low_setup wns_ns 0.199
+if {![catch {timing_run::validate_signoff_manifest $low_setup}]} {
+    error "Promotion policy accepted setup slack below +0.200 ns."
+}
+set uncleared_margin $signoff
+dict set uncleared_margin final_fabric_user_uncertainty_ns 0.200
+if {![catch {timing_run::validate_signoff_manifest $uncleared_margin}]} {
+    error "Promotion policy accepted uncleared setup margin."
+}
+set missing_hook_hash $signoff
+dict set missing_hook_hash margin_apply_hook_sha256 unavailable
+if {![catch {timing_run::validate_signoff_manifest $missing_hook_hash}]} {
+    error "Promotion policy accepted missing timing-margin hook evidence."
+}
 set rescued $signoff
 dict set rescued rescue_used 1
 if {![catch {timing_run::validate_signoff_manifest $rescued}]} {

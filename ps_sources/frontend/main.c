@@ -186,7 +186,13 @@ uint8_t appletini_config_ramworks_enabled(void)
          : (g_config_menu_state->ramworks_enabled != 0U) ? 1U : 0U;
 }
 static uint32_t g_card_slot_enable_mask = CARD_CTRL_SLOT_ENABLE_RESET_MASK;
+static uint32_t g_card_slot_effective_mask =
+    CARD_CTRL_SLOT_ENABLE_REQUIRED_MASK;
 static uint8_t g_slot5_processor = CONFIG_SLOT5_PROCESSOR_Z80;
+static uint8_t g_clock_requested;
+static uint8_t g_supersprite_requested;
+static uint8_t g_ssc_requested;
+static uint16_t g_host_policy_snapshot = 0xFFFFU;
 static uint8_t g_apple_reset_seq_valid = 0U;
 static uint8_t g_apple_reset_seq_last = 0U;
 static uint8_t g_usb1_background_poll_active = 0U;
@@ -755,16 +761,48 @@ static uint32_t card_control_normalize_slot_mask(uint32_t slot_mask)
            CARD_CTRL_SLOT_ENABLE_REQUIRED_MASK;
 }
 
+static uint8_t control_onee_isolated(void)
+{
+    return onee_service_isolation_confirmed();
+}
+
 static void card_control_sync_slot_mask_from_hw(void)
 {
     g_card_slot_enable_mask =
         card_control_normalize_slot_mask(REG_READ(CARD_CTRL_SLOT_ENABLE_REG));
+    g_card_slot_effective_mask = g_card_slot_enable_mask;
+}
+
+static void card_control_apply_slot_policy(void)
+{
+    uint32_t effective = CARD_CTRL_SLOT_ENABLE_REQUIRED_MASK;
+    const uint8_t onee_isolated = control_onee_isolated();
+    uint8_t slot;
+
+    if (onee_isolated != 0U) {
+        /* These slots terminate on ONE//e's private bus. The PL keeps every
+         * physical Apple-facing output isolated for this whole path. */
+        effective = g_card_slot_enable_mask;
+    }
+    /* Slot 7 stays present here for the small boot responder. Optional
+     * slot-7 services have a separate PL ownership gate because the legacy
+     * slot-mask register always forces bit 7 high. */
+    for (slot = 1U; slot <= 6U && onee_isolated == 0U; ++slot) {
+        const uint32_t bit = 1UL << slot;
+
+        if ((g_card_slot_enable_mask & bit) != 0U &&
+            boot_menu_service_slot_allowed(slot) != 0U) {
+            effective |= bit;
+        }
+    }
+    g_card_slot_effective_mask = effective;
+    REG_WRITE(CARD_CTRL_SLOT_ENABLE_REG, g_card_slot_effective_mask);
 }
 
 static void card_control_write_slot_mask(uint32_t slot_mask)
 {
     g_card_slot_enable_mask = card_control_normalize_slot_mask(slot_mask);
-    REG_WRITE(CARD_CTRL_SLOT_ENABLE_REG, g_card_slot_enable_mask);
+    card_control_apply_slot_policy();
 }
 
 static uint8_t card_control_read_apple_reset_seq(void)
@@ -857,13 +895,19 @@ static void card_control_mark_cpu0_ready(void)
 
 static void control_apply_slot5_service(uint8_t enable)
 {
+    const uint8_t slot_effective =
+        ((g_card_slot_effective_mask & (1UL << 5)) != 0U) ? 1U : 0U;
+
     /* Always disarm both first. This makes live personality changes atomic
      * from the PS point of view; each CPU retains a separate DDR arena. */
     applicard_service_set_enabled(0U);
     ad8088_service_set_enabled(0U);
-    if (enable != 0U) {
+    if (enable != 0U && slot_effective != 0U) {
         if (g_slot5_processor == CONFIG_SLOT5_PROCESSOR_AD8088) {
-            ad8088_service_set_enabled(1U);
+            if (boot_menu_service_host_bus_master_allowed() != 0U ||
+                control_onee_isolated() != 0U) {
+                ad8088_service_set_enabled(1U);
+            }
         } else {
             applicard_service_set_enabled(1U);
         }
@@ -895,17 +939,6 @@ static void control_set_slot_enabled(void *ctx, uint8_t slot, uint8_t enable)
     if (slot == 0U || slot > 7U) {
         return;
     }
-    if (slot == 5U) {
-        /* Slot 5 is a mutually exclusive Z80/8088 personality. */
-        control_apply_slot5_service(enable);
-    }
-    if (slot == 6U) {
-        /* Slot 6 is Disk II: keep the PS track loader in lockstep with the
-         * PL front end while still allowing it to drain a dirty track. The
-         * vTW service owns ONE//e's session-only override and applies the
-         * latest saved value when that override ends. */
-        vtw_service_set_disk2_config_enabled(enable);
-    }
     slot_bit = 1UL << slot;
     slot_mask = g_card_slot_enable_mask;
     if (enable != 0U) {
@@ -914,6 +947,16 @@ static void control_set_slot_enabled(void *ctx, uint8_t slot, uint8_t enable)
         slot_mask &= ~slot_bit;
     }
     card_control_write_slot_mask(slot_mask);
+    if (slot == 5U) {
+        /* Slot 5 is a mutually exclusive Z80/8088 personality. */
+        control_apply_slot5_service(enable);
+    }
+    if (slot == 6U) {
+        /* The loader follows the effective host slot. ONE//e keeps its own
+         * isolated session override. */
+        vtw_service_set_disk2_config_enabled(
+            ((g_card_slot_effective_mask & slot_bit) != 0U) ? 1U : 0U);
+    }
 }
 
 static const char *boot_debug_handoff_name(uint32_t handoff)
@@ -962,11 +1005,12 @@ static void boot_debug_log_snapshot(const char *label)
 
     (void)snprintf(line,
                    sizeof(line),
-                   "[bootdbg] %s slot_mask raw=0x%08lX norm=0x%08lX shadow=0x%08lX slot6=%lu\r\n",
+                   "[bootdbg] %s slot_mask raw=0x%08lX norm=0x%08lX request=0x%08lX effective=0x%08lX slot6=%lu\r\n",
                    label,
                    (unsigned long)slot_mask_raw,
                    (unsigned long)slot_mask_norm,
                    (unsigned long)g_card_slot_enable_mask,
+                   (unsigned long)g_card_slot_effective_mask,
                    (unsigned long)((slot_mask_norm >> CARD_CTRL_SLOT_DISK2) & 0x1U));
     uart_puts(UART0_BASE, line);
 
@@ -1003,7 +1047,6 @@ static uint8_t control_get_slot_enabled(void *ctx, uint8_t slot)
     if (slot == 0U || slot > 7U) {
         return 0U;
     }
-    card_control_sync_slot_mask_from_hw();
     slot_bit = 1UL << slot;
     return ((g_card_slot_enable_mask & slot_bit) != 0U) ? 1U : 0U;
 }
@@ -1062,22 +1105,47 @@ static void control_play_disk2_sound_event(void *ctx, uint8_t event)
     card_control_pulse_disk2_sound_event(event);
 }
 
+static void control_apply_clock_policy(void)
+{
+    const uint32_t clock_slots =
+        (1UL << 2) | (1UL << 4) | (1UL << 6) | (1UL << 7);
+    const uint8_t allowed = control_onee_isolated() != 0U ?
+        (((g_card_slot_enable_mask & clock_slots) != 0U) ? 1U : 0U) :
+        ((((g_card_slot_enable_mask & (1UL << 2)) != 0U &&
+           boot_menu_service_slot_allowed(2U) != 0U) ||
+          ((g_card_slot_enable_mask & (1UL << 4)) != 0U &&
+           boot_menu_service_slot_allowed(4U) != 0U) ||
+          ((g_card_slot_enable_mask & (1UL << 6)) != 0U &&
+           boot_menu_service_slot_allowed(6U) != 0U) ||
+          ((g_card_slot_enable_mask & (1UL << 7)) != 0U &&
+           boot_menu_service_slot_allowed(7U) != 0U)) ? 1U : 0U);
+    const uint8_t effective =
+        (g_clock_requested != 0U && allowed != 0U) ? 1U : 0U;
+
+    if (effective != 0U) {
+        no_slot_clock_control_publish_rtc(&g_rtc);
+    }
+    no_slot_clock_control_set_enabled(effective);
+}
+
 static void control_set_clock_enabled(void *ctx, uint8_t enable)
 {
     (void)ctx;
-    if (enable != 0U) {
-        no_slot_clock_control_publish_rtc(&g_rtc);
-    }
-    no_slot_clock_control_set_enabled(enable);
+    g_clock_requested = (enable != 0U) ? 1U : 0U;
+    control_apply_clock_policy();
 }
 
-static void control_set_supersprite_enabled(void *ctx, uint8_t enable)
+static void control_apply_supersprite_policy(void)
 {
     /* Live read-modify-write of the feature register (bit 1), preserving the
      * no-slot-clock bit -- all feature-mask owners RMW from hardware. */
     uint32_t feat = REG_READ(CARD_CTRL_FEATURE_ENABLE_REG);
-    (void)ctx;
-    if (enable != 0U) {
+    const uint8_t effective =
+        (g_supersprite_requested != 0U &&
+         (boot_menu_service_slot_allowed(7U) != 0U ||
+          control_onee_isolated() != 0U)) ? 1U : 0U;
+
+    if (effective != 0U) {
         feat |= CARD_CTRL_FEATURE_SUPERSPRITE_ENABLE_BIT;
     } else {
         feat &= ~CARD_CTRL_FEATURE_SUPERSPRITE_ENABLE_BIT;
@@ -1085,19 +1153,76 @@ static void control_set_supersprite_enabled(void *ctx, uint8_t enable)
     REG_WRITE(CARD_CTRL_FEATURE_ENABLE_REG, feat);
 }
 
-static void control_set_ssc_enabled(void *ctx, uint8_t enable)
+static void control_set_supersprite_enabled(void *ctx, uint8_t enable)
+{
+    (void)ctx;
+    g_supersprite_requested = (enable != 0U) ? 1U : 0U;
+    control_apply_supersprite_policy();
+}
+
+static void control_apply_ssc_policy(void)
 {
     /* Live read-modify-write of the feature register (bit 2); the virtual
      * SSC shares slot 1 with the Uthernet II, so it never touches the
      * slot-enable mask. */
     uint32_t feat = REG_READ(CARD_CTRL_FEATURE_ENABLE_REG);
-    (void)ctx;
-    if (enable != 0U) {
+    const uint8_t effective =
+        (g_ssc_requested != 0U &&
+         (boot_menu_service_slot_allowed(1U) != 0U ||
+          control_onee_isolated() != 0U)) ? 1U : 0U;
+
+    if (effective != 0U) {
         feat |= CARD_CTRL_FEATURE_SSC_ENABLE_BIT;
     } else {
         feat &= ~CARD_CTRL_FEATURE_SSC_ENABLE_BIT;
     }
     REG_WRITE(CARD_CTRL_FEATURE_ENABLE_REG, feat);
+}
+
+static void control_set_ssc_enabled(void *ctx, uint8_t enable)
+{
+    (void)ctx;
+    g_ssc_requested = (enable != 0U) ? 1U : 0U;
+    control_apply_ssc_policy();
+}
+
+static void control_refresh_machine_policy(void)
+{
+    const uint16_t slot_config = boot_menu_service_iigs_slot_config();
+    const uint8_t onee_isolated = control_onee_isolated();
+    const uint16_t snapshot =
+        (uint16_t)(((uint16_t)boot_menu_service_machine_mode() << 9) |
+                   (slot_config & 0x01FFU) |
+                   ((uint16_t)onee_isolated << 15));
+    const uint8_t slot5_requested =
+        ((g_card_slot_enable_mask & (1UL << 5)) != 0U) ? 1U : 0U;
+
+    if (snapshot == g_host_policy_snapshot) {
+        return;
+    }
+    g_host_policy_snapshot = snapshot;
+    card_control_apply_slot_policy();
+    control_apply_slot5_service(slot5_requested);
+    vtw_service_set_disk2_config_enabled(
+        ((g_card_slot_effective_mask & (1UL << 6)) != 0U) ? 1U : 0U);
+    control_apply_clock_policy();
+    control_apply_supersprite_policy();
+    control_apply_ssc_policy();
+
+    uart_puts(UART0_BASE, "machine: effective slot mask 0x");
+    uart_puthex(UART0_BASE, g_card_slot_effective_mask);
+    uart_puts(UART0_BASE,
+              onee_isolated != 0U ?
+                  " ONE//e private bus enabled\r\n" :
+                  (boot_menu_service_host_bus_master_allowed() != 0U ?
+                       " host bus master enabled\r\n" :
+                       " host bus master blocked\r\n"));
+    if (boot_menu_service_machine_mode() == CARD_MACHINE_MODE_IIGS) {
+        uart_puts(UART0_BASE,
+            ((slot_config & 0x0180U) == 0x0180U) ?
+                "machine: IIgs physical slot 7 eligible; logical slots 1-6 blocked\r\n" :
+                "machine: IIgs boot responder only; logical slots 1-6 blocked\r\n");
+    }
 }
 
 static uint8_t menu_platform_get_scanlines(void *ctx)
@@ -2864,12 +2989,14 @@ static void ui_handle_apple_reset(ui_state_t *s, config_menu_t *menu)
         config_menu_apply_boot_runtime(menu);
     }
     boot_menu_service_refresh_machine_policy();
+    control_refresh_machine_policy();
     smartport_service_apple_reset();
-    /* A physical IIgs clears NEWVIDEO on reset; mirror that for the fake-SHR
-     * path. ONE//e is a virtual Enhanced //e, so its private cold reboot must
-     * not start a host DMA transaction or wait for a physical bus response. */
+    /* Reset fake-SHR state only on a host for which legacy bus mastering is
+     * allowed. A IIgs owns NEWVIDEO itself; UNKNOWN and IIgs must not start a
+     * host DMA transaction. ONE//e uses its private bus. */
     if ((onee_service_status() &
-         CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT) == 0U) {
+         CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT) == 0U &&
+        boot_menu_service_host_bus_master_allowed() != 0U) {
         (void)uart_control_dma_bus_write(0xC029U, 0x01U);
     }
     if (config_menu_is_active(menu)) {
@@ -2898,6 +3025,7 @@ static void ui_start_onee_cold_reboot(ui_state_t *s, config_menu_t *menu)
         config_menu_apply_boot_runtime(menu);
     }
     boot_menu_service_refresh_machine_policy();
+    control_refresh_machine_policy();
     smartport_service_apple_reset();
     if (config_menu_is_active(menu)) {
         g_usb_menu_owned = 0U;
@@ -3499,6 +3627,8 @@ int main(void)
     }
 
     config_menu_apply_runtime(&config_menu);
+    boot_menu_service_refresh_machine_policy();
+    control_refresh_machine_policy();
     boot_debug_log_snapshot("after runtime apply");
     /* The remaining boot-init steps (asset loads, SmartPort media reload,
      * PSRAM benchmark, compositor init) block for a while before the main
@@ -3855,6 +3985,7 @@ int main(void)
 
         ui_handle_apple_reset(&ui, &config_menu);
         boot_menu_service_refresh_machine_policy();
+        control_refresh_machine_policy();
         usb0_priority_checkpoint();
         if (usb_sdd_service_active() ||
             usb_storage_service_needs_attention() == 0) {

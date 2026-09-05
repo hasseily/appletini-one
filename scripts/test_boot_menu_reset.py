@@ -296,10 +296,10 @@ def test_disk2_slot6_uses_boot_handoff_gate() -> None:
 
     require("wire disk2_bus_visible =\n"
             "        onee_enable_effective ||\n"
-            "        (card_slot6_enable && disk2_active_timing_q);" in source and
+            "        (card_slot6_bus_enable && disk2_active_timing_q);" in source and
             ".ab_read(gate_ab(ab_read, disk2_bus_visible))" in source and
             "wire disk2_live_handoff_serve =\n"
-            "        !onee_enable_effective && card_slot6_enable && disk2_active &&\n"
+            "        !onee_enable_effective && card_slot6_bus_enable && disk2_active &&\n"
             "        !disk2_active_timing_q;" in source and
             ".rom_serve_en(ab_read.serve_en && disk2_live_handoff_serve)" in source and
             ".slot_assign(3'h6)" in source,
@@ -336,7 +336,7 @@ def test_disk2_handoff_timing_gate_phase_contract() -> None:
             "the live handoff bypass must terminate in the slot-ROM response")
 
     require("wire disk2_live_handoff_serve =\n"
-            "        !onee_enable_effective && card_slot6_enable && disk2_active &&\n"
+            "        !onee_enable_effective && card_slot6_bus_enable && disk2_active &&\n"
             "        !disk2_active_timing_q;" in top and
             ".rom_serve_en(ab_read.serve_en && disk2_live_handoff_serve)" in top,
             "the live slot-ROM bypass must exist only during the physical host's "

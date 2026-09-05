@@ -15,6 +15,7 @@ module tb_smartport_shortcut;
 
     logic rstn = 0;
     logic apple_bus_visible = 1;
+    logic overlay_bus_visible = 1;
 
     globals::AppleBus_read   ab_read;
     globals::SoftSwitchState sss;
@@ -39,6 +40,7 @@ module tb_smartport_shortcut;
         .rstn(rstn),
         .ab_read(ab_read),
         .apple_bus_visible(apple_bus_visible),
+        .overlay_bus_visible(overlay_bus_visible),
         .sss(sss),
         .slot_assign(3'h7),
         .as_common(as_common),
@@ -266,13 +268,26 @@ module tb_smartport_shortcut;
         repeat (4) @(posedge clk);
         check(ab_write.wr_data_en, "overlay reply is held before visibility loss");
         apple_bus_visible <= 1'b0;
+        overlay_bus_visible <= 1'b0;
         @(posedge clk);
         #1;
         check(!ab_write.wr_data_en, "cycle-boundary visibility loss clears held reply");
         @(posedge clk);
         apple_bus_visible <= 1'b1;
+        overlay_bus_visible <= 1'b1;
         #1;
         check(!ab_write.wr_data_en, "hidden reply stays cleared after re-enable");
+
+        // The top shares overlay cycles with this block. With only the
+        // overlay visible, C8 traffic must not enter the SmartPort FIFOs or
+        // command state.
+        apple_bus_visible <= 1'b0;
+        apple_write(16'hCFF0, 8'hD5);
+        apple_write(16'hCFF1, 8'h02);
+        axi_read(R_STATUS, st);
+        check(st_in(st) == 0 && !st_exec(st),
+              "overlay-only writes cannot change SmartPort state");
+        apple_bus_visible <= 1'b1;
 
         // ---- 1. ROM reads are stable and side-effect-free ----
         vtw_access(T_SLOT_ROM, 1'b1, 11'h000, 8'h00, rom0);

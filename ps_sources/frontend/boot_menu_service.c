@@ -4,6 +4,7 @@
 
 #include "boot_menu_rom_patch.h"
 #include "card_control_regs.h"
+#include "onee_service.h"
 
 #include "../lib/common.h"
 #include "../lib/uart.h"
@@ -17,6 +18,9 @@
 #define BOOT_MENU_REG_APPLE_STATUS     (BOOT_MENU_MMIO_BASE + 0x14U)
 #define BOOT_MENU_REG_APPLE_TIMING     (BOOT_MENU_MMIO_BASE + 0x18U)
 #define BOOT_MENU_REG_C8_PATCH         (BOOT_MENU_MMIO_BASE + 0x1CU)
+/* Read side of the C8 patch port. The boot ROM publishes the IIgs $C02D
+ * slot-owner byte here; writes still patch the C8 ROM as before. */
+#define BOOT_MENU_REG_IIGS_SLOT_CONFIG (BOOT_MENU_MMIO_BASE + 0x1CU)
 
 #define BOOT_MENU_STATUS_MENU_REQUESTED    (1U << 2)
 #define BOOT_MENU_STATUS_CLOSE_REQUESTED   (1U << 3)
@@ -33,6 +37,9 @@
 
 #define BOOT_MENU_APPLE_TIMING_VALID       (1U << 0)
 #define BOOT_MENU_APPLE_TIMING_50HZ        (1U << 1)
+#define BOOT_MENU_IIGS_SLOT_CONFIG_VALID    (1U << 8)
+#define BOOT_MENU_MACHINE_ID_FAULT          (1U << 9)
+#define BOOT_MENU_IIGS_SLOT_CONFIG_FAULT    (1U << 10)
 
 #define BOOT_MENU_DEFAULT_TIMEOUT_TICKS    399000000U
 #define BOOT_MENU_POP_BUDGET               8U
@@ -258,6 +265,11 @@ static uint8_t g_aux_card_present;     /* boot ROM probe: physical aux card */
 static uint8_t g_aux_probe_seen;
 static uint8_t g_machine_mode_applied = 0xFFU;  /* force first apply   */
 static uint8_t g_machine_forced;
+static uint8_t g_iigs_seen;
+static uint8_t g_machine_identity_fault;
+static uint8_t g_iigs_slot_config_valid;
+static uint8_t g_iigs_external_slot_mask;
+static uint8_t g_iigs_policy_fault_seen;
 
 static const char *machine_mode_name(uint8_t mode)
 {
@@ -301,7 +313,8 @@ static uint8_t g_ramworks_applied = 0xFFU;
 static void machine_refresh_aux_policy(void)
 {
     const uint8_t want =
-        (g_machine_mode_applied == CARD_MACHINE_MODE_IIE &&
+        (boot_menu_service_host_bus_master_allowed() != 0U &&
+         g_machine_mode_applied == CARD_MACHINE_MODE_IIE &&
          g_aux_card_present == 0U &&
          appletini_config_ram_enabled() != 0U) ? 1U : 0U;
     /* RamWorks banking requires the Appletini to own base aux: with a
@@ -313,7 +326,9 @@ static void machine_refresh_aux_policy(void)
      * physical-card exclusion stays -- posted aux writes echo to the
      * real bus, and a real card folds every bank into its bank 0. */
     const uint8_t vtw_owns_aux =
-        (vtw_service_session_active() != 0U &&
+        ((boot_menu_service_host_bus_master_allowed() != 0U ||
+          onee_service_isolation_confirmed() != 0U) &&
+         vtw_service_session_active() != 0U &&
          g_aux_card_present == 0U) ? 1U : 0U;
     const uint8_t rw_want =
         ((want != 0U || vtw_owns_aux != 0U) &&
@@ -332,6 +347,43 @@ static void machine_refresh_aux_policy(void)
     }
 }
 
+static void machine_refresh_iigs_slot_policy(void)
+{
+    uint8_t valid = 0U;
+    uint8_t mask = 0U;
+
+    if (g_machine_mode_applied == CARD_MACHINE_MODE_IIGS) {
+        const uint32_t config = REG_READ(BOOT_MENU_REG_IIGS_SLOT_CONFIG);
+        const uint8_t policy_fault =
+            ((config & (BOOT_MENU_MACHINE_ID_FAULT |
+                        BOOT_MENU_IIGS_SLOT_CONFIG_FAULT)) != 0U) ? 1U : 0U;
+
+        valid = ((config & BOOT_MENU_IIGS_SLOT_CONFIG_VALID) != 0U &&
+                 policy_fault == 0U) ? 1U : 0U;
+        mask = valid != 0U ? (uint8_t)(config & 0xFFU) : 0U;
+        if (policy_fault != 0U && g_iigs_policy_fault_seen == 0U) {
+            g_iigs_policy_fault_seen = 1U;
+            uart_puts(UART0_BASE,
+                      "machine: IIgs policy report fault; optional slots off\r\n");
+        }
+    }
+    if (valid == g_iigs_slot_config_valid &&
+        mask == g_iigs_external_slot_mask) {
+        return;
+    }
+
+    g_iigs_slot_config_valid = valid;
+    g_iigs_external_slot_mask = mask;
+    if (valid != 0U) {
+        uart_puts(UART0_BASE, "machine: IIgs boot slot mask 0x");
+        uart_puthex(UART0_BASE, (uint32_t)mask);
+        uart_puts(UART0_BASE, "\r\n");
+    } else if (g_machine_mode_applied == CARD_MACHINE_MODE_IIGS) {
+        uart_puts(UART0_BASE,
+                  "machine: IIgs slot ownership unknown; optional slots off\r\n");
+    }
+}
+
 static void machine_apply_mode(uint8_t mode)
 {
     if (mode == g_machine_mode_applied) {
@@ -341,6 +393,7 @@ static void machine_apply_mode(uint8_t mode)
     g_machine_mode_applied = mode;
     REG_WRITE(CARD_CTRL_MACHINE_MODE_REG, (uint32_t)mode);
     machine_refresh_aux_policy();
+    machine_refresh_iigs_slot_policy();
     uart_puts(UART0_BASE, "machine: mode -> ");
     uart_puts(UART0_BASE, machine_mode_name(mode));
     uart_puts(UART0_BASE, "\r\n");
@@ -349,12 +402,38 @@ static void machine_apply_mode(uint8_t mode)
 static void machine_observe_status(uint32_t status)
 {
     const uint8_t id = (uint8_t)((status >> 12) & 0xFU);
+    const uint8_t observed_mode = machine_mode_from_id(id);
+    const uint32_t safety = REG_READ(BOOT_MENU_REG_IIGS_SLOT_CONFIG);
+
+    if ((safety & BOOT_MENU_MACHINE_ID_FAULT) != 0U &&
+        g_machine_identity_fault == 0U) {
+        g_machine_identity_fault = 1U;
+        uart_puts(UART0_BASE,
+                  "machine: hardware identity fault; strict policy active\r\n");
+    }
 
     if (id != 0U && id != g_machine_id_raw) {
-        g_machine_id_raw = id;
         uart_puts(UART0_BASE, "machine: boot ROM reports id ");
         uart_putdec(UART0_BASE, id);
         uart_puts(UART0_BASE, "\r\n");
+
+        if (observed_mode == CARD_MACHINE_MODE_IIGS) {
+            if (g_iigs_seen == 0U) {
+                uart_puts(UART0_BASE, "machine: IIgs identity latched\r\n");
+            }
+            g_iigs_seen = 1U;
+            g_machine_id_raw = id;
+        } else if (g_iigs_seen != 0U) {
+            uart_puts(UART0_BASE,
+                      "machine: non-IIgs report ignored after IIgs latch\r\n");
+        } else if (g_machine_id_raw == 0U ||
+                   machine_mode_from_id(g_machine_id_raw) == observed_mode) {
+            g_machine_id_raw = id;
+        } else {
+            g_machine_identity_fault = 1U;
+            uart_puts(UART0_BASE,
+                      "machine: conflicting identity; strict policy active\r\n");
+        }
     }
     if (id != 0U) {
         const uint32_t probe = REG_READ(CARD_CTRL_AUX_PROBE_REG);
@@ -385,8 +464,12 @@ static void machine_observe_status(uint32_t status)
         }
     }
     if (g_machine_forced == 0U) {
-        machine_apply_mode(machine_mode_from_id(g_machine_id_raw));
+        const uint8_t mode = g_iigs_seen != 0U ? CARD_MACHINE_MODE_IIGS :
+            (g_machine_identity_fault != 0U ? CARD_MACHINE_MODE_UNKNOWN :
+             machine_mode_from_id(g_machine_id_raw));
+        machine_apply_mode(mode);
     }
+    machine_refresh_iigs_slot_policy();
 }
 
 uint8_t boot_menu_service_aux_card_present(void)
@@ -403,6 +486,40 @@ uint8_t boot_menu_service_machine_mode(void)
 {
     return (g_machine_mode_applied == 0xFFU) ? CARD_MACHINE_MODE_UNKNOWN
                                              : g_machine_mode_applied;
+}
+
+uint8_t boot_menu_service_host_bus_master_allowed(void)
+{
+    const uint8_t mode = boot_menu_service_machine_mode();
+
+    return (mode == CARD_MACHINE_MODE_IIPLUS ||
+            mode == CARD_MACHINE_MODE_IIE) ? 1U : 0U;
+}
+
+uint8_t boot_menu_service_slot_allowed(uint8_t slot)
+{
+    const uint8_t mode = boot_menu_service_machine_mode();
+
+    if (slot == 0U || slot > 7U || mode == CARD_MACHINE_MODE_UNKNOWN) {
+        return 0U;
+    }
+    if (mode == CARD_MACHINE_MODE_IIGS) {
+        /* This PCB has live DEVSEL only for its physical slot 7. $C02D can
+         * change under GS/OS and does not prove ownership of phantom logical
+         * slots, so slots 1-6 stay off for the life of an IIgs boot. */
+        if (slot != 7U || g_iigs_slot_config_valid == 0U) {
+            return 0U;
+        }
+        return ((g_iigs_external_slot_mask & 0x80U) != 0U) ? 1U : 0U;
+    }
+    return 1U;
+}
+
+uint16_t boot_menu_service_iigs_slot_config(void)
+{
+    return (uint16_t)g_iigs_external_slot_mask |
+        (g_iigs_slot_config_valid != 0U ?
+             (uint16_t)BOOT_MENU_IIGS_SLOT_CONFIG_VALID : 0U);
 }
 
 const char *boot_menu_service_machine_name(void)
@@ -424,11 +541,21 @@ void boot_menu_service_force_machine_mode(int mode)
 {
     if (mode < 0) {
         g_machine_forced = 0U;
-        machine_apply_mode(machine_mode_from_id(g_machine_id_raw));
+        machine_apply_mode(g_iigs_seen != 0U ? CARD_MACHINE_MODE_IIGS :
+            (g_machine_identity_fault != 0U ? CARD_MACHINE_MODE_UNKNOWN :
+             machine_mode_from_id(g_machine_id_raw)));
+        return;
+    }
+
+    /* Bench overrides may tighten the policy, never relax it. An unsafe
+     * IIe/II+ override on a real IIgs would reopen /INH and DMA. */
+    if (mode != (int)CARD_MACHINE_MODE_IIGS) {
+        uart_puts(UART0_BASE,
+                  "machine: unsafe force refused; only IIgs is allowed\r\n");
         return;
     }
     g_machine_forced = 1U;
-    machine_apply_mode((uint8_t)mode);
+    machine_apply_mode(CARD_MACHINE_MODE_IIGS);
 }
 
 uint8_t boot_menu_service_machine_forced(void)

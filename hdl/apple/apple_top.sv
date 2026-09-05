@@ -103,8 +103,10 @@ module apple_top(
     globals::AppleBus_read  physical_ab_read;
     globals::AppleBus_read  virtual_ab_read;
     globals::AppleBus_read  onee_softswitch_ab_read;
+    globals::AppleBus_read  slot7_devsel_ab_read;
     globals::AppleBus_write ab_write;
     globals::AppleBus_write ab_write_arb;
+    globals::AppleBus_write virtual_ab_write_arb;
     globals::AppleBus_write onee_motherboard_ab_write;
     globals::SoftSwitchState sss;
     logic ramworks_en_q;  // RamWorks 8 MB expansion, card-control register 0x62
@@ -287,7 +289,7 @@ module apple_top(
         .resp_valid       (virtual_resp_valid),
         .resp_rdata       (virtual_resp_rdata),
         .floating_bus_data(onee_floating_bus_data),
-        .ab_write         (ab_write_arb),
+        .ab_write         (virtual_ab_write_arb),
         .ab_read          (virtual_ab_read)
     );
 
@@ -587,11 +589,126 @@ module apple_top(
     logic [7:0] apple_reset_seq_q = 8'h00;
     logic [13:0] ss_vram_addr_q = 14'd0;    // PS-set VRAM read address
     logic [6:0]  ss_status_flags_q = 7'd0;  // PS-set sprite status flags
+
+    /* The boot ROM reports machine and IIgs slot ownership straight to the
+     * PL. These are safety facts, not PS policy: raw MMIO writes cannot make
+     * an unknown host or an IIgs eligible for INH or bus mastering. */
+    logic [3:0] boot_menu_machine_id;
+    logic       boot_menu_machine_id_fault;
+    logic [7:0] boot_menu_iigs_external_slot_mask;
+    logic       boot_menu_iigs_external_slot_mask_valid;
+    logic       boot_menu_iigs_policy_fault;
+    logic [1:0] machine_mode_q;
+    logic       machine_m2sel_active_high;
+    logic [1:0] machine_mode_effective;
+    logic       machine_m2sel_active_high_safe;
+    logic       machine_identity_fault;
+    logic       machine_identity_reported;
+    logic       machine_identity_legacy;
+    logic       machine_identity_iigs;
+    logic [7:0] physical_slot_allowed_mask;
+    logic       machine_inh_allowed;
+    logic       machine_gs_m2_qualify;
+    logic       machine_is_iiplus;
+    logic       bootstrap_identity_valid;
+    logic       bootstrap_identity_legacy;
+    logic       bootstrap_identity_iigs;
+
+    apple_machine_safety_policy apple_machine_safety_policy_i (
+        .locked_machine_id             (boot_menu_machine_id),
+        .machine_id_fault              (boot_menu_machine_id_fault),
+        .iigs_slot_policy_fault        (boot_menu_iigs_policy_fault),
+        .iigs_external_slot_mask       (
+            boot_menu_iigs_external_slot_mask),
+        .iigs_external_slot_mask_valid (
+            boot_menu_iigs_external_slot_mask_valid),
+        .bootstrap_identity_valid      (bootstrap_identity_valid),
+        .bootstrap_identity_legacy     (bootstrap_identity_legacy),
+        .bootstrap_identity_iigs       (bootstrap_identity_iigs),
+        .requested_machine_mode        (machine_mode_q),
+        .requested_m2sel_active_high   (machine_m2sel_active_high),
+        .machine_identity_reported     (machine_identity_reported),
+        .machine_identity_legacy       (machine_identity_legacy),
+        .machine_identity_iigs         (machine_identity_iigs),
+        .machine_identity_fault        (machine_identity_fault),
+        .physical_slot_allowed_mask    (physical_slot_allowed_mask),
+        .machine_inh_allowed           (machine_inh_allowed),
+        .machine_gs_m2_qualify         (machine_gs_m2_qualify),
+        .machine_is_iiplus             (machine_is_iiplus),
+        .effective_machine_mode        (machine_mode_effective),
+        .effective_m2sel_active_high   (
+            machine_m2sel_active_high_safe)
+    );
+
+    logic unknown_boot_select_seen;
+    logic boot_menu_physical_visible;
+    apple_bootstrap_guard apple_bootstrap_guard_i (
+        .clk                          (clk),
+        .resetn                       (rstn[1]),
+        .onee_enable_effective        (onee_enable_effective),
+        .machine_identity_reported    (machine_identity_reported),
+        .machine_identity_legacy      (machine_identity_legacy),
+        .machine_identity_iigs        (machine_identity_iigs),
+        .reported_identity_fault      (boot_menu_machine_id_fault ||
+                                       boot_menu_iigs_policy_fault),
+        .iigs_external_slot_mask_valid(
+            boot_menu_iigs_external_slot_mask_valid),
+        .iigs_slot7_allowed           (physical_slot_allowed_mask[7]),
+        .physical_ab_read             (physical_ab_read),
+        .boot_menu_physical_visible   (boot_menu_physical_visible),
+        .bootstrap_identity_valid     (bootstrap_identity_valid),
+        .bootstrap_identity_legacy    (bootstrap_identity_legacy),
+        .bootstrap_identity_iigs      (bootstrap_identity_iigs),
+        .unknown_boot_select_seen     (unknown_boot_select_seen)
+    );
+
     wire card_slot1_enable = card_slot_enable_mask_q[1];
     wire card_slot2_enable = card_slot_enable_mask_q[2];
     wire card_slot4_enable = card_slot_enable_mask_q[4];
     wire card_slot5_enable = card_slot_enable_mask_q[5];
     wire card_slot6_enable = card_slot_enable_mask_q[6];
+    wire card_slot1_bus_enable = card_slot1_enable &&
+        (onee_enable_effective || physical_slot_allowed_mask[1]);
+    wire card_slot2_bus_enable = card_slot2_enable &&
+        (onee_enable_effective || physical_slot_allowed_mask[2]);
+    wire card_slot4_bus_enable = card_slot4_enable &&
+        (onee_enable_effective || physical_slot_allowed_mask[4]);
+    wire card_slot5_bus_enable = card_slot5_enable &&
+        (onee_enable_effective || physical_slot_allowed_mask[5]);
+    wire card_slot6_bus_enable = card_slot6_enable &&
+        (onee_enable_effective || physical_slot_allowed_mask[6]);
+    wire card_slot7_bus_enable = onee_enable_effective ||
+                                 physical_slot_allowed_mask[7];
+    /* UNKNOWN and IIgs may use only slot-7 device I/O whose live /DEVSEL
+     * proves ownership. This does not grant any Cn/C8, IRQ, or bus-master
+     * right and is kept separate from the general physical slot mask. */
+    wire physical_slot7_devsel_required = !onee_enable_effective &&
+                                          !machine_identity_legacy;
+    wire physical_slot7_unclassified_io =
+        physical_slot7_devsel_required &&
+        !machine_identity_reported && !machine_identity_fault;
+    wire physical_low_slot7_rom_read =
+        physical_ab_read.cycle_valid && physical_ab_read.rw &&
+        !physical_ab_read.m2sel &&
+        ((physical_ab_read.addr[15:8] == 8'hC7) ||
+         ((physical_ab_read.addr >= 16'hC800) &&
+          (physical_ab_read.addr < 16'hCFFF)));
+    wire physical_low_slot7_io_read =
+        physical_ab_read.cycle_valid && physical_ab_read.rw &&
+        !physical_ab_read.m2sel &&
+        (physical_ab_read.addr[15:4] == 12'hC0F) &&
+        !physical_ab_read.devsel_n;
+    /* Direct final D-bus verdict. C7/C8 needs the exact bootstrap or the
+     * confirmed external-slot policy. C0F also needs live /DEVSEL. */
+    wire physical_slave_select_ok = machine_identity_legacy ||
+        (!machine_identity_fault &&
+         ((boot_menu_physical_visible && physical_low_slot7_rom_read) ||
+          ((physical_slot7_unclassified_io ||
+            (machine_identity_iigs && physical_slot_allowed_mask[7])) &&
+           physical_low_slot7_io_read)));
+    /* GS-capable features use polling. No UNKNOWN or IIgs card may pull the
+     * shared physical IRQ line, even if a stale client request survives. */
+    wire physical_irq_allowed = machine_identity_legacy;
     logic onee_slot7_cold_scan_q;
     wire onee_slot7_cards_visible =
         !onee_enable_effective || !onee_slot7_cold_scan_q;
@@ -627,11 +744,14 @@ module apple_top(
      * enables through its own feature bit instead of the slot mask. */
     wire card_ssc_enable =
         card_feature_enable_mask_q[CARD_CTRL_FEATURE_SSC_ENABLE_BIT];
+    wire card_ssc_bus_enable = card_ssc_enable &&
+        (onee_enable_effective || physical_slot_allowed_mask[1]);
     wire [7:0] no_slot_clock_slot_mask =
-        (card_slot2_enable ? 8'h04 : 8'h00) |
-        (card_slot4_enable ? 8'h10 : 8'h00) |
-        (card_slot6_enable ? 8'h40 : 8'h00) |
-        (onee_slot7_cards_visible ? 8'h80 : 8'h00);
+        (card_slot2_bus_enable ? 8'h04 : 8'h00) |
+        (card_slot4_bus_enable ? 8'h10 : 8'h00) |
+        (card_slot6_bus_enable ? 8'h40 : 8'h00) |
+        ((onee_slot7_cards_visible && card_slot7_bus_enable) ?
+            8'h80 : 8'h00);
     wire apple_reset_release =
         (reset_release_ready_q & RESET_RELEASE_READY_MASK) == RESET_RELEASE_READY_MASK;
     /* A2CTRL.RESET is the sole card-generated RESET assertion path. Merge
@@ -655,10 +775,13 @@ module apple_top(
         (!card_supersprite_enable || onee_smartport_boot_owner) &&
         (onee_enable_effective || smartport_active) &&
         !vtw_disk2_boot_scan_q &&
-        onee_slot7_cards_visible;
+        onee_slot7_cards_visible && card_slot7_bus_enable;
     wire supersprite_visible_desired =
         card_supersprite_enable && !onee_smartport_boot_owner &&
-        onee_slot7_cards_visible;
+        ((onee_slot7_cards_visible && card_slot7_bus_enable) ||
+         physical_slot7_unclassified_io);
+    wire slot7_overlay_devsel_visible =
+        physical_slot7_unclassified_io && !card_supersprite_enable;
     logic vtw_smartport_visible_q;
     logic supersprite_visible_q;
     wire vtw_smartport_visible = ab_read.addr_en
@@ -678,9 +801,9 @@ module apple_top(
 
     wire disk2_bus_visible =
         onee_enable_effective ||
-        (card_slot6_enable && disk2_active_timing_q);
+        (card_slot6_bus_enable && disk2_active_timing_q);
     wire disk2_live_handoff_serve =
-        !onee_enable_effective && card_slot6_enable && disk2_active &&
+        !onee_enable_effective && card_slot6_bus_enable && disk2_active &&
         !disk2_active_timing_q;
     logic vtw_disk2_active;
     logic vtw_d2_req_valid;
@@ -826,6 +949,7 @@ module apple_top(
         .line_in_frame(line_in_frame),
         .cycle_in_line(cycle_in_line),
         .frame_en(frame_en),
+        .fake_shr_allowed(machine_identity_legacy || onee_enable_effective),
         .overlay_devsel_enabled(overlay_devsel_enabled),
         .overlay_capture_armed(overlay_capture_armed),
         .overlay_capture_bank_aux(overlay_capture_bank_aux),
@@ -880,11 +1004,9 @@ module apple_top(
     logic [31:0] sdd_cfg_consumer_ptr_q;
     logic        sdd_cfg_reset_pulse;
 
-    /* Machine mode reported by the boot ROM: 0=unknown, 1=II/II+,
-     * 2=IIe, 3=IIgs. Unknown and IIgs modes prohibit INH and DMA; the PS
-     * must positively identify a compatible machine before either signal
-     * can be driven. */
-    logic [1:0]  machine_mode_q;
+    /* PS-visible machine mode: 0=unknown, 1=II/II+, 2=IIe, 3=IIgs. It may
+     * narrow feature policy, but it cannot grant physical-bus ownership.
+     * Only the locked direct boot-ROM fact above can do that. */
     /* AUX_PROVIDE: card serves the aux 64K + RamWorks banks from PSRAM.
      * Frontend policy enables this only for a //e with no physical aux card;
      * the fabric interlock itself permits INH on identified //e and II/II+
@@ -895,31 +1017,18 @@ module apple_top(
     logic [4:0]  psram_dcount_q;
     logic        psram_dcount_edge_q;
     logic        psram_dcount_wr_pulse_q;
-    logic        machine_inh_allowed;
     /* Give the wrapper a same-edge copy that the placer can keep near its
      * loads. The wrapper still sees each mode change on its original edge. */
     (* DONT_TOUCH = "TRUE" *) logic machine_inh_allowed_wrapper_q;
-    logic        machine_m2sel_active_high;
-    logic        machine_gs_m2_qualify;
-    logic        machine_is_iiplus;
-    assign machine_inh_allowed = (machine_mode_q == 2'd1) ||
-                                 (machine_mode_q == 2'd2);
-    /* M2SEL qualification arms only on a POSITIVE GS identification.
-     * It must NOT apply in UNKNOWN mode: the //e's level on the M2SEL
-     * pin is not guaranteed to read "asserted", and qualifying before
-     * identification could invalidate every cycle -- the boot ROM
-     * could then never serve, the machine ID could never be reported,
-     * and the card would fail to boot on supported Apple II/IIe hosts.
-     * Pre-ID exposure on a GS is the few milliseconds of its own ROM
-     * slot scan; the INH/DMA interlock covers the serving hazards in
-     * that window. */
-    assign machine_gs_m2_qualify = (machine_mode_q == 2'd3);
-
-    /* II/II+ mode selects only the proven host-specific electrical behavior
-     * (served-byte output hold and accelerated Apple-key synthesis). Bus
-     * capture uses the same fixed sample point on every host. */
-    assign machine_is_iiplus = (machine_mode_q == 2'd1);
-
+    /* Register the direct safety verdict near the wrapper loads. There is
+     * no PS write path to this grant. A GS ID or any policy fault drops it. */
+    always_ff @(posedge clk) begin
+        if (!rstn[1]) begin
+            machine_inh_allowed_wrapper_q <= 1'b0;
+        end else begin
+            machine_inh_allowed_wrapper_q <= machine_inh_allowed;
+        end
+    end
     logic [31:0] sdd_stat_producer_ptr;
     logic [31:0] sdd_stat_records_written;
     logic [31:0] sdd_stat_gap_markers;
@@ -1058,9 +1167,11 @@ module apple_top(
         .clk(clk),
         .rstn(rstn[1]),
         .physical_bus_isolate(physical_bus_isolate),
-        .inh_allowed(machine_inh_allowed_wrapper_q),
+        .inh_allowed(machine_inh_allowed_wrapper_q && machine_inh_allowed),
+        .physical_slave_select_ok(physical_slave_select_ok),
+        .physical_irq_allowed(physical_irq_allowed),
         .gs_m2_qualify(machine_gs_m2_qualify),
-        .m2sel_active_high(machine_m2sel_active_high),
+        .m2sel_active_high(machine_m2sel_active_high_safe),
         .host_is_iiplus(machine_is_iiplus),
         .iiplus_dma_refresh_active(vtw_iiplus_dma_refresh_active),
         .apple_data_pin(apple_data_pin),
@@ -1069,6 +1180,7 @@ module apple_top(
         .apple_phi0_pin(apple_phi0_pin),
         .apple_m2sel_pin(apple_m2sel_pin),
         .apple_m2b0_pin(apple_m2b0_pin),
+        .apple_devsel_n_pin(apple_devsel_n_pin),
         .apple_inh_pin(apple_inh_pin),
         .apple_res_pin(apple_res_pin),
         .apple_irq_pin(apple_irq_pin),
@@ -1219,7 +1331,7 @@ module apple_top(
         .audio_control(phasor_audio_q),
         .audio_sample_tick(audio_sample_tick),
         .sss(sss),
-        .ab_read(gate_ab(ab_read, card_slot4_enable)),
+        .ab_read(gate_ab(ab_read, card_slot4_bus_enable)),
         .ab_write(mb1_ab_write),
         .audio_l(mb1_audio_l),
         .audio_r(mb1_audio_r),
@@ -1262,7 +1374,7 @@ module apple_top(
         .clk(clk),
         .rstn(rstn[2]),
         .vblank_start_pulse(mouse_vblank_start_pulse),
-        .ab_read(gate_ab(ab_read, card_slot2_enable)),
+        .ab_read(gate_ab(ab_read, card_slot2_bus_enable)),
         .sss(sss),
         .slot_assign(3'h2),
         .as_common(as_common),
@@ -1369,8 +1481,8 @@ module apple_top(
     applicard_card applicard_card_i (
         .clk(clk),
         .rstn(rstn[2]),
-        .ab_read(gate_ab(ab_read, card_slot5_enable)),
-        .card_enabled(card_slot5_enable),
+        .ab_read(gate_ab(ab_read, card_slot5_bus_enable)),
+        .card_enabled(card_slot5_bus_enable),
         .disk2_timing_active(disk2_sound_spinning),
         // A stand-alone motherboard owns the only virtual bus even before
         // vTW starts; the AD8088 bus-master path must stay stopped throughout.
@@ -1385,7 +1497,7 @@ module apple_top(
     uthernet2_card uthernet2_card_i (
         .clk(clk),
         .rstn(rstn[2]),
-        .ab_read(gate_ab(ab_read, card_slot1_enable)),
+        .ab_read(gate_ab(ab_read, card_slot1_bus_enable)),
         .sss(sss),
         .slot_assign(3'h1),
         .ab_write(uthernet_ab_write),
@@ -1415,7 +1527,7 @@ module apple_top(
     ssc_card ssc_card_i (
         .clk(clk),
         .rstn(rstn[2]),
-        .ab_read(gate_ab(ab_read, card_ssc_enable)),
+        .ab_read(gate_ab(ab_read, card_ssc_bus_enable)),
         .sss(sss),
         .slot_assign(3'h1),
         .ab_write(ssc_ab_write),
@@ -1437,7 +1549,8 @@ module apple_top(
     supersprite_card supersprite_card_i (
         .clk(clk),
         .rstn(rstn[2]),
-        .ab_read(gate_ab(ab_read, supersprite_bus_visible)),
+        .ab_read(gate_ab(slot7_devsel_ab_read,
+                         supersprite_bus_visible)),
         .sss(sss),
         .slot_assign(3'h7),
         .vblank_tick(bm_vbl_cmd_pulse),
@@ -1545,8 +1658,11 @@ module apple_top(
     smartport_card smartport_card_i (
         .clk(clk),
         .rstn(rstn[2]),
-        .ab_read(gate_ab(ab_read, vtw_smartport_visible)),
+        .ab_read(gate_ab(slot7_devsel_ab_read,
+                         vtw_smartport_visible ||
+                         slot7_overlay_devsel_visible)),
         .apple_bus_visible(vtw_smartport_visible),
+        .overlay_bus_visible(slot7_overlay_devsel_visible),
         .sss(sss),
         // SuperSprite wins the shared slot when enabled.
         .slot_assign(3'h7),
@@ -1630,15 +1746,24 @@ module apple_top(
     logic       bm_aux_probe_pulse;
     logic [1:0] bm_aux_status;
     logic       bm_aux_status_clear;
+    globals::AppleBus_read boot_menu_ab_read;
+
+    always_comb begin
+        /* Address/serve phases may prepare a hidden read response. Only an
+         * accepted low-/M2SEL cycle receives data_en, so an untrusted cycle
+         * cannot change boot-menu commands, ID, slot mask, RAM, or keys. */
+        boot_menu_ab_read = gate_ab(slot7_devsel_ab_read,
+                                    !onee_enable_effective);
+        if (!boot_menu_physical_visible)
+            boot_menu_ab_read.data_en = 1'b0;
+    end
 
     boot_menu_card boot_menu_card_i (
         .clk(clk),
         .rstn(rstn[2]),
-        // The stand-alone machine has its own cold slot order. Keep both the
-        // virtual cycles and resets out of the physical-host boot-menu state.
-        .ab_read(gate_ab(physical_ab_read, !onee_enable_effective)),
+        .ab_read(boot_menu_ab_read),
         .sss(sss),
-        .disk2_enabled(card_slot6_enable),
+        .disk2_enabled(card_slot6_bus_enable),
         .apple_video_mode_valid(video_mode_50hz_valid),
         .apple_video_mode_50hz(video_mode_50hz),
         .as_common(as_common),
@@ -1651,6 +1776,12 @@ module apple_top(
         .boot_slot(boot_menu_slot),
         .boot_slot_valid(boot_menu_slot_valid),
         .apple_vblank_start_pulse(bm_vbl_cmd_pulse),
+        .machine_id(boot_menu_machine_id),
+        .machine_id_fault(boot_menu_machine_id_fault),
+        .iigs_external_slot_mask(boot_menu_iigs_external_slot_mask),
+        .iigs_external_slot_mask_valid(
+            boot_menu_iigs_external_slot_mask_valid),
+        .iigs_policy_fault(boot_menu_iigs_policy_fault),
         .aux_probe_pulse(bm_aux_probe_pulse),
         .aux_status(bm_aux_status),
         .aux_status_clear(bm_aux_status_clear)
@@ -1769,11 +1900,11 @@ module apple_top(
             vtw_host_is_iiplus_q   <= 1'b0;
         end
         else if (!vtw_machine_ok_q && !physical_bus_isolate) begin
-            if (machine_mode_q == 2'd1) begin
+            if (machine_is_iiplus) begin
                 vtw_machine_ok_q       <= 1'b1;
                 vtw_host_is_iiplus_q   <= 1'b1;
             end
-            else if (machine_mode_q == 2'd2) begin
+            else if (machine_identity_legacy) begin
                 vtw_machine_ok_q       <= 1'b1;
                 vtw_host_is_iiplus_q   <= 1'b0;
             end
@@ -1825,7 +1956,7 @@ module apple_top(
 
     assign vtw_disk2_active = !onee_enable_effective &&
                               vtw_core_run_eff && vtw_bus_owned &&
-                              card_slot6_enable && disk2_active_timing_q &&
+                              card_slot6_bus_enable && disk2_active_timing_q &&
                               !vtw_ctrl_q[7];
     wire vtw_slot6_boot_probe =
         vtw_disk2_boot_scan_q && vtw_bus_owned &&
@@ -1896,9 +2027,9 @@ module apple_top(
         .speed_mode(vtw_ctrl_q[3:2]),
         .pace_divider(vtw_ctrl_q[31:16]),
         .ignore_c074(vtw_ctrl_q[6]),
-        .irq_assert_in(ab_write_arb.assert_irq),
-        .data_drive_in(ab_write_arb.wr_data_en),
-        .data_drive_value_in(ab_write_arb.wr_data),
+        .irq_assert_in(virtual_ab_write_arb.assert_irq),
+        .data_drive_in(virtual_ab_write_arb.wr_data_en),
+        .data_drive_value_in(virtual_ab_write_arb.wr_data),
         .dbg_clear(busdbg_clear_pulse),
         .iiplus_buttons_zero(vtw_ctrl_q[5]),
         .slow_region_en(vtw_slowdown_q[9:0]),
@@ -1998,15 +2129,84 @@ module apple_top(
     // high index, so every existing client keeps its index. vTW and AD8088 can
     // both drive address/RW, but applicard_card blocks AD8088 whenever vTW or
     // the stand-alone motherboard is enabled.
+    localparam int APPLE_BUS_CLIENT_COUNT = 13;
+    globals::AppleBus_write [APPLE_BUS_CLIENT_COUNT-1:0]
+        policy_gated_client_writes;
+    globals::AppleBus_write supersprite_safe_ab_write;
+    globals::AppleBus_write smartport_safe_ab_write;
+    globals::AppleBus_write boot_menu_safe_ab_write;
+    logic [APPLE_BUS_CLIENT_COUNT-1:0] client_write_enable;
+
+    apple_slot7_devsel_guard apple_slot7_devsel_guard_i (
+        .devsel_required       (physical_slot7_devsel_required),
+        .minimal_io_only       (physical_slot7_unclassified_io),
+        .ab_read_in            (ab_read),
+        .physical_ab_read      (physical_ab_read),
+        .supersprite_write_in  (supersprite_ab_write),
+        .smartport_write_in    (smartport_ab_write),
+        .boot_menu_write_in    (boot_menu_ab_write),
+        .ab_read_out           (slot7_devsel_ab_read),
+        .supersprite_write_out (supersprite_safe_ab_write),
+        .smartport_write_out   (smartport_safe_ab_write),
+        .boot_menu_write_out   (boot_menu_safe_ab_write)
+    );
+
+    /* Phase-strobe gating stops new card activity, but a card may still hold
+     * an IRQ pending. Gate every output tuple with the same direct slot fact
+     * so a C02D/identity fault releases shared lines in the same cycle. */
+    assign client_write_enable = {
+        onee_enable_effective,
+        (machine_inh_allowed || onee_enable_effective),
+        (machine_inh_allowed || onee_enable_effective),
+        card_slot4_bus_enable,
+        card_slot2_bus_enable,
+        card_slot5_bus_enable,
+        card_slot1_bus_enable,
+        card_ssc_bus_enable,
+        (supersprite_bus_visible &&
+         (onee_enable_effective || physical_slot_allowed_mask[7] ||
+          physical_slot7_unclassified_io)),
+        disk2_bus_visible,
+        ((vtw_smartport_visible &&
+          (onee_enable_effective || physical_slot_allowed_mask[7])) ||
+         slot7_overlay_devsel_visible),
+        boot_menu_physical_visible,
+        (no_slot_clock_enabled && (|no_slot_clock_slot_mask))
+    };
+
+    apple_bus_client_policy_gate #(
+        .NUM_CLIENTS(APPLE_BUS_CLIENT_COUNT)
+    ) apple_bus_client_policy_gate_i (
+        .client_enable(client_write_enable),
+        .client_writes({
+            onee_motherboard_ab_write,
+            vtw_ab_write,
+            brain_transplant_write,
+            mb1_ab_write,
+            mouse_ab_write,
+            applicard_ab_write,
+            uthernet_ab_write,
+            ssc_ab_write,
+            supersprite_safe_ab_write,
+            disk2_ab_write,
+            smartport_safe_ab_write,
+            boot_menu_safe_ab_write,
+            no_slot_clock_ab_write
+        }),
+        .gated_writes(policy_gated_client_writes)
+    );
+
+    /* Keep the private ONE//e bus on the short, original card-response path.
+     * Physical policy and live-select gates must never feed back through the
+     * virtual bus: that creates a long card-to-card combinational path. This
+     * raw branch cannot reach an Apple slot pin. The physical branch below
+     * retains every policy gate and the wrapper's final pad interlocks. */
     apple_bus_write_arbiter #(
-        .NUM_CLIENTS(13),
+        .NUM_CLIENTS(APPLE_BUS_CLIENT_COUNT),
         .FAST_DATA_CLIENT(2),
-        .FAST_ADDR_CLIENT(11)
-    )
-    apple_bus_write_arbiter_i(
-        // INH is an internal virtual line in ONE//e. The physical wrapper
-        // still receives a zeroed write record while isolation is asserted.
-        .inh_allowed(machine_inh_allowed || onee_enable_effective),
+        .FAST_ADDR_CLIENT(-1)
+    ) apple_virtual_bus_write_arbiter_i (
+        .inh_allowed(1'b1),
         .client_writes({
             onee_motherboard_ab_write,
             vtw_ab_write,
@@ -2022,6 +2222,19 @@ module apple_top(
             boot_menu_ab_write,
             no_slot_clock_ab_write
         }),
+        .ab_write(virtual_ab_write_arb)
+    );
+
+    apple_bus_write_arbiter #(
+        .NUM_CLIENTS(APPLE_BUS_CLIENT_COUNT),
+        .FAST_DATA_CLIENT(2),
+        .FAST_ADDR_CLIENT(11)
+    )
+    apple_bus_write_arbiter_i(
+        // INH is an internal virtual line in ONE//e. The physical wrapper
+        // still receives a zeroed write record while isolation is asserted.
+        .inh_allowed(machine_inh_allowed || onee_enable_effective),
+        .client_writes(policy_gated_client_writes),
         .ab_write(ab_write_arb)
     );
 
@@ -2108,7 +2321,6 @@ module apple_top(
             sdd_cfg_reset_pulse             <= 1'b0;
             onee_request_q                  <= 1'b0;
             machine_mode_q                  <= 2'd0;
-            machine_inh_allowed_wrapper_q   <= 1'b0;
             machine_m2sel_active_high       <= 1'b0;
             aux_provide_en_q                <= 1'b0;
             psram_dcount_q                  <= 5'd0;
@@ -2339,11 +2551,19 @@ module apple_top(
                         onee_request_q <= tmp[0];
                     end
                     8'h60: begin
-                        machine_mode_q            <= as_common.wdata[1:0];
-                        machine_inh_allowed_wrapper_q <=
-                            (as_common.wdata[1:0] == 2'd1) ||
-                            (as_common.wdata[1:0] == 2'd2);
-                        machine_m2sel_active_high <= as_common.wdata[2];
+                        /* A PS command may restrict an unknown/legacy host,
+                         * but cannot downgrade a latched GS or invert its
+                         * active-low /M2SEL input. */
+                        if (boot_menu_machine_id == 4'd4) begin
+                            machine_mode_q <= 2'd3;
+                            machine_m2sel_active_high <= 1'b0;
+                        end else if (machine_identity_fault) begin
+                            machine_mode_q <= 2'd0;
+                            machine_m2sel_active_high <= 1'b0;
+                        end else begin
+                            machine_mode_q <= as_common.wdata[1:0];
+                            machine_m2sel_active_high <= as_common.wdata[2];
+                        end
                     end
                     8'h61: aux_provide_en_q <= as_common.wdata[0];
                     /* (aux_provide is also force-dropped by the boot
@@ -2546,8 +2766,8 @@ module apple_top(
                                           onee_video_50hz_active,
                                           onee_video_50hz_desired};
                 8'h60:   as_client_rdata_q <= {29'b0,
-                                               machine_m2sel_active_high,
-                                               machine_mode_q};
+                                               machine_m2sel_active_high_safe,
+                                               machine_mode_effective};
                 8'h61:   as_client_rdata_q <= {31'b0, aux_provide_en_q};
                 8'h62:   as_client_rdata_q <= {31'b0, ramworks_en_q};
                 8'h63:   as_client_rdata_q <= {26'b0,

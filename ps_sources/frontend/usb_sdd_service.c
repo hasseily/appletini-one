@@ -23,6 +23,7 @@
 #include "../lib/common.h"
 #include "../lib/uart.h"
 #include "card_control_regs.h"
+#include "boot_menu_service.h"
 #include "usb_sdd_service.h"
 #include "uart_control.h"
 #include "usb0_personality.h"
@@ -107,6 +108,7 @@ static u32 SddWatchdogWrites;
 static u32 SddUnknownWrites;
 static u32 SddRamBytes;
 static u32 SddRamErrors;
+static u32 SddRamBlocked;
 
 /* ------------------------------------------------------------------ */
 /* PL tap control                                                       */
@@ -379,6 +381,11 @@ static void sdd_handle_reg_write(u32 addr, u32 value)
                  * ascending addresses (hex dumps read left to right). */
                 u32 a = addr - SDD_ADDR_RAM_BASE;
                 int shift;
+
+                if (boot_menu_service_host_bus_master_allowed() == 0U) {
+                    SddRamBlocked++;
+                    break;
+                }
                 for (shift = 24; shift >= 0; shift -= 8) {
                     if (a > 0xFFFFU) {
                         break;              /* clip at the top of RAM */
@@ -775,14 +782,15 @@ void usb_sdd_service_print_status(uint32_t uart_base)
     uart_puts(uart_base, line);
     (void)snprintf(line, sizeof(line),
                    "sdd: events=%lu msgs=%lu enables=%lu wdog=%lu "
-                   "unk=%lu ram=%lu ramerr=%lu\r\n",
+                   "unk=%lu ram=%lu ramerr=%lu ramblock=%lu\r\n",
                    (unsigned long)SddEventsSent,
                    (unsigned long)SddMessagesSent,
                    (unsigned long)SddHostEnables,
                    (unsigned long)SddWatchdogWrites,
                    (unsigned long)SddUnknownWrites,
                    (unsigned long)SddRamBytes,
-                   (unsigned long)SddRamErrors);
+                   (unsigned long)SddRamErrors,
+                   (unsigned long)SddRamBlocked);
     uart_puts(uart_base, line);
     (void)snprintf(line, sizeof(line),
                    "sdd: tx sub=%lu comp=%lu inflight=%lu\r\n",

@@ -129,7 +129,9 @@ def static_checks() -> None:
         ("a2fpga_7m", "PULLDOWN"),
         ("a2fpga_q3", "PULLDOWN"),
         ("a2fpga_m2b0", "PULLDOWN"),
-        ("a2fpga_m2sel", "PULLDOWN"),
+        # /M2SEL is active-low on a IIgs, so the disconnected FPGA-side
+        # default must be deasserted. The pull cannot cross U533.
+        ("a2fpga_m2sel", "PULLUP"),
         ("a2fpga_devsel_n", "PULLUP"),
     ):
         require(
@@ -143,8 +145,11 @@ def static_checks() -> None:
     require(
         "apple_virtual_bus apple_virtual_bus_i" in apple_top and
         ".req_valid        (1'b0)" in apple_top and
-        ".ab_write         (ab_write_arb)" in apple_top,
-        "virtual bus must use merged card writes with its CPU request tied off",
+        ".ab_write         (virtual_ab_write_arb)" in apple_top and
+        "apple_virtual_bus_write_arbiter_i" in apple_top and
+        "apple_bus_private_client_gate" not in apple_top,
+        "virtual bus must use the short private card-write path with its "
+        "CPU request tied off",
     )
     require(
         "assign ab_read  = onee_enable_effective ? virtual_ab_read" in apple_top and
@@ -172,7 +177,8 @@ def static_checks() -> None:
     )
 
     for contract in (
-        "ab_write.wr_addr_rw_en &&\n                                !physical_bus_isolate",
+        "ab_write.wr_addr_rw_en && inh_allowed &&\n"
+        "                                !physical_bus_isolate",
         "apple_data_enable_unisolated &&\n                             !physical_bus_isolate",
         "wire apple_irq_drive_low = !physical_bus_isolate",
         "assign apple_inh_pin = (!physical_bus_isolate",

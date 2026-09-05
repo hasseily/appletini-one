@@ -604,7 +604,8 @@ def test_empty_or_disabled_disk2_track_requests_stay_quiet() -> None:
         re.S)
     require(slot_control is not None and
             "if (slot == 6U)" in slot_control.group(0) and
-            "vtw_service_set_disk2_config_enabled(enable);" in slot_control.group(0),
+            "g_card_slot_effective_mask & slot_bit" in slot_control.group(0) and
+            "vtw_service_set_disk2_config_enabled(" in slot_control.group(0),
             "Slot 6 config changes must flow through the effective Disk II owner")
 
 

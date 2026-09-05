@@ -45,6 +45,11 @@ module apple_bus_wrapper (
      * assert a bus-contention event. vTW bus takeover is supported on both
      * identified //e and II/II+ hosts. */
     input  logic                  inh_allowed,
+    /* Final physical-pad policy. The upstream physical arbiter already
+     * filters each card, but these direct facts keep stale or merged records
+     * from enabling GS data or IRQ drive. */
+    input  logic                  physical_slave_select_ok,
+    input  logic                  physical_irq_allowed,
 
     /* M2SEL qualification. When gs_m2_qualify is high for an identified
      * IIgs, a bus cycle is
@@ -68,6 +73,7 @@ module apple_bus_wrapper (
     input  logic                  apple_phi0_pin,
     input  logic                  apple_m2sel_pin,
     input  logic                  apple_m2b0_pin,
+    input  logic                  apple_devsel_n_pin,
     inout  wire                   apple_inh_pin,
     inout  wire                   apple_res_pin,
     inout  wire                   apple_irq_pin,
@@ -141,14 +147,15 @@ module apple_bus_wrapper (
     logic        phi0_clean;
     logic        m2sel_clean;
     logic        m2b0_clean;
+    logic        devsel_n_clean;
     logic        inh_clean;
     logic        res_clean;
     logic        irq_clean;
     logic        rdy_clean;
     logic        dma_clean;
     logic        nmi_clean;
-    logic [9:0]  misc_clean;
-    assign {rw_clean, phi0_clean, m2sel_clean, m2b0_clean,
+    logic [10:0] misc_clean;
+    assign {rw_clean, phi0_clean, m2sel_clean, m2b0_clean, devsel_n_clean,
             inh_clean, res_clean, irq_clean, rdy_clean, dma_clean,
             nmi_clean} = misc_clean;
 
@@ -190,10 +197,11 @@ module apple_bus_wrapper (
         .clk(clk), .resetn(rstn),
         .din(apple_addr_pin), .dout(addr_clean)
     );
-    cdc_bus_iob #(.WIDTH(10)) misc_clean_sync (
+    cdc_bus_iob #(.WIDTH(11)) misc_clean_sync (
         .clk(clk), .resetn(rstn),
         .din({apple_rw_pin, apple_phi0_pin, apple_m2sel_pin,
-              apple_m2b0_pin, apple_inh_pin, apple_res_pin,
+              apple_m2b0_pin, apple_devsel_n_pin,
+              apple_inh_pin, apple_res_pin,
               apple_irq_pin, apple_rdy_pin, apple_dma_pin,
               apple_nmi_pin}),
         .dout(misc_clean)
@@ -238,7 +246,10 @@ module apple_bus_wrapper (
                             {2'b0, phi0_maj_hist[2]} +
                             {2'b0, phi0_maj_hist[3]} +
                             {2'b0, phi0_maj_hist[4]};
-    wire m2sel_asserted = m2sel_active_high ? m2sel_clean : ~m2sel_clean;
+    /* A IIgs always presents /M2SEL active low. The polarity control remains
+     * for legacy bring-up only and cannot invert an identified GS cycle. */
+    wire m2sel_asserted = gs_m2_qualify ? ~m2sel_clean :
+                             (m2sel_active_high ? m2sel_clean : ~m2sel_clean);
     wire cycle_valid_now = !gs_m2_qualify || m2sel_asserted;
     logic [ADDR_PIPE_DEPTH-1:0]    addr_pipe;
     logic [DATA_PIPE_DEPTH-1:0]    data_pipe;
@@ -288,7 +299,7 @@ module apple_bus_wrapper (
      * every existing data-enable truth-table entry unchanged when inactive. */
     // Address and R/W drive only while an arbiter client explicitly requests
     // ownership; otherwise both buses remain tri-stated.
-    wire apple_addr_rw_enable = ab_write.wr_addr_rw_en &&
+    wire apple_addr_rw_enable = ab_write.wr_addr_rw_en && inh_allowed &&
                                 !physical_bus_isolate;
 
     /* Card responses settle many fabric clocks before TAP_DATA_EMIT. Register
@@ -303,6 +314,9 @@ module apple_bus_wrapper (
     logic       physical_addr_rw_en_q;
     logic       physical_rw_q;
     logic       physical_inh_dependent_q;
+    logic       physical_bus_master_q;
+    logic       physical_slave_read_q;
+    logic       physical_slave_select_ok_q;
     always_ff @(posedge clk) begin
         /* The cleared enable masks this byte during reset, so the data flops
          * need no reset input or extra control set. */
@@ -312,20 +326,33 @@ module apple_bus_wrapper (
             physical_addr_rw_en_q <= 1'b0;
             physical_rw_q         <= 1'b1;
             physical_inh_dependent_q <= 1'b0;
+            physical_bus_master_q <= 1'b0;
+            physical_slave_read_q <= 1'b0;
+            physical_slave_select_ok_q <= 1'b0;
         end else begin
             physical_data_en_q    <= ab_write.wr_data_en;
             physical_addr_rw_en_q <= ab_write.wr_addr_rw_en;
             physical_rw_q         <= ab_write.wr_rw;
             physical_inh_dependent_q <= ab_write.assert_inh;
+            physical_bus_master_q <= ab_write.assert_dma ||
+                                     ab_write.wr_addr_rw_en ||
+                                     ab_write.wr_dma_data_en;
+            physical_slave_read_q <= ab_read_r.cycle_valid && ab_read_r.rw;
+            physical_slave_select_ok_q <= physical_slave_select_ok;
         end
     end
 
     /* machine_inh_allowed may drop after this stage captures an INH-backed
      * response. Release that response with INH so motherboard RAM cannot
      * contend with the card for the rest of the Apple cycle. */
+    wire physical_data_policy_allowed = physical_bus_master_q ?
+                                            inh_allowed :
+                                            (physical_slave_read_q &&
+                                             physical_slave_select_ok_q);
     wire physical_data_en_safe =
         physical_data_en_q &&
-        (!physical_inh_dependent_q || inh_allowed);
+        (!physical_inh_dependent_q || inh_allowed) &&
+        physical_data_policy_allowed;
     wire drive_live = bus_emit_state && physical_data_en_safe;
     wire read_response_live =
         drive_live && (!physical_addr_rw_en_q || physical_rw_q);
@@ -413,13 +440,14 @@ module apple_bus_wrapper (
         end
     end
     wire iiplus_read_hold_allowed =
-        !iiplus_read_inh_dependent_q || inh_allowed;
+        inh_allowed &&
+        (!iiplus_read_inh_dependent_q || inh_allowed);
     wire iiplus_read_hold_active =
         host_is_iiplus && data_override_q && data_override_saved_q &&
         iiplus_read_hold_allowed;
     wire data_override_safe =
         data_override_q &&
-        (!data_override_saved_q || iiplus_read_hold_allowed);
+        (data_override_saved_q ? iiplus_read_hold_allowed : inh_allowed);
 
     /* The direction-output route is bounded in the XDC so the asynchronous
      * raw-PHI0 release remains placement-independent. Keep this one gate at
@@ -471,6 +499,7 @@ module apple_bus_wrapper (
      * core's internal interrupt path. Driving is still low/high-Z only,
      * preserving the open-collector electrical contract. */
     wire apple_irq_drive_low = !physical_bus_isolate &&
+                               physical_irq_allowed &&
                                ab_write.assert_irq &&
                                (!host_is_iiplus || !irq_rearm_release_q);
     assign apple_irq_pin = apple_irq_drive_low ? 1'b0 : 1'bz;
@@ -553,6 +582,7 @@ module apple_bus_wrapper (
             /* Interrupt lines idle deasserted (active low). */
             ab_read_r.irq    <= 1'b1;
             ab_read_r.nmi    <= 1'b1;
+            ab_read_r.devsel_n <= 1'b1;
             irq_snap_q       <= 1'b1;
             nmi_snap_q       <= 1'b1;
             bus_emit_state   <= 1'b0;
@@ -601,6 +631,7 @@ module apple_bus_wrapper (
                  * master may still be showing the previous cycle here. */
                 ab_read_r.addr_early  <= addr_clean;
                 ab_read_r.rw_early    <= rw_clean;
+                ab_read_r.devsel_n_early <= devsel_n_clean;
                 ab_read_r.m2sel       <= m2sel_clean;
                 ab_read_r.m2b0        <= m2b0_clean;
                 ab_read_r.inh         <= inh_clean;
@@ -623,6 +654,7 @@ module apple_bus_wrapper (
                  * Everything except INH/PSRAM serving keys off this. */
                 ab_read_r.addr     <= addr_clean;
                 ab_read_r.rw       <= rw_clean;
+                ab_read_r.devsel_n <= devsel_n_clean;
                 ab_read_r.serve_en <= ab_read_r.cycle_valid;
             end
             else if (data_phase_snap_bus) begin

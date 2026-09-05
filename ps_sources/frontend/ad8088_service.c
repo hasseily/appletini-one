@@ -17,6 +17,8 @@
 
 #include "ad8088_machine.h"
 #include "applicard_regs.h"
+#include "boot_menu_service.h"
+#include "onee_service.h"
 #include "../lib/common.h"
 #include "../lib/uart.h"
 
@@ -1119,6 +1121,16 @@ void ad8088_service_init(uint32_t uart_base)
 
 void ad8088_service_set_enabled(uint8_t enable)
 {
+    if (enable != 0U &&
+        boot_menu_service_host_bus_master_allowed() == 0U &&
+        onee_service_isolation_confirmed() == 0U) {
+        g_enabled = 0U;
+        g_machine.active = 0U;
+        REG_WRITE(APPLICARD_REG_AD_CONTROL, AD8088_CONTROL_CANCEL_BUS);
+        uart_puts(g_uart_base,
+                  "AD8088: blocked by host machine safety policy\r\n");
+        return;
+    }
     if (enable != 0U) {
         if (g_memory_initialized == 0U) {
             memset((uint8_t *)AD8088_RAM_BASE, 0, AD8088_BASE_RAM_END);
@@ -1166,6 +1178,13 @@ void ad8088_service_poll(void)
 {
     uint32_t status;
 
+    if (boot_menu_service_host_bus_master_allowed() == 0U &&
+        onee_service_isolation_confirmed() == 0U) {
+        if (g_enabled != 0U || g_machine.active != 0U) {
+            ad8088_service_set_enabled(0U);
+        }
+        return;
+    }
     if (g_enabled == 0U ||
         (REG_READ(APPLICARD_REG_MODE) & 1U) != APPLICARD_MODE_AD8088) {
         return;

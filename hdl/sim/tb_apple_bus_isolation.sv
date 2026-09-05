@@ -11,6 +11,10 @@ module tb_apple_bus_isolation;
     logic rstn = 1'b0;
     logic physical_bus_isolate = 1'b0;
     logic inh_allowed = 1'b1;
+    logic physical_slave_select_ok = 1'b1;
+    logic physical_irq_allowed = 1'b1;
+    logic gs_m2_qualify = 1'b0;
+    logic m2sel_active_high = 1'b0;
 
     tri [7:0]  apple_data_pin;
     tri [15:0] apple_addr_pin;
@@ -51,8 +55,10 @@ module tb_apple_bus_isolation;
         .dbg_ghost_write(),
         .dbg_clear(1'b0),
         .inh_allowed(inh_allowed),
-        .gs_m2_qualify(1'b0),
-        .m2sel_active_high(1'b0),
+        .physical_slave_select_ok(physical_slave_select_ok),
+        .physical_irq_allowed(physical_irq_allowed),
+        .gs_m2_qualify(gs_m2_qualify),
+        .m2sel_active_high(m2sel_active_high),
         .host_is_iiplus(1'b0),
         .iiplus_dma_refresh_active(1'b0),
         .apple_data_pin(apple_data_pin),
@@ -61,6 +67,7 @@ module tb_apple_bus_isolation;
         .apple_phi0_pin(apple_phi0_pin),
         .apple_m2sel_pin(apple_m2sel_pin),
         .apple_m2b0_pin(apple_m2b0_pin),
+        .apple_devsel_n_pin(1'b1),
         .apple_inh_pin(apple_inh_pin),
         .apple_res_pin(apple_res_pin),
         .apple_irq_pin(apple_irq_pin),
@@ -129,9 +136,77 @@ module tb_apple_bus_isolation;
               apple_inh_pin === 1'b1,
               "control request escaped physical isolation");
 
-        release dut.apple_inh_assert;
+        // UNKNOWN/IIgs policy must atomically release every bus-master pin,
+        // even while the client tuple and registered data remain asserted.
         release dut.apple_data_enable_unisolated;
+        physical_bus_isolate = 1'b0;
+        inh_allowed = 1'b0;
+        apple_phi0_pin = 1'b1;
+        force dut.bus_emit_state = 1'b1;
+        force dut.physical_data_en_q = 1'b1;
+        force dut.physical_data_q = 8'h5A;
+        force dut.physical_bus_master_q = 1'b1;
+        force dut.physical_slave_read_q = 1'b1;
+        #1;
+        check(tini_addr_dir_pin == 1'b0, "unsafe mode clears address direction");
+        check(tini_data_dir_pin == 1'b0, "unsafe mode clears master data direction");
+        check(apple_addr_pin === 16'hzzzz, "unsafe mode releases address");
+        check(apple_rw_pin === 1'bz, "unsafe mode releases R/W");
+        check(apple_data_pin === 8'hzz, "unsafe mode releases master data");
+        check(apple_dma_pin === 1'b1, "unsafe mode releases DMA");
+        check(apple_inh_pin === 1'b1, "unsafe mode releases INH");
+        check(apple_rdy_pin === 1'b1 && apple_nmi_pin === 1'b1,
+              "RDY and NMI remain high-Z");
+
+        // A selected slave read uses no ownership field and remains legal.
+        ab_write.wr_addr_rw_en = 1'b0;
+        ab_write.assert_dma = 1'b0;
+        force dut.physical_bus_master_q = 1'b0;
+        #1;
+        check(tini_data_dir_pin == 1'b1 && apple_data_pin === 8'h5A,
+              "qualified slave read remains enabled");
+        physical_slave_select_ok = 1'b0;
+        @(posedge clk);
+        #1;
+        check(tini_data_dir_pin == 1'b0 && apple_data_pin === 8'hzz,
+              "final slot select gate must release slave data");
+        physical_slave_select_ok = 1'b1;
+        @(posedge clk);
+        #1;
+        check(tini_data_dir_pin == 1'b1 && apple_data_pin === 8'h5A,
+              "selected slave read restores data after the staged gate");
+
+        physical_irq_allowed = 1'b0;
+        #1;
+        check(apple_irq_pin === 1'b1,
+              "final GS IRQ policy must release the shared line");
+        physical_irq_allowed = 1'b1;
+        force dut.physical_slave_read_q = 1'b0;
+        #1;
+        check(tini_data_dir_pin == 1'b0 && apple_data_pin === 8'hzz,
+              "invalid GS cycle cannot drive slave data");
+
+        // GS mode fixes /M2SEL active low; the writable legacy polarity bit
+        // cannot reverse this safety rule.
+        gs_m2_qualify = 1'b1;
+        m2sel_active_high = 1'b1;
+        apple_m2sel_pin = 1'b1;
+        force dut.m2sel_clean = 1'b1;
+        #1;
+        check(!dut.m2sel_asserted && !dut.cycle_valid_now,
+              "GS M2SEL high is invalid despite polarity request");
+        force dut.m2sel_clean = 1'b0;
+        #1;
+        check(dut.m2sel_asserted && dut.cycle_valid_now,
+              "GS M2SEL low is valid");
+
+        release dut.apple_inh_assert;
+        release dut.bus_emit_state;
+        release dut.physical_data_en_q;
         release dut.physical_data_q;
+        release dut.physical_bus_master_q;
+        release dut.physical_slave_read_q;
+        release dut.m2sel_clean;
         $display("APPLE BUS ISOLATION PASS");
         $finish;
     end

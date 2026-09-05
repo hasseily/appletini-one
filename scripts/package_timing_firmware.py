@@ -17,6 +17,7 @@ BUILD_ID_RE = re.compile(
     r"^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}-full(?:-[0-9]{2})?$"
 )
 MANIFEST_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]*$")
+SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
 def validate_manifest_entry(key: str, value: str) -> None:
@@ -88,7 +89,15 @@ def validate_build_manifest(build_id: str, run_dir: Path,
     require_value(values, "git_dirty", "0")
     require_value(values, "route_status", "PASS")
     require_value(values, "bus_skew_status", "PASS")
-    require_nonnegative(values, "wns_ns", 0.300)
+    require_nonnegative(values, "minimum_wns_ns", 0.200)
+    require_nonnegative(values, "implementation_setup_margin_ns", 0.200)
+    require_nonnegative(values, "final_fabric_user_uncertainty_ns")
+    if float(values["final_fabric_user_uncertainty_ns"]) != 0.0:
+        raise ValueError(
+            "final_fabric_user_uncertainty_ns must be zero, got "
+            f"{values['final_fabric_user_uncertainty_ns']}"
+        )
+    require_nonnegative(values, "wns_ns", 0.200)
     require_nonnegative(values, "whs_ns")
     require_nonnegative(values, "wpws_ns")
     for key in (
@@ -100,6 +109,10 @@ def validate_build_manifest(build_id: str, run_dir: Path,
         require_nonnegative(values, key)
         if float(values[key]) != 0.0:
             raise ValueError(f"{key} must be zero, got {values[key]}")
+
+    for key in ("margin_apply_hook_sha256", "margin_clear_hook_sha256"):
+        if not SHA256_RE.fullmatch(values.get(key, "")):
+            raise ValueError(f"{key} is missing or invalid")
 
     artifacts = {
         "candidate_dcp_sha256": run_dir / "candidate.dcp",

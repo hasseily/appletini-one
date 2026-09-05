@@ -224,6 +224,11 @@ static vtw_ctrl_live_result_t vtw_apply_ctrl_live(void)
 {
     uint32_t desired;
 
+    if (g_onee_running == 0U && g_state != VTW_ST_IDLE &&
+        boot_menu_service_host_bus_master_allowed() == 0U) {
+        REG_WRITE(CARD_CTRL_VTW_CTRL_REG, 0U);
+        return VTW_CTRL_LIVE_FAILED;
+    }
     if (g_onee_running != 0U) {
         /* A live option or speed reapply must not end an ordered reboot.
          * CORE_RUN stays high as a supervisor-visible session echo, while
@@ -923,23 +928,24 @@ void vtw_service_poll(void)
         return;
     }
 
+    /* Recheck before every host state. A late or conflicting machine report
+     * must cancel a pending takeover as well as a running session. */
+    if (boot_menu_service_host_bus_master_allowed() == 0U) {
+        if (g_state != VTW_ST_IDLE) {
+            vtw_session_stop("machine safety policy");
+        } else if (g_intent_enabled != 0U && g_announced_wait == 0U) {
+            uart_puts(g_uart_base,
+                      "vtw: saved request blocked by host machine policy\r\n");
+            g_announced_wait = 1U;
+        }
+        return;
+    }
+    g_announced_wait = 0U;
+
     switch (g_state) {
     case VTW_ST_IDLE:
         if (g_intent_enabled == 0U) {
             g_announced_handoff_wait = 0U;
-            break;
-        }
-        if (boot_menu_service_machine_mode() != CARD_MACHINE_MODE_IIE &&
-            boot_menu_service_machine_mode() != CARD_MACHINE_MODE_IIPLUS) {
-            /* The PL gate would refuse anyway; wait for the boot ROM's
-             * machine report (or a forced mode). Announce once. Both //e
-             * and II/II+ accelerate as an Enhanced //e: the fixed //e ROM
-             * and the full MMU model apply regardless of host. */
-            if (g_announced_wait == 0U) {
-                uart_puts(g_uart_base,
-                          "vtw: waiting for machine identification\r\n");
-                g_announced_wait = 1U;
-            }
             break;
         }
         /* Take the bus only after the boot menu has handed slot 7 off to a

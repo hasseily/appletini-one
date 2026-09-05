@@ -77,15 +77,47 @@ module tb_apple_bus_addr_enable;
             clear_clients();
             client_writes[i].assert_inh = 1'b1;
             client_writes[i].wr_addr_rw_en = 1'b1;
+            client_writes[i].wr_data_en = 1'b1;
+            client_writes[i].wr_dma_data_en = 1'b1;
+            client_writes[i].assert_dma = 1'b1;
             inh_allowed = 1'b0;
             #1;
-            check(!ab_write.wr_addr_rw_en,
-                  $sformatf("client %0d blocked with unsafe INH", i));
+            check(!ab_write.assert_inh && !ab_write.assert_dma &&
+                  !ab_write.wr_addr_rw_en && !ab_write.wr_data_en &&
+                  !ab_write.wr_dma_data_en,
+                  $sformatf("client %0d unsafe tuple blocked atomically", i));
             inh_allowed = 1'b1;
             #1;
-            check(ab_write.wr_addr_rw_en,
-                  $sformatf("client %0d restored with safe INH", i));
+            check(ab_write.assert_inh && ab_write.assert_dma &&
+                  ab_write.wr_addr_rw_en && ab_write.wr_data_en &&
+                  ab_write.wr_dma_data_en,
+                  $sformatf("client %0d safe tuple restored", i));
+
+            // Each ownership field must close the whole request even if a
+            // faulty client omits DMA# or presents its tuple out of order.
+            clear_clients();
+            inh_allowed = 1'b0;
+            client_writes[i].wr_data_en = 1'b1;
+            client_writes[i].wr_addr_rw_en = 1'b1;
+            #1;
+            check(!ab_write.wr_addr_rw_en && !ab_write.wr_data_en,
+                  $sformatf("client %0d address-only master blocked", i));
+            clear_clients();
+            client_writes[i].wr_data_en = 1'b1;
+            client_writes[i].wr_dma_data_en = 1'b1;
+            #1;
+            check(!ab_write.wr_dma_data_en && !ab_write.wr_data_en,
+                  $sformatf("client %0d DMA-data-only master blocked", i));
+            clear_clients();
+            client_writes[i].wr_data_en = 1'b1;
+            #1;
+            check(ab_write.wr_data_en && !ab_write.wr_addr_rw_en &&
+                  !ab_write.wr_dma_data_en && !ab_write.assert_dma &&
+                  !ab_write.assert_inh,
+                  $sformatf("client %0d selected slave read remains enabled", i));
         end
+
+        inh_allowed = 1'b1;
 
         // A handoff between vTW and another bus master must never create a
         // low pulse while either same-edge request remains asserted.

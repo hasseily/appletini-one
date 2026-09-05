@@ -130,25 +130,33 @@ def test_apple_top_integration() -> None:
             "SuperSprite must be instantiated in apple_top")
     require("wire supersprite_visible_desired =\n"
             "        card_supersprite_enable && !onee_smartport_boot_owner &&\n"
-            "        onee_slot7_cards_visible;" in s and
-            ".ab_read(gate_ab(ab_read, supersprite_bus_visible))" in s and
+            "        ((onee_slot7_cards_visible && card_slot7_bus_enable) ||\n"
+            "         physical_slot7_unclassified_io);" in s and
+            ".ab_read(gate_ab(slot7_devsel_ab_read,\n"
+            "                         supersprite_bus_visible))" in s and
+            "apple_slot7_devsel_guard apple_slot7_devsel_guard_i" in s and
+            ".minimal_io_only       (physical_slot7_unclassified_io)" in s and
             ".slot_assign(3'h7)" in s,
-            "SuperSprite occupies slot 7 except for a SmartPort ONE//e boot")
+            "SuperSprite must use only the isolated or DEVSEL-guarded slot-7 path")
     require("card_feature_enable_mask_q[CARD_CTRL_FEATURE_SS_ENABLE_BIT]" in s,
             "enable comes from the feature-enable mask")
     require("wire vtw_smartport_visible_desired =\n"
             "        (!card_supersprite_enable || onee_smartport_boot_owner) &&\n"
             "        (onee_enable_effective || smartport_active) &&\n"
             "        !vtw_disk2_boot_scan_q &&\n"
-            "        onee_slot7_cards_visible;" in s and
+            "        onee_slot7_cards_visible && card_slot7_bus_enable;" in s and
             "wire vtw_smartport_visible = ab_read.addr_en" in s and
-            ".ab_read(gate_ab(ab_read, vtw_smartport_visible))" in s,
-            "slot-7 ownership must be stable for each Apple bus cycle")
+            ".ab_read(gate_ab(slot7_devsel_ab_read,\n"
+            "                         vtw_smartport_visible ||\n"
+            "                         slot7_overlay_devsel_visible))" in s,
+            "slot-7 ownership must stay stable and DEVSEL-guarded for each cycle")
     require(".vblank_tick(bm_vbl_cmd_pulse)" in s,
             "frame tick reuses the boot ROM VBL command pulse")
-    require(".NUM_CLIENTS(13)" in s and
-            "supersprite_ab_write" in s,
-            "SuperSprite must be in the write arbiter (13 clients with vTW and ONE//e)")
+    require("localparam int APPLE_BUS_CLIENT_COUNT = 13;" in s and
+            ".NUM_CLIENTS(APPLE_BUS_CLIENT_COUNT)" in s and
+            "supersprite_safe_ab_write" in s and
+            ".client_writes({" in s,
+            "SuperSprite must reach the write arbiter through the policy gates")
     # PS export window
     require("CARD_CTRL_REG_SS_REGS_LO" in s and "CARD_CTRL_REG_SS_VRAM_ADDR" in s and
             "CARD_CTRL_REG_SS_SPR_FLAGS" in s,

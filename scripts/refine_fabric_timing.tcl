@@ -11,8 +11,8 @@ if {$argc < 2 || $argc > 4} {
 
 set input_dcp [file normalize [lindex $argv 0]]
 set output_dir [file normalize [lindex $argv 1]]
-set temporary_uncertainty [expr {$argc >= 3 ? [lindex $argv 2] : 0.200}]
-set minimum_wns [expr {$argc >= 4 ? [lindex $argv 3] : 0.150}]
+set temporary_uncertainty [expr {$argc >= 3 ? [lindex $argv 2] : 0.300}]
+set minimum_wns [expr {$argc >= 4 ? [lindex $argv 3] : 0.200}]
 
 if {![file isfile $input_dcp]} {
     error "Input checkpoint does not exist: $input_dcp"
@@ -21,6 +21,9 @@ foreach value [list $temporary_uncertainty $minimum_wns] {
     if {![string is double -strict $value] || $value <= 0.0} {
         error "Timing margins must be positive numbers."
     }
+}
+if {$minimum_wns < 0.200} {
+    error "Minimum final WNS cannot be less than 0.200 ns."
 }
 if {$temporary_uncertainty <= $minimum_wns} {
     error "Temporary uncertainty must exceed the required final WNS."
@@ -113,8 +116,8 @@ puts "Global hold after refinement: $hold_after ns"
 puts "Video setup after refinement: $video_after ns"
 puts "Video-to-DVI setup after refinement: $video_dvi_after ns"
 
-if {$fabric_after <= $minimum_wns || $global_after <= $minimum_wns} {
-    error "Refined setup slack must be greater than $minimum_wns ns."
+if {$fabric_after < $minimum_wns || $global_after < $minimum_wns} {
+    error "Refined setup slack must be at least $minimum_wns ns."
 }
 if {$hold_after < 0.0} {
     error "Refinement introduced a hold violation."
@@ -156,8 +159,8 @@ foreach key {wns_ns whs_ns wpws_ns} {
         error "Final timing check failed: $key"
     }
 }
-if {[dict get $timing_values wns_ns] <= $minimum_wns} {
-    error "Reported WNS does not exceed $minimum_wns ns."
+if {[dict get $timing_values wns_ns] < $minimum_wns} {
+    error "Reported WNS is below $minimum_wns ns."
 }
 foreach key {
     tns_ns ths_ns tpws_ns setup_failing_endpoints hold_failing_endpoints

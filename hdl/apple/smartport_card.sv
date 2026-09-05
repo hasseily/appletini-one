@@ -69,6 +69,7 @@ module smartport_card (
     input  logic                     rstn,
     input  globals::AppleBus_read    ab_read,
     input  logic                     apple_bus_visible,
+    input  logic                     overlay_bus_visible,
     input  globals::SoftSwitchState  sss,
     input  logic [2:0]               slot_assign,
     input  globals::AxiSimple_common as_common,
@@ -173,10 +174,10 @@ module smartport_card (
 
     // ---- Apple-bus decode ----
     wire configured = (slot_assign != 3'd0);
-    /* apple_top already removes every bus phase strobe while this card is
-     * hidden. Keep visibility out of the shared decode tree; the output mask
-     * and state clear below handle a late ownership loss. */
-    wire apple_bus_enabled = configured && ab_read.res &&
+    /* The shared input also carries text-overlay DEVSEL cycles. Keep the main
+     * SmartPort decoder behind its own visibility bit so an overlay-only
+     * access cannot read or change SmartPort state. */
+    wire apple_bus_enabled = configured && apple_bus_visible && ab_read.res &&
                              ((slot_assign != 3'h3) || sss.sw_slotc3rom);
 
     logic [7:0] axi_read_addr_q;
@@ -425,7 +426,7 @@ module smartport_card (
                 ab_write_d.wr_data_en = 1'b0;
             end
         end
-        else if (ab_read.data_en || !ab_read.res) begin
+        else if (ab_read.addr_en || ab_read.data_en || !ab_read.res) begin
             ab_write_d.wr_data    = 8'h00;
             ab_write_d.wr_data_en = 1'b0;
         end
@@ -468,13 +469,13 @@ module smartport_card (
             smartport_irq <= 1'b0;
             ab_write_q    <= ab_write_d;
 
-            if (!apple_bus_visible) begin
+            if (!apple_bus_visible && !overlay_bus_visible) begin
                 ab_write_q.wr_data_en <= 1'b0;
                 overlay_reply_hold_q <= 1'b0;
             end else begin
                 if (overlay_io_read_valid)
                     overlay_reply_hold_q <= 1'b1;
-                else if (ab_read.data_en || !ab_read.res)
+                else if (ab_read.addr_en || ab_read.data_en || !ab_read.res)
                     overlay_reply_hold_q <= 1'b0;
             end
 

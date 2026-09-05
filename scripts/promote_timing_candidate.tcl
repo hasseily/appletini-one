@@ -36,7 +36,9 @@ timing_run::require_matching_manifest_values $tested $confirm {
     vivado_version device_part speed_grade seed_control
     synth_strategy synth_retiming control_set_opt_threshold
     impl_strategy place_directive phys_opt_directive route_directive
-    post_route_phys_opt_directive jobs rescue_used
+    post_route_phys_opt_directive jobs rescue_used minimum_wns_ns
+    implementation_setup_margin_ns margin_apply_hook_sha256
+    margin_clear_hook_sha256 final_fabric_user_uncertainty_ns
 }
 set current_git [timing_run::git_state]
 timing_run::require_manifest_value $current_git git_sha $tested_sha \

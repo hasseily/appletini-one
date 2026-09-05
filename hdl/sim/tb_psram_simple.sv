@@ -167,6 +167,17 @@ module tb_psram_simple;
         join_any
         disable fork;
 
+        // A held aux-memory reply must release at data_en. The private ONE//e
+        // gate admits a newly enabled client on this same fabric edge.
+        aux_cycle(1'b0, 24'h0140DD, 8'h00);
+        #1;
+        if (ab_write.assert_inh !== 1'b0 ||
+            ab_write.wr_data_en !== 1'b0) begin
+            $display("FAIL: PSRAM reply survived the data_en boundary");
+            $finish;
+        end
+        $display("[%0t] PSRAM DATA_EN RELEASE PASS", $time);
+
         // --- DMA line WRITE (staging): MC-port rw=0 = write ---
         dma_rw = 1'b0; dma_wdata = 64'hDEAD_BEEF_CAFE_F00D;
         dma_line_addr = 21'h1C0000;  // disk2 staging region

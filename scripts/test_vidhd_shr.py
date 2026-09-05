@@ -560,7 +560,8 @@ def test_no_vidhd_identity_and_slot_layout() -> None:
     # 13 clients = the post-VidHD clients, ImageWriter, virtual TransWarp bus
     # master, and ONE//e motherboard; the VidHD client itself must stay gone.
     require("apple_bus_write_arbiter #(" in top and
-            ".NUM_CLIENTS(13)" in top and
+            "APPLE_BUS_CLIENT_COUNT = 13" in top and
+            ".NUM_CLIENTS(APPLE_BUS_CLIENT_COUNT)" in top and
             "ssc_ab_write" in top and
             "vidhd_ab_write" not in top,
             "bus write arbiter must not include a VidHD client")
@@ -569,8 +570,8 @@ def test_no_vidhd_identity_and_slot_layout() -> None:
             "SoftSwitchState must expose SLOTC3ROM so slot-3 cards can avoid the internal //e ROM/IO personality")
     require("sss.slot_access &&" in mouse and
             "((slot_assign != 3'h3) || sss.sw_slotc3rom)" in mouse and
-            "apple_bus_enabled = configured && ab_read.res" in smartport and
-            "if (!apple_bus_visible) begin" in smartport and
+            "apple_bus_enabled = configured && apple_bus_visible && ab_read.res" in smartport and
+            "if (!apple_bus_visible && !overlay_bus_visible) begin" in smartport and
             "((slot_assign != 3'h3) || sss.sw_slotc3rom)" in smartport and
             "apple_bus_active = enabled &&" in disk2 and
             "((slot_assign != 3'h3) || sss.sw_slotc3rom)" in disk2,
@@ -584,7 +585,7 @@ def test_no_vidhd_identity_and_slot_layout() -> None:
             ".slot_assign(MB1_SLOT_ASSIGN)" in top,
             "Phasor must be controlled as slot 4")
     require("mouse_card mouse_card_i" in top and
-            ".ab_read(gate_ab(ab_read, card_slot2_enable))" in top and
+            ".ab_read(gate_ab(ab_read, card_slot2_bus_enable))" in top and
             ".slot_assign(3'h2)" in top,
             "MouseCard must be controlled as slot 2")
     require('"mouse_card_slot2.mem"' in mouse and

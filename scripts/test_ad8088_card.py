@@ -126,7 +126,7 @@ def test_hdl() -> None:
             "!bus_master_owns" in card,
             "sparse DMA must park owned cycles, give the CPU recovery time, "
             "and suppress ghost slot I/O")
-    require(".card_enabled(card_slot5_enable)" in top,
+    require(".card_enabled(card_slot5_bus_enable)" in top,
             "AD8088 front end must be disabled with slot 5")
     require(".disk2_timing_active(disk2_sound_spinning)" in top,
             "sparse DMA must be blocked during Disk II timing")

@@ -530,7 +530,13 @@ proc timing_run::validate_signoff_manifest {values} {
         "Incremental reference"
     require_manifest_value $values incremental_reference_sha256 "" \
         "Incremental reference hash"
-    require_number_at_least $values wns_ns 0.300 "Setup slack"
+    require_number_at_least $values minimum_wns_ns 0.200 \
+        "Required setup slack"
+    require_number_at_least $values implementation_setup_margin_ns 0.200 \
+        "Implementation setup margin"
+    require_number_zero $values final_fabric_user_uncertainty_ns \
+        "Final fabric user uncertainty"
+    require_number_at_least $values wns_ns 0.200 "Setup slack"
     require_number_at_least $values whs_ns 0.000 "Hold slack"
     require_number_at_least $values wpws_ns 0.000 "Pulse-width slack"
     foreach key {
@@ -553,10 +559,13 @@ proc timing_run::validate_signoff_manifest {values} {
             error "Build flow value is missing ($key)."
         }
     }
-    foreach key {candidate_dcp_sha256 bitstream_sha256 xsa_sha256} {
+    foreach key {
+        margin_apply_hook_sha256 margin_clear_hook_sha256
+        candidate_dcp_sha256 bitstream_sha256 xsa_sha256
+    } {
         if {![dict exists $values $key] ||
-            [dict get $values $key] in {"" unavailable}} {
-            error "Build artifact hash is missing ($key)."
+            ![regexp -nocase {^[0-9a-f]{64}$} [dict get $values $key]]} {
+            error "Build hash is missing or invalid ($key)."
         }
     }
 }

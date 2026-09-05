@@ -8,6 +8,25 @@ set force_full_build [expr {
     $::env(APPLETINI_FULL_BUILD) ne "0"
 }]
 set timing_diagnostics [timing_run::env_enabled APPLETINI_TIMING_DIAGNOSTICS]
+set minimum_setup_slack 0.200
+set implementation_setup_margin 0.200
+set script_dir [file dirname [file normalize [info script]]]
+set margin_apply_hook \
+    [file normalize [file join $script_dir apply_fabric_timing_margin.tcl]]
+set margin_clear_hook \
+    [file normalize [file join $script_dir clear_fabric_timing_margin.tcl]]
+foreach hook [list $margin_apply_hook $margin_clear_hook] {
+    if {![file isfile $hook]} {
+        error "Timing-margin hook does not exist: $hook"
+    }
+}
+set margin_apply_hook_sha256 [timing_run::sha256_file $margin_apply_hook]
+set margin_clear_hook_sha256 [timing_run::sha256_file $margin_clear_hook]
+foreach hook_hash [list $margin_apply_hook_sha256 $margin_clear_hook_sha256] {
+    if {![regexp -nocase {^[0-9a-f]{64}$} $hook_hash]} {
+        error "Could not record a timing-margin hook SHA-256."
+    }
+}
 set build_mode [expr {
     $force_full_build || ![file isfile $incremental_ref]
         ? "full"
@@ -33,6 +52,11 @@ proc finish_timing_build {} {
 dict set build_info vivado_version [version -short]
 dict set build_info jobs 8
 dict set build_info rescue_used 0
+dict set build_info minimum_wns_ns $minimum_setup_slack
+dict set build_info implementation_setup_margin_ns $implementation_setup_margin
+dict set build_info margin_apply_hook_sha256 $margin_apply_hook_sha256
+dict set build_info margin_clear_hook_sha256 $margin_clear_hook_sha256
+dict set build_info final_fabric_user_uncertainty_ns ""
 dict set build_info seed_control "Vivado default"
 dict set build_info device_part ""
 dict set build_info speed_grade ""
@@ -112,13 +136,20 @@ if {[lsearch -exact $allowed_place_directives $place_directive] < 0} {
     error "Unsupported APPLETINI_PLACE_DIRECTIVE: $place_directive"
 }
 set_property STEPS.PLACE_DESIGN.ARGS.DIRECTIVE $place_directive $impl_run
+set_property STEPS.PLACE_DESIGN.TCL.PRE $margin_apply_hook $impl_run
 set_property -dict \
     [list {STEPS.ROUTE_DESIGN.ARGS.MORE OPTIONS} {-tns_cleanup}] $impl_run
 set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true $impl_run
 set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE Explore $impl_run
+set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.TCL.POST \
+    $margin_clear_hook $impl_run
 if {[get_property STEPS.PLACE_DESIGN.ARGS.DIRECTIVE $impl_run] ne
         $place_directive} {
     error "Place directive did not apply."
+}
+if {[get_property STEPS.PLACE_DESIGN.TCL.PRE $impl_run] ne
+        $margin_apply_hook} {
+    error "Fabric timing-margin apply hook did not register."
 }
 if {[string trim [get_property {STEPS.ROUTE_DESIGN.ARGS.MORE OPTIONS} $impl_run]] ne
         "-tns_cleanup"} {
@@ -128,6 +159,10 @@ if {![get_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED $impl_run] ||
     [get_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE $impl_run] ne
         "Explore"} {
     error "Post-route physical optimization settings did not apply."
+}
+if {[get_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.TCL.POST $impl_run] ne
+        $margin_clear_hook} {
+    error "Fabric timing-margin clear hook did not register."
 }
 puts "Placement directive: $place_directive"
 
@@ -222,6 +257,27 @@ wait_on_run impl_1
 # not prove that the image boots on hardware, so only the explicit promotion
 # script may replace the known-good incremental reference.
 open_run impl_1
+set fabric_clock \
+    [get_clocks -quiet clk_out1_zynq_ps_bd_clk_wiz_1_0]
+if {[llength $fabric_clock] != 1} {
+    error "Expected exactly one 133 MHz fabric clock at signoff."
+}
+set fabric_path [get_timing_paths -quiet -delay_type max \
+    -from $fabric_clock -to $fabric_clock -max_paths 1]
+if {[llength $fabric_path] != 1} {
+    error "No fabric setup path found at signoff."
+}
+set final_user_uncertainty \
+    [get_property USER_UNCERTAINTY $fabric_path]
+if {$final_user_uncertainty eq ""} {
+    set final_user_uncertainty 0.000
+}
+dict set build_info final_fabric_user_uncertainty_ns \
+    $final_user_uncertainty
+if {![string is double -strict $final_user_uncertainty] ||
+    abs(double($final_user_uncertainty)) > 0.0005} {
+    error "Temporary fabric setup margin remains at signoff: $final_user_uncertainty ns."
+}
 set worst_setup_path [get_timing_paths -quiet -delay_type max -max_paths 1]
 set worst_hold_path  [get_timing_paths -quiet -delay_type min -max_paths 1]
 if {[llength $worst_setup_path] == 0 || [llength $worst_hold_path] == 0} {
@@ -231,12 +287,10 @@ set worst_setup_slack [get_property SLACK $worst_setup_path]
 set worst_hold_slack  [get_property SLACK $worst_hold_path]
 puts "Final implementation slack: setup=$worst_setup_slack ns hold=$worst_hold_slack ns"
 
-# A full placement can finish a few picoseconds short even after the run's
-# normal post-route Explore pass. Do not change the placement strategy or
-# accept that result. One AggressiveExplore pass on the routed design can
-# transform only the remaining critical cones while preserving the completed
-# placement and routing. This closed the F0.9.75 image from -0.025 ns to
-# +0.022 ns. Keep hold failures fatal; this fallback targets setup only.
+# A full placement can still finish a few picoseconds short after its normal
+# post-route pass. Give an actual setup failure one final routed repair, but
+# do not run a no-op rescue merely because a passing route misses the stricter
+# release margin below.
 if {$worst_setup_slack < 0.0 && $worst_hold_slack >= 0.0} {
     puts "Setup timing is short; running one extra post-route AggressiveExplore pass."
     dict set build_info rescue_used 1
@@ -317,7 +371,11 @@ foreach path [get_timing_paths -delay_type max -max_paths 10 -sort_by slack] {
 
 # Keep reports and CSV values for failed attempts, but never export hardware
 # from a design with a timing, route, bus-skew, or constraint fault.
-foreach key {wns_ns whs_ns wpws_ns} {
+if {![string is double -strict [dict get $build_info wns_ns]] ||
+    [dict get $build_info wns_ns] < $minimum_setup_slack} {
+    error "Timing failed (wns_ns below $minimum_setup_slack ns); refusing to export hardware."
+}
+foreach key {whs_ns wpws_ns} {
     if {![string is double -strict [dict get $build_info $key]] ||
         [dict get $build_info $key] < 0.0} {
         error "Timing failed ($key); refusing to export hardware."

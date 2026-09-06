@@ -598,6 +598,9 @@ def test_empty_or_disabled_disk2_track_requests_stay_quiet() -> None:
     require("void disk2_service_set_enabled(uint8_t enabled);" in header and
             "void disk2_service_set_enabled(uint8_t enabled)" in source,
             "Disk II service must expose its Slot 6 enable state")
+    require("out->enabled = g_disk2_enabled;" in source and
+            "out->enabled = (uint8_t)((status >> 2U) & 0x01U);" not in source,
+            "Disk II activity must report the effective service state, not a stale PL bit")
     slot_control = re.search(
         r"static void control_set_slot_enabled\(.*?\n}\n\nstatic const char",
         frontend_main,

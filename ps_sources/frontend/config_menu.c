@@ -2242,6 +2242,15 @@ static uint32_t config_menu_boot_timeout_ticks(uint8_t mode)
     }
 }
 
+static void config_menu_coerce_boot_device(config_menu_t *menu)
+{
+    if (menu != NULL &&
+        menu->boot_device == CONFIG_BOOT_DEVICE_DISK2 &&
+        menu->disk2_slot6_enabled == 0U) {
+        menu->boot_device = CONFIG_BOOT_DEVICE_SMARTPORT;
+    }
+}
+
 static void config_menu_coerce_video_output(config_menu_t *menu)
 {
     if (menu == NULL) {
@@ -2592,6 +2601,8 @@ static void config_menu_apply_boot_runtime_internal(config_menu_t *menu,
         return;
     }
 
+    config_menu_coerce_boot_device(menu);
+
     if (menu->platform.set_onee_video_50hz != NULL) {
         menu->platform.set_onee_video_50hz(menu->platform.ctx,
                                            menu->onee_video_50hz);
@@ -2605,10 +2616,8 @@ static void config_menu_apply_boot_runtime_internal(config_menu_t *menu,
     if (menu->platform.set_boot_handoff != NULL) {
         uint8_t handoff = CONFIG_BOOT_HANDOFF_SMARTPORT;
 
-        /* Publish the saved choice without the physical Slot 6 mask. The PL
-         * applies that mask to an Apple host, while ONE//e uses the same raw
-         * choice with its always-present virtual Disk II card. */
-        if (menu->boot_device == CONFIG_BOOT_DEVICE_DISK2) {
+        if (menu->boot_device == CONFIG_BOOT_DEVICE_DISK2 &&
+            menu->disk2_slot6_enabled != 0U) {
             handoff = CONFIG_BOOT_HANDOFF_DISK2;
         }
         menu->platform.set_boot_handoff(menu->platform.ctx, handoff);
@@ -3553,6 +3562,7 @@ static void config_menu_load_settings(config_menu_t *menu)
         line = strtok(NULL, "\r\n");
     }
 
+    config_menu_coerce_boot_device(menu);
     config_menu_coerce_video_output(menu);
     config_menu_coerce_video_ghosting(menu);
     config_menu_coerce_video_blur(menu);
@@ -3898,6 +3908,7 @@ static uint8_t config_menu_read_settings_from_path(config_menu_t *menu,
         line = strtok(NULL, "\r\n");
     }
 
+    config_menu_coerce_boot_device(menu);
     config_menu_coerce_video_output(menu);
     config_menu_coerce_video_ghosting(menu);
     config_menu_coerce_video_blur(menu);
@@ -6438,6 +6449,7 @@ static void config_menu_activate_item(config_menu_t *menu)
     case CONFIG_TAB_DISK2:
         if (menu->item_focus == 0U) {
             menu->disk2_slot6_enabled = menu->disk2_slot6_enabled ? 0U : 1U;
+            config_menu_coerce_boot_device(menu);
             config_menu_apply_runtime(menu);
             config_menu_save_settings(menu);
         } else if (menu->item_focus == 1U) {

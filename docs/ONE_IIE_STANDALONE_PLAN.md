@@ -299,11 +299,11 @@ target, slot 7 stays hidden until the first `$C6xx` probe, so virtual Disk II
 answers first; slot 7 becomes visible after that probe. ONE//e entry and each
 virtual warm reset re-arm this choice from the same configured target.
 
-The configured target and the physical-host handoff are separate signals. The
-physical-host path may fall back to SmartPort when the saved Slot 6 enable is
-off. ONE//e must not use that fallback rule: it supplies its virtual Disk II
-for the session even when the saved Slot 6 setting is off. This split keeps the
-menu choice intact without changing normal host behavior.
+The menu accepts Disk II as the boot target only while Slot 6 is on. Loading a
+main or profile config repairs a Disk II/Slot 6 off pair to SmartPort. Turning
+Slot 6 off does the same before the menu publishes the boot handoff. ONE//e
+still supplies its virtual Disk II service for a valid Disk II target, but it
+does not bypass this config rule.
 
 The Appli-Card/AD8088 bus-master path stays blocked for the whole ONE//e
 session. Virtual-card IRQ and NMI requests remain internal; physical DMA is not
@@ -437,12 +437,11 @@ temporary override; the retry uses that same mode and divider in every start
 word. A terminal session stop clears the temporary override, and a new manual
 session returns to the saved configured speed.
 
-Reset and config reapply paths also need the effective session state, not just
-saved host intent. One centralized Disk II setter now keeps the service on
-while `g_onee_running` owns the machine, without changing the saved Slot 6
-setting. On stop, the same setter applies the latest saved setting rather than
-a restore value captured when the session began. The ONE//e-private reset path
-skips the IIgs `$C029` DMA write, which belongs only to a physical-host reset.
+Reset and config reapply paths use the same effective Slot 6 state as the bus.
+One centralized Disk II setter applies that state in both host and ONE//e
+sessions, so no session-only override or stop-time restore exists. The
+ONE//e-private reset path skips the IIgs `$C029` DMA write, which belongs only
+to a physical-host reset.
 
 Ctrl+Alt+forward-Delete requests a virtual warm reset. The input service
 consumes every chord member through release, so Ctrl, Alt, and Delete do not
@@ -547,13 +546,11 @@ gives the configured SmartPort target session priority over SuperSprite, while
 leaving the saved SuperSprite setting intact for normal host mode and after
 ONE//e stops.
 
-The storage overlay now polls the effective Disk II service state instead of
-gating it on the saved Slot 6 bit. The old gate hid the session-only Disk II
-which ONE//e had enabled, while a SmartPort `STATUS` poll remained as the last
-visible source and produced the false `SMARTPORT SP1` label. Source selection
-now gives SmartPort data first place, then current Disk II motor/read/write
-work, then a SmartPort `STATUS` poll, then the retained valid source. Thus Disk
-II work beats SmartPort discovery traffic and shows its actual drive number.
+The storage overlay polls the effective Disk II service state instead of
+applying a second saved-setting check. Source selection gives SmartPort data
+first place, then current Disk II motor/read/write work, then a SmartPort
+`STATUS` poll, then the retained valid source. Thus Disk II work beats
+SmartPort discovery traffic and shows its actual drive number.
 
 ### Video and Speaker
 
@@ -676,8 +673,10 @@ mode is off.
   utility-strobe, and speaker soft switches.
 - [x] Add the boot-menu action and durable global manual latch.
 - [x] Auto-start vTW through a stand-alone cold-ROM path.
-- [x] Select the configured SmartPort or Disk II cold-boot order without using
-  the physical-host fallback rule.
+- [x] Select the configured SmartPort or Disk II cold-boot order after the
+  menu has required Slot 6 for a Disk II target.
+- [x] Repair a loaded or live Disk II/Slot 6 off pair to SmartPort before
+  publishing the boot handoff.
 - [x] Re-arm the configured target across a virtual warm reset.
 - [x] Run the stock DOS 3.3 System Master and ProDOS 2.4.3 track-0 paths through
   the production Disk II slot bus and enter each loaded boot sector at `$0801`
@@ -779,8 +778,9 @@ historical record and do not validate the later F0.9.78 correction:
   disable masking, and isolated synthesis.
 - `python scripts/test_onee_config_menu.py`: seven menu, register, session-only,
   manual-start, refusal, timeout, and runtime-binding checks.
-- `python scripts/test_onee_vtw_runtime.py`: eight cold start, isolation, ROM,
-  Disk II override, stop order, running-state, menu-close, and host-path checks.
+- `python scripts/test_onee_vtw_runtime.py`: cold start, isolation, ROM,
+  effective Disk II state, stop order, running-state, menu-close, and host-path
+  checks.
 - `python scripts/test_onee_input_service.py`: ten source checks plus a native
   host harness for key translation, initial edges, timed held-key repeat,
   multi-key selection, FIFO backpressure, the warm-reset chord, Apple keys,
@@ -863,7 +863,8 @@ host or ONE//e session. The reset/config path uses the same effective Disk II
 setter, and a SmartPort-target session overrides saved SuperSprite slot-7
 ownership. The menu also keeps a configured Disk II target when physical Slot
 6 is off; only the physical-host path applies that fallback. Both saved host
-choices remain intact after ONE//e stops.
+choices remain intact after ONE//e stops. The current menu rule described in
+the implemented architecture above supersedes this F0.9.79 behavior.
 
 - [x] Run the focused cold-slot, joined-bus, real-ROM, effective Disk II,
   SuperSprite override, storage-selection, and live-speed-control regressions

@@ -952,8 +952,7 @@ static void control_set_slot_enabled(void *ctx, uint8_t slot, uint8_t enable)
         control_apply_slot5_service(enable);
     }
     if (slot == 6U) {
-        /* The loader follows the effective host slot. ONE//e keeps its own
-         * isolated session override. */
+        /* The loader follows the same effective Slot 6 state as the bus. */
         vtw_service_set_disk2_config_enabled(
             ((g_card_slot_effective_mask & slot_bit) != 0U) ? 1U : 0U);
     }
@@ -1446,8 +1445,9 @@ static void onee_platform_log(void *ctx, const char *event, uint32_t status)
 static uint8_t onee_runtime_start(void *ctx)
 {
     (void)ctx;
+    control_refresh_machine_policy();
     return vtw_service_onee_start(
-        ((g_card_slot_enable_mask & (1UL << CARD_CTRL_SLOT_DISK2)) != 0U) ?
+        ((g_card_slot_effective_mask & (1UL << CARD_CTRL_SLOT_DISK2)) != 0U) ?
             1U : 0U);
 }
 
@@ -2499,9 +2499,8 @@ static void ui_draw_storage_activity(uint16_t *fb, const ui_state_t *s)
     int x = UI_DISK_ACTIVITY_X;
     int y = UI_DISK_ACTIVITY_Y;
 
-    /* The service snapshot reports the effective PL state. Do not gate it on
-     * the saved Slot 6 setting: ONE//e can enable its virtual Disk II for the
-     * current session without changing that setting. */
+    /* The service snapshot already reports the effective Slot 6 state. Do not
+     * apply a second UI-side gate. */
     if (disk2_service_get_activity(&disk2_activity) == 0) {
         disk2_valid = (disk2_activity.enabled != 0U) ? 1U : 0U;
     }

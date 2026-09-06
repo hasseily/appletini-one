@@ -3396,7 +3396,7 @@ int disk2_service_get_activity(disk2_activity_t *out)
     write_info = disk2_reg_read(DISK2_REG_WRITE_INFO);
 
     out->present_mask = (uint8_t)(status & 0x03U);
-    out->enabled = (uint8_t)((status >> 2U) & 0x01U);
+    out->enabled = g_disk2_enabled;
     out->motor_on = (uint8_t)((status >> 3U) & 0x01U);
     out->drive = (uint8_t)((status >> 4U) & 0x01U);
     out->phase = (uint8_t)((status >> 5U) & 0x0FU);

@@ -721,7 +721,8 @@ module apple_top(
         .resetn      (rstn[1]),
         .enabled     (onee_enable_effective),
         .manual_enable_request(onee_request_q),
-        .boot_target_disk2(configured_boot_target_disk2),
+        .boot_target_disk2(
+            configured_boot_target_disk2 && card_slot6_enable),
         .warm_reset_active(onee_warm_reset_active),
         .ab_read     (ab_read),
         .session_boot_target_disk2(onee_boot_target_disk2),
@@ -799,9 +800,15 @@ module apple_top(
         end
     end
 
+    /* Keep the proven physical-output policy separate from the ONE//e card
+     * input gate. Physical outputs are isolated in ONE//e, while the input
+     * gate makes Slot 6 OFF stop all new Disk II activity. */
     wire disk2_bus_visible =
         onee_enable_effective ||
         (card_slot6_bus_enable && disk2_active_timing_q);
+    wire disk2_card_enabled =
+        card_slot6_bus_enable &&
+        (onee_enable_effective || disk2_active_timing_q);
     wire disk2_live_handoff_serve =
         !onee_enable_effective && card_slot6_bus_enable && disk2_active &&
         !disk2_active_timing_q;
@@ -1571,7 +1578,7 @@ module apple_top(
     disk2_card disk2_card_i (
         .clk(clk),
         .rstn(rstn[2]),
-        .ab_read(gate_ab(ab_read, disk2_bus_visible)),
+        .ab_read(gate_ab(ab_read, disk2_card_enabled)),
         .rom_serve_en(ab_read.serve_en && disk2_live_handoff_serve),
         .sss(sss),
         .slot_assign(3'h6),

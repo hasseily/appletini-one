@@ -11,8 +11,12 @@ module tb_onee_joined_bus;
 
     logic resetn = 1'b0;
     logic onee_enabled = 1'b0;
-    // ONE//e resolves Disk II independently of the saved physical slot mask.
-    logic configured_boot_target_disk2 = 1'b1;
+    logic slot6_enabled = 1'b0;
+    logic disk2_boot_selected = 1'b1;
+    wire card_slot6_bus_enable = slot6_enabled && onee_enabled;
+    wire configured_boot_target_disk2 = disk2_boot_selected;
+    wire boot_target_disk2 =
+        configured_boot_target_disk2 && slot6_enabled;
     /* Model the exact VTW_CTRL register word that apple_top holds outside the
      * virtual Apple reset domain. The joined test drives the core from the
      * same fields as apple_top: enable/core-run in [1:0], speed in [3:2],
@@ -29,6 +33,8 @@ module tb_onee_joined_bus;
     end
 
     globals::AppleBus_read  ab_read;
+    globals::AppleBus_read  card_ab_read;
+    globals::AppleBus_read  card_probe_ab_read;
     globals::AppleBus_read  softswitch_ab_read;
     globals::AppleBus_read  disk_ab_read;
     globals::AppleBus_write motherboard_write;
@@ -40,6 +46,8 @@ module tb_onee_joined_bus;
     globals::AppleBus_write merged_write;
     globals::AppleBus_write physical_write;
     globals::SoftSwitchState sss;
+    globals::SoftSwitchState disk_sss;
+    logic card_probe_active = 1'b0;
 
     logic req_valid = 1'b0;
     logic req_ready;
@@ -170,7 +178,7 @@ module tb_onee_joined_bus;
         .resetn(resetn),
         .enabled(onee_enabled),
         .manual_enable_request(onee_enabled),
-        .boot_target_disk2(configured_boot_target_disk2),
+        .boot_target_disk2(boot_target_disk2),
         .warm_reset_active(1'b0),
         .ab_read(ab_read),
         .session_boot_target_disk2(),
@@ -193,16 +201,16 @@ module tb_onee_joined_bus;
             slot7_write_q.assert_rdy       <= 1'b0;
             slot7_write_q.assert_nmi       <= 1'b0;
             slot7_write_q.assert_dma       <= 1'b0;
-            if (ab_read.serve_en && ab_read.rw &&
-                (ab_read.addr[15:8] == 8'hC7)) begin
+            if (card_ab_read.serve_en && card_ab_read.rw &&
+                (card_ab_read.addr[15:8] == 8'hC7)) begin
                 slot7_write_q.wr_data    <= 8'h77;
                 slot7_write_q.wr_data_en <= 1'b1;
-            end else if (ab_read.serve_en && ab_read.rw &&
-                         (ab_read.addr[15:8] == 8'hC8) &&
+            end else if (card_ab_read.serve_en && card_ab_read.rw &&
+                         (card_ab_read.addr[15:8] == 8'hC8) &&
                          sss.io_select[7]) begin
                 slot7_write_q.wr_data    <= 8'h88;
                 slot7_write_q.wr_data_en <= 1'b1;
-            end else if (ab_read.data_en) begin
+            end else if (card_ab_read.data_en) begin
                 slot7_write_q.wr_data    <= 8'h00;
                 slot7_write_q.wr_data_en <= 1'b0;
             end
@@ -224,13 +232,17 @@ module tb_onee_joined_bus;
         return gated;
     endfunction
 
-    // The saved host mask is deliberately off. ONE//e must still expose its
-    // fixed virtual Disk II, while the equivalent host-mode term stays false.
-    wire saved_slot6_enable = 1'b0;
     wire saved_disk2_handoff = 1'b0;
-    wire disk2_visible = onee_enabled ||
-        (saved_slot6_enable && saved_disk2_handoff);
-    always_comb disk_ab_read = gate_ab(ab_read, disk2_visible);
+    wire disk2_visible =
+        (onee_enabled && slot6_enabled) ||
+        (card_slot6_bus_enable && saved_disk2_handoff);
+    always_comb begin
+        card_ab_read = card_probe_active ? card_probe_ab_read : ab_read;
+        disk_ab_read = gate_ab(card_ab_read, disk2_visible);
+        disk_sss = sss;
+        if (card_probe_active)
+            disk_sss.slot_access = 1'b1;
+    end
 
     globals::AxiSimple_common disk_as_common;
     AxiSimple_if disk_axi();
@@ -245,7 +257,7 @@ module tb_onee_joined_bus;
         .rstn(resetn),
         .ab_read(disk_ab_read),
         .rom_serve_en(1'b0),
-        .sss(sss),
+        .sss(disk_sss),
         .slot_assign(3'd6),
         .as_common(disk_as_common),
         .as_client(disk_axi),
@@ -490,6 +502,35 @@ module tb_onee_joined_bus;
         input_ps_wr_en = 1'b0;
     endtask
 
+    task automatic probe_card_read(
+        input  logic [15:0] addr,
+        output logic        disk_drives,
+        output logic        slot7_drives,
+        output logic [7:0]  slot7_data
+    );
+        @(negedge clk);
+        card_probe_ab_read = '0;
+        card_probe_ab_read.res = 1'b1;
+        card_probe_ab_read.rw = 1'b1;
+        card_probe_ab_read.cycle_valid = 1'b1;
+        card_probe_ab_read.addr = addr;
+        card_probe_ab_read.serve_en = 1'b1;
+        card_probe_active = 1'b1;
+        @(posedge clk);
+        #1;
+        disk_drives = disk_write.wr_data_en;
+        slot7_drives = slot7_write_q.wr_data_en;
+        slot7_data = slot7_write_q.wr_data;
+
+        @(negedge clk);
+        card_probe_ab_read.serve_en = 1'b0;
+        card_probe_ab_read.data_en = 1'b1;
+        @(posedge clk);
+        #1;
+        card_probe_active = 1'b0;
+        card_probe_ab_read = '0;
+    endtask
+
     int physical_nonzero_cycles = 0;
     int private_smartport_cycles = 0;
     always @(posedge clk) begin
@@ -507,10 +548,14 @@ module tb_onee_joined_bus;
     logic [15:0] paused_core_pc;
     int warm_reset_fabric_clks;
     int warm_reset_native_ticks;
+    logic probe_disk_drives;
+    logic probe_slot7_drives;
+    logic [7:0] probe_slot7_data;
 
     initial begin
         disk_as_common = '0;
         disk_axi.awvalid = 1'b0;
+        card_probe_ab_read = '0;
 
         repeat (8) @(posedge clk);
         resetn = 1'b1;
@@ -530,10 +575,40 @@ module tb_onee_joined_bus;
             1'b1, 1'b0, 1'b0, 1'b0, 1'b0);
         sh_write({2'b00, scan_addr}, 8'h2D);
 
+        // With Slot 6 off, ONE//e must select SmartPort and keep every Disk II
+        // ROM and I/O response silent.
         onee_enabled = 1'b1;
         repeat (3) @(posedge clk);
-        check(!saved_slot6_enable && configured_boot_target_disk2,
-              "test did not cover Disk II target with saved Slot 6 off");
+        check(!slot6_enabled && !card_slot6_bus_enable &&
+              !boot_target_disk2 && !disk2_visible,
+              "Slot 6 OFF did not remove the ONE//e Disk II target");
+        check(!slot7_hidden,
+              "Slot 6 OFF hid the ONE//e SmartPort boot ROM");
+        probe_card_read(16'hC600, probe_disk_drives,
+                        probe_slot7_drives, probe_slot7_data);
+        check(!probe_disk_drives,
+              "Slot 6 OFF still served the Disk II ROM");
+        probe_card_read(16'hC0E9, probe_disk_drives,
+                        probe_slot7_drives, probe_slot7_data);
+        check(!probe_disk_drives && !disk_i.motor_on_q,
+              "Slot 6 OFF still accepted Disk II I/O");
+        probe_card_read(16'hC700, probe_disk_drives,
+                        probe_slot7_drives, probe_slot7_data);
+        check(!probe_disk_drives && probe_slot7_drives &&
+              probe_slot7_data == 8'h77,
+              "Slot 6 OFF did not expose the SmartPort slot ROM");
+
+        // Re-enter ONE//e with Slot 6 on. The same resolved target now hides
+        // SmartPort until the core reaches the Disk II ROM.
+        @(negedge clk);
+        onee_enabled = 1'b0;
+        repeat (3) @(posedge clk);
+        @(negedge clk);
+        slot6_enabled = 1'b1;
+        onee_enabled = 1'b1;
+        repeat (3) @(posedge clk);
+        check(card_slot6_bus_enable && boot_target_disk2 && disk2_visible,
+              "Slot 6 ON did not expose the ONE//e Disk II target");
         check(slot7_hidden, "ONE//e entry did not hide slot 7");
         push_key(7'h41);
         check(keyboard_latch == 8'hC1,
@@ -643,7 +718,7 @@ module tb_onee_joined_bus;
         check(result[8] == 8'h2D,
               "hidden slot 7 did not return scanner fallback");
         check(result[9] == 8'hA2,
-              "slot 6 ROM was not visible with saved mask disabled");
+              "slot 6 ROM was not visible with Slot 6 enabled");
         check(result[10] == 8'h77 && result[11] == 8'h88,
               "SmartPort C7/C8 did not use the synthetic slot bus");
         check(result[12] == 8'h2D && disk_i.motor_on_q,

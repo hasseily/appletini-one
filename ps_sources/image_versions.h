@@ -8,8 +8,8 @@
 #define APPLETINI_BOOT_IMAGE_VERSION_SHORT      "B1.2.0"
 #define APPLETINI_BOOT_IMAGE_VERSION_FULL       "Boot B1.2.0"
 
-#define APPLETINI_FIRMWARE_IMAGE_VERSION_SHORT  "F1.0.2"
-#define APPLETINI_FIRMWARE_IMAGE_VERSION_FULL   "Firmware F1.0.2"
+#define APPLETINI_FIRMWARE_IMAGE_VERSION_SHORT  "F1.0.3"
+#define APPLETINI_FIRMWARE_IMAGE_VERSION_FULL   "Firmware F1.0.3"
 
 /* Current updater/flash layout configuration shown in firmware UI. */
 #define APPLETINI_FLASH_LAYOUT_LABEL            "QSPI 16MB single-slot"

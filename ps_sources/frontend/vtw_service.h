@@ -38,9 +38,7 @@ void vtw_service_set_ignore_c074(uint8_t ignore);
 /* Force virtual Disk II accesses through the original physical 1 MHz path. */
 void vtw_service_set_disk2_accel_disabled(uint8_t disable);
 
-/* Apply the saved Slot 6 service setting without defeating ONE//e's private
- * session override. Changes made during ONE//e become effective when it
- * stops; while it runs, the virtual Disk II service stays available. */
+/* Apply the current effective Slot 6 service setting. */
 void vtw_service_set_disk2_config_enabled(uint8_t enable);
 
 /* Per-region slowdown (TransWarp DIP block 2): region_mask bits are
@@ -70,8 +68,9 @@ uint8_t vtw_service_session_active(void);
 /* ONE//e stand-alone entry. This path never changes the persisted host-vTW
  * intent or options and never waits for host identity, /DMA ownership,
  * physical RESET, or slot-7 handoff. start() requires the ONE//e supervisor
- * to report an effective, isolated session. */
-uint8_t vtw_service_onee_start(uint8_t disk2_config_enabled);
+ * to report an effective, isolated session. disk2_enabled is the current
+ * effective Slot 6 service state. */
+uint8_t vtw_service_onee_start(uint8_t disk2_enabled);
 /* Pause at a completed virtual CPU cycle without reset, ROM reload, or a
  * change to the selected speed. Used while the Appletini menu owns input. */
 uint8_t vtw_service_onee_set_paused(uint8_t paused);

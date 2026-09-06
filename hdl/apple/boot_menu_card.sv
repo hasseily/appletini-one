@@ -214,9 +214,8 @@ module boot_menu_card (
         disk2_enabled && (handoff_mode_q == SLOT7_HANDOFF_DISK2);
     assign handoff_smartport = !handoff_disk2;
     assign boot_target_disk2 = handoff_disk2;
-    // Keep the configured choice separate from the physical-host fallback.
-    // ONE//e always supplies its virtual slot-6 card, even when the saved
-    // physical Slot 6 enable is off.
+    // Keep the saved choice separate from the host's current Slot 6 policy.
+    // The caller applies that policy for each host before it starts a scan.
     assign configured_boot_target_disk2 =
         handoff_mode_q == SLOT7_HANDOFF_DISK2;
     assign boot_target_slot = handoff_disk2 ? 3'h6 : 3'h7;

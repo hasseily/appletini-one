@@ -1,5 +1,17 @@
 # ONE//e Hardware Test Record and F0.9.86 Retest Plan
 
+## Current Slot 6 Boot Rule
+
+Disk II is a valid boot target only while Slot 6 is on. The main config loader,
+profile loader, and live Slot 6 toggle must repair a Disk II/Slot 6 off pair to
+SmartPort before publishing the handoff.
+
+For a focused check, turn Slot 6 on, select Disk II, and confirm the next
+ONE//e cold start reaches `$C600`. Then turn Slot 6 off and confirm Boot
+Settings changes to SmartPort. A virtual warm reset must take the slot-7
+SmartPort path. Reload both a main config and a profile which request Disk II
+with Slot 6 off; each must show and publish SmartPort.
+
 ## F0.9.77 Test Result
 
 The first hardware test used the F0.9.77 image built from source commit
@@ -415,10 +427,10 @@ used for the F0.9.77 test.
    Confirm that the ROM hides slot 7 for the cold scan, reaches `$C600`, and
    boots drive 1. The activity label must say `DISK II D1`, even if SmartPort
    sends `STATUS` calls.
-7. While ONE//e runs, change the saved Slot 6 setting and apply config. Confirm
-   that the session Disk II service stays enabled. Stop ONE//e and confirm that
-   the latest saved Slot 6 state, not the state from session start, takes
-   effect.
+7. While ONE//e runs, turn Slot 6 off. Confirm that the Disk II service stops
+   and Boot Settings changes to SmartPort. A virtual warm reset must then use
+   the slot-7 SmartPort path. Turn Slot 6 on again, select Disk II, and confirm
+   that a new cold start reaches `$C600`.
 8. Set a divided configured speed, start ONE//e without a speed key, and time
    a fixed loop. The first running core must use that configured speed, not
    full acceleration.

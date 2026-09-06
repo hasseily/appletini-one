@@ -260,36 +260,40 @@ def test_global_persistence_is_synced_before_onee_request() -> None:
             "a rejected request must let the service's forced OFF update save before refusal")
 
 
-def test_disk2_boot_choice_is_independent_of_physical_slot6() -> None:
+def test_disk2_boot_choice_requires_slot6() -> None:
     source = read(CONFIG_C)
     help_source = read(CONFIG_HELP_C)
     apply = function_slice(source,
                            "static void config_menu_apply_boot_runtime_internal",
                            "static void config_menu_apply_smartport_paths")
-    adjust = function_slice(source,
-                            "static uint8_t config_menu_adjust_focused_value",
-                            "static int config_menu_reload_smartport_device")
+    load = function_slice(source,
+                          "static void config_menu_load_settings",
+                          "static void config_menu_restore_onee_intent")
+    profile_load = function_slice(source,
+                                  "static uint8_t config_menu_read_settings_from_path",
+                                  "uint8_t config_menu_save_profile_settings")
     activate = function_slice(source,
                               "static void config_menu_activate_item",
                               "void config_menu_init")
 
-    require("config_menu_coerce_boot_device" not in source and
-            "ENABLE DISK II TO BOOT SLOT 6" not in source,
-            "saved Disk II choice must never be rewritten when physical Slot 6 is off")
-    require("if (menu->boot_device == CONFIG_BOOT_DEVICE_DISK2) {\n"
-            "            handoff = CONFIG_BOOT_HANDOFF_DISK2;" in apply and
-            "menu->boot_device == CONFIG_BOOT_DEVICE_DISK2 &&" not in apply,
-            "runtime apply must publish the configured Disk II target without a Slot 6 gate")
-    require("menu->disk2_slot6_enabled" not in adjust and
-            "menu->disk2_slot6_enabled" not in
-            activate[activate.find("case CONFIG_TAB_BOOT_SETTINGS:"):
-                     activate.find("case CONFIG_TAB_PROFILES:")],
-            "both Boot device actions must allow Disk II while physical Slot 6 is off")
-    require("ONE//e always has virtual Disk II. It keeps this choice even when physical Slot 6 is off." in
-            help_source and
-            "An Apple host falls back to SmartPort when Disk II is selected but physical Slot 6 is off." in
+    require("static void config_menu_coerce_boot_device" in source and
+            "menu->boot_device == CONFIG_BOOT_DEVICE_DISK2 &&" in source and
+            "menu->disk2_slot6_enabled == 0U" in source,
+            "Slot 6 OFF must coerce an invalid Disk II boot choice to SmartPort")
+    require("config_menu_coerce_boot_device(menu);" in apply and
+            "if (menu->boot_device == CONFIG_BOOT_DEVICE_DISK2 &&\n"
+            "            menu->disk2_slot6_enabled != 0U)" in apply,
+            "runtime apply must never publish a disabled Disk II boot target")
+    require("config_menu_coerce_boot_device(menu);" in load and
+            "config_menu_coerce_boot_device(menu);" in profile_load,
+            "main and profile config loads must repair a disabled Disk II boot target")
+    disk2_toggle = activate[activate.find("case CONFIG_TAB_DISK2:"):
+                            activate.find("case CONFIG_TAB_MOUSE:")]
+    require("config_menu_coerce_boot_device(menu);" in disk2_toggle,
+            "turning Slot 6 off live must also repair the boot choice")
+    require("Turning Slot 6 off also selects SmartPort as the boot device." in
             help_source,
-            "Boot device help must explain the ONE//e target and physical-host fallback")
+            "Boot device help must state the authoritative Slot 6 rule")
 
 
 def test_only_manual_or_guarded_restore_can_start() -> None:
@@ -1222,7 +1226,7 @@ TESTS = [
     test_onee_standard_keeps_global_callback_and_actions,
     test_global_persistent_action_is_not_profiled,
     test_global_persistence_is_synced_before_onee_request,
-    test_disk2_boot_choice_is_independent_of_physical_slot6,
+    test_disk2_boot_choice_requires_slot6,
     test_only_manual_or_guarded_restore_can_start,
     test_start_refuses_unsafe_or_missing_pl,
     test_selected_request_has_no_software_expiry,

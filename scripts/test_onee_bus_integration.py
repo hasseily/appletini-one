@@ -113,14 +113,17 @@ def static_checks() -> None:
     require(
         "onee_cold_slot_scan onee_cold_slot_scan_i" in top and
         ".manual_enable_request(onee_request_q)" in top and
-        ".boot_target_disk2(configured_boot_target_disk2)" in top and
+        ".boot_target_disk2(\n"
+        "            configured_boot_target_disk2 && card_slot6_enable)" in top and
         ".session_boot_target_disk2(onee_boot_target_disk2)" in top and
-        ".configured_boot_target_disk2(configured_boot_target_disk2)" in top and
         "if (manual_enable_request && !request_q)\n"
         "                session_boot_target_disk2 <= boot_target_disk2;" in cold_scan and
+        ".configured_boot_target_disk2(configured_boot_target_disk2)" in top and
+        "assign handoff_disk2 =\n"
+        "        disk2_enabled && (handoff_mode_q == SLOT7_HANDOFF_DISK2);" in boot_card and
+        "assign boot_target_disk2 = handoff_disk2;" in boot_card and
         "assign configured_boot_target_disk2 =\n"
         "        handoff_mode_q == SLOT7_HANDOFF_DISK2;" in boot_card and
-        "assign boot_target_disk2 = handoff_disk2;" in boot_card and
         "else if (!ab_read.res && !warm_reset_active) begin" in cold_scan and
         "session_boot_target_disk2 <= boot_target_disk2;" in cold_scan and
         "slot7_hidden <= boot_target_disk2;" in cold_scan and
@@ -128,7 +131,7 @@ def static_checks() -> None:
         "boot_menu_ab_read = gate_ab(slot7_devsel_ab_read," in top and
         "boot_menu_ab_read.data_en = 1'b0;" in top and
         ".onee_enable_effective        (onee_enable_effective)" in top,
-        "ONE//e must sample each cold-boot target without changing host fallback",
+        "ONE//e must sample the same slot-enabled boot target as the host",
     )
     require(
         "wire onee_smartport_boot_owner =\n"
@@ -144,10 +147,15 @@ def static_checks() -> None:
         "SmartPort-selected ONE//e must own slot 7 over saved SuperSprite",
     )
     require(
-        "wire disk2_bus_visible =\n        onee_enable_effective ||" in top and
-        ".ab_read(gate_ab(ab_read, disk2_bus_visible))" in top and
+        "wire disk2_bus_visible =\n"
+        "        onee_enable_effective ||\n"
+        "        (card_slot6_bus_enable && disk2_active_timing_q);" in top and
+        "wire disk2_card_enabled =\n"
+        "        card_slot6_bus_enable &&\n"
+        "        (onee_enable_effective || disk2_active_timing_q);" in top and
+        ".ab_read(gate_ab(ab_read, disk2_card_enabled))" in top and
         "assign vtw_disk2_active = !onee_enable_effective" in top,
-        "ONE//e must force slot 6 visible and disable private Disk II",
+        "ONE//e must gate Disk II input while keeping physical output policy stable",
     )
     require(
         "(onee_enable_effective || smartport_active)" in top and

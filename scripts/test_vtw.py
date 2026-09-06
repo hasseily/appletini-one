@@ -365,7 +365,10 @@ def static_checks() -> None:
             "wire disk2_bus_visible =\n"
             "        onee_enable_effective ||\n"
             "        (card_slot6_bus_enable && disk2_active_timing_q);" in top and
-            ".ab_read(gate_ab(ab_read, disk2_bus_visible))" in top and
+            "wire disk2_card_enabled =\n"
+            "        card_slot6_bus_enable &&\n"
+            "        (onee_enable_effective || disk2_active_timing_q);" in top and
+            ".ab_read(gate_ab(ab_read, disk2_card_enabled))" in top and
             "wire disk2_live_handoff_serve =\n"
             "        !onee_enable_effective && card_slot6_bus_enable && disk2_active &&\n"
             "        !disk2_active_timing_q;" in top and
@@ -378,7 +381,7 @@ def static_checks() -> None:
             "!vtw_ctrl_q[7];" in top and
             ".vtw_active(vtw_disk2_active)" in top and
             ".d2_active(vtw_disk2_active)" in top,
-            "apple_top must force slot 6 onto the ONE//e bus while keeping the physical "
+            "apple_top must honor Slot 6 on the ONE//e bus while keeping the physical "
             "handoff staging and both vTW private-port consumers physical-host only")
     require("wire disk_cycle_tick" in disk2_card and
             "vtw_native_cycle_active" in disk2_card and

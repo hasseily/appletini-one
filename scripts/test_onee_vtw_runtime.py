@@ -116,7 +116,7 @@ def test_rom_and_cold_signature_helpers_are_shared() -> None:
             "helpers must cold-load the Enhanced //e ROM and check isolation per byte")
 
 
-def test_standalone_forces_synthetic_disk2_without_changing_options() -> None:
+def test_standalone_applies_effective_disk2_without_changing_options() -> None:
     source = read(VTW_C)
     ctrl = between(source,
                    "static uint32_t vtw_onee_ctrl_value",
@@ -141,6 +141,9 @@ def test_standalone_forces_synthetic_disk2_without_changing_options() -> None:
                            "void vtw_service_set_disk2_config_enabled",
                            "void vtw_service_set_enabled")
     main = read(MAIN_C)
+    runtime_start = between(main,
+                            "static uint8_t onee_runtime_start",
+                            "static void onee_runtime_suspend")
     onee = read(ONEE_C)
     slot_policy = between(main,
                           "static void card_control_apply_slot_policy",
@@ -151,17 +154,23 @@ def test_standalone_forces_synthetic_disk2_without_changing_options() -> None:
     isolation = between(onee,
                         "uint8_t onee_service_isolation_confirmed",
                         "\n}\n")
-    require("g_disk2_config_enabled" in start and
-            "disk2_service_set_enabled(1U);" in start and
-            start.find("disk2_service_set_enabled(1U);") <
-            start.find("vtw_shadow_force_cold_start(1U)") and
-            "disk2_service_set_enabled(g_disk2_config_enabled);" in shutdown and
-            "g_onee_disk2_override_active != 0U" in disk2_config and
+    disk2_apply = start.find(
+        "vtw_service_set_disk2_config_enabled(disk2_enabled);")
+    require(0 <= disk2_apply < start.find("vtw_shadow_force_cold_start(1U)") and
+            "disk2_service_set_enabled((enable != 0U) ? 1U : 0U);" in
+            disk2_config and
+            "g_onee_disk2_override_active" not in source and
+            "g_disk2_config_enabled" not in source and
             "vtw_service_set_disk2_config_enabled(" in main and
-            "g_card_slot_enable_mask" in main and
             "g_card_slot_effective_mask" in main and
             "CARD_CTRL_SLOT_DISK2" in main,
-            "ONE//e must keep one effective Disk II service owner")
+            "ONE//e and live config must apply the effective Disk II state directly")
+    refresh_slots = runtime_start.find("control_refresh_machine_policy();")
+    start_service = runtime_start.find("return vtw_service_onee_start(")
+    require(0 <= refresh_slots < start_service and
+            "g_card_slot_effective_mask & (1UL << CARD_CTRL_SLOT_DISK2)" in
+            runtime_start,
+            "ONE//e start must refresh slot policy and pass effective Slot 6")
     require("control_onee_isolated()" in slot_policy and
             "effective = g_card_slot_enable_mask;" in slot_policy and
             "((uint16_t)onee_isolated << 15)" in machine_policy,
@@ -176,14 +185,14 @@ def test_standalone_forces_synthetic_disk2_without_changing_options() -> None:
             "the private-slot bypass must require confirmed PL isolation")
     require(start.count("vtw_service_onee_suspend();") == 3 and
             "vtw_onee_shutdown(0U);" in suspend and
-            "vtw_onee_shutdown(1U);" in stop and
-            shutdown.find("REG_WRITE(CARD_CTRL_VTW_CTRL_REG, 0U);") <
-            shutdown.find("disk2_service_set_enabled(g_disk2_config_enabled);"),
+            "vtw_onee_shutdown(1U);" in stop,
             "failed starts must suspend while terminal stop clears the session")
+    require("disk2_service_set_enabled" not in shutdown,
+            "ONE//e shutdown must not replace the current effective Disk II state")
     require("card_control_write_slot_mask" not in start and
             "control_set_slot_enabled" not in start and
             "config_menu_save_settings" not in start,
-            "the Disk II session override must not mutate or save the slot mask")
+            "the Disk II service setting must not mutate or save the slot mask")
     mutations = (
         "g_intent_enabled =",
         "g_speed_mode =",
@@ -470,7 +479,7 @@ TESTS = [
     test_real_runtime_hooks_are_bound_after_vtw_init,
     test_cold_start_is_direct_and_isolation_first,
     test_rom_and_cold_signature_helpers_are_shared,
-    test_standalone_forces_synthetic_disk2_without_changing_options,
+    test_standalone_applies_effective_disk2_without_changing_options,
     test_onee_reset_uses_private_runtime_paths,
     test_stop_order_and_runtime_drop_preserves_request,
     test_running_state_requires_released_core_status,
@@ -746,8 +755,6 @@ def run_native_speed_control_test() -> bool:
             g_onee_running = 0U;
             g_onee_pause_requested = 0U;
             g_onee_cold_reboot_active = 0U;
-            g_onee_disk2_override_active = 0U;
-            g_disk2_config_enabled = 0U;
             g_res_phase_start = 0U;
             g_onee_cold_reboot_start = 0U;
             vtw_service_init(0U);
@@ -1097,44 +1104,61 @@ def run_native_speed_control_test() -> bool:
             return 1;
         }
 
-        static int test_disk2_session_override_tracks_latest_config(void)
+        static int test_disk2_effective_state_applies_directly(void)
         {
             reset_fixture();
             vtw_service_set_disk2_config_enabled(0U);
             if (!check(disk2_enabled == 0U,
-                       "saved Disk II off did not reach an idle service")) {
-                return 0;
-            }
-
-            g_onee_disk2_override_active = 1U;
-            disk2_service_set_enabled(1U);
-            vtw_service_set_disk2_config_enabled(0U);
-            if (!check(disk2_enabled == 1U && g_disk2_config_enabled == 0U,
-                       "reset/config reapply disabled Disk II during ONE//e")) {
+                       "effective Disk II off did not reach the service")) {
                 return 0;
             }
             vtw_service_set_disk2_config_enabled(1U);
-            if (!check(disk2_enabled == 1U && g_disk2_config_enabled == 1U,
-                       "live saved-state change defeated the ONE//e override")) {
+            if (!check(disk2_enabled == 1U,
+                       "effective Disk II on did not reach the service")) {
                 return 0;
             }
 
-            g_onee_running = 1U;
+            /* A rejected start must not change the last effective state. */
+            if (!check(vtw_service_onee_start(0U) == 0U &&
+                       disk2_enabled == 1U,
+                       "rejected ONE//e start changed Disk II state")) {
+                return 0;
+            }
+
+            /* A valid start applies the passed effective bit, and live policy
+             * changes remain authoritative while the private machine runs. */
+            set_onee_isolated();
+            if (!check(vtw_service_onee_start(0U) != 0U &&
+                       disk2_enabled == 0U,
+                       "ONE//e start did not apply effective Disk II off")) {
+                return 0;
+            }
+            vtw_service_set_disk2_config_enabled(1U);
+            if (!check(disk2_enabled == 1U,
+                       "live effective Disk II on was ignored during ONE//e")) {
+                return 0;
+            }
             vtw_service_onee_stop();
-            if (!check(disk2_enabled == 1U &&
-                       g_onee_disk2_override_active == 0U,
-                       "ONE//e stop did not apply the latest saved on state")) {
+            if (!check(disk2_enabled == 1U,
+                       "ONE//e stop changed effective Disk II on")) {
                 return 0;
             }
 
-            g_onee_disk2_override_active = 1U;
-            disk2_service_set_enabled(1U);
+            reset_fixture();
+            set_onee_isolated();
+            if (!check(vtw_service_onee_start(1U) != 0U &&
+                       disk2_enabled == 1U,
+                       "ONE//e start did not apply effective Disk II on")) {
+                return 0;
+            }
             vtw_service_set_disk2_config_enabled(0U);
-            g_onee_running = 1U;
+            if (!check(disk2_enabled == 0U,
+                       "live effective Disk II off was ignored during ONE//e")) {
+                return 0;
+            }
             vtw_service_onee_stop();
-            if (!check(disk2_enabled == 0U &&
-                       g_onee_disk2_override_active == 0U,
-                       "ONE//e stop restored a stale rather than latest off state")) {
+            if (!check(disk2_enabled == 0U,
+                       "ONE//e stop changed effective Disk II off")) {
                 return 0;
             }
             return 1;
@@ -1231,7 +1255,7 @@ def run_native_speed_control_test() -> bool:
                 !test_failed_live_writes_and_pending_choice() ||
                 !test_menu_preselect_context_boundary() ||
                 !test_onee_configured_and_pending_speed_boundaries() ||
-                !test_disk2_session_override_tracks_latest_config() ||
+                !test_disk2_effective_state_applies_directly() ||
                 !test_onee_ordered_cold_reboot()) {
                 return 1;
             }

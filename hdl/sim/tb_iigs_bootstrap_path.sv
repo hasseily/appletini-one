@@ -57,7 +57,7 @@ module tb_iigs_bootstrap_path;
         .apple_video_mode_50hz(1'b0), .as_common(as_common),
         .as_client(as_if), .ab_write(boot_raw_write), .smartport_active(),
         .disk2_active(), .boot_target_disk2(),
-        .configured_boot_target_disk2(), .boot_slot(), .boot_slot_valid(),
+        .boot_slot(), .boot_slot_valid(),
         .apple_vblank_start_pulse(), .machine_id(boot_machine_id),
         .machine_id_fault(boot_machine_id_fault),
         .iigs_external_slot_mask(boot_iigs_slot_mask),

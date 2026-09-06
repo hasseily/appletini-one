@@ -35,7 +35,6 @@ module tb_boot_menu_iigs_policy;
         .smartport_active(),
         .disk2_active(),
         .boot_target_disk2(),
-        .configured_boot_target_disk2(),
         .boot_slot(),
         .boot_slot_valid(),
         .apple_vblank_start_pulse(),

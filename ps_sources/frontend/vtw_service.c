@@ -136,8 +136,6 @@ static uint8_t g_announced_handoff_wait;
 static uint8_t g_onee_running;
 static uint8_t g_onee_pause_requested;
 static uint8_t g_onee_cold_reboot_active;
-static uint8_t g_onee_disk2_override_active;
-static uint8_t g_disk2_config_enabled;
 static XTime g_res_phase_start;
 static XTime g_onee_cold_reboot_start;
 
@@ -406,8 +404,6 @@ void vtw_service_init(uint32_t uart_base)
     g_onee_running = 0U;
     g_onee_pause_requested = 0U;
     g_onee_cold_reboot_active = 0U;
-    g_onee_disk2_override_active = 0U;
-    g_disk2_config_enabled = 0U;
     g_onee_cold_reboot_start = 0U;
     vtw_override_clear();
     REG_WRITE(CARD_CTRL_VTW_CTRL_REG, 0U);
@@ -416,16 +412,7 @@ void vtw_service_init(uint32_t uart_base)
 
 void vtw_service_set_disk2_config_enabled(uint8_t enable)
 {
-    uint8_t effective_enable;
-
-    /* Keep the saved host setting separate from the ONE//e session override.
-     * Reset-time config reapply and live menu changes both pass here, so the
-     * virtual track service cannot be turned off under a running ONE//e. The
-     * latest saved value takes effect as soon as the override ends. */
-    g_disk2_config_enabled = (enable != 0U) ? 1U : 0U;
-    effective_enable = (g_onee_disk2_override_active != 0U) ?
-        1U : g_disk2_config_enabled;
-    disk2_service_set_enabled(effective_enable);
+    disk2_service_set_enabled((enable != 0U) ? 1U : 0U);
 }
 
 void vtw_service_set_enabled(uint8_t enable)
@@ -727,13 +714,9 @@ static void vtw_onee_shutdown(uint8_t clear_speed_override)
         g_onee_pause_requested = 0U;
         vtw_override_clear();
     }
-    if (g_onee_disk2_override_active != 0U) {
-        g_onee_disk2_override_active = 0U;
-        disk2_service_set_enabled(g_disk2_config_enabled);
-    }
 }
 
-uint8_t vtw_service_onee_start(uint8_t disk2_config_enabled)
+uint8_t vtw_service_onee_start(uint8_t disk2_enabled)
 {
     uint32_t poll;
 
@@ -743,13 +726,7 @@ uint8_t vtw_service_onee_start(uint8_t disk2_config_enabled)
     if (g_state != VTW_ST_IDLE || vtw_onee_isolation_confirmed() == 0U) {
         return 0U;
     }
-    /* ONE//e forces the virtual Disk II card into slot 6 even when the saved
-     * slot mask leaves it off. Match that session-only PL override in the PS
-     * track service, then apply the latest saved bit-6 state on every exit. */
-    g_disk2_config_enabled =
-        (disk2_config_enabled != 0U) ? 1U : 0U;
-    g_onee_disk2_override_active = 1U;
-    disk2_service_set_enabled(1U);
+    vtw_service_set_disk2_config_enabled(disk2_enabled);
 
     /* Only this confirmed-isolation branch asserts the virtual reset. The
      * physical wrapper is already cut off, while ab_write_arb still carries

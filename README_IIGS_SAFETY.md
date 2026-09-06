@@ -1,6 +1,6 @@
 # Apple IIgs safety profile
 
-Firmware F1.0.2 uses a strict physical-bus policy for Apple IIgs use. Install
+Firmware F1.0.3 uses a strict physical-bus policy for Apple IIgs use. Install
 the card in physical slot 7 and set slot 7 to **Your Card** in the IIgs Control
 Panel.
 
@@ -8,12 +8,12 @@ Panel.
 
 Pin 39 is active-high processor `SYNC` on an Apple IIe and active-low
 `/M2SEL` on an IIgs. Before the host reports its type, a high pin cannot prove
-that an apparent slot address is valid. F1.0.2 therefore answers only the
+that an apparent slot address is valid. F1.0.3 therefore answers only the
 normal low-pin boot signature scan. A selected low-pin `$C700` fetch locks a
 provisional IIgs state and enables active-low `/M2SEL` checks before the boot
 ROM calls fast IIgs firmware.
 
-This keeps the IIgs slot-7 boot path, but it means that F1.0.2 cannot
+This keeps the IIgs slot-7 boot path, but it means that F1.0.3 cannot
 auto-start on a physical IIe: the IIe `$C700` opcode fetch has `SYNC` high.
 ONE//e is isolated from the physical bus and keeps its normal virtual-card
 behavior.

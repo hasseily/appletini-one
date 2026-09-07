@@ -348,6 +348,11 @@ The Boot Settings page has row 2 named `ONE//e standalone`, before the USB
 binding rows. It reports `OFF`, `RUNNING`, or `LOCKED`. Its global ON/OFF latch
 is saved in `0:/appletini_cfg.txt`; profiles neither write nor load it.
 
+`LOCKED` means a manual start would currently be refused. After a stopped
+session, once the connector is quiet and reselect is armed, the row shows
+`OFF` and accepts a fresh selection. The software stop latch still prevents
+an automatic restart during that boot.
+
 The item help is:
 
 > Runs the built-in Enhanced Apple //e on Appletini's soft 65C02 without an
@@ -355,8 +360,9 @@ The item help is:
 > the connector is quiet. Any Apple-bus activity stops ONE//e and saves it
 > OFF. After the connector is quiet, select this item again to save it ON.
 
-The sole high write to the ONE//e request register comes from an explicit menu
-selection. A safe request has no software timeout: it remains selected while
+The ONE//e request register is raised by an explicit menu selection or the
+guarded, one-shot restore of saved ON after a card boot. A safe request has no
+software timeout: it remains selected while
 physical isolation settles and while a recoverable private-runtime fault is
 retried. The menu closes only when the vTW status confirms both effective
 enable and a released core; the user can reopen it to stop the session.
@@ -373,6 +379,12 @@ guard confirms the hazard on consecutive polls. The writer syncs a temporary
 file, keeps the
 last committed file as a backup, and then installs the new global file. A
 failed write stays pending and retries. A profile cannot arm or disarm ONE//e.
+
+A transient stop after the restore request can therefore leave saved ON
+intact while the current session stays off. A fresh selection can restart
+it, and the next cold boot can restore ON again. UART lines beginning with
+`onee: session stop:` identify the event; a later quiet status does not retain
+its cause.
 
 There is one hard limit. If all card power disappears after PL sees Apple
 activity but before the PS records OFF on the SD card, that event cannot be

@@ -646,14 +646,18 @@ def test_native_latched_selection_lifecycle() -> None:
                        "Apple activity did not latch off and clear session speed")) {
                 return 1;
             }
-            mode_status = status_safe_off();
+            /* Exact field report: quiet, armed, manual OFF, outputs off.
+             * A previous software stop must not dim this selectable row. */
+            mode_status = 0xE10098C8U;
             high_before = high_writes;
             for (uint32_t i = 0U; i < 512U; ++i) {
                 onee_service_poll();
             }
             if (!check(high_writes == high_before &&
-                       onee_service_state() == ONEE_SERVICE_STATE_LOCKED,
-                       "quiet polling restarted an activity-locked mode")) {
+                       g_lockout_latched != 0U && g_manual_request == 0U &&
+                       runtime_live == 0U &&
+                       onee_service_state() == ONEE_SERVICE_STATE_OFF,
+                       "safe stopped mode must show OFF without restarting")) {
                 return 1;
             }
 
@@ -675,7 +679,7 @@ def test_native_latched_selection_lifecycle() -> None:
             if (!check(g_manual_request == 0U && high_writes == high_before &&
                        stop_calls == stop_before + 1U &&
                        runtime_speed_override == 0U &&
-                       onee_service_state() == ONEE_SERVICE_STATE_LOCKED,
+                       onee_service_state() == ONEE_SERVICE_STATE_OFF,
                        "lost request echo did not clear the session speed")) {
                 return 1;
             }
@@ -970,8 +974,8 @@ def test_native_persistent_reboot_lifecycle() -> None:
                        g_persisted_intent != 0U &&
                        g_hazard_confirm_pending == 0U &&
                        onee_service_persist_update_pending(NULL) == 0U &&
-                       onee_service_state() == ONEE_SERVICE_STATE_LOCKED,
-                       "transient glitch erased saved ON or restarted the mode")) {
+                       onee_service_state() == ONEE_SERVICE_STATE_OFF,
+                       "transient stop must preserve saved ON and show OFF without restarting")) {
                 return 1;
             }
             onee_service_restore_persisted(0U);

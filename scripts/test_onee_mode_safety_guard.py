@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -26,6 +27,17 @@ def vivado_tool(name: str) -> str:
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise RuntimeError(message)
+
+
+def verify_simulation_output(output: str) -> None:
+    require(
+        re.search(r"(?im)^\s*(?:FAIL\b|Fatal\b|Error:)", output) is None,
+        "ONE//e safety simulation reported a failure",
+    )
+    require(
+        "ONEE MODE SAFETY GUARD PASS" in output,
+        "simulation did not report the ONE//e safety pass marker",
+    )
 
 
 def run(command: list[str], log_name: str) -> str:
@@ -251,10 +263,7 @@ def main() -> int:
         vivado_tool("xsim"), "tb_onee_mode_safety_guard_snap", "--runall",
     ], "xsim.log")
 
-    require(
-        "ONEE MODE SAFETY GUARD PASS" in output,
-        "simulation did not report the ONE//e safety pass marker",
-    )
+    verify_simulation_output(output)
     print("ONE//e mode safety guard source test passed")
     return 0
 

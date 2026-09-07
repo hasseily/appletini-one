@@ -3,6 +3,9 @@
 module tb_onee_mode_safety_guard;
 
     localparam integer QUIET_CYCLES = 4;
+    // Allow the raw capture to clear, cross both synchronizer stages, then
+    // clear lockout and arm selection after the quiet interval.
+    localparam integer REARM_WAIT_CYCLES = QUIET_CYCLES + 8;
     localparam logic [11:0] OPEN_BUS_VECTOR_A = 12'b101001011010;
     localparam logic [11:0] OPEN_BUS_VECTOR_B = ~OPEN_BUS_VECTOR_A;
 
@@ -88,14 +91,14 @@ module tb_onee_mode_safety_guard;
     task automatic require_true(input logic condition, input string message);
         if (condition !== 1'b1) begin
             $display("FAIL: %s", message);
-            $fatal(1);
+            $fatal(1, "%s", message);
         end
     endtask
 
     task automatic require_false(input logic condition, input string message);
         if (condition !== 1'b0) begin
             $display("FAIL: %s", message);
-            $fatal(1);
+            $fatal(1, "%s", message);
         end
     endtask
 
@@ -136,7 +139,7 @@ module tb_onee_mode_safety_guard;
 
     task automatic select_off_then_on;
         manual_enable_request = 1'b0;
-        wait_clocks(QUIET_CYCLES + 6);
+        wait_clocks(REARM_WAIT_CYCLES);
         require_false(apple_activity_lockout,
                       "off selection must clear a quiet lockout");
         require_true(reselect_armed,
@@ -300,7 +303,7 @@ module tb_onee_mode_safety_guard;
                      "continuous Apple clocks must latch isolation");
 
         manual_enable_request = 1'b0;
-        wait_clocks(QUIET_CYCLES + 6);
+        wait_clocks(REARM_WAIT_CYCLES);
         require_false(apple_activity_quiet,
                       "continuous Apple clocks must block quiet state");
         require_false(reselect_armed,
@@ -311,7 +314,7 @@ module tb_onee_mode_safety_guard;
                      "continuous Apple clocks must retain isolation");
 
         periodic_clocks = 1'b0;
-        wait_clocks(QUIET_CYCLES + 6);
+        wait_clocks(REARM_WAIT_CYCLES);
         require_true(apple_activity_quiet,
                      "stopped stable clocks must reach quiet state");
         require_false(apple_activity_lockout,
@@ -343,7 +346,7 @@ module tb_onee_mode_safety_guard;
 
         #10;
         resetn = 1'b1;
-        wait_clocks(QUIET_CYCLES + 6);
+        wait_clocks(REARM_WAIT_CYCLES);
         require_true(apple_activity_quiet,
                      "stable open-bus vector must reach quiet state");
         require_false(apple_activity_lockout,
@@ -362,7 +365,7 @@ module tb_onee_mode_safety_guard;
         require_true(physical_bus_isolate,
                      "request high during reset must retain isolation");
         resetn = 1'b1;
-        wait_clocks(QUIET_CYCLES + 6);
+        wait_clocks(REARM_WAIT_CYCLES);
         require_false(onee_enable_effective,
                       "request high across reset must not restart mode");
         select_off_then_on();
@@ -425,7 +428,7 @@ module tb_onee_mode_safety_guard;
                       "slot power must keep ONE//e disabled after reset");
 
         apple_power_present_raw = 1'b0;
-        wait_clocks(QUIET_CYCLES + 6);
+        wait_clocks(REARM_WAIT_CYCLES);
         require_false(apple_activity_lockout,
                       "quiet manual off must clear lockout after power loss");
         require_false(physical_bus_isolate,

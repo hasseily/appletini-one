@@ -601,10 +601,7 @@ void onee_service_poll(void)
 
 onee_service_state_t onee_service_state(void)
 {
-    const uint32_t reason = onee_inhibit_reason(g_status);
-
-    if (g_lockout_latched != 0U ||
-        onee_status_pl_ready(g_status) == 0U ||
+    if (onee_status_pl_ready(g_status) == 0U ||
         onee_status_has_hazard(g_status) != 0U) {
         return ONEE_SERVICE_STATE_LOCKED;
     }
@@ -617,10 +614,10 @@ onee_service_state_t onee_service_state(void)
     if (g_manual_request != 0U) {
         return ONEE_SERVICE_STATE_OFF;
     }
-    if ((g_status & CARD_CTRL_ONEE_STATUS_QUIET_BIT) != 0U &&
-        (g_status & CARD_CTRL_ONEE_STATUS_RESELECT_ARMED_BIT) != 0U &&
-        (reason == CARD_CTRL_ONEE_INHIBIT_NONE ||
-         reason == CARD_CTRL_ONEE_INHIBIT_MANUAL_OFF)) {
+    /* A past stop still blocks automatic restore, but a fresh manual start
+     * may be safe now. Show OFF when that same start check would accept the
+     * row; keep the stop latch and saved intent unchanged. */
+    if (onee_service_check_start(g_status) == ONEE_START_CHECK_OK) {
         return ONEE_SERVICE_STATE_OFF;
     }
     return ONEE_SERVICE_STATE_LOCKED;

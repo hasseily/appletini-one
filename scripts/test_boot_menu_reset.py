@@ -390,8 +390,9 @@ def test_aux_probe_drops_provided_ram_and_rejects_floating_echo() -> None:
     apple_top = read(APPLE_TOP_SV)
     service_c = read(BOOT_MENU_SERVICE_C)
 
-    require("aux_probe_pulse = apple_cmd_write_hit && (ab_read.data == 8'h26);" in hdl,
-            "boot-menu PL must pulse when the ROM requests a physical aux probe")
+    require("aux_probe_pulse = report_write_hit && !iigs_mask_data_write &&" in hdl
+            and "(ab_read.data == 8'h26);" in hdl,
+            "only an unescaped boot-report command may request an aux probe")
     require("if (bm_aux_probe_pulse) begin\n"
             "                aux_provide_en_q <= 1'b0;\n"
             "            end" in apple_top,

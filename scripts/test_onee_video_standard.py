@@ -104,21 +104,19 @@ def static_contract_checks() -> None:
             "VBL_START_LINE = 9'd192" in timing,
             "scanner is not fixed at 312/262 lines with VBL line 192")
 
-    # These digests cover the reset calibration block, the physical period
-    # detector instance, and the detector module itself (65-pulse line
-    # period, 8513-clock threshold, 64-line flip hysteresis). The ONE//e
-    # override must route around them, not edit them. Recompute on
+    # These digests cover the physical period detector instance and module
+    # (65-pulse line period, 8513-clock threshold, 64-line flip hysteresis).
+    # test_apple_timing_reset.py exercises the reset calibration policy.
+    # The ONE//e override must route around them, not edit them. Recompute on
     # deliberate edits.
     detector_start = top.index(
-        "    always_ff @(posedge clk) begin\n"
-        "        if (!rstn[1]) begin\n"
-        "            apple_reset_prev_q"
+        "    /* Physical host standard from the PHI0 line period"
     )
     detector_end = top.index("\n\n    apple_timing_gen", detector_start)
     detector = top[detector_start:detector_end]
     require(
         hashlib.sha256(detector.encode("utf-8")).hexdigest() ==
-        "5bcca128fb9527445e1f17031a6a124900b46134fbeee6af4b48fce466067dde",
+        "149d044a434d45f34cc90091b2e4b6a153bb2c18ef8bafe1e18aa8b6d0712ac8",
         "physical Apple PAL/NTSC detector block changed",
     )
     require(sources.count("apple/apple_video_standard_detect.sv") == 1,

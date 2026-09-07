@@ -162,11 +162,12 @@ def static_checks() -> None:
     )
     require(
         ".ab_read(physical_ab_read)" in apple_top and
-        ".physical_bus_isolate(physical_bus_isolate)" in apple_top,
+        ".physical_bus_isolate(physical_bus_output_isolate)" in apple_top and
+        "physical_bus_fault_isolate = physical_bus_isolate ||" in apple_top,
         "physical wrapper must remain separate and receive the direct kill",
     )
     require(
-        "assign apple_reset_n_out = physical_bus_isolate ? 1'b1 :" in apple_top,
+        "assign apple_reset_n_out = physical_bus_fault_isolate ? 1'b1 :" in apple_top,
         "dedicated physical RESET must release under isolation",
     )
     require(
@@ -179,7 +180,12 @@ def static_checks() -> None:
     for contract in (
         "ab_write.wr_addr_rw_en && inh_allowed &&\n"
         "                                !physical_bus_isolate",
-        "apple_data_enable_unisolated &&\n                             !physical_bus_isolate",
+        "physical_bus_emit_allowed = bus_emit_state && !physical_bus_isolate;",
+        "physical_data_override_allowed = data_override_safe &&\n"
+        "                                           !physical_bus_isolate;",
+        ".I0(physical_bus_emit_allowed)",
+        ".I5(physical_data_override_allowed)",
+        ".O(apple_data_enable)",
         "wire apple_irq_drive_low = !physical_bus_isolate",
         "assign apple_inh_pin = (!physical_bus_isolate",
         "wire apple_dma_requested = !physical_bus_isolate",

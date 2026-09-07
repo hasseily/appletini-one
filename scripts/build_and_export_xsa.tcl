@@ -1,6 +1,12 @@
 set xpr_path "project/appletini_yarz.xpr"
 set xsa_out  "project/appletini_yarz_top.xsa"
 set incremental_ref       ".vivado_cache/appletini_yarz_top_known_good.dcp"
+if {[info exists ::env(APPLETINI_INCREMENTAL_REF_DCP)]} {
+    set incremental_ref [file normalize $::env(APPLETINI_INCREMENTAL_REF_DCP)]
+    if {![file isfile $incremental_ref]} {
+        error "APPLETINI_INCREMENTAL_REF_DCP does not name a checkpoint."
+    }
+}
 source [file join [file dirname [info script]] timing_run_helpers.tcl]
 set force_full_build [expr {
     [info exists ::env(APPLETINI_FULL_BUILD)] &&
@@ -9,6 +15,13 @@ set force_full_build [expr {
 }]
 set timing_diagnostics [timing_run::env_enabled APPLETINI_TIMING_DIAGNOSTICS]
 set minimum_setup_slack 0.200
+if {[info exists ::env(APPLETINI_MIN_SETUP_SLACK_NS)]} {
+    set minimum_setup_slack $::env(APPLETINI_MIN_SETUP_SLACK_NS)
+    if {![string is double -strict $minimum_setup_slack] ||
+        !($minimum_setup_slack >= 0.200 && $minimum_setup_slack <= 1.0)} {
+        error "APPLETINI_MIN_SETUP_SLACK_NS must be at least 0.200 and at most 1.0."
+    }
+}
 set implementation_setup_margin 0.200
 set script_dir [file dirname [file normalize [info script]]]
 set margin_apply_hook \
@@ -52,6 +65,7 @@ proc finish_timing_build {} {
 dict set build_info vivado_version [version -short]
 dict set build_info jobs 8
 dict set build_info rescue_used 0
+dict set build_info synthesis_reused 0
 dict set build_info minimum_wns_ns $minimum_setup_slack
 dict set build_info implementation_setup_margin_ns $implementation_setup_margin
 dict set build_info margin_apply_hook_sha256 $margin_apply_hook_sha256
@@ -239,9 +253,18 @@ check_syntax
 
 # Run synthesis + implementation through write_bitstream
 puts "Launching synthesis..."
-reset_run synth_1 -quiet
-launch_runs synth_1 -jobs 8
-wait_on_run synth_1
+if {[timing_run::env_enabled APPLETINI_REUSE_SYNTH]} {
+    if {[get_property STATUS [get_runs synth_1]] ne "synth_design Complete!" ||
+        [get_property NEEDS_REFRESH [get_runs synth_1]]} {
+        error "APPLETINI_REUSE_SYNTH requires a complete, current synthesis run."
+    }
+    dict set build_info synthesis_reused 1
+    puts "Reusing the current synthesis run from the top-level compile check."
+} else {
+    reset_run synth_1 -quiet
+    launch_runs synth_1 -jobs 8
+    wait_on_run synth_1
+}
 
 puts "Launching implementation to write_bitstream..."
 reset_run impl_1 -quiet
@@ -277,6 +300,30 @@ dict set build_info final_fabric_user_uncertainty_ns \
 if {![string is double -strict $final_user_uncertainty] ||
     abs(double($final_user_uncertainty)) > 0.0005} {
     error "Temporary fabric setup margin remains at signoff: $final_user_uncertainty ns."
+}
+# Check the reopened design independently of the implementation hook process.
+# Final setup slack must use the board's original output timing requirements.
+foreach spec {
+    {a2fpga_dir_a fabric 10.000 final_direction_a_limit_ns}
+    {a2fpga_dir_d fabric 10.000 final_direction_d_limit_ns}
+    {a2fpga_dir_d phi0 8.000 final_phi0_release_limit_ns}
+} {
+    lassign $spec port source expected manifest_key
+    set output_port [get_ports -quiet $port]
+    set startpoint [expr {$source eq "fabric" ? $fabric_clock :
+        [get_ports -quiet a2fpga_clk]}]
+    set output_path [get_timing_paths -quiet -delay_type max \
+        -from $startpoint -to $output_port -max_paths 1]
+    if {[llength $output_port] != 1 || [llength $startpoint] != 1 ||
+        [llength $output_path] != 1} {
+        error "Missing $source to $port path at signoff."
+    }
+    set output_limit [get_property REQUIREMENT $output_path]
+    if {![string is double -strict $output_limit] ||
+        abs(double($output_limit) - $expected) > 0.0005} {
+        error "Expected nominal $expected ns from $source to $port, got $output_limit ns."
+    }
+    dict set build_info $manifest_key $output_limit
 }
 set worst_setup_path [get_timing_paths -quiet -delay_type max -max_paths 1]
 set worst_hold_path  [get_timing_paths -quiet -delay_type min -max_paths 1]

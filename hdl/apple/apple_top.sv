@@ -362,6 +362,7 @@ module apple_top(
     logic apple_vblank_lock_seen_q;
     logic apple_reset_prev_q;
     logic apple_reset_release_q;
+    logic apple_timing_onee_prev_q;
     logic update_pulse;
     logic [8:0] line_in_frame;
     logic [6:0] cycle_in_line;
@@ -393,8 +394,12 @@ module apple_top(
      * the boot->OS handoff instead of stepping to the standard mode. */
     assign apple_vblank_start_pulse = mouse_vblank_start_pulse;
     wire apple_reset_assert_pulse = rstn[1] && apple_reset_prev_q && !ab_read.res;
-    assign set_frame_zero_pulse = apple_reset_release_q;
-    // The ROM's first VBL command after reset is the calibrated lock point.
+    // The physical scanner keeps running from PHI0 throughout Apple RES#.
+    // Only the stand-alone virtual machine seeds frame zero on reset release.
+    assign set_frame_zero_pulse =
+        onee_enable_effective && apple_reset_release_q;
+    // The first VBL command after FPGA reset, host clock loss, or a clock-
+    // source change calibrates the phase. Physical CTRL-RESET retains it.
     // Later commands must not re-phase the Apple timing counters with raw
     // polling jitter (the genlock heartbeat no longer needs them at all).
     assign set_vblank_start_pulse =
@@ -598,6 +603,8 @@ module apple_top(
     logic [7:0] boot_menu_iigs_external_slot_mask;
     logic       boot_menu_iigs_external_slot_mask_valid;
     logic       boot_menu_iigs_policy_fault;
+    logic [2:0] boot_menu_slot;
+    logic       boot_menu_slot_valid;
     logic [1:0] machine_mode_q;
     logic       machine_m2sel_active_high;
     logic [1:0] machine_mode_effective;
@@ -610,9 +617,10 @@ module apple_top(
     logic       machine_inh_allowed;
     logic       machine_gs_m2_qualify;
     logic       machine_is_iiplus;
-    logic       bootstrap_identity_valid;
-    logic       bootstrap_identity_legacy;
-    logic       bootstrap_identity_iigs;
+    logic       decoded_machine_legacy;
+    logic       decoded_machine_iigs;
+    logic       decoded_machine_iiplus;
+    logic [7:0] decoded_physical_slot_mask;
 
     apple_machine_safety_policy apple_machine_safety_policy_i (
         .locked_machine_id             (boot_menu_machine_id),
@@ -622,45 +630,44 @@ module apple_top(
             boot_menu_iigs_external_slot_mask),
         .iigs_external_slot_mask_valid (
             boot_menu_iigs_external_slot_mask_valid),
-        .bootstrap_identity_valid      (bootstrap_identity_valid),
-        .bootstrap_identity_legacy     (bootstrap_identity_legacy),
-        .bootstrap_identity_iigs       (bootstrap_identity_iigs),
         .requested_machine_mode        (machine_mode_q),
         .requested_m2sel_active_high   (machine_m2sel_active_high),
         .machine_identity_reported     (machine_identity_reported),
-        .machine_identity_legacy       (machine_identity_legacy),
-        .machine_identity_iigs         (machine_identity_iigs),
+        .machine_identity_legacy       (decoded_machine_legacy),
+        .machine_identity_iigs         (decoded_machine_iigs),
         .machine_identity_fault        (machine_identity_fault),
-        .physical_slot_allowed_mask    (physical_slot_allowed_mask),
-        .machine_inh_allowed           (machine_inh_allowed),
+        .physical_slot_allowed_mask    (decoded_physical_slot_mask),
+        .machine_inh_allowed           (),
         .machine_gs_m2_qualify         (machine_gs_m2_qualify),
-        .machine_is_iiplus             (machine_is_iiplus),
+        .machine_is_iiplus             (decoded_machine_iiplus),
         .effective_machine_mode        (machine_mode_effective),
         .effective_m2sel_active_high   (
             machine_m2sel_active_high_safe)
     );
 
-    logic unknown_boot_select_seen;
-    logic boot_menu_physical_visible;
-    apple_bootstrap_guard apple_bootstrap_guard_i (
-        .clk                          (clk),
-        .resetn                       (rstn[1]),
-        .onee_enable_effective        (onee_enable_effective),
-        .machine_identity_reported    (machine_identity_reported),
-        .machine_identity_legacy      (machine_identity_legacy),
-        .machine_identity_iigs        (machine_identity_iigs),
-        .reported_identity_fault      (boot_menu_machine_id_fault ||
-                                       boot_menu_iigs_policy_fault),
-        .iigs_external_slot_mask_valid(
-            boot_menu_iigs_external_slot_mask_valid),
-        .iigs_slot7_allowed           (physical_slot_allowed_mask[7]),
-        .physical_ab_read             (physical_ab_read),
-        .boot_menu_physical_visible   (boot_menu_physical_visible),
-        .bootstrap_identity_valid     (bootstrap_identity_valid),
-        .bootstrap_identity_legacy    (bootstrap_identity_legacy),
-        .bootstrap_identity_iigs      (bootstrap_identity_iigs),
-        .unknown_boot_select_seen     (unknown_boot_select_seen)
+    apple_machine_policy_latch apple_machine_policy_latch_i (
+        .clk(clk), .resetn(rstn[1]), .host_policy_resetn(rstn[2]),
+        .onee_enable_effective(onee_enable_effective),
+        .machine_id_fault(boot_menu_machine_id_fault),
+        .iigs_slot_policy_fault(boot_menu_iigs_policy_fault),
+        .decoded_legacy(decoded_machine_legacy),
+        .decoded_iigs(decoded_machine_iigs),
+        .decoded_iiplus(decoded_machine_iiplus),
+        .decoded_slot_mask(decoded_physical_slot_mask),
+        .machine_identity_legacy(machine_identity_legacy),
+        .machine_identity_iigs(machine_identity_iigs),
+        .machine_is_iiplus(machine_is_iiplus),
+        .physical_slot_allowed_mask(physical_slot_allowed_mask)
     );
+    assign machine_inh_allowed = machine_identity_legacy;
+    // Faults stop the physical pins immediately. Internal card policy is
+    // registered so a fault does not traverse every card and the arbiter
+    // before reaching the direction pins. Keep the power-up RESET hold
+    // independent of the fabric resets while both PS cores start.
+    wire physical_bus_fault_isolate = physical_bus_isolate ||
+        boot_menu_machine_id_fault || boot_menu_iigs_policy_fault;
+    wire physical_bus_output_isolate = physical_bus_fault_isolate ||
+        !rstn[1] || !rstn[2];
 
     wire card_slot1_enable = card_slot_enable_mask_q[1];
     wire card_slot2_enable = card_slot_enable_mask_q[2];
@@ -679,33 +686,25 @@ module apple_top(
         (onee_enable_effective || physical_slot_allowed_mask[6]);
     wire card_slot7_bus_enable = onee_enable_effective ||
                                  physical_slot_allowed_mask[7];
-    /* UNKNOWN and IIgs may use only slot-7 device I/O whose live /DEVSEL
-     * proves ownership. This does not grant any Cn/C8, IRQ, or bus-master
-     * right and is kept separate from the general physical slot mask. */
+    /* A legacy card can serve virtual slot 7 from another physical slot.
+     * Only a reported IIgs requires the wired slot's live device select. */
     wire physical_slot7_devsel_required = !onee_enable_effective &&
-                                          !machine_identity_legacy;
-    wire physical_slot7_unclassified_io =
-        physical_slot7_devsel_required &&
-        !machine_identity_reported && !machine_identity_fault;
-    wire physical_low_slot7_rom_read =
+                                          machine_identity_iigs;
+    wire physical_slot7_rom_read =
         physical_ab_read.cycle_valid && physical_ab_read.rw &&
-        !physical_ab_read.m2sel &&
         ((physical_ab_read.addr[15:8] == 8'hC7) ||
          ((physical_ab_read.addr >= 16'hC800) &&
           (physical_ab_read.addr < 16'hCFFF)));
-    wire physical_low_slot7_io_read =
+    wire physical_slot7_io_read =
         physical_ab_read.cycle_valid && physical_ab_read.rw &&
-        !physical_ab_read.m2sel &&
         (physical_ab_read.addr[15:4] == 12'hC0F) &&
         !physical_ab_read.devsel_n;
-    /* Direct final D-bus verdict. C7/C8 needs the exact bootstrap or the
-     * confirmed external-slot policy. C0F also needs live /DEVSEL. */
-    wire physical_slave_select_ok = machine_identity_legacy ||
-        (!machine_identity_fault &&
-         ((boot_menu_physical_visible && physical_low_slot7_rom_read) ||
-          ((physical_slot7_unclassified_io ||
-            (machine_identity_iigs && physical_slot_allowed_mask[7])) &&
-           physical_low_slot7_io_read)));
+    /* Before ID, the ordinary boot decoder must run on either SYNC level.
+     * After ID4, cycle_valid already enforces active-low /M2SEL. Optional
+     * card permission is separate from this bootstrap read permission. */
+    wire physical_slave_select_ok = !machine_identity_fault &&
+        (!machine_identity_iigs || physical_slot7_rom_read ||
+         physical_slot7_io_read);
     /* GS-capable features use polling. No UNKNOWN or IIgs card may pull the
      * shared physical IRQ line, even if a stale client request survives. */
     wire physical_irq_allowed = machine_identity_legacy;
@@ -759,7 +758,7 @@ module apple_top(
      * every virtual-card request with the power-up/boot hold so RESET uses
      * the populated open-collector transistor on every Apple model. The
      * separate A2FPGA.RESET lane remains an input observer. */
-    assign apple_reset_n_out = physical_bus_isolate ? 1'b1 :
+    assign apple_reset_n_out = physical_bus_fault_isolate ? 1'b1 :
         (apple_reset_release && !ab_write_arb.assert_res);
     assign menu_chime_start = menu_chime_start_q;
     logic smartport_active;
@@ -779,10 +778,13 @@ module apple_top(
         onee_slot7_cards_visible && card_slot7_bus_enable;
     wire supersprite_visible_desired =
         card_supersprite_enable && !onee_smartport_boot_owner &&
-        ((onee_slot7_cards_visible && card_slot7_bus_enable) ||
-         physical_slot7_unclassified_io);
+        onee_slot7_cards_visible && card_slot7_bus_enable;
+    /* LINTXT remains accessible when another slot boots. This grants only
+     * selected C0F I/O, not SmartPort ROM/FIFO or boot-command ownership. */
     wire slot7_overlay_devsel_visible =
-        physical_slot7_unclassified_io && !card_supersprite_enable;
+        !onee_enable_effective && !machine_identity_reported &&
+        !machine_identity_fault && !boot_menu_slot_valid &&
+        !card_supersprite_enable;
     logic vtw_smartport_visible_q;
     logic supersprite_visible_q;
     wire vtw_smartport_visible = ab_read.addr_en
@@ -828,8 +830,6 @@ module apple_top(
     logic [7:0] disk2_sound_seek_start_qtrack;
     logic [7:0] disk2_sound_seek_distance;
     logic [3:0] disk2_menu_sound_event_q;
-    logic [2:0] boot_menu_slot;
-    logic       boot_menu_slot_valid;
     wire [20:0] current_softswitch_state = {
         sss.sw_ramworks_bank,
         sss.sw_lcram_write,
@@ -853,13 +853,21 @@ module apple_top(
             apple_reset_prev_q          <= 1'b1;
             apple_reset_release_q       <= 1'b0;
             apple_vblank_lock_seen_q    <= 1'b0;
+            apple_timing_onee_prev_q    <= 1'b0;
         end else begin
             // Apple RES# is not a PSRAM coherency boundary. Cache contents
             // remain valid across CTRL+RESET.
             apple_reset_release_q     <= !apple_reset_prev_q && ab_read.res;
             apple_reset_prev_q <= ab_read.res;
+            apple_timing_onee_prev_q <= onee_enable_effective;
 
-            if (!ab_read.res) begin
+            // Clock loss or a clock-source change needs a fresh phase lock.
+            // The physical activity guard stays active throughout CTRL-RESET
+            // because the motherboard clocks keep running. Its quiet state
+            // lets a host power cycle recalibrate without resetting the FPGA.
+            if ((onee_enable_effective != apple_timing_onee_prev_q) ||
+                (!onee_enable_effective && onee_activity_quiet) ||
+                (onee_enable_effective && !ab_read.res)) begin
                 apple_vblank_lock_seen_q <= 1'b0;
             end else if (set_vblank_start_pulse) begin
                 apple_vblank_lock_seen_q <= 1'b1;
@@ -1173,7 +1181,7 @@ module apple_top(
         .dbg_clear(busdbg_clear_pulse),
         .clk(clk),
         .rstn(rstn[1]),
-        .physical_bus_isolate(physical_bus_isolate),
+        .physical_bus_isolate(physical_bus_output_isolate),
         .inh_allowed(machine_inh_allowed_wrapper_q && machine_inh_allowed),
         .physical_slave_select_ok(physical_slave_select_ok),
         .physical_irq_allowed(physical_irq_allowed),
@@ -1662,12 +1670,26 @@ module apple_top(
     logic [7:0]  vtw_sp_resp_rdata;
     logic [21:0] vtw_sp_sss_snapshot;
 
+    globals::AppleBus_read smartport_ab_read;
+    always_comb begin
+        smartport_ab_read = gate_ab(slot7_devsel_ab_read,
+            vtw_smartport_visible || slot7_overlay_devsel_visible);
+        if (!vtw_smartport_visible) begin
+            // Only selected C0F I/O may reach the independent text overlay.
+            // Keep addr_en so a stale reply clears at the next address.
+            smartport_ab_read.sss_en = 1'b0;
+            if (!ab_read.cycle_valid || ab_read.m2sel ||
+                ab_read.devsel_n || (ab_read.addr[15:4] != 12'hC0F)) begin
+                smartport_ab_read.serve_en = 1'b0;
+                smartport_ab_read.data_en = 1'b0;
+            end
+        end
+    end
+
     smartport_card smartport_card_i (
         .clk(clk),
         .rstn(rstn[2]),
-        .ab_read(gate_ab(slot7_devsel_ab_read,
-                         vtw_smartport_visible ||
-                         slot7_overlay_devsel_visible)),
+        .ab_read(smartport_ab_read),
         .apple_bus_visible(vtw_smartport_visible),
         .overlay_bus_visible(slot7_overlay_devsel_visible),
         .sss(sss),
@@ -1756,13 +1778,9 @@ module apple_top(
     globals::AppleBus_read boot_menu_ab_read;
 
     always_comb begin
-        /* Address/serve phases may prepare a hidden read response. Only an
-         * accepted low-/M2SEL cycle receives data_en, so an untrusted cycle
-         * cannot change boot-menu commands, ID, slot mask, RAM, or keys. */
+        // The boot card owns its command session and normal C7/C8 decode.
         boot_menu_ab_read = gate_ab(slot7_devsel_ab_read,
-                                    !onee_enable_effective);
-        if (!boot_menu_physical_visible)
-            boot_menu_ab_read.data_en = 1'b0;
+                                     !onee_enable_effective);
     end
 
     boot_menu_card boot_menu_card_i (
@@ -2146,7 +2164,6 @@ module apple_top(
 
     apple_slot7_devsel_guard apple_slot7_devsel_guard_i (
         .devsel_required       (physical_slot7_devsel_required),
-        .minimal_io_only       (physical_slot7_unclassified_io),
         .ab_read_in            (ab_read),
         .physical_ab_read      (physical_ab_read),
         .supersprite_write_in  (supersprite_ab_write),
@@ -2170,14 +2187,12 @@ module apple_top(
         card_slot5_bus_enable,
         card_slot1_bus_enable,
         card_ssc_bus_enable,
-        (supersprite_bus_visible &&
-         (onee_enable_effective || physical_slot_allowed_mask[7] ||
-          physical_slot7_unclassified_io)),
+        supersprite_bus_visible,
         disk2_bus_visible,
-        ((vtw_smartport_visible &&
-          (onee_enable_effective || physical_slot_allowed_mask[7])) ||
-         slot7_overlay_devsel_visible),
-        boot_menu_physical_visible,
+        (vtw_smartport_visible ||
+         (slot7_overlay_devsel_visible && physical_slot7_io_read &&
+          !physical_ab_read.m2sel)),
+        !onee_enable_effective,
         (no_slot_clock_enabled && (|no_slot_clock_slot_mask))
     };
 

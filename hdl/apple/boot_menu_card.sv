@@ -131,12 +131,15 @@ module boot_menu_card (
     logic [7:0] last_event_q;
     /* Machine identification reported by the boot ROM: command byte
      * $2i latches i here. 0 = not yet reported. Ids: 1=II/II+, 2=IIe,
-     * 3=enhanced IIe, 4=IIgs, 5=IIc. Deliberately NOT cleared by Apple
-     * warm reset or reset-release. The ROM may send the same report again,
+     * 3=enhanced IIe, 4=IIgs. The IIc value 5 is unsupported (no slots).
+     * Apple warm reset and reset-release do not clear the ID. The ROM may
+     * send the same report again,
      * but the machine cannot physically change without cycling card power
      * (which resets the PL and clears this). */
     logic [3:0] machine_id_q;
     logic       machine_id_fault_q;
+    logic       boot_entry_seen_q;
+    logic       report_session_q;
     logic [7:0] iigs_external_slot_mask_q;
     logic       iigs_external_slot_mask_valid_q;
     logic       iigs_slot_mask_escape_q;
@@ -178,6 +181,9 @@ module boot_menu_card (
     logic [3:0] c8_ram_offset;
     logic [7:0] apple_status_byte;
     logic       apple_cmd_write_hit;
+    logic       boot_window_begin;
+    logic       boot_command_write_hit;
+    logic       report_write_hit;
     logic       iigs_mask_data_write;
     logic       menu_request_write;
     logic       push_key;
@@ -272,6 +278,9 @@ module boot_menu_card (
                                            (rom_addr_slot == 3'h7));
         slot_io_access = (slot7_mode_q == SLOT_MODE_BOOTMENU) &&
                          !handoff_pending_q &&
+                         (boot_slot_valid_q ||
+                          (boot_entry_seen_q && !sss.sw_intcxrom &&
+                           sss.io_select[3'h7])) &&
                          (ab_read.addr[15:8] == 8'hC0) &&
                          ab_read.addr[7] &&
                          (io_addr_slot != 3'h0) &&
@@ -330,10 +339,20 @@ module boot_menu_card (
                               (slot_io_reg_idx == APPLE_REG_CMD_STATUS[3:0]);
         iigs_mask_data_write = apple_cmd_write_hit &&
                                iigs_slot_mask_escape_q;
-        menu_request_write = apple_cmd_write_hit &&
+        boot_window_begin = apple_cmd_write_hit &&
+                            !iigs_slot_mask_escape_q &&
+                            (ab_read.data == CMD_WINDOW_BEGIN) &&
+                            boot_entry_seen_q && !sss.sw_intcxrom &&
+                            sss.io_select[slot_resolved ? resolved_slot : 3'h7];
+        boot_command_write_hit = apple_cmd_write_hit &&
+                                 !iigs_slot_mask_escape_q &&
+                                 (boot_slot_valid_q || boot_window_begin);
+        report_write_hit = apple_cmd_write_hit && report_session_q;
+        menu_request_write = boot_command_write_hit &&
                              (ab_read.data == CMD_MENU_REQUEST) &&
                              boot_eligible_q;
-        aux_probe_pulse = apple_cmd_write_hit && (ab_read.data == 8'h26);
+        aux_probe_pulse = report_write_hit && !iigs_mask_data_write &&
+                          (ab_read.data == 8'h26);
 
         apple_status_byte = {
             1'b0,
@@ -458,6 +477,8 @@ module boot_menu_card (
             key_seq_q <= 8'd0;
             machine_id_q <= 4'd0;
             machine_id_fault_q <= 1'b0;
+            boot_entry_seen_q <= 1'b0;
+            report_session_q <= 1'b0;
             iigs_external_slot_mask_q <= 8'h00;
             iigs_external_slot_mask_valid_q <= 1'b0;
             iigs_slot_mask_escape_q <= 1'b0;
@@ -507,6 +528,8 @@ module boot_menu_card (
                 key_count_q <= 4'd0;
                 key_seq_q <= 8'd0;
                 iigs_slot_mask_escape_q <= 1'b0;
+                boot_entry_seen_q <= 1'b0;
+                report_session_q <= 1'b0;
             end else if (apple_reset_release) begin
                 if (slot7_mode_q == SLOT_MODE_BOOTMENU) begin
                     // Cold boot with no handoff yet (e.g. power-on): the boot
@@ -540,7 +563,20 @@ module boot_menu_card (
                 key_wr_ptr_q <= 3'd0;
                 key_count_q <= 4'd0;
                 key_seq_q <= 8'd0;
+                boot_entry_seen_q <= 1'b0;
+                report_session_q <= 1'b0;
+                iigs_slot_mask_escape_q <= 1'b0;
             end else begin
+                // C0F0 also serves LINTXT and SuperSprite. Only a boot-ROM
+                // entry followed by its owned WINDOW_BEGIN starts reports.
+                // This state does not depend on the menu's countdown.
+                if (slot_rom_read_hit && (ab_read.addr[7:0] == 8'h00))
+                    boot_entry_seen_q <= 1'b1;
+                if (boot_window_begin) begin
+                    boot_entry_seen_q <= 1'b0;
+                    report_session_q <= 1'b1;
+                    iigs_slot_mask_escape_q <= 1'b0;
+                end
                 // Open-Apple (cold-boot) detection window. The //e reset handler
                 // reads $C061 (bit 7 = Open-Apple) just after reset; snoop it.
                 // Open-Apple held => cold boot => return to the boot menu. The
@@ -565,6 +601,9 @@ module boot_menu_card (
                 if (handoff_entry_read) begin
                     slot7_mode_q <= SLOT_MODE_SMARTPORT;
                     handoff_pending_q <= 1'b0;
+                    boot_entry_seen_q <= 1'b0;
+                    report_session_q <= 1'b0;
+                    iigs_slot_mask_escape_q <= 1'b0;
                 end
 
                 if (window_active_q && !timeout_expired_q && !menu_request_write) begin
@@ -578,62 +617,60 @@ module boot_menu_card (
                     end
                 end
 
-                /* Machine ID and IIgs slot ownership are write-once safety
-                 * facts. $27 escapes the next command byte as raw $C02D.
-                 * The boot ROM reports again after a warm reset, so the same
-                 * ID and slot-7 bit are idempotent. Other C02D bits may
-                 * change under GS/OS and are diagnostic only. A changed ID or
-                 * cleared slot-7 bit latches a fail-closed fault. */
-                if (apple_cmd_write_hit) begin
+                /* Keep the first physical host ID. A later vTW boot uses an
+                 * enhanced IIe ROM even on a II/II+, so legacy IDs may repeat
+                 * with a different value. A legacy/GS conflict is a fault.
+                 * $26 is the aux probe, never a machine ID. $27 makes the
+                 * next command byte exclusively a raw GS slot mask. */
+                if (report_write_hit) begin
                     if (iigs_slot_mask_escape_q) begin
                         iigs_slot_mask_escape_q <= 1'b0;
-                        if ((machine_id_q == 4'd4) && window_active_q &&
-                            !iigs_slot_mask_fault_q) begin
-                            if (!ab_read.data[7]) begin
-                                /* This ROM can execute on a GS only through
-                                 * external slot 7. A clear C02D bit 7 is an
-                                 * inconsistent report, so trust none of it. */
-                                iigs_external_slot_mask_q <= 8'h00;
-                                iigs_external_slot_mask_valid_q <= 1'b0;
-                                iigs_slot_mask_fault_q <= 1'b1;
-                            end else if (!iigs_external_slot_mask_valid_q) begin
-                                iigs_external_slot_mask_q <= ab_read.data;
-                                iigs_external_slot_mask_valid_q <= 1'b1;
-                            end else if (iigs_external_slot_mask_q[7] !=
-                                         ab_read.data[7]) begin
-                                iigs_external_slot_mask_q <= 8'h00;
-                                iigs_external_slot_mask_valid_q <= 1'b0;
-                                iigs_slot_mask_fault_q <= 1'b1;
-                            end else begin
-                                /* Only physical slot 7 affects hardware
-                                 * safety. Keep the latest full byte for
-                                 * diagnostics without treating unrelated
-                                 * GS/OS slot remaps as a conflict. */
-                                iigs_external_slot_mask_q <= ab_read.data;
+                        report_session_q <= 1'b0;
+                        if ((machine_id_q == 4'd4) && ab_read.data[7] &&
+                            !machine_id_fault_q && !iigs_slot_mask_fault_q) begin
+                            // Only bit 7 grants a physical slot. Keep other
+                            // GS/OS slot bits as current diagnostic data.
+                            iigs_external_slot_mask_q <= ab_read.data;
+                            iigs_external_slot_mask_valid_q <= 1'b1;
+                        end else begin
+                            iigs_external_slot_mask_q <= 8'h00;
+                            iigs_external_slot_mask_valid_q <= 1'b0;
+                            iigs_slot_mask_fault_q <= 1'b1;
+                        end
+                    end else begin
+                        case (ab_read.data)
+                            8'h21, 8'h22, 8'h23, 8'h24: begin
+                                if (machine_id_q == 4'd0)
+                                    machine_id_q <= ab_read.data[3:0];
+                                else if ((machine_id_q == 4'd4) !=
+                                         (ab_read.data == 8'h24)) begin
+                                    machine_id_fault_q <= 1'b1;
+                                    report_session_q <= 1'b0;
+                                end
+                                if (ab_read.data != 8'h24)
+                                    report_session_q <= 1'b0;
                             end
-                        end else begin
-                            iigs_external_slot_mask_q <= 8'h00;
-                            iigs_external_slot_mask_valid_q <= 1'b0;
-                            iigs_slot_mask_fault_q <= 1'b1;
-                        end
-                    end else if (ab_read.data == 8'h27) begin
-                        if ((machine_id_q == 4'd4) && window_active_q &&
-                            !iigs_slot_mask_fault_q) begin
-                            iigs_slot_mask_escape_q <= 1'b1;
-                        end else begin
-                            iigs_external_slot_mask_q <= 8'h00;
-                            iigs_external_slot_mask_valid_q <= 1'b0;
-                            iigs_slot_mask_fault_q <= 1'b1;
-                        end
-                    end else if (ab_read.data[7:4] == 4'h2) begin
-                        if ((ab_read.data[3:0] < 4'd1) ||
-                            (ab_read.data[3:0] > 4'd5)) begin
-                            machine_id_fault_q <= 1'b1;
-                        end else if (machine_id_q == 4'd0) begin
-                            machine_id_q <= ab_read.data[3:0];
-                        end else if (machine_id_q != ab_read.data[3:0]) begin
-                            machine_id_fault_q <= 1'b1;
-                        end
+                            8'h26: begin end // Aux probe, handled above.
+                            8'h27: begin
+                                if ((machine_id_q == 4'd4) &&
+                                    !machine_id_fault_q && !iigs_slot_mask_fault_q)
+                                    iigs_slot_mask_escape_q <= 1'b1;
+                                else begin
+                                    report_session_q <= 1'b0;
+                                    iigs_external_slot_mask_q <= 8'h00;
+                                    iigs_external_slot_mask_valid_q <= 1'b0;
+                                    iigs_slot_mask_fault_q <= 1'b1;
+                                end
+                            end
+                            default: begin
+                                // A IIc ($25) cannot host this card; other
+                                // unused $2x report values are invalid too.
+                                if (ab_read.data[7:4] == 4'h2) begin
+                                    machine_id_fault_q <= 1'b1;
+                                    report_session_q <= 1'b0;
+                                end
+                            end
+                        endcase
                     end
                 end
 
@@ -642,15 +679,15 @@ module boot_menu_card (
                 end
                 /* set wins over a same-cycle clear: a fresh report
                  * must never be lost to a stale consume */
-                if (apple_cmd_write_hit &&
+                if (report_write_hit &&
                     !iigs_mask_data_write &&
                     (ab_read.data == 8'h30 || ab_read.data == 8'h31)) begin
                     aux_present_q      <= ab_read.data[0];
                     aux_report_valid_q <= 1'b1;
                 end
 
-                if (apple_cmd_write_hit && !iigs_mask_data_write) begin
-                    if (!boot_slot_valid_q && (ab_read.data == CMD_WINDOW_BEGIN)) begin
+                if (boot_command_write_hit) begin
+                    if (!boot_slot_valid_q && boot_window_begin) begin
                         boot_slot_q <= io_addr_slot;
                         boot_slot_valid_q <= 1'b1;
                     end
@@ -670,6 +707,9 @@ module boot_menu_card (
                             window_active_q <= 1'b0;
                             boot_eligible_q <= 1'b0;
                             handoff_pending_q <= 1'b1;
+                            boot_entry_seen_q <= 1'b0;
+                            report_session_q <= 1'b0;
+                            iigs_slot_mask_escape_q <= 1'b0;
                         end
                         CMD_MENU_REQUEST: begin
                             if (boot_eligible_q) begin
@@ -687,6 +727,9 @@ module boot_menu_card (
                             menu_close_requested_q <= 1'b1;
                             ps_close_requested_q <= 1'b0;
                             handoff_pending_q <= 1'b1;
+                            boot_entry_seen_q <= 1'b0;
+                            report_session_q <= 1'b0;
+                            iigs_slot_mask_escape_q <= 1'b0;
                         end
                         CMD_VBL_START: begin
                             if (boot_eligible_q) begin

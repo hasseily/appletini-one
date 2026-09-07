@@ -48,6 +48,7 @@ def run(command: list[str], log_name: str) -> str:
 
 def static_checks() -> None:
     top = TOP.read_text(encoding="utf-8")
+    normalized_top = " ".join(top.split())
     core = CORE.read_text(encoding="utf-8")
     boot_card = BOOT_CARD.read_text(encoding="utf-8")
     cold_scan = COLD_SCAN.read_text(encoding="utf-8")
@@ -128,16 +129,16 @@ def static_checks() -> None:
         "session_boot_target_disk2 <= boot_target_disk2;" in cold_scan and
         "slot7_hidden <= boot_target_disk2;" in cold_scan and
         ".ab_read(boot_menu_ab_read)" in top and
-        "boot_menu_ab_read = gate_ab(slot7_devsel_ab_read," in top and
-        "boot_menu_ab_read.data_en = 1'b0;" in top and
-        ".onee_enable_effective        (onee_enable_effective)" in top,
+        "boot_menu_ab_read = gate_ab(slot7_devsel_ab_read, "
+        "!onee_enable_effective);" in normalized_top and
+        "apple_bootstrap_guard" not in top,
         "ONE//e must sample the same slot-enabled boot target as the host",
     )
     require(
         "wire onee_smartport_boot_owner =\n"
         "        onee_enable_effective && !onee_boot_target_disk2;" in top and
         "card_supersprite_enable && !onee_smartport_boot_owner &&\n"
-        "        ((onee_slot7_cards_visible && card_slot7_bus_enable) ||" in top and
+        "        onee_slot7_cards_visible && card_slot7_bus_enable;" in top and
         "(!card_supersprite_enable || onee_smartport_boot_owner) &&\n"
         "        (onee_enable_effective || smartport_active)" in top and
         "else if (ab_read.addr_en) begin\n"

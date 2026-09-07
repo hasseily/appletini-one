@@ -313,10 +313,11 @@ module apple_bus_wrapper (
     logic [7:0] physical_data_q = 8'h00;
     logic       physical_addr_rw_en_q;
     logic       physical_rw_q;
-    logic       physical_inh_dependent_q;
-    logic       physical_bus_master_q;
-    logic       physical_slave_read_q;
-    logic       physical_slave_select_ok_q;
+    logic       physical_ownership_dependent_q;
+    logic       physical_select_allowed_q;
+    wire physical_bus_master_now = ab_write.assert_dma ||
+                                   ab_write.wr_addr_rw_en ||
+                                   ab_write.wr_dma_data_en;
     always_ff @(posedge clk) begin
         /* The cleared enable masks this byte during reset, so the data flops
          * need no reset input or extra control set. */
@@ -325,34 +326,27 @@ module apple_bus_wrapper (
             physical_data_en_q    <= 1'b0;
             physical_addr_rw_en_q <= 1'b0;
             physical_rw_q         <= 1'b1;
-            physical_inh_dependent_q <= 1'b0;
-            physical_bus_master_q <= 1'b0;
-            physical_slave_read_q <= 1'b0;
-            physical_slave_select_ok_q <= 1'b0;
+            physical_ownership_dependent_q <= 1'b0;
+            physical_select_allowed_q <= 1'b0;
         end else begin
             physical_data_en_q    <= ab_write.wr_data_en;
             physical_addr_rw_en_q <= ab_write.wr_addr_rw_en;
             physical_rw_q         <= ab_write.wr_rw;
-            physical_inh_dependent_q <= ab_write.assert_inh;
-            physical_bus_master_q <= ab_write.assert_dma ||
-                                     ab_write.wr_addr_rw_en ||
-                                     ab_write.wr_dma_data_en;
-            physical_slave_read_q <= ab_read_r.cycle_valid && ab_read_r.rw;
-            physical_slave_select_ok_q <= physical_slave_select_ok;
+            physical_ownership_dependent_q <= ab_write.assert_inh ||
+                                              physical_bus_master_now;
+            physical_select_allowed_q <= physical_bus_master_now ||
+                (ab_read_r.cycle_valid && ab_read_r.rw &&
+                 physical_slave_select_ok);
         end
     end
 
-    /* machine_inh_allowed may drop after this stage captures an INH-backed
-     * response. Release that response with INH so motherboard RAM cannot
-     * contend with the card for the rest of the Apple cycle. */
-    wire physical_data_policy_allowed = physical_bus_master_q ?
-                                            inh_allowed :
-                                            (physical_slave_read_q &&
-                                             physical_slave_select_ok_q);
+    /* Decide slave read permission before the tuple register. Ownership
+     * remains a live veto: dropping INH/DMA permission must also release
+     * the previous staged byte, even after the arbiter drops its request. */
     wire physical_data_en_safe =
         physical_data_en_q &&
-        (!physical_inh_dependent_q || inh_allowed) &&
-        physical_data_policy_allowed;
+        (!physical_ownership_dependent_q || inh_allowed) &&
+        physical_select_allowed_q;
     wire drive_live = bus_emit_state && physical_data_en_safe;
     wire read_response_live =
         drive_live && (!physical_addr_rw_en_q || physical_rw_q);
@@ -435,7 +429,7 @@ module apple_bus_wrapper (
                 data_override_saved_q <= 1'b1;
                 iiplus_read_data_q    <= physical_data_q;
                 iiplus_read_inh_dependent_q <=
-                    physical_inh_dependent_q;
+                    physical_ownership_dependent_q;
             end
         end
     end
@@ -457,26 +451,29 @@ module apple_bus_wrapper (
      *
      * Keep the bus phase and staged response enable as separate LUT inputs.
      * This keeps raw PHI0 as the release input of the placed LUT. INH safety
-     * stays in a small pre-gate fed by the staged response tag.
+     * stays in a small pre-gate fed by the staged response tag. Isolation
+     * directly kills both the emit and override inputs, so every drive path
+     * releases without a clock edge. No extra LUT follows the raw-PHI0 LUT.
      *
      * LUT inputs implement:
-     *   (bus_emit_state && physical_data_en_safe &&
+     *   (physical_bus_emit_allowed && physical_data_en_safe &&
      *       (PHI0 || (!host_is_iiplus && addr_rw_enable))) ||
-     *   data_override_safe
+     *   physical_data_override_allowed
      * INIT bit order is {I5,I4,I3,I2,I1,I0}. */
-    wire apple_data_enable_unisolated;
+    wire physical_bus_emit_allowed = bus_emit_state && !physical_bus_isolate;
+    wire physical_data_override_allowed = data_override_safe &&
+                                           !physical_bus_isolate;
+    wire apple_data_enable;
     (* LOC = "SLICE_X104Y23", BEL = "A6LUT", DONT_TOUCH = "TRUE" *)
     LUT6 #(.INIT(64'hFFFF_FFFF_8088_8080)) apple_data_enable_lut (
-        .I0(bus_emit_state),
+        .I0(physical_bus_emit_allowed),
         .I1(physical_data_en_safe),
         .I2(apple_phi0_pin),
         .I3(host_is_iiplus),
         .I4(physical_addr_rw_en_q),
-        .I5(data_override_safe),
-        .O(apple_data_enable_unisolated)
+        .I5(physical_data_override_allowed),
+        .O(apple_data_enable)
     );
-    wire apple_data_enable = apple_data_enable_unisolated &&
-                             !physical_bus_isolate;
     wire [7:0] apple_data_out =
         iiplus_read_hold_active ? iiplus_read_data_q : physical_data_q;
 

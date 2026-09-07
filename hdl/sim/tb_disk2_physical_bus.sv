@@ -190,7 +190,7 @@ module tb_disk2_physical_bus;
     logic [7:0] sampled_data;
     logic sampled_addr_rw_en;
     logic sampled_rw;
-    logic sampled_inh;
+    logic sampled_ownership;
     logic sampled_serve;
     logic sampled_sync_fall;
     always @(posedge clk) begin
@@ -200,7 +200,8 @@ module tb_disk2_physical_bus;
         sampled_data = ab_write.wr_data;
         sampled_addr_rw_en = ab_write.wr_addr_rw_en;
         sampled_rw = ab_write.wr_rw;
-        sampled_inh = ab_write.assert_inh;
+        sampled_ownership = ab_write.assert_inh || ab_write.assert_dma ||
+                            ab_write.wr_addr_rw_en || ab_write.wr_dma_data_en;
         sampled_serve = ab_read.serve_en &&
                         (ab_read.addr[15:4] == 12'hC0E);
         sampled_sync_fall = wrapper_i.phi0_fall;
@@ -220,8 +221,8 @@ module tb_disk2_physical_bus;
                   "physical address ownership tag was not staged with data");
             check(wrapper_i.physical_rw_q === sampled_rw,
                   "physical R/W tag was not staged with data");
-            check(wrapper_i.physical_inh_dependent_q === sampled_inh,
-                  "physical INH-dependency tag was not staged with data");
+            check(wrapper_i.physical_ownership_dependent_q === sampled_ownership,
+                  "physical ownership-dependency tag was not staged with data");
         end
     end
 

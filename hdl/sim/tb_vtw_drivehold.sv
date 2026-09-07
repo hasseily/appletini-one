@@ -94,7 +94,7 @@ module tb_vtw_drivehold;
               wrapper_i.physical_data_q === 8'hE1 &&
               wrapper_i.physical_addr_rw_en_q === 1'b1 &&
               wrapper_i.physical_rw_q === 1'b1 &&
-              wrapper_i.physical_inh_dependent_q === 1'b0,
+              wrapper_i.physical_ownership_dependent_q === 1'b1,
               "physical response tuple did not register together");
         @(negedge clk);
         ab_write.wr_addr_rw_en = 1'b0;
@@ -111,7 +111,7 @@ module tb_vtw_drivehold;
               wrapper_i.physical_data_q === 8'h1E &&
               wrapper_i.physical_addr_rw_en_q === 1'b0 &&
               wrapper_i.physical_rw_q === 1'b0 &&
-              wrapper_i.physical_inh_dependent_q === 1'b0,
+              wrapper_i.physical_ownership_dependent_q === 1'b0,
               "physical response clear did not preserve tuple alignment");
 
         // A card may assert its registered response after serve_en. Prove
@@ -284,7 +284,7 @@ module tb_vtw_drivehold;
         ab_write.assert_inh = 1'b0;
         repeat (2) @(posedge clk);
         #1;
-        check(wrapper_i.physical_inh_dependent_q === 1'b0 &&
+        check(wrapper_i.physical_ownership_dependent_q === 1'b0 &&
               wrapper_i.iiplus_read_inh_dependent_q === 1'b1,
               "II+ saved read lost its INH dependency with the live tuple");
         @(negedge phi0);

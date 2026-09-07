@@ -410,8 +410,8 @@ module tb_onee_video_path;
         check(saw_vblank_start, "VBL did not start at line 192 cycle 0");
         check(saw_frame_wrap, "scanner did not return to frame start");
 
-        // The top-level reset-release hook uses this input. It must restart
-        // the scanner at frame zero even after the free-running bus advances.
+        // The ONE//e reset-release hook uses this input. It must restart
+        // the virtual scanner even after the free-running bus advances.
         repeat (37) wait_native_tick();
         check(line_in_frame != 9'd0 || cycle_in_line != 7'd0,
               "scanner did not advance before frame-zero test");

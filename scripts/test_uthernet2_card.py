@@ -349,8 +349,8 @@ def main():
 
     require("#define CARD_CTRL_SLOT_ETHERNET    1U" in regs,
             "PS register header must name Ethernet slot 1")
-    require("CARD_CTRL_SLOT_BIT(CARD_CTRL_SLOT_ETHERNET)" in regs,
-            "Ethernet slot 1 should be part of the default enabled slot mask")
+    require("#define CARD_CTRL_SLOT_ENABLE_RESET_MASK 0x00000000UL" in regs,
+            "Reset slot mask must leave Ethernet slot 1 off; saved settings enable it")
     require("#define CARD_CTRL_ETH_ADDR_REG" in regs and
             "#define CARD_CTRL_ETH_DATA_REG" in regs and
             "#define CARD_CTRL_ETH_CMD_REG" in regs and
@@ -375,8 +375,8 @@ def main():
             "Host reads must skip the unused Ethernet data-register write")
     require("#define ETHERNET_CONTROL_SLOT 1U" in config,
             "Config menu must use Ethernet slot 1")
-    require("#define CONFIG_DEFAULT_ETHERNET_SLOT1_ENABLED 1U" in config,
-            "Ethernet slot 1 should be enabled by default for Uthernet II")
+    require("#define CONFIG_DEFAULT_ETHERNET_SLOT1_ENABLED 0U" in config,
+            "Ethernet slot 1 should be disabled by default")
     require("ETHERNET_CONTROL_SLOT,\n                                        menu->ethernet_slot1_enabled" in config,
             "Config menu runtime apply must enable/disable slot 1")
     require("ethernet_read_config" in config_h and

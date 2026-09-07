@@ -576,11 +576,11 @@ def test_no_vidhd_identity_and_slot_layout() -> None:
             "apple_bus_active = enabled &&" in disk2 and
             "((slot_assign != 3'h3) || sss.sw_slotc3rom)" in disk2,
             "ROM-bearing virtual cards must use slot_access and the slot-3 external-ROM gate")
-    require("CARD_CTRL_SLOT_ENABLE_RESET      = 32'h0000_0016" in top and
+    require("CARD_CTRL_SLOT_ENABLE_RESET      = 32'h0000_0000" in top and
             "wire card_slot1_enable = card_slot_enable_mask_q[1];" in top and
             "wire card_slot2_enable = card_slot_enable_mask_q[2];" in top and
             "wire card_slot4_enable = card_slot_enable_mask_q[4];" in top,
-            "PL default slot mask must enable Ethernet slot 1, mouse slot 2 and Phasor slot 4")
+            "PL default slot mask must leave every optional slot off; the PS enables Ethernet slot 1, mouse slot 2 and Phasor slot 4 from saved settings")
     require("localparam logic [2:0] MB1_SLOT_ASSIGN = 3'h4;" in top and
             ".slot_assign(MB1_SLOT_ASSIGN)" in top,
             "Phasor must be controlled as slot 4")

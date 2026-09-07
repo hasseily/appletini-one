@@ -382,10 +382,9 @@
 #define CARD_CTRL_SLOT_SMARTPORT   7U
 #define CARD_CTRL_SLOT_BIT(slot)   (1UL << (slot))
 #define CARD_CTRL_SLOT_ENABLE_VALID_MASK 0x0000007EUL
-#define CARD_CTRL_SLOT_ENABLE_RESET_MASK \
-    (CARD_CTRL_SLOT_BIT(CARD_CTRL_SLOT_ETHERNET) | \
-     CARD_CTRL_SLOT_BIT(CARD_CTRL_SLOT_MOUSE) | \
-     CARD_CTRL_SLOT_BIT(CARD_CTRL_SLOT_MOCKINGBOARD))
+/* No optional slot is enabled at reset. This matches the PL reset value and
+ * the config-menu defaults; the saved settings enable slots at boot. */
+#define CARD_CTRL_SLOT_ENABLE_RESET_MASK 0x00000000UL
 #define CARD_CTRL_SLOT_ENABLE_REQUIRED_MASK CARD_CTRL_SLOT_BIT(CARD_CTRL_SLOT_SMARTPORT)
 
 #define CARD_CTRL_SOFTSW_STATE_MASK           0x001FFFFFUL

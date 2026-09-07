@@ -58,11 +58,11 @@
 #define CONFIG_DEFAULT_SHOW_DEBUGGING 0U
 #define CONFIG_DEFAULT_SHOW_BEZEL 1U
 #define CONFIG_DEFAULT_SMARTPORT_DISK1_ENABLED 1U
-#define CONFIG_DEFAULT_DISK2_SLOT6_ENABLED 1U
+#define CONFIG_DEFAULT_DISK2_SLOT6_ENABLED 0U
 #define CONFIG_DEFAULT_APPLICARD_SLOT5_ENABLED 0U
 #define CONFIG_DEFAULT_SLOT5_PROCESSOR CONFIG_SLOT5_PROCESSOR_Z80
 #define CONFIG_DEFAULT_VTW_ENABLED 0U
-#define CONFIG_DEFAULT_VTW_SPEED_MODE 0U     /* full-rate bursts */
+#define CONFIG_DEFAULT_VTW_SPEED_MODE CARD_CTRL_VTW_SPEED_1MHZ
 #define CONFIG_DEFAULT_VTW_PACE_DIVIDER 37U  /* ~3.6 MHz-equivalent */
 #define CONFIG_DEFAULT_VTW_IGNORE_C074 0U    /* honor software speed control */
 #define CONFIG_DEFAULT_VTW_DISABLE_D2_ACCEL 0U
@@ -79,21 +79,21 @@
 static const uint16_t k_vtw_slowdown_cycle_presets[] = {
     256U, 512U, 1024U, 2048U, 4096U, 8192U, 16384U, 32768U, 65535U
 };
-#define CONFIG_DEFAULT_DISK2_ACTIVITY_VISIBLE 1U
+#define CONFIG_DEFAULT_DISK2_ACTIVITY_VISIBLE 0U
 #define CONFIG_DEFAULT_DISK2_SOUND_VOLUME 5U
 #define CONFIG_MAX_DISK2_SOUND_VOLUME 10U
 #define CONFIG_DISK2_SOUND_EVENT_DOOR_OPEN 4U
 #define CONFIG_DISK2_SOUND_EVENT_DOOR_CLOSE 5U
-#define CONFIG_DEFAULT_MOUSE_SLOT2_ENABLED 1U
+#define CONFIG_DEFAULT_MOUSE_SLOT2_ENABLED 0U
 #define CONFIG_DEFAULT_MOUSE_SENSITIVITY 100U
-#define CONFIG_DEFAULT_MOCKINGBOARD_SLOT4_ENABLED 1U
-#define CONFIG_DEFAULT_ETHERNET_SLOT1_ENABLED 1U
+#define CONFIG_DEFAULT_MOCKINGBOARD_SLOT4_ENABLED 0U
+#define CONFIG_DEFAULT_ETHERNET_SLOT1_ENABLED 0U
 #define CONFIG_DEFAULT_ETHERNET_CONFIG_ENABLED 0U
 #define CONFIG_DEFAULT_ETHERNET_ADDRESS_MODE CONFIG_MENU_ETHERNET_ADDRESS_STATIC
 #define CONFIG_DEFAULT_CLOCK_ENABLED 1U
 #define CONFIG_DEFAULT_RAM_ENABLED 1U
 #define CONFIG_DEFAULT_SP_RAMDISK_ENABLED 0U
-#define CONFIG_DEFAULT_SSC_SLOT1_ENABLED 1U
+#define CONFIG_DEFAULT_SSC_SLOT1_ENABLED 0U
 
 /* Config keys for the file-manager per-feature last-directory memory,
  * indexed by CONFIG_BROWSER_CAT_*. */
@@ -2580,18 +2580,9 @@ static void config_menu_load_platform_defaults(config_menu_t *menu)
             (menu->platform.get_onee_video_50hz(menu->platform.ctx) != 0U) ?
                 1U : 0U;
     }
-    if (menu->platform.get_slot_enabled != NULL) {
-        menu->ethernet_slot1_enabled =
-            menu->platform.get_slot_enabled(menu->platform.ctx, ETHERNET_CONTROL_SLOT);
-        menu->disk2_slot6_enabled =
-            menu->platform.get_slot_enabled(menu->platform.ctx, DISK2_CONTROL_SLOT);
-        menu->mouse_slot2_enabled =
-            menu->platform.get_slot_enabled(menu->platform.ctx, MOUSE_CONTROL_SLOT);
-        menu->mockingboard_slot4_enabled =
-            menu->platform.get_slot_enabled(menu->platform.ctx, MOCKINGBOARD_CONTROL_SLOT);
-        menu->applicard_slot5_enabled =
-            menu->platform.get_slot_enabled(menu->platform.ctx, APPLICARD_CONTROL_SLOT);
-    }
+    /* Every optional slot keeps its configuration default (off) until the
+     * saved settings load. The FPGA and PS reset masks use the same default,
+     * so nothing is read back from the hardware here. */
 }
 
 static void config_menu_apply_boot_runtime_internal(config_menu_t *menu,

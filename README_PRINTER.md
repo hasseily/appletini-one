@@ -7,7 +7,7 @@ on the SD card.
 ## How to print
 
 1. Open the config menu, go to the **Printing** tab, and enable the
-   Super Serial Card. It is on by default.
+   Super Serial Card. It is off by default.
 2. On the Apple, print to slot 1: `PR#1` in BASIC, or select an Apple
    Super Serial Card in slot 1 (printer: ImageWriter or ImageWriter II)
    in your software.

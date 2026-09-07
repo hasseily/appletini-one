@@ -527,7 +527,9 @@ module apple_top(
     localparam logic [31:0] RESET_RELEASE_CPU1_READY         = 32'h0000_0002;
     localparam logic [31:0] RESET_RELEASE_READY_MASK =
         RESET_RELEASE_CPU0_READY | RESET_RELEASE_CPU1_READY;
-    localparam logic [31:0] CARD_CTRL_SLOT_ENABLE_RESET      = 32'h0000_0016;
+    // No optional slot is enabled at reset. This matches the PS reset mask
+    // and the config-menu defaults; the PS enables slots from saved settings.
+    localparam logic [31:0] CARD_CTRL_SLOT_ENABLE_RESET      = 32'h0000_0000;
     localparam logic [31:0] CARD_CTRL_SLOT_ENABLE_VALID_MASK = 32'h0000_007E;
     localparam logic [31:0] CARD_CTRL_SLOT_ENABLE_REQUIRED   = 32'h0000_0080;
     localparam logic [47:0] PHASOR_PAN_RESET                 = 48'h5B5B5B5B5B5B;

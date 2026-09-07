@@ -532,10 +532,10 @@ HELP(transwarp_slowdown_slots,
 
 HELP(transwarp_slowdown_window,
     "Controls the duration of the slowdown window for all slowdown regions.",
-    "The window is how long (in cycles) each touch stays at 1 MHz. The default of 512 cycles",
-    "should be long enough for most software; pick 16k, 32k, or the maximum 65535 cycles when",
+    "The window is how long (in cycles) each touch stays at 1 MHz. As a rule, the faster the acceleration,",
+    "the longer the window, but it depends on the software; pick 16k, 32k, or the maximum 65535 cycles when",
     "a very fast core needs to stay locked through longer stretches, like a beam-synced effect",
-    "or a long device loop.");
+    "or a long device loop. Pick the shortest window that works for your software.");
 
 static const help_override_t transwarp_overrides[] = {
     OVERRIDE(1, transwarp_speed),

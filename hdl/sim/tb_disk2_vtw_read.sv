@@ -6,6 +6,7 @@
 module tb_disk2_vtw_read;
     logic clk = 1'b0;
     logic rstn = 1'b0;
+    logic [2:0] slot_assign = 3'd6;
     always #3.75 clk = ~clk;
 
     globals::AppleBus_read ab_read;
@@ -40,7 +41,7 @@ module tb_disk2_vtw_read;
     disk2_card dut (
         .clk(clk), .rstn(rstn),
         .ab_read(ab_read), .rom_serve_en(rom_serve_en),
-        .sss(sss), .slot_assign(3'd6),
+        .sss(sss), .slot_assign(slot_assign),
         .as_common(as_common), .as_client(axi),
         .mc_line_addr(mc_line_addr), .mc_rw(mc_rw),
         .mc_wdata(mc_wdata), .mc_wstrb(mc_wstrb),
@@ -78,6 +79,34 @@ module tb_disk2_vtw_read;
     task automatic check(input bit cond, input string msg);
         if (!cond)
             $fatal(1, "FAIL: %s", msg);
+    endtask
+
+    // The local output must retain the original same-edge motor waveform.
+    always @(posedge clk) begin
+        #1;
+        if (rstn)
+            check(dut.sound_spinning ===
+                  (dut.motor_on_q || (dut.spin_countdown_q[dut.drive_select_q] != 0)),
+                  "motor nonzero flag changed the local spinning waveform");
+    end
+
+    task automatic motor_access(input logic [3:0] io_addr,
+                                input bit expected_motor,
+                                input bit expected_drive,
+                                input bit expected_spinning);
+        @(negedge clk);
+        ab_read.addr = {12'hC0E, io_addr};
+        ab_read.rw = 1'b0;
+        ab_read.data_en = 1'b1;
+        @(posedge clk);
+        #1;
+        check(dut.motor_on_q == expected_motor &&
+              dut.drive_select_q == expected_drive &&
+              dut.sound_spinning == expected_spinning,
+              $sformatf("wrong motor state on C0E%X access edge", io_addr));
+        @(negedge clk);
+        ab_read.data_en = 1'b0;
+        ab_read.rw = 1'b1;
     endtask
 
     task automatic axi_write(input logic [7:0] reg_addr,
@@ -278,6 +307,64 @@ module tb_disk2_vtw_read;
         #1;
         check(!dut.vtw_req_pending_q && !dut.vtw_io_read && !vtw_resp_valid,
               "reset left a private Disk II tick or response pending");
+
+        // Keep both drive timers and the live sound/TURBO motor signal exact.
+        @(negedge clk);
+        rstn = 1'b1;
+        motor_access(4'h9, 1, 0, 1);
+        motor_access(4'h8, 0, 0, 1); // Motor-off retains spin-down.
+        motor_access(4'hB, 0, 1, 0); // Selecting the stopped drive clears drive 1.
+        check(dut.spin_countdown_q[0] == 0,
+              "drive selection retained the unselected spin-down timer");
+        motor_access(4'h9, 1, 1, 1);
+        motor_access(4'hA, 1, 0, 1); // Selection while on reloads the new drive.
+        check(dut.spin_countdown_q[1] == 0 && dut.spin_countdown_q[0] != 0,
+              "motor-on drive selection did not clear and reload its timers");
+        motor_access(4'h8, 0, 0, 1);
+
+        // Start near expiry instead of simulating the full one-second delay.
+        @(negedge clk);
+        dut.spin_countdown_q[0] = 28'd2;
+        dut.spin_countdown_active_q[0] = 1'b1;
+        @(posedge clk); #1;
+        check(dut.sound_spinning && dut.spin_countdown_q[0] == 1,
+              "spin-down ended one edge early");
+        @(posedge clk); #1;
+        check(!dut.sound_spinning && dut.spin_countdown_q[0] == 0,
+              "spin-down did not end on the expiry edge");
+        check(dut.vtw_drive_spinning_q,
+              "registered vTW rotation view lost its existing one-edge delay");
+        @(posedge clk); #1;
+        check(!dut.vtw_drive_spinning_q,
+              "registered vTW rotation view missed timer expiry");
+
+        motor_access(4'h9, 1, 0, 1);
+        motor_access(4'hB, 1, 1, 1);
+        @(negedge clk);
+        ab_read.res = 1'b0;
+        @(posedge clk); #1;
+        check(!dut.motor_on_q && !dut.drive_select_q &&
+              dut.spin_countdown_q[1] != 0,
+              "Apple RESET did not preserve the spinning drive's timer");
+        @(negedge clk);
+        ab_read.res = 1'b1;
+        motor_access(4'hB, 0, 1, 1);
+        // The private even read must retain the same drive-selection effect.
+        direct_read(4'hA, value);
+        check(!dut.drive_select_q && !dut.sound_spinning &&
+              dut.spin_countdown_q[1] == 0,
+              "private drive selection did not clear the unselected timer");
+        motor_access(4'h9, 1, 0, 1);
+        @(negedge clk);
+        slot_assign = 3'd0;
+        @(posedge clk); #1;
+        check(!dut.sound_spinning && dut.spin_countdown_q[0] == 0 &&
+              dut.spin_countdown_q[1] == 0,
+              "disabling Disk II did not clear both spin-down timers");
+        @(negedge clk);
+        slot_assign = 3'd6;
+        @(posedge clk); #1;
+        check(!dut.sound_spinning, "reenabling Disk II restarted its motor");
 
         $display("DISK2 VTW READ PASS");
         $finish;

@@ -19,17 +19,18 @@ layouts (`$9000` and `$9080`) produced the same counts:
 
 | Pass | MAX | TURBO | Speedup |
 |---|---:|---:|---:|
-| First pass, cold cache | 1,080 | 592 | 1.82 times |
-| Second pass, warm cache | 1,064 | 474 | 2.24 times |
+| First pass, cold cache | 1,080 | 649 | 1.66 times |
+| Second pass, warm cache | 1,064 | 476 | 2.24 times |
 
-At 133.333 MHz fabric, the warm result equals about 74.8 MHz of classic
+At 133.333 MHz fabric, the warm result equals about 74.5 MHz of classic
 65C02 work for this program. It is a simulation result for one small
 workload, not a general application-speed rating.
 
 ## Execution and memory
 
-The existing four-clock memory path remains in place for modes 0–2 and for
-TURBO misses. The shared fabric clock stays at about 133 MHz.
+The existing four-clock memory path remains in place for modes 0–2.
+A TURBO cache miss adds one lookup clock before that path. The shared
+fabric clock stays at about 133 MHz.
 
 `vtw_turbo_cache.sv` adds two independent caches:
 
@@ -44,8 +45,8 @@ TURBO misses. The shared fabric clock stays at about 133 MHz.
   mapping does not discard a valid cached byte.
 
 A cache hit takes two fabric clocks: lookup captures the byte or write
-mapping in a register, then execute completes the CPU cycle. A writable
-address hit commits its byte to shadow BRAM on that completing edge.
+mapping and its tag, then execute checks the tag and completes the CPU
+cycle. A writable address hit commits its byte to shadow BRAM on that edge.
 Video and overlay writes retain the existing posted-write path.
 The byte cache snoops every CPU shadow write. It updates a read entry only
 when its physical read page matches the write page; this preserves distinct

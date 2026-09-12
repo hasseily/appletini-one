@@ -74,7 +74,8 @@ module apple_cycle_egress
     logic [31:0] producer_ptr_q;
     logic [31:0] consumer_ptr_q;
     logic [31:0] used_bytes;
-    logic [31:0] free_bytes;
+    logic [31:0] free_tail_bytes;
+    logic [7:0]  free_tail_after_reserve;
 
     always_ff @(posedge clk) begin
         if (~resetn)
@@ -102,10 +103,11 @@ module apple_cycle_egress
         (used_bytes >= (ring_size_bytes - 32'd16));
     assign ring_full_for_gap_now =
         (used_bytes >= (ring_size_bytes - 32'd8));
-    // Burst-cap free space clamps at zero to prevent unsigned underflow from
-    // being interpreted as available room. Caps at ring_size-16.
-    assign free_bytes = ring_full_for_records_now ? 32'd0
-                       : ((ring_size_bytes - 32'd16) - used_bytes);
+    // For a power-of-two ring, this is ring_size - 1 - used_bytes without
+    // another wide subtract after the pointer difference. Subtracting the
+    // remaining 15 reserved bytes only needs eight bits below the cap.
+    assign free_tail_bytes = (~used_bytes) & ring_mask;
+    assign free_tail_after_reserve = free_tail_bytes[7:0] - 8'd15;
 
     // ---------------- Stage register file ----------------
     // 16x64 distributed RAM; two head pointers form a circular buffer.
@@ -142,7 +144,7 @@ module apple_cycle_egress
     logic [31:0] aw_addr_q;           // absolute PS DDR address for current AW
 
     /* Staged burst-cap result: S_BURST_CAP computes the four caps
-     * (stage / 4KB / wrap / free_bytes) and registers the final 5-bit
+     * (stage / 4KB / wrap / free space) and registers the final 5-bit
      * size + the absolute beat address; S_BURST_PREP just commits them
      * into aw_burst_size_q / aw_addr_q. Splits the long carry chain
      * from cfg_ring_size_log2_q -> sz_wrap -> aw_burst_size_q to keep
@@ -171,7 +173,7 @@ module apple_cycle_egress
      *
      * sz_4k_q  : 4KB-boundary cap (1..16)
      * sz_wrap_q: ring-wrap cap (0..16)
-     * free_beats_q: free_bytes >> 3, clamped to 5 bits
+     * free_beats_q: unreserved free bytes >> 3, clamped to 16 beats
      * beat_addr_q : cfg_ring_base_addr + producer_ptr_q (absolute beat
      *               address); also the per-burst aw address. */
     logic [4:0]  sz_4k_q;
@@ -217,11 +219,18 @@ module apple_cycle_egress
             else
                 sz_wrap_q <= (ring_size_bytes - producer_ptr_q) >> 3;
 
-            /* free_bytes feeds many things; clamp to 5 bits for the cap. */
-            if ((free_bytes >> 3) >= 32'd16)
+            /* free_tail - 15 leaves at least 128 bytes at tail >= 143,
+             * and no whole beat at tail < 23. Keep the old unsigned-wrap
+             * result for unsupported ring sizes below 16 bytes too. */
+            if (|ring_size_bytes[3:0])
                 free_beats_q <= 5'd16;
+            else if ((|free_tail_bytes[31:8]) ||
+                     (free_tail_bytes[7:0] >= 8'd143))
+                free_beats_q <= 5'd16;
+            else if (free_tail_bytes[7:0] < 8'd23)
+                free_beats_q <= 5'd0;
             else
-                free_beats_q <= (free_bytes >> 3);
+                free_beats_q <= free_tail_after_reserve[7:3];
         end
     end
 
@@ -436,7 +445,7 @@ module apple_cycle_egress
                      * no arithmetic in this path.
                      *
                      * If sz turned out to be zero (shouldn't happen since
-                     * DRAIN guards on free_bytes >= 8), spin back to
+                     * DRAIN guards on available record space), spin back to
                      * DRAIN instead of issuing a zero-length AXI burst. */
                     if (burst_cap_sz_q == 5'd0) begin
                         state_q <= S_DRAIN;

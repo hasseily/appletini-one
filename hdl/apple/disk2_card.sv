@@ -146,6 +146,7 @@ module disk2_card (
     logic       motor_on_q;
     logic       drive_select_q;
     logic [27:0] spin_countdown_q [0:1];
+    logic [1:0]  spin_countdown_active_q;
     logic       vtw_drive_spinning_q;
     logic       step_pending_q;
     logic [3:0] step_pending_addr_q;
@@ -335,7 +336,9 @@ module disk2_card (
         !active_track_unavailable;
     wire stream_track_loaded = active_drive_loaded;
     wire woz_track_stream_ready = woz_alias_loaded;
-    wire drive_spinning = motor_on_q || (spin_countdown_q[drive_select_q] != 28'd0);
+    // Keep the timer nonzero bit current on the same edge as the timer.
+    // This keeps the wide countdown reduction out of vTW speed control.
+    wire drive_spinning = motor_on_q || spin_countdown_active_q[drive_select_q];
 
     /* Rotation state feeds vTW speed control, then returns as a Disk II tick.
      * Register only this outbound view to break that long feedback path. Q7
@@ -815,7 +818,9 @@ module disk2_card (
             motor_on_q <= 1'b0;
             drive_select_q <= 1'b0;
             spin_countdown_q[0] <= 28'd0;
+            spin_countdown_active_q[0] <= 1'b0;
             spin_countdown_q[1] <= 28'd0;
+            spin_countdown_active_q[1] <= 1'b0;
             step_pending_q <= 1'b0;
             step_pending_addr_q <= 4'h0;
             step_delay_q <= 4'd0;
@@ -1121,12 +1126,17 @@ module disk2_card (
             end
 
             if (!motor_on_q) begin
-                if (spin_countdown_q[0] != 28'd0)
+                if (spin_countdown_q[0] != 28'd0) begin
                     spin_countdown_q[0] <= spin_countdown_q[0] - 28'd1;
-                if (spin_countdown_q[1] != 28'd0)
+                    spin_countdown_active_q[0] <= spin_countdown_q[0] != 28'd1;
+                end
+                if (spin_countdown_q[1] != 28'd0) begin
                     spin_countdown_q[1] <= spin_countdown_q[1] - 28'd1;
+                    spin_countdown_active_q[1] <= spin_countdown_q[1] != 28'd1;
+                end
             end else begin
                 spin_countdown_q[drive_select_q] <= SPIN_DOWN_TICKS;
+                spin_countdown_active_q[drive_select_q] <= 1'b1;
             end
 
             if (!enabled || !ab_read.res) begin
@@ -1172,7 +1182,9 @@ module disk2_card (
             // Disabling the virtual card is the explicit full device reset.
             if (!enabled) begin
                 spin_countdown_q[0] <= 28'd0;
+                spin_countdown_active_q[0] <= 1'b0;
                 spin_countdown_q[1] <= 28'd0;
+                spin_countdown_active_q[1] <= 1'b0;
                 drive_phase_q[0] <= 8'h00;
                 drive_phase_q[1] <= 8'h00;
                 drive_qtrack_q[0] <= 8'h00;
@@ -1267,6 +1279,7 @@ module disk2_card (
                         end
                         motor_on_q <= 1'b1;
                         spin_countdown_q[drive_select_q] <= SPIN_DOWN_TICKS;
+                        spin_countdown_active_q[drive_select_q] <= 1'b1;
                     end
                     IO_DRIVE1: begin
                         if (motor_on_q && spin_countdown_q[0] == 28'd0) begin
@@ -1280,8 +1293,11 @@ module disk2_card (
                         end
                         drive_select_q <= 1'b0;
                         spin_countdown_q[1] <= 28'd0;
-                        if (motor_on_q)
+                        spin_countdown_active_q[1] <= 1'b0;
+                        if (motor_on_q) begin
                             spin_countdown_q[0] <= SPIN_DOWN_TICKS;
+                            spin_countdown_active_q[0] <= 1'b1;
+                        end
                     end
                     IO_DRIVE2: begin
                         if (motor_on_q && spin_countdown_q[1] == 28'd0) begin
@@ -1295,8 +1311,11 @@ module disk2_card (
                         end
                         drive_select_q <= 1'b1;
                         spin_countdown_q[0] <= 28'd0;
-                        if (motor_on_q)
+                        spin_countdown_active_q[0] <= 1'b0;
+                        if (motor_on_q) begin
                             spin_countdown_q[1] <= SPIN_DOWN_TICKS;
+                            spin_countdown_active_q[1] <= 1'b1;
+                        end
                     end
                     IO_Q6_LOW:     q6_q <= 1'b0;
                     IO_Q6_HIGH: begin

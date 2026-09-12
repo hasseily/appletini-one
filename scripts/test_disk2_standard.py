@@ -622,7 +622,7 @@ def test_pl_empty_drive_returns_changing_latch_noise() -> None:
     require("wire drive_has_media = drive_info_q[drive_select_q][0];" in source,
             "Disk II media presence must be distinct from physical drive connection")
     require("wire drive_spinning = motor_on_q || "
-            "(spin_countdown_q[drive_select_q] != 28'd0);" in source,
+            "spin_countdown_active_q[drive_select_q];" in source,
             "an empty connected drive must still run its motor and stepper")
     require("drive_has_media &&\n        active_drive_loaded &&\n"
             "        !active_track_unavailable &&\n        !track_woz_q" in source and

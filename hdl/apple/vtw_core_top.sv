@@ -1060,7 +1060,10 @@ module vtw_core_top (
     assign turbo_execute = (eff_mode == SPEED_TURBO) &&
                            !(slow_update_valid_q && slow_update_hit_q);
 
-    wire turbo_read_hit, turbo_write_hit;
+    wire turbo_read_valid, turbo_write_valid, turbo_write_fast;
+    wire [7:0] turbo_read_tag, turbo_write_tag;
+    (* DONT_TOUCH = "TRUE" *) logic [7:0] turbo_read_tag_q, turbo_write_tag_q;
+    logic turbo_read_valid_q, turbo_write_valid_q, turbo_write_fast_q;
     wire [17:0] turbo_write_phys;
     logic [1:0] turbo_mode_q;
     logic turbo_ramworks_q, turbo_post_wide_q, turbo_overlay_q;
@@ -1099,7 +1102,9 @@ module vtw_core_top (
     vtw_turbo_cache turbo_cache_i (
         .clk(clk), .rstn(rstn), .invalidate(turbo_invalidate),
         .addr(core_addr), .rw(core_rwb),
-        .read_hit(turbo_read_hit), .write_hit(turbo_write_hit),
+        .read_valid(turbo_read_valid), .read_tag(turbo_read_tag),
+        .write_valid(turbo_write_valid), .write_tag(turbo_write_tag),
+        .write_fast(turbo_write_fast),
         .rdata(turbo_rdata), .write_phys(turbo_write_phys),
         .map_fill(turbo_map_fill), .map_addr(cycle_addr_q),
         .map_rw(cycle_rw_q), .map_phys(xl_shadow_phys),
@@ -1111,9 +1116,13 @@ module vtw_core_top (
         .snoop_phys(shadow_a_addr),
         .snoop_data(cycle_wdata_q)
     );
-    wire turbo_hit = turbo_execute && !turbo_invalidate &&
-        (turbo_read_hit || (turbo_write_hit && !overlay_capture_armed));
-    assign turbo_complete = (xstate_q == X_TURBO_DONE) && pace_ok &&
+    wire turbo_hit = cycle_addr_q[15:12] != 4'hC &&
+        (cycle_rw_q ? (turbo_read_valid_q &&
+                      turbo_read_tag_q == cycle_addr_q[15:8]) :
+                     (turbo_write_valid_q && turbo_write_fast_q &&
+                      turbo_write_tag_q == cycle_addr_q[15:8] &&
+                      !overlay_capture_armed));
+    assign turbo_complete = (xstate_q == X_TURBO_DONE) && turbo_hit && pace_ok &&
                             core_active && !turbo_invalidate && !arm_rw_flush_req;
     assign turbo_shadow_write = (xstate_q == X_TURBO_DONE) &&
                                 core_en && !cycle_rw_q;
@@ -1306,6 +1315,11 @@ module vtw_core_top (
             status_vbl_sampled_q    <= 1'b0;
             core_data_in_q      <= 8'hFF;
             turbo_rdata_q       <= 8'hFF;
+            turbo_read_tag_q    <= 8'h00;
+            turbo_write_tag_q   <= 8'h00;
+            turbo_read_valid_q  <= 1'b0;
+            turbo_write_valid_q <= 1'b0;
+            turbo_write_fast_q  <= 1'b0;
             turbo_write_phys_q  <= '0;
             cycle_addr_q        <= '0;
             cycle_wdata_q       <= '0;
@@ -1559,12 +1573,18 @@ module vtw_core_top (
                         // Snapshot slot-7 IOSEL pre-update, for the
                         // SmartPort C8-window classifier.
                         cycle_sp_iosel7_q       <= vsss.io_select[SP_SLOT];
-                        // Payload capture does not depend on the late hit
-                        // signal. Only the next state consumes the hit; all
-                        // cache-to-CPU and cache-to-write paths end here.
+                        // Capture raw cache entries before comparing tags.
+                        // Hits still retire on the next edge; a miss takes
+                        // one extra edge before the original route.
                         turbo_rdata_q           <= turbo_rdata;
                         turbo_write_phys_q      <= turbo_write_phys;
-                        xstate_q                <= turbo_hit ? X_TURBO_DONE : X_ROUTE;
+                        turbo_read_tag_q        <= turbo_read_tag;
+                        turbo_write_tag_q       <= turbo_write_tag;
+                        turbo_read_valid_q      <= turbo_read_valid;
+                        turbo_write_valid_q     <= turbo_write_valid;
+                        turbo_write_fast_q      <= turbo_write_fast;
+                        xstate_q <= (turbo_execute && !turbo_invalidate &&
+                                     core_addr[15:12] != 4'hC) ? X_TURBO_DONE : X_ROUTE;
                     end
                 end
 
@@ -1574,6 +1594,8 @@ module vtw_core_top (
                     // before consuming it; no cached write has committed yet.
                     if (turbo_invalidate || core_en)
                         xstate_q <= X_CAPTURE;
+                    else if (!turbo_hit)
+                        xstate_q <= X_ROUTE;
                 end
 
                 X_ROUTE: begin

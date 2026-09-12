@@ -496,7 +496,7 @@ module tb_vtw_turbo;
         timeout = 0;
         while (!pause && timeout < 200000) begin
             @(negedge clk);
-            if (dut.xstate_q == dut.X_TURBO_DONE &&
+            if (dut.xstate_q == dut.X_TURBO_DONE && dut.turbo_hit &&
                 dut.core_rwb && dut.core_addr == address)
                 pause = 1'b1;
             timeout++;
@@ -522,7 +522,7 @@ module tb_vtw_turbo;
         timeout = 0;
         while (!pause && timeout < 200000) begin
             @(negedge clk);
-            if (dut.xstate_q == dut.X_TURBO_DONE && !dut.core_rwb &&
+            if (dut.xstate_q == dut.X_TURBO_DONE && dut.turbo_hit && !dut.core_rwb &&
                 dut.core_addr == 16'h9000 && dut.core_data_out != 8'h00)
                 pause = 1'b1;
             timeout++;

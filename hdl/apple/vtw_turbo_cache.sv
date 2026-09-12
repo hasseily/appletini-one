@@ -13,8 +13,11 @@ module vtw_turbo_cache #(
     input  logic        invalidate,
     input  logic [15:0] addr,
     input  logic        rw,
-    output logic        read_hit,
-    output logic        write_hit,
+    output logic        read_valid,
+    output logic [15-BYTE_INDEX_BITS:0] read_tag,
+    output logic        write_valid,
+    output logic [7:0]  write_tag,
+    output logic        write_fast,
     output logic [7:0]  rdata,
     output logic [17:0] write_phys,
 
@@ -60,15 +63,16 @@ module vtw_turbo_cache #(
     wire [BYTE_INDEX_BITS-1:0] byte_index = byte_set(addr);
     wire [TAG_BITS+7:0] byte_entry = byte_mem[byte_index];
     wire [18:0] map_entry = map_mem[map_index];
-    wire ordinary_addr = addr[15:12] != 4'hC;
     // A byte was filled only after a translated shadow read, and every
     // mapping change invalidates bytes. Address-table eviction therefore
     // need not evict a still-valid byte or add another lookup to read hits.
-    assign read_hit = ordinary_addr && rw &&
-                      byte_valid_q[byte_index] &&
-                      byte_entry[TAG_BITS+7:8] == addr[15:BYTE_INDEX_BITS];
-    assign write_hit = ordinary_addr && !rw && map_valid_q[map_index] &&
-                       map_entry[18:11] == addr[15:8] && map_entry[10];
+    // The wrapper captures these raw entries with the request, then checks
+    // their tags. Keep the tag comparison after that register boundary.
+    assign read_valid = byte_valid_q[byte_index];
+    assign read_tag = byte_entry[TAG_BITS+7:8];
+    assign write_valid = map_valid_q[map_index];
+    assign write_tag = map_entry[18:11];
+    assign write_fast = map_entry[10];
     assign rdata = byte_entry[7:0];
     assign write_phys = {map_entry[9:0], addr[7:0]};
 

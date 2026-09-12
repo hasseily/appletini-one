@@ -49,6 +49,11 @@ row for its two or four output scanlines. Normal HGR and DHGR both produce
 There is no extra framebuffer pass, frame-sized buffer, or output readback.
 The colored border uses the existing RGB expansion. Blur, glow, and ghosting
 still work; shaping follows those effects and never enters ghosting history.
+On ARM, the mono glow pass uses NEON to add eight pixels at a time, with a
+scalar tail for shorter rows. It keeps 8-bit channels in the cached scratch
+row so dot bleed can filter neighboring samples before RGB565 conversion.
+The dot-bleed filter itself stays scalar; color glow keeps its combined
+NEON glow, RGB565 conversion, and pixel-doubling loop.
 With Dot bleed Off and no other effect, color and mono frames both stay on
 the plain fast path.
 
@@ -78,6 +83,18 @@ Validation on 2026-09-11:
   a mid-frame mono/color change, and SHR exclusion.
 - The CPU0 frontend builds in Vitis 2025.2 with no new warnings. CPU1 is
   unchanged by the menu row; the renderer already publishes the mono tag.
+
+Validation on 2026-09-12 for the NEON mono glow pass:
+
+- `python scripts/test_video_mono_neon.py` compiles the production row
+  compositor for Cortex-A9 and runs 2,160 cases in Unicorn. It compares the
+  8-bit scratch row and final RGB565 pixels with a scalar reference across
+  all blur, glow, tint, and dot-bleed levels with glow and bleed enabled.
+  Widths around vector boundaries and full display widths cover scalar
+  tails, colored borders, saturation, alpha, and row bounds. The script
+  lists its ARM compiler and Unicorn dependencies.
+- The existing mono, video-output, border, and VidHD/SHR tests pass. The
+  CPU0 frontend compiles and links in Vitis 2025.2 with no new warnings.
 
 CRT appearance and added render time still need measurement on the board.
 The existing `g_compositor_last_apple_us` counter measures the Apple blit

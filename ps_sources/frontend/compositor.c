@@ -576,7 +576,29 @@ static void effect_emit_2x_row(const uint32_t *sharp,
 
     if (glow != APPLETINI_VIDEO_GLOW_OFF) {
         if (effect_mono_row_active(row)) {
-            for (int x = 0; x < w; ++x) {
+            int x = 0;
+
+            /* Keep 8-bit channels for the neighboring-dot filter below;
+             * the color loop packs and duplicates pixels too early. */
+#if defined(__ARM_NEON)
+            const int8x8_t shift =
+                vdup_n_s8(-(int8_t)effect_glow_shift(glow));
+
+            for (; x + 8 <= w; x += 8) {
+                const uint8x8x4_t p =
+                    vld4_u8((const uint8_t *)(base + x));
+                const uint8x8x4_t h =
+                    vld4_u8((const uint8_t *)(s_effect_halo_row + x));
+                uint8x8x4_t out;
+
+                out.val[0] = vqadd_u8(p.val[0], vshl_u8(h.val[0], shift));
+                out.val[1] = vqadd_u8(p.val[1], vshl_u8(h.val[1], shift));
+                out.val[2] = vqadd_u8(p.val[2], vshl_u8(h.val[2], shift));
+                out.val[3] = vdup_n_u8(0U);
+                vst4_u8((uint8_t *)(s_effect_row + x), out);
+            }
+#endif
+            for (; x < w; ++x) {
                 s_effect_row[x] = effect_rgb_sat_add(
                     base[x], effect_glow_scale(s_effect_halo_row[x], glow));
             }

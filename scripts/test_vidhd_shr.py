@@ -801,8 +801,8 @@ def test_page_flip_removed() -> None:
                      "s_shr_flip_parity"):
         require(obsolete not in combined,
                 f"obsolete page-flip path remains: {obsolete}")
-    require("CONFIG_VIDEO_ITEM_COUNT        16U" in menu_internal,
-            "Video menu must contain its 16 video-only controls")
+    require("CONFIG_VIDEO_ITEM_COUNT        17U" in menu_internal,
+            "Video menu must contain its 17 video-only controls")
 
 
 TESTS = [

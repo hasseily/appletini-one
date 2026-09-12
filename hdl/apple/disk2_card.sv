@@ -365,6 +365,7 @@ module disk2_card (
      * behavior is visible. */
     logic       vtw_drive_loaded_q;
     logic       vtw_media_wait_q;
+    logic       vtw_stream_pos_match_q;
     logic [1:0] vtw_media_valid_q;
     wire vtw_media_snapshot_valid = vtw_media_valid_q[1] && !as_client.awvalid;
     wire vtw_media_ready =
@@ -439,14 +440,20 @@ module disk2_card (
         if (!rstn || !enabled || !ab_read.res) begin
             vtw_drive_loaded_q <= 1'b0;
             vtw_media_wait_q <= 1'b0;
+            vtw_stream_pos_match_q <= 1'b0;
             vtw_media_valid_q <= 2'b00;
         end else begin
             vtw_drive_loaded_q <= active_drive_loaded;
             vtw_media_wait_q <= drive_has_media && !active_track_unavailable;
-            if (disk_cycle_tick || io_read || io_write || as_client.awvalid)
+            if (disk_cycle_tick || io_read || io_write || as_client.awvalid) begin
+                vtw_stream_pos_match_q <= 1'b0;
                 vtw_media_valid_q <= 2'b00;
-            else
+            end else begin
+                // The first quiet edge updates stream_line_pos_q; the
+                // second samples its equality before media_valid releases.
+                vtw_stream_pos_match_q <= stream_line_pos_q == active_stream_pos;
                 vtw_media_valid_q <= {vtw_media_valid_q[0], 1'b1};
+            end
         end
     end
 
@@ -582,7 +589,7 @@ module disk2_card (
         !vtw_drive_spinning_q ||
         (vtw_media_snapshot_valid &&
          (!vtw_media_wait_q ||
-          (vtw_drive_loaded_q && vtw_stream_current &&
+          (vtw_drive_loaded_q && stream_line_hit_q && vtw_stream_pos_match_q &&
            (!track_woz_q ||
             (!woz_weak_refill_pending_q && woz_weak_refill_stage_q == 2'd0 &&
              vtw_woz_cell_due_valid_q &&

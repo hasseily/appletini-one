@@ -124,6 +124,7 @@ module tb_disk2_woz_rw;
 
     integer settled_readiness_holds = 0;
     integer settled_media_holds = 0;
+    integer changed_stream_position_holds = 0;
     // Check the acceptance contract against the live sequencer, including
     // the cycle after a counted step drains its last credit. A stale due-bit
     // snapshot must not let a private read pass a cell/cache/weak-bit wait.
@@ -138,6 +139,16 @@ module tb_disk2_woz_rw;
                       "acceptance passed unsettled media metadata");
                 settled_media_holds++;
             end
+            if (dut.active_drive_loaded && dut.drive_has_media &&
+                dut.stream_line_pos_q != dut.active_stream_pos) begin
+                check(!vtw_time_ready && !vtw_req_ready,
+                      "acceptance passed the previous stream byte after a position change");
+                changed_stream_position_holds++;
+            end
+            if (dut.vtw_media_snapshot_valid && dut.vtw_drive_loaded_q)
+                check(dut.vtw_stream_pos_match_q ==
+                      (dut.stream_line_pos_q == dut.active_stream_pos),
+                      "settled stream-position snapshot differs from the current byte");
             if (dut.drive_has_media && dut.active_drive_loaded &&
                 dut.track_woz_q && !dut.vtw_woz_cell_due_valid_q &&
                 dut.vtw_ticks_pending_q == 0) begin
@@ -583,6 +594,8 @@ module tb_disk2_woz_rw;
               "counted WOZ test did not exercise post-tick readiness holds");
         check(settled_media_holds > 0,
               "counted WOZ test did not exercise media metadata holds");
+        check(changed_stream_position_holds > 0,
+              "counted WOZ test did not exercise byte-position changes");
         $display("DISK2 COUNTED WOZ TIME PASS");
 
         // Run the same eight-bit A5 media write and readback through each

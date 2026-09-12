@@ -291,20 +291,17 @@ module vtw_core_top (
     logic [15:0] core_addr;
     logic [7:0]  core_data_out;
     logic        core_sync;
-    /* Registered CPU operand. Every X_*_DONE-entry edge resolves that
-     * cycle's response -- shadow BRAM, bus engine, RamWorks cache byte,
-     * SmartPort card, synthesized $C01x status, or the $FF dead-route
-     * filler -- into this one flop, so the core reads a stable register
-     * instead of an xstate-selected mux stacked ahead of its ALU. That
-     * keeps the mux and its high-fanout select off the single-cycle
-     * execute path (the design's tightest). */
+    /* Normal CPU response register. Shadow BRAM, bus engine, RamWorks,
+     * SmartPort and status responses share this register. TURBO captures
+     * into turbo_rdata_q so its cache has a short, separate input path. */
     logic [7:0]  core_data_in_q;
     logic        core_rwb;
     wire         turbo_execute;
     wire         turbo_complete;
     wire         turbo_shadow_write;
     wire [7:0]   turbo_rdata;
-    wire [7:0]   core_data_in = core_data_in_q;
+    (* DONT_TOUCH = "TRUE" *) logic [7:0] turbo_rdata_q;
+    wire [7:0]   core_data_in;
     logic [17:0] turbo_write_phys_q;
 
     /* Motherboard RES# resets the core through the shadow's reset vector;
@@ -905,10 +902,14 @@ module vtw_core_top (
         X_DEAD,       // unmapped route (must not happen): serve $FF
         X_TURBO_DONE  // registered cache response / write tuple ready
     } xstate_t;
-    xstate_t xstate_q;
+    // Decode cache completion and response selection with one state bit.
+    (* fsm_encoding = "one_hot" *) xstate_t xstate_q;
+    assign core_data_in = (xstate_q == X_TURBO_DONE) ? turbo_rdata_q : core_data_in_q;
 
-    // TURBO separates lookup and execute. Every CPU operand still comes
-    // from core_data_in_q; a LUT RAM read never feeds the ALU in one clock.
+    // TURBO separates lookup and execute. Its dedicated response register
+    // keeps the cache lookup out of the shared normal-response input mux.
+    // The CPU selects between two registered bytes; LUT RAM never feeds
+    // the ALU in the same clock as lookup.
 
     // Private-card response selection. SmartPort needs a single-outstanding
     // guard because its card port can remain busy; Disk II accepts at most
@@ -1304,6 +1305,7 @@ module vtw_core_top (
             status_vbl_data_phase_q <= 1'b0;
             status_vbl_sampled_q    <= 1'b0;
             core_data_in_q      <= 8'hFF;
+            turbo_rdata_q       <= 8'hFF;
             turbo_write_phys_q  <= '0;
             cycle_addr_q        <= '0;
             cycle_wdata_q       <= '0;
@@ -1560,7 +1562,7 @@ module vtw_core_top (
                         // Payload capture does not depend on the late hit
                         // signal. Only the next state consumes the hit; all
                         // cache-to-CPU and cache-to-write paths end here.
-                        core_data_in_q          <= turbo_rdata;
+                        turbo_rdata_q           <= turbo_rdata;
                         turbo_write_phys_q      <= turbo_write_phys;
                         xstate_q                <= turbo_hit ? X_TURBO_DONE : X_ROUTE;
                     end

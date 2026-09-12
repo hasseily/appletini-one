@@ -199,7 +199,8 @@ module w65c02_core #(
     logic [7:0]  p_q;
     logic [7:0]  ir_q;
 
-    state_t      state_q;
+    // Keep address selection shallow before the TURBO cache lookup.
+    (* fsm_encoding = "one_hot" *) state_t state_q;
     op_t         op_q;
     addr_mode_t  mode_q;
     kind_t       kind_q;

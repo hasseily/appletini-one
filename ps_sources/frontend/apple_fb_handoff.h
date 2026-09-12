@@ -42,12 +42,18 @@
  *
  * Bits 3:0  base format
  * Bits 7:4  SHR4 selectors, or the active Video-7 legacy-mode tag
- * Bits 9:8  paged presentation (none/interlace/merged page flip) */
+ * Bits 9:8  paged presentation (none/interlace/merged page flip)
+ * Bit 10    whole legacy frame uses monochrome output
+ * Bits 12:11 monochrome tint (APPLE_VIDEO_MONO_*) */
 #define APPLE_FB_FORMAT_BASE_MASK          0x000FU
 #define APPLE_FB_FORMAT_SELECTORS_SHIFT    4U
 #define APPLE_FB_FORMAT_SELECTORS_MASK     0x00F0U
 #define APPLE_FB_FORMAT_PAGE_SHIFT         8U
 #define APPLE_FB_FORMAT_PAGE_MASK          0x0300U
+#define APPLE_FB_FORMAT_MONO_ENABLE        0x0400U
+#define APPLE_FB_FORMAT_MONO_COLOR_SHIFT   11U
+#define APPLE_FB_FORMAT_MONO_COLOR_MASK    0x1800U
+#define APPLE_FB_FORMAT_MONO_MASK          0x1C00U
 
 #define APPLE_FB_FORMAT_UNKNOWN            0U
 #define APPLE_FB_FORMAT_TEXT               1U

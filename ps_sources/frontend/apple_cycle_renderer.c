@@ -163,6 +163,7 @@ static uint8_t s_cached_writer_slot = 0u;
 static uint32_t s_video_settings_seen = 0xFFFFFFFFu;
 static uint32_t s_video_rom_gen_seen = 0u;   /* applied video-ROM override gen */
 static uint8_t s_render_mono_enable = 0u;
+static uint8_t s_render_mono_color = APPLE_VIDEO_MONO_WHITE;
 static uint8_t s_render_color_mode = APPLE_VIDEO_COLOR_COMPOSITE_MONITOR;
 static uint8_t s_render_video7_mono_enable = 0u;
 static uint8_t s_render_dhgr_col140m_enable = 1u;
@@ -2358,7 +2359,11 @@ static uint32_t legacy_format_detail(uint8_t page_mode)
                s_render_dhgr_col140m_enable != 0u) {
         video7 = APPLE_FB_FORMAT_LEGACY_VIDEO7_MIX;
     }
-    return APPLE_FB_FORMAT_DETAIL(base, video7, page);
+    const uint32_t mono = (s_render_mono_enable != 0u)
+        ? (APPLE_FB_FORMAT_MONO_ENABLE |
+           ((uint32_t)s_render_mono_color << APPLE_FB_FORMAT_MONO_COLOR_SHIFT))
+        : 0u;
+    return APPLE_FB_FORMAT_DETAIL(base, video7, page) | mono;
 }
 
 /* Nonzero while frames render as legacy flip merges (published with
@@ -2658,7 +2663,15 @@ static void apply_video_settings_if_changed(void) {
     if (old_pal_phase != pal_phase) {
         apple_pal_video_reset();
     }
+    /* A mid-frame switch can leave both color and mono pixels in this slot.
+     * Only a complete frame with one mono tint may use brightness shaping.
+     * on_frame_start() tags the next complete legacy frame. */
+    if (s_render_mono_enable != effective_mono ||
+        s_render_mono_color != mono_color) {
+        s_frame_format_detail &= ~APPLE_FB_FORMAT_MONO_MASK;
+    }
     s_render_mono_enable = effective_mono;
+    s_render_mono_color = mono_color;
     s_render_color_mode = apple_video_settings_color_mode(settings);
     s_render_video7_mono_enable = video7_mono;
     s_render_dhgr_col140m_enable = video7_mix;

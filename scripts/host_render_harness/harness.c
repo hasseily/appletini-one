@@ -1142,6 +1142,66 @@ static void t8_video7_mix_load_hold(void)
     free(f);
 }
 
+static void t9_mono_frame_tags(void)
+{
+    printf("--- T9 complete-frame mono shaping tags ---\n");
+    memset(s_main_mem, 0, sizeof s_main_mem);
+    memset(s_aux_mem, 0, sizeof s_aux_mem);
+    s_settings = apple_video_settings_pack(1u, APPLE_VIDEO_MONO_GREEN,
+                                            APPLE_VIDEO_COLOR_COMPOSITE_MONITOR);
+    apple_cycle_renderer_reset_local_video_state();
+    for (unsigned mode = 0; mode < 2; ++mode) {
+        const uint32_t sw = mode ? SW_DHGR : SW_HGR;
+        legacy_full_frame(sw);
+        legacy_full_frame(sw);
+        legacy_full_frame(sw);
+        expect((s_pub_detail & APPLE_FB_FORMAT_MONO_MASK) ==
+                   (APPLE_FB_FORMAT_MONO_ENABLE |
+                    (APPLE_VIDEO_MONO_GREEN << APPLE_FB_FORMAT_MONO_COLOR_SHIFT)),
+               "T9 HGR/DHGR publishes the frame's green mono tint");
+    }
+
+    s_settings = apple_video_settings_pack(0u, APPLE_VIDEO_MONO_GREEN,
+                                            APPLE_VIDEO_COLOR_COMPOSITE_MONITOR);
+    legacy_full_frame(SW_HGR);
+    legacy_full_frame(SW_HGR);
+    legacy_full_frame(SW_HGR);
+    expect((s_pub_detail & APPLE_FB_FORMAT_MONO_MASK) == 0u,
+           "T9 color frame clears mono metadata despite saved green tint");
+
+    video7_select_mode(3u);
+    legacy_full_frame(SW_HGR);
+    legacy_full_frame(SW_HGR);
+    legacy_full_frame(SW_HGR);
+    expect((s_pub_detail & APPLE_FB_FORMAT_MONO_MASK) ==
+               (APPLE_FB_FORMAT_MONO_ENABLE |
+                (APPLE_VIDEO_MONO_WHITE << APPLE_FB_FORMAT_MONO_COLOR_SHIFT)),
+           "T9 Video-7 whole-frame mono carries white tint");
+
+    for (uint32_t line = 0; line < 262; ++line) {
+        if (line == 96) {
+            video7_select_mode(0u);
+        }
+        for (uint32_t cycle = 0; cycle < 65; ++cycle) {
+            feed(rec_frame(line, cycle, SW_HGR));
+        }
+    }
+    for (uint32_t cycle = 0; cycle < 3; ++cycle) {
+        feed(rec_frame(0u, cycle, SW_HGR));
+    }
+    expect((s_pub_detail & APPLE_FB_FORMAT_MONO_MASK) == 0u,
+           "T9 mid-frame mono/color switch disables shaping for that slot");
+
+    s_settings = apple_video_settings_pack(1u, APPLE_VIDEO_MONO_GREEN,
+                                            APPLE_VIDEO_COLOR_COMPOSITE_MONITOR);
+    feed(rec_io(0xC029u, 0xC1u));
+    shr_marker();
+    shr_marker();
+    expect(s_pub_mode == APPLE_FB_DISPLAY_MODE_SHR &&
+           (s_pub_detail & APPLE_FB_FORMAT_MONO_MASK) == 0u,
+           "T9 SHR never inherits legacy mono shaping metadata");
+}
+
 int main(int argc, char **argv)
 {
     if (argc == 5 && strcmp(argv[1], "--check-exact-file") == 0) {
@@ -1153,14 +1213,17 @@ int main(int argc, char **argv)
         free(file);
         return 0;
     }
-    if (argc != 3) {
+    const int mono_only = argc == 2 && strcmp(argv[1], "--mono-only") == 0;
+    if (argc != 3 && !mono_only) {
         fprintf(stderr,
                 "usage: harness <repo_root> <out_dir>\n"
                 "       harness --check-exact-file <root> <file> <bytes>\n");
         return 2;
     }
-    snprintf(s_repo, sizeof s_repo, "%s", argv[1]);
-    snprintf(s_out, sizeof s_out, "%s", argv[2]);
+    if (!mono_only) {
+        snprintf(s_repo, sizeof s_repo, "%s", argv[1]);
+        snprintf(s_out, sizeof s_out, "%s", argv[2]);
+    }
 
     s_settings = apple_video_settings_pack_border_full(
         0u, 0u, APPLE_VIDEO_COLOR_COMPOSITE_MONITOR, 1u, 1u,
@@ -1171,6 +1234,10 @@ int main(int argc, char **argv)
         return 2;
     }
 
+    if (mono_only) {
+        t9_mono_frame_tags();
+        return s_failures ? 1 : 0;
+    }
     t1_dragons();
     t2_legacy_weave();
     t3_shr_transitions();
@@ -1179,6 +1246,7 @@ int main(int argc, char **argv)
     t6_dhgri_static_cache();
     t7_dloresi_cache_invalidation();
     t8_video7_mix_load_hold();
+    t9_mono_frame_tags();
 
     printf("harness: %d failure(s)\n", s_failures);
     return s_failures ? 1 : 0;

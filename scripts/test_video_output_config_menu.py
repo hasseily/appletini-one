@@ -306,7 +306,7 @@ def test_boot_menu_groups_boot_and_video_settings() -> None:
             "normal boot settings must contain boot controls and USB menu bindings")
     require("case CONFIG_TAB_VIDEO:\n"
             "        return CONFIG_VIDEO_ITEM_COUNT;" in source and
-            "#define CONFIG_VIDEO_ITEM_COUNT        16U" in internal and
+            "#define CONFIG_VIDEO_ITEM_COUNT        17U" in internal and
             "CONFIG_VIDEO_ITEM_ONEE_STANDARD" not in internal and
             '"ONE//e video standard"' not in video_draw,
             "video tab must not own the ONE//e PAL/NTSC control")
@@ -319,6 +319,7 @@ def test_boot_menu_groups_boot_and_video_settings() -> None:
             '"Bezel"' not in boot_draw,
             "boot settings tab must draw only boot rows and USB menu bindings")
     require('"Video output"' in video_draw and
+            '"Dot bleed"' in video_draw and
             '"Video-7 mono"' in video_draw and
             '"Video-7 MIX (COL140M)"' in video_draw and
             '"Scanlines"' in video_draw and
@@ -338,7 +339,8 @@ def test_boot_menu_groups_boot_and_video_settings() -> None:
             '"Video ROM"' in video_draw and
             "config_menu_video_variant_label(menu)" in video_draw,
             "video tab must draw video output, effects, bezel controls, and the video ROM override")
-    require(video_draw.index('"Scanlines"') <
+    require(video_draw.index('"Dot bleed"') <
+            video_draw.index('"Scanlines"') <
             video_draw.index("hgr_draw_video_ghosting_item") <
             video_draw.index('"IIgs border (VidHD $C034)"') <
             video_draw.index('"Border color"') <
@@ -347,22 +349,22 @@ def test_boot_menu_groups_boot_and_video_settings() -> None:
             video_draw.index('"Show bezel"') <
             video_draw.index('"Bezel"') <
             video_draw.index('"Show debugging"'),
-            "video tab must order ghosting below Scanlines, then Video ROM, bezel controls, and Show debugging")
+            "video tab must order Dot bleed, Scanlines, ghosting, Video ROM, bezel controls, then Show debugging")
     require("y + row_h,\n                        w,\n"
             "                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_VARIANT)" in video_draw and
-            "y + (row_h * 3),\n                             w,\n"
-            "                             (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BLUR)" in video_draw and
             "y + (row_h * 4),\n                             w,\n"
+            "                             (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BLUR)" in video_draw and
+            "y + (row_h * 5),\n                             w,\n"
             "                             (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_GLOW)" in video_draw and
-            "y + (row_h * 6),\n                        third_w,\n"
+            "y + (row_h * 7),\n                        third_w,\n"
             "                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BORDER)" in video_draw and
-            "middle_x,\n                        y + (row_h * 6),\n                        third_w,\n"
+            "middle_x,\n                        y + (row_h * 7),\n                        third_w,\n"
             "                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_VIDEO7)" in video_draw and
-            "last_x,\n                        y + (row_h * 6),\n                        last_w,\n"
+            "last_x,\n                        y + (row_h * 7),\n                        last_w,\n"
             "                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_COL140M)" in video_draw and
-            "y + (row_h * 12),\n                         half_w,\n"
+            "y + (row_h * 13),\n                         half_w,\n"
             "                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_DEBUG)" in video_draw and
-            "right_x,\n                        y + (row_h * 12),\n                        right_w,\n"
+            "right_x,\n                        y + (row_h * 13),\n                        right_w,\n"
             "                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BADGE)" in video_draw,
             "video tab must give full rows to value controls and group the three requested video checkboxes")
     require("y + (row_h * 8)" in video_draw and
@@ -650,7 +652,8 @@ def test_compositor_ghosting_is_optional_and_cache_friendly() -> None:
             "static uint16_t s_effect_2x_row[COMP_APPLE_SHR_WIDTH * 2U]" in compositor,
             "ghosting blits must use cacheable scratch/history buffers instead of output-row readback")
     require("effect_blend_history_row(s_effect_row," in compositor and
-            "fb16_expand_2x_row_bgra32src(s_effect_2x_row," in compositor and
+            "effect_expand_2x_row(s_effect_2x_row, s_effect_row, src_w, sy);" in compositor and
+            "fb16_expand_2x_row_bgra32src(dst, src, width);" in compositor and
             "vld4_u8((const uint8_t *)(history + x))" in compositor and
             "vmull_u8(old.val[0], numer)" in compositor and
             "vmax_u8(current.val[0]" in compositor,
@@ -682,8 +685,10 @@ def test_compositor_ghosting_is_optional_and_cache_friendly() -> None:
             "fb16_blit_2x4_scanlines(fb," in compositor and
             "(s_video_ghosting_strength != APPLETINI_VIDEO_GHOSTING_OFF) ||\n"
             "           (s_video_blur_strength != APPLETINI_VIDEO_BLUR_OFF) ||\n"
-            "           (s_video_glow_strength != APPLETINI_VIDEO_GLOW_OFF);" in compositor,
-            "normal Apple blits must stay on the existing fast path until an effect is enabled")
+            "           (s_video_glow_strength != APPLETINI_VIDEO_GLOW_OFF) ||\n"
+            "           s_mono_width != 0;" in compositor,
+            "color blits must stay on the existing fast path until an effect is enabled; "
+            "complete mono frames use the row shaper")
     require("effect_clear_history();" in compositor and
             "s_force_full_refresh = 1u;" in compositor,
             "changing ghosting must reset temporal state and force a fresh composite")
@@ -734,7 +739,8 @@ def test_compositor_phosphor_blur_is_display_only() -> None:
     require("vld1q_u32(src + x - 1)" in compositor and
             "vld1q_u32(src + x + 1)" in compositor and
             "vld1q_u32(up + x)" in compositor and
-            "fb16_expand_2x_row_bgra32src(s_effect_2x_row, base, w);" in compositor,
+            "effect_expand_2x_row(s_effect_2x_row, base, w, row);" in compositor and
+            "fb16_expand_2x_row_bgra32src(dst, src, width);" in compositor,
             "blur filters and output packing must use NEON for complete row groups")
     require("effect_mix_3_1" not in compositor and
             "effect_row_weight" not in compositor and
@@ -923,6 +929,86 @@ def test_pal_accurate_renderer_model_is_registered() -> None:
             "frontend_core1 Vitis build must compile the PAL timing source")
 
 
+def test_dot_bleed_is_mono_only_and_persists() -> None:
+    mono_h = read(REPO_ROOT / "ps_sources" / "frontend" / "video_mono.h")
+    compositor = read(COMPOSITOR_C)
+    compositor_h = read(COMPOSITOR_H)
+    source = read(CONFIG_MENU_C)
+    header = read(CONFIG_MENU_H)
+    internal = read(CONFIG_MENU_INTERNAL_H)
+    main_tabs = read(CONFIG_MENU_MAIN_TABS_C)
+    help_c = read(CONFIG_MENU_HELP_C)
+    frontend_main = read(FRONTEND_MAIN_C)
+    debug_c = read(DEBUG_OVERLAY_C)
+    debug_h = read(DEBUG_OVERLAY_H)
+    video_draw = main_tabs[
+        main_tabs.index("void config_menu_draw_video"):
+        main_tabs.index("void config_menu_draw_clock")
+    ]
+
+    require(has_define(mono_h, "APPLETINI_VIDEO_DOT_BLEED_OFF", "0U") and
+            has_define(mono_h, "APPLETINI_VIDEO_DOT_BLEED_LIGHT", "1U") and
+            has_define(mono_h, "APPLETINI_VIDEO_DOT_BLEED_MEDIUM", "2U") and
+            has_define(mono_h, "APPLETINI_VIDEO_DOT_BLEED_STRONG", "3U") and
+            has_define(mono_h, "APPLETINI_VIDEO_DOT_BLEED_MAX",
+                       "APPLETINI_VIDEO_DOT_BLEED_STRONG") and
+            "appletini_video_dot_bleed_clamp" in mono_h and
+            "appletini_video_dot_bleed_name" in mono_h and
+            "video_mono_expand_row_light(" in mono_h and
+            "video_mono_expand_row_medium(" in mono_h and
+            "video_mono_expand_row_strong(" in mono_h and
+            "        fb16_expand_2x_row_bgra32src(dst, src, width);\n"
+            "        break;" in mono_h,
+            "dot bleed must expose Off/Light/Medium/Strong with one row shaper per level "
+            "and a plain Off path")
+    require("static uint8_t               s_video_dot_bleed = APPLETINI_VIDEO_DOT_BLEED_LIGHT;" in compositor and
+            "        s_video_dot_bleed != APPLETINI_VIDEO_DOT_BLEED_OFF &&\n"
+            "        (mono_detail & APPLE_FB_FORMAT_MONO_ENABLE) != 0U) {" in compositor and
+            "s_mono_channel_shift, s_mono_tint,\n"
+            "                           s_video_dot_bleed);" in compositor and
+            "void compositor_set_video_dot_bleed(uint8_t level);" in compositor_h and
+            "uint8_t compositor_video_dot_bleed(void);" in compositor_h,
+            "compositor must default dot bleed to Light and claim no mono span when it is Off")
+    require("#define CONFIG_VIDEO_ITEM_VARIANT      1U" in internal and
+            "#define CONFIG_VIDEO_ITEM_DOT_BLEED    2U" in internal and
+            "#define CONFIG_VIDEO_ITEM_SCANLINES    3U" in internal,
+            "Dot bleed must sit directly under the mono tint row")
+    require(video_draw.count('"Dot bleed"') == 2 and
+            "    if (menu->video_output_mono != 0U) {\n"
+            "        hgr_draw_value_item(fb," in video_draw and
+            "        hgr_draw_value_item_dimmed(fb,\n"
+            "                                   x,\n"
+            "                                   y + (row_h * 2),\n" in video_draw,
+            "Dot bleed row must draw normally in Monochrome and dimmed in Color")
+    require("        menu->item_focus == CONFIG_VIDEO_ITEM_DOT_BLEED) {\n"
+            "        /* Dot bleed shapes monochrome frames only, so the row is inert\n"
+            "         * with Color output. */\n"
+            "        if (menu->video_output_mono != 0U) {" in source and
+            "        } else if (menu->item_focus == CONFIG_VIDEO_ITEM_DOT_BLEED) {\n"
+            "            if (menu->video_output_mono == 0U) {" in source,
+            "Dot bleed must ignore adjust and select while output is Color")
+    require('"video.dot.bleed=%s\\n"' in source and
+            'strcmp(key, "video.dot.bleed") == 0' in source and
+            "#define CONFIG_DEFAULT_VIDEO_DOT_BLEED APPLETINI_VIDEO_DOT_BLEED_LIGHT" in source and
+            "config_menu_coerce_video_dot_bleed(menu);" in source and
+            "config_menu_apply_video_dot_bleed(menu);" in source and
+            "    return APPLETINI_VIDEO_DOT_BLEED_LIGHT;\n}" in source and
+            "void (*set_video_dot_bleed)(void *ctx, uint8_t level);" in header and
+            "uint8_t (*get_video_dot_bleed)(void *ctx);" in header and
+            "uint8_t video_dot_bleed;" in header,
+            "dot bleed must persist as video.dot.bleed, default Light, and read unknown text as Light")
+    require("static uint8_t g_video_dot_bleed_shadow = APPLETINI_VIDEO_DOT_BLEED_LIGHT;" in frontend_main and
+            "compositor_set_video_dot_bleed(g_video_dot_bleed_shadow);" in frontend_main and
+            "control_set_video_dot_bleed(NULL, config_menu.video_dot_bleed);" in frontend_main and
+            "snapshot->video_dot_bleed = video_dot_bleed_get();" in frontend_main and
+            "uint8_t video_dot_bleed;" in debug_h and
+            '"Output mono %s, bleed %s"' in debug_c,
+            "frontend must keep a clamped dot bleed shadow, apply it at boot, and report it")
+    require("HELP(video_dot_bleed," in help_c and
+            "OVERRIDE(CONFIG_VIDEO_ITEM_DOT_BLEED, video_dot_bleed)," in help_c,
+            "Dot bleed row must have its own help")
+
+
 TESTS = [
     test_shared_video_output_contract,
     test_menu_persists_video_output_settings,
@@ -937,6 +1023,7 @@ TESTS = [
     test_compositor_ghosting_is_optional_and_cache_friendly,
     test_compositor_phosphor_blur_is_display_only,
     test_pal_accurate_renderer_model_is_registered,
+    test_dot_bleed_is_mono_only_and_persists,
 ]
 
 

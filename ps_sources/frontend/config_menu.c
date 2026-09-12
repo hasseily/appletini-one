@@ -24,6 +24,7 @@
 #include "video_blur.h"
 #include "video_ghosting.h"
 #include "video_glow.h"
+#include "video_mono.h"
 #include "video_output.h"
 
 #define APPLETINI_CFG_PATH "0:/appletini_cfg.txt"
@@ -49,6 +50,7 @@
 #define CONFIG_DEFAULT_VIDEO_GHOSTING_STRENGTH APPLETINI_VIDEO_GHOSTING_OFF
 #define CONFIG_DEFAULT_VIDEO_BLUR_STRENGTH APPLETINI_VIDEO_BLUR_OFF
 #define CONFIG_DEFAULT_VIDEO_GLOW_STRENGTH APPLETINI_VIDEO_GLOW_OFF
+#define CONFIG_DEFAULT_VIDEO_DOT_BLEED APPLETINI_VIDEO_DOT_BLEED_LIGHT
 #define CONFIG_DEFAULT_FORMAT_BADGE_ENABLED 0U
 #define CONFIG_DEFAULT_BORDER_ENABLED 0U
 #define CONFIG_DEFAULT_BORDER_COLOR APPLE_VIDEO_IIGS_BORDER_DEFAULT
@@ -796,6 +798,40 @@ static uint8_t config_menu_video_glow_text(const char *value)
         return APPLETINI_VIDEO_GLOW_STRONG;
     }
     return APPLETINI_VIDEO_GLOW_OFF;
+}
+
+static const char *config_menu_video_dot_bleed_config(uint8_t level)
+{
+    switch (appletini_video_dot_bleed_clamp(level)) {
+    case APPLETINI_VIDEO_DOT_BLEED_OFF:
+        return "OFF";
+    case APPLETINI_VIDEO_DOT_BLEED_MEDIUM:
+        return "MEDIUM";
+    case APPLETINI_VIDEO_DOT_BLEED_STRONG:
+        return "STRONG";
+    case APPLETINI_VIDEO_DOT_BLEED_LIGHT:
+    default:
+        return "LIGHT";
+    }
+}
+
+/* Unknown or missing text keeps Light, the behaviour of firmware that
+ * predates the key. */
+static uint8_t config_menu_video_dot_bleed_text(const char *value)
+{
+    if (value == NULL) {
+        return CONFIG_DEFAULT_VIDEO_DOT_BLEED;
+    }
+    if (config_menu_str_ieq(value, "off") != 0U) {
+        return APPLETINI_VIDEO_DOT_BLEED_OFF;
+    }
+    if (config_menu_str_ieq(value, "medium") != 0U) {
+        return APPLETINI_VIDEO_DOT_BLEED_MEDIUM;
+    }
+    if (config_menu_str_ieq(value, "strong") != 0U) {
+        return APPLETINI_VIDEO_DOT_BLEED_STRONG;
+    }
+    return APPLETINI_VIDEO_DOT_BLEED_LIGHT;
 }
 
 static char config_menu_ascii_lower(char c)
@@ -2300,6 +2336,15 @@ static void config_menu_coerce_video_glow(config_menu_t *menu)
         appletini_video_glow_clamp(menu->video_glow_strength);
 }
 
+static void config_menu_coerce_video_dot_bleed(config_menu_t *menu)
+{
+    if (menu == NULL) {
+        return;
+    }
+    menu->video_dot_bleed =
+        appletini_video_dot_bleed_clamp(menu->video_dot_bleed);
+}
+
 static void config_menu_coerce_format_badge(config_menu_t *menu)
 {
     if (menu == NULL) {
@@ -2385,6 +2430,18 @@ static void config_menu_apply_video_glow(config_menu_t *menu)
     if (menu->platform.set_video_glow != NULL) {
         menu->platform.set_video_glow(menu->platform.ctx,
                                       menu->video_glow_strength);
+    }
+}
+
+static void config_menu_apply_video_dot_bleed(config_menu_t *menu)
+{
+    if (menu == NULL) {
+        return;
+    }
+    config_menu_coerce_video_dot_bleed(menu);
+    if (menu->platform.set_video_dot_bleed != NULL) {
+        menu->platform.set_video_dot_bleed(menu->platform.ctx,
+                                           menu->video_dot_bleed);
     }
 }
 
@@ -2527,6 +2584,10 @@ static void config_menu_load_platform_defaults(config_menu_t *menu)
     if (menu->platform.get_video_glow != NULL) {
         menu->video_glow_strength = appletini_video_glow_clamp(
             menu->platform.get_video_glow(menu->platform.ctx));
+    }
+    if (menu->platform.get_video_dot_bleed != NULL) {
+        menu->video_dot_bleed = appletini_video_dot_bleed_clamp(
+            menu->platform.get_video_dot_bleed(menu->platform.ctx));
     }
     if (menu->platform.get_format_badge != NULL) {
         menu->format_badge_enabled =
@@ -2895,6 +2956,7 @@ static void config_menu_apply_runtime_internal(config_menu_t *menu,
     config_menu_apply_video_ghosting(menu);
     config_menu_apply_video_blur(menu);
     config_menu_apply_video_glow(menu);
+    config_menu_apply_video_dot_bleed(menu);
     config_menu_apply_format_badge(menu);
     config_menu_apply_video_output(menu);
     config_menu_apply_border(menu);
@@ -3090,6 +3152,8 @@ static void config_menu_parse_key_value(config_menu_t *menu, const char *key, co
         menu->video_blur_strength = config_menu_video_blur_text(value);
     } else if (strcmp(key, "video.glow") == 0) {
         menu->video_glow_strength = config_menu_video_glow_text(value);
+    } else if (strcmp(key, "video.dot.bleed") == 0) {
+        menu->video_dot_bleed = config_menu_video_dot_bleed_text(value);
     } else if (strcmp(key, "video.format.badge") == 0) {
         menu->format_badge_enabled = config_menu_bool_text(value);
     } else if (strcmp(key, "video.border.enabled") == 0) {
@@ -3285,6 +3349,7 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                "video.ghosting=%s\n"
                "video.blur=%s\n"
                "video.glow=%s\n"
+               "video.dot.bleed=%s\n"
                "video.format.badge=%s\n"
                "video.border.enabled=%s\n"
                "video.border.color=%u\n"
@@ -3306,6 +3371,7 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                config_menu_video_ghosting_config(menu->video_ghosting_strength),
                config_menu_video_blur_config(menu->video_blur_strength),
                config_menu_video_glow_config(menu->video_glow_strength),
+               config_menu_video_dot_bleed_config(menu->video_dot_bleed),
                config_menu_on_off(menu->format_badge_enabled),
                config_menu_on_off(menu->border_enabled),
                (unsigned)apple_video_iigs_border_color_clamp(menu->border_color),
@@ -3558,6 +3624,7 @@ static void config_menu_load_settings(config_menu_t *menu)
     config_menu_coerce_video_ghosting(menu);
     config_menu_coerce_video_blur(menu);
     config_menu_coerce_video_glow(menu);
+    config_menu_coerce_video_dot_bleed(menu);
     config_menu_coerce_format_badge(menu);
     config_menu_coerce_border(menu);
     config_menu_coerce_ethernet(menu);
@@ -3780,6 +3847,7 @@ static void config_menu_reset_settings_only(config_menu_t *menu)
     menu->video_ghosting_strength = CONFIG_DEFAULT_VIDEO_GHOSTING_STRENGTH;
     menu->video_blur_strength = CONFIG_DEFAULT_VIDEO_BLUR_STRENGTH;
     menu->video_glow_strength = CONFIG_DEFAULT_VIDEO_GLOW_STRENGTH;
+    menu->video_dot_bleed = CONFIG_DEFAULT_VIDEO_DOT_BLEED;
     menu->format_badge_enabled = CONFIG_DEFAULT_FORMAT_BADGE_ENABLED;
     menu->border_enabled = CONFIG_DEFAULT_BORDER_ENABLED;
     menu->border_color = CONFIG_DEFAULT_BORDER_COLOR;
@@ -3904,6 +3972,7 @@ static uint8_t config_menu_read_settings_from_path(config_menu_t *menu,
     config_menu_coerce_video_ghosting(menu);
     config_menu_coerce_video_blur(menu);
     config_menu_coerce_video_glow(menu);
+    config_menu_coerce_video_dot_bleed(menu);
     config_menu_coerce_format_badge(menu);
     config_menu_coerce_border(menu);
     config_menu_coerce_ethernet(menu);
@@ -5223,6 +5292,28 @@ static uint8_t config_menu_adjust_focused_value(config_menu_t *menu, int8_t delt
     }
 
     if (menu->tab == CONFIG_TAB_VIDEO &&
+        menu->item_focus == CONFIG_VIDEO_ITEM_DOT_BLEED) {
+        /* Dot bleed shapes monochrome frames only, so the row is inert
+         * with Color output. */
+        if (menu->video_output_mono != 0U) {
+            int32_t level =
+                (int32_t)menu->video_dot_bleed + (int32_t)delta;
+            if (level < 0) {
+                level = 0;
+            }
+            if (level > (int32_t)APPLETINI_VIDEO_DOT_BLEED_MAX) {
+                level = (int32_t)APPLETINI_VIDEO_DOT_BLEED_MAX;
+            }
+            if (menu->video_dot_bleed != (uint8_t)level) {
+                menu->video_dot_bleed = (uint8_t)level;
+                config_menu_apply_runtime(menu);
+                config_menu_save_settings(menu);
+            }
+        }
+        return 1U;
+    }
+
+    if (menu->tab == CONFIG_TAB_VIDEO &&
         menu->item_focus == CONFIG_VIDEO_ITEM_BORDER_COLOR) {
         if (delta < 0) {
             menu->border_color = (menu->border_color == 0u) ?
@@ -6387,6 +6478,14 @@ static void config_menu_activate_item(config_menu_t *menu)
             menu->video_glow_strength =
                 (uint8_t)((menu->video_glow_strength + 1U) %
                           (APPLETINI_VIDEO_GLOW_MAX + 1U));
+        } else if (menu->item_focus == CONFIG_VIDEO_ITEM_DOT_BLEED) {
+            if (menu->video_output_mono == 0U) {
+                /* Inert with Color output: nothing to apply or save. */
+                break;
+            }
+            menu->video_dot_bleed =
+                (uint8_t)((menu->video_dot_bleed + 1U) %
+                          (APPLETINI_VIDEO_DOT_BLEED_MAX + 1U));
         } else if (menu->item_focus == CONFIG_VIDEO_ITEM_BADGE) {
             menu->format_badge_enabled =
                 (menu->format_badge_enabled != 0u) ? 0u : 1u;
@@ -6743,6 +6842,7 @@ void config_menu_init(config_menu_t *menu)
     menu->video_ghosting_strength = CONFIG_DEFAULT_VIDEO_GHOSTING_STRENGTH;
     menu->video_blur_strength = CONFIG_DEFAULT_VIDEO_BLUR_STRENGTH;
     menu->video_glow_strength = CONFIG_DEFAULT_VIDEO_GLOW_STRENGTH;
+    menu->video_dot_bleed = CONFIG_DEFAULT_VIDEO_DOT_BLEED;
     menu->format_badge_enabled = CONFIG_DEFAULT_FORMAT_BADGE_ENABLED;
     menu->border_enabled = CONFIG_DEFAULT_BORDER_ENABLED;
     menu->border_color = CONFIG_DEFAULT_BORDER_COLOR;

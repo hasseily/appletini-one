@@ -50,6 +50,7 @@
 #include "linear_text_overlay.h"
 #include "supersprite_vdp.h"
 #include "video_blur.h"
+#include "video_mono.h"
 #include "video_ghosting.h"
 #include "video_glow.h"
 
@@ -88,6 +89,7 @@ static uint8_t               s_scanlines_mode = APPLETINI_SCANLINES_OFF;
 static uint8_t               s_video_ghosting_strength = APPLETINI_VIDEO_GHOSTING_OFF;
 static uint8_t               s_video_blur_strength = APPLETINI_VIDEO_BLUR_OFF;
 static uint8_t               s_video_glow_strength = APPLETINI_VIDEO_GLOW_OFF;
+static uint8_t               s_video_dot_bleed = APPLETINI_VIDEO_DOT_BLEED_LIGHT;
 static uint8_t               s_format_badge_enabled = 0u;
 static uint8_t               s_border_enabled = 0u;
 static uint8_t               s_border_flood = 0u;
@@ -155,6 +157,40 @@ static uint32_t s_effect_row[COMP_APPLE_SHR_WIDTH]
     __attribute__((aligned(32)));
 static uint16_t s_effect_2x_row[COMP_APPLE_SHR_WIDTH * 2U]
     __attribute__((aligned(32)));
+
+/* Claimed-frame mono span. The optional colored border stays on the RGB
+ * path. SHR, frames that changed mono mode during capture, and Dot bleed
+ * Off have no span. */
+static int s_mono_x, s_mono_y, s_mono_width, s_mono_height;
+static unsigned s_mono_channel_shift;
+static uint16_t s_mono_tint[256];
+static uint8_t s_mono_tint_color = 0xFFU;
+static uint32_t s_effect_mono_detail;
+
+static int effect_mono_row_active(int row)
+{
+    return s_mono_width != 0 && row >= s_mono_y &&
+           row < s_mono_y + s_mono_height;
+}
+
+static void effect_expand_2x_row(uint16_t *dst, const uint32_t *src,
+                                 int width, int row)
+{
+    if (!effect_mono_row_active(row)) {
+        fb16_expand_2x_row_bgra32src(dst, src, width);
+        return;
+    }
+    if (s_mono_x != 0) {
+        fb16_expand_2x_row_bgra32src(dst, src, s_mono_x);
+    }
+    video_mono_expand_row(dst + 2 * s_mono_x, src + s_mono_x,
+                           s_mono_width, s_mono_channel_shift, s_mono_tint,
+                           s_video_dot_bleed);
+    const int end = s_mono_x + s_mono_width;
+    if (end < width) {
+        fb16_expand_2x_row_bgra32src(dst + 2 * end, src + end, width - end);
+    }
+}
 static uint16_t s_effect_history_w = 0U;
 static uint16_t s_effect_history_h = 0U;
 
@@ -518,7 +554,8 @@ static void effect_emit_2x_row(const uint32_t *sharp,
                                const uint32_t *dn,
                                int w,
                                uint8_t blur,
-                               uint8_t glow)
+                               uint8_t glow,
+                               int row)
 {
     const uint32_t *base;
 
@@ -538,6 +575,14 @@ static void effect_emit_2x_row(const uint32_t *sharp,
     }
 
     if (glow != APPLETINI_VIDEO_GLOW_OFF) {
+        if (effect_mono_row_active(row)) {
+            for (int x = 0; x < w; ++x) {
+                s_effect_row[x] = effect_rgb_sat_add(
+                    base[x], effect_glow_scale(s_effect_halo_row[x], glow));
+            }
+            effect_expand_2x_row(s_effect_2x_row, s_effect_row, w, row);
+            return;
+        }
         int x = 0;
 #if defined(__ARM_NEON)
         const int8x8_t shift =
@@ -573,7 +618,7 @@ static void effect_emit_2x_row(const uint32_t *sharp,
         return;
     }
 
-    fb16_expand_2x_row_bgra32src(s_effect_2x_row, base, w);
+    effect_expand_2x_row(s_effect_2x_row, base, w, row);
 }
 
 static uint8_t effect_scanline_blank(uint8_t phase,
@@ -685,7 +730,7 @@ static void blit_apple_ghosting_2x(uint16_t *fb,
     glow = appletini_video_glow_clamp(glow);
     if (strength == APPLETINI_VIDEO_GHOSTING_OFF &&
         blur == APPLETINI_VIDEO_BLUR_OFF &&
-        glow == APPLETINI_VIDEO_GLOW_OFF) {
+        glow == APPLETINI_VIDEO_GLOW_OFF && s_mono_width == 0) {
         return;
     }
 
@@ -744,7 +789,7 @@ static void blit_apple_ghosting_2x(uint16_t *fb,
                     s_effect_blur_ring[((sy < src_h) ? sy : ey) % 3];
 
                 effect_emit_2x_row(s_effect_sharp_ring[ey % 3], up, mid, dn,
-                                   src_w, blur, glow);
+                                   src_w, blur, glow, ey);
                 for (uint8_t phase = 0U; phase < scale_y; ++phase) {
                     uint16_t *drow = fb +
                         (dst_y + ey * (int)scale_y + (int)phase) * FB16_WIDTH +
@@ -774,11 +819,12 @@ static void blit_apple_ghosting_2x(uint16_t *fb,
          * would require one DDR round trip per pixel. */
         memcpy(s_effect_row, srow, (size_t)src_w * sizeof(uint32_t));
 
-        effect_blend_history_row(s_effect_row,
-                                 &s_effect_history[hist_base],
-                                 src_w, strength);
-        fb16_expand_2x_row_bgra32src(s_effect_2x_row,
-                                     s_effect_row, src_w);
+        if (strength != APPLETINI_VIDEO_GHOSTING_OFF) {
+            effect_blend_history_row(s_effect_row,
+                                     &s_effect_history[hist_base],
+                                     src_w, strength);
+        }
+        effect_expand_2x_row(s_effect_2x_row, s_effect_row, src_w, sy);
 
         for (uint8_t phase = 0U; phase < scale_y; ++phase) {
             uint16_t *drow =
@@ -907,7 +953,8 @@ static inline int compositor_apple_effects_active(void)
 {
     return (s_video_ghosting_strength != APPLETINI_VIDEO_GHOSTING_OFF) ||
            (s_video_blur_strength != APPLETINI_VIDEO_BLUR_OFF) ||
-           (s_video_glow_strength != APPLETINI_VIDEO_GLOW_OFF);
+           (s_video_glow_strength != APPLETINI_VIDEO_GLOW_OFF) ||
+           s_mono_width != 0;
 }
 
 /* ---------- Slot picking ---------- */
@@ -1040,6 +1087,33 @@ static int draw_apple_subwindow(uint16_t *fb)
     }
     const uint32_t display_mode = apple_fb_reader_display_mode();
     const uint8_t border_color = apple_fb_reader_border_color();
+    const uint32_t mono_detail = apple_fb_reader_format_detail() &
+                                APPLE_FB_FORMAT_MONO_MASK;
+    s_mono_width = 0;
+    if (display_mode != APPLE_FB_DISPLAY_MODE_SHR &&
+        s_video_dot_bleed != APPLETINI_VIDEO_DOT_BLEED_OFF &&
+        (mono_detail & APPLE_FB_FORMAT_MONO_ENABLE) != 0U) {
+        const uint8_t color = (uint8_t)((mono_detail &
+            APPLE_FB_FORMAT_MONO_COLOR_MASK) >> APPLE_FB_FORMAT_MONO_COLOR_SHIFT);
+        const int woven = display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I;
+        s_mono_x = (!woven && s_border_enabled != 0U)
+            ? (int)COMP_APPLE_BORDER_H_PIXELS : 0;
+        s_mono_y = (!woven && s_border_enabled != 0U)
+            ? (int)COMP_APPLE_BORDER_V_LINES : 0;
+        s_mono_width = (int)COMP_APPLE_WIDTH;
+        s_mono_height = woven ? 384 : (int)COMP_APPLE_HEIGHT;
+        s_mono_channel_shift = video_mono_channel_shift(color);
+        if (color != s_mono_tint_color) {
+            video_mono_build_tint(s_mono_tint, color);
+            s_mono_tint_color = color;
+        }
+    }
+    if (mono_detail != s_effect_mono_detail) {
+        /* History belongs to the old tint/output mode. Shaping itself is
+         * display-only and never feeds back into that history. */
+        effect_clear_history();
+        s_effect_mono_detail = mono_detail;
+    }
     g_compositor_last_apple_slot = slot;
     g_compositor_last_apple_mode = display_mode;
 
@@ -1407,6 +1481,20 @@ void compositor_set_video_glow(uint8_t strength)
 uint8_t compositor_video_glow(void)
 {
     return s_video_glow_strength;
+}
+
+void compositor_set_video_dot_bleed(uint8_t level)
+{
+    level = appletini_video_dot_bleed_clamp(level);
+    s_video_dot_bleed = level;
+    /* Display-only, like blur. The mono span is claimed again on the
+     * next composite, so force one instead of waiting for a new frame. */
+    s_force_full_refresh = 1u;
+}
+
+uint8_t compositor_video_dot_bleed(void)
+{
+    return s_video_dot_bleed;
 }
 
 void compositor_set_format_badge(uint8_t enabled)

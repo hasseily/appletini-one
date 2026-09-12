@@ -10,6 +10,7 @@
 #include "video_blur.h"
 #include "video_ghosting.h"
 #include "video_glow.h"
+#include "video_mono.h"
 #include "video_output.h"
 
 #define HUD_TEXT_SCALE_X 1
@@ -550,8 +551,9 @@ static void draw_video(uint16_t *fb, const debug_overlay_snapshot_t *s)
     if (s->video_output_mono != 0U) {
         (void)snprintf(text,
                        sizeof(text),
-                       "Output mono %s",
-                       mono_color_name(s->video_mono_color));
+                       "Output mono %s, bleed %s",
+                       mono_color_name(s->video_mono_color),
+                       appletini_video_dot_bleed_name(s->video_dot_bleed));
     } else {
         (void)snprintf(text,
                        sizeof(text),

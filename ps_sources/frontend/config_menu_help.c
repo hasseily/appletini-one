@@ -220,6 +220,12 @@ HELP(video_variant,
     "PAL Accurate appears only on PAL machines. It models individual signal components.",
     "We're happy to implement an accurate NTSC model if someone can provide the necessary data.");
 
+HELP(video_dot_bleed,
+    "Dot bleed shapes each monochrome dot like a CRT spot during the 2x horizontal expansion.",
+    "Light keeps single dots sharp and softens only the gaps in dithered images.",
+    "Medium and Strong widen the spot. They fill gaps more, but 80-column text gets softer.",
+    "It applies to Monochrome output and to Video-7 forced mono frames. SHR is not affected.");
+
 HELP(video_video7,
     "Video-7 mono watches the $C05E/$C05F soft-switch sequence used by compatible Video-7 software.",
     "When enabled, a certain switch combination will force monochrome output.",
@@ -297,6 +303,7 @@ HELP(video_debug,
 static const help_override_t video_overrides[] = {
     OVERRIDE(CONFIG_VIDEO_ITEM_OUTPUT, video_output),
     OVERRIDE(CONFIG_VIDEO_ITEM_VARIANT, video_variant),
+    OVERRIDE(CONFIG_VIDEO_ITEM_DOT_BLEED, video_dot_bleed),
     OVERRIDE(CONFIG_VIDEO_ITEM_SCANLINES, video_scanlines),
     OVERRIDE(CONFIG_VIDEO_ITEM_BLUR, video_blur),
     OVERRIDE(CONFIG_VIDEO_ITEM_GLOW, video_glow),

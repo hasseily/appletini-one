@@ -77,6 +77,12 @@ uint8_t compositor_video_blur(void);
 void compositor_set_video_glow(uint8_t strength);
 uint8_t compositor_video_glow(void);
 
+/* Apple subwindow dot bleed: CRT-spot shaping of complete monochrome
+ * frames during the 2x row expansion (APPLETINI_VIDEO_DOT_BLEED_*).
+ * Display-only like blur; Off keeps the plain RGB expansion. */
+void compositor_set_video_dot_bleed(uint8_t level);
+uint8_t compositor_video_dot_bleed(void);
+
 /* Corner overlay naming the current Apple video format (HGR, DHGR,
  * SHR4, 3200, ...). Derived per frame from the PL soft-switch state
  * and the aux shadow's in-band SDD bytes. */

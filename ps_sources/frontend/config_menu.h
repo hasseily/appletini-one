@@ -78,6 +78,8 @@ typedef struct {
     uint8_t (*get_video_blur)(void *ctx);
     void (*set_video_glow)(void *ctx, uint8_t strength);
     uint8_t (*get_video_glow)(void *ctx);
+    void (*set_video_dot_bleed)(void *ctx, uint8_t level);
+    uint8_t (*get_video_dot_bleed)(void *ctx);
     void (*set_format_badge)(void *ctx, uint8_t enabled);
     uint8_t (*get_format_badge)(void *ctx);
     void (*set_border)(void *ctx, uint8_t enabled, uint8_t color, uint8_t flood);
@@ -196,6 +198,7 @@ typedef struct {
     uint8_t video_ghosting_strength;
     uint8_t video_blur_strength;
     uint8_t video_glow_strength;
+    uint8_t video_dot_bleed;
     uint8_t format_badge_enabled;
     uint8_t border_enabled;
     uint8_t border_color;

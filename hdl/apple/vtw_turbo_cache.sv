@@ -91,7 +91,9 @@ module vtw_turbo_cache #(
         if (map_fill && !invalidate)
             map_mem[fill_map_index] <= {map_addr[15:8], map_fast_write, map_phys[17:8]};
         if (!invalidate) begin
-            if (snoop_write && snoop_same_bank)
+            // Wrong-bank snoops clear validity below. Every later operation
+            // that validates the entry also replaces this complete payload.
+            if (snoop_write)
                 byte_mem[snoop_index] <= {snoop_addr[15:BYTE_INDEX_BITS], snoop_data};
             else if (byte_fill)
                 byte_mem[fill_index] <= {byte_addr[15:BYTE_INDEX_BITS], byte_data};

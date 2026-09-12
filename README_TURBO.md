@@ -38,7 +38,7 @@ fabric clock stays at about 133 MHz.
   for 256-byte pages. Page tags distinguish entries that share an index.
   Only shadow-backed pages outside `$C000–$CFFF` enter the table. A store
   can hit this table without a byte-cache hit.
-- A 256-byte distributed-RAM cache serves reads without the shadow BRAM's
+- A 128-byte distributed-RAM cache serves reads without the shadow BRAM's
   response pipeline. Its index folds high address bits into low bits to
   reduce collisions between code and buffers; address tags distinguish
   every byte. Read hits do not need an address-table hit, so replacing a

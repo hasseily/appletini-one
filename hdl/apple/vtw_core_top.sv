@@ -1060,9 +1060,13 @@ module vtw_core_top (
     assign turbo_execute = (eff_mode == SPEED_TURBO) &&
                            !(slow_update_valid_q && slow_update_hit_q);
 
+    // Bound the valid-bit mux and LUT-RAM read depth at the fabric clock.
+    localparam int TURBO_BYTE_INDEX_BITS = 7;
     wire turbo_read_valid, turbo_write_valid, turbo_write_fast;
-    wire [7:0] turbo_read_tag, turbo_write_tag;
-    (* DONT_TOUCH = "TRUE" *) logic [7:0] turbo_read_tag_q, turbo_write_tag_q;
+    wire [15-TURBO_BYTE_INDEX_BITS:0] turbo_read_tag;
+    wire [7:0] turbo_write_tag;
+    (* DONT_TOUCH = "TRUE" *) logic [15-TURBO_BYTE_INDEX_BITS:0] turbo_read_tag_q;
+    (* DONT_TOUCH = "TRUE" *) logic [7:0] turbo_write_tag_q;
     logic turbo_read_valid_q, turbo_write_valid_q, turbo_write_fast_q;
     wire [17:0] turbo_write_phys;
     logic [1:0] turbo_mode_q;
@@ -1099,7 +1103,7 @@ module vtw_core_top (
     // aux $9D page includes the private SHR paging control at $9DF8.
     wire turbo_map_fast_write = !xl_is_posted &&
                                !(xl_is_aux && cycle_addr_q[15:8] == 8'h9D);
-    vtw_turbo_cache turbo_cache_i (
+    vtw_turbo_cache #(.BYTE_INDEX_BITS(TURBO_BYTE_INDEX_BITS)) turbo_cache_i (
         .clk(clk), .rstn(rstn), .invalidate(turbo_invalidate),
         .addr(core_addr), .rw(core_rwb),
         .read_valid(turbo_read_valid), .read_tag(turbo_read_tag),
@@ -1118,7 +1122,7 @@ module vtw_core_top (
     );
     wire turbo_hit = cycle_addr_q[15:12] != 4'hC &&
         (cycle_rw_q ? (turbo_read_valid_q &&
-                      turbo_read_tag_q == cycle_addr_q[15:8]) :
+                      turbo_read_tag_q == cycle_addr_q[15:TURBO_BYTE_INDEX_BITS]) :
                      (turbo_write_valid_q && turbo_write_fast_q &&
                       turbo_write_tag_q == cycle_addr_q[15:8] &&
                       !overlay_capture_armed));
@@ -1315,7 +1319,7 @@ module vtw_core_top (
             status_vbl_sampled_q    <= 1'b0;
             core_data_in_q      <= 8'hFF;
             turbo_rdata_q       <= 8'hFF;
-            turbo_read_tag_q    <= 8'h00;
+            turbo_read_tag_q    <= '0;
             turbo_write_tag_q   <= 8'h00;
             turbo_read_valid_q  <= 1'b0;
             turbo_write_valid_q <= 1'b0;

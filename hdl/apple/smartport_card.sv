@@ -348,10 +348,11 @@ module smartport_card (
         end
 
         in_mem_we    = 4'b0000;
-        in_mem_wdata = 32'd0;
+        // Only the selected byte lane writes. Keep the lane and full checks
+        // in its enable instead of adding them to the BRAM data path.
+        in_mem_wdata = {4{data_write_byte}};
         if (data_write_ev && !in_full) begin
             in_mem_we[in_wr_q[1:0]] = 1'b1;
-            in_mem_wdata[8*in_wr_q[1:0] +: 8] = data_write_byte;
         end
     end
 

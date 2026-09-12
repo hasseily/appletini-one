@@ -67,7 +67,7 @@ module vtw_core_top (
 
     // Speed configuration (config menu / persisted profile). 16-bit
     // divider: the 0.05 MHz slug mode needs ~2667 fabric clks/cycle.
-    input  logic [1:0]              speed_mode,   // 0=full, 1=divided, 2=1MHz-locked
+    input  logic [1:0]              speed_mode,   // 0=full, 1=divided, 2=1MHz, 3=TURBO
     input  logic [15:0]             pace_divider, // divided: min fabric clks/cycle
     /* Ignore every software write to the TransWarp speed register. Raising
      * this live also clears a value that software latched earlier, so the
@@ -90,6 +90,9 @@ module vtw_core_top (
      * 1 MHz path. The card may hold virtual time while CPU0 stages a track
      * or the DDR line cache catches up. */
     input  logic                    d2_active,
+    // TURBO retains the existing MAX execution path while the drive spins,
+    // so Disk II still receives one virtual tick per classic CPU cycle.
+    input  logic                    d2_motor_active,
     output logic                    d2_req_valid,
     output logic [3:0]              d2_req_addr,
     input  logic                    d2_req_ready,
@@ -297,6 +300,12 @@ module vtw_core_top (
      * execute path (the design's tightest). */
     logic [7:0]  core_data_in_q;
     logic        core_rwb;
+    wire         turbo_execute;
+    wire         turbo_complete;
+    wire         turbo_shadow_write;
+    wire [7:0]   turbo_rdata;
+    wire [7:0]   core_data_in = core_data_in_q;
+    logic [17:0] turbo_write_phys_q;
 
     /* Motherboard RES# resets the core through the shadow's reset vector;
      * /DMA stays held (vtw_bus_engine). CTRL-RESET with the vTW disabled
@@ -332,10 +341,11 @@ module vtw_core_top (
         .reset_n(core_res_n),
         .enable(core_en),
         .ready(1'b1),
+        .turbo(turbo_execute),
         .irq_n(core_irq_n),
         .nmi_n(ab_read.nmi),
         .so_n(1'b1),
-        .data_in(core_data_in_q),
+        .data_in(core_data_in),
         .addr(core_addr),
         .data_out(core_data_out),
         .rwb(core_rwb),
@@ -876,7 +886,7 @@ module vtw_core_top (
     // ALU. These two explicit cuts keep both sides of the inferred BRAM
     // inside the 133.333 MHz fabric-clock budget.
     // ------------------------------------------------------------------
-    typedef enum logic [3:0] {
+    typedef enum logic [4:0] {
         X_CAPTURE,
         X_ROUTE,      // map registered route tuple + issue shadow access
         X_MEM_CAPTURE,// capture synchronous BRAM output
@@ -892,9 +902,13 @@ module vtw_core_top (
         X_SP_WAIT,    // SmartPort: response in flight
         X_SP_DONE,    // SmartPort: response latched, waiting for pace
         X_STATUS_DONE,// synthesized $C01x status read: serve the status byte
-        X_DEAD        // unmapped route (must not happen): serve $FF
+        X_DEAD,       // unmapped route (must not happen): serve $FF
+        X_TURBO_DONE  // registered cache response / write tuple ready
     } xstate_t;
     xstate_t xstate_q;
+
+    // TURBO separates lookup and execute. Every CPU operand still comes
+    // from core_data_in_q; a LUT RAM read never feeds the ALU in one clock.
 
     // Private-card response selection. SmartPort needs a single-outstanding
     // guard because its card port can remain busy; Disk II accepts at most
@@ -944,6 +958,7 @@ module vtw_core_top (
     localparam logic [1:0] SPEED_FULL    = 2'd0;
     localparam logic [1:0] SPEED_DIVIDED = 2'd1;
     localparam logic [1:0] SPEED_1MHZ    = 2'd2;
+    localparam logic [1:0] SPEED_TURBO   = 2'd3;
 
     logic [1:0]  c074_q;
     logic [15:0] pace_cnt_q;
@@ -1010,6 +1025,9 @@ module vtw_core_top (
     wire sd_disk2 = (sd_slot_io && (sd_slot_num == 3'd6)) ||
                     (sd_iosel  && (sd_iosel_slot == 3'd6));
     wire sd_disk2_native = sd_disk2 && !d2_fast_hit;
+    // Hold the native/private decision made in X_ROUTE through completion.
+    // This also keeps live ownership decode off the Disk II tick/CPU path.
+    logic cycle_d2_native_q;
 
     wire sd_hit = (sd_floating_io && slow_region_en[7]) ||
                   (sd_paddle      && slow_region_en[8]) ||
@@ -1020,19 +1038,84 @@ module vtw_core_top (
      * only in state 0. ignore_c074 keeps that state at zero. Per-region
      * slowdown, physical Disk II accesses, and Disk II Q7 write mode also
      * force 1 MHz. */
+    wire turbo_disk_hold = d2_active && (d2_motor_active === 1'b1);
     wire [1:0] eff_mode =
-        (c074_q != 2'd0 || slow_active || sd_disk2_native ||
+        (c074_q != 2'd0 || slow_active || cycle_d2_native_q ||
          d2_write_timing_active) ?
-                          SPEED_1MHZ : speed_mode;
+                          SPEED_1MHZ :
+        (speed_mode == SPEED_TURBO && turbo_disk_hold) ? SPEED_FULL : speed_mode;
 
     wire pace_ok =
-        (eff_mode == SPEED_FULL)    ? 1'b1 :
+        (eff_mode == SPEED_FULL || eff_mode == SPEED_TURBO) ? 1'b1 :
         (eff_mode == SPEED_DIVIDED) ? (pace_cnt_q >= pace_divider) :
                                       pace_tick_pending_q;
 
     /* Suppress bus side effects while the core is held or in reset: a
      * held core's cycles are served $FF instead of reaching the bus. */
     wire core_active = enable && core_run && ab_read.res;
+
+    // Do not accept a fast cycle ahead of a just-completed I/O access's
+    // registered slowdown update. The old path always left that extra edge.
+    assign turbo_execute = (eff_mode == SPEED_TURBO) &&
+                           !(slow_update_valid_q && slow_update_hit_q);
+
+    wire turbo_read_hit, turbo_write_hit;
+    wire [17:0] turbo_write_phys;
+    logic [1:0] turbo_mode_q;
+    logic turbo_ramworks_q, turbo_post_wide_q, turbo_overlay_q;
+    always_ff @(posedge clk) begin
+        if (!rstn) begin
+            turbo_mode_q <= SPEED_FULL;
+            turbo_ramworks_q <= 1'b0;
+            turbo_post_wide_q <= 1'b0;
+            turbo_overlay_q <= 1'b0;
+        end
+        else begin
+            turbo_mode_q <= speed_mode;
+            turbo_ramworks_q <= ramworks_en;
+            turbo_post_wide_q <= post_main_wide_eff;
+            turbo_overlay_q <= overlay_capture_armed;
+        end
+    end
+    // Cxxx accesses always take the original route, including ROM accesses
+    // that claim/release C8 or change the language-card double-access latch.
+    // External shadow writes and changes to write-through policy invalidate
+    // both caches. No physical I/O, PSRAM, or card response is ever cached.
+    wire turbo_invalidate = !core_res_n ||
+        (sh_en && sh_we) || arm_rw_flush_req ||
+        (speed_mode != turbo_mode_q) || (ramworks_en != turbo_ramworks_q) ||
+        (post_main_wide_eff != turbo_post_wide_q) ||
+        (overlay_capture_armed != turbo_overlay_q) ||
+        ((xstate_q == X_ROUTE) && cycle_addr_q[15:12] == 4'hC);
+    wire turbo_map_fill = (xstate_q == X_ROUTE) && xl_shadow_valid &&
+                         core_res_n && cycle_addr_q[15:12] != 4'hC;
+    wire turbo_byte_fill = (xstate_q == X_MEM_CAPTURE) && cycle_rw_q &&
+                          xl_shadow_valid && cycle_addr_q[15:12] != 4'hC;
+    // Video and overlay writes keep the existing posted FIFO path. The
+    // aux $9D page includes the private SHR paging control at $9DF8.
+    wire turbo_map_fast_write = !xl_is_posted &&
+                               !(xl_is_aux && cycle_addr_q[15:8] == 8'h9D);
+    vtw_turbo_cache turbo_cache_i (
+        .clk(clk), .rstn(rstn), .invalidate(turbo_invalidate),
+        .addr(core_addr), .rw(core_rwb),
+        .read_hit(turbo_read_hit), .write_hit(turbo_write_hit),
+        .rdata(turbo_rdata), .write_phys(turbo_write_phys),
+        .map_fill(turbo_map_fill), .map_addr(cycle_addr_q),
+        .map_rw(cycle_rw_q), .map_phys(xl_shadow_phys),
+        .map_fast_write(turbo_map_fast_write),
+        .byte_fill(turbo_byte_fill), .byte_addr(cycle_addr_q),
+        .byte_data(shadow_a_rdata),
+        .snoop_write(shadow_a_en && shadow_a_we),
+        .snoop_addr(cycle_addr_q),
+        .snoop_phys(shadow_a_addr),
+        .snoop_data(cycle_wdata_q)
+    );
+    wire turbo_hit = turbo_execute && !turbo_invalidate &&
+        (turbo_read_hit || (turbo_write_hit && !overlay_capture_armed));
+    assign turbo_complete = (xstate_q == X_TURBO_DONE) && pace_ok &&
+                            core_active && !turbo_invalidate && !arm_rw_flush_req;
+    assign turbo_shadow_write = (xstate_q == X_TURBO_DONE) &&
+                                core_en && !cycle_rw_q;
 
     assign ssm_pulse       = core_active && (xstate_q == X_CAPTURE);
     assign ssm_apply_pulse = core_active && (xstate_q == X_ROUTE);
@@ -1093,11 +1176,11 @@ module vtw_core_top (
 
     /* No shadow traffic while the core is held: port B (ARM) owns the
      * memory, and a held core's outputs must not scribble on it. */
-    assign shadow_a_en   = core_shadow_issue || floating_scan_issue;
+    assign shadow_a_en   = core_shadow_issue || floating_scan_issue || turbo_shadow_write;
     assign shadow_a_addr = floating_scan_issue
                          ? {2'b00, floating_scan_addr_q}
-                         : xl_shadow_phys;
-    assign shadow_a_we   = core_shadow_issue && xl_is_write;
+                         : (xstate_q == X_TURBO_DONE) ? turbo_write_phys_q : xl_shadow_phys;
+    assign shadow_a_we   = (core_shadow_issue && xl_is_write) || turbo_shadow_write;
 
     always_ff @(posedge clk) begin
         if (!rstn) begin
@@ -1178,7 +1261,7 @@ module vtw_core_top (
                      d2_time_ready &&
                      (complete_mem || complete_bus ||
                       complete_rw || complete_sp ||
-                      complete_status || complete_dead);
+                      complete_status || complete_dead || turbo_complete);
     assign arm_rw_hold_state = rw_hold_q;
 
     /* One Disk II time tick per virtual 65C02 cycle. Stage the accepted
@@ -1189,11 +1272,11 @@ module vtw_core_top (
      * disk2_card and are suppressed here. */
     wire d2_req_fire = d2_req_valid && d2_req_ready;
     wire d2_cycle_tick_accept =
-        core_en && d2_active && !private_d2_q && !sd_disk2_native;
+        core_en && d2_active && !private_d2_q && !cycle_d2_native_q;
     logic d2_cycle_tick_q;
     assign d2_cycle_tick = d2_cycle_tick_q;
     assign d2_native_cycle_active =
-        core_active && (xstate_q == X_BUS) && sd_disk2_native;
+        core_active && (xstate_q == X_BUS) && cycle_d2_native_q;
 
     /* The xstate FSM runs one access ahead of a frozen core: these are
      * the only states from which it can still reach the RamWorks cache.
@@ -1203,6 +1286,7 @@ module vtw_core_top (
     wire rw_flush_unsafe =
         core_res_n &&
         ((xstate_q == X_CAPTURE) || (xstate_q == X_ROUTE) ||
+         (xstate_q == X_TURBO_DONE) ||
          (xstate_q == X_RW_LOOKUP) || (xstate_q == X_RW_FLUSH) ||
          (xstate_q == X_RW_FILL));
 
@@ -1220,6 +1304,7 @@ module vtw_core_top (
             status_vbl_data_phase_q <= 1'b0;
             status_vbl_sampled_q    <= 1'b0;
             core_data_in_q      <= 8'hFF;
+            turbo_write_phys_q  <= '0;
             cycle_addr_q        <= '0;
             cycle_wdata_q       <= '0;
             cycle_rw_q          <= 1'b1;
@@ -1250,6 +1335,7 @@ module vtw_core_top (
             cycle_sp_iosel7_q   <= 1'b0;
             sp_req_target_q     <= SP_TGT_C8_ROM;
             private_d2_q        <= 1'b0;
+            cycle_d2_native_q   <= 1'b0;
             d2_cycle_tick_q     <= 1'b0;
             sp_inflight_q       <= 1'b0;
             slow_cnt_q          <= 16'd0;
@@ -1431,7 +1517,7 @@ module vtw_core_top (
             // counter is current before the next cycle can complete.
             slow_update_valid_q <= core_en;
             if (core_en) begin
-                slow_update_hit_q      <= sd_hit;
+                slow_update_hit_q      <= !turbo_complete && sd_hit;
                 slow_update_duration_q <= slow_duration;
             end
             if (slow_update_valid_q && slow_update_hit_q) begin
@@ -1447,6 +1533,7 @@ module vtw_core_top (
 
             unique case (xstate_q)
                 X_CAPTURE: begin
+                    cycle_d2_native_q <= 1'b0;
                     if (!core_res_n) begin
                         // Core held/reset: idle here (cheap wait state).
                         xstate_q <= X_CAPTURE;
@@ -1470,11 +1557,25 @@ module vtw_core_top (
                         // Snapshot slot-7 IOSEL pre-update, for the
                         // SmartPort C8-window classifier.
                         cycle_sp_iosel7_q       <= vsss.io_select[SP_SLOT];
-                        xstate_q                 <= X_ROUTE;
+                        // Payload capture does not depend on the late hit
+                        // signal. Only the next state consumes the hit; all
+                        // cache-to-CPU and cache-to-write paths end here.
+                        core_data_in_q          <= turbo_rdata;
+                        turbo_write_phys_q      <= turbo_write_phys;
+                        xstate_q                <= turbo_hit ? X_TURBO_DONE : X_ROUTE;
                     end
                 end
 
+                X_TURBO_DONE: begin
+                    // A mode change or an external write can invalidate a
+                    // parked response. Reissue from the unchanged CPU state
+                    // before consuming it; no cached write has committed yet.
+                    if (turbo_invalidate || core_en)
+                        xstate_q <= X_CAPTURE;
+                end
+
                 X_ROUTE: begin
+                    cycle_d2_native_q <= sd_disk2_native;
                     if (xl_is_bus) begin
                         // core_res_n implies the session is active, so the
                         // bus engine is running and will take the request.
@@ -1706,6 +1807,7 @@ module vtw_core_top (
             if (!core_res_n) begin
                 xstate_q                   <= X_CAPTURE;
                 private_d2_q              <= 1'b0;
+                cycle_d2_native_q         <= 1'b0;
                 status_vbl_data_phase_q   <= 1'b0;
                 status_vbl_sampled_q      <= 1'b0;
             end

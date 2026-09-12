@@ -2,7 +2,7 @@
 // Focused vTW Disk II speed and route matrix.
 //
 // This bench keeps the production RTL unchanged. It runs one live vTW
-// session through all seven speed-ladder presets plus the 0.05 MHz UI slug
+// session through all eight speed-ladder presets plus the 0.05 MHz UI slug
 // override, proves the registered normal-time tick edge by edge, and then
 // checks the Disk II route split at each speed: even reads use the private
 // card port, while odd reads and all writes use the physical Apple bus. It
@@ -159,7 +159,7 @@ module tb_vtw_disk2_speed_matrix;
         .data_drive_value_in(vtw_ab_write.wr_data),
         .dbg_clear(1'b0), .iiplus_buttons_zero(1'b0),
         .slow_region_en(10'd0), .slow_duration(16'd0),
-        .d2_active(disk2_active),
+        .d2_active(disk2_active), .d2_motor_active(1'b1),
         .d2_req_valid(disk2_req_valid), .d2_req_addr(disk2_req_addr),
         .d2_req_ready(disk2_req_ready),
         .d2_resp_valid(disk2_resp_valid),
@@ -314,7 +314,7 @@ module tb_vtw_disk2_speed_matrix;
 
     wire normal_tick_accept =
         dut.core_en && disk2_active &&
-        !dut.private_d2_q && !dut.sd_disk2_native;
+        !dut.private_d2_q && !dut.cycle_d2_native_q;
 
     task automatic check(input bit condition, input string message);
         if (!condition)
@@ -353,7 +353,7 @@ module tb_vtw_disk2_speed_matrix;
             // direct private-card time, or native Apple-bus time.
             if (dut.core_en && disk2_active) begin
                 logical_select_count <= logical_select_count + 1;
-                unique case ({dut.private_d2_q, dut.sd_disk2_native})
+                unique case ({dut.private_d2_q, dut.cycle_d2_native_q})
                     2'b00: begin
                         if (!normal_tick_accept) begin
                             $fatal(1,
@@ -454,7 +454,7 @@ module tb_vtw_disk2_speed_matrix;
         check((normal_accept_count - accept_before) ==
               (normal_tick_count - tick_before),
               $sformatf("%s lost or duplicated a normal Disk II tick", label));
-        if (mode == 2'd0) begin
+        if (mode == 2'd0 || mode == 2'd3) begin
             check(min_gap == 4 && max_gap == 4,
                   $sformatf("%s did not complete shadow cycles every four fabric clocks (min=%0d max=%0d)",
                             label, min_gap, max_gap));
@@ -597,6 +597,7 @@ module tb_vtw_disk2_speed_matrix;
         check_private_preset(2'd1, 10, "even read / 13 MHz");
         check_private_preset(2'd1, 5,  "even read / 26 MHz");
         check_private_preset(2'd0, 0,  "even read / MAX");
+        check_private_preset(2'd3, 0,  "even read / TURBO");
     endtask
 
     task automatic run_native_matrix(input string operation);
@@ -609,6 +610,108 @@ module tb_vtw_disk2_speed_matrix;
         check_native_preset(2'd1, 10, $sformatf("%s / 13 MHz", operation));
         check_native_preset(2'd1, 5,  $sformatf("%s / 26 MHz", operation));
         check_native_preset(2'd0, 0,  $sformatf("%s / MAX", operation));
+        check_native_preset(2'd3, 0,  $sformatf("%s / TURBO", operation));
+    endtask
+
+    task automatic check_frozen_routes;
+        integer requests_before;
+        integer native_before;
+        integer private_before;
+        integer deadline;
+
+        // Select a real bus read with the private card disabled. Enabling
+        // the card after X_ROUTE must not turn that in-flight bus cycle into
+        // a normal/private time source or remove its native pace.
+        begin_reboot();
+        expected_native_check_en = 1'b1;
+        expected_native_addr = 16'hC0EC;
+        expected_native_rw = 1'b1;
+        disk2_active = 1'b0;
+        speed_mode = 2'd3;
+        load_route_program(8'hAD, 16'hC0EC);
+        finish_reboot();
+        deadline = 0;
+        while (dut.xstate_q != dut.X_BUS && deadline < 100000) begin
+            @(negedge clk);
+            deadline++;
+        end
+        check(dut.xstate_q == dut.X_BUS && dut.cycle_d2_native_q,
+              "candidate did not select a native even read with card disabled");
+        requests_before = private_req_count;
+        native_before = native_select_count;
+        @(negedge clk);
+        disk2_active = 1'b1;
+        #1ps;
+        check(!dut.sd_disk2_native && dut.cycle_d2_native_q &&
+              disk2_native_cycle_active,
+              "enabling the private card reclassified an in-flight native read");
+        deadline = 0;
+        while (!(dut.core_en && dut.core_addr == 16'hC0EC) &&
+               deadline < 100000) begin
+            @(negedge clk);
+            check(dut.cycle_d2_native_q && private_req_count == requests_before,
+                  "native classification/private request changed before completion");
+            deadline++;
+        end
+        check(dut.core_en && dut.core_data_in === 8'hEE &&
+              dut.eff_mode == 2'd2,
+              "native read lost its bus result or 1 MHz pace after card enable");
+        @(posedge clk);
+        #1ps;
+        check(native_select_count == native_before + 1,
+              "native read did not retain exactly one native completion");
+        wait_private_delta(requests_before, 1,
+                           "next read after card enable");
+
+        // Select the private route, hold its request, then assert live Q7.
+        // Q7 must force 1 MHz while the already-selected private response
+        // remains private, with no second native time source.
+        begin_reboot();
+        speed_mode = 2'd3;
+        disk2_active = 1'b1;
+        disk2_req_ready = 1'b0;
+        load_route_program(8'hAD, 16'hC0EC);
+        finish_reboot();
+        deadline = 0;
+        while (!disk2_req_valid && deadline < 100000) begin
+            @(negedge clk);
+            deadline++;
+        end
+        check(disk2_req_valid && dut.private_d2_q && !dut.cycle_d2_native_q,
+              "candidate did not park the selected private read");
+        requests_before = private_req_count;
+        private_before = private_select_count;
+        native_before = native_select_count;
+        @(negedge clk);
+        disk2_write_timing_active = 1'b1;
+        #1ps;
+        check(dut.sd_disk2_native && !dut.cycle_d2_native_q &&
+              dut.eff_mode == 2'd2,
+              "live Q7 failed to preserve private route while forcing 1 MHz");
+        repeat (20) begin
+            @(negedge clk);
+            check(disk2_req_valid && dut.private_d2_q &&
+                  !dut.cycle_d2_native_q && !disk2_native_cycle_active &&
+                  private_req_count == requests_before,
+                  "Q7 reclassified or completed a stalled private request");
+        end
+        disk2_req_ready = 1'b1;
+        deadline = 0;
+        while (!(dut.core_en && dut.core_addr == 16'hC0EC) &&
+               deadline < 100000) begin
+            @(negedge clk);
+            deadline++;
+        end
+        check(dut.core_en && dut.core_data_in === 8'hA5 &&
+              dut.private_d2_q && !dut.cycle_d2_native_q &&
+              dut.eff_mode == 2'd2,
+              "selected private response lost its result, route, or live Q7 pace");
+        @(posedge clk);
+        #1ps;
+        check(private_select_count == private_before + 1 &&
+              native_select_count == native_before,
+              "private completion selected two time sources after live Q7");
+        $display("VTW DISK2 FROZEN CLASSIFICATION PASS");
     endtask
 
     integer avg_slug;
@@ -619,9 +722,11 @@ module tb_vtw_disk2_speed_matrix;
     integer avg_13m;
     integer avg_26m;
     integer avg_max;
+    integer avg_turbo;
 
     initial begin
-        // 1. One live session changes through all seven ladder presets and
+        check_frozen_routes();
+        // 1. One live session changes through all eight ladder presets and
         // the UI's divided-mode 0.05 MHz slug override.
         reboot_normal();
         measure_normal_speed(2'd1, 2667, "0.05 MHz slug", avg_slug);
@@ -632,6 +737,8 @@ module tb_vtw_disk2_speed_matrix;
         measure_normal_speed(2'd1, 10, "13 MHz", avg_13m);
         measure_normal_speed(2'd1, 5,  "26 MHz", avg_26m);
         measure_normal_speed(2'd0, 0,  "MAX", avg_max);
+        measure_normal_speed(2'd3, 0,  "TURBO / motor active", avg_turbo);
+        check(avg_turbo == avg_max, "TURBO motor interlock changed classic cycle timing");
         check(avg_slug > avg_1mhz &&
               avg_1mhz > avg_2m6 && avg_2m6 > avg_3m6 &&
               avg_3m6 > avg_7m && avg_7m > avg_13m &&
@@ -690,6 +797,7 @@ module tb_vtw_disk2_speed_matrix;
         measure_q7_speed(2'd1, 10, "13 MHz");
         measure_q7_speed(2'd1, 5,  "26 MHz");
         measure_q7_speed(2'd0, 0,  "MAX");
+        measure_q7_speed(2'd3, 0,  "TURBO");
         @(negedge clk);
         disk2_write_timing_active = 1'b0;
 
@@ -751,6 +859,7 @@ module tb_vtw_disk2_speed_matrix;
         disk2_write_timing_active = 1'b1;
         check_native_preset(2'd1, 2667, "Q7 even read / 0.05 MHz slug");
         check_native_preset(2'd0, 0, "Q7 even read / MAX");
+        check_native_preset(2'd3, 0, "Q7 even read / TURBO");
         check(video_phase_1mhz,
               "Q7 even-read route did not report the 1 MHz interlock");
 

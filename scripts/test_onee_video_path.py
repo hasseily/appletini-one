@@ -28,6 +28,7 @@ SOURCES = [
     "hdl/apple/vtw_shadow.sv",
     "hdl/apple/vtw_bus_engine.sv",
     "hdl/apple/w65c02_core.sv",
+    "hdl/apple/vtw_turbo_cache.sv",
     "hdl/apple/vtw_core_top.sv",
     "hdl/sim/tb_onee_video_path.sv",
     "hdl/sim/tb_onee_cold_slot_scan.sv",

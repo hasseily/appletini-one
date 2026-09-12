@@ -453,6 +453,49 @@ module tb_smartport_shortcut;
         check(rd[7] && !rd[6],
               "native command cannot acquire the direct-copy flag");
 
+        // Fill the 1K ring through both transports. Four-byte runs give each
+        // transport every byte lane and cross the BRAM word boundary.
+        axi_write(R_CONTROL, CTL_CLR_IN);
+        for (int i = 0; i < 1024; i++) begin
+            if ((i / 4) & 1)
+                apple_write(16'hCFF0, 8'(i * 37 + 8'h53));
+            else
+                vtw_access(T_DATA, 1'b0, 11'h7F0,
+                           8'(i * 37 + 8'h53), rd);
+        end
+        axi_read(R_STATUS, st);
+        check(st_in(st) == 1024, "mixed transports fill all 1024 IN bytes");
+        apple_write(16'hCFF0, 8'hCA);
+        vtw_access(T_DATA, 1'b0, 11'h7F0, 8'hEF, rd);
+        axi_read(R_STATUS, st);
+        check(st_in(st) == 1024, "full ring drops native and private writes");
+
+        // Wrap the producer while the last three bytes from the first lap
+        // remain unread, then check every byte across both sides of the ring.
+        for (int i = 0; i < 1021; i++) begin
+            axi_read(R_IN_HEAD, st);
+            check(st[8:0] == {1'b1, 8'(i * 37 + 8'h53)},
+                  $sformatf("full-ring byte %0d preserves its lane", i));
+            axi_write(R_CONTROL, CTL_POP_IN);
+        end
+        for (int i = 1024; i < 1041; i++) begin
+            if ((i / 4) & 1)
+                apple_write(16'hCFF0, 8'(i * 37 + 8'h53));
+            else
+                vtw_access(T_DATA, 1'b0, 11'h7F0,
+                           8'(i * 37 + 8'h53), rd);
+        end
+        axi_read(R_STATUS, st);
+        check(st_in(st) == 20, "ring wrap retains three old and 17 new bytes");
+        for (int i = 1021; i < 1041; i++) begin
+            axi_read(R_IN_HEAD, st);
+            check(st[8:0] == {1'b1, 8'(i * 37 + 8'h53)},
+                  $sformatf("wrapped ring byte %0d stays ordered", i));
+            axi_write(R_CONTROL, CTL_POP_IN);
+        end
+        axi_read(R_STATUS, st);
+        check(st_in(st) == 0, "wrapped IN ring drains exactly");
+
         if (fails == 0) $display("SP SHORTCUT PASS");
         else            $display("SP SHORTCUT FAILED: %0d checks", fails);
         $finish;

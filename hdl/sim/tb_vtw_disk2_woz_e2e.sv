@@ -9,6 +9,7 @@
 module tb_vtw_disk2_woz_e2e;
     timeunit 1ns;
     timeprecision 1ps;
+    logic disk2_motor_active;
 
     localparam logic [17:0] ROM_BASE = 18'h20000;
     localparam logic [20:0] TRACK_BASE_LINE = 21'h0E0000;
@@ -165,7 +166,7 @@ module tb_vtw_disk2_woz_e2e;
         .vtw_native_cycle_active(disk2_native_cycle_active),
         .vtw_time_ready(disk2_time_ready),
         .vtw_write_timing_active(disk2_write_timing_active),
-        .sound_spinning(), .sound_qtrack(), .sound_event(),
+        .sound_spinning(disk2_motor_active), .sound_qtrack(), .sound_event(),
         .sound_seek_start_qtrack(), .sound_seek_distance()
     );
 
@@ -191,7 +192,7 @@ module tb_vtw_disk2_woz_e2e;
         .data_drive_value_in(vtw_write.wr_data), .dbg_clear(1'b0),
         .iiplus_buttons_zero(1'b0),
         .slow_region_en(10'd0), .slow_duration(16'd0),
-        .d2_active(1'b1), .d2_req_valid(disk2_req_valid),
+        .d2_active(1'b1), .d2_motor_active(disk2_motor_active), .d2_req_valid(disk2_req_valid),
         .d2_req_addr(disk2_req_addr), .d2_req_ready(disk2_req_ready),
         .d2_resp_valid(disk2_resp_valid),
         .d2_resp_rdata(disk2_resp_rdata),
@@ -476,6 +477,7 @@ module tb_vtw_disk2_woz_e2e;
         run_preset(2'd1, 10,   "13 MHz",        1'b0);
         run_preset(2'd1, 5,    "26 MHz",        1'b0);
         run_preset(2'd0, 0,    "MAX",           1'b0);
+        run_preset(2'd3, 0,    "TURBO",         1'b0);
         $display("VTW DISK2 WOZ E2E PASS");
         $finish;
     end

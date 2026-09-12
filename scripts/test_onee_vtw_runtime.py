@@ -818,6 +818,84 @@ def run_native_speed_control_test() -> bool:
             return 1;
         }
 
+        static int test_turbo_speed_controls(void)
+        {
+            reset_fixture();
+            g_intent_enabled = 1U;
+            g_state = VTW_ST_RUN;
+            vtw_service_set_speed(CARD_CTRL_VTW_SPEED_FULL, 37U);
+            vtw_service_speed_step(1, 0U);
+            if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_TURBO &&
+                       strcmp(vtw_service_last_action_text(), "TW: TURBO") == 0,
+                       "MAX speed up must select TURBO")) {
+                return 0;
+            }
+            vtw_service_speed_step(1, 0U);
+            if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_TURBO,
+                       "speed up must stay at TURBO")) {
+                return 0;
+            }
+            vtw_service_speed_step(-1, 0U);
+            if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_FULL &&
+                       strcmp(vtw_service_last_action_text(), "TW: MAX Speed") == 0,
+                       "TURBO speed down must select MAX")) {
+                return 0;
+            }
+
+            vtw_service_set_speed(CARD_CTRL_VTW_SPEED_TURBO, 37U);
+            vtw_service_set_ignore_c074(1U);
+            vtw_service_set_disk2_accel_disabled(1U);
+            vtw_service_set_slowdown(0x1FFU, 512U);
+            vtw_service_speed_toggle(0U);
+            if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_1MHZ &&
+                       vtw_service_speed_mode() == CARD_CTRL_VTW_SPEED_TURBO,
+                       "1 MHz toggle must preserve configured TURBO")) {
+                return 0;
+            }
+            vtw_service_speed_toggle(0U);
+            if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_TURBO &&
+                       g_ovr_active == 0U &&
+                       (ctrl_value() & CARD_CTRL_VTW_CTRL_IGNORE_C074_BIT) != 0U &&
+                       (ctrl_value() & CARD_CTRL_VTW_CTRL_DISABLE_D2_ACCEL_BIT) != 0U &&
+                       g_slowdown_mask == 0x1FFU && g_slowdown_cycles == 512U,
+                       "1 MHz toggle must restore TURBO and keep I/O options")) {
+                return 0;
+            }
+            vtw_service_set_slug_enabled(1U);
+            vtw_service_slug_toggle(0U);
+            if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_DIVIDED &&
+                       ctrl_divider() == VTW_SLUG_DIVIDER,
+                       "slug must override configured TURBO")) {
+                return 0;
+            }
+            vtw_service_slug_toggle(0U);
+            if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_TURBO &&
+                       g_ovr_active == 0U,
+                       "slug toggle must restore configured TURBO")) {
+                return 0;
+            }
+            vtw_service_slug_toggle(0U);
+            vtw_service_set_slug_enabled(0U);
+            if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_TURBO,
+                       "disarming slug must restore configured TURBO")) {
+                return 0;
+            }
+
+            /* The same encoding and return path apply to an isolated ONE//e. */
+            reset_fixture();
+            vtw_service_set_speed(CARD_CTRL_VTW_SPEED_TURBO, 37U);
+            g_onee_running = 1U;
+            vtw_service_speed_toggle(0U);
+            vtw_service_speed_toggle(0U);
+            if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_TURBO &&
+                       (ctrl_value() & CARD_CTRL_VTW_CTRL_DISABLE_D2_ACCEL_BIT) != 0U &&
+                       vtw_service_is_enabled() == 0U,
+                       "ONE//e must restore TURBO without changing host intent")) {
+                return 0;
+            }
+            return 1;
+        }
+
         static int test_onee_live_controls_without_host_intent(void)
         {
             uint32_t before;
@@ -1251,6 +1329,7 @@ def run_native_speed_control_test() -> bool:
         int main(void)
         {
             if (!test_host_live_controls() ||
+                !test_turbo_speed_controls() ||
                 !test_onee_live_controls_without_host_intent() ||
                 !test_failed_live_writes_and_pending_choice() ||
                 !test_menu_preselect_context_boundary() ||

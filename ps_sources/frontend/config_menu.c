@@ -3212,7 +3212,8 @@ static void config_menu_parse_key_value(config_menu_t *menu, const char *key, co
         menu->vtw_disable_disk2_accel = config_menu_bool_text(value);
     } else if (strcmp(key, "vtw.speed.mode") == 0) {
         unsigned long mode = strtoul(value, NULL, 10);
-        menu->vtw_speed_mode = (mode <= 2UL) ? (uint8_t)mode : 0U;
+        menu->vtw_speed_mode = (mode <= CARD_CTRL_VTW_SPEED_TURBO) ?
+                                  (uint8_t)mode : CARD_CTRL_VTW_SPEED_FULL;
     } else if (strcmp(key, "vtw.slug.key") == 0) {
         menu->vtw_slug_key_enabled = config_menu_bool_text(value);
     } else if (strcmp(key, "vtw.slowdown.mask") == 0) {
@@ -4161,11 +4162,11 @@ void config_menu_set_applicard_enabled(config_menu_t *menu, uint8_t enable)
 
 /* Speed presets shown in the TransWarp tab. Divided-mode rates follow from
  * the 133.333 MHz fabric clock / divider. The divider column stays
- * meaningful for the full and 1 MHz rows so cycling back into a divided
+ * meaningful for the MAX, TURBO, and 1 MHz rows so cycling back into a divided
  * preset restores a sane value. */
 typedef struct {
     const char *label;
-    uint8_t mode;      /* 0 full, 1 divided, 2 1MHz-locked */
+    uint8_t mode;      /* CARD_CTRL_VTW_SPEED_* */
     uint8_t divider;
 } vtw_speed_preset_t;
 
@@ -4177,6 +4178,7 @@ static const vtw_speed_preset_t k_vtw_speed_presets[] = {
     { "13 MHz (UltraWarp)",   1U, 10U },
     { "26 MHz",               1U,  5U },
     { "MAX Speed",            0U, 37U },
+    { "TURBO",                3U, 37U },
 };
 #define VTW_SPEED_PRESET_COUNT \
     ((uint32_t)(sizeof(k_vtw_speed_presets) / sizeof(k_vtw_speed_presets[0])))
@@ -4184,6 +4186,9 @@ static const vtw_speed_preset_t k_vtw_speed_presets[] = {
 static uint32_t config_menu_vtw_preset_index(const config_menu_t *menu)
 {
     if (menu->vtw_speed_mode == CARD_CTRL_VTW_SPEED_FULL) {
+        return VTW_SPEED_PRESET_COUNT - 2U;
+    }
+    if (menu->vtw_speed_mode == CARD_CTRL_VTW_SPEED_TURBO) {
         return VTW_SPEED_PRESET_COUNT - 1U;
     }
     if (menu->vtw_speed_mode == CARD_CTRL_VTW_SPEED_1MHZ) {
@@ -4255,7 +4260,8 @@ void config_menu_set_vtw_speed(config_menu_t *menu,
     if (menu == NULL) {
         return;
     }
-    menu->vtw_speed_mode = (speed_mode <= 2U) ? speed_mode : 0U;
+    menu->vtw_speed_mode = (speed_mode <= CARD_CTRL_VTW_SPEED_TURBO) ?
+                              speed_mode : CARD_CTRL_VTW_SPEED_FULL;
     menu->vtw_pace_divider = (pace_divider >= 2U) ? pace_divider : 2U;
     if (menu->platform.set_vtw_config != NULL) {
         menu->platform.set_vtw_config(menu->platform.ctx,

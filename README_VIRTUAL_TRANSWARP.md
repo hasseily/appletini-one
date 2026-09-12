@@ -1,5 +1,10 @@
 # Virtual TransWarp — Design Document
 
+The `turbo` branch adds **TURBO** as a separate speed choice after MAX.
+The 1 MHz through MAX presets retain their cycle-exact execution path.
+See [README_TURBO.md](README_TURBO.md) for the cache design, compatibility
+rules, tests, and firmware build instructions.
+
 ## Fixed Enhanced-//e acceleration
 
 Accelerating presents a **fixed Enhanced //e on every host**, //e or II+.

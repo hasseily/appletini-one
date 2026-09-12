@@ -2062,6 +2062,7 @@ module apple_top(
         .slow_region_en(vtw_slowdown_q[9:0]),
         .slow_duration(vtw_slowdown_q[31:16]),
         .d2_active(vtw_disk2_active),
+        .d2_motor_active(disk2_sound_spinning),
         .d2_req_valid(vtw_d2_req_valid),
         .d2_req_addr(vtw_d2_req_addr),
         .d2_req_ready(vtw_d2_req_ready),

@@ -1715,7 +1715,7 @@ void uart_control_print_help(const uart_control_t *control, const uart_control_o
         "  z80 [status|on|off|reset]\r\n"
         "  z80 budget <tstates> | z80 wall <us> | z80 dump <hex-addr> [hex-len]\r\n"
         "  8088 [status|dump <hex-addr> [hex-len]|trace on|off|paddle]\r\n"
-        "  vtw [status|on|off] | vtw speed <full|1mhz|div <2-255>>\r\n"
+        "  vtw [status|on|off] | vtw speed <full|turbo|1mhz|div <2-255>>\r\n"
         "  vtw dump <hex-phys> [hex-len]\r\n"
         "  ss [on|off|force <on|off>|dump]\r\n"
         "Bus diagnostics:\r\n"
@@ -2416,12 +2416,14 @@ static uart_control_event_t process_command(
             uint8_t divider = vtw_service_pace_divider();
 
             if (str_ieq(argv[2], "full")) {
-                mode = 0U;
+                mode = CARD_CTRL_VTW_SPEED_FULL;
+            } else if (str_ieq(argv[2], "turbo")) {
+                mode = CARD_CTRL_VTW_SPEED_TURBO;
             } else if (str_ieq(argv[2], "1mhz")) {
-                mode = 2U;
+                mode = CARD_CTRL_VTW_SPEED_1MHZ;
             } else if (str_ieq(argv[2], "div") && argc >= 4) {
                 unsigned long div = strtoul(argv[3], NULL, 10);
-                mode = 1U;
+                mode = CARD_CTRL_VTW_SPEED_DIVIDED;
                 if (div < 2UL) {
                     div = 2UL;
                 } else if (div > 255UL) {
@@ -2430,7 +2432,7 @@ static uart_control_event_t process_command(
                 divider = (uint8_t)div;
             } else {
                 uart_puts(control->control_uart_base,
-                          "usage: vtw speed full|1mhz|div <2-255>\r\n");
+                          "usage: vtw speed full|turbo|1mhz|div <2-255>\r\n");
                 return event;
             }
             if (g_config_menu != NULL) {
@@ -2449,7 +2451,7 @@ static uart_control_event_t process_command(
             return event;
         }
         uart_puts(control->control_uart_base,
-                  "usage: vtw [status|on|off|speed full|1mhz|div <n>|"
+                  "usage: vtw [status|on|off|speed full|turbo|1mhz|div <n>|"
                   "dump <hex-phys> [hex-len]]\r\n");
         return event;
     }

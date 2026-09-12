@@ -42,6 +42,7 @@ utils_1/
 
 # Build output directories
 build/
+firmwares/
 export/
 
 # Object files and dependency files

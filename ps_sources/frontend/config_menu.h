@@ -222,7 +222,7 @@ typedef struct {
     uint8_t slot5_processor;         /* config_slot5_processor_t */
     uint8_t applicard_resource_max;  /* 0 = standard CPU share, 1 = maximum */
     uint8_t vtw_enabled;             /* virtual TransWarp accelerator */
-    uint8_t vtw_speed_mode;          /* 0 full, 1 divided, 2 1MHz-locked */
+    uint8_t vtw_speed_mode;          /* CARD_CTRL_VTW_SPEED_* */
     uint8_t vtw_pace_divider;        /* divided mode: fabric clks per cycle */
     uint8_t vtw_ignore_c074;         /* ignore every $C074 speed-switch write */
     uint8_t vtw_disable_disk2_accel; /* force Disk II onto physical 1MHz path */

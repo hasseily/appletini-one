@@ -33,6 +33,7 @@ SOURCES = [
     "hdl/apple/vtw_shadow_host_port.sv",
     "hdl/apple/vtw_bus_engine.sv",
     "hdl/apple/w65c02_core.sv",
+    "hdl/apple/vtw_turbo_cache.sv",
     "hdl/apple/vtw_core_top.sv",
     "hdl/apple/apple_dma_engine.sv",
     "hdl/apple/ps_dma_command.sv",
@@ -64,6 +65,7 @@ SOURCES = [
     "hdl/sim/tb_disk2_woz_rw.sv",
     "hdl/sim/tb_vtw_disk2_speed_matrix.sv",
     "hdl/sim/tb_vtw_disk2_woz_e2e.sv",
+    "hdl/sim/tb_vtw_turbo.sv",
 ]
 
 # Card-ROM $readmemh calls resolve against the simulation cwd.
@@ -97,6 +99,7 @@ BENCHES = [
     ("tb_disk2_woz_rw", "DISK2 WOZ RW PASS"),
     ("tb_vtw_disk2_speed_matrix", "VTW DISK2 SPEED MATRIX PASS"),
     ("tb_vtw_disk2_woz_e2e", "VTW DISK2 WOZ E2E PASS"),
+    ("tb_vtw_turbo", "VTW TURBO PASS"),
 ]
 
 
@@ -167,6 +170,7 @@ def static_checks() -> None:
             ("CARD_CTRL_VTW_SPEED_DIVIDED", "10"),
             ("CARD_CTRL_VTW_SPEED_DIVIDED", "5"),
             ("CARD_CTRL_VTW_SPEED_FULL", "0"),
+            ("CARD_CTRL_VTW_SPEED_TURBO", "0"),
         ] and "#define VTW_SLUG_DIVIDER 2667U" in service,
         "the dynamic Disk II speed matrix must match every vTW ladder preset "
         "and the slug override",
@@ -343,7 +347,7 @@ def static_checks() -> None:
             "d2_time_ready &&" in core_top,
             "vTW must stage slowdown bookkeeping without delaying Disk II holds")
     require("wire d2_cycle_tick_accept =\n"
-            "        core_en && d2_active && !private_d2_q && !sd_disk2_native;"
+            "        core_en && d2_active && !private_d2_q && !cycle_d2_native_q;"
             in core_top and
             "logic d2_cycle_tick_q;" in core_top and
             "assign d2_cycle_tick = d2_cycle_tick_q;" in core_top and
@@ -355,7 +359,7 @@ def static_checks() -> None:
             "vTW must stage each accepted normal Disk II tick for one fabric "
             "clock without changing private or native tick selection")
     require("d2_write_timing_active" in core_top and
-            "sd_disk2_native ||" in core_top and
+            "cycle_d2_native_q ||" in core_top and
             ".d2_write_timing_active(vtw_d2_write_timing_active)" in top and
             "disk2_timing_active" not in core_top,
             "physical Disk II accesses and Q7 write mode must force 1 MHz")
@@ -570,13 +574,16 @@ def static_checks() -> None:
             '"3.6 MHz (TransWarp)"' in menu_c and
             '"1 MHz default"' in menu_c and
             '"26 MHz"' in menu_c and
-            '"MAX Speed"' in menu_c,
+            '"MAX Speed"' in menu_c and
+            '"TURBO"' in menu_c,
             "TransWarp tab must offer the speed presets")
-    require("menu->vtw_speed_mode == CARD_CTRL_VTW_SPEED_FULL" in menu_c and
+    require("menu->vtw_speed_mode == CARD_CTRL_VTW_SPEED_TURBO" in menu_c and
             "return VTW_SPEED_PRESET_COUNT - 1U;" in menu_c and
+            "menu->vtw_speed_mode == CARD_CTRL_VTW_SPEED_FULL" in menu_c and
+            "return VTW_SPEED_PRESET_COUNT - 2U;" in menu_c and
             "menu->vtw_speed_mode == CARD_CTRL_VTW_SPEED_1MHZ" in menu_c and
             "return 0U;" in menu_c,
-            "TransWarp full speed and 1 MHz modes must resolve to their correct endpoint labels")
+            "TransWarp TURBO, MAX and 1 MHz modes must resolve to their correct labels")
     ladder_index = service[service.index(
         "static int vtw_eff_ladder_index(void)"):
         service.index("void vtw_service_set_slug_enabled", service.index(

@@ -192,6 +192,7 @@ module tb_onee_video_path;
         .slow_region_en(10'd0),
         .slow_duration(16'd0),
         .d2_active(1'b0),
+        .d2_motor_active(1'b0),
         .d2_req_valid(),
         .d2_req_addr(),
         .d2_req_ready(1'b0),

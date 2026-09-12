@@ -18,6 +18,9 @@ module w65c02_core #(
     input  logic        reset_n,
     input  logic        enable,
     input  logic        ready,
+    // Optional relaxed instruction timing. An omitted/unknown input keeps
+    // the cycle-exact path. Enable only for instructions in untimed memory.
+    input  logic        turbo,
 
     input  logic        irq_n,
     input  logic        nmi_n,
@@ -200,6 +203,11 @@ module w65c02_core #(
     op_t         op_q;
     addr_mode_t  mode_q;
     kind_t       kind_q;
+    logic        instruction_turbo_q;
+    wire         turbo_requested = (turbo === 1'b1);
+    // A slow request can cancel later shortcuts, but a fast request cannot
+    // enable them partway through an instruction that began cycle-exact.
+    wire         turbo_instruction = instruction_turbo_q && turbo_requested;
 
     logic [7:0]  operand_q;
     logic [7:0]  lo_q;
@@ -712,6 +720,8 @@ module w65c02_core #(
     endfunction
 
     task automatic apply_read_value(input logic [7:0] value);
+        // Decimal ADC/SBC use the registered extra-cycle path. Keep their
+        // correction logic out of these binary-only architectural updates.
         logic [8:0] compare_value;
         logic [15:0] arithmetic;
         logic [7:0] next_value;
@@ -733,12 +743,12 @@ module w65c02_core #(
                     p_q <= with_nz(p_q, next_value);
                 end
                 OP_ADC: begin
-                    arithmetic = adc_result(a_q, value, p_q);
+                    arithmetic = adc_result(a_q, value, p_q & 8'hF7);
                     p_q <= arithmetic[15:8];
                     a_q <= arithmetic[7:0];
                 end
                 OP_SBC: begin
-                    arithmetic = sbc_result(a_q, value, p_q);
+                    arithmetic = sbc_result(a_q, value, p_q & 8'hF7);
                     p_q <= arithmetic[15:8];
                     a_q <= arithmetic[7:0];
                 end
@@ -778,10 +788,10 @@ module w65c02_core #(
         end
     endtask
 
-    task automatic apply_implied;
+    task automatic apply_implied(input op_t operation);
         logic [7:0] next_value;
         begin
-            case (op_q)
+            case (operation)
                 OP_CLC: p_q[P_C] <= 1'b0;
                 OP_SEC: p_q[P_C] <= 1'b1;
                 OP_CLI: p_q[P_I] <= 1'b0;
@@ -1085,6 +1095,7 @@ module w65c02_core #(
             op_q <= OP_NOP;
             mode_q <= AM_IMP;
             kind_q <= KIND_IMPLIED;
+            instruction_turbo_q <= 1'b0;
             operand_q <= 8'h00;
             lo_q <= 8'h00;
             hi_q <= 8'h00;
@@ -1113,6 +1124,7 @@ module w65c02_core #(
             op_q <= OP_NOP;
             mode_q <= AM_IMP;
             kind_q <= KIND_IMPLIED;
+            instruction_turbo_q <= 1'b0;
             operand_q <= 8'h00;
             lo_q <= 8'h00;
             hi_q <= 8'h00;
@@ -1161,6 +1173,7 @@ module w65c02_core #(
                     end
 
                     ST_FETCH: begin
+                        instruction_turbo_q <= turbo_requested;
                         ir_q <= data_in;
                         op_q <= fetch_decode.op;
                         mode_q <= fetch_decode.mode;
@@ -1196,7 +1209,19 @@ module w65c02_core #(
                                     OP_STP: state_q <= ST_STP_DUMMY;
                                     default: begin
                                         case (fetch_decode.mode)
-                                            AM_IMP, AM_ACC: state_q <= ST_IMPLIED;
+                                            AM_IMP, AM_ACC: begin
+                                                // The discarded implied read
+                                                // uses PC+1. Keep it if that
+                                                // address can change Apple I/O.
+                                                if (turbo_requested &&
+                                                    relative_base[15:12] != 4'hC) begin
+                                                    apply_implied(fetch_decode.op);
+                                                    instruction_done <= 1'b1;
+                                                    state_q <= ST_FETCH;
+                                                end else begin
+                                                    state_q <= ST_IMPLIED;
+                                                end
+                                            end
                                             default: state_q <= ST_OPERAND;
                                         endcase
                                     end
@@ -1206,7 +1231,7 @@ module w65c02_core #(
                     end
 
                     ST_IMPLIED: begin
-                        apply_implied();
+                        apply_implied(op_q);
                         instruction_done <= 1'b1;
                         state_q <= ST_FETCH;
                     end
@@ -1244,7 +1269,24 @@ module w65c02_core #(
                                     state_q <= ST_MEM_READ;
                             end
 
-                            AM_ZPX, AM_ZPY: state_q <= ST_ZP_INDEX;
+                            AM_ZPX, AM_ZPY: begin
+                                if (turbo_instruction) begin
+                                    // The omitted indexing read is always in
+                                    // zero page; the actual data access remains.
+                                    if (mode_q == AM_ZPY)
+                                        ea_q <= {8'h00, 8'(data_in + y_q)};
+                                    else
+                                        ea_q <= {8'h00, 8'(data_in + x_q)};
+                                    if (kind_q == KIND_WRITE)
+                                        state_q <= ST_MEM_WRITE;
+                                    else if (kind_q == KIND_RMW)
+                                        state_q <= ST_RMW_READ;
+                                    else
+                                        state_q <= ST_MEM_READ;
+                                end else begin
+                                    state_q <= ST_ZP_INDEX;
+                                end
+                            end
 
                             AM_ABS, AM_ABSX, AM_ABSY,
                             AM_ABSIND, AM_ABSXIND: begin
@@ -1252,7 +1294,14 @@ module w65c02_core #(
                                 state_q <= ST_ABS_HI;
                             end
 
-                            AM_INDX: state_q <= ST_INDX_DUMMY;
+                            AM_INDX: begin
+                                if (turbo_instruction) begin
+                                    ptr_q <= data_in + x_q;
+                                    state_q <= ST_PTR_LO;
+                                end else begin
+                                    state_q <= ST_INDX_DUMMY;
+                                end
+                            end
 
                             AM_INDY, AM_ZPIND: begin
                                 ptr_q <= data_in;
@@ -1262,9 +1311,19 @@ module w65c02_core #(
                             AM_REL: begin
                                 target_q <= relative_target;
                                 page_cross_q <= relative_base[15:8] != relative_target[15:8];
-                                if (branch_taken(op_q, p_q))
-                                    state_q <= ST_BRANCH_DUMMY;
-                                else begin
+                                if (branch_taken(op_q, p_q)) begin
+                                    // Both taken-branch dummy addresses have
+                                    // the next PC's page. Never remove an I/O
+                                    // read, even when its result is discarded.
+                                    if (turbo_instruction &&
+                                        relative_base[15:12] != 4'hC) begin
+                                        pc_q <= relative_target;
+                                        instruction_done <= 1'b1;
+                                        state_q <= ST_FETCH;
+                                    end else begin
+                                        state_q <= ST_BRANCH_DUMMY;
+                                    end
+                                end else begin
                                     instruction_done <= 1'b1;
                                     state_q <= ST_FETCH;
                                 end

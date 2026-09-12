@@ -101,6 +101,7 @@ static const struct {
     { CARD_CTRL_VTW_SPEED_DIVIDED, 10U, "13 MHz (UltraWarp)" },
     { CARD_CTRL_VTW_SPEED_DIVIDED,  5U, "26 MHz" },
     { CARD_CTRL_VTW_SPEED_FULL,    0U,  "MAX Speed" },
+    { CARD_CTRL_VTW_SPEED_TURBO,   0U,  "TURBO" },
 };
 #define VTW_LADDER_COUNT \
     (sizeof(k_vtw_ladder) / sizeof(k_vtw_ladder[0]))
@@ -512,6 +513,9 @@ static int vtw_eff_ladder_index(void)
     int fastest_divided = 0;
 
     if (mode == CARD_CTRL_VTW_SPEED_FULL) {
+        return (int)VTW_LADDER_COUNT - 2;
+    }
+    if (mode == CARD_CTRL_VTW_SPEED_TURBO) {
         return (int)VTW_LADDER_COUNT - 1;
     }
     if (mode == CARD_CTRL_VTW_SPEED_1MHZ) {

@@ -2230,7 +2230,7 @@ module apple_top(
         (machine_inh_allowed || onee_enable_effective),
         card_slot4_bus_enable,
         card_slot2_bus_enable,
-        card_slot5_bus_enable,
+        (card_slot5_enable && physical_slot_allowed_mask[5]),
         card_slot1_bus_enable,
         card_ssc_bus_enable,
         supersprite_bus_visible,
@@ -2299,9 +2299,9 @@ module apple_top(
         .FAST_ADDR_CLIENT(11)
     )
     apple_bus_write_arbiter_i(
-        // INH is an internal virtual line in ONE//e. The physical wrapper
-        // still receives a zeroed write record while isolation is asserted.
-        .inh_allowed(machine_inh_allowed || onee_enable_effective),
+        // Virtual ownership uses the separate raw arbiter above. Physical
+        // clients require the host grant even while ONE//e is selected.
+        .inh_allowed(machine_inh_allowed),
         .client_writes(policy_gated_client_writes),
         .ab_write(ab_write_arb)
     );

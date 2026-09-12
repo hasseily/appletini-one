@@ -123,17 +123,23 @@ module tb_disk2_woz_rw;
     endtask
 
     integer settled_readiness_holds = 0;
+    integer settled_media_holds = 0;
     // Check the acceptance contract against the live sequencer, including
     // the cycle after a counted step drains its last credit. A stale due-bit
     // snapshot must not let a private read pass a cell/cache/weak-bit wait.
     always @(negedge clk) begin
         if (rstn && ab_read.res && dut.vtw_virtual_time &&
-            dut.vtw_drive_spinning_q && dut.drive_has_media &&
-            dut.active_drive_loaded && dut.track_woz_q) begin
+            dut.vtw_drive_spinning_q) begin
             if (vtw_time_ready || dut.vtw_req_fire)
                 check(dut.vtw_sequencer_ready,
-                      "registered WOZ readiness passed a live sequencer wait");
-            if (!dut.vtw_woz_cell_due_valid_q &&
+                      "registered readiness passed a live media/sequencer wait");
+            if (!dut.vtw_media_snapshot_valid && dut.vtw_ticks_pending_q == 0) begin
+                check(!vtw_time_ready && !vtw_req_ready,
+                      "acceptance passed unsettled media metadata");
+                settled_media_holds++;
+            end
+            if (dut.drive_has_media && dut.active_drive_loaded &&
+                dut.track_woz_q && !dut.vtw_woz_cell_due_valid_q &&
                 dut.vtw_ticks_pending_q == 0) begin
                 check(!vtw_time_ready && !vtw_req_ready,
                       "WOZ acceptance passed an unsettled due-cell snapshot");
@@ -575,6 +581,8 @@ module tb_disk2_woz_rw;
         end
         check(settled_readiness_holds > 0,
               "counted WOZ test did not exercise post-tick readiness holds");
+        check(settled_media_holds > 0,
+              "counted WOZ test did not exercise media metadata holds");
         $display("DISK2 COUNTED WOZ TIME PASS");
 
         // Run the same eight-bit A5 media write and readback through each

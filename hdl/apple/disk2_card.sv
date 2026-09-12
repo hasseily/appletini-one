@@ -363,11 +363,15 @@ module disk2_card (
      * CPU hold: no virtual timeout or disk bit cell advances during it. Empty
      * drives and known unavailable tracks remain live so their normal noise
      * behavior is visible. */
+    logic       vtw_drive_loaded_q;
+    logic       vtw_media_wait_q;
+    logic [1:0] vtw_media_valid_q;
+    wire vtw_media_snapshot_valid = vtw_media_valid_q[1] && !as_client.awvalid;
     wire vtw_media_ready =
         !vtw_active || !enabled || !ab_read.res ||
-        vtw_write_timing_active || !vtw_drive_spinning_q || !drive_has_media ||
-        active_track_unavailable ||
-        (active_drive_loaded && stream_line_hit_q);
+        vtw_write_timing_active || !vtw_drive_spinning_q ||
+        (vtw_media_snapshot_valid &&
+         (!vtw_media_wait_q || (vtw_drive_loaded_q && stream_line_hit_q)));
 
     // A completed TURBO step may represent several classic guest cycles.
     // Replay them through the existing sequencers one at a time; a private
@@ -399,8 +403,9 @@ module disk2_card (
 
     wire vtw_read_not_ready =
         !vtw_q6_after_access && !vtw_q7_after_access &&
-        (track_data_pending ||
-         (!track_woz_q && active_drive_loaded && !stream_line_hit_q));
+        (!vtw_media_snapshot_valid ||
+         (vtw_media_wait_q && !vtw_drive_loaded_q) ||
+         (!track_woz_q && vtw_drive_loaded_q && !stream_line_hit_q));
     /* Register the private request before it touches the controller state.
      * This keeps the vTW classifier and boot-menu ownership decode out of
      * the Disk II stepper, LSS, write, and sound update cones. The response
@@ -425,6 +430,25 @@ module disk2_card (
         (!vtw_active || vtw_native_cycle_active ||
          vtw_write_timing_active) ? ab_read.sss_en :
                                     (vtw_replay_tick || vtw_io_read);
+
+    // Wide track-size and drive/head matches must not feed the CPU's write
+    // enable. Sample only these stable metadata predicates; DDR/current-byte
+    // and weak-bit waits still guard acceptance live. Head/alias selection
+    // has a registered stage, so require two quiet edges after any mutation.
+    always_ff @(posedge clk) begin
+        if (!rstn || !enabled || !ab_read.res) begin
+            vtw_drive_loaded_q <= 1'b0;
+            vtw_media_wait_q <= 1'b0;
+            vtw_media_valid_q <= 2'b00;
+        end else begin
+            vtw_drive_loaded_q <= active_drive_loaded;
+            vtw_media_wait_q <= drive_has_media && !active_track_unavailable;
+            if (disk_cycle_tick || io_read || io_write || as_client.awvalid)
+                vtw_media_valid_q <= 2'b00;
+            else
+                vtw_media_valid_q <= {vtw_media_valid_q[0], 1'b1};
+        end
+    end
 
     assign sound_spinning = drive_spinning;
     assign sound_qtrack = current_qtrack;
@@ -555,12 +579,14 @@ module disk2_card (
            (!vtw_woz_cell_due || woz_cached_ready_q))));
     assign vtw_accept_sequencer_ready =
         !vtw_virtual_time || !enabled || !ab_read.res ||
-        !vtw_drive_spinning_q || !drive_has_media || active_track_unavailable ||
-        (active_drive_loaded && vtw_stream_current &&
-         (!track_woz_q ||
-          (!woz_weak_refill_pending_q && woz_weak_refill_stage_q == 2'd0 &&
-           vtw_woz_cell_due_valid_q &&
-           (!vtw_woz_cell_due_q || woz_cached_ready_q))));
+        !vtw_drive_spinning_q ||
+        (vtw_media_snapshot_valid &&
+         (!vtw_media_wait_q ||
+          (vtw_drive_loaded_q && vtw_stream_current &&
+           (!track_woz_q ||
+            (!woz_weak_refill_pending_q && woz_weak_refill_stage_q == 2'd0 &&
+             vtw_woz_cell_due_valid_q &&
+             (!vtw_woz_cell_due_q || woz_cached_ready_q))))));
     wire vtw_prepare_woz = vtw_virtual_time && enabled && ab_read.res &&
         drive_spinning && active_drive_loaded && vtw_stream_current &&
         vtw_woz_cell_due && !woz_cached_ready_q;

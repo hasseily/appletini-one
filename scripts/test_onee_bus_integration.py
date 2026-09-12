@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -101,10 +102,24 @@ def static_checks() -> None:
         "            vtw_ab_write," in top,
         "split virtual and physical arbiters must keep the motherboard at index 12",
     )
+    physical_arbiter = re.search(r"\bapple_bus_write_arbiter_i\s*\((.*?)\);", top, re.S)
+    virtual_arbiter = re.search(r"\bapple_virtual_bus_write_arbiter_i\s*\((.*?)\);", top, re.S)
+    require(physical_arbiter is not None and virtual_arbiter is not None,
+            "physical and virtual arbiters must remain separate instances")
+    physical_ports = " ".join(physical_arbiter.group(1).split()) if physical_arbiter else ""
+    virtual_ports = " ".join(virtual_arbiter.group(1).split()) if virtual_arbiter else ""
     require(
-        ".inh_allowed(machine_inh_allowed || onee_enable_effective)" in top and
+        ".inh_allowed(machine_inh_allowed)" in physical_ports and
+        ".client_writes(policy_gated_client_writes)" in physical_ports and
+        ".inh_allowed(1'b1)" in virtual_ports and
+        ".ab_write(virtual_ab_write_arb)" in virtual_ports and
         "assign ab_write = physical_bus_isolate ? '0 : ab_write_arb;" in top,
-        "ONE//e must allow internal INH while preserving physical masking",
+        "virtual ownership must not grant physical ownership or bypass isolation",
+    )
+    require(
+        "card_slot2_bus_enable, (card_slot5_enable && physical_slot_allowed_mask[5]), "
+        "card_slot1_bus_enable," in normalized_top,
+        "physical Appli-Card client 7 must use slot-5 host permission without a ONE//e grant",
     )
     require(
         ".vtw_enabled(vtw_enable_eff || onee_enable_effective)" in top,

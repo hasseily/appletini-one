@@ -506,6 +506,22 @@ module tb_apple_cycle_capture;
         int accepted;
         soft_reset_dut();
         $display("TEST: TURBO direct ordering, mirror suppression, and backpressure");
+        // Even a DATA edge with no physical record reserves the packing
+        // stage. Readiness must depend on the strobe, not its late decode.
+        @(negedge clk);
+        ab_read.data_en = 1'b1;
+        ab_read.addr = 16'h1000;
+        ab_read.rw = 1'b1;
+        frame_en = 1'b0;
+        #1;
+        check(!dut.io_push_request && !dut.apple_push_request,
+              "plain DATA edge has no capture record");
+        check(!direct_ready, "plain DATA edge reserves direct acceptance");
+        @(posedge clk); #1;
+        @(negedge clk); ab_read.data_en = 1'b0;
+        #1;
+        check(direct_ready, "plain DATA edge releases direct acceptance");
+        check(cycle_capture_empty, "plain DATA edge queues no record");
         // A physical frame event is older than the direct byte offered on
         // that edge. It must survive the one-clock packing pipeline first.
         @(negedge clk);

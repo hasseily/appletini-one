@@ -291,12 +291,14 @@ module apple_cycle_capture (
     end
 
     // Reserve space for physical frame/IO records, which cannot wait for
-    // the ARM consumer. Also wait for records being captured this edge:
-    // a direct byte must not overtake their one-clock packing pipeline.
+    // the ARM consumer. Reserve every DATA edge for physical capture:
+    // a direct byte must not overtake its one-clock packing pipeline.
+    // The DATA strobe covers every raw record source without placing the
+    // address/overlay decode on the direct-write acceptance path.
     assign direct_ready = resetn && !soft_reset && !fifo_full &&
         (fifo_write_count < 13'(FIFO_DEPTH - 32)) &&
         !pending_record_valid && !io_push_request_q &&
-        !apple_push_request_q && !io_push_request && !apple_push_request;
+        !apple_push_request_q && !ab_read.data_en;
     wire direct_push = (direct_valid === 1'b1) && direct_ready;
 
     // Combined push request -- used for the drop-sticky check below.

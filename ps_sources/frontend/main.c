@@ -3557,8 +3557,27 @@ int main(void)
         uart_puts(UART0_BASE, "TMP102 init failed (temp unavailable)\r\n");
     }
     if (g_i2c_ready) {
-        (void)rtc_pcf8563_read_time(&g_i2c, &g_rtc);
+        char line[112];
+        const int rtc_rc = rtc_pcf8563_read_time(&g_i2c, &g_rtc);
+
         no_slot_clock_control_publish_rtc(&g_rtc);
+        /* Boot-time RTC evidence: a set VL bit here means the PCF8563 lost
+         * its supply since the time was last written. The raw fields show
+         * whether the chip kept counting or came up from power-on reset. */
+        (void)snprintf(line,
+                       sizeof(line),
+                       "RTC boot read: rc=%d valid=%u status=0x%02X "
+                       "%04u-%02u-%02u %02u:%02u:%02u\r\n",
+                       rtc_rc,
+                       (unsigned)g_rtc.valid,
+                       (unsigned)g_rtc.status,
+                       (unsigned)g_rtc.year,
+                       (unsigned)g_rtc.month,
+                       (unsigned)g_rtc.day,
+                       (unsigned)g_rtc.hour,
+                       (unsigned)g_rtc.min,
+                       (unsigned)g_rtc.sec);
+        uart_puts(UART0_BASE, line);
     }
     if (usb_storage_service_init() != 0) {
         uart_puts(UART0_BASE, "USB storage service: disabled\r\n");

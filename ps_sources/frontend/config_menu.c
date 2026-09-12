@@ -4002,7 +4002,12 @@ static void config_menu_try_read_rtc(config_menu_t *menu, uint8_t visible_status
         if (rc != 0) {
             snprintf(text, sizeof(text), "RTC I2C READ FAILED RC=%d", rc);
         } else if ((now.status & RTC_PCF8563_STATUS_VOLTAGE_LOW) != 0U) {
-            snprintf(text, sizeof(text), "RTC VL FLAG SET: WRITE TIME TO CLEAR");
+            /* Show the raw registers: a plausible date means the chip kept
+             * counting through a supply dip; 2000-01-01 or garbage means a
+             * full power-on reset (no backup supply reached the PCF8563). */
+            snprintf(text, sizeof(text), "RTC VL SET (%04u-%02u-%02u %02u:%02u:%02u): WRITE TIME TO CLEAR",
+                     (unsigned)now.year, (unsigned)now.month, (unsigned)now.day,
+                     (unsigned)now.hour, (unsigned)now.min, (unsigned)now.sec);
         } else if ((now.status & RTC_PCF8563_STATUS_BAD_FIELD) != 0U) {
             snprintf(text, sizeof(text), "RTC BAD TIME %04u-%02u-%02u %02u:%02u:%02u",
                      (unsigned)now.year, (unsigned)now.month, (unsigned)now.day,
@@ -4619,6 +4624,15 @@ static void config_menu_clamp_item(config_menu_t *menu)
     }
 }
 
+static void config_menu_on_tab_entered(config_menu_t *menu)
+{
+    if (menu->tab == CONFIG_TAB_CLOCK) {
+        /* Refresh the fields from hardware so the tab opens on the live
+         * time instead of the copy taken when the menu opened. */
+        config_menu_try_read_rtc(menu, 0U);
+    }
+}
+
 static void config_menu_next_tab(config_menu_t *menu)
 {
     if (menu == NULL) {
@@ -4627,6 +4641,7 @@ static void config_menu_next_tab(config_menu_t *menu)
     menu->tab = (menu->tab + 1U) % CONFIG_TAB_COUNT;
     menu->item_focus = 0U;
     config_menu_clamp_item(menu);
+    config_menu_on_tab_entered(menu);
 }
 
 static void config_menu_prev_tab(config_menu_t *menu)
@@ -4637,6 +4652,7 @@ static void config_menu_prev_tab(config_menu_t *menu)
     menu->tab = (menu->tab == 0U) ? (CONFIG_TAB_COUNT - 1U) : (menu->tab - 1U);
     menu->item_focus = 0U;
     config_menu_clamp_item(menu);
+    config_menu_on_tab_entered(menu);
 }
 
 static void config_menu_next_item(config_menu_t *menu)
@@ -6916,6 +6932,9 @@ void config_menu_set_active(config_menu_t *menu, uint8_t active)
         menu->onee_persist_retry_polls = 0U;
         config_menu_retry_settings_if_needed(menu);
         config_menu_refresh_smartport_media_after_menu_sd(menu);
+        /* Load the live hardware time so the Clock tab shows the RTC, not
+         * the session default or a stale copy from the last open. */
+        config_menu_try_read_rtc(menu, 0U);
     } else {
         config_menu_stop_usb0_sd_remote(menu);
         menu->usb_owned = 0U;

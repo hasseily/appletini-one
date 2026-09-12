@@ -559,7 +559,7 @@ static const help_override_t transwarp_overrides[] = {
 /* ======================================================================== */
 HELP(clock,
     "Clock exposes the PCF8563 real-time clock as a \"no-slot\" clock for Apple software.",
-    "\"Read RTC\" loads hardware time into the fields; \"Write RTC\" stores the edited date and time.",
+    "The fields load the hardware time when the tab opens; \"Read RTC\" reloads them, \"Write RTC\" stores edits.",
     "The clock is battery-backed and keeps time when the Appletini ONE is powered off.",
     "Check the CR2032 coin battery voltage regularly, and replace it when it drops below 2.5V.");
 

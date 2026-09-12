@@ -375,6 +375,7 @@ module disk2_card (
     logic [4:0] vtw_ticks_pending_q;
     logic [12:0] stream_line_pos_q;
     wire vtw_sequencer_ready;
+    wire vtw_accept_sequencer_ready;
     wire vtw_virtual_time = vtw_active && !vtw_native_cycle_active &&
                             !vtw_write_timing_active;
     wire [3:0] vtw_tick_count = (vtw_cycle_ticks == 4'd0) ? 4'd1 : vtw_cycle_ticks;
@@ -382,7 +383,7 @@ module disk2_card (
     wire vtw_replay_tick = vtw_virtual_time && vtw_tick_available &&
                            vtw_sequencer_ready;
     assign vtw_time_ready = !vtw_active || !enabled || !ab_read.res ||
-        (vtw_media_ready && vtw_sequencer_ready &&
+        (vtw_media_ready && vtw_accept_sequencer_ready &&
          vtw_ticks_pending_q == 5'd0 &&
          !(vtw_cycle_tick && vtw_tick_count > 4'd1));
 
@@ -408,7 +409,7 @@ module disk2_card (
         enabled && ab_read.res && !vtw_req_pending_q &&
         !vtw_resp_valid && !vtw_read_not_ready &&
         vtw_ticks_pending_q == 5'd0 && !vtw_cycle_tick &&
-        vtw_sequencer_ready;
+        vtw_accept_sequencer_ready;
     wire vtw_req_fire = vtw_req_valid && vtw_req_ready;
     wire vtw_io_read = vtw_req_pending_q;
     wire io_read = ab_io_read || vtw_io_read;
@@ -528,6 +529,23 @@ module disk2_card (
                               stream_line_pos_q == active_stream_pos;
     wire vtw_woz_cell_due = track_woz_q &&
         woz_accum_plus_cycle >= {9'h000, woz_effective_bit_timing};
+    logic vtw_woz_cell_due_q;
+    logic vtw_woz_cell_due_valid_q;
+    // The accumulator add/compare stays in the local replay path. A CPU or
+    // private-read acceptance uses a registered view, invalidated on every
+    // event that can change the accumulator or its track/timing context.
+    // A quiet edge then samples the new state. Keep DDR and weak-bit guards
+    // live so a previously ready snapshot cannot pass a new pipeline wait.
+    always_ff @(posedge clk) begin
+        if (!rstn || !enabled || !ab_read.res ||
+            disk_cycle_tick || io_read || io_write || as_client.awvalid) begin
+            vtw_woz_cell_due_q <= 1'b0;
+            vtw_woz_cell_due_valid_q <= 1'b0;
+        end else begin
+            vtw_woz_cell_due_q <= vtw_woz_cell_due;
+            vtw_woz_cell_due_valid_q <= 1'b1;
+        end
+    end
     assign vtw_sequencer_ready =
         !vtw_virtual_time || !enabled || !ab_read.res ||
         !vtw_drive_spinning_q || !drive_has_media || active_track_unavailable ||
@@ -535,6 +553,14 @@ module disk2_card (
          (!track_woz_q ||
           (!woz_weak_refill_pending_q && woz_weak_refill_stage_q == 2'd0 &&
            (!vtw_woz_cell_due || woz_cached_ready_q))));
+    assign vtw_accept_sequencer_ready =
+        !vtw_virtual_time || !enabled || !ab_read.res ||
+        !vtw_drive_spinning_q || !drive_has_media || active_track_unavailable ||
+        (active_drive_loaded && vtw_stream_current &&
+         (!track_woz_q ||
+          (!woz_weak_refill_pending_q && woz_weak_refill_stage_q == 2'd0 &&
+           vtw_woz_cell_due_valid_q &&
+           (!vtw_woz_cell_due_q || woz_cached_ready_q))));
     wire vtw_prepare_woz = vtw_virtual_time && enabled && ab_read.res &&
         drive_spinning && active_drive_loaded && vtw_stream_current &&
         vtw_woz_cell_due && !woz_cached_ready_q;

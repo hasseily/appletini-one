@@ -57,7 +57,7 @@ state invalidate both caches; harmless I/O polling retains cached RAM.
 This preserves soft-switch ordering, language-card double-access rules,
 and C8 ROM ownership. ARM shadow writes, RAMWorks DMA hold requests, resets,
 mode changes, and changes to write-through policy also invalidate caches.
-PSRAM and private-card responses never enter the byte cache.
+PSRAM and private-card responses never enter the word cache.
 
 The CPU keeps one set of architectural registers when modes change. TURBO
 can retire ordinary implied and accumulator instructions at opcode fetch,

@@ -45,8 +45,8 @@ module vtw_turbo_cache #(
     localparam int TAG_BITS = 16 - BYTE_INDEX_BITS;
     localparam int MAP_COUNT = 2 << MAP_INDEX_BITS;
     (* ram_style = "distributed" *) logic [18:0] map_mem [0:MAP_COUNT-1];
-    (* ram_style = "distributed" *) logic [31:0] word_mem [0:WORD_COUNT-1];
     (* ram_style = "distributed" *) logic [TAG_BITS+9:0] word_tag_mem [0:WORD_COUNT-1];
+    wire [31:0] read_word;
     logic [MAP_COUNT-1:0] map_valid_q;
     logic [WORD_COUNT-1:0] word_valid_q;
 
@@ -77,7 +77,7 @@ module vtw_turbo_cache #(
     assign write_valid = map_valid_q[map_index];
     assign write_tag = map_entry[18:11];
     assign write_fast = map_entry[10];
-    assign rdata = word_mem[word_index][8*addr[1:0] +: 8];
+    assign rdata = read_word[8*addr[1:0] +: 8];
     assign write_phys = {map_entry[9:0], addr[7:0]};
 
     wire [MAP_INDEX_BITS:0] fill_map_index = {map_rw, page_set(map_addr[15:8])};
@@ -100,14 +100,20 @@ module vtw_turbo_cache #(
         end
     end
 
+    // Give each lane one inferred LUT-RAM write port. Separate arrays and
+    // an explicit address mux prevent fill/snoop from becoming two ports
+    // on a shared word array and falling back to registers.
+    wire data_fill = byte_fill && !snoop_write;
+    wire [WORD_INDEX_BITS-1:0] data_write_index = snoop_write ? snoop_index : fill_index;
     for (genvar lane = 0; lane < 4; lane++) begin : data_lane
+        (* ram_style = "distributed" *) logic [7:0] byte_mem [0:WORD_COUNT-1];
+        wire lane_write = !invalidate &&
+            (data_fill || (snoop_write && snoop_hit && snoop_addr[1:0] == 2'(lane)));
+        wire [7:0] lane_wdata = snoop_write ? snoop_data : word_data[8*lane +: 8];
+        assign read_word[8*lane +: 8] = byte_mem[word_index];
         always_ff @(posedge clk) begin
-            if (!invalidate) begin
-                if (snoop_write && snoop_hit && snoop_addr[1:0] == 2'(lane))
-                    word_mem[snoop_index][8*lane +: 8] <= snoop_data;
-                else if (byte_fill && !snoop_write)
-                    word_mem[fill_index][8*lane +: 8] <= word_data[8*lane +: 8];
-            end
+            if (lane_write)
+                byte_mem[data_write_index] <= lane_wdata;
         end
     end
 

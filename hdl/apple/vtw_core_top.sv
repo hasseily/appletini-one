@@ -1224,9 +1224,12 @@ module vtw_core_top (
      * memory, and a held core's outputs must not scribble on it. */
     assign shadow_a_en   = core_shadow_issue || floating_scan_issue ||
                           turbo_shadow_write || turbo_shadow_read;
+    // Address selection depends only on the captured request. Completion
+    // permission gates the write enable, not the RAM address or snoop tag.
+    wire turbo_write_address = (xstate_q == X_TURBO_DONE) && !cycle_rw_q;
     assign shadow_a_addr = floating_scan_issue
                          ? {2'b00, floating_scan_addr_q}
-                         : turbo_shadow_write ? turbo_write_phys_q : xl_shadow_phys;
+                         : turbo_write_address ? turbo_write_phys_q : xl_shadow_phys;
     assign shadow_a_we   = (core_shadow_issue && xl_is_write) || turbo_shadow_write;
 
     always_ff @(posedge clk) begin

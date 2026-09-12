@@ -122,6 +122,26 @@ module tb_disk2_woz_rw;
             $fatal(1, "FAIL: %s", msg);
     endtask
 
+    integer settled_readiness_holds = 0;
+    // Check the acceptance contract against the live sequencer, including
+    // the cycle after a counted step drains its last credit. A stale due-bit
+    // snapshot must not let a private read pass a cell/cache/weak-bit wait.
+    always @(negedge clk) begin
+        if (rstn && ab_read.res && dut.vtw_virtual_time &&
+            dut.vtw_drive_spinning_q && dut.drive_has_media &&
+            dut.active_drive_loaded && dut.track_woz_q) begin
+            if (vtw_time_ready || dut.vtw_req_fire)
+                check(dut.vtw_sequencer_ready,
+                      "registered WOZ readiness passed a live sequencer wait");
+            if (!dut.vtw_woz_cell_due_valid_q &&
+                dut.vtw_ticks_pending_q == 0) begin
+                check(!vtw_time_ready && !vtw_req_ready,
+                      "WOZ acceptance passed an unsettled due-cell snapshot");
+                settled_readiness_holds++;
+            end
+        end
+    end
+
     task automatic counted_ticks(input integer count);
         integer remaining_ticks;
         integer batch_ticks;
@@ -553,6 +573,8 @@ module tb_disk2_woz_rw;
             check(dut.underrun_count_q == 0,
                   "counted WOZ ticks outran the DDR/weak-bit pipeline");
         end
+        check(settled_readiness_holds > 0,
+              "counted WOZ test did not exercise post-tick readiness holds");
         $display("DISK2 COUNTED WOZ TIME PASS");
 
         // Run the same eight-bit A5 media write and readback through each

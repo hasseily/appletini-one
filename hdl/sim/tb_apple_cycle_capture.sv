@@ -27,6 +27,11 @@ module tb_apple_cycle_capture;
     logic            capture_drop_ack = 1'b0;
     logic            overlay_capture_drop_sticky;
     logic            shr_capture_active;
+    logic            direct_valid = 1'b0;
+    logic [16:0]     direct_addr = '0;
+    logic [7:0]      direct_data = '0;
+    logic            direct_ready;
+    logic            suppress_bus_writes = 1'b0;
 
     int failures = 0;
 
@@ -45,6 +50,11 @@ module tb_apple_cycle_capture;
         .overlay_capture_bank_aux(overlay_capture_bank_aux),
         .overlay_capture_base(overlay_capture_base),
         .overlay_capture_limit(overlay_capture_limit),
+        .direct_valid(direct_valid),
+        .direct_addr(direct_addr),
+        .direct_data(direct_data),
+        .direct_ready(direct_ready),
+        .suppress_bus_writes(suppress_bus_writes),
         .cycle_capture_data(cycle_capture_data),
         .cycle_capture_rd_en(cycle_capture_rd_en),
         .cycle_capture_empty(cycle_capture_empty),
@@ -78,6 +88,8 @@ module tb_apple_cycle_capture;
             overlay_capture_bank_aux = 1'b0;
             overlay_capture_base = '0;
             overlay_capture_limit = '0;
+            direct_valid = 1'b0;
+            suppress_bus_writes = 1'b0;
             @(posedge clk);
             #1;
         end
@@ -489,6 +501,82 @@ module tb_apple_cycle_capture;
         end
     endtask
 
+    task automatic test_direct_video;
+        AppleCycleRecord got;
+        int accepted;
+        soft_reset_dut();
+        $display("TEST: TURBO direct ordering, mirror suppression, and backpressure");
+        // A physical frame event is older than the direct byte offered on
+        // that edge. It must survive the one-clock packing pipeline first.
+        @(negedge clk);
+        frame_en = 1'b1;
+        ab_read.data_en = 1'b1;
+        ab_read.rw = 1'b1;
+        line_in_frame = 9'd12;
+        direct_valid = 1'b1;
+        direct_addr = 17'h12000;
+        direct_data = 8'hA7;
+        #1;
+        check(!direct_ready, "direct cannot overtake raw physical frame");
+        @(posedge clk); #1;
+        @(negedge clk);
+        frame_en = 1'b0;
+        ab_read.data_en = 1'b0;
+        while (!direct_ready) begin @(posedge clk); #1; end
+        @(posedge clk); #1;
+        @(negedge clk); direct_valid = 1'b0;
+        pop_record(got);
+        check(got.frame_en && got.line_in_frame == 9'd12,
+              "physical frame precedes direct record");
+        pop_record(got);
+        check(got.addr_decode_en && got.addr_decode == 24'h012000 &&
+              got.data == 8'hA7 && !got.frame_en, "direct AUX write record");
+
+        // A delayed old motherboard copy must not overwrite the new byte
+        // in the renderer shadow. Its contemporaneous frame half stays.
+        suppress_bus_writes = 1'b1;
+        ab_read.addr = 16'h2000;
+        ab_read.rw = 1'b0;
+        ab_read.data = 8'h11;
+        sss.addr_decode_late = 24'h012000;
+        sss.addr_decode_late_en = 1'b1;
+        frame_en = 1'b1;
+        push_cycle();
+        pop_record(got);
+        check(got.frame_en && !got.addr_decode_en,
+              "delayed mirror loses memory half only");
+
+        // Overlay commands remain ordered and visible during suppression.
+        overlay_devsel_enabled = 1'b1;
+        ab_read.addr = 16'hC0F3;
+        ab_read.data = 8'h02;
+        sss.addr_decode_late_en = 1'b0;
+        push_cycle();
+        pop_record(got);
+        check(got.record_kind == RECORD_KIND_IO_WRITE,
+              "overlay command remains visible in direct mode");
+
+        soft_reset_dut();
+        accepted = 0;
+        @(negedge clk); direct_valid = 1'b1;
+        repeat (4100) begin
+            direct_addr = 17'h00400 + 17'(accepted);
+            direct_data = 8'(accepted);
+            if (direct_ready) accepted++;
+            @(posedge clk); #1;
+            @(negedge clk);
+        end
+        direct_valid = 1'b0;
+        check(accepted == 4064, "direct records reserve 32 physical FIFO slots");
+        check(!capture_drop_sticky, "direct backpressure does not drop records");
+        for (int i = 0; i < accepted; i++) begin
+            pop_record(got);
+            check(got.addr_decode == 24'h000400 + 24'(i) && got.data == 8'(i),
+                  "all accepted direct records retain order");
+        end
+        check(cycle_capture_empty, "all direct records drain exactly once");
+    endtask
+
     initial begin
         repeat (4) @(posedge clk);
         @(negedge clk);
@@ -505,6 +593,7 @@ module tb_apple_cycle_capture;
         test_pending_drop_set_wins();
         test_full_and_overlay_drop();
         test_c029_and_soft_reset();
+        test_direct_video();
 
         if (failures == 0)
             $display("APPLE CYCLE CAPTURE PASS");

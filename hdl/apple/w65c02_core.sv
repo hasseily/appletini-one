@@ -36,6 +36,9 @@ module w65c02_core #(
     output logic        waiting,
     output logic        stopped,
     output logic        instruction_done,
+    // Classic guest cycles represented by this step, including skipped RAM
+    // reads. Sample only when enable && ready accepts the current bus cycle.
+    output logic [3:0]  cycle_ticks,
 
     input  logic        debug_load,
     input  logic [15:0] debug_pc_in,
@@ -896,6 +899,76 @@ module w65c02_core #(
     decode_t fetch_decode;
     assign fetch_decode = decode_opcode(data_in);
 
+    wire fetch_interrupt = nmi_pending_q || nmi_edge || (!irq_n && !p_q[P_I]);
+    wire turbo_fetch_skip_pc = turbo_requested && !fetch_interrupt &&
+                               !fetch_decode.one_cycle &&
+                               relative_base[15:12] != 4'hC;
+    wire abs_index_cross = (mode_q == AM_ABSX) ? index_sum_x[8] : index_sum_y[8];
+    wire abs_index_dummy = kind_q == KIND_WRITE ||
+                           (kind_q == KIND_RMW && (op_q == OP_INC || op_q == OP_DEC)) ||
+                           abs_index_cross;
+    // Same-page STA reads the destination; other indexed dummy cycles read
+    // the last instruction byte. Preserve either address when it is I/O.
+    wire turbo_skip_abs_dummy = turbo_instruction && abs_index_dummy &&
+        ((op_q == OP_STA && !abs_index_cross) ? data_in[7:4] != 4'hC
+                                             : pc_q[15:12] != 4'hC);
+    wire [15:0] previous_pc = pc_q - 16'd1;
+    wire turbo_skip_indy_dummy = turbo_instruction && previous_pc[15:12] != 4'hC;
+    wire turbo_skip_rmw_dummy = turbo_instruction && ea_q[15:12] != 4'hC;
+    wire turbo_skip_rts_final = turbo_instruction && data_in[7:4] != 4'hC;
+
+    // Account for classic time at the edge that removes subsequent dummy
+    // reads. Device logic can drain these ticks before the next CPU access;
+    // a stalled step must not consume any ticks. Classic mode always emits 1.
+    always_comb begin
+        cycle_ticks = 4'd1;
+        case (state_q)
+            ST_FETCH: begin
+                if (turbo_fetch_skip_pc) begin
+                    case (fetch_decode.op)
+                        OP_PHP, OP_PHA, OP_PHX, OP_PHY: cycle_ticks = 4'd2;
+                        OP_PLP, OP_PLA, OP_PLX, OP_PLY, OP_RTS, OP_RTI:
+                            cycle_ticks = 4'd3;
+                        OP_BRK, OP_JSR, OP_WAI, OP_STP: begin end
+                        default: begin
+                            if (fetch_decode.mode == AM_IMP || fetch_decode.mode == AM_ACC)
+                                cycle_ticks = 4'd2;
+                        end
+                    endcase
+                end
+            end
+            ST_OPERAND: begin
+                if (turbo_instruction) begin
+                    case (mode_q)
+                        AM_ZPX, AM_ZPY, AM_INDX: cycle_ticks = 4'd2;
+                        AM_REL: begin
+                            if (branch_taken(op_q, p_q) && relative_base[15:12] != 4'hC)
+                                cycle_ticks = (relative_base[15:8] != relative_target[15:8])
+                                            ? 4'd3 : 4'd2;
+                        end
+                        default: begin end
+                    endcase
+                end
+            end
+            ST_ABS_HI: begin
+                if ((mode_q == AM_ABSX || mode_q == AM_ABSY) && turbo_skip_abs_dummy)
+                    cycle_ticks = 4'd2;
+            end
+            ST_PTR_HI: begin
+                if (mode_q == AM_INDY && (kind_q == KIND_WRITE || index_sum_y[8]) &&
+                    turbo_skip_indy_dummy)
+                    cycle_ticks = 4'd2;
+            end
+            ST_RMW_READ: if (turbo_skip_rmw_dummy) cycle_ticks = 4'd2;
+            ST_JSR_LOW,
+            ST_PULL_DUMMY_PC,
+            ST_RTS_DUMMY_PC,
+            ST_RTI_DUMMY_PC: if (turbo_instruction) cycle_ticks = 4'd2;
+            ST_RTS_PULL_HI: if (turbo_skip_rts_final) cycle_ticks = 4'd2;
+            default: begin end
+        endcase
+    end
+
     assign debug_pc = pc_q;
     assign debug_s  = s_q;
     assign debug_a  = a_q;
@@ -1180,8 +1253,7 @@ module w65c02_core #(
                         mode_q <= fetch_decode.mode;
                         kind_q <= kind_for_op(fetch_decode.op);
 
-                        if (nmi_pending_q || nmi_edge ||
-                            (!irq_n && !p_q[P_I])) begin
+                        if (fetch_interrupt) begin
                             op_q <= OP_NOP;
                             vector_q <= (nmi_pending_q || nmi_edge)
                                       ? 16'hFFFA : 16'hFFFE;
@@ -1200,12 +1272,26 @@ module w65c02_core #(
                                         state_q <= ST_BRK_SIGNATURE;
                                     end
                                     OP_JSR: state_q <= ST_JSR_LOW;
-                                    OP_RTS: state_q <= ST_RTS_DUMMY_PC;
-                                    OP_RTI: state_q <= ST_RTI_DUMMY_PC;
+                                    OP_RTS: begin
+                                        if (turbo_fetch_skip_pc) begin
+                                            s_q <= s_q + 8'd1;
+                                            state_q <= ST_RTS_PULL_LO;
+                                        end else state_q <= ST_RTS_DUMMY_PC;
+                                    end
+                                    OP_RTI: begin
+                                        if (turbo_fetch_skip_pc) begin
+                                            s_q <= s_q + 8'd1;
+                                            state_q <= ST_RTI_PULL_P;
+                                        end else state_q <= ST_RTI_DUMMY_PC;
+                                    end
                                     OP_PHP, OP_PHA, OP_PHX, OP_PHY:
-                                        state_q <= ST_PUSH_DUMMY;
-                                    OP_PLP, OP_PLA, OP_PLX, OP_PLY:
-                                        state_q <= ST_PULL_DUMMY_PC;
+                                        state_q <= turbo_fetch_skip_pc ? ST_PUSH_WRITE : ST_PUSH_DUMMY;
+                                    OP_PLP, OP_PLA, OP_PLX, OP_PLY: begin
+                                        if (turbo_fetch_skip_pc) begin
+                                            s_q <= s_q + 8'd1;
+                                            state_q <= ST_PULL_READ;
+                                        end else state_q <= ST_PULL_DUMMY_PC;
+                                    end
                                     OP_WAI: state_q <= ST_WAI_DUMMY;
                                     OP_STP: state_q <= ST_STP_DUMMY;
                                     default: begin
@@ -1214,8 +1300,7 @@ module w65c02_core #(
                                                 // The discarded implied read
                                                 // uses PC+1. Keep it if that
                                                 // address can change Apple I/O.
-                                                if (turbo_requested &&
-                                                    relative_base[15:12] != 4'hC) begin
+                                                if (turbo_fetch_skip_pc) begin
                                                     apply_implied(fetch_decode.op);
                                                     instruction_done <= 1'b1;
                                                     state_q <= ST_FETCH;
@@ -1374,12 +1459,10 @@ module w65c02_core #(
                             else
                                 page_cross_q <= index_sum_y[8];
 
-                            if (kind_q == KIND_WRITE ||
-                                ((kind_q == KIND_RMW) &&
-                                 (op_q == OP_INC || op_q == OP_DEC)) ||
-                                ((mode_q == AM_ABSX) && index_sum_x[8]) ||
-                                ((mode_q == AM_ABSY) && index_sum_y[8])) begin
+                            if (abs_index_dummy && !turbo_skip_abs_dummy) begin
                                 state_q <= ST_INDEX_DUMMY;
+                            end else if (kind_q == KIND_WRITE) begin
+                                state_q <= ST_MEM_WRITE;
                             end else if (kind_q == KIND_RMW) begin
                                 state_q <= ST_RMW_READ;
                             end else begin
@@ -1417,8 +1500,11 @@ module w65c02_core #(
                         if (mode_q == AM_INDY) begin
                             ea_q <= {data_in, lo_q} + {8'h00, y_q};
                             page_cross_q <= index_sum_y[8];
-                            if (kind_q == KIND_WRITE || index_sum_y[8])
+                            if ((kind_q == KIND_WRITE || index_sum_y[8]) &&
+                                !turbo_skip_indy_dummy)
                                 state_q <= ST_INDEX_DUMMY;
+                            else if (kind_q == KIND_WRITE)
+                                state_q <= ST_MEM_WRITE;
                             else
                                 state_q <= ST_MEM_READ;
                         end else begin
@@ -1472,7 +1558,7 @@ module w65c02_core #(
                     ST_RMW_READ: begin
                         data_q <= data_in;
                         prepare_rmw(data_in);
-                        state_q <= ST_RMW_MODIFY;
+                        state_q <= turbo_skip_rmw_dummy ? ST_RMW_WRITE : ST_RMW_MODIFY;
                     end
                     ST_RMW_MODIFY: state_q <= ST_RMW_WRITE;
                     ST_RMW_WRITE: begin
@@ -1539,7 +1625,12 @@ module w65c02_core #(
                         state_q <= ST_FETCH;
                     end
 
-                    ST_PULL_DUMMY_PC: state_q <= ST_PULL_DUMMY_STACK;
+                    ST_PULL_DUMMY_PC: begin
+                        if (turbo_instruction) begin
+                            s_q <= s_q + 8'd1;
+                            state_q <= ST_PULL_READ;
+                        end else state_q <= ST_PULL_DUMMY_STACK;
+                    end
                     ST_PULL_DUMMY_STACK: begin
                         s_q <= s_q + 8'd1;
                         state_q <= ST_PULL_READ;
@@ -1559,7 +1650,9 @@ module w65c02_core #(
                     ST_JSR_LOW: begin
                         lo_q <= data_in;
                         pc_q <= pc_q + 16'd1;
-                        state_q <= ST_JSR_STACK_DUMMY;
+                        // Keep the operand-high read after both writes: a JSR
+                        // executing in stack memory can overwrite that byte.
+                        state_q <= turbo_instruction ? ST_JSR_PUSH_HI : ST_JSR_STACK_DUMMY;
                     end
                     ST_JSR_STACK_DUMMY: state_q <= ST_JSR_PUSH_HI;
                     ST_JSR_PUSH_HI: begin s_q <= s_q - 8'd1; state_q <= ST_JSR_PUSH_LO; end
@@ -1570,17 +1663,36 @@ module w65c02_core #(
                         state_q <= ST_FETCH;
                     end
 
-                    ST_RTS_DUMMY_PC: state_q <= ST_RTS_DUMMY_STACK;
+                    ST_RTS_DUMMY_PC: begin
+                        if (turbo_instruction) begin
+                            s_q <= s_q + 8'd1;
+                            state_q <= ST_RTS_PULL_LO;
+                        end else state_q <= ST_RTS_DUMMY_STACK;
+                    end
                     ST_RTS_DUMMY_STACK: begin s_q <= s_q + 8'd1; state_q <= ST_RTS_PULL_LO; end
                     ST_RTS_PULL_LO: begin lo_q <= data_in; s_q <= s_q + 8'd1; state_q <= ST_RTS_PULL_HI; end
-                    ST_RTS_PULL_HI: begin pc_q <= {data_in, lo_q}; state_q <= ST_RTS_FINAL; end
+                    ST_RTS_PULL_HI: begin
+                        if (turbo_skip_rts_final) begin
+                            pc_q <= {data_in, lo_q} + 16'd1;
+                            instruction_done <= 1'b1;
+                            state_q <= ST_FETCH;
+                        end else begin
+                            pc_q <= {data_in, lo_q};
+                            state_q <= ST_RTS_FINAL;
+                        end
+                    end
                     ST_RTS_FINAL: begin
                         pc_q <= pc_q + 16'd1;
                         instruction_done <= 1'b1;
                         state_q <= ST_FETCH;
                     end
 
-                    ST_RTI_DUMMY_PC: state_q <= ST_RTI_DUMMY_STACK;
+                    ST_RTI_DUMMY_PC: begin
+                        if (turbo_instruction) begin
+                            s_q <= s_q + 8'd1;
+                            state_q <= ST_RTI_PULL_P;
+                        end else state_q <= ST_RTI_DUMMY_STACK;
+                    end
                     ST_RTI_DUMMY_STACK: begin s_q <= s_q + 8'd1; state_q <= ST_RTI_PULL_P; end
                     ST_RTI_PULL_P: begin p_q <= normalize_p(data_in) & 8'hEF; s_q <= s_q + 8'd1; state_q <= ST_RTI_PULL_LO; end
                     ST_RTI_PULL_LO: begin lo_q <= data_in; s_q <= s_q + 8'd1; state_q <= ST_RTI_PULL_HI; end

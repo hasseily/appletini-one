@@ -219,6 +219,8 @@ module vtw_bus_engine #(
     input  logic [7:0]              post_wdata,
     output logic                    post_full,        // stall the core CE
     output logic [POST_DEPTH_LOG2:0] post_fill,
+    output logic                    post_idle,
+    output logic                    post_cycle,
 
     // Session status + diagnostics (`:vtw status`).
     output logic                    bus_owned,        // parked driver active
@@ -316,6 +318,9 @@ module vtw_bus_engine #(
     logic [31:0]                 post_drops_q;
 
     wire post_hard_full = (post_fill_q == (POST_DEPTH_LOG2+1)'(POST_DEPTH));
+    assign post_idle = post_fill_q == '0 &&
+        cyc_q != CYC_POST_FETCH && cyc_q != CYC_POST_LOAD && cyc_q != CYC_POST;
+    assign post_cycle = cyc_q == CYC_POST;
     wire post_pop   = (session_q == S_RUN) && ab_read.res && enable &&
                       (cyc_q == CYC_POST_FETCH);
     /* Apple RES# is a transaction boundary: queued posted writes are

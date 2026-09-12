@@ -21,6 +21,15 @@ module apple_cycle_capture (
     input  logic [15:0]                     overlay_capture_base,
     input  logic [15:0]                     overlay_capture_limit,
 
+    // TURBO bypasses the 1 MHz motherboard mirror for renderer updates.
+    // Direct records use the resolved MAIN/AUX address and retain FIFO
+    // ordering with frame, softswitch, and overlay command records.
+    input  logic                            direct_valid,
+    input  logic [16:0]                     direct_addr,
+    input  logic [7:0]                      direct_data,
+    output logic                            direct_ready,
+    input  logic                            suppress_bus_writes,
+
     output apple_cycle_capture_pkg::AppleCycleRecord cycle_capture_data,
     input  logic                            cycle_capture_rd_en,
     output logic                            cycle_capture_empty,
@@ -89,6 +98,7 @@ module apple_cycle_capture (
     logic overlay_rule_valid;
     assign overlay_rule_valid =
         overlay_capture_armed &&
+        !(suppress_bus_writes === 1'b1) &&
         (cap_rw == 1'b0) &&
         cap_addr_decode_en &&
         (cap_addr_decode[23:17] == 7'd0) &&
@@ -97,6 +107,7 @@ module apple_cycle_capture (
         (cap_addr_decode[15:0] < overlay_capture_limit);
     assign rule1_valid =
         (cap_rw == 1'b0) &&
+        !(suppress_bus_writes === 1'b1) &&
         cap_addr_decode_en &&
         (in_video_range(cap_addr_decode) || overlay_rule_valid);
 
@@ -257,18 +268,36 @@ module apple_cycle_capture (
     logic [FIFO_WIDTH-1:0] fifo_dout;
     logic                  fifo_wr_en;
     logic                  fifo_rd_en;
+    logic [12:0]           fifo_write_count;
     AppleCycleRecord       record_din;
+    AppleCycleRecord       direct_record;
     AppleCycleRecord       pending_record_q;
     logic                  pending_record_valid;
 
     always_comb begin
+        direct_record = '0;
+        direct_record.addr_decode = {7'd0, direct_addr};
+        direct_record.addr_decode_en = 1'b1;
+        direct_record.data = direct_data;
+
         if (pending_record_valid)
             record_din = pending_record_q;
         else if (io_push_request_q)
             record_din = io_record_q;
-        else
+        else if (apple_push_request_q)
             record_din = apple_record_q;
+        else
+            record_din = direct_record;
     end
+
+    // Reserve space for physical frame/IO records, which cannot wait for
+    // the ARM consumer. Also wait for records being captured this edge:
+    // a direct byte must not overtake their one-clock packing pipeline.
+    assign direct_ready = resetn && !soft_reset && !fifo_full &&
+        (fifo_write_count < 13'(FIFO_DEPTH - 32)) &&
+        !pending_record_valid && !io_push_request_q &&
+        !apple_push_request_q && !io_push_request && !apple_push_request;
+    wire direct_push = (direct_valid === 1'b1) && direct_ready;
 
     // Combined push request -- used for the drop-sticky check below.
     wire push_request =
@@ -276,7 +305,7 @@ module apple_cycle_capture (
         io_push_request_q ||
         apple_push_request_q;
 
-    assign fifo_wr_en = push_request && !fifo_full;
+    assign fifo_wr_en = (push_request || direct_push) && !fifo_full;
     assign fifo_rd_en = cycle_capture_rd_en && !fifo_empty;
 
     // Set wins. A full FIFO or a third simultaneous record source marks
@@ -358,7 +387,7 @@ module apple_cycle_capture (
         .dbiterr        (), .overflow      (), .prog_empty    (),
         .prog_full      (), .rd_data_count (), .rd_rst_busy   (),
         .sbiterr        (), .underflow     (), .wr_ack        (),
-        .wr_data_count  (),
+        .wr_data_count  (fifo_write_count),
         .wr_rst_busy    (),
         .injectdbiterr  (1'b0), .injectsbiterr (1'b0), .sleep (1'b0)
     );

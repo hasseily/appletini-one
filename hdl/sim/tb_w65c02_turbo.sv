@@ -18,12 +18,15 @@ module tb_w65c02_turbo;
     wire [15:0] addr [0:1];
     wire [7:0] data_out [0:1];
     wire [1:0] rwb, sync, done, waiting, stopped;
+    wire [3:0] cycle_ticks [0:1];
     wire [15:0] pc [0:1];
     wire [7:0] s [0:1], a [0:1], x [0:1], y [0:1], p [0:1];
     logic [7:0] memory [0:1][0:65535];
     logic [24:0] events [0:1][0:31];
+    integer event_ticks [0:1][0:31];
     integer event_count [0:1];
     integer cycles [0:1];
+    integer guest_cycles [0:1];
     integer cases = 0;
     integer saved_cycles = 0;
     logic [31:0] rng = 32'hC0201333;
@@ -36,7 +39,8 @@ module tb_w65c02_turbo;
             .data_in(memory[core][addr[core]]), .addr(addr[core]),
             .data_out(data_out[core]), .rwb(rwb[core]), .sync(sync[core]),
             .vpb_n(), .mlb_n(), .waiting(waiting[core]), .stopped(stopped[core]),
-            .instruction_done(done[core]), .debug_load(debug_load),
+            .instruction_done(done[core]), .cycle_ticks(cycle_ticks[core]),
+            .debug_load(debug_load),
             .debug_pc_in(initial_pc), .debug_s_in(initial_s),
             .debug_a_in(initial_a), .debug_x_in(initial_x),
             .debug_y_in(initial_y), .debug_p_in(initial_p),
@@ -78,6 +82,7 @@ module tb_w65c02_turbo;
         for (int core = 0; core < 2; core++) begin
             event_count[core] = 0;
             cycles[core] = 0;
+            guest_cycles[core] = 0;
         end
     endtask
 
@@ -104,13 +109,19 @@ module tb_w65c02_turbo;
                 frozen_bus[core] = {rwb[core], addr[core], data_out[core]};
                 if (enable[core] && ready[core]) begin
                     cycles[core]++;
+                    check(cycle_ticks[core] >= 1 && cycle_ticks[core] <= 3,
+                          "invalid accepted-step guest-cycle count");
+                    if (core == 0)
+                        check(cycle_ticks[core] == 1, "classic step must count one cycle");
                     if (!rwb[core] || addr[core][15:12] == 4'hC) begin
                         check(event_count[core] < 32, "event buffer overflow");
                         events[core][event_count[core]] =
                             {rwb[core], addr[core], rwb[core]
                              ? memory[core][addr[core]] : data_out[core]};
+                        event_ticks[core][event_count[core]] = guest_cycles[core] + 1;
                         event_count[core]++;
                     end
+                    guest_cycles[core] += cycle_ticks[core];
                     if (!rwb[core])
                         memory[core][addr[core]] = data_out[core];
                 end
@@ -135,9 +146,15 @@ module tb_w65c02_turbo;
                         pc[0], s[0], a[0], x[0], y[0], p[0],
                         pc[1], s[1], a[1], x[1], y[1], p[1]));
         check(event_count[0] == event_count[1], "write/I/O event count differs");
-        for (int event_index = 0; event_index < event_count[0]; event_index++)
+        for (int event_index = 0; event_index < event_count[0]; event_index++) begin
             check(events[0][event_index] === events[1][event_index],
                   $sformatf("write/I/O event %0d differs", event_index));
+            check(event_ticks[0][event_index] == event_ticks[1][event_index],
+                  $sformatf("write/I/O guest time differs at event %0d: classic=%0d turbo=%0d",
+                            event_index, event_ticks[0][event_index], event_ticks[1][event_index]));
+        end
+        check(guest_cycles[0] == guest_cycles[1],
+              $sformatf("guest cycles differ: classic=%0d turbo=%0d", guest_cycles[0], guest_cycles[1]));
         check(cycles[1] <= cycles[0], "turbo instruction became slower");
         if (expected_fast_cycles >= 0)
             check(cycles[1] == expected_fast_cycles,
@@ -204,6 +221,72 @@ module tb_w65c02_turbo;
         nmi_on_fetch = 1'b1;
         run_instruction(1'b1, 0, 1'b1, -1, 1'b0);
         nmi_on_fetch = 1'b0;
+
+        // Indexed dummy reads can name either the destination or the final
+        // instruction byte. Cover both I/O exclusions, with and without carry.
+        initial_pc = 16'h2000;
+        initial_x = 8'h01;
+        put(initial_pc, 8'h9D); // STA abs,X
+        put(initial_pc + 1, 8'h20);
+        put(initial_pc + 2, 8'h30);
+        run_instruction(1'b1, 0, 1'b1, 4, 1'b1);
+        put(initial_pc + 2, 8'hC0);
+        run_instruction(1'b1, 0, 1'b1, 5, 1'b1);
+        put(initial_pc + 1, 8'hFF);
+        put(initial_pc + 2, 8'hBF); // Crossing into I/O still keeps the store.
+        run_instruction(1'b1, 0, 1'b1, 4, 1'b1);
+        initial_pc = 16'hC100;
+        put(initial_pc, 8'h9D);
+        put(initial_pc + 1, 8'hFF);
+        put(initial_pc + 2, 8'h30);
+        run_instruction(1'b1, 0, 1'b1, 5, 1'b1);
+
+        initial_pc = 16'h2000;
+        initial_y = 8'h01;
+        put(initial_pc, 8'h91); // STA (zp),Y
+        put(initial_pc + 1, 8'hFF);
+        put(16'h00FF, 8'hFF);
+        put(16'h0000, 8'h30);
+        run_instruction(1'b1, 0, 1'b1, 5, 1'b1);
+        initial_pc = 16'hC100;
+        put(initial_pc, 8'h91);
+        put(initial_pc + 1, 8'hFF);
+        run_instruction(1'b1, 0, 1'b1, 6, 1'b1);
+
+        initial_pc = 16'h2000;
+        put(initial_pc, 8'hFE); // INC abs,X removes two safe dummy reads.
+        put(initial_pc + 1, 8'h20);
+        put(initial_pc + 2, 8'h30);
+        run_instruction(1'b1, 0, 1'b1, 5, 1'b1);
+        put(initial_pc, 8'hEE); // INC absolute I/O retains both device reads.
+        put(initial_pc + 1, 8'h30);
+        put(initial_pc + 2, 8'hC0);
+        run_instruction(1'b1, 0, 1'b1, 6, 1'b1);
+
+        // Stack traffic remains real and ordered. Test wrapping S, an I/O
+        // return address, and JSR overwriting its own high operand on stack.
+        initial_s = 8'hFF;
+        put(initial_pc, 8'h48);
+        run_instruction(1'b1, 0, 1'b1, 2, 1'b1);
+        put(initial_pc, 8'h68);
+        run_instruction(1'b1, 0, 1'b1, 2, 1'b1);
+        put(initial_pc, 8'h60);
+        put(16'h0100, 8'h34);
+        put(16'h0101, 8'h30);
+        run_instruction(1'b1, 0, 1'b1, 3, 1'b1);
+        put(16'h0101, 8'hC0);
+        run_instruction(1'b1, 0, 1'b1, 4, 1'b1);
+        put(initial_pc, 8'h40);
+        run_instruction(1'b1, 0, 1'b1, 4, 1'b1);
+        initial_pc = 16'hBFFF;
+        put(initial_pc, 8'h68); // Preserve the PC dummy read at $C000.
+        run_instruction(1'b1, 0, 1'b1, 3, 1'b1);
+        initial_pc = 16'h0180;
+        initial_s = 8'h82;
+        put(initial_pc, 8'h20);
+        put(initial_pc + 1, 8'h34);
+        put(initial_pc + 2, 8'h56);
+        run_instruction(1'b1, 0, 1'b1, 5, 1'b1);
 
         // Full opcode coverage over fixed-seed random architectural states,
         // operands, page boundaries, I/O addresses and independent RDY stalls.

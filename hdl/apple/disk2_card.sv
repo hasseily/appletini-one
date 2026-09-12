@@ -36,6 +36,7 @@ module disk2_card (
     output logic                     vtw_resp_valid,
     output logic [7:0]               vtw_resp_rdata,
     input  logic                     vtw_cycle_tick,
+    input  logic [3:0]               vtw_cycle_ticks,
     input  logic                     vtw_native_cycle_active,
     output logic                     vtw_time_ready,
     output logic                     vtw_write_timing_active,
@@ -362,11 +363,38 @@ module disk2_card (
      * CPU hold: no virtual timeout or disk bit cell advances during it. Empty
      * drives and known unavailable tracks remain live so their normal noise
      * behavior is visible. */
-    assign vtw_time_ready =
+    wire vtw_media_ready =
         !vtw_active || !enabled || !ab_read.res ||
         vtw_write_timing_active || !vtw_drive_spinning_q || !drive_has_media ||
         active_track_unavailable ||
         (active_drive_loaded && stream_line_hit_q);
+
+    // A completed TURBO step may represent several classic guest cycles.
+    // Replay them through the existing sequencers one at a time; a private
+    // register access must not pass time still owed by the preceding step.
+    logic [4:0] vtw_ticks_pending_q;
+    logic [12:0] stream_line_pos_q;
+    wire vtw_sequencer_ready;
+    wire vtw_virtual_time = vtw_active && !vtw_native_cycle_active &&
+                            !vtw_write_timing_active;
+    wire [3:0] vtw_tick_count = (vtw_cycle_ticks == 4'd0) ? 4'd1 : vtw_cycle_ticks;
+    wire vtw_tick_available = (vtw_ticks_pending_q != 5'd0) || vtw_cycle_tick;
+    wire vtw_replay_tick = vtw_virtual_time && vtw_tick_available &&
+                           vtw_sequencer_ready;
+    assign vtw_time_ready = !vtw_active || !enabled || !ab_read.res ||
+        (vtw_media_ready && vtw_sequencer_ready &&
+         vtw_ticks_pending_q == 5'd0 &&
+         !(vtw_cycle_tick && vtw_tick_count > 4'd1));
+
+    always_ff @(posedge clk) begin
+        if (!rstn || !enabled || !ab_read.res || !vtw_active)
+            vtw_ticks_pending_q <= 5'd0;
+        else
+            vtw_ticks_pending_q <= vtw_ticks_pending_q +
+                ((vtw_cycle_tick && vtw_virtual_time) ?
+                 {1'b0, vtw_tick_count} : 5'd0) -
+                (vtw_replay_tick ? 5'd1 : 5'd0);
+    end
 
     wire vtw_read_not_ready =
         !vtw_q6_after_access && !vtw_q7_after_access &&
@@ -378,7 +406,9 @@ module disk2_card (
      * is returned when the registered event executes one clock later. */
     assign vtw_req_ready =
         enabled && ab_read.res && !vtw_req_pending_q &&
-        !vtw_resp_valid && !vtw_read_not_ready;
+        !vtw_resp_valid && !vtw_read_not_ready &&
+        vtw_ticks_pending_q == 5'd0 && !vtw_cycle_tick &&
+        vtw_sequencer_ready;
     wire vtw_req_fire = vtw_req_valid && vtw_req_ready;
     wire vtw_io_read = vtw_req_pending_q;
     wire io_read = ab_io_read || vtw_io_read;
@@ -393,7 +423,7 @@ module disk2_card (
     wire disk_cycle_tick =
         (!vtw_active || vtw_native_cycle_active ||
          vtw_write_timing_active) ? ab_read.sss_en :
-                                    (vtw_cycle_tick || vtw_io_read);
+                                    (vtw_replay_tick || vtw_io_read);
 
     assign sound_spinning = drive_spinning;
     assign sound_qtrack = current_qtrack;
@@ -491,6 +521,23 @@ module disk2_card (
         woz_stream_active &&
         !woz_bit_cell_tick &&
         (woz_accum_plus_cycle + 17'd8 >= {9'h000, woz_effective_bit_timing});
+    // The DDR lookup and weak-bit PRNG have registered stages. A burst of
+    // guest ticks may reach them sooner than the classic four-clock path.
+    // Wait for their current data instead of advancing with an old byte.
+    wire vtw_stream_current = stream_line_hit_q &&
+                              stream_line_pos_q == active_stream_pos;
+    wire vtw_woz_cell_due = track_woz_q &&
+        woz_accum_plus_cycle >= {9'h000, woz_effective_bit_timing};
+    assign vtw_sequencer_ready =
+        !vtw_virtual_time || !enabled || !ab_read.res ||
+        !vtw_drive_spinning_q || !drive_has_media || active_track_unavailable ||
+        (active_drive_loaded && vtw_stream_current &&
+         (!track_woz_q ||
+          (!woz_weak_refill_pending_q && woz_weak_refill_stage_q == 2'd0 &&
+           (!vtw_woz_cell_due || woz_cached_ready_q))));
+    wire vtw_prepare_woz = vtw_virtual_time && enabled && ab_read.res &&
+        drive_spinning && active_drive_loaded && vtw_stream_current &&
+        vtw_woz_cell_due && !woz_cached_ready_q;
     wire [7:0] disk_next_byte =
         (stream_track_loaded && stream_line_hit_q) ?
         line_byte(stream_line_data_q, stream_line_offset_q) :
@@ -916,6 +963,7 @@ module disk2_card (
             prefetch_current_line_q <= 21'd0;
             prefetch_next_line_q <= 21'd0;
             stream_line_hit_q <= 1'b0;
+            stream_line_pos_q <= 13'd0;
             stream_line_data_q <= 64'hFFFF_FFFF_FFFF_FFFF;
             stream_line_addr_q <= 21'd0;
             stream_line_offset_q <= 3'd0;
@@ -957,7 +1005,8 @@ module disk2_card (
             automatic logic write_fifo_push_v;
             automatic logic write_fifo_push_woz_v;
 
-            stream_line_hit_q <= current_line_hit;
+            stream_line_hit_q <= current_line_hit && current_line_addr == active_line_next;
+            stream_line_pos_q <= active_stream_pos;
             stream_line_data_q <= current_line_data;
             stream_line_addr_q <= current_line_addr;
             stream_line_offset_q <= current_line_offset;
@@ -1390,6 +1439,19 @@ module disk2_card (
                 end
                 if (!q7_after_access)
                     woz_write_started_q <= 1'b0;
+            end
+
+            if (vtw_prepare_woz) begin
+                woz_cached_valid_q <= 1'b1;
+                woz_cached_ready_q <= 1'b1;
+                woz_cached_byte_q <= disk_next_byte;
+                woz_cached_mask_q <= 8'h80 >> selected_bit_offset[2:0];
+                woz_cached_line_q <= stream_line_addr_q;
+                woz_cached_offset_q <= stream_line_offset_q;
+                woz_seam_arm_q <=
+                    woz_read_mode && woz_seam_run_q > 16'd110 &&
+                    woz_seam_pre_start_q != WOZ_SEAM_PRE_START_INVALID &&
+                    selected_bit_offset == woz_seam_pre_start_q;
             end
 
             if (woz_stream_active) begin

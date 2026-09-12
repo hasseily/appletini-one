@@ -39,6 +39,26 @@ def generated_harness(name: str, turbo: bool) -> tuple[str, Path]:
     )
     if name == "vectors":
         text = replace_once(
+            text, "logic instruction_done;",
+            "logic instruction_done;\n    wire [3:0] cycle_ticks;\n    integer guest_cycles;",
+        )
+        text = replace_once(
+            text, ".instruction_done(instruction_done),",
+            ".instruction_done(instruction_done),\n        .cycle_ticks(cycle_ticks),",
+        )
+        text = replace_once(
+            text, "debug_load = 1'b0;\n\n            for (cycle_index",
+            "debug_load = 1'b0;\n            guest_cycles = 0;\n\n            for (cycle_index",
+        )
+        text = replace_once(
+            text, "                clock_once();\n            end\n\n            if (!instruction_done)",
+            "                guest_cycles = guest_cycles + cycle_ticks;\n"
+            "                clock_once();\n            end\n\n"
+            "            if (guest_cycles != cycle_count)\n"
+            "                vector_fatal($sformatf(\"guest cycles %0d != expected %0d\", guest_cycles, cycle_count));\n\n"
+            "            if (!instruction_done)",
+        )
+        text = replace_once(
             text, "build/w65c02_vectors/current_vectors.bin", "vectors.bin"
         )
         if turbo:
@@ -70,7 +90,10 @@ def run_snapshot(top: str, marker: str, name: str | None = None) -> str:
 
 
 def main() -> int:
+    global OUT
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--out", type=Path, default=OUT,
+                        help="isolated simulation work directory")
     parser.add_argument("--vectors", type=Path, default=vectors.DEFAULT_VECTOR_DIR)
     parser.add_argument("--limit", type=int, default=100,
                         help="vectors per opcode; zero runs the full corpus")
@@ -80,6 +103,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.limit < 0:
         parser.error("--limit must be nonnegative")
+    OUT = args.out.resolve()
     OUT.mkdir(parents=True, exist_ok=True)
     try:
         harnesses = [generated_harness("vectors", turbo) for turbo in (False, True)]

@@ -34,6 +34,7 @@ SOURCES = [
     "hdl/apple/vtw_bus_engine.sv",
     "hdl/apple/w65c02_core.sv",
     "hdl/apple/vtw_turbo_cache.sv",
+    "hdl/apple/vtw_video_coalescer.sv",
     "hdl/apple/vtw_core_top.sv",
     "hdl/apple/apple_dma_engine.sv",
     "hdl/apple/ps_dma_command.sv",
@@ -355,9 +356,11 @@ def static_checks() -> None:
             "if (!core_active)\n                d2_cycle_tick_q <= 1'b0;"
             in core_top and
             "d2_cycle_tick_q <= d2_cycle_tick_accept;" in core_top and
+            "d2_cycle_ticks <= core_cycle_ticks;" in core_top and
+            ".cycle_ticks(core_cycle_ticks)" in core_top and
             "assign d2_cycle_tick =\n        core_en" not in core_top,
-            "vTW must stage each accepted normal Disk II tick for one fabric "
-            "clock without changing private or native tick selection")
+            "vTW must stage each accepted normal Disk II tick and guest-cycle "
+            "count together without changing private or native selection")
     require("d2_write_timing_active" in core_top and
             "cycle_d2_native_q ||" in core_top and
             ".d2_write_timing_active(vtw_d2_write_timing_active)" in top and
@@ -389,7 +392,13 @@ def static_checks() -> None:
             "handoff staging and both vTW private-port consumers physical-host only")
     require("wire disk_cycle_tick" in disk2_card and
             "vtw_native_cycle_active" in disk2_card and
-            "(vtw_cycle_tick || vtw_io_read);" in disk2_card and
+            "(vtw_replay_tick || vtw_io_read);" in disk2_card and
+            "vtw_ticks_pending_q" in disk2_card and
+            "vtw_cycle_ticks" in disk2_card and
+            "vtw_ticks_pending_q == 5'd0 && !vtw_cycle_tick" in disk2_card and
+            "vtw_sequencer_ready" in disk2_card and
+            "stream_line_pos_q == active_stream_pos" in disk2_card and
+            "!woz_weak_refill_pending_q && woz_weak_refill_stage_q == 2'd0" in disk2_card and
             "assign vtw_time_ready" in disk2_card and
             "assign vtw_write_timing_active" in disk2_card and
             "logic       vtw_drive_spinning_q;" in disk2_card and
@@ -399,7 +408,13 @@ def static_checks() -> None:
             "logic        vtw_req_pending_q;" in disk2_card and
             "wire vtw_io_read = vtw_req_pending_q;" in disk2_card and
             "vtw_resp_valid <= 1'b1;" in disk2_card,
-            "disk2_card must expose virtual time, safe holds, and the private read response")
+            "disk2_card must drain counted guest time before private reads "
+            "and wait for current DDR data and the WOZ sequencer")
+    require("turbo_disk_hold" not in core_top and
+            ".d2_cycle_ticks(vtw_d2_cycle_ticks)" in top and
+            ".vtw_cycle_ticks(vtw_d2_cycle_ticks)" in top and
+            "!d2_time_ready || video_barrier" in core_top,
+            "TURBO must preserve counted Disk II time without a motor-wide MAX fallback")
     require("CARD_CTRL_REG_VTW_SLOWDOWN" in top and
             ".slow_region_en(vtw_slowdown_q[9:0])" in top and
             ".slow_duration(vtw_slowdown_q[31:16])" in top,
@@ -518,30 +533,36 @@ def static_checks() -> None:
             "input logic wide_main" in engine,
             "vTW must extend the aux posted-write window for Super Hi-Res "
             "and arm the main interlace window from its private ctrl write")
-    require("wire core_post_accept = core_post_req && !eng_post_full;"
-            in core_top and
+    require("wire core_post_accept = core_post_req && !video_selected &&"
+             in core_top and
+            "!eng_post_full && !video_mirror_mode_q;" in core_top and
             "wire arm_post_accept = arm_post_we && arm_post_ready;"
             in core_top and
             "logic        post_stage_valid_q;" in core_top and
             "logic [15:0] post_stage_addr_q;" in core_top and
             "logic [7:0]  post_stage_wdata_q;" in core_top and
-            "post_stage_valid_q <= core_post_accept || arm_post_accept;"
-            in core_top and
-            "post_stage_addr_q  <= arm_post_accept ? arm_post_addr"
-            in core_top and
-            "post_stage_wdata_q <= arm_post_accept ? arm_post_wdata"
-            in core_top and
-            "assign eng_post_we    = post_stage_valid_q && rstn && enable && ab_read.res;"
+            "post_stage_valid_q <= core_post_accept || arm_post_accept ||"
+             in core_top and
+            "(video_mirror_valid && video_mirror_ready);" in core_top and
+            "post_stage_addr_q  <= video_mirror_valid ? video_mirror_addr :"
+             in core_top and
+            "post_stage_wdata_q <= video_mirror_valid ? video_mirror_data :"
+             in core_top and
+            "assign eng_post_we    = post_stage_valid_q && rstn && engine_enable && ab_read.res;"
             in core_top and
             "assign eng_post_addr  = post_stage_addr_q;" in core_top and
             "assign eng_post_wdata = post_stage_wdata_q;" in core_top and
-            "if (!rstn || !enable || !ab_read.res) begin\n"
+            "if (!rstn || !engine_enable || !ab_read.res) begin\n"
             "            post_stage_valid_q <= 1'b0;" in core_top and
-            "assign arm_post_ready = core_active && !eng_post_full && !core_post_req;"
+            "assign arm_post_ready = core_active && !eng_post_full && !core_post_req &&"
+             in core_top and
+            "wire video_all_drained = video_coalesce_drained && eng_post_idle && !post_stage_valid_q;"
             in core_top and
+            "assign video_barrier = video_mirror_pending &&" in core_top and
+            "(!video_selected || !core_run || arm_rw_flush_req ||" in core_top and
             "assign eng_post_we    = core_post_push" not in core_top,
-            "vTW must register the final accepted core-or-ARM posted tuple "
-            "for one clock, keep core priority, and cancel it with queue clear")
+            "vTW must register strict core/ARM or direct-video mirror writes, "
+            "exclude ARM writes during mirroring, and drain before mode/I/O/DMA barriers")
     require("vtw_service_init(UART0_BASE);" in main_c and
             "vtw_service_poll();" in main_c and
             "menu_platform.set_vtw_config = control_set_vtw_config;" in main_c,

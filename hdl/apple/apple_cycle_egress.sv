@@ -30,6 +30,10 @@ module apple_cycle_egress
 
     // Configuration (driven from apple_top register cases)
     input  logic                        cfg_enable,
+    // TURBO direct records are lossless under ring backpressure. Keep
+    // staged records intact and wait for the consumer instead of emitting
+    // a gap merely because the ring is temporarily full.
+    input  logic                        cfg_lossless,
     input  logic [31:0]                 cfg_ring_base_addr,    // byte addr; >=64B aligned
     input  logic [4:0]                  cfg_ring_size_log2,    // valid 12..24 (4KB..16MB)
     input  logic [31:0]                 cfg_producer_ptr_addr, // byte addr; 8B aligned
@@ -384,7 +388,8 @@ module apple_cycle_egress
             end
 
             // Stall counter
-            if (gap_pending_q && state_q == S_DRAIN)
+            if (state_q == S_DRAIN &&
+                (gap_pending_q || (ring_full_for_records_q && ring_burst_trigger)))
                 stat_full_stall_cycles <= stat_full_stall_cycles + 32'd1;
 
             // ---------------- State transitions ----------------
@@ -410,8 +415,10 @@ module apple_cycle_egress
                             // gap marker (ring-full source) and stall.
                             // Consumer must advance before we can do
                             // anything else.
-                            gap_pending_q <= 1'b1;
-                            gap_source_q  <= 1'b0;
+                            if (!(cfg_lossless === 1'b1)) begin
+                                gap_pending_q <= 1'b1;
+                                gap_source_q  <= 1'b0;
+                            end
                         end else begin
                             state_q <= S_BURST_CAP;
                         end

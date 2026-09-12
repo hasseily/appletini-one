@@ -107,6 +107,7 @@ module tb_vtw_disk2_speed_matrix;
     logic        disk2_resp_valid = 1'b0;
     logic [7:0]  disk2_resp_rdata = 8'hA5;
     logic        disk2_cycle_tick;
+    logic [3:0]  disk2_cycle_ticks;
     logic        disk2_native_cycle_active;
     logic        disk2_time_ready = 1'b1;
     logic        disk2_write_timing_active = 1'b0;
@@ -164,7 +165,7 @@ module tb_vtw_disk2_speed_matrix;
         .d2_req_ready(disk2_req_ready),
         .d2_resp_valid(disk2_resp_valid),
         .d2_resp_rdata(disk2_resp_rdata),
-        .d2_cycle_tick(disk2_cycle_tick),
+        .d2_cycle_tick(disk2_cycle_tick), .d2_cycle_ticks(disk2_cycle_ticks),
         .d2_native_cycle_active(disk2_native_cycle_active),
         .d2_time_ready(disk2_time_ready),
         .d2_write_timing_active(disk2_write_timing_active),
@@ -310,6 +311,7 @@ module tb_vtw_disk2_speed_matrix;
     integer logical_select_count = 0;
     integer native_window_count = 0;
     logic   expected_normal_tick_q = 1'b0;
+    logic [3:0] expected_normal_ticks_q = 4'd0;
     logic   native_window_q = 1'b0;
 
     wire normal_tick_accept =
@@ -325,6 +327,7 @@ module tb_vtw_disk2_speed_matrix;
         fabric_cycle <= fabric_cycle + 1;
         if (!rstn) begin
             expected_normal_tick_q <= 1'b0;
+            expected_normal_ticks_q <= 4'd0;
             normal_accept_count <= 0;
             normal_tick_count <= 0;
             private_select_count <= 0;
@@ -343,6 +346,9 @@ module tb_vtw_disk2_speed_matrix;
                        expected_normal_tick_q);
             end
             expected_normal_tick_q <= normal_tick_accept;
+            if (disk2_cycle_tick && disk2_cycle_ticks !== expected_normal_ticks_q)
+                $fatal(1, "VTW DISK2 SPEED FAIL: registered guest-cycle count changed");
+            expected_normal_ticks_q <= dut.core_cycle_ticks;
             if (normal_tick_accept)
                 normal_accept_count <= normal_accept_count + 1;
             if (disk2_cycle_tick)
@@ -454,10 +460,15 @@ module tb_vtw_disk2_speed_matrix;
         check((normal_accept_count - accept_before) ==
               (normal_tick_count - tick_before),
               $sformatf("%s lost or duplicated a normal Disk II tick", label));
-        if (mode == 2'd0 || mode == 2'd3) begin
+        if (mode == 2'd0) begin
             check(min_gap == 4 && max_gap == 4,
                   $sformatf("%s did not complete shadow cycles every four fabric clocks (min=%0d max=%0d)",
                             label, min_gap, max_gap));
+        end
+        else if (mode == 2'd3) begin
+            check(min_gap >= 2 && average_gap < 4,
+                  $sformatf("%s did not keep the TURBO path while its motor spun (min=%0d avg=%0d max=%0d)",
+                            label, min_gap, average_gap, max_gap));
         end
         else if (mode == 2'd1) begin
             check(min_gap >= divider && max_gap <= divider + 2,
@@ -738,7 +749,7 @@ module tb_vtw_disk2_speed_matrix;
         measure_normal_speed(2'd1, 5,  "26 MHz", avg_26m);
         measure_normal_speed(2'd0, 0,  "MAX", avg_max);
         measure_normal_speed(2'd3, 0,  "TURBO / motor active", avg_turbo);
-        check(avg_turbo == avg_max, "TURBO motor interlock changed classic cycle timing");
+        check(avg_turbo < avg_max, "TURBO motor-active execution did not beat MAX");
         check(avg_slug > avg_1mhz &&
               avg_1mhz > avg_2m6 && avg_2m6 > avg_3m6 &&
               avg_3m6 > avg_7m && avg_7m > avg_13m &&

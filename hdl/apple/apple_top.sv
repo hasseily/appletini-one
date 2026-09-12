@@ -504,6 +504,15 @@ module apple_top(
     localparam logic [7:0] CARD_CTRL_REG_VTW_SHADOW_READ4 = 8'h9F;
     localparam logic [7:0] CARD_CTRL_REG_VTW_SHADOW_READ4_DATA = 8'hA0;
     localparam logic [7:0] CARD_CTRL_REG_VTW_SHADOW_READ4_STATUS = 8'hA1;
+    // A2 belongs to ONE//e video. TURBO counters use the next eight words.
+    localparam logic [7:0] CARD_CTRL_REG_TURBO_PERF0 = 8'hA3;
+    localparam logic [7:0] CARD_CTRL_REG_TURBO_PERF1 = 8'hA4;
+    localparam logic [7:0] CARD_CTRL_REG_TURBO_PERF2 = 8'hA5;
+    localparam logic [7:0] CARD_CTRL_REG_TURBO_PERF3 = 8'hA6;
+    localparam logic [7:0] CARD_CTRL_REG_TURBO_PERF4 = 8'hA7;
+    localparam logic [7:0] CARD_CTRL_REG_TURBO_PERF5 = 8'hA8;
+    localparam logic [7:0] CARD_CTRL_REG_TURBO_PERF6 = 8'hA9;
+    localparam logic [7:0] CARD_CTRL_REG_TURBO_PERF7 = 8'hAA;
     //   VTW_C0_RING_*   : last eight $C00x/$C01x soft-switch cycles with
     //                     latched data ({rw,addr[4:0],data[7:0]} x2/reg).
     localparam logic [7:0] CARD_CTRL_REG_VTW_C0_RING0    = 8'h6C;
@@ -823,6 +832,7 @@ module apple_top(
     logic vtw_d2_resp_valid;
     logic [7:0] vtw_d2_resp_rdata;
     logic vtw_d2_cycle_tick;
+    logic [3:0] vtw_d2_cycle_ticks;
     logic vtw_d2_native_cycle_active;
     logic vtw_d2_time_ready;
     logic vtw_d2_write_timing_active;
@@ -935,6 +945,11 @@ module apple_top(
     logic                                     cycle_capture_rd_en_internal;
     logic                                     capture_drop_sticky_internal;
     logic                                     overlay_capture_drop_internal;
+    logic                                     vtw_video_record_valid;
+    logic [16:0]                              vtw_video_record_addr;
+    logic [7:0]                               vtw_video_record_data;
+    logic                                     vtw_video_record_ready;
+    logic                                     vtw_video_direct_active;
     logic                                     overlay_devsel_enabled;
     logic                                     overlay_capture_armed;
     logic                                     overlay_capture_bank_aux;
@@ -972,6 +987,11 @@ module apple_top(
         .overlay_capture_bank_aux(overlay_capture_bank_aux),
         .overlay_capture_base(overlay_capture_base),
         .overlay_capture_limit(overlay_capture_limit),
+        .direct_valid(vtw_video_record_valid),
+        .direct_addr(vtw_video_record_addr),
+        .direct_data(vtw_video_record_data),
+        .direct_ready(vtw_video_record_ready),
+        .suppress_bus_writes(vtw_video_direct_active),
         .cycle_capture_data(cycle_capture_data_internal),
         .cycle_capture_rd_en(cycle_capture_rd_en_internal),
         .cycle_capture_empty(cycle_capture_empty_internal),
@@ -990,6 +1010,9 @@ module apple_top(
         .capture_drop_sticky       (capture_drop_sticky_internal),
         .capture_drop_ack          (egress_capture_drop_ack),
         .cfg_enable                (egress_cfg_enable_q),
+        // Direct records can remain queued after TURBO has drained its
+        // motherboard mirror. Ring fullness alone must never erase them.
+        .cfg_lossless              (1'b1),
         .cfg_ring_base_addr        (egress_cfg_ring_base_q),
         .cfg_ring_size_log2        (egress_cfg_ring_size_log2_q),
         .cfg_producer_ptr_addr     (egress_cfg_producer_ptr_addr_q),
@@ -1078,6 +1101,7 @@ module apple_top(
         .capture_drop_sticky       (sdd_tap_drop_sticky_internal),
         .capture_drop_ack          (sdd_egress_drop_ack),
         .cfg_enable                (sdd_cfg_enable_q),
+        .cfg_lossless              (1'b0),
         .cfg_ring_base_addr        (sdd_cfg_ring_base_q),
         .cfg_ring_size_log2        (sdd_cfg_ring_size_log2_q),
         .cfg_producer_ptr_addr     (sdd_cfg_producer_ptr_addr_q),
@@ -1610,6 +1634,7 @@ module apple_top(
         .vtw_resp_valid(vtw_d2_resp_valid),
         .vtw_resp_rdata(vtw_d2_resp_rdata),
         .vtw_cycle_tick(vtw_d2_cycle_tick),
+        .vtw_cycle_ticks(vtw_d2_cycle_ticks),
         .vtw_native_cycle_active(vtw_d2_native_cycle_active),
         .vtw_time_ready(vtw_d2_time_ready),
         .vtw_write_timing_active(vtw_d2_write_timing_active),
@@ -1838,6 +1863,10 @@ module apple_top(
     logic [31:0] vtw_slowdown_q;   // [9:0] region enables, [31:16] duration
     logic [17:0] vtw_sh_addr_q;
     logic [7:0]  vtw_sh_rdata;
+    logic [31:0] vtw_sh_rdata32;
+    logic        vtw_sh_word_we;
+    logic [31:0] vtw_sh_wdata32;
+    logic [255:0] vtw_turbo_perf;
     logic [7:0]  vtw_sh_rdata_q;
     logic        vtw_sh_port_en;
     logic        vtw_sh_port_we;
@@ -2016,7 +2045,7 @@ module apple_top(
     /* SHR paged-mode posting fallback (CARD_CTRL 0x35 bit 0). */
     logic post_main_wide_q;
 
-    vtw_shadow_host_port vtw_shadow_host_port_i (
+    vtw_shadow_host_port #(.WIDE_PORT(1'b1)) vtw_shadow_host_port_i (
         .clk(clk),
         .rstn(rstn[3]),
         .addr_set(vtw_sh_addr_set),
@@ -2039,7 +2068,10 @@ module apple_top(
         .sh_addr(),
         .sh_we(vtw_sh_port_we),
         .sh_wdata(vtw_sh_port_wdata),
-        .sh_rdata(vtw_sh_rdata)
+        .sh_rdata(vtw_sh_rdata),
+        .sh_rdata32(vtw_sh_rdata32),
+        .sh_word_we(vtw_sh_word_we),
+        .sh_wdata32(vtw_sh_wdata32)
     );
 
     vtw_core_top vtw_core_top_i (
@@ -2069,12 +2101,19 @@ module apple_top(
         .d2_resp_valid(vtw_d2_resp_valid),
         .d2_resp_rdata(vtw_d2_resp_rdata),
         .d2_cycle_tick(vtw_d2_cycle_tick),
+        .d2_cycle_ticks(vtw_d2_cycle_ticks),
         .d2_native_cycle_active(vtw_d2_native_cycle_active),
         .d2_time_ready(vtw_d2_time_ready),
         .d2_write_timing_active(vtw_d2_write_timing_active),
         .ramworks_en(ramworks_en_q),
         .video_vbl(vtw_video_vbl),
         .post_main_wide(post_main_wide_q),
+        .video_record_valid(vtw_video_record_valid),
+        .video_record_enable(1'b1),
+        .video_record_addr(vtw_video_record_addr),
+        .video_record_data(vtw_video_record_data),
+        .video_record_ready(vtw_video_record_ready && egress_cfg_enable_q),
+        .video_direct_active(vtw_video_direct_active),
         .overlay_capture_armed(overlay_capture_armed),
         .overlay_capture_bank_aux(overlay_capture_bank_aux),
         .overlay_capture_base(overlay_capture_base),
@@ -2109,6 +2148,10 @@ module apple_top(
         .sh_we(vtw_sh_port_we),
         .sh_wdata(vtw_sh_port_wdata),
         .sh_rdata(vtw_sh_rdata),
+        .sh_rdata32(vtw_sh_rdata32),
+        .sh_word_we(vtw_sh_word_we),
+        .sh_wdata32(vtw_sh_wdata32),
+        .turbo_perf(vtw_turbo_perf),
         .arm_req_valid(vtw_arm_go_pulse_q),
         .arm_req_addr(vtw_arm_addr_q),
         .arm_req_rw(vtw_arm_rw_q),
@@ -2848,6 +2891,14 @@ module apple_top(
                                                                     vtw_dbg_last_sync_rw,
                                                                     vtw_dbg_last_sync_data,
                                                                     vtw_dbg_last_sync_addr};
+                CARD_CTRL_REG_TURBO_PERF0: as_client_rdata_q <= vtw_turbo_perf[31:0];
+                CARD_CTRL_REG_TURBO_PERF1: as_client_rdata_q <= vtw_turbo_perf[63:32];
+                CARD_CTRL_REG_TURBO_PERF2: as_client_rdata_q <= vtw_turbo_perf[95:64];
+                CARD_CTRL_REG_TURBO_PERF3: as_client_rdata_q <= vtw_turbo_perf[127:96];
+                CARD_CTRL_REG_TURBO_PERF4: as_client_rdata_q <= vtw_turbo_perf[159:128];
+                CARD_CTRL_REG_TURBO_PERF5: as_client_rdata_q <= vtw_turbo_perf[191:160];
+                CARD_CTRL_REG_TURBO_PERF6: as_client_rdata_q <= vtw_turbo_perf[223:192];
+                CARD_CTRL_REG_TURBO_PERF7: as_client_rdata_q <= vtw_turbo_perf[255:224];
                 CARD_CTRL_REG_VTW_POST_STATUS: as_client_rdata_q <= {vtw_arm_post_ready,
                                                                     vtw_arm_post_accept_count_q};
                 CARD_CTRL_REG_VTW_RW_FLUSH:    as_client_rdata_q <= {vtw_arm_rw_flush_busy_q,

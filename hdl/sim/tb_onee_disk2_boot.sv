@@ -209,7 +209,7 @@ module tb_onee_disk2_boot;
         .ab_write(disk2_write),
         .vtw_active(1'b0), .vtw_req_valid(1'b0), .vtw_req_addr(4'h0),
         .vtw_req_ready(), .vtw_resp_valid(), .vtw_resp_rdata(),
-        .vtw_cycle_tick(1'b0), .vtw_native_cycle_active(1'b0),
+        .vtw_cycle_tick(1'b0), .vtw_cycle_ticks(4'd1), .vtw_native_cycle_active(1'b0),
         .vtw_time_ready(), .vtw_write_timing_active(),
         .sound_spinning(), .sound_qtrack(), .sound_event(),
         .sound_seek_start_qtrack(), .sound_seek_distance()
@@ -384,24 +384,29 @@ module tb_onee_disk2_boot;
         repeat (2) @(negedge clk);
     endtask
 
+    logic [7:0] cpu_rom_bytes [0:16383];
+
     initial begin
         // This file comes from ps_sources/frontend/apple2e_cpu_rom_data.c,
         // not a reduced test program. Direct hierarchy keeps test setup from
         // spending 16K two-clock ARM writes before the first reset fetch.
-        $readmemh("onee_enhanced_cpu_rom.mem", core_i.shadow_i.mem_rom);
-        for (int i = 0; i < 65536; i++) begin
-            core_i.shadow_i.mem_main[i] = 8'h00;
-            core_i.shadow_i.mem_aux[i]  = 8'h00;
+        $readmemh("onee_enhanced_cpu_rom.mem", cpu_rom_bytes);
+        for (int i = 0; i < 4096; i++)
+            core_i.shadow_i.mem_rom[i] = {cpu_rom_bytes[4*i+3], cpu_rom_bytes[4*i+2],
+                                         cpu_rom_bytes[4*i+1], cpu_rom_bytes[4*i]};
+        for (int i = 0; i < 16384; i++) begin
+            core_i.shadow_i.mem_main[i] = 32'h00;
+            core_i.shadow_i.mem_aux[i]  = 32'h00;
         end
 
         #1;
-        check(core_i.shadow_i.mem_rom[14'h3FFC] == 8'h62 &&
-              core_i.shadow_i.mem_rom[14'h3FFD] == 8'hFA,
+        check(core_i.shadow_i.mem_rom[4095][0 +: 8] == 8'h62 &&
+              core_i.shadow_i.mem_rom[4095][8 +: 8] == 8'hFA,
               "embedded ROM reset vector is not $FA62");
-        check(core_i.shadow_i.mem_rom[14'h3A62] == 8'hD8 &&
-              core_i.shadow_i.mem_rom[14'h3A63] == 8'h20 &&
-              core_i.shadow_i.mem_rom[14'h3A64] == 8'h84 &&
-              core_i.shadow_i.mem_rom[14'h3A65] == 8'hFE,
+        check(core_i.shadow_i.mem_rom[3736][16 +: 8] == 8'hD8 &&
+              core_i.shadow_i.mem_rom[3736][24 +: 8] == 8'h20 &&
+              core_i.shadow_i.mem_rom[3737][0 +: 8] == 8'h84 &&
+              core_i.shadow_i.mem_rom[3737][8 +: 8] == 8'hFE,
               "embedded ROM reset-entry signature changed");
 
         as_common = '0;
@@ -459,10 +464,10 @@ module tb_onee_disk2_boot;
               "boot did not exercise the full slot-ROM/card/staging path");
         check(bus_data_mismatches == 0,
               "disk2_card and vTW bus-engine response bytes differed");
-        check(core_i.shadow_i.mem_main[16'h0800] == expected_boot[0] &&
-              core_i.shadow_i.mem_main[16'h0801] == expected_boot[1] &&
-              core_i.shadow_i.mem_main[16'h0802] == expected_boot[2] &&
-              core_i.shadow_i.mem_main[16'h0803] == expected_boot[3],
+        check(core_i.shadow_i.mem_main[512][0 +: 8] == expected_boot[0] &&
+              core_i.shadow_i.mem_main[512][8 +: 8] == expected_boot[1] &&
+              core_i.shadow_i.mem_main[512][16 +: 8] == expected_boot[2] &&
+              core_i.shadow_i.mem_main[512][24 +: 8] == expected_boot[3],
               "selected boot-sector signature was not loaded at $0800");
 
         $display("ONEE DISK2 BOOT PASS slot=%0d io=%0d reads=%0d ddr=%0d d5=%0d",

@@ -145,6 +145,7 @@ module tb_vtw_disk2_woz_e2e;
     logic disk2_resp_valid;
     logic [7:0] disk2_resp_rdata;
     logic disk2_cycle_tick;
+    logic [3:0] disk2_cycle_ticks;
     logic disk2_native_cycle_active;
     logic disk2_time_ready;
     logic disk2_write_timing_active;
@@ -162,7 +163,7 @@ module tb_vtw_disk2_woz_e2e;
         .vtw_req_ready(disk2_req_ready),
         .vtw_resp_valid(disk2_resp_valid),
         .vtw_resp_rdata(disk2_resp_rdata),
-        .vtw_cycle_tick(disk2_cycle_tick),
+        .vtw_cycle_tick(disk2_cycle_tick), .vtw_cycle_ticks(disk2_cycle_ticks),
         .vtw_native_cycle_active(disk2_native_cycle_active),
         .vtw_time_ready(disk2_time_ready),
         .vtw_write_timing_active(disk2_write_timing_active),
@@ -196,7 +197,7 @@ module tb_vtw_disk2_woz_e2e;
         .d2_req_addr(disk2_req_addr), .d2_req_ready(disk2_req_ready),
         .d2_resp_valid(disk2_resp_valid),
         .d2_resp_rdata(disk2_resp_rdata),
-        .d2_cycle_tick(disk2_cycle_tick),
+        .d2_cycle_tick(disk2_cycle_tick), .d2_cycle_ticks(disk2_cycle_ticks),
         .d2_native_cycle_active(disk2_native_cycle_active),
         .d2_time_ready(disk2_time_ready),
         .d2_write_timing_active(disk2_write_timing_active),
@@ -257,8 +258,8 @@ module tb_vtw_disk2_woz_e2e;
             // reach disk_cycle_tick, but cannot advance media state.
             if (card_i.woz_stream_active)
                 selected_tick_count <= selected_tick_count + 1;
-            if (core_i.ssm_apply_pulse && !core_i.cycle_rw_q &&
-                core_i.cycle_addr_q == 16'h0200 &&
+            if (core_i.shadow_a_en && core_i.shadow_a_we &&
+                core_i.shadow_a_addr == 18'h00200 &&
                 core_i.cycle_wdata_q == 8'hA5)
                 cpu_a5_store_count <= cpu_a5_store_count + 1;
         end

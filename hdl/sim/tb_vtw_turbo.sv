@@ -80,6 +80,8 @@ module tb_vtw_turbo;
     // value; all other reads get RAM data.
     logic [7:0] mb_rdata;
     logic [7:0] mb_ram [0:16'hFFFF];
+    logic [7:0] mb_aux [0:16'hFFFF];
+    logic mb_aux_write = 1'b0;
     always_comb begin
         if (apple_addr_pin[15:12] == 4'hC)
             mb_rdata = 8'hEE;
@@ -129,6 +131,15 @@ module tb_vtw_turbo;
     logic [31:0] cnt_post_drops;
     logic [31:0] cnt_invalid_routes;
     logic [9:0] post_fill;
+    logic video_record_enable = 1'b0;
+    logic video_record_valid, video_direct_active;
+    logic [16:0] video_record_addr;
+    logic [7:0] video_record_data;
+    logic video_record_ready = 1'b1;
+    logic bus_owned;
+    integer direct_video_writes = 0;
+    logic [7:0] renderer_shadow [0:131071];
+    bit check_video_banks = 0;
     logic ramworks_en = 1'b0;
     logic rw_req_valid, rw_req_rw, rw_req_ready = 1'b0;
     logic rw_resp_valid = 1'b0;
@@ -200,6 +211,12 @@ module tb_vtw_turbo;
         .d2_write_timing_active(disk2_write_timing_active),
         .ramworks_en(ramworks_en), .video_vbl(1'b0),
         .post_main_wide(1'b0),
+        .video_record_enable(video_record_enable),
+        .video_record_valid(video_record_valid),
+        .video_record_addr(video_record_addr),
+        .video_record_data(video_record_data),
+        .video_record_ready(video_record_ready),
+        .video_direct_active(video_direct_active),
         .overlay_capture_armed(1'b0),
         .overlay_capture_bank_aux(1'b0),
         .overlay_capture_base(16'd0),
@@ -224,7 +241,7 @@ module tb_vtw_turbo;
         .arm_post_ready(),
         .arm_rw_flush_req(arm_rw_flush_req), .arm_rw_hold_release(arm_rw_hold_release),
         .arm_rw_flush_done(arm_rw_flush_done), .arm_rw_hold_state(arm_rw_hold_state),
-        .c074_state(), .bus_owned(),
+        .c074_state(), .bus_owned(bus_owned),
         .video_phase_1mhz(video_phase_1mhz),
         .dbg_core_pc(), .cnt_core_cycles(cnt_core_cycles),
         .cnt_bus_cycles(cnt_bus_cycles), .cnt_posted_writes(cnt_posted_writes),
@@ -273,7 +290,38 @@ module tb_vtw_turbo;
             normal_ticks <= 0;
             physical_wait_clocks <= 0;
             physical_request_pending <= 1'b0;
+            mb_aux_write <= 1'b0;
+            direct_video_writes <= 0;
         end else begin
+            if (video_record_valid && video_record_ready) begin
+                direct_video_writes <= direct_video_writes + 1;
+                renderer_shadow[video_record_addr] <= video_record_data;
+            end
+            if (ab_read.data_en && !ab_read.rw) begin
+                if (ab_read.addr == 16'hC005) begin
+                    if (check_video_banks)
+                        for (int i = 0; i < 1024; i++)
+                            check(mb_ram[16'h2000+i] === 8'hC3,
+                                  "RAMWRT changed before MAIN mirror drained");
+                    mb_aux_write <= 1'b1;
+                end
+                if (ab_read.addr == 16'hC004) begin
+                    if (check_video_banks)
+                        for (int i = 0; i < 512; i++)
+                            check(mb_aux[16'h2000+i] === 8'hA5,
+                                  "RAMWRT changed before AUX mirror drained");
+                    mb_aux_write <= 1'b0;
+                end
+                if (ab_read.addr >= 16'h2000 && ab_read.addr < 16'h2400) begin
+                    if (video_record_enable)
+                        check(video_direct_active,
+                              "mirrored physical byte was not suppressed in capture");
+                    if (mb_aux_write)
+                        mb_aux[ab_read.addr] <= ab_read.data;
+                    else
+                        mb_ram[ab_read.addr] <= ab_read.data;
+                end
+            end
             if (dut.eng_req_valid && dut.eng_req_ready) begin
                 check(!physical_request_pending,
                       "second physical request overlapped an unfinished request");
@@ -368,6 +416,9 @@ module tb_vtw_turbo;
         disk2_active = 1'b0;
         disk2_motor_active = 1'b0;
         ramworks_en = 1'b0;
+        video_record_enable = 1'b0;
+        video_record_ready = 1'b1;
+        check_video_banks = 1'b0;
         speed_mode = mode;
         pace_divider = 0;
         repeat (20) @(posedge clk);
@@ -471,10 +522,11 @@ module tb_vtw_turbo;
         core_run = 1'b1;
     endtask
 
-    task automatic wait_marker(input integer index, input integer wanted);
+    task automatic wait_marker(input integer index, input integer wanted,
+                               input integer budget = 200000);
         integer timeout;
         timeout = 0;
-        while (marker_count[index] < wanted && timeout < 200000) begin
+        while (marker_count[index] < wanted && timeout < budget) begin
             @(posedge clk);
             #1ps;
             timeout++;
@@ -793,6 +845,138 @@ module tb_vtw_turbo;
         end
     endtask
 
+    task automatic emit_video_fill(input logic [7:0] value, input integer pages);
+        immediate(8'hA9, value);
+        immediate(8'hA2, 8'h00);
+        for (int page = 0; page < pages; page++)
+            absolute(8'h9D, 16'h2000 + 16'(page * 256));
+        emit(8'hE8);
+        immediate(8'hD0, 8'(-(3 * pages + 3)));
+    endtask
+
+    task automatic await_video_drain;
+        integer guard;
+        guard = 0;
+        while (!dut.video_all_drained && guard < 400000) begin
+            @(posedge clk); #1ps;
+            guard++;
+        end
+        check(dut.video_all_drained && cnt_post_drops == 0,
+              "TURBO motherboard mirror failed to drain without drops");
+    endtask
+
+    task automatic direct_video_banks;
+        integer stalled_count;
+        begin_program(2'd3);
+        video_record_enable = 1'b1;
+        video_record_ready = 1'b0;
+        check_video_banks = 1'b1;
+        emit_video_fill(8'h5A, 4);
+        absolute(8'h8D, 16'hA100);
+        emit_video_fill(8'hC3, 4);
+        absolute(8'h8D, 16'hA101);
+        absolute(8'h8D, 16'hC005);
+        emit_video_fill(8'hA5, 2);
+        absolute(8'h8D, 16'hC004);
+        absolute(8'h8D, 16'hA10F);
+        halt_loop();
+        start_program();
+        wait (video_record_valid);
+        repeat (40) @(posedge clk);
+        check(direct_video_writes == 0 && cnt_posted_writes == 0,
+              "renderer backpressure allowed a partial video commit");
+        @(negedge clk); video_record_ready = 1'b1;
+        wait_marker(0, 1);
+        check(direct_video_writes == 1024 && cnt_posted_writes < 512,
+              "1024 direct bytes did not outrun the physical posted queue");
+        $display("VTW TURBO VIDEO: 1024 direct writes completed with %0d physical writes", cnt_posted_writes);
+        @(negedge clk); video_record_ready = 1'b0;
+        wait (video_record_valid);
+        stalled_count = direct_video_writes;
+        repeat (40) @(posedge clk);
+        check(direct_video_writes == stalled_count,
+              "stalled renderer accepted another video byte");
+        @(negedge clk); video_record_ready = 1'b1;
+        wait_marker(15, 1, 600000);
+        await_video_drain();
+        check(direct_video_writes == 2560,
+              "direct video stream lost or duplicated repeated/banked writes");
+        for (int i = 0; i < 1024; i++)
+            check(renderer_shadow[17'h02000+i] === 8'hC3 &&
+                  mb_ram[16'h2000+i] === 8'hC3,
+                  "latest repeated MAIN video value was not preserved");
+        for (int i = 0; i < 512; i++)
+            check(renderer_shadow[17'h12000+i] === 8'hA5 &&
+                  mb_aux[16'h2000+i] === 8'hA5,
+                  "AUX direct record or motherboard bank mapping was wrong");
+        $display("VTW TURBO VIDEO BANKS/BACKPRESSURE PASS");
+    endtask
+
+    task automatic direct_video_exit(input bit handback);
+        integer stopped_cycles;
+        begin_program(2'd3);
+        video_record_enable = 1'b1;
+        emit_video_fill(8'hB6, 4);
+        absolute(8'h8D, 16'hA100);
+        halt_loop();
+        start_program();
+        wait_marker(0, 1);
+        check(dut.video_mirror_pending, "video exit test had no pending mirror");
+        @(negedge clk);
+        if (handback) enable = 1'b0;
+        else speed_mode = 2'd0;
+        repeat (20) @(posedge clk);
+        stopped_cycles = cnt_core_cycles;
+        repeat (150) begin
+            @(posedge clk); #1ps;
+            check(bus_owned && apple_dma_pin === 1'b0,
+                  "physical bus released before video mirror drained");
+            check(cnt_core_cycles == stopped_cycles,
+                  "CPU advanced across pending video mode-exit barrier");
+        end
+        await_video_drain();
+        for (int i = 0; i < 1024; i++)
+            check(mb_ram[16'h2000+i] === 8'hB6,
+                  "mode exit/handback left stale physical video RAM");
+        repeat (1000) @(posedge clk);
+        if (handback)
+            check(!bus_owned && apple_dma_pin === 1'b1,
+                  "clean video handback did not release DMA");
+        else
+            check(cnt_core_cycles > stopped_cycles,
+                  "CPU did not resume after video speed-exit drain");
+        $display("VTW TURBO VIDEO EXIT PASS: handback=%0d", handback);
+    endtask
+
+    task automatic direct_video_abort(input bit stop_core);
+        begin_program(2'd3);
+        video_record_enable = 1'b1;
+        emit_video_fill(8'h5A, 1);
+        absolute(8'h8D, 16'hA100);
+        immediate(8'hA9, 8'hC3);
+        absolute(8'h8D, 16'h2100);
+        absolute(8'h8D, 16'hA10F);
+        halt_loop();
+        start_program();
+        wait_marker(0, 1);
+        @(negedge clk); video_record_ready = 1'b0;
+        wait (video_record_valid);
+        check(video_record_addr == 17'h02100 && direct_video_writes == 256,
+              "abort test did not park the next direct byte");
+        @(negedge clk);
+        if (stop_core) core_run = 1'b0;
+        else enable = 1'b0;
+        video_record_ready = 1'b1;
+        repeat (20) @(posedge clk);
+        check(direct_video_writes == 256,
+              "disabled core accepted a previously blocked direct byte");
+        await_video_drain();
+        for (int i = 0; i < 256; i++)
+            check(mb_ram[16'h2000+i] === 8'h5A,
+                  "abort lost an already accepted video byte");
+        $display("VTW TURBO VIDEO ABORT PASS: core_run=%0d", stop_core);
+    endtask
+
     integer max_cold, max_hot, turbo_cold, turbo_hot;
     integer alt_max_cold, alt_max_hot, alt_turbo_cold, alt_turbo_hot;
     initial begin
@@ -817,6 +1001,11 @@ module tb_vtw_turbo;
         ramworks_program();
         selfmod_program();
         physical_program();
+        direct_video_banks();
+        direct_video_exit(1'b0);
+        direct_video_exit(1'b1);
+        direct_video_abort(1'b0);
+        direct_video_abort(1'b1);
         pending_write_abort(0);
         pending_write_abort(1);
         pending_write_abort(2);

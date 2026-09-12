@@ -99,6 +99,7 @@ module vtw_core_top (
     input  logic                    d2_resp_valid,
     input  logic [7:0]              d2_resp_rdata,
     output logic                    d2_cycle_tick,
+    output logic [3:0]              d2_cycle_ticks,
     output logic                    d2_native_cycle_active,
     input  logic                    d2_time_ready,
     input  logic                    d2_write_timing_active,
@@ -138,6 +139,13 @@ module vtw_core_top (
     input  logic                    overlay_capture_bank_aux,
     input  logic [15:0]             overlay_capture_base,
     input  logic [15:0]             overlay_capture_limit,
+
+    input  logic                    video_record_enable,
+    output logic                    video_record_valid,
+    output logic [16:0]             video_record_addr,
+    output logic [7:0]              video_record_data,
+    input  logic                    video_record_ready,
+    output logic                    video_direct_active,
 
     input  globals::AppleBus_read   ab_read,
     output globals::AppleBus_write  ab_write,
@@ -201,6 +209,9 @@ module vtw_core_top (
     input  logic                    sh_we,
     input  logic [7:0]              sh_wdata,
     output logic [7:0]              sh_rdata,
+    output logic [31:0]             sh_rdata32,
+    input  logic                    sh_word_we,
+    input  logic [31:0]             sh_wdata32,
 
     // ARM synchronous bus access (boot ROM copy; honored only when the
     // core is held).
@@ -277,7 +288,8 @@ module vtw_core_top (
     output logic [16*16-1:0]        dbg_pc_trace,
     output logic [16*32-1:0]        dbg_io_trace,
     output logic [31:0]             dbg_trace_status,
-    output logic [31:0]             dbg_bus_faults
+    output logic [31:0]             dbg_bus_faults,
+    output logic [255:0]            turbo_perf
 );
 
     import globals::*;
@@ -291,6 +303,7 @@ module vtw_core_top (
     logic [15:0] core_addr;
     logic [7:0]  core_data_out;
     logic        core_sync;
+    logic [3:0]  core_cycle_ticks;
     /* Normal CPU response register. Shadow BRAM, bus engine, RamWorks,
      * SmartPort and status responses share this register. TURBO captures
      * into turbo_rdata_q so its cache has a short, separate input path. */
@@ -339,6 +352,7 @@ module vtw_core_top (
         .enable(core_en),
         .ready(1'b1),
         .turbo(turbo_execute),
+        .cycle_ticks(core_cycle_ticks),
         .irq_n(core_irq_n),
         .nmi_n(ab_read.nmi),
         .so_n(1'b1),
@@ -636,6 +650,11 @@ module vtw_core_top (
     logic [7:0]  eng_resp_rdata;
     logic        eng_post_we;
     logic        eng_post_full;
+    logic        eng_post_idle, eng_post_cycle;
+    wire         video_mirror_pending;
+    wire         video_barrier;
+    wire         core_post_blocked;
+    wire         engine_enable = enable || video_mirror_pending;
     logic [15:0] eng_post_addr;
     logic [7:0]  eng_post_wdata;
     logic        eng_bad_c000_pulse;
@@ -668,7 +687,7 @@ module vtw_core_top (
 
     assign arm_owns_bus      = !core_run;
     assign eng_req_valid_raw = arm_owns_bus ? arm_pending_q : fsm_req_valid;
-    assign eng_req_valid     = eng_req_valid_raw && !req_inflight_q;
+    assign eng_req_valid     = eng_req_valid_raw && !req_inflight_q && !video_mirror_pending;
     assign eng_req_addr      = arm_owns_bus ? arm_addr_q    : cycle_addr_q;
     assign eng_req_rw        = arm_owns_bus ? arm_rw_q      : cycle_rw_q;
     assign eng_req_wdata     = arm_owns_bus ? arm_wdata_q   : cycle_wdata_q;
@@ -682,7 +701,7 @@ module vtw_core_top (
     vtw_bus_engine engine_i (
         .clk(clk),
         .rstn(rstn),
-        .enable(enable),
+        .enable(engine_enable),
         .host_is_iiplus(host_is_iiplus),
         .ab_read(ab_read),
         .ab_write(eng_ab_write),
@@ -702,6 +721,7 @@ module vtw_core_top (
         .post_wdata(eng_post_wdata),
         .post_full(eng_post_full),
         .post_fill(post_fill),
+        .post_idle(eng_post_idle), .post_cycle(eng_post_cycle),
         .bus_owned(bus_owned),
         .cnt_sync_cycles(cnt_bus_cycles),
         .cnt_posted_writes(cnt_posted_writes),
@@ -861,6 +881,7 @@ module vtw_core_top (
     logic       shadow_a_we;
     logic [17:0] shadow_a_addr;
     logic [7:0] shadow_a_rdata;
+    logic [31:0] shadow_a_rdata32;
 
     vtw_shadow shadow_i (
         .clk(clk),
@@ -869,11 +890,15 @@ module vtw_core_top (
         .a_we(shadow_a_we),
         .a_wdata(cycle_wdata_q),
         .a_rdata(shadow_a_rdata),
+        .a_rdata32(shadow_a_rdata32),
         .b_en(sh_en),
         .b_addr(sh_addr),
         .b_we(sh_we),
         .b_wdata(sh_wdata),
-        .b_rdata(sh_rdata)
+        .b_rdata(sh_rdata),
+        .b_rdata32(sh_rdata32),
+        .b_word_we(sh_word_we),
+        .b_wdata32(sh_wdata32)
     );
 
     // ------------------------------------------------------------------
@@ -1039,12 +1064,10 @@ module vtw_core_top (
      * only in state 0. ignore_c074 keeps that state at zero. Per-region
      * slowdown, physical Disk II accesses, and Disk II Q7 write mode also
      * force 1 MHz. */
-    wire turbo_disk_hold = d2_active && (d2_motor_active === 1'b1);
     wire [1:0] eff_mode =
         (c074_q != 2'd0 || slow_active || cycle_d2_native_q ||
          d2_write_timing_active) ?
-                          SPEED_1MHZ :
-        (speed_mode == SPEED_TURBO && turbo_disk_hold) ? SPEED_FULL : speed_mode;
+                          SPEED_1MHZ : speed_mode;
 
     wire pace_ok =
         (eff_mode == SPEED_FULL || eff_mode == SPEED_TURBO) ? 1'b1 :
@@ -1071,22 +1094,26 @@ module vtw_core_top (
     wire [17:0] turbo_write_phys;
     logic [1:0] turbo_mode_q;
     logic turbo_ramworks_q, turbo_post_wide_q, turbo_overlay_q;
+    TranslateState turbo_mapping_q;
+    wire [18:0] turbo_mapping = translate_state_from_sss(vsss);
     always_ff @(posedge clk) begin
         if (!rstn) begin
             turbo_mode_q <= SPEED_FULL;
             turbo_ramworks_q <= 1'b0;
             turbo_post_wide_q <= 1'b0;
             turbo_overlay_q <= 1'b0;
+            turbo_mapping_q <= '0;
         end
         else begin
             turbo_mode_q <= speed_mode;
             turbo_ramworks_q <= ramworks_en;
             turbo_post_wide_q <= post_main_wide_eff;
             turbo_overlay_q <= overlay_capture_armed;
+            turbo_mapping_q <= TranslateState'(turbo_mapping);
         end
     end
-    // Cxxx accesses always take the original route, including ROM accesses
-    // that claim/release C8 or change the language-card double-access latch.
+    // Cxxx accesses always take the original route. Only a change in the
+    // actual translation state discards RAM data; polling I/O remains live.
     // External shadow writes and changes to write-through policy invalidate
     // both caches. No physical I/O, PSRAM, or card response is ever cached.
     wire turbo_invalidate = !core_res_n ||
@@ -1094,7 +1121,7 @@ module vtw_core_top (
         (speed_mode != turbo_mode_q) || (ramworks_en != turbo_ramworks_q) ||
         (post_main_wide_eff != turbo_post_wide_q) ||
         (overlay_capture_armed != turbo_overlay_q) ||
-        ((xstate_q == X_ROUTE) && cycle_addr_q[15:12] == 4'hC);
+        (turbo_mapping != turbo_mapping_q);
     wire turbo_map_fill = (xstate_q == X_ROUTE) && xl_shadow_valid &&
                          core_res_n && cycle_addr_q[15:12] != 4'hC;
     wire turbo_byte_fill = (xstate_q == X_MEM_CAPTURE) && cycle_rw_q &&
@@ -1114,7 +1141,7 @@ module vtw_core_top (
         .map_rw(cycle_rw_q), .map_phys(xl_shadow_phys),
         .map_fast_write(turbo_map_fast_write),
         .byte_fill(turbo_byte_fill), .byte_addr(cycle_addr_q),
-        .byte_data(shadow_a_rdata),
+        .word_data(shadow_a_rdata32), .byte_phys(xl_shadow_phys),
         .snoop_write(shadow_a_en && shadow_a_we),
         .snoop_addr(cycle_addr_q),
         .snoop_phys(shadow_a_addr),
@@ -1130,6 +1157,11 @@ module vtw_core_top (
                             core_active && !turbo_invalidate && !arm_rw_flush_req;
     assign turbo_shadow_write = (xstate_q == X_TURBO_DONE) &&
                                 core_en && !cycle_rw_q;
+    // Translation was captured with the request. An ordinary RAM/ROM miss
+    // can issue its wide read here without repeating the route stage.
+    wire turbo_shadow_read = (xstate_q == X_TURBO_DONE) &&
+        !turbo_hit && cycle_rw_q && xl_shadow_valid &&
+        core_res_n && !turbo_invalidate && !arm_rw_flush_req;
 
     assign ssm_pulse       = core_active && (xstate_q == X_CAPTURE);
     assign ssm_apply_pulse = core_active && (xstate_q == X_ROUTE);
@@ -1190,10 +1222,11 @@ module vtw_core_top (
 
     /* No shadow traffic while the core is held: port B (ARM) owns the
      * memory, and a held core's outputs must not scribble on it. */
-    assign shadow_a_en   = core_shadow_issue || floating_scan_issue || turbo_shadow_write;
+    assign shadow_a_en   = core_shadow_issue || floating_scan_issue ||
+                          turbo_shadow_write || turbo_shadow_read;
     assign shadow_a_addr = floating_scan_issue
                          ? {2'b00, floating_scan_addr_q}
-                         : (xstate_q == X_TURBO_DONE) ? turbo_write_phys_q : xl_shadow_phys;
+                         : turbo_shadow_write ? turbo_write_phys_q : xl_shadow_phys;
     assign shadow_a_we   = (core_shadow_issue && xl_is_write) || turbo_shadow_write;
 
     always_ff @(posedge clk) begin
@@ -1221,13 +1254,63 @@ module vtw_core_top (
     end
 
     assign fsm_req_valid = (xstate_q == X_BUS) && core_run && ab_read.res;
-    wire core_post_req = (core_active && (xstate_q == X_ROUTE) &&
-                          xl_is_posted) || (xstate_q == X_POST_STALL);
-    wire core_post_accept = core_post_req && !eng_post_full;
+    wire core_post_req = core_active &&
+        (((xstate_q == X_ROUTE) && xl_is_posted) || (xstate_q == X_POST_STALL));
+    logic        post_stage_valid_q;
+    logic [15:0] post_stage_addr_q;
+    logic [7:0]  post_stage_wdata_q;
+    wire video_selected = (video_record_enable === 1'b1) &&
+                          speed_mode == SPEED_TURBO;
+    logic video_mirror_mode_q;
+    wire video_coalesce_ready, video_coalesce_drained;
+    wire video_mirror_valid, video_mirror_ready;
+    wire [15:0] video_mirror_addr;
+    wire [7:0] video_mirror_data;
+    wire video_all_drained = video_coalesce_drained && eng_post_idle && !post_stage_valid_q;
+    wire video_start_ready = video_mirror_mode_q || (eng_post_idle && !post_stage_valid_q);
+    wire video_fast_req = core_post_req && video_selected;
+    wire video_fast_accept = video_fast_req && video_coalesce_ready &&
+                             video_start_ready && video_record_ready;
+    wire core_post_accept = core_post_req && !video_selected &&
+                            !eng_post_full && !video_mirror_mode_q;
+    assign core_post_blocked = video_selected ?
+        !(video_coalesce_ready && video_start_ready && video_record_ready) :
+        (eng_post_full || video_mirror_mode_q);
+    assign video_record_valid = video_fast_req && video_coalesce_ready && video_start_ready;
+    assign video_record_addr = xl_decoded[16:0];
+    assign video_record_data = cycle_wdata_q;
+    // Suppress only the mirrored posted cycle. Native/device DMA writes
+    // still enter capture, even during an accelerated display session.
+    assign video_direct_active = video_mirror_mode_q && eng_post_cycle;
+    // Keep bus ownership on a registered flag, not the wide dirty/queue
+    // reduction. Clearing it one edge after drain is harmless and gives
+    // the physical drive enables a short, stable path.
+    assign video_mirror_pending = video_mirror_mode_q;
+    assign video_barrier = video_mirror_pending &&
+        (!video_selected || !core_run || arm_rw_flush_req ||
+         core_addr[15:12] == 4'hC);
+    assign video_mirror_ready = !eng_post_full && engine_enable;
+    vtw_video_coalescer video_coalescer_i (
+        .clk(clk), .rstn(rstn), .clear(!ab_read.res),
+        .write_valid(video_fast_accept), .write_addr(cycle_addr_q),
+        .write_data(cycle_wdata_q), .write_ready(video_coalesce_ready),
+        .mirror_valid(video_mirror_valid), .mirror_addr(video_mirror_addr),
+        .mirror_data(video_mirror_data), .mirror_ready(video_mirror_ready),
+        .drained(video_coalesce_drained)
+    );
+    always_ff @(posedge clk) begin
+        if (!rstn || !ab_read.res)
+            video_mirror_mode_q <= 1'b0;
+        else if (video_fast_accept)
+            video_mirror_mode_q <= 1'b1;
+        else if (video_all_drained)
+            video_mirror_mode_q <= 1'b0;
+    end
     /* SmartPort holds the core outside X_ROUTE until READY, so contention is
      * not expected. Keeping it in the handshake still makes a stray CPU0
      * request fail closed instead of replacing a core write. */
-    assign arm_post_ready = core_active && !eng_post_full && !core_post_req;
+    assign arm_post_ready = core_active && !eng_post_full && !core_post_req &&
+                            !video_mirror_mode_q;
     wire arm_post_accept = arm_post_we && arm_post_ready;
 
     /* Register the final accepted tuple before the queue. This cuts address
@@ -1235,29 +1318,26 @@ module vtw_core_top (
      * and fill-count enables. The queue's early-full margin reserves room for
      * this one in-flight entry, so an accepted tuple drains on the next edge
      * even if the early-full flag rises meanwhile. */
-    logic        post_stage_valid_q;
-    logic [15:0] post_stage_addr_q;
-    logic [7:0]  post_stage_wdata_q;
-
-    assign eng_post_we    = post_stage_valid_q && rstn && enable && ab_read.res;
+    assign eng_post_we    = post_stage_valid_q && rstn && engine_enable && ab_read.res;
     assign eng_post_addr  = post_stage_addr_q;
     assign eng_post_wdata = post_stage_wdata_q;
 
     always_ff @(posedge clk) begin
-        if (!rstn || !enable || !ab_read.res) begin
+        if (!rstn || !engine_enable || !ab_read.res) begin
             post_stage_valid_q <= 1'b0;
             post_stage_addr_q  <= '0;
             post_stage_wdata_q <= '0;
         end
         else begin
-            post_stage_valid_q <= core_post_accept || arm_post_accept;
+            post_stage_valid_q <= core_post_accept || arm_post_accept ||
+                                  (video_mirror_valid && video_mirror_ready);
             /* Capture the core tuple without the posted classifier as a
              * register enable. ARM wins this data mux only when its handshake
              * is accepted; core_post_req already makes the cases exclusive. */
-            post_stage_addr_q  <= arm_post_accept ? arm_post_addr
-                                                  : cycle_addr_q;
-            post_stage_wdata_q <= arm_post_accept ? arm_post_wdata
-                                                  : cycle_wdata_q;
+            post_stage_addr_q  <= video_mirror_valid ? video_mirror_addr :
+                                 arm_post_accept ? arm_post_addr : cycle_addr_q;
+            post_stage_wdata_q <= video_mirror_valid ? video_mirror_data :
+                                 arm_post_accept ? arm_post_wdata : cycle_wdata_q;
         end
     end
 
@@ -1298,15 +1378,52 @@ module vtw_core_top (
      * state with no RamWorks traffic and parks there against the gated
      * core_en, so the CPU0 flush below may safely take the cache. */
     wire rw_flush_unsafe =
-        core_res_n &&
+        (core_res_n || video_mirror_pending) &&
         ((xstate_q == X_CAPTURE) || (xstate_q == X_ROUTE) ||
          (xstate_q == X_TURBO_DONE) ||
          (xstate_q == X_RW_LOOKUP) || (xstate_q == X_RW_FLUSH) ||
-         (xstate_q == X_RW_FILL));
+          (xstate_q == X_RW_FILL) || video_mirror_pending);
 
     assign c074_state      = c074_q;
     assign cnt_core_cycles = cnt_core_q;
     assign cnt_invalid_routes = cnt_invalid_q;
+
+    // Read-only performance counters. Register the predicates before the
+    // adders so diagnostics do not lengthen the CPU completion paths.
+    logic [7:0] perf_events_q;
+    logic [3:0] perf_ticks_q;
+    logic perf_invalidate_q;
+    logic [31:0] perf_count [0:7];
+    always_ff @(posedge clk) begin
+        if (!rstn || dbg_clear) begin
+            perf_events_q <= '0;
+            perf_ticks_q <= '0;
+            perf_invalidate_q <= 1'b0;
+            for (int n = 0; n < 8; n++) perf_count[n] <= '0;
+        end else begin
+            perf_events_q <= {
+                core_active && ((xstate_q == X_POST_STALL) ||
+                    (xstate_q == X_CAPTURE && video_barrier)),
+                core_active && !d2_time_ready,
+                core_active && turbo_invalidate && !perf_invalidate_q,
+                core_active && xstate_q == X_TURBO_DONE && !turbo_hit && !turbo_invalidate,
+                core_en && xstate_q == X_TURBO_DONE && cycle_rw_q,
+                core_en,
+                core_en,
+                core_active
+            };
+            perf_ticks_q <= core_cycle_ticks;
+            perf_invalidate_q <= turbo_invalidate;
+            for (int n = 0; n < 8; n++) begin
+                if (perf_events_q[n])
+                    perf_count[n] <= perf_count[n] +
+                        ((n == 2) ? {28'b0, perf_ticks_q} : 32'd1);
+            end
+        end
+    end
+    for (genvar n = 0; n < 8; n++) begin : perf_readback
+        assign turbo_perf[32*n +: 32] = perf_count[n];
+    end
 
     always_ff @(posedge clk) begin
         if (!rstn) begin
@@ -1357,6 +1474,7 @@ module vtw_core_top (
             private_d2_q        <= 1'b0;
             cycle_d2_native_q   <= 1'b0;
             d2_cycle_tick_q     <= 1'b0;
+            d2_cycle_ticks      <= 4'd0;
             sp_inflight_q       <= 1'b0;
             slow_cnt_q          <= 16'd0;
             slow_update_valid_q <= 1'b0;
@@ -1365,6 +1483,7 @@ module vtw_core_top (
         end
         else begin
             arm_rw_flush_done <= 1'b0;
+            d2_cycle_ticks <= core_cycle_ticks;
             if (!core_active)
                 d2_cycle_tick_q <= 1'b0;
             else
@@ -1554,7 +1673,7 @@ module vtw_core_top (
             unique case (xstate_q)
                 X_CAPTURE: begin
                     cycle_d2_native_q <= 1'b0;
-                    if (!core_res_n) begin
+                    if (!core_res_n || !d2_time_ready || video_barrier) begin
                         // Core held/reset: idle here (cheap wait state).
                         xstate_q <= X_CAPTURE;
                     end
@@ -1599,7 +1718,7 @@ module vtw_core_top (
                     if (turbo_invalidate || core_en)
                         xstate_q <= X_CAPTURE;
                     else if (!turbo_hit)
-                        xstate_q <= X_ROUTE;
+                        xstate_q <= turbo_shadow_read ? X_MEM_CAPTURE : X_ROUTE;
                 end
 
                 X_ROUTE: begin
@@ -1656,7 +1775,7 @@ module vtw_core_top (
                         core_data_in_q <= 8'hFF;
                         xstate_q       <= X_DEAD;
                     end
-                    else if (xl_is_posted && eng_post_full) begin
+                    else if (xl_is_posted && core_post_blocked) begin
                         xstate_q <= X_POST_STALL;
                     end
                     else begin
@@ -1728,7 +1847,7 @@ module vtw_core_top (
                     /* Shadow write already committed at the X_ROUTE edge;
                      * the queue push retries until accepted (mirrors the
                      * real TW's stall-on-buffer-full). */
-                    if (!eng_post_full) begin
+                    if (!core_post_blocked) begin
                         xstate_q <= X_MEM_CAPTURE;
                     end
                 end

@@ -1164,6 +1164,23 @@ void vtw_service_uart_status(uint32_t uart_base)
              (unsigned long)REG_READ(CARD_CTRL_VTW_CNT_INVALID_REG));
     uart_puts(uart_base, line);
     snprintf(line, sizeof(line),
+             "vtw: perf fabric=%lu steps=%lu classic=%lu\r\n",
+             (unsigned long)REG_READ(CARD_CTRL_TURBO_PERF_REG(0)),
+             (unsigned long)REG_READ(CARD_CTRL_TURBO_PERF_REG(1)),
+             (unsigned long)REG_READ(CARD_CTRL_TURBO_PERF_REG(2)));
+    uart_puts(uart_base, line);
+    snprintf(line, sizeof(line),
+             "vtw: cache hits=%lu misses=%lu invalidations=%lu\r\n",
+             (unsigned long)REG_READ(CARD_CTRL_TURBO_PERF_REG(3)),
+             (unsigned long)REG_READ(CARD_CTRL_TURBO_PERF_REG(4)),
+             (unsigned long)REG_READ(CARD_CTRL_TURBO_PERF_REG(5)));
+    uart_puts(uart_base, line);
+    snprintf(line, sizeof(line),
+             "vtw: wait disk=%lu video=%lu\r\n",
+             (unsigned long)REG_READ(CARD_CTRL_TURBO_PERF_REG(6)),
+             (unsigned long)REG_READ(CARD_CTRL_TURBO_PERF_REG(7)));
+    uart_puts(uart_base, line);
+    snprintf(line, sizeof(line),
              "vtw: qfill=%lu qhw=%lu qdrop=%lu sessions=%lu\r\n",
              (unsigned long)(post & 0x3FFU),
              (unsigned long)((post >> 16) & 0x3FFU),

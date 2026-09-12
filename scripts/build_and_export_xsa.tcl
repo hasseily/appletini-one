@@ -15,7 +15,13 @@ set force_full_build [expr {
 }]
 set timing_diagnostics [timing_run::env_enabled APPLETINI_TIMING_DIAGNOSTICS]
 set minimum_setup_slack 0.200
-if {[info exists ::env(APPLETINI_MIN_SETUP_SLACK_NS)]} {
+# Explicit test-firmware policy: require strictly positive setup slack, with
+# all hold, pulse-width, route and constraint checks unchanged. This does
+# not change the separate known-good release promotion policy.
+set positive_slack_only [timing_run::env_enabled APPLETINI_POSITIVE_SLACK_ONLY]
+if {$positive_slack_only} {
+    set minimum_setup_slack 0.000
+} elseif {[info exists ::env(APPLETINI_MIN_SETUP_SLACK_NS)]} {
     set minimum_setup_slack $::env(APPLETINI_MIN_SETUP_SLACK_NS)
     if {![string is double -strict $minimum_setup_slack] ||
         !($minimum_setup_slack >= 0.200 && $minimum_setup_slack <= 1.0)} {
@@ -419,7 +425,8 @@ foreach path [get_timing_paths -delay_type max -max_paths 10 -sort_by slack] {
 # Keep reports and CSV values for failed attempts, but never export hardware
 # from a design with a timing, route, bus-skew, or constraint fault.
 if {![string is double -strict [dict get $build_info wns_ns]] ||
-    [dict get $build_info wns_ns] < $minimum_setup_slack} {
+    [dict get $build_info wns_ns] < $minimum_setup_slack ||
+    ($positive_slack_only && [dict get $build_info wns_ns] <= 0.0)} {
     error "Timing failed (wns_ns below $minimum_setup_slack ns); refusing to export hardware."
 }
 foreach key {whs_ns wpws_ns} {

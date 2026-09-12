@@ -236,6 +236,7 @@ def main() -> int:
         "hdl/apple/vtw_bus_engine.sv",
         "hdl/apple/w65c02_core.sv",
         "hdl/apple/vtw_turbo_cache.sv",
+        "hdl/apple/vtw_video_coalescer.sv",
         "hdl/apple/vtw_core_top.sv",
         "hdl/apple/disk2_card.sv",
         "hdl/sim/tb_onee_joined_bus.sv",

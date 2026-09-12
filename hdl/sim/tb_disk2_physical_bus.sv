@@ -161,7 +161,7 @@ module tb_disk2_physical_bus;
         .vtw_req_ready(),
         .vtw_resp_valid(),
         .vtw_resp_rdata(),
-        .vtw_cycle_tick(1'b0),
+        .vtw_cycle_tick(1'b0), .vtw_cycle_ticks(4'd1),
         .vtw_native_cycle_active(1'b0),
         .vtw_time_ready(),
         .vtw_write_timing_active(),

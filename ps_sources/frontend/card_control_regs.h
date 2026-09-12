@@ -287,6 +287,10 @@
 #define CARD_CTRL_VTW_SHADOW_READ4_READY_BIT    (1UL << 31)
 #define CARD_CTRL_VTW_SHADOW_READ4_BUSY_BIT     (1UL << 30)
 #define CARD_CTRL_VTW_SHADOW_READ4_COUNT_MASK   0x3FFFFFFFUL
+/* TURBO performance counters, cleared with busdbg clear: fabric clocks,
+ * accepted CPU steps, classic guest cycles, cached read hits, read misses,
+ * invalidation events, Disk II wait clocks, and video/post wait clocks. */
+#define CARD_CTRL_TURBO_PERF_REG(n)             CARD_CTRL_REG_ADDR(0xA3U + (n))
 #define CARD_CTRL_VTW_TRACE_FROZEN_BIT      (1UL << 0)
 #define CARD_CTRL_VTW_TRACE_REASON_SHIFT    1U
 #define CARD_CTRL_VTW_TRACE_REASON_MASK     0x3UL

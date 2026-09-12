@@ -36,6 +36,7 @@ module tb_disk2_woz_rw;
     logic vtw_resp_valid;
     logic [7:0] vtw_resp_rdata;
     logic vtw_cycle_tick = 1'b0;
+    logic [3:0] vtw_cycle_ticks = 4'd1;
     logic vtw_native_cycle_active = 1'b0;
     logic vtw_time_ready;
     logic vtw_write_timing_active;
@@ -62,7 +63,7 @@ module tb_disk2_woz_rw;
         .vtw_req_valid(vtw_req_valid), .vtw_req_addr(vtw_req_addr),
         .vtw_req_ready(vtw_req_ready),
         .vtw_resp_valid(vtw_resp_valid), .vtw_resp_rdata(vtw_resp_rdata),
-        .vtw_cycle_tick(vtw_cycle_tick),
+        .vtw_cycle_tick(vtw_cycle_tick), .vtw_cycle_ticks(vtw_cycle_ticks),
         .vtw_native_cycle_active(vtw_native_cycle_active),
         .vtw_time_ready(vtw_time_ready),
         .vtw_write_timing_active(vtw_write_timing_active),
@@ -119,6 +120,49 @@ module tb_disk2_woz_rw;
     task automatic check(input bit cond, input string msg);
         if (!cond)
             $fatal(1, "FAIL: %s", msg);
+    endtask
+
+    task automatic counted_ticks(input integer count);
+        integer remaining_ticks;
+        integer batch_ticks;
+        integer batch_index;
+        integer timeout;
+        remaining_ticks = count;
+        batch_index = 0;
+        while (remaining_ticks != 0) begin
+            timeout = 0;
+            while (!vtw_time_ready && timeout < 1000) begin
+                @(negedge clk);
+                timeout++;
+            end
+            check(vtw_time_ready, "counted guest time did not become ready");
+            // Mix CPU-sized steps with the largest interface count. This
+            // covers each partial cell and crosses DDR lines/track wraps.
+            case (batch_index % 5)
+                0: batch_ticks = 1;
+                1: batch_ticks = 2;
+                2: batch_ticks = 3;
+                3: batch_ticks = 4;
+                default: batch_ticks = 15;
+            endcase
+            if (batch_ticks > remaining_ticks)
+                batch_ticks = remaining_ticks;
+            @(negedge clk);
+            vtw_cycle_ticks = 4'(batch_ticks);
+            vtw_cycle_tick = 1'b1;
+            @(negedge clk);
+            vtw_cycle_tick = 1'b0;
+            remaining_ticks -= batch_ticks;
+            batch_index++;
+        end
+        timeout = 0;
+        while (!vtw_time_ready && timeout < 1000) begin
+            @(negedge clk);
+            timeout++;
+        end
+        check(vtw_time_ready && dut.vtw_ticks_pending_q == 0,
+              "counted guest time did not drain");
+        vtw_cycle_ticks = 4'd1;
     endtask
 
     task automatic axi_write(input logic [7:0] reg_addr,
@@ -237,6 +281,7 @@ module tb_disk2_woz_rw;
         vtw_active = accelerated;
         vtw_req_valid = 1'b0;
         vtw_cycle_tick = 1'b0;
+        vtw_cycle_ticks = 4'd1;
         vtw_native_cycle_active = 1'b0;
         ab_read.serve_en = 1'b0;
         ab_read.data_en = 1'b0;
@@ -478,6 +523,37 @@ module tb_disk2_woz_rw;
               "native and vTW WOZ head windows differ");
         check(dut.stream_read_count_q == native_stream_reads,
               "native and vTW raw-cell counts differ");
+
+        // Folded TURBO steps owe exactly the same guest time as separate
+        // classic cycles. Compare state through multiple track wraps and
+        // the weak-bit PRNG as well as a regular A5 stream.
+        for (int pattern = 0; pattern < 2; ++pattern) begin
+            reset_and_load(1'b0, 1'b0,
+                pattern == 0 ? 64'hA5A5_A5A5_A5A5_A5A5 : 64'd0);
+            source_ticks(1036, 1'b0);
+            physical_access(4'hC, 1'b1, 8'h00, value);
+            native_offset = dut.drive_bit_offset_q[0];
+            native_accum = dut.woz_bit_accum_q;
+            native_latch = dut.disk_latch_q;
+            native_shift = dut.woz_shift_q;
+            native_head_window = dut.drive_woz_head_window_q[0];
+            native_stream_reads = dut.stream_read_count_q;
+
+            reset_and_load(1'b1, 1'b0,
+                pattern == 0 ? 64'hA5A5_A5A5_A5A5_A5A5 : 64'd0);
+            counted_ticks(1036);
+            direct_read(4'hC, value);
+            check(dut.drive_bit_offset_q[0] == native_offset &&
+                  dut.woz_bit_accum_q == native_accum &&
+                  dut.disk_latch_q == native_latch &&
+                  dut.woz_shift_q == native_shift &&
+                  dut.drive_woz_head_window_q[0] == native_head_window &&
+                  dut.stream_read_count_q == native_stream_reads,
+                  $sformatf("counted WOZ state differs from classic ticks, pattern=%0d", pattern));
+            check(dut.underrun_count_q == 0,
+                  "counted WOZ ticks outran the DDR/weak-bit pipeline");
+        end
+        $display("DISK2 COUNTED WOZ TIME PASS");
 
         // Run the same eight-bit A5 media write and readback through each
         // mode. The native case keeps vtw_active low for the full session and

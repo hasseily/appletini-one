@@ -31,6 +31,7 @@ module tb_disk2_vtw_read;
     logic vtw_req_ready;
     logic vtw_resp_valid;
     logic [7:0] vtw_resp_rdata;
+    logic [3:0] vtw_cycle_ticks = 4'd1;
     logic vtw_tick_extra = 1'b0;
     wire vtw_cycle_tick = vtw_tick_extra;
     logic vtw_native_cycle_active = 1'b0;
@@ -52,7 +53,7 @@ module tb_disk2_vtw_read;
         .vtw_req_valid(vtw_req_valid), .vtw_req_addr(vtw_req_addr),
         .vtw_req_ready(vtw_req_ready),
         .vtw_resp_valid(vtw_resp_valid), .vtw_resp_rdata(vtw_resp_rdata),
-        .vtw_cycle_tick(vtw_cycle_tick),
+        .vtw_cycle_tick(vtw_cycle_tick), .vtw_cycle_ticks(vtw_cycle_ticks),
         .vtw_native_cycle_active(vtw_native_cycle_active),
         .vtw_time_ready(vtw_time_ready),
         .vtw_write_timing_active(vtw_write_timing_active),
@@ -262,6 +263,24 @@ module tb_disk2_vtw_read;
               $sformatf("second private nibble was %02X, expected A2", value));
         check(disk_tick_count == ticks_before + 1,
               "second private read did not add exactly one execution tick");
+
+        // One shortened CPU step represents eight classic cycles here.
+        // Present the next read immediately: its request must wait until
+        // all eight ticks have reached the disk before sampling its latch.
+        ticks_before = disk_tick_count;
+        @(negedge clk);
+        vtw_cycle_ticks = 4'd8;
+        vtw_tick_extra = 1'b1;
+        #1;
+        check(!vtw_time_ready && !vtw_req_ready,
+              "counted step did not hold the next CPU/private access");
+        @(negedge clk);
+        vtw_tick_extra = 1'b0;
+        direct_read(4'hC, value);
+        check(value == 8'hA3 && disk_tick_count == ticks_before + 9 &&
+              dut.vtw_ticks_pending_q == 0,
+              "private read passed or lost pending classic guest ticks");
+        vtw_cycle_ticks = 4'd1;
 
         // A native Disk II cycle uses only the physical sss_en pulse. A
         // virtual pulse presented at the same time source selection is native

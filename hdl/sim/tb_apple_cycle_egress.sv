@@ -17,6 +17,7 @@ module tb_apple_cycle_egress;
     logic capture_drop_sticky = 1'b0;
     logic capture_drop_ack;
     logic cfg_enable = 1'b0;
+    logic cfg_lossless = 1'b0;
     logic [31:0] cfg_ring_base_addr = 32'h3F00_0000;
     logic [4:0] cfg_ring_size_log2 = 5'd12;
     logic [31:0] cfg_producer_ptr_addr = 32'h3F01_0000;
@@ -65,6 +66,7 @@ module tb_apple_cycle_egress;
         .capture_drop_sticky(capture_drop_sticky),
         .capture_drop_ack(capture_drop_ack),
         .cfg_enable(cfg_enable),
+        .cfg_lossless(cfg_lossless),
         .cfg_ring_base_addr(cfg_ring_base_addr),
         .cfg_ring_size_log2(cfg_ring_size_log2),
         .cfg_producer_ptr_addr(cfg_producer_ptr_addr),
@@ -205,6 +207,33 @@ module tb_apple_cycle_egress;
 
         $display("APPLE CYCLE EGRESS CAP EQUIVALENCE: %0d cases, %0d clock checks, 32 sizes",
                  cap_cases, cap_clock_checks);
+
+        // A stopped ARM consumer must backpressure direct TURBO records,
+        // preserving the staged bytes rather than inventing a gap marker.
+        @(negedge clk);
+        cfg_ring_size_log2 = 5'd12;
+        cfg_consumer_ptr = 0;
+        force dut.producer_ptr_q = 32'd4080;
+        cfg_lossless = 1'b1;
+        cfg_enable = 1'b1;
+        cycle_capture_empty = 1'b0;
+        cycle_capture_data.addr_decode_en = 1'b1;
+        cycle_capture_data.addr_decode = 24'h012345;
+        cycle_capture_data.data = 8'hA6;
+        repeat (100) @(posedge clk);
+        #1;
+        if (dut.gap_pending_q || dut.stage_count_q != 16 || stat_gap_markers != 0)
+            $fatal(1, "lossless full ring discarded staged records");
+        @(negedge clk);
+        cycle_capture_empty = 1'b1;
+        cfg_consumer_ptr = 32'd256;
+        axi_write.bvalid = 1'b1;
+        repeat (150) @(posedge clk);
+        #1;
+        if (stat_records_written != 16 || stat_gap_markers != 0 ||
+            dut.stage_count_q != 0 || stat_full_stall_cycles == 0)
+            $fatal(1, "lossless ring did not resume all sixteen records");
+        release dut.producer_ptr_q;
 
         if (failures == 0)
             $display("APPLE CYCLE EGRESS RING FLAGS PASS");

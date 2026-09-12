@@ -7,7 +7,9 @@
  * queue and drain four little-endian bytes per accepted word. A new address
  * or scalar write cancels packed work, which lets the SmartPort fallback
  * path stop a partial direct copy before it resumes the 6502. */
-module vtw_shadow_host_port (
+module vtw_shadow_host_port #(
+    parameter bit WIDE_PORT = 1'b0
+) (
     input  logic        clk,
     input  logic        rstn,
 
@@ -33,7 +35,10 @@ module vtw_shadow_host_port (
     output logic [17:0] sh_addr,
     output logic        sh_we,
     output logic [7:0]  sh_wdata,
-    input  logic [7:0]  sh_rdata
+    input  logic [7:0]  sh_rdata,
+    input  logic [31:0] sh_rdata32,
+    output logic       sh_word_we,
+    output logic [31:0] sh_wdata32
 );
 
     typedef enum logic [2:0] {
@@ -58,8 +63,12 @@ module vtw_shadow_host_port (
 
     wire word_push = word_write && !addr_set && !byte_write &&
                      (word_count_q != 2'd2);
+    wire wide_write = WIDE_PORT && pointer[1:0] == 2'b00 && word_lane_q == 2'd0;
+    wire wide_read = WIDE_PORT && pointer[1:0] == 2'b00 && word_read_lane_q == 2'd0;
     wire word_pop = (state_q == SH_WORD_WRITE) &&
-                    (word_lane_q == 2'd3);
+                    (word_lane_q == 2'd3 || wide_write);
+    assign sh_word_we = (state_q == SH_WORD_WRITE) && wide_write;
+    assign sh_wdata32 = word_active_q;
 
     assign word_ready = (word_count_q != 2'd2);
     assign word_busy = (word_count_q != 2'd0) ||
@@ -141,8 +150,8 @@ module vtw_shadow_host_port (
                     state_q   <= SH_IDLE;
                 end
                 SH_WORD_WRITE: begin
-                    pointer <= pointer + 18'd1;
-                    if (word_lane_q == 2'd3) begin
+                    pointer <= pointer + (wide_write ? 18'd4 : 18'd1);
+                    if (word_lane_q == 2'd3 || wide_write) begin
                         state_q <= SH_IDLE;
                     end else begin
                         word_lane_q <= word_lane_q + 2'd1;
@@ -152,6 +161,12 @@ module vtw_shadow_host_port (
                     state_q <= SH_WORD_CAPTURE;
                 end
                 SH_WORD_CAPTURE: begin
+                    if (wide_read) begin
+                        word_read_data <= sh_rdata32;
+                        pointer <= pointer + 18'd4;
+                        word_read_count <= word_read_count + 30'd1;
+                        state_q <= SH_IDLE;
+                    end else begin
                     unique case (word_read_lane_q)
                         2'd0: word_read_data[7:0]   <= sh_rdata;
                         2'd1: word_read_data[15:8]  <= sh_rdata;
@@ -165,6 +180,7 @@ module vtw_shadow_host_port (
                     end else begin
                         word_read_lane_q <= word_read_lane_q + 2'd1;
                         state_q <= SH_WORD_READ;
+                    end
                     end
                 end
                 default: state_q <= SH_IDLE;

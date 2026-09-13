@@ -48,6 +48,14 @@ void shape(uint16_t *dst, const uint32_t *src, int width, uint8_t color,
     video_mono_expand_row(dst, src, width, video_mono_channel_shift(color),
                           tint, bleed);
 }
+/* Keep the exact brightness samples visible before RGB565 quantization. */
+void shape_levels(uint16_t *dst, const uint32_t *src, int width, uint8_t color,
+                  uint8_t bleed) {
+    uint16_t tint[256];
+    for (unsigned y = 0; y < 256; ++y) tint[y] = (uint16_t)y;
+    video_mono_expand_row(dst, src, width, video_mono_channel_shift(color),
+                          tint, bleed);
+}
 uint32_t packed(uint32_t detail, uint32_t mode, uint8_t border) {
     return handoff_pack_published(2, mode, detail, border);
 }
@@ -90,6 +98,7 @@ uint32_t history(int x) { return s_effect_history[x]; }
     lib.shape.argtypes = [ctypes.POINTER(ctypes.c_uint16),
                          ctypes.POINTER(ctypes.c_uint32), ctypes.c_int,
                          ctypes.c_uint8, ctypes.c_uint8]
+    lib.shape_levels.argtypes = lib.shape.argtypes
     lib.packed.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint8]
     lib.packed.restype = lib.unpacked.restype = ctypes.c_uint32
     lib.unpacked.argtypes = [ctypes.c_uint32]
@@ -98,12 +107,12 @@ uint32_t history(int x) { return s_effect_history[x]; }
     lib.history.argtypes = [ctypes.c_int]
     lib.history.restype = ctypes.c_uint32
 
-    def shape(pixels, color=1, bleed=LIGHT):
+    def shape(pixels, color=1, bleed=LIGHT, levels=False):
         src = (ctypes.c_uint32 * len(pixels))(*pixels)
         guarded = (ctypes.c_uint16 * (2 * len(pixels) + 2))()
         guarded[0] = guarded[-1] = 0xA55A
         dst = ctypes.cast(ctypes.byref(guarded, 2), ctypes.POINTER(ctypes.c_uint16))
-        lib.shape(dst, src, len(pixels), color, bleed)
+        (lib.shape_levels if levels else lib.shape)(dst, src, len(pixels), color, bleed)
         assert guarded[0] == guarded[-1] == 0xA55A, "row write crossed an edge"
         return list(guarded)[1:-1]
 
@@ -127,22 +136,23 @@ uint32_t history(int x) { return s_effect_history[x]; }
     print("PASS solid fills, edge clamps, tails and row bounds at every level")
 
     # Ordinary HGR doubles each bit to two source dots. An interior off bit
-    # once made four black output columns. Light keeps its middle two black
-    # with dim edges; Medium and Strong widen the spot until no column is
-    # fully black. Each profile is fixed and symmetric.
+    # makes four output columns. Light and Medium keep its middle two black
+    # as the edges brighten; Strong adds only a little light at the center.
+    # Each profile is fixed and symmetric.
     pattern = [0xFFFFFFFF] * 2 + [0xFF000000] * 2 + [0xFFFFFFFF] * 2
     profiles = {
         LIGHT:  [255, 255, 255, 191, 64, 0, 0, 64, 191, 255, 255, 255],
-        MEDIUM: [255, 255, 239, 175, 80, 16, 16, 80, 175, 239, 255, 255],
-        STRONG: [255, 239, 215, 159, 96, 56, 56, 96, 159, 215, 239, 255],
+        MEDIUM: [255, 255, 255, 159, 96, 0, 0, 96, 159, 255, 255, 255],
+        STRONG: [255, 255, 247, 143, 112, 8, 8, 112, 143, 247, 255, 255],
     }
     for bleed, expected in profiles.items():
         result = shape(pattern, bleed=bleed)
         assert result == [rgb565(v, v, v) for v in expected], (bleed, result)
         assert result == result[::-1]
+        assert shape(pattern, bleed=bleed, levels=True) == expected
     assert shape(pattern, bleed=OFF) == plain(pattern)
-    assert [profiles[b].count(0) for b in LEVELS] == [2, 0, 0]
-    assert profiles[LIGHT][5] < profiles[MEDIUM][5] < profiles[STRONG][5]
+    assert [profiles[b].count(0) for b in LEVELS] == [2, 2, 0]
+    assert profiles[LIGHT][4] < profiles[MEDIUM][4] < profiles[STRONG][4]
     print("PASS HGR gap profiles per level; Off is the plain expansion")
 
     # DHGR alternating single dots (80-column text density) keep two

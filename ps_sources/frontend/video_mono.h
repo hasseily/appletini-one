@@ -6,10 +6,11 @@
 #include "../lib/fb16.h"
 #include "video_output.h"
 
-/* Dot bleed: how far each monochrome dot spreads sideways during the
- * compositor's 2x row expansion, like the spot of a CRT. Off keeps the
- * plain RGB expansion. Light shapes only the two output columns of each
- * dot. Medium and Strong widen the spot into the neighbouring dots. */
+/* Dot bleed: how much each monochrome dot spreads sideways during the
+ * compositor's 2x row expansion. Off keeps the plain RGB expansion.
+ * Light and Medium brighten four-column gaps at their edges while
+ * keeping the two center columns dark.
+ * Strong adds a small amount of light to the gap centers. */
 #define APPLETINI_VIDEO_DOT_BLEED_OFF    0U
 #define APPLETINI_VIDEO_DOT_BLEED_LIGHT  1U
 #define APPLETINI_VIDEO_DOT_BLEED_MEDIUM 2U
@@ -102,9 +103,9 @@ static inline void video_mono_expand_row_light(uint16_t *dst,
     }
 }
 
-/* Medium: three taps, a spot about 1.25x wider than Light.
- *     left  = (10*previous + 20*current + 2*next)/32
- *     right = (2*previous + 20*current + 10*next)/32 */
+/* Medium: two taps, brighter four-column gap edges with dark centers.
+ *     left  = (12*previous + 20*current)/32
+ *     right = (20*current + 12*next)/32 */
 static inline void video_mono_expand_row_medium(uint16_t *dst,
                                                 const uint32_t *src,
                                                 int width,
@@ -118,17 +119,16 @@ static inline void video_mono_expand_row_medium(uint16_t *dst,
             ? video_mono_level(src, x + 1, channel_shift) : current;
         const unsigned center = 20U * current + 16U;
 
-        dst[2 * x] = tint[(10U * previous + center + 2U * next) >> 5];
-        dst[2 * x + 1] = tint[(2U * previous + center + 10U * next) >> 5];
+        dst[2 * x] = tint[(12U * previous + center) >> 5];
+        dst[2 * x + 1] = tint[(center + 12U * next) >> 5];
         previous = current;
         current = next;
     }
 }
 
-/* Strong: four taps, a spot about 1.7x wider than Light. Each sample also
- * sees the second dot behind it.
- *     left  = (2*previous2 + 10*previous + 15*current + 5*next)/32
- *     right = (5*previous + 15*current + 10*next + 2*next2)/32 */
+/* Strong: three taps, with a small contribution to the gap centers.
+ *     left  = (14*previous + 17*current + next)/32
+ *     right = (previous + 17*current + 14*next)/32 */
 static inline void video_mono_expand_row_strong(uint16_t *dst,
                                                 const uint32_t *src,
                                                 int width,
@@ -137,22 +137,15 @@ static inline void video_mono_expand_row_strong(uint16_t *dst,
 {
     unsigned current = video_mono_level(src, 0, channel_shift);
     unsigned previous = current;
-    unsigned previous2 = current;
-    unsigned next = (width > 1)
-        ? video_mono_level(src, 1, channel_shift) : current;
     for (int x = 0; x < width; ++x) {
-        const unsigned next2 = (x + 2 < width)
-            ? video_mono_level(src, x + 2, channel_shift) : next;
-        const unsigned center = 15U * current + 16U;
+        const unsigned next = (x + 1 < width)
+            ? video_mono_level(src, x + 1, channel_shift) : current;
+        const unsigned center = 17U * current + 16U;
 
-        dst[2 * x] = tint[(2U * previous2 + 10U * previous + center +
-                           5U * next) >> 5];
-        dst[2 * x + 1] = tint[(5U * previous + center + 10U * next +
-                               2U * next2) >> 5];
-        previous2 = previous;
+        dst[2 * x] = tint[(14U * previous + center + next) >> 5];
+        dst[2 * x + 1] = tint[(previous + center + 14U * next) >> 5];
         previous = current;
         current = next;
-        next = next2;
     }
 }
 

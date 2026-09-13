@@ -1,10 +1,11 @@
 # Monochrome dot bleed
 
 Legacy mono output shapes each dot during the compositor's 2x row
-expansion, like the spot of a CRT. This reduces the thick dark gaps seen
-in dithered HGR images. The Video tab row "Dot bleed" selects Off, Light,
-Medium, or Strong. Light is the default. The row is active only with
-Monochrome output; with Color output it shows dimmed and ignores input.
+expansion. This reduces the thick dark gaps seen in dithered HGR images.
+The Video tab control "Dot bleed" selects Off, Light, Medium, or Strong.
+Light is the default. It shares the "Color mode" row (labelled "Mono color"
+in Monochrome) and appears only with Monochrome output. With Color output,
+navigation skips this hidden control.
 
 Shaping runs on complete mono frames, including green, amber, white, and
 Video-7 automatic white mono. It supports normal legacy video and the
@@ -17,25 +18,26 @@ repeat the end dot and never sample a colored border.
 ```
 Light   left = (previous + 3*current) / 4
         right = (3*current + next) / 4
-Medium  left = (10*previous + 20*current + 2*next) / 32
-        right = (2*previous + 20*current + 10*next) / 32
-Strong  left = (2*previous2 + 10*previous + 15*current + 5*next) / 32
-        right = (5*previous + 15*current + 10*next + 2*next2) / 32
+Medium  left = (12*previous + 20*current) / 32
+        right = (20*current + 12*next) / 32
+Strong  left = (14*previous + 17*current + next) / 32
+        right = (previous + 17*current + 14*next) / 32
 ```
 
-For an HGR bit pattern of on, on, off, off, on, on (each bit is two source
-dots), the twelve output columns read:
+For an HGR bit pattern of on, off, on (each bit is two source dots), the
+twelve output columns read:
 
 ```
 Off     255 255 255 255   0   0   0   0 255 255 255 255
 Light   255 255 255 191  64   0   0  64 191 255 255 255
-Medium  255 255 239 175  80  16  16  80 175 239 255 255
-Strong  255 239 215 159  96  56  56  96 159 215 239 255
+Medium  255 255 255 159  96   0   0  96 159 255 255 255
+Strong  255 255 247 143 112   8   8 112 143 247 255 255
 ```
 
-Light keeps single dots sharp and softens only the gap edges. Medium and
-Strong widen the spot, so gaps fill more but 80-column text loses
-contrast. For alternating single dots, the on and off levels are 191/64
+The gap edges brighten from 64 to 96 to 112 as bleed increases. Light and
+Medium keep the two center columns black; Strong raises them to 8, about
+3% brightness. The values above precede RGB565 quantization and assume no
+other effects. For alternating single dots, the on and off levels are 191/64
 (Light), 159/96 (Medium), and 135/120 (Strong).
 
 The filter reads the strongest channel of the renderer's tinted pixels,
@@ -95,6 +97,17 @@ Validation on 2026-09-12 for the NEON mono glow pass:
   lists its ARM compiler and Unicorn dependencies.
 - The existing mono, video-output, border, and VidHD/SHR tests pass. The
   CPU0 frontend compiles and links in Vitis 2025.2 with no new warnings.
+
+Validation on 2026-09-13 for the revised Medium and Strong profiles:
+
+- The host mono test checks the exact brightness samples above before
+  RGB565 quantization, as well as the packed pixels and compositor paths.
+  Light and Medium keep the two center columns black; Strong produces 8.
+- All 2,160 Cortex-A9/Unicorn cases pass with the revised scalar reference.
+  The video-output menu and compositor border tests also pass.
+- Host checks of the shared color/bleed row pass in both output modes,
+  including control positions, focus, and navigation past hidden dot bleed.
+- No firmware rebuild or board test was run for this profile change.
 
 CRT appearance and added render time still need measurement on the board.
 The existing `g_compositor_last_apple_us` counter measures the Apple blit

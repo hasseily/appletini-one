@@ -221,9 +221,9 @@ HELP(video_variant,
     "We're happy to implement an accurate NTSC model if someone can provide the necessary data.");
 
 HELP(video_dot_bleed,
-    "Dot bleed shapes each monochrome dot like a CRT spot during the 2x horizontal expansion.",
-    "Light keeps single dots sharp and softens only the gaps in dithered images.",
-    "Medium and Strong widen the spot. They fill gaps more, but 80-column text gets softer.",
+    "Dot bleed softens monochrome dot edges during the 2x horizontal expansion.",
+    "Light and Medium brighten gap edges while keeping the middle of a four-column gap dark.",
+    "Strong adds a little light at the gap center. Fine text has less contrast as bleed increases.",
     "It applies to Monochrome output and to Video-7 forced mono frames. SHR is not affected.");
 
 HELP(video_video7,

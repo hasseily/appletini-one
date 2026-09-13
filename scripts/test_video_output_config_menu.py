@@ -350,26 +350,19 @@ def test_boot_menu_groups_boot_and_video_settings() -> None:
             video_draw.index('"Bezel"') <
             video_draw.index('"Show debugging"'),
             "video tab must order Dot bleed, Scanlines, ghosting, Video ROM, bezel controls, then Show debugging")
-    require("y + row_h,\n                        w,\n"
-            "                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_VARIANT)" in video_draw and
-            "y + (row_h * 4),\n                             w,\n"
-            "                             (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BLUR)" in video_draw and
-            "y + (row_h * 5),\n                             w,\n"
-            "                             (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_GLOW)" in video_draw and
-            "y + (row_h * 7),\n                        third_w,\n"
-            "                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BORDER)" in video_draw and
-            "middle_x,\n                        y + (row_h * 7),\n                        third_w,\n"
-            "                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_VIDEO7)" in video_draw and
-            "last_x,\n                        y + (row_h * 7),\n                        last_w,\n"
-            "                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_COL140M)" in video_draw and
-            "y + (row_h * 13),\n                         half_w,\n"
-            "                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_DEBUG)" in video_draw and
-            "right_x,\n                        y + (row_h * 13),\n                        right_w,\n"
-            "                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BADGE)" in video_draw,
-            "video tab must give full rows to value controls and group the three requested video checkboxes")
-    require("y + (row_h * 8)" in video_draw and
-            "y + (row_h * 10)" in video_draw,
-            "video tab must leave a blank row between Video ROM and Show bezel")
+    for item, row, width in (
+        ("SCANLINES", 2, "w"), ("BLUR", 3, "w"), ("GLOW", 4, "w"),
+        ("GHOSTING", 5, "w"), ("BORDER", 6, "third_w"),
+        ("VIDEO7", 6, "third_w"), ("COL140M", 6, "last_w"),
+        ("BORDER_COLOR", 7, "w"), ("BORDER_FLOOD", 8, "w"),
+        ("ROM", 9, "w"), ("SHOW_BEZEL", 10, "w"), ("BEZEL", 11, "w"),
+        ("DEBUG", 12, "half_w"), ("BADGE", 12, "right_w"),
+    ):
+        require(re.search(
+            rf"y \+ \(row_h \* {row}\),\s+{width},\s+"
+            rf"\(uint8_t\)\(menu->item_focus == CONFIG_VIDEO_ITEM_{item}\)",
+            video_draw) is not None,
+            f"{item} must use compact video row {row} with width {width}")
     require('"Clean phase"' not in main_tabs and
             '"PAL phase"' not in main_tabs and
             "config_menu_adjust_video_phase" not in source,
@@ -972,18 +965,30 @@ def test_dot_bleed_is_mono_only_and_persists() -> None:
     require("#define CONFIG_VIDEO_ITEM_VARIANT      1U" in internal and
             "#define CONFIG_VIDEO_ITEM_DOT_BLEED    2U" in internal and
             "#define CONFIG_VIDEO_ITEM_SCANLINES    3U" in internal,
-            "Dot bleed must sit directly under the mono tint row")
-    require(video_draw.count('"Dot bleed"') == 2 and
-            "    if (menu->video_output_mono != 0U) {\n"
-            "        hgr_draw_value_item(fb," in video_draw and
-            "        hgr_draw_value_item_dimmed(fb,\n"
-            "                                   x,\n"
-            "                                   y + (row_h * 2),\n" in video_draw,
-            "Dot bleed row must draw normally in Monochrome and dimmed in Color")
-    require("        menu->item_focus == CONFIG_VIDEO_ITEM_DOT_BLEED) {\n"
-            "        /* Dot bleed shapes monochrome frames only, so the row is inert\n"
-            "         * with Color output. */\n"
-            "        if (menu->video_output_mono != 0U) {" in source and
+            "Dot bleed must retain its focus index between mono tint and Scanlines")
+    require("y + row_h,\n"
+            "                        (menu->video_output_mono != 0U) ? half_w : w," in video_draw and
+            video_draw.count('"Dot bleed"') == 1 and
+            re.search(r'if \(menu->video_output_mono != 0U\) \{\s*'
+                      r'hgr_draw_value_item\(fb,\s*right_x,\s*y \+ row_h,\s*right_w,\s*'
+                      r'\(uint8_t\)\(menu->item_focus == CONFIG_VIDEO_ITEM_DOT_BLEED\),\s*'
+                      r'"Dot bleed",\s*appletini_video_dot_bleed_name\(menu->video_dot_bleed\)\);\s*'
+                      r'\}\s*hgr_draw_value_item\(', video_draw) is not None,
+            "Dot bleed must share the tint row on the right only in Monochrome; Color mode keeps the full row")
+    for function, next_function, target in (
+        ("config_menu_clamp_item", "config_menu_on_tab_entered", "VARIANT"),
+        ("config_menu_next_item", "config_menu_prev_item", "SCANLINES"),
+        ("config_menu_prev_item", "config_menu_ethernet_edit_target", "VARIANT"),
+    ):
+        body = source[source.index(f"static void {function}("):
+                      source.index(next_function, source.index(f"static void {function}("))]
+        require("if (menu->tab == CONFIG_TAB_VIDEO && menu->video_output_mono == 0U &&\n"
+                "        menu->item_focus == CONFIG_VIDEO_ITEM_DOT_BLEED) {\n"
+                f"        menu->item_focus = CONFIG_VIDEO_ITEM_{target};" in body,
+                f"{function} must skip hidden Dot bleed only on the Color video tab")
+    require(re.search(r"menu->item_focus == CONFIG_VIDEO_ITEM_DOT_BLEED\) \{\s*"
+                      r"(?:/\*.*?\*/\s*)?if \(menu->video_output_mono != 0U\)",
+                      source, re.DOTALL) is not None and
             "        } else if (menu->item_focus == CONFIG_VIDEO_ITEM_DOT_BLEED) {\n"
             "            if (menu->video_output_mono == 0U) {" in source,
             "Dot bleed must ignore adjust and select while output is Color")

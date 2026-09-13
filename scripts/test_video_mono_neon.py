@@ -126,8 +126,8 @@ def reference(rows, width, blur, glow, color, bleed, border):
         pixels.append(channels[0] | (channels[1] << 8) | (channels[2] << 16))
     output = []
     taps = {1: ((1, 3), (3, 1), (-1, 0), (0, 1), 4),
-            2: ((10, 20, 2), (2, 20, 10), (-1, 0, 1), (-1, 0, 1), 32),
-            3: ((2, 10, 15, 5), (5, 15, 10, 2), (-2, -1, 0, 1), (-1, 0, 1, 2), 32)}
+            2: ((12, 20), (20, 12), (-1, 0), (0, 1), 32),
+            3: ((14, 17, 1), (1, 17, 14), (-1, 0, 1), (-1, 0, 1), 32)}
     for x, pixel in enumerate(pixels):
         if x < border or x >= width - border:
             packed = rgb565((pixel >> 16) & 255, (pixel >> 8) & 255, pixel & 255)

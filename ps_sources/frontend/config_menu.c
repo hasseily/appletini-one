@@ -4697,6 +4697,10 @@ static void config_menu_clamp_item(config_menu_t *menu)
     if (menu->item_focus >= count) {
         menu->item_focus = count - 1U;
     }
+    if (menu->tab == CONFIG_TAB_VIDEO && menu->video_output_mono == 0U &&
+        menu->item_focus == CONFIG_VIDEO_ITEM_DOT_BLEED) {
+        menu->item_focus = CONFIG_VIDEO_ITEM_VARIANT;
+    }
 }
 
 static void config_menu_on_tab_entered(config_menu_t *menu)
@@ -4738,6 +4742,10 @@ static void config_menu_next_item(config_menu_t *menu)
         return;
     }
     menu->item_focus = (menu->item_focus + 1U) % count;
+    if (menu->tab == CONFIG_TAB_VIDEO && menu->video_output_mono == 0U &&
+        menu->item_focus == CONFIG_VIDEO_ITEM_DOT_BLEED) {
+        menu->item_focus = CONFIG_VIDEO_ITEM_SCANLINES;
+    }
 }
 
 static void config_menu_prev_item(config_menu_t *menu)
@@ -4748,6 +4756,10 @@ static void config_menu_prev_item(config_menu_t *menu)
         return;
     }
     menu->item_focus = (menu->item_focus == 0U) ? (count - 1U) : (menu->item_focus - 1U);
+    if (menu->tab == CONFIG_TAB_VIDEO && menu->video_output_mono == 0U &&
+        menu->item_focus == CONFIG_VIDEO_ITEM_DOT_BLEED) {
+        menu->item_focus = CONFIG_VIDEO_ITEM_VARIANT;
+    }
 }
 
 static uint8_t *config_menu_ethernet_edit_target(config_menu_t *menu,
@@ -5299,8 +5311,7 @@ static uint8_t config_menu_adjust_focused_value(config_menu_t *menu, int8_t delt
 
     if (menu->tab == CONFIG_TAB_VIDEO &&
         menu->item_focus == CONFIG_VIDEO_ITEM_DOT_BLEED) {
-        /* Dot bleed shapes monochrome frames only, so the row is inert
-         * with Color output. */
+        /* Ignore edits while the control is hidden with Color output. */
         if (menu->video_output_mono != 0U) {
             int32_t level =
                 (int32_t)menu->video_dot_bleed + (int32_t)delta;

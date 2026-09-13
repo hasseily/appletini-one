@@ -362,8 +362,8 @@ void config_menu_draw_video(uint16_t *fb,
         (menu->border_flood != 0u) ?
             hgr_draw_value_item_dimmed : hgr_draw_value_item;
 
-    /* Border and the two Video-7 options share one row. Debug and video mode
-     * share another. Value controls keep a full line so their labels stay clear. */
+    /* Mono tint and dot bleed share a row. Border and the two Video-7
+     * options share another, as do debug and video mode. */
     const int half_w = (w - 12) / 2;
     const int right_x = x + half_w + 12;
     const int right_w = w - half_w - 12;
@@ -382,120 +382,110 @@ void config_menu_draw_video(uint16_t *fb,
     hgr_draw_value_item(fb,
                         x,
                         y + row_h,
-                        w,
+                        (menu->video_output_mono != 0U) ? half_w : w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_VARIANT),
                         config_menu_video_variant_label(menu),
                         config_menu_video_variant_text(menu));
     if (menu->video_output_mono != 0U) {
         hgr_draw_value_item(fb,
-                            x,
-                            y + (row_h * 2),
-                            w,
+                            right_x,
+                            y + row_h,
+                            right_w,
                             (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_DOT_BLEED),
                             "Dot bleed",
                             appletini_video_dot_bleed_name(menu->video_dot_bleed));
-    } else {
-        /* Dot bleed shapes monochrome frames only. Keep the row visible
-         * but dimmed and inert with Color output. */
-        hgr_draw_value_item_dimmed(fb,
-                                   x,
-                                   y + (row_h * 2),
-                                   w,
-                                   (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_DOT_BLEED),
-                                   "Dot bleed",
-                                   appletini_video_dot_bleed_name(menu->video_dot_bleed));
     }
     hgr_draw_value_item(fb,
                         x,
-                        y + (row_h * 3),
+                        y + (row_h * 2),
                         w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_SCANLINES),
                         "Scanlines",
                         appletini_scanlines_name(menu->scanlines_mode));
     hgr_draw_video_blur_item(fb,
                              x,
-                             y + (row_h * 4),
+                             y + (row_h * 3),
                              w,
                              (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BLUR),
                              menu->video_blur_strength);
     hgr_draw_video_glow_item(fb,
                              x,
-                             y + (row_h * 5),
+                             y + (row_h * 4),
                              w,
                              (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_GLOW),
                              menu->video_glow_strength);
     hgr_draw_video_ghosting_item(fb,
                                  x,
-                                 y + (row_h * 6),
+                                 y + (row_h * 5),
                                  w,
                                  (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_GHOSTING),
                                  menu->video_ghosting_strength);
     hgr_draw_check_item(fb,
                         x,
-                        y + (row_h * 7),
+                        y + (row_h * 6),
                         third_w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BORDER),
                         menu->border_enabled,
                         "IIgs border (VidHD $C034)");
     hgr_draw_check_item(fb,
                         middle_x,
-                        y + (row_h * 7),
+                        y + (row_h * 6),
                         third_w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_VIDEO7),
                         menu->video7_auto_mono_enabled,
                         "Video-7 mono");
     hgr_draw_check_item(fb,
                         last_x,
-                        y + (row_h * 7),
+                        y + (row_h * 6),
                         last_w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_COL140M),
                         menu->dhgr_col140m_enabled,
                         "Video-7 MIX (COL140M)");
     hgr_draw_value_item(fb,
                         x,
-                        y + (row_h * 8),
+                        y + (row_h * 7),
                         w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BORDER_COLOR),
                         "Border color",
                         config_menu_border_color_text(menu->border_color));
     hgr_draw_value_item(fb,
                         x,
-                        y + (row_h * 9),
+                        y + (row_h * 8),
                         w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BORDER_FLOOD),
                         "Outside ring",
                         config_menu_border_outside_text(menu->border_flood));
     hgr_draw_value_item(fb,
                         x,
-                        y + (row_h * 10),
+                        y + (row_h * 9),
                         w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_ROM),
                         "Video ROM",
                         config_menu_video_rom_text(menu));
     draw_exclusive_check(fb,
                          x,
-                         y + (row_h * 11),
+                         y + (row_h * 10),
                          w,
                          (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_SHOW_BEZEL),
                          menu->show_bezel,
                          "Show bezel");
     draw_exclusive_value(fb,
                          x,
-                         y + (row_h * 12),
+                         y + (row_h * 11),
                          w,
                          (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BEZEL),
                          "Bezel",
                          config_menu_bezel_text(menu));
     draw_exclusive_check(fb,
                          x,
-                         y + (row_h * 13),
+                         y + (row_h * 12),
                          half_w,
                          (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_DEBUG),
                          menu->show_debugging,
                          "Show debugging");
     hgr_draw_check_item(fb,
                         right_x,
-                        y + (row_h * 13),
+                        y + (row_h * 12),
                         right_w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BADGE),
                         menu->format_badge_enabled,

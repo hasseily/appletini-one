@@ -54,6 +54,8 @@ SOURCES = [
     "hdl/apple/w65c02_core.sv",
     "hdl/apple/vtw_turbo_cache.sv",
     "hdl/apple/vtw_video_coalescer.sv",
+    "hdl/apple/vtw_video_policy.sv",
+    "hdl/apple/vtw_video_bank_sync.sv",
     "hdl/apple/vtw_core_top.sv",
     "hdl/apple/disk2_card.sv",
     "hdl/sim/tb_onee_disk2_boot.sv",

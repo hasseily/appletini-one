@@ -950,6 +950,10 @@ module apple_top(
     logic [7:0]                               vtw_video_record_data;
     logic                                     vtw_video_record_ready;
     logic                                     vtw_video_direct_active;
+    logic                                     vtw_video_sync_active;
+    logic                                     vtw_video_sync_ramwrt;
+    logic                                     vtw_video_sync_page2;
+    globals::SoftSwitchState                  capture_sss;
     logic                                     overlay_devsel_enabled;
     logic                                     overlay_capture_armed;
     logic                                     overlay_capture_bank_aux;
@@ -972,12 +976,19 @@ module apple_top(
     logic        egress_capture_drop_ack;
 
     logic shr_capture_active_w;
+    always_comb begin
+        capture_sss = sss;
+        if (vtw_video_sync_active) begin
+            capture_sss.sw_ramwrt = vtw_video_sync_ramwrt;
+            capture_sss.sw_page2 = vtw_video_sync_page2;
+        end
+    end
     apple_cycle_capture apple_cycle_capture_i (
         .clk(clk),
         .resetn(rstn[0]),
         .soft_reset(!ab_read.res),
         .ab_read(ab_read),
-        .sss(sss),
+        .sss(capture_sss),
         .line_in_frame(line_in_frame),
         .cycle_in_line(cycle_in_line),
         .frame_en(frame_en),
@@ -2113,6 +2124,9 @@ module apple_top(
         .video_record_addr(vtw_video_record_addr),
         .video_record_data(vtw_video_record_data),
         .video_record_ready(vtw_video_record_ready && egress_cfg_enable_q),
+        .video_sync_active(vtw_video_sync_active),
+        .video_sync_ramwrt(vtw_video_sync_ramwrt),
+        .video_sync_page2(vtw_video_sync_page2),
         .video_direct_active(vtw_video_direct_active),
         .overlay_capture_armed(overlay_capture_armed),
         .overlay_capture_bank_aux(overlay_capture_bank_aux),

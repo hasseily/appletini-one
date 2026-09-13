@@ -146,6 +146,11 @@ module vtw_core_top (
     output logic [7:0]              video_record_data,
     input  logic                    video_record_ready,
     output logic                    video_direct_active,
+    // During a deferred-bank flush, capture must retain the CPU's display
+    // switch snapshot while the physical RAMWRT/PAGE2 steering is temporary.
+    output logic                    video_sync_active,
+    output logic                    video_sync_ramwrt,
+    output logic                    video_sync_page2,
 
     input  globals::AppleBus_read   ab_read,
     output globals::AppleBus_write  ab_write,
@@ -399,10 +404,11 @@ module vtw_core_top (
     logic [7:0]              cycle_wdata_q;
     logic                    cycle_rw_q;
     TranslateState           cycle_translate_state_q;
+    wire                     video_mirror_pending;
 
     always_comb begin
         core_ab             = '0;
-        core_ab.res         = ab_read.res && enable;
+        core_ab.res         = ab_read.res && (enable || video_mirror_pending);
         core_ab.addr        = cycle_addr_q;
         core_ab.rw          = cycle_rw_q;
         core_ab.data        = cycle_wdata_q;
@@ -417,6 +423,16 @@ module vtw_core_top (
         .ramworks_en(ramworks_en),
         .ab_read(core_ab),
         .sss(vsss)
+    );
+
+    // A re-hold can abort a CPU switch access after the private tracker
+    // applies it but before the physical bus accepts it. Save the actual
+    // motherboard state for replay, using the same authoritative decoder.
+    // Only RAMWRT, PAGE2 and 80STORE are consumed from this instance.
+    globals::SoftSwitchState video_physical_sss;
+    soft_switch_manager video_physical_ssm (
+        .clk(clk), .rstn(rstn), .ramworks_en(ramworks_en),
+        .ab_read(ab_read), .sss(video_physical_sss)
     );
 
     assign dbg_vsss = {vsss.sw_intcxrom, vsss.sw_slotc3rom,
@@ -464,6 +480,22 @@ module vtw_core_top (
     logic              cycle_video_page2_q;
     logic              cycle_video_hires_q;
     logic              cycle_video_80store_q;
+    logic              cycle_video_mirror_active_q;
+    wire               capture_video_mirror_active;
+    wire               post_main_wide_eff;
+
+    // Classify before X_ROUTE. Renderer eligibility and the TURBO cache's
+    // write-through permission stay unchanged; only physical drain urgency
+    // depends on the display mode. Armed overlays keep the broad policy.
+    vtw_video_policy video_policy_i (
+        .address(capture_xl_decoded_d[16:0]),
+        .sw_text(vsss.sw_text), .sw_mixed(vsss.sw_mixed),
+        .sw_page2(vsss.sw_page2), .sw_hires(vsss.sw_hires),
+        .sw_80store(vsss.sw_80store), .sw_80col(vsss.sw_80col),
+        .post_main_wide(post_main_wide_eff),
+        .overlay_match(overlay_capture_armed),
+        .mirror_active(capture_video_mirror_active)
+    );
 
     always_comb begin
         translate_apple_addr(translate_state_from_sss(vsss),
@@ -484,7 +516,7 @@ module vtw_core_top (
      * CPU1 to see that posted byte can lose the start of a fast main-field
      * load, including its mode magic at $9DFC. */
     logic shr_post_main_wide_q;
-    wire post_main_wide_eff = post_main_wide | shr_post_main_wide_q;
+    assign post_main_wide_eff = post_main_wide | shr_post_main_wide_q;
     assign sp_sss_snapshot = {
         post_main_wide_eff,
         vsss.sw_ramworks_bank,
@@ -651,8 +683,13 @@ module vtw_core_top (
     logic        eng_post_we;
     logic        eng_post_full;
     logic        eng_post_idle, eng_post_cycle;
-    wire         video_mirror_pending;
     wire         video_barrier;
+    wire         video_full_flush;
+    logic        video_active_pending_q;
+    wire         video_sync_req_valid, video_sync_req_ready;
+    wire [15:0]  video_sync_req_addr;
+    wire         video_sync_req_rw;
+    wire [7:0]   video_sync_req_wdata;
     wire         core_post_blocked;
     wire         engine_enable = enable || video_mirror_pending;
     logic [15:0] eng_post_addr;
@@ -687,10 +724,17 @@ module vtw_core_top (
 
     assign arm_owns_bus      = !core_run;
     assign eng_req_valid_raw = arm_owns_bus ? arm_pending_q : fsm_req_valid;
-    assign eng_req_valid     = eng_req_valid_raw && !req_inflight_q && !video_mirror_pending;
-    assign eng_req_addr      = arm_owns_bus ? arm_addr_q    : cycle_addr_q;
-    assign eng_req_rw        = arm_owns_bus ? arm_rw_q      : cycle_rw_q;
-    assign eng_req_wdata     = arm_owns_bus ? arm_wdata_q   : cycle_wdata_q;
+    assign eng_req_valid = !req_inflight_q &&
+        (video_sync_active ? video_sync_req_valid :
+         (eng_req_valid_raw && !video_active_pending_q &&
+          (!video_full_flush || (!arm_owns_bus && fsm_req_valid))));
+    assign video_sync_req_ready = video_sync_active && !req_inflight_q && eng_req_ready;
+    assign eng_req_addr = video_sync_active ? video_sync_req_addr :
+                          arm_owns_bus ? arm_addr_q : cycle_addr_q;
+    assign eng_req_rw = video_sync_active ? video_sync_req_rw :
+                        arm_owns_bus ? arm_rw_q : cycle_rw_q;
+    assign eng_req_wdata = video_sync_active ? video_sync_req_wdata :
+                           arm_owns_bus ? arm_wdata_q : cycle_wdata_q;
 
     globals::AppleBus_write eng_ab_write;
     always_comb begin
@@ -863,7 +907,7 @@ module vtw_core_top (
                 arm_rw_q      <= arm_req_rw;
                 arm_wdata_q   <= arm_req_wdata;
             end
-            if (arm_owns_bus && arm_pending_q && eng_resp_valid) begin
+            if (arm_owns_bus && arm_pending_q && eng_resp_valid && !video_sync_active) begin
                 arm_pending_q    <= 1'b0;
                 arm_rdata_q      <= eng_resp_rdata;
                 arm_resp_valid_q <= 1'b1;
@@ -1266,11 +1310,17 @@ module vtw_core_top (
                           speed_mode == SPEED_TURBO;
     logic video_mirror_mode_q;
     wire video_coalesce_ready, video_coalesce_drained;
+    wire video_active_drained;
+    wire [1:0] video_bank_drained;
     wire video_mirror_valid, video_mirror_ready;
-    wire [15:0] video_mirror_addr;
+    wire [16:0] video_mirror_addr;
     wire [7:0] video_mirror_data;
-    wire video_all_drained = video_coalesce_drained && eng_post_idle && !post_stage_valid_q;
-    wire video_start_ready = video_mirror_mode_q || (eng_post_idle && !post_stage_valid_q);
+    wire video_post_idle = eng_post_idle && !post_stage_valid_q;
+    wire video_all_drained = video_coalesce_drained && video_post_idle && !video_sync_active;
+    // A stalled write may see TURBO selected again during a bank flush.
+    // Keep admission closed until the saved physical switches are restored.
+    wire video_start_ready = !video_sync_active &&
+        (video_mirror_mode_q || (eng_post_idle && !post_stage_valid_q));
     wire video_fast_req = core_post_req && video_selected;
     wire video_fast_accept = video_fast_req && video_coalesce_ready &&
                              video_start_ready && video_record_ready;
@@ -1285,29 +1335,96 @@ module vtw_core_top (
     // Suppress only the mirrored posted cycle. Native/device DMA writes
     // still enter capture, even during an accelerated display session.
     assign video_direct_active = video_mirror_mode_q && eng_post_cycle;
-    // Keep bus ownership on a registered flag, not the wide dirty/queue
-    // reduction. Clearing it one edge after drain is harmless and gives
-    // the physical drive enables a short, stable path.
+    // Keep bus ownership on registered flags, not wide dirty reductions.
+    // Inactive pages may survive ordinary I/O and RAMWRT changes. A mode
+    // exposure or handback flushes both tagged banks before proceeding.
     assign video_mirror_pending = video_mirror_mode_q;
-    assign video_barrier = video_mirror_pending &&
-        (!video_selected || !core_run || arm_rw_flush_req ||
-         core_addr[15:12] == 4'hC);
+
+    function automatic logic video_exposure_access(input logic [15:0] addr,
+                                                    input logic rw);
+        // Card ROM/DEVSEL entry can start SmartPort or device DMA without
+        // a separate ARM hold. Retire deferred bytes before that handoff.
+        return ((addr[15:12] == 4'hC) && (addr[11:7] != 5'd0)) ||
+               (addr[15:4] == 12'hC05) ||
+               (!rw && ((addr[15:1] == (16'hC000 >> 1)) ||
+                        (addr[15:2] == (16'hC00C >> 2)) ||
+                        addr == 16'hC022 || addr == 16'hC029 ||
+                        addr == 16'hC034 || addr == 16'hC035 ||
+                        addr == 16'hC071 || addr == 16'hC073));
+    endfunction
+
+    logic video_policy_flush_q;
+    wire video_external_policy_change =
+        (post_main_wide_eff != turbo_post_wide_q) ||
+        (overlay_capture_armed != turbo_overlay_q) ||
+        (ramworks_en != turbo_ramworks_q);
+    assign video_full_flush = video_mirror_pending &&
+        (!video_selected || !enable || !core_run || arm_rw_flush_req ||
+         rw_flush_pending_q ||
+         video_policy_flush_q || video_external_policy_change ||
+         ((xstate_q == X_CAPTURE) && video_exposure_access(core_addr, core_rwb)));
+    assign video_barrier = video_sync_active || video_full_flush ||
+        (video_active_pending_q && (core_addr[15:12] == 4'hC));
+
+    wire video_flush_valid, video_flush_bank;
+    // ARM can freeze an in-flight access at a completed state. Admit that
+    // parked state too, after its actual bus request and posted writes end.
+    // Otherwise a flush could wait for a CPU edge that ARM itself holds off.
+    wire video_sync_core_idle = (xstate_q == X_CAPTURE) ||
+        (xstate_q == X_MEM_DONE) || (xstate_q == X_BUS_DONE) ||
+        (xstate_q == X_RW_DONE) || (xstate_q == X_SP_DONE) ||
+        (xstate_q == X_STATUS_DONE) || (xstate_q == X_DEAD) ||
+        // After leaving the direct path, this saved write cannot enter
+        // the classic queue until the old mirror and bank restore finish.
+        ((xstate_q == X_POST_STALL) && !video_selected);
+    wire video_sync_bus_idle = video_post_idle && !req_inflight_q &&
+        !video_active_pending_q && video_sync_core_idle;
+    vtw_video_bank_sync video_bank_sync_i (
+        .clk(clk), .rstn(rstn), .clear(!ab_read.res),
+        .start(video_full_flush && !video_coalesce_drained),
+        .bank_pending(~video_bank_drained), .bus_idle(video_sync_bus_idle),
+        .sw_ramwrt(video_physical_sss.sw_ramwrt),
+        .sw_page2(video_physical_sss.sw_page2),
+        .sw_80store(video_physical_sss.sw_80store), .busy(video_sync_active),
+        .restore_ramwrt(video_sync_ramwrt), .restore_page2(video_sync_page2),
+        .flush_valid(video_flush_valid), .flush_bank(video_flush_bank),
+        .flush_drained(video_bank_drained[video_flush_bank] && video_post_idle),
+        .sync_req_valid(video_sync_req_valid), .sync_req_addr(video_sync_req_addr),
+        .sync_req_rw(video_sync_req_rw), .sync_req_wdata(video_sync_req_wdata),
+        .sync_req_ready(video_sync_req_ready),
+        .sync_resp_valid(eng_resp_valid && video_sync_active)
+    );
     assign video_mirror_ready = !eng_post_full && engine_enable;
     vtw_video_coalescer video_coalescer_i (
         .clk(clk), .rstn(rstn), .clear(!ab_read.res),
-        .write_valid(video_fast_accept), .write_addr(cycle_addr_q),
+        .write_valid(video_fast_accept), .write_addr(xl_decoded[16:0]),
         .write_data(cycle_wdata_q), .write_ready(video_coalesce_ready),
+        .write_active(cycle_video_mirror_active_q),
+        .flush_valid(video_flush_valid), .flush_bank(video_flush_bank),
         .mirror_valid(video_mirror_valid), .mirror_addr(video_mirror_addr),
         .mirror_data(video_mirror_data), .mirror_ready(video_mirror_ready),
-        .drained(video_coalesce_drained)
+        .drained(video_coalesce_drained), .active_drained(video_active_drained),
+        .bank_drained(video_bank_drained)
     );
     always_ff @(posedge clk) begin
-        if (!rstn || !ab_read.res)
+        if (!rstn || !ab_read.res) begin
             video_mirror_mode_q <= 1'b0;
-        else if (video_fast_accept)
-            video_mirror_mode_q <= 1'b1;
-        else if (video_all_drained)
-            video_mirror_mode_q <= 1'b0;
+            video_active_pending_q <= 1'b0;
+            video_policy_flush_q <= 1'b0;
+        end else begin
+            if (video_fast_accept)
+                video_mirror_mode_q <= 1'b1;
+            else if (video_all_drained)
+                video_mirror_mode_q <= 1'b0;
+            if (video_fast_accept && cycle_video_mirror_active_q)
+                video_active_pending_q <= 1'b1;
+            else if (video_active_drained && video_post_idle)
+                video_active_pending_q <= 1'b0;
+            if (video_mirror_pending && video_external_policy_change)
+                video_policy_flush_q <= 1'b1;
+            else if (video_all_drained)
+                video_policy_flush_q <= 1'b0;
+        end
     end
     /* SmartPort holds the core outside X_ROUTE until READY, so contention is
      * not expected. Keeping it in the handshake still makes a stray CPU0
@@ -1337,7 +1454,7 @@ module vtw_core_top (
             /* Capture the core tuple without the posted classifier as a
              * register enable. ARM wins this data mux only when its handshake
              * is accepted; core_post_req already makes the cases exclusive. */
-            post_stage_addr_q  <= video_mirror_valid ? video_mirror_addr :
+            post_stage_addr_q  <= video_mirror_valid ? video_mirror_addr[15:0] :
                                  arm_post_accept ? arm_post_addr : cycle_addr_q;
             post_stage_wdata_q <= video_mirror_valid ? video_mirror_data :
                                  arm_post_accept ? arm_post_wdata : cycle_wdata_q;
@@ -1696,6 +1813,10 @@ module vtw_core_top (
                         cycle_video_page2_q      <= vsss.sw_page2;
                         cycle_video_hires_q      <= vsss.sw_hires;
                         cycle_video_80store_q    <= vsss.sw_80store;
+                        // A physical II/II+ has no //e bank-steering switches.
+                        // Keep its existing immediate write-through policy.
+                        cycle_video_mirror_active_q <=
+                            capture_video_mirror_active || host_is_iiplus;
                         // Snapshot slot-7 IOSEL pre-update, for the
                         // SmartPort C8-window classifier.
                         cycle_sp_iosel7_q       <= vsss.io_select[SP_SLOT];
@@ -1867,7 +1988,7 @@ module vtw_core_top (
                 end
 
                 X_BUS: begin
-                    if (eng_resp_valid) begin
+                    if (eng_resp_valid && !video_sync_active) begin
                         /* Fully floating $C030-$C05F reads return the
                          * same-cycle scanner byte fetched from main shadow.
                          * The physical bus cycle still performed any side

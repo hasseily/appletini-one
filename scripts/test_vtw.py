@@ -35,6 +35,8 @@ SOURCES = [
     "hdl/apple/w65c02_core.sv",
     "hdl/apple/vtw_turbo_cache.sv",
     "hdl/apple/vtw_video_coalescer.sv",
+    "hdl/apple/vtw_video_policy.sv",
+    "hdl/apple/vtw_video_bank_sync.sv",
     "hdl/apple/vtw_core_top.sv",
     "hdl/apple/apple_dma_engine.sv",
     "hdl/apple/ps_dma_command.sv",
@@ -526,7 +528,7 @@ def static_checks() -> None:
     # Super Hi-Res: aux posted-write window extended to $9FFF.
     require("vtw_is_video_window(cycle_addr_q, xl_is_aux," in core_top and
             "post_main_wide_eff)" in core_top and
-            "wire post_main_wide_eff = post_main_wide | shr_post_main_wide_q;"
+            "assign post_main_wide_eff = post_main_wide | shr_post_main_wide_q;"
             in core_top and
             "cycle_addr_q == 16'h9DF8" in core_top and
             "input logic is_aux" in engine and
@@ -544,7 +546,7 @@ def static_checks() -> None:
             "post_stage_valid_q <= core_post_accept || arm_post_accept ||"
              in core_top and
             "(video_mirror_valid && video_mirror_ready);" in core_top and
-            "post_stage_addr_q  <= video_mirror_valid ? video_mirror_addr :"
+            "post_stage_addr_q  <= video_mirror_valid ? video_mirror_addr[15:0] :"
              in core_top and
             "post_stage_wdata_q <= video_mirror_valid ? video_mirror_data :"
              in core_top and
@@ -556,13 +558,19 @@ def static_checks() -> None:
             "            post_stage_valid_q <= 1'b0;" in core_top and
             "assign arm_post_ready = core_active && !eng_post_full && !core_post_req &&"
              in core_top and
-            "wire video_all_drained = video_coalesce_drained && eng_post_idle && !post_stage_valid_q;"
+            "wire video_all_drained = video_coalesce_drained && video_post_idle && !video_sync_active;"
             in core_top and
-            "assign video_barrier = video_mirror_pending &&" in core_top and
-            "(!video_selected || !core_run || arm_rw_flush_req ||" in core_top and
+            "assign video_barrier = video_sync_active || video_full_flush ||" in core_top and
+            "(!video_selected || !enable || !core_run || arm_rw_flush_req ||" in core_top and
+            ".write_addr(xl_decoded[16:0])" in core_top and
+            ".write_active(cycle_video_mirror_active_q)" in core_top and
+            "vtw_video_bank_sync video_bank_sync_i" in core_top and
+            ".sss(capture_sss)" in top and
+            "capture_sss.sw_page2 = vtw_video_sync_page2;" in top and
             "assign eng_post_we    = core_post_push" not in core_top,
             "vTW must register strict core/ARM or direct-video mirror writes, "
-            "exclude ARM writes during mirroring, and drain before mode/I/O/DMA barriers")
+            "retain bank-tagged inactive writes, exclude ARM writes during mirroring, "
+            "and drain before mode/ownership barriers")
     require("vtw_service_init(UART0_BASE);" in main_c and
             "vtw_service_poll();" in main_c and
             "menu_platform.set_vtw_config = control_set_vtw_config;" in main_c,

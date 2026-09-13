@@ -94,13 +94,44 @@ mirror retains the latest byte for each dirty motherboard address and drains
 through the existing physical bus engine. Repeated writes may coalesce on
 the motherboard; Appletini's renderer receives every accepted write.
 
+On ONE//e and physical //e hosts, TURBO now separates renderer capture from
+physical mirror urgency. Text/lores and MAIN HGR pages that the current
+display mode does not use remain dirty in bank-tagged mirror RAM. Ordinary
+I/O and RAMWRT changes can proceed without draining those inactive pages.
+Every write still reaches the renderer, including hidden-page drawing.
+Mixed mode retains text, and 80STORE keeps display page selection on page 1.
+AUX graphics/SHR, paged MAIN SHR, armed overlays and the legacy Li control
+holes retain conservative immediate mirroring. Physical II/II+ hosts retain
+the immediate policy because their motherboard cannot steer AUX with //e
+soft switches. All classic speed presets retain their existing write path.
+
+Display-mode changes, card ROM/DEVSEL entry, RamWorks bank changes, speed
+changes, ARM memory holds and handback drain the deferred banks first.
+The flush saves the actual physical bank switches, writes each dirty bank,
+and restores RAMWRT/PAGE2 before the waiting access resumes. It never changes
+80STORE, HIRES or RamWorks switches. Renderer frame records retain the saved
+switch values during this temporary steering. Apple RESET retains the existing
+behavior of discarding queued mirror data.
+
 The integrated test writes 1,024 bytes before the physical copy has finished.
-Bank/I/O boundaries, speed changes, ARM memory holds and handback drain the
-mirror first. The bus remains owned until the final physical write completes.
+The bus remains owned until the final physical write and bank restoration finish.
 Mirror cycles do not overwrite newer direct records in the renderer.
 Motherboard video can lag the local display and omit intermediate values;
 use a classic preset when those physical raster effects matter. The same
 direct path removes the synthetic 1 MHz video bottleneck in ONE//e mode.
+
+The mode-aware regression writes MAIN and AUX `$08DF` in full-screen DHGR,
+switches RAMWRT and reads `$C020` without issuing a physical mirror write;
+the renderer already holds both updated bytes. A later display-page switch
+must flush both banks before it reaches the bus. Other cases cover hidden
+graphics, mixed text, renderer backpressure, all classic speed codes, TURBO
+exit/re-entry during a stalled write, and ARM holds or aborts between private
+and physical switch updates. The focused
+policy and bank-sync benches run through `scripts/test_vtw_video_policy.py`
+and `scripts/test_vtw_video_bank_sync.py`. These are simulation checks; this
+change has no new routed timing or physical-board validation yet. Synthesis
+on the XC7Z020 passes with 110 of 140 BRAM tiles and 64.46% LUT use. The
+bank-tagged mirror adds 18 BRAM tiles over the previous firmware design.
 
 `vtw status` reports fabric clocks, accepted CPU steps, represented classic
 cycles, cache read hits/misses, invalidations, Disk II waits and video waits.

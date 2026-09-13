@@ -113,6 +113,11 @@ and restores RAMWRT/PAGE2 before the waiting access resumes. It never changes
 switch values during this temporary steering. Apple RESET retains the existing
 behavior of discarding queued mirror data.
 
+When a mirror is pending, Cxxx accesses check video exposure after capturing
+the CPU address and before applying any I/O side effect. This keeps the low
+address-bit decoder off the wide capture enable. Only pending-video I/O gains
+one fabric wait state; RAM and cache accesses keep their existing latency.
+
 The integrated test writes 1,024 bytes before the physical copy has finished.
 The bus remains owned until the final physical write and bank restoration finish.
 Mirror cycles do not overwrite newer direct records in the renderer.
@@ -128,10 +133,11 @@ graphics, mixed text, renderer backpressure, all classic speed codes, TURBO
 exit/re-entry during a stalled write, and ARM holds or aborts between private
 and physical switch updates. The focused
 policy and bank-sync benches run through `scripts/test_vtw_video_policy.py`
-and `scripts/test_vtw_video_bank_sync.py`. These are simulation checks; this
-change has no new routed timing or physical-board validation yet. Synthesis
-on the XC7Z020 passes with 110 of 140 BRAM tiles and 64.46% LUT use. The
-bank-tagged mirror adds 18 BRAM tiles over the previous firmware design.
+and `scripts/test_vtw_video_bank_sync.py`. These are simulation checks;
+physical-board validation is still pending. The first full build of the banked
+mirror reached -0.063 ns setup and +0.021 ns hold, so it was not packaged.
+Its capture-enable paths led to the separate I/O wait state above. The first
+build used 110 of 140 BRAM tiles, adding 18 tiles over the previous firmware.
 
 `vtw status` reports fabric clocks, accepted CPU steps, represented classic
 cycles, cache read hits/misses, invalidations, Disk II waits and video waits.

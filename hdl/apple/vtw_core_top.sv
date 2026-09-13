@@ -969,7 +969,8 @@ module vtw_core_top (
         X_SP_DONE,    // SmartPort: response latched, waiting for pace
         X_STATUS_DONE,// synthesized $C01x status read: serve the status byte
         X_DEAD,       // unmapped route (must not happen): serve $FF
-        X_TURBO_DONE  // registered cache response / write tuple ready
+        X_TURBO_DONE, // registered cache response / write tuple ready
+        X_VIDEO_WAIT  // captured I/O: flush hidden video before side effects
     } xstate_t;
     // Decode cache completion and response selection with one state bit.
     (* fsm_encoding = "one_hot" *) xstate_t xstate_q;
@@ -1362,7 +1363,8 @@ module vtw_core_top (
         (!video_selected || !enable || !core_run || arm_rw_flush_req ||
          rw_flush_pending_q ||
          video_policy_flush_q || video_external_policy_change ||
-         ((xstate_q == X_CAPTURE) && video_exposure_access(core_addr, core_rwb)));
+         ((xstate_q == X_VIDEO_WAIT) &&
+          video_exposure_access(cycle_addr_q, cycle_rw_q)));
     assign video_barrier = video_sync_active || video_full_flush ||
         (video_active_pending_q && (core_addr[15:12] == 4'hC));
 
@@ -1371,6 +1373,7 @@ module vtw_core_top (
     // parked state too, after its actual bus request and posted writes end.
     // Otherwise a flush could wait for a CPU edge that ARM itself holds off.
     wire video_sync_core_idle = (xstate_q == X_CAPTURE) ||
+        (xstate_q == X_VIDEO_WAIT) ||
         (xstate_q == X_MEM_DONE) || (xstate_q == X_BUS_DONE) ||
         (xstate_q == X_RW_DONE) || (xstate_q == X_SP_DONE) ||
         (xstate_q == X_STATUS_DONE) || (xstate_q == X_DEAD) ||
@@ -1500,6 +1503,7 @@ module vtw_core_top (
     wire rw_flush_unsafe =
         (core_res_n || video_mirror_pending) &&
         ((xstate_q == X_CAPTURE) || (xstate_q == X_ROUTE) ||
+         (xstate_q == X_VIDEO_WAIT) ||
          (xstate_q == X_TURBO_DONE) ||
          (xstate_q == X_RW_LOOKUP) || (xstate_q == X_RW_FLUSH) ||
           (xstate_q == X_RW_FILL) || video_mirror_pending);
@@ -1523,6 +1527,7 @@ module vtw_core_top (
         end else begin
             perf_events_q <= {
                 core_active && ((xstate_q == X_POST_STALL) ||
+                    (xstate_q == X_VIDEO_WAIT) ||
                     (xstate_q == X_CAPTURE && video_barrier)),
                 core_active && !d2_time_ready,
                 core_active && turbo_invalidate && !perf_invalidate_q,
@@ -1830,9 +1835,22 @@ module vtw_core_top (
                         turbo_read_valid_q      <= turbo_read_valid;
                         turbo_write_valid_q     <= turbo_write_valid;
                         turbo_write_fast_q      <= turbo_write_fast;
-                        xstate_q <= (turbo_execute && !turbo_invalidate &&
-                                     core_addr[15:12] != 4'hC) ? X_TURBO_DONE : X_ROUTE;
+                        // Keep low I/O-address decoding off this wide
+                        // capture enable. RAM/cache accesses retain their
+                        // direct route; pending video only adds an I/O wait.
+                        if (video_mirror_pending && core_addr[15:12] == 4'hC)
+                            xstate_q <= X_VIDEO_WAIT;
+                        else
+                            xstate_q <= (turbo_execute && !turbo_invalidate &&
+                                         core_addr[15:12] != 4'hC) ? X_TURBO_DONE : X_ROUTE;
                     end
+                end
+
+                X_VIDEO_WAIT: begin
+                    // The tuple is stable and X_ROUTE has not applied
+                    // soft-switch, card or shadow side effects yet.
+                    if (!video_barrier)
+                        xstate_q <= X_ROUTE;
                 end
 
                 X_TURBO_DONE: begin

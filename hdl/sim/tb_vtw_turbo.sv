@@ -309,6 +309,14 @@ module tb_vtw_turbo;
             arm_responses <= 0;
             checked_display_cycles <= 0;
         end else begin
+            if (check_display_flip && dut.ssm_apply_pulse &&
+                dut.core_addr == checked_display_switch)
+                check(mb_ram[checked_display_byte] === 8'hA6,
+                      "private display/card side effect preceded the video drain");
+            if (check_deferred_page_flip && dut.ssm_apply_pulse &&
+                dut.core_addr == 16'hC055)
+                check(mb_ram[16'h08DF] === 8'h5E && mb_aux[16'h08DF] === 8'hA7,
+                      "private PAGE2 changed before deferred banks drained");
             if (arm_resp_valid) begin
                 arm_responses <= arm_responses + 1;
                 check(!dut.video_sync_active && dut.video_all_drained &&
@@ -1263,8 +1271,8 @@ module tb_vtw_turbo;
             absolute(8'hAD, 16'h9000); // Warm the exact address before parking a hit.
             absolute(8'h8D, 16'hA102);
         end
-        if (request_point < 4) begin
-            absolute(8'hAD, request_point < 2 ? 16'hC020 : 16'h9000);
+        if (request_point != 4) begin
+            absolute(8'hAD, request_point < 2 || request_point == 5 ? 16'hC020 : 16'h9000);
             absolute(8'h8D, 16'hA101);
         end
         halt_loop();
@@ -1285,6 +1293,8 @@ module tb_vtw_turbo;
                            dut.core_addr == 16'h9000;
                 3: found = dut.xstate_q == dut.X_TURBO_DONE && dut.turbo_hit &&
                            dut.core_addr == 16'h9000 && marker_count[2] == 1;
+                5: found = dut.xstate_q == dut.X_VIDEO_WAIT &&
+                           dut.cycle_addr_q == 16'hC020;
             endcase
             guard++;
         end
@@ -1330,7 +1340,7 @@ module tb_vtw_turbo;
               !mb_aux_write && !mb_page2 && !dut.vsss.sw_ramwrt &&
               !dut.vsss.sw_page2 && dut.video_all_drained,
               "asynchronous video flush lost data or failed to restore banking");
-        if (request_point < 4) begin
+        if (request_point != 4) begin
             check(arm_responses == 0, "maintenance invented an ARM bus response");
             @(negedge clk);
             arm_rw_hold_release = 1'b1;
@@ -1338,12 +1348,60 @@ module tb_vtw_turbo;
             @(negedge clk); arm_rw_hold_release = 1'b0;
             wait_marker(1, 1);
             check(marker_count[1] == 1 && marker_value[1] ===
-                  (request_point < 2 ? 8'hEE : request_point == 3 ? 8'hD2 : 8'h66),
+                  (request_point < 2 || request_point == 5 ? 8'hEE :
+                   request_point == 3 ? 8'hD2 : 8'h66),
                   "held access lost its response or used pre-invalidation data");
-            check(physical_io_reads == (request_point < 2 ? 1 : 0),
+            check(physical_io_reads == (request_point < 2 || request_point == 5 ? 1 : 0),
                   "asynchronous hold omitted or duplicated physical I/O");
         end
         $display("VTW TURBO ASYNC VIDEO HOLD PASS: point=%0d", request_point);
+    endtask
+
+    task automatic deferred_video_wait_exit(input bit stop_core);
+        integer guard;
+        begin_program(2'd3);
+        video_record_enable = 1'b1;
+        mb_ram[16'h08DF] = 8'h11;
+        mb_aux[16'h08DF] = 8'h22;
+        emit_hgr_mode();
+        immediate(8'hA9, 8'h5E);
+        absolute(8'h8D, 16'h08DF);
+        absolute(8'h8D, 16'hC005);
+        immediate(8'hA9, 8'hA7);
+        absolute(8'h8D, 16'h08DF);
+        absolute(8'h8D, 16'hC004);
+        absolute(8'h8D, 16'hA100);
+        absolute(8'h8D, 16'hC055);
+        absolute(8'h8D, 16'hA101);
+        halt_loop();
+        start_program();
+        wait_marker(0, 1);
+        check_deferred_page_flip = 1'b1;
+        guard = 0;
+        while (!(dut.xstate_q == dut.X_VIDEO_WAIT &&
+                 dut.cycle_addr_q == 16'hC055) && guard < 200000) begin
+            @(negedge clk);
+            guard++;
+        end
+        check(guard < 200000 && !dut.vsss.sw_page2 && !mb_page2 &&
+              mb_ram[16'h08DF] === 8'h11 && mb_aux[16'h08DF] === 8'h22,
+              "video wait did not precede private and physical PAGE2 side effects");
+        if (stop_core) core_run = 1'b0;
+        else speed_mode = 2'd0;
+        await_video_drain();
+        check(mb_ram[16'h08DF] === 8'h5E && mb_aux[16'h08DF] === 8'hA7 &&
+              !mb_aux_write,
+              "video wait exit lost deferred banks or failed to restore RAMWRT");
+        if (stop_core) begin
+            repeat (100) @(posedge clk);
+            check(!dut.vsss.sw_page2 && !mb_page2 && marker_count[1] == 0,
+                  "video wait abort performed an unaccepted PAGE2 access");
+        end else begin
+            wait_marker(1, 1);
+            check(dut.vsss.sw_page2 && mb_page2,
+                  "video wait speed exit lost the saved PAGE2 access");
+        end
+        $display("VTW TURBO VIDEO WAIT EXIT PASS: stop_core=%0d", stop_core);
     endtask
 
     task automatic deferred_bank_abort(input bit target_aux);
@@ -1509,8 +1567,10 @@ module tb_vtw_turbo;
             deferred_display_flip(kind);
         for (int mode = 0; mode < 3; mode++)
             classic_video_case(2'(mode));
-        for (int point = 0; point < 5; point++)
+        for (int point = 0; point < 6; point++)
             deferred_async_hold(point);
+        deferred_video_wait_exit(1'b0);
+        deferred_video_wait_exit(1'b1);
         deferred_bank_abort(1'b0);
         deferred_bank_abort(1'b1);
         iiplus_video_case();

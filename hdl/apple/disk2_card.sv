@@ -366,14 +366,10 @@ module disk2_card (
     logic       vtw_drive_loaded_q;
     logic       vtw_media_wait_q;
     logic       vtw_stream_pos_match_q;
+    logic       vtw_woz_cell_due_q;
+    logic       vtw_woz_cell_due_valid_q;
     logic [1:0] vtw_media_valid_q;
     wire vtw_media_snapshot_valid = vtw_media_valid_q[1] && !as_client.awvalid;
-    wire vtw_media_ready =
-        !vtw_active || !enabled || !ab_read.res ||
-        vtw_write_timing_active || !vtw_drive_spinning_q ||
-        (vtw_media_snapshot_valid &&
-         (!vtw_media_wait_q || (vtw_drive_loaded_q && stream_line_hit_q)));
-
     // A completed TURBO step may represent several classic guest cycles.
     // Replay them through the existing sequencers one at a time; a private
     // register access must not pass time still owed by the preceding step.
@@ -387,10 +383,23 @@ module disk2_card (
     wire vtw_tick_available = (vtw_ticks_pending_q != 5'd0) || vtw_cycle_tick;
     wire vtw_replay_tick = vtw_virtual_time && vtw_tick_available &&
                            vtw_sequencer_ready;
+    // Keep the live session bypass at the final gate. Repeating it inside
+    // both readiness terms adds logic from ONE//e ownership to TURBO writes.
+    // Native cycles still require media readiness; only virtual cycles need
+    // the position and WOZ sequencer guards. Local replay stays unchanged.
     assign vtw_time_ready = !vtw_active || !enabled || !ab_read.res ||
-        (vtw_media_ready && vtw_accept_sequencer_ready &&
-         vtw_ticks_pending_q == 5'd0 &&
-         !(vtw_cycle_tick && vtw_tick_count > 4'd1));
+        (vtw_ticks_pending_q == 5'd0 &&
+         !(vtw_cycle_tick && vtw_tick_count > 4'd1) &&
+         (vtw_write_timing_active || !vtw_drive_spinning_q ||
+          (vtw_media_snapshot_valid &&
+           (!vtw_media_wait_q ||
+            (vtw_drive_loaded_q && stream_line_hit_q &&
+             (vtw_native_cycle_active ||
+              (vtw_stream_pos_match_q &&
+               (!track_woz_q ||
+                (!woz_weak_refill_pending_q && woz_weak_refill_stage_q == 2'd0 &&
+                 vtw_woz_cell_due_valid_q &&
+                 (!vtw_woz_cell_due_q || woz_cached_ready_q))))))))));
 
     always_ff @(posedge clk) begin
         if (!rstn || !enabled || !ab_read.res || !vtw_active)
@@ -560,8 +569,6 @@ module disk2_card (
                               stream_line_pos_q == active_stream_pos;
     wire vtw_woz_cell_due = track_woz_q &&
         woz_accum_plus_cycle >= {9'h000, woz_effective_bit_timing};
-    logic vtw_woz_cell_due_q;
-    logic vtw_woz_cell_due_valid_q;
     // The accumulator add/compare stays in the local replay path. A CPU or
     // private-read acceptance uses a registered view, invalidated on every
     // event that can change the accumulator or its track/timing context.

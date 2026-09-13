@@ -139,6 +139,13 @@ program output, bank selection, CPU/ARM cache coherence, pause and DMA hold,
 mode changes, reset, posted writes, and real I/O stalls. Disk II benches
 include TURBO in their speed and WOZ read matrices.
 
+The outbound Disk II time-ready logic keeps the live session bypass at the
+last gate, shortening the path into TURBO shadow-RAM write enable without
+adding a clock or changing local replay. The Disk II launcher compares the
+production expression with the previous readiness rules across all
+1,048,576 combinations of its input predicates before running the controller
+benches.
+
 Build a new bitstream and its matching XSA, then rebuild the PS applications:
 
 ```powershell

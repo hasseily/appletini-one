@@ -61,10 +61,15 @@ scope.
 
 ## Test disks
 
-Run `python scripts/build_ad8088_test_disks.py` to generate:
+The [AD8088 diagnostic project](https://github.com/hasseily/appletini-software/blob/main/diagnostics/ad8088/README.md)
+and its source, builder, and disks now live in appletini-software:
 
-- `software/AD8088_Test.dsk` -- bootable DOS 3.3 image
-- `software/AD8088_Test.po` -- bootable 800 KB ProDOS image
+- `diagnostics/ad8088/AD8088_Test.dsk` -- bootable DOS 3.3 image
+- `diagnostics/ad8088/AD8088_Test.po` -- bootable 800 KB ProDOS image
+
+Build from that repository with
+`python diagnostics/ad8088/tools/build_ad8088_test_disks.py`.
+Fresh images go into its `diagnostics/ad8088/build/` directory.
 
 Both auto-run the same visible test. It checks the mailbox, an 8088 integer
 monitor command, fill/copy through the AD128K-compatible range, and execution

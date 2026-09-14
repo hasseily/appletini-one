@@ -108,7 +108,7 @@ mixed build is visible immediately.
 The Appli-Card interface and demo media are documented in
 [README_APPLICARD.md](README_APPLICARD.md). Apple II software can identify the
 card through the documented SmartPort interface described in
-[README_APPLETINI_DETECTION.md](README_APPLETINI_DETECTION.md).
+[the detection example](https://github.com/hasseily/appletini-software/blob/main/examples/detect_appletini/README.md).
 
 ## Licensing
 

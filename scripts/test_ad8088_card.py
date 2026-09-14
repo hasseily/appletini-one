@@ -8,10 +8,14 @@ smoke test lives in test_ad8088_cpu.c and is built with a host C compiler.
 from __future__ import annotations
 
 import math
+import os
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SOFTWARE_ROOT = Path(os.environ.get(
+    "APPLETINI_SOFTWARE_ROOT", str(ROOT.parent / "appletini-software")))
+AD8088_TEST = SOFTWARE_ROOT / "diagnostics" / "ad8088"
 
 
 def text(path: str) -> str:
@@ -270,8 +274,9 @@ def test_ui_and_build() -> None:
 
 
 def test_hardware_test_disk_sources() -> None:
-    source = text("software/ad8088_test.a65")
-    builder = text("scripts/build_ad8088_test_disks.py")
+    source = (AD8088_TEST / "ad8088_test.a65").read_text(encoding="utf-8")
+    builder = (AD8088_TEST / "tools" / "build_ad8088_test_disks.py").read_text(
+        encoding="utf-8")
     readme = text("README_AD8088.md")
 
     for needle in ("CMD_UMUL    = 29", "CMD_FILL    = 253",

@@ -83,10 +83,10 @@ Physical slot 5 must be empty whenever the virtual card is enabled.
 
 ## Demo Media
 
-`software/applicard/DEMOBOOT.DO` boots PCPI CP/M 2.2 through the virtual Disk II
-in slot 6. `DEMOGAME.DO` contains the bundled game data disk. The directory also
-contains banking and CPU-validation programs plus source media for
-compatibility testing.
+The [Appli-Card software project](https://github.com/hasseily/appletini-software/blob/main/diagnostics/applicard/README.md)
+in appletini-software contains the boot and compatibility media, banking
+and CPU-validation programs, and disk tools. Its `DEMOBOOT.DO` boots PCPI
+CP/M 2.2 through Disk II in slot 6; `DEMOGAME.DO` is the companion game disk.
 
 The embedded ROM is generated from `software/applicard/APPLICARD.ROM` by
 `scripts/gen_applicard_rom_c.py`; runtime firmware never loads an SD-card ROM

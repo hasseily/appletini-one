@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Source regressions for cycle-accurate VidHD $C034 border rendering."""
 
+import os
 from pathlib import Path
 
 
@@ -9,7 +10,9 @@ RENDERER = ROOT / "ps_sources" / "frontend" / "apple_cycle_renderer.c"
 NTSC_H = ROOT / "ps_sources" / "frontend" / "appletini_ntsc.h"
 VIDEO_H = ROOT / "ps_sources" / "frontend" / "video_output.h"
 PAL_C = ROOT / "ps_sources" / "frontend" / "apple_pal_video_timing.c"
-DEMO = ROOT / "software" / "border_demo.a65"
+SOFTWARE_ROOT = Path(os.environ.get(
+    "APPLETINI_SOFTWARE_ROOT", str(ROOT.parent / "appletini-software")))
+DEMO = SOFTWARE_ROOT / "demos" / "appletini_demos" / "border_demo.a65"
 
 
 def require(condition: bool, message: str) -> None:

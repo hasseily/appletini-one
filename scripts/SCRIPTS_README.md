@@ -2,6 +2,12 @@
 
 Run scripts from the repository root unless a script's help says otherwise.
 
+The Appletini demo-disk, HGR asset, SuperSprite builders, and demo/network
+software tests moved to
+[appletini-software](../../appletini-software/demos/appletini_demos/README.md).
+The SHR test-disk builder and border/overlay source checks use that sibling
+checkout; override its location with `APPLETINI_SOFTWARE_ROOT`.
+
 ## Hardware
 
 - `create_project.tcl`: recreate the Vivado project from `hdl/hdl_sources.txt`.

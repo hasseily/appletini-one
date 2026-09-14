@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -11,6 +12,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "build" / "linear_text_overlay_sim"
+SOFTWARE_ROOT = Path(os.environ.get(
+    "APPLETINI_SOFTWARE_ROOT", str(ROOT.parent / "appletini-software")))
 
 
 def require(value: bool, message: str) -> None:
@@ -44,7 +47,8 @@ def static_checks() -> None:
     capture_c = read("ps_sources/frontend/linear_text_overlay_capture.c")
     compositor = read("ps_sources/frontend/compositor.c")
     vitis = read("scripts/create_vitis_workspace.py")
-    demo = read("software/textoverlay.a65")
+    demo = (SOFTWARE_ROOT / "demos" / "appletini_demos" /
+            "textoverlay.a65").read_text(encoding="utf-8")
     font = read("ps_sources/frontend/linear_text_overlay_font.c")
     font_header = read("ps_sources/frontend/linear_text_overlay_font.h")
     font_generator = read("scripts/gen_linear_text_overlay_font.py")

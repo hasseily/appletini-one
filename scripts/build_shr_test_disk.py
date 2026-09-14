@@ -24,7 +24,9 @@ REPO = Path(__file__).resolve().parents[1]
 SOFTWARE = REPO / "software"
 IMAGES = SOFTWARE / "shr_testimages"
 PRODOS_MASTER = SOFTWARE / "ProDOS_2_4_3.po"
-VIEWER_SRC = SOFTWARE / "a2imgview.a65"
+SOFTWARE_ROOT = Path(os.environ.get(
+    "APPLETINI_SOFTWARE_ROOT", str(REPO.parent / "appletini-software")))
+VIEWER_SRC = SOFTWARE_ROOT / "demos" / "appletini_demos" / "a2imgview.a65"
 VIEWER_APP = SOFTWARE / "a2imgview.bin"
 OUTPUT = SOFTWARE / "SHR_Test.po"
 TEMP_OUTPUT = SOFTWARE / "SHR_Test.tmp.po"

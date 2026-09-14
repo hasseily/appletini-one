@@ -94,7 +94,7 @@ vitis_workspace/
 
 tmp/
 
-# Generated demo-viewer source (build_appletini_demo_disk.py)
+# Legacy local build output from before the demo-project migration
 software/a2imgview_demo.a65
 
 # Local agent/tool state

@@ -27,6 +27,9 @@ module disk2_sound_player (
     localparam logic [3:0] EVENT_RECAL_ZERO   = 4'd3;
     localparam logic [3:0] EVENT_DOOR_OPEN    = 4'd4;
     localparam logic [3:0] EVENT_DOOR_CLOSE   = 4'd5;
+    // The boot ROM steps about every 19.25 ms. Keep one seek recording
+    // running between steps, then stop 25 ms after the last movement.
+    localparam logic [17:0] SEEK_TIMEOUT_SAMPLES = 18'd1200;
 
     logic [17:0] idle_addr_q;
     logic [17:0] idle_fetch_addr_q;
@@ -36,15 +39,21 @@ module disk2_sound_player (
     logic signed [15:0] idle_sample_q;
 
     logic [17:0] event_fetch_addr_q;
+    logic [17:0] event_pending_addr_q;
     logic [17:0] event_next_addr_q;
     logic [17:0] event_fetch_remaining_q;
     logic [17:0] event_output_remaining_q;
     logic        event_need_fetch_q;
     logic        event_req_q;
+    logic        event_fetch_discard_q;
     logic signed [15:0] event_fetch_data;
     logic               event_fetch_valid;
     logic signed [15:0] event_sample_q;
     logic               event_recal_q;
+    logic               event_seek_q;
+    logic [3:0]         event_direction_q;
+    logic [17:0]        event_sound_begin_q;
+    logic [17:0]        event_sound_end_q;
     logic signed [15:0] mix_q;
     logic [3:0]         volume_q;
     logic               mix_valid_q;
@@ -68,13 +77,23 @@ module disk2_sound_player (
     logic [17:0]        event_calc_sound_offset_q;
     logic [17:0]        event_calc_full_length_q;
     logic [17:0]        event_calc_start_offset_q;
-    logic [17:0]        event_calc_end_offset_q;
     logic               event_calc_seek_q;
     logic               event_calc_zero_length_q;
 
     wire active = enable && (volume != 4'd0) && (sample_base_addr != 32'h00000000);
     wire event_playing = (event_output_remaining_q != 18'd0);
     wire recal_playing = event_playing && event_recal_q;
+    wire seek_motor_stopped = event_seek_q && !drive_spinning;
+    wire seek_refresh = event_seek_q && event_playing && drive_spinning &&
+        (sound_event == event_direction_q) && (seek_distance != 8'd0) &&
+        (((sound_event == EVENT_SEEK_OUTWARD) &&
+          (seek_start_qtrack < DISK2_SOUND_SEEK_FULL_QTRACK_DISTANCE)) ||
+         ((sound_event == EVENT_SEEK_INWARD) && (seek_start_qtrack != 8'd0)));
+    wire event_calc_commit = event_calc_valid_q && !recal_playing &&
+        !(event_calc_seek_q && (event_calc_zero_length_q || !drive_spinning));
+    wire seek_continues = event_calc_commit && event_calc_seek_q &&
+        event_seek_q && event_playing && (event_calc_event_q == event_direction_q);
+    wire event_replaces = event_calc_commit && !seek_continues;
 
     audio_pcm16_ddr_fetcher #(
         .SAMPLE_ADDR_WIDTH(18)
@@ -83,11 +102,13 @@ module disk2_sound_player (
         .rstn(rstn && active),
         .sample_base_addr(sample_base_addr),
         .voice0_addr(idle_fetch_addr_q),
-        .voice0_req(idle_req_q),
+        // The fetcher's reply is registered. Suppress the held request on
+        // that reply cycle so its idle state cannot grant the same request twice.
+        .voice0_req(idle_req_q && !idle_fetch_valid),
         .voice0_data(idle_fetch_data),
         .voice0_valid(idle_fetch_valid),
         .voice1_addr(event_fetch_addr_q),
-        .voice1_req(event_req_q),
+        .voice1_req(event_req_q && !event_fetch_valid),
         .voice1_data(event_fetch_data),
         .voice1_valid(event_fetch_valid),
         .axi_read(sample_read)
@@ -219,13 +240,19 @@ module disk2_sound_player (
             idle_sample_q <= 16'sd0;
 
             event_fetch_addr_q <= 18'd0;
+            event_pending_addr_q <= 18'd0;
             event_next_addr_q <= 18'd0;
             event_fetch_remaining_q <= 18'd0;
             event_output_remaining_q <= 18'd0;
             event_need_fetch_q <= 1'b0;
             event_req_q <= 1'b0;
+            event_fetch_discard_q <= 1'b0;
             event_sample_q <= 16'sd0;
             event_recal_q <= 1'b0;
+            event_seek_q <= 1'b0;
+            event_direction_q <= EVENT_NONE;
+            event_sound_begin_q <= 18'd0;
+            event_sound_end_q <= 18'd0;
             mix_q <= 16'sd0;
             volume_q <= 4'd0;
             mix_valid_q <= 1'b0;
@@ -249,7 +276,6 @@ module disk2_sound_player (
             event_calc_sound_offset_q <= 18'd0;
             event_calc_full_length_q <= 18'd0;
             event_calc_start_offset_q <= 18'd0;
-            event_calc_end_offset_q <= 18'd0;
             event_calc_seek_q <= 1'b0;
             event_calc_zero_length_q <= 1'b0;
             audio_l <= 16'sd0;
@@ -273,35 +299,44 @@ module disk2_sound_player (
             end
 
             if (event_fetch_valid) begin
-                event_sample_q <= event_fetch_data;
+                if (!event_fetch_discard_q)
+                    event_sample_q <= event_fetch_data;
                 event_req_q <= 1'b0;
+                event_fetch_discard_q <= 1'b0;
             end
 
             if (event_calc_valid_q) begin
-                automatic logic [17:0] sound_start_offset;
-                automatic logic [17:0] sound_length;
-
-                sound_start_offset = event_calc_seek_q ? event_calc_start_offset_q : 18'd0;
-                if (event_calc_seek_q) begin
-                    if (event_calc_zero_length_q)
-                        sound_length = 18'd0;
-                    else if (event_calc_end_offset_q > event_calc_start_offset_q)
-                        sound_length = event_calc_end_offset_q - event_calc_start_offset_q;
-                    else
-                        sound_length = 18'd1;
-                end else begin
-                    sound_length = event_calc_full_length_q;
-                end
-
-                event_fetch_addr_q <= event_calc_sound_offset_q + sound_start_offset;
-                event_next_addr_q <= event_calc_sound_offset_q + sound_start_offset + 18'd1;
-                event_fetch_remaining_q <= (sound_length == 18'd0) ? 18'd0 : (sound_length - 18'd1);
-                event_output_remaining_q <= sound_length;
-                event_need_fetch_q <= (sound_length != 18'd0);
-                event_req_q <= 1'b0;
-                event_sample_q <= 16'sd0;
-                event_recal_q <= (event_calc_event_q == EVENT_RECAL_ZERO) && (sound_length != 18'd0);
                 event_calc_valid_q <= 1'b0;
+                if (event_replaces) begin
+                    automatic logic [17:0] sound_start_addr;
+                    automatic logic [17:0] sound_end_addr;
+                    automatic logic [17:0] sound_length;
+
+                    sound_start_addr = event_calc_sound_offset_q +
+                        (event_calc_seek_q ? event_calc_start_offset_q : 18'd0);
+                    sound_end_addr = event_calc_sound_offset_q + event_calc_full_length_q;
+                    sound_length = event_calc_seek_q ?
+                        SEEK_TIMEOUT_SAMPLES : event_calc_full_length_q;
+
+                    // Keep an outstanding request's address stable and drain
+                    // its reply before fetching the replacement clip's first sample.
+                    event_pending_addr_q <= sound_start_addr;
+                    event_next_addr_q <= (event_calc_seek_q &&
+                        sound_start_addr + 18'd1 >= sound_end_addr) ?
+                        event_calc_sound_offset_q : (sound_start_addr + 18'd1);
+                    event_fetch_remaining_q <= event_calc_seek_q || sound_length == 18'd0 ?
+                        18'd0 : (sound_length - 18'd1);
+                    event_output_remaining_q <= sound_length;
+                    event_need_fetch_q <= (sound_length != 18'd0);
+                    event_fetch_discard_q <= event_req_q && !event_fetch_valid;
+                    event_sample_q <= 16'sd0;
+                    event_recal_q <= (event_calc_event_q == EVENT_RECAL_ZERO) &&
+                        (sound_length != 18'd0);
+                    event_seek_q <= event_calc_seek_q;
+                    event_direction_q <= event_calc_event_q;
+                    event_sound_begin_q <= event_calc_sound_offset_q;
+                    event_sound_end_q <= sound_end_addr;
+                end
             end
 
             if (event_pos_valid_q) begin
@@ -313,12 +348,6 @@ module disk2_sound_player (
                         disk2_sound_seek_position_offset(
                             event_pos_sound_id_q,
                             event_pos_sample_start_pos_q) :
-                        18'd0;
-                event_calc_end_offset_q <=
-                    event_pos_seek_q ?
-                        disk2_sound_seek_position_offset(
-                            event_pos_sound_id_q,
-                            event_pos_sample_end_pos_q) :
                         18'd0;
                 event_calc_seek_q <= event_pos_seek_q;
                 /* Compare the registered positions in this existing stage.
@@ -374,7 +403,9 @@ module disk2_sound_player (
                 event_setup_valid_q <= 1'b1;
             end
 
-            if (event_need_fetch_q && !event_req_q) begin
+            if (event_need_fetch_q && !event_req_q &&
+                !event_replaces && !seek_motor_stopped) begin
+                event_fetch_addr_q <= event_pending_addr_q;
                 event_req_q <= 1'b1;
                 event_need_fetch_q <= 1'b0;
             end
@@ -396,30 +427,53 @@ module disk2_sound_player (
                     idle_sample_q <= 16'sd0;
                 end
 
-                if (event_output_remaining_q != 18'd0) begin
-                    event_output_remaining_q <= event_output_remaining_q - 18'd1;
-                    if (event_output_remaining_q == 18'd1)
-                        event_recal_q <= 1'b0;
-                    if (event_output_remaining_q > 18'd1 &&
-                        event_fetch_remaining_q != 18'd0 &&
-                        !event_req_q &&
-                        !event_need_fetch_q) begin
-                        event_fetch_addr_q <= event_next_addr_q;
-                        event_next_addr_q <= event_next_addr_q + 18'd1;
-                        event_fetch_remaining_q <= event_fetch_remaining_q - 18'd1;
-                        event_need_fetch_q <= 1'b1;
+                // A new clip owns its counters and queued address on this
+                // cycle. A same-direction step leaves the sample cursor alone.
+                if (!event_replaces && !seek_motor_stopped) begin
+                    if (event_output_remaining_q != 18'd0) begin
+                        event_output_remaining_q <= event_output_remaining_q - 18'd1;
+                        if (event_output_remaining_q == 18'd1)
+                            event_recal_q <= 1'b0;
+                        if ((event_output_remaining_q > 18'd1 || seek_refresh) &&
+                            (event_seek_q || event_fetch_remaining_q != 18'd0) &&
+                            !event_req_q && !event_need_fetch_q) begin
+                            event_pending_addr_q <= event_next_addr_q;
+                            event_next_addr_q <= (event_seek_q &&
+                                event_next_addr_q + 18'd1 >= event_sound_end_q) ?
+                                event_sound_begin_q : (event_next_addr_q + 18'd1);
+                            if (!event_seek_q)
+                                event_fetch_remaining_q <= event_fetch_remaining_q - 18'd1;
+                            event_need_fetch_q <= 1'b1;
+                        end
+                    end else begin
+                        event_sample_q <= 16'sd0;
                     end
-                end else begin
-                    event_sample_q <= 16'sd0;
                 end
 
                 begin
-                    automatic logic signed [15:0] idle_mix = idle_sample_q >>> 2;
-                    automatic logic signed [15:0] event_mix = event_sample_q >>> 1;
+                    automatic logic signed [15:0] idle_mix =
+                        drive_spinning ? (idle_sample_q >>> 2) : 16'sd0;
+                    automatic logic signed [15:0] event_mix =
+                        (event_playing && !seek_motor_stopped) ?
+                            (event_sample_q >>> 1) : 16'sd0;
                     mix_q <= sat_add16(idle_mix, event_mix);
                     volume_q <= volume;
                     mix_valid_q <= 1'b1;
                 end
+            end
+
+            // Refresh on receipt, before the setup pipeline, so a step on the
+            // final timeout tick continues the same recording without a gap.
+            if (seek_refresh && !event_replaces)
+                event_output_remaining_q <= SEEK_TIMEOUT_SAMPLES;
+
+            if (seek_motor_stopped && !event_replaces) begin
+                event_output_remaining_q <= 18'd0;
+                event_fetch_remaining_q <= 18'd0;
+                event_need_fetch_q <= 1'b0;
+                event_fetch_discard_q <= event_req_q && !event_fetch_valid;
+                event_sample_q <= 16'sd0;
+                event_seek_q <= 1'b0;
             end
         end
     end

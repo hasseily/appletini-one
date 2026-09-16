@@ -716,7 +716,7 @@ def test_disk2_sound_recal_and_volume_contract() -> None:
             "scaled_seek_length" not in sound_player and
             "function automatic logic [17:0] disk2_sound_seek_position_offset" in sound_pkg and
             "8'd140" in sound_pkg,
-            "Disk II seek sounds must slice position-based 05/06 playback")
+            "Disk II seeks must start 05/06 playback at the head-position offset")
     require("sample_phase_q" not in sound_player and
             "sample_advance" not in sound_player and
             "if (audio_tick) begin" in sound_player,
@@ -862,8 +862,8 @@ def test_disk2_sound_zero_length_retime_contract() -> None:
                 re.S) is not None,
             "seek zero equality must move with its registered positions into the calculation stage")
     require(sound_player.count("event_calc_zero_length_q <=") == 2 and
-            "if (event_calc_zero_length_q)" in sound_player,
-            "the retimed zero flag must have one reset, one position-stage assignment, and one use")
+            "event_calc_zero_length_q || !drive_spinning" in sound_player,
+            "the staged zero flag must reject clamped or zero-distance seek events")
 
     setup_stage = re.search(
         r"if \(event_setup_valid_q\) begin(?P<body>.*?)"

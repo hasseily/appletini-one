@@ -106,7 +106,9 @@ images report their firmware, golden-updater, and RTL versions at runtime so a
 mixed build is visible immediately.
 
 The Appli-Card interface and demo media are documented in
-[README_APPLICARD.md](README_APPLICARD.md). Apple II software can identify the
+[README_APPLICARD.md](README_APPLICARD.md). Disk II drive sounds and their
+simulation checks are documented in [README_DISK2_SOUND.md](README_DISK2_SOUND.md).
+Apple II software can identify the
 card through the documented SmartPort interface described in
 [the detection example](https://github.com/hasseily/appletini-software/blob/main/examples/detect_appletini/README.md).
 

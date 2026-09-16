@@ -738,6 +738,7 @@ def run_native_speed_control_test() -> bool:
             g_intent_enabled = 0U;
             g_speed_mode = CARD_CTRL_VTW_SPEED_FULL;
             g_pace_divider = 37U;
+            g_turbo_enabled = 0U;
             g_ovr_active = 0U;
             g_ovr_mode = 0U;
             g_ovr_div = 0U;
@@ -821,6 +822,7 @@ def run_native_speed_control_test() -> bool:
         static int test_turbo_speed_controls(void)
         {
             reset_fixture();
+            vtw_service_set_turbo_enabled(1U);
             g_intent_enabled = 1U;
             g_state = VTW_ST_RUN;
             vtw_service_set_speed(CARD_CTRL_VTW_SPEED_FULL, 37U);
@@ -883,6 +885,7 @@ def run_native_speed_control_test() -> bool:
 
             /* The same encoding and return path apply to an isolated ONE//e. */
             reset_fixture();
+            vtw_service_set_turbo_enabled(1U);
             vtw_service_set_speed(CARD_CTRL_VTW_SPEED_TURBO, 37U);
             g_onee_running = 1U;
             vtw_service_speed_toggle(0U);
@@ -894,6 +897,153 @@ def run_native_speed_control_test() -> bool:
                 return 0;
             }
             return 1;
+        }
+
+        static int test_turbo_opt_in(void)
+        {
+            reset_fixture();
+            g_intent_enabled = 1U;
+            g_state = VTW_ST_RUN;
+            vtw_service_set_speed(CARD_CTRL_VTW_SPEED_TURBO, 37U);
+            if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_FULL,
+                       "disabled direct TURBO request must select MAX")) {
+                return 0;
+            }
+            vtw_service_speed_step(1, 0U);
+            if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_FULL &&
+                       strcmp(vtw_service_last_action_text(), "TW: MAX Speed") == 0,
+                       "disabled USB ladder must stop at MAX")) {
+                return 0;
+            }
+            vtw_service_speed_toggle(0U);
+            vtw_service_speed_toggle(0U);
+            if (!check(vtw_service_turbo_enabled() == 0U &&
+                       vtw_service_speed_mode() == CARD_CTRL_VTW_SPEED_FULL &&
+                       ctrl_speed() == CARD_CTRL_VTW_SPEED_FULL,
+                       "default-off gate must block direct, USB, and toggle TURBO")) {
+                return 0;
+            }
+            vtw_service_set_turbo_enabled(1U);
+            if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_FULL,
+                       "enabling TURBO must not select it")) {
+                return 0;
+            }
+            vtw_service_set_speed(CARD_CTRL_VTW_SPEED_TURBO, 37U);
+            vtw_service_set_turbo_enabled(0U);
+            vtw_service_set_turbo_enabled(1U);
+            if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_FULL &&
+                       vtw_service_speed_mode() == CARD_CTRL_VTW_SPEED_FULL,
+                       "disabling configured TURBO must persist MAX on re-enable")) {
+                return 0;
+            }
+
+            /* A runtime TURBO override must leave the menu baseline intact. */
+            vtw_service_set_speed(CARD_CTRL_VTW_SPEED_DIVIDED, 37U);
+            vtw_service_speed_step(127, 0U);
+            if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_TURBO,
+                       "enabled USB ladder must reach TURBO")) {
+                return 0;
+            }
+            vtw_service_set_turbo_enabled(0U);
+            if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_FULL &&
+                       vtw_service_speed_mode() == CARD_CTRL_VTW_SPEED_DIVIDED &&
+                       vtw_service_pace_divider() == 37U,
+                       "disabled TURBO override must fall to MAX and retain baseline")) {
+                return 0;
+            }
+            vtw_service_speed_toggle(0U);
+            vtw_service_speed_toggle(0U);
+            if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_DIVIDED &&
+                       ctrl_divider() == 37U,
+                       "toggle must still restore the original menu baseline")) {
+                return 0;
+            }
+
+            /* Disabling while a slow override is active clears hidden TURBO. */
+            vtw_service_set_turbo_enabled(1U);
+            vtw_service_set_speed(CARD_CTRL_VTW_SPEED_TURBO, 37U);
+            vtw_service_speed_toggle(0U);
+            vtw_service_set_turbo_enabled(0U);
+            if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_1MHZ,
+                       "disabling TURBO must preserve an active 1 MHz override")) {
+                return 0;
+            }
+            vtw_service_speed_toggle(0U);
+            if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_FULL,
+                       "1 MHz toggle must not restore hidden TURBO after disable")) {
+                return 0;
+            }
+            vtw_service_set_turbo_enabled(1U);
+            vtw_service_set_speed(CARD_CTRL_VTW_SPEED_TURBO, 37U);
+            vtw_service_set_slug_enabled(1U);
+            vtw_service_slug_toggle(0U);
+            vtw_service_set_turbo_enabled(0U);
+            if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_DIVIDED &&
+                       ctrl_divider() == VTW_SLUG_DIVIDER,
+                       "disabling TURBO must preserve an active slug override")) {
+                return 0;
+            }
+            vtw_service_slug_toggle(0U);
+            if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_FULL,
+                       "slug toggle must not restore hidden TURBO after disable")) {
+                return 0;
+            }
+
+            /* A failed live write must not put TURBO back into saved state. */
+            vtw_service_set_turbo_enabled(1U);
+            vtw_service_set_speed(CARD_CTRL_VTW_SPEED_TURBO, 37U);
+            ctrl_write_sticks = 0U;
+            vtw_service_set_turbo_enabled(0U);
+            if (!check(vtw_service_turbo_enabled() == 0U &&
+                       vtw_service_speed_mode() == CARD_CTRL_VTW_SPEED_FULL &&
+                       ((writes[write_count - 1U].value >>
+                         CARD_CTRL_VTW_CTRL_SPEED_SHIFT) &
+                        CARD_CTRL_VTW_CTRL_SPEED_MASK) == CARD_CTRL_VTW_SPEED_FULL,
+                       "failed live disable must keep the gate and saved TURBO off")) {
+                return 0;
+            }
+            ctrl_write_sticks = 1U;
+            vtw_service_speed_toggle(0U);
+            vtw_service_speed_toggle(0U);
+            if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_FULL,
+                       "next successful live write must use sanitized speed")) {
+                return 0;
+            }
+
+            /* Pending ONE//e choices use the same gate, before any PL write. */
+            reset_fixture();
+            vtw_service_speed_step(1, 1U);
+            if (!check(vtw_eff_mode() == CARD_CTRL_VTW_SPEED_FULL &&
+                       write_count == 0U,
+                       "disabled menu preselection must stop at MAX")) {
+                return 0;
+            }
+            vtw_service_set_turbo_enabled(1U);
+            vtw_service_speed_step(1, 1U);
+            if (!check(vtw_eff_mode() == CARD_CTRL_VTW_SPEED_TURBO,
+                       "enabled menu preselection must reach TURBO")) {
+                return 0;
+            }
+            vtw_service_set_turbo_enabled(0U);
+            set_onee_isolated();
+            if (!check(vtw_service_onee_start(0U) != 0U &&
+                       ctrl_speed() == CARD_CTRL_VTW_SPEED_FULL &&
+                       vtw_service_is_enabled() == 0U,
+                       "disabled pending TURBO must start ONE//e at MAX")) {
+                return 0;
+            }
+            return 1;
+        }
+
+        static int test_turbo_config_before_service_init(void)
+        {
+            reset_fixture();
+            vtw_service_set_turbo_enabled(1U);
+            vtw_service_set_speed(CARD_CTRL_VTW_SPEED_TURBO, 37U);
+            vtw_service_init(0U);
+            return check(vtw_service_turbo_enabled() != 0U &&
+                         vtw_service_speed_mode() == CARD_CTRL_VTW_SPEED_TURBO,
+                         "service init must retain the saved opt-in loaded by menu bind");
         }
 
         static int test_onee_live_controls_without_host_intent(void)
@@ -1330,6 +1480,8 @@ def run_native_speed_control_test() -> bool:
         {
             if (!test_host_live_controls() ||
                 !test_turbo_speed_controls() ||
+                !test_turbo_opt_in() ||
+                !test_turbo_config_before_service_init() ||
                 !test_onee_live_controls_without_host_intent() ||
                 !test_failed_live_writes_and_pending_choice() ||
                 !test_menu_preselect_context_boundary() ||

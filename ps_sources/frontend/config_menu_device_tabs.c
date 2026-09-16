@@ -468,10 +468,20 @@ void config_menu_draw_transwarp(uint16_t *fb,
                         config_menu_vtw_speed_label(menu));
     hgr_draw_check_item(fb, x, y + (2 * row_h), option_w,
                         (uint8_t)(menu->item_focus ==
+                                  CONFIG_TRANSWARP_ITEM_TURBO),
+                        menu->vtw_turbo_enabled,
+                        "Enable TURBO speed");
+    hgr_draw_check_item(fb, option_x2, y + (2 * row_h), option_w2,
+                        (uint8_t)(menu->item_focus ==
+                                  CONFIG_TRANSWARP_ITEM_SLUG),
+                        menu->vtw_slug_key_enabled,
+                        "Enable 0.05 MHz slug debug key");
+    hgr_draw_check_item(fb, x, y + (3 * row_h), option_w,
+                        (uint8_t)(menu->item_focus ==
                                   CONFIG_TRANSWARP_ITEM_IGNORE_C074),
                         menu->vtw_ignore_c074,
                         "Ignore $C074 Speed Switch");
-    hgr_draw_check_item(fb, option_x2, y + (2 * row_h), option_w2,
+    hgr_draw_check_item(fb, option_x2, y + (3 * row_h), option_w2,
                         (uint8_t)(menu->item_focus ==
                                   CONFIG_TRANSWARP_ITEM_DISABLE_D2),
                         menu->vtw_disable_disk2_accel,
@@ -479,22 +489,16 @@ void config_menu_draw_transwarp(uint16_t *fb,
     /* Per-region slowdown (TransWarp DIP block 2): each enabled region
      * drops the core to 1 MHz for a window after it is touched, so
      * timing-sensitive I/O keeps working at high core speeds. */
-    hgr_draw_check_item(fb, x, y + (3 * row_h), option_w,
+    hgr_draw_check_item(fb, x, y + (4 * row_h), option_w,
                         (uint8_t)(menu->item_focus ==
                                   CONFIG_TRANSWARP_ITEM_FLOATBUS),
                         (uint8_t)((menu->vtw_slowdown_mask & (1U << 7)) != 0U),
                         "Slow Floating bus ($C019,$C030-$C05F)");
-    hgr_draw_check_item(fb, option_x2, y + (3 * row_h), option_w2,
+    hgr_draw_check_item(fb, option_x2, y + (4 * row_h), option_w2,
                         (uint8_t)(menu->item_focus ==
                                   CONFIG_TRANSWARP_ITEM_PADDLE),
                         (uint8_t)((menu->vtw_slowdown_mask & (1U << 8)) != 0U),
                         "Slow Paddles/joystick ($C064-$C070)");
-    hgr_draw_check_item(fb, x, y + (4 * row_h), w,
-                        (uint8_t)(menu->item_focus ==
-                                  CONFIG_TRANSWARP_ITEM_SLUG),
-                        menu->vtw_slug_key_enabled,
-                        "Enable 0.05 MHz slug debug key");
-
     cmui_caption(fb, x + 18, y + (5 * row_h) + 10, w - 36,
                  "Slow down physical slots:");
     for (uint8_t slot = 1U; slot <= CONFIG_TRANSWARP_SLOT_COUNT; ++slot) {

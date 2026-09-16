@@ -2418,6 +2418,12 @@ static uart_control_event_t process_command(
             if (str_ieq(argv[2], "full")) {
                 mode = CARD_CTRL_VTW_SPEED_FULL;
             } else if (str_ieq(argv[2], "turbo")) {
+                if (vtw_service_turbo_enabled() == 0U) {
+                    uart_puts(control->control_uart_base,
+                              "vtw: TURBO disabled; check Enable TURBO speed "
+                              "in the TransWarp tab first\r\n");
+                    return event;
+                }
                 mode = CARD_CTRL_VTW_SPEED_TURBO;
             } else if (str_ieq(argv[2], "1mhz")) {
                 mode = CARD_CTRL_VTW_SPEED_1MHZ;

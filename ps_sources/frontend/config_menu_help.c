@@ -497,11 +497,15 @@ HELP(transwarp,
 
 HELP(transwarp_speed,
     "MAX Speed keeps the normal core timing at about 33 MHz. 3.6 MHz matches the real TransWarp.",
-    "TURBO is a separate fast mode for software that does not need exact 65C02 cycle timing.",
-    "TURBO uses the same I/O slowdown and $C074 controls. Its speed depends on the program.",
     "1 MHz cycle-exact locks every core cycle to the Apple bus clock and passes cycle-counting",
     "speed detectors and vapor lock, but disable acceleration for really precise demos.",
     "Most I/O and video writes always run at 1 MHz bus speed, whatever the setting.");
+
+HELP(transwarp_turbo,
+    "TURBO is a special ultrafast mode for software that does not need exact 65C02 cycle timing.",
+    "This speed setting, unlike the others, does not guarantee an exact speed. It will fluctuate",
+    "depending on the running software, due to instruction and data caching. You can expect",
+    "anywhere between 60MHz and 110MHz effective speed, with an average around 75MHz.");
 
 HELP(transwarp_ignore_c074,
     "$C074 is the TransWarp software speed switch: $00 selects fast, $01 selects 1 MHz,",
@@ -547,20 +551,21 @@ HELP(transwarp_slowdown_window,
     "or a long device loop. Pick the shortest window that works for your software.");
 
 static const help_override_t transwarp_overrides[] = {
-    OVERRIDE(1, transwarp_speed),
-    OVERRIDE(2, transwarp_ignore_c074),
-    OVERRIDE(3, transwarp_disable_disk2_accel),
-    OVERRIDE(4, transwarp_slowdown_floatbus),
-    OVERRIDE(5, transwarp_slowdown_paddle),
-    OVERRIDE(6, transwarp_slug),
-    OVERRIDE(7, transwarp_slowdown_slots),
-    OVERRIDE(8, transwarp_slowdown_slots),
-    OVERRIDE(9, transwarp_slowdown_slots),
-    OVERRIDE(10, transwarp_slowdown_slots),
-    OVERRIDE(11, transwarp_slowdown_slots),
-    OVERRIDE(12, transwarp_slowdown_slots),
-    OVERRIDE(13, transwarp_slowdown_slots),
-    OVERRIDE(14, transwarp_slowdown_window),
+    OVERRIDE(CONFIG_TRANSWARP_ITEM_SPEED, transwarp_speed),
+    OVERRIDE(CONFIG_TRANSWARP_ITEM_TURBO, transwarp_turbo),
+    OVERRIDE(CONFIG_TRANSWARP_ITEM_SLUG, transwarp_slug),
+    OVERRIDE(CONFIG_TRANSWARP_ITEM_IGNORE_C074, transwarp_ignore_c074),
+    OVERRIDE(CONFIG_TRANSWARP_ITEM_DISABLE_D2, transwarp_disable_disk2_accel),
+    OVERRIDE(CONFIG_TRANSWARP_ITEM_FLOATBUS, transwarp_slowdown_floatbus),
+    OVERRIDE(CONFIG_TRANSWARP_ITEM_PADDLE, transwarp_slowdown_paddle),
+    OVERRIDE(CONFIG_TRANSWARP_ITEM_SLOT_FIRST, transwarp_slowdown_slots),
+    OVERRIDE(CONFIG_TRANSWARP_ITEM_SLOT_FIRST + 1U, transwarp_slowdown_slots),
+    OVERRIDE(CONFIG_TRANSWARP_ITEM_SLOT_FIRST + 2U, transwarp_slowdown_slots),
+    OVERRIDE(CONFIG_TRANSWARP_ITEM_SLOT_FIRST + 3U, transwarp_slowdown_slots),
+    OVERRIDE(CONFIG_TRANSWARP_ITEM_SLOT_FIRST + 4U, transwarp_slowdown_slots),
+    OVERRIDE(CONFIG_TRANSWARP_ITEM_SLOT_FIRST + 5U, transwarp_slowdown_slots),
+    OVERRIDE(CONFIG_TRANSWARP_ITEM_SLOT_LAST, transwarp_slowdown_slots),
+    OVERRIDE(CONFIG_TRANSWARP_ITEM_WINDOW, transwarp_slowdown_window),
 };
 
 /* ======================================================================== */

@@ -607,7 +607,7 @@ def static_checks() -> None:
             '"TURBO"' in menu_c,
             "TransWarp tab must offer the speed presets")
     require("menu->vtw_speed_mode == CARD_CTRL_VTW_SPEED_TURBO" in menu_c and
-            "return VTW_SPEED_PRESET_COUNT - 1U;" in menu_c and
+            "(menu->vtw_turbo_enabled != 0U ? 1U : 2U)" in menu_c and
             "menu->vtw_speed_mode == CARD_CTRL_VTW_SPEED_FULL" in menu_c and
             "return VTW_SPEED_PRESET_COUNT - 2U;" in menu_c and
             "menu->vtw_speed_mode == CARD_CTRL_VTW_SPEED_1MHZ" in menu_c and
@@ -625,7 +625,7 @@ def static_checks() -> None:
     require("void config_menu_draw_transwarp" in tabs_c and
             '"Ignore $C074 Speed Switch"' in tabs_c and
             '"Disable DiskII Acceleration"' in tabs_c and
-            "option_x2, y + (2 * row_h), option_w2" in tabs_c and
+            "option_x2, y + (3 * row_h), option_w2" in tabs_c and
             '"TransWarp on: 128K + 8MB RamWorks, accelerated"' in tabs_c,
             "TransWarp tab must show both compatibility checkboxes on one row, "
             "and RAM must surface the accelerated-RamWorks status")

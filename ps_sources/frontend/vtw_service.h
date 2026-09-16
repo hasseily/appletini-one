@@ -26,10 +26,16 @@ void vtw_service_set_enabled(uint8_t enable);
 uint8_t vtw_service_is_enabled(void);
 
 /* speed_mode: CARD_CTRL_VTW_SPEED_*; pace_divider: fabric clocks per core
- * cycle in divided mode (min 2 = full rate; 37 ~= 3.6 MHz-equivalent). */
+ * cycle in divided mode (min 2 = full rate; 37 ~= 3.6 MHz-equivalent).
+ * TURBO requests fall back to MAX unless TURBO is enabled. */
 void vtw_service_set_speed(uint8_t speed_mode, uint8_t pace_divider);
 uint8_t vtw_service_speed_mode(void);
 uint8_t vtw_service_pace_divider(void);
+
+/* TURBO opt-in (default off). Disabling changes configured and override
+ * TURBO speeds to MAX, so later USB toggles cannot restore TURBO. */
+void vtw_service_set_turbo_enabled(uint8_t enable);
+uint8_t vtw_service_turbo_enabled(void);
 
 /* Ignore all software writes to $C074, including fast, 1 MHz, and disable.
  * Enabling it live clears any value that software latched earlier. */

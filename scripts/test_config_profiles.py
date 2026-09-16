@@ -91,8 +91,19 @@ def test_autosave_remains_working_config() -> None:
 def test_clean_config_schema_contract() -> None:
     source = read(CONFIG_MENU_C)
 
-    require("#define APPLETINI_CFG_VERSION 116U" in source,
-            "the global ONE//e video key must advance the config schema")
+    require("#define APPLETINI_CFG_VERSION 117U" in source,
+            "the TURBO opt-in key must advance the config schema")
+    require('strcmp(key, "vtw.turbo.enabled") == 0' in source and
+            '"vtw.turbo.enabled=%s\\n"' in source,
+            "TURBO opt-in must load and save with the config and profiles")
+    require("#define CONFIG_DEFAULT_VTW_TURBO_ENABLED 0U" in source,
+            "TURBO must default to disabled")
+    for function in ("config_menu_init", "config_menu_reset_settings_only",
+                     "config_menu_load_settings", "config_menu_read_settings_from_path"):
+        body = re.search(rf"\b{function}\([^;]*?\n\{{\n(.*?)\n\}}", source, re.DOTALL)
+        require(body is not None and
+                "menu->vtw_turbo_enabled = CONFIG_DEFAULT_VTW_TURBO_ENABLED;" in body.group(1),
+                f"{function} must require each config to opt in to TURBO")
     require("config_menu_parse_config_line(line, &value)" in source and
             "hash = strchr(line, '#')" in source and
             "config_menu_ascii_lower_in_place(key)" in source,
@@ -529,32 +540,44 @@ def test_transwarp_slot_slowdown_rows() -> None:
     device_tabs = read(CONFIG_MENU_DEVICE_TABS_C)
     help_source = read(CONFIG_MENU_HELP_C)
 
-    require("#define CONFIG_TRANSWARP_ITEM_IGNORE_C074  2U" in internal and
-            "#define CONFIG_TRANSWARP_ITEM_DISABLE_D2   3U" in internal and
-            "#define CONFIG_TRANSWARP_ITEM_FLOATBUS     4U" in internal and
-            "#define CONFIG_TRANSWARP_ITEM_PADDLE       5U" in internal and
-            "#define CONFIG_TRANSWARP_ITEM_SLUG         6U" in internal and
-            "#define CONFIG_TRANSWARP_ITEM_SLOT_FIRST   7U" in internal and
-            "#define CONFIG_TRANSWARP_SLOT_COUNT        7U" in internal and
+    items = {
+        "ENABLE": 0, "SPEED": 1, "TURBO": 2, "SLUG": 3,
+        "IGNORE_C074": 4, "DISABLE_D2": 5, "FLOATBUS": 6,
+        "PADDLE": 7, "SLOT_FIRST": 8,
+    }
+    for item, index in items.items():
+        require(re.search(rf"#define CONFIG_TRANSWARP_ITEM_{item}\s+{index}U\b",
+                          internal) is not None,
+                f"TransWarp focus index for {item} must match the compact layout")
+    require("#define CONFIG_TRANSWARP_SLOT_COUNT        7U" in internal and
             "#define CONFIG_TRANSWARP_ITEM_COUNT" in internal,
-            "TransWarp focus order must match the compact slowdown layout")
-    require('"Ignore $C074 Speed Switch"' in device_tabs and
-            '"Disable DiskII Acceleration"' in device_tabs and
-            "y + (2 * row_h), option_w" in device_tabs and
-            "option_x2, y + (2 * row_h), option_w2" in device_tabs,
-            "TransWarp compatibility checkboxes must share one row")
+            "TransWarp layout must retain all seven physical slots")
+    checkbox_rows = (
+        ("TURBO", "x", "option_w", 2, "Enable TURBO speed"),
+        ("SLUG", "option_x2", "option_w2", 2, "Enable 0.05 MHz slug debug key"),
+        ("IGNORE_C074", "x", "option_w", 3, "Ignore $C074 Speed Switch"),
+        ("DISABLE_D2", "option_x2", "option_w2", 3, "Disable DiskII Acceleration"),
+        ("FLOATBUS", "x", "option_w", 4, "Slow Floating bus ($C019,$C030-$C05F)"),
+        ("PADDLE", "option_x2", "option_w2", 4, "Slow Paddles/joystick ($C064-$C070)"),
+    )
+    for item, x, width, row, label in checkbox_rows:
+        call = re.search(
+            rf"hgr_draw_check_item\(fb, {x}, y \+ \({row} \* row_h\), {width},"
+            rf"(?:(?!hgr_draw_check_item).)*?CONFIG_TRANSWARP_ITEM_{item}\),"
+            rf'(?:(?!hgr_draw_check_item).)*?"{re.escape(label)}"\);',
+            device_tabs,
+            re.DOTALL,
+        )
+        require(call is not None,
+                f"TransWarp {item} must draw in row {row} at {x}")
+    require("vtw_turbo_enabled" in header and
+            "menu->vtw_turbo_enabled," in device_tabs,
+            "TURBO checkbox must show the saved opt-in state")
     require('strcmp(key, "vtw.c074.ignore") == 0' in source and
             'strcmp(key, "vtw.disk2.acceleration.disabled") == 0' in source and
             '"vtw.c074.ignore=%s\\n"' in source and
             '"vtw.disk2.acceleration.disabled=%s\\n"' in source,
             "TransWarp compatibility checkboxes must persist")
-    require('"Slow Floating bus ($C019,$C030-$C05F)"' in device_tabs and
-            '"Slow Paddles/joystick ($C064-$C070)"' in device_tabs and
-            "y + (3 * row_h), option_w" in device_tabs and
-            "option_x2, y + (3 * row_h), option_w2" in device_tabs and
-            '"Enable 0.05 MHz slug debug key"' in device_tabs and
-            "y + (4 * row_h), w" in device_tabs,
-            "floating-bus and paddle slowdown must share the row above slug")
     require('"Slow down physical slots:"' in device_tabs and
             "for (uint8_t slot = 1U; slot <= CONFIG_TRANSWARP_SLOT_COUNT; ++slot)" in
             device_tabs and
@@ -591,16 +614,33 @@ def test_transwarp_slot_slowdown_rows() -> None:
             "only OK may toggle an available focused TransWarp slot checkbox")
     require("vtw_slowdown_slot_cursor" not in header + source + device_tabs,
             "TransWarp slowdown UI must not retain the hidden slot selector")
-    require("OVERRIDE(2, transwarp_ignore_c074)" in help_source and
-            "OVERRIDE(3, transwarp_disable_disk2_accel)" in help_source and
-            "OVERRIDE(4, transwarp_slowdown_floatbus)" in help_source and
-            "OVERRIDE(5, transwarp_slowdown_paddle)" in help_source and
-            "OVERRIDE(6, transwarp_slug)" in help_source and
-            "OVERRIDE(14, transwarp_slowdown_window)" in help_source,
-            "TransWarp non-slot slowdown rows must retain contextual help")
-    for item in range(7, 14):
+    help_topics = {
+        "SPEED": "speed", "TURBO": "turbo", "SLUG": "slug",
+        "IGNORE_C074": "ignore_c074", "DISABLE_D2": "disable_disk2_accel",
+        "FLOATBUS": "slowdown_floatbus", "PADDLE": "slowdown_paddle",
+        "WINDOW": "slowdown_window",
+    }
+    for item, topic in help_topics.items():
+        require(f"OVERRIDE(CONFIG_TRANSWARP_ITEM_{item}, transwarp_{topic})" in help_source,
+                f"TransWarp {item} must retain contextual help after reordering")
+    for slot in range(7):
+        item = ("CONFIG_TRANSWARP_ITEM_SLOT_FIRST" if slot == 0 else
+                "CONFIG_TRANSWARP_ITEM_SLOT_LAST" if slot == 6 else
+                f"CONFIG_TRANSWARP_ITEM_SLOT_FIRST + {slot}U")
         require(f"OVERRIDE({item}, transwarp_slowdown_slots)" in help_source,
-                f"TransWarp slot slowdown row {item} must retain contextual help")
+                f"TransWarp slot {slot + 1} must retain contextual help")
+    turbo_help = re.search(r"HELP\(transwarp_turbo,\s*(.*?)\);", help_source, re.DOTALL)
+    require(turbo_help is not None, "TURBO checkbox must have its own help text")
+    turbo_text = " ".join(re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', turbo_help.group(1)))
+    require(turbo_text ==
+            "TURBO is a special ultrafast mode for software that does not need exact 65C02 cycle timing. "
+            "This speed setting, unlike the others, does not guarantee an exact speed. It will fluctuate "
+            "depending on the running software, due to instruction and data caching. You can expect "
+            "anywhere between 60MHz and 110MHz effective speed, with an average around 75MHz.",
+            "TURBO help must explain timing and the requested effective speed range")
+    speed_help = re.search(r"HELP\(transwarp_speed,\s*(.*?)\);", help_source, re.DOTALL)
+    require(speed_help is not None and "TURBO" not in speed_help.group(1),
+            "Speed help must omit the TURBO text now shown under its checkbox")
     require("Slot 4 is automatically slowed down when the virtual Phasor is active." in
             help_source,
             "TransWarp slot help must explain the automatic virtual Phasor slowdown")
@@ -647,6 +687,7 @@ def test_checkbox_rows_ignore_left_right() -> None:
     adjust = source[adjust_start:adjust_end]
     forbidden_checkbox_mutations = (
         "config_menu_vtw_toggle_focused_slot(menu)",
+        "menu->vtw_turbo_enabled =",
         "menu->vtw_ignore_c074 =",
         "menu->vtw_disable_disk2_accel =",
         "menu->border_enabled =",

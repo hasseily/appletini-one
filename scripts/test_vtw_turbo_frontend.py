@@ -27,8 +27,17 @@ def main() -> int:
     assert "mode = CARD_CTRL_VTW_SPEED_TURBO;" in speed_command
     assert "config_menu_set_vtw_speed(g_config_menu, mode, divider);" in speed_command
     assert "vtw_service_set_speed(mode, divider);" in speed_command
+    assert "vtw_service_turbo_enabled() == 0U" in speed_command
     assert "config_menu_read_settings_from_path(menu, cfg_path, 1U, NULL)" in source
     assert "config_menu_save_settings_to_path(menu, cfg_path, NULL)" in source
+    for start, end in (
+        ("static void config_menu_load_settings(", "static void config_menu_restore_onee_intent("),
+        ("static uint8_t config_menu_read_settings_from_path(",
+         "uint8_t config_menu_save_profile_settings("),
+    ):
+        loader = extract(source, start, end)
+        assert loader.index("menu->vtw_turbo_enabled = CONFIG_DEFAULT_VTW_TURBO_ENABLED;") < loader.index("line = strtok(")
+        assert loader.index("config_menu_parse_key_value(menu, key, value);") < loader.index("config_menu_coerce_vtw_speed(menu);")
 
     compiler = find_native_c_compiler()
     if compiler is None:
@@ -38,9 +47,11 @@ def main() -> int:
     presets = source[presets_start:source.index("/* Single authority", presets_start)]
     setter = extract(source, "void config_menu_set_vtw_speed(config_menu_t *menu,",
                      "/* Mockingboard / Phasor")
+    coerce = extract(source, "static void config_menu_coerce_vtw_speed(",
+                     "/* Config 104 exposed")
     parse = extract(source, 'strcmp(key, "vtw.speed.mode") == 0) {',
                     '} else if (strcmp(key, "vtw.slug.key")')
-    parse = parse[parse.index("{") + 1:]
+    parse = "    if (" + parse + "    }\n"
     serializer = extract(source, '    APPEND_CFG("mouse.slot2.enabled=',
                          "    for (uint32_t binding")
     harness = BUILD / "vtw_turbo_frontend.c"
@@ -57,22 +68,27 @@ def main() -> int:
         typedef struct {
             uint8_t vtw_enabled, vtw_speed_mode, vtw_pace_divider;
             uint8_t vtw_ignore_c074, vtw_disable_disk2_accel;
-            uint8_t vtw_slug_key_enabled;
+            uint8_t vtw_turbo_enabled, vtw_slug_key_enabled;
             uint16_t vtw_slowdown_mask, vtw_slowdown_cycles;
             uint8_t mouse_slot2_enabled, mouse_sensitivity;
             uint8_t applicard_slot5_enabled, slot5_processor, applicard_resource_max;
             struct {
                 void *ctx;
+                void (*set_vtw_turbo_enabled)(void *, uint8_t);
                 void (*set_vtw_config)(void *, uint8_t, uint8_t, uint8_t,
                                        uint8_t, uint8_t);
             } platform;
         } config_menu_t;
         static char saved[1024];
-        static unsigned saves, applied;
-        static uint8_t applied_mode;
+        static unsigned saves, applied, gates;
+        static uint8_t applied_mode, turbo_allowed;
         static const char *config_menu_on_off(uint8_t value)
         {
             return value ? "ON" : "OFF";
+        }
+        static uint8_t config_menu_bool_text(const char *value)
+        {
+            return strcmp(value, "ON") == 0;
         }
         static void config_menu_set_status(config_menu_t *menu, uint8_t error,
                                             const char *message)
@@ -88,6 +104,15 @@ def main() -> int:
             applied_mode = mode;
             ++applied;
         }
+        static void apply_turbo(void *ctx, uint8_t enable)
+        {
+            (void)ctx;
+            turbo_allowed = enable;
+            ++gates;
+            if (enable == 0U && applied_mode == CARD_CTRL_VTW_SPEED_TURBO) {
+                applied_mode = CARD_CTRL_VTW_SPEED_FULL;
+            }
+        }
         static void config_menu_save_settings(config_menu_t *menu)
         {
             ++saves;
@@ -95,11 +120,16 @@ def main() -> int:
     ''') + serializer + textwrap.dedent(r'''
         #undef APPEND_CFG
         }
-        static void parse_mode(config_menu_t *menu, const char *value)
+        static void parse_setting(config_menu_t *menu, const char *key,
+                                  const char *value)
         {
     ''') + parse + "\n}\n" + textwrap.dedent(r'''
+        static void parse_mode(config_menu_t *menu, const char *value)
+        {
+            parse_setting(menu, "vtw.speed.mode", value);
+        }
         void config_menu_set_vtw_speed(config_menu_t *, uint8_t, uint8_t);
-    ''') + presets + setter + textwrap.dedent(r'''
+    ''') + coerce + presets + setter + textwrap.dedent(r'''
         int main(void)
         {
             config_menu_t menu = {0};
@@ -109,16 +139,32 @@ def main() -> int:
             menu.vtw_ignore_c074 = 1U;
             menu.vtw_disable_disk2_accel = 1U;
             menu.platform.set_vtw_config = apply;
+            menu.platform.set_vtw_turbo_enabled = apply_turbo;
             assert(CARD_CTRL_VTW_SPEED_TURBO == 3U);
             config_menu_set_vtw_speed(&menu, CARD_CTRL_VTW_SPEED_FULL, 37U);
             assert(strcmp(config_menu_vtw_speed_label(&menu), "MAX Speed") == 0);
+            config_menu_set_vtw_speed(&menu, CARD_CTRL_VTW_SPEED_TURBO, 37U);
+            assert(menu.vtw_speed_mode == CARD_CTRL_VTW_SPEED_FULL);
+            assert(applied == 1U && saves == 1U);
+            config_menu_vtw_cycle_speed(&menu, 1);
+            assert(menu.vtw_speed_mode == CARD_CTRL_VTW_SPEED_1MHZ);
+            config_menu_vtw_cycle_speed(&menu, -1);
+            assert(menu.vtw_speed_mode == CARD_CTRL_VTW_SPEED_FULL);
+            assert(strstr(saved, "vtw.turbo.enabled=OFF\n"));
+
+            config_menu_vtw_set_turbo_enabled(&menu, 1U);
+            assert(turbo_allowed == 1U);
+            assert(menu.vtw_speed_mode == CARD_CTRL_VTW_SPEED_FULL);
             config_menu_vtw_cycle_speed(&menu, 1);
             assert(menu.vtw_speed_mode == CARD_CTRL_VTW_SPEED_TURBO);
             assert(applied_mode == CARD_CTRL_VTW_SPEED_TURBO);
             assert(strcmp(config_menu_vtw_speed_label(&menu), "TURBO") == 0);
             line = strstr(saved, "vtw.speed.mode=");
             assert(line && strstr(saved, "vtw.speed.mode=3\n"));
+            assert(strstr(saved, "vtw.turbo.enabled=ON\n"));
             parse_mode(&loaded, line + strlen("vtw.speed.mode="));
+            parse_setting(&loaded, "vtw.turbo.enabled", "ON");
+            config_menu_coerce_vtw_speed(&loaded);
             assert(loaded.vtw_speed_mode == CARD_CTRL_VTW_SPEED_TURBO);
             assert(strcmp(config_menu_vtw_speed_label(&loaded), "TURBO") == 0);
             config_menu_vtw_cycle_speed(&menu, -1);
@@ -128,7 +174,7 @@ def main() -> int:
             assert(menu.vtw_speed_mode == CARD_CTRL_VTW_SPEED_1MHZ);
             config_menu_vtw_cycle_speed(&menu, -1);
             assert(menu.vtw_speed_mode == CARD_CTRL_VTW_SPEED_TURBO);
-            assert(saves == applied && saves == 6U);
+            assert(saves == applied + gates);
             for (uint8_t mode = 0U; mode <= CARD_CTRL_VTW_SPEED_TURBO; ++mode) {
                 char number[8];
                 snprintf(number, sizeof(number), "%u", (unsigned)mode);
@@ -141,9 +187,43 @@ def main() -> int:
             assert(loaded.vtw_speed_mode == CARD_CTRL_VTW_SPEED_FULL);
             parse_mode(&loaded, "259");
             assert(loaded.vtw_speed_mode == CARD_CTRL_VTW_SPEED_FULL);
+
+            /* Disabling drops the selection and persists both values. */
+            config_menu_vtw_set_turbo_enabled(&menu, 0U);
+            assert(menu.vtw_speed_mode == CARD_CTRL_VTW_SPEED_FULL);
+            assert(applied_mode == CARD_CTRL_VTW_SPEED_FULL && turbo_allowed == 0U);
+            assert(strstr(saved, "vtw.turbo.enabled=OFF\n"));
+            assert(strstr(saved, "vtw.speed.mode=0\n"));
+            config_menu_vtw_cycle_speed(&menu, 1);
+            assert(menu.vtw_speed_mode == CARD_CTRL_VTW_SPEED_1MHZ);
+            config_menu_vtw_cycle_speed(&menu, -1);
+            assert(menu.vtw_speed_mode == CARD_CTRL_VTW_SPEED_FULL);
+
+            /* An old config with only mode=3 requires a fresh opt-in. */
+            loaded.vtw_turbo_enabled = 0U;
+            parse_mode(&loaded, "3");
+            assert(strcmp(config_menu_vtw_speed_label(&loaded), "MAX Speed") == 0);
+            config_menu_coerce_vtw_speed(&loaded);
+            assert(loaded.vtw_speed_mode == CARD_CTRL_VTW_SPEED_FULL);
+            /* Either key order retains TURBO when permission is present. */
+            parse_setting(&loaded, "vtw.turbo.enabled", "ON");
+            parse_mode(&loaded, "3");
+            config_menu_coerce_vtw_speed(&loaded);
+            assert(loaded.vtw_speed_mode == CARD_CTRL_VTW_SPEED_TURBO);
+            parse_setting(&loaded, "vtw.turbo.enabled", "OFF");
+            config_menu_coerce_vtw_speed(&loaded);
+            assert(loaded.vtw_speed_mode == CARD_CTRL_VTW_SPEED_FULL);
+
+            /* Opt-in changes alone leave ordinary speed presets intact. */
+            config_menu_set_vtw_speed(&menu, CARD_CTRL_VTW_SPEED_DIVIDED, 19U);
+            config_menu_vtw_set_turbo_enabled(&menu, 1U);
+            config_menu_vtw_set_turbo_enabled(&menu, 0U);
+            assert(menu.vtw_speed_mode == CARD_CTRL_VTW_SPEED_DIVIDED);
+            assert(menu.vtw_pace_divider == 19U);
             config_menu_set_vtw_speed(&menu, 255U, 0U);
             assert(menu.vtw_speed_mode == CARD_CTRL_VTW_SPEED_FULL);
             assert(menu.vtw_pace_divider == 2U);
+            assert(saves == applied + gates);
             puts("VTW TURBO FRONTEND PASS");
             return 0;
         }

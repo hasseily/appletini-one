@@ -31,7 +31,7 @@
 #define APPLETINI_CFG_TMP_PATH "0:/appletini_cfg.tmp"
 #define APPLETINI_CFG_BAK_PATH "0:/appletini_cfg.bak"
 #define APPLETINI_CFG_MAX 8192U
-#define APPLETINI_CFG_VERSION 116U
+#define APPLETINI_CFG_VERSION 117U
 #define ONEE_PERSIST_RETRY_POLL_LIMIT 4096U
 #define ETHERNET_CONTROL_SLOT 1U
 #define DISK2_CONTROL_SLOT 6U
@@ -68,6 +68,7 @@
 #define CONFIG_DEFAULT_VTW_PACE_DIVIDER 37U  /* ~3.6 MHz-equivalent */
 #define CONFIG_DEFAULT_VTW_IGNORE_C074 0U    /* honor software speed control */
 #define CONFIG_DEFAULT_VTW_DISABLE_D2_ACCEL 0U
+#define CONFIG_DEFAULT_VTW_TURBO_ENABLED 0U  /* TURBO requires opt-in */
 #define CONFIG_DEFAULT_VTW_SLUG_KEY 0U       /* slug USB key disarmed */
 #define CONFIG_DEFAULT_VTW_SLOWDOWN_MASK 0U     /* all regions full speed */
 #define CONFIG_DEFAULT_VTW_SLOWDOWN_CYCLES 512U /* 1 MHz window per access */
@@ -2368,6 +2369,14 @@ static void config_menu_coerce_border(config_menu_t *menu)
     }
 }
 
+static void config_menu_coerce_vtw_speed(config_menu_t *menu)
+{
+    if (menu->vtw_turbo_enabled == 0U &&
+        menu->vtw_speed_mode == CARD_CTRL_VTW_SPEED_TURBO) {
+        menu->vtw_speed_mode = CARD_CTRL_VTW_SPEED_FULL;
+    }
+}
+
 /* Config 104 exposed separate Speaker (bit 7) and Video (bit 9) slowdown
  * controls. Config 105 combines them as Floating-bus I/O on bit 7. Preserve
  * either old choice, then permanently discard the retired bit. */
@@ -2994,6 +3003,11 @@ static void config_menu_apply_runtime_internal(config_menu_t *menu,
         menu->platform.set_applicard_resource_max(menu->platform.ctx,
                                                   menu->applicard_resource_max);
     }
+    config_menu_coerce_vtw_speed(menu);
+    if (menu->platform.set_vtw_turbo_enabled != NULL) {
+        menu->platform.set_vtw_turbo_enabled(menu->platform.ctx,
+                                             menu->vtw_turbo_enabled);
+    }
     if (menu->platform.set_vtw_config != NULL) {
         menu->platform.set_vtw_config(menu->platform.ctx,
                                       menu->vtw_enabled,
@@ -3214,6 +3228,8 @@ static void config_menu_parse_key_value(config_menu_t *menu, const char *key, co
         unsigned long mode = strtoul(value, NULL, 10);
         menu->vtw_speed_mode = (mode <= CARD_CTRL_VTW_SPEED_TURBO) ?
                                   (uint8_t)mode : CARD_CTRL_VTW_SPEED_FULL;
+    } else if (strcmp(key, "vtw.turbo.enabled") == 0) {
+        menu->vtw_turbo_enabled = config_menu_bool_text(value);
     } else if (strcmp(key, "vtw.slug.key") == 0) {
         menu->vtw_slug_key_enabled = config_menu_bool_text(value);
     } else if (strcmp(key, "vtw.slowdown.mask") == 0) {
@@ -3448,6 +3464,7 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                "vtw.enabled=%s\n"
                "vtw.c074.ignore=%s\n"
                "vtw.disk2.acceleration.disabled=%s\n"
+               "vtw.turbo.enabled=%s\n"
                "vtw.speed.mode=%u\n"
                "vtw.pace.divider=%u\n"
                "vtw.slug.key=%s\n"
@@ -3462,6 +3479,7 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                config_menu_on_off(menu->vtw_enabled),
                config_menu_on_off(menu->vtw_ignore_c074),
                config_menu_on_off(menu->vtw_disable_disk2_accel),
+               config_menu_on_off(menu->vtw_turbo_enabled),
                (unsigned)menu->vtw_speed_mode,
                (unsigned)menu->vtw_pace_divider,
                config_menu_on_off(menu->vtw_slug_key_enabled),
@@ -3606,6 +3624,8 @@ static void config_menu_load_settings(config_menu_t *menu)
         return;
     }
 
+    /* Each file must opt in; a missing key never inherits TURBO permission. */
+    menu->vtw_turbo_enabled = CONFIG_DEFAULT_VTW_TURBO_ENABLED;
     buffer[bytes_read] = '\0';
     line = strtok(buffer, "\r\n");
     while (line != NULL) {
@@ -3629,6 +3649,7 @@ static void config_menu_load_settings(config_menu_t *menu)
     config_menu_coerce_format_badge(menu);
     config_menu_coerce_border(menu);
     config_menu_coerce_ethernet(menu);
+    config_menu_coerce_vtw_speed(menu);
     config_menu_migrate_vtw_slowdown_mask(menu);
     config_menu_usb_bindings_coerce(menu);
     menu->settings_loaded = 1U;
@@ -3875,6 +3896,7 @@ static void config_menu_reset_settings_only(config_menu_t *menu)
     menu->applicard_resource_max = 0U;
     menu->vtw_enabled = CONFIG_DEFAULT_VTW_ENABLED;
     menu->vtw_speed_mode = CONFIG_DEFAULT_VTW_SPEED_MODE;
+    menu->vtw_turbo_enabled = CONFIG_DEFAULT_VTW_TURBO_ENABLED;
     menu->vtw_pace_divider = CONFIG_DEFAULT_VTW_PACE_DIVIDER;
     menu->vtw_ignore_c074 = CONFIG_DEFAULT_VTW_IGNORE_C074;
     menu->vtw_disable_disk2_accel = CONFIG_DEFAULT_VTW_DISABLE_D2_ACCEL;
@@ -3949,6 +3971,8 @@ static uint8_t config_menu_read_settings_from_path(config_menu_t *menu,
         config_menu_reset_settings_only(menu);
     }
 
+    /* Each file must opt in; a missing key never inherits TURBO permission. */
+    menu->vtw_turbo_enabled = CONFIG_DEFAULT_VTW_TURBO_ENABLED;
     buffer[bytes_read] = '\0';
     line = strtok(buffer, "\r\n");
     while (line != NULL) {
@@ -3977,6 +4001,7 @@ static uint8_t config_menu_read_settings_from_path(config_menu_t *menu,
     config_menu_coerce_format_badge(menu);
     config_menu_coerce_border(menu);
     config_menu_coerce_ethernet(menu);
+    config_menu_coerce_vtw_speed(menu);
     config_menu_migrate_vtw_slowdown_mask(menu);
     config_menu_usb_bindings_coerce(menu);
     menu->settings_loaded = 1U;
@@ -4189,7 +4214,8 @@ static uint32_t config_menu_vtw_preset_index(const config_menu_t *menu)
         return VTW_SPEED_PRESET_COUNT - 2U;
     }
     if (menu->vtw_speed_mode == CARD_CTRL_VTW_SPEED_TURBO) {
-        return VTW_SPEED_PRESET_COUNT - 1U;
+        return VTW_SPEED_PRESET_COUNT -
+                   (menu->vtw_turbo_enabled != 0U ? 1U : 2U);
     }
     if (menu->vtw_speed_mode == CARD_CTRL_VTW_SPEED_1MHZ) {
         return 0U;
@@ -4214,13 +4240,27 @@ const char *config_menu_vtw_speed_label(const config_menu_t *menu)
 static void config_menu_vtw_cycle_speed(config_menu_t *menu, int8_t delta)
 {
     uint32_t index = config_menu_vtw_preset_index(menu);
+    const uint32_t count = VTW_SPEED_PRESET_COUNT -
+                               (menu->vtw_turbo_enabled != 0U ? 0U : 1U);
 
-    index = (index + VTW_SPEED_PRESET_COUNT +
-             (uint32_t)(delta < 0 ? -1 : 1)) % VTW_SPEED_PRESET_COUNT;
+    index = (index + count + (uint32_t)(delta < 0 ? -1 : 1)) % count;
     config_menu_set_vtw_speed(menu,
                               k_vtw_speed_presets[index].mode,
                               k_vtw_speed_presets[index].divider);
     config_menu_set_status(menu, 0U, "TRANSWARP SPEED SET");
+}
+
+static void config_menu_vtw_set_turbo_enabled(config_menu_t *menu, uint8_t enable)
+{
+    menu->vtw_turbo_enabled = enable ? 1U : 0U;
+    config_menu_coerce_vtw_speed(menu);
+    if (menu->platform.set_vtw_turbo_enabled != NULL) {
+        menu->platform.set_vtw_turbo_enabled(menu->platform.ctx,
+                                             menu->vtw_turbo_enabled);
+    }
+    config_menu_save_settings(menu);
+    config_menu_set_status(menu, 0U, menu->vtw_turbo_enabled != 0U
+        ? "TURBO SPEED ENABLED" : "TURBO SPEED DISABLED");
 }
 
 /* Single authority for the virtual TransWarp settings: applies the live
@@ -4258,6 +4298,11 @@ void config_menu_set_vtw_speed(config_menu_t *menu,
                                uint8_t pace_divider)
 {
     if (menu == NULL) {
+        return;
+    }
+    if (speed_mode == CARD_CTRL_VTW_SPEED_TURBO &&
+        menu->vtw_turbo_enabled == 0U) {
+        config_menu_set_status(menu, 1U, "ENABLE TURBO SPEED FIRST");
         return;
     }
     menu->vtw_speed_mode = (speed_mode <= CARD_CTRL_VTW_SPEED_TURBO) ?
@@ -6724,6 +6769,9 @@ static void config_menu_activate_item(config_menu_t *menu)
                 menu->vtw_enabled ? 0U : 1U);
         } else if (menu->item_focus == CONFIG_TRANSWARP_ITEM_SPEED) {
             config_menu_vtw_cycle_speed(menu, 1);
+        } else if (menu->item_focus == CONFIG_TRANSWARP_ITEM_TURBO) {
+            config_menu_vtw_set_turbo_enabled(menu,
+                menu->vtw_turbo_enabled ? 0U : 1U);
         } else if (menu->item_focus == CONFIG_TRANSWARP_ITEM_IGNORE_C074) {
             menu->vtw_ignore_c074 = menu->vtw_ignore_c074 ? 0U : 1U;
             if (menu->platform.set_vtw_config != NULL) {
@@ -6881,6 +6929,7 @@ void config_menu_init(config_menu_t *menu)
     menu->applicard_resource_max = 0U;
     menu->vtw_enabled = CONFIG_DEFAULT_VTW_ENABLED;
     menu->vtw_speed_mode = CONFIG_DEFAULT_VTW_SPEED_MODE;
+    menu->vtw_turbo_enabled = CONFIG_DEFAULT_VTW_TURBO_ENABLED;
     menu->vtw_pace_divider = CONFIG_DEFAULT_VTW_PACE_DIVIDER;
     menu->vtw_ignore_c074 = CONFIG_DEFAULT_VTW_IGNORE_C074;
     menu->vtw_disable_disk2_accel = CONFIG_DEFAULT_VTW_DISABLE_D2_ACCEL;

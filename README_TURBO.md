@@ -1,13 +1,22 @@
 # vTW TURBO
 
 TURBO is an execution mode separate from the 1 MHz through MAX presets.
-Select **TURBO** after MAX in the TransWarp speed selector, or send
-`vtw speed turbo` over UART. USB speed-up moves from MAX to TURBO;
-speed-down returns to MAX. The 1 MHz toggle and optional slug toggle return
-to the selected TURBO setting when released. Profiles store
-`vtw.speed.mode=3`; existing mode values keep their meanings.
+Check **Enable TURBO speed** below Speed in the TransWarp tab to make
+**TURBO** appear after MAX in the speed selector. The checkbox defaults to
+off, and profiles store the choice as `vtw.turbo.enabled`. With it checked,
+`vtw speed turbo` over UART selects TURBO, and USB speed-up moves from MAX
+to TURBO; speed-down returns to MAX. With it unchecked, the speed selector
+omits TURBO, USB speed-up stops at MAX, and UART cannot select TURBO. Unchecking
+it while TURBO is selected changes the speed to MAX.
 
-This firmware uses version **F1.0.9-turbo2** on branch `turbo-v2`.
+The 1 MHz toggle and optional slug toggle return to the selected TURBO
+setting when released. Profiles store `vtw.speed.mode=3`; existing mode
+values keep their meanings. The checkbox rows pair Enable TURBO speed with
+the slug debug key, Ignore $C074 with Disable DiskII Acceleration, and Slow
+Floating bus with Slow Paddles/joystick.
+
+The current firmware version is **F1.1.0**. The archived build described
+below uses version **F1.0.9-turbo2** on branch `turbo-v2`.
 TURBO has no fixed MHz rating: cache misses and the instruction mix change
 its rate. Simulation measurements and routed timing accompany the built
 image in `firmwares/TURBO_V2_BUILD.json`. They do not establish operation on a

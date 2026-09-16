@@ -61,6 +61,8 @@ static uint32_t g_uart_base;
 static uint8_t g_intent_enabled;
 static uint8_t g_speed_mode = CARD_CTRL_VTW_SPEED_FULL;
 static uint8_t g_pace_divider = 37U;   /* ~3.6 MHz-equivalent preset */
+/* TURBO requires an explicit opt-in in the TransWarp tab (default off). */
+static uint8_t g_turbo_enabled;
 
 /* Runtime speed override (USB keymap actions): $C074-style, never
  * persisted. The configured menu speed above is the baseline the toggles
@@ -432,6 +434,11 @@ uint8_t vtw_service_is_enabled(void)
 void vtw_service_set_speed(uint8_t speed_mode, uint8_t pace_divider)
 {
     g_speed_mode = (uint8_t)(speed_mode & CARD_CTRL_VTW_CTRL_SPEED_MASK);
+    if (g_speed_mode == CARD_CTRL_VTW_SPEED_TURBO && g_turbo_enabled == 0U) {
+        g_speed_mode = CARD_CTRL_VTW_SPEED_FULL;
+        uart_puts(g_uart_base,
+                  "vtw: TURBO disabled; using MAX Speed\r\n");
+    }
     if (pace_divider < 2U) {
         pace_divider = 2U;
     }
@@ -440,6 +447,32 @@ void vtw_service_set_speed(uint8_t speed_mode, uint8_t pace_divider)
     vtw_override_clear();
     /* Live update: rewrite CTRL with the current session bits intact. */
     (void)vtw_apply_ctrl_live();
+}
+
+void vtw_service_set_turbo_enabled(uint8_t enable)
+{
+    const uint8_t old_mode = vtw_eff_mode();
+
+    g_turbo_enabled = (enable != 0U) ? 1U : 0U;
+    if (g_turbo_enabled == 0U) {
+        /* Clear both return paths, including a configured TURBO hidden by
+         * a 1 MHz or slug override. Re-enabling must not restore TURBO. */
+        if (g_speed_mode == CARD_CTRL_VTW_SPEED_TURBO) {
+            g_speed_mode = CARD_CTRL_VTW_SPEED_FULL;
+        }
+        if (g_ovr_mode == CARD_CTRL_VTW_SPEED_TURBO) {
+            g_ovr_mode = CARD_CTRL_VTW_SPEED_FULL;
+        }
+        if (vtw_eff_mode() != old_mode) {
+            /* Keep the gate and saved state off even if readback fails. */
+            (void)vtw_apply_ctrl_live();
+        }
+    }
+}
+
+uint8_t vtw_service_turbo_enabled(void)
+{
+    return g_turbo_enabled;
 }
 
 void vtw_service_set_ignore_c074(uint8_t ignore)
@@ -614,6 +647,8 @@ void vtw_service_speed_toggle(uint8_t allow_onee_preselect)
 void vtw_service_speed_step(int8_t dir, uint8_t allow_onee_preselect)
 {
     int idx;
+    const int top_idx = (int)VTW_LADDER_COUNT -
+                       (g_turbo_enabled != 0U ? 1 : 2);
     const uint8_t old_ovr_active = g_ovr_active;
     const uint8_t old_ovr_mode = g_ovr_mode;
     const uint16_t old_ovr_div = g_ovr_div;
@@ -628,8 +663,8 @@ void vtw_service_speed_step(int8_t dir, uint8_t allow_onee_preselect)
     if (idx < 0) {
         idx = 0;
     }
-    if (idx >= (int)VTW_LADDER_COUNT) {
-        idx = (int)VTW_LADDER_COUNT - 1;
+    if (idx > top_idx) {
+        idx = top_idx;
     }
     g_ovr_active = 1U;
     g_ovr_mode = k_vtw_ladder[idx].mode;

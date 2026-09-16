@@ -135,6 +135,7 @@ typedef struct {
                            uint8_t pace_divider,
                            uint8_t ignore_c074,
                            uint8_t disable_disk2_accel);
+    void (*set_vtw_turbo_enabled)(void *ctx, uint8_t enable);
     void (*set_vtw_slug_key_enabled)(void *ctx, uint8_t enable);
     /* Per-region slowdown (TransWarp DIP block 2): region enable mask +
      * 1 MHz window duration in Apple cycles. */
@@ -223,6 +224,7 @@ typedef struct {
     uint8_t applicard_resource_max;  /* 0 = standard CPU share, 1 = maximum */
     uint8_t vtw_enabled;             /* virtual TransWarp accelerator */
     uint8_t vtw_speed_mode;          /* CARD_CTRL_VTW_SPEED_* */
+    uint8_t vtw_turbo_enabled;       /* allow TURBO speed (default off) */
     uint8_t vtw_pace_divider;        /* divided mode: fabric clks per cycle */
     uint8_t vtw_ignore_c074;         /* ignore every $C074 speed-switch write */
     uint8_t vtw_disable_disk2_accel; /* force Disk II onto physical 1MHz path */

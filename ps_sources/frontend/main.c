@@ -1801,6 +1801,12 @@ static void control_set_vtw_config(void *ctx,
     vtw_service_set_enabled(enable);
 }
 
+static void control_set_vtw_turbo_enabled(void *ctx, uint8_t enable)
+{
+    (void)ctx;
+    vtw_service_set_turbo_enabled(enable);
+}
+
 static void control_set_vtw_slug_key_enabled(void *ctx, uint8_t enable)
 {
     (void)ctx;
@@ -3519,6 +3525,7 @@ int main(void)
         menu_platform.set_slot5_processor = control_set_slot5_processor;
         menu_platform.set_applicard_resource_max = control_set_applicard_resource_max;
         menu_platform.set_vtw_config = control_set_vtw_config;
+        menu_platform.set_vtw_turbo_enabled = control_set_vtw_turbo_enabled;
         menu_platform.set_vtw_slug_key_enabled = control_set_vtw_slug_key_enabled;
         menu_platform.set_vtw_slowdown = control_set_vtw_slowdown;
         menu_platform.refresh_usb1 = control_refresh_usb1;

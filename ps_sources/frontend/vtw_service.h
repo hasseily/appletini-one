@@ -54,14 +54,13 @@ void vtw_service_set_slowdown(uint16_t region_mask, uint16_t cycles);
 
 /* Runtime speed overrides (USB keymap actions; $C074-style, never
  * persisted, cleared by a configured speed change or session stop). A live
- * host-vTW or ONE//e core changes at once. Set allow_onee_preselect only for
- * an event from the open Appletini menu; it lets that event queue a rung for
- * the upcoming ONE//e session while saved host-vTW stays off. The
- * queued/live rung remains in force across a warm reset or a recoverable
- * private-runtime restart in that session. */
-void vtw_service_speed_toggle(uint8_t allow_onee_preselect);
-void vtw_service_speed_step(int8_t dir, uint8_t allow_onee_preselect);
-void vtw_service_slug_toggle(uint8_t allow_onee_preselect);
+ * host-vTW or ONE//e core changes at once. Without an active session, keys
+ * report TW: OFF and leave the speed unchanged, whether the menu is open
+ * or closed. A live override remains in force across a warm reset or a
+ * recoverable private-runtime restart in that session. */
+void vtw_service_speed_toggle(void);
+void vtw_service_speed_step(int8_t dir);
+void vtw_service_slug_toggle(void);
 /* Slug key arming (TransWarp tab, default off). Disarming while slug
  * is active restores the configured speed. */
 void vtw_service_set_slug_enabled(uint8_t enable);
@@ -87,7 +86,7 @@ uint8_t vtw_service_onee_paused(void);
  * state intact. Returns zero without touching a host or unsafe session. */
 uint8_t vtw_service_onee_cold_reboot(void);
 /* Stop a failed private runtime so the same manual ONE//e session can retry.
- * This keeps its queued/live speed override. */
+ * This keeps its live speed override. */
 void vtw_service_onee_suspend(void);
 /* End the manual ONE//e session and clear all session-only overrides. */
 void vtw_service_onee_stop(void);

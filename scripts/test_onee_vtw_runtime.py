@@ -364,13 +364,13 @@ def test_live_speed_controls_share_one_verified_writer() -> None:
                      "static vtw_ctrl_live_result_t vtw_apply_ctrl_live",
                      "static uint8_t vtw_onee_isolation_confirmed")
     toggle = between(source,
-                     "void vtw_service_speed_toggle(uint8_t allow_onee_preselect)",
-                     "void vtw_service_speed_step(int8_t dir, uint8_t allow_onee_preselect)")
+                     "void vtw_service_speed_toggle(void)",
+                     "void vtw_service_speed_step(int8_t dir)")
     step = between(source,
-                   "void vtw_service_speed_step(int8_t dir, uint8_t allow_onee_preselect)",
-                   "void vtw_service_slug_toggle(uint8_t allow_onee_preselect)")
+                   "void vtw_service_speed_step(int8_t dir)",
+                   "void vtw_service_slug_toggle(void)")
     slug = between(source,
-                   "void vtw_service_slug_toggle(uint8_t allow_onee_preselect)",
+                   "void vtw_service_slug_toggle(void)",
                    "void vtw_service_set_slowdown")
     configured = between(source,
                          "void vtw_service_set_speed(",
@@ -394,29 +394,28 @@ def test_live_speed_controls_share_one_verified_writer() -> None:
     gate = between(source,
                    "static uint8_t vtw_speed_request_allowed",
                    "void vtw_service_set_slug_enabled")
-    require(all("vtw_speed_request_allowed(allow_onee_preselect) == 0U" in action
+    require(all("vtw_speed_request_allowed() == 0U" in action
                 for action in (toggle, step, slug)) and
-            "allow_onee_preselect != 0U" in gate and
-            "g_intent_enabled != 0U" in gate and
             "g_state != VTW_ST_IDLE" in gate and
             "g_onee_running != 0U" in gate and
-            "vtw_onee_control_active() != 0U" in gate and
-            '"TW NEXT: %s"' in source and
+            "g_intent_enabled" not in gate and
+            "vtw_onee_control_active" not in gate and
+            "allow_onee_preselect" not in source and
+            "TW NEXT:" not in source and
             "VTW_CTRL_LIVE_NONE" in between(
                 source, "static uint8_t vtw_override_apply", "/* Nearest"),
-            "requested sessions must queue a pre-takeover speed while true off stays off")
+            "runtime speed actions must require an active session and never queue while idle")
     usb_handler = between(main,
                           "static void ui_handle_usb_menu_event",
                           "static void ui_set_bezel")
-    require("allow_onee_preselect =\n"
-            "        (uint8_t)(config_menu_is_active(menu) != 0U);" in usb_handler and
-            "vtw_service_speed_toggle(allow_onee_preselect);" in usb_handler and
+    require("allow_onee_preselect" not in usb_handler and
+            "vtw_service_speed_toggle();" in usb_handler and
             usb_handler.count(
                 "vtw_service_speed_step(") == 2 and
-            usb_handler.count(
-                ", allow_onee_preselect);") == 2 and
-            "vtw_service_slug_toggle(allow_onee_preselect);" in usb_handler,
-            "USB speed actions must pass the current menu context explicitly")
+            "vtw_service_speed_step(1);" in usb_handler and
+            "vtw_service_speed_step(-1);" in usb_handler and
+            "vtw_service_slug_toggle();" in usb_handler,
+            "opening the menu must not bypass the runtime speed gate")
     require("TW: CONTROL WRITE FAILED" in source and
             all("vtw_override_apply(" in action
                 for action in (toggle, step, slug)),
@@ -800,7 +799,7 @@ def run_native_speed_control_test() -> bool:
             }
 
             before = write_count;
-            vtw_service_speed_toggle(0U);
+            vtw_service_speed_toggle();
             if (!check(write_count == before + 1U &&
                        ctrl_speed() == CARD_CTRL_VTW_SPEED_1MHZ &&
                        strcmp(vtw_service_last_action_text(),
@@ -826,18 +825,18 @@ def run_native_speed_control_test() -> bool:
             g_intent_enabled = 1U;
             g_state = VTW_ST_RUN;
             vtw_service_set_speed(CARD_CTRL_VTW_SPEED_FULL, 37U);
-            vtw_service_speed_step(1, 0U);
+            vtw_service_speed_step(1);
             if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_TURBO &&
                        strcmp(vtw_service_last_action_text(), "TW: TURBO") == 0,
                        "MAX speed up must select TURBO")) {
                 return 0;
             }
-            vtw_service_speed_step(1, 0U);
+            vtw_service_speed_step(1);
             if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_TURBO,
                        "speed up must stay at TURBO")) {
                 return 0;
             }
-            vtw_service_speed_step(-1, 0U);
+            vtw_service_speed_step(-1);
             if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_FULL &&
                        strcmp(vtw_service_last_action_text(), "TW: MAX Speed") == 0,
                        "TURBO speed down must select MAX")) {
@@ -848,13 +847,13 @@ def run_native_speed_control_test() -> bool:
             vtw_service_set_ignore_c074(1U);
             vtw_service_set_disk2_accel_disabled(1U);
             vtw_service_set_slowdown(0x1FFU, 512U);
-            vtw_service_speed_toggle(0U);
+            vtw_service_speed_toggle();
             if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_1MHZ &&
                        vtw_service_speed_mode() == CARD_CTRL_VTW_SPEED_TURBO,
                        "1 MHz toggle must preserve configured TURBO")) {
                 return 0;
             }
-            vtw_service_speed_toggle(0U);
+            vtw_service_speed_toggle();
             if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_TURBO &&
                        g_ovr_active == 0U &&
                        (ctrl_value() & CARD_CTRL_VTW_CTRL_IGNORE_C074_BIT) != 0U &&
@@ -864,19 +863,19 @@ def run_native_speed_control_test() -> bool:
                 return 0;
             }
             vtw_service_set_slug_enabled(1U);
-            vtw_service_slug_toggle(0U);
+            vtw_service_slug_toggle();
             if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_DIVIDED &&
                        ctrl_divider() == VTW_SLUG_DIVIDER,
                        "slug must override configured TURBO")) {
                 return 0;
             }
-            vtw_service_slug_toggle(0U);
+            vtw_service_slug_toggle();
             if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_TURBO &&
                        g_ovr_active == 0U,
                        "slug toggle must restore configured TURBO")) {
                 return 0;
             }
-            vtw_service_slug_toggle(0U);
+            vtw_service_slug_toggle();
             vtw_service_set_slug_enabled(0U);
             if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_TURBO,
                        "disarming slug must restore configured TURBO")) {
@@ -888,8 +887,8 @@ def run_native_speed_control_test() -> bool:
             vtw_service_set_turbo_enabled(1U);
             vtw_service_set_speed(CARD_CTRL_VTW_SPEED_TURBO, 37U);
             g_onee_running = 1U;
-            vtw_service_speed_toggle(0U);
-            vtw_service_speed_toggle(0U);
+            vtw_service_speed_toggle();
+            vtw_service_speed_toggle();
             if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_TURBO &&
                        (ctrl_value() & CARD_CTRL_VTW_CTRL_DISABLE_D2_ACCEL_BIT) != 0U &&
                        vtw_service_is_enabled() == 0U,
@@ -909,14 +908,14 @@ def run_native_speed_control_test() -> bool:
                        "disabled direct TURBO request must select MAX")) {
                 return 0;
             }
-            vtw_service_speed_step(1, 0U);
+            vtw_service_speed_step(1);
             if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_FULL &&
                        strcmp(vtw_service_last_action_text(), "TW: MAX Speed") == 0,
                        "disabled USB ladder must stop at MAX")) {
                 return 0;
             }
-            vtw_service_speed_toggle(0U);
-            vtw_service_speed_toggle(0U);
+            vtw_service_speed_toggle();
+            vtw_service_speed_toggle();
             if (!check(vtw_service_turbo_enabled() == 0U &&
                        vtw_service_speed_mode() == CARD_CTRL_VTW_SPEED_FULL &&
                        ctrl_speed() == CARD_CTRL_VTW_SPEED_FULL,
@@ -939,7 +938,7 @@ def run_native_speed_control_test() -> bool:
 
             /* A runtime TURBO override must leave the menu baseline intact. */
             vtw_service_set_speed(CARD_CTRL_VTW_SPEED_DIVIDED, 37U);
-            vtw_service_speed_step(127, 0U);
+            vtw_service_speed_step(127);
             if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_TURBO,
                        "enabled USB ladder must reach TURBO")) {
                 return 0;
@@ -951,8 +950,8 @@ def run_native_speed_control_test() -> bool:
                        "disabled TURBO override must fall to MAX and retain baseline")) {
                 return 0;
             }
-            vtw_service_speed_toggle(0U);
-            vtw_service_speed_toggle(0U);
+            vtw_service_speed_toggle();
+            vtw_service_speed_toggle();
             if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_DIVIDED &&
                        ctrl_divider() == 37U,
                        "toggle must still restore the original menu baseline")) {
@@ -962,13 +961,13 @@ def run_native_speed_control_test() -> bool:
             /* Disabling while a slow override is active clears hidden TURBO. */
             vtw_service_set_turbo_enabled(1U);
             vtw_service_set_speed(CARD_CTRL_VTW_SPEED_TURBO, 37U);
-            vtw_service_speed_toggle(0U);
+            vtw_service_speed_toggle();
             vtw_service_set_turbo_enabled(0U);
             if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_1MHZ,
                        "disabling TURBO must preserve an active 1 MHz override")) {
                 return 0;
             }
-            vtw_service_speed_toggle(0U);
+            vtw_service_speed_toggle();
             if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_FULL,
                        "1 MHz toggle must not restore hidden TURBO after disable")) {
                 return 0;
@@ -976,14 +975,14 @@ def run_native_speed_control_test() -> bool:
             vtw_service_set_turbo_enabled(1U);
             vtw_service_set_speed(CARD_CTRL_VTW_SPEED_TURBO, 37U);
             vtw_service_set_slug_enabled(1U);
-            vtw_service_slug_toggle(0U);
+            vtw_service_slug_toggle();
             vtw_service_set_turbo_enabled(0U);
             if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_DIVIDED &&
                        ctrl_divider() == VTW_SLUG_DIVIDER,
                        "disabling TURBO must preserve an active slug override")) {
                 return 0;
             }
-            vtw_service_slug_toggle(0U);
+            vtw_service_slug_toggle();
             if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_FULL,
                        "slug toggle must not restore hidden TURBO after disable")) {
                 return 0;
@@ -1003,25 +1002,28 @@ def run_native_speed_control_test() -> bool:
                 return 0;
             }
             ctrl_write_sticks = 1U;
-            vtw_service_speed_toggle(0U);
-            vtw_service_speed_toggle(0U);
+            vtw_service_speed_toggle();
+            vtw_service_speed_toggle();
             if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_FULL,
                        "next successful live write must use sanitized speed")) {
                 return 0;
             }
 
-            /* Pending ONE//e choices use the same gate, before any PL write. */
+            /* TURBO opt-in never makes an idle runtime speed key active. */
             reset_fixture();
-            vtw_service_speed_step(1, 1U);
+            vtw_service_speed_step(1);
             if (!check(vtw_eff_mode() == CARD_CTRL_VTW_SPEED_FULL &&
-                       write_count == 0U,
-                       "disabled menu preselection must stop at MAX")) {
+                       write_count == 0U && g_ovr_active == 0U &&
+                       strcmp(vtw_service_last_action_text(), "TW: OFF") == 0,
+                       "idle speed key must stay off with TURBO disabled")) {
                 return 0;
             }
             vtw_service_set_turbo_enabled(1U);
-            vtw_service_speed_step(1, 1U);
-            if (!check(vtw_eff_mode() == CARD_CTRL_VTW_SPEED_TURBO,
-                       "enabled menu preselection must reach TURBO")) {
+            vtw_service_speed_step(1);
+            if (!check(vtw_eff_mode() == CARD_CTRL_VTW_SPEED_FULL &&
+                       write_count == 0U && g_ovr_active == 0U &&
+                       strcmp(vtw_service_last_action_text(), "TW: OFF") == 0,
+                       "TURBO opt-in must not enable idle speed actions")) {
                 return 0;
             }
             vtw_service_set_turbo_enabled(0U);
@@ -1029,7 +1031,7 @@ def run_native_speed_control_test() -> bool:
             if (!check(vtw_service_onee_start(0U) != 0U &&
                        ctrl_speed() == CARD_CTRL_VTW_SPEED_FULL &&
                        vtw_service_is_enabled() == 0U,
-                       "disabled pending TURBO must start ONE//e at MAX")) {
+                       "ignored idle speed keys must leave ONE//e at configured MAX")) {
                 return 0;
             }
             return 1;
@@ -1060,7 +1062,7 @@ def run_native_speed_control_test() -> bool:
             g_onee_running = 1U;
             g_intent_enabled = 0U;
 
-            vtw_service_speed_toggle(0U);
+            vtw_service_speed_toggle();
             if (!check(write_count == 1U && ctrl_read_count == 1U &&
                        ctrl_value() ==
                            (onee_run |
@@ -1073,7 +1075,7 @@ def run_native_speed_control_test() -> bool:
             }
 
             before_reads = ctrl_read_count;
-            vtw_service_speed_step(1, 0U);
+            vtw_service_speed_step(1);
             if (!check(ctrl_read_count == before_reads + 1U &&
                        ctrl_value() ==
                            (onee_run |
@@ -1085,7 +1087,7 @@ def run_native_speed_control_test() -> bool:
             }
 
             vtw_service_set_slug_enabled(1U);
-            vtw_service_slug_toggle(0U);
+            vtw_service_slug_toggle();
             if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_DIVIDED &&
                        ctrl_divider() == VTW_SLUG_DIVIDER,
                        "ONE//e slug key did not reach CTRL")) {
@@ -1112,7 +1114,7 @@ def run_native_speed_control_test() -> bool:
             return 1;
         }
 
-        static int test_failed_live_writes_and_pending_choice(void)
+        static int test_failed_live_writes_and_idle_apply(void)
         {
             uint32_t before;
 
@@ -1121,7 +1123,7 @@ def run_native_speed_control_test() -> bool:
             (void)vtw_apply_ctrl_live();
             before = ctrl_value();
             ctrl_write_sticks = 0U;
-            vtw_service_speed_toggle(0U);
+            vtw_service_speed_toggle();
             if (!check(ctrl_value() == before &&
                        g_ovr_active == 0U && g_ovr_mode == 0U &&
                        g_ovr_div == 0U && ctrl_read_count == 2U &&
@@ -1136,7 +1138,7 @@ def run_native_speed_control_test() -> bool:
             g_intent_enabled = 0U;
             g_state = VTW_ST_IDLE;
             before = write_count;
-            vtw_service_speed_toggle(0U);
+            vtw_service_speed_toggle();
             if (!check(write_count == before && g_ovr_active == 0U &&
                        strcmp(vtw_service_last_action_text(), "TW: OFF") == 0,
                        "truly inactive speed choice did not stay off")) {
@@ -1144,69 +1146,113 @@ def run_native_speed_control_test() -> bool:
             }
 
             g_intent_enabled = 1U;
-            vtw_service_speed_toggle(0U);
+            vtw_service_speed_toggle();
             if (!check(write_count == before &&
-                       g_ovr_active != 0U &&
-                       g_ovr_mode == CARD_CTRL_VTW_SPEED_1MHZ &&
+                       g_ovr_active == 0U &&
                        strcmp(vtw_service_last_action_text(),
-                              "TW NEXT: 1 MHz default") == 0,
-                       "idle speed choice was not queued for takeover")) {
+                              "TW: OFF") == 0,
+                       "saved host intent must not queue an idle speed choice")) {
+                return 0;
+            }
+            if (!check(vtw_override_apply("idle regression") == 0U &&
+                       write_count == before &&
+                       strcmp(vtw_service_last_action_text(), "TW: OFF") == 0,
+                       "idle apply must report off and reject the override")) {
                 return 0;
             }
             return 1;
         }
 
-        static int test_menu_preselect_context_boundary(void)
+        static int test_idle_speed_actions_stay_off(void)
         {
-            uint32_t before;
+            uint32_t scenario;
+            uint32_t action;
             uint32_t start_write;
 
-            /* Saved host vTW stays off, but a mapped speed key used in the
-             * open Appletini menu must stage the next ONE//e session. */
-            reset_fixture();
-            vtw_service_set_speed(CARD_CTRL_VTW_SPEED_DIVIDED, 37U);
-            before = write_count;
-            vtw_service_speed_step(1, 1U);
-            if (!check(g_intent_enabled == 0U && write_count == before &&
-                       g_ovr_active != 0U &&
-                       g_ovr_mode == CARD_CTRL_VTW_SPEED_DIVIDED &&
-                       g_ovr_div == 19U &&
-                       strcmp(vtw_service_last_action_text(),
-                              "TW NEXT: 7 MHz") == 0,
-                       "open-menu speed key did not queue ONE//e preselection")) {
-                return 0;
+            /* No menu context, saved host request, or pending ONE//e state
+             * may make an idle key change the next session's speed. */
+            for (scenario = 0U; scenario < 5U; ++scenario) {
+                reset_fixture();
+                vtw_service_set_speed(CARD_CTRL_VTW_SPEED_DIVIDED, 37U);
+                if (scenario == 1U || scenario == 4U) {
+                    g_intent_enabled = 1U;
+                }
+                if (scenario == 2U) {
+                    registers[reg_index(CARD_CTRL_ONEE_MODE_REG)] =
+                        CARD_CTRL_ONEE_STATUS_REQUEST_BIT;
+                } else if (scenario >= 3U) {
+                    set_onee_isolated();
+                }
+                for (action = 0U; action < 5U; ++action) {
+                    const uint32_t before = write_count;
+                    const uint8_t intent = g_intent_enabled;
+
+                    switch (action) {
+                    case 0U: vtw_service_speed_toggle(); break;
+                    case 1U: vtw_service_speed_step(1); break;
+                    case 2U: vtw_service_speed_step(-1); break;
+                    case 3U: vtw_service_slug_toggle(); break;
+                    default:
+                        vtw_service_set_slug_enabled(1U);
+                        vtw_service_slug_toggle();
+                        break;
+                    }
+                    if (!check(write_count == before &&
+                               g_intent_enabled == intent &&
+                               g_ovr_active == 0U && g_ovr_mode == 0U &&
+                               g_ovr_div == 0U &&
+                               vtw_service_speed_mode() == CARD_CTRL_VTW_SPEED_DIVIDED &&
+                               vtw_service_pace_divider() == 37U &&
+                               strcmp(vtw_service_last_action_text(), "TW: OFF") == 0,
+                               "idle speed action changed state or failed to report off")) {
+                        return 0;
+                    }
+                }
             }
+
+            /* Ignored keys must not change any of the startup CTRL words. */
             set_onee_isolated();
             start_write = write_count;
             if (!check(vtw_service_onee_start(0U) != 0U &&
                        ctrl_speed() == CARD_CTRL_VTW_SPEED_DIVIDED &&
-                       ctrl_divider() == 19U,
-                       "menu preselection did not reach ONE//e CTRL") ||
+                       ctrl_divider() == 37U,
+                       "idle keys changed the configured ONE//e startup speed") ||
                 !check_start_ctrl_words(
                     start_write,
                     CARD_CTRL_VTW_SPEED_DIVIDED,
-                    19U,
-                    "menu preselection changed during ONE//e start")) {
+                    37U,
+                    "ignored keys changed speed during ONE//e start")) {
                 return 0;
             }
             vtw_service_onee_stop();
+            return 1;
+        }
 
-            /* The same key outside the menu must not turn a truly disabled
-             * host-vTW setup into a pending session. */
-            reset_fixture();
-            vtw_service_set_speed(CARD_CTRL_VTW_SPEED_DIVIDED, 37U);
-            before = write_count;
-            vtw_service_speed_step(1, 0U);
-            if (!check(g_intent_enabled == 0U && write_count == before &&
-                       g_ovr_active == 0U &&
-                       strcmp(vtw_service_last_action_text(), "TW: OFF") == 0,
-                       "closed-menu speed key queued while vTW was off")) {
-                return 0;
+        static int test_host_startup_speed_actions_preserve_phase(void)
+        {
+            vtw_state_t phase;
+
+            for (phase = VTW_ST_TAKE_BUS; phase <= VTW_ST_LOAD_ROM; ++phase) {
+                uint32_t expected;
+
+                reset_fixture();
+                vtw_service_set_speed(CARD_CTRL_VTW_SPEED_DIVIDED, 37U);
+                g_intent_enabled = 1U;
+                g_state = phase;
+                vtw_service_speed_step(1);
+                expected = vtw_ctrl_value(1U, 0U,
+                                         (uint8_t)(phase == VTW_ST_RES_HOLD));
+                if (!check(write_count == 1U && ctrl_value() == expected &&
+                           g_state == phase && ctrl_divider() == 19U &&
+                           strcmp(vtw_service_last_action_text(), "TW: 7 MHz") == 0,
+                           "startup speed action changed phase or did not apply live")) {
+                    return 0;
+                }
             }
             return 1;
         }
 
-        static int test_onee_configured_and_pending_speed_boundaries(void)
+        static int test_onee_configured_and_live_speed_boundaries(void)
         {
             uint32_t run_ctrl;
             uint32_t before;
@@ -1239,28 +1285,34 @@ def run_native_speed_control_test() -> bool:
             }
             vtw_service_onee_stop();
 
-            /* A key used after the ONE//e request becomes active but before
-             * core release must stage the first session speed. */
+            /* An isolated but not yet running ONE//e core is still off. */
             reset_fixture();
             vtw_service_set_speed(CARD_CTRL_VTW_SPEED_DIVIDED, 37U);
             set_onee_isolated();
-            vtw_service_speed_step(1, 0U);
-            if (!check(g_ovr_active != 0U &&
-                       g_ovr_mode == CARD_CTRL_VTW_SPEED_DIVIDED &&
-                       g_ovr_div == 19U &&
+            vtw_service_speed_step(1);
+            if (!check(g_ovr_active == 0U && write_count == 0U &&
                        strcmp(vtw_service_last_action_text(),
-                              "TW NEXT: 7 MHz") == 0,
-                       "ONE//e boot-window speed was not queued")) {
+                              "TW: OFF") == 0,
+                       "ONE//e boot-window speed action must stay off")) {
                 return 0;
             }
             start_write = write_count;
             first_core_run_ctrl = 0U;
             if (!check(vtw_service_onee_start(0U) != 0U,
-                       "ONE//e queued-speed start failed") ||
+                       "ONE//e configured-speed start failed") ||
                 !check_start_ctrl_words(start_write,
                                         CARD_CTRL_VTW_SPEED_DIVIDED,
-                                        19U,
-                                        "queued speed changed during ONE//e start")) {
+                                        37U,
+                                        "idle key changed speed during ONE//e start")) {
+                return 0;
+            }
+            vtw_service_speed_step(1);
+            if (!check(g_ovr_active != 0U &&
+                       g_ovr_mode == CARD_CTRL_VTW_SPEED_DIVIDED &&
+                       g_ovr_div == 19U && ctrl_divider() == 19U &&
+                       vtw_service_is_enabled() == 0U &&
+                       strcmp(vtw_service_last_action_text(), "TW: 7 MHz") == 0,
+                       "live ONE//e speed action must work with saved host intent off")) {
                 return 0;
             }
 
@@ -1278,7 +1330,7 @@ def run_native_speed_control_test() -> bool:
                 return 0;
             }
 
-            /* A recoverable runtime stop must leave the exact queued/live
+            /* A recoverable runtime stop must leave the exact live
              * rung intact and use it in every word of the retry start. */
             before = write_count;
             vtw_service_onee_suspend();
@@ -1287,6 +1339,32 @@ def run_native_speed_control_test() -> bool:
                        g_ovr_mode == CARD_CTRL_VTW_SPEED_DIVIDED &&
                        g_ovr_div == 19U,
                        "recoverable ONE//e suspend lost the exact override")) {
+                return 0;
+            }
+            before = write_count;
+            vtw_service_speed_toggle();
+            if (!check(write_count == before && g_ovr_active != 0U &&
+                       g_ovr_mode == CARD_CTRL_VTW_SPEED_DIVIDED &&
+                       g_ovr_div == 19U &&
+                       strcmp(vtw_service_last_action_text(), "TW: OFF") == 0,
+                       "suspended speed toggle changed the retained override")) {
+                return 0;
+            }
+            vtw_service_speed_step(1);
+            if (!check(write_count == before && g_ovr_active != 0U &&
+                       g_ovr_mode == CARD_CTRL_VTW_SPEED_DIVIDED &&
+                       g_ovr_div == 19U &&
+                       strcmp(vtw_service_last_action_text(), "TW: OFF") == 0,
+                       "suspended speed step changed the retained override")) {
+                return 0;
+            }
+            vtw_service_set_slug_enabled(1U);
+            vtw_service_slug_toggle();
+            if (!check(write_count == before && g_ovr_active != 0U &&
+                       g_ovr_mode == CARD_CTRL_VTW_SPEED_DIVIDED &&
+                       g_ovr_div == 19U &&
+                       strcmp(vtw_service_last_action_text(), "TW: OFF") == 0,
+                       "suspended slug toggle changed the retained override")) {
                 return 0;
             }
             memset(writes, 0, sizeof(writes));
@@ -1483,9 +1561,10 @@ def run_native_speed_control_test() -> bool:
                 !test_turbo_opt_in() ||
                 !test_turbo_config_before_service_init() ||
                 !test_onee_live_controls_without_host_intent() ||
-                !test_failed_live_writes_and_pending_choice() ||
-                !test_menu_preselect_context_boundary() ||
-                !test_onee_configured_and_pending_speed_boundaries() ||
+                !test_failed_live_writes_and_idle_apply() ||
+                !test_idle_speed_actions_stay_off() ||
+                !test_host_startup_speed_actions_preserve_phase() ||
+                !test_onee_configured_and_live_speed_boundaries() ||
                 !test_disk2_effective_state_applies_directly() ||
                 !test_onee_ordered_cold_reboot()) {
                 return 1;

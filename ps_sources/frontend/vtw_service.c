@@ -514,8 +514,12 @@ static const char *vtw_eff_speed_name(void)
 static uint8_t vtw_override_apply(const char *tag)
 {
     const vtw_ctrl_live_result_t applied = vtw_apply_ctrl_live();
-    const uint8_t queued = (applied == VTW_CTRL_LIVE_NONE) ? 1U : 0U;
 
+    if (applied == VTW_CTRL_LIVE_NONE) {
+        (void)snprintf(g_last_action_text, sizeof(g_last_action_text),
+                       "TW: OFF");
+        return 0U;
+    }
     if (applied == VTW_CTRL_LIVE_FAILED) {
         uart_puts(g_uart_base, "vtw: ");
         uart_puts(g_uart_base, tag);
@@ -526,13 +530,12 @@ static uint8_t vtw_override_apply(const char *tag)
     }
     uart_puts(g_uart_base, "vtw: ");
     uart_puts(g_uart_base, tag);
-    uart_puts(g_uart_base,
-              queued == 0U ? " -> " : " queued -> ");
+    uart_puts(g_uart_base, " -> ");
     uart_puts(g_uart_base, vtw_eff_speed_name());
     uart_puts(g_uart_base, g_ovr_active != 0U ? " (override)\r\n"
                                               : " (configured)\r\n");
     (void)snprintf(g_last_action_text, sizeof(g_last_action_text),
-                   queued == 0U ? "TW: %s" : "TW NEXT: %s",
+                   "TW: %s",
                    vtw_eff_speed_name());
     return 1U;
 }
@@ -572,11 +575,10 @@ static int vtw_eff_ladder_index(void)
     return fastest_divided;
 }
 
-static uint8_t vtw_speed_request_allowed(uint8_t allow_onee_preselect)
+static uint8_t vtw_speed_request_allowed(void)
 {
-    return (allow_onee_preselect != 0U ||
-            g_intent_enabled != 0U || g_state != VTW_ST_IDLE ||
-            g_onee_running != 0U || vtw_onee_control_active() != 0U) ? 1U : 0U;
+    /* Hotkeys change an existing session, never a future session's speed. */
+    return (g_state != VTW_ST_IDLE || g_onee_running != 0U) ? 1U : 0U;
 }
 
 void vtw_service_set_slug_enabled(uint8_t enable)
@@ -614,13 +616,13 @@ const char *vtw_service_last_action_text(void)
     return g_last_action_text;
 }
 
-void vtw_service_speed_toggle(uint8_t allow_onee_preselect)
+void vtw_service_speed_toggle(void)
 {
     const uint8_t old_ovr_active = g_ovr_active;
     const uint8_t old_ovr_mode = g_ovr_mode;
     const uint16_t old_ovr_div = g_ovr_div;
 
-    if (vtw_speed_request_allowed(allow_onee_preselect) == 0U) {
+    if (vtw_speed_request_allowed() == 0U) {
         uart_puts(g_uart_base, "vtw: speed toggle ignored (vtw off)\r\n");
         (void)snprintf(g_last_action_text, sizeof(g_last_action_text),
                        "TW: OFF");
@@ -644,7 +646,7 @@ void vtw_service_speed_toggle(uint8_t allow_onee_preselect)
     }
 }
 
-void vtw_service_speed_step(int8_t dir, uint8_t allow_onee_preselect)
+void vtw_service_speed_step(int8_t dir)
 {
     int idx;
     const int top_idx = (int)VTW_LADDER_COUNT -
@@ -653,7 +655,7 @@ void vtw_service_speed_step(int8_t dir, uint8_t allow_onee_preselect)
     const uint8_t old_ovr_mode = g_ovr_mode;
     const uint16_t old_ovr_div = g_ovr_div;
 
-    if (vtw_speed_request_allowed(allow_onee_preselect) == 0U) {
+    if (vtw_speed_request_allowed() == 0U) {
         uart_puts(g_uart_base, "vtw: speed step ignored (vtw off)\r\n");
         (void)snprintf(g_last_action_text, sizeof(g_last_action_text),
                        "TW: OFF");
@@ -677,13 +679,13 @@ void vtw_service_speed_step(int8_t dir, uint8_t allow_onee_preselect)
     }
 }
 
-void vtw_service_slug_toggle(uint8_t allow_onee_preselect)
+void vtw_service_slug_toggle(void)
 {
     const uint8_t old_ovr_active = g_ovr_active;
     const uint8_t old_ovr_mode = g_ovr_mode;
     const uint16_t old_ovr_div = g_ovr_div;
 
-    if (vtw_speed_request_allowed(allow_onee_preselect) == 0U) {
+    if (vtw_speed_request_allowed() == 0U) {
         uart_puts(g_uart_base, "vtw: slug toggle ignored (vtw off)\r\n");
         (void)snprintf(g_last_action_text, sizeof(g_last_action_text),
                        "TW: OFF");

@@ -295,9 +295,12 @@ In priority order:
      slugged restores the configured speed immediately.
    Every speed action raises a **top-of-screen overlay** (`TW: 7 MHz`)
    so the change is visible even without the UART — anchored at the top
-   so it never collides with the bottom screenshot overlay. Runtime
-   overrides never persist and a configured (menu) speed change clears
-   them, matching $C074 semantics. Session enable/disable stays
+   so it never collides with the bottom screenshot overlay.
+   With no active accelerator session, these keys show `TW: OFF` and
+   leave the speed unchanged, even while the menu is open. They never
+   queue a speed for the next session. Runtime overrides never persist
+   and a configured (menu) speed change clears them, matching $C074
+   semantics. Session enable/disable stays
    BOOT-mode-only; only speed is live. The boot beeps double as audible
    speed confirmation.
 3. **Own-card I/O short-circuit — SmartPort at core speed (implemented).**

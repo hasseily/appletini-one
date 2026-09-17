@@ -120,6 +120,8 @@ typedef struct {
 } usb_hid_slot_t;
 
 static uint8_t g_started;
+/* A failed PHY shutdown must be retried before the next host start. */
+static uint8_t g_power_shutdown_required;
 static uint8_t g_ready;
 static uint8_t g_seq;
 static uint8_t g_sensitivity = MOUSE_SENSITIVITY_BASE;
@@ -2077,10 +2079,20 @@ int usb_hid_service_init(void)
 
 int usb_hid_service_start(void)
 {
+    struct usbh_bus *bus = &g_usbhost_bus[CHERRYUSB_USB1_BUSID];
     int rc;
+    int cleanup_rc;
 
     if (g_started != 0U) {
         return 0;
+    }
+    if (g_power_shutdown_required != 0U) {
+        rc = cherryusb_usb1_host_power_stop();
+        if (rc != 0) {
+            g_last_error = rc;
+            return rc;
+        }
+        g_power_shutdown_required = 0U;
     }
 
     g_ready = 0U;
@@ -2092,30 +2104,64 @@ int usb_hid_service_start(void)
     mouse_publish_state(0U, g_x, g_y, 0U);
 
     uart_puts(UART0_BASE, "[usb1] CherryUSB host start\r\n");
-    g_started = 1U;
     rc = usbh_initialize(CHERRYUSB_USB1_BUSID, USB1_BASE, cherry_event_handler);
+    g_power_shutdown_required = 1U;
+    if (rc == 0) {
+        g_started = 1U;
+        /* This CherryUSB revision drops usbh_hub_initialize()'s error.
+         * Its queue/semaphore pair exists only after the HC starts. */
+        if (bus->hub_mq == NULL || bus->hub_sem == NULL) {
+            rc = cherryusb_usb1_power_result();
+            if (rc == 0) {
+                rc = -USB_ERR_IO;
+            }
+        } else {
+            rc = cherryusb_usb1_host_power_start();
+        }
+    }
     if (rc != 0) {
-        g_started = 0U;
+        usb_hid_service_stop();
+        cleanup_rc = cherryusb_usb1_power_stop_result();
+        if (cleanup_rc != 0) {
+            rc = cleanup_rc;
+        }
         g_last_error = rc;
+        cherryusb_printf("[usb1] host start failed: %d\r\n", rc);
     }
     return rc;
 }
 
 void usb_hid_service_stop(void)
 {
-    if (g_started == 0U) {
-        mouse_mark_disconnected();
-        onee_input_service_release_all();
-        hid_slots_reset_all();
-        return;
-    }
+    int power_rc = 0;
 
-    uart_puts(UART0_BASE, "[usb1] CherryUSB host stop\r\n");
-    (void)usbh_deinitialize(CHERRYUSB_USB1_BUSID);
-    g_started = 0U;
+    /* Remove VBUS independently: CherryUSB can return before its low-level
+     * deinit hook if the controller fails to halt. */
+    if (g_started != 0U || g_power_shutdown_required != 0U) {
+        g_power_shutdown_required = 1U;
+        power_rc = cherryusb_usb1_host_power_stop();
+        if (power_rc == 0) {
+            g_power_shutdown_required = 0U;
+        }
+    }
+    if (g_started != 0U) {
+        uart_puts(UART0_BASE, "[usb1] CherryUSB host stop\r\n");
+        (void)usbh_deinitialize(CHERRYUSB_USB1_BUSID);
+        power_rc = cherryusb_usb1_power_stop_result();
+        if (power_rc != 0) {
+            power_rc = cherryusb_usb1_host_power_stop();
+        }
+        g_power_shutdown_required = (power_rc != 0) ? 1U : 0U;
+        g_started = 0U;
+    }
     mouse_mark_disconnected();
     onee_input_service_release_all();
     hid_slots_reset_all();
+    if (power_rc != 0) {
+        g_power_shutdown_required = 1U;
+        g_last_error = power_rc;
+        cherryusb_printf("[usb1] host VBUS shutdown pending: %d\r\n", power_rc);
+    }
 }
 
 void usb_hid_service_set_sensitivity(uint8_t sensitivity)
@@ -2375,6 +2421,8 @@ static void usb_hid_service_dump_slot(uint32_t uart_base,
 
 void usb_hid_service_dump_status(uint32_t uart_base)
 {
+    cherryusb_usb1_phy_status_t phy;
+    char phy_line[256];
     uint32_t portsc;
     uint32_t hid_status;
     uint32_t mouse_x;
@@ -2388,6 +2436,7 @@ void usb_hid_service_dump_status(uint32_t uart_base)
     uint32_t mouse_y_max;
 
     portsc = cherryusb_usb1_portsc();
+    cherryusb_usb1_phy_status(&phy);
     hid_status = REG_READ(MOUSE_REG_STATUS);
     mouse_x = REG_READ(MOUSE_REG_X) & 0xFFFFU;
     mouse_y = REG_READ(MOUSE_REG_Y) & 0xFFFFU;
@@ -2464,6 +2513,22 @@ void usb_hid_service_dump_status(uint32_t uart_base)
     uart_puts(uart_base, " aggregate_buttons=0x");
     uart_puthex(uart_base, mouse_card_aggregate_buttons());
     uart_puts(uart_base, "\r\n");
+
+    (void)snprintf(phy_line, sizeof(phy_line),
+                   "phy (cached): setup_rc=%d off_rc=%d drive_known=%u drive=%u "
+                   "vbus_known=%u vbus_valid=%u id=%04x:%04x "
+                   "func=%02x iface=%02x otg=%02x ulpi_err=%d timeouts=%u\r\n",
+                   phy.power_result, phy.disable_result,
+                   (unsigned int)phy.vbus_drive_known,
+                   (unsigned int)phy.vbus_drive_enabled,
+                   (unsigned int)phy.vbus_valid_known,
+                   (unsigned int)phy.vbus_valid,
+                   (unsigned int)phy.vendor_id, (unsigned int)phy.product_id,
+                   (unsigned int)phy.function_control,
+                   (unsigned int)phy.interface_control,
+                   (unsigned int)phy.otg_control,
+                   phy.last_error, (unsigned int)phy.timeouts);
+    uart_puts(uart_base, phy_line);
 
     for (uint32_t i = 0U; i < USB_HID_SLOT_COUNT; ++i) {
         usb_hid_service_dump_slot(uart_base, &g_hid_slots[i]);

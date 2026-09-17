@@ -781,6 +781,8 @@ int usbh_hub_initialize(struct usbh_bus *bus)
     bus->hub_sem = usb_osal_sem_create(0);
     if (bus->hub_sem == NULL) {
         USB_LOG_ERR("Failed to create hub sem\r\n");
+        usb_osal_mq_delete(bus->hub_mq);
+        bus->hub_mq = NULL;
         return -1;
     }
 

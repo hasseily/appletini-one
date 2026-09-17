@@ -126,6 +126,8 @@ mixed build is visible immediately.
 The Appli-Card interface and demo media are documented in
 [README_APPLICARD.md](README_APPLICARD.md). Disk II drive sounds and their
 simulation checks are documented in [README_DISK2_SOUND.md](README_DISK2_SOUND.md).
+USB1 PHY startup, power checks, and diagnostics are documented in
+[README_USB1.md](README_USB1.md).
 Apple II software can identify the
 card through the documented SmartPort interface described in
 [the detection example](https://github.com/hasseily/appletini-software/blob/main/examples/detect_appletini/README.md).

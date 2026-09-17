@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* USB3300 diagnostic state/API adapted from hasseily/multitini-one c2b87fa. */
 #ifndef CHERRYUSB_PLATFORM_H
 #define CHERRYUSB_PLATFORM_H
 
@@ -72,6 +74,28 @@ typedef struct {
     const char *last_class_driver;
 } cherryusb_host_debug_t;
 
+typedef struct {
+    uint32_t viewport;
+    uint32_t otgsc;
+    uint32_t accesses;
+    uint32_t timeouts;
+    uint16_t vendor_id;
+    uint16_t product_id;
+    int power_result;
+    int disable_result;
+    int last_error;
+    uint8_t function_control;
+    uint8_t interface_control;
+    uint8_t otg_control;
+    uint8_t interrupt_status;
+    uint8_t debug;
+    uint8_t identity_valid;
+    uint8_t vbus_drive_enabled;
+    uint8_t vbus_drive_known;
+    uint8_t vbus_valid;
+    uint8_t vbus_valid_known;
+} cherryusb_usb1_phy_status_t;
+
 uint32_t cherryusb_baremetal_ms(void);
 void cherryusb_baremetal_osal_poll(void);
 void cherryusb_baremetal_poll_irq(void);
@@ -97,6 +121,12 @@ void cherryusb_host_debug_note_class_connect(const struct usbh_hubport *hport,
                                              int ret,
                                              uint8_t started);
 uint32_t cherryusb_usb1_portsc(void);
+/* Cached setup/shutdown diagnostics; no live ULPI transactions. */
+void cherryusb_usb1_phy_status(cherryusb_usb1_phy_status_t *status);
+int cherryusb_usb1_power_result(void);
+int cherryusb_usb1_host_power_start(void);
+int cherryusb_usb1_host_power_stop(void);
+int cherryusb_usb1_power_stop_result(void);
 int cherryusb_printf(const char *fmt, ...);
 
 #endif /* CHERRYUSB_PLATFORM_H */

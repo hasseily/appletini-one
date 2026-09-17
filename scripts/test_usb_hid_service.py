@@ -374,7 +374,8 @@ def test_zynq_glue_uses_usb1_host_mode_and_cache_hooks() -> None:
 
     for token in [
         "usb_phy_early_init();",
-        "XUsbPs_ResetHw(base);",
+        "REG_WRITE(base + XUSBPS_CMD_OFFSET, XUSBPS_CMD_RST_MASK);",
+        "usbps_wait_controller_reset(base)",
         "XUSBPS_MODE_CM_HOST_MASK",
         "XUSBPS_PORTSCR_PP_MASK",
         "XUSBPS_PORTSCR_PHCD_MASK",
@@ -387,6 +388,39 @@ def test_zynq_glue_uses_usb1_host_mode_and_cache_hooks() -> None:
         "cherryusb_usb1_portsc",
     ]:
         require(token in glue, f"Zynq CherryUSB glue must include {token}")
+
+
+def test_usb1_requires_verified_phy_power_and_keeps_status_passive() -> None:
+    glue = read(CHERRY_ZYNQ_C)
+    hid = read(USB_HID_C)
+    prepare = function_body(glue, "usb3300_host_prepare")
+    power_start = function_body(glue, "cherryusb_usb1_host_power_start")
+    status = function_body(glue, "cherryusb_usb1_phy_status")
+    start = function_body(hid, "usb_hid_service_start")
+    stop = function_body(hid, "usb_hid_service_stop")
+
+    require("usb3300_read_identity(base)" in prepare and
+            "CHERRYUSB_ULPI_REG_FUNCTION_CONTROL" in prepare and
+            "CHERRYUSB_ULPI_REG_INTERFACE_CONTROL" in prepare and
+            "CHERRYUSB_ULPI_REG_OTG_CONTROL" in prepare,
+            "host startup must configure the USB3300 PHY, not only PORTSC.PP")
+    require("usb3300_host_power_enable" in power_start and
+            "XUSBPS_CMD_RS_MASK" in power_start and
+            "XUSBPS_IXR_HCH_MASK" in power_start,
+            "connector power requires a running EHCI host and verified PHY state")
+    require("*status = g_usb1_phy;" in status and
+            "usbps_ulpi_" not in status and "REG_READ" not in status,
+            "UART status must copy cached PHY results without active USB transactions")
+    require("bus->hub_mq == NULL || bus->hub_sem == NULL" in start and
+            "cherryusb_usb1_host_power_start()" in start and
+            "g_last_error = rc;" in start,
+            "HID startup must reject swallowed hub initialization and PHY power errors")
+    require(stop.find("cherryusb_usb1_host_power_stop()") <
+            stop.find("usbh_deinitialize("),
+            "HID stop must remove connector power before EHCI teardown can fail")
+    require("g_power_shutdown_required" in start and
+            "g_power_shutdown_required = 1U;" in stop,
+            "failed VBUS shutdown must remain pending and retry before another start")
 
 
 def test_hub_source_is_pollable_not_threaded() -> None:
@@ -940,6 +974,7 @@ TESTS = [
     test_baremetal_osal_pumps_polled_irq_during_waits,
     test_usb1_waits_keep_frontend_services_running,
     test_zynq_glue_uses_usb1_host_mode_and_cache_hooks,
+    test_usb1_requires_verified_phy_power_and_keeps_status_passive,
     test_hub_source_is_pollable_not_threaded,
     test_vitis_registers_cherryusb_sources_and_linker_section,
     test_usb_hid_uart_diagnostics,

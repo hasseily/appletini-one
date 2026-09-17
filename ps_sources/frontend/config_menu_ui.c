@@ -458,11 +458,23 @@ void cmui_row(uint16_t *fb,
               uint8_t dimmed,
               const char *text)
 {
+    cmui_row_colored(fb, x, y, w, focused, dimmed, text,
+                     (focused != 0U) ? CMUI_COLOR_TEXT : CMUI_COLOR_MUTED);
+}
+
+void cmui_row_colored(uint16_t *fb,
+                      int x,
+                      int y,
+                      int w,
+                      uint8_t focused,
+                      uint8_t dimmed,
+                      const char *text,
+                      uint32_t color)
+{
     const uint32_t bg = (dimmed != 0U) ? CMUI_COLOR_ROW_DISABLED :
                         ((focused != 0U) ? CMUI_COLOR_ROW_ACTIVE :
                          CMUI_COLOR_ROW);
-    const uint32_t fg = (dimmed != 0U) ? CMUI_COLOR_DIM :
-                        ((focused != 0U) ? CMUI_COLOR_TEXT : CMUI_COLOR_MUTED);
+    const uint32_t fg = (dimmed != 0U) ? CMUI_COLOR_DIM : color;
 
     if (w <= 0) {
         return;

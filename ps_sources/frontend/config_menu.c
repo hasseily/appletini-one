@@ -1,6 +1,7 @@
 #include "config_menu.h"
 #include "config_menu_internal.h"
 #include "config_menu_help.h"
+#include "config_menu_text_reader.h"
 
 #include <stddef.h>
 #include <stdio.h>
@@ -197,6 +198,7 @@ typedef enum {
     CONFIG_BROWSER_ENTRY_PARENT,
     CONFIG_BROWSER_ENTRY_DIR,
     CONFIG_BROWSER_ENTRY_FILE,
+    CONFIG_BROWSER_ENTRY_TEXT,
     CONFIG_BROWSER_ENTRY_FILTERED
 } config_browser_entry_type_t;
 
@@ -343,8 +345,8 @@ static const uint8_t k_boot_usb_binding_column_row_first[] = { 0U, 0U, 1U };
 static const uint8_t k_boot_usb_binding_column_count[] = { 4U, 4U, 6U };
 
 static const ui_key_t k_usb_binding_keys[CONFIG_MENU_USB_BIND_ACTION_COUNT] = {
-    UI_KEY_PAGE_UP,
-    UI_KEY_PAGE_DOWN,
+    UI_KEY_UP,
+    UI_KEY_DOWN,
     UI_KEY_LEFT,
     UI_KEY_RIGHT,
     UI_KEY_SHIFT_TAB,
@@ -1171,6 +1173,13 @@ static uint8_t config_menu_has_png_ext(const char *name)
         name++;
     }
     return (dot != NULL && config_menu_str_ieq(dot, ".png") != 0U) ? 1U : 0U;
+}
+
+static uint8_t config_menu_has_txt_ext(const char *name)
+{
+    const char *dot = (name != NULL) ? strrchr(name, '.') : NULL;
+
+    return (dot != NULL && config_menu_str_ieq(dot, ".txt") != 0U) ? 1U : 0U;
 }
 
 static uint8_t config_menu_is_video_rom_file(const char *name, FSIZE_t size)
@@ -5852,14 +5861,21 @@ static void config_menu_browser_add_entry(config_menu_t *menu,
     } else {
         uint16_t index = CONFIG_BROWSER_MAX_ENTRIES;
 
-        /* Showing unsupported files must not crowd out usable images or
-         * directories that FatFs returns later in a full listing. */
+        /* Keep images and directories ahead of text documents, and text
+         * documents ahead of unsupported files when the list is full. */
         if (type == CONFIG_BROWSER_ENTRY_FILTERED) {
             return;
         }
         while (index > 0U &&
                g_browser_entries[index - 1U].type != CONFIG_BROWSER_ENTRY_FILTERED) {
             --index;
+        }
+        if (index == 0U && type != CONFIG_BROWSER_ENTRY_TEXT) {
+            index = CONFIG_BROWSER_MAX_ENTRIES;
+            while (index > 0U &&
+                   g_browser_entries[index - 1U].type != CONFIG_BROWSER_ENTRY_TEXT) {
+                --index;
+            }
         }
         if (index == 0U) {
             return;
@@ -5998,6 +6014,10 @@ static FRESULT config_menu_browser_refresh(config_menu_t *menu)
                 CONFIG_BROWSER_ENTRY_DIR :
                 (accepted != 0U ? CONFIG_BROWSER_ENTRY_FILE : CONFIG_BROWSER_ENTRY_FILTERED);
 
+            if (type == CONFIG_BROWSER_ENTRY_FILTERED &&
+                config_menu_has_txt_ext(info.fname) != 0U) {
+                type = CONFIG_BROWSER_ENTRY_TEXT;
+            }
             if (config_menu_join_path(menu->browser_dir,
                                       info.fname,
                                       path,
@@ -6132,6 +6152,7 @@ static void config_menu_browser_close(config_menu_t *menu)
         return;
     }
 
+    config_menu_text_reader_close();
     menu->browser_active = 0U;
     menu->browser_target = CONFIG_BROWSER_TARGET_NONE;
     config_menu_browser_preview_clear();
@@ -6181,6 +6202,7 @@ static void config_menu_browser_set_dir(config_menu_t *menu, const char *dir)
     if (menu == NULL) {
         return;
     }
+    config_menu_text_reader_close();
     config_menu_copy_text(menu->browser_dir, sizeof(menu->browser_dir),
                           (dir != NULL && dir[0] != '\0') ? dir : "0:/");
     config_menu_browser_remember_dir(menu);
@@ -6228,6 +6250,7 @@ static void config_menu_open_browser(config_menu_t *menu, uint8_t target)
         return;
     }
 
+    config_menu_text_reader_close();
     config_menu_browser_preview_clear();
     menu->browser_active = 1U;
     menu->browser_target = target;
@@ -6454,6 +6477,8 @@ static void config_menu_browser_select(config_menu_t *menu)
     } else if (entry.type == CONFIG_BROWSER_ENTRY_PARENT ||
                entry.type == CONFIG_BROWSER_ENTRY_DIR) {
         config_menu_browser_set_dir(menu, entry.path);
+    } else if (entry.type == CONFIG_BROWSER_ENTRY_TEXT) {
+        config_menu_text_reader_open(menu, entry.name, entry.path);
     } else if (entry.type == CONFIG_BROWSER_ENTRY_FILE) {
         if (config_menu_browser_apply_file(menu, entry.path) != 0U) {
             config_menu_browser_close(menu);
@@ -7252,6 +7277,11 @@ uint8_t config_menu_handle_input(config_menu_t *menu, ui_input_t input)
             input.key == UI_KEY_MENU) {
             config_menu_stop_usb0_sd_remote(menu);
         }
+        return 1U;
+    }
+
+    if (config_menu_is_active(menu) &&
+        config_menu_text_reader_handle_input(input) != 0U) {
         return 1U;
     }
 
@@ -8153,6 +8183,15 @@ static void config_menu_draw_browser(uint16_t *fb,
         }
         focused = (uint8_t)(index == menu->browser_selected);
         dimmed = config_menu_browser_entry_is_disabled(menu, &entry);
+        if (entry.type == CONFIG_BROWSER_ENTRY_TEXT) {
+            /* Two blank character cells align with Disk II's lock column. */
+            if (config_menu_browser_is_disk2_target(menu->browser_target) != 0U) {
+                (void)snprintf(line, sizeof(line), "  %.128s", entry.name);
+            }
+            cmui_row_colored(fb, x, row_y + ((int)row * row_h), list_w,
+                             focused, dimmed, line, CMUI_COLOR_DOCUMENT);
+            continue;
+        }
         color = (entry.type == CONFIG_BROWSER_ENTRY_EMPTY) ? HGR_ORANGE :
                 ((entry.type == CONFIG_BROWSER_ENTRY_CLOSE) ? HGR_GREEN : HGR_WHITE);
         hgr_draw_item_with_lock_ex(
@@ -8402,5 +8441,6 @@ void config_menu_draw(uint16_t *fb, const config_menu_t *menu, uint8_t usb_owned
         config_menu_draw_browser(fb, menu, body.x, body.y - 4, body.w);
         /* Printout rename editor / delete confirm draw over the browser. */
         config_menu_printing_draw_overlays(fb, menu, body.x, body.y, body.w);
+        config_menu_text_reader_draw(fb, &body);
     }
 }

@@ -327,6 +327,7 @@ HELP(smartport,
     "SmartPort presents up to eight block devices as ProDOS/SOS-style mass-storage units.",
     "Each SP row selects, replaces, or clears an image on the SD card; duplicate images are blocked.",
     "Supported: HDV, 2MG, 2IMG, and PO images of any size.",
+    "Light-brown TXT files open in a reader. UP/DOWN scroll, LEFT/RIGHT turn pages, ESC returns.",
     "SuperSprite shares slot 7; when it is enabled, the rest of this page is disabled.");
 
 HELP(smartport_supersprite,
@@ -354,7 +355,8 @@ static const help_override_t smartport_overrides[] = {
 HELP(disk2,
     "Disk II emulates slot 6 drives with activity overlay and optional drive-door and activity audio.",
     "Select Disk 1 or Disk 2 to attach or clear an image; write-protected files show a lock.",
-    "Supported: WOZ, NIB, DSK, DO, PO, 2MG, and 2IMG (16-sector only).");
+    "Supported: WOZ, NIB, DSK, DO, PO, 2MG, and 2IMG (16-sector only).",
+    "Light-brown TXT files open in a reader. UP/DOWN scroll, LEFT/RIGHT turn pages, ESC returns.");
 
 /* ======================================================================== */
 /*  MOUSE                                                                   */

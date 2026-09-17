@@ -211,8 +211,8 @@ def test_only_usb_menu_events_are_remapped() -> None:
             "case 0x7F:\n        input->key = UI_KEY_BACK;" not in boot_menu,
             "Apple keyboard ESC must stay Back while DEL reverse-tabs")
     require("boot_menu_service_machine_mode() != CARD_MACHINE_MODE_IIPLUS" in boot_menu and
-            "case 'O':\n    case 'o':\n        input->key = UI_KEY_PAGE_UP;" in boot_menu and
-            "case 'L':\n    case 'l':\n        input->key = UI_KEY_PAGE_DOWN;" in boot_menu and
+            "case 'O':\n    case 'o':\n        input->key = UI_KEY_UP;" in boot_menu and
+            "case 'L':\n    case 'l':\n        input->key = UI_KEY_DOWN;" in boot_menu and
             "case 'Q':\n    case 'q':\n        input->key = UI_KEY_SHIFT_TAB;" in boot_menu and
             "case 'A':\n    case 'a':\n        input->key = UI_KEY_TAB;" in boot_menu and
             "case 'I':" not in boot_menu and "case 'K':" not in boot_menu,

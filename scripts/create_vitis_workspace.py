@@ -1235,6 +1235,7 @@ run_step(
             "../../../ps_sources/frontend/config_menu_main_tabs.c",
             "../../../ps_sources/frontend/config_menu_phasor.c",
             "../../../ps_sources/frontend/config_menu_printing.c",
+            "../../../ps_sources/frontend/config_menu_text_reader.c",
             "../../../ps_sources/frontend/config_menu_profiles.c",
             "../../../ps_sources/frontend/config_menu_logo_png.c",
             "../../../ps_sources/frontend/config_menu_ui.c",

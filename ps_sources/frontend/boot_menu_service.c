@@ -130,11 +130,11 @@ static uint8_t boot_menu_map_iiplus_key(uint8_t ascii, ui_input_t *input)
     switch (ascii) {
     case 'O':
     case 'o':
-        input->key = UI_KEY_PAGE_UP;
+        input->key = UI_KEY_UP;
         break;
     case 'L':
     case 'l':
-        input->key = UI_KEY_PAGE_DOWN;
+        input->key = UI_KEY_DOWN;
         break;
     case 'Q':
     case 'q':
@@ -182,10 +182,10 @@ static uint8_t boot_menu_map_key(uint8_t raw_key, ui_input_t *input)
         input->key = UI_KEY_ENTER;
         break;
     case 0x0B:
-        input->key = UI_KEY_PAGE_UP;
+        input->key = UI_KEY_UP;
         break;
     case 0x0A:
-        input->key = UI_KEY_PAGE_DOWN;
+        input->key = UI_KEY_DOWN;
         break;
     case 0x08:
         input->key = UI_KEY_LEFT;

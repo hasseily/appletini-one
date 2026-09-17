@@ -26,6 +26,17 @@ image exists, the cursor stays on the parent or close row. When the directory
 list reaches its entry limit, usable images and directories take priority
 over unsupported files.
 
+TXT files appear in light brown in both disk-image browsers. Select one to
+open a large text reader without changing the mounted image. Up/Down scroll
+by line on both the Apple boot keyboard and USB controls; Left/Right or
+Page Up/Page Down scroll by page. II/II+ users can scroll by line with O/L.
+Esc returns to the
+same directory, selection, and scroll position. The reader wraps long lines,
+handles CRLF, LF, and CR line endings and tabs, and reads at most 256 KiB with
+a visible notice when a file is longer. It uses the menu's ASCII font and
+replaces unsupported characters. Images and directories take priority over
+text files when the 96-entry browser list fills up.
+
 ## Repository Layout
 
 - `hdl/`: SystemVerilog/VHDL sources and the active source manifest

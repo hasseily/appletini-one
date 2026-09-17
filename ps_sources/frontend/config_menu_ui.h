@@ -39,6 +39,7 @@
 #define CMUI_COLOR_ACCENT_2 FB16_RGB(0x6D, 0x9D, 0xFF)
 #define CMUI_COLOR_WARN FB16_RGB(0xF2, 0xB5, 0x5B)
 #define CMUI_COLOR_SUCCESS FB16_RGB(0x8E, 0xD6, 0x8A)
+#define CMUI_COLOR_DOCUMENT FB16_RGB(0xCD, 0xAA, 0x7D)
 
 typedef struct {
     int x;
@@ -91,6 +92,14 @@ void cmui_row(uint16_t *fb,
               uint8_t focused,
               uint8_t dimmed,
               const char *text);
+void cmui_row_colored(uint16_t *fb,
+                      int x,
+                      int y,
+                      int w,
+                      uint8_t focused,
+                      uint8_t dimmed,
+                      const char *text,
+                      uint32_t color);
 void cmui_value_row(uint16_t *fb,
                     int x,
                     int y,

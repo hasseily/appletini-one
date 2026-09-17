@@ -19,6 +19,13 @@ and higher-level peripheral emulation.
 The boot menu configures virtual cards, storage images, video, audio, networking,
 USB behavior, and named profiles. Settings are stored on the card's SD volume.
 
+The slot 6 and slot 7 disk-image browsers select the first usable image when
+opening or entering a directory. Unsupported files and images already mounted
+in another drive remain visible in grey; navigation skips them. If no usable
+image exists, the cursor stays on the parent or close row. When the directory
+list reaches its entry limit, usable images and directories take priority
+over unsupported files.
+
 ## Repository Layout
 
 - `hdl/`: SystemVerilog/VHDL sources and the active source manifest

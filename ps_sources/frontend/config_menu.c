@@ -196,7 +196,8 @@ typedef enum {
     CONFIG_BROWSER_ENTRY_EMPTY,
     CONFIG_BROWSER_ENTRY_PARENT,
     CONFIG_BROWSER_ENTRY_DIR,
-    CONFIG_BROWSER_ENTRY_FILE
+    CONFIG_BROWSER_ENTRY_FILE,
+    CONFIG_BROWSER_ENTRY_FILTERED
 } config_browser_entry_type_t;
 
 typedef struct {
@@ -5646,6 +5647,12 @@ static uint8_t config_menu_browser_is_smartport_target(uint8_t target)
             target <= CONFIG_BROWSER_TARGET_SMARTPORT_8) ? 1U : 0U;
 }
 
+static uint8_t config_menu_browser_is_disk_target(uint8_t target)
+{
+    return (config_menu_browser_is_disk2_target(target) != 0U ||
+            config_menu_browser_is_smartport_target(target) != 0U) ? 1U : 0U;
+}
+
 static uint8_t config_menu_browser_is_bezel_target(uint8_t target)
 {
     return (target == CONFIG_BROWSER_TARGET_BEZEL) ? 1U : 0U;
@@ -5731,6 +5738,18 @@ static uint8_t config_menu_browser_entry_is_duplicate_image(
         return config_menu_disk2_path_in_use(menu, drive, entry->path);
     }
     return 0U;
+}
+
+static uint8_t config_menu_browser_entry_is_disabled(
+    const config_menu_t *menu,
+    const config_browser_entry_t *entry)
+{
+    if (menu == NULL || entry == NULL) {
+        return 1U;
+    }
+    return (entry->type == CONFIG_BROWSER_ENTRY_FILTERED ||
+            config_menu_browser_entry_is_duplicate_image(menu, entry) != 0U) ?
+        1U : 0U;
 }
 
 static const char *config_menu_browser_title(uint8_t target)
@@ -5824,11 +5843,29 @@ static void config_menu_browser_add_entry(config_menu_t *menu,
 {
     config_browser_entry_t *entry;
 
-    if (menu == NULL || menu->browser_count >= CONFIG_BROWSER_MAX_ENTRIES) {
+    if (menu == NULL) {
         return;
     }
 
-    entry = &g_browser_entries[menu->browser_count++];
+    if (menu->browser_count < CONFIG_BROWSER_MAX_ENTRIES) {
+        entry = &g_browser_entries[menu->browser_count++];
+    } else {
+        uint16_t index = CONFIG_BROWSER_MAX_ENTRIES;
+
+        /* Showing unsupported files must not crowd out usable images or
+         * directories that FatFs returns later in a full listing. */
+        if (type == CONFIG_BROWSER_ENTRY_FILTERED) {
+            return;
+        }
+        while (index > 0U &&
+               g_browser_entries[index - 1U].type != CONFIG_BROWSER_ENTRY_FILTERED) {
+            --index;
+        }
+        if (index == 0U) {
+            return;
+        }
+        entry = &g_browser_entries[index - 1U];
+    }
     memset(entry, 0, sizeof(*entry));
     entry->type = type;
     entry->read_only = read_only;
@@ -5944,21 +5981,30 @@ static FRESULT config_menu_browser_refresh(config_menu_t *menu)
     }
 
     for (;;) {
+        uint8_t accepted;
+
         fr = f_readdir(&dir, &info);
         if (fr != FR_OK || info.fname[0] == '\0') {
             break;
         }
-        if (config_menu_browser_accepts(menu, &info) != 0U) {
+        if (strcmp(info.fname, ".") == 0 || strcmp(info.fname, "..") == 0) {
+            continue;
+        }
+        accepted = config_menu_browser_accepts(menu, &info);
+        if (accepted != 0U ||
+            config_menu_browser_is_disk_target(menu->browser_target) != 0U) {
             char path[CONFIG_MENU_PATH_LEN];
             config_browser_entry_type_t type = ((info.fattrib & AM_DIR) != 0U) ?
-                CONFIG_BROWSER_ENTRY_DIR : CONFIG_BROWSER_ENTRY_FILE;
+                CONFIG_BROWSER_ENTRY_DIR :
+                (accepted != 0U ? CONFIG_BROWSER_ENTRY_FILE : CONFIG_BROWSER_ENTRY_FILTERED);
 
             if (config_menu_join_path(menu->browser_dir,
                                       info.fname,
                                       path,
                                       sizeof(path)) != 0U) {
                 const uint8_t read_only =
-                    (type == CONFIG_BROWSER_ENTRY_FILE &&
+                    ((type == CONFIG_BROWSER_ENTRY_FILE ||
+                      type == CONFIG_BROWSER_ENTRY_FILTERED) &&
                      (info.fattrib & AM_RDO) != 0U) ? 1U : 0U;
                 config_menu_browser_add_entry(menu, type, info.fname, path, read_only);
             }
@@ -6030,7 +6076,8 @@ uint8_t config_menu_browser_selected_file(const config_menu_t *menu,
     if (menu == NULL || menu->browser_active == 0U ||
         config_menu_browser_get_entry(menu, menu->browser_selected,
                                       &entry) != FR_OK ||
-        entry.type != CONFIG_BROWSER_ENTRY_FILE) {
+        entry.type != CONFIG_BROWSER_ENTRY_FILE ||
+        config_menu_browser_entry_is_disabled(menu, &entry) != 0U) {
         return 0U;
     }
     if (name != NULL) {
@@ -6090,6 +6137,45 @@ static void config_menu_browser_close(config_menu_t *menu)
     config_menu_browser_preview_clear();
 }
 
+static uint16_t config_menu_browser_visible_rows(const config_menu_t *menu)
+{
+    return (menu != NULL &&
+            menu->browser_target == CONFIG_BROWSER_TARGET_PROFILE_IMAGE) ?
+        CONFIG_BROWSER_PROFILE_IMAGE_VISIBLE_ROWS :
+        CONFIG_BROWSER_VISIBLE_ROWS;
+}
+
+static void config_menu_browser_keep_selection_visible(config_menu_t *menu)
+{
+    const uint16_t visible_rows = config_menu_browser_visible_rows(menu);
+
+    if (menu->browser_selected < menu->browser_top) {
+        menu->browser_top = menu->browser_selected;
+    } else if (menu->browser_selected >=
+               (uint16_t)(menu->browser_top + visible_rows)) {
+        menu->browser_top =
+            (uint16_t)(menu->browser_selected - visible_rows + 1U);
+    }
+}
+
+static void config_menu_browser_select_first_image(config_menu_t *menu)
+{
+    if (menu == NULL ||
+        config_menu_browser_is_disk_target(menu->browser_target) == 0U) {
+        return;
+    }
+    for (uint16_t index = 0U; index < menu->browser_count; ++index) {
+        const config_browser_entry_t *entry = &g_browser_entries[index];
+
+        if (entry->type == CONFIG_BROWSER_ENTRY_FILE &&
+            config_menu_browser_entry_is_disabled(menu, entry) == 0U) {
+            menu->browser_selected = index;
+            config_menu_browser_keep_selection_visible(menu);
+            return;
+        }
+    }
+}
+
 static void config_menu_browser_set_dir(config_menu_t *menu, const char *dir)
 {
     if (menu == NULL) {
@@ -6102,6 +6188,8 @@ static void config_menu_browser_set_dir(config_menu_t *menu, const char *dir)
     menu->browser_top = 0U;
     if (config_menu_browser_refresh(menu) != FR_OK) {
         menu->browser_count = 0U;
+    } else {
+        config_menu_browser_select_first_image(menu);
     }
     config_menu_refresh_smartport_media_after_menu_sd(menu);
     config_menu_browser_preview_prepare(menu);
@@ -6169,6 +6257,7 @@ static void config_menu_open_browser(config_menu_t *menu, uint8_t target)
         config_menu_browser_close(menu);
         config_menu_set_sd_error(menu, "FILE BROWSER OPEN FAILED", fr);
     } else {
+        config_menu_browser_select_first_image(menu);
         config_menu_browser_preview_prepare(menu);
     }
 }
@@ -6353,6 +6442,9 @@ static void config_menu_browser_select(config_menu_t *menu)
         config_menu_set_sd_error(menu, "FILE BROWSER READ FAILED", fr);
         return;
     }
+    if (config_menu_browser_entry_is_disabled(menu, &entry) != 0U) {
+        return;
+    }
 
     if (entry.type == CONFIG_BROWSER_ENTRY_CLOSE) {
         config_menu_browser_close(menu);
@@ -6385,18 +6477,8 @@ static void config_menu_browser_parent(config_menu_t *menu)
     config_menu_browser_set_dir(menu, parent);
 }
 
-static uint16_t config_menu_browser_visible_rows(const config_menu_t *menu)
-{
-    return (menu != NULL &&
-            menu->browser_target == CONFIG_BROWSER_TARGET_PROFILE_IMAGE) ?
-        CONFIG_BROWSER_PROFILE_IMAGE_VISIBLE_ROWS :
-        CONFIG_BROWSER_VISIBLE_ROWS;
-}
-
 static void config_menu_browser_move(config_menu_t *menu, int8_t delta)
 {
-    const uint16_t visible_rows = config_menu_browser_visible_rows(menu);
-
     if (menu == NULL || menu->browser_active == 0U) {
         return;
     }
@@ -6404,22 +6486,22 @@ static void config_menu_browser_move(config_menu_t *menu, int8_t delta)
         return;
     }
 
-    if (delta < 0) {
-        menu->browser_selected = (menu->browser_selected == 0U) ?
-            (uint16_t)(menu->browser_count - 1U) :
-            (uint16_t)(menu->browser_selected - 1U);
-    } else {
-        menu->browser_selected = (uint16_t)((menu->browser_selected + 1U) %
-                                            menu->browser_count);
+    for (uint16_t checked = 0U; checked < menu->browser_count; ++checked) {
+        if (delta < 0) {
+            menu->browser_selected = (menu->browser_selected == 0U) ?
+                (uint16_t)(menu->browser_count - 1U) :
+                (uint16_t)(menu->browser_selected - 1U);
+        } else {
+            menu->browser_selected = (uint16_t)((menu->browser_selected + 1U) %
+                                                menu->browser_count);
+        }
+        if (config_menu_browser_entry_is_disabled(
+                menu, &g_browser_entries[menu->browser_selected]) == 0U) {
+            break;
+        }
     }
 
-    if (menu->browser_selected < menu->browser_top) {
-        menu->browser_top = menu->browser_selected;
-    } else if (menu->browser_selected >=
-               (uint16_t)(menu->browser_top + visible_rows)) {
-        menu->browser_top =
-            (uint16_t)(menu->browser_selected - visible_rows + 1U);
-    }
+    config_menu_browser_keep_selection_visible(menu);
     config_menu_browser_preview_prepare(menu);
 }
 
@@ -8070,7 +8152,7 @@ static void config_menu_draw_browser(uint16_t *fb,
             (void)snprintf(line, sizeof(line), "%.128s", entry.name);
         }
         focused = (uint8_t)(index == menu->browser_selected);
-        dimmed = config_menu_browser_entry_is_duplicate_image(menu, &entry);
+        dimmed = config_menu_browser_entry_is_disabled(menu, &entry);
         color = (entry.type == CONFIG_BROWSER_ENTRY_EMPTY) ? HGR_ORANGE :
                 ((entry.type == CONFIG_BROWSER_ENTRY_CLOSE) ? HGR_GREEN : HGR_WHITE);
         hgr_draw_item_with_lock_ex(
@@ -8082,7 +8164,8 @@ static void config_menu_draw_browser(uint16_t *fb,
             line,
             color,
             (uint8_t)(config_menu_browser_is_disk2_target(menu->browser_target) != 0U &&
-                      entry.type == CONFIG_BROWSER_ENTRY_FILE),
+                      (entry.type == CONFIG_BROWSER_ENTRY_FILE ||
+                       entry.type == CONFIG_BROWSER_ENTRY_FILTERED)),
             entry.read_only,
             dimmed);
     }

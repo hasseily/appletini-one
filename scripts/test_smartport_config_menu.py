@@ -383,8 +383,10 @@ def test_browser_dims_duplicate_disk_images() -> None:
             "config_menu_browser_is_disk2_target(menu->browser_target)" in source and
             "config_menu_disk2_path_in_use(menu, drive, entry->path)" in source,
             "duplicate dimming must cover file entries for both virtual disk controllers")
-    require("dimmed = config_menu_browser_entry_is_duplicate_image(menu, &entry);" in source,
-            "browser row drawing must compute duplicate-image dim state")
+    require("dimmed = config_menu_browser_entry_is_disabled(menu, &entry);" in source and
+            "entry->type == CONFIG_BROWSER_ENTRY_FILTERED" in source and
+            "config_menu_browser_entry_is_duplicate_image(menu, entry) != 0U" in source,
+            "browser row drawing must share the filtered/duplicate disabled state")
     require("hgr_draw_item_with_lock_ex(\n"
             "            fb,\n"
             "            x,\n"
@@ -393,7 +395,8 @@ def test_browser_dims_duplicate_disk_images() -> None:
             "            line,\n"
             "            color,\n" in source and
             "            (uint8_t)(config_menu_browser_is_disk2_target(menu->browser_target) != 0U &&\n"
-            "                      entry.type == CONFIG_BROWSER_ENTRY_FILE),\n"
+            "                      (entry.type == CONFIG_BROWSER_ENTRY_FILE ||\n"
+            "                       entry.type == CONFIG_BROWSER_ENTRY_FILTERED)),\n"
             "            entry.read_only,\n"
             "            dimmed);" in source,
             "browser row drawing must pass duplicate-image dim state into item rendering")

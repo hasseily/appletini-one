@@ -4197,7 +4197,7 @@ void config_menu_set_applicard_enabled(config_menu_t *menu, uint8_t enable)
 
 /* Speed presets shown in the TransWarp tab. Divided-mode rates follow from
  * the 133.333 MHz fabric clock / divider. The divider column stays
- * meaningful for the MAX, TURBO, and 1 MHz rows so cycling back into a divided
+ * meaningful for the 33 MHz, TURBO, and 1 MHz rows so cycling back into a divided
  * preset restores a sane value. */
 typedef struct {
     const char *label;
@@ -4212,7 +4212,7 @@ static const vtw_speed_preset_t k_vtw_speed_presets[] = {
     { "7 MHz",                1U, 19U },
     { "13 MHz (UltraWarp)",   1U, 10U },
     { "26 MHz",               1U,  5U },
-    { "MAX Speed",            0U, 37U },
+    { "33 MHz",                0U, 37U },
     { "TURBO",                3U, 37U },
 };
 #define VTW_SPEED_PRESET_COUNT \

@@ -838,7 +838,7 @@ def run_native_speed_control_test() -> bool:
             }
             vtw_service_speed_step(-1);
             if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_FULL &&
-                       strcmp(vtw_service_last_action_text(), "TW: MAX Speed") == 0,
+                       strcmp(vtw_service_last_action_text(), "TW: 33 MHz") == 0,
                        "TURBO speed down must select MAX")) {
                 return 0;
             }
@@ -910,7 +910,7 @@ def run_native_speed_control_test() -> bool:
             }
             vtw_service_speed_step(1);
             if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_FULL &&
-                       strcmp(vtw_service_last_action_text(), "TW: MAX Speed") == 0,
+                       strcmp(vtw_service_last_action_text(), "TW: 33 MHz") == 0,
                        "disabled USB ladder must stop at MAX")) {
                 return 0;
             }

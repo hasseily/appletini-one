@@ -1,13 +1,13 @@
 # vTW TURBO
 
-TURBO is an execution mode separate from the 1 MHz through MAX presets.
+TURBO is an execution mode separate from the fixed 1 MHz through 33 MHz presets.
 Check **Enable TURBO speed** below Speed in the TransWarp tab to make
-**TURBO** appear after MAX in the speed selector. The checkbox defaults to
+**TURBO** appear after 33 MHz in the speed selector. The checkbox defaults to
 off, and profiles store the choice as `vtw.turbo.enabled`. With it checked,
-`vtw speed turbo` over UART selects TURBO, and USB speed-up moves from MAX
-to TURBO; speed-down returns to MAX. With it unchecked, the speed selector
-omits TURBO, USB speed-up stops at MAX, and UART cannot select TURBO. Unchecking
-it while TURBO is selected changes the speed to MAX.
+`vtw speed turbo` over UART selects TURBO, and USB speed-up moves from 33 MHz
+to TURBO; speed-down returns to 33 MHz. With it unchecked, the speed selector
+omits TURBO, USB speed-up stops at 33 MHz, and UART cannot select TURBO. Unchecking
+it while TURBO is selected changes the speed to 33 MHz.
 
 The 1 MHz toggle and optional slug toggle return to the selected TURBO
 setting when released. Profiles store `vtw.speed.mode=3`; existing mode
@@ -15,7 +15,7 @@ values keep their meanings. The checkbox rows pair Enable TURBO speed with
 the slug debug key, Ignore $C074 with Disable DiskII Acceleration, and Slow
 Floating bus with Slow Paddles/joystick.
 
-The current firmware version is **F1.1.0**. The archived build described
+The current firmware version is **F1.1.1**. The archived build described
 below uses version **F1.0.9-turbo2** on branch `turbo-v2`.
 TURBO has no fixed MHz rating: cache misses and the instruction mix change
 its rate. Simulation measurements and routed timing accompany the built
@@ -26,7 +26,7 @@ The integrated 16-byte indexed-copy benchmark, including loop control,
 measured the following fabric-clock counts. Code ran at `$F000`; both source
 layouts (`$9000` and `$9080`) produced the same counts:
 
-| Pass | MAX | TURBO | Speedup |
+| Pass | 33 MHz | TURBO | Speedup |
 |---|---:|---:|---:|
 | First pass, cold cache | 1,080 | 474 | 2.28 times |
 | Second pass, warm cache | 1,064 | 436 | 2.44 times |
@@ -88,7 +88,7 @@ cache or ARM CPU translator is included.
 Real bus transactions keep their electrical timing. `$C074`, per-region slowdowns, native Disk II accesses,
 and Disk II write mode still take priority over the selected speed.
 
-The private Disk II no longer forces MAX while its motor spins. Each accepted
+The private Disk II no longer forces 33 MHz while its motor spins. Each accepted
 CPU step reports the number of classic cycles it represents, including
 omitted cycles. The controller replays those ticks before the next access;
 WOZ track data and weak-bit state must be ready before replay advances.
@@ -154,7 +154,7 @@ The 32-bit counters wrap and clear with `busdbg clear`. They provide interval
 measurements; live reads are not an atomic snapshot of all counters.
 
 TURBO does not preserve cycle-counted RAM loops or dummy memory-read timing.
-Use a 1–MAX preset for software that depends on those details. Selecting
+Use a 1 MHz through 33 MHz preset for software that depends on those details. Selecting
 1 MHz restores the classic path; throttling TURBO instructions alone would
 not restore omitted cycles. An instruction already shortened before a live
 mode change cannot recover its elapsed cycles.

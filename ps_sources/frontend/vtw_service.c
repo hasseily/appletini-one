@@ -102,7 +102,7 @@ static const struct {
     { CARD_CTRL_VTW_SPEED_DIVIDED, 19U, "7 MHz" },
     { CARD_CTRL_VTW_SPEED_DIVIDED, 10U, "13 MHz (UltraWarp)" },
     { CARD_CTRL_VTW_SPEED_DIVIDED,  5U, "26 MHz" },
-    { CARD_CTRL_VTW_SPEED_FULL,    0U,  "MAX Speed" },
+    { CARD_CTRL_VTW_SPEED_FULL,    0U,  "33 MHz" },
     { CARD_CTRL_VTW_SPEED_TURBO,   0U,  "TURBO" },
 };
 #define VTW_LADDER_COUNT \
@@ -437,7 +437,7 @@ void vtw_service_set_speed(uint8_t speed_mode, uint8_t pace_divider)
     if (g_speed_mode == CARD_CTRL_VTW_SPEED_TURBO && g_turbo_enabled == 0U) {
         g_speed_mode = CARD_CTRL_VTW_SPEED_FULL;
         uart_puts(g_uart_base,
-                  "vtw: TURBO disabled; using MAX Speed\r\n");
+                  "vtw: TURBO disabled; using 33 MHz\r\n");
     }
     if (pace_divider < 2U) {
         pace_divider = 2U;

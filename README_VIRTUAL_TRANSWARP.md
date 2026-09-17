@@ -1,7 +1,7 @@
 # Virtual TransWarp — Design Document
 
-The `turbo` branch adds **TURBO** as a separate speed choice after MAX.
-The 1 MHz through MAX presets retain their cycle-exact execution path.
+**TURBO** is a separate speed choice after the fixed **33 MHz** preset.
+The 1 MHz through 33 MHz presets retain their cycle-exact execution path.
 See [README_TURBO.md](README_TURBO.md) for the cache design, compatibility
 rules, tests, and firmware build instructions.
 
@@ -59,7 +59,7 @@ Components:
   port-B window (`VTW_ST_LOAD_ROM`), releases the core.
 - UART `vtw [status|on|off|speed full|1mhz|div <n>]` + config-menu
   "TransWarp" tab (the slot-3 presentation): enable checkbox dimmed on a
-  positive non-//e identification; presets MAX / 26 / 13 / 7 / 3.6
+  positive non-//e identification; presets 33 MHz / 26 / 13 / 7 / 3.6
   / 2.6 / 1 MHz cycle-exact (divided-mode dividers 5/10/19/37/51 against the
   133.333 MHz fabric clock). Persisted keys `vtw.enabled`,
   `vtw.speed.mode`, `vtw.pace.divider`, `vtw.c074.ignore`, and

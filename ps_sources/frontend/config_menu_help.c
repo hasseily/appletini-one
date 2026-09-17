@@ -498,7 +498,7 @@ HELP(transwarp,
     "for live speed control: 1 MHz toggle, speed up/down, and the 0.05 MHz slug toggle.");
 
 HELP(transwarp_speed,
-    "MAX Speed keeps the normal core timing at about 33 MHz. 3.6 MHz matches the real TransWarp.",
+    "33 MHz runs the normal core at a fixed speed. 3.6 MHz matches the real TransWarp.",
     "1 MHz cycle-exact locks every core cycle to the Apple bus clock and passes cycle-counting",
     "speed detectors and vapor lock, but disable acceleration for really precise demos.",
     "Most I/O and video writes always run at 1 MHz bus speed, whatever the setting.");

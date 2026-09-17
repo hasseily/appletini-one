@@ -603,7 +603,7 @@ def static_checks() -> None:
             '"3.6 MHz (TransWarp)"' in menu_c and
             '"1 MHz default"' in menu_c and
             '"26 MHz"' in menu_c and
-            '"MAX Speed"' in menu_c and
+            '"33 MHz"' in menu_c and
             '"TURBO"' in menu_c,
             "TransWarp tab must offer the speed presets")
     require("menu->vtw_speed_mode == CARD_CTRL_VTW_SPEED_TURBO" in menu_c and
@@ -612,12 +612,12 @@ def static_checks() -> None:
             "return VTW_SPEED_PRESET_COUNT - 2U;" in menu_c and
             "menu->vtw_speed_mode == CARD_CTRL_VTW_SPEED_1MHZ" in menu_c and
             "return 0U;" in menu_c,
-            "TransWarp TURBO, MAX and 1 MHz modes must resolve to their correct labels")
+            "TransWarp TURBO, 33 MHz and 1 MHz modes must resolve to their correct labels")
     ladder_index = service[service.index(
         "static int vtw_eff_ladder_index(void)"):
         service.index("void vtw_service_set_slug_enabled", service.index(
             "static int vtw_eff_ladder_index(void)"))]
-    require(service.index('"26 MHz"') < service.index('"MAX Speed"') and
+    require(service.index('"26 MHz"') < service.index('"33 MHz"') and
             "fastest_divided" in ladder_index and
             "div >= k_vtw_ladder[i].divider" in ladder_index and
             "if (div >= 51U) return 1;" not in ladder_index,

@@ -142,7 +142,7 @@ def main() -> int:
             menu.platform.set_vtw_turbo_enabled = apply_turbo;
             assert(CARD_CTRL_VTW_SPEED_TURBO == 3U);
             config_menu_set_vtw_speed(&menu, CARD_CTRL_VTW_SPEED_FULL, 37U);
-            assert(strcmp(config_menu_vtw_speed_label(&menu), "MAX Speed") == 0);
+            assert(strcmp(config_menu_vtw_speed_label(&menu), "33 MHz") == 0);
             config_menu_set_vtw_speed(&menu, CARD_CTRL_VTW_SPEED_TURBO, 37U);
             assert(menu.vtw_speed_mode == CARD_CTRL_VTW_SPEED_FULL);
             assert(applied == 1U && saves == 1U);
@@ -202,7 +202,7 @@ def main() -> int:
             /* An old config with only mode=3 requires a fresh opt-in. */
             loaded.vtw_turbo_enabled = 0U;
             parse_mode(&loaded, "3");
-            assert(strcmp(config_menu_vtw_speed_label(&loaded), "MAX Speed") == 0);
+            assert(strcmp(config_menu_vtw_speed_label(&loaded), "33 MHz") == 0);
             config_menu_coerce_vtw_speed(&loaded);
             assert(loaded.vtw_speed_mode == CARD_CTRL_VTW_SPEED_FULL);
             /* Either key order retains TURBO when permission is present. */

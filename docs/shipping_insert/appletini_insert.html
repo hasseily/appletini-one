@@ -91,7 +91,7 @@
     padding: 12mm 14mm 11mm;
     display: flex;
     flex-direction: column;
-    gap: 4.2mm;
+    gap: 3.4mm;
     overflow: hidden;
     position: relative;
     counter-reset: none;
@@ -209,23 +209,27 @@
   .spec { font: 600 7.8pt/1 var(--mono); border: .25mm solid var(--rule); background: var(--tint); border-radius: 1mm; padding: 1.2mm 1.8mm; }
 
   /* ---------- Keypad ---------- */
-  .keypad { display: grid; grid-template-columns: 62mm 1fr; gap: 6mm; align-items: start; }
+  .keypad { display: grid; grid-template-columns: 56mm 1fr; gap: 6mm; align-items: start; }
   .keypad svg { width: 100%; height: auto; display: block; }
+  .mouse { display: grid; grid-template-columns: 40mm 1fr; gap: 7mm; align-items: start; }
+  .mouse svg { width: 100%; height: auto; display: block; }
+  .mb { display: inline-grid; place-items: center; width: 4.4mm; height: 4.4mm; border-radius: 50%; background: var(--ink); color: var(--paper); font: 600 8pt/1 var(--mono); }
+  .unmapped { font-size: 8.6pt; color: var(--ink-2); }
   .keypad svg text { font-family: var(--body); }
   .kgroups { display: grid; gap: 2.2mm; }
   .kgroup { display: grid; grid-template-columns: 2.2mm 1fr; gap: 2.4mm; }
   .kgroup .bar { border-radius: 1mm; }
   .kgroup h4 { margin: 0 0 .8mm; font: 800 9.4pt/1.1 var(--display); }
   .kgroup table { border-collapse: collapse; width: 100%; }
-  .kgroup td { padding: .45mm 0; vertical-align: baseline; font-size: 8.8pt; }
-  .kgroup td:first-child { width: 22mm; white-space: nowrap; }
+  .kgroup td { padding: .45mm 0; vertical-align: top; font-size: 8.8pt; }
+  .kgroup td:first-child { width: 25mm; white-space: nowrap; }
 
   /* ---------- Footer / community ---------- */
   .community {
     margin-top: auto;
     display: grid; grid-template-columns: 1fr auto; gap: 6mm; align-items: center;
     border-top: .3mm solid var(--ink);
-    padding-top: 4mm;
+    padding-top: 3mm;
   }
   .thanks h3 { margin: 0 0 1.6mm; font: 800 17pt/1.1 var(--display); text-wrap: balance; }
   .thanks p + p { margin-top: 1.4mm; }
@@ -388,7 +392,11 @@
     </ol>
     <div class="callout note">
       <span class="tag">NOTE</span>
-      <p>To go back to the <code>A:APPLETINI</code> prompt at any time, push <kbd>Ctrl</kbd> + <kbd>Open-Apple</kbd> + <kbd>Reset</kbd> together.</p>
+      <ul>
+        <li>In the boot menu, you can always use the Apple //e keyboard to navigate.</li>
+        <li>The boot menu is the only place where you can change the mapping of the USB keys and buttons.</li>
+        <li>To go back to the <code>A:APPLETINI</code> prompt at any time, push <kbd>Ctrl</kbd> + <kbd>Open-Apple</kbd> + <kbd>Reset</kbd> together.</li>
+      </ul>
     </div>
   </section>
 
@@ -403,14 +411,13 @@
         <div class="kgroup"><span class="bar" style="background:var(--s-blue)"></span><div>
           <h4>Menu navigation</h4>
           <table>
-            <tr><td><kbd>8</kbd> <kbd>2</kbd></td><td>Move up or down in the current tab.</td></tr>
-            <tr><td><kbd>4</kbd> <kbd>6</kbd></td><td>Move left or right in the current tab.</td></tr>
+            <tr><td><kbd>8</kbd> <kbd>2</kbd> <kbd>4</kbd> <kbd>6</kbd></td><td>Move up, down, left or right in the current tab.</td></tr>
             <tr><td><kbd>9</kbd> <kbd>3</kbd></td><td>Go to the previous tab (9) or the next tab (3).</td></tr>
           </table></div></div>
         <div class="kgroup"><span class="bar" style="background:var(--s-green)"></span><div>
           <h4>Select and go back</h4>
           <table>
-            <tr><td><kbd>Enter</kbd></td><td>OK. In normal Apple operation, hold this key to open the configuration menu.</td></tr>
+            <tr><td><kbd>Enter</kbd></td><td>OK (push). Configuration menu (push and hold, see the note).</td></tr>
             <tr><td><kbd>&larr;</kbd></td><td>Back (Backspace key).</td></tr>
           </table></div></div>
         <div class="kgroup"><span class="bar" style="background:var(--s-orange)"></span><div>
@@ -422,35 +429,78 @@
         <div class="kgroup"><span class="bar" style="background:var(--s-red)"></span><div>
           <h4>Speed</h4>
           <table>
-            <tr><td><kbd>/</kbd></td><td>Set 0.05× (very slow) speed. Push again to cancel.</td></tr>
-            <tr><td><kbd>*</kbd></td><td>Set 1× (normal) speed. Push again to cancel.</td></tr>
+            <tr><td><kbd>/</kbd> <kbd>*</kbd></td><td>Set 0.05× speed (/) or 1× speed (*). Push again to cancel.</td></tr>
             <tr><td><kbd>+</kbd> <kbd>&minus;</kbd></td><td>Increase (+) or decrease (&minus;) the speed.</td></tr>
           </table></div></div>
+      </div>
+    </div>
+    <div class="callout note">
+      <span class="tag">NOTE</span>
+      <p>The <kbd>Enter</kbd> key has two functions. In the Appletini menu, push <kbd>Enter</kbd> to select an item (OK). While the Apple //e operates normally, push and hold <kbd>Enter</kbd> until the configuration menu opens.</p>
+    </div>
+  </section>
+
+  <section class="sec num" id="mouse" hidden>
+    <h3>Use a USB mouse to control the menu</h3>
+    <p>If you do not have the USB keypad, you can use a 5-button USB mouse. Connect the mouse to the lower USB-C port (green). The mouse buttons control the Appletini menu.</p>
+    <div class="mouse">
+      <svg viewBox="0 0 176 232" role="img" aria-label="Five-button mouse with the Appletini function of each button">
+        <defs><clipPath id="mbody"><rect x="46" y="12" width="110" height="206" rx="55"/></clipPath></defs>
+        <g clip-path="url(#mbody)">
+          <rect x="46" y="12" width="55" height="92" fill="#dbe8f7"/>
+          <rect x="101" y="12" width="55" height="92" fill="#dbe8f7"/>
+        </g>
+        <rect x="46" y="12" width="110" height="206" rx="55" fill="none" stroke="#17191e" stroke-width="2.2"/>
+        <path d="M101 12V104M48 104H154" stroke="#17191e" stroke-width="1.6" fill="none"/>
+        <rect x="93" y="34" width="16" height="38" rx="8" fill="#3a9b35" stroke="#17191e" stroke-width="1.4"/>
+        <rect x="40" y="112" width="9" height="30" rx="3" fill="#1f6fc5" stroke="#17191e" stroke-width="1.2"/>
+        <rect x="40" y="148" width="9" height="30" rx="3" fill="#1f6fc5" stroke="#17191e" stroke-width="1.2"/>
+        <path d="M31 127H40M31 163H40M101 24V14" stroke="#17191e" stroke-width="1" fill="none"/>
+        <g font-family="IBM Plex Mono, Liberation Mono, monospace" font-weight="600" font-size="12" text-anchor="middle" fill="#ffffff">
+          <circle cx="72" cy="66" r="10" fill="#17191e"/><text x="72" y="70">1</text>
+          <circle cx="130" cy="66" r="10" fill="#17191e"/><text x="130" y="70">2</text>
+          <text x="101" y="57" font-size="11">3</text>
+          <circle cx="21" cy="127" r="10" fill="#17191e"/><text x="21" y="131">5</text>
+          <circle cx="21" cy="163" r="10" fill="#17191e"/><text x="21" y="167">4</text>
+        </g>
+      </svg>
+      <div class="kgroups">
+        <div class="kgroup"><span class="bar" style="background:var(--s-blue)"></span><div>
+          <h4>Menu navigation</h4>
+          <table>
+            <tr><td><b class="mb">1</b> <b class="mb">2</b></td><td>Move left (1) or right (2) in the current tab.</td></tr>
+            <tr><td><b class="mb">4</b> <b class="mb">5</b></td><td>Go to the previous tab (4) or the next tab (5).</td></tr>
+          </table></div></div>
+        <div class="kgroup"><span class="bar" style="background:var(--s-green)"></span><div>
+          <h4>Select</h4>
+          <table>
+            <tr><td><b class="mb">3</b></td><td>OK (push). While the Apple //e operates normally, push and hold until the configuration menu opens.</td></tr>
+          </table></div></div>
+        <p class="unmapped">Button 1 is the left button, 2 the right button, 3 the wheel button, and 4 and 5 the side buttons. The mouse has no screenshot or speed functions. To change the button mapping, use the boot menu.</p>
       </div>
     </div>
   </section>
 
   <section class="sec num">
     <h3>Update the firmware</h3>
-    <p>The card is supplied with firmware <b>F1.1.1</b> installed. You do not have to update it now. When a new version is available, do these steps:</p>
+    <p>Firmware <b>F1.1.1</b> is already installed. To install a newer version, do these steps:</p>
     <ol class="steps">
-      <li>Download the latest <code>FIRMWARE.BIN</code> file from:<br><span class="mono">github.com/hasseily/appletini-one/releases/latest</span></li>
+      <li>Download the latest <code>FIRMWARE.BIN</code> from <span class="mono">github.com/hasseily/appletini-one/releases/latest</span>.</li>
       <li>Turn off the Apple //e. Remove the microSD card from the card.</li>
-      <li>Copy <code>FIRMWARE.BIN</code> to the root folder of the microSD card.</li>
-      <li>Push the microSD card fully back into the top slot. Turn on the Apple //e.</li>
+      <li>Copy <code>FIRMWARE.BIN</code> to the root folder of the microSD card. Push the microSD card fully back into the top slot.</li>
+      <li>Turn on the Apple //e.</li>
       <li>Wait. The card writes and checks the new firmware. Then it changes the file name to <code>FIRMWARE.OK</code> and starts normally.</li>
     </ol>
     <div class="callout caution">
       <span class="tag">CAUTION</span>
-      <p>Do not turn off the power during the update. If you turn off the power, the update stops and you must do it again.</p>
+      <p>Do not turn off the power during the update.</p>
     </div>
   </section>
 
   <footer class="community">
     <div class="thanks">
       <h3 id="thanks-title">Thank you!</h3>
-      <p>Thank you for your purchase of the Appletini ONE. We hope that it gives your Apple //e a long and exciting new life.</p>
-      <p>For help, news and new software, join the Appletini community on Discord, or go to our website.</p>
+      <p>Thank you for your purchase of the Appletini ONE. We hope that it gives your Apple //e a long and exciting new life. For help, news and new software, join the Appletini community on Discord.</p>
       <p class="sign">— The Appletini team</p>
     </div>
     <div class="links">
@@ -2827,6 +2877,7 @@ var qrcode = function() {
     $('sd-yes').hidden = !state.sd;
     $('sd-no').hidden = state.sd;
     $('keypad').hidden = !state.keypad;
+    $('mouse').hidden = state.keypad;
     var name = (state.name || '').trim();
     $('thanks-title').textContent = name ? 'Thank you, ' + name + '!' : 'Thank you!';
     var link = (state.discord || '').trim();

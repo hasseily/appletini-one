@@ -434,7 +434,7 @@
     <h3>Update the firmware</h3>
     <p>The card is supplied with firmware <b>F1.1.1</b> installed. You do not have to update it now. When a new version is available, do these steps:</p>
     <ol class="steps">
-      <li>Download the new <code>FIRMWARE.BIN</code> file from appletini.org.</li>
+      <li>Download the latest <code>FIRMWARE.BIN</code> file from:<br><span class="mono">github.com/hasseily/appletini-one/releases/latest</span></li>
       <li>Turn off the Apple //e. Remove the microSD card from the card.</li>
       <li>Copy <code>FIRMWARE.BIN</code> to the root folder of the microSD card.</li>
       <li>Push the microSD card fully back into the top slot. Turn on the Apple //e.</li>
@@ -2812,8 +2812,9 @@ var qrcode = function() {
   // ---------- State ----------
   var $ = function (id) { return document.getElementById(id); };
   var KEY = 'appletini-insert-v1';
-  var state = { sd: true, keypad: true, discord: '', name: '' };
+  var state = { sd: true, keypad: true, discord: 'https://discord.gg/MkpzJHrzFd', name: '' };
   try { var saved = JSON.parse(localStorage.getItem(KEY) || 'null'); if (saved) for (var s in saved) state[s] = saved[s]; } catch (e) {}
+  if (!(state.discord || '').trim()) state.discord = 'https://discord.gg/MkpzJHrzFd';
 
   function qrSvg(text) {
     var q = qrcode(0, 'M'); q.addData(text); q.make();

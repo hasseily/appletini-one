@@ -2097,3 +2097,34 @@ Validation before the first full build:
 The user confirmed that the F1.1.4 DMA fix starts Doom v11 on hardware, with
 no significant observed speedup. That check does not validate this timing
 trial. Record its measured build results and any hardware checks separately.
+
+### First trial result
+
+Full build `20260925T173149Z-2d8a48fe-full` reached `+0.172 ns` setup,
+`+0.031 ns` hold, and `+0.265 ns` pulse-width slack. Routing and bus skew
+passed, with no missing constraint objects or unconstrained internal paths.
+The normal margin gate rejected the build; no XSA or test firmware was
+exported. The routed design remains in that run as `failed_margin.dcp`.
+
+| Endpoint family | Baseline worst slack | Trial worst slack |
+| --- | ---: | ---: |
+| Coalescer scan address | `+0.226 ns` | `+1.077 ns` |
+| Disk II sound | `+0.213 ns` | `+0.419 ns` |
+| WOZ cache-patch registers | `+0.218 ns` | `+0.436 ns` |
+| TURBO shadow RAM | `+0.171 ns` | `+0.200 ns` |
+| Coalescer overall | `+0.220 ns` | `+0.177 ns` |
+
+The scan, sound, and WOZ paths no longer lead the critical paths. Keep these
+three simplifications for the next trial. Total LUTs fell from 34,091 to
+33,978, registers from 22,723 to 22,671, slices from 10,920 to 10,826, and
+control sets from 1,316 to 1,179. Block RAM and DSP use stayed at 110 and six.
+These totals include changes made by physical optimization.
+
+The new limits are PSRAM reset to chip select (`+0.172 ns`), unchanged SSI
+duration logic (`+0.176 ns`), and the new TURBO display policy and direct
+video admission paths (both `+0.177 ns`). Focus the next trial on direct
+video admission, which still carries an eight-level classification path
+into the coalescer write enable. Use the existing `X_POST_STALL` state to
+separate classification from acceptance. This costs one fabric clock per
+TURBO posted write and requires an ARM hold check before accepting the
+first deferred write. Keep classic posted writes unchanged.

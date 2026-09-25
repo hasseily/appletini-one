@@ -80,3 +80,13 @@ The package is `firmwares/FIRMWARE_F1.1.0_DISK2_SOUND_PLACEMENT.BIN`, with a
 matching `_AUDIT.json` and `.sha256`. The root and `firmwares/FIRMWARE.BIN`
 copies contain the same bytes. The earlier named sound test images remain
 available. The new placement has not been flashed or checked on the card.
+
+The September 25 timing trial removes the saturating adder before volume
+scaling. Idle PCM is divided by four and event PCM by two, so their sum fits
+in 16 signed bits. Final volume saturation remains. Simulation passed 35,199
+exact stereo sample checks, including signed extremes and clipping; the
+worst routed path into this player improved from +0.213 to +0.419 ns. The
+whole design reached +0.172 ns, below the +0.200 ns margin requirement, so
+this trial has no test firmware or new hardware listening result. See
+[`docs/FABRIC_TIMING_MARGIN_PLAN.md`](docs/FABRIC_TIMING_MARGIN_PLAN.md) for
+the build record and subsequent trials.

@@ -198,16 +198,16 @@ Build a new bitstream and its matching XSA, then rebuild the PS applications:
 vivado -mode batch -source scripts/create_project.tcl
 $env:APPLETINI_FULL_BUILD = '1'
 $env:APPLETINI_TIMING_DIAGNOSTICS = '1'
-$env:APPLETINI_POSITIVE_SLACK_ONLY = '1'
+Remove-Item Env:APPLETINI_POSITIVE_SLACK_ONLY -ErrorAction SilentlyContinue
 vivado -mode batch -source scripts/build_and_export_xsa.tcl
 vitis -s scripts/create_vitis_workspace.py
 ```
 
-For this requested firmware, strictly positive setup slack is sufficient;
-no extra positive margin is required. Hold, pulse width, bus skew, routing,
-and bound-constraint checks still apply. The temporary implementation margin
-helps placement and clears before the final timing report. Normal release
-promotion retains its separate policy.
+Timing trials require at least +0.200 ns setup slack. Hold, pulse width,
+bus skew, routing, and bound-constraint checks also apply. The temporary
+implementation margin helps placement and clears before the final timing
+report. Earlier correctness test images used an explicit positive-slack
+exception; that exception does not apply to the current timing work.
 
 Package with explicit FSBL, passing bitstream, and frontend ELF paths using
 `scripts/make_firmware_bin.bat`. Verify the image with

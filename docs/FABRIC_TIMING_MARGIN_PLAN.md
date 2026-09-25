@@ -2049,3 +2049,51 @@ vivado -mode batch -source scripts/promote_timing_candidate.tcl `
 
 Expected useful margin is `+0.200 ns` to about `+0.800 ns`. The measured gates,
 not that estimate, decide when the campaign ends.
+
+## September 25: Focus on Changes Since F1.0.8
+
+Compare RTL against F1.0.8 (`c5044416`). The F1.1.4 correctness build
+`20260925T161228Z-86b99228-full` has setup WNS `+0.150 ns`, hold WNS
+`+0.055 ns`, and pulse-width slack `+0.265 ns`. Routing and bus skew pass;
+no internal path lacks a constraint. This build used the positive-slack
+exception for the DMA completion fix. Keep its working firmware intact.
+All timing trials use the normal `+0.200 ns` gate.
+
+The main additions since F1.0.8 are TURBO caching, deferred video writes,
+Disk II replay and readiness, and seek sound handling. The video coalescer
+adds 36 block RAM tiles. The current design uses 110 of 140 tiles and
+10,920 slices. The worst SSI duration path predates F1.0.8, so leave that
+logic out of this trial.
+
+The first trial combines three small changes, each in its own commit:
+
+| Block | Measured path before the trial | Change |
+| --- | --- | --- |
+| Disk II WOZ replay | Accumulator to cache-patch enable, `+0.218 ns`, 11 levels | Store the bit-cell threshold when timing changes; compare the accumulator directly instead of adding eight first. |
+| Disk II sound | Motor state to volume multiplier, `+0.213 ns`, 10-11 levels | Remove saturation before volume scaling: the two attenuated inputs can only sum to `[-24576,24574]`. Keep final volume saturation. |
+| Video coalescer | Page scan to scan-address enable, `+0.226 ns`, 9 levels | Load the candidate address every page-search cycle and increment only its low byte while scanning a page. |
+
+These edits preserve cycle timing and output values. The trial changes no
+clocks, constraints, implementation directives, or floorplan. Compare each
+path family after routing, since the combined trial cannot assign a total
+WNS change to a single edit.
+
+Validation before the first full build:
+
+- WOZ: all 16,777,216 accumulator/timing combinations match the old predicate;
+  all 4,096 timing-register/byte-strobe combinations pass, along with reset
+  and a timing write on the same edge as a disk tick. All seven TURBO-time
+  benches and 66 WOZ source/model checks pass.
+- Sound: 35,199 exact stereo sample checks pass, including signed extremes,
+  volume clipping, DDR latency, and stale responses. All 20 standard Disk II
+  source/model checks pass.
+- Coalescer: 1,060,064 cycles match the frozen F1.1.4 implementation for
+  handshakes, flags, and valid writes, including bank flushes, collisions,
+  reset, and clear. All seven TURBO benches pass.
+- Capture, egress, SDD, linear overlay, VidHD SHR, and timing-hook checks pass.
+  Two stale VidHD source checks were updated for the existing direct-video
+  arbiter and split declaration/assignment; this changes no RTL.
+
+The user confirmed that the F1.1.4 DMA fix starts Doom v11 on hardware, with
+no significant observed speedup. That check does not validate this timing
+trial. Record its measured build results and any hardware checks separately.

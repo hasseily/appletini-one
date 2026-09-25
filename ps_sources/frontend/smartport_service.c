@@ -10,6 +10,8 @@
  * shadow RAM, while unsafe ranges keep the normal FIFO path. */
 
 #include "smartport_service.h"
+#include "memory_api.h"
+#include "memory_api_hw.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -1211,6 +1213,9 @@ static uint16_t build_sp_status(sp_device_t *dev,
     if (unit == 0x00U) {
         /* Unit 0 = SmartPort controller. Always present. */
         switch (status_code) {
+        case MEMORY_API_SELECTOR:
+            memory_api_status(g_scratch, &memory_api_hardware);
+            return MEMORY_API_STATUS_SIZE;
         case SP_STATUS_STATUS:
             g_scratch[0] = smartport_present_count();
             return 8U;
@@ -1442,6 +1447,8 @@ static void execute_command(void)
     const uint8_t raw_family =
         (uint8_t)(REG_READ(SP_R_CONTROL) & 0xFFU);
     const uint8_t family = raw_family & (uint8_t)~SP_FAMILY_PREFLIGHT_BIT;
+    /* Capture the reset generation before draining the request. */
+    memory_api_hw_prepare(accelerated);
     uint32_t len = sp_drain(g_cmd_buf, sizeof(g_cmd_buf),
                             SP_ST_IN_COUNT(hw_status));
     uint8_t result = ERR_DEVICE_OK;
@@ -1734,7 +1741,39 @@ static void execute_command(void)
             sp_response_append(result);
             break;
 
-        default:       /* INIT/OPEN/CLOSE/CONTROL/char READ/WRITE */
+        case 0x04: {   /* CONTROL: controller working-memory service */
+            uint16_t payload_length = 0U;
+            if (unit != 0U || list[4] != MEMORY_API_SELECTOR) {
+                result = ERR_BADCTL;
+                sp_response_append(result);
+                break;
+            }
+            if (len >= 12U) {
+                payload_length = (uint16_t)g_cmd_buf[10] |
+                                 ((uint16_t)g_cmd_buf[11] << 8);
+            }
+            /* The ROM sends nine parameter bytes. Only the first five
+             * belong to CONTROL; the trailing four are unspecified ROM
+             * padding, so do not impose a new zero-padding requirement. */
+            if (list[0] != 3U || len < 12U ||
+                (uint32_t)payload_length + 12U != len) {
+                result = memory_api_execute(NULL, 0U, &memory_api_hardware);
+            } else {
+                result = memory_api_execute(g_cmd_buf + 12U, payload_length,
+                                            &memory_api_hardware);
+            }
+            /* Reset may discard the request while ARM is copying. Never
+             * publish its response into a new command's FIFO. EXEC_PENDING
+             * otherwise stays asserted until the ordinary READY/ACK below. */
+            if (!memory_api_hw_response_valid()) {
+                g_irq_tick_valid = 0U;
+                return;
+            }
+            sp_response_append(result);
+            break;
+        }
+
+        default:       /* INIT/OPEN/CLOSE/char READ/WRITE */
             result = ERR_BADCTL;
             sp_response_append(result);
             break;

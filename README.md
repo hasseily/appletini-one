@@ -84,6 +84,10 @@ build fails if the final file exceeds either 1 MiB golden slot.
 C-only frontend changes require a Vitis rebuild and a new `FIRMWARE.BIN`; HDL,
 clock, AXI, or constraint changes require the full Vivado and Vitis sequence.
 
+The ARM-only [copy/fill API](README_MEMORY_API.md) documents the new SmartPort
+memory service, its private-memory contract, ca65 examples and PC build steps
+using the existing F1.1.1 hardware image.
+
 See [README_VIVADO.md](README_VIVADO.md) for hardware-build details and
 [README_BOOT_UPDATE.md](README_BOOT_UPDATE.md) for the flash layout and update
 steps. Script-specific usage is in

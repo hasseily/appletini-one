@@ -79,13 +79,15 @@ static psdma_result_t psdma_abort_owned(uint32_t timeout_us)
     }
 }
 
-psdma_result_t psdma_transfer(psdma_owner_t owner,
+psdma_result_t psdma_transfer_checked(psdma_owner_t owner,
                               uint32_t mc_addr,
                               uint32_t ddr_addr,
                               uint32_t length,
                               psdma_direction_t direction,
                               uint32_t timeout_us,
-                              uint32_t abort_timeout_us)
+                              uint32_t abort_timeout_us,
+                              uint8_t (*keep_running)(void *),
+                              void *context)
 {
     psdma_result_t rc;
     XTime started;
@@ -106,6 +108,11 @@ psdma_result_t psdma_transfer(psdma_owner_t owner,
         return rc;
     }
 
+    if (keep_running != 0 && keep_running(context) == 0U) {
+        psdma_release(owner);
+        return PSDMA_ERR_CANCELLED;
+    }
+
     status = REG_READ(PSDMA_STATUS_REG);
     if ((status & PSDMA_BUSY_BIT) != 0U) {
         rc = psdma_abort_owned(abort_timeout_us);
@@ -122,6 +129,11 @@ psdma_result_t psdma_transfer(psdma_owner_t owner,
     limit = psdma_timeout_ticks(timeout_us);
     XTime_GetTime(&started);
     for (;;) {
+        if (keep_running != 0 && keep_running(context) == 0U) {
+            rc = psdma_abort_owned(abort_timeout_us);
+            psdma_release(owner);
+            return (rc == PSDMA_OK) ? PSDMA_ERR_CANCELLED : PSDMA_ERR_ABORT;
+        }
         status = REG_READ(PSDMA_STATUS_REG);
         if ((status & PSDMA_DONE_BIT) != 0U) {
             psdma_release(owner);
@@ -138,6 +150,18 @@ psdma_result_t psdma_transfer(psdma_owner_t owner,
             return (rc == PSDMA_OK) ? PSDMA_ERR_TIMEOUT : PSDMA_ERR_ABORT;
         }
     }
+}
+
+psdma_result_t psdma_transfer(psdma_owner_t owner,
+                              uint32_t mc_addr,
+                              uint32_t ddr_addr,
+                              uint32_t length,
+                              psdma_direction_t direction,
+                              uint32_t timeout_us,
+                              uint32_t abort_timeout_us)
+{
+    return psdma_transfer_checked(owner, mc_addr, ddr_addr, length, direction,
+                                   timeout_us, abort_timeout_us, 0, 0);
 }
 
 psdma_owner_t psdma_current_owner(void)

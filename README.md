@@ -18,6 +18,8 @@ and higher-level peripheral emulation.
 
 The boot menu configures virtual cards, storage images, video, audio, networking,
 USB behavior, and named profiles. Settings are stored on the card's SD volume.
+All config-menu file choosers hide names that start with a dot, including
+dot-prefixed directories. The parent-directory row remains available.
 
 The slot 6 and slot 7 disk-image browsers select the first usable image when
 opening or entering a directory. Unsupported files and images already mounted

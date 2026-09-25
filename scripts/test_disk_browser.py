@@ -230,8 +230,14 @@ def main() -> int:
             add_file("z.po", 1U, 0U); add_file("Readme.bin", 4096U, 0U);
             add_file("a.hdv", 512U, AM_RDO); add_file("Folder", 0U, AM_DIR);
             add_file(".", 0U, AM_DIR); add_file("..", 0U, AM_DIR);
+            add_file(".hidden.po", 143360U, 0U); add_file("._disk.po", 4096U, 0U);
+            add_file(".hidden.txt", 100U, 0U); add_file(".hidden.bin", 100U, 0U);
+            add_file(".hidden_folder", 0U, AM_DIR);
             config_menu_browser_set_dir(&menu, "0:/disks");
             CHECK(menu.browser_count == 6U, "show rejected files but omit dot entries");
+            CHECK(g_browser_entries[0].type == CONFIG_BROWSER_ENTRY_PARENT &&
+                  strcmp(g_browser_entries[0].path, "0:/") == 0,
+                  "hiding dot entries retains the parent navigation row");
             CHECK(strcmp(selected(&menu)->name, "a.hdv") == 0, "first sorted image, not directory/control");
             CHECK(selected(&menu)->read_only && !config_menu_browser_entry_is_disabled(&menu, selected(&menu)),
                   "read-only images remain selectable");
@@ -495,10 +501,14 @@ def main() -> int:
             for (unsigned t = 0U; t < sizeof(targets)/sizeof(targets[0]); ++t) {
                 reset_fixture(&menu, targets[t]);
                 add_file("preview.png", 4096U, 0U); add_file("ignored.txt", 13U, 0U);
+                add_file(".hidden.png", 4096U, 0U); add_file(".hidden_folder", 0U, AM_DIR);
                 config_menu_open_browser(&menu, targets[t]);
                 CHECK(menu.browser_selected == 0U, "non-disk browsers retain control-row initial focus");
                 CHECK(find_entry(&menu, "ignored.txt") == UINT16_MAX, "non-disk filters still hide unsupported files");
                 CHECK(find_entry(&menu, "preview.png") != UINT16_MAX, "non-disk accepted file retained");
+                CHECK(find_entry(&menu, ".hidden.png") == UINT16_MAX &&
+                      find_entry(&menu, ".hidden_folder") == UINT16_MAX,
+                      "non-disk browsers omit dot files and directories");
                 config_menu_browser_set_dir(&menu, targets[t] == CONFIG_BROWSER_TARGET_PRINTOUT ? PRINTER_SERVICE_DIR : "0:/sub");
                 CHECK(menu.browser_selected == 0U, "non-disk set_dir retains initial focus policy");
                 if (targets[t] == CONFIG_BROWSER_TARGET_PRINTOUT) {

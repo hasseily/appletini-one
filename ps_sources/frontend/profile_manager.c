@@ -270,7 +270,7 @@ FRESULT profile_manager_list_dir(const char *dir,
         if (fr != FR_OK || info.fname[0] == '\0') {
             break;
         }
-        if (strcmp(info.fname, ".") == 0 || strcmp(info.fname, "..") == 0 ||
+        if (info.fname[0] == '.' ||
             (info.fattrib & AM_DIR) == 0U) {
             continue;
         }

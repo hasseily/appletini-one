@@ -5817,7 +5817,7 @@ static uint8_t config_menu_browser_accepts(const config_menu_t *menu,
     if (menu == NULL || info == NULL || info->fname[0] == '\0') {
         return 0U;
     }
-    if (strcmp(info->fname, ".") == 0 || strcmp(info->fname, "..") == 0) {
+    if (info->fname[0] == '.') {
         return 0U;
     }
     if ((info->fattrib & AM_DIR) != 0U) {
@@ -6003,7 +6003,8 @@ static FRESULT config_menu_browser_refresh(config_menu_t *menu)
         if (fr != FR_OK || info.fname[0] == '\0') {
             break;
         }
-        if (strcmp(info.fname, ".") == 0 || strcmp(info.fname, "..") == 0) {
+        /* Hide dot files and directories before disk browsers add unsupported files. */
+        if (info.fname[0] == '.') {
             continue;
         }
         accepted = config_menu_browser_accepts(menu, &info);

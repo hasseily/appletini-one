@@ -1,6 +1,6 @@
 # Appletini copy/fill API 1.0
 
-This branch adds an ARM service for explicit 65C02 memory transfers. It reuses
+Firmware F1.1.2 adds an ARM service for explicit 65C02 memory transfers. It reuses
 the F1.1.1 FPGA interfaces: the vTW CPU hold, shadow-RAM access and PSRAM DMA.
 No FPGA change is required. The firmware must be rebuilt on the PC; stock
 F1.1.1 does **not** implement this API.

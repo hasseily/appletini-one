@@ -15,7 +15,7 @@ values keep their meanings. The checkbox rows pair Enable TURBO speed with
 the slug debug key, Ignore $C074 with Disable DiskII Acceleration, and Slow
 Floating bus with Slow Paddles/joystick.
 
-The current firmware version is **F1.1.1**. The archived build described
+The current firmware version is **F1.1.2**. The archived build described
 below uses version **F1.0.9-turbo2** on branch `turbo-v2`.
 TURBO has no fixed MHz rating: cache misses and the instruction mix change
 its rate. Simulation measurements and routed timing accompany the built

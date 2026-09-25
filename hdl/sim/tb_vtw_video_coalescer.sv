@@ -21,6 +21,36 @@ module tb_vtw_video_coalescer;
     logic [31:0] random_q = 32'h6532ACE1;
     vtw_video_coalescer dut (.*);
 
+    logic ref_write_ready, ref_mirror_valid, ref_drained, ref_active_drained;
+    logic [1:0] ref_bank_drained;
+    logic [16:0] ref_mirror_addr;
+    logic [7:0] ref_mirror_data;
+    int equivalent_cycles = 0;
+    vtw_video_coalescer_reference reference_i (
+        .clk(clk), .rstn(rstn), .clear(clear),
+        .write_valid(write_valid), .write_addr(write_addr),
+        .write_data(write_data), .write_active(write_active),
+        .flush_valid(flush_valid), .flush_bank(flush_bank),
+        .mirror_ready(mirror_ready), .write_ready(ref_write_ready),
+        .mirror_valid(ref_mirror_valid), .mirror_addr(ref_mirror_addr),
+        .mirror_data(ref_mirror_data), .drained(ref_drained),
+        .active_drained(ref_active_drained), .bank_drained(ref_bank_drained)
+    );
+
+    // Compare every cycle, including backpressure and reset, against the
+    // original control logic. Addresses outside mirror_valid are unused.
+    always @(posedge clk) begin
+        #0.5;
+        equivalent_cycles++;
+        if ({write_ready, mirror_valid, drained, active_drained, bank_drained}
+            !== {ref_write_ready, ref_mirror_valid, ref_drained,
+                 ref_active_drained, ref_bank_drained})
+            $fatal(1, "coalescer control changed at cycle %0d", equivalent_cycles);
+        if (mirror_valid && {mirror_addr, mirror_data} !==
+                            {ref_mirror_addr, ref_mirror_data})
+            $fatal(1, "coalescer valid traffic changed at cycle %0d", equivalent_cycles);
+    end
+
     always @(posedge clk) begin
         if (rstn && !clear) begin
             cycles <= cycles + 1;
@@ -88,6 +118,39 @@ module tb_vtw_video_coalescer;
         mirror_ready = 0;
     endtask
 
+    task automatic reset_during_flush(input bit hard_reset);
+        write_active = 0;
+        send(17'h000FF, 8'hA1);
+        send(17'h100FF, 8'hB2);
+        @(negedge clk);
+        flush_valid = 1;
+        flush_bank = 1;
+        mirror_ready = 0;
+        wait (mirror_valid);
+        @(negedge clk);
+        // Reset cancels the held snapshot and rejects a concurrent writer.
+        rstn = !hard_reset;
+        clear = !hard_reset;
+        write_valid = 1;
+        write_addr = 17'h100FF;
+        write_data = 8'hC3;
+        repeat (3) @(posedge clk);
+        #1;
+        if (write_ready || mirror_valid || drained || active_drained || |bank_drained)
+            $fatal(1, "reset exposed a pending mirror or accepted a writer");
+        @(negedge clk);
+        rstn = 1;
+        clear = 0;
+        write_valid = 0;
+        flush_valid = 0;
+        for (int i = 0; i < 131072; i++)
+            touched[i] = 0;
+        wait (write_ready);
+        #1;
+        if (!drained || !active_drained || bank_drained != 2'b11 || mirror_valid)
+            $fatal(1, "reset did not discard the old dirty pages");
+    endtask
+
     initial begin
         repeat (4) @(posedge clk);
         @(negedge clk); rstn = 1;
@@ -146,7 +209,21 @@ module tb_vtw_video_coalescer;
             send({random_q[15:8], 4'h0, random_q[3:0]}, random_q[23:16]);
         end
         verify_drained();
-        $display("VTW VIDEO COALESCER PASS: accepted=%0d mirrored=%0d", accepted, emitted);
+
+        reset_during_flush(0);
+        reset_during_flush(1);
+        // Page ends must retain their bank; the next page loads separately.
+        write_active = 0;
+        send(17'h000FF, 8'h11);
+        send(17'h00100, 8'h22);
+        send(17'h0FFFF, 8'h33);
+        send(17'h10000, 8'h44);
+        send(17'h1FFFF, 8'h55);
+        flush_one_bank(1);
+        flush_one_bank(0);
+        verify_drained();
+        $display("VTW VIDEO COALESCER PASS: accepted=%0d mirrored=%0d equivalent_cycles=%0d",
+                 accepted, emitted, equivalent_cycles);
         $finish;
     end
     initial begin

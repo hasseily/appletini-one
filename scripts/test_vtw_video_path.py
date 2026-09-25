@@ -25,6 +25,7 @@ def main():
     sources = ["hdl/globals.sv", "hdl/apple/apple_cycle_capture_pkg.sv",
                "hdl/sim/xpm_fifo_sync_model.sv", "hdl/apple/apple_cycle_capture.sv",
                "hdl/apple/apple_cycle_egress.sv", "hdl/apple/vtw_video_coalescer.sv",
+               "hdl/sim/vtw_video_coalescer_reference.sv",
                "hdl/sim/tb_vtw_video_coalescer.sv",
                "hdl/sim/tb_apple_cycle_capture.sv", "hdl/sim/tb_apple_cycle_egress.sv"]
     run("xvlog", ["--sv", *(str(ROOT / s) for s in sources)], "compile.log")

@@ -1,3 +1,5 @@
+// Frozen F1.1.4 coalescer (6335a98) for cycle-equivalence checks.
+// Keep its original address control independent of later timing edits.
 `timescale 1ns / 1ps
 
 // Latest-value motherboard mirror for TURBO video and overlay RAM writes.
@@ -5,7 +7,7 @@
 // Inactive writes retain their translated MAIN/AUX bank until an explicit
 // bank flush; the caller steers and restores the motherboard for that flush.
 // Every accepted write also enters the renderer stream at the caller.
-module vtw_video_coalescer (
+module vtw_video_coalescer_reference (
     input  logic        clk,
     input  logic        rstn,
     input  logic        clear,
@@ -118,11 +120,8 @@ module vtw_video_coalescer (
                 end
                 SELECT_PAGE: begin
                     next_page_q <= next_page_q + 9'd1;
-                    // The address matters only after a page is selected.
-                    // Load it every scan step so the dirty-page lookup
-                    // does not drive the address register's clock enable.
-                    scan_addr_q <= {next_page_q, 8'd0};
                     if (select_page) begin
+                        scan_addr_q <= {next_page_q, 8'd0};
                         state_q <= FETCH_BYTE;
                     end
                 end
@@ -133,7 +132,7 @@ module vtw_video_coalescer (
                     end else if (scan_addr_q[7:0] == 8'hFF) begin
                         state_q <= SELECT_PAGE;
                     end else begin
-                        scan_addr_q[7:0] <= scan_addr_q[7:0] + 8'd1;
+                        scan_addr_q <= scan_addr_q + 17'd1;
                         state_q <= FETCH_BYTE;
                     end
                 end
@@ -142,7 +141,7 @@ module vtw_video_coalescer (
                         if (scan_addr_q[7:0] == 8'hFF) begin
                             state_q <= SELECT_PAGE;
                         end else begin
-                            scan_addr_q[7:0] <= scan_addr_q[7:0] + 8'd1;
+                            scan_addr_q <= scan_addr_q + 17'd1;
                             state_q <= FETCH_BYTE;
                         end
                     end

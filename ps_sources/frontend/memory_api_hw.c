@@ -32,11 +32,14 @@ static uint8_t bounce[MEMORY_API_DMA_CHUNK] __attribute__((aligned(32)));
 static uint32_t hw_micros(void *context)
 {
     XTime ticks;
+    /* The BSP expands COUNTS_PER_SECOND to an unparenthesized division.
+     * Evaluate that complete expression before using it as a divisor. */
+    const uint64_t counts_per_second = (uint64_t)(COUNTS_PER_SECOND);
     (void)context;
     XTime_GetTime(&ticks);
-    return (uint32_t)(((uint64_t)ticks / COUNTS_PER_SECOND) * 1000000ULL +
-                     (((uint64_t)ticks % COUNTS_PER_SECOND) * 1000000ULL) /
-                         COUNTS_PER_SECOND);
+    return (uint32_t)(((uint64_t)ticks / counts_per_second) * 1000000ULL +
+                     (((uint64_t)ticks % counts_per_second) * 1000000ULL) /
+                         counts_per_second);
 }
 
 static uint8_t hw_available(void *context)

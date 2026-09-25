@@ -15,7 +15,8 @@ static uint32_t ptr, read_count, write_count, read_data, flush_count, reset_seq;
 static uint32_t dma_calls, maximum_dma, abort_on_dma, release_calls;
 static uint8_t held, live, pending, ramworks;
 static uint64_t ticks;
-void XTime_GetTime(XTime *out) { ticks += COUNTS_PER_SECOND / 10000; *out = ticks; }
+static uint64_t tick_step = (COUNTS_PER_SECOND) / 10000U;
+void XTime_GetTime(XTime *out) { ticks += tick_step; *out = ticks; }
 void Xil_DCacheFlushRange(UINTPTR address, unsigned length) {(void)address; assert(length==512);}
 void Xil_DCacheInvalidateRange(UINTPTR address, unsigned length) {(void)address; assert(length==512);}
 psdma_owner_t psdma_current_owner(void) {return PSDMA_OWNER_NONE;}
@@ -76,9 +77,69 @@ static void descriptor(uint8_t p[24],uint8_t srcspace,uint8_t srcbank,uint16_t s
     p[8]=1;p[9]=1;p[10]=srcspace;p[11]=srcbank;put16_mock(p+12,srcaddr);
     p[14]=dstspace;p[15]=dstbank;put16_mock(p+16,dstaddr);put16_mock(p+18,length);
 }
+static void test_microsecond_clock(void)
+{
+    /* The actual timer runs at 333333343 Hz. Check known answers, including
+     * both sides of the BSP macro's old two-second discontinuity and the
+     * intended 32-bit microsecond wrap after about 71.6 minutes. */
+    static const struct {
+        uint64_t ticks;
+        uint32_t microseconds;
+    } cases[] = {
+        {0ULL, 0U},
+        {333333342ULL, 999999U},
+        {333333343ULL, 1000000U},
+        {333333344ULL, 1000000U},
+        {666666685ULL, 1999999U},
+        {666666686ULL, 2000000U},
+        {666666687ULL, 2000000U},
+        {1333333372ULL, 4000000U},
+        {1333333374ULL, 4000000U},
+        {1431655806851ULL, UINT32_MAX},
+        {1431655806852ULL, 0U},
+        {1431655806853ULL, 0U},
+    };
+    unsigned i;
+    uint32_t before, after;
+
+    assert((COUNTS_PER_SECOND) == 333333343U);
+    tick_step = 0U;
+    for (i = 0U; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        uint32_t actual;
+        ticks = cases[i].ticks;
+        actual = hw_micros(NULL);
+        if (actual != cases[i].microseconds) {
+            fprintf(stderr, "microsecond clock case %u: got %lu, expected %lu\n",
+                    i, (unsigned long)actual,
+                    (unsigned long)cases[i].microseconds);
+        }
+        assert(actual == cases[i].microseconds);
+    }
+    ticks = 666666685ULL;
+    before = hw_micros(NULL);
+    ticks = 666666687ULL;
+    after = hw_micros(NULL);
+    assert((uint32_t)(after - before) == 1U);
+    /* The old expression also jumped forward by 750001 us over these
+     * two microseconds around its four-second boundary. */
+    ticks = 1333333041ULL;
+    before = hw_micros(NULL);
+    ticks = 1333333707ULL;
+    after = hw_micros(NULL);
+    assert((uint32_t)(after - before) == 2U);
+    ticks = 1431655806851ULL;
+    before = hw_micros(NULL);
+    ticks = 1431655806852ULL;
+    after = hw_micros(NULL);
+    assert((uint32_t)(after - before) == 1U);
+    ticks = 0U;
+    tick_step = (COUNTS_PER_SECOND) / 10000U;
+    puts("PASS hardware microsecond clock: BSP macro, second boundaries, 32-bit wrap");
+}
 int main(void) {
     uint8_t payload[24], result[32], expected[1600];
     unsigned srcspace,dstspace,so,doff,i;
+    test_microsecond_clock();
     for(srcspace=0;srcspace<3;srcspace++)for(dstspace=0;dstspace<3;dstspace++)
     for(so=0;so<8;so++)for(doff=0;doff<8;doff++) {
         uint32_t source=(srcspace==0?0:srcspace==1?0x10000:0x7F0000)+0x1000+so;

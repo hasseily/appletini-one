@@ -17,6 +17,7 @@ import test_vtw as vtw
 
 BENCHES = [
     ("tb_disk2_time_ready", "DISK2 TIME READY EQUIVALENCE PASS"),
+    ("tb_disk2_woz_cell_due", "DISK2 WOZ CELL DUE EQUIVALENCE PASS"),
     ("tb_disk2_vtw_read", "DISK2 VTW READ PASS"),
     ("tb_disk2_physical_bus", "DISK2 PHYSICAL BUS PASS"),
     ("tb_disk2_woz_rw", "DISK2 COUNTED WOZ TIME PASS"),
@@ -92,6 +93,46 @@ endmodule
     return path
 
 
+def write_woz_cell_due_bench() -> Path:
+    """Check the RTL threshold against the original add/compare for all inputs."""
+    source = (vtw.ROOT / "hdl/apple/disk2_card.sv").read_text(encoding="utf-8")
+    threshold = re.search(
+        r"function automatic logic \[7:0\] woz_cell_threshold\b.*?endfunction",
+        source, re.DOTALL,
+    )
+    due = re.search(r"\bwire woz_cell_due\s*=.*?;", source, re.DOTALL)
+    if threshold is None or due is None:
+        raise RuntimeError("Disk II WOZ due threshold not found")
+    path = vtw.OUT_DIR / "tb_disk2_woz_cell_due.sv"
+    path.write_text("""`timescale 1ns / 1ps
+module tb_disk2_woz_cell_due;
+    logic [7:0] track_bit_timing_q;
+    logic [15:0] woz_bit_accum_q;
+""" + threshold.group(0) + """
+    wire [7:0] woz_cell_threshold_q = woz_cell_threshold(track_bit_timing_q);
+""" + due.group(0) + """
+    integer effective_timing;
+    logic expected_due;
+    initial begin
+        for (int timing = 0; timing < 256; timing++) begin
+            track_bit_timing_q = timing;
+            effective_timing = timing < 8 ? 32 : timing;
+            for (int accum = 0; accum < 65536; accum++) begin
+                woz_bit_accum_q = accum;
+                expected_due = accum + 8 >= effective_timing;
+                #1;
+                if (woz_cell_due !== expected_due)
+                    $fatal(1, "WOZ due changed: timing=%0d accum=%0d", timing, accum);
+            end
+        end
+        $display("DISK2 WOZ CELL DUE EQUIVALENCE PASS: 16777216 combinations");
+        $finish;
+    end
+endmodule
+""", encoding="utf-8")
+    return path
+
+
 def main() -> int:
     vtw.OUT_DIR = vtw.ROOT / "build" / "disk2_turbo_time_sim"
     vtw.OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -101,9 +142,10 @@ def main() -> int:
                if not source.startswith("hdl/sim/") and
                not source.endswith("vtw_shadow_host_port.sv")]
     sources.extend(f"hdl/sim/{bench}.sv" for bench, _ in BENCHES
-                   if bench != "tb_disk2_time_ready")
+                   if bench not in ("tb_disk2_time_ready", "tb_disk2_woz_cell_due"))
     try:
         sources.append(str(write_time_ready_bench()))
+        sources.append(str(write_woz_cell_due_bench()))
         vtw.run([vtw.vivado_tool("xvlog"), "--sv"] +
                 [str(vtw.ROOT / source) for source in sources],
                 vtw.OUT_DIR / "xvlog.log")

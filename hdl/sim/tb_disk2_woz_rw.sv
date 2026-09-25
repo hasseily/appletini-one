@@ -203,15 +203,72 @@ module tb_disk2_woz_rw;
     endtask
 
     task automatic axi_write(input logic [7:0] reg_addr,
-                             input logic [31:0] value);
+                             input logic [31:0] value,
+                             input logic [3:0] strobes = 4'hF);
         @(negedge clk);
         as_common.awaddr = reg_addr;
         as_common.wdata = value;
-        as_common.wstrb = 4'hF;
+        as_common.wstrb = strobes;
         axi.awvalid = 1'b1;
         @(negedge clk);
         axi.awvalid = 1'b0;
         repeat (2) @(negedge clk);
+    endtask
+
+    task automatic check_timing_threshold_programming;
+        logic [7:0] expected_timing;
+        logic [7:0] expected_threshold;
+        begin
+            reset_and_load(1'b0, 1'b0, 64'hA5A5_A5A5_A5A5_A5A5);
+            check(dut.woz_cell_threshold_q == 8'd24,
+                  "reset/default bit-cell threshold differs from 32-unit timing");
+            expected_timing = 8'd32;
+            for (int timing = 0; timing < 256; timing++) begin
+                for (int strobes = 0; strobes < 16; strobes++) begin
+                    expected_timing = ~8'(timing);
+                    axi_write(8'h15, {24'd0, expected_timing}, 4'h1);
+                    axi_write(8'h15, 32'hA5C38000 | timing, 4'(strobes));
+                    if (strobes & 1)
+                        expected_timing = 8'(timing);
+                    expected_threshold = expected_timing < 8 ?
+                        8'd24 : expected_timing - 8'd8;
+                    check(dut.track_bit_timing_q == expected_timing &&
+                          dut.woz_cell_threshold_q == expected_threshold,
+                          $sformatf("timing/threshold write differs: timing=%0d strobes=%h",
+                                    timing, strobes));
+                end
+            end
+
+            // A timing write and native tick share the old timing on their
+            // accepted edge. The new register applies to the following tick.
+            axi_write(8'h15, 32'd32);
+            source_ticks(3, 1'b0);
+            check(dut.woz_bit_accum_q == 16'd24,
+                  "could not reach the old timing boundary");
+            @(negedge clk);
+            as_common.awaddr = 8'h15;
+            as_common.wdata = 32'd64;
+            as_common.wstrb = 4'h1;
+            axi.awvalid = 1'b1;
+            ab_read.sss_en = 1'b1;
+            @(negedge clk);
+            axi.awvalid = 1'b0;
+            ab_read.sss_en = 1'b0;
+            check(dut.drive_bit_offset_q[0] == 17'd1 &&
+                  dut.woz_bit_accum_q == 16'd0 &&
+                  dut.track_bit_timing_q == 8'd64 &&
+                  dut.woz_cell_threshold_q == 8'd56,
+                  "coincident timing write changed the tick's old-state behavior");
+            source_ticks(7, 1'b0);
+            check(dut.drive_bit_offset_q[0] == 17'd1 &&
+                  dut.woz_bit_accum_q == 16'd56,
+                  "new timing did not hold the next cell for eight ticks");
+            source_ticks(1, 1'b0);
+            check(dut.drive_bit_offset_q[0] == 17'd2 &&
+                  dut.woz_bit_accum_q == 16'd0,
+                  "new timing did not take effect after the write edge");
+            $display("DISK2 WOZ TIMING THRESHOLD PASS: 4096 writes and coincident tick");
+        end
     endtask
 
     // Perform one real Apple slot-I/O cycle. vtw_native_cycle_active selects
@@ -329,6 +386,9 @@ module tb_disk2_woz_rw;
         @(negedge clk);
         rstn = 1'b1;
         repeat (3) @(posedge clk);
+        check(dut.track_bit_timing_q == 8'd32 &&
+              dut.woz_cell_threshold_q == 8'd24,
+              "reset timing and derived bit-cell threshold are inconsistent");
 
         axi_write(8'h10, read_only ? 32'h0000_0003 : 32'h0000_0001);
         axi_write(8'h07, 32'd16);
@@ -507,6 +567,8 @@ module tb_disk2_woz_rw;
         sss = '0;
         as_common = '0;
         axi.awvalid = 1'b0;
+
+        check_timing_threshold_programming();
 
         // Native WOZ read: four 1 MHz ticks form one 32-unit bit cell. A
         // repeating A5 track reaches the data latch after nine bit cells.

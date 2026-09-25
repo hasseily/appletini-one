@@ -186,6 +186,7 @@ module disk2_card (
     logic [7:0] drive_rotation_qtrack_q [0:1];
     logic       woz_write_started_q;
     logic [7:0]  track_bit_timing_q;
+    logic [7:0]  woz_cell_threshold_q;
     logic [15:0] woz_seam_start_q;
     logic [15:0] woz_seam_run_q;
     logic [16:0] woz_seam_pre_start_q;
@@ -548,6 +549,14 @@ module disk2_card (
     wire [16:0] woz_accum_plus_cycle = {1'b0, woz_bit_accum_q} + 17'd8;
     wire [15:0] woz_accum_plus_saturated =
         woz_accum_plus_cycle[16] ? 16'hFFFF : woz_accum_plus_cycle[15:0];
+    // Timing is at least eight. Move that fixed tick increment to the
+    // configured threshold, away from replay and sequencer enables.
+    // Any accumulator above 255 already exceeds every possible threshold.
+    function automatic logic [7:0] woz_cell_threshold(input logic [7:0] timing);
+        woz_cell_threshold = (timing < 8'd8) ? 8'd24 : (timing - 8'd8);
+    endfunction
+    wire woz_cell_due = (|woz_bit_accum_q[15:8]) ||
+                       (woz_bit_accum_q[7:0] >= woz_cell_threshold_q);
     wire woz_stream_active =
         enabled &&
         ab_read.res &&
@@ -556,8 +565,7 @@ module disk2_card (
         track_woz_q &&
         woz_track_stream_ready;
     wire woz_bit_cell_tick =
-        woz_stream_active &&
-        (woz_accum_plus_cycle >= {9'h000, woz_effective_bit_timing});
+        woz_stream_active && woz_cell_due;
     wire woz_cache_before_tick =
         woz_stream_active &&
         !woz_bit_cell_tick &&
@@ -567,11 +575,9 @@ module disk2_card (
     // Wait for their current data instead of advancing with an old byte.
     wire vtw_stream_current = stream_line_hit_q &&
                               stream_line_pos_q == active_stream_pos;
-    wire vtw_woz_cell_due = track_woz_q &&
-        woz_accum_plus_cycle >= {9'h000, woz_effective_bit_timing};
-    // The accumulator add/compare stays in the local replay path. A CPU or
-    // private-read acceptance uses a registered view, invalidated on every
-    // event that can change the accumulator or its track/timing context.
+    wire vtw_woz_cell_due = track_woz_q && woz_cell_due;
+    // CPU and private-read acceptance use a registered view, invalidated by
+    // every event that can change the accumulator or its track/timing context.
     // A quiet edge then samples the new state. Keep DDR and weak-bit guards
     // live so a previously ready snapshot cannot pass a new pipeline wait.
     always_ff @(posedge clk) begin
@@ -968,6 +974,7 @@ module disk2_card (
             drive_bit_offset_q[0] <= 17'd0;
             drive_bit_offset_q[1] <= 17'd0;
             track_bit_timing_q <= 8'd32;
+            woz_cell_threshold_q <= 8'd24;
             woz_seam_start_q <= 16'd0;
             woz_seam_run_q <= 16'd0;
             woz_seam_pre_start_q <= WOZ_SEAM_PRE_START_INVALID;
@@ -1925,6 +1932,8 @@ module disk2_card (
                     D2_REG_TRACK_BIT_TIMING: begin
                         if (as_common.wstrb[0]) begin
                             track_bit_timing_q <= as_common.wdata[7:0];
+                            woz_cell_threshold_q <=
+                                woz_cell_threshold(as_common.wdata[7:0]);
                             woz_bit_accum_q <= 16'd0;
                             woz_seam_arm_q <= 1'b0;
                             woz_cached_valid_q <= 1'b0;

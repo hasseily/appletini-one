@@ -106,8 +106,8 @@ module tb_ps_dma_command;
         check(status[0] && !status[1] && !status[2],
               $sformatf("normal completion reports done: status=%08x", status));
         reg_read(8'h03, status);
-        check(!status[0] && !status[2],
-              "reading STATUS clears the normal completion latch");
+        check(status[0] && !status[2],
+              "reading STATUS preserves the normal completion latch");
 
         reg_write(8'h02, 32'h80000200);
         @(negedge clk);
@@ -130,7 +130,7 @@ module tb_ps_dma_command;
         check(!status[1] && status[2] && !status[0],
               $sformatf("drained abort reports aborted: status=%08x", status));
         reg_read(8'h03, status);
-        check(!status[2], "reading STATUS clears the aborted latch");
+        check(status[2], "reading STATUS preserves the aborted latch");
 
         if (fails == 0) $display("PS DMA COMMAND PASS");
         else            $display("PS DMA COMMAND FAILED: %0d checks", fails);

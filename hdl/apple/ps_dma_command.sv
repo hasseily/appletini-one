@@ -10,6 +10,7 @@
 //                              : writing this register kicks off a DMA
 //                                with the currently-latched values
 //   0x03  STATUS      [0]=complete, [1]=busy, [2]=aborted
+//                         Results stay set until the next LENGTH_RW command.
 //   0x04  CONTROL     [0]=abort current command. The engine drains any
 //                         accepted AXI/PSRAM operation before ABORTED rises.
 //
@@ -49,15 +50,6 @@ module ps_dma_command (
     logic        ps_cmd_busy_q;
     logic        ps_cmd_complete_q;
     logic        ps_cmd_aborted_q;
-
-    // Detect a read of STATUS by tracking the prior araddr. axidouble's
-    // addrdecode advances araddr the cycle after a read fires (see the
-    // comment in apple_top), so consecutive reads always go through a
-    // non-STATUS araddr value between them.
-    logic [7:0]  araddr_prev_q;
-    wire         status_read_pulse =
-        (as_common.araddr == REG_STATUS) &&
-        (araddr_prev_q    != REG_STATUS);
 
     wire [31:0] mc_addr_word    = {8'h00, mc_addr_q};
     wire [31:0] length_rw_word  = {rw_q, 15'h0, length_q};
@@ -101,19 +93,17 @@ module ps_dma_command (
             ps_cmd_busy_q     <= 1'b0;
             ps_cmd_complete_q <= 1'b0;
             ps_cmd_aborted_q  <= 1'b0;
-            araddr_prev_q     <= 8'hFF;
         end else begin
-            araddr_prev_q <= as_common.araddr;
-
             if (req_valid_q && dma_req_ready)
                 req_valid_q <= 1'b0;
 
+            // The shared read address changes during idle cycles and reads
+            // to other clients. It cannot acknowledge this owner's result.
+            // Retain completion until LENGTH_RW starts the next command so
+            // delayed firmware polls cannot miss a finished transfer.
             if (dma_req_done) begin
                 ps_cmd_busy_q     <= 1'b0;
                 ps_cmd_complete_q <= 1'b1;
-            end else if (status_read_pulse) begin
-                ps_cmd_complete_q <= 1'b0;
-                ps_cmd_aborted_q  <= 1'b0;
             end
             if (dma_req_abort_done) begin
                 req_abort_q      <= 1'b0;

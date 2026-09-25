@@ -153,6 +153,15 @@ cycles, cache read hits/misses, invalidations, Disk II waits and video waits.
 The 32-bit counters wrap and clear with `busdbg clear`. They provide interval
 measurements; live reads are not an atomic snapshot of all counters.
 
+Direct TURBO video writes now enter through a registered admission state.
+Address classification and shadow writes finish before the renderer and
+deferred mirror accept the saved byte together. Display policy uses the
+switch state captured with that byte. An ARM hold waits for the staged write
+and its mirror to drain. This adds one fabric clock (about 7.5 ns) when a
+posted write could previously enter both consumers at once. A write that
+already needed to wait gains no extra cycle. The video-wait counter includes
+this admission cycle; classic posted writes keep their existing timing.
+
 TURBO does not preserve cycle-counted RAM loops or dummy memory-read timing.
 Use a 1 MHz through 33 MHz preset for software that depends on those details. Selecting
 1 MHz restores the classic path; throttling TURBO instructions alone would

@@ -2128,3 +2128,33 @@ into the coalescer write enable. Use the existing `X_POST_STALL` state to
 separate classification from acceptance. This costs one fabric clock per
 TURBO posted write and requires an ARM hold check before accepting the
 first deferred write. Keep classic posted writes unchanged.
+
+### Second trial: Stage direct video admission
+
+All direct TURBO posted writes pass through the existing `X_POST_STALL`
+state after `X_ROUTE` writes shadow RAM. Both video consumers accept the
+saved tuple together from that state. Keep ARM posted-write exclusion active
+through both states, and keep ARM flush completion blocked until the first
+staged write has entered and drained from the mirror.
+
+The same stage allows display-policy decoding to use the captured address
+and switch flags. Capture the remaining 80COL, wide-window, and forced-active
+flags with the request, then register the unchanged policy result in
+`X_ROUTE`. This removes CPU/MMU decoding from the policy register's input
+without changing which display state the policy uses.
+
+A ready direct write gains one fabric clock of latency (about 7.5 ns).
+Already-stalled direct writes and classic posted writes keep their prior
+latency. Counter 7 includes the new admission cycle. This trial changes no
+clock, external timing requirement, or Vivado directive.
+
+Validation passed all seven TURBO benches, including nine new admission
+cases for first-write readiness and hold, backpressure, pause, speed exit,
+enable/core/reset aborts, and policy changes between capture and route.
+The staged policy matched the original capture-time calculation on 11,997
+routed accesses. The consumer monitor checks atomic acceptance throughout
+the suite. The unchanged policy passed 398,595 combinations. Coalescer,
+capture, egress, ONE//e video with both real-ROM boot paths, and all 17
+VidHD/SHR checks passed. Independent RTL and test review found no remaining
+issue. The first hold test had confused HELD with DONE; correcting that test
+required no RTL change.

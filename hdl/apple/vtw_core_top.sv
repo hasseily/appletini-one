@@ -480,21 +480,25 @@ module vtw_core_top (
     logic              cycle_video_page2_q;
     logic              cycle_video_hires_q;
     logic              cycle_video_80store_q;
+    logic              cycle_video_80col_q;
+    logic              cycle_video_post_main_wide_q;
+    logic              cycle_video_force_active_q;
     logic              cycle_video_mirror_active_q;
-    wire               capture_video_mirror_active;
+    wire               route_video_mirror_active;
     wire               post_main_wide_eff;
 
-    // Classify before X_ROUTE. Renderer eligibility and the TURBO cache's
-    // write-through permission stay unchanged; only physical drain urgency
-    // depends on the display mode. Armed overlays keep the broad policy.
+    // Classify the captured tuple before direct-video admission. Renderer
+    // eligibility and the TURBO cache's write-through permission stay
+    // unchanged; only physical drain urgency depends on the display mode.
+    // Armed overlays keep the broad policy.
     vtw_video_policy video_policy_i (
-        .address(capture_xl_decoded_d[16:0]),
-        .sw_text(vsss.sw_text), .sw_mixed(vsss.sw_mixed),
-        .sw_page2(vsss.sw_page2), .sw_hires(vsss.sw_hires),
-        .sw_80store(vsss.sw_80store), .sw_80col(vsss.sw_80col),
-        .post_main_wide(post_main_wide_eff),
-        .overlay_match(overlay_capture_armed),
-        .mirror_active(capture_video_mirror_active)
+        .address(cycle_xl_decoded_q[16:0]),
+        .sw_text(cycle_video_text_q), .sw_mixed(cycle_video_mixed_q),
+        .sw_page2(cycle_video_page2_q), .sw_hires(cycle_video_hires_q),
+        .sw_80store(cycle_video_80store_q), .sw_80col(cycle_video_80col_q),
+        .post_main_wide(cycle_video_post_main_wide_q),
+        .overlay_match(cycle_video_force_active_q),
+        .mirror_active(route_video_mirror_active)
     );
 
     always_comb begin
@@ -957,7 +961,7 @@ module vtw_core_top (
         X_ROUTE,      // map registered route tuple + issue shadow access
         X_MEM_CAPTURE,// capture synchronous BRAM output
         X_MEM_DONE,   // registered read data ready / waiting for pace
-        X_POST_STALL, // posted queue full: push pending
+        X_POST_STALL, // direct-video admission or posted queue retry
         X_BUS,        // sync bus cycle in flight
         X_BUS_DONE,   // response latched, completing edge pending
         X_RW_LOOKUP,  // RamWorks: line-cache hit test / patch
@@ -1322,7 +1326,11 @@ module vtw_core_top (
     // Keep admission closed until the saved physical switches are restored.
     wire video_start_ready = !video_sync_active &&
         (video_mirror_mode_q || (eng_post_idle && !post_stage_valid_q));
-    wire video_fast_req = core_post_req && video_selected;
+    // X_ROUTE classifies and commits the shadow write. Admit its saved
+    // tuple on the next edge so overlay bounds do not feed either video
+    // consumer's write enable. Both consumers still accept together.
+    wire video_fast_req = core_active && video_selected &&
+                          (xstate_q == X_POST_STALL);
     wire video_fast_accept = video_fast_req && video_coalesce_ready &&
                              video_start_ready && video_record_ready;
     wire core_post_accept = core_post_req && !video_selected &&
@@ -1497,6 +1505,8 @@ module vtw_core_top (
 
     /* The xstate FSM runs one access ahead of a frozen core: these are
      * the only states from which it can still reach the RamWorks cache.
+     * Direct-video admission must also drain before the hold can complete,
+     * including the first write before video_mirror_pending becomes set.
      * From every other state the in-flight access drains to a *_DONE
      * state with no RamWorks traffic and parks there against the gated
      * core_en, so the CPU0 flush below may safely take the cache. */
@@ -1504,6 +1514,7 @@ module vtw_core_top (
         (core_res_n || video_mirror_pending) &&
         ((xstate_q == X_CAPTURE) || (xstate_q == X_ROUTE) ||
          (xstate_q == X_VIDEO_WAIT) ||
+         ((xstate_q == X_POST_STALL) && video_selected) ||
          (xstate_q == X_TURBO_DONE) ||
          (xstate_q == X_RW_LOOKUP) || (xstate_q == X_RW_FLUSH) ||
           (xstate_q == X_RW_FILL) || video_mirror_pending);
@@ -1578,6 +1589,10 @@ module vtw_core_top (
             cycle_video_page2_q  <= 1'b0;
             cycle_video_hires_q  <= 1'b0;
             cycle_video_80store_q <= 1'b0;
+            cycle_video_80col_q <= 1'b0;
+            cycle_video_post_main_wide_q <= 1'b0;
+            cycle_video_force_active_q <= 1'b0;
+            cycle_video_mirror_active_q <= 1'b0;
             shr_post_main_wide_q <= 1'b0;
             cnt_core_q          <= '0;
             cnt_invalid_q       <= '0;
@@ -1818,10 +1833,12 @@ module vtw_core_top (
                         cycle_video_page2_q      <= vsss.sw_page2;
                         cycle_video_hires_q      <= vsss.sw_hires;
                         cycle_video_80store_q    <= vsss.sw_80store;
+                        cycle_video_80col_q      <= vsss.sw_80col;
+                        cycle_video_post_main_wide_q <= post_main_wide_eff;
                         // A physical II/II+ has no //e bank-steering switches.
                         // Keep its existing immediate write-through policy.
-                        cycle_video_mirror_active_q <=
-                            capture_video_mirror_active || host_is_iiplus;
+                        cycle_video_force_active_q <=
+                            overlay_capture_armed || host_is_iiplus;
                         // Snapshot slot-7 IOSEL pre-update, for the
                         // SmartPort C8-window classifier.
                         cycle_sp_iosel7_q       <= vsss.io_select[SP_SLOT];
@@ -1865,6 +1882,7 @@ module vtw_core_top (
 
                 X_ROUTE: begin
                     cycle_d2_native_q <= sd_disk2_native;
+                    cycle_video_mirror_active_q <= route_video_mirror_active;
                     if (xl_is_bus) begin
                         // core_res_n implies the session is active, so the
                         // bus engine is running and will take the request.
@@ -1917,7 +1935,7 @@ module vtw_core_top (
                         core_data_in_q <= 8'hFF;
                         xstate_q       <= X_DEAD;
                     end
-                    else if (xl_is_posted && core_post_blocked) begin
+                    else if (xl_is_posted && (video_selected || core_post_blocked)) begin
                         xstate_q <= X_POST_STALL;
                     end
                     else begin

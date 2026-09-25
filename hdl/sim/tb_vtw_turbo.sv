@@ -147,6 +147,8 @@ module tb_vtw_turbo;
     logic [16:0] video_record_addr;
     logic [7:0] video_record_data;
     logic video_record_ready = 1'b1;
+    logic post_main_wide = 1'b0;
+    logic overlay_capture_armed = 1'b0;
     logic bus_owned;
     integer direct_video_writes = 0;
     logic [7:0] renderer_shadow [0:131071];
@@ -221,14 +223,14 @@ module tb_vtw_turbo;
         .d2_time_ready(disk2_time_ready),
         .d2_write_timing_active(disk2_write_timing_active),
         .ramworks_en(ramworks_en), .video_vbl(1'b0),
-        .post_main_wide(1'b0),
+        .post_main_wide(post_main_wide),
         .video_record_enable(video_record_enable),
         .video_record_valid(video_record_valid),
         .video_record_addr(video_record_addr),
         .video_record_data(video_record_data),
         .video_record_ready(video_record_ready),
         .video_direct_active(video_direct_active),
-        .overlay_capture_armed(1'b0),
+        .overlay_capture_armed(overlay_capture_armed),
         .overlay_capture_bank_aux(1'b0),
         .overlay_capture_base(16'd0),
         .overlay_capture_limit(16'd0),
@@ -286,6 +288,36 @@ module tb_vtw_turbo;
             $fatal(1, "VTW TURBO FAIL: %s", message);
     endtask
 
+    // Match the old capture-time policy against the staged result. This
+    // reads the live pre-access inputs, independently of the new snapshots.
+    wire capture_policy_active;
+    logic expected_policy_active = 1'b0;
+    integer policy_checks = 0;
+    vtw_video_policy capture_policy_i (
+        .address(dut.capture_xl_decoded_d[16:0]),
+        .sw_text(dut.vsss.sw_text), .sw_mixed(dut.vsss.sw_mixed),
+        .sw_page2(dut.vsss.sw_page2), .sw_hires(dut.vsss.sw_hires),
+        .sw_80store(dut.vsss.sw_80store), .sw_80col(dut.vsss.sw_80col),
+        .post_main_wide(dut.post_main_wide_eff),
+        .overlay_match(overlay_capture_armed),
+        .mirror_active(capture_policy_active)
+    );
+    always @(posedge clk) begin
+        if (!rstn)
+            expected_policy_active = 1'b0;
+        else if (dut.core_res_n) begin
+            if (dut.xstate_q == dut.X_CAPTURE && dut.d2_time_ready &&
+                !dut.video_barrier)
+                expected_policy_active = capture_policy_active || host_is_iiplus;
+            else if (dut.xstate_q == dut.X_ROUTE) begin
+                #1ps;
+                check(dut.cycle_video_mirror_active_q === expected_policy_active,
+                      "staged policy changed the captured display/bank decision");
+                policy_checks++;
+            end
+        end
+    end
+
     // Observe only accepted CPU accesses. The write address and data must
     // agree across the separate cache lookup and CPU execution stages.
     always @(posedge clk) begin
@@ -309,6 +341,13 @@ module tb_vtw_turbo;
             arm_responses <= 0;
             checked_display_cycles <= 0;
         end else begin
+            check((video_record_valid && video_record_ready) ===
+                  (dut.video_coalescer_i.write_valid &&
+                   dut.video_coalescer_i.write_ready),
+                  "renderer and motherboard mirror accepted different records");
+            if (video_record_valid)
+                check(dut.xstate_q == dut.X_POST_STALL,
+                      "direct video bypassed the registered admission stage");
             if (check_display_flip && dut.ssm_apply_pulse &&
                 dut.core_addr == checked_display_switch)
                 check(mb_ram[checked_display_byte] === 8'hA6,
@@ -479,6 +518,8 @@ module tb_vtw_turbo;
         ramworks_en = 1'b0;
         video_record_enable = 1'b0;
         video_record_ready = 1'b1;
+        post_main_wide = 1'b0;
+        overlay_capture_armed = 1'b0;
         check_video_banks = 1'b0;
         check_deferred_page_flip = 1'b0;
         check_display_flip = 1'b0;
@@ -934,6 +975,142 @@ module tb_vtw_turbo;
         end
         check(dut.video_all_drained && cnt_post_drops == 0,
               "TURBO motherboard mirror failed to drain without drops");
+    endtask
+
+    // Exercise the first direct write with an empty, ready coalescer. A
+    // later write could hide an early hold acknowledgement behind old data.
+    task automatic direct_video_admission(input integer kind);
+        integer guard;
+        integer stopped_cycles;
+        logic [15:0] target;
+        begin_program(2'd3);
+        video_record_enable = 1'b1;
+        target = kind >= 7 ? 16'h4000 : 16'h2000;
+        post_main_wide = kind == 7;
+        overlay_capture_armed = kind == 8;
+        mb_ram[target] = 8'h11;
+        sh_write({2'b00, target}, 8'h11);
+        emit_hgr_mode();
+        immediate(8'hA9, 8'h5A);
+        absolute(8'h8D, target);
+        absolute(8'h8D, 16'hA100);
+        halt_loop();
+
+        // Finish the coalescer clear before starting the CPU, so its first
+        // video write measures the mandatory stage without startup stalls.
+        enable = 1'b1;
+        #10us;
+        @(negedge clk); res_drive_low = 1'b0;
+        guard = 0;
+        while (!(ab_read.res && dut.video_coalesce_ready) && guard < 200000) begin
+            @(negedge clk);
+            guard++;
+        end
+        check(guard < 200000, "admission test coalescer failed to become ready");
+        core_run = 1'b1;
+        guard = 0;
+        while (!(dut.xstate_q == dut.X_ROUTE &&
+                 dut.cycle_addr_q == target && !dut.cycle_rw_q) && guard < 200000) begin
+            @(negedge clk);
+            guard++;
+        end
+        check(guard < 200000 && !dut.video_mirror_pending &&
+              !video_record_valid && direct_video_writes == 0 &&
+              dut.video_start_ready && dut.video_coalesce_ready,
+              "first direct write did not enter an empty admission stage");
+        if (kind == 1) begin
+            arm_rw_flush_req = 1'b1;
+            video_record_ready = 1'b0;
+        end
+        // These controls affect the policy but must use the capture edge,
+        // even when they change immediately before its new route stage.
+        if (kind == 7) post_main_wide = 1'b0;
+        if (kind == 8) overlay_capture_armed = 1'b0;
+        @(posedge clk); #1ps;
+        check(dut.xstate_q == dut.X_POST_STALL && direct_video_writes == 0 &&
+              dut.cycle_video_mirror_active_q,
+              "direct write skipped its route stage or lost captured policy");
+        @(negedge clk);
+        arm_rw_flush_req = 1'b0;
+        stopped_cycles = cnt_core_cycles;
+        case (kind)
+            1: begin
+                repeat (12) begin
+                    @(posedge clk); #1ps;
+                    check(!arm_rw_flush_done && arm_rw_hold_state &&
+                          !dut.video_mirror_pending && direct_video_writes == 0 &&
+                          dut.xstate_q == dut.X_POST_STALL &&
+                          dut.cycle_addr_q == target && dut.cycle_wdata_q == 8'h5A &&
+                          video_record_addr == {1'b0, target} &&
+                          video_record_data == 8'h5A,
+                          "first-write hold completed early or changed the saved tuple");
+                end
+                @(negedge clk); video_record_ready = 1'b1;
+            end
+            2: pause = 1'b1;
+            3: speed_mode = 2'd0;
+            4: enable = 1'b0;
+            5: core_run = 1'b0;
+            6: begin
+                // The wrapper filters physical reset; block acceptance
+                // until reset reaches the DUT's qualified input.
+                video_record_ready = 1'b0;
+                res_drive_low = 1'b1;
+                guard = 0;
+                while (ab_read.res && guard < 200000) begin
+                    @(negedge clk);
+                    guard++;
+                end
+                check(!ab_read.res, "admission reset did not reach the core");
+                video_record_ready = 1'b1;
+            end
+            default: begin end
+        endcase
+        @(posedge clk); #1ps;
+        if (kind >= 4 && kind <= 6) begin
+            repeat (16) @(posedge clk);
+            #1ps;
+            check(!video_record_valid && direct_video_writes == 0 &&
+                  !dut.video_mirror_pending && marker_count[0] == 0 &&
+                  mb_ram[target] === 8'h11,
+                  "aborted admission emitted or completed an unaccepted write");
+        end else begin
+            check(direct_video_writes == (kind == 3 ? 0 : 1),
+                  "ready direct write did not accept exactly one edge after route");
+            if (kind == 1) begin
+                check(!arm_rw_flush_done && arm_rw_hold_state,
+                      "ARM hold acknowledged on the first video acceptance edge");
+                guard = 0;
+                while (!arm_rw_flush_done && guard < 200000) begin
+                    @(posedge clk); #1ps;
+                    check(cnt_core_cycles == stopped_cycles,
+                          "CPU advanced while its first video write was held");
+                    guard++;
+                end
+                check(arm_rw_flush_done && arm_rw_hold_state && dut.video_all_drained &&
+                      mb_ram[target] === 8'h5A && direct_video_writes == 1,
+                      "first-write hold completed before physical drain");
+                @(negedge clk); arm_rw_hold_release = 1'b1;
+                @(negedge clk); arm_rw_hold_release = 1'b0;
+            end else if (kind == 2) begin
+                repeat (20) @(posedge clk);
+                #1ps;
+                check(cnt_core_cycles == stopped_cycles && direct_video_writes == 1 &&
+                      marker_count[0] == 0,
+                      "pause lost the staged write or advanced the CPU");
+                @(negedge clk); pause = 1'b0;
+            end
+            wait_marker(0, 1);
+            await_video_drain();
+            check(marker_count[0] == 1 && mb_ram[target] === 8'h5A &&
+                  cnt_posted_writes == 1 &&
+                  direct_video_writes == (kind == 3 ? 0 : 1),
+                  "admission exit omitted, duplicated or misrouted the video write");
+        end
+        // X_ROUTE has already committed the shadow on every path,
+        // including aborts before the separate renderer/mirror acceptance.
+        sh_check({2'b00, target}, 8'h5A);
+        $display("VTW TURBO DIRECT ADMISSION PASS: kind=%0d", kind);
     endtask
 
     task automatic direct_video_banks;
@@ -1555,6 +1732,8 @@ module tb_vtw_turbo;
         ramworks_program();
         selfmod_program();
         physical_program();
+        for (int kind = 0; kind < 9; kind++)
+            direct_video_admission(kind);
         direct_video_banks();
         direct_video_exit(1'b0);
         direct_video_exit(1'b1);
@@ -1582,6 +1761,7 @@ module tb_vtw_turbo;
         // Every case resets and reloads a formerly cached ROM address. The
         // final fresh benchmark also proves reset after I/O and posted work.
         benchmark(2'd3, 16'h9000, turbo_cold, turbo_hot);
+        $display("VTW CAPTURE POLICY EQUIVALENCE PASS: %0d routed accesses", policy_checks);
         $display("VTW TURBO PASS");
         $finish;
     end

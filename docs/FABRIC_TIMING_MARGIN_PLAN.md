@@ -2158,3 +2158,81 @@ capture, egress, ONE//e video with both real-ROM boot paths, and all 17
 VidHD/SHR checks passed. Independent RTL and test review found no remaining
 issue. The first hold test had confused HELD with DONE; correcting that test
 required no RTL change.
+
+### Second trial result and post-route refinement
+
+Clean full build `20260925T181302Z-5ae852a2-full`, from source commit
+`5ae852a2`, reached `+0.192 ns` setup, `+0.029 ns` hold, and `+0.265 ns`
+pulse-width slack. The normal setup gate rejected it by `0.008 ns`. The
+limiting path ran from the PS reset register to `a2fpga_dir_d` under the
+unchanged 10 ns output requirement. The worst internal setup path was
+`+0.208 ns`.
+
+The routed path families below compare the working F1.1.4 baseline with both
+clean trials. These values precede the extra post-route pass.
+
+| Endpoint family | F1.1.4 baseline | First trial | Second trial |
+| --- | ---: | ---: | ---: |
+| Coalescer scan address | `+0.226 ns` | `+1.077 ns` | `+0.482 ns` |
+| Disk II sound | `+0.213 ns` | `+0.419 ns` | `+0.408 ns` |
+| WOZ cache-patch registers | `+0.218 ns` | `+0.436 ns` | `+0.212 ns` |
+| Coalescer overall | `+0.220 ns` | `+0.177 ns` | `+0.333 ns` |
+| TURBO shadow RAM | `+0.171 ns` | `+0.200 ns` | `+0.273 ns` |
+| Captured video policy | `+0.346 ns` | `+0.177 ns` | `+1.720 ns` |
+| Capture FIFO | `+0.182 ns` | `+0.292 ns` | `+0.546 ns` |
+
+The WOZ cache-patch limit now starts at ONE//e ownership logic; the old
+accumulator add/compare no longer leads that family. Placement changes can
+move a family's worst endpoint, so these totals do not assign all gains to
+one source edit. The work focuses on paths affected by changes since
+F1.0.8: TURBO video admission, coalescer scans, Disk II replay, and seek mixing. A ready direct
+video write costs one extra fabric clock, about 7.5 ns, as described above.
+
+One extra post-route pass produced candidate
+`20260925T181302Z-5ae852a2-refined`. The sequence used the same temporary
+implementation margin, then restored nominal constraints before measurement:
+
+```tcl
+open_checkpoint .timing_runs/20260925T181302Z-5ae852a2-full/failed_margin.dcp
+source scripts/apply_fabric_timing_margin.tcl
+phys_opt_design -directive AggressiveExplore
+source scripts/clear_fabric_timing_margin.tcl
+```
+
+The exact script, `refine_stage_margin.tcl`, is archived under the source
+run's `refined` directory with its input/output hashes and logs. It refuses
+to overwrite that directory; use a fresh output directory when repeating
+the script. No RTL, clock rate, or external requirement changed during this
+pass. Its nominal results are `+0.205 ns` setup, `+0.029 ns` hold, and
+`+0.265 ns` pulse-width slack. Routing and bus skew pass, with no missing
+constraint objects or unconstrained internal endpoints. Existing I/O-delay
+warnings match the baseline.
+
+The refined setup limit is ONE//e selection to the Disk II bit-offset
+register enable: ten logic levels and 78% routing delay. SmartPort snapshot
+enables and mouse data follow at `+0.208 ns`. The former direction-output
+limit improves to `+0.322 ns`. The worst hold path is between menu-chime
+counter bits on the audio clock.
+
+| Resource | F1.1.4 baseline | Refined candidate |
+| --- | ---: | ---: |
+| LUTs | 34,091 | 34,888 |
+| Registers | 22,723 | 22,661 |
+| Slices | 10,920 | 11,249 |
+| Control sets | 1,316 | 1,078 |
+| Block RAM tiles | 110 | 110 |
+| DSPs | 6 | 6 |
+
+The candidate trades more LUTs and slices for fewer control sets. It clears
+the setup target by only `0.005 ns`; this is a passing post-route candidate,
+not a passing clean full build or a promoted timing reference. Hardware
+validation and two consecutive passing clean full builds remain pending.
+
+The packaged hardware-test image is
+`firmwares/F1.1.4-timing-5ae852a2/FIRMWARE.BIN`. Its menu still reports
+F1.1.4, so identify it by this path and SHA-256:
+`12fcfd9b105a593b7f25495797297cb2191e6627648afc433b54a75c1c31678c`.
+Image verification passed with payload size 4,313,356 bytes and CRC32
+`E9239FD2`. The exact bitstream, XSA, ARM ELFs, package, component manifests,
+and build logs are archived in
+`.timing_runs/20260925T181302Z-5ae852a2-full/refined`.

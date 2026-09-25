@@ -224,3 +224,26 @@ Package with explicit FSBL, passing bitstream, and frontend ELF paths using
 The companion build record identifies inputs, source hashes, validation
 results, timing, image size, and SHA-256. Generated images and logs remain
 outside source commits.
+
+The September 25 timing work focused on paths affected by changes since
+F1.0.8: TURBO video admission, coalescer scans, Disk II replay, and seek mixing. Clean full build
+`20260925T181302Z-5ae852a2-full` reached `+0.192 ns` setup and missed the
+`+0.200 ns` gate. An extra `AggressiveExplore` post-route pass reached
+`+0.205 ns` setup, `+0.029 ns` hold, and `+0.265 ns` pulse-width slack.
+Both measurements use nominal clocks and unchanged external constraints.
+The refined limit is ONE//e selection to a Disk II bit-offset enable.
+
+The candidate retains 110 BRAM tiles and the extra 7.5 ns direct-write
+admission cycle described above. It uses 34,888 LUTs versus 34,091 in the
+F1.1.4 baseline, while control sets fall from 1,316 to 1,078. See the
+[timing plan](docs/FABRIC_TIMING_MARGIN_PLAN.md) for path-family results,
+resource costs, and the exact refinement sequence.
+
+The hardware-test image is
+`firmwares/F1.1.4-timing-5ae852a2/FIRMWARE.BIN`; the menu still reports
+F1.1.4. Its SHA-256 is
+`12fcfd9b105a593b7f25495797297cb2191e6627648afc433b54a75c1c31678c`.
+The matching bitstream, XSA, ARM ELFs, logs, and manifests are archived under
+`.timing_runs/20260925T181302Z-5ae852a2-full/refined`. Board validation and
+two consecutive passing clean full builds remain pending. This post-route
+candidate has not been promoted to the timing reference.

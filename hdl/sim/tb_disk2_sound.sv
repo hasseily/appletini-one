@@ -27,15 +27,17 @@ module tb_disk2_sound;
     bit response_pending = 0, previous_ar_stall = 0;
     logic [31:0] pending_address, previous_araddr;
     logic [63:0] pending_data;
+    bit pcm_override = 0;
+    logic signed [15:0] idle_pcm, event_pcm;
 
     // Even, nonzero samples survive the existing event /2 and volume x2
     // exactly. The odd multiplier changes successive samples and all lanes.
     function automatic logic signed [15:0] pcm(input int sample_address);
         if (sample_address >= disk2_sound_offset(DISK2_SOUND_IDLE_SPIN) &&
             sample_address < disk2_sound_offset(DISK2_SOUND_SEEK_34_0))
-            pcm = 0;
+            pcm = pcm_override ? idle_pcm : 16'sd0;
         else
-            pcm = 2 * (1 + ((sample_address * 37) % 14983));
+            pcm = pcm_override ? event_pcm : 2 * (1 + ((sample_address * 37) % 14983));
     endfunction
 
     function automatic logic [63:0] beat(input logic [31:0] byte_address);
@@ -353,6 +355,40 @@ module tb_disk2_sound;
         end
     endtask
 
+    task automatic signed_mix_boundaries;
+        int samples [0:14] = '{-32768, -32767, -5, -4, -3, -2, -1,
+                               0, 1, 2, 3, 4, 5, 32766, 32767};
+        int volumes [0:2] = '{1, 5, 10};
+        int coefficients [0:2] = '{51, 256, 512};
+        int expected;
+        begin
+            pcm_override = 1;
+            delayed_memory = 0;
+            foreach (samples[i]) begin
+                foreach (samples[j]) begin
+                    foreach (volumes[v]) begin
+                        reset_player();
+                        idle_pcm = 16'(samples[i]);
+                        event_pcm = 16'(samples[j]);
+                        volume = 4'(volumes[v]);
+                        // Use real DDR replies for both voices. The first
+                        // tick starts idle fetching; a door clip owns the
+                        // event voice and continues while the motor runs.
+                        ready_event(4, 0, 0);
+                        unchecked_tick();
+                        expected = (((samples[i] >>> 2) + (samples[j] >>> 1)) *
+                                    coefficients[v]) >>> 8;
+                        if (expected > 32767) expected = 32767;
+                        if (expected < -32768) expected = -32768;
+                        tick_value(16'(expected));
+                    end
+                end
+            end
+            pcm_override = 0;
+            $display("DISK2 SOUND signed mix, rounding and volume saturation boundaries");
+        end
+    endtask
+
     initial begin
         boot_seek(0);
         boot_seek(1);
@@ -365,6 +401,7 @@ module tb_disk2_sound;
         stale_response(3, 1);
         zero_refresh_and_motor_stop();
         disable_rules();
+        signed_mix_boundaries();
         $display("DISK2 SOUND PASS: %0d exact stereo samples, %0d DDR reads", sample_checks, request_count);
         $finish;
     end

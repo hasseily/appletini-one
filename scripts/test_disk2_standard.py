@@ -742,7 +742,9 @@ def test_disk2_sound_recal_and_volume_contract() -> None:
             "function automatic logic signed [15:0] sat_volume_product" in sound_player and
             "volume_product_q <= volume_product(mix_q, volume_q);" in sound_player and
             "audio_l <= sat_volume_product(volume_product_q);" in sound_player and
-            "mix_q <= sat_add16(idle_mix, event_mix);" in sound_player,
+            "idle_sample_q >>> 2" in sound_player and
+            "event_sample_q >>> 1" in sound_player and
+            "mix_q <= idle_mix + event_mix;" in sound_player,
             "Disk II sound volume scaling must be pipelined for timing")
     require("card_control_pack_disk2_sound_control" in frontend_main and
             "CARD_CTRL_DISK2_SOUND_DEFAULT_VOLUME" in frontend_main and

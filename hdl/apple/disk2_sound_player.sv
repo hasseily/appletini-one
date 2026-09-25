@@ -174,22 +174,6 @@ module disk2_sound_player (
         seek_reverse_sample_position = DISK2_SOUND_SEEK_FULL_QTRACK_DISTANCE - position;
     endfunction
 
-    function automatic logic signed [15:0] sat_add16(
-        input logic signed [15:0] a,
-        input logic signed [15:0] b
-    );
-        logic signed [16:0] sum;
-        begin
-            sum = {a[15], a} + {b[15], b};
-            if (sum > 17'sd32767)
-                sat_add16 = 16'sh7FFF;
-            else if (sum < -17'sd32768)
-                sat_add16 = -16'sd32768;
-            else
-                sat_add16 = sum[15:0];
-        end
-    endfunction
-
     function automatic logic [9:0] disk2_volume_scale_coeff(input logic [3:0] volume_level);
         begin
             unique case (volume_level)
@@ -456,7 +440,10 @@ module disk2_sound_player (
                     automatic logic signed [15:0] event_mix =
                         (event_playing && !seek_motor_stopped) ?
                             (event_sample_q >>> 1) : 16'sd0;
-                    mix_q <= sat_add16(idle_mix, event_mix);
+                    // The /4 and /2 inputs sum to [-24576,24574], so this
+                    // addition cannot clip. Keep saturation after volume
+                    // scaling, which can still exceed the 16-bit range.
+                    mix_q <= idle_mix + event_mix;
                     volume_q <= volume;
                     mix_valid_q <= 1'b1;
                 end

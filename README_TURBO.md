@@ -244,6 +244,7 @@ The hardware-test image is
 F1.1.4. Its SHA-256 is
 `12fcfd9b105a593b7f25495797297cb2191e6627648afc433b54a75c1c31678c`.
 The matching bitstream, XSA, ARM ELFs, logs, and manifests are archived under
-`.timing_runs/20260925T181302Z-5ae852a2-full/refined`. Board validation and
-two consecutive passing clean full builds remain pending. This post-route
-candidate has not been promoted to the timing reference.
+`.timing_runs/20260925T181302Z-5ae852a2-full/refined`. Initial user testing
+suggests that the image works; further testing is still underway. Full board
+validation and two consecutive passing clean full builds remain pending.
+This post-route candidate has not been promoted to the timing reference.

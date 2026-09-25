@@ -2236,3 +2236,8 @@ Image verification passed with payload size 4,313,356 bytes and CRC32
 `E9239FD2`. The exact bitstream, XSA, ARM ELFs, package, component manifests,
 and build logs are archived in
 `.timing_runs/20260925T181302Z-5ae852a2-full/refined`.
+
+The user reports that this timing image seems to work, but needs more
+testing. Record this as a preliminary hardware result. The user has not yet
+reported detailed test coverage; full hardware validation and timing-reference
+promotion remain pending.

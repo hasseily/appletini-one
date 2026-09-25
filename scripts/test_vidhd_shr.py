@@ -112,8 +112,9 @@ def test_capture_emits_two_records_for_vidhd_io_plus_frame() -> None:
             "io_push_request_q    <= io_push_request;" in source and
             "if (pending_record_valid)" in source and
             "else if (io_push_request_q)" in source and
-            "else\n            record_din = apple_record_q;" in source,
-            "capture arbitration must emit pending, then I/O, then normal Apple records")
+            "else if (apple_push_request_q)\n            record_din = apple_record_q;" in source and
+            "else\n            record_din = direct_record;" in source,
+            "capture arbitration must emit pending, I/O, Apple, then direct records")
     require("logic shr_capture_active_q;" in source and
             "wire c029_write_shr_active = (ab_read.data[7:6] == 2'b11);" in source,
             "capture must track the C029 fake-SHR enable bit pattern")
@@ -719,7 +720,7 @@ def test_shr_interlace() -> None:
             "post_main_wide" in core,
             "the widened window must reach the posting classifier")
     require("logic shr_post_main_wide_q;" in core and
-            "wire post_main_wide_eff = post_main_wide | shr_post_main_wide_q;" in core and
+            "assign post_main_wide_eff = post_main_wide | shr_post_main_wide_q;" in core and
             "cycle_addr_q == 16'h9DF8" in core and
             "xl_is_write && xl_is_aux" in core and
             "cycle_wdata_q == 8'd1 || cycle_wdata_q == 8'd2" in core and

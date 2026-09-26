@@ -132,8 +132,8 @@ tested F1.1.4 FPGA image restored the display and Apple boot on the same
 board. This isolates the failure to the new FPGA image. That working
 fallback is `firmwares/F1.1.5-diagnostic-old-pl/FIRMWARE.BIN`, SHA-256
 `ed17caac29a0cb8b4f3e618d997146032cab6c488edb83d182429325975203fb`.
-It lacks physical vTW USB joystick hardware. The cause of the new FPGA
-image's register read failures is still under investigation.
+It lacks physical vTW USB joystick hardware. The regenerated FPGA image
+below fixes the reported startup failure.
 
 The routed design passes 53 full-design MMIO checks, including the
 joystick signature, framebuffer round-trip, every framebuffer data bit,
@@ -147,9 +147,16 @@ frame data compared with the shipped bitstream. The test image
 regenerated bitstream and the exact same ARM software. Its SHA-256 is
 `92481bf4d12a6133ba27a3e21e05f9c26efd1e1caf4b609080be36f847e79025`.
 It includes the new joystick hardware and retains the measured +0.076 ns
-setup result. Its board test is pending; it is not a confirmed fix.
+setup result. **Board result, 2026-09-26: the user confirms that the
+regenerated image works and fixes the hardware failure.** Controller
+mapping and game tests have not yet been reported.
 Two fresh Vivado sessions produce byte-identical regenerated configuration
-data. The investigation logs, bitstreams, and test harness are archived in
+data. The fix required no HDL, synthesis, placement, routing, or ARM
+software change: a fresh Vivado session reopened `candidate.dcp` and ran
+`write_bitstream` again. The differing frame data and successful board
+test point to a bitstream-generation state issue; the exact internal
+Vivado cause has not been established. The investigation logs, bitstreams,
+and test harness are archived in
 `.timing_runs/F1.1.5-blank-boot-investigation-20260926`.
 
 For board testing:

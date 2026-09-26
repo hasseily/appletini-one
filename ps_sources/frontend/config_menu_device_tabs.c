@@ -109,19 +109,20 @@ static void config_menu_draw_joystick(uint16_t *fb,
     char value[32];
 
     onee_input_service_get_joystick_snapshot(&snapshot);
+    const uint8_t standalone =
+        menu->onee_mode_state == CONFIG_MENU_ONEE_MODE_RUNNING;
+    const uint8_t available = standalone || snapshot.active;
     cmui_title(fb, x, y, "Joystick / Paddles");
-    if (snapshot.connected) {
-        (void)snprintf(line, sizeof(line), "USB joystick connected (device %u)  |  %s",
-            (unsigned)snapshot.owner_slot + 1U,
-            snapshot.active ? "vTW input active" :
-            menu->onee_mode_state == CONFIG_MENU_ONEE_MODE_RUNNING ?
-                "ONE//e input" : "vTW input inactive");
-    } else {
-        (void)snprintf(line, sizeof(line), "No USB joystick connected");
-    }
-    cmui_caption(fb, x, y + row_h, w, line);
-    y += 2 * row_h;
-    (void)snprintf(value, sizeof(value), "PDL%u", (unsigned)menu->joystick_paddle);
+    cmui_caption(fb, x, y + row_h, w, snapshot.connected ?
+                 "USB controller connected" : "No USB controller connected");
+    cmui_text_clipped(fb, x, y + 2 * row_h, w,
+                      standalone ? "Available in standalone ONE//e" :
+                      snapshot.active ? "Available with TransWarp" :
+                          "Unavailable: TransWarp is not active",
+                      available ? CMUI_COLOR_SUCCESS : CMUI_COLOR_WARN,
+                      CMUI_COLOR_BG, CMUI_BODY_SCALE);
+    y += 3 * row_h;
+    (void)snprintf(value, sizeof(value), "Paddle %u", (unsigned)menu->joystick_paddle + 1U);
     hgr_draw_value_item(fb, x, y, controls_w, menu->joystick_focus == 0U,
                         "Apple paddle:", value);
     if (config->source == ONEE_INPUT_JOYSTICK_SOURCE_AUTO) {
@@ -145,12 +146,33 @@ static void config_menu_draw_joystick(uint16_t *fb,
     hgr_draw_item(fb, x, y + 6 * row_h, controls_w, menu->joystick_focus == 6U,
                   "Back to USB", HGR_WHITE);
 
+    if (!available) {
+        int note_y = y + 7 * row_h;
+        if (menu->vtw_enabled) {
+            cmui_caption(fb, x, note_y, controls_w,
+                         "TransWarp is enabled in settings but is not active.");
+            note_y += 28;
+        } else {
+            cmui_caption(fb, x, note_y, controls_w, menu->usb_owned ?
+                         "To enable TransWarp, restart and press A during boot." :
+                         "To enable TransWarp, open the TransWarp tab.");
+            cmui_caption(fb, x, note_y + 28, controls_w, menu->usb_owned ?
+                         "Open TransWarp and turn on \"Accelerate the Apple II\"." :
+                         "Turn on \"Accelerate the Apple II\".");
+            note_y += 56;
+        }
+        cmui_caption(fb, x, note_y, controls_w,
+                     "You can test and adjust your controller here,");
+        cmui_caption(fb, x, note_y + 28, controls_w,
+                     "but it cannot control the Apple II until TransWarp is active.");
+    }
+
     cmui_caption(fb, preview_x, y, preview_w, "Live paddle values (0-255)");
     for (unsigned paddle = 0U; paddle < 4U; ++paddle) {
         const int bar_y = y + row_h + (int)paddle * 52;
-        const int bar_x = preview_x + 128;
-        const int bar_w = preview_w - 140;
-        (void)snprintf(line, sizeof(line), "PDL%u %3u", paddle, (unsigned)snapshot.paddles[paddle]);
+        const int bar_x = preview_x + 180;
+        const int bar_w = preview_w - 192;
+        (void)snprintf(line, sizeof(line), "Paddle %u %3u", paddle + 1U, (unsigned)snapshot.paddles[paddle]);
         cmui_text(fb, preview_x, bar_y, line, CMUI_COLOR_TEXT, CMUI_COLOR_BG, CMUI_SMALL_SCALE);
         fb16_fill_rect(fb, bar_x, bar_y + 2, bar_w, 18, CMUI_COLOR_ROW);
         fb16_fill_rect(fb, bar_x, bar_y + 2,

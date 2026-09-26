@@ -35,4 +35,7 @@ typedef struct {
  */
 config_menu_help_block_t config_menu_help_resolve(uint32_t tab, uint32_t item);
 
+/* Help for the selected row within USB > Joystick / Paddles. */
+config_menu_help_block_t config_menu_help_resolve_joystick(uint32_t item);
+
 #endif /* CONFIG_MENU_HELP_H_INCLUDED */

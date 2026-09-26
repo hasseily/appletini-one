@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Compile the real joystick settings helpers; exercise persistence and navigation.
 
-Also renders the actual settings page with the firmware's RGB565 widgets to
-build/joystick_config_menu/joystick.ppm for visual review (no FPGA tools).
+Also renders the actual settings page and USB help in each availability state
+to build/joystick_config_menu for visual review (no FPGA tools).
 """
 from pathlib import Path
 import os
@@ -33,6 +33,8 @@ def main() -> None:
     tabs = (FRONT / "config_menu_device_tabs.c").read_text()
     main_c = (FRONT / "main.c").read_text()
     service = (FRONT / "onee_input_service.c").read_text()
+    public_header = (FRONT / "config_menu.h").read_text()
+    internal_header = (FRONT / "config_menu_internal.h").read_text()
     # Check real integration around the independently compiled helpers.
     assert "config_menu_parse_joystick(menu, key, value)" in menu
     assert "APPEND_CFG(\"%s\", joystick_line)" in menu
@@ -69,45 +71,104 @@ def main() -> None:
 #include <string.h>
 #include "onee_input_service.h"
 #include "config_menu_ui.h"
-#define CONFIG_USB_ITEM_JOYSTICK 3U
-#define CONFIG_JOYSTICK_ITEM_COUNT 7U
-#define CONFIG_MENU_ONEE_MODE_RUNNING 1U
-#define HGR_WHITE CMUI_COLOR_TEXT
+#include "config_menu_help.h"
 """
+    # Keep the real tab IDs, row IDs, and mode enum without pulling in the
+    # target-only hardware headers or the full config-menu state structure.
+    code += public_header[public_header.index("#define CONFIG_MENU_STATUS_LEN"):
+                          public_header.index("typedef struct {")]
+    code += internal_header[internal_header.index("/* Coordinate and palette"):
+                            internal_header.index("uint8_t config_menu_appendf(")]
     uart = (FRONT / "uart_control.h").read_text()
     code += uart[uart.index("typedef enum {"):uart.index("typedef struct {\n    uint32_t frame_count")]
     code += r"""
 typedef struct {
     onee_input_joystick_config_t joystick_config;
     uint8_t joystick_page_active, joystick_paddle, joystick_focus;
-    uint8_t onee_mode_state;
-    unsigned item_focus;
+    uint8_t onee_mode_state, usb_owned, clock_enabled, vtw_enabled;
+    uint8_t sdd_stream_enabled, usb0_sd_remote_active;
+    unsigned tab, item_focus;
 } config_menu_t;
 static unsigned save_count, apply_count;
 static onee_input_joystick_config_t applied;
+static uint8_t snapshot_connected = 1, snapshot_active = 1;
 static void config_menu_save_settings(config_menu_t *m) { (void)m; ++save_count; }
 void onee_input_service_set_joystick_config(const onee_input_joystick_config_t *c)
 { applied = *c; ++apply_count; }
 void onee_input_service_get_joystick_snapshot(onee_input_joystick_snapshot_t *s)
 {
-    memset(s, 0, sizeof(*s)); s->connected = 1; s->active = 1;
+    memset(s, 0, sizeof(*s));
+    s->connected = snapshot_connected; s->active = snapshot_active;
+    if (!s->connected) {
+        memset(s->paddles, 128, sizeof(s->paddles));
+        return;
+    }
     s->axis_valid_mask = 0x3f; s->buttons = 5;
     for (unsigned i=0; i<6; ++i) s->axis[i] = (uint8_t)(i*51);
     s->paddles[0]=0; s->paddles[1]=128; s->paddles[2]=255; s->paddles[3]=63;
 }
 static void hgr_draw_item(uint16_t *f, int x,int y,int w,uint8_t focused,const char *t,uint32_t color)
 { (void)color; cmui_row(f,x,y,w,focused,0,t); }
+static void hgr_draw_item_dimmed(uint16_t *f, int x,int y,int w,uint8_t focused,const char *t)
+{ cmui_row(f,x,y,w,focused,1,t); }
+static uint8_t config_menu_onee_fixed_bindings_active(const config_menu_t *m)
+{ return m->onee_mode_state == CONFIG_MENU_ONEE_MODE_RUNNING; }
+static uint8_t config_menu_video_pal_accurate_help_visible(const config_menu_t *m)
+{ (void)m; return 0; }
 """
     code += function(service, "onee_input_service_default_joystick_config")
     code += functions
     code += function(menu, "hgr_draw_check_item") + function(menu, "hgr_draw_value_item")
     code += function(tabs, "config_menu_draw_joystick")
+    code += function(tabs, "config_menu_draw_usb")
     help_source = (FRONT / "config_menu_help.c").read_text()
-    help_lines = re.search(r"HELP\(usb_joystick,(.*?)\);", help_source, re.S).group(1)
-    code += "static const char *const joystick_help[] = {" + help_lines + "};\n"
+    # Compile all real help blocks and resolvers, using the real constants above.
+    code += help_source.replace('#include "config_menu_internal.h"', '')
+    code += re.search(r"(?m)^#define CONFIG_MENU_HELP_MAX_LINES .*", menu).group(0) + "\n"
+    code += r"""
+static const char *shown_help[CONFIG_MENU_HELP_MAX_LINES];
+static uint32_t shown_help_count;
+static void record_help_panel(uint16_t *fb, const cmui_rect_t *rect, const char *title,
+                              const char *const *lines, uint32_t count)
+{
+    assert(count <= CONFIG_MENU_HELP_MAX_LINES);
+    shown_help_count = count;
+    for (uint32_t i=0; i<count; ++i) shown_help[i] = lines[i];
+    cmui_help_panel(fb,rect,title,lines,count);
+}
+#define cmui_help_panel record_help_panel
+"""
+    code += function(menu, "config_menu_draw_help")
+    code += "#undef cmui_help_panel\n"
     code += r"""
 static void press(config_menu_t *m, ui_key_t key)
 { assert(config_menu_joystick_handle_input(m, (ui_input_t){key,1,0})); }
+static void render(config_menu_t *menu, const char *path)
+{
+    uint16_t *fb=calloc(FB16_WIDTH*FB16_HEIGHT,sizeof(*fb)); assert(fb);
+    cmui_rect_t nav,body,footer; cmui_screen_rects(&nav,&body,&footer);
+    cmui_clear(fb); cmui_header(fb,"Appletini","Joystick settings preview",menu->usb_owned);
+    config_menu_draw_usb(fb,menu,body.x,body.y,body.w);
+    cmui_rect_t help_rect={body.x,body.y+body.h-210,body.w,210};
+    config_menu_draw_help(fb,menu,&help_rect);
+    config_menu_help_block_t expected = menu->joystick_page_active ?
+        config_menu_help_resolve_joystick(menu->joystick_focus) :
+        config_menu_help_resolve(CONFIG_TAB_USB,menu->item_focus);
+    assert(expected.count && shown_help_count == expected.count);
+    for (uint32_t i=0; i<expected.count; ++i) {
+        assert(shown_help[i] == expected.lines[i]);
+        assert(cmui_text_width(shown_help[i],CMUI_SMALL_SCALE) <= help_rect.w-40);
+    }
+    cmui_rect_t navrow={nav.x,nav.y+12*42,nav.w,34}; cmui_nav_item(fb,&navrow,"USB",1,1);
+    cmui_footer(fb,&footer,"Settings saved",0,0,0);
+    FILE *ppm=fopen(path,"wb"); assert(ppm);
+    fprintf(ppm,"P6\n%d %d\n255\n",FB16_WIDTH,FB16_HEIGHT);
+    for(unsigned i=0;i<FB16_WIDTH*FB16_HEIGHT;++i) {
+        unsigned char rgb[3]={(fb[i]>>11)*255/31,((fb[i]>>5)&63)*255/63,(fb[i]&31)*255/31};
+        fwrite(rgb,1,3,ppm);
+    }
+    fclose(ppm); free(fb);
+}
 int main(void)
 {
     config_menu_t menu = {0}, loaded = {0};
@@ -190,23 +251,31 @@ int main(void)
     menu.joystick_page_active=1; press(&menu,UI_KEY_ESC); assert(!menu.joystick_page_active);
     menu.joystick_page_active=1; press(&menu,UI_KEY_BACK); assert(!menu.joystick_page_active);
 
-    uint16_t *fb=calloc(FB16_WIDTH*FB16_HEIGHT,sizeof(*fb)); assert(fb);
-    cmui_rect_t nav,body,footer; cmui_screen_rects(&nav,&body,&footer);
-    cmui_clear(fb); cmui_header(fb,"Appletini","Joystick settings preview",0);
+    menu.tab=CONFIG_TAB_USB; menu.usb_owned=1; menu.joystick_page_active=1;
     menu.joystick_focus=3; menu.joystick_paddle=2;
-    config_menu_draw_joystick(fb,&menu,body.x,body.y,body.w);
-    cmui_rect_t help_rect={body.x,body.y+body.h-210,body.w,210};
-    cmui_help_panel(fb,&help_rect,"Joystick / Paddles",joystick_help,
-                    sizeof(joystick_help)/sizeof(joystick_help[0]));
-    cmui_rect_t navrow={nav.x,nav.y+12*42,nav.w,34}; cmui_nav_item(fb,&navrow,"USB",1,1);
-    cmui_footer(fb,&footer,"Settings saved",0,0,0);
-    FILE *ppm=fopen("joystick.ppm","wb"); assert(ppm);
-    fprintf(ppm,"P6\n%d %d\n255\n",FB16_WIDTH,FB16_HEIGHT);
-    for(unsigned i=0;i<FB16_WIDTH*FB16_HEIGHT;++i) {
-        unsigned char rgb[3]={(fb[i]>>11)*255/31,((fb[i]>>5)&63)*255/63,(fb[i]&31)*255/31};
-        fwrite(rgb,1,3,ppm);
+    render(&menu,"joystick.ppm");
+    snapshot_active=0;
+    render(&menu,"joystick_inactive.ppm");
+    menu.vtw_enabled=1;
+    render(&menu,"joystick_waiting.ppm");
+    menu.vtw_enabled=0;
+    menu.usb_owned=0;
+    render(&menu,"joystick_boot_menu.ppm");
+    menu.usb_owned=1; snapshot_connected=0;
+    render(&menu,"joystick_disconnected.ppm");
+    snapshot_connected=1; menu.onee_mode_state=CONFIG_MENU_ONEE_MODE_RUNNING;
+    render(&menu,"joystick_standalone_onee.ppm");
+    menu.onee_mode_state=CONFIG_MENU_ONEE_MODE_OFF; snapshot_active=1;
+    for(unsigned focus=0;focus<CONFIG_JOYSTICK_ITEM_COUNT;++focus) {
+        char path[64];
+        menu.joystick_focus=(uint8_t)focus;
+        snprintf(path,sizeof(path),"joystick_help_%u.ppm",focus);
+        render(&menu,path);
     }
-    fclose(ppm); free(fb);
+    menu.joystick_page_active=0; menu.item_focus=CONFIG_USB_ITEM_JOYSTICK;
+    render(&menu,"usb_joystick_help.ppm");
+    menu.item_focus=2;
+    render(&menu,"usb_general_help.ppm");
     puts("PASS: joystick config round-trip, validation, navigation, apply/save, defaults, and rendering");
     return 0;
 }
@@ -221,11 +290,13 @@ int main(void)
     subprocess.run([str(exe)], cwd=OUT, check=True, env=env)
     try:
         from PIL import Image
-        Image.open(OUT / "joystick.ppm").save(OUT / "joystick.png")
+        for preview in OUT.glob("*.ppm"):
+            with Image.open(preview) as image:
+                image.save(preview.with_suffix(".png"))
     except ImportError:
         pass
     print("PASS: joystick menu global/profile integration and startup hooks")
-    print(f"Preview: {OUT / 'joystick.ppm'}")
+    print(f"Previews: {OUT}")
 
 
 if __name__ == "__main__":

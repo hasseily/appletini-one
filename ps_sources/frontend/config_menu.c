@@ -8095,9 +8095,10 @@ static void config_menu_draw_help(uint16_t *fb,
         help_item = CONFIG_MENU_BOOT_ONEE_STANDARD_HELP_ITEM;
     }
     if (menu->tab == CONFIG_TAB_USB && menu->joystick_page_active) {
-        help_item = CONFIG_USB_ITEM_JOYSTICK;
+        base = config_menu_help_resolve_joystick(menu->joystick_focus);
+    } else {
+        base = config_menu_help_resolve(menu->tab, help_item);
     }
-    base = config_menu_help_resolve(menu->tab, help_item);
 
     switch (menu->tab) {
     case CONFIG_TAB_VIDEO:

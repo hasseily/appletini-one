@@ -1,12 +1,12 @@
 # USB joysticks and paddles
 
 USB1 HID joysticks can supply Apple paddle positions and three pushbuttons
-while vTW runs the physical Apple II. Connecting a supported controller
-selects USB paddle input automatically. Disconnecting it restores the
+only while TransWarp runs the physical Apple II. Connecting a supported
+controller selects USB paddle input automatically. Disconnecting it restores the
 physical game connector and the existing II/II+ button policy. Native Apple
 CPU operation does not use the USB joystick bridge.
 
-ONE//e keeps its existing input path. Both virtual CPU modes use the same
+Standalone ONE//e keeps its existing input path. Both modes use the same
 saved mapping settings. Physical Open/Solid Apple keys still work on a //e:
 vTW combines their button reads with USB button presses. On a II/II+ with
 forced-zero buttons enabled, USB supplies the button state directly.
@@ -14,22 +14,31 @@ forced-zero buttons enabled, USB supplies the button state directly.
 ## Set up a controller
 
 Open **USB > Joystick / Paddles** in the config menu. Select a paddle from
-PDL0 through PDL3, then adjust:
+Paddle 1 through Paddle 4, then adjust:
 
 - **Source:** Auto, X, Y, Z, Rx, Ry, Rz, or Off.
 - **Invert:** reverse that paddle's direction.
-- **Sensitivity:** 25% through 200%, with 100% as the default.
+- **Sensitivity:** 25% through 200%, with 100% as the default. Higher values
+  make the same movement have a larger effect. Below 100%, even full travel
+  cannot reach the maximum paddle value.
 - **Deadzone:** 0% through 50% of the travel from center to an endpoint.
 
-Auto maps PDL0/1 to X/Y and PDL2/3 to Rx/Ry, falling back to Z/Rz when those
-rotation axes are absent. Missing axes and Off return the center value 128.
+Auto maps Paddle 1/2 to X/Y and Paddle 3/4 to Rx/Ry, falling back to Z/Rz
+when those rotation axes are absent. Missing axes and Off return the center value 128.
 Defaults use Auto, no inversion, 100% sensitivity, and no deadzone, which
-preserves the earlier ONE//e mapping. Use zero deadzone for a paddle that
-needs continuous movement through its center.
+preserves the earlier standalone ONE//e mapping. Use zero deadzone for a
+paddle that needs continuous movement through its center.
 
-The page shows raw axes, mapped paddle values, buttons, connection state,
-and whether vTW input is active. Axis and hat movement does not navigate
-the menu while this page is open; keyboard, mouse, and buttons remain
+The page shows raw axes, mapped paddle values, buttons, and connection state.
+A separate status line shows whether USB controls are available with TransWarp
+or in standalone ONE//e. If TransWarp is not active, you can still test and
+adjust the controller, but it cannot control games on the Apple II. To enable
+TransWarp, restart, press A during boot, open **TransWarp**, and turn on
+**Accelerate the Apple II**. The page gives this guidance when TransWarp is
+off, and distinguishes a saved enabled setting from active TransWarp.
+Help explains the selected setting; the USB tab also states the requirement.
+Axis and hat movement does not navigate the menu while this page is open;
+keyboard, mouse, and buttons remain
 available. **Restore defaults** resets all four mappings. Settings use the
 normal config save and profile flows, with keys under
 `usb.joystick.paddle.0` through `usb.joystick.paddle.3`.
@@ -97,6 +106,26 @@ python scripts/test_joystick_config_menu.py
 
 The first board test of F1.1.5 failed during startup; see the result below.
 Controller mapping and game tests remain pending.
+
+The revised menu help and status passed the native joystick menu checks,
+38 profile, USB binding, and standalone ONE//e checks, and ARM syntax checks.
+Rendered previews show active, inactive, waiting, disconnected, and standalone
+ONE//e states, all seven setting help blocks, and the USB tab help without
+clipping or overlap. These checks preceded the firmware confirmation below.
+
+### Rebuilt firmware with the revised help
+
+`firmwares/F1.1.5-joystick-help/FIRMWARE.BIN` contains a full Vitis rebuild
+from 2026-09-26 with the approved help and availability changes. It uses the
+exact regenerated FPGA bitstream confirmed working below. FSBL and core-1
+binaries match the previous working build; only the frontend binary changed.
+The menu still reports F1.1.5. Timing remains +0.076 ns setup and +0.065 ns
+hold. On 2026-09-26, the user confirmed that this rebuilt firmware is good.
+
+The folder includes build logs, input binaries, source hashes, the source
+patch, and the firmware manifest. Packaging verified the firmware role,
+recovery flag, size limit, and payload CRC. SHA-256:
+`089fca6841462005e0e6a9a0ca3909939d78eee3a5119168c92fb9f3170e4909`.
 
 ### F1.1.5 test image
 

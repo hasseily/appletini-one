@@ -602,6 +602,7 @@ static const help_override_t ram_overrides[] = {
 /* ======================================================================== */
 HELP(usb,
     "USB controls USB0 device modes and USB1 joysticks, paddles, keyboards, and mice.",
+    "USB joysticks and paddles need TransWarp on your Apple II. They also work in standalone ONE//e.",
     "By default USB0 is detached. SuperDuperDisplay is persistent; SD Card Remote Mounting is a modal",
     "maintenance mode that should be exited after ejecting the disk on the host.");
 
@@ -618,11 +619,50 @@ HELP(usb_sd_remote,
     "SD Card Remote Mounting is not available while SDD is active.");
 
 HELP(usb_joystick,
-    "Choose PDL0-PDL3, then set its source axis, inversion, sensitivity, and center deadzone.",
-    "Auto uses X, Y, RX (or Z), and RY (or RZ). Off centers a paddle. The live values show the result.",
+    "USB joysticks and paddles work on your Apple II only while TransWarp is on.",
+    "They also work in standalone ONE//e mode.",
+    "Open these settings to choose the controls, adjust their response, and test them.");
+
+HELP(joystick_paddle,
+    "Choose Paddle 1 to Paddle 4, then adjust its settings. Settings save with your profiles.",
     "Up/Down selects a row; Left/Right or Enter changes it. Esc/Back returns to USB.",
-    "Settings apply to vTW and ONE//e and save with profiles.",
-    "Move the stick to test. Use keys or buttons to navigate.");
+    "Move your controller to test. Use keys or buttons to navigate.");
+
+HELP(joystick_source,
+    "Start with Auto. Move your controller and watch the bars.",
+    "Choose another input if the wrong control moves the bar. Off keeps this paddle centred.");
+
+HELP(joystick_invert,
+    "Turn this on if movement goes the wrong way.");
+
+HELP(joystick_sensitivity,
+    "Higher values make the same movement have a larger effect.",
+    "Values below 100% also limit the maximum paddle value, even at full travel.");
+
+HELP(joystick_deadzone,
+    "Ignore small movements near the centre. Increase this if the game moves when you let go.",
+    "For paddles, start at 0%.");
+
+HELP(joystick_defaults,
+    "Reset all four paddles to Auto, normal direction, 100% sensitivity, and 0% deadzone.");
+
+HELP(joystick_back,
+    "Return to the USB tab. Changes apply as you make them.");
+
+static const config_menu_help_block_t joystick_help[] = {
+    { help_joystick_paddle, HELP_COUNT(help_joystick_paddle) },
+    { help_joystick_source, HELP_COUNT(help_joystick_source) },
+    { help_joystick_invert, HELP_COUNT(help_joystick_invert) },
+    { help_joystick_sensitivity, HELP_COUNT(help_joystick_sensitivity) },
+    { help_joystick_deadzone, HELP_COUNT(help_joystick_deadzone) },
+    { help_joystick_defaults, HELP_COUNT(help_joystick_defaults) },
+    { help_joystick_back, HELP_COUNT(help_joystick_back) },
+};
+
+config_menu_help_block_t config_menu_help_resolve_joystick(uint32_t item)
+{
+    return joystick_help[item < HELP_COUNT(joystick_help) ? item : 0U];
+}
 
 static const help_override_t usb_overrides[] = {
     OVERRIDE(0, usb_sd_remote),

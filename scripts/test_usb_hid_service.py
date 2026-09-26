@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import re
+import subprocess
+import textwrap
 from pathlib import Path
 
 
@@ -275,8 +277,9 @@ def test_onee_uses_fixed_keyboard_controls_and_blocks_menu_leakage() -> None:
             "slot->raw_hat_active" in desktop and
             "onee_usb_axis_direction(" in desktop and
             "onee_usb_hat_active(" in desktop and
-            "g_onee_input_blocked == 0U && slot->onee_joystick" in source,
-            "menu ownership must block joystick delivery and wait for buttons, axes, and hat release")
+            "onee_input_service_set_blocked(" in source and
+            "g_onee_input_blocked == 0U && slot->onee_joystick" not in source,
+            "menu ownership must block guest delivery, retain joystick preview, and wait for release")
     hold = function_body(source, "menu_poll_open_close_hold")
     require("g_onee_fixed_mode" not in mouse_buttons and
             "g_onee_fixed_mode" not in hold and
@@ -313,6 +316,111 @@ def test_cherryusb_config_supports_hubs_and_zynq_ehci() -> None:
             "EHCI descriptor pools must be cache managed")
     require("CONFIG_USB_PRINTF(...) cherryusb_printf(__VA_ARGS__)" in config,
             "CherryUSB logs must route to the firmware UART")
+
+
+def test_joystick_preview_suppresses_axis_navigation() -> None:
+    from test_onee_input_service import find_native_c_compiler
+
+    source = read(USB_HID_C)
+    header = read(USB_HID_H)
+    setter = function_body(source, "usb_hid_service_set_joystick_preview")
+    capture = function_body(source, "usb_hid_service_set_menu_capture")
+    blocked = function_body(source, "usb_hid_service_set_onee_input_blocked")
+    axis = function_body(source, "hid_menu_push_axis")
+    hat = function_body(source, "hid_menu_push_hat")
+    require("void usb_hid_service_set_joystick_preview(uint8_t active)" in header and
+            "g_joystick_preview != 0U" in axis and
+            "g_joystick_preview != 0U" in hat and
+            "prev_hat = HID_HAT_NEUTRAL" in setter and
+            "prev_x_dir = 0" in setter and "prev_y_dir = 0" in setter and
+            "hid_slots_reset_menu_state" not in setter,
+            "preview must suppress axis/hat events without clearing keyboard/button state")
+    require(all("onee_input_service_set_blocked(" in body and
+                "g_menu_capture != 0U || g_onee_input_blocked != 0U" in body
+                for body in (capture, blocked)),
+            "menu capture and ONE//e release wait must both block guest joystick delivery")
+    compiler = find_native_c_compiler()
+    if compiler is None:
+        print("SKIP native joystick preview: no host C compiler")
+        return
+    build = REPO_ROOT / "build" / "usb_hid_preview_test"
+    build.mkdir(parents=True, exist_ok=True)
+    harness = build / "usb_hid_preview.c"
+    executable = build / "usb_hid_preview.exe"
+    harness.write_text(textwrap.dedent(r'''
+        #include <stdint.h>
+        #include <stddef.h>
+        #include "usb_hid_service.h"
+        #define USB_HID_SLOT_COUNT 8U
+        #define HID_HAT_NEUTRAL 0xFFU
+        typedef struct {
+            uint8_t prev_hat;
+            int8_t prev_x_dir, prev_y_dir;
+            uint8_t prev_buttons, raw_axis_active_mask;
+        } usb_hid_slot_t;
+        static usb_hid_slot_t g_hid_slots[USB_HID_SLOT_COUNT];
+        static uint8_t g_joystick_preview;
+        static uint32_t event_count;
+        static usb_hid_menu_action_t last_action;
+        static void mouse_menu_push_bindable_action(usb_hid_menu_action_t action)
+        {
+            ++event_count;
+            last_action = action;
+        }
+    ''') +
+        "void usb_hid_service_set_joystick_preview(uint8_t active)\n" + setter +
+        "\nstatic void hid_menu_push_hat(usb_hid_slot_t *slot, uint8_t hat)\n" + hat +
+        "\nstatic void hid_menu_push_axis(usb_hid_slot_t *slot, int8_t *previous, "
+        "int8_t direction, usb_hid_menu_action_t negative_action, "
+        "usb_hid_menu_action_t positive_action)\n" + axis +
+        textwrap.dedent(r'''
+        int main(void)
+        {
+            usb_hid_slot_t *slot = &g_hid_slots[2];
+            slot->prev_hat = 2U;
+            slot->prev_x_dir = 1;
+            slot->prev_y_dir = -1;
+            slot->prev_buttons = 5U;
+            slot->raw_axis_active_mask = 0x3FU;
+            usb_hid_service_set_joystick_preview(1U);
+            if (slot->prev_hat != HID_HAT_NEUTRAL || slot->prev_x_dir != 0 ||
+                slot->prev_y_dir != 0 || slot->prev_buttons != 5U ||
+                slot->raw_axis_active_mask != 0x3FU) return 1;
+            hid_menu_push_axis(slot, &slot->prev_x_dir, 1,
+                USB_HID_MENU_ACTION_LEFT, USB_HID_MENU_ACTION_RIGHT);
+            hid_menu_push_hat(slot, 0U);
+            if (event_count != 0U) return 2;
+            usb_hid_service_set_joystick_preview(0U);
+            hid_menu_push_axis(slot, &slot->prev_x_dir, 1,
+                USB_HID_MENU_ACTION_LEFT, USB_HID_MENU_ACTION_RIGHT);
+            if (event_count != 1U || last_action != USB_HID_MENU_ACTION_RIGHT)
+                return 3;
+            hid_menu_push_axis(slot, &slot->prev_x_dir, 1,
+                USB_HID_MENU_ACTION_LEFT, USB_HID_MENU_ACTION_RIGHT);
+            if (event_count != 1U) return 4;
+            hid_menu_push_hat(slot, 0U);
+            if (event_count != 2U || last_action != USB_HID_MENU_ACTION_ITEM_UP)
+                return 5;
+            hid_menu_push_hat(slot, 2U);
+            if (event_count != 3U || last_action != USB_HID_MENU_ACTION_RIGHT)
+                return 6;
+            usb_hid_service_set_joystick_preview(1U);
+            hid_menu_push_hat(slot, 4U);
+            if (event_count != 3U || slot->prev_buttons != 5U ||
+                slot->raw_axis_active_mask != 0x3FU) return 7;
+            return 0;
+        }
+        '''), encoding="utf-8")
+    command = [str(compiler), "-std=c11", "-Wall", "-Wextra", "-Werror",
+               str(harness), "-I", str(FRONTEND), "-o", str(executable)]
+    if "mingw" in str(compiler).lower():
+        command.insert(1, "-static")
+    compiled = subprocess.run(command, capture_output=True, text=True)
+    require(compiled.returncode == 0, "preview harness compile failed: " +
+            compiled.stdout + compiled.stderr)
+    ran = subprocess.run([str(executable)], capture_output=True, text=True)
+    require(ran.returncode == 0,
+            f"preview suppression/state test failed ({ran.returncode})")
 
 
 def test_baremetal_osal_pumps_polled_irq_during_waits() -> None:
@@ -564,6 +672,7 @@ def test_usb0_storage_priority_over_usb1_hid_poll() -> None:
             "            config_menu_ethernet_ftp_sd_remote_active(menu) != 0U ||\n"
             "            menu->usb_binding_capture != CONFIG_MENU_USB_BIND_CAPTURE_NONE ||\n"
             "            menu->browser_active != 0U ||\n"
+            "            menu->joystick_page_active != 0U ||\n"
             "            menu->profile_carousel_active != 0U ||\n"
             "            menu->profile_name_editor_active != 0U" in frontend_main and
             "static void ui_close_config_menu_child(ui_state_t *s, config_menu_t *menu)" in frontend_main,
@@ -970,6 +1079,7 @@ TESTS = [
     test_failed_hid_interrupt_submit_retries_after_backoff,
     test_usb_keyboard_and_keypad_emit_bindable_sources,
     test_onee_uses_fixed_keyboard_controls_and_blocks_menu_leakage,
+    test_joystick_preview_suppresses_axis_navigation,
     test_cherryusb_config_supports_hubs_and_zynq_ehci,
     test_baremetal_osal_pumps_polled_irq_during_waits,
     test_usb1_waits_keep_frontend_services_running,

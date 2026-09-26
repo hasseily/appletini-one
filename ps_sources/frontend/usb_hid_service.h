@@ -61,8 +61,11 @@ void usb_hid_service_poll(void);
 uint32_t usb_hid_service_activity_count(void);
 void usb_hid_service_set_sensitivity(uint8_t sensitivity);
 void usb_hid_service_set_menu_capture(uint8_t capture);
+/* Axis/hat motion updates calibration preview without navigating its page.
+ * Keyboard, mouse, and joystick button menu actions stay available. */
+void usb_hid_service_set_joystick_preview(uint8_t active);
 /* ONE//e replaces saved key bindings with a fixed control set. Blocking the
- * Apple bridge releases all live keys and keeps reports confined to the menu. */
+ * Apple bridge releases guest input but keeps joystick preview reports live. */
 void usb_hid_service_set_onee_fixed_mode(uint8_t enable);
 void usb_hid_service_set_onee_input_blocked(uint8_t blocked);
 uint8_t usb_hid_service_all_input_released(void);

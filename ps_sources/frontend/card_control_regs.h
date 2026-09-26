@@ -291,6 +291,21 @@
  * accepted CPU steps, classic guest cycles, cached read hits, read misses,
  * invalidation events, Disk II wait clocks, and video/post wait clocks. */
 #define CARD_CTRL_TURBO_PERF_REG(n)             CARD_CTRL_REG_ADDR(0xA3U + (n))
+/* USB joystick override for vTW on a physical Apple II. PADDLES stages
+ * PDL0..3 in bits 7:0 through 31:24. A CONTROL write with byte 0 enabled
+ * commits those paddles and bits 3:0 together: present, then raw PB0..2.
+ * Clearing present restores physical game-port reads. CONTROL reads return
+ * signature 0x4A in bits 31:24, enabled in bit 8 (vTW on, ONE//e off), and
+ * the live bits 3:0, which read zero while disabled. */
+#define CARD_CTRL_VTW_JOYSTICK_PADDLES_REG     CARD_CTRL_REG_ADDR(0xABU)
+#define CARD_CTRL_VTW_JOYSTICK_CONTROL_REG     CARD_CTRL_REG_ADDR(0xACU)
+#define CARD_CTRL_VTW_JOYSTICK_SIGNATURE_SHIFT 24U
+#define CARD_CTRL_VTW_JOYSTICK_SIGNATURE       0x4AU
+#define CARD_CTRL_VTW_JOYSTICK_ENABLED_BIT     (1UL << 8)
+#define CARD_CTRL_VTW_JOYSTICK_PRESENT_BIT     (1UL << 0)
+#define CARD_CTRL_VTW_JOYSTICK_BUTTON_SHIFT    1U
+#define CARD_CTRL_VTW_JOYSTICK_BUTTON_MASK     0x07UL
+#define CARD_CTRL_VTW_JOYSTICK_STATE_MASK      0x0FUL
 #define CARD_CTRL_VTW_TRACE_FROZEN_BIT      (1UL << 0)
 #define CARD_CTRL_VTW_TRACE_REASON_SHIFT    1U
 #define CARD_CTRL_VTW_TRACE_REASON_MASK     0x3UL

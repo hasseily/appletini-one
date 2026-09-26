@@ -93,6 +93,94 @@ void config_menu_draw_smartport(uint16_t *fb,
         "SuperSprite VDP + PSG (Slot 7, disables SmartPort)");
 }
 
+static void config_menu_draw_joystick(uint16_t *fb,
+                                      const config_menu_t *menu,
+                                      int x, int y, int w)
+{
+    const int row_h = CMUI_ROW_H + CMUI_ROW_GAP;
+    const int controls_w = (w * 5) / 8;
+    const int preview_x = x + controls_w + 24;
+    const int preview_w = w - controls_w - 24;
+    const onee_input_joystick_paddle_config_t *config =
+        &menu->joystick_config.paddle[menu->joystick_paddle];
+    static const char *const defaults[] = { "X", "Y", "RX / Z", "RY / RZ" };
+    onee_input_joystick_snapshot_t snapshot;
+    char line[128];
+    char value[32];
+
+    onee_input_service_get_joystick_snapshot(&snapshot);
+    cmui_title(fb, x, y, "Joystick / Paddles");
+    if (snapshot.connected) {
+        (void)snprintf(line, sizeof(line), "USB joystick connected (device %u)  |  %s",
+            (unsigned)snapshot.owner_slot + 1U,
+            snapshot.active ? "vTW input active" :
+            menu->onee_mode_state == CONFIG_MENU_ONEE_MODE_RUNNING ?
+                "ONE//e input" : "vTW input inactive");
+    } else {
+        (void)snprintf(line, sizeof(line), "No USB joystick connected");
+    }
+    cmui_caption(fb, x, y + row_h, w, line);
+    y += 2 * row_h;
+    (void)snprintf(value, sizeof(value), "PDL%u", (unsigned)menu->joystick_paddle);
+    hgr_draw_value_item(fb, x, y, controls_w, menu->joystick_focus == 0U,
+                        "Apple paddle:", value);
+    if (config->source == ONEE_INPUT_JOYSTICK_SOURCE_AUTO) {
+        (void)snprintf(value, sizeof(value), "Auto (%s)", defaults[menu->joystick_paddle]);
+    } else {
+        (void)snprintf(value, sizeof(value), "%s", config_menu_joystick_source_text(config->source));
+    }
+    hgr_draw_value_item(fb, x, y + row_h, controls_w, menu->joystick_focus == 1U,
+                        "Source axis:", value);
+    hgr_draw_check_item(fb, x, y + 2 * row_h, controls_w,
+                        menu->joystick_focus == 2U, config->invert, "Invert axis");
+    (void)snprintf(value, sizeof(value), "%u%%", (unsigned)config->sensitivity_percent);
+    cmui_slider(fb, x, y + 3 * row_h, controls_w, menu->joystick_focus == 3U,
+                0U, "Sensitivity", "25%", "200%",
+                config->sensitivity_percent - 25U, 175U, 75U, value);
+    (void)snprintf(value, sizeof(value), "%u%%", (unsigned)config->deadzone_percent);
+    cmui_slider(fb, x, y + 4 * row_h, controls_w, menu->joystick_focus == 4U,
+                0U, "Deadzone", "0%", "50%", config->deadzone_percent, 50U, 0U, value);
+    hgr_draw_item(fb, x, y + 5 * row_h, controls_w, menu->joystick_focus == 5U,
+                  "Restore defaults (all four paddles)", HGR_WHITE);
+    hgr_draw_item(fb, x, y + 6 * row_h, controls_w, menu->joystick_focus == 6U,
+                  "Back to USB", HGR_WHITE);
+
+    cmui_caption(fb, preview_x, y, preview_w, "Live paddle values (0-255)");
+    for (unsigned paddle = 0U; paddle < 4U; ++paddle) {
+        const int bar_y = y + row_h + (int)paddle * 52;
+        const int bar_x = preview_x + 128;
+        const int bar_w = preview_w - 140;
+        (void)snprintf(line, sizeof(line), "PDL%u %3u", paddle, (unsigned)snapshot.paddles[paddle]);
+        cmui_text(fb, preview_x, bar_y, line, CMUI_COLOR_TEXT, CMUI_COLOR_BG, CMUI_SMALL_SCALE);
+        fb16_fill_rect(fb, bar_x, bar_y + 2, bar_w, 18, CMUI_COLOR_ROW);
+        fb16_fill_rect(fb, bar_x, bar_y + 2,
+                       (int)((unsigned)bar_w * snapshot.paddles[paddle] / 255U),
+                       18, CMUI_COLOR_ACCENT);
+        fb16_fill_rect(fb, bar_x + bar_w / 2, bar_y, 1, 22, CMUI_COLOR_MUTED);
+    }
+    cmui_caption(fb, preview_x, y + 6 * row_h, preview_w, "Raw USB axes:");
+    for (unsigned axis = 0U; axis < 6U; ++axis) {
+        const unsigned col = axis % 3U;
+        const unsigned row = axis / 3U;
+        if ((snapshot.axis_valid_mask & (1U << axis)) != 0U) {
+            (void)snprintf(line, sizeof(line), "%s: %u",
+                           config_menu_joystick_source_text((uint8_t)(axis + 1U)),
+                           (unsigned)snapshot.axis[axis]);
+        } else {
+            (void)snprintf(line, sizeof(line), "%s: --",
+                           config_menu_joystick_source_text((uint8_t)(axis + 1U)));
+        }
+        cmui_text(fb, preview_x + (int)col * (preview_w / 3),
+                  y + 7 * row_h + (int)row * 28, line,
+                  CMUI_COLOR_MUTED, CMUI_COLOR_BG, CMUI_SMALL_SCALE);
+    }
+    (void)snprintf(line, sizeof(line), "Buttons: %s %s %s",
+                   snapshot.buttons & 1U ? "1" : "-",
+                   snapshot.buttons & 2U ? "2" : "-",
+                   snapshot.buttons & 4U ? "3" : "-");
+    cmui_caption(fb, preview_x, y + 9 * row_h, preview_w, line);
+}
+
 void config_menu_draw_usb(uint16_t *fb,
                           const config_menu_t *menu,
                           int x,
@@ -102,6 +190,10 @@ void config_menu_draw_usb(uint16_t *fb,
     const int row_h = CMUI_ROW_H + CMUI_ROW_GAP;
 
     if (menu == NULL) {
+        return;
+    }
+    if (menu->joystick_page_active) {
+        config_menu_draw_joystick(fb, menu, x, y, w);
         return;
     }
 
@@ -127,6 +219,9 @@ void config_menu_draw_usb(uint16_t *fb,
                   (uint8_t)(menu->item_focus == 2U),
                   "Refresh USB1 devices (re-scan)",
                   HGR_WHITE);
+    hgr_draw_item(fb, x, y + (3 * row_h), w,
+                  (uint8_t)(menu->item_focus == CONFIG_USB_ITEM_JOYSTICK),
+                  "Joystick / Paddles...", HGR_WHITE);
 }
 
 void config_menu_draw_applicard(uint16_t *fb,

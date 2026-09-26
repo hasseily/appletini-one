@@ -1,4 +1,4 @@
-/* USB keyboard and joystick input for the built-in ONE//e motherboard. */
+/* USB keyboard/joystick input for ONE//e, and joystick input for vTW. */
 
 #include "onee_input_service.h"
 
@@ -76,6 +76,10 @@ static uint8_t g_caps_lock;
 static uint8_t g_session_active;
 static uint8_t g_live_dirty;
 static uint8_t g_paddles_dirty;
+static uint8_t g_vtw_joystick_active;
+static uint8_t g_vtw_joystick_dirty;
+static uint8_t g_input_blocked;
+static onee_input_joystick_config_t g_joystick_config;
 static uint8_t g_cold_reboot_pending;
 static uint32_t g_repeat_press_sequence;
 static uint32_t g_repeat_deadline_ms;
@@ -371,7 +375,8 @@ static uint32_t onee_live_word(void)
             joystick_owner = i;
         }
     }
-    if (joystick_owner != ONEE_INPUT_DEVICE_SLOT_COUNT) {
+    if (joystick_owner != ONEE_INPUT_DEVICE_SLOT_COUNT &&
+        g_input_blocked == 0U) {
         live |= (uint32_t)(g_slots[joystick_owner].joystick_buttons & 0x07U)
                 << ONEE_INPUT_LIVE_BUTTON_SHIFT;
     }
@@ -391,6 +396,61 @@ static uint8_t onee_axis_or_neutral(const onee_input_slot_t *slot,
     return 0x80U;
 }
 
+static uint8_t onee_mapped_paddle(const onee_input_slot_t *slot, uint8_t paddle)
+{
+    static const onee_input_axis_t preferred[ONEE_INPUT_PADDLE_COUNT] = {
+        ONEE_INPUT_AXIS_X, ONEE_INPUT_AXIS_Y,
+        ONEE_INPUT_AXIS_RX, ONEE_INPUT_AXIS_RY
+    };
+    static const onee_input_axis_t fallback[ONEE_INPUT_PADDLE_COUNT] = {
+        ONEE_INPUT_AXIS_X, ONEE_INPUT_AXIS_Y,
+        ONEE_INPUT_AXIS_Z, ONEE_INPUT_AXIS_RZ
+    };
+    const onee_input_joystick_paddle_config_t *config =
+        &g_joystick_config.paddle[paddle];
+    onee_input_axis_t axis;
+    int32_t value;
+    int32_t distance;
+    int32_t side;
+    int32_t deadzone;
+    int32_t magnitude;
+
+    if (config->source == ONEE_INPUT_JOYSTICK_SOURCE_OFF) {
+        return 0x80U;
+    }
+    if (config->source == ONEE_INPUT_JOYSTICK_SOURCE_AUTO) {
+        axis = preferred[paddle];
+        if ((slot->joystick_axis_valid & (uint8_t)(1U << axis)) == 0U) {
+            axis = fallback[paddle];
+        }
+    } else {
+        axis = (onee_input_axis_t)(config->source -
+                                 ONEE_INPUT_JOYSTICK_SOURCE_X);
+    }
+    /* Missing/disabled axes stay centered even when inversion is selected. */
+    if ((slot->joystick_axis_valid & (uint8_t)(1U << axis)) == 0U) {
+        return 0x80U;
+    }
+    value = onee_axis_or_neutral(slot, axis, axis);
+    if (config->invert != 0U) {
+        value = 255 - value;
+    }
+    distance = value - 128;
+    side = (distance < 0) ? 128 : 127;
+    magnitude = (distance < 0) ? -distance : distance;
+    deadzone = (side * config->deadzone_percent + 50) / 100;
+    if (magnitude <= deadzone) {
+        return 0x80U;
+    }
+    magnitude = ((magnitude - deadzone) * side + (side - deadzone) / 2) /
+                (side - deadzone);
+    magnitude = (magnitude * config->sensitivity_percent + 50) / 100;
+    if (magnitude > side) {
+        magnitude = side;
+    }
+    return (uint8_t)((distance < 0) ? 128 - magnitude : 128 + magnitude);
+}
+
 static uint32_t onee_paddles_word(void)
 {
     const onee_input_slot_t *slot = NULL;
@@ -404,18 +464,55 @@ static uint32_t onee_paddles_word(void)
     if (slot == NULL) {
         return ONEE_INPUT_NEUTRAL_PADDLES;
     }
-    return ((uint32_t)onee_axis_or_neutral(slot,
-                                           ONEE_INPUT_AXIS_X,
-                                           ONEE_INPUT_AXIS_X)) |
-           ((uint32_t)onee_axis_or_neutral(slot,
-                                           ONEE_INPUT_AXIS_Y,
-                                           ONEE_INPUT_AXIS_Y) << 8) |
-           ((uint32_t)onee_axis_or_neutral(slot,
-                                           ONEE_INPUT_AXIS_RX,
-                                           ONEE_INPUT_AXIS_Z) << 16) |
-           ((uint32_t)onee_axis_or_neutral(slot,
-                                           ONEE_INPUT_AXIS_RY,
-                                           ONEE_INPUT_AXIS_RZ) << 24);
+    return (uint32_t)onee_mapped_paddle(slot, 0U) |
+           ((uint32_t)onee_mapped_paddle(slot, 1U) << 8) |
+           ((uint32_t)onee_mapped_paddle(slot, 2U) << 16) |
+           ((uint32_t)onee_mapped_paddle(slot, 3U) << 24);
+}
+
+static void vtw_joystick_poll(void)
+{
+    const uint32_t status = REG_READ(CARD_CTRL_VTW_JOYSTICK_CONTROL_REG);
+    uint32_t control = 0U;
+
+    if (((status >> CARD_CTRL_VTW_JOYSTICK_SIGNATURE_SHIFT) & 0xFFU) !=
+            CARD_CTRL_VTW_JOYSTICK_SIGNATURE ||
+        (status & CARD_CTRL_VTW_JOYSTICK_ENABLED_BIT) == 0U) {
+        g_vtw_joystick_active = 0U;
+        return;
+    }
+    if (g_vtw_joystick_active == 0U) {
+        g_vtw_joystick_active = 1U;
+        g_vtw_joystick_dirty = 1U;
+    }
+    /* Match the paddle owner's slot. Use only raw joystick buttons: Alt,
+     * Apple keys, and keyboard events belong to the ONE//e bridge. */
+    for (uint8_t i = 0U; i < ONEE_INPUT_DEVICE_SLOT_COUNT; ++i) {
+        if (g_slots[i].joystick_seen != 0U) {
+            /* Menus keep the virtual port present and centered rather than
+             * exposing physical inputs while guest delivery is blocked. */
+            control = CARD_CTRL_VTW_JOYSTICK_PRESENT_BIT;
+            if (g_input_blocked == 0U) {
+                control |= (uint32_t)(g_slots[i].joystick_buttons &
+                                     CARD_CTRL_VTW_JOYSTICK_BUTTON_MASK) <<
+                           CARD_CTRL_VTW_JOYSTICK_BUTTON_SHIFT;
+            }
+            break;
+        }
+    }
+    /* The mode may leave and return between polls. Hardware clears presence
+     * then, so compare the live commit state even without a fresh report. */
+    if (g_vtw_joystick_dirty == 0U &&
+        (status & CARD_CTRL_VTW_JOYSTICK_STATE_MASK) == control) {
+        return;
+    }
+    /* CONTROL commits both values on one PL edge; the first write only
+     * stages paddles, including neutral values when the last owner leaves. */
+    REG_WRITE(CARD_CTRL_VTW_JOYSTICK_PADDLES_REG,
+              (g_input_blocked != 0U) ? ONEE_INPUT_NEUTRAL_PADDLES :
+                                       onee_paddles_word());
+    REG_WRITE(CARD_CTRL_VTW_JOYSTICK_CONTROL_REG, control);
+    g_vtw_joystick_dirty = 0U;
 }
 
 static void onee_input_session_stop(void)
@@ -427,6 +524,94 @@ static void onee_input_session_stop(void)
     onee_repeat_clear_press_orders();
 }
 
+void onee_input_service_default_joystick_config(
+    onee_input_joystick_config_t *config)
+{
+    if (config == NULL) {
+        return;
+    }
+    memset(config, 0, sizeof(*config));
+    for (uint8_t i = 0U; i < ONEE_INPUT_PADDLE_COUNT; ++i) {
+        config->paddle[i].source = ONEE_INPUT_JOYSTICK_SOURCE_AUTO;
+        config->paddle[i].sensitivity_percent = 100U;
+    }
+}
+
+void onee_input_service_set_joystick_config(
+    const onee_input_joystick_config_t *config)
+{
+    onee_input_joystick_config_t next;
+
+    onee_input_service_default_joystick_config(&next);
+    if (config != NULL) {
+        for (uint8_t i = 0U; i < ONEE_INPUT_PADDLE_COUNT; ++i) {
+            next.paddle[i] = config->paddle[i];
+            if (next.paddle[i].source > ONEE_INPUT_JOYSTICK_SOURCE_OFF) {
+                next.paddle[i].source = ONEE_INPUT_JOYSTICK_SOURCE_AUTO;
+            }
+            next.paddle[i].invert = (next.paddle[i].invert != 0U) ? 1U : 0U;
+            if (next.paddle[i].sensitivity_percent <
+                ONEE_INPUT_JOYSTICK_SENSITIVITY_MIN) {
+                next.paddle[i].sensitivity_percent =
+                    ONEE_INPUT_JOYSTICK_SENSITIVITY_MIN;
+            } else if (next.paddle[i].sensitivity_percent >
+                       ONEE_INPUT_JOYSTICK_SENSITIVITY_MAX) {
+                next.paddle[i].sensitivity_percent =
+                    ONEE_INPUT_JOYSTICK_SENSITIVITY_MAX;
+            }
+            if (next.paddle[i].deadzone_percent >
+                ONEE_INPUT_JOYSTICK_DEADZONE_MAX) {
+                next.paddle[i].deadzone_percent =
+                    ONEE_INPUT_JOYSTICK_DEADZONE_MAX;
+            }
+        }
+    }
+    g_joystick_config = next;
+    g_paddles_dirty = 1U;
+    g_vtw_joystick_dirty = 1U;
+}
+
+void onee_input_service_get_joystick_config(
+    onee_input_joystick_config_t *config)
+{
+    if (config != NULL) {
+        *config = g_joystick_config;
+    }
+}
+
+void onee_input_service_get_joystick_snapshot(
+    onee_input_joystick_snapshot_t *snapshot)
+{
+    uint32_t paddles;
+
+    if (snapshot == NULL) {
+        return;
+    }
+    memset(snapshot, 0, sizeof(*snapshot));
+    snapshot->owner_slot = ONEE_INPUT_DEVICE_SLOT_COUNT;
+    snapshot->active = g_vtw_joystick_active;
+    memset(snapshot->axis, 0x80, sizeof(snapshot->axis));
+    for (uint8_t i = 0U; i < ONEE_INPUT_DEVICE_SLOT_COUNT; ++i) {
+        const onee_input_slot_t *slot = &g_slots[i];
+        if (slot->joystick_seen == 0U) {
+            continue;
+        }
+        snapshot->connected = 1U;
+        snapshot->owner_slot = i;
+        snapshot->axis_valid_mask = slot->joystick_axis_valid;
+        snapshot->buttons = slot->joystick_buttons;
+        for (uint8_t axis = 0U; axis < ONEE_INPUT_AXIS_COUNT; ++axis) {
+            snapshot->axis[axis] = onee_axis_or_neutral(
+                slot, (onee_input_axis_t)axis, (onee_input_axis_t)axis);
+        }
+        break;
+    }
+    paddles = onee_paddles_word();
+    for (uint8_t i = 0U; i < ONEE_INPUT_PADDLE_COUNT; ++i) {
+        snapshot->paddles[i] = (uint8_t)(paddles >> (i * 8U));
+    }
+}
+
 void onee_input_service_init(void)
 {
     memset(g_slots, 0, sizeof(g_slots));
@@ -436,6 +621,10 @@ void onee_input_service_init(void)
     g_session_active = 0U;
     g_live_dirty = 1U;
     g_paddles_dirty = 1U;
+    g_vtw_joystick_active = 0U;
+    g_vtw_joystick_dirty = 1U;
+    g_input_blocked = 0U;
+    onee_input_service_default_joystick_config(&g_joystick_config);
     g_cold_reboot_pending = 0U;
     g_repeat_press_sequence = 0U;
     onee_repeat_cancel();
@@ -446,6 +635,7 @@ void onee_input_service_poll(void)
 {
     uint32_t fifo_status;
 
+    vtw_joystick_poll();
     if (onee_input_bridge_active() == 0U) {
         if (g_session_active != 0U) {
             onee_input_session_stop();
@@ -472,7 +662,9 @@ void onee_input_service_poll(void)
         g_live_dirty = 0U;
     }
     if (g_paddles_dirty != 0U) {
-        REG_WRITE(ONEE_INPUT_PADDLES_REG, onee_paddles_word());
+        REG_WRITE(ONEE_INPUT_PADDLES_REG,
+                  (g_input_blocked != 0U) ? ONEE_INPUT_NEUTRAL_PADDLES :
+                                           onee_paddles_word());
         g_paddles_dirty = 0U;
     }
     onee_repeat_poll();
@@ -667,6 +859,7 @@ void onee_input_service_joystick_report(
     }
     g_live_dirty = 1U;
     g_paddles_dirty = 1U;
+    g_vtw_joystick_dirty = 1U;
 }
 
 void onee_input_service_disconnect(uint8_t slot_index)
@@ -674,18 +867,43 @@ void onee_input_service_disconnect(uint8_t slot_index)
     if (slot_index >= ONEE_INPUT_DEVICE_SLOT_COUNT) {
         return;
     }
+    if (g_slots[slot_index].joystick_seen != 0U) {
+        g_vtw_joystick_dirty = 1U;
+    }
     memset(&g_slots[slot_index], 0, sizeof(g_slots[slot_index]));
     onee_repeat_reselect();
     g_live_dirty = 1U;
     g_paddles_dirty = 1U;
 }
 
-void onee_input_service_release_all(void)
+void onee_input_service_release_keyboard(void)
 {
-    memset(g_slots, 0, sizeof(g_slots));
+    for (uint8_t i = 0U; i < ONEE_INPUT_DEVICE_SLOT_COUNT; ++i) {
+        /* The keyboard fields precede the saved joystick state. */
+        memset(&g_slots[i], 0, offsetof(onee_input_slot_t, joystick_seen));
+    }
     onee_key_queue_clear();
     g_cold_reboot_pending = 0U;
     onee_repeat_clear_press_orders();
     g_live_dirty = 1U;
+}
+
+void onee_input_service_set_blocked(uint8_t blocked)
+{
+    blocked = (blocked != 0U) ? 1U : 0U;
+    if (g_input_blocked == blocked) {
+        return;
+    }
+    g_input_blocked = blocked;
+    onee_input_service_release_keyboard();
     g_paddles_dirty = 1U;
+    g_vtw_joystick_dirty = 1U;
+}
+
+void onee_input_service_release_all(void)
+{
+    memset(g_slots, 0, sizeof(g_slots));
+    onee_input_service_release_keyboard();
+    g_paddles_dirty = 1U;
+    g_vtw_joystick_dirty = 1U;
 }

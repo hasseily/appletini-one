@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Focused source checks for the ONE//e USB input firmware path."""
+"""Source and native C checks for ONE//e and vTW USB input firmware."""
 
 import shutil
 import subprocess
@@ -186,7 +186,7 @@ def test_four_paddles_are_normalized_with_stable_fallbacks() -> None:
                         "static uint8_t onee_normalize_axis",
                         "static uint32_t onee_live_word")
     paddles = between(source,
-                      "static uint32_t onee_paddles_word",
+                      "static uint8_t onee_mapped_paddle",
                       "static void onee_input_session_stop")
 
     require("value < logical_min" in normalize and
@@ -224,6 +224,33 @@ def test_lowest_slot_owns_joystick_and_disconnect_recenters() -> None:
             "g_paddles_dirty = 1U" in disconnect and
             "ONEE_INPUT_NEUTRAL_PADDLES" in source,
             "disconnect must release buttons and select the next owner or neutral")
+
+
+def test_vtw_gate_and_menu_joystick_lifetime() -> None:
+    source = read(SERVICE_C)
+    usb = read(USB_C)
+    poll = between(source, "void onee_input_service_poll",
+                   "uint8_t onee_input_service_take_cold_reboot_request")
+    vtw = between(source, "static void vtw_joystick_poll",
+                  "static void onee_input_session_stop")
+    joystick = between(usb, "/* Keep joystick preview current",
+                       "onee_input_service_joystick_report")
+    blocked = between(usb, "void usb_hid_service_set_onee_input_blocked",
+                      "uint8_t usb_hid_service_all_input_released")
+    require(poll.index("vtw_joystick_poll();") <
+            poll.index("onee_input_bridge_active() == 0U"),
+            "physical-host vTW polling must precede the ONE//e-only gate")
+    require("CARD_CTRL_VTW_JOYSTICK_SIGNATURE" in vtw and
+            "CARD_CTRL_VTW_JOYSTICK_ENABLED_BIT" in vtw and
+            "g_vtw_joystick_active = 0U" in vtw and
+            vtw.index("REG_WRITE(CARD_CTRL_VTW_JOYSTICK_PADDLES_REG") <
+            vtw.index("REG_WRITE(CARD_CTRL_VTW_JOYSTICK_CONTROL_REG"),
+            "vTW writes require its signature/enable gate and ordered commit")
+    require("g_onee_input_blocked" not in joystick and
+            "onee_input_service_set_blocked(" in blocked and
+            "g_menu_capture != 0U || g_onee_input_blocked != 0U" in blocked and
+            "onee_input_service_release_keyboard();" in usb,
+            "menu/routing changes must retain joystick preview state")
 
 
 def test_hid_parser_feeds_boot_keyboard_and_absolute_joystick() -> None:
@@ -282,6 +309,7 @@ TESTS = (
     test_held_key_repeat_contract,
     test_four_paddles_are_normalized_with_stable_fallbacks,
     test_lowest_slot_owns_joystick_and_disconnect_recenters,
+    test_vtw_gate_and_menu_joystick_lifetime,
     test_hid_parser_feeds_boot_keyboard_and_absolute_joystick,
     test_usb_lifecycle_drives_input_lifecycle,
     test_frontend_build_includes_input_service,
@@ -362,6 +390,10 @@ def run_native_behavior_test() -> bool:
             writes[write_count].address = address;
             writes[write_count].value = value;
             ++write_count;
+            if (address == CARD_CTRL_VTW_JOYSTICK_CONTROL_REG) {
+                registers[reg_index(address)] =
+                    (registers[reg_index(address)] & ~0x0FUL) | (value & 0x0FU);
+            }
         }
 
         onee_service_state_t onee_service_state(void)
@@ -398,6 +430,407 @@ def run_native_behavior_test() -> bool:
         static void release_keys(uint8_t slot)
         {
             (void)onee_input_service_keyboard_report(slot, 0U, NULL, 0U);
+        }
+
+        static int expect_vtw_update(uint32_t paddles, uint32_t control,
+                                     const char *context)
+        {
+            const uint32_t before = write_count;
+            onee_input_service_poll();
+            if (write_count != before + 2U ||
+                writes[before].address != CARD_CTRL_VTW_JOYSTICK_PADDLES_REG ||
+                writes[before].value != paddles ||
+                writes[before + 1U].address != CARD_CTRL_VTW_JOYSTICK_CONTROL_REG ||
+                writes[before + 1U].value != control) {
+                fail(context);
+                return 1;
+            }
+            return 0;
+        }
+
+        static int test_vtw_joystick(void)
+        {
+            const uint32_t enabled = (0x4AUL << 24) | (1UL << 8);
+            onee_input_joystick_report_t joystick;
+            onee_input_joystick_snapshot_t snapshot;
+            onee_input_joystick_config_t config;
+            uint8_t delete_key = HID_KBD_USAGE_DELFWD;
+            uint32_t before;
+
+            memset(registers, 0, sizeof(registers));
+            memset(writes, 0, sizeof(writes));
+            write_count = 0U;
+            service_state = ONEE_SERVICE_STATE_OFF;
+            onee_input_service_init();
+            memset(&joystick, 0, sizeof(joystick));
+            joystick.buttons_valid = 1U;
+            joystick.buttons = 5U;
+            joystick.axis_valid_mask = (1U << ONEE_INPUT_AXIS_X) |
+                (1U << ONEE_INPUT_AXIS_Y) | (1U << ONEE_INPUT_AXIS_Z) |
+                (1U << ONEE_INPUT_AXIS_RZ);
+            joystick.axis[ONEE_INPUT_AXIS_X] = -40000;
+            joystick.axis[ONEE_INPUT_AXIS_Y] = 40000;
+            joystick.logical_min[ONEE_INPUT_AXIS_X] = -32768;
+            joystick.logical_min[ONEE_INPUT_AXIS_Y] = -32768;
+            joystick.logical_max[ONEE_INPUT_AXIS_X] = 32767;
+            joystick.logical_max[ONEE_INPUT_AXIS_Y] = 32767;
+            joystick.axis[ONEE_INPUT_AXIS_Z] = 512;
+            joystick.logical_max[ONEE_INPUT_AXIS_Z] = 1023;
+            joystick.axis[ONEE_INPUT_AXIS_RZ] = 25;
+            joystick.logical_max[ONEE_INPUT_AXIS_RZ] = 100;
+            onee_input_service_joystick_report(3U, &joystick);
+            onee_input_service_poll();
+            registers[0xACU] = 0xFF000100UL; /* Old/unknown hardware. */
+            onee_input_service_poll();
+            registers[0xACU] = 0x4A000000UL; /* New hardware, mode off. */
+            onee_input_service_poll();
+            onee_input_service_get_joystick_snapshot(&snapshot);
+            if (write_count != 0U || snapshot.connected != 1U ||
+                snapshot.owner_slot != 3U || snapshot.active != 0U ||
+                snapshot.axis[ONEE_INPUT_AXIS_X] != 0U ||
+                snapshot.axis[ONEE_INPUT_AXIS_Y] != 255U ||
+                snapshot.paddles[2] != 128U || snapshot.paddles[3] != 64U) {
+                fail("inactive/old vTW hardware must save reports without writes");
+                return 1;
+            }
+            registers[0xACU] = enabled;
+            if (expect_vtw_update(0x4080FF00UL, 0x0BU,
+                                 "attach before enable did not publish atomically")) {
+                return 1;
+            }
+            before = write_count;
+            onee_input_service_poll();
+            if (onee_input_service_keyboard_report(
+                    0U, HID_MOD_CTRL | HID_MOD_ALT | HID_MOD_LGUI,
+                    &delete_key, 1U) != 0U) {
+                fail("physical-host vTW consumed a ONE//e reset chord");
+                return 1;
+            }
+            onee_input_service_poll();
+            onee_input_service_disconnect(0U);
+            onee_input_service_poll();
+            if (write_count != before ||
+                onee_input_service_take_cold_reboot_request() != 0U) {
+                fail("keyboard or unchanged joystick reached physical-host vTW");
+                return 1;
+            }
+            /* PL can see a complete mode exit/re-entry between two polls. */
+            registers[0xACU] = enabled;
+            if (expect_vtw_update(0x4080FF00UL, 0x0BU,
+                                 "unobserved mode cycle lost a held joystick")) {
+                return 1;
+            }
+
+            /* Split axis/button reports retain each other's saved fields. */
+            joystick.buttons_valid = 0U;
+            joystick.axis_valid_mask = 1U << ONEE_INPUT_AXIS_X;
+            joystick.axis[ONEE_INPUT_AXIS_X] = 0;
+            onee_input_service_joystick_report(3U, &joystick);
+            if (expect_vtw_update(0x4080FF80UL, 0x0BU,
+                                 "axis-only report lost buttons or other axes")) {
+                return 1;
+            }
+            joystick.axis_valid_mask = 0U;
+            joystick.buttons_valid = 1U;
+            joystick.buttons = 2U;
+            onee_input_service_joystick_report(3U, &joystick);
+            if (expect_vtw_update(0x4080FF80UL, 0x05U,
+                                 "button-only report lost saved axes")) {
+                return 1;
+            }
+            memset(&joystick, 0, sizeof(joystick));
+            joystick.axis_valid_mask = 1U << ONEE_INPUT_AXIS_X;
+            joystick.axis[ONEE_INPUT_AXIS_X] = 255;
+            joystick.logical_max[ONEE_INPUT_AXIS_X] = 255;
+            onee_input_service_joystick_report(1U, &joystick);
+            if (expect_vtw_update(0x808080FFUL, 0x01U,
+                                 "lower-slot owner inherited stale buttons/axes")) {
+                return 1;
+            }
+            joystick.axis_valid_mask = 0U;
+            joystick.buttons_valid = 1U;
+            joystick.buttons = 7U;
+            onee_input_service_joystick_report(3U, &joystick);
+            if (expect_vtw_update(0x808080FFUL, 0x01U,
+                                 "non-owner buttons replaced lowest-slot owner")) {
+                return 1;
+            }
+            onee_input_service_disconnect(1U);
+            if (expect_vtw_update(0x4080FF80UL, 0x0FU,
+                                 "owner disconnect did not restore remaining slot")) {
+                return 1;
+            }
+
+            /* Menu capture centers the virtual port without physical fallback. */
+            onee_input_service_set_blocked(1U);
+            if (expect_vtw_update(0x80808080UL, 1U,
+                                 "menu block lost presence or retained guest input")) {
+                return 1;
+            }
+            joystick.axis_valid_mask = 1U << ONEE_INPUT_AXIS_X;
+            joystick.axis[ONEE_INPUT_AXIS_X] = 255;
+            joystick.logical_max[ONEE_INPUT_AXIS_X] = 255;
+            joystick.buttons = 1U;
+            onee_input_service_joystick_report(3U, &joystick);
+            if (expect_vtw_update(0x80808080UL, 1U,
+                                 "blocked joystick report reached guest")) {
+                return 1;
+            }
+            onee_input_service_release_keyboard();
+            onee_input_service_get_joystick_snapshot(&snapshot);
+            if (snapshot.connected != 1U || snapshot.owner_slot != 3U ||
+                snapshot.active != 1U || snapshot.axis[0] != 255U ||
+                snapshot.paddles[0] != 255U || snapshot.buttons != 1U) {
+                fail("menu/routing transition lost live joystick preview");
+                return 1;
+            }
+            registers[0xACU] = enabled;
+            if (expect_vtw_update(0x80808080UL, 1U,
+                                 "unobserved blocked mode cycle lost neutral presence")) {
+                return 1;
+            }
+            registers[0xACU] = enabled & ~(1UL << 8);
+            before = write_count;
+            onee_input_service_poll();
+            if (write_count != before) {
+                fail("blocked mode exit wrote disabled joystick hardware");
+                return 1;
+            }
+            registers[0xACU] = enabled;
+            if (expect_vtw_update(0x80808080UL, 1U,
+                                 "blocked mode re-entry did not restore neutral presence")) {
+                return 1;
+            }
+            onee_input_service_set_blocked(0U);
+            if (expect_vtw_update(0x4080FFFFUL, 0x03U,
+                                 "menu exit required a fresh joystick report")) {
+                return 1;
+            }
+            registers[0xACU] = enabled & ~(1UL << 8);
+            before = write_count;
+            onee_input_service_poll();
+            joystick.axis[ONEE_INPUT_AXIS_X] = 64;
+            onee_input_service_joystick_report(3U, &joystick);
+            onee_input_service_poll();
+            if (write_count != before) {
+                fail("mode exit wrote to disabled joystick hardware");
+                return 1;
+            }
+            registers[0xACU] = enabled;
+            if (expect_vtw_update(0x4080FF40UL, 0x03U,
+                                 "mode re-entry did not restore latest report")) {
+                return 1;
+            }
+            registers[0xACU] = 0U;
+            onee_input_service_poll();
+            registers[0xACU] = enabled;
+            if (expect_vtw_update(0x4080FF40UL, 0x03U,
+                                 "restored signature did not republish clean state")) {
+                return 1;
+            }
+            onee_input_service_disconnect(3U);
+            if (expect_vtw_update(0x80808080UL, 0U,
+                                 "last disconnect did not restore physical fallback")) {
+                return 1;
+            }
+            onee_input_service_get_joystick_snapshot(&snapshot);
+            if (snapshot.connected != 0U || snapshot.buttons != 0U ||
+                snapshot.owner_slot != ONEE_INPUT_DEVICE_SLOT_COUNT) {
+                fail("disconnect left stale preview presence/buttons");
+                return 1;
+            }
+            memset(&joystick, 0, sizeof(joystick));
+            joystick.axis_valid_mask = 3U;
+            joystick.logical_max[0] = joystick.logical_max[1] = 255;
+            joystick.axis[0] = joystick.axis[1] = 128;
+            onee_input_service_joystick_report(2U, &joystick);
+            if (expect_vtw_update(0x80808080UL, 1U,
+                                 "idle centered joystick lost presence")) {
+                return 1;
+            }
+
+            /* Mapping changes use saved reports without waiting for motion. */
+            joystick.axis_valid_mask = 0x3FU;
+            joystick.buttons_valid = 1U;
+            joystick.buttons = 2U;
+            for (uint8_t axis = 0U; axis < ONEE_INPUT_AXIS_COUNT; ++axis) {
+                joystick.logical_max[axis] = 255;
+            }
+            joystick.axis[0] = 192;
+            joystick.axis[1] = 64;
+            joystick.axis[2] = 255;
+            joystick.axis[3] = 0;
+            joystick.axis[4] = 160;
+            joystick.axis[5] = 96;
+            onee_input_service_joystick_report(2U, &joystick);
+            if (expect_vtw_update(0xA00040C0UL, 5U,
+                                 "Auto mapping did not prefer Rx/Ry over Z/Rz")) {
+                return 1;
+            }
+            onee_input_service_default_joystick_config(&config);
+            config.paddle[0].source = ONEE_INPUT_JOYSTICK_SOURCE_Y;
+            config.paddle[0].invert = 1U;
+            config.paddle[1].source = ONEE_INPUT_JOYSTICK_SOURCE_X;
+            config.paddle[1].sensitivity_percent = 50U;
+            config.paddle[2].source = ONEE_INPUT_JOYSTICK_SOURCE_RZ;
+            config.paddle[2].deadzone_percent = 25U;
+            config.paddle[3].source = ONEE_INPUT_JOYSTICK_SOURCE_OFF;
+            config.paddle[3].invert = 1U;
+            onee_input_service_set_joystick_config(&config);
+            if (expect_vtw_update(0x8080A0BFUL, 5U,
+                                 "mapping/inversion/sensitivity/deadzone failed")) {
+                return 1;
+            }
+            before = write_count;
+            onee_input_service_get_joystick_snapshot(&snapshot);
+            if (snapshot.axis[0] != 192U || snapshot.axis[1] != 64U ||
+                snapshot.paddles[0] != 191U || snapshot.paddles[1] != 160U ||
+                snapshot.paddles[2] != 128U || snapshot.paddles[3] != 128U ||
+                write_count != before) {
+                fail("preview altered raw axes or performed MMIO writes");
+                return 1;
+            }
+
+            /* Both virtual CPU consumers use the configured paddle values. */
+            registers[0xACU] = enabled & ~(1UL << 8);
+            registers[0x5BU] = CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT;
+            registers[0x5FU] = (0xE1UL << 24) | (1UL << 9);
+            service_state = ONEE_SERVICE_STATE_RUNNING;
+            onee_input_service_poll();
+            if (last_write(ONEE_INPUT_PADDLES_REG) != 0x8080A0BFUL ||
+                last_write(ONEE_INPUT_LIVE_REG) != 0x10U) {
+                fail("ONE//e did not share configured joystick mapping");
+                return 1;
+            }
+            onee_input_service_set_blocked(1U);
+            onee_input_service_poll();
+            if (last_write(ONEE_INPUT_PADDLES_REG) != 0x80808080UL ||
+                last_write(ONEE_INPUT_LIVE_REG) != 0U) {
+                fail("menu block leaked joystick state into ONE//e");
+                return 1;
+            }
+            onee_input_service_set_blocked(0U);
+            onee_input_service_poll();
+            if (last_write(ONEE_INPUT_PADDLES_REG) != 0x8080A0BFUL ||
+                last_write(ONEE_INPUT_LIVE_REG) != 0x10U) {
+                fail("ONE//e menu exit required a fresh joystick report");
+                return 1;
+            }
+            service_state = ONEE_SERVICE_STATE_OFF;
+            registers[0x5BU] = 0U;
+            onee_input_service_poll();
+
+            /* Every 8-bit value remains exact with defaults and inversion. */
+            onee_input_service_default_joystick_config(&config);
+            joystick.axis_valid_mask = 1U;
+            for (uint16_t value = 0U; value <= 255U; ++value) {
+                joystick.axis[0] = value;
+                config.paddle[0].invert = 0U;
+                onee_input_service_set_joystick_config(&config);
+                onee_input_service_joystick_report(2U, &joystick);
+                onee_input_service_get_joystick_snapshot(&snapshot);
+                if (snapshot.paddles[0] != value) {
+                    fail("default transform changed an 8-bit normalized axis");
+                    return 1;
+                }
+                config.paddle[0].invert = 1U;
+                onee_input_service_set_joystick_config(&config);
+                onee_input_service_get_joystick_snapshot(&snapshot);
+                if (snapshot.paddles[0] != 255U - value) {
+                    fail("inversion did not preserve the full 8-bit range");
+                    return 1;
+                }
+            }
+            config.paddle[0].source = 255U;
+            config.paddle[0].invert = 99U;
+            config.paddle[0].sensitivity_percent = 0U;
+            config.paddle[0].deadzone_percent = 255U;
+            config.paddle[1].sensitivity_percent = 65535U;
+            onee_input_service_set_joystick_config(&config);
+            onee_input_service_get_joystick_config(&config);
+            if (config.paddle[0].source != ONEE_INPUT_JOYSTICK_SOURCE_AUTO ||
+                config.paddle[0].invert != 1U ||
+                config.paddle[0].sensitivity_percent != 25U ||
+                config.paddle[0].deadzone_percent != 50U ||
+                config.paddle[1].sensitivity_percent != 200U) {
+                fail("joystick configuration bounds were not enforced");
+                return 1;
+            }
+            onee_input_service_set_joystick_config(NULL);
+            onee_input_service_get_joystick_config(&config);
+            if (config.paddle[0].source != ONEE_INPUT_JOYSTICK_SOURCE_AUTO ||
+                config.paddle[0].invert != 0U ||
+                config.paddle[0].sensitivity_percent != 100U ||
+                config.paddle[0].deadzone_percent != 0U) {
+                fail("restoring joystick defaults failed");
+                return 1;
+            }
+            {
+                static const struct {
+                    uint8_t input, deadzone, sensitivity, expected;
+                } boundaries[] = {
+                    {   0, 50, 100,   0 }, {  63, 50, 100, 126 },
+                    {  64, 50, 100, 128 }, { 128, 50, 100, 128 },
+                    { 192, 50, 100, 128 }, { 193, 50, 100, 130 },
+                    { 255, 50, 100, 255 }, {  64,  0, 200,   0 },
+                    { 127,  0, 200, 126 }, { 129,  0, 200, 130 },
+                    { 192,  0, 200, 255 }, {   0,  0,  25,  96 },
+                    { 255,  0,  25, 160 }, {  96, 25, 100, 128 },
+                    { 192, 25, 100, 171 }
+                };
+                for (uint32_t i = 0U;
+                     i < sizeof(boundaries) / sizeof(boundaries[0]); ++i) {
+                    config.paddle[0].deadzone_percent = boundaries[i].deadzone;
+                    config.paddle[0].sensitivity_percent = boundaries[i].sensitivity;
+                    onee_input_service_set_joystick_config(&config);
+                    joystick.axis[0] = boundaries[i].input;
+                    onee_input_service_joystick_report(2U, &joystick);
+                    onee_input_service_get_joystick_snapshot(&snapshot);
+                    if (snapshot.paddles[0] != boundaries[i].expected) {
+                        fail("sensitivity/deadzone boundary changed center or travel");
+                        return 1;
+                    }
+                }
+            }
+            memset(&joystick, 0, sizeof(joystick));
+            joystick.axis_valid_mask = 1U << ONEE_INPUT_AXIS_Y;
+            joystick.logical_max[ONEE_INPUT_AXIS_Y] = 255;
+            onee_input_service_joystick_report(0U, &joystick);
+            config.paddle[0].source = ONEE_INPUT_JOYSTICK_SOURCE_RX;
+            config.paddle[0].invert = 1U;
+            onee_input_service_set_joystick_config(&config);
+            onee_input_service_get_joystick_snapshot(&snapshot);
+            if (snapshot.paddles[0] != 128U) {
+                fail("a missing selected axis did not stay centered");
+                return 1;
+            }
+            registers[0xACU] = enabled;
+            onee_input_service_release_all();
+            if (expect_vtw_update(0x80808080UL, 0U,
+                                 "USB teardown did not clear saved presence")) {
+                return 1;
+            }
+            onee_input_service_get_joystick_snapshot(&snapshot);
+            if (snapshot.connected != 0U || snapshot.axis_valid_mask != 0U) {
+                fail("USB teardown retained raw joystick preview");
+                return 1;
+            }
+            onee_input_service_set_blocked(1U);
+            if (expect_vtw_update(0x80808080UL, 0U,
+                                 "blocked empty port claimed joystick presence")) {
+                return 1;
+            }
+            onee_input_service_joystick_report(0U, &joystick);
+            if (expect_vtw_update(0x80808080UL, 1U,
+                                 "blocked attach did not claim a neutral virtual port")) {
+                return 1;
+            }
+            onee_input_service_disconnect(0U);
+            if (expect_vtw_update(0x80808080UL, 0U,
+                                 "blocked disconnect did not restore physical fallback")) {
+                return 1;
+            }
+            return 0;
         }
 
         int main(void)
@@ -791,7 +1224,10 @@ def run_native_behavior_test() -> bool:
                 return 1;
             }
 
-            puts("ONEE INPUT SERVICE NATIVE PASS");
+            if (test_vtw_joystick() != 0) {
+                return 1;
+            }
+            puts("ONEE AND VTW INPUT SERVICE NATIVE PASS");
             return 0;
         }
     '''), encoding="utf-8")
@@ -818,7 +1254,7 @@ def run_native_behavior_test() -> bool:
         [str(executable)], cwd=ROOT, text=True,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
     )
-    if ran.returncode != 0 or "ONEE INPUT SERVICE NATIVE PASS" not in ran.stdout:
+    if ran.returncode != 0 or "ONEE AND VTW INPUT SERVICE NATIVE PASS" not in ran.stdout:
         print(ran.stdout)
         print("FAIL native_behavior_test: harness failed")
         return False

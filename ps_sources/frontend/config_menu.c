@@ -133,6 +133,12 @@ static const char *const k_browser_lastdir_keys[CONFIG_BROWSER_CAT_COUNT] = {
 #define CONFIG_DISK2_2MG_HEADER_BYTES 64U
 
 static uint8_t config_menu_str_ieq(const char *a, const char *b);
+static uint8_t config_menu_parse_indexed_config_key(const char *key,
+                                                    const char *prefix,
+                                                    uint32_t min_index,
+                                                    uint32_t max_index,
+                                                    uint32_t *out_index,
+                                                    const char **out_suffix);
 
 #define BOOT_TIMEOUT_TICKS_3S 399000000U
 #define BOOT_TIMEOUT_TICKS_5S 665000000U
@@ -1878,6 +1884,79 @@ static uint8_t config_menu_parse_usb_binding(config_menu_t *menu,
     return 0U;
 }
 
+const char *config_menu_joystick_source_text(uint8_t source)
+{
+    static const char *const names[] = {
+        "Auto", "X", "Y", "Z", "RX", "RY", "RZ", "Off"
+    };
+    return names[source <= ONEE_INPUT_JOYSTICK_SOURCE_OFF ? source : 0U];
+}
+
+static unsigned config_menu_joystick_percent(const char *value,
+                                              unsigned minimum,
+                                              unsigned maximum,
+                                              unsigned fallback)
+{
+    char *end;
+    long parsed = strtol(value, &end, 10);
+    if (end == value || *end != '\0') {
+        return fallback;
+    }
+    if (parsed < (long)minimum) {
+        return minimum;
+    }
+    return parsed > (long)maximum ? maximum : (unsigned)parsed;
+}
+
+static uint8_t config_menu_parse_joystick(config_menu_t *menu,
+                                         const char *key,
+                                         const char *value)
+{
+    uint32_t paddle;
+    const char *suffix;
+    onee_input_joystick_paddle_config_t *config;
+    if (!config_menu_parse_indexed_config_key(
+            key, "usb.joystick.paddle.", 0U, 3U, &paddle, &suffix)) {
+        return 0U;
+    }
+    config = &menu->joystick_config.paddle[paddle];
+    if (strcmp(suffix, ".source") == 0) {
+        config->source = ONEE_INPUT_JOYSTICK_SOURCE_AUTO;
+        for (uint8_t source = 0U; source <= ONEE_INPUT_JOYSTICK_SOURCE_OFF; ++source) {
+            if (config_menu_str_ieq(value, config_menu_joystick_source_text(source))) {
+                config->source = source;
+                break;
+            }
+        }
+    } else if (strcmp(suffix, ".invert") == 0) {
+        config->invert = config_menu_bool_text(value);
+    } else if (strcmp(suffix, ".sensitivity") == 0) {
+        config->sensitivity_percent = (uint16_t)config_menu_joystick_percent(
+            value, 25U, 200U, 100U);
+    } else if (strcmp(suffix, ".deadzone") == 0) {
+        config->deadzone_percent = (uint8_t)config_menu_joystick_percent(
+            value, 0U, 50U, 0U);
+    }
+    return 1U;
+}
+
+static void config_menu_joystick_config_line(const config_menu_t *menu,
+                                              uint32_t paddle,
+                                              char *line, size_t size)
+{
+    const onee_input_joystick_paddle_config_t *config =
+        &menu->joystick_config.paddle[paddle];
+    (void)snprintf(line, size,
+        "usb.joystick.paddle.%u.source=%s\n"
+        "usb.joystick.paddle.%u.invert=%s\n"
+        "usb.joystick.paddle.%u.sensitivity=%u\n"
+        "usb.joystick.paddle.%u.deadzone=%u\n",
+        (unsigned)paddle, config_menu_joystick_source_text(config->source),
+        (unsigned)paddle, config_menu_on_off(config->invert),
+        (unsigned)paddle, (unsigned)config->sensitivity_percent,
+        (unsigned)paddle, (unsigned)config->deadzone_percent);
+}
+
 const char *config_menu_usb_binding_action_text(uint32_t action)
 {
     if (action >= CONFIG_MENU_USB_BIND_ACTION_COUNT) {
@@ -2673,6 +2752,7 @@ static void config_menu_apply_boot_runtime_internal(config_menu_t *menu,
     }
 
     config_menu_coerce_boot_device(menu);
+    onee_input_service_set_joystick_config(&menu->joystick_config);
 
     if (menu->platform.set_onee_video_50hz != NULL) {
         menu->platform.set_onee_video_50hz(menu->platform.ctx,
@@ -3279,6 +3359,8 @@ static void config_menu_parse_key_value(config_menu_t *menu, const char *key, co
                     config_menu_bool_text(value);
             }
         }
+    } else if (config_menu_parse_joystick(menu, key, value) != 0U) {
+        /* Joystick settings use the same global and profile config files. */
     } else if (config_menu_parse_usb_binding(menu, key, value) != 0U) {
         /* Handled by USB menu binding settings. */
     } else if (config_menu_phasor_parse_setting(menu, key, value) != 0U) {
@@ -3495,6 +3577,12 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                config_menu_on_off(menu->vtw_slug_key_enabled),
                (unsigned)menu->vtw_slowdown_mask,
                (unsigned)menu->vtw_slowdown_cycles);
+
+    for (uint32_t paddle = 0U; paddle < 4U; ++paddle) {
+        char joystick_line[256];
+        config_menu_joystick_config_line(menu, paddle, joystick_line, sizeof(joystick_line));
+        APPEND_CFG("%s", joystick_line);
+    }
 
     for (uint32_t binding = 0U;
          binding < CONFIG_MENU_USB_BIND_ACTION_COUNT;
@@ -3940,6 +4028,7 @@ static void config_menu_reset_settings_only(config_menu_t *menu)
     menu->ramworks_enabled = menu->ram_enabled;
     menu->sp_ramdisk_enabled = CONFIG_DEFAULT_SP_RAMDISK_ENABLED;
     config_menu_usb_bindings_set_defaults(menu);
+    onee_input_service_default_joystick_config(&menu->joystick_config);
     menu->usb_bindings_editable = usb_bindings_editable;
     menu->usb_binding_capture = CONFIG_MENU_USB_BIND_CAPTURE_NONE;
 }
@@ -4592,7 +4681,7 @@ static uint32_t config_menu_tab_item_count(const config_menu_t *menu)
     case CONFIG_TAB_SMARTPORT:
         return SMARTPORT_DEVICE_COUNT + 3U; /* overlay + N slots + ram disk + SuperSprite */
     case CONFIG_TAB_USB:
-        return 3U;              /* SD remote mount + SDD stream + USB1 refresh */
+        return 4U;              /* SD mount, SDD, USB1 refresh, joystick settings */
     case CONFIG_TAB_DISK2:
         return 5U;
     case CONFIG_TAB_MOUSE:
@@ -6963,6 +7052,10 @@ static void config_menu_activate_item(config_menu_t *menu)
             config_menu_start_usb0_sd_remote(menu);
         } else if (menu->item_focus == 1U) {
             config_menu_set_sdd_stream(menu, menu->sdd_stream_enabled ? 0U : 1U);
+        } else if (menu->item_focus == CONFIG_USB_ITEM_JOYSTICK) {
+            menu->joystick_page_active = 1U;
+            menu->joystick_focus = 0U;
+            menu->joystick_paddle = 0U;
         } else if (menu->item_focus == 2U) {
             if (menu->platform.refresh_usb1 != NULL) {
                 menu->platform.refresh_usb1(menu->platform.ctx);
@@ -7052,6 +7145,7 @@ void config_menu_init(config_menu_t *menu)
     menu->sdd_stream_enabled = 0U;
     menu->usb0_sd_remote_active = 0U;
     config_menu_usb_bindings_set_defaults(menu);
+    onee_input_service_default_joystick_config(&menu->joystick_config);
     menu->usb_bindings_editable = 1U;
     menu->usb_owned = 0U;
     menu->mockingboard_slot4_enabled = CONFIG_DEFAULT_MOCKINGBOARD_SLOT4_ENABLED;
@@ -7211,6 +7305,7 @@ void config_menu_set_active(config_menu_t *menu, uint8_t active)
         config_menu_try_read_rtc(menu, 0U);
     } else {
         config_menu_stop_usb0_sd_remote(menu);
+        menu->joystick_page_active = 0U;
         menu->usb_owned = 0U;
         menu->usb_binding_capture = CONFIG_MENU_USB_BIND_CAPTURE_NONE;
         config_menu_browser_close(menu);
@@ -7253,6 +7348,71 @@ void config_menu_set_usb_owned(config_menu_t *menu, uint8_t usb_owned)
     }
 }
 
+static uint8_t config_menu_joystick_handle_input(config_menu_t *menu,
+                                                 ui_input_t input)
+{
+    onee_input_joystick_paddle_config_t *config;
+    int delta;
+    int value;
+    if (!menu->joystick_page_active) {
+        return 0U;
+    }
+    if (input.key == UI_KEY_ESC || input.key == UI_KEY_BACK ||
+        (input.key == UI_KEY_ENTER && menu->joystick_focus == 6U)) {
+        menu->joystick_page_active = 0U;
+        menu->item_focus = CONFIG_USB_ITEM_JOYSTICK;
+        return 1U;
+    }
+    if (input.key == UI_KEY_UP || input.key == UI_KEY_PAGE_UP ||
+        input.key == UI_KEY_SHIFT_TAB) {
+        menu->joystick_focus = (uint8_t)((menu->joystick_focus +
+            CONFIG_JOYSTICK_ITEM_COUNT - 1U) % CONFIG_JOYSTICK_ITEM_COUNT);
+        return 1U;
+    }
+    if (input.key == UI_KEY_DOWN || input.key == UI_KEY_PAGE_DOWN ||
+        input.key == UI_KEY_TAB) {
+        menu->joystick_focus = (uint8_t)((menu->joystick_focus + 1U) %
+                                          CONFIG_JOYSTICK_ITEM_COUNT);
+        return 1U;
+    }
+    if (input.key != UI_KEY_LEFT && input.key != UI_KEY_RIGHT &&
+        input.key != UI_KEY_ENTER && input.key != UI_KEY_SPACE) {
+        return 1U;
+    }
+    delta = input.key == UI_KEY_LEFT ? -1 : 1;
+    config = &menu->joystick_config.paddle[menu->joystick_paddle];
+    switch (menu->joystick_focus) {
+    case 0U:
+        menu->joystick_paddle = (uint8_t)((menu->joystick_paddle + 4 + delta) % 4);
+        return 1U;
+    case 1U:
+        config->source = (uint8_t)((config->source + 8 + delta) % 8);
+        break;
+    case 2U:
+        config->invert = !config->invert;
+        break;
+    case 3U:
+        value = (int)config->sensitivity_percent + delta * 5;
+        config->sensitivity_percent = (uint16_t)(value < 25 ? 25 : value > 200 ? 200 : value);
+        break;
+    case 4U:
+        value = (int)config->deadzone_percent + delta * 5;
+        config->deadzone_percent = (uint8_t)(value < 0 ? 0 : value > 50 ? 50 : value);
+        break;
+    case 5U:
+        if (input.key != UI_KEY_ENTER && input.key != UI_KEY_SPACE) {
+            return 1U;
+        }
+        onee_input_service_default_joystick_config(&menu->joystick_config);
+        break;
+    default:
+        return 1U;
+    }
+    onee_input_service_set_joystick_config(&menu->joystick_config);
+    config_menu_save_settings(menu);
+    return 1U;
+}
+
 uint8_t config_menu_handle_input(config_menu_t *menu, ui_input_t input)
 {
     if (menu == NULL || input.pressed == 0U) {
@@ -7292,6 +7452,10 @@ uint8_t config_menu_handle_input(config_menu_t *menu, ui_input_t input)
     }
     if (!config_menu_is_active(menu)) {
         return 0U;
+    }
+
+    if (config_menu_joystick_handle_input(menu, input) != 0U) {
+        return 1U;
     }
 
     if (menu->usb_binding_capture != CONFIG_MENU_USB_BIND_CAPTURE_NONE) {
@@ -7929,6 +8093,9 @@ static void config_menu_draw_help(uint16_t *fb,
         help_item == CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM &&
         config_menu_onee_fixed_bindings_active(menu) != 0U) {
         help_item = CONFIG_MENU_BOOT_ONEE_STANDARD_HELP_ITEM;
+    }
+    if (menu->tab == CONFIG_TAB_USB && menu->joystick_page_active) {
+        help_item = CONFIG_USB_ITEM_JOYSTICK;
     }
     base = config_menu_help_resolve(menu->tab, help_item);
 

@@ -8,6 +8,7 @@
 #include "uart_control.h"
 #include "uthernet2_control.h"
 #include "usb_hid_service.h"
+#include "onee_input_service.h"
 
 #define CONFIG_MENU_STATUS_LEN 96U
 #define CONFIG_MENU_PATH_LEN 128U
@@ -234,6 +235,10 @@ typedef struct {
     uint8_t supersprite_enabled;   /* SuperSprite VDP in slot 7 (excl. SmartPort) */
     uint8_t sdd_stream_enabled;    /* USB0 bus-event stream for SuperDuperDisplay */
     uint8_t usb0_sd_remote_active; /* modal USB0 SD-card mass-storage bridge */
+    onee_input_joystick_config_t joystick_config;
+    uint8_t joystick_page_active;
+    uint8_t joystick_paddle;
+    uint8_t joystick_focus;
     uint8_t mockingboard_slot4_enabled;
     uint8_t mockingboard_pan[12];
     int8_t phasor_bass;

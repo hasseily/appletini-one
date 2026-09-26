@@ -3079,6 +3079,7 @@ static uint8_t ui_config_menu_has_close_consumer(const config_menu_t *menu)
             config_menu_ethernet_ftp_sd_remote_active(menu) != 0U ||
             menu->usb_binding_capture != CONFIG_MENU_USB_BIND_CAPTURE_NONE ||
             menu->browser_active != 0U ||
+            menu->joystick_page_active != 0U ||
             menu->profile_carousel_active != 0U ||
             menu->profile_name_editor_active != 0U) ? 1U : 0U;
 }
@@ -3136,6 +3137,8 @@ static void ui_sync_usb_menu_capture(config_menu_t *menu)
         usb_hid_service_set_vtw_sources(vtw_sources);
     }
     usb_hid_service_set_menu_capture(config_menu_is_active(menu));
+    usb_hid_service_set_joystick_preview(
+        (uint8_t)(config_menu_is_active(menu) && menu->joystick_page_active));
     ui_sync_onee_menu_pause(menu);
 }
 
@@ -3655,6 +3658,9 @@ int main(void)
         }
     }
     (void)usb_hid_service_init();
+    // USB init clears input state after the saved profile has been loaded.
+    // Restore its mapping before enumeration can deliver the first report.
+    onee_input_service_set_joystick_config(&config_menu.joystick_config);
     onee_service_bind_ui_policy(onee_ui_set_paused,
                                 onee_ui_set_input_policy,
                                 onee_ui_input_released,

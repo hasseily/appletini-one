@@ -126,6 +126,7 @@ static uint8_t g_ready;
 static uint8_t g_seq;
 static uint8_t g_sensitivity = MOUSE_SENSITIVITY_BASE;
 static uint8_t g_menu_capture;
+static uint8_t g_joystick_preview;
 static uint8_t g_onee_fixed_mode;
 static uint8_t g_onee_input_blocked;
 static usb_hid_menu_event_t g_menu_events[MOUSE_MENU_EVENT_DEPTH];
@@ -1404,7 +1405,7 @@ static uint8_t hid_axis_active_from_rest(int32_t value,
 
 static void hid_menu_push_hat(usb_hid_slot_t *slot, uint8_t hat)
 {
-    if (slot == NULL || hat == slot->prev_hat) {
+    if (slot == NULL || g_joystick_preview != 0U || hat == slot->prev_hat) {
         return;
     }
 
@@ -1433,7 +1434,8 @@ static void hid_menu_push_axis(usb_hid_slot_t *slot,
                                usb_hid_menu_action_t negative_action,
                                usb_hid_menu_action_t positive_action)
 {
-    if (slot == NULL || previous == NULL || *previous == direction) {
+    if (slot == NULL || previous == NULL || g_joystick_preview != 0U ||
+        *previous == direction) {
         return;
     }
 
@@ -1696,7 +1698,9 @@ static void hid_process_report_protocol_report(usb_hid_slot_t *slot,
         mouse_apply_motion(slot, dx, dy, (button_seen != 0U) ? buttons : slot->prev_buttons);
     }
 
-    if (g_onee_input_blocked == 0U && slot->onee_joystick != 0U &&
+    /* Keep joystick preview current while menus block guest delivery. The
+     * input service masks guest output without discarding the saved axes. */
+    if (slot->onee_joystick != 0U &&
         (onee_joystick.axis_valid_mask != 0U || button_seen != 0U)) {
         onee_joystick.buttons_valid = button_seen;
         onee_joystick.buttons = buttons;
@@ -2049,6 +2053,7 @@ int usb_hid_service_init(void)
     g_seq = 0U;
     g_sensitivity = MOUSE_SENSITIVITY_BASE;
     g_menu_capture = 0U;
+    g_joystick_preview = 0U;
     g_onee_fixed_mode = 0U;
     g_onee_input_blocked = 0U;
     g_menu_ok_source = USB_HID_MENU_ACTION_SELECT;
@@ -2185,6 +2190,8 @@ void usb_hid_service_set_menu_capture(uint8_t capture)
     }
 
     g_menu_capture = capture;
+    onee_input_service_set_blocked(
+        (uint8_t)(g_menu_capture != 0U || g_onee_input_blocked != 0U));
     g_x_residue = 0;
     g_y_residue = 0;
     hid_slots_reset_menu_state();
@@ -2192,6 +2199,22 @@ void usb_hid_service_set_menu_capture(uint8_t capture)
         g_x = (int32_t)(REG_READ(MOUSE_REG_X) & 0xFFFFU);
         g_y = (int32_t)(REG_READ(MOUSE_REG_Y) & 0xFFFFU);
         mouse_publish_state(1U, g_x, g_y, 0U);
+    }
+}
+
+void usb_hid_service_set_joystick_preview(uint8_t active)
+{
+    active = (active != 0U) ? 1U : 0U;
+    if (g_joystick_preview == active) {
+        return;
+    }
+    g_joystick_preview = active;
+    /* Changing this page only resets axis/hat navigation edges. Keep held
+     * keyboard, mouse, and button actions, and the raw joystick reports. */
+    for (uint32_t i = 0U; i < USB_HID_SLOT_COUNT; ++i) {
+        g_hid_slots[i].prev_hat = HID_HAT_NEUTRAL;
+        g_hid_slots[i].prev_x_dir = 0;
+        g_hid_slots[i].prev_y_dir = 0;
     }
 }
 
@@ -2214,7 +2237,7 @@ void usb_hid_service_set_onee_fixed_mode(uint8_t enable)
         }
     }
     /* Do not carry a key latched under one routing policy into the other. */
-    onee_input_service_release_all();
+    onee_input_service_release_keyboard();
 }
 
 void usb_hid_service_set_onee_input_blocked(uint8_t blocked)
@@ -2225,7 +2248,8 @@ void usb_hid_service_set_onee_input_blocked(uint8_t blocked)
     }
 
     g_onee_input_blocked = blocked;
-    onee_input_service_release_all();
+    onee_input_service_set_blocked(
+        (uint8_t)(g_menu_capture != 0U || g_onee_input_blocked != 0U));
 }
 
 uint8_t usb_hid_service_all_input_released(void)

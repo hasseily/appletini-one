@@ -601,7 +601,7 @@ static const help_override_t ram_overrides[] = {
 /*  USB                                                                     */
 /* ======================================================================== */
 HELP(usb,
-    "USB controls the USB0 device presented to the host computer.",
+    "USB controls USB0 device modes and USB1 joysticks, paddles, keyboards, and mice.",
     "By default USB0 is detached. SuperDuperDisplay is persistent; SD Card Remote Mounting is a modal",
     "maintenance mode that should be exited after ejecting the disk on the host.");
 
@@ -617,9 +617,17 @@ HELP(usb_sd_remote,
     "Software running on the slot 5 processor pauses during the mount and resumes when you exit.",
     "SD Card Remote Mounting is not available while SDD is active.");
 
+HELP(usb_joystick,
+    "Choose PDL0-PDL3, then set its source axis, inversion, sensitivity, and center deadzone.",
+    "Auto uses X, Y, RX (or Z), and RY (or RZ). Off centers a paddle. The live values show the result.",
+    "Up/Down selects a row; Left/Right or Enter changes it. Esc/Back returns to USB.",
+    "Settings apply to vTW and ONE//e and save with profiles.",
+    "Move the stick to test. Use keys or buttons to navigate.");
+
 static const help_override_t usb_overrides[] = {
     OVERRIDE(0, usb_sd_remote),
     OVERRIDE(1, usb_sdd),
+    OVERRIDE(CONFIG_USB_ITEM_JOYSTICK, usb_joystick),
 };
 
 /* ======================================================================== */

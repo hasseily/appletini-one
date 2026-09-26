@@ -56,6 +56,9 @@ typedef enum {
 } config_tab_t;
 
 #define SMARTPORT_DEVICE_COUNT 8U
+#define CONFIG_USB_ITEM_JOYSTICK 3U
+#define CONFIG_JOYSTICK_ITEM_COUNT 7U
+const char *config_menu_joystick_source_text(uint8_t source);
 #define CONFIG_ETHERNET_ITEM_SLOT 0U
 #define CONFIG_ETHERNET_ITEM_CONFIG_ENABLED 1U
 #define CONFIG_ETHERNET_ITEM_MODE 2U

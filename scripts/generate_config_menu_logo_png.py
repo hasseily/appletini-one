@@ -25,7 +25,7 @@ def main() -> None:
         "extern const size_t config_menu_logo_png_len;\n"
         "extern const unsigned config_menu_logo_png_width;\n"
         "extern const unsigned config_menu_logo_png_height;\n\n"
-        "#endif\n")
+        "#endif\n", encoding="utf-8", newline="\n")
 
     rows = []
     for offset in range(0, len(data), 12):
@@ -39,7 +39,7 @@ def main() -> None:
         f"const size_t config_menu_logo_png_len = {len(data)}U;\n"
         "const unsigned char config_menu_logo_png[] = {\n"
         + "\n".join(rows) +
-        "\n};\n")
+        "\n};\n", encoding="utf-8", newline="\n")
 
     print(f"generated {c_path} from {png_path} ({width}x{height}, {len(data)} bytes)")
 

@@ -1146,10 +1146,13 @@ module vtw_core_top (
     /* $C074 = 1 or 3 forces stock speed; the divided/full presets apply
      * only in state 0. ignore_c074 keeps that state at zero. Per-region
      * slowdown, physical Disk II accesses, and Disk II Q7 write mode also
-     * force 1 MHz. */
+     * force 1 MHz. USB pacing uses only registered flags to keep live
+     * ownership gates off the CPU/shadow write-enable path. Ownership loss
+     * still masks USB accesses at once; pacing clears on the next fabric
+     * edge, so stock speed may linger for at most one fabric clock. */
     wire [1:0] eff_mode =
         (c074_q != 2'd0 || slow_active || cycle_d2_native_q ||
-         (usb_joystick_enabled && (usb_paddle_poll_q || cycle_usb_native_q)) ||
+         (usb_paddle_poll_q || cycle_usb_native_q) ||
          d2_write_timing_active) ?
                           SPEED_1MHZ : speed_mode;
 

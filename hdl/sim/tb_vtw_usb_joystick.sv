@@ -469,11 +469,67 @@ module tb_vtw_usb_joystick;
             4: virtual_motherboard = 1;
         endcase
         if (kind == 3) wait (!ab_read.res);
-        repeat (3) @(posedge clk); #1ps;
+        #1ps;
+        check(!dut.usb_joystick_enabled && !dut.xl_usb_status_rd &&
+              !dut.xl_usb_trigger,
+              "ownership loss did not mask new USB accesses immediately");
+        @(posedge clk); #1ps;
+        check(dut.eff_mode == 2'd3 && !dut.usb_paddle_poll_q &&
+              !dut.cycle_usb_native_q,
+              "registered USB pacing lingered more than one fabric edge");
+        repeat (2) @(posedge clk); #1ps;
         check(dut.usb_paddle_active_q == 0 && !dut.usb_paddle_poll_q &&
               !dut.cycle_usb_native_q,
               "USB ownership/reset boundary retained stale timer or pacing state");
         $display("VTW USB CLEAR PASS: kind=%0d", kind);
+    endtask
+
+    // A private response is already captured at X_ROUTE. Removing input
+    // ownership must not deadlock its completion or start another USB access.
+    task automatic pending_private_clear_case(input integer kind);
+        integer guard;
+        begin_program(2'd3);
+        physical_status = 0;
+        if (kind == 3)
+            for (int i = 16'h0400; i < 16'h0C00; i++) sh_write(18'(i), 8'h35);
+        absolute(8'hAD, 16'hC070);
+        save_read(16'hC064, 0);
+        save_read(16'hC064, 1);
+        halt_loop(); start_program();
+        guard = 0;
+        while (!(dut.cycle_addr_q == 16'hC064 && dut.xstate_q == dut.X_DEAD) &&
+               guard < 200000) begin
+            @(negedge clk); guard++;
+        end
+        check(guard < 200000 && dut.cycle_usb_native_q,
+              "pending-clear test did not reach a paced USB response");
+        pause = 1;
+        case (kind)
+            0: usb_joystick_active = 0;
+            1: enable = 0;
+            2: core_run = 0;
+            3: virtual_motherboard = 1;
+        endcase
+        #1ps;
+        check(dut.eff_mode == 2'd2 && !dut.usb_joystick_enabled &&
+              !dut.xl_usb_status_rd && !dut.xl_usb_trigger,
+              "registered hold changed response ownership on the falling edge");
+        @(posedge clk); #1ps;
+        check(dut.eff_mode == 2'd3 && !dut.cycle_usb_native_q &&
+              !dut.usb_paddle_poll_q && dut.usb_paddle_active_q == 0,
+              "pending USB response retained pacing after one fabric edge");
+        @(negedge clk); pause = 0;
+        if (kind == 1 || kind == 2) begin
+            repeat (12) @(posedge clk); #1ps;
+            check(marker_count[0] == 0 && !dut.core_res_n &&
+                  dut.xstate_q == dut.X_CAPTURE,
+                  "disabled core completed a stale private response");
+        end else begin
+            wait_marker(1);
+            check(marker_value[0] === 8'h80 && marker_value[1] === 8'h35,
+                  "owner transition lost saved response or new physical/ONEe input");
+        end
+        $display("VTW USB REGISTERED PACING BOUNDARY PASS: kind=%0d", kind);
     endtask
 
     integer measured[0:3];
@@ -489,6 +545,7 @@ module tb_vtw_usb_joystick;
         disconnect_pending_case(0);
         disconnect_pending_case(1);
         for (int i = 0; i < 5; i++) clear_case(i);
+        for (int i = 0; i < 4; i++) pending_private_clear_case(i);
         $display("VTW USB JOYSTICK PASS (%0d native timer checks)", timer_checks);
         $finish;
     end

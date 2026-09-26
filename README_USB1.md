@@ -48,6 +48,9 @@ reports the current controller state.
 
 ## Validation
 
+For USB joystick input, axis mapping, and paddle timing, see
+[USB joysticks and paddles](README_USB_JOYSTICK.md).
+
 ```text
 python scripts/test_usb1_phy_startup.py
 python scripts/test_usb_hid_service.py

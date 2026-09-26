@@ -95,8 +95,8 @@ python scripts/test_usb_hid_service.py
 python scripts/test_joystick_config_menu.py
 ```
 
-Physical controller and game tests remain pending for this implementation.
-Record the exact firmware image and controller models when those tests run.
+The first board test of F1.1.5 failed during startup; see the result below.
+Controller mapping and game tests remain pending.
 
 ### F1.1.5 test image
 
@@ -109,13 +109,48 @@ The image has **+0.076 ns setup**, **+0.065 ns hold**, and **+0.265 ns pulse
 width** slack under nominal constraints, with no failing timing endpoints
 or routing errors. Further timing attempts did not improve this result.
 This test image falls below the **+0.200 ns setup target**; it is not a
-promoted timing reference and has not been tested on a board.
+promoted timing reference.
 
 Firmware SHA-256:
 `e1ff775d834cc6176ef2119b75a7b9c332e54eef59b03bcdb3a3d2320d7678d7`.
 The delivery folder contains `firmware_manifest.txt`. Reports, component
 hashes, and build logs are archived under
 `.timing_runs/20260926T134422Z-d5b43743-incremental/positive_trial`.
+
+**Board result, 2026-09-26: failed.** This image produces a blank screen
+with USB1 empty as well as with a hub, mouse, and joystick. The log reports
+an invalid machine mode and corrupt reads from several FPGA register
+blocks: the slot mask reads `0x00802000`, the boot status/timeout/handoff
+all read `0x01200000`, and framebuffer base readback is `0x00004000` after
+writing `0x3E000000`. The framebuffer check runs before joystick polling.
+Do not use this image for controller validation until startup is fixed.
+The firmware payload contains the intended bitstream; its FSBL and PS
+clock initialization match the prior working F1.1.4 image.
+
+A diagnostic image with the exact F1.1.5 ARM software and the previously
+tested F1.1.4 FPGA image restored the display and Apple boot on the same
+board. This isolates the failure to the new FPGA image. That working
+fallback is `firmwares/F1.1.5-diagnostic-old-pl/FIRMWARE.BIN`, SHA-256
+`ed17caac29a0cb8b4f3e618d997146032cab6c488edb83d182429325975203fb`.
+It lacks physical vTW USB joystick hardware. The cause of the new FPGA
+image's register read failures is still under investigation.
+
+The routed design passes 53 full-design MMIO checks, including the
+joystick signature, framebuffer round-trip, every framebuffer data bit,
+and the PS7 interface connections. Its read FIFO also passes 10,272
+comparisons. These checks validate the logical design, not the programmed
+configuration or board timing.
+
+Regenerating the bitstream from the saved implementation changes actual
+frame data compared with the shipped bitstream. The test image
+`firmwares/F1.1.5-diagnostic-regenerated-pl/FIRMWARE.BIN` contains that
+regenerated bitstream and the exact same ARM software. Its SHA-256 is
+`92481bf4d12a6133ba27a3e21e05f9c26efd1e1caf4b609080be36f847e79025`.
+It includes the new joystick hardware and retains the measured +0.076 ns
+setup result. Its board test is pending; it is not a confirmed fix.
+Two fresh Vivado sessions produce byte-identical regenerated configuration
+data. The investigation logs, bitstreams, and test harness are archived in
+`.timing_runs/F1.1.5-blank-boot-investigation-20260926`.
 
 For board testing:
 

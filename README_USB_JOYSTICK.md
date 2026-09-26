@@ -97,3 +97,37 @@ python scripts/test_joystick_config_menu.py
 
 Physical controller and game tests remain pending for this implementation.
 Record the exact firmware image and controller models when those tests run.
+
+### F1.1.5 test image
+
+`firmwares/F1.1.5/FIRMWARE.BIN` was built from clean source `d5b43743` on
+2026-09-26. The HDL simulations, native input/UI checks, full Vitis build,
+and firmware integrity checks passed. The final USB paddle simulation
+checked 5,381,600 timer values and real CPU polling at all four speed modes.
+
+The image has **+0.076 ns setup**, **+0.065 ns hold**, and **+0.265 ns pulse
+width** slack under nominal constraints, with no failing timing endpoints
+or routing errors. Further timing attempts did not improve this result.
+This test image falls below the **+0.200 ns setup target**; it is not a
+promoted timing reference and has not been tested on a board.
+
+Firmware SHA-256:
+`e1ff775d834cc6176ef2119b75a7b9c332e54eef59b03bcdb3a3d2320d7678d7`.
+The delivery folder contains `firmware_manifest.txt`. Reports, component
+hashes, and build logs are archived under
+`.timing_runs/20260926T134422Z-d5b43743-incremental/positive_trial`.
+
+For board testing:
+
+- Record the firmware hash, Apple model, and controller model. Check raw
+  axes, all four mapped paddles, and PB0 through PB2 in the preview.
+- Try source selection, Off, inversion, sensitivity, and deadzone. Save and
+  reload a profile. Confirm stick movement leaves the menu focus unchanged.
+- Test a paddle diagnostic or game at each vTW speed, including TURBO with
+  **Slow Paddles/joystick** disabled.
+- Hold an axis or button while opening and closing the menu and switching
+  vTW off and on. Check that held input returns without a new movement.
+- Check controller handoff and physical game connector fallback after
+  disconnect. On a //e, check physical Apple keys alongside USB buttons.
+  Also check the saved mapping in ONE//e and physical inputs with the
+  native Apple CPU.

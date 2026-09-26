@@ -24,6 +24,7 @@ apple/apple_c01x_status_decode.sv
 apple/onee_motherboard_io.sv
 apple/onee_cold_slot_scan.sv
 apple/onee_input_bridge.sv
+apple/vtw_joystick_bridge.sv
 apple/onee_warm_reset_ctrl.sv
 apple/onee_speaker_audio.sv
 apple/apple_bus_write_arbiter.sv

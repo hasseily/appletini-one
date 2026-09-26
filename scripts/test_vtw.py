@@ -69,6 +69,7 @@ SOURCES = [
     "hdl/sim/tb_vtw_disk2_speed_matrix.sv",
     "hdl/sim/tb_vtw_disk2_woz_e2e.sv",
     "hdl/sim/tb_vtw_turbo.sv",
+    "hdl/sim/tb_vtw_usb_joystick.sv",
 ]
 
 # Card-ROM $readmemh calls resolve against the simulation cwd.
@@ -103,6 +104,7 @@ BENCHES = [
     ("tb_vtw_disk2_speed_matrix", "VTW DISK2 SPEED MATRIX PASS"),
     ("tb_vtw_disk2_woz_e2e", "VTW DISK2 WOZ E2E PASS"),
     ("tb_vtw_turbo", "VTW TURBO PASS"),
+    ("tb_vtw_usb_joystick", "VTW USB JOYSTICK PASS"),
 ]
 
 

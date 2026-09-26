@@ -115,6 +115,8 @@ module tb_vtw_video;
         .data_drive_value_in(vtw_ab_write.wr_data),
         .dbg_clear(1'b0),
         .iiplus_buttons_zero(1'b0),
+        .usb_joystick_active(1'b0), .usb_joystick_buttons(3'd0),
+        .usb_joystick_paddles(32'h80808080),
         .slow_region_en(10'd0),
         .slow_duration(16'd0),
         .d2_active(1'b0),

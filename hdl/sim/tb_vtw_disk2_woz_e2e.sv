@@ -192,6 +192,8 @@ module tb_vtw_disk2_woz_e2e;
         .irq_assert_in(1'b0), .data_drive_in(vtw_write.wr_data_en),
         .data_drive_value_in(vtw_write.wr_data), .dbg_clear(1'b0),
         .iiplus_buttons_zero(1'b0),
+        .usb_joystick_active(1'b0), .usb_joystick_buttons(3'd0),
+        .usb_joystick_paddles(32'h80808080),
         .slow_region_en(10'd0), .slow_duration(16'd0),
         .d2_active(1'b1), .d2_motor_active(disk2_motor_active), .d2_req_valid(disk2_req_valid),
         .d2_req_addr(disk2_req_addr), .d2_req_ready(disk2_req_ready),

@@ -64,6 +64,8 @@ module tb_vtw_pc_event_pipeline;
         .data_drive_value_in(8'd0),
         .dbg_clear(dbg_clear),
         .iiplus_buttons_zero(1'b0),
+        .usb_joystick_active(1'b0), .usb_joystick_buttons(3'd0),
+        .usb_joystick_paddles(32'h80808080),
         .rw_req_valid(),
         .rw_req_rw(),
         .rw_req_addr(),

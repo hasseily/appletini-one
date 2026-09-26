@@ -361,6 +361,8 @@ module tb_onee_joined_bus;
         .dbg_clear(1'b0),
         // This would bypass C061-C063 on a physical II+. ONE//e must ignore it.
         .iiplus_buttons_zero(1'b1),
+        .usb_joystick_active(1'b0), .usb_joystick_buttons(3'd0),
+        .usb_joystick_paddles(32'h80808080),
         .rw_req_valid(),
         .rw_req_rw(),
         .rw_req_addr(),

@@ -173,6 +173,13 @@ module vtw_core_top (
      * clear it to restore real reads when a controller is attached. */
     input  logic                    iiplus_buttons_zero,
 
+    /* Physical-host USB joystick takeover. ONE//e keeps its motherboard
+     * input responder. The PS publishes presence/buttons/paddles together;
+     * loss of presence restores the physical game connector immediately. */
+    input  logic                    usb_joystick_active,
+    input  logic [2:0]              usb_joystick_buttons,
+    input  logic [31:0]             usb_joystick_paddles,
+
     /* PSRAM line port (psram_simple vtw client): 8-byte line reads and
      * writes for RamWorks banks. One op per background admission window,
      * so a miss costs up to ~one Apple bus cycle; the single-line cache
@@ -581,6 +588,33 @@ module vtw_core_top (
                      xl_is_bus && cycle_rw_q && iiplus_buttons_zero &&
                      (cycle_addr_q[15:2] == 14'h3018) &&
                      (cycle_addr_q[1:0] != 2'b00);
+
+    wire usb_joystick_enabled = usb_joystick_active &&
+        !virtual_motherboard && enable && core_run && ab_read.res;
+    // The motherboard ignores A3 for C06x: C069-C06F are status aliases.
+    // Cassette input and writes still take their normal physical path.
+    wire xl_usb_status_rd = usb_joystick_enabled && xl_is_bus && cycle_rw_q &&
+        (cycle_addr_q[15:4] == 12'hC06) && (cycle_addr_q[2:0] != 3'd0);
+    wire xl_usb_paddle_rd = xl_usb_status_rd && cycle_addr_q[2];
+    wire xl_usb_button_rd = xl_usb_status_rd && !cycle_addr_q[2];
+    wire xl_usb_private_rd = xl_usb_paddle_rd ||
+        (xl_usb_button_rd && iiplus_buttons_zero);
+    wire xl_usb_trigger = usb_joystick_enabled && xl_is_bus &&
+        (cycle_addr_q == 16'hC070);
+    logic [11:0] usb_paddle_count_q [0:3];
+    logic [3:0] usb_paddle_active_q;
+    logic usb_paddle_poll_q;
+    logic cycle_usb_native_q, cycle_usb_trigger_q;
+    logic cycle_usb_button_q, cycle_usb_button_value_q;
+    wire usb_status_bit = cycle_addr_q[2] ?
+        usb_paddle_active_q[cycle_addr_q[1:0]] :
+        usb_joystick_buttons[cycle_addr_q[1:0] - 2'd1];
+
+    // Same native-cycle calibration as onee_motherboard_io. The maximum
+    // reload is 2809, so each timer needs only twelve bits.
+    function automatic logic [11:0] usb_paddle_reload(input logic [7:0] value);
+        usb_paddle_reload = 12'd4 + (12'(value) * 12'd11);
+    endfunction
 
     /* $C019 RDVBLBAR bit 7 uses the //e (AppleWin-ported renderer)
      * convention: 1 during active display, 0 during vertical blanking.
@@ -1115,6 +1149,7 @@ module vtw_core_top (
      * force 1 MHz. */
     wire [1:0] eff_mode =
         (c074_q != 2'd0 || slow_active || cycle_d2_native_q ||
+         (usb_joystick_enabled && (usb_paddle_poll_q || cycle_usb_native_q)) ||
          d2_write_timing_active) ?
                           SPEED_1MHZ : speed_mode;
 
@@ -1488,6 +1523,59 @@ module vtw_core_top (
                       complete_rw || complete_sp ||
                       complete_status || complete_dead || turbo_complete);
     assign arm_rw_hold_state = rw_hold_q;
+
+    // C070 completes privately at native cadence. Its aliases keep their
+    // physical side effects (RamWorks, C074, etc.) and trigger at SERVE,
+    // after any bus wait rather than when the request first reaches ROUTE.
+    wire usb_paddle_trigger = usb_joystick_enabled &&
+        (((xstate_q == X_DEAD) && cycle_usb_trigger_q && core_en) ||
+         ((xstate_q == X_BUS) && cycle_addr_q[15:4] == 12'hC07 &&
+          cycle_addr_q[3:0] != 4'h0 && ab_read.serve_en &&
+          ab_read.cycle_valid && ab_read.addr == cycle_addr_q));
+    always_ff @(posedge clk) begin
+        if (!rstn || !usb_joystick_enabled) begin
+            for (int i = 0; i < 4; i++) usb_paddle_count_q[i] <= 12'd0;
+            usb_paddle_active_q <= 4'b0000;
+            usb_paddle_poll_q <= 1'b0;
+            cycle_usb_native_q <= 1'b0;
+            cycle_usb_trigger_q <= 1'b0;
+            cycle_usb_button_q <= 1'b0;
+            cycle_usb_button_value_q <= 1'b0;
+        end else begin
+            if (xstate_q == X_CAPTURE) begin
+                cycle_usb_native_q <= 1'b0;
+                cycle_usb_trigger_q <= 1'b0;
+                cycle_usb_button_q <= 1'b0;
+            end else if (xstate_q == X_ROUTE) begin
+                cycle_usb_native_q <= xl_usb_paddle_rd || xl_usb_trigger;
+                cycle_usb_trigger_q <= xl_usb_trigger;
+                cycle_usb_button_q <= xl_usb_button_rd && !iiplus_buttons_zero;
+                cycle_usb_button_value_q <= usb_status_bit;
+            end
+            if (!(|usb_paddle_active_q)) usb_paddle_poll_q <= 1'b0;
+            if (((xstate_q == X_ROUTE) && xl_usb_paddle_rd &&
+                 (|usb_paddle_active_q)) ||
+                ((xstate_q == X_DEAD) && cycle_usb_trigger_q && core_en))
+                usb_paddle_poll_q <= 1'b1;
+            // Native idle bus cycles count too, including while paused.
+            if (ab_read.data_en && ab_read.cycle_valid) begin
+                for (int i = 0; i < 4; i++) begin
+                    if (usb_paddle_active_q[i]) begin
+                        usb_paddle_count_q[i] <= usb_paddle_count_q[i] - 12'd1;
+                        if (usb_paddle_count_q[i] == 12'd1)
+                            usb_paddle_active_q[i] <= 1'b0;
+                    end
+                end
+            end
+            // A trigger wins over a simultaneous native timer tick.
+            if (usb_paddle_trigger) begin
+                for (int i = 0; i < 4; i++)
+                    usb_paddle_count_q[i] <=
+                        usb_paddle_reload(usb_joystick_paddles[8*i +: 8]);
+                usb_paddle_active_q <= 4'b1111;
+            end
+        end
+    end
 
     /* One Disk II time tick per virtual 65C02 cycle. Stage the accepted
      * normal-cycle predicate for one fabric clock so the card's readiness
@@ -1915,6 +2003,14 @@ module vtw_core_top (
                             status_vbl_sampled_q <= 1'b0;
                             xstate_q       <= X_STATUS_DONE;
                         end
+                        else if (xl_usb_private_rd || xl_usb_trigger) begin
+                            // USB overrides the II+ floating-button guard.
+                            // As with that private shortcut, only bit 7 is
+                            // defined; ONE//e retains its scanner low bits.
+                            core_data_in_q <= xl_usb_private_rd ?
+                                              {usb_status_bit, 7'd0} : 8'h00;
+                            xstate_q <= X_DEAD;
+                        end
                         else if (xl_btn_rd) begin
                             // II/II+ host: Apple keys read "not pressed"
                             // instead of the floating game-connector level.
@@ -2030,7 +2126,15 @@ module vtw_core_top (
                          * The physical bus cycle still performed any side
                          * effect. The BRAM read was issued at data_en one
                          * fabric clock before this response is observed. */
-                        if (virtual_motherboard &&
+                        if (cycle_usb_button_q) begin
+                            // Preserve physical joystick/Apple-key input
+                            // and floating low bits on hosts without the
+                            // II+ forced-zero policy. USB adds pressed bits.
+                            core_data_in_q <= {
+                                eng_resp_rdata[7] | cycle_usb_button_value_q,
+                                eng_resp_rdata[6:0]
+                            };
+                        end else if (virtual_motherboard &&
                             !onee_bus_data_claimed_q) begin
                             core_data_in_q <= shadow_a_rdata;
                         end else if (virtual_motherboard_floating_status_read) begin

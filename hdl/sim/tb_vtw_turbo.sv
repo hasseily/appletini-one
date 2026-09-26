@@ -212,6 +212,8 @@ module tb_vtw_turbo;
         .data_drive_in(vtw_ab_write.wr_data_en),
         .data_drive_value_in(vtw_ab_write.wr_data),
         .dbg_clear(1'b0), .iiplus_buttons_zero(1'b0),
+        .usb_joystick_active(1'b0), .usb_joystick_buttons(3'd0),
+        .usb_joystick_paddles(32'h80808080),
         .slow_region_en(10'd0), .slow_duration(16'd0),
         .d2_active(disk2_active), .d2_motor_active(disk2_motor_active),
         .d2_req_valid(disk2_req_valid), .d2_req_addr(disk2_req_addr),

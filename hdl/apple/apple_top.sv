@@ -513,6 +513,8 @@ module apple_top(
     localparam logic [7:0] CARD_CTRL_REG_TURBO_PERF5 = 8'hA8;
     localparam logic [7:0] CARD_CTRL_REG_TURBO_PERF6 = 8'hA9;
     localparam logic [7:0] CARD_CTRL_REG_TURBO_PERF7 = 8'hAA;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_JOYSTICK_PADDLES = 8'hAB;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_JOYSTICK_CONTROL = 8'hAC;
     //   VTW_C0_RING_*   : last eight $C00x/$C01x soft-switch cycles with
     //                     latched data ({rw,addr[4:0],data[7:0]} x2/reg).
     localparam logic [7:0] CARD_CTRL_REG_VTW_C0_RING0    = 8'h6C;
@@ -2085,6 +2087,28 @@ module apple_top(
         .sh_wdata32(vtw_sh_wdata32)
     );
 
+    wire vtw_usb_joystick_active;
+    wire [2:0] vtw_usb_joystick_buttons;
+    wire [31:0] vtw_usb_joystick_paddles;
+    wire [31:0] vtw_joystick_ps_rdata;
+
+    // Keep this state separate from ONE//e keyboard/reset input. The PL
+    // boundary prevents a stale ARM report from affecting a physical CPU.
+    vtw_joystick_bridge vtw_joystick_bridge_i (
+        .clk              (clk),
+        .resetn           (rstn[1]),
+        .enabled          (vtw_enable_eff && !onee_selected),
+        .ps_wr_en         (as_client.awvalid),
+        .ps_addr          (as_common.awaddr),
+        .ps_wdata         (as_common.wdata),
+        .ps_wstrb         (as_common.wstrb),
+        .ps_read_addr     (as_common.araddr),
+        .ps_rdata         (vtw_joystick_ps_rdata),
+        .joystick_active  (vtw_usb_joystick_active),
+        .joystick_buttons (vtw_usb_joystick_buttons),
+        .joystick_paddles (vtw_usb_joystick_paddles)
+    );
+
     vtw_core_top vtw_core_top_i (
         .clk(clk),
         .rstn(rstn[1]),
@@ -2102,6 +2126,9 @@ module apple_top(
         .data_drive_value_in(virtual_ab_write_arb.wr_data),
         .dbg_clear(busdbg_clear_pulse),
         .iiplus_buttons_zero(vtw_ctrl_q[5]),
+        .usb_joystick_active(vtw_usb_joystick_active),
+        .usb_joystick_buttons(vtw_usb_joystick_buttons),
+        .usb_joystick_paddles(vtw_usb_joystick_paddles),
         .slow_region_en(vtw_slowdown_q[9:0]),
         .slow_duration(vtw_slowdown_q[31:16]),
         .d2_active(vtw_disk2_active),
@@ -2913,6 +2940,9 @@ module apple_top(
                 CARD_CTRL_REG_TURBO_PERF5: as_client_rdata_q <= vtw_turbo_perf[191:160];
                 CARD_CTRL_REG_TURBO_PERF6: as_client_rdata_q <= vtw_turbo_perf[223:192];
                 CARD_CTRL_REG_TURBO_PERF7: as_client_rdata_q <= vtw_turbo_perf[255:224];
+                CARD_CTRL_REG_VTW_JOYSTICK_PADDLES,
+                CARD_CTRL_REG_VTW_JOYSTICK_CONTROL:
+                    as_client_rdata_q <= vtw_joystick_ps_rdata;
                 CARD_CTRL_REG_VTW_POST_STATUS: as_client_rdata_q <= {vtw_arm_post_ready,
                                                                     vtw_arm_post_accept_count_q};
                 CARD_CTRL_REG_VTW_RW_FLUSH:    as_client_rdata_q <= {vtw_arm_rw_flush_busy_q,

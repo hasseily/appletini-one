@@ -246,7 +246,8 @@ def check_masked_wskid_copy() -> None:
         r"wire\s+vtw_sh_byte_write\s*=.*?;",
         r"wire\s+vtw_sh_word_write\s*=.*?;",
         r"wire\s+vtw_sh_word_read\s*=.*?;",
-        r"vtw_shadow_host_port\s+vtw_shadow_host_port_i\s*\(.*?\);",
+        r"vtw_shadow_host_port\s+(?:#\s*\([^;]*?\)\s*)?"
+        r"vtw_shadow_host_port_i\s*\(.*?\);",
         r"CARD_CTRL_REG_PHASOR_PAN_LO\s*:\s*begin.*?end",
         r"CARD_CTRL_REG_PHASOR_PAN_HI\s*:\s*begin.*?end",
         r"CARD_CTRL_REG_PHASOR_AUDIO\s*:\s*begin.*?end",
@@ -305,7 +306,8 @@ def check_masked_wskid_copy() -> None:
         ("vtw_sh_word_read", r"wire\s+vtw_sh_word_read\s*=.*?;"),
         (
             "vtw_shadow_host_port_i",
-            r"vtw_shadow_host_port\s+vtw_shadow_host_port_i\s*\(.*?\);",
+            r"vtw_shadow_host_port\s+(?:#\s*\([^;]*?\)\s*)?"
+            r"vtw_shadow_host_port_i\s*\(.*?\);",
         ),
     ):
         match = re.search(pattern, apple_source, re.MULTILINE | re.DOTALL)

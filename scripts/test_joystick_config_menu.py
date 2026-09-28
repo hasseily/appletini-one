@@ -48,6 +48,9 @@ def main() -> None:
     assert "usb_hid_service_set_joystick_preview" in function(main_c, "ui_sync_usb_menu_capture")
     assert "onee_input_service_set_joystick_config" in main_c[main_c.index("usb_hid_service_init();"):main_c.index("usb_hid_service_init();") + 500]
     assert "onee_input_service_get_joystick_snapshot" in function(tabs, "config_menu_draw_joystick")
+    assert "config_menu_joystick_config_line(menu" in function(menu, "config_menu_save_settings_to_path")
+    assert "config_menu_save_settings_to_path(menu" in function(menu, "config_menu_save_profile_settings")
+    assert "config_menu_read_settings_from_path(menu, cfg_path, 1U" in function(menu, "config_menu_load_profile_settings")
 
     OUT.mkdir(parents=True, exist_ok=True)
     compiler = shutil.which("gcc") or shutil.which("clang")
@@ -92,6 +95,7 @@ typedef struct {
 static unsigned save_count, apply_count;
 static onee_input_joystick_config_t applied;
 static uint8_t snapshot_connected = 1, snapshot_active = 1;
+static uint8_t snapshot_slots = 0x81;
 static void config_menu_save_settings(config_menu_t *m) { (void)m; ++save_count; }
 void onee_input_service_set_joystick_config(const onee_input_joystick_config_t *c)
 { applied = *c; ++apply_count; }
@@ -99,11 +103,21 @@ void onee_input_service_get_joystick_snapshot(onee_input_joystick_snapshot_t *s)
 {
     memset(s, 0, sizeof(*s));
     s->connected = snapshot_connected; s->active = snapshot_active;
+    s->owner_slot = ONEE_INPUT_DEVICE_SLOT_COUNT;
+    memset(s->paddle_slots, ONEE_INPUT_DEVICE_SLOT_COUNT, sizeof(s->paddle_slots));
     if (!s->connected) {
         memset(s->paddles, 128, sizeof(s->paddles));
         return;
     }
     s->axis_valid_mask = 0x3f; s->buttons = 5;
+    s->connected_mask = snapshot_slots;
+    for (unsigned slot=0; slot<ONEE_INPUT_DEVICE_SLOT_COUNT; ++slot) {
+        if (!(snapshot_slots & (1U<<slot))) continue;
+        s->devices[slot].connected=1; s->devices[slot].axis_valid_mask=0x3f;
+        s->devices[slot].buttons = slot == 0 ? 5 : 2;
+        for (unsigned i=0; i<6; ++i) s->devices[slot].axis[i]=(uint8_t)((slot*16+i*37)%256);
+        if (s->owner_slot == ONEE_INPUT_DEVICE_SLOT_COUNT) s->owner_slot=(uint8_t)slot;
+    }
     for (unsigned i=0; i<6; ++i) s->axis[i] = (uint8_t)(i*51);
     s->paddles[0]=0; s->paddles[1]=128; s->paddles[2]=255; s->paddles[3]=63;
 }
@@ -119,7 +133,30 @@ static uint8_t config_menu_video_pal_accurate_help_visible(const config_menu_t *
     code += function(service, "onee_input_service_default_joystick_config")
     code += functions
     code += function(menu, "hgr_draw_check_item") + function(menu, "hgr_draw_value_item")
+    code += r"""
+static char shown_device[64], shown_raw_title[64], shown_raw_x[32], shown_buttons[32];
+static void record_value(uint16_t *fb,int x,int y,int w,uint8_t focus,const char *label,const char *value)
+{
+    if (!strcmp(label,"Source device:")) snprintf(shown_device,sizeof(shown_device),"%s",value);
+    hgr_draw_value_item(fb,x,y,w,focus,label,value);
+}
+static void record_caption(uint16_t *fb,int x,int y,int w,const char *text)
+{
+    if (!strncmp(text,"Raw axes:",9)) snprintf(shown_raw_title,sizeof(shown_raw_title),"%s",text);
+    if (!strncmp(text,"Buttons:",8)) snprintf(shown_buttons,sizeof(shown_buttons),"%s",text);
+    cmui_caption(fb,x,y,w,text);
+}
+static void record_text(uint16_t *fb,int x,int y,const char *text,uint16_t fg,uint16_t bg,int scale)
+{
+    if (!strncmp(text,"X:",2)) snprintf(shown_raw_x,sizeof(shown_raw_x),"%s",text);
+    cmui_text(fb,x,y,text,fg,bg,scale);
+}
+#define hgr_draw_value_item record_value
+#define cmui_caption record_caption
+#define cmui_text record_text
+"""
     code += function(tabs, "config_menu_draw_joystick")
+    code += "#undef hgr_draw_value_item\n#undef cmui_caption\n#undef cmui_text\n"
     code += function(tabs, "config_menu_draw_usb")
     help_source = (FRONT / "config_menu_help.c").read_text()
     # Compile all real help blocks and resolvers, using the real constants above.
@@ -176,6 +213,7 @@ int main(void)
     onee_input_service_default_joystick_config(&loaded.joystick_config);
     for (unsigned p=0; p<4; ++p) {
         assert(menu.joystick_config.paddle[p].source == ONEE_INPUT_JOYSTICK_SOURCE_AUTO);
+        assert(menu.joystick_config.paddle[p].device == 0);
         assert(menu.joystick_config.paddle[p].sensitivity_percent == 100);
         assert(!menu.joystick_config.paddle[p].invert && !menu.joystick_config.paddle[p].deadzone_percent);
     }
@@ -183,6 +221,14 @@ int main(void)
     menu.joystick_page_active = 1;
     press(&menu, UI_KEY_LEFT); assert(menu.joystick_paddle == 3 && !save_count);
     press(&menu, UI_KEY_RIGHT); assert(menu.joystick_paddle == 0 && !save_count);
+    press(&menu, UI_KEY_DOWN); press(&menu, UI_KEY_LEFT);
+    assert(menu.joystick_config.paddle[0].device == ONEE_INPUT_DEVICE_SLOT_COUNT);
+    assert(applied.paddle[0].device == ONEE_INPUT_DEVICE_SLOT_COUNT && apply_count == save_count);
+    press(&menu, UI_KEY_ENTER); assert(menu.joystick_config.paddle[0].device == 0);
+    for(unsigned device=1;device<=ONEE_INPUT_DEVICE_SLOT_COUNT;++device) {
+        press(&menu,UI_KEY_RIGHT); assert(menu.joystick_config.paddle[0].device == device);
+    }
+    press(&menu,UI_KEY_RIGHT); assert(menu.joystick_config.paddle[0].device == 0);
     press(&menu, UI_KEY_DOWN); press(&menu, UI_KEY_LEFT);
     assert(menu.joystick_config.paddle[0].source == ONEE_INPUT_JOYSTICK_SOURCE_OFF);
     press(&menu, UI_KEY_ENTER); assert(menu.joystick_config.paddle[0].source == ONEE_INPUT_JOYSTICK_SOURCE_AUTO);
@@ -199,9 +245,18 @@ int main(void)
     for(unsigned i=0;i<15;++i) press(&menu, UI_KEY_LEFT);
     assert(menu.joystick_config.paddle[0].deadzone_percent == 0);
 
-    /* Exercise all four persisted settings per paddle, with different values. */
+    /* Older profiles omit .device and keep Auto for each paddle. */
+    for(unsigned p=0;p<4;++p) {
+        char key[80]; snprintf(key,sizeof(key),"usb.joystick.paddle.%u.source",p);
+        assert(config_menu_parse_joystick(&loaded,key,"X"));
+        assert(loaded.joystick_config.paddle[p].device == 0);
+    }
+
+    /* Exercise all five persisted settings per paddle, with different values. */
     for(unsigned p=0;p<4;++p) {
         char key[80], value[16];
+        snprintf(key,sizeof(key),"usb.joystick.paddle.%u.device",p);
+        snprintf(value,sizeof(value),"%u",p+1); config_menu_parse_joystick(&menu,key,value);
         snprintf(key,sizeof(key),"usb.joystick.paddle.%u.source",p);
         assert(config_menu_parse_joystick(&menu,key,p == 0 ? "rx" : p == 1 ? "OFF" : p == 2 ? "Y" : "Auto"));
         snprintf(key,sizeof(key),"usb.joystick.paddle.%u.invert",p);
@@ -222,6 +277,28 @@ int main(void)
         }
     }
     assert(memcmp(&loaded.joystick_config,&menu.joystick_config,sizeof(menu.joystick_config)) == 0);
+    /* Every shared input slot, including Auto, round-trips on all four paddles. */
+    for(unsigned device=0;device<=ONEE_INPUT_DEVICE_SLOT_COUNT;++device) {
+        for(unsigned p=0;p<4;++p) {
+            char text[256], *line;
+            menu.joystick_config.paddle[p].device=(uint8_t)device;
+            config_menu_joystick_config_line(&menu,p,text,sizeof(text));
+            if (!device) assert(strstr(text,".device=Auto\n"));
+            line=strtok(text,"\n");
+            while(line) {
+                char *eq=strchr(line,'='); assert(eq); *eq++='\0';
+                assert(config_menu_parse_joystick(&loaded,line,eq));
+                line=strtok(NULL,"\n");
+            }
+            assert(loaded.joystick_config.paddle[p].device == device);
+        }
+    }
+    static const char *invalid_devices[]={"0","9","-1","256","1.0","1garbage","", "99999999999999999", "Auto", "AUTO"};
+    for(unsigned i=0;i<sizeof(invalid_devices)/sizeof(invalid_devices[0]);++i) {
+        loaded.joystick_config.paddle[0].device=3;
+        config_menu_parse_joystick(&loaded,"usb.joystick.paddle.0.device",invalid_devices[i]);
+        assert(loaded.joystick_config.paddle[0].device == 0);
+    }
     assert(!config_menu_parse_joystick(&loaded,"usb.joystick.paddle.4.source","X"));
     assert(!config_menu_parse_joystick(&loaded,"usb.joystick.paddle.-1.source","X"));
     config_menu_parse_joystick(&loaded,"usb.joystick.paddle.0.sensitivity","-1");
@@ -236,24 +313,41 @@ int main(void)
     assert(loaded.joystick_config.paddle[0].deadzone_percent==0);
     config_menu_parse_joystick(&loaded,"usb.joystick.paddle.0.source","missing");
     assert(loaded.joystick_config.paddle[0].source==ONEE_INPUT_JOYSTICK_SOURCE_AUTO);
-    menu.joystick_focus=5; unsigned saves=save_count;
+    menu.joystick_focus=6; unsigned saves=save_count;
     press(&menu,UI_KEY_RIGHT); assert(save_count==saves);
     press(&menu,UI_KEY_ENTER); assert(save_count==saves+1);
     for(unsigned p=0;p<4;++p) {
         assert(applied.paddle[p].source==ONEE_INPUT_JOYSTICK_SOURCE_AUTO);
+        assert(applied.paddle[p].device==0);
         assert(applied.paddle[p].sensitivity_percent==100);
         assert(!applied.paddle[p].invert && !applied.paddle[p].deadzone_percent);
     }
-    press(&menu,UI_KEY_TAB); assert(menu.joystick_focus==6);
+    press(&menu,UI_KEY_TAB); assert(menu.joystick_focus==7);
     press(&menu,UI_KEY_TAB); assert(menu.joystick_focus==0);
-    press(&menu,UI_KEY_SHIFT_TAB); assert(menu.joystick_focus==6);
+    press(&menu,UI_KEY_SHIFT_TAB); assert(menu.joystick_focus==7);
     press(&menu,UI_KEY_ENTER); assert(!menu.joystick_page_active && menu.item_focus==3);
     menu.joystick_page_active=1; press(&menu,UI_KEY_ESC); assert(!menu.joystick_page_active);
     menu.joystick_page_active=1; press(&menu,UI_KEY_BACK); assert(!menu.joystick_page_active);
 
     menu.tab=CONFIG_TAB_USB; menu.usb_owned=1; menu.joystick_page_active=1;
-    menu.joystick_focus=3; menu.joystick_paddle=2;
+    menu.joystick_focus=4; menu.joystick_paddle=2;
     render(&menu,"joystick.ppm");
+    assert(!strcmp(shown_device,"Auto (Input 1)"));
+    assert(!strcmp(shown_raw_x,"X: 0"));
+    menu.joystick_config.paddle[2].device=8; menu.joystick_focus=1;
+    render(&menu,"joystick_input8.ppm");
+    assert(!strcmp(shown_device,"Input 8 (connected)"));
+    assert(!strcmp(shown_raw_title,"Raw axes: Input 8"));
+    assert(!strcmp(shown_raw_x,"X: 112") && !strcmp(shown_buttons,"Buttons: - 2 -"));
+    menu.joystick_config.paddle[2].device=4;
+    render(&menu,"joystick_input_unavailable.ppm");
+    assert(!strcmp(shown_device,"Input 4 (unavailable)"));
+    assert(!strcmp(shown_raw_x,"X: --") && !strcmp(shown_buttons,"Buttons: - - -"));
+    menu.joystick_config.paddle[2].device=0; snapshot_slots=0x80;
+    render(&menu,"joystick_auto_input8.ppm");
+    assert(!strcmp(shown_device,"Auto (Input 8)"));
+    assert(!strcmp(shown_raw_x,"X: 112"));
+    snapshot_slots=0x81;
     snapshot_active=0;
     render(&menu,"joystick_inactive.ppm");
     menu.vtw_enabled=1;
@@ -263,6 +357,8 @@ int main(void)
     render(&menu,"joystick_boot_menu.ppm");
     menu.usb_owned=1; snapshot_connected=0;
     render(&menu,"joystick_disconnected.ppm");
+    assert(!strcmp(shown_device,"Auto (unavailable)"));
+    assert(!strcmp(shown_raw_title,"Raw axes: no input connected") && !strcmp(shown_raw_x,"X: --"));
     snapshot_connected=1; menu.onee_mode_state=CONFIG_MENU_ONEE_MODE_RUNNING;
     render(&menu,"joystick_standalone_onee.ppm");
     menu.onee_mode_state=CONFIG_MENU_ONEE_MODE_OFF; snapshot_active=1;

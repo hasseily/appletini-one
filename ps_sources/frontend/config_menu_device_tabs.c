@@ -109,12 +109,28 @@ static void config_menu_draw_joystick(uint16_t *fb,
     char value[32];
 
     onee_input_service_get_joystick_snapshot(&snapshot);
+    const unsigned selected_slot = config->device == 0U ?
+        snapshot.owner_slot : (unsigned)config->device - 1U;
+    const onee_input_joystick_device_snapshot_t *device =
+        selected_slot < ONEE_INPUT_DEVICE_SLOT_COUNT ?
+            &snapshot.devices[selected_slot] : NULL;
+    const uint8_t device_connected = device != NULL && device->connected;
     const uint8_t standalone =
         menu->onee_mode_state == CONFIG_MENU_ONEE_MODE_RUNNING;
     const uint8_t available = standalone || snapshot.active;
     cmui_title(fb, x, y, "Joystick / Paddles");
-    cmui_caption(fb, x, y + row_h, w, snapshot.connected ?
-                 "USB controller connected" : "No USB controller connected");
+    if (snapshot.connected_mask != 0U) {
+        unsigned offset = (unsigned)snprintf(line, sizeof(line), "Connected USB inputs:");
+        for (unsigned slot = 0U; slot < ONEE_INPUT_DEVICE_SLOT_COUNT; ++slot) {
+            if ((snapshot.connected_mask & (1U << slot)) != 0U) {
+                offset += (unsigned)snprintf(line + offset, sizeof(line) - offset,
+                                             " %u", slot + 1U);
+            }
+        }
+    } else {
+        (void)snprintf(line, sizeof(line), "No USB controller connected");
+    }
+    cmui_caption(fb, x, y + row_h, w, line);
     cmui_text_clipped(fb, x, y + 2 * row_h, w,
                       standalone ? "Available in standalone ONE//e" :
                       snapshot.active ? "Available with TransWarp" :
@@ -125,29 +141,41 @@ static void config_menu_draw_joystick(uint16_t *fb,
     (void)snprintf(value, sizeof(value), "Paddle %u", (unsigned)menu->joystick_paddle + 1U);
     hgr_draw_value_item(fb, x, y, controls_w, menu->joystick_focus == 0U,
                         "Apple paddle:", value);
+    if (config->device == 0U) {
+        if (device_connected) {
+            (void)snprintf(value, sizeof(value), "Auto (Input %u)", selected_slot + 1U);
+        } else {
+            (void)snprintf(value, sizeof(value), "Auto (unavailable)");
+        }
+    } else {
+        (void)snprintf(value, sizeof(value), "Input %u (%s)", (unsigned)config->device,
+                       device_connected ? "connected" : "unavailable");
+    }
+    hgr_draw_value_item(fb, x, y + row_h, controls_w, menu->joystick_focus == 1U,
+                        "Source device:", value);
     if (config->source == ONEE_INPUT_JOYSTICK_SOURCE_AUTO) {
         (void)snprintf(value, sizeof(value), "Auto (%s)", defaults[menu->joystick_paddle]);
     } else {
         (void)snprintf(value, sizeof(value), "%s", config_menu_joystick_source_text(config->source));
     }
-    hgr_draw_value_item(fb, x, y + row_h, controls_w, menu->joystick_focus == 1U,
+    hgr_draw_value_item(fb, x, y + 2 * row_h, controls_w, menu->joystick_focus == 2U,
                         "Source axis:", value);
-    hgr_draw_check_item(fb, x, y + 2 * row_h, controls_w,
-                        menu->joystick_focus == 2U, config->invert, "Invert axis");
+    hgr_draw_check_item(fb, x, y + 3 * row_h, controls_w,
+                        menu->joystick_focus == 3U, config->invert, "Invert axis");
     (void)snprintf(value, sizeof(value), "%u%%", (unsigned)config->sensitivity_percent);
-    cmui_slider(fb, x, y + 3 * row_h, controls_w, menu->joystick_focus == 3U,
+    cmui_slider(fb, x, y + 4 * row_h, controls_w, menu->joystick_focus == 4U,
                 0U, "Sensitivity", "25%", "200%",
                 config->sensitivity_percent - 25U, 175U, 75U, value);
     (void)snprintf(value, sizeof(value), "%u%%", (unsigned)config->deadzone_percent);
-    cmui_slider(fb, x, y + 4 * row_h, controls_w, menu->joystick_focus == 4U,
+    cmui_slider(fb, x, y + 5 * row_h, controls_w, menu->joystick_focus == 5U,
                 0U, "Deadzone", "0%", "50%", config->deadzone_percent, 50U, 0U, value);
-    hgr_draw_item(fb, x, y + 5 * row_h, controls_w, menu->joystick_focus == 5U,
-                  "Restore defaults (all four paddles)", HGR_WHITE);
     hgr_draw_item(fb, x, y + 6 * row_h, controls_w, menu->joystick_focus == 6U,
+                  "Restore defaults (all four paddles)", HGR_WHITE);
+    hgr_draw_item(fb, x, y + 7 * row_h, controls_w, menu->joystick_focus == 7U,
                   "Back to USB", HGR_WHITE);
 
     if (!available) {
-        int note_y = y + 7 * row_h;
+        int note_y = y + 8 * row_h;
         if (menu->vtw_enabled) {
             cmui_caption(fb, x, note_y, controls_w,
                          "TransWarp is enabled in settings but is not active.");
@@ -180,14 +208,20 @@ static void config_menu_draw_joystick(uint16_t *fb,
                        18, CMUI_COLOR_ACCENT);
         fb16_fill_rect(fb, bar_x + bar_w / 2, bar_y, 1, 22, CMUI_COLOR_MUTED);
     }
-    cmui_caption(fb, preview_x, y + 6 * row_h, preview_w, "Raw USB axes:");
+    if (selected_slot < ONEE_INPUT_DEVICE_SLOT_COUNT) {
+        (void)snprintf(line, sizeof(line), "Raw axes: Input %u%s", selected_slot + 1U,
+                       device_connected ? "" : " (unavailable)");
+    } else {
+        (void)snprintf(line, sizeof(line), "Raw axes: no input connected");
+    }
+    cmui_caption(fb, preview_x, y + 6 * row_h, preview_w, line);
     for (unsigned axis = 0U; axis < 6U; ++axis) {
         const unsigned col = axis % 3U;
         const unsigned row = axis / 3U;
-        if ((snapshot.axis_valid_mask & (1U << axis)) != 0U) {
+        if (device_connected && (device->axis_valid_mask & (1U << axis)) != 0U) {
             (void)snprintf(line, sizeof(line), "%s: %u",
                            config_menu_joystick_source_text((uint8_t)(axis + 1U)),
-                           (unsigned)snapshot.axis[axis]);
+                           (unsigned)device->axis[axis]);
         } else {
             (void)snprintf(line, sizeof(line), "%s: --",
                            config_menu_joystick_source_text((uint8_t)(axis + 1U)));
@@ -197,9 +231,9 @@ static void config_menu_draw_joystick(uint16_t *fb,
                   CMUI_COLOR_MUTED, CMUI_COLOR_BG, CMUI_SMALL_SCALE);
     }
     (void)snprintf(line, sizeof(line), "Buttons: %s %s %s",
-                   snapshot.buttons & 1U ? "1" : "-",
-                   snapshot.buttons & 2U ? "2" : "-",
-                   snapshot.buttons & 4U ? "3" : "-");
+                   device_connected && (device->buttons & 1U) ? "1" : "-",
+                   device_connected && (device->buttons & 2U) ? "2" : "-",
+                   device_connected && (device->buttons & 4U) ? "3" : "-");
     cmui_caption(fb, preview_x, y + 9 * row_h, preview_w, line);
 }
 

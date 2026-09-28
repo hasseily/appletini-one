@@ -415,7 +415,8 @@ static uint8_t onee_mapped_paddle(const onee_input_slot_t *slot, uint8_t paddle)
     int32_t deadzone;
     int32_t magnitude;
 
-    if (config->source == ONEE_INPUT_JOYSTICK_SOURCE_OFF) {
+    if (slot == NULL || slot->joystick_seen == 0U ||
+        config->source == ONEE_INPUT_JOYSTICK_SOURCE_OFF) {
         return 0x80U;
     }
     if (config->source == ONEE_INPUT_JOYSTICK_SOURCE_AUTO) {
@@ -451,23 +452,36 @@ static uint8_t onee_mapped_paddle(const onee_input_slot_t *slot, uint8_t paddle)
     return (uint8_t)((distance < 0) ? 128 - magnitude : 128 + magnitude);
 }
 
-static uint32_t onee_paddles_word(void)
+static const onee_input_slot_t *onee_paddle_slot(uint8_t paddle)
 {
-    const onee_input_slot_t *slot = NULL;
+    const onee_input_joystick_paddle_config_t *config =
+        &g_joystick_config.paddle[paddle];
 
+    if (config->source == ONEE_INPUT_JOYSTICK_SOURCE_OFF) {
+        return NULL;
+    }
+    if (config->device != 0U) {
+        const uint8_t index = (uint8_t)(config->device - 1U);
+        /* An explicit device never falls back to another controller. */
+        return (index < ONEE_INPUT_DEVICE_SLOT_COUNT &&
+                g_slots[index].joystick_seen != 0U) ? &g_slots[index] : NULL;
+    }
     for (uint8_t i = 0U; i < ONEE_INPUT_DEVICE_SLOT_COUNT; ++i) {
         if (g_slots[i].joystick_seen != 0U) {
-            slot = &g_slots[i];
-            break;
+            return &g_slots[i];
         }
     }
-    if (slot == NULL) {
-        return ONEE_INPUT_NEUTRAL_PADDLES;
+    return NULL;
+}
+
+static uint32_t onee_paddles_word(void)
+{
+    uint32_t paddles = 0U;
+
+    for (uint8_t i = 0U; i < ONEE_INPUT_PADDLE_COUNT; ++i) {
+        paddles |= (uint32_t)onee_mapped_paddle(onee_paddle_slot(i), i) << (i * 8U);
     }
-    return (uint32_t)onee_mapped_paddle(slot, 0U) |
-           ((uint32_t)onee_mapped_paddle(slot, 1U) << 8) |
-           ((uint32_t)onee_mapped_paddle(slot, 2U) << 16) |
-           ((uint32_t)onee_mapped_paddle(slot, 3U) << 24);
+    return paddles;
 }
 
 static void vtw_joystick_poll(void)
@@ -485,7 +499,7 @@ static void vtw_joystick_poll(void)
         g_vtw_joystick_active = 1U;
         g_vtw_joystick_dirty = 1U;
     }
-    /* Match the paddle owner's slot. Use only raw joystick buttons: Alt,
+    /* Keep buttons on the first joystick, independent of paddle mappings. Alt,
      * Apple keys, and keyboard events belong to the ONE//e bridge. */
     for (uint8_t i = 0U; i < ONEE_INPUT_DEVICE_SLOT_COUNT; ++i) {
         if (g_slots[i].joystick_seen != 0U) {
@@ -549,6 +563,9 @@ void onee_input_service_set_joystick_config(
             if (next.paddle[i].source > ONEE_INPUT_JOYSTICK_SOURCE_OFF) {
                 next.paddle[i].source = ONEE_INPUT_JOYSTICK_SOURCE_AUTO;
             }
+            if (next.paddle[i].device > ONEE_INPUT_DEVICE_SLOT_COUNT) {
+                next.paddle[i].device = 0U;
+            }
             next.paddle[i].invert = (next.paddle[i].invert != 0U) ? 1U : 0U;
             if (next.paddle[i].sensitivity_percent <
                 ONEE_INPUT_JOYSTICK_SENSITIVITY_MIN) {
@@ -593,22 +610,35 @@ void onee_input_service_get_joystick_snapshot(
     memset(snapshot->axis, 0x80, sizeof(snapshot->axis));
     for (uint8_t i = 0U; i < ONEE_INPUT_DEVICE_SLOT_COUNT; ++i) {
         const onee_input_slot_t *slot = &g_slots[i];
+        onee_input_joystick_device_snapshot_t *device = &snapshot->devices[i];
+
+        memset(device->axis, 0x80, sizeof(device->axis));
         if (slot->joystick_seen == 0U) {
             continue;
         }
-        snapshot->connected = 1U;
-        snapshot->owner_slot = i;
-        snapshot->axis_valid_mask = slot->joystick_axis_valid;
-        snapshot->buttons = slot->joystick_buttons;
+        device->connected = 1U;
+        device->axis_valid_mask = slot->joystick_axis_valid;
+        device->buttons = slot->joystick_buttons;
+        snapshot->connected_mask |= (uint8_t)(1U << i);
         for (uint8_t axis = 0U; axis < ONEE_INPUT_AXIS_COUNT; ++axis) {
-            snapshot->axis[axis] = onee_axis_or_neutral(
+            device->axis[axis] = onee_axis_or_neutral(
                 slot, (onee_input_axis_t)axis, (onee_input_axis_t)axis);
         }
-        break;
+        /* Retain the first-controller view for buttons and existing callers. */
+        if (snapshot->connected == 0U) {
+            snapshot->connected = 1U;
+            snapshot->owner_slot = i;
+            snapshot->axis_valid_mask = device->axis_valid_mask;
+            snapshot->buttons = device->buttons;
+            memcpy(snapshot->axis, device->axis, sizeof(snapshot->axis));
+        }
     }
     paddles = onee_paddles_word();
     for (uint8_t i = 0U; i < ONEE_INPUT_PADDLE_COUNT; ++i) {
+        const onee_input_slot_t *slot = onee_paddle_slot(i);
         snapshot->paddles[i] = (uint8_t)(paddles >> (i * 8U));
+        snapshot->paddle_slots[i] = slot != NULL ? (uint8_t)(slot - g_slots) :
+                                                   ONEE_INPUT_DEVICE_SLOT_COUNT;
     }
 }
 

@@ -1927,7 +1927,13 @@ static uint8_t config_menu_parse_joystick(config_menu_t *menu,
         return 0U;
     }
     config = &menu->joystick_config.paddle[paddle];
-    if (strcmp(suffix, ".source") == 0) {
+    if (strcmp(suffix, ".device") == 0) {
+        char *end;
+        long device = strtol(value, &end, 10);
+        config->device = end != value && *end == '\0' &&
+            device >= 1 && device <= (long)ONEE_INPUT_DEVICE_SLOT_COUNT ?
+                (uint8_t)device : 0U;
+    } else if (strcmp(suffix, ".source") == 0) {
         config->source = ONEE_INPUT_JOYSTICK_SOURCE_AUTO;
         for (uint8_t source = 0U; source <= ONEE_INPUT_JOYSTICK_SOURCE_OFF; ++source) {
             if (config_menu_str_ieq(value, config_menu_joystick_source_text(source))) {
@@ -1953,11 +1959,19 @@ static void config_menu_joystick_config_line(const config_menu_t *menu,
 {
     const onee_input_joystick_paddle_config_t *config =
         &menu->joystick_config.paddle[paddle];
+    char device[16];
+    if (config->device == 0U) {
+        (void)snprintf(device, sizeof(device), "Auto");
+    } else {
+        (void)snprintf(device, sizeof(device), "%u", (unsigned)config->device);
+    }
     (void)snprintf(line, size,
+        "usb.joystick.paddle.%u.device=%s\n"
         "usb.joystick.paddle.%u.source=%s\n"
         "usb.joystick.paddle.%u.invert=%s\n"
         "usb.joystick.paddle.%u.sensitivity=%u\n"
         "usb.joystick.paddle.%u.deadzone=%u\n",
+        (unsigned)paddle, device,
         (unsigned)paddle, config_menu_joystick_source_text(config->source),
         (unsigned)paddle, config_menu_on_off(config->invert),
         (unsigned)paddle, (unsigned)config->sensitivity_percent,
@@ -7456,7 +7470,7 @@ static uint8_t config_menu_joystick_handle_input(config_menu_t *menu,
         return 0U;
     }
     if (input.key == UI_KEY_ESC || input.key == UI_KEY_BACK ||
-        (input.key == UI_KEY_ENTER && menu->joystick_focus == 6U)) {
+        (input.key == UI_KEY_ENTER && menu->joystick_focus == 7U)) {
         menu->joystick_page_active = 0U;
         menu->item_focus = CONFIG_USB_ITEM_JOYSTICK;
         return 1U;
@@ -7484,20 +7498,25 @@ static uint8_t config_menu_joystick_handle_input(config_menu_t *menu,
         menu->joystick_paddle = (uint8_t)((menu->joystick_paddle + 4 + delta) % 4);
         return 1U;
     case 1U:
-        config->source = (uint8_t)((config->source + 8 + delta) % 8);
+        config->device = (uint8_t)((config->device +
+            (int)ONEE_INPUT_DEVICE_SLOT_COUNT + 1 + delta) %
+            ((int)ONEE_INPUT_DEVICE_SLOT_COUNT + 1));
         break;
     case 2U:
-        config->invert = !config->invert;
+        config->source = (uint8_t)((config->source + 8 + delta) % 8);
         break;
     case 3U:
+        config->invert = !config->invert;
+        break;
+    case 4U:
         value = (int)config->sensitivity_percent + delta * 5;
         config->sensitivity_percent = (uint16_t)(value < 25 ? 25 : value > 200 ? 200 : value);
         break;
-    case 4U:
+    case 5U:
         value = (int)config->deadzone_percent + delta * 5;
         config->deadzone_percent = (uint8_t)(value < 0 ? 0 : value > 50 ? 50 : value);
         break;
-    case 5U:
+    case 6U:
         if (input.key != UI_KEY_ENTER && input.key != UI_KEY_SPACE) {
             return 1U;
         }

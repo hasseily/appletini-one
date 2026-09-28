@@ -638,13 +638,20 @@ HELP(usb_joystick,
     "Open these settings to choose the controls, adjust their response, and test them.");
 
 HELP(joystick_paddle,
-    "Choose Paddle 1 to Paddle 4, then adjust its settings. Settings save with your profiles.",
+    "Choose Paddle 1 to Paddle 4, then choose its USB input and axis. Settings save with profiles.",
     "Up/Down selects a row; Left/Right or Enter changes it. Esc/Back returns to USB.",
     "Move your controller to test. Use keys or buttons to navigate.");
 
+HELP(joystick_device,
+    "Each Apple paddle can use a different USB input. Auto uses the first connected joystick.",
+    "Inputs 1-8 are shared USB slots; their numbers can change when devices reconnect.",
+    "Choose a connected input, then move its controls and check the raw axes on the right.",
+    "An unavailable input keeps its paddle centred until that input connects.");
+
 HELP(joystick_source,
-    "Start with Auto. Move your controller and watch the bars.",
-    "Choose another input if the wrong control moves the bar. Off keeps this paddle centred.");
+    "Choose X, Y, Z, RX, RY, or RZ from the selected USB input; up to 48 axes across 8 inputs.",
+    "Auto uses X/Y for paddles 1/2 and RX/RY (or Z/RZ) for paddles 3/4.",
+    "Choose another axis if the wrong control moves the bar. Off keeps this paddle centred.");
 
 HELP(joystick_invert,
     "Turn this on if movement goes the wrong way.");
@@ -658,13 +665,14 @@ HELP(joystick_deadzone,
     "For paddles, start at 0%.");
 
 HELP(joystick_defaults,
-    "Reset all four paddles to Auto, normal direction, 100% sensitivity, and 0% deadzone.");
+    "Reset all four paddles to Auto device and axis, normal direction, 100% sensitivity, and 0% deadzone.");
 
 HELP(joystick_back,
     "Return to the USB tab. Changes apply as you make them.");
 
 static const config_menu_help_block_t joystick_help[] = {
     { help_joystick_paddle, HELP_COUNT(help_joystick_paddle) },
+    { help_joystick_device, HELP_COUNT(help_joystick_device) },
     { help_joystick_source, HELP_COUNT(help_joystick_source) },
     { help_joystick_invert, HELP_COUNT(help_joystick_invert) },
     { help_joystick_sensitivity, HELP_COUNT(help_joystick_sensitivity) },

@@ -16,6 +16,9 @@
 #include "xusbps_hw.h"
 
 #include "usb_hid_service.h"
+#include "usb_gamepad_input.h"
+#include "usb_ps4_report.h"
+#include "usb_xbox_one.h"
 #include "onee_input_service.h"
 
 #include "cherryusb_platform.h"
@@ -51,7 +54,7 @@
 #define MOUSE_BUTTON_APPLE_MASK (MOUSE_BUTTON_LEFT | MOUSE_BUTTON_RIGHT)
 #define MOUSE_BOOT_WHEEL_INDEX 3U
 
-#define USB_HID_SLOT_COUNT CONFIG_USBHOST_MAX_HID_CLASS
+#define USB_HID_SLOT_COUNT ONEE_INPUT_DEVICE_SLOT_COUNT
 #define HID_REPORT_BYTES 64U
 #define HID_REPORT_BUFFER_BYTES USB_ALIGN_UP(HID_REPORT_BYTES, CONFIG_USB_ALIGN_SIZE)
 #define HID_REPORT_DESC_BYTES CONFIG_USBHOST_REQUEST_BUFFER_LEN
@@ -78,6 +81,8 @@
 typedef struct {
     uint8_t index;
     uint8_t active;
+    uint8_t vendor_gamepad;
+    uint8_t ps4;
     uint8_t boot_mouse;
     uint8_t boot_keyboard;
     uint8_t keyboard_keys_down;
@@ -559,10 +564,70 @@ static void hid_slots_reset_menu_state(void)
 
 static usb_hid_slot_t *hid_slot_from_hid(struct usbh_hid *hid)
 {
-    if (hid == NULL || hid->minor >= USB_HID_SLOT_COUNT) {
+    if (hid == NULL) {
         return NULL;
     }
-    return &g_hid_slots[hid->minor];
+    for (uint32_t i = 0U; i < USB_HID_SLOT_COUNT; ++i) {
+        usb_hid_slot_t *slot = &g_hid_slots[i];
+
+        if (slot->active != 0U && slot->vendor_gamepad == 0U &&
+            slot->hid == hid && hid->user_data == slot) {
+            return slot;
+        }
+    }
+    for (uint32_t i = 0U; i < USB_HID_SLOT_COUNT; ++i) {
+        usb_hid_slot_t *slot = &g_hid_slots[i];
+
+        if (slot->active != 0U && slot->vendor_gamepad == 0U &&
+            slot->hid == hid) {
+            return slot;
+        }
+    }
+    return NULL;
+}
+
+static usb_hid_slot_t *hid_slot_find_free(uint8_t preferred)
+{
+    if (preferred < USB_HID_SLOT_COUNT &&
+        g_hid_slots[preferred].active == 0U) {
+        return &g_hid_slots[preferred];
+    }
+    for (uint32_t i = 0U; i < USB_HID_SLOT_COUNT; ++i) {
+        if (g_hid_slots[i].active == 0U) {
+            return &g_hid_slots[i];
+        }
+    }
+    return NULL;
+}
+
+int usb_gamepad_input_connect(void)
+{
+    usb_hid_slot_t *slot = hid_slot_find_free(USB_HID_SLOT_COUNT);
+
+    if (slot == NULL) {
+        return -1;
+    }
+    onee_input_service_disconnect(slot->index);
+    hid_slot_reset(slot);
+    slot->active = 1U;
+    slot->vendor_gamepad = 1U;
+    slot->onee_joystick = 1U;
+    return slot->index;
+}
+
+void usb_gamepad_input_disconnect(uint8_t index)
+{
+    usb_hid_slot_t *slot;
+
+    if (index >= USB_HID_SLOT_COUNT) {
+        return;
+    }
+    slot = &g_hid_slots[index];
+    if (slot->active == 0U || slot->vendor_gamepad == 0U) {
+        return;
+    }
+    onee_input_service_disconnect(slot->index);
+    hid_slot_reset(slot);
 }
 
 static uint32_t hid_active_count(void)
@@ -570,7 +635,8 @@ static uint32_t hid_active_count(void)
     uint32_t count = 0U;
 
     for (uint32_t i = 0U; i < USB_HID_SLOT_COUNT; ++i) {
-        if (g_hid_slots[i].active != 0U) {
+        if (g_hid_slots[i].active != 0U &&
+            g_hid_slots[i].vendor_gamepad == 0U) {
             count++;
         }
     }
@@ -1447,6 +1513,88 @@ static void hid_menu_push_axis(usb_hid_slot_t *slot,
     }
 }
 
+static void hid_process_gamepad_report(
+    usb_hid_slot_t *slot,
+    const onee_input_joystick_report_t *report,
+    uint8_t hat,
+    uint8_t extra_active)
+{
+    if (slot == NULL || report == NULL) {
+        return;
+    }
+
+    slot->raw_buttons_down =
+        ((report->buttons_valid != 0U && report->buttons != 0U) ||
+         extra_active != 0U) ? 1U : 0U;
+    slot->raw_hat_active = onee_usb_hat_active(hat);
+    for (uint32_t axis = 0U; axis < ONEE_INPUT_AXIS_COUNT; ++axis) {
+        const uint8_t axis_bit = (uint8_t)(1U << axis);
+
+        if ((report->axis_valid_mask & axis_bit) == 0U) {
+            continue;
+        }
+        if ((slot->raw_axis_rest_valid_mask & axis_bit) == 0U) {
+            slot->raw_axis_rest[axis] = report->axis[axis];
+            slot->raw_axis_rest_valid_mask |= axis_bit;
+        }
+        if (hid_axis_active_from_rest(report->axis[axis],
+                                      slot->raw_axis_rest[axis],
+                                      report->logical_min[axis],
+                                      report->logical_max[axis]) == 0U) {
+            slot->raw_axis_active_mask &= (uint8_t)~axis_bit;
+        } else {
+            slot->raw_axis_active_mask |= axis_bit;
+        }
+    }
+
+    if (g_menu_capture != 0U) {
+        if ((report->axis_valid_mask & (1U << ONEE_INPUT_AXIS_X)) != 0U) {
+            hid_menu_push_axis(slot,
+                               &slot->prev_x_dir,
+                               onee_usb_axis_direction(
+                                   report->axis[ONEE_INPUT_AXIS_X],
+                                   report->logical_min[ONEE_INPUT_AXIS_X],
+                                   report->logical_max[ONEE_INPUT_AXIS_X]),
+                               USB_HID_MENU_ACTION_LEFT,
+                               USB_HID_MENU_ACTION_RIGHT);
+        }
+        if ((report->axis_valid_mask & (1U << ONEE_INPUT_AXIS_Y)) != 0U) {
+            hid_menu_push_axis(slot,
+                               &slot->prev_y_dir,
+                               onee_usb_axis_direction(
+                                   report->axis[ONEE_INPUT_AXIS_Y],
+                                   report->logical_min[ONEE_INPUT_AXIS_Y],
+                                   report->logical_max[ONEE_INPUT_AXIS_Y]),
+                               USB_HID_MENU_ACTION_ITEM_UP,
+                               USB_HID_MENU_ACTION_ITEM_DOWN);
+        }
+        hid_menu_push_hat(slot, hat);
+    }
+    if (report->buttons_valid != 0U) {
+        mouse_menu_process_buttons(slot, report->buttons, 0);
+    }
+    /* Gamepad buttons reach paddles and menus, never the MouseCard. */
+    onee_input_service_joystick_report(slot->index, report);
+}
+
+void usb_gamepad_input_report(
+    uint8_t index,
+    const onee_input_joystick_report_t *report,
+    uint8_t hat,
+    uint8_t extra_active)
+{
+    usb_hid_slot_t *slot;
+
+    if (index >= USB_HID_SLOT_COUNT) {
+        return;
+    }
+    slot = &g_hid_slots[index];
+    if (slot->active == 0U || slot->vendor_gamepad == 0U) {
+        return;
+    }
+    hid_process_gamepad_report(slot, report, hat, extra_active);
+}
+
 static void hid_collect_desktop_item(usb_hid_slot_t *slot,
                                      const struct usbh_hid_report_item *item,
                                      const uint8_t *report,
@@ -1716,6 +1864,17 @@ static void hid_process_report(usb_hid_slot_t *slot,
         return;
     }
 
+    if (slot->ps4 != 0U) {
+        onee_input_joystick_report_t gamepad;
+        uint8_t hat;
+        uint8_t extra_active;
+
+        if (usb_ps4_decode(report, len, &gamepad, &hat, &extra_active) != 0U) {
+            hid_process_gamepad_report(slot, &gamepad, hat, extra_active);
+        }
+        return;
+    }
+
     if (slot->boot_mouse != 0U) {
         hid_process_boot_mouse_report(slot, report, len);
         return;
@@ -1852,6 +2011,8 @@ static void hid_slots_retry_reports(void)
         usb_hid_slot_t *slot = &g_hid_slots[i];
 
         if (slot->active == 0U ||
+            slot->vendor_gamepad != 0U ||
+            slot->hid == NULL ||
             slot->report_pending != 0U ||
             slot->report_retry_armed == 0U ||
             (now - slot->report_retry_started) < HID_REPORT_RETRY_TICKS) {
@@ -1927,6 +2088,8 @@ static void hid_log_connected(const usb_hid_slot_t *slot)
     uart_putdec(UART0_BASE, slot->mouse_capable);
     uart_puts(UART0_BASE, " joystick=");
     uart_putdec(UART0_BASE, slot->onee_joystick);
+    uart_puts(UART0_BASE, " ps4=");
+    uart_putdec(UART0_BASE, slot->ps4);
     uart_puts(UART0_BASE, "\r\n");
 }
 
@@ -1970,7 +2133,12 @@ void usbh_hid_run(struct usbh_hid *hid_class)
     }
 
     slot = hid_slot_from_hid(hid_class);
+    if (slot != NULL) {
+        return;
+    }
+    slot = hid_slot_find_free(hid_class->minor);
     if (slot == NULL) {
+        uart_puts(UART0_BASE, "[usb1] no free input slot for HID\r\n");
         return;
     }
 
@@ -1984,6 +2152,10 @@ void usbh_hid_run(struct usbh_hid *hid_class)
     slot->active = 1U;
     slot->interface_subclass = intf_desc->bInterfaceSubClass;
     slot->interface_protocol = hid_class->protocol;
+    slot->ps4 = (uint8_t)(hid_class->protocol == 0U &&
+                         slot->interface_subclass == 0U &&
+                         usb_ps4_supported(hid_class->hport->device_desc.idVendor,
+                                           hid_class->hport->device_desc.idProduct));
     slot->boot_mouse = (uint8_t)((hid_class->protocol == HID_PROTOCOL_MOUSE &&
                                   intf_desc->bInterfaceSubClass == HID_SUBCLASS_BOOTIF) ? 1U : 0U);
     slot->boot_keyboard = (uint8_t)((hid_class->protocol == HID_PROTOCOL_KEYBOARD &&
@@ -1992,7 +2164,12 @@ void usbh_hid_run(struct usbh_hid *hid_class)
     hid_class->user_data = slot;
 
     (void)usbh_hid_set_idle(hid_class, 0U, 0U);
-    if (slot->boot_keyboard != 0U) {
+    if (slot->ps4 != 0U) {
+        /* DS4 USB report 1 needs no startup command. Decode it directly:
+         * its explicit axis usages are not consecutive, and its right-stick
+         * and trigger usage names differ from our shared gamepad mapping. */
+        slot->onee_joystick = 1U;
+    } else if (slot->boot_keyboard != 0U) {
         /* Keyboards: boot protocol. Fixed 8-byte layout, exactly what the
          * accel-keys / menu key tracking parse. */
         (void)usbh_hid_set_protocol(hid_class, HID_PROTOCOL_BOOT);
@@ -2027,11 +2204,8 @@ void usbh_hid_stop(struct usbh_hid *hid_class)
         return;
     }
 
-    slot = (usb_hid_slot_t *)hid_class->user_data;
+    slot = hid_slot_from_hid(hid_class);
     if (slot == NULL) {
-        slot = hid_slot_from_hid(hid_class);
-    }
-    if (slot == NULL || slot->hid != hid_class) {
         return;
     }
 
@@ -2159,6 +2333,7 @@ void usb_hid_service_stop(void)
         g_power_shutdown_required = (power_rc != 0) ? 1U : 0U;
         g_started = 0U;
     }
+    usb_xbox_one_stop();
     mouse_mark_disconnected();
     onee_input_service_release_all();
     hid_slots_reset_all();
@@ -2557,6 +2732,7 @@ void usb_hid_service_dump_status(uint32_t uart_base)
     for (uint32_t i = 0U; i < USB_HID_SLOT_COUNT; ++i) {
         usb_hid_service_dump_slot(uart_base, &g_hid_slots[i]);
     }
+    usb_xbox_one_dump_status(uart_base);
 }
 
 void usb_hid_service_poll(void)
@@ -2566,6 +2742,7 @@ void usb_hid_service_poll(void)
     onee_input_service_poll();
     if (g_started != 0U) {
         cherryusb_host_poll(CHERRYUSB_USB1_BUSID);
+        usb_xbox_one_poll();
         hid_slots_retry_reports();
         hid_slots_poll_holds();
         onee_input_service_poll();

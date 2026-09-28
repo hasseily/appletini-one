@@ -1262,6 +1262,7 @@ run_step(
             "../../../ps_sources/frontend/cherryusb_usbh_hub_poll.c",
             "../../../ps_sources/frontend/cherryusb_zynq_hc.c",
             "../../../ps_sources/frontend/usb_hid_service.c",
+            "../../../ps_sources/frontend/usb_xbox_one.c",
             "../../../ps_sources/frontend/usb_phy_init.c",
             "../../../ps_sources/frontend/usb_storage_service.c",
             "../../../ps_sources/frontend/usb_storage_sd.c",

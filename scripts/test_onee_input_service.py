@@ -2,6 +2,7 @@
 """Source and native C checks for ONE//e and vTW USB input firmware."""
 
 import shutil
+import re
 import subprocess
 import textwrap
 from pathlib import Path
@@ -203,22 +204,18 @@ def test_four_paddles_are_normalized_with_stable_fallbacks() -> None:
             "PDL0-3 must use X/Y/Rx/Ry with Z/Rz fallbacks")
 
 
-def test_lowest_slot_owns_joystick_and_disconnect_recenters() -> None:
+def test_lowest_slot_owns_buttons_and_disconnect_recenters() -> None:
     source = read(SERVICE_C)
     live = between(source,
                    "static uint32_t onee_live_word",
                    "static uint8_t onee_axis_or_neutral")
-    paddles = between(source,
-                      "static uint32_t onee_paddles_word",
-                      "static void onee_input_session_stop")
     disconnect = between(source,
                          "void onee_input_service_disconnect",
                          "void onee_input_service_release_all")
 
     require("joystick_owner == ONEE_INPUT_DEVICE_SLOT_COUNT" in live and
-            "joystick_owner = i;" in live and
-            "break;" in paddles,
-            "the lowest active HID slot must own buttons and all paddles")
+            "joystick_owner = i;" in live,
+            "the lowest active joystick slot must still own buttons")
     require("memset(&g_slots[slot_index], 0" in disconnect and
             "g_live_dirty = 1U" in disconnect and
             "g_paddles_dirty = 1U" in disconnect and
@@ -308,7 +305,7 @@ TESTS = (
     test_apple_keys_caps_and_cold_reboot_chord,
     test_held_key_repeat_contract,
     test_four_paddles_are_normalized_with_stable_fallbacks,
-    test_lowest_slot_owns_joystick_and_disconnect_recenters,
+    test_lowest_slot_owns_buttons_and_disconnect_recenters,
     test_vtw_gate_and_menu_joystick_lifetime,
     test_hid_parser_feeds_boot_keyboard_and_absolute_joystick,
     test_usb_lifecycle_drives_input_lifecycle,
@@ -321,12 +318,16 @@ def find_native_c_compiler() -> Path | None:
         found = shutil.which(name)
         if found:
             return Path(found)
-    xilinx = Path("C:/Xilinx")
-    if xilinx.exists():
+    # Recent AMD installs can live outside the old C:/Xilinx tree. Keep the
+    # USB runtime tests from silently skipping their bundled native compiler.
+    for xilinx in (Path("C:/Xilinx"), Path("C:/AMDDesignTools"),
+                   Path("E:/AMDDesignTools")):
         matches = sorted(
             xilinx.glob(
                 "*/tps/mingw/*/win64.o/nt/bin/x86_64-w64-mingw32-gcc.exe"
             ),
+            key=lambda path: tuple(int(part) for part in
+                                   re.findall(r"\d+", path.as_posix())),
             reverse=True,
         )
         if matches:

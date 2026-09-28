@@ -3,9 +3,9 @@
 
 #include <stdint.h>
 
-/* CherryUSB assigns HID interfaces stable minor numbers in the range 0..7.
- * Keeping the same count here makes keyboard aggregation and joystick owner
- * selection independent of USB connection order. */
+/* HID interfaces and vendor gamepads share these slots. HID keeps its
+ * CherryUSB minor number when that slot is free; both transports otherwise
+ * use the first free slot for keyboard aggregation and joystick ownership. */
 #define ONEE_INPUT_DEVICE_SLOT_COUNT 8U
 
 typedef enum {
@@ -45,6 +45,7 @@ typedef enum {
 
 typedef struct {
     uint8_t source;
+    uint8_t device; /* 0: first joystick; 1..8: shared USB input slot + 1. */
     uint8_t invert;
     uint8_t deadzone_percent;
     uint16_t sensitivity_percent;
@@ -56,16 +57,29 @@ typedef struct {
 
 typedef struct {
     uint8_t connected;
+    uint8_t axis_valid_mask;
+    uint8_t axis[ONEE_INPUT_AXIS_COUNT];
+    uint8_t buttons;
+} onee_input_joystick_device_snapshot_t;
+
+typedef struct {
+    uint8_t connected;
     uint8_t owner_slot; /* ONEE_INPUT_DEVICE_SLOT_COUNT when disconnected. */
     uint8_t active;     /* Physical-host vTW hardware gate; separate from USB. */
     uint8_t axis_valid_mask;
     uint8_t axis[ONEE_INPUT_AXIS_COUNT];
     uint8_t paddles[ONEE_INPUT_PADDLE_COUNT];
     uint8_t buttons;
+    uint8_t connected_mask;
+    /* Resolved sources; SLOT_COUNT means disabled or disconnected. */
+    uint8_t paddle_slots[ONEE_INPUT_PADDLE_COUNT];
+    onee_input_joystick_device_snapshot_t devices[ONEE_INPUT_DEVICE_SLOT_COUNT];
 } onee_input_joystick_snapshot_t;
 
 /* The same mapping serves ONE//e and physical-host vTW. Auto defaults to
- * X/Y/Rx/Ry, with Z/Rz fallback for the last two paddles. Deadzone is a
+ * the first joystick and X/Y/Rx/Ry, with Z/Rz fallback for the last two
+ * paddles. Each paddle may instead select its own USB slot and axis.
+ * A missing explicit device/axis stays centered. Deadzone is a
  * percentage of each half-range around center; sensitivity scales the
  * remaining travel. Snapshot stays live while menu input delivery is blocked. */
 void onee_input_service_default_joystick_config(
@@ -88,8 +102,9 @@ void onee_input_service_prepare_cold_reboot(void);
 
 /* HID reports update saved physical state for both input consumers. Keyboard
  * edges and Apple keys reach only an active ONE//e input bridge. The lowest
- * joystick slot also supplies paddles and raw buttons to physical-host vTW
- * when its separate hardware bridge is present and enabled. Each consumer
+ * joystick slot supplies raw buttons; each paddle can use a separate slot.
+ * Physical-host vTW receives the same mapping when its separate hardware
+ * bridge is present and enabled. Each consumer
  * keeps its own session and pending-update state.
  * The keyboard call returns one only when an active Ctrl+Alt+Delete reboot
  * chord consumed forward Delete, so the normal USB binding path can omit

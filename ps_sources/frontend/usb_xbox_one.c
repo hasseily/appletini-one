@@ -14,9 +14,21 @@
 #define XBOX_COUNT ONEE_INPUT_DEVICE_SLOT_COUNT
 #define XBOX_PACKET_BYTES 64U
 #define XBOX_RETRY_MS 10U
+#define XBOX_HALT_TIMEOUT_MS 100U
+#define XBOX_MAX_FAILURES 8U
 #define XBOX_OUT_TIMEOUT_MS 1000U
+#define XBOX_INPUT_NOTICE_MS 2000U
+#define XBOX_RX_PREVIEW_BYTES 18U
 #define XBOX_ACK_COUNT 4U
 #define XBOX_INIT_COUNT 4U
+#define XBOX_CLONE_WAIT_MS 1000U
+#define XBOX_CLONE_COUNT 2U
+
+enum {
+    XBOX_TX_INIT,
+    XBOX_TX_ACK,
+    XBOX_TX_CLONE
+};
 
 typedef struct {
     struct usbh_hubport *hport;
@@ -28,9 +40,16 @@ typedef struct {
     uint32_t in_retry_at;
     uint32_t out_retry_at;
     uint32_t out_started;
+    uint32_t connected_at;
+    uint32_t init_completed_at;
+    uint32_t packets;
+    uint32_t empty_packets;
     uint32_t reports;
     uint32_t errors;
     uint8_t active;
+    uint8_t input_connected;
+    uint8_t faulted;
+    uint8_t failures[2];
     uint8_t slot;
     uint8_t index;
     uint8_t in_pending;
@@ -39,16 +58,21 @@ typedef struct {
     uint8_t out_retry;
     uint8_t in_halted;
     uint8_t out_halted;
+    uint8_t hello_seen;
     uint8_t init_step;
+    uint8_t clone_step;
     uint8_t sequence;
     uint8_t tx_len;
-    uint8_t tx_ack;
+    uint8_t tx_type;
     uint8_t ack_sequence[XBOX_ACK_COUNT];
     uint8_t ack_count;
     uint8_t guide;
     uint8_t stick_buttons;
     uint8_t hat;
     uint8_t error_logged;
+    uint8_t waiting_logged;
+    uint8_t last_rx_len;
+    uint8_t last_rx[XBOX_RX_PREVIEW_BYTES];
 } xbox_one_t;
 
 static xbox_one_t g_xbox[XBOX_COUNT];
@@ -58,12 +82,43 @@ static uint8_t g_xbox_in[XBOX_COUNT][USB_ALIGN_UP(XBOX_PACKET_BYTES, CONFIG_USB_
 static uint8_t g_xbox_out[XBOX_COUNT][USB_ALIGN_UP(XBOX_PACKET_BYTES, CONFIG_USB_ALIGN_SIZE)]
     USB_MEM_ALIGNX;
 
-static void xbox_error(xbox_one_t *pad, int error)
+static void xbox_rx_status(const xbox_one_t *pad, char *line, size_t size)
+{
+    int used = snprintf(line, size,
+                        "Xbox One rx slot=%u packets=%lu empty=%lu len=%u data=",
+                        pad->slot, (unsigned long)pad->packets,
+                        (unsigned long)pad->empty_packets, pad->last_rx_len);
+    for (uint8_t i = 0U; i < pad->last_rx_len && i < XBOX_RX_PREVIEW_BYTES; ++i) {
+        if (used < 0 || (size_t)used >= size) {
+            return;
+        }
+        int added = snprintf(line + used, size - (size_t)used,
+                             "%s%02x", i == 0U ? "" : " ", pad->last_rx[i]);
+        if (added < 0) {
+            return;
+        }
+        used += added;
+    }
+    if (used >= 0 && (size_t)used < size) {
+        (void)snprintf(line + used, size - (size_t)used, "\r\n");
+    }
+}
+
+static void xbox_error(xbox_one_t *pad, int error, uint8_t endpoint)
 {
     pad->errors++;
+    if (endpoint != 0U) {
+        const unsigned direction = (endpoint & 0x80U) != 0U;
+        if (pad->failures[direction] < XBOX_MAX_FAILURES) {
+            pad->failures[direction]++;
+        }
+        if (pad->failures[direction] == XBOX_MAX_FAILURES) {
+            pad->faulted = 1U;
+        }
+    }
     if (pad->error_logged == 0U) {
-        cherryusb_printf("[usb1] Xbox One transfer error slot=%u err=%d\r\n",
-                         pad->slot, error);
+        cherryusb_printf("[usb1] Xbox One transfer error slot=%u ep=%02x err=%d init=%u/%u\r\n",
+                         pad->slot, endpoint, error, pad->init_step, XBOX_INIT_COUNT);
         pad->error_logged = 1U;
     }
 }
@@ -94,7 +149,7 @@ static uint8_t xbox_hat(uint8_t buttons)
 
 static void xbox_queue_ack(xbox_one_t *pad, uint8_t sequence)
 {
-    if (pad->tx_len != 0U && pad->tx_ack != 0U &&
+    if (pad->tx_len != 0U && pad->tx_type == XBOX_TX_ACK &&
         g_xbox_out[pad->index][2] == sequence) {
         return;
     }
@@ -107,7 +162,7 @@ static void xbox_queue_ack(xbox_one_t *pad, uint8_t sequence)
         pad->ack_sequence[pad->ack_count++] = sequence;
     } else {
         /* The controller retries an unacknowledged report. */
-        xbox_error(pad, -USB_ERR_NOMEM);
+        xbox_error(pad, -USB_ERR_NOMEM, 0U);
     }
 }
 
@@ -119,6 +174,21 @@ static void xbox_input(xbox_one_t *pad, const uint8_t *data, uint32_t len)
      * Extended lengths and accessory clients use different header layouts. */
     if (len < 4U || (data[1] & 0xcfU) != 0U ||
         (data[3] & 0x80U) != 0U || (uint32_t)data[3] + 4U > len) {
+        return;
+    }
+    if (data[0] == 0x02U) {
+        /* GIP Hello: primary device, system packet, 28-byte identity.
+         * Start is a valid Hello response for a non-audio device. Latch it
+         * once so queued duplicate Hellos cannot restart an active OUT. */
+        if (data[1] == 0x20U && data[2] != 0U && data[3] == 28U &&
+            pad->hello_seen == 0U) {
+            pad->hello_seen = 1U;
+            cherryusb_printf("[usb1] Xbox One Hello received slot=%u; starting input\r\n",
+                             pad->slot);
+        }
+        return;
+    }
+    if (pad->hello_seen == 0U) {
         return;
     }
     if (data[0] == 0x07U && data[3] == 2U) {
@@ -165,10 +235,20 @@ static void xbox_in_complete(void *arg, int nbytes)
 {
     xbox_one_t *pad = (xbox_one_t *)arg;
     pad->in_pending = 0U;
-    if (pad->active == 0U) {
+    if (pad->active == 0U || pad->faulted != 0U) {
         return;
     }
     if (nbytes > 0 && nbytes <= (int)XBOX_PACKET_BYTES) {
+        pad->packets++;
+        pad->last_rx_len = (uint8_t)nbytes;
+        memcpy(pad->last_rx, g_xbox_in[pad->index],
+               nbytes < (int)XBOX_RX_PREVIEW_BYTES ? (size_t)nbytes : XBOX_RX_PREVIEW_BYTES);
+        if (pad->packets == 1U) {
+            char line[160];
+            xbox_rx_status(pad, line, sizeof(line));
+            cherryusb_printf("[usb1] %s", line);
+        }
+        pad->failures[1] = 0U;
         pad->error_logged = 0U;
         xbox_input(pad, g_xbox_in[pad->index], (uint32_t)nbytes);
     } else {
@@ -176,7 +256,9 @@ static void xbox_in_complete(void *arg, int nbytes)
             pad->in_halted = 1U;
         }
         if (nbytes != 0) {
-            xbox_error(pad, nbytes);
+            xbox_error(pad, nbytes, pad->in_ep->bEndpointAddress);
+        } else {
+            pad->empty_packets++;
         }
         pad->in_retry = 1U;
         pad->in_retry_at = cherryusb_baremetal_ms();
@@ -188,19 +270,32 @@ static void xbox_out_complete(void *arg, int nbytes)
 {
     xbox_one_t *pad = (xbox_one_t *)arg;
     pad->out_pending = 0U;
-    if (pad->active == 0U) {
+    if (pad->active == 0U || pad->faulted != 0U) {
         return;
     }
     if (nbytes == (int)pad->tx_len) {
-        if (pad->tx_ack == 0U) {
+        pad->failures[0] = 0U;
+        if (pad->tx_type == XBOX_TX_INIT) {
             pad->init_step++;
+            if (pad->init_step == XBOX_INIT_COUNT) {
+                pad->init_completed_at = cherryusb_baremetal_ms();
+                cherryusb_printf("[usb1] Xbox One startup sent slot=%u commands=%u\r\n",
+                                 pad->slot, XBOX_INIT_COUNT);
+            }
+        } else if (pad->tx_type == XBOX_TX_CLONE) {
+            pad->clone_step++;
+            if (pad->clone_step == XBOX_CLONE_COUNT) {
+                cherryusb_printf("[usb1] Xbox One clone fallback sent slot=%u commands=%u\r\n",
+                                 pad->slot, XBOX_CLONE_COUNT);
+            }
         }
         pad->tx_len = 0U;
     } else {
         if (nbytes == -USB_ERR_STALL) {
             pad->out_halted = 1U;
         }
-        xbox_error(pad, nbytes < 0 ? nbytes : -USB_ERR_IO);
+        xbox_error(pad, nbytes < 0 ? nbytes : -USB_ERR_IO,
+                   pad->out_ep->bEndpointAddress);
         pad->out_retry = 1U;
         pad->out_retry_at = cherryusb_baremetal_ms();
     }
@@ -209,21 +304,35 @@ static void xbox_out_complete(void *arg, int nbytes)
 static int xbox_clear_halt(xbox_one_t *pad, struct usbh_urb *urb)
 {
     struct usb_setup_packet *setup = pad->hport->setup;
+    struct usbh_urb *control = &pad->hport->ep0_urb;
     int rc;
 
-    /* Only poll performs control requests; completion callbacks just mark
-     * the halted endpoint. The shared EP0 wait still pumps USB/background work. */
+    /* One bounded attempt per poll, not the generic one-second, three-attempt
+     * control wrapper. The EP0 wait still pumps USB and Apple-facing work. */
+    if (control->errorcode == -USB_ERR_BUSY) {
+        xbox_error(pad, -USB_ERR_BUSY, urb->ep->bEndpointAddress);
+        return -USB_ERR_BUSY;
+    }
+    usb_osal_mutex_take(pad->hport->mutex);
     setup->bmRequestType = USB_REQUEST_DIR_OUT | USB_REQUEST_STANDARD |
                            USB_REQUEST_RECIPIENT_ENDPOINT;
     setup->bRequest = USB_REQUEST_CLEAR_FEATURE;
     setup->wValue = USB_FEATURE_ENDPOINT_HALT;
     setup->wIndex = urb->ep->bEndpointAddress;
     setup->wLength = 0U;
-    rc = usbh_control_transfer(pad->hport, setup, NULL);
+    usbh_control_urb_fill(control, pad->hport, setup, NULL, 0U,
+                          XBOX_HALT_TIMEOUT_MS, NULL, NULL);
+    rc = usbh_submit_urb(control);
+    if (rc == -USB_ERR_NOMEM && control->hcpriv == NULL) {
+        control->errorcode = 0;
+    }
+    control->timeout = 0U;
+    usb_osal_mutex_give(pad->hport->mutex);
+    cherryusb_host_debug_note_control(pad->hport, setup, rc);
     if (rc >= 0) {
         urb->data_toggle = 0U;
     } else {
-        xbox_error(pad, rc);
+        xbox_error(pad, rc, urb->ep->bEndpointAddress);
     }
     return rc;
 }
@@ -244,7 +353,7 @@ static void xbox_submit_in(xbox_one_t *pad, uint32_t now)
         }
         pad->in_halted = 0U;
     }
-    if (pad->active == 0U || !pad->hport->connected) {
+    if (pad->active == 0U || pad->faulted != 0U || !pad->hport->connected) {
         return;
     }
     usbh_int_urb_fill(&pad->in_urb, pad->hport, pad->in_ep,
@@ -259,11 +368,11 @@ static void xbox_submit_in(xbox_one_t *pad, uint32_t now)
         }
         pad->in_retry = 1U;
         pad->in_retry_at = now;
-        xbox_error(pad, rc);
+        xbox_error(pad, rc, pad->in_ep->bEndpointAddress);
     }
 }
 
-static void xbox_prepare_out(xbox_one_t *pad)
+static void xbox_prepare_out(xbox_one_t *pad, uint32_t now)
 {
     uint8_t *data = g_xbox_out[pad->index];
     /* Xbox One S requires the extra power and LED/mode commands, including
@@ -278,9 +387,27 @@ static void xbox_prepare_out(xbox_one_t *pad)
     static const uint8_t ack[] = {
         0x01, 0x20, 0x00, 0x09, 0x00, 0x07, 0x20, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00
     };
+    /* Clone-specific Identify/serial ACK workaround reported in
+     * github.com/paroj/xpad/issues/161. Preserve its fixed sequence bytes.
+     * Try once only when normal startup has completed without input. */
+    static const uint8_t clone[XBOX_CLONE_COUNT][13] = {
+        { 0x04, 0x20, 0x01, 0x00 },
+        { 0x01, 0x20, 0x01, 0x09, 0x00, 0x1e, 0x20, 0x10,
+          0x00, 0x00, 0x00, 0x00, 0x00 }
+    };
+    static const uint8_t clone_len[XBOX_CLONE_COUNT] = { 4U, 13U };
 
+    if (pad->hello_seen == 0U) {
+        return;
+    }
     if (pad->tx_len != 0U) {
-        return; /* Retain the bytes and sequence through retries. */
+        /* Poll calls here only when no OUT is active. Input makes a queued
+         * fallback unnecessary; all other retries keep their exact bytes. */
+        if (pad->tx_type == XBOX_TX_CLONE && pad->reports != 0U) {
+            pad->tx_len = 0U;
+        } else {
+            return;
+        }
     }
     if (pad->ack_count != 0U) {
         memcpy(data, ack, sizeof(ack));
@@ -288,19 +415,64 @@ static void xbox_prepare_out(xbox_one_t *pad)
         pad->ack_count--;
         memmove(pad->ack_sequence, pad->ack_sequence + 1, pad->ack_count);
         pad->tx_len = sizeof(ack);
-        pad->tx_ack = 1U;
+        pad->tx_type = XBOX_TX_ACK;
     } else if (pad->init_step < XBOX_INIT_COUNT) {
         pad->tx_len = init_len[pad->init_step];
         memcpy(data, init[pad->init_step], pad->tx_len);
         data[2] = pad->sequence++;
-        pad->tx_ack = 0U;
+        if (pad->sequence == 0U) {
+            pad->sequence = 1U; /* GIP reserves sequence zero. */
+        }
+        pad->tx_type = XBOX_TX_INIT;
+    } else if (pad->reports == 0U && pad->clone_step < XBOX_CLONE_COUNT &&
+               (uint32_t)(now - pad->init_completed_at) >= XBOX_CLONE_WAIT_MS) {
+        if (pad->clone_step == 0U) {
+            cherryusb_printf("[usb1] Xbox One clone fallback starting slot=%u\r\n",
+                             pad->slot);
+        }
+        pad->tx_len = clone_len[pad->clone_step];
+        memcpy(data, clone[pad->clone_step], pad->tx_len);
+        pad->tx_type = XBOX_TX_CLONE;
+    }
+}
+
+static void xbox_release_failed_pad(xbox_one_t *pad)
+{
+    /* Run outside completion callbacks, after EHCI has released its QH. Keep
+     * the class instance until unplug, but release this pad's shared input. */
+    if (pad->input_connected != 0U) {
+        (void)usbh_kill_urb(&pad->in_urb);
+        (void)usbh_kill_urb(&pad->out_urb);
+        usb_gamepad_input_disconnect(pad->slot);
+        pad->input_connected = 0U;
+        cherryusb_printf("[usb1] Xbox One stopped after repeated transfer failures slot=%u; unplug and reconnect\r\n",
+                         pad->slot);
     }
 }
 
 static void xbox_poll_pad(xbox_one_t *pad, uint32_t now)
 {
     int rc;
+    if (pad->reports == 0U && pad->waiting_logged == 0U &&
+        (uint32_t)(now - pad->connected_at) >= XBOX_INPUT_NOTICE_MS) {
+        char line[160];
+        pad->waiting_logged = 1U;
+        cherryusb_printf("[usb1] Xbox One waiting for input slot=%u hello=%u init=%u/%u packets=%lu errors=%lu in=%u out=%u\r\n",
+                         pad->slot, pad->hello_seen, pad->init_step, XBOX_INIT_COUNT,
+                         (unsigned long)pad->packets, (unsigned long)pad->errors,
+                         pad->in_pending, pad->out_pending);
+        xbox_rx_status(pad, line, sizeof(line));
+        cherryusb_printf("[usb1] %s", line);
+    }
+    if (pad->faulted != 0U) {
+        xbox_release_failed_pad(pad);
+        return;
+    }
     xbox_submit_in(pad, now);
+    if (pad->faulted != 0U) {
+        xbox_release_failed_pad(pad);
+        return;
+    }
     if (pad->active == 0U || !pad->hport->connected) {
         return;
     }
@@ -311,12 +483,13 @@ static void xbox_poll_pad(xbox_one_t *pad, uint32_t now)
         }
         return;
     }
-    /* Listen before waking the controller. Never block frontend polling. */
+    /* Receive Hello before waking the controller. All output stays async. */
     if (pad->in_pending == 0U ||
         (pad->out_retry != 0U && (uint32_t)(now - pad->out_retry_at) < XBOX_RETRY_MS)) {
         return;
     }
-    xbox_prepare_out(pad);
+    /* IN halt recovery can pump the final startup completion above. */
+    xbox_prepare_out(pad, cherryusb_baremetal_ms());
     if (pad->tx_len == 0U) {
         return;
     }
@@ -329,7 +502,12 @@ static void xbox_poll_pad(xbox_one_t *pad, uint32_t now)
         }
         pad->out_halted = 0U;
     }
-    if (pad->active == 0U || !pad->hport->connected) {
+    if (pad->active == 0U || pad->faulted != 0U || !pad->hport->connected) {
+        return;
+    }
+    /* OUT halt recovery can deliver input before this packet is submitted. */
+    if (pad->tx_type == XBOX_TX_CLONE && pad->reports != 0U) {
+        pad->tx_len = 0U;
         return;
     }
     usbh_int_urb_fill(&pad->out_urb, pad->hport, pad->out_ep,
@@ -344,7 +522,7 @@ static void xbox_poll_pad(xbox_one_t *pad, uint32_t now)
         }
         pad->out_retry = 1U;
         pad->out_retry_at = now;
-        xbox_error(pad, rc);
+        xbox_error(pad, rc, pad->out_ep->bEndpointAddress);
     }
 }
 
@@ -410,15 +588,22 @@ static int xbox_connect(struct usbh_hubport *hport, uint8_t intf)
     }
     pad->slot = (uint8_t)slot;
     pad->active = 1U;
+    pad->input_connected = 1U;
     pad->hport = hport;
     pad->in_ep = in_ep;
     pad->out_ep = out_ep;
+    pad->sequence = 1U;
+    pad->connected_at = cherryusb_baremetal_ms();
     pad->hat = 8U;
     hport->config.intf[intf].priv = pad;
     snprintf(hport->config.intf[intf].devname, CONFIG_USBHOST_DEV_NAMELEN,
              "/dev/xboxone%u", pad->index);
     cherryusb_printf("[usb1] Xbox One connected slot=%u vid=%04x pid=%04x intf=0\r\n",
                      pad->slot, hport->device_desc.idVendor, hport->device_desc.idProduct);
+    cherryusb_printf("[usb1] Xbox One endpoints in=%02x mps=%u interval=%u out=%02x mps=%u interval=%u\r\n",
+                     in_ep->bEndpointAddress, USB_GET_MAXPACKETSIZE(in_ep->wMaxPacketSize),
+                     in_ep->bInterval, out_ep->bEndpointAddress,
+                     USB_GET_MAXPACKETSIZE(out_ep->wMaxPacketSize), out_ep->bInterval);
     xbox_poll_pad(pad, cherryusb_baremetal_ms());
     return 0;
 }
@@ -430,7 +615,9 @@ static int xbox_disconnect(struct usbh_hubport *hport, uint8_t intf)
         pad->active = 0U; /* Kill callbacks must not publish or rearm input. */
         (void)usbh_kill_urb(&pad->in_urb);
         (void)usbh_kill_urb(&pad->out_urb);
-        usb_gamepad_input_disconnect(pad->slot);
+        if (pad->input_connected != 0U) {
+            usb_gamepad_input_disconnect(pad->slot);
+        }
         cherryusb_printf("[usb1] Xbox One disconnected slot=%u\r\n", pad->slot);
         memset(pad, 0, sizeof(*pad));
     }
@@ -460,15 +647,18 @@ void usb_xbox_one_stop(void)
 
 void usb_xbox_one_dump_status(uint32_t uart_base)
 {
-    char line[128];
+    char line[160];
     for (uint8_t i = 0U; i < XBOX_COUNT; ++i) {
         const xbox_one_t *pad = &g_xbox[i];
         if (pad->active != 0U) {
             snprintf(line, sizeof(line),
-                     "xboxone%u: slot=%u init=%u/%u reports=%lu errors=%lu in=%u out=%u\r\n",
-                     i, pad->slot, pad->init_step, XBOX_INIT_COUNT,
+                     "xboxone%u: slot=%u hello=%u init=%u/%u clone=%u/%u reports=%lu errors=%lu in=%u out=%u stopped=%u\r\n",
+                     i, pad->slot, pad->hello_seen, pad->init_step, XBOX_INIT_COUNT,
+                     pad->clone_step, XBOX_CLONE_COUNT,
                      (unsigned long)pad->reports, (unsigned long)pad->errors,
-                     pad->in_pending, pad->out_pending);
+                     pad->in_pending, pad->out_pending, pad->faulted);
+            uart_puts(uart_base, line);
+            xbox_rx_status(pad, line, sizeof(line));
             uart_puts(uart_base, line);
         }
     }

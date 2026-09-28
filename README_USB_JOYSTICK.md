@@ -80,6 +80,147 @@ just because its CherryUSB minor number matches that slot.
 
 ## Wired Xbox One controllers
 
+### F1.2.1 clone activation fix
+
+The board test of the Hello startup image still received only two Hello
+packets. Its log confirms `hello=1`, all four startup commands completed,
+and no Xbox transfer errors. Waiting for Hello fixed the startup order but
+did not make this controller send input.
+
+[xpad issue 161](https://github.com/paroj/xpad/issues/161) records the same
+failure on a ZEROPLUS clone with USB ID `045e:02ea`, endpoints `82/02`, and
+the same first three Hello identity bytes (`7e ed 81`). Owners report that
+an Identify request followed by a fixed serial-response acknowledgement
+enables input. The [working driver variant](https://github.com/sirkhancision/xpad/blob/master/xpad.c)
+sends these bytes, including sequence 1 in both packets:
+
+```text
+04 20 01 00
+01 20 01 09 00 1e 20 10 00 00 00 00 00
+```
+
+The driver now tries this pair once if the normal four-command startup has
+finished and no input report arrives within one second. It sends both
+commands through the existing asynchronous OUT path. Normal input suppresses
+any remaining unsent fallback command. Guide acknowledgements, stable output
+buffers, bounded retries, and disconnect cleanup still apply. This is a
+workaround for these clones, not a full metadata or authentication driver.
+
+**Board result, 2026-09-28: confirmed working.** The user reports that the
+EG-C50700X now works through the same USB hub with the clone activation image.
+This confirms the fix for the reported controller startup failure on this
+setup.
+
+The confirmed image is `firmwares/F1.2.1-xbox-clone/FIRMWARE.BIN`, also copied
+to the repository root. It keeps F1.2.1 and the exact existing FPGA image.
+All 18 Xbox runtime groups, shared-input/HID retry checks, PS4 checks, the
+full Vitis build, and firmware payload checks pass. SHA-256:
+`86d2476992232873e7504fcbc0452c1061e5dfab2a58e8191a0d87d7fab5c46f`.
+
+After updating, reconnect the controller through the same hub, wait three
+seconds, then move a stick and press a button. Capture the connection log
+and `usb1 status`; look for `clone fallback starting`, `clone fallback sent`,
+`clone=2/2`, and `Xbox One input active`. Clone progress counts completed
+fallback commands; it stays partial if input makes the remaining work
+unnecessary. The ordinary startup count remains `init=4/4`.
+
+### F1.2.1 Hello startup fix
+
+The diagnostic image received two identical 32-byte packets beginning
+`02 20 01 1c`, with zero USB errors and no input reports. This is the
+controller's Hello message. The driver ignored it and sent its Start command
+before Hello, using sequence zero.
+
+The driver now arms IN and waits for a valid primary-device Hello. It then
+sends `05 20 01 01 00` (Start, sequence 1) and the existing three compatibility
+commands. Host command sequences skip zero. Duplicate Hellos do not restart
+startup or change an active output buffer. The firmware keeps the prior
+transfer recovery fixes and packet diagnostics; `usb1 status` adds `hello=1`
+when the handshake begins.
+
+Microsoft permits Start as the Hello response for non-audio devices and
+reserves sequence zero. See [Hello enumeration](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-gipusb/09351525-aa34-4a00-ac36-510fcf2fb106)
+and [Set Device State](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-gipusb/8eaad00e-97e6-4ae0-86fa-471131649d70).
+The board test confirmed the new startup order but still received no input;
+see the clone activation test above.
+
+The earlier test image is `firmwares/F1.2.1-xbox-hello/FIRMWARE.BIN`.
+It keeps F1.2.1 and the exact existing FPGA image.
+All 13 Xbox runtime test groups pass, including delayed/malformed Hello,
+duplicate Hello during active output, and the reported `0x82/0x02` endpoints.
+The Vitis build and firmware payload checks pass. SHA-256:
+`2b8409e572e0dd099b97d1618d7fa19cb9218d65ebe3fcc038247b2d4d403fa2`.
+
+### F1.2.1 transfer recovery fix
+
+The next board test confirmed that the recovery image no longer freezes,
+but the same controller still does not supply input. Its log ends after
+interface 0 connects, with no transfer errors. That does not yet distinguish
+a silent controller from packets the parser rejects.
+
+The follow-up `usb1 status` shows Xbox startup at `4/4`, no Xbox transfer
+errors, and its IN request pending. Two keyboard interfaces on device 4 have
+more than 233,000 combined I/O errors (`-12`). Those counts show a wider USB
+problem, but do not prove its cause. The status command now includes the
+cached EHCI error token and remaining byte count to distinguish retry
+exhaustion from missed split transactions on the next test.
+With the keyboard removed and the controller reconnected into slot 0,
+startup still reaches `4/4` with no Xbox errors or input reports. The old
+HID error totals stop growing. Keyboard traffic is therefore not required
+to reproduce the Xbox input failure; receive-packet diagnostics are still
+needed to distinguish silence from ignored packets.
+Failed HID completions now use the existing 10 ms retry timer. Successful
+input still rearms at once, and a device can recover without being unplugged.
+This limits the retry rate; it does not establish the cause of the I/O errors.
+
+The follow-up diagnostic image prints endpoint sizes and intervals, the
+first received packet (up to 18 bytes), and `startup sent` after all four
+output commands complete. If no joystick report arrives within two seconds,
+it prints one `waiting for input` snapshot. `usb1 status` also shows packet
+and empty-transfer counts plus the last packet prefix. These messages do not
+change startup, parsing, retries, or USB scheduling. They avoid repeated log
+output while a controller remains idle.
+
+The diagnostic test used `firmwares/F1.2.1-usb-input-recovery/FIRMWARE.BIN`.
+The image remains F1.2.1 and reuses the same FPGA bitstream. Xbox runtime
+checks, native HID retry checks, HID source checks, the Vitis rebuild and
+firmware payload verification pass. Reconnect the controller, wait at least
+two seconds, move a stick, then capture the connection log and `usb1 status`.
+SHA-256: `67ec1f755824e1beab85e3c3c379e7801b08b85528ed69e8757423a94e590e15`.
+
+The reported `045e:02ea` log reaches `Xbox One connected`, but never
+`Xbox One input active`, then repeats error `-8` and control-transfer retries.
+The unsupported audio/accessory interfaces are expected; the gamepad driver
+has already claimed interface 0. The log does not establish why the first
+USB transaction failed or whether Home/Turbo caused the failure.
+
+The EHCI completion scanner previously treated sticky transaction-error bits
+as a completed failure even while hardware was still retrying. It also called
+all halted descriptors STALL (`-8`), including exhausted transport retries.
+The scanner now waits for hardware completion and distinguishes a real STALL
+from transport errors. This follows the EHCI completion rules and
+[Linux's EHCI status handling](https://github.com/torvalds/linux/blob/master/drivers/usb/host/ehci-q.c).
+
+Xbox endpoint recovery now makes one control request with a 100 ms timeout
+per attempt. After eight consecutive failures on either endpoint, it stops
+that controller's transfers and releases its buttons, axes and held Guide
+state. Unplugging and reconnecting starts a fresh attempt. Other USB inputs
+remain registered. Successful IN traffic cannot hide persistent OUT failures.
+Error messages include the endpoint and startup step; `usb1 status` shows
+`stopped=1` after recovery is exhausted. The startup packets remain unchanged.
+
+The actual EHCI scanner passes 23 completion cases; the original code fails
+the active-retry case. Xbox runtime checks cover permanent STALL/timeout/I/O
+failures, bounded recovery, separate endpoint budgets, late callbacks and
+reconnection. HID, PS4, shared input, ONE//e and vTW checks also pass. These
+checks establish the software defects and their fixes; the controller still
+needs a board test through the reported hub.
+
+The earlier test image is `firmwares/F1.2.1-xbox-recovery/FIRMWARE.BIN`.
+It keeps version F1.2.1 and the existing FPGA image
+(setup slack +0.166 ns). The full Vitis rebuild and firmware payload checks
+pass. SHA-256: `7e74f82f3f22a57229f758813e53e7d15e0352f9c0af72a427200d3bafe9ba01`.
+
 The EG-C50700X reports USB ID `045e:02ea` and Xbox One interface class,
 subclass, and protocol `ff/47/d0`. The USB1 host binds its gamepad interface
 (interface 0), sends the Xbox One S startup commands, and reads both sticks,

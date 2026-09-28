@@ -28,7 +28,7 @@ FUNCTIONS = (
     "mouse_menu_finish_ok_hold", "mouse_menu_push_button_edge",
     "mouse_menu_process_buttons", "hid_axis_active_from_rest",
     "hid_menu_push_hat", "hid_menu_push_axis", "hid_process_gamepad_report",
-    "usb_gamepad_input_report", "hid_process_report",
+    "usb_gamepad_input_report", "hid_process_report", "hid_report_complete",
     "hid_slots_retry_reports", "usbh_hid_run", "usbh_hid_stop",
     "usb_hid_service_set_menu_capture", "usb_hid_service_set_joystick_preview",
     "usb_hid_service_set_onee_fixed_mode",

@@ -1941,6 +1941,11 @@ static void hid_report_complete(void *arg, int nbytes)
             uart_puts(UART0_BASE, "\r\n");
             slot->error_log_suppressed = 1U;
         }
+        /* Retry transport failures from the poll timer, not this completion.
+         * A failing endpoint must not resubmit at bus speed. */
+        XTime_GetTime(&slot->report_retry_started);
+        slot->report_retry_armed = 1U;
+        return;
     }
 
     hid_resubmit_report(slot);
@@ -2614,6 +2619,14 @@ static void usb_hid_service_dump_slot(uint32_t uart_base,
         uart_putdec(uart_base, USB_GET_MAXPACKETSIZE(hid->intin->wMaxPacketSize));
         uart_puts(uart_base, " interval=");
         uart_putdec(uart_base, hid->intin->bInterval);
+        if (hid->hport != NULL) {
+            uart_puts(uart_base, " speed=");
+            uart_putdec(uart_base, hid->hport->speed);
+            uart_puts(uart_base, " hub=");
+            uart_putdec(uart_base, hid->hport->parent ? hid->hport->parent->index : 0U);
+            uart_puts(uart_base, " port=");
+            uart_putdec(uart_base, hid->hport->port);
+        }
         uart_puts(uart_base, "\r\n");
     }
 }
@@ -2621,6 +2634,7 @@ static void usb_hid_service_dump_slot(uint32_t uart_base,
 void usb_hid_service_dump_status(uint32_t uart_base)
 {
     cherryusb_usb1_phy_status_t phy;
+    cherryusb_host_debug_t host;
     char phy_line[256];
     uint32_t portsc;
     uint32_t hid_status;
@@ -2636,6 +2650,7 @@ void usb_hid_service_dump_status(uint32_t uart_base)
 
     portsc = cherryusb_usb1_portsc();
     cherryusb_usb1_phy_status(&phy);
+    cherryusb_host_debug_snapshot(CHERRYUSB_USB1_BUSID, &host);
     hid_status = REG_READ(MOUSE_REG_STATUS);
     mouse_x = REG_READ(MOUSE_REG_X) & 0xFFFFU;
     mouse_y = REG_READ(MOUSE_REG_Y) & 0xFFFFU;
@@ -2670,6 +2685,15 @@ void usb_hid_service_dump_status(uint32_t uart_base)
         uart_putdec(uart_base, (uint32_t)g_last_error);
     }
     uart_puts(uart_base, "\r\n");
+
+    (void)snprintf(phy_line, sizeof(phy_line),
+                   "ehci: errors=%lu token=%08lx qtd=%u pid=%u length=%u remaining=%u actual=%u\r\n",
+                   (unsigned long)host.ehci_error_count,
+                   (unsigned long)host.last_ehci_qtd_token,
+                   host.last_ehci_qtd_index, host.last_ehci_qtd_pid,
+                   host.last_ehci_qtd_length, host.last_ehci_qtd_remaining,
+                   host.last_ehci_qtd_actual);
+    uart_puts(uart_base, phy_line);
 
     uart_puts(uart_base, "mouse_regs: status=0x");
     uart_puthex(uart_base, hid_status);

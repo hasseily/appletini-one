@@ -29,7 +29,7 @@ struct usb_interface_descriptor { uint8_t bInterfaceSubClass; };
 struct mock_altsetting { struct usb_interface_descriptor intf_desc; };
 struct mock_interface { struct mock_altsetting altsetting[1]; };
 struct mock_hport {
-    struct { struct mock_interface intf[1]; } config;
+    struct { struct mock_interface intf[2]; } config;
     struct { uint16_t idVendor, idProduct; } device_desc;
 };
 struct usbh_hid {
@@ -41,6 +41,9 @@ struct usbh_hid {
 /* PRODUCTION_SLOT */
 
 static usb_hid_slot_t g_hid_slots[USB_HID_SLOT_COUNT];
+static uint8_t g_reports[USB_HID_SLOT_COUNT][64];
+static uint32_t g_report_count, g_transfer_error_count;
+static int g_last_error;
 static uint8_t g_menu_capture, g_joystick_preview, g_onee_fixed_mode;
 static uint8_t g_onee_input_blocked, g_ready;
 static usb_hid_menu_source_t g_menu_ok_source = USB_HID_MENU_ACTION_SELECT;
@@ -79,7 +82,12 @@ static void hid_process_report_protocol_report(usb_hid_slot_t *slot,
                                                const uint8_t *report, uint32_t len)
 { (void)slot; (void)report; (void)len; ++mock_other_report_calls; }
 static void hid_resubmit_report(usb_hid_slot_t *slot)
-{ ++mock_submit_calls[slot->index]; }
+{
+    ++mock_submit_calls[slot->index];
+    slot->report_pending = 1U;
+    slot->report_retry_armed = 0U;
+    slot->report_retry_started = 0U;
+}
 static void mouse_mark_connected(usb_hid_slot_t *slot) { slot->mouse_card = 1U; }
 static void mouse_release_slot(usb_hid_slot_t *slot) { slot->mouse_card = 0U; }
 static void mouse_publish_state(uint8_t connected, int32_t x, int32_t y,
@@ -106,6 +114,111 @@ static int take_event(usb_hid_menu_action_t action)
 {
     usb_hid_menu_event_t event;
     return usb_hid_service_pop_menu_event(&event) && event.action == action;
+}
+
+static int test_hid_completion_backoff(void)
+{
+    struct mock_hport port = {0};
+    struct usbh_hid first_hid = {0}, second_hid = {0};
+    usb_hid_slot_t *first = &g_hid_slots[0];
+    usb_hid_slot_t *second = &g_hid_slots[1];
+    uint32_t calls;
+    uint32_t releases = mock_release_keys;
+
+    hid_slots_reset_all();
+    memset(mock_submit_calls, 0, sizeof(mock_submit_calls));
+    mock_other_report_calls = 0U;
+    g_report_count = 0U;
+    g_transfer_error_count = 0U;
+    g_last_error = 0;
+    port.config.intf[0].altsetting[0].intf_desc.bInterfaceSubClass =
+        HID_SUBCLASS_BOOTIF;
+    port.config.intf[1].altsetting[0].intf_desc.bInterfaceSubClass =
+        HID_SUBCLASS_BOOTIF;
+    first_hid.hport = &port;
+    first_hid.protocol = HID_PROTOCOL_KEYBOARD;
+    second_hid.hport = &port;
+    second_hid.protocol = HID_PROTOCOL_KEYBOARD;
+    second_hid.minor = 1U;
+    second_hid.intf = 1U;
+    usbh_hid_run(&first_hid);
+    usbh_hid_run(&second_hid);
+    CHECK(first_hid.user_data == first && second_hid.user_data == second,
+          "two keyboard interfaces own separate report slots");
+
+    first->keyboard_keys_down = 1U;
+    mock_time = 100U;
+    hid_report_complete(first, -12);
+    mock_time = 103U;
+    hid_report_complete(second, -12);
+    CHECK(mock_submit_calls[0] == 1U && mock_submit_calls[1] == 1U &&
+          !first->report_pending && !second->report_pending &&
+          first->report_retry_armed && second->report_retry_armed,
+          "failed completions defer both interfaces without immediate resubmit");
+    CHECK(first->transfer_error_count == 1U && second->transfer_error_count == 1U &&
+          g_transfer_error_count == 2U && g_last_error == -12 &&
+          first->last_error == -12 && second->last_error == -12 &&
+          !g_report_count && !mock_other_report_calls,
+          "transport failures remain errors and never become input reports");
+    CHECK(first->keyboard_keys_down && mock_release_keys == releases,
+          "transient errors do not invent a keyboard release");
+
+    mock_time = 109U;
+    hid_slots_retry_reports();
+    CHECK(mock_submit_calls[0] == 1U && mock_submit_calls[1] == 1U,
+          "fast polls cannot retry before ten milliseconds");
+    mock_time = 110U;
+    hid_slots_retry_reports();
+    CHECK(mock_submit_calls[0] == 2U && mock_submit_calls[1] == 1U &&
+          first->report_pending && !first->report_retry_armed,
+          "first interface retries once at its own deadline");
+    mock_time = 113U;
+    hid_slots_retry_reports();
+    hid_slots_retry_reports();
+    CHECK(mock_submit_calls[0] == 2U && mock_submit_calls[1] == 2U &&
+          second->report_pending && !second->report_retry_armed,
+          "second interface retries independently without duplicate submissions");
+
+    mock_time = 114U;
+    hid_report_complete(first, -12);
+    hid_report_complete(second, 8);
+    CHECK(mock_submit_calls[0] == 2U && mock_submit_calls[1] == 3U &&
+          second->report_count == 1U && g_report_count == 1U &&
+          mock_other_report_calls == 1U && !second->last_error &&
+          !second->error_log_suppressed && !g_last_error,
+          "healthy input is processed and resubmitted immediately during another failure");
+    hid_report_complete(second, 0);
+    CHECK(mock_submit_calls[1] == 4U && second->report_count == 1U,
+          "empty successful completions retain immediate resubmission");
+
+    for (uint32_t attempt = 0U; attempt < 100U; ++attempt) {
+        calls = mock_submit_calls[0];
+        mock_time = first->report_retry_started + HID_REPORT_RETRY_TICKS - 1U;
+        hid_slots_retry_reports();
+        CHECK(mock_submit_calls[0] == calls,
+              "persistent completion errors cannot retry early");
+        ++mock_time;
+        hid_slots_retry_reports();
+        CHECK(mock_submit_calls[0] == calls + 1U && first->report_pending &&
+              first->active && mock_submit_calls[1] == 4U,
+              "persistent errors retain capped automatic recovery without delaying peers");
+        hid_report_complete(first, -12);
+    }
+    CHECK(first->transfer_error_count == 102U,
+          "each persistent transport failure remains visible in counters");
+    calls = mock_submit_calls[0];
+    usbh_hid_stop(&first_hid);
+    mock_time += HID_REPORT_RETRY_TICKS;
+    hid_slots_retry_reports();
+    hid_report_complete(first, -12);
+    hid_report_complete(first, 8);
+    CHECK(mock_submit_calls[0] == calls && !first->active &&
+          !first->report_retry_armed && !first->keyboard_keys_down &&
+          mock_other_report_calls == 1U,
+          "disconnect cancels delayed retries and ignores late completions");
+    usbh_hid_stop(&second_hid);
+    puts("PASS native HID completion backoff, independent interfaces, recovery, and disconnect");
+    return 0;
 }
 
 int main(void)
@@ -162,6 +275,7 @@ int main(void)
 
     g_hid_slots[0].report_retry_armed = 1U;
     g_hid_slots[5].report_retry_armed = 1U;
+    g_hid_slots[5].report_pending = 0U;
     mock_time = 10U;
     hid_slots_retry_reports();
     CHECK(mock_submit_calls[0] == 0U && mock_submit_calls[5] == 2U,
@@ -282,5 +396,6 @@ int main(void)
           usb_hid_service_all_input_released(),
           "DS4 disconnect releases only its shared slot");
     puts("PASS native USB gamepad slot ownership, menu, preview, hold, and release guards");
+    CHECK(test_hid_completion_backoff() == 0, "HID failed-completion retry coverage");
     return 0;
 }

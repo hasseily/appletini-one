@@ -165,6 +165,32 @@ static void record_text(uint16_t *fb,int x,int y,const char *text,uint16_t fg,ui
     code += r"""
 static const char *shown_help[CONFIG_MENU_HELP_MAX_LINES];
 static uint32_t shown_help_count;
+static unsigned compact_preview_rows, compact_focused_rows, compact_layout_checks;
+static unsigned compact_largest_page, compact_smallest_view = 1000;
+static char compact_raw[128];
+void test_compact_bounds(unsigned first, unsigned visible, unsigned count)
+{
+    assert(first == 0 && count <= visible);
+    ++compact_layout_checks;
+    if (count > compact_largest_page) compact_largest_page = count;
+    if (visible < compact_smallest_view) compact_smallest_view = visible;
+}
+void test_compact_row(const char *text, unsigned focused, int width, int available_width)
+{
+    assert(width <= available_width);
+    compact_focused_rows += focused != 0;
+    if (!strncmp(text,"Mapped (0-255):",15)) {
+        assert(strstr(text,"P1:") && strstr(text,"P2:") && strstr(text,"P3:") && strstr(text,"P4:"));
+        compact_preview_rows |= 1;
+    }
+    if (!strncmp(text,"Raw axes:",9)) {
+        assert(strstr(text,"X:") && strstr(text,"Y:") && strstr(text,"Z:") &&
+               strstr(text,"RX:") && strstr(text,"RY:") && strstr(text,"RZ:"));
+        snprintf(compact_raw,sizeof(compact_raw),"%s",text);
+        compact_preview_rows |= 2;
+    }
+    if (!strncmp(text,"Input buttons:",14)) compact_preview_rows |= 4;
+}
 static void record_help_panel(uint16_t *fb, const cmui_rect_t *rect, const char *title,
                               const char *const *lines, uint32_t count)
 {
@@ -182,9 +208,17 @@ static void press(config_menu_t *m, ui_key_t key)
 { assert(config_menu_joystick_handle_input(m, (ui_input_t){key,1,0})); }
 static void render(config_menu_t *menu, const char *path)
 {
+    const unsigned compact = FB16_WIDTH == 1024 && FB16_HEIGHT == 768;
+    static const char *const tabs[]={"Prof","Boot","Video","SP","Disk","CPU","Sound","Mouse","Net","TW","Clock","RAM","USB","Print","About"};
     uint16_t *fb=calloc(FB16_WIDTH*FB16_HEIGHT,sizeof(*fb)); assert(fb);
     cmui_rect_t nav,body,footer; cmui_screen_rects(&nav,&body,&footer);
-    cmui_clear(fb); cmui_header(fb,"Appletini","Joystick settings preview",menu->usb_owned);
+    compact_preview_rows=0; compact_focused_rows=0; compact_raw[0]='\0';
+    if (compact) {
+        body=(cmui_rect_t){0,0,1480,812};
+        cmui_compact_begin();
+    } else {
+        cmui_clear(fb); cmui_header(fb,"Appletini","Joystick settings preview",menu->usb_owned);
+    }
     config_menu_draw_usb(fb,menu,body.x,body.y,body.w);
     cmui_rect_t help_rect={body.x,body.y+body.h-210,body.w,210};
     config_menu_draw_help(fb,menu,&help_rect);
@@ -194,10 +228,16 @@ static void render(config_menu_t *menu, const char *path)
     assert(expected.count && shown_help_count == expected.count);
     for (uint32_t i=0; i<expected.count; ++i) {
         assert(shown_help[i] == expected.lines[i]);
-        assert(cmui_text_width(shown_help[i],CMUI_SMALL_SCALE) <= help_rect.w-40);
+        if (!compact) assert(cmui_text_width(shown_help[i],CMUI_SMALL_SCALE) <= help_rect.w-40);
     }
-    cmui_rect_t navrow={nav.x,nav.y+12*42,nav.w,34}; cmui_nav_item(fb,&navrow,"USB",1,1);
-    cmui_footer(fb,&footer,"Settings saved",0,0,0);
+    if (compact) {
+        cmui_compact_finish(fb,"USB",tabs,15,CONFIG_TAB_USB,"Settings saved",0,menu->usb_owned,0);
+        assert(compact_preview_rows==7 && compact_focused_rows==1);
+    } else {
+        cmui_rect_t navrow={nav.x,nav.y+12*42,nav.w,34}; cmui_nav_item(fb,&navrow,"USB",1,1);
+        cmui_footer(fb,&footer,"Settings saved",0,0,0);
+    }
+    if (!path) { free(fb); return; }
     FILE *ppm=fopen(path,"wb"); assert(ppm);
     fprintf(ppm,"P6\n%d %d\n255\n",FB16_WIDTH,FB16_HEIGHT);
     for(unsigned i=0;i<(unsigned)(FB16_WIDTH*FB16_HEIGHT);++i) {
@@ -372,15 +412,59 @@ int main(void)
     render(&menu,"usb_joystick_help.ppm");
     menu.item_focus=2;
     render(&menu,"usb_general_help.ppm");
+    /* Exercise real compact row collection and wrapping for every focused
+     * control, including inactive guidance and missing input previews. */
+    assert(fb16_set_size(1024,768));
+    menu.joystick_page_active=1; menu.joystick_paddle=2;
+    for(unsigned state=0;state<7;++state) {
+        snapshot_active=state==1 || state==4 || state==5 || state==6 ? 0 : 1;
+        snapshot_connected=state==3 ? 0 : 1;
+        menu.vtw_enabled=state==4 ? 1 : 0;
+        menu.onee_mode_state=state==5 ? CONFIG_MENU_ONEE_MODE_RUNNING : CONFIG_MENU_ONEE_MODE_OFF;
+        menu.joystick_config.paddle[2].device=state==2 || state==6 ? 4 : state==3 ? 0 : 8;
+        menu.joystick_focus=0;
+        for(unsigned focus=0;focus<CONFIG_JOYSTICK_ITEM_COUNT;++focus) {
+            char path[80];
+            assert(menu.joystick_focus==focus);
+            snprintf(path,sizeof(path),"joystick_compact_state%u_focus%u.ppm",state,focus);
+            render(&menu,focus==1 || focus==7 ? path : NULL);
+            if (state==2 || state==3 || state==6) {
+                assert(strstr(compact_raw,"RX: --") && strstr(compact_raw,"RZ: --"));
+            } else {
+                assert(strstr(compact_raw,"X: 112") && strstr(compact_raw,"RZ: 41"));
+            }
+            press(&menu,UI_KEY_DOWN);
+        }
+        assert(menu.joystick_focus==0);
+    }
+    assert(compact_layout_checks==7*CONFIG_JOYSTICK_ITEM_COUNT);
+    printf("PASS: 1024x768 compact controls/preview bounds, %u focus/state checks, largest page %u rows, smallest viewport %u rows\n",
+           compact_layout_checks,compact_largest_page,compact_smallest_view);
     puts("PASS: joystick config round-trip, validation, navigation, apply/save, defaults, and rendering");
     return 0;
 }
 """
     harness = OUT / "test.c"
     harness.write_text(code)
+    # Audit the real compact layout at the point where it has computed the
+    # visible rows and wrapped help, without duplicating that calculation.
+    ui_source = (FRONT / "config_menu_ui.c").read_text()
+    audit_point = "    cmui_clear(fb);\n    (void)snprintf(heading, sizeof(heading),"
+    assert ui_source.count(audit_point) == 1
+    audit = """    extern void test_compact_bounds(unsigned, unsigned, unsigned);
+    extern void test_compact_row(const char *, unsigned, int, int);
+    test_compact_bounds(first, visible, s_compact_count);
+    for (uint32_t row = 0; row < s_compact_count; ++row) {
+        test_compact_row(s_compact_rows[row].text, s_compact_rows[row].focused,
+                         cmui_text_width(s_compact_rows[row].text, scale),
+                         FB16_WIDTH - 4 * margin);
+    }
+"""
+    ui_harness = OUT / "config_menu_ui.c"
+    ui_harness.write_text(ui_source.replace(audit_point, audit + audit_point))
     exe = OUT / "test.exe"
     command = [compiler,"-std=c11","-O0","-funsigned-char","-Wall","-Wextra","-Werror","-I",str(FRONT),
-        str(harness),str(FRONT / "config_menu_ui.c"),str(FRONT / "config_menu_logo_png.c"),
+        str(harness),str(ui_harness),str(FRONT / "config_menu_logo_png.c"),
         str(ROOT / "ps_sources/lib/fb16.c"),str(ROOT / "ps_sources/lib/lodepng.c"),"-o",str(exe)]
     subprocess.run(command, check=True, env=env)
     subprocess.run([str(exe)], cwd=OUT, check=True, env=env)

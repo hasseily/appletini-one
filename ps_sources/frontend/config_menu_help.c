@@ -645,7 +645,7 @@ HELP(joystick_paddle,
 HELP(joystick_device,
     "Each Apple paddle can use a different USB input. Auto uses the first connected joystick.",
     "Inputs 1-8 are shared USB slots; their numbers can change when devices reconnect.",
-    "Choose a connected input, then move its controls and check the raw axes on the right.",
+    "Choose a connected input, then move its controls and check the raw axis values.",
     "An unavailable input keeps its paddle centred until that input connects.");
 
 HELP(joystick_source,

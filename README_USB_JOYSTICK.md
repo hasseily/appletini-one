@@ -34,7 +34,9 @@ and no deadzone. This preserves the earlier standalone ONE//e mapping. Use zero 
 paddle that needs continuous movement through its center.
 
 The page shows the selected input's raw axes and connection state, all four
-mapped paddle values, and buttons.
+mapped paddle values, and buttons. Compact menus group the preview into three
+rows so all six raw axes, four mapped values, and buttons stay visible at
+1024x768 while changing settings.
 A separate status line shows whether USB controls are available with TransWarp
 or in standalone ONE//e. If TransWarp is not active, you can still test and
 adjust the controller, but it cannot control games on the Apple II. To enable

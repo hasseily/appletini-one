@@ -195,6 +195,31 @@ static void config_menu_draw_joystick(uint16_t *fb,
                      "but it cannot control the Apple II until TransWarp is active.");
     }
 
+    /* Keep every preview value in view with the compact menu's longest help. */
+    if (cmui_compact_active() != 0U) {
+        char raw[ONEE_INPUT_AXIS_COUNT][4];
+        (void)snprintf(line, sizeof(line), "P1: %u   P2: %u   P3: %u   P4: %u",
+                       (unsigned)snapshot.paddles[0], (unsigned)snapshot.paddles[1],
+                       (unsigned)snapshot.paddles[2], (unsigned)snapshot.paddles[3]);
+        cmui_compact_entry("Mapped (0-255)", line, 0U, 0U);
+        for (unsigned axis = 0U; axis < ONEE_INPUT_AXIS_COUNT; ++axis) {
+            if (device_connected && (device->axis_valid_mask & (1U << axis)) != 0U) {
+                (void)snprintf(raw[axis], sizeof(raw[axis]), "%u", (unsigned)device->axis[axis]);
+            } else {
+                (void)snprintf(raw[axis], sizeof(raw[axis]), "--");
+            }
+        }
+        (void)snprintf(line, sizeof(line), "X: %s  Y: %s  Z: %s  RX: %s  RY: %s  RZ: %s",
+                       raw[0], raw[1], raw[2], raw[3], raw[4], raw[5]);
+        cmui_compact_entry("Raw axes", line, 0U, 0U);
+        (void)snprintf(line, sizeof(line), "%s %s %s",
+                       device_connected && (device->buttons & 1U) ? "1" : "-",
+                       device_connected && (device->buttons & 2U) ? "2" : "-",
+                       device_connected && (device->buttons & 4U) ? "3" : "-");
+        cmui_compact_entry("Input buttons", line, 0U, 0U);
+        return;
+    }
+
     cmui_caption(fb, preview_x, y, preview_w, "Live paddle values (0-255)");
     for (unsigned paddle = 0U; paddle < 4U; ++paddle) {
         const int bar_y = y + row_h + (int)paddle * 52;

@@ -1,4 +1,4 @@
-# Restore nominal constraints after the fabric-only flow or routed pixel repair.
+# Restore nominal constraints after the fabric-only flow or routed timing repair.
 proc appletini_check_bus_output_limits {fabric_clock dir_limit phi_limit} {
     set dir_ports [get_ports -quiet {a2fpga_dir_a a2fpga_dir_d}]
     set phi0_port [get_ports -quiet a2fpga_clk]

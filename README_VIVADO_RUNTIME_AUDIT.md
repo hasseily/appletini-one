@@ -500,13 +500,17 @@ wait totals above, not extra time. Fresh synthesis has the same checksum,
 `c75d21d3`, as the successful `route_explore` trial, and all **32 pre-route
 WNS/TNS estimates match** that trial exactly.
 
-The current profile uses eight worker threads in each child run, synthesis
+The profile used for this measurement has eight worker threads in each child run, synthesis
 defaults, Explore logic optimization, Default placement, Explore pre-route
 physical optimization and Explore routing. It has no TNS-cleanup option,
 automatic incremental reference, full post-route Explore pass or automatic
 rescue. The fixed route-post hook performs the pixel-only repair described
 above. The saved project's actual properties pass the read-only check in
 `build/timing_firmware/test_timing_run_properties.log`.
+
+The `four-play` branch later replaces this pixel-only repair with one routed
+`AggressiveExplore` pass across all paths. See [the build workflow](scripts/SCRIPTS_README.md)
+for the current profile; the timings above describe the earlier F1.2.0 build.
 
 Vivado's generated implementation script orders the work as routing,
 built-in route reports, `finish_video_timing.tcl`, routed checkpoint, then

@@ -100,12 +100,12 @@ proc set_max_delay {args} {
     }
 }
 proc phys_opt_design {args} {
-    if {$args ne {-routing_opt -critical_cell_opt -critical_pin_opt -path_groups clk_out1_zynq_ps_bd_clk_wiz_0_0}} {
-        error "Unexpected video repair options: $args"
+    if {$args ne {-directive AggressiveExplore}} {
+        error "Unexpected routed repair options: $args"
     }
     if {$::uncertainty != 0.2 || $::pixel_uncertainty != 0.2 ||
         $::dir_limit != 9.8 || $::phi_limit != 7.8} {
-        error "Video repair ran without both margins and tightened board limits"
+        error "Routed repair ran without both margins and tightened board limits"
     }
     lappend ::repairs $args
     if {$::fail_repair} {error "Modeled repair failure"}
@@ -241,7 +241,7 @@ def main() -> int:
     expect_failure(interp, CLEAR, "Expected 10.000 ns")
 
     expect_failure(model(), CLEAR, "Expected 9.800 ns")
-    print("PASS: fabric-first timing, one routed pixel repair, exact restoration and failure gates")
+    print("PASS: fabric-first timing, one routed AggressiveExplore pass, exact restoration and failure gates")
     return 0
 
 

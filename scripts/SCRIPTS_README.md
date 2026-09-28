@@ -45,15 +45,17 @@ track build results and the top ten setup paths.
 profile: default synthesis, Explore logic optimization, Default placement,
 Explore pre-route physical optimization, and Explore routing. It clears old
 hooks and extra options and sets eight worker threads in each run. `-jobs 8`
-alone does not set the worker count. Full post-route Explore, forced TNS
-cleanup, and automatic rescue passes are disabled.
+alone does not set the worker count. The route hook runs the single post-route
+physical optimization; the separate post-route run step, forced TNS cleanup,
+and automatic rescue passes are disabled.
 
 Before logic optimization, the flow applies a temporary `0.200 ns` fabric
 setup margin and tightens the Apple direction limits by the same amount.
 After routing, `finish_video_timing.tcl` applies `0.200 ns` to the pixel clock
-and runs routing, cell and pin optimization only for that clock's paths.
-It then restores both clocks and the Apple output requirements. Applying
-the pixel margin before placement was measured and rejected.
+and runs one `phys_opt_design -directive AggressiveExplore` across all path
+groups, with both setup margins active. It then restores both clocks and
+the Apple output requirements. Applying the pixel margin before placement
+was measured and rejected.
 
 The build reopens the final design and checks both clocks' nominal
 uncertainty, the original board requirements, all 32 Apple/Gray-pointer

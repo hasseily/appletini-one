@@ -1,5 +1,5 @@
 # One fixed profile for create_project and build_and_export_xsa.
-# Measured flow: retain the good fabric placement, then repair pixel routes.
+# Apply the fabric margin before placement and run one routed repair.
 namespace eval appletini_run_profile {
     # Preserve completed runs when their settings already match the profile.
     proc set_if_changed {run property expected} {
@@ -42,7 +42,7 @@ namespace eval appletini_run_profile {
         STEPS.INIT_DESIGN.TCL.PRE $threads_hook \
         STEPS.OPT_DESIGN.TCL.PRE $margin_apply \
         STEPS.ROUTE_DESIGN.TCL.POST $route_finish]
-    # The route hook repairs only pixel paths and clears both temporary margins.
+    # The route hook runs one AggressiveExplore pass and clears both temporary margins.
     foreach run [list $synth $impl] settings [list $synth_settings $impl_settings] {
         # Clear stale hooks/options without clearing a desired hook first.
         foreach property [list_property $run] {
@@ -63,5 +63,5 @@ namespace eval appletini_run_profile {
     foreach run [get_runs -filter {IS_SYNTHESIS && SRCSET != sources_1}] {
         set_if_changed $run STEPS.SYNTH_DESIGN.TCL.PRE $threads_hook
     }
-    puts "Vivado profile: OPT Explore, PLACE Default, PHYS Explore, ROUTE Explore, pixel route repair"
+    puts "Vivado profile: OPT Explore, PLACE Default, PHYS Explore, ROUTE Explore, routed PHYS AggressiveExplore"
 }

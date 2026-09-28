@@ -73,8 +73,9 @@ def static_checks() -> None:
                   "font_height - 2U", "s_vga_palette[16]",
                   "cell_width = 8U * scale_x",
                   "cell_height = (uint32_t)font_height * scale_y",
-                  "gx * scale_x + sx", "canvas_width = COMP_SUBWIN_WIDTH",
-                  "canvas_width = COMP_SUBWIN_SHR_WIDTH",
+                  "gx * scale_x + sx", "canvas_width = COMP_APPLE_WIDTH * 2U",
+                  "canvas_width = COMP_APPLE_SHR_WIDTH * 2U",
+                  "canvas_x * output_scale / 2U", "canvas_y * output_scale / 2U",
                   "canvas_x >= canvas_width",
                   "canvas_y >= canvas_height"):
         require(token in renderer, f"renderer lacks {token}")

@@ -81,7 +81,7 @@ def test_png_writer_is_streaming_and_self_contained() -> None:
     require("crc32_update" in source and
             "adler32_update" in source and
             "fill_png_row(g_png_row, surface, y, width);" in source and
-            "static uint8_t g_png_row[1U + (COMP_OUT_WIDTH * 4U)];" in source,
+            "static uint8_t g_png_row[1U + (COMP_OUT_MAX_WIDTH * 4U)];" in source,
             "PNG writing must stream one converted BGRA-to-RGBA row at a time")
 
 

@@ -339,7 +339,7 @@ proc timing_run::count_missing_constraint_objects {text} {
     foreach line [split $text "\n"] {
         # Vivado echoes sourced Tcl into its log. Match only tool messages so
         # this procedure does not count its own pattern text.
-        if {[regexp -nocase {^\s*(?:CRITICAL WARNING|WARNING|ERROR):.*(?:No valid object\(s\) found|matched no objects|expects at least one object)} $line]} {
+        if {[regexp -nocase {^\s*(?:CRITICAL WARNING|WARNING|ERROR):.*(?:No valid object\(s\) found|matched no objects|expects at least one object|No (?:cells|pins|ports|clocks|nets) matched)} $line]} {
             incr count
         }
     }
@@ -530,13 +530,17 @@ proc timing_run::validate_signoff_manifest {values} {
         "Incremental reference"
     require_manifest_value $values incremental_reference_sha256 "" \
         "Incremental reference hash"
-    require_number_at_least $values minimum_wns_ns 0.200 \
+    require_number_at_least $values minimum_wns_ns 0.150 \
         "Required setup slack"
     require_number_at_least $values implementation_setup_margin_ns 0.200 \
         "Implementation setup margin"
     require_number_zero $values final_fabric_user_uncertainty_ns \
         "Final fabric user uncertainty"
-    require_number_at_least $values wns_ns 0.200 "Setup slack"
+    require_number_zero $values final_pixel_user_uncertainty_ns \
+        "Final pixel user uncertainty"
+    require_manifest_value $values constraint_bounds_status PASS \
+        "Apple and video CDC bounds"
+    require_number_at_least $values wns_ns 0.150 "Setup slack"
     require_number_at_least $values whs_ns 0.000 "Hold slack"
     require_number_at_least $values wpws_ns 0.000 "Pulse-width slack"
     foreach key {

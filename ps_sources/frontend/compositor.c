@@ -46,6 +46,7 @@
 #include "smartport_service.h"
 #include "compositor.h"
 #include "compositor_layout.h"
+#include "display_modes.h"
 #include "scanlines.h"
 #include "linear_text_overlay.h"
 #include "supersprite_vdp.h"
@@ -95,6 +96,7 @@ static uint8_t               s_border_enabled = 0u;
 static uint8_t               s_border_flood = 0u;
 static volatile uint8_t      s_force_full_refresh = 0u;
 static volatile uint8_t      s_paused = 0u;
+static uint8_t s_output_mode = DISPLAY_MODE_DEFAULT;
 
 /* Debug/measurement: when set, compositor_tick() composites and publishes
  * on every call, bypassing the vblank + fresh-Apple-frame pacing. This
@@ -720,21 +722,68 @@ static void blit_apple_2x4_serviced(uint16_t *fb,
     }
 }
 
-static void blit_apple_ghosting_2x(uint16_t *fb,
+/* Keep the 2x paths for the usual modes; smaller outputs use the same
+ * clipped blit with one horizontal sample per source pixel. */
+static void blit_apple_scaled_serviced(uint16_t *fb, int dst_x, int dst_y,
+                                       const uint32_t *src, int src_w,
+                                       int src_h, int src_stride,
+                                       uint8_t scale_x, uint8_t scale_y,
+                                       uint8_t scanline_mode)
+{
+    if (scale_x == 2U) {
+        if (scale_y == 4U) {
+            blit_apple_2x4_serviced(fb, dst_x, dst_y, src, src_w, src_h,
+                                    src_stride, scanline_mode);
+        } else {
+            blit_apple_2x2_serviced(fb, dst_x, dst_y, src, src_w, src_h,
+                                    src_stride, scanline_mode);
+        }
+        return;
+    }
+    for (int row = 0; row < src_h; row += COMPOSITOR_SP_ROWS_PER_SLICE) {
+        const int rows = (src_h - row < COMPOSITOR_SP_ROWS_PER_SLICE)
+            ? src_h - row : COMPOSITOR_SP_ROWS_PER_SLICE;
+        fb16_blit_scaled_scanlines(fb, dst_x, dst_y + row * scale_y,
+                                    src + row * src_stride, src_w, rows,
+                                    src_stride, scale_x, scale_y, scanline_mode);
+        compositor_smartport_checkpoint();
+    }
+}
+
+/* Dot bleed shapes two horizontal samples. At 1x, average their RGB565
+ * channels before storing the row so the spot's brightness stays balanced. */
+static void effect_store_row(uint16_t *fb, int x, int y, int width,
+                               uint8_t scale_x, uint8_t scale_y,
+                               uint8_t scanline_mode)
+{
+    if (scale_x == 1U) {
+        for (int i = 0; i < width; ++i) {
+            const uint16_t a = s_effect_2x_row[2 * i];
+            const uint16_t b = s_effect_2x_row[2 * i + 1];
+            s_effect_2x_row[i] = (uint16_t)((a & b) +
+                (((a ^ b) & 0xF7DEU) >> 1));
+        }
+    }
+    for (uint8_t phase = 0U; phase < scale_y; ++phase) {
+        fb16_copy_row(fb, x, y + phase, s_effect_2x_row, width * scale_x,
+                       effect_scanline_blank(phase, scale_y, scanline_mode));
+    }
+}
+
+static void blit_apple_effects_scaled(uint16_t *fb,
                                    int dst_x,
                                    int dst_y,
                                    const uint32_t *src,
                                    int src_w,
                                    int src_h,
                                    int src_stride,
+                                   uint8_t scale_x,
                                    uint8_t scale_y,
                                    uint8_t scanline_mode,
                                    uint8_t strength,
                                    uint8_t blur,
                                    uint8_t glow)
 {
-    const size_t row_pixels = (size_t)src_w * 2U;
-
     if (src == NULL || src_w <= 0 || src_h <= 0 ||
         src_w > (int)COMP_APPLE_SHR_WIDTH ||
         src_h > (int)COMP_APPLE_SHR_HEIGHT) {
@@ -743,7 +792,8 @@ static void blit_apple_ghosting_2x(uint16_t *fb,
     if (src_stride <= 0) {
         src_stride = src_w;
     }
-    if (scale_y != 2U && scale_y != 4U) {
+    if ((scale_x != 1U && scale_x != 2U) ||
+        (scale_y != 1U && scale_y != 2U && scale_y != 4U)) {
         return;
     }
 
@@ -812,18 +862,8 @@ static void blit_apple_ghosting_2x(uint16_t *fb,
 
                 effect_emit_2x_row(s_effect_sharp_ring[ey % 3], up, mid, dn,
                                    src_w, blur, glow, ey);
-                for (uint8_t phase = 0U; phase < scale_y; ++phase) {
-                    uint16_t *drow = fb +
-                        (dst_y + ey * (int)scale_y + (int)phase) * FB16_WIDTH +
-                        dst_x;
-                    if (effect_scanline_blank(phase, scale_y,
-                                              scanline_mode) != 0U) {
-                        memset(drow, 0, row_pixels * sizeof(uint16_t));
-                    } else {
-                        memcpy(drow, s_effect_2x_row,
-                               row_pixels * sizeof(uint16_t));
-                    }
-                }
+                effect_store_row(fb, dst_x, dst_y + ey * scale_y, src_w,
+                                   scale_x, scale_y, scanline_mode);
             }
         }
         return;
@@ -848,15 +888,8 @@ static void blit_apple_ghosting_2x(uint16_t *fb,
         }
         effect_expand_2x_row(s_effect_2x_row, s_effect_row, src_w, sy);
 
-        for (uint8_t phase = 0U; phase < scale_y; ++phase) {
-            uint16_t *drow =
-                fb + (dst_y + sy * (int)scale_y + (int)phase) * FB16_WIDTH + dst_x;
-            if (effect_scanline_blank(phase, scale_y, scanline_mode) != 0U) {
-                memset(drow, 0, row_pixels * sizeof(uint16_t));
-            } else {
-                memcpy(drow, s_effect_2x_row, row_pixels * sizeof(uint16_t));
-            }
-        }
+        effect_store_row(fb, dst_x, dst_y + sy * scale_y, src_w,
+                           scale_x, scale_y, scanline_mode);
     }
 }
 
@@ -1023,7 +1056,8 @@ static void fill_border_rect(uint16_t *fb,
                              int phase_origin_y,
                              uint8_t vertical_scale)
 {
-    vertical_scale = (vertical_scale >= 4U) ? 4U : 2U;
+    vertical_scale = (vertical_scale >= 4U) ? 4U :
+                     (vertical_scale >= 2U) ? 2U : 1U;
     if (scanline_mode == APPLETINI_SCANLINES_OFF) {
         fb16_fill_rect(fb, x, y, w, h, color);
         return;
@@ -1094,23 +1128,24 @@ static void draw_solid_border_ring(uint16_t *fb,
                      color, scanline_mode, border_y, vertical_scale);
 }
 
-static int draw_apple_subwindow(uint16_t *fb)
+static int draw_apple_subwindow(uint16_t *fb, uint8_t slot)
 {
-    /* Atomically claim the freshest Apple frame the renderer has
-     * published. If no frame has been published yet, skip the
-     * subwindow blit -- the previous compositor pass painted
-     * whatever UI is in this region. If the renderer hasn't produced
-     * anything new since our last claim, we keep our current slot
-     * and re-blit it (which is what we want when DVI is faster than
-     * the renderer: hold the last good frame). */
-    uint8_t slot = apple_fb_reader_claim();
+    /* The frame was claimed before the background callback, so its
+     * cleanup and this blit use the same display mode. */
     if (slot == APPLE_FB_NO_SLOT) {
         return 0;
     }
     const uint32_t display_mode = apple_fb_reader_display_mode();
+    const uint8_t scale = (display_mode == APPLE_FB_DISPLAY_MODE_SHR)
+        ? comp_shr_viewport.scale : comp_legacy_viewport.scale;
     const uint8_t border_color = apple_fb_reader_border_color();
-    const uint32_t mono_detail = apple_fb_reader_format_detail() &
-                                APPLE_FB_FORMAT_MONO_MASK;
+    const uint32_t format_detail = apple_fb_reader_format_detail();
+    const uint32_t mono_detail = format_detail & APPLE_FB_FORMAT_MONO_MASK;
+    const int synthetic_legacy_border =
+        display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I ||
+        (display_mode == APPLE_FB_DISPLAY_MODE_LEGACY &&
+         ((format_detail & APPLE_FB_FORMAT_PAGE_MASK) >>
+          APPLE_FB_FORMAT_PAGE_SHIFT) == APPLE_FB_FORMAT_PAGE_FLIP_MERGE);
     s_mono_width = 0;
     if (display_mode != APPLE_FB_DISPLAY_MODE_SHR &&
         s_video_dot_bleed != APPLETINI_VIDEO_DOT_BLEED_OFF &&
@@ -1118,9 +1153,9 @@ static int draw_apple_subwindow(uint16_t *fb)
         const uint8_t color = (uint8_t)((mono_detail &
             APPLE_FB_FORMAT_MONO_COLOR_MASK) >> APPLE_FB_FORMAT_MONO_COLOR_SHIFT);
         const int woven = display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I;
-        s_mono_x = (!woven && s_border_enabled != 0U)
+        s_mono_x = (!synthetic_legacy_border && s_border_enabled != 0U)
             ? (int)COMP_APPLE_BORDER_H_PIXELS : 0;
-        s_mono_y = (!woven && s_border_enabled != 0U)
+        s_mono_y = (!synthetic_legacy_border && s_border_enabled != 0U)
             ? (int)COMP_APPLE_BORDER_V_LINES : 0;
         s_mono_width = (int)COMP_APPLE_WIDTH;
         s_mono_height = woven ? 384 : (int)COMP_APPLE_HEIGHT;
@@ -1164,7 +1199,7 @@ static int draw_apple_subwindow(uint16_t *fb)
                                   (int)COMP_SHR_BORDER_HEIGHT,
                                   color,
                                   s_scanlines_mode,
-                                  2U);
+                                  scale);
             }
             draw_solid_border_ring(fb,
                                    (int)COMP_SHR_BORDER_X_OFF,
@@ -1177,73 +1212,106 @@ static int draw_apple_subwindow(uint16_t *fb)
                                    (int)COMP_SUBWIN_SHR_HEIGHT,
                                    color,
                                    s_scanlines_mode,
-                                   2U);
+                                   scale);
         }
         if (compositor_apple_effects_active()) {
-            blit_apple_ghosting_2x(fb,
+            blit_apple_effects_scaled(fb,
                                    (int)COMP_SUBWIN_SHR_X_OFF,
                                    (int)COMP_SUBWIN_SHR_Y_OFF,
                                    src_base,
                                    (int)COMP_APPLE_SHR_WIDTH,
                                    (int)COMP_APPLE_SHR_HEIGHT,
                                    (int)COMP_APPLE_SHR_ROW_PIXELS,
-                                   2U,
+                                   scale,
+                                   scale,
                                    s_scanlines_mode,
                                    s_video_ghosting_strength,
                                    s_video_blur_strength,
                                    s_video_glow_strength);
         } else {
-            blit_apple_2x2_serviced(fb,
+            blit_apple_scaled_serviced(fb,
                                     (int)COMP_SUBWIN_SHR_X_OFF,
                                     (int)COMP_SUBWIN_SHR_Y_OFF,
                                     src_base,
                                     (int)COMP_APPLE_SHR_WIDTH,
                                     (int)COMP_APPLE_SHR_HEIGHT,
                                     (int)COMP_APPLE_SHR_ROW_PIXELS,
+                                    scale, scale,
                                     s_scanlines_mode);
         }
         if (s_format_badge_enabled != 0u) {
             draw_format_badge(fb, (int)COMP_SUBWIN_SHR_X_OFF,
                               (int)COMP_SUBWIN_SHR_Y_OFF,
-                              (int)(COMP_APPLE_SHR_WIDTH * 2u));
+                              (int)COMP_SUBWIN_SHR_WIDTH);
         }
         return 1;
     }
 
+    if (synthetic_legacy_border && s_border_enabled != 0u) {
+        /* A2Li weave and flip-merge frames contain only active pixels.
+         * Use their published border color while leaving the captured,
+         * cycle-positioned border of ordinary legacy frames untouched. */
+        const uint16_t color = fb16_from_bgra32(
+            apple_video_iigs_border_bgra(border_color));
+        const uint8_t vertical_scale =
+            (display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I) ?
+                scale : (uint8_t)(2U * scale);
+
+        if (s_border_flood != 0u) {
+            draw_border_flood(fb,
+                              (int)COMP_BORDER_X_OFF,
+                              (int)COMP_BORDER_Y_OFF,
+                              (int)COMP_BORDER_WIDTH,
+                              (int)COMP_BORDER_HEIGHT,
+                              color, s_scanlines_mode, vertical_scale);
+        }
+        draw_solid_border_ring(fb,
+                               (int)COMP_BORDER_X_OFF,
+                               (int)COMP_BORDER_Y_OFF,
+                               (int)COMP_BORDER_WIDTH,
+                               (int)COMP_BORDER_HEIGHT,
+                               (int)COMP_SUBWIN_X_OFF,
+                               (int)COMP_SUBWIN_Y_OFF,
+                               (int)COMP_SUBWIN_WIDTH,
+                               (int)COMP_SUBWIN_HEIGHT,
+                               color, s_scanlines_mode, vertical_scale);
+    }
+
     if (display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I) {
         /* Woven 384-row frame at the legacy stride, starting at slot
-         * row 0 with no border data: blit 2x2 into the same rect the
-         * legacy 2x4 path fills. The IIgs border is unavailable while
-         * interlaced. */
+         * row 0 with no border data. Its active rect matches legacy video;
+         * the compositor supplied the border above. */
         const uint32_t *srcw = src_base + COMP_APPLE_ACTIVE_X;
 
         if (compositor_apple_effects_active()) {
-            blit_apple_ghosting_2x(fb,
+            blit_apple_effects_scaled(fb,
                                    (int)COMP_SUBWIN_X_OFF,
                                    (int)COMP_SUBWIN_Y_OFF,
                                    srcw,
                                    (int)COMP_APPLE_WIDTH,
                                    384,
                                    (int)COMP_APPLE_ROW_PIXELS,
-                                   2U,
+                                   scale,
+                                   scale,
                                    s_scanlines_mode,
                                    s_video_ghosting_strength,
                                    s_video_blur_strength,
                                    s_video_glow_strength);
         } else {
-            blit_apple_2x2_serviced(fb,
+            blit_apple_scaled_serviced(fb,
                                     (int)COMP_SUBWIN_X_OFF,
                                     (int)COMP_SUBWIN_Y_OFF,
                                     srcw,
                                     (int)COMP_APPLE_WIDTH,
                                     384,
                                     (int)COMP_APPLE_ROW_PIXELS,
+                                    scale, scale,
                                     s_scanlines_mode);
         }
         if (s_format_badge_enabled != 0u) {
             draw_format_badge(fb, (int)COMP_SUBWIN_X_OFF,
                               (int)COMP_SUBWIN_Y_OFF,
-                              (int)(COMP_APPLE_WIDTH * 2u));
+                              (int)COMP_SUBWIN_WIDTH);
         }
         return 1;
     }
@@ -1254,7 +1322,7 @@ static int draw_apple_subwindow(uint16_t *fb)
     int src_w;
     int src_h;
 
-    if (s_border_enabled != 0u) {
+    if (s_border_enabled != 0u && !synthetic_legacy_border) {
         if (s_border_flood != 0u) {
             draw_border_flood(fb,
                               (int)COMP_BORDER_X_OFF,
@@ -1264,7 +1332,7 @@ static int draw_apple_subwindow(uint16_t *fb)
                               fb16_from_bgra32(
                                   apple_video_iigs_border_bgra(border_color)),
                               s_scanlines_mode,
-                              4U);
+                              (uint8_t)(2U * scale));
         }
         src = src_base + COMP_APPLE_LEFT_BORDER_PIXELS;
         dst_x = (int)COMP_BORDER_X_OFF;
@@ -1280,26 +1348,28 @@ static int draw_apple_subwindow(uint16_t *fb)
         src_h = (int)COMP_APPLE_HEIGHT;
     }
     if (compositor_apple_effects_active()) {
-        blit_apple_ghosting_2x(fb,
+        blit_apple_effects_scaled(fb,
                                dst_x,
                                dst_y,
                                src,
                                src_w,
                                src_h,
                                (int)COMP_APPLE_ROW_PIXELS,
-                               4U,
+                               scale,
+                               (uint8_t)(2U * scale),
                                s_scanlines_mode,
                                s_video_ghosting_strength,
                                s_video_blur_strength,
                                s_video_glow_strength);
     } else {
-        blit_apple_2x4_serviced(fb,
+        blit_apple_scaled_serviced(fb,
                                 dst_x,
                                 dst_y,
                                 src,
                                 src_w,
                                 src_h,
                                 (int)COMP_APPLE_ROW_PIXELS,
+                                scale, (uint8_t)(2U * scale),
                                 s_scanlines_mode);
     }
     if (s_format_badge_enabled != 0u) {
@@ -1356,19 +1426,53 @@ static void draw_supersprite_overlay(uint16_t *fb)
 
 /* ---------- Public API ---------- */
 
+void compositor_set_output_mode(uint8_t mode)
+{
+    mode = display_mode_clamp(mode);
+    const display_mode_t *output = display_mode_get(mode);
+    (void)comp_layout_set_output_size(output->width, output->height);
+    (void)fb16_set_size(output->width, output->height);
+    s_output_mode = mode;
+    effect_clear_history();
+    s_writer_idx = 0xFFU;
+    s_published_idx = comp_out_addr_to_slot(REG_READ(FB_BASE_ADDR_REG));
+    s_published_counter = REG_READ(FB_STATUS_REG);
+    s_composited_apple_seq = 0U;
+    s_force_full_refresh = 1U;
+}
+
+uint8_t compositor_output_mode(void)
+{
+    return s_output_mode;
+}
+
+void compositor_set_size_multiplier(uint8_t multiplier)
+{
+    multiplier = display_size_multiplier_clamp(multiplier);
+    if (multiplier == comp_layout_size_multiplier()) {
+        return;
+    }
+    comp_layout_set_size_multiplier(multiplier);
+    effect_clear_history();
+    s_force_full_refresh = 1U;
+}
+
+uint8_t compositor_size_multiplier(void)
+{
+    return comp_layout_size_multiplier();
+}
+
 void compositor_init(compositor_ui_draw_fn draw_fn)
 {
     linear_text_overlay_init();
     /* USB/SD DMA and full-menu repaints share DDR bandwidth with HP0 scanout.
      * The full-screen UI throttle limits repaint bursts to 30 Hz. */
 
-    /* Mark every output slot non-cacheable so fb_reader (AXI HP0)
-     * sees PS writes immediately. The slots aren't necessarily
-     * contiguous (slot 2 lives past 0x3F800000), so mark each one
-     * with its own MMU section walk. */
+    /* Mark the full capacity of every output slot non-cacheable so a
+     * later mode change needs no MMU update. HP0 sees PS writes at once. */
     for (uint32_t i = 0u; i < COMP_OUT_SLOT_COUNT; ++i) {
-        fb_mark_noncached(comp_out_slot_addr[i], COMP_OUT_BYTES);
-        memset((void *)(uintptr_t)comp_out_slot_addr[i], 0, COMP_OUT_BYTES);
+        fb_mark_noncached(comp_out_slot_addr[i], COMP_OUT_MAX_BYTES);
+        memset((void *)(uintptr_t)comp_out_slot_addr[i], 0, COMP_OUT_MAX_BYTES);
     }
 
     /* Apple FB slots: non-cacheable on BOTH cores. CPU1 writes
@@ -1677,6 +1781,10 @@ int compositor_tick(void)
     uint16_t *fb =
         (uint16_t *)(uintptr_t)comp_out_slot_addr[s_writer_idx];
 
+    /* Claim once before restoring the background. CPU1 may publish a new
+     * mode during that restore; keep this frame's mode and pixels paired. */
+    const uint8_t apple_slot = apple_fb_reader_claim();
+
     /* Paint the static background first. The base callback returns non-zero
      * when the boot/config menu owns the whole screen and the Apple subwindow
      * must be suppressed. */
@@ -1700,7 +1808,7 @@ int compositor_tick(void)
             g_compositor_last_apple_mode == APPLE_FB_DISPLAY_MODE_SHR);
     } else {
         XTime_GetTime(&apple_start);
-        apple_drawn = draw_apple_subwindow(fb);
+        apple_drawn = draw_apple_subwindow(fb, apple_slot);
         draw_supersprite_overlay(fb);
         linear_text_overlay_draw(fb,
             g_compositor_last_apple_mode == APPLE_FB_DISPLAY_MODE_SHR);

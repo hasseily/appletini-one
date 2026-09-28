@@ -188,10 +188,10 @@ int bezel_loader_decode_png_rgb565(const unsigned char *png_data,
         return -1;
     }
 
-    if (w != 1920U || h == 0U || h > 1080U) {
+    if (w == 0U || w > 1920U || h == 0U || h > 1080U) {
         free(rgba);
         set_error(errbuf, errbuf_size,
-                  "PNG must be 1920 wide and <=1080 high, got %ux%u for %s",
+                  "PNG must fit within 1920x1080, got %ux%u for %s",
                   w, h, label);
         return -1;
     }

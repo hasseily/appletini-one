@@ -1,7 +1,10 @@
 //******************************************************************************
-// Video Timing Generator with Fixed-Rate Genlock
+// Selectable Video Timing Generator with Fixed-Rate 1080p Genlock
 //
-// Generates 1920x1080 progressive timing with runtime mode switching:
+// video_pkg defines the resolution presets; output_mode changes only under
+// scanout reset after the matching pixel clock locks. Smaller modes use
+// their standard 60 Hz totals or fixed custom 50 Hz vertical blanking.
+// The remaining notes describe the preserved 1920x1080 policy:
 //   mode_1080p50 = 0  ->  1080p60 region (2200 pixels/line, 148.5 MHz)
 //   mode_1080p50 = 1  ->  1080p50 region (2640 pixels/line, 148.5 MHz)
 //
@@ -79,8 +82,9 @@
 //******************************************************************************
 
 module video_timing_gen (
-    input  wire         clk_pixel,     // 148.5 MHz pixel clock
+    input  wire         clk_pixel,     // Preset pixel clock, 65..148.5 MHz
     input  wire         rst_n,         // Active-low reset
+    input  wire [3:0]   output_mode,   // Stable while reset is released
     input  wire         mode_1080p50,  // 0 = 60 Hz region, 1 = 50 Hz region
     input  wire         genlock_vblank_start, // Apple VBL pulse (activity detection only)
 
@@ -96,13 +100,15 @@ module video_timing_gen (
     //==========================================================================
     // Timing parameters
     //==========================================================================
-    localparam [11:0] H_VISIBLE    = VIDEO_ACTIVE_W;           // 1920
-    localparam [11:0] V_VISIBLE    = VIDEO_ACTIVE_H;           // 1080
-    localparam [11:0] V_FRONT      = 12'd4;                    // Front porch lines
-    localparam [11:0] V_SYNC       = 12'd5;                    // Vsync pulse lines
-    localparam [11:0] H_SYNC       = 12'd44;                   // Hsync pulse pixels
-    localparam        H_SYNC_POL   = 1'b1;                     // Hsync active polarity
-    localparam        V_SYNC_POL   = 1'b1;                     // Vsync active polarity
+    video_mode_t timing;
+    always_comb timing = video_mode(output_mode);
+    wire [11:0] H_VISIBLE = timing.width;
+    wire [11:0] V_VISIBLE = timing.height;
+    wire [11:0] V_FRONT = timing.v_front;
+    wire [11:0] V_SYNC = timing.v_sync;
+    wire [11:0] H_SYNC = timing.h_sync;
+    wire H_SYNC_POL = timing.h_positive;
+    wire V_SYNC_POL = timing.v_positive;
 
     //--------------------------------------------------------------------------
     // V_TOTAL variants
@@ -162,8 +168,10 @@ module video_timing_gen (
     //==========================================================================
 
     // Mode-dependent horizontal timing
-    wire [11:0] h_front = mode_1080p50_latched ? H_FRONT_50 : H_FRONT_60;
-    wire [11:0] h_total = mode_1080p50_latched ? H_TOTAL_50 : H_TOTAL_60;
+    wire [11:0] h_front = output_mode == VIDEO_DEFAULT_MODE ?
+        (mode_1080p50_latched ? H_FRONT_50 : H_FRONT_60) : timing.h_front;
+    wire [11:0] h_total = output_mode == VIDEO_DEFAULT_MODE ?
+        (mode_1080p50_latched ? H_TOTAL_50 : H_TOTAL_60) : timing.h_total;
 
     // Line and frame boundary detectors
     wire        line_end  = (h_counter == (h_total - 12'd1));
@@ -183,9 +191,21 @@ module video_timing_gen (
     // V_TOTAL to use for the NEXT frame.  Computed combinationally from the
     // current genlock_active state and the (unlatched) mode input.  Sampled
     // into v_total_latched at each frame boundary.
-    wire [11:0] v_total_next = genlock_active ?
-        (mode_1080p50 ? V_TOTAL_PAL_GL : V_TOTAL_NTSC_GL) :
-        V_TOTAL_STD;
+    logic [11:0] v_total_50;
+    always_comb begin
+        case (output_mode)
+            0: v_total_50 = 967;
+            1: v_total_50 = 993;
+            2: v_total_50 = 1280;
+            3: v_total_50 = 1293;
+            5: v_total_50 = 954;
+            default: v_total_50 = V_TOTAL_STD;
+        endcase
+    end
+    wire [11:0] v_total_next = output_mode == VIDEO_DEFAULT_MODE ?
+        (genlock_active ?
+            (mode_1080p50 ? V_TOTAL_PAL_GL : V_TOTAL_NTSC_GL) : V_TOTAL_STD) :
+        (mode_1080p50 ? v_total_50 : timing.v_total);
 
     //==========================================================================
     // Main counter logic
@@ -198,9 +218,12 @@ module video_timing_gen (
     always @(posedge clk_pixel) begin
         if (!rst_n) begin
             h_counter           <= 12'd0;
-            v_counter           <= 12'd0;
-            mode_1080p50_latched <= 1'b0;
-            v_total_latched     <= V_TOTAL_STD;
+            // Start in blanking so HP0 can fill the clean FIFO before
+            // the first active row following a pixel-clock change.
+            v_counter           <= V_VISIBLE;
+            mode_1080p50_latched <= mode_1080p50;
+            v_total_latched     <= output_mode == VIDEO_DEFAULT_MODE ?
+                V_TOTAL_STD : (mode_1080p50 ? v_total_50 : timing.v_total);
             genlock_seen        <= 1'b0;
             frames_without_vbl  <= 2'd3;    // Start with genlock inactive
         end else begin

@@ -179,6 +179,7 @@ void linear_text_overlay_draw(uint16_t *framebuffer, uint8_t shr_canvas)
     uint32_t canvas_y_offset;
     uint32_t canvas_width;
     uint32_t canvas_height;
+    uint32_t output_scale;
 
     process_frame_request();
     if (framebuffer == NULL || s_visible == 0U) {
@@ -197,13 +198,15 @@ void linear_text_overlay_draw(uint16_t *framebuffer, uint8_t shr_canvas)
     if (shr_canvas != 0U) {
         canvas_x_offset = COMP_SUBWIN_SHR_X_OFF;
         canvas_y_offset = COMP_SUBWIN_SHR_Y_OFF;
-        canvas_width = COMP_SUBWIN_SHR_WIDTH;
-        canvas_height = COMP_SUBWIN_SHR_HEIGHT;
+        canvas_width = COMP_APPLE_SHR_WIDTH * 2U;
+        canvas_height = COMP_APPLE_SHR_HEIGHT * 2U;
+        output_scale = comp_shr_viewport.scale;
     } else {
         canvas_x_offset = COMP_SUBWIN_X_OFF;
         canvas_y_offset = COMP_SUBWIN_Y_OFF;
-        canvas_width = COMP_SUBWIN_WIDTH;
-        canvas_height = COMP_SUBWIN_HEIGHT;
+        canvas_width = COMP_APPLE_WIDTH * 2U;
+        canvas_height = COMP_APPLE_HEIGHT * 4U;
+        output_scale = comp_legacy_viewport.scale;
     }
     cells = shadow_slot(s_active.slot);
     cursor = REG_READ(LTO_R_CURSOR);
@@ -277,13 +280,17 @@ void linear_text_overlay_draw(uint16_t *framebuffer, uint8_t shr_canvas)
                 for (uint32_t sy = 0U; sy < scale_y; ++sy) {
                     const uint32_t canvas_y = py0 + sy;
                     uint16_t *dst;
-                    if (canvas_y >= canvas_height) {
+                    /* The card reports the original 2x logical canvas.
+                     * At 1x sample every other logical pixel, keeping text
+                     * and its origin tied to the Apple picture. */
+                    if (canvas_y >= canvas_height ||
+                        (output_scale == 1U && (canvas_y & 1U) != 0U)) {
                         continue;
                     }
                     dst = framebuffer +
-                          (canvas_y_offset + canvas_y) *
+                          (canvas_y_offset + canvas_y * output_scale / 2U) *
                               COMP_OUT_WIDTH +
-                          canvas_x_offset + cell_x;
+                          canvas_x_offset;
                     for (uint32_t gx = 0U; gx < 8U; ++gx) {
                         uint8_t set = (bits & (0x80U >> gx)) != 0U;
                         if (cursor_here != 0U && cursor_shape == 2U &&
@@ -293,14 +300,15 @@ void linear_text_overlay_draw(uint16_t *framebuffer, uint8_t shr_canvas)
                         for (uint32_t sx = 0U; sx < scale_x; ++sx) {
                             const uint32_t canvas_x = cell_x +
                                 gx * scale_x + sx;
-                            if (canvas_x >= canvas_width) {
+                            if (canvas_x >= canvas_width ||
+                                (output_scale == 1U && (canvas_x & 1U) != 0U)) {
                                 continue;
                             }
                             if (set != 0U) {
-                                dst[gx * scale_x + sx] = s_vga_palette[fg];
+                                dst[canvas_x * output_scale / 2U] = s_vga_palette[fg];
                             } else if ((s_active.config &
                                        LTO_CONFIG_TRANSPARENT) == 0U) {
-                                dst[gx * scale_x + sx] = s_vga_palette[bg];
+                                dst[canvas_x * output_scale / 2U] = s_vga_palette[bg];
                             }
                         }
                     }

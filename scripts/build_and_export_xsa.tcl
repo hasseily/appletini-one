@@ -1,6 +1,7 @@
 set xpr_path "project/appletini_yarz.xpr"
 set xsa_out  "project/appletini_yarz_top.xsa"
-set incremental_ref       ".vivado_cache/appletini_yarz_top_known_good.dcp"
+# Full builds are the default; incremental reuse must name an explicit DCP.
+set incremental_ref ""
 if {[info exists ::env(APPLETINI_INCREMENTAL_REF_DCP)]} {
     set incremental_ref [file normalize $::env(APPLETINI_INCREMENTAL_REF_DCP)]
     if {![file isfile $incremental_ref]} {
@@ -14,7 +15,7 @@ set force_full_build [expr {
     $::env(APPLETINI_FULL_BUILD) ne "0"
 }]
 set timing_diagnostics [timing_run::env_enabled APPLETINI_TIMING_DIAGNOSTICS]
-set minimum_setup_slack 0.200
+set minimum_setup_slack 0.150
 # Explicit test-firmware policy: require strictly positive setup slack, with
 # all hold, pulse-width, route and constraint checks unchanged. This does
 # not change the separate known-good release promotion policy.
@@ -24,8 +25,8 @@ if {$positive_slack_only} {
 } elseif {[info exists ::env(APPLETINI_MIN_SETUP_SLACK_NS)]} {
     set minimum_setup_slack $::env(APPLETINI_MIN_SETUP_SLACK_NS)
     if {![string is double -strict $minimum_setup_slack] ||
-        !($minimum_setup_slack >= 0.200 && $minimum_setup_slack <= 1.0)} {
-        error "APPLETINI_MIN_SETUP_SLACK_NS must be at least 0.200 and at most 1.0."
+        !($minimum_setup_slack >= 0.150 && $minimum_setup_slack <= 1.0)} {
+        error "APPLETINI_MIN_SETUP_SLACK_NS must be at least 0.150 and at most 1.0."
     }
 }
 set implementation_setup_margin 0.200
@@ -34,14 +35,17 @@ set margin_apply_hook \
     [file normalize [file join $script_dir apply_fabric_timing_margin.tcl]]
 set margin_clear_hook \
     [file normalize [file join $script_dir clear_fabric_timing_margin.tcl]]
-foreach hook [list $margin_apply_hook $margin_clear_hook] {
+set route_finish_hook \
+    [file normalize [file join $script_dir finish_video_timing.tcl]]
+foreach hook [list $margin_apply_hook $margin_clear_hook $route_finish_hook] {
     if {![file isfile $hook]} {
         error "Timing-margin hook does not exist: $hook"
     }
 }
 set margin_apply_hook_sha256 [timing_run::sha256_file $margin_apply_hook]
 set margin_clear_hook_sha256 [timing_run::sha256_file $margin_clear_hook]
-foreach hook_hash [list $margin_apply_hook_sha256 $margin_clear_hook_sha256] {
+set route_finish_hook_sha256 [timing_run::sha256_file $route_finish_hook]
+foreach hook_hash [list $margin_apply_hook_sha256 $margin_clear_hook_sha256 $route_finish_hook_sha256] {
     if {![regexp -nocase {^[0-9a-f]{64}$} $hook_hash]} {
         error "Could not record a timing-margin hook SHA-256."
     }
@@ -70,13 +74,17 @@ proc finish_timing_build {} {
 
 dict set build_info vivado_version [version -short]
 dict set build_info jobs 8
+dict set build_info worker_threads ""
+dict set build_info constraint_bounds_status ""
 dict set build_info rescue_used 0
 dict set build_info synthesis_reused 0
 dict set build_info minimum_wns_ns $minimum_setup_slack
 dict set build_info implementation_setup_margin_ns $implementation_setup_margin
 dict set build_info margin_apply_hook_sha256 $margin_apply_hook_sha256
 dict set build_info margin_clear_hook_sha256 $margin_clear_hook_sha256
+dict set build_info route_finish_hook_sha256 $route_finish_hook_sha256
 dict set build_info final_fabric_user_uncertainty_ns ""
+dict set build_info final_pixel_user_uncertainty_ns ""
 dict set build_info seed_control "Vivado default"
 dict set build_info device_part ""
 dict set build_info speed_grade ""
@@ -132,6 +140,7 @@ configure_batch_tclapp_repo
 
 puts "Opening project: $xpr_path"
 open_project $xpr_path
+source [file join $script_dir register_video_cdc_constraints.tcl]
 
 set device_part [timing_run::safe_property [current_project] PART ""]
 dict set build_info device_part $device_part
@@ -142,49 +151,9 @@ if {[regexp {(-[0-9][A-Za-z]?)$} $device_part -> speed_grade]} {
 set synth_run [get_runs synth_1]
 set impl_run [get_runs impl_1]
 
-# Keep all signoff flow settings in tracked Tcl. A generated project may hold
-# stale run options, so apply and check the required placement, route, and
-# post-route settings before the manifest records them.
-set place_directive Explore
-if {[timing_run::env_enabled APPLETINI_PLACE_DIRECTIVE]} {
-    set place_directive [string trim $::env(APPLETINI_PLACE_DIRECTIVE)]
-}
-set allowed_place_directives {
-    Explore ExtraNetDelay_high ExtraPostPlacementOpt AltSpreadLogic_high
-}
-if {[lsearch -exact $allowed_place_directives $place_directive] < 0} {
-    error "Unsupported APPLETINI_PLACE_DIRECTIVE: $place_directive"
-}
-set_property STEPS.PLACE_DESIGN.ARGS.DIRECTIVE $place_directive $impl_run
-set_property STEPS.PLACE_DESIGN.TCL.PRE $margin_apply_hook $impl_run
-set_property -dict \
-    [list {STEPS.ROUTE_DESIGN.ARGS.MORE OPTIONS} {-tns_cleanup}] $impl_run
-set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true $impl_run
-set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE Explore $impl_run
-set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.TCL.POST \
-    $margin_clear_hook $impl_run
-if {[get_property STEPS.PLACE_DESIGN.ARGS.DIRECTIVE $impl_run] ne
-        $place_directive} {
-    error "Place directive did not apply."
-}
-if {[get_property STEPS.PLACE_DESIGN.TCL.PRE $impl_run] ne
-        $margin_apply_hook} {
-    error "Fabric timing-margin apply hook did not register."
-}
-if {[string trim [get_property {STEPS.ROUTE_DESIGN.ARGS.MORE OPTIONS} $impl_run]] ne
-        "-tns_cleanup"} {
-    error "Route extra options did not apply."
-}
-if {![get_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED $impl_run] ||
-    [get_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE $impl_run] ne
-        "Explore"} {
-    error "Post-route physical optimization settings did not apply."
-}
-if {[get_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.TCL.POST $impl_run] ne
-        $margin_clear_hook} {
-    error "Fabric timing-margin clear hook did not register."
-}
-puts "Placement directive: $place_directive"
+# Share one fixed profile with freshly created projects.
+source [file join $script_dir configure_vivado_run_profile.tcl]
+dict set build_info worker_threads [get_param general.maxThreads]
 
 dict set build_info synth_strategy [timing_run::safe_property $synth_run STRATEGY ""]
 dict set build_info synth_retiming \
@@ -192,6 +161,8 @@ dict set build_info synth_retiming \
 dict set build_info control_set_opt_threshold \
     [timing_run::safe_property $synth_run STEPS.SYNTH_DESIGN.ARGS.CONTROL_SET_OPT_THRESHOLD ""]
 dict set build_info impl_strategy [timing_run::safe_property $impl_run STRATEGY ""]
+dict set build_info opt_directive \
+    [get_property STEPS.OPT_DESIGN.ARGS.DIRECTIVE $impl_run]
 dict set build_info place_directive \
     [timing_run::safe_property $impl_run STEPS.PLACE_DESIGN.ARGS.DIRECTIVE ""]
 dict set build_info phys_opt_directive \
@@ -212,30 +183,28 @@ dict set build_info post_route_phys_opt_directive \
 # Always synthesize from current RTL. Generated partitions in an incremental
 # checkpoint may not match the source being validated.
 if {[llength [get_runs synth_1 -quiet]]} {
-    set_property AUTO_INCREMENTAL_CHECKPOINT 0 [get_runs synth_1]
-    set_property INCREMENTAL_CHECKPOINT "" [get_runs synth_1]
+    appletini_run_profile::set_if_changed [get_runs synth_1] AUTO_INCREMENTAL_CHECKPOINT 0
+    appletini_run_profile::set_if_changed [get_runs synth_1] INCREMENTAL_CHECKPOINT ""
     if {[get_property AUTO_INCREMENTAL_CHECKPOINT [get_runs synth_1]] ||
         [string trim [get_property INCREMENTAL_CHECKPOINT [get_runs synth_1]]] ne ""} {
         error "Synthesis incremental settings did not clear."
     }
 }
 
-# Reuse placement/routing from the last timing-clean implementation. Vivado
-# matches unchanged cells and implements unmatched logic normally, so source
-# changes can still proceed without treating the reference as a fixed netlist.
+# Reuse placement/routing only when an explicit reference was requested.
 if {[llength [get_runs impl_1 -quiet]]} {
-    set_property AUTO_INCREMENTAL_CHECKPOINT 0 [get_runs impl_1]
-    set_property INCREMENTAL_CHECKPOINT "" [get_runs impl_1]
+    appletini_run_profile::set_if_changed [get_runs impl_1] AUTO_INCREMENTAL_CHECKPOINT 0
+    appletini_run_profile::set_if_changed [get_runs impl_1] INCREMENTAL_CHECKPOINT ""
     if {$force_full_build} {
         puts "APPLETINI_FULL_BUILD requested; running without an incremental reference."
     } elseif {[file isfile $incremental_ref]} {
         set incremental_ref_abs [file normalize $incremental_ref]
-        set_property INCREMENTAL_CHECKPOINT $incremental_ref_abs [get_runs impl_1]
+        appletini_run_profile::set_if_changed [get_runs impl_1] INCREMENTAL_CHECKPOINT $incremental_ref_abs
         dict set build_info incremental_reference $incremental_ref_abs
         dict set build_info incremental_reference_sha256 [timing_run::sha256_file $incremental_ref_abs]
         puts "Using incremental implementation reference: $incremental_ref_abs"
     } else {
-        puts "No incremental implementation reference found; running a full implementation."
+        puts "No explicit incremental reference; running a full implementation."
     }
     if {[get_property AUTO_INCREMENTAL_CHECKPOINT [get_runs impl_1]]} {
         error "Implementation auto-incremental mode did not clear."
@@ -267,46 +236,56 @@ if {[timing_run::env_enabled APPLETINI_REUSE_SYNTH]} {
     dict set build_info synthesis_reused 1
     puts "Reusing the current synthesis run from the top-level compile check."
 } else {
+    set synthesis_started [clock seconds]
     reset_run synth_1 -quiet
     launch_runs synth_1 -jobs 8
     wait_on_run synth_1
+    dict set build_info synthesis_wall_seconds [expr {[clock seconds] - $synthesis_started}]
+}
+if {[get_property STATUS $synth_run] ne "synth_design Complete!" ||
+    [get_property NEEDS_REFRESH $synth_run]} {
+    error "Synthesis did not finish with current inputs: [get_property STATUS $synth_run]"
 }
 
 puts "Launching implementation to write_bitstream..."
 reset_run impl_1 -quiet
-# Post-route physical optimization. This design sits at the edge of the
-# 133 MHz fabric-clock timing budget, so a from-scratch (non-incremental)
-# placement can leave sub-100 ps setup violations on pre-existing
-# carry-chain paths (the audio mixer, etc.). Post-route phys_opt closes
-# these deterministically; it is a no-op once timing is already met.
+set implementation_started [clock seconds]
 launch_runs impl_1 -to_step write_bitstream -jobs 8
 wait_on_run impl_1
+dict set build_info implementation_wall_seconds [expr {[clock seconds] - $implementation_started}]
+set implementation_status [get_property STATUS $impl_run]
+if {$implementation_status ni {
+        "write_bitstream Complete!" "write_bitstream Complete, Failed Timing!"
+    } || [get_property NEEDS_REFRESH $impl_run]} {
+    error "Implementation did not finish write_bitstream with current inputs: $implementation_status"
+}
+set impl_dir [get_property DIRECTORY $impl_run]
+set bitstream_path [file join $impl_dir appletini_yarz_top.bit]
+if {![file isfile $bitstream_path] || [file size $bitstream_path] == 0 ||
+    [file mtime $bitstream_path] < $implementation_started} {
+    error "Implementation did not produce a fresh bitstream."
+}
 
 # Save a timing-clean final design as a candidate. Timing closure alone does
 # not prove that the image boots on hardware, so only the explicit promotion
 # script may replace the known-good incremental reference.
 open_run impl_1
-set fabric_clock \
-    [get_clocks -quiet clk_out1_zynq_ps_bd_clk_wiz_1_0]
-if {[llength $fabric_clock] != 1} {
-    error "Expected exactly one 133 MHz fabric clock at signoff."
+foreach {domain clock_name} {fabric clk_out1_zynq_ps_bd_clk_wiz_1_0
+                            pixel clk_out1_zynq_ps_bd_clk_wiz_0_0} {
+    set domain_clock [get_clocks -quiet $clock_name]
+    if {[llength $domain_clock] != 1} {error "Expected one $domain clock at signoff."}
+    set domain_path [get_timing_paths -quiet -delay_type max \
+        -from $domain_clock -to $domain_clock -max_paths 1]
+    if {[llength $domain_path] != 1} {error "No $domain setup path at signoff."}
+    set final_user_uncertainty [get_property USER_UNCERTAINTY $domain_path]
+    if {$final_user_uncertainty eq ""} {set final_user_uncertainty 0.000}
+    dict set build_info final_${domain}_user_uncertainty_ns $final_user_uncertainty
+    if {![string is double -strict $final_user_uncertainty] ||
+        abs(double($final_user_uncertainty)) > 0.0005} {
+        error "Temporary $domain setup margin remains at signoff: $final_user_uncertainty ns."
+    }
 }
-set fabric_path [get_timing_paths -quiet -delay_type max \
-    -from $fabric_clock -to $fabric_clock -max_paths 1]
-if {[llength $fabric_path] != 1} {
-    error "No fabric setup path found at signoff."
-}
-set final_user_uncertainty \
-    [get_property USER_UNCERTAINTY $fabric_path]
-if {$final_user_uncertainty eq ""} {
-    set final_user_uncertainty 0.000
-}
-dict set build_info final_fabric_user_uncertainty_ns \
-    $final_user_uncertainty
-if {![string is double -strict $final_user_uncertainty] ||
-    abs(double($final_user_uncertainty)) > 0.0005} {
-    error "Temporary fabric setup margin remains at signoff: $final_user_uncertainty ns."
-}
+set fabric_clock [get_clocks clk_out1_zynq_ps_bd_clk_wiz_1_0]
 # Check the reopened design independently of the implementation hook process.
 # Final setup slack must use the board's original output timing requirements.
 foreach spec {
@@ -339,30 +318,6 @@ if {[llength $worst_setup_path] == 0 || [llength $worst_hold_path] == 0} {
 set worst_setup_slack [get_property SLACK $worst_setup_path]
 set worst_hold_slack  [get_property SLACK $worst_hold_path]
 puts "Final implementation slack: setup=$worst_setup_slack ns hold=$worst_hold_slack ns"
-
-# A full placement can still finish a few picoseconds short after its normal
-# post-route pass. Give an actual setup failure one final routed repair, but
-# do not run a no-op rescue merely because a passing route misses the stricter
-# release margin below.
-if {$worst_setup_slack < 0.0 && $worst_hold_slack >= 0.0} {
-    puts "Setup timing is short; running one extra post-route AggressiveExplore pass."
-    dict set build_info rescue_used 1
-    phys_opt_design -directive AggressiveExplore
-
-    set worst_setup_path [get_timing_paths -quiet -delay_type max -max_paths 1]
-    set worst_hold_path  [get_timing_paths -quiet -delay_type min -max_paths 1]
-    set worst_setup_slack [get_property SLACK $worst_setup_path]
-    set worst_hold_slack  [get_property SLACK $worst_hold_path]
-    puts "Slack after extra physical optimization: setup=$worst_setup_slack ns hold=$worst_hold_slack ns"
-
-    if {$worst_setup_slack >= 0.0 && $worst_hold_slack >= 0.0} {
-        set impl_dir [get_property DIRECTORY [get_runs impl_1]]
-        write_checkpoint -force [file join $impl_dir appletini_yarz_top_postroute_physopt.dcp]
-        report_timing_summary -file [file join $impl_dir appletini_yarz_top_timing_summary_postroute_physopted.rpt]
-        report_bus_skew -warn_on_violation -file [file join $impl_dir appletini_yarz_top_bus_skew_postroute_physopted.rpt]
-        write_bitstream -force [file join $impl_dir appletini_yarz_top.bit]
-    }
-}
 
 # Save signoff reports next to the immutable build record. The main run can
 # overwrite its reports on the next build; this directory never does.
@@ -406,13 +361,13 @@ set build_info [dict merge $build_info [timing_run::parse_route_status $route_te
 set build_info [dict merge $build_info [timing_run::parse_bus_skew $bus_skew_text]]
 set missing_constraint_objects 0
 foreach log_path [list \
-    vivado.log \
     [file join [get_property DIRECTORY [get_runs synth_1]] runme.log] \
     [file join [get_property DIRECTORY [get_runs impl_1]] runme.log]] {
-    if {[file isfile $log_path]} {
-        incr missing_constraint_objects \
-            [timing_run::count_missing_constraint_objects [timing_run::read_text $log_path]]
+    if {![file isfile $log_path]} {
+        error "Missing current run log: $log_path"
     }
+    incr missing_constraint_objects \
+        [timing_run::count_missing_constraint_objects [timing_run::read_text $log_path]]
 }
 dict set build_info missing_constraint_objects $missing_constraint_objects
 
@@ -421,6 +376,10 @@ foreach path [get_timing_paths -delay_type max -max_paths 10 -sort_by slack] {
     incr rank
     timing_run::append_path [timing_run::path_values $build_id $rank $path]
 }
+
+# Verify that higher-priority exceptions did not mask the Apple/Gray bounds.
+source [file join $script_dir check_video_bus_constraints.tcl]
+dict set build_info constraint_bounds_status PASS
 
 # Keep reports and CSV values for failed attempts, but never export hardware
 # from a design with a timing, route, bus-skew, or constraint fault.
@@ -459,8 +418,6 @@ puts "Saved timing-clean build candidate: [file normalize $build_candidate]"
 
 # Export XSA including bitstream
 # write_hw_platform is the modern flow; include_bit ensures bit is packaged.
-set impl_dir [get_property DIRECTORY [get_runs impl_1]]
-set bitstream_path [file join $impl_dir appletini_yarz_top.bit]
 set build_bitstream [file join $timing_run_dir appletini_yarz_top.bit]
 set build_xsa [file join $timing_run_dir appletini_yarz_top.xsa]
 file copy -force $bitstream_path $build_bitstream

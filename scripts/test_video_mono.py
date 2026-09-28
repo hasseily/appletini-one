@@ -74,7 +74,7 @@ void compose(uint16_t *dst, const uint32_t *src, int w, int h, int sy,
     video_mono_build_tint(s_mono_tint, color);
     if (reset) effect_clear_history();
     if (bleed || blur || glow || ghost) {
-        blit_apple_ghosting_2x(dst, 0, 0, src, w, h, w, sy,
+        blit_apple_effects_scaled(dst, 0, 0, src, w, h, w, 2, sy,
                               scan, ghost, blur, glow);
     } else if (sy == 4) {
         blit_apple_2x4_serviced(dst, 0, 0, src, w, h, w, scan);

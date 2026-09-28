@@ -14,30 +14,31 @@
 #include "video_output.h"
 
 #define HUD_TEXT_SCALE_X 1
-#define HUD_TEXT_SCALE_Y 2
+#define HUD_V(n)         (FB16_HEIGHT < 900 ? (n) / 2 : (n))
+#define HUD_TEXT_SCALE_Y (FB16_HEIGHT < 900 ? 1 : 2)
 #define HUD_TEXT_W      (FB16_BUILTIN_FONT_ADVANCE_X * HUD_TEXT_SCALE_X)
-#define HUD_LINE_H      18
-#define HUD_PAD         8
+#define HUD_LINE_H      HUD_V(18)
+#define HUD_PAD         HUD_V(8)
 
 #define HUD_TOP_X       8
 #define HUD_TOP_W       (FB16_WIDTH - 16)
-#define HUD_TOP_H       76
+#define HUD_TOP_H       HUD_V(76)
 #define HUD_TOP_Y       (FB16_HEIGHT - HUD_TOP_H - 8)
 
 #define HUD_LEFT_X      8
-#define HUD_LEFT_Y      148
+#define HUD_LEFT_Y      (FB16_HEIGHT < 900 ? 8 : 148)
 #define HUD_LEFT_W      304
-#define HUD_LEFT_H      438
+#define HUD_LEFT_H      HUD_V(438)
 
-#define HUD_RIGHT_X     1608
-#define HUD_RIGHT_Y     148
+#define HUD_RIGHT_X     (FB16_WIDTH - HUD_RIGHT_W - 8)
+#define HUD_RIGHT_Y     HUD_LEFT_Y
 #define HUD_RIGHT_W     304
-#define HUD_RIGHT_H     408
+#define HUD_RIGHT_H     HUD_V(408)
 
 #define HUD_SOFT_X      HUD_RIGHT_X
-#define HUD_SOFT_Y      (HUD_RIGHT_Y + HUD_RIGHT_H + 12)
+#define HUD_SOFT_Y      (HUD_RIGHT_Y + HUD_RIGHT_H + HUD_V(12))
 #define HUD_SOFT_W      HUD_RIGHT_W
-#define HUD_SOFT_H      216
+#define HUD_SOFT_H      HUD_V(216)
 
 #define HUD_BG          FB16_RGB(0x08, 0x0B, 0x10)
 #define HUD_PANEL_BG    FB16_RGB(0x0E, 0x13, 0x1B)
@@ -47,26 +48,25 @@
 #define HUD_WARN        FB16_RGB(0xFF, 0xB0, 0x45)
 #define HUD_GOOD        FB16_RGB(0x78, 0xE0, 0x9A)
 
-static const debug_overlay_rect_t k_regions[] = {
-    { HUD_TOP_X, HUD_TOP_Y, HUD_TOP_W, HUD_TOP_H },
-    { HUD_LEFT_X, HUD_LEFT_Y, HUD_LEFT_W, HUD_LEFT_H },
-    { HUD_RIGHT_X, HUD_RIGHT_Y, HUD_RIGHT_W, HUD_RIGHT_H },
-    { HUD_SOFT_X, HUD_SOFT_Y, HUD_SOFT_W, HUD_SOFT_H }
-};
-
 uint32_t debug_overlay_region_count(void)
 {
-    return (uint32_t)(sizeof(k_regions) / sizeof(k_regions[0]));
+    return 4U;
 }
 
 debug_overlay_rect_t debug_overlay_region(uint32_t index)
 {
+    const debug_overlay_rect_t regions[] = {
+        { HUD_TOP_X, HUD_TOP_Y, HUD_TOP_W, HUD_TOP_H },
+        { HUD_LEFT_X, HUD_LEFT_Y, HUD_LEFT_W, HUD_LEFT_H },
+        { HUD_RIGHT_X, HUD_RIGHT_Y, HUD_RIGHT_W, HUD_RIGHT_H },
+        { HUD_SOFT_X, HUD_SOFT_Y, HUD_SOFT_W, HUD_SOFT_H }
+    };
     debug_overlay_rect_t empty = {0, 0, 0, 0};
 
     if (index >= debug_overlay_region_count()) {
         return empty;
     }
-    return k_regions[index];
+    return regions[index];
 }
 
 static void text_clipped(uint16_t *fb,
@@ -141,7 +141,7 @@ static void line(uint16_t *fb,
 {
     text_clipped(fb,
                  x + HUD_PAD,
-                 y + HUD_PAD + 22 + ((int)row * HUD_LINE_H),
+                 y + HUD_PAD + HUD_V(22) + ((int)row * HUD_LINE_H),
                  w - (2 * HUD_PAD),
                  text,
                  color,
@@ -160,7 +160,7 @@ static void switch_pair(uint16_t *fb,
                         uint32_t state)
 {
     const int col_w = (w - (2 * HUD_PAD) - 8) / 2;
-    const int row_y = y + HUD_PAD + 22 + ((int)row * HUD_LINE_H);
+    const int row_y = y + HUD_PAD + HUD_V(22) + ((int)row * HUD_LINE_H);
     char text[48];
 
     (void)snprintf(text,
@@ -366,7 +366,7 @@ static void draw_header(uint16_t *fb, const debug_overlay_snapshot_t *s)
 
     (void)snprintf(line_buf,
                    sizeof(line_buf),
-                   "DEBUG  FW %s  FPS 1080p %lu.%02lu  Apple area %lu.%02lu  DRAW %lu us  OWNER %s",
+                   "DEBUG  FW %s  FPS output %lu.%02lu  Apple area %lu.%02lu  DRAW %lu us  OWNER %s",
                    s->firmware_version,
                    (unsigned long)(s->fps_x100 / 100U),
                    (unsigned long)(s->fps_x100 % 100U),
@@ -376,7 +376,7 @@ static void draw_header(uint16_t *fb, const debug_overlay_snapshot_t *s)
                    (s->usb_menu_owned != 0U) ? "USB device" : "Apple keyboard");
     text_clipped(fb,
                  HUD_TOP_X + HUD_PAD,
-                 HUD_TOP_Y + 12,
+                 HUD_TOP_Y + HUD_V(12),
                  HUD_TOP_W - (2 * HUD_PAD),
                  line_buf,
                  FB16_COLOR_WHITE,
@@ -386,7 +386,7 @@ static void draw_header(uint16_t *fb, const debug_overlay_snapshot_t *s)
         (void)snprintf(line_buf, sizeof(line_buf), "WARN  %s", warnings);
         text_clipped(fb,
                      HUD_TOP_X + HUD_PAD,
-                     HUD_TOP_Y + 40,
+                     HUD_TOP_Y + HUD_V(40),
                      HUD_TOP_W - (2 * HUD_PAD),
                      line_buf,
                      HUD_WARN,
@@ -401,7 +401,7 @@ static void draw_system(uint16_t *fb, const debug_overlay_snapshot_t *s)
     int y = HUD_LEFT_Y;
     int w = HUD_LEFT_W;
 
-    panel(fb, x, y, w, 142, "System");
+    panel(fb, x, y, w, HUD_V(142), "System");
     (void)snprintf(text, sizeof(text), "Boot %s", boot_device_name(s->boot_device));
     line(fb, x, y, w, 0U, text, FB16_COLOR_WHITE);
     (void)snprintf(text,
@@ -431,10 +431,10 @@ static void draw_input(uint16_t *fb, const debug_overlay_snapshot_t *s)
 {
     char text[96];
     int x = HUD_LEFT_X;
-    int y = HUD_LEFT_Y + 154;
+    int y = HUD_LEFT_Y + HUD_V(154);
     int w = HUD_LEFT_W;
 
-    panel(fb, x, y, w, 112, "Input");
+    panel(fb, x, y, w, HUD_V(112), "Input");
     (void)snprintf(text,
                    sizeof(text),
                    "Owner %s",
@@ -469,10 +469,10 @@ static void draw_storage(uint16_t *fb, const debug_overlay_snapshot_t *s)
     uint8_t unit;
     uint8_t present;
     int x = HUD_LEFT_X;
-    int y = HUD_LEFT_Y + 278;
+    int y = HUD_LEFT_Y + HUD_V(278);
     int w = HUD_LEFT_W;
 
-    panel(fb, x, y, w, 160, "Storage");
+    panel(fb, x, y, w, HUD_V(160), "Storage");
     if (s->disk2_valid != 0U) {
         drive = (s->disk2_activity.drive < DISK2_DRIVE_COUNT) ?
             s->disk2_activity.drive : 0U;
@@ -541,7 +541,7 @@ static void draw_video(uint16_t *fb, const debug_overlay_snapshot_t *s)
     int y = HUD_RIGHT_Y;
     int w = HUD_RIGHT_W;
 
-    panel(fb, x, y, w, 150, "Video");
+    panel(fb, x, y, w, HUD_V(150), "Video");
     (void)snprintf(text,
                    sizeof(text),
                    "Apple %s %s",
@@ -630,10 +630,10 @@ static void draw_performance(uint16_t *fb, const debug_overlay_snapshot_t *s)
     const uint32_t fb_bursts = (s->fb_debug >> 8) & 0x3FFFFU;
     const uint32_t fb_axi_err_count = s->fb_debug2 & 0xFFFFU;
     int x = HUD_RIGHT_X;
-    int y = HUD_RIGHT_Y + 162;
+    int y = HUD_RIGHT_Y + HUD_V(162);
     int w = HUD_RIGHT_W;
 
-    panel(fb, x, y, w, 240, "Pipeline");
+    panel(fb, x, y, w, HUD_V(240), "Pipeline");
     (void)snprintf(text,
                    sizeof(text),
                    "FPS comp %lu.%02lu render %lu.%02lu",

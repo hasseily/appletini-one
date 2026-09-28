@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 // Framebuffer Reader - AXI HP0 Read Master + Async FIFO
 //
-// Reads a 1920x1080 RGB565 framebuffer from DDR via AXI HP0 and feeds
+// Reads the selected RGB565 framebuffer from DDR via AXI HP0 and feeds
 // 16-bit pixels through an async FIFO into the pixel clock domain.
 // Each 64-bit AXI beat carries four pixels (lowest pixel = beat[15:0],
 // ascending).
@@ -24,6 +24,9 @@ module fb_reader (
 
     // Frame-base handshake with the PS compositor.
     input  logic [31:0]  base_addr_in,
+    input  logic [17:0]  frame_bursts_in,
+    input  logic         pause_request,
+    output logic         quiescent,
     output logic [31:0]  last_latched_addr,
     output logic         vblank_latched_pulse,
 
@@ -69,9 +72,8 @@ module fb_reader (
     //----------------------------------------------------------------------
     // Parameters
     //----------------------------------------------------------------------
-    localparam FRAME_BYTES      = VIDEO_ACTIVE_W * VIDEO_ACTIVE_H * FB_BYTES_PER_PIXEL;
     localparam BURST_BYTES      = AXI_HP0_BURST_BYTES;
-    localparam BURSTS_PER_FRAME = FRAME_BYTES / BURST_BYTES;   // 32,400 @ 1920x1080 RGB565
+    logic [17:0] bursts_per_frame;
 
     //----------------------------------------------------------------------
     // AXI read master state machine
@@ -86,6 +88,7 @@ module fb_reader (
     localparam S_RESET_FIFO  = 3'd1;
     localparam S_BURST       = 3'd2;
     localparam S_DRAIN       = 3'd3;
+    localparam S_PAUSED      = 3'd4;
     localparam int MAX_OUTSTANDING = 8;
 
     reg [2:0]  state;
@@ -114,7 +117,7 @@ module fb_reader (
     // fetched. S_DRAIN consumes a cancelled frame's AXI responses without
     // letting any of those old beats enter the next frame's FIFO image.
     assign fifo_wr_en   = axi_read_if.rvalid && !fifo_full
-                          && (state == S_BURST) && !vblank_latched;
+                          && (state == S_BURST) && !vblank_latched && !pause_request;
     assign fifo_wr_data = axi_read_if.rdata;
 
     /* AXI read-response error counter (wrapping). axi_read_err is the
@@ -188,8 +191,10 @@ module fb_reader (
                                                 && axi_read_if.rlast;
     wire can_issue_burst  = !fifo_prog_full
                             && (outstanding < MAX_OUTSTANDING[3:0])
-                            && (bursts_issued < BURSTS_PER_FRAME[17:0])
+                            && (bursts_issued < bursts_per_frame)
+                            && !pause_request
                             && !axi_read_if.arvalid;
+    assign quiescent = state == S_PAUSED;
 
     always @(posedge clk) begin
         if (!resetn) begin
@@ -205,6 +210,7 @@ module fb_reader (
             vblank_latched       <= 0;
             last_latched_addr    <= 32'h0;
             vblank_latched_pulse <= 1'b0;
+            bursts_per_frame    <= video_frame_bursts(VIDEO_DEFAULT_MODE);
         end else begin
             // Default: deassert after handshake.
             if (ar_handshake)
@@ -219,7 +225,7 @@ module fb_reader (
              * Holding S_IDLE until the PS compositor writes a real slot
              * address keeps fb_reader (and the FIFO/DVI output) in a
              * known-zero state across the early-boot window. */
-            if (vblank_start && base_addr_in != 32'h0) begin
+            if (vblank_start && base_addr_in != 32'h0 && !pause_request) begin
                 vblank_latched <= 1;
             end
 
@@ -233,10 +239,15 @@ module fb_reader (
 
             case (state)
                 S_IDLE: begin
-                    if (vblank_latched) begin
+                    if (pause_request) begin
+                        vblank_latched <= 0;
+                        fifo_reset_axi <= 1;
+                        state <= S_PAUSED;
+                    end else if (vblank_latched) begin
                         vblank_latched       <= 0;
                         burst_addr           <= base_addr_in;
                         last_latched_addr    <= base_addr_in;
+                        bursts_per_frame     <= frame_bursts_in;
                         vblank_latched_pulse <= 1'b1;
                         bursts_issued        <= 18'd0;
                         bursts_completed     <= 18'd0;
@@ -248,7 +259,10 @@ module fb_reader (
                 end
 
                 S_RESET_FIFO: begin
-                    if (fifo_reset_count == 0) begin
+                    if (pause_request) begin
+                        fifo_reset_axi <= 1;
+                        state <= S_PAUSED;
+                    end else if (fifo_reset_count == 0) begin
                         fifo_reset_axi <= 1'b0;
                         if (!fifo_wr_rst_busy) begin
                             state <= S_BURST;
@@ -271,7 +285,7 @@ module fb_reader (
                  * early lets old RLAST responses wrap it and lets old data
                  * arrive after the FIFO reset, corrupting following frames. */
                 S_BURST: begin
-                    if (vblank_latched ||
+                    if (pause_request || vblank_latched ||
                         (vblank_start && base_addr_in != 32'h0)) begin
                         state <= S_DRAIN;
                     end else begin
@@ -283,7 +297,7 @@ module fb_reader (
                         end
                         if (rlast_accepted) begin
                             bursts_completed <= bursts_completed + 18'd1;
-                            if (bursts_completed >= BURSTS_PER_FRAME[17:0] - 18'd1) begin
+                            if (bursts_completed >= bursts_per_frame - 18'd1) begin
                                 /* Full frame received; idle until next
                                  * vblank. */
                                 state <= S_IDLE;
@@ -300,9 +314,15 @@ module fb_reader (
                  * start with a clean FIFO and clean counters. */
                 S_DRAIN: begin
                     if (!axi_read_if.arvalid && outstanding == 4'd0) begin
+                        if (pause_request) begin
+                            vblank_latched <= 0;
+                            fifo_reset_axi <= 1;
+                            state <= S_PAUSED;
+                        end else begin
                         vblank_latched       <= 1'b0;
                         burst_addr           <= base_addr_in;
                         last_latched_addr    <= base_addr_in;
+                        bursts_per_frame     <= frame_bursts_in;
                         vblank_latched_pulse <= 1'b1;
                         bursts_issued        <= 18'd0;
                         bursts_completed     <= 18'd0;
@@ -310,7 +330,14 @@ module fb_reader (
                         fifo_reset_axi       <= 1'b1;
                         fifo_reset_count     <= 4'd8;
                         state                <= S_RESET_FIFO;
+                        end
                     end
+                end
+
+                S_PAUSED: begin
+                    fifo_reset_axi <= 1;
+                    vblank_latched <= 0;
+                    if (!pause_request) state <= S_IDLE;
                 end
 
                 default: state <= S_IDLE;

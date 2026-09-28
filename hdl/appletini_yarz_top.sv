@@ -254,6 +254,14 @@ module appletini_yarz_top (
     wire        fclk_clk0;              // PL Clock 0 (133 MHz)
     wire        fclk_clk1;              // IDELAY reference clock (~200 MHz from clk_wiz_1 clk_out2)
     wire        clk_pixel_148mhz;
+    wire        pixel_clock_locked;
+    wire        pixel_clock_resetn;
+    wire [10:0] pixel_clock_awaddr;
+    wire        pixel_clock_awvalid, pixel_clock_awready;
+    wire [31:0] pixel_clock_wdata;
+    wire        pixel_clock_wvalid, pixel_clock_wready;
+    wire [1:0]  pixel_clock_bresp;
+    wire        pixel_clock_bvalid, pixel_clock_bready;
     // 8 independent reset bits from proc_sys_reset_0 (C_NUM_PERP_ARESETN=8).
     // Each bit is the output of its own FDRE inside the IP — functionally
     // identical (same deassert cycle), but placeable near distinct load
@@ -304,15 +312,14 @@ module appletini_yarz_top (
         input logic signed [15:0] a,
         input logic signed [15:0] b
     );
-        logic signed [16:0] sum;
+        logic signed [15:0] sum;
         begin
-            sum = {a[15], a} + {b[15], b};
-            if (sum > 17'sd32767)
-                sat_add16 = 16'sh7FFF;
-            else if (sum < -17'sd32768)
-                sat_add16 = -16'sd32768;
+            sum = a + b;
+            // Equal-sign operands overflow only when the sum changes sign.
+            if ((a[15] == b[15]) && (sum[15] != a[15]))
+                sat_add16 = a[15] ? 16'sh8000 : 16'sh7FFF;
             else
-                sat_add16 = sum[15:0];
+                sat_add16 = sum;
         end
     endfunction
 
@@ -642,6 +649,17 @@ module appletini_yarz_top (
         .FCLK_CLK0           (fclk_clk0),
         .FCLK_CLK1           (fclk_clk1),
         .clk_pixel_148mhz (clk_pixel_148mhz),
+        .pixel_clock_locked(pixel_clock_locked),
+        .pixel_clock_resetn(pixel_clock_resetn),
+        .pixel_clock_awaddr(pixel_clock_awaddr),
+        .pixel_clock_awvalid(pixel_clock_awvalid),
+        .pixel_clock_awready(pixel_clock_awready),
+        .pixel_clock_wdata(pixel_clock_wdata),
+        .pixel_clock_wvalid(pixel_clock_wvalid),
+        .pixel_clock_wready(pixel_clock_wready),
+        .pixel_clock_bresp(pixel_clock_bresp),
+        .pixel_clock_bvalid(pixel_clock_bvalid),
+        .pixel_clock_bready(pixel_clock_bready),
         .peripheral_133M_aresetn       (peripheral_133M_aresetn),  // [7:0] bus
         .peripheral_148M_aresetn       (peripheral_148M_aresetn),
 
@@ -835,6 +853,17 @@ module appletini_yarz_top (
         .as_client(as_clients[1]),
         .pixel_clk(clk_pixel_148mhz),
         .pixel_resetn(peripheral_148M_aresetn),
+        .pixel_locked(pixel_clock_locked),
+        .clock_resetn(pixel_clock_resetn),
+        .clock_awaddr(pixel_clock_awaddr),
+        .clock_awvalid(pixel_clock_awvalid),
+        .clock_awready(pixel_clock_awready),
+        .clock_wdata(pixel_clock_wdata),
+        .clock_wvalid(pixel_clock_wvalid),
+        .clock_wready(pixel_clock_wready),
+        .clock_bresp(pixel_clock_bresp),
+        .clock_bvalid(pixel_clock_bvalid),
+        .clock_bready(pixel_clock_bready),
         .apple_video_mode_50hz(apple_video_mode_50hz),
         .apple_vblank_start_pulse(apple_vblank_start_pulse),
         .axi_read_if(s_axi_hp0_read),

@@ -130,9 +130,9 @@ def test_boot_settings_draws_binding_editor() -> None:
             '"BACK"' in tabs and
             '"TAB DOWN"' in tabs and
             '"PRTSCR A2"' in tabs and
-            '"PRTSCR 1080P"' in tabs and
+            '"OUTPUT SCREEN"' in tabs and
             '"PRTSCR A2"' in source and
-            '"PRTSCR 1080P"' in source and
+            '"OUTPUT SCREEN"' in source and
             '"SHOT A2"' not in tabs and
             '"SHOT 1080"' not in tabs,
             "USB binding rows must use fixed-width uppercase labels before the colon")

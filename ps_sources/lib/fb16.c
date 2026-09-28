@@ -26,7 +26,21 @@
 #include <arm_neon.h>
 #endif
 
-#define FB16_BLIT_2X_MAX_SRC_W (FB16_WIDTH / 2)
+#define FB16_BLIT_2X_MAX_SRC_W (FB16_MAX_WIDTH / 2)
+
+int fb16_width = FB16_MAX_WIDTH;
+int fb16_height = FB16_MAX_HEIGHT;
+
+int fb16_set_size(int width, int height)
+{
+    if (width < 1 || width > FB16_MAX_WIDTH ||
+        height < 1 || height > FB16_MAX_HEIGHT) {
+        return 0;
+    }
+    fb16_width = width;
+    fb16_height = height;
+    return 1;
+}
 
 /* Cacheable scratch for one 2x-expanded output row (src_w*2 565 pixels).
  * Sized for the widest supported source and 32-byte aligned so the NEON
@@ -226,6 +240,9 @@ void fb16_clear(uint16_t *fb, uint16_t color)
     for (; p64 < end; ++p64) {
         *p64 = qword;
     }
+    uint16_t *tail = (uint16_t *)p64;
+    const size_t tail_pixels = ((size_t)FB16_WIDTH * FB16_HEIGHT) % 4U;
+    for (size_t i = 0; i < tail_pixels; ++i) tail[i] = color;
 }
 
 void fb16_pixel(uint16_t *fb, int x, int y, uint16_t color)
@@ -528,6 +545,67 @@ void fb16_blit_bgra32src(uint16_t *fb, int x, int y, int w, int h,
     }
 }
 
+void fb16_copy_row(uint16_t *fb, int x, int y, const uint16_t *src,
+                   int width, uint8_t blank)
+{
+    int skip = 0;
+    if (fb == NULL || src == NULL || width <= 0 ||
+        y < 0 || y >= FB16_HEIGHT || x >= FB16_WIDTH) return;
+    if (x < 0) {
+        skip = -x;
+        width -= skip;
+        x = 0;
+    }
+    if (width > FB16_WIDTH - x) width = FB16_WIDTH - x;
+    if (width <= 0) return;
+    uint16_t *dst = fb + (size_t)y * FB16_WIDTH + x;
+    if (blank != 0U) {
+        memset(dst, 0, (size_t)width * FB16_BPP);
+    } else {
+        memcpy(dst, src + skip, (size_t)width * FB16_BPP);
+    }
+}
+
+void fb16_blit_scaled_scanlines(uint16_t *fb, int dst_x, int dst_y,
+                                const uint32_t *src, int src_w, int src_h,
+                                int src_stride, unsigned scale_x,
+                                unsigned scale_y, uint8_t scanline_mode)
+{
+    if (fb == NULL || src == NULL || src_w <= 0 || src_h <= 0 ||
+        (scale_x != 1U && scale_x != 2U) ||
+        (scale_y != 1U && scale_y != 2U && scale_y != 4U)) return;
+    if (src_stride <= 0) src_stride = src_w;
+    if (src_stride < src_w) return;
+    if (scanline_mode > 3U) scanline_mode = 0U;
+
+    for (int sy = 0; sy < src_h; ++sy) {
+        const int out_y = dst_y + sy * (int)scale_y;
+        if (out_y + (int)scale_y <= 0 || out_y >= FB16_HEIGHT) continue;
+        const uint32_t *srow = src + (size_t)sy * src_stride;
+        /* Slice unusually wide sources too, so scratch size never limits
+         * the clipped primitive. Normal Apple rows fit in one slice. */
+        for (int sx = 0; sx < src_w; sx += FB16_BLIT_2X_MAX_SRC_W) {
+            const int count = (src_w - sx < FB16_BLIT_2X_MAX_SRC_W)
+                ? src_w - sx : FB16_BLIT_2X_MAX_SRC_W;
+            if (scale_x == 2U) {
+                fb16_expand_2x_row_bgra32src(s_blit_2x_row, srow + sx, count);
+            } else {
+                for (int x = 0; x < count; ++x) {
+                    s_blit_2x_row[x] = fb16_from_bgra32(srow[sx + x]);
+                }
+            }
+            for (unsigned phase = 0U; phase < scale_y; ++phase) {
+                const uint8_t blank = scale_y == 4U
+                    ? (uint8_t)(scanline_mode != 0U && phase >= 4U - scanline_mode)
+                    : (uint8_t)(scale_y == 2U && phase == 1U && scanline_mode >= 2U);
+                fb16_copy_row(fb, dst_x + sx * (int)scale_x,
+                               out_y + (int)phase, s_blit_2x_row,
+                               count * (int)scale_x, blank);
+            }
+        }
+    }
+}
+
 void fb16_blit_2x4(uint16_t *fb, int dst_x, int dst_y,
                    const uint32_t *src, int src_w, int src_h,
                    int src_stride)
@@ -540,110 +618,14 @@ void fb16_blit_2x4_scanlines(uint16_t *fb, int dst_x, int dst_y,
                              const uint32_t *src, int src_w, int src_h,
                              int src_stride, uint8_t scanline_mode)
 {
-    if (src == NULL || src_w <= 0 || src_h <= 0) return;
-    if (src_stride <= 0) src_stride = src_w;
-    if (scanline_mode > 3U) scanline_mode = 0U;
-
-    /* Caller is responsible for ensuring the destination rect (src_w*2 by
-     * src_h*4) fits inside the framebuffer; this primitive does not
-     * clip. The compositor's Apple subwindow is fixed-geometry inside
-     * 1920x1080, so no clipping is required here. */
-    for (int sy = 0; sy < src_h; ++sy) {
-        const uint32_t *srow = src + sy * src_stride;
-        uint16_t       *drow0 = fb + (dst_y + sy * 4) * FB16_WIDTH + dst_x;
-        uint16_t       *drow1 = drow0 + FB16_WIDTH;
-        uint16_t       *drow2 = drow0 + 2 * FB16_WIDTH;
-        uint16_t       *drow3 = drow0 + 3 * FB16_WIDTH;
-
-        const size_t row_bytes = (size_t)src_w * 2u * FB16_BPP;
-
-        /* Expand + narrow once into cacheable scratch, then copy that
-         * scratch to each active output row. Output slots are noncached
-         * DDR; keeping destination writes row-contiguous gives the
-         * store buffer a far better pattern than interleaving four
-         * distant rows. */
-        if (src_w <= FB16_BLIT_2X_MAX_SRC_W) {
-            fb16_expand_2x_row_bgra32src(s_blit_2x_row, srow, src_w);
-
-            memcpy(drow0, s_blit_2x_row, row_bytes);
-            if (scanline_mode >= 3U) {
-                memset(drow1, 0, row_bytes);
-            } else {
-                memcpy(drow1, s_blit_2x_row, row_bytes);
-            }
-            if (scanline_mode >= 2U) {
-                memset(drow2, 0, row_bytes);
-            } else {
-                memcpy(drow2, s_blit_2x_row, row_bytes);
-            }
-            if (scanline_mode >= 1U) {
-                memset(drow3, 0, row_bytes);
-            } else {
-                memcpy(drow3, s_blit_2x_row, row_bytes);
-            }
-        } else {
-            for (int x = 0; x < src_w; ++x) {
-                const uint16_t v = fb16_from_bgra32(srow[x]);
-                const uint32_t vv = ((uint32_t)v << 16) | v;
-                ((uint32_t *)drow0)[x] = vv;
-                if (scanline_mode < 3U) {
-                    ((uint32_t *)drow1)[x] = vv;
-                }
-                if (scanline_mode < 2U) {
-                    ((uint32_t *)drow2)[x] = vv;
-                }
-                if (scanline_mode < 1U) {
-                    ((uint32_t *)drow3)[x] = vv;
-                }
-            }
-            if (scanline_mode >= 3U) {
-                memset(drow1, 0, row_bytes);
-            }
-            if (scanline_mode >= 2U) {
-                memset(drow2, 0, row_bytes);
-            }
-            if (scanline_mode >= 1U) {
-                memset(drow3, 0, row_bytes);
-            }
-        }
-    }
+    fb16_blit_scaled_scanlines(fb, dst_x, dst_y, src, src_w, src_h,
+                               src_stride, 2U, 4U, scanline_mode);
 }
 
 void fb16_blit_2x2_scanlines(uint16_t *fb, int dst_x, int dst_y,
                              const uint32_t *src, int src_w, int src_h,
                              int src_stride, uint8_t scanline_mode)
 {
-    if (src == NULL || src_w <= 0 || src_h <= 0) return;
-    if (src_stride <= 0) src_stride = src_w;
-    if (scanline_mode > 3U) scanline_mode = 0U;
-
-    for (int sy = 0; sy < src_h; ++sy) {
-        const uint32_t *srow = src + sy * src_stride;
-        uint16_t       *drow0 = fb + (dst_y + sy * 2) * FB16_WIDTH + dst_x;
-        uint16_t       *drow1 = drow0 + FB16_WIDTH;
-
-        const size_t row_bytes = (size_t)src_w * 2u * FB16_BPP;
-
-        if (src_w <= FB16_BLIT_2X_MAX_SRC_W) {
-            fb16_expand_2x_row_bgra32src(s_blit_2x_row, srow, src_w);
-            memcpy(drow0, s_blit_2x_row, row_bytes);
-            if (scanline_mode >= 2U) {
-                memset(drow1, 0, row_bytes);
-            } else {
-                memcpy(drow1, s_blit_2x_row, row_bytes);
-            }
-        } else {
-            for (int x = 0; x < src_w; ++x) {
-                const uint16_t v = fb16_from_bgra32(srow[x]);
-                const uint32_t vv = ((uint32_t)v << 16) | v;
-                ((uint32_t *)drow0)[x] = vv;
-                if (scanline_mode < 2U) {
-                    ((uint32_t *)drow1)[x] = vv;
-                }
-            }
-            if (scanline_mode >= 2U) {
-                memset(drow1, 0, row_bytes);
-            }
-        }
-    }
+    fb16_blit_scaled_scanlines(fb, dst_x, dst_y, src, src_w, src_h,
+                               src_stride, 2U, 2U, scanline_mode);
 }

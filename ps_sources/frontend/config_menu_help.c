@@ -161,7 +161,7 @@ HELP(boot_bind_ok_back,
 
 HELP(boot_bind_prtscr,
     "Screenshot keys, active at all times, not just in the menu.",
-    "PRTSCR A2 saves the Apple's native video frame; PRTSCR 1080P saves the full 1080p HDMI output.",
+    "PRTSCR A2 saves the Apple's native video frame; OUTPUT SCREEN saves the full screen at the selected resolution.",
     "Screenshots land on the SD card.");
 
 HELP(boot_bind_tw_speed,
@@ -289,7 +289,7 @@ HELP(video_show_bezel,
     "Border Flood forces this Off and disables it until Bezel mode is selected again.");
 
 HELP(video_bezel,
-    "Choose a PNG exactly 1920 pixels wide and up to 1080 pixels high; it starts at the top left.",
+    "Choose a PNG that matches the selected output resolution; it starts at the top left.",
     "The larger the image, the more the performance impact, but it remains moderate.",
     "Auto tries 0:/bezel.png, then 0:/bezels/bezel.png, then the embedded default.",
     "Show bezel controls visibility. Border Flood disables this file selector.");
@@ -300,7 +300,21 @@ HELP(video_debug,
     "It adds overlay drawing. Border Flood forces it Off and disables this control.",
     "Debugging has a mild performance impact. Let us know if you want additional debug information.");
 
+HELP(video_resolution,
+    "Choose the display resolution. Changes apply immediately and are saved with the profile.",
+    "Size multiplier sets the centered Apple picture size; Max uses the largest whole-number fit.",
+    "Borders scale with the picture and get clipped at the screen edges.",
+    "Supply a bezel PNG at the selected resolution. The display must support the chosen mode.");
+
+HELP(video_size_multiplier,
+    "Max uses the largest whole-number scale that fits. Choose 1x or 2x to set a fixed limit.",
+    "The picture stays centered. Borders scale with it and get clipped at the screen edges.",
+    "SHR may need a smaller scale: 1200x800 fits legacy at 2x and SHR at 1x.",
+    "Your choice stays saved when SHR or a lower resolution needs a smaller scale.");
+
 static const help_override_t video_overrides[] = {
+    OVERRIDE(CONFIG_VIDEO_ITEM_RESOLUTION, video_resolution),
+    OVERRIDE(CONFIG_VIDEO_ITEM_SIZE_MULTIPLIER, video_size_multiplier),
     OVERRIDE(CONFIG_VIDEO_ITEM_OUTPUT, video_output),
     OVERRIDE(CONFIG_VIDEO_ITEM_VARIANT, video_variant),
     OVERRIDE(CONFIG_VIDEO_ITEM_DOT_BLEED, video_dot_bleed),

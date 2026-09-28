@@ -26,16 +26,14 @@ def test_layout() -> None:
         "#define COMP_APPLE_HEIGHT              192u",
         "#define COMP_APPLE_BORDER_H_CYCLES     2u",
         "#define COMP_APPLE_BORDER_V_LINES      16u",
-        "#define COMP_BORDER_X_OFF    344u",
-        "#define COMP_BORDER_Y_OFF    92u",
-        "#define COMP_BORDER_WIDTH    1232u",
-        "#define COMP_BORDER_HEIGHT   896u",
-        "#define COMP_SUBWIN_X_OFF    400u",
-        "#define COMP_SUBWIN_Y_OFF    156u",
-        "#define COMP_SHR_BORDER_H_PIXELS (COMP_SUBWIN_X_OFF - COMP_BORDER_X_OFF)",
-        "#define COMP_SHR_BORDER_V_PIXELS (COMP_SUBWIN_Y_OFF - COMP_BORDER_Y_OFF)",
-        "#define COMP_SHR_BORDER_X_OFF    (COMP_SUBWIN_SHR_X_OFF - COMP_SHR_BORDER_H_PIXELS)",
-        "#define COMP_SHR_BORDER_Y_OFF    (COMP_SUBWIN_SHR_Y_OFF - COMP_SHR_BORDER_V_PIXELS)",
+        "#define COMP_BORDER_X_OFF    (comp_legacy_viewport.border_x)",
+        "#define COMP_BORDER_Y_OFF    (comp_legacy_viewport.border_y)",
+        "#define COMP_SUBWIN_X_OFF    (comp_legacy_viewport.x)",
+        "#define COMP_SUBWIN_Y_OFF    (comp_legacy_viewport.y)",
+        "#define COMP_SHR_BORDER_X_OFF    (comp_shr_viewport.border_x)",
+        "#define COMP_SHR_BORDER_Y_OFF    (comp_shr_viewport.border_y)",
+        "int x, y, width, height;",
+        "int border_x, border_y, border_width, border_height;",
     )
     for text in expected:
         require(text in layout, f"missing layout contract: {text}")
@@ -101,7 +99,7 @@ def test_blit_and_flood_gating() -> None:
             "flood must narrow the sampled frame color to 565 and honor "
             "the scanline setting")
     require("if (suppress_apple)" in tick and
-            tick.index("if (suppress_apple)") < tick.index("draw_apple_subwindow(fb)"),
+            tick.index("if (suppress_apple)") < tick.index("draw_apple_subwindow(fb, apple_slot)"),
             "menu ownership must suppress the ring and flood with the Apple blit")
 
 
@@ -121,16 +119,34 @@ def test_shr_border_surrounds_video() -> None:
             "COMP_SHR_BORDER_HEIGHT" in shr,
             "SHR must synthesize a border around its own larger geometry")
     require(shr.index("draw_solid_border_ring(fb,") <
-            shr.index("blit_apple_2x2_serviced(fb,"),
+            shr.index("blit_apple_scaled_serviced(fb,"),
             "SHR video must land inside, not over, the synthesized ring")
     require("draw_border_flood(fb," in shr and
-            "s_scanlines_mode,\n                                  2U);" in shr,
-            "SHR flood must use the SHR ring and two-row scanline phase")
-    require("COMP_SHR_BORDER_X_OFF" in frontend and
-            "COMP_SHR_BORDER_Y_OFF" in frontend and
-            "COMP_SHR_BORDER_WIDTH" in frontend and
-            "COMP_SHR_BORDER_HEIGHT" in frontend,
-            "leaving SHR must restore its complete border footprint")
+            "s_scanlines_mode,\n                                  scale);" in shr,
+            "SHR flood must use its current scale for the scanline phase")
+    require("g_output_slot_apple_mode[slot] != next_mode" in frontend and
+            "apple_fb_reader_display_mode() == APPLE_FB_DISPLAY_MODE_SHR" in frontend and
+            "0, 0, FB16_WIDTH, FB16_HEIGHT" in frontend,
+            "either mode transition must restore the whole background from claimed geometry")
+
+
+def test_synthesized_legacy_border() -> None:
+    source = COMPOSITOR.read_text(encoding="utf-8")
+    draw = source[source.index("static int draw_apple_subwindow"):
+                  source.index("/* ---------- SuperSprite")]
+    require("APPLE_FB_FORMAT_PAGE_FLIP_MERGE" in draw and
+            "display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I ||" in draw and
+            "synthetic_legacy_border && s_border_enabled" in draw,
+            "interlace and page-flip frames need borders synthesized from the claimed color")
+    require("s_border_enabled != 0u && !synthetic_legacy_border" in draw and
+            "!synthetic_legacy_border && s_border_enabled != 0U" in draw,
+            "synthetic borders must not read absent samples or offset the active mono span")
+    ring = draw[draw.index("if (synthetic_legacy_border && s_border_enabled"):
+                draw.index("if (display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I) {")]
+    require("draw_solid_border_ring(fb," in ring and
+            "draw_border_flood(fb," in ring and
+            "apple_video_iigs_border_bgra(border_color)" in ring,
+            "the synthetic legacy ring and flood must use the frame-coherent border color")
 
 
 def test_format_badge_stays_on_active_image() -> None:
@@ -161,10 +177,11 @@ def test_border_is_below_foreground_overlays() -> None:
     require("COMPOSITOR_UI_PHASE_BASE" in header and
             "COMPOSITOR_UI_PHASE_OVERLAY" in header,
             "compositor UI contract must expose base and foreground phases")
-    require(tick.index("COMPOSITOR_UI_PHASE_BASE") <
-            tick.index("draw_apple_subwindow(fb)") <
+    require(tick.index("apple_fb_reader_claim()") <
+            tick.index("COMPOSITOR_UI_PHASE_BASE") <
+            tick.index("draw_apple_subwindow(fb, apple_slot)") <
             tick.index("COMPOSITOR_UI_PHASE_OVERLAY"),
-            "Apple border/video must draw after the bezel base and before foreground UI")
+            "claim before cleanup, then draw Apple border/video between base and foreground UI")
     base_return = compose.index("return menu_active;")
     require(compose.index("ui_prepare_static_background(fb, show_bezel);") < base_return and
             compose.index("debug_overlay_draw(fb, &debug_snapshot);") > base_return and
@@ -178,6 +195,7 @@ def main() -> int:
     test_frame_coherent_color()
     test_blit_and_flood_gating()
     test_shr_border_surrounds_video()
+    test_synthesized_legacy_border()
     test_format_badge_stays_on_active_image()
     test_border_is_below_foreground_overlays()
     print("compositor border tests: PASS")

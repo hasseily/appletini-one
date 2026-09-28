@@ -1,4 +1,5 @@
 #include "config_menu_internal.h"
+#include "display_modes.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -24,7 +25,7 @@ static const char *usb_binding_draw_label(uint32_t action)
     case CONFIG_MENU_USB_BIND_ACTION_SCREENSHOT_A2:
         return "PRTSCR A2";
     case CONFIG_MENU_USB_BIND_ACTION_SCREENSHOT_1080P:
-        return "PRTSCR 1080P";
+        return "OUTPUT SCREEN";
     case CONFIG_MENU_USB_BIND_ACTION_OK:
         return "OK";
     case CONFIG_MENU_USB_BIND_ACTION_BACK:
@@ -371,6 +372,26 @@ void config_menu_draw_video(uint16_t *fb,
     const int middle_x = x + third_w + 8;
     const int last_x = middle_x + third_w + 8;
     const int last_w = w - (third_w * 2) - 16;
+    const uint8_t multiplier = config_menu_size_multiplier(menu);
+    const uint8_t maximum = display_mode_max_multiplier(config_menu_output_mode(menu));
+    const char *multiplier_text = (multiplier == 0U) ? "Max" :
+        ((multiplier == 1U) ? "1x" : ((maximum < 2U) ? "2x (1x fit)" : "2x"));
+
+    hgr_draw_value_item(fb,
+                        x,
+                        y,
+                        half_w,
+                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_RESOLUTION),
+                        "Output resolution",
+                        display_mode_get(config_menu_output_mode(menu))->name);
+    hgr_draw_value_item(fb,
+                        right_x,
+                        y,
+                        right_w,
+                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_SIZE_MULTIPLIER),
+                        "Size multiplier",
+                        multiplier_text);
+    y += row_h;
 
     hgr_draw_value_item(fb,
                         x,
@@ -426,7 +447,7 @@ void config_menu_draw_video(uint16_t *fb,
                         third_w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BORDER),
                         menu->border_enabled,
-                        "IIgs border (VidHD $C034)");
+                        "IIgs border");
     hgr_draw_check_item(fb,
                         middle_x,
                         y + (row_h * 6),

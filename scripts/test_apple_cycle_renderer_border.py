@@ -84,11 +84,16 @@ def test_cycle_emission_and_handoff() -> None:
             "line >= ATN_ACTIVE_HEIGHT" in renderer,
             "border emitter must separate right, left, and border-only regions")
     require("s_frame_end_pending = 1u;" in renderer and
-            "line == 0u && cycle < ATN_BORDER_H_CYCLES" in renderer and
+            "const uint32_t pending_raw_cycles = ATN_BORDER_H_CYCLES +" in renderer and
+            "line * ATN_SCANNER_MAX_HORZ + cycle < pending_raw_cycles" in renderer and
             "on_frame_end();" in renderer and
             "on_frame_start();" in renderer and
             "s_frame_end_pending = 0u;" in renderer,
-            "frame publish must wait until wrapped right-border cycles are stored")
+            "frame publish must wait for phase-adjusted right-border cycles")
+    require("line = s_scanner_frame_lines - 1u;" in renderer and
+            "s_border_preroll_colors[index]" in renderer and
+            "apple_pal_video_on_cycle(0u, s_pending_line0_cycle[i]," in renderer,
+            "phase shifts must preserve border preroll and PAL replay coordinates")
     require("restore_left_border(render_line, render_cycle);" in renderer and
             "s_left_border_colors[left_index] = color;" in renderer,
             "AppleWin chroma preroll must not overwrite visible left-border pixels")

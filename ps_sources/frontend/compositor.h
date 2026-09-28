@@ -1,5 +1,5 @@
 /*
- * compositor.h -- PS-driven compositor that produces 1920x1080 RGB565
+ * compositor.h -- PS-driven compositor that produces RGB565
  * output frames for fb_reader.
  *
  * Each output frame is composited back-to-front as:
@@ -39,6 +39,8 @@ typedef enum {
  * visible above the border. Forward-declared as opaque pointers because
  * compositor.c doesn't know about ui_state_t / config_menu_t internals.
  *
+ * The compositor claims the Apple frame before BASE; callbacks may read
+ * apple_fb_reader_display_mode() to restore that frame's background.
  * During BASE, a non-zero return tells the compositor to suppress the Apple
  * subwindow for this frame. The return value from OVERLAY is ignored. */
 typedef int (*compositor_ui_draw_fn)(uint16_t *fb,
@@ -51,6 +53,18 @@ typedef int (*compositor_ui_draw_fn)(uint16_t *fb,
  * region has been marked DEVICE_MEMORY and after
  * apple_cycle_renderer_init() (so the Apple FB ring is initialized). */
 void compositor_init(compositor_ui_draw_fn draw_fn);
+
+/* Apply drawing geometry after the driver switches PL scanout. The caller
+ * must pause publication during the switch. This resets the publish pacing
+ * from the current PL registers and forces all output slots to repaint. */
+void compositor_set_output_mode(uint8_t mode);
+uint8_t compositor_output_mode(void);
+
+/* Apple picture size: 0 = Max, 1 = 1x, 2 = 2x. Each picture format
+ * clamps the preference to what fits. Only drawing geometry changes;
+ * the output resolution stays fixed. Retained across output mode changes. */
+void compositor_set_size_multiplier(uint8_t multiplier);
+uint8_t compositor_size_multiplier(void);
 
 /* Bind the user-state pointers the draw callback receives. Called once
  * after compositor_init() before the main loop starts. */
@@ -97,7 +111,7 @@ void compositor_set_border(uint8_t enabled, uint8_t flood);
  * without the compositor racing ahead. */
 void compositor_set_paused(uint8_t paused);
 
-/* Return the 1920x1080 RGB565 output slot currently latched by the PL.
+/* Return the current-size RGB565 output slot currently latched by the PL.
  * If the PL has not reported a recognizable slot yet, this falls back to
  * the last slot published by the compositor. */
 const uint16_t *compositor_latched_framebuffer(uint8_t *slot_out);

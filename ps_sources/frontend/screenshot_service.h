@@ -29,6 +29,8 @@ typedef struct {
 typedef void (*screenshot_service_sd_write_hook_t)(void *ctx);
 
 void screenshot_service_init(void);
+/* Drop screen coordinates cached before an output resolution change. */
+void screenshot_service_clear_overlays(void);
 void screenshot_service_set_scanlines(uint8_t mode);
 
 /* Feed the FatFS get_fattime() hook (this file owns the FAT time

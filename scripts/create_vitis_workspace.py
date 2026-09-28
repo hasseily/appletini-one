@@ -1240,6 +1240,7 @@ run_step(
             "../../../ps_sources/frontend/config_menu_logo_png.c",
             "../../../ps_sources/frontend/config_menu_ui.c",
             "../../../ps_sources/frontend/debug_overlay.c",
+            "../../../ps_sources/frontend/display_output.c",
             "../../../ps_sources/frontend/disk2_service.c",
             "../../../ps_sources/frontend/disk2_sound_samples.c",
             "../../../ps_sources/frontend/imagewriter.c",

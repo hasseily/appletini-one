@@ -424,13 +424,11 @@ def test_compositor_and_handoff_are_mode_aware() -> None:
             "UART :status must expose Apple FB handoff mode so black-screen SHR can be diagnosed")
     require("static uint8_t g_output_slot_apple_mode[COMP_OUT_SLOT_COUNT];" in frontend_main and
             "static void ui_restore_apple_footprint_if_needed" in frontend_main and
-            "apple_fb_reader_published_display_mode();" in frontend_main and
-            "COMP_SHR_BORDER_X_OFF" in frontend_main and
-            "COMP_SHR_BORDER_Y_OFF" in frontend_main and
-            "COMP_SHR_BORDER_WIDTH" in frontend_main and
-            "COMP_SHR_BORDER_HEIGHT" in frontend_main and
+            "apple_fb_reader_display_mode() == APPLE_FB_DISPLAY_MODE_SHR" in frontend_main and
+            "g_output_slot_apple_mode[slot] != next_mode" in frontend_main and
+            "0, 0, FB16_WIDTH, FB16_HEIGHT," in frontend_main and
             "ui_restore_apple_footprint_if_needed(fb, show_bezel);" in frontend_main,
-            "static bezel caching must restore the complete SHR border footprint when returning to legacy video")
+            "static bezel caching must restore the full background in both directions using the claimed frame mode")
 
 
 def test_shr_generation_cache() -> None:
@@ -802,8 +800,8 @@ def test_page_flip_removed() -> None:
                      "s_shr_flip_parity"):
         require(obsolete not in combined,
                 f"obsolete page-flip path remains: {obsolete}")
-    require("CONFIG_VIDEO_ITEM_COUNT        17U" in menu_internal,
-            "Video menu must contain its 17 video-only controls")
+    require("CONFIG_VIDEO_ITEM_COUNT        19U" in menu_internal,
+            "Video menu must contain its 19 video-only controls including resolution and size")
 
 
 TESTS = [

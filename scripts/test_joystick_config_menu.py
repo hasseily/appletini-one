@@ -163,7 +163,7 @@ static void render(config_menu_t *menu, const char *path)
     cmui_footer(fb,&footer,"Settings saved",0,0,0);
     FILE *ppm=fopen(path,"wb"); assert(ppm);
     fprintf(ppm,"P6\n%d %d\n255\n",FB16_WIDTH,FB16_HEIGHT);
-    for(unsigned i=0;i<FB16_WIDTH*FB16_HEIGHT;++i) {
+    for(unsigned i=0;i<(unsigned)(FB16_WIDTH*FB16_HEIGHT);++i) {
         unsigned char rgb[3]={(fb[i]>>11)*255/31,((fb[i]>>5)&63)*255/63,(fb[i]&31)*255/31};
         fwrite(rgb,1,3,ppm);
     }

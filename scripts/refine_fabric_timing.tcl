@@ -12,7 +12,7 @@ if {$argc < 2 || $argc > 4} {
 set input_dcp [file normalize [lindex $argv 0]]
 set output_dir [file normalize [lindex $argv 1]]
 set temporary_uncertainty [expr {$argc >= 3 ? [lindex $argv 2] : 0.300}]
-set minimum_wns [expr {$argc >= 4 ? [lindex $argv 3] : 0.200}]
+set minimum_wns [expr {$argc >= 4 ? [lindex $argv 3] : 0.150}]
 
 if {![file isfile $input_dcp]} {
     error "Input checkpoint does not exist: $input_dcp"
@@ -22,8 +22,8 @@ foreach value [list $temporary_uncertainty $minimum_wns] {
         error "Timing margins must be positive numbers."
     }
 }
-if {$minimum_wns < 0.200} {
-    error "Minimum final WNS cannot be less than 0.200 ns."
+if {$minimum_wns < 0.150} {
+    error "Minimum final WNS cannot be less than 0.150 ns."
 }
 if {$temporary_uncertainty <= $minimum_wns} {
     error "Temporary uncertainty must exceed the required final WNS."
@@ -54,6 +54,21 @@ proc clock_setup_slack {clock_name} {
     return [get_property SLACK $path]
 }
 
+# Reject inherited or uncleared margin before reporting nominal slack.
+proc nominal_clock_user_uncertainty {clock_name} {
+    set clock [get_clocks -quiet $clock_name]
+    if {[llength $clock] != 1} {error "Expected one clock named $clock_name."}
+    set path [get_timing_paths -quiet -delay_type max -from $clock -to $clock \
+        -max_paths 1]
+    if {[llength $path] != 1} {error "No setup path found for $clock_name."}
+    set value [get_property USER_UNCERTAINTY $path]
+    if {$value eq ""} {set value 0.000}
+    if {![string is double -strict $value] || $value != 0.0} {
+        error "Expected nominal user uncertainty for $clock_name, got $value ns."
+    }
+    return $value
+}
+
 proc cross_clock_setup_slack {from_name to_name} {
     set from_clock [get_clocks -quiet $from_name]
     set to_clock [get_clocks -quiet $to_name]
@@ -81,6 +96,8 @@ set video_group clk_out1_zynq_ps_bd_clk_wiz_0_0
 set dvi_group dvi_clk_out
 
 open_checkpoint $input_dcp
+nominal_clock_user_uncertainty $fabric_group
+nominal_clock_user_uncertainty $video_group
 
 set fabric_before [clock_setup_slack $fabric_group]
 set video_before [clock_setup_slack $video_group]
@@ -103,6 +120,8 @@ phys_opt_design -placement_opt -routing_opt -restruct_opt \
 
 # The extra uncertainty is an implementation aid, not a design constraint.
 set_clock_uncertainty -setup 0.0 $fabric_clock
+set final_fabric_user_uncertainty [nominal_clock_user_uncertainty $fabric_group]
+set final_pixel_user_uncertainty [nominal_clock_user_uncertainty $video_group]
 
 set fabric_after [clock_setup_slack $fabric_group]
 set video_after [clock_setup_slack $video_group]
@@ -177,6 +196,8 @@ if {[dict get $route_values route_status] ne "PASS" ||
     error "Route or bus-skew check failed."
 }
 
+source [file join [file dirname [info script]] check_video_bus_constraints.tcl]
+
 write_checkpoint -force $output_dcp
 write_bitstream -force $output_bit
 
@@ -207,6 +228,9 @@ set manifest [dict create \
     input_dcp_sha256 [timing_run::sha256_file $input_dcp] \
     temporary_setup_uncertainty_ns $temporary_uncertainty \
     temporary_setup_uncertainty_cleared 1 \
+    final_fabric_user_uncertainty_ns $final_fabric_user_uncertainty \
+    final_pixel_user_uncertainty_ns $final_pixel_user_uncertainty \
+    constraint_bounds_status PASS \
     minimum_wns_ns $minimum_wns \
     fabric_wns_before_ns $fabric_before \
     fabric_wns_after_ns $fabric_after \

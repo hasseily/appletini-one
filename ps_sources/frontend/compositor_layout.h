@@ -63,11 +63,16 @@
 
 /* ---------- Output framebuffer ring (PS -> PL) ------------------------- */
 
-#define COMP_OUT_WIDTH         1920u
-#define COMP_OUT_HEIGHT        1080u
+#define COMP_OUT_MAX_WIDTH     1920u
+#define COMP_OUT_MAX_HEIGHT    1080u
+extern uint16_t comp_out_width;
+extern uint16_t comp_out_height;
+#define COMP_OUT_WIDTH         ((uint32_t)comp_out_width)
+#define COMP_OUT_HEIGHT        ((uint32_t)comp_out_height)
 #define COMP_OUT_BPP           2u    /* RGB565 */
-#define COMP_OUT_STRIDE_BYTES  (COMP_OUT_WIDTH * COMP_OUT_BPP)         /* 3840 */
-#define COMP_OUT_BYTES         (COMP_OUT_HEIGHT * COMP_OUT_STRIDE_BYTES) /* 4,147,200 */
+#define COMP_OUT_STRIDE_BYTES  (COMP_OUT_WIDTH * COMP_OUT_BPP)
+#define COMP_OUT_BYTES         (COMP_OUT_HEIGHT * COMP_OUT_STRIDE_BYTES)
+#define COMP_OUT_MAX_BYTES     (COMP_OUT_MAX_WIDTH * COMP_OUT_MAX_HEIGHT * COMP_OUT_BPP)
 
 #define COMP_OUT_SLOT_COUNT    3u
 
@@ -132,38 +137,41 @@ extern const uint32_t comp_apple_slot_addr[COMP_APPLE_SLOT_COUNT];
 #define APPLE_VIDEO_ROM_OVERRIDE_ADDR   0x3F020000u
 #define APPLE_VIDEO_ROM_OVERRIDE_BYTES  4096u
 
-/* ---------- Apple subwindow geometry inside the output frame ----------- *
- *
- * Fixed geometry. The Apple FB is 560x192; the subwindow is 1120x768
- * (2x horizontal, 4x vertical replication) centered horizontally at y=156.
- * Keep all related offsets and dimensions together in this section.
- */
+/* ---------- Apple subwindow geometry inside the output frame ----------- */
 
-#define COMP_SUBWIN_X_OFF    400u
-#define COMP_SUBWIN_Y_OFF    156u
-#define COMP_SUBWIN_WIDTH    1120u
-#define COMP_SUBWIN_HEIGHT   768u
+/* Fit the active image with an integer scale. Border coordinates stay
+ * signed: the ring may extend offscreen. Legacy has a 560x384 display aspect. */
+typedef struct {
+    int x, y, width, height;
+    int border_x, border_y, border_width, border_height;
+    uint8_t scale;
+} comp_viewport_t;
+extern comp_viewport_t comp_legacy_viewport;
+extern comp_viewport_t comp_shr_viewport;
+int comp_layout_set_output_size(uint16_t width, uint16_t height);
 
-#define COMP_BORDER_X_OFF    344u
-#define COMP_BORDER_Y_OFF    92u
-#define COMP_BORDER_WIDTH    1232u
-#define COMP_BORDER_HEIGHT   896u
+/* 0 chooses the largest fitting integer; 1 and 2 cap that choice.
+ * The preference survives output mode changes. Invalid values select 0. */
+void comp_layout_set_size_multiplier(uint8_t multiplier);
+uint8_t comp_layout_size_multiplier(void);
 
-#define COMP_SUBWIN_SHR_X_OFF    320u
-#define COMP_SUBWIN_SHR_Y_OFF    140u
-#define COMP_SUBWIN_SHR_WIDTH    1280u
-#define COMP_SUBWIN_SHR_HEIGHT   800u
-
-/* SHR is wider and taller than the legacy active image, so its IIgs border
- * needs its own outer rectangle. Keep the same on-screen border thickness as
- * legacy while expanding the ring around the complete 1280x800 SHR image. */
-#define COMP_SHR_BORDER_H_PIXELS (COMP_SUBWIN_X_OFF - COMP_BORDER_X_OFF)
-#define COMP_SHR_BORDER_V_PIXELS (COMP_SUBWIN_Y_OFF - COMP_BORDER_Y_OFF)
-#define COMP_SHR_BORDER_X_OFF    (COMP_SUBWIN_SHR_X_OFF - COMP_SHR_BORDER_H_PIXELS)
-#define COMP_SHR_BORDER_Y_OFF    (COMP_SUBWIN_SHR_Y_OFF - COMP_SHR_BORDER_V_PIXELS)
-#define COMP_SHR_BORDER_WIDTH    (COMP_SUBWIN_SHR_WIDTH + \
-                                  (2u * COMP_SHR_BORDER_H_PIXELS))
-#define COMP_SHR_BORDER_HEIGHT   (COMP_SUBWIN_SHR_HEIGHT + \
-                                  (2u * COMP_SHR_BORDER_V_PIXELS))
+#define COMP_SUBWIN_X_OFF    (comp_legacy_viewport.x)
+#define COMP_SUBWIN_Y_OFF    (comp_legacy_viewport.y)
+#define COMP_SUBWIN_WIDTH    (comp_legacy_viewport.width)
+#define COMP_SUBWIN_HEIGHT   (comp_legacy_viewport.height)
+#define COMP_BORDER_X_OFF    (comp_legacy_viewport.border_x)
+#define COMP_BORDER_Y_OFF    (comp_legacy_viewport.border_y)
+#define COMP_BORDER_WIDTH    (comp_legacy_viewport.border_width)
+#define COMP_BORDER_HEIGHT   (comp_legacy_viewport.border_height)
+#define COMP_SUBWIN_SHR_X_OFF    (comp_shr_viewport.x)
+#define COMP_SUBWIN_SHR_Y_OFF    (comp_shr_viewport.y)
+#define COMP_SUBWIN_SHR_WIDTH    (comp_shr_viewport.width)
+#define COMP_SUBWIN_SHR_HEIGHT   (comp_shr_viewport.height)
+#define COMP_SHR_BORDER_H_PIXELS (COMP_SUBWIN_SHR_X_OFF - COMP_SHR_BORDER_X_OFF)
+#define COMP_SHR_BORDER_V_PIXELS (COMP_SUBWIN_SHR_Y_OFF - COMP_SHR_BORDER_Y_OFF)
+#define COMP_SHR_BORDER_X_OFF    (comp_shr_viewport.border_x)
+#define COMP_SHR_BORDER_Y_OFF    (comp_shr_viewport.border_y)
+#define COMP_SHR_BORDER_WIDTH    (comp_shr_viewport.border_width)
+#define COMP_SHR_BORDER_HEIGHT   (comp_shr_viewport.border_height)
 
 #endif /* COMPOSITOR_LAYOUT_H */

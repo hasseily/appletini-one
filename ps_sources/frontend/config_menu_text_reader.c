@@ -253,14 +253,27 @@ void config_menu_text_reader_open(config_menu_t *menu,
             *ch = ' ';
         }
     }
-    cmui_screen_rects(NULL, &body, NULL);
-    g_text_reader.columns = (uint32_t)((body.w - (2 * TEXT_READER_PADDING)) /
-                                      (FB16_BUILTIN_FONT_ADVANCE_X * CMUI_BODY_SCALE));
-    if (g_text_reader.columns == 0U || g_text_reader.columns > TEXT_READER_COLUMNS) {
-        g_text_reader.columns = TEXT_READER_COLUMNS;
+    if (FB16_WIDTH < 1680 || FB16_HEIGHT < 1000) {
+        const int scale = (FB16_WIDTH >= 1024 && FB16_HEIGHT >= 768) ? 2 : 1;
+        const int line_h = FB16_BUILTIN_FONT_HEIGHT * scale + 4;
+        const int row_h = FB16_BUILTIN_FONT_HEIGHT * scale + 8;
+        g_text_reader.columns = (uint32_t)((FB16_WIDTH - 32) /
+            (FB16_BUILTIN_FONT_ADVANCE_X * scale));
+        if (g_text_reader.columns > TEXT_READER_COLUMNS) {
+            g_text_reader.columns = TEXT_READER_COLUMNS;
+        }
+        g_text_reader.page_rows =
+            (uint32_t)((FB16_HEIGHT - 38 - 4 * line_h) / row_h - 4);
+    } else {
+        cmui_screen_rects(NULL, &body, NULL);
+        g_text_reader.columns = (uint32_t)((body.w - (2 * TEXT_READER_PADDING)) /
+                                          (FB16_BUILTIN_FONT_ADVANCE_X * CMUI_BODY_SCALE));
+        if (g_text_reader.columns == 0U || g_text_reader.columns > TEXT_READER_COLUMNS) {
+            g_text_reader.columns = TEXT_READER_COLUMNS;
+        }
+        g_text_reader.page_rows = (uint32_t)((body.h - TEXT_READER_HEADER_H -
+                                            TEXT_READER_FOOTER_H) / TEXT_READER_LINE_H);
     }
-    g_text_reader.page_rows = (uint32_t)((body.h - TEXT_READER_HEADER_H -
-                                        TEXT_READER_FOOTER_H) / TEXT_READER_LINE_H);
     if (g_text_reader.page_rows == 0U) {
         g_text_reader.page_rows = 1U;
     }

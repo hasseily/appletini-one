@@ -67,7 +67,7 @@ def test_fb16_blits_narrow_at_store():
             "and double in-register")
     require("const uint32_t *src, int src_w, int src_h" in c,
             "2x blits keep BGRA32 source signatures (Apple ring stays 32-bit)")
-    require("memcpy(drow0, s_blit_2x_row, row_bytes);" in c,
+    require("memcpy(dst, src + skip, (size_t)width * FB16_BPP);" in c,
             "expanded rows must be copied contiguously to the noncached output")
     require("fb32" not in c and "FB32" not in c,
             "no fb32 remnants in fb16.c")

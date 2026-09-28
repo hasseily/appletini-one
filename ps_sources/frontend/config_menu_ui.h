@@ -48,6 +48,19 @@ typedef struct {
     int h;
 } cmui_rect_t;
 
+/* Small outputs reuse the same page drawing code to collect text and rows.
+ * Rendering them at a native font size keeps settings readable at 640x400. */
+uint8_t cmui_compact_active(void);
+void cmui_compact_begin(void);
+void cmui_compact_scroll(int delta);
+void cmui_compact_entry(const char *label, const char *value,
+                         uint8_t focused, uint8_t dimmed);
+void cmui_compact_finish(uint16_t *fb, const char *title,
+                          const char * const *tabs, uint32_t tab_count,
+                          uint32_t selected_tab,
+                          const char *status, uint8_t warning,
+                          uint8_t usb_owned, uint8_t iiplus_keyboard);
+
 void cmui_screen_rects(cmui_rect_t *nav,
                        cmui_rect_t *body,
                        cmui_rect_t *footer);

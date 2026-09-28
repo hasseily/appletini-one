@@ -306,7 +306,7 @@ def test_boot_menu_groups_boot_and_video_settings() -> None:
             "normal boot settings must contain boot controls and USB menu bindings")
     require("case CONFIG_TAB_VIDEO:\n"
             "        return CONFIG_VIDEO_ITEM_COUNT;" in source and
-            "#define CONFIG_VIDEO_ITEM_COUNT        17U" in internal and
+            "#define CONFIG_VIDEO_ITEM_COUNT        19U" in internal and
             "CONFIG_VIDEO_ITEM_ONEE_STANDARD" not in internal and
             '"ONE//e video standard"' not in video_draw,
             "video tab must not own the ONE//e PAL/NTSC control")
@@ -324,7 +324,7 @@ def test_boot_menu_groups_boot_and_video_settings() -> None:
             '"Video-7 MIX (COL140M)"' in video_draw and
             '"Scanlines"' in video_draw and
             "hgr_draw_video_ghosting_item" in video_draw and
-            '"IIgs border (VidHD $C034)"' in video_draw and
+            '"IIgs border"' in video_draw and
             '"Border color"' in video_draw and
             '"Outside ring"' in video_draw and
             '"Legacy page flip' not in video_draw and
@@ -342,7 +342,7 @@ def test_boot_menu_groups_boot_and_video_settings() -> None:
     require(video_draw.index('"Dot bleed"') <
             video_draw.index('"Scanlines"') <
             video_draw.index("hgr_draw_video_ghosting_item") <
-            video_draw.index('"IIgs border (VidHD $C034)"') <
+            video_draw.index('"IIgs border"') <
             video_draw.index('"Border color"') <
             video_draw.index('"Outside ring"') <
             video_draw.index('"Video ROM"') <
@@ -599,11 +599,10 @@ def test_scaled_apple_blits_avoid_uncached_output_readback() -> None:
             "scaled Apple blits must not copy from noncached output rows")
     require("static uint16_t s_blit_2x_row[FB16_BLIT_2X_MAX_SRC_W * 2]" in fb16 and
             "void fb16_expand_2x_row_bgra32src(uint16_t *dst, const uint32_t *src," in fb16 and
-            "fb16_expand_2x_row_bgra32src(s_blit_2x_row, srow, src_w);" in fb16 and
-            "memcpy(drow0, s_blit_2x_row, row_bytes);" in fb16 and
-            "memcpy(drow1, s_blit_2x_row, row_bytes);" in fb16 and
-            "memcpy(drow2, s_blit_2x_row, row_bytes);" in fb16 and
-            "memcpy(drow3, s_blit_2x_row, row_bytes);" in fb16,
+            "fb16_expand_2x_row_bgra32src(s_blit_2x_row, srow + sx, count);" in fb16 and
+            "out_y + (int)phase, s_blit_2x_row," in fb16 and
+            "count * (int)scale_x, blank);" in fb16 and
+            "memcpy(dst, src + skip, (size_t)width * FB16_BPP);" in fb16,
             "2x Apple blits must expand into cacheable scratch and copy active rows contiguously")
     require("#if defined(__ARM_NEON)" in fb16 and
             "#include <arm_neon.h>" in fb16 and
@@ -671,10 +670,10 @@ def test_compositor_ghosting_is_optional_and_cache_friendly() -> None:
             "effect_write_row" not in compositor,
             "ghosting pipeline must use packed piecewise temporal history and remove blur/soften/phosphor falloff")
     require("if (compositor_apple_effects_active()) {\n"
-            "            blit_apple_ghosting_2x(fb," in compositor and
+            "            blit_apple_effects_scaled(fb," in compositor and
             "fb16_blit_2x2_scanlines(fb," in compositor and
             "if (compositor_apple_effects_active()) {\n"
-            "        blit_apple_ghosting_2x(fb," in compositor and
+            "        blit_apple_effects_scaled(fb," in compositor and
             "fb16_blit_2x4_scanlines(fb," in compositor and
             "(s_video_ghosting_strength != APPLETINI_VIDEO_GHOSTING_OFF) ||\n"
             "           (s_video_blur_strength != APPLETINI_VIDEO_BLUR_OFF) ||\n"
@@ -962,9 +961,9 @@ def test_dot_bleed_is_mono_only_and_persists() -> None:
             "void compositor_set_video_dot_bleed(uint8_t level);" in compositor_h and
             "uint8_t compositor_video_dot_bleed(void);" in compositor_h,
             "compositor must default dot bleed to Light and claim no mono span when it is Off")
-    require("#define CONFIG_VIDEO_ITEM_VARIANT      1U" in internal and
-            "#define CONFIG_VIDEO_ITEM_DOT_BLEED    2U" in internal and
-            "#define CONFIG_VIDEO_ITEM_SCANLINES    3U" in internal,
+    require("#define CONFIG_VIDEO_ITEM_VARIANT      3U" in internal and
+            "#define CONFIG_VIDEO_ITEM_DOT_BLEED     4U" in internal and
+            "#define CONFIG_VIDEO_ITEM_SCANLINES    5U" in internal,
             "Dot bleed must retain its focus index between mono tint and Scanlines")
     require("y + row_h,\n"
             "                        (menu->video_output_mono != 0U) ? half_w : w," in video_draw and

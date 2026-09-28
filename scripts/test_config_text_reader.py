@@ -2,6 +2,7 @@
 """Exercise the production text reader with native FatFs/UI/heap stubs."""
 
 from pathlib import Path
+import os
 import re
 import subprocess
 import textwrap
@@ -16,7 +17,12 @@ BUILD = ROOT / "build/config_text_reader_test"
 def main() -> int:
     compiler = find_native_c_compiler()
     if compiler is None:
+        candidate = Path("E:/AMDDesignTools/2025.2/tps/mingw/10.0.0/win64.o/nt/bin/gcc.exe")
+        if candidate.exists():
+            compiler = candidate
+    if compiler is None:
         raise RuntimeError("A native C compiler is required for text reader tests")
+    env = dict(os.environ, PATH=str(compiler.parent) + os.pathsep + os.environ.get("PATH", ""))
     source = (ROOT / "ps_sources/frontend/config_menu_text_reader.c").read_text(
         encoding="utf-8")
     source = re.sub(r'^#include "config_menu[^\n]+\n', "", source, flags=re.MULTILINE)
@@ -57,6 +63,10 @@ def main() -> int:
         } } while (0)
         #define CONFIG_MENU_PATH_LEN 256
         #define FB16_BUILTIN_FONT_ADVANCE_X 7
+        #define FB16_BUILTIN_FONT_HEIGHT 8
+        static int output_width=1920, output_height=1080;
+        #define FB16_WIDTH output_width
+        #define FB16_HEIGHT output_height
         #define CMUI_BODY_SCALE 2
         #define CMUI_TITLE_SCALE 2
         #define CMUI_SMALL_SCALE 2
@@ -364,13 +374,27 @@ def main() -> int:
             config_menu_text_reader_close(); config_menu_text_reader_close();
             CHECK(live_allocs == 0U);
         }
+        static void test_compact_screen_layout(void)
+        {
+            output_width=1024; output_height=768;
+            reset(""); memset(data, 'x', 150U); data_size=150U; open_reader();
+            CHECK(g_text_reader.columns==70U && g_text_reader.page_rows==23U);
+            CHECK(g_text_reader.count==3U);
+            char line[71]; memset(line,'x',70); line[70]='\0';
+            check_line(0U,line); check_line(1U,line); check_line(2U,"xxxxxxxxxx");
+            reset(""); memset(data,'\n',100U); data_size=100U; open_reader();
+            key(UI_KEY_RIGHT); CHECK(g_text_reader.top==23U);
+            key(UI_KEY_RIGHT); CHECK(g_text_reader.top==46U);
+            output_width=1920; output_height=1080;
+        }
         int main(void)
         {
             test_newlines_and_tabs(); test_wrap(); test_encoding(); test_limits();
             test_input_and_empty(); test_filesystem_errors(); test_oom_and_cleanup();
             test_boot_keyboard_navigation(); test_usb_navigation_bindings();
+            test_compact_screen_layout();
             config_menu_text_reader_close(); CHECK(live_allocs == 0U && file_open == 0U);
-            puts("PASS: 9 text-reader behavior groups (formatting, bounds, input, Apple/USB mappings, SD lifecycle, errors)");
+            puts("PASS: 10 text-reader behavior groups (formatting, bounds, input, Apple/USB mappings, SD lifecycle, errors)");
             return 0;
         }
     ''')
@@ -380,8 +404,8 @@ def main() -> int:
     c_path.write_text(preamble + "\n" + input_source + "\n" + source + "\n" + tests,
                       encoding="utf-8")
     subprocess.run([str(compiler), "-std=c11", "-Wall", "-Wextra", "-Werror", "-static",
-                    str(c_path), "-o", str(executable)], check=True, cwd=ROOT)
-    subprocess.run([str(executable)], check=True, cwd=ROOT)
+                    str(c_path), "-o", str(executable)], check=True, cwd=ROOT, env=env)
+    subprocess.run([str(executable)], check=True, cwd=ROOT, env=env)
     return 0
 
 

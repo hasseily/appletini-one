@@ -538,7 +538,7 @@ def test_settings_menu_controls_debug_overlay_and_bezel() -> None:
             "draw_performance" in debug_overlay and
             "OWNER %s" in debug_overlay and
             "HUD_TOP_Y       (FB16_HEIGHT - HUD_TOP_H - 8)" in debug_overlay and
-            "FPS 1080p %lu.%02lu  Apple area %lu.%02lu" in debug_overlay and
+            "FPS output %lu.%02lu  Apple area %lu.%02lu" in debug_overlay and
             '"USB device"' in debug_overlay and
             '"Apple keyboard"' in debug_overlay,
             "debug overlay must draw compact bottom system/input/storage/video/soft-switch/pipeline HUD panels")
@@ -577,7 +577,7 @@ def test_settings_menu_controls_debug_overlay_and_bezel() -> None:
             "extern volatile uint32_t g_compositor_last_sync_us;" in compositor_h and
             "extern volatile uint32_t g_compositor_last_total_us;" in compositor_h and
             "XTime_GetTime(&ui_start);" in compositor and
-            "apple_drawn = draw_apple_subwindow(fb);" in compositor and
+            "apple_drawn = draw_apple_subwindow(fb, apple_slot);" in compositor and
             "XTime_GetTime(&sync_start);" in compositor and
             "g_compositor_last_total_us = ticks_to_us(total_end - total_start);" in compositor,
             "compositor must time UI draw, Apple blit, sync/publish, and total compose work")

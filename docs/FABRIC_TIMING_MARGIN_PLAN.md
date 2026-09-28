@@ -6,17 +6,29 @@ Raise intrinsic fabric timing margin at 133.333 MHz. A timing candidate may
 become the incremental reference only after it meets all of these gates:
 
 - Two clean, full, non-incremental builds of the same Git commit pass in a row.
-- Each build has setup WNS of at least `+0.200 ns` and setup TNS of `0`.
+- Each build has nominal global setup WNS of at least `+0.150 ns` and setup TNS of `0`.
 - Each build has nonnegative hold WNS and hold TNS of `0`.
 - Each build has nonnegative pulse-width slack and no failing endpoints.
 - Each build has no unconstrained internal endpoint, route error, bus-skew
   error, or XDC query that matched no object.
+- The temporary implementation margin stays at `0.200 ns` in the normal flow.
+  Final fabric and pixel user uncertainty must both be zero, and
+  `constraint_bounds_status=PASS` must confirm all 32 Apple/Gray bounds.
 - The exact firmware made from the first passing checkpoint passes the full
   hardware test list.
 - The checkpoint, bitstream, XSA, firmware, reports, commit, and tool version
   have saved hashes or IDs.
 
-The `+0.200 ns` setup target gives useful build margin. Two runs with Vivado's
+The user-requested `+0.150 ns` nominal floor applies to normal export,
+firmware packaging and reference promotion. The temporary `0.200 ns`
+implementation margin is an optimization aid and must be removed before
+signoff. The separate fabric-refinement tool retains its `0.300 ns` temporary
+default; its output remains ineligible as a full-build reference.
+
+This policy was updated on September 27, 2026. Historical trial entries below
+retain their measured values and the gates used at the time; they do not
+override the current floor or satisfy the new manifest checks retroactively.
+Two runs with Vivado's
 default seed show repeatability on one tool version and host. They do not prove
 that all seeds or later Vivado releases will pass. Record both facts and rerun
 the gate after a tool change.
@@ -2040,15 +2052,15 @@ vivado -mode batch -source scripts/promote_timing_candidate.tcl `
 - Do not mix RTL, a flow experiment, and a floorplan change.
 - Keep all failed build records. Revert a failed experiment in a new scoped
   commit or before starting the next one.
-- Do not promote a new fabric feature while setup WNS is below `+0.200 ns`.
+- Do not promote a new fabric feature while nominal setup WNS is below `+0.150 ns`.
 - A correctness or safety fix may proceed below the margin bar, but it must use
   a full build and hardware test and must not become the timing reference until
   it passes the normal gate.
 - Stop a phase when two clean full builds and hardware tests meet the target.
   Do not add later timing changes without a measured need.
 
-Expected useful margin is `+0.200 ns` to about `+0.800 ns`. The measured gates,
-not that estimate, decide when the campaign ends.
+The measured gates, including the `+0.150 ns` nominal floor, decide when
+the campaign ends.
 
 ## September 25: Focus on Changes Since F1.0.8
 
@@ -2057,7 +2069,7 @@ Compare RTL against F1.0.8 (`c5044416`). The F1.1.4 correctness build
 `+0.055 ns`, and pulse-width slack `+0.265 ns`. Routing and bus skew pass;
 no internal path lacks a constraint. This build used the positive-slack
 exception for the DMA completion fix. Keep its working firmware intact.
-All timing trials use the normal `+0.200 ns` gate.
+Those September 25 trials used the then-current `+0.200 ns` gate.
 
 The main additions since F1.0.8 are TURBO caching, deferred video writes,
 Disk II replay and readiness, and seek sound handling. The video coalescer

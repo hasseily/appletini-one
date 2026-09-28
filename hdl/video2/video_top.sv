@@ -3,7 +3,7 @@
  *
  * Reads RGB565 framebuffer pixels from PS DDR over AXI HP0 via fb_reader
  * and drives them straight onto the 5:6:5 DVI output pins through
- * video_timing_gen at 1080p. The framebuffer format and the wire format
+ * video_timing_gen at the selected resolution. The framebuffer and wire
  * are the same 16 bits end to end.
  *
  * The PS compositor produces frames into one of three slots in PS DDR
@@ -20,6 +20,20 @@ module video_top (
     AxiSimple_if.client as_client,
     input logic pixel_clk,
     input logic pixel_resetn,
+    input logic pixel_locked,
+    output logic clock_resetn,
+
+    // Dedicated Clocking Wizard AXI-Lite write master. No PS address map
+    // exposure: only the checked mode presets can program the pixel clock.
+    output logic [10:0] clock_awaddr,
+    output logic clock_awvalid,
+    input logic clock_awready,
+    output logic [31:0] clock_wdata,
+    output logic clock_wvalid,
+    input logic clock_wready,
+    input logic [1:0] clock_bresp,
+    input logic clock_bvalid,
+    output logic clock_bready,
 
     /* Apple-side timing inputs that drive the DVI timing genlock. */
     input logic apple_video_mode_50hz,
@@ -35,6 +49,7 @@ module video_top (
     output logic         dvi_hsync,
     output logic         dvi_vsync
 );
+    import video_pkg::*;
 
     // ------------------------------------------------------------------
     // FB control registers (offsets 0x00..0x0C). PS writes the base
@@ -52,6 +67,14 @@ module video_top (
     localparam [7:0] FB_REGIDX_LAST_LATCHED = 8'h03;
     localparam [7:0] FB_REGIDX_DEBUG        = 8'h04;
     localparam [7:0] FB_REGIDX_DEBUG2       = 8'h05;
+    localparam [7:0] FB_REGIDX_MODE_REQUEST = 8'h06;
+    localparam [7:0] FB_REGIDX_MODE_STATUS  = 8'h07;
+    localparam [7:0] FB_REGIDX_MODE_BASE    = 8'h08;
+    // Stage a 128-byte-aligned MODE_BASE, then write MODE_REQUEST[3:0].
+    // STATUS: [31:24]=A9, [11]=held, [10]=locked, [9]=error,
+    // [8]=busy, [3:0]=active mode. A successful fallback retains error.
+    // Request/base writes while busy are ignored. FB_BASE changes only
+    // when the new mode and staged base commit together after clock lock.
     /* DEBUG register layout (read-only):
      *   [2:0]   fb_reader FSM state
      *   [3]     axi_read_err sticky
@@ -63,6 +86,24 @@ module video_top (
     logic [31:0] fb_base_addr_q;
     logic [31:0] fb_frame_count_q;
     logic [31:0] fb_last_latched_q;
+    logic [31:0] mode_base_q;
+    logic [3:0] requested_mode_q;
+    logic mode_request;
+    logic [3:0] active_mode;
+    logic mode_busy, mode_error, mode_commit;
+    logic [31:0] mode_committed_base;
+    logic reader_pause, reader_quiescent, video_hold;
+    logic clock_locked_clk;
+    logic video_resetn;
+
+    cdc_bit_sync cdc_pixel_locked_i (
+        .clk(clk), .resetn(resetn), .din(pixel_locked), .dout(clock_locked_clk)
+    );
+    reset_sync video_reset_sync_i (
+        .clk(pixel_clk),
+        .arst_n(pixel_resetn && resetn && !video_hold),
+        .srst_n(video_resetn)
+    );
 
     // ------------------------------------------------------------------
     // DVI timing generator -- pixel_clk domain
@@ -78,7 +119,7 @@ module video_top (
 
     cdc_bit_sync cdc_apple_video_mode_50hz_i (
         .clk(pixel_clk),
-        .resetn(pixel_resetn),
+        .resetn(video_resetn),
         .din(apple_video_mode_50hz),
         .dout(apple_video_mode_50hz_pixel)
     );
@@ -88,13 +129,14 @@ module video_top (
         .src_resetn(resetn),
         .src_pulse (apple_vblank_start_pulse),
         .dst_clk   (pixel_clk),
-        .dst_resetn(pixel_resetn),
+        .dst_resetn(video_resetn),
         .dst_pulse (apple_vblank_start_pixel)
     );
 
     video_timing_gen video_timing (
         .clk_pixel    (pixel_clk),
-        .rst_n        (pixel_resetn),
+        .rst_n        (video_resetn),
+        .output_mode  (active_mode),
         .mode_1080p50 (apple_video_mode_50hz_pixel),
         .genlock_vblank_start(apple_vblank_start_pixel),
         .hsync        (video_hsync_i),
@@ -109,7 +151,7 @@ module video_top (
     logic video_vblank_start_clk;
     cdc_pulse_toggle cdc_video_vblank_start_i (
         .src_clk   (pixel_clk),
-        .src_resetn(pixel_resetn),
+        .src_resetn(video_resetn),
         .src_pulse (video_vblank_start),
         .dst_clk   (clk),
         .dst_resetn(resetn),
@@ -130,6 +172,22 @@ module video_top (
     logic [15:0] fb_reader_dbg_axi_err_count;
     logic [15:0] fb_reader_dbg_underrun_count;
 
+    video_mode_control mode_control_i (
+        .clk(clk), .resetn(resetn),
+        .request(mode_request), .requested_mode(requested_mode_q),
+        .requested_base(mode_base_q), .reader_quiescent(reader_quiescent),
+        .frame_latched(fb_reader_vblank_pulse), .clock_locked(clock_locked_clk),
+        .active_mode(active_mode), .committed_base(mode_committed_base),
+        .commit(mode_commit), .busy(mode_busy), .error(mode_error),
+        .reader_pause(reader_pause), .video_hold(video_hold),
+        .clock_resetn(clock_resetn),
+        .clock_awaddr(clock_awaddr), .clock_awvalid(clock_awvalid),
+        .clock_awready(clock_awready), .clock_wdata(clock_wdata),
+        .clock_wvalid(clock_wvalid), .clock_wready(clock_wready),
+        .clock_bresp(clock_bresp), .clock_bvalid(clock_bvalid),
+        .clock_bready(clock_bready)
+    );
+
     fb_reader fb_reader_i (
         .clk         (clk),
         .resetn      (resetn),
@@ -137,6 +195,9 @@ module video_top (
         .axi_read_if (axi_read_if),
 
         .base_addr_in        (fb_base_addr_q),
+        .frame_bursts_in     (video_frame_bursts(active_mode)),
+        .pause_request       (reader_pause),
+        .quiescent           (reader_quiescent),
         .last_latched_addr   (fb_reader_last_latched),
         .vblank_latched_pulse(fb_reader_vblank_pulse),
 
@@ -161,15 +222,27 @@ module video_top (
             fb_base_addr_q     <= 32'h0;
             fb_frame_count_q   <= 32'h0;
             fb_last_latched_q  <= 32'h0;
+            mode_base_q        <= 32'h0;
+            requested_mode_q   <= VIDEO_DEFAULT_MODE;
+            mode_request      <= 1'b0;
         end else begin
+            mode_request <= 1'b0;
             if (as_client.awvalid) begin
                 case (as_common.awaddr)
                     FB_REGIDX_BASE_ADDR: fb_base_addr_q <= globals::apply_wstrb(
                         fb_base_addr_q, as_common.wdata, as_common.wstrb);
                     FB_REGIDX_CONTROL:   ;
+                    FB_REGIDX_MODE_BASE: if (!mode_busy)
+                        mode_base_q <= globals::apply_wstrb(
+                            mode_base_q, as_common.wdata, as_common.wstrb);
+                    FB_REGIDX_MODE_REQUEST: if (!mode_busy && as_common.wstrb[0]) begin
+                        requested_mode_q <= as_common.wdata[3:0];
+                        mode_request <= 1'b1;
+                    end
                     default: ;
                 endcase
             end
+            if (mode_commit) fb_base_addr_q <= mode_committed_base;
             if (fb_reader_vblank_pulse) begin
                 fb_frame_count_q  <= fb_frame_count_q + 32'd1;
                 fb_last_latched_q <= fb_reader_last_latched;
@@ -205,6 +278,12 @@ module video_top (
                     fb_reader_dbg_underrun_count, // [31:16]
                     fb_reader_dbg_axi_err_count   // [15:0]
                 };
+                FB_REGIDX_MODE_REQUEST: as_client_rdata_q <= {28'b0, requested_mode_q};
+                FB_REGIDX_MODE_BASE: as_client_rdata_q <= mode_base_q;
+                FB_REGIDX_MODE_STATUS: as_client_rdata_q <= {
+                    8'hA9, 12'b0, video_hold, clock_locked_clk, mode_error, mode_busy,
+                    4'b0, active_mode
+                };
                 default:                as_client_rdata_q <= 32'h00000000;
             endcase
         end
@@ -222,7 +301,7 @@ module video_top (
     (* IOB = "TRUE" *) reg       dvi_vsync_r;
 
     always @(posedge pixel_clk) begin
-        if (!pixel_resetn) begin
+        if (!video_resetn) begin
             dvi_red_r <= 0;
             dvi_grn_r <= 0;
             dvi_blu_r <= 0;

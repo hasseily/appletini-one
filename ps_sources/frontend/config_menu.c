@@ -16,6 +16,7 @@
 #include "boot_menu_service.h"
 #include "card_control_regs.h"
 #include "compositor_layout.h"
+#include "display_modes.h"
 #include "printer_service.h"
 #include "profile_manager.h"
 #include "onee_fixed_mode.h"
@@ -32,7 +33,7 @@
 #define APPLETINI_CFG_TMP_PATH "0:/appletini_cfg.tmp"
 #define APPLETINI_CFG_BAK_PATH "0:/appletini_cfg.bak"
 #define APPLETINI_CFG_MAX 8192U
-#define APPLETINI_CFG_VERSION 117U
+#define APPLETINI_CFG_VERSION 119U
 #define ONEE_PERSIST_RETRY_POLL_LIMIT 4096U
 #define ETHERNET_CONTROL_SLOT 1U
 #define DISK2_CONTROL_SLOT 6U
@@ -258,6 +259,12 @@ static const char * const k_tab_labels[CONFIG_TAB_COUNT] = {
     "About"
 };
 
+/* Keep every tab visible in one row at the smallest supported output size. */
+static const char * const k_compact_tab_labels[CONFIG_TAB_COUNT] = {
+    "Prof", "Boot", "Video", "SP", "Disk", "CPU", "Sound", "Mouse",
+    "Net", "TW", "Clock", "RAM", "USB", "Print", "About"
+};
+
 #define CONFIG_MENU_HELP_H 210
 #define CONFIG_MENU_HELP_GAP 24
 
@@ -319,7 +326,7 @@ static const char * const k_usb_binding_action_text[CONFIG_MENU_USB_BIND_ACTION_
     "Tab up",
     "Tab down",
     "PRTSCR A2",
-    "PRTSCR 1080P",
+    "OUTPUT SCREEN",
     "OK",
     "Back",
     "TW 1MHz",
@@ -3204,6 +3211,67 @@ static uint8_t config_menu_parse_browser_lastdir(config_menu_t *menu,
     return 0U;
 }
 
+static uint8_t config_menu_output_mode_text(const char *value)
+{
+    for (uint8_t mode = 0U; mode < DISPLAY_MODE_COUNT; ++mode) {
+        if (config_menu_str_ieq(value, display_mode_get(mode)->name) != 0U) {
+            return mode;
+        }
+    }
+    return DISPLAY_MODE_DEFAULT;
+}
+
+static void config_menu_cycle_output_mode(config_menu_t *menu, int8_t delta)
+{
+    /* UI order is separate from the fixed PL preset IDs. */
+    static const uint8_t order[DISPLAY_MODE_COUNT] = { 0U, 1U, 2U, 5U, 3U, 4U };
+    const uint8_t mode = config_menu_output_mode(menu);
+    if (menu == NULL) {
+        return;
+    }
+    for (uint8_t i = 0U; i < DISPLAY_MODE_COUNT; ++i) {
+        if (order[i] == mode) {
+            const uint8_t next = (delta < 0) ?
+                ((i == 0U) ? DISPLAY_MODE_COUNT - 1U : i - 1U) :
+                (uint8_t)((i + 1U) % DISPLAY_MODE_COUNT);
+            menu->output_mode = order[next];
+            return;
+        }
+    }
+}
+
+static uint8_t config_menu_size_multiplier_text(const char *value)
+{
+    if (config_menu_str_ieq(value, "1") != 0U) {
+        return 1U;
+    }
+    if (config_menu_str_ieq(value, "2") != 0U) {
+        return 2U;
+    }
+    return 0U;
+}
+
+static const char *config_menu_size_multiplier_config(const config_menu_t *menu)
+{
+    const uint8_t multiplier = config_menu_size_multiplier(menu);
+    return (multiplier == 1U) ? "1" : ((multiplier == 2U) ? "2" : "max");
+}
+
+static void config_menu_cycle_size_multiplier(config_menu_t *menu, int8_t delta)
+{
+    const uint8_t current = config_menu_size_multiplier(menu);
+    const uint8_t maximum = display_mode_max_multiplier(config_menu_output_mode(menu));
+    if (menu == NULL) {
+        return;
+    }
+    if (delta < 0) {
+        menu->size_multiplier = (current == 0U || current > maximum) ?
+            maximum : current - 1U;
+    } else {
+        menu->size_multiplier = (current >= maximum) ? 0U : current + 1U;
+    }
+}
+
 static void config_menu_parse_key_value(config_menu_t *menu, const char *key, const char *value)
 {
     uint32_t i;
@@ -3238,6 +3306,10 @@ static void config_menu_parse_key_value(config_menu_t *menu, const char *key, co
     } else if (strcmp(key, "onee.video.standard") == 0) {
         menu->onee_video_50hz =
             (config_menu_str_ieq(value, "PAL") != 0U) ? 1U : 0U;
+    } else if (strcmp(key, "video.resolution") == 0) {
+        menu->output_mode = config_menu_output_mode_text(value);
+    } else if (strcmp(key, "video.size_multiplier") == 0) {
+        menu->size_multiplier = config_menu_size_multiplier_text(value);
     } else if (strcmp(key, "video.scanlines") == 0) {
         menu->scanlines_mode = config_menu_scanlines_text(value);
     } else if (strcmp(key, "video.output") == 0) {
@@ -3449,6 +3521,8 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
     APPEND_CFG("appletini.config.version=%u\n"
                "boot.menu.seconds=%s\n"
                "boot.device=%s\n"
+               "video.resolution=%s\n"
+               "video.size_multiplier=%s\n"
                "video.scanlines=%s\n"
                "video.output=%s\n"
                "video.mono.color=%s\n"
@@ -3471,6 +3545,8 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                (menu->boot_timeout_mode == CONFIG_BOOT_TIMEOUT_UNLIMITED) ? "UNLIMITED" :
                ((menu->boot_timeout_mode == CONFIG_BOOT_TIMEOUT_5S) ? "5" : "3"),
                (menu->boot_device == CONFIG_BOOT_DEVICE_DISK2) ? "DISK2" : "SMARTPORT",
+               display_mode_get(config_menu_output_mode(menu))->name,
+               config_menu_size_multiplier_config(menu),
                config_menu_scanlines_config(menu->scanlines_mode),
                (menu->video_output_mono != 0U) ? "MONOCHROME" : "COLOR",
                config_menu_video_mono_color_config(menu->video_mono_color),
@@ -3724,6 +3800,8 @@ static void config_menu_load_settings(config_menu_t *menu)
 
     /* Each file must opt in; a missing key never inherits TURBO permission. */
     menu->vtw_turbo_enabled = CONFIG_DEFAULT_VTW_TURBO_ENABLED;
+    /* Old files use Max even if an earlier SD read failed and the user changed it. */
+    menu->size_multiplier = 0U;
     buffer[bytes_read] = '\0';
     line = strtok(buffer, "\r\n");
     while (line != NULL) {
@@ -3958,6 +4036,8 @@ static void config_menu_reset_settings_only(config_menu_t *menu)
     menu->boot_device = CONFIG_DEFAULT_BOOT_DEVICE;
     /* Keep onee_video_50hz: like the ONE//e enable latch, it is global and a
      * profile reset must not replace it with a profile-local default. */
+    menu->output_mode = DISPLAY_MODE_DEFAULT;
+    menu->size_multiplier = 0U;
     menu->scanlines_mode = CONFIG_DEFAULT_SCANLINES_MODE;
     menu->video_output_mono = CONFIG_DEFAULT_VIDEO_OUTPUT_MONO;
     menu->video_mono_color = CONFIG_DEFAULT_VIDEO_MONO_COLOR;
@@ -5364,6 +5444,18 @@ static uint8_t config_menu_adjust_focused_value(config_menu_t *menu, int8_t delt
         return 1U;
     }
     if (menu->tab == CONFIG_TAB_VIDEO &&
+        menu->item_focus == CONFIG_VIDEO_ITEM_RESOLUTION) {
+        config_menu_cycle_output_mode(menu, delta);
+        config_menu_save_settings(menu);
+        return 1U;
+    }
+    if (menu->tab == CONFIG_TAB_VIDEO &&
+        menu->item_focus == CONFIG_VIDEO_ITEM_SIZE_MULTIPLIER) {
+        config_menu_cycle_size_multiplier(menu, delta);
+        config_menu_save_settings(menu);
+        return 1U;
+    }
+    if (menu->tab == CONFIG_TAB_VIDEO &&
         menu->item_focus == CONFIG_VIDEO_ITEM_SCANLINES) {
         if (delta < 0) {
             menu->scanlines_mode = (menu->scanlines_mode == APPLETINI_SCANLINES_OFF) ?
@@ -6706,7 +6798,11 @@ static void config_menu_activate_item(config_menu_t *menu)
             config_menu_open_browser(menu, CONFIG_BROWSER_TARGET_BEZEL);
             break;
         }
-        if (menu->item_focus == CONFIG_VIDEO_ITEM_OUTPUT) {
+        if (menu->item_focus == CONFIG_VIDEO_ITEM_RESOLUTION) {
+            config_menu_cycle_output_mode(menu, 1);
+        } else if (menu->item_focus == CONFIG_VIDEO_ITEM_SIZE_MULTIPLIER) {
+            config_menu_cycle_size_multiplier(menu, 1);
+        } else if (menu->item_focus == CONFIG_VIDEO_ITEM_OUTPUT) {
             menu->video_output_mono = menu->video_output_mono ? 0U : 1U;
         } else if (menu->item_focus == CONFIG_VIDEO_ITEM_VARIANT) {
             if (menu->video_output_mono != 0U) {
@@ -7099,6 +7195,8 @@ void config_menu_init(config_menu_t *menu)
     menu->onee_video_50hz = CONFIG_DEFAULT_ONEE_VIDEO_50HZ;
     menu->onee_persist_write_failed = 0U;
     menu->onee_persist_retry_polls = 0U;
+    menu->output_mode = DISPLAY_MODE_DEFAULT;
+    menu->size_multiplier = 0U;
     menu->scanlines_mode = CONFIG_DEFAULT_SCANLINES_MODE;
     menu->video_output_mono = CONFIG_DEFAULT_VIDEO_OUTPUT_MONO;
     menu->video_mono_color = CONFIG_DEFAULT_VIDEO_MONO_COLOR;
@@ -7454,6 +7552,17 @@ uint8_t config_menu_handle_input(config_menu_t *menu, ui_input_t input)
         return 0U;
     }
 
+    if ((FB16_WIDTH < 1680 || FB16_HEIGHT < 1000) &&
+        menu->tab == CONFIG_TAB_ABOUT) {
+        if (input.key == UI_KEY_UP || input.key == UI_KEY_PAGE_UP) {
+            cmui_compact_scroll(input.key == UI_KEY_UP ? -1 : -8);
+            return 1U;
+        }
+        if (input.key == UI_KEY_DOWN || input.key == UI_KEY_PAGE_DOWN) {
+            cmui_compact_scroll(input.key == UI_KEY_DOWN ? 1 : 8);
+            return 1U;
+        }
+    }
     if (config_menu_joystick_handle_input(menu, input) != 0U) {
         return 1U;
     }
@@ -7637,6 +7746,11 @@ static void hgr_draw_item_with_lock_ex(uint16_t *fb,
                         (focused ? CMUI_COLOR_ROW_ACTIVE : CMUI_COLOR_ROW);
     int text_x = x + 2;
 
+    if (cmui_compact_active() != 0U) {
+        cmui_compact_entry(text, (show_lock && locked) ? "Read only" : NULL,
+                           focused, dimmed);
+        return;
+    }
     if (show_lock != 0U) {
         fb16_fill_rect(fb, x, y, w, CMUI_ROW_H, bg);
         if (focused != 0U) {
@@ -7812,6 +7926,12 @@ void hgr_draw_video_ghosting_item(uint16_t *fb,
                                   uint8_t focused,
                                   uint8_t strength)
 {
+    if (cmui_compact_active() != 0U) {
+        cmui_compact_entry("Phosphor ghosting", appletini_video_ghosting_name(strength),
+                           focused, 0U);
+        return;
+    }
+
     const uint32_t bg = (focused != 0U) ? CMUI_COLOR_ROW_ACTIVE : CMUI_COLOR_ROW;
     const uint32_t label_fg = (focused != 0U) ? CMUI_COLOR_TEXT :
                               CMUI_COLOR_MUTED;
@@ -7854,6 +7974,12 @@ void hgr_draw_video_blur_item(uint16_t *fb,
                               uint8_t focused,
                               uint8_t strength)
 {
+    if (cmui_compact_active() != 0U) {
+        cmui_compact_entry("Phosphor blur", appletini_video_blur_name(strength),
+                           focused, 0U);
+        return;
+    }
+
     const uint32_t bg = (focused != 0U) ? CMUI_COLOR_ROW_ACTIVE : CMUI_COLOR_ROW;
     const uint32_t label_fg = (focused != 0U) ? CMUI_COLOR_TEXT :
                               CMUI_COLOR_MUTED;
@@ -7896,6 +8022,12 @@ void hgr_draw_video_glow_item(uint16_t *fb,
                               uint8_t focused,
                               uint8_t strength)
 {
+    if (cmui_compact_active() != 0U) {
+        cmui_compact_entry("Phosphor glow", appletini_video_glow_name(strength),
+                           focused, 0U);
+        return;
+    }
+
     const uint32_t bg = (focused != 0U) ? CMUI_COLOR_ROW_ACTIVE : CMUI_COLOR_ROW;
     const uint32_t label_fg = (focused != 0U) ? CMUI_COLOR_TEXT :
                               CMUI_COLOR_MUTED;
@@ -8033,7 +8165,7 @@ static void config_menu_draw_about(uint16_t *fb,
 {
     int cursor = y + 10;
     const int help_h = 92;
-    const int bottom = y + h - help_h - 18;
+    const int bottom = cmui_compact_active() ? 10000 : y + h - help_h - 18;
 
     config_menu_draw_about_section(
         fb,
@@ -8378,7 +8510,7 @@ static void config_menu_draw_browser(uint16_t *fb,
             dimmed);
     }
 
-    if (show_preview != 0U) {
+    if (show_preview != 0U && cmui_compact_active() == 0U) {
         config_menu_draw_browser_preview(fb,
                                          menu,
                                          x + list_w + preview_gap,
@@ -8502,6 +8634,9 @@ static void config_menu_draw_page(uint16_t *fb, const config_menu_t *menu,
     }
     help_h = (h > (CONFIG_MENU_HELP_H + 160)) ?
         CONFIG_MENU_HELP_H : (h / 3);
+    if (menu->tab == CONFIG_TAB_VIDEO && h < 810 && help_h > 190) {
+        help_h = 190;
+    }
     help.x = x;
     help.y = y + h - help_h;
     help.w = w;
@@ -8567,6 +8702,17 @@ static void config_menu_draw_page(uint16_t *fb, const config_menu_t *menu,
     }
 }
 
+uint8_t config_menu_output_mode(const config_menu_t *menu)
+{
+    return (menu != NULL) ? display_mode_clamp(menu->output_mode) :
+        DISPLAY_MODE_DEFAULT;
+}
+
+uint8_t config_menu_size_multiplier(const config_menu_t *menu)
+{
+    return (menu != NULL) ? display_size_multiplier_clamp(menu->size_multiplier) : 0U;
+}
+
 void config_menu_draw(uint16_t *fb, const config_menu_t *menu, uint8_t usb_owned)
 {
     cmui_rect_t nav;
@@ -8574,6 +8720,33 @@ void config_menu_draw(uint16_t *fb, const config_menu_t *menu, uint8_t usb_owned
     cmui_rect_t footer;
 
     if (!config_menu_is_active(menu)) {
+        return;
+    }
+
+    if (FB16_WIDTH < 1680 || FB16_HEIGHT < 1000) {
+        const cmui_rect_t logical_body = {0, 0, 1480, 812};
+        const char *title = (menu->tab < CONFIG_TAB_COUNT) ?
+            k_tab_labels[menu->tab] : "Settings";
+        cmui_compact_begin();
+        if (menu->ethernet_ftp_sd_remote_active != 0U) {
+            config_menu_draw_ethernet_ftp_sd_modal(fb, &logical_body, usb_owned);
+        } else if (menu->usb0_sd_remote_active != 0U) {
+            config_menu_draw_usb0_sd_remote_modal(fb, &logical_body, usb_owned);
+        } else if (config_menu_text_reader_active() != 0U) {
+            config_menu_text_reader_draw(fb, &logical_body);
+        } else if (menu->printout_action_active || menu->printout_editor_active ||
+                   menu->printout_delete_confirm_active) {
+            config_menu_printing_draw_overlays(fb, menu, 0, 0, logical_body.w);
+        } else if (menu->browser_active != 0U) {
+            config_menu_draw_browser(fb, menu, 0, 0, logical_body.w);
+        } else {
+            config_menu_draw_page(fb, menu, 0, 0, logical_body.w, logical_body.h);
+        }
+        cmui_compact_finish(fb, title, k_compact_tab_labels, CONFIG_TAB_COUNT,
+                            menu->tab, menu->status, menu->status_warning,
+                            usb_owned,
+                            (uint8_t)(boot_menu_service_machine_mode() ==
+                                      CARD_MACHINE_MODE_IIPLUS));
         return;
     }
 

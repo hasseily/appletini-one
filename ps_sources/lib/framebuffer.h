@@ -41,6 +41,19 @@
 #define FB_LAST_LATCHED_REG (FB_CONTROL_BASE + 0x0C)
 #define FB_DEBUG_REG        (FB_CONTROL_BASE + 0x10)
 #define FB_DEBUG2_REG       (FB_CONTROL_BASE + 0x14)
+#define FB_MODE_REQUEST_REG (FB_CONTROL_BASE + 0x18)
+#define FB_MODE_STATUS_REG  (FB_CONTROL_BASE + 0x1C)
+#define FB_MODE_BASE_REG    (FB_CONTROL_BASE + 0x20)
+#define FB_MODE_ID_MASK     0x0FU
+#define FB_MODE_BUSY        (1U << 8)
+#define FB_MODE_ERROR       (1U << 9)
+#define FB_MODE_LOCKED      (1U << 10)
+#define FB_MODE_HELD        (1U << 11)
+#define FB_MODE_SIGNATURE_MASK 0xFF000000U
+#define FB_MODE_SIGNATURE   0xA9000000U
+/* MODE_BASE stages the first frame for MODE_REQUEST. The PL commits its
+ * base and dimensions together after draining AXI and locking the new clock.
+ * MODE_STATUS reports the active preset, busy/error/lock, and an ABI tag. */
 /* FB_DEBUG_REG layout (read-only):
  *   [2:0]   fb_reader FSM state (S_IDLE=0, S_RESET_FIFO=1, S_BURST=2,
  *                                S_DRAIN=3)

@@ -4,7 +4,7 @@
  * Compiles the REAL apple_cycle_renderer.c + appletini_ntsc.c +
  * appletini_csbits.c for x86 and drives them with synthetic capture
  * records, mimicking apple_cycle_egress.c's shadow-write + dispatch
- * order exactly. Eight scenarios, mirroring hardware reports:
+ * order exactly. Scenarios mirroring hardware reports:
  *
  *   T1  dragons.shr4i (interlaced R4G4B4): full-frame decode dumped
  *       for pixel-exact comparison against scripts/render_shr4.py.
@@ -31,6 +31,16 @@
  *       write, stream all four DHGRi banks across frame edges. The $FF A2Li
  *       marker must hold the old published slot until mode 1 commits the
  *       complete pair, then publish one pixel-identical settled weave.
+ *   T9  Frame-coherent monochrome metadata, including mid-frame changes.
+ *   T10 Every captured border pixel survives TEXT/HGR/DHGR/lores changes.
+ *   T11 C034 border colors reach ordinary, A2Li weave/flip, and SHR frames.
+ *       test_renderer_border_pipeline.py feeds these actual rendered slots
+ *       through the production compositor at every output size/multiplier.
+ *   T12 Enable the border after startup, visit every source slot, and retain
+ *       cached paged graphics unchanged for 50 frame markers at a time.
+ *   T13 Capture 262/312-line frames with phase shifts and delayed PAL work.
+ *   T14 Keep C034 raster colors and publication order at negative phase edges.
+ *   T15 Keep line-0 C034 raster colors across positive phase preroll.
  *
  * Usage: harness.exe <repo_root> <out_dir>
  * Then:  python scripts/host_render_harness/check_output.py <out_dir>
@@ -43,6 +53,7 @@
 
 #include "apple_cycle_egress.h"
 #include "apple_cycle_renderer.h"
+#include "apple_pal_video_timing.h"
 #include "apple_fb_handoff.h"
 #include "appletini_ntsc.h"
 #include "compositor_layout.h"
@@ -77,6 +88,12 @@ static uint8_t  s_pub_slot = 0xFFu;
 static uint8_t  s_pub_border;
 static uint32_t s_pub_count = 0u;
 
+#ifdef HARNESS_BORDER_CALLBACK
+static void verify_composited_border(void);
+#else
+#define verify_composited_border() ((void)0)
+#endif
+
 uint8_t apple_fb_writer_slot(void) { return s_writer_slot; }
 
 void apple_fb_writer_publish_frame(uint32_t display_mode,
@@ -107,6 +124,7 @@ uint32_t apple_fb_reader_published_format_detail(void) { return s_pub_detail; }
 
 /* ---------- PAL-accurate model stubs (harness runs non-PAL modes) --- */
 
+#ifndef HARNESS_REAL_PAL
 uint8_t apple_pal_video_mode_is_active(uint8_t color_mode)
 {
     return (uint8_t)((color_mode == APPLE_VIDEO_COLOR_PAL_ACCURATE_COMPOSITE ||
@@ -124,6 +142,7 @@ void apple_pal_video_preroll_line0_cycle(uint32_t cycle, uint32_t sw)
 void apple_pal_video_on_cycle(uint32_t line, uint32_t cycle, uint32_t sw)
 { (void)line; (void)cycle; (void)sw; }
 void apple_pal_video_pump(void) {}
+#endif
 
 /* ---------- uart stubs ---------- */
 
@@ -215,13 +234,23 @@ static void legacy_frame(uint32_t sw11)
     }
 }
 
-static void legacy_full_frame(uint32_t sw11)
+static void legacy_full_frame_timed(uint32_t sw11, uint32_t lines,
+                                    uint32_t pump_every_lines)
 {
-    for (uint32_t line = 0u; line < 262u; ++line) {
+    for (uint32_t line = 0u; line < lines; ++line) {
         for (uint32_t cycle = 0u; cycle < 65u; ++cycle) {
             feed(rec_frame(line, cycle, sw11));
         }
+        if (pump_every_lines != 0u &&
+            ((line + 1u) % pump_every_lines) == 0u) {
+            apple_pal_video_pump();
+        }
     }
+}
+
+static void legacy_full_frame(uint32_t sw11)
+{
+    legacy_full_frame_timed(sw11, 262u, 1u);
 }
 
 static void shr_marker(void)
@@ -1202,6 +1231,358 @@ static void t9_mono_frame_tags(void)
            "T9 SHR never inherits legacy mono shaping metadata");
 }
 
+static void t10_captured_borders(void)
+{
+    static const uint32_t modes[] = {
+        SW_TEXT_ONLY, SW_HGR, SW_DHGR, 0u, SW_DLORES, SW_TEXT_ONLY
+    };
+    printf("--- T10 real CPU1 captured borders across text/graphics ---\n");
+    memset(s_main_mem, 0, sizeof s_main_mem);
+    memset(s_aux_mem, 0, sizeof s_aux_mem);
+    for (uint8_t output = 0; output < APPLE_VIDEO_COLOR_COUNT; ++output) {
+        s_settings = apple_video_settings_pack_border_full(
+            0u, APPLE_VIDEO_MONO_GREEN, output, 1u, 1u,
+            0, 0, 1u, APPLE_VIDEO_IIGS_BORDER_DEFAULT, 0u);
+        apple_cycle_renderer_reset_local_video_state();
+        for (unsigned mode = 0; mode < sizeof modes / sizeof modes[0]; ++mode) {
+            legacy_full_frame(modes[mode]);
+            legacy_full_frame(modes[mode]);
+            legacy_full_frame(modes[mode]);
+            const uint32_t *pixels = (const uint32_t *)s_slot_mem[s_pub_slot];
+            const uint32_t expected = apple_video_iigs_border_bgra(
+                APPLE_VIDEO_IIGS_BORDER_DEFAULT);
+            unsigned bad = 0;
+            unsigned first_x = 0, first_y = 0;
+            for (unsigned y = 0; y < COMP_APPLE_VISIBLE_HEIGHT; ++y) {
+                for (unsigned x = 0; x < COMP_APPLE_VISIBLE_WIDTH; ++x) {
+                    if (y >= COMP_APPLE_BORDER_V_LINES &&
+                        y < COMP_APPLE_BORDER_V_LINES + COMP_APPLE_HEIGHT &&
+                        x >= COMP_APPLE_BORDER_H_PIXELS &&
+                        x < COMP_APPLE_BORDER_H_PIXELS + COMP_APPLE_WIDTH) {
+                        continue;
+                    }
+                    if (pixels[y * COMP_APPLE_ROW_PIXELS +
+                               COMP_APPLE_LEFT_BORDER_PIXELS + x] != expected) {
+                        if (bad++ == 0) { first_x = x; first_y = y; }
+                    }
+                }
+            }
+            printf("border output=%u sw=%03x mode=%u detail=%x color=%u bad=%u first=%u,%u\n",
+                   output, modes[mode], s_pub_mode, s_pub_detail,
+                   s_pub_border, bad, first_x, first_y);
+            expect(bad == 0, "T10 every captured border pixel retains the IIgs color");
+            verify_composited_border();
+        }
+    }
+}
+
+static void t11_synthesized_border_metadata(void)
+{
+    printf("--- T11 real CPU1 A2Li/SHR border handoff ---\n");
+    memset(s_main_mem, 0, sizeof s_main_mem);
+    memset(s_aux_mem, 0, sizeof s_aux_mem);
+    s_settings = apple_video_settings_pack_border_full(
+        1u, APPLE_VIDEO_MONO_GREEN, APPLE_VIDEO_COLOR_COMPOSITE_MONITOR,
+        1u, 1u, 0, 0, 1u, APPLE_VIDEO_IIGS_BORDER_DEFAULT, 0u);
+    apple_cycle_renderer_reset_local_video_state();
+    const uint8_t colors[] = {6u, 1u, 0u, 15u};
+    const uint32_t switches[] = {SW_HGR, SW_DHGR, 0u, SW_DLORES};
+    for (unsigned ci = 0; ci < sizeof colors; ++ci) {
+        feed(rec_io(0xC034u, colors[ci]));
+        for (unsigned mode = 0; mode < sizeof switches / sizeof switches[0]; ++mode) {
+            const uint16_t hole = (switches[mode] & SW_HGR) ? 0x4078u : 0x0878u;
+            for (unsigned page = 0; page < 3; ++page) {
+                static const uint8_t magic[] = {0xC1u, 0xB2u, 0xCCu, 0xE9u};
+                for (unsigned i = 0; i < sizeof magic; ++i) feed(rec_write(hole + i, magic[i]));
+                feed(rec_write(hole + 4, (uint8_t)page));
+                legacy_full_frame(switches[mode]);
+                legacy_full_frame(switches[mode]);
+                legacy_full_frame(switches[mode]);
+                expect(s_pub_border == colors[ci], "T11 ordinary/weave/flip preserves the C034 border latch");
+                expect(s_pub_mode == (page == 1 ? APPLE_FB_DISPLAY_MODE_LEGACY_I : APPLE_FB_DISPLAY_MODE_LEGACY),
+                       "T11 requested legacy geometry reached publication");
+                expect(((s_pub_detail & APPLE_FB_FORMAT_PAGE_MASK) >> APPLE_FB_FORMAT_PAGE_SHIFT) == page,
+                       "T11 page mode reached publication");
+                verify_composited_border();
+            }
+        }
+        feed(rec_io(0xC029u, 0xC1u));
+        shr_marker();
+        shr_marker();
+        shr_marker();
+        expect(s_pub_mode == APPLE_FB_DISPLAY_MODE_SHR && s_pub_border == colors[ci],
+               "T11 SHR preserves the C034 border latch");
+        verify_composited_border();
+        feed(rec_io(0xC029u, 0x01u));
+    }
+}
+
+static void t12_border_enable_and_static_cache(void)
+{
+    printf("--- T12 enable borders after rendering; all slots and static cache ---\n");
+    const uint32_t switches[] = {SW_HGR, SW_DHGR, 0u, SW_DLORES};
+    for (unsigned mode = 0; mode < sizeof switches / sizeof switches[0]; ++mode) {
+        for (unsigned page = 0; page < 3; ++page) {
+            memset(s_main_mem, 0, sizeof s_main_mem);
+            memset(s_aux_mem, 0, sizeof s_aux_mem);
+            memset(s_slot_mem, 0, sizeof s_slot_mem);
+            s_settings = apple_video_settings_pack_border_full(
+                0u, APPLE_VIDEO_MONO_GREEN, APPLE_VIDEO_COLOR_COMPOSITE_MONITOR,
+                1u, 1u, 0, 0, 0u, APPLE_VIDEO_IIGS_BORDER_DEFAULT, 0u);
+            apple_cycle_renderer_reset_local_video_state();
+            const uint16_t hole = (switches[mode] & SW_HGR) ? 0x4078u : 0x0878u;
+            static const uint8_t magic[] = {0xC1u, 0xB2u, 0xCCu, 0xE9u};
+            for (unsigned i = 0; i < sizeof magic; ++i) feed(rec_write(hole + i, magic[i]));
+            feed(rec_write(hole + 4, (uint8_t)page));
+            for (unsigned i = 0; i < 8; ++i) legacy_full_frame(switches[mode]);
+            s_settings |= 1u << APPLE_VIDEO_SETTINGS_BORDER_ENABLE_SHIFT;
+            for (unsigned i = 0; i < 3; ++i) legacy_full_frame(switches[mode]);
+            unsigned slots = 0;
+            for (unsigned slot = 0; slot < COMP_APPLE_SLOT_COUNT; ++slot) {
+                /* A new video write forces each cached mode through settling
+                 * and a fresh writer slot, without changing its format. */
+                feed(rec_write(0x2000u, (uint8_t)(slot + 1)));
+                for (unsigned i = 0; i < 3; ++i) legacy_full_frame(switches[mode]);
+                slots |= 1u << s_pub_slot;
+                verify_composited_border();
+                const uint32_t publications = s_pub_count;
+                for (unsigned i = 0; i < 50; ++i) legacy_full_frame(switches[mode]);
+                if (page != 0) {
+                    expect(s_pub_count == publications,
+                           "T12 static paged graphics retains the same complete frame for 50 frames");
+                }
+                verify_composited_border();
+            }
+            /* The ordinary path publishes three times per batch, so sample
+             * its three rotating slots on adjacent frame edges as well. */
+            if (page == 0) {
+                for (unsigned slot = 0; slot < COMP_APPLE_SLOT_COUNT; ++slot) {
+                    legacy_full_frame(switches[mode]);
+                    slots |= 1u << s_pub_slot;
+                    verify_composited_border();
+                }
+            }
+            expect(slots == (1u << COMP_APPLE_SLOT_COUNT) - 1u,
+                   "T12 enabled graphics borders verified in every source slot");
+        }
+    }
+}
+
+static void check_captured_border(const char *label, uint32_t lines,
+                                 uint8_t output, int8_t phase, uint32_t sw,
+                                 uint32_t pump_every_lines)
+{
+    const uint32_t *pixels = (const uint32_t *)s_slot_mem[s_pub_slot];
+    const uint32_t expected = apple_video_iigs_border_bgra(s_pub_border);
+    unsigned bad = 0, first_x = 0, first_y = 0;
+    uint32_t first_value = 0;
+    for (unsigned y = 0; y < COMP_APPLE_VISIBLE_HEIGHT; ++y) {
+        for (unsigned x = 0; x < COMP_APPLE_VISIBLE_WIDTH; ++x) {
+            if (y >= COMP_APPLE_BORDER_V_LINES &&
+                y < COMP_APPLE_BORDER_V_LINES + COMP_APPLE_HEIGHT &&
+                x >= COMP_APPLE_BORDER_H_PIXELS &&
+                x < COMP_APPLE_BORDER_H_PIXELS + COMP_APPLE_WIDTH) {
+                continue;
+            }
+            const uint32_t got = pixels[y * COMP_APPLE_ROW_PIXELS +
+                                        COMP_APPLE_LEFT_BORDER_PIXELS + x];
+            if (got != expected) {
+                if (bad++ == 0) {
+                    first_x = x;
+                    first_y = y;
+                    first_value = got;
+                }
+            }
+        }
+    }
+    printf("%s lines=%u output=%u phase=%d sw=%03x pump=%u color=%u bad=%u first=%u,%u value=%08x\n",
+           label, lines, output, (int)phase, sw, pump_every_lines,
+           s_pub_border, bad, first_x, first_y, first_value);
+    expect(bad == 0, "captured border survives real frame lengths, phase and delayed PAL work");
+    if (bad == 0 && phase == 0) {
+        verify_composited_border();
+    }
+}
+
+static void t13_capture_timing_borders(void)
+{
+    static const uint32_t modes[] = {
+        SW_TEXT_ONLY, SW_HGR, SW_DHGR, 0u, SW_DLORES
+    };
+    static const uint32_t frame_lines[] = {262u, 312u};
+    static const int8_t phases[] = {-64, -2, -1, 0, 1, 2, 22, 23, 24, 25, 63};
+    static const uint8_t outputs[] = {
+        APPLE_VIDEO_COLOR_COMPOSITE_MONITOR,
+        APPLE_VIDEO_COLOR_PAL_ACCURATE_COMPOSITE
+    };
+    printf("--- T13 captured borders with actual PAL length and phase calibration ---\n");
+    for (unsigned timing = 0; timing < sizeof frame_lines / sizeof frame_lines[0]; ++timing) {
+        for (unsigned output = 0; output < sizeof outputs / sizeof outputs[0]; ++output) {
+            for (unsigned phase = 0; phase < sizeof phases / sizeof phases[0]; ++phase) {
+                for (unsigned mode = 0; mode < sizeof modes / sizeof modes[0]; ++mode) {
+                    memset(s_main_mem, 0, sizeof s_main_mem);
+                    memset(s_aux_mem, 0, sizeof s_aux_mem);
+                    memset(s_slot_mem, 0, sizeof s_slot_mem);
+                    s_settings = apple_video_settings_pack_border_full(
+                        0u, APPLE_VIDEO_MONO_GREEN, outputs[output], 1u, 1u,
+                        phases[phase], phases[phase], 1u,
+                        APPLE_VIDEO_IIGS_BORDER_DEFAULT, 0u);
+                    apple_cycle_renderer_reset_local_video_state();
+                    const uint32_t publications = s_pub_count;
+                    for (unsigned frame = 0; frame < 4; ++frame) {
+                        legacy_full_frame_timed(modes[mode], frame_lines[timing], 1u);
+                    }
+                    expect(s_pub_count != publications, "T13 calibrated capture publishes a complete frame");
+                    check_captured_border("phase-border", frame_lines[timing],
+                        outputs[output], phases[phase], modes[mode], 1u);
+                }
+            }
+        }
+    }
+
+    printf("--- T13 PAL frames finish through bounded frame-edge work without line pumps ---\n");
+    for (unsigned timing = 0; timing < sizeof frame_lines / sizeof frame_lines[0]; ++timing) {
+        for (unsigned mode = 0; mode < sizeof modes / sizeof modes[0]; ++mode) {
+            memset(s_main_mem, 0, sizeof s_main_mem);
+            memset(s_aux_mem, 0, sizeof s_aux_mem);
+            memset(s_slot_mem, 0, sizeof s_slot_mem);
+            s_settings = apple_video_settings_pack_border_full(
+                0u, APPLE_VIDEO_MONO_GREEN, APPLE_VIDEO_COLOR_PAL_ACCURATE_COMPOSITE,
+                1u, 1u, 0, 0, 1u, APPLE_VIDEO_IIGS_BORDER_DEFAULT, 0u);
+            apple_cycle_renderer_reset_local_video_state();
+            const uint32_t publications = s_pub_count;
+            for (unsigned frame = 0; frame < 10; ++frame) {
+                legacy_full_frame_timed(modes[mode], frame_lines[timing], 0u);
+            }
+            expect(s_pub_count != publications, "T13 delayed PAL capture eventually publishes");
+            check_captured_border("delayed-border", frame_lines[timing],
+                APPLE_VIDEO_COLOR_PAL_ACCURATE_COMPOSITE, 0, modes[mode], 0u);
+        }
+    }
+}
+
+static void t14_border_raster_frame_edge(void)
+{
+    static const int8_t phases[] = {-64, -2, -1};
+    static const uint32_t frame_lines[] = {262u, 312u};
+    static const uint8_t outputs[] = {
+        APPLE_VIDEO_COLOR_COMPOSITE_MONITOR,
+        APPLE_VIDEO_COLOR_PAL_ACCURATE_COMPOSITE
+    };
+    printf("--- T14 C034 raster colors retain their phase-adjusted frame-edge positions ---\n");
+    for (unsigned timing = 0; timing < sizeof frame_lines / sizeof frame_lines[0]; ++timing) {
+        for (unsigned output = 0; output < sizeof outputs / sizeof outputs[0]; ++output) {
+            for (unsigned p = 0; p < sizeof phases / sizeof phases[0]; ++p) {
+                uint32_t expected[COMP_APPLE_VISIBLE_WIDTH];
+                memset(s_main_mem, 0, sizeof s_main_mem);
+                memset(s_aux_mem, 0, sizeof s_aux_mem);
+                memset(s_slot_mem, 0, sizeof s_slot_mem);
+                s_settings = apple_video_settings_pack_border_full(
+                    0u, APPLE_VIDEO_MONO_GREEN, outputs[output], 1u, 1u,
+                    phases[p], phases[p], 1u, APPLE_VIDEO_IIGS_BORDER_DEFAULT, 0u);
+                apple_cycle_renderer_reset_local_video_state();
+                for (unsigned frame = 0; frame < 4; ++frame) {
+                    legacy_full_frame_timed(SW_HGR, frame_lines[timing], 1u);
+                }
+                for (unsigned x = 0; x < COMP_APPLE_VISIBLE_WIDTH; ++x) {
+                    expected[x] = apple_video_iigs_border_bgra(APPLE_VIDEO_IIGS_BORDER_DEFAULT);
+                }
+                const uint32_t publications = s_pub_count;
+                const uint32_t close_cycle = 2u - (int32_t)phases[p];
+                for (uint32_t raw = 0; raw < close_cycle; ++raw) {
+                    const uint8_t color = (uint8_t)((raw % 15u) + 1u);
+                    const int adjusted = (int)raw + phases[p];
+                    const int cycle = (adjusted < 0) ? 65 + adjusted : adjusted;
+                    int x = -1;
+                    if (adjusted < 0 && cycle >= 23) {
+                        x = (cycle - 23) * 14;
+                    } else if (adjusted >= 0 && cycle < 2) {
+                        x = (int)COMP_APPLE_BORDER_H_PIXELS +
+                            (int)COMP_APPLE_WIDTH + cycle * 14;
+                    }
+                    if (x >= 0) {
+                        for (unsigned i = 0; i < 14; ++i) {
+                            expected[x + i] = apple_video_iigs_border_bgra(color);
+                        }
+                    }
+                    feed(rec_io(0xC034u, color));
+                    feed(rec_frame(raw / 65u, raw % 65u, SW_HGR));
+                }
+                expect(s_pub_count == publications,
+                       "T14 holds the writer until every previous-frame border cycle arrives");
+                feed(rec_frame(close_cycle / 65u, close_cycle % 65u, SW_HGR));
+                expect(s_pub_count == publications + 1u,
+                       "T14 publishes once after the last adjusted border cycle");
+                const uint32_t *row = (const uint32_t *)s_slot_mem[s_pub_slot] +
+                    (COMP_APPLE_BORDER_V_LINES - 1u) * COMP_APPLE_ROW_PIXELS +
+                    COMP_APPLE_LEFT_BORDER_PIXELS;
+                unsigned bad = 0;
+                for (unsigned x = 0; x < COMP_APPLE_VISIBLE_WIDTH; ++x) {
+                    if (row[x] != expected[x]) ++bad;
+                }
+                printf("raster-border lines=%u output=%u phase=%d bad=%u\n",
+                       frame_lines[timing], outputs[output], (int)phases[p], bad);
+                expect(bad == 0, "T14 preserves each C034 color in its captured 14-pixel segment");
+            }
+        }
+    }
+}
+
+static void t15_border_positive_preroll(void)
+{
+    static const int8_t phases[] = {22, 23, 24, 25, 63};
+    static const uint32_t frame_lines[] = {262u, 312u};
+    static const uint8_t outputs[] = {
+        APPLE_VIDEO_COLOR_COMPOSITE_MONITOR,
+        APPLE_VIDEO_COLOR_PAL_ACCURATE_COMPOSITE
+    };
+    printf("--- T15 C034 line-0 colors cross positive-phase publication boundaries ---\n");
+    for (unsigned timing = 0; timing < sizeof frame_lines / sizeof frame_lines[0]; ++timing) {
+        for (unsigned output = 0; output < sizeof outputs / sizeof outputs[0]; ++output) {
+            for (unsigned p = 0; p < sizeof phases / sizeof phases[0]; ++p) {
+                memset(s_main_mem, 0, sizeof s_main_mem);
+                memset(s_aux_mem, 0, sizeof s_aux_mem);
+                memset(s_slot_mem, 0, sizeof s_slot_mem);
+                s_settings = apple_video_settings_pack_border_full(
+                    0u, APPLE_VIDEO_MONO_GREEN, outputs[output], 1u, 1u,
+                    phases[p], phases[p], 1u, APPLE_VIDEO_IIGS_BORDER_DEFAULT, 0u);
+                apple_cycle_renderer_reset_local_video_state();
+                const uint32_t publications = s_pub_count;
+                for (unsigned frame = 0; frame < 4; ++frame) {
+                    for (uint32_t line = 0; line < frame_lines[timing]; ++line) {
+                        for (uint32_t cycle = 0; cycle < 65u; ++cycle) {
+                            const uint32_t shifted = cycle + (uint32_t)phases[p];
+                            int line0_cycle = -1;
+                            if (line == frame_lines[timing] - 1u && shifted >= 65u) {
+                                line0_cycle = (int)shifted - 65;
+                            } else if (line == 0u && shifted < 65u) {
+                                line0_cycle = (int)shifted;
+                            }
+                            if (line0_cycle == 23 || line0_cycle == 24) {
+                                feed(rec_io(0xC034u, (uint8_t)(line0_cycle - 14)));
+                            }
+                            feed(rec_frame(line, cycle, SW_HGR));
+                        }
+                        apple_pal_video_pump();
+                    }
+                }
+                expect(s_pub_count != publications, "T15 positive-phase raster capture publishes");
+                const uint32_t *row = (const uint32_t *)s_slot_mem[s_pub_slot] +
+                    COMP_APPLE_BORDER_V_LINES * COMP_APPLE_ROW_PIXELS +
+                    COMP_APPLE_LEFT_BORDER_PIXELS;
+                unsigned bad = 0;
+                for (unsigned x = 0; x < COMP_APPLE_BORDER_H_PIXELS; ++x) {
+                    const uint8_t color = (x < 14u) ? 9u : 10u;
+                    if (row[x] != apple_video_iigs_border_bgra(color)) ++bad;
+                }
+                printf("preroll-border lines=%u output=%u phase=%d bad=%u\n",
+                       frame_lines[timing], outputs[output], (int)phases[p], bad);
+                expect(bad == 0, "T15 preserves both captured C034 colors in the next writer slot");
+            }
+        }
+    }
+}
+
 int main(int argc, char **argv)
 {
     if (argc == 5 && strcmp(argv[1], "--check-exact-file") == 0) {
@@ -1214,13 +1595,14 @@ int main(int argc, char **argv)
         return 0;
     }
     const int mono_only = argc == 2 && strcmp(argv[1], "--mono-only") == 0;
-    if (argc != 3 && !mono_only) {
+    const int border_only = argc == 2 && strcmp(argv[1], "--border-only") == 0;
+    if (argc != 3 && !mono_only && !border_only) {
         fprintf(stderr,
                 "usage: harness <repo_root> <out_dir>\n"
                 "       harness --check-exact-file <root> <file> <bytes>\n");
         return 2;
     }
-    if (!mono_only) {
+    if (!mono_only && !border_only) {
         snprintf(s_repo, sizeof s_repo, "%s", argv[1]);
         snprintf(s_out, sizeof s_out, "%s", argv[2]);
     }
@@ -1238,6 +1620,15 @@ int main(int argc, char **argv)
         t9_mono_frame_tags();
         return s_failures ? 1 : 0;
     }
+    if (border_only) {
+        t10_captured_borders();
+        t11_synthesized_border_metadata();
+        t12_border_enable_and_static_cache();
+        t13_capture_timing_borders();
+        t14_border_raster_frame_edge();
+        t15_border_positive_preroll();
+        return s_failures ? 1 : 0;
+    }
     t1_dragons();
     t2_legacy_weave();
     t3_shr_transitions();
@@ -1247,6 +1638,12 @@ int main(int argc, char **argv)
     t7_dloresi_cache_invalidation();
     t8_video7_mix_load_hold();
     t9_mono_frame_tags();
+    t10_captured_borders();
+    t11_synthesized_border_metadata();
+    t12_border_enable_and_static_cache();
+    t13_capture_timing_borders();
+    t14_border_raster_frame_edge();
+    t15_border_positive_preroll();
 
     printf("harness: %d failure(s)\n", s_failures);
     return s_failures ? 1 : 0;

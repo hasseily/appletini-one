@@ -77,6 +77,7 @@ static uint32_t s_prev_line      = 0;
 static uint8_t  s_frame_end_pending = 0u;
 static uint32_t s_scanner_frame_lines = ATN_SCANNER_MAX_VERT_NTSC;
 static uint32_t s_pending_line0_sw[ATN_BORDER_H_CYCLES];
+static uint8_t s_pending_line0_cycle[ATN_BORDER_H_CYCLES];
 static uint8_t  s_pending_line0_mask = 0u;
 
 /* A 1 MHz vTW record needs one initial normalization because its serialized
@@ -286,6 +287,8 @@ volatile uint32_t g_acr_legacy_frames_skipped = 0u;
 volatile uint32_t g_acr_legacy_cache_rebuilds = 0u;
 
 static uint32_t s_left_border_colors[ATN_BORDER_H_CYCLES];
+static uint32_t s_border_preroll_colors[ATN_BORDER_H_CYCLES];
+static uint8_t s_border_preroll_mask;
 
 /* ---------- AppleWin scanner address tables (NTSC, //e only) ---------- *
  * Verbatim from NTSC.cpp:180-213 (the _DEBUG static tables that match the
@@ -1090,6 +1093,28 @@ static void emit_border_cycle(uint32_t line, uint32_t cycle)
     uint8_t save_left = 0u;
 
     if (s_border_enabled == 0u || g_atn_framebuffer == NULL) {
+        return;
+    }
+
+    /* A negative capture phase moves raw line-0 cycles into the tail of
+     * the previous scanner frame. Active rendering must reject that line,
+     * but the border still owns its final top-ring pixels. */
+    if (line == UINT32_MAX) {
+        line = s_scanner_frame_lines - 1u;
+    }
+
+    /* A large positive phase captures the next line-0 left border before
+     * the raw frame edge selects its writer slot. Retain those exact C034
+     * colors and install them when that slot opens. */
+    if ((line == s_scanner_frame_lines ||
+         (s_frame_end_pending != 0u && line == 0u)) &&
+        cycle >= (ATN_SCANNER_HORZ_START - ATN_BORDER_H_CYCLES) &&
+        cycle < ATN_SCANNER_HORZ_START) {
+        const uint32_t index = cycle -
+            (ATN_SCANNER_HORZ_START - ATN_BORDER_H_CYCLES);
+        s_border_preroll_colors[index] =
+            apple_video_iigs_border_bgra(s_vidhd_border_color);
+        s_border_preroll_mask |= (uint8_t)(1u << index);
         return;
     }
 
@@ -2276,8 +2301,8 @@ static void render_shr_frame_full(void)
  * weaves at nibble-row bands (96 four-scanline bands, page by band
  * parity) so a 40x96 image shows 96 crisp rows instead of striped
  * blends. The woven frame starts at slot row 0 with no border data
- * (384 rows at the legacy stride exceed the bordered layout; the
- * IIgs border is unavailable while interlaced). */
+ * (384 rows at the legacy stride exceed the bordered layout). The
+ * compositor adds the IIgs border from the published frame color. */
 /* Returns the armed paged TYPE, declared by the content:
  * 0 = off, 1 = interlace (spatial fields), 2 = page flip (temporal:
  * PAGE2 is the alternate frame; merged 50/50 below 120 Hz output,
@@ -2501,8 +2526,8 @@ static void render_legacy_weave_frame_full(void)
  * alternate at 120 Hz. Below 120 Hz output, render each line from
  * PAGE1 directly into the slot at the normal legacy position, render
  * the PAGE2 line into a scratch row, and blend 50/50. Published as
- * plain LEGACY geometry (borders stay black; the slot is cleared on
- * entry via the flip-state change). */
+ * plain LEGACY geometry (border samples stay black; the slot is cleared
+ * on entry via the flip-state change). The compositor supplies the ring. */
 static uint32_t s_legacy_merge_row[ATN_SCRATCH_ROW_PIXELS]
     __attribute__((aligned(16)));
 
@@ -2694,6 +2719,7 @@ void apple_cycle_renderer_reset_local_video_state(void)
     s_frame_end_pending   = 0u;
     s_scanner_frame_lines = ATN_SCANNER_MAX_VERT_NTSC;
     s_pending_line0_mask  = 0u;
+    s_border_preroll_mask = 0u;
     s_vtw_1mhz_active     = 0u;
     s_phase_prev_valid    = 0u;
     s_phase_prev_record   = 0ULL;
@@ -3017,6 +3043,17 @@ static void on_frame_start(void) {
      * g_atn_framebuffer. */
     appletini_ntsc_set_framebuffer(slot_addr);
     apple_pal_video_set_framebuffer(slot_addr);
+    if (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_LEGACY &&
+        s_legacy_flip_q == 0u && s_legacy_load_hold_q == 0u) {
+        for (uint32_t i = 0u; i < ATN_BORDER_H_CYCLES; ++i) {
+            if ((s_border_preroll_mask & (uint8_t)(1u << i)) != 0u) {
+                s_left_border_colors[i] = s_border_preroll_colors[i];
+                border_fill(ATN_BORDER_V_LINES, i * 14u,
+                            s_border_preroll_colors[i]);
+            }
+        }
+    }
+    s_border_preroll_mask = 0u;
     if (!vidhd_shr_enabled() && s_legacy_load_hold_q != 0u) {
         /* Either A2Li sentinel keeps the whole transaction private, even if
          * the other hole already contains a valid paged-mode commit. */
@@ -3169,6 +3206,7 @@ static void apple_cycle_renderer_dispatch_record(uint64_t rec) {
         s_render_armed = 0;
         s_frame_end_pending = 0u;
         s_pending_line0_mask = 0u;
+        s_border_preroll_mask = 0u;
         s_legacy_cache_valid = 0u;
         s_shr_cache_valid = 0u;
         s_shr_cache_invalidate = 1u;
@@ -3278,28 +3316,37 @@ static void apple_cycle_renderer_dispatch_record(uint64_t rec) {
         }
     }
 
-    /* Cycles 0 and 1 draw the right border of the previous scanner line.
-     * Keep the same writer slot through those two cycles, then publish it and
-     * open the new frame before line 0 reaches any active pixels. */
+    /* Adjusted cycles 0 and 1 finish the previous frame's right border.
+     * A negative phase delays them beyond raw cycles 0 and 1; keep their
+     * writer slot until both have arrived. Save the adjusted PAL coordinates
+     * as well so replay cannot omit cycles when phase is positive. */
     if (s_frame_end_pending != 0u) {
-        if (line == 0u && cycle < ATN_BORDER_H_CYCLES) {
+        const int8_t phase =
+            (apple_pal_video_mode_is_active(s_render_color_mode) != 0u) ?
+                s_pal_capture_phase_cycles : s_clean_capture_phase_cycles;
+        const uint32_t pending_raw_cycles = ATN_BORDER_H_CYCLES +
+            ((phase < 0) ? (uint32_t)(-(int32_t)phase) : 0u);
+        if (line * ATN_SCANNER_MAX_HORZ + cycle < pending_raw_cycles) {
+            uint32_t border_line;
+            uint32_t border_cycle;
+
+            capture_to_scanner_phase(line, cycle, phase,
+                                     &border_line, &border_cycle);
             /* A finishing woven or flip-merged frame has no border
              * geometry to complete; emitting here would scribble on
              * synthesized rows. */
             if (s_frame_display_mode != APPLE_FB_DISPLAY_MODE_LEGACY_I &&
                 s_legacy_flip_q == 0u) {
-                uint32_t border_line;
-                uint32_t border_cycle;
-                const int8_t phase =
-                    (apple_pal_video_mode_is_active(s_render_color_mode) != 0u) ?
-                    s_pal_capture_phase_cycles : s_clean_capture_phase_cycles;
-
-                capture_to_scanner_phase(line, cycle, phase,
-                                         &border_line, &border_cycle);
                 emit_border_cycle(border_line, border_cycle);
             }
-            s_pending_line0_sw[cycle] = sw;
-            s_pending_line0_mask |= (uint8_t)(1u << cycle);
+            if (border_line == 0u) {
+                const uint32_t index = (phase > 0) ? cycle : border_cycle;
+                if (index < ATN_BORDER_H_CYCLES) {
+                    s_pending_line0_sw[index] = sw;
+                    s_pending_line0_cycle[index] = (uint8_t)border_cycle;
+                    s_pending_line0_mask |= (uint8_t)(1u << index);
+                }
+            }
             g_acr_cycles_rendered++;
             s_records_in_frame++;
             return;
@@ -3316,7 +3363,8 @@ static void apple_cycle_renderer_dispatch_record(uint64_t rec) {
                 apple_pal_video_mode_is_active(s_render_color_mode) != 0u) {
                 for (uint32_t i = 0u; i < ATN_BORDER_H_CYCLES; ++i) {
                     if ((s_pending_line0_mask & (uint8_t)(1u << i)) != 0u) {
-                        apple_pal_video_on_cycle(0u, i, s_pending_line0_sw[i]);
+                        apple_pal_video_on_cycle(0u, s_pending_line0_cycle[i],
+                                                  s_pending_line0_sw[i]);
                     }
                 }
             }
@@ -3594,6 +3642,16 @@ void apple_cycle_renderer_debug_a2li_line(void)
     uart_putc(UART0_BASE, (char)('0' + s_legacy_flip_q));
     uart_puts(UART0_BASE, " nv=");
     acr_put_hex8(s_vidhd_newvideo);
+    uart_puts(UART0_BASE, " border_en=");
+    acr_put_hex8(s_border_enabled);
+    uart_puts(UART0_BASE, " border_default=");
+    acr_put_hex8(s_border_default_color);
+    uart_puts(UART0_BASE, " border_c034=");
+    acr_put_hex8(s_vidhd_border_color);
+    uart_puts(UART0_BASE, " phase_clean=");
+    acr_put_hex8((uint8_t)s_clean_capture_phase_cycles);
+    uart_puts(UART0_BASE, " phase_pal=");
+    acr_put_hex8((uint8_t)s_pal_capture_phase_cycles);
     acr_put_bytes(" auxctrl@9DF8=", g_aux_bank, 0x9DF8u, 8u);
     uart_puts(UART0_BASE, " localfmt=");
     acr_put_hex16((uint16_t)s_frame_format_detail);

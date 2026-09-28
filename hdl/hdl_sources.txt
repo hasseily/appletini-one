@@ -12,6 +12,7 @@ audio_pcm16_ddr_fetcher.sv
 axi3_read_arbiter_2.sv
 irq_pulse_stretcher.sv
 constraints/appletini_yarz.xdc
+constraints/video_cdc_impl.xdc
 apple/apple_top.sv
 apple/apple_bus_wrapper.sv
 apple/apple_bus_client_policy_gate.sv
@@ -88,6 +89,7 @@ axisimple/axidouble.v
 axisimple/skidbuffer.v
 axisimple/sfifo.v
 video2/video_top.sv
+video2/video_mode_control.sv
 video2/fb_reader.sv
 video2/video_pkg.sv
 video2/video_timing_gen.sv

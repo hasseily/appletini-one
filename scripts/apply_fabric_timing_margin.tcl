@@ -1,6 +1,5 @@
-# Make implementation optimize the fabric and Apple direction outputs for
-# the release margin. clear_fabric_timing_margin.tcl restores the exact nominal
-# constraints before any signoff report or exported artifact.
+# Tighten fabric and Apple direction paths before optimization. Keep the pixel
+# clock nominal until finish_video_timing.tcl performs its routed repair.
 proc appletini_check_bus_output_limits {fabric_clock dir_limit phi_limit} {
     set dir_ports [get_ports -quiet {a2fpga_dir_a a2fpga_dir_d}]
     set phi0_port [get_ports -quiet a2fpga_clk]
@@ -28,21 +27,25 @@ proc appletini_check_bus_output_limits {fabric_clock dir_limit phi_limit} {
 }
 
 set fabric_clock [get_clocks -quiet clk_out1_zynq_ps_bd_clk_wiz_1_0]
-if {[llength $fabric_clock] != 1} {
-    error "Expected exactly one 133 MHz fabric clock."
+set pixel_clock [get_clocks -quiet clk_out1_zynq_ps_bd_clk_wiz_0_0]
+if {[llength $fabric_clock] != 1 || [llength $pixel_clock] != 1} {
+    error "Expected exactly one fabric clock and one pixel clock."
 }
 appletini_check_bus_output_limits $fabric_clock 10.000 8.000
 
-set fabric_path [get_timing_paths -quiet -delay_type max \
-    -from $fabric_clock -to $fabric_clock -max_paths 1]
-if {[llength $fabric_path] != 1} {
-    error "No fabric setup path found before applying timing margin."
-}
-set user_uncertainty [get_property USER_UNCERTAINTY $fabric_path]
-if {$user_uncertainty ne "" &&
-    (![string is double -strict $user_uncertainty] ||
-    abs(double($user_uncertainty)) > 0.0005)} {
-    error "Refusing to replace fabric user uncertainty: $user_uncertainty ns."
+set margin_clocks [concat $fabric_clock $pixel_clock]
+foreach margin_clock $margin_clocks {
+    set margin_path [get_timing_paths -quiet -delay_type max \
+        -from $margin_clock -to $margin_clock -max_paths 1]
+    if {[llength $margin_path] != 1} {
+        error "No setup path for $margin_clock before applying timing margin."
+    }
+    set user_uncertainty [get_property USER_UNCERTAINTY $margin_path]
+    if {$user_uncertainty ne "" &&
+        (![string is double -strict $user_uncertainty] ||
+        abs(double($user_uncertainty)) > 0.0005)} {
+        error "Refusing to replace $margin_clock user uncertainty: $user_uncertainty ns."
+    }
 }
 
 set_clock_uncertainty -setup 0.200 $fabric_clock
@@ -53,12 +56,19 @@ set_max_delay -datapath_only 7.800 \
     -from [get_ports a2fpga_clk] -to [get_ports a2fpga_dir_d]
 appletini_check_bus_output_limits $fabric_clock 9.800 7.800
 
-set fabric_path [get_timing_paths -quiet -delay_type max \
-    -from $fabric_clock -to $fabric_clock -max_paths 1]
-set user_uncertainty [get_property USER_UNCERTAINTY $fabric_path]
-if {![string is double -strict $user_uncertainty] ||
-    abs(double($user_uncertainty) - 0.200) > 0.0005} {
-    error "Fabric implementation margin did not apply: $user_uncertainty ns."
+foreach margin_clock $margin_clocks {
+    set margin_path [get_timing_paths -quiet -delay_type max \
+        -from $margin_clock -to $margin_clock -max_paths 1]
+    if {[llength $margin_path] != 1} {
+        error "No setup path for $margin_clock after applying timing margin."
+    }
+    set user_uncertainty [get_property USER_UNCERTAINTY $margin_path]
+    if {$user_uncertainty eq ""} {set user_uncertainty 0.000}
+    set expected [expr {$margin_clock eq $fabric_clock ? 0.200 : 0.000}]
+    if {![string is double -strict $user_uncertainty] ||
+        abs(double($user_uncertainty) - $expected) > 0.0005} {
+        error "$margin_clock implementation margin did not apply: $user_uncertainty ns."
+    }
+    puts "Implementation setup margin for $margin_clock: $user_uncertainty ns"
 }
-puts "Applied temporary fabric setup margin: $user_uncertainty ns"
 puts "Applied temporary Apple output limits: direction 9.800 ns, PHI0 release 7.800 ns"

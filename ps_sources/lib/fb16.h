@@ -2,9 +2,9 @@
  * fb16.h -- RGB565 drawing primitives.
  *
  * Single drawing API for the compositor pipeline. All primitives take an
- * explicit framebuffer base pointer (uint16_t * to a 1920x1080 RGB565
+ * explicit framebuffer base pointer (uint16_t * to an RGB565
  * surface) so the compositor can write into whichever output slot it
- * has selected for the current frame, without globals.
+ * has selected for the current frame.
  *
  * Color format: RGB565 (bits [15:11] = R, [10:5] = G, [4:0] = B). This
  * matches the DVI output pins bit-for-bit -- the PL scans these pixels
@@ -17,10 +17,8 @@
  * pipeline is 8:8:8-native); the *_bgra32src blits narrow to 565 while
  * expanding, so precision is only dropped at the final store.
  *
- * Most primitives clip to FB16_WIDTH x FB16_HEIGHT (1920x1080); the
- * exceptions are the 2x expansion blits, which are performance-critical
- * and assume the caller has placed them inside the surface. The
- * caller's `fb` pointer must point at the start of a 1920x1080 RGB565
+ * All primitives clip to the current FB16_WIDTH x FB16_HEIGHT. The
+ * caller's `fb` pointer must point at the start of a packed RGB565
  * surface (i.e. one of the comp_out_slot_addr[] slots).
  */
 
@@ -29,10 +27,18 @@
 
 #include <stdint.h>
 
-#define FB16_WIDTH         1920
-#define FB16_HEIGHT        1080
+#define FB16_MAX_WIDTH     1920
+#define FB16_MAX_HEIGHT    1080
+extern int fb16_width;
+extern int fb16_height;
+#define FB16_WIDTH         fb16_width
+#define FB16_HEIGHT        fb16_height
 #define FB16_BPP           2
 #define FB16_STRIDE_BYTES  (FB16_WIDTH * FB16_BPP)
+
+/* Set the packed output surface size; invalid dimensions leave it unchanged.
+ * Call between frames, while scanout is stopped for a mode change. */
+int fb16_set_size(int width, int height);
 
 /* Construct an RGB565 value from 8-bit channels. */
 #define FB16_RGB(r, g, b)  \
@@ -102,7 +108,7 @@ typedef struct {
 
 /* ---------- Primitives ---------- */
 
-/* Fill the entire 1920x1080 frame with `color`. Optimized for color==0
+/* Fill the entire current frame with `color`. Optimized for color==0
  * (memset path) and aligned 64-bit writes otherwise. */
 void fb16_clear(uint16_t *fb, uint16_t color);
 
@@ -153,8 +159,7 @@ void fb16_blit_bgra32src(uint16_t *fb, int x, int y, int w, int h,
 /* 2x horizontal, 4x vertical nearest-neighbor replication blit from a
  * BGRA32 source (the Apple frame ring), narrowing to 565 in the
  * expansion. The destination rect is (dst_x, dst_y) sized (src_w*2 by
- * src_h*4). Caller must ensure the destination fits; this primitive
- * does not clip.
+ * src_h*4). Clips at the destination.
  *
  * src_stride is the source row stride in pixels. Pass <= 0 to mean
  * "tightly packed" (stride == src_w). The Apple FB has leading guard
@@ -176,6 +181,18 @@ void fb16_blit_2x4_scanlines(uint16_t *fb, int dst_x, int dst_y,
 void fb16_blit_2x2_scanlines(uint16_t *fb, int dst_x, int dst_y,
                              const uint32_t *src, int src_w, int src_h,
                              int src_stride, uint8_t scanline_mode);
+
+/* Integer expansion with clipped borders. Horizontal scale is 1 or 2;
+ * vertical scale is 1, 2, or 4. At 1x vertically there are no repeated
+ * rows to blank, so scanlines leave all source rows visible. */
+void fb16_blit_scaled_scanlines(uint16_t *fb, int dst_x, int dst_y,
+                                const uint32_t *src, int src_w, int src_h,
+                                int src_stride, unsigned scale_x,
+                                unsigned scale_y, uint8_t scanline_mode);
+
+/* Copy one RGB565 row, clipping both axes. Used after phosphor effects. */
+void fb16_copy_row(uint16_t *fb, int x, int y, const uint16_t *src,
+                   int width, uint8_t blank);
 
 /* Expand one BGRA32 source row into a 565 destination with 2x
  * horizontal doubling: dst[2i] == dst[2i+1] == narrow(src[i]). Exposed

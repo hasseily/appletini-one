@@ -325,6 +325,14 @@ static void hgr_draw_disk2_image_item(uint16_t *fb,
     const uint32_t bg = focused ? CMUI_COLOR_ROW_ACTIVE : CMUI_COLOR_ROW;
     const uint32_t fg = focused ? CMUI_COLOR_TEXT : CMUI_COLOR_MUTED;
 
+    if (cmui_compact_active() != 0U) {
+        char value[CONFIG_MENU_PATH_LEN + 16U];
+        (void)snprintf(value, sizeof(value), "%s%s", name,
+                       locked ? " [read only]" : "");
+        cmui_compact_entry(label, value, focused, 0U);
+        return;
+    }
+
     hgr_focus_band(fb, x, y, w, focused);
     cmui_text(fb, x + 18, y + 11, label, fg, bg, CMUI_BODY_SCALE);
     cmui_lock(fb, x + 138, y, locked, focused, bg);

@@ -37,6 +37,8 @@
 #include "onee_service.h"
 #include "compositor.h"
 #include "compositor_layout.h"
+#include "display_modes.h"
+#include "display_output.h"
 #include "config_menu.h"
 #include "debug_overlay.h"
 #include "disk2_service.h"
@@ -85,7 +87,8 @@
 #define UI_DISK_ACTIVITY_W 360
 #define UI_DISK_ACTIVITY_H 28
 #define UI_DISK_ACTIVITY_X (APPLE_VIEW_X + APPLE_VIEW_W - UI_DISK_ACTIVITY_W)
-#define UI_DISK_ACTIVITY_Y (APPLE_VIEW_Y - UI_DISK_ACTIVITY_H - 10)
+#define UI_DISK_ACTIVITY_Y ((APPLE_VIEW_Y - UI_DISK_ACTIVITY_H - 10) > 0 ? \
+                           (APPLE_VIEW_Y - UI_DISK_ACTIVITY_H - 10) : 0)
 #define USB1_BOOT_SETTLE_QUIET_US 750000U
 #define USB1_BOOT_HOLD_TIMEOUT_TICKS 0xFFFFFFFFU
 
@@ -2181,13 +2184,21 @@ static void ui_handle_input_with_config(ui_state_t *s, config_menu_t *menu, ui_i
     ui_handle_input(s, in);
 }
 
+static uint8_t ui_bezel_matches_output(void)
+{
+    /* Partial-height banners retain their native pixels; fill below them.
+     * A bezel for another width must not be stretched or silently cropped. */
+    return g_bezel_565 != NULL && g_bezel_width == (unsigned)FB16_WIDTH &&
+           g_bezel_height != 0U && g_bezel_height <= (unsigned)FB16_HEIGHT;
+}
+
 static void ui_draw_bezel_image(uint16_t *fb)
 {
     unsigned copy_w;
     unsigned copy_h;
     unsigned y;
 
-    if (g_bezel_565 == NULL || g_bezel_width == 0U || g_bezel_height == 0U) {
+    if (ui_bezel_matches_output() == 0U) {
         return;
     }
 
@@ -2229,7 +2240,7 @@ static void ui_draw_bezel(uint16_t *fb)
      * as blue flashes during config-menu use. The image is painted
      * directly and only uncovered margins get the background color; the
      * clear survives solely for the no-bezel case. */
-    if (g_bezel_565 == NULL || g_bezel_width == 0U || g_bezel_height == 0U) {
+    if (ui_bezel_matches_output() == 0U) {
         fb16_clear(fb, UI_BEZEL_BG_COLOR);
         return;
     }
@@ -2275,8 +2286,7 @@ static void ui_restore_static_rect(uint16_t *fb,
         return;
     }
 
-    if (show_bezel == 0U || g_bezel_565 == NULL ||
-        g_bezel_width == 0U || g_bezel_height == 0U) {
+    if (show_bezel == 0U || ui_bezel_matches_output() == 0U) {
         fb16_fill_rect(fb, x0, y0, x1 - x0, y1 - y0,
                        (show_bezel != 0U) ? UI_BEZEL_BG_COLOR : FB16_COLOR_BLACK);
         return;
@@ -2344,25 +2354,24 @@ static void ui_prepare_static_background(uint16_t *fb, uint8_t show_bezel)
 static void ui_restore_apple_footprint_if_needed(uint16_t *fb, uint8_t show_bezel)
 {
     const uint8_t slot = comp_out_addr_to_slot((uint32_t)(uintptr_t)fb);
-    const uint32_t next_mode = apple_fb_reader_published_display_mode();
+    const uint8_t next_mode =
+        (apple_fb_reader_display_mode() == APPLE_FB_DISPLAY_MODE_SHR) ?
+            APPLE_FB_DISPLAY_MODE_SHR : APPLE_FB_DISPLAY_MODE_LEGACY;
 
     if (slot == 0xFFU) {
         return;
     }
 
-    if (g_output_slot_apple_mode[slot] == APPLE_FB_DISPLAY_MODE_SHR &&
-        next_mode != APPLE_FB_DISPLAY_MODE_SHR) {
+    if (g_output_slot_apple_mode[slot] != next_mode) {
+        /* Either direction can expose old pixels: at 1200x800, legacy
+         * fits at 2x but SHR only fits at 1x. Restore the whole background
+         * for this output slot before drawing the claimed Apple frame. */
         ui_restore_static_rect(fb,
-                               (int)COMP_SHR_BORDER_X_OFF,
-                               (int)COMP_SHR_BORDER_Y_OFF,
-                               (int)COMP_SHR_BORDER_WIDTH,
-                               (int)COMP_SHR_BORDER_HEIGHT,
+                               0, 0, FB16_WIDTH, FB16_HEIGHT,
                                show_bezel);
     }
 
-    g_output_slot_apple_mode[slot] =
-        (uint8_t)((next_mode == APPLE_FB_DISPLAY_MODE_SHR) ?
-                  APPLE_FB_DISPLAY_MODE_SHR : APPLE_FB_DISPLAY_MODE_LEGACY);
+    g_output_slot_apple_mode[slot] = next_mode;
 }
 
 static void ui_mark_slot_dynamic(uint16_t *fb)
@@ -3167,7 +3176,7 @@ static void ui_save_screenshot(screenshot_service_kind_t kind)
     screenshot_service_result_t result;
     char line[180];
     const char *kind_text =
-        (kind == SCREENSHOT_SERVICE_KIND_A2) ? "a2" : "1080p";
+        (kind == SCREENSHOT_SERVICE_KIND_A2) ? "a2" : "output";
     const int rc = screenshot_service_save(kind, &g_rtc, &result);
 
     if (rc == 0) {
@@ -3405,6 +3414,55 @@ static int menu_platform_set_bezel_path(void *ctx, const char *path)
 {
     (void)ctx;
     return ui_apply_bezel_path(path);
+}
+
+static void ui_apply_size_multiplier(const config_menu_t *menu)
+{
+    const uint8_t requested = config_menu_size_multiplier(menu);
+
+    if (requested == compositor_size_multiplier()) {
+        return;
+    }
+    compositor_set_size_multiplier(requested);
+    /* A smaller picture exposes pixels from the old picture and overlays
+     * even when the Apple display mode has not changed. Clear every slot. */
+    ui_invalidate_static_backgrounds();
+    memset(&g_storage_activity, 0, sizeof(g_storage_activity));
+}
+
+static void ui_apply_output_mode(config_menu_t *menu, uint8_t force)
+{
+    const uint8_t requested = config_menu_output_mode(menu);
+
+    if (force == 0U && requested == compositor_output_mode()) {
+        return;
+    }
+    const int rc = display_output_apply(requested, cherryusb_background_poll);
+    if (rc != 0) {
+        menu->output_mode = compositor_output_mode();
+        (void)snprintf(menu->status, sizeof(menu->status),
+                       "Could not set %s; output remains %s",
+                       display_mode_get(requested)->name,
+                       display_mode_get(menu->output_mode)->name);
+        const uint32_t hw_status = REG_READ(FB_MODE_STATUS_REG);
+        if ((hw_status & FB_MODE_SIGNATURE_MASK) == FB_MODE_SIGNATURE &&
+            (hw_status & (FB_MODE_HELD | FB_MODE_LOCKED)) != FB_MODE_LOCKED) {
+            (void)snprintf(menu->status, sizeof(menu->status),
+                           "Output clock failed; restart to restore video");
+        }
+    }
+    uart_puts(UART0_BASE, "Output resolution: ");
+    uart_puts(UART0_BASE, display_mode_get(compositor_output_mode())->name);
+    uart_puts(UART0_BASE, rc == 0 ? "\r\n" : " (mode change failed)\r\n");
+    ui_invalidate_static_backgrounds();
+    screenshot_service_clear_overlays();
+    memset(&g_storage_activity, 0, sizeof(g_storage_activity));
+    if (g_bezel_565 != NULL) {
+        (void)snprintf(g_bezel_status, sizeof(g_bezel_status),
+                       "%ux%u%s", g_bezel_width, g_bezel_height,
+                       ui_bezel_matches_output() ? "" : " (does not fit output)");
+    }
+    compositor_request_full_refresh();
 }
 
 int main(void)
@@ -3721,6 +3779,8 @@ int main(void)
      * publishing completed compositor slots to fb_reader. */
     compositor_init(ui_compose_thunk);
     compositor_set_draw_context(&ui, &config_menu);
+    ui_apply_output_mode(&config_menu, 1U);
+    ui_apply_size_multiplier(&config_menu);
     g_usb1_background_compositor_ready = 1U;
     usb0_priority_checkpoint();
     if (hid_rc == 0) {
@@ -4133,6 +4193,9 @@ int main(void)
             uart_budget--;
         } while (uart_budget != 0U);
         ui_sync_usb_menu_capture(&config_menu);
+
+        ui_apply_output_mode(&config_menu, 0U);
+        ui_apply_size_multiplier(&config_menu);
 
         /* Keep UI animation time tied to scanout, but let the compositor
          * run every loop. It normally returns immediately; when CPU1

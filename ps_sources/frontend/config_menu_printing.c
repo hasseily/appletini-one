@@ -632,6 +632,13 @@ static void printout_draw_editor(uint16_t *fb,
             (int)strlen(label) * FB16_BUILTIN_FONT_ADVANCE_X * key_scale;
         const int text_h = FB16_BUILTIN_FONT_HEIGHT * key_scale;
 
+        if (cmui_compact_active() != 0U) {
+            if (focused != 0U) {
+                cmui_compact_entry("Selected key", label, 1U, 0U);
+                cmui_compact_entry("Arrows move; Enter selects; Back erases", NULL, 0U, 0U);
+            }
+            continue;
+        }
         fb16_fill_rect(fb, key_x, key_y, key_w, key_h, bg);
         fb16_rect(fb, key_x, key_y, key_w, key_h,
                   focused ? CMUI_COLOR_ACCENT : CMUI_COLOR_BORDER_SOFT);

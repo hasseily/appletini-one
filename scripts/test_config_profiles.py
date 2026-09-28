@@ -91,8 +91,15 @@ def test_autosave_remains_working_config() -> None:
 def test_clean_config_schema_contract() -> None:
     source = read(CONFIG_MENU_C)
 
-    require("#define APPLETINI_CFG_VERSION 117U" in source,
-            "the TURBO opt-in key must advance the config schema")
+    require("#define APPLETINI_CFG_VERSION 119U" in source,
+            "output resolution and size multiplier must advance the config schema")
+    require('strcmp(key, "video.size_multiplier") == 0' in source and
+            '"video.size_multiplier=%s\\n"' in source,
+            "size multiplier must load and save with the config and profiles")
+    for function in ("config_menu_init", "config_menu_reset_settings_only", "config_menu_load_settings"):
+        body = re.search(rf"\b{function}\([^;]*?\n\{{\n(.*?)\n\}}", source, re.DOTALL)
+        require(body is not None and "menu->size_multiplier = 0U;" in body.group(1),
+                f"{function} must default size multiplier to Max")
     require('strcmp(key, "vtw.turbo.enabled") == 0' in source and
             '"vtw.turbo.enabled=%s\\n"' in source,
             "TURBO opt-in must load and save with the config and profiles")

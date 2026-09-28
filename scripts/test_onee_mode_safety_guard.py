@@ -112,12 +112,9 @@ def static_contract_checks() -> None:
         "every watched U533 input must retain the 5 ns route bound",
     )
     require(
-        "generate_raw_transition_capture" in xdc and
-        "generate_raw_transition_capture*.raw_transition_latched_reg*" in xdc and
-        "REF_PIN_NAME == PRE" in xdc and
-        "set_false_path -to" in xdc,
-        "intentional raw-event capture controls must have an explicit timing "
-        "exception",
+        "generate_raw_transition_capture*.raw_transition_latched_reg*" not in xdc,
+        "a false path to raw-event PRE pins would override their 5 ns bound; "
+        "max-delay datapath-only already exempts asynchronous removal",
     )
 
     raw_vector_start = rtl.index("wire [5:0] apple_raw_levels = {")

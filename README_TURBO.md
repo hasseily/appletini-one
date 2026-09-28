@@ -15,7 +15,7 @@ values keep their meanings. The checkbox rows pair Enable TURBO speed with
 the slug debug key, Ignore $C074 with Disable DiskII Acceleration, and Slow
 Floating bus with Slow Paddles/joystick.
 
-The current firmware version is **F1.1.5**. USB joystick and paddle setup is
+The current firmware version is **F1.2.0**. USB joystick and paddle setup is
 available under **USB > Joystick / Paddles**; see
 [the joystick guide](README_USB_JOYSTICK.md) for mapping and timing details.
 The archived build described

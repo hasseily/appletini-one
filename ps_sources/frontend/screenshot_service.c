@@ -16,6 +16,7 @@
 #include "apple_fb_handoff.h"
 #include "compositor.h"
 #include "compositor_layout.h"
+#include "display_modes.h"
 #include "scanlines.h"
 #include "usb_storage_service.h"
 
@@ -36,7 +37,7 @@ typedef struct {
 } screenshot_surface_t;
 
 static FATFS g_screenshot_fs;
-static uint8_t g_png_row[1U + (COMP_OUT_WIDTH * 4U)];
+static uint8_t g_png_row[1U + (COMP_OUT_MAX_WIDTH * 4U)];
 
 /* Two transient on-screen overlays, each a self-contained instance:
  * BOTTOM = screenshot confirmations, TOP = TransWarp speed notices, so
@@ -63,6 +64,12 @@ typedef struct {
 } overlay_t;
 
 static overlay_t g_overlays[OVERLAY_COUNT];
+
+void screenshot_service_clear_overlays(void)
+{
+    memset(g_overlays, 0, sizeof(g_overlays));
+    g_overlays[OVERLAY_TOP].anchor_top = 1U;
+}
 static uint8_t g_scanlines_mode;
 static DWORD g_fattime_override;
 static uint8_t g_fattime_override_active;
@@ -102,7 +109,7 @@ static void result_set(screenshot_service_result_t *result,
 static screenshot_service_rect_t overlay_rect_for_text(const char *text,
                                                        uint8_t anchor_top)
 {
-    const int scale = 3;
+    const int scale = FB16_WIDTH < 1200 ? 2 : 3;
     screenshot_service_rect_t rect;
     const int text_w = (int)strlen(text) * FB16_BUILTIN_FONT_ADVANCE_X * scale;
     const int text_h = FB16_BUILTIN_FONT_HEIGHT * scale;
@@ -738,7 +745,8 @@ static int save_1080p_png(const char *timestamp,
                             COMP_OUT_WIDTH,
                             COMP_OUT_HEIGHT,
                             timestamp,
-                            "1080p",
+                            compositor_output_mode() == DISPLAY_MODE_DEFAULT ?
+                                "1080p" : display_mode_get(compositor_output_mode())->name,
                             rtc,
                             result);
 }
@@ -828,7 +836,7 @@ uint8_t screenshot_service_restore_rect_for_frame(uint16_t *fb,
 
 static void overlay_draw_one(uint16_t *fb, overlay_t *ov, uint8_t slot_mask)
 {
-    const int scale = 3;
+    const int scale = FB16_WIDTH < 1200 ? 2 : 3;
 
     if (ov->active == 0U || ov->text[0] == '\0') {
         return;

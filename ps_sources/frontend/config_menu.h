@@ -192,6 +192,8 @@ typedef struct {
     uint8_t onee_persist_write_failed;
     uint32_t onee_persist_retry_polls;
     uint8_t scanlines_mode;
+    uint8_t output_mode; /* display_modes.h ID; saved with each profile */
+    uint8_t size_multiplier; /* 0: maximum fit; 1/2: requested picture scale */
     uint8_t video_output_mono;
     uint8_t video_mono_color;
     uint8_t video_color_mode;
@@ -327,6 +329,8 @@ void config_menu_start_ethernet_ftp_sd_remote(config_menu_t *menu);
 void config_menu_stop_ethernet_ftp_sd_remote(config_menu_t *menu);
 uint8_t config_menu_ethernet_ftp_sd_remote_active(const config_menu_t *menu);
 uint8_t config_menu_is_active(const config_menu_t *menu);
+uint8_t config_menu_output_mode(const config_menu_t *menu);
+uint8_t config_menu_size_multiplier(const config_menu_t *menu);
 uint8_t config_menu_storage_activity_page_visible(const config_menu_t *menu);
 void config_menu_set_active(config_menu_t *menu, uint8_t active);
 void config_menu_toggle(config_menu_t *menu);

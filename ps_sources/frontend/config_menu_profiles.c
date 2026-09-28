@@ -910,15 +910,24 @@ static void profile_draw_card(uint16_t *fb,
     uint32_t title_color = focused ? CMUI_COLOR_ACCENT : CMUI_COLOR_TEXT;
     unsigned thumb_w = 0U;
     unsigned thumb_h = 0U;
-    const uint32_t *thumb = profile_cache_thumb(entry, cache_slot, &thumb_w, &thumb_h);
+    const uint32_t *thumb;
     char title[80];
     char kind[24];
     int text_scale = focused ? 2 : 1;
     int max_chars;
 
+    if (cmui_compact_active() != 0U && entry != NULL) {
+        cmui_compact_entry(entry->name,
+                           entry->type == CONFIG_PROFILE_UI_FOLDER ? "Folder" :
+                           entry->type == CONFIG_PROFILE_UI_PARENT ? "Back" : NULL,
+                           focused, 0U);
+        return;
+    }
+
     if (entry == NULL) {
         return;
     }
+    thumb = profile_cache_thumb(entry, cache_slot, &thumb_w, &thumb_h);
 
     if (focused == 0U) {
         fb16_fill_rect(fb, x - 8, y - 8, w + 16, h + 50, CMUI_COLOR_PANEL);
@@ -1126,6 +1135,15 @@ static void profile_draw_name_editor(uint16_t *fb,
             (int)strlen(label) * FB16_BUILTIN_FONT_ADVANCE_X * key_scale;
         const int text_h = FB16_BUILTIN_FONT_HEIGHT * key_scale;
 
+        if (cmui_compact_active() != 0U) {
+            /* Only the selected key is needed; arrows still move through
+             * the existing keyboard grid and Enter inserts that key. */
+            if (focused != 0U) {
+                cmui_compact_entry("Selected key", label, 1U, 0U);
+                cmui_compact_entry("Arrows move; Enter selects; Back erases", NULL, 0U, 0U);
+            }
+            continue;
+        }
         fb16_fill_rect(fb, key_x, key_y, key_w, key_h, bg);
         fb16_rect(fb, key_x, key_y, key_w, key_h,
                   focused ? CMUI_COLOR_ACCENT : CMUI_COLOR_BORDER_SOFT);
@@ -1150,6 +1168,17 @@ void config_menu_profiles_draw(uint16_t *fb,
 
     if (menu == NULL) {
         return;
+    }
+
+    if (cmui_compact_active() != 0U) {
+        if (menu->profile_name_editor_active != 0U) {
+            profile_draw_name_editor(fb, menu, x, y, w);
+            return;
+        }
+        if (menu->profile_carousel_active != 0U) {
+            profile_draw_carousel(fb, menu, x, y, w);
+            return;
+        }
     }
 
     (void)snprintf(line,

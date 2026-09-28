@@ -47,12 +47,14 @@ def main() -> int:
             "git_dirty": "0",
             "route_status": "PASS",
             "bus_skew_status": "PASS",
-            "minimum_wns_ns": "0.200",
+            "minimum_wns_ns": "0.150",
             "implementation_setup_margin_ns": "0.200",
             "margin_apply_hook_sha256": "a" * 64,
             "margin_clear_hook_sha256": "b" * 64,
             "final_fabric_user_uncertainty_ns": "0.000",
-            "wns_ns": "0.200",
+            "final_pixel_user_uncertainty_ns": "0.000",
+            "constraint_bounds_status": "PASS",
+            "wns_ns": "0.150",
             "whs_ns": "0.000",
             "wpws_ns": "0.000",
         }
@@ -69,7 +71,7 @@ def main() -> int:
         pack.validate_build_manifest(build_id, run_dir, manifest)
 
         low_slack = copy.deepcopy(manifest)
-        low_slack["wns_ns"] = "0.199"
+        low_slack["wns_ns"] = "0.149"
         expect_failure(
             lambda: pack.validate_build_manifest(build_id, run_dir, low_slack),
             "low setup margin",
@@ -83,6 +85,26 @@ def main() -> int:
             ),
             "uncleared implementation margin",
         )
+
+        for key, value in (
+            ("minimum_wns_ns", "0.149"),
+            ("implementation_setup_margin_ns", "0.199"),
+            ("final_pixel_user_uncertainty_ns", "0.200"),
+            ("constraint_bounds_status", "FAIL"),
+        ):
+            invalid = copy.deepcopy(manifest)
+            invalid[key] = value
+            expect_failure(
+                lambda: pack.validate_build_manifest(build_id, run_dir, invalid),
+                f"{key}={value}",
+            )
+        for key in ("final_pixel_user_uncertainty_ns", "constraint_bounds_status"):
+            invalid = copy.deepcopy(manifest)
+            del invalid[key]
+            expect_failure(
+                lambda: pack.validate_build_manifest(build_id, run_dir, invalid),
+                f"missing {key}",
+            )
 
         missing_hook_hash = copy.deepcopy(manifest)
         missing_hook_hash["margin_apply_hook_sha256"] = "unavailable"

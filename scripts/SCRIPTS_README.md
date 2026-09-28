@@ -26,14 +26,14 @@ vivado -mode batch -source scripts/build_and_export_xsa.tcl
 vitis -s .\scripts\create_vitis_workspace.py
 ```
 
-Use the known-good checkpoint for normal small changes. For a large netlist
-change, first recreate the project, then request a full build:
+Normal builds start from current synthesis with no incremental reference.
+Recreate the project when its source list or block design changes. To request
+an incremental comparison, name a tested checkpoint explicitly:
 
 ```powershell
-vivado -mode batch -source scripts/create_project.tcl
-$env:APPLETINI_FULL_BUILD = "1"
+$env:APPLETINI_INCREMENTAL_REF_DCP = ".vivado_cache/appletini_yarz_top_known_good.dcp"
 vivado -mode batch -source scripts/build_and_export_xsa.tcl
-Remove-Item Env:APPLETINI_FULL_BUILD
+Remove-Item Env:APPLETINI_INCREMENTAL_REF_DCP
 ```
 
 Set `APPLETINI_TIMING_DIAGNOSTICS=1` on a full build to add congestion,
@@ -41,28 +41,29 @@ high-fanout-net, and QoR reports. Each build writes an immutable record under
 `.timing_runs/<build-id>/`. The two CSV files at the root of that directory
 track build results and the top ten setup paths.
 
-The generated project must keep the `Performance_ExplorePostRoutePhysOpt`
-implementation strategy. Its Explore placement, physical optimization, route,
-and post-route physical optimization settings are part of the timing flow. Do
-not force Default placement or disable the post-place pass. Those changes made
-the same F0.9.75 design miss setup timing by 0.207 ns.
+`configure_vivado_run_profile.tcl` gives new and existing projects one fixed
+profile: default synthesis, Explore logic optimization, Default placement,
+Explore pre-route physical optimization, and Explore routing. It clears old
+hooks and extra options and sets eight worker threads in each run. `-jobs 8`
+alone does not set the worker count. Full post-route Explore, forced TNS
+cleanup, and automatic rescue passes are disabled.
 
-The build script checks both setup and hold slack before it exports the XSA. If
-the normal full flow misses setup by a small amount, it runs one more
-post-route `AggressiveExplore` physical-optimization pass on the routed design.
-The implementation flow applies a temporary `0.200 ns` setup margin to the
-133 MHz fabric clock before placement, then clears and verifies it after the
-last physical-optimization step. This makes Vivado target the release margin
-without changing the final timing constraint. The script stops unless final
-setup WNS is at least `+0.200 ns` and hold stays nonnegative. Never package a
-bitstream from a run that stopped at that timing gate.
+Before logic optimization, the flow applies a temporary `0.200 ns` fabric
+setup margin and tightens the Apple direction limits by the same amount.
+After routing, `finish_video_timing.tcl` applies `0.200 ns` to the pixel clock
+and runs routing, cell and pin optimization only for that clock's paths.
+It then restores both clocks and the Apple output requirements. Applying
+the pixel margin before placement was measured and rejected.
 
-An incremental run can fail placement when the known-good checkpoint predates
-a large change. In that case, do not weaken timing settings or promote the
-failed run. Use the fresh full-build sequence above.
+The build reopens the final design and checks both clocks' nominal
+uncertainty, the original board requirements, all 32 Apple/Gray-pointer
+bounds, and the full timing/route reports. Export requires global setup
+WNS of at least `+0.150 ns`, nonnegative hold and pulse width, and no failing
+or unconstrained internal endpoint. Never package a bitstream from a run
+that stopped at that gate. See `README_VIVADO_RUNTIME_AUDIT.md` for the trials.
 
 Promotion requires two consecutive clean full builds of the same commit. Both
-must have setup WNS of at least `+0.200 ns`, nonnegative hold and pulse width,
+must have setup WNS of at least `+0.150 ns`, nonnegative hold and pulse width,
 no timing failure, no bad route or bus skew, no missing XDC object, and no
 extra rescue pass. Both builds must also use the same Vivado version and the
 same synthesis, placement, route, and physical-optimization settings. Package
@@ -87,6 +88,11 @@ Run the timing-tool tests after changing this flow:
 
 ```powershell
 vivado -mode batch -source scripts/test_timing_tooling.tcl
+python scripts/test_timing_margin_hooks.py
+python scripts/test_vivado_run_profile.py
+python scripts/test_timing_manifest_format.py
+python scripts/test_timing_firmware_packaging.py
+# After a normal full build; checks saved properties without changing them:
 vivado -mode batch -source scripts/test_timing_run_properties.tcl
 ```
 

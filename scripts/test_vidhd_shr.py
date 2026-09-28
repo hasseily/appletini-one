@@ -583,10 +583,16 @@ def test_no_vidhd_identity_and_slot_layout() -> None:
     require("localparam logic [2:0] MB1_SLOT_ASSIGN = 3'h4;" in top and
             ".slot_assign(MB1_SLOT_ASSIGN)" in top,
             "Phasor must be controlled as slot 4")
-    require("mouse_card mouse_card_i" in top and
-            ".ab_read(gate_ab(ab_read, card_slot2_bus_enable))" in top and
-            ".slot_assign(3'h2)" in top,
-            "MouseCard must be controlled as slot 2")
+    slot2 = read(REPO_ROOT / "hdl/apple/slot2_card.sv")
+    require("slot2_card slot2_card_i" in top and
+            ".enabled(card_slot2_enable)" in top and
+            ".ab_read(gate_ab(data_phase_ab_read, card_slot2_bus_enable))" in top and
+            "mouse_card mouse_card_i" in top and
+            ".rstn(slot2_mouse_selected)" in top and
+            ".ab_read(mouse_ab_read)" in top and
+            ".slot_assign(3'd2)" in top and
+            "assign mouse_selected = card_active && (mode_q == MODE_MOUSE);" in slot2,
+            "MouseCard must remain behind the selectable slot-2 bus gate")
     require('"mouse_card_slot2.mem"' in mouse and
             "apple/mouse_card_slot2.mem" in sources,
             "MouseCard slot ROM image must be patched and loaded for slot 2")
@@ -602,7 +608,9 @@ def test_no_vidhd_identity_and_slot_layout() -> None:
             "for (uint32_t channel = 0U; channel < MOCKINGBOARD_CHANNEL_COUNT; ++channel)" in config_menu_phasor and
             "mouse.slot2.enabled=%s\\n" in config_menu and
             "mockingboard_slot4=%u\\n" not in config_menu_phasor and
-            "Enable in Slot 2" in config_menu_device_tabs and
+            "config_menu_slot2_card_text(menu->slot2_card)" in config_menu_device_tabs and
+            '"slot2.card=%s\\n"' in config_menu and
+            '"Slot 2"' in config_menu and
             "Enable in Slot 4" in config_menu_phasor and
             'strcmp(key, "mouse.slot2.enabled") == 0' in config_menu and
             'strcmp(key, "phasor.slot4.enabled") == 0' in config_menu_phasor and

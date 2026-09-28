@@ -209,7 +209,7 @@ static void press(config_menu_t *m, ui_key_t key)
 static void render(config_menu_t *menu, const char *path)
 {
     const unsigned compact = FB16_WIDTH == 1024 && FB16_HEIGHT == 768;
-    static const char *const tabs[]={"Prof","Boot","Video","SP","Disk","CPU","Sound","Mouse","Net","TW","Clock","RAM","USB","Print","About"};
+    static const char *const tabs[]={"Prof","Boot","Video","SP","Disk","CPU","Sound","Slot2","Net","TW","Clock","RAM","USB","Print","About"};
     uint16_t *fb=calloc(FB16_WIDTH*FB16_HEIGHT,sizeof(*fb)); assert(fb);
     cmui_rect_t nav,body,footer; cmui_screen_rects(&nav,&body,&footer);
     compact_preview_rows=0; compact_focused_rows=0; compact_raw[0]='\0';

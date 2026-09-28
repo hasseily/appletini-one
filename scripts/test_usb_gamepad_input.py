@@ -28,6 +28,11 @@ FUNCTIONS = (
     "mouse_menu_finish_ok_hold", "mouse_menu_push_button_edge",
     "mouse_menu_process_buttons", "hid_axis_active_from_rest",
     "hid_menu_push_hat", "hid_menu_push_axis", "hid_process_gamepad_report",
+    "hid_report_id_matches", "hid_extract_bits", "hid_sign_extend",
+    "hid_item_signed_value", "hid_desktop_usage_for_field", "hid_onee_axis_from_usage",
+    "hid_collect_button_item", "hid_collect_desktop_item",
+    "hid_report_info_has_absolute_joystick", "hid_report_info_has_relative_mouse",
+    "hid_process_report_protocol_report",
     "usb_gamepad_input_report", "hid_process_report", "hid_report_complete",
     "hid_slots_retry_reports", "usbh_hid_run", "usbh_hid_stop",
     "usb_hid_service_set_menu_capture", "usb_hid_service_set_joystick_preview",
@@ -65,6 +70,10 @@ def main() -> int:
         return 0
 
     source = (FRONTEND / "usb_hid_service.c").read_text(encoding="utf-8")
+    descriptor = extract_function(source, "hid_parse_report_descriptor")[1]
+    assert re.search(r"if \(hid_report_info_has_absolute_joystick\(slot\) != 0U\)\s*\{\s*"
+                     r"slot->onee_joystick = 1U;", descriptor)
+    assert "slot2_gamepad_service_poll();" in extract_function(source, "usb_hid_service_poll")[1]
     slot = re.search(r"typedef struct \{.*?\} usb_hid_slot_t;", source, re.DOTALL)
     if slot is None:
         raise AssertionError("missing production USB slot type")
@@ -72,6 +81,10 @@ def main() -> int:
     harness = (ROOT / "scripts" / "fixtures" /
                "usb_gamepad_input_harness.c").read_text(encoding="utf-8")
     harness = harness.replace("/* PRODUCTION_SLOT */", slot.group())
+    hid_header = (ROOT / "third_party/CherryUSB/class/hid/usbh_hid.h").read_text()
+    report_types = hid_header[hid_header.index("struct usbh_hid_report_item_attribute"):
+                              hid_header.index("struct usbh_hid {")]
+    harness = harness.replace("/* PRODUCTION_REPORT_TYPES */", report_types)
     harness = harness.replace("/* PRODUCTION_PROTOTYPES */",
                               "\n".join(item[0] for item in functions))
     harness = harness.replace("/* PRODUCTION_FUNCTIONS */",

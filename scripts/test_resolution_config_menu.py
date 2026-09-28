@@ -142,6 +142,7 @@ typedef struct { int unused; } FIL;
 #define FA_READ 1
 #define APPLETINI_CFG_MAX 4096
 #define CONFIG_DEFAULT_VTW_TURBO_ENABLED 0
+#define config_menu_slot2_reset(menu) ((void)(menu))
 static const char *cfg_contents;
 static int cfg_read_result;
 static unsigned cfg_saves, cfg_saved_multiplier;
@@ -213,10 +214,10 @@ int main(void)
     cfg_read_result=FR_OK;
     config_menu_load_settings(&m);
     assert(m.size_multiplier==0 && cfg_saves==1 && cfg_saved_multiplier==0);
-    cfg_contents="appletini.config.version=119\nvideo.size_multiplier=2\n";
+    cfg_contents="appletini.config.version=120\nvideo.size_multiplier=2\n";
     config_menu_load_settings(&m);
     assert(m.size_multiplier==2 && cfg_saves==1);
-    cfg_contents="appletini.config.version=119\nvideo.size_multiplier=invalid\n";
+    cfg_contents="appletini.config.version=120\nvideo.size_multiplier=invalid\n";
     config_menu_load_settings(&m);
     assert(m.size_multiplier==0 && cfg_saves==1);
     const char *ui_order[] = {

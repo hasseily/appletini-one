@@ -46,7 +46,10 @@ module apple_virtual_bus #(
     input  logic [7:0]              floating_bus_data,
 
     input  globals::AppleBus_write  ab_write,
-    output globals::AppleBus_read   ab_read
+    output globals::AppleBus_read   ab_read,
+    // For consumers which inspect data only at data_en. This is the same
+    // byte as ab_read.data in that phase, without the live pre-data mux.
+    output logic [7:0]              data_phase_data
 );
 
     localparam integer MAX_CYCLE_CLKS =
@@ -64,6 +67,8 @@ module apple_virtual_bus #(
     logic                   cycle_rw_q;
     (* KEEP = "TRUE" *) logic [7:0] cycle_data_q;
     (* KEEP = "TRUE" *) logic       phase_data_q;
+
+    assign data_phase_data = cycle_data_q;
 
     wire phase_drive = (phase_q == PHASE_WIDTH'(DRIVE_CLK));
     wire phase_addr  = (phase_q == PHASE_WIDTH'(ADDR_CLK));

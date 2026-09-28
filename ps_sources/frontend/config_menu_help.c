@@ -373,13 +373,14 @@ HELP(disk2,
     "Light-brown TXT files open in a reader. UP/DOWN scroll, LEFT/RIGHT turn pages, ESC returns.");
 
 /* ======================================================================== */
-/*  MOUSE                                                                   */
+/*  SLOT 2                                                                  */
 /* ======================================================================== */
 HELP(mouse,
-    "Mouse emulates an Apple Mouse Card in slot 2 using USB HID input from USB1.",
-    "Sensitivity scales movement before it reaches Apple software; changes apply immediately.",
-    "The original //e mouse is extremely slow. Set sensitivity to 12% for a similar feel, but this also",
-    "depends heavily on the mouse's DPI. Experiment to find the best sensitivity for your mouse.");
+    "Choose one card for slot 2: Mouse, 4Play, SNES MAX, or Off. Changes apply immediately.",
+    "4Play supports four players with directions and fire buttons. SNES MAX supports two full gamepads.",
+    "For each player, Auto picks an available controller; USB 1-8 selects a device; Off leaves it empty.",
+    "SNES buttons follow their positions: B bottom, Y left, A right, X top; shoulders are L and R.",
+    "Mouse sensitivity changes movement speed. Its setting stays saved when another card is selected.");
 
 /* ======================================================================== */
 /*  MOCKINGBOARD / PHASOR                                                   */

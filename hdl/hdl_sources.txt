@@ -53,6 +53,8 @@ apple/ssi263_voice.sv
 apple/mockingboard.sv
 apple/disk2_sound_player.sv
 apple/mouse_card.sv
+apple/slot2_gamepad_card.sv
+apple/slot2_card.sv
 apple/applicard_card.sv
 apple/uthernet2_card.sv
 apple/ssc_card.sv

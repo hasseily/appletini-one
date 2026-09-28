@@ -9,6 +9,7 @@
 #include "uthernet2_control.h"
 #include "usb_hid_service.h"
 #include "onee_input_service.h"
+#include "slot2_gamepad_service.h"
 
 #define CONFIG_MENU_STATUS_LEN 96U
 #define CONFIG_MENU_PATH_LEN 128U
@@ -128,6 +129,8 @@ typedef struct {
                                       size_t detail_len);
     void (*set_slot_enabled)(void *ctx, uint8_t slot, uint8_t enable);
     uint8_t (*get_slot_enabled)(void *ctx, uint8_t slot);
+    void (*set_slot2_card)(void *ctx, uint8_t card);
+    void (*set_slot2_player_devices)(void *ctx, const uint8_t devices[4]);
     void (*set_slot5_processor)(void *ctx, uint8_t processor);
     void (*set_applicard_resource_max)(void *ctx, uint8_t maximum);
     void (*set_vtw_config)(void *ctx,
@@ -220,7 +223,10 @@ typedef struct {
     uint8_t disk2_sound_volume;
     uint8_t disk2_slots[2][4];
     char disk2_disk_paths[2][CONFIG_MENU_PATH_LEN];
-    uint8_t mouse_slot2_enabled;
+    uint8_t slot2_card;
+    uint8_t slot2_card_explicit; /* per-file key precedence over the legacy mouse key */
+    uint8_t slot2_player_devices[4]; /* 0 Auto, 1..8 USB device, 9 Off */
+    uint8_t mouse_slot2_enabled; /* derived from slot2_card for older callers */
     uint8_t mouse_sensitivity;
     uint8_t applicard_slot5_enabled; /* selected coprocessor in slot 5 */
     uint8_t slot5_processor;         /* config_slot5_processor_t */

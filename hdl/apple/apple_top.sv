@@ -102,6 +102,8 @@ module apple_top(
     globals::AppleBus_read  ab_read;
     globals::AppleBus_read  physical_ab_read;
     globals::AppleBus_read  virtual_ab_read;
+    globals::AppleBus_read  data_phase_ab_read;
+    logic [7:0] virtual_data_phase_data;
     globals::AppleBus_read  onee_softswitch_ab_read;
     globals::AppleBus_read  slot7_devsel_ab_read;
     globals::AppleBus_write ab_write;
@@ -290,7 +292,8 @@ module apple_top(
         .resp_rdata       (virtual_resp_rdata),
         .floating_bus_data(onee_floating_bus_data),
         .ab_write         (virtual_ab_write_arb),
-        .ab_read          (virtual_ab_read)
+        .ab_read          (virtual_ab_read),
+        .data_phase_data  (virtual_data_phase_data)
     );
 
     onee_motherboard_io onee_motherboard_io_i (
@@ -344,6 +347,15 @@ module apple_top(
     assign ab_read  = onee_enable_effective ? virtual_ab_read
                                              : physical_ab_read;
     assign ab_write = physical_bus_isolate ? '0 : ab_write_arb;
+
+    // Mouse data consumers all require data_en. The private
+    // bus has already captured their byte before that strobe; bypass its
+    // unused live-data arm without changing any phase, policy, or reset.
+    always_comb begin
+        data_phase_ab_read = ab_read;
+        data_phase_ab_read.data = onee_enable_effective ?
+                                  virtual_data_phase_data : physical_ab_read.data;
+    end
 
     soft_switch_manager ssm(
         .clk(clk),
@@ -515,6 +527,9 @@ module apple_top(
     localparam logic [7:0] CARD_CTRL_REG_TURBO_PERF7 = 8'hAA;
     localparam logic [7:0] CARD_CTRL_REG_VTW_JOYSTICK_PADDLES = 8'hAB;
     localparam logic [7:0] CARD_CTRL_REG_VTW_JOYSTICK_CONTROL = 8'hAC;
+    localparam logic [7:0] CARD_CTRL_REG_SLOT2_CONTROL = 8'hAD;
+    localparam logic [7:0] CARD_CTRL_REG_SLOT2_STATE_LO = 8'hAE;
+    localparam logic [7:0] CARD_CTRL_REG_SLOT2_STATE_HI = 8'hAF;
     //   VTW_C0_RING_*   : last eight $C00x/$C01x soft-switch cycles with
     //                     latched data ({rw,addr[4:0],data[7:0]} x2/reg).
     localparam logic [7:0] CARD_CTRL_REG_VTW_C0_RING0    = 8'h6C;
@@ -759,8 +774,9 @@ module apple_top(
         card_feature_enable_mask_q[CARD_CTRL_FEATURE_SSC_ENABLE_BIT];
     wire card_ssc_bus_enable = card_ssc_enable &&
         (onee_enable_effective || physical_slot_allowed_mask[1]);
+    logic slot2_mouse_selected;
     wire [7:0] no_slot_clock_slot_mask =
-        (card_slot2_bus_enable ? 8'h04 : 8'h00) |
+        ((card_slot2_bus_enable && slot2_mouse_selected) ? 8'h04 : 8'h00) |
         (card_slot4_bus_enable ? 8'h10 : 8'h00) |
         (card_slot6_bus_enable ? 8'h40 : 8'h00) |
         ((onee_slot7_cards_visible && card_slot7_bus_enable) ?
@@ -1169,7 +1185,10 @@ module apple_top(
     // individual writer interfaces that get arbited into the mux
     globals::AppleBus_write brain_transplant_write;
     globals::AppleBus_write mb1_ab_write;
+    globals::AppleBus_read mouse_ab_read;
     globals::AppleBus_write mouse_ab_write;
+    globals::AppleBus_write slot2_ab_write;
+    logic [31:0] slot2_ps_rdata;
     // Interrupt-chain debug taps (declared here so the card instantiations
     // above the counter block can drive them; see the counters near the
     // mouse_card instance).
@@ -1424,13 +1443,30 @@ module apple_top(
     assign mockingboard_audio_l = mockingboard_audio_l_q;
     assign mockingboard_audio_r = mockingboard_audio_r_q;
 
+    slot2_card slot2_card_i (
+        .clk(clk),
+        .resetn(rstn[3]),
+        .card_resetn(rstn[2]),
+        .enabled(card_slot2_enable),
+        .ab_read(gate_ab(data_phase_ab_read, card_slot2_bus_enable)),
+        .as_common(as_common),
+        .ps_wr_en(as_client.awvalid),
+        .ps_rdata(slot2_ps_rdata),
+        .mouse_selected(slot2_mouse_selected),
+        .mouse_ab_read(mouse_ab_read),
+        .mouse_ab_write(mouse_ab_write),
+        .ab_write(slot2_ab_write)
+    );
+
+    // Keep the existing Mouse instance. Selection also
+    // resets the inactive card so held data and pending IRQ cannot return.
     mouse_card mouse_card_i (
         .clk(clk),
-        .rstn(rstn[2]),
+        .rstn(slot2_mouse_selected),
         .vblank_start_pulse(mouse_vblank_start_pulse),
-        .ab_read(gate_ab(ab_read, card_slot2_bus_enable)),
+        .ab_read(mouse_ab_read),
         .sss(sss),
-        .slot_assign(3'h2),
+        .slot_assign(3'd2),
         .as_common(as_common),
         .as_client(mouse_as_client),
         .ab_write(mouse_ab_write),
@@ -1474,7 +1510,7 @@ module apple_top(
             irqdbg_ssi_irq_prev_q     <= 1'b0;
         end
         else begin
-            irqdbg_mouse_irq_prev_q   <= mouse_ab_write.assert_irq;
+            irqdbg_mouse_irq_prev_q   <= slot2_ab_write.assert_irq;
             irqdbg_ssi_backend_prev_q <= mb1_dbg_ssi_backend_done;
             irqdbg_ssi_irq_prev_q     <= mb1_dbg_ssi_irq;
             if (ab_read.serve_en && ab_read.rw &&
@@ -1484,7 +1520,7 @@ module apple_top(
             if (mouse_vblank_start_pulse && irqdbg_mouse_vbl_q != 8'hFF) begin
                 irqdbg_mouse_vbl_q <= irqdbg_mouse_vbl_q + 8'd1;
             end
-            if (mouse_ab_write.assert_irq && !irqdbg_mouse_irq_prev_q &&
+            if (slot2_ab_write.assert_irq && !irqdbg_mouse_irq_prev_q &&
                 irqdbg_mouse_irq_q != 8'hFF) begin
                 irqdbg_mouse_irq_q <= irqdbg_mouse_irq_q + 8'd1;
             end
@@ -1821,6 +1857,9 @@ module apple_top(
         // The boot card owns its command session and normal C7/C8 decode.
         boot_menu_ab_read = gate_ab(slot7_devsel_ab_read,
                                      !onee_enable_effective);
+        // No virtual phases reach this card, and every data consumer needs
+        // data_en. Keep its byte on the physical bus as well.
+        boot_menu_ab_read.data = physical_ab_read.data;
     end
 
     boot_menu_card boot_menu_card_i (
@@ -2292,7 +2331,7 @@ module apple_top(
             vtw_ab_write,
             brain_transplant_write,
             mb1_ab_write,
-            mouse_ab_write,
+            slot2_ab_write,
             applicard_ab_write,
             uthernet_ab_write,
             ssc_ab_write,
@@ -2321,7 +2360,7 @@ module apple_top(
             vtw_ab_write,
             brain_transplant_write,
             mb1_ab_write,
-            mouse_ab_write,
+            slot2_ab_write,
             applicard_ab_write,
             uthernet_ab_write,
             ssc_ab_write,
@@ -2381,6 +2420,8 @@ module apple_top(
     //                         [11:8] volume, write-only [19:16] menu event.
     //   araddr/awaddr 0x5C-0x5F: ONE//e USB key FIFO, live keys/buttons,
     //                         paddles, and virtual warm-reset control.
+    //   araddr/awaddr 0xAD-0xAF: slot-2 selection, presence, and staged
+    //                         gamepad buttons; $AD commits the whole state.
     //
     // rdata MUST be registered (not always_comb): the axidouble crossbar's
     // addrdecode is OPT_REGISTERED=1 without OPT_LOWPOWER, so it advances
@@ -2943,6 +2984,10 @@ module apple_top(
                 CARD_CTRL_REG_VTW_JOYSTICK_PADDLES,
                 CARD_CTRL_REG_VTW_JOYSTICK_CONTROL:
                     as_client_rdata_q <= vtw_joystick_ps_rdata;
+                CARD_CTRL_REG_SLOT2_CONTROL,
+                CARD_CTRL_REG_SLOT2_STATE_LO,
+                CARD_CTRL_REG_SLOT2_STATE_HI:
+                    as_client_rdata_q <= slot2_ps_rdata;
                 CARD_CTRL_REG_VTW_POST_STATUS: as_client_rdata_q <= {vtw_arm_post_ready,
                                                                     vtw_arm_post_accept_count_q};
                 CARD_CTRL_REG_VTW_RW_FLUSH:    as_client_rdata_q <= {vtw_arm_rw_flush_busy_q,

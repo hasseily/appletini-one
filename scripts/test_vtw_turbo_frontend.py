@@ -53,7 +53,7 @@ def main() -> int:
                     '} else if (strcmp(key, "vtw.slug.key")')
     parse = "    if (" + parse + "    }\n"
     serializer = extract(source, '    APPEND_CFG("mouse.slot2.enabled=',
-                         "    for (uint32_t binding")
+                         "    for (uint32_t paddle")
     harness = BUILD / "vtw_turbo_frontend.c"
     executable = BUILD / "vtw_turbo_frontend.exe"
     harness.write_text(textwrap.dedent(r'''
@@ -63,6 +63,7 @@ def main() -> int:
         #include <stdlib.h>
         #include <string.h>
         #include "card_control_regs.h"
+        #include "slot2_gamepad_service.h"
 
         #define CONFIG_SLOT5_PROCESSOR_AD8088 1U
         typedef struct {
@@ -70,7 +71,7 @@ def main() -> int:
             uint8_t vtw_ignore_c074, vtw_disable_disk2_accel;
             uint8_t vtw_turbo_enabled, vtw_slug_key_enabled;
             uint16_t vtw_slowdown_mask, vtw_slowdown_cycles;
-            uint8_t mouse_slot2_enabled, mouse_sensitivity;
+            uint8_t mouse_slot2_enabled, mouse_sensitivity, slot2_card;
             uint8_t applicard_slot5_enabled, slot5_processor, applicard_resource_max;
             struct {
                 void *ctx;

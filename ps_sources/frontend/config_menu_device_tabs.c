@@ -477,14 +477,23 @@ void config_menu_draw_mouse(uint16_t *fb,
         return;
     }
 
-    hgr_draw_check_item(fb, x, y, w, (uint8_t)(menu->item_focus == 0U),
-                        menu->mouse_slot2_enabled, "Enable in Slot 2");
-    hgr_draw_mouse_sensitivity_item(fb,
-                                    x,
-                                    y + (CMUI_ROW_H + CMUI_ROW_GAP),
-                                    w,
-                                    (uint8_t)(menu->item_focus == 1U),
-                                    menu->mouse_sensitivity);
+    hgr_draw_value_item(fb, x, y, w, (uint8_t)(menu->item_focus == 0U),
+                        "Card", config_menu_slot2_card_text(menu->slot2_card));
+    if (menu->slot2_card == SLOT2_CARD_MOUSE) {
+        hgr_draw_mouse_sensitivity_item(fb, x, y + (CMUI_ROW_H + CMUI_ROW_GAP),
+                                        w, (uint8_t)(menu->item_focus == 1U),
+                                        menu->mouse_sensitivity);
+    } else {
+        const uint8_t players = config_menu_slot2_player_count(menu->slot2_card);
+        for (uint8_t player = 0U; player < players; ++player) {
+            char label[16];
+            (void)snprintf(label, sizeof(label), "Player %u", (unsigned)player + 1U);
+            hgr_draw_value_item(fb, x,
+                y + ((int)(player + 1U) * (CMUI_ROW_H + CMUI_ROW_GAP)), w,
+                (uint8_t)(menu->item_focus == (uint32_t)player + 1U), label,
+                config_menu_slot2_device_text(menu->slot2_player_devices[player]));
+        }
+    }
 }
 
 void config_menu_draw_ethernet(uint16_t *fb,

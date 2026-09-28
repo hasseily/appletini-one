@@ -297,7 +297,7 @@ def test_boot_menu_groups_boot_and_video_settings() -> None:
         '    "Slot 6 Disk II",\n'
         '    "Slot 5 Processor",\n'
         '    "Slot 4 Phasor",\n'
-        '    "Slot 2 Mouse",\n'
+        '    "Slot 2",\n'
         '    "Slot 1 Ethernet",\n'
         '    "TransWarp",' in source,
         "slot-card tab titles and order must match their physical slots")

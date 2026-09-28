@@ -49,6 +49,7 @@
 #include "smartport_service.h"
 #include "usb_hid_service.h"
 #include "onee_input_service.h"
+#include "slot2_gamepad_service.h"
 #include "onee_fixed_mode.h"
 #include "usb_storage_backend.h"
 #include "usb_storage_service.h"
@@ -974,6 +975,31 @@ static void control_set_slot_enabled(void *ctx, uint8_t slot, uint8_t enable)
         vtw_service_set_disk2_config_enabled(
             ((g_card_slot_effective_mask & slot_bit) != 0U) ? 1U : 0U);
     }
+}
+
+static void control_set_slot2_card(void *ctx, uint8_t card)
+{
+    slot2_gamepad_snapshot_t state;
+    card = card < SLOT2_CARD_COUNT ? card : SLOT2_CARD_OFF;
+    slot2_gamepad_service_get_snapshot(&state);
+    /* Remove the old card only when its type changes. Reapplying unrelated
+     * menu settings must not reset an initialized mouse. */
+    if (state.card != card) {
+        control_set_slot_enabled(ctx, 2U, 0U);
+    }
+    slot2_gamepad_service_set_card(card);
+    const uint8_t supported = (card == SLOT2_CARD_MOUSE) || state.available;
+    control_set_slot_enabled(ctx, 2U,
+        (uint8_t)(card != SLOT2_CARD_OFF && supported));
+    if (card >= SLOT2_CARD_FOUR_PLAY && !supported) {
+        uart_puts(UART0_BASE, "[slot2] Gamepad card requires updated FPGA firmware\r\n");
+    }
+}
+
+static void control_set_slot2_player_devices(void *ctx, const uint8_t devices[4])
+{
+    (void)ctx;
+    slot2_gamepad_service_set_player_devices(devices);
 }
 
 static const char *boot_debug_handoff_name(uint32_t handoff)
@@ -3478,6 +3504,7 @@ int main(void)
     uart_init_both(921600U);
 
     memset(&ui, 0, sizeof(ui));
+    slot2_gamepad_service_init();
     config_menu_init(&config_menu);
 
     uart_puts(UART0_BASE, "\r\n==============================\r\n");
@@ -3575,6 +3602,8 @@ int main(void)
             control_set_ethernet_ftp_sd_remote;
         menu_platform.set_slot_enabled = control_set_slot_enabled;
         menu_platform.get_slot_enabled = control_get_slot_enabled;
+        menu_platform.set_slot2_card = control_set_slot2_card;
+        menu_platform.set_slot2_player_devices = control_set_slot2_player_devices;
         menu_platform.set_slot5_processor = control_set_slot5_processor;
         menu_platform.set_applicard_resource_max = control_set_applicard_resource_max;
         menu_platform.set_vtw_config = control_set_vtw_config;

@@ -306,6 +306,18 @@
 #define CARD_CTRL_VTW_JOYSTICK_BUTTON_SHIFT    1U
 #define CARD_CTRL_VTW_JOYSTICK_BUTTON_MASK     0x07UL
 #define CARD_CTRL_VTW_JOYSTICK_STATE_MASK      0x0FUL
+/* Slot 2: atomic card choice and up to four USB gamepads. Each staged
+ * 16-bit player halfword holds active-high SNES B,Y,Select,Start,Up,Down,
+ * Left,Right,A,X,L,R in bits 0..11. A byte-0 CONTROL write commits both
+ * staged words, the card choice in bits 1:0, and presence in bits 7:4.
+ * CONTROL readback identifies this interface with 0x5332 in bits 31:16. */
+#define CARD_CTRL_SLOT2_CONTROL_REG           CARD_CTRL_REG_ADDR(0xADU)
+#define CARD_CTRL_SLOT2_STATE_LO_REG          CARD_CTRL_REG_ADDR(0xAEU)
+#define CARD_CTRL_SLOT2_STATE_HI_REG          CARD_CTRL_REG_ADDR(0xAFU)
+#define CARD_CTRL_SLOT2_SIGNATURE             0x5332U
+#define CARD_CTRL_SLOT2_SIGNATURE_SHIFT       16U
+#define CARD_CTRL_SLOT2_PRESENT_SHIFT         4U
+#define CARD_CTRL_SLOT2_STATE_MASK            0xF3U
 #define CARD_CTRL_VTW_TRACE_FROZEN_BIT      (1UL << 0)
 #define CARD_CTRL_VTW_TRACE_REASON_SHIFT    1U
 #define CARD_CTRL_VTW_TRACE_REASON_MASK     0x3UL

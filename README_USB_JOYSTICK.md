@@ -1,5 +1,9 @@
 # USB joysticks and paddles
 
+For USB-backed 4Play and SNES MAX in slot 2, see
+[Slot 2 gamepad cards](README_SLOT2_GAMEPADS.md). Those interfaces work without
+TransWarp; the paddle bridge described below has its own requirements.
+
 USB1 controllers can supply Apple paddle positions and three pushbuttons
 only while TransWarp runs the physical Apple II. Connecting a supported
 controller selects USB paddle input automatically. Disconnecting it restores the
@@ -72,8 +76,8 @@ selected slots continue updating.
 The lowest connected joystick slot still owns PB0 through PB2. If it
 disconnects, the next controller supplies the buttons and any paddles whose
 device is Auto. Axis-only and button-only
-reports retain the values omitted from that report. Current HID detection
-requires at least two absolute axes; relative mice and a lone throttle are
+reports retain the values omitted from that report. HID detection accepts
+two absolute axes or a D-pad hat; relative mice and a lone throttle are
 not selected as joysticks. HID devices and supported vendor gamepads share
 eight input slots. A new HID device cannot replace a connected vendor gamepad
 just because its CherryUSB minor number matches that slot.

@@ -33,7 +33,7 @@
 #define APPLETINI_CFG_TMP_PATH "0:/appletini_cfg.tmp"
 #define APPLETINI_CFG_BAK_PATH "0:/appletini_cfg.bak"
 #define APPLETINI_CFG_MAX 8192U
-#define APPLETINI_CFG_VERSION 119U
+#define APPLETINI_CFG_VERSION 120U
 #define ONEE_PERSIST_RETRY_POLL_LIMIT 4096U
 #define ETHERNET_CONTROL_SLOT 1U
 #define DISK2_CONTROL_SLOT 6U
@@ -89,7 +89,6 @@ static const uint16_t k_vtw_slowdown_cycle_presets[] = {
 #define CONFIG_MAX_DISK2_SOUND_VOLUME 10U
 #define CONFIG_DISK2_SOUND_EVENT_DOOR_OPEN 4U
 #define CONFIG_DISK2_SOUND_EVENT_DOOR_CLOSE 5U
-#define CONFIG_DEFAULT_MOUSE_SLOT2_ENABLED 0U
 #define CONFIG_DEFAULT_MOUSE_SENSITIVITY 100U
 #define CONFIG_DEFAULT_MOCKINGBOARD_SLOT4_ENABLED 0U
 #define CONFIG_DEFAULT_ETHERNET_SLOT1_ENABLED 0U
@@ -249,7 +248,7 @@ static const char * const k_tab_labels[CONFIG_TAB_COUNT] = {
     "Slot 6 Disk II",
     "Slot 5 Processor",
     "Slot 4 Phasor",
-    "Slot 2 Mouse",
+    "Slot 2",
     "Slot 1 Ethernet",
     "TransWarp",
     "Clock",
@@ -261,7 +260,7 @@ static const char * const k_tab_labels[CONFIG_TAB_COUNT] = {
 
 /* Keep every tab visible in one row at the smallest supported output size. */
 static const char * const k_compact_tab_labels[CONFIG_TAB_COUNT] = {
-    "Prof", "Boot", "Video", "SP", "Disk", "CPU", "Sound", "Mouse",
+    "Prof", "Boot", "Video", "SP", "Disk", "CPU", "Sound", "Slot2",
     "Net", "TW", "Clock", "RAM", "USB", "Print", "About"
 };
 
@@ -3055,6 +3054,145 @@ void config_menu_poll_ethernet(config_menu_t *menu)
 
 static void config_menu_apply_vtw_slowdown(config_menu_t *menu, uint8_t save);
 
+const char *config_menu_slot2_card_text(uint8_t card)
+{
+    static const char *const names[SLOT2_CARD_COUNT] = {
+        "Off", "Mouse", "4Play", "SNES MAX"
+    };
+    return names[card < SLOT2_CARD_COUNT ? card : SLOT2_CARD_OFF];
+}
+
+static const char *config_menu_slot2_card_config(uint8_t card)
+{
+    static const char *const names[SLOT2_CARD_COUNT] = {
+        "OFF", "MOUSE", "FOUR_PLAY", "SNES_MAX"
+    };
+    return names[card < SLOT2_CARD_COUNT ? card : SLOT2_CARD_OFF];
+}
+
+const char *config_menu_slot2_device_text(uint8_t device)
+{
+    static const char *const names[] = {
+        "Auto", "USB 1", "USB 2", "USB 3", "USB 4",
+        "USB 5", "USB 6", "USB 7", "USB 8", "Off"
+    };
+    return names[device <= 9U ? device : 0U];
+}
+
+static const char *config_menu_slot2_device_config(uint8_t device)
+{
+    static const char *const names[] = {
+        "AUTO", "1", "2", "3", "4", "5", "6", "7", "8", "OFF"
+    };
+    return names[device <= 9U ? device : 0U];
+}
+
+uint8_t config_menu_slot2_player_count(uint8_t card)
+{
+    return card == SLOT2_CARD_FOUR_PLAY ? 4U :
+        (card == SLOT2_CARD_SNES_MAX ? 2U : 0U);
+}
+
+static void config_menu_slot2_reset(config_menu_t *menu)
+{
+    menu->slot2_card = SLOT2_CARD_OFF;
+    menu->slot2_card_explicit = 0U;
+    menu->mouse_slot2_enabled = 0U;
+    memset(menu->slot2_player_devices, 0, sizeof(menu->slot2_player_devices));
+}
+
+static uint8_t config_menu_parse_slot2(config_menu_t *menu,
+                                       const char *key, const char *value)
+{
+    uint32_t player;
+    const char *suffix;
+
+    if (strcmp(key, "slot2.card") == 0) {
+        /* An explicit unknown mode fails closed, including when an older
+         * mouse key follows it. Never inherit the previous file's mode. */
+        menu->slot2_card = SLOT2_CARD_OFF;
+        menu->slot2_card_explicit = 1U;
+        for (uint8_t card = 0U; card < SLOT2_CARD_COUNT; ++card) {
+            if (config_menu_str_ieq(value, config_menu_slot2_card_config(card))) {
+                menu->slot2_card = card;
+                break;
+            }
+        }
+        menu->mouse_slot2_enabled = menu->slot2_card == SLOT2_CARD_MOUSE;
+        return 1U;
+    }
+    if (strcmp(key, "mouse.slot2.enabled") == 0) {
+        if (menu->slot2_card_explicit == 0U) {
+            menu->slot2_card = config_menu_bool_text(value) ?
+                SLOT2_CARD_MOUSE : SLOT2_CARD_OFF;
+            menu->mouse_slot2_enabled = menu->slot2_card == SLOT2_CARD_MOUSE;
+        }
+        return 1U;
+    }
+    if (config_menu_parse_indexed_config_key(key, "slot2.player", 1U, 4U,
+                                              &player, &suffix) != 0U &&
+        strcmp(suffix, ".device") == 0) {
+        menu->slot2_player_devices[player - 1U] = 0U;
+        for (uint8_t device = 0U; device <= 9U; ++device) {
+            if (config_menu_str_ieq(value, config_menu_slot2_device_config(device))) {
+                menu->slot2_player_devices[player - 1U] = device;
+                break;
+            }
+        }
+        return 1U;
+    }
+    return 0U;
+}
+
+static void config_menu_apply_slot2(config_menu_t *menu)
+{
+    if (menu->slot2_card >= SLOT2_CARD_COUNT) {
+        menu->slot2_card = SLOT2_CARD_OFF;
+    }
+    menu->mouse_slot2_enabled = menu->slot2_card == SLOT2_CARD_MOUSE;
+    if (menu->tab == CONFIG_TAB_MOUSE) {
+        const uint32_t rows = 1U + (menu->mouse_slot2_enabled ? 1U :
+            config_menu_slot2_player_count(menu->slot2_card));
+        if (menu->item_focus >= rows) {
+            menu->item_focus = rows - 1U;
+        }
+    }
+    if (menu->platform.set_slot2_player_devices != NULL) {
+        menu->platform.set_slot2_player_devices(menu->platform.ctx,
+                                                  menu->slot2_player_devices);
+    }
+    if (menu->platform.set_slot2_card != NULL) {
+        menu->platform.set_slot2_card(menu->platform.ctx, menu->slot2_card);
+    } else if (menu->platform.set_slot_enabled != NULL) {
+        menu->platform.set_slot_enabled(menu->platform.ctx, MOUSE_CONTROL_SLOT,
+                                           menu->mouse_slot2_enabled);
+    }
+}
+
+static uint8_t config_menu_slot2_adjust(config_menu_t *menu, int8_t delta)
+{
+    uint8_t *value;
+    uint8_t count;
+
+    if (menu->item_focus == 0U) {
+        value = &menu->slot2_card;
+        count = SLOT2_CARD_COUNT;
+    } else if (menu->item_focus <= config_menu_slot2_player_count(menu->slot2_card)) {
+        value = &menu->slot2_player_devices[menu->item_focus - 1U];
+        count = 10U;
+    } else {
+        return 0U;
+    }
+    if (*value >= count) {
+        *value = 0U;
+    }
+    *value = delta < 0 ? (*value == 0U ? count - 1U : *value - 1U) :
+        (uint8_t)((*value + 1U) % count);
+    config_menu_apply_slot2(menu);
+    config_menu_save_settings(menu);
+    return 1U;
+}
+
 static uint8_t config_menu_ad8088_active(const config_menu_t *menu)
 {
     return menu != NULL && menu->applicard_slot5_enabled != 0U &&
@@ -3092,13 +3230,11 @@ static void config_menu_apply_runtime_internal(config_menu_t *menu,
         menu->platform.set_slot5_processor(menu->platform.ctx,
                                            menu->slot5_processor);
     }
+    config_menu_apply_slot2(menu);
     if (menu->platform.set_slot_enabled != NULL) {
         menu->platform.set_slot_enabled(menu->platform.ctx,
                                         ETHERNET_CONTROL_SLOT,
                                         menu->ethernet_slot1_enabled);
-        menu->platform.set_slot_enabled(menu->platform.ctx,
-                                        MOUSE_CONTROL_SLOT,
-                                        menu->mouse_slot2_enabled);
         if (menu->platform.set_ssc_enabled != NULL) {
             menu->platform.set_ssc_enabled(menu->platform.ctx,
                                            menu->ssc_slot1_enabled);
@@ -3451,8 +3587,8 @@ static void config_menu_parse_key_value(config_menu_t *menu, const char *key, co
         /* Handled by USB menu binding settings. */
     } else if (config_menu_phasor_parse_setting(menu, key, value) != 0U) {
         /* Handled by the Phasor tab module. */
-    } else if (strcmp(key, "mouse.slot2.enabled") == 0) {
-        menu->mouse_slot2_enabled = config_menu_bool_text(value);
+    } else if (config_menu_parse_slot2(menu, key, value) != 0U) {
+        /* Slot 2 personality and sources, including the old mouse alias. */
     } else if (strcmp(key, "mouse.sensitivity") == 0) {
         menu->mouse_sensitivity =
             config_menu_mouse_sensitivity_clamp(strtoul(value, NULL, 10));
@@ -3638,6 +3774,13 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
         }
     }
 
+    APPEND_CFG("slot2.card=%s\n", config_menu_slot2_card_config(menu->slot2_card));
+    for (uint32_t player = 0U; player < 4U; ++player) {
+        APPEND_CFG("slot2.player%u.device=%s\n", (unsigned)(player + 1U),
+                   config_menu_slot2_device_config(menu->slot2_player_devices[player]));
+    }
+
+    /* Keep the old key safe when the SD card is used with older firmware. */
     APPEND_CFG("mouse.slot2.enabled=%s\n"
                "mouse.sensitivity=%u\n"
                "applicard.slot5.enabled=%s\n"
@@ -3652,7 +3795,7 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                "vtw.slug.key=%s\n"
                "vtw.slowdown.mask=0x%X\n"
                "vtw.slowdown.cycles=%u\n",
-               config_menu_on_off(menu->mouse_slot2_enabled),
+               config_menu_on_off(menu->slot2_card == SLOT2_CARD_MOUSE),
                (unsigned)menu->mouse_sensitivity,
                config_menu_on_off(menu->applicard_slot5_enabled),
                menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_AD8088 ?
@@ -3814,6 +3957,7 @@ static void config_menu_load_settings(config_menu_t *menu)
 
     /* Each file must opt in; a missing key never inherits TURBO permission. */
     menu->vtw_turbo_enabled = CONFIG_DEFAULT_VTW_TURBO_ENABLED;
+    config_menu_slot2_reset(menu);
     /* Old files use Max even if an earlier SD read failed and the user changed it. */
     menu->size_multiplier = 0U;
     buffer[bytes_read] = '\0';
@@ -4101,7 +4245,7 @@ static void config_menu_reset_settings_only(config_menu_t *menu)
     memset(menu->disk2_disk_paths, 0, sizeof(menu->disk2_disk_paths));
     memset(menu->browser_last_dir, 0, sizeof(menu->browser_last_dir));
 
-    menu->mouse_slot2_enabled = CONFIG_DEFAULT_MOUSE_SLOT2_ENABLED;
+    config_menu_slot2_reset(menu);
     menu->mouse_sensitivity = CONFIG_DEFAULT_MOUSE_SENSITIVITY;
     menu->supersprite_enabled = 0U;
     menu->sdd_stream_enabled = 0U;
@@ -4166,6 +4310,7 @@ static uint8_t config_menu_read_settings_from_path(config_menu_t *menu,
 
     /* Each file must opt in; a missing key never inherits TURBO permission. */
     menu->vtw_turbo_enabled = CONFIG_DEFAULT_VTW_TURBO_ENABLED;
+    config_menu_slot2_reset(menu);
     buffer[bytes_read] = '\0';
     line = strtok(buffer, "\r\n");
     while (line != NULL) {
@@ -4779,7 +4924,8 @@ static uint32_t config_menu_tab_item_count(const config_menu_t *menu)
     case CONFIG_TAB_DISK2:
         return 5U;
     case CONFIG_TAB_MOUSE:
-        return 2U;
+        return 1U + (menu->slot2_card == SLOT2_CARD_MOUSE ? 1U :
+            config_menu_slot2_player_count(menu->slot2_card));
     case CONFIG_TAB_MOCKINGBOARD:
         return config_menu_phasor_item_count();
     case CONFIG_TAB_ETHERNET:
@@ -5683,7 +5829,11 @@ static uint8_t config_menu_adjust_focused_value(config_menu_t *menu, int8_t delt
         return 1U;
     }
 
-    if (menu->tab == CONFIG_TAB_MOUSE && menu->item_focus == 1U) {
+    if (menu->tab == CONFIG_TAB_MOUSE && config_menu_slot2_adjust(menu, delta)) {
+        return 1U;
+    }
+    if (menu->tab == CONFIG_TAB_MOUSE && menu->slot2_card == SLOT2_CARD_MOUSE &&
+        menu->item_focus == 1U) {
         index = config_menu_mouse_sensitivity_index(menu->mouse_sensitivity);
         if (delta < 0) {
             if (index > 0U) {
@@ -6943,14 +7093,10 @@ static void config_menu_activate_item(config_menu_t *menu)
         break;
 
     case CONFIG_TAB_MOUSE:
-        if (menu->item_focus == 0U) {
-            menu->mouse_slot2_enabled = menu->mouse_slot2_enabled ? 0U : 1U;
-            if (menu->platform.set_slot_enabled != NULL) {
-                menu->platform.set_slot_enabled(menu->platform.ctx,
-                                                MOUSE_CONTROL_SLOT,
-                                                menu->mouse_slot2_enabled);
-            }
-        } else if (menu->item_focus == 1U) {
+        if (config_menu_slot2_adjust(menu, 1) != 0U) {
+            break;
+        }
+        if (menu->slot2_card == SLOT2_CARD_MOUSE && menu->item_focus == 1U) {
             menu->mouse_sensitivity = CONFIG_DEFAULT_MOUSE_SENSITIVITY;
             if (menu->platform.set_mouse_sensitivity != NULL) {
                 menu->platform.set_mouse_sensitivity(menu->platform.ctx,
@@ -7251,7 +7397,7 @@ void config_menu_init(config_menu_t *menu)
     menu->vtw_slowdown_cycles = CONFIG_DEFAULT_VTW_SLOWDOWN_CYCLES;
     menu->disk2_activity_visible = CONFIG_DEFAULT_DISK2_ACTIVITY_VISIBLE;
     menu->disk2_sound_volume = CONFIG_DEFAULT_DISK2_SOUND_VOLUME;
-    menu->mouse_slot2_enabled = CONFIG_DEFAULT_MOUSE_SLOT2_ENABLED;
+    config_menu_slot2_reset(menu);
     menu->mouse_sensitivity = CONFIG_DEFAULT_MOUSE_SENSITIVITY;
     menu->supersprite_enabled = 0U;
     menu->sdd_stream_enabled = 0U;

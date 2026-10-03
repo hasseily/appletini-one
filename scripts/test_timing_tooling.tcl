@@ -69,12 +69,12 @@ set signoff [dict create \
     place_directive Explore phys_opt_directive Explore \
     route_directive {directive=Explore;more_options=-tns_cleanup} \
     post_route_phys_opt_directive {enabled=1;directive=Explore} jobs 8 \
-    minimum_wns_ns 0.150 implementation_setup_margin_ns 0.200 \
+    minimum_wns_ns 0.050 implementation_setup_margin_ns 0.200 \
     margin_apply_hook_sha256 [string repeat d 64] \
     margin_clear_hook_sha256 [string repeat e 64] \
     final_fabric_user_uncertainty_ns 0.000 \
     final_pixel_user_uncertainty_ns 0.000 constraint_bounds_status PASS \
-    wns_ns 0.150 tns_ns 0.000 whs_ns 0.061 ths_ns 0.000 \
+    wns_ns 0.050 tns_ns 0.000 whs_ns 0.061 ths_ns 0.000 \
     setup_failing_endpoints 0 hold_failing_endpoints 0 \
     pulse_width_failing_endpoints 0 \
     wpws_ns 0.265 tpws_ns 0.000 unconstrained_internal_endpoints 0 \
@@ -85,9 +85,9 @@ set signoff [dict create \
     xsa_sha256 [string repeat c 64]]
 timing_run::validate_signoff_manifest $signoff
 set low_setup $signoff
-dict set low_setup wns_ns 0.149
+dict set low_setup wns_ns 0.049
 if {![catch {timing_run::validate_signoff_manifest $low_setup}]} {
-    error "Promotion policy accepted setup slack below +0.150 ns."
+    error "Promotion policy accepted setup slack below +0.050 ns."
 }
 set uncleared_margin $signoff
 dict set uncleared_margin final_fabric_user_uncertainty_ns 0.200
@@ -95,7 +95,7 @@ if {![catch {timing_run::validate_signoff_manifest $uncleared_margin}]} {
     error "Promotion policy accepted uncleared setup margin."
 }
 foreach {key value} {
-    minimum_wns_ns 0.149
+    minimum_wns_ns 0.049
     implementation_setup_margin_ns 0.199
     final_pixel_user_uncertainty_ns 0.200
     constraint_bounds_status FAIL

@@ -1,5 +1,11 @@
 # Vivado runtime and timing audit
 
+As of 2026-10-03, `codex/turbo-paging-dma` requires at least **+0.050 ns**
+final setup slack for build export, packaging, and promotion. The temporary
+implementation setup uncertainty stays at **0.200 ns**; clocks, hold checks,
+and pulse-width checks stay unchanged. The results and targets below describe
+the earlier audit runs.
+
 Audit date: 2026-09-27. This report describes the completed run
 `.timing_runs/20260926T201645Z-f1f4919d-full`, made with Vivado 2025.2 for
 `xc7z020clg484-2`. The later sections record measured simplification trials

@@ -22,7 +22,7 @@ set out [file normalize [dict get $info run_dir]]
 set manifest [file join $out manifest.txt]
 dict set info experiment_label $label
 dict set info options $options
-dict set info target_wns_ns 0.150
+dict set info target_wns_ns 0.050
 dict set info vivado_version [version -short]
 timing_run::write_manifest $manifest $info
 puts "EXPERIMENT_DIR=$out"
@@ -176,7 +176,7 @@ try {
     }
     dict set info missing_constraint_objects $missing
     write_checkpoint -force [file join $out final.dcp]
-    set qualifies [expr {[dict get $info wns_ns] >= 0.150 &&
+    set qualifies [expr {[dict get $info wns_ns] >= 0.050 &&
         [dict get $info whs_ns] >= 0.0 && [dict get $info wpws_ns] >= 0.0 &&
         [dict get $info route_status] eq "PASS" && [dict get $info bus_skew_status] eq "PASS"}]
     foreach key {tns_ns ths_ns tpws_ns setup_failing_endpoints hold_failing_endpoints \

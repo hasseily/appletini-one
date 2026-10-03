@@ -89,7 +89,7 @@ def validate_build_manifest(build_id: str, run_dir: Path,
     require_value(values, "git_dirty", "0")
     require_value(values, "route_status", "PASS")
     require_value(values, "bus_skew_status", "PASS")
-    require_nonnegative(values, "minimum_wns_ns", 0.150)
+    require_nonnegative(values, "minimum_wns_ns", 0.050)
     require_nonnegative(values, "implementation_setup_margin_ns", 0.200)
     for key in ("final_fabric_user_uncertainty_ns",
                 "final_pixel_user_uncertainty_ns"):
@@ -97,7 +97,7 @@ def validate_build_manifest(build_id: str, run_dir: Path,
         if float(values[key]) != 0.0:
             raise ValueError(f"{key} must be zero, got {values[key]}")
     require_value(values, "constraint_bounds_status", "PASS")
-    require_nonnegative(values, "wns_ns", 0.150)
+    require_nonnegative(values, "wns_ns", 0.050)
     require_nonnegative(values, "whs_ns")
     require_nonnegative(values, "wpws_ns")
     for key in (

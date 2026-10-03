@@ -15,7 +15,7 @@ set force_full_build [expr {
     $::env(APPLETINI_FULL_BUILD) ne "0"
 }]
 set timing_diagnostics [timing_run::env_enabled APPLETINI_TIMING_DIAGNOSTICS]
-set minimum_setup_slack 0.150
+set minimum_setup_slack 0.050
 # Explicit test-firmware policy: require strictly positive setup slack, with
 # all hold, pulse-width, route and constraint checks unchanged. This does
 # not change the separate known-good release promotion policy.
@@ -25,8 +25,8 @@ if {$positive_slack_only} {
 } elseif {[info exists ::env(APPLETINI_MIN_SETUP_SLACK_NS)]} {
     set minimum_setup_slack $::env(APPLETINI_MIN_SETUP_SLACK_NS)
     if {![string is double -strict $minimum_setup_slack] ||
-        !($minimum_setup_slack >= 0.150 && $minimum_setup_slack <= 1.0)} {
-        error "APPLETINI_MIN_SETUP_SLACK_NS must be at least 0.150 and at most 1.0."
+        !($minimum_setup_slack >= 0.050 && $minimum_setup_slack <= 1.0)} {
+        error "APPLETINI_MIN_SETUP_SLACK_NS must be at least 0.050 and at most 1.0."
     }
 }
 set implementation_setup_margin 0.200

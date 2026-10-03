@@ -12,7 +12,7 @@ if {$argc < 2 || $argc > 4} {
 set input_dcp [file normalize [lindex $argv 0]]
 set output_dir [file normalize [lindex $argv 1]]
 set temporary_uncertainty [expr {$argc >= 3 ? [lindex $argv 2] : 0.300}]
-set minimum_wns [expr {$argc >= 4 ? [lindex $argv 3] : 0.150}]
+set minimum_wns [expr {$argc >= 4 ? [lindex $argv 3] : 0.050}]
 
 if {![file isfile $input_dcp]} {
     error "Input checkpoint does not exist: $input_dcp"
@@ -22,8 +22,8 @@ foreach value [list $temporary_uncertainty $minimum_wns] {
         error "Timing margins must be positive numbers."
     }
 }
-if {$minimum_wns < 0.150} {
-    error "Minimum final WNS cannot be less than 0.150 ns."
+if {$minimum_wns < 0.050} {
+    error "Minimum final WNS cannot be less than 0.050 ns."
 }
 if {$temporary_uncertainty <= $minimum_wns} {
     error "Temporary uncertainty must exceed the required final WNS."

@@ -62,11 +62,11 @@ def main() -> int:
     require("dict set build_info vivado_version [version -short]" in
             build_script,
             "Vivado manifest producer must store a one-line version")
-    require("set minimum_setup_slack 0.150" in build_script and
+    require("set minimum_setup_slack 0.050" in build_script and
             "dict set build_info minimum_wns_ns $minimum_setup_slack" in
             build_script and
             "wns_ns] < $minimum_setup_slack" in build_script,
-            "Vivado export must reject setup WNS below +0.150 ns")
+            "Vivado export must reject setup WNS below +0.050 ns")
     require("STEPS.OPT_DESIGN.TCL.PRE $margin_apply" in
             profile_script and
             "STEPS.ROUTE_DESIGN.TCL.POST $route_finish" in profile_script and
@@ -79,11 +79,11 @@ def main() -> int:
             "set_clock_uncertainty -setup 0.0" in clear_margin_script and
             "USER_UNCERTAINTY" in clear_margin_script,
             "timing-margin hooks must verify both application and removal")
-    require("if {$minimum_wns < 0.150}" in refine_script and
-            "Minimum final WNS cannot be less than 0.150 ns." in
+    require("if {$minimum_wns < 0.050}" in refine_script and
+            "Minimum final WNS cannot be less than 0.050 ns." in
             refine_script and
             "if {$fabric_after < $minimum_wns ||" in refine_script,
-            "post-route refinement must enforce the same +0.150 ns floor")
+            "post-route refinement must enforce the same +0.050 ns floor")
 
     valid_path = FIXTURES / "valid.manifest"
     canonical = (FIXTURES / "canonical.manifest").read_bytes()

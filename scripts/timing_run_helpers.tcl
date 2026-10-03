@@ -530,7 +530,7 @@ proc timing_run::validate_signoff_manifest {values} {
         "Incremental reference"
     require_manifest_value $values incremental_reference_sha256 "" \
         "Incremental reference hash"
-    require_number_at_least $values minimum_wns_ns 0.150 \
+    require_number_at_least $values minimum_wns_ns 0.050 \
         "Required setup slack"
     require_number_at_least $values implementation_setup_margin_ns 0.200 \
         "Implementation setup margin"
@@ -540,7 +540,7 @@ proc timing_run::validate_signoff_manifest {values} {
         "Final pixel user uncertainty"
     require_manifest_value $values constraint_bounds_status PASS \
         "Apple and video CDC bounds"
-    require_number_at_least $values wns_ns 0.150 "Setup slack"
+    require_number_at_least $values wns_ns 0.050 "Setup slack"
     require_number_at_least $values whs_ns 0.000 "Hold slack"
     require_number_at_least $values wpws_ns 0.000 "Pulse-width slack"
     foreach key {

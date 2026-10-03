@@ -42,6 +42,14 @@ def main() -> int:
             command[1:1] = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         subprocess.run(command, check=True)
         subprocess.run([str(executable)], check=True)
+        executable = Path(temporary) / "psdma_owner_host"
+        command = [compiler, *flags, "-O1", *includes,
+                   str(ROOT / "scripts/fixtures/psdma_owner_host.c"),
+                   "-o", str(executable)]
+        if os.environ.get("MEMORY_API_SANITIZE", "1") != "0":
+            command[1:1] = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
+        subprocess.run(command, check=True)
+        subprocess.run([str(executable)], check=True)
     print("PASS strict native syntax: parser, backend, PSDMA, SmartPort dispatch")
     return 0
 

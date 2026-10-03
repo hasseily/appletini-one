@@ -4,6 +4,14 @@ Firmware F1.1.2 introduced an ARM service for explicit 65C02 memory transfers,
 using the vTW CPU hold, shadow-RAM access and PSRAM DMA. Stock F1.1.1 does
 **not** implement this API.
 
+F1.2.2 adds an FPGA copy/fill engine for the same API. It moves data directly
+between shadow BRAM and RamWorks PSRAM, or within either memory, without
+staging it through ARM DDR. ARM submits one command per descriptor instead
+of reading or writing each four-byte shadow word. Existing applications need
+no changes. Install the matching rebuilt FPGA image to use this path; the
+firmware checks its signature and uses the old ARM path when it is absent.
+Hardware paging times for this engine have not yet been measured.
+
 Use F1.1.4 or later with its rebuilt FPGA image. The old DMA status register
 could discard completion during unrelated reads or idle bus cycles. The ARM
 service could then report `$67` even after the DMA finished. F1.1.4 keeps
@@ -92,7 +100,7 @@ fail, for example if RamWorks is disabled.
 | 14 | 1 | Highest supported logical AUX bank: 126 |
 | 15 | 1 | Bit 0: active vTW available; other bits zero |
 | 16 | 4 | Current ARM microsecond counter, low 32 bits |
-| 20 | 2 | Maximum hardware DMA transaction: 512 bytes; not an API length limit |
+| 20 | 2 | Legacy DMA chunk limit: 512 bytes; unchanged and not an API length limit |
 | 22 | 1 | Last CONTROL result code |
 | 23 | 1 | Fully completed descriptors in the last CONTROL |
 | 24 | 4 | Last CONTROL elapsed microseconds |
@@ -199,9 +207,17 @@ buffer and any later instructions must remain valid. To replace most MAIN
 memory, keep the transport and continuation in language-card RAM, as Doom
 does. The API cannot protect a caller from overwriting its own program.
 
-One CPU hold covers the entire list. Transfers run in bounded internal
-chunks: 504 useful bytes, with aligned DMA transactions of at most 512 bytes.
-That avoids the existing FPGA DMA engine's ten-bit length truncation.
+One CPU hold covers the entire list. With the F1.2.2 FPGA engine, each
+descriptor runs as one command, up to `$BE00` bytes. Aligned words use the
+wide shadow port; differently aligned endpoints use byte transfers internally.
+The engine preserves bytes outside unaligned endpoints. PSRAM still uses the
+existing eight-byte transactions, with source and destination line buffers;
+this change removes ARM word traffic but does not add long QPI bursts.
+The direct engine owns the shared PSRAM path until all accepted work drains.
+The ARM fallback still copies 504 useful bytes per chunk, with aligned DDR
+DMA transactions of at most 512 bytes. That avoids the old DDR DMA engine's
+ten-bit length truncation; the new engine has its own 16-bit length.
+
 Successful release happens only after accepted transfers complete. Reset,
 loss of session or hold ownership cancels DMA and drains it before release.
 If completion cannot be proved, the service does not release any surviving
@@ -226,8 +242,9 @@ restarting the Appletini firmware, not by resubmitting the list.
 
 Validation failures execute no destination writes. Runtime failures are
 **not atomic**: earlier descriptors and chunks remain written, and the failing
-chunk may also have been partly written. STATUS progress counts only confirmed
-completed chunks and complete descriptors. It is diagnostic, not a safe retry
+chunk may also have been partly written. The direct engine reports bytes
+whose destination writes completed; the ARM fallback reports whole completed
+chunks. STATUS reports complete descriptors separately. Progress is not a safe retry
 offset. A lost/reset session gets no stale SmartPort response.
 
 The CPU is stopped during these operations. Long holds can merge periodic
@@ -235,6 +252,34 @@ VBL interrupts, so VBL IRQ counts and phase samples can undercount elapsed
 time and transfer cost. Use ARM timestamps or external wall time for speed
 measurements. Do not infer hardware acceleration from the simulator's timing:
 its API model verifies memory and transport behavior, not DMA speed.
+
+### FPGA copy registers (F1.2.2)
+
+These registers serve ARM firmware. Apple applications should keep using the
+SmartPort API. Register indices are words at `$40000000 + 4 * index`.
+
+| Index | Register | Meaning |
+|---|---|---|
+| `$B0` | SOURCE | Physical source byte address, bits 23:0 |
+| `$B1` | DESTINATION | Physical destination byte address, bits 23:0 |
+| `$B2` | LENGTH | Byte count, bits 15:0 |
+| `$B3` write | COMMAND | Bit 0 START, bit 1 ABORT, bit 2 FILL; bits 15:8 fill value |
+| `$B3` read | STATUS | Bit 0 BUSY, bit 1 DONE, bit 2 ERROR, bit 3 ABORTED |
+| `$B4` | COMPLETED | Confirmed destination bytes, bits 15:0 |
+| `$B5` | SIGNATURE | `$56435031` (`VCP1`) |
+
+Physical addresses below `$020000` select MAIN/base-AUX shadow BRAM; addresses
+from `$020000` through `$7FFFFF` select PSRAM. START requires a live, flushed
+CPU hold and an idle shadow host port. It clears the previous result; reads
+do not clear DONE, ERROR, or ABORTED. ABORT stops new work and drains accepted
+transactions before clearing BUSY. Session loss also cancels the engine.
+
+Firmware reserves the shared PSRAM path before START. A missing signature
+permits the ARM fallback. Once it submits START, any failure ends the request
+without a retry, even when no completed bytes are reported. A whole-descriptor
+transfer has a 100 ms deadline and abort has a further 10 ms drain deadline.
+An unproved drain poisons the service and retains its memory-path reservation
+and any surviving CPU hold.
 
 ## 6. ca65 example
 

@@ -287,6 +287,28 @@
 #define CARD_CTRL_VTW_SHADOW_READ4_READY_BIT    (1UL << 31)
 #define CARD_CTRL_VTW_SHADOW_READ4_BUSY_BIT     (1UL << 30)
 #define CARD_CTRL_VTW_SHADOW_READ4_COUNT_MASK   0x3FFFFFFFUL
+/* Direct working-memory copy engine. Addresses are physical byte addresses:
+ * MAIN/base AUX use shadow BRAM; banks 2..127 use PSRAM. Command bit0 starts,
+ * bit1 aborts and drains, bit2 selects fill, bits15:8 hold the fill byte.
+ * Status is sticky until the next accepted start. Completed counts bytes
+ * whose destination write completed; it is diagnostic, not a retry offset. */
+#define CARD_CTRL_VTW_COPY_SOURCE_REG          CARD_CTRL_REG_ADDR(0xB0U)
+#define CARD_CTRL_VTW_COPY_DESTINATION_REG     CARD_CTRL_REG_ADDR(0xB1U)
+#define CARD_CTRL_VTW_COPY_LENGTH_REG          CARD_CTRL_REG_ADDR(0xB2U)
+#define CARD_CTRL_VTW_COPY_COMMAND_REG         CARD_CTRL_REG_ADDR(0xB3U)
+#define CARD_CTRL_VTW_COPY_STATUS_REG          CARD_CTRL_REG_ADDR(0xB3U)
+#define CARD_CTRL_VTW_COPY_COMPLETED_REG       CARD_CTRL_REG_ADDR(0xB4U)
+#define CARD_CTRL_VTW_COPY_SIGNATURE_REG       CARD_CTRL_REG_ADDR(0xB5U)
+#define CARD_CTRL_VTW_COPY_SIGNATURE          0x56435031UL
+#define CARD_CTRL_VTW_COPY_START_BIT          (1UL << 0)
+#define CARD_CTRL_VTW_COPY_ABORT_BIT          (1UL << 1)
+#define CARD_CTRL_VTW_COPY_FILL_BIT           (1UL << 2)
+#define CARD_CTRL_VTW_COPY_FILL_SHIFT         8U
+#define CARD_CTRL_VTW_COPY_BUSY_BIT           (1UL << 0)
+#define CARD_CTRL_VTW_COPY_DONE_BIT           (1UL << 1)
+#define CARD_CTRL_VTW_COPY_ERROR_BIT          (1UL << 2)
+#define CARD_CTRL_VTW_COPY_ABORTED_BIT        (1UL << 3)
+#define CARD_CTRL_VTW_COPY_COMPLETED_MASK      0xFFFFUL
 /* TURBO performance counters, cleared with busdbg clear: fabric clocks,
  * accepted CPU steps, classic guest cycles, cached read hits, read misses,
  * invalidation events, Disk II wait clocks, and video/post wait clocks. */

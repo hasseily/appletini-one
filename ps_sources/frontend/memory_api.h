@@ -53,6 +53,12 @@ typedef struct {
     uint8_t (*end)(void *ctx);
     uint8_t (*private_required)(void *ctx, uint32_t phys, uint16_t length);
     uint32_t (*micros)(void *ctx);
+    /* Optional whole-descriptor engine. UNAVAILABLE with zero completed
+     * bytes means no work started and permits the read/write fallback.
+     * Every other result is final; completed counts confirmed writes only. */
+    uint8_t (*transfer)(void *ctx, uint32_t source, uint32_t destination,
+                        uint16_t length, uint8_t operation, uint8_t fill,
+                        uint16_t *completed);
 } memory_api_backend_t;
 
 /* payload starts at AMEM, after the SmartPort control-list length word.

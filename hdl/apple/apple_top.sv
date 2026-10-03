@@ -530,6 +530,12 @@ module apple_top(
     localparam logic [7:0] CARD_CTRL_REG_SLOT2_CONTROL = 8'hAD;
     localparam logic [7:0] CARD_CTRL_REG_SLOT2_STATE_LO = 8'hAE;
     localparam logic [7:0] CARD_CTRL_REG_SLOT2_STATE_HI = 8'hAF;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_COPY_SOURCE = 8'hB0;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_COPY_DEST = 8'hB1;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_COPY_LENGTH = 8'hB2;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_COPY_COMMAND = 8'hB3;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_COPY_COMPLETED = 8'hB4;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_COPY_CAPS = 8'hB5;
     //   VTW_C0_RING_*   : last eight $C00x/$C01x soft-switch cycles with
     //                     latched data ({rw,addr[4:0],data[7:0]} x2/reg).
     localparam logic [7:0] CARD_CTRL_REG_VTW_C0_RING0    = 8'h6C;
@@ -945,6 +951,20 @@ module apple_top(
     logic        mc_dma_ready;
     logic [63:0] mc_dma_rdata;
     logic        mc_dma_rvalid;
+    logic [20:0] legacy_dma_line_addr;
+    logic        legacy_dma_rw, legacy_dma_valid;
+    logic [63:0] legacy_dma_wdata;
+    logic        legacy_dma_req_ready;
+    logic        vtw_copy_busy, vtw_copy_done, vtw_copy_error, vtw_copy_aborted;
+    logic        vtw_copy_ps_valid, vtw_copy_ps_rw;
+    logic [23:0] vtw_copy_ps_addr;
+    logic [63:0] vtw_copy_ps_wdata;
+    // A descriptor owns the shared DMA line port until all accepted work
+    // drains. The ARM reserves the same port through the PSDMA owner API.
+    assign mc_dma_line_addr = vtw_copy_busy ? vtw_copy_ps_addr[23:3] : legacy_dma_line_addr;
+    assign mc_dma_rw = vtw_copy_busy ? vtw_copy_ps_rw : legacy_dma_rw;
+    assign mc_dma_wdata = vtw_copy_busy ? vtw_copy_ps_wdata : legacy_dma_wdata;
+    assign mc_dma_valid = vtw_copy_busy ? vtw_copy_ps_valid : legacy_dma_valid;
     logic [20:0] mc_disk2_line_addr;
     logic        mc_disk2_rw;
     logic [63:0] mc_disk2_wdata;
@@ -1832,18 +1852,18 @@ module apple_top(
         .req_ddr_addr(dma_req_ddr_addr),
         .req_length(dma_req_length[9:0]),
         .req_rw(dma_req_rw),
-        .req_valid(dma_req_valid),
+        .req_valid(dma_req_valid && !vtw_copy_busy),
         .req_abort(dma_req_abort),
-        .req_ready(dma_req_ready),
+        .req_ready(legacy_dma_req_ready),
         .req_done(dma_req_done),
         .req_abort_done(dma_req_abort_done),
-        .dma_line_addr(mc_dma_line_addr),
-        .dma_rw(mc_dma_rw),
-        .dma_wdata(mc_dma_wdata),
-        .dma_valid(mc_dma_valid),
-        .dma_ready(mc_dma_ready),
+        .dma_line_addr(legacy_dma_line_addr),
+        .dma_rw(legacy_dma_rw),
+        .dma_wdata(legacy_dma_wdata),
+        .dma_valid(legacy_dma_valid),
+        .dma_ready(mc_dma_ready && !vtw_copy_busy),
         .dma_rdata(mc_dma_rdata),
-        .dma_rvalid(mc_dma_rvalid),
+        .dma_rvalid(mc_dma_rvalid && !vtw_copy_busy),
         .axi_hp1_read(axi_hp1_read),
         .axi_hp1_write(axi_hp1_write)
     );
@@ -1923,6 +1943,12 @@ module apple_top(
     logic        vtw_sh_port_en;
     logic        vtw_sh_port_we;
     logic [7:0]  vtw_sh_port_wdata;
+    logic [23:0] vtw_copy_source_q, vtw_copy_dest_q;
+    logic [15:0] vtw_copy_length_q, vtw_copy_completed;
+    logic        vtw_copy_sh_en, vtw_copy_sh_we, vtw_copy_sh_word_we;
+    logic [17:0] vtw_copy_sh_addr;
+    logic [31:0] vtw_copy_sh_wdata;
+    logic        vtw_copy_release_q;
     logic        vtw_sh_word_ready;
     logic        vtw_sh_word_busy;
     logic [29:0] vtw_sh_word_accept_count;
@@ -1975,15 +2001,19 @@ module apple_top(
     logic [31:0] vtw_dbg_bus_faults;
 
     wire vtw_sh_addr_set = as_client.awvalid &&
+                           !vtw_copy_busy &&
                            (as_common.awaddr == CARD_CTRL_REG_VTW_SHADOW_ADDR) &&
                            (as_vtw_phasor_wstrb != 4'b0000);
     wire vtw_sh_byte_write = as_client.awvalid &&
+                             !vtw_copy_busy &&
                              (as_common.awaddr == CARD_CTRL_REG_VTW_SHADOW_DATA) &&
                              as_vtw_phasor_wstrb[0];
     wire vtw_sh_word_write = as_client.awvalid &&
+                             !vtw_copy_busy &&
                              (as_common.awaddr == CARD_CTRL_REG_VTW_SHADOW_DATA4) &&
                              (as_vtw_phasor_wstrb == 4'b1111);
     wire vtw_sh_word_read = as_client.awvalid &&
+                            !vtw_copy_busy &&
                             (as_common.awaddr == CARD_CTRL_REG_VTW_SHADOW_READ4) &&
                             as_vtw_phasor_wstrb[0] && as_vtw_phasor_wdata[0];
 
@@ -2096,6 +2126,60 @@ module apple_top(
 
     /* SHR paged-mode posting fallback (CARD_CTRL 0x35 bit 0). */
     logic post_main_wide_q;
+
+    assign dma_req_ready = legacy_dma_req_ready && !vtw_copy_busy;
+    wire vtw_copy_command = as_client.awvalid &&
+        as_common.awaddr == CARD_CTRL_REG_VTW_COPY_COMMAND;
+    wire vtw_copy_start = vtw_copy_command &&
+        as_vtw_phasor_wstrb == 4'b1111 && as_vtw_phasor_wdata[0];
+    wire vtw_copy_release = as_client.awvalid &&
+        as_common.awaddr == CARD_CTRL_REG_VTW_RW_FLUSH &&
+        as_vtw_phasor_wstrb[0] && as_vtw_phasor_wdata[1];
+    wire vtw_copy_abort = (vtw_copy_command && as_vtw_phasor_wstrb[0] &&
+        as_vtw_phasor_wdata[1]) || vtw_copy_release;
+    wire vtw_copy_permit = vtw_enable_eff && vtw_core_run_eff &&
+        vtw_bus_owned && ab_read.res && vtw_arm_rw_hold_state &&
+        !vtw_arm_rw_flush_busy_q &&
+        (vtw_copy_busy || (vtw_sh_word_read_ready && legacy_dma_req_ready &&
+                          !dma_req_valid && !vtw_sh_addr_set &&
+                          !vtw_sh_byte_write && !vtw_sh_word_write && !vtw_sh_word_read));
+
+    always_ff @(posedge clk) begin
+        if (!rstn[3]) begin
+            vtw_copy_source_q <= '0;
+            vtw_copy_dest_q <= '0;
+            vtw_copy_length_q <= '0;
+        end else if (as_client.awvalid && !vtw_copy_busy) begin
+            case (as_common.awaddr)
+                CARD_CTRL_REG_VTW_COPY_SOURCE:
+                    vtw_copy_source_q <= 24'(globals::apply_wstrb(
+                        {8'd0, vtw_copy_source_q}, as_vtw_phasor_wdata, as_vtw_phasor_wstrb));
+                CARD_CTRL_REG_VTW_COPY_DEST:
+                    vtw_copy_dest_q <= 24'(globals::apply_wstrb(
+                        {8'd0, vtw_copy_dest_q}, as_vtw_phasor_wdata, as_vtw_phasor_wstrb));
+                CARD_CTRL_REG_VTW_COPY_LENGTH:
+                    vtw_copy_length_q <= 16'(globals::apply_wstrb(
+                        {16'd0, vtw_copy_length_q}, as_vtw_phasor_wdata, as_vtw_phasor_wstrb));
+                default: ;
+            endcase
+        end
+    end
+
+    vtw_copy_engine vtw_copy_engine_i (
+        .clk(clk), .rstn(rstn[3]),
+        .start(vtw_copy_start), .abort_req(vtw_copy_abort), .permit(vtw_copy_permit),
+        .source(vtw_copy_source_q), .destination(vtw_copy_dest_q),
+        .length(vtw_copy_length_q), .fill(as_vtw_phasor_wdata[2]),
+        .fill_data(as_vtw_phasor_wdata[15:8]),
+        .busy(vtw_copy_busy), .done(vtw_copy_done),
+        .error(vtw_copy_error), .aborted(vtw_copy_aborted), .completed(vtw_copy_completed),
+        .sh_en(vtw_copy_sh_en), .sh_we(vtw_copy_sh_we), .sh_word_we(vtw_copy_sh_word_we),
+        .sh_addr(vtw_copy_sh_addr), .sh_wdata(vtw_copy_sh_wdata), .sh_rdata(vtw_sh_rdata32),
+        .ps_valid(vtw_copy_ps_valid), .ps_rw(vtw_copy_ps_rw),
+        .ps_addr(vtw_copy_ps_addr), .ps_wdata(vtw_copy_ps_wdata),
+        .ps_ready(mc_dma_ready && vtw_copy_busy),
+        .ps_rvalid(mc_dma_rvalid && vtw_copy_busy), .ps_rdata(mc_dma_rdata)
+    );
 
     vtw_shadow_host_port #(.WIDE_PORT(1'b1)) vtw_shadow_host_port_i (
         .clk(clk),
@@ -2223,14 +2307,14 @@ module apple_top(
         .sp_resp_valid(vtw_sp_resp_valid),
         .sp_resp_rdata(vtw_sp_resp_rdata),
         .sp_sss_snapshot(vtw_sp_sss_snapshot),
-        .sh_en(vtw_sh_port_en),
-        .sh_addr(vtw_sh_addr_q),
-        .sh_we(vtw_sh_port_we),
-        .sh_wdata(vtw_sh_port_wdata),
+        .sh_en(vtw_copy_busy ? vtw_copy_sh_en : vtw_sh_port_en),
+        .sh_addr(vtw_copy_busy ? vtw_copy_sh_addr : vtw_sh_addr_q),
+        .sh_we(vtw_copy_busy ? vtw_copy_sh_we : vtw_sh_port_we),
+        .sh_wdata(vtw_copy_busy ? vtw_copy_sh_wdata[7:0] : vtw_sh_port_wdata),
         .sh_rdata(vtw_sh_rdata),
         .sh_rdata32(vtw_sh_rdata32),
-        .sh_word_we(vtw_sh_word_we),
-        .sh_wdata32(vtw_sh_wdata32),
+        .sh_word_we(vtw_copy_busy ? vtw_copy_sh_word_we : vtw_sh_word_we),
+        .sh_wdata32(vtw_copy_busy ? vtw_copy_sh_wdata : vtw_sh_wdata32),
         .turbo_perf(vtw_turbo_perf),
         .arm_req_valid(vtw_arm_go_pulse_q),
         .arm_req_addr(vtw_arm_addr_q),
@@ -2491,6 +2575,7 @@ module apple_top(
             vtw_arm_post_accept_count_q     <= 31'd0;
             vtw_arm_rw_flush_pulse_q        <= 1'b0;
             vtw_arm_rw_release_pulse_q      <= 1'b0;
+            vtw_copy_release_q             <= 1'b0;
             vtw_arm_rw_flush_busy_q         <= 1'b0;
             vtw_arm_rw_flush_count_q        <= 30'd0;
         end else begin
@@ -2512,6 +2597,10 @@ module apple_top(
             vtw_arm_post_pulse_q <= 1'b0;
             vtw_arm_rw_flush_pulse_q <= 1'b0;
             vtw_arm_rw_release_pulse_q <= 1'b0;
+            if (vtw_copy_release_q && !vtw_copy_busy) begin
+                vtw_copy_release_q <= 1'b0;
+                vtw_arm_rw_release_pulse_q <= 1'b1;
+            end
 
             if (vtw_arm_post_pulse_q && vtw_arm_post_ready) begin
                 vtw_arm_post_accept_count_q <=
@@ -2766,8 +2855,11 @@ module apple_top(
                             vtw_arm_rw_flush_pulse_q <= 1'b1;
                             vtw_arm_rw_flush_busy_q  <= 1'b1;
                         end
-                        if (as_common.wdata[1]) begin
-                            vtw_arm_rw_release_pulse_q <= 1'b1;
+                        if (as_common.wstrb[0] && as_common.wdata[1]) begin
+                            if (vtw_copy_busy)
+                                vtw_copy_release_q <= 1'b1;
+                            else
+                                vtw_arm_rw_release_pulse_q <= 1'b1;
                         end
                     end
                     default: begin
@@ -2994,15 +3086,28 @@ module apple_top(
                                                                     vtw_arm_rw_hold_state,
                                                                     vtw_arm_rw_flush_count_q};
                 CARD_CTRL_REG_VTW_SHADOW_DATA4_STATUS:
-                    as_client_rdata_q <= {vtw_sh_word_ready,
+                    as_client_rdata_q <= {vtw_sh_word_ready && !vtw_copy_busy,
                                           vtw_sh_word_busy,
                                           vtw_sh_word_accept_count};
                 CARD_CTRL_REG_VTW_SHADOW_READ4_DATA:
                     as_client_rdata_q <= vtw_sh_word_read_data;
                 CARD_CTRL_REG_VTW_SHADOW_READ4_STATUS:
-                    as_client_rdata_q <= {vtw_sh_word_read_ready,
+                    as_client_rdata_q <= {vtw_sh_word_read_ready && !vtw_copy_busy,
                                           vtw_sh_word_read_busy,
                                           vtw_sh_word_read_count};
+                CARD_CTRL_REG_VTW_COPY_SOURCE:
+                    as_client_rdata_q <= {8'd0, vtw_copy_source_q};
+                CARD_CTRL_REG_VTW_COPY_DEST:
+                    as_client_rdata_q <= {8'd0, vtw_copy_dest_q};
+                CARD_CTRL_REG_VTW_COPY_LENGTH:
+                    as_client_rdata_q <= {16'd0, vtw_copy_length_q};
+                CARD_CTRL_REG_VTW_COPY_COMMAND:
+                    as_client_rdata_q <= {28'd0, vtw_copy_aborted, vtw_copy_error,
+                                          vtw_copy_done, vtw_copy_busy};
+                CARD_CTRL_REG_VTW_COPY_COMPLETED:
+                    as_client_rdata_q <= {16'd0, vtw_copy_completed};
+                CARD_CTRL_REG_VTW_COPY_CAPS:
+                    as_client_rdata_q <= 32'h56435031;
                 CARD_CTRL_REG_VTW_CXXX_RING0:  as_client_rdata_q <= vtw_dbg_cxxx_ring[31:0];
                 CARD_CTRL_REG_VTW_CXXX_RING1:  as_client_rdata_q <= vtw_dbg_cxxx_ring[63:32];
                 CARD_CTRL_REG_VTW_CXXX_RING2:  as_client_rdata_q <= vtw_dbg_cxxx_ring[95:64];

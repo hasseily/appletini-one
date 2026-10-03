@@ -105,11 +105,13 @@ module tb_psram_simple;
             sss.addr_decode_en = 1'b1;
             sss.addr_decode    = adr;
             ab_read.rw   = !is_write;
+            ab_read.rw_early = !is_write;
             ab_read.data = dat;
             @(posedge clk iff (buscnt % 130 == 129));
             sss.route_kind     = globals::APPLE_ROUTE_BUS;
             sss.addr_decode_en = 1'b0;
             ab_read.rw = 1'b1;
+            ab_read.rw_early = 1'b1;
         end
     endtask
 

@@ -47,11 +47,22 @@ static psdma_result_t psdma_claim(psdma_owner_t owner)
     return PSDMA_OK;
 }
 
-static void psdma_release(psdma_owner_t owner)
+void psdma_release(psdma_owner_t owner)
 {
     if (g_psdma_owner == owner) {
         g_psdma_owner = PSDMA_OWNER_NONE;
     }
+}
+
+psdma_result_t psdma_acquire(psdma_owner_t owner)
+{
+    psdma_result_t result = psdma_claim(owner);
+    if (result != PSDMA_OK) return result;
+    if ((REG_READ(PSDMA_STATUS_REG) & PSDMA_BUSY_BIT) != 0U) {
+        psdma_release(owner);
+        return PSDMA_ERR_BUSY;
+    }
+    return PSDMA_OK;
 }
 
 /* Stop admission, then wait until the engine has drained any AXI beat or

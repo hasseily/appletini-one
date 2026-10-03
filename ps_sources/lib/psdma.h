@@ -59,4 +59,11 @@ psdma_result_t psdma_transfer_checked(psdma_owner_t owner,
 
 psdma_owner_t psdma_current_owner(void);
 
+/* Reserve the shared PSRAM DMA path for another PL engine. Claim fails if
+ * either a software owner or a hardware DMA request remains active. Release
+ * only after that engine proves all accepted work has drained; keep the
+ * reservation on an unsafe timeout. CPU0 foreground only, as above. */
+psdma_result_t psdma_acquire(psdma_owner_t owner);
+void psdma_release(psdma_owner_t owner);
+
 #endif

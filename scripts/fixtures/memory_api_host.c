@@ -19,6 +19,7 @@ typedef struct {
     unsigned begin_error, end_error, read_fail_at, write_fail_at, fail_code;
     unsigned enabled, held, need_ramworks, max_transfer;
     unsigned inject_partial_write, reenter;
+    unsigned transfers, transfer_fail_at, transfer_error, transfer_confirmed;
     uint32_t first_read, first_write, now;
 } mock_t;
 
@@ -92,6 +93,26 @@ static uint8_t private_required(void *ctx, uint32_t phys, uint16_t length)
     return (uint8_t)(phys < 0x20000U);
 }
 static uint32_t micros(void *ctx) { mock_t *m = ctx; return ++m->now; }
+
+static uint8_t direct_transfer(void *ctx, uint32_t source, uint32_t destination,
+                               uint16_t length, uint8_t operation, uint8_t fill,
+                               uint16_t *completed)
+{
+    mock_t *m = ctx;
+    uint16_t size = length;
+    uint8_t error = 0U;
+    CHECK(m->held && length != 0U);
+    ++m->transfers;
+    if (m->transfers == m->transfer_fail_at) {
+        error = (uint8_t)m->transfer_error;
+        size = (uint16_t)m->transfer_confirmed;
+    }
+    CHECK(size <= length);
+    if (operation == COPY) memcpy(memory + destination, memory + source, size);
+    else memset(memory + destination, fill, size);
+    *completed = size;
+    return error;
+}
 
 static void reset(void)
 {
@@ -311,6 +332,49 @@ static void test_limits_and_large_exact_range(void)
     ++passed;
 }
 
+static void test_direct_transfers_and_progress(void)
+{
+    uint8_t status[32];
+    reset(); backend.transfer = direct_transfer; payload[5] = 3;
+    desc(0, FILL, 0, 0, 0, 0, AUX, 126, 0x8011, 2003, 0x71);
+    desc(1, COPY, 1, AUX, 126, 0x8011, MAIN, 0, 0x1003, 2003, 0);
+    desc(2, COPY, 1, MAIN, 0, 0x1003, AUX, 0, 0x2005, 2003, 0);
+    CHECK(run() == 0 && mock.transfers == 3 && !mock.reads && !mock.writes);
+    CHECK(!memcmp(memory + 0x7f8011, memory + 0x1003, 2003));
+    CHECK(!memcmp(memory + 0x1003, memory + 0x12005, 2003));
+    CHECK(memory[0x12004] == 0xA5 && memory[0x12005 + 2003] == 0xA5);
+    memory_api_status(status, &backend);
+    CHECK(status[23] == 3 && u32(status + 28) == 6009);
+    CHECK(mock.begins == 1 && mock.ends == 1);
+
+    reset(); backend.transfer = direct_transfer;
+    desc(0, FILL, 1, 0, 0, 0, MAIN, 0, 0x8000, 1009, 0x21);
+    mock.transfer_fail_at = 1; mock.transfer_error = UNAVAILABLE;
+    CHECK(run() == 0 && mock.transfers == 1 && mock.writes == 3);
+
+    reset(); backend.transfer = direct_transfer; payload[5] = 3;
+    desc(0, FILL, 1, 0, 0, 0, MAIN, 0, 0x8000, 17, 0x21);
+    desc(1, FILL, 1, 0, 0, 0, AUX, 0, 0x8000, 1009, 0x31);
+    desc(2, FILL, 1, 0, 0, 0, AUX, 1, 0x8000, 9, 0x41);
+    mock.transfer_fail_at = 2; mock.transfer_error = IO; mock.transfer_confirmed = 13;
+    CHECK(run() == IO && mock.transfers == 2 && !mock.writes && !mock.reads);
+    memory_api_status(status, &backend);
+    CHECK(status[23] == 1 && u32(status + 28) == 30);
+    CHECK(memory[0x1800c] == 0x31 && memory[0x1800d] == 0xA5 && memory[0x28000] == 0xA5);
+
+    reset(); backend.transfer = direct_transfer;
+    desc(0, FILL, 1, 0, 0, 0, MAIN, 0, 0x8000, 1009, 0x21);
+    mock.transfer_fail_at = 1; mock.transfer_error = IO;
+    CHECK(run() == IO && !mock.writes && !mock.reads && mock.ends == 1);
+    /* An unavailable result after writes is a failure, never a fallback. */
+    mock.transfer_error = UNAVAILABLE; mock.transfer_confirmed = 7; mock.transfers = 0;
+    CHECK(run() == IO && !mock.writes && !mock.reads);
+    /* A success must prove the full descriptor completed. */
+    mock.transfer_error = 0; mock.transfer_confirmed = 7; mock.transfers = 0;
+    CHECK(run() == IO && !mock.writes && !mock.reads);
+    ++passed;
+}
+
 int main(void)
 {
     test_header_and_descriptor_validation();
@@ -321,6 +385,7 @@ int main(void)
     test_unavailable_and_backend_failures();
     test_status_progress_reset_and_busy();
     test_limits_and_large_exact_range();
+    test_direct_transfers_and_progress();
     printf("PASS memory API host runtime: %u groups\n", passed);
     return 0;
 }

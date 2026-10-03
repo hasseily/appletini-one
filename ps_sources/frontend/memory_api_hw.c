@@ -16,6 +16,7 @@
                                    CARD_CTRL_VTW_STATUS_CORE_RUN)
 #define MEM_HOLD_TIMEOUT_US        100000U
 #define MEM_TRANSFER_TIMEOUT_US    10000U
+#define MEM_COPY_TIMEOUT_US        100000U
 
 typedef struct {
     uint32_t reset_sequence;
@@ -314,18 +315,116 @@ static uint8_t hw_write(void *context, uint32_t physical, const uint8_t *data,
     return hw_dma(physical & ~7UL, total, PSDMA_DDR_TO_MC);
 }
 
+static uint8_t hw_copy_abort(void)
+{
+    uint32_t started = hw_micros(NULL);
+    REG_WRITE(CARD_CTRL_VTW_COPY_COMMAND_REG, CARD_CTRL_VTW_COPY_ABORT_BIT);
+    do {
+        if ((REG_READ(CARD_CTRL_VTW_COPY_STATUS_REG) &
+             CARD_CTRL_VTW_COPY_BUSY_BIT) == 0U)
+            return MEMORY_API_OK;
+    } while ((uint32_t)(hw_micros(NULL) - started) < MEM_TRANSFER_TIMEOUT_US);
+    state.poisoned = 1U;
+    return MEMORY_API_UNSAFE;
+}
+
+static uint8_t hw_transfer(void *context, uint32_t source,
+                           uint32_t destination, uint16_t length,
+                           uint8_t operation, uint8_t fill,
+                           uint16_t *completed)
+{
+    uint32_t started;
+    uint32_t status;
+    uint32_t command = CARD_CTRL_VTW_COPY_START_BIT;
+    uint8_t error;
+    (void)context;
+    *completed = 0U;
+    /* The signature is the only fallback gate. Once START is written, even
+     * an error with no confirmed bytes must not retry through the ARM path. */
+    if (REG_READ(CARD_CTRL_VTW_COPY_SIGNATURE_REG) != CARD_CTRL_VTW_COPY_SIGNATURE)
+        return MEMORY_API_UNAVAILABLE;
+    if (!hw_held(NULL)) return MEMORY_API_SESSION_LOST;
+    if (psdma_acquire(PSDMA_OWNER_MEMORY) != PSDMA_OK) return MEMORY_API_BUSY;
+    if ((REG_READ(CARD_CTRL_VTW_COPY_STATUS_REG) &
+         CARD_CTRL_VTW_COPY_BUSY_BIT) != 0U) {
+        error = hw_copy_abort();
+        if (error == MEMORY_API_OK) {
+            psdma_release(PSDMA_OWNER_MEMORY);
+            return MEMORY_API_BUSY;
+        }
+        return error;
+    }
+    /* The host port and copy engine share shadow port B. A preceding scalar
+     * access can still be fetching its next byte when the core hold ends. */
+    started = hw_micros(NULL);
+    while ((REG_READ(CARD_CTRL_VTW_SHADOW_READ4_STATUS_REG) &
+            CARD_CTRL_VTW_SHADOW_READ4_READY_BIT) == 0U) {
+        if (!hw_held(NULL)) {
+            psdma_release(PSDMA_OWNER_MEMORY);
+            return MEMORY_API_SESSION_LOST;
+        }
+        if ((uint32_t)(hw_micros(NULL) - started) >= MEM_TRANSFER_TIMEOUT_US) {
+            psdma_release(PSDMA_OWNER_MEMORY);
+            return MEMORY_API_IO;
+        }
+    }
+    if (!hw_held(NULL)) {
+        psdma_release(PSDMA_OWNER_MEMORY);
+        return MEMORY_API_SESSION_LOST;
+    }
+    if (operation == MEMORY_API_FILL)
+        command |= CARD_CTRL_VTW_COPY_FILL_BIT |
+                   ((uint32_t)fill << CARD_CTRL_VTW_COPY_FILL_SHIFT);
+    REG_WRITE(CARD_CTRL_VTW_COPY_SOURCE_REG, source);
+    REG_WRITE(CARD_CTRL_VTW_COPY_DESTINATION_REG, destination);
+    REG_WRITE(CARD_CTRL_VTW_COPY_LENGTH_REG, length);
+    REG_WRITE(CARD_CTRL_VTW_COPY_COMMAND_REG, command);
+    started = hw_micros(NULL);
+    for (;;) {
+        if (!hw_held(NULL)) {
+            error = MEMORY_API_SESSION_LOST;
+            break;
+        }
+        status = REG_READ(CARD_CTRL_VTW_COPY_STATUS_REG);
+        if ((status & CARD_CTRL_VTW_COPY_BUSY_BIT) == 0U &&
+            (status & (CARD_CTRL_VTW_COPY_DONE_BIT |
+                       CARD_CTRL_VTW_COPY_ERROR_BIT |
+                       CARD_CTRL_VTW_COPY_ABORTED_BIT)) != 0U) {
+            *completed = (uint16_t)(REG_READ(CARD_CTRL_VTW_COPY_COMPLETED_REG) &
+                                    CARD_CTRL_VTW_COPY_COMPLETED_MASK);
+            psdma_release(PSDMA_OWNER_MEMORY);
+            return (status & (CARD_CTRL_VTW_COPY_ERROR_BIT |
+                             CARD_CTRL_VTW_COPY_ABORTED_BIT)) == 0U &&
+                   *completed == length ? MEMORY_API_OK : MEMORY_API_IO;
+        }
+        if ((uint32_t)(hw_micros(NULL) - started) >= MEM_COPY_TIMEOUT_US) {
+            error = MEMORY_API_IO;
+            break;
+        }
+    }
+    if (hw_copy_abort() != MEMORY_API_OK) {
+        /* Keep the shared path reserved and the CPU held if the engine
+         * cannot prove that every accepted memory transaction drained. */
+        return MEMORY_API_UNSAFE;
+    }
+    *completed = (uint16_t)(REG_READ(CARD_CTRL_VTW_COPY_COMPLETED_REG) &
+                            CARD_CTRL_VTW_COPY_COMPLETED_MASK);
+    psdma_release(PSDMA_OWNER_MEMORY);
+    return error;
+}
+
 static uint8_t hw_end(void *context)
 {
     uint8_t was_live = hw_held(NULL);
     uint32_t pointer;
     uint32_t started;
     (void)context;
+    if (state.poisoned != 0U) return MEMORY_API_UNSAFE;
     /* A failed shadow write may leave packed words queued. Changing its
      * pointer cancels them before release. A word already accepted may land;
      * the caller receives an error and must not retry as an atomic copy. */
     pointer = REG_READ(CARD_CTRL_VTW_SHADOW_ADDR_REG) & 0x3FFFFUL;
     REG_WRITE(CARD_CTRL_VTW_SHADOW_ADDR_REG, pointer);
-    if (state.poisoned != 0U) return MEMORY_API_UNSAFE;
     /* READ4 ready proves the host port is idle, including scalar writes.
      * A pointer reset also performs a harmless read, so wait for that to
      * drain before allowing the CPU to use the shared shadow memory. */
@@ -354,5 +453,5 @@ static uint8_t hw_private_required(void *context, uint32_t physical,
 
 const memory_api_backend_t memory_api_hardware = {
     NULL, hw_available, hw_begin, hw_read, hw_write, hw_end,
-    hw_private_required, hw_micros
+    hw_private_required, hw_micros, hw_transfer
 };

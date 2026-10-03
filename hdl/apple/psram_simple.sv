@@ -25,12 +25,12 @@
 // 8-deep FIFO with margin. Reads forward the newest matching queued
 // byte so read-after-write is always coherent.
 //
-// Scheduling: a background op (RMW drain / ps-dma) is admitted at
-// most once per Apple bus cycle, right after the serve decision point,
-// so the PSRAM is idle again before the next cycle could need a
-// deadline read. Admission keys off addr_en (which fires on every
-// cycle, including M2-invalid ones on a GS) rather than sss_en (which
-// does not).
+// Scheduling: while the motherboard owns the bus, a background op is
+// admitted at most once per Apple cycle in a bounded window after the
+// serve decision. Admission keys off addr_en (including M2-invalid GS
+// cycles), not sss_en. While vTW owns the bus there are no deadline reads,
+// so background work runs whenever the driver is free. On handback, finish
+// the owned operation before restoring native serves and admission.
 //
 // Address space: first PSRAM chip only, 8 MB. Banks 1..127 are
 // servable (bank 128 -- RamWorks bank-select 127 -- would cross the
@@ -68,8 +68,8 @@ module psram_simple (
     /* ---- vTW RamWorks client (line-granular). The accelerator's aux
      * expansion reads and writes whole 8-byte lines; its line cache and
      * write-combining live in vtw_core_top. Ops are admitted through the
-     * same bounded background window as the RMW drain and PS DMA, so the
-     * Apple serve deadline analysis is unchanged. Priority sits above
+     * same scheduler as the RMW drain and PS DMA. Native bus ownership
+     * retains the bounded window and Apple serve deadline. Priority sits above
      * PS DMA (the core is stalled on this) and below the write queue
      * (committed Apple-bus data drains first). ---- */
     input  logic                     vtw_valid,
@@ -131,8 +131,9 @@ module psram_simple (
      * is translated from addr_early), the only sample that meets the INH
      * deadline. ab_read.rw is the PHI0-high sample and is not yet valid
      * for this cycle at sss_en time. */
+    logic owned_drain_q;
     wire serve_read_start  = ab_read.sss_en && aux_cycle && ab_read.rw_early &&
-                             !vtw_bus_owned;
+                             !vtw_bus_owned && !owned_drain_q;
     wire serve_write_start = ab_read.sss_en && aux_cycle && !ab_read.rw_early;
 
     // ------------------------------------------------------------------
@@ -241,6 +242,20 @@ module psram_simple (
     logic [1:0] admit_delay_q;
     logic       admit_armed_q;
 
+    /* vtw_bus_engine removes its address drivers at drive_en, then keeps
+     * /DMA asserted for one full Apple cycle (S_RELEASE). An 8-byte op,
+     * including both RMW legs and the CE-high tail, finishes within that
+     * guard cycle. Suppress floating/parked aux reads during
+     * this drain; the first native serve occurs after the guard ends.
+     *
+     * Keep the driver-ready test: rvalid reports useful completion before
+     * its mandatory CE-high rest has ended. A fabric reset resets both
+     * this service and the driver; an Apple RESET instead uses the same
+     * guarded handback and must let an accepted operation finish. */
+    wire owned_drain_done = (state == S_IDLE) && !psram_valid && psram_ready;
+    wire background_admit = vtw_bus_owned ||
+        (!owned_drain_q && admit_armed_q && admit_window_q != 6'd0);
+
     logic [2:0]  serve_lane_q;   // byte lane of in-flight serve read
     logic [7:0]  serve_age_q;    // clk cycles since serve issue
     localparam [7:0] SERVE_LATE_THRESHOLD = 8'd75;
@@ -274,6 +289,7 @@ module psram_simple (
             admit_delay_q   <= 2'd0;
             admit_armed_q   <= 1'b0;
             admit_window_q  <= 6'd0;
+            owned_drain_q   <= 1'b0;
             serve_lane_q    <= 3'd0;
             serve_fwd_q     <= 1'b0;
             rmw_line_q      <= 24'd0;
@@ -300,6 +316,10 @@ module psram_simple (
             dma_ready    <= 1'b0;
             vtw_ready    <= 1'b0;
             vtw_rvalid   <= 1'b0;
+            if (vtw_bus_owned)
+                owned_drain_q <= 1'b1;
+            else if (owned_drain_done)
+                owned_drain_q <= 1'b0;
             if (psram_valid && psram_ready) begin
                 psram_valid <= 1'b0;
             end
@@ -431,11 +451,10 @@ module psram_simple (
                 end
 
                 S_IDLE: begin
-                    // Background admission, one DRIVER OP per bus
-                    // cycle. Priority: pending second legs (committed
-                    // data) > RMW drain > ps-dma.
-                    if (admit_armed_q && admit_window_q != 6'd0 &&
-                        !serve_read_start) begin
+                    // Native bus: one bounded admission per cycle.
+                    // vTW-owned bus: run at the driver's command rate.
+                    // Priority: parked write > RMW > vTW > PS DMA.
+                    if (background_admit && !serve_read_start) begin
                         if (rmw_park_q) begin
                             admit_armed_q <= 1'b0;
                             rmw_park_q  <= 1'b0;

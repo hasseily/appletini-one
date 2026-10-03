@@ -15,7 +15,7 @@ values keep their meanings. The checkbox rows pair Enable TURBO speed with
 the slug debug key, Ignore $C074 with Disable DiskII Acceleration, and Slow
 Floating bus with Slow Paddles/joystick.
 
-The current firmware version is **F1.2.0**. USB joystick and paddle setup is
+The current firmware version is **F1.2.2**. USB joystick and paddle setup is
 available under **USB > Joystick / Paddles**; see
 [the joystick guide](README_USB_JOYSTICK.md) for mapping and timing details.
 The archived build described
@@ -70,6 +70,31 @@ This preserves soft-switch ordering, language-card double-access rules,
 and C8 ROM ownership. ARM shadow writes, RAMWorks DMA hold requests, resets,
 mode changes, and changes to write-through policy also invalidate caches.
 PSRAM and private-card responses never enter the word cache.
+
+### F1.2.2 extended-memory transfers
+
+While vTW owns the Apple bus, PSRAM now admits each fixed eight-byte request
+as soon as the service can accept it. Native bus operation keeps its bounded
+admission window. Bus handback drains accepted work and the driver's CE-high
+rest during the existing release guard before native reads resume.
+
+The [AMEM copy/fill API](README_MEMORY_API.md) now submits each descriptor to
+an FPGA engine. Copies and fills use shadow BRAM directly and retain PSRAM
+source and destination lines in the engine. ARM no longer moves each word
+through registers or a DDR buffer. Aligned shadow transfers use four-byte
+accesses; partial PSRAM writes preserve bytes outside the destination range.
+The API still holds the CPU for the batch and invalidates its caches.
+
+In real-driver simulation, 32 PSRAM reads took 1,022 fabric clocks with vTW
+ownership versus 4,042 clocks under native admission. This measures the
+scheduler alone; it is not an application or hardware speed rating. The
+largest observed handback drain was 45 clocks, within the 130-clock release
+guard used by the test. No physical-card result has been recorded for F1.2.2.
+
+Run `python scripts/test_psram_owned.py`,
+`python scripts/test_vtw_copy_engine.py`, `python scripts/test_memory_api.py`,
+`python scripts/test_memory_api_hw.py`, and `python scripts/test_vtw.py` for
+the transfer, reset, ownership, and CPU regressions.
 
 The CPU keeps one set of architectural registers when modes change. TURBO
 can retire ordinary implied and accumulator instructions at opcode fetch,

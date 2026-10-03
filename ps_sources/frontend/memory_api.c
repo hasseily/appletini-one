@@ -166,6 +166,29 @@ uint8_t memory_api_execute(const uint8_t *payload, uint16_t length,
     for (i = 0U; i < count; ++i) {
         const memory_descriptor_t *d = &descriptors[i];
         uint16_t offset = 0U;
+        if (backend->transfer != NULL) {
+            uint16_t completed = 0U;
+            error = backend->transfer(backend->ctx, d->source, d->destination,
+                                      d->length, d->operation, d->fill,
+                                      &completed);
+            if (completed > d->length) {
+                error = MEMORY_API_IO;
+                goto finished;
+            }
+            last_completed_bytes += completed;
+            if (error == MEMORY_API_OK) {
+                if (completed != d->length) {
+                    error = MEMORY_API_IO;
+                    goto finished;
+                }
+                last_completed_descriptors++;
+                continue;
+            }
+            if (error != MEMORY_API_UNAVAILABLE || completed != 0U) {
+                if (error == MEMORY_API_UNAVAILABLE) error = MEMORY_API_IO;
+                goto finished;
+            }
+        }
         while (offset < d->length) {
             uint16_t size = (uint16_t)(d->length - offset);
             if (size > MEMORY_API_COPY_CHUNK) size = MEMORY_API_COPY_CHUNK;

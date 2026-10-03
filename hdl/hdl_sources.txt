@@ -32,6 +32,7 @@ apple/apple_bus_write_arbiter.sv
 apple/w65c02_core.sv
 apple/vtw_shadow.sv
 apple/vtw_shadow_host_port.sv
+apple/vtw_copy_engine.sv
 apple/vtw_turbo_cache.sv
 apple/vtw_video_coalescer.sv
 apple/vtw_video_policy.sv

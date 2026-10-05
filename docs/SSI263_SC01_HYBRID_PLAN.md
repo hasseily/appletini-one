@@ -91,8 +91,9 @@ stop followed by several wait lengths.
 
 ## Phase 3: state continuity and filter clock
 
-Register 4 now controls a bounded filter-only recurrence rate. `$E6` preserves
-the existing response; the provisional range is 0.75×–1.5×. See
+Register 4 now controls a bounded filter-only recurrence rate. `$80` preserves
+the existing response; all 256 values use `(128 + FF) / 256`, from 0.5× to
+about 1.496×. See
 [filter-frequency implementation and tests](SSI263_FILTER_FREQUENCY.md). The
 remaining items below still describe the broader hybrid work and calibration
 limits.

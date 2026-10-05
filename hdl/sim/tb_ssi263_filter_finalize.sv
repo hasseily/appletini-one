@@ -30,7 +30,7 @@ module tb_ssi263_filter_finalize;
     logic [7:0] inflection = 8'h52;
     logic [7:0] rate_inflection = 8'hB8;
     logic [7:0] ctrl_art_amp = 8'h0F;
-    logic [7:0] filter_freq = 8'hE6;
+    logic [7:0] filter_freq = 8'h80;
     logic phoneme_done;
     logic response_done;
     logic signed [15:0] audio;

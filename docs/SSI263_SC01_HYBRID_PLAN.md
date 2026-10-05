@@ -91,6 +91,12 @@ stop followed by several wait lengths.
 
 ## Phase 3: state continuity and filter clock
 
+Register 4 now controls a bounded filter-only recurrence rate. `$E6` preserves
+the existing response; the provisional range is 0.75×–1.5×. See
+[filter-frequency implementation and tests](SSI263_FILTER_FREQUENCY.md). The
+remaining items below still describe the broader hybrid work and calibration
+limits.
+
 - Keep formant filter history across phone boundaries.
 - Remove the hard mute for filter frequency `FF`. The data-sheet formula is
   `XCK / (2 * (256 - FF))`, so `FF` is the fastest valid setting.

@@ -131,6 +131,32 @@ module ssi263_formant_backend (
 
     logic signed [15:0] audio_q;
 
+    // SSI FF controls the switched-capacitor tract clock, not the source or
+    // response clocks. FF=$80 retains the existing 48 kHz coefficient response.
+    // The provisional Q8 rate is 128+FF: all 256 codes span 0.5..383/256 times
+    // that response. At most two tract passes share one held excitation sample;
+    // amplitude, presence, slew limiting and the digital core still run once
+    // per audio tick. SC-01 never uses this rate conversion.
+    logic [8:0] filter_step_q;
+    logic [7:0] filter_phase_q;
+    logic       filter_repeat_q;
+
+    function automatic logic [8:0] ssi_filter_step(input logic [7:0] ff);
+        begin
+            // Linear provisional control, with exact one-pass bypass at FF=$80.
+            // Explicit widening keeps the full 128..383 range in nine bits.
+            ssi_filter_step = 9'd128 + {1'b0, ff};
+        end
+    endfunction
+
+    always_ff @(posedge clk) begin
+        if (!rstn) begin
+            filter_step_q <= 9'd128;
+        end else begin
+            filter_step_q <= ssi_filter_step(filter_freq);
+        end
+    end
+
     synth_state_t synth_state_q;
     filter_stage_t filter_stage_q;
     logic [2:0]   mac_tap_q;
@@ -935,6 +961,8 @@ module ssi263_formant_backend (
 
     task automatic clear_synth_pipeline;
         begin
+            filter_phase_q <= 8'd0;
+            filter_repeat_q <= 1'b0;
             synth_state_q <= SYNTH_IDLE;
             filter_stage_q <= FILTER_F1;
             mac_tap_q <= 3'd0;
@@ -1036,8 +1064,21 @@ module ssi263_formant_backend (
                                       input logic [2:0] closure_gain,
                                       input logic signed [15:0] voice_source,
                                       input logic signed [15:0] noise_source);
+        logic [9:0] phase_next;
         begin
-            synth_state_q <= SYNTH_EXCITE;
+            if (is_votrax_q || filter_step_q == 9'd256) begin
+                filter_phase_q <= 8'd0;
+                filter_repeat_q <= 1'b0;
+                synth_state_q <= SYNTH_EXCITE;
+            end else begin
+                phase_next = {2'b00, filter_phase_q} + {1'b0, filter_step_q};
+                filter_phase_q <= phase_next[7:0];
+                filter_repeat_q <= phase_next[9];
+                // A skipped tract pass holds its last filtered sample. The
+                // output envelope/shaping still advances at the DAC cadence.
+                synth_state_q <= (phase_next[9:8] == 2'd0) ?
+                                 SYNTH_SCALE : SYNTH_EXCITE;
+            end
             synth_voice_gain_q <= voice_gain;
             synth_noise_gain_q <= noise_gain;
             synth_noise_fc_q <= noise_fc;
@@ -1402,7 +1443,12 @@ module ssi263_formant_backend (
                                 synth_fx_q <= filter_out;
                                 fx_y1_q <= filter_out;
                                 fx_history_valid_q <= 1'b1;
-                                synth_state_q <= SYNTH_SCALE;
+                                if (filter_repeat_q) begin
+                                    filter_repeat_q <= 1'b0;
+                                    synth_state_q <= SYNTH_EXCITE;
+                                end else begin
+                                    synth_state_q <= SYNTH_SCALE;
+                                end
                             end
 
                             default: begin

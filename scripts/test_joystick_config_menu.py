@@ -47,7 +47,7 @@ def main() -> None:
     assert "menu->joystick_page_active" in function(main_c, "ui_config_menu_has_close_consumer")
     assert "usb_hid_service_set_joystick_preview" in function(main_c, "ui_sync_usb_menu_capture")
     assert "onee_input_service_set_joystick_config" in main_c[main_c.index("usb_hid_service_init();"):main_c.index("usb_hid_service_init();") + 500]
-    assert "onee_input_service_get_joystick_snapshot" in function(tabs, "config_menu_draw_joystick")
+    assert "onee_input_service_get_joystick_snapshot" in function(tabs, "config_menu_gamepad_buttons_text") + function(tabs, "config_menu_draw_joystick")
     assert "config_menu_joystick_config_line(menu" in function(menu, "config_menu_save_settings_to_path")
     assert "config_menu_save_settings_to_path(menu" in function(menu, "config_menu_save_profile_settings")
     assert "config_menu_read_settings_from_path(menu, cfg_path, 1U" in function(menu, "config_menu_load_profile_settings")
@@ -155,7 +155,7 @@ static void record_text(uint16_t *fb,int x,int y,const char *text,uint16_t fg,ui
 #define cmui_caption record_caption
 #define cmui_text record_text
 """
-    code += function(tabs, "config_menu_draw_joystick")
+    code += function(tabs, "config_menu_gamepad_buttons_text") + function(tabs, "config_menu_draw_joystick")
     code += "#undef hgr_draw_value_item\n#undef cmui_caption\n#undef cmui_text\n"
     code += function(tabs, "config_menu_draw_usb")
     help_source = (FRONT / "config_menu_help.c").read_text()
@@ -378,11 +378,11 @@ int main(void)
     render(&menu,"joystick_input8.ppm");
     assert(!strcmp(shown_device,"Input 8 (connected)"));
     assert(!strcmp(shown_raw_title,"Raw axes: Input 8"));
-    assert(!strcmp(shown_raw_x,"X: 112") && !strcmp(shown_buttons,"Buttons: - 2 -"));
+    assert(!strcmp(shown_raw_x,"X: 112") && !strcmp(shown_buttons,"Buttons: 2"));
     menu.joystick_config.paddle[2].device=4;
     render(&menu,"joystick_input_unavailable.ppm");
     assert(!strcmp(shown_device,"Input 4 (unavailable)"));
-    assert(!strcmp(shown_raw_x,"X: --") && !strcmp(shown_buttons,"Buttons: - - -"));
+    assert(!strcmp(shown_raw_x,"X: --") && !strcmp(shown_buttons,"Buttons: None"));
     menu.joystick_config.paddle[2].device=0; snapshot_slots=0x80;
     render(&menu,"joystick_auto_input8.ppm");
     assert(!strcmp(shown_device,"Auto (Input 8)"));

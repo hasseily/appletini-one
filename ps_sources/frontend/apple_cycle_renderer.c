@@ -565,6 +565,7 @@ enum {
 };
 
 static uint32_t s_aw_base_packed[16];
+static uint32_t s_aw_hgr_packed[6];
 static uint8_t s_aw_dhires_lookup[AW_DHIRES_LOOKUP_BYTES];
 
 static inline uint32_t aw_pack_bgra(atn_bgra_t v) {
@@ -598,10 +599,6 @@ static uint32_t aw_palette_color(uint8_t index) {
     case AW_HGR_PINK:   return aw_bgr(0xFF, 0x32, 0xB5);
     default:            return aw_pack_bgra(g_aAppleWinBaseColors[0]);
     }
-}
-
-static inline void aw_emit_color_index(uint8_t palette_index) {
-    *g_pVideoAddress++ = aw_palette_color(palette_index);
 }
 
 static inline void aw_emit_base_index(uint8_t base_index) {
@@ -655,6 +652,9 @@ static void aw_init_crisp_lookup_tables(void)
 {
     for (uint8_t i = 0; i < 16; ++i) {
         s_aw_base_packed[i] = aw_pack_bgra(g_aAppleWinBaseColors[i]);
+    }
+    for (uint8_t i = 0; i < 6; ++i) {
+        s_aw_hgr_packed[i] = aw_palette_color(i);
     }
 
     for (uint32_t column = 0; column < 256u; ++column) {
@@ -751,8 +751,9 @@ static void step_hgr_idealized(uint32_t sw) {
     }
 
     const uint8_t start = (uint8_t)((x & 1) * 16);
+    /* The HGR decoder emits six native indices; one lookup packs each pixel. */
     for (uint8_t i = 0; i < 14; ++i) {
-        aw_emit_color_index(source[start + i]);
+        *g_pVideoAddress++ = s_aw_hgr_packed[source[start + i]];
     }
 }
 

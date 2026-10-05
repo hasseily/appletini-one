@@ -43,6 +43,7 @@ int main(void)
     const uint8_t button_mask[] = {0x20, 0x40, 0x10, 0x80, 1, 2, 0x10, 0x20};
     const uint8_t extra_byte[] = {6, 6, 6, 6, 7, 7};
     const uint8_t extra_mask[] = {4, 8, 0x40, 0x80, 1, 2};
+    const uint8_t extra_button[] = {11, 12, 8, 9, 10, 13};
     const uint8_t axis_byte[] = {1, 2, 8, 3, 4, 9};
 
     CHECK(usb_ps4_supported(0x054c, 0x05c4), "first DS4 revision missing");
@@ -90,9 +91,10 @@ int main(void)
     for (unsigned button = 0; button < 6; ++button) {
         neutral(data);
         data[extra_byte[button]] |= extra_mask[button];
-        CHECK(usb_ps4_decode(data, 64, &report, &hat, &extra) && extra == 1,
+        CHECK(usb_ps4_decode(data, 64, &report, &hat, &extra) && extra == 0,
               "held auxiliary button missed by release guard");
-        CHECK(report.buttons == 0, "auxiliary button leaked into Apple buttons");
+        CHECK(report.buttons == (1U << extra_button[button]) && !(report.buttons & 7U),
+              "auxiliary button must have its own bit above the Apple buttons");
     }
     neutral(data);
     data[7] = 0xfc;
@@ -122,7 +124,7 @@ int main(void)
     CHECK(!usb_ps4_decode(data, 64, &report, &hat, NULL), "null extra accepted");
     CHECK(!memcmp(&report, &unchanged, sizeof(report)) && hat == 55 && extra == 66,
           "rejected packet changed held state");
-    puts("PASS wired PS4 reports: six axes, eight buttons, hat, release guard, bounds");
+    puts("PASS wired PS4 reports: six axes, fourteen buttons, hat, release guard, bounds");
     return 0;
 }
 """

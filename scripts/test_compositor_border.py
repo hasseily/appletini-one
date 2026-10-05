@@ -89,7 +89,7 @@ def test_blit_and_flood_gating() -> None:
             "static void draw_solid_border_ring(uint16_t *fb," in source and
             source.count("fill_border_rect(") == 9,
             "flood and synthesized SHR ring must each use four rectangles")
-    require("effect_scanline_blank(phase, vertical_scale, scanline_mode)" in source and
+    require("appletini_scanlines_keep_quarters(phase, vertical_scale, scanline_mode)" in source and
             "y + row - phase_origin_y" in source and
             "vertical_scale - 1U" in source,
             "border fills must follow the selected legacy or SHR scanline phase")
@@ -138,9 +138,8 @@ def test_synthesized_legacy_border() -> None:
             "display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I ||" in draw and
             "synthetic_legacy_border && s_border_enabled" in draw,
             "interlace and page-flip frames need borders synthesized from the claimed color")
-    require("s_border_enabled != 0u && !synthetic_legacy_border" in draw and
-            "!synthetic_legacy_border && s_border_enabled != 0U" in draw,
-            "synthetic borders must not read absent samples or offset the active mono span")
+    require("s_border_enabled != 0u && !synthetic_legacy_border" in draw,
+            "synthetic borders must not read absent raster samples")
     ring = draw[draw.index("if (synthetic_legacy_border && s_border_enabled"):
                 draw.index("if (display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I) {")]
     require("draw_solid_border_ring(fb," in ring and

@@ -49,6 +49,21 @@ void screenshot_service_note_local_sd_write_complete(void);
 int screenshot_service_save(screenshot_service_kind_t kind,
                             const rtc_pcf8563_time_t *rtc,
                             screenshot_service_result_t *result);
+/* Snapshot the F1.2.2 capture source, then save bounded row batches from poll().
+ * A2 uses raw renderer colors, border selection and fixed 2x/4x legacy or
+ * 2x/2x SHR scaling with scanlines. OUTPUT copies the full RGB565 framebuffer.
+ * Neither capture replays the FPGA mask; A2 omits compositor effects.
+ * Returns zero when queued; errors fill result immediately. Consume the
+ * completion before requesting another image. Normal batches close their
+ * file before returning; framebuffer ownership never spans polls. */
+int screenshot_service_request(screenshot_service_kind_t kind,
+                               const rtc_pcf8563_time_t *rtc,
+                               screenshot_service_result_t *result);
+uint8_t screenshot_service_busy(void);
+/* Returns one once per completed or cancelled request. */
+uint8_t screenshot_service_take_result(screenshot_service_result_t *result);
+/* Cancel a pending save. A cleanup error names the retained .part file. */
+int screenshot_service_cancel(void);
 void screenshot_service_poll(void);
 uint8_t screenshot_service_restore_rect_for_frame(uint16_t *fb,
                                                   screenshot_service_rect_t *rect);

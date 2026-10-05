@@ -177,7 +177,8 @@ void fb16_blit_2x4_scanlines(uint16_t *fb, int dst_x, int dst_y,
 
 /* 2x horizontal, 2x vertical nearest-neighbor replication blit. Used by
  * VidHD SHR, whose AppleWin-compatible source is already 640x400 and
- * only needs a modest output scale for the 1080p compositor surface. */
+ * only needs a modest output scale for the 1080p compositor surface. The
+ * second row retains 3/4, 1/2, or 1/4 brightness for scanline levels 1..3. */
 void fb16_blit_2x2_scanlines(uint16_t *fb, int dst_x, int dst_y,
                              const uint32_t *src, int src_w, int src_h,
                              int src_stride, uint8_t scanline_mode);
@@ -191,6 +192,21 @@ void fb16_blit_scaled_scanlines(uint16_t *fb, int dst_x, int dst_y,
                                 unsigned scale_y, uint8_t scanline_mode);
 
 /* Copy one RGB565 row, clipping both axes. Used after phosphor effects. */
+/* Per-channel RGB565 attenuation, floor to whole channel codes. */
+static inline uint16_t fb16_attenuate(uint16_t p, uint8_t keep_quarters)
+{
+    if (keep_quarters >= 4U) return p;
+    return (uint16_t)((((p & 0xf81fU)*keep_quarters) >> 2 & 0xf81fU) |
+                      (((p & 0x07e0U)*keep_quarters) >> 2 & 0x07e0U));
+}
+void fb16_copy_row_attenuated(uint16_t *fb, int x, int y, const uint16_t *src,
+                             int width, uint8_t keep_quarters);
+void fb16_pack_row_bgra32src(uint16_t *dst, const uint32_t *src, int width);
+
+/* Copy one BGRA32 row from a video slot to cached scratch, using wide
+ * transfers for non-cacheable DDR. Buffers must not overlap. */
+void fb16_copy_bgra32_row(uint32_t *dst, const uint32_t *src, int width);
+
 void fb16_copy_row(uint16_t *fb, int x, int y, const uint16_t *src,
                    int width, uint8_t blank);
 

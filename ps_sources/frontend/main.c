@@ -55,6 +55,7 @@
 #include "usb_storage_service.h"
 #include "usb_sdd_service.h"
 #include "video_blur.h"
+#include "video_pixel_mask.h"
 #include "video_ghosting.h"
 #include "video_glow.h"
 #include "video_mono.h"
@@ -222,6 +223,7 @@ static psram_ui_state_t g_psram = {0};
 static uint8_t g_scanlines_mode_shadow = APPLETINI_SCANLINES_OFF;
 static uint8_t g_video_ghosting_shadow = APPLETINI_VIDEO_GHOSTING_OFF;
 static uint8_t g_video_blur_shadow = APPLETINI_VIDEO_BLUR_OFF;
+static uint8_t g_video_pixel_mask_shadow = APPLETINI_VIDEO_PIXEL_MASK_OFF;
 static uint8_t g_video_glow_shadow = APPLETINI_VIDEO_GLOW_OFF;
 static uint8_t g_video_dot_bleed_shadow = APPLETINI_VIDEO_DOT_BLEED_LIGHT;
 static uint8_t g_format_badge_shadow = 0u;
@@ -431,6 +433,13 @@ static void    video_blur_set(uint8_t strength)
 {
     g_video_blur_shadow = appletini_video_blur_clamp(strength);
     compositor_set_video_blur(g_video_blur_shadow);
+}
+
+static uint8_t video_pixel_mask_get(void) { return g_video_pixel_mask_shadow; }
+static void video_pixel_mask_set(uint8_t mode)
+{
+    g_video_pixel_mask_shadow = appletini_video_pixel_mask_clamp(mode);
+    compositor_set_video_pixel_mask(g_video_pixel_mask_shadow);
 }
 
 static uint8_t video_glow_get(void) { return g_video_glow_shadow; }
@@ -754,6 +763,12 @@ static void control_set_video_blur(void *ctx, uint8_t strength)
 {
     (void)ctx;
     video_blur_set(strength);
+}
+
+static void control_set_video_pixel_mask(void *ctx, uint8_t mode)
+{
+    (void)ctx;
+    video_pixel_mask_set(mode);
 }
 
 static void control_set_video_glow(void *ctx, uint8_t strength)
@@ -1286,6 +1301,12 @@ static uint8_t menu_platform_get_video_blur(void *ctx)
     return video_blur_get();
 }
 
+static uint8_t menu_platform_get_video_pixel_mask(void *ctx)
+{
+    (void)ctx;
+    return video_pixel_mask_get();
+}
+
 static uint8_t menu_platform_get_video_glow(void *ctx)
 {
     (void)ctx;
@@ -1695,6 +1716,10 @@ static void control_set_sdd_stream_enabled(void *ctx, uint8_t enable)
 static void control_set_usb0_sd_remote_mount(void *ctx, uint8_t enable)
 {
     (void)ctx;
+    /* Finish local ownership before handing the filesystem to the host. */
+    if (screenshot_service_busy() != 0U) {
+        (void)screenshot_service_cancel();
+    }
     if (enable) {
         if (usb_sdd_service_active()) {
             usb_sdd_service_stop();
@@ -1763,6 +1788,9 @@ static int control_set_ethernet_ftp_sd_remote(void *ctx,
         CARD_CTRL_SLOT_BIT(CARD_CTRL_SLOT_DISK2);
 
     (void)ctx;
+    if (screenshot_service_busy() != 0U) {
+        (void)screenshot_service_cancel();
+    }
     if (enable != 0U) {
         int flush_rc = 0;
 
@@ -2746,6 +2774,7 @@ static void ui_draw_storage_activity(uint16_t *fb, const ui_state_t *s)
         return;
     }
 
+    compositor_pixel_mask_exclude(x, y, UI_DISK_ACTIVITY_W, UI_DISK_ACTIVITY_H);
     fb16_fill_rect(fb, x, y, UI_DISK_ACTIVITY_W, UI_DISK_ACTIVITY_H, FB16_COLOR_BLACK);
     fb16_rect(fb,
               x,
@@ -2961,6 +2990,10 @@ static int ui_compose_frame(uint16_t *fb,
     if (show_debugging != 0U) {
         debug_overlay_snapshot_t debug_snapshot;
 
+        for (uint32_t i = 0U; i < debug_overlay_region_count(); ++i) {
+            const debug_overlay_rect_t rect = debug_overlay_region(i);
+            compositor_pixel_mask_exclude(rect.x, rect.y, rect.w, rect.h);
+        }
         ui_collect_debug_overlay_snapshot(&debug_snapshot, s, menu, show_bezel);
         debug_overlay_draw(fb, &debug_snapshot);
         ui_note_debug_overlay_drawn(fb);
@@ -3152,6 +3185,18 @@ static void ui_sync_usb_menu_capture(config_menu_t *menu)
         menu,
         (uint8_t)(config_menu_is_active(menu) &&
                   (g_usb_menu_owned == 0U || ui_onee_selected() != 0U)));
+    usb_hid_service_set_binding_capture((uint8_t)(config_menu_is_active(menu) &&
+        config_menu_usb_binding_capture_action(menu) != CONFIG_MENU_USB_BIND_CAPTURE_NONE));
+    {
+        uint32_t gamepad_bindings = 0U;
+        for (uint32_t i = 0U; i < CONFIG_MENU_USB_BIND_ACTION_COUNT; ++i) {
+            const usb_hid_menu_source_t source = menu->usb_menu_bindings[i];
+            if (usb_hid_menu_source_is_gamepad(source) != 0U) {
+                gamepad_bindings |= 1UL << (source - USB_HID_MENU_SOURCE_GAMEPAD_BASE);
+            }
+        }
+        usb_hid_service_set_gamepad_binding_mask(gamepad_bindings);
+    }
     usb_hid_service_set_menu_ok_source(config_menu_usb_ok_binding_source(menu));
     usb_hid_service_set_menu_open_close_source(
         config_menu_usb_open_close_binding_source(menu));
@@ -3197,28 +3242,27 @@ static void ui_close_menu_on_onee_running(ui_state_t *s,
     g_onee_ui_running_seen = running;
 }
 
+static void ui_report_screenshot(const screenshot_service_result_t *result)
+{
+    char line[256];
+    if (result->rc == 0) {
+        (void)snprintf(line, sizeof(line), "screenshot saved: %s\r\n", result->path);
+    } else {
+        (void)snprintf(line, sizeof(line), "screenshot failed: %s%s%s\r\n",
+                       result->message[0] != '\0' ? result->message : "error",
+                       result->path[0] != '\0' ? " - " : "",
+                       result->path);
+    }
+    uart_puts(UART0_BASE, line);
+}
+
 static void ui_save_screenshot(screenshot_service_kind_t kind)
 {
     screenshot_service_result_t result;
-    char line[180];
-    const char *kind_text =
-        (kind == SCREENSHOT_SERVICE_KIND_A2) ? "a2" : "output";
-    const int rc = screenshot_service_save(kind, &g_rtc, &result);
-
-    if (rc == 0) {
-        (void)snprintf(line,
-                       sizeof(line),
-                       "screenshot %s saved: %s\r\n",
-                       kind_text,
-                       result.path);
-    } else {
-        (void)snprintf(line,
-                       sizeof(line),
-                       "screenshot %s failed: %s\r\n",
-                       kind_text,
-                       (result.message[0] != '\0') ? result.message : "error");
+    if (screenshot_service_request(kind, &g_rtc, &result) != 0) {
+        screenshot_service_show_confirmation(result.message);
+        ui_report_screenshot(&result);
     }
-    uart_puts(UART0_BASE, line);
 }
 
 static void ui_handle_usb_menu_event(ui_state_t *s,
@@ -3263,6 +3307,14 @@ static void ui_handle_usb_menu_event(ui_state_t *s,
         return;
     }
 
+    if ((event->action == USB_HID_MENU_ACTION_SCREENSHOT_A2 ||
+         event->action == USB_HID_MENU_ACTION_SCREENSHOT_1080P) &&
+        (config_menu_usb0_sd_remote_active(menu) != 0U ||
+         config_menu_ethernet_ftp_sd_remote_active(menu) != 0U)) {
+        screenshot_service_show_notice("STOP SD SHARING FIRST");
+        s->input_seq++;
+        return;
+    }
     switch (event->action) {
     case USB_HID_MENU_ACTION_SCREENSHOT_A2:
         ui_save_screenshot(SCREENSHOT_SERVICE_KIND_A2);
@@ -3551,6 +3603,8 @@ int main(void)
         menu_platform.get_video_ghosting = menu_platform_get_video_ghosting;
         menu_platform.set_video_blur = control_set_video_blur;
         menu_platform.get_video_blur = menu_platform_get_video_blur;
+        menu_platform.set_video_pixel_mask = control_set_video_pixel_mask;
+        menu_platform.get_video_pixel_mask = menu_platform_get_video_pixel_mask;
         menu_platform.set_video_glow = control_set_video_glow;
         menu_platform.get_video_glow = menu_platform_get_video_glow;
         menu_platform.set_video_dot_bleed = control_set_video_dot_bleed;
@@ -3723,6 +3777,7 @@ int main(void)
     control_set_scanlines(NULL, config_menu.scanlines_mode);
     control_set_video_ghosting(NULL, config_menu.video_ghosting_strength);
     control_set_video_blur(NULL, config_menu.video_blur_strength);
+    control_set_video_pixel_mask(NULL, config_menu.video_pixel_mask);
     control_set_video_glow(NULL, config_menu.video_glow_strength);
     control_set_video_dot_bleed(NULL, config_menu.video_dot_bleed);
     control_set_format_badge(NULL, config_menu.format_badge_enabled);
@@ -4145,6 +4200,12 @@ int main(void)
         ui_poll_sd_media_arrival(&config_menu);
         usb0_priority_checkpoint();
         screenshot_service_poll();
+        {
+            screenshot_service_result_t screenshot_result;
+            if (screenshot_service_take_result(&screenshot_result) != 0U) {
+                ui_report_screenshot(&screenshot_result);
+            }
+        }
         usb0_priority_checkpoint();
         printer_service_poll();
         usb0_priority_checkpoint();

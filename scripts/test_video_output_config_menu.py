@@ -78,7 +78,7 @@ def test_shared_video_output_contract() -> None:
             "#define APPLE_VIDEO_COLOR_PAL_ACCURATE_COMPOSITE 4U" in header and
             "#define APPLE_VIDEO_COLOR_PAL_ACCURATE_TV        5U" in header and
             "#define APPLE_VIDEO_COLOR_COUNT              6U" in header,
-            "video-output header must define the clean and PAL-accurate render/color modes")
+            "video-output header must retain the six original selectable mode IDs")
     require("APPLE_VIDEO_SETTINGS_DEFAULT" in header and
             "APPLE_VIDEO_COLOR_COMPOSITE_MONITOR" in header,
             "packed video settings must default to Composite Monitor")
@@ -199,6 +199,21 @@ def test_menu_persists_video_output_settings() -> None:
             '"pal_accurate_composite"' in source and
             '"pal_accurate_tv"' in source,
             "menu and config text must expose both PAL-accurate color modes")
+    require('return "Idealized + mix";' not in source and
+            'return "IDEALIZED_MIX";' not in source and
+            'config_menu_str_ieq(value, "idealized_mix")' in source and
+            '"video.blur=%s\\n"' in source and
+            '"video.crt_blending=%u\\n"' not in source and
+            '"video.smoothing.vertical=%s\\n"' not in source and
+            "video_blending_vertical_explicit" in source and
+            "video_legacy_crt_explicit" in source,
+            "legacy mixed mode and CRT settings must migrate to original Blur")
+    require("set_video_crt_blending" not in header + source and
+            "get_video_crt_blending" not in header + source and
+            "void (*set_video_blur)(void *ctx, uint8_t strength);" in header and
+            "config_menu_apply_video_blur(menu);" in source,
+            "Blur must use the original strength callback without a separate CRT switch")
+
 
 
 def test_border_flood_excludes_bezel_and_debugging() -> None:
@@ -214,11 +229,33 @@ def test_border_flood_excludes_bezel_and_debugging() -> None:
             source.count("config_menu_coerce_border(menu);") >= 3,
             "flood must override bezel and debugging after normal and profile config loads")
     require("hgr_draw_check_item_dimmed : hgr_draw_check_item" in main_tabs and
-            "hgr_draw_value_item_dimmed : hgr_draw_value_item" in main_tabs,
+            re.search(r"menu->item_focus == CONFIG_VIDEO_ITEM_BEZEL\),\s+"
+                      r"\(uint8_t\)\(menu->border_flood != 0U\)", main_tabs) is not None,
             "flood must visibly disable bezel and debugging controls")
     require(source.count("menu->item_focus >= CONFIG_VIDEO_ITEM_SHOW_BEZEL") >= 2 and
             source.count("menu->item_focus <= CONFIG_VIDEO_ITEM_DEBUG") >= 2,
             "disabled flood-conflicting controls must reject adjustment and activation")
+
+
+def test_pixel_mask_persistence_and_runtime_wiring() -> None:
+    source = read(CONFIG_MENU_C)
+    header = read(REPO_ROOT / "ps_sources/frontend/config_menu.h")
+    main = read(FRONTEND_MAIN_C)
+    for token in ("video_pixel_mask", "set_video_pixel_mask", "get_video_pixel_mask"):
+        require(token in header, f"Pixel mask must expose {token} in the menu contract")
+    require('"video.pixel_mask=%s\\n"' in source and
+            'strcmp(key, "video.pixel_mask") == 0' in source and
+            source.count("menu->video_pixel_mask = CONFIG_DEFAULT_VIDEO_PIXEL_MASK;") == 4,
+            "Pixel mask must save globally/profiles and default Off at reset and each file load")
+    require("config_menu_cycle_video_pixel_mask(menu, delta);" in source and
+            "config_menu_cycle_video_pixel_mask(menu, 1);" in source and
+            "config_menu_apply_video_pixel_mask(menu);" in source,
+            "Pixel mask must support adjustment, activation, and runtime apply")
+    require("menu_platform.set_video_pixel_mask = control_set_video_pixel_mask;" in main and
+            "menu_platform.get_video_pixel_mask = menu_platform_get_video_pixel_mask;" in main and
+            "control_set_video_pixel_mask(NULL, config_menu.video_pixel_mask);" in main and
+            "compositor_set_video_pixel_mask(g_video_pixel_mask_shadow);" in main,
+            "Pixel mask must reach compositor at startup and through menu callbacks")
 
 
 def test_video_help_overrides_every_row() -> None:
@@ -306,7 +343,7 @@ def test_boot_menu_groups_boot_and_video_settings() -> None:
             "normal boot settings must contain boot controls and USB menu bindings")
     require("case CONFIG_TAB_VIDEO:\n"
             "        return CONFIG_VIDEO_ITEM_COUNT;" in source and
-            "#define CONFIG_VIDEO_ITEM_COUNT        19U" in internal and
+            "#define CONFIG_VIDEO_ITEM_COUNT        20U" in internal and
             "CONFIG_VIDEO_ITEM_ONEE_STANDARD" not in internal and
             '"ONE//e video standard"' not in video_draw,
             "video tab must not own the ONE//e PAL/NTSC control")
@@ -339,24 +376,29 @@ def test_boot_menu_groups_boot_and_video_settings() -> None:
             '"Video ROM"' in video_draw and
             "config_menu_video_variant_label(menu)" in video_draw,
             "video tab must draw video output, effects, bezel controls, and the video ROM override")
-    require(video_draw.index('"Dot bleed"') <
+    require(video_draw.index('"Video ROM"') <
+            video_draw.index('"Video-7 mono"') <
             video_draw.index('"Scanlines"') <
+            video_draw.index('"Pixel mask"') <
+            video_draw.index('"Dot bleed"') <
+            video_draw.index("hgr_draw_video_blur_item") <
+            video_draw.index("hgr_draw_video_glow_item") <
             video_draw.index("hgr_draw_video_ghosting_item") <
             video_draw.index('"IIgs border"') <
             video_draw.index('"Border color"') <
             video_draw.index('"Outside ring"') <
-            video_draw.index('"Video ROM"') <
             video_draw.index('"Show bezel"') <
             video_draw.index('"Bezel"') <
             video_draw.index('"Show debugging"'),
-            "video tab must order Dot bleed, Scanlines, ghosting, Video ROM, bezel controls, then Show debugging")
+            "video tab must group source controls, Scanlines/Mask, Dot bleed/Blur, Glow/Ghosting, borders, and diagnostics")
     for item, row, width in (
-        ("SCANLINES", 2, "w"), ("BLUR", 3, "w"), ("GLOW", 4, "w"),
-        ("GHOSTING", 5, "w"), ("BORDER", 6, "third_w"),
-        ("VIDEO7", 6, "third_w"), ("COL140M", 6, "last_w"),
-        ("BORDER_COLOR", 7, "w"), ("BORDER_FLOOD", 8, "w"),
-        ("ROM", 9, "w"), ("SHOW_BEZEL", 10, "w"), ("BEZEL", 11, "w"),
-        ("DEBUG", 12, "half_w"), ("BADGE", 12, "right_w"),
+        ("OUTPUT", 1, "half_w"), ("VARIANT", 1, "right_w"), ("ROM", 2, "w"),
+        ("VIDEO7", 3, "half_w"), ("COL140M", 3, "right_w"),
+
+        ("SCANLINES", 4, "half_w"), ("PIXEL_MASK", 4, "right_w"), ("GLOW", 6, "half_w"), ("GHOSTING", 6, "right_w"),
+        ("BORDER", 7, "half_w"), ("BORDER_COLOR", 7, "right_w"), ("BORDER_FLOOD", 8, "w"),
+        ("SHOW_BEZEL", 9, "w"), ("BEZEL", 10, "w"),
+        ("DEBUG", 11, "half_w"), ("BADGE", 11, "right_w"),
     ):
         require(re.search(
             rf"y \+ \(row_h \* {row}\),\s+{width},\s+"
@@ -601,8 +643,8 @@ def test_scaled_apple_blits_avoid_uncached_output_readback() -> None:
             "void fb16_expand_2x_row_bgra32src(uint16_t *dst, const uint32_t *src," in fb16 and
             "fb16_expand_2x_row_bgra32src(s_blit_2x_row, srow + sx, count);" in fb16 and
             "out_y + (int)phase, s_blit_2x_row," in fb16 and
-            "count * (int)scale_x, blank);" in fb16 and
-            "memcpy(dst, src + skip, (size_t)width * FB16_BPP);" in fb16,
+            "appletini_scanlines_keep_quarters(phase,scale_y,scanline_mode)" in fb16 and
+            "fb16_copy_video_bytes(dst, src, (size_t)width * FB16_BPP);" in fb16,
             "2x Apple blits must expand into cacheable scratch and copy active rows contiguously")
     require("#if defined(__ARM_NEON)" in fb16 and
             "#include <arm_neon.h>" in fb16 and
@@ -619,176 +661,37 @@ def test_scaled_apple_blits_avoid_uncached_output_readback() -> None:
 
 
 def test_compositor_ghosting_is_optional_and_cache_friendly() -> None:
-    compositor_h = read(COMPOSITOR_H)
     compositor = read(COMPOSITOR_C)
-    debug_h = read(DEBUG_OVERLAY_H)
-    debug_c = read(DEBUG_OVERLAY_C)
-    ghosting_h = read(VIDEO_GHOSTING_H)
-
-    require(has_define(ghosting_h, "APPLETINI_VIDEO_GHOSTING_OFF", "0U") and
-            has_define(ghosting_h, "APPLETINI_VIDEO_GHOSTING_LIGHT", "1U") and
-            has_define(ghosting_h, "APPLETINI_VIDEO_GHOSTING_MEDIUM", "2U") and
-            has_define(ghosting_h, "APPLETINI_VIDEO_GHOSTING_STRONG", "3U") and
-            has_define(ghosting_h, "APPLETINI_VIDEO_GHOSTING_MAX",
-                       "APPLETINI_VIDEO_GHOSTING_STRONG") and
-            "APPLETINI_VIDEO_GHOSTING_HEAVY" not in ghosting_h and
-            "APPLETINI_VIDEO_GHOSTING_HIGH" not in ghosting_h,
-            "ghosting must expose Off/Light/Medium/Strong strengths")
-    require("void compositor_set_video_ghosting(uint8_t strength);" in compositor_h and
-            "uint8_t compositor_video_ghosting(void);" in compositor_h and
-            "static uint8_t               s_video_ghosting_strength = APPLETINI_VIDEO_GHOSTING_OFF;" in compositor and
-            "strength = appletini_video_ghosting_clamp(strength);" in compositor,
-            "compositor must expose and clamp optional ghosting strength")
+    header = read(COMPOSITOR_H)
+    debug = read(DEBUG_OVERLAY_C)
+    require("void compositor_set_video_ghosting(uint8_t strength);" in header and
+            "uint8_t compositor_video_ghosting(void);" in header,
+            "ghosting runtime API must remain available")
     require("static uint32_t s_effect_history[EFFECT_HISTORY_PIXELS]" in compositor and
-            "static uint32_t s_effect_row[COMP_APPLE_SHR_WIDTH]" in compositor and
-            "static uint16_t s_effect_2x_row[COMP_APPLE_SHR_WIDTH * 2U]" in compositor,
-            "ghosting blits must use cacheable scratch/history buffers instead of output-row readback")
-    require("effect_blend_history_row(s_effect_row," in compositor and
-            "effect_expand_2x_row(s_effect_2x_row, s_effect_row, src_w, sy);" in compositor and
-            "fb16_expand_2x_row_bgra32src(dst, src, width);" in compositor and
-            "vld4_u8((const uint8_t *)(history + x))" in compositor and
-            "vmull_u8(old.val[0], numer)" in compositor and
-            "vmax_u8(current.val[0]" in compositor,
-            "ghosting must blend cached 8:8:8 rows with NEON and use the "
-            "shared NEON doubled-565 row output")
-    require("static inline uint8_t effect_decay_numer(uint32_t p, uint8_t strength)" in compositor and
-            "(p & 0x00808080U)" in compositor and
-            "(p & 0x00202020U)" in compositor and
-            "EFFECT_NUMER_BRIGHT_LIGHT" in compositor and
-            "EFFECT_NUMER_BRIGHT_MEDIUM" in compositor and
-            "EFFECT_NUMER_BRIGHT_STRONG" in compositor and
-            "k_effect_numer_bright[strength]" in compositor and
-            "k_effect_numer_knee[strength]" in compositor and
-            "k_effect_numer_tail[strength]" in compositor and
-            "const uint8_t decay_numer = effect_decay_numer(history[x], strength);" in compositor and
-            "\"usub8 %0, %2, %3\\n\\t\"" in compositor and
-            "\"sel %1, %2, %3\\n\\t\"" in compositor and
-            "effect_max_rgb(p, effect_scale_64(history[x], decay_numer))" in compositor and
-            "history[x] = p;" in compositor and
-            "effect_mix_3_1" not in compositor and
-            "effect_row_weight" not in compositor and
-            "effect_write_row" not in compositor,
-            "ghosting pipeline must use packed piecewise temporal history and remove blur/soften/phosphor falloff")
-    require("if (compositor_apple_effects_active()) {\n"
-            "            blit_apple_effects_scaled(fb," in compositor and
-            "fb16_blit_2x2_scanlines(fb," in compositor and
-            "if (compositor_apple_effects_active()) {\n"
-            "        blit_apple_effects_scaled(fb," in compositor and
-            "fb16_blit_2x4_scanlines(fb," in compositor and
-            "(s_video_ghosting_strength != APPLETINI_VIDEO_GHOSTING_OFF) ||\n"
-            "           (s_video_blur_strength != APPLETINI_VIDEO_BLUR_OFF) ||\n"
-            "           (s_video_glow_strength != APPLETINI_VIDEO_GLOW_OFF) ||\n"
-            "           s_mono_width != 0;" in compositor,
-            "color blits must stay on the existing fast path until an effect is enabled; "
-            "complete mono frames use the row shaper")
+            "effect_blend_history_row(" in compositor and
+            "vld4_u8((const uint8_t *)(history + x))" in compositor,
+            "history must remain cached BGRA8888 with a NEON path")
+    require("(p & 0x00E0E0E0U)" in compositor and
+            "vdup_n_u8(0xE0U)" in compositor,
+            "both ghosting paths must recognize all brightness values >=32")
     require("effect_clear_history();" in compositor and
             "s_force_full_refresh = 1u;" in compositor,
-            "changing ghosting must reset temporal state and force a fresh composite")
-    require("uint8_t video_ghosting_strength;" in debug_h and
-            "uint8_t video_blur_strength;" in debug_h and
-            "uint8_t video_glow_strength;" in debug_h and
-            '"Ghost %s Blur %s Glow %s"' in debug_c and
-            "appletini_video_ghosting_name(s->video_ghosting_strength)" in debug_c and
-            "appletini_video_blur_name(s->video_blur_strength)" in debug_c and
-            "appletini_video_glow_name(s->video_glow_strength)" in debug_c and
-            "APPLETINI_VIDEO_EFFECT" not in debug_c,
-            "debug overlay must report the ghosting, blur, and glow strengths only")
+            "ghosting changes must reset history and publish a fresh frame")
+    for token in ("video_ghosting_strength", "video_dot_bleed",
+                  "video_blur_strength", "video_glow_strength"):
+        require(token in debug, "debug overlay must report every video effect")
 
 
 def test_compositor_phosphor_blur_is_display_only() -> None:
-    compositor_h = read(COMPOSITOR_H)
-    compositor = read(COMPOSITOR_C)
-    blur_h = read(REPO_ROOT / "ps_sources" / "frontend" / "video_blur.h")
-    source = read(CONFIG_MENU_C)
-    header = read(CONFIG_MENU_H)
-    frontend_main = read(FRONTEND_MAIN_C)
-
-    require(has_define(blur_h, "APPLETINI_VIDEO_BLUR_OFF", "0U") and
-            has_define(blur_h, "APPLETINI_VIDEO_BLUR_LIGHT", "1U") and
-            has_define(blur_h, "APPLETINI_VIDEO_BLUR_MEDIUM", "2U") and
-            has_define(blur_h, "APPLETINI_VIDEO_BLUR_STRONG", "3U") and
-            has_define(blur_h, "APPLETINI_VIDEO_BLUR_MAX",
-                       "APPLETINI_VIDEO_BLUR_STRONG") and
-            "appletini_video_blur_clamp" in blur_h and
-            "appletini_video_blur_name" in blur_h,
-            "phosphor blur must expose Off/Light/Medium/Strong strengths")
-    require("void compositor_set_video_blur(uint8_t strength);" in compositor_h and
-            "uint8_t compositor_video_blur(void);" in compositor_h and
-            "static uint8_t               s_video_blur_strength = APPLETINI_VIDEO_BLUR_OFF;" in compositor,
-            "compositor must expose and default-off the blur strength")
-    require("static uint32_t s_effect_blur_ring[3U][COMP_APPLE_SHR_WIDTH]" in compositor and
-            "effect_rgb_half" in compositor and
-            "effect_rgb_quarter" in compositor and
-            "effect_rgb_eighth" in compositor and
-            "effect_blur_h_row(s_effect_row, s_effect_blur_ring[sy % 3]," in compositor,
-            "blur must run as SWAR taps over a cacheable three-row ring at source resolution")
-    blur_path = compositor[compositor.index(
-        "if (blur != APPLETINI_VIDEO_BLUR_OFF || glow != APPLETINI_VIDEO_GLOW_OFF)"):
-        compositor.index("    for (int sy = 0; sy < src_h; ++sy) {")]
-    require(blur_path.index("effect_blend_history_row(") <
-            blur_path.index("effect_blur_h_row(s_effect_row, s_effect_blur_ring[sy % 3],"),
-            "blur must be display-only: history keeps the unblurred pixel")
-    require("vld1q_u32(src + x - 1)" in compositor and
-            "vld1q_u32(src + x + 1)" in compositor and
-            "vld1q_u32(up + x)" in compositor and
-            "effect_expand_2x_row(s_effect_2x_row, base, w, row);" in compositor and
-            "fb16_expand_2x_row_bgra32src(dst, src, width);" in compositor,
-            "blur filters and output packing must use NEON for complete row groups")
-    require("effect_mix_3_1" not in compositor and
-            "effect_row_weight" not in compositor and
-            "effect_write_row" not in compositor,
-            "the retired falloff pipeline must not return")
-    require('"video.blur=%s\\n"' in source and
-            'strcmp(key, "video.blur") == 0' in source and
-            "#define CONFIG_DEFAULT_VIDEO_BLUR_STRENGTH APPLETINI_VIDEO_BLUR_OFF" in source and
-            "config_menu_coerce_video_blur(menu);" in source and
-            "config_menu_apply_video_blur(menu);" in source and
-            '"Phosphor blur"' in source,
-            "blur must persist as video.blur, default off, and draw its own video row")
-    require("void (*set_video_blur)(void *ctx, uint8_t strength);" in header and
-            "uint8_t (*get_video_blur)(void *ctx);" in header and
-            "uint8_t video_blur_strength;" in header,
-            "menu platform must expose blur runtime callbacks and state")
-    require("static uint8_t g_video_blur_shadow = APPLETINI_VIDEO_BLUR_OFF;" in frontend_main and
-            "compositor_set_video_blur(g_video_blur_shadow);" in frontend_main and
-            "control_set_video_blur(NULL, config_menu.video_blur_strength);" in frontend_main and
-            "snapshot->video_blur_strength = video_blur_get();" in frontend_main,
-            "frontend must keep a clamped blur shadow, apply it at boot, and report it")
-
-    glow_h = read(REPO_ROOT / "ps_sources" / "frontend" / "video_glow.h")
-    require(has_define(glow_h, "APPLETINI_VIDEO_GLOW_OFF", "0U") and
-            has_define(glow_h, "APPLETINI_VIDEO_GLOW_LIGHT", "1U") and
-            has_define(glow_h, "APPLETINI_VIDEO_GLOW_MEDIUM", "2U") and
-            has_define(glow_h, "APPLETINI_VIDEO_GLOW_STRONG", "3U") and
-            has_define(glow_h, "APPLETINI_VIDEO_GLOW_MAX",
-                       "APPLETINI_VIDEO_GLOW_STRONG"),
-            "phosphor glow must expose Off/Light/Medium/Strong strengths")
-    require("void compositor_set_video_glow(uint8_t strength);" in compositor_h and
-            "uint8_t compositor_video_glow(void);" in compositor_h and
-            "static uint8_t               s_video_glow_strength = APPLETINI_VIDEO_GLOW_OFF;" in compositor and
-            "effect_rgb_sat_add" in compositor and
-            "effect_glow_scale(s_effect_halo_row[x], glow)" in compositor and
-            "vqadd_u8(p.val[0], vshl_u8(h.val[0], shift))" in compositor and
-            "vzipq_u16(px, px)" in compositor and
-            "k_effect_glow_numer" not in compositor,
-            "glow must use shifted halo weights and a NEON saturating "
-            "add/doubled-565 output, with a scalar fallback")
-    require("if (strength != APPLETINI_VIDEO_GHOSTING_OFF) {" in compositor and
-            "effect_blend_history_row(" in compositor,
-            "blur and glow must skip temporal history work when ghosting is off")
-    require('"video.glow=%s\\n"' in source and
-            'strcmp(key, "video.glow") == 0' in source and
-            "#define CONFIG_DEFAULT_VIDEO_GLOW_STRENGTH APPLETINI_VIDEO_GLOW_OFF" in source and
-            "config_menu_coerce_video_glow(menu);" in source and
-            "config_menu_apply_video_glow(menu);" in source and
-            '"Phosphor glow"' in source and
-            "void (*set_video_glow)(void *ctx, uint8_t strength);" in header and
-            "uint8_t (*get_video_glow)(void *ctx);" in header and
-            "uint8_t video_glow_strength;" in header and
-            "static uint8_t g_video_glow_shadow = APPLETINI_VIDEO_GLOW_OFF;" in frontend_main and
-            "control_set_video_glow(NULL, config_menu.video_glow_strength);" in frontend_main and
-            "snapshot->video_glow_strength = video_glow_get();" in frontend_main,
-            "glow must persist as video.glow, default off, and wire through menu and boot")
+    compositor, header, source, main = map(read, (COMPOSITOR_C, COMPOSITOR_H, CONFIG_MENU_C, FRONTEND_MAIN_C))
+    for effect, field, key in (("blur", "blur_strength", "blur"), ("dot_bleed", "dot_bleed", "dot.bleed")):
+        require(f"compositor_set_video_{effect}(" in header, f"restored {effect} API")
+        require(f'"video.{key}=%s\\n"' in source, f"persist restored {effect}")
+        require(f"control_set_video_{effect}(NULL, config_menu.video_{field});" in main, f"apply {effect}")
+    require("video_axis_" not in compositor and "video_crt_blend" not in compositor, "remove the later light/luma algorithms")
+    body = compositor[compositor.index("static void blit_apple_effects_scaled"):compositor.index("/* ---------- Format badge")]
+    require(body.index("effect_blend_history_row(") < body.index("effect_blur_h_row("), "filter must not feed back into history")
+    require("s_effect_glow_ring[3U]" in compositor and "effect_glow_h_row(" in compositor, "glow must keep its independent fixed radius")
 
 
 def test_pal_accurate_renderer_model_is_registered() -> None:
@@ -921,102 +824,20 @@ def test_pal_accurate_renderer_model_is_registered() -> None:
             "frontend_core1 Vitis build must compile the PAL timing source")
 
 
-def test_dot_bleed_is_mono_only_and_persists() -> None:
-    mono_h = read(REPO_ROOT / "ps_sources" / "frontend" / "video_mono.h")
-    compositor = read(COMPOSITOR_C)
-    compositor_h = read(COMPOSITOR_H)
-    source = read(CONFIG_MENU_C)
-    header = read(CONFIG_MENU_H)
-    internal = read(CONFIG_MENU_INTERNAL_H)
-    main_tabs = read(CONFIG_MENU_MAIN_TABS_C)
-    help_c = read(CONFIG_MENU_HELP_C)
-    frontend_main = read(FRONTEND_MAIN_C)
-    debug_c = read(DEBUG_OVERLAY_C)
-    debug_h = read(DEBUG_OVERLAY_H)
-    video_draw = main_tabs[
-        main_tabs.index("void config_menu_draw_video"):
-        main_tabs.index("void config_menu_draw_clock")
-    ]
-
-    require(has_define(mono_h, "APPLETINI_VIDEO_DOT_BLEED_OFF", "0U") and
-            has_define(mono_h, "APPLETINI_VIDEO_DOT_BLEED_LIGHT", "1U") and
-            has_define(mono_h, "APPLETINI_VIDEO_DOT_BLEED_MEDIUM", "2U") and
-            has_define(mono_h, "APPLETINI_VIDEO_DOT_BLEED_STRONG", "3U") and
-            has_define(mono_h, "APPLETINI_VIDEO_DOT_BLEED_MAX",
-                       "APPLETINI_VIDEO_DOT_BLEED_STRONG") and
-            "appletini_video_dot_bleed_clamp" in mono_h and
-            "appletini_video_dot_bleed_name" in mono_h and
-            "video_mono_expand_row_light(" in mono_h and
-            "video_mono_expand_row_medium(" in mono_h and
-            "video_mono_expand_row_strong(" in mono_h and
-            "        fb16_expand_2x_row_bgra32src(dst, src, width);\n"
-            "        break;" in mono_h,
-            "dot bleed must expose Off/Light/Medium/Strong with one row shaper per level "
-            "and a plain Off path")
-    require("static uint8_t               s_video_dot_bleed = APPLETINI_VIDEO_DOT_BLEED_LIGHT;" in compositor and
-            "        s_video_dot_bleed != APPLETINI_VIDEO_DOT_BLEED_OFF &&\n"
-            "        (mono_detail & APPLE_FB_FORMAT_MONO_ENABLE) != 0U) {" in compositor and
-            "s_mono_channel_shift, s_mono_tint,\n"
-            "                           s_video_dot_bleed);" in compositor and
-            "void compositor_set_video_dot_bleed(uint8_t level);" in compositor_h and
-            "uint8_t compositor_video_dot_bleed(void);" in compositor_h,
-            "compositor must default dot bleed to Light and claim no mono span when it is Off")
-    require("#define CONFIG_VIDEO_ITEM_VARIANT      3U" in internal and
-            "#define CONFIG_VIDEO_ITEM_DOT_BLEED     4U" in internal and
-            "#define CONFIG_VIDEO_ITEM_SCANLINES    5U" in internal,
-            "Dot bleed must retain its focus index between mono tint and Scanlines")
-    require("y + row_h,\n"
-            "                        (menu->video_output_mono != 0U) ? half_w : w," in video_draw and
-            video_draw.count('"Dot bleed"') == 1 and
-            re.search(r'if \(menu->video_output_mono != 0U\) \{\s*'
-                      r'hgr_draw_value_item\(fb,\s*right_x,\s*y \+ row_h,\s*right_w,\s*'
-                      r'\(uint8_t\)\(menu->item_focus == CONFIG_VIDEO_ITEM_DOT_BLEED\),\s*'
-                      r'"Dot bleed",\s*appletini_video_dot_bleed_name\(menu->video_dot_bleed\)\);\s*'
-                      r'\}\s*hgr_draw_value_item\(', video_draw) is not None,
-            "Dot bleed must share the tint row on the right only in Monochrome; Color mode keeps the full row")
-    for function, next_function, target in (
-        ("config_menu_clamp_item", "config_menu_on_tab_entered", "VARIANT"),
-        ("config_menu_next_item", "config_menu_prev_item", "SCANLINES"),
-        ("config_menu_prev_item", "config_menu_ethernet_edit_target", "VARIANT"),
-    ):
-        body = source[source.index(f"static void {function}("):
-                      source.index(next_function, source.index(f"static void {function}("))]
-        require("if (menu->tab == CONFIG_TAB_VIDEO && menu->video_output_mono == 0U &&\n"
-                "        menu->item_focus == CONFIG_VIDEO_ITEM_DOT_BLEED) {\n"
-                f"        menu->item_focus = CONFIG_VIDEO_ITEM_{target};" in body,
-                f"{function} must skip hidden Dot bleed only on the Color video tab")
-    require(re.search(r"menu->item_focus == CONFIG_VIDEO_ITEM_DOT_BLEED\) \{\s*"
-                      r"(?:/\*.*?\*/\s*)?if \(menu->video_output_mono != 0U\)",
-                      source, re.DOTALL) is not None and
-            "        } else if (menu->item_focus == CONFIG_VIDEO_ITEM_DOT_BLEED) {\n"
-            "            if (menu->video_output_mono == 0U) {" in source,
-            "Dot bleed must ignore adjust and select while output is Color")
-    require('"video.dot.bleed=%s\\n"' in source and
-            'strcmp(key, "video.dot.bleed") == 0' in source and
-            "#define CONFIG_DEFAULT_VIDEO_DOT_BLEED APPLETINI_VIDEO_DOT_BLEED_LIGHT" in source and
-            "config_menu_coerce_video_dot_bleed(menu);" in source and
-            "config_menu_apply_video_dot_bleed(menu);" in source and
-            "    return APPLETINI_VIDEO_DOT_BLEED_LIGHT;\n}" in source and
-            "void (*set_video_dot_bleed)(void *ctx, uint8_t level);" in header and
-            "uint8_t (*get_video_dot_bleed)(void *ctx);" in header and
-            "uint8_t video_dot_bleed;" in header,
-            "dot bleed must persist as video.dot.bleed, default Light, and read unknown text as Light")
-    require("static uint8_t g_video_dot_bleed_shadow = APPLETINI_VIDEO_DOT_BLEED_LIGHT;" in frontend_main and
-            "compositor_set_video_dot_bleed(g_video_dot_bleed_shadow);" in frontend_main and
-            "control_set_video_dot_bleed(NULL, config_menu.video_dot_bleed);" in frontend_main and
-            "snapshot->video_dot_bleed = video_dot_bleed_get();" in frontend_main and
-            "uint8_t video_dot_bleed;" in debug_h and
-            '"Output mono %s, bleed %s"' in debug_c,
-            "frontend must keep a clamped dot bleed shadow, apply it at boot, and report it")
-    require("HELP(video_dot_bleed," in help_c and
-            "OVERRIDE(CONFIG_VIDEO_ITEM_DOT_BLEED, video_dot_bleed)," in help_c,
-            "Dot bleed row must have its own help")
+def test_original_controls_replace_axis_blending() -> None:
+    source, tabs, help_c = map(read, (CONFIG_MENU_C, CONFIG_MENU_MAIN_TABS_C, CONFIG_MENU_HELP_C))
+    require('"Dot bleed"' in tabs and '"Phosphor blur"' in source, "restore original controls")
+    require('"H blending"' not in source + tabs and '"V blending"' not in source + tabs, "remove axis controls")
+    require(source.count("config_menu_resolve_video_blending(menu);") == 2, "migrate both global and profile loads")
+    for name, key in (("blur", "BLUR"), ("dot_bleed", "DOT_BLEED")):
+        require(f"HELP(video_{name}," in help_c and f"OVERRIDE(CONFIG_VIDEO_ITEM_{key}, video_{name})," in help_c, "restored help")
 
 
 TESTS = [
     test_shared_video_output_contract,
     test_menu_persists_video_output_settings,
     test_border_flood_excludes_bezel_and_debugging,
+    test_pixel_mask_persistence_and_runtime_wiring,
     test_video_help_overrides_every_row,
     test_boot_menu_groups_boot_and_video_settings,
     test_frontend_wires_settings_to_cpu1_renderer,
@@ -1027,7 +848,7 @@ TESTS = [
     test_compositor_ghosting_is_optional_and_cache_friendly,
     test_compositor_phosphor_blur_is_display_only,
     test_pal_accurate_renderer_model_is_registered,
-    test_dot_bleed_is_mono_only_and_persists,
+    test_original_controls_replace_axis_blending,
 ]
 
 

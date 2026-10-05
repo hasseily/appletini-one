@@ -15,6 +15,72 @@ saved mapping settings. Physical Open/Solid Apple keys still work on a //e:
 vTW combines their button reads with USB button presses. On a II/II+ with
 forced-zero buttons enabled, USB supplies the button state directly.
 
+## F1.2.3 controller bindings
+
+The USB binding editor accepts **Gamepad 1** through **Gamepad 32** for menu,
+screenshot, and Turbo speed actions. Config files store these as
+`GAMEPAD.BUTTON1` through `GAMEPAD.BUTTON32`. Existing mouse and keyboard
+bindings keep their meaning. An explicit controller binding takes priority
+over that button's old mouse-menu action.
+
+Generic HID pads keep the button numbers in their descriptors. Parsing now
+preserves nonconsecutive axis usages and each report ID's input offsets;
+output and feature reports cannot shift input fields. Simulation trigger
+usages feed Z/Rz. A report that updates one group of buttons retains held
+buttons from other report IDs. The live joystick preview keeps all 32 bits.
+Apple PB0..PB2 and the fixed slot-2 SNES mapping still use their existing
+buttons; extra controls cannot alias them.
+
+Wired Xbox One and DualShock 4 use these common binding numbers:
+
+| Gamepad button | Xbox One | DualShock 4 |
+| --- | --- | --- |
+| 1 | A | Cross |
+| 2 | B | Circle |
+| 3 | X | Square |
+| 4 | Y | Triangle |
+| 5 | LB | L1 |
+| 6 | RB | R1 |
+| 7 | View | Share |
+| 8 | Menu | Options |
+| 9 | Left stick click | L3 |
+| 10 | Right stick click | R3 |
+| 11 | Guide | PS |
+| 12 | - | L2 switch |
+| 13 | - | R2 switch |
+| 14 | - | Touchpad click |
+
+Both controllers retain their six analog axes, including the two triggers.
+Xbox Guide packets update Guide independently of main button/stick reports.
+DS4 report-counter bits never count as buttons.
+
+With the menu open, unbound LB/RB (L1/R1) select the previous/next tab. Both
+held together cancel tab movement; holding one does not repeat. Learning a
+binding or viewing joystick calibration suppresses these tab shortcuts, and
+normal gameplay keeps its existing controller input. Assigning either shoulder
+an explicit binding disables the default shoulder pair's tab shortcut.
+
+The new descriptor helper derives from Multitini One commit `1c4f8be`.
+Host tests exercise real parsing, 32 separate binding sources, partial reports,
+button arrays, malformed descriptors, shoulder edges and capture, PS4 controls,
+Xbox Guide/main packet ordering, and the unchanged Apple PB/SNES outputs.
+
+Hardware checks for this change remain to be run:
+
+- On wired DS4 and Xbox One, learn each extra button separately, then test
+  short OK presses and held menu-open/close bindings. Hold Guide while moving
+  both sticks; release Guide and confirm the stick state remains live.
+- Test LB to RB without a neutral report, both shoulders together, and their
+  release. During binding learning, each shoulder must bind without changing
+  tabs. In calibration, verify axes remain live and shoulders do not change tabs.
+- With a generic pad that exposes high button numbers, bind Gamepad 32 to a
+  screenshot and then to a Turbo action. Hold it across reports containing
+  only other buttons or axes, then release it; each press must fire once.
+- Connect two pads, retain held controls across each pad's partial reports,
+  and unplug one. Confirm only that pad releases, menu release guards clear,
+  Apple PB0..PB2 still match the first three buttons, and slot-2 SNES buttons
+  retain their documented positions.
+
 ## Set up a controller
 
 Open **USB > Joystick / Paddles** in the config menu. Select a paddle from

@@ -49,8 +49,45 @@ static void draw_format_badge(uint16_t *fb, int x, int y, int w) {
         effects + effects_active + drawing + r'''
 static uint16_t output[COMP_OUT_MAX_WIDTH * COMP_OUT_MAX_HEIGHT + 2];
 static unsigned checks;
+static uint32_t expected_horizontal[COMP_APPLE_VISIBLE_HEIGHT][COMP_APPLE_VISIBLE_WIDTH];
+static uint16_t expected_capture[3][COMP_APPLE_VISIBLE_HEIGHT][COMP_APPLE_VISIBLE_WIDTH];
+/* Independent old Blur oracle: each tap truncates before summation. The
+ * captured border shares the filter with active pixels, including its seam. */
+static uint32_t reference_tent(uint32_t a, uint32_t c, uint32_t b)
+{
+    uint32_t result=0;
+    for (unsigned shift=0;shift<=16;shift+=8) {
+        const unsigned value=(((a>>shift)&255)/4)+(((c>>shift)&255)/2)+(((b>>shift)&255)/4);
+        result|=value<<shift;
+    }
+    return result;
+}
+static void prepare_captured_border_oracle(void)
+{
+    const uint32_t *source=(const uint32_t *)(uintptr_t)comp_apple_slot_addr[s_pub_slot];
+    source+=COMP_APPLE_LEFT_BORDER_PIXELS;
+    for (int y=0;y<COMP_APPLE_VISIBLE_HEIGHT;++y) {
+        for (int x=0;x<COMP_APPLE_VISIBLE_WIDTH;++x) {
+            const uint32_t *row=source+y*COMP_APPLE_ROW_PIXELS;
+            expected_capture[0][y][x]=fb16_from_bgra32(row[x]);
+            expected_horizontal[y][x]=reference_tent(row[x?x-1:0],row[x],
+                row[x+1<COMP_APPLE_VISIBLE_WIDTH?x+1:x]);
+            expected_capture[1][y][x]=fb16_from_bgra32(expected_horizontal[y][x]);
+        }
+    }
+    for (int y=0;y<COMP_APPLE_VISIBLE_HEIGHT;++y) {
+        for (int x=0;x<COMP_APPLE_VISIBLE_WIDTH;++x) {
+            expected_capture[2][y][x]=fb16_from_bgra32(reference_tent(
+                expected_horizontal[y?y-1:0][x],expected_horizontal[y][x],
+                expected_horizontal[y+1<COMP_APPLE_VISIBLE_HEIGHT?y+1:y][x]));
+        }
+    }
+}
 static void verify_composited_border(void)
 {
+    const int captured=s_pub_mode==APPLE_FB_DISPLAY_MODE_LEGACY &&
+        ((s_pub_detail&APPLE_FB_FORMAT_PAGE_MASK)>>APPLE_FB_FORMAT_PAGE_SHIFT)!=APPLE_FB_FORMAT_PAGE_FLIP_MERGE;
+    if (captured) prepare_captured_border_oracle();
     for (unsigned mode = 0; mode < DISPLAY_MODE_COUNT; ++mode) {
         const display_mode_t *d = display_mode_get((uint8_t)mode);
         for (unsigned preference = 0; preference <= 2; ++preference) {
@@ -62,10 +99,10 @@ static void verify_composited_border(void)
             const unsigned sy = (s_pub_mode == APPLE_FB_DISPLAY_MODE_LEGACY)
                 ? 2 * v->scale : v->scale;
             const uint16_t border = fb16_from_bgra32(apple_video_iigs_border_bgra(s_pub_border));
-            for (unsigned effects = 0; effects < 2; ++effects) {
-                s_video_dot_bleed = effects ? APPLETINI_VIDEO_DOT_BLEED_LIGHT : 0;
+            for (unsigned effects = 0; effects < 8; ++effects) {
+                s_video_blur_strength = effects ? (effects >= 4 ? APPLETINI_VIDEO_BLUR_MEDIUM : APPLETINI_VIDEO_BLUR_LIGHT) : 0;
                 s_video_ghosting_strength = effects ? APPLETINI_VIDEO_GHOSTING_LIGHT : 0;
-                s_scanlines_mode = effects ? 3 : 0;
+                s_scanlines_mode = effects % 4;
                 s_border_flood = effects;
                 for (size_t i = 0; i < sizeof output / sizeof output[0]; ++i) output[i] = 0x1357;
                 effect_clear_history();
@@ -80,9 +117,11 @@ static void verify_composited_border(void)
                         const int ring = x >= v->border_x && x < v->border_x + v->border_width &&
                             y >= v->border_y && y < v->border_y + v->border_height;
                         const unsigned phase = (unsigned)(y - v->border_y) & (sy - 1U);
-                        const int blank = s_scanlines_mode &&
-                            ((sy == 4 && phase != 0) || (sy == 2 && phase == 1));
-                        const uint16_t want = (ring || s_border_flood) ? (blank ? 0 : border) : 0x1357;
+                        const unsigned q = !s_scanlines_mode || sy == 1 ? 4 : sy == 4 ? (phase >= 4-s_scanlines_mode ? 0 : 4) : phase == 1 ? 4-s_scanlines_mode : 4;
+                        const uint16_t raw=captured && ring ? expected_capture[s_video_blur_strength]
+                            [(y-v->border_y)/sy][(x-v->border_x)/v->scale]:border;
+                        const uint16_t shaded=(uint16_t)((((raw>>11)*q/4)<<11)|(((((raw>>5)&63)*q/4))<<5)|((raw&31)*q/4));
+                        const uint16_t want=(ring || s_border_flood) ? shaded:0x1357;
                         const uint16_t got = output[1 + y*d->width+x];
                         if (got != want) {
                             fprintf(stderr, "border pipeline mode=%u size=%u apple=%u detail=%x color=%u effects=%u at %d,%d got=%x want=%x\n",

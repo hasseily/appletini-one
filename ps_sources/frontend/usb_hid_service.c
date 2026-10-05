@@ -25,6 +25,7 @@
 #include "cherryusb_platform.h"
 #include "usbh_core.h"
 #include "usbh_hid.h"
+#include "usb_gamepad_descriptor.h"
 #include "usb_def.h"
 #include "usb_errno.h"
 #include "usb_hid.h"
@@ -98,6 +99,10 @@ typedef struct {
     uint8_t report_pending;
     uint8_t report_retry_armed;
     uint8_t prev_buttons;
+    uint32_t gamepad_buttons;
+    uint32_t prev_gamepad_buttons;
+    uint8_t gamepad_tab;
+    uint8_t gamepad_dpad;
     uint8_t apple_buttons;
     usb_hid_menu_source_t prev_sources[HID_SOURCE_TRACK_COUNT];
     uint8_t prev_hat;
@@ -133,6 +138,8 @@ static uint8_t g_seq;
 static uint8_t g_sensitivity = MOUSE_SENSITIVITY_BASE;
 static uint8_t g_menu_capture;
 static uint8_t g_joystick_preview;
+static uint8_t g_binding_capture;
+static uint32_t g_gamepad_binding_mask;
 static uint8_t g_onee_fixed_mode;
 static uint8_t g_onee_input_blocked;
 static usb_hid_menu_event_t g_menu_events[MOUSE_MENU_EVENT_DEPTH];
@@ -197,6 +204,19 @@ uint8_t usb_hid_menu_source_is_keyboard(usb_hid_menu_source_t source)
     return ((source & (usb_hid_menu_source_t)~USB_HID_MENU_SOURCE_KEY_MASK) ==
                 USB_HID_MENU_SOURCE_KEY_BASE &&
             usb_hid_menu_source_from_keyboard_usage(usage) == source) ? 1U : 0U;
+}
+
+usb_hid_menu_source_t usb_hid_menu_source_from_gamepad_button(uint8_t button)
+{
+    return button < USB_HID_MENU_SOURCE_GAMEPAD_COUNT ?
+        (usb_hid_menu_source_t)(USB_HID_MENU_SOURCE_GAMEPAD_BASE + button) :
+        USB_HID_MENU_SOURCE_NONE;
+}
+
+uint8_t usb_hid_menu_source_is_gamepad(usb_hid_menu_source_t source)
+{
+    return source >= USB_HID_MENU_SOURCE_GAMEPAD_BASE &&
+           source < USB_HID_MENU_SOURCE_GAMEPAD_BASE + USB_HID_MENU_SOURCE_GAMEPAD_COUNT;
 }
 
 static const char *hid_keyboard_usage_label(uint8_t usage)
@@ -351,6 +371,11 @@ const char *usb_hid_menu_source_text(usb_hid_menu_source_t source)
     const uint8_t usage = (uint8_t)(source & USB_HID_MENU_SOURCE_KEY_MASK);
     const char *label;
 
+    if (usb_hid_menu_source_is_gamepad(source)) {
+        (void)snprintf(text, sizeof(text), "Gamepad %u",
+            (unsigned)(source - USB_HID_MENU_SOURCE_GAMEPAD_BASE + 1U));
+        return text;
+    }
     if (usb_hid_menu_source_is_keyboard(source) == 0U) {
         return "None";
     }
@@ -448,7 +473,8 @@ static void keyboard_menu_push_source(usb_hid_menu_source_t source)
 static uint8_t screenshot_source_valid(usb_hid_menu_source_t source)
 {
     return (source == USB_HID_MENU_SOURCE_NONE ||
-            usb_hid_menu_source_is_keyboard(source) != 0U) ? 1U : 0U;
+            usb_hid_menu_source_is_keyboard(source) != 0U ||
+            usb_hid_menu_source_is_gamepad(source) != 0U) ? 1U : 0U;
 }
 
 static uint8_t screenshot_push_source(usb_hid_menu_source_t source)
@@ -511,7 +537,8 @@ static uint8_t mouse_menu_source_button_mask(usb_hid_menu_source_t source)
 static uint8_t menu_hold_source_valid(usb_hid_menu_source_t source)
 {
     return (mouse_menu_source_button_mask(source) != 0U ||
-            usb_hid_menu_source_is_keyboard(source) != 0U) ? 1U : 0U;
+            usb_hid_menu_source_is_keyboard(source) != 0U ||
+            usb_hid_menu_source_is_gamepad(source) != 0U) ? 1U : 0U;
 }
 
 static void hid_slot_reset_menu_state(usb_hid_slot_t *slot)
@@ -520,6 +547,8 @@ static void hid_slot_reset_menu_state(usb_hid_slot_t *slot)
         return;
     }
     slot->prev_buttons = 0U;
+    slot->prev_gamepad_buttons = slot->gamepad_buttons;
+    slot->gamepad_tab = 0U;
     memset(slot->prev_sources, 0, sizeof(slot->prev_sources));
     slot->prev_hat = HID_HAT_NEUTRAL;
     slot->prev_x_dir = 0;
@@ -667,6 +696,10 @@ static uint8_t menu_source_is_down(const usb_hid_slot_t *slot,
 
     if (slot == NULL || source == USB_HID_MENU_SOURCE_NONE) {
         return 0U;
+    }
+    if (usb_hid_menu_source_is_gamepad(source)) {
+        return (slot->gamepad_buttons &
+            (UINT32_C(1) << (source - USB_HID_MENU_SOURCE_GAMEPAD_BASE))) != 0U;
     }
     if (mouse_mask != 0U) {
         return ((slot->prev_buttons & mouse_mask) != 0U) ? 1U : 0U;
@@ -836,6 +869,56 @@ static void mouse_menu_process_buttons(usb_hid_slot_t *slot,
 
     slot->prev_buttons = buttons;
     menu_poll_open_close_hold(slot);
+}
+
+/* Button state is physical and survives menu changes. Legacy first-five
+ * mouse bindings keep their hold behavior until the user binds that specific
+ * controller button. Dedicated sources keep all 32 buttons independent. */
+static void gamepad_menu_process_buttons(usb_hid_slot_t *slot)
+{
+    const uint32_t buttons = slot->gamepad_buttons;
+    const uint32_t pressed = buttons & ~slot->prev_gamepad_buttons;
+    const uint32_t released = ~buttons & slot->prev_gamepad_buttons;
+    const uint32_t shoulders = buttons & UINT32_C(0x30);
+    const uint8_t tabs_enabled = g_menu_capture && !g_binding_capture &&
+        !g_joystick_preview && !(g_gamepad_binding_mask & UINT32_C(0x30));
+    const uint8_t tab = shoulders == 0x10U ? 1U : shoulders == 0x20U ? 2U : 0U;
+    uint8_t legacy = (uint8_t)(buttons & ~g_gamepad_binding_mask & 0x1FU);
+
+    if (tabs_enabled && tab != 0U && tab != slot->gamepad_tab) {
+        mouse_menu_push_bindable_action(tab == 1U ?
+            USB_HID_MENU_ACTION_PREV_TAB : USB_HID_MENU_ACTION_NEXT_TAB);
+    }
+    slot->gamepad_tab = tab;
+    slot->prev_gamepad_buttons = buttons;
+    if (tabs_enabled) legacy &= (uint8_t)~0x10U;
+    if (!g_binding_capture) mouse_menu_process_buttons(slot, legacy, 0);
+
+    for (uint8_t button = 0U; button < USB_HID_MENU_SOURCE_GAMEPAD_COUNT; ++button) {
+        const uint32_t mask = UINT32_C(1) << button;
+        const usb_hid_menu_source_t source = usb_hid_menu_source_from_gamepad_button(button);
+        if (released & mask) {
+            if (slot->ok_down && slot->ok_down_source == source)
+                mouse_menu_finish_ok_hold(slot);
+            menu_finish_open_close_hold(slot, source);
+        }
+        if (!(pressed & mask)) continue;
+        if (g_binding_capture) {
+            mouse_menu_push_event(USB_HID_MENU_ACTION_NONE, source);
+            continue;
+        }
+        if (tabs_enabled && (mask & 0x30U)) continue;
+        if (!(g_gamepad_binding_mask & mask) && button < 5U) continue;
+        if (source == g_menu_open_close_source) {
+            menu_start_open_close_hold(slot, source);
+            if (g_menu_capture && source == g_menu_ok_source)
+                mouse_menu_start_ok_hold(slot);
+        } else if (g_menu_capture && source == g_menu_ok_source) {
+            mouse_menu_start_ok_hold(slot);
+        } else if (!screenshot_push_source(source) && !vtw_push_source(source) && g_menu_capture) {
+            mouse_menu_push_event(USB_HID_MENU_ACTION_NONE, source);
+        }
+    }
 }
 
 static void mouse_publish_state(uint8_t connected, int32_t x, int32_t y, uint8_t buttons)
@@ -1184,6 +1267,7 @@ static void hid_process_keyboard_usages(usb_hid_slot_t *slot,
     }
 
     if (slot->ok_down != 0U &&
+        usb_hid_menu_source_is_keyboard(slot->ok_down_source) != 0U &&
         slot->ok_hold_fired == 0U &&
         hid_source_in_list(slot->ok_down_source, next_sources, next_count) == 0U) {
         if (slot->ok_down_action != USB_HID_MENU_ACTION_NONE) {
@@ -1194,6 +1278,7 @@ static void hid_process_keyboard_usages(usb_hid_slot_t *slot,
         }
     }
     if (slot->ok_down != 0U &&
+        usb_hid_menu_source_is_keyboard(slot->ok_down_source) != 0U &&
         hid_source_in_list(slot->ok_down_source, next_sources, next_count) == 0U) {
         slot->ok_down = 0U;
         slot->ok_hold_fired = 0U;
@@ -1202,6 +1287,7 @@ static void hid_process_keyboard_usages(usb_hid_slot_t *slot,
         slot->ok_down_action = USB_HID_MENU_ACTION_NONE;
     }
     if (slot->open_close_down != 0U &&
+        usb_hid_menu_source_is_keyboard(slot->open_close_down_source) != 0U &&
         hid_source_in_list(slot->open_close_down_source, next_sources, next_count) == 0U) {
         menu_finish_open_close_hold(slot, slot->open_close_down_source);
     }
@@ -1368,33 +1454,34 @@ static void hid_collect_keyboard_item(const struct usbh_hid_report_item *item,
 
 static void hid_collect_button_item(usb_hid_slot_t *slot,
                                     const struct usbh_hid_report_item *item,
-                                    const uint8_t *report,
-                                    uint32_t len,
-                                    uint8_t *buttons,
+                                    const uint8_t *report, uint32_t len,
+                                    uint32_t *buttons, uint32_t *button_mask,
                                     uint8_t *button_seen)
 {
-    if (slot == NULL ||
-        item->attribute.usage_page != HID_USAGE_PAGE_BUTTON ||
-        item->report_type != HID_REPORT_INPUT ||
-        (item->report_flags & HID_MAINITEM_VARIABLE) == 0U) {
-        return;
-    }
-
+    if (slot == NULL || item->attribute.usage_page != HID_USAGE_PAGE_BUTTON ||
+        item->report_type != HID_REPORT_INPUT) return;
+    const uint32_t limit = slot->onee_joystick ? 32U : 5U;
+    const uint8_t variable = (item->report_flags & HID_MAINITEM_VARIABLE) != 0U;
     for (uint32_t field = 0U; field < item->attribute.report_count; ++field) {
-        uint32_t raw = 0U;
-        uint16_t usage = (uint16_t)(item->attribute.usage_min + field);
-
-        if (usage < 1U || usage > (slot->onee_joystick ? 8U : 5U)) {
-            continue;
+        uint32_t raw;
+        if (!hid_extract_bits(item, report, len, field, &raw)) continue;
+        if (variable) {
+            const uint32_t usage = item->attribute.usage_min + field;
+            if (usage < 1U || usage > limit) continue;
+            const uint32_t mask = UINT32_C(1) << (usage - 1U);
+            *button_mask |= mask;
+            if (raw) *buttons |= mask;
+        } else {
+            /* Array reports describe the complete set within their range. */
+            for (uint32_t usage = 1U; usage <= limit; ++usage)
+                if (usage >= item->attribute.usage_min && usage <= item->attribute.usage_max)
+                    *button_mask |= UINT32_C(1) << (usage - 1U);
+            const int64_t usage = (int64_t)hid_item_signed_value(item, raw) -
+                item->attribute.logical_min + item->attribute.usage_min;
+            if (usage >= 1 && usage <= limit && usage <= item->attribute.usage_max)
+                *buttons |= UINT32_C(1) << (usage - 1U);
         }
-        if (hid_extract_bits(item, report, len, field, &raw) == 0U) {
-            continue;
-        }
-
         *button_seen = 1U;
-        if (raw != 0U) {
-            *buttons |= (uint8_t)(1U << (usage - 1U));
-        }
     }
 }
 
@@ -1527,10 +1614,13 @@ static void hid_process_gamepad_report(
         return;
     }
 
-    slot->raw_buttons_down =
-        ((report->buttons_valid != 0U && report->buttons != 0U) ||
-         extra_active != 0U) ? 1U : 0U;
-    slot->raw_hat_active = onee_usb_hat_active(hat);
+    if (report->buttons_valid) {
+        const uint32_t mask = report->buttons_mask ? report->buttons_mask : UINT32_MAX;
+        slot->gamepad_buttons = (slot->gamepad_buttons & ~mask) | (report->buttons & mask);
+    }
+    slot->raw_buttons_down = (slot->gamepad_buttons != 0U || extra_active != 0U);
+    if (hat != SLOT2_GAMEPAD_HAT_UNCHANGED)
+        slot->raw_hat_active = onee_usb_hat_active(hat);
     for (uint32_t axis = 0U; axis < ONEE_INPUT_AXIS_COUNT; ++axis) {
         const uint8_t axis_bit = (uint8_t)(1U << axis);
 
@@ -1572,13 +1662,14 @@ static void hid_process_gamepad_report(
                                USB_HID_MENU_ACTION_ITEM_UP,
                                USB_HID_MENU_ACTION_ITEM_DOWN);
         }
-        hid_menu_push_hat(slot, hat);
+        if (hat != SLOT2_GAMEPAD_HAT_UNCHANGED) hid_menu_push_hat(slot, hat);
     }
     if (report->buttons_valid != 0U) {
-        mouse_menu_process_buttons(slot, report->buttons, 0);
+        gamepad_menu_process_buttons(slot);
     }
     /* Gamepad buttons reach paddles, slot-2 gamepads and menus, never MouseCard. */
-    onee_input_service_joystick_report(slot->index, report);
+    if (report->axis_valid_mask || report->buttons_valid)
+        onee_input_service_joystick_report(slot->index, report);
     slot2_gamepad_service_report(slot->index, report, hat);
 }
 
@@ -1615,7 +1706,8 @@ static void hid_collect_desktop_item(usb_hid_slot_t *slot,
     const uint8_t relative = (uint8_t)((item->report_flags & HID_MAINITEM_RELATIVE) ? 1U : 0U);
 
     if (slot == NULL ||
-        item->attribute.usage_page != HID_USAGE_PAGE_GENERIC_DESKTOP_CONTROLS ||
+        (item->attribute.usage_page != HID_USAGE_PAGE_GENERIC_DESKTOP_CONTROLS &&
+         item->attribute.usage_page != 2U) ||
         item->report_type != HID_REPORT_INPUT ||
         (item->report_flags & HID_MAINITEM_VARIABLE) == 0U) {
         return;
@@ -1632,6 +1724,11 @@ static void hid_collect_desktop_item(usb_hid_slot_t *slot,
 
         value = hid_item_signed_value(item, raw);
         usage = hid_desktop_usage_for_field(item, field);
+        if (item->attribute.usage_page == 2U) {
+            if (usage == 0xC4U) usage = HID_DESKTOP_USAGE_Z;
+            else if (usage == 0xC5U) usage = HID_DESKTOP_USAGE_RZ;
+            else continue;
+        }
         if (relative == 0U && onee_joystick != NULL) {
             onee_input_axis_t axis;
             if (hid_onee_axis_from_usage(usage, &axis) != 0U) {
@@ -1712,6 +1809,21 @@ static void hid_collect_desktop_item(usb_hid_slot_t *slot,
                 if (g_menu_capture != 0U) {
                     hid_menu_push_hat(slot, hat);
                 }
+            }
+            break;
+        case HID_DESKTOP_USAGE_DPAD_UP:
+        case HID_DESKTOP_USAGE_DPAD_DOWN:
+        case HID_DESKTOP_USAGE_DPAD_RIGHT:
+        case HID_DESKTOP_USAGE_DPAD_LEFT:
+            if (relative == 0U && slot->onee_joystick) {
+                const uint8_t bit = (uint8_t)(1U << (usage - HID_DESKTOP_USAGE_DPAD_UP));
+                if (value) slot->gamepad_dpad |= bit;
+                else slot->gamepad_dpad &= (uint8_t)~bit;
+                const int x = !!(slot->gamepad_dpad & 4U) - !!(slot->gamepad_dpad & 8U);
+                const int y = !!(slot->gamepad_dpad & 2U) - !!(slot->gamepad_dpad & 1U);
+                *gamepad_hat = y < 0 ? (x < 0 ? 7U : x > 0 ? 1U : 0U) :
+                    y > 0 ? (x < 0 ? 5U : x > 0 ? 3U : 4U) :
+                    x < 0 ? 6U : x > 0 ? 2U : HID_HAT_NEUTRAL;
             }
             break;
         default:
@@ -1798,7 +1910,7 @@ static void hid_process_report_protocol_report(usb_hid_slot_t *slot,
     uint32_t key_count = 0U;
     uint8_t modifier = 0U;
     uint8_t keyboard_seen = 0U;
-    uint8_t buttons = 0U;
+    uint32_t buttons = 0U, button_mask = 0U;
     uint8_t button_seen = 0U;
     int8_t wheel = 0;
     uint8_t wheel_seen = 0U;
@@ -1835,6 +1947,7 @@ static void hid_process_report_protocol_report(usb_hid_slot_t *slot,
                                 report,
                                 len,
                                 &buttons,
+                                &button_mask,
                                 &button_seen);
         hid_collect_desktop_item(slot,
                                  item,
@@ -1853,7 +1966,7 @@ static void hid_process_report_protocol_report(usb_hid_slot_t *slot,
         hid_process_keyboard_usages(slot, modifier, keys, key_count);
     }
 
-    if (button_seen != 0U || wheel_seen != 0U) {
+    if (slot->onee_joystick == 0U && (button_seen != 0U || wheel_seen != 0U)) {
         if (button_seen != 0U) {
             slot->raw_buttons_down = (buttons != 0U) ? 1U : 0U;
         }
@@ -1862,22 +1975,19 @@ static void hid_process_report_protocol_report(usb_hid_slot_t *slot,
                                    wheel);
     }
 
-    if (mouse_delta_seen != 0U || button_seen != 0U) {
+    if (mouse_delta_seen != 0U || (button_seen != 0U && !slot->onee_joystick)) {
         mouse_apply_motion(slot, dx, dy, (button_seen != 0U) ? buttons : slot->prev_buttons);
     }
 
-    /* Keep joystick preview current while menus block guest delivery. The
-     * input service masks guest output without discarding the saved axes. */
-    if (slot->onee_joystick != 0U &&
-        (onee_joystick.axis_valid_mask != 0U || button_seen != 0U)) {
-        onee_joystick.buttons_valid = button_seen;
-        onee_joystick.buttons = buttons;
-        onee_input_service_joystick_report(slot->index, &onee_joystick);
-    }
+    /* One routing path preserves partial buttons and release guards for both
+     * generic HID and vendor pads, while MouseCard remains independent. */
     if (slot->onee_joystick != 0U &&
         (onee_joystick.axis_valid_mask != 0U || button_seen != 0U ||
          gamepad_hat != SLOT2_GAMEPAD_HAT_UNCHANGED)) {
-        slot2_gamepad_service_report(slot->index, &onee_joystick, gamepad_hat);
+        onee_joystick.buttons_valid = button_seen;
+        onee_joystick.buttons = buttons;
+        onee_joystick.buttons_mask = button_mask;
+        hid_process_gamepad_report(slot, &onee_joystick, gamepad_hat, 0U);
     }
 }
 
@@ -2078,9 +2188,17 @@ static void hid_parse_report_descriptor(usb_hid_slot_t *slot)
         return;
     }
 
-    rc = usbh_hid_parse_report_descriptor(g_report_descs[slot->index],
-                                          slot->hid->report_size,
-                                          &slot->report_info);
+    rc = appletini_usb_parse_gamepad_descriptor(g_report_descs[slot->index],
+        slot->hid->report_size, &slot->report_info);
+    slot->report_info_valid = rc >= 0;
+    if (rc >= 0 && (rc == 1 || hid_report_info_has_absolute_joystick(slot))) {
+        slot->onee_joystick = 1U;
+        rc = 0;
+    } else {
+        slot->report_info_valid = 0U;
+        rc = usbh_hid_parse_report_descriptor(g_report_descs[slot->index],
+            slot->hid->report_size, &slot->report_info);
+    }
     if (rc == 0) {
         slot->report_info_valid = 1U;
         if (hid_report_info_has_relative_mouse(slot) != 0U) {
@@ -2259,6 +2377,8 @@ int usb_hid_service_init(void)
     g_seq = 0U;
     g_sensitivity = MOUSE_SENSITIVITY_BASE;
     g_menu_capture = 0U;
+    g_binding_capture = 0U;
+    g_gamepad_binding_mask = 0U;
     g_joystick_preview = 0U;
     g_onee_fixed_mode = 0U;
     g_onee_input_blocked = 0U;
@@ -2425,6 +2545,29 @@ void usb_hid_service_set_joystick_preview(uint8_t active)
         g_hid_slots[i].prev_hat = HID_HAT_NEUTRAL;
         g_hid_slots[i].prev_x_dir = 0;
         g_hid_slots[i].prev_y_dir = 0;
+    }
+}
+
+void usb_hid_service_set_gamepad_binding_mask(uint32_t mask)
+{
+    g_gamepad_binding_mask = mask;
+}
+
+void usb_hid_service_set_binding_capture(uint8_t active)
+{
+    active = active != 0U;
+    if (g_binding_capture == active) return;
+    g_binding_capture = active;
+    for (uint32_t i = 0U; i < USB_HID_SLOT_COUNT; ++i) {
+        usb_hid_slot_t *slot = &g_hid_slots[i];
+
+        /* Pad learning must not reset another device's mouse edges or holds. */
+        if (slot->vendor_gamepad == 0U && slot->onee_joystick == 0U) {
+            continue;
+        }
+        slot->prev_gamepad_buttons = slot->gamepad_buttons;
+        slot->prev_buttons = (uint8_t)(slot->gamepad_buttons & 0x1FU);
+        slot->ok_down = slot->open_close_down = 0U;
     }
 }
 

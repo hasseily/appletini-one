@@ -18,6 +18,8 @@ def main():
     compiler = os.environ.get("CC") or shutil.which("gcc")
     if not compiler and Path("C:/msys64/ucrt64/bin/gcc.exe").exists():
         compiler = "C:/msys64/ucrt64/bin/gcc.exe"
+    if not compiler and Path("E:/AMDDesignTools/2025.2/tps/mingw/10.0.0/win64.o/nt/bin/gcc.exe").exists():
+        compiler = "E:/AMDDesignTools/2025.2/tps/mingw/10.0.0/win64.o/nt/bin/gcc.exe"
     if not compiler:
         raise RuntimeError("Set CC to a native GCC compiler")
     BUILD.mkdir(parents=True, exist_ok=True)
@@ -25,9 +27,6 @@ def main():
     handoff = (ROOT / "ps_sources/frontend/apple_fb_handoff.c").read_text()
     packing = handoff[handoff.index("#define HANDOFF_PUBLISHED_SLOT_ADDR"):
                       handoff.index("static void handoff_map_shared_ocm")]
-    compositor = (ROOT / "ps_sources/frontend/compositor.c").read_text()
-    effects = compositor[compositor.index("#define EFFECT_HISTORY_STRIDE"):
-                         compositor.index("/* ---------- Format badge")]
     wrapper = BUILD / "mono_test.c"
     wrapper.write_text('''#include <string.h>
 #include "video_mono.h"
@@ -40,7 +39,7 @@ def main():
 static int smartport_service_has_pending(void) { return 0; }
 static void smartport_service_poll(void) {}
 static uint8_t s_video_dot_bleed = APPLETINI_VIDEO_DOT_BLEED_LIGHT;
-''' + packing + effects + '''
+''' + packing + '''
 void shape(uint16_t *dst, const uint32_t *src, int width, uint8_t color,
            uint8_t bleed) {
     uint16_t tint[256];
@@ -60,29 +59,6 @@ uint32_t packed(uint32_t detail, uint32_t mode, uint8_t border) {
     return handoff_pack_published(2, mode, detail, border);
 }
 uint32_t unpacked(uint32_t word) { return handoff_published_format_detail(word); }
-/* bleed 0 models a color frame or Dot bleed Off: draw_apple_subwindow then
- * claims no mono span and the plain RGB path runs. */
-void compose(uint16_t *dst, const uint32_t *src, int w, int h, int sy,
-             int scan, int bleed, int color, int border, int blur, int glow,
-             int ghost, int reset) {
-    s_video_dot_bleed = (uint8_t)bleed;
-    s_mono_x = border ? 2 : 0;
-    s_mono_y = border ? 1 : 0;
-    s_mono_width = bleed ? w - 2*s_mono_x : 0;
-    s_mono_height = h - 2*s_mono_y;
-    s_mono_channel_shift = video_mono_channel_shift(color);
-    video_mono_build_tint(s_mono_tint, color);
-    if (reset) effect_clear_history();
-    if (bleed || blur || glow || ghost) {
-        blit_apple_effects_scaled(dst, 0, 0, src, w, h, w, 2, sy,
-                              scan, ghost, blur, glow);
-    } else if (sy == 4) {
-        blit_apple_2x4_serviced(dst, 0, 0, src, w, h, w, scan);
-    } else {
-        blit_apple_2x2_serviced(dst, 0, 0, src, w, h, w, scan);
-    }
-}
-uint32_t history(int x) { return s_effect_history[x]; }
 ''')
     libpath = BUILD / ("mono_test.dll" if os.name == "nt" else "mono_test.so")
     env = os.environ.copy()
@@ -102,10 +78,6 @@ uint32_t history(int x) { return s_effect_history[x]; }
     lib.packed.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint8]
     lib.packed.restype = lib.unpacked.restype = ctypes.c_uint32
     lib.unpacked.argtypes = [ctypes.c_uint32]
-    lib.compose.argtypes = [ctypes.POINTER(ctypes.c_uint16),
-                           ctypes.POINTER(ctypes.c_uint32)] + [ctypes.c_int] * 11
-    lib.history.argtypes = [ctypes.c_int]
-    lib.history.restype = ctypes.c_uint32
 
     def shape(pixels, color=1, bleed=LIGHT, levels=False):
         src = (ctypes.c_uint32 * len(pixels))(*pixels)
@@ -181,64 +153,20 @@ uint32_t history(int x) { return s_effect_history[x]; }
         assert shape([0xFF800000], 2, bleed) == shape([0xFF80FFFF], 2, bleed)
     print("PASS mono tints, black output and single-channel filtering at every level")
 
-    def compose(rows, sy=4, scan=0, bleed=LIGHT, color=1, border=0,
-                blur=0, glow=0, ghost=0, reset=1):
-        w, h = len(rows[0]), len(rows)
-        src = (ctypes.c_uint32 * (w*h))(*(v for row in rows for v in row))
-        count = 1920*h*sy
-        guarded = (ctypes.c_uint16 * (count + 2))()
-        guarded[0] = guarded[-1] = 0xA55A
-        dst = ctypes.cast(ctypes.byref(guarded, 2), ctypes.POINTER(ctypes.c_uint16))
-        lib.compose(dst, src, w, h, sy, scan, bleed, color, border,
-                    blur, glow, ghost, reset)
-        assert guarded[0] == guarded[-1] == 0xA55A
-        for y in range(h*sy):
-            assert not any(dst[y*1920+2*w:y*1920+1920]), "write crossed row width"
-        return [list(dst[y*1920:y*1920+2*w]) for y in range(h*sy)]
+    # Runtime Blur/Dot/glow/scanline coverage lives in test_video_smoothing.py;
+    # this checks mono shaping and frame-tag compatibility vectors.
 
-    for bleed in LEVELS:
-        for sy in (2, 4):
-            for scan in range(4):
-                rows = compose([pattern] * 3, sy=sy, scan=scan, bleed=bleed)
-                for y, row in enumerate(rows):
-                    phase = y % sy
-                    blank = (phase >= 4-scan if sy == 4 else phase == 1 and scan >= 2)
-                    assert row == ([0] * 12 if blank else shape(pattern, bleed=bleed))
-    red = 0xFFFF0000
-    bordered = [[red]*10] + [[red]*2 + pattern + [red]*2]*3 + [[red]*10]
-    for bleed in LEVELS:
-        rows = compose(bordered, border=1, bleed=bleed)
-        for y, row in enumerate(rows):
-            if y < 4 or y >= 16:
-                assert row == [rgb565(255, 0, 0)] * 20
-            else:
-                assert row[:4] == row[-4:] == [rgb565(255, 0, 0)] * 4
-                assert row[4:-4] == shape(pattern, bleed=bleed)
-    print("PASS production compositor: scanline phases, 2x/4x row reuse and colored borders")
-
-    for blur in range(4):
-        for glow in range(4):
-            for ghost in range(4):
-                compose([pattern] * 3, bleed=OFF, blur=blur, glow=glow, ghost=ghost)
-                color_history = [lib.history(x) for x in range(len(pattern))]
-                for bleed in (LIGHT, STRONG):
-                    compose([pattern] * 3, bleed=bleed, blur=blur, glow=glow, ghost=ghost)
-                    assert [lib.history(x) for x in range(len(pattern))] == color_history
-    for sy in (2, 4):
-        rows = compose(bordered, sy=sy, bleed=OFF)
-        for y, row in enumerate(rows):
-            assert row == plain(bordered[y//sy])
-    print("PASS Off/color bypass and all blur/glow/ghosting combinations; shaping never enters history")
-
-    for detail in range(0x2000):
+    for detail in range(0x8000):
         for mode in range(3):
             border = detail & 15
             word = lib.packed(detail, mode, border)
-            assert lib.unpacked(word) == detail
+            # The thirteen original format/mono bits survive; removed TV/mix
+            # flags and other reserved bits are ignored.
+            assert lib.unpacked(word) == (detail & 0x1FFF)
             assert (word & 255) == 2
             assert ((word >> 8) & 3) == mode
             assert ((word >> 10) & 15) == border
-    print("PASS all mono/format bits survive frame handoff without corrupting geometry or border")
+    print("PASS mono/format bits survive frame handoff; reserved bit discarded; geometry/border unchanged")
 
 
 if __name__ == "__main__":

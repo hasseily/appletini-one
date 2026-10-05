@@ -26,6 +26,7 @@
 #define COMPOSITOR_H
 
 #include <stdint.h>
+#include "video_pixel_mask.h"
 
 typedef enum {
     COMPOSITOR_UI_PHASE_BASE = 0,
@@ -73,6 +74,20 @@ void compositor_set_draw_context(const void *ui_state,
 
 /* Apple subwindow scanline strength: APPLETINI_SCANLINES_* values. */
 void compositor_set_scanlines(uint8_t mode);
+
+/* Completed output-slot crop, including an enabled border, excluding flood.
+ * Invalid for uncomposed slots or frames whose menu suppresses Apple video. */
+uint8_t compositor_frame_picture_rect(uint8_t slot, int *x, int *y, int *width, int *height);
+/* Completed slot stride and height. Invalid while output switching pauses
+ * composition, or until a slot is composed after a resolution change. */
+uint8_t compositor_frame_output_size(uint8_t slot, int *width, int *height);
+
+/* FPGA output-pixel grille. Per-slot metadata also drives screenshot masks.
+ * UI painters register opaque overlay bounds while composing that slot. */
+void compositor_set_video_pixel_mask(uint8_t mode);
+uint8_t compositor_video_pixel_mask(void);
+uint8_t compositor_frame_pixel_mask(uint8_t slot, video_pixel_mask_frame_t *frame);
+void compositor_pixel_mask_exclude(int x, int y, int width, int height);
 
 /* Apple subwindow phosphor ghosting strength. */
 void compositor_set_video_ghosting(uint8_t strength);

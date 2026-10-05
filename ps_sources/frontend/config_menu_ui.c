@@ -634,6 +634,28 @@ void cmui_value_row(uint16_t *fb,
                     const char *label,
                     const char *value)
 {
+    int label_w = (w >= 900) ? CMUI_VALUE_LABEL_W : ((w * 46) / 100);
+    const int label_text_w = cmui_text_width(label, CMUI_BODY_SCALE);
+    const int value_text_w = cmui_text_width(value, CMUI_BODY_SCALE);
+
+    /* A short label can leave room for a longer value at the normal size. */
+    if (value_text_w > w - label_w - 48 &&
+        label_text_w + value_text_w <= w - 66) {
+        label_w = w - value_text_w - 66;
+    }
+    cmui_value_row_aligned(fb, x, y, w, focused, dimmed, label, value, label_w);
+}
+
+void cmui_value_row_aligned(uint16_t *fb,
+                            int x,
+                            int y,
+                            int w,
+                            uint8_t focused,
+                            uint8_t dimmed,
+                            const char *label,
+                            const char *value,
+                            int label_w)
+{
     if (s_compact_active != 0U) {
         cmui_compact_entry(label, value, focused, dimmed);
         return;
@@ -648,13 +670,11 @@ void cmui_value_row(uint16_t *fb,
     const uint32_t value_fg = (dimmed != 0U) ? CMUI_COLOR_DIM :
                               ((focused != 0U) ? CMUI_COLOR_ACCENT :
                                CMUI_COLOR_TEXT);
-    const int label_w = (w >= 900) ? CMUI_VALUE_LABEL_W : ((w * 46) / 100);
-    const int value_w = w - label_w - 48;
-    const int value_x = x + 18 + label_w + 30;
-
     if (w <= 0) {
         return;
     }
+    const int value_w = w - label_w - 48;
+    const int value_x = x + 18 + label_w + 30;
 
     fb16_fill_rect(fb, x, y, w, CMUI_ROW_H, bg);
     if (focused != 0U) {

@@ -378,7 +378,7 @@ def test_usb_keyboard_uses_binding_sources_only() -> None:
             "config menu must persist and validate keyboard/keypad source IDs")
 
 
-def test_screenshot_usb_shortcuts_are_global_keyboard_bindings() -> None:
+def test_screenshot_usb_shortcuts_accept_keys_and_gamepads() -> None:
     header = read(CONFIG_MENU_H)
     source = read(CONFIG_MENU_C)
     hid_header = read(REPO_ROOT / "ps_sources" / "frontend" / "usb_hid_service.h")
@@ -393,9 +393,9 @@ def test_screenshot_usb_shortcuts_are_global_keyboard_bindings() -> None:
             "        CONFIG_MENU_USB_BIND_ACTION_SCREENSHOT_1080P" in source,
             "config menu must expose clamped screenshot binding sources")
     require("config_menu_usb_binding_action_is_screenshot(action)" in source and
-            '"SCREENSHOT REQUIRES USB KEY"' in source and
+            '"USE A KEY OR GAMEPAD BUTTON"' in source and
             "usb_hid_menu_source_is_keyboard(source)" in source,
-            "screenshot bindings must remain keyboard-only")
+            "screenshot bindings must accept keys and controller buttons")
     require("USB_HID_MENU_ACTION_SCREENSHOT_A2" in hid_header and
             "USB_HID_MENU_ACTION_SCREENSHOT_1080P" in hid_header and
             "void usb_hid_service_set_screenshot_sources(usb_hid_menu_source_t a2_source," in hid_header,
@@ -406,7 +406,7 @@ def test_screenshot_usb_shortcuts_are_global_keyboard_bindings() -> None:
             "mouse_menu_push_event(USB_HID_MENU_ACTION_SCREENSHOT_1080P, source);" in hid_service and
             "source == USB_HID_MENU_SOURCE_NONE ||\n"
             "            usb_hid_menu_source_is_keyboard(source) != 0U" in hid_service,
-            "HID keyboard edges must emit global screenshot actions from configured keyboard-only sources")
+            "HID keyboard edges must emit global screenshot actions from configured sources")
     require("usb_hid_service_set_screenshot_sources(\n"
             "        config_menu_usb_screenshot_a2_binding_source(menu),\n"
             "        config_menu_usb_screenshot_1080p_binding_source(menu));" in frontend_main and
@@ -427,7 +427,7 @@ TESTS = [
     test_onee_draws_fixed_controls_and_editable_bindings,
     test_open_close_is_long_press_of_open_close_source,
     test_usb_keyboard_uses_binding_sources_only,
-    test_screenshot_usb_shortcuts_are_global_keyboard_bindings,
+    test_screenshot_usb_shortcuts_accept_keys_and_gamepads,
 ]
 
 

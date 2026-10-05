@@ -21,6 +21,7 @@
 #include <stdint.h>
 
 #include "fb16.h"
+#include "../frontend/scanlines.h"
 
 #if defined(__ARM_NEON)
 #include <arm_neon.h>
@@ -47,6 +48,46 @@ int fb16_set_size(int width, int height)
  * 128-bit stores and the row memcpy stay aligned. */
 static uint16_t s_blit_2x_row[FB16_BLIT_2X_MAX_SRC_W * 2]
     __attribute__((aligned(32)));
+
+/* Video slots are normal, non-cacheable DDR. The library's aligned memcpy
+ * uses individual 8-byte VFP transfers here. Keep each bulk transfer at
+ * 32 bytes to reduce uncached transactions; never read past the row end.
+ * Explicit register groups prevent the compiler from splitting the burst. */
+static void fb16_copy_video_bytes(void *dst, const void *src, size_t bytes)
+{
+#if defined(__ARM_NEON)
+    uint8_t *out = (uint8_t *)dst;
+    const uint8_t *in = (const uint8_t *)src;
+    while (bytes >= 64U) {
+        __asm__ volatile (
+            "vld1.8 {d0-d3}, [%1]!\n\t"
+            "vld1.8 {d4-d7}, [%1]!\n\t"
+            "vst1.8 {d0-d3}, [%0]!\n\t"
+            "vst1.8 {d4-d7}, [%0]!"
+            : "+r" (out), "+r" (in)
+            :
+            : "d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7", "memory");
+        bytes -= 64U;
+    }
+    if (bytes >= 32U) {
+        __asm__ volatile (
+            "vld1.8 {d0-d3}, [%1]!\n\t"
+            "vst1.8 {d0-d3}, [%0]!"
+            : "+r" (out), "+r" (in)
+            :
+            : "d0", "d1", "d2", "d3", "memory");
+        bytes -= 32U;
+    }
+    while (bytes--) *out++ = *in++;
+#else
+    memcpy(dst, src, bytes);
+#endif
+}
+
+void fb16_copy_bgra32_row(uint32_t *dst, const uint32_t *src, int width)
+{
+    if (width > 0) fb16_copy_video_bytes(dst, src, (size_t)width * sizeof(*src));
+}
 
 /* Expand one BGRA32 source row into `dst` with 2x horizontal pixel
  * doubling and BGRA32 -> 565 narrowing:
@@ -81,6 +122,24 @@ void fb16_expand_2x_row_bgra32src(uint16_t *dst, const uint32_t *src,
         const uint16_t v = fb16_from_bgra32(src[x]);
         dst[2 * x]     = v;
         dst[2 * x + 1] = v;
+    }
+}
+
+/* Native 1x conversion uses the same eight-pixel burst path as 2x. */
+void fb16_pack_row_bgra32src(uint16_t *dst, const uint32_t *src, int width)
+{
+    int x = 0;
+#if defined(__ARM_NEON)
+    for (; x + 8 <= width; x += 8) {
+        const uint8x8x4_t p = vld4_u8((const uint8_t *)(src + x));
+        uint16x8_t px = vshll_n_u8(p.val[2], 8);
+        px = vsriq_n_u16(px, vshll_n_u8(p.val[1], 8), 5);
+        px = vsriq_n_u16(px, vshll_n_u8(p.val[0], 8), 11);
+        vst1q_u16(dst + x, px);
+    }
+#endif
+    for (; x < width; ++x) {
+        dst[x] = fb16_from_bgra32(src[x]);
     }
 }
 
@@ -545,25 +604,55 @@ void fb16_blit_bgra32src(uint16_t *fb, int x, int y, int w, int h,
     }
 }
 
-void fb16_copy_row(uint16_t *fb, int x, int y, const uint16_t *src,
-                   int width, uint8_t blank)
+void fb16_copy_row_attenuated(uint16_t *fb, int x, int y, const uint16_t *src, int width,
+                              uint8_t keep_quarters)
 {
     int skip = 0;
-    if (fb == NULL || src == NULL || width <= 0 ||
-        y < 0 || y >= FB16_HEIGHT || x >= FB16_WIDTH) return;
+    if (fb == NULL || src == NULL || width <= 0 || y < 0 || y >= FB16_HEIGHT || x >= FB16_WIDTH) {
+        return;
+    }
     if (x < 0) {
         skip = -x;
         width -= skip;
         x = 0;
     }
-    if (width > FB16_WIDTH - x) width = FB16_WIDTH - x;
-    if (width <= 0) return;
-    uint16_t *dst = fb + (size_t)y * FB16_WIDTH + x;
-    if (blank != 0U) {
-        memset(dst, 0, (size_t)width * FB16_BPP);
-    } else {
-        memcpy(dst, src + skip, (size_t)width * FB16_BPP);
+    if (width > FB16_WIDTH - x) {
+        width = FB16_WIDTH - x;
     }
+    if (width <= 0) {
+        return;
+    }
+    uint16_t *dst = fb + (size_t)y * FB16_WIDTH + x;
+    src += skip;
+    if (keep_quarters >= 4U) {
+        fb16_copy_video_bytes(dst, src, (size_t)width * FB16_BPP);
+        return;
+    }
+    if (!keep_quarters) {
+        memset(dst, 0, (size_t)width * FB16_BPP);
+        return;
+    }
+    int i = 0;
+#if defined(__ARM_NEON)
+    const uint16x8_t rb = vdupq_n_u16(0xf81fU), g = vdupq_n_u16(0x07e0U);
+    /* Shift to separate channel codes before multiplication: the red field
+     * would overflow a 16-bit lane if multiplied in its packed position. */
+    for (; i + 8 <= width; i += 8) {
+        uint16x8_t p = vld1q_u16(src + i);
+        uint16x8_t r = vshrq_n_u16(vmulq_n_u16(vshrq_n_u16(p, 11), keep_quarters), 2);
+        uint16x8_t v = vandq_u16(vshrq_n_u16(vmulq_n_u16(vandq_u16(p, g), keep_quarters), 2), g);
+        uint16x8_t b = vshrq_n_u16(vmulq_n_u16(vandq_u16(p, vdupq_n_u16(31)), keep_quarters), 2);
+        vst1q_u16(dst + i, vorrq_u16(vorrq_u16(vshlq_n_u16(r, 11), v), vandq_u16(b, rb)));
+    }
+#endif
+    for (; i < width; ++i) {
+        dst[i] = fb16_attenuate(src[i], keep_quarters);
+    }
+}
+
+void fb16_copy_row(uint16_t *fb, int x, int y, const uint16_t *src, int width, uint8_t blank)
+{
+    fb16_copy_row_attenuated(fb, x, y, src, width, blank ? 0U : 4U);
 }
 
 void fb16_blit_scaled_scanlines(uint16_t *fb, int dst_x, int dst_y,
@@ -590,17 +679,12 @@ void fb16_blit_scaled_scanlines(uint16_t *fb, int dst_x, int dst_y,
             if (scale_x == 2U) {
                 fb16_expand_2x_row_bgra32src(s_blit_2x_row, srow + sx, count);
             } else {
-                for (int x = 0; x < count; ++x) {
-                    s_blit_2x_row[x] = fb16_from_bgra32(srow[sx + x]);
-                }
+                fb16_pack_row_bgra32src(s_blit_2x_row, srow + sx, count);
             }
             for (unsigned phase = 0U; phase < scale_y; ++phase) {
-                const uint8_t blank = scale_y == 4U
-                    ? (uint8_t)(scanline_mode != 0U && phase >= 4U - scanline_mode)
-                    : (uint8_t)(scale_y == 2U && phase == 1U && scanline_mode >= 2U);
-                fb16_copy_row(fb, dst_x + sx * (int)scale_x,
-                               out_y + (int)phase, s_blit_2x_row,
-                               count * (int)scale_x, blank);
+                fb16_copy_row_attenuated(fb, dst_x + sx * (int)scale_x,
+                    out_y + (int)phase, s_blit_2x_row, count * (int)scale_x,
+                    appletini_scanlines_keep_quarters(phase,scale_y,scanline_mode));
             }
         }
     }

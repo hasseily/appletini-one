@@ -1,203 +1,135 @@
 #!/usr/bin/env python3
-"""Source checks for USB-triggered PNG screenshot capture."""
-
+"""Run the real screenshot service, then independently decode its PNG output."""
 from pathlib import Path
+import os
+import shutil
+import struct
+import subprocess
+import tempfile
+import zlib
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-FRONTEND = REPO_ROOT / "ps_sources" / "frontend"
-SCREENSHOT_C = FRONTEND / "screenshot_service.c"
-SCREENSHOT_H = FRONTEND / "screenshot_service.h"
-COMPOSITOR_C = FRONTEND / "compositor.c"
-COMPOSITOR_H = FRONTEND / "compositor.h"
-FRONTEND_MAIN_C = FRONTEND / "main.c"
-VITIS_SCRIPT = REPO_ROOT / "scripts" / "create_vitis_workspace.py"
-USB_STORAGE_SERVICE_C = FRONTEND / "usb_storage_service.c"
-USB_STORAGE_SERVICE_H = FRONTEND / "usb_storage_service.h"
+def check_integration() -> None:
+    """Retain the existing frontend/build checks around the executable test."""
+    frontend = ROOT / "ps_sources/frontend"
+    main = (frontend / "main.c").read_text(encoding="utf-8")
+    generator = (ROOT / "scripts/create_vitis_workspace.py").read_text(encoding="utf-8")
+    usb = (frontend / "usb_storage_service.c").read_text(encoding="utf-8")
+    service = (frontend / "screenshot_service.c").read_text(encoding="utf-8")
+    for removed in ("compositor_frame_picture_rect", "compositor_frame_output_size",
+                    "compositor_frame_pixel_mask", "video_pixel_mask_frame_rgb565"):
+        assert removed not in service, ("capture must retain F1.2.2 sources", removed)
+    assert "apple_fb_reader_claim()" in service
+    for token in (
+        '#include "screenshot_service.h"', "screenshot_service_init();",
+        "screenshot_service_set_sd_write_hook(ui_screenshot_sd_write_complete, NULL);",
+        "smartport_service_reset_media(SMARTPORT_SERVICE_ALL_DEVICES)",
+        "screenshot_service_update_fattime_from_rtc(&g_rtc);",
+        "screenshot_service_poll();", "screenshot_service_take_result(&screenshot_result)",
+        "screenshot_service_restore_rect_for_frame(fb, &rect)",
+        "ui_restore_static_rect(fb, rect.x, rect.y, rect.w, rect.h, show_bezel);",
+        "screenshot_service_draw_overlay(fb);", "screenshot_service_request(kind, &g_rtc, &result)",
+    ):
+        assert token in main, ("frontend screenshot wiring", token)
+    from test_joystick_config_menu import function
+    for name in ("control_set_usb0_sd_remote_mount", "control_set_ethernet_ftp_sd_remote"):
+        assert "screenshot_service_cancel();" in function(main, name), name
+    immediate = function(main, "ui_save_screenshot")
+    assert "screenshot_service_show_confirmation(result.message)" in immediate
+    event = function(main, "ui_handle_usb_menu_event")
+    guard = event[event.index('"STOP SD SHARING FIRST"'):]
+    assert "s->input_seq++;" in guard[:120]
+    assert "config_menu_usb0_sd_remote_active(menu)" in event
+    assert "config_menu_ethernet_ftp_sd_remote_active(menu)" in event
+    for token in ('"../../../ps_sources/frontend/screenshot_service.c"',
+                  "enable_fatfs_timestamp_hook", "appletini_fatfs_get_fattime", "get_fattime()"):
+        assert token in generator, ("Vitis screenshot wiring", token)
+    for token in ("uint8_t usb_storage_service_disconnect(void)",
+                  "XUsbPs_StorageFlushPending();", "UsbSoftDisconnect(&UsbInstance);",
+                  "UsbConnected = 0;"):
+        assert token in usb, ("USB storage disconnect", token)
+    print("PASS frontend, overlay, SD invalidation, USB draining, timestamp and build wiring")
 
 
-class TestFailure(AssertionError):
-    pass
-
-
-def require(condition: bool, message: str) -> None:
-    if not condition:
-        raise TestFailure(message)
-
-
-def read(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
-
-
-def test_service_contract_and_paths() -> None:
-    header = read(SCREENSHOT_H)
-    source = read(SCREENSHOT_C)
-    vitis = read(VITIS_SCRIPT)
-
-    require("SCREENSHOT_SERVICE_KIND_A2" in header and
-            "SCREENSHOT_SERVICE_KIND_1080P" in header and
-            "screenshot_service_result_t" in header and
-            "screenshot_service_rect_t" in header and
-            "typedef void (*screenshot_service_sd_write_hook_t)(void *ctx);" in header and
-            "void screenshot_service_set_sd_write_hook(screenshot_service_sd_write_hook_t hook," in header and
-            "void screenshot_service_set_scanlines(uint8_t mode);" in header and
-            "void screenshot_service_poll(void);" in header and
-            "uint8_t screenshot_service_restore_rect_for_frame(uint16_t *fb," in header and
-            "void screenshot_service_draw_overlay(uint16_t *fb);" in header,
-            "screenshot service must expose A2/1080p save and overlay restore APIs")
-    require('#define SCREENSHOT_DIR "0:/screenshots"' in source and
-            'SCREENSHOT_DIR "/%s-%s.png"' in source and
-            '"a2"' in source and
-            '"1080p"' in source,
-            "screenshots must be saved under 0:/screenshots with the expected suffixes")
-    require('"%04u%02u%02u-%02u%02u%02u"' in source and
-            '"uptime-%010llu"' in source,
-            "screenshot filenames must use RTC timestamps with an uptime fallback")
-    require("DWORD appletini_fatfs_get_fattime(void)" in source and
-            "g_fattime_override_active" in source and
-            "fat_timestamp_override_begin(rtc);" in source and
-            "fat_timestamp_override_end();" in source and
-            "save_a2_png(timestamp, rtc, result)" in source and
-            "save_1080p_png(timestamp, rtc, result)" in source,
-            "screenshot file creation and modified metadata must use the RTC timestamp")
-    require("enable_fatfs_timestamp_hook" in vitis and
-            "appletini_fatfs_get_fattime" in vitis and
-            "get_fattime()" in vitis,
-            "Vitis generator must patch generated FatFs get_fattime for screenshots")
-
-
-def test_png_writer_is_streaming_and_self_contained() -> None:
-    source = read(SCREENSHOT_C)
-
-    require("0x89U, 'P', 'N', 'G'" in source and
-            'png_chunk_begin(file, "IHDR"' in source and
-            'png_chunk_begin(file, "IDAT"' in source and
-            'png_chunk_begin(file, "IEND"' in source,
-            "screenshot service must write real PNG chunks")
-    require("uint8_t zlib_header[2] = {0x78U, 0x01U};" in source and
-            "store_le16(&block_header[1], len16);" in source and
-            "store_le16(&block_header[3], (uint16_t)~len16);" in source,
-            "PNG IDAT must use valid uncompressed zlib blocks")
-    require("crc32_update" in source and
-            "adler32_update" in source and
-            "fill_png_row(g_png_row, surface, y, width);" in source and
-            "static uint8_t g_png_row[1U + (COMP_OUT_MAX_WIDTH * 4U)];" in source,
-            "PNG writing must stream one converted BGRA-to-RGBA row at a time")
-
-
-def test_sources_pause_and_capture_expected_surfaces() -> None:
-    source = read(SCREENSHOT_C)
-    compositor_c = read(COMPOSITOR_C)
-    compositor_h = read(COMPOSITOR_H)
-
-    require("compositor_set_paused(1U);" in source and
-            "compositor_set_paused(0U);" in source and
-            "compositor_request_full_refresh();" in source,
-            "screen updates must pause during writes and refresh when the overlay is shown")
-    require("void compositor_set_paused(uint8_t paused);" in compositor_h and
-            "const uint16_t *compositor_latched_framebuffer(uint8_t *slot_out);" in compositor_h and
-            "if (s_paused != 0u) {\n        return 0;\n    }" in compositor_c,
-            "compositor must expose pause and latched-frame capture hooks")
-    service = read(SCREENSHOT_C)
-    require("(surface->base == NULL && surface->base565 == NULL)" in service,
-            "PNG encode must accept both BGRA32 (Apple ring) and RGB565 "
-            "(output ring) surfaces")
-    require("apple_fb_reader_claim()" in source and
-            "g_compositor_last_apple_slot" in source and
-            "g_compositor_last_apple_mode" in source and
-            "APPLE_FB_DISPLAY_MODE_SHR" in source and
-            "COMP_APPLE_SHR_WIDTH" in source and
-            "width = COMP_APPLE_SHR_WIDTH * 2U;" in source and
-            "height = COMP_APPLE_SHR_HEIGHT * 2U;" in source and
-            "COMP_APPLE_WIDTH" in source and
-            "width = COMP_APPLE_WIDTH * 2U;" in source and
-            "height = COMP_APPLE_HEIGHT * 4U;" in source and
-            "COMP_APPLE_LEFT_BORDER_PIXELS" in source,
-            "A2 screenshots must capture scaled SHR or legacy visible pixels, including the last composited frame")
-    require("surface.scale_x = 2U;" in source and
-            "surface.scale_y = 2U;" in source and
-            "surface.scale_y = 4U;" in source and
-            "surface.scanlines_mode = g_scanlines_mode;" in source and
-            "surface_scanline_blank(surface, y)" in source,
-            "A2 screenshots must stream the current scanline-rendered Apple area")
-    require("compositor_latched_framebuffer(&slot)" in source and
-            "COMP_OUT_WIDTH" in source and
-            "COMP_OUT_HEIGHT" in source,
-            "1080p screenshots must capture the latched compositor output")
-
-
-def test_overlay_frontend_and_build_wiring() -> None:
-    source = read(SCREENSHOT_C)
-    frontend_main = read(FRONTEND_MAIN_C)
-    vitis = read(VITIS_SCRIPT)
-    usb_storage_c = read(USB_STORAGE_SERVICE_C)
-    usb_storage_h = read(USB_STORAGE_SERVICE_H)
-
-    require('"SCREENSHOT SAVED"' in source and
-            "SCREENSHOT_OVERLAY_TICKS" in source and
-            "fb16_string_scaled(fb," in source,
-            "screenshot service must draw a temporary saved overlay")
-    require('#include "usb_storage_service.h"' in source and
-            "usb_storage_was_connected = usb_storage_service_disconnect();" in source and
-            "screenshot_service_note_local_sd_write_complete();\n        if (usb_storage_was_connected != 0U) {\n            usb_storage_service_connect();" in source and
-            "screenshot_service_note_local_sd_write_complete();\n    if (usb_storage_was_connected != 0U) {\n        usb_storage_service_connect();" in source and
-            "usb_storage_service_connect();" in source and
-            "fr = mount_sd();\n\n    if (fr != FR_OK)" in source,
-            "screenshot writes must quiesce USB0 storage, refresh local SD users, and mount SD before mkdir/open")
-    require("uint8_t usb_storage_service_disconnect(void);" in usb_storage_h and
-            "uint8_t usb_storage_service_disconnect(void)" in usb_storage_c and
-            "XUsbPs_StorageFlushPending();" in usb_storage_c and
-            "UsbSoftDisconnect(&UsbInstance);" in usb_storage_c and
-            "UsbConnected = 0;" in usb_storage_c,
-            "USB0 storage service must expose a draining soft-disconnect for local FAT writes")
-    require("uint8_t drawn_slots;" in source and
-            "uint8_t restore_slots;" in source and
-            "output_slot_mask_for_fb(fb)" in source and
-            "ov->restore_slots |= ov->drawn_slots;" in source and
-            "compositor_request_full_refresh();" in source,
-            "overlay timeout must request a refresh and restore only slots that were drawn")
-    require("(g_overlay_drawn_slots & slot_mask) != 0U" not in source,
-            "active screenshot overlay must redraw each composed frame until its timeout")
-    require("overlay_show(&g_overlays[OVERLAY_BOTTOM], result->message);" in source,
-            "failed screenshots must show the actual failure message on screen")
-    require('#include "screenshot_service.h"' in frontend_main and
-            "screenshot_service_init();" in frontend_main and
-            "screenshot_service_set_sd_write_hook(ui_screenshot_sd_write_complete, NULL);" in frontend_main and
-            "smartport_service_reset_media(SMARTPORT_SERVICE_ALL_DEVICES)" in frontend_main and
-            "screenshot_service_set_scanlines(g_scanlines_mode_shadow);" in frontend_main and
-            "screenshot_service_poll();" in frontend_main and
-            "screenshot_service_restore_rect_for_frame(fb, &rect)" in frontend_main and
-            "ui_restore_static_rect(fb, rect.x, rect.y, rect.w, rect.h, show_bezel);" in frontend_main and
-            "screenshot_service_draw_overlay(fb);" in frontend_main and
-            "screenshot_service_save(kind, &g_rtc, &result)" in frontend_main,
-            "frontend must initialize, poll, restore, draw, and dispatch screenshot saves")
-    require('"../../../ps_sources/frontend/screenshot_service.c"' in vitis,
-            "Vitis workspace generator must register the screenshot service source")
-
-
-TESTS = [
-    test_service_contract_and_paths,
-    test_png_writer_is_streaming_and_self_contained,
-    test_sources_pause_and_capture_expected_surfaces,
-    test_overlay_frontend_and_build_wiring,
-]
+def check_png(path: Path, width: int, height: int, raw_layout: int | None = None,
+              scanlines: int = 0) -> None:
+    image = path.read_bytes()
+    assert image[:8] == b"\x89PNG\r\n\x1a\n"
+    pos, idat, chunks = 8, bytearray(), []
+    while pos < len(image):
+        length = struct.unpack_from(">I", image, pos)[0]
+        kind = image[pos + 4:pos + 8]
+        data = image[pos + 8:pos + 8 + length]
+        crc = struct.unpack_from(">I", image, pos + 8 + length)[0]
+        assert crc == zlib.crc32(kind + data), (path.name, kind, "CRC")
+        chunks.append(kind)
+        if kind == b"IHDR":
+            assert struct.unpack(">IIBBBBB", data) == (width, height, 8, 6, 0, 0, 0)
+        elif kind == b"IDAT":
+            idat.extend(data)
+        else:
+            assert kind == b"IEND" and length == 0
+        pos += 12 + length
+    assert pos == len(image) and chunks == [b"IHDR", b"IDAT", b"IEND"]
+    raw = zlib.decompress(idat)  # Also checks deflate structure and Adler-32.
+    assert len(raw) == height * (1 + 4 * width)
+    for y in range(height):
+        start = y * (1 + 4 * width)
+        assert raw[start] == 0
+        expected = bytearray()
+        for x in range(width):
+            if raw_layout is None:
+                r, g, b = (x * 3 + y * 5) & 31, (x * 7 + y * 11) & 63, (x * 13 + y * 17) & 31
+                rgb = [(r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2)]
+            else:
+                # Independent F1.2.2 sampling rules (3101934 save_a2_png):
+                # active legacy starts32,16; border starts4,0; SHR starts0,0.
+                sy_scale = 2 if raw_layout == 2 else 4
+                sx = x // 2 + (32 if raw_layout == 0 else 4 if raw_layout == 1 else 0)
+                sy = y // sy_scale + (16 if raw_layout == 0 else 0)
+                blank = (scanlines >= 2 and y % 2 == 1) if sy_scale == 2 else (
+                    scanlines != 0 and y % 4 >= 4 - scanlines)
+                rgb = [0, 0, 0] if blank else [
+                    (sx * 3 + sy * 5 + 1) & 255,
+                    (sx * 7 + sy * 11 + 2) & 255,
+                    (sx * 13 + sy * 17 + 3) & 255]
+            expected.extend((*rgb, 255))
+        assert raw[start + 1:start + 1 + 4 * width] == expected, (path.name, y)
+    print(f"PASS decoded {path.name}: {width}x{height}, every RGBA pixel/CRC/Adler checked")
 
 
 def main() -> int:
-    failures = []
-    for test in TESTS:
-        try:
-            test()
-        except TestFailure as exc:
-            failures.append((test.__name__, str(exc)))
-            print(f"FAIL {test.__name__}: {exc}")
-        else:
-            print(f"PASS {test.__name__}")
-    if failures:
-        print(f"{len(TESTS) - len(failures)} of {len(TESTS)} screenshot tests passed; "
-              f"{len(failures)} failed")
-        return 1
-    print(f"{len(TESTS)} screenshot tests passed")
+    check_integration()
+    compiler = os.environ.get("CC") or shutil.which("clang") or shutil.which("gcc")
+    if compiler is None:
+        bundled = Path("E:/AMDDesignTools/2025.2/tps/mingw/10.0.0/win64.o/nt/bin/gcc.exe")
+        if bundled.is_file():
+            compiler = str(bundled)
+    if compiler is None:
+        raise RuntimeError("A native C compiler is required")
+    environment = dict(os.environ, PATH=str(Path(compiler).parent) + os.pathsep + os.environ.get("PATH", ""))
+    with tempfile.TemporaryDirectory(prefix="appletini-screenshot-") as directory:
+        output = Path(directory)
+        executable = output / "screenshot_host"
+        command = [compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-O1",
+                   "-I", str(ROOT / "scripts/fixtures/screenshot_bsp"),
+                   str(ROOT / "scripts/fixtures/screenshot_service_host.c"),
+                   str(ROOT / "ps_sources/lib/crc32.c"), "-o", str(executable)]
+        if os.environ.get("SCREENSHOT_SANITIZE", "0" if os.name == "nt" else "1") != "0":
+            command[1:1] = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
+        subprocess.run(command, check=True, env=environment)
+        subprocess.run([str(executable), str(output)], check=True, env=environment)
+        for layout, dimensions in enumerate(((1120, 768), (1232, 896), (1280, 800))):
+            for scanlines in range(4):
+                check_png(output / f"raw-{layout}-scan-{scanlines}.png", *dimensions,
+                          raw_layout=layout, scanlines=scanlines)
+        check_png(output / "raw-interlace-baseline.png", 1120, 768, raw_layout=0)
+        check_png(output / "raw-fallback.png", 1280, 800, raw_layout=2)
+        check_png(output / "full.png", 1920, 1080)
+        check_png(output / "wide.png", 1360, 768)
+        check_png(output / "frozen-stride.png", 11, 7)
     return 0
 
 

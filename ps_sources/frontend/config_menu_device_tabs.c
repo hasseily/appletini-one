@@ -93,6 +93,29 @@ void config_menu_draw_smartport(uint16_t *fb,
         "SuperSprite VDP + PSG (Slot 7, disables SmartPort)");
 }
 
+static void config_menu_gamepad_buttons_text(char *text, size_t size,
+                                              uint32_t buttons)
+{
+    size_t used = 0U;
+    if (size == 0U) {
+        return;
+    }
+    text[0] = '\0';
+    for (unsigned button = 0U; button < 32U; ++button) {
+        if ((buttons & (1UL << button)) != 0U) {
+            int count = snprintf(text + used, size - used, "%s%u",
+                                  used != 0U ? " " : "", button + 1U);
+            if (count < 0 || (size_t)count >= size - used) {
+                return;
+            }
+            used += (size_t)count;
+        }
+    }
+    if (used == 0U) {
+        (void)snprintf(text, size, "None");
+    }
+}
+
 static void config_menu_draw_joystick(uint16_t *fb,
                                       const config_menu_t *menu,
                                       int x, int y, int w)
@@ -212,10 +235,8 @@ static void config_menu_draw_joystick(uint16_t *fb,
         (void)snprintf(line, sizeof(line), "X: %s  Y: %s  Z: %s  RX: %s  RY: %s  RZ: %s",
                        raw[0], raw[1], raw[2], raw[3], raw[4], raw[5]);
         cmui_compact_entry("Raw axes", line, 0U, 0U);
-        (void)snprintf(line, sizeof(line), "%s %s %s",
-                       device_connected && (device->buttons & 1U) ? "1" : "-",
-                       device_connected && (device->buttons & 2U) ? "2" : "-",
-                       device_connected && (device->buttons & 4U) ? "3" : "-");
+        config_menu_gamepad_buttons_text(line, sizeof(line),
+                                         device_connected ? device->buttons : 0U);
         cmui_compact_entry("Input buttons", line, 0U, 0U);
         return;
     }
@@ -255,10 +276,9 @@ static void config_menu_draw_joystick(uint16_t *fb,
                   y + 7 * row_h + (int)row * 28, line,
                   CMUI_COLOR_MUTED, CMUI_COLOR_BG, CMUI_SMALL_SCALE);
     }
-    (void)snprintf(line, sizeof(line), "Buttons: %s %s %s",
-                   device_connected && (device->buttons & 1U) ? "1" : "-",
-                   device_connected && (device->buttons & 2U) ? "2" : "-",
-                   device_connected && (device->buttons & 4U) ? "3" : "-");
+    (void)snprintf(line, sizeof(line), "Buttons: ");
+    config_menu_gamepad_buttons_text(line + 9, sizeof(line) - 9,
+                                     device_connected ? device->buttons : 0U);
     cmui_caption(fb, preview_x, y + 9 * row_h, preview_w, line);
 }
 

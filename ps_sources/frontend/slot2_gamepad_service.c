@@ -9,7 +9,7 @@
 
 typedef struct {
     uint8_t connected;
-    uint8_t buttons;
+    uint32_t buttons;
     uint8_t hat;
     int8_t x;
     int8_t y;
@@ -77,7 +77,7 @@ static void slot2_resolve_auto(void)
 
 static uint16_t slot2_snes_buttons(const slot2_input_t *input)
 {
-    const uint8_t buttons = input->buttons;
+    const uint32_t buttons = input->buttons;
     const uint8_t hat = input->hat;
     /* Preserve face-button positions across Xbox/PS4 and SNES labels:
      * bottom/left/right/top become SNES B/Y/A/X. */
@@ -196,7 +196,8 @@ void slot2_gamepad_service_report(uint8_t slot,
     }
     input->connected = 1U;
     if (report->buttons_valid) {
-        input->buttons = report->buttons;
+        const uint32_t mask = report->buttons_mask ? report->buttons_mask : UINT32_MAX;
+        input->buttons = (input->buttons & ~mask) | (report->buttons & mask);
     }
     if (hat != SLOT2_GAMEPAD_HAT_UNCHANGED) {
         input->hat = hat <= 7U ? hat : SLOT2_GAMEPAD_HAT_NEUTRAL;

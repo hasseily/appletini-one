@@ -165,6 +165,24 @@ def main() -> int:
                   snapshot.devices[7].axis[ONEE_INPUT_AXIS_RZ] == 250U,
                   "last slot or its sixth axis is absent from preview");
 
+            /* Reports under another HID ID update only their own buttons.
+             * Preview retains all32; both physical Apple bridges keep PB0..2. */
+            onee_input_joystick_report_t high = {0};
+            high.buttons_valid = 1U;
+            high.buttons_mask = UINT32_C(0xFFFF0000);
+            high.buttons = UINT32_C(0x80000000);
+            onee_input_service_joystick_report(1U, &high);
+            onee_input_service_get_joystick_snapshot(&snapshot);
+            CHECK(snapshot.buttons == UINT32_C(0x80000001) &&
+                  snapshot.devices[1].buttons == UINT32_C(0x80000001),
+                  "preview lost high buttons or partial low state");
+            CHECK(expect_bridges(0xFAC04014UL, 1U, 1U) == 0,
+                  "high controller buttons leaked into Apple PB bits");
+            high.buttons = 0U;
+            onee_input_service_joystick_report(1U, &high);
+            onee_input_service_get_joystick_snapshot(&snapshot);
+            CHECK(snapshot.buttons == 1U, "high-button release cleared other report ID");
+
             config.paddle[0].invert = 1U;
             config.paddle[1].sensitivity_percent = 50U;
             config.paddle[2].deadzone_percent = 25U;

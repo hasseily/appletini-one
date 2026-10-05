@@ -77,6 +77,33 @@ static uint8_t  s_writer_idx        = 0xFFu;
 static uint8_t  s_published_idx     = 0xFFu;
 static uint32_t s_composited_apple_seq = 0u;
 
+/* Geometry belongs to completed output slots, not the current settings. */
+static struct {
+    int x, y, width, height;
+    int output_width, output_height;
+    uint8_t valid;
+} s_picture_rect[COMP_OUT_SLOT_COUNT];
+
+static video_pixel_mask_frame_t s_pixel_mask[COMP_OUT_SLOT_COUNT];
+static video_pixel_mask_frame_t s_pixel_mask_uploaded[COMP_OUT_SLOT_COUNT];
+static uint8_t s_pixel_mask_upload_valid[COMP_OUT_SLOT_COUNT];
+static uint8_t s_pixel_mask_supported;
+static uint8_t s_pixel_mask_collecting;
+static uint8_t s_video_pixel_mask;
+
+uint8_t compositor_frame_picture_rect(uint8_t slot, int *x, int *y, int *width, int *height)
+{
+    if (slot >= COMP_OUT_SLOT_COUNT || !s_picture_rect[slot].valid || !x || !y || !width ||
+        !height) {
+        return 0;
+    }
+    *x = s_picture_rect[slot].x;
+    *y = s_picture_rect[slot].y;
+    *width = s_picture_rect[slot].width;
+    *height = s_picture_rect[slot].height;
+    return 1;
+}
+
 /* Counter value we expect FB_STATUS_REG to reach (or exceed) before our
  * last publish is considered latched by the PL. Initialized below in
  * compositor_init(). */
@@ -88,9 +115,9 @@ static const void           *s_ui_state  = NULL;
 static const void           *s_ui_config = NULL;
 static uint8_t               s_scanlines_mode = APPLETINI_SCANLINES_OFF;
 static uint8_t               s_video_ghosting_strength = APPLETINI_VIDEO_GHOSTING_OFF;
-static uint8_t               s_video_blur_strength = APPLETINI_VIDEO_BLUR_OFF;
+static uint8_t s_video_blur_strength = APPLETINI_VIDEO_BLUR_OFF;
+static uint8_t s_video_dot_bleed = APPLETINI_VIDEO_DOT_BLEED_LIGHT;
 static uint8_t               s_video_glow_strength = APPLETINI_VIDEO_GLOW_OFF;
-static uint8_t               s_video_dot_bleed = APPLETINI_VIDEO_DOT_BLEED_LIGHT;
 static uint8_t               s_format_badge_enabled = 0u;
 static uint8_t               s_border_enabled = 0u;
 static uint8_t               s_border_flood = 0u;
@@ -235,7 +262,7 @@ static inline uint8_t effect_decay_numer(uint32_t p, uint8_t strength)
     if ((p & 0x00808080U) != 0U) {
         return k_effect_numer_bright[strength];
     }
-    if ((p & 0x00202020U) != 0U) {
+    if ((p & 0x00E0E0E0U) != 0U) {
         return k_effect_numer_knee[strength];
     }
     return k_effect_numer_tail[strength];
@@ -298,7 +325,7 @@ static void effect_blend_history_row(uint32_t *row,
         const uint8x8_t rgb_or =
             vorr_u8(vorr_u8(old.val[0], old.val[1]), old.val[2]);
         const uint8x8_t active = vtst_u8(rgb_or, vdup_n_u8(0xFCU));
-        const uint8x8_t knee = vtst_u8(rgb_or, vdup_n_u8(0x20U));
+        const uint8x8_t knee = vtst_u8(rgb_or, vdup_n_u8(0xE0U));
         const uint8x8_t bright = vtst_u8(rgb_or, vdup_n_u8(0x80U));
         uint8x8_t numer = vbsl_u8(active, tail_numer, zero);
         uint8x8x4_t out;
@@ -547,6 +574,61 @@ static void effect_blur_h_row(const uint32_t *src,
     }
 }
 
+static uint32_t s_effect_glow_ring[3U][COMP_APPLE_SHR_WIDTH]
+    __attribute__((aligned(32)));
+static uint32_t s_effect_blurred_row[COMP_APPLE_SHR_WIDTH]
+    __attribute__((aligned(32)));
+
+static inline uint32_t effect_glow_tent(uint32_t a, uint32_t b, uint32_t c)
+{
+    return ((((a & 0x00FF00FFU) + 2U * (b & 0x00FF00FFU) +
+               (c & 0x00FF00FFU)) >> 2) & 0x00FF00FFU) |
+           ((((a & 0x0000FF00U) + 2U * (b & 0x0000FF00U) +
+               (c & 0x0000FF00U)) >> 2) & 0x0000FF00U);
+}
+
+#if defined(__ARM_NEON)
+static inline uint32x4_t effect_glow_tent4(uint32x4_t a, uint32x4_t b, uint32x4_t c)
+{
+    return vreinterpretq_u32_u8(vhaddq_u8(vreinterpretq_u8_u32(b),
+        vhaddq_u8(vreinterpretq_u8_u32(a), vreinterpretq_u8_u32(c))));
+}
+#endif
+
+static void effect_glow_h_row(const uint32_t *src, uint32_t *dst, int width)
+{
+    int x = 0;
+#if defined(__ARM_NEON)
+    for (; x + 4 <= width; x += 4) {
+        const uint32x4_t c = vld1q_u32(src + x);
+        const uint32x4_t a = x ? vld1q_u32(src + x - 1) :
+            vextq_u32(vdupq_n_u32(src[0]), c, 3);
+        const uint32x4_t b = x + 4 < width ? vld1q_u32(src + x + 1) :
+            vextq_u32(c, vdupq_n_u32(src[width - 1]), 1);
+        vst1q_u32(dst + x, effect_glow_tent4(a, c, b));
+    }
+#endif
+    for (; x < width; ++x) {
+        dst[x] = effect_glow_tent(src[x ? x - 1 : 0], src[x],
+                                 src[x + 1 < width ? x + 1 : x]);
+    }
+}
+
+static void effect_glow_v_row(const uint32_t *up, const uint32_t *mid,
+                               const uint32_t *dn, uint32_t *dst, int width)
+{
+    int x = 0;
+#if defined(__ARM_NEON)
+    for (; x + 4 <= width; x += 4) {
+        vst1q_u32(dst + x, effect_glow_tent4(vld1q_u32(up + x),
+            vld1q_u32(mid + x), vld1q_u32(dn + x)));
+    }
+#endif
+    for (; x < width; ++x) {
+        dst[x] = effect_glow_tent(up[x], mid[x], dn[x]);
+    }
+}
+
 /* Assemble one output row from the rings, apply the optional glow
  * halo, and emit the 565 pack + horizontal doubling into
  * s_effect_2x_row -- one pass, same contract as the ghosting emit. */
@@ -561,11 +643,8 @@ static void effect_emit_2x_row(const uint32_t *sharp,
 {
     const uint32_t *base;
 
-    /* The vertical tent serves double duty: MEDIUM/STRONG blur's
-     * vertical stage and (always) the glow halo's shape. */
-    if (glow != APPLETINI_VIDEO_GLOW_OFF ||
-        blur >= APPLETINI_VIDEO_BLUR_MEDIUM) {
-        effect_blur_v_row(up, mid, dn, s_effect_halo_row, w, 1);
+    if (blur >= APPLETINI_VIDEO_BLUR_MEDIUM) {
+        effect_blur_v_row(up, mid, dn, s_effect_blurred_row, w, 1);
     }
 
     if (blur == APPLETINI_VIDEO_BLUR_OFF) {
@@ -573,7 +652,7 @@ static void effect_emit_2x_row(const uint32_t *sharp,
     } else if (blur == APPLETINI_VIDEO_BLUR_LIGHT) {
         base = mid;
     } else {
-        base = s_effect_halo_row;
+        base = s_effect_blurred_row;
     }
 
     if (glow != APPLETINI_VIDEO_GLOW_OFF) {
@@ -765,8 +844,8 @@ static void effect_store_row(uint16_t *fb, int x, int y, int width,
         }
     }
     for (uint8_t phase = 0U; phase < scale_y; ++phase) {
-        fb16_copy_row(fb, x, y + phase, s_effect_2x_row, width * scale_x,
-                       effect_scanline_blank(phase, scale_y, scanline_mode));
+        fb16_copy_row_attenuated(fb, x, y + phase, s_effect_2x_row, width * scale_x,
+                       appletini_scanlines_keep_quarters(phase, scale_y, scanline_mode));
     }
 }
 
@@ -833,7 +912,7 @@ static void blit_apple_effects_scaled(uint16_t *fb,
             if (sy < src_h) {
                 const uint32_t *srow = src + sy * src_stride;
 
-                memcpy(s_effect_row, srow, (size_t)src_w * sizeof(uint32_t));
+                fb16_copy_bgra32_row(s_effect_row, srow, src_w);
                 if (strength != APPLETINI_VIDEO_GHOSTING_OFF) {
                     const uint32_t hist_base =
                         (uint32_t)sy * EFFECT_HISTORY_STRIDE;
@@ -848,6 +927,19 @@ static void blit_apple_effects_scaled(uint16_t *fb,
                 }
                 effect_blur_h_row(s_effect_row, s_effect_blur_ring[sy % 3],
                                   src_w, ring_h_kernel);
+                if (glow != APPLETINI_VIDEO_GLOW_OFF) {
+                    const int inset = src_w == COMP_APPLE_VISIBLE_WIDTH &&
+                        src_h == COMP_APPLE_VISIBLE_HEIGHT ? COMP_APPLE_BORDER_H_PIXELS : 0;
+                    if (inset) {
+                        effect_glow_h_row(s_effect_row, s_effect_glow_ring[sy % 3], inset);
+                        effect_glow_h_row(s_effect_row + inset,
+                            s_effect_glow_ring[sy % 3] + inset, src_w - 2 * inset);
+                        effect_glow_h_row(s_effect_row + src_w - inset,
+                            s_effect_glow_ring[sy % 3] + src_w - inset, inset);
+                    } else {
+                        effect_glow_h_row(s_effect_row, s_effect_glow_ring[sy % 3], src_w);
+                    }
+                }
             }
             if (sy < 1) {
                 continue;
@@ -860,6 +952,19 @@ static void blit_apple_effects_scaled(uint16_t *fb,
                 const uint32_t *dn =
                     s_effect_blur_ring[((sy < src_h) ? sy : ey) % 3];
 
+                if (glow != APPLETINI_VIDEO_GLOW_OFF) {
+                    int first = 0, last = src_h - 1;
+                    if (src_w == COMP_APPLE_VISIBLE_WIDTH && src_h == COMP_APPLE_VISIBLE_HEIGHT) {
+                        const int inset = COMP_APPLE_BORDER_V_LINES;
+                        if (ey < inset) last = inset - 1;
+                        else if (ey < src_h - inset) { first = inset; last = src_h - inset - 1; }
+                        else first = src_h - inset;
+                    }
+                    effect_glow_v_row(s_effect_glow_ring[(ey > first ? ey - 1 : first) % 3],
+                        s_effect_glow_ring[ey % 3],
+                        s_effect_glow_ring[(ey < last ? ey + 1 : last) % 3],
+                        s_effect_halo_row, src_w);
+                }
                 effect_emit_2x_row(s_effect_sharp_ring[ey % 3], up, mid, dn,
                                    src_w, blur, glow, ey);
                 effect_store_row(fb, dst_x, dst_y + ey * scale_y, src_w,
@@ -879,7 +984,7 @@ static void blit_apple_effects_scaled(uint16_t *fb,
         /* Pull the uncached row into cached scratch with burst reads before
          * blending. Reading NORM_NONCACHE source pixels in the inner loop
          * would require one DDR round trip per pixel. */
-        memcpy(s_effect_row, srow, (size_t)src_w * sizeof(uint32_t));
+        fb16_copy_bgra32_row(s_effect_row, srow, src_w);
 
         if (strength != APPLETINI_VIDEO_GHOSTING_OFF) {
             effect_blend_history_row(s_effect_row,
@@ -994,6 +1099,7 @@ static void draw_format_badge(uint16_t *fb, int x, int y, int w_px)
     const int bx = x + w_px - badge_w - 10;
     const int by = y + 10;
 
+    compositor_pixel_mask_exclude(bx, by, badge_w, badge_h);
     fb16_fill_rect(fb, bx, by, badge_w, badge_h, FB16_RGB(0x10, 0x14, 0x1C));
     fb16_rect(fb, bx, by, badge_w, badge_h, FB16_RGB(0x34, 0x48, 0x5C));
     fb16_string_scaled_xy(fb, bx + 8, by + 5, label,
@@ -1066,9 +1172,8 @@ static void fill_border_rect(uint16_t *fb,
     for (int row = 0; row < h; ++row) {
         const uint8_t phase = (uint8_t)((uint32_t)
             (y + row - phase_origin_y) & (uint32_t)(vertical_scale - 1U));
-        const uint16_t row_color =
-            (effect_scanline_blank(phase, vertical_scale, scanline_mode) != 0U) ?
-            0U : color;
+        const uint16_t row_color = fb16_attenuate(color,
+            appletini_scanlines_keep_quarters(phase, vertical_scale, scanline_mode));
 
         fb16_fill_rect(fb, x, y + row, w, 1, row_color);
     }
@@ -1426,6 +1531,76 @@ static void draw_supersprite_overlay(uint16_t *fb)
 
 /* ---------- Public API ---------- */
 
+void compositor_set_video_pixel_mask(uint8_t mode)
+{
+    s_video_pixel_mask = appletini_video_pixel_mask_clamp(mode);
+    s_force_full_refresh = 1U;
+}
+
+uint8_t compositor_video_pixel_mask(void)
+{
+    return s_video_pixel_mask;
+}
+
+uint8_t compositor_frame_pixel_mask(uint8_t slot, video_pixel_mask_frame_t *frame)
+{
+    if (slot >= COMP_OUT_SLOT_COUNT || frame == NULL) return 0U;
+    *frame = s_pixel_mask[slot];
+    return 1U;
+}
+
+uint8_t compositor_frame_output_size(uint8_t slot, int *width, int *height)
+{
+    if (s_paused || slot >= COMP_OUT_SLOT_COUNT || width == NULL || height == NULL ||
+        s_picture_rect[slot].output_width <= 0 || s_picture_rect[slot].output_height <= 0)
+        return 0U;
+    *width = s_picture_rect[slot].output_width;
+    *height = s_picture_rect[slot].output_height;
+    return 1U;
+}
+
+void compositor_pixel_mask_exclude(int x, int y, int width, int height)
+{
+    if (!s_pixel_mask_collecting || s_writer_idx >= COMP_OUT_SLOT_COUNT) return;
+    video_pixel_mask_frame_t *frame = &s_pixel_mask[s_writer_idx];
+    if (!frame->mode || width <= 0 || height <= 0) return;
+    video_pixel_mask_rect_t clipped;
+    if (!video_pixel_mask_clip_rect(&clipped, x, y, width, height,
+                                    COMP_OUT_WIDTH, COMP_OUT_HEIGHT)) return;
+    if (frame->exclusion_count == VIDEO_PIXEL_MASK_EXCLUSIONS) {
+        /* A future UI widget must never silently receive a picture effect. */
+        frame->mode = APPLETINI_VIDEO_PIXEL_MASK_OFF;
+        return;
+    }
+    frame->excluded[frame->exclusion_count++] = clipped;
+}
+
+static uint32_t pixel_mask_bounds(uint16_t low, uint16_t high)
+{
+    return (uint32_t)low | ((uint32_t)high << 16);
+}
+
+static void pixel_mask_stage(uint8_t slot)
+{
+    const video_pixel_mask_frame_t *frame = &s_pixel_mask[slot];
+    if (!s_pixel_mask_supported || (s_pixel_mask_upload_valid[slot] &&
+        memcmp(frame, &s_pixel_mask_uploaded[slot], sizeof(*frame)) == 0)) return;
+
+    /* Only the free output slot is changed. Its bank stays immutable while
+     * pending or scanning; the PL matches this tag to its latched FB base. */
+    REG_WRITE(FB_MASK_BANK_REG(slot, 1), frame->mode | ((uint32_t)frame->exclusion_count << 4));
+    REG_WRITE(FB_MASK_BANK_REG(slot, 2), pixel_mask_bounds(frame->viewport.x0, frame->viewport.x1));
+    REG_WRITE(FB_MASK_BANK_REG(slot, 3), pixel_mask_bounds(frame->viewport.y0, frame->viewport.y1));
+    for (unsigned i = 0; i < VIDEO_PIXEL_MASK_EXCLUSIONS; ++i) {
+        const video_pixel_mask_rect_t *r = &frame->excluded[i];
+        REG_WRITE(FB_MASK_BANK_REG(slot, 4 + 2 * i), pixel_mask_bounds(r->x0, r->x1));
+        REG_WRITE(FB_MASK_BANK_REG(slot, 5 + 2 * i), pixel_mask_bounds(r->y0, r->y1));
+    }
+    REG_WRITE(FB_MASK_BANK_REG(slot, 0), comp_out_slot_addr[slot]);
+    s_pixel_mask_uploaded[slot] = *frame;
+    s_pixel_mask_upload_valid[slot] = 1U;
+}
+
 void compositor_set_output_mode(uint8_t mode)
 {
     mode = display_mode_clamp(mode);
@@ -1435,6 +1610,9 @@ void compositor_set_output_mode(uint8_t mode)
     s_output_mode = mode;
     effect_clear_history();
     s_writer_idx = 0xFFU;
+    memset(s_picture_rect, 0, sizeof(s_picture_rect));
+    memset(s_pixel_mask, 0, sizeof(s_pixel_mask));
+    memset(s_pixel_mask_upload_valid, 0, sizeof(s_pixel_mask_upload_valid));
     s_published_idx = comp_out_addr_to_slot(REG_READ(FB_BASE_ADDR_REG));
     s_published_counter = REG_READ(FB_STATUS_REG);
     s_composited_apple_seq = 0U;
@@ -1465,6 +1643,11 @@ uint8_t compositor_size_multiplier(void)
 void compositor_init(compositor_ui_draw_fn draw_fn)
 {
     linear_text_overlay_init();
+    s_pixel_mask_supported = REG_READ(FB_MASK_CAPABILITY_REG) == FB_MASK_CAPABILITY;
+    s_pixel_mask_collecting = 0U;
+    memset(s_pixel_mask, 0, sizeof(s_pixel_mask));
+    memset(s_pixel_mask_upload_valid, 0, sizeof(s_pixel_mask_upload_valid));
+    for (uint8_t slot = 0; slot < COMP_OUT_SLOT_COUNT; ++slot) pixel_mask_stage(slot);
     /* USB/SD DMA and full-menu repaints share DDR bandwidth with HP0 scanout.
      * The full-screen UI throttle limits repaint bursts to 30 Hz. */
 
@@ -1522,6 +1705,7 @@ void compositor_init(compositor_ui_draw_fn draw_fn)
      * gates the next compose on FB_STATUS_REG advancing -- the first
      * tick will wait until PL latches the init-time publish, then
      * pick a different slot to draw into. */
+    memset(s_picture_rect, 0, sizeof(s_picture_rect));
     s_writer_idx        = 0u;
     s_published_idx     = 0u;
     s_composited_apple_seq = 0u;
@@ -1617,7 +1801,6 @@ void compositor_set_video_dot_bleed(uint8_t level)
      * next composite, so force one instead of waiting for a new frame. */
     s_force_full_refresh = 1u;
 }
-
 uint8_t compositor_video_dot_bleed(void)
 {
     return s_video_dot_bleed;
@@ -1778,6 +1961,10 @@ int compositor_tick(void)
     uint8_t latched = fb_last_latched_slot();    /* 0xFF if unrecognized */
     s_writer_idx = pick_safe_slot(latched, s_published_idx);
 
+    memset(&s_pixel_mask[s_writer_idx], 0, sizeof(s_pixel_mask[s_writer_idx]));
+    s_pixel_mask[s_writer_idx].mode = s_pixel_mask_supported ? s_video_pixel_mask : 0U;
+    s_pixel_mask_collecting = 1U;
+
     uint16_t *fb =
         (uint16_t *)(uintptr_t)comp_out_slot_addr[s_writer_idx];
 
@@ -1800,6 +1987,7 @@ int compositor_tick(void)
         fb16_clear(fb, FB16_COLOR_BLACK);
     }
     XTime_GetTime(&ui_base_end);
+    s_picture_rect[s_writer_idx].valid = 0;
     if (suppress_apple) {
         s_composited_apple_seq = apple_seq;
         /* The boot and config screens own the picture, but frame-edge
@@ -1826,13 +2014,39 @@ int compositor_tick(void)
     }
     XTime_GetTime(&ui_end);
     if (apple_drawn) {
+        const int shr = g_compositor_last_apple_mode == APPLE_FB_DISPLAY_MODE_SHR;
+        s_picture_rect[s_writer_idx].x = s_border_enabled ?
+            (shr ? (int)COMP_SHR_BORDER_X_OFF:(int)COMP_BORDER_X_OFF) :
+            (shr ? (int)COMP_SUBWIN_SHR_X_OFF:(int)COMP_SUBWIN_X_OFF);
+        s_picture_rect[s_writer_idx].y = s_border_enabled ?
+            (shr ? (int)COMP_SHR_BORDER_Y_OFF:(int)COMP_BORDER_Y_OFF) :
+            (shr ? (int)COMP_SUBWIN_SHR_Y_OFF:(int)COMP_SUBWIN_Y_OFF);
+        s_picture_rect[s_writer_idx].width = s_border_enabled ?
+            (shr ? (int)COMP_SHR_BORDER_WIDTH:(int)COMP_BORDER_WIDTH) :
+            (shr ? (int)COMP_SUBWIN_SHR_WIDTH:(int)COMP_SUBWIN_WIDTH);
+        s_picture_rect[s_writer_idx].height = s_border_enabled ?
+            (shr ? (int)COMP_SHR_BORDER_HEIGHT:(int)COMP_BORDER_HEIGHT) :
+            (shr ? (int)COMP_SUBWIN_SHR_HEIGHT:(int)COMP_SUBWIN_HEIGHT);
+        s_picture_rect[s_writer_idx].valid = 1;
+        /* Borders can extend off-screen at Max/2x. Anchor the mask to the
+         * visible clipped viewport, just as a cropped screenshot does. */
+        (void)video_pixel_mask_clip_rect(&s_pixel_mask[s_writer_idx].viewport,
+            s_picture_rect[s_writer_idx].x, s_picture_rect[s_writer_idx].y,
+            s_picture_rect[s_writer_idx].width, s_picture_rect[s_writer_idx].height,
+            COMP_OUT_WIDTH, COMP_OUT_HEIGHT);
         g_compositor_apple_frames_drawn++;
         s_composited_apple_seq = apple_seq;
+    } else {
+        s_pixel_mask[s_writer_idx].mode = APPLETINI_VIDEO_PIXEL_MASK_OFF;
     }
+    s_pixel_mask_collecting = 0U;
+    s_picture_rect[s_writer_idx].output_width = COMP_OUT_WIDTH;
+    s_picture_rect[s_writer_idx].output_height = COMP_OUT_HEIGHT;
 
     /* Slots are non-cached; no flush needed. dsb makes sure all writes
      * retire in DDR before we tell the PL where to look. */
     XTime_GetTime(&sync_start);
+    pixel_mask_stage(s_writer_idx);
     __asm__ volatile ("dsb sy");
 
     REG_WRITE(FB_BASE_ADDR_REG, comp_out_slot_addr[s_writer_idx]);

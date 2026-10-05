@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "onee_input_service.h"
+#include "usb_gamepad_input.h"
 
 /* Wired DualShock 4 input report 1. The HID descriptor lists X/Y/Z/Rz
  * together, which CherryUSB reduces to a usage range. Decode the known
@@ -53,11 +53,14 @@ static inline uint8_t usb_ps4_decode(
         *hat = 8U;
     }
 
-    /* Stick clicks, trigger switches, PS and touchpad click must also
-     * finish their release before menu capture returns control to a game.
-     * Bits 2..7 of byte 7 hold a report counter, not buttons. */
-    *extra_active = (uint8_t)(((data[6] & 0xCCU) != 0U) ||
-                              ((data[7] & 0x03U) != 0U));
+    if (data[6] & 0x40U) report->buttons |= UINT32_C(1) << USB_GAMEPAD_BUTTON_LEFT_STICK;
+    if (data[6] & 0x80U) report->buttons |= UINT32_C(1) << USB_GAMEPAD_BUTTON_RIGHT_STICK;
+    if (data[7] & 1U) report->buttons |= UINT32_C(1) << USB_GAMEPAD_BUTTON_HOME;
+    if (data[6] & 4U) report->buttons |= UINT32_C(1) << USB_GAMEPAD_BUTTON_LEFT_TRIGGER;
+    if (data[6] & 8U) report->buttons |= UINT32_C(1) << USB_GAMEPAD_BUTTON_RIGHT_TRIGGER;
+    if (data[7] & 2U) report->buttons |= UINT32_C(1) << USB_GAMEPAD_BUTTON_TOUCHPAD;
+    /* Byte 7 bits 2..7 are a report counter, never buttons. */
+    *extra_active = 0U;
     return 1U;
 }
 

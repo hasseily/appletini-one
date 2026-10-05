@@ -24,16 +24,18 @@
 #include "xil_cache.h"
 #include "usb_hid_service.h"
 #include "video_blur.h"
+#include "video_filter_config.h"
 #include "video_ghosting.h"
 #include "video_glow.h"
 #include "video_mono.h"
 #include "video_output.h"
+#include "video_pixel_mask.h"
 
 #define APPLETINI_CFG_PATH "0:/appletini_cfg.txt"
 #define APPLETINI_CFG_TMP_PATH "0:/appletini_cfg.tmp"
 #define APPLETINI_CFG_BAK_PATH "0:/appletini_cfg.bak"
 #define APPLETINI_CFG_MAX 8192U
-#define APPLETINI_CFG_VERSION 120U
+#define APPLETINI_CFG_VERSION 124U
 #define ONEE_PERSIST_RETRY_POLL_LIMIT 4096U
 #define ETHERNET_CONTROL_SLOT 1U
 #define DISK2_CONTROL_SLOT 6U
@@ -44,6 +46,7 @@
 #define CONFIG_DEFAULT_BOOT_DEVICE CONFIG_BOOT_DEVICE_SMARTPORT
 #define CONFIG_DEFAULT_ONEE_VIDEO_50HZ 0U
 #define CONFIG_DEFAULT_SCANLINES_MODE APPLETINI_SCANLINES_OFF
+#define CONFIG_DEFAULT_VIDEO_PIXEL_MASK APPLETINI_VIDEO_PIXEL_MASK_OFF
 #define CONFIG_DEFAULT_VIDEO_OUTPUT_MONO 0U
 #define CONFIG_DEFAULT_VIDEO_MONO_COLOR APPLE_VIDEO_MONO_WHITE
 #define CONFIG_DEFAULT_VIDEO_COLOR_MODE APPLE_VIDEO_COLOR_COMPOSITE_MONITOR
@@ -703,6 +706,36 @@ static const char *config_menu_scanlines_config(uint8_t mode)
     }
 }
 
+static const char *config_menu_video_pixel_mask_config(uint8_t mode)
+{
+    switch (appletini_video_pixel_mask_clamp(mode)) {
+    case APPLETINI_VIDEO_PIXEL_MASK_APERTURE:
+        return "APERTURE";
+    case APPLETINI_VIDEO_PIXEL_MASK_SHADOW:
+        return "SHADOW";
+    case APPLETINI_VIDEO_PIXEL_MASK_LCD:
+        return "LCD";
+    default:
+        return "OFF";
+    }
+}
+
+static uint8_t config_menu_video_pixel_mask_text(const char *value)
+{
+    if (value != NULL) {
+        if (config_menu_str_ieq(value, "aperture") != 0U) {
+            return APPLETINI_VIDEO_PIXEL_MASK_APERTURE;
+        }
+        if (config_menu_str_ieq(value, "shadow") != 0U) {
+            return APPLETINI_VIDEO_PIXEL_MASK_SHADOW;
+        }
+        if (config_menu_str_ieq(value, "lcd") != 0U) {
+            return APPLETINI_VIDEO_PIXEL_MASK_LCD;
+        }
+    }
+    return APPLETINI_VIDEO_PIXEL_MASK_OFF;
+}
+
 static const char *config_menu_video_ghosting_config(uint8_t strength)
 {
     switch (appletini_video_ghosting_clamp(strength)) {
@@ -831,8 +864,6 @@ static const char *config_menu_video_dot_bleed_config(uint8_t level)
     }
 }
 
-/* Unknown or missing text keeps Light, the behaviour of firmware that
- * predates the key. */
 static uint8_t config_menu_video_dot_bleed_text(const char *value)
 {
     if (value == NULL) {
@@ -1538,7 +1569,8 @@ static uint8_t config_menu_usb_binding_source_valid(usb_hid_menu_source_t source
             return 1U;
         }
     }
-    return usb_hid_menu_source_is_keyboard(source);
+    return (uint8_t)(usb_hid_menu_source_is_keyboard(source) ||
+                     usb_hid_menu_source_is_gamepad(source));
 }
 
 static uint8_t config_menu_usb_binding_mouse_button_source_valid(
@@ -1558,7 +1590,8 @@ static uint8_t config_menu_usb_binding_mouse_button_source_valid(
 static uint8_t config_menu_usb_binding_ok_source_valid(usb_hid_menu_source_t source)
 {
     return (config_menu_usb_binding_mouse_button_source_valid(source) != 0U ||
-            usb_hid_menu_source_is_keyboard(source) != 0U) ? 1U : 0U;
+            usb_hid_menu_source_is_keyboard(source) != 0U ||
+            usb_hid_menu_source_is_gamepad(source) != 0U) ? 1U : 0U;
 }
 
 static uint8_t config_menu_usb_binding_action_is_button(uint32_t action)
@@ -1583,12 +1616,12 @@ static uint8_t config_menu_usb_binding_source_valid_for_action(
     uint32_t action,
     usb_hid_menu_source_t source)
 {
-    /* Screenshot and vTW-speed actions are global keyboard bindings:
-     * a dedicated key (or unbound), never a menu-navigation source. */
+    /* Global actions accept a dedicated key or controller button. */
     if (config_menu_usb_binding_action_is_screenshot(action) != 0U ||
         config_menu_usb_binding_action_is_vtw(action) != 0U) {
         return (source == USB_HID_MENU_SOURCE_NONE ||
-                usb_hid_menu_source_is_keyboard(source) != 0U) ? 1U : 0U;
+                usb_hid_menu_source_is_keyboard(source) != 0U ||
+            usb_hid_menu_source_is_gamepad(source) != 0U) ? 1U : 0U;
     }
 
     return config_menu_usb_binding_source_valid(source);
@@ -1719,6 +1752,11 @@ static const char *config_menu_usb_binding_source_config(
 {
     static char text[24];
 
+    if (usb_hid_menu_source_is_gamepad(source) != 0U) {
+        (void)snprintf(text, sizeof(text), "GAMEPAD.BUTTON%u",
+                       (unsigned)(source - USB_HID_MENU_SOURCE_GAMEPAD_BASE + 1U));
+        return text;
+    }
     switch (source) {
     case USB_HID_MENU_SOURCE_NONE:
         return "NONE";
@@ -1865,6 +1903,15 @@ static usb_hid_menu_source_t config_menu_usb_binding_source_value(const char *va
     }
     if (config_menu_str_ieq(value, "wheel.down") != 0U) {
         return USB_HID_MENU_ACTION_NEXT_TAB;
+    }
+    if (config_menu_str_starts_ieq(value, "gamepad.button") != 0U) {
+        char *end;
+        const unsigned long button = strtoul(value + 14, &end, 10);
+        if (end != value + 14 && *end == '\0' && button >= 1UL &&
+            button <= USB_HID_MENU_SOURCE_GAMEPAD_COUNT) {
+            return usb_hid_menu_source_from_gamepad_button((uint8_t)(button - 1UL));
+        }
+        return USB_HID_MENU_SOURCE_NONE;
     }
     if (config_menu_usb_key_usage_value(value, &usage) != 0U) {
         return CONFIG_USB_KEY_SOURCE(usage);
@@ -2034,8 +2081,9 @@ uint8_t config_menu_capture_usb_binding(config_menu_t *menu,
         return 0U;
     }
     if (config_menu_usb_binding_action_is_screenshot(action) != 0U &&
-        usb_hid_menu_source_is_keyboard(source) == 0U) {
-        config_menu_set_status(menu, 1U, "SCREENSHOT REQUIRES USB KEY");
+        usb_hid_menu_source_is_keyboard(source) == 0U &&
+        usb_hid_menu_source_is_gamepad(source) == 0U) {
+        config_menu_set_status(menu, 1U, "USE A KEY OR GAMEPAD BUTTON");
         return 1U;
     }
     if (config_menu_usb_binding_source_valid_for_action(action, source) == 0U) {
@@ -2081,6 +2129,16 @@ ui_key_t config_menu_translate_usb_binding(const config_menu_t *menu,
     for (uint32_t i = 0U; i < CONFIG_MENU_USB_BIND_ACTION_COUNT; ++i) {
         if (menu->usb_menu_bindings[i] == source) {
             return k_usb_binding_keys[i];
+        }
+    }
+    /* Preserve old controller aliases only when no explicit button binding
+     * matched. Source IDs for existing mouse and keyboard settings stay stable. */
+    if (usb_hid_menu_source_is_gamepad(source) != 0U) {
+        const uint32_t button = source - USB_HID_MENU_SOURCE_GAMEPAD_BASE;
+        if (button < sizeof(k_usb_binding_button_source_order) /
+                         sizeof(k_usb_binding_button_source_order[0])) {
+            return config_menu_translate_usb_binding(
+                menu, k_usb_binding_button_source_order[button]);
         }
     }
     return UI_KEY_NONE;
@@ -2295,6 +2353,9 @@ static uint8_t config_menu_video_color_mode_value(const char *value)
     if (config_menu_str_ieq(value, "idealized") != 0U) {
         return APPLE_VIDEO_COLOR_IDEALIZED;
     }
+    if (config_menu_str_ieq(value, "idealized_mix") != 0U) {
+        return APPLE_VIDEO_COLOR_IDEALIZED;
+    }
     if (config_menu_str_ieq(value, "rgb") != 0U) {
         return APPLE_VIDEO_COLOR_RGB;
     }
@@ -2311,6 +2372,62 @@ static uint8_t config_menu_video_color_mode_value(const char *value)
         return APPLE_VIDEO_COLOR_COMPOSITE_MONITOR;
     }
     return CONFIG_DEFAULT_VIDEO_COLOR_MODE;
+}
+
+/* The new key wins even when a legacy key follows it in the file. */
+static void config_menu_parse_video_horizontal_setting(config_menu_t *menu,
+                                                       const char *key,
+                                                       const char *value)
+{
+    if (strcmp(key, "video.blending.horizontal") == 0) {
+        menu->video_blending_horizontal_explicit = 1U;
+    } else if (menu->video_blending_horizontal_explicit != 0U) {
+        return;
+    }
+    menu->video_legacy_horizontal = config_menu_video_blur_text(value);
+    menu->video_smoothing_explicit |= VIDEO_FILTER_AXIS_H;
+}
+
+static void config_menu_parse_video_vertical_setting(config_menu_t *menu,
+                                                     const char *key,
+                                                     const char *value)
+{
+    if (strcmp(key, "video.blending.vertical") == 0) {
+        menu->video_blending_vertical_explicit = 1U;
+    } else if (menu->video_blending_vertical_explicit != 0U) {
+        return;
+    }
+    menu->video_legacy_vertical = config_menu_video_blur_text(value);
+    menu->video_smoothing_explicit |= VIDEO_FILTER_AXIS_V;
+}
+
+static void config_menu_resolve_video_blending(config_menu_t *menu)
+{
+    if (menu->video_blending_vertical_explicit == 0U &&
+        menu->video_legacy_crt_blending != 0U) {
+        menu->video_legacy_vertical = APPLETINI_VIDEO_BLUR_STRONG;
+        menu->video_smoothing_explicit |= VIDEO_FILTER_AXIS_V;
+    }
+    video_filter_migrate(&menu->video_blur_strength, &menu->video_dot_bleed,
+        menu->video_filter_explicit, menu->video_smoothing_explicit,
+        menu->video_legacy_horizontal, menu->video_legacy_vertical,
+        menu->video_output_mono);
+}
+
+static void config_menu_parse_video_color_setting(config_menu_t *menu,
+                                                  const char *key,
+                                                  const char *value)
+{
+    if (strcmp(key, "video.crt_blending") == 0) {
+        menu->video_legacy_crt_blending =
+            strcmp(value, "1") == 0 || config_menu_bool_text(value) != 0U;
+        menu->video_legacy_crt_explicit = 1U;
+    } else {
+        menu->video_color_mode = config_menu_video_color_mode_value(value);
+        if (menu->video_legacy_crt_explicit == 0U) {
+            menu->video_legacy_crt_blending = config_menu_str_ieq(value, "idealized_mix");
+        }
+    }
 }
 
 static uint8_t config_menu_next_mono_color(uint8_t color, int8_t delta)
@@ -2515,6 +2632,32 @@ static void config_menu_apply_border(config_menu_t *menu)
     }
 }
 
+static void config_menu_cycle_video_pixel_mask(config_menu_t *menu, int8_t delta)
+{
+    if (menu == NULL) {
+        return;
+    }
+    menu->video_pixel_mask = appletini_video_pixel_mask_clamp(menu->video_pixel_mask);
+    if (delta < 0) {
+        menu->video_pixel_mask = (menu->video_pixel_mask == APPLETINI_VIDEO_PIXEL_MASK_OFF) ?
+            APPLETINI_VIDEO_PIXEL_MASK_MAX : (uint8_t)(menu->video_pixel_mask - 1U);
+    } else {
+        menu->video_pixel_mask =
+            (uint8_t)((menu->video_pixel_mask + 1U) % (APPLETINI_VIDEO_PIXEL_MASK_MAX + 1U));
+    }
+}
+
+static void config_menu_apply_video_pixel_mask(config_menu_t *menu)
+{
+    if (menu == NULL) {
+        return;
+    }
+    menu->video_pixel_mask = appletini_video_pixel_mask_clamp(menu->video_pixel_mask);
+    if (menu->platform.set_video_pixel_mask != NULL) {
+        menu->platform.set_video_pixel_mask(menu->platform.ctx, menu->video_pixel_mask);
+    }
+}
+
 static void config_menu_apply_video_ghosting(config_menu_t *menu)
 {
     if (menu == NULL) {
@@ -2690,6 +2833,10 @@ static void config_menu_load_platform_defaults(config_menu_t *menu)
     if (menu->platform.get_scanlines != NULL) {
         menu->scanlines_mode =
             appletini_scanlines_clamp(menu->platform.get_scanlines(menu->platform.ctx));
+    }
+    if (menu->platform.get_video_pixel_mask != NULL) {
+        menu->video_pixel_mask = appletini_video_pixel_mask_clamp(
+            menu->platform.get_video_pixel_mask(menu->platform.ctx));
     }
     if (menu->platform.get_video_ghosting != NULL) {
         menu->video_ghosting_strength = appletini_video_ghosting_clamp(
@@ -3211,6 +3358,7 @@ static void config_menu_apply_runtime_internal(config_menu_t *menu,
     if (menu->platform.set_scanlines != NULL) {
         menu->platform.set_scanlines(menu->platform.ctx, menu->scanlines_mode);
     }
+    config_menu_apply_video_pixel_mask(menu);
     config_menu_apply_video_ghosting(menu);
     config_menu_apply_video_blur(menu);
     config_menu_apply_video_glow(menu);
@@ -3462,24 +3610,35 @@ static void config_menu_parse_key_value(config_menu_t *menu, const char *key, co
         menu->size_multiplier = config_menu_size_multiplier_text(value);
     } else if (strcmp(key, "video.scanlines") == 0) {
         menu->scanlines_mode = config_menu_scanlines_text(value);
+    } else if (strcmp(key, "video.pixel_mask") == 0) {
+        menu->video_pixel_mask = config_menu_video_pixel_mask_text(value);
     } else if (strcmp(key, "video.output") == 0) {
         menu->video_output_mono = config_menu_video_output_text_value(value);
     } else if (strcmp(key, "video.mono.color") == 0) {
         menu->video_mono_color = config_menu_video_mono_color_value(value);
-    } else if (strcmp(key, "video.color.mode") == 0) {
-        menu->video_color_mode = config_menu_video_color_mode_value(value);
+    } else if (strcmp(key, "video.color.mode") == 0 ||
+               strcmp(key, "video.crt_blending") == 0) {
+        config_menu_parse_video_color_setting(menu, key, value);
     } else if (strcmp(key, "video.dhgr.col140m") == 0) {
         menu->dhgr_col140m_enabled = config_menu_bool_text(value);
     } else if (strcmp(key, "video.video7.monochrome") == 0) {
         menu->video7_auto_mono_enabled = config_menu_bool_text(value);
     } else if (strcmp(key, "video.ghosting") == 0) {
         menu->video_ghosting_strength = config_menu_video_ghosting_text(value);
+    } else if (strcmp(key, "video.blending.horizontal") == 0 ||
+               strcmp(key, "video.smoothing.horizontal") == 0) {
+        config_menu_parse_video_horizontal_setting(menu, key, value);
+    } else if (strcmp(key, "video.blending.vertical") == 0 ||
+               strcmp(key, "video.smoothing.vertical") == 0) {
+        config_menu_parse_video_vertical_setting(menu, key, value);
     } else if (strcmp(key, "video.blur") == 0) {
         menu->video_blur_strength = config_menu_video_blur_text(value);
+        menu->video_filter_explicit |= VIDEO_FILTER_EXPLICIT_BLUR;
     } else if (strcmp(key, "video.glow") == 0) {
         menu->video_glow_strength = config_menu_video_glow_text(value);
     } else if (strcmp(key, "video.dot.bleed") == 0) {
         menu->video_dot_bleed = config_menu_video_dot_bleed_text(value);
+        menu->video_filter_explicit |= VIDEO_FILTER_EXPLICIT_DOT;
     } else if (strcmp(key, "video.format.badge") == 0) {
         menu->format_badge_enabled = config_menu_bool_text(value);
     } else if (strcmp(key, "video.border.enabled") == 0) {
@@ -3674,6 +3833,7 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                "video.resolution=%s\n"
                "video.size_multiplier=%s\n"
                "video.scanlines=%s\n"
+               "video.pixel_mask=%s\n"
                "video.output=%s\n"
                "video.mono.color=%s\n"
                "video.color.mode=%s\n"
@@ -3698,6 +3858,7 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                display_mode_get(config_menu_output_mode(menu))->name,
                config_menu_size_multiplier_config(menu),
                config_menu_scanlines_config(menu->scanlines_mode),
+               config_menu_video_pixel_mask_config(menu->video_pixel_mask),
                (menu->video_output_mono != 0U) ? "MONOCHROME" : "COLOR",
                config_menu_video_mono_color_config(menu->video_mono_color),
                config_menu_video_color_mode_config(menu->video_color_mode),
@@ -3960,6 +4121,17 @@ static void config_menu_load_settings(config_menu_t *menu)
     config_menu_slot2_reset(menu);
     /* Old files use Max even if an earlier SD read failed and the user changed it. */
     menu->size_multiplier = 0U;
+    menu->video_legacy_horizontal = APPLETINI_VIDEO_BLUR_OFF;
+    menu->video_filter_explicit = 0U;
+    menu->video_blur_strength = CONFIG_DEFAULT_VIDEO_BLUR_STRENGTH;
+    menu->video_dot_bleed = CONFIG_DEFAULT_VIDEO_DOT_BLEED;
+    menu->video_legacy_vertical = APPLETINI_VIDEO_BLUR_OFF;
+    menu->video_smoothing_explicit = 0U;
+    menu->video_legacy_crt_blending = 0U;
+    menu->video_legacy_crt_explicit = 0U;
+    menu->video_blending_vertical_explicit = 0U;
+    menu->video_blending_horizontal_explicit = 0U;
+    menu->video_pixel_mask = CONFIG_DEFAULT_VIDEO_PIXEL_MASK;
     buffer[bytes_read] = '\0';
     line = strtok(buffer, "\r\n");
     while (line != NULL) {
@@ -3974,6 +4146,7 @@ static void config_menu_load_settings(config_menu_t *menu)
         line = strtok(NULL, "\r\n");
     }
 
+    config_menu_resolve_video_blending(menu);
     config_menu_coerce_boot_device(menu);
     config_menu_coerce_video_output(menu);
     config_menu_coerce_video_ghosting(menu);
@@ -4200,6 +4373,11 @@ static void config_menu_reset_settings_only(config_menu_t *menu)
     menu->video_output_mono = CONFIG_DEFAULT_VIDEO_OUTPUT_MONO;
     menu->video_mono_color = CONFIG_DEFAULT_VIDEO_MONO_COLOR;
     menu->video_color_mode = CONFIG_DEFAULT_VIDEO_COLOR_MODE;
+    menu->video_legacy_crt_blending = 0U;
+    menu->video_legacy_crt_explicit = 0U;
+    menu->video_blending_vertical_explicit = 0U;
+    menu->video_blending_horizontal_explicit = 0U;
+    menu->video_pixel_mask = CONFIG_DEFAULT_VIDEO_PIXEL_MASK;
     menu->video7_auto_mono_enabled = CONFIG_DEFAULT_VIDEO7_AUTO_MONO_ENABLED;
     menu->dhgr_col140m_enabled = CONFIG_DEFAULT_DHGR_COL140M_ENABLED;
     menu->video_ghosting_strength = CONFIG_DEFAULT_VIDEO_GHOSTING_STRENGTH;
@@ -4311,6 +4489,17 @@ static uint8_t config_menu_read_settings_from_path(config_menu_t *menu,
     /* Each file must opt in; a missing key never inherits TURBO permission. */
     menu->vtw_turbo_enabled = CONFIG_DEFAULT_VTW_TURBO_ENABLED;
     config_menu_slot2_reset(menu);
+    menu->video_legacy_horizontal = APPLETINI_VIDEO_BLUR_OFF;
+    menu->video_filter_explicit = 0U;
+    menu->video_blur_strength = CONFIG_DEFAULT_VIDEO_BLUR_STRENGTH;
+    menu->video_dot_bleed = CONFIG_DEFAULT_VIDEO_DOT_BLEED;
+    menu->video_legacy_vertical = APPLETINI_VIDEO_BLUR_OFF;
+    menu->video_smoothing_explicit = 0U;
+    menu->video_legacy_crt_blending = 0U;
+    menu->video_legacy_crt_explicit = 0U;
+    menu->video_blending_vertical_explicit = 0U;
+    menu->video_blending_horizontal_explicit = 0U;
+    menu->video_pixel_mask = CONFIG_DEFAULT_VIDEO_PIXEL_MASK;
     buffer[bytes_read] = '\0';
     line = strtok(buffer, "\r\n");
     while (line != NULL) {
@@ -4330,6 +4519,7 @@ static uint8_t config_menu_read_settings_from_path(config_menu_t *menu,
         line = strtok(NULL, "\r\n");
     }
 
+    config_menu_resolve_video_blending(menu);
     config_menu_coerce_boot_device(menu);
     config_menu_coerce_video_output(menu);
     config_menu_coerce_video_ghosting(menu);
@@ -5128,7 +5318,7 @@ static void config_menu_next_item(config_menu_t *menu)
     menu->item_focus = (menu->item_focus + 1U) % count;
     if (menu->tab == CONFIG_TAB_VIDEO && menu->video_output_mono == 0U &&
         menu->item_focus == CONFIG_VIDEO_ITEM_DOT_BLEED) {
-        menu->item_focus = CONFIG_VIDEO_ITEM_SCANLINES;
+        menu->item_focus = CONFIG_VIDEO_ITEM_BLUR;
     }
 }
 
@@ -5624,6 +5814,14 @@ static uint8_t config_menu_adjust_focused_value(config_menu_t *menu, int8_t delt
             menu->scanlines_mode =
                 (uint8_t)((menu->scanlines_mode + 1U) % APPLETINI_SCANLINES_COUNT);
         }
+        config_menu_apply_runtime(menu);
+        config_menu_save_settings(menu);
+        return 1U;
+    }
+
+    if (menu->tab == CONFIG_TAB_VIDEO &&
+        menu->item_focus == CONFIG_VIDEO_ITEM_PIXEL_MASK) {
+        config_menu_cycle_video_pixel_mask(menu, delta);
         config_menu_apply_runtime(menu);
         config_menu_save_settings(menu);
         return 1U;
@@ -6985,6 +7183,8 @@ static void config_menu_activate_item(config_menu_t *menu)
         } else if (menu->item_focus == CONFIG_VIDEO_ITEM_SCANLINES) {
             menu->scanlines_mode =
                 (uint8_t)((menu->scanlines_mode + 1U) % APPLETINI_SCANLINES_COUNT);
+        } else if (menu->item_focus == CONFIG_VIDEO_ITEM_PIXEL_MASK) {
+            config_menu_cycle_video_pixel_mask(menu, 1);
         } else if (menu->item_focus == CONFIG_VIDEO_ITEM_GHOSTING) {
             menu->video_ghosting_strength =
                 (uint8_t)((menu->video_ghosting_strength + 1U) %
@@ -6998,10 +7198,7 @@ static void config_menu_activate_item(config_menu_t *menu)
                 (uint8_t)((menu->video_glow_strength + 1U) %
                           (APPLETINI_VIDEO_GLOW_MAX + 1U));
         } else if (menu->item_focus == CONFIG_VIDEO_ITEM_DOT_BLEED) {
-            if (menu->video_output_mono == 0U) {
-                /* Inert with Color output: nothing to apply or save. */
-                break;
-            }
+            if (menu->video_output_mono == 0U) break;
             menu->video_dot_bleed =
                 (uint8_t)((menu->video_dot_bleed + 1U) %
                           (APPLETINI_VIDEO_DOT_BLEED_MAX + 1U));
@@ -7361,6 +7558,11 @@ void config_menu_init(config_menu_t *menu)
     menu->video_output_mono = CONFIG_DEFAULT_VIDEO_OUTPUT_MONO;
     menu->video_mono_color = CONFIG_DEFAULT_VIDEO_MONO_COLOR;
     menu->video_color_mode = CONFIG_DEFAULT_VIDEO_COLOR_MODE;
+    menu->video_legacy_crt_blending = 0U;
+    menu->video_legacy_crt_explicit = 0U;
+    menu->video_blending_vertical_explicit = 0U;
+    menu->video_blending_horizontal_explicit = 0U;
+    menu->video_pixel_mask = CONFIG_DEFAULT_VIDEO_PIXEL_MASK;
     menu->video7_auto_mono_enabled = CONFIG_DEFAULT_VIDEO7_AUTO_MONO_ENABLED;
     menu->dhgr_col140m_enabled = CONFIG_DEFAULT_DHGR_COL140M_ENABLED;
     menu->video_ghosting_strength = CONFIG_DEFAULT_VIDEO_GHOSTING_STRENGTH;
@@ -8089,7 +8291,8 @@ void hgr_draw_video_ghosting_item(uint16_t *fb,
                                   int y,
                                   int w,
                                   uint8_t focused,
-                                  uint8_t strength)
+                                  uint8_t strength,
+                                  int label_w)
 {
     if (cmui_compact_active() != 0U) {
         cmui_compact_entry("Phosphor ghosting", appletini_video_ghosting_name(strength),
@@ -8102,7 +8305,6 @@ void hgr_draw_video_ghosting_item(uint16_t *fb,
                               CMUI_COLOR_MUTED;
     const uint32_t value_fg = (focused != 0U) ? CMUI_COLOR_ACCENT :
                               CMUI_COLOR_TEXT;
-    const int label_w = (w >= 900) ? CMUI_VALUE_LABEL_W : ((w * 46) / 100);
     const int value_x = x + 18 + label_w + 30;
     const int value_w = w - label_w - 48;
     const char *value;
@@ -8137,7 +8339,8 @@ void hgr_draw_video_blur_item(uint16_t *fb,
                               int y,
                               int w,
                               uint8_t focused,
-                              uint8_t strength)
+                              uint8_t strength,
+                                  int label_w)
 {
     if (cmui_compact_active() != 0U) {
         cmui_compact_entry("Phosphor blur", appletini_video_blur_name(strength),
@@ -8150,7 +8353,6 @@ void hgr_draw_video_blur_item(uint16_t *fb,
                               CMUI_COLOR_MUTED;
     const uint32_t value_fg = (focused != 0U) ? CMUI_COLOR_ACCENT :
                               CMUI_COLOR_TEXT;
-    const int label_w = (w >= 900) ? CMUI_VALUE_LABEL_W : ((w * 46) / 100);
     const int value_x = x + 18 + label_w + 30;
     const int value_w = w - label_w - 48;
     const char *value;
@@ -8185,7 +8387,8 @@ void hgr_draw_video_glow_item(uint16_t *fb,
                               int y,
                               int w,
                               uint8_t focused,
-                              uint8_t strength)
+                              uint8_t strength,
+                                  int label_w)
 {
     if (cmui_compact_active() != 0U) {
         cmui_compact_entry("Phosphor glow", appletini_video_glow_name(strength),
@@ -8198,7 +8401,6 @@ void hgr_draw_video_glow_item(uint16_t *fb,
                               CMUI_COLOR_MUTED;
     const uint32_t value_fg = (focused != 0U) ? CMUI_COLOR_ACCENT :
                               CMUI_COLOR_TEXT;
-    const int label_w = (w >= 900) ? CMUI_VALUE_LABEL_W : ((w * 46) / 100);
     const int value_x = x + 18 + label_w + 30;
     const int value_w = w - label_w - 48;
     const char *value;

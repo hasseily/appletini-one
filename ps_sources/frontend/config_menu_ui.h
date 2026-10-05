@@ -121,6 +121,16 @@ void cmui_value_row(uint16_t *fb,
                     uint8_t dimmed,
                     const char *label,
                     const char *value);
+/* Keep related rows on one value column, including full-width rows. */
+void cmui_value_row_aligned(uint16_t *fb,
+                            int x,
+                            int y,
+                            int w,
+                            uint8_t focused,
+                            uint8_t dimmed,
+                            const char *label,
+                            const char *value,
+                            int label_w);
 void cmui_check_row(uint16_t *fb,
                     int x,
                     int y,

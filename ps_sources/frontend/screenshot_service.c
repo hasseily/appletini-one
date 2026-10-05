@@ -4,6 +4,7 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "diskio.h"
@@ -24,6 +25,8 @@
 #define SCREENSHOT_OVERLAY_TICKS ((XTime)(3ULL * (uint64_t)COUNTS_PER_SECOND))
 #define PNG_ADLER_MOD 65521U
 #define PNG_ADLER_NMAX 5552U
+#define SCREENSHOT_ROWS_PER_POLL 2U
+#define SCREENSHOT_NAME_ATTEMPTS 64U
 
 typedef struct {
     const uint32_t *base;      /* BGRA32 surfaces (Apple frame ring) */
@@ -38,6 +41,30 @@ typedef struct {
 
 static FATFS g_screenshot_fs;
 static uint8_t g_png_row[1U + (COMP_OUT_MAX_WIDTH * 4U)];
+
+typedef struct {
+    uint32_t crc, adler_a, adler_b;
+} screenshot_png_t;
+
+typedef enum { SHOT_IDLE, SHOT_OPEN, SHOT_ROWS, SHOT_FINISH, SHOT_RENAME } shot_state_t;
+static struct {
+    shot_state_t state;
+    void *pixels;
+    screenshot_surface_t surface;
+    uint32_t width, height, next_row;
+    FSIZE_t offset;
+    FIL file;
+    uint8_t file_open, owns_part, storage_session, usb_was_connected;
+    uint8_t result_pending;
+    uint32_t attempts;
+    char timestamp[32], suffix[16];
+    char temporary[SCREENSHOT_SERVICE_PATH_LEN];
+    char final[SCREENSHOT_SERVICE_PATH_LEN - 5U]; /* Room for ".part". */
+    rtc_pcf8563_time_t rtc;
+    screenshot_png_t png;
+    screenshot_service_result_t result;
+} g_shot;
+static uint32_t g_shot_serial;
 
 /* Two transient on-screen overlays, each a self-contained instance:
  * BOTTOM = screenshot confirmations, TOP = TransWarp speed notices, so
@@ -371,26 +398,19 @@ static void fill_png_row(uint8_t *row,
     }
 }
 
-static int write_png_rgba(FIL *file,
-                          const screenshot_surface_t *surface,
-                          uint32_t width,
-                          uint32_t height)
+static int png_begin(FIL *file, screenshot_png_t *png,
+                     uint32_t width, uint32_t height)
 {
     static const uint8_t signature[8] = {
         0x89U, 'P', 'N', 'G', 0x0DU, 0x0AU, 0x1AU, 0x0AU
     };
     uint8_t ihdr[13];
     uint32_t crc;
-    uint32_t adler_a = 1U;
-    uint32_t adler_b = 0U;
     uint8_t zlib_header[2] = {0x78U, 0x01U};
     const uint32_t row_len = 1U + (width * 4U);
     const uint32_t idat_len = 2U + (height * (5U + row_len)) + 4U;
 
-    if (surface == NULL ||
-        (surface->base == NULL && surface->base565 == NULL) ||
-        width == 0U || height == 0U ||
-        surface->scale_x == 0U || surface->scale_y == 0U ||
+    if (width == 0U || height == 0U ||
         row_len > (uint32_t)sizeof(g_png_row)) {
         return -1;
     }
@@ -416,27 +436,39 @@ static int write_png_rgba(FIL *file,
         return -1;
     }
 
-    for (uint32_t y = 0U; y < height; ++y) {
-        uint8_t block_header[5];
-        const uint16_t len16 = (uint16_t)row_len;
+    png->crc = crc;
+    png->adler_a = 1U;
+    png->adler_b = 0U;
+    return 0;
+}
 
-        fill_png_row(g_png_row, surface, y, width);
-        block_header[0] = (uint8_t)((y + 1U == height) ? 0x01U : 0x00U);
-        store_le16(&block_header[1], len16);
-        store_le16(&block_header[3], (uint16_t)~len16);
+static int png_row(FIL *file, screenshot_png_t *png,
+                   const screenshot_surface_t *surface,
+                   uint32_t y, uint32_t width, uint32_t height)
+{
+    uint8_t block_header[5];
+    const uint16_t row_len = (uint16_t)(1U + width * 4U);
 
-        if (png_chunk_data(file, &crc, block_header, sizeof(block_header)) != 0 ||
-            png_chunk_data(file, &crc, g_png_row, row_len) != 0) {
-            return -1;
-        }
-        adler32_update(&adler_a, &adler_b, g_png_row, row_len);
+    fill_png_row(g_png_row, surface, y, width);
+    block_header[0] = (uint8_t)((y + 1U == height) ? 0x01U : 0x00U);
+    store_le16(&block_header[1], row_len);
+    store_le16(&block_header[3], (uint16_t)~row_len);
+    if (png_chunk_data(file, &png->crc, block_header, sizeof(block_header)) != 0 ||
+        png_chunk_data(file, &png->crc, g_png_row, row_len) != 0) {
+        return -1;
     }
+    adler32_update(&png->adler_a, &png->adler_b, g_png_row, row_len);
+    return 0;
+}
 
+static int png_end(FIL *file, screenshot_png_t *png)
+{
+    uint32_t crc;
     {
         uint8_t adler[4];
-        store_be32(adler, (adler_b << 16U) | adler_a);
-        if (png_chunk_data(file, &crc, adler, sizeof(adler)) != 0 ||
-            png_chunk_end(file, crc) != 0) {
+        store_be32(adler, (png->adler_b << 16U) | png->adler_a);
+        if (png_chunk_data(file, &png->crc, adler, sizeof(adler)) != 0 ||
+            png_chunk_end(file, png->crc) != 0) {
             return -1;
         }
     }
@@ -465,13 +497,14 @@ static FRESULT mount_sd(void)
 
 static FRESULT ensure_screenshot_dir(void)
 {
-    FRESULT fr = mount_sd();
-
-    if (fr != FR_OK) {
-        return fr;
+    /* Reuse the volume: remounting invalidates other services' open files. */
+    FRESULT fr = f_mkdir(SCREENSHOT_DIR);
+    if (fr == FR_NOT_ENABLED) {
+        fr = mount_sd();
+        if (fr == FR_OK) {
+            fr = f_mkdir(SCREENSHOT_DIR);
+        }
     }
-
-    fr = f_mkdir(SCREENSHOT_DIR);
     return (fr == FR_EXIST) ? FR_OK : fr;
 }
 
@@ -587,202 +620,304 @@ static void fat_timestamp_override_end(void)
     g_fattime_override_active = 0U;
 }
 
-static FRESULT open_screenshot_file(FIL *file,
-                                    const char *timestamp,
-                                    const char *suffix,
-                                    char *path,
-                                    size_t path_size)
+static void next_final_path(void)
 {
-    FRESULT fr;
-
-    if (file == NULL || timestamp == NULL || suffix == NULL ||
-        path == NULL || path_size == 0U) {
-        return FR_INVALID_OBJECT;
-    }
-
-    (void)snprintf(path,
-                   path_size,
-                   SCREENSHOT_DIR "/%s-%s.png",
-                   timestamp,
-                   suffix);
-
-    fr = ensure_screenshot_dir();
-    if (fr != FR_OK) {
-        return fr;
-    }
-
-    fr = f_open(file, path, FA_CREATE_ALWAYS | FA_WRITE);
-    if (fr == FR_OK) {
-        return fr;
-    }
-
-    fr = mount_sd();
-    if (fr != FR_OK) {
-        return fr;
-    }
-
-    (void)ensure_screenshot_dir();
-    return f_open(file, path, FA_CREATE_ALWAYS | FA_WRITE);
+    (void)snprintf(g_shot.final, sizeof(g_shot.final),
+                   SCREENSHOT_DIR "/%s-%s-%08lx.png", g_shot.timestamp,
+                   g_shot.suffix, (unsigned long)g_shot_serial++);
 }
 
-static int save_surface_png(const screenshot_surface_t *surface,
-                            uint32_t width,
-                            uint32_t height,
-                            const char *timestamp,
-                            const char *suffix,
-                            const rtc_pcf8563_time_t *rtc,
-                            screenshot_service_result_t *result)
+static FRESULT shot_close(void)
 {
-    FIL file;
-    FRESULT fr;
-    char path[SCREENSHOT_SERVICE_PATH_LEN];
-    uint8_t usb_storage_was_connected;
-    int rc;
+    FRESULT fr = FR_OK;
+    if (g_shot.file_open != 0U) {
+        fr = f_close(&g_shot.file);
+        if (fr == FR_OK) {
+            g_shot.file_open = 0U;
+        }
+    }
+    return fr;
+}
 
-    usb_storage_was_connected = usb_storage_service_disconnect();
-    fat_timestamp_override_begin(rtc);
-    fr = open_screenshot_file(&file, timestamp, suffix, path, sizeof(path));
-    if (fr != FR_OK) {
-        fat_timestamp_override_end();
+static void shot_complete(int rc, const char *message)
+{
+    FRESULT cleanup = shot_close();
+    if (cleanup == FR_OK && g_shot.owns_part != 0U) {
+        cleanup = f_unlink(g_shot.temporary);
+        if (cleanup == FR_OK || cleanup == FR_NO_FILE) {
+            cleanup = FR_OK;
+            g_shot.owns_part = 0U;
+        }
+    }
+    if (cleanup != FR_OK) {
+        result_set(&g_shot.result, -(int)cleanup, g_shot.temporary,
+                   "%s; PART CLEANUP FAILED=%u", message, (unsigned)cleanup);
+    } else {
+        result_set(&g_shot.result, rc, rc == 0 ? g_shot.final : NULL,
+                   "%s", message);
+    }
+    fat_timestamp_override_end();
+    if (g_shot.storage_session != 0U) {
         screenshot_service_note_local_sd_write_complete();
-        if (usb_storage_was_connected != 0U) {
+        if (g_shot.usb_was_connected != 0U) {
             usb_storage_service_connect();
         }
-        result_set(result, -(int)fr, path, "OPEN FAILED FRESULT=%u", (unsigned)fr);
-        return -(int)fr;
     }
+    free(g_shot.pixels);
+    g_shot.pixels = NULL;
+    g_shot.state = SHOT_IDLE;
+    g_shot.result_pending = 1U;
+    overlay_show(&g_overlays[OVERLAY_BOTTOM], g_shot.result.rc == 0 ?
+                 "SCREENSHOT SAVED" : g_shot.result.message);
+    compositor_request_full_refresh();
+}
 
-    rc = write_png_rgba(&file, surface, width, height);
-    fr = f_close(&file);
-    fat_timestamp_override_end();
-    screenshot_service_note_local_sd_write_complete();
-    if (usb_storage_was_connected != 0U) {
-        usb_storage_service_connect();
-    }
-    if (rc != 0) {
-        result_set(result, rc, path, "PNG WRITE FAILED");
-        return rc;
-    }
+/* Other CPU0 services can remount FatFS between polls. Reopen each batch and
+ * check its length rather than retaining an invalid FIL across a remount. */
+static FRESULT shot_resume_file(void)
+{
+    FRESULT fr = f_open(&g_shot.file, g_shot.temporary, FA_WRITE);
     if (fr != FR_OK) {
-        result_set(result, -(int)fr, path, "CLOSE FAILED FRESULT=%u", (unsigned)fr);
-        return -(int)fr;
+        return fr;
     }
+    g_shot.file_open = 1U;
+    if (f_size(&g_shot.file) != g_shot.offset) {
+        return FR_INVALID_OBJECT;
+    }
+    fr = f_lseek(&g_shot.file, g_shot.offset);
+    return (fr == FR_OK && f_tell(&g_shot.file) != g_shot.offset) ?
+            FR_DISK_ERR : fr;
+}
 
-    result_set(result, 0, path, "OK");
+static void shot_poll(void)
+{
+    FRESULT fr;
+    int rc = 0;
+    if (g_shot.state == SHOT_IDLE) {
+        return;
+    }
+    fat_timestamp_override_begin(&g_shot.rtc);
+    if (g_shot.state == SHOT_OPEN) {
+        g_shot.usb_was_connected = usb_storage_service_disconnect();
+        g_shot.storage_session = 1U;
+        fr = ensure_screenshot_dir();
+        if (fr != FR_OK) {
+            shot_complete(-(int)fr, "SD DIRECTORY FAILED");
+            return;
+        }
+        for (g_shot.attempts = 0U;
+             g_shot.attempts < SCREENSHOT_NAME_ATTEMPTS; ++g_shot.attempts) {
+            next_final_path();
+            (void)snprintf(g_shot.temporary, sizeof(g_shot.temporary),
+                           "%s.part", g_shot.final);
+            fr = f_open(&g_shot.file, g_shot.temporary, FA_CREATE_NEW | FA_WRITE);
+            if (fr != FR_EXIST) {
+                break;
+            }
+        }
+        if (fr != FR_OK) {
+            shot_complete(-(int)fr, "TEMP FILE CREATE FAILED");
+            return;
+        }
+        g_shot.file_open = 1U;
+        g_shot.owns_part = 1U;
+        rc = png_begin(&g_shot.file, &g_shot.png, g_shot.width, g_shot.height);
+        g_shot.state = SHOT_ROWS;
+        g_shot.attempts = 0U;
+    } else if (g_shot.state == SHOT_RENAME) {
+        /* FatFS rename never replaces an existing file. A completed .part
+         * remains private until a successful close and non-clobber rename. */
+        fr = f_rename(g_shot.temporary, g_shot.final);
+        if (fr == FR_EXIST && ++g_shot.attempts < SCREENSHOT_NAME_ATTEMPTS) {
+            next_final_path();
+            fat_timestamp_override_end();
+            return;
+        }
+        if (fr == FR_OK) {
+            g_shot.owns_part = 0U;
+        }
+        shot_complete(fr == FR_OK ? 0 : -(int)fr,
+                      fr == FR_OK ? "OK" : "PNG PUBLISH FAILED");
+        return;
+    } else {
+        fr = shot_resume_file();
+        if (fr != FR_OK) {
+            shot_complete(-(int)fr, "TEMP FILE RESUME FAILED");
+            return;
+        }
+        if (g_shot.state == SHOT_ROWS) {
+            for (uint32_t n = 0U; n < SCREENSHOT_ROWS_PER_POLL &&
+                 g_shot.next_row < g_shot.height; ++n) {
+                rc = png_row(&g_shot.file, &g_shot.png, &g_shot.surface,
+                             g_shot.next_row, g_shot.width, g_shot.height);
+                if (rc != 0) {
+                    break;
+                }
+                ++g_shot.next_row;
+            }
+            if (g_shot.next_row == g_shot.height) {
+                g_shot.state = SHOT_FINISH;
+            }
+        } else {
+            rc = png_end(&g_shot.file, &g_shot.png);
+            g_shot.state = SHOT_RENAME;
+        }
+    }
+    g_shot.offset = f_tell(&g_shot.file);
+    fr = shot_close();
+    if (rc != 0 || fr != FR_OK) {
+        shot_complete(rc != 0 ? rc : -(int)fr,
+                      rc != 0 ? "PNG WRITE FAILED" : "PNG CLOSE FAILED");
+        return;
+    }
+    fat_timestamp_override_end();
+}
+
+int screenshot_service_request(screenshot_service_kind_t kind,
+                               const rtc_pcf8563_time_t *rtc,
+                               screenshot_service_result_t *result)
+{
+    screenshot_surface_t surface = {0};
+    uint32_t width, height;
+    uint32_t native_width, native_height;
+    size_t pixel_bytes;
+    void *pixels;
+
+    if (g_shot.state != SHOT_IDLE || g_shot.result_pending != 0U) {
+        result_set(result, -1, NULL, "SCREENSHOT BUSY");
+        return -1;
+    }
+    if (kind != SCREENSHOT_SERVICE_KIND_A2 && kind != SCREENSHOT_SERVICE_KIND_1080P) {
+        result_set(result, -1, NULL, "INVALID SCREENSHOT KIND");
+        return -1;
+    }
+    if (kind == SCREENSHOT_SERVICE_KIND_A2) {
+        uint8_t slot = apple_fb_reader_claim();
+        uint32_t mode = apple_fb_reader_display_mode();
+        const uint32_t video_settings = apple_fb_video_settings_get();
+
+        if (slot == APPLE_FB_NO_SLOT || slot >= COMP_APPLE_SLOT_COUNT) {
+            slot = (uint8_t)g_compositor_last_apple_slot;
+            mode = g_compositor_last_apple_mode;
+        }
+        if (slot == APPLE_FB_NO_SLOT || slot >= COMP_APPLE_SLOT_COUNT) {
+            result_set(result, -1, NULL, "NO APPLE FRAME");
+            return -1;
+        }
+
+        /* Keep the F1.2.2 Apple capture: raw renderer colors, its border
+         * selection and fixed 2x/4x (SHR 2x/2x) size, independent of output
+         * layout, compositor effects and the FPGA pixel mask. */
+        surface.base = (const uint32_t *)(uintptr_t)comp_apple_slot_addr[slot];
+        surface.scale_x = 2U;
+        surface.scanlines_mode = g_scanlines_mode;
+        if (mode == APPLE_FB_DISPLAY_MODE_SHR) {
+            surface.stride_pixels = COMP_APPLE_SHR_ROW_PIXELS;
+            surface.scale_y = 2U;
+            width = COMP_APPLE_SHR_WIDTH * 2U;
+            height = COMP_APPLE_SHR_HEIGHT * 2U;
+        } else {
+            surface.stride_pixels = COMP_APPLE_ROW_PIXELS;
+            surface.scale_y = 4U;
+            if (apple_video_settings_border_enabled(video_settings) != 0U) {
+                surface.x_offset = COMP_APPLE_LEFT_BORDER_PIXELS;
+                width = COMP_APPLE_VISIBLE_WIDTH * 2U;
+                height = COMP_APPLE_VISIBLE_HEIGHT * 4U;
+            } else {
+                surface.base += COMP_APPLE_ACTIVE_Y * COMP_APPLE_ROW_PIXELS;
+                surface.x_offset = COMP_APPLE_ACTIVE_X;
+                width = COMP_APPLE_WIDTH * 2U;
+                height = COMP_APPLE_HEIGHT * 4U;
+            }
+        }
+        pixel_bytes = sizeof(uint32_t);
+    } else {
+        uint8_t slot = 0xFFU;
+        surface.base565 = compositor_latched_framebuffer(&slot);
+        surface.stride_pixels = COMP_OUT_WIDTH;
+        surface.scale_x = 1U;
+        surface.scale_y = 1U;
+        width = COMP_OUT_WIDTH;
+        height = COMP_OUT_HEIGHT;
+        if (surface.base565 == NULL || slot >= COMP_OUT_SLOT_COUNT ||
+            width == 0U || height == 0U || width > COMP_OUT_MAX_WIDTH ||
+            height > COMP_OUT_MAX_HEIGHT) {
+            result_set(result, -1, NULL, "NO OUTPUT FRAME");
+            return -1;
+        }
+        pixel_bytes = sizeof(uint16_t);
+    }
+    native_width = width / surface.scale_x;
+    native_height = height / surface.scale_y;
+    pixels = malloc((size_t)native_width * native_height * pixel_bytes);
+    if (pixels == NULL) {
+        result_set(result, -1, NULL, "SCREENSHOT OUT OF MEMORY");
+        return -1;
+    }
+    /* CPU0 does not yield during this copy. The claimed Apple slot is
+     * protected from CPU1; CPU0 owns output writes. SD polling retains only
+     * this private snapshot, never either framebuffer ring. */
+    for (uint32_t row = 0; row < native_height; ++row) {
+        const size_t source_offset =
+            ((size_t)row * surface.stride_pixels + surface.x_offset) * pixel_bytes;
+        const void *source = surface.base565 != NULL ?
+            (const void *)surface.base565 : (const void *)surface.base;
+        memcpy((uint8_t *)pixels + (size_t)row * native_width * pixel_bytes,
+               (const uint8_t *)source + source_offset,
+               (size_t)native_width * pixel_bytes);
+    }
+    memset(&g_shot, 0, sizeof(g_shot));
+    g_shot.pixels = pixels;
+    g_shot.width = width;
+    g_shot.height = height;
+    surface.base = kind == SCREENSHOT_SERVICE_KIND_A2 ? pixels : NULL;
+    surface.base565 = kind == SCREENSHOT_SERVICE_KIND_1080P ? pixels : NULL;
+    surface.stride_pixels = native_width;
+    surface.x_offset = 0U;
+    g_shot.surface = surface;
+    if (rtc != NULL) { g_shot.rtc = *rtc; }
+    make_timestamp(g_shot.timestamp, sizeof(g_shot.timestamp), rtc);
+    (void)snprintf(g_shot.suffix, sizeof(g_shot.suffix), "%s",
+                   kind == SCREENSHOT_SERVICE_KIND_A2 ? "a2" :
+                   compositor_output_mode() == DISPLAY_MODE_DEFAULT ? "1080p" :
+                   display_mode_get(compositor_output_mode())->name);
+    g_shot.state = SHOT_OPEN;
+    result_set(result, 0, NULL, "SCREENSHOT QUEUED");
     return 0;
 }
 
-static int save_a2_png(const char *timestamp,
-                       const rtc_pcf8563_time_t *rtc,
-                       screenshot_service_result_t *result)
+uint8_t screenshot_service_busy(void)
 {
-    uint8_t slot = apple_fb_reader_claim();
-    uint32_t mode = apple_fb_reader_display_mode();
-    const uint32_t video_settings = apple_fb_video_settings_get();
-    screenshot_surface_t surface;
-    uint32_t width;
-    uint32_t height;
-
-    if (slot == APPLE_FB_NO_SLOT || slot >= COMP_APPLE_SLOT_COUNT) {
-        slot = (uint8_t)g_compositor_last_apple_slot;
-        mode = g_compositor_last_apple_mode;
-    }
-
-    if (slot == APPLE_FB_NO_SLOT || slot >= COMP_APPLE_SLOT_COUNT) {
-        result_set(result, -1, NULL, "NO APPLE FRAME");
-        return -1;
-    }
-
-    surface.base = (const uint32_t *)(uintptr_t)comp_apple_slot_addr[slot];
-    surface.base565 = NULL;
-    surface.scale_x = 2U;
-    surface.scanlines_mode = g_scanlines_mode;
-    if (mode == APPLE_FB_DISPLAY_MODE_SHR) {
-        surface.stride_pixels = COMP_APPLE_SHR_ROW_PIXELS;
-        surface.x_offset = 0U;
-        surface.scale_y = 2U;
-        width = COMP_APPLE_SHR_WIDTH * 2U;
-        height = COMP_APPLE_SHR_HEIGHT * 2U;
-    } else {
-        surface.stride_pixels = COMP_APPLE_ROW_PIXELS;
-        surface.scale_y = 4U;
-        if (apple_video_settings_border_enabled(video_settings) != 0U) {
-            surface.x_offset = COMP_APPLE_LEFT_BORDER_PIXELS;
-            width = COMP_APPLE_VISIBLE_WIDTH * 2U;
-            height = COMP_APPLE_VISIBLE_HEIGHT * 4U;
-        } else {
-            surface.base += COMP_APPLE_ACTIVE_Y * COMP_APPLE_ROW_PIXELS;
-            surface.x_offset = COMP_APPLE_ACTIVE_X;
-            width = COMP_APPLE_WIDTH * 2U;
-            height = COMP_APPLE_HEIGHT * 4U;
-        }
-    }
-
-    return save_surface_png(&surface, width, height, timestamp, "a2", rtc, result);
+    return g_shot.state != SHOT_IDLE ? 1U : 0U;
 }
 
-static int save_1080p_png(const char *timestamp,
-                          const rtc_pcf8563_time_t *rtc,
-                          screenshot_service_result_t *result)
+uint8_t screenshot_service_take_result(screenshot_service_result_t *result)
 {
-    uint8_t slot = 0xFFU;
-    screenshot_surface_t surface;
+    if (g_shot.result_pending == 0U) { return 0U; }
+    if (result != NULL) { *result = g_shot.result; }
+    g_shot.result_pending = 0U;
+    return 1U;
+}
 
-    surface.base = NULL;
-    surface.base565 = compositor_latched_framebuffer(&slot);
-    surface.stride_pixels = COMP_OUT_WIDTH;
-    surface.x_offset = 0U;
-    surface.scale_x = 1U;
-    surface.scale_y = 1U;
-    surface.scanlines_mode = APPLETINI_SCANLINES_OFF;
-
-    if (surface.base565 == NULL || slot >= COMP_OUT_SLOT_COUNT) {
-        result_set(result, -1, NULL, "NO OUTPUT FRAME");
-        return -1;
-    }
-
-    return save_surface_png(&surface,
-                            COMP_OUT_WIDTH,
-                            COMP_OUT_HEIGHT,
-                            timestamp,
-                            compositor_output_mode() == DISPLAY_MODE_DEFAULT ?
-                                "1080p" : display_mode_get(compositor_output_mode())->name,
-                            rtc,
-                            result);
+int screenshot_service_cancel(void)
+{
+    if (g_shot.state == SHOT_IDLE) { return 0; }
+    fat_timestamp_override_begin(&g_shot.rtc);
+    shot_complete(-1, "SCREENSHOT CANCELLED");
+    return g_shot.owns_part != 0U ? g_shot.result.rc : 0;
 }
 
 int screenshot_service_save(screenshot_service_kind_t kind,
                             const rtc_pcf8563_time_t *rtc,
                             screenshot_service_result_t *result)
 {
-    char timestamp[32];
-    int rc;
-
-    if (result != NULL) {
-        memset(result, 0, sizeof(*result));
-    }
-
-    make_timestamp(timestamp, sizeof(timestamp), rtc);
-    compositor_set_paused(1U);
-    if (kind == SCREENSHOT_SERVICE_KIND_A2) {
-        rc = save_a2_png(timestamp, rtc, result);
-    } else if (kind == SCREENSHOT_SERVICE_KIND_1080P) {
-        rc = save_1080p_png(timestamp, rtc, result);
-    } else {
-        result_set(result, -1, NULL, "INVALID SCREENSHOT KIND");
-        rc = -1;
-    }
-    compositor_set_paused(0U);
-
-    if (rc == 0) {
-        overlay_show(&g_overlays[OVERLAY_BOTTOM], "SCREENSHOT SAVED");
-    } else if (result != NULL && result->message[0] != '\0') {
-        overlay_show(&g_overlays[OVERLAY_BOTTOM], result->message);
-    } else {
-        overlay_show(&g_overlays[OVERLAY_BOTTOM], "SCREENSHOT FAILED");
-    }
-    compositor_request_full_refresh();
-    return rc;
+    screenshot_service_result_t completed;
+    const int rc = screenshot_service_request(kind, rtc, result);
+    if (rc != 0) { return rc; }
+    while (screenshot_service_busy() != 0U) { screenshot_service_poll(); }
+    (void)screenshot_service_take_result(&completed);
+    if (result != NULL) { *result = completed; }
+    return completed.rc;
 }
 
 void screenshot_service_poll(void)
@@ -790,6 +925,7 @@ void screenshot_service_poll(void)
     XTime now = 0U;
     uint8_t any_active = 0U;
 
+    shot_poll();
     for (uint32_t i = 0U; i < OVERLAY_COUNT; ++i) {
         if (g_overlays[i].active != 0U) {
             any_active = 1U;
@@ -842,6 +978,7 @@ static void overlay_draw_one(uint16_t *fb, overlay_t *ov, uint8_t slot_mask)
         return;
     }
 
+    compositor_pixel_mask_exclude(ov->rect.x, ov->rect.y, ov->rect.w, ov->rect.h);
     fb16_fill_rect(fb, ov->rect.x, ov->rect.y, ov->rect.w, ov->rect.h,
                    FB16_COLOR_BLACK);
     fb16_rect(fb, ov->rect.x, ov->rect.y, ov->rect.w, ov->rect.h,

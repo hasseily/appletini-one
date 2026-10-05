@@ -44,6 +44,13 @@
 #define FB_MODE_REQUEST_REG (FB_CONTROL_BASE + 0x18)
 #define FB_MODE_STATUS_REG  (FB_CONTROL_BASE + 0x1C)
 #define FB_MODE_BASE_REG    (FB_CONTROL_BASE + 0x20)
+#define FB_MASK_CAPABILITY_REG (FB_CONTROL_BASE + 0x24U)
+#define FB_MASK_CAPABILITY     0x4D534B31U /* MSK1 */
+#define FB_MASK_BANK_REG(slot, word) \
+    (FB_CONTROL_BASE + 0x100U + (uint32_t)(slot) * 0x80U + (uint32_t)(word) * 4U)
+/* Three slot banks: framebuffer tag, mode/count, viewport X/Y bounds,
+ * then eight X/Y exclusion pairs. Publish FB_BASE only after staging the
+ * free slot's bank. The PL transfers its matching bank at the frame latch. */
 #define FB_MODE_ID_MASK     0x0FU
 #define FB_MODE_BUSY        (1U << 8)
 #define FB_MODE_ERROR       (1U << 9)

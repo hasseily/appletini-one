@@ -16,8 +16,13 @@ BUILD = ROOT / "build" / "usb_gamepad_input_test"
 FUNCTIONS = (
     "usb_hid_menu_source_from_keyboard_usage",
     "usb_hid_menu_source_is_keyboard",
+    "usb_hid_menu_source_from_gamepad_button", "usb_hid_menu_source_is_gamepad",
+    "screenshot_source_valid", "screenshot_push_source", "vtw_push_source",
+    "usb_hid_service_set_screenshot_sources", "usb_hid_service_set_vtw_sources",
     "mouse_menu_push_event", "mouse_menu_push_action",
     "mouse_menu_push_bindable_action", "mouse_menu_action_from_source",
+    "keyboard_menu_push_source", "hid_source_list_add",
+    "keyboard_menu_start_ok_hold", "hid_process_keyboard_usages",
     "mouse_menu_source_button_mask", "menu_hold_source_valid",
     "hid_slot_reset_menu_state", "hid_slot_reset", "hid_slots_reset_all",
     "hid_slots_reset_menu_state", "hid_slot_from_hid", "hid_slot_find_free",
@@ -26,7 +31,7 @@ FUNCTIONS = (
     "menu_finish_open_close_hold", "menu_poll_open_close_hold",
     "hid_slots_poll_holds", "mouse_menu_start_ok_hold",
     "mouse_menu_finish_ok_hold", "mouse_menu_push_button_edge",
-    "mouse_menu_process_buttons", "hid_axis_active_from_rest",
+    "mouse_menu_process_buttons", "gamepad_menu_process_buttons", "hid_axis_active_from_rest",
     "hid_menu_push_hat", "hid_menu_push_axis", "hid_process_gamepad_report",
     "hid_report_id_matches", "hid_extract_bits", "hid_sign_extend",
     "hid_item_signed_value", "hid_desktop_usage_for_field", "hid_onee_axis_from_usage",
@@ -37,6 +42,7 @@ FUNCTIONS = (
     "hid_slots_retry_reports", "usbh_hid_run", "usbh_hid_stop",
     "usb_hid_service_set_menu_capture", "usb_hid_service_set_joystick_preview",
     "usb_hid_service_set_onee_fixed_mode",
+    "usb_hid_service_set_binding_capture", "usb_hid_service_set_gamepad_binding_mask",
     "usb_hid_service_set_onee_input_blocked",
     "usb_hid_service_all_input_released", "usb_hid_service_set_menu_ok_source",
     "usb_hid_service_set_menu_open_close_source",
@@ -84,7 +90,8 @@ def main() -> int:
     hid_header = (ROOT / "third_party/CherryUSB/class/hid/usbh_hid.h").read_text()
     report_types = hid_header[hid_header.index("struct usbh_hid_report_item_attribute"):
                               hid_header.index("struct usbh_hid {")]
-    harness = harness.replace("/* PRODUCTION_REPORT_TYPES */", report_types)
+    parser = (FRONTEND / "usb_gamepad_descriptor.h").read_text().replace('#include "usbh_hid.h"', "")
+    harness = harness.replace("/* PRODUCTION_REPORT_TYPES */", report_types + "\n" + parser)
     harness = harness.replace("/* PRODUCTION_PROTOTYPES */",
                               "\n".join(item[0] for item in functions))
     harness = harness.replace("/* PRODUCTION_FUNCTIONS */",

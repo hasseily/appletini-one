@@ -61,7 +61,7 @@ typedef struct {
     uint8_t reset_delete_consumed;
     uint8_t reset_modifier_consumed;
     uint8_t joystick_seen;
-    uint8_t joystick_buttons;
+    uint32_t joystick_buttons;
     uint8_t joystick_axis_valid;
     uint8_t joystick_axes[ONEE_INPUT_AXIS_COUNT];
 } onee_input_slot_t;
@@ -875,7 +875,8 @@ void onee_input_service_joystick_report(
     slot = &g_slots[slot_index];
     slot->joystick_seen = 1U;
     if (report->buttons_valid != 0U) {
-        slot->joystick_buttons = (uint8_t)(report->buttons & 0x07U);
+        const uint32_t mask = report->buttons_mask ? report->buttons_mask : UINT32_MAX;
+        slot->joystick_buttons = (slot->joystick_buttons & ~mask) | (report->buttons & mask);
     }
     for (uint8_t axis = 0U; axis < ONEE_INPUT_AXIS_COUNT; ++axis) {
         if ((report->axis_valid_mask & (uint8_t)(1U << axis)) == 0U) {

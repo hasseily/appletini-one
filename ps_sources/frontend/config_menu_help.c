@@ -152,7 +152,7 @@ HELP(boot_bind_nav,
     "Press Enter on the row, then press the USB key or gamepad input you want to bind.");
 
 HELP(boot_bind_tabs,
-    "Cycles the menu tabs up or down from anywhere in the menu.",
+    "Cycles the menu tabs up or down. Unbound LB and RB also select the previous and next tab.",
     "Press Enter on the row, then press the USB key or gamepad input you want to bind.");
 
 HELP(boot_bind_ok_back,
@@ -161,8 +161,8 @@ HELP(boot_bind_ok_back,
 
 HELP(boot_bind_prtscr,
     "Screenshot keys, active at all times, not just in the menu.",
-    "PRTSCR A2 saves the Apple's native video frame; OUTPUT SCREEN saves the full screen at the selected resolution.",
-    "Screenshots land on the SD card.");
+    "PRTSCR A2 crops the displayed Apple picture with its effects; OUTPUT SCREEN saves the whole output.",
+    "Screenshots save to SD in the background. Keyboard keys and controller buttons can trigger them.");
 
 HELP(boot_bind_tw_speed,
     "TransWarp speed keys, active at all times: toggle between full speed and 1 MHz,",
@@ -209,16 +209,17 @@ HELP(video,
     "Ghosting, a phosphor persistence effect across frames, is by far the most expensive feature.");
 
 HELP(video_output,
-    "Color renders legacy Apple video with the decoder selected on the next row.",
+    "Color renders legacy Apple video with the selected Color mode.",
     "Monochrome removes artifact color and uses the selected White, Green, or Amber tint.",
     "SHR ignores this switch and follows its own $C029 black-and-white control.");
 
 HELP(video_variant,
-    "With Monochrome, this row selects the display tint. Add ghosting for a phosphor persistence effect.",
-    "With Color output, choose a color model. Idealized and RGB are crisp, but miss color blending.",
-    "Composite Monitor and Color TV model analog color artifacts and blending.",
-    "PAL Accurate appears only on PAL machines. It models individual signal components.",
-    "We're happy to implement an accurate NTSC model if someone can provide the necessary data.");
+    "Color selects a decoder; Monochrome selects White, Green, or Amber.",
+    "Idealized and RGB keep crisp colors; Composite Monitor and TV model artifacts.",
+    "TV modes keep their own color and horizontal response.",
+    "Phosphor blur softens color and monochrome; Dot bleed applies only to mono.",
+    "PAL Accurate models PAL timing; its colors use NTSC-derived tables.",
+    "Neither PAL mode models a PAL chroma delay-line decoder.");
 
 HELP(video_dot_bleed,
     "Dot bleed softens monochrome dot edges during the 2x horizontal expansion.",
@@ -239,8 +240,16 @@ HELP(video_video7_mix,
     "The byte high bits select color or monochrome at each four-dot color boundary.");
 
 HELP(video_scanlines,
-    "Scanlines blank replicated output rows after scaling. It is a naive but effective effect.",
-    "There is no performance impact, and it is purely a matter of preference.");
+    "Scanlines darken repeated output rows after enlargement.",
+    "At 2x height, Light, Medium, and Strong keep 75%, 50%, and 25% of each dark row.",
+    "At 4x, one, two, or three rows are black. At 1x, scanlines have no effect.");
+
+HELP(video_pixel_mask,
+    "Add a pixel texture to the Apple picture and its optional border.",
+    "Aperture grille repeats RGB columns. Shadow mask staggers each row.",
+    "LCD grid dims every third row or column. Strength is fixed.",
+    "Patterns use output pixels, so their pitch stays fixed as size changes.",
+    "The decorative bezel, menus and status overlays stay unchanged.");
 
 HELP(video_ghosting,
     "Phosphor ghosting retains bright pixels from earlier displayed frames and decays them over time.",
@@ -248,16 +257,15 @@ HELP(video_ghosting,
     "Ghosting is expensive, so avoid mixing it with borders, full screen bezels and debug.");
 
 HELP(video_blur,
-    "Phosphor blur softens the Apple video like a CRT spot, bleeding each pixel into its neighbors.",
-    "Light softens horizontally. Medium adds vertical bleed across scanlines. Strong widens further.",
-    "Blur combines with glow and ghosting for a full CRT look.",
-    "Blur+glow are expensive, so avoid mixing them with borders, full screen bezels and debug.");
+    "Blur spreads each Apple pixel into nearby pixels.",
+    "Light softens rows. Medium also blends nearby lines. Strong widens the blur.",
+    "Glow adds light; ghosting leaves a fading trail. Both work with blur.",
+    "Blur and glow cost speed, especially with borders, bezels and debug.");
 
 HELP(video_glow,
-    "Phosphor glow adds a halo of light around bright pixels without softening the image itself.",
-    "The halo is additive and saturates toward white, like a CRT bloom. Strengths set its intensity.",
-    "Glow is independent of blur: sharp with glow, soft with glow, or both work together.",
-    "Blur+glow are expensive, so avoid mixing them with borders, full screen bezels and debug.");
+    "Phosphor glow adds light around bright pixels. Strength sets the added light.",
+    "Its halo uses a fixed native filter, so Blur does not change its radius.",
+    "Larger size multipliers enlarge the halo with the picture.");
 
 HELP(video_format_badge,
     "Show video mode labels the current Apple format (HGR, DHGR, SHR4, 3200...) in a corner.",
@@ -317,17 +325,18 @@ static const help_override_t video_overrides[] = {
     OVERRIDE(CONFIG_VIDEO_ITEM_SIZE_MULTIPLIER, video_size_multiplier),
     OVERRIDE(CONFIG_VIDEO_ITEM_OUTPUT, video_output),
     OVERRIDE(CONFIG_VIDEO_ITEM_VARIANT, video_variant),
-    OVERRIDE(CONFIG_VIDEO_ITEM_DOT_BLEED, video_dot_bleed),
+    OVERRIDE(CONFIG_VIDEO_ITEM_ROM, video_rom),
+    OVERRIDE(CONFIG_VIDEO_ITEM_VIDEO7, video_video7),
+    OVERRIDE(CONFIG_VIDEO_ITEM_COL140M, video_video7_mix),
     OVERRIDE(CONFIG_VIDEO_ITEM_SCANLINES, video_scanlines),
+    OVERRIDE(CONFIG_VIDEO_ITEM_PIXEL_MASK, video_pixel_mask),
+    OVERRIDE(CONFIG_VIDEO_ITEM_DOT_BLEED, video_dot_bleed),
     OVERRIDE(CONFIG_VIDEO_ITEM_BLUR, video_blur),
     OVERRIDE(CONFIG_VIDEO_ITEM_GLOW, video_glow),
     OVERRIDE(CONFIG_VIDEO_ITEM_GHOSTING, video_ghosting),
     OVERRIDE(CONFIG_VIDEO_ITEM_BORDER, video_border),
-    OVERRIDE(CONFIG_VIDEO_ITEM_VIDEO7, video_video7),
-    OVERRIDE(CONFIG_VIDEO_ITEM_COL140M, video_video7_mix),
     OVERRIDE(CONFIG_VIDEO_ITEM_BORDER_COLOR, video_border_color),
     OVERRIDE(CONFIG_VIDEO_ITEM_BORDER_FLOOD, video_border_outside),
-    OVERRIDE(CONFIG_VIDEO_ITEM_ROM, video_rom),
     OVERRIDE(CONFIG_VIDEO_ITEM_SHOW_BEZEL, video_show_bezel),
     OVERRIDE(CONFIG_VIDEO_ITEM_BEZEL, video_bezel),
     OVERRIDE(CONFIG_VIDEO_ITEM_DEBUG, video_debug),

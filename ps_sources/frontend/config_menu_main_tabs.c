@@ -5,7 +5,9 @@
 #include <string.h>
 
 #include "scanlines.h"
+#include "video_blur.h"
 #include "video_mono.h"
+#include "video_pixel_mask.h"
 
 static const char *usb_binding_draw_label(uint32_t action)
 {
@@ -358,155 +360,167 @@ void config_menu_draw_video(uint16_t *fb,
                                  uint8_t, uint8_t, const char *) =
         (menu->border_flood != 0u) ?
             hgr_draw_check_item_dimmed : hgr_draw_check_item;
-    void (*draw_exclusive_value)(uint16_t *, int, int, int,
-                                 uint8_t, const char *, const char *) =
-        (menu->border_flood != 0u) ?
-            hgr_draw_value_item_dimmed : hgr_draw_value_item;
 
-    /* Mono tint and dot bleed share a row. Border and the two Video-7
-     * options share another, as do debug and video mode. */
+    /* Keep source settings, display effects, and border controls together.
+     * Draw in focus order so the compact menu keeps the same grouping. */
     const int half_w = (w - 12) / 2;
     const int right_x = x + half_w + 12;
     const int right_w = w - half_w - 12;
-    const int third_w = (w - 16) / 3;
-    const int middle_x = x + third_w + 8;
-    const int last_x = middle_x + third_w + 8;
-    const int last_w = w - (third_w * 2) - 16;
+    int label_w = (half_w * 46) / 100;
+    const int long_value_label_w = half_w - 66 -
+        cmui_text_width("PAL Accurate Composite", CMUI_BODY_SCALE);
+
+    /* Use one anchor for both columns and full-width rows. Reserve enough
+     * value space for every color mode without moving individual fields. */
+    if (label_w > long_value_label_w) {
+        label_w = long_value_label_w;
+    }
     const uint8_t multiplier = config_menu_size_multiplier(menu);
     const uint8_t maximum = display_mode_max_multiplier(config_menu_output_mode(menu));
     const char *multiplier_text = (multiplier == 0U) ? "Max" :
         ((multiplier == 1U) ? "1x" : ((maximum < 2U) ? "2x (1x fit)" : "2x"));
 
-    hgr_draw_value_item(fb,
+    cmui_value_row_aligned(fb,
                         x,
                         y,
                         half_w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_RESOLUTION),
+                        0U,
                         "Output resolution",
-                        display_mode_get(config_menu_output_mode(menu))->name);
-    hgr_draw_value_item(fb,
+                        display_mode_get(config_menu_output_mode(menu))->name, label_w);
+    cmui_value_row_aligned(fb,
                         right_x,
                         y,
                         right_w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_SIZE_MULTIPLIER),
+                        0U,
                         "Size multiplier",
-                        multiplier_text);
-    y += row_h;
-
-    hgr_draw_value_item(fb,
+                        multiplier_text, label_w);
+    cmui_value_row_aligned(fb,
                         x,
-                        y,
-                        w,
+                        y + (row_h * 1),
+                        half_w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_OUTPUT),
+                        0U,
                         "Video output",
-                        config_menu_video_output_text(menu->video_output_mono));
-    hgr_draw_value_item(fb,
-                        x,
-                        y + row_h,
-                        (menu->video_output_mono != 0U) ? half_w : w,
+                        config_menu_video_output_text(menu->video_output_mono), label_w);
+    cmui_value_row_aligned(fb,
+                        right_x,
+                        y + (row_h * 1),
+                        right_w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_VARIANT),
+                        0U,
                         config_menu_video_variant_label(menu),
-                        config_menu_video_variant_text(menu));
-    if (menu->video_output_mono != 0U) {
-        hgr_draw_value_item(fb,
-                            right_x,
-                            y + row_h,
-                            right_w,
-                            (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_DOT_BLEED),
-                            "Dot bleed",
-                            appletini_video_dot_bleed_name(menu->video_dot_bleed));
-    }
-    hgr_draw_value_item(fb,
+                        config_menu_video_variant_text(menu), label_w);
+    cmui_value_row_aligned(fb,
                         x,
                         y + (row_h * 2),
                         w,
-                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_SCANLINES),
-                        "Scanlines",
-                        appletini_scanlines_name(menu->scanlines_mode));
-    hgr_draw_video_blur_item(fb,
-                             x,
-                             y + (row_h * 3),
-                             w,
-                             (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BLUR),
-                             menu->video_blur_strength);
-    hgr_draw_video_glow_item(fb,
-                             x,
-                             y + (row_h * 4),
-                             w,
-                             (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_GLOW),
-                             menu->video_glow_strength);
-    hgr_draw_video_ghosting_item(fb,
-                                 x,
-                                 y + (row_h * 5),
-                                 w,
-                                 (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_GHOSTING),
-                                 menu->video_ghosting_strength);
+                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_ROM),
+                        0U,
+                        "Video ROM",
+                        config_menu_video_rom_text(menu), label_w);
     hgr_draw_check_item(fb,
                         x,
-                        y + (row_h * 6),
-                        third_w,
-                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BORDER),
-                        menu->border_enabled,
-                        "IIgs border");
-    hgr_draw_check_item(fb,
-                        middle_x,
-                        y + (row_h * 6),
-                        third_w,
+                        y + (row_h * 3),
+                        half_w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_VIDEO7),
                         menu->video7_auto_mono_enabled,
                         "Video-7 mono");
     hgr_draw_check_item(fb,
-                        last_x,
-                        y + (row_h * 6),
-                        last_w,
+                        right_x,
+                        y + (row_h * 3),
+                        right_w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_COL140M),
                         menu->dhgr_col140m_enabled,
                         "Video-7 MIX (COL140M)");
-    hgr_draw_value_item(fb,
+    cmui_value_row_aligned(fb,
+                        x,
+                        y + (row_h * 4),
+                        half_w,
+                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_SCANLINES),
+                        0U,
+                        "Scanlines",
+                        appletini_scanlines_name(menu->scanlines_mode), label_w);
+    cmui_value_row_aligned(fb,
+                        right_x,
+                        y + (row_h * 4),
+                        right_w,
+                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_PIXEL_MASK),
+                        0U,
+                        "Pixel mask",
+                        appletini_video_pixel_mask_name(menu->video_pixel_mask), label_w);
+    if (menu->video_output_mono != 0U) {
+        cmui_value_row_aligned(fb, x, y + row_h * 5, half_w,
+            (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_DOT_BLEED),
+            0U,
+            "Dot bleed", appletini_video_dot_bleed_name(menu->video_dot_bleed), label_w);
+    }
+    hgr_draw_video_blur_item(fb,
+        menu->video_output_mono ? right_x : x, y + row_h * 5,
+        menu->video_output_mono ? right_w : w,
+        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BLUR),
+        menu->video_blur_strength, label_w);
+    hgr_draw_video_glow_item(fb,
+                             x,
+                             y + (row_h * 6),
+                             half_w,
+                             (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_GLOW),
+                             menu->video_glow_strength, label_w);
+    hgr_draw_video_ghosting_item(fb,
+                                 right_x,
+                                 y + (row_h * 6),
+                                 right_w,
+                                 (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_GHOSTING),
+                                 menu->video_ghosting_strength, label_w);
+    hgr_draw_check_item(fb,
                         x,
                         y + (row_h * 7),
-                        w,
+                        half_w,
+                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BORDER),
+                        menu->border_enabled,
+                        "IIgs border");
+    cmui_value_row_aligned(fb,
+                        right_x,
+                        y + (row_h * 7),
+                        right_w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BORDER_COLOR),
+                        0U,
                         "Border color",
-                        config_menu_border_color_text(menu->border_color));
-    hgr_draw_value_item(fb,
+                        config_menu_border_color_text(menu->border_color), label_w);
+    cmui_value_row_aligned(fb,
                         x,
                         y + (row_h * 8),
                         w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BORDER_FLOOD),
+                        0U,
                         "Outside ring",
-                        config_menu_border_outside_text(menu->border_flood));
-    hgr_draw_value_item(fb,
-                        x,
-                        y + (row_h * 9),
-                        w,
-                        (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_ROM),
-                        "Video ROM",
-                        config_menu_video_rom_text(menu));
+                        config_menu_border_outside_text(menu->border_flood), label_w);
     draw_exclusive_check(fb,
                          x,
-                         y + (row_h * 10),
+                         y + (row_h * 9),
                          w,
                          (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_SHOW_BEZEL),
                          menu->show_bezel,
                          "Show bezel");
-    draw_exclusive_value(fb,
+    cmui_value_row_aligned(fb,
                          x,
-                         y + (row_h * 11),
+                         y + (row_h * 10),
                          w,
                          (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BEZEL),
+                         (uint8_t)(menu->border_flood != 0U),
                          "Bezel",
-                         config_menu_bezel_text(menu));
+                         config_menu_bezel_text(menu), label_w);
     draw_exclusive_check(fb,
                          x,
-                         y + (row_h * 12),
+                         y + (row_h * 11),
                          half_w,
                          (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_DEBUG),
                          menu->show_debugging,
                          "Show debugging");
     hgr_draw_check_item(fb,
                         right_x,
-                        y + (row_h * 12),
+                        y + (row_h * 11),
                         right_w,
                         (uint8_t)(menu->item_focus == CONFIG_VIDEO_ITEM_BADGE),
                         menu->format_badge_enabled,

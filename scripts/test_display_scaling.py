@@ -68,7 +68,7 @@ volatile uint32_t g_compositor_last_apple_slot, g_compositor_last_apple_mode;
 uint32_t apple_fb_reader_display_mode(void) { return test_display_mode; }
 uint32_t apple_fb_reader_format_detail(void) { return test_format_detail; }
 uint8_t apple_fb_reader_border_color(void) { return 12; }
-static int compositor_apple_effects_active(void) { return s_video_ghosting_strength != 0; }
+static int compositor_apple_effects_active(void) { return s_video_ghosting_strength != 0 || s_video_blur_strength != 0 || s_video_glow_strength != 0 || s_mono_width != 0; }
 static void draw_format_badge(uint16_t *fb, int x, int y, int w) {
     (void)fb; (void)x; (void)y; (void)w;
 }
@@ -98,9 +98,9 @@ static void check_guards(void) {
          i < GUARD + (size_t)FB16_MAX_WIDTH * FB16_MAX_HEIGHT + GUARD; ++i)
         CHECK(storage[i] == 0x1357);
 }
-static int blank(unsigned phase, unsigned scale, unsigned scan) {
-    if (scale == 4) return scan != 0 && phase >= 4 - scan;
-    return scale == 2 && scan >= 2 && phase == 1;
+static uint16_t shade(uint16_t p,unsigned phase,unsigned sy,unsigned scan) {
+    unsigned q=!scan || sy==1 ? 4 : sy==4 ? (phase>=4-scan ? 0:4) : phase==1 ? 4-scan:4;
+    return (uint16_t)((((p>>11)*q/4)<<11)|(((((p>>5)&63)*q/4))<<5)|((p&31)*q/4));
 }
 static void check_blit(const comp_viewport_t *v, int shr, int woven,
                         unsigned scan, int effects_on) {
@@ -118,7 +118,6 @@ static void check_blit(const comp_viewport_t *v, int shr, int woven,
     reset_output();
     if (effects_on) {
         effect_clear_history();
-        s_mono_width = 0;
         blit_apple_effects_scaled(fb, ox, oy, src, w, h, stride, sx, sy,
                                    scan, APPLETINI_VIDEO_GHOSTING_LIGHT, 0, 0);
     } else {
@@ -129,8 +128,7 @@ static void check_blit(const comp_viewport_t *v, int shr, int woven,
         for (int x = 0; x < FB16_WIDTH; ++x) {
             uint16_t want = 0x1357;
             if (x >= ox && x < ox + w * sx && y >= oy && y < oy + h * sy) {
-                want = blank((y - oy) % sy, sy, scan) ? 0 :
-                    fb16_from_bgra32(src[((y - oy) / sy) * stride + (x - ox) / sx]);
+                want = shade(fb16_from_bgra32(src[((y - oy) / sy) * stride + (x - ox) / sx]),(y-oy)%sy,sy,scan);
             }
             CHECK(fb[y * FB16_WIDTH + x] == want);
         }
@@ -151,7 +149,7 @@ static void check_shr_border(const comp_viewport_t *v, unsigned scan) {
             const int active = x >= v->x && x < v->x + v->width &&
                 y >= v->y && y < v->y + v->height;
             const unsigned phase = (unsigned)(y - v->border_y) & (v->scale - 1U);
-            const uint16_t want = active ? 0x1357 : blank(phase, v->scale, scan) ? 0 : 0xFFFF;
+            const uint16_t want = active ? 0x1357 : shade(0xFFFF,phase,v->scale,scan);
             CHECK(fb[y * FB16_WIDTH + x] == want);
         }
     }
@@ -196,24 +194,25 @@ static void check_overlay(int shr) {
     }
 }
 static void check_small_effects(void) {
-    uint16_t reference[5][18];
+    uint16_t reference[5][9];
     for (int i = 0; i < 45; ++i)
         src[i] = 0xFF000000U | ((i * 87159U) & 0xFFFFFFU);
     for (unsigned mono = 0; mono < 2; ++mono) {
-        s_mono_x = 1;
-        s_mono_y = 0;
-        s_mono_width = mono ? 7 : 0;
-        s_mono_height = 5;
-        s_mono_channel_shift = video_mono_channel_shift(3);
-        video_mono_build_tint(s_mono_tint, 3);
         for (unsigned blur = 0; blur < 4; ++blur) {
             for (unsigned glow = 0; glow < 4; ++glow) {
+                s_mono_x = s_mono_y = 0;
+                s_mono_width = mono ? 9 : 0;
+                s_mono_height = mono ? 5 : 0;
+                s_mono_channel_shift = 16;
+                s_video_dot_bleed = (uint8_t)blur;
+                for (unsigned value = 0; value < 256; ++value)
+                    s_mono_tint[value] = fb16_from_bgra32(0xFF000000U | value * 0x010101U);
                 reset_output();
                 effect_clear_history();
-                blit_apple_effects_scaled(fb, 0, 0, src, 9, 5, 9, 2, 2, 0,
+                blit_apple_effects_scaled(fb, 0, 0, src, 9, 5, 9, 1, 1, 0,
                                            APPLETINI_VIDEO_GHOSTING_LIGHT, blur, glow);
                 for (int y = 0; y < 5; ++y)
-                    memcpy(reference[y], fb + 2 * y * FB16_WIDTH, sizeof(reference[y]));
+                    memcpy(reference[y], fb + y * FB16_WIDTH, sizeof(reference[y]));
                 reset_output();
                 effect_clear_history();
                 blit_apple_effects_scaled(fb, -3, -1, src, 9, 5, 9, 1, 1, 3,
@@ -223,12 +222,7 @@ static void check_small_effects(void) {
                     for (int x = 0; x < 12; ++x) {
                         uint16_t want = 0x1357;
                         if (y < 4 && x < 6) {
-                            const uint16_t a = reference[y + 1][2 * (x + 3)];
-                            const uint16_t b = reference[y + 1][2 * (x + 3) + 1];
-                            const unsigned r = (((a >> 11) & 31) + ((b >> 11) & 31)) / 2;
-                            const unsigned g = (((a >> 5) & 63) + ((b >> 5) & 63)) / 2;
-                            const unsigned blue = ((a & 31) + (b & 31)) / 2;
-                            want = (r << 11) | (g << 5) | blue;
+                            want = reference[y + 1][x + 3];
                         }
                         CHECK(fb[y * FB16_WIDTH + x] == want);
                     }
@@ -236,7 +230,6 @@ static void check_small_effects(void) {
             }
         }
     }
-    s_mono_width = 0;
 }
 static void check_claimed_border_modes(void) {
     const comp_viewport_t *v = &comp_legacy_viewport;
@@ -277,11 +270,11 @@ static void check_claimed_border_modes(void) {
                             const int in_ring = x >= v->border_x && x < v->border_x + v->border_width &&
                                 y >= v->border_y && y < v->border_y + v->border_height;
                             const unsigned phase = (unsigned)(y - v->border_y) & (sy - 1U);
-                            if (in_active) want = blank(phase, sy, scan) ? 0 : active565;
+                            if (in_active) want = shade(active565,phase,sy,scan);
                             else if (s_border_enabled && in_ring)
-                                want = blank(phase, sy, scan) ? 0 : synthetic ? solid565 : raster565;
+                                want = shade(synthetic ? solid565:raster565,phase,sy,scan);
                             else if (s_border_enabled && s_border_flood)
-                                want = blank(phase, sy, scan) ? 0 : solid565;
+                                want = shade(solid565,phase,sy,scan);
                             CHECK(fb[y * FB16_WIDTH + x] == want);
                         }
                     }

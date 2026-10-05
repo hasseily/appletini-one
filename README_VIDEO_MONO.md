@@ -1,5 +1,30 @@
 # Monochrome dot bleed
 
+F1.2.4 restores the F1.2.2 **Phosphor blur** and mono **Dot bleed** controls.
+Blur Light applies the old horizontal three-tap filter; Medium adds the old
+vertical three-tap filter; Strong uses the old wider horizontal filter.
+The later separate H/V light-space filter is removed. Color/TV decoders are
+unchanged by these controls. Pixel masks remain available.
+
+The ghosting threshold correction, fixed glow radius, 2x scanline dimming,
+and NEON row copies remain. Blur/Dot output with those independent effects
+Off matches F1.2.2 exactly. Glow uses its own fixed three-by-three halo, so
+changing Blur does not widen that halo.
+
+Settings again save `video.blur` and `video.dot.bleed`. Original keys win if
+both original and F1.2.3 keys appear, regardless of order. F1.2.3 settings
+have no exact equivalent: color H Light/Medium becomes Blur Light, H Strong
+becomes Blur Strong, and enabled V requires at least Blur Medium. In mono,
+H becomes Dot bleed and enabled V becomes Blur Medium. New defaults are
+Blur Off and Dot bleed Light; original profiles retain their original values.
+
+Validation: `test_video_smoothing.py` runs the actual F1.2.2 compositor as a
+reference. Native and Cortex-A9 NEON runs each pass 704 exact Blur/Dot cases,
+321 retained glow/scanline/border cases, and 768 ghosting-decay cases.
+`test_video_smoothing_config.py` checks 8,192 migration combinations.
+No new board frame-rate result is claimed.
+
+
 Legacy mono output shapes each dot during the compositor's 2x row
 expansion. This reduces the thick dark gaps seen in dithered HGR images.
 The Video tab control "Dot bleed" selects Off, Light, Medium, or Strong.

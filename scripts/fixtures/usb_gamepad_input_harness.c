@@ -13,7 +13,7 @@
 #define USB_HID_SLOT_COUNT ONEE_INPUT_DEVICE_SLOT_COUNT
 #define HID_SOURCE_TRACK_COUNT 16U
 #define HID_KEY_TRACK_COUNT 8U
-#define CONFIG_USB_HID_MAX_REPORT_ITEMS 16U
+#define CONFIG_USB_HID_MAX_REPORT_ITEMS 48U
 #define HID_HAT_NEUTRAL 8U
 #define MOUSE_MENU_EVENT_DEPTH 16U
 #define MOUSE_MENU_HOLD_TICKS 1000U
@@ -49,7 +49,10 @@ static uint8_t g_reports[USB_HID_SLOT_COUNT][64];
 static uint32_t g_report_count, g_transfer_error_count;
 static int g_last_error;
 static uint8_t g_menu_capture, g_joystick_preview, g_onee_fixed_mode;
-static uint8_t g_onee_input_blocked, g_ready;
+static uint8_t g_onee_input_blocked, g_ready, g_binding_capture;
+static uint32_t g_gamepad_binding_mask;
+static usb_hid_menu_source_t g_screenshot_a2_source, g_screenshot_1080p_source;
+static usb_hid_menu_source_t g_vtw_sources[USB_HID_VTW_SOURCE_COUNT];
 static usb_hid_menu_source_t g_menu_ok_source = USB_HID_MENU_ACTION_SELECT;
 static usb_hid_menu_source_t g_menu_open_close_source = USB_HID_MENU_ACTION_SELECT;
 static usb_hid_menu_event_t g_menu_events[MOUSE_MENU_EVENT_DEPTH];
@@ -90,9 +93,6 @@ static void hid_collect_keyboard_item(const struct usbh_hid_report_item *item,
     const uint8_t *report, uint32_t len, uint8_t *modifier, uint8_t *keys,
     uint32_t *count, uint8_t *seen)
 { (void)item; (void)report; (void)len; (void)modifier; (void)keys; (void)count; (void)seen; }
-static void hid_process_keyboard_usages(usb_hid_slot_t *slot, uint8_t modifier,
-    const uint8_t *keys, uint32_t count)
-{ (void)slot; (void)modifier; (void)keys; (void)count; }
 static void mouse_apply_motion(usb_hid_slot_t *slot, int32_t dx,int32_t dy,uint8_t buttons)
 { (void)dx; (void)dy; (void)buttons; if (slot->mouse_card) ++mock_mouse_writes; }
 static void hid_resubmit_report(usb_hid_slot_t *slot)
@@ -115,6 +115,9 @@ void onee_input_service_disconnect(uint8_t slot)
 void onee_input_service_joystick_report(
     uint8_t slot, const onee_input_joystick_report_t *report)
 { ++mock_report_calls; mock_reports[slot] = *report; }
+uint8_t onee_input_service_keyboard_report(uint8_t slot, uint8_t modifier,
+    const uint8_t *keys, uint32_t count)
+{ (void)slot; (void)modifier; (void)keys; (void)count; return 0U; }
 void onee_input_service_set_blocked(uint8_t value) { mock_blocked = value; }
 void onee_input_service_release_keyboard(void) { ++mock_release_keys; }
 void slot2_gamepad_service_disconnect(uint8_t slot)
@@ -390,8 +393,9 @@ static int test_generic_hid_gamepad(void)
     slot->onee_joystick = 0U;
     packet[0] = 2U; packet[1] = 0xFFU;
     {
-        uint8_t value = 0U, seen = 0U;
-        hid_collect_button_item(slot, buttons, packet, 2U, &value, &seen);
+        uint32_t value = 0U, mask = 0U;
+        uint8_t seen = 0U;
+        hid_collect_button_item(slot, buttons, packet, 2U, &value, &mask, &seen);
         CHECK(seen && value == 0x1FU, "mouse button limit stays at five");
     }
     slot->onee_joystick = 1U;
@@ -401,6 +405,219 @@ static int test_generic_hid_gamepad(void)
           !mock_slot2_reports[0].axis_valid_mask && mock_slot2_hats[0] == HID_HAT_NEUTRAL,
           "generic HID disconnect releases the matching slot-2 controller");
     puts("PASS native generic HID hat-only detection, one-based and four/eight-way hats, all eight buttons, partial report IDs, mouse limit, disconnect");
+    return 0;
+}
+
+static int test_gamepad_descriptor_and_masks(void)
+{
+    /* Explicit nonconsecutive axes; output/feature fields must not consume
+     * input offsets, and switching report IDs must retain each input offset. */
+    static const uint8_t descriptor[] = {
+        0x05,1,0x09,5,0xa1,1,0x85,1,0x15,0,0x26,0xff,0,
+        0x75,8,0x95,4,0x09,0x30,0x09,0x31,0x09,0x33,0x09,0x35,0x81,2,
+        0x95,2,0x91,2,0xb1,2,
+        0x85,2,0x05,9,0x19,1,0x29,16,0x15,0,0x25,1,0x75,1,0x95,16,0x81,2,
+        0x85,3,0x19,17,0x29,32,0x81,2,
+        0x85,1,0x05,2,0x09,0xc4,0x09,0xc5,0x15,0,0x26,0xff,0,
+        0x75,8,0x95,2,0x81,2,0xc0
+    };
+    static const uint8_t array_descriptor[] = {
+        0x05,1,0x09,5,0xa1,1,0x05,9,0x19,1,0x29,32,
+        0x15,1,0x25,32,0x75,8,0x95,2,0x81,0,0xc0
+    };
+    usb_hid_slot_t *slot = &g_hid_slots[0];
+    hid_slots_reset_all();
+    g_menu_capture = g_binding_capture = g_joystick_preview = 0U;
+    g_gamepad_binding_mask = 0U;
+    slot->active = slot->onee_joystick = slot->report_info_valid = 1U;
+    CHECK(appletini_usb_parse_gamepad_descriptor(descriptor, sizeof(descriptor),
+        &slot->report_info) == 1, "gamepad application collection identified");
+    CHECK(slot->report_info.report_item_count == 38U &&
+        slot->report_info.report_items[2].attribute.usage_min == HID_DESKTOP_USAGE_RX &&
+        slot->report_info.report_items[3].attribute.usage_min == HID_DESKTOP_USAGE_RZ &&
+        slot->report_info.report_items[36].report_bit_offset == 32U,
+        "nonconsecutive usages and independent report-type offsets retained");
+    const uint8_t axes[] = {1,64,192,99,12,0,255};
+    hid_process_report_protocol_report(slot, axes, sizeof(axes));
+    CHECK(mock_reports[0].axis_valid_mask == 0x2FU &&
+        mock_reports[0].axis[ONEE_INPUT_AXIS_RX] == 99 &&
+        mock_reports[0].axis[ONEE_INPUT_AXIS_Z] == 0 &&
+        mock_reports[0].axis[ONEE_INPUT_AXIS_RZ] == 255,
+        "explicit axes and simulation trigger fields decode independently");
+    uint8_t buttons[] = {3,0,0x80};
+    hid_process_report_protocol_report(slot, buttons, sizeof(buttons));
+    CHECK(slot->gamepad_buttons == UINT32_C(0x80000000) &&
+        mock_reports[0].buttons_mask == UINT32_C(0xFFFF0000), "button32 kept independently");
+    buttons[0]=2;buttons[1]=1;buttons[2]=0;
+    hid_process_report_protocol_report(slot, buttons, sizeof(buttons));
+    CHECK(slot->gamepad_buttons == UINT32_C(0x80000001), "different report ID preserves held button32");
+    hid_process_report_protocol_report(slot, axes, sizeof(axes));
+    CHECK(slot->gamepad_buttons == UINT32_C(0x80000001) && slot->raw_buttons_down,
+        "axes-only packet cannot release any buttons");
+    buttons[0]=3;buttons[1]=buttons[2]=0;
+    hid_process_report_protocol_report(slot, buttons, sizeof(buttons));
+    CHECK(slot->gamepad_buttons == 1U, "high button release preserves low report state");
+    CHECK(appletini_usb_parse_gamepad_descriptor(array_descriptor, sizeof(array_descriptor),
+        &slot->report_info) == 1, "button arrays parsed");
+    const uint8_t array[] = {1,32}, released[] = {0,0};
+    hid_process_report_protocol_report(slot,array,sizeof(array));
+    CHECK(slot->gamepad_buttons == UINT32_C(0x80000001), "array selectors keep both low and high buttons");
+    hid_process_report_protocol_report(slot,released,sizeof(released));
+    CHECK(slot->gamepad_buttons == 0U, "array null selectors release the declared range");
+    const uint8_t bad_short[] = {0x26,1}, bad_pop[] = {0xb4}, bad_long[] = {0xfe,4,0,1};
+    CHECK(appletini_usb_parse_gamepad_descriptor(bad_short,sizeof(bad_short),&slot->report_info)<0 &&
+        appletini_usb_parse_gamepad_descriptor(bad_pop,sizeof(bad_pop),&slot->report_info)<0 &&
+        appletini_usb_parse_gamepad_descriptor(bad_long,sizeof(bad_long),&slot->report_info)<0,
+        "truncation and global stack underflow rejected");
+    puts("PASS descriptor usages, input/output/feature offsets, trigger fields, all32 buttons, partial IDs, arrays and malformed bounds");
+    return 0;
+}
+
+static int test_gamepad_shortcuts_and_capture(void)
+{
+    onee_input_joystick_report_t report = {0};
+    usb_hid_menu_event_t event;
+    hid_slots_reset_all();
+    g_menu_event_rd=g_menu_event_wr=g_menu_event_count=0;
+    g_menu_capture=g_binding_capture=g_joystick_preview=0;
+    g_gamepad_binding_mask=0;
+    g_screenshot_a2_source=g_screenshot_1080p_source=0;
+    memset(g_vtw_sources,0,sizeof(g_vtw_sources));
+    g_menu_ok_source=g_menu_open_close_source=USB_HID_MENU_ACTION_SELECT;
+    CHECK(usb_gamepad_input_connect()==0,"shortcut controller allocated");
+    report.buttons_valid=1;
+    report.buttons=0x10U;usb_gamepad_input_report(0,&report,8,0);
+    CHECK(!g_menu_event_count,"shoulders never navigate during gameplay");
+    report.buttons=0;usb_gamepad_input_report(0,&report,8,0);
+    usb_hid_service_set_menu_capture(1);
+    report.buttons=0x10U;usb_gamepad_input_report(0,&report,8,0);
+    CHECK(take_event(USB_HID_MENU_ACTION_PREV_TAB) && !g_menu_event_count,"LB navigates once");
+    usb_gamepad_input_report(0,&report,8,0);CHECK(!g_menu_event_count,"held LB does not repeat");
+    report.buttons=0x20U;usb_gamepad_input_report(0,&report,8,0);
+    CHECK(take_event(USB_HID_MENU_ACTION_NEXT_TAB) && !g_menu_event_count,"direct LB to RB changes direction");
+    report.buttons=0x30U;usb_gamepad_input_report(0,&report,8,0);
+    CHECK(!g_menu_event_count,"both shoulders cancel");
+    report.buttons=0x10U;usb_gamepad_input_report(0,&report,8,0);
+    CHECK(take_event(USB_HID_MENU_ACTION_PREV_TAB),"release one shoulder resumes the held direction");
+    report.buttons=0;usb_gamepad_input_report(0,&report,8,0);
+    usb_hid_service_set_binding_capture(1);
+    for(uint8_t button=0;button<32;++button) {
+        report.buttons=UINT32_C(1)<<button;usb_gamepad_input_report(0,&report,8,0);
+        CHECK(usb_hid_service_pop_menu_event(&event) && event.action==USB_HID_MENU_ACTION_NONE &&
+            event.source==usb_hid_menu_source_from_gamepad_button(button) && !g_menu_event_count,
+            "learning keeps every button source separate and suppresses shortcuts");
+        report.buttons=0;usb_gamepad_input_report(0,&report,8,0);
+    }
+    usb_hid_service_set_binding_capture(0);
+    usb_hid_service_set_gamepad_binding_mask(UINT32_C(1)<<4);
+    report.buttons=0x10U;usb_gamepad_input_report(0,&report,8,0);
+    CHECK(usb_hid_service_pop_menu_event(&event) && event.action==USB_HID_MENU_ACTION_NONE &&
+        event.source==USB_HID_MENU_SOURCE_GAMEPAD_BASE+4 && !g_menu_event_count,
+        "explicit LB binding replaces its default tab shortcut");
+    report.buttons=0;usb_gamepad_input_report(0,&report,8,0);
+    usb_hid_service_set_gamepad_binding_mask(UINT32_C(1)<<31);
+    usb_hid_service_set_screenshot_sources(USB_HID_MENU_SOURCE_GAMEPAD_BASE+31,0);
+    usb_hid_service_set_menu_capture(0);
+    report.buttons=UINT32_C(1)<<31;usb_gamepad_input_report(0,&report,8,0);
+    CHECK(take_event(USB_HID_MENU_ACTION_SCREENSHOT_A2),"button32 global screenshot binding fires outside menu");
+    usb_gamepad_input_report(0,&report,8,0);CHECK(!g_menu_event_count,"held screenshot button does not repeat");
+    report.buttons=0;usb_gamepad_input_report(0,&report,8,0);
+    usb_hid_service_set_screenshot_sources(0,0);
+    usb_hid_menu_source_t speed[USB_HID_VTW_SOURCE_COUNT]={USB_HID_MENU_SOURCE_GAMEPAD_BASE+31,0,0,0};
+    usb_hid_service_set_vtw_sources(speed);
+    report.buttons=UINT32_C(1)<<31;usb_gamepad_input_report(0,&report,8,0);
+    CHECK(take_event(USB_HID_MENU_ACTION_VTW_SPEED_TOGGLE),"button32 global speed binding fires");
+    report.buttons=0;usb_gamepad_input_report(0,&report,8,0);
+    memset(speed,0,sizeof(speed));usb_hid_service_set_vtw_sources(speed);
+    usb_hid_service_set_menu_ok_source(USB_HID_MENU_SOURCE_GAMEPAD_BASE+31);
+    usb_hid_service_set_menu_open_close_source(USB_HID_MENU_SOURCE_GAMEPAD_BASE+31);
+    report.buttons=UINT32_C(1)<<31;usb_gamepad_input_report(0,&report,8,0);
+    mock_time+=MOUSE_MENU_HOLD_TICKS;hid_slots_poll_holds();
+    CHECK(take_event(USB_HID_MENU_ACTION_OPEN),"high button holds open menu");
+    report.buttons=0;usb_gamepad_input_report(0,&report,8,0);
+    usb_hid_service_set_menu_capture(1);
+    report.buttons=UINT32_C(1)<<31;usb_gamepad_input_report(0,&report,8,0);
+    report.buttons=0;usb_gamepad_input_report(0,&report,8,0);
+    CHECK(usb_hid_service_pop_menu_event(&event) && event.source==USB_HID_MENU_SOURCE_GAMEPAD_BASE+31,
+        "high button short OK emits its own source on release");
+    CHECK(!g_menu_event_count,"no legacy event duplicates a high button binding");
+    puts("PASS shoulder direction/cancellation/gameplay,32-source learning, explicit override, screenshot/speed and high-button holds");
+    return 0;
+}
+
+static int test_input_kind_state_boundaries(void)
+{
+    onee_input_joystick_report_t report = {0};
+    usb_hid_menu_event_t event;
+    const uint8_t no_keys[] = {0U};
+    const uint8_t held_key[] = {HID_KBD_USAGE_A};
+    usb_hid_slot_t *slot = &g_hid_slots[0];
+
+    hid_slots_reset_all();
+    g_menu_event_rd = g_menu_event_wr = g_menu_event_count = 0U;
+    g_menu_capture = 1U;
+    g_binding_capture = g_joystick_preview = 0U;
+    g_gamepad_binding_mask = 0U;
+    g_screenshot_a2_source = g_screenshot_1080p_source = 0U;
+    memset(g_vtw_sources, 0, sizeof(g_vtw_sources));
+    g_menu_ok_source = g_menu_open_close_source = USB_HID_MENU_ACTION_SELECT;
+    slot->active = 1U;
+
+    mouse_menu_process_buttons(slot, MOUSE_BUTTON_LEFT, 0);
+    CHECK(take_event(USB_HID_MENU_ACTION_LEFT), "initial physical mouse edge");
+    usb_hid_service_set_binding_capture(1U);
+    mouse_menu_process_buttons(slot, MOUSE_BUTTON_LEFT, 0);
+    CHECK(!g_menu_event_count, "capture entry cannot retrigger a held physical mouse");
+    usb_hid_service_set_binding_capture(0U);
+    mouse_menu_process_buttons(slot, MOUSE_BUTTON_LEFT, 0);
+    CHECK(!g_menu_event_count, "capture exit cannot retrigger a held physical mouse");
+    mouse_menu_process_buttons(slot, 0U, 0);
+    mouse_menu_process_buttons(slot, MOUSE_BUTTON_MIDDLE, 0);
+    CHECK(slot->ok_down && slot->open_close_down, "mouse hold begins");
+    usb_hid_service_set_binding_capture(1U);
+    usb_hid_service_set_binding_capture(0U);
+    CHECK(slot->ok_down && slot->open_close_down, "pad learning preserves mouse holds");
+    mouse_menu_process_buttons(slot, 0U, 0);
+    CHECK(take_event(USB_HID_MENU_ACTION_SELECT), "preserved mouse hold releases once");
+
+    g_menu_ok_source = g_menu_open_close_source =
+        usb_hid_menu_source_from_keyboard_usage(HID_KBD_USAGE_A);
+    hid_process_keyboard_usages(slot, 0U, held_key, sizeof(held_key));
+    usb_hid_service_set_binding_capture(1U);
+    usb_hid_service_set_binding_capture(0U);
+    CHECK(slot->ok_down && slot->open_close_down, "pad learning preserves keyboard holds");
+    hid_process_keyboard_usages(slot, 0U, no_keys, sizeof(no_keys));
+    CHECK(!slot->ok_down && !slot->open_close_down &&
+        usb_hid_service_pop_menu_event(&event) && event.source == g_menu_ok_source,
+        "real keyboard release still finishes its own hold");
+    CHECK(!g_menu_event_count, "keyboard release emits one event");
+
+    slot->onee_joystick = 1U;
+    g_menu_capture = 0U;
+    g_menu_ok_source = g_menu_open_close_source = USB_HID_MENU_SOURCE_GAMEPAD_BASE + 31U;
+    g_gamepad_binding_mask = UINT32_C(1) << 31U;
+    report.buttons_valid = 1U;
+    report.buttons = UINT32_C(1) << 31U;
+    hid_process_gamepad_report(slot, &report, HID_HAT_NEUTRAL, 0U);
+    hid_process_keyboard_usages(slot, 0U, no_keys, sizeof(no_keys));
+    CHECK(slot->open_close_down, "composite keyboard packet preserves gamepad open hold");
+    mock_time += MOUSE_MENU_HOLD_TICKS;
+    hid_slots_poll_holds();
+    CHECK(take_event(USB_HID_MENU_ACTION_OPEN), "preserved composite gamepad hold opens menu");
+    report.buttons = 0U;
+    hid_process_gamepad_report(slot, &report, HID_HAT_NEUTRAL, 0U);
+    g_menu_capture = 1U;
+    report.buttons = UINT32_C(1) << 31U;
+    hid_process_gamepad_report(slot, &report, HID_HAT_NEUTRAL, 0U);
+    hid_process_keyboard_usages(slot, 0U, no_keys, sizeof(no_keys));
+    CHECK(slot->ok_down && slot->open_close_down && !g_menu_event_count,
+        "composite keyboard packet cannot finish a held gamepad OK");
+    report.buttons = 0U;
+    hid_process_gamepad_report(slot, &report, HID_HAT_NEUTRAL, 0U);
+    CHECK(!slot->ok_down && !slot->open_close_down &&
+        usb_hid_service_pop_menu_event(&event) && event.source == g_menu_ok_source &&
+        !g_menu_event_count, "gamepad release finishes its own composite hold once");
+    puts("PASS mouse/keyboard state across pad learning and composite gamepad hold isolation");
     return 0;
 }
 
@@ -591,5 +808,8 @@ int main(void)
     puts("PASS native USB gamepad slot ownership, menu, preview, hold, and release guards");
     CHECK(test_hid_completion_backoff() == 0, "HID failed-completion retry coverage");
     CHECK(test_generic_hid_gamepad() == 0, "generic HID gamepad bridge coverage");
+    CHECK(test_gamepad_descriptor_and_masks() == 0, "bounded descriptor parsing and partial masks");
+    CHECK(test_gamepad_shortcuts_and_capture() == 0, "32button binding and shoulder coverage");
+    CHECK(test_input_kind_state_boundaries() == 0, "input-kind hold and capture boundaries");
     return 0;
 }

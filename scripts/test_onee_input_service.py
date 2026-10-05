@@ -230,8 +230,8 @@ def test_vtw_gate_and_menu_joystick_lifetime() -> None:
                    "uint8_t onee_input_service_take_cold_reboot_request")
     vtw = between(source, "static void vtw_joystick_poll",
                   "static void onee_input_session_stop")
-    joystick = between(usb, "/* Keep joystick preview current",
-                       "onee_input_service_joystick_report")
+    joystick = between(usb, "/* One routing path preserves partial buttons",
+                       "static void hid_process_report(")
     blocked = between(usb, "void usb_hid_service_set_onee_input_blocked",
                       "uint8_t usb_hid_service_all_input_released")
     require(poll.index("vtw_joystick_poll();") <
@@ -265,7 +265,8 @@ def test_hid_parser_feeds_boot_keyboard_and_absolute_joystick() -> None:
             "HID_MAINITEM_RELATIVE" in source and
             "slot->interface_protocol == HID_PROTOCOL_MOUSE" in source,
             "joystick detection must require non-mouse absolute HID axes")
-    require("onee_input_service_joystick_report(slot->index" in report and
+    require("hid_process_gamepad_report(slot, &onee_joystick" in report and
+            "onee_input_service_joystick_report(slot->index, report)" in source and
             "onee_joystick.buttons_valid = button_seen" in report,
             "parsed absolute axes and PB0-PB2 must reach the ONE//e service")
 

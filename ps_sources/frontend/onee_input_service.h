@@ -21,10 +21,12 @@ typedef enum {
 typedef struct {
     uint8_t axis_valid_mask;
     uint8_t buttons_valid;
-    uint8_t buttons;
+    uint32_t buttons;
     int32_t axis[ONEE_INPUT_AXIS_COUNT];
     int32_t logical_min[ONEE_INPUT_AXIS_COUNT];
     int32_t logical_max[ONEE_INPUT_AXIS_COUNT];
+    /* Zero keeps the legacy whole-state report; otherwise update only these bits. */
+    uint32_t buttons_mask;
 } onee_input_joystick_report_t;
 
 #define ONEE_INPUT_PADDLE_COUNT 4U
@@ -59,7 +61,7 @@ typedef struct {
     uint8_t connected;
     uint8_t axis_valid_mask;
     uint8_t axis[ONEE_INPUT_AXIS_COUNT];
-    uint8_t buttons;
+    uint32_t buttons;
 } onee_input_joystick_device_snapshot_t;
 
 typedef struct {
@@ -69,7 +71,7 @@ typedef struct {
     uint8_t axis_valid_mask;
     uint8_t axis[ONEE_INPUT_AXIS_COUNT];
     uint8_t paddles[ONEE_INPUT_PADDLE_COUNT];
-    uint8_t buttons;
+    uint32_t buttons;
     uint8_t connected_mask;
     /* Resolved sources; SLOT_COUNT means disabled or disconnected. */
     uint8_t paddle_slots[ONEE_INPUT_PADDLE_COUNT];

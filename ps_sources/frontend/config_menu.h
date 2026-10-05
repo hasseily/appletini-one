@@ -74,6 +74,8 @@ typedef struct {
     void *ctx;
     void (*set_scanlines)(void *ctx, uint8_t mode);
     uint8_t (*get_scanlines)(void *ctx);
+    void (*set_video_pixel_mask)(void *ctx, uint8_t mode);
+    uint8_t (*get_video_pixel_mask)(void *ctx);
     void (*set_video_ghosting)(void *ctx, uint8_t strength);
     uint8_t (*get_video_ghosting)(void *ctx);
     void (*set_video_blur)(void *ctx, uint8_t strength);
@@ -195,6 +197,7 @@ typedef struct {
     uint8_t onee_persist_write_failed;
     uint32_t onee_persist_retry_polls;
     uint8_t scanlines_mode;
+    uint8_t video_pixel_mask;
     uint8_t output_mode; /* display_modes.h ID; saved with each profile */
     uint8_t size_multiplier; /* 0: maximum fit; 1/2: requested picture scale */
     uint8_t video_output_mono;
@@ -206,6 +209,15 @@ typedef struct {
     uint8_t video_blur_strength;
     uint8_t video_glow_strength;
     uint8_t video_dot_bleed;
+    /* Temporary legacy values used while loading a config or profile. */
+    uint8_t video_legacy_horizontal;
+    uint8_t video_filter_explicit;
+    uint8_t video_legacy_vertical;
+    uint8_t video_smoothing_explicit;
+    uint8_t video_legacy_crt_blending;
+    uint8_t video_legacy_crt_explicit;
+    uint8_t video_blending_vertical_explicit;
+    uint8_t video_blending_horizontal_explicit;
     uint8_t format_badge_enabled;
     uint8_t border_enabled;
     uint8_t border_color;

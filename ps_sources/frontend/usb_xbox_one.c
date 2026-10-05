@@ -218,6 +218,10 @@ static void xbox_input(xbox_one_t *pad, const uint8_t *data, uint32_t len)
             }
         }
         pad->stick_buttons = data[5] & 0xc0U;
+        if (pad->stick_buttons & 0x40U)
+            report->buttons |= UINT32_C(1) << USB_GAMEPAD_BUTTON_LEFT_STICK;
+        if (pad->stick_buttons & 0x80U)
+            report->buttons |= UINT32_C(1) << USB_GAMEPAD_BUTTON_RIGHT_STICK;
         pad->hat = xbox_hat(data[5]);
         pad->reports++;
         if (pad->reports == 1U) {
@@ -227,8 +231,12 @@ static void xbox_input(xbox_one_t *pad, const uint8_t *data, uint32_t len)
     } else {
         return;
     }
-    usb_gamepad_input_report(pad->slot, report, pad->hat,
-                             (uint8_t)(pad->guide | pad->stick_buttons));
+    /* Guide arrives separately; the saved main report and Guide state each
+     * survive packets that update only the other controls. */
+    report->buttons &= ~(UINT32_C(1) << USB_GAMEPAD_BUTTON_HOME);
+    if (pad->guide) report->buttons |= UINT32_C(1) << USB_GAMEPAD_BUTTON_HOME;
+    report->buttons_valid = 1U;
+    usb_gamepad_input_report(pad->slot, report, pad->hat, 0U);
 }
 
 static void xbox_in_complete(void *arg, int nbytes)

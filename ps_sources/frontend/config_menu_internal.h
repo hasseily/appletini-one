@@ -79,22 +79,23 @@ uint8_t config_menu_slot2_player_count(uint8_t card);
 #define CONFIG_VIDEO_ITEM_SIZE_MULTIPLIER 1U
 #define CONFIG_VIDEO_ITEM_OUTPUT       2U
 #define CONFIG_VIDEO_ITEM_VARIANT      3U
-#define CONFIG_VIDEO_ITEM_DOT_BLEED     4U
-#define CONFIG_VIDEO_ITEM_SCANLINES    5U
-#define CONFIG_VIDEO_ITEM_BLUR         6U
-#define CONFIG_VIDEO_ITEM_GLOW         7U
-#define CONFIG_VIDEO_ITEM_GHOSTING     8U
-#define CONFIG_VIDEO_ITEM_BORDER       9U
-#define CONFIG_VIDEO_ITEM_VIDEO7       10U
-#define CONFIG_VIDEO_ITEM_COL140M      11U
-#define CONFIG_VIDEO_ITEM_BORDER_COLOR 12U
-#define CONFIG_VIDEO_ITEM_BORDER_FLOOD 13U
-#define CONFIG_VIDEO_ITEM_ROM          14U
-#define CONFIG_VIDEO_ITEM_SHOW_BEZEL   15U
-#define CONFIG_VIDEO_ITEM_BEZEL        16U
-#define CONFIG_VIDEO_ITEM_DEBUG        17U
-#define CONFIG_VIDEO_ITEM_BADGE        18U
-#define CONFIG_VIDEO_ITEM_COUNT        19U
+#define CONFIG_VIDEO_ITEM_ROM          4U
+#define CONFIG_VIDEO_ITEM_VIDEO7       5U
+#define CONFIG_VIDEO_ITEM_COL140M      6U
+#define CONFIG_VIDEO_ITEM_SCANLINES    7U
+#define CONFIG_VIDEO_ITEM_PIXEL_MASK   8U
+#define CONFIG_VIDEO_ITEM_DOT_BLEED     9U
+#define CONFIG_VIDEO_ITEM_BLUR          10U
+#define CONFIG_VIDEO_ITEM_GLOW         11U
+#define CONFIG_VIDEO_ITEM_GHOSTING     12U
+#define CONFIG_VIDEO_ITEM_BORDER       13U
+#define CONFIG_VIDEO_ITEM_BORDER_COLOR 14U
+#define CONFIG_VIDEO_ITEM_BORDER_FLOOD 15U
+#define CONFIG_VIDEO_ITEM_SHOW_BEZEL   16U
+#define CONFIG_VIDEO_ITEM_BEZEL        17U
+#define CONFIG_VIDEO_ITEM_DEBUG        18U
+#define CONFIG_VIDEO_ITEM_BADGE        19U
+#define CONFIG_VIDEO_ITEM_COUNT        20U
 /* This is a help-table key, not a selectable row. The live ONE//e standard
  * shares the normal boot-menu reset index, whose help remains distinct. */
 #define CONFIG_MENU_BOOT_ONEE_STANDARD_HELP_ITEM CONFIG_MENU_BOOT_ITEM_COUNT
@@ -367,18 +368,21 @@ void hgr_draw_video_ghosting_item(uint16_t *fb,
                                   int y,
                                   int w,
                                   uint8_t focused,
-                                  uint8_t strength);
+                                  uint8_t strength,
+                                  int label_w);
 void hgr_draw_video_blur_item(uint16_t *fb,
                               int x,
                               int y,
                               int w,
                               uint8_t focused,
-                              uint8_t strength);
+                              uint8_t strength,
+                                  int label_w);
 void hgr_draw_video_glow_item(uint16_t *fb,
                               int x,
                               int y,
                               int w,
                               uint8_t focused,
-                              uint8_t strength);
+                              uint8_t strength,
+                                  int label_w);
 
 #endif

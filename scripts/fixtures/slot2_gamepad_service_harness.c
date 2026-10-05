@@ -110,6 +110,16 @@ static int test_axes_and_partial_reports(void)
     report.axis[1] = 255;
     slot2_gamepad_service_report(0, &report, 8);
     CHECK(snapshot().buttons[0] == 0x061);
+    onee_input_joystick_report_t high = {0};
+    high.buttons_valid = 1U;
+    high.buttons_mask = UINT32_C(0xFFFF0000);
+    high.buttons = UINT32_C(0x80000000);
+    slot2_gamepad_service_report(0, &high, SLOT2_GAMEPAD_HAT_UNCHANGED);
+    CHECK(g_inputs[0].buttons == UINT32_C(0x80000001));
+    CHECK(snapshot().buttons[0] == 0x061); /* Extras never alias SNES controls. */
+    high.buttons = 0U;
+    slot2_gamepad_service_report(0, &high, SLOT2_GAMEPAD_HAT_UNCHANGED);
+    CHECK(g_inputs[0].buttons == 1U && snapshot().buttons[0] == 0x061);
     report.buttons_valid = 0;
     report.axis_valid_mask = 1;
     report.axis[0] = 255;

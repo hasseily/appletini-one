@@ -30,6 +30,8 @@ typedef enum {
 #define USB_HID_MENU_SOURCE_NONE 0U
 #define USB_HID_MENU_SOURCE_KEY_BASE 0x0100U
 #define USB_HID_MENU_SOURCE_KEY_MASK 0x00FFU
+#define USB_HID_MENU_SOURCE_GAMEPAD_BASE 0x0200U
+#define USB_HID_MENU_SOURCE_GAMEPAD_COUNT 32U
 
 typedef struct {
     usb_hid_menu_action_t action;
@@ -53,6 +55,8 @@ typedef struct {
 
 usb_hid_menu_source_t usb_hid_menu_source_from_keyboard_usage(uint8_t usage);
 uint8_t usb_hid_menu_source_is_keyboard(usb_hid_menu_source_t source);
+usb_hid_menu_source_t usb_hid_menu_source_from_gamepad_button(uint8_t button);
+uint8_t usb_hid_menu_source_is_gamepad(usb_hid_menu_source_t source);
 const char *usb_hid_menu_source_text(usb_hid_menu_source_t source);
 int usb_hid_service_init(void);
 int usb_hid_service_start(void);
@@ -64,6 +68,9 @@ void usb_hid_service_set_menu_capture(uint8_t capture);
 /* Axis/hat motion updates calibration preview without navigating its page.
  * Keyboard, mouse, and joystick button menu actions stay available. */
 void usb_hid_service_set_joystick_preview(uint8_t active);
+/* Suppress controller tab shortcuts while the UI learns a binding. */
+void usb_hid_service_set_binding_capture(uint8_t active);
+void usb_hid_service_set_gamepad_binding_mask(uint32_t mask);
 /* ONE//e replaces saved key bindings with a fixed control set. Blocking the
  * Apple bridge releases guest input but keeps joystick preview reports live. */
 void usb_hid_service_set_onee_fixed_mode(uint8_t enable);

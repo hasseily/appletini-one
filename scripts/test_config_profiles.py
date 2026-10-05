@@ -91,8 +91,8 @@ def test_autosave_remains_working_config() -> None:
 def test_clean_config_schema_contract() -> None:
     source = read(CONFIG_MENU_C)
 
-    require("#define APPLETINI_CFG_VERSION 120U" in source,
-            "slot 2 card choices must advance the config schema")
+    require("#define APPLETINI_CFG_VERSION 124U" in source,
+            "legacy video-filter migration must advance the config schema")
     require('strcmp(key, "video.size_multiplier") == 0' in source and
             '"video.size_multiplier=%s\\n"' in source,
             "size multiplier must load and save with the config and profiles")

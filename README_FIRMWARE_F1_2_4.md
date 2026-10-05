@@ -88,6 +88,10 @@ remain pending.
 
 Hardware checks for the corrected image after it is built:
 
+- Open Video at 1680x1050 and 1920x1080. Check that Scanlines/Pixel mask
+  sits above the phosphor rows, with Glow left of Ghosting. Switch between
+  PAL, color and monochrome modes: value columns should stay aligned and
+  keyboard focus should follow the visible row order.
 - Compare Blur Off/Light/Medium/Strong and monochrome Dot bleed against
   F1.2.2 using the same image, resolution and size setting.
 - Check Pixel mask on screen, and confirm screenshots omit its scanout

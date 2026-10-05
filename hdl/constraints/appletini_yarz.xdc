@@ -527,6 +527,11 @@ create_generated_clock -name dvi_clk_out \
     -edges {2 3 4} \
     [get_ports dvi_clk]
 
+## Bind packing to the ports: synthesis retiming can replace the sync flops
+## and lose their RTL IOB attributes after a pixel pipeline is inserted.
+set dvi_registered_ports [get_ports {dvi_red[*] dvi_grn[*] dvi_blu[*] dvi_de dvi_hsync dvi_vsync}]
+set_property IOB TRUE $dvi_registered_ports
+
 ## TFP410PAP input timing (from datasheet):
 ##   Setup (tsu): 0.7 ns min
 ##   Hold  (th):  1.4 ns min

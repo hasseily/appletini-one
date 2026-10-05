@@ -1242,8 +1242,11 @@ module vtw_core_top (
                       !overlay_capture_armed));
     assign turbo_complete = (xstate_q == X_TURBO_DONE) && turbo_hit && pace_ok &&
                             core_active && !turbo_invalidate && !arm_rw_flush_req;
-    assign turbo_shadow_write = (xstate_q == X_TURBO_DONE) &&
-                                core_en && !cycle_rw_q;
+    // In X_TURBO_DONE, every other core completion term is false.
+    // Keep the same retirement guards in a local shadow-write cone.
+    assign turbo_shadow_write = turbo_complete && core_res_n &&
+                                !pause && !rw_hold_q && d2_time_ready &&
+                                !cycle_rw_q;
     // Translation was captured with the request. An ordinary RAM/ROM miss
     // can issue its wide read here without repeating the route stage.
     wire turbo_shadow_read = (xstate_q == X_TURBO_DONE) &&

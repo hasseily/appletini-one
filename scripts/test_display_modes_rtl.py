@@ -46,6 +46,7 @@ def main() -> None:
         "hdl/video2/video_timing_gen.sv", "hdl/video2/video_mode_control.sv",
         "hdl/video2/fb_reader.sv", "hdl/cdc_bit_sync.sv",
         "hdl/cdc_pulse_toggle.sv", "hdl/reset_sync.sv", "hdl/video2/video_top.sv",
+        "hdl/video2/video_mask_config.sv", "hdl/video2/video_pixel_mask.sv",
         "hdl/sim/tb_fb_reader_restart.sv", "hdl/sim/tb_fb_reader_modes.sv",
         "hdl/sim/tb_video_output_modes.sv",
     ]

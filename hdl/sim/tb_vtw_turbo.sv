@@ -1710,6 +1710,10 @@ module tb_vtw_turbo;
         $display("VTW TURBO POST STALL EXIT/REENTRY PASS: kind=%0d", kind);
     endtask
 
+`ifdef VTW_SHADOW_WRITE_GUARDS
+    // Reuse the real CPU/bus/shadow fixture for the focused retirement test.
+`include "vtw_shadow_write_guard_cases.svh"
+`else
     integer max_cold, max_hot, turbo_cold, turbo_hot;
     integer alt_max_cold, alt_max_hot, alt_turbo_cold, alt_turbo_hot;
     initial begin
@@ -1767,6 +1771,8 @@ module tb_vtw_turbo;
         $display("VTW TURBO PASS");
         $finish;
     end
+
+`endif
 
     initial begin
         #50ms;

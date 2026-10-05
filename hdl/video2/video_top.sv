@@ -70,6 +70,7 @@ module video_top (
     localparam [7:0] FB_REGIDX_MODE_REQUEST = 8'h06;
     localparam [7:0] FB_REGIDX_MODE_STATUS  = 8'h07;
     localparam [7:0] FB_REGIDX_MODE_BASE    = 8'h08;
+    localparam [7:0] FB_REGIDX_MASK_CAP     = 8'h09; // MSK1 at byte 0x24
     // Stage a 128-byte-aligned MODE_BASE, then write MODE_REQUEST[3:0].
     // STATUS: [31:24]=A9, [11]=held, [10]=locked, [9]=error,
     // [8]=busy, [3:0]=active mode. A successful fallback retains error.
@@ -213,6 +214,21 @@ module video_top (
         .dbg_underrun_count(fb_reader_dbg_underrun_count)
     );
 
+    logic [31:0] mask_read_data;
+    logic [607:0] mask_pixel_config;
+    video_mode_t mask_timing;
+    always_comb mask_timing = video_mode(active_mode);
+    video_mask_config mask_config_i (
+        .clk(clk), .resetn(resetn), .write_enable(as_client.awvalid),
+        .write_address(as_common.awaddr), .read_address(as_common.araddr),
+        .write_data(as_common.wdata), .write_strobe(as_common.wstrb),
+        .read_data(mask_read_data), .frame_latched(fb_reader_vblank_pulse),
+        .frame_base(fb_reader_last_latched), .pixel_clk(pixel_clk),
+        .video_resetn(video_resetn), .vblank_start(video_vblank_start),
+        .vertical_blank(video_v_count >= mask_timing.height),
+        .pixel_config(mask_pixel_config)
+    );
+
     // ------------------------------------------------------------------
     // FB control register block (AXI write decode + read mux + frame
     // counter / last-latched snapshot).
@@ -280,11 +296,12 @@ module video_top (
                 };
                 FB_REGIDX_MODE_REQUEST: as_client_rdata_q <= {28'b0, requested_mode_q};
                 FB_REGIDX_MODE_BASE: as_client_rdata_q <= mode_base_q;
+                FB_REGIDX_MASK_CAP: as_client_rdata_q <= 32'h4d534b31;
                 FB_REGIDX_MODE_STATUS: as_client_rdata_q <= {
                     8'hA9, 12'b0, video_hold, clock_locked_clk, mode_error, mode_busy,
                     4'b0, active_mode
                 };
-                default:                as_client_rdata_q <= 32'h00000000;
+                default:                as_client_rdata_q <= mask_read_data;
             endcase
         end
     end
@@ -299,6 +316,23 @@ module video_top (
     (* IOB = "TRUE" *) reg       dvi_de_r;
     (* IOB = "TRUE" *) reg       dvi_hsync_r;
     (* IOB = "TRUE" *) reg       dvi_vsync_r;
+
+    // DE/sync already lag timing counters by one cycle. Match their
+    // coordinates before inserting the fixed four-cycle mask pipeline.
+    logic [11:0] mask_x, mask_y;
+    logic [15:0] masked_pixel;
+    logic masked_de, masked_hsync, masked_vsync;
+    always_ff @(posedge pixel_clk) begin
+        if (!video_resetn) begin mask_x <= 0; mask_y <= 0; end
+        else begin mask_x <= video_h_count; mask_y <= video_v_count; end
+    end
+    video_pixel_mask pixel_mask_i (
+        .pixel_clk(pixel_clk), .resetn(video_resetn),
+        .config_data(mask_pixel_config), .pixel_in(fb_pixel), .x(mask_x), .y(mask_y),
+        .de_in(video_de_i), .hsync_in(video_hsync_i), .vsync_in(video_vsync_i),
+        .pixel_out(masked_pixel), .de_out(masked_de),
+        .hsync_out(masked_hsync), .vsync_out(masked_vsync)
+    );
 
     always @(posedge pixel_clk) begin
         if (!video_resetn) begin
@@ -316,12 +350,12 @@ module video_top (
             fb_pixel_rd_en <= video_de_i;
 
             /* RGB565 maps directly onto the 5:6:5 pins. */
-            dvi_red_r <= fb_pixel[15:11];
-            dvi_grn_r <= fb_pixel[10:5];
-            dvi_blu_r <= fb_pixel[4:0];
-            dvi_de_r <= video_de_i;
-            dvi_hsync_r <= video_hsync_i;
-            dvi_vsync_r <= video_vsync_i;
+            dvi_red_r <= masked_pixel[15:11];
+            dvi_grn_r <= masked_pixel[10:5];
+            dvi_blu_r <= masked_pixel[4:0];
+            dvi_de_r <= masked_de;
+            dvi_hsync_r <= masked_hsync;
+            dvi_vsync_r <= masked_vsync;
         end
     end
 

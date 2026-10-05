@@ -92,6 +92,8 @@ axisimple/axidouble.v
 axisimple/skidbuffer.v
 axisimple/sfifo.v
 video2/video_top.sv
+video2/video_mask_config.sv
+video2/video_pixel_mask.sv
 video2/video_mode_control.sv
 video2/fb_reader.sv
 video2/video_pkg.sv

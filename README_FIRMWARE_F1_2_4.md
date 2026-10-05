@@ -52,9 +52,11 @@ unchanged.
 
 ## Validation
 
-The corrected linear FF mapping passes speech simulation. Fresh FPGA signoff
-and packaging are in progress; the existing root image is still the first,
-clamped F1.2.4 build until the corrected image passes those gates.
+The corrected linear FF build passes FPGA signoff with **+0.067 ns setup**,
+**+0.050 ns hold** and **+0.265 ns pulse-width slack**. There are no failing
+timing endpoints, unconstrained internal endpoints or routing errors. CDC,
+I/O placement, bus-skew and DRC checks pass. The setup-slack requirement
+remains **+0.050 ns**; clock rates and external timing limits remain unchanged.
 
 Both ARM applications build successfully. Native and Cortex-A9 tests each
 pass 704 exact F1.2.2 Blur/Dot comparisons, 321 retained-effect cases and 768
@@ -74,19 +76,17 @@ The duration lookup passes all 65,536 input-byte combinations.
 The original Phasor demo's Pitch setting defaults to 232. Set it to **128**
 for the old sound; values below and above 128 lower and raise the tract rate.
 
-Historical signoff for the first clamped build passed with **+0.054 ns setup**, **+0.021 ns hold** and
-**+0.265 ns pulse-width slack**. There are no failing timing endpoints,
-unconstrained internal endpoints or routing errors. CDC, I/O placement and
-DRC checks pass. The setup-slack requirement remains **+0.050 ns**; clock
-rates and external timing limits remain unchanged.
+The corrected image is `firmwares/F1.2.4-ssi-filter-linear/FIRMWARE.BIN`.
+Its archive includes build inputs, source hashes, test evidence and timing
+reports. The root `FIRMWARE.BIN` contains the same image.
 
-The firmware image is `firmwares/F1.2.4-ssi-filter/FIRMWARE.BIN`, and remains archived for comparison. The archive includes build
-inputs, source hashes, test evidence and timing reports. Hardware feedback on
-that image reported a lower-sounding default and no useful response across
-most of the FF range. Corrected-image validation and real-SSI calibration
-remain pending.
+The first, clamped build remains at `firmwares/F1.2.4-ssi-filter/FIRMWARE.BIN`
+for comparison. That build reached +0.054 ns setup and +0.021 ns hold, but
+hardware feedback found a lower-sounding default and no useful FF response
+across most of the range. Hardware validation of the corrected image and
+real-SSI calibration remain pending.
 
-Hardware checks for the corrected image after it is built:
+Hardware checks for the corrected image:
 
 - Open Video at 1680x1050 and 1920x1080. Check that Scanlines/Pixel mask
   sits above the phosphor rows, with Glow left of Ghosting. Switch between

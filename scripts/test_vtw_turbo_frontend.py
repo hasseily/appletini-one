@@ -78,10 +78,11 @@ def main() -> int:
                 void (*set_vtw_turbo_enabled)(void *, uint8_t);
                 void (*set_vtw_config)(void *, uint8_t, uint8_t, uint8_t,
                                        uint8_t, uint8_t);
+                void (*set_vtw_speed)(void *, uint8_t, uint8_t);
             } platform;
         } config_menu_t;
         static char saved[1024];
-        static unsigned saves, applied, gates;
+        static unsigned saves, applied, gates, explicit_speed_applies;
         static uint8_t applied_mode, turbo_allowed;
         static const char *config_menu_on_off(uint8_t value)
         {
@@ -113,6 +114,13 @@ def main() -> int:
             if (enable == 0U && applied_mode == CARD_CTRL_VTW_SPEED_TURBO) {
                 applied_mode = CARD_CTRL_VTW_SPEED_FULL;
             }
+        }
+        static void apply_explicit_speed(void *ctx, uint8_t mode, uint8_t divider)
+        {
+            (void)ctx;
+            assert(divider >= 2U);
+            applied_mode = mode;
+            ++explicit_speed_applies;
         }
         static void config_menu_save_settings(config_menu_t *menu)
         {
@@ -225,6 +233,27 @@ def main() -> int:
             assert(menu.vtw_speed_mode == CARD_CTRL_VTW_SPEED_FULL);
             assert(menu.vtw_pace_divider == 2U);
             assert(saves == applied + gates);
+
+            /* The real platform binds a distinct explicit selection path.
+             * Legacy platforms above still exercise the generic fallback. */
+            const unsigned generic_before = applied;
+            const unsigned saves_before = saves;
+            menu.platform.set_vtw_speed = apply_explicit_speed;
+            config_menu_set_vtw_speed(&menu, CARD_CTRL_VTW_SPEED_FULL, 37U);
+            config_menu_set_vtw_speed(&menu, CARD_CTRL_VTW_SPEED_FULL, 37U);
+            assert(explicit_speed_applies == 2U && applied == generic_before);
+            assert(saves == saves_before + 2U);
+            assert(applied_mode == CARD_CTRL_VTW_SPEED_FULL);
+            config_menu_vtw_cycle_speed(&menu, 1);
+            assert(explicit_speed_applies == 3U && applied == generic_before);
+            assert(applied_mode == CARD_CTRL_VTW_SPEED_1MHZ);
+            assert(strstr(saved, "vtw.speed.mode=2\n"));
+            config_menu_set_vtw_speed(&menu, CARD_CTRL_VTW_SPEED_TURBO, 37U);
+            assert(explicit_speed_applies == 3U && saves == saves_before + 3U);
+            config_menu_set_vtw_speed(&menu, 255U, 0U);
+            assert(explicit_speed_applies == 4U && applied == generic_before);
+            assert(applied_mode == CARD_CTRL_VTW_SPEED_FULL && menu.vtw_pace_divider == 2U);
+            assert(saves == saves_before + 4U);
             puts("VTW TURBO FRONTEND PASS");
             return 0;
         }

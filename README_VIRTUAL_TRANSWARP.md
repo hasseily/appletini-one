@@ -300,7 +300,10 @@ In priority order:
    leave the speed unchanged, even while the menu is open. They never
    queue a speed for the next session. Runtime overrides never persist
    and a configured (menu) speed change clears them, matching $C074
-   semantics. Session enable/disable stays
+   semantics. Opening the menu, retrying an unavailable SD configuration,
+   or reapplying unchanged settings keeps the live keypad speed. Selecting
+   a speed explicitly in the menu or through UART clears the override,
+   including a request for the same saved preset. Session enable/disable stays
    BOOT-mode-only; only speed is live. The boot beeps double as audible
    speed confirmation.
 3. **Own-card I/O short-circuit — SmartPort at core speed (implemented).**

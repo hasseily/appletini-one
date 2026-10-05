@@ -27,6 +27,11 @@ fields share fixed columns, including full-width rows and the longer PAL
 mode names. Keyboard focus follows the new row order; compact layouts keep
 their single-column format.
 
+Opening the config menu and reapplying unchanged settings preserve the live
+speed selected with keypad `+`/`-`, the 1 MHz toggle or the slug key. This also
+covers a failed SD settings retry. An explicit menu or UART speed selection
+still takes effect at once, even when it selects the saved default again.
+
 ## SSI263 filter frequency
 
 Register 4 now shifts the speech tract's filter frequencies. It leaves the
@@ -76,9 +81,13 @@ The duration lookup passes all 65,536 input-byte combinations.
 The original Phasor demo's Pitch setting defaults to 232. Set it to **128**
 for the old sound; values below and above 128 lower and raise the tract rate.
 
-The corrected image is `firmwares/F1.2.4-ssi-filter-linear/FIRMWARE.BIN`.
+The corrected image with the menu speed fix is
+`firmwares/F1.2.4-menu-speed/FIRMWARE.BIN`.
 Its archive includes build inputs, source hashes, test evidence and timing
 reports. The root `FIRMWARE.BIN` contains the same image.
+The preceding linear-FF image remains at
+`firmwares/F1.2.4-ssi-filter-linear/FIRMWARE.BIN` for comparison. The menu fix
+changes only ARM software and uses that image's verified FPGA bitstream.
 
 The first, clamped build remains at `firmwares/F1.2.4-ssi-filter/FIRMWARE.BIN`
 for comparison. That build reached +0.054 ns setup and +0.021 ns hold, but
@@ -88,6 +97,10 @@ real-SSI calibration remain pending.
 
 Hardware checks for the corrected image:
 
+- Change the live speed with keypad `+`/`-`, open and close the config menu,
+  and check that the running speed stays the same. Repeat with unavailable
+  SD settings and in ONE//e, including its menu pause. Choose a speed
+  explicitly in the TransWarp tab or through UART and confirm it takes effect.
 - Open Video at 1680x1050 and 1920x1080. Check that Scanlines/Pixel mask
   sits above the phosphor rows, with Glow left of Ghosting. Switch between
   PAL, color and monochrome modes: value columns should stay aligned and

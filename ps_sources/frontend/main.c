@@ -1854,8 +1854,15 @@ static void control_set_vtw_config(void *ctx,
     (void)ctx;
     vtw_service_set_ignore_c074(ignore_c074);
     vtw_service_set_disk2_accel_disabled(disable_disk2_accel);
-    vtw_service_set_speed(speed_mode, pace_divider);
+    vtw_service_apply_configured_speed(speed_mode, pace_divider);
     vtw_service_set_enabled(enable);
+}
+
+static void control_set_vtw_speed(void *ctx, uint8_t speed_mode,
+                                   uint8_t pace_divider)
+{
+    (void)ctx;
+    vtw_service_set_speed(speed_mode, pace_divider);
 }
 
 static void control_set_vtw_turbo_enabled(void *ctx, uint8_t enable)
@@ -3661,6 +3668,7 @@ int main(void)
         menu_platform.set_slot5_processor = control_set_slot5_processor;
         menu_platform.set_applicard_resource_max = control_set_applicard_resource_max;
         menu_platform.set_vtw_config = control_set_vtw_config;
+        menu_platform.set_vtw_speed = control_set_vtw_speed;
         menu_platform.set_vtw_turbo_enabled = control_set_vtw_turbo_enabled;
         menu_platform.set_vtw_slug_key_enabled = control_set_vtw_slug_key_enabled;
         menu_platform.set_vtw_slowdown = control_set_vtw_slowdown;

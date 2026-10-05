@@ -27,8 +27,11 @@ uint8_t vtw_service_is_enabled(void);
 
 /* speed_mode: CARD_CTRL_VTW_SPEED_*; pace_divider: fabric clocks per core
  * cycle in divided mode (min 2 = full rate; 37 ~= 3.6 MHz-equivalent).
- * TURBO requests fall back to MAX unless TURBO is enabled. */
+ * TURBO requests fall back to MAX unless TURBO is enabled. An explicit
+ * selection clears a live USB override, even for the same saved preset. */
 void vtw_service_set_speed(uint8_t speed_mode, uint8_t pace_divider);
+/* Reapply saved settings, preserving a live override when they are unchanged. */
+void vtw_service_apply_configured_speed(uint8_t speed_mode, uint8_t pace_divider);
 uint8_t vtw_service_speed_mode(void);
 uint8_t vtw_service_pace_divider(void);
 

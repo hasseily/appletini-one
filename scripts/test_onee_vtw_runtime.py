@@ -3,6 +3,7 @@
 
 import shutil
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -373,7 +374,7 @@ def test_live_speed_controls_share_one_verified_writer() -> None:
                    "void vtw_service_slug_toggle(void)",
                    "void vtw_service_set_slowdown")
     configured = between(source,
-                         "void vtw_service_set_speed(",
+                         "static void vtw_set_configured_speed(",
                          "void vtw_service_set_ignore_c074")
     options = between(source,
                       "static void vtw_apply_ctrl_options_live",
@@ -507,7 +508,168 @@ def find_native_c_compiler() -> Path | None:
     return None
 
 
-def run_native_speed_control_test() -> bool:
+def menu_speed_replay_harness() -> str:
+    """Exercise production retry/callbacks with only SD and unrelated services stubbed."""
+    callbacks = between(read(MAIN_C), "static void control_set_vtw_config(",
+                        "static void control_set_vtw_turbo_enabled(")
+    require("vtw_service_apply_configured_speed(speed_mode, pace_divider);" in callbacks and
+            "static void control_set_vtw_speed(" in callbacks and
+            "menu_platform.set_vtw_speed = control_set_vtw_speed;" in read(MAIN_C),
+            "generic reapply and explicit menu speed need separate bound callbacks")
+    retry = between(read(FRONTEND / "config_menu.c"),
+                    "void config_menu_retry_settings_if_needed(",
+                    "static uint8_t config_menu_days_in_month(")
+    return callbacks + textwrap.dedent(r'''
+        typedef struct {
+            uint8_t settings_loaded, vtw_enabled, vtw_speed_mode, vtw_pace_divider;
+        } config_menu_t;
+        static unsigned load_attempts, runtime_applies, restored_intents;
+        static unsigned ethernet_applies, bezel_applies, rom_applies;
+        static uint8_t load_succeeds, loaded_mode, loaded_divider;
+        static void config_menu_load_settings(config_menu_t *menu)
+        {
+            ++load_attempts;
+            if (load_succeeds) {
+                menu->settings_loaded = 1U;
+                menu->vtw_speed_mode = loaded_mode;
+                menu->vtw_pace_divider = loaded_divider;
+            }
+        }
+        static void config_menu_restore_onee_intent(config_menu_t *menu)
+        { (void)menu; ++restored_intents; }
+        static void config_menu_apply_runtime(config_menu_t *menu)
+        {
+            ++runtime_applies;
+            control_set_vtw_config(NULL, menu->vtw_enabled, menu->vtw_speed_mode,
+                                   menu->vtw_pace_divider, 1U, 1U);
+        }
+        static int config_menu_apply_ethernet_config(config_menu_t *menu, uint8_t save)
+        { (void)menu; (void)save; ++ethernet_applies; return 0; }
+        static void config_menu_apply_bezel(config_menu_t *menu)
+        { (void)menu; ++bezel_applies; }
+        static void config_menu_apply_video_rom(config_menu_t *menu)
+        { (void)menu; ++rom_applies; }
+    ''') + retry + textwrap.dedent(r'''
+        static void speed_override(unsigned action)
+        {
+            switch (action) {
+            case 0U: vtw_service_speed_step(1); break;
+            case 1U: vtw_service_speed_step(-1); break;
+            case 2U: vtw_service_speed_toggle(); break;
+            default:
+                vtw_service_set_slug_enabled(1U);
+                vtw_service_slug_toggle();
+                break;
+            }
+        }
+
+        static int test_menu_speed_replay(void)
+        {
+            for (unsigned onee = 0U; onee < 2U; ++onee) {
+                for (unsigned action = 0U; action < 4U; ++action) {
+                    config_menu_t menu = {0U, (uint8_t)!onee,
+                        CARD_CTRL_VTW_SPEED_DIVIDED, 37U};
+                    uint32_t expected, first;
+                    reset_fixture();
+                    load_attempts = runtime_applies = restored_intents = 0U;
+                    ethernet_applies = bezel_applies = rom_applies = 0U;
+                    load_succeeds = 0U;
+                    if (onee) {
+                        set_onee_isolated();
+                        g_onee_running = 1U;
+                    } else {
+                        g_intent_enabled = 1U;
+                        g_state = VTW_ST_RUN;
+                    }
+                    control_set_vtw_config(NULL, menu.vtw_enabled,
+                                           menu.vtw_speed_mode, 37U, 1U, 1U);
+                    speed_override(action);
+                    if (onee && !check(vtw_service_onee_set_paused(1U),
+                                      "ONE//e menu pause failed")) return 0;
+                    expected = ctrl_value();
+                    first = write_count;
+                    /* Two failed menu-open/SD-arrival retries must neither
+                     * save the live rung nor transiently write the baseline. */
+                    config_menu_retry_settings_if_needed(&menu);
+                    config_menu_retry_settings_if_needed(&menu);
+                    if (!check(ctrl_value() == expected && g_ovr_active &&
+                               g_speed_mode == CARD_CTRL_VTW_SPEED_DIVIDED &&
+                               g_pace_divider == 37U && menu.vtw_pace_divider == 37U,
+                               "settings retry changed live speed")) return 0;
+                    for (uint32_t i = first; i < write_count; ++i) {
+                        if (writes[i].address == CARD_CTRL_VTW_CTRL_REG &&
+                            !check(writes[i].value == expected,
+                                   "settings replay transiently wrote a different CTRL")) return 0;
+                    }
+                    if (!check(load_attempts == 2U && runtime_applies == 2U &&
+                               restored_intents == 2U && ethernet_applies == 0U &&
+                               bezel_applies == 2U && rom_applies == 2U,
+                               "failed retry lost unrelated startup work")) return 0;
+                    menu.settings_loaded = 1U;
+                    first = write_count;
+                    config_menu_retry_settings_if_needed(&menu);
+                    if (!check(write_count == first && load_attempts == 2U,
+                               "loaded settings retried on menu entry")) return 0;
+                    /* A later successful load may change the saved speed. */
+                    menu.settings_loaded = 0U;
+                    load_succeeds = 1U;
+                    loaded_mode = CARD_CTRL_VTW_SPEED_DIVIDED;
+                    loaded_divider = 10U;
+                    config_menu_retry_settings_if_needed(&menu);
+                    if (!check(!g_ovr_active && ctrl_divider() == 10U &&
+                               g_pace_divider == 10U && ethernet_applies == 1U &&
+                               (ctrl_value() & CARD_CTRL_VTW_CTRL_PAUSE_BIT) ==
+                                   (expected & CARD_CTRL_VTW_CTRL_PAUSE_BIT),
+                               "changed saved speed did not replace override safely")) return 0;
+                    speed_override(action);
+                    /* Same-value explicit menu/UART selection must still win. */
+                    control_set_vtw_speed(NULL, CARD_CTRL_VTW_SPEED_DIVIDED, 10U);
+                    if (!check(!g_ovr_active && ctrl_divider() == 10U,
+                               "same-baseline explicit speed did not clear override")) return 0;
+                    speed_override(action);
+                    vtw_service_apply_configured_speed(CARD_CTRL_VTW_SPEED_FULL, 10U);
+                    if (!check(!g_ovr_active && ctrl_speed() == CARD_CTRL_VTW_SPEED_FULL,
+                               "changed configured mode did not clear override")) return 0;
+                }
+            }
+            /* Compare normalized baseline values, not raw caller bytes. */
+            reset_fixture();
+            g_state = VTW_ST_RUN;
+            g_intent_enabled = 1U;
+            vtw_service_set_speed(CARD_CTRL_VTW_SPEED_DIVIDED, 2U);
+            vtw_service_speed_toggle();
+            uint32_t expected = ctrl_value();
+            vtw_service_apply_configured_speed(
+                CARD_CTRL_VTW_SPEED_DIVIDED | 0xFCU, 0U);
+            if (!check(g_ovr_active && ctrl_value() == expected && g_pace_divider == 2U,
+                       "equivalent normalized config cleared override")) return 0;
+            vtw_service_set_speed(CARD_CTRL_VTW_SPEED_FULL, 37U);
+            vtw_service_speed_toggle();
+            expected = ctrl_value();
+            vtw_service_apply_configured_speed(CARD_CTRL_VTW_SPEED_TURBO, 37U);
+            if (!check(g_ovr_active && ctrl_value() == expected &&
+                       g_speed_mode == CARD_CTRL_VTW_SPEED_FULL,
+                       "disabled TURBO normalization cleared ordinary override")) return 0;
+            vtw_service_set_turbo_enabled(1U);
+            vtw_service_set_speed(CARD_CTRL_VTW_SPEED_TURBO, 37U);
+            vtw_service_speed_toggle();
+            expected = ctrl_value();
+            vtw_service_apply_configured_speed(CARD_CTRL_VTW_SPEED_TURBO, 37U);
+            if (!check(g_ovr_active && ctrl_value() == expected,
+                       "same TURBO baseline replay cleared 1MHz override")) return 0;
+            vtw_service_set_turbo_enabled(0U);
+            vtw_service_apply_configured_speed(CARD_CTRL_VTW_SPEED_FULL, 37U);
+            vtw_service_set_turbo_enabled(1U);
+            vtw_service_speed_toggle();
+            if (!check(ctrl_speed() == CARD_CTRL_VTW_SPEED_FULL,
+                       "replay restored hidden TURBO after opt-out")) return 0;
+            puts("MENU SPEED REPLAY NATIVE PASS (8 session/override cases + normalization)");
+            return 1;
+        }
+    ''')
+
+
+def run_native_speed_control_test(prove_regression: bool = False) -> bool:
     compiler = find_native_c_compiler()
     if compiler is None:
         print("SKIP native_speed_control_test: no host C compiler")
@@ -1574,6 +1736,12 @@ def run_native_speed_control_test() -> bool:
         }
     '''), encoding="utf-8")
 
+    original = harness.read_text(encoding="utf-8")
+    harness.write_text(original.replace(
+        "int main(void)", menu_speed_replay_harness() + "\nint main(void)").replace(
+        "if (!test_host_live_controls() ||",
+        "if (!test_menu_speed_replay() || !test_host_live_controls() ||"),
+        encoding="utf-8")
     compile_cmd = [
         str(compiler), "-std=c11", "-Wall", "-Wextra", "-Werror",
         str(harness), "-o", str(executable), f"-I{BUILD}",
@@ -1599,6 +1767,23 @@ def run_native_speed_control_test() -> bool:
         print("FAIL native_speed_control_test: harness failed")
         return False
     print("PASS native_speed_control_test")
+    if prove_regression:
+        mutant = BUILD / "onee_vtw_runtime_old_reapply.c"
+        mutant_exe = BUILD / "onee_vtw_runtime_old_reapply.exe"
+        text = harness.read_text(encoding="utf-8")
+        old = "vtw_service_apply_configured_speed(speed_mode, pace_divider);"
+        require(text.count(old) == 1, "expected one production generic speed callback")
+        mutant.write_text(text.replace(old, "vtw_service_set_speed(speed_mode, pace_divider);"),
+                          encoding="utf-8")
+        mutant_cmd = [str(mutant) if part == str(harness) else
+                      str(mutant_exe) if part == str(executable) else part
+                      for part in compile_cmd]
+        subprocess.run(mutant_cmd, cwd=REPO_ROOT, check=True)
+        failed = subprocess.run([str(mutant_exe)], cwd=REPO_ROOT, text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        require(failed.returncode != 0 and "settings retry changed live speed" in failed.stdout,
+                "old force-select reapply must fail the behavioral regression")
+        print("PASS old force-select reapply mutant rejected: " + failed.stdout.strip())
     return True
 
 
@@ -1612,7 +1797,7 @@ def main() -> int:
             print(f"FAIL {test.__name__}: {exc}")
         else:
             print(f"PASS {test.__name__}")
-    native_ok = run_native_speed_control_test()
+    native_ok = run_native_speed_control_test("--prove-speed-replay-regression" in sys.argv[1:])
     if failures or not native_ok:
         print(f"{len(TESTS) - len(failures)} of {len(TESTS)} tests passed; "
               f"{len(failures)} failed")

@@ -4836,7 +4836,11 @@ void config_menu_set_vtw_speed(config_menu_t *menu,
     menu->vtw_speed_mode = (speed_mode <= CARD_CTRL_VTW_SPEED_TURBO) ?
                               speed_mode : CARD_CTRL_VTW_SPEED_FULL;
     menu->vtw_pace_divider = (pace_divider >= 2U) ? pace_divider : 2U;
-    if (menu->platform.set_vtw_config != NULL) {
+    if (menu->platform.set_vtw_speed != NULL) {
+        menu->platform.set_vtw_speed(menu->platform.ctx,
+                                     menu->vtw_speed_mode,
+                                     menu->vtw_pace_divider);
+    } else if (menu->platform.set_vtw_config != NULL) {
         menu->platform.set_vtw_config(menu->platform.ctx,
                                       menu->vtw_enabled,
                                       menu->vtw_speed_mode,

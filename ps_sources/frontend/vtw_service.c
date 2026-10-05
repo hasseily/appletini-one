@@ -431,22 +431,40 @@ uint8_t vtw_service_is_enabled(void)
     return g_intent_enabled;
 }
 
-void vtw_service_set_speed(uint8_t speed_mode, uint8_t pace_divider)
+static void vtw_set_configured_speed(uint8_t speed_mode, uint8_t pace_divider,
+                                      uint8_t force)
 {
-    g_speed_mode = (uint8_t)(speed_mode & CARD_CTRL_VTW_CTRL_SPEED_MASK);
-    if (g_speed_mode == CARD_CTRL_VTW_SPEED_TURBO && g_turbo_enabled == 0U) {
-        g_speed_mode = CARD_CTRL_VTW_SPEED_FULL;
+    speed_mode = (uint8_t)(speed_mode & CARD_CTRL_VTW_CTRL_SPEED_MASK);
+    if (speed_mode == CARD_CTRL_VTW_SPEED_TURBO && g_turbo_enabled == 0U) {
+        speed_mode = CARD_CTRL_VTW_SPEED_FULL;
         uart_puts(g_uart_base,
                   "vtw: TURBO disabled; using 33 MHz\r\n");
     }
     if (pace_divider < 2U) {
         pace_divider = 2U;
     }
+    /* Menu refreshes and SD retries reapply the saved settings. They must
+     * leave a live USB override alone unless the saved speed changed. */
+    if (force == 0U && speed_mode == g_speed_mode &&
+        pace_divider == g_pace_divider) {
+        return;
+    }
+    g_speed_mode = speed_mode;
     g_pace_divider = pace_divider;
-    /* A configured (menu) speed change wins over any runtime override. */
+    /* An explicit speed choice also wins when it selects the same preset. */
     vtw_override_clear();
     /* Live update: rewrite CTRL with the current session bits intact. */
     (void)vtw_apply_ctrl_live();
+}
+
+void vtw_service_set_speed(uint8_t speed_mode, uint8_t pace_divider)
+{
+    vtw_set_configured_speed(speed_mode, pace_divider, 1U);
+}
+
+void vtw_service_apply_configured_speed(uint8_t speed_mode, uint8_t pace_divider)
+{
+    vtw_set_configured_speed(speed_mode, pace_divider, 0U);
 }
 
 void vtw_service_set_turbo_enabled(uint8_t enable)

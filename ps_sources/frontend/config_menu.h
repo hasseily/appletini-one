@@ -141,6 +141,8 @@ typedef struct {
                            uint8_t pace_divider,
                            uint8_t ignore_c074,
                            uint8_t disable_disk2_accel);
+    /* Explicit speed selection, distinct from reapplying saved settings. */
+    void (*set_vtw_speed)(void *ctx, uint8_t speed_mode, uint8_t pace_divider);
     void (*set_vtw_turbo_enabled)(void *ctx, uint8_t enable);
     void (*set_vtw_slug_key_enabled)(void *ctx, uint8_t enable);
     /* Per-region slowdown (TransWarp DIP block 2): region enable mask +

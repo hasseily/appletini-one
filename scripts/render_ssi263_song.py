@@ -12,6 +12,7 @@ from dataclasses import asdict
 import hashlib
 import html
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -66,9 +67,10 @@ def write_wav(path: Path, samples) -> None:
         stream.writeframes(samples.astype("<i2").tobytes())
 
 
-def render_song(song: Path, output: Path, region: str, distro: str) -> dict:
+def render_song(song: Path, output: Path, region: str, distro: str,
+                ssi_mix_gain: float = 1.25, reference: str | None = None) -> dict:
     import numpy as np
-    from render_ssi263 import render
+    from render_ssi263 import render, reference_settings
     from ssi263_host_data import Event, Trace
 
     framework = use_framework(song)
@@ -77,6 +79,8 @@ def render_song(song: Path, output: Path, region: str, distro: str) -> dict:
     from phasor.hardware import TARGET_SOURCE_COMMIT, TARGET_SOURCE_SHA256
     from phasor.stream import decode, encode
 
+    if not math.isfinite(ssi_mix_gain) or not 0 < ssi_mix_gain <= 4:
+        raise ValueError("SSI mix gain must be finite and greater than 0, up to 4")
     output.mkdir(parents=True, exist_ok=True)
     score_path = song / "score.json"
     score = json.loads(score_path.read_text(encoding="utf-8"))
@@ -111,7 +115,7 @@ def render_song(song: Path, output: Path, region: str, distro: str) -> dict:
     (output / "trace.json").write_text(json.dumps({
         "effective_clock_hz": clock, "duration_ticks": trace.duration_ticks,
         "events": [asdict(e) for e in writes], "metadata": metadata}, indent=2) + "\n")
-    vocals_report = render(trace, output / "vocals", "prototype")
+    vocals_report = render(trace, output / "vocals", "prototype", **reference_settings(reference))
     shutil.copyfile(output / "vocals/prototype.wav", output / "vocals.wav")
 
     # Only the original AY RTL and mixer are read from the song's pinned
@@ -147,39 +151,60 @@ def render_song(song: Path, output: Path, region: str, distro: str) -> dict:
         vocals = np.frombuffer(stream.readframes(stream.getnframes()), dtype="<i2").reshape(-1, 2)
     if vocals.shape != backing.shape:
         raise RuntimeError("Vocal and AY stem lengths differ")
-    mixed = vocals.astype(np.int32) + backing.astype(np.int32)
+    # Card-level balance only: scale the completed SSI output, including both
+    # voice and frication. Keep the raw model stem for checkpoint comparisons.
+    mix_vocals = np.rint(vocals.astype(np.float64) * ssi_mix_gain).astype(np.int32)
+    vocal_clips = int(np.count_nonzero((mix_vocals < -32768) | (mix_vocals > 32767)))
+    if vocal_clips:
+        raise RuntimeError(f"SSI mix stem would clip {vocal_clips} samples")
+    reference = vocals.astype(np.int32) + backing.astype(np.int32)
+    mixed = mix_vocals + backing.astype(np.int32)
     clipped = int(np.count_nonzero((mixed < -32768) | (mixed > 32767)))
-    if clipped:
-        raise RuntimeError(f"Mix would clip {clipped} samples; keep the stems for review")
+    reference_clips = int(np.count_nonzero((reference < -32768) | (reference > 32767)))
+    if clipped or reference_clips:
+        raise RuntimeError(f"Mix would clip {clipped} samples, reference {reference_clips}; keep the stems for review")
     stem = "house-of-the-rising-sun-native-ssi263"
     wav_path, mp3_path = output / (stem + ".wav"), output / (stem + ".mp3")
+    reference_wav = output / (stem + "-reference.wav")
+    reference_mp3 = output / (stem + "-reference.mp3")
     write_wav(wav_path, mixed)
+    write_wav(reference_wav, reference)
+    write_wav(output / "vocals-mixed.wav", mix_vocals)
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
         raise RuntimeError("ffmpeg is required for the requested MP3")
-    subprocess.run([ffmpeg, "-v", "error", "-nostdin", "-y", "-i", str(wav_path),
-                    "-codec:a", "libmp3lame", "-q:a", "2", "-metadata",
-                    "title=House of the Rising Sun - native SSI model", "-metadata",
-                    "artist=Appletini Phasor / SSI-263", str(mp3_path)], check=True)
+    for source_wav, destination_mp3 in ((wav_path, mp3_path), (reference_wav, reference_mp3)):
+        subprocess.run([ffmpeg, "-v", "error", "-nostdin", "-y", "-i", str(source_wav),
+                        "-codec:a", "libmp3lame", "-q:a", "2", "-metadata",
+                        "title=House of the Rising Sun - native SSI model", "-metadata",
+                        "artist=Appletini Phasor / SSI-263", str(destination_mp3)], check=True)
+    gain_db = 20 * math.log10(ssi_mix_gain)
     report = {"title": score["title"], "firmware_target": "F1.2.5-d1",
               "seconds": frames / 48_000, "frames": frames, "sample_rate": 48_000,
               "region": region, "stream": stream_meta, "source": metadata,
               "ssi_writes": len(writes), "ay_writes": sum(e[1] < 4 for e in events),
-              "mix": "Original AY pan/scaling plus current native SSI fixed gain; no normalization or EQ",
+              "mix": "Original AY pan/scaling plus separate SSI output trim; no normalization or EQ",
+              "ssi_mix_gain": ssi_mix_gain, "ssi_mix_gain_db": gain_db,
+              "ssi_mix_peak_pcm": int(np.abs(mix_vocals).max()),
+              "ssi_mix_clipped_samples": vocal_clips,
+              "reference_peak_pcm": int(np.abs(reference).max()),
+              "reference_clipped_samples": reference_clips,
               "pan": DEFAULT_PAN, "peak_pcm": int(np.abs(mixed).max()),
               "clipped_samples": clipped, "ssi": vocals_report,
               "ay": json.loads((output / "ay-driver.json").read_text()),
-              "files": {p.name: sha256(p) for p in (wav_path, mp3_path, output / "vocals.wav", output / "backing.wav")},
+              "files": {p.name: sha256(p) for p in (wav_path, mp3_path, reference_wav, reference_mp3,
+                        output / "vocals.wav", output / "vocals-mixed.wav", output / "backing.wav")},
               "limits": ["This uses the corrected physical SSI compiler profile: pitch and FF differ from the old Appletini MP3.",
                          "Composition, phonemes, musical timing and AY accompaniment are unchanged.",
-                         "Physical chip levels, Phasor analog mix, output frequency response and CPU bus overhead are not modeled.",
+                         "The SSI mix trim follows listening feedback; physical chip levels, Phasor analog mix, output frequency response and CPU bus overhead remain unmeasured.",
                          "The SSI engine retains its documented prototype conflicts and provisional attack envelope."]}
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     cards = "".join(f'<section><h2>{title}</h2><audio controls preload="metadata" '
                     f'src="{name}?v={sha256(output / name)[:12]}"></audio>'
                     f'<p><a href="{name}">Download</a></p></section>' for title, name in (
-                        ("Full song — native SSI vocals and AY backing", mp3_path.name),
-                        ("Native SSI vocals only", "vocals.wav"),
+                        (f"Full song — SSI {gain_db:+.2f} dB", mp3_path.name),
+                        ("Reference — previous SSI / AY balance", reference_mp3.name),
+                        ("SSI vocals at revised mix level", "vocals-mixed.wav"),
                         ("Original AY backing", "backing.wav")))
     (output / "listen.html").write_text('<!doctype html><meta charset="utf-8">'
         '<title>House of the Rising Sun — native SSI</title><style>'
@@ -189,7 +214,8 @@ def render_song(song: Path, output: Path, region: str, distro: str) -> dict:
         '<h1>House of the Rising Sun</h1><p>Current native SSI model, with the original AY accompaniment. '
         f'{frames / 48_000:.2f} seconds; {region.upper()} clock; corrected physical SSI pitch and filter bytes.</p>'
         '<p>The composition and register controls come from the song score in appletini-software. '
-        'This is a model preview, with fixed gains and no normalization. Its analog mix and attack timing '
+        f'SSI output is multiplied by {ssi_mix_gain:g} ({gain_db:+.2f} dB); AY levels stay fixed. '
+        'The reference uses the previous balance. This is a model preview, with no normalization. Its analog mix and attack timing '
         'have not been matched to a physical Phasor.</p>' + cards +
         f'<p><a href="{html.escape(wav_path.name)}">Full-resolution WAV</a> · '
         '<a href="report.json">Source hashes and model notes</a></p>', encoding="utf-8")
@@ -202,6 +228,9 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=ROOT / "build/ssi263_host/house_rising_sun")
     parser.add_argument("--region", choices=("pal", "ntsc"), default="pal")
     parser.add_argument("--wsl-distro", default="Ubuntu")
+    parser.add_argument("--reference", choices=("balanced",), help="accepted SSI voice/noise balance")
+    parser.add_argument("--ssi-mix-gain", type=float, default=1.25,
+                        help="SSI output multiplier relative to AY (default: 1.25, about +2 dB)")
     parser.add_argument("--ay-only", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--ay-clock", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--frames", type=int, help=argparse.SUPPRESS)
@@ -210,7 +239,7 @@ def main() -> None:
     if args.ay_only:
         ay_only(song, output, args.ay_clock, args.frames)
     else:
-        report = render_song(song, output, args.region, args.wsl_distro)
+        report = render_song(song, output, args.region, args.wsl_distro, args.ssi_mix_gain, args.reference)
         print(json.dumps({key: report[key] for key in
                           ("seconds", "frames", "ssi_writes", "ay_writes", "peak_pcm", "clipped_samples")}, indent=2))
         print(output / "listen.html")

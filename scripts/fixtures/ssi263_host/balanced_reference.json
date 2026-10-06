@@ -1,0 +1,37 @@
+{
+  "id": "balanced-2026-10-07",
+  "status": "User-approved listening reference; production firmware not yet updated",
+  "engine": "prototype",
+  "parameters": {
+    "articulation_reference": 8,
+    "prototype_gain": 1,
+    "voice_trim": 16384
+  },
+  "unchanged_noise_drive_q16": 301,
+  "song_ssi_mix_gain": 1.25,
+  "prototype_status": "Adjusts an unspecified POT3-like voice setting and common output gain; no new known circuit conflict. Existing timing, reset and analog-model limits remain.",
+  "calibration": {
+    "hardware_wav_sha256": "d3d0c94cc23fd0887ca15b4293b1c6b49e2da9cbedea880a4df04cdaf89c56b7",
+    "events_sha256": "e5f729e6a22055ef93992e9c3e8f3c1edb85d821d3063c6a2ffe51f16bb2c6b5",
+    "tables_sha256": "47b35dd8a2336bb3b7ef471d9297f8abdd762bc82769912d31299328b6baa3d1",
+    "balanced_wav_sha256": "fe83ba628343ef22df99d5f30c5a9717526d9717ee2851c127124f8fd76ad53b"
+  },
+  "song": {
+    "software_commit": "85bd75cf9604ad9ebef688fb42890e21bbfd2478",
+    "hardware_mp3_sha256": "095690407f6c125c8b7bc2960e7cf116e488b58df510ef4a919acc14dfd93eec",
+    "events_sha256": "0524ca5878d466ab4a1986c90d9e6af7aee94f0cebfd036229cbd9583357200f",
+    "balanced_vocals_wav_sha256": "77d3f004911179eeaec1529dba543bea71bda50346c53554a51dae71933f297a",
+    "balanced_mix_wav_sha256": "3e0e166f010d648eb6ba5688cb511e1cd364b50c4811732355269086f9a3c0d8"
+  },
+  "measurements": {
+    "description": "200-350 ms phoneme tails; arrays are physical targets 4 and 5. Levels relative to each stream's AH. High-band fraction uses 4-20 kHz over 20 Hz-20 kHz.",
+    "physical_thv_high_fraction": [0.07387869164496348, 0.05842316904530303],
+    "balanced_thv_high_fraction": [0.08090777298320745, 0.07472066701759364],
+    "physical_s_relative_ah_db": [-19.196, -19.229],
+    "balanced_s_relative_ah_db": [-19.732, -19.830],
+    "physical_hf_relative_ah_db": [-19.741, -20.157],
+    "balanced_hf_relative_ah_db": [-22.527, -22.509],
+    "internal_saturations": 0,
+    "output_clips": 0
+  }
+}

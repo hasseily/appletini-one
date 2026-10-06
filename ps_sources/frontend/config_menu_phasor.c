@@ -1,4 +1,5 @@
 #include "config_menu_internal.h"
+#include "card_control_regs.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -100,6 +101,17 @@ static int8_t phasor_audio_clamp(int32_t value)
     return (int8_t)value;
 }
 
+static int8_t phasor_ssi_volume_clamp(int32_t value)
+{
+    if (value < PHASOR_SSI_VOLUME_MIN) {
+        return (int8_t)PHASOR_SSI_VOLUME_MIN;
+    }
+    if (value > PHASOR_SSI_VOLUME_MAX) {
+        return (int8_t)PHASOR_SSI_VOLUME_MAX;
+    }
+    return (int8_t)value;
+}
+
 static int8_t *phasor_audio_control_ptr(config_menu_t *menu, uint32_t control)
 {
     if (menu == NULL) {
@@ -183,6 +195,9 @@ void config_menu_phasor_set_defaults(config_menu_t *menu)
     menu->phasor_treble = 0;
     menu->phasor_warmth = PHASOR_WARMTH_DEFAULT;
     menu->phasor_volume = 0;
+    menu->phasor_ssi_volume_db = PHASOR_SSI_VOLUME_DEFAULT;
+    menu->phasor_ssi_pan[0] = 0U;
+    menu->phasor_ssi_pan[1] = 15U;
     menu->phasor_psg_ay_mode = PHASOR_PSG_MODE_AY8913;
     menu->phasor_mockingboard_only = 0U;
 }
@@ -196,7 +211,11 @@ void config_menu_phasor_apply(config_menu_t *menu)
         menu->platform.set_phasor_pan(
             menu->platform.ctx,
             phasor_pack_pan_word(menu, 0U),
-            phasor_pack_pan_word(menu, 6U));
+            phasor_pack_pan_word(menu, 6U) |
+                ((uint32_t)config_menu_pan_clamp(menu->phasor_ssi_pan[0]) <<
+                    CARD_CTRL_PHASOR_PAN_HI_SSI0_SHIFT) |
+                ((uint32_t)config_menu_pan_clamp(menu->phasor_ssi_pan[1]) <<
+                    CARD_CTRL_PHASOR_PAN_HI_SSI1_SHIFT));
     }
     menu->phasor_warmth = PHASOR_WARMTH_DEFAULT;
     if (menu->platform.set_phasor_audio != NULL) {
@@ -206,6 +225,7 @@ void config_menu_phasor_apply(config_menu_t *menu)
                                         menu->phasor_treble,
                                         menu->phasor_warmth,
                                         menu->phasor_volume,
+                                        menu->phasor_ssi_volume_db,
                                         menu->phasor_psg_ay_mode,
                                         menu->phasor_mockingboard_only);
     }
@@ -213,7 +233,7 @@ void config_menu_phasor_apply(config_menu_t *menu)
 
 uint32_t config_menu_phasor_item_count(void)
 {
-    return PHASOR_PSG_MODE_FOCUS + 1U;
+    return PHASOR_SSI_PAN_FOCUS_BASE + PHASOR_SSI_COUNT;
 }
 
 uint8_t config_menu_phasor_parse_setting(config_menu_t *menu,
@@ -260,6 +280,16 @@ uint8_t config_menu_phasor_parse_setting(config_menu_t *menu,
     }
     if (strcmp(key, "phasor.volume") == 0) {
         menu->phasor_volume = phasor_audio_clamp(strtol(value, NULL, 10));
+        return 1U;
+    }
+    if (strcmp(key, "phasor.ssi.volume_db") == 0) {
+        menu->phasor_ssi_volume_db = phasor_ssi_volume_clamp(strtol(value, NULL, 10));
+        return 1U;
+    }
+    if (strcmp(key, "phasor.ssi.pan.0") == 0 ||
+        strcmp(key, "phasor.ssi.pan.1") == 0) {
+        menu->phasor_ssi_pan[key[15] - '0'] =
+            config_menu_pan_clamp(strtoul(value, NULL, 10));
         return 1U;
     }
     if (strcmp(key, "phasor.psg.mode") == 0) {
@@ -311,6 +341,12 @@ uint8_t config_menu_phasor_append_settings(const config_menu_t *menu,
                       phasor_psg_mode_config(menu->phasor_psg_ay_mode));
     APPEND_PHASOR_CFG("phasor.mockingboard.only=%s\n",
                       phasor_bool_config(menu->phasor_mockingboard_only));
+    APPEND_PHASOR_CFG("phasor.ssi.volume_db=%d\n"
+                      "phasor.ssi.pan.0=%u\n"
+                      "phasor.ssi.pan.1=%u\n",
+                      (int)menu->phasor_ssi_volume_db,
+                      (unsigned)menu->phasor_ssi_pan[0],
+                      (unsigned)menu->phasor_ssi_pan[1]);
 
 #undef APPEND_PHASOR_CFG
 
@@ -366,6 +402,34 @@ uint8_t config_menu_phasor_adjust(config_menu_t *menu, int8_t delta)
             (delta < 0) ? PHASOR_PSG_MODE_YM2149 : PHASOR_PSG_MODE_AY8913;
         if (menu->phasor_psg_ay_mode != next) {
             menu->phasor_psg_ay_mode = next;
+            config_menu_phasor_apply(menu);
+            config_menu_save_settings(menu);
+        }
+        return 1U;
+    }
+
+    if (menu->item_focus == PHASOR_SSI_VOLUME_FOCUS) {
+        const int8_t next = phasor_ssi_volume_clamp(
+            (int32_t)menu->phasor_ssi_volume_db + (int32_t)delta);
+        if (menu->phasor_ssi_volume_db != next) {
+            menu->phasor_ssi_volume_db = next;
+            config_menu_phasor_apply(menu);
+            config_menu_save_settings(menu);
+        }
+        return 1U;
+    }
+
+    if (menu->item_focus >= PHASOR_SSI_PAN_FOCUS_BASE &&
+        menu->item_focus < PHASOR_SSI_PAN_FOCUS_BASE + PHASOR_SSI_COUNT) {
+        const uint32_t chip = menu->item_focus - PHASOR_SSI_PAN_FOCUS_BASE;
+        int32_t pan = (int32_t)menu->phasor_ssi_pan[chip] + (int32_t)delta;
+        if (pan < 0) {
+            pan = 0;
+        } else if (pan > 15) {
+            pan = 15;
+        }
+        if (menu->phasor_ssi_pan[chip] != (uint8_t)pan) {
+            menu->phasor_ssi_pan[chip] = (uint8_t)pan;
             config_menu_phasor_apply(menu);
             config_menu_save_settings(menu);
         }
@@ -437,6 +501,26 @@ void config_menu_phasor_activate(config_menu_t *menu)
             menu->phasor_mockingboard_only ? 0U : 1U;
         config_menu_phasor_apply(menu);
         config_menu_save_settings(menu);
+        return;
+    }
+
+    if (menu->item_focus == PHASOR_SSI_VOLUME_FOCUS) {
+        if (menu->phasor_ssi_volume_db != 0) {
+            menu->phasor_ssi_volume_db = 0;
+            config_menu_phasor_apply(menu);
+            config_menu_save_settings(menu);
+        }
+        return;
+    }
+
+    if (menu->item_focus >= PHASOR_SSI_PAN_FOCUS_BASE &&
+        menu->item_focus < PHASOR_SSI_PAN_FOCUS_BASE + PHASOR_SSI_COUNT) {
+        const uint32_t chip = menu->item_focus - PHASOR_SSI_PAN_FOCUS_BASE;
+        if (menu->phasor_ssi_pan[chip] != 8U) {
+            menu->phasor_ssi_pan[chip] = 8U;
+            config_menu_phasor_apply(menu);
+            config_menu_save_settings(menu);
+        }
         return;
     }
 
@@ -572,4 +656,35 @@ void config_menu_phasor_draw(uint16_t *fb,
                         "Volume Envelope",
                         phasor_psg_mode_label(menu->phasor_psg_ay_mode));
 
+    /* Fill the unused right column without making the page taller. Compact
+     * mode collects these same rows and scrolls to the focused control. */
+    {
+        char value[8];
+        const int8_t volume = phasor_ssi_volume_clamp(menu->phasor_ssi_volume_db);
+        (void)snprintf(value, sizeof(value), "%+d dB", (int)volume);
+        cmui_slider(fb,
+                    psg_item_x,
+                    audio_y + row_h,
+                    column_w,
+                    (uint8_t)(menu->item_focus == PHASOR_SSI_VOLUME_FOCUS),
+                    0U,
+                    "SSI volume",
+                    "-5",
+                    "+5",
+                    (uint32_t)(volume - PHASOR_SSI_VOLUME_MIN),
+                    PHASOR_SSI_VOLUME_MAX - PHASOR_SSI_VOLUME_MIN,
+                    0 - PHASOR_SSI_VOLUME_MIN,
+                    value);
+    }
+    for (uint32_t chip = 0U; chip < PHASOR_SSI_COUNT; ++chip) {
+        hgr_draw_phasor_pan_item(fb,
+                                 psg_item_x,
+                                 audio_y + (int)(chip + 2U) * row_h,
+                                 column_w,
+                                 (uint8_t)(menu->item_focus ==
+                                           PHASOR_SSI_PAN_FOCUS_BASE + chip),
+                                 0U,
+                                 chip == 0U ? "SSI0 pan" : "SSI1 pan",
+                                 menu->phasor_ssi_pan[chip]);
+    }
 }

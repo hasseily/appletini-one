@@ -564,8 +564,10 @@ module apple_top(
     localparam logic [31:0] CARD_CTRL_SLOT_ENABLE_RESET      = 32'h0000_0000;
     localparam logic [31:0] CARD_CTRL_SLOT_ENABLE_VALID_MASK = 32'h0000_007E;
     localparam logic [31:0] CARD_CTRL_SLOT_ENABLE_REQUIRED   = 32'h0000_0080;
-    localparam logic [47:0] PHASOR_PAN_RESET                 = 48'h5B5B5B5B5B5B;
-    localparam logic [31:0] PHASOR_AUDIO_RESET               = 32'h0204_0000;
+    // Top byte holds SSI1/SSI0 pan: hard right / hard left. AY pan is unchanged.
+    localparam logic [55:0] PHASOR_PAN_RESET                 = 56'hF05B5B5B5B5B5B;
+    // Signed bits 31:27 set SSI gain in dB; start at +2 dB.
+    localparam logic [31:0] PHASOR_AUDIO_RESET               = 32'h1204_0000;
 
     function automatic logic [31:0] card_slot_enable_normalize(input logic [31:0] value);
         card_slot_enable_normalize =
@@ -593,7 +595,7 @@ module apple_top(
     logic [31:0] card_feature_enable_mask_q = 32'h0000_0000;
     logic [31:0] reset_release_ready_q = 32'h0000_0000;
     logic menu_chime_start_q = 1'b0;
-    logic [47:0] phasor_pan_q = PHASOR_PAN_RESET;
+    logic [55:0] phasor_pan_q = PHASOR_PAN_RESET;
     logic [31:0] phasor_audio_q = PHASOR_AUDIO_RESET;
     logic [15:0] eth_host_addr_q = 16'h0000;
     logic [7:0]  eth_host_wdata_q = 8'h00;
@@ -1420,7 +1422,8 @@ module apple_top(
         .rstn(rstn[2]),
         .apple_q3_raw(apple_q3_pin),
         .slot_assign(MB1_SLOT_ASSIGN),
-        .pan(phasor_pan_q),
+        .pan(phasor_pan_q[47:0]),
+        .ssi_pan(phasor_pan_q[55:48]),
         .audio_control(phasor_audio_q),
         .audio_sample_tick(audio_sample_tick),
         .sss(sss),
@@ -1770,6 +1773,9 @@ module apple_top(
     always_comb begin
         smartport_ab_read = gate_ab(slot7_devsel_ab_read,
             vtw_smartport_visible || slot7_overlay_devsel_visible);
+        // SmartPort and overlay write bytes are consumed only at data_en.
+        // Use the already captured virtual byte to avoid the live reply mux.
+        smartport_ab_read.data = data_phase_ab_read.data;
         if (!vtw_smartport_visible) begin
             // Only selected C0F I/O may reach the independent text overlay.
             // Keep addr_en so a stale reply clears at the next address.
@@ -2678,9 +2684,9 @@ module apple_top(
                     end
                     CARD_CTRL_REG_PHASOR_PAN_HI: begin
                         automatic logic [31:0] pan_tmp = globals::apply_wstrb(
-                            {8'h00, phasor_pan_q[47:24]},
+                            phasor_pan_q[55:24],
                             as_vtw_phasor_wdata, as_vtw_phasor_wstrb);
-                        phasor_pan_q[47:24] <= pan_tmp[23:0];
+                        phasor_pan_q[55:24] <= pan_tmp;
                     end
                     CARD_CTRL_REG_PHASOR_AUDIO: begin
                         phasor_audio_q <= globals::apply_wstrb(
@@ -2904,7 +2910,7 @@ module apple_top(
                     vtw_video_phase_1mhz,
                     ab_read.res, apple_reset_seq_q
                 };
-                CARD_CTRL_REG_PHASOR_PAN_HI:       as_client_rdata_q <= {8'h00, phasor_pan_q[47:24]};
+                CARD_CTRL_REG_PHASOR_PAN_HI:       as_client_rdata_q <= phasor_pan_q[55:24];
                 CARD_CTRL_REG_PHASOR_AUDIO:        as_client_rdata_q <= phasor_audio_q;
                 CARD_CTRL_REG_ETH_ADDR:            as_client_rdata_q <= {16'h0000, eth_host_addr_q};
                 CARD_CTRL_REG_ETH_DATA:            as_client_rdata_q <= {24'h000000, eth_host_wdata_q};

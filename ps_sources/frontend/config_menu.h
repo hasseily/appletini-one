@@ -158,6 +158,7 @@ typedef struct {
                              int8_t treble,
                              int8_t warmth,
                              int8_t volume,
+                             int8_t ssi_volume_db,
                              uint8_t psg_ay_mode,
                              uint8_t mockingboard_only);
     void (*set_mouse_sensitivity)(void *ctx, uint8_t sensitivity);
@@ -268,6 +269,8 @@ typedef struct {
     int8_t phasor_treble;
     int8_t phasor_warmth;
     int8_t phasor_volume;
+    int8_t phasor_ssi_volume_db;
+    uint8_t phasor_ssi_pan[2];
     uint8_t phasor_psg_ay_mode;
     uint8_t phasor_mockingboard_only;  /* lock card to Mockingboard mode */
     uint8_t ethernet_slot1_enabled;

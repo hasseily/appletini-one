@@ -395,10 +395,10 @@ HELP(mouse,
 /*  MOCKINGBOARD / PHASOR                                                   */
 /* ======================================================================== */
 HELP(phasor,
-    "Phasor sound card: four YM2149 chips, 12 channels. 2x SSI-263/SC-01 speech chips.",
+    "Phasor sound card: four YM2149 chips, 12 channels, and two SSI-263 speech chips.",
     "The Phasor is essentially 2 Mockingboard cards in one slot. It should run all Mockingboard software.",
-    "Pan sliders position the 12 channels; audio sliders tune bass, mid, treble, and volume.",
-    "The Appletini's audio is very clean, so you can push the volume up high.");
+    "Pan sliders position the AY channels and each SSI. SSI volume sets speech level against the AYs.",
+    "Bass, Mid, Treble, and Volume adjust the complete mix.");
 
 HELP(phasor_mockingboard_only,
     "Locks the card in plain Mockingboard mode and ignores Phasor $C0nX mode-switch writes.",
@@ -433,6 +433,16 @@ HELP(phasor_volume,
     "Range is -8 to +8; 0 adds no gain. Negative values reduce level and positive values raise it.",
     "Positive gain can saturate the 16-bit output; reduce it if loud passages sound distorted.");
 
+HELP(phasor_ssi_volume,
+    "Adjusts both SSI speech chips against the AY channels, from -5 dB to +5 dB in 1 dB steps.",
+    "The default is +2 dB; 0 dB keeps the model's original output level. Enter selects 0 dB.",
+    "This adjusts the mix without changing speech timing, pitch, or the chip's amplitude register.");
+
+HELP(phasor_ssi_pan,
+    "Positions one SSI speech chip between the left and right outputs: 0 is left and 15 is right.",
+    "SSI0 defaults to left and SSI1 defaults to right. Enter selects the near-center position, 8.",
+    "Each chip stays active in Mockingboard Only mode when software uses it.");
+
 static const help_override_t phasor_overrides[] = {
     OVERRIDE(PHASOR_MOCKINGBOARD_ONLY_FOCUS, phasor_mockingboard_only),
     OVERRIDE(PHASOR_AUDIO_FOCUS_BASE + PHASOR_AUDIO_CONTROL_BASS, phasor_bass),
@@ -440,6 +450,9 @@ static const help_override_t phasor_overrides[] = {
     OVERRIDE(PHASOR_AUDIO_FOCUS_BASE + PHASOR_AUDIO_CONTROL_TREBLE, phasor_treble),
     OVERRIDE(PHASOR_AUDIO_FOCUS_BASE + PHASOR_AUDIO_CONTROL_VOLUME, phasor_volume),
     OVERRIDE(PHASOR_PSG_MODE_FOCUS, phasor_volume_envelope),
+    OVERRIDE(PHASOR_SSI_VOLUME_FOCUS, phasor_ssi_volume),
+    OVERRIDE(PHASOR_SSI_PAN_FOCUS_BASE, phasor_ssi_pan),
+    OVERRIDE(PHASOR_SSI_PAN_FOCUS_BASE + 1U, phasor_ssi_pan),
 };
 
 /* ======================================================================== */

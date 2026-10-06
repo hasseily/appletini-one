@@ -1113,7 +1113,7 @@ static void control_set_phasor_pan(void *ctx, uint32_t pan_lo, uint32_t pan_hi)
 {
     (void)ctx;
     REG_WRITE(CARD_CTRL_PHASOR_PAN_LO_REG, pan_lo & 0x00FFFFFFUL);
-    REG_WRITE(CARD_CTRL_PHASOR_PAN_HI_REG, pan_hi & 0x00FFFFFFUL);
+    REG_WRITE(CARD_CTRL_PHASOR_PAN_HI_REG, pan_hi);
 }
 
 static uint32_t phasor_audio_pack5(int8_t value)
@@ -1127,6 +1127,7 @@ static void control_set_phasor_audio(void *ctx,
                                      int8_t treble,
                                      int8_t warmth,
                                      int8_t volume,
+                                     int8_t ssi_volume_db,
                                      uint8_t psg_ay_mode,
                                      uint8_t mockingboard_only)
 {
@@ -1138,7 +1139,8 @@ static void control_set_phasor_audio(void *ctx,
              (phasor_audio_pack5(treble) << 10) |
              (phasor_audio_pack5(warmth) << 15) |
              (phasor_audio_pack5(volume) << 20) |
-             (((uint32_t)(psg_ay_mode != 0U)) << 25);
+             (((uint32_t)(psg_ay_mode != 0U)) << 25) |
+             (phasor_audio_pack5(ssi_volume_db) << CARD_CTRL_PHASOR_AUDIO_SSI_VOLUME_SHIFT);
     if (mockingboard_only != 0U) {
         packed |= CARD_CTRL_PHASOR_AUDIO_MOCKINGBOARD_ONLY_BIT;
     }

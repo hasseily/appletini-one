@@ -1,3 +1,6 @@
+// Historical formant-backend bench, retained as reference only. Active start,
+// bus and audio regression: scripts/test_ssi263_native_integration.py with
+// scripts/fixtures/ssi263_native/integration_top.sv and integration_bus.cpp.
 `timescale 1ns / 1ps
 
 module tb_ssi263_start_timing;

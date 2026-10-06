@@ -1,5 +1,38 @@
 # SSI263 filter-frequency control
 
+## F1.2.5-d1 native engine
+
+The native engine now uses the SSI divider:
+`filter_clock = effective_XCK / (2 * (256 - FF))`. At PAL effective XCK,
+FF128 gives about 3.97 kHz, FF230 about 19.53 kHz and FF232 about 21.16 kHz.
+FF128 is no longer a normal-sounding reference setting. These are internal
+filter-clock frequencies, not the voice fundamental.
+
+The original Phasor demo labels R4/FF **Pitch**. Its checked Ver 1.1.0 image
+defaults to 232. The earlier advice to select 128 applied only to the legacy
+filter approximation below; do not carry that adjustment into the native
+engine. The tested mb-audit phrase streams use FF230 or FF233. Comparing
+different applications does not isolate a Mockingboard/Phasor mode difference.
+Both modes feed the SSI engines from the same Q3/DIV2 clock path.
+
+The real-card regression now replays reset-identical SSI writes and Q3/sample
+timing in both modes at FF128 and FF232. All 4,096 raw socket PCM comparisons
+are byte-identical, with one valid sample per request. This checks the current
+core's mode invariance for those traces; it does not make different programs
+write the same parameters.
+
+On 2026-10-06 the user reported that mb-audit speech sounds correct on the
+new firmware, while the Phasor.hdv demo sounds too low until its Pitch control
+is raised to 230, with remaining audible differences. The checked demo image
+establishes the control's meaning, but is not yet verified as that exact HDV.
+The returned physical capture supports the native steady pitch and identifies
+noise/filter balance differences; see the [capture review](SSI263_CAPTURE_COMPARISON.md).
+
+## Legacy F1.2.4 implementation
+
+The sections below retain the earlier implementation and test history. Their
+linear FF mapping and 128 reference apply to that backend only.
+
 Register 4 now changes the speech tract instead of being stored without an
 audio effect. Addresses 5–7 remain aliases of register 4. This applies to SSI263
 speech; the SC-01/Votrax path ignores this register as before.

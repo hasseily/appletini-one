@@ -3,6 +3,12 @@
 Started 2026-10-06 on `codex/ssi263-physical-match-handoff`.
 Firmware stays `F1.2.5-d1` until the user approves `F1.2.5`.
 
+The listening checkpoint now has a complete FPGA audio implementation:
+scanner, transitions, source, five formants and a per-socket scheduler. The
+production wrapper selects it for both sockets, with SSI volume and pan. See
+[FPGA candidate notes](SSI263_FPGA_CANDIDATE.md) for exact host/RTL replay,
+arithmetic, clock limits and the production bus integration.
+
 ## First implementation step
 
 The new work targets SSI-263 behavior. It does not regenerate the old SC-01
@@ -24,11 +30,11 @@ The following pieces are now available:
   source plus prototype filter candidate. See [host renderer notes](SSI263_HOST_RENDERER.md)
   for commands, model assumptions and known prototype conflicts.
 
-The native controller is in the Vivado source list and passes standalone
-simulation and synthesis. The production audio engine does not instantiate
-it yet. The replay still measures the existing engine, which has the
-limitations listed below. No new firmware image, native acoustic match, or
-board validation is claimed.
+These earlier control-only modules established the ROM and timing rules.
+The later `ssi263_native_engine` now supplies production audio. Historical
+baseline replays still measure the old engine; they do not validate the new
+path. The native engine has separate replay and integration checks. Physical
+audio agreement still awaits the tester's recording.
 
 ## Recovered prototype source
 
@@ -133,18 +139,18 @@ the recorded equations do not settle their simultaneous physical order.
 Simulation rejects those ambiguous event combinations. These exclusions are
 interface policies, not additional claims about the prototype.
 
-The remaining boundary is explicit. The caller must supply native selector
+For this earlier control-only module, the caller must supply native selector
 events, U37 phase, latched CTRL, U62 /Q, D3+4, U68 zero and current native
 amplitude-zero flags. Latched CTRL is not a guessed decode of a host CTL write.
 Neither the old pulse counter nor its mapped amplitude state is a valid
-replacement for these signals. The full U68 envelope, CD4006 noise recurrence,
-sequencer and analog tract remain to implement. The new controls therefore
-do not yet drive the production audio mix. This avoids introducing a conflict
-with the recorded prototype merely to make an incomplete path audible.
+replacement for these signals. The later `ssi263_native_engine` now implements
+the scanner, U68 envelope, CD4006 noise and analog tract together. It uses the
+frozen host event order and explicitly documented SSI policies. It now runs
+behind the production wrapper; see [the candidate](SSI263_FPGA_CANDIDATE.md).
 
-## Prototype differences still to remove
+## Departures removed from the old audio path
 
-The current production SSI path has these known departures or missing paths:
+The replaced SC-01-based SSI path had these departures or missing paths:
 
 - A nine-value SC-01 glottal waveform and SC-01 noise recurrence instead of
   the native source/envelope and U75/CD4006 noise logic.
@@ -154,9 +160,10 @@ The current production SSI path has these known departures or missing paths:
 - Missing low-nibble TPARM controls, including the HF/HFC PW3 distinction.
 - Missing separate held FRIC1 and FRIC2 routes.
 
-These remain limits of the production audio path. The separate native
-controller now implements the TPARM controls and held route switches, pending
-the native source/sequencer and audio connection. The recorded
+The native engine implements the TPARM controls, held routes, source,
+sequencer and filters. Its remaining prototype conflicts are listed in the
+[FPGA notes](SSI263_FPGA_CANDIDATE.md), including retained timing/reset policies
+and unmeasured analog assumptions. The recorded
 prototype route is voice -> F1 -> F2(+FRIC1) -> F3 -> F4 -> F5(+FRIC2).
 Selector 3 supplies the shared F3/F4 target. Route switches hold state on
 different phases; they are not a live bit and its complement. See
@@ -169,17 +176,16 @@ better-sounding result alone.
 
 ## Native filter direction
 
-Investigate a native switched-capacitor state model with distinct F1..F5
-stages and the documented held noise routes. Derive state updates from the
-actual circuit and capacitor ratios, then drive their timing from effective
-XCK and FF. Do not insert the native capacitor banks into SC-01 equations.
+The standalone candidate implements distinct F1..F5 charge states and the
+documented held noise routes, driven by effective XCK and FF. It ports the
+checked host model's circuit and capacitor ratios. It does not insert native
+capacitor banks into SC-01 equations.
 
 The recorded switched banks alone do not define the full transfer function.
-Review the recovered schematic and earlier model for fixed capacitors,
-topology, phase ordering and output circuitry before choosing the next
-implementation. These are now source-review and implementation tasks, rather
-than a missing-schematic blocker. Acoustic measurements and differences
-between the prototype and production chip remain separate checks.
+The recovered schematic and earlier model supply the fixed capacitors,
+topology, phase ordering and output circuit used by the candidate. Acoustic
+measurements and differences between the prototype and production chip remain
+separate checks.
 
 At the assumed NTSC effective clock of 1,020,484 Hz, FF255 gives 510,242
 complete filter cycles per second per chip. At 133 MHz:
@@ -191,11 +197,10 @@ complete filter cycles per second per chip. At 133 MHz:
 | One engine per chip, separate jobs for both half-phases | 130.3 |
 | One shared engine, separate jobs for both half-phases | 65.2 |
 
-These are planning budgets, not measured throughput. Current voice backends
-have separate arithmetic engines. Their old 48 kHz coefficient recurrence is
-not a native switched-capacitor cycle, so its cycle cost cannot establish the
-new model's feasibility. Measure the new schedule, fixed-point bounds and
-output-rate conversion before selecting the implementation. High FF also
+The candidate uses one engine per socket and separate half-phase events.
+Its measured worst complete update takes 121 fabric clocks, within the
+130-clock minimum effective-XCK interval. The old backend's 48 kHz coefficient
+recurrence does not set this budget. High FF also
 needs anti-alias filtering before 48 kHz output.
 
 ## Replaying the physical disk

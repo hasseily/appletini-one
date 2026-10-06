@@ -9,12 +9,19 @@ and higher-level peripheral emulation.
 
 - SmartPort storage and Disk II disk-image support
 - Selectable slot-5 coprocessor: PCPI-compatible Z80 Appli-Card or 640 KB ALF AD8088 Plus
-- Phasor/Mockingboard audio with SSI-263/SC-01 speech
+- Phasor/Mockingboard audio with dual SSI-263 speech
 - Uthernet II compatible W5100 interface
 - Mouse card, RamWorks memory, and no-slot clock
 - VidHD-compatible video controls and SuperSprite graphics
 - Accurate Apple //e video capture, HDMI output, borders, scanlines, and profiles
 - USB keyboard, mouse, storage, firmware update, and SuperDuperDisplay support
+
+The [native SSI-263 FPGA engine](docs/SSI263_FPGA_CANDIDATE.md) now drives both
+speech sockets in the F1.2.5-d1 test firmware. The Phasor menu adds SSI volume
+from -5 to +5 dB and independent pan, defaulting to +2 dB and left/right.
+The first [physical Phasor capture review](docs/SSI263_CAPTURE_COMPARISON.md)
+confirms close steady pitch and identifies noise/filter balance and response
+timing differences that still need work.
 
 The boot menu configures virtual cards, storage images, video, audio, networking,
 USB behavior, and named profiles. Settings are stored on the card's SD volume.

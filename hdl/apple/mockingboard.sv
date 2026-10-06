@@ -8,7 +8,7 @@
 // mode VIA ORB bit 4 selects the primary AY and bit 3 selects the secondary AY;
 // both chip selects are active-low, matching the Phasor GAL behavior documented
 // by AppleWin. Both speech sockets expose SSI263AP bus behavior and use the
-// retained SC-01 formant engine for audio.
+// native SSI-263 engine for audio.
 module mockingboard(
     input clk,
     input rstn,
@@ -17,6 +17,7 @@ module mockingboard(
     input globals::SoftSwitchState sss,
     input logic [2:0] slot_assign,
     input logic [47:0] pan,
+    input logic [7:0] ssi_pan,
     input logic [31:0] audio_control,
     input logic audio_sample_tick,
     output globals::AppleBus_write ab_write,
@@ -141,6 +142,8 @@ assign dbg_ssi_backend_done = ssi0_backend_done | ssi1_backend_done;
 assign dbg_ssi_enable_ints  = ssi0_enable_ints | ssi1_enable_ints;
 logic signed [15:0] ssi0_audio;
 logic signed [15:0] ssi1_audio;
+logic ssi0_audio_valid, ssi1_audio_valid;
+logic signed [17:0] ssi_mix_l, ssi_mix_r;
 logic ssi_xck_ce;
 logic signed [31:0] tone_l_low_q;
 logic signed [31:0] tone_l_warm_lp_q;
@@ -365,16 +368,14 @@ function automatic logic [8:0] apply_pan_gain(input logic [7:0] sample,
     end
 endfunction
 
-function automatic signed [15:0] mix2_to_pcm(input logic [10:0] value);
-    mix2_to_pcm = $signed({1'b0, value, 4'b0000});
+function automatic signed [16:0] mix2_to_wide(input logic [10:0] value);
+    mix2_to_wide = $signed({2'b00, value, 4'b0000});
 endfunction
 
-function automatic signed [15:0] mix4_to_pcm(input logic [11:0] value);
-    if (value[11]) begin
-        mix4_to_pcm = 16'sh7FFF;
-    end else begin
-        mix4_to_pcm = $signed({1'b0, value[10:0], 4'b0000});
-    end
+function automatic signed [16:0] mix4_to_wide(input logic [11:0] value);
+    // Keep the full four-AY sum until signed SSI is added. Clamping AY first
+    // would lose valid cancellation from a negative speech sample.
+    mix4_to_wide = $signed({1'b0, value, 4'b0000});
 endfunction
 
 function automatic signed [15:0] sat_add16(input signed [15:0] a,
@@ -392,9 +393,15 @@ function automatic signed [15:0] sat_add16(input signed [15:0] a,
     end
 endfunction
 
-function automatic signed [15:0] mix_speech(input signed [15:0] base,
-                                            input signed [15:0] speech);
-    mix_speech = sat_add16(base, speech);
+function automatic signed [15:0] mix_speech(input signed [16:0] base,
+                                            input signed [17:0] speech);
+    logic signed [18:0] combined;
+    begin
+        combined=19'(base)+19'(speech);
+        if (combined > 19'sd32767) mix_speech=16'sh7fff;
+        else if (combined < -19'sd32768) mix_speech=16'sh8000;
+        else mix_speech=combined[15:0];
+    end
 endfunction
 
 function automatic signed [4:0] clamp_audio_control(input logic [4:0] raw);
@@ -647,7 +654,7 @@ via6522 via1(
 );
 
 // Both physical Phasor speech sockets contain SSI263AP devices. They use the
-// same SC-01-backed SSI263 synthesis path, but expose no SC-01/Votrax device.
+// same native SSI263 synthesis path, but expose no SC-01/Votrax device.
 ssi263_xck_ce ssi_xck_ce_i (
     .clk(clk),
     .rstn(rstn),
@@ -676,6 +683,7 @@ ssi263_voice #(
     .via_ifr_set(via0_ifr_set),
     .via_ifr_clr(via0_ifr_clr),
     .audio(ssi0_audio),
+    .audio_valid(ssi0_audio_valid),
     .direct_irq(ssi0_direct_irq),
     .dbg_backend_done(ssi0_backend_done),
     .dbg_enable_ints(ssi0_enable_ints)
@@ -702,9 +710,21 @@ ssi263_voice #(
     .via_ifr_set(via1_ifr_set),
     .via_ifr_clr(via1_ifr_clr),
     .audio(ssi1_audio),
+    .audio_valid(ssi1_audio_valid),
     .direct_irq(ssi1_direct_irq),
     .dbg_backend_done(ssi1_backend_done),
     .dbg_enable_ints(ssi1_enable_ints)
+);
+
+// Signed audio_control[31:27] gives -5..+5 dB; reset/menu default is +2 dB.
+// The mixer uses per-engine valid strobes, independent of native XCK jobs.
+ssi263_stereo_mixer ssi_mixer_i (
+    .clk(clk), .rstn(rstn && card_enabled),
+    .audio_tick(audio_sample_tick),
+    .sample0(ssi0_audio), .sample1(ssi1_audio),
+    .sample0_valid(ssi0_audio_valid), .sample1_valid(ssi1_audio_valid),
+    .volume_db($signed(audio_control[31:27])), .pan(ssi_pan),
+    .speech_l(ssi_mix_l), .speech_r(ssi_mix_r), .mix_valid()
 );
 
 YM2149 psg0(
@@ -940,25 +960,25 @@ always_ff @(posedge clk) begin
 
             if (phasor_native) begin
                 base_l_next = mix_speech(
-                    mix4_to_pcm(psg_phasor_l_mix_q),
-                    ssi0_audio);
+                    mix4_to_wide(psg_phasor_l_mix_q),
+                    ssi_mix_l);
                 base_r_next = mix_speech(
-                    mix4_to_pcm(psg_phasor_r_mix_q),
-                    ssi1_audio);
+                    mix4_to_wide(psg_phasor_r_mix_q),
+                    ssi_mix_r);
             end else if (echo_plus) begin
                 base_l_next = mix_speech(
-                    mix2_to_pcm(psg_echo_l_mix_q),
-                    ssi0_audio);
+                    mix2_to_wide(psg_echo_l_mix_q),
+                    ssi_mix_l);
                 base_r_next = mix_speech(
-                    mix2_to_pcm(psg_echo_r_mix_q),
-                    ssi1_audio);
+                    mix2_to_wide(psg_echo_r_mix_q),
+                    ssi_mix_r);
             end else begin
                 base_l_next = mix_speech(
-                    mix2_to_pcm(psg_mockingboard_l_mix_q),
-                    ssi0_audio);
+                    mix2_to_wide(psg_mockingboard_l_mix_q),
+                    ssi_mix_l);
                 base_r_next = mix_speech(
-                    mix2_to_pcm(psg_mockingboard_r_mix_q),
-                    ssi1_audio);
+                    mix2_to_wide(psg_mockingboard_r_mix_q),
+                    ssi_mix_r);
             end
 
             tone_base_l_q <= base_l_next;

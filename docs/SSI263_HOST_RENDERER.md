@@ -4,6 +4,45 @@
 48 kHz WAVs. It does not run Vivado, build firmware, or need an Apple II.
 The firmware target remains `F1.2.5-d1`.
 
+## Accepted balanced reference, 2026-10-07
+
+The user approved the balanced song as our listening reference. Use
+`--reference balanced` for new host listening comparisons. It fixes voice
+trim at 16384, common gain at 1, and ART reference RATE at 8. The committed
+`scripts/fixtures/ssi263_host/balanced_reference.json` records those settings,
+the accepted calibration/song WAV hashes, and measured checks on both chips.
+
+```powershell
+python scripts/render_ssi263.py --demo hello_four --engine prototype --ff 231 --reference balanced --output build/ssi263_host/balanced_hello
+python scripts/render_ssi263_mb_audit.py --reference balanced --output build/ssi263_host/balanced_mb_audit
+python scripts/render_ssi263_song.py --song ../appletini-software-ssi-calibration/music/house_of_the_rising_sun --reference balanced --output build/ssi263_host/balanced_song
+```
+
+The main renderer also accepts `--reference balanced` with `--trace` or
+`--calibration`. The capture comparison tool accepts the equivalent explicit
+settings `--prototype-gain 1 --voice-trim 16384 --articulation-reference-rate 8`.
+Commands without the reference flag retain the pre-calibration settings for
+replaying old checkpoints and host/RTL parity tests. The delivered firmware
+still uses those older gains; this checkpoint does not rebuild it.
+
+The optional full-capture regression protects the accepted waveform:
+
+```powershell
+python scripts/test_ssi263_host_render.py --package build/ssi263_calibration/SSI263-CAL-PAL-01.zip
+```
+
+It checks the complete balanced WAV against the committed hash and rejects
+internal saturation or clipped output. This validates reproducibility, not
+the remaining physical-chip differences.
+
+The balance change adjusts an unspecified prototype source setting, with no
+new known SC-02 circuit conflict. Existing timing/reset departures remain.
+See [the physical comparison](SSI263_ATTACK_AUDIT.md) for the improvements and
+remaining transition, noise-spectrum and amplitude-dependent tone differences.
+
+The same listening model now has a [standalone FPGA implementation](SSI263_FPGA_CANDIDATE.md)
+with exact host/RTL sample checks. The renderer itself remains unchanged.
+
 ## Run it
 
 From the repository root:
@@ -154,6 +193,13 @@ checkpoint for the next attack-timing audit and capture-comparison work.
 Keep its source, filter, gain and timing settings reproducible; listening
 memory alone does not establish which part of the remaining attack differs.
 
+Checkpoint `41ac989` preserves this model and the House of the Rising Sun
+preview workflow. The later [attack audit](SSI263_ATTACK_AUDIT.md) traces
+the source gates and amplitude steps without changing the sound. The
+[capture comparison page](SSI263_CAPTURE_COMPARISON.md) prepares matching
+clips, envelopes and spectra for the tester's WAV, using one timing map for
+the whole recording. Its synthetic preview tests the tools only.
+
 ## Explicit assumptions and prototype conflicts
 
 - **ART clock conflict:** the prototype couples articulation to live RATE.
@@ -192,6 +238,18 @@ Gain 8 leaves headroom in the full calibration trace; it is not a fit to
 physical output level. Use `--prototype-gain` and `--voice-trim` for explicit
 experiments. No render normalizes its output or applies per-phone gain/EQ.
 Reports include rail counts, internal saturation counts and the settings.
+
+The song renderer applies a separate SSI-to-AY mix trim after speech generation.
+Its default `--ssi-mix-gain 1.25` raises the complete SSI output by 25%
+(+1.94 dB), following the user's report that speech sits louder against the
+AYs on a physical Phasor. Voice/noise balance, model output gain 8, raw speech
+stems and AY levels stay fixed. The listening page includes the previous
+unity-gain mix for comparison. This is a provisional card mix setting, not a
+change to SC-02 circuit behavior or a measured physical gain.
+
+```powershell
+python scripts/render_ssi263_song.py --song ../appletini-software-ssi-calibration/music/house_of_the_rising_sun --output build/ssi263_host/house_rising_sun_mix --ssi-mix-gain 1.25
+```
 
 The `baseline` and `transitions` paths retain current coefficient mappings,
 the old filter-frequency approximation and output shaping. These differ

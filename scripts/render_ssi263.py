@@ -29,6 +29,18 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "scripts/ssi263_host"
 CACHE = ROOT / "build/ssi263_host"
 PROFILES = ("baseline", "pitch", "transitions", "prototype")
+BALANCED_REFERENCE = ROOT / "scripts/fixtures/ssi263_host/balanced_reference.json"
+
+
+def reference_settings(reference: str | None = None) -> dict:
+    """Keep the accepted listening settings separate from frozen RTL defaults."""
+    if reference is None:
+        return {"articulation_reference": 8, "prototype_gain": 8, "voice_trim": 2048}
+    if reference != "balanced":
+        raise ValueError("unknown SSI listening reference")
+    return json.loads(BALANCED_REFERENCE.read_text(encoding="utf-8"))["parameters"]
+
+
 DESCRIPTION = {
     "baseline": "Current-engine software baseline",
     "pitch": "Baseline with exact SSI pitch timing",
@@ -66,7 +78,7 @@ def digest(path: Path) -> str:
 
 def source_hashes() -> dict[str, str]:
     paths = sorted(SOURCE.glob("*.h")) + sorted(SOURCE.glob("*.cpp"))
-    paths += [Path(__file__), ROOT / "scripts/ssi263_host_data.py",
+    paths += [Path(__file__), BALANCED_REFERENCE, ROOT / "scripts/ssi263_host_data.py",
               ROOT / "hdl/apple/ssi263_formant_pkg.sv", ROOT / "hdl/apple/ssi263_sc02_rom.mem"]
     return {path.relative_to(ROOT).as_posix(): digest(path) for path in paths}
 
@@ -328,15 +340,23 @@ def main() -> None:
     parser.add_argument("--ff", type=int, default=128, help="filter register for built-in demos")
     parser.add_argument("--compare-ff", type=int, help="also render the built-in demo with this FF value")
     parser.add_argument("--articulation", type=int, default=5, help="articulation register for demos")
-    parser.add_argument("--articulation-reference-rate", type=int, default=8)
-    parser.add_argument("--prototype-gain", type=int, default=8)
-    parser.add_argument("--voice-trim", type=int, default=2048, help="prototype voice drive, Q16")
+    parser.add_argument("--reference", choices=("balanced",), help="accepted SSI voice/noise balance")
+    parser.add_argument("--articulation-reference-rate", type=int)
+    parser.add_argument("--prototype-gain", type=int)
+    parser.add_argument("--voice-trim", type=int, help="prototype voice drive, Q16")
     parser.add_argument("--start-seconds", default="0")
     parser.add_argument("--end-seconds")
     parser.add_argument("--rebuild", action="store_true")
     parser.add_argument("--build-only", action="store_true")
     parser.add_argument("--bundle", action="store_true", help="also create a portable listening ZIP")
     args = parser.parse_args()
+    settings = reference_settings(args.reference)
+    for key, value in (("articulation_reference", args.articulation_reference_rate),
+                       ("prototype_gain", args.prototype_gain), ("voice_trim", args.voice_trim)):
+        if value is not None:
+            if args.reference and value != settings[key]:
+                parser.error("--reference fixes the model settings; omit it for experiments")
+            settings[key] = value
     if not 0 <= args.ff <= 255 or not 0 <= args.articulation <= 7:
         parser.error("--ff must be 0..255 and --articulation must be 0..7")
     if args.compare_ff is not None and (not 0 <= args.compare_ff <= 255 or args.trace or args.calibration):
@@ -358,7 +378,7 @@ def main() -> None:
         reports = []
         for profile in profiles:
             report = render(stimulus, directory, profile, executable, start, end,
-                            args.articulation_reference_rate, args.prototype_gain, args.voice_trim)
+                            **settings)
             reports.append(report)
             print(f'{profile}: {report["audio_seconds"]:.2f}s stereo WAV in '
                   f'{report["render_seconds"]:.2f}s -> {directory / (profile + ".wav")}')

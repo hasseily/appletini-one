@@ -1,12 +1,10 @@
 `timescale 1ns / 1ps
 
-import ssi263_formant_pkg::*;
-
-// Apple-visible SSI263/SC-01 wrapper.
+// Apple-visible SSI263 wrapper.
 //
 // This module preserves the Phasor/Mockingboard register, D7, IRQ, and reset
-// behavior. Audio generation is handled by the formant backend; bus-visible
-// SSI263 semantics stay isolated here.
+// behavior. Audio comes from the native SSI checkpoint; response timing and
+// the Apple bus contract remain isolated from its source and tract.
 module ssi263_bus_wrapper #(
     // AppleWin types: 0=empty, 1=SSI263P, 2=SSI263AP.
     parameter int unsigned SSI263_TYPE = 2,
@@ -33,6 +31,7 @@ module ssi263_bus_wrapper #(
     output logic [6:0]         via_ifr_clr,
 
     output logic signed [15:0] audio,
+    output logic               audio_valid,
     output logic               direct_irq,
 
     // Debug taps (freeze diagnosis): does the phoneme complete, and are
@@ -81,30 +80,94 @@ module ssi263_bus_wrapper #(
      * Placement may then keep the audio-only pulse near its consumers. */
     (* KEEP = "TRUE" *) logic backend_start_q;
     logic [5:0] backend_phoneme_q;
-    logic [5:0] backend_sc01_phone_q;
     logic       backend_votrax_q;
     logic       backend_warm_reset;
-    logic       formant_backend_start;
-    logic       formant_backend_reset;
-    logic       formant_backend_done;
-    logic       formant_backend_response;
     logic       backend_done;
-    logic [7:0] formant_rate_inflection;
-    logic signed [15:0] formant_audio;
+    logic [7:0] timing_rate_inflection;
+    logic       native_write, native_valid, native_fault;
+    logic [2:0] native_reg;
+    logic [7:0] native_data;
+    logic signed [15:0] native_audio;
+    logic       compat_control_pending_q;
+    logic       accept_ssi_write, accept_compat_write, engine_rstn;
+
+    // One fabric-clock boundary separates Apple bus selection from native
+    // arithmetic. Delay the whole event stream so writes retain their order
+    // relative to XCK, samples, AP reset and the P mode-latch edge.
+    typedef struct packed {
+        logic rstn, warm_reset, mode_latch, xck_ce, audio_tick, write_strobe;
+        logic [2:0] write_reg;
+        logic [7:0] write_data;
+    } native_event_t;
+    native_event_t native_event_q;
+
+    always_ff @(posedge clk) begin
+        if (!rstn) native_event_q <= '0;
+        else begin
+            native_event_q.rstn <= engine_rstn;
+            native_event_q.warm_reset <= backend_warm_reset;
+            native_event_q.mode_latch <= !apple_res && SSI263_TYPE == SSI263_P && !ctrl_art_amp_q[7];
+            native_event_q.xck_ce <= xck_ce;
+            native_event_q.audio_tick <= audio_tick;
+            native_event_q.write_strobe <= native_write;
+            native_event_q.write_reg <= native_reg;
+            native_event_q.write_data <= native_data;
+        end
+    end
 
     assign ssi_d7 = d7_q;
     assign direct_irq = direct_irq_q;
     assign dbg_backend_done = backend_done;
-    assign dbg_enable_ints  = current_enable_ints_q;
-    assign audio = formant_audio;
-    assign formant_backend_start = backend_start_q;
-    assign formant_backend_reset = backend_warm_reset;
-    assign backend_done = formant_backend_response;
-    // Present a reg2 write to the timing core on its accepted edge so a frame
-    // boundary on that same clock reloads from the new RATE value.
-    assign formant_rate_inflection =
-        (ssi_write_strobe && ssi_reg == SSI_RATEINF) ?
-        ssi_wdata : rate_inflection_q;
+    assign dbg_enable_ints = current_enable_ints_q;
+    assign engine_rstn = rstn && card_enabled && (SSI263_TYPE != SSI263_EMPTY || HAS_SC01);
+    assign accept_ssi_write = rstn && card_enabled && apple_res &&
+                              ssi_write_strobe && SSI263_TYPE != SSI263_EMPTY;
+    assign accept_compat_write = rstn && card_enabled && apple_res &&
+                                 votrax_write_strobe && HAS_SC01;
+    // Reg2 remains live on the exact response-slot reload edge.
+    assign timing_rate_inflection =
+        accept_ssi_write && ssi_reg == SSI_RATEINF ? ssi_wdata : rate_inflection_q;
+
+    always_comb begin
+        native_write = accept_ssi_write;
+        native_reg = ssi_reg;
+        native_data = ssi_wdata;
+        if (accept_compat_write) begin
+            native_write = 1;
+            native_reg = SSI_DURPHON;
+            native_data = {2'b11, votrax_to_ssi263(votrax_wdata[5:0])};
+        end else if (compat_control_pending_q && !accept_ssi_write) begin
+            native_write = apple_res;
+            native_reg = SSI_CTTRAMP;
+            native_data = ctrl_art_amp_q;
+        end
+    end
+
+    // Votrax address compatibility translates to a native SSI phone and CTL
+    // write. It uses SSI timing and SSI sound; no SC-01 ROM/audio is present.
+    always_ff @(posedge clk) begin
+        if (!engine_rstn || backend_warm_reset) compat_control_pending_q <= 0;
+        else compat_control_pending_q <= accept_compat_write;
+    end
+
+    // Publish silence during AP PD/RST so sample-held mixers cannot retain a
+    // pre-reset DC value. Audio otherwise changes only alongside audio_valid.
+    always_ff @(posedge clk) begin
+        if (!rstn || !card_enabled) begin
+            audio <= 0;
+            audio_valid <= 0;
+        end else begin
+            audio_valid <= 0;
+            if ((backend_warm_reset || !engine_rstn) && audio_tick) begin
+                audio <= 0;
+                audio_valid <= 1;
+            end else if (!backend_warm_reset && native_event_q.rstn &&
+                         !native_event_q.warm_reset && native_valid) begin
+                audio <= native_audio;
+                audio_valid <= 1;
+            end
+        end
+    end
 
     assign backend_warm_reset =
         !apple_res && (SSI263_TYPE != SSI263_P) && (SSI263_TYPE != SSI263_EMPTY);
@@ -193,32 +256,8 @@ module ssi263_bus_wrapper #(
         begin
             backend_start_q <= 1'b1;
             backend_phoneme_q <= votrax ? votrax_to_ssi263(phoneme) : phoneme;
-            backend_sc01_phone_q <= votrax ? phoneme : ssi263_to_sc01_phone(phoneme);
             backend_votrax_q <= votrax;
             active_is_votrax_q <= votrax;
-        end
-    endtask
-
-    task automatic set_speech_irq;
-        begin
-            if (!active_is_votrax_q && (ctrl_art_amp_q & CONTROL_MASK) == 8'd0) begin
-                if (current_enable_ints_q) begin
-                    if (card_mode == PH_MOCKINGBOARD) begin
-                        if (!d7_q && !via_pcr[0]) begin
-                            via_ifr_set[IFR_CA1_SSI263] <= 1'b1;
-                        end
-                    end else if (card_mode == PH_PHASOR) begin
-                        direct_irq_q <= 1'b1;
-                    end
-                end
-                // DR=00 masks the external A/R line but the status bit still
-                // records the response at the retained mode's boundary.
-                d7_q <= 1'b1;
-            end
-
-            if (active_is_votrax_q && via_pcr == 8'hB0) begin
-                via_ifr_set[IFR_CB1_VOTRAX] <= 1'b1;
-            end
         end
     endtask
 
@@ -228,7 +267,7 @@ module ssi263_bus_wrapper #(
             inflection_q <= 8'd0;
             rate_inflection_q <= 8'd0;
             ctrl_art_amp_q <= CONTROL_MASK;
-            // FF is the fastest filter-clock setting, not a mute command.
+            // Preserve the board wrapper's established cold FF latch value.
             filter_freq_q <= 8'd0;
             current_function_q <= 2'd0;
             current_enable_ints_q <= 1'b0;
@@ -238,7 +277,6 @@ module ssi263_bus_wrapper #(
             direct_irq_q <= 1'b0;
             backend_start_q <= 1'b0;
             backend_phoneme_q <= 6'd0;
-            backend_sc01_phone_q <= 6'h3F;
             backend_votrax_q <= 1'b0;
         end
     endtask
@@ -258,26 +296,24 @@ module ssi263_bus_wrapper #(
         end
     endtask
 
-    ssi263_formant_backend formant_backend_i (
-        .clk(clk),
-        .rstn(rstn),
-        .card_enabled(card_enabled),
-        .warm_reset(formant_backend_reset),
-        .audio_tick(audio_tick),
-        .xck_ce(xck_ce),
-        .start(formant_backend_start),
-        .start_phoneme(backend_phoneme_q),
-        .start_sc01_phone(backend_sc01_phone_q),
-        .start_votrax(backend_votrax_q),
-        .current_function(current_function_q),
-        .duration_phoneme(duration_phoneme_q),
-        .inflection(inflection_q),
-        .rate_inflection(formant_rate_inflection),
-        .ctrl_art_amp(ctrl_art_amp_q),
-        .filter_freq(filter_freq_q),
-        .phoneme_done(formant_backend_done),
-        .response_done(formant_backend_response),
-        .audio(formant_audio)
+    ssi263_native_engine #(
+        .RESET_FILTER_FREQUENCY(8'h00)
+    ) native_engine_i (
+        .clk(clk), .rstn(native_event_q.rstn), .warm_reset(native_event_q.warm_reset),
+        .mode_latch(native_event_q.mode_latch),
+        .xck_ce(native_event_q.xck_ce), .audio_tick(native_event_q.audio_tick),
+        .write_strobe(native_event_q.write_strobe), .write_reg(native_event_q.write_reg),
+        .write_data(native_event_q.write_data),
+        .audio(native_audio), .audio_valid(native_valid), .fault(native_fault),
+        .busy(), .tick_done(), .duration_phase()
+    );
+
+    ssi263_response_timing response_timing_i (
+        .clk(clk), .rstn(engine_rstn), .warm_reset(backend_warm_reset),
+        .xck_ce(xck_ce), .start(backend_start_q), .start_compat(backend_votrax_q),
+        .current_function(current_function_q), .duration_phoneme(duration_phoneme_q),
+        .rate_inflection(timing_rate_inflection), .response_done(backend_done),
+        .phoneme_done()
     );
 
     always_ff @(posedge clk) begin
@@ -369,7 +405,8 @@ module ssi263_bus_wrapper #(
 
                 if (votrax_write_strobe && HAS_SC01) begin
                     via_ifr_clr[IFR_CB1_VOTRAX] <= 1'b1;
-                    duration_phoneme_q <= 8'd0;
+                    duration_phoneme_q <= {2'b11, votrax_to_ssi263(votrax_wdata[5:0])};
+                    ctrl_art_amp_q <= {1'b0, ctrl_art_amp_q[6:4], 4'hf};
                     start_backend(votrax_wdata[5:0], 1'b1);
                     backend_started_this_cycle = 1'b1;
                 end
@@ -379,8 +416,26 @@ module ssi263_bus_wrapper #(
                 // set D7 again; this edge must leave the request cleared.
                 if (backend_done && !backend_started_this_cycle &&
                     !backend_start_q &&
-                    !(ssi_write_strobe && ssi_reg <= SSI_RATEINF)) begin
-                    set_speech_irq();
+                    !(ssi_write_strobe && (ssi_reg <= SSI_RATEINF ||
+                        (ssi_reg == SSI_CTTRAMP && ssi_wdata[7])))) begin
+                    if (!active_is_votrax_q && (ctrl_art_amp_q & CONTROL_MASK) == 8'd0) begin
+                        if (current_enable_ints_q) begin
+                            if (card_mode == PH_MOCKINGBOARD) begin
+                                if (!d7_q && !via_pcr[0]) begin
+                                    via_ifr_set[IFR_CA1_SSI263] <= 1'b1;
+                                end
+                            end else if (card_mode == PH_PHASOR) begin
+                                direct_irq_q <= 1'b1;
+                            end
+                        end
+                        // DR=00 masks the external A/R line but the status bit still
+                        // records the response at the retained mode's boundary.
+                        d7_q <= 1'b1;
+                    end
+
+                    if (active_is_votrax_q && via_pcr == 8'hB0) begin
+                        via_ifr_set[IFR_CB1_VOTRAX] <= 1'b1;
+                    end
                 end
             end
         end

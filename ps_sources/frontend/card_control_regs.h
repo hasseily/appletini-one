@@ -428,6 +428,11 @@
  * compatible mode: the PL ignores the Apple-bus $C0nX Phasor mode switch so
  * software can never detect or enable Phasor-native behavior. */
 #define CARD_CTRL_PHASOR_AUDIO_MOCKINGBOARD_ONLY_BIT (1UL << 26)
+/* SSI output mixer: signed dB gain -5..+5 in AUDIO[31:27]; each pan is
+ * 0 (left) through 15 (right). PAN_HI[23:0] still holds AY2/AY3 channels. */
+#define CARD_CTRL_PHASOR_AUDIO_SSI_VOLUME_SHIFT 27U
+#define CARD_CTRL_PHASOR_PAN_HI_SSI0_SHIFT 24U
+#define CARD_CTRL_PHASOR_PAN_HI_SSI1_SHIFT 28U
 
 #define CARD_CTRL_SLOT_ETHERNET    1U
 #define CARD_CTRL_SLOT_MOUSE       2U

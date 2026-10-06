@@ -382,6 +382,14 @@ def check_calibration(path: Path) -> None:
         assert report["rendered_audio_per_wall_second"] > 1, "two-minute baseline should render faster than real time"
         print(f"Full calibration passed: {report['applied_writes']} SSI writes, "
               f"{report['audio_seconds']:.3f}s audio in {report['render_seconds']:.3f}s.")
+        reference = json.loads(render.BALANCED_REFERENCE.read_text(encoding="utf-8"))
+        balanced = render.render(trace, Path(tmp), "prototype",
+                                 **render.reference_settings("balanced"))
+        assert balanced["wav_sha256"] == reference["calibration"]["balanced_wav_sha256"], \
+            "The approved balanced calibration audio changed"
+        assert all(channel["state_saturations"] == channel["output_clips"] == 0
+                   for channel in balanced["native_metrics"])
+        print("Approved balanced reference: complete calibration WAV is byte-identical.")
 
 
 def main() -> int:

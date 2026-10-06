@@ -1,8 +1,6 @@
 `timescale 1ns / 1ps
 
-// Compatibility shell for the SSI263/SC-01 voice. The Apple-visible behavior
-// lives in ssi263_bus_wrapper; audio generation uses the formant backend behind
-// the same bus contract.
+// Apple bus shell for the native SSI263 voice.
 module ssi263_voice #(
     // AppleWin types: 0=empty, 1=SSI263P, 2=SSI263AP.
     parameter int unsigned SSI263_TYPE = 2,
@@ -29,6 +27,7 @@ module ssi263_voice #(
     output logic [6:0]         via_ifr_clr,
 
     output logic signed [15:0] audio,
+    output logic               audio_valid,
     output logic               direct_irq,
 
     // Debug taps routed up for freeze diagnosis.
@@ -57,6 +56,7 @@ module ssi263_voice #(
         .via_ifr_set(via_ifr_set),
         .via_ifr_clr(via_ifr_clr),
         .audio(audio),
+        .audio_valid(audio_valid),
         .direct_irq(direct_irq),
         .dbg_backend_done(dbg_backend_done),
         .dbg_enable_ints(dbg_enable_ints)

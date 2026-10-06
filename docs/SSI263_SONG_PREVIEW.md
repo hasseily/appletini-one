@@ -1,5 +1,28 @@
 # House of the Rising Sun listening preview
 
+## Physical comparison and balance trial
+
+On 2026-10-07 the user accepted the balance trial as our listening reference.
+Use `--reference balanced` with the song renderer to reproduce that balance;
+see [the pinned settings and commands](SSI263_HOST_RENDERER.md#accepted-balanced-reference-2026-10-07).
+Further experiments must keep this reference available for comparison.
+
+The tester's physical `risingsun.mp3` is now available. The comparison at
+`build/ssi263_host/song_hardware_20261006/listen.html` has the full real song,
+the frozen native render and a separate voice/noise-balance trial, plus eight
+matched excerpts and model stems. All clips keep their original levels and
+sample rates. One instrumental time map selects the hardware excerpts; there
+is no per-attack alignment or gain fit.
+
+The trial keeps ideal voiced level and the AY backing while reducing noise
+relative to voice by 18.06 dB. It changes no envelope, pitch, ROM or filter.
+Calibration measurements improve markedly for S and voiced TH, but some
+fricatives become slightly quiet and spectral differences remain. Firmware and
+default model parameters stay unchanged. See the [attack review](SSI263_ATTACK_AUDIT.md)
+for the source-gain history, prototype status, measurements and limits.
+
+## Render the original checkpoint
+
 `scripts/render_ssi263_song.py` combines the current native SSI host model with
 the song's original four-chip AY RTL accompaniment. It leaves the song score
 and the source repository unchanged. No Vivado build or hardware is required.

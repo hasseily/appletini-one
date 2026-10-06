@@ -14,7 +14,7 @@ from pathlib import Path
 import wave
 import zipfile
 
-from render_ssi263 import CACHE, ROOT, build_host, digest, render
+from render_ssi263 import CACHE, ROOT, build_host, digest, render, reference_settings
 from ssi263_host_data import Event, PAL_EFFECTIVE_XCK_HZ, Trace
 
 FIXTURE = ROOT / "scripts/fixtures/ssi263_host/mb_audit_phrases.json"
@@ -189,6 +189,7 @@ document.querySelectorAll('audio').forEach(a=>a.addEventListener('play',()=>{
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=CACHE / "mb_audit")
+    parser.add_argument("--reference", choices=("balanced",), help="accepted SSI voice/noise balance")
     args = parser.parse_args()
     fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
     out = args.output.resolve()
@@ -196,7 +197,8 @@ def main() -> None:
 
     def run(phrase: dict, directory: Path, rate: int | None = None) -> dict:
         trace = make_trace(fixture, phrase, rate)
-        reports = {p: render(trace, out / directory, p, executable) for p in PROFILES}
+        reports = {p: render(trace, out / directory, p, executable,
+                            **reference_settings(args.reference)) for p in PROFILES}
         (out / directory / "trace.json").write_text(json.dumps({
             "effective_clock_hz": trace.xck_hz, "duration_ticks": trace.duration_ticks,
             "metadata": trace.metadata, "events": [asdict(e) for e in trace.events]}, indent=2) + "\n")

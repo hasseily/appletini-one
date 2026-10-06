@@ -1,0 +1,466 @@
+{
+  "schema": 1,
+  "description": "Native SSI-263 bus stimulus for the familiar A-G speech-player phrases and the original mb-audit Classic Adventure test. No SC-01 synthesis data or sound model is included.",
+  "provenance": [
+    {
+      "repository_url": "https://github.com/tomcw/play-sc01-using-ssi263",
+      "commit": "11025ed20d9f05afe899c854db43a85ba8a850c4",
+      "path": "chip-sc01.a",
+      "url": "https://github.com/tomcw/play-sc01-using-ssi263/blob/11025ed20d9f05afe899c854db43a85ba8a850c4/chip-sc01.a",
+      "sha256_committed_bytes": "69708fb302f9cffd0799f5553427986f7e96e3d64fee1012c1a1bdacb2b5f755",
+      "license": "MIT (source-file declaration)",
+      "copyright": "(c) 2021 by Tom Charlesworth",
+      "use": "Phrase order only; the fixture stores only SSI DURPHON bytes produced by the player lookup."
+    },
+    {
+      "repository_url": "https://github.com/tomcw/play-sc01-using-ssi263",
+      "commit": "11025ed20d9f05afe899c854db43a85ba8a850c4",
+      "path": "chip-ssi263.a",
+      "url": "https://github.com/tomcw/play-sc01-using-ssi263/blob/11025ed20d9f05afe899c854db43a85ba8a850c4/chip-ssi263.a",
+      "sha256_committed_bytes": "4cf6a1bc6485968259860e8bfd63127c3357a8d61f38b6edb0e7f611fafa93ea",
+      "license": "MIT (source-file declaration)",
+      "copyright": "(c) 2021 by Tom Charlesworth",
+      "use": "SSI register setup, 64-entry phoneme lookup, and IRQ playback writes."
+    },
+    {
+      "repository_url": "https://github.com/tomcw/mb-audit",
+      "commit": "3b6eb43fa3cb8a8825011171649621d664f717a5",
+      "path": "chip-ssi263.a",
+      "url": "https://github.com/tomcw/mb-audit/blob/3b6eb43fa3cb8a8825011171649621d664f717a5/chip-ssi263.a",
+      "sha256_committed_bytes": "7fda7c11f92f534d078fccd45bf09f00f5867ad7eae5cbce583f14556026be5c",
+      "license": "MIT (source-file declaration)",
+      "copyright": "(c) 2021-2025 by Tom Charlesworth",
+      "use": "Original five-register ClassicAdv table and playback register order."
+    }
+  ],
+  "translated_player": {
+    "attributes": [
+      0,
+      32,
+      168,
+      92,
+      233
+    ],
+    "register_order": [
+      "DURPHON",
+      "INFLECT",
+      "RATEINF",
+      "CTRLARTAMP",
+      "FILFREQ"
+    ],
+    "default_rate": 10,
+    "published_example_rates": [
+      11,
+      12
+    ],
+    "setup_writes": [
+      [
+        4,
+        233
+      ],
+      [
+        3,
+        92
+      ],
+      [
+        2,
+        168
+      ],
+      [
+        1,
+        32
+      ],
+      [
+        3,
+        220
+      ],
+      [
+        0,
+        192
+      ],
+      [
+        3,
+        92
+      ]
+    ],
+    "rate_override": "Only replace RATEINF bits 7:4; keep the low inflection nibble 8.",
+    "playback": "After the initial DUR=3 PA completes, each SSI request writes the next native_ssi_durphon byte to register 0. All A-G bytes have DUR=0. The upstream STOP becomes a final PA and remains in each sequence. The five-zero data sentinel does not become an SSI phoneme.",
+    "stop_writes": [
+      [
+        3,
+        128
+      ],
+      [
+        0,
+        0
+      ],
+      [
+        3,
+        0
+      ]
+    ],
+    "timing": "Nominal XCK clocks per phoneme = 4096 * (16-RATE) * (4-DUR). CPU IRQ service time and the phase of the chip at each request require a bus-level replay or capture for exact timing.",
+    "phrases": [
+      {
+        "id": "A",
+        "text": "The spy strikes back",
+        "label": "Spy_TheSpyStrikesBack",
+        "native_ssi_durphon": [
+          0,
+          53,
+          25,
+          0,
+          48,
+          39,
+          15,
+          3,
+          0,
+          48,
+          40,
+          29,
+          15,
+          3,
+          41,
+          48,
+          0,
+          36,
+          12,
+          41,
+          0,
+          0
+        ]
+      },
+      {
+        "id": "B",
+        "text": "Ouch!",
+        "label": "Spy_Ouch",
+        "native_ssi_durphon": [
+          0,
+          16,
+          20,
+          40,
+          50,
+          0,
+          0
+        ]
+      },
+      {
+        "id": "C",
+        "text": "Crime wave one",
+        "label": "CW_CrimeWave1",
+        "native_ssi_durphon": [
+          0,
+          41,
+          29,
+          15,
+          3,
+          55,
+          0,
+          35,
+          8,
+          51,
+          0,
+          35,
+          25,
+          56,
+          0
+        ]
+      },
+      {
+        "id": "D",
+        "text": "Game over",
+        "label": "CW_GameOver",
+        "native_ssi_durphon": [
+          0,
+          38,
+          8,
+          55,
+          0,
+          17,
+          20,
+          51,
+          28,
+          0
+        ]
+      },
+      {
+        "id": "E",
+        "text": "Please consult the hint sheet",
+        "label": "COM_Help",
+        "native_ssi_durphon": [
+          0,
+          39,
+          32,
+          1,
+          47,
+          0,
+          41,
+          16,
+          56,
+          48,
+          24,
+          32,
+          40,
+          0,
+          53,
+          24,
+          0,
+          44,
+          7,
+          56,
+          40,
+          0,
+          50,
+          1,
+          40,
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "id": "F",
+        "text": "You can't go that way",
+        "label": "COM_CantGoThatWay",
+        "native_ssi_durphon": [
+          0,
+          5,
+          22,
+          0,
+          41,
+          12,
+          56,
+          40,
+          0,
+          38,
+          17,
+          0,
+          53,
+          12,
+          40,
+          0,
+          35,
+          10,
+          9,
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "id": "G",
+        "text": "You were a pitiful opponent",
+        "label": "BZ_PitifulOpponent",
+        "native_ssi_durphon": [
+          0,
+          3,
+          22,
+          0,
+          0,
+          35,
+          35,
+          29,
+          0,
+          0,
+          8,
+          0,
+          39,
+          7,
+          40,
+          7,
+          52,
+          25,
+          32,
+          0,
+          0,
+          0,
+          14,
+          39,
+          17,
+          56,
+          10,
+          56,
+          40,
+          0,
+          0
+        ]
+      }
+    ]
+  },
+  "classic_adventure": {
+    "id": "classic",
+    "text": "Classic Adventure",
+    "label": "ClassicAdv",
+    "register_order": [
+      "DURPHON",
+      "INFLECT",
+      "RATEINF",
+      "CTRLARTAMP",
+      "FILFREQ"
+    ],
+    "setup_writes": [
+      [
+        3,
+        128
+      ],
+      [
+        0,
+        192
+      ],
+      [
+        3,
+        0
+      ]
+    ],
+    "register_rows": [
+      [
+        41,
+        82,
+        184,
+        123,
+        230
+      ],
+      [
+        45,
+        82,
+        184,
+        123,
+        230
+      ],
+      [
+        96,
+        82,
+        184,
+        123,
+        230
+      ],
+      [
+        12,
+        82,
+        184,
+        123,
+        230
+      ],
+      [
+        48,
+        82,
+        184,
+        123,
+        230
+      ],
+      [
+        71,
+        82,
+        184,
+        123,
+        230
+      ],
+      [
+        41,
+        82,
+        184,
+        123,
+        230
+      ],
+      [
+        76,
+        82,
+        184,
+        123,
+        230
+      ],
+      [
+        12,
+        82,
+        184,
+        123,
+        230
+      ],
+      [
+        37,
+        82,
+        184,
+        123,
+        230
+      ],
+      [
+        51,
+        82,
+        184,
+        123,
+        230
+      ],
+      [
+        236,
+        82,
+        184,
+        123,
+        230
+      ],
+      [
+        71,
+        82,
+        184,
+        123,
+        230
+      ],
+      [
+        71,
+        82,
+        184,
+        123,
+        230
+      ],
+      [
+        120,
+        82,
+        184,
+        123,
+        230
+      ],
+      [
+        104,
+        82,
+        184,
+        123,
+        230
+      ],
+      [
+        114,
+        82,
+        184,
+        123,
+        230
+      ],
+      [
+        92,
+        82,
+        184,
+        123,
+        230
+      ]
+    ],
+    "playback_write_order": [
+      4,
+      3,
+      2,
+      1,
+      0
+    ],
+    "stop_writes": [
+      [
+        3,
+        128
+      ],
+      [
+        0,
+        0
+      ],
+      [
+        3,
+        0
+      ]
+    ],
+    "timing": "The upstream kick changes only CTL and DURPHON; its initial PA duration depends on the previous RATE register. Each subsequent request writes all five table bytes in reverse register order, ending with DURPHON. The all-zero NullPhrase sentinel stops playback and is not a spoken row."
+  }
+}

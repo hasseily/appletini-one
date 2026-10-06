@@ -4,14 +4,26 @@ Prepared 2026-10-06 for the local Appletini One instance with Vivado.
 
 ## Goal and current status
 
+Use firmware version `F1.2.5-d1` during this work. Change it to `F1.2.5` only
+when the user says it is ready for release.
+
 Make Appletini interpret SSI-263 register writes like a physical Phasor and
 produce a measured, close match to its speech. The same register stream should
 work on both targets, including PAL and NTSC. Start with the correct clock and
 register laws, then calibrate the audio response from isolated chip recordings.
 
 This document is an implementation brief. It does not report a completed FPGA
-fix, a new bitstream, or a calibrated analog model. The working correction so
-far is in the **song exporter**, which has a separate physical-SSI profile.
+fix, a new bitstream, or a calibrated analog model. The working audible
+correction so far is in the **song exporter**, which has a separate
+physical-SSI profile.
+
+Native SSI work has now started: exact dividers, documented TPARM source
+controls and held routes, a separate raw-ROM control core, two-socket
+calibration-trace replay, and WAV checks. See
+[SSI263_NATIVE_IMPLEMENTATION.md](SSI263_NATIVE_IMPLEMENTATION.md) for the
+implemented scope, validation, prototype gaps and next integration steps.
+The new control path is not yet connected to the production audio engine. The old
+SC-01 generator is outside this work; it has not been run or changed.
 
 The user tested a PAL enhanced Apple //e at normal 1 MHz with a physical Phasor
 and two SSI speech chips. After the export correction, the user reported that
@@ -23,6 +35,20 @@ were also fetched and compared byte for byte against remote main `ab0846b` and
 `codex/turbo-paging-dma` at `8fe96ac`: the formant backend, digital core, formant
 package, XCK clock-enable helper, and filter-frequency documentation. All five
 matched. This does not claim that the full repository trees match.
+
+## SC-02 prototype conflicts
+
+Flag any proposed change that conflicts with known SC-02 prototype behavior
+to the user before implementing it. State the known behavior and its source,
+the proposed difference, the reason for it, and the evidence that supports it.
+Apply this rule to register, timing, source, routing, envelope and filter work,
+including calibration changes.
+
+Distinguish direct die observations, schematic/ROM evidence, production-chip
+measurements and assumptions. Keep unresolved conflicts explicit in the work
+notes and final report. A better-sounding result alone does not settle a
+conflict with the prototype. See the source order and deferred prototype facts
+in [SSI263_SC01_HYBRID_PLAN.md](SSI263_SC01_HYBRID_PLAN.md).
 
 ## Evidence from the two recordings
 
@@ -123,7 +149,8 @@ Line numbers describe the inspected revision; use symbols after code changes.
 | Same file, around 705–787 | Duration follows Q3/DIV2; source pitch still uses the DAC-derived control cadence. |
 | `hdl/apple/ssi263_xck_ce.sv` | Existing synchronized Q3 clock-enable source; avoid adding a separate fabric clock domain. |
 | `hdl/apple/ssi263_formant_pkg.sv` | Native SSI/SC-02 parameter ROM is already present alongside SC-01 data. |
-| `docs/SSI263_SC02_ROM_FORMAT.md`, “Current hybrid behavior” | Upper-nibble targets are used; lower-nibble TPARM paths are not yet executed. Some phones differ in those controls. |
+| `docs/SSI263_SC02_ROM_FORMAT.md`, “Current implementation” | The separate native controller executes TPARM and held-route logic. The production audio path still uses upper targets alone. |
+| `hdl/apple/ssi263_control_core.sv` | Independent native ROM, source-control state and exact clock interface; source/sequencer inputs and production audio connection remain explicit work. |
 | `hdl/apple/mockingboard.sv` | Mixing, gains and final tone controls also affect a recorded comparison. |
 
 Read [SSI263_FILTER_FREQUENCY.md](SSI263_FILTER_FREQUENCY.md),
@@ -210,25 +237,118 @@ preview/fitting profiles, and retain old goldens only for the legacy contract.
 
 ## Calibration capture plan
 
-The next physical test should be a small deterministic calibration disk with
-an exact register/timestamp manifest. It has not yet been built or recorded.
+The next physical test should be one deterministic capture of about two
+minutes, with an exact raw-register/timestamp manifest. The remote tester has
+a PAL enhanced Apple //e at normal 1 MHz, a Phasor with two SSI chips, and can
+record both channels in one WAV. Minimize manual steps and repeat visits.
+The `SSI263-CAL-PAL-01` disk is built and passes the assembled-player and
+disk-image checks below. Physical playback and the WAV capture remain pending.
 
-For an initial capture of a few minutes:
+### Two-minute remote capture
 
-1. Silence AY accompaniment. Exercise SSI0 and SSI1 separately, while recording
-   stereo. Keep card and capture gains fixed and leave headroom.
-2. Hold five vowels spanning tract settings, such as E, AH, AW, U and ER, at
-   fixed low pitch (about 90–120 Hz), amplitude, rate and articulation.
-3. Step through FF128, 192, 216, 224, 228, 230, 232, 236 and 240. As a starting
-   schedule, allow about 650 ms per sound plus 200 ms separation. Check that
-   this leaves a settled interval; increase it where necessary.
-4. Repeat a reference segment at the end to check drift. Add a separate AY
-   reference tone or sequence to help align captures and estimate common
-   recording-path gain. Keep it out of the speech measurement intervals.
-5. Save lossless WAV, preferably 48 kHz/24-bit or 96 kHz/24-bit, without AGC,
-   EQ, noise removal or normalization. Record the chip/card details and clock.
+The [Phasor manual, page 24](https://downloads.reactivemicro.com/Apple%20II%20Items/Hardware/Phasor/Phasor%20Manual%20v1.3.pdf)
+places the two speech sockets on separate output channels. Start with each
+chip alone to verify the actual recording's channel mapping and leakage.
+Then send the same test sequence to both chips in parallel. Analyze each
+recorded channel separately; do not sum them or assume identical chips.
 
-Then extend the sequence without testing every possible parameter combination:
+The proposed budget is 120 seconds, including bookends and gaps:
+
+| Time | Length | Capture |
+| --- | ---: | --- |
+| 0-8 s | 8 s | Silence, alignment markers, each SSI alone, and a reference sound. |
+| 8-40 s | 32 s | All 64 phones at FF231 and about 110 Hz: 400 ms sound plus 100 ms gap per phone. |
+| 40-76 s | 36 s | Five vowels (E, AH, AW, U, ER), each at 12 FF settings for 600 ms per setting. |
+| 76-88 s | 12 s | One held vowel through all 256 FF bytes at 40 ms per byte, plus initial settling and an end gap. |
+| 88-98 s | 10 s | One vowel at all 16 amplitudes for 300 ms each and eight immediate pitches for 500 ms each, with 1.2 s for setup/gaps. |
+| 98-114 s | 16 s | Eight two-second probes for transitions, native source controls, pitch modes and CTL restart. |
+| 114-120 s | 6 s | Repeat the initial reference, end marker and silence. |
+
+For each vowel in the 36-second section, use FF values
+`231, 0, 128, 192, 216, 224, 228, 230, 232, 236, 240, 255`.
+Start the vowel once, then change FF live without restarting it. Fix and
+record pitch, amplitude, D, R, articulation, CTL and prior state. The first
+setting includes the vowel's onset; all 600 ms windows include any settling.
+Use fast articulation for the phone survey, with slower settings in the
+separate transition probes.
+
+The eight proposed probes are `AH-HF-AH`, `AH-HFC-AH`, `AH-S-AH`, an `E-U-E`
+transition at each of two articulation settings, the same pitch target change
+in immediate and transitioned modes, and a CTL stop/restart. Give HF and HFC
+identical lead-in states so their known prototype control difference remains
+testable. Finalize raw bytes and timing before building; the table is a
+budget, not a claim that every sound settles within its window.
+
+Use the longer held windows for fitting only after checking that their tails
+settle. The all-phone section is a phone/onset survey. The 40 ms FF sweep
+checks gross response, continuity, clipping and unexpected silence; it cannot
+calibrate each byte or prove long-term stability. At extreme FF values, a
+recording also cannot identify resonances above its usable bandwidth.
+
+Build the disk so the tester can load it, start recording, press one key,
+wait for DONE, and send the whole WAV. Keep AY silent during speech; use any
+AY alignment signals only in the bookends. Include an initial level-check
+option before the timed run, then keep gains fixed with ample headroom.
+Use lossless stereo WAV, preferably 48 kHz/24-bit (16-bit is usable), without
+AGC, EQ, noise removal or normalization. Do not require trimming or splitting.
+
+Preload the full stream, check the assembled player's raw writes and worst
+timer workload before sending it, and use fixed scheduled timing rather than
+waiting indefinitely for a chip response. Package the build ID, hashes,
+register trace, expected duration and segment manifest. Plan to log overruns
+and selected D7 response times in RAM and save them after playback, so timing
+checks need no separate recording or manual stopwatch. Verify that logging
+does not disturb the scheduled writes.
+
+The first analysis should check completeness, channel separation, clipping,
+timing drift and settled windows before fitting. Compare repeated references
+and both chips to estimate variation. Reserve some captured probes for
+validation. Request another run only for an unusable capture or a specific
+unresolved behavior; prepare a short targeted follow-up in that case.
+
+### Built remote-test package
+
+The package is `build/ssi263_calibration/SSI263-CAL-PAL-01.zip` in this
+firmware checkout. It includes 140 KB `.dsk`, `.po` and `.hdv` images of the
+same ProDOS volume, short tester instructions, the full register/segment
+manifest, emulated write-cycle traces, validation results, hashes and sources.
+Choose one disk image. It targets a physical Phasor in **slot 4**, with both
+SSI chips, on a **PAL enhanced //e at normal 1 MHz**.
+
+Source lives in `hasseily/appletini-software`, on branch
+`codex/ssi263-calibration-disk`, under `diagnostics/ssi263_calibration/`.
+The local checkout is `../appletini-software-ssi-calibration`. The firmware
+version remains `F1.2.5-d1`; this disk is a standalone physical-chip diagnostic.
+
+The program waits at READY. Space starts the capture; L runs an optional
+eight-second level check. Space/Escape stops, R restarts, and Q quits. It
+preloads the stream, samples both D7 bits every nominal 10 ms, and saves a
+bounded change log to `CAL.LOG` only after the capture ends. Log-save failure
+does not invalidate the WAV. The log is optional for the tester to return.
+
+Validation on 2026-10-06 passed:
+
+- Eleven sequence tests, including coverage, mode setup, matched HF/HFC
+  lead-ins, live FF writes, repeated references and AY silence during speech.
+- The complete assembled 65C02 capture: 12,000 ticks and 1,752 ordered writes;
+  the optional level check: 800 ticks and 80 writes.
+- A worst polling iteration of 7,206 nominal CPU cycles out of 10,156, with
+  status logging active; no disk I/O during playback.
+- Twenty-two input/playback failure cases, five log failure/bounds cases,
+  READY/DONE/error display checks, stop/replay and forced-overrun silence.
+- Independent directory, allocation, file and boot-block readback of all
+  three disk images, including DOS/ProDOS sector conversion.
+
+The nominal PAL duration is 119.997046 seconds. These checks execute the
+assembled player with mocked ProDOS and Phasor ports; they do not establish
+physical boot, analog fidelity or exact bus-edge timing. The diagnostic uses
+documented register writes and introduces no known SC-02 prototype conflict.
+Its manifest preserves the known limits around CTL retention, hidden state,
+stop-phone context, settled windows and high-FF bandwidth.
+
+### Later extensions, only where the first capture leaves a gap
+
+Do not ask the remote tester to run all of these by default:
 
 - All 64 phones at a few representative FF values, including noise phones.
 - Selected vowels at a second and third pitch, to separate the excitation's

@@ -1,0 +1,161 @@
+{
+  "description": "Independent behavioral RTL output captured before the host renderer existed. This is the current hybrid engine, not physical SSI audio.",
+  "source": "build/test_ssi263_calibration_replay created by scripts/test_ssi263_calibration_replay.py --simulate",
+  "fabric_hz": 133000000,
+  "effective_xck_hz": 1015625,
+  "sample_rate": 48000,
+  "capture_start_fabric_cycle": 26223,
+  "end_fabric_cycle": 15985831,
+  "frames": 5760,
+  "events": [
+    [
+      33,
+      0,
+      4,
+      3,
+      128
+    ],
+    [
+      10509,
+      1,
+      5,
+      3,
+      128
+    ],
+    [
+      22295,
+      2,
+      0,
+      8,
+      0
+    ],
+    [
+      1358810,
+      3,
+      4,
+      3,
+      128
+    ],
+    [
+      1364048,
+      4,
+      4,
+      0,
+      128
+    ],
+    [
+      1369286,
+      5,
+      4,
+      1,
+      111
+    ],
+    [
+      1374524,
+      6,
+      4,
+      2,
+      142
+    ],
+    [
+      1379762,
+      7,
+      4,
+      4,
+      231
+    ],
+    [
+      1385001,
+      8,
+      4,
+      3,
+      127
+    ],
+    [
+      1390239,
+      9,
+      4,
+      0,
+      14
+    ],
+    [
+      1395477,
+      10,
+      5,
+      3,
+      128
+    ],
+    [
+      1400715,
+      11,
+      5,
+      0,
+      128
+    ],
+    [
+      1405953,
+      12,
+      5,
+      1,
+      168
+    ],
+    [
+      1411191,
+      13,
+      5,
+      2,
+      142
+    ],
+    [
+      1416430,
+      14,
+      5,
+      4,
+      231
+    ],
+    [
+      1421668,
+      15,
+      5,
+      3,
+      127
+    ],
+    [
+      1426906,
+      16,
+      5,
+      0,
+      8
+    ],
+    [
+      2691396,
+      17,
+      4,
+      7,
+      230
+    ],
+    [
+      6681298,
+      18,
+      4,
+      2,
+      254
+    ],
+    [
+      13331134,
+      19,
+      5,
+      3,
+      128
+    ]
+  ],
+  "rtl_sha256": {
+    "hdl\\apple\\ssi263_formant_pkg.sv": "44c8f3f3588462d589717047349282801766b8e5da2dcedcd10cf0c1829f8e25",
+    "hdl\\apple\\sc01a_digital_core.sv": "b9f7fcbc4aeb8c200649923b41753c81859717bf86ba1bd623fbc004baaad63f",
+    "hdl\\apple\\ssi263_formant_backend.sv": "520505cfcff3c4820fe0deaf30c9ff335b8ace42659e9b421fc5aba5a5265716",
+    "hdl\\apple\\ssi263_bus_wrapper.sv": "87e264f5873d195af22c04863ea65a384f721eb71ff8e11c9a73b1b85b82b82e",
+    "hdl\\apple\\ssi263_voice.sv": "d1c6488a263b2b27efd483add301f36dcb1f9cdcd23d38f870f80333280f01b3",
+    "hdl\\apple\\ssi263_xck_ce.sv": "eb4f0cef7f718433322795c36b99a70cd4cb2c0a01cfe772d927060306bb2199",
+    "hdl\\sim\\tb_ssi263_calibration.sv": "119b82b2cfd9161c2975a96a31c171cc5bbbcc50775e4aa9ec88f83640da72a9"
+  }
+}

@@ -228,8 +228,8 @@ typedef struct {
 } config_browser_preview_cache_t;
 
 #define CONFIG_BROWSER_MAX_ENTRIES 96U
-#define CONFIG_BROWSER_VISIBLE_ROWS 17U
-#define CONFIG_BROWSER_PROFILE_IMAGE_VISIBLE_ROWS 17U
+#define CONFIG_BROWSER_HEADER_H 108
+#define CONFIG_BROWSER_BOTTOM_PAD 8
 #define CONFIG_BROWSER_PROFILE_PREVIEW_W 118
 #define CONFIG_BROWSER_PROFILE_PREVIEW_GAP 8
 #define CONFIG_BROWSER_PROFILE_PREVIEW_PAD_X 4
@@ -6708,23 +6708,57 @@ static void config_menu_browser_close(config_menu_t *menu)
 
 static uint16_t config_menu_browser_visible_rows(const config_menu_t *menu)
 {
-    return (menu != NULL &&
-            menu->browser_target == CONFIG_BROWSER_TARGET_PROFILE_IMAGE) ?
-        CONFIG_BROWSER_PROFILE_IMAGE_VISIBLE_ROWS :
-        CONFIG_BROWSER_VISIBLE_ROWS;
+    cmui_rect_t body;
+    int rows;
+
+    (void)menu;
+    if (FB16_WIDTH < 1680 || FB16_HEIGHT < 1000) {
+        const uint32_t capacity = cmui_compact_row_capacity();
+
+        /* The title, directory and item count occupy three compact rows. */
+        return (capacity > 3U) ? (uint16_t)(capacity - 3U) : 1U;
+    }
+
+    cmui_screen_rects(NULL, &body, NULL);
+    {
+        const int row_y = body.y - 4 + CONFIG_BROWSER_HEADER_H;
+        const int list_bottom = CMUI_SCREEN_H - CMUI_MARGIN_Y - CMUI_FOOTER_H -
+                                6 - CONFIG_BROWSER_BOTTOM_PAD;
+
+        rows = (list_bottom - row_y + CMUI_ROW_GAP) /
+               (CMUI_ROW_H + CMUI_ROW_GAP);
+    }
+    return (rows > 0) ? (uint16_t)rows : 1U;
+}
+
+static uint16_t config_menu_browser_first_row(const config_menu_t *menu)
+{
+    uint16_t top;
+    uint16_t selected;
+    uint16_t visible_rows;
+    uint16_t max_top;
+
+    if (menu == NULL || menu->browser_count == 0U) {
+        return 0U;
+    }
+    visible_rows = config_menu_browser_visible_rows(menu);
+    max_top = (menu->browser_count > visible_rows) ?
+        (uint16_t)(menu->browser_count - visible_rows) : 0U;
+    selected = (menu->browser_selected < menu->browser_count) ?
+        menu->browser_selected : (uint16_t)(menu->browser_count - 1U);
+    top = menu->browser_top;
+    if (selected < top) {
+        top = selected;
+    } else if (selected >= (uint16_t)(top + visible_rows)) {
+        top = (uint16_t)(selected - visible_rows + 1U);
+    }
+    /* Backfill the last page, including after a larger viewport is applied. */
+    return (top < max_top) ? top : max_top;
 }
 
 static void config_menu_browser_keep_selection_visible(config_menu_t *menu)
 {
-    const uint16_t visible_rows = config_menu_browser_visible_rows(menu);
-
-    if (menu->browser_selected < menu->browser_top) {
-        menu->browser_top = menu->browser_selected;
-    } else if (menu->browser_selected >=
-               (uint16_t)(menu->browser_top + visible_rows)) {
-        menu->browser_top =
-            (uint16_t)(menu->browser_selected - visible_rows + 1U);
-    }
+    menu->browser_top = config_menu_browser_first_row(menu);
 }
 
 static void config_menu_browser_select_first_image(config_menu_t *menu)
@@ -8802,9 +8836,10 @@ static void config_menu_draw_browser(uint16_t *fb,
     const int box_y = y;
     const int box_bottom = CMUI_SCREEN_H - CMUI_MARGIN_Y - CMUI_FOOTER_H - 24;
     const int box_h = box_bottom - box_y;
-    const int row_y = y + 108;
+    const int row_y = y + CONFIG_BROWSER_HEADER_H;
     const int row_h = CMUI_ROW_H + CMUI_ROW_GAP;
     const uint16_t visible_rows = config_menu_browser_visible_rows(menu);
+    const uint16_t first_row = config_menu_browser_first_row(menu);
     const int preview_w = show_preview ? 360 : 0;
     const int preview_gap = show_preview ? 24 : 0;
     const int preview_h = show_preview ? 320 : 0;
@@ -8826,14 +8861,16 @@ static void config_menu_draw_browser(uint16_t *fb,
 
     (void)snprintf(line,
                    sizeof(line),
-                   "Item %u/%u",
-                   (unsigned)((menu->browser_count == 0U) ? 0U : (menu->browser_selected + 1U)),
+                   "Items %u-%u/%u",
+                   (unsigned)((menu->browser_count == 0U) ? 0U : (first_row + 1U)),
+                   (unsigned)(((uint32_t)first_row + visible_rows < menu->browser_count) ?
+                              first_row + visible_rows : menu->browser_count),
                    (unsigned)menu->browser_count);
     cmui_text_clipped(fb, x + w - 280, y + 24, 270, line,
                       CMUI_COLOR_TEXT, CMUI_COLOR_PANEL, CMUI_SMALL_SCALE);
 
     for (uint16_t row = 0U; row < visible_rows; ++row) {
-        const uint16_t index = (uint16_t)(menu->browser_top + row);
+        const uint16_t index = (uint16_t)(first_row + row);
         config_browser_entry_t entry;
         uint8_t focused;
         uint8_t dimmed;

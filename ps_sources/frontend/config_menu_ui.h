@@ -52,6 +52,8 @@ typedef struct {
  * Rendering them at a native font size keeps settings readable at 640x400. */
 uint8_t cmui_compact_active(void);
 void cmui_compact_begin(void);
+/* Rows that fit above the footer when the page has no help text. */
+uint32_t cmui_compact_row_capacity(void);
 void cmui_compact_scroll(int delta);
 void cmui_compact_entry(const char *label, const char *value,
                          uint8_t focused, uint8_t dimmed);

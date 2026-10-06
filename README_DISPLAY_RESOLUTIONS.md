@@ -54,6 +54,14 @@ in the heading. The larger outputs keep the
 sidebar layout. Tab/Delete changes tabs; normal navigation and actions still
 apply. File browsers and text readers use the available screen space.
 
+File browsers size the list from the current screen height, including the
+title and footer. The old 17-row limit left unused space in compact menus.
+For example, 1024x768 now fits 24 entries and 1280x1024 fits 34. The last page
+includes earlier entries where needed to fill the list, including after a
+resolution change. The item counter shows the visible range and total so
+users can see when more entries lie above or below the list. Short directories
+show only their actual entries.
+
 Supply a bezel PNG for the selected resolution. Appletini draws it at its
 native size. A bezel with another width or too much height leaves a plain
 background. Existing partial-height banners still work when their width
@@ -111,12 +119,21 @@ rates and a late clock-change failure followed by recovery to 148.5 MHz.
 The complete Vitis build passes for both frontend cores, the bootloader,
 FSBL, and BSPs.
 
+The F1.2.5-d1 browser-height fix passes 990 rendered cases across all six
+outputs and three smaller fallback sizes. These cover scrolling, short and
+empty lists, end-page filling, resolution changes, text bounds, and framebuffer
+guards. Browser, profile, menu, and text-reader regressions pass, as does the
+frontend Vitis build. The 1024x768 and 1280x1024 previews were checked by eye;
+the browser-height fix still needs a board test.
+
 Run the focused regressions with:
 
 ```text
 python scripts/test_display_scaling.py
 python scripts/test_display_mode_transition.py
 python scripts/test_resolution_config_menu.py
+python scripts/test_disk_browser.py
+python scripts/test_disk_browser_layout.py
 python scripts/test_display_output.py
 python scripts/test_display_modes_rtl.py
 python scripts/test_display_clock_wizard.py

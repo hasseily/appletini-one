@@ -337,9 +337,9 @@ def test_profile_image_picker_and_normalization() -> None:
             "CONFIG_BROWSER_PROFILE_PREVIEW_W" in source and
             "config_menu_blit_scaled_bgra" in source,
             "profile-image picker must draw a scaled preview panel")
-    require("CONFIG_BROWSER_PROFILE_IMAGE_VISIBLE_ROWS 17U" in source and
-            "config_menu_browser_visible_rows(menu)" in source,
-            "profile-image picker list height must stay above the footer")
+    require("config_menu_browser_visible_rows(menu)" in source and
+            "config_menu_browser_first_row(menu)" in source,
+            "profile-image picker must use the shared browser viewport")
     require("CONFIG_BROWSER_PROFILE_PREVIEW_H" in source and
             "PROFILE_MANAGER_THUMB_H" in source and
             "PROFILE_MANAGER_THUMB_W" in source,

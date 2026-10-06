@@ -48,8 +48,8 @@ def check_reader_integration(source: str) -> None:
     if deactivate is None or "config_menu_browser_close(menu);" not in deactivate["body"]:
         raise RuntimeError("Deactivating the menu must close its browser and reader")
     draw = extract_function(source, "config_menu_draw")
-    browser_draw = draw.find("config_menu_draw_browser(")
-    reader_draw = draw.find("config_menu_text_reader_draw(")
+    browser_draw = draw.rfind("config_menu_draw_browser(")
+    reader_draw = draw.rfind("config_menu_text_reader_draw(")
     if browser_draw < 0 or reader_draw <= browser_draw:
         raise RuntimeError("Draw the reader after the browser so its panel stays visible")
     workspace_builder = (ROOT / "scripts/create_vitis_workspace.py").read_text(encoding="utf-8")
@@ -68,7 +68,7 @@ def main() -> int:
     defines = []
     for name in (
         "CONFIG_MENU_PATH_LEN", "CONFIG_BROWSER_MAX_ENTRIES",
-        "CONFIG_BROWSER_VISIBLE_ROWS", "CONFIG_BROWSER_PROFILE_IMAGE_VISIBLE_ROWS",
+        "CONFIG_BROWSER_HEADER_H", "CONFIG_BROWSER_BOTTOM_PAD",
         "CONFIG_BROWSER_CAT_SMARTPORT", "CONFIG_BROWSER_CAT_DISK2",
         "CONFIG_BROWSER_CAT_BEZEL", "CONFIG_BROWSER_CAT_ROM",
         "CONFIG_BROWSER_CAT_PROFILE", "CONFIG_BROWSER_CAT_PRINTOUT",
@@ -105,7 +105,8 @@ def main() -> int:
         "config_menu_browser_add_entry", "config_menu_browser_compare",
         "config_menu_browser_sort", "config_menu_browser_refresh",
         "config_menu_browser_get_entry", "config_menu_browser_selected_file",
-        "config_menu_browser_visible_rows", "config_menu_browser_keep_selection_visible",
+        "config_menu_browser_visible_rows", "config_menu_browser_first_row",
+        "config_menu_browser_keep_selection_visible",
         "config_menu_browser_select_first_image", "config_menu_browser_close",
         "config_menu_browser_set_dir", "config_menu_browser_default_dir",
         "config_menu_open_browser", "config_menu_browser_select",
@@ -119,6 +120,7 @@ def main() -> int:
         #include <stdio.h>
         #include <stdlib.h>
         #include <string.h>
+        #include "config_menu_ui.h"
         typedef uint64_t FSIZE_t;
         typedef int FRESULT;
         #define FR_OK 0
@@ -348,7 +350,7 @@ def main() -> int:
             config_menu_browser_move(&menu, 1); config_menu_browser_select(&menu);
             CHECK(emptied == 1U && !menu.browser_active, "empty-drive action remains reachable");
             reset_fixture(&menu, CONFIG_BROWSER_TARGET_SMARTPORT_1);
-            for (unsigned i = 0; i < CONFIG_BROWSER_VISIBLE_ROWS + 3U; ++i) {
+            for (unsigned i = 0; i < config_menu_browser_visible_rows(&menu) + 3U; ++i) {
                 snprintf(name, sizeof(name), "folder%02u", i); add_file(name, 0U, AM_DIR);
             }
             add_file("image.po", 1U, 0U); config_menu_browser_set_dir(&menu, "0:/");
@@ -403,7 +405,7 @@ def main() -> int:
                 add_file("zz-last.TXT", 0U, 0U);
                 add_file("ignore.txt.bak", 1U, 0U);
                 add_file("ignoretxt", 1U, 0U);
-                for (unsigned i = 0U; i < CONFIG_BROWSER_VISIBLE_ROWS + 3U; ++i) {
+                for (unsigned i = 0U; i < config_menu_browser_visible_rows(&menu) + 3U; ++i) {
                     snprintf(name, sizeof(name), "folder%02u", i); add_file(name, 0U, AM_DIR);
                 }
                 config_menu_browser_set_dir(&menu, "0:/documents");
@@ -543,8 +545,13 @@ def main() -> int:
     harness = BUILD / "disk_browser.c"
     executable = BUILD / "disk_browser.exe"
     harness.write_text(preamble + "\n".join(prototypes + functions) + tests, encoding="utf-8")
-    subprocess.run([str(compiler), "-std=c11", "-Wall", "-Wextra", "-Werror", "-static",
-                    str(harness), "-o", str(executable)], cwd=ROOT, check=True)
+    subprocess.run([str(compiler), "-std=c11", "-funsigned-char", "-Wall", "-Wextra", "-Werror", "-static",
+                    "-I", str(FRONTEND), str(harness),
+                    str(FRONTEND / "config_menu_ui.c"),
+                    str(FRONTEND / "config_menu_logo_png.c"),
+                    str(ROOT / "ps_sources/lib/fb16.c"),
+                    str(ROOT / "ps_sources/lib/lodepng.c"),
+                    "-o", str(executable)], cwd=ROOT, check=True)
     subprocess.run([str(executable)], cwd=ROOT, check=True, timeout=15)
     return 0
 

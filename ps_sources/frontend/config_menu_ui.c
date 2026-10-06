@@ -32,6 +32,51 @@ static cmui_compact_row_t s_compact_rows[CMUI_COMPACT_MAX_ROWS];
 static const char *s_compact_help[CMUI_COMPACT_MAX_HELP];
 static uint32_t s_compact_help_count;
 
+typedef struct {
+    int scale;
+    int font_h;
+    int line_h;
+    int row_h;
+    int margin;
+    int content_y;
+    int footer_y;
+    int help_y;
+    uint32_t visible_rows;
+} cmui_compact_layout_t;
+
+static cmui_compact_layout_t cmui_compact_layout(uint32_t help_rows)
+{
+    cmui_compact_layout_t layout;
+    int max_help_rows;
+    int visible_rows;
+
+    layout.scale = (FB16_WIDTH >= 1024 && FB16_HEIGHT >= 768) ? 2 : 1;
+    layout.font_h = FB16_BUILTIN_FONT_HEIGHT * layout.scale;
+    layout.line_h = layout.font_h + 4;
+    layout.row_h = layout.font_h + 8;
+    layout.margin = 8;
+    layout.content_y = layout.margin + (2 * layout.line_h) + 6;
+    layout.footer_y = FB16_HEIGHT - layout.margin - (2 * layout.line_h);
+    /* Keep room for at least eight settings when help needs wrapping. */
+    max_help_rows = (layout.footer_y - layout.content_y - 8 * layout.row_h) /
+                   layout.line_h;
+    if (max_help_rows < 0) {
+        max_help_rows = 0;
+    }
+    if (help_rows > (uint32_t)max_help_rows) {
+        help_rows = (uint32_t)max_help_rows;
+    }
+    layout.help_y = layout.footer_y - 8 - (int)help_rows * layout.line_h;
+    visible_rows = (layout.help_y - layout.content_y - 6) / layout.row_h;
+    layout.visible_rows = (visible_rows > 0) ? (uint32_t)visible_rows : 1U;
+    return layout;
+}
+
+uint32_t cmui_compact_row_capacity(void)
+{
+    return cmui_compact_layout(0U).visible_rows;
+}
+
 uint8_t cmui_compact_active(void)
 {
     return s_compact_active;
@@ -993,13 +1038,14 @@ void cmui_compact_finish(uint16_t *fb, const char *title,
                           const char *status, uint8_t warning,
                           uint8_t usb_owned, uint8_t iiplus_keyboard)
 {
-    const int scale = (FB16_WIDTH >= 1024 && FB16_HEIGHT >= 768) ? 2 : 1;
-    const int font_h = FB16_BUILTIN_FONT_HEIGHT * scale;
-    const int line_h = font_h + 4;
-    const int row_h = font_h + 8;
-    const int margin = 8;
-    const int content_y = margin + (2 * line_h) + 6;
-    const int footer_y = FB16_HEIGHT - margin - (2 * line_h);
+    cmui_compact_layout_t layout = cmui_compact_layout(0U);
+    const int scale = layout.scale;
+    const int font_h = layout.font_h;
+    const int line_h = layout.line_h;
+    const int row_h = layout.row_h;
+    const int margin = layout.margin;
+    const int content_y = layout.content_y;
+    const int footer_y = layout.footer_y;
     const size_t cols = (size_t)((FB16_WIDTH - (4 * margin)) /
                                 (FB16_BUILTIN_FONT_ADVANCE_X * scale));
     char wrapped[CMUI_COMPACT_TEXT_LEN];
@@ -1020,15 +1066,9 @@ void cmui_compact_finish(uint16_t *fb, const char *title,
             ++help_rows;
         }
     }
-    /* Leave room for at least eight settings and two footer lines. */
-    if (help_rows > (uint32_t)((footer_y - content_y - 8 * row_h) / line_h)) {
-        help_rows = (uint32_t)((footer_y - content_y - 8 * row_h) / line_h);
-    }
-    help_y = footer_y - 8 - (int)help_rows * line_h;
-    visible = (uint32_t)((help_y - content_y - 6) / row_h);
-    if (visible == 0U) {
-        visible = 1U;
-    }
+    layout = cmui_compact_layout(help_rows);
+    help_y = layout.help_y;
+    visible = layout.visible_rows;
     for (uint32_t i = 0U; i < s_compact_count; ++i) {
         if (s_compact_rows[i].focused != 0U) {
             focus = i;

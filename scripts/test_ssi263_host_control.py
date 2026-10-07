@@ -113,8 +113,9 @@ int main(int argc, char** argv) {
             check(control.parameter_state(7).a == 0 && control.parameter_state(7).target == 0, "slot7 must not write");
             control.write(3, 0x70);
             control.advance_xck(256);
-            for (int selector : {4, 5, 6})
-                check(control.parameter_state(selector).target == 0, "host amplitude zero clears amplitude targets");
+            check(control.parameter_state(4).target == 15, "AMP zero retains stored filter-amplitude target");
+            for (int selector : {5, 6})
+                check(control.parameter_state(selector).target == 0, "host amplitude zero clears source targets");
         }
 
         // A synthetic row isolates scan/transition latency from source gates.

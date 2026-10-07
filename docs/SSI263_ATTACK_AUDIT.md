@@ -301,7 +301,7 @@ A_CLR_control =
 
 The drawing names the combined state-5/state-6 signal `STATE5&6`.
 
-The current host deliberately differs in three ways:
+The original listening checkpoint differed in three ways:
 
 1. It permits selector 4 from a software duration window and has no
    separate U166B write-pending inhibit.
@@ -315,11 +315,49 @@ The existing setup window prevents a normal transition step during setup,
 which covers part of U166B's job, but that is not proof of equivalent
 behavior for closely timed writes.
 
-These are concrete prototype conflicts and should remain explicit. A
-future U166B implementation should be tested with control writes around
+The integrated AMP-zero retention change below removes differences 2 and 3.
+The duration permit and U166B difference remains explicit. A future U166B
+implementation should be tested with control writes around
 SEL2 and duration boundaries, including zero-AMP writes, before choosing
 which behavior belongs in the production SSI model. This audit does not
-silently replace the existing policy with the possibly buggy prototype.
+silently replace the remaining policy with the possibly buggy prototype.
+
+## AMP-zero retention, 2026-10-07
+
+The user approved integrating the two AMP-nonzero gates after a separate
+host experiment matched two features of the physical calibration. When
+software writes AMP=0, selector 4 now keeps its stored amplitude and DDA
+state. The voice and frication targets still move to zero. A later nonzero
+AMP write retargets selector 4 from the retained value.
+
+This changes the control-write setup and transition permit only. It does
+not add a fade, change a time constant, alter the ROM or implement U166B.
+It removes two documented departures from the prototype drawing.
+
+Six conditioned AH probes on each recorded chip support the change:
+
+| Measure | Physical chips | Balanced reference | AMP retention candidate |
+| --- | --- | --- | --- |
+| AH 10%-to-90% rise | 35-40 ms | 60-75 ms | 30-35 ms |
+| AMP0-to-1 early peak above its late level | 18.7/18.7 dB | 1.4/0.6 dB | 18.3/18.2 dB |
+
+Rise measurements use 20 ms RMS windows on a 5 ms grid. Absolute alignment
+has a +/-25 ms allowance. No per-attack timing or gain fit was used. Late
+AMP0 has zero modeled AC, although a small constant DC remainder can persist.
+CTL results and settled AMP1/2/4/15 tails remain unchanged. The full candidate
+calibration and song have no internal saturation or output clipping.
+
+The song's late S-to-I interval at 82.65-83.5 seconds stays byte-identical
+to the balanced reference. Its separate PW0/duration delay remains open.
+The change does not claim to solve that transition or the measured
+amplitude-dependent tone. The original approved balanced audio remains the
+historical comparison reference.
+
+Local evidence lives in
+`build/ssi263_host/remainder_20261007/transitions/`, including
+`amp_zero_hold.diff`, `amp_zero_hold_comparison.json` and
+`amp_zero_hold_final_manifest.json`. Integrated host/RTL checks and full
+firmware results are recorded in [the FPGA candidate notes](SSI263_FPGA_CANDIDATE.md).
 
 ## What remains unknown
 

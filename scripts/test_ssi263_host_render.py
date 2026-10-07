@@ -124,6 +124,49 @@ class RenderTests(unittest.TestCase):
             self.assertFalse(np.any(read_pcm(directory, profile)))
             self.assertEqual([item["rms"] for item in report["statistics"]], [0, 0])
 
+    def test_amp_zero_retention_mutes_then_restores_the_previous_level(self):
+        # A held AH at AMP12, then AMP0->1, exercises the measured retained
+        # amplitude overshoot without adding a synthetic fade or preload.
+        hz = 1_015_625
+        events = []
+        for socket in (0, 1):
+            for register, value in ((3, 0x80), (0, 0x80), (1, 0x6f),
+                                    (2, 0x8e), (4, 231), (3, 0x7c), (0, 0x0e)):
+                events.append(Event(0, socket, register, value))
+            for milliseconds, amp in ((400, 0), (700, 1), (1000, 2)):
+                events.append(Event(hz * milliseconds // 1000, socket, 3, 0x70 | amp))
+        events.sort(key=lambda event: event.tick)
+        trace = Trace(events, hz, hz * 13 // 10, {"name": "retained_amp_zero_one"})
+        out = self.root / "retained_amp_zero_one"
+        report = render.render(trace, out, "prototype", self.executable)
+        pcm = read_pcm(out, "prototype").astype(np.float64)
+        def rms(start, stop, channel):
+            return float(np.std(pcm[round(start * 48000):round(stop * 48000), channel]))
+        for channel in (0, 1):
+            self.assertEqual(rms(.60, .67, channel), 0, "AMP0 must silence AC despite held AMP")
+            plateau = rms(.90, .97, channel)
+            self.assertGreater(plateau, 0)
+            peak = max(rms(t - .01, t + .01, channel) for t in np.arange(.71, .90, .005))
+            self.assertGreater(20 * np.log10(peak / plateau), 15,
+                               "AMP0 must retain prior gain until the AMP1 transition settles")
+            self.assertAlmostEqual(20 * np.log10(rms(1.20, 1.27, channel) / plateau), 6, delta=.7)
+        self.assertEqual(report["native_model_revision"], render.MODEL_REVISION)
+        for metrics in report["native_metrics"]:
+            self.assertEqual(metrics["state_saturations"], 0)
+            self.assertEqual(metrics["output_clips"], 0)
+
+    def test_balanced_preset_is_current_engine_and_default_executable_settings(self):
+        self.assertEqual(render.reference_settings(), render.reference_settings("balanced"))
+        directory = self.root / "full_prototype"
+        destination = self.root / "default_prototype.wav"
+        result = subprocess.run([str(self.executable), str(directory / "tables.txt"),
+                                 str(directory / "events.txt"), str(destination), "prototype", "8"],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(destination.read_bytes(), (directory / "prototype.wav").read_bytes())
+        self.assertEqual(self.reports["prototype"]["prototype_gain"], 1)
+        self.assertEqual(self.reports["prototype"]["voice_trim_q16"], 16384)
+
     def test_invalid_ranges_and_profiles_fail_before_process_launch(self):
         for kwargs in ({"start_tick": -1}, {"start_tick": 100, "end_tick": 100},
                        {"end_tick": self.trace.duration_ticks + 1}, {"profile": "unknown"},
@@ -327,10 +370,12 @@ int main() {
             amplitude.write(3, 0x70);
             check(amplitude.parameter_codes() == before_mute, "amplitude write jumped native parameter A");
             amplitude.advance_xck(256);
-            for (int slot : {4, 5, 6})
+            check(amplitude.parameter_state(4).target == 15, "AMPZERO must retain filter-amplitude target");
+            for (int slot : {5, 6})
                 check(amplitude.parameter_state(slot).target == 0, "live AMPZERO left stale source target");
             amplitude.advance_xck(8192);
-            for (int slot : {4, 5, 6})
+            check(amplitude.parameter_codes()[4] == before_mute[4], "AMPZERO changed stored filter amplitude");
+            for (int slot : {5, 6})
                 check(amplitude.parameter_codes()[slot] == 0, "native amplitude fade did not finish");
             amplitude.write(3, 0x77);
             amplitude.advance_xck(256);
@@ -340,6 +385,23 @@ int main() {
             amplitude.advance_xck(8192);
             check(amplitude.parameter_codes()[4] == 7 && amplitude.parameter_codes()[5] == 10
                   && amplitude.parameter_codes()[6] == 8, "restored amplitude transition did not finish");
+
+            NativeControl interrupted(tables, 1015625, NativeTiming{15});
+            start(interrupted);
+            interrupted.advance_xck(1024 + phase);
+            const auto saved = interrupted.parameter_state(4);
+            check(saved.a > 0 && saved.a < 15, "retention test must interrupt a live ramp");
+            interrupted.write(3, 0x70);
+            interrupted.advance_xck(8192);
+            const auto frozen = interrupted.parameter_state(4);
+            check(saved.a == frozen.a && saved.b == frozen.b && saved.c == frozen.c &&
+                  saved.target == frozen.target && saved.upward == frozen.upward,
+                  "AMPZERO must hold the entire filter-amplitude DDA, including its pending target");
+            check(interrupted.parameter_codes()[5] == 0 && interrupted.parameter_codes()[6] == 0,
+                  "holding filter amplitude must not prevent source mute");
+            interrupted.write(3, 0x71);
+            interrupted.advance_xck(8192);
+            check(interrupted.parameter_codes()[4] == 1, "AMP1 must retarget from held state");
         }
         std::cout << "128 scan phases: phone interruption, rapid writes, amplitude zero and restore passed\n";
         return 0;
@@ -382,14 +444,18 @@ def check_calibration(path: Path) -> None:
         assert report["rendered_audio_per_wall_second"] > 1, "two-minute baseline should render faster than real time"
         print(f"Full calibration passed: {report['applied_writes']} SSI writes, "
               f"{report['audio_seconds']:.3f}s audio in {report['render_seconds']:.3f}s.")
-        reference = json.loads(render.BALANCED_REFERENCE.read_text(encoding="utf-8"))
+        reference = json.loads(render.MODEL_REFERENCE.read_text(encoding="utf-8"))
         balanced = render.render(trace, Path(tmp), "prototype",
                                  **render.reference_settings("balanced"))
-        assert balanced["wav_sha256"] == reference["calibration"]["balanced_wav_sha256"], \
-            "The approved balanced calibration audio changed"
+        assert balanced["native_model_revision"] == reference["id"]
+        assert balanced["wav_sha256"] == reference["calibration"]["wav_sha256"], \
+            "Integrated AMP-zero-hold calibration differs from the reviewed candidate"
+        historical = json.loads(render.BALANCED_REFERENCE.read_text(encoding="utf-8"))
+        assert historical["calibration"]["balanced_wav_sha256"] == reference["calibration"]["historical_balanced_wav_sha256"]
+        assert balanced["wav_sha256"] != historical["calibration"]["balanced_wav_sha256"]
         assert all(channel["state_saturations"] == channel["output_clips"] == 0
                    for channel in balanced["native_metrics"])
-        print("Approved balanced reference: complete calibration WAV is byte-identical.")
+        print("Integrated AMP-zero-hold calibration matches the reviewed candidate; historical balanced hash preserved.")
 
 
 def main() -> int:

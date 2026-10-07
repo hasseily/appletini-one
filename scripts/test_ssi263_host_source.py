@@ -155,14 +155,14 @@ int main(int argc, char** argv) {
         check(pitch.glottal_load_pending(), "U61 records rising U62 at Phi0");
         p.phase = true;
         pitch.tick(p);
-        check(pitch.glottal_count() == 11 && pitch.output().voice_target_q16 == -2048, "U60 loads 1011 at Phi1");
+        check(pitch.glottal_count() == 11 && pitch.output().voice_target_q16 == -16384, "U60 loads 1011 at Phi1 with accepted voice balance");
         for (int expected = 12; expected <= 15; ++expected) {
             p.phase = false;
             pitch.tick(p);
             p.phase = true;
             pitch.tick(p);
             check(pitch.glottal_count() == expected, "U60 saturating four-Phi1 pulse");
-            check(pitch.output().voice_target_q16 == (expected == 15 ? 0 : -2048), "U116 voice trim pulse");
+            check(pitch.output().voice_target_q16 == (expected == 15 ? 0 : -16384), "U116 voice trim pulse");
         }
         p.phase_edge = false;
         p.inflection = 4095;

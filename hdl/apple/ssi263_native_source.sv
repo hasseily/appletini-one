@@ -5,7 +5,7 @@
 // unknown cold FRIC routing uses FRIC1, and CTL hard-mutes the sources. Neither
 // policy claims to reproduce an observed SC-02 prototype reset circuit.
 module ssi263_native_source #(
-    parameter integer VOICE_TRIM_Q16 = 2048
+    parameter integer VOICE_TRIM_Q16 = 16384
 ) (
     input  logic               clk,
     input  logic               rstn,

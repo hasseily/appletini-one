@@ -118,7 +118,7 @@ class ListeningTests(unittest.TestCase):
         else:
             commands = [[self.executable.name, prefix + "tables.txt", prefix + "events.txt",
                          prefix + "rerender-" + profile + ".wav", profile, "6",
-                         "13" if profile == "prototype" else "8", "1700" if profile == "prototype" else "2048"]
+                         "13" if profile == "prototype" else "1", "1700" if profile == "prototype" else "16384"]
                         for prefix in ("", "ff-232/") for profile in renderer.PROFILES]
         self.assertEqual(len(commands), 2 * len(renderer.PROFILES))
         for command in commands:

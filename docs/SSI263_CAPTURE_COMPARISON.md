@@ -1,5 +1,22 @@
 # SSI capture comparison
 
+## Integrated changes, 2026-10-07
+
+The next firmware and canonical C++ simulator use the user-approved balanced
+voice/noise settings and retain selector-4 amplitude when host AMP is zero.
+The original approved balanced audio remains a separate historical reference.
+
+The retention experiment reduced six conditioned AH rise widths from 60-75 ms
+to 30-35 ms, against 35-40 ms on the two physical chips. An independent AMP0-to-1
+check reproduced the physical 18.7 dB overshoot at 18.3/18.2 dB; the prior model
+gave 1.4/0.6 dB. The late S-to-I passage, settled amplitude tails and CTL checks
+remain unchanged. See [the attack audit](SSI263_ATTACK_AUDIT.md) for windows,
+alignment limits and prototype evidence.
+
+The remaining D7, PW0, high-frequency and amplitude-dependent tone findings
+remain open. They do not justify unrelated timing or analog changes in this
+build. The sections below retain the measurements of the earlier candidates.
+
 ## First physical capture, 2026-10-06
 
 The PAL-01 return is usable. The tester's README identifies a **Phasor Rev E**

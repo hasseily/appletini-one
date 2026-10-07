@@ -40,9 +40,9 @@ struct NativeSourceMetrics {
 
 class NativeSource {
 public:
-    // POT3 is an unknown physical wiper setting. Keep the prior branch's
-    // explicitly provisional 1/32-rail voice trim; do not call it calibration.
-    explicit NativeSource(int voice_trim_q16 = 2048);
+    // Accepted voice/noise balance; POT3's physical wiper setting is unknown.
+    // This is a model calibration value, not a measured source voltage.
+    explicit NativeSource(int voice_trim_q16 = 16384);
     void tick(const NativeSourceInputs& inputs);
     // The renderer supplies Baseline::active_inflection() between output
     // samples: native XCK divider, retained approximate pitch-glide cadence.

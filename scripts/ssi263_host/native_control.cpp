@@ -115,10 +115,9 @@ bool NativeControl::transition_permit(int selector) const {
     }
     case 2: return articulation_window_;
     case 4:
-        // Isolated amplitude bridge: one opportunity per native duration
-        // phase, including a fade to zero. This deliberately does not copy
-        // prototype U166B or analog U68 masking before they are implemented.
-        return duration_window_;
+        // AMP=0 silences VA/FA while preserving the stored filter amplitude.
+        // The remaining duration permit still approximates prototype U166B.
+        return duration_window_ && (regs_[3] & 15) != 0;
     case 5: return amplitude_window_ && pw0_ == 1;
     case 6: return amplitude_window_ && pw1_ == 1;
     default: return false;
@@ -129,7 +128,8 @@ void NativeControl::parameter_write() {
     ++metrics_.write_phases;
     if (!phone_valid_ || selector_ == 7) return;
     const bool setup = (phone_setup_window_ && selector_ != 4) ||
-                       (control_setup_window_ && selector_ >= 4 && selector_ <= 6);
+                       (control_setup_window_ && selector_ >= 4 && selector_ <= 6 &&
+                        (selector_ != 4 || (regs_[3] & 15) != 0));
     if (setup) {
         dda_[selector_].retarget(target(selector_));
         ++metrics_.setups;

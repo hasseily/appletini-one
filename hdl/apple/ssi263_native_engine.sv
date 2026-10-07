@@ -6,8 +6,8 @@ module ssi263_native_engine #(
     parameter ROM_FILE = "ssi263_sc02_rom.mem",
     parameter bit DIV2 = 1'b1,
     parameter integer ART_REFERENCE_RATE = 8,
-    parameter integer VOICE_TRIM_Q16 = 2048,
-    parameter integer OUTPUT_GAIN = 8,
+    parameter integer VOICE_TRIM_Q16 = 16384,
+    parameter integer OUTPUT_GAIN = 1,
     parameter logic [7:0] RESET_FILTER_FREQUENCY = 8'hff
 ) (
     input  logic               clk,

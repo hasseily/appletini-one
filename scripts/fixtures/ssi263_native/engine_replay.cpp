@@ -50,7 +50,7 @@ static int timed_contracts(const Tables& tables) {
     Baseline pitch[2]={Baseline(tables),Baseline(tables)};
     NativeControl control[2]={NativeControl(tables),NativeControl(tables)};
     NativeSource source[2];
-    PrototypeTract tract[2]={PrototypeTract(8),PrototypeTract(8)};
+    PrototypeTract tract[2]={PrototypeTract(1),PrototypeTract(1)};
     bool pending[2]={false,false};
     int16_t expected[2]={0,0};
     int checks=0;
@@ -161,7 +161,7 @@ int main(int argc, char** argv) {
         Baseline pitch[2] = {Baseline(tables,hz), Baseline(tables,hz)};
         NativeControl control[2] = {NativeControl(tables,hz), NativeControl(tables,hz)};
         NativeSource source[2];
-        PrototypeTract tract[2] = {PrototypeTract(8), PrototypeTract(8)};
+        PrototypeTract tract[2] = {PrototypeTract(1), PrototypeTract(1)};
         auto a = std::make_unique<Vssi263_native_engine>();
         auto b = std::make_unique<Vssi263_native_engine>();
         Vssi263_native_engine* dut[2] = {a.get(), b.get()};

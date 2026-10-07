@@ -1,0 +1,28 @@
+{
+  "id": "balanced-amp-zero-hold-2026-10-07",
+  "status": "Integrated host model; accepted balance plus prototype-backed AMP-zero retention",
+  "engine": "prototype",
+  "historical_reference": "balanced-2026-10-07",
+  "historical_source_commit": "00dbe55",
+  "change": "Selector 4 retains its DDA state and target while host AMP is zero; VA and FA still target zero. All other timing and circuit assumptions remain.",
+  "parameters": {
+    "articulation_reference": 8,
+    "prototype_gain": 1,
+    "voice_trim": 16384
+  },
+  "unchanged_noise_drive_q16": 301,
+  "calibration": {
+    "events_sha256": "e5f729e6a22055ef93992e9c3e8f3c1edb85d821d3063c6a2ffe51f16bb2c6b5",
+    "tables_sha256": "47b35dd8a2336bb3b7ef471d9297f8abdd762bc82769912d31299328b6baa3d1",
+    "wav_sha256": "f066e172c9c3ffa7876368c055d56a802863371308ac94645e3750c8e32ea87d",
+    "historical_balanced_wav_sha256": "fe83ba628343ef22df99d5f30c5a9717526d9717ee2851c127124f8fd76ad53b"
+  },
+  "song": {
+    "events_sha256": "0524ca5878d466ab4a1986c90d9e6af7aee94f0cebfd036229cbd9583357200f",
+    "vocals_wav_sha256": "f4aeae92403cf49491c81c8826b3a17ca36cb15506bf06254102d23d922d799a",
+    "mix_wav_sha256": "d586d964d6cf60a2053b3f1c3842e6c76656070eb164a760751c0f526e509b28",
+    "ssi_mix_gain": 1.25
+  },
+  "golden_origin": "Full existing calibration and song histories rendered by the separately reviewed AMP-zero-hold candidate. Integrated code must reproduce these WAVs; the historical balanced fixture remains unchanged.",
+  "limits": "This corrects a stored-amplitude transition rule, not steady AMP coloration, all U166B behavior, or the remaining production-chip timing and analog differences."
+}

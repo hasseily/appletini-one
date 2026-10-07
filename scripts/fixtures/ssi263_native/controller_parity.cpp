@@ -194,13 +194,81 @@ int main(int argc, char** argv) {
         for (int reg = 0; reg < 8; ++reg) { f.cycle(false, reg, 0x81 + reg); f.cycle(false); }
         f.reset();
 
+        // AMP=0 inhibits both selector-4 setup and stepping. Holding an
+        // unfinished ramp catches a missing permit gate; a settled value
+        // alone would only exercise the setup gate. VA/FA still fade to zero.
+        f.cycle(false, 2, 0xf8); f.cycle(false, 4, 231);
+        f.cycle(false, 3, 0x7c); f.cycle(false, 0, 0xce); // AH, RATE=15, DUR=3.
+        for (int n = 0; n < 8192 && f.host().parameter_state(4).a == 0; ++n) f.cycle();
+        const NativeDda unfinished = f.host().parameter_state(4);
+        if (!(unfinished.a > 0 && unfinished.a < unfinished.target && unfinished.target == 12))
+            throw std::runtime_error("AMP hold fixture did not reach an unfinished ramp");
+        f.cycle(true, 3, 0x70);
+        for (int scan = 0; scan < 64; ++scan) {
+            f.run(128);
+            const auto& held = f.host().parameter_state(4);
+            equal(held.a, unfinished.a, "AMP=0 retained A");
+            equal(held.b, unfinished.b, "AMP=0 retained B");
+            equal(held.c, unfinished.c, "AMP=0 retained C");
+            equal(held.target, unfinished.target, "AMP=0 retained target");
+            equal(held.upward, unfinished.upward, "AMP=0 retained direction");
+        }
+        equal(f.host().parameter_codes()[5], 0, "AMP=0 VA muted");
+        equal(f.host().parameter_codes()[6], 0, "AMP=0 FA muted");
+        // A phone write during AMP=0 must not replace the retained AMP bank.
+        f.cycle(true, 0, 0xce); f.run(8192);
+        equal(f.host().parameter_state(4).a, unfinished.a, "silent phone retained AMP");
+        equal(f.host().parameter_state(4).target, 12, "silent phone retained target");
+        f.cycle(false, 3, 0x7c); f.run(8192);
+        equal(f.host().parameter_codes()[4], 12, "AMP ramp resumes");
+        f.cycle(false, 3, 0x70); f.run(8192);
+        equal(f.host().parameter_codes()[4], 12, "settled AMP retained during zero");
+        equal(f.host().parameter_codes()[5], 0, "settled AMP zero mutes VA");
+        f.cycle(true, 3, 0x71); f.run(128);
+        equal(f.host().parameter_state(4).target, 1, "AMP 0->1 retargets stored value");
+        if (f.host().parameter_state(4).a < 11)
+            throw std::runtime_error("AMP 0->1 lost the retained starting amplitude");
+        f.run(8192);
+        equal(f.host().parameter_codes()[4], 1, "AMP 0->1 settles");
+        f.reset();
+
+        // A coincident AMP=0 write must qualify both gates with the newly
+        // written register, even if a duration/control window is already open.
+        for (bool setup_collision : {false, true}) {
+            f.cycle(false, 2, 0xf8); f.cycle(false, 4, 231);
+            f.cycle(false, 3, 0x7c); f.cycle(false, 0, 0xce);
+            for (int n = 0; n < 8192 && f.host().parameter_state(4).a == 0; ++n) f.cycle();
+            if (setup_collision) f.cycle(false, 3, 0x75);
+            int wait = 0;
+            while (!(f.host().selector() == 4 && f.host().selector_phase() == 1 &&
+                     (setup_collision ? f.host().control_setup_window_ :
+                      (f.host().duration_window_ && !f.host().control_setup_window_)))) {
+                if (++wait > 8192) throw std::runtime_error("AMP collision window not reached");
+                f.cycle();
+            }
+            const NativeDda before = f.host().parameter_state(4);
+            if (!(before.a > 0 && before.a < before.target && before.target == 12))
+                throw std::runtime_error("AMP collision requires an unfinished ramp");
+            f.cycle(true, 3, 0x70); // The same fabric edge consumes selector-4 r2.
+            for (int observation = 0; observation < 2; ++observation) {
+                const auto& held = f.host().parameter_state(4);
+                equal(held.a, before.a, "r2 AMP=0 retained A");
+                equal(held.b, before.b, "r2 AMP=0 retained B");
+                equal(held.c, before.c, "r2 AMP=0 retained C");
+                equal(held.target, before.target, "r2 AMP=0 retained target");
+                equal(held.upward, before.upward, "r2 AMP=0 retained direction");
+                if (observation == 0) f.run(8192);
+            }
+            f.reset();
+        }
+
         // Every ROM phone: high RATE allows PW and amplitude events, while
         // enough ticks exercise rising/falling DDA targets and held routes.
         f.cycle(false, 2, 0xf8); f.cycle(false, 4, 0xe7); f.cycle(false, 3, 0x7f);
         for (int phone = 0; phone < 64; ++phone) {
             f.cycle(true, 0, phone | 0xc0);
             f.run(65536);
-            f.cycle(false, 3, 0x70); // Preserve provisional AMP=0 fade policy.
+            f.cycle(false, 3, 0x70); // Retain AMP while VA/FA fade to silence.
             f.run(2048);
             f.cycle(true, 3, 0x7f);
         }

@@ -5,8 +5,9 @@
 // tick when both arrive together; writes without a tick still take effect.
 //
 // Deliberate prototype departures remain unchanged: fixed ART reference
-// RATE, full duration restart, selector-4 duration permit (including AMP=0),
-// and host CTL policy. See docs/SSI263_ATTACK_AUDIT.md. This module does not
+// RATE, full duration restart, omitted U166B permit inhibit, and host CTL
+// policy. AMP=0 retains selector-4 state as in the prototype gates.
+// See docs/SSI263_ATTACK_AUDIT.md. This module does not
 // turn a bounded cold seed into a known held-control value.
 module ssi263_native_controller #(
     parameter integer ART_REFERENCE_RATE = 8,
@@ -234,7 +235,8 @@ module ssi263_native_controller #(
                 // r0 is the only setup-window load; at r2 both setup
                 // windows and the selected DDA bank still name old state.
                 setup = (q.phone_window && q.selector != 3'd4) ||
-                        (q.control_window && q.selector >= 3'd4 && q.selector <= 3'd6);
+                        (q.control_window && q.selector >= 3'd4 && q.selector <= 3'd6 &&
+                         (q.selector != 3'd4 || n.regs[3][3:0] != 4'd0));
                 blocked = bit_and(q.pw5, {1'b1, n.regs[0][5] ||
                                   q.codes[5] != 4'd0 || q.codes[6] != 4'd0});
                 // r0 cannot load a new permit window on this r2 write.
@@ -243,7 +245,8 @@ module ssi263_native_controller #(
                 case (q.selector)
                     3'd0, 3'd1, 3'd3: permit = q.articulation_window && !control_release && blocked == KNOWN_ZERO;
                     3'd2: permit = q.articulation_window && !control_release;
-                    3'd4: permit = q.duration_window && !phone_write && !control_release;
+                    3'd4: permit = q.duration_window && !phone_write && !control_release &&
+                                   n.regs[3][3:0] != 4'd0;
                     3'd5: permit = q.amplitude_window && !control_release && !phone_write && q.pw0 == KNOWN_ONE;
                     3'd6: permit = q.amplitude_window && !control_release && !phone_write && q.pw1 == KNOWN_ONE;
                     default: permit = 1'b0;

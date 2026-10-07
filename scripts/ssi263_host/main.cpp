@@ -91,8 +91,8 @@ int main(int argc, char** argv) {
         articulation_reference = integer(argv[5]);
         if (articulation_reference < 0 || articulation_reference > 15)
             throw std::runtime_error("articulation reference rate must be 0..15");
-        const int prototype_gain = argc == 8 ? integer(argv[6]) : 8;
-        const int voice_trim = argc == 8 ? integer(argv[7]) : 2048;
+        const int prototype_gain = argc == 8 ? integer(argv[6]) : 1;
+        const int voice_trim = argc == 8 ? integer(argv[7]) : 16384;
         if (prototype_gain < 1 || prototype_gain > 1024 || voice_trim < 0 || voice_trim > 131071)
             throw std::runtime_error("prototype gain must be 1..1024 and voice trim 0..131071");
         const bool native = mode == "transitions" || mode == "prototype";

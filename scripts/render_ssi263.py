@@ -30,12 +30,17 @@ SOURCE = ROOT / "scripts/ssi263_host"
 CACHE = ROOT / "build/ssi263_host"
 PROFILES = ("baseline", "pitch", "transitions", "prototype")
 BALANCED_REFERENCE = ROOT / "scripts/fixtures/ssi263_host/balanced_reference.json"
+MODEL_REFERENCE = ROOT / "scripts/fixtures/ssi263_host/amp_zero_hold_reference.json"
+MODEL_REVISION = json.loads(MODEL_REFERENCE.read_text(encoding="utf-8"))["id"]
+DEFAULT_PROTOTYPE_GAIN = 1
+DEFAULT_VOICE_TRIM = 16384
 
 
 def reference_settings(reference: str | None = None) -> dict:
-    """Keep the accepted listening settings separate from frozen RTL defaults."""
+    """Select gains for the current engine, not a historical waveform replay."""
     if reference is None:
-        return {"articulation_reference": 8, "prototype_gain": 8, "voice_trim": 2048}
+        return {"articulation_reference": 8, "prototype_gain": DEFAULT_PROTOTYPE_GAIN,
+                "voice_trim": DEFAULT_VOICE_TRIM}
     if reference != "balanced":
         raise ValueError("unknown SSI listening reference")
     return json.loads(BALANCED_REFERENCE.read_text(encoding="utf-8"))["parameters"]
@@ -68,7 +73,7 @@ LIMITS = {
                   "Voice trim, output gain and deterministic cold seeds are model settings, not measured chip values.",
                   "Five ideal switched-capacitor formants retain individual charge; no op-amp or analog-output response.",
                   "U148 output hold is sampled at 48 kHz without an analog reconstruction or anti-alias filter.",
-                  "Host amplitude transition timing remains a provisional one-opportunity-per-duration-phase model."],
+                  "AMP zero retains stored filter amplitude while VA/FA target zero; the remaining U166B permit is provisional."],
 }
 
 
@@ -78,7 +83,7 @@ def digest(path: Path) -> str:
 
 def source_hashes() -> dict[str, str]:
     paths = sorted(SOURCE.glob("*.h")) + sorted(SOURCE.glob("*.cpp"))
-    paths += [Path(__file__), BALANCED_REFERENCE, ROOT / "scripts/ssi263_host_data.py",
+    paths += [Path(__file__), BALANCED_REFERENCE, MODEL_REFERENCE, ROOT / "scripts/ssi263_host_data.py",
               ROOT / "hdl/apple/ssi263_formant_pkg.sv", ROOT / "hdl/apple/ssi263_sc02_rom.mem"]
     return {path.relative_to(ROOT).as_posix(): digest(path) for path in paths}
 
@@ -163,8 +168,8 @@ def load_json_trace(path: Path) -> Trace:
 
 def render(trace: Trace, out: Path, profile: str, executable: Path | None = None,
            start_tick: int = 0, end_tick: int | None = None,
-           articulation_reference: int = 8, prototype_gain: int = 8,
-           voice_trim: int = 2048) -> dict:
+           articulation_reference: int = 8, prototype_gain: int = DEFAULT_PROTOTYPE_GAIN,
+           voice_trim: int = DEFAULT_VOICE_TRIM) -> dict:
     trace.validate()
     end_tick = trace.duration_ticks if end_tick is None else end_tick
     if type(start_tick) is not int or type(end_tick) is not int:
@@ -218,6 +223,7 @@ def render(trace: Trace, out: Path, profile: str, executable: Path | None = None
                            "nonzero_samples": int(np.count_nonzero(channel))})
     report = {
         "profile": profile, "description": DESCRIPTION[profile], "firmware_target": "F1.2.5-d1",
+        "native_model_revision": MODEL_REVISION if profile in ("prototype", "transitions") else None,
         "sample_rate": 48000, "channels": 2, "gain": "fixed model gain; no normalization",
         "effective_xck_hz": trace.xck_hz, "articulation_reference_rate": articulation_reference,
         "prototype_gain": prototype_gain if profile == "prototype" else None,
@@ -303,8 +309,8 @@ def write_bundle(out: Path, reports: list[dict], executable: Path,
             profile = report["profile"]
             commands.append(f'"{executable.name}" {prefix}tables.txt {prefix}events.txt {prefix}rerender-{profile}.wav '
                             f'{profile} {report["articulation_reference_rate"]} '
-                            f'{report.get("prototype_gain") or 8} '
-                            f'{report["voice_trim_q16"] if report.get("voice_trim_q16") is not None else 2048}')
+                            f'{report.get("prototype_gain") or DEFAULT_PROTOTYPE_GAIN} '
+                            f'{report["voice_trim_q16"] if report.get("voice_trim_q16") is not None else DEFAULT_VOICE_TRIM}')
             commands.append("if errorlevel 1 exit /b 1")
     commands.append("pause")
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
@@ -340,7 +346,7 @@ def main() -> None:
     parser.add_argument("--ff", type=int, default=128, help="filter register for built-in demos")
     parser.add_argument("--compare-ff", type=int, help="also render the built-in demo with this FF value")
     parser.add_argument("--articulation", type=int, default=5, help="articulation register for demos")
-    parser.add_argument("--reference", choices=("balanced",), help="accepted SSI voice/noise balance")
+    parser.add_argument("--reference", choices=("balanced",), help="accepted gains with the current engine; not historical audio replay")
     parser.add_argument("--articulation-reference-rate", type=int)
     parser.add_argument("--prototype-gain", type=int)
     parser.add_argument("--voice-trim", type=int, help="prototype voice drive, Q16")

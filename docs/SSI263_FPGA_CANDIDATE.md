@@ -1,10 +1,16 @@
 # Native SSI-263 FPGA candidate
 
-This implements the listening model checkpoint `41ac989` in synthesizable
-SystemVerilog. It uses the committed SSI parameter ROM, native scanner,
-native voice/noise source and all five prototype formants. It has no dependency
-on the old sound generator or coefficient package. The host model and listening
-files remain unchanged. Firmware stays `F1.2.5-d1`.
+This implements the portable C++ model in `scripts/ssi263_host/` in synthesizable
+SystemVerilog. The C++ code is the canonical higher-level implementation;
+controller-state and sample-by-sample PCM checks keep the RTL in step with it.
+Both use the committed SSI parameter ROM, native scanner, native voice/noise
+source and all five prototype formants. Neither depends on the old sound
+generator or coefficient package. Firmware stays `F1.2.5-d1`.
+
+The 2026-10-07 update integrates the user-approved balanced voice/noise levels
+and the measured AMP-zero retention correction. The original balanced audio
+and its hashes remain the historical listening reference. Earlier qualification
+results below describe their dated source revisions, not the updated firmware.
 
 The production `ssi263_bus_wrapper` now selects the native engine for both
 SSI263AP sockets. The old SC-01 sound core and formant backend are no longer
@@ -65,10 +71,12 @@ charge transfers in the host order. The tract exports a sticky
 `state_saturated` diagnostic separately from its scheduling/arithmetic `fault`.
 Saturation is defined model behavior, not an event drop.
 
-The default voice drive is already trimmed to -2048/0; frication is +/-301.
-No second voice scaling occurs in the tract. The default PCM gain is 8 followed
+The default voice drive is trimmed to -16384/0; frication is +/-301.
+No second voice scaling occurs in the tract. The default PCM gain is 1 followed
 by arithmetic division by 2 and signed 16-bit clipping. These remain listening
-settings, not measurements of chip gain or potentiometer position.
+settings, not measurements of chip gain or potentiometer position. This is the
+approved balanced pair: compared with the first firmware's 2048/8 pair, it
+preserves nominal voice gain and reduces frication relative to voice by 18 dB.
 
 The song preview uses a separate 1.25 SSI-to-AY mix multiplier (+1.94 dB)
 based on listening feedback. The firmware's SSI volume control provides
@@ -97,9 +105,11 @@ with the known buggy prototype:
 - Phone writes restart duration. CTL release restarts the host timing windows.
   CTL also hard-mutes excitation and clears the glottal-load synchronizer;
   the prototype has a separate PD/RST path.
-- Selector 4 retains the host duration permit and zero-AMP retarget behavior.
-  It omits the prototype U166B pending-write inhibit and AMP-nonzero gates.
-  See the pin-level evidence in [the attack audit](SSI263_ATTACK_AUDIT.md).
+- Selector 4 retains the host duration permit and omits the prototype U166B
+  pending-write inhibit. Its setup and transition paths now require host AMP
+  to be nonzero, retaining stored amplitude during AMP=0 as the drawing shows.
+  This removes the two former AMP-zero conflicts. See the pin-level and
+  physical-capture evidence in [the attack audit](SSI263_ATTACK_AUDIT.md).
 - Unknown cold routes use the provisional FRIC1 fallback that removed the
   first-H hiss. Held control state still carries its unknown flag; the fallback
   does not assert a known physical U20 reset value.
@@ -111,7 +121,27 @@ with the known buggy prototype:
   amplifier limits, propagation at coincident edges and output reconstruction
   beyond the modeled hold remain unverified against production SSI silicon.
 
-No attack shaping, gain fitting or new acoustic tuning forms part of this port.
+The AMP-zero change adds no attack shaping or new time constant. The balanced
+voice/noise settings are a listening choice checked against the two real chips.
+
+## Remaining work after the 2026-10-07 review
+
+This firmware changes the balanced gains and AMP-zero retention only. The
+remaining evidence does not yet specify complete fixes for:
+
+- D7 response handling when a new phone arrives before the preceding response.
+  The physical log rejects the current unconditional restart in those cases,
+  but does not uniquely choose the replacement counter/latch behavior.
+- The late S-to-I transition in the song. Retaining AMP does not change that
+  passage; the PW0/duration timing remains a separate question.
+- The prototype U166B write inhibit, pitch glide and unknown cold-state policy.
+- High-frequency output reconstruction and amplitude-dependent tone. A single
+  fixed EQ cannot explain the measured amplitude-dependent change.
+
+The Phasor demo issue was resolved by comparing the supplied HDV with all four
+archived DSKs: its speech code is original, but its saved FF was 128 instead of
+232. The user requested a corrected HDV. No clock or FF remap belongs in the
+engine for that saved-setting difference; see [the FF notes](SSI263_FILTER_FREQUENCY.md).
 
 ## Reproduce the checks
 
@@ -131,7 +161,7 @@ python scripts/test_smartport_data_phase.py
 ```
 
 `test_ssi263_native_engine.py` replays both sockets through the complete RTL,
-compares each PCM sample to the unchanged C++ classes, and compares the finished
+compares each PCM sample to the canonical C++ classes, and compares the finished
 PCM bytes to a separate run of the public renderer. It also runs a dense fabric
 schedule with Q3 every 65 clocks, writes during active work, sample requests
 across pipeline phases and deliberate deadline violations. Idle clocks may be
@@ -148,6 +178,71 @@ only this engine for `xc7z020clg484-2` at a 7.5 ns fabric period. This writes
 reports and a standalone checkpoint under `build/test_ssi263_native_engine`;
 it does not build or flash Appletini firmware. Isolated timing does not prove
 timing or available resources in the complete two-socket board design.
+
+## Integrated host and RTL checks, 2026-10-07
+
+Before the updated full-board build, the following checks passed:
+
+- Controller: 734,176,077 state checks at ART references 0, 8 and 15. These
+  include interrupted amplitude transitions and AMP-zero writes coincident
+  with selector-4 setup and update edges.
+- Source and tract: 266,194,267 source checks and 3,654,267 tract checks.
+- Engine: listening, stress and retained-amplitude traces match the public
+  C++ renderer sample for sample. Late AMP-zero and CTL intervals have zero AC;
+  the synthetic AMP0-to-1 trace has a 15.904 dB early peak above its late level
+  on both sockets. This synthetic trace differs from the physical calibration.
+- Bus integration: 41,231,842 SSI263P/AP checks and 196,101,634 response checks.
+  The unchanged maximum completion times are 122 clocks for an input event
+  and 124 clocks for a sample, within the 130-clock effective XCK spacing.
+- Full card: 35,926 checks, 6,736 writes and 6,144 frames; all 4,096 matched
+  Mockingboard/Phasor PCM comparisons pass. Mixer and UI regressions also pass.
+- The full 119.997-second calibration, raw song vocals and unchanged-AY song
+  mix from the integrated C++ code match the reviewed retention candidate's
+  WAV hashes exactly, without internal saturation or output clipping.
+
+The current model ID is `balanced-amp-zero-hold-2026-10-07`. Its golden hashes
+live in `scripts/fixtures/ssi263_host/amp_zero_hold_reference.json`. The original
+`balanced_reference.json` is unchanged. Local test reports and frozen test
+sources are retained in `build/ssi263_firmware_balanced_20261007/test_evidence.zip`.
+
+## Qualified updated full-board build, 2026-10-07
+
+Vivado 2025.2 completed fresh synthesis and implementation for
+`20261006T230942Z-00dbe551-full`, with no incremental reference. The build
+contains the balanced gains and AMP-zero retention described above. It uses
+the user's positive-slack test policy and remains a development build.
+
+| Final nominal check | Result |
+| --- | --- |
+| Setup slack | **+0.015 ns**, no failing endpoints |
+| Hold slack | **+0.048 ns**, no failing endpoints |
+| Pulse-width slack | **+0.265 ns**, no failing endpoints |
+| Total negative slack, unconstrained internal endpoints, route errors and missing constraint objects | Zero |
+| Board/CDC/DVI bounds and bus skew | PASS; bus-skew slack +5.903 ns |
+| Resources | 38,296 LUTs, 29,108 registers, 30 DSPs, 110 block RAM tiles |
+
+Both temporary clock margins are zero at signoff; the original direction
+10 ns and PHI0-release 8 ns limits remain in force. This passes the requested
+test-build criterion, not the separate known-good reference promotion policy.
+
+The run artifacts are in `.timing_runs/20261006T230942Z-00dbe551-full/`.
+The working-tree build records its base commit and dirty flag, with 489
+unchanged source hashes and an archived source snapshot under
+`build/ssi263_firmware_balanced_20261007/`. The tests and reference fixtures
+have a separate archive there. These identify the actual updated sources;
+the base commit alone does not include these changes.
+
+The full Vitis rebuild and firmware packaging then passed. The frontend embeds
+the fresh CPU1 image; FSBL and both application ELFs are newer than the hardware
+export. The XSA's embedded bitstream matches the qualified bitstream. Source
+and test-evidence hashes remain unchanged after generated-asset and PS builds.
+
+The resulting `build/ssi263_firmware_balanced_20261007/FIRMWARE.BIN` is
+**F1.2.5-d1**, 4,432,172 bytes, SHA-256
+`eafeef2c0bbfdc8b41a49836cf29609e00628ef638008ef9d48691f0a190a9dc`.
+Its firmware/recovery manifest, CRC and flash-size checks pass. The same folder's
+`build_report.json` binds the source, timing, bitstream, XSA and software hashes.
+This image awaits the user's hardware test; the workflow did not flash a card.
 
 ## Recorded validation
 

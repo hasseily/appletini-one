@@ -17,6 +17,8 @@ import shutil
 import subprocess
 import wave
 
+import numpy as np
+
 from render_ssi263 import build_host, render, load_json_trace
 from ssi263_host_data import Event, Trace, make_demo, write_tables
 
@@ -102,6 +104,53 @@ def stress_trace() -> Trace:
     return Trace(events, 1020484, 105000, {"name":"native_stress"})
 
 
+def amp_zero_hold_trace() -> Trace:
+    # Hardware calibration holdout: steady AH at AMP=12, AMP=0, then AMP=1
+    # without another phone write. The stored amplitude creates a brief
+    # restart overshoot while VA rises; the later AMP=1 level is unchanged.
+    hz = 1015625
+    events = []
+    for socket in (0, 1):
+        for reg, value in ((3, 0x80), (0, 0x80), (1, 111), (2, 0x8e),
+                           (4, 231), (3, 0x7c), (0, 14)):
+            events.append(Event(0, socket, reg, value))
+        for at, value in ((0.35, 0x70), (0.65, 0x71), (0.95, 0xf1), (1.10, 0x71)):
+            events.append(Event(round(at * hz), socket, 3, value))
+    events.sort(key=lambda event: event.tick)
+    return Trace(events, hz, round(1.30 * hz), {"name": "amp_zero_hold"})
+
+
+def check_amp_zero_hold() -> dict:
+    samples = np.frombuffer((BUILD / "amp_zero_hold/rtl.pcm").read_bytes(), dtype="<i2")
+    samples = samples.reshape(-1, 2).astype(np.float64)
+
+    def window(start: float, end: float) -> np.ndarray:
+        return samples[round(start * 48000):round(end * 48000)]
+
+    def ac_rms(values: np.ndarray) -> np.ndarray:
+        return np.sqrt(np.mean((values - values.mean(axis=0)) ** 2, axis=0))
+
+    amp_zero = ac_rms(window(0.55, 0.62))
+    ctl_mute = ac_rms(window(1.05, 1.085))
+    late = ac_rms(window(0.85, 0.92))
+    early = ac_rms(window(0.69, 0.75))
+    if np.any(amp_zero != 0) or np.any(ctl_mute != 0):
+        raise AssertionError("retained AMP must not bypass AMP=0 or CTL mute")
+    if np.any(late <= 0):
+        raise AssertionError("AMP 0->1 must restart audible AH")
+    overshoot_db = 20 * np.log10(early / late)
+    # This independent waveform condition fails the old zero-target fade:
+    # hardware and the held-state candidate exceed +9 dB in this window,
+    # including the calibration recording's +/-25 ms marker uncertainty.
+    if np.any((overshoot_db < 9) | (overshoot_db > 22)):
+        raise AssertionError(f"AMP 0->1 lost retained-state overshoot: {overshoot_db}")
+    report = {"amp_zero_ac_rms": amp_zero.tolist(), "ctl_mute_ac_rms": ctl_mute.tolist(),
+              "amp_one_late_ac_rms": late.tolist(),
+              "amp_one_40_100ms_vs_200_270ms_db": overshoot_db.tolist()}
+    (BUILD / "amp_zero_hold/retention.json").write_text(json.dumps(report, indent=2) + "\n")
+    return report
+
+
 def replay(name: str, trace: Trace, exe: Path) -> dict:
     out = BUILD / name
     out.mkdir(parents=True, exist_ok=True)
@@ -116,7 +165,8 @@ def replay(name: str, trace: Trace, exe: Path) -> dict:
                        out / "simulation.log")
     metrics = json.loads(result.strip().splitlines()[-1])
     # Compare the public renderer as well as the per-sample in-process oracle.
-    render(trace, out / "host", "prototype", executable=build_host())
+    render(trace, out / "host", "prototype", executable=build_host(),
+           prototype_gain=1, voice_trim=16384)
     host_wav = out / "host/prototype.wav"
     with wave.open(str(host_wav), "rb") as reader:
         expected = reader.readframes(reader.getnframes())
@@ -194,7 +244,9 @@ def main() -> None:
         if args.quick:
             end = min(demo.duration_ticks, demo.xck_hz//4)
             demo = Trace([e for e in demo.events if e.tick<end], demo.xck_hz, end, demo.metadata)
-        result["cases"] = [replay("listening", demo, exe), replay("stress", stress_trace(), exe)]
+        result["cases"] = [replay("listening", demo, exe), replay("stress", stress_trace(), exe),
+                           replay("amp_zero_hold", amp_zero_hold_trace(), exe)]
+        result["amp_zero_hold"] = check_amp_zero_hold()
         if any(digest(ROOT / p) != h for p, h in compiled_hashes.items()):
             raise RuntimeError("Sources changed during replay; rerun after edits finish")
         if args.synth:

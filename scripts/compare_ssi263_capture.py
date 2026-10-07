@@ -269,7 +269,8 @@ def write_page_assets(out: Path, result: dict) -> None:
 
 
 def build_comparison(package: Path, wav: Path | None, out: Path, *, demo: bool = False,
-                     prototype_gain: int = 8, voice_trim: int = 2048,
+                     prototype_gain: int = renderer.DEFAULT_PROTOTYPE_GAIN,
+                     voice_trim: int = renderer.DEFAULT_VOICE_TRIM,
                      articulation_reference: int = 8) -> dict:
     if demo == (wav is not None):
         raise ValueError("Choose one real WAV or --demo")
@@ -341,8 +342,8 @@ def main() -> None:
     source.add_argument("--demo", action="store_true", help="Create unmistakably synthetic tooling preview")
     parser.add_argument("--package", required=True, type=Path, help="Checked SSI263-CAL-PAL-01.zip")
     parser.add_argument("--output", type=Path, default=ROOT / "build/ssi263_host/comparison_preview")
-    parser.add_argument("--prototype-gain", type=int, default=8)
-    parser.add_argument("--voice-trim", type=int, default=2048)
+    parser.add_argument("--prototype-gain", type=int, default=renderer.DEFAULT_PROTOTYPE_GAIN)
+    parser.add_argument("--voice-trim", type=int, default=renderer.DEFAULT_VOICE_TRIM)
     parser.add_argument("--articulation-reference-rate", type=int, default=8)
     args = parser.parse_args()
     try:

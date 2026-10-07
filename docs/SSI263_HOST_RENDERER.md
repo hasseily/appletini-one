@@ -4,6 +4,11 @@
 48 kHz WAVs. It does not run Vivado, build firmware, or need an Apple II.
 The firmware target remains `F1.2.5-d1`.
 
+The portable C++ model in `scripts/ssi263_host` is the canonical higher-level
+implementation of the native sound engine. FPGA changes must retain its sample
+behavior in the host/RTL parity tests. This establishes implementation agreement,
+not proof that every prototype assumption matches the production SSI.
+
 ## Accepted balanced reference, 2026-10-07
 
 The user approved the balanced song as our listening reference. Use
@@ -11,6 +16,10 @@ The user approved the balanced song as our listening reference. Use
 trim at 16384, common gain at 1, and ART reference RATE at 8. The committed
 `scripts/fixtures/ssi263_host/balanced_reference.json` records those settings,
 the accepted calibration/song WAV hashes, and measured checks on both chips.
+That fixture remains an unchanged historical record. The current model adds
+the separately checked AMP-zero retention rule and records revision
+`balanced-amp-zero-hold-2026-10-07` in each native render report. Its new hashes
+live in `scripts/fixtures/ssi263_host/amp_zero_hold_reference.json`.
 
 ```powershell
 python scripts/render_ssi263.py --demo hello_four --engine prototype --ff 231 --reference balanced --output build/ssi263_host/balanced_hello
@@ -21,27 +30,37 @@ python scripts/render_ssi263_song.py --song ../appletini-software-ssi-calibratio
 The main renderer also accepts `--reference balanced` with `--trace` or
 `--calibration`. The capture comparison tool accepts the equivalent explicit
 settings `--prototype-gain 1 --voice-trim 16384 --articulation-reference-rate 8`.
-Commands without the reference flag retain the pre-calibration settings for
-replaying old checkpoints and host/RTL parity tests. The delivered firmware
-still uses those older gains; this checkpoint does not rebuild it.
+These are now the default host and FPGA settings. `--reference balanced`
+selects those gains on the current engine; it does not replay the historical
+engine. To reproduce historical audio, use its recorded source checkpoint,
+settings and input trace. Changing gains alone does not restore old timing.
 
-The optional full-capture regression protects the accepted waveform:
+The optional full-capture regression protects the integrated waveform:
 
 ```powershell
 python scripts/test_ssi263_host_render.py --package build/ssi263_calibration/SSI263-CAL-PAL-01.zip
 ```
 
-It checks the complete balanced WAV against the committed hash and rejects
-internal saturation or clipped output. This validates reproducibility, not
-the remaining physical-chip differences.
+It checks the complete WAV against the reviewed AMP-zero-hold candidate and
+rejects internal saturation or clipped output. The earlier balanced hash stays
+separate. The integrated calibration, song vocals and song mix reproduce the
+isolated candidate byte for byte; evidence is under
+`build/ssi263_host/integrated_amp_zero_hold/verification.json`.
+
+AMP zero now preserves selector 4's stored amplitude, pending target and DDA
+state while voice/fricative amplitudes target zero. This follows the two drawn
+prototype AMP-nonzero gates and removes the extra amplitude rebuild after mute.
+Focused tests cover all 128 scanner phases, interrupted ramps, quiet AC output,
+and the measured AMP0-to-1 overshoot. The remaining U166B timing approximation,
+steady AMP coloration and other stated model limits remain.
 
 The balance change adjusts an unspecified prototype source setting, with no
 new known SC-02 circuit conflict. Existing timing/reset departures remain.
 See [the physical comparison](SSI263_ATTACK_AUDIT.md) for the improvements and
 remaining transition, noise-spectrum and amplitude-dependent tone differences.
 
-The same listening model now has a [standalone FPGA implementation](SSI263_FPGA_CANDIDATE.md)
-with exact host/RTL sample checks. The renderer itself remains unchanged.
+The same listening model has a [standalone FPGA implementation](SSI263_FPGA_CANDIDATE.md)
+with exact host/RTL sample checks.
 
 ## Run it
 
@@ -216,8 +235,9 @@ the whole recording. Its synthetic preview tests the tools only.
   PD/RST separately and retains source charge. This hard mute is a host
   policy, not a verified prototype or production-chip rule. Filter charge
   remains stored and can still produce a decay after the source stops.
-- **Amplitude timing approximation:** selector 4 gets one transition
-  opportunity per duration phase. This does not yet reproduce the full
+- **Amplitude timing approximation:** selector 4 retains its state while host
+  AMP is zero; for nonzero AMP it gets one transition opportunity per duration
+  phase. This does not yet reproduce the full
   prototype U166B permit logic. The prototype profile does apply U68/U206
   amplitude masking; the `transitions` bridge still mutes host AMP=0 at once.
 - **Pitch glide approximation:** transitioned-I timing is inherited from the
@@ -232,17 +252,18 @@ the whole recording. Its synthetic preview tests the tools only.
   hiss. This choice has no proven prototype or production reset rule; the
   control model retains its unknown flags and gate behavior.
 
-The prototype defaults to fixed output gain 8 and voice drive 2048 in Q16.
-The archived branch used output gain 32, which clips parts of these renders.
-Gain 8 leaves headroom in the full calibration trace; it is not a fit to
-physical output level. Use `--prototype-gain` and `--voice-trim` for explicit
+The prototype defaults to fixed output gain 1 and voice drive 16384 in Q16,
+with noise drive remaining 301. These are the accepted voice/noise balance.
+Older checkpoints used gain 8 and voice drive 2048; the archived branch used
+gain 32. Those settings are historical, not current defaults or measured
+physical source voltages. Use `--prototype-gain` and `--voice-trim` for explicit
 experiments. No render normalizes its output or applies per-phone gain/EQ.
 Reports include rail counts, internal saturation counts and the settings.
 
 The song renderer applies a separate SSI-to-AY mix trim after speech generation.
 Its default `--ssi-mix-gain 1.25` raises the complete SSI output by 25%
 (+1.94 dB), following the user's report that speech sits louder against the
-AYs on a physical Phasor. Voice/noise balance, model output gain 8, raw speech
+AYs on a physical Phasor. Voice/noise balance, model output gain 1, raw speech
 stems and AY levels stay fixed. The listening page includes the previous
 unity-gain mix for comparison. This is a provisional card mix setting, not a
 change to SC-02 circuit behavior or a measured physical gain.
@@ -309,7 +330,7 @@ For an already-built executable, the generated `tables.txt` and `events.txt`
 are enough. No Python or compiler is needed for this command:
 
 ```powershell
-build/ssi263_host/ssi263_host.exe build/ssi263_host/listen/tables.txt build/ssi263_host/listen/events.txt example.wav prototype 8 8 2048
+build/ssi263_host/ssi263_host.exe build/ssi263_host/listen/tables.txt build/ssi263_host/listen/events.txt example.wav prototype 8 1 16384
 ```
 
 The three numbers are articulation reference RATE, prototype output gain,

@@ -69,7 +69,7 @@ int main(int argc, char** argv) {
         Baseline pitch(tables, hz);
         NativeControl control(tables, hz);
         NativeSource source;
-        PrototypeTract tract(8);
+        PrototypeTract tract(1);
         std::ofstream csv(argv[3]), pcm(argv[4], std::ios::binary);
         if (!csv || !pcm) throw std::runtime_error("cannot open diagnostic output");
         csv << "tick,reason,write_reg,write_value,phone,ctl,duration_phase,pw0,pw1,pw2,pw3,pw5,u20,"

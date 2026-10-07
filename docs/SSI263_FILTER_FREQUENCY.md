@@ -21,12 +21,27 @@ are byte-identical, with one valid sample per request. This checks the current
 core's mode invariance for those traces; it does not make different programs
 write the same parameters.
 
-On 2026-10-06 the user reported that mb-audit speech sounds correct on the
-new firmware, while the Phasor.hdv demo sounds too low until its Pitch control
-is raised to 230, with remaining audible differences. The checked demo image
-establishes the control's meaning, but is not yet verified as that exact HDV.
-The returned physical capture supports the native steady pitch and identifies
-noise/filter balance differences; see the [capture review](SSI263_CAPTURE_COMPARISON.md).
+On 2026-10-07 all four DSKs from the
+[Phasor archive](https://mirrors.apple2.org.za/ftp.apple.asimov.net/images/hardware/sound/phasor/)
+were compared with the user's exact HDV. The included Phasor application code
+matches the archive. `SPEECH/TTS` differs at only three saved settings:
+RATE 11 to 10, inflection 11 to 15, and FF 232 to 128. Its other 9,328 bytes,
+including instructions and pronunciation tables, match. A separate disk reader
+confirmed all seven speech files and their load addresses. The unchanged
+parameter editor explicitly saves these fields.
+
+The user accepted this saved FF difference as the cause of the reported demo
+problem. The corrected `Phasor-FF232.hdv` restores only FF to 232, retaining
+RATE 10 and inflection 15. Its SHA-256 is
+`2cebdb5fe0c9f6b226f83d41c17c48e9d5066a8a90ab4dfd432de20404750b55`.
+The supplied attachment remains unchanged. This correction adds no FF remap,
+clock adjustment or prototype departure to the firmware.
+
+The real-chip calibration also has low vowel spectra at FF128. That setting
+is still supported; it should not be remapped to 230 to compensate for the
+disk's saved value. The returned capture supports the native steady pitch
+and identifies remaining noise/filter differences; see the
+[capture review](SSI263_CAPTURE_COMPARISON.md).
 
 ## Legacy F1.2.4 implementation
 

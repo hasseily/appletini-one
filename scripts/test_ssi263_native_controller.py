@@ -103,6 +103,8 @@ def main() -> None:
                            "all register addresses including FF aliases 4..7",
                            "known/unknown route state", "all scanner phases with coincident writes",
                            "CTL stop/restart, AMP=0, duration and FF boundaries",
+                           "AMP=0 holds unfinished/settled selector-4 state while VA/FA mute",
+                           "AMP 0->1 starts from retained amplitude and settles to new target",
                            "ordered random writes, fabric stalls, active resets",
                            "frozen-host U68 feedback during directed listening traces"],
               "limits": ["Preserves current host assumptions; no physical SSI fidelity claim.",

@@ -1,29 +1,9 @@
 # Appletini copy/fill API 1.0
 
-Firmware F1.1.2 introduced an ARM service for explicit 65C02 memory transfers,
-using the vTW CPU hold, shadow-RAM access and PSRAM DMA. Stock F1.1.1 does
-**not** implement this API.
-
-F1.2.2 adds an FPGA copy/fill engine for the same API. It moves data directly
-between shadow BRAM and RamWorks PSRAM, or within either memory, without
-staging it through ARM DDR. ARM submits one command per descriptor instead
-of reading or writing each four-byte shadow word. Existing applications need
-no changes. Install the matching rebuilt FPGA image to use this path; the
-firmware checks its signature and uses the old ARM path when it is absent.
-Hardware paging times for this engine have not yet been measured.
-
-Use F1.1.4 or later with its rebuilt FPGA image. The old DMA status register
-could discard completion during unrelated reads or idle bus cycles. The ARM
-service could then report `$67` even after the DMA finished. F1.1.4 keeps
-DONE and ABORTED set until reset or the next DMA command. The API format and
-register addresses stay the same, but updating only the ARM ELF is insufficient.
-
-F1.1.3 also fixed a separate timer-conversion bug: its predecessor's timestamp
-could move backward at two-second boundaries and cause false timeouts. That
-fix alone did not resolve the reported Doom v11 startup crash `$67`. Host tests
-cover the timer, and RTL tests reproduce lost completion through the real AXI
-wrapper. The hardware retest on 2026-09-25 confirmed that Doom v11 works with
-F1.1.4. The user did not observe a significant speedup.
+The copy/fill service transfers 65C02 memory through the vTW CPU hold,
+shadow RAM, and PSRAM DMA. Matching FPGA firmware can run copy and fill
+directly between shadow BRAM and RamWorks PSRAM. The service checks the
+hardware signature and uses its ARM path if the FPGA engine is absent.
 
 The service requires an active virtual TransWarp CPU. It works at any vTW
 speed, including TURBO, and does not change the speed. The native motherboard
@@ -354,83 +334,15 @@ fall back to CPU copying.
 
 ## 8. Build and validation
 
-### Doom v11 crash on F1.1.3
-
-A hardware dump after the reported startup crash showed:
-
-| Item | Value | Meaning |
-|---|---|---|
-| Last API error | `$67` | Transfer failed |
-| Completed bytes | `$0BD0` (3024) | Six 504-byte chunks confirmed |
-| Elapsed time | `$2E40` (11840 us) | Consistent with the 10 ms transfer deadline |
-| Hold status, `$40000270` | `$00000001` | One flush completed; no busy or held bit |
-| Shadow READ4 status, `$40000284` | `$80000372` | Idle and ready; 882 four-byte reads completed |
-
-Doom's first API copy saves MAIN `$0200` onward to AUX bank 122 at the
-same address. The API maps that bank to physical `$7B0200`. Each 504-byte
-source chunk needs 126 READ4 operations: 882 reads match seven source chunks,
-while the API confirmed only six destination chunks. This is consistent with
-a timeout during the seventh PSRAM DMA write, followed by a clean CPU release.
-It excludes an initial hold timeout, which would leave zero completed bytes
-and take at least 100 ms.
-
-The DMA register dump confirmed MC_ADDR `$007B0DD0`, DDR_ADDR `$005CB900`
-(the F1.1.3 bounce buffer), LENGTH_RW `$800001F8` and STATUS `$00000000`.
-Those are the expected seventh-chunk parameters, with neither BUSY nor DONE
-set. This matches the completion-loss fault reproduced in the RTL test.
-The dump does not prove whether that chunk reached PSRAM before cleanup.
-The user retested the same Doom v11 disk with the full F1.1.4 image on
-2026-09-25 and confirmed that it works, with no significant speedup observed.
-This confirms the startup fix; it is not a measured performance comparison.
-
-### Mac checks
-
-```sh
-python3 scripts/test_memory_api.py
-python3 scripts/test_memory_api_hw.py
-ca65 --cpu 65c02 -I software/memory_api -o /tmp/memory_api_example.o software/memory_api/example.s
+```powershell
+python scripts/test_memory_api.py
+python scripts/test_memory_api_hw.py
+python scripts/test_ps_dma_command.py
+ca65 --cpu 65c02 -I software/memory_api -o memory_api_example.o software/memory_api/example.s
 ```
 
-With Vivado tools on PATH, `python scripts/test_ps_dma_command.py` checks
-completion retention through the real AXI wrapper, the DMA register contract
-and abort draining. The old RTL fails the completion-retention test.
-
-The native C tests exercise the real parser/executor with a memory backend,
-including unaligned boundaries, ordered dependencies, full-list validation,
-private-memory requirements and partial failures. The second script also
-checks the real hardware backend against fake MMIO/DMA, and compiles the
-backend, DMA helper and SmartPort dispatch for syntax using minimal BSP
-declarations. They cannot validate FPGA timing or the PC BSP/toolchain.
-See the Doom repository's profiling document
-for the hardware A/B procedure.
-
-### PC FPGA and firmware build
-
-Use the repository's supported Vitis environment, with `XILINX_VITIS` set.
-From the repository root, rebuild the FPGA to include the DMA completion fix.
-The build exports `project\appletini_yarz_top.xsa` and the matching bitstream at
-`project\appletini_yarz.runs\impl_1\appletini_yarz_top.bit`.
-
-```bat
-vivado -mode batch -source scripts/build_and_export_xsa.tcl
-vitis -s scripts\create_vitis_workspace.py
-scripts\make_firmware_bin.bat FIRMWARE-AMEM.BIN
-```
-
-The Vitis command **recreates `vitis_workspace` and terminates existing Vitis
-IDE/server and Java processes**, as that existing script specifies. Save any
-workspace work and close applications that depend on those processes first.
-It builds the platform/FSBL, core-1 frontend and core-0 frontend with the new
-sources. The packaging command combines FSBL, the rebuilt bitstream and frontend
-ELF, then appends the firmware manifest. For a different bitstream location:
-
-```bat
-scripts\make_firmware_bin.bat FIRMWARE-AMEM.BIN vitis_workspace\appletini_platform\export\appletini_platform\sw\boot\fsbl.elf C:\path\to\F1.1.4.bit vitis_workspace\frontend\build\frontend.elf
-```
-
-Copy the resulting image onto the card's SD volume under the required name
-`FIRMWARE.BIN`, then use the normal firmware update procedure. The packaged
-bitstream must include the F1.1.4 DMA status fix. Hardware acceptance still
-requires copy/readback tests on spare regions, reset/error checks and Doom
-captures against the same disk on stock and modified firmware. No speedup is
-claimed until those measurements exist.
+The C checks exercise the parser, transfer order, private-memory rules, and
+failure handling. The DMA check needs Vivado simulation tools. Build the PL,
+export its XSA, rebuild Vitis, and package `FIRMWARE.BIN` as described in
+[the build guide](README_VIVADO.md). On the card, check copy/readback,
+reset, and error handling on spare memory before using an application.

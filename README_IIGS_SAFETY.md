@@ -1,6 +1,6 @@
 # Apple IIgs safety profile
 
-Firmware F1.0.6 uses the boot ROM to identify the physical host. For IIgs use,
+The boot ROM identifies the physical host. For IIgs use,
 install the card in physical slot 7 and set that slot to **Your Card**.
 
 ## Boot and identity

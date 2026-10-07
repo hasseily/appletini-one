@@ -15,28 +15,8 @@ values keep their meanings. The checkbox rows pair Enable TURBO speed with
 the slug debug key, Ignore $C074 with Disable DiskII Acceleration, and Slow
 Floating bus with Slow Paddles/joystick.
 
-The current firmware version is **F1.2.2**. USB joystick and paddle setup is
-available under **USB > Joystick / Paddles**; see
-[the joystick guide](README_USB_JOYSTICK.md) for mapping and timing details.
-The archived build described
-below uses version **F1.0.9-turbo2** on branch `turbo-v2`.
-TURBO has no fixed MHz rating: cache misses and the instruction mix change
-its rate. Simulation measurements and routed timing accompany the built
-image in `firmwares/TURBO_V2_BUILD.json`. They do not establish operation on a
-physical Apple II. The build does not flash the card.
-
-The integrated 16-byte indexed-copy benchmark, including loop control,
-measured the following fabric-clock counts. Code ran at `$F000`; both source
-layouts (`$9000` and `$9080`) produced the same counts:
-
-| Pass | 33 MHz | TURBO | Speedup |
-|---|---:|---:|---:|
-| First pass, cold cache | 1,080 | 474 | 2.28 times |
-| Second pass, warm cache | 1,064 | 436 | 2.44 times |
-
-The original TURBO branch took 649/476 clocks on these cold/warm passes.
-Version 2 improves those results by 1.37/1.09 times. These are simulation
-results for one small workload, not general application-speed ratings.
+USB joystick and paddle setup is under **USB > Joystick / Paddles**; see
+[the joystick guide](README_USB_JOYSTICK.md).
 
 ## Execution and memory
 
@@ -71,7 +51,7 @@ and C8 ROM ownership. ARM shadow writes, RAMWorks DMA hold requests, resets,
 mode changes, and changes to write-through policy also invalidate caches.
 PSRAM and private-card responses never enter the word cache.
 
-### F1.2.2 extended-memory transfers
+### Extended-memory transfers
 
 While vTW owns the Apple bus, PSRAM now admits each fixed eight-byte request
 as soon as the service can accept it. Native bus operation keeps its bounded
@@ -89,7 +69,7 @@ In real-driver simulation, 32 PSRAM reads took 1,022 fabric clocks with vTW
 ownership versus 4,042 clocks under native admission. This measures the
 scheduler alone; it is not an application or hardware speed rating. The
 largest observed handback drain was 45 clocks, within the 130-clock release
-guard used by the test. No physical-card result has been recorded for F1.2.2.
+guard used by the test.
 
 Run `python scripts/test_psram_owned.py`,
 `python scripts/test_vtw_copy_engine.py`, `python scripts/test_memory_api.py`,
@@ -171,10 +151,7 @@ exit/re-entry during a stalled write, and ARM holds or aborts between private
 and physical switch updates. The focused
 policy and bank-sync benches run through `scripts/test_vtw_video_policy.py`
 and `scripts/test_vtw_video_bank_sync.py`. These are simulation checks;
-physical-board validation is still pending. The first full build of the banked
-mirror reached -0.063 ns setup and +0.021 ns hold, so it was not packaged.
-Its capture-enable paths led to the separate I/O wait state above. The first
-build used 110 of 140 BRAM tiles, adding 18 tiles over the previous firmware.
+physical-board validation is still pending.
 
 `vtw status` reports fabric clocks, accepted CPU steps, represented classic
 cycles, cache read hits/misses, invalidations, Disk II waits and video waits.
@@ -240,39 +217,5 @@ vivado -mode batch -source scripts/build_and_export_xsa.tcl
 vitis -s scripts/create_vitis_workspace.py
 ```
 
-Timing trials require at least +0.200 ns setup slack. Hold, pulse width,
-bus skew, routing, and bound-constraint checks also apply. The temporary
-implementation margin helps placement and clears before the final timing
-report. Earlier correctness test images used an explicit positive-slack
-exception; that exception does not apply to the current timing work.
-
-Package with explicit FSBL, passing bitstream, and frontend ELF paths using
-`scripts/make_firmware_bin.bat`. Verify the image with
-`python scripts/image_manifest.py verify firmwares/FIRMWARE_TURBO_V2.BIN --role firmware --require-recovery-capable`.
-The companion build record identifies inputs, source hashes, validation
-results, timing, image size, and SHA-256. Generated images and logs remain
-outside source commits.
-
-The September 25 timing work focused on paths affected by changes since
-F1.0.8: TURBO video admission, coalescer scans, Disk II replay, and seek mixing. Clean full build
-`20260925T181302Z-5ae852a2-full` reached `+0.192 ns` setup and missed the
-`+0.200 ns` gate. An extra `AggressiveExplore` post-route pass reached
-`+0.205 ns` setup, `+0.029 ns` hold, and `+0.265 ns` pulse-width slack.
-Both measurements use nominal clocks and unchanged external constraints.
-The refined limit is ONE//e selection to a Disk II bit-offset enable.
-
-The candidate retains 110 BRAM tiles and the extra 7.5 ns direct-write
-admission cycle described above. It uses 34,888 LUTs versus 34,091 in the
-F1.1.4 baseline, while control sets fall from 1,316 to 1,078. See the
-[timing plan](docs/FABRIC_TIMING_MARGIN_PLAN.md) for path-family results,
-resource costs, and the exact refinement sequence.
-
-The hardware-test image is
-`firmwares/F1.1.4-timing-5ae852a2/FIRMWARE.BIN`; the menu still reports
-F1.1.4. Its SHA-256 is
-`12fcfd9b105a593b7f25495797297cb2191e6627648afc433b54a75c1c31678c`.
-The matching bitstream, XSA, ARM ELFs, logs, and manifests are archived under
-`.timing_runs/20260925T181302Z-5ae852a2-full/refined`. Initial user testing
-suggests that the image works; further testing is still underway. Full board
-validation and two consecutive passing clean full builds remain pending.
-This post-route candidate has not been promoted to the timing reference.
+Follow [the Vivado build guide](README_VIVADO.md) for current timing gates and
+image packaging.

@@ -14,8 +14,6 @@ Standalone applications now live in
 - [Appletini detection](https://github.com/hasseily/appletini-software/blob/main/examples/detect_appletini/README.md):
   the standalone SmartPort GETDIB example.
 
-The obsolete SHR_Test disk, builder, and `shr_testimages/` corpus were deleted.
-
 Boot-menu, mouse-card, and `applicard/APPLICARD.ROM` sources remain firmware
 inputs. Shared base disks and `legacy_demo_images/` / `shr4_demo_images/`
 remain as inputs for diagnostics and renderer regression tests. The renderer

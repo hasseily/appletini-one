@@ -44,10 +44,7 @@ apple/ps_dma_command.sv
 apple/soft_switch_manager.sv
 apple/YM2149.sv
 apple/ssi263_xck_ce.sv
-apple/ssi263_clock_core.sv
 apple/ssi263_parameter_rom.sv
-apple/ssi263_source_control.sv
-apple/ssi263_control_core.sv
 apple/ssi263_native_controller.sv
 apple/ssi263_native_pitch.sv
 apple/ssi263_native_source.sv

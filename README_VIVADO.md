@@ -52,7 +52,7 @@ and frontend produced by this build chain.
 
 ## Constraints
 
-`constraints/appletini_yarz.xdc` is the board-level source of truth for pins,
+`hdl/constraints/appletini_yarz.xdc` is the board-level source of truth for pins,
 I/O standards, generated clocks, asynchronous clock groups, and external bus
 timing. Hierarchical object queries can silently stop matching after an RTL
 rename, so review the log for `No valid object(s) found` after every constraint

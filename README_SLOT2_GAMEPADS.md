@@ -87,8 +87,7 @@ or `SNES_MAX`, and `slot2.player1.device` through `slot2.player4.device` as
 `AUTO`, `1`–`8`, or `OFF`. Fresh settings default to Off and Auto. Old
 `mouse.slot2.enabled` settings still select Mouse or Off. An explicit new
 card key wins regardless of file order. New files also save the legacy mouse
-key as ON only for Mouse, for safe use with older firmware. Config schema is
-120; the firmware version stays F1.2.1.
+key as ON only for Mouse, for safe use with older firmware. Config schema is 120.
 
 The new PS registers use the existing fabric clock and need no new clock
 crossing or placement constraint:
@@ -119,25 +118,6 @@ Native C checks cover the production gamepad service, HID/vendor input paths,
 partial reports, disconnects, short and full-width axis ranges, menu blocking,
 stable player assignments, old-FPGA rejection, settings migration and profile
 loads. Menu renders pass at all six supported resolutions.
-
-The 2026-09-28 test image uses hardware build
-`20260928T203943Z-9fec74df-full`. Full Vivado implementation passed with
-setup slack **+0.181 ns**, hold slack **+0.013 ns**, and pulse-width slack
-**+0.265 ns**. Routing, bus skew and constraint bounds passed. The build
-reused unchanged synthesis and ran one standard `AggressiveExplore` pass
-after routing; the +0.150 ns export requirement remains unchanged.
-
-A full Vitis rebuild and firmware payload checks passed. The F1.2.1 image is
-at `FIRMWARE.BIN` and `firmwares/F1.2.1-four-play/FIRMWARE.BIN`; the archive
-also holds its source snapshot, build logs and verification records. FPGA
-data, CPU programs, embedded CPU1 image, recovery code and CRC were checked.
-
-The two `test_axisimple_wrapper.py` expressions now accept an optional
-parameter block on `vtw_shadow_host_port`, including the existing
-`#(.WIDE_PORT(1'b1))`. Regressions were not rerun for this test-only fix,
-at the user's request.
-
-On 2026-09-29, the user confirmed F1.2.1 had been tested on hardware.
 
 Run the focused tests with:
 

@@ -1,14 +1,14 @@
 `timescale 1ns / 1ps
 
-// Fabric port of scripts/ssi263_host/native_control.cpp, frozen listening
-// candidate. One xck_ce advances one effective SSI XCK. Writes precede that
+// Fabric port of scripts/ssi263_host/native_control.cpp. One xck_ce advances
+// one effective SSI XCK. Writes precede that
 // tick when both arrive together; writes without a tick still take effect.
 //
 // Deliberate prototype departures remain unchanged: fixed ART reference
 // RATE, full duration restart, omitted U166B permit inhibit, and host CTL
 // policy. AMP=0 retains selector-4 state as in the prototype gates.
-// See docs/SSI263_ATTACK_AUDIT.md. This module does not
-// turn a bounded cold seed into a known held-control value.
+// This module does not turn a bounded cold seed into a known held-control
+// value. See docs/SSI263_NATIVE.md for the production path.
 module ssi263_native_controller #(
     parameter integer ART_REFERENCE_RATE = 8,
     parameter ROM_FILE = "ssi263_sc02_rom.mem",

@@ -18,7 +18,7 @@ import zlib
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-OUT_SV = REPO_ROOT / "hdl" / "apple" / "ssi263_formant_pkg.sv"
+OUT_SV = REPO_ROOT / "scripts" / "fixtures" / "ssi263_host" / "ssi263_formant_pkg.sv"
 EXPECTED_SIZE = 512
 EXPECTED_CRC32 = 0xFC416227
 EXPECTED_SHA1 = "1d6da90b1807a01b5e186ef08476119a862b5e6d"

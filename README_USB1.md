@@ -61,11 +61,3 @@ python scripts/test_onee_usb_controls.py
 The PHY regression runs the actual controller glue against a simulated
 register interface, including stale warm-start state and injected failures.
 It checks power/IRQ order, bounded waits, shutdown, and USB0 isolation.
-
-The reported Appletini failure was intermittent hub detection at boot,
-with only the host-init event; reconnecting the hub did not recover it.
-The missing PHY setup is consistent with that report and with the prior
-Multitini failure. This Appletini firmware still needs physical checks:
-repeat cold boots and warm resets with the affected hub attached, then
-check hub reconnect and USB1 refresh. Source and simulated-register tests
-do not replace those checks.

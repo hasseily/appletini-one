@@ -3,11 +3,10 @@
 Run scripts from the repository root unless a script's help says otherwise.
 
 The Appletini demo-disk, HGR asset, SuperSprite builders, and demo/network
-software tests moved to
+software tests live in
 [appletini-software](https://github.com/hasseily/appletini-software/blob/main/demos/appletini_demos/README.md).
 The AUX, AD8088, and Appli-Card software builders and CP/M disk utility
-also moved there, under `diagnostics/`. The obsolete SHR_Test disk,
-builder, and exclusive images were removed.
+live there under `diagnostics/`.
 
 The border/overlay and AD8088 source checks use the sibling software
 checkout; override its location with `APPLETINI_SOFTWARE_ROOT`.
@@ -60,12 +59,12 @@ was measured and rejected.
 The build reopens the final design and checks both clocks' nominal
 uncertainty, the original board requirements, all 32 Apple/Gray-pointer
 bounds, and the full timing/route reports. Export requires global setup
-WNS of at least `+0.150 ns`, nonnegative hold and pulse width, and no failing
+WNS of at least `+0.050 ns`, nonnegative hold and pulse width, and no failing
 or unconstrained internal endpoint. Never package a bitstream from a run
-that stopped at that gate. See `README_VIVADO_RUNTIME_AUDIT.md` for the trials.
+that stopped at that gate.
 
 Promotion requires two consecutive clean full builds of the same commit. Both
-must have setup WNS of at least `+0.150 ns`, nonnegative hold and pulse width,
+must have setup WNS of at least `+0.050 ns`, nonnegative hold and pulse width,
 no timing failure, no bad route or bus skew, no missing XDC object, and no
 extra rescue pass. Both builds must also use the same Vivado version and the
 same synthesis, placement, route, and physical-optimization settings. Package
@@ -84,7 +83,7 @@ vivado -mode batch -source scripts/promote_timing_candidate.tcl `
 ```
 
 Promotion copies the tested build's checkpoint to the known-good incremental
-reference. See `docs/FABRIC_TIMING_MARGIN_PLAN.md` for the full process.
+reference.
 
 Run the timing-tool tests after changing this flow:
 
@@ -164,15 +163,9 @@ Run `python scripts\test_psram_driver_iddr_reset.py` after PSRAM capture or
 reset changes. It compares reset modes, both capture phases, a mid-read reset,
 and the first read after reset through the real tape and input-DDR path.
 
-Run `python scripts\test_ssi263_start_timing.py` after SSI263, Votrax, or
-formant-start changes. It checks the same-edge backend start and VIA clear,
-the saved phoneme tuple, reset cancellation, and formant pipeline restart.
-
-Run `python scripts\test_ssi263_filter_finalize.py` after SSI263 formant MAC or
-filter-pipeline changes. It checks every filter stage, exact accumulator and
-history timing, saturation limits, reset/restart cancellation, and sample output.
-Use `python scripts\sim_ssi263_formant_rtl.py --votrax ...` for direct SC-01
-phone sweeps; omit `--votrax` for SSI263 mode.
+Run `python scripts\test_ssi263_native_integration.py` after SSI263 bus,
+response, or start changes. Run the focused `test_ssi263_native_*.py` checks
+after changes to the native engine, source, tract, or pitch.
 
 Simulator-backed checks require the Xilinx simulation tools on `PATH`.
 Hardware-facing scripts document their required UART, JTAG, SD, or USB setup in

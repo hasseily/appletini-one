@@ -84,7 +84,8 @@ def digest(path: Path) -> str:
 def source_hashes() -> dict[str, str]:
     paths = sorted(SOURCE.glob("*.h")) + sorted(SOURCE.glob("*.cpp"))
     paths += [Path(__file__), BALANCED_REFERENCE, MODEL_REFERENCE, ROOT / "scripts/ssi263_host_data.py",
-              ROOT / "hdl/apple/ssi263_formant_pkg.sv", ROOT / "hdl/apple/ssi263_sc02_rom.mem"]
+              ROOT / "scripts/fixtures/ssi263_host/ssi263_formant_pkg.sv",
+              ROOT / "hdl/apple/ssi263_sc02_rom.mem"]
     return {path.relative_to(ROOT).as_posix(): digest(path) for path in paths}
 
 

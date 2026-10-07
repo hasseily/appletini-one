@@ -1,34 +1,13 @@
 # Monochrome dot bleed
 
-F1.2.4 restores the F1.2.2 **Phosphor blur** and mono **Dot bleed** controls.
-Blur Light applies the old horizontal three-tap filter; Medium adds the old
-vertical three-tap filter; Strong uses the old wider horizontal filter.
-The later separate H/V light-space filter is removed. Color/TV decoders are
-unchanged by these controls. Pixel masks remain available.
-
-The ghosting threshold correction, fixed glow radius, 2x scanline dimming,
-and NEON row copies remain. Blur/Dot output with those independent effects
-Off matches F1.2.2 exactly. Glow uses its own fixed three-by-three halo, so
-changing Blur does not widen that halo.
-
-Settings again save `video.blur` and `video.dot.bleed`. Original keys win if
-both original and F1.2.3 keys appear, regardless of order. F1.2.3 settings
-have no exact equivalent: color H Light/Medium becomes Blur Light, H Strong
-becomes Blur Strong, and enabled V requires at least Blur Medium. In mono,
-H becomes Dot bleed and enabled V becomes Blur Medium. New defaults are
-Blur Off and Dot bleed Light; original profiles retain their original values.
-
-Validation: `test_video_smoothing.py` runs the actual F1.2.2 compositor as a
-reference. Native and Cortex-A9 NEON runs each pass 704 exact Blur/Dot cases,
-321 retained glow/scanline/border cases, and 768 ghosting-decay cases.
-`test_video_smoothing_config.py` checks 8,192 migration combinations.
-No new board frame-rate result is claimed.
-
+The Video tab offers Phosphor blur for color and Dot bleed for monochrome.
+Blur Light uses a horizontal three-tap filter, Medium also blends vertically,
+and Strong uses a wider horizontal filter. Dot bleed has Off, Light, Medium,
+and Strong levels; Light is the default. Pixel masks remain separate.
 
 Legacy mono output shapes each dot during the compositor's 2x row
 expansion. This reduces the thick dark gaps seen in dithered HGR images.
-The Video tab control "Dot bleed" selects Off, Light, Medium, or Strong.
-Light is the default. It shares the "Color mode" row (labelled "Mono color"
+The control shares the "Color mode" row (labelled "Mono color"
 in Monochrome) and appears only with Monochrome output. With Color output,
 navigation skips this hidden control.
 
@@ -97,44 +76,14 @@ For comparison with a CRT, start with Phosphor blur and glow off to isolate
 this change. Pixel centers, image size, HGR half-dot delays, and vertical
 scanline spacing stay fixed.
 
-Validation on 2026-09-11:
+## Checks
 
-- `python scripts/test_video_mono.py` compiles the production shaper, row
-  compositor and RGB565 blits on the host. It checks the four profiles
-  above, solid fills, row bounds, tint peaks, colored borders, both
-  vertical scales, all scanline strengths, the Off fast path, and all
-  blur/glow/ghosting combinations at Light and Strong.
-- `python scripts/test_video_output_config_menu.py` checks the menu row,
-  its Monochrome-only guard, persistence, help, and the frontend wiring.
-- The host render harness passes, including mono frame tags, Video-7 mono,
-  a mid-frame mono/color change, and SHR exclusion.
-- The CPU0 frontend builds in Vitis 2025.2 with no new warnings. CPU1 is
-  unchanged by the menu row; the renderer already publishes the mono tag.
+```powershell
+python scripts/test_video_mono.py
+python scripts/test_video_smoothing.py
+python scripts/test_video_smoothing.py --neon
+python scripts/test_video_output_config_menu.py
+```
 
-Validation on 2026-09-12 for the NEON mono glow pass:
-
-- `python scripts/test_video_mono_neon.py` compiles the production row
-  compositor for Cortex-A9 and runs 2,160 cases in Unicorn. It compares the
-  8-bit scratch row and final RGB565 pixels with a scalar reference across
-  all blur, glow, tint, and dot-bleed levels with glow and bleed enabled.
-  Widths around vector boundaries and full display widths cover scalar
-  tails, colored borders, saturation, alpha, and row bounds. The script
-  lists its ARM compiler and Unicorn dependencies.
-- The existing mono, video-output, border, and VidHD/SHR tests pass. The
-  CPU0 frontend compiles and links in Vitis 2025.2 with no new warnings.
-
-Validation on 2026-09-13 for the revised Medium and Strong profiles:
-
-- The host mono test checks the exact brightness samples above before
-  RGB565 quantization, as well as the packed pixels and compositor paths.
-  Light and Medium keep the two center columns black; Strong produces 8.
-- All 2,160 Cortex-A9/Unicorn cases pass with the revised scalar reference.
-  The video-output menu and compositor border tests also pass.
-- Host checks of the shared color/bleed row pass in both output modes,
-  including control positions, focus, and navigation past hidden dot bleed.
-- No firmware rebuild or board test was run for this profile change.
-
-CRT appearance and added render time still need measurement on the board.
-The existing `g_compositor_last_apple_us` counter measures the Apple blit
-including this stage; compare the same static image and effects at each
-level. Medium and Strong cost more than Light per row.
+The NEON check needs a Cortex-A9 compiler and Unicorn. Compare CRT appearance
+and render time on the card with the same static image at each setting.

@@ -21,7 +21,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-FORMANT_PKG = ROOT / "hdl" / "apple" / "ssi263_formant_pkg.sv"
+FORMANT_PKG = ROOT / "scripts" / "fixtures" / "ssi263_host" / "ssi263_formant_pkg.sv"
 OUT_DIR = ROOT / "build" / "ssi263_formant_compare"
 MB_AUDIT_CAPTURE_DIR = ROOT / "Assets" / "Sounds" / "Mockingboard mb-audit samples"
 MB_AUDIT_SC01_SOURCE = ROOT.parent / "play-sc01-using-ssi263" / "chip-sc01.a"

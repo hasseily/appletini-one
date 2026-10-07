@@ -230,9 +230,14 @@ def run_tool(command: list[str], out: Path, logfile: str) -> float:
 def simulate(out: Path, details: dict) -> dict:
     """Use an isolated xsim work directory so concurrent regressions cannot collide."""
     out = out.resolve()
+    shutil.copyfile(ROOT / "hdl/apple/ssi263_sc02_rom.mem",
+                    out / "ssi263_sc02_rom.mem")
     sources = [ROOT / "hdl/apple" / name for name in (
-        "ssi263_formant_pkg.sv", "sc01a_digital_core.sv", "ssi263_formant_backend.sv",
-        "ssi263_bus_wrapper.sv", "ssi263_voice.sv", "ssi263_xck_ce.sv")]
+        "ssi263_parameter_rom.sv", "ssi263_native_controller.sv",
+        "ssi263_native_pitch.sv", "ssi263_native_source.sv",
+        "ssi263_native_tract.sv", "ssi263_native_engine.sv",
+        "ssi263_response_timing.sv", "ssi263_bus_wrapper.sv",
+        "ssi263_voice.sv", "ssi263_xck_ce.sv")]
     sources.append(ROOT / "hdl/sim/tb_ssi263_calibration.sv")
     details["rtl_sha256"] = {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
                               for path in sources}

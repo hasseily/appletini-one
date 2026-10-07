@@ -141,7 +141,7 @@ remaining evidence does not yet specify complete fixes for:
 The Phasor demo issue was resolved by comparing the supplied HDV with all four
 archived DSKs: its speech code is original, but its saved FF was 128 instead of
 232. The user requested a corrected HDV. No clock or FF remap belongs in the
-engine for that saved-setting difference; see [the FF notes](SSI263_FILTER_FREQUENCY.md).
+engine for that saved-setting difference.
 
 ## Reproduce the checks
 
@@ -388,6 +388,5 @@ left and SSI1 right, with separate pan controls. The build workflow did not
 flash hardware. The user subsequently tested the image and reported correct
 mb-audit speech, but low-sounding Phasor.hdv demo speech until its Pitch/FF
 setting was raised to 230, with remaining differences. That control used the
-legacy filter mapping in the previous firmware; see the
-[FF version notes](SSI263_FILTER_FREQUENCY.md). Menu-control coverage is not
+legacy filter mapping in the previous firmware. Menu-control coverage is not
 yet reported. PL timing success does not establish measured SSI sound accuracy.

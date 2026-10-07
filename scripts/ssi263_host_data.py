@@ -15,7 +15,7 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-FORMANT_PKG = ROOT / "hdl/apple/ssi263_formant_pkg.sv"
+FORMANT_PKG = ROOT / "scripts/fixtures/ssi263_host/ssi263_formant_pkg.sv"
 NATIVE_ROM = ROOT / "hdl/apple/ssi263_sc02_rom.mem"
 ACTIVE_ROM_SHA256 = "101d129a5f104e6190f2eca518bbf9ef65bf4ff92684d29eba56d9641aa02b0a"
 FULL_ROM_SHA256 = "9c3bba73319e1ed3652c85dac19874df04cbb72e62fdd63d6cbd7b34ff81f941"

@@ -197,25 +197,11 @@ envelope control, not through their formant or amplitude targets.
 
 ## Current implementation
 
-The separate native control path now reads the canonical ROM directly through
-`ssi263_parameter_rom.sv` and applies its low bits in
-`ssi263_source_control.sv`. `ssi263_control_core.sv` owns the raw phone, source
-state, independent held routes and exact divider interface. It exposes native
-targets and the documented transition permits without a phone or target map.
+The production `ssi263_parameter_rom` reads the active 512-byte table.
+`ssi263_native_controller` uses the upper targets and lower control bits.
+The native source and tract modules then form audio. The Apple bus wrapper
+keeps D7 and IRQ response timing in a separate block. See
+[the native engine](SSI263_NATIVE.md) for the active source list and checks.
 
-This path passes independent event-reference and two-socket integration tests.
-Its caller must supply the actual native scan, source/envelope and phase
-inputs; the module does not invent those missing mechanisms. Cold seeds carry
-unknown-state flags. See [native implementation status](SSI263_NATIVE_IMPLEMENTATION.md)
-for evidence, event-order contracts and the remaining audio connection.
-
-### Production audio path
-
-The current SSI-with-SC-01 backend reads only `rom_byte[7:4]` through
-`ssi263_sc02_target()` in
-[`hdl/apple/ssi263_formant_pkg.sv`](../hdl/apple/ssi263_formant_pkg.sv). It
-does not yet connect the new TPARM controller to its audio path.
-
-This keeps all native upper-nibble targets while retaining the SC-01 timing,
-source, and route behavior. It also means the hybrid cannot reproduce
-lower-nibble-only distinctions such as the prototype HF/HFC PW3 difference.
+The archived prototype helps explain the ROM fields, but it does not prove
+the final SSI-263 die used the same internal wiring.

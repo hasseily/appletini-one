@@ -10,7 +10,7 @@ import tempfile
 import unittest
 import os
 
-from test_ssi263_host_baseline import compiler
+from render_ssi263 import find_compiler as compiler
 
 ROOT = Path(__file__).resolve().parents[1]
 HOST = ROOT / "scripts" / "ssi263_host"

@@ -1,5 +1,9 @@
 # Native SSI-263 work
 
+The production path and current checks are in [the native engine guide](SSI263_NATIVE.md).
+The control-only modules and tests listed below are earlier prototype work;
+Vivado no longer includes them in `hdl/hdl_sources.txt`.
+
 Started 2026-10-06 on `codex/ssi263-physical-match-handoff`.
 Firmware stays `F1.2.5-d1` until the user approves `F1.2.5`.
 
@@ -167,8 +171,7 @@ and unmeasured analog assumptions. The recorded
 prototype route is voice -> F1 -> F2(+FRIC1) -> F3 -> F4 -> F5(+FRIC2).
 Selector 3 supplies the shared F3/F4 target. Route switches hold state on
 different phases; they are not a live bit and its complement. See
-[the ROM/control evidence](SSI263_SC02_ROM_FORMAT.md) and
-[the source authority and deferred facts](SSI263_SC01_HYBRID_PLAN.md).
+[the ROM/control evidence](SSI263_SC02_ROM_FORMAT.md).
 
 Flag any proposed conflict with that evidence before implementing it. Do not
 infer production source shape, noise level or hidden latch phase from a

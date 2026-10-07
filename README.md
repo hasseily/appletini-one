@@ -16,12 +16,8 @@ and higher-level peripheral emulation.
 - Accurate Apple //e video capture, HDMI output, borders, scanlines, and profiles
 - USB keyboard, mouse, storage, firmware update, and SuperDuperDisplay support
 
-The [native SSI-263 FPGA engine](docs/SSI263_FPGA_CANDIDATE.md) now drives both
-speech sockets in the F1.2.5-d1 test firmware. The Phasor menu adds SSI volume
-from -5 to +5 dB and independent pan, defaulting to +2 dB and left/right.
-The first [physical Phasor capture review](docs/SSI263_CAPTURE_COMPARISON.md)
-confirms close steady pitch and identifies noise/filter balance and response
-timing differences that still need work.
+The [native SSI-263 FPGA engine](docs/SSI263_NATIVE.md) drives both speech
+sockets. The Phasor menu controls SSI volume and independent pan.
 
 The boot menu configures virtual cards, storage images, video, audio, networking,
 USB behavior, and named profiles. Settings are stored on the card's SD volume.
@@ -93,9 +89,8 @@ build fails if the final file exceeds either 1 MiB golden slot.
 C-only frontend changes require a Vitis rebuild and a new `FIRMWARE.BIN`; HDL,
 clock, AXI, or constraint changes require the full Vivado and Vitis sequence.
 
-The ARM-only [copy/fill API](README_MEMORY_API.md) documents the new SmartPort
-memory service, its private-memory contract, ca65 examples and PC build steps
-using the existing F1.1.1 hardware image.
+The ARM-only [copy/fill API](README_MEMORY_API.md) documents the SmartPort
+memory service, its private-memory contract, and ca65 examples.
 
 See [README_VIVADO.md](README_VIVADO.md) for hardware-build details and
 [README_BOOT_UPDATE.md](README_BOOT_UPDATE.md) for the flash layout and update

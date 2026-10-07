@@ -7,6 +7,8 @@ project/
 
 # Vivado journals, logs, and temp files
 *.jou
+/build_*.out
+/clockInfo.txt
 vivado*.jou
 vivado*.log
 vivado*.str
@@ -93,9 +95,6 @@ vitis_workspace/
 # =============================================================================
 
 tmp/
-
-# Legacy local build output from before the demo-project migration
-software/a2imgview_demo.a65
 
 # Local agent/tool state
 .claude/settings.local.json

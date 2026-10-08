@@ -17,8 +17,9 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 FORMANT_PKG = ROOT / "scripts/fixtures/ssi263_host/ssi263_formant_pkg.sv"
 NATIVE_ROM = ROOT / "hdl/apple/ssi263_sc02_rom.mem"
-ACTIVE_ROM_SHA256 = "101d129a5f104e6190f2eca518bbf9ef65bf4ff92684d29eba56d9641aa02b0a"
-FULL_ROM_SHA256 = "9c3bba73319e1ed3652c85dac19874df04cbb72e62fdd63d6cbd7b34ff81f941"
+ACTIVE_ROM_SHA256 = "ea494f047de11c533cb36a51d8686949206cedb91ab4855bdf9bde9500f828d9"
+# Hash of the active table plus zero padding, not of the original SC-02 source.
+FULL_ROM_SHA256 = "849baa20baae3d756f26813cf4e4f47392573e735cb4c66afdc434f9932147e0"
 PHONE_FIELDS = ("f1", "va", "f2", "fc", "f2q", "f3", "fa", "cld", "vd",
                 "closure", "duration", "pause")
 MAPPING_FIELDS = ("f1", "f2", "f2q", "f3", "va", "fa")
@@ -130,10 +131,10 @@ def load_tables(package: Path = FORMANT_PKG, rom: Path = NATIVE_ROM) -> dict:
         raise ValueError("native ROM must contain exactly 512 byte literals")
     native = bytes(int(token, 16) for token in tokens)
     if hashlib.sha256(native).hexdigest() != ACTIVE_ROM_SHA256:
-        raise ValueError("native ROM does not match the canonical SSI dump")
+        raise ValueError("native ROM does not match the active die-target table")
     rows = _case(source, "ssi263_sc02_rom_row", list(range(64)), default_count=1)
     if b"".join(row.to_bytes(8, "little") for row in rows) != native:
-        raise ValueError("HDL native ROM rows differ from canonical ROM")
+        raise ValueError("HDL native ROM rows differ from the active table")
     words = _case(source, "sc01a_word_by_phone", list(range(64)))
     result = {
         "phones": [[_phone_field(source, field, word, phone) for field in PHONE_FIELDS]

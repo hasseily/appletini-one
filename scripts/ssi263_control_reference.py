@@ -20,7 +20,7 @@ from typing import Iterable
 Bit = int | None
 ROOT = Path(__file__).resolve().parents[1]
 ROM_PATH = ROOT / "hdl/apple/ssi263_sc02_rom.mem"
-ROM_SHA256 = "9c3bba73319e1ed3652c85dac19874df04cbb72e62fdd63d6cbd7b34ff81f941"
+ROM_SHA256 = "849baa20baae3d756f26813cf4e4f47392573e735cb4c66afdc434f9932147e0"
 STATE_NAMES = ("pw0", "pw1", "pw2", "pw3", "pw5", "u20", "fric1_sw", "fric2_sw")
 GATE_NAMES = ("u104c", "ampct0", "fricative", "u32b")
 STIMULUS_FIELDS = {

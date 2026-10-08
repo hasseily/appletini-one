@@ -1,7 +1,7 @@
-// SSI-263A / SC-02 parameter ROM for readmemh.
-// Source SHA-256: 9C3BBA73319E1ED3652C85DAC19874DF04CBB72E62FDD63D6CBD7B34FF81F941
-// Source CRC32: CC0A72EE
-// Active bytes 0x000-0x1ff; source bytes 0x200-0x7ff are zero.
+// SSI-263 parameter ROM for readmemh: die targets, SC-02 control bits.
+// Target bits: Casso SSI-263P die read at 87704604d38531ff0ac2ddefdb0b1779c0b1982f.
+// Control bits: SC-02 prototype ROM, SHA-256 9C3BBA73319E1ED3652C85DAC19874DF04CBB72E62FDD63D6CBD7B34FF81F941.
+// Active 512-byte SHA-256: EA494F047DE11C533CB36A51D8686949206CEDB91AB4855BDF9BDE9500F828D9.
 70
 90
 0A
@@ -271,7 +271,7 @@ E0
 0E
 F0
 00
-F0
+80
 00
 00
 50
@@ -383,8 +383,8 @@ C0
 06
 D0
 00
-20
-F0
+10
+A0
 00
 01
 70
@@ -399,8 +399,8 @@ B0
 0E
 E0
 00
-20
-F0
+10
+A0
 00
 21
 B0
@@ -408,15 +408,15 @@ B0
 E0
 00
 00
-90
+60
 00
 20
 30
 0E
 90
 00
-60
-80
+30
+40
 00
 21
 30
@@ -424,15 +424,15 @@ E0
 90
 00
 00
-80
+40
 00
 30
 70
 06
 E0
 00
+10
 20
-40
 00
 51
 80
@@ -440,14 +440,14 @@ E0
 A0
 00
 00
-60
+20
 00
 00
 31
 3E
 90
 00
-F0
+A0
 00
 00
 00
@@ -455,7 +455,7 @@ F0
 3E
 D0
 00
-F0
+80
 00
 00
 20
@@ -463,7 +463,7 @@ C1
 3E
 E0
 00
-80
+40
 00
 00
 70
@@ -511,6 +511,6 @@ A0
 0E
 E0
 00
-F0
+80
 00
 00

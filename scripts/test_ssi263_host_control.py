@@ -271,7 +271,7 @@ def main() -> int:
     data = bytes(int(field, 16) for line in ROM.read_text().splitlines()
                  for field in line.split("//")[0].split())
     digest = hashlib.sha256(data).hexdigest()
-    if digest != "101d129a5f104e6190f2eca518bbf9ef65bf4ff92684d29eba56d9641aa02b0a":
+    if digest != "ea494f047de11c533cb36a51d8686949206cedb91ab4855bdf9bde9500f828d9":
         raise ValueError("Native ROM identity changed")
     args.build_dir.mkdir(parents=True, exist_ok=True)
     harness = args.build_dir / "test.cpp"

@@ -5,7 +5,8 @@ SystemVerilog. The C++ code is the canonical higher-level implementation;
 controller-state and sample-by-sample PCM checks keep the RTL in step with it.
 Both use the committed SSI parameter ROM, native scanner, native voice/noise
 source and all five prototype formants. Neither depends on the old sound
-generator or coefficient package. Firmware stays `F1.2.5-d1`.
+generator or coefficient package. The die-target firmware build is `F1.2.5-d2`;
+the build results below for `F1.2.5-d1` record the earlier checkpoint.
 
 The 2026-10-07 update integrates the user-approved balanced voice/noise levels
 and the measured AMP-zero retention correction. The original balanced audio
@@ -16,6 +17,17 @@ The production `ssi263_bus_wrapper` now selects the native engine for both
 SSI263AP sockets. The old SC-01 sound core and formant backend are no longer
 in the firmware source list. The standalone checks below remain historical
 evidence for the listening checkpoint; full firmware validation is separate.
+
+## F1.2.5-d2 build
+
+The 2026-10-08 full Vivado build `20261008T095955Z-1a3e8d38-full` exported
+the die-target bitstream and XSA. Its final setup slack was +0.117 ns and
+hold slack was +0.022 ns; route, bus skew, and constraint checks passed.
+The Vitis build and firmware pack step produced the local image
+`build/ssi263_firmware_die_d2/FIRMWARE.BIN` (4,428,268 bytes). Its SHA-256 is
+`ce4126ac912790820d9b10574deadd67c1392de0f20bde207f5a3d2086ef9d51`.
+The image manifest passed its firmware and recovery checks, and the frontend
+ELF contains `F1.2.5-d2`. This build has not been tested on a card.
 
 ## Blocks and clock contract
 
@@ -126,8 +138,9 @@ voice/noise settings are a listening choice checked against the two real chips.
 
 ## Remaining work after the 2026-10-07 review
 
-This firmware changes the balanced gains and AMP-zero retention only. The
-remaining evidence does not yet specify complete fixes for:
+The F1.2.5-d1 checkpoint changed the balanced gains and AMP-zero retention.
+F1.2.5-d2 updates the die-decoded speech targets. The remaining evidence does
+not yet specify complete fixes for:
 
 - D7 response handling when a new phone arrives before the preceding response.
   The physical log rejects the current unconditional restart in those cases,
@@ -293,7 +306,7 @@ reset policy; that is not a measured production analog charge-retention rule.
 The production cold FF register remains 0, while standalone engine tests
 default to FF255 to preserve the frozen host checkpoint's reset settings.
 
-The test firmware remains F1.2.5-d1. It uses the build script's
+The F1.2.5-d1 test firmware used the build script's
 `APPLETINI_POSITIVE_SLACK_ONLY=1` policy at the user's request: setup slack
 must be strictly positive; hold, pulse-width, routing and constraint checks
 still apply. Audio comparison against the tester's recording remains pending.

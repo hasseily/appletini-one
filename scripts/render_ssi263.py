@@ -223,7 +223,7 @@ def render(trace: Trace, out: Path, profile: str, executable: Path | None = None
                            "rail_samples": int(np.count_nonzero((channel == -32768) | (channel == 32767))),
                            "nonzero_samples": int(np.count_nonzero(channel))})
     report = {
-        "profile": profile, "description": DESCRIPTION[profile], "firmware_target": "F1.2.5-d1",
+        "profile": profile, "description": DESCRIPTION[profile], "firmware_target": "F1.2.5-d2",
         "native_model_revision": MODEL_REVISION if profile in ("prototype", "transitions") else None,
         "sample_rate": 48000, "channels": 2, "gain": "fixed model gain; no normalization",
         "effective_xck_hz": trace.xck_hz, "articulation_reference_rate": articulation_reference,

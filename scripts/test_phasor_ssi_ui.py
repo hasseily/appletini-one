@@ -128,7 +128,7 @@ static void render(config_menu_t *menu, const char *path)
     uint16_t *fb=calloc(FB16_WIDTH*FB16_HEIGHT,sizeof(*fb)); assert(fb);
     cmui_rect_t nav,body,footer; cmui_screen_rects(&nav,&body,&footer);
     if (compact) { body=(cmui_rect_t){0,0,1480,812}; cmui_compact_begin(); }
-    else { cmui_clear(fb); cmui_header(fb,"Appletini","F1.2.5-d1 SSI mixer",1); }
+    else { cmui_clear(fb); cmui_header(fb,"Appletini","F1.2.5-d2 SSI mixer",1); }
     config_menu_phasor_draw(fb,menu,body.x,body.y,body.w);
     const char *const *help=help_phasor;
     unsigned help_count=sizeof(help_phasor)/sizeof(*help_phasor);

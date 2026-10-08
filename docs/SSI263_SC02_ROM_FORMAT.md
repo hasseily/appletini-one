@@ -1,22 +1,52 @@
-# SSI-263 / SC-02 parameter ROM format
+# SSI-263 parameter ROM format
 
 ## Scope
 
 This note records the format of the supplied SSI-263A parameter ROM and the
-use of its low nibbles in the archived SC-02 prototype schematic. It separates
-facts read from those sources from behavior in the current hybrid firmware.
+use of its low nibbles in the archived SC-02 prototype schematic. The active
+table now uses target codes read from an SSI-263P die. It keeps the original
+low control nibbles because the die read does not establish their byte wiring.
 
 The net and latch behavior below is exact for the saved prototype schematic
 and its ROM. It does not prove that the final production SSI-263 die used the
 same inner wiring. Use a real production-card capture to settle any difference.
 
 The checked-in active table is
-[`hdl/apple/ssi263_sc02_rom.mem`](../hdl/apple/ssi263_sc02_rom.mem). The source
-image has these identities:
+[`hdl/apple/ssi263_sc02_rom.mem`](../hdl/apple/ssi263_sc02_rom.mem). The low
+control bits came from a previously supplied `ssi263a.bin` when commit
+`9ddcdc3` first added this table. That source file is not in this repo, so
+the recorded hashes identify it but do not let this repo check its origin.
+The 2 KiB source image had these identities:
 
 - CRC32: `CC0A72EE`
 - SHA-256:
   `9C3BBA73319E1ED3652C85DAC19874DF04CBB72E62FDD63D6CBD7B34FF81F941`
+
+## Die target update for F1.2.5-d2
+
+The active table's six upper-nibble fields use the phoneme bits from
+[Casso's SSI-263P die extraction](https://github.com/relmer/Casso/tree/87704604d38531ff0ac2ddefdb0b1779c0b1982f/specs/024-mockingboard-speech/rom-extraction).
+The exact 64-row raw bit matrix is saved as
+[`ssi263p_die_bits.csv`](../scripts/fixtures/ssi263_native/ssi263p_die_bits.csv).
+The independent [die review](https://github.com/tgeczy/ssi263-speech/blob/0cc92b3452ea6f1392b45f6036c780343c8f30a7/docs/die.md)
+reports agreement on all 1,856 visible bits. F1 uses the bottom PAR row as
+its low bit; that field reading remains under study.
+
+Selectors 0, 1, 2, 3, 5, and 6 now hold die-decoded F1, F2, nasal, F3,
+voice amplitude, and noise amplitude targets. The first four fields already
+agreed across all 64 phones. The update changes 16 amplitude bytes: L1, Z,
+J, SCH, V, F, THV, TH, M, N, NG, and LB have at least one changed target.
+Selectors 4 and 7 stay zero. Every low nibble remains byte-for-byte as before;
+its SHA-256 when stored as one low-nibble value per byte is
+`ec766017bd444b275405bfb2825083e58e59ea1113328b5ba1f881ad0760118d`.
+
+The new active 512-byte table has SHA-256
+`ea494f047de11c533cb36a51d8686949206cedb91ab4855bdf9bde9500f828d9`.
+Padding it with 1,536 zero bytes gives SHA-256
+`849baa20baae3d756f26813cf4e4f47392573e735cb4c66afdc434f9932147e0`;
+that padded table is not the original source image. Run
+`python scripts/test_ssi263_die_rom.py` to check all raw bits, target fields,
+control nibbles, and the host table mirror.
 
 ## Address and byte layout
 

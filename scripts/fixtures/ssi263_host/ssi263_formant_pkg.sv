@@ -89,13 +89,11 @@ package ssi263_formant_pkg;
         end
     endfunction
 
-    // Native SSI-263A parameter ROM.  Each 64-bit row contains selector
-    // bytes 7..0, while ssi263_sc02_rom_byte returns one byte in the original
-    // {phone, selector} address order.  These constants are the active first
-    // 512 bytes of the verified SC-02 dump (active-table SHA-256
-    // 101d129a5f104e6190f2eca518bbf9ef65bf4ff92684d29eba56d9641aa02b0;
-    // full 2 KiB source SHA-256
-    // 9c3bba73319e1ed3652c85dac19874df04cbb72e62fdd63d6cbd7b34ff81f941).
+    // Native SSI ROM mirror. Each row has selector bytes 7..0.
+    // Upper target nibbles use Casso's SSI-263P die decode; lower control
+    // nibbles retain the supplied SC-02 prototype ROM. Active 512-byte
+    // SHA-256: ea494f047de11c533cb36a51d8686949206cedb91ab4855bdf9bde9500f828d9.
+    // ssi263_sc02_rom_byte returns a byte in {phone, selector} order.
     // The SC-01 ROM below remains the source for direct Votrax playback.
     function automatic logic [63:0] ssi263_sc02_rom_row(input logic [5:0] phone);
         case (phone)
@@ -132,7 +130,7 @@ package ssi263_formant_pkg;
             6'h1E: ssi263_sc02_rom_row = 64'h00008000400E3120;
             6'h1F: ssi263_sc02_rom_row = 64'h00006000900E6170;
             6'h20: ssi263_sc02_rom_row = 64'h00007000E00E3130;
-            6'h21: ssi263_sc02_rom_row = 64'h0000F000F00E5110;
+            6'h21: ssi263_sc02_rom_row = 64'h00008000F00E5110;
             6'h22: ssi263_sc02_rom_row = 64'h00009000E00E1150;
             6'h23: ssi263_sc02_rom_row = 64'h00008000900E0130;
             6'h24: ssi263_sc02_rom_row = 64'h00008000C00C3110;
@@ -146,23 +144,23 @@ package ssi263_formant_pkg;
             6'h2C: ssi263_sc02_rom_row = 64'h00800000C00A9071;
             6'h2D: ssi263_sc02_rom_row = 64'h00800000C0089071;
             6'h2E: ssi263_sc02_rom_row = 64'h00004000C03A9170;
-            6'h2F: ssi263_sc02_rom_row = 64'h00F02000D0062030;
+            6'h2F: ssi263_sc02_rom_row = 64'h00A01000D0062030;
             6'h30: ssi263_sc02_rom_row = 64'h00F00000C0067001;
-            6'h31: ssi263_sc02_rom_row = 64'h00F02000E00EB020;
-            6'h32: ssi263_sc02_rom_row = 64'h00900000E00EB021;
-            6'h33: ssi263_sc02_rom_row = 64'h00806000900E3020;
-            6'h34: ssi263_sc02_rom_row = 64'h00800000900E3021;
-            6'h35: ssi263_sc02_rom_row = 64'h00402000E0067030;
-            6'h36: ssi263_sc02_rom_row = 64'h00600000A0068051;
-            6'h37: ssi263_sc02_rom_row = 64'h0000F000903E3100;
-            6'h38: ssi263_sc02_rom_row = 64'h0000F000D03E8100;
-            6'h39: ssi263_sc02_rom_row = 64'h00008000E03EC120;
+            6'h31: ssi263_sc02_rom_row = 64'h00A01000E00EB020;
+            6'h32: ssi263_sc02_rom_row = 64'h00600000E00EB021;
+            6'h33: ssi263_sc02_rom_row = 64'h00403000900E3020;
+            6'h34: ssi263_sc02_rom_row = 64'h00400000900E3021;
+            6'h35: ssi263_sc02_rom_row = 64'h00201000E0067030;
+            6'h36: ssi263_sc02_rom_row = 64'h00200000A0068051;
+            6'h37: ssi263_sc02_rom_row = 64'h0000A000903E3100;
+            6'h38: ssi263_sc02_rom_row = 64'h00008000D03E8100;
+            6'h39: ssi263_sc02_rom_row = 64'h00004000E03EC120;
             6'h3A: ssi263_sc02_rom_row = 64'h00008000A00E9170;
             6'h3B: ssi263_sc02_rom_row = 64'h00006000900E8120;
             6'h3C: ssi263_sc02_rom_row = 64'h0000A000900E7110;
             6'h3D: ssi263_sc02_rom_row = 64'h0000A000A00E9100;
             6'h3E: ssi263_sc02_rom_row = 64'h00007000A00E7160;
-            default: ssi263_sc02_rom_row = 64'h0000F000E00E1110;
+            default: ssi263_sc02_rom_row = 64'h00008000E00E1110;
         endcase
     endfunction
 

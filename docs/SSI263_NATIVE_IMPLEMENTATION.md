@@ -5,7 +5,8 @@ The control-only modules and tests listed below are earlier prototype work;
 Vivado no longer includes them in `hdl/hdl_sources.txt`.
 
 Started 2026-10-06 on `codex/ssi263-physical-match-handoff`.
-Firmware stays `F1.2.5-d1` until the user approves `F1.2.5`.
+The die-target firmware build is `F1.2.5-d2`. The earlier listening checkpoint
+was `F1.2.5-d1`.
 
 The listening checkpoint now has a complete FPGA audio implementation:
 scanner, transitions, source, five formants and a per-socket scheduler. The
@@ -115,7 +116,7 @@ HF and HFC now produce different PW3/source-control terms in native-control
 tests with the same lead-in and CTRL inputs. This verifies their documented
 control distinction; it is not yet an audible HF/HFC result in firmware.
 
-The separate controller reads all 512 canonical ROM bytes directly through
+The separate controller reads all 512 active ROM bytes directly through
 `ssi263_parameter_rom`, without importing the old table package, translating
 phone numbers, or converting native target codes. Selector 4 exposes host
 amplitude as its target; selector 7 has no parameter target. It owns its phone

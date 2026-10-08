@@ -43,8 +43,8 @@ def source_checks():
     data = bytes(int(value, 16) for line in ROM.read_text().splitlines()
                  if (value := line.split("//", 1)[0].strip()))
     assert len(data) == 512
-    assert hashlib.sha256(data).hexdigest() == "101d129a5f104e6190f2eca518bbf9ef65bf4ff92684d29eba56d9641aa02b0a"
-    assert hashlib.sha256(data + bytes(1536)).hexdigest() == "9c3bba73319e1ed3652c85dac19874df04cbb72e62fdd63d6cbd7b34ff81f941"
+    assert hashlib.sha256(data).hexdigest() == "ea494f047de11c533cb36a51d8686949206cedb91ab4855bdf9bde9500f828d9"
+    assert hashlib.sha256(data + bytes(1536)).hexdigest() == "849baa20baae3d756f26813cf4e4f47392573e735cb4c66afdc434f9932147e0"
     # Build and synthesize with only these native files: no inherited digital
     # core, table package or pulse source may be required to resolve a module.
     for source in SOURCES:

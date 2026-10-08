@@ -14,7 +14,7 @@ from unittest.mock import patch
 import ssi263_host_data as host
 
 DEFAULT_PACKAGE = host.ROOT / "build/ssi263_calibration/SSI263-CAL-PAL-01.zip"
-TABLE_SHA256 = "47b35dd8a2336bb3b7ef471d9297f8abdd762bc82769912d31299328b6baa3d1"
+TABLE_SHA256 = "9daa3a5179027af095ba62835e70d6822957cb3d40681415062e268fd50c6503"
 
 
 class TableTests(unittest.TestCase):
@@ -35,7 +35,7 @@ class TableTests(unittest.TestCase):
             self.assertEqual(len(self.tables[key]), count)
         self.assertEqual(sum(len(list(host._flatten(self.tables[key]))) for key in host.TABLE_ORDER), 5262)
 
-    def test_canonical_rom_full_and_active_hashes(self):
+    def test_active_and_padded_rom_hashes(self):
         native = bytes(self.tables["native_rom"])
         self.assertEqual(hashlib.sha256(native).hexdigest(), host.ACTIVE_ROM_SHA256)
         self.assertEqual(hashlib.sha256(native + bytes(1536)).hexdigest(), host.FULL_ROM_SHA256)
@@ -89,7 +89,7 @@ class TableTests(unittest.TestCase):
             values = list(self.tables["native_rom"])
             values[-1] ^= 1
             changed.write_text("\n".join(f"{value:02x}" for value in values), encoding="ascii")
-            with self.assertRaisesRegex(ValueError, "canonical"):
+            with self.assertRaisesRegex(ValueError, "active die-target table"):
                 host.load_tables(rom=changed)
 
 

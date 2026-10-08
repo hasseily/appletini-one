@@ -179,7 +179,7 @@ def render_song(song: Path, output: Path, region: str, distro: str,
                         "title=House of the Rising Sun - native SSI model", "-metadata",
                         "artist=Appletini Phasor / SSI-263", str(destination_mp3)], check=True)
     gain_db = 20 * math.log10(ssi_mix_gain)
-    report = {"title": score["title"], "firmware_target": "F1.2.5-d1",
+    report = {"title": score["title"], "firmware_target": "F1.2.5-d2",
               "seconds": frames / 48_000, "frames": frames, "sample_rate": 48_000,
               "region": region, "stream": stream_meta, "source": metadata,
               "ssi_writes": len(writes), "ay_writes": sum(e[1] < 4 for e in events),

@@ -88,6 +88,7 @@ def main() -> None:
         assert mode_audio[ff, 0] == mode_audio[ff, 5], f"FF{ff}: card mode changed native SSI PCM"
         assert all(sum(sample[ch] != 0 for sample in mode_audio[ff, 0]) > 16 for ch in (0, 1))
     assert "PHASOR MODE PCM PASS comparisons=4096 frames_per_run=1024" in text
+    assert "PHASOR Q3 RINGING PCM PASS comparisons=2048 frames=1024" in text
     for name, digest in source_hashes.items():
         assert sha(ROOT / name) == digest, f"Source changed during simulation: {name}"
     report = dict(status="PASS", counts=counts, audio=audio_metrics,
@@ -105,6 +106,9 @@ def main() -> None:
                       result="byte-identical native SSI PCM in Mockingboard and Phasor modes",
                       csv_sha256=sha(OUT / "phasor_mode_audio.csv")),
                   fabric_period_ns=7.5, q3_period_fabric_clocks=65,
+                  q3_ringing=dict(pulse_widths_ns=[30, 45], filter_frequency=232,
+                      frames=1024, raw_socket_pcm_comparisons=2048,
+                      result="byte-identical PCM with short high pulses and low notches"),
                   effective_xck_period_fabric_clocks=130, audio_period_fabric_clocks=2778,
                   response_coverage="FF-independent response counters/D7/IRQ; source/envelope state may legitimately differ with FF",
                   limitation="RTL bus/audio proof at physical clock spacing; not physical SSI accuracy or a board hardware result")

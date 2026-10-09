@@ -222,6 +222,31 @@ phaser's raw-rise start is gated by the same window. Verification:
 `extra/missing data_en=0` while ring events keep counting
 (`tb_phi0_edge_lockout`).
 
+**SSI-263 Q3 input (`ssi263_xck_ce.sv`):** a reported Phasor.hdv fault
+raises the speech demo's Pitch (FF) with vTW at 1 MHz, while stock mode
+sounds correct. A clean-pin RTL test preserves every SSI write through
+both stock and vTW bus paths, including the demo's FF value `$E8`.
+The old Q3 edge detector counts short input glitches as extra speech
+clocks: injected 25–45 ns pulses produced three enables per true Q3
+period, and a two-pulse burst produced five.
+
+The Q3 input now requires eight equal samples (60 ns at 133.333 MHz)
+before it changes level. Normal Q3 phases are about 280 ns high and
+210 ns low; see Figure 1 in the
+[Apple IIe technical notes](https://mirrors.apple2.org.za/ftp.apple.asimov.net/documentation/hardware/misc/Apple%20IIe%20Technical%20Notes.pdf).
+A pending-rise latch also keeps enables at least 62 fabric clocks apart.
+This preserves at least 124 clocks per DIV2 step when a glitch delays
+one edge and the next arrives on time; the native engine needs up to 121.
+FF values and the clock divider stay unchanged.
+
+Run `scripts/test_ssi263_xck_ce.py` for clean clocks and injected glitches,
+`scripts/test_vtw_ssi263_bus.py` for stock/vTW register writes, and
+`scripts/test_phasor_demo_filter.py` for both sockets' audio with clean
+and noisy Q3. These are simulation checks. On 2026-10-09, the user
+confirmed that firmware F1.2.5-d3 fixes the reported Phasor.hdv pitch
+fault with vTW at 1 MHz on the board. No physical Q3 capture was taken,
+so input noise remains the inferred cause.
+
 **Host standard hysteresis (`apple_video_standard_detect.sv`):** the
 PAL/NTSC verdict is a physical constant. The first complete line after
 reset decides at once; after that the verdict changes only after 64

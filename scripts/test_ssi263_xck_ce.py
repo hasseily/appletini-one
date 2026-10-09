@@ -20,18 +20,22 @@ def static_checks() -> None:
         "input  logic q3_raw",
         "q3_sync1_q",
         "q3_sync2_q",
-        "q3_sync2_d_q",
         '(* ASYNC_REG = "TRUE" *)',
-        "assign xck_ce = q3_sync2_q && !q3_sync2_d_q;",
     )
     missing = [item for item in required if item not in source]
     if missing:
         raise RuntimeError(f"physical-Q3 XCK contract missing: {missing}")
 
 
-def run(command: list[str]) -> None:
+def run(command: list[str]) -> str:
     print("+", " ".join(command))
-    subprocess.run(command, cwd=BUILD_DIR, check=True)
+    result = subprocess.run(command, cwd=BUILD_DIR, check=True, text=True,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    print(result.stdout)
+    (BUILD_DIR / (Path(command[0]).stem + ".log")).write_text(
+        result.stdout, encoding="utf-8"
+    )
+    return result.stdout
 
 
 def vivado_tool(name: str) -> str:
@@ -53,7 +57,11 @@ def main() -> int:
         vivado_tool("xelab"), "tb_ssi263_xck_ce",
         "-s", "tb_ssi263_xck_ce_sim",
     ])
-    run([vivado_tool("xsim"), "tb_ssi263_xck_ce_sim", "--runall"])
+    output = run([vivado_tool("xsim"), "tb_ssi263_xck_ce_sim", "--runall"])
+    # XSim can return zero even after a testbench $fatal.
+    if ("SSI263 XCK CE PASS" not in output or "FAIL" in output or
+            "Fatal:" in output):
+        raise RuntimeError("SSI263 XCK regression failed; see xsim.log")
     return 0
 
 

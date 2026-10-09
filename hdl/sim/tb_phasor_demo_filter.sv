@@ -20,6 +20,10 @@ module tb_phasor_demo_filter;
     logic clk = 1'b0;
     logic rstn = 1'b0;
     logic q3 = 1'b0;
+    logic q3_ringing = 1'b0;
+    wire q3_pin = q3 ^ (q3_ringing &&
+                  ((q3_div >= 10 && q3_div < 14) ||
+                   (q3_div >= 42 && q3_div < 48)));
     logic audio_tick = 1'b0;
     logic [2:0] slot = 3'd4;
     logic [31:0] audio_control = 32'h10000000; // +2 dB SSI; neutral common tone controls.
@@ -36,6 +40,7 @@ module tb_phasor_demo_filter;
     integer audio_file;
     integer mode_audio_file;
     integer mode_pcm_checks = 0;
+    integer ringing_pcm_checks = 0;
     logic signed [15:0] mode_primary_reference [0:MODE_FRAMES-1];
     logic signed [15:0] mode_secondary_reference [0:MODE_FRAMES-1];
     integer secondary_expected;
@@ -50,12 +55,12 @@ module tb_phasor_demo_filter;
             q3 = 1'b0;
         end else begin
             q3_div = (q3_div + 1) % 65;
-            q3 = q3_div >= 32;
+            q3 = q3_div >= 28; // About 280 ns high / 210 ns low.
         end
     end
 
     mockingboard dut (
-        .clk(clk), .rstn(rstn), .apple_q3_raw(q3), .ab_read(bus), .sss(sss),
+        .clk(clk), .rstn(rstn), .apple_q3_raw(q3_pin), .ab_read(bus), .sss(sss),
         .slot_assign(slot), .pan(48'h888888888888), .ssi_pan(8'hF0), .audio_control(audio_control),
         .audio_sample_tick(audio_tick), .ab_write(response),
         .audio_l(audio_l), .audio_r(audio_r), .dbg_ssi_irq(),
@@ -72,6 +77,7 @@ module tb_phasor_demo_filter;
         @(negedge clk);
         compare_sources = 1'b0;
         rstn = 1'b0;
+        q3_ringing = 1'b0;
         audio_tick = 1'b0;
         bus = '0;
         bus.res = 1'b1;
@@ -220,11 +226,15 @@ module tb_phasor_demo_filter;
                  ff, different, present_primary, present_reference, card_present);
     endtask
 
-    task automatic mode_audio_window(input integer ff, input logic [2:0] mode);
+    task automatic mode_audio_window(input integer ff, input logic [2:0] mode,
+                                     input logic ringing = 1'b0);
         integer primary_before, secondary_before, nonzero_primary, nonzero_secondary;
         nonzero_primary = 0;
         nonzero_secondary = 0;
         reset_card();
+        // Opposite-level 30/45 ns pulses occur after each true edge has
+        // settled. They must not change either socket's clock or PCM.
+        q3_ringing = ringing;
         // Perform one mode access in both runs so Q3 and sample phases match.
         select_mode(mode);
         write_bus(16'hC463, 8'hFF);
@@ -257,10 +267,12 @@ module tb_phasor_demo_filter;
                         "primary SSI PCM changed between Mockingboard and Phasor modes");
                 require(dut.ssi0_audio === mode_secondary_reference[frame],
                         "secondary SSI PCM changed between Mockingboard and Phasor modes");
-                mode_pcm_checks = mode_pcm_checks + 2;
+                if (ringing) ringing_pcm_checks = ringing_pcm_checks + 2;
+                else mode_pcm_checks = mode_pcm_checks + 2;
             end
-            $fdisplay(mode_audio_file, "%0d,%0d,%0d,%0d,%0d", ff, mode, frame,
-                      $signed(dut.ssi1_audio), $signed(dut.ssi0_audio));
+            if (!ringing)
+                $fdisplay(mode_audio_file, "%0d,%0d,%0d,%0d,%0d", ff, mode, frame,
+                          $signed(dut.ssi1_audio), $signed(dut.ssi0_audio));
         end
         require(nonzero_primary > 16 && nonzero_secondary > 16,
                 "mode comparison must include nonzero native speech on both sockets");
@@ -314,7 +326,10 @@ module tb_phasor_demo_filter;
         mode_audio_window(128, 3'd5);
         mode_audio_window(232, 3'd0);
         mode_audio_window(232, 3'd5);
+        mode_audio_window(232, 3'd5, 1'b1);
         $fclose(mode_audio_file);
+        $display("PHASOR Q3 RINGING PCM PASS comparisons=%0d frames=%0d",
+                 ringing_pcm_checks, MODE_FRAMES);
         $display("PHASOR MODE PCM PASS comparisons=%0d frames_per_run=%0d", mode_pcm_checks, MODE_FRAMES);
         $display("PHASOR DEMO FILTER PASS checks=%0d writes=%0d source_checks=%0d audio_frames=%0d completions=%0d",
                  checks, write_count, source_checks, audio_frames, completions);
@@ -322,7 +337,7 @@ module tb_phasor_demo_filter;
     end
 
     initial begin
-        #250000000;
+        #300000000;
         $fatal(1, "PHASOR DEMO FILTER FAIL: timeout");
     end
 endmodule

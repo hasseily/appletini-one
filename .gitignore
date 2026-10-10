@@ -120,4 +120,5 @@ hdl/sim/*
 !hdl/sim/tb_*.sv
 !hdl/sim/xpm_fifo_sync_model.sv
 !hdl/sim/vtw_shadow_write_guard_cases.svh
+!hdl/sim/vtw_shr_capture_cases.svh
 !hdl/sim/vtw_shadow_write_guard_oracle.svh

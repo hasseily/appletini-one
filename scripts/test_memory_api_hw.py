@@ -5,6 +5,7 @@ Minimal BSP declarations make these native checks reproducible. They do not
 replace the supported Vitis firmware build or validate real FPGA timing.
 """
 from pathlib import Path
+import argparse
 import os
 import shutil
 import subprocess
@@ -14,6 +15,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--baseline-dir", type=Path,
+                        help="also run identical failure/data fixtures against saved pre-lease C sources")
+    args = parser.parse_args()
     compiler = os.environ.get("CC") or shutil.which("clang") or shutil.which("gcc")
     if compiler is None:
         raise RuntimeError("A native C compiler is required")
@@ -42,6 +47,19 @@ def main() -> int:
             command[1:1] = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         subprocess.run(command, check=True)
         subprocess.run([str(executable)], check=True)
+        if args.baseline_dir:
+            baseline = args.baseline_dir.resolve()
+            reference = Path(temporary) / "memory_api_hw_baseline"
+            command = [compiler, *flags, "-O1", *includes,
+                       "-I", str(ROOT / "ps_sources/frontend"),
+                       '-DMEMORY_API_HW_SOURCE="' + str(baseline / "memory_api_hw.c") + '"',
+                       "-DEXPECT_BATCH_LEASE=0", "-DEXPECT_COPY_ROWS=0",
+                       str(ROOT / "scripts/fixtures/memory_api_hw_host.c"),
+                       str(baseline / "memory_api.c"), "-o", str(reference)]
+            if os.environ.get("MEMORY_API_SANITIZE", "1") != "0":
+                command[1:1] = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
+            subprocess.run(command, check=True)
+            subprocess.run([str(reference)], check=True)
         executable = Path(temporary) / "psdma_owner_host"
         command = [compiler, *flags, "-O1", *includes,
                    str(ROOT / "scripts/fixtures/psdma_owner_host.c"),

@@ -1,4 +1,4 @@
-; Appletini memory service 1.0, ca65 command builders.
+; Appletini memory service 1.2, ca65 command builders.
 ; All multibyte fields are little endian. See README_MEMORY_API.md.
 .ifndef APPLETINI_MEMORY_API_INC
 APPLETINI_MEMORY_API_INC = 1
@@ -12,11 +12,17 @@ AMEM_MAX_DESCRIPTORS = 16
 AMEM_MAIN = 0
 AMEM_AUX = 1
 AMEM_PRIVATE = 1
+AMEM_PUBLISH_SHR = 2        ; requires feature8; cannot combine with PRIVATE
+AMEM_SHR_MIN_ADDR = $2000
+AMEM_SHR_LIMIT_ADDR = $9D00  ; exclusive pixel-plane limit
 AMEM_COPY = 1
 AMEM_FILL = 2
+AMEM_COPY_ROWS = 3
 AMEM_FEATURE_COPY = 1
 AMEM_FEATURE_FILL = 2
 AMEM_FEATURE_PRIVATE = 4
+AMEM_FEATURE_PUBLISH_SHR = 8
+AMEM_FEATURE_COPY_ROWS = 16
 
 AMEM_OK = $00
 AMEM_UNSUPPORTED = $21       ; old SmartPort firmware: BADCTL
@@ -52,5 +58,18 @@ AMEM_UNSAFE = $69
         .byte destination_space, destination_bank
         .word destination_addr, length
         .byte value, 0, 0, 0
+.endmacro
+; Width is copied bytes per row. Gaps are skipped after each non-final row.
+; Bounds and conservative full-span overlap are checked before any batch write.
+.macro AMEM_COPY_ROWS_RECORD source_space, source_bank, source_addr, destination_space, destination_bank, destination_addr, width, rows, source_gap, destination_gap, flags
+        .assert rows >= 1 .and rows <= 256, error, "invalid AMEM rows"
+        .assert width >= 1 .and width * rows <= 65535, error, "invalid AMEM row width"
+        .assert source_gap >= 0 .and source_gap <= 255, error, "invalid AMEM source gap"
+        .assert destination_gap >= 0 .and destination_gap <= 255, error, "invalid AMEM destination gap"
+        .byte AMEM_COPY_ROWS, flags, source_space, source_bank
+        .word source_addr
+        .byte destination_space, destination_bank
+        .word destination_addr, width
+        .byte 0, rows-1, source_gap, destination_gap
 .endmacro
 .endif

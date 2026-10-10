@@ -8,7 +8,10 @@
 // Apple cycle. The bench measures that collapse and also checks the region
 // decode (a non-enabled region does NOT slow the core).
 
-module tb_vtw_slowdown;
+module tb_vtw_slowdown #(
+    parameter bit RUN_TESTS = 1'b1,
+    parameter logic [1:0] SPEED_MODE = 2'd0
+);
 
     timeunit 1ns;
     timeprecision 1ps;
@@ -46,9 +49,19 @@ module tb_vtw_slowdown;
     assign apple_res_pin = res_drive_low ? 1'b0 : 1'bz;
 
     globals::AppleBus_read  ab_read;
+    globals::AppleBus_read  core_ab_read;
+    logic reset_cancel_override = 1'b0;
     globals::AppleBus_write ab_write;
     globals::AppleBus_write vtw_ab_write;
     logic tini_oe_pin, tini_addr_dir_pin, tini_data_dir_pin;
+
+    // A directed one-edge reset bypasses only the pin filter. Keep the
+    // override on the bench side of the input (portable to Verilator).
+    always_comb begin
+        core_ab_read = ab_read;
+        if (reset_cancel_override)
+            core_ab_read.res = 1'b0;
+    end
 
     apple_bus_wrapper wrapper_i (
         .clk(clk), .rstn(rstn), .physical_bus_isolate(1'b0),
@@ -79,6 +92,7 @@ module tb_vtw_slowdown;
     logic        core_run = 0;
     logic [9:0]  sd_region_en = 10'd0;
     logic [15:0] sd_duration  = 16'd0;
+    logic        sound_card_active = 1'b0;
     logic        disk2_write_timing_active = 0;
     logic        sh_en = 0;
     logic [17:0] sh_addr = '0;
@@ -114,7 +128,7 @@ module tb_vtw_slowdown;
         .core_run(core_run),
         .pause(1'b0),
         .assert_apple_res(1'b0),
-        .speed_mode(2'd0),        // WARP baseline
+        .speed_mode(SPEED_MODE),  // FULL baseline; reusable by audio/TURBO bench
         .pace_divider(16'd0),
         .ignore_c074(1'b0),
         .irq_assert_in(1'b0),
@@ -126,6 +140,7 @@ module tb_vtw_slowdown;
         .usb_joystick_paddles(32'h80808080),
         .slow_region_en(sd_region_en),
         .slow_duration(sd_duration),
+        .sound_card_active(sound_card_active),
         .d2_active(disk2_active),
         .d2_req_valid(disk2_req_valid), .d2_req_addr(disk2_req_addr),
         .d2_req_ready(1'b1),
@@ -144,7 +159,7 @@ module tb_vtw_slowdown;
         .video_mode_50hz(1'b0),
         .video_line(9'd0),
         .video_cycle(7'd0),
-        .ab_read(ab_read), .ab_write(vtw_ab_write),
+        .ab_read(core_ab_read), .ab_write(vtw_ab_write),
         .rw_req_valid(), .rw_req_rw(), .rw_req_addr(), .rw_req_wline(),
         .rw_req_ready(1'b1), .rw_resp_valid(1'b0), .rw_resp_rline(64'd0),
         .sp_active(1'b0),
@@ -325,7 +340,7 @@ module tb_vtw_slowdown;
               "slowdown update stage duplicated an accepted hit");
         pipeline_watch = 1'b0;
 
-        // Present an Apple reset between capture and apply. Force the DUT's
+        // Present an Apple reset between capture and apply. Override the
         // filtered reset input low for this one-edge test so the 2.1 us pin
         // filter does not hide the single-clock cancellation case.
         reboot_with(16'hC030, 10'b00_1000_0000, PIPELINE_DURATION);
@@ -341,15 +356,64 @@ module tb_vtw_slowdown;
         check(dut.slow_cnt_q == 16'd0,
               "reset-cancel test did not start with an empty counter");
         res_drive_low = 1'b1;
-        force dut.ab_read.res = 1'b0;
+        reset_cancel_override = 1'b1;
         @(posedge clk);
         #1ps;
         check(dut.slow_cnt_q == 16'd0,
               "Apple reset did not cancel the pending slowdown update");
         check(!dut.slow_update_valid_q,
               "Apple reset did not clear the pending slowdown valid bit");
-        release dut.ab_read.res;
+        reset_cancel_override = 1'b0;
         res_drive_low = 1'b0;
+    endtask
+    task automatic check_sound_window_expiry;
+        int clocks, writes, before_cycles, elapsed_cycles;
+        logic [15:0] previous_count;
+        logic pending_update;
+        sound_card_active = 1'b1;
+        reboot_op_with(8'hAD, 16'hC404);
+        sd_region_en = 10'b00_0000_1000;
+        sd_duration = 16'd512;
+        clocks = 0;
+        while (dut.slow_cnt_q != 16'd512 && clocks < 20000) begin
+            @(posedge clk);
+            #1ps;
+            clocks++;
+        end
+        check(clocks < 20000, "sound read did not load the 512-cycle window");
+        // The remaining loop is still in its NOP block. Change only the
+        // next iteration to STA C400 before it can fetch another timer read.
+        sh_write(ROM_BASE + 18'h3000, 8'h8D);
+        sh_write(ROM_BASE + 18'h3001, 8'h00);
+        clocks = 0;
+        writes = 0;
+        while (dut.slow_cnt_q != 0 && clocks < 200000) begin
+            @(negedge clk);
+            previous_count = dut.slow_cnt_q;
+            pending_update = dut.slow_update_valid_q;
+            check(!dut.slow_update_hit_q || !pending_update,
+                  "sound write rearmed an existing read window");
+            if (dut.core_en && !dut.cycle_rw_q &&
+                dut.cycle_addr_q == 16'hC400)
+                writes++;
+            @(posedge clk);
+            #1ps;
+            check(dut.slow_cnt_q == previous_count - (pending_update ? 16'd1 : 16'd0),
+                  "sound read window did not decrement once per accepted CPU cycle");
+            clocks++;
+        end
+        check(clocks < 200000, "sound read window did not expire during writes");
+        check(writes > 0, "expiry test did not execute a virtual sound write");
+        repeat (80) @(negedge phi0);
+        before_cycles = int'(cnt_core_cycles);
+        repeat (WINDOW) @(negedge phi0);
+        elapsed_cycles = int'(cnt_core_cycles) - before_cycles;
+        check(elapsed_cycles > 2 * WINDOW,
+              "virtual sound writes stayed slow after the read window expired");
+        check(dut.slow_cnt_q == 0, "virtual sound writes reloaded the expired window");
+        $display("SOUND WINDOW EXPIRY: writes=%0d clocks=%0d fast_cycles=%0d",
+                 writes, clocks, elapsed_cycles);
+        sound_card_active = 1'b0;
     endtask
 
     /* The registered normal tick must equal the prior edge's accepted
@@ -404,6 +468,30 @@ module tb_vtw_slowdown;
     end
 
     localparam int WINDOW = 200;
+    task automatic check_sound_access(input logic [7:0] opcode,
+                                       input logic [15:0] address,
+                                       input logic active,
+                                       input logic should_slow);
+        int before_cycles, elapsed_cycles;
+        sound_card_active = active;
+        reboot_op_with(opcode, address);
+        sd_region_en = 10'b00_0000_1000;
+        sd_duration = 16'd64;
+        repeat (80) @(negedge phi0);
+        before_cycles = int'(cnt_core_cycles);
+        repeat (WINDOW) @(negedge phi0);
+        elapsed_cycles = int'(cnt_core_cycles) - before_cycles;
+        $display("SOUND ACCESS: op=%02X address=%04X virtual=%0b slow=%0b cycles=%0d counter=%0d",
+                 opcode, address, active, should_slow, elapsed_cycles, dut.slow_cnt_q);
+        check(should_slow ? elapsed_cycles <= WINDOW + WINDOW / 4 :
+                            elapsed_cycles > 2 * WINDOW,
+              $sformatf("sound op=%02X address=%04X virtual=%0b slow=%0b: %0d cycles",
+                        opcode, address, active, should_slow, elapsed_cycles));
+        if (!should_slow)
+            check(dut.slow_cnt_q == 0,
+                  "virtual sound writes reloaded the slowdown counter");
+        sound_card_active = 1'b0;
+    endtask
     int off_core, on_core, other_core;
     int iosel_on_core, iosel_off_core;
     int video_on_core, video_off_core;
@@ -414,7 +502,7 @@ module tb_vtw_slowdown;
     int d2_native_active_before;
     int d2_wait_cycles;
 
-    initial begin
+    initial if (RUN_TESTS) begin
         // ---- 0. Slowdown bookkeeping pipeline ----
         check_slow_update_pipeline();
 
@@ -430,7 +518,8 @@ module tb_vtw_slowdown;
         core_run = 1;
         repeat (80) @(negedge phi0);
         begin
-            int a = int'(cnt_core_cycles);
+            int a;
+            a = int'(cnt_core_cycles);
             repeat (WINDOW) @(negedge phi0);
             off_core = int'(cnt_core_cycles) - a;
         end
@@ -447,7 +536,8 @@ module tb_vtw_slowdown;
         sd_duration  = 16'd64;           // >= loop length in Apple cycles
         repeat (80) @(negedge phi0);     // let it re-lock
         begin
-            int a = int'(cnt_core_cycles);
+            int a;
+            a = int'(cnt_core_cycles);
             repeat (WINDOW) @(negedge phi0);
             on_core = int'(cnt_core_cycles) - a;
         end
@@ -467,7 +557,8 @@ module tb_vtw_slowdown;
         sd_duration  = 16'd64;
         repeat (80) @(negedge phi0);
         begin
-            int a = int'(cnt_core_cycles);
+            int a;
+            a = int'(cnt_core_cycles);
             repeat (WINDOW) @(negedge phi0);
             other_core = int'(cnt_core_cycles) - a;
         end
@@ -482,7 +573,8 @@ module tb_vtw_slowdown;
         reboot_with(16'hC400, 10'b00_0000_1000, 16'd64);   // slot 4 = bit3
         repeat (80) @(negedge phi0);
         begin
-            int a = int'(cnt_core_cycles);
+            int a;
+            a = int'(cnt_core_cycles);
             repeat (WINDOW) @(negedge phi0);
             iosel_on_core = int'(cnt_core_cycles) - a;
         end
@@ -495,19 +587,34 @@ module tb_vtw_slowdown;
         reboot_with(16'hC400, 10'd0, 16'd64);
         repeat (80) @(negedge phi0);
         begin
-            int a = int'(cnt_core_cycles);
+            int a;
+            a = int'(cnt_core_cycles);
             repeat (WINDOW) @(negedge phi0);
             iosel_off_core = int'(cnt_core_cycles) - a;
         end
         check(iosel_off_core > 2 * WINDOW,
               $sformatf("$C400 with slot-4 off stays warp (%0d)", iosel_off_core));
 
+        // Virtual AY/VIA writes and mode writes retain fast CPU work after
+        // their ordinary bus transaction. Reads still pace detection loops,
+        // and the same writes on a physical slot-4 card remain protected.
+        check_sound_access(8'h8D, 16'hC400, 1'b1, 1'b0);
+        check_sound_access(8'h8D, 16'hC481, 1'b1, 1'b0);
+        check_sound_access(8'h8D, 16'hC0C8, 1'b1, 1'b0);
+        check_sound_access(8'hAD, 16'hC404, 1'b1, 1'b1);
+        check_sound_access(8'hAD, 16'hC414, 1'b1, 1'b1);
+        check_sound_access(8'hAD, 16'hC0C8, 1'b1, 1'b1);
+        check_sound_access(8'h8D, 16'hC400, 1'b0, 1'b1);
+        check_sound_access(8'h8D, 16'hC0C8, 1'b0, 1'b1);
+        check_sound_window_expiry();
+
         // ---- 6. Floating-I/O region ($C019/$C030-$C05F) armed: a $C05A loop
         //         self-slows to ~1 MHz (FLOATBUS vapor lock / raster sync). ----
         reboot_with(16'hC05A, 10'b00_1000_0000, 16'd64);   // bit7 = floating I/O
         repeat (80) @(negedge phi0);
         begin
-            int a = int'(cnt_core_cycles);
+            int a;
+            a = int'(cnt_core_cycles);
             repeat (WINDOW) @(negedge phi0);
             video_on_core = int'(cnt_core_cycles) - a;
         end
@@ -519,7 +626,8 @@ module tb_vtw_slowdown;
         reboot_with(16'hC05A, 10'd0, 16'd64);
         repeat (80) @(negedge phi0);
         begin
-            int a = int'(cnt_core_cycles);
+            int a;
+            a = int'(cnt_core_cycles);
             repeat (WINDOW) @(negedge phi0);
             video_off_core = int'(cnt_core_cycles) - a;
         end
@@ -533,7 +641,8 @@ module tb_vtw_slowdown;
         disk2_write_timing_active = 1'b1;
         repeat (80) @(negedge phi0);
         begin
-            int a = int'(cnt_core_cycles);
+            int a;
+            a = int'(cnt_core_cycles);
             repeat (WINDOW) @(negedge phi0);
             disk2_on_core = int'(cnt_core_cycles) - a;
         end
@@ -546,7 +655,8 @@ module tb_vtw_slowdown;
         disk2_write_timing_active = 1'b0;
         repeat (80) @(negedge phi0);
         begin
-            int a = int'(cnt_core_cycles);
+            int a;
+            a = int'(cnt_core_cycles);
             repeat (WINDOW) @(negedge phi0);
             disk2_off_core = int'(cnt_core_cycles) - a;
         end
@@ -683,7 +793,7 @@ module tb_vtw_slowdown;
     end
 
     initial begin
-        #5ms;
+        #10ms;
         $display("VTW SLOWDOWN FAIL: timeout");
         $finish;
     end

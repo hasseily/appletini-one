@@ -537,7 +537,7 @@ def static_checks() -> None:
             "input logic wide_main" in engine,
             "vTW must extend the aux posted-write window for Super Hi-Res "
             "and arm the main interlace window from its private ctrl write")
-    require("wire core_post_accept = core_post_req && !video_selected &&"
+    require("wire core_post_accept = core_post_req && !video_direct_selected &&"
              in core_top and
             "!eng_post_full && !video_mirror_mode_q;" in core_top and
             "wire arm_post_accept = arm_post_we && arm_post_ready;"
@@ -573,6 +573,25 @@ def static_checks() -> None:
             "vTW must register strict core/ARM or direct-video mirror writes, "
             "retain bank-tagged inactive writes, exclude ARM writes during mirroring, "
             "and drain before mode/ownership barriers")
+    video_policy = read("hdl/apple/vtw_video_policy.sv")
+    require(".shr_capture_active(shr_capture_active_w)" in top and
+            "cycle_video_shr_active_q <= (shr_capture_active === 1'b1);" in core_top and
+            ".shr_active(cycle_video_shr_active_q)" in core_top and
+            "assign capture_only = shr_active;" in video_policy and
+            "else if (xl_is_posted && (video_direct_selected || core_post_blocked))" in core_top and
+            "assign mirror_active = !capture_only &&" in video_policy and
+            "wire video_direct_selected = video_selected ||" in core_top and
+            "((xstate_q == X_ROUTE) ? route_video_capture_only :" in core_top and
+            "cycle_video_capture_only_q <= route_video_capture_only;" in core_top and
+            "wire video_write_ready = cycle_video_capture_only_q || video_coalesce_ready;" in core_top and
+            "wire video_fast_accept = video_fast_req && video_write_ready &&" in core_top and
+            "video_start_ready && video_record_ready;" in core_top and
+            ".write_valid(video_fast_accept && !cycle_video_capture_only_q)" in core_top and
+            "if (video_fast_accept && !cycle_video_capture_only_q)" in core_top and
+            "((xstate_q == X_POST_STALL) && video_direct_selected)" in core_top,
+            "active synthetic SHR must use captured range/mode selection at every vTW "
+            "speed, preserve lossless renderer admission and ARM-hold ordering, and "
+            "never create a physical motherboard mirror obligation")
     require("vtw_service_init(UART0_BASE);" in main_c and
             "vtw_service_poll();" in main_c and
             "menu_platform.set_vtw_config = control_set_vtw_config;" in main_c,

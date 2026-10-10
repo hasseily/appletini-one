@@ -4,8 +4,8 @@ module tb_vtw_video_policy;
     logic [16:0] address = 0;
     logic sw_text = 0, sw_mixed = 0, sw_page2 = 0, sw_hires = 0;
     logic sw_80store = 0, sw_80col = 0;
-    logic post_main_wide = 0, overlay_match = 0;
-    logic mirror_active;
+    logic post_main_wide = 0, overlay_match = 0, shr_active = 0;
+    logic mirror_active, capture_only;
     int checks = 0;
 
     vtw_video_policy dut (.*);
@@ -32,6 +32,7 @@ module tb_vtw_video_policy;
         if (!aux && addr >= hires_base && addr < hires_base + 8192 &&
             !sw_text && sw_hires)
             active = 1;
+        if (shr_active) active = 0;
         return active;
     endfunction
 
@@ -42,6 +43,9 @@ module tb_vtw_video_policy;
             $fatal(1, "policy mismatch addr=%05x text=%b mixed=%b page2=%b hires=%b store80=%b col80=%b wide=%b overlay=%b",
                    address, sw_text, sw_mixed, sw_page2, sw_hires,
                    sw_80store, sw_80col, post_main_wide, overlay_match);
+        if (capture_only !== shr_active)
+            $fatal(1, "capture-only mismatch addr=%05x SHR=%b wide=%b",
+                   address, shr_active, post_main_wide);
         checks++;
     endtask
 
@@ -49,9 +53,9 @@ module tb_vtw_video_policy;
         // Every classic switch combination, both SHR-wide states and both
         // banks. Check every page boundary and its last byte, plus each
         // legacy metadata boundary which lies inside a 256-byte page.
-        for (int mode = 0; mode < 128; mode++) begin
-            {post_main_wide, sw_80col, sw_80store, sw_hires,
-             sw_page2, sw_mixed, sw_text} = 7'(mode);
+        for (int mode = 0; mode < 256; mode++) begin
+            {shr_active, post_main_wide, sw_80col, sw_80store, sw_hires,
+             sw_page2, sw_mixed, sw_text} = 8'(mode);
             for (int page = 0; page < 512; page++) begin
                 check(page * 256);
                 check(page * 256 + 255);
@@ -74,6 +78,7 @@ module tb_vtw_video_policy;
         sw_80store = 0;
         sw_80col = 1;
         post_main_wide = 0;
+        shr_active = 0;
         for (int addr = 0; addr < 131072; addr++) check(addr);
         check('h108DF);
         if (mirror_active) $fatal(1, "fullscreen DHGR must defer AUX $08DF");
@@ -90,6 +95,13 @@ module tb_vtw_video_policy;
         // Overlay selection overrides ordinary video ranges, in either bank.
         overlay_match = 1;
         for (int addr = 0; addr < 131072; addr++) check(addr);
+        // SHR suppresses physical mirroring for every eligible video/overlay
+        // write. The core's existing posted-window decode owns eligibility.
+        shr_active = 1;
+        for (int wide = 0; wide < 2; wide++) begin
+            post_main_wide = 1'(wide);
+            for (int addr = 0; addr < 131072; addr++) check(addr);
+        end
         $display("VTW VIDEO POLICY PASS (%0d checks)", checks);
         $finish;
     end

@@ -1,9 +1,12 @@
-# Appletini copy/fill API 1.0
+# Appletini copy/fill API 1.2
 
 The copy/fill service transfers 65C02 memory through the vTW CPU hold,
 shadow RAM, and PSRAM DMA. Matching FPGA firmware can run copy and fill
 directly between shadow BRAM and RamWorks PSRAM. The service checks the
-hardware signature and uses its ARM path if the FPGA engine is absent.
+hardware signature and uses its ARM path for ordinary copies if the FPGA
+engine is absent. Optional `PUBLISH_SHR` requires the matching FPGA capability;
+it never uses the ARM copy fallback. Optional `COPY_ROWS` copies strided rows
+with one descriptor and also requires matching FPGA support.
 
 The service requires an active virtual TransWarp CPU. It works at any vTW
 speed, including TURBO, and does not change the speed. The native motherboard
@@ -71,10 +74,10 @@ fail, for example if RamWorks is disabled.
 |---|---:|---|
 | 0 | 4 | ASCII `AMEM` |
 | 4 | 1 | Major version: 1 |
-| 5 | 1 | Minor version: 0 |
+| 5 | 1 | Minor version: 2 (prior services: 0, 1) |
 | 6 | 1 | Descriptor size: 16 |
 | 7 | 1 | Maximum descriptor count: 16 |
-| 8 | 2 | Feature bits: bit 0 COPY, bit 1 FILL, bit 2 PRIVATE; v1 = `$0007` |
+| 8 | 2 | Feature bits: bit 0 COPY, bit 1 FILL, bit 2 PRIVATE; bit 3 PUBLISH_SHR only when the FPGA supports it. Ordinary/old engine: `$0007`; publication engine: `$000F`; bit 4 COPY_ROWS adds `$0010` |
 | 10 | 2 | Lowest allowed endpoint address: `$0200` |
 | 12 | 2 | Exclusive endpoint limit: `$C000` |
 | 14 | 1 | Highest supported logical AUX bank: 126 |
@@ -109,7 +112,9 @@ The complete caller buffer occupies `10 + 16*N` bytes, at most 266 bytes.
 
 Payload length must match the count exactly. Unknown flags, operations,
 versions or nonzero reserved bytes are rejected. All descriptors, including
-their PRIVATE requirements, are checked before any destination is written.
+their PRIVATE/publication requirements, are checked before any destination is
+written. Publication range, capability, captured SHR mode and egress readiness
+are checked under the CPU hold.
 Hold acquisition can synchronize existing pending work even for a rejected
 PRIVATE request; this does not execute any of the requested writes.
 
@@ -117,20 +122,46 @@ PRIVATE request; this does not execute any of the requested writes.
 
 | Offset | Size | Meaning |
 |---|---:|---|
-| 0 | 1 | Operation: 1 COPY, 2 FILL |
-| 1 | 1 | Flags: bit 0 PRIVATE, other bits zero |
+| 0 | 1 | Operation: 1 COPY, 2 FILL, 3 COPY_ROWS |
+| 1 | 1 | Flags: bit 0 PRIVATE or bit 1 PUBLISH_SHR, mutually exclusive; other bits zero |
 | 2 | 1 | Source space: 0 MAIN, 1 AUX |
 | 3 | 1 | Source logical bank |
 | 4 | 2 | Source address |
 | 6 | 1 | Destination space: 0 MAIN, 1 AUX |
 | 7 | 1 | Destination logical bank |
 | 8 | 2 | Destination address |
-| 10 | 2 | Byte count, nonzero |
-| 12 | 1 | FILL value; must be zero for COPY |
-| 13 | 3 | Reserved: zero |
+| 10 | 2 | Byte count, or COPY_ROWS width, nonzero |
+| 12 | 1 | FILL value; zero for COPY and COPY_ROWS |
+| 13 | 1 | COPY_ROWS row count minus one; otherwise zero |
+| 14 | 1 | COPY_ROWS source gap; otherwise zero |
+| 15 | 1 | COPY_ROWS destination gap; otherwise zero |
 
 For FILL, all four source bytes (offsets 2–5) must be zero. COPY transfers the
 specified byte count unchanged. FILL repeats its one-byte value.
+
+### Optional COPY_ROWS
+
+Check feature bit 4 (`$0010`) before using operation 3. It copies 1–256 rows
+of `width` bytes each. After each non-final row it skips the unsigned source
+and destination gaps (0–255 bytes). Skipped destination bytes remain intact.
+The total copied byte count `width * rows` must be at most 65,535. Each endpoint's
+bounding span is `width * rows + gap * (rows - 1)`; the complete span must fit
+that endpoint's allowed bank range. Any overlap between source and destination
+bounding spans in the same physical bank is rejected, even when active row
+bytes would not overlap. There is no FILL_ROWS operation.
+
+PRIVATE and PUBLISH_SHR rules are unchanged. For publication, every row and
+its bounding destination span must fit AUX0 `$2000..$9CFF`. The ARM service
+checks rows support under the hold before any batch descriptor executes, and
+again before each engine START. An older engine returns UNAVAILABLE before
+execution; COPY_ROWS has no ARM or scalar fallback. A failure after transfer
+dispatch is final; do not retry. Progress counts copied bytes only, never gaps.
+
+For a native 256-pixel, eight-row packed strip, source MAIN `$0800`, destination
+AUX0 `$2010`, width128, rows8, source gap0 and destination gap32 copy 1,024 bytes
+while preserving both 16-byte borders on each 160-byte SHR row. This is the
+same memory/capture work as eight ordered COPY descriptors, with one engine
+command and one descriptor's validation/submission overhead.
 
 ### Endpoint rules
 
@@ -158,8 +189,10 @@ descriptors may overlap: they execute strictly in list order.
 
 ## 4. PRIVATE is an explicit working-memory contract
 
-**Every destination in MAIN or base AUX requires flag bit 0 (`PRIVATE`).**
-Extended-AUX destinations may use flags 0; PRIVATE is also accepted there.
+**MAIN and base-AUX working-memory destinations require flag bit 0 (`PRIVATE`).**
+The only visible-write exception is the separately negotiated `PUBLISH_SHR`
+mode below. Extended-AUX destinations may use flags 0; PRIVATE is also accepted
+there. Flags 0 still cannot publish MAIN or base AUX.
 
 A PRIVATE write updates authoritative CPU memory and maintains the relevant
 CPU cache coherence. It deliberately emits **no renderer capture records and
@@ -171,13 +204,66 @@ entire required range through the application's normal supported display or
 I/O path. A video-mode change alone is not a publish operation.
 
 This rule applies to all MAIN/base-AUX addresses, not just conventional video
-ranges: renderer and physical visibility depend on mode and consumer. Version
-1 has no visible-video-copy flag. Doom opts in for its phase arenas and its
-internal column buffer; its SHR screen blit remains on the existing path.
+ranges: renderer and physical visibility depend on mode and consumer. API 1.0
+has no visible-video-copy flag. Existing applications keep their current
+PRIVATE behavior when running on 1.1; nothing implicitly publishes a copy.
 
 The existing CPU hold first drains pending mirror/cache work. This prevents
 an older queued write from overwriting a newly restored private region.
 The broad F1.1.1 flush rules remain unchanged in this branch.
+
+### Optional PUBLISH_SHR pixel publication
+
+Check STATUS feature bit 3 (`$0008`) before choosing this path. A 1.1 ARM
+service paired with an old FPGA still reports only `$0007`. Capability means
+that the engine supports publication; it does not mean SHR is currently on.
+The caller must select captured fake-SHR (`C029` bits 7:6 equal `11`) before
+submitting a publication list. An unsupported startup probe should select
+the application's existing CPU publisher, before submitting any operation.
+
+Flag bit 1 (`$02`) publishes COPY, FILL or supported COPY_ROWS to **AUX, logical bank 0, pixel
+addresses `$2000` through `$9CFF`**. The exclusive end is `$9D00`: SCBs,
+palettes, and `$9DF8` mode control are excluded. Source endpoints follow the
+ordinary COPY rules. Combining this flag with PRIVATE is BAD_DESCRIPTOR;
+MAIN, extended AUX, or an interval outside the pixel plane is RANGE.
+
+The service checks the whole batch under one CPU hold before any descriptor
+runs. It requires the engine capability, active captured SHR, and enabled,
+non-reset capture egress. Missing support or mode is UNAVAILABLE; a lost
+hold/session is SESSION_LOST. The engine also checks these conditions during
+execution. Flags do not alter the caller's memory mapping or CPU speed.
+
+Each published byte updates the authoritative AUX0 CPU shadow and enters the
+existing ordered capture FIFO on the **same accepted edge**. FIFO backpressure
+stalls both. CPU1 consumes the ordinary byte records through its existing
+renderer path. The operation emits no motherboard video replay and does not
+ask ARM to compose pixels. Prior accepted capture records stay before the
+copy; later CPU writes stay after it. Physical frame markers may fall within
+a copy, just as they can between ordinary CPU stores.
+
+Success means all bytes reached CPU memory and the ordered capture FIFO;
+it does **not** mean they have appeared on the display or that a strip/frame
+was presented atomically. The completed-byte count includes only shadow plus
+capture commits. On errors, a prefix may already be visible. No failed
+publication retries through scalar ARM copies, even if zero bytes completed.
+The existing no-retry and unsafe-drain rules below still apply.
+
+An eight-row 256-pixel packed strip can use eight 128-byte descriptors:
+source rows have stride 128; SHR destination rows have stride 160. This
+amortizes request/hold overhead without changing the CPU compositor. Example
+for the first two rows (caller has already checked feature bit 3):
+
+```asm
+        AMEM_BEGIN 2
+        AMEM_COPY_RECORD AMEM_MAIN, 0, $0800, AMEM_AUX, 0, $2020, 128, AMEM_PUBLISH_SHR
+        AMEM_COPY_RECORD AMEM_MAIN, 0, $0880, AMEM_AUX, 0, $20C0, 128, AMEM_PUBLISH_SHR
+```
+
+This capability belongs to the matching source changes, not released F1.2.2
+firmware. Host C/RTL tests establish protocol behavior; synthesis, timing
+closure, FIFO-consumer throughput, and board validation remain separate.
+Do not derive a hardware frame rate from the functional simulator or assume
+capture FIFO admission is free.
 
 ## 5. Ownership, failures and timing
 
@@ -194,6 +280,20 @@ The engine preserves bytes outside unaligned endpoints. PSRAM still uses the
 existing eight-byte transactions, with source and destination line buffers;
 this change removes ARM word traffic but does not add long QPI bursts.
 The direct engine owns the shared PSRAM path until all accepted work drains.
+The current ARM backend keeps that ownership for the complete held batch.
+It checks the engine signature and idle shadow host port once, then checks
+the live hold, reset generation and SmartPort session before every START
+and during every completion poll. It checks all descriptor ranges before
+writes and checks publication mode once for the batch and again before each
+publication START. An unsafe drain keeps both the surviving CPU hold and
+the shared path reserved. Old engines still use the existing ARM fallback.
+
+The native MMIO fixture counts 186 reads for sixteen private descriptors
+(previously 306), and 118 reads for eight publication descriptors (previously
+257). Command writes and engine/poll behavior do not change. These are source
+operation counts, not hardware timing measurements. The fixture can also run
+against saved pre-change sources with `scripts/test_memory_api_hw.py
+--baseline-dir PATH`.
 The ARM fallback still copies 504 useful bytes per chunk, with aligned DDR
 DMA transactions of at most 512 bytes. That avoids the old DDR DMA engine's
 ten-bit length truncation; the new engine has its own 16-bit length.
@@ -209,12 +309,12 @@ restarting the Appletini firmware, not by resubmitting the list.
 |---|---|---|
 | `$00` | OK | All descriptors completed |
 | `$21` | BADCTL / unsupported | Old firmware or unsupported selector/unit |
-| `$60` | UNAVAILABLE | Active vTW/RamWorks prerequisite missing |
+| `$60` | UNAVAILABLE | Active vTW/RamWorks or publication capability/mode/egress prerequisite missing |
 | `$61` | BAD_HEADER | Signature, version, count, flags or payload length invalid |
 | `$62` | BAD_DESCRIPTOR | Operation, flags, unused fields or reserved bytes invalid |
 | `$63` | RANGE | Unsupported endpoint/bank, zero count or address overflow |
 | `$64` | OVERLAP | COPY source/destination overlap in the same bank |
-| `$65` | PRIVATE_REQUIRED | MAIN/base-AUX destination lacks PRIVATE |
+| `$65` | PRIVATE_REQUIRED | MAIN/base-AUX destination lacks PRIVATE or valid PUBLISH_SHR |
 | `$66` | BUSY | Another owner is using the service, hold or DMA |
 | `$67` | IO | Transfer/hold timeout or hardware error |
 | `$68` | SESSION_LOST | Apple reset or accelerated execution session disappeared |
@@ -233,7 +333,7 @@ time and transfer cost. Use ARM timestamps or external wall time for speed
 measurements. Do not infer hardware acceleration from the simulator's timing:
 its API model verifies memory and transport behavior, not DMA speed.
 
-### FPGA copy registers (F1.2.2)
+### FPGA copy registers (F1.2.2 plus optional publication extension)
 
 These registers serve ARM firmware. Apple applications should keep using the
 SmartPort API. Register indices are words at `$40000000 + 4 * index`.
@@ -243,16 +343,20 @@ SmartPort API. Register indices are words at `$40000000 + 4 * index`.
 | `$B0` | SOURCE | Physical source byte address, bits 23:0 |
 | `$B1` | DESTINATION | Physical destination byte address, bits 23:0 |
 | `$B2` | LENGTH | Byte count, bits 15:0 |
-| `$B3` write | COMMAND | Bit 0 START, bit 1 ABORT, bit 2 FILL; bits 15:8 fill value |
+| `$B3` write | COMMAND | Bit 0 START, bit 1 ABORT, bit 2 FILL, bit 3 PUBLISH_SHR; bits 15:8 fill value |
 | `$B3` read | STATUS | Bit 0 BUSY, bit 1 DONE, bit 2 ERROR, bit 3 ABORTED |
 | `$B4` | COMPLETED | Confirmed destination bytes, bits 15:0 |
 | `$B5` | SIGNATURE | `$56435031` (`VCP1`) |
+| `$B6` | CAPABILITIES | Bit 0 PUBLISH_SHR supported; bit 1 captured SHR active; bit 2 egress enabled and not in reset. Old FPGA reads zero |
 
 Physical addresses below `$020000` select MAIN/base-AUX shadow BRAM; addresses
 from `$020000` through `$7FFFFF` select PSRAM. START requires a live, flushed
 CPU hold and an idle shadow host port. It clears the previous result; reads
 do not clear DONE, ERROR, or ABORTED. ABORT stops new work and drains accepted
 transactions before clearing BUSY. Session loss also cancels the engine.
+Publication additionally requires `$B6 & 7 == 7`, physical destination
+`$012000..$019CFF`, and a matching capture admission for each shadow byte.
+Capability/state loss cancels publication and reports only its accepted prefix.
 
 Firmware reserves the shared PSRAM path before START. A missing signature
 permits the ARM fallback. Once it submits START, any failure ends the request
@@ -321,7 +425,7 @@ two-byte length and its payload. Write `$02` to CONTROL to execute the
 SmartPort command, then poll CONTROL bit 7. Pop the first response byte:
 the SmartPort result. Each pop is `LDA $CFF0` followed by `STA $CFF2`;
 reading `$CFF2` does not consume anything. For successful STATUS, pop a two-byte returned length
-followed by that many data bytes (32 for API 1.0). CONTROL returns only its
+followed by that many data bytes (32 for API 1.x). CONTROL returns only its
 result byte. Finish by releasing C8 at `$CFFF`.
 
 The parameter pointer bytes are retained in this framing for compatibility;
@@ -337,12 +441,38 @@ fall back to CPU copying.
 ```powershell
 python scripts/test_memory_api.py
 python scripts/test_memory_api_hw.py
+python scripts/test_vtw_copy_publish.py
 python scripts/test_ps_dma_command.py
 ca65 --cpu 65c02 -I software/memory_api -o memory_api_example.o software/memory_api/example.s
 ```
 
-The C checks exercise the parser, transfer order, private-memory rules, and
-failure handling. The DMA check needs Vivado simulation tools. Build the PL,
+The C checks exercise the parser, transfer order, private-memory rules,
+publication capability/mode gating, whole-batch validation, ordered strip
+records, and failure handling. Fake MMIO tests do not measure FPGA timing. The DMA check needs Vivado simulation tools. Build the PL,
 export its XSA, rebuild Vitis, and package `FIRMWARE.BIN` as described in
 [the build guide](README_VIVADO.md). On the card, check copy/readback,
 reset, and error handling on spare memory before using an application.
+
+### COPY_ROWS hardware contract and measured simulation
+
+CSR `$B7` stores row-count-minus-one in bits7:0, source gap in15:8 and
+destination gap in23:16. Command `$B3` bit4 selects rows; length `$B2` then
+means width. Capability `$B6` bit3 advertises support. Legacy commands ignore
+`$B7`. Register writes while the engine is busy remain blocked.
+
+The engine validates total bytes and complete spans before memory access.
+It limits each word to the current row, applies gaps only between rows and
+retains partial PSRAM lines so skipped bytes survive. Publication still commits
+one shadow byte and one capture record on the same ready edge. Reset, abort,
+mode loss and accepted-transaction drain use the existing fail-closed path.
+
+The reproducible Verilator fixture measured 2,563 engine clocks for the
+1,024-byte eight-row publication above, versus 2,584 clocks for eight separate
+128-byte commands. The immediate-completion C fixture counts 49 MMIO reads and 8 writes for
+that one rows descriptor, versus 118 reads and 35 writes for eight publication
+descriptors, including the PSDMA claim check. Real hardware may need more busy
+polls; those polls overlap engine work and cannot all be subtracted from wall
+time. The main saving comes from fewer ARM/AXI and caller submission operations,
+not faster pixel memory. This simulation covers the
+production engine, shadow and capture logic with functional FIFO storage;
+it does not establish synthesis timing, board speed or DDR consumer latency.

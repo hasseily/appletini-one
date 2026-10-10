@@ -23,6 +23,9 @@ typedef struct {
     uint8_t accelerated;
     uint8_t hold_requested;
     uint8_t poisoned;
+    uint8_t copy_checked;
+    uint8_t copy_present;
+    uint8_t copy_claimed;
 } memory_hw_state_t;
 
 static memory_hw_state_t state;
@@ -114,6 +117,8 @@ static uint8_t hw_begin(void *context, uint8_t needs_ramworks)
     uint8_t error;
     (void)context;
     if (state.poisoned != 0U) return MEMORY_API_UNSAFE;
+    state.copy_checked = 0U;
+    state.copy_present = 0U;
     if (!state.accelerated || !hw_available(NULL) ||
         (needs_ramworks && (REG_READ(MEM_RAMWORKS_ENABLE) & 1U) == 0U))
         return MEMORY_API_UNAVAILABLE;
@@ -328,49 +333,112 @@ static uint8_t hw_copy_abort(void)
     return MEMORY_API_UNSAFE;
 }
 
-static uint8_t hw_transfer(void *context, uint32_t source,
+static uint16_t hw_features(void *context)
+{
+    (void)context;
+    /* Older VCP1 engines return zero for this formerly unmapped register.
+     * The feature is supported even while the current video mode is off. */
+    if (REG_READ(CARD_CTRL_VTW_COPY_SIGNATURE_REG) != CARD_CTRL_VTW_COPY_SIGNATURE)
+        return 0U;
+    uint32_t caps = REG_READ(CARD_CTRL_VTW_COPY_CAPABILITIES_REG);
+    return ((caps & CARD_CTRL_VTW_COPY_CAP_PUBLISH_SHR) != 0U ?
+             MEMORY_API_FEATURE_PUBLISH_SHR : 0U) |
+           ((caps & CARD_CTRL_VTW_COPY_CAP_ROWS) != 0U ?
+             MEMORY_API_FEATURE_COPY_ROWS : 0U);
+}
+
+static uint8_t hw_validate_publish(void *context)
+{
+    const uint32_t required = CARD_CTRL_VTW_COPY_CAP_PUBLISH_SHR |
+                              CARD_CTRL_VTW_COPY_CAP_SHR_ACTIVE |
+                              CARD_CTRL_VTW_COPY_CAP_EGRESS_READY;
+    (void)context;
+    if (!hw_held(NULL)) return MEMORY_API_SESSION_LOST;
+    state.copy_present = REG_READ(CARD_CTRL_VTW_COPY_SIGNATURE_REG) ==
+                         CARD_CTRL_VTW_COPY_SIGNATURE;
+    state.copy_checked = 1U;
+    if (state.copy_present == 0U ||
+        (REG_READ(CARD_CTRL_VTW_COPY_CAPABILITIES_REG) & required) != required)
+        return MEMORY_API_UNAVAILABLE;
+    return MEMORY_API_OK;
+}
+
+static uint8_t hw_validate_rows(void *context)
+{
+    (void)context;
+    if (!hw_held(NULL)) return MEMORY_API_SESSION_LOST;
+    state.copy_present = REG_READ(CARD_CTRL_VTW_COPY_SIGNATURE_REG) ==
+                         CARD_CTRL_VTW_COPY_SIGNATURE;
+    state.copy_checked = 1U;
+    if (state.copy_present == 0U ||
+        (REG_READ(CARD_CTRL_VTW_COPY_CAPABILITIES_REG) & CARD_CTRL_VTW_COPY_CAP_ROWS) == 0U)
+        return MEMORY_API_UNAVAILABLE;
+    return MEMORY_API_OK;
+}
+
+static uint8_t hw_transfer_command(void *context, uint32_t source,
                            uint32_t destination, uint16_t length,
-                           uint8_t operation, uint8_t fill,
+                           uint8_t operation, uint8_t fill, uint8_t flags,
+                           uint8_t rows_minus1, uint8_t source_gap, uint8_t destination_gap,
                            uint16_t *completed)
 {
     uint32_t started;
     uint32_t status;
     uint32_t command = CARD_CTRL_VTW_COPY_START_BIT;
+    uint32_t expected = (uint32_t)length * ((uint32_t)rows_minus1 + 1U);
     uint8_t error;
     (void)context;
     *completed = 0U;
     /* The signature is the only fallback gate. Once START is written, even
      * an error with no confirmed bytes must not retry through the ARM path. */
-    if (REG_READ(CARD_CTRL_VTW_COPY_SIGNATURE_REG) != CARD_CTRL_VTW_COPY_SIGNATURE)
+    if (state.copy_checked == 0U) {
+        state.copy_present = REG_READ(CARD_CTRL_VTW_COPY_SIGNATURE_REG) ==
+                             CARD_CTRL_VTW_COPY_SIGNATURE;
+        state.copy_checked = 1U;
+    }
+    if (state.copy_present == 0U)
         return MEMORY_API_UNAVAILABLE;
-    if (!hw_held(NULL)) return MEMORY_API_SESSION_LOST;
-    if (psdma_acquire(PSDMA_OWNER_MEMORY) != PSDMA_OK) return MEMORY_API_BUSY;
-    if ((REG_READ(CARD_CTRL_VTW_COPY_STATUS_REG) &
-         CARD_CTRL_VTW_COPY_BUSY_BIT) != 0U) {
-        error = hw_copy_abort();
-        if (error == MEMORY_API_OK) {
-            psdma_release(PSDMA_OWNER_MEMORY);
-            return MEMORY_API_BUSY;
+    if (state.copy_claimed == 0U) {
+        if (!hw_held(NULL)) return MEMORY_API_SESSION_LOST;
+        if (psdma_acquire(PSDMA_OWNER_MEMORY) != PSDMA_OK) return MEMORY_API_BUSY;
+        state.copy_claimed = 1U;
+        if ((REG_READ(CARD_CTRL_VTW_COPY_STATUS_REG) &
+             CARD_CTRL_VTW_COPY_BUSY_BIT) != 0U) {
+            error = hw_copy_abort();
+            return error == MEMORY_API_OK ? MEMORY_API_BUSY : error;
         }
-        return error;
-    }
-    /* The host port and copy engine share shadow port B. A preceding scalar
-     * access can still be fetching its next byte when the core hold ends. */
-    started = hw_micros(NULL);
-    while ((REG_READ(CARD_CTRL_VTW_SHADOW_READ4_STATUS_REG) &
-            CARD_CTRL_VTW_SHADOW_READ4_READY_BIT) == 0U) {
-        if (!hw_held(NULL)) {
-            psdma_release(PSDMA_OWNER_MEMORY);
-            return MEMORY_API_SESSION_LOST;
-        }
-        if ((uint32_t)(hw_micros(NULL) - started) >= MEM_TRANSFER_TIMEOUT_US) {
-            psdma_release(PSDMA_OWNER_MEMORY);
-            return MEMORY_API_IO;
+        /* The host port and copy engine share shadow port B. A preceding
+         * scalar access can still be fetching its next byte when the hold
+         * starts. Drain it once before the first engine descriptor. */
+        started = hw_micros(NULL);
+        while ((REG_READ(CARD_CTRL_VTW_SHADOW_READ4_STATUS_REG) &
+                CARD_CTRL_VTW_SHADOW_READ4_READY_BIT) == 0U) {
+            if (!hw_held(NULL)) return MEMORY_API_SESSION_LOST;
+            if ((uint32_t)(hw_micros(NULL) - started) >= MEM_TRANSFER_TIMEOUT_US)
+                return MEMORY_API_IO;
         }
     }
+    /* The lease retains the engine and shadow port across this held batch.
+     * A preceding successful transfer proved BUSY clear and all writes
+     * complete; no other PSDMA owner or Apple CPU can enter the path.
+     * Session/reset/hold checks still run before every START and every poll. */
     if (!hw_held(NULL)) {
-        psdma_release(PSDMA_OWNER_MEMORY);
         return MEMORY_API_SESSION_LOST;
+    }
+    if (operation == MEMORY_API_COPY_ROWS) {
+        if ((REG_READ(CARD_CTRL_VTW_COPY_CAPABILITIES_REG) & CARD_CTRL_VTW_COPY_CAP_ROWS) == 0U)
+            return MEMORY_API_UNAVAILABLE;
+        command |= CARD_CTRL_VTW_COPY_ROWS_BIT;
+        REG_WRITE(CARD_CTRL_VTW_COPY_ROWS_REG, (uint32_t)rows_minus1 |
+                  ((uint32_t)source_gap << 8) | ((uint32_t)destination_gap << 16));
+    }
+    if ((flags & MEMORY_API_PUBLISH_SHR) != 0U) {
+        const uint32_t required = CARD_CTRL_VTW_COPY_CAP_PUBLISH_SHR |
+                                  CARD_CTRL_VTW_COPY_CAP_SHR_ACTIVE |
+                                  CARD_CTRL_VTW_COPY_CAP_EGRESS_READY;
+        if ((REG_READ(CARD_CTRL_VTW_COPY_CAPABILITIES_REG) & required) != required)
+            return MEMORY_API_UNAVAILABLE;
+        command |= CARD_CTRL_VTW_COPY_PUBLISH_SHR_BIT;
     }
     if (operation == MEMORY_API_FILL)
         command |= CARD_CTRL_VTW_COPY_FILL_BIT |
@@ -392,10 +460,9 @@ static uint8_t hw_transfer(void *context, uint32_t source,
                        CARD_CTRL_VTW_COPY_ABORTED_BIT)) != 0U) {
             *completed = (uint16_t)(REG_READ(CARD_CTRL_VTW_COPY_COMPLETED_REG) &
                                     CARD_CTRL_VTW_COPY_COMPLETED_MASK);
-            psdma_release(PSDMA_OWNER_MEMORY);
             return (status & (CARD_CTRL_VTW_COPY_ERROR_BIT |
                              CARD_CTRL_VTW_COPY_ABORTED_BIT)) == 0U &&
-                   *completed == length ? MEMORY_API_OK : MEMORY_API_IO;
+                   *completed == expected ? MEMORY_API_OK : MEMORY_API_IO;
         }
         if ((uint32_t)(hw_micros(NULL) - started) >= MEM_COPY_TIMEOUT_US) {
             error = MEMORY_API_IO;
@@ -409,8 +476,24 @@ static uint8_t hw_transfer(void *context, uint32_t source,
     }
     *completed = (uint16_t)(REG_READ(CARD_CTRL_VTW_COPY_COMPLETED_REG) &
                             CARD_CTRL_VTW_COPY_COMPLETED_MASK);
-    psdma_release(PSDMA_OWNER_MEMORY);
     return error;
+}
+
+static uint8_t hw_transfer(void *context, uint32_t source, uint32_t destination,
+                           uint16_t length, uint8_t operation, uint8_t fill,
+                           uint8_t flags, uint16_t *completed)
+{
+    return hw_transfer_command(context, source, destination, length, operation,
+                                fill, flags, 0U, 0U, 0U, completed);
+}
+
+static uint8_t hw_transfer_rows(void *context, uint32_t source, uint32_t destination,
+                                uint16_t width, uint8_t rows_minus1,
+                                uint8_t source_gap, uint8_t destination_gap,
+                                uint8_t flags, uint16_t *completed)
+{
+    return hw_transfer_command(context, source, destination, width, MEMORY_API_COPY_ROWS,
+                                0U, flags, rows_minus1, source_gap, destination_gap, completed);
 }
 
 static uint8_t hw_end(void *context)
@@ -438,6 +521,10 @@ static uint8_t hw_end(void *context)
     }
     if (state.hold_requested != 0U && hw_release() != MEMORY_API_OK)
         return MEMORY_API_UNSAFE;
+    if (state.copy_claimed != 0U) {
+        psdma_release(PSDMA_OWNER_MEMORY);
+        state.copy_claimed = 0U;
+    }
     return was_live ? MEMORY_API_OK : MEMORY_API_SESSION_LOST;
 }
 
@@ -446,12 +533,16 @@ static uint8_t hw_private_required(void *context, uint32_t physical,
 {
     (void)context;
     (void)length;
-    /* v1 offers working-memory copies only. Every shadow destination needs
-     * explicit PRIVATE: no renderer capture or motherboard replay is emitted. */
+    /* Ordinary shadow copies remain private. The parser bypasses this check
+     * only for a separately validated PUBLISH_SHR descriptor. */
     return physical < 0x20000UL;
 }
 
 const memory_api_backend_t memory_api_hardware = {
-    NULL, hw_available, hw_begin, hw_read, hw_write, hw_end,
-    hw_private_required, hw_micros, hw_transfer
+    .ctx = NULL, .available = hw_available, .begin = hw_begin,
+    .read = hw_read, .write = hw_write, .end = hw_end,
+    .private_required = hw_private_required, .micros = hw_micros,
+    .transfer = hw_transfer, .features = hw_features,
+    .validate_publish = hw_validate_publish, .validate_rows = hw_validate_rows,
+    .transfer_rows = hw_transfer_rows
 };

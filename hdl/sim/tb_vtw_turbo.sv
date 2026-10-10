@@ -148,6 +148,7 @@ module tb_vtw_turbo;
     logic [7:0] video_record_data;
     logic video_record_ready = 1'b1;
     logic post_main_wide = 1'b0;
+    logic shr_capture_active = 1'b0;
     logic overlay_capture_armed = 1'b0;
     logic bus_owned;
     integer direct_video_writes = 0;
@@ -226,6 +227,7 @@ module tb_vtw_turbo;
         .d2_write_timing_active(disk2_write_timing_active),
         .ramworks_en(ramworks_en), .video_vbl(1'b0),
         .post_main_wide(post_main_wide),
+        .shr_capture_active(shr_capture_active),
         .video_record_enable(video_record_enable),
         .video_record_valid(video_record_valid),
         .video_record_addr(video_record_addr),
@@ -301,8 +303,9 @@ module tb_vtw_turbo;
         .sw_page2(dut.vsss.sw_page2), .sw_hires(dut.vsss.sw_hires),
         .sw_80store(dut.vsss.sw_80store), .sw_80col(dut.vsss.sw_80col),
         .post_main_wide(dut.post_main_wide_eff),
-        .overlay_match(overlay_capture_armed),
-        .mirror_active(capture_policy_active)
+        .shr_active(shr_capture_active),
+        .overlay_match(overlay_capture_armed || host_is_iiplus),
+        .mirror_active(capture_policy_active), .capture_only()
     );
     always @(posedge clk) begin
         if (!rstn)
@@ -310,7 +313,7 @@ module tb_vtw_turbo;
         else if (dut.core_res_n) begin
             if (dut.xstate_q == dut.X_CAPTURE && dut.d2_time_ready &&
                 !dut.video_barrier)
-                expected_policy_active = capture_policy_active || host_is_iiplus;
+                expected_policy_active = capture_policy_active;
             else if (dut.xstate_q == dut.X_ROUTE) begin
                 #1ps;
                 check(dut.cycle_video_mirror_active_q === expected_policy_active,
@@ -343,7 +346,8 @@ module tb_vtw_turbo;
             arm_responses <= 0;
             checked_display_cycles <= 0;
         end else begin
-            check((video_record_valid && video_record_ready) ===
+            check((video_record_valid && video_record_ready &&
+                   !dut.cycle_video_capture_only_q) ===
                   (dut.video_coalescer_i.write_valid &&
                    dut.video_coalescer_i.write_ready),
                   "renderer and motherboard mirror accepted different records");
@@ -389,6 +393,9 @@ module tb_vtw_turbo;
                 endcase
             end
             if (ab_read.data_en && !ab_read.rw) begin
+                // Same accepted-write predicate as apple_cycle_capture.
+                if (ab_read.addr == 16'hC029)
+                    shr_capture_active <= ab_read.data[7:6] == 2'b11;
                 if (ab_read.addr == 16'hC000) mb_80store <= 1'b0;
                 if (ab_read.addr == 16'hC001) mb_80store <= 1'b1;
                 if (ab_read.addr == 16'hC005) begin
@@ -521,6 +528,7 @@ module tb_vtw_turbo;
         video_record_enable = 1'b0;
         video_record_ready = 1'b1;
         post_main_wide = 1'b0;
+        shr_capture_active = 1'b0;
         overlay_capture_armed = 1'b0;
         check_video_banks = 1'b0;
         check_deferred_page_flip = 1'b0;
@@ -1710,7 +1718,9 @@ module tb_vtw_turbo;
         $display("VTW TURBO POST STALL EXIT/REENTRY PASS: kind=%0d", kind);
     endtask
 
-`ifdef VTW_SHADOW_WRITE_GUARDS
+`ifdef VTW_SHR_CAPTURE_TEST
+`include "vtw_shr_capture_cases.svh"
+`elsif VTW_SHADOW_WRITE_GUARDS
     // Reuse the real CPU/bus/shadow fixture for the focused retirement test.
 `include "vtw_shadow_write_guard_cases.svh"
 `else

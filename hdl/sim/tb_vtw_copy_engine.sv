@@ -3,14 +3,20 @@
 // Real shadow BRAM, registered PSRAM acceptance, and delayed line responses.
 // The golden result is a byte copy/fill from the initial fixture, independent
 // of the engine's word selection, line buffer, and state machine.
-module tb_vtw_copy_engine;
+module tb_vtw_copy_engine #(parameter bit RUN_TESTS = 1'b1);
     localparam int FIXTURE_BYTES = 'h22000;
     logic clk = 1'b0, rstn = 1'b0;
     logic start = 1'b0, abort_req = 1'b0, permit = 1'b1;
     logic [23:0] source = '0, destination = '0;
     logic [15:0] length = '0;
+    logic copy_rows = 1'b0;
+    logic [7:0] rows_minus1 = 0, source_gap = 0, destination_gap = 0;
     logic fill = 1'b0;
     logic [7:0] fill_data = 8'hA6;
+    logic publish = 1'b0, publish_active = 1'b1, publish_ready = 1'b1;
+    wire publish_valid;
+    wire [16:0] publish_addr;
+    wire [7:0] publish_data;
     wire busy, done, error, aborted;
     wire [15:0] completed;
     wire sh_en, sh_we, sh_word_we;
@@ -32,7 +38,7 @@ module tb_vtw_copy_engine;
     integer clocks = 0, checks = 0, cases = 0;
     integer ps_reads = 0, ps_writes = 0, sh_reads = 0;
     integer sh_writes = 0, sh_wide_writes = 0, written_bytes = 0;
-    integer command_src = 0, command_dst = 0, command_len = 0;
+    integer command_src = 0, command_dst = 0, command_len = 0, command_width = 1;
     logic command_fill = 1'b0, track_progress = 1'b0;
     logic [7:0] command_fill_data;
     string label = "reset";
@@ -73,6 +79,13 @@ module tb_vtw_copy_engine;
     // ps_ready is the controller's registered acceptance pulse. The request
     // has already been captured when the DUT sees it on the following edge.
     // Responses likewise arrive only after acceptance, with varying latency.
+    function automatic integer source_at(input integer index);
+        return command_src + index + (copy_rows ? (index/command_width)*int'(source_gap) : 0);
+    endfunction
+    function automatic integer destination_at(input integer index);
+        return command_dst + index + (copy_rows ? (index/command_width)*int'(destination_gap) : 0);
+    endfunction
+
     task automatic tick;
         logic next_ready, next_rvalid;
         logic [63:0] next_rdata;
@@ -87,8 +100,8 @@ module tb_vtw_copy_engine;
             if (sh_we) begin
                 commit_bytes = sh_word_we ? 4 : 1;
                 check(!sh_word_we || sh_addr[1:0] == 0, "unaligned shadow word write");
-                check(sh_addr == command_dst + written_bytes, "shadow writes are not an ordered prefix");
-                check(sh_addr + commit_bytes <= command_dst + command_len, "shadow write exceeded length");
+                check(sh_addr == destination_at(written_bytes), "shadow writes are not an ordered prefix");
+                check(sh_addr + commit_bytes <= destination_at(command_len-1)+1, "shadow write exceeded length");
                 written_bytes += commit_bytes;
                 sh_writes++;
                 if (sh_word_we) sh_wide_writes++;
@@ -98,12 +111,11 @@ module tb_vtw_copy_engine;
             commit_bytes = 0;
             for (int lane = 0; lane < 8; lane++) begin
                 ps_memory[accepted_addr + lane] = accepted_data[8*lane +: 8];
-                if (accepted_addr + lane >= command_dst &&
-                    accepted_addr + lane < command_dst + command_len)
-                    commit_bytes++;
+                for (int index = written_bytes; index < command_len; index++)
+                    if (destination_at(index) == accepted_addr + lane) commit_bytes++;
             end
-            check(accepted_addr <= command_dst + written_bytes &&
-                  accepted_addr + 8 > command_dst + written_bytes,
+            check(accepted_addr <= destination_at(written_bytes) &&
+                  accepted_addr + 8 > destination_at(written_bytes),
                   "PSRAM writes are not an ordered prefix");
             written_bytes += commit_bytes;
         end
@@ -165,7 +177,8 @@ module tb_vtw_copy_engine;
     task automatic launch(input integer src, dst, count, input logic is_fill);
         command_src = src;
         command_dst = dst;
-        command_len = count;
+        command_width = count == 0 ? 1 : count;
+        command_len = copy_rows ? count*(int'(rows_minus1)+1) : count;
         command_fill = is_fill;
         command_fill_data = fill_data;
         source = 24'(src);
@@ -177,13 +190,13 @@ module tb_vtw_copy_engine;
         start = 1'b0;
         track_progress = 1'b1;
         check(completed == 0, "new command did not clear progress");
-        if (permit && !abort_req)
+        if (permit && !abort_req && (!publish || publish_active))
             check(busy && !done && !error && !aborted, "new command did not clear sticky status");
     endtask
 
     task automatic wait_done;
         integer budget;
-        budget = 50000;
+        budget = 200000;
         while (busy && budget > 0) begin
             tick();
             budget--;
@@ -194,8 +207,8 @@ module tb_vtw_copy_engine;
 
     task automatic verify_memory;
         for (int index = 0; index < written_bytes; index++)
-            expected[command_dst + index] = command_fill ? command_fill_data :
-                                           initial_byte(command_src + index);
+            expected[destination_at(index)] = command_fill ? command_fill_data :
+                                           initial_byte(source_at(index));
         for (int address = 0; address < FIXTURE_BYTES; address++) begin
             if (actual_byte(address) !== expected[address])
                 $fatal(1, "VTW COPY ENGINE FAIL %s memory[%06x]=%02x expected=%02x",
@@ -278,7 +291,7 @@ module tb_vtw_copy_engine;
         sticky();
     endtask
 
-    initial begin
+    initial if (RUN_TESTS) begin
         repeat (3) tick();
         rstn = 1'b1;
         tick();

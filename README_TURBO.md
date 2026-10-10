@@ -117,13 +117,39 @@ display mode does not use remain dirty in bank-tagged mirror RAM. Ordinary
 I/O and RAMWRT changes can proceed without draining those inactive pages.
 Every write still reaches the renderer, including hidden-page drawing.
 Mixed mode retains text, and 80STORE keeps display page selection on page 1.
-AUX graphics/SHR, paged MAIN SHR, armed overlays and the legacy Li control
+AUX graphics outside synthetic SHR, armed overlays and the legacy Li control
 holes retain conservative immediate mirroring. Physical II/II+ hosts retain
-the immediate policy because their motherboard cannot steer AUX with //e
-soft switches. All classic speed presets retain their existing write path.
+the immediate policy for classic video because their motherboard cannot steer
+AUX with //e soft switches. Non-SHR writes at classic speed presets retain
+their existing write path.
+
+Synthetic SHR is capture-only at every vTW speed, including TURBO. The accepted
+`$C029` value must have bits 7:6 set, matching the renderer's fake-SHR selection;
+a physical IIgs does not enable this synthetic mode. While selected, every
+write already classified as video or overlay bypasses the motherboard mirror.
+This includes AUX `$2000–$9FFF` pixels/SCBs/palettes and classic MAIN/AUX text
+and HGR windows, which can serve as work memory while SHR is displayed. MAIN
+`$6000–$9FFF` remains eligible only while paged SHR is enabled (`AUX $9DF8` is
+1 or 2, or the PS main-wide fallback is set); no new addresses become video
+writes. Armed overlays follow the same capture-only rule. Writes
+still update the CPU's private shadow and enter the ordered renderer stream;
+renderer backpressure stalls admission without dropping intermediate values.
+The CPU's selected fixed-speed pacing is unchanged.
+
+SHR bytes do not become deferred mirror work, so slot I/O, RamWorks bank
+changes, PRIVATE memory holds and session shutdown cannot turn them into a
+later motherboard burst. They also avoid the PSRAM AUX read/modify/write
+caused by that physical mirror: direct capture goes through the capture FIFO
+and DDR egress to CPU1's renderer shadow. Ordinary CPU/AMEM PSRAM operations
+remain unchanged. Existing classic mirror work still drains normally.
+After SHR exits, new classic video writes mirror normally; physical classic
+graphics must be redrawn, since the previous SHR image was never copied to
+the motherboard. The vTW shadow and Appletini renderer retain those bytes.
+This follows the existing cold-reset handback contract, not a live physical
+CPU/RAM resume operation.
 
 Display-mode changes, card ROM/DEVSEL entry, RamWorks bank changes, speed
-changes, ARM memory holds and handback drain the deferred banks first.
+changes, ARM memory holds and handback drain deferred classic banks first.
 The flush saves the actual physical bank switches, writes each dirty bank,
 and restores RAMWRT/PAGE2 before the waiting access resumes. It never changes
 80STORE, HIRES or RamWorks switches. Renderer frame records retain the saved
@@ -152,6 +178,12 @@ and physical switch updates. The focused
 policy and bank-sync benches run through `scripts/test_vtw_video_policy.py`
 and `scripts/test_vtw_video_bank_sync.py`. These are simulation checks;
 physical-board validation is still pending.
+
+`python3 scripts/test_vtw_shr_capture.py` runs the production policy and
+CPU/bus/shadow RTL with Verilator. It checks every policy range and switch
+combination, all four speed codes, AUX pixels/SCBs/palettes, both paged-MAIN
+selectors, II+ capture, repeated-write ordering, renderer backpressure,
+PRIVATE holds, preexisting classic mirror work, SHR exit and cold handback.
 
 `vtw status` reports fabric clocks, accepted CPU steps, represented classic
 cycles, cache read hits/misses, invalidations, Disk II waits and video waits.

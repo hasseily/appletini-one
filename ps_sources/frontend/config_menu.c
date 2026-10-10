@@ -4853,8 +4853,9 @@ void config_menu_set_vtw_speed(config_menu_t *menu,
 
 /* Mockingboard / Phasor live in slot 4. Its virtual-card detection reads
  * the 6522 VIA timers with cycle-counted loops, which fail at high core
- * speed -- so its slot slowdown is ALWAYS forced on when the card is
- * present, regardless of the per-slot config. */
+ * speed -- so its read slowdown is ALWAYS forced on when the card is
+ * present, regardless of the per-slot config. The PL exempts virtual-card
+ * writes; physical cards retain the user's read/write slot policy. */
 #define VTW_MOCKINGBOARD_SLOT 4U
 
 /* Push the per-region slowdown config to the PL (and persist). The stored

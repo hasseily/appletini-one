@@ -580,7 +580,8 @@ HELP(transwarp_slowdown_slots,
     "peripherals that expect the Apple bus to run at 1 MHz.",
     "Per-slot slowdown mirrors the real TransWarp's DIP block 2: after the core touches an enabled",
     "timing-sensitive region, it drops to 1 MHz for the slowdown window, then resumes full speed.",
-    "Slot 4 is automatically slowed down when the virtual Phasor is active.");
+    "Virtual Phasor reads in slot 4 automatically start the slowdown window for detection.",
+    "Virtual Phasor writes do not start or extend it; physical cards keep the selected slot policy.");
 
 HELP(transwarp_slowdown_window,
     "Controls the duration of the slowdown window for all slowdown regions.",

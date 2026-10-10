@@ -536,6 +536,10 @@ module apple_top(
     localparam logic [7:0] CARD_CTRL_REG_VTW_COPY_COMMAND = 8'hB3;
     localparam logic [7:0] CARD_CTRL_REG_VTW_COPY_COMPLETED = 8'hB4;
     localparam logic [7:0] CARD_CTRL_REG_VTW_COPY_CAPS = 8'hB5;
+    // B5 remains VCP1; B6 read zero on older RTL. bit0 publish support,
+    // bit1 captured SHR active, bit2 egress enabled and not resetting.
+    localparam logic [7:0] CARD_CTRL_REG_VTW_COPY_PUBLISH = 8'hB6;
+    localparam logic [7:0] CARD_CTRL_REG_VTW_COPY_ROWS = 8'hB7;
     //   VTW_C0_RING_*   : last eight $C00x/$C01x soft-switch cycles with
     //                     latched data ({rw,addr[4:0],data[7:0]} x2/reg).
     localparam logic [7:0] CARD_CTRL_REG_VTW_C0_RING0    = 8'h6C;
@@ -989,6 +993,12 @@ module apple_top(
     logic [16:0]                              vtw_video_record_addr;
     logic [7:0]                               vtw_video_record_data;
     logic                                     vtw_video_record_ready;
+    logic                                     capture_direct_valid, capture_direct_ready;
+    logic [16:0]                              capture_direct_addr;
+    logic [7:0]                               capture_direct_data;
+    logic                                     vtw_copy_publish_valid, vtw_copy_publish_ready;
+    logic [16:0]                              vtw_copy_publish_addr;
+    logic [7:0]                               vtw_copy_publish_data;
     logic                                     vtw_video_direct_active;
     logic                                     vtw_video_sync_active;
     logic                                     vtw_video_sync_ramwrt;
@@ -1016,6 +1026,18 @@ module apple_top(
     logic        egress_capture_drop_ack;
 
     logic shr_capture_active_w;
+    wire capture_transport_enabled = egress_cfg_enable_q && !egress_cfg_reset_pulse &&
+                                     rstn[0] && ab_read.res;
+    wire vtw_copy_publish_active = shr_capture_active_w && capture_transport_enabled;
+    vtw_video_capture_mux vtw_video_capture_mux_i (
+        .enabled(capture_transport_enabled),
+        .cpu_valid(vtw_video_record_valid), .cpu_addr(vtw_video_record_addr),
+        .cpu_data(vtw_video_record_data), .cpu_ready(vtw_video_record_ready),
+        .copy_valid(vtw_copy_publish_valid), .copy_addr(vtw_copy_publish_addr),
+        .copy_data(vtw_copy_publish_data), .copy_ready(vtw_copy_publish_ready),
+        .capture_valid(capture_direct_valid), .capture_addr(capture_direct_addr),
+        .capture_data(capture_direct_data), .capture_ready(capture_direct_ready)
+    );
     always_comb begin
         capture_sss = sss;
         if (vtw_video_sync_active) begin
@@ -1038,10 +1060,10 @@ module apple_top(
         .overlay_capture_bank_aux(overlay_capture_bank_aux),
         .overlay_capture_base(overlay_capture_base),
         .overlay_capture_limit(overlay_capture_limit),
-        .direct_valid(vtw_video_record_valid),
-        .direct_addr(vtw_video_record_addr),
-        .direct_data(vtw_video_record_data),
-        .direct_ready(vtw_video_record_ready),
+        .direct_valid(capture_direct_valid),
+        .direct_addr(capture_direct_addr),
+        .direct_data(capture_direct_data),
+        .direct_ready(capture_direct_ready),
         .suppress_bus_writes(vtw_video_direct_active),
         .cycle_capture_data(cycle_capture_data_internal),
         .cycle_capture_rd_en(cycle_capture_rd_en_internal),
@@ -1949,7 +1971,7 @@ module apple_top(
     logic        vtw_sh_port_en;
     logic        vtw_sh_port_we;
     logic [7:0]  vtw_sh_port_wdata;
-    logic [23:0] vtw_copy_source_q, vtw_copy_dest_q;
+    logic [23:0] vtw_copy_source_q, vtw_copy_dest_q, vtw_copy_rows_q;
     logic [15:0] vtw_copy_length_q, vtw_copy_completed;
     logic        vtw_copy_sh_en, vtw_copy_sh_we, vtw_copy_sh_word_we;
     logic [17:0] vtw_copy_sh_addr;
@@ -2155,8 +2177,12 @@ module apple_top(
             vtw_copy_source_q <= '0;
             vtw_copy_dest_q <= '0;
             vtw_copy_length_q <= '0;
+            vtw_copy_rows_q <= '0;
         end else if (as_client.awvalid && !vtw_copy_busy) begin
             case (as_common.awaddr)
+                CARD_CTRL_REG_VTW_COPY_ROWS:
+                    vtw_copy_rows_q <= 24'(globals::apply_wstrb(
+                        {8'd0, vtw_copy_rows_q}, as_vtw_phasor_wdata, as_vtw_phasor_wstrb));
                 CARD_CTRL_REG_VTW_COPY_SOURCE:
                     vtw_copy_source_q <= 24'(globals::apply_wstrb(
                         {8'd0, vtw_copy_source_q}, as_vtw_phasor_wdata, as_vtw_phasor_wstrb));
@@ -2176,7 +2202,12 @@ module apple_top(
         .start(vtw_copy_start), .abort_req(vtw_copy_abort), .permit(vtw_copy_permit),
         .source(vtw_copy_source_q), .destination(vtw_copy_dest_q),
         .length(vtw_copy_length_q), .fill(as_vtw_phasor_wdata[2]),
+        .copy_rows(as_vtw_phasor_wdata[4]), .rows_minus1(vtw_copy_rows_q[7:0]),
+        .source_gap(vtw_copy_rows_q[15:8]), .destination_gap(vtw_copy_rows_q[23:16]),
         .fill_data(as_vtw_phasor_wdata[15:8]),
+        .publish(as_vtw_phasor_wdata[3]), .publish_active(vtw_copy_publish_active),
+        .publish_valid(vtw_copy_publish_valid), .publish_addr(vtw_copy_publish_addr),
+        .publish_data(vtw_copy_publish_data), .publish_ready(vtw_copy_publish_ready),
         .busy(vtw_copy_busy), .done(vtw_copy_done),
         .error(vtw_copy_error), .aborted(vtw_copy_aborted), .completed(vtw_copy_completed),
         .sh_en(vtw_copy_sh_en), .sh_we(vtw_copy_sh_we), .sh_word_we(vtw_copy_sh_word_we),
@@ -2260,6 +2291,7 @@ module apple_top(
         .usb_joystick_paddles(vtw_usb_joystick_paddles),
         .slow_region_en(vtw_slowdown_q[9:0]),
         .slow_duration(vtw_slowdown_q[31:16]),
+        .sound_card_active(card_slot4_bus_enable),
         .d2_active(vtw_disk2_active),
         .d2_motor_active(disk2_sound_spinning),
         .d2_req_valid(vtw_d2_req_valid),
@@ -2275,11 +2307,12 @@ module apple_top(
         .ramworks_en(ramworks_en_q),
         .video_vbl(vtw_video_vbl),
         .post_main_wide(post_main_wide_q),
+        .shr_capture_active(shr_capture_active_w),
         .video_record_valid(vtw_video_record_valid),
         .video_record_enable(1'b1),
         .video_record_addr(vtw_video_record_addr),
         .video_record_data(vtw_video_record_data),
-        .video_record_ready(vtw_video_record_ready && egress_cfg_enable_q),
+        .video_record_ready(vtw_video_record_ready),
         .video_sync_active(vtw_video_sync_active),
         .video_sync_ramwrt(vtw_video_sync_ramwrt),
         .video_sync_page2(vtw_video_sync_page2),
@@ -3114,6 +3147,11 @@ module apple_top(
                     as_client_rdata_q <= {16'd0, vtw_copy_completed};
                 CARD_CTRL_REG_VTW_COPY_CAPS:
                     as_client_rdata_q <= 32'h56435031;
+                CARD_CTRL_REG_VTW_COPY_ROWS:
+                    as_client_rdata_q <= {8'd0, vtw_copy_rows_q};
+                CARD_CTRL_REG_VTW_COPY_PUBLISH:
+                    as_client_rdata_q <= {28'd0, 1'b1, capture_transport_enabled,
+                                          shr_capture_active_w, 1'b1};
                 CARD_CTRL_REG_VTW_CXXX_RING0:  as_client_rdata_q <= vtw_dbg_cxxx_ring[31:0];
                 CARD_CTRL_REG_VTW_CXXX_RING1:  as_client_rdata_q <= vtw_dbg_cxxx_ring[63:32];
                 CARD_CTRL_REG_VTW_CXXX_RING2:  as_client_rdata_q <= vtw_dbg_cxxx_ring[95:64];

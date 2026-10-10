@@ -12,8 +12,10 @@ module vtw_video_policy (
     input  logic        sw_80store,
     input  logic        sw_80col,
     input  logic        post_main_wide,
+    input  logic        shr_active,
     input  logic        overlay_match,
-    output logic        mirror_active
+    output logic        mirror_active,
+    output logic        capture_only
 );
     wire is_aux = address[16];
     // 80STORE changes CPU banking but keeps the video scanner on page 1.
@@ -25,9 +27,14 @@ module vtw_video_policy (
     wire graphics_range = (address[15:13] >= 3'b001) &&
                           (address[15:13] <= 3'b100);
 
-    // AUX graphics also hold SHR pixels, controls and palettes. Its state
-    // is not fully described by the classic switches, so keep the whole
-    // extended range immediate. Paged SHR uses the same range in MAIN.
+    // Synthetic SHR has no motherboard display. This policy is consumed
+    // only for writes the caller already classifies as video/overlay; it
+    // does not widen that address window. While SHR is selected, classic
+    // MAIN/AUX text/HGR pages are also private work memory, not physical
+    // display buffers. Keep their ordered capture records without creating
+    // mirror traffic. The captured C029[7:6]==11 renderer state is definitive.
+    assign capture_only = shr_active;
+    // Outside synthetic SHR preserve the conservative AUX/DHGR policy.
     wire extended_graphics = (is_aux || post_main_wide) && graphics_range;
 
     // A2Li stamps mode/load controls in the unused MAIN page-2 holes even
@@ -36,9 +43,9 @@ module vtw_video_policy (
         ((address[15:3] == (16'h0878 >> 3)) ||
          (address[15:3] == (16'h4078 >> 3)));
 
-    assign mirror_active = overlay_match || extended_graphics ||
+    assign mirror_active = !capture_only && (overlay_match || extended_graphics ||
         legacy_metadata ||
         (text_page && (sw_text || sw_mixed || !sw_hires) &&
          (!is_aux || sw_80col)) ||
-        (hires_page && !is_aux && !sw_text && sw_hires);
+        (hires_page && !is_aux && !sw_text && sw_hires));
 endmodule

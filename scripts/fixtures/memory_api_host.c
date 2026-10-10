@@ -20,6 +20,7 @@ typedef struct {
     unsigned enabled, held, need_ramworks, max_transfer;
     unsigned inject_partial_write, reenter;
     unsigned transfers, transfer_fail_at, transfer_error, transfer_confirmed;
+    unsigned publish_checks, publish_fail_at, publish_error, publish_supported, published;
     uint32_t first_read, first_write, now;
 } mock_t;
 
@@ -95,7 +96,7 @@ static uint8_t private_required(void *ctx, uint32_t phys, uint16_t length)
 static uint32_t micros(void *ctx) { mock_t *m = ctx; return ++m->now; }
 
 static uint8_t direct_transfer(void *ctx, uint32_t source, uint32_t destination,
-                               uint16_t length, uint8_t operation, uint8_t fill,
+                               uint16_t length, uint8_t operation, uint8_t fill, uint8_t flags,
                                uint16_t *completed)
 {
     mock_t *m = ctx;
@@ -110,8 +111,23 @@ static uint8_t direct_transfer(void *ctx, uint32_t source, uint32_t destination,
     CHECK(size <= length);
     if (operation == COPY) memcpy(memory + destination, memory + source, size);
     else memset(memory + destination, fill, size);
+    if (flags & MEMORY_API_PUBLISH_SHR) m->published += size;
     *completed = size;
     return error;
+}
+
+static uint16_t features(void *ctx)
+{
+    return ((mock_t *)ctx)->publish_supported ? MEMORY_API_FEATURE_PUBLISH_SHR : 0;
+}
+static uint8_t validate_publish(void *ctx)
+{
+    mock_t *m = ctx;
+    CHECK(m->held && m->transfers == 0 && m->writes == 0);
+    ++m->publish_checks;
+    if (!m->publish_supported) return UNAVAILABLE;
+    if (m->publish_checks == m->publish_fail_at) return (uint8_t)m->publish_error;
+    return 0;
 }
 
 static void reset(void)
@@ -171,7 +187,7 @@ static void test_header_and_descriptor_validation(void)
         uint8_t *d;
         reset(); d = desc(0, FILL, 1, 0, 0, 0, MAIN, 0, 0x8000, 40, 7);
         if (i == 0) d[0] = 3;
-        else if (i == 1) d[1] = 2;
+        else if (i == 1) d[1] = 4;
         else if (i < 5) d[11 + i] = 1;
         else if (i == 5) d[2] = AUX;
         else d[4] = 1;
@@ -286,7 +302,7 @@ static void test_status_progress_reset_and_busy(void)
 {
     uint8_t status[32];
     reset(); memory_api_status(status, &backend);
-    CHECK(!memcmp(status, "AMEM\1\0\20\20", 8));
+    CHECK(!memcmp(status, "AMEM\1\2\20\20", 8));
     CHECK(u16(status + 8) == 7 && u16(status + 10) == 0x200 && u16(status + 12) == 0xc000);
     CHECK(status[14] == 126 && status[15] == 1 && u16(status + 20) == 512);
     CHECK(status[22] == 0 && status[23] == 0 && u32(status + 28) == 0);
@@ -375,8 +391,174 @@ static void test_direct_transfers_and_progress(void)
     ++passed;
 }
 
+static void publication_backend(void)
+{
+    backend.transfer = direct_transfer;
+    backend.features = features;
+    backend.validate_publish = validate_publish;
+    mock.publish_supported = 1;
+}
+static void test_publication_capability_and_whole_batch(void)
+{
+    uint8_t status[32];
+    static const unsigned invalid[][3] = {
+        {MAIN, 0, 0x2000}, {AUX, 1, 0x2000}, {AUX, 0, 0x1fff},
+        {AUX, 0, 0x9d00}, {AUX, 0, 0x9df8}, {AUX, 0, 0x9e00}
+    };
+    unsigned i;
+    reset(); publication_backend(); memory_api_status(status, &backend);
+    CHECK(u16(status + 8) == 15);
+    mock.publish_supported = 0; memory_api_status(status, &backend);
+    CHECK(u16(status + 8) == 7);
+    mock.publish_supported = 1; backend.transfer = NULL;
+    memory_api_status(status, &backend); CHECK(u16(status + 8) == 7);
+    for (i = 0; i < sizeof(invalid)/sizeof(invalid[0]); ++i) {
+        reset(); publication_backend(); payload[5] = 2;
+        desc(0, FILL, 1, 0, 0, 0, MAIN, 0, 0x8000, 8, 3);
+        desc(1, FILL, 2, 0, 0, 0, invalid[i][0], invalid[i][1], invalid[i][2], 1, 7);
+        CHECK(run() == RANGE && mock.begins == 1 && mock.ends == 1);
+        CHECK(!mock.transfers && !mock.writes && !mock.reads); untouched();
+    }
+    reset(); publication_backend();
+    desc(0, FILL, 2, 0, 0, 0, AUX, 0, 0x9cff, 2, 7);
+    CHECK(run() == RANGE && !mock.transfers);
+    reset(); publication_backend();
+    desc(0, FILL, 3, 0, 0, 0, AUX, 0, 0x2000, 1, 7);
+    CHECK(run() == DESCRIPTOR && !mock.begins);
+    for (i = 0; i < 4; ++i) {
+        reset(); publication_backend(); payload[5] = 2;
+        desc(0, FILL, 1, 0, 0, 0, MAIN, 0, 0x8000, 8, 3);
+        desc(1, FILL, 2, 0, 0, 0, AUX, 0, 0x2000, 8, 7);
+        if (i == 0) backend.transfer = NULL;
+        if (i == 1) backend.validate_publish = NULL;
+        if (i == 2) mock.publish_supported = 0;
+        if (i == 3) { mock.publish_fail_at = 1; mock.publish_error = SESSION_LOST; }
+        CHECK(run() == (i == 3 ? SESSION_LOST : UNAVAILABLE));
+        CHECK(mock.begins == 1 && mock.ends == 1 && !mock.transfers);
+        CHECK(!mock.writes && !mock.reads); untouched();
+    }
+    /* One global publication check runs after all ranges validate and before
+     * even an earlier valid copy. Readiness at START is the backend's job. */
+    reset(); publication_backend(); payload[5] = 2;
+    desc(0, FILL, 2, 0, 0, 0, AUX, 0, 0x2000, 8, 7);
+    desc(1, FILL, 2, 0, 0, 0, AUX, 0, 0x2080, 8, 9);
+    mock.publish_fail_at = 1; mock.publish_error = UNAVAILABLE;
+    CHECK(run() == UNAVAILABLE && mock.publish_checks == 1 && !mock.transfers);
+    reset(); publication_backend(); payload[5] = 2;
+    desc(0, FILL, 2, 0, 0, 0, AUX, 0, 0x2000, 8, 7);
+    desc(1, FILL, 2, 0, 0, 0, AUX, 0, 0x9cff, 2, 9);
+    CHECK(run() == RANGE && !mock.publish_checks && !mock.transfers);
+    ++passed;
+}
+static void test_publication_execution_and_partial_errors(void)
+{
+    uint8_t status[32];
+    unsigned i;
+    reset(); publication_backend(); payload[5] = 3;
+    pattern(0x0800, 129, 77);
+    desc(0, COPY, 2, MAIN, 0, 0x0800, AUX, 0, 0x2000, 129, 0);
+    desc(1, FILL, 2, 0, 0, 0, AUX, 0, 0x9cff, 1, 0x73);
+    desc(2, COPY, 1, AUX, 0, 0x2000, MAIN, 0, 0x1000, 129, 0);
+    CHECK(run() == 0 && mock.published == 130 && mock.publish_checks == 1);
+    CHECK(!memcmp(memory + 0x0800, memory + 0x12000, 129));
+    CHECK(!memcmp(memory + 0x0800, memory + 0x1000, 129));
+    CHECK(memory[0x19cff] == 0x73 && memory[0x19d00] == 0xA5);
+    CHECK(!mock.reads && !mock.writes && mock.transfers == 3);
+    for (i = 0; i < 4; ++i) {
+        reset(); publication_backend(); payload[5] = 3;
+        desc(0, FILL, 2, 0, 0, 0, AUX, 0, 0x2000, 8, 7);
+        desc(1, FILL, 2, 0, 0, 0, AUX, 0, 0x2080, 8, 9);
+        desc(2, FILL, 1, 0, 0, 0, MAIN, 0, 0x8000, 8, 3);
+        mock.transfer_fail_at = 2;
+        mock.transfer_error = i == 0 ? UNAVAILABLE : i == 1 ? IO : i == 2 ? SESSION_LOST : 0;
+        mock.transfer_confirmed = i == 0 ? 0 : 3;
+        CHECK(run() == (i == 2 ? SESSION_LOST : IO));
+        CHECK(mock.transfers == 2 && !mock.writes && !mock.reads);
+        memory_api_status(status, &backend);
+        CHECK(status[23] == 1 && u32(status + 28) == 8 + mock.transfer_confirmed);
+        CHECK(mock.published == 8 + mock.transfer_confirmed);
+        CHECK(memory[0x8000] == 0xA5 && mock.ends == 1);
+    }
+    ++passed;
+}
+
+static uint8_t validate_rows(void *ctx)
+{
+    mock_t *m=ctx;
+    CHECK(m->held && !m->transfers && !m->writes);
+    return m->publish_supported ? 0 : UNAVAILABLE;
+}
+static uint8_t rows_transfer(void *ctx, uint32_t src, uint32_t dst,
+                              uint16_t width, uint8_t count, uint8_t sg,
+                              uint8_t dg, uint8_t flags, uint16_t *completed)
+{
+    mock_t *m=ctx;
+    unsigned i,total=(unsigned)width*(count+1U),size=total;
+    uint8_t error=0;
+    CHECK(m->held && width);
+    ++m->transfers;
+    if(m->transfers==m->transfer_fail_at){error=(uint8_t)m->transfer_error;size=m->transfer_confirmed;}
+    CHECK(size<=total);
+    for(i=0;i<size;i++)memory[dst+i+(i/width)*dg]=memory[src+i+(i/width)*sg];
+    if(flags&MEMORY_API_PUBLISH_SHR)m->published+=size;
+    *completed=(uint16_t)size;
+    return error;
+}
+static void rows_backend(void)
+{
+    publication_backend();
+    backend.validate_rows=validate_rows;backend.transfer_rows=rows_transfer;
+}
+static void test_rows_validation_and_execution(void)
+{
+    uint8_t *d,status[32];unsigned row,x,mode;
+    for(mode=0;mode<2;mode++) {
+        reset();rows_backend();pattern(0x0801,1600,33);
+        d=desc(0,MEMORY_API_COPY_ROWS,mode?2:1,MAIN,0,0x0801,AUX,0,0x2011,128,0);
+        d[13]=7;d[14]=3;d[15]=32;
+        CHECK(run()==0 && mock.transfers==1 && !mock.reads && !mock.writes);
+        for(row=0;row<8;row++) {
+            CHECK(!memcmp(memory+0x12011+row*160,memory+0x801+row*131,128));
+            for(x=128;x<160;x++)CHECK(memory[0x12011+row*160+x]==0xA5);
+        }
+        memory_api_status(status,&backend);CHECK(status[23]==1 && u32(status+28)==1024);
+    }
+    for(mode=0;mode<9;mode++) {
+        reset();rows_backend();payload[5]=2;
+        desc(0,FILL,1,0,0,0,MAIN,0,0x8000,8,7);
+        d=desc(1,MEMORY_API_COPY_ROWS,2,MAIN,0,0x800,AUX,0,0x2000,128,0);d[13]=7;d[15]=32;
+        if(mode==0)backend.transfer_rows=NULL;
+        if(mode==1)backend.validate_rows=NULL;
+        if(mode==2)mock.publish_supported=0;
+        if(mode==3)d[12]=1;
+        if(mode==4)put16(d+4,0xBF00);
+        if(mode==5)put16(d+8,0x9C00);
+        if(mode==6){put16(d+10,256);d[13]=255;}
+        if(mode==7){d[6]=MAIN;put16(d+8,0x900);d[14]=128;d[15]=128;put16(d+10,4);d[13]=2;}
+        if(mode==8){put16(d+10,0);d[13]=1;d[14]=1;d[15]=1;}
+        CHECK(run()==(mode<3?UNAVAILABLE:mode==3?DESCRIPTOR:mode==7?OVERLAP:RANGE));
+        if(mode==8)CHECK(!mock.begins);
+        CHECK(!mock.transfers && !mock.reads && !mock.writes && memory[0x8000]==0xA5);
+    }
+    for(mode=0;mode<6;mode++) {
+        reset();rows_backend();payload[5]=2;
+        d=desc(0,MEMORY_API_COPY_ROWS,2,MAIN,0,0x800,AUX,0,0x2000,128,0);d[13]=7;d[15]=32;
+        desc(1,FILL,1,0,0,0,MAIN,0,0x8000,8,7);
+        mock.transfer_fail_at=1;mock.transfer_confirmed=mode?137:0;
+        mock.transfer_error=mode==0||mode==5?UNAVAILABLE:mode==1?IO:mode==2?SESSION_LOST:mode==3?UNSAFE:0;
+        CHECK(run()==(mode==4||mode==0||mode==5?IO:mock.transfer_error));
+        CHECK(mock.transfers==1 && !mock.reads && !mock.writes && memory[0x8000]==0xA5);
+        memory_api_status(status,&backend);CHECK(status[23]==0 && u32(status+28)==mock.transfer_confirmed);
+    }
+    reset();rows_backend();
+    d=desc(0,MEMORY_API_COPY_ROWS,1,MAIN,0,0xBF00,AUX,126,0xBF00,1,0);d[13]=255;
+    CHECK(run()==0 && mock.need_ramworks);
+    ++passed;
+}
+
 int main(void)
 {
+    test_rows_validation_and_execution();
     test_header_and_descriptor_validation();
     test_range_and_whole_list_validation();
     test_copy_all_alignments_and_banks();
@@ -386,6 +568,8 @@ int main(void)
     test_status_progress_reset_and_busy();
     test_limits_and_large_exact_range();
     test_direct_transfers_and_progress();
+    test_publication_capability_and_whole_batch();
+    test_publication_execution_and_partial_errors();
     printf("PASS memory API host runtime: %u groups\n", passed);
     return 0;
 }

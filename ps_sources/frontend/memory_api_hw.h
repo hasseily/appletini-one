@@ -3,6 +3,8 @@
 
 #include "memory_api.h"
 
+/* PUBLISH_SHR is optional: STATUS probes the engine capability; CONTROL
+ * validates active capture and egress under the hold before any writes. */
 extern const memory_api_backend_t memory_api_hardware;
 /* Snapshot the reset generation before draining a SmartPort request. */
 void memory_api_hw_prepare(uint8_t accelerated);

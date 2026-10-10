@@ -377,9 +377,13 @@ In priority order:
    config lives in AxiSimple register 0x6B ([8:0] region enables,
    [31:16] window). Exposed in the TransWarp tab: speaker, paddle, a
    per-slot selector, and the window size — all **default OFF**. The
-   virtual Mockingboard/Phasor slot (4) is **always** slowed regardless of
-   config, because its 6522-VIA cycle-counted detection otherwise fails at
-   warp. Validated by `tb_vtw_slowdown` (warp baseline runs fast; speaker
+   virtual Mockingboard/Phasor slot (4) **reads always start the window**
+   regardless of config, because its 6522-VIA cycle-counted detection
+   otherwise fails at warp. Writes to its `$C400-$C4FF` registers and
+   `$C0C0-$C0CF` mode controls do not start or extend the window. A window
+   already started by a read still expires normally. Physical sound cards
+   retain the user's read/write slot slowdown policy. Validated by
+   `tb_vtw_slowdown` (warp baseline runs fast; speaker
    slowdown collapses the rate to ~1 MHz; a non-matching region enable
    stays warp).
 6. **II/II+ acceleration — implemented, bench validation pending.**

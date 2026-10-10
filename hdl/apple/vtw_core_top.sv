@@ -83,6 +83,10 @@ module vtw_core_top (
      * slow_duration = 0 disables the feature. */
     input  logic [9:0]              slow_region_en,
     input  logic [15:0]             slow_duration,
+    /* The virtual slot-4 sound card needs native pacing for detection
+     * reads, not for AY/VIA writes. Physical slot-4 cards keep the selected
+     * read/write slowdown policy when this input is low. */
+    input  logic                    sound_card_active,
 
     /* Virtual Disk II read shortcut. Even-address reads in $C0E0-$C0EF
      * may run against the private card port. Odd reads, every CPU write,
@@ -131,6 +135,9 @@ module vtw_core_top (
      * also tracks aux $9DF8 itself so an accelerated second-field load does
      * not race the physical capture and CPU1 service path. */
     input  logic                    post_main_wide,
+    // Authoritative fake-SHR state from ordered bus capture (C029[7:6]=11).
+    // A physical IIgs never asserts this synthetic display selection.
+    input  logic                    shr_capture_active,
 
     /* An armed linear-text buffer is another write-through window. The
      * physical capture path must see these writes even when the accelerated
@@ -489,9 +496,12 @@ module vtw_core_top (
     logic              cycle_video_80store_q;
     logic              cycle_video_80col_q;
     logic              cycle_video_post_main_wide_q;
+    logic              cycle_video_shr_active_q;
     logic              cycle_video_force_active_q;
     logic              cycle_video_mirror_active_q;
+    logic              cycle_video_capture_only_q;
     wire               route_video_mirror_active;
+    wire               route_video_capture_only;
     wire               post_main_wide_eff;
 
     // Classify the captured tuple before direct-video admission. Renderer
@@ -504,8 +514,10 @@ module vtw_core_top (
         .sw_page2(cycle_video_page2_q), .sw_hires(cycle_video_hires_q),
         .sw_80store(cycle_video_80store_q), .sw_80col(cycle_video_80col_q),
         .post_main_wide(cycle_video_post_main_wide_q),
+        .shr_active(cycle_video_shr_active_q),
         .overlay_match(cycle_video_force_active_q),
-        .mirror_active(route_video_mirror_active)
+        .mirror_active(route_video_mirror_active),
+        .capture_only(route_video_capture_only)
     );
 
     always_comb begin
@@ -1138,10 +1150,15 @@ module vtw_core_top (
     // This also keeps live ownership decode off the Disk II tick/CPU path.
     logic cycle_d2_native_q;
 
-    wire sd_hit = (sd_floating_io && slow_region_en[7]) ||
+    wire sd_virtual_sound_write = (sound_card_active === 1'b1) &&
+                  !cycle_rw_q &&
+                  ((sd_slot_io && sd_slot_num == 3'd4) ||
+                   (sd_iosel && sd_iosel_slot == 3'd4));
+    wire sd_hit = !sd_virtual_sound_write &&
+                 ((sd_floating_io && slow_region_en[7]) ||
                   (sd_paddle      && slow_region_en[8]) ||
                   (sd_slot_io && slow_region_en[sd_slot_num  - 3'd1]) ||
-                  (sd_iosel   && slow_region_en[sd_iosel_slot - 3'd1]);
+                  (sd_iosel   && slow_region_en[sd_iosel_slot - 3'd1]));
 
     /* $C074 = 1 or 3 forces stock speed; the divided/full presets apply
      * only in state 0. ignore_c074 keeps that state at zero. Per-region
@@ -1354,6 +1371,14 @@ module vtw_core_top (
     logic [7:0]  post_stage_wdata_q;
     wire video_selected = (video_record_enable === 1'b1) &&
                           speed_mode == SPEED_TURBO;
+    // Synthetic SHR has no motherboard display at any vTW speed. Fixed
+    // presets keep their CPU pacing but use the same lossless capture path
+    // for these bytes. Route uses its captured tuple before the policy
+    // result is registered; a stalled write then retains that decision.
+    wire video_direct_selected = video_selected ||
+        ((video_record_enable === 1'b1) &&
+         ((xstate_q == X_ROUTE) ? route_video_capture_only :
+                                 cycle_video_capture_only_q));
     logic video_mirror_mode_q;
     wire video_coalesce_ready, video_coalesce_drained;
     wire video_active_drained;
@@ -1370,16 +1395,20 @@ module vtw_core_top (
     // X_ROUTE classifies and commits the shadow write. Admit its saved
     // tuple on the next edge so overlay bounds do not feed either video
     // consumer's write enable. Both consumers still accept together.
-    wire video_fast_req = core_active && video_selected &&
+    wire video_fast_req = core_active && video_direct_selected &&
                           (xstate_q == X_POST_STALL);
-    wire video_fast_accept = video_fast_req && video_coalesce_ready &&
+    // SHR still uses lossless renderer admission, but has no physical
+    // mirror obligation. In particular, an ARM PRIVATE hold must not turn
+    // already captured SHR bytes into a motherboard transfer.
+    wire video_write_ready = cycle_video_capture_only_q || video_coalesce_ready;
+    wire video_fast_accept = video_fast_req && video_write_ready &&
                              video_start_ready && video_record_ready;
-    wire core_post_accept = core_post_req && !video_selected &&
+    wire core_post_accept = core_post_req && !video_direct_selected &&
                             !eng_post_full && !video_mirror_mode_q;
-    assign core_post_blocked = video_selected ?
-        !(video_coalesce_ready && video_start_ready && video_record_ready) :
+    assign core_post_blocked = video_direct_selected ?
+        !(video_write_ready && video_start_ready && video_record_ready) :
         (eng_post_full || video_mirror_mode_q);
-    assign video_record_valid = video_fast_req && video_coalesce_ready && video_start_ready;
+    assign video_record_valid = video_fast_req && video_write_ready && video_start_ready;
     assign video_record_addr = xl_decoded[16:0];
     assign video_record_data = cycle_wdata_q;
     // Suppress only the mirrored posted cycle. Native/device DMA writes
@@ -1428,7 +1457,7 @@ module vtw_core_top (
         (xstate_q == X_STATUS_DONE) || (xstate_q == X_DEAD) ||
         // After leaving the direct path, this saved write cannot enter
         // the classic queue until the old mirror and bank restore finish.
-        ((xstate_q == X_POST_STALL) && !video_selected);
+        ((xstate_q == X_POST_STALL) && !video_direct_selected);
     wire video_sync_bus_idle = video_post_idle && !req_inflight_q &&
         !video_active_pending_q && video_sync_core_idle;
     vtw_video_bank_sync video_bank_sync_i (
@@ -1449,7 +1478,8 @@ module vtw_core_top (
     assign video_mirror_ready = !eng_post_full && engine_enable;
     vtw_video_coalescer video_coalescer_i (
         .clk(clk), .rstn(rstn), .clear(!ab_read.res),
-        .write_valid(video_fast_accept), .write_addr(xl_decoded[16:0]),
+        .write_valid(video_fast_accept && !cycle_video_capture_only_q),
+        .write_addr(xl_decoded[16:0]),
         .write_data(cycle_wdata_q), .write_ready(video_coalesce_ready),
         .write_active(cycle_video_mirror_active_q),
         .flush_valid(video_flush_valid), .flush_bank(video_flush_bank),
@@ -1464,7 +1494,7 @@ module vtw_core_top (
             video_active_pending_q <= 1'b0;
             video_policy_flush_q <= 1'b0;
         end else begin
-            if (video_fast_accept)
+            if (video_fast_accept && !cycle_video_capture_only_q)
                 video_mirror_mode_q <= 1'b1;
             else if (video_all_drained)
                 video_mirror_mode_q <= 1'b0;
@@ -1608,7 +1638,7 @@ module vtw_core_top (
         (core_res_n || video_mirror_pending) &&
         ((xstate_q == X_CAPTURE) || (xstate_q == X_ROUTE) ||
          (xstate_q == X_VIDEO_WAIT) ||
-         ((xstate_q == X_POST_STALL) && video_selected) ||
+         ((xstate_q == X_POST_STALL) && video_direct_selected) ||
          (xstate_q == X_TURBO_DONE) ||
          (xstate_q == X_RW_LOOKUP) || (xstate_q == X_RW_FLUSH) ||
           (xstate_q == X_RW_FILL) || video_mirror_pending);
@@ -1685,8 +1715,10 @@ module vtw_core_top (
             cycle_video_80store_q <= 1'b0;
             cycle_video_80col_q <= 1'b0;
             cycle_video_post_main_wide_q <= 1'b0;
+            cycle_video_shr_active_q <= 1'b0;
             cycle_video_force_active_q <= 1'b0;
             cycle_video_mirror_active_q <= 1'b0;
+            cycle_video_capture_only_q <= 1'b0;
             shr_post_main_wide_q <= 1'b0;
             cnt_core_q          <= '0;
             cnt_invalid_q       <= '0;
@@ -1929,6 +1961,7 @@ module vtw_core_top (
                         cycle_video_80store_q    <= vsss.sw_80store;
                         cycle_video_80col_q      <= vsss.sw_80col;
                         cycle_video_post_main_wide_q <= post_main_wide_eff;
+                        cycle_video_shr_active_q <= (shr_capture_active === 1'b1);
                         // A physical II/II+ has no //e bank-steering switches.
                         // Keep its existing immediate write-through policy.
                         cycle_video_force_active_q <=
@@ -1977,6 +2010,7 @@ module vtw_core_top (
                 X_ROUTE: begin
                     cycle_d2_native_q <= sd_disk2_native;
                     cycle_video_mirror_active_q <= route_video_mirror_active;
+                    cycle_video_capture_only_q <= route_video_capture_only;
                     if (xl_is_bus) begin
                         // core_res_n implies the session is active, so the
                         // bus engine is running and will take the request.
@@ -2037,7 +2071,7 @@ module vtw_core_top (
                         core_data_in_q <= 8'hFF;
                         xstate_q       <= X_DEAD;
                     end
-                    else if (xl_is_posted && (video_selected || core_post_blocked)) begin
+                    else if (xl_is_posted && (video_direct_selected || core_post_blocked)) begin
                         xstate_q <= X_POST_STALL;
                     end
                     else begin

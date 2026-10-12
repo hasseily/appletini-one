@@ -84,18 +84,33 @@ def keep_usb_classes(path):
     path.write_text(text)
 
 
+SOURCE_SUFFIXES = {".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".s", ".asm", ".inc", ".ld"}
+HARDWARE_SUFFIXES = SOURCE_SUFFIXES | {".sv", ".svh", ".v", ".vh", ".vhd", ".vhdl",
+    ".xdc", ".mem", ".hex", ".coe", ".mif", ".tcl", ".py", ".bat", ".ps1",
+    ".md", ".txt", ".json", ".yaml", ".yml", ".csv"}
+
+
+def legal_or_readme(path):
+    return path.name.upper().startswith(("LICENSE", "COPYING", "NOTICE", "AUTHORS", "CREDITS", "README"))
+
+
 def source_files(base):
     return sorted(path for path in base.rglob("*") if path.is_file() and
                   ".git" not in path.relative_to(base).parts and
-                  path.suffix.lower() not in (".pyc", ".o", ".elf"))
+                  (path.suffix.lower() in SOURCE_SUFFIXES or legal_or_readme(path)))
 
 
 def source_snapshot(third_party):
     members = {}
-    for prefix, base in (("ps_sources", ROOT / "ps_sources"),
-                         ("third_party", third_party)):
-        for path in source_files(base):
-            members[f"{prefix}/{path.relative_to(base).as_posix()}"] = path
+    for path in source_files(ROOT / "ps_sources"):
+        members[f"ps_sources/{path.relative_to(ROOT / 'ps_sources').as_posix()}"] = path
+    for directory in ("xtulator_cpu", "z80emu", "CherryUSB/common", "CherryUSB/core",
+                      "CherryUSB/class/hid", "CherryUSB/class/hub", "CherryUSB/port/ehci"):
+        for path in source_files(third_party / directory):
+            members[f"third_party/{path.relative_to(third_party).as_posix()}"] = path
+    for path in (third_party / "CherryUSB").iterdir():
+        if path.is_file() and legal_or_readme(path):
+            members[f"third_party/CherryUSB/{path.name}"] = path
     for name in ("LICENSE", "scripts/build_multiboot_arm.py",
                  "scripts/create_vitis_workspace.py", "scripts/image_manifest.py"):
         path = ROOT / name
@@ -282,8 +297,12 @@ def main():
     retained_hashes = json.loads((baseline / "source_after.json").read_text())["source_sha256"]
     hardware_members = {}
     for name, expected_hash in retained_hashes.items():
-        if name.startswith(("hdl/", "scripts/", "third_party/")):
-            source = baseline_root / name
+        source = baseline_root / name
+        selected = name.startswith(("hdl/", "scripts/")) and (
+            source.suffix.lower() in HARDWARE_SUFFIXES or legal_or_readme(source))
+        selected |= name.startswith("third_party/") and (
+            source.suffix.lower() in SOURCE_SUFFIXES or legal_or_readme(source))
+        if selected:
             if digest(source) != expected_hash:
                 raise RuntimeError(f"retained hardware build source changed: {name}")
             hardware_members[name] = source

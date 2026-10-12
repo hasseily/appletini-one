@@ -73,7 +73,8 @@ void config_menu_draw_boot_settings(uint16_t *fb,
 {
     const uint8_t onee_fixed = config_menu_onee_fixed_bindings_active(menu);
     const char *heading_text = "USB MENU BINDINGS";
-    const int row_h = CMUI_ROW_H + CMUI_ROW_GAP;
+    /* Keep all six right-column bindings above help at 1680x1050 too. */
+    const int row_h = CMUI_ROW_H + 1;
     const int column_gap = 20;
     const int column_w = (w - (2 * column_gap)) / 3;
     static const uint8_t left_actions[] = {
@@ -96,7 +97,7 @@ void config_menu_draw_boot_settings(uint16_t *fb,
         CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_DOWN,
         CONFIG_MENU_USB_BIND_ACTION_VTW_SLUG_TOGGLE
     };
-    const int heading_y = y + (row_h * ((onee_fixed != 0U) ? 4 : 3));
+    const int heading_y = y + (row_h * ((onee_fixed != 0U) ? 6 : 5));
     const int heading_text_w =
         ((int)strlen(heading_text) *
          FB16_BUILTIN_FONT_ADVANCE_X *
@@ -150,11 +151,36 @@ void config_menu_draw_boot_settings(uint16_t *fb,
             "ONE//e standalone",
             config_menu_onee_mode_text(menu));
     }
+    {
+        const uint8_t other_bit = menu->startup_firmware == MB_PRODUCT_MULTITINI ?
+            1U : 2U;
+        void (*draw_startup)(uint16_t *, int, int, int, uint8_t,
+                              const char *, const char *) =
+            (menu->multiboot_ready != 0U &&
+             (menu->multiboot_present_mask & other_bit) != 0U) ?
+                hgr_draw_value_item : hgr_draw_value_item_dimmed;
+        void (*draw_switch)(uint16_t *, int, int, int, uint8_t,
+                             const char *, const char *) =
+            (menu->multiboot_ready != 0U &&
+             (menu->multiboot_present_mask & 2U) != 0U) ?
+                hgr_draw_value_item : hgr_draw_value_item_dimmed;
+        draw_startup(fb, x, y + (row_h * 3), w,
+                     (uint8_t)(menu->item_focus == CONFIG_MENU_BOOT_STARTUP_FIRMWARE_ITEM),
+                     "Startup firmware",
+                     menu->multiboot_ready != 0U ?
+                         mb_product_name(menu->startup_firmware) : "Multiboot golden required");
+        draw_switch(fb, x, y + (row_h * 4), w,
+                    (uint8_t)(menu->item_focus == CONFIG_MENU_BOOT_SWITCH_FIRMWARE_ITEM),
+                    "Switch to Multitini",
+                    menu->multiboot_ready == 0U ? "Multiboot golden required" :
+                    ((menu->multiboot_present_mask & 2U) != 0U ?
+                        "Reboot card" : "Not installed"));
+    }
     if (onee_fixed != 0U) {
         hgr_draw_value_item(
             fb,
             x,
-            y + (row_h * 3),
+            y + (row_h * 5),
             w,
             (uint8_t)(menu->item_focus ==
                       CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM),

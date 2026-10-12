@@ -1,4 +1,5 @@
 #include "serial_boot.h"
+#include "updater.h"
 
 #include <stdarg.h>
 #include <stddef.h>
@@ -195,7 +196,7 @@ static void print_help(void)
     serial_puts_both("[SER]   status\r\n");
     serial_puts_both("[SER]   continue      - leave monitor and follow normal SD update/boot path\r\n");
     serial_puts_both("[SER]   update        - run SD FIRMWARE.BIN updater now\r\n");
-    serial_puts_both("[SER]   boot          - boot firmware slot without SD update\r\n");
+    serial_puts_both("[SER]   boot          - boot a verified available firmware without SD update\r\n");
     serial_puts_both("[SER]   reboot        - reboot back through golden image\r\n");
     serial_puts_both("[SER]   rx [size] [crc32] - receive FIRMWARE.BIN by XMODEM-CRC to SD, then update\r\n");
     serial_puts_both("[SER]   selfupdate    - stage SD BOOT.BIN in the golden trial slot\r\n");
@@ -217,9 +218,12 @@ static void print_status(const flash_layout_t *layout)
         serial_logf("[SER] Golden   @0x%08lX size=0x%08lX\r\n",
                     (unsigned long)layout->golden.offset,
                     (unsigned long)layout->golden.size);
-        serial_logf("[SER] Firmware @0x%08lX size=0x%08lX\r\n",
+        serial_logf("[SER] Appletini @0x%08lX size=0x%08lX\r\n",
                     (unsigned long)layout->firmware.offset,
                     (unsigned long)layout->firmware.size);
+        serial_logf("[SER] Multitini @0x%08lX size=0x%08lX\r\n",
+                    (unsigned long)layout->multitini.offset,
+                    (unsigned long)layout->multitini.size);
         serial_logf("[SER] Metadata @0x%08lX size=0x%08lX\r\n",
                     (unsigned long)layout->metadata.offset,
                     (unsigned long)layout->metadata.size);
@@ -540,8 +544,8 @@ static int receive_firmware_xmodem(uint32_t uart_base,
 
     target.kind = SERIAL_RX_TARGET_SD_FILE;
     target.command_name = "rx";
-    target.limit_name = "firmware slot";
-    target.max_size = layout->firmware.size;
+    target.limit_name = "largest product slot";
+    target.max_size = layout->multitini.size;
     target.memory = NULL;
     target.tmp_path = SERIAL_BOOT_RX_TMP_PATH;
     target.final_path = SERIAL_BOOT_FW_PATH;
@@ -654,7 +658,11 @@ static serial_boot_action_t process_command(uint32_t uart_base,
         return SERIAL_BOOT_ACTION_RUN_UPDATER;
     }
     if (str_ieq(argv[0], "boot") || str_ieq(argv[0], "firmware") || str_ieq(argv[0], "run")) {
-        serial_puts_both("[SER] Booting firmware slot now\r\n");
+        if (!updater_has_verified_firmware()) {
+            serial_puts_both("[SER] No verified available firmware; staying in monitor\r\n");
+            return SERIAL_BOOT_ACTION_NONE;
+        }
+        serial_puts_both("[SER] Selecting verified available firmware now\r\n");
         return SERIAL_BOOT_ACTION_BOOT_FIRMWARE;
     }
     if (str_ieq(argv[0], "reboot") || str_ieq(argv[0], "reset")) {

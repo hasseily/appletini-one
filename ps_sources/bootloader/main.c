@@ -4,6 +4,7 @@
 #include "../image_versions.h"
 #include "../lib/golden_self_update.h"
 #include "../lib/uart.h"
+#include "../lib/multiboot.h"
 
 #include "updater.h"
 #include "updater_layout.h"
@@ -44,9 +45,14 @@ static void print_result(const updater_result_t *r)
     uart_puts(UART1_BASE, "\r\n");
 }
 
-static void boot_firmware_slot(const flash_layout_t *layout)
+static int boot_firmware_slot(void)
 {
-    uint32_t boot_offset = updater_layout_firmware_offset(layout);
+    uint32_t boot_offset;
+    if (updater_select_firmware(&boot_offset) != 0) {
+        uart_puts(UART0_BASE, "[GOLDEN] No verified firmware; staying in monitor\r\n");
+        uart_puts(UART1_BASE, "[GOLDEN] No verified firmware; staying in monitor\r\n");
+        return -1;
+    }
 
     uart_puts(UART0_BASE, "[GOLDEN] Booting firmware @0x");
     uart_puts(UART1_BASE, "[GOLDEN] Booting firmware @0x");
@@ -57,6 +63,7 @@ static void boot_firmware_slot(const flash_layout_t *layout)
      * path reached here (normal boot, serial "boot", post-update). */
     golden_led_off();
     boot_control_boot_qspi_image_offset(boot_offset);
+    return -1;
 }
 
 int main(void)
@@ -74,11 +81,17 @@ int main(void)
     current_boot_offset = boot_control_current_qspi_image_offset();
     /* Any reset after this point starts its search at primary. If primary is
      * being repaired, BootROM advances to the still-valid trial slot. */
-    boot_control_select_qspi_image_offset(GOLDEN_SELF_UPDATE_PRIMARY_OFFSET);
+    if (boot_control_select_qspi_image_offset(GOLDEN_SELF_UPDATE_PRIMARY_OFFSET) != 0) {
+        uart_puts(UART0_BASE, "[GOLDEN] MULTIBOOT verification failed; flash untouched\r\n");
+        for (;;) { __asm__ volatile("nop"); }
+    }
     uart_puts(UART0_BASE, "\r\n[GOLDEN] boot_updater start @921600\r\n");
     uart_puts(UART1_BASE, "\r\n[GOLDEN] boot_updater start @921600\r\n");
     uart_puts(UART0_BASE, "[GOLDEN] Boot image version: " APPLETINI_BOOT_IMAGE_VERSION_FULL "\r\n");
     uart_puts(UART1_BASE, "[GOLDEN] Boot image version: " APPLETINI_BOOT_IMAGE_VERSION_FULL "\r\n");
+    /* Linked proof that golden validates both product slots. */
+    uart_puts(UART0_BASE, MB_GOLDEN_MARKER "\r\n");
+    uart_puts(UART1_BASE, MB_GOLDEN_MARKER "\r\n");
 
     if (current_boot_offset == GOLDEN_SELF_UPDATE_TRIAL_OFFSET) {
         uart_puts(UART0_BASE, "[GOLDEN] Running golden trial; repairing primary now\r\n");
@@ -122,7 +135,9 @@ int main(void)
         }
 
         if (action == SERIAL_BOOT_ACTION_BOOT_FIRMWARE) {
-            boot_firmware_slot(layout);
+            (void)boot_firmware_slot();
+            action = serial_boot_menu(layout, 0U);
+            continue;
         }
 
         if (metadata_sync_attempted == 0U) {
@@ -150,15 +165,13 @@ int main(void)
         if (run_rc != 0 || res.error_code != 0) {
             print_result(&res);
             if (res.found_file) {
-                uart_puts(UART0_BASE, "[GOLDEN] Update failed after detecting FIRMWARE.BIN; refusing to boot firmware automatically.\r\n");
-                uart_puts(UART1_BASE, "[GOLDEN] Update failed after detecting FIRMWARE.BIN; refusing to boot firmware automatically.\r\n");
-                /* A real update was attempted and failed: blink the error
-                 * code on the LED before dropping into the serial monitor.
-                 * Scoped to found_file so a missing SD / no-update-file
-                 * normal boot never blinks (the LED was never turned on). */
-                golden_led_error_code(res.error_code);
-                action = serial_boot_menu(layout, 0U);
-                continue;
+                uart_puts(UART0_BASE, "[GOLDEN] Update failed; checking remaining verified firmware.\r\n");
+                uart_puts(UART1_BASE, "[GOLDEN] Update failed; checking remaining verified firmware.\r\n");
+                /* Blink only at a dead end. A surviving verified slot
+                 * should start without waiting for the error-code pattern. */
+                if (!updater_has_verified_firmware()) {
+                    golden_led_error_code(res.error_code);
+                }
             }
         } else {
             uart_puts(UART0_BASE, "[GOLDEN] No update file\r\n");
@@ -172,7 +185,8 @@ int main(void)
             continue;
         }
 
-        boot_firmware_slot(layout);
+        (void)boot_firmware_slot();
+        action = serial_boot_menu(layout, 0U);
     }
 
     for (;;) {

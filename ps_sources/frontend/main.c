@@ -22,6 +22,7 @@
 #include "../lib/rtc_pcf8563.h"
 #include "../lib/qspi_nor.h"
 #include "../lib/golden_self_update.h"
+#include "../lib/multiboot_platform.h"
 
 #include "uart_control.h"
 #include "card_control_regs.h"
@@ -124,6 +125,11 @@ static XTime g_last_draw_ticks = 0U;
 static usb1_boot_settle_t g_usb1_boot_settle = {0};
 static fw_update_metadata_t g_update_meta = {0};
 static uint8_t g_update_meta_valid = 0U;
+static mb_platform_status_t g_multiboot_status;
+static uint8_t g_multiboot_status_valid;
+static uint32_t g_firmware_switch_request = MB_PRODUCT_NONE;
+static uint8_t g_firmware_switch_active;
+static uint8_t g_firmware_switch_fault;
 static uint8_t g_usb_menu_owned = 0U;
 static uint8_t g_onee_ui_running_seen = 0U;
 static uint16_t *g_bezel_565 = NULL;
@@ -1973,6 +1979,289 @@ static void control_reboot_system(void *ctx)
     control_reboot_qspi_image(ctx, GOLDEN_SELF_UPDATE_PRIMARY_OFFSET);
 }
 
+static int control_write_multiboot_checked(uint32_t value)
+{
+    int rc;
+
+    REG_WRITE(0xF8000008U, 0x0000DF0DU);
+    REG_WRITE(0xF800702CU, value & 0x1FFFU);
+    __asm__ volatile ("dsb sy" ::: "memory");
+    rc = (REG_READ(0xF800702CU) & 0x1FFFU) == (value & 0x1FFFU) ? 0 : -1;
+    REG_WRITE(0xF8000004U, 0x0000767BU);
+    __asm__ volatile ("dsb sy" ::: "memory");
+    return rc;
+}
+
+static int control_prepare_golden_boot(uint32_t offset, uint32_t *previous)
+{
+    *previous = REG_READ(0xF800702CU);
+    if ((offset & 0x7FFFU) != 0U || offset / 0x8000U > 0x1FFFU) {
+        return -1;
+    }
+    return control_write_multiboot_checked(offset / 0x8000U);
+}
+
+static void control_reboot_preselected_golden(void)
+{
+    /* The boot offset has already passed readback before services stop. */
+    REG_WRITE(0xF8000008U, 0x0000DF0DU);
+    __asm__ volatile ("dsb sy" ::: "memory");
+    REG_WRITE(0xF8000200U, 0x00000001U);
+    __asm__ volatile ("dsb sy" ::: "memory");
+    REG_WRITE(0xF8000004U, 0x0000767BU);
+    for (;;) {
+        __asm__ volatile ("wfi");
+    }
+}
+
+static void control_refresh_multiboot(void)
+{
+    memset(&g_multiboot_status, 0, sizeof(g_multiboot_status));
+    g_multiboot_status_valid =
+        mb_platform_status(MB_PRODUCT_APPLETINI, &g_multiboot_status) == MB_OK;
+}
+
+static uint8_t menu_platform_get_multiboot_status(void *ctx,
+                                                  uint8_t *present_mask,
+                                                  uint32_t *default_product)
+{
+    (void)ctx;
+    *present_mask = (g_multiboot_status.appletini_present != 0U ? 1U : 0U) |
+                   (g_multiboot_status.multitini_present != 0U ? 2U : 0U);
+    *default_product = g_multiboot_status.default_product;
+    return (g_multiboot_status_valid != 0U &&
+            g_multiboot_status.golden_available != 0U) ? 1U : 0U;
+}
+
+static int menu_platform_set_startup_firmware(void *ctx, uint32_t product)
+{
+    int rc;
+
+    (void)ctx;
+    rc = mb_platform_set_default(product);
+    control_refresh_multiboot();
+    return rc;
+}
+
+static int menu_platform_request_firmware_switch(void *ctx, uint32_t product)
+{
+    (void)ctx;
+    if (product != MB_PRODUCT_MULTITINI ||
+        g_firmware_switch_request != MB_PRODUCT_NONE) {
+        return -1;
+    }
+    /* Process this after input dispatch, outside the USB stack and drawing. */
+    g_firmware_switch_request = product;
+    return 0;
+}
+
+static int control_hold_quiet_connector(uint32_t *saved_request,
+                                         uint8_t *requested)
+{
+    const uint32_t ready = CARD_CTRL_ONEE_STATUS_HDL_PRESENT_BIT |
+        CARD_CTRL_ONEE_STATUS_QUIET_BIT | CARD_CTRL_ONEE_STATUS_RESELECT_ARMED_BIT |
+        CARD_CTRL_ONEE_STATUS_OUTPUTS_OFF_BIT;
+    const uint32_t unsafe = CARD_CTRL_ONEE_STATUS_ACTIVITY_BIT |
+        CARD_CTRL_ONEE_STATUS_LOCKOUT_BIT | CARD_CTRL_ONEE_STATUS_APPLE_POWER_BIT |
+        CARD_CTRL_ONEE_STATUS_REQUEST_BIT | CARD_CTRL_ONEE_STATUS_SELECTED_BIT |
+        CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT;
+    const uint32_t held = CARD_CTRL_ONEE_STATUS_HDL_PRESENT_BIT |
+        CARD_CTRL_ONEE_STATUS_QUIET_BIT | CARD_CTRL_ONEE_STATUS_REQUEST_BIT |
+        CARD_CTRL_ONEE_STATUS_ISOLATED_BIT;
+    const uint32_t hazard = CARD_CTRL_ONEE_STATUS_ACTIVITY_BIT |
+        CARD_CTRL_ONEE_STATUS_LOCKOUT_BIT | CARD_CTRL_ONEE_STATUS_APPLE_POWER_BIT;
+    uint32_t status = REG_READ(CARD_CTRL_ONEE_MODE_REG);
+    XTime started;
+    XTime now;
+
+    if ((status >> CARD_CTRL_ONEE_STATUS_SIGNATURE_SHIFT) !=
+            CARD_CTRL_ONEE_STATUS_SIGNATURE ||
+        (status & ready) != ready || (status & unsafe) != 0U ||
+        (REG_READ(CARD_CTRL_VTW_CTRL_REG) & CARD_CTRL_VTW_CTRL_CORE_RUN_BIT) != 0U) {
+        return -1;
+    }
+    *saved_request = status & CARD_CTRL_ONEE_CTRL_REQUEST_BIT;
+    /* Switch to Multitini is an explicit stand-alone action. Ask the existing
+     * PL guard to isolate the connector; do not start or persist ONE//e. */
+    REG_WRITE(CARD_CTRL_ONEE_MODE_REG, CARD_CTRL_ONEE_CTRL_REQUEST_BIT);
+    *requested = 1U;
+    XTime_GetTime(&started);
+    do {
+        status = REG_READ(CARD_CTRL_ONEE_MODE_REG);
+        if ((status >> CARD_CTRL_ONEE_STATUS_SIGNATURE_SHIFT) !=
+                CARD_CTRL_ONEE_STATUS_SIGNATURE || (status & hazard) != 0U) {
+            return -1;
+        }
+        if ((status & held) == held) {
+            return 0;
+        }
+        XTime_GetTime(&now);
+    } while (ticks_to_us(now - started) < 100000U);
+    return -1;
+}
+
+static void control_service_firmware_switch(config_menu_t *menu)
+{
+    const uint32_t product = g_firmware_switch_request;
+    uint32_t golden_offset = MB_GOLDEN_OFFSET;
+    uint32_t saved_dma = 0U;
+    uint32_t saved_onee_request = 0U;
+    uint8_t dma_held = 0U;
+    uint8_t temporary_isolation = 0U;
+    uint8_t cpu1_hold_attempted = 0U;
+    uint8_t request_attempted = 0U;
+    uint8_t boot_register_attempted = 0U;
+    uint32_t saved_multiboot = 0U;
+    uint8_t recovery_failed = 0U;
+    const char *error = NULL;
+
+    if (product == MB_PRODUCT_NONE) {
+        return;
+    }
+    g_firmware_switch_request = MB_PRODUCT_NONE;
+    if (screenshot_service_busy() != 0U || printer_service_job_active() != 0U ||
+        (REG_READ(CARD_CTRL_SSC_STATUS_REG) & CARD_CTRL_SSC_STATUS_COUNT_MASK) != 0U ||
+        config_menu_usb0_sd_remote_active(menu) != 0U ||
+        config_menu_ethernet_ftp_sd_remote_active(menu) != 0U) {
+        error = "FINISH SD SHARING, SCREENSHOTS AND PRINTING FIRST";
+        goto failed;
+    }
+    /* A displayed presence result is never permission to boot stale flash. */
+    control_refresh_multiboot();
+    if (g_multiboot_status_valid == 0U ||
+        g_multiboot_status.multitini_present == 0U ||
+        mb_platform_golden_offset(&golden_offset) != MB_OK) {
+        error = "MULTITINI OR MULTIBOOT GOLDEN NOT VERIFIED";
+        goto failed;
+    }
+    if (control_onee_isolated() == 0U) {
+        XTime started;
+        XTime now;
+
+        if (boot_menu_service_host_bus_master_allowed() == 0U) {
+            if (control_hold_quiet_connector(&saved_onee_request,
+                                               &temporary_isolation) != 0) {
+                error = "APPLE BUS CANNOT BE ISOLATED FOR THIS SWITCH";
+                goto failed;
+            }
+        } else {
+            saved_dma = REG_READ(AT_DMA_CTRL_REG);
+            REG_WRITE(AT_DMA_CTRL_REG, saved_dma | AT_DMA_CTRL_HOLD_REQ_BIT);
+            dma_held = 1U;
+            XTime_GetTime(&started);
+            do {
+                if ((REG_READ(AT_DMA_CTRL_REG) & AT_DMA_CTRL_HOLD_ACTIVE_BIT) != 0U) {
+                    break;
+                }
+                XTime_GetTime(&now);
+                if (ticks_to_us(now - started) >= 100000U) {
+                    error = "APPLE BUS HOLD TIMED OUT; SWITCH CANCELLED";
+                    goto failed;
+                }
+            } while (1);
+        }
+    } else if (vtw_service_onee_set_paused(1U) == 0U) {
+        error = "ONE//e PAUSE FAILED; SWITCH CANCELLED";
+        goto failed;
+    }
+
+    /* The Apple CPU is held, or its connector is isolated with ONE//e paused.
+     * CPU0 runs no emulation polls here. Keep services intact for cancellation. */
+    g_firmware_switch_active = 1U;
+    for (uint32_t attempt = 0U; attempt < 64U &&
+         smartport_service_has_pending() != 0U; ++attempt) {
+        smartport_service_poll();
+    }
+    if (smartport_service_has_pending() != 0U) {
+        error = "SMARTPORT BUSY; SWITCH CANCELLED";
+        goto failed;
+    }
+    {
+        int rc = -1;
+        for (uint32_t attempt = 0U; attempt < 64U; ++attempt) {
+            rc = disk2_service_flush_dirty_now();
+            if (rc == 0) {
+                break;
+            }
+        }
+        if (rc != 0) {
+            error = "DISK II SAVE FAILED; SWITCH CANCELLED";
+            goto failed;
+        }
+    }
+    if (config_menu_flush_settings(menu) == 0U ||
+        smartport_service_sync_sd() != 0) {
+        error = "SD SAVE FAILED; SWITCH CANCELLED";
+        goto failed;
+    }
+    /* This checks both target and golden again before committing one request. */
+    request_attempted = 1U;
+    if (mb_platform_request(product) != MB_OK) {
+        error = "FIRMWARE CHECK OR FLASH WRITE FAILED; SWITCH CANCELLED";
+        goto failed;
+    }
+    boot_register_attempted = 1U;
+    if (control_prepare_golden_boot(golden_offset, &saved_multiboot) != 0) {
+        error = "GOLDEN BOOT REGISTER CHECK FAILED; SWITCH CANCELLED";
+        goto failed;
+    }
+    cpu1_hold_attempted = 1U;
+    if (amp_hold_core1() != 0) {
+        error = "CPU1 HOLD FAILED; SWITCH CANCELLED";
+        goto failed;
+    }
+
+    card_control_write_slot_mask(0U);
+    REG_WRITE(CARD_CTRL_FEATURE_ENABLE_REG, 0U);
+    control_apply_slot5_service(0U);
+    compositor_set_paused(1U);
+    vtw_service_onee_stop();
+    vtw_service_set_enabled(0U);
+    usb_hid_service_stop();
+    usb_sdd_service_stop();
+    (void)usb_storage_service_disconnect();
+    Xil_DCacheFlush();
+    uart_puts(UART0_BASE, "multiboot: saved media; rebooting through golden\r\n");
+    control_reboot_preselected_golden();
+    return;
+
+failed:
+    if (request_attempted != 0U && mb_platform_clear_request() != MB_OK) {
+        error = "BOOT REQUEST CLEAR FAILED; NO REBOOT PERFORMED";
+    }
+    if (boot_register_attempted != 0U &&
+        control_write_multiboot_checked(saved_multiboot) != 0) {
+        recovery_failed = 1U;
+    }
+    if (cpu1_hold_attempted != 0U && amp_release_core1() == 0U) {
+        recovery_failed = 1U;
+    }
+    if (recovery_failed != 0U) {
+        /* Keep the machine held if a partial worker reset cannot be repaired.
+         * The main loop then draws the error without restarting services. */
+        g_firmware_switch_fault = 1U;
+        menu->status_warning = 1U;
+        (void)snprintf(menu->status, sizeof(menu->status),
+                       "HANDOFF RECOVERY FAILED; REBOOT THE CARD");
+        uart_puts(UART0_BASE, menu->status);
+        uart_puts(UART0_BASE, "\r\n");
+        compositor_request_full_refresh();
+        return;
+    }
+    g_firmware_switch_active = 0U;
+    if (dma_held != 0U) {
+        REG_WRITE(AT_DMA_CTRL_REG, saved_dma);
+    }
+    if (temporary_isolation != 0U) {
+        REG_WRITE(CARD_CTRL_ONEE_MODE_REG, saved_onee_request);
+    }
+    config_menu_refresh_multiboot(menu);
+    menu->status_warning = 1U;
+    (void)snprintf(menu->status, sizeof(menu->status), "%s", error);
+    uart_puts(UART0_BASE, error);
+    uart_puts(UART0_BASE, "\r\n");
+}
+
 static int control_self_update_boot(void *ctx,
                                     uint32_t control_uart_base,
                                     uint32_t mirror_uart_base,
@@ -2067,6 +2356,9 @@ static void ui_poll_sensors(void)
 
 static void usb0_priority_checkpoint(void)
 {
+    if (g_firmware_switch_active != 0U) {
+        return;
+    }
     /* Exactly one personality owns USB0 at a time. */
     if (usb_sdd_service_active()) {
         usb_sdd_service_poll();
@@ -2080,7 +2372,7 @@ static void usb0_priority_checkpoint(void)
  * call USB1 here: this callback runs from inside the USB1 stack. */
 void cherryusb_background_poll(void)
 {
-    if (g_usb1_background_poll_active != 0U) {
+    if (g_usb1_background_poll_active != 0U || g_firmware_switch_active != 0U) {
         return;
     }
 
@@ -3571,11 +3863,15 @@ int main(void)
     uart_puts(UART0_BASE, "\r\n==============================\r\n");
     uart_puts(UART0_BASE, "text_ui_test main start\r\n");
     uart_puts(UART0_BASE, "Firmware image: " APPLETINI_FIRMWARE_IMAGE_VERSION_FULL "\r\n");
+    uart_puts(UART0_BASE, MB_APPLETINI_MARKER "\r\n");
     uart_puts(UART0_BASE, "Debug UART: UART0\r\n");
     uart_puts(UART0_BASE, "Control UART: UART1 + UART0\r\n");
     uart_puts(UART0_BASE, "==============================\r\n");
 
     g_update_meta_valid = update_metadata_read_from_qspi(&g_update_meta);
+    if (mb_platform_open() == MB_OK) {
+        control_refresh_multiboot();
+    }
 
     /* Reset shared renderer handoff/control words before CPU1 can read them.
      * CPU1 applies its own MMU mapping but must not clear CPU0-published
@@ -3585,7 +3881,10 @@ int main(void)
     /* Prepare the second Cortex-A9. amp_release_core1() copies the
      * core-1 image (embedded as .rodata.core1_blob via lib/core1_
      * blob.S) into DDR at 0x20000000, dcache-flushes it, and wakes CPU1. */
-    (void)amp_release_core1();
+    if (amp_release_core1() == 0U) {
+        uart_puts(UART0_BASE, "core 1: checked startup failed; Apple remains held\r\n");
+        return -1;
+    }
     g_ui_state = &ui;
     g_config_menu_state = &config_menu;
     uart_control_bind_config_menu(&config_menu);
@@ -3675,6 +3974,9 @@ int main(void)
         menu_platform.set_vtw_slug_key_enabled = control_set_vtw_slug_key_enabled;
         menu_platform.set_vtw_slowdown = control_set_vtw_slowdown;
         menu_platform.refresh_usb1 = control_refresh_usb1;
+        menu_platform.get_multiboot_status = menu_platform_get_multiboot_status;
+        menu_platform.set_startup_firmware = menu_platform_set_startup_firmware;
+        menu_platform.request_firmware_switch = menu_platform_request_firmware_switch;
         menu_platform.set_phasor_pan = control_set_phasor_pan;
         menu_platform.set_phasor_audio = control_set_phasor_audio;
         menu_platform.set_mouse_sensitivity = control_set_mouse_sensitivity;
@@ -3696,6 +3998,7 @@ int main(void)
         menu_platform.ethernet_dhcp_cancel = menu_platform_ethernet_dhcp_cancel;
         XTime_GetTime(&boot_stage_started);
         config_menu_bind_platform(&config_menu, &menu_platform);
+        config_menu_refresh_multiboot(&config_menu);
         boot_timing_log("config load and bind", boot_stage_started);
         boot_debug_log_snapshot("after config bind");
     }
@@ -3898,6 +4201,10 @@ int main(void)
     uint32_t ftp_modal_last_input_seq = 0U;
 
     while (1) {
+        if (g_firmware_switch_fault != 0U) {
+            (void)compositor_tick();
+            continue;
+        }
         uart_budget = 32U;
         onee_service_poll();
         config_menu_poll_onee_mode(&config_menu);
@@ -4294,6 +4601,7 @@ int main(void)
         } while (uart_budget != 0U);
         ui_sync_usb_menu_capture(&config_menu);
 
+        control_service_firmware_switch(&config_menu);
         ui_apply_output_mode(&config_menu, 0U);
         ui_apply_size_multiplier(&config_menu);
 

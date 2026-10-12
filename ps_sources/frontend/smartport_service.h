@@ -55,6 +55,8 @@ int smartport_service_reset_media(uint8_t device);
  * resume remounts and reopens the configured files. */
 void smartport_service_suspend_sd(void);
 int smartport_service_resume_sd(void);
+/* Check every writable SD image before reboot. Does not close or unmount it. */
+int smartport_service_sync_sd(void);
 
 /* Read up to count bytes starting at logical block_num*512 from the mounted
  * disk image into buffer. *actual_out gets the actual bytes read. Returns 0

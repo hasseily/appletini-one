@@ -17,5 +17,7 @@ typedef struct {
 int updater_run(updater_result_t *result);
 int updater_sync_boot_metadata(void);
 int updater_has_verified_firmware(void);
+/* No available verified image returns failure. */
+int updater_select_firmware(uint32_t *boot_offset);
 
 #endif

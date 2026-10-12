@@ -4078,6 +4078,78 @@ void config_menu_save_settings(config_menu_t *menu)
                                             "WROTE 0:/appletini_cfg.txt");
 }
 
+uint8_t config_menu_flush_settings(config_menu_t *menu)
+{
+    if (menu == NULL) {
+        return 0U;
+    }
+    /* Edits save at once. A session-only change cannot be silently discarded. */
+    if (menu->session_only == 0U && menu->onee_persist_write_failed == 0U) {
+        return 1U;
+    }
+    return config_menu_save_settings_to_path(menu, APPLETINI_CFG_PATH, NULL);
+}
+
+void config_menu_refresh_multiboot(config_menu_t *menu)
+{
+    if (menu == NULL) {
+        return;
+    }
+    menu->multiboot_ready = 0U;
+    menu->multiboot_present_mask = 0U;
+    menu->startup_firmware = MB_PRODUCT_APPLETINI;
+    if (menu->platform.get_multiboot_status != NULL) {
+        menu->multiboot_ready = menu->platform.get_multiboot_status(
+            menu->platform.ctx, &menu->multiboot_present_mask,
+            &menu->startup_firmware);
+    }
+}
+
+static void config_menu_cycle_startup_firmware(config_menu_t *menu)
+{
+    uint32_t product;
+    uint8_t bit;
+
+    config_menu_refresh_multiboot(menu);
+    product = menu->startup_firmware == MB_PRODUCT_MULTITINI ?
+        MB_PRODUCT_APPLETINI : MB_PRODUCT_MULTITINI;
+    bit = product == MB_PRODUCT_APPLETINI ? 1U : 2U;
+    if (menu->multiboot_ready == 0U ||
+        (menu->multiboot_present_mask & bit) == 0U ||
+        menu->platform.set_startup_firmware == NULL) {
+        config_menu_set_status(menu, 1U,
+            menu->multiboot_ready == 0U ? "MULTIBOOT GOLDEN REQUIRED" :
+            "OTHER FIRMWARE NOT INSTALLED");
+        return;
+    }
+    if (menu->platform.set_startup_firmware(menu->platform.ctx, product) != 0) {
+        config_menu_refresh_multiboot(menu);
+        config_menu_set_status(menu, 1U, "STARTUP FIRMWARE WRITE FAILED");
+        return;
+    }
+    config_menu_refresh_multiboot(menu);
+    config_menu_set_status(menu, 0U, "STARTUP FIRMWARE SAVED IN FLASH");
+}
+
+static void config_menu_switch_firmware(config_menu_t *menu)
+{
+    config_menu_refresh_multiboot(menu);
+    if (menu->multiboot_ready == 0U ||
+        (menu->multiboot_present_mask & 2U) == 0U ||
+        menu->platform.request_firmware_switch == NULL) {
+        config_menu_set_status(menu, 1U,
+            menu->multiboot_ready == 0U ? "MULTIBOOT GOLDEN REQUIRED" :
+            "MULTITINI NOT INSTALLED");
+        return;
+    }
+    if (menu->platform.request_firmware_switch(
+            menu->platform.ctx, MB_PRODUCT_MULTITINI) != 0) {
+        config_menu_set_status(menu, 1U, "FIRMWARE SWITCH UNAVAILABLE");
+        return;
+    }
+    config_menu_set_status(menu, 0U, "CHECKING MULTITINI AND SAVING MEDIA");
+}
+
 static void config_menu_load_settings(config_menu_t *menu)
 {
     FIL file;
@@ -5772,6 +5844,13 @@ static uint8_t config_menu_adjust_focused_value(config_menu_t *menu, int8_t delt
         return 0U;
     }
 
+    if (menu->tab == CONFIG_TAB_BOOT_SETTINGS &&
+        menu->item_focus == CONFIG_MENU_BOOT_STARTUP_FIRMWARE_ITEM) {
+        (void)delta;
+        config_menu_cycle_startup_firmware(menu);
+        return 1U;
+    }
+
     if (menu->tab == CONFIG_TAB_APPLICARD && menu->item_focus == 1U) {
         (void)delta;
         config_menu_set_slot5_processor(menu,
@@ -7129,6 +7208,12 @@ static void config_menu_activate_item(config_menu_t *menu)
         } else if (menu->item_focus == CONFIG_MENU_BOOT_ONEE_ITEM) {
             config_menu_toggle_onee_mode(menu);
             break;
+        } else if (menu->item_focus == CONFIG_MENU_BOOT_STARTUP_FIRMWARE_ITEM) {
+            config_menu_cycle_startup_firmware(menu);
+            break;
+        } else if (menu->item_focus == CONFIG_MENU_BOOT_SWITCH_FIRMWARE_ITEM) {
+            config_menu_switch_firmware(menu);
+            break;
         } else if (menu->item_focus == CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM) {
             if (config_menu_onee_fixed_bindings_active(menu) != 0U) {
                 config_menu_toggle_onee_video_standard(menu);
@@ -7718,7 +7803,7 @@ void config_menu_poll_onee_mode(config_menu_t *menu)
     menu->onee_mode_status =
         menu->platform.get_onee_mode_status(menu->platform.ctx);
 
-    /* Item 3 becomes Reset USB Bindings when ONE//e stops. Do not let a
+    /* The standard row becomes Reset USB Bindings when ONE//e stops. Do not let a
      * focused standard row silently turn into that destructive action. */
     if (menu->tab == CONFIG_TAB_BOOT_SETTINGS &&
         menu->item_focus == CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM &&

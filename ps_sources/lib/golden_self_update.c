@@ -10,13 +10,12 @@
 
 #include "crc32.h"
 #include "qspi_nor.h"
+#include "multiboot.h"
 #include "uart.h"
 
 #define PRIMARY_FLASH_OFFSET                GOLDEN_SELF_UPDATE_PRIMARY_OFFSET
 #define TRIAL_FLASH_OFFSET                  GOLDEN_SELF_UPDATE_TRIAL_OFFSET
 #define GOLDEN_SLOT_SIZE                    GOLDEN_SELF_UPDATE_SLOT_SIZE
-#define FALLBACK_FLASH_OFFSET               0x00200000U
-#define FALLBACK_FLASH_SIZE                 0x00DF0000U
 #define QSPI_ERASE_SIZE                     0x00010000U
 #define QSPI_ADDRESS_BYTES                  3U
 
@@ -461,6 +460,25 @@ static int manifest_decode(const uint8_t bytes[GOLDEN_SELF_UPDATE_MANIFEST_SIZE]
     return XST_SUCCESS;
 }
 
+/* Reuse the shared read-only golden validator. It decodes expected marker
+ * bytes at runtime, so this generic library cannot supply a false capability
+ * marker to a single-slot main that did not link the multiboot boot path. */
+static int target_multiboot_read(void *context, uint32_t offset, void *dst, uint32_t len)
+{
+    return reader_read((const image_reader_t *)context, offset, dst, len) == XST_SUCCESS ? 0 : -1;
+}
+
+static int target_is_multiboot_golden(const image_reader_t *reader)
+{
+    mb_flash_t source;
+    uint32_t offset;
+    memset(&source, 0, sizeof(source));
+    source.context = (void *)reader;
+    source.read = target_multiboot_read;
+    source.capacity = MB_FLASH_SIZE;
+    return mb_golden_available(&source, &offset) == MB_OK && offset == MB_GOLDEN_OFFSET;
+}
+
 static int target_preflight(const image_reader_t *reader,
                             target_image_t *target,
                             golden_self_update_result_t *out)
@@ -515,6 +533,11 @@ static int target_preflight(const image_reader_t *reader,
     }
 
     target->total_size = reader->size;
+    if (!target_is_multiboot_golden(reader)) {
+        result_error(out, GSU_E_TARGET_MARKER,
+                     "golden target lacks the linked multiboot golden capability");
+        return XST_FAILURE;
+    }
     out->payload_size = target->manifest.payload_size;
     out->payload_crc32 = target->manifest.payload_crc32;
     return XST_SUCCESS;
@@ -576,60 +599,37 @@ static int flash_golden_preflight(qspi_nor_t *nor,
     return XST_SUCCESS;
 }
 
+static int fallback_flash_read(void *context, uint32_t offset, void *dst, uint32_t len)
+{
+    return qspi_nor_read((qspi_nor_t *)context, offset, dst, len) == XST_SUCCESS ? 0 : -1;
+}
+
 static int fallback_preflight(qspi_nor_t *nor,
                               uint32_t flash_capacity,
                               golden_self_update_result_t *out)
 {
-    flash_reader_ctx_t flash_ctx;
-    image_reader_t reader;
-    golden_self_update_manifest_t manifest;
-    uint8_t manifest_bytes[GOLDEN_SELF_UPDATE_MANIFEST_SIZE];
-    uint32_t payload_size;
-    uint32_t crc;
-    uint32_t available;
-    int marker_found;
-
-    if (flash_capacity <= FALLBACK_FLASH_OFFSET) {
-        result_error(out, GSU_E_FALLBACK_IMAGE, "detected flash has no fallback region");
+    mb_flash_t flash;
+    mb_selection_t selected;
+    if (flash_capacity < MB_FLASH_SIZE) {
+        result_error(out, GSU_E_FALLBACK_IMAGE, "flash does not cover the multiboot layout");
         return XST_FAILURE;
     }
-    available = flash_capacity - FALLBACK_FLASH_OFFSET;
-    if (available > FALLBACK_FLASH_SIZE) {
-        available = FALLBACK_FLASH_SIZE;
-    }
-    flash_ctx.nor = nor;
-    flash_ctx.base = FALLBACK_FLASH_OFFSET;
-    reader.read = flash_read;
-    reader.ctx = &flash_ctx;
-    reader.size = available;
-
-    if (bootgen_image_validate(&reader, &payload_size) != XST_SUCCESS ||
-        payload_size > (FALLBACK_FLASH_SIZE - GOLDEN_SELF_UPDATE_MANIFEST_SIZE) ||
-        !range_valid(payload_size, GOLDEN_SELF_UPDATE_MANIFEST_SIZE, reader.size)) {
-        result_error(out, GSU_E_FALLBACK_IMAGE, "fallback Bootgen image is invalid");
+    memset(&flash, 0, sizeof(flash));
+    flash.context = nor;
+    flash.read = fallback_flash_read;
+    flash.capacity = MB_FLASH_SIZE;
+    if (mb_select(&flash, MB_PRODUCT_NONE, &selected) != MB_OK ||
+        (selected.product == MB_PRODUCT_NONE && selected.legacy == 0U)) {
+        result_error(out, GSU_E_FALLBACK_IMAGE,
+                     "no live verified recovery firmware in either slot");
         return XST_FAILURE;
     }
-    if (reader_read(&reader, payload_size, manifest_bytes,
-                    sizeof(manifest_bytes)) != XST_SUCCESS ||
-        manifest_decode(manifest_bytes, &manifest) != XST_SUCCESS ||
-        manifest.role != GOLDEN_SELF_UPDATE_ROLE_FIRMWARE ||
-        (manifest.flags & GOLDEN_SELF_UPDATE_FLAG_RECOVERY) == 0U ||
-        manifest.payload_size != payload_size) {
-        result_error(out, GSU_E_FALLBACK_MANIFEST,
-                     "fallback recovery manifest is invalid");
-        return XST_FAILURE;
-    }
-    if (stream_crc_and_marker(&reader, payload_size,
-                              &crc, &marker_found) != XST_SUCCESS ||
-        crc != manifest.payload_crc32) {
-        result_error(out, GSU_E_FALLBACK_CRC, "fallback payload CRC32 mismatch");
-        return XST_FAILURE;
-    }
-    if (!marker_found) {
-        result_error(out, GSU_E_FALLBACK_MARKER,
-                     "fallback recovery marker is missing");
-        return XST_FAILURE;
-    }
+    /* mb_select checks Bootgen bounds, the complete payload/footer CRC,
+     * recovery marker, and either the product tag or guarded legacy record.
+     * Neither firmware slot nor boot-choice metadata is changed here. */
+    log_printf("[GSU] Verified recovery %s @0x%08lX\r\n",
+               selected.legacy ? "legacy firmware" : mb_product_name(selected.product),
+               (unsigned long)selected.boot_offset);
     return XST_SUCCESS;
 }
 
@@ -774,7 +774,7 @@ static int qspi_preflight_init(qspi_nor_t *nor,
         return XST_FAILURE;
     }
     capacity = qspi_nor_capacity_bytes(nor);
-    if (capacity < (FALLBACK_FLASH_OFFSET + FALLBACK_FLASH_SIZE)) {
+    if (capacity < MB_FLASH_SIZE) {
         result_error(out, GSU_E_QSPI_INIT, "QSPI capacity does not cover the fixed flash layout");
         return XST_FAILURE;
     }

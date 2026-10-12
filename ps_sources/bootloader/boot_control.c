@@ -15,14 +15,23 @@
 
 #define ZYNQ_MULTIBOOT_GRANULARITY_BYTES 0x8000U
 
+/* Order device writes before a reset, and never reset toward an unverified
+ * MULTIBOOT value. This path also works before any fabric is configured. */
+static void device_barrier(void)
+{
+#if defined(__arm__)
+    __asm__ volatile("dsb sy" ::: "memory");
+#endif
+}
+
 void boot_control_soft_reset(void)
 {
     REG_WRITE(SLCR_UNLOCK, SLCR_UNLOCK_KEY);
+    device_barrier();
     REG_WRITE(PS_RST_CTRL_REG, PS_RST_MASK);
+    device_barrier();
     REG_WRITE(SLCR_LOCK, SLCR_LOCK_KEY);
-    for (;;) {
-        __asm__ volatile("nop");
-    }
+    for (;;) { __asm__ volatile("nop"); }
 }
 
 uint32_t boot_control_current_qspi_image_offset(void)
@@ -31,23 +40,27 @@ uint32_t boot_control_current_qspi_image_offset(void)
            ZYNQ_MULTIBOOT_GRANULARITY_BYTES;
 }
 
-void boot_control_select_qspi_image_offset(uint32_t image_offset_bytes)
+int boot_control_select_qspi_image_offset(uint32_t image_offset_bytes)
 {
-    uint32_t mb = image_offset_bytes / ZYNQ_MULTIBOOT_GRANULARITY_BYTES;
-
+    uint32_t mb;
+    if ((image_offset_bytes % ZYNQ_MULTIBOOT_GRANULARITY_BYTES) != 0U ||
+        image_offset_bytes >= 0x01000000U) return -1;
+    mb = image_offset_bytes / ZYNQ_MULTIBOOT_GRANULARITY_BYTES;
     REG_WRITE(SLCR_UNLOCK, SLCR_UNLOCK_KEY);
-    REG_WRITE(DEVCFG_MULTIBOOT, mb & 0x1FFFU);
+    REG_WRITE(DEVCFG_MULTIBOOT, mb);
+    device_barrier();
+    if ((REG_READ(DEVCFG_MULTIBOOT) & 0x1FFFU) != mb) {
+        REG_WRITE(SLCR_LOCK, SLCR_LOCK_KEY);
+        return -1;
+    }
     REG_WRITE(SLCR_LOCK, SLCR_LOCK_KEY);
+    device_barrier();
+    return 0;
 }
 
 void boot_control_boot_qspi_image_offset(uint32_t image_offset_bytes)
 {
     /* Zynq FSBL computes image start = multiboot_reg * 0x8000. */
-    boot_control_select_qspi_image_offset(image_offset_bytes);
-    REG_WRITE(SLCR_UNLOCK, SLCR_UNLOCK_KEY);
-    REG_WRITE(PS_RST_CTRL_REG, PS_RST_MASK);
-    REG_WRITE(SLCR_LOCK, SLCR_LOCK_KEY);
-    for (;;) {
-        __asm__ volatile("nop");
-    }
+    if (boot_control_select_qspi_image_offset(image_offset_bytes) != 0) return;
+    boot_control_soft_reset();
 }

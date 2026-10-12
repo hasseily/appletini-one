@@ -34,7 +34,7 @@ def main() -> int:
         temp_dir = Path(name)
         payload_path = temp_dir / "raw.bin"
         output_path = temp_dir / "BOOT.BIN"
-        payload = bytes(range(256)) * 17 + b"Appletini"
+        payload = bytes(range(256)) * 17 + image.RECOVERY_MARKER
         payload_path.write_bytes(payload)
 
         manifest = image.append_manifest(
@@ -127,7 +127,7 @@ def main() -> int:
         boundary_payload = temp_dir / "boundary-raw.bin"
         boundary_output = temp_dir / "boundary-BOOT.BIN"
         boundary_payload.write_bytes(
-            b"\xA5" * (slot_size - image.MANIFEST_SIZE)
+            image.RECOVERY_MARKER + b"\xA5" * (slot_size - image.MANIFEST_SIZE - len(image.RECOVERY_MARKER))
         )
         image.append_manifest(
             boundary_payload,
@@ -162,7 +162,7 @@ def main() -> int:
 
         cli_payload = temp_dir / "cli-raw.bin"
         cli_output = temp_dir / "FIRMWARE.BIN"
-        cli_payload.write_bytes(b"firmware payload")
+        cli_payload.write_bytes(b"firmware payload" + image.RECOVERY_MARKER)
         tool = ROOT / "scripts" / "image_manifest.py"
         appended = subprocess.run(
             [
@@ -209,7 +209,7 @@ def main() -> int:
             boot_script,
             "golden build does not enforce its one-megabyte slot")
     require('image_manifest.py" append' in firmware_script and
-            "--role firmware --recovery-capable --max-size 0x00DF0000" in
+            "--role firmware --recovery-capable --product appletini --max-size 0x00600000" in
             firmware_script,
             "firmware build does not enforce its slot or append its recovery manifest")
     require('-o "%TMP_RAW%"' in boot_script and

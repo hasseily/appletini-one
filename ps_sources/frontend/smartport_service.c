@@ -2367,6 +2367,22 @@ uint8_t smartport_service_has_pending(void)
     return (g_cmd_pending_count != 0U) ? 1U : 0U;
 }
 
+int smartport_service_sync_sd(void)
+{
+    smartport_devices_ensure_defaults();
+    for (uint8_t i = 0U; i < SP_MAX_DEVICES; ++i) {
+        sp_device_t *dev = &g_devices[i];
+        if (dev->image_open != 0U && dev->is_ram == 0U &&
+            dev->read_only == 0U) {
+            const FRESULT fr = f_sync(&dev->image_file);
+            if (fr != FR_OK) {
+                return -(int)fr;
+            }
+        }
+    }
+    return 0;
+}
+
 void smartport_service_suspend_sd(void)
 {
     uint8_t i;

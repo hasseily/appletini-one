@@ -155,8 +155,12 @@ class RenderTests(unittest.TestCase):
             self.assertEqual(metrics["state_saturations"], 0)
             self.assertEqual(metrics["output_clips"], 0)
 
-    def test_balanced_preset_is_current_engine_and_default_executable_settings(self):
-        self.assertEqual(render.reference_settings(), render.reference_settings("balanced"))
+    def test_current_gain_and_historical_balanced_preset(self):
+        current = render.reference_settings()
+        historical = render.reference_settings("balanced")
+        self.assertEqual(current["prototype_gain"], 2)
+        self.assertEqual(historical["prototype_gain"], 1)
+        self.assertEqual({**historical, "prototype_gain": 2}, current)
         directory = self.root / "full_prototype"
         destination = self.root / "default_prototype.wav"
         result = subprocess.run([str(self.executable), str(directory / "tables.txt"),
@@ -164,8 +168,25 @@ class RenderTests(unittest.TestCase):
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(destination.read_bytes(), (directory / "prototype.wav").read_bytes())
-        self.assertEqual(self.reports["prototype"]["prototype_gain"], 1)
+        self.assertEqual(self.reports["prototype"]["prototype_gain"], 2)
         self.assertEqual(self.reports["prototype"]["voice_trim_q16"], 16384)
+
+    def test_output_gain_doubles_speech_without_changing_tract_state(self):
+        directory = self.root / "gain_one"
+        previous = render.render(self.trace, directory, "prototype", self.executable,
+                                 prototype_gain=1)
+        old_pcm = read_pcm(directory, "prototype").astype(np.int32)
+        new_pcm = self.pcm["prototype"].astype(np.int32)
+        # Gain 1 floors an odd signed Q16 value when converting to PCM.
+        # Gain 2 retains that bit; an unclipped sample is 2*old or 2*old+1.
+        delta = new_pcm - 2 * old_pcm
+        self.assertTrue(np.all((delta == 0) | (delta == 1)))
+        self.assertTrue(np.any(old_pcm != 0))
+        for old, new in zip(previous["native_metrics"], self.reports["prototype"]["native_metrics"]):
+            self.assertEqual(old["output_clips"], 0)
+            self.assertEqual(new["output_clips"], 0)
+            self.assertEqual({k: v for k, v in old.items() if k != "output_clips"},
+                             {k: v for k, v in new.items() if k != "output_clips"})
 
     def test_invalid_ranges_and_profiles_fail_before_process_launch(self):
         for kwargs in ({"start_tick": -1}, {"start_tick": 100, "end_tick": 100},

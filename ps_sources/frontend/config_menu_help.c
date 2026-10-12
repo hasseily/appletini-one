@@ -435,7 +435,7 @@ HELP(phasor_volume,
 
 HELP(phasor_ssi_volume,
     "Adjusts both SSI speech chips against the AY channels, from -5 dB to +5 dB in 1 dB steps.",
-    "The default is +2 dB; 0 dB keeps the model's original output level. Enter selects 0 dB.",
+    "The default is 0 dB, which adds no mixer gain. Enter selects 0 dB.",
     "This adjusts the mix without changing speech timing, pitch, or the chip's amplitude register.");
 
 HELP(phasor_ssi_pan,

@@ -5,8 +5,8 @@ SystemVerilog. The C++ code is the canonical higher-level implementation;
 controller-state and sample-by-sample PCM checks keep the RTL in step with it.
 Both use the committed SSI parameter ROM, native scanner, native voice/noise
 source and all five prototype formants. Neither depends on the old sound
-generator or coefficient package. The die-target firmware build is `F1.2.5-d2`;
-the build results below for `F1.2.5-d1` record the earlier checkpoint.
+generator or coefficient package. The current development firmware is
+`F1.2.6-d1`; the dated build results below record earlier checkpoints.
 
 The 2026-10-07 update integrates the user-approved balanced voice/noise levels
 and the measured AMP-zero retention correction. The original balanced audio
@@ -17,6 +17,23 @@ The production `ssi263_bus_wrapper` now selects the native engine for both
 SSI263AP sockets. The old SC-01 sound core and formant backend are no longer
 in the firmware source list. The standalone checks below remain historical
 evidence for the listening checkpoint; full firmware validation is separate.
+
+## F1.2.6-d1 build
+
+The 2026-10-12 full Vivado build `20261012T043849Z-886ea50e-full` includes
+output gain 2 and the 0 dB SSI mixer default. Setup slack is +0.054 ns, passing
+the +0.050 ns build gate; hold slack is +0.064 ns and pulse-width slack is
++0.265 ns. Routing, bus skew and constraint-bound checks passed. No internal
+endpoints lack constraints, and no constraint object queries failed. Both
+temporary implementation clock uncertainties are zero at signoff.
+
+Fresh Vitis platform, FSBL, CPU1 and frontend builds use the named run's XSA.
+The package audit checks all ELF load bytes, the embedded CPU1 binary, the
+F1.2.6-d1 version, manifest CRC/role/recovery flag, and bitstream/XSA identity.
+The firmware SHA-256 is
+`22ba195da1c230df11ffe903d7b4f4971cea23352e5241dc98fae70c5426b2d9`.
+The build report and payload audit are in `build/firmware-1.2.6-d1/`.
+This image has not been flashed or tested on a card.
 
 ## F1.2.5-d2 build
 
@@ -84,15 +101,35 @@ charge transfers in the host order. The tract exports a sticky
 Saturation is defined model behavior, not an event drop.
 
 The default voice drive is trimmed to -16384/0; frication is +/-301.
-No second voice scaling occurs in the tract. The default PCM gain is 1 followed
-by arithmetic division by 2 and signed 16-bit clipping. These remain listening
-settings, not measurements of chip gain or potentiometer position. This is the
-approved balanced pair: compared with the first firmware's 2048/8 pair, it
-preserves nominal voice gain and reduces frication relative to voice by 18 dB.
+No second voice scaling occurs in the tract. The default PCM gain is 2 followed
+by arithmetic division by 2 and signed 16-bit clipping. The division keeps the
+Q16-to-Q15 mapping. On 2026-10-12 the user reported that Appletini speech was
+about half the real Mockingboard level at the same AY level. Gain 2 raises both
+speech sources by 6.02 dB over the former gain-1 default. AY level, source
+balance, pitch and timing stay the same. Loud speech can reach the 16-bit clamp
+before the menu volume control. A test on the card must confirm the new level.
+
+The historical balanced preset keeps voice trim 16384 and PCM gain 1. Compared
+with the first firmware's 2048/8 pair, that preset preserves nominal voice gain
+and reduces frication relative to voice by 18 dB. The saved preset and its
+audio hashes remain unchanged.
+
+Gain-2 checks on 2026-10-12 passed the host renderer's 18 tests, 4,228 analytic
+tract checks, and three listening/replay tests. XSIM replayed 20 exact writes
+through both production voices and kept the output samples unchanged when
+capturing a shorter range from the same reset. The host survey covered all 64
+phones at AMP15 with FF231 and FF255. Neither survey clipped in the engine or
+at the then-default +2 dB speech setting; the highest speech-only output was 22,094
+counts out of 32,767. This check excludes AY sums and physical output. Its
+report is `build/ssi263_output_gain_audit/validation.json`. The whole-engine
+Verilator parity suite was not run because Verilator is absent on this host.
 
 The song preview uses a separate 1.25 SSI-to-AY mix multiplier (+1.94 dB)
-based on listening feedback. The firmware's SSI volume control provides
--5 through +5 dB in 1 dB steps and defaults to +2 dB (about 1.259 times).
+based on listening feedback. Use `--ssi-mix-gain 1` to compare the current
+0 dB firmware default. The firmware's SSI volume control provides
+-5 through +5 dB in 1 dB steps and now defaults to 0 dB (unity mixer gain).
+The frontend and FPGA reset defaults agree. Saved SSI volume settings still
+take precedence; changing the default does not rewrite existing profiles.
 SSI0/SSI1 pan use the AY pan scale, 0 through 15, defaulting to left/right.
 The mixer combines volume and pan into four gains. One shared multiplier
 applies them outside the native engine schedule. It captures each socket on
@@ -396,7 +433,7 @@ role/recovery-capable manifest and size checks, and retains the development
 version. `build/ssi263_firmware/build_report.json` records the artifact hashes
 and checks; the Vitis and packaging logs are in the same directory.
 
-The default SSI volume is +2 dB, adjustable from -5 to +5 dB; SSI0 defaults
+That image's default SSI volume was +2 dB, adjustable from -5 to +5 dB; SSI0 defaults
 left and SSI1 right, with separate pan controls. The build workflow did not
 flash hardware. The user subsequently tested the image and reported correct
 mb-audit speech, but low-sounding Phasor.hdv demo speech until its Pitch/FF

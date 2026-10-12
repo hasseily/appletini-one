@@ -32,7 +32,7 @@ PROFILES = ("baseline", "pitch", "transitions", "prototype")
 BALANCED_REFERENCE = ROOT / "scripts/fixtures/ssi263_host/balanced_reference.json"
 MODEL_REFERENCE = ROOT / "scripts/fixtures/ssi263_host/amp_zero_hold_reference.json"
 MODEL_REVISION = json.loads(MODEL_REFERENCE.read_text(encoding="utf-8"))["id"]
-DEFAULT_PROTOTYPE_GAIN = 1
+DEFAULT_PROTOTYPE_GAIN = 2
 DEFAULT_VOICE_TRIM = 16384
 
 
@@ -223,7 +223,7 @@ def render(trace: Trace, out: Path, profile: str, executable: Path | None = None
                            "rail_samples": int(np.count_nonzero((channel == -32768) | (channel == 32767))),
                            "nonzero_samples": int(np.count_nonzero(channel))})
     report = {
-        "profile": profile, "description": DESCRIPTION[profile], "firmware_target": "F1.2.5-d2",
+        "profile": profile, "description": DESCRIPTION[profile], "firmware_target": "F1.2.6-d1",
         "native_model_revision": MODEL_REVISION if profile in ("prototype", "transitions") else None,
         "sample_rate": 48000, "channels": 2, "gain": "fixed model gain; no normalization",
         "effective_xck_hz": trace.xck_hz, "articulation_reference_rate": articulation_reference,

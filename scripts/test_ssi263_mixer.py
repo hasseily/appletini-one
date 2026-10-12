@@ -70,7 +70,7 @@ def main():
             "puts {SSI263 MIXER SYNTHESIS PASS}\n")
         run([vivado, "-mode", "batch", "-source", str(tcl)], "synthesis.log", "SSI263 MIXER SYNTHESIS PASS")
     result.update(status="passed", standalone_synthesis=args.synth,
-                  unity_gain_db=0, default_gain_db=2, gain_range_db=[-5,5], default_pan="F0",
+                  unity_gain_db=0, default_gain_db=0, gain_range_db=[-5,5], default_pan="F0",
                   ramp_step_q14=64, maximum_pan_ramp_samples=456,
                   sha256={p.relative_to(ROOT).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
                           for p in (RTL,CARD,BENCH,HARNESS)})

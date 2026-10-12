@@ -30,7 +30,7 @@ class Test {
 public:
     Vmixer_tb d;
     uint64_t checks{}, cycles{}, publications{};
-    std::array<int,4> gains{20626,0,0,20626};
+    std::array<int,4> gains{16384,0,0,16384};
     int held0{}, held1{}, ay_l{}, ay_r{};
     void require(bool condition, const std::string& message) {
         ++checks;
@@ -46,9 +46,9 @@ public:
     }
     void reset() {
         d.rstn=0; d.audio_tick=0; d.sample0_valid=d.sample1_valid=0;
-        d.volume_db=2; d.pan=0xf0; d.ay_l=d.ay_r=0; cycle();
+        d.volume_db=0; d.pan=0xf0; d.ay_l=d.ay_r=0; cycle();
         d.rstn=1; idle();
-        gains={20626,0,0,20626}; held0=held1=ay_l=ay_r=0;
+        gains={16384,0,0,16384}; held0=held1=ay_l=ay_r=0;
         require(d.speech_l==0 && d.speech_r==0 && !d.mix_valid,"reset output");
     }
     void compare() {

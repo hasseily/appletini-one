@@ -122,7 +122,7 @@ uint8_t config_menu_slot2_player_count(uint8_t card);
 #define PHASOR_AUDIO_CONTROL_MAX 8
 #define PHASOR_SSI_VOLUME_MIN (-5)
 #define PHASOR_SSI_VOLUME_MAX 5
-#define PHASOR_SSI_VOLUME_DEFAULT 2
+#define PHASOR_SSI_VOLUME_DEFAULT 0
 #define PHASOR_SSI_COUNT 2U
 #define PHASOR_WARMTH_DEFAULT 8
 #define PHASOR_PSG_MODE_YM2149 0U

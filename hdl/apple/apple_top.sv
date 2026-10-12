@@ -566,8 +566,8 @@ module apple_top(
     localparam logic [31:0] CARD_CTRL_SLOT_ENABLE_REQUIRED   = 32'h0000_0080;
     // Top byte holds SSI1/SSI0 pan: hard right / hard left. AY pan is unchanged.
     localparam logic [55:0] PHASOR_PAN_RESET                 = 56'hF05B5B5B5B5B5B;
-    // Signed bits 31:27 set SSI gain in dB; start at +2 dB.
-    localparam logic [31:0] PHASOR_AUDIO_RESET               = 32'h1204_0000;
+    // Signed bits 31:27 set SSI gain in dB; start at 0 dB.
+    localparam logic [31:0] PHASOR_AUDIO_RESET               = 32'h0204_0000;
 
     function automatic logic [31:0] card_slot_enable_normalize(input logic [31:0] value);
         card_slot_enable_normalize =

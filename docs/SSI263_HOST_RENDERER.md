@@ -29,6 +29,11 @@ checks. The host model has several profiles for comparison; its analog
 response and absolute output level have not been proven against production
 SSI-263 silicon.
 
+The current prototype output gain defaults to 2, matching the FPGA's twofold
+speech increase from 2026-10-12. `--reference balanced` keeps the historical
+gain-1 preset; `--prototype-gain 1` selects the former output level with the
+current engine. Both use voice trim 16384. Reports include output clipping.
+
 ## Checks
 
 ```powershell

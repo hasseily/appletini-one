@@ -12,7 +12,7 @@
 // An event presented while busy sets fault and is not queued. No clock stalls
 // or event drops are permitted in the caller's normal operating schedule.
 module ssi263_native_tract #(
-    parameter integer OUTPUT_GAIN = 1
+    parameter integer OUTPUT_GAIN = 2
 ) (
     input  logic               clk,
     input  logic               rstn,

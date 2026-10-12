@@ -7,7 +7,8 @@ module ssi263_native_engine #(
     parameter bit DIV2 = 1'b1,
     parameter integer ART_REFERENCE_RATE = 8,
     parameter integer VOICE_TRIM_Q16 = 16384,
-    parameter integer OUTPUT_GAIN = 1,
+    // Twice the prior speech level at the same AY and SSI menu settings.
+    parameter integer OUTPUT_GAIN = 2,
     parameter logic [7:0] RESET_FILTER_FREQUENCY = 8'hff
 ) (
     input  logic               clk,

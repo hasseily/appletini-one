@@ -561,7 +561,7 @@ def test_phasor_pan_registers_and_menu_schema() -> None:
             "tone_warm_control_q <= clamp_audio_control(audio_control[19:15]);" in mockingboard and
             "tone_volume_control_q <= clamp_audio_control(audio_control[24:20]);" in mockingboard,
             "PL must decode five packed signed 5-bit Phasor audio controls")
-    require("PHASOR_AUDIO_RESET               = 32'h1204_0000" in top and
+    require("PHASOR_AUDIO_RESET               = 32'h0204_0000" in top and
             "bit 25 selects PSG volume table (0=YM, 1=AY)." in top and
             "bit 26 selects SSI263 backend" not in top,
             "PL reset/default register value must keep AY PSG mode and the current audio-control layout")

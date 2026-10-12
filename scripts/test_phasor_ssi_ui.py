@@ -128,7 +128,7 @@ static void render(config_menu_t *menu, const char *path)
     uint16_t *fb=calloc(FB16_WIDTH*FB16_HEIGHT,sizeof(*fb)); assert(fb);
     cmui_rect_t nav,body,footer; cmui_screen_rects(&nav,&body,&footer);
     if (compact) { body=(cmui_rect_t){0,0,1480,812}; cmui_compact_begin(); }
-    else { cmui_clear(fb); cmui_header(fb,"Appletini","F1.2.5-d2 SSI mixer",1); }
+    else { cmui_clear(fb); cmui_header(fb,"Appletini","F1.2.6-d1 SSI mixer",1); }
     config_menu_phasor_draw(fb,menu,body.x,body.y,body.w);
     const char *const *help=help_phasor;
     unsigned help_count=sizeof(help_phasor)/sizeof(*help_phasor);
@@ -165,12 +165,12 @@ int main(void)
     menu.platform.set_phasor_pan=control_set_phasor_pan;
     menu.platform.set_phasor_audio=control_set_phasor_audio;
     config_menu_phasor_set_defaults(&menu);
-    assert(menu.phasor_ssi_volume_db == 2 && menu.phasor_ssi_pan[0] == 0 && menu.phasor_ssi_pan[1] == 15);
+    assert(menu.phasor_ssi_volume_db == 0 && menu.phasor_ssi_pan[0] == 0 && menu.phasor_ssi_pan[1] == 15);
     config_menu_phasor_apply(&menu);
-    assert(audio == 0x12040000U && pan_hi == 0xF05B5B5BU && pan_lo == 0x005B5B5BU);
+    assert(audio == 0x02040000U && pan_hi == 0xF05B5B5BU && pan_lo == 0x005B5B5BU);
     /* Old configurations have no SSI settings: the new defaults remain. */
     assert(config_menu_phasor_parse_setting(&menu,"phasor.volume","-2"));
-    assert(menu.phasor_ssi_volume_db == 2 && menu.phasor_ssi_pan[1] == 15);
+    assert(menu.phasor_ssi_volume_db == 0 && menu.phasor_ssi_pan[1] == 15);
     menu.phasor_bass=-3; menu.phasor_mid=4; menu.phasor_treble=-7;
     for (int db=-5; db<=5; ++db) for (unsigned p0=0; p0<16; ++p0)
     for (unsigned p1=0; p1<16; ++p1) for (unsigned mb=0; mb<2; ++mb) {

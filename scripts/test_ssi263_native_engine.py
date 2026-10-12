@@ -166,7 +166,7 @@ def replay(name: str, trace: Trace, exe: Path) -> dict:
     metrics = json.loads(result.strip().splitlines()[-1])
     # Compare the public renderer as well as the per-sample in-process oracle.
     render(trace, out / "host", "prototype", executable=build_host(),
-           prototype_gain=1, voice_trim=16384)
+           prototype_gain=2, voice_trim=16384)
     host_wav = out / "host/prototype.wav"
     with wave.open(str(host_wav), "rb") as reader:
         expected = reader.readframes(reader.getnframes())

@@ -21,7 +21,7 @@ module ssi263_stereo_mixer (
     output logic               mix_valid
 );
     localparam logic [2:0] IDLE=0, LOAD=1, MULTIPLY=2, ABSOLUTE=3, STORE=4, PUBLISH=5;
-    localparam logic [15:0] DEFAULT_GAIN = 16'd20626; // +2 dB in Q14.
+    localparam logic [15:0] DEFAULT_GAIN = 16'd16384; // 0 dB in Q14.
     localparam logic [15:0] RAMP_STEP = 16'd64;
     logic [2:0] state_q;
     logic [1:0] lane_q;

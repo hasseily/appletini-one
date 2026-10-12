@@ -716,7 +716,7 @@ ssi263_voice #(
     .dbg_enable_ints(ssi1_enable_ints)
 );
 
-// Signed audio_control[31:27] gives -5..+5 dB; reset/menu default is +2 dB.
+// Signed audio_control[31:27] gives -5..+5 dB; reset/menu default is 0 dB.
 // The mixer uses per-engine valid strobes, independent of native XCK jobs.
 ssi263_stereo_mixer ssi_mixer_i (
     .clk(clk), .rstn(rstn && card_enabled),

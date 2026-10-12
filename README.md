@@ -18,6 +18,11 @@ and higher-level peripheral emulation.
 
 The [native SSI-263 FPGA engine](docs/SSI263_NATIVE.md) drives both speech
 sockets. The Phasor menu controls SSI volume and independent pan.
+SSI volume defaults to 0 dB; saved settings still take precedence.
+
+Speech now uses output gain 2, a 6.02 dB increase at the same AY and menu levels.
+This follows the user's comparison with a real Mockingboard. The change keeps
+the voice/consonant balance and needs a test on the card to confirm the level.
 
 The boot menu configures virtual cards, storage images, video, audio, networking,
 USB behavior, and named profiles. Settings are stored on the card's SD volume.

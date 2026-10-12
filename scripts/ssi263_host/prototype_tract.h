@@ -46,7 +46,7 @@ public:
     // Output gain and source levels are explicit experiment settings. The old
     // branch used voice drive -2048, fricative +/-301 and socket gain 32; no
     // potentiometer setting or chip output gain is established by those values.
-    explicit PrototypeTract(int output_gain = 1, int initial_fric_drive = 0);
+    explicit PrototypeTract(int output_gain = 2, int initial_fric_drive = 0);
     void process(const FilterEvent& event);
     int16_t sample();
     const State& state() const { return state_; }

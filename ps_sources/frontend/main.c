@@ -7,6 +7,7 @@
 #include "xil_mmu.h"
 #include "xparameters.h"
 #include "xstatus.h"
+#include "ff.h"
 
 #include "../image_versions.h"
 #include "../fw_update_metadata.h"
@@ -130,6 +131,8 @@ static uint8_t g_multiboot_status_valid;
 static uint32_t g_firmware_switch_request = MB_PRODUCT_NONE;
 static uint8_t g_firmware_switch_active;
 static uint8_t g_firmware_switch_fault;
+static char g_installed_golden_version[32] = "Unknown";
+static uint8_t g_golden_boot_update_request;
 static uint8_t g_usb_menu_owned = 0U;
 static uint8_t g_onee_ui_running_seen = 0U;
 static uint16_t *g_bezel_565 = NULL;
@@ -721,12 +724,10 @@ static int control_get_snapshot(void *ctx, uart_control_snapshot_t *snapshot)
     snapshot->updater_meta_valid = g_update_meta_valid;
     memset(snapshot->updater_golden_version, 0, sizeof(snapshot->updater_golden_version));
     memset(snapshot->updater_firmware_version, 0, sizeof(snapshot->updater_firmware_version));
-    if (g_update_meta_valid) {
-        (void)snprintf(snapshot->updater_golden_version, sizeof(snapshot->updater_golden_version),
-                       "%s", g_update_meta.golden_version);
-        (void)snprintf(snapshot->updater_firmware_version, sizeof(snapshot->updater_firmware_version),
-                       "%s", APPLETINI_FIRMWARE_IMAGE_VERSION_FULL);
-    }
+    (void)snprintf(snapshot->updater_golden_version, sizeof(snapshot->updater_golden_version),
+                   "%s", g_installed_golden_version);
+    (void)snprintf(snapshot->updater_firmware_version, sizeof(snapshot->updater_firmware_version),
+                   "%s", APPLETINI_FIRMWARE_IMAGE_VERSION_FULL);
     return 0;
 }
 
@@ -2021,6 +2022,55 @@ static void control_refresh_multiboot(void)
         mb_platform_status(MB_PRODUCT_APPLETINI, &g_multiboot_status) == MB_OK;
 }
 
+static void control_refresh_installed_golden(void)
+{
+    const mb_flash_t *flash = mb_platform_flash();
+    uint32_t offset;
+
+    if (flash == NULL ||
+        mb_golden_installed_version(flash, g_installed_golden_version,
+                                   sizeof(g_installed_golden_version), &offset) != MB_OK) {
+        (void)snprintf(g_installed_golden_version,
+                       sizeof(g_installed_golden_version), "Unknown");
+    }
+}
+
+static void menu_platform_get_golden_boot_version(void *ctx, char *dst, size_t cap)
+{
+    (void)ctx;
+    if (dst != NULL && cap != 0U) {
+        (void)snprintf(dst, cap, "%s", g_installed_golden_version);
+    }
+}
+
+static uint8_t menu_platform_get_golden_boot_file_present(void *ctx)
+{
+    FILINFO info;
+
+    (void)ctx;
+    /* These services own the volume exclusively while active. */
+    if (g_config_menu_state == NULL ||
+        config_menu_usb0_sd_remote_active(g_config_menu_state) != 0U ||
+        config_menu_ethernet_ftp_sd_remote_active(g_config_menu_state) != 0U) {
+        return 0U;
+    }
+    return (f_stat("0:/BOOT.BIN", &info) == FR_OK &&
+            (info.fattrib & AM_DIR) == 0U) ? 1U : 0U;
+}
+
+static int menu_platform_request_golden_boot_update(void *ctx)
+{
+    (void)ctx;
+    if (g_golden_boot_update_request != 0U ||
+        g_firmware_switch_request != MB_PRODUCT_NONE ||
+        g_firmware_switch_active != 0U || g_firmware_switch_fault != 0U) {
+        return -1;
+    }
+    /* Run only after input dispatch and the USB stack have returned. */
+    g_golden_boot_update_request = 1U;
+    return 0;
+}
+
 static uint8_t menu_platform_get_multiboot_status(void *ctx,
                                                   uint8_t *present_mask,
                                                   uint32_t *default_product)
@@ -2260,6 +2310,149 @@ failed:
     (void)snprintf(menu->status, sizeof(menu->status), "%s", error);
     uart_puts(UART0_BASE, error);
     uart_puts(UART0_BASE, "\r\n");
+}
+
+static void control_service_golden_boot_update(config_menu_t *menu)
+{
+    golden_self_update_result_t result;
+    uint32_t saved_dma = 0U;
+    uint32_t saved_onee_request = 0U;
+    uint32_t saved_multiboot = 0U;
+    uint8_t dma_held = 0U;
+    uint8_t temporary_isolation = 0U;
+    uint8_t boot_register_attempted = 0U;
+    uint8_t cpu1_hold_attempted = 0U;
+    const char *error = NULL;
+
+    if (g_golden_boot_update_request == 0U) {
+        return;
+    }
+    g_golden_boot_update_request = 0U;
+    memset(&result, 0, sizeof(result));
+    if (screenshot_service_busy() != 0U || printer_service_job_active() != 0U ||
+        (REG_READ(CARD_CTRL_SSC_STATUS_REG) & CARD_CTRL_SSC_STATUS_COUNT_MASK) != 0U ||
+        config_menu_usb0_sd_remote_active(menu) != 0U ||
+        config_menu_ethernet_ftp_sd_remote_active(menu) != 0U) {
+        error = "Finish SD sharing, screenshots and printing first";
+        goto failed;
+    }
+    if (menu_platform_get_golden_boot_file_present(NULL) == 0U) {
+        error = "BOOT.BIN is no longer available on SD";
+        goto failed;
+    }
+    if (control_onee_isolated() == 0U) {
+        XTime started;
+        XTime now;
+
+        if (boot_menu_service_host_bus_master_allowed() == 0U) {
+            if (control_hold_quiet_connector(&saved_onee_request,
+                                             &temporary_isolation) != 0) {
+                error = "Apple bus cannot be held safely for the update";
+                goto failed;
+            }
+        } else {
+            saved_dma = REG_READ(AT_DMA_CTRL_REG);
+            REG_WRITE(AT_DMA_CTRL_REG, saved_dma | AT_DMA_CTRL_HOLD_REQ_BIT);
+            dma_held = 1U;
+            XTime_GetTime(&started);
+            do {
+                if ((REG_READ(AT_DMA_CTRL_REG) & AT_DMA_CTRL_HOLD_ACTIVE_BIT) != 0U) {
+                    break;
+                }
+                XTime_GetTime(&now);
+                if (ticks_to_us(now - started) >= 100000U) {
+                    error = "Apple bus hold timed out; update cancelled";
+                    goto failed;
+                }
+            } while (1);
+        }
+    } else if (vtw_service_onee_set_paused(1U) == 0U) {
+        error = "ONE//e pause failed; update cancelled";
+        goto failed;
+    }
+    g_firmware_switch_active = 1U;
+    for (uint32_t attempt = 0U; attempt < 64U &&
+         smartport_service_has_pending() != 0U; ++attempt) {
+        smartport_service_poll();
+    }
+    if (smartport_service_has_pending() != 0U) {
+        error = "SmartPort is busy; update cancelled";
+        goto failed;
+    }
+    {
+        int rc = -1;
+        for (uint32_t attempt = 0U; attempt < 64U; ++attempt) {
+            rc = disk2_service_flush_dirty_now();
+            if (rc == 0) {
+                break;
+            }
+        }
+        if (rc != 0) {
+            error = "Disk II save failed; update cancelled";
+            goto failed;
+        }
+    }
+    if (config_menu_flush_settings(menu) == 0U || smartport_service_sync_sd() != 0) {
+        error = "SD save failed; update cancelled";
+        goto failed;
+    }
+    compositor_request_full_refresh();
+    (void)compositor_tick();
+    /* This validates BOOT.BIN, primary and a live recovery firmware before
+     * writing trial. It does not require the old Golden to support multiboot. */
+    if (golden_self_update_run("0:/BOOT.BIN", UART0_BASE, UART1_BASE, &result) != 0 ||
+        result.updated == 0 || result.verified == 0 || result.reset_required == 0 ||
+        result.boot_offset != GOLDEN_SELF_UPDATE_TRIAL_OFFSET) {
+        error = result.error_msg[0] != '\0' ? result.error_msg :
+            "Golden trial was not verified; update cancelled";
+        goto failed;
+    }
+    boot_register_attempted = 1U;
+    if (control_prepare_golden_boot(result.boot_offset, &saved_multiboot) != 0) {
+        error = "Boot register check failed; verified trial retained";
+        goto failed;
+    }
+    cpu1_hold_attempted = 1U;
+    if (amp_hold_core1() != 0) {
+        error = "CPU1 hold failed; reboot the card";
+        goto failed;
+    }
+    card_control_write_slot_mask(0U);
+    REG_WRITE(CARD_CTRL_FEATURE_ENABLE_REG, 0U);
+    control_apply_slot5_service(0U);
+    compositor_set_paused(1U);
+    vtw_service_onee_stop();
+    vtw_service_set_enabled(0U);
+    usb_hid_service_stop();
+    usb_sdd_service_stop();
+    (void)usb_storage_service_disconnect();
+    Xil_DCacheFlush();
+    uart_puts(UART0_BASE, "Golden Boot: trial verified; rebooting into the new Golden\r\n");
+    control_reboot_preselected_golden();
+    return;
+
+failed:
+    if (boot_register_attempted != 0U &&
+        control_write_multiboot_checked(saved_multiboot) != 0) {
+        cpu1_hold_attempted = 1U;
+        error = "Boot register recovery failed; reboot the card";
+    }
+    config_menu_golden_boot_update_finished(menu, error);
+    if (cpu1_hold_attempted != 0U) {
+        /* Cold SEV cannot safely restart a processor that was reset. */
+        g_firmware_switch_fault = 1U;
+    } else {
+        g_firmware_switch_active = 0U;
+        if (dma_held != 0U) {
+            REG_WRITE(AT_DMA_CTRL_REG, saved_dma);
+        }
+        if (temporary_isolation != 0U) {
+            REG_WRITE(CARD_CTRL_ONEE_MODE_REG, saved_onee_request);
+        }
+    }
+    uart_puts(UART0_BASE, error);
+    uart_puts(UART0_BASE, "\r\n");
+    compositor_request_full_refresh();
 }
 
 static int control_self_update_boot(void *ctx,
@@ -3159,12 +3352,9 @@ static void ui_collect_debug_overlay_snapshot(debug_overlay_snapshot_t *snapshot
                    sizeof(snapshot->firmware_version),
                    "%s",
                    APPLETINI_FIRMWARE_IMAGE_VERSION_SHORT);
-    if (g_update_meta_valid != 0U) {
-        (void)snprintf(snapshot->golden_version,
-                       sizeof(snapshot->golden_version),
-                       "%s",
-                       g_update_meta.golden_version);
-    }
+    (void)snprintf(snapshot->golden_version,
+                   sizeof(snapshot->golden_version),
+                   "%s", g_installed_golden_version);
     (void)snprintf(snapshot->bezel_status,
                    sizeof(snapshot->bezel_status),
                    "%s",
@@ -3450,7 +3640,9 @@ static uint8_t ui_config_menu_has_close_consumer(const config_menu_t *menu)
             menu->browser_active != 0U ||
             menu->joystick_page_active != 0U ||
             menu->profile_carousel_active != 0U ||
-            menu->profile_name_editor_active != 0U) ? 1U : 0U;
+            menu->profile_name_editor_active != 0U ||
+            menu->golden_boot_update_confirm != 0U ||
+            menu->golden_boot_update_pending != 0U) ? 1U : 0U;
 }
 
 static uint8_t ui_input_requests_menu_close(ui_input_t input)
@@ -3871,6 +4063,7 @@ int main(void)
     g_update_meta_valid = update_metadata_read_from_qspi(&g_update_meta);
     if (mb_platform_open() == MB_OK) {
         control_refresh_multiboot();
+        control_refresh_installed_golden();
     }
 
     /* Reset shared renderer handoff/control words before CPU1 can read them.
@@ -3979,6 +4172,9 @@ int main(void)
         menu_platform.get_multiboot_status = menu_platform_get_multiboot_status;
         menu_platform.set_startup_firmware = menu_platform_set_startup_firmware;
         menu_platform.request_firmware_switch = menu_platform_request_firmware_switch;
+        menu_platform.get_golden_boot_version = menu_platform_get_golden_boot_version;
+        menu_platform.get_golden_boot_file_present = menu_platform_get_golden_boot_file_present;
+        menu_platform.request_golden_boot_update = menu_platform_request_golden_boot_update;
         menu_platform.set_phasor_pan = control_set_phasor_pan;
         menu_platform.set_phasor_audio = control_set_phasor_audio;
         menu_platform.set_mouse_sensitivity = control_set_mouse_sensitivity;
@@ -4603,6 +4799,7 @@ int main(void)
         } while (uart_budget != 0U);
         ui_sync_usb_menu_capture(&config_menu);
 
+        control_service_golden_boot_update(&config_menu);
         control_service_firmware_switch(&config_menu);
         ui_apply_output_mode(&config_menu, 0U);
         ui_apply_size_multiplier(&config_menu);

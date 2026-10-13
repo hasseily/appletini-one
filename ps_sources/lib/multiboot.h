@@ -84,6 +84,14 @@ int mb_metadata_load(const mb_flash_t *flash, mb_metadata_t *out);
 /* out may be NULL for availability probes. */
 int mb_slot_verify(const mb_flash_t *flash, uint32_t product, mb_image_t *out);
 int mb_golden_available(const mb_flash_t *flash, uint32_t *boot_offset_out);
+/* Discover the linked version in the installed Golden executable, preferring
+ * the primary copy and falling back to trial only on validation/read failure.
+ * Manifest images require their complete payload CRC and Golden identity.
+ * Historical raw B1.1 images have no payload CRC; verify their Bootgen headers
+ * and loaded startup/version identity instead. Never reads a build-time version.
+ * On failure, version is empty and slot_offset (when supplied) is UINT32_MAX. */
+int mb_golden_installed_version(const mb_flash_t *flash, char *version,
+                                uint32_t capacity, uint32_t *slot_offset);
 /* NONE selects the persistent default. No eligible product returns golden
  * (product NONE and offset 0); a missing request falls back to the other slot.
  * Legacy is eligible only with old v4 metadata and a complete live v1 image. */

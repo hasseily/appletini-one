@@ -272,6 +272,9 @@ def main():
             set_config(config, "USER_LINK_OTHER_FLAGS",
                        [f"-Wl,--defsym,_HEAP_SIZE=0x{FRONTEND_HEAP_BYTES:08X},"
                         f"--defsym,_STACK_SIZE=0x{FRONTEND_STACK_BYTES:08X}"])
+        if name == "bootloader":
+            set_config(config, "USER_LINK_OTHER_FLAGS",
+                       ["-Wl,--defsym,_STACK_SIZE=0x00010000,--defsym,_HEAP_SIZE=0x00010000"])
         with config.open("a") as stream:
             stream.write('\nset(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "" FORCE)\n')
         components[name] = component

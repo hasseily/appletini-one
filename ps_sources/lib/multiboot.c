@@ -482,6 +482,189 @@ int mb_golden_available(const mb_flash_t *f, uint32_t *offset_out)
     }
     return MB_E_UNAVAILABLE;
 }
+
+#define GOLDEN_VERSION_SIZE 64U
+#define GOLDEN_EXEC_ADDRESS 0x00100000U
+/* These are UART identity labels, not version references. A version is accepted
+ * only after the loaded Golden application's complete Bootgen/manifest checks. */
+static const char golden_version_prefix[] = "[GOLDEN] Boot image version: ";
+static const char golden_start_prefix[] = "[GOLDEN] boot_updater start @";
+
+static int golden_version_parse(char *text, uint32_t *major, uint32_t *minor)
+{
+    char *p=text, *version;
+    uint32_t components[3],i;
+    size_t len=strlen(text);
+    if (len<2U || text[len-2U]!='\r' || text[len-1U]!='\n') return 0;
+    text[len-2U]='\0';
+    if (!strncmp(p,"Boot ",5)) p+=5;
+    else if (!strncmp(p,"Multiboot ",10)) p+=10;
+    else return 0;
+    version=p;
+    if (*p++!='B') return 0;
+    for (i=0;i<3U;++i) {
+        uint32_t value=0;
+        if (*p<'0' || *p>'9') return 0;
+        do {
+            uint32_t digit=(uint32_t)(*p-'0');
+            if (value>(UINT32_MAX-digit)/10U) return 0;
+            value=value*10U+digit; ++p;
+        } while (*p>='0' && *p<='9');
+        components[i]=value;
+        if (i<2U && *p++!='.') return 0;
+    }
+    if (*p=='-') {
+        ++p;
+        if (!*p) return 0;
+        while ((*p>='0' && *p<='9') || (*p>='A' && *p<='Z') ||
+               (*p>='a' && *p<='z') || *p=='.' || *p=='-') ++p;
+    }
+    if (*p) return 0;
+    *major=components[0]; *minor=components[1];
+    memmove(text,version,strlen(version)+1U);
+    return 1;
+}
+typedef struct {
+    char version[GOLDEN_VERSION_SIZE],candidate[GOLDEN_VERSION_SIZE];
+    uint32_t version_match,start_match,length,major,minor;
+    int collecting,found,start_found,conflicting;
+} golden_identity_t;
+
+static void golden_identity_byte(golden_identity_t *s, uint8_t byte)
+{
+    if (!s->start_found) {
+        s->start_match=marker_step(golden_start_prefix,s->start_match,byte);
+        if (s->start_match==sizeof golden_start_prefix-1U) s->start_found=1;
+    }
+    if (s->collecting) {
+        if (s->length>=sizeof s->candidate-1U) {
+            s->collecting=0; s->version_match=0;
+        } else {
+            s->candidate[s->length++]=(char)byte;
+            if (!byte) {
+                uint32_t major,minor;
+                if (golden_version_parse(s->candidate,&major,&minor)) {
+                    if (s->found && strcmp(s->version,s->candidate)) s->conflicting=1;
+                    else {
+                        memcpy(s->version,s->candidate,strlen(s->candidate)+1U);
+                        s->major=major; s->minor=minor; s->found=1;
+                    }
+                }
+                s->collecting=0; s->version_match=0;
+            }
+        }
+    } else {
+        s->version_match=marker_step(golden_version_prefix,s->version_match,byte);
+        if (s->version_match==sizeof golden_version_prefix-1U) {
+            s->collecting=1; s->length=0; s->version_match=0;
+        }
+    }
+}
+
+/* Scan only executable/data bytes actually loaded for Golden at 1 MiB. Skip
+ * FSBL, partition tables, file padding, unused flash and the manifest footer.
+ * Golden consists of the FSBL plus one CPU0 ELF (possibly split into segments),
+ * with no bitstream, other executable or overlapping application segments. */
+static int golden_loaded_identity(const mb_reader_t *r, golden_identity_t *identity)
+{
+    uint8_t h[0xa0],iht[64],pht[64],buf[IO_SIZE];
+    uint32_t po,count,i,previous_end=GOLDEN_EXEC_ADDRESS;
+    int executed=0;
+    memset(identity,0,sizeof *identity);
+    if (read_at(r,0,h,sizeof h)!=MB_OK || read_at(r,le32(h+0x98),iht,64)!=MB_OK)
+        return MB_E_READ;
+    po=le32(h+0x9c); count=le32(iht+4);
+    if (count<2U) return MB_E_IMAGE;
+    for (i=1;i<count;++i) {
+        uint32_t load,exec,start,size,off;
+        if (read_at(r,po+i*64U,pht,sizeof pht)!=MB_OK) return MB_E_READ;
+        load=le32(pht+12); exec=le32(pht+16);
+        start=le32(pht+20)*4U; size=le32(pht+4)*4U;
+        if ((le32(pht+24)&0xf0U)!=0x10U || load<previous_end ||
+            size>UINT32_MAX-load ||
+            (!executed && (load!=GOLDEN_EXEC_ADDRESS || exec!=GOLDEN_EXEC_ADDRESS)) ||
+            (executed && exec)) return MB_E_IMAGE;
+        previous_end=load+size; executed=1;
+        /* Identity strings cannot span distinct ELF load segments. */
+        identity->version_match=identity->start_match=identity->length=0;
+        identity->collecting=0;
+        for (off=0;off<size;) {
+            uint32_t n=size-off,j;
+            if (n>sizeof buf) n=sizeof buf;
+            if (read_at(r,start+off,buf,n)!=MB_OK) return MB_E_READ;
+            for (j=0;j<n;++j) golden_identity_byte(identity,buf[j]);
+            off+=n;
+        }
+    }
+    return identity->found && identity->start_found && !identity->conflicting ? MB_OK : MB_E_MARKER;
+}
+static int golden_installed_at(const mb_flash_t *f, uint32_t offset,
+                               char version[GOLDEN_VERSION_SIZE], int *valid_copy)
+{
+    flash_reader_t context;
+    mb_reader_t r=slot_reader(f,offset,MB_GOLDEN_SIZE,&context);
+    mb_image_t image; golden_identity_t identity;
+    uint8_t footer[MB_MANIFEST_SIZE];
+    uint32_t payload_size,off;
+    int rc=bootgen_validate(&r,&payload_size);
+    *valid_copy=0;
+    if (rc!=MB_OK) return rc;
+    if (!range(payload_size,sizeof footer,MB_GOLDEN_SIZE)) return MB_E_IMAGE;
+    if (read_at(&r,payload_size,footer,sizeof footer)!=MB_OK) return MB_E_READ;
+    /* A valid footer provides full image integrity. A malformed footer never
+     * downgrades a B1.2/B2 image to the historical raw-B1.1 path below. */
+    if (!memcmp(footer,"ATNIMG1\0",8)) {
+        r.size=payload_size+sizeof footer;
+        rc=image_validate(&r,0,1,1U,0,&image);
+        if (rc!=MB_OK) return rc;
+    } else {
+        for (off=0;off<sizeof footer;++off) if (footer[off]!=0xffU) return MB_E_MANIFEST;
+        r.size=payload_size;
+        for (off=0x8000U; range(off,0x4cU,payload_size); off+=0x8000U) {
+            int candidate=boot_header(&r,off);
+            if (candidate<0) return MB_E_READ;
+            if (candidate) return MB_E_IMAGE;
+        }
+    }
+    rc=golden_loaded_identity(&r,&identity);
+    if (rc!=MB_OK) {
+        /* Do not label an intact primary with the trial's version merely
+         * because a future Golden changes its UART banner. */
+        if (rc==MB_E_MARKER && (r.size!=payload_size || identity.start_found)) *valid_copy=1;
+        return rc;
+    }
+    if (r.size==payload_size) {
+        if (identity.major!=1U || identity.minor!=1U || strchr(identity.version,'-'))
+            return MB_E_MANIFEST;
+    } else if (identity.major>=2U) {
+        rc=image_validate(&r,0,1,1U,1,&image);
+        if (rc!=MB_OK) return rc;
+    }
+    *valid_copy=1;
+    memcpy(version,identity.version,strlen(identity.version)+1U);
+    return MB_OK;
+}
+int mb_golden_installed_version(const mb_flash_t *f, char *version,
+                                uint32_t capacity, uint32_t *slot_offset)
+{
+    char discovered[GOLDEN_VERSION_SIZE];
+    uint32_t offset;
+    int rc,valid_copy;
+    if (version && capacity) version[0]='\0';
+    if (slot_offset) *slot_offset=UINT32_MAX;
+    if (!flash_valid(f,0) || !version || !capacity) return MB_E_ARGUMENT;
+    for (offset=MB_GOLDEN_OFFSET;offset<=MB_GOLDEN_TRIAL_OFFSET;offset+=MB_GOLDEN_TRIAL_OFFSET) {
+        rc=golden_installed_at(f,offset,discovered,&valid_copy);
+        if (rc==MB_OK) {
+            if (strlen(discovered)>=capacity) return MB_E_ARGUMENT;
+            memcpy(version,discovered,strlen(discovered)+1U);
+            if (slot_offset) *slot_offset=offset;
+            return MB_OK;
+        }
+        if (valid_copy) return MB_E_UNAVAILABLE;
+    }
+    return MB_E_UNAVAILABLE;
+}
 static int metadata_adopt(const mb_flash_t *f, mb_metadata_t *m)
 {
     mb_image_t image; unsigned i; int rc=mb_metadata_load(f,m);

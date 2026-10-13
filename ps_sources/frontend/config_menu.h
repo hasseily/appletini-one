@@ -159,6 +159,11 @@ typedef struct {
                                    uint32_t *default_product);
     int (*set_startup_firmware)(void *ctx, uint32_t product);
     int (*request_firmware_switch)(void *ctx, uint32_t product);
+    /* Version is a verified flash snapshot; drawing never reads flash or SD. */
+    void (*get_golden_boot_version)(void *ctx, char *dst, size_t capacity);
+    uint8_t (*get_golden_boot_file_present)(void *ctx);
+    /* Queue only. The main loop validates, saves media, writes, and reboots. */
+    int (*request_golden_boot_update)(void *ctx);
     void (*set_phasor_pan)(void *ctx, uint32_t pan_lo, uint32_t pan_hi);
     void (*set_phasor_audio)(void *ctx,
                              int8_t bass,
@@ -299,6 +304,11 @@ typedef struct {
     uint8_t multiboot_ready;
     uint8_t multiboot_present_mask; /* bit 0 Appletini, bit 1 Multitini */
     uint32_t startup_firmware;
+    char golden_boot_version[32];
+    uint8_t golden_boot_file_present;
+    uint8_t golden_boot_update_confirm;
+    uint8_t golden_boot_confirm_update; /* Cancel (0) is the initial choice. */
+    uint8_t golden_boot_update_pending;
     usb_hid_menu_source_t usb_menu_bindings[CONFIG_MENU_USB_BIND_ACTION_COUNT];
     uint8_t usb_binding_capture;
     uint8_t usb_bindings_editable;
@@ -343,6 +353,8 @@ typedef struct {
 void config_menu_init(config_menu_t *menu);
 void config_menu_bind_platform(config_menu_t *menu, const config_menu_platform_t *platform);
 void config_menu_refresh_multiboot(config_menu_t *menu);
+void config_menu_refresh_golden_boot(config_menu_t *menu);
+void config_menu_golden_boot_update_finished(config_menu_t *menu, const char *error);
 uint8_t config_menu_flush_settings(config_menu_t *menu);
 void config_menu_apply_boot_runtime(config_menu_t *menu);
 void config_menu_apply_runtime(config_menu_t *menu);

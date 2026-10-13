@@ -22,6 +22,30 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+FRONTEND_STACK_BYTES = 0x00010000
+FRONTEND_HEAP_BYTES = 0x04000000
+
+
+def audit_frontend_memory(symbols):
+    """Check the linked reservation, independently of the requested flags."""
+    names = ("_STACK_SIZE", "_stack", "_stack_end", "_HEAP_SIZE", "_heap_start", "_heap_end")
+    addresses = {}
+    for line in symbols.splitlines():
+        fields = line.split()
+        if len(fields) == 3 and fields[2] in names:
+            addresses[fields[2]] = int(fields[0], 16)
+    missing = sorted(set(names) - addresses.keys())
+    if missing:
+        raise RuntimeError(f"missing linked frontend memory symbols: {missing}")
+    stack_span = addresses["_stack"] - addresses["_stack_end"]
+    heap_span = addresses["_heap_end"] - addresses["_heap_start"]
+    if stack_span != addresses["_STACK_SIZE"] or stack_span < FRONTEND_STACK_BYTES:
+        raise RuntimeError(f"frontend stack must reserve at least {FRONTEND_STACK_BYTES} bytes: {addresses}")
+    if heap_span != addresses["_HEAP_SIZE"] or heap_span != FRONTEND_HEAP_BYTES:
+        raise RuntimeError(f"frontend heap must retain {FRONTEND_HEAP_BYTES} bytes: {addresses}")
+    return {"symbols": addresses, "stack_bytes": stack_span,
+            "minimum_stack_bytes": FRONTEND_STACK_BYTES, "heap_bytes": heap_span,
+            "stack_span_matches": True, "heap_span_matches": True}
 
 
 def digest(path):
@@ -143,6 +167,10 @@ def main():
     if golden_match is None:
         raise RuntimeError("missing Golden version in source header")
     golden_version = golden_match.group(1)
+    firmware_match = re.search(r'APPLETINI_FIRMWARE_IMAGE_VERSION_SHORT\s+"([^"]+)"', versions)
+    if firmware_match is None:
+        raise RuntimeError("missing firmware version in source header")
+    firmware_version = firmware_match.group(1)
 
     platform = required_env("APP_MULTIBOOT_PLATFORM")
     baseline = required_env("APP_MULTIBOOT_BASELINE")
@@ -187,7 +215,7 @@ def main():
         raise RuntimeError("selected CherryUSB checkout contains tracked source edits")
 
     workspace = new_directory(Path(os.environ.get("APP_MULTIBOOT_WORKSPACE", ROOT / "build/vitis-multiboot")))
-    output = new_directory(Path(os.environ.get("APP_MULTIBOOT_OUTPUT", ROOT / "build/firmware-F1.3.0-dev")))
+    output = new_directory(Path(os.environ.get("APP_MULTIBOOT_OUTPUT", ROOT / f"build/firmware-{firmware_version}")))
     records = output / "build-records"
     inputs = output / "inputs"
     records.mkdir()
@@ -237,7 +265,13 @@ def main():
             set_config(config, "USER_COMPILE_OTHER_FLAGS", ["-mfpu=neon"])
             set_config(config, "USER_COMPILE_OPTIMIZATION_OTHER_FLAGS", ["-falign-functions=32"])
             set_config(config, "USER_LINK_LIBRARIES", ["m"])
-            set_config(config, "USER_LINK_OTHER_FLAGS", ["-Wl,--defsym,_HEAP_SIZE=0x04000000"])
+            # main keeps the menu on its stack, while multiboot verification
+            # adds a 4 KiB read buffer and QSPI call frames. The 8 KiB Vitis
+            # default cannot hold that call chain. Keep both linker switches
+            # in one token because Vitis concatenates this setting's entries.
+            set_config(config, "USER_LINK_OTHER_FLAGS",
+                       [f"-Wl,--defsym,_HEAP_SIZE=0x{FRONTEND_HEAP_BYTES:08X},"
+                        f"--defsym,_STACK_SIZE=0x{FRONTEND_STACK_BYTES:08X}"])
         with config.open("a") as stream:
             stream.write('\nset(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "" FORCE)\n')
         components[name] = component
@@ -271,6 +305,8 @@ def main():
         shutil.copy2(path, inputs / target)
     shutil.copy2(platform, records / platform.name)
     symbols = subprocess.check_output([str(nm), str(inputs / "frontend.elf")], text=True)
+    frontend_memory = audit_frontend_memory(symbols)
+    write_json(records / "frontend-memory.json", frontend_memory)
     addresses = {}
     for line in symbols.splitlines():
         fields = line.split()
@@ -339,7 +375,7 @@ def main():
                 "--platform-xsa", str(exported_xsa),
                 "--core1-elf", str(inputs / "frontend_core1.elf"),
                 "--core1-blob", str(inputs / "core1_blob.bin"),
-                "--version", "F1.3.0-dev", "--boot-version", golden_version,
+                "--version", firmware_version, "--boot-version", golden_version,
                 "--output", str(output / "FIRMWARE_AUDIT.json")]
     try:
         auditor.main()
@@ -348,7 +384,7 @@ def main():
 
     report = {
         "built_utc": datetime.now(timezone.utc).isoformat(),
-        "version": "F1.3.0-dev", "golden_version": golden_version, "tool_version": "Vitis 2025.2",
+        "version": firmware_version, "golden_version": golden_version, "tool_version": "Vitis 2025.2",
         "git_commit": subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip(),
         "git_status": subprocess.check_output(["git", "-C", str(ROOT), "status", "--short"], text=True),
         "platform": file_record(platform), "platform_xsa": file_record(exported_xsa),
@@ -360,6 +396,7 @@ def main():
         "cpu1": {"retained_baseline": str(baseline), "elf_sha256": expected["cpu1_elf"],
                  "raw_sha256": expected["cpu1_raw"], "embedded_sha256": hashlib.sha256(embedded).hexdigest(),
                  "embedded_bytes": len(embedded), "size_word_matches": True, "elf_raw_matches": True},
+        "frontend_memory": frontend_memory,
         "pinned_cherryusb": selected_cherry, "hardware_flashed": False, "hardware_tested": False,
     }
     write_json(output / "ARM_BUILD.json", report)

@@ -3885,12 +3885,14 @@ int main(void)
         uart_puts(UART0_BASE, "core 1: checked startup failed; Apple remains held\r\n");
         return -1;
     }
+    uart_puts(UART0_BASE, "core 1: cold wake issued\r\n");
     g_ui_state = &ui;
     g_config_menu_state = &config_menu;
     uart_control_bind_config_menu(&config_menu);
     uart_control_init(&g_uart_control, UART1_BASE, UART0_BASE);
     uart_control_init(&g_uart0_control, UART0_BASE, UART0_BASE);
     boot_menu_service_init();
+    uart_puts(UART0_BASE, "boot menu: register init complete\r\n");
     XTime_GetTime(&boot_stage_started);
     card_control_init();
     boot_timing_log("card_control_init", boot_stage_started);

@@ -23,70 +23,57 @@ extern const unsigned char core1_blob_start[];
 extern const unsigned char core1_blob_end[];
 extern const uint32_t      core1_blob_size;
 
+static uint8_t core1_launch_attempted;
+static uint8_t core1_hold_attempted;
+
+static inline void amp_memory_barrier(void)
+{
+#if defined(AMP_HOST_TEST)
+    extern void amp_test_memory_barrier(void);
+    amp_test_memory_barrier();
+#else
+    __asm__ volatile ("dsb sy" ::: "memory");
+#endif
+}
+
 static inline void amp_wake_core1(void)
 {
-    __asm__ volatile ("dsb sy" ::: "memory");
+    amp_memory_barrier();
+#if defined(AMP_HOST_TEST)
+    extern void amp_test_wake_core1(void);
+    amp_test_wake_core1();
+#else
     __asm__ volatile ("sev");
+#endif
 }
 
 int amp_hold_core1(void)
 {
-    uint32_t ctrl = Xil_In32(AMP_CPU_RESET_CTRL);
+    uint32_t ctrl;
     int rc = -1;
+
+    /* Even a failed reset attempt makes the BootROM WFE handoff unsafe.
+     * A reset CPU starts at its reset vector, not at 0xFFFFFFF0. */
+    core1_hold_attempted = 1U;
+    ctrl = Xil_In32(AMP_CPU_RESET_CTRL);
 
     /* UG585 requires reset before clock stop. Preserve CPU0 and APU bits. */
     Xil_Out32(AMP_SLCR_UNLOCK, 0x0000DF0DU);
     Xil_Out32(AMP_CPU_RESET_CTRL, ctrl | AMP_CPU1_RESET);
-    __asm__ volatile ("dsb sy" ::: "memory");
+    amp_memory_barrier();
     if (Xil_In32(AMP_CPU_RESET_CTRL) != (ctrl | AMP_CPU1_RESET)) {
         goto done;
     }
     Xil_Out32(AMP_CPU_RESET_CTRL,
               ctrl | AMP_CPU1_RESET | AMP_CPU1_CLOCK_STOP);
-    __asm__ volatile ("dsb sy" ::: "memory");
+    amp_memory_barrier();
     if (Xil_In32(AMP_CPU_RESET_CTRL) ==
         (ctrl | AMP_CPU1_RESET | AMP_CPU1_CLOCK_STOP)) {
         rc = 0;
     }
 done:
     Xil_Out32(AMP_SLCR_LOCK, 0x0000767BU);
-    __asm__ volatile ("dsb sy" ::: "memory");
-    return rc;
-}
-
-static int amp_resume_held_core1(void)
-{
-    uint32_t ctrl = Xil_In32(AMP_CPU_RESET_CTRL);
-    int rc = -1;
-
-    if ((ctrl & (AMP_CPU1_RESET | AMP_CPU1_CLOCK_STOP)) == 0U) {
-        return 0;
-    }
-    /* A partial failed hold must become a verified hold before release. */
-    if ((ctrl & (AMP_CPU1_RESET | AMP_CPU1_CLOCK_STOP)) !=
-        (AMP_CPU1_RESET | AMP_CPU1_CLOCK_STOP)) {
-        if (amp_hold_core1() != 0) {
-            return -1;
-        }
-        ctrl = Xil_In32(AMP_CPU_RESET_CTRL);
-    }
-    Xil_Out32(AMP_SLCR_UNLOCK, 0x0000DF0DU);
-    /* Publish the entry vector first, then release reset before the clock. */
-    Xil_Out32(AMP_CPU_RESET_CTRL, ctrl & ~AMP_CPU1_RESET);
-    __asm__ volatile ("dsb sy" ::: "memory");
-    if (Xil_In32(AMP_CPU_RESET_CTRL) != (ctrl & ~AMP_CPU1_RESET)) {
-        goto done;
-    }
-    Xil_Out32(AMP_CPU_RESET_CTRL,
-              ctrl & ~(AMP_CPU1_RESET | AMP_CPU1_CLOCK_STOP));
-    __asm__ volatile ("dsb sy" ::: "memory");
-    if (Xil_In32(AMP_CPU_RESET_CTRL) ==
-        (ctrl & ~(AMP_CPU1_RESET | AMP_CPU1_CLOCK_STOP))) {
-        rc = 0;
-    }
-done:
-    Xil_Out32(AMP_SLCR_LOCK, 0x0000767BU);
-    __asm__ volatile ("dsb sy" ::: "memory");
+    amp_memory_barrier();
     return rc;
 }
 
@@ -94,8 +81,17 @@ uint32_t amp_release_core1(void)
 {
     uint32_t size = (uint32_t)(core1_blob_end - core1_blob_start);
 
-    /* Never rewrite CPU1's DDR while it may still execute a previous image. */
-    if (size == 0U || amp_hold_core1() != 0) {
+    /* Cold start only: BootROM has already parked CPU1 in its WFE loop.
+     * Resetting it here would execute the low reset vector (the FSBL),
+     * which reinitializes clocks and DDR while CPU0 is running. Never copy
+     * over an already launched worker or resume after any hold attempt. */
+    if (core1_launch_attempted != 0U || core1_hold_attempted != 0U) {
+        return 0U;
+    }
+    core1_launch_attempted = 1U;
+    if (size == 0U ||
+        (Xil_In32(AMP_CPU_RESET_CTRL) &
+         (AMP_CPU1_RESET | AMP_CPU1_CLOCK_STOP)) != 0U) {
         return 0U;
     }
 
@@ -105,9 +101,6 @@ uint32_t amp_release_core1(void)
 
     Xil_Out32(AMP_CPU1_START_ADDR, AMP_CORE1_ENTRY_DEFAULT);
     Xil_DCacheFlush();
-    if (amp_resume_held_core1() != 0) {
-        return 0U;
-    }
     amp_wake_core1();
 
     return size;

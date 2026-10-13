@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 from test_joystick_config_menu import function
+from test_amp_startup import main as test_amp_startup
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONT = ROOT / "ps_sources/frontend"
@@ -39,9 +40,9 @@ def main():
     assert "g_firmware_switch_active != 0U" in function(runtime, "cherryusb_background_poll")
     assert "g_firmware_switch_active != 0U" in function(runtime, "usb0_priority_checkpoint")
     release = function(amp, "amp_release_core1")
-    assert release.index("amp_hold_core1()") < release.index("memcpy(dst")
-    assert release.index("Xil_Out32(AMP_CPU1_START_ADDR") < release.index("amp_resume_held_core1()")
-    assert release.index("amp_resume_held_core1()") < release.index("amp_wake_core1();")
+    assert "amp_hold_core1()" not in release and "amp_resume_held_core1" not in amp
+    assert release.index("core1_launch_attempted = 1U") < release.index("memcpy(dst")
+    assert release.index("Xil_Out32(AMP_CPU1_START_ADDR") < release.index("amp_wake_core1();")
 
     code = r'''
 #include <assert.h>
@@ -87,7 +88,7 @@ static unsigned default_calls, menu_request_calls, requests, clears, resets, hol
 static unsigned disk_calls, sync_calls, settings_calls, golden_checks;
 static unsigned stop_calls, worker_calls, hw_dma, hw_features, hw_onee, hw_vtw;
 static unsigned isolation_fail, isolation_hazard;
-static unsigned cpu1_hold_error, cpu1_recovery_ok, restart_calls;
+static unsigned cpu1_hold_error, restart_calls;
 static XTime time_now;
 static char events[256]; static unsigned event_count;
 static void event(char value) { assert(event_count < sizeof(events)-1); events[event_count++]=value; events[event_count]=0; }
@@ -165,7 +166,7 @@ static void usb_hid_service_stop(void) { ++stop_calls; }
 static void usb_sdd_service_stop(void) { ++stop_calls; }
 static uint8_t usb_storage_service_disconnect(void) { ++stop_calls; return 0; }
 static int amp_hold_core1(void) { ++worker_calls; event('W'); return (int)cpu1_hold_error; }
-static uint32_t amp_release_core1(void) { ++restart_calls; return cpu1_recovery_ok ? 1000U : 0U; }
+static uint32_t amp_release_core1(void) { ++restart_calls; return 0U; } /* Hold attempts require reboot. */
 static void compositor_request_full_refresh(void) {}
 static void Xil_DCacheFlush(void) {}
 static void uart_puts(uint32_t uart, const char *text) { (void)uart; (void)text; }
@@ -203,7 +204,7 @@ static config_menu_t prepare(void) {
     g_firmware_switch_fault=g_firmware_switch_active=0; g_firmware_switch_request=MB_PRODUCT_MULTITINI;
     g_card_slot_enable_mask=0xB0; hw_features=7; hw_dma=0; time_now=0;
     hw_onee=hw_vtw=isolation_fail=isolation_hazard=0;
-    cpu1_hold_error=restart_calls=0; cpu1_recovery_ok=1;
+    cpu1_hold_error=restart_calls=0;
     event_count=0; events[0]=0;
     memset(g_devices,0,sizeof(g_devices));
     g_devices[0].image_open=1; g_devices[0].image_file=7;
@@ -286,9 +287,9 @@ int main(void) {
     menu=prepare(); cpu1_hold_error=1;
     control_service_firmware_switch(&menu);
     assert(!resets && worker_calls==1 && restart_calls==1 && !stop_calls && clears==1);
-    assert(!g_firmware_switch_active && !g_firmware_switch_fault && menu.status_warning);
+    assert(g_firmware_switch_active && g_firmware_switch_fault && menu.status_warning);
     assert(g_card_slot_enable_mask==0xB0 && hw_features==7 && !hw_dma);
-    menu=prepare(); isolated=0; cpu1_hold_error=1; cpu1_recovery_ok=0;
+    menu=prepare(); isolated=0; cpu1_hold_error=1;
     control_service_firmware_switch(&menu);
     assert(!resets && restart_calls==1 && !stop_calls && clears==1);
     assert(g_firmware_switch_active && g_firmware_switch_fault && (hw_dma&1));
@@ -345,49 +346,8 @@ int main(void) {
                     "-Wno-misleading-indentation", str(source), "-o", str(exe)], check=True, env=env)
     subprocess.run([str(exe)], check=True, env=env)
 
-    # Keep the real ordered register writes; native hosts replace only ARM barriers.
-    cpu_code = "#include <assert.h>\n#include <stdint.h>\n#include <stdio.h>\n"
-    cpu_code += "\n".join(re.findall(r"^#define AMP_.*$", amp, re.M)) + "\n"
-    cpu_code += r'''
-static uint32_t state, writes[8], addresses[8]; static unsigned count, drop_write;
-static uint32_t Xil_In32(uint32_t address) { assert(address==AMP_CPU_RESET_CTRL); return state; }
-static void Xil_Out32(uint32_t address, uint32_t value) {
-    assert(count<8); addresses[count]=address; writes[count++]=value;
-    if(address==AMP_CPU_RESET_CTRL && count!=drop_write) state=value;
-}
-'''
-    for name in ("amp_hold_core1", "amp_resume_held_core1"):
-        body = function(amp, name)
-        body = re.sub(r'__asm__ volatile \(.*?\);', '(void)0;', body, flags=re.S)
-        cpu_code += body + "\n"
-    cpu_code += r'''
-int main(void) {
-    state=0x100; assert(amp_hold_core1()==0);
-    assert(count==4 && addresses[0]==AMP_SLCR_UNLOCK && addresses[3]==AMP_SLCR_LOCK);
-    assert(writes[1]==0x102 && writes[2]==0x122 && state==0x122);
-    count=0; assert(amp_resume_held_core1()==0);
-    assert(count==4 && writes[1]==0x120 && writes[2]==0x100 && state==0x100);
-    count=0; assert(amp_resume_held_core1()==0); assert(count==0 && state==0x100);
-    state=0x100; count=0; drop_write=2;
-    assert(amp_hold_core1()!=0 && state==0x100 && addresses[count-1]==AMP_SLCR_LOCK);
-    state=0x100; count=0; drop_write=3;
-    assert(amp_hold_core1()!=0 && state==0x102 && addresses[count-1]==AMP_SLCR_LOCK);
-    count=0; drop_write=0; assert(amp_resume_held_core1()==0 && state==0x100);
-    state=0x122; count=0; drop_write=2;
-    assert(amp_resume_held_core1()!=0 && state==0x122 && addresses[count-1]==AMP_SLCR_LOCK);
-    state=0x122; count=0; drop_write=3;
-    assert(amp_resume_held_core1()!=0 && state==0x120 && addresses[count-1]==AMP_SLCR_LOCK);
-    count=0; drop_write=0; assert(amp_resume_held_core1()==0 && state==0x100);
-    puts("PASS: checked CPU1 reset/clock ordering, partial-hold repair, failed-readback refusal and preserved bits");
-    return 0;
-}
-'''
-    source = OUT / "cpu1.c"
-    exe = OUT / "cpu1.exe"
-    source.write_text(cpu_code)
-    subprocess.run([compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
-                    str(source), "-o", str(exe)], check=True, env=env)
-    subprocess.run([str(exe)], check=True, env=env)
+    # Compile the complete production helper, replacing only ARM operations and MMIO.
+    test_amp_startup()
 
     draw_code = r'''
 #include <assert.h>

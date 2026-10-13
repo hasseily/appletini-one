@@ -1,7 +1,7 @@
 # Appletini and Multitini multiboot
 
 Branch `multiboot` in each repository adds shared Golden B2.0.1 and two firmware
-slots. Multitini firmware is M0.2.0; Appletini firmware is F1.3.0-dev. These are
+slots. Multitini firmware is M0.2.0; Appletini firmware is F1.3.0-dev2. These are
 development builds. Board validation is pending. No FPGA image changes are
 required: the packages retain their selected supervisor, machine and Appletini
 bitstreams.
@@ -82,10 +82,35 @@ new 6 MiB Appletini boundary. Current selected legacy packages fit within that
 boundary. A multiboot firmware refuses a Golden downgrade without the new
 capability marker.
 
-Do not feed tagged firmware to an old single-slot Golden: it lacks version 2
-support. Upgrade Golden first. Direct programming scripts require product-tagged
+The historical B1.1.0 and B1.2.0 SD installers copy `FIRMWARE.BIN` verbatim to
+`0x200000`; they do not parse its trailing manifest. A tagged Appletini image
+can therefore be installed before B2, and its normal frontend can run with
+multiboot controls disabled. Those installers ignore `BOOT.BIN` and the named
+firmware files. B1.1.0 requires FAT32. Never use a Multitini image as the generic
+file on B1: it has no product-aware destination selection.
+
+Firmware-first migration still requires the existing serial `:selfupdate`
+command after Appletini starts. The proposed About-tab update action is not
+implemented. The complete F-then-B-then-M procedure still needs board validation.
+Direct programming scripts require product-tagged
 files and choose fixed product offsets, but do not provide the transactional SD
 updater's power-loss protection. No hardware programming occurs during builds.
+
+## Appletini startup correction
+
+The owner reported that both F1.3.0-dev bundles stop after the initial SMARTPORT
+handoff message on an Apple //e with Golden 1.x. F1.3.0-dev2 restores the existing
+CPU1 cold-start path: publish its entry address and issue SEV without resetting
+the processor. A CPU1 reset can instead enter the retained FSBL at its low reset
+vector and repeat hardware initialization while CPU0 is running.
+
+The frontend also reserves a 64 KiB stack. Its menu state and new flash-validation
+call chain exceed the previous 8 KiB reservation. The builder checks the actual
+linked stack and heap spans independently and records them in the package.
+The FPGA, FSBL and CPU1 payload remain the exact selected F1.2.6-d1 inputs.
+These software corrections have host and build checks; the replacement still
+needs the owner's board test. A failed firmware handoff after CPU1 was held
+requires a card reboot; it does not attempt an unsafe warm restart.
 
 ## Failure handling and evidence
 

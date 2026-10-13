@@ -397,6 +397,8 @@ static void draw_header(uint16_t *fb, const debug_overlay_snapshot_t *s)
 static void draw_system(uint16_t *fb, const debug_overlay_snapshot_t *s)
 {
     char text[192];
+    const uint8_t golden_known = s->golden_version[0] != '\0' &&
+                                strcmp(s->golden_version, "Unknown") != 0;
     int x = HUD_LEFT_X;
     int y = HUD_LEFT_Y;
     int w = HUD_LEFT_W;
@@ -413,8 +415,8 @@ static void draw_system(uint16_t *fb, const debug_overlay_snapshot_t *s)
     (void)snprintf(text,
                    sizeof(text),
                    "Golden %s",
-                   (s->metadata_valid != 0U) ? s->golden_version : "unavailable");
-    line(fb, x, y, w, 2U, text, (s->metadata_valid != 0U) ? HUD_MUTED : HUD_WARN);
+                   s->golden_version[0] != '\0' ? s->golden_version : "Unknown");
+    line(fb, x, y, w, 2U, text, golden_known != 0U ? HUD_MUTED : HUD_WARN);
     format_temp(text, sizeof(text), &s->temp);
     line(fb, x, y, w, 3U, text, FB16_COLOR_WHITE);
     format_rtc(text, sizeof(text), &s->rtc);

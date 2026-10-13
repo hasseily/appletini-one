@@ -21,7 +21,7 @@
 #include "../lib/dac_ak4493.h"
 #include "../lib/tmp102.h"
 #include "../lib/rtc_pcf8563.h"
-#include "../lib/qspi_nor.h"
+#include "../lib/crc32.h"
 #include "../lib/psdma.h"
 #include "../lib/golden_self_update.h"
 #include "../lib/multiboot_platform.h"
@@ -125,7 +125,6 @@ static uint32_t g_renderer_fps_x100 = 0U;
 static uint32_t g_renderer_publish_seq = 0U;
 static XTime g_last_draw_ticks = 0U;
 static usb1_boot_settle_t g_usb1_boot_settle = {0};
-static fw_update_metadata_t g_update_meta = {0};
 static uint8_t g_update_meta_valid = 0U;
 static mb_platform_status_t g_multiboot_status;
 static uint8_t g_multiboot_status_valid;
@@ -284,84 +283,41 @@ static uint32_t ui_softswitch_state(void)
     return REG_READ(CARD_CTRL_SOFTSW_STATE_REG);
 }
 
-static uint32_t crc32_local_init(void)
+static uint8_t update_metadata_read_from_qspi(void)
 {
-    return 0xFFFFFFFFU;
-}
-
-static uint32_t crc32_local_update(uint32_t crc, const void *data, uint32_t len)
-{
-    const uint8_t *p = (const uint8_t *)data;
-    uint32_t i;
-    uint32_t j;
-    for (i = 0U; i < len; ++i) {
-        crc ^= (uint32_t)p[i];
-        for (j = 0U; j < 8U; ++j) {
-            const uint32_t mask = (uint32_t)-(int32_t)(crc & 1U);
-            crc = (crc >> 1) ^ (0xEDB88320U & mask);
-        }
-    }
-    return crc;
-}
-
-static uint32_t crc32_local_finish(uint32_t crc)
-{
-    return crc ^ 0xFFFFFFFFU;
-}
-
-static int qspi_read_bytes_direct(uint32_t flash_addr, void *dst, uint32_t len)
-{
-    qspi_nor_t nor;
-
-    if (qspi_nor_init(&nor, 3U, APPLETINI_FLASH_METADATA_SIZE) != XST_SUCCESS) {
-        return XST_FAILURE;
-    }
-    return qspi_nor_read(&nor, flash_addr, dst, len);
-}
-
-static uint8_t update_metadata_read_from_qspi(fw_update_metadata_t *out)
-{
+    const mb_flash_t *flash = mb_platform_flash();
+    mb_metadata_t metadata;
     fw_update_metadata_t tmp;
     uint32_t calc_crc;
-    volatile const uint8_t *src;
-    uint8_t *dst = (uint8_t *)&tmp;
-    uint32_t i;
+    int rc;
 
-    if (out == NULL) {
+    if (flash == NULL) {
         return 0U;
     }
-
-    /* Try QSPI linear window first. */
-    src = (volatile const uint8_t *)(uintptr_t)(0xFC000000U + APPLETINI_FLASH_METADATA_OFFSET);
-    Xil_DCacheInvalidateRange((INTPTR)src, (INTPTR)sizeof(tmp));
-    for (i = 0U; i < (uint32_t)sizeof(tmp); ++i) {
-        dst[i] = src[i];
+    /* Diagnostic health only. Both multiboot copies have their own CRC and
+     * sequence checks; menu presence is not proof of valid metadata. */
+    rc = mb_metadata_load(flash, &metadata);
+    if (rc == MB_OK) {
+        return 1U;
     }
-
-    if (!(tmp.magic == FW_UPDATE_METADATA_MAGIC &&
-          tmp.version == FW_UPDATE_METADATA_VERSION &&
-          tmp.length_bytes == (uint32_t)sizeof(tmp))) {
-        /* Fallback: direct QSPI command-mode read (works even if linear mode is not configured). */
-        if (qspi_read_bytes_direct(APPLETINI_FLASH_METADATA_OFFSET, &tmp, (uint32_t)sizeof(tmp)) != XST_SUCCESS) {
-            return 0U;
-        }
+    if (rc != MB_E_METADATA) {
+        /* A failed read may hide a newer invalidation. Keep the warning. */
+        return 0U;
     }
-
+    /* Golden 1.x writes FWMT/v4 at FF0000, independent of the new two-sector
+     * layout's FE0000 base. Use command reads, never an unconfigured AXI alias. */
+    if (flash->read(flash->context, MB_METADATA_B_OFFSET, &tmp,
+                    (uint32_t)sizeof(tmp)) != 0) {
+        return 0U;
+    }
     if (tmp.magic != FW_UPDATE_METADATA_MAGIC ||
         tmp.version != FW_UPDATE_METADATA_VERSION ||
         tmp.length_bytes != (uint32_t)sizeof(tmp)) {
         return 0U;
     }
-
-    calc_crc = crc32_local_init();
-    calc_crc = crc32_local_update(calc_crc, &tmp, (uint32_t)sizeof(tmp) - 4U);
-    calc_crc = crc32_local_finish(calc_crc);
-    if (calc_crc != tmp.crc32) {
-        return 0U;
-    }
-
-    *out = tmp;
-    return 1U;
+    calc_crc = crc32_finish(crc32_update(crc32_init(), &tmp,
+                           sizeof(tmp) - sizeof(tmp.crc32)));
+    return calc_crc == tmp.crc32 ? 1U : 0U;
 }
 
 /* Text-mono colors are software-owned settings. Display-mono/video-style
@@ -4161,7 +4117,7 @@ int main(void)
     uart_puts(UART0_BASE, "Control UART: UART1 + UART0\r\n");
     uart_puts(UART0_BASE, "==============================\r\n");
 
-    g_update_meta_valid = update_metadata_read_from_qspi(&g_update_meta);
+    g_update_meta_valid = update_metadata_read_from_qspi();
     if (mb_platform_open() == MB_OK) {
         control_refresh_multiboot();
         control_refresh_installed_golden();
@@ -4457,7 +4413,7 @@ int main(void)
 
     if (g_update_meta_valid) {
         uart_puts(UART0_BASE, "Updater meta boot: ");
-        uart_puts(UART0_BASE, g_update_meta.golden_version);
+        uart_puts(UART0_BASE, g_installed_golden_version);
         uart_puts(UART0_BASE, "\r\n");
         uart_puts(UART0_BASE, "Updater local firmware: ");
         uart_puts(UART0_BASE, APPLETINI_FIRMWARE_IMAGE_VERSION_FULL);

@@ -362,8 +362,21 @@ def main():
     # Use the retained independent Bootgen/ELF auditor with this checkout's
     # v2-aware manifest parser. Its explicit inputs never write to the baseline.
     import package_timing_firmware  # Cache the matching parser before loading the auditor.
-    audit_script = baseline / "audit_firmware.py"
-    shutil.copy2(audit_script, records / "audit_firmware.py")
+    baseline_audit = baseline / "audit_firmware.py"
+    shutil.copy2(baseline_audit, records / "baseline_audit_firmware.py")
+    audit_script = records / "audit_firmware.py"
+    audit_text = baseline_audit.read_text()
+    old_check = '    need(boot_label in b"".join(s["data"] for s in front_segments), "Wrong loaded boot-version label")'
+    if audit_text.count(old_check) != 1:
+        raise RuntimeError("retained auditor's boot display contract has changed")
+    # Preserve every retained payload/ELF/CRC check. Replace only the obsolete
+    # static About label gate with the installed-image display contract.
+    new_check = '\n'.join((
+        '    need(boot_label not in b"".join(s["data"] for s in front_segments), "Frontend still embeds a misleading static boot label")',
+        '    need(b"Golden Boot: %s\\0" in b"".join(s["data"] for s in front_segments), "Missing installed Golden display format")',
+        '    need("mb_golden_installed_version" in front_symbols and "golden_self_update_run" in front_symbols, "Missing installed-version/update implementation")',
+    ))
+    audit_script.write_text(audit_text.replace(old_check, new_check))
     spec = importlib.util.spec_from_file_location("retained_firmware_audit", audit_script)
     auditor = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(auditor)
@@ -400,6 +413,7 @@ def main():
                  "raw_sha256": expected["cpu1_raw"], "embedded_sha256": hashlib.sha256(embedded).hexdigest(),
                  "embedded_bytes": len(embedded), "size_word_matches": True, "elf_raw_matches": True},
         "frontend_memory": frontend_memory,
+        "golden_version_display": "installed-image",
         "pinned_cherryusb": selected_cherry, "hardware_flashed": False, "hardware_tested": False,
     }
     write_json(output / "ARM_BUILD.json", report)

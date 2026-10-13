@@ -8,6 +8,10 @@
 static qspi_nor_t nor;
 static mb_flash_t flash;
 static int opened;
+static int golden_cached;
+static int golden_cached_available;
+static int golden_cached_version_status = MB_E_UNAVAILABLE;
+static char golden_cached_version[32];
 
 static int flash_read(void *context, uint32_t offset, void *destination, uint32_t length)
 {
@@ -68,6 +72,56 @@ int mb_platform_status(uint32_t current_product, mb_platform_status_t *status)
      * but never advertises an untagged image as an installed peer. */
     if (status->default_product == MB_PRODUCT_NONE && status->legacy_present)
         status->default_product = current_product;
+    return MB_OK;
+}
+
+static int cache_golden_identity(void)
+{
+    if (golden_cached) return MB_OK;
+    if (mb_platform_open() != MB_OK) return MB_E_READ;
+    golden_cached_available = mb_golden_available(&flash, NULL) == MB_OK;
+    golden_cached_version_status = mb_golden_installed_version(&flash,
+        golden_cached_version, (uint32_t)sizeof(golden_cached_version), NULL);
+    /* Flash writes and boot decisions still validate live images. A successful
+     * Golden replacement restarts the PS and therefore clears this UI cache. */
+    golden_cached = 1;
+    return MB_OK;
+}
+
+int mb_platform_golden_version_cached(char *version, uint32_t capacity)
+{
+    uint32_t length;
+    if (version == NULL || capacity == 0U) return MB_E_ARGUMENT;
+    version[0] = '\0';
+    if (cache_golden_identity() != MB_OK) return MB_E_READ;
+    if (golden_cached_version_status != MB_OK) return golden_cached_version_status;
+    length = (uint32_t)strlen(golden_cached_version);
+    if (length >= capacity) return MB_E_ARGUMENT;
+    memcpy(version, golden_cached_version, length + 1U);
+    return MB_OK;
+}
+
+int mb_platform_status_ui(uint32_t current_product, mb_platform_status_t *status)
+{
+    mb_metadata_t metadata;
+    int rc;
+    if (status == NULL) return MB_E_ARGUMENT;
+    memset(status, 0, sizeof(*status));
+    if (cache_golden_identity() != MB_OK) return MB_E_READ;
+    status->golden_available = golden_cached_available;
+    rc = mb_metadata_load(&flash, &metadata);
+    if (rc == MB_E_READ) return rc;
+    if (rc == MB_OK) {
+        status->default_product = metadata.default_product;
+        status->request_product = metadata.request_product;
+    }
+    status->appletini_present = mb_slot_probe(&flash, MB_PRODUCT_APPLETINI, NULL) == MB_OK;
+    status->multitini_present = mb_slot_probe(&flash, MB_PRODUCT_MULTITINI, NULL) == MB_OK;
+    if (status->default_product == MB_PRODUCT_NONE) {
+        if (status->appletini_present) status->default_product = MB_PRODUCT_APPLETINI;
+        else if (status->multitini_present) status->default_product = MB_PRODUCT_MULTITINI;
+        else status->default_product = current_product;
+    }
     return MB_OK;
 }
 

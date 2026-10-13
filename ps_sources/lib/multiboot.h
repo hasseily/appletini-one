@@ -83,6 +83,12 @@ int mb_image_validate(const mb_reader_t *reader, uint32_t expected_product,
 int mb_metadata_load(const mb_flash_t *flash, mb_metadata_t *out);
 /* out may be NULL for availability probes. */
 int mb_slot_verify(const mb_flash_t *flash, uint32_t product, mb_image_t *out);
+/* Fast advisory UI presence only: validates bounded Bootgen headers/partition
+ * bounds, footer identity/CRC and committed eligibility. Does not read or CRC
+ * the payload, prove linked capability or authorize any flash write/boot.
+ * All actions must still use mb_slot_verify/mb_select/set_choice/mb_install.
+ * out may be NULL. image_crc32 is zero because the payload was not read. */
+int mb_slot_probe(const mb_flash_t *flash, uint32_t product, mb_image_t *out);
 int mb_golden_available(const mb_flash_t *flash, uint32_t *boot_offset_out);
 /* Discover the linked version in the installed Golden executable, preferring
  * the primary copy and falling back to trial only on validation/read failure.

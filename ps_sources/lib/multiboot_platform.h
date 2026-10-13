@@ -16,6 +16,10 @@ typedef struct {
 int mb_platform_open(void);
 const mb_flash_t *mb_platform_flash(void);
 int mb_platform_status(uint32_t current_product, mb_platform_status_t *status);
+/* Display only: bounded slot probes and cached verified Golden identity.
+ * This is not authorization to boot, change startup choice or write flash. */
+int mb_platform_status_ui(uint32_t current_product, mb_platform_status_t *status);
+int mb_platform_golden_version_cached(char *version, uint32_t capacity);
 int mb_platform_set_default(uint32_t product);
 int mb_platform_request(uint32_t product);
 int mb_platform_clear_request(void);

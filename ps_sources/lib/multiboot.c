@@ -415,6 +415,51 @@ int mb_slot_verify(const mb_flash_t *f, uint32_t product, mb_image_t *out)
     if (m.slots[product_index(product)].product!=product) return MB_E_UNAVAILABLE;
     return recorded_slot_verify(f,&m.slots[product_index(product)],0,out);
 }
+int mb_slot_probe(const mb_flash_t *f, uint32_t product, mb_image_t *out)
+{
+    mb_metadata_t metadata;
+    mb_image_t image;
+    flash_reader_t context;
+    mb_reader_t reader;
+    uint8_t footer[MB_MANIFEST_SIZE];
+    uint32_t size,capacity,flags;
+    int rc;
+    if (out) memset(out,0,sizeof *out);
+    if (!flash_valid(f,0) || !product_valid(product)) return MB_E_ARGUMENT;
+    /* A committed invalidation wins over a still-intact old payload. A read
+     * failure could hide a newer invalidation and must fail closed. */
+    rc=mb_metadata_load(f,&metadata);
+    if (rc!=MB_OK && rc!=MB_E_METADATA) return rc;
+    if (rc==MB_OK) {
+        const mb_slot_record_t *slot=&metadata.slots[product_index(product)];
+        if (slot->product!=product || slot->flags!=MB_FLAG_SLOT_VALID)
+            return MB_E_UNAVAILABLE;
+    }
+    capacity=mb_product_capacity(product);
+    reader=slot_reader(f,mb_product_offset(product),capacity,&context);
+    {
+        int image_rc=bootgen_validate(&reader,&size);
+        if (image_rc!=MB_OK) return image_rc;
+    }
+    if (!range(size,sizeof footer,capacity)) return MB_E_IMAGE;
+    if (read_at(&reader,size,footer,sizeof footer)!=MB_OK) return MB_E_READ;
+    flags=product|MB_FLAG_RECOVERY|MB_FLAG_MULTIBOOT;
+    if (memcmp(footer,"ATNIMG1\0",8) || le32(footer+8)!=2U ||
+        le32(footer+12)!=2U || le32(footer+16)!=flags ||
+        le32(footer+20)!=size || le32(footer+28)!=crc(footer,28))
+        return MB_E_MANIFEST;
+    memset(&image,0,sizeof image);
+    image.product=product; image.version=2U; image.payload_size=size;
+    image.payload_crc32=le32(footer+24); image.image_size=size+sizeof footer;
+    if (rc==MB_OK) {
+        const mb_slot_record_t *slot=&metadata.slots[product_index(product)];
+        if (slot->payload_size!=image.payload_size ||
+            slot->payload_crc32!=image.payload_crc32 ||
+            slot->image_size!=image.image_size) return MB_E_VERIFY;
+    }
+    if (out) *out=image;
+    return MB_OK;
+}
 static int old_legacy_verify(const mb_flash_t *f, mb_image_t *out)
 {
     uint8_t b[LEGACY_METADATA_SIZE];
@@ -681,6 +726,16 @@ static int metadata_adopt(const mb_flash_t *f, mb_metadata_t *m)
         if (rc==MB_E_READ) return rc;
         if (rc==MB_OK && image.image_size<=MB_APPLETINI_CAPACITY) record_image(&m->slots[0],&image,1);
     }
+    /* First migration must preserve the verified tagged boot fallback that
+     * existed before an update started. An old Golden can install tagged
+     * Appletini without creating multiboot metadata; adding Multitini later
+     * must not make that newly installed peer the startup default. */
+    if ((m->slots[0].flags&MB_FLAG_SLOT_VALID) &&
+        m->slots[0].product==MB_PRODUCT_APPLETINI)
+        m->default_product=MB_PRODUCT_APPLETINI;
+    else if ((m->slots[1].flags&MB_FLAG_SLOT_VALID) &&
+             m->slots[1].product==MB_PRODUCT_MULTITINI)
+        m->default_product=MB_PRODUCT_MULTITINI;
     return MB_OK;
 }
 static int set_choice(const mb_flash_t *f, uint32_t product, int request)
@@ -749,8 +804,9 @@ int mb_update_finish(const mb_flash_t *f, const mb_image_t *source)
     if (!image_matches(&record,&installed)) return MB_E_VERIFY;
     rc=mb_metadata_load(f,&m); if (rc!=MB_OK) return rc;
     record_image(&m.slots[product_index(source->product)],&installed,0);
-    /* First installed tagged image becomes the default; subsequent installs
-     * preserve the owner's explicit choice. Missing defaults still fall back. */
+    /* With no pre-existing verified tagged selection, the first installed
+     * tagged image becomes the default. Adoption and explicit owner choices
+     * otherwise survive peer installation. Missing defaults still fall back. */
     if (!product_valid(m.default_product)) m.default_product=source->product;
     return metadata_commit(f,&m);
 }

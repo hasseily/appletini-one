@@ -1,7 +1,7 @@
 # Appletini and Multitini multiboot
 
-Branch `multiboot` in each repository adds shared Golden B2.0.2 and two firmware
-slots. Multitini firmware is M0.2.1; Appletini firmware is F1.3.0-dev4. These are
+Branch `multiboot` in each repository adds shared Golden B2.0.3 and two firmware
+slots. Multitini firmware is M0.2.2; Appletini firmware is F1.3.0-dev5. These are
 development builds. Board validation is pending. No FPGA image changes are
 required: the packages retain their selected supervisor, machine and Appletini
 bitstreams.
@@ -89,7 +89,7 @@ multiboot controls disabled. Those installers ignore `BOOT.BIN` and the named
 firmware files. B1.1.0 requires FAT32. Never use a Multitini image as the generic
 file on B1: it has no product-aware destination selection.
 
-Appletini F1.3.0-dev4 supports firmware-first migration without serial commands:
+Appletini F1.3.0-dev5 supports firmware-first migration without serial commands:
 copy the bundle's `appletini/FIRMWARE.BIN` as `FIRMWARE.BIN`, its `golden/BOOT.BIN`
 as `BOOT.BIN`, and `sd-root/FIRMWARE-MULTITINI.BIN` to SD root. Let the installed
 B1 update Appletini first. In About, choose **Update Golden Boot...** beside the
@@ -145,6 +145,38 @@ B2.0.2 also reserves a checked 64 KiB Golden stack: installation
 and nested validation cannot fit the previous 8 KiB template stack.
 A failed firmware handoff after CPU1 was held
 requires a card reboot; it does not attempt an unsafe warm restart.
+
+## Multitini handoff correction
+
+The owner reports successful B2.0.2 and M0.2.1 installation, followed by an
+unexpected Multitini startup, a minute-long System entry, and a cancelled switch
+to Appletini. Subsequent core loads report FatFs `FR_NOT_ENABLED` (backend 12)
+before PCAP reads any bytes. This does not establish that the machine cores run.
+
+B2.0.3 preserves the existing verified tagged startup choice when creating
+multiboot metadata for the first time. Adding Multitini no longer promotes it
+over the Appletini already installed by B1. Existing saved choices are preserved:
+an affected card should select **System > Startup firmware > Appletini** once.
+
+M0.2.2 uses `f_mount(NULL, "0:/", 0)` to detach SD. The previous option 1 detached
+the filesystem and then failed an immediate mount with no filesystem object,
+leaving the wrapper's cached mounted state wrong. The fix permits a clean
+handoff and remount; open files and failed closes still block unmount. Switch and
+Golden-update transactions finish metadata, SD, UART and boot-register checks
+before the final CPU1 hold. An attempted CPU1 reset cannot be resumed in place.
+
+System and Appletini menu status use bounded live header/footer/metadata probes
+and a Golden identity cache verified once during startup. These display hints
+do not authorize a boot: every actual switch, startup-choice write and Golden
+selection retains full live payload, role and CRC checks. An altered payload
+may remain visible until an action checks it, but it is never booted unchecked.
+System entry no longer rereads whole firmware images. Full switch validation
+has a visible progress message.
+
+Native tests exercise the exact installed FatFs `f_mount` implementation,
+SD detach/remount and fault ownership, menu-cache read counts, migration power
+cuts, and deferred handoff failure boundaries. These corrections retain all
+FPGA, FSBL and CPU1 inputs. The corrected runtime switching still needs a board test.
 
 ## Failure handling and evidence
 

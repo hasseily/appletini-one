@@ -94,7 +94,7 @@ static unsigned cpu1_hold_error, restart_calls;
 static XTime time_now;
 static char events[256]; static unsigned event_count;
 static void event(char value) { assert(event_count < sizeof(events)-1); events[event_count++]=value; events[event_count]=0; }
-static int mb_platform_status(uint32_t product, mb_platform_status_t *out) {
+static int mb_platform_status_ui(uint32_t product, mb_platform_status_t *out) {
     assert(product==MB_PRODUCT_APPLETINI); event('V'); *out=live_status; return (int)status_rc;
 }
 static int mb_platform_set_default(uint32_t product) {

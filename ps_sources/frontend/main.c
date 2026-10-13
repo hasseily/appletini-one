@@ -2024,17 +2024,13 @@ static void control_refresh_multiboot(void)
 {
     memset(&g_multiboot_status, 0, sizeof(g_multiboot_status));
     g_multiboot_status_valid =
-        mb_platform_status(MB_PRODUCT_APPLETINI, &g_multiboot_status) == MB_OK;
+        mb_platform_status_ui(MB_PRODUCT_APPLETINI, &g_multiboot_status) == MB_OK;
 }
 
 static void control_refresh_installed_golden(void)
 {
-    const mb_flash_t *flash = mb_platform_flash();
-    uint32_t offset;
-
-    if (flash == NULL ||
-        mb_golden_installed_version(flash, g_installed_golden_version,
-                                   sizeof(g_installed_golden_version), &offset) != MB_OK) {
+    if (mb_platform_golden_version_cached(g_installed_golden_version,
+                                         sizeof(g_installed_golden_version)) != MB_OK) {
         (void)snprintf(g_installed_golden_version,
                        sizeof(g_installed_golden_version), "Unknown");
     }
@@ -2228,7 +2224,8 @@ static void control_service_firmware_switch(config_menu_t *menu)
         error = "FINISH SD SHARING, SCREENSHOTS AND PRINTING FIRST";
         goto failed;
     }
-    /* A displayed presence result is never permission to boot stale flash. */
+    /* A displayed presence result is advisory. The request API below performs
+     * full live target and Golden validation before any boot request commits. */
     control_refresh_multiboot();
     if (g_multiboot_status_valid == 0U ||
         g_multiboot_status.multitini_present == 0U ||

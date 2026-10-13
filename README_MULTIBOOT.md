@@ -1,6 +1,6 @@
 # Appletini and Multitini multiboot
 
-Branch `multiboot` in each repository adds shared Golden B2.0.3 and two firmware
+Branch `multiboot` in each repository adds shared Golden B2.0.4 and two firmware
 slots. Multitini firmware is M0.2.2; Appletini firmware is F1.3.0-dev5. These are
 development builds. Board validation is pending. No FPGA image changes are
 required: the packages retain their selected supervisor, machine and Appletini
@@ -177,6 +177,23 @@ Native tests exercise the exact installed FatFs `f_mount` implementation,
 SD detach/remount and fault ownership, menu-cache read counts, migration power
 cuts, and deferred handoff failure boundaries. These corrections retain all
 FPGA, FSBL and CPU1 inputs. The corrected runtime switching still needs a board test.
+
+## Golden update completion
+
+The owner confirms the preceding bundle works. B2.0.4 renames SD-root `BOOT.BIN`
+to `BOOT.OK` only when its complete bytes, including the manifest, match the
+live fully validated primary Golden image. Trial staging keeps `BOOT.BIN`; a
+running trial first repairs and verifies primary before acknowledgement. Primary
+boot retries acknowledgement after a power cut between primary commit and rename.
+An identical file is already installed and can be acknowledged; a different
+file remains an update candidate and is never installed merely by this check.
+
+The source must close successfully before replacing an older regular `BOOT.OK`.
+A directory at that path is preserved. SD mount/read/close/delete/rename errors
+leave the source for retry and do not invalidate verified flash or block boot.
+FatFs directory changes retain their normal power-loss limits. The completion
+step writes no flash. This bundle retains the accepted M0.2.2 and F1.3.0-dev5
+images exactly; only Golden is rebuilt. The rename still needs a board test.
 
 ## Failure handling and evidence
 

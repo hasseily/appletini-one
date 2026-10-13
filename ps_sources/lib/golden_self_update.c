@@ -117,6 +117,7 @@ typedef char golden_manifest_size_must_be_32[
 
 static uint32_t g_log_uart;
 static uint32_t g_log_mirror_uart;
+static FATFS g_completion_fs;
 
 static void log_puts(const char *text)
 {
@@ -1015,6 +1016,114 @@ int golden_self_update_repair_primary(uint32_t current_multiboot_offset,
                (unsigned long)out->flash_crc32,
                (unsigned long)out->boot_offset);
     return XST_SUCCESS;
+}
+
+int golden_self_update_complete_sd(uint32_t current_multiboot_offset,
+                                   const golden_self_update_result_t *repair,
+                                   uint32_t uart_base,
+                                   uint32_t mirror_uart_base)
+{
+    qspi_nor_t nor;
+    flash_reader_ctx_t flash_ctx;
+    image_reader_t primary_reader;
+    target_image_t primary;
+    golden_self_update_result_t validation;
+    FIL file;
+    FILINFO info;
+    FRESULT fr;
+    FSIZE_t size;
+    uint32_t capacity;
+    uint32_t offset;
+    int matched = 1;
+    int read_failed = 0;
+
+    g_log_uart = uart_base;
+    g_log_mirror_uart = mirror_uart_base;
+    if (current_multiboot_offset != PRIMARY_FLASH_OFFSET &&
+        current_multiboot_offset != TRIAL_FLASH_OFFSET) {
+        return GOLDEN_SELF_UPDATE_SD_FAILED;
+    }
+    if (current_multiboot_offset == TRIAL_FLASH_OFFSET &&
+        (repair == NULL || !repair->updated || !repair->verified ||
+         !repair->reset_required || repair->error_code != GSU_E_OK ||
+         repair->boot_offset != PRIMARY_FLASH_OFFSET)) {
+        /* Staging trial alone never acknowledges the SD source. */
+        return GOLDEN_SELF_UPDATE_SD_FAILED;
+    }
+    fr = f_mount(&g_completion_fs, "0:/", 1U);
+    if (fr != FR_OK) {
+        log_printf("[GSU] BOOT.BIN retained: SD completion mount failed fr=%d\r\n", (int)fr);
+        return GOLDEN_SELF_UPDATE_SD_FAILED;
+    }
+    fr = f_open(&file, "0:/BOOT.BIN", FA_READ);
+    if (fr == FR_NO_FILE || fr == FR_NO_PATH) return GOLDEN_SELF_UPDATE_SD_UNCHANGED;
+    if (fr != FR_OK) {
+        log_printf("[GSU] BOOT.BIN retained: completion open failed fr=%d\r\n", (int)fr);
+        return GOLDEN_SELF_UPDATE_SD_FAILED;
+    }
+    size = f_size(&file);
+    result_init(&validation);
+    memset(&primary, 0, sizeof(primary));
+    if (size <= GOLDEN_SELF_UPDATE_MANIFEST_SIZE || size > GOLDEN_SLOT_SIZE) {
+        matched = 0;
+    } else if (qspi_preflight_init(&nor, &capacity, &validation) != XST_SUCCESS ||
+               flash_golden_preflight(&nor, PRIMARY_FLASH_OFFSET, &primary,
+                   &primary_reader, &flash_ctx, &validation) != XST_SUCCESS) {
+        read_failed = 1;
+    } else if (size != primary.total_size ||
+               (current_multiboot_offset == TRIAL_FLASH_OFFSET &&
+                (repair->payload_size != primary.manifest.payload_size ||
+                 repair->payload_crc32 != primary.manifest.payload_crc32 ||
+                 repair->flash_crc32 != primary.manifest.payload_crc32))) {
+        matched = 0;
+    } else {
+        /* Compare every byte including the manifest. Payload CRC equality
+         * alone must not acknowledge a changed or unrelated SD image. */
+        for (offset = 0U; offset < primary.total_size; ) {
+            UINT got = 0U;
+            uint32_t chunk = primary.total_size - offset;
+            if (chunk > IO_CHUNK_SIZE) chunk = IO_CHUNK_SIZE;
+            if (f_read(&file, g_source_buf, (UINT)chunk, &got) != FR_OK ||
+                got != chunk || reader_read(&primary_reader, offset,
+                    g_flash_buf, chunk) != XST_SUCCESS) {
+                read_failed = 1;
+                break;
+            }
+            if (memcmp(g_source_buf, g_flash_buf, chunk) != 0) {
+                matched = 0;
+                break;
+            }
+            offset += chunk;
+        }
+    }
+    fr = f_close(&file);
+    if (fr != FR_OK || read_failed) {
+        log_printf("[GSU] BOOT.BIN retained: completion verification/close failed fr=%d\r\n", (int)fr);
+        return GOLDEN_SELF_UPDATE_SD_FAILED;
+    }
+    if (!matched) {
+        log_puts("[GSU] BOOT.BIN retained: file differs from verified primary\r\n");
+        return GOLDEN_SELF_UPDATE_SD_UNCHANGED;
+    }
+    fr = f_stat("0:/BOOT.OK", &info);
+    if (fr == FR_OK) {
+        if ((info.fattrib & AM_DIR) != 0U) {
+            log_puts("[GSU] BOOT.BIN retained: BOOT.OK is a directory\r\n");
+            return GOLDEN_SELF_UPDATE_SD_FAILED;
+        }
+        fr = f_unlink("0:/BOOT.OK");
+    }
+    if (fr != FR_OK && fr != FR_NO_FILE && fr != FR_NO_PATH) {
+        log_printf("[GSU] BOOT.BIN retained: cannot replace BOOT.OK fr=%d\r\n", (int)fr);
+        return GOLDEN_SELF_UPDATE_SD_FAILED;
+    }
+    fr = f_rename("0:/BOOT.BIN", "0:/BOOT.OK");
+    if (fr != FR_OK) {
+        log_printf("[GSU] BOOT.BIN retained: completion rename failed fr=%d\r\n", (int)fr);
+        return GOLDEN_SELF_UPDATE_SD_FAILED;
+    }
+    log_puts("[GSU] Verified primary: renamed BOOT.BIN to BOOT.OK\r\n");
+    return GOLDEN_SELF_UPDATE_SD_RENAMED;
 }
 
 int golden_self_update_run(const char *source_path,

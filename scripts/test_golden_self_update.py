@@ -221,6 +221,39 @@ def test_shared_reader_frontends_use_one_update_engine() -> None:
             "public API must state the source image and manifest contract")
 
 
+def test_sd_completion_follows_verified_primary_and_allows_retry() -> None:
+    source = read(SELF_UPDATE_C)
+    header = read(SELF_UPDATE_H)
+    main = read(BOOT_MAIN_C)
+    trial_flow = section(main,
+        "if (current_boot_offset == GOLDEN_SELF_UPDATE_TRIAL_OFFSET)",
+        "for (;;) {")
+    complete = "(void)golden_self_update_complete_sd(current_boot_offset,"
+    require(main.count(complete) == 2,
+            "Golden must acknowledge after trial repair and retry from primary")
+    require(trial_flow.index("repair_result.boot_offset == GOLDEN_SELF_UPDATE_PRIMARY_OFFSET") <
+            trial_flow.index(complete) <
+            trial_flow.index("boot_control_boot_qspi_image_offset(repair_result.boot_offset);"),
+            "completion must follow verified primary repair and precede its reboot")
+    require("golden_self_update_complete_sd(current_boot_offset, NULL," in trial_flow and
+            trial_flow.index("golden_self_update_complete_sd(current_boot_offset, NULL,") <
+            trial_flow.index("serial_boot_menu(layout, GOLDEN_SERIAL_BOOT_WINDOW_SECONDS)"),
+            "primary startup must retry completion after power loss without staging another image")
+    require("golden_self_update_complete_sd(" not in read(FRONTEND_MAIN_C),
+            "running firmware must retain BOOT.BIN while it only stages the trial image")
+    completion = section(source, "int golden_self_update_complete_sd(",
+                         "int golden_self_update_run(const char *source_path,")
+    require(completion.index("flash_golden_preflight(&nor, PRIMARY_FLASH_OFFSET") <
+            completion.index("memcmp(g_source_buf, g_flash_buf, chunk)") <
+            completion.index("f_close(&file)") <
+            completion.index('f_stat("0:/BOOT.OK", &info)') <
+            completion.index('f_rename("0:/BOOT.BIN", "0:/BOOT.OK")'),
+            "completion must verify primary/full source bytes and close before changing SD names")
+    require("GOLDEN_SELF_UPDATE_SD_FAILED = -1" in header and
+            "GOLDEN_SELF_UPDATE_SD_RENAMED = 1" in header,
+            "completion needs separate advisory failure and successful rename results")
+
+
 def test_running_firmware_selfupdate_callback_boots_verified_trial() -> None:
     header = read(UART_CONTROL_H)
     control = read(UART_CONTROL_C)
@@ -462,6 +495,7 @@ TESTS = [
     test_update_entry_points_and_trial_reboot,
     test_trial_boot_repairs_primary_before_monitor,
     test_shared_reader_frontends_use_one_update_engine,
+    test_sd_completion_follows_verified_primary_and_allows_retry,
     test_running_firmware_selfupdate_callback_boots_verified_trial,
     test_fixed_slots_and_fault_cut_model,
     test_preflight_and_ab_commit_order,

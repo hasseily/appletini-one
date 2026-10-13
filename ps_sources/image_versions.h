@@ -5,8 +5,8 @@
  * Manually bump these when generating a new boot image or firmware image.
  * They are displayed by boot_updater (UART) and text_ui_test (UART + Home UI).
  */
-#define APPLETINI_BOOT_IMAGE_VERSION_SHORT      "B2.0.3"
-#define APPLETINI_BOOT_IMAGE_VERSION_FULL       "Boot B2.0.3"
+#define APPLETINI_BOOT_IMAGE_VERSION_SHORT      "B2.0.4"
+#define APPLETINI_BOOT_IMAGE_VERSION_FULL       "Boot B2.0.4"
 
 #define APPLETINI_FIRMWARE_IMAGE_VERSION_SHORT  "F1.3.0-dev5"
 #define APPLETINI_FIRMWARE_IMAGE_VERSION_FULL   "Firmware F1.3.0-dev5"

@@ -116,6 +116,9 @@ int main(void)
             repair_result.updated != 0 && repair_result.verified != 0 &&
             repair_result.reset_required != 0 &&
             repair_result.boot_offset == GOLDEN_SELF_UPDATE_PRIMARY_OFFSET) {
+            /* SD acknowledgement cannot block the verified primary boot. */
+            (void)golden_self_update_complete_sd(current_boot_offset,
+                &repair_result, UART0_BASE, UART1_BASE);
             uart_puts(UART0_BASE, "[GOLDEN] Primary repair verified; booting @0x");
             uart_puts(UART1_BASE, "[GOLDEN] Primary repair verified; booting @0x");
             print_hex32(repair_result.boot_offset);
@@ -128,6 +131,9 @@ int main(void)
         uart_puts(UART1_BASE, "[GOLDEN] Primary repair failed; staying in monitor\r\n");
         action = serial_boot_menu(layout, 0U);
     } else {
+        /* Retry after power loss between primary commit and SD rename. */
+        (void)golden_self_update_complete_sd(current_boot_offset, NULL,
+            UART0_BASE, UART1_BASE);
         action = serial_boot_menu(layout, GOLDEN_SERIAL_BOOT_WINDOW_SECONDS);
     }
 

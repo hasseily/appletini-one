@@ -68,4 +68,19 @@ int golden_self_update_repair_primary(uint32_t current_multiboot_offset,
                                       uint32_t mirror_uart_base,
                                       golden_self_update_result_t *out);
 
+enum {
+    GOLDEN_SELF_UPDATE_SD_FAILED = -1,
+    GOLDEN_SELF_UPDATE_SD_UNCHANGED = 0,
+    GOLDEN_SELF_UPDATE_SD_RENAMED = 1
+};
+/* Golden boot only: mount SD and acknowledge a BOOT.BIN whose complete bytes
+ * match the live verified primary. A running trial requires its successful
+ * primary-repair result. Primary boot may retry acknowledgement after a power
+ * cut. Missing/different files stay unchanged; filesystem errors are logged
+ * separately and never invalidate flash or change the repair result. */
+int golden_self_update_complete_sd(uint32_t current_multiboot_offset,
+                                   const golden_self_update_result_t *repair,
+                                   uint32_t uart_base,
+                                   uint32_t mirror_uart_base);
+
 #endif

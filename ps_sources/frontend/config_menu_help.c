@@ -134,7 +134,7 @@ HELP(boot_onee,
     "Runs the Appletini without the Apple //e, using the built-in 65c02 accelerator and a virtual",
     "motherboard. This mode is only available when there is no Apple bus activity detected.",
     "Any such activity disables this mode.",
-    "The standalone mode requires a jumper on the card. Read the documentation for more detail.",
+    "Outside the Apple //e, the jumper supplies the 5V needed for standalone ONE//e or Multitini.",
     "For additional safety, only run the standalone mode when the card is out of the Apple.");
 
 HELP(boot_onee_standard,
@@ -150,9 +150,11 @@ HELP(boot_startup_firmware,
 
 HELP(boot_switch_firmware,
     "Reboots the card into Multitini for this session. The saved startup firmware stays unchanged.",
-    "The card checks Multitini again and saves pending disk and settings writes before it reboots.",
-    "Finish screenshots, print jobs, and remote SD sharing first. A failed check or save cancels the switch.",
-    "Multitini needs the stand-alone power jumper. The Apple program will lose this card's services.");
+    "Pending disk and settings writes are saved before reboot. Golden validates Multitini after reset.",
+    "Finish screenshots, print jobs, and remote SD sharing first. A failed save cancels the switch.",
+    "Inside the Apple //e, Multitini gets 5V from the host and needs no standalone jumper.",
+    "The jumper supplies 5V only when the card is outside the Apple, for standalone ONE//e or Multitini.",
+    "The Apple program will lose this card's services.");
 
 HELP(boot_bind_reset,
     "Restores every USB menu binding below to its factory default.",

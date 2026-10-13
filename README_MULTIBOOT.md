@@ -1,7 +1,7 @@
 # Appletini and Multitini multiboot
 
 Branch `multiboot` in each repository adds shared Golden B2.0.5 and two firmware
-slots. Multitini firmware is M0.2.3; Appletini firmware is F1.3.0-dev7. These are
+slots. Multitini firmware is M0.2.3; Appletini firmware is F1.3.0-dev8. These are
 development builds. Board validation is pending. No FPGA image changes are
 required: the packages retain their selected supervisor, machine and Appletini
 bitstreams.
@@ -89,7 +89,7 @@ multiboot controls disabled. Those installers ignore `BOOT.BIN` and the named
 firmware files. B1.1.0 requires FAT32. Never use a Multitini image as the generic
 file on B1: it has no product-aware destination selection.
 
-Appletini F1.3.0-dev7 supports firmware-first migration without serial commands:
+Appletini F1.3.0-dev8 supports firmware-first migration without serial commands:
 copy the bundle's `appletini/FIRMWARE.BIN` as `FIRMWARE.BIN`, its `golden/BOOT.BIN`
 as `BOOT.BIN`, and `sd-root/FIRMWARE-MULTITINI.BIN` to SD root. Let the installed
 B1 update Appletini first. In About, choose **Update Golden Boot...** beside the
@@ -239,6 +239,33 @@ HUD shows the actual cached Golden version independently of metadata health.
 This correction writes no flash metadata and does not change boot selection.
 M0.2.3, B2.0.5, FPGA, core, FSBL and CPU1 inputs are retained exactly. Only the
 Appletini firmware needs updating. The replacement HUD still needs a board test.
+
+## Standalone power and Appletini screenshots
+
+F1.3.0-dev8 corrects Boot Settings help: Multitini installed in an Apple //e gets
+5V from the host and needs no standalone jumper. The jumper supplies 5V when the
+card is outside the Apple for standalone ONE//e or Multitini. It does not select
+the firmware or operating mode.
+
+Full output screenshots now include the FPGA aperture, shadow or LCD mask using
+the completed output slot's mask, dimensions and mode. Scanlines, ghosting, blur,
+glow and dot bleed are already in that slot's pixels and are preserved directly.
+The capture copies pixels and settings before yielding; later video changes do
+not change the saved image. Raw Apple screenshots retain their existing colors,
+border selection, scaling and scanline rules.
+
+PNG rows use 64 KiB staging, up to 16 rows per poll, with a 4 ms budget checked
+between writes. A synchronous SD write or close can exceed that budget. The file
+still closes before returning to other services so remounts remain safe. At
+1080p, native tests reduce row writes from 2160 to 135 and row batches from 540
+to 68; those operation counts do not establish elapsed board timing. Partial
+files, cancellation, USB/SD ownership and non-clobber publication are retained.
+
+Native tests decode PNG pixels and CRC/Adler data, exercise I/O failures and
+frame changes, and check all six output modes. The software mask also matches
+simulation of the exact retained RTL. Only Appletini ARM firmware changes;
+M0.2.3, B2.0.5, FPGA/core, FSBL and CPU1 inputs are retained. Screenshot speed and
+display matching still need the owner's card test.
 
 ## Failure handling and evidence
 

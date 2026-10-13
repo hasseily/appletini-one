@@ -81,7 +81,7 @@ static uint32_t s_composited_apple_seq = 0u;
 static struct {
     int x, y, width, height;
     int output_width, output_height;
-    uint8_t valid;
+    uint8_t valid, output_mode;
 } s_picture_rect[COMP_OUT_SLOT_COUNT];
 
 static video_pixel_mask_frame_t s_pixel_mask[COMP_OUT_SLOT_COUNT];
@@ -1559,6 +1559,27 @@ uint8_t compositor_frame_output_size(uint8_t slot, int *width, int *height)
     return 1U;
 }
 
+uint8_t compositor_capture_output_frame(compositor_output_frame_t *frame)
+{
+    uint8_t slot = 0xFFU;
+    int width, height;
+    if (frame == NULL) return 0U;
+    memset(frame, 0, sizeof(*frame));
+    frame->slot = 0xFFU;
+    const uint16_t *pixels = compositor_latched_framebuffer(&slot);
+    if (pixels == NULL ||
+        !compositor_frame_output_size(slot, &width, &height) ||
+        width > (int)COMP_OUT_MAX_WIDTH || height > (int)COMP_OUT_MAX_HEIGHT)
+        return 0U;
+    frame->pixels = pixels;
+    frame->width = width;
+    frame->height = height;
+    frame->slot = slot;
+    frame->mode = s_picture_rect[slot].output_mode;
+    (void)compositor_frame_pixel_mask(slot, &frame->pixel_mask);
+    return 1U;
+}
+
 void compositor_pixel_mask_exclude(int x, int y, int width, int height)
 {
     if (!s_pixel_mask_collecting || s_writer_idx >= COMP_OUT_SLOT_COUNT) return;
@@ -2042,6 +2063,7 @@ int compositor_tick(void)
     s_pixel_mask_collecting = 0U;
     s_picture_rect[s_writer_idx].output_width = COMP_OUT_WIDTH;
     s_picture_rect[s_writer_idx].output_height = COMP_OUT_HEIGHT;
+    s_picture_rect[s_writer_idx].output_mode = s_output_mode;
 
     /* Slots are non-cached; no flush needed. dsb makes sure all writes
      * retire in DDR before we tell the PL where to look. */

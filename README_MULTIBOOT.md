@@ -1,7 +1,7 @@
 # Appletini and Multitini multiboot
 
 Branch `multiboot` in each repository adds shared Golden B2.0.5 and two firmware
-slots. Multitini firmware is M0.2.3; Appletini firmware is F1.3.0-dev9. These are
+slots. Multitini firmware is M0.2.3; Appletini firmware is F1.3.0-dev10. These are
 development builds. Board validation is pending. No FPGA image changes are
 required: the packages retain their selected supervisor, machine and Appletini
 bitstreams.
@@ -89,7 +89,7 @@ multiboot controls disabled. Those installers ignore `BOOT.BIN` and the named
 firmware files. B1.1.0 requires FAT32. Never use a Multitini image as the generic
 file on B1: it has no product-aware destination selection.
 
-Appletini F1.3.0-dev9 supports firmware-first migration without serial commands:
+Appletini F1.3.0-dev10 supports firmware-first migration without serial commands:
 copy the bundle's `appletini/FIRMWARE.BIN` as `FIRMWARE.BIN`, its `golden/BOOT.BIN`
 as `BOOT.BIN`, and `sd-root/FIRMWARE-MULTITINI.BIN` to SD root. Let the installed
 B1 update Appletini first. In About, choose **Update Golden Boot...** beside the
@@ -286,6 +286,23 @@ bezel-only case had ONE//e disabled; it does not require a renderer change.
 Native startup, ROM execution and failure tests accompany this change. Only
 Appletini ARM firmware changes; M0.2.3, B2.0.5, FPGA/core, FSBL and CPU1 inputs
 are retained. First boot and menu exit still need the owner's card test.
+
+## Shorter vTW slowdown windows
+
+F1.3.0-dev10 adds 32, 64 and 128 Apple-cycle choices before the existing
+256 through 65535 presets. The saved default remains 512 cycles; an unlisted
+saved value still uses that default as the starting point for menu navigation.
+The retained FPGA already accepts arbitrary 16-bit durations. Only Appletini
+ARM firmware changes; Golden B2.0.5, Multitini M0.2.3 and hardware inputs remain
+byte-identical.
+
+Speed Race on the owner's physical //e in TURBO slows when Disk II slot 6 is
+enabled. The retained Disk II core replays classic-cycle timing debt after all
+TURBO steps, including while the motor is stopped, and globally gates the CPU
+until that debt drains. This predates multiboot. The existing Disable DiskII
+Acceleration option removes that idle replay cost while retaining slot 6 and
+normal 1 MHz Disk II accesses. Optimizing the accelerated idle path requires an
+FPGA change; dev10 does not change disk timing or the acceleration setting.
 
 ## Failure handling and evidence
 

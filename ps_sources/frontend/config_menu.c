@@ -85,7 +85,8 @@
 #define VTW_SLOW_SLOT_BIT(s)      (1U << ((s) - 1U))   /* s = 1..7 */
 /* Duration presets the menu cycles through (Apple cycles). */
 static const uint16_t k_vtw_slowdown_cycle_presets[] = {
-    256U, 512U, 1024U, 2048U, 4096U, 8192U, 16384U, 32768U, 65535U
+    32U, 64U, 128U, 256U, 512U, 1024U, 2048U, 4096U,
+    8192U, 16384U, 32768U, 65535U
 };
 #define CONFIG_DEFAULT_DISK2_ACTIVITY_VISIBLE 0U
 #define CONFIG_DEFAULT_DISK2_SOUND_VOLUME 5U
@@ -5068,12 +5069,16 @@ static uint32_t config_menu_vtw_slowdown_cycle_index(const config_menu_t *menu)
 {
     uint32_t count = (uint32_t)(sizeof(k_vtw_slowdown_cycle_presets) /
                                 sizeof(k_vtw_slowdown_cycle_presets[0]));
+    uint32_t default_index = 0U;
     for (uint32_t i = 0U; i < count; ++i) {
         if (k_vtw_slowdown_cycle_presets[i] == menu->vtw_slowdown_cycles) {
             return i;
         }
+        if (k_vtw_slowdown_cycle_presets[i] == CONFIG_DEFAULT_VTW_SLOWDOWN_CYCLES) {
+            default_index = i;
+        }
     }
-    return 1U;   /* default 512 */
+    return default_index;
 }
 
 static void config_menu_vtw_cycle_slowdown_window(config_menu_t *menu,

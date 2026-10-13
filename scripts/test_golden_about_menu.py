@@ -56,13 +56,15 @@ def main() -> None:
 #include "config_menu_ui.h"
 #include "config_menu_help.h"
 #include "../image_versions.h"
-static unsigned version_reads, file_checks, update_requests, reject_request;
-static uint8_t file_present;
+static unsigned version_reads, file_checks, allowed_checks, update_requests, reject_request;
+static uint8_t file_present, update_allowed=1;
 static const char *installed_version = "B1.2.0";
 static void read_version(void *ctx, char *dst, size_t cap)
 { (void)ctx; ++version_reads; snprintf(dst, cap, "%s", installed_version); }
 static uint8_t read_present(void *ctx)
 { (void)ctx; ++file_checks; return file_present; }
+static uint8_t read_allowed(void *ctx)
+{ (void)ctx; ++allowed_checks; return update_allowed; }
 static int request_update(void *ctx)
 { (void)ctx; ++update_requests; return (int)reject_request; }
 static void config_menu_set_status(config_menu_t *menu, uint8_t warn, const char *text)
@@ -74,6 +76,8 @@ static uint8_t config_menu_printing_handle_input(config_menu_t *menu, ui_input_t
 static uint8_t config_menu_joystick_handle_input(config_menu_t *menu, ui_input_t in)
 { (void)menu; (void)in; return 0; }
 static uint8_t config_menu_text_reader_handle_input(ui_input_t in) { (void)in; return 0; }
+static void config_menu_try_read_rtc(config_menu_t *menu,uint8_t status)
+{ (void)menu; (void)status; }
 void config_menu_stop_ethernet_ftp_sd_remote(config_menu_t *m) { (void)m; }
 static void config_menu_browser_move(config_menu_t *m,int n) { (void)m; (void)n; }
 static void config_menu_browser_parent(config_menu_t *m) { (void)m; }
@@ -102,7 +106,8 @@ void config_menu_toggle(config_menu_t *m) { m->active=!m->active; }
     code = code.replace("static unsigned version_reads", enums + "\nstatic unsigned version_reads")
     code += "\n".join(function(source, name) for name in (
         "config_menu_refresh_golden_boot", "config_menu_golden_boot_update_finished",
-        "config_menu_start_golden_boot_update", "config_menu_golden_boot_handle_input"))
+        "config_menu_start_golden_boot_update", "config_menu_golden_boot_handle_input",
+        "config_menu_on_tab_entered"))
     code += r'''
 static void config_menu_activate_item(config_menu_t *m)
 { if(m->tab==CONFIG_TAB_ABOUT && !m->item_focus) config_menu_start_golden_boot_update(m); }
@@ -111,7 +116,7 @@ static void config_menu_activate_item(config_menu_t *m)
     for array in ("k_about_contributors", "k_about_third_party"):
         code += re.search(r"static const char \* const " + array + r"\[\] = \{.*?\n\};", source, re.S).group(0) + "\n"
     code += r'''
-static unsigned drawn_button, drawn_version, focused_buttons;
+static unsigned drawn_button, drawn_version, focused_buttons, disabled_buttons;
 static int body_x, body_y, body_w, body_h;
 static void record_row(uint16_t *fb,int x,int y,int w,uint8_t focus,uint8_t dim,const char *text)
 {
@@ -119,7 +124,7 @@ static void record_row(uint16_t *fb,int x,int y,int w,uint8_t focus,uint8_t dim,
         assert(x>=body_x && x+w<=body_x+body_w && y>=body_y && y+CMUI_ROW_H<=body_y+body_h);
         assert(cmui_text_width(text,CMUI_BODY_SCALE)<=w-34);
     }
-    if (!strcmp(text,"Update Golden Boot...")) { ++drawn_button; focused_buttons+=focus!=0; }
+    if (!strcmp(text,"Update Golden Boot...")) { ++drawn_button; focused_buttons+=focus!=0; disabled_buttons+=dim!=0; }
     cmui_row(fb,x,y,w,focus,dim,text);
 }
 static void record_text(uint16_t *fb,int x,int y,int w,const char *text,uint32_t fg,uint32_t bg,int scale)
@@ -140,13 +145,13 @@ static void record_text(uint16_t *fb,int x,int y,int w,const char *text,uint32_t
     code += draws
     code += "#undef cmui_row\n#undef cmui_text_clipped\n"
     code += r'''
-static unsigned compact_focus, compact_button, compact_bounds;
+static unsigned compact_focus, compact_button, compact_bounds, compact_disabled;
 void test_compact_rows(unsigned first,unsigned visible,unsigned count)
 { assert(first<count && visible>0); ++compact_bounds; }
-void test_compact_row(const char *text,unsigned focus,unsigned index,unsigned first,unsigned visible)
+void test_compact_row(const char *text,unsigned focus,unsigned dim,unsigned index,unsigned first,unsigned visible)
 {
     if(strstr(text,"Golden Boot:") && strstr(text,"[Update Golden Boot...]")) {
-        ++compact_button; assert(cmui_text_width(text,FB16_WIDTH>=1024?2:1)<=FB16_WIDTH-32);
+        ++compact_button; compact_disabled+=dim!=0; assert(cmui_text_width(text,FB16_WIDTH>=1024?2:1)<=FB16_WIDTH-32);
     }
     if(focus) { ++compact_focus; assert(index>=first && index<first+visible); }
 }
@@ -162,8 +167,8 @@ static void render(config_menu_t *menu,unsigned width,unsigned height,unsigned m
     uint16_t *fb=guard+16;
     cmui_rect_t nav,body,footer; cmui_screen_rects(&nav,&body,&footer);
     const unsigned compact=width<1680 || height<1000;
-    unsigned old_reads=version_reads,old_checks=file_checks;
-    drawn_button=drawn_version=focused_buttons=compact_focus=compact_button=0;
+    unsigned old_reads=version_reads,old_checks=file_checks,old_allowed=allowed_checks;
+    drawn_button=drawn_version=focused_buttons=disabled_buttons=compact_focus=compact_button=compact_disabled=0;
     if(compact) { body=(cmui_rect_t){0,0,1480,812}; cmui_compact_begin(); }
     else { cmui_clear(fb); cmui_header(fb,"Appletini",APPLETINI_FIRMWARE_IMAGE_VERSION_FULL,0); }
     body_x=body.x; body_y=body.y; body_w=body.w; body_h=body.h;
@@ -171,14 +176,20 @@ static void render(config_menu_t *menu,unsigned width,unsigned height,unsigned m
     else config_menu_draw_about(fb,menu,body.x,body.y,body.w,body.h);
     if(compact) cmui_compact_finish(fb,"About",tabs,CONFIG_TAB_COUNT,CONFIG_TAB_ABOUT,menu->status,menu->status_warning,0,0);
     else cmui_footer(fb,&footer,menu->status,menu->status_warning,0,0);
-    assert(version_reads==old_reads && file_checks==old_checks);
+    assert(version_reads==old_reads && file_checks==old_checks && allowed_checks==old_allowed);
     if(mode==0) {
-        if(compact) { assert(compact_button==(menu->golden_boot_file_present!=0)); assert(compact_focus==(menu->golden_boot_file_present!=0 && menu->item_focus==0)); }
-        else { assert(drawn_version==1 && drawn_button==(menu->golden_boot_file_present!=0)); }
+        if(compact) {
+            assert(compact_button==(menu->golden_boot_file_present!=0));
+            assert(compact_focus==(menu->golden_boot_file_present!=0 && menu->item_focus==0));
+            assert(compact_disabled==(menu->golden_boot_file_present!=0 && menu->golden_boot_update_allowed==0));
+        } else {
+            assert(drawn_version==1 && drawn_button==(menu->golden_boot_file_present!=0));
+            assert(disabled_buttons==(menu->golden_boot_file_present!=0 && menu->golden_boot_update_allowed==0));
+        }
     } else if(compact) assert(compact_focus==(mode==1));
     for(unsigned i=0;i<16;++i) assert(guard[i]==0xa55a && guard[pixels+16+i]==0xa55a);
-    char path[96]; snprintf(path,sizeof(path),"about_%ux%u_mode%u_focus%u_present%u.ppm",width,height,mode,
-        mode==1?menu->golden_boot_confirm_update:menu->item_focus,menu->golden_boot_file_present);
+    char path[96]; snprintf(path,sizeof(path),"about_%ux%u_mode%u_focus%u_present%u_allowed%u.ppm",width,height,mode,
+        mode==1?menu->golden_boot_confirm_update:menu->item_focus,menu->golden_boot_file_present,menu->golden_boot_update_allowed);
     FILE *ppm=fopen(path,"wb"); assert(ppm); fprintf(ppm,"P6\n%u %u\n255\n",width,height);
     for(size_t i=0;i<pixels;++i) {
         unsigned char rgb[]={(unsigned char)((fb[i]>>11)*255/31),(unsigned char)(((fb[i]>>5)&63)*255/63),(unsigned char)((fb[i]&31)*255/31)};
@@ -193,6 +204,33 @@ int main(void)
     menu.platform.get_golden_boot_version=read_version;
     menu.platform.get_golden_boot_file_present=read_present;
     menu.platform.request_golden_boot_update=request_update;
+    /* An unknown platform denies updates even when BOOT.BIN exists. */
+    file_present=1; config_menu_refresh_golden_boot(&menu);
+    assert(menu.golden_boot_file_present && !menu.golden_boot_update_allowed);
+    press(&menu,UI_KEY_ENTER);
+    assert(!menu.golden_boot_update_confirm && !update_requests && menu.active);
+    assert(!strcmp(menu.status,"Update Golden Boot from the initial boot menu"));
+    /* A booted physical Apple II keeps the button visible and dimmed. Both
+     * button activation and the real Enter/controller input path refuse it. */
+    menu.platform.get_golden_boot_update_allowed=read_allowed;
+    update_allowed=0; config_menu_on_tab_entered(&menu);
+    const unsigned sizes[][2]={{1920,1080},{1280,720},{1024,768},{640,400}};
+    for(unsigned s=0;s<4;++s) render(&menu,sizes[s][0],sizes[s][1],0);
+    config_menu_activate_item(&menu);
+    press(&menu,UI_KEY_ENTER);
+    assert(!menu.golden_boot_update_confirm && !menu.golden_boot_update_pending && !update_requests);
+    assert(!strcmp(menu.status,"Update Golden Boot from the initial boot menu"));
+    /* Initial-boot-menu/ONE//e eligibility refreshes on About entry. */
+    update_allowed=1; assert(!menu.golden_boot_update_allowed);
+    config_menu_on_tab_entered(&menu); assert(menu.golden_boot_update_allowed);
+    render(&menu,1920,1080,0);
+    press(&menu,UI_KEY_ENTER); assert(menu.golden_boot_update_confirm && !menu.golden_boot_confirm_update);
+    /* A host boot handoff while confirmation is open invalidates acceptance. */
+    update_allowed=0; press(&menu,UI_KEY_RIGHT); press(&menu,UI_KEY_ENTER);
+    assert(!menu.golden_boot_update_confirm && !menu.golden_boot_update_pending && !update_requests);
+    assert(menu.active && menu.tab==CONFIG_TAB_ABOUT && menu.status_warning);
+    assert(!strcmp(menu.status,"Update Golden Boot from the initial boot menu"));
+    update_allowed=1; file_present=0;
     config_menu_refresh_golden_boot(&menu);
     assert(!strcmp(menu.golden_boot_version,"B1.2.0") && !menu.golden_boot_file_present);
     press(&menu,UI_KEY_ENTER); assert(!menu.golden_boot_update_confirm && !update_requests);
@@ -216,7 +254,6 @@ int main(void)
     assert(!menu.golden_boot_update_pending && menu.status_warning && strstr(menu.status,"CRC MISMATCH"));
     installed_version=""; config_menu_refresh_golden_boot(&menu); assert(!strcmp(menu.golden_boot_version,"Unknown"));
     installed_version="B1.2.0"; config_menu_refresh_golden_boot(&menu);
-    const unsigned sizes[][2]={{1920,1080},{1280,720},{1024,768},{640,400}};
     for(unsigned s=0;s<4;++s) {
         menu.item_focus=0; render(&menu,sizes[s][0],sizes[s][1],0);
         if(s) {
@@ -232,6 +269,7 @@ int main(void)
     }
     assert(compact_bounds);
     puts("PASS: actual installed version, missing/stale BOOT.BIN, explicit Cancel/Update, repeated input, queued update and error recovery");
+    puts("PASS: physical Apple II boot-phase gate, missing-callback denial, disabled activation and eligibility loss during confirmation");
     puts("PASS: full/compact About and modal drawing, button visibility, focus and framebuffer bounds; no flash/SD work during draw");
     return 0;
 }
@@ -242,9 +280,9 @@ int main(void)
     audit_point = "    cmui_clear(fb);\n    (void)snprintf(heading, sizeof(heading),"
     assert ui_source.count(audit_point) == 1
     audit = '''    extern void test_compact_rows(unsigned,unsigned,unsigned);
-    extern void test_compact_row(const char *,unsigned,unsigned,unsigned,unsigned);
+    extern void test_compact_row(const char *,unsigned,unsigned,unsigned,unsigned,unsigned);
     test_compact_rows(first,visible,s_compact_count);
-    for(unsigned i=0;i<s_compact_count;++i) test_compact_row(s_compact_rows[i].text,s_compact_rows[i].focused,i,first,visible);
+    for(unsigned i=0;i<s_compact_count;++i) test_compact_row(s_compact_rows[i].text,s_compact_rows[i].focused,s_compact_rows[i].dimmed,i,first,visible);
 '''
     ui_harness = OUT / "config_menu_ui.c"
     ui_harness.write_text(ui_source.replace(audit_point, audit + audit_point))

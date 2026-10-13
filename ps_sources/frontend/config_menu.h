@@ -162,6 +162,10 @@ typedef struct {
     /* Version is a verified flash snapshot; drawing never reads flash or SD. */
     void (*get_golden_boot_version)(void *ctx, char *dst, size_t capacity);
     uint8_t (*get_golden_boot_file_present)(void *ctx);
+    /* ONE//e and the physical Apple II's initial boot menu are eligible.
+     * The platform holds the host in RESET upon confirmation. After handing
+     * off to the host OS, or without this callback, updating is unavailable. */
+    uint8_t (*get_golden_boot_update_allowed)(void *ctx);
     /* Queue only. The main loop validates, saves media, writes, and reboots. */
     int (*request_golden_boot_update)(void *ctx);
     void (*set_phasor_pan)(void *ctx, uint32_t pan_lo, uint32_t pan_hi);
@@ -306,6 +310,7 @@ typedef struct {
     uint32_t startup_firmware;
     char golden_boot_version[32];
     uint8_t golden_boot_file_present;
+    uint8_t golden_boot_update_allowed;
     uint8_t golden_boot_update_confirm;
     uint8_t golden_boot_confirm_update; /* Cancel (0) is the initial choice. */
     uint8_t golden_boot_update_pending;

@@ -23,6 +23,11 @@
 #define BOOT_MENU_REG_IIGS_SLOT_CONFIG (BOOT_MENU_MMIO_BASE + 0x1CU)
 
 #define BOOT_MENU_STATUS_MENU_REQUESTED    (1U << 2)
+#define BOOT_MENU_STATUS_BOOT_ELIGIBLE     (1U << 0)
+#define BOOT_MENU_STATUS_WINDOW_ACTIVE     (1U << 1)
+#define BOOT_MENU_STATUS_TIMEOUT_EXPIRED   (1U << 4)
+#define BOOT_MENU_HANDOFF_SLOT_MODE_MASK   (3U << 2)
+#define BOOT_MENU_HANDOFF_PENDING          (1U << 5)
 #define BOOT_MENU_STATUS_CLOSE_REQUESTED   (1U << 3)
 #define BOOT_MENU_STATUS_MENU_ACTIVE_ACK   (1U << 5)
 #define BOOT_MENU_STATUS_KEY_VALID         (1U << 6)
@@ -535,6 +540,22 @@ uint8_t boot_menu_service_slot7_handed_off(void)
      * inherently target-agnostic. */
     uint32_t w = REG_READ(BOOT_MENU_REG_HANDOFF_MODE);
     return (((w >> 2U) & 0x3U) == 1U) ? 1U : 0U;
+}
+
+uint8_t boot_menu_service_initial_menu_active(void)
+{
+    const uint32_t status = REG_READ(BOOT_MENU_REG_STATUS);
+    const uint32_t handoff = REG_READ(BOOT_MENU_REG_HANDOFF_MODE);
+
+    /* The ROM clears eligibility before changing slot mode. A zero slot
+     * mode or PS-owned menu acknowledgement alone cannot authorize RESET. */
+    return ((status & BOOT_MENU_STATUS_BOOT_ELIGIBLE) != 0U &&
+            (status & (BOOT_MENU_STATUS_WINDOW_ACTIVE |
+                       BOOT_MENU_STATUS_MENU_REQUESTED)) != 0U &&
+            (status & (BOOT_MENU_STATUS_CLOSE_REQUESTED |
+                       BOOT_MENU_STATUS_TIMEOUT_EXPIRED)) == 0U &&
+            (handoff & (BOOT_MENU_HANDOFF_SLOT_MODE_MASK |
+                        BOOT_MENU_HANDOFF_PENDING)) == 0U) ? 1U : 0U;
 }
 
 void boot_menu_service_force_machine_mode(int mode)

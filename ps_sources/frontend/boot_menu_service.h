@@ -61,6 +61,8 @@ uint8_t boot_menu_service_aux_card_present(void);
  * in boot-menu mode and force the //e ROM to re-run the boot menu on the vTW
  * core -- which misbehaves on a II+. Target-agnostic. */
 uint8_t boot_menu_service_slot7_handed_off(void);
+/* Live initial ROM menu/window only; close, timeout and pending handoff deny. */
+uint8_t boot_menu_service_initial_menu_active(void);
 /* mode == IIGS: force the strict policy for bench testing;
  * mode < 0: return to automatic policy. Other modes are refused. */
 void boot_menu_service_force_machine_mode(int mode);

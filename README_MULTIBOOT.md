@@ -1,7 +1,7 @@
 # Appletini and Multitini multiboot
 
 Branch `multiboot` in each repository adds shared Golden B2.0.2 and two firmware
-slots. Multitini firmware is M0.2.1; Appletini firmware is F1.3.0-dev3. These are
+slots. Multitini firmware is M0.2.1; Appletini firmware is F1.3.0-dev4. These are
 development builds. Board validation is pending. No FPGA image changes are
 required: the packages retain their selected supervisor, machine and Appletini
 bitstreams.
@@ -89,11 +89,13 @@ multiboot controls disabled. Those installers ignore `BOOT.BIN` and the named
 firmware files. B1.1.0 requires FAT32. Never use a Multitini image as the generic
 file on B1: it has no product-aware destination selection.
 
-Appletini F1.3.0-dev3 supports firmware-first migration without serial commands:
+Appletini F1.3.0-dev4 supports firmware-first migration without serial commands:
 copy the bundle's `appletini/FIRMWARE.BIN` as `FIRMWARE.BIN`, its `golden/BOOT.BIN`
 as `BOOT.BIN`, and `sd-root/FIRMWARE-MULTITINI.BIN` to SD root. Let the installed
 B1 update Appletini first. In About, choose **Update Golden Boot...** beside the
-Golden Boot version, then explicitly choose **Update and reboot** in the modal.
+Golden Boot version from the initial boot menu, then explicitly choose
+**Update and reboot** in the modal. On a physical Apple II the button is disabled
+after boot handoff, even if the config menu is opened again. ONE//e remains eligible.
 This stages and verifies the trial from the running firmware, then reboots into
 the new Golden. Golden repairs primary and automatically installs the named
 Multitini file. The complete F-then-B-then-M procedure still needs board validation.
@@ -128,8 +130,18 @@ call chain exceed the previous 8 KiB reservation. The builder checks the actual
 linked stack and heap spans independently and records them in the package.
 The FPGA, FSBL and CPU1 payload remain the exact selected F1.2.6-d1 inputs.
 The owner confirmed that F1.3.0-dev2 boots on the Apple //e with Golden 1.x.
-F1.3.0-dev3 retains those corrections. Its new About/update flow still needs the
-owner's board test. B2.0.2 also reserves a checked 64 KiB Golden stack: installation
+F1.3.0-dev3 retains those corrections. The owner confirmed that it reports the
+installed B1.2.0, but its Golden update cancels with an Apple bus hold timeout.
+F1.3.0-dev4 replaces the obsolete DMA-hold debug window, which is absent from the
+retained FPGA, with the existing vTW Apple RESET control. It verifies both the
+control readback and physical RESET status before continuing, saves media and
+reserves the real PS-DMA port only when its software owner and hardware BUSY are
+clear. The physical host stays in RESET through the final handoff. A recoverable
+failure clears reset-stale SmartPort state and restores the saved control; the
+Apple then resumes through its reset handler. The config error screen stays open.
+Native tests use the actual register headers and model the absent legacy DMA
+window as zero-read/write-ignored. The menu-driven update still needs a board test.
+B2.0.2 also reserves a checked 64 KiB Golden stack: installation
 and nested validation cannot fit the previous 8 KiB template stack.
 A failed firmware handoff after CPU1 was held
 requires a card reboot; it does not attempt an unsafe warm restart.

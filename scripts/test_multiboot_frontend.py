@@ -49,6 +49,10 @@ def main():
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include "card_control_regs.h"
+#include "../lib/framebuffer.h"
+#include "../lib/psdma.h"
+#define COUNTS_PER_SECOND 100000000U / 2U
 enum { MB_OK=0, MB_PRODUCT_NONE=0, MB_PRODUCT_APPLETINI=0x100,
        MB_PRODUCT_MULTITINI=0x200, MB_GOLDEN_OFFSET=0 };
 typedef uint64_t XTime;
@@ -68,13 +72,6 @@ typedef struct {
     char status[96];
 } config_menu_t;
 #define APPLETINI_CFG_PATH "0:/appletini_cfg.txt"
-#define AT_DMA_CTRL_REG 1U
-#define CARD_CTRL_FEATURE_ENABLE_REG 2U
-#define CARD_CTRL_SSC_STATUS_REG 3U
-#define CARD_CTRL_ONEE_MODE_REG 4U
-#define CARD_CTRL_VTW_CTRL_REG 5U
-#define AT_DMA_CTRL_HOLD_REQ_BIT 1U
-#define AT_DMA_CTRL_HOLD_ACTIVE_BIT 16U
 #define UART0_BASE 0U
 static mb_platform_status_t live_status, g_multiboot_status;
 static uint8_t g_multiboot_status_valid, g_firmware_switch_active, g_firmware_switch_fault;
@@ -88,6 +85,11 @@ static unsigned default_calls, menu_request_calls, requests, clears, resets, hol
 static unsigned disk_calls, sync_calls, settings_calls, golden_checks;
 static unsigned stop_calls, worker_calls, hw_dma, hw_features, hw_onee, hw_vtw;
 static unsigned isolation_fail, isolation_hazard;
+static unsigned reset_ctrl_fail, reset_ack_delay, reset_reads, reset_syncs, legacy_reads, legacy_writes;
+static uint32_t reset_status;
+static psdma_owner_t dma_owner;
+static unsigned dma_busy,dma_claims,dma_releases,dma_granted;
+static unsigned reset_cleanups,late_pending;
 static unsigned cpu1_hold_error, restart_calls;
 static XTime time_now;
 static char events[256]; static unsigned event_count;
@@ -113,11 +115,17 @@ static uint8_t config_menu_usb0_sd_remote_active(const config_menu_t *menu) { (v
 static uint8_t config_menu_ethernet_ftp_sd_remote_active(const config_menu_t *menu) { (void)menu; return (uint8_t)ftp_remote; }
 static uint8_t control_onee_isolated(void) { return (uint8_t)isolated; }
 static uint8_t boot_menu_service_host_bus_master_allowed(void) { return (uint8_t)host_allowed; }
-static uint8_t vtw_service_onee_set_paused(uint8_t paused) { assert(paused==1); return (uint8_t)pause_ok; }
+static uint8_t vtw_service_onee_set_paused(uint8_t paused) { assert(paused==1); event('J'); return (uint8_t)pause_ok; }
 static unsigned reg_read(unsigned address) {
     if(address==0xF800702CU) return hw_multiboot;
     if (address==CARD_CTRL_SSC_STATUS_REG) return printer_queued;
     if (address==CARD_CTRL_VTW_CTRL_REG) return hw_vtw;
+    if (address==CARD_CTRL_APPLE_RESET_STATUS_REG) {
+        ++reset_reads;
+        if((hw_vtw&CARD_CTRL_VTW_CTRL_APPLE_RES_BIT)&&!hold_timeout&&
+            reset_reads>=reset_ack_delay) reset_status &= ~CARD_CTRL_APPLE_RESET_RES_BIT;
+        return reset_status;
+    }
     if (address==CARD_CTRL_ONEE_MODE_REG) {
         if(hw_onee & CARD_CTRL_ONEE_CTRL_REQUEST_BIT) {
             if(isolation_hazard) return hw_onee|CARD_CTRL_ONEE_STATUS_ACTIVITY_BIT;
@@ -127,7 +135,8 @@ static unsigned reg_read(unsigned address) {
     }
     if (address==CARD_CTRL_FEATURE_ENABLE_REG) return hw_features;
     assert(address==AT_DMA_CTRL_REG);
-    return hw_dma | ((!hold_timeout && (hw_dma & AT_DMA_CTRL_HOLD_REQ_BIT)) ? AT_DMA_CTRL_HOLD_ACTIVE_BIT : 0U);
+    /* The retained FPGA ignores this retired debug hold window. */
+    ++legacy_reads; return 0;
 }
 static void reg_write(unsigned address, unsigned value) {
     if(address==0xF8000008U || address==0xF8000004U) return;
@@ -140,18 +149,38 @@ static void reg_write(unsigned address, unsigned value) {
         hw_onee=(hw_onee & ~CARD_CTRL_ONEE_CTRL_REQUEST_BIT) | (value & CARD_CTRL_ONEE_CTRL_REQUEST_BIT);
         event(value?'I':'i'); return;
     }
+    if(address==CARD_CTRL_VTW_CTRL_REG) {
+        if(!(value&CARD_CTRL_VTW_CTRL_APPLE_RES_BIT) && strchr(events,'H')) {
+            assert(reset_cleanups==((reset_status&CARD_CTRL_APPLE_RESET_RES_BIT)==0));
+        }
+        if(!reset_ctrl_fail) hw_vtw=value;
+        if(value&CARD_CTRL_VTW_CTRL_APPLE_RES_BIT) {
+            assert(!pending_count); /* Drain live commands before asserting reset. */
+            if(!worker_calls) { ++holds; event('H'); }
+            if(late_pending) pending_count=1;
+        }
+        return;
+    }
     if (address==CARD_CTRL_FEATURE_ENABLE_REG) { hw_features=value; return; }
-    assert(address==AT_DMA_CTRL_REG); hw_dma=value;
-    if(value & AT_DMA_CTRL_HOLD_REQ_BIT) { ++holds; event('H'); }
+    assert(address==AT_DMA_CTRL_REG); ++legacy_writes; (void)value;
 }
 #define REG_READ(a) reg_read(a)
 #define REG_WRITE(a,v) reg_write(a,v)
 static void XTime_GetTime(XTime *now) { time_now+=50000; *now=time_now; }
-static uint64_t ticks_to_us(XTime elapsed) { return elapsed; }
+static void card_control_sync_apple_reset_seq(void) {
+    assert(!(reg_read(CARD_CTRL_APPLE_RESET_STATUS_REG)&CARD_CTRL_APPLE_RESET_RES_BIT));
+    ++reset_syncs; event('A');
+}
 static void card_control_write_slot_mask(uint32_t value) { g_card_slot_enable_mask=value|0x80; event(value?'s':'S'); }
 static void control_apply_slot5_service(uint8_t enabled) { if(!enabled) ++stop_calls; }
 static uint8_t smartport_service_has_pending(void) { return pending_count!=0; }
-static void smartport_service_poll(void) { if(pending_count) --pending_count; }
+static void smartport_service_poll(void) {
+    assert(reset_status&CARD_CTRL_APPLE_RESET_RES_BIT);
+    if(pending_count) --pending_count;
+}
+static void smartport_service_apple_reset(void) {
+    assert(strchr(events,'H') && !worker_calls); ++reset_cleanups; pending_count=0; event('K');
+}
 static int disk2_service_flush_dirty_now(void) { ++disk_calls; event('D'); return (int)disk_rc; }
 typedef int FRESULT;
 enum { FR_OK=0, SP_MAX_DEVICES=4 };
@@ -161,22 +190,36 @@ static void smartport_devices_ensure_defaults(void) {}
 static FRESULT f_sync(unsigned *file) { assert(*file==7); ++sync_calls; event('F'); return (int)sync_error; }
 static void compositor_set_paused(uint8_t paused) { assert(paused==1); }
 static void vtw_service_onee_stop(void) { ++stop_calls; }
-static void vtw_service_set_enabled(uint8_t enabled) { assert(!enabled); ++stop_calls; }
+static void vtw_service_set_enabled(uint8_t enabled) { assert(!enabled); hw_vtw=0; ++stop_calls; }
 static void usb_hid_service_stop(void) { ++stop_calls; }
 static void usb_sdd_service_stop(void) { ++stop_calls; }
 static uint8_t usb_storage_service_disconnect(void) { ++stop_calls; return 0; }
+psdma_result_t psdma_acquire(psdma_owner_t owner) {
+    assert(owner==PSDMA_OWNER_FIRMWARE_UPDATE && !pending_count && !holds && !strchr(events,'J'));
+    ++dma_claims;
+    if(dma_owner!=PSDMA_OWNER_NONE) return PSDMA_ERR_OWNED;
+    if(dma_busy) return PSDMA_ERR_BUSY;
+    dma_owner=owner; dma_granted=1; event('Q'); return PSDMA_OK;
+}
+void psdma_release(psdma_owner_t owner) {
+    assert(owner==PSDMA_OWNER_FIRMWARE_UPDATE && dma_owner==owner);
+    dma_owner=PSDMA_OWNER_NONE; ++dma_releases;
+}
 static int amp_hold_core1(void) { ++worker_calls; event('W'); return (int)cpu1_hold_error; }
 static uint32_t amp_release_core1(void) { ++restart_calls; return 0U; } /* Hold attempts require reboot. */
 static void compositor_request_full_refresh(void) {}
 static void Xil_DCacheFlush(void) {}
 static void uart_puts(uint32_t uart, const char *text) { (void)uart; (void)text; }
-static void control_reboot_preselected_golden(void) { assert(hw_multiboot==32); ++resets; event('B'); }
+static void control_reboot_preselected_golden(void) {
+    assert(hw_multiboot==32);
+    if(!isolated && host_allowed) {
+        assert(hw_vtw&CARD_CTRL_VTW_CTRL_APPLE_RES_BIT);
+        assert(!(reg_read(CARD_CTRL_APPLE_RESET_STATUS_REG)&CARD_CTRL_APPLE_RESET_RES_BIT));
+    }
+    assert(!legacy_reads&&!legacy_writes); ++resets; event('B');
+}
 '''
-    control = (FRONT / "card_control_regs.h").read_text()
-    definitions = re.findall(r"^#define CARD_CTRL_ONEE_(?:STATUS|CTRL)_[A-Z_]+.*$", control, re.M)
-    definitions += re.findall(r"^#define CARD_CTRL_SSC_STATUS_COUNT_MASK.*$", control, re.M)
-    definitions += re.findall(r"^#define CARD_CTRL_VTW_CTRL_CORE_RUN_BIT.*$", control, re.M)
-    code = "\n".join(definitions) + "\n" + code
+    code += function(runtime, "ticks_to_us") + "\n"
     for name in ("control_write_multiboot_checked", "control_prepare_golden_boot",
                  "control_refresh_multiboot", "menu_platform_get_multiboot_status",
                  "menu_platform_set_startup_firmware", "menu_platform_request_firmware_switch"):
@@ -187,6 +230,7 @@ static void control_reboot_preselected_golden(void) { assert(hw_multiboot==32); 
         code += function(menu, name) + "\n"
     code += function(smartport, "smartport_service_sync_sd") + "\n"
     code += function(runtime, "control_hold_quiet_connector") + "\n"
+    code += function(runtime, "control_hold_apple_reset") + "\n"
     code += function(runtime, "control_service_firmware_switch") + "\n"
     code += r'''
 static int menu_request(void *ctx, uint32_t product) { (void)ctx; assert(product==MB_PRODUCT_MULTITINI); ++menu_request_calls; return (int)menu_request_rc; }
@@ -204,6 +248,10 @@ static config_menu_t prepare(void) {
     g_firmware_switch_fault=g_firmware_switch_active=0; g_firmware_switch_request=MB_PRODUCT_MULTITINI;
     g_card_slot_enable_mask=0xB0; hw_features=7; hw_dma=0; time_now=0;
     hw_onee=hw_vtw=isolation_fail=isolation_hazard=0;
+    reset_ctrl_fail=reset_reads=reset_syncs=legacy_reads=legacy_writes=0;
+    reset_ack_delay=1; reset_status=CARD_CTRL_APPLE_RESET_RES_BIT|0x55U;
+    dma_owner=PSDMA_OWNER_NONE; dma_busy=dma_claims=dma_releases=dma_granted=0;
+    reset_cleanups=late_pending=0;
     cpu1_hold_error=restart_calls=0;
     event_count=0; events[0]=0;
     memset(g_devices,0,sizeof(g_devices));
@@ -222,8 +270,12 @@ static void cancelled(const config_menu_t *menu) {
     assert(stop_calls==0);
     assert(g_card_slot_enable_mask==0xB0 && hw_features==7 && hw_dma==0);
     assert(hw_multiboot==64);
+    assert(!legacy_reads&&!legacy_writes);
     assert((hw_onee & CARD_CTRL_ONEE_CTRL_REQUEST_BIT)==0);
+    assert(dma_owner==PSDMA_OWNER_NONE || (dma_owner==PSDMA_OWNER_SMARTPORT&&!dma_releases));
     assert(menu->status_warning && g_firmware_switch_request==MB_PRODUCT_NONE);
+    assert(dma_releases==dma_granted);
+    assert(reset_cleanups==(holds!=0 && (reset_status&CARD_CTRL_APPLE_RESET_RES_BIT)==0));
 }
 int main(void) {
     config_menu_t menu=prepare();
@@ -266,6 +318,7 @@ int main(void) {
     control_service_firmware_switch(&menu); cancelled(&menu); assert(!holds && !disk_calls);
     menu=prepare(); isolated=0; hold_timeout=1;
     control_service_firmware_switch(&menu); cancelled(&menu); assert(holds==1 && !disk_calls);
+    assert(time_now>=5000000 && time_now<=5100000);
     menu=prepare(); pause_ok=0;
     control_service_firmware_switch(&menu); cancelled(&menu); assert(!disk_calls);
     menu=prepare(); pending_count=65;
@@ -288,16 +341,22 @@ int main(void) {
     control_service_firmware_switch(&menu);
     assert(!resets && worker_calls==1 && restart_calls==1 && !stop_calls && clears==1);
     assert(g_firmware_switch_active && g_firmware_switch_fault && menu.status_warning);
+    assert(dma_owner==PSDMA_OWNER_FIRMWARE_UPDATE&&!dma_releases);
+    assert(!reset_cleanups);
     assert(g_card_slot_enable_mask==0xB0 && hw_features==7 && !hw_dma);
     menu=prepare(); isolated=0; cpu1_hold_error=1;
     control_service_firmware_switch(&menu);
     assert(!resets && restart_calls==1 && !stop_calls && clears==1);
-    assert(g_firmware_switch_active && g_firmware_switch_fault && (hw_dma&1));
+    assert(g_firmware_switch_active && g_firmware_switch_fault && (hw_vtw&CARD_CTRL_VTW_CTRL_APPLE_RES_BIT));
+    assert(dma_owner==PSDMA_OWNER_FIRMWARE_UPDATE&&!dma_releases);
+    assert(!reset_cleanups);
     assert(g_card_slot_enable_mask==0xB0 && hw_features==7 && menu.status_warning);
     menu=prepare(); isolated=0; cpu1_hold_error=multiboot_restore_fail=1;
     control_service_firmware_switch(&menu);
     assert(!resets && restart_calls==1 && !stop_calls && clears==1);
-    assert(g_firmware_switch_active && g_firmware_switch_fault && (hw_dma&1));
+    assert(g_firmware_switch_active && g_firmware_switch_fault && (hw_vtw&CARD_CTRL_VTW_CTRL_APPLE_RES_BIT));
+    assert(dma_owner==PSDMA_OWNER_FIRMWARE_UPDATE&&!dma_releases);
+    assert(!reset_cleanups);
     assert(hw_multiboot==32 && strstr(menu.status,"RECOVERY FAILED"));
     menu=prepare(); pending_count=3;
     control_service_firmware_switch(&menu);
@@ -306,8 +365,28 @@ int main(void) {
     assert(strchr(events,'D') < strchr(events,'C') && strchr(events,'C') < strchr(events,'F'));
     assert(strchr(events,'F') < strchr(events,'R') && strchr(events,'R') < strchr(events,'W') && strchr(events,'W') < strchr(events,'B'));
     assert(live_status.default_product==MB_PRODUCT_APPLETINI);
+    assert(dma_owner==PSDMA_OWNER_FIRMWARE_UPDATE&&dma_claims==1&&!dma_releases);
     menu=prepare(); isolated=0;
-    control_service_firmware_switch(&menu); assert(resets==1 && holds==1);
+    control_service_firmware_switch(&menu); assert(resets==1 && holds==1 && reset_syncs==1);
+    menu=prepare(); isolated=0; reset_ack_delay=3;
+    control_service_firmware_switch(&menu); assert(resets==1 && reset_reads>=3 && reset_syncs==1);
+    menu=prepare(); isolated=0; reset_ctrl_fail=1;
+    control_service_firmware_switch(&menu); cancelled(&menu); assert(!requests&&!reset_syncs&&hw_vtw==0);
+    /* Preserve every speed/pause bit when any pre-worker failure cancels. */
+    menu=prepare(); isolated=0; settings_ok=0; hw_vtw=0x123400E0U;
+    control_service_firmware_switch(&menu); cancelled(&menu); assert(hw_vtw==0x123400E0U && reset_syncs==2);
+    menu=prepare(); isolated=0; hold_timeout=1; hw_vtw=0x123400E0U;
+    control_service_firmware_switch(&menu); cancelled(&menu); assert(hw_vtw==0x123400E0U && !reset_syncs);
+    menu=prepare(); isolated=0; pending_count=3;
+    control_service_firmware_switch(&menu); assert(resets==1 && !pending_count && holds==1 && reset_syncs==1);
+    menu=prepare(); isolated=0; late_pending=1;
+    control_service_firmware_switch(&menu); cancelled(&menu); assert(!pending_count && !requests && reset_cleanups==1);
+    menu=prepare(); isolated=0; dma_owner=PSDMA_OWNER_SMARTPORT;
+    control_service_firmware_switch(&menu); cancelled(&menu);
+    assert(!requests && !holds && !disk_calls && !settings_calls && !sync_calls && dma_owner==PSDMA_OWNER_SMARTPORT && !dma_releases);
+    menu=prepare(); isolated=0; dma_busy=1;
+    control_service_firmware_switch(&menu); cancelled(&menu);
+    assert(!requests && !holds && !disk_calls && !settings_calls && !sync_calls && dma_owner==PSDMA_OWNER_NONE);
     menu=prepare(); menu.session_only=0;
     control_service_firmware_switch(&menu); assert(resets==1 && !settings_calls);
     /* A quiet unattached connector can enter hardware isolation without starting ONE//e. */
@@ -330,7 +409,7 @@ int main(void) {
         if(fault==8) disk_rc=1;
         control_service_firmware_switch(&menu); cancelled(&menu); assert(!requests);
     }
-    puts("PASS: menu presence, startup persistence, one-shot switch, save failures and quiet-connector isolation cleanup");
+    puts("PASS: menu presence, startup persistence, one-shot switch, physical Apple reset/delay/readback/timeout, pre-reset command drain and quiet isolation cleanup");
     return 0;
 }
 '''
@@ -343,6 +422,7 @@ int main(void) {
     exe = OUT / "frontend.exe"
     source.write_text(code)
     subprocess.run([compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
+                    "-I",str(FRONT),
                     "-Wno-misleading-indentation", str(source), "-o", str(exe)], check=True, env=env)
     subprocess.run([str(exe)], check=True, env=env)
 

@@ -4119,6 +4119,9 @@ void config_menu_refresh_golden_boot(config_menu_t *menu)
     menu->golden_boot_file_present =
         menu->platform.get_golden_boot_file_present != NULL ?
         (menu->platform.get_golden_boot_file_present(menu->platform.ctx) != 0U) : 0U;
+    menu->golden_boot_update_allowed =
+        menu->platform.get_golden_boot_update_allowed != NULL ?
+        (menu->platform.get_golden_boot_update_allowed(menu->platform.ctx) != 0U) : 0U;
 }
 
 void config_menu_golden_boot_update_finished(config_menu_t *menu, const char *error)
@@ -4139,6 +4142,10 @@ static void config_menu_start_golden_boot_update(config_menu_t *menu)
     config_menu_refresh_golden_boot(menu);
     if (menu->golden_boot_file_present == 0U) {
         config_menu_set_status(menu, 1U, "BOOT.BIN NOT AVAILABLE ON SD");
+        return;
+    }
+    if (menu->golden_boot_update_allowed == 0U) {
+        config_menu_set_status(menu, 1U, "Update Golden Boot from the initial boot menu");
         return;
     }
     if (menu->platform.request_golden_boot_update == NULL) {
@@ -4186,6 +4193,9 @@ static uint8_t config_menu_golden_boot_handle_input(config_menu_t *menu, ui_inpu
             config_menu_refresh_golden_boot(menu);
             if (menu->golden_boot_file_present == 0U) {
                 config_menu_golden_boot_update_finished(menu, "BOOT.BIN NO LONGER AVAILABLE");
+            } else if (menu->golden_boot_update_allowed == 0U) {
+                config_menu_golden_boot_update_finished(menu,
+                    "Update Golden Boot from the initial boot menu");
             } else if (menu->platform.request_golden_boot_update == NULL ||
                 menu->platform.request_golden_boot_update(menu->platform.ctx) != 0) {
                 config_menu_golden_boot_update_finished(menu, "GOLDEN BOOT UPDATE UNAVAILABLE");
@@ -8789,6 +8799,7 @@ static void config_menu_draw_about(uint16_t *fb,
     const char *version = menu->golden_boot_version[0] != '\0' ?
         menu->golden_boot_version : "Unknown";
     const uint8_t button_focused = (uint8_t)(menu->item_focus == 0U);
+    const uint8_t button_disabled = (uint8_t)(menu->golden_boot_update_allowed == 0U);
 
     cmui_text(fb, x, cursor, "Versions", CMUI_COLOR_ACCENT,
                CMUI_COLOR_BG, CMUI_BODY_SCALE);
@@ -8798,7 +8809,7 @@ static void config_menu_draw_about(uint16_t *fb,
         if (menu->golden_boot_file_present != 0U) {
             (void)snprintf(golden_line, sizeof(golden_line),
                 "Golden Boot: %s   [Update Golden Boot...]", version);
-            cmui_compact_entry(golden_line, NULL, button_focused, 0U);
+            cmui_compact_entry(golden_line, NULL, button_focused, button_disabled);
         } else {
             cmui_compact_entry(golden_line, NULL, 0U, 0U);
         }
@@ -8811,7 +8822,7 @@ static void config_menu_draw_about(uint16_t *fb,
             golden_line, CMUI_COLOR_TEXT, CMUI_COLOR_BG, CMUI_SMALL_SCALE);
         if (menu->golden_boot_file_present != 0U) {
             cmui_row(fb, x + w - 18 - button_w, cursor, button_w,
-                button_focused, 0U, "Update Golden Boot...");
+                button_focused, button_disabled, "Update Golden Boot...");
         }
     }
     cursor += 40;

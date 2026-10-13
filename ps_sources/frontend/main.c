@@ -22,6 +22,7 @@
 #include "../lib/tmp102.h"
 #include "../lib/rtc_pcf8563.h"
 #include "../lib/qspi_nor.h"
+#include "../lib/psdma.h"
 #include "../lib/golden_self_update.h"
 #include "../lib/multiboot_platform.h"
 
@@ -254,10 +255,14 @@ static XTime g_ethernet_dhcp_started = 0U;
 
 static uint32_t ticks_to_us(XTime ticks)
 {
-    if (COUNTS_PER_SECOND == 0U) {
+    /* The BSP macro contains division; group the complete clock expression. */
+    const uint64_t counts_per_second = (uint64_t)(COUNTS_PER_SECOND);
+    if (counts_per_second == 0U) {
         return 0U;
     }
-    return (uint32_t)((ticks * 1000000ULL) / (uint64_t)COUNTS_PER_SECOND);
+    return (uint32_t)((ticks / counts_per_second) * 1000000ULL +
+                     ((ticks % counts_per_second) * 1000000ULL) /
+                         counts_per_second);
 }
 
 static void boot_timing_log(const char *stage, XTime started)
@@ -2058,6 +2063,24 @@ static uint8_t menu_platform_get_golden_boot_file_present(void *ctx)
             (info.fattrib & AM_DIR) == 0U) ? 1U : 0U;
 }
 
+static uint8_t control_golden_boot_update_allowed(void)
+{
+    if (control_onee_isolated() != 0U) {
+        return 1U;
+    }
+    /* The boot ROM itself is running in the initial menu. Only that phase
+     * may assert RESET after confirmation; a menu reopened after storage
+     * handoff must not reset the running Apple or discard its bus traffic. */
+    return (boot_menu_service_host_bus_master_allowed() != 0U &&
+            boot_menu_service_initial_menu_active() != 0U) ? 1U : 0U;
+}
+
+static uint8_t menu_platform_get_golden_boot_update_allowed(void *ctx)
+{
+    (void)ctx;
+    return control_golden_boot_update_allowed();
+}
+
 static int menu_platform_request_golden_boot_update(void *ctx)
 {
     (void)ctx;
@@ -2150,13 +2173,42 @@ static int control_hold_quiet_connector(uint32_t *saved_request,
     return -1;
 }
 
+static int control_hold_apple_reset(uint32_t *saved_ctrl, uint8_t *requested)
+{
+    XTime started;
+    XTime now;
+
+    /* The old slot-2 AT_DMA_CTRL debug window has no hold implementation in
+     * the retained FPGA. The existing vTW RES# control drives the populated
+     * open-collector reset transistor even when acceleration is disabled. */
+    *saved_ctrl = REG_READ(CARD_CTRL_VTW_CTRL_REG);
+    REG_WRITE(CARD_CTRL_VTW_CTRL_REG,
+              *saved_ctrl | CARD_CTRL_VTW_CTRL_APPLE_RES_BIT);
+    *requested = 1U;
+    XTime_GetTime(&started);
+    do {
+        if ((REG_READ(CARD_CTRL_VTW_CTRL_REG) &
+             CARD_CTRL_VTW_CTRL_APPLE_RES_BIT) != 0U &&
+            (REG_READ(CARD_CTRL_APPLE_RESET_STATUS_REG) &
+             CARD_CTRL_APPLE_RESET_RES_BIT) == 0U) {
+            /* This intentional reset must not close the About error/status
+             * page on the next foreground loop if the update is cancelled. */
+            card_control_sync_apple_reset_seq();
+            return 0;
+        }
+        XTime_GetTime(&now);
+    } while (ticks_to_us(now - started) < 100000U);
+    return -1;
+}
+
 static void control_service_firmware_switch(config_menu_t *menu)
 {
     const uint32_t product = g_firmware_switch_request;
     uint32_t golden_offset = MB_GOLDEN_OFFSET;
-    uint32_t saved_dma = 0U;
+    uint32_t saved_vtw_ctrl = 0U;
     uint32_t saved_onee_request = 0U;
-    uint8_t dma_held = 0U;
+    uint8_t apple_reset_requested = 0U;
+    uint8_t dma_reserved = 0U;
     uint8_t temporary_isolation = 0U;
     uint8_t cpu1_hold_attempted = 0U;
     uint8_t request_attempted = 0U;
@@ -2184,10 +2236,23 @@ static void control_service_firmware_switch(config_menu_t *menu)
         error = "MULTITINI OR MULTIBOOT GOLDEN NOT VERIFIED";
         goto failed;
     }
+    /* Finish captured SmartPort commands before RESET clears its transport. */
+    g_firmware_switch_active = 1U;
+    for (uint32_t attempt = 0U; attempt < 64U &&
+         smartport_service_has_pending() != 0U; ++attempt) {
+        smartport_service_poll();
+    }
+    if (smartport_service_has_pending() != 0U) {
+        error = "SMARTPORT BUSY; SWITCH CANCELLED";
+        goto failed;
+    }
+    /* Refuse an undrained DMA before RESET changes any accelerator hold. */
+    if (psdma_acquire(PSDMA_OWNER_FIRMWARE_UPDATE) != PSDMA_OK) {
+        error = "PS DMA BUSY; SWITCH CANCELLED";
+        goto failed;
+    }
+    dma_reserved = 1U;
     if (control_onee_isolated() == 0U) {
-        XTime started;
-        XTime now;
-
         if (boot_menu_service_host_bus_master_allowed() == 0U) {
             if (control_hold_quiet_connector(&saved_onee_request,
                                                &temporary_isolation) != 0) {
@@ -2195,33 +2260,19 @@ static void control_service_firmware_switch(config_menu_t *menu)
                 goto failed;
             }
         } else {
-            saved_dma = REG_READ(AT_DMA_CTRL_REG);
-            REG_WRITE(AT_DMA_CTRL_REG, saved_dma | AT_DMA_CTRL_HOLD_REQ_BIT);
-            dma_held = 1U;
-            XTime_GetTime(&started);
-            do {
-                if ((REG_READ(AT_DMA_CTRL_REG) & AT_DMA_CTRL_HOLD_ACTIVE_BIT) != 0U) {
-                    break;
-                }
-                XTime_GetTime(&now);
-                if (ticks_to_us(now - started) >= 100000U) {
-                    error = "APPLE BUS HOLD TIMED OUT; SWITCH CANCELLED";
-                    goto failed;
-                }
-            } while (1);
+            if (control_hold_apple_reset(&saved_vtw_ctrl,
+                                         &apple_reset_requested) != 0) {
+                error = "APPLE RESET HOLD TIMED OUT; SWITCH CANCELLED";
+                goto failed;
+            }
         }
     } else if (vtw_service_onee_set_paused(1U) == 0U) {
         error = "ONE//e PAUSE FAILED; SWITCH CANCELLED";
         goto failed;
     }
 
-    /* The Apple CPU is held, or its connector is isolated with ONE//e paused.
+    /* Reject a late command rather than service transport cleared by RESET.
      * CPU0 runs no emulation polls here. Keep services intact for cancellation. */
-    g_firmware_switch_active = 1U;
-    for (uint32_t attempt = 0U; attempt < 64U &&
-         smartport_service_has_pending() != 0U; ++attempt) {
-        smartport_service_poll();
-    }
     if (smartport_service_has_pending() != 0U) {
         error = "SMARTPORT BUSY; SWITCH CANCELLED";
         goto failed;
@@ -2265,8 +2316,13 @@ static void control_service_firmware_switch(config_menu_t *menu)
     REG_WRITE(CARD_CTRL_FEATURE_ENABLE_REG, 0U);
     control_apply_slot5_service(0U);
     compositor_set_paused(1U);
-    vtw_service_onee_stop();
-    vtw_service_set_enabled(0U);
+    if (apple_reset_requested != 0U) {
+        /* Clear acceleration without briefly releasing the host RESET. */
+        REG_WRITE(CARD_CTRL_VTW_CTRL_REG, CARD_CTRL_VTW_CTRL_APPLE_RES_BIT);
+    } else {
+        vtw_service_onee_stop();
+        vtw_service_set_enabled(0U);
+    }
     usb_hid_service_stop();
     usb_sdd_service_stop();
     (void)usb_storage_service_disconnect();
@@ -2299,8 +2355,18 @@ failed:
         return;
     }
     g_firmware_switch_active = 0U;
-    if (dma_held != 0U) {
-        REG_WRITE(AT_DMA_CTRL_REG, saved_dma);
+    if (dma_reserved != 0U) {
+        psdma_release(PSDMA_OWNER_FIRMWARE_UPDATE);
+    }
+    if (apple_reset_requested != 0U) {
+        if ((REG_READ(CARD_CTRL_APPLE_RESET_STATUS_REG) &
+             CARD_CTRL_APPLE_RESET_RES_BIT) == 0U) {
+            /* RESET cleared the PL transport; discard saved preflight data
+             * too before the host resumes through its reset handler. */
+            smartport_service_apple_reset();
+            card_control_sync_apple_reset_seq();
+        }
+        REG_WRITE(CARD_CTRL_VTW_CTRL_REG, saved_vtw_ctrl);
     }
     if (temporary_isolation != 0U) {
         REG_WRITE(CARD_CTRL_ONEE_MODE_REG, saved_onee_request);
@@ -2315,10 +2381,11 @@ failed:
 static void control_service_golden_boot_update(config_menu_t *menu)
 {
     golden_self_update_result_t result;
-    uint32_t saved_dma = 0U;
+    uint32_t saved_vtw_ctrl = 0U;
     uint32_t saved_onee_request = 0U;
     uint32_t saved_multiboot = 0U;
-    uint8_t dma_held = 0U;
+    uint8_t apple_reset_requested = 0U;
+    uint8_t dma_reserved = 0U;
     uint8_t temporary_isolation = 0U;
     uint8_t boot_register_attempted = 0U;
     uint8_t cpu1_hold_attempted = 0U;
@@ -2340,10 +2407,28 @@ static void control_service_golden_boot_update(config_menu_t *menu)
         error = "BOOT.BIN is no longer available on SD";
         goto failed;
     }
+    if (control_golden_boot_update_allowed() == 0U) {
+        error = "Update Golden Boot from the initial boot menu";
+        goto failed;
+    }
+    /* Finish captured commands before RESET clears the SmartPort transport. */
+    g_firmware_switch_active = 1U;
+    for (uint32_t attempt = 0U; attempt < 64U &&
+         smartport_service_has_pending() != 0U; ++attempt) {
+        smartport_service_poll();
+    }
+    if (smartport_service_has_pending() != 0U) {
+        error = "SmartPort is busy; update cancelled";
+        goto failed;
+    }
+    /* Apple RESET does not drain the independent PS-DMA engine. Claim checks
+     * both its software owner and hardware BUSY before any reset assertion. */
+    if (psdma_acquire(PSDMA_OWNER_FIRMWARE_UPDATE) != PSDMA_OK) {
+        error = "PS DMA is busy; update cancelled";
+        goto failed;
+    }
+    dma_reserved = 1U;
     if (control_onee_isolated() == 0U) {
-        XTime started;
-        XTime now;
-
         if (boot_menu_service_host_bus_master_allowed() == 0U) {
             if (control_hold_quiet_connector(&saved_onee_request,
                                              &temporary_isolation) != 0) {
@@ -2351,30 +2436,22 @@ static void control_service_golden_boot_update(config_menu_t *menu)
                 goto failed;
             }
         } else {
-            saved_dma = REG_READ(AT_DMA_CTRL_REG);
-            REG_WRITE(AT_DMA_CTRL_REG, saved_dma | AT_DMA_CTRL_HOLD_REQ_BIT);
-            dma_held = 1U;
-            XTime_GetTime(&started);
-            do {
-                if ((REG_READ(AT_DMA_CTRL_REG) & AT_DMA_CTRL_HOLD_ACTIVE_BIT) != 0U) {
-                    break;
-                }
-                XTime_GetTime(&now);
-                if (ticks_to_us(now - started) >= 100000U) {
-                    error = "Apple bus hold timed out; update cancelled";
-                    goto failed;
-                }
-            } while (1);
+            /* Recheck after draining commands: the boot ROM may have handed off. */
+            if (control_golden_boot_update_allowed() == 0U) {
+                error = "Update Golden Boot from the initial boot menu";
+                goto failed;
+            }
+            if (control_hold_apple_reset(&saved_vtw_ctrl,
+                                         &apple_reset_requested) != 0) {
+                error = "Apple reset hold timed out; update cancelled";
+                goto failed;
+            }
         }
     } else if (vtw_service_onee_set_paused(1U) == 0U) {
         error = "ONE//e pause failed; update cancelled";
         goto failed;
     }
-    g_firmware_switch_active = 1U;
-    for (uint32_t attempt = 0U; attempt < 64U &&
-         smartport_service_has_pending() != 0U; ++attempt) {
-        smartport_service_poll();
-    }
+    /* A request racing the RESET edge cannot be serviced from cleared data. */
     if (smartport_service_has_pending() != 0U) {
         error = "SmartPort is busy; update cancelled";
         goto failed;
@@ -2421,8 +2498,12 @@ static void control_service_golden_boot_update(config_menu_t *menu)
     REG_WRITE(CARD_CTRL_FEATURE_ENABLE_REG, 0U);
     control_apply_slot5_service(0U);
     compositor_set_paused(1U);
-    vtw_service_onee_stop();
-    vtw_service_set_enabled(0U);
+    if (apple_reset_requested != 0U) {
+        REG_WRITE(CARD_CTRL_VTW_CTRL_REG, CARD_CTRL_VTW_CTRL_APPLE_RES_BIT);
+    } else {
+        vtw_service_onee_stop();
+        vtw_service_set_enabled(0U);
+    }
     usb_hid_service_stop();
     usb_sdd_service_stop();
     (void)usb_storage_service_disconnect();
@@ -2443,8 +2524,16 @@ failed:
         g_firmware_switch_fault = 1U;
     } else {
         g_firmware_switch_active = 0U;
-        if (dma_held != 0U) {
-            REG_WRITE(AT_DMA_CTRL_REG, saved_dma);
+        if (dma_reserved != 0U) {
+            psdma_release(PSDMA_OWNER_FIRMWARE_UPDATE);
+        }
+        if (apple_reset_requested != 0U) {
+            if ((REG_READ(CARD_CTRL_APPLE_RESET_STATUS_REG) &
+                 CARD_CTRL_APPLE_RESET_RES_BIT) == 0U) {
+                smartport_service_apple_reset();
+                card_control_sync_apple_reset_seq();
+            }
+            REG_WRITE(CARD_CTRL_VTW_CTRL_REG, saved_vtw_ctrl);
         }
         if (temporary_isolation != 0U) {
             REG_WRITE(CARD_CTRL_ONEE_MODE_REG, saved_onee_request);
@@ -4174,6 +4263,7 @@ int main(void)
         menu_platform.request_firmware_switch = menu_platform_request_firmware_switch;
         menu_platform.get_golden_boot_version = menu_platform_get_golden_boot_version;
         menu_platform.get_golden_boot_file_present = menu_platform_get_golden_boot_file_present;
+        menu_platform.get_golden_boot_update_allowed = menu_platform_get_golden_boot_update_allowed;
         menu_platform.request_golden_boot_update = menu_platform_request_golden_boot_update;
         menu_platform.set_phasor_pan = control_set_phasor_pan;
         menu_platform.set_phasor_audio = control_set_phasor_audio;

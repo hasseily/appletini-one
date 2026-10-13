@@ -138,6 +138,12 @@ def main():
     import vitis
     from image_manifest import append_manifest, verify_image, ROLE_FIRMWARE
 
+    versions = (ROOT / "ps_sources/image_versions.h").read_text()
+    golden_match = re.search(r'APPLETINI_BOOT_IMAGE_VERSION_SHORT\s+"([^"]+)"', versions)
+    if golden_match is None:
+        raise RuntimeError("missing Golden version in source header")
+    golden_version = golden_match.group(1)
+
     platform = required_env("APP_MULTIBOOT_PLATFORM")
     baseline = required_env("APP_MULTIBOOT_BASELINE")
     third_party = Path(os.environ.get("APP_MULTIBOOT_THIRD_PARTY_ROOT", ROOT / "third_party")).resolve()
@@ -333,7 +339,7 @@ def main():
                 "--platform-xsa", str(exported_xsa),
                 "--core1-elf", str(inputs / "frontend_core1.elf"),
                 "--core1-blob", str(inputs / "core1_blob.bin"),
-                "--version", "F1.3.0-dev", "--boot-version", "B2.0.0",
+                "--version", "F1.3.0-dev", "--boot-version", golden_version,
                 "--output", str(output / "FIRMWARE_AUDIT.json")]
     try:
         auditor.main()
@@ -342,7 +348,7 @@ def main():
 
     report = {
         "built_utc": datetime.now(timezone.utc).isoformat(),
-        "version": "F1.3.0-dev", "golden_version": "B2.0.0", "tool_version": "Vitis 2025.2",
+        "version": "F1.3.0-dev", "golden_version": golden_version, "tool_version": "Vitis 2025.2",
         "git_commit": subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip(),
         "git_status": subprocess.check_output(["git", "-C", str(ROOT), "status", "--short"], text=True),
         "platform": file_record(platform), "platform_xsa": file_record(exported_xsa),

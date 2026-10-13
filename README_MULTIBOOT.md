@@ -1,6 +1,6 @@
 # Appletini and Multitini multiboot
 
-Branch `multiboot` in each repository adds shared Golden B2.0.0 and two firmware
+Branch `multiboot` in each repository adds shared Golden B2.0.1 and two firmware
 slots. Multitini firmware is M0.2.0; Appletini firmware is F1.3.0-dev. These are
 development builds. Board validation is pending. No FPGA image changes are
 required: the packages retain their selected supervisor, machine and Appletini
@@ -55,12 +55,25 @@ that Appletini normally needs.
 2. Put the new shared `BOOT.BIN` in the SD root. Run `:selfupdate` from the
    firmware's serial console. This stages the trial Golden, verifies it and
    repairs the primary through the existing recovery procedure.
-3. With B2.0.0 installed, put either new product image at the SD root as
-   `FIRMWARE.BIN`, then enter Golden. Its manifest determines the destination;
-   the filename does not. The updater verifies before erasing and preserves
+3. With B2.0.1 installed, copy `sd-root/FIRMWARE-APPLETINI.BIN` and
+   `sd-root/FIRMWARE-MULTITINI.BIN` from the bundle to the SD root together,
+   then enter Golden once (for example, run `:reboot` in the serial console).
+   Golden installs each file serially and replaces `.BIN` with `.OK` after
+   a successful update. The updater verifies before erasing and preserves
    the other firmware slot.
-4. Repeat with the other product image to install both. Select the power-on
-   preference in either configuration menu.
+4. Select the power-on preference in either configuration menu. Merge the
+   bundle's `multitini/sd/multitini/` into SD `/multitini/` if core files are
+   needed, preserving user media and settings.
+
+Golden scans `FIRMWARE.BIN`, `FIRMWARE-APPLETINI.BIN`, then
+`FIRMWARE-MULTITINI.BIN`. These names only identify files to inspect. The
+manifest and linked product marker determine the destination. An Appletini
+image named `FIRMWARE-MULTITINI.BIN` still updates Appletini. A failed update
+leaves its `.BIN` file in place and does not stop the remaining files from
+being checked. If multiple valid files target the same product, the last
+successful update in scan order wins. `BOOT.BIN` still requires the explicit
+`:selfupdate` procedure above. A failed file is not retried during that pass;
+leave it in place and enter Golden again after resolving the failure.
 
 An old version 1 firmware file remains usable as a boot fallback. The new
 updater refuses to install it because it lacks an unambiguous product identity.

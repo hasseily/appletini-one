@@ -21,6 +21,14 @@ static void print_hex32(uint32_t v)
     uart_puthex(UART1_BASE, v);
 }
 
+static void print_count(const char *label, uint32_t value)
+{
+    uart_puts(UART0_BASE, label);
+    uart_puts(UART1_BASE, label);
+    uart_putdec(UART0_BASE, value);
+    uart_putdec(UART1_BASE, value);
+}
+
 static void print_result(const updater_result_t *r)
 {
     uart_puts(UART0_BASE, "[UPD] result: ");
@@ -41,6 +49,11 @@ static void print_result(const updater_result_t *r)
     uart_puts(UART1_BASE, " msg=");
     uart_puts(UART0_BASE, r->error_msg);
     uart_puts(UART1_BASE, r->error_msg);
+    print_count(" found=", r->files_found);
+    print_count(" installed=", r->files_updated);
+    print_count(" failed=", r->files_failed);
+    print_count(" renamed=", r->files_renamed);
+    print_count(" rename_failures=", r->rename_failures);
     uart_puts(UART0_BASE, "\r\n");
     uart_puts(UART1_BASE, "\r\n");
 }
@@ -149,33 +162,37 @@ int main(void)
         }
 
         run_rc = updater_run(&res);
-        if (run_rc == 0 && res.updated && res.verified) {
-            uart_puts(UART0_BASE, "[GOLDEN] Update OK CRC file=0x");
-            uart_puts(UART1_BASE, "[GOLDEN] Update OK CRC file=0x");
+        if (res.found_file || run_rc != 0 || res.error_code != 0) {
+            print_result(&res);
+        }
+        if (res.updated && res.verified) {
+            uart_puts(UART0_BASE, "[GOLDEN] Last verified update CRC file=0x");
+            uart_puts(UART1_BASE, "[GOLDEN] Last verified update CRC file=0x");
             print_hex32(res.file_crc32);
             uart_puts(UART0_BASE, " flash=0x");
             uart_puts(UART1_BASE, " flash=0x");
             print_hex32(res.flash_crc32);
-            uart_puts(UART0_BASE, "\r\n[GOLDEN] Rebooting...\r\n");
-            uart_puts(UART1_BASE, "\r\n[GOLDEN] Rebooting...\r\n");
+            uart_puts(UART0_BASE, "\r\n[GOLDEN] Update batch complete; selecting verified firmware.\r\n");
+            uart_puts(UART1_BASE, "\r\n[GOLDEN] Update batch complete; selecting verified firmware.\r\n");
             golden_led_off();   /* update done */
-            boot_control_soft_reset();
+            /* Boot the verified selection directly after the complete batch.
+             * An intermediate Golden reset would reinstall any source whose
+             * close or rename failed, potentially repeating indefinitely. */
         }
 
         if (run_rc != 0 || res.error_code != 0) {
-            print_result(&res);
             if (res.found_file) {
-                uart_puts(UART0_BASE, "[GOLDEN] Update failed; checking remaining verified firmware.\r\n");
-                uart_puts(UART1_BASE, "[GOLDEN] Update failed; checking remaining verified firmware.\r\n");
+                uart_puts(UART0_BASE, "[GOLDEN] Batch completed with errors; checking verified firmware.\r\n");
+                uart_puts(UART1_BASE, "[GOLDEN] Batch completed with errors; checking verified firmware.\r\n");
                 /* Blink only at a dead end. A surviving verified slot
                  * should start without waiting for the error-code pattern. */
                 if (!updater_has_verified_firmware()) {
                     golden_led_error_code(res.error_code);
                 }
             }
-        } else {
-            uart_puts(UART0_BASE, "[GOLDEN] No update file\r\n");
-            uart_puts(UART1_BASE, "[GOLDEN] No update file\r\n");
+        } else if (!res.found_file) {
+            uart_puts(UART0_BASE, "[GOLDEN] No update files\r\n");
+            uart_puts(UART1_BASE, "[GOLDEN] No update files\r\n");
         }
 
         if (!updater_has_verified_firmware()) {

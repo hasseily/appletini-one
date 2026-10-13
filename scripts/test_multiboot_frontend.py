@@ -100,8 +100,8 @@ static int mb_platform_status_ui(uint32_t product, mb_platform_status_t *out) {
 static int mb_platform_set_default(uint32_t product) {
     ++default_calls; if (!default_rc) live_status.default_product=product; return (int)default_rc;
 }
-static int mb_platform_golden_offset(uint32_t *offset) { ++golden_checks; event('G'); *offset=0x100000; return (int)golden_rc; }
-static int mb_platform_request(uint32_t product) { assert(product==MB_PRODUCT_MULTITINI); ++requests; event('R'); return (int)request_rc; }
+static int mb_platform_prepare_request(uint32_t product,uint32_t *offset) { assert(product==MB_PRODUCT_MULTITINI); ++golden_checks; event('G'); *offset=0x100000; ++requests; event('R'); return golden_rc ? (int)golden_rc:(int)request_rc; }
+static int mb_platform_read_report(char *text,uint32_t size) { assert(size);text[0]=0;return MB_OK; }
 static int mb_platform_clear_request(void) { ++clears; return (int)clear_rc; }
 static void config_menu_set_status(config_menu_t *menu, uint8_t warning, const char *text) {
     menu->status_warning=warning; snprintf(menu->status,sizeof(menu->status),"%s",text);
@@ -306,7 +306,7 @@ int main(void) {
     menu=prepare(); status_rc=1;
     control_service_firmware_switch(&menu); cancelled(&menu); assert(!requests);
     menu=prepare(); golden_rc=1;
-    control_service_firmware_switch(&menu); cancelled(&menu); assert(!requests && !disk_calls);
+    control_service_firmware_switch(&menu); cancelled(&menu); assert(requests==1 && disk_calls==1 && clears==1);
     for(unsigned mode=0;mode<5;++mode) {
         menu=prepare();
         if(mode==0) screenshot_busy=1; if(mode==1) printer_busy=1;

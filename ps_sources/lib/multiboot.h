@@ -85,8 +85,10 @@ int mb_metadata_load(const mb_flash_t *flash, mb_metadata_t *out);
 int mb_slot_verify(const mb_flash_t *flash, uint32_t product, mb_image_t *out);
 /* Fast advisory UI presence only: validates bounded Bootgen headers/partition
  * bounds, footer identity/CRC and committed eligibility. Does not read or CRC
- * the payload, prove linked capability or authorize any flash write/boot.
- * All actions must still use mb_slot_verify/mb_select/set_choice/mb_install.
+ * the payload, prove linked capability or authorize firmware installation/boot.
+ * Execution must still use mb_slot_verify/mb_select; installation and startup
+ * choice still validate fully. A one-shot request delegates its full target
+ * check to Golden and may use this advisory probe before committing metadata.
  * out may be NULL. image_crc32 is zero because the payload was not read. */
 int mb_slot_probe(const mb_flash_t *flash, uint32_t product, mb_image_t *out);
 int mb_golden_available(const mb_flash_t *flash, uint32_t *boot_offset_out);
@@ -104,6 +106,14 @@ int mb_golden_installed_version(const mb_flash_t *flash, char *version,
 int mb_select(const mb_flash_t *flash, uint32_t requested, mb_selection_t *out);
 int mb_set_default(const mb_flash_t *flash, uint32_t product);
 int mb_set_request(const mb_flash_t *flash, uint32_t product);
+/* Validate Golden live, probe committed target eligibility/headers/footer,
+ * commit the one-shot request and return the checked Golden offset. Golden
+ * fully validates target payload after reset and falls back if it is corrupt.
+ * First metadata adoption still fully verifies images to establish records.
+ * No caller-supplied token or cross-reset cache is accepted. On failure the
+ * required golden_offset output is UINT32_MAX. */
+int mb_prepare_request(const mb_flash_t *flash, uint32_t product,
+                       uint32_t *golden_offset);
 int mb_clear_request(const mb_flash_t *flash);
 /* Clears target eligibility durably before any image erase. Other-slot data
  * and metadata survive. finish verifies live flash against the source record.

@@ -658,10 +658,8 @@ static serial_boot_action_t process_command(uint32_t uart_base,
         return SERIAL_BOOT_ACTION_RUN_UPDATER;
     }
     if (str_ieq(argv[0], "boot") || str_ieq(argv[0], "firmware") || str_ieq(argv[0], "run")) {
-        if (!updater_has_verified_firmware()) {
-            serial_puts_both("[SER] No verified available firmware; staying in monitor\r\n");
-            return SERIAL_BOOT_ACTION_NONE;
-        }
+        /* main selects and fully verifies once immediately before booting.
+         * Do not scan here and repeat the same scan after returning. */
         serial_puts_both("[SER] Selecting verified available firmware now\r\n");
         return SERIAL_BOOT_ACTION_BOOT_FIRMWARE;
     }

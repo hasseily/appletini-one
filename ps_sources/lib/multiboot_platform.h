@@ -22,6 +22,9 @@ int mb_platform_status_ui(uint32_t current_product, mb_platform_status_t *status
 int mb_platform_golden_version_cached(char *version, uint32_t capacity);
 int mb_platform_set_default(uint32_t product);
 int mb_platform_request(uint32_t product);
+int mb_platform_prepare_request(uint32_t product, uint32_t *golden_offset);
+/* Bounded UART diagnostic text only; no image validation or metadata writes. */
+int mb_platform_read_report(char *text, uint32_t capacity);
 int mb_platform_clear_request(void);
 int mb_platform_golden_offset(uint32_t *offset);
 

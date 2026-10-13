@@ -710,14 +710,18 @@ int mb_golden_installed_version(const mb_flash_t *f, char *version,
     }
     return MB_E_UNAVAILABLE;
 }
-static int metadata_adopt(const mb_flash_t *f, mb_metadata_t *m)
+static int metadata_adopt(const mb_flash_t *f, mb_metadata_t *m,
+                           const mb_image_t *checked)
 {
     mb_image_t image; unsigned i; int rc=mb_metadata_load(f,m);
     if (rc!=MB_E_METADATA) return rc;
     metadata_init(m);
     for (i=0;i<2;++i) {
         uint32_t p=i ? MB_PRODUCT_MULTITINI : MB_PRODUCT_APPLETINI;
-        rc=flash_image(f,mb_product_offset(p),mb_product_capacity(p),p,0,2U,0,&image);
+        /* Reuse only this transaction's private live target verification.
+         * An external/cached image record must never authorize adoption. */
+        if (checked && checked->product==p) { image=*checked; rc=MB_OK; }
+        else rc=flash_image(f,mb_product_offset(p),mb_product_capacity(p),p,0,2U,0,&image);
         if (rc==MB_E_READ) return rc;
         if (rc==MB_OK) record_image(&m->slots[i],&image,0);
     }
@@ -738,29 +742,60 @@ static int metadata_adopt(const mb_flash_t *f, mb_metadata_t *m)
         m->default_product=MB_PRODUCT_MULTITINI;
     return MB_OK;
 }
-static int set_choice(const mb_flash_t *f, uint32_t product, int request)
+static int set_choice(const mb_flash_t *f, uint32_t product, int request,
+                       uint32_t *golden_offset)
 {
-    mb_metadata_t m; mb_image_t image; int rc;
+    mb_metadata_t m; mb_image_t image; uint32_t offset; int rc;
+    if (golden_offset) *golden_offset=UINT32_MAX;
     if (!flash_valid(f,1) || !product_valid(product)) return MB_E_ARGUMENT;
-    if (mb_golden_available(f,NULL)!=MB_OK) return MB_E_UNAVAILABLE;
-    rc=mb_slot_verify(f,product,&image); if (rc!=MB_OK) return rc;
-    rc=metadata_adopt(f,&m); if (rc!=MB_OK) return rc;
+    if (mb_golden_available(f,&offset)!=MB_OK) return MB_E_UNAVAILABLE;
     if (request) {
-        if (m.request_product==product && m.sector_offset!=UINT32_MAX) return MB_OK;
+        rc=mb_metadata_load(f,&m);
+        if (rc==MB_OK) {
+            /* Switching delegates full payload integrity to Golden after
+             * reset. Committed eligibility and bounded live headers/footer
+             * only authorize this request, never direct firmware execution. */
+            rc=mb_slot_probe(f,product,NULL); if (rc!=MB_OK) return rc;
+        } else if (rc==MB_E_METADATA) {
+            /* First migration must establish records from full live checks,
+             * rather than promote header-only presence into trusted state. */
+            const mb_slot_record_t *slot;
+            rc=metadata_adopt(f,&m,NULL); if (rc!=MB_OK) return rc;
+            slot=&m.slots[product_index(product)];
+            if (slot->product!=product || slot->flags!=MB_FLAG_SLOT_VALID)
+                return MB_E_UNAVAILABLE;
+        } else return rc;
+    } else {
+        /* A persistent startup choice still rejects a corrupt target now. */
+        rc=mb_slot_verify(f,product,&image); if (rc!=MB_OK) return rc;
+        rc=metadata_adopt(f,&m,&image); if (rc!=MB_OK) return rc;
+    }
+    if (request) {
+        if (m.request_product==product && m.sector_offset!=UINT32_MAX) {
+            if (golden_offset) *golden_offset=offset;
+            return MB_OK;
+        }
         m.request_product=product;
     } else {
         if (m.default_product==product && m.sector_offset!=UINT32_MAX) return MB_OK;
         m.default_product=product;
     }
-    return metadata_commit(f,&m);
+    rc=metadata_commit(f,&m);
+    if (rc==MB_OK && golden_offset) *golden_offset=offset;
+    return rc;
 }
 int mb_set_default(const mb_flash_t *f, uint32_t product)
 {
-    return set_choice(f,product,0);
+    return set_choice(f,product,0,NULL);
 }
 int mb_set_request(const mb_flash_t *f, uint32_t product)
 {
-    return set_choice(f,product,1);
+    return set_choice(f,product,1,NULL);
+}
+int mb_prepare_request(const mb_flash_t *f, uint32_t product, uint32_t *golden_offset)
+{
+    if (!golden_offset) return MB_E_ARGUMENT;
+    return set_choice(f,product,1,golden_offset);
 }
 int mb_clear_request(const mb_flash_t *f)
 {
@@ -778,7 +813,7 @@ int mb_update_begin(const mb_flash_t *f, uint32_t product)
     rc=mb_metadata_load(f,&m);
     if (rc==MB_E_READ) return rc;
     if (rc!=MB_OK) {
-        rc=metadata_adopt(f,&m); if (rc!=MB_OK) return rc;
+        rc=metadata_adopt(f,&m,NULL); if (rc!=MB_OK) return rc;
         rc=old_legacy_verify(f,&legacy);
         if (rc==MB_E_READ) return rc;
         if (rc==MB_OK) {

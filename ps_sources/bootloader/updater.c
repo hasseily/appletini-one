@@ -100,14 +100,6 @@ int updater_select_firmware(uint32_t *boot_offset)
     return XST_SUCCESS;
 }
 
-int updater_has_verified_firmware(void)
-{
-    const mb_flash_t *flash = mb_platform_flash();
-    mb_selection_t selected;
-    return flash != NULL && mb_select(flash, MB_PRODUCT_NONE, &selected) == MB_OK &&
-           (selected.product != MB_PRODUCT_NONE || selected.legacy != 0U);
-}
-
 int updater_sync_boot_metadata(void)
 {
     /* Preserve v4 single-slot metadata until a tagged image or owner choice

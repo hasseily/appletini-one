@@ -1,7 +1,7 @@
 # Appletini and Multitini multiboot
 
-Branch `multiboot` in each repository adds shared Golden B2.0.4 and two firmware
-slots. Multitini firmware is M0.2.2; Appletini firmware is F1.3.0-dev5. These are
+Branch `multiboot` in each repository adds shared Golden B2.0.5 and two firmware
+slots. Multitini firmware is M0.2.3; Appletini firmware is F1.3.0-dev6. These are
 development builds. Board validation is pending. No FPGA image changes are
 required: the packages retain their selected supervisor, machine and Appletini
 bitstreams.
@@ -89,7 +89,7 @@ multiboot controls disabled. Those installers ignore `BOOT.BIN` and the named
 firmware files. B1.1.0 requires FAT32. Never use a Multitini image as the generic
 file on B1: it has no product-aware destination selection.
 
-Appletini F1.3.0-dev5 supports firmware-first migration without serial commands:
+Appletini F1.3.0-dev6 supports firmware-first migration without serial commands:
 copy the bundle's `appletini/FIRMWARE.BIN` as `FIRMWARE.BIN`, its `golden/BOOT.BIN`
 as `BOOT.BIN`, and `sd-root/FIRMWARE-MULTITINI.BIN` to SD root. Let the installed
 B1 update Appletini first. In About, choose **Update Golden Boot...** beside the
@@ -167,9 +167,9 @@ before the final CPU1 hold. An attempted CPU1 reset cannot be resumed in place.
 
 System and Appletini menu status use bounded live header/footer/metadata probes
 and a Golden identity cache verified once during startup. These display hints
-do not authorize a boot: every actual switch, startup-choice write and Golden
-selection retains full live payload, role and CRC checks. An altered payload
-may remain visible until an action checks it, but it is never booted unchecked.
+do not authorize a boot. Startup-choice writes and Golden selection retain full
+live payload, role and CRC checks. An altered payload may remain visible until
+Golden checks it after a switch, but it is never booted unchecked.
 System entry no longer rereads whole firmware images. Full switch validation
 has a visible progress message.
 
@@ -192,8 +192,37 @@ The source must close successfully before replacing an older regular `BOOT.OK`.
 A directory at that path is preserved. SD mount/read/close/delete/rename errors
 leave the source for retry and do not invalidate verified flash or block boot.
 FatFs directory changes retain their normal power-loss limits. The completion
-step writes no flash. This bundle retains the accepted M0.2.2 and F1.3.0-dev5
+step writes no flash. The B2.0.4 bundle retains the accepted M0.2.2 and F1.3.0-dev5
 images exactly; only Golden is rebuilt. The rename still needs a board test.
+
+## Switch performance
+
+M0.2.3, F1.3.0-dev6 and B2.0.5 reduce flash validation time. A firmware switch
+fully verifies Golden and probes the requested firmware's header and committed
+record before saving the one-shot request. It uses the verified Golden offset
+for reset. Golden performs the full target payload and CRC check after reset.
+A corrupt payload therefore reboots through Golden and falls back instead of
+cancelling immediately in the running firmware. If metadata must first be
+created, adoption still fully verifies the slots before recording them.
+Golden selects once after its SD update pass and boots the selected offset.
+Missing or corrupt targets still fall back to another fully verified firmware.
+
+Shared CRC uses a constant lookup table with the same incremental CRC result.
+Flash reads use batches of up to 4 KiB. Known compatible 16 MiB NOR parts on the
+single four-bit QSPI connection can use quad I/O reads at 25 MHz, matching the
+retained FSBL's command and clock. Qualification compares ordinary and quad reads
+at several addresses and requires non-erased data. Unsupported parts, mismatches
+and transfer errors use ordinary reads at 6.25 MHz when the controller remains
+usable. Failed state restoration blocks further flash operations. The driver
+restores controller state after reads and does not change flash protection or
+quad-enable bits.
+Erase and page program keep their existing conservative path.
+
+Golden retains its one-second serial recovery window. UART stage timings and
+flash read diagnostics distinguish validation from reset, FSBL and frontend
+startup. Host CRC equivalence, QSPI fault fixtures, request power cuts and ARM
+builds do not establish a board speedup. Measure both switch directions on the
+card after installing all three images; no FPGA/core rebuild is needed.
 
 ## Failure handling and evidence
 

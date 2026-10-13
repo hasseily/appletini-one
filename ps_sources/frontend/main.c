@@ -2224,12 +2224,11 @@ static void control_service_firmware_switch(config_menu_t *menu)
         error = "FINISH SD SHARING, SCREENSHOTS AND PRINTING FIRST";
         goto failed;
     }
-    /* A displayed presence result is advisory. The request API below performs
-     * full live target and Golden validation before any boot request commits. */
+    /* Presence is advisory. The request checks Golden before reset; Golden
+     * fully checks target payload and fallback before executing firmware. */
     control_refresh_multiboot();
     if (g_multiboot_status_valid == 0U ||
-        g_multiboot_status.multitini_present == 0U ||
-        mb_platform_golden_offset(&golden_offset) != MB_OK) {
+        g_multiboot_status.multitini_present == 0U) {
         error = "MULTITINI OR MULTIBOOT GOLDEN NOT VERIFIED";
         goto failed;
     }
@@ -2292,11 +2291,27 @@ static void control_service_firmware_switch(config_menu_t *menu)
         error = "SD SAVE FAILED; SWITCH CANCELLED";
         goto failed;
     }
-    /* This checks both target and golden again before committing one request. */
+    /* Check Golden and commit a bounded target request. Payload integrity is
+     * verified by Golden after reset, with the other valid firmware as fallback. */
     request_attempted = 1U;
-    if (mb_platform_request(product) != MB_OK) {
-        error = "FIRMWARE CHECK OR FLASH WRITE FAILED; SWITCH CANCELLED";
-        goto failed;
+    {
+        XTime started,now;
+        char timing[96];
+        char read_report[192];
+        int request_rc;
+        XTime_GetTime(&started);
+        request_rc=mb_platform_prepare_request(product,&golden_offset);
+        XTime_GetTime(&now);
+        (void)snprintf(timing,sizeof timing,
+            "multiboot: Golden validation and request ms=%lu\r\n",
+            (unsigned long)(ticks_to_us(now-started)/1000U));
+        uart_puts(UART0_BASE,timing);
+        if (mb_platform_read_report(read_report,sizeof read_report)==MB_OK)
+            uart_puts(UART0_BASE,read_report);
+        if (request_rc != MB_OK) {
+            error = "FIRMWARE CHECK OR FLASH WRITE FAILED; SWITCH CANCELLED";
+            goto failed;
+        }
     }
     boot_register_attempted = 1U;
     if (control_prepare_golden_boot(golden_offset, &saved_multiboot) != 0) {

@@ -1,10 +1,12 @@
 #include <stdint.h>
 #include <string.h>
+#include "xiltimer.h"
 
 #include "../image_versions.h"
 #include "../lib/golden_self_update.h"
 #include "../lib/uart.h"
 #include "../lib/multiboot.h"
+#include "../lib/multiboot_platform.h"
 
 #include "updater.h"
 #include "updater_layout.h"
@@ -61,7 +63,21 @@ static void print_result(const updater_result_t *r)
 static int boot_firmware_slot(void)
 {
     uint32_t boot_offset;
-    if (updater_select_firmware(&boot_offset) != 0) {
+    XTime started,now;
+    const uint64_t clock_hz=(uint64_t)(COUNTS_PER_SECOND);
+    int selection_rc;
+    char read_report[192];
+    XTime_GetTime(&started);
+    selection_rc=updater_select_firmware(&boot_offset);
+    XTime_GetTime(&now);
+    print_count("[GOLDEN] Firmware selection ms=", clock_hz ?
+        (uint32_t)(((now-started)/clock_hz)*1000ULL+
+                   (((now-started)%clock_hz)*1000ULL)/clock_hz) : 0U);
+    uart_puts(UART0_BASE,"\r\n"); uart_puts(UART1_BASE,"\r\n");
+    if (mb_platform_read_report(read_report,sizeof read_report)==MB_OK) {
+        uart_puts(UART0_BASE,read_report);uart_puts(UART1_BASE,read_report);
+    }
+    if (selection_rc != 0) {
         uart_puts(UART0_BASE, "[GOLDEN] No verified firmware; staying in monitor\r\n");
         uart_puts(UART1_BASE, "[GOLDEN] No verified firmware; staying in monitor\r\n");
         return -1;
@@ -190,25 +206,19 @@ int main(void)
             if (res.found_file) {
                 uart_puts(UART0_BASE, "[GOLDEN] Batch completed with errors; checking verified firmware.\r\n");
                 uart_puts(UART1_BASE, "[GOLDEN] Batch completed with errors; checking verified firmware.\r\n");
-                /* Blink only at a dead end. A surviving verified slot
-                 * should start without waiting for the error-code pattern. */
-                if (!updater_has_verified_firmware()) {
-                    golden_led_error_code(res.error_code);
-                }
             }
         } else if (!res.found_file) {
             uart_puts(UART0_BASE, "[GOLDEN] No update files\r\n");
             uart_puts(UART1_BASE, "[GOLDEN] No update files\r\n");
         }
 
-        if (!updater_has_verified_firmware()) {
-            uart_puts(UART0_BASE, "[GOLDEN] No verified firmware record; staying in golden monitor.\r\n");
-            uart_puts(UART1_BASE, "[GOLDEN] No verified firmware record; staying in golden monitor.\r\n");
-            action = serial_boot_menu(layout, 0U);
-            continue;
+        /* Select and verify once after the complete update batch. The same
+         * in-call selection is handed to BootROM; never carry it across reset. */
+        if (boot_firmware_slot() != 0 && res.found_file &&
+            (run_rc != 0 || res.error_code != 0)) {
+            /* Only a dead end waits for the update-error blink pattern. */
+            golden_led_error_code(res.error_code);
         }
-
-        (void)boot_firmware_slot();
         action = serial_boot_menu(layout, 0U);
     }
 

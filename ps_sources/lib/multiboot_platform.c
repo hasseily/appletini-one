@@ -4,6 +4,7 @@
 #include "xstatus.h"
 
 #include <string.h>
+#include <stdio.h>
 
 static qspi_nor_t nor;
 static mb_flash_t flash;
@@ -133,6 +134,33 @@ int mb_platform_set_default(uint32_t product)
 int mb_platform_request(uint32_t product)
 {
     return mb_platform_open() == MB_OK ? mb_set_request(&flash, product) : MB_E_READ;
+}
+
+int mb_platform_prepare_request(uint32_t product, uint32_t *golden_offset)
+{
+    if (golden_offset == NULL) return MB_E_ARGUMENT;
+    *golden_offset = UINT32_MAX;
+    return mb_platform_open() == MB_OK ?
+        mb_prepare_request(&flash, product, golden_offset) : MB_E_READ;
+}
+
+int mb_platform_read_report(char *text, uint32_t capacity)
+{
+    qspi_nor_read_stats_t stats;
+    int length;
+    if (text == NULL || capacity == 0U) return MB_E_ARGUMENT;
+    text[0]='\0';
+    if (mb_platform_open() != MB_OK) return MB_E_READ;
+    qspi_nor_get_read_stats(&nor,&stats);
+    length=snprintf(text,capacity,
+        "[MB] reads jedec=%02X%02X%02X mode=%s hz=%lu chunk=%lu bytes=%llu commands=%llu fallback=%lu probe_failed=%u\r\n",
+        (unsigned)stats.jedec_id[0],(unsigned)stats.jedec_id[1],(unsigned)stats.jedec_id[2],
+        qspi_nor_read_mode(&nor),(unsigned long)stats.clock_hz,
+        (unsigned long)stats.chunk_bytes,(unsigned long long)stats.bytes,
+        (unsigned long long)stats.transactions,(unsigned long)stats.fallback_count,
+        (unsigned)stats.probe_failed);
+    if (length<0 || (uint32_t)length>=capacity) { text[0]='\0';return MB_E_ARGUMENT; }
+    return MB_OK;
 }
 
 int mb_platform_clear_request(void)

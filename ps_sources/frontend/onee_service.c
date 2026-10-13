@@ -564,6 +564,11 @@ void onee_service_poll(void)
     }
 
     if ((g_status & CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT) != 0U) {
+        /* REQUEST can become effective between UI polls. Publish the current
+         * menu/input policy before the first CORE_RUN write, while the private
+         * core is still held. Using the old cached status after a menu action
+         * would otherwise allow instructions to run before PAUSE is queued. */
+        onee_service_update_ui_policy();
         if (g_runtime_started == 0U) {
             if (g_runtime_retry_polls != 0U) {
                 --g_runtime_retry_polls;

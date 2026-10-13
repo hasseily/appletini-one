@@ -1,7 +1,7 @@
 # Appletini and Multitini multiboot
 
 Branch `multiboot` in each repository adds shared Golden B2.0.5 and two firmware
-slots. Multitini firmware is M0.2.3; Appletini firmware is F1.3.0-dev8. These are
+slots. Multitini firmware is M0.2.3; Appletini firmware is F1.3.0-dev9. These are
 development builds. Board validation is pending. No FPGA image changes are
 required: the packages retain their selected supervisor, machine and Appletini
 bitstreams.
@@ -89,7 +89,7 @@ multiboot controls disabled. Those installers ignore `BOOT.BIN` and the named
 firmware files. B1.1.0 requires FAT32. Never use a Multitini image as the generic
 file on B1: it has no product-aware destination selection.
 
-Appletini F1.3.0-dev8 supports firmware-first migration without serial commands:
+Appletini F1.3.0-dev9 supports firmware-first migration without serial commands:
 copy the bundle's `appletini/FIRMWARE.BIN` as `FIRMWARE.BIN`, its `golden/BOOT.BIN`
 as `BOOT.BIN`, and `sd-root/FIRMWARE-MULTITINI.BIN` to SD root. Let the installed
 B1 update Appletini first. In About, choose **Update Golden Boot...** beside the
@@ -266,6 +266,26 @@ frame changes, and check all six output modes. The software mask also matches
 simulation of the exact retained RTL. Only Appletini ARM firmware changes;
 M0.2.3, B2.0.5, FPGA/core, FSBL and CPU1 inputs are retained. Screenshot speed and
 display matching still need the owner's card test.
+
+## Saved vTW startup
+
+F1.3.0-dev9 starts saved host vTW before the physical Apple //e reaches the
+initial prompt or config menu. CPU0 installs a firmware C8 ROM patch while the
+initial Apple RESET is held. Only the IIe identification return waits for vTW;
+II/II+, IIgs and unidentified hosts retain their existing startup paths.
+
+The accelerated core runs the initial prompt/menu at 1 MHz to preserve the ROM's
+VBL timing, then applies the requested speed at storage handoff without another
+RESET or ROM copy. Disk II selection returns after the first CORE_RUN echo so
+slot 7 remains visible for that initial prompt. Cancellation, policy refusal,
+failed takeover and ONE//e startup release the native hold. Late SD restores and
+manual host-vTW enabling retain the existing post-handoff path.
+
+ONE//e now publishes menu PAUSE before its first CORE_RUN write. The reported
+bezel-only case had ONE//e disabled; it does not require a renderer change.
+Native startup, ROM execution and failure tests accompany this change. Only
+Appletini ARM firmware changes; M0.2.3, B2.0.5, FPGA/core, FSBL and CPU1 inputs
+are retained. First boot and menu exit still need the owner's card test.
 
 ## Failure handling and evidence
 

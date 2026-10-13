@@ -40,6 +40,18 @@ void boot_menu_service_debug_snapshot(boot_menu_debug_snapshot_t *snapshot);
 boot_menu_event_t boot_menu_service_poll(void);
 void boot_menu_service_refresh_machine_policy(void);
 
+/* Firmware-only C8 startup hold. Install once before CPU0_READY releases the
+ * initial Apple RESET. Only the physical IIe ROM report enters the hold;
+ * II/II+, IIgs, and an unidentified host keep their original ROM path. */
+void boot_menu_service_install_vtw_boot_gate(uint8_t armed);
+void boot_menu_service_release_vtw_boot_gate(void);
+uint8_t boot_menu_service_vtw_boot_gate_armed(void);
+uint8_t boot_menu_service_vtw_boot_gate_waiting(void);
+/* Keep slot 7 visible on the first accelerated scan, then restore the user's
+ * target only after the PL echoes CORE_RUN. No saved setting is changed. */
+void boot_menu_service_begin_vtw_boot_scan(void);
+void boot_menu_service_end_vtw_boot_scan(void);
+
 /* The boot ROM reports the host machine through the boot-menu command channel.
  * The service maps it to a CARD_MACHINE_MODE_* and programs the PL
  * interlock register. Raw ids: 0=none yet, 1=II/II+, 2=IIe,

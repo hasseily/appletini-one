@@ -226,6 +226,7 @@ def test_onee_reset_uses_private_runtime_paths() -> None:
     require("config_menu_apply_boot_runtime(menu);" in reset and
             "if ((onee_service_status() &\n"
             "         CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT) == 0U &&\n"
+            "        vtw_service_boot_start_pending() == 0U &&\n"
             "        boot_menu_service_host_bus_master_allowed() != 0U) {\n"
             "        (void)uart_control_dma_bus_write(0xC029U, 0x01U);\n"
             "    }" in reset,
@@ -697,10 +698,17 @@ def run_native_speed_control_test(prove_regression: bool = False) -> bool:
         static uint32_t test_reg_read(uint32_t address);
         static void test_reg_write(uint32_t address, uint32_t value);
         uint8_t boot_menu_service_machine_mode(void);
+        uint8_t boot_menu_service_machine_id(void);
         uint8_t boot_menu_service_host_bus_master_allowed(void);
         const char *boot_menu_service_machine_name(void);
         uint8_t boot_menu_service_slot7_handed_off(void);
         void boot_menu_service_apply_video_rom_patch(void);
+        void boot_menu_service_install_vtw_boot_gate(uint8_t armed);
+        void boot_menu_service_release_vtw_boot_gate(void);
+        uint8_t boot_menu_service_vtw_boot_gate_waiting(void);
+        uint8_t boot_menu_service_vtw_boot_gate_armed(void);
+        void boot_menu_service_begin_vtw_boot_scan(void);
+        void boot_menu_service_end_vtw_boot_scan(void);
         void disk2_service_set_enabled(uint8_t enabled);
         void uart_puts(uint32_t base, const char *s);
 
@@ -730,6 +738,7 @@ def run_native_speed_control_test(prove_regression: bool = False) -> bool:
         static uint8_t disk2_enabled;
         static uint32_t boot_patch_count;
         static uint32_t boot_patch_reset_held_count;
+        static uint8_t stub_boot_gate_armed;
         static XTime fake_time;
 
         static uint32_t reg_index(uint32_t address)
@@ -777,6 +786,21 @@ def run_native_speed_control_test(prove_regression: bool = False) -> bool:
         {
             return machine_mode;
         }
+
+        uint8_t boot_menu_service_machine_id(void)
+        {
+            return machine_mode == CARD_MACHINE_MODE_IIE ? 3U :
+                   machine_mode == CARD_MACHINE_MODE_IIPLUS ? 1U :
+                   machine_mode == CARD_MACHINE_MODE_IIGS ? 4U : 0U;
+        }
+
+        void boot_menu_service_install_vtw_boot_gate(uint8_t armed)
+        { stub_boot_gate_armed = armed; }
+        void boot_menu_service_release_vtw_boot_gate(void) { stub_boot_gate_armed = 0U; }
+        uint8_t boot_menu_service_vtw_boot_gate_waiting(void) { return 0U; }
+        uint8_t boot_menu_service_vtw_boot_gate_armed(void) { return stub_boot_gate_armed; }
+        void boot_menu_service_begin_vtw_boot_scan(void) { }
+        void boot_menu_service_end_vtw_boot_scan(void) { }
 
         uint8_t boot_menu_service_host_bus_master_allowed(void)
         {
@@ -894,6 +918,7 @@ def run_native_speed_control_test(prove_regression: bool = False) -> bool:
             disk2_enabled = 0U;
             boot_patch_count = 0U;
             boot_patch_reset_held_count = 0U;
+            stub_boot_gate_armed = 0U;
             fake_time = 0U;
             g_uart_base = 0U;
             g_intent_enabled = 0U;
@@ -917,6 +942,9 @@ def run_native_speed_control_test(prove_regression: bool = False) -> bool:
             g_onee_running = 0U;
             g_onee_pause_requested = 0U;
             g_onee_cold_reboot_active = 0U;
+            g_boot_start_active = 0U;
+            g_boot_menu_speed_hold = 0U;
+            g_boot_take_start = 0U;
             g_res_phase_start = 0U;
             g_onee_cold_reboot_start = 0U;
             vtw_service_init(0U);

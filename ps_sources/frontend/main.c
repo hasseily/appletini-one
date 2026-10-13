@@ -3639,6 +3639,7 @@ static void ui_handle_apple_reset(ui_state_t *s, config_menu_t *menu)
      * host DMA transaction. ONE//e uses its private bus. */
     if ((onee_service_status() &
          CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT) == 0U &&
+        vtw_service_boot_start_pending() == 0U &&
         boot_menu_service_host_bus_master_allowed() != 0U) {
         (void)uart_control_dma_bus_write(0xC029U, 0x01U);
     }
@@ -4440,6 +4441,10 @@ int main(void)
         usb1_boot_settle_begin();
     }
     boot_debug_log_snapshot("pre apple release");
+    /* Install the saved-vTW gate while the physical CPU is still held. The
+     * verified //e identification path waits before showing its first prompt
+     * until the accelerated core is ready to run that same boot flow. */
+    vtw_service_prepare_boot_start();
     card_control_mark_cpu0_ready();
     config_menu_start_boot_dhcp(&config_menu);
     XTime_GetTime(&boot_stage_started);
@@ -4466,6 +4471,22 @@ int main(void)
         config_menu_poll_onee_mode(&config_menu);
         ui_close_menu_on_onee_running(&ui, &config_menu);
         ui_sync_onee_menu_pause(&config_menu);
+        boot_menu_service_refresh_machine_policy();
+        control_refresh_machine_policy();
+        if (vtw_service_boot_start_pending() != 0U) {
+            /* Keep RESET transport cleanup and HDMI alive during takeover.
+             * USB enumeration and media work must not delay this first boot.
+             * The native //e is waiting in the ROM gate, before storage code. */
+            ui_handle_apple_reset(&ui, &config_menu);
+            vtw_service_poll();
+            (void)compositor_tick();
+            continue;
+        }
+        if (vtw_service_boot_handoff_pending() != 0U) {
+            /* Apply the requested speed before the first storage command.
+             * A failed live write retries without delaying normal services. */
+            vtw_service_poll();
+        }
         config_menu_poll_ethernet(&config_menu);
         if (config_menu_ethernet_ftp_sd_remote_active(&config_menu) != 0U) {
             if (ftp_modal_was_active == 0U) {

@@ -26,6 +26,7 @@ extern const uint8_t apple2e_cpu_rom[16384];
 /* Bus-takeover confirmation: the engine needs a few Apple cycles (DMA
  * assert + grace); retry the check across polls rather than spinning. */
 #define VTW_TAKE_POLL_LIMIT    64U
+#define VTW_BOOT_TAKE_TIMEOUT_MS 50U
 /* Takeover machine reset: hold Apple RES# like a CTRL-RESET, then let the
  * PS-side reset handlers (boot menu re-arm, machine re-report plumbing)
  * settle before the ROM copy starts. */
@@ -54,7 +55,8 @@ typedef enum {
     VTW_ST_RES_HOLD,     /* Apple RES# held: whole machine resets */
     VTW_ST_RES_SETTLE,   /* RES# released: PS reset handlers settle */
     VTW_ST_LOAD_ROM,     /* load the fixed Enhanced //e ROM into the shadow */
-    VTW_ST_RUN           /* core released, session live */
+    VTW_ST_RUN,          /* core released, session live */
+    VTW_ST_BOOT_RELEASE  /* initial core release awaiting a checked PL echo */
 } vtw_state_t;
 
 static uint32_t g_uart_base;
@@ -139,8 +141,14 @@ static uint8_t g_announced_handoff_wait;
 static uint8_t g_onee_running;
 static uint8_t g_onee_pause_requested;
 static uint8_t g_onee_cold_reboot_active;
+static uint8_t g_boot_start_active;
+/* The existing ROM's PAL/NTSC VBL lock counts 1 MHz CPU cycles. Run its
+ * first accelerated prompt/menu at that cadence, then apply the saved speed
+ * live on the storage handoff, without another RESET or ROM load. */
+static uint8_t g_boot_menu_speed_hold;
 static XTime g_res_phase_start;
 static XTime g_onee_cold_reboot_start;
+static XTime g_boot_take_start;
 
 static const char *vtw_state_name(vtw_state_t st)
 {
@@ -151,6 +159,7 @@ static const char *vtw_state_name(vtw_state_t st)
     case VTW_ST_RES_SETTLE: return "reset settle";
     case VTW_ST_LOAD_ROM:   return "loading ROM";
     case VTW_ST_RUN:        return "running";
+    case VTW_ST_BOOT_RELEASE: return "boot core release";
     default:                return "?";
     }
 }
@@ -169,9 +178,12 @@ static uint32_t vtw_ctrl_value(uint8_t enable, uint8_t core_run,
     if (apple_res != 0U) {
         v |= CARD_CTRL_VTW_CTRL_APPLE_RES_BIT;
     }
-    v |= ((uint32_t)(vtw_eff_mode() & CARD_CTRL_VTW_CTRL_SPEED_MASK))
+    v |= ((uint32_t)((g_boot_menu_speed_hold != 0U ?
+                      CARD_CTRL_VTW_SPEED_1MHZ : vtw_eff_mode()) &
+                     CARD_CTRL_VTW_CTRL_SPEED_MASK))
          << CARD_CTRL_VTW_CTRL_SPEED_SHIFT;
-    v |= ((uint32_t)vtw_eff_divider()) << CARD_CTRL_VTW_CTRL_DIVIDER_SHIFT;
+    v |= ((uint32_t)(g_boot_menu_speed_hold != 0U ? 0U :
+                    vtw_eff_divider())) << CARD_CTRL_VTW_CTRL_DIVIDER_SHIFT;
     if (boot_menu_service_machine_mode() == CARD_MACHINE_MODE_IIPLUS) {
         /* Controller-less II/II+ game-connector buttons float "pressed";
          * serve the //e Apple-key reads ($C061-$C063) as not-pressed
@@ -236,7 +248,7 @@ static vtw_ctrl_live_result_t vtw_apply_ctrl_live(void)
          * virtual RES# itself keeps the 65C02 and all virtual cards reset. */
         desired = vtw_onee_ctrl_value(
             1U, g_onee_cold_reboot_active);
-    } else if (g_state == VTW_ST_RUN) {
+    } else if (g_state == VTW_ST_RUN || g_state == VTW_ST_BOOT_RELEASE) {
         desired = vtw_ctrl_value(1U, 1U, 0U);
     } else if (g_state == VTW_ST_RES_HOLD) {
         desired = vtw_ctrl_value(1U, 0U, 1U);
@@ -387,6 +399,12 @@ static uint8_t vtw_ms_elapsed(XTime since, uint32_t ms)
 
 static void vtw_session_stop(const char *reason)
 {
+    /* Clear the firmware ROM hold before the native CPU can regain the bus,
+     * including timeouts, policy cancellation, and a settings change. */
+    boot_menu_service_release_vtw_boot_gate();
+    boot_menu_service_end_vtw_boot_scan();
+    g_boot_start_active = 0U;
+    g_boot_menu_speed_hold = 0U;
     REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(0U, 0U, 0U));
     if (g_state != VTW_ST_IDLE) {
         uart_puts(g_uart_base, "vtw: session off (");
@@ -408,6 +426,9 @@ void vtw_service_init(uint32_t uart_base)
     g_onee_pause_requested = 0U;
     g_onee_cold_reboot_active = 0U;
     g_onee_cold_reboot_start = 0U;
+    g_boot_start_active = 0U;
+    g_boot_menu_speed_hold = 0U;
+    g_boot_take_start = 0U;
     vtw_override_clear();
     REG_WRITE(CARD_CTRL_VTW_CTRL_REG, 0U);
     uart_puts(uart_base, "vtw: virtual TransWarp service ready\r\n");
@@ -421,14 +442,38 @@ void vtw_service_set_disk2_config_enabled(uint8_t enable)
 void vtw_service_set_enabled(uint8_t enable)
 {
     g_intent_enabled = (enable != 0U) ? 1U : 0U;
-    if (g_intent_enabled == 0U && g_state != VTW_ST_IDLE) {
-        vtw_session_stop("disabled");
+    if (g_intent_enabled == 0U) {
+        boot_menu_service_release_vtw_boot_gate();
+        if (g_state != VTW_ST_IDLE) {
+            vtw_session_stop("disabled");
+        }
     }
 }
 
 uint8_t vtw_service_is_enabled(void)
 {
     return g_intent_enabled;
+}
+
+void vtw_service_prepare_boot_start(void)
+{
+    /* This installs a compatible C8 page even when host vTW is disabled.
+     * Its gate remains zero then, and the original C7 bytes never change. */
+    boot_menu_service_install_vtw_boot_gate(g_intent_enabled);
+}
+
+uint8_t vtw_service_boot_start_pending(void)
+{
+    return (g_boot_start_active != 0U ||
+            (g_intent_enabled != 0U && g_onee_running == 0U &&
+             vtw_onee_control_active() == 0U &&
+             boot_menu_service_vtw_boot_gate_waiting() != 0U)) ? 1U : 0U;
+}
+
+uint8_t vtw_service_boot_handoff_pending(void)
+{
+    return (g_state == VTW_ST_RUN && g_boot_menu_speed_hold != 0U &&
+            boot_menu_service_slot7_handed_off() != 0U) ? 1U : 0U;
 }
 
 static void vtw_set_configured_speed(uint8_t speed_mode, uint8_t pace_divider,
@@ -785,6 +830,10 @@ uint8_t vtw_service_onee_start(uint8_t disk2_enabled)
     if (g_state != VTW_ST_IDLE || vtw_onee_isolation_confirmed() == 0U) {
         return 0U;
     }
+    /* A saved host-vTW ON can coexist with a saved ONE//e ON. The private
+     * Enhanced //e ROM uses the same C8 helper, so it must never enter the
+     * physical-host startup hold. */
+    boot_menu_service_release_vtw_boot_gate();
     vtw_service_set_disk2_config_enabled(disk2_enabled);
 
     /* Only this confirmed-isolation branch asserts the virtual reset. The
@@ -937,6 +986,27 @@ uint8_t vtw_service_onee_running(void)
             (status & required) == required) ? 1U : 0U;
 }
 
+static uint8_t vtw_boot_finish_core_release(void)
+{
+    const uint32_t required = CARD_CTRL_VTW_STATUS_ENABLE_EFF |
+                              CARD_CTRL_VTW_STATUS_CORE_RUN;
+
+    if (REG_READ(CARD_CTRL_VTW_CTRL_REG) != vtw_ctrl_value(1U, 1U, 0U) ||
+        (REG_READ(CARD_CTRL_VTW_STATUS_REG) & required) != required) {
+        return 0U;
+    }
+    /* The readback crosses the same AXI/PL boundary as CORE_RUN's sampled
+     * edge. Only now restore Disk II; the first cold scan keeps slot 7 and
+     * the accelerated ROM shows the prompt/menu before selecting storage. */
+    boot_menu_service_end_vtw_boot_scan();
+    ++g_sessions_started;
+    g_boot_start_active = 0U;
+    g_state = VTW_ST_RUN;
+    uart_puts(g_uart_base,
+              "vtw: initial //e boot ready; prompt and storage run accelerated\r\n");
+    return 1U;
+}
+
 void vtw_service_poll(void)
 {
     if (g_onee_running != 0U) {
@@ -964,6 +1034,16 @@ void vtw_service_poll(void)
         return;
     }
 
+    if (boot_menu_service_vtw_boot_gate_armed() != 0U &&
+        boot_menu_service_machine_mode() != CARD_MACHINE_MODE_IIE &&
+        (boot_menu_service_machine_id() != 0U ||
+         boot_menu_service_machine_mode() == CARD_MACHINE_MODE_IIGS)) {
+        /* No report yet is a normal cold-start wait. Any identified host
+         * outside the positive IIe path, or a conflicting/faulted report,
+         * releases the hold without granting bus ownership. */
+        boot_menu_service_release_vtw_boot_gate();
+    }
+
     /* Recheck before every host state. A late or conflicting machine report
      * must cancel a pending takeover as well as a running session. */
     if (boot_menu_service_host_bus_master_allowed() == 0U) {
@@ -984,7 +1064,11 @@ void vtw_service_poll(void)
             g_announced_handoff_wait = 0U;
             break;
         }
-        /* Take the bus only after the boot menu has handed slot 7 off to a
+        g_boot_start_active = boot_menu_service_vtw_boot_gate_waiting();
+        g_boot_menu_speed_hold = g_boot_start_active;
+        /* A saved IIe request stops its native ROM before the first prompt.
+         * All other entries retain the existing post-handoff contract below.
+         * Take the bus only after the boot menu has handed slot 7 off to a
          * boot target. If we take over while slot 7 is still the boot menu,
          * the takeover RES# re-arms it and the accelerated //e ROM re-runs
          * the boot menu on the vTW core -- which misbehaves on a II+ (the 'A'
@@ -998,7 +1082,8 @@ void vtw_service_poll(void)
          * finish and it hands off. A machine with no boot target never hands
          * off and stays un-accelerated by design (reliability over the flaky
          * re-run). */
-        if (boot_menu_service_slot7_handed_off() == 0U) {
+        if (g_boot_start_active == 0U &&
+            boot_menu_service_slot7_handed_off() == 0U) {
             if (g_announced_handoff_wait == 0U) {
                 uart_puts(g_uart_base,
                           "vtw: waiting for boot menu handoff\r\n");
@@ -1008,6 +1093,11 @@ void vtw_service_poll(void)
         }
         REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(1U, 0U, 0U));
         g_take_polls = 0U;
+        if (g_boot_start_active != 0U) {
+            XTime_GetTime(&g_boot_take_start);
+            uart_puts(g_uart_base,
+                      "vtw: taking initial //e boot before native prompt\r\n");
+        }
         g_state = VTW_ST_TAKE_BUS;
         break;
 
@@ -1030,7 +1120,11 @@ void vtw_service_poll(void)
             g_state = VTW_ST_RES_HOLD;
             break;
         }
-        if (++g_take_polls > VTW_TAKE_POLL_LIMIT) {
+        if ((g_boot_start_active != 0U &&
+             vtw_ms_elapsed(g_boot_take_start,
+                            VTW_BOOT_TAKE_TIMEOUT_MS) != 0U) ||
+            (g_boot_start_active == 0U &&
+             ++g_take_polls > VTW_TAKE_POLL_LIMIT)) {
             /* No PHI0, or the PL machine gate disagrees. Back off. */
             vtw_session_stop("bus takeover failed");
         }
@@ -1082,6 +1176,18 @@ void vtw_service_poll(void)
          * data pointer auto-increments on each write. */
         (void)vtw_shadow_load_fixed_rom(iiplus_patch, 0U);
 
+        if (g_boot_start_active != 0U) {
+            /* Release the native hold before either core can run again.
+             * The new core must boot the prompt, including when Disk II is
+             * selected; the PL's second-scan shortcut must not hide slot 7. */
+            boot_menu_service_release_vtw_boot_gate();
+            boot_menu_service_begin_vtw_boot_scan();
+            REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(1U, 1U, 0U));
+            XTime_GetTime(&g_boot_take_start);
+            g_state = VTW_ST_BOOT_RELEASE;
+            (void)vtw_boot_finish_core_release();
+            break;
+        }
         REG_WRITE(CARD_CTRL_VTW_CTRL_REG, vtw_ctrl_value(1U, 1U, 0U));
         g_sessions_started++;
         uart_puts(g_uart_base, "vtw: core released, accelerating\r\n");
@@ -1095,11 +1201,31 @@ void vtw_service_poll(void)
         if ((REG_READ(CARD_CTRL_VTW_STATUS_REG) &
              CARD_CTRL_VTW_STATUS_ENABLE_EFF) == 0U) {
             vtw_session_stop("PL gate dropped");
+        } else if (g_boot_menu_speed_hold != 0U &&
+                   boot_menu_service_slot7_handed_off() != 0U) {
+            g_boot_menu_speed_hold = 0U;
+            if (vtw_apply_ctrl_live() != VTW_CTRL_LIVE_APPLIED) {
+                /* Keep the working 1 MHz session if a live speed write is
+                 * not acknowledged; retry without resetting the machine. */
+                g_boot_menu_speed_hold = 1U;
+                (void)vtw_apply_ctrl_live();
+            } else {
+                uart_puts(g_uart_base,
+                          "vtw: boot handoff complete; configured speed applied\r\n");
+            }
+        }
+        break;
+
+    case VTW_ST_BOOT_RELEASE:
+        if (vtw_boot_finish_core_release() == 0U &&
+            vtw_ms_elapsed(g_boot_take_start,
+                           VTW_BOOT_TAKE_TIMEOUT_MS) != 0U) {
+            vtw_session_stop("initial core release failed");
         }
         break;
 
     default:
-        g_state = VTW_ST_IDLE;
+        vtw_session_stop("invalid state");
         break;
     }
 }

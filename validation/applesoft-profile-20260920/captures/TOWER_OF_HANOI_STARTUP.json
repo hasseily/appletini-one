@@ -1,0 +1,22 @@
+{
+  "format": "gs2_guest_pc_profile_v1",
+  "runid": "TOWER_OF_HANOI_STARTUP",
+  "start_seq": 117,
+  "stop_seq": 118,
+  "reason": "host_stop",
+  "instruction_limit": 100000000,
+  "instructions": 997383,
+  "instruction_cycles": 3266358,
+  "irq_events": 0,
+  "irq_cycles": 0,
+  "accounted_cycles": 3266358,
+  "start_guest_cycle": 21696197611,
+  "end_guest_cycle": 21699463969,
+  "guest_cycle_span": 3266358,
+  "histogram_instructions": 997383,
+  "histogram_cycles": 3266358,
+  "clock_mode_at_start": 0,
+  "capture_wall_seconds": 0.10703,
+  "scope": "65C02 PC histogram; IRQ entry accounted separately",
+  "wall_time_note": "Includes host control and pauses; not a clean throughput benchmark"
+}

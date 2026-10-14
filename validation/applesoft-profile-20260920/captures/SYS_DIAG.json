@@ -1,0 +1,22 @@
+{
+  "format": "gs2_guest_pc_profile_v1",
+  "runid": "SYS_DIAG",
+  "start_seq": 29,
+  "stop_seq": 30,
+  "reason": "host_stop",
+  "instruction_limit": 0,
+  "instructions": 6033485,
+  "instruction_cycles": 16222276,
+  "irq_events": 0,
+  "irq_cycles": 0,
+  "accounted_cycles": 16222276,
+  "start_guest_cycle": 20098758769,
+  "end_guest_cycle": 20114981045,
+  "guest_cycle_span": 16222276,
+  "histogram_instructions": 6033485,
+  "histogram_cycles": 16222276,
+  "clock_mode_at_start": 0,
+  "capture_wall_seconds": 0.178195,
+  "scope": "65C02 PC histogram; IRQ entry accounted separately",
+  "wall_time_note": "Includes host control and pauses; not a clean throughput benchmark"
+}

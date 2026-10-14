@@ -1,0 +1,1 @@
+0 TEXT : INPUT "PERIOD,CO-EFFICIENT,THRESHOLD: ";P,N,T:M = 6.28318 / P: HGR2 : FOR Y = 0 TO P - 1:B = Y - 95: FOR X = 0 TO P - 1:A = X - 139: HCOLOR= 3 * ( COS (A * M +  SIN (B * M) * N) +  COS (B * M +  SIN (A * M) * N) > T): FOR D = Y TO 191 STEP P: FOR C = X TO 279 STEP P: HPLOT C,D: NEXT : NEXT : NEXT : NEXT

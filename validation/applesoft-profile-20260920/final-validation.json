@@ -1,0 +1,20 @@
+{
+  "passed": true,
+  "captures": 62,
+  "useful_captures": 61,
+  "successful_program_entries": 28,
+  "failed_captures": 1,
+  "normal_end_program_entries": 21,
+  "useful_instructions": 6151771196,
+  "useful_cycles": 20135577309,
+  "disk_sha256": "a886567d9400af183cf85dbfca84a95e5ec25ad18d2e4036ce725c95a694fbe6",
+  "original_and_working_disk_unchanged": true,
+  "restored_gssquared_files": {
+    "src/cpus/base_6502.cpp": true,
+    "src/gs2.cpp": true,
+    "build/GSSquared.exe": true
+  },
+  "all_capture_clock_modes_zero": true,
+  "all_histograms_match_guest_cycle_spans": true,
+  "duplicate_program_counts_match": true
+}

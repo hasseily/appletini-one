@@ -1,0 +1,22 @@
+{
+  "format": "gs2_guest_pc_profile_v1",
+  "runid": "CONCENTRATION_STARTUP",
+  "start_seq": 37,
+  "stop_seq": 38,
+  "reason": "host_stop",
+  "instruction_limit": 100000000,
+  "instructions": 492842,
+  "instruction_cycles": 1628443,
+  "irq_events": 0,
+  "irq_cycles": 0,
+  "accounted_cycles": 1628443,
+  "start_guest_cycle": 20444355786,
+  "end_guest_cycle": 20445984229,
+  "guest_cycle_span": 1628443,
+  "histogram_instructions": 492842,
+  "histogram_cycles": 1628443,
+  "clock_mode_at_start": 0,
+  "capture_wall_seconds": 0.0763239,
+  "scope": "65C02 PC histogram; IRQ entry accounted separately",
+  "wall_time_note": "Includes host control and pauses; not a clean throughput benchmark"
+}

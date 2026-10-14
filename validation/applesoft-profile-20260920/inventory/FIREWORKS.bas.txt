@@ -1,0 +1,1 @@
+0 HGR2 : FOR C = 3 TO 7 STEP 4:X =  INT ( RND (1) * 200) + 40: FOR Y = 161 TO 20 STEP  - 1: HCOLOR= C * (Y > 50): HPLOT X,Y: HCOLOR= 0: HPLOT X,Y + 30: HPLOT X,Y +  INT ( RND (1) * 15) + 10: NEXT : FOR N = C TO 0 STEP  - C: HCOLOR= N: FOR R = 0 TO 40:A =  SIN (R) * R:B =  COS (R) * R: HPLOT X + A,50 + B: NEXT : NEXT :C = C - (C = 7) * 8: NEXT

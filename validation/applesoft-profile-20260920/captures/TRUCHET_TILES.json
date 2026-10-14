@@ -1,0 +1,22 @@
+{
+  "format": "gs2_guest_pc_profile_v1",
+  "runid": "TRUCHET_TILES",
+  "start_seq": 25,
+  "stop_seq": 26,
+  "reason": "host_stop",
+  "instruction_limit": 0,
+  "instructions": 84065465,
+  "instruction_cycles": 274721368,
+  "irq_events": 0,
+  "irq_cycles": 0,
+  "accounted_cycles": 274721368,
+  "start_guest_cycle": 19809302978,
+  "end_guest_cycle": 20084024346,
+  "guest_cycle_span": 274721368,
+  "histogram_instructions": 84065465,
+  "histogram_cycles": 274721368,
+  "clock_mode_at_start": 0,
+  "capture_wall_seconds": 2.72712,
+  "scope": "65C02 PC histogram; IRQ entry accounted separately",
+  "wall_time_note": "Includes host control and pauses; not a clean throughput benchmark"
+}

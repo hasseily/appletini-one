@@ -1,0 +1,22 @@
+{
+  "format": "gs2_guest_pc_profile_v1",
+  "runid": "FIREWORKS_STARTUP",
+  "start_seq": 67,
+  "stop_seq": 67,
+  "reason": "instruction_budget",
+  "instruction_limit": 100000000,
+  "instructions": 100000000,
+  "instruction_cycles": 331367254,
+  "irq_events": 0,
+  "irq_cycles": 0,
+  "accounted_cycles": 331367254,
+  "start_guest_cycle": 20461229358,
+  "end_guest_cycle": 20792596612,
+  "guest_cycle_span": 331367254,
+  "histogram_instructions": 100000000,
+  "histogram_cycles": 331367254,
+  "clock_mode_at_start": 0,
+  "capture_wall_seconds": 3.14572,
+  "scope": "65C02 PC histogram; IRQ entry accounted separately",
+  "wall_time_note": "Includes host control and pauses; not a clean throughput benchmark"
+}

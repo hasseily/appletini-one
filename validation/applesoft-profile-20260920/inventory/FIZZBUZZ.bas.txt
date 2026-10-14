@@ -1,0 +1,1 @@
+0 A$(1) = "FIZZ":A$(2) = "BUZZ":A$(3) = "FIZZBUZZ": FOR N = 1 TO 100:A$(0) =  STR$ (N): PRINT A$((N / 3 =  INT (N / 3)) + (N / 5 =  INT (N / 5)) * 2): NEXT

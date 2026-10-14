@@ -1,0 +1,22 @@
+{
+  "format": "gs2_guest_pc_profile_v1",
+  "runid": "TARGET_PRACTICE_SHOT",
+  "start_seq": 125,
+  "stop_seq": 126,
+  "reason": "host_stop",
+  "instruction_limit": 100000000,
+  "instructions": 431962,
+  "instruction_cycles": 1414463,
+  "irq_events": 0,
+  "irq_cycles": 0,
+  "accounted_cycles": 1414463,
+  "start_guest_cycle": 21719782264,
+  "end_guest_cycle": 21721196727,
+  "guest_cycle_span": 1414463,
+  "histogram_instructions": 431962,
+  "histogram_cycles": 1414463,
+  "clock_mode_at_start": 0,
+  "capture_wall_seconds": 0.0858381,
+  "scope": "65C02 PC histogram; IRQ entry accounted separately",
+  "wall_time_note": "Includes host control and pauses; not a clean throughput benchmark"
+}

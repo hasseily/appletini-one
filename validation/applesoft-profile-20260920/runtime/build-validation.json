@@ -1,0 +1,13 @@
+{
+  "profiler_tests": "passed: exact instruction budget, IRQ separation, per-PC sums, host stop, consecutive captures",
+  "source_revision": "695e627acb8154adfe7ea5ac972b32fbd50e2c3a",
+  "instrumented_executable": "C:\\Users\\hasse\\source\\repos\\hasseily\\appletini-one\\validation\\applesoft-profile-20260920\\runtime\\GSSquared-profile.exe",
+  "instrumented_executable_sha256": "cb53e8946862c6aa1bb0cc1239cf76c46a2f5db44aa8661150b71b134f373a89",
+  "build_executable_sha256": "cb53e8946862c6aa1bb0cc1239cf76c46a2f5db44aa8661150b71b134f373a89",
+  "original_executable_sha256": "ec838a30c85365ef8b9e9f76fc13b92cd5c5d4098e2164927e70666fd9a3062e",
+  "restored_source_sha256": {
+    "src/cpus/base_6502.cpp": "f29d54e55364f262c3a2891557419a019f752baa6ed2fd8db2593879575be940",
+    "src/gs2.cpp": "31d7dcfcb916f696d8d313ace8f9f18a1b3359e731d3a3444f9368b6b64cb423"
+  },
+  "instrumentation_header_sha256": "b2c0a82f5154c3c2fb793c062e6bdb32eafa55d88224de5437b7b0f289e78faa"
+}

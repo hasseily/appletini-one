@@ -1,0 +1,1 @@
+0 HOME : PRINT "]";:L$ =  CHR$ (8): FOR N = 19 TO 0 STEP  - 1:C =  INT ( RND (1) * 26) + 65: HTAB 25: FOR X = 23 TO 1 STEP  - 1: PRINT " "L$L$ CHR$ (C)L$;: FOR W = 0 TO N * 4: NEXT :P = X:X = X - (( PEEK ( - 16384) - 128) = C) * X: NEXT :N = N *  - X:S = S + (1 - X) * P:D = D - 1: PRINT  MID$ (" ",1, - X);: POKE  - 16368,0: NEXT : PRINT : PRINT "SCORE:"S CHR$ (7)

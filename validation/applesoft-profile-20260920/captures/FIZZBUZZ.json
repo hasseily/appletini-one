@@ -1,0 +1,22 @@
+{
+  "format": "gs2_guest_pc_profile_v1",
+  "runid": "FIZZBUZZ",
+  "start_seq": 1,
+  "stop_seq": 2,
+  "reason": "host_stop",
+  "instruction_limit": 0,
+  "instructions": 1566792,
+  "instruction_cycles": 5291334,
+  "irq_events": 0,
+  "irq_cycles": 0,
+  "accounted_cycles": 5291334,
+  "start_guest_cycle": 1506083034,
+  "end_guest_cycle": 1511374368,
+  "guest_cycle_span": 5291334,
+  "histogram_instructions": 1566792,
+  "histogram_cycles": 5291334,
+  "clock_mode_at_start": 0,
+  "capture_wall_seconds": 0.0947114,
+  "scope": "65C02 PC histogram; IRQ entry accounted separately",
+  "wall_time_note": "Includes host control and pauses; not a clean throughput benchmark"
+}

@@ -1,0 +1,22 @@
+{
+  "format": "gs2_guest_pc_profile_v1",
+  "runid": "GR-KANOID_STARTUP",
+  "start_seq": 69,
+  "stop_seq": 70,
+  "reason": "host_stop",
+  "instruction_limit": 100000000,
+  "instructions": 3551636,
+  "instruction_cycles": 11583149,
+  "irq_events": 0,
+  "irq_cycles": 0,
+  "accounted_cycles": 11583149,
+  "start_guest_cycle": 20804382462,
+  "end_guest_cycle": 20815965611,
+  "guest_cycle_span": 11583149,
+  "histogram_instructions": 3551636,
+  "histogram_cycles": 11583149,
+  "clock_mode_at_start": 0,
+  "capture_wall_seconds": 0.16122,
+  "scope": "65C02 PC histogram; IRQ entry accounted separately",
+  "wall_time_note": "Includes host control and pauses; not a clean throughput benchmark"
+}

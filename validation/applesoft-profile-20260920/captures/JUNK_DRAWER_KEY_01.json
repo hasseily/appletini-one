@@ -1,0 +1,22 @@
+{
+  "format": "gs2_guest_pc_profile_v1",
+  "runid": "JUNK_DRAWER_KEY_01",
+  "start_seq": 73,
+  "stop_seq": 74,
+  "reason": "host_stop",
+  "instruction_limit": 100000000,
+  "instructions": 27960,
+  "instruction_cycles": 91314,
+  "irq_events": 0,
+  "irq_cycles": 0,
+  "accounted_cycles": 91314,
+  "start_guest_cycle": 20817201571,
+  "end_guest_cycle": 20817292885,
+  "guest_cycle_span": 91314,
+  "histogram_instructions": 27960,
+  "histogram_cycles": 91314,
+  "clock_mode_at_start": 0,
+  "capture_wall_seconds": 0.0419659,
+  "scope": "65C02 PC histogram; IRQ entry accounted separately",
+  "wall_time_note": "Includes host control and pauses; not a clean throughput benchmark"
+}

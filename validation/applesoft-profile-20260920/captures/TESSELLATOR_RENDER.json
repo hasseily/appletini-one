@@ -1,0 +1,22 @@
+{
+  "format": "gs2_guest_pc_profile_v1",
+  "runid": "TESSELLATOR_RENDER",
+  "start_seq": 115,
+  "stop_seq": 116,
+  "reason": "host_stop",
+  "instruction_limit": 0,
+  "instructions": 258696525,
+  "instruction_cycles": 852249218,
+  "irq_events": 0,
+  "irq_cycles": 0,
+  "accounted_cycles": 852249218,
+  "start_guest_cycle": 20841895945,
+  "end_guest_cycle": 21694145163,
+  "guest_cycle_span": 852249218,
+  "histogram_instructions": 258696525,
+  "histogram_cycles": 852249218,
+  "clock_mode_at_start": 0,
+  "capture_wall_seconds": 7.76181,
+  "scope": "65C02 PC histogram; IRQ entry accounted separately",
+  "wall_time_note": "Includes host control and pauses; not a clean throughput benchmark"
+}

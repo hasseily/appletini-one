@@ -1,0 +1,759 @@
+{
+  "source": "C:\\Users\\hasse\\Downloads\\short-programs.dsk",
+  "size_bytes": 143360,
+  "sha256": "a886567d9400af183cf85dbfca84a95e5ec25ad18d2e4036ce725c95a694fbe6",
+  "format": "DOS 3.3, 35 tracks, 16 sectors, DOS sector order",
+  "dos_release": 3,
+  "volume": 254,
+  "files": [
+    {
+      "name": "SIERPINSKI",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 3,
+      "run_command": "RUN SIERPINSKI",
+      "length_bytes": 341,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2248,
+          "body_hex": "b93138342c3232c82844d03029ca3231303a48d0482843293a58d0582843293a59d059284329c8483a814ed030c148c9313a51d04eca533a9358c9512c59c94ec158c8512c59c94e3a823ab93138342c3937c82843d04429ca3133333a50284329d0c9313a815ad030c1323a45d043c8313a50d0502843293a48284529d048284329cb323a58d0582843293a59d0592843293a58284529d058c848284329ca53ca503a59284529d059c848284529ca28d4285029ca32c931293a43d043c8313ab030",
+          "text": "POKE 184,22 + (D = 0) * 210:H = H(C):X = X(C):Y = Y(C) + H: FOR N = 0 TO H - 1:Q = N * S: HPLOT X - Q,Y - N TO X + Q,Y - N: NEXT : POKE 184,97 + (C = D) * 133:P(C) =  - 1: FOR Z = 0 TO 2:E = C + 1:P = P(C):H(E) = H(C) / 2:X = X(C):Y = Y(C):X(E) = X + H(C) * S * P:Y(E) = Y + H(E) * ( ABS (P) * 2 - 1):C = C + 1: GOSUB 0"
+        },
+        {
+          "line": 1,
+          "next_address": 2387,
+          "body_hex": "43d043c9313a50284329d050284329c8313a5ad0502843293a823ab13a44d0343a53d02e3537373a86582844292c592844292c482844292c502844293a58283029d03133393a59283029d039353a48283029d039363a903a92333a8159d030c13139313a51d059ca533a93313339c9512c59c1313339c8512c593a823a92303a43d0303ab030",
+          "text": "C = C - 1:P(C) = P(C) + 1:Z = P(C): NEXT : RETURN :D = 4:S = .577: DIM X(D),Y(D),H(D),P(D):X(0) = 139:Y(0) = 95:H(0) = 96: HGR2 : HCOLOR= 3: FOR Y = 0 TO 191:Q = Y * S: HPLOT 139 - Q,Y TO 139 + Q,Y: NEXT : HCOLOR= 0:C = 0: GOSUB 0"
+        }
+      ],
+      "listing": "SIERPINSKI.bas.txt",
+      "tokenized_sha256": "ee17515d136f2a73c4b5278d38411f1b43501c091d50c2bf5d679b68a5e7e31e"
+    },
+    {
+      "name": "SNAKE GAME",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 3,
+      "run_command": "RUN SNAKE GAME",
+      "length_bytes": 311,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2216,
+          "body_hex": "973a58d031313a59d0583a41d0313a9e3a814ed031c133393aa2313a964e3aba222f223b3aa232333aba222f223b3aa228284ec93129cb333929ca3232c8313a9634303aba222f2f223b3a823a814ed030c1313aa259c8313a9658c8313aba2220223b3a58d058c8413a59d059c8423aade228c9313633383429cf313237c4be41243a43d0423a42d0413a41d0c9433aade628412429d038c441d0c9413a42d0c942",
+          "text": "HOME :X = 11:Y = X:A = 1: INVERSE : FOR N = 1 TO 39: VTAB 1: HTAB N: PRINT \"/\";: VTAB 23: PRINT \"/\";: VTAB ((N - 1) / 39) * 22 + 1: HTAB 40: PRINT \"//\";: NEXT : FOR N = 0 TO 1: VTAB Y + 1: HTAB X + 1: PRINT \" \";:X = X + A:Y = Y + B: IF  PEEK ( - 16384) > 127 THEN  GET A$:C = B:B = A:A =  - C: IF  ASC (A$) = 8 THEN A =  - A:B =  - B"
+        },
+        {
+          "line": 1,
+          "next_address": 2357,
+          "body_hex": "53d053c8313aa2313a96313aba533a4ed0e22831303234c858c828d32859cb3829ca343029c82859cb38c9d32859cb382929ca3130323429d1cf3136303a823aa259c8313a9658c8313aba222a223be72837293aa259c8313a9658c8313a814ed030c1313030303a823ab9c931363336382c303abe41243a9d3a973aade628412429d1cf3237c4ac",
+          "text": "S = S + 1: VTAB 1: HTAB 1: PRINT S:N =  PEEK (1024 + X + ( INT (Y / 8) * 40) + (Y / 8 -  INT (Y / 8)) * 1024) <  > 160: NEXT : VTAB Y + 1: HTAB X + 1: PRINT \"*\"; CHR$ (7): VTAB Y + 1: HTAB X + 1: FOR N = 0 TO 1000: NEXT : POKE  - 16368,0: GET A$: NORMAL : HOME : IF  ASC (A$) <  > 27 THEN  RUN"
+        }
+      ],
+      "listing": "SNAKE_GAME.bas.txt",
+      "tokenized_sha256": "42828a4448539ec7de99607e25ff7092ab2de95e5bfac2d08e335a6629fe657f"
+    },
+    {
+      "name": "GUMBALLS",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 2,
+      "run_command": "RUN GUMBALLS",
+      "length_bytes": 162,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2208,
+          "body_hex": "903a86592836293a814ed030c1353a8759284e293a823a8141d030c1323636c731343a53d037c9533a8159d053c1313738c731343a92d328db283129ca3229ca34c8333a58d041c8d328db283129ca32293a814ed030c1353a9358c84eca322c59c859284e29c158c84eca322c59c83135c959284e293a823a9358c8332c59c834c158c8332c59c8353a823a823a83352c332c322c322c332c35",
+          "text": "HGR2 : DIM Y(6): FOR N = 0 TO 5: READ Y(N): NEXT : FOR A = 0 TO 266 STEP 14:S = 7 - S: FOR Y = S TO 178 STEP 14: HCOLOR=  INT ( RND (1) * 2) * 4 + 3:X = A +  INT ( RND (1) * 2): FOR N = 0 TO 5: HPLOT X + N * 2,Y + Y(N) TO X + N * 2,Y + 15 - Y(N): NEXT : HPLOT X + 3,Y + 4 TO X + 3,Y + 5: NEXT : NEXT : DATA 5,3,2,2,3,5"
+        }
+      ],
+      "listing": "GUMBALLS.bas.txt",
+      "tokenized_sha256": "9d47066d5c72d380b2c527073438b371016250b28963f6357fa20b5ed5b7dc0e"
+    },
+    {
+      "name": "STACKER",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 3,
+      "run_command": "RUN STACKER",
+      "length_bytes": 327,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2228,
+          "body_hex": "57d032303a4124d0222a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a223a50d0c931363338343a973a4cd0323a52d033393a58d0343a8159d03234c131c7c9313aa93234353a5024d0ea2841242c312c57293aa2593a815ad030c1313a8158d058c13337c9573a96583aba2220223b3aba50243b3aade2285029d1313238c4823a8158d03337c957c134c7c9313a96583aba50243b3aba2220223b3aade2285029d1313238c4823a5ad0303a82",
+          "text": "W = 20:A$ = \"********************\":P =  - 16384: HOME :L = 2:R = 39:X = 4: FOR Y = 24 TO 1 STEP  - 1: SPEED= 245:P$ =  MID$ (A$,1,W): VTAB Y: FOR Z = 0 TO 1: FOR X = X TO 37 - W: HTAB X: PRINT \" \";: PRINT P$;: IF  PEEK (P) < 128 THEN  NEXT : FOR X = 37 - W TO 4 STEP  - 1: HTAB X: PRINT P$;: PRINT \" \";: IF  PEEK (P) < 128 THEN  NEXT :Z = 0: NEXT"
+        },
+        {
+          "line": 1,
+          "next_address": 2373,
+          "body_hex": "b934393136382c303aa93235353a96583abac357c832293b3a4cd04cc8284cd15829ca2858c94c293a52d052c92852cf58c857c93129ca2852c92858c857c93129293a57d052c94cc8313aa2313aad57cf30c4a2593a964c3abaea2841242c312c57293b3a96313aba593b3a58d0d328db283129ca313029c8343a82593a96313aba22594f552057494e2122",
+          "text": "POKE 49168,0: SPEED= 255: HTAB X: PRINT  SPC( W + 2);:L = L + (L < X) * (X - L):R = R - (R > X + W - 1) * (R - (X + W - 1)):W = R - L + 1: VTAB 1: IF W > 0 THEN  VTAB Y: HTAB L: PRINT  MID$ (A$,1,W);: HTAB 1: PRINT Y;:X =  INT ( RND (1) * 10) + 4: NEXT Y: HTAB 1: PRINT \"YOU WIN!\""
+        }
+      ],
+      "listing": "STACKER.bas.txt",
+      "tokenized_sha256": "de75250ec5b6f5fd99f9e7cbbb7aa32a45db74d7962a60e8c3711e5aabb84733"
+    },
+    {
+      "name": "CITY SCAPE",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 2,
+      "run_command": "RUN CITY SCAPE",
+      "length_bytes": 161,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2207,
+          "body_hex": "903a92363a93302c303a8c36323435343a92343a814ed030c1333a49d0303a814dd031c1313a4ad049c8d328db283129ca3329c8323a4ad04ac928284acf333929ca284ac9333929293a54d0d328db283129ca2834c94e29ca343829c84eca34383a8158d049c14a3a8159d054c1313931c734c94e3a9358ca372c59c158ca37c8362c593a49d04ac8313a4dd04ad033393a823a823a823a82",
+          "text": "HGR2 : HCOLOR= 6: HPLOT 0,0: CALL 62454: HCOLOR= 4: FOR N = 0 TO 3:I = 0: FOR M = 1 TO 1:J = I +  INT ( RND (1) * 3) + 2:J = J - ((J > 39) * (J - 39)):T =  INT ( RND (1) * (4 - N) * 48) + N * 48: FOR X = I TO J: FOR Y = T TO 191 STEP 4 - N: HPLOT X * 7,Y TO X * 7 + 6,Y:I = J + 1:M = J = 39: NEXT : NEXT : NEXT : NEXT"
+        }
+      ],
+      "listing": "CITY_SCAPE.bas.txt",
+      "tokenized_sha256": "d78d907ecd883fcdd0a2353c56e72fb45ceb238084fb7ef9e5f3ead323ff82e9"
+    },
+    {
+      "name": "DRIVING",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 2,
+      "run_command": "RUN DRIVING",
+      "length_bytes": 196,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2242,
+          "body_hex": "973aba3aba3a814ed030c133393aba223d223b3a4124d04124c82220223a823a814ed030c1313a4ed0303aa2313aba2220202020223aba4124533aa232c9284acf4e293aba22204f3d6f223ab93439323030c9284ad0313629ca33322c4e3aadea2841242c332c3229d022202022ce4ac44ad04ac828284ad13129ca28e228343931353229cf31323729ca313629c9284acf4e293a4124d0ea2841242c322c333929c8e7283332c828db283129d12e3129ca33293a53d053c8313a82",
+          "text": "HOME : PRINT : PRINT : FOR N = 0 TO 39: PRINT \"=\";:A$ = A$ + \" \": NEXT : FOR N = 0 TO 1:N = 0: VTAB 1: PRINT \"    \": PRINT A$S: VTAB 2 - (J > N): PRINT \" O=o\": POKE 49200 - (J = 16) * 32,N: IF  MID$ (A$,3,2) = \"  \" OR J THEN J = J + ((J < 1) * ( PEEK (49152) > 127) * 16) - (J > N):A$ =  MID$ (A$,2,39) +  CHR$ (32 + ( RND (1) < .1) * 3):S = S + 1: NEXT"
+        }
+      ],
+      "listing": "DRIVING.bas.txt",
+      "tokenized_sha256": "f1c4e421cb186f4b6974f612660becccc246ed7188cee72254a2c939418c5d3b"
+    },
+    {
+      "name": "FIZZBUZZ",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 2,
+      "run_command": "RUN FIZZBUZZ",
+      "length_bytes": 105,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2151,
+          "body_hex": "4124283129d02246495a5a223a4124283229d02242555a5a223a4124283329d02246495a5a42555a5a223a814ed031c13130303a4124283029d0e4284e293aba412428284ecb33d0d3284ecb332929c8284ecb35d0d3284ecb352929ca32293a82",
+          "text": "A$(1) = \"FIZZ\":A$(2) = \"BUZZ\":A$(3) = \"FIZZBUZZ\": FOR N = 1 TO 100:A$(0) =  STR$ (N): PRINT A$((N / 3 =  INT (N / 3)) + (N / 5 =  INT (N / 5)) * 2): NEXT"
+        }
+      ],
+      "listing": "FIZZBUZZ.bas.txt",
+      "tokenized_sha256": "a08a5ddeb70e6271050a5591cbe998603a98a865e67a891a68e8edd637bdeb7e"
+    },
+    {
+      "name": "FIREWORKS",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 2,
+      "run_command": "RUN FIREWORKS",
+      "length_bytes": 162,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2208,
+          "body_hex": "903a8143d033c137c7343a58d0d328db283129ca32303029c834303a8159d0313631c13230c7c9313a9243ca2859cf3530293a93582c593a92303a93582c59c833303a93582c59c8d328db283129ca313529c831303a823a814ed043c130c7c9433a924e3a8152d030c134303a41d0df285229ca523a42d0de285229ca523a9358c8412c3530c8423a823a823a43d043c92843d03729ca383a82",
+          "text": "HGR2 : FOR C = 3 TO 7 STEP 4:X =  INT ( RND (1) * 200) + 40: FOR Y = 161 TO 20 STEP  - 1: HCOLOR= C * (Y > 50): HPLOT X,Y: HCOLOR= 0: HPLOT X,Y + 30: HPLOT X,Y +  INT ( RND (1) * 15) + 10: NEXT : FOR N = C TO 0 STEP  - C: HCOLOR= N: FOR R = 0 TO 40:A =  SIN (R) * R:B =  COS (R) * R: HPLOT X + A,50 + B: NEXT : NEXT :C = C - (C = 7) * 8: NEXT"
+        }
+      ],
+      "listing": "FIREWORKS.bas.txt",
+      "tokenized_sha256": "9d278ec6f0c3c321c5dabc384567c53fa3d2022d0a798d8201c60fa42511674b"
+    },
+    {
+      "name": "RANDOM PLASMA",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 2,
+      "run_command": "RUN RANDOM PLASMA",
+      "length_bytes": 68,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2114,
+          "body_hex": "903a8159d030c13139313a8158d030c13237393a9228db283129cf28df2859ca2e3129c832c8df2858ca2e312929cb3429ca333a93582c593a823a82",
+          "text": "HGR2 : FOR Y = 0 TO 191: FOR X = 0 TO 279: HCOLOR= ( RND (1) > ( SIN (Y * .1) + 2 +  SIN (X * .1)) / 4) * 3: HPLOT X,Y: NEXT : NEXT"
+        }
+      ],
+      "listing": "RANDOM_PLASMA.bas.txt",
+      "tokenized_sha256": "c556906ed84b10f265764ba99785291af444edb3b5f2118f24b97e00e75db017"
+    },
+    {
+      "name": "FS PLASMA",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 2,
+      "run_command": "RUN FS PLASMA",
+      "length_bytes": 214,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2260,
+          "body_hex": "864128322c323831293a903a8159d030c13139313a54d031c9543a8158d030c13237393a56d028df2859cb3929c8df2858cb3929c83229cb34c84128542c58c831293a51d056cfd0302e353a45d056c9513a4128542c58c83129d0303a4128542c58c83229d04128542c58c83229c845ca2e343a412831c9542c5829d0412831c9542c5829c845ca2e323a412831c9542c58c83129d0412831c9542c58c83129c845ca2e333a412831c9542c58c83229d0412831c9542c58c83229c845ca2e313a9251ca333a93582c593a823a82",
+          "text": "DIM A(2,281): HGR2 : FOR Y = 0 TO 191:T = 1 - T: FOR X = 0 TO 279:V = ( SIN (Y / 9) +  SIN (X / 9) + 2) / 4 + A(T,X + 1):Q = V >  = 0.5:E = V - Q:A(T,X + 1) = 0:A(T,X + 2) = A(T,X + 2) + E * .4:A(1 - T,X) = A(1 - T,X) + E * .2:A(1 - T,X + 1) = A(1 - T,X + 1) + E * .3:A(1 - T,X + 2) = A(1 - T,X + 2) + E * .1: HCOLOR= Q * 3: HPLOT X,Y: NEXT : NEXT"
+        }
+      ],
+      "listing": "FS_PLASMA.bas.txt",
+      "tokenized_sha256": "f47120b32f4e74a62cae19ea3f5132dbf4fb3f550c80f3e2a865a649f1eea956"
+    },
+    {
+      "name": "COLOR PLASMA",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 4,
+      "run_command": "RUN COLOR PLASMA",
+      "length_bytes": 546,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2105,
+          "body_hex": "864128322c323831293a903a92373ab22022412220495320544845204552524f5220434f5252454354494f4e20425546464552",
+          "text": "DIM A(2,281): HGR2 : HCOLOR= 7: REM  \"A\" IS THE ERROR CORRECTION BUFFER"
+        },
+        {
+          "line": 1,
+          "next_address": 2133,
+          "body_hex": "8159d030c13139313a54d031c9543a8158d030c1313339",
+          "text": "FOR Y = 0 TO 191:T = 1 - T: FOR X = 0 TO 139"
+        },
+        {
+          "line": 2,
+          "next_address": 2178,
+          "body_hex": "56d0df282858c9373029cb2831c82859cb3130292929c8313ab220434f4d505554452056414c5545",
+          "text": "V =  SIN ((X - 70) / (1 + (Y / 10))) + 1: REM  COMPUTE VALUE"
+        },
+        {
+          "line": 3,
+          "next_address": 2218,
+          "body_hex": "56d056c84128542c58c831293ab220414444204552524f5220434f5252454354494f4e",
+          "text": "V = V + A(T,X + 1): REM  ADD ERROR CORRECTION"
+        },
+        {
+          "line": 4,
+          "next_address": 2261,
+          "body_hex": "51d0d32856c8302e35293ab2205155414e54495a452056414c55452028302c31204f52203229",
+          "text": "Q =  INT (V + 0.5): REM  QUANTIZE VALUE (0,1 OR 2)"
+        },
+        {
+          "line": 5,
+          "next_address": 2287,
+          "body_hex": "45d056c9513ab220434f4d50555445204552524f52",
+          "text": "E = V - Q: REM  COMPUTE ERROR"
+        },
+        {
+          "line": 6,
+          "next_address": 2442,
+          "body_hex": "4128542c58c83129d0303a4128542c58c83229d04128542c58c83229c845ca2e343a412831c9542c5829d0412831c9542c5829c845ca2e323a412831c9542c58c83129d0412831c9542c58c83129c845ca2e333a412831c9542c58c83229d0412831c9542c58c83229c845ca2e313ab2204552524f5220444946465553494f4e20544f204e45494748424f52494e4720504958454c53",
+          "text": "A(T,X + 1) = 0:A(T,X + 2) = A(T,X + 2) + E * .4:A(1 - T,X) = A(1 - T,X) + E * .2:A(1 - T,X + 1) = A(1 - T,X + 1) + E * .3:A(1 - T,X + 2) = A(1 - T,X + 2) + E * .1: REM  ERROR DIFFUSION TO NEIGHBORING PIXELS"
+        },
+        {
+          "line": 7,
+          "next_address": 2515,
+          "body_hex": "ad51cf30c49358ca322c593ab220504c4f54204c45465420504958454c204f462050414952204946205155414e54495a45442056414c5545204953204e4f54205a45524f",
+          "text": "IF Q > 0 THEN  HPLOT X * 2,Y: REM  PLOT LEFT PIXEL OF PAIR IF QUANTIZED VALUE IS NOT ZERO"
+        },
+        {
+          "line": 8,
+          "next_address": 2584,
+          "body_hex": "ad51cf31c49358ca32c8312c593ab220504c4f5420524947485420504958454c204946205155414e54495a45442056414c554520495320322028574849544529",
+          "text": "IF Q > 1 THEN  HPLOT X * 2 + 1,Y: REM  PLOT RIGHT PIXEL IF QUANTIZED VALUE IS 2 (WHITE)"
+        },
+        {
+          "line": 9,
+          "next_address": 2592,
+          "body_hex": "823a82",
+          "text": "NEXT : NEXT"
+        }
+      ],
+      "listing": "COLOR_PLASMA.bas.txt",
+      "tokenized_sha256": "a042dfd0e16ec03cdc75203f1772db581c4af22bc59272c23de0f04ca2b79a2a"
+    },
+    {
+      "name": "DESERT ISLAND",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 3,
+      "run_command": "RUN DESERT ISLAND",
+      "length_bytes": 435,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2269,
+          "body_hex": "814ed030c1353a875224284e292c4924284e293a823a8757242c51243a814ed030c1313a4924d049242852293a43d043c8313a8322494e20412043415645222c2241204d4150222c224f4e20412053554e4e59204245414348222c2c22494e20544845204f4345414e222c2c225452454144494e47205741544552222c2c224f4e204120534d414c4c2049534c414e44222c2c22425920412050414c4d2054524545222c22412053484f56454c222c22594f5520464f554e442054484520545245415355524520494e20222c2220414e44205345452022",
+          "text": "FOR N = 0 TO 5: READ R$(N),I$(N): NEXT : READ W$,Q$: FOR N = 0 TO 1:I$ = I$(R):C = C + 1: DATA \"IN A CAVE\",\"A MAP\",\"ON A SUNNY BEACH\",,\"IN THE OCEAN\",,\"TREADING WATER\",,\"ON A SMALL ISLAND\",,\"BY A PALM TREE\",\"A SHOVEL\",\"YOU FOUND THE TREASURE IN \",\" AND SEE \""
+        },
+        {
+          "line": 1,
+          "next_address": 2481,
+          "body_hex": "ba22594f552041524520225224285229ea285124c849242c312c3330ca28e328492429cf312929222e223abe41243aba41243b3abaea2822414b454e2e49472e222c31c8284124d022442229ca352c28284124d0225422cd4924d1cf222229ce4124d022442229ca35293a4924285229d0ea2849242c312ce328492429ca284124d1cf22542229293a52d052c8284124d0224522cd52d13529c9284124d0225722cd52cf30293a4ed052d034cd4124c84924283029c84924283529d02244223a823aba57244322204d4f5645532122",
+          "text": "PRINT \"YOU ARE \"R$(R) MID$ (Q$ + I$,1,30 * ( LEN (I$) > 1))\".\": GET A$: PRINT A$;: PRINT  MID$ (\"AKEN.IG.\",1 + (A$ = \"D\") * 5,((A$ = \"T\" AND I$ <  > \"\") OR A$ = \"D\") * 5):I$(R) =  MID$ (I$,1, LEN (I$) * (A$ <  > \"T\")):R = R + (A$ = \"E\" AND R < 5) - (A$ = \"W\" AND R > 0):N = R = 4 AND A$ + I$(0) + I$(5) = \"D\": NEXT : PRINT W$C\" MOVES!\""
+        }
+      ],
+      "listing": "DESERT_ISLAND.bas.txt",
+      "tokenized_sha256": "8054d9657c5c8af39feae838a06269dfd143d09a185f90b12cdbadb9320833de"
+    },
+    {
+      "name": "TYPING GAME",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 2,
+      "run_command": "RUN TYPING GAME",
+      "length_bytes": 192,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2238,
+          "body_hex": "973aba225d223b3a4c24d0e72838293a814ed03139c130c7c9313a43d0d328db283129ca323629c836353a9632353a8158d03233c131c7c9313aba2220224c244c24e72843294c243b3a8157d030c14eca343a823a50d0583a58d058c92828e228c9313633383429c931323829d04329ca583a823a4ed04ecac9583a53d053c82831c95829ca503a44d044c9313abaea282220222c312cc958293b3ab9c931363336382c303a823aba3aba2253434f52453a2253e7283729",
+          "text": "HOME : PRINT \"]\";:L$ =  CHR$ (8): FOR N = 19 TO 0 STEP  - 1:C =  INT ( RND (1) * 26) + 65: HTAB 25: FOR X = 23 TO 1 STEP  - 1: PRINT \" \"L$L$ CHR$ (C)L$;: FOR W = 0 TO N * 4: NEXT :P = X:X = X - (( PEEK ( - 16384) - 128) = C) * X: NEXT :N = N *  - X:S = S + (1 - X) * P:D = D - 1: PRINT  MID$ (\" \",1, - X);: POKE  - 16368,0: NEXT : PRINT : PRINT \"SCORE:\"S CHR$ (7)"
+        }
+      ],
+      "listing": "TYPING_GAME.bas.txt",
+      "tokenized_sha256": "f88956465d59f1e42199a7b3e48658010f09b86074437773f69e71496c3c1ac2"
+    },
+    {
+      "name": "SPRITE",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 3,
+      "run_command": "RUN SPRITE",
+      "length_bytes": 305,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2220,
+          "body_hex": "bae7283137293a41d03132343a42d038303a903a92363a93302c303a8cc9333038323a4424d0223f263e293e253e3e24314b3124314e3124322424314d315031244b242456314b24243151244b244d243e243150244b244c31243e25314f244b244c243e3e24314d324f31243e3e243155243e3f2451244c31243e3f243153243f3e243124315131243f3e243225314d3224403e24332a413e2432243e243224433f25402522",
+          "text": "PRINT  CHR$ (17):A = 124:B = 80: HGR2 : HCOLOR= 6: HPLOT 0,0: CALL  - 3082:D$ = \"?&>)>%>>$1K1$1N1$2$$1M1P1$K$$V1K$$1Q$K$M$>$1P$K$L1$>%1O$K$L$>>$1M2O1$>>$1U$>?$Q$L1$>?$1S$?>$1$1Q1$?>$2%1M2$@>$3*A>$2$>$2$C?%@%\""
+        },
+        {
+          "line": 1,
+          "next_address": 2351,
+          "body_hex": "814dd031c13132363a44d0e628ea2844242c4d2c312929c933353a43d0d32844cb3133293a9243c8343a814ed031c144c943ca31333a9341c8582c42c859c141c858c8312c42c8593a9341c8582c42c859c831c141c858c8312c42c859c8313a58d02858c83229ca2858d13330293a59d059c82858d03029ca323a823a82",
+          "text": "FOR M = 1 TO 126:D =  ASC ( MID$ (D$,M,1)) - 35:C =  INT (D / 13): HCOLOR= C + 4: FOR N = 1 TO D - C * 13: HPLOT A + X,B + Y TO A + X + 1,B + Y: HPLOT A + X,B + Y + 1 TO A + X + 1,B + Y + 1:X = (X + 2) * (X < 30):Y = Y + (X = 0) * 2: NEXT : NEXT"
+        }
+      ],
+      "listing": "SPRITE.bas.txt",
+      "tokenized_sha256": "c5999da1a1d3a4e37715b642dd0ac001dd4228c0775614f3193c4cc940fa3358"
+    },
+    {
+      "name": "ISOMETRIC FACTORY",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 3,
+      "run_command": "RUN ISOMETRIC FACTORY",
+      "length_bytes": 330,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2231,
+          "body_hex": "903a92343a93302c303a8c36323435343a58d03133383a59d03134303a814ed030c131303a8744284e292c57284e292c48284e293ab0313a823a58d03132323a59d039333a48283529d036303a814ed035c131303ab0313a823a803a8336362c37352c302c35342c35312c31352c37362c35312c32302c35342c35312c352c37372c35312c302c35342c362c34352c35352c362c302c34342c342c302c37362c342c342c37362c372c342c37362c332c33",
+          "text": "HGR2 : HCOLOR= 4: HPLOT 0,0: CALL 62454:X = 138:Y = 140: FOR N = 0 TO 10: READ D(N),W(N),H(N): GOSUB 1: NEXT :X = 122:Y = 93:H(5) = 60: FOR N = 5 TO 10: GOSUB 1: NEXT : END : DATA 66,75,0,54,51,15,76,51,20,54,51,5,77,51,0,54,6,45,55,6,0,44,4,0,76,4,4,76,7,4,76,3,3"
+        },
+        {
+          "line": 1,
+          "next_address": 2376,
+          "body_hex": "58d058c8284ecf3729ca343a59d059c9284ed03829ca373a43d044284e293a57d057284e293a48d048284e293a4325d043cb31303a43283029d043253a43283129d043c94325ca31303a8149d0c957c1573a92432849cf30293a4ad057cb32c9d42849cb32293a9358c8492c59c94ac9d4284829c158c8492c59c84a3a823a59d059c948ca2848cf30293ab1",
+          "text": "X = X + (N > 7) * 4:Y = Y - (N = 8) * 7:C = D(N):W = W(N):H = H(N):C% = C / 10:C(0) = C%:C(1) = C - C% * 10: FOR I =  - W TO W: HCOLOR= C(I > 0):J = W / 2 -  ABS (I / 2): HPLOT X + I,Y - J -  ABS (H) TO X + I,Y + J: NEXT :Y = Y - H * (H > 0): RETURN"
+        }
+      ],
+      "listing": "ISOMETRIC_FACTORY.bas.txt",
+      "tokenized_sha256": "2d00ff91005ca445b529e5e3b34e4e39097faa1231dd5ef582dfc1f6181e667a"
+    },
+    {
+      "name": "TESSELLATOR",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 2,
+      "run_command": "RUN TESSELLATOR",
+      "length_bytes": 171,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2217,
+          "body_hex": "893a8422504552494f442c434f2d454646494349454e542c5448524553484f4c443a20223b502c4e2c543a4dd0362e3238333138cb503a903a8159d030c150c9313a42d059c939353a8158d030c150c9313a41d058c93133393a9233ca28de2841ca4dc8df2842ca4d29ca4e29c8de2842ca4dc8df2841ca4d29ca4e29cf54293a8144d059c1313931c7503a8143d058c1323739c7503a93432c443a823a823a823a82",
+          "text": "TEXT : INPUT \"PERIOD,CO-EFFICIENT,THRESHOLD: \";P,N,T:M = 6.28318 / P: HGR2 : FOR Y = 0 TO P - 1:B = Y - 95: FOR X = 0 TO P - 1:A = X - 139: HCOLOR= 3 * ( COS (A * M +  SIN (B * M) * N) +  COS (B * M +  SIN (A * M) * N) > T): FOR D = Y TO 191 STEP P: FOR C = X TO 279 STEP P: HPLOT C,D: NEXT : NEXT : NEXT : NEXT"
+        }
+      ],
+      "listing": "TESSELLATOR.bas.txt",
+      "tokenized_sha256": "ae1c96fa1f163171f5ea2357bfd00042bdf0476d9d08b4041051a94cf0e33681"
+    },
+    {
+      "name": "TOWER OF HANOI",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 3,
+      "run_command": "RUN TOWER OF HANOI",
+      "length_bytes": 400,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2248,
+          "body_hex": "48d0383a865428332c48293a913a973a44d0313a8159d030c148c9313a5428582c5929d048c9593a48285829d059c8313ab0313a823a8144d030c1313a8151d030c1313abe41243a58d0e628412429c9313a58d058c9d32858cb3329ca333a51d048285829cfc944cd54ca44d1d0562858293a823a542858c82831c94429ca2833c958292c4828582929d0543a48285829d048285829c8443ab0313a48285829d048285829c931c8443a44d044c92844d03129ca32ca2848283229d148293a823a80",
+          "text": "H = 8: DIM T(3,H): HGR : HOME :D = 1: FOR Y = 0 TO H - 1:T(X,Y) = H - Y:H(X) = Y + 1: GOSUB 1: NEXT : FOR D = 0 TO 1: FOR Q = 0 TO 1: GET A$:X =  ASC (A$) - 1:X = X -  INT (X / 3) * 3:Q = H(X) >  - D AND T * D <  = V(X): NEXT :T(X + (1 - D) * (3 - X),H(X)) = T:H(X) = H(X) + D: GOSUB 1:H(X) = H(X) - 1 + D:D = D - (D = 1) * 2 * (H(2) < H): NEXT : END"
+        },
+        {
+          "line": 1,
+          "next_address": 2446,
+          "body_hex": "59d048285829c9313a54d05428582c59293a43d054c9d32854cb3529ca35c8313a43d043c82843cf33293a9243ca443a41d058ca28313334c948ca3429c848ca343a5ad05428582c5929ca343a8142d030c1343a9341c95a2c313536c959ca36c942c141c85a2c313536c959ca36c9423a823a92333a93302c313538c13237392c3135383aa232313a8149d030c1323aba222020202249c8312c3a5ad048284929c9313a56284929d05428492c5ac8285ad1302929c8285ad13029ca393a823ab1",
+          "text": "Y = H(X) - 1:T = T(X,Y):C = T -  INT (T / 5) * 5 + 1:C = C + (C > 3): HCOLOR= C * D:A = X * (134 - H * 4) + H * 4:Z = T(X,Y) * 4: FOR B = 0 TO 4: HPLOT A - Z,156 - Y * 6 - B TO A + Z,156 - Y * 6 - B: NEXT : HCOLOR= 3: HPLOT 0,158 TO 279,158: VTAB 21: FOR I = 0 TO 2: PRINT \"   \"I + 1,:Z = H(I) - 1:V(I) = T(I,Z + (Z < 0)) + (Z < 0) * 9: NEXT : RETURN"
+        }
+      ],
+      "listing": "TOWER_OF_HANOI.bas.txt",
+      "tokenized_sha256": "a4b278c59a25ecf12f8a8bf9e1906487e7fd53803eb123923e02f56eabeedfa4"
+    },
+    {
+      "name": "GEOMETRY",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 3,
+      "run_command": "RUN GEOMETRY",
+      "length_bytes": 305,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2193,
+          "body_hex": "903a92333a50d0332e313431353932373a51d050cb323a4cd034373a4bd0d3283935cb4c293a52d0da28284ccb3229cc32ca32293a43d031303a41d050cb343a814ed030c1433a44d02843c94e29cb43ca523a814dd030c1333a55284d29d0de2841c84dca5129ca443a56284d29d0df2841c84dca5129ca443a823ab0313a41d041c8302e31353a823a80",
+          "text": "HGR2 : HCOLOR= 3:P = 3.1415927:Q = P / 2:L = 47:K =  INT (95 / L):R =  SQR ((L / 2) ^ 2 * 2):C = 10:A = P / 4: FOR N = 0 TO C:D = (C - N) / C * R: FOR M = 0 TO 3:U(M) =  COS (A + M * Q) * D:V(M) =  SIN (A + M * Q) * D: NEXT : GOSUB 1:A = A + 0.15: NEXT : END"
+        },
+        {
+          "line": 1,
+          "next_address": 2351,
+          "body_hex": "42d0313a8153d0c94bc14bc9313a8154d0c94bc14bc9313a58d0313430c853ca4cc84ccb323a59d03936c854ca4cc84ccb323a9358c855283029ca422c59c856283029c158c855283129ca422c59c8562831293a93c158c855283229ca422c59c8562832293a93c158c855283329ca422c59c8562833293a93c158c855283029ca422c59c8562830293a42d0c9423a823a42d0c9423a823ab1",
+          "text": "B = 1: FOR S =  - K TO K - 1: FOR T =  - K TO K - 1:X = 140 + S * L + L / 2:Y = 96 + T * L + L / 2: HPLOT X + U(0) * B,Y + V(0) TO X + U(1) * B,Y + V(1): HPLOT  TO X + U(2) * B,Y + V(2): HPLOT  TO X + U(3) * B,Y + V(3): HPLOT  TO X + U(0) * B,Y + V(0):B =  - B: NEXT :B =  - B: NEXT : RETURN"
+        }
+      ],
+      "listing": "GEOMETRY.bas.txt",
+      "tokenized_sha256": "d0fc652f01cb103cf851ec3dcc9f3b5f8fa3286796c53cd8fe224fcb380d8069"
+    },
+    {
+      "name": "TARGET PRACTICE",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 3,
+      "run_command": "RUN TARGET PRACTICE",
+      "length_bytes": 392,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2234,
+          "body_hex": "865928313430293ab933342c32303a973a92373a8155d037c131363a913a52d0db283129ca33373a814ed030c13133393a54d0d3284ecb3829d0553a59284e29d0313439c952c8de284eca52ca2e303031c85229ca523a58d04eca323a59d059284e293a93582c30c158c8312c593a93c158c8312c59c835ca543a823a45d05928323029c9353a814ed030c1343a933431c94e2c45c84ec134312c45c84e3a823a50d0323030303a8151d030c1313a50d050cb32",
+          "text": "DIM Y(140): POKE 34,20: HOME : HCOLOR= 7: FOR U = 7 TO 16: HGR :R =  RND (1) * 37: FOR N = 0 TO 139:T =  INT (N / 8) = U:Y(N) = 149 - R +  COS (N * R * .001 + R) * R:X = N * 2:Y = Y(N): HPLOT X,0 TO X + 1,Y: HPLOT  TO X + 1,Y + 5 * T: NEXT :E = Y(20) - 5: FOR N = 0 TO 4: HPLOT 41 - N,E + N TO 41,E + N: NEXT :P = 2000: FOR Q = 0 TO 1:P = P / 2"
+        },
+        {
+          "line": 1,
+          "next_address": 2438,
+          "body_hex": "8422414e472c5057523a223b412c563a52d041cac92e303137353a43d0de285229ca563a44d0df285229ca563a58d0303a59d0303a8154d030c13130c7302e313a93582c593a58d03431c8d32843ca54cb32c954ca5429ca323a59d045c844ca54c8392e38ca54ca543a49d058cb32ca2858cf30cd58d1323830293a54d054c8282859cf5928492929c82858d13029c82858cf32373929c82859d1302929ca31353a823a51d0d32858cb313629d0553a823a53d053c8503a823aba2253434f52453a22d3285329",
+          "text": "INPUT \"ANG,PWR:\";A,V:R = A *  - .0175:C =  COS (R) * V:D =  SIN (R) * V:X = 0:Y = 0: FOR T = 0 TO 10 STEP 0.1: HPLOT X,Y:X = 41 +  INT (C * T / 2 - T * T) * 2:Y = E + D * T + 9.8 * T * T:I = X / 2 * (X > 0 AND X < 280):T = T + ((Y > Y(I)) + (X < 0) + (X > 279) + (Y < 0)) * 15: NEXT :Q =  INT (X / 16) = U: NEXT :S = S + P: NEXT : PRINT \"SCORE:\" INT (S)"
+        }
+      ],
+      "listing": "TARGET_PRACTICE.bas.txt",
+      "tokenized_sha256": "7968a5d0523fd8928b0686f5c723a68fa9b23315f34195ada89d998f646d7d7f"
+    },
+    {
+      "name": "JUNK DRAWER",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 2,
+      "run_command": "RUN JUNK DRAWER",
+      "length_bytes": 185,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2231,
+          "body_hex": "903a814cd030c1313a92333a93412c42c8323a92433a815ad042c142c8313a93412c5ac141c831312c5a3a823abe4b243a4bd0e6284b2429c937343a92303a93412c42c8323a58d058c8284bc93129ca28d4284bc93129d031293a58d058c9d32858cb3230293a41d058ca31343a59d059c84bca28d4284b29d031293a59d059c9d32859cb3438293a42d059ca343a4cd0303a43d043c8284bc83236c94329ca28d328284bc8323629cb3829d030293a82",
+          "text": "HGR2 : FOR L = 0 TO 1: HCOLOR= 3: HPLOT A,B + 2: HCOLOR= C: FOR Z = B TO B + 1: HPLOT A,Z TO A + 11,Z: NEXT : GET K$:K =  ASC (K$) - 74: HCOLOR= 0: HPLOT A,B + 2:X = X + (K - 1) * ( ABS (K - 1) = 1):X = X -  INT (X / 20):A = X * 14:Y = Y + K * ( ABS (K) = 1):Y = Y -  INT (Y / 48):B = Y * 4:L = 0:C = C + (K + 26 - C) * ( INT ((K + 26) / 8) = 0): NEXT"
+        }
+      ],
+      "listing": "JUNK_DRAWER.bas.txt",
+      "tokenized_sha256": "69eaa8adcf7225cb7fb1b792016245bdc9eb6af634f55a34710b113d53b5aff3"
+    },
+    {
+      "name": "TRUCHET TILES",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 2,
+      "run_command": "RUN TRUCHET TILES",
+      "length_bytes": 119,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2165,
+          "body_hex": "903a92333a53d0333a59d0303a814cd030c1313a8158d030c1323830c953c7533a44d0d328db283129ca32293a5ad059c844ca2853c931293a44d0c944ca32c8313a8152d030c153c9313a9358c8522c5a3a5ad05ac8443a823a823a59d059c8533a4cd02859c85329cf3139313a82",
+          "text": "HGR2 : HCOLOR= 3:S = 3:Y = 0: FOR L = 0 TO 1: FOR X = 0 TO 280 - S STEP S:D =  INT ( RND (1) * 2):Z = Y + D * (S - 1):D =  - D * 2 + 1: FOR R = 0 TO S - 1: HPLOT X + R,Z:Z = Z + D: NEXT : NEXT :Y = Y + S:L = (Y + S) > 191: NEXT"
+        }
+      ],
+      "listing": "TRUCHET_TILES.bas.txt",
+      "tokenized_sha256": "5d89c3b64fb544b5b275136f3883dd6cd22dbcde092e75ed95ffb8ebcbf070b2"
+    },
+    {
+      "name": "CONCENTRATION",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 3,
+      "run_command": "RUN CONCENTRATION",
+      "length_bytes": 379,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2243,
+          "body_hex": "b93138342c3232c8284ed03029ca3130313abe41243a41d0d428e628412429c93635293a41d041c93332ca2841cf3331293a4124d0ea2843242c41c8312c31293a52d0d32841cb35293aa252ca32c8393a9639c835ca2841c952ca35293aba22202241242220223a52d04124d04224cd41d1cf423ab13a973a8647283230293a814ed030c131393a49d0db283129ca284ec831293a4324d0ea2843242c312c4929c8e7283438c84ecb3229c8ea2843242c49c8312c4ec949c831293a82",
+          "text": "POKE 184,22 + (N = 0) * 101: GET A$:A =  ABS ( ASC (A$) - 65):A = A - 32 * (A > 31):A$ =  MID$ (C$,A + 1,1):R =  INT (A / 5): VTAB R * 2 + 9: HTAB 9 + 5 * (A - R * 5): PRINT \" \"A$\" \":R = A$ = B$ AND A <  > B: RETURN : HOME : DIM G(20): FOR N = 0 TO 19:I =  RND (1) * (N + 1):C$ =  MID$ (C$,1,I) +  CHR$ (48 + N / 2) +  MID$ (C$,I + 1,N - I + 1): NEXT"
+        },
+        {
+          "line": 1,
+          "next_address": 2425,
+          "body_hex": "8157d030c1393a8152d030c1313a8144d030c131393a52d0d32844cb35293ab935302c3633c8313932ca472844293aa252ca32c8393a9639c835ca2844c952ca35293abaea28e72844c8363529c8222e2e2e222c47284429c8312c33293a823a9d3ab0303a4224d041243a42d0413ab0303a815ad030c13939393a823a4dd04dc8313a823a47284129d0313a47284229d0313a823aa231383aba22594f5520574f4e20494e20224d22204d4f5645532122",
+          "text": "FOR W = 0 TO 9: FOR R = 0 TO 1: FOR D = 0 TO 19:R =  INT (D / 5): POKE 50,63 + 192 * G(D): VTAB R * 2 + 9: HTAB 9 + 5 * (D - R * 5): PRINT  MID$ ( CHR$ (D + 65) + \"...\",G(D) + 1,3): NEXT : NORMAL : GOSUB 0:B$ = A$:B = A: GOSUB 0: FOR Z = 0 TO 999: NEXT :M = M + 1: NEXT :G(A) = 1:G(B) = 1: NEXT : VTAB 18: PRINT \"YOU WON IN \"M\" MOVES!\""
+        }
+      ],
+      "listing": "CONCENTRATION.bas.txt",
+      "tokenized_sha256": "ecaa7d48e01000d97913f5cd641e1712ecd2e8807ba83f3bbd88c469000c7f55"
+    },
+    {
+      "name": "FIFTEEN PUZZLE",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 3,
+      "run_command": "RUN FIFTEEN PUZZLE",
+      "length_bytes": 387,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2227,
+          "body_hex": "b93138342c3231c8285ad03029ca38343ab935302c3633c8313932ca284ed050293a5225d04ecb343a9633ca284ec95225ca3429c8313aa232ca5225c8313a4124d0e42854284e2929c822223abaea2841242c31c8284ed05029ca322c32293ab13a5ad0313a973a8654283136293a814ed030c131353a54284e29d04e3a823a4ed0d328db283129ca313429c8313a54284e29d04ec8313a54284ec83129d04e3a814ed030c131353ab0303a82",
+          "text": "POKE 184,21 + (Z = 0) * 84: POKE 50,63 + 192 * (N = P):R% = N / 4: HTAB 3 * (N - R% * 4) + 1: VTAB 2 * R% + 1:A$ =  STR$ (T(N)) + \"\": PRINT  MID$ (A$,1 + (N = P) * 2,2): RETURN :Z = 1: HOME : DIM T(16): FOR N = 0 TO 15:T(N) = N: NEXT :N =  INT ( RND (1) * 14) + 1:T(N) = N + 1:T(N + 1) = N: FOR N = 0 TO 15: GOSUB 0: NEXT"
+        },
+        {
+          "line": 1,
+          "next_address": 2433,
+          "body_hex": "8154d030c131343ab93138342c323136c82854285429d1cf54c83129ca343a823a803abe41243a41d0e6284124293a4bd041cf3732cd41d137383a58d0c9d22841c9373529ca2841d1cf373329ca4b3a59d0c9d22841c9373429ca2841d1cf373629ca4b3a5225d050cb343a43d050c95225ca343a43d043c858ca28d42843c858c9312e3529d132293a5225d05225c859ca28d4285225c859c9312e3529d132293a51d05225ca34c8433a54285029d0542851293a4ed0503a50d0513ab0303a4ed0503ab0303aab31",
+          "text": "FOR T = 0 TO 14: POKE 184,216 + (T(T) <  > T + 1) * 4: NEXT : END : GET A$:A =  ASC (A$):K = A > 72 AND A < 78:X =  -  SGN (A - 75) * (A <  > 73) * K:Y =  -  SGN (A - 74) * (A <  > 76) * K:R% = P / 4:C = P - R% * 4:C = C + X * ( ABS (C + X - 1.5) < 2):R% = R% + Y * ( ABS (R% + Y - 1.5) < 2):Q = R% * 4 + C:T(P) = T(Q):N = P:P = Q: GOSUB 0:N = P: GOSUB 0: GOTO 1"
+        }
+      ],
+      "listing": "FIFTEEN_PUZZLE.bas.txt",
+      "tokenized_sha256": "125662b7866345ea48df0240a777d49e43e5a906d34f53c19adc966d7a31b889"
+    },
+    {
+      "name": "GEOMETRIC",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 3,
+      "run_command": "RUN GEOMETRIC",
+      "length_bytes": 305,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2193,
+          "body_hex": "903a92333a50d0332e313431353932373a51d050cb323a4cd034373a4bd0d3283935cb4c293a52d0da28284ccb3229cc32ca32293a43d031303a41d050cb343a814ed030c1433a44d02843c94e29cb43ca523a814dd030c1333a55284d29d0de2841c84dca5129ca443a56284d29d0df2841c84dca5129ca443a823ab0313a41d041c8302e31353a823a80",
+          "text": "HGR2 : HCOLOR= 3:P = 3.1415927:Q = P / 2:L = 47:K =  INT (95 / L):R =  SQR ((L / 2) ^ 2 * 2):C = 10:A = P / 4: FOR N = 0 TO C:D = (C - N) / C * R: FOR M = 0 TO 3:U(M) =  COS (A + M * Q) * D:V(M) =  SIN (A + M * Q) * D: NEXT : GOSUB 1:A = A + 0.15: NEXT : END"
+        },
+        {
+          "line": 1,
+          "next_address": 2351,
+          "body_hex": "42d0313a8153d0c94bc14bc9313a8154d0c94bc14bc9313a58d0313430c853ca4cc84ccb323a59d03936c854ca4cc84ccb323a9358c855283029ca422c59c856283029c158c855283129ca422c59c8562831293a93c158c855283229ca422c59c8562832293a93c158c855283329ca422c59c8562833293a93c158c855283029ca422c59c8562830293a42d0c9423a823a42d0c9423a823ab1",
+          "text": "B = 1: FOR S =  - K TO K - 1: FOR T =  - K TO K - 1:X = 140 + S * L + L / 2:Y = 96 + T * L + L / 2: HPLOT X + U(0) * B,Y + V(0) TO X + U(1) * B,Y + V(1): HPLOT  TO X + U(2) * B,Y + V(2): HPLOT  TO X + U(3) * B,Y + V(3): HPLOT  TO X + U(0) * B,Y + V(0):B =  - B: NEXT :B =  - B: NEXT : RETURN"
+        }
+      ],
+      "listing": "GEOMETRIC.bas.txt",
+      "tokenized_sha256": "d0fc652f01cb103cf851ec3dcc9f3b5f8fa3286796c53cd8fe224fcb380d8069"
+    },
+    {
+      "name": "GR-KANOID",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 3,
+      "run_command": "RUN GR-KANOID",
+      "length_bytes": 349,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2218,
+          "body_hex": "883aa0353a8e31322c3236c5393a8f392c3338c531323a8f392c3338c532363aa0323a8158d03133c132353a8f31302c3338c5583a823a8146d03134c131393a87433aa0433a8e31332c3235c5463a823a45d0463a814cd030c1323a973aba224c495645533a2232c94c3a41d02e353a42d0c9313a58d031393a59d033353a814ed030c133383a50d0d8283029cb323536ca3131c831333aa0323a8e31332c3235c53336",
+          "text": "GR : COLOR= 5: HLIN 12,26 AT 9: VLIN 9,38 AT 12: VLIN 9,38 AT 26: COLOR= 2: FOR X = 13 TO 25: VLIN 10,38 AT X: NEXT : FOR F = 14 TO 19: READ C: COLOR= C: HLIN 13,25 AT F: NEXT :E = F: FOR L = 0 TO 2: HOME : PRINT \"LIVES:\"2 - L:A = .5:B =  - 1:X = 19:Y = 35: FOR N = 0 TO 38:P =  PDL (0) / 256 * 11 + 13: COLOR= 2: HLIN 13,25 AT 36"
+        },
+        {
+          "line": 1,
+          "next_address": 2395,
+          "body_hex": "a0353a8e502c50c832c533363a43d058c8413aa0323a8d452c463a50d0d7432c59293a41d041ca282850d03229ca32c931293aa032c833ca2850d035293a8d432c593a58d058c8413a44d059c8423a50d0d7582c44293a42d042ca282850d03229ca32c931293aa032c833ca2850d035293a8d582c443a59d059c8423a45d0583a46d0593aa031343a8d582c593a4ed0593a823abae72837293b3a823a8331302c312c31332c362c332c3132",
+          "text": "COLOR= 5: HLIN P,P + 2 AT 36:C = X + A: COLOR= 2: PLOT E,F:P =  SCRN( C,Y):A = A * ((P = 2) * 2 - 1): COLOR= 2 + 3 * (P = 5): PLOT C,Y:X = X + A:D = Y + B:P =  SCRN( X,D):B = B * ((P = 2) * 2 - 1): COLOR= 2 + 3 * (P = 5): PLOT X,D:Y = Y + B:E = X:F = Y: COLOR= 14: PLOT X,Y:N = Y: NEXT : PRINT  CHR$ (7);: NEXT : DATA 10,1,13,6,3,12"
+        }
+      ],
+      "listing": "GR-KANOID.bas.txt",
+      "tokenized_sha256": "f4f2564bf28937ec03e0fd9d0ba6df8aba3e2e13383091a862bafed13fedc94a"
+    },
+    {
+      "name": "IDENTITY CRISIS",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 3,
+      "run_command": "RUN IDENTITY CRISIS",
+      "length_bytes": 405,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2271,
+          "body_hex": "4124d02232443430443033304630363032403230393031304030313039303130403031303930313040303130423031303330323032303330313042303130333032303230333031303c3031303730373031303c3031303730373031303c30313036313730313039303130403031303f30313034303330353031303c303130353336303130393031304030313039303130403031303630324032303330463033304630333046303330463039303131393532303330463033304630333046303330463031463430443034304430343044303146223a50d0313a90",
+          "text": "A$ = \"2D40D030F0602@209010@0109010@0109010@010B0103020203010B0103020203010<010707010<010707010<0106170109010@010?01040305010<0105360109010@0109010@010602@2030F030F030F030F09011952030F030F030F030F01F40D040D040D01F\":P = 1: HGR2"
+        },
+        {
+          "line": 1,
+          "next_address": 2451,
+          "body_hex": "92363a93302c303a8cc9333038323a8159d03331c136323a43d0343a49d0e628ea2841242c502c312929c934383a4ad0d32849cb33293a58d0313134c82849c94aca3329ca323a814dd050c150c84aca323a92433a43d03131c9433a53d032ca28e628ea2841242c4dc8312c312929c93437293a93582c59ca32c158c853c9312c59ca323a93582c59ca32c831c158c853c9312c59ca32c8313a58d058c8533a50d050c8313a823a50d050c8313a82",
+          "text": "HCOLOR= 6: HPLOT 0,0: CALL  - 3082: FOR Y = 31 TO 62:C = 4:I =  ASC ( MID$ (A$,P,1)) - 48:J =  INT (I / 3):X = 114 + (I - J * 3) * 2: FOR M = P TO P + J * 2: HCOLOR= C:C = 11 - C:S = 2 * ( ASC ( MID$ (A$,M + 1,1)) - 47): HPLOT X,Y * 2 TO X + S - 1,Y * 2: HPLOT X,Y * 2 + 1 TO X + S - 1,Y * 2 + 1:X = X + S:P = P + 1: NEXT :P = P + 1: NEXT"
+        }
+      ],
+      "listing": "IDENTITY_CRISIS.bas.txt",
+      "tokenized_sha256": "b23715554f1dc23d31017d1215ed65b025eeee9c70968520ff7d20bcca2c655c"
+    },
+    {
+      "name": "MIND THE GAPS",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 3,
+      "run_command": "RUN MIND THE GAPS",
+      "length_bytes": 352,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2210,
+          "body_hex": "a432343537363a83312c302c342c302c35382c33362c34352c35342c372c303ab93233322c303ab93233332c333a8149d030c1393a874a3ab9373638c8492c4a3a823a913ab933342c32303a973a5424d0224d494e445f5448455f47415053215f5f42544e5f305f544f5f4a554d505f484947484552215f5f5f223a99323a98383a59d03135373a9531c535322c593a814ed030c1313a55d059c856",
+          "text": "LOMEM: 24576: DATA 1,0,4,0,58,36,45,54,7,0: POKE 232,0: POKE 233,3: FOR I = 0 TO 9: READ J: POKE 768 + I,J: NEXT : HGR : POKE 34,20: HOME :T$ = \"MIND_THE_GAPS!__BTN_0_TO_JUMP_HIGHER!___\": SCALE= 2: ROT= 8:Y = 157: XDRAW 1 AT 52,Y: FOR N = 0 TO 1:U = Y + V"
+        },
+        {
+          "line": 1,
+          "next_address": 2398,
+          "body_hex": "56d02855d131353729ca56c92855cfd031353729ca2836c828e228343932343929cf31323729ca3229c8313a59d059c8563a9531c535322c593a9531c535322c59c9563aa232313a50d0d8283029cf3136393a53d053c8503a5424d0e92854242c3430c95029c8ea28225f5454222cdb283129ca33c8312c50293a4ed0ea2854242c382c3129d0225f22cd59cfd03135373aba54242253434f52453a22533a823aa232313a96383a9531c535322c593aba303be7283729",
+          "text": "V = (U < 157) * V - (U >  = 157) * (6 + ( PEEK (49249) > 127) * 2) + 1:Y = Y + V: XDRAW 1 AT 52,Y: XDRAW 1 AT 52,Y - V: VTAB 21:P =  PDL (0) > 169:S = S + P:T$ =  RIGHT$ (T$,40 - P) +  MID$ (\"_TT\", RND (1) * 3 + 1,P):N =  MID$ (T$,8,1) = \"_\" AND Y >  = 157: PRINT T$\"SCORE:\"S: NEXT : VTAB 21: HTAB 8: XDRAW 1 AT 52,Y: PRINT 0; CHR$ (7)"
+        }
+      ],
+      "listing": "MIND_THE_GAPS.bas.txt",
+      "tokenized_sha256": "b242651b28ffc5c1420fc8b162b6226edfb89b6a5ff36d9f62e0a7e34259ab8a"
+    },
+    {
+      "name": "SYS.DIAG",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 3,
+      "run_command": "RUN SYS.DIAG",
+      "length_bytes": 352,
+      "lines": [
+        {
+          "line": 0,
+          "next_address": 2205,
+          "body_hex": "a93136303ab8c241284929d0db283129ca35c835ca493a864124283135293a814ed030c131343a874124284e293a823a973a4124d022414e414c595a494e472e2e2e223ab0313aba3a8151d030c1343a8157d030c13530303a823a4124d022594f55522022c84124285129c8222022c8412428c24128312929c8222022c8412428c24128322929c8222e223ab0313a823aa93235353a80",
+          "text": "SPEED= 160: DEF  FN A(I) =  RND (1) * 5 + 5 * I: DIM A$(15): FOR N = 0 TO 14: READ A$(N): NEXT : HOME :A$ = \"ANALYZING...\": GOSUB 1: PRINT : FOR Q = 0 TO 4: FOR W = 0 TO 500: NEXT :A$ = \"YOUR \" + A$(Q) + \" \" + A$( FN A(1)) + \" \" + A$( FN A(2)) + \".\": GOSUB 1: NEXT : SPEED= 255: END"
+        },
+        {
+          "line": 1,
+          "next_address": 2398,
+          "body_hex": "814cd031c1e3284124293abaea2841242c4c2c31293b3a9e3aba2220223be72838293b3a9d3a823aba2220223ab13a8322435055222c2252414d222c224b4559424f415244222c224d4f4e49544f52222c224449534b204949222c224953222c224953205155495445222c22434f554c44204245222c224d49474854204245222c224d555354204245222c2241204d455353222c2259454c4c4f57222c2241204449534153544552222c224f5645525241544544222c2246494e4522",
+          "text": "FOR L = 1 TO  LEN (A$): PRINT  MID$ (A$,L,1);: INVERSE : PRINT \" \"; CHR$ (8);: NORMAL : NEXT : PRINT \" \": RETURN : DATA \"CPU\",\"RAM\",\"KEYBOARD\",\"MONITOR\",\"DISK II\",\"IS\",\"IS QUITE\",\"COULD BE\",\"MIGHT BE\",\"MUST BE\",\"A MESS\",\"YELLOW\",\"A DISASTER\",\"OVERRATED\",\"FINE\""
+        }
+      ],
+      "listing": "SYS.DIAG.bas.txt",
+      "tokenized_sha256": "c717a03b7084f5bce8e97859804240619ff97b3f0012215797cf4f226a8515a8"
+    },
+    {
+      "name": "HELLO",
+      "type_code": 2,
+      "type": "APPLESOFT",
+      "locked": false,
+      "catalog_sectors": 3,
+      "run_command": "RUN HELLO",
+      "length_bytes": 470,
+      "lines": [
+        {
+          "line": 10,
+          "next_address": 2057,
+          "body_hex": "893a97",
+          "text": "TEXT : HOME"
+        },
+        {
+          "line": 20,
+          "next_address": 2077,
+          "body_hex": "8741243aad4124d022454f4622c480",
+          "text": "READ A$: IF A$ = \"EOF\" THEN  END"
+        },
+        {
+          "line": 30,
+          "next_address": 2110,
+          "body_hex": "ad4124d0222d22c49e3abac33430293b3a42d031c9423a9d3aab3230",
+          "text": "IF A$ = \"-\" THEN  INVERSE : PRINT  SPC( 40);:B = 1 - B: NORMAL : GOTO 20"
+        },
+        {
+          "line": 40,
+          "next_address": 2133,
+          "body_hex": "9632312e35c9e328412429cb323aba41243b",
+          "text": "HTAB 21.5 -  LEN (A$) / 2: PRINT A$;"
+        },
+        {
+          "line": 50,
+          "next_address": 2167,
+          "body_hex": "ad42c49e3a96313aba2220223b3a9634303aba2220223b3a9d3aab3230",
+          "text": "IF B THEN  INVERSE : HTAB 1: PRINT \" \";: HTAB 40: PRINT \" \";: NORMAL : GOTO 20"
+        },
+        {
+          "line": 60,
+          "next_address": 2177,
+          "body_hex": "ba3aab3230",
+          "text": "PRINT : GOTO 20"
+        },
+        {
+          "line": 70,
+          "next_address": 2183,
+          "body_hex": "80",
+          "text": "END"
+        },
+        {
+          "line": 80,
+          "next_address": 2323,
+          "body_hex": "832022222c224120434f4c4c454354494f4e204f46204150504c452049492050524f4752414d53222c224259222c224c454520572e2046415354454e4155222c22222c22222c225745423a204150504c453250524f4752414d532e434f4d222c224749544855423a205448454c42414e452f4150504c452d49492d50524f4752414d53222c2222",
+          "text": "DATA  \"\",\"A COLLECTION OF APPLE II PROGRAMS\",\"BY\",\"LEE W. FASTENAU\",\"\",\"\",\"WEB: APPLE2PROGRAMS.COM\",\"GITHUB: THELBANE/APPLE-II-PROGRAMS\",\"\""
+        },
+        {
+          "line": 90,
+          "next_address": 2516,
+          "body_hex": "8320222d222c22222c22494e535452554354494f4e53222c22222c22545950452027434154414c4f472720544f204c4953542046494c45532020202020202020222c2254595045202752554e203c46494c453e2720544f2052554e20412050524f4752414d2020222c22222c225649534954204150504c453250524f4752414d532e434f4d20544f2046494e44222c22494e535452554354494f4e5320464f5220454143482050524f4752414d2e222c22222c222d222c22454f4622",
+          "text": "DATA  \"-\",\"\",\"INSTRUCTIONS\",\"\",\"TYPE 'CATALOG' TO LIST FILES        \",\"TYPE 'RUN <FILE>' TO RUN A PROGRAM  \",\"\",\"VISIT APPLE2PROGRAMS.COM TO FIND\",\"INSTRUCTIONS FOR EACH PROGRAM.\",\"\",\"-\",\"EOF\""
+        }
+      ],
+      "listing": "HELLO.bas.txt",
+      "tokenized_sha256": "c6a9c1ad1e3e4c05c48149b7ce5779dfc29d4097dfb037a119aa5625a42fc546"
+    }
+  ]
+}

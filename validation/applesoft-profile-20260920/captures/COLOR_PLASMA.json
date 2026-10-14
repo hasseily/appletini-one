@@ -1,0 +1,22 @@
+{
+  "format": "gs2_guest_pc_profile_v1",
+  "runid": "COLOR_PLASMA",
+  "start_seq": 9,
+  "stop_seq": 10,
+  "reason": "host_stop",
+  "instruction_limit": 0,
+  "instructions": 1348729127,
+  "instruction_cycles": 4363603356,
+  "irq_events": 0,
+  "irq_cycles": 0,
+  "accounted_cycles": 4363603356,
+  "start_guest_cycle": 15205479148,
+  "end_guest_cycle": 19569082504,
+  "guest_cycle_span": 4363603356,
+  "histogram_instructions": 1348729127,
+  "histogram_cycles": 4363603356,
+  "clock_mode_at_start": 0,
+  "capture_wall_seconds": 40.5991,
+  "scope": "65C02 PC histogram; IRQ entry accounted separately",
+  "wall_time_note": "Includes host control and pauses; not a clean throughput benchmark"
+}

@@ -1,0 +1,75 @@
+start	end_exclusive	category	label
+0x0000	0x00B1	DOS/user	RAM / application / DOS
+0x00B1	0x00C9	parser/dispatch	RAM CHRGET / CHRGOT; require stock-code guard
+0x00C9	0xC000	DOS/user	RAM / application / DOS
+0xC000	0xD000	monitor/IO	I/O and slot firmware address region
+0xD000	0xD365	parser/dispatch	Applesoft dispatch tables, tokens, error text (mostly data)
+0xD365	0xD393	loops/control	GTFORPNT: locate FOR/GOSUB stack frame
+0xD393	0xD3D6	variable/array lookup	BLTU: shared memory relocation helper
+0xD3D6	0xD3E3	parser/dispatch	CHKMEM: expression/statement stack room check
+0xD3E3	0xD410	strings/GC	REASON: storage space check and GC invocation
+0xD410	0xD52C	parser/dispatch	Errors, command input dispatch, program editing/link repair
+0xD52C	0xD559	monitor/IO	INLIN / INCHR: input front end
+0xD559	0xD61A	parser/dispatch	PARSE_INPUT_LINE: tokenize entered text
+0xD61A	0xD649	loops/control	FNDLIN / FL1: linked line search
+0xD649	0xD6A5	parser/dispatch	NEW / CLEAR / interpreter reset
+0xD6A5	0xD766	monitor/IO	LIST and token/line display
+0xD766	0xD7D2	loops/control	FOR / STEP setup
+0xD7D2	0xD849	parser/dispatch	NEWSTT / TRACE / statement dispatch
+0xD849	0xD858	loops/control	RESTORE / DATA pointer reset
+0xD858	0xD863	monitor/IO	ISCNTC: keyboard polling (LDA $C000)
+0xD863	0xD8B0	loops/control	Ctrl-C / STOP / END / CONT
+0xD8B0	0xD912	monitor/IO	SAVE / LOAD / VARTIO / PROGIO
+0xD912	0xDA0C	loops/control	RUN / GOSUB / GOTO / RETURN / DATA / IF / ON
+0xDA0C	0xDA46	literals/number input	LINGET: decimal line-number conversion
+0xDA46	0xDA7A	variable/array lookup	LET / LET2: assignment and numeric variable store
+0xDA7A	0xDACF	strings/GC	LET_STRING / PUTSTR: string assignment
+0xDACF	0xDB71	monitor/IO	PRINT and text formatting/output wrappers
+0xDB71	0xDCF9	literals/number input	INPUT / GET / READ orchestration and input errors
+0xDCF9	0xDD67	loops/control	NEXT: loop frame update and continuation
+0xDD67	0xDED5	parser/dispatch	FRMNUM / type checks / FRMEVL / expression parser
+0xDED5	0xDEF9	variable/array lookup	FRM_VARIABLE: resolve/load variable (including int-to-FP)
+0xDEF9	0xDF0C	graphics	SCRN expression front end
+0xDF0C	0xDF4F	parser/dispatch	UNARY function argument parsing and dispatch
+0xDF4F	0xDF7D	arithmetic	OR / AND / numeric relations
+0xDF7D	0xDFCD	strings/GC	String comparison (includes shared boolean result tail)
+0xDFCD	0xDFD6	monitor/IO	PDL: paddle input front end
+0xDFD6	0xE000	variable/array lookup	DIM / PTRGET and scalar name processing
+0xE000	0xE007	parser/dispatch	DOS/monitor BASIC entry vectors E000/E003
+0xE007	0xE102	variable/array lookup	Scalar lookup/allocation and array descriptor setup
+0xE102	0xE11E	arithmetic	MAKINT / MKINT / AYINT: integer range/conversion
+0xE11E	0xE2DE	variable/array lookup	ARRAY lookup/allocation/indexing; includes integer multiplier
+0xE2DE	0xE2F2	strings/GC	FRE: explicit garbage collection and free-space query
+0xE2F2	0xE2FF	arithmetic	GIVAYF: signed integer to floating point
+0xE2FF	0xE301	monitor/IO	POS: cursor-column query
+0xE301	0xE306	arithmetic	SNGFLT: byte to floating point
+0xE306	0xE3C5	parser/dispatch	DEF FN / FN dispatch and function environment
+0xE3C5	0xE3D5	number output	STR$: number-to-string front end
+0xE3D5	0xE6F5	strings/GC	String allocation, literals, GC, concatenate, slice, LEN/ASC
+0xE6F5	0xE707	arithmetic	GTBYTC / GETBYT / CONINT: byte argument conversion
+0xE707	0xE746	literals/number input	VAL and temporary string parsing pointers
+0xE746	0xE764	arithmetic	GTNUM / COMBYTE / GETADR: address argument conversion
+0xE764	0xE7A0	monitor/IO	PEEK / POKE / WAIT front ends
+0xE7A0	0xEC4A	arithmetic	Floating math, normalization, transfer, compare, integer conversion
+0xEC4A	0xED0A	literals/number input	FIN: decimal text to FAC (includes ADDACC helper)
+0xED0A	0xEE8D	number output	FOUT constants / line and FAC number formatting
+0xEE8D	0xF10B	arithmetic	SQR / power / EXP / polynomial / RND / trigonometry
+0xF10B	0xF1D5	parser/dispatch	CHRGET template / seed data / cold start
+0xF1D5	0xF1EC	monitor/IO	CALL / IN# / PR# wrappers
+0xF1EC	0xF256	graphics	Low-resolution graphics command front ends
+0xF256	0xF26D	monitor/IO	VTAB / SPEED text controls
+0xF26D	0xF273	loops/control	TRACE / NOTRACE
+0xF273	0xF286	monitor/IO	NORMAL / INVERSE / FLASH
+0xF286	0xF2CB	variable/array lookup	HIMEM / LOMEM storage limits
+0xF2CB	0xF331	loops/control	ONERR / HANDLERR / RESUME
+0xF331	0xF390	parser/dispatch	DEL: program editing
+0xF390	0xF39F	graphics	GR / TEXT display modes
+0xF39F	0xF3D8	monitor/IO	STORE / RECALL
+0xF3D8	0xF775	graphics	HGR / HPLOT / HGLIN / DRAW / XDRAW
+0xF775	0xF787	monitor/IO	Enhanced SHLOAD/STORE/RECALL firmware shim
+0xF787	0xF7AA	parser/dispatch	Enhanced tokenizer case-fold helpers
+0xF7AA	0xF7B4	number output	Enhanced LIST line-number prefix wrapper
+0xF7B4	0xF7D9	monitor/IO	Enhanced 40/80-column text-position helpers
+0xF7D9	0xF7E7	variable/array lookup	GETARYPT: STORE/RECALL array lookup wrapper
+0xF7E7	0xF800	monitor/IO	Enhanced HTAB
+0xF800	0x10000	monitor/IO	Monitor ROM; includes low-res graphics and screen output

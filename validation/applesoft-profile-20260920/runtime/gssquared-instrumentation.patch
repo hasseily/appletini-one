@@ -1,0 +1,57 @@
+diff --git a/src/cpus/base_6502.cpp b/src/cpus/base_6502.cpp
+index 3f1b8ea..d9c3f48 100644
+--- a/src/cpus/base_6502.cpp
++++ b/src/cpus/base_6502.cpp
+@@ -20,6 +20,7 @@
+ #include <cstdio>
+ 
+ #include "cpu.hpp"
++#include "C:/Users/hasse/source/repos/hasseily/appletini-one/validation/applesoft-profile-20260920/runtime/GuestProfiler.hpp"
+ 
+ #include "opcodes.hpp"
+ 
+@@ -2145,6 +2146,8 @@ int execute_next(cpu_state *cpu) override {
+         incr_cycles(cpu);
+         return 0;
+     }
++    const uint16_t profile_pc = cpu->pc;
++    const uint64_t profile_cycle = clock->get_cycles();
+     system_trace_entry_t *tb = &cpu->trace_entry;
+     TRACE(
+     // Clear access flags every insn so DATA/IO breakpoints see a fresh f_write.
+@@ -2205,6 +2208,7 @@ int execute_next(cpu_state *cpu) override {
+         //cpu->EFFI = cpu->I;
+ 
+         TRACE ( tb->eaddr = cpu->pc; tb->f_irq = 1;);
++        gs2guest::profiler.record(profile_pc, profile_cycle, clock->get_cycles(), true);
+         TRACE(if (cpu->trace) cpu->trace_buffer->add_entry(cpu->trace_entry);)
+         return 0;
+     }
+@@ -4662,6 +4666,7 @@ int execute_next(cpu_state *cpu) override {
+             break;
+     }
+ 
++    gs2guest::profiler.record(profile_pc, profile_cycle, clock->get_cycles(), false);
+     TRACE(if (cpu->trace) cpu->trace_buffer->add_entry(cpu->trace_entry);)
+ 
+     return 0;
+diff --git a/src/gs2.cpp b/src/gs2.cpp
+index 4e9d066..1cabcb8 100644
+--- a/src/gs2.cpp
++++ b/src/gs2.cpp
+@@ -30,6 +30,7 @@
+ #include "Module_ID.hpp"
+ #include "paths.hpp"
+ #include "cpu.hpp"
++#include "C:/Users/hasse/source/repos/hasseily/appletini-one/validation/applesoft-profile-20260920/runtime/GuestProfiler.hpp"
+ #include "display/display.hpp"
+ #include "devices/speaker/speaker.hpp"
+ #include "platforms.hpp"
+@@ -324,6 +325,7 @@ false if the user requested a halt.
+ bool run_one_frame(computer_t *computer) {
+     cpu_state *cpu = computer->cpu;
+     NClock *clock = computer->clock;
++    gs2guest::profiler.poll_control(clock->get_cycles(), (int)clock->get_clock_mode());
+     display_state_t *ds = (display_state_t *)computer->cached_display_state;
+ 
+     if (cpu->halt == HLT_USER) { // top of frame.

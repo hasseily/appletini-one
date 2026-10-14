@@ -1,0 +1,22 @@
+{
+  "format": "gs2_guest_pc_profile_v1",
+  "runid": "VERIFY_TRACE",
+  "start_seq": 3,
+  "stop_seq": 4,
+  "reason": "host_stop",
+  "instruction_limit": 0,
+  "instructions": 1000,
+  "instruction_cycles": 3661,
+  "irq_events": 0,
+  "irq_cycles": 0,
+  "accounted_cycles": 3661,
+  "start_guest_cycle": 1511374368,
+  "end_guest_cycle": 1511378029,
+  "guest_cycle_span": 3661,
+  "histogram_instructions": 1000,
+  "histogram_cycles": 3661,
+  "clock_mode_at_start": 0,
+  "capture_wall_seconds": 0.0770169,
+  "scope": "65C02 PC histogram; IRQ entry accounted separately",
+  "wall_time_note": "Includes host control and pauses; not a clean throughput benchmark"
+}

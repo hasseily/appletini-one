@@ -1,0 +1,1 @@
+0 HGR2 : DIM Y(6): FOR N = 0 TO 5: READ Y(N): NEXT : FOR A = 0 TO 266 STEP 14:S = 7 - S: FOR Y = S TO 178 STEP 14: HCOLOR=  INT ( RND (1) * 2) * 4 + 3:X = A +  INT ( RND (1) * 2): FOR N = 0 TO 5: HPLOT X + N * 2,Y + Y(N) TO X + N * 2,Y + 15 - Y(N): NEXT : HPLOT X + 3,Y + 4 TO X + 3,Y + 5: NEXT : NEXT : DATA 5,3,2,2,3,5

@@ -1,0 +1,22 @@
+{
+  "format": "gs2_guest_pc_profile_v1",
+  "runid": "GEOMETRY",
+  "start_seq": 21,
+  "stop_seq": 22,
+  "reason": "host_stop",
+  "instruction_limit": 0,
+  "instructions": 6425890,
+  "instruction_cycles": 20856081,
+  "irq_events": 0,
+  "irq_cycles": 0,
+  "accounted_cycles": 20856081,
+  "start_guest_cycle": 19765427119,
+  "end_guest_cycle": 19786283200,
+  "guest_cycle_span": 20856081,
+  "histogram_instructions": 6425890,
+  "histogram_cycles": 20856081,
+  "clock_mode_at_start": 0,
+  "capture_wall_seconds": 0.246611,
+  "scope": "65C02 PC histogram; IRQ entry accounted separately",
+  "wall_time_note": "Includes host control and pauses; not a clean throughput benchmark"
+}

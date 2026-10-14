@@ -1,0 +1,2 @@
+0 POKE 184,22 + (D = 0) * 210:H = H(C):X = X(C):Y = Y(C) + H: FOR N = 0 TO H - 1:Q = N * S: HPLOT X - Q,Y - N TO X + Q,Y - N: NEXT : POKE 184,97 + (C = D) * 133:P(C) =  - 1: FOR Z = 0 TO 2:E = C + 1:P = P(C):H(E) = H(C) / 2:X = X(C):Y = Y(C):X(E) = X + H(C) * S * P:Y(E) = Y + H(E) * ( ABS (P) * 2 - 1):C = C + 1: GOSUB 0
+1 C = C - 1:P(C) = P(C) + 1:Z = P(C): NEXT : RETURN :D = 4:S = .577: DIM X(D),Y(D),H(D),P(D):X(0) = 139:Y(0) = 95:H(0) = 96: HGR2 : HCOLOR= 3: FOR Y = 0 TO 191:Q = Y * S: HPLOT 139 - Q,Y TO 139 + Q,Y: NEXT : HCOLOR= 0:C = 0: GOSUB 0

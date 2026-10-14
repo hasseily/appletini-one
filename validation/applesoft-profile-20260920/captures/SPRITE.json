@@ -1,0 +1,22 @@
+{
+  "format": "gs2_guest_pc_profile_v1",
+  "runid": "SPRITE",
+  "start_seq": 17,
+  "stop_seq": 18,
+  "reason": "host_stop",
+  "instruction_limit": 0,
+  "instructions": 4297089,
+  "instruction_cycles": 14087085,
+  "irq_events": 0,
+  "irq_cycles": 0,
+  "accounted_cycles": 14087085,
+  "start_guest_cycle": 19727081647,
+  "end_guest_cycle": 19741168732,
+  "guest_cycle_span": 14087085,
+  "histogram_instructions": 4297089,
+  "histogram_cycles": 14087085,
+  "clock_mode_at_start": 0,
+  "capture_wall_seconds": 0.185239,
+  "scope": "65C02 PC histogram; IRQ entry accounted separately",
+  "wall_time_note": "Includes host control and pauses; not a clean throughput benchmark"
+}

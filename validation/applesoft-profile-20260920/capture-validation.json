@@ -1,0 +1,26 @@
+{
+  "rom_d000_ffff_sha256": "68fada1511919d3dc9e884231c5fd6974ec41de447f3196e3a58ffcad4e1bb9a",
+  "mapped_rom_matches": true,
+  "trace_records": 1000,
+  "distinct_pcs": 196,
+  "cycles": 3661,
+  "independent_trace_histogram_matches": true,
+  "start": {
+    "pc": 54335,
+    "cycle": 1511374368,
+    "a": 242,
+    "x": 1,
+    "y": 211,
+    "sp": 248,
+    "raw": "20be155a0000000000000000a2a500003fd4f2000100d300f8000000000000000000000000000000"
+  },
+  "end": {
+    "pc": 49789,
+    "cycle": 1511378029,
+    "a": 13,
+    "x": 0,
+    "y": 1,
+    "sp": 234,
+    "raw": "6dcc155a0000000000000000e62400007dc20d0000000100ea000000000000000000000000000000"
+  }
+}

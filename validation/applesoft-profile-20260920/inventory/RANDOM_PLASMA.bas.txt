@@ -1,0 +1,1 @@
+0 HGR2 : FOR Y = 0 TO 191: FOR X = 0 TO 279: HCOLOR= ( RND (1) > ( SIN (Y * .1) + 2 +  SIN (X * .1)) / 4) * 3: HPLOT X,Y: NEXT : NEXT

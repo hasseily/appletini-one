@@ -1,0 +1,2 @@
+0 HGR2 : HCOLOR= 4: HPLOT 0,0: CALL 62454:X = 138:Y = 140: FOR N = 0 TO 10: READ D(N),W(N),H(N): GOSUB 1: NEXT :X = 122:Y = 93:H(5) = 60: FOR N = 5 TO 10: GOSUB 1: NEXT : END : DATA 66,75,0,54,51,15,76,51,20,54,51,5,77,51,0,54,6,45,55,6,0,44,4,0,76,4,4,76,7,4,76,3,3
+1 X = X + (N > 7) * 4:Y = Y - (N = 8) * 7:C = D(N):W = W(N):H = H(N):C% = C / 10:C(0) = C%:C(1) = C - C% * 10: FOR I =  - W TO W: HCOLOR= C(I > 0):J = W / 2 -  ABS (I / 2): HPLOT X + I,Y - J -  ABS (H) TO X + I,Y + J: NEXT :Y = Y - H * (H > 0): RETURN

@@ -1,0 +1,22 @@
+{
+  "format": "gs2_guest_pc_profile_v1",
+  "runid": "DESERT_ISLAND_KEY_09",
+  "start_seq": 61,
+  "stop_seq": 62,
+  "reason": "host_stop",
+  "instruction_limit": 100000000,
+  "instructions": 38175,
+  "instruction_cycles": 122081,
+  "irq_events": 0,
+  "irq_cycles": 0,
+  "accounted_cycles": 122081,
+  "start_guest_cycle": 20451366010,
+  "end_guest_cycle": 20451488091,
+  "guest_cycle_span": 122081,
+  "histogram_instructions": 38175,
+  "histogram_cycles": 122081,
+  "clock_mode_at_start": 0,
+  "capture_wall_seconds": 0.045071,
+  "scope": "65C02 PC histogram; IRQ entry accounted separately",
+  "wall_time_note": "Includes host control and pauses; not a clean throughput benchmark"
+}

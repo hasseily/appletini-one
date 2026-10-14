@@ -1,0 +1,22 @@
+{
+  "format": "gs2_guest_pc_profile_v1",
+  "runid": "MIND_THE_GAPS_STARTUP",
+  "start_seq": 109,
+  "stop_seq": 110,
+  "reason": "host_stop",
+  "instruction_limit": 100000000,
+  "instructions": 1210489,
+  "instruction_cycles": 3869672,
+  "irq_events": 0,
+  "irq_cycles": 0,
+  "accounted_cycles": 3869672,
+  "start_guest_cycle": 20821346305,
+  "end_guest_cycle": 20825215977,
+  "guest_cycle_span": 3869672,
+  "histogram_instructions": 1210489,
+  "histogram_cycles": 3869672,
+  "clock_mode_at_start": 0,
+  "capture_wall_seconds": 0.114197,
+  "scope": "65C02 PC histogram; IRQ entry accounted separately",
+  "wall_time_note": "Includes host control and pauses; not a clean throughput benchmark"
+}

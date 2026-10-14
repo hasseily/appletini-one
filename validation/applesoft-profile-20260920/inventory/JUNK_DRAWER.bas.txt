@@ -1,0 +1,1 @@
+0 HGR2 : FOR L = 0 TO 1: HCOLOR= 3: HPLOT A,B + 2: HCOLOR= C: FOR Z = B TO B + 1: HPLOT A,Z TO A + 11,Z: NEXT : GET K$:K =  ASC (K$) - 74: HCOLOR= 0: HPLOT A,B + 2:X = X + (K - 1) * ( ABS (K - 1) = 1):X = X -  INT (X / 20):A = X * 14:Y = Y + K * ( ABS (K) = 1):Y = Y -  INT (Y / 48):B = Y * 4:L = 0:C = C + (K + 26 - C) * ( INT ((K + 26) / 8) = 0): NEXT

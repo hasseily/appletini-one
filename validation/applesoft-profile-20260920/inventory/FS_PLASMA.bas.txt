@@ -1,0 +1,1 @@
+0 DIM A(2,281): HGR2 : FOR Y = 0 TO 191:T = 1 - T: FOR X = 0 TO 279:V = ( SIN (Y / 9) +  SIN (X / 9) + 2) / 4 + A(T,X + 1):Q = V >  = 0.5:E = V - Q:A(T,X + 1) = 0:A(T,X + 2) = A(T,X + 2) + E * .4:A(1 - T,X) = A(1 - T,X) + E * .2:A(1 - T,X + 1) = A(1 - T,X + 1) + E * .3:A(1 - T,X + 2) = A(1 - T,X + 2) + E * .1: HCOLOR= Q * 3: HPLOT X,Y: NEXT : NEXT

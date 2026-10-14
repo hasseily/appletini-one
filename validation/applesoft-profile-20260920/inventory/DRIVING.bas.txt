@@ -1,0 +1,1 @@
+0 HOME : PRINT : PRINT : FOR N = 0 TO 39: PRINT "=";:A$ = A$ + " ": NEXT : FOR N = 0 TO 1:N = 0: VTAB 1: PRINT "    ": PRINT A$S: VTAB 2 - (J > N): PRINT " O=o": POKE 49200 - (J = 16) * 32,N: IF  MID$ (A$,3,2) = "  " OR J THEN J = J + ((J < 1) * ( PEEK (49152) > 127) * 16) - (J > N):A$ =  MID$ (A$,2,39) +  CHR$ (32 + ( RND (1) < .1) * 3):S = S + 1: NEXT

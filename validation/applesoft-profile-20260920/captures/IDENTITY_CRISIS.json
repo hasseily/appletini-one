@@ -1,0 +1,22 @@
+{
+  "format": "gs2_guest_pc_profile_v1",
+  "runid": "IDENTITY_CRISIS",
+  "start_seq": 27,
+  "stop_seq": 28,
+  "reason": "host_stop",
+  "instruction_limit": 0,
+  "instructions": 3332360,
+  "instruction_cycles": 11106377,
+  "irq_events": 0,
+  "irq_cycles": 0,
+  "accounted_cycles": 11106377,
+  "start_guest_cycle": 20086265511,
+  "end_guest_cycle": 20097371888,
+  "guest_cycle_span": 11106377,
+  "histogram_instructions": 3332360,
+  "histogram_cycles": 11106377,
+  "clock_mode_at_start": 0,
+  "capture_wall_seconds": 0.162756,
+  "scope": "65C02 PC histogram; IRQ entry accounted separately",
+  "wall_time_note": "Includes host control and pauses; not a clean throughput benchmark"
+}

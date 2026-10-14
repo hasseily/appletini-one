@@ -262,6 +262,8 @@ static XTime now_ticks, enabled_at;
 static unsigned ctrl_sticks,core_echo,core_writes,reset_writes,shadow_writes;
 static unsigned first_core_ctrl,first_core_target,slot7_hidden,restore_before_echo;
 static unsigned begin_scan, trace_gate_cleared;
+static uint8_t configured_ram, aux_write_sticks = 1U, isolated;
+static uint8_t expect_native_c3_before_release;
 static uint32_t reg_index(uint32_t address) { return (address-APPLE_DEBUG_BASE)/4U; }
 static uint32_t test_reg_read(uint32_t address) {
     if(address>=BOOT_MENU_MMIO_BASE&&address<=BOOT_MENU_REG_C8_PATCH)
@@ -283,6 +285,9 @@ static uint32_t test_reg_read(uint32_t address) {
 }
 static void test_reg_write(uint32_t address,uint32_t value) {
     if(address==BOOT_MENU_REG_C8_PATCH) {
+        if(((value>>8)&255U)==BOOT_MENU_VTW_C8_GATE_OFFSET && !(value&255U) &&
+           expect_native_c3_before_release)
+            assert(c8_rom[BOOT_MENU_NATIVE_C3_OFFSET]==1);
         c8_rom[(value>>8)&255U]=(uint8_t)value;
         if(((value>>8)&255U)==BOOT_MENU_VTW_C8_GATE_OFFSET&&(value&255U)==0U)
             trace_gate_cleared=1U;
@@ -297,6 +302,11 @@ static void test_reg_write(uint32_t address,uint32_t value) {
         return;
     }
     assert(reg_index(address)<256U);
+    if(address==CARD_CTRL_AUX_PROVIDE_REG && !aux_write_sticks) return;
+    if(address==CARD_CTRL_AUX_PROBE_REG) {
+        card_regs[reg_index(address)] &= ~2U;
+        return;
+    }
     if(address==CARD_CTRL_VTW_CTRL_REG) {
         uint32_t old=card_regs[reg_index(address)];
         if(!ctrl_sticks) return;
@@ -309,7 +319,9 @@ static void test_reg_write(uint32_t address,uint32_t value) {
             ++core_writes;first_core_ctrl=value;
             first_core_target=boot_regs[4]&3U;
             slot7_hidden=first_core_target==BOOT_MENU_HANDOFF_DISK2;
-            assert(!g_vtw_boot_gate_armed && !c8_rom[BOOT_MENU_VTW_C8_GATE_OFFSET]);
+            assert(!g_vtw_boot_gate_armed);
+            assert(!c8_rom[BOOT_MENU_VTW_C8_GATE_OFFSET] || isolated);
+            assert(!c8_rom[BOOT_MENU_NATIVE_C3_OFFSET]);
         }
     }
     if(address==CARD_CTRL_VTW_SHADOW_DATA_REG) ++shadow_writes;
@@ -319,9 +331,9 @@ void XTime_GetTime(XTime *value) { *value=now_ticks; }
 void uart_puts(uint32_t base,const char *text) { (void)base;(void)text; }
 void uart_puthex(uint32_t base,uint32_t value) { (void)base;(void)value; }
 void uart_putdec(uint32_t base,uint32_t value) { (void)base;(void)value; }
-uint8_t appletini_config_ram_enabled(void) { return 0; }
+uint8_t appletini_config_ram_enabled(void) { return configured_ram; }
 uint8_t appletini_config_ramworks_enabled(void) { return 0; }
-uint8_t onee_service_isolation_confirmed(void) { return 0; }
+uint8_t onee_service_isolation_confirmed(void) { return isolated; }
 void disk2_service_set_enabled(uint8_t enabled) { (void)enabled; }
 static void fixture(unsigned target) {
     memset(card_regs,0,sizeof(card_regs));memset(boot_regs,0,sizeof(boot_regs));
@@ -329,6 +341,8 @@ static void fixture(unsigned target) {
     ctrl_sticks=core_echo=1;core_writes=reset_writes=shadow_writes=0;
     first_core_ctrl=first_core_target=slot7_hidden=restore_before_echo=0;
     begin_scan=trace_gate_cleared=0;
+    configured_ram=isolated=0;aux_write_sticks=1U;
+    expect_native_c3_before_release=0;
     g_machine_id_raw=g_aux_card_present=g_aux_probe_seen=g_machine_forced=0;
     g_iigs_seen=g_machine_identity_fault=g_iigs_policy_fault_seen=0;
     g_iigs_slot_config_valid=g_iigs_external_slot_mask=0;
@@ -342,6 +356,7 @@ static void fixture(unsigned target) {
     assert(g_vtw_boot_gate_armed && c8_rom[BOOT_MENU_VTW_C8_GATE_OFFSET]==1);
 }
 static void report(unsigned id,unsigned timeout) {
+    if(id==2U || id==3U) card_regs[reg_index(CARD_CTRL_AUX_PROBE_REG)]=2U;
     boot_regs[0]=((0x20U+id)<<24)|(id<<12)|
         (timeout ? BOOT_MENU_STATUS_TIMEOUT_EXPIRED :
          BOOT_MENU_STATUS_BOOT_ELIGIBLE|BOOT_MENU_STATUS_WINDOW_ACTIVE);
@@ -451,12 +466,107 @@ static void safety(void) {
         CARD_CTRL_ONEE_STATUS_REQUEST_BIT|CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT|
         CARD_CTRL_ONEE_STATUS_ISOLATED_BIT|CARD_CTRL_ONEE_STATUS_SELECTED_BIT|
         CARD_CTRL_ONEE_STATUS_HDL_PRESENT_BIT;
+    isolated=1;
     assert(vtw_service_onee_start(1));
     assert(!g_vtw_boot_gate_armed&&!g_boot_menu_speed_hold&&!vtw_service_boot_start_pending());
     assert(speed()==CARD_CTRL_VTW_SPEED_DIVIDED&&g_intent_enabled);
+    report(3,0);
+    assert(!g_native_boot_policy_pending&&!c8_rom[BOOT_MENU_VTW_C8_GATE_OFFSET]);
+    assert(!c8_rom[BOOT_MENU_NATIVE_C3_OFFSET]);
     puts("PASS UNKNOWN, IIgs, II+, identity-fault and mixed saved ONE//e/vTW intent safety");
 }
-int main(void) { single_boot();failures();safety();return 0; }
+static void native_fixture(unsigned ram) {
+    fixture(1);
+    vtw_service_set_enabled(0);
+    configured_ram=(uint8_t)ram;
+    expect_native_c3_before_release=(uint8_t)ram;
+    assert(!g_vtw_boot_gate_armed&&g_native_boot_policy_pending);
+    assert(c8_rom[BOOT_MENU_VTW_C8_GATE_OFFSET]==1);
+    assert(!c8_rom[BOOT_MENU_NATIVE_C3_OFFSET]);
+}
+static void native_policy(void) {
+    for(unsigned id=2;id<=3;++id) {
+        native_fixture(1);
+        /* Identity alone must not release native code before its aux probe. */
+        boot_regs[0]=((0x20U+id)<<24)|(id<<12)|BOOT_MENU_STATUS_BOOT_ELIGIBLE;
+        boot_menu_service_refresh_machine_policy();
+        assert(g_native_boot_policy_pending&&!g_aux_probe_seen);
+        assert(c8_rom[BOOT_MENU_VTW_C8_GATE_OFFSET]&&!c8_rom[BOOT_MENU_NATIVE_C3_OFFSET]);
+        report(id,0);
+        assert(g_aux_probe_seen&&!g_native_boot_policy_pending);
+        assert(card_regs[reg_index(CARD_CTRL_AUX_PROVIDE_REG)]==1);
+        assert(!c8_rom[BOOT_MENU_VTW_C8_GATE_OFFSET]&&c8_rom[BOOT_MENU_NATIVE_C3_OFFSET]==1);
+        /* Repeat polling/warm probe must retain a working selector. */
+        for(unsigned i=0;i<10;++i) boot_menu_service_refresh_machine_policy();
+        report(id,1);
+        assert(!g_native_boot_policy_pending&&c8_rom[BOOT_MENU_NATIVE_C3_OFFSET]==1);
+        configured_ram=0;boot_menu_service_refresh_machine_policy();
+        assert(!c8_rom[BOOT_MENU_NATIVE_C3_OFFSET]);
+        configured_ram=1;boot_menu_service_refresh_machine_policy();
+        assert(c8_rom[BOOT_MENU_NATIVE_C3_OFFSET]==1);
+        /* Failed aux-provide readback keeps native code held, selector off. */
+        native_fixture(1);aux_write_sticks=0;report(id,0);
+        assert(g_native_boot_policy_pending&&c8_rom[BOOT_MENU_VTW_C8_GATE_OFFSET]);
+        assert(!c8_rom[BOOT_MENU_NATIVE_C3_OFFSET]);
+        card_regs[reg_index(CARD_CTRL_AUX_PROVIDE_REG)]=1;aux_write_sticks=1;
+        boot_menu_service_refresh_machine_policy();
+        assert(!g_native_boot_policy_pending&&!c8_rom[BOOT_MENU_VTW_C8_GATE_OFFSET]);
+        assert(c8_rom[BOOT_MENU_NATIVE_C3_OFFSET]==1);
+        /* A physical aux card and disabled RAM preserve motherboard choice. */
+        native_fixture(1);
+        expect_native_c3_before_release=0;
+        card_regs[reg_index(CARD_CTRL_AUX_PROBE_REG)]=3;
+        boot_regs[0]=((0x20U+id)<<24)|(id<<12)|BOOT_MENU_STATUS_BOOT_ELIGIBLE;
+        boot_menu_service_refresh_machine_policy();
+        assert(g_aux_card_present&&!g_native_boot_policy_pending);
+        assert(!c8_rom[BOOT_MENU_NATIVE_C3_OFFSET]&&!c8_rom[BOOT_MENU_VTW_C8_GATE_OFFSET]);
+        assert(!card_regs[reg_index(CARD_CTRL_AUX_PROVIDE_REG)]);
+        native_fixture(0);report(id,0);
+        assert(!g_native_boot_policy_pending&&!c8_rom[BOOT_MENU_NATIVE_C3_OFFSET]);
+        /* Saved-vTW owns its hold; a cancelled takeover restores native C3. */
+        fixture(1);configured_ram=1;report(id,0);
+        assert(!g_native_boot_policy_pending&&g_vtw_boot_gate_armed);
+        assert(c8_rom[BOOT_MENU_VTW_C8_GATE_OFFSET]&&!c8_rom[BOOT_MENU_NATIVE_C3_OFFSET]);
+        expect_native_c3_before_release=1;
+        ctrl_sticks=0;vtw_service_poll();millis(50);vtw_service_poll();
+        assert(!g_vtw_boot_gate_armed&&!c8_rom[BOOT_MENU_VTW_C8_GATE_OFFSET]);
+        assert(c8_rom[BOOT_MENU_NATIVE_C3_OFFSET]==1);
+    }
+    for(unsigned id=1;id<=4;id+=3) {
+        native_fixture(1);expect_native_c3_before_release=0;report(id,0);
+        assert(!g_native_boot_policy_pending&&!c8_rom[BOOT_MENU_VTW_C8_GATE_OFFSET]);
+        assert(!c8_rom[BOOT_MENU_NATIVE_C3_OFFSET]);
+    }
+    native_fixture(1);report(3,0);
+    boot_menu_service_force_machine_mode(CARD_MACHINE_MODE_IIGS);
+    boot_menu_service_refresh_machine_policy();
+    assert(!c8_rom[BOOT_MENU_NATIVE_C3_OFFSET]);
+    /* Each physical identity can transition to the isolated Enhanced ROM. */
+    for(unsigned id=0;id<=4;id+=id==0?1:3) {
+        fixture(1);if(id) report(id,0);
+        isolated=1;
+        card_regs[reg_index(CARD_CTRL_ONEE_MODE_REG)]=
+            (CARD_CTRL_ONEE_STATUS_SIGNATURE<<CARD_CTRL_ONEE_STATUS_SIGNATURE_SHIFT)|
+            CARD_CTRL_ONEE_STATUS_REQUEST_BIT|CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT|
+            CARD_CTRL_ONEE_STATUS_ISOLATED_BIT|CARD_CTRL_ONEE_STATUS_SELECTED_BIT|
+            CARD_CTRL_ONEE_STATUS_HDL_PRESENT_BIT;
+        assert(vtw_service_onee_start(1));
+        report(3,0);
+        assert(!g_native_boot_policy_pending&&!c8_rom[BOOT_MENU_VTW_C8_GATE_OFFSET]);
+        assert(!c8_rom[BOOT_MENU_NATIVE_C3_OFFSET]);
+    }
+    /* A physical II+ bypasses the native hold, then accelerates after handoff. */
+    fixture(1);configured_ram=1;report(1,0);vtw_service_poll();
+    assert(!g_native_boot_policy_pending&&!g_vtw_boot_gate_armed);
+    boot_regs[4]=5U;vtw_service_poll();
+    assert(g_state==VTW_ST_TAKE_BUS);
+    millis(1);vtw_service_poll();millis(100);vtw_service_poll();
+    millis(50);vtw_service_poll();vtw_service_poll();
+    assert(g_state==VTW_ST_RUN&&!c8_rom[BOOT_MENU_VTW_C8_GATE_OFFSET]);
+    assert(!c8_rom[BOOT_MENU_NATIVE_C3_OFFSET]);
+    puts("PASS production native C3 policy: fresh probe, delayed MMIO, physical aux, RAM off, warm repeats, vTW rollback, II+/GS/ONEe safety");
+}
+int main(void) { single_boot();failures();safety();native_policy();return 0; }
 '''
 
 

@@ -41,7 +41,9 @@ boot_menu_event_t boot_menu_service_poll(void);
 void boot_menu_service_refresh_machine_policy(void);
 
 /* Firmware-only C8 startup hold. Install once before CPU0_READY releases the
- * initial Apple RESET. Only the physical IIe ROM report enters the hold;
+ * initial Apple RESET. The physical IIe report waits for the applied aux
+ * policy, then selects internal slot-3 ROM only when Appletini supplies RAM.
+ * The armed argument and queries describe the separate saved-vTW takeover;
  * II/II+, IIgs, and an unidentified host keep their original ROM path. */
 void boot_menu_service_install_vtw_boot_gate(uint8_t armed);
 void boot_menu_service_release_vtw_boot_gate(void);

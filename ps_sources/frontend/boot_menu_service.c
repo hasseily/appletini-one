@@ -53,13 +53,30 @@
 static uint8_t g_boot_menu_open_reported = 0U;
 static uint8_t g_vtw_boot_rom_installed;
 static uint8_t g_vtw_boot_gate_armed;
+static uint8_t g_native_boot_policy_pending;
+static uint8_t g_native_c3_select = 0xFFU;
+static uint8_t g_boot_gate_control = 0xFFU;
 static uint8_t g_vtw_boot_scan_override;
 static boot_menu_handoff_t g_vtw_boot_saved_handoff;
+
+static void machine_refresh_boot_rom_policy(void);
 
 static void boot_menu_service_patch_c8_byte(uint8_t offset, uint8_t value)
 {
     REG_WRITE(BOOT_MENU_REG_C8_PATCH,
               ((uint32_t)offset << 8) | (uint32_t)value);
+}
+
+static void boot_menu_service_update_boot_gate(void)
+{
+    const uint8_t hold =
+        (g_vtw_boot_gate_armed != 0U || g_native_boot_policy_pending != 0U)
+            ? 1U : 0U;
+
+    if (g_vtw_boot_rom_installed != 0U && hold != g_boot_gate_control) {
+        boot_menu_service_patch_c8_byte(BOOT_MENU_VTW_C8_GATE_OFFSET, hold);
+        g_boot_gate_control = hold;
+    }
 }
 
 static void boot_menu_service_set_vbl_delay(uint8_t x_count, uint8_t y_count)
@@ -228,6 +245,9 @@ void boot_menu_service_init(void)
     g_boot_menu_open_reported = 0U;
     g_vtw_boot_rom_installed = 0U;
     g_vtw_boot_gate_armed = 0U;
+    g_native_boot_policy_pending = 0U;
+    g_native_c3_select = 0xFFU;
+    g_boot_gate_control = 0xFFU;
     g_vtw_boot_scan_override = 0U;
     boot_menu_service_apply_video_rom_patch();
     boot_menu_service_set_handoff(BOOT_MENU_HANDOFF_SMARTPORT);
@@ -283,18 +303,19 @@ void boot_menu_service_install_vtw_boot_gate(uint8_t armed)
     }
     g_vtw_boot_rom_installed = 1U;
     g_vtw_boot_gate_armed = (armed != 0U) ? 1U : 0U;
-    boot_menu_service_patch_c8_byte(BOOT_MENU_VTW_C8_GATE_OFFSET,
-                                    g_vtw_boot_gate_armed);
+    g_native_boot_policy_pending = 1U;
+    g_native_c3_select = 0U;
+    g_boot_gate_control = 0xFFU;
+    boot_menu_service_update_boot_gate();
     boot_menu_service_apply_video_rom_patch();
 }
 
 void boot_menu_service_release_vtw_boot_gate(void)
 {
-    if (g_vtw_boot_rom_installed != 0U && g_vtw_boot_gate_armed != 0U) {
-        /* One immediate is safe to change while the native ROM polls it. */
-        boot_menu_service_patch_c8_byte(BOOT_MENU_VTW_C8_GATE_OFFSET, 0U);
-    }
     g_vtw_boot_gate_armed = 0U;
+    /* A cancelled takeover still waits for a fresh native aux policy. */
+    machine_refresh_boot_rom_policy();
+    boot_menu_service_update_boot_gate();
 }
 
 uint8_t boot_menu_service_vtw_boot_gate_armed(void)
@@ -449,6 +470,54 @@ static void machine_refresh_aux_policy(void)
     }
 }
 
+static void machine_refresh_boot_rom_policy(void)
+{
+    uint8_t applied;
+    uint8_t select;
+    uint8_t private_aux_ready;
+
+    if (g_vtw_boot_rom_installed == 0U) {
+        return;
+    }
+    applied = (uint8_t)(REG_READ(CARD_CTRL_AUX_PROVIDE_REG) & 1U);
+    private_aux_ready =
+        (vtw_service_session_active() != 0U &&
+         onee_service_isolation_confirmed() != 0U) ? 1U : 0U;
+    select =
+        (g_aux_probe_seen != 0U && g_aux_card_present == 0U &&
+         g_machine_mode_applied == CARD_MACHINE_MODE_IIE &&
+         g_aux_provide_applied == 1U && applied == 1U &&
+         g_vtw_boot_gate_armed == 0U &&
+         vtw_service_session_active() == 0U) ? 1U : 0U;
+    if (select != g_native_c3_select) {
+        boot_menu_service_patch_c8_byte(BOOT_MENU_NATIVE_C3_OFFSET, select);
+        g_native_c3_select = select;
+    }
+    if (g_native_boot_policy_pending != 0U &&
+        g_aux_provide_applied != 0xFFU && applied != g_aux_provide_applied) {
+        /* Retry a missed policy write while the initial ROM still waits. */
+        REG_WRITE(CARD_CTRL_AUX_PROVIDE_REG, (uint32_t)g_aux_provide_applied);
+        return;
+    }
+    /* The IIe ROM reported its physical aux probe before entering the hold.
+     * An active, isolated ONE//e has private aux RAM; its physical host may
+     * have no IIe identity or physical probe verdict.
+     * A known II/II+ or IIgs skips the native hold; clear it so a later
+     * enhanced-ROM virtual boot cannot inherit an unused physical hold.
+     * Publish C3 selection first, then release only after the PL confirms the
+     * chosen aux policy. The separate vTW hold can stay armed for takeover. */
+    if (g_native_boot_policy_pending != 0U &&
+        ((g_aux_probe_seen != 0U &&
+          (g_machine_id_raw == 2U || g_machine_id_raw == 3U)) ||
+         g_machine_id_raw == 1U || g_machine_id_raw == 4U ||
+         private_aux_ready != 0U) &&
+        g_machine_mode_applied != 0xFFU &&
+        g_aux_provide_applied != 0xFFU && applied == g_aux_provide_applied) {
+        g_native_boot_policy_pending = 0U;
+        boot_menu_service_update_boot_gate();
+    }
+}
+
 static void machine_refresh_iigs_slot_policy(void)
 {
     uint8_t valid = 0U;
@@ -572,6 +641,7 @@ static void machine_observe_status(uint32_t status)
         machine_apply_mode(mode);
     }
     machine_refresh_iigs_slot_policy();
+    machine_refresh_boot_rom_policy();
 }
 
 uint8_t boot_menu_service_aux_card_present(void)

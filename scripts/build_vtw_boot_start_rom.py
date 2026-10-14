@@ -20,12 +20,19 @@ NEW = """          sta ALTZP_OFF
           sta BM_IO,y
           txa
           ; This path belongs only to a physical IIe/enhanced IIe. Report
-          ; its identity before the optional CPU0 startup hold. II/II+ and
-          ; IIgs reports keep the original shared return path.
+          ; its identity before CPU0 applies the aux policy and the optional
+          ; vTW startup hold. II/II+ and IIgs keep the original return path.
           sta BM_IO,y
 vtw_boot_gate_control:
           lda #$00
           bne vtw_boot_gate_control
+native_slot3_control:
+          lda #$00
+          beq native_slot3_done
+          ; The stock cold-start probe ran before Appletini supplied aux
+          ; RAM. Show the internal 80-column ROM before ProDOS scans slots.
+          sta $C00A
+native_slot3_done:
           rts
 """
 
@@ -59,6 +66,7 @@ def build():
 def header_text():
     slot, reloc, c8, symbols = build()
     gate = symbols["VTW_BOOT_GATE_CONTROL"] + 1 - 0xC800
+    native_c3 = symbols["NATIVE_SLOT3_CONTROL"] + 1 - 0xC800
     delay_x = symbols["DELAY_FRAME_X_OPCODE"] + 1 - 0xC800
     delay_y = symbols["DELAY_FRAME_Y_OPCODE"] + 1 - 0xC800
     lines = [
@@ -72,8 +80,9 @@ def header_text():
         " * Apple RESET is held; C7 code and its C8 call addresses stay unchanged.",
         f" * Retained C7 SHA-256: {hashlib.sha256(slot).hexdigest()}",
         f" * Retained relocation SHA-256: {hashlib.sha256(reloc).hexdigest()}",
-        " * The optional hold is reached only after a physical IIe ID report. */",
+        " * The hold and native slot-3 selection follow only a physical IIe report. */",
         f"#define BOOT_MENU_VTW_C8_GATE_OFFSET    0x{gate:02X}U",
+        f"#define BOOT_MENU_NATIVE_C3_OFFSET      0x{native_c3:02X}U",
         f"#define BOOT_MENU_VTW_C8_DELAY_X_OFFSET 0x{delay_x:02X}U",
         f"#define BOOT_MENU_VTW_C8_DELAY_Y_OFFSET 0x{delay_y:02X}U",
         "",

@@ -457,8 +457,8 @@ uint8_t vtw_service_is_enabled(void)
 
 void vtw_service_prepare_boot_start(void)
 {
-    /* This installs a compatible C8 page even when host vTW is disabled.
-     * Its gate remains zero then, and the original C7 bytes never change. */
+    /* Install the C8 page for native aux-policy handoff as well as optional
+     * vTW takeover. The original C7 bytes never change. */
     boot_menu_service_install_vtw_boot_gate(g_intent_enabled);
 }
 

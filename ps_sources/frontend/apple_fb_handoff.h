@@ -139,12 +139,17 @@ uint32_t apple_fb_handoff_state(void);
 void apple_fb_video_settings_set(uint32_t settings);
 uint32_t apple_fb_video_settings_get(void);
 
-/* Video character-ROM override generation (CPU0 writes, CPU1 reads). CPU0
- * bumps this after copying a validated ROM into APPLE_VIDEO_ROM_OVERRIDE_ADDR
- * (compositor_layout.h); 0 means "no override -> baked Enhanced US ROM". CPU1
- * rebuilds csbits whenever the value it sees changes. */
-void apple_fb_video_rom_gen_set(uint32_t gen);
+/* CPU0 publishes a ROM image and mode before a new generation. CPU1 reads
+ * these at a frame boundary, copies/rebuilds its private tables, then ACKs.
+ * CPU0 must wait for ACK == generation before changing the shared buffer or
+ * mode again. Every change advances generation, including built-in restores. */
+#define APPLE_FB_VIDEO_ROM_BUILT_IN 0U
+#define APPLE_FB_VIDEO_ROM_OVERRIDE 1U
+void apple_fb_video_rom_publish(uint32_t gen, uint32_t mode);
 uint32_t apple_fb_video_rom_gen_get(void);
+uint32_t apple_fb_video_rom_mode_get(void);
+void apple_fb_video_rom_ack_set(uint32_t gen);
+uint32_t apple_fb_video_rom_ack_get(void);
 
 /* Diagnostic shadow-dump request (CPU0 writes, CPU1 takes). CPU0 cannot
  * read the Apple memory shadow banks directly: they are cacheable and

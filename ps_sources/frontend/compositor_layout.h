@@ -128,8 +128,9 @@ extern const uint32_t comp_apple_slot_addr[COMP_APPLE_SLOT_COUNT];
  * CPU0 reads a user-selected //e video character ROM from the SD card,
  * validates it (size 4096/8192, not all 00/FF), and copies the primary 4 KB
  * bank here. CPU1's renderer rebuilds csbits from this buffer when the
- * handoff generation word changes (see apple_fb_handoff video-ROM gen);
- * generation 0 means "no override -> baked Enhanced US ROM".
+ * handoff generation word changes. A separate mode selects the built-in
+ * ROM. CPU0 waits for the renderer ACK before reusing this buffer, so CPU1
+ * always copies a whole image (see video_rom_service/apple_fb_handoff).
  *
  * Lives in the 0x3F000000 NONCACHE DDR section so both cores see it
  * coherently with no cache maintenance. Keep this in sync with the address

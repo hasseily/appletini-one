@@ -13,6 +13,8 @@
 #include "ff.h"
 
 #include "apple_fb_handoff.h"
+#include "glyph_api.h"
+#include "video_rom_service.h"
 #include "boot_menu_service.h"
 #include "card_control_regs.h"
 #include "compositor_layout.h"
@@ -2757,12 +2759,9 @@ static void config_menu_apply_bezel(config_menu_t *menu)
     }
 }
 
-/* Load the user-selected video character ROM from the SD card into the shared
- * CPU0->CPU1 override buffer and bump the handoff generation so CPU1's renderer
- * rebuilds csbits from it. Validates size (4096 or 8192; an 8 KB dual-charset
- * dump uses its primary 4 KB bank) and sanity (not all 00/FF). On empty path,
- * missing/unreadable file, or a bad dump, sets generation 0 -> CPU1 falls back
- * to the baked Enhanced US ROM. */
+/* Validate the menu's SD ROM and cache its primary 4 KB bank separately from
+ * software uploads. Empty paths and bad dumps select the built-in ROM; the
+ * service queues whole images until CPU1 releases the shared buffer. */
 static uint8_t s_video_rom_scratch[8192];
 
 static void config_menu_apply_video_rom(config_menu_t *menu)
@@ -2777,12 +2776,13 @@ static void config_menu_apply_video_rom(config_menu_t *menu)
     if (menu == NULL) {
         return;
     }
+    glyph_api_reset();
     if (menu->video_rom_path[0] == '\0') {
-        apple_fb_video_rom_gen_set(0U);   /* no override -> baked Enhanced US */
+        video_rom_service_set_menu(NULL);
         return;
     }
     if (config_menu_open_path(&file, menu->video_rom_path, FA_READ) != FR_OK) {
-        apple_fb_video_rom_gen_set(0U);
+        video_rom_service_set_menu(NULL);
         config_menu_set_status(menu, 1U, "VIDEO ROM OPEN FAILED - USING BUILT-IN");
         return;
     }
@@ -2802,20 +2802,11 @@ static void config_menu_apply_video_rom(config_menu_t *menu)
     (void)f_close(&file);
 
     if (valid != 0U) {
-        memcpy((void *)(uintptr_t)APPLE_VIDEO_ROM_OVERRIDE_ADDR,
-               s_video_rom_scratch, APPLE_VIDEO_ROM_OVERRIDE_BYTES);
-        /* Push the buffer to DDR before CPU1 (which reads it non-cached) sees
-         * the new generation, in case this region is cacheable on CPU0. */
-        Xil_DCacheFlushRange((INTPTR)APPLE_VIDEO_ROM_OVERRIDE_ADDR,
-                             (INTPTR)APPLE_VIDEO_ROM_OVERRIDE_BYTES);
-        __asm__ volatile ("dmb sy" ::: "memory");
-        uint32_t gen = apple_fb_video_rom_gen_get() + 1U;
-        if (gen == 0U) { gen = 1U; }
-        apple_fb_video_rom_gen_set(gen);
+        video_rom_service_set_menu(s_video_rom_scratch);
         (void)snprintf(text, sizeof(text), "VIDEO ROM: %.80s", config_menu_video_rom_text(menu));
         config_menu_set_status(menu, 0U, text);
     } else {
-        apple_fb_video_rom_gen_set(0U);   /* bad dump -> baked Enhanced US */
+        video_rom_service_set_menu(NULL);
         config_menu_set_status(menu, 1U, "VIDEO ROM INVALID - USING BUILT-IN");
     }
 }

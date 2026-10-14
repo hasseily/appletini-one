@@ -12,6 +12,8 @@
 #include "smartport_service.h"
 #include "memory_api.h"
 #include "memory_api_hw.h"
+#include "glyph_api.h"
+#include "video_rom_service.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -1202,6 +1204,44 @@ static const char ID_STR_DEV [13] = { 12, 'A','p','p','l','e','t','i','n','i',' 
 
 /* Build a status block in g_scratch. Returns the length, or 0 if the
  * (unit, status_code) pair is unsupported. */
+/* Track Apple reset edges even in background polls that do not run the UI's
+ * reset handler. A new transport session must never inherit upload coverage. */
+static uint32_t g_glyph_reset_sequence;
+static uint8_t g_glyph_reset_sequence_valid;
+
+static void sp_glyph_check_reset(void)
+{
+    const uint32_t sequence = REG_READ(CARD_CTRL_APPLE_RESET_STATUS_REG) &
+                              CARD_CTRL_APPLE_RESET_SEQ_MASK;
+    if (g_glyph_reset_sequence_valid == 0U || sequence != g_glyph_reset_sequence) {
+        glyph_api_reset();
+        g_glyph_reset_sequence = sequence;
+        g_glyph_reset_sequence_valid = 1U;
+    }
+}
+
+static uint8_t sp_glyph_apply(void *context, const uint8_t *rom)
+{
+    (void)context;
+    if (!memory_api_hw_response_valid()) {
+        return GLYPH_API_UNAVAILABLE;
+    }
+    return video_rom_service_apply(rom);
+}
+
+static void sp_glyph_status(void *context, uint16_t *flags,
+                            uint32_t *generation)
+{
+    (void)context;
+    video_rom_service_status(flags, generation);
+}
+
+static const glyph_api_backend_t sp_glyph_backend = {
+    .ctx = NULL,
+    .apply = sp_glyph_apply,
+    .status = sp_glyph_status
+};
+
 static uint16_t build_sp_status(sp_device_t *dev,
                                 uint8_t unit,
                                 uint8_t status_code)
@@ -1216,6 +1256,9 @@ static uint16_t build_sp_status(sp_device_t *dev,
         case MEMORY_API_SELECTOR:
             memory_api_status(g_scratch, &memory_api_hardware);
             return MEMORY_API_STATUS_SIZE;
+        case GLYPH_API_SELECTOR:
+            glyph_api_status(g_scratch, &sp_glyph_backend);
+            return GLYPH_API_STATUS_SIZE;
         case SP_STATUS_STATUS:
             g_scratch[0] = smartport_present_count();
             return 8U;
@@ -1741,9 +1784,10 @@ static void execute_command(void)
             sp_response_append(result);
             break;
 
-        case 0x04: {   /* CONTROL: controller working-memory service */
+        case 0x04: {   /* CONTROL: private controller services */
             uint16_t payload_length = 0U;
-            if (unit != 0U || list[4] != MEMORY_API_SELECTOR) {
+            if (unit != 0U || (list[4] != MEMORY_API_SELECTOR &&
+                               list[4] != GLYPH_API_SELECTOR)) {
                 result = ERR_BADCTL;
                 sp_response_append(result);
                 break;
@@ -1757,10 +1801,15 @@ static void execute_command(void)
              * padding, so do not impose a new zero-padding requirement. */
             if (list[0] != 3U || len < 12U ||
                 (uint32_t)payload_length + 12U != len) {
-                result = memory_api_execute(NULL, 0U, &memory_api_hardware);
+                result = (list[4] == GLYPH_API_SELECTOR)
+                    ? glyph_api_execute(NULL, 0U, &sp_glyph_backend)
+                    : memory_api_execute(NULL, 0U, &memory_api_hardware);
             } else {
-                result = memory_api_execute(g_cmd_buf + 12U, payload_length,
-                                            &memory_api_hardware);
+                result = (list[4] == GLYPH_API_SELECTOR)
+                    ? glyph_api_execute(g_cmd_buf + 12U, payload_length,
+                                        &sp_glyph_backend)
+                    : memory_api_execute(g_cmd_buf + 12U, payload_length,
+                                         &memory_api_hardware);
             }
             /* Reset may discard the request while ARM is copying. Never
              * publish its response into a new command's FIFO. EXEC_PENDING
@@ -2123,6 +2172,8 @@ int smartport_service_init(uint32_t uart_base)
     XScuGic *gic;
 
     g_uart_base = uart_base;
+    glyph_api_reset();
+    g_glyph_reset_sequence_valid = 0U;
     g_smartport_slot = 0U;
     smartport_devices_ensure_defaults();
     sp_cache_invalidate_device(SMARTPORT_SERVICE_ALL_DEVICES);
@@ -2199,6 +2250,10 @@ const char *smartport_service_get_image_path(uint8_t device)
 void smartport_service_apple_reset(void)
 {
     uint32_t cpsr;
+
+    /* The background poll may already have handled this edge. Do not discard
+     * an upload begun in the new session when the UI notices it later. */
+    sp_glyph_check_reset();
 
     __asm__ volatile ("mrs %0, cpsr" : "=r"(cpsr));
     __asm__ volatile ("cpsid i");
@@ -2315,6 +2370,8 @@ void smartport_service_uart_status(uint32_t uart_base)
 void smartport_service_poll(void)
 {
     const uint32_t vtw_status = REG_READ(CARD_CTRL_VTW_STATUS_REG);
+
+    sp_glyph_check_reset();
 
     /* A DMA fault stays latched for one vTW takeover. Apple RESET keeps the
      * takeover alive, so clear it only after acceleration is truly stopped. */

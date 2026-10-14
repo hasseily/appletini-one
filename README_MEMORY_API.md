@@ -1,5 +1,9 @@
 # Appletini copy/fill API 1.0
 
+The separate [character glyph API](README_GLYPH_API.md) uses private selector
+`$81` to upload and activate text ROMs. The copy/fill selector `$80` below
+keeps its existing format and behavior.
+
 The copy/fill service transfers 65C02 memory through the vTW CPU hold,
 shadow RAM, and PSRAM DMA. Matching FPGA firmware can run copy and fill
 directly between shadow BRAM and RamWorks PSRAM. The service checks the

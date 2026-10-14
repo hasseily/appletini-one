@@ -163,6 +163,7 @@ static uint32_t s_current_sw     = 0u;
 static uint8_t s_cached_writer_slot = 0u;
 static uint32_t s_video_settings_seen = 0xFFFFFFFFu;
 static uint32_t s_video_rom_gen_seen = 0u;   /* applied video-ROM override gen */
+static uint8_t s_video_rom_seen_valid = 0u;
 static uint8_t s_render_mono_enable = 0u;
 static uint8_t s_render_mono_color = APPLE_VIDEO_MONO_WHITE;
 static uint8_t s_render_color_mode = APPLE_VIDEO_COLOR_COMPOSITE_MONITOR;
@@ -2609,27 +2610,27 @@ static void render_legacy_flip_merge_frame_full(void)
 
 /* ---------- Frame end / start ---------- */
 
-/* Rebuild csbits from the SD video-ROM override buffer when CPU0 bumps the
- * handoff generation. gen 0 = no override -> baked Enhanced US ROM. CPU0 has
- * already validated the buffer (size/sanity) before bumping the generation. */
+/* Called only before painting a frame. CPU0 keeps mode and shared bytes
+ * fixed until we rebuild our private ROM/tables and acknowledge this gen. */
 static void apply_video_rom_if_changed(void) {
     const uint32_t gen = apple_fb_video_rom_gen_get();
-    if (gen == s_video_rom_gen_seen) {
+    if (s_video_rom_seen_valid != 0u && gen == s_video_rom_gen_seen) {
         return;
     }
-    s_video_rom_gen_seen = gen;
     s_shr_cache_invalidate = 1u;
-    if (gen != 0u) {
+    if (apple_fb_video_rom_mode_get() == APPLE_FB_VIDEO_ROM_OVERRIDE) {
         appletini_video_rom_use_override(
             (const uint8_t *)(uintptr_t)APPLE_VIDEO_ROM_OVERRIDE_ADDR);
     } else {
         appletini_video_rom_use_baked();
     }
     apple_pal_video_reset();
+    s_video_rom_gen_seen = gen;
+    s_video_rom_seen_valid = 1u;
+    apple_fb_video_rom_ack_set(gen);
 }
 
 static void apply_video_settings_if_changed(void) {
-    apply_video_rom_if_changed();
     const uint32_t settings = apple_fb_video_settings_get();
     const uint8_t border_default =
         apple_video_settings_border_color(settings);
@@ -2982,6 +2983,7 @@ static void on_frame_end(void) {
 static void on_frame_start(void) {
     /* Apply CPU0 settings before deriving this frame's format metadata, so
      * the badge tag and the pixels always describe the same frame. */
+    apply_video_rom_if_changed();
     apply_video_settings_if_changed();
 
     /* Bind the NTSC core to the fresh writer slot selected by the handoff
@@ -3172,6 +3174,9 @@ int apple_cycle_renderer_init(void) {
     /* CPU0 owns the shared handoff/control reset. CPU1 only needs the
      * matching OCM mapping and its local writer cache initialized. */
     apple_fb_handoff_secondary_init();
+    /* Cold init must acknowledge built-in generation 0 as well. */
+    s_video_rom_seen_valid = 0u;
+    apply_video_rom_if_changed();
     s_cached_writer_slot = apple_fb_writer_slot();
 
     /* Bind the initial writer slot so g_atn_framebuffer is non-NULL

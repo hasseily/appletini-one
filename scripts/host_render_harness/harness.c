@@ -118,7 +118,11 @@ void apple_fb_writer_publish_frame_detail(uint32_t display_mode,
 
 void apple_fb_handoff_secondary_init(void) {}
 uint32_t apple_fb_video_settings_get(void) { return s_settings; }
+#ifndef HARNESS_VIDEO_ROM_SERVICE
 uint32_t apple_fb_video_rom_gen_get(void) { return 0u; }
+uint32_t apple_fb_video_rom_mode_get(void) { return APPLE_FB_VIDEO_ROM_BUILT_IN; }
+void apple_fb_video_rom_ack_set(uint32_t gen) { (void)gen; }
+#endif
 uint32_t apple_fb_reader_published_display_mode(void) { return s_pub_mode; }
 uint32_t apple_fb_reader_published_format_detail(void) { return s_pub_detail; }
 

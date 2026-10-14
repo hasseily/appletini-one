@@ -11,3 +11,9 @@ Accepted files must meet both requirements:
 2. The data is not entirely `00` or entirely `FF`.
 
 Missing or invalid files select the built-in Enhanced US ROM.
+
+Apple II programs can also upload a complete 4 KB ROM through the
+[SmartPort glyph API](../../README_GLYPH_API.md), selector `$81` on controller
+unit 0. Uploads change Appletini's rendered text. They do not change the
+motherboard's character ROM or the saved `video.rom` setting. RESTORE returns
+to this menu selection, and selecting a ROM in the menu cancels an upload.

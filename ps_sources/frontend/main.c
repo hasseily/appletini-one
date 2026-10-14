@@ -67,6 +67,7 @@
 #include "apple_cycle_egress.h"
 #include "apple_cycle_renderer.h"
 #include "apple_fb_handoff.h"
+#include "video_rom_service.h"
 #include "../lib/amp.h"
 
 /*
@@ -2628,7 +2629,9 @@ void cherryusb_background_poll(void)
 
     g_usb1_background_poll_active = 1U;
     usb0_priority_checkpoint();
+    video_rom_service_poll();
     smartport_service_poll();
+    video_rom_service_poll();
     disk2_service_poll();
     if (g_usb1_background_compositor_ready != 0U) {
         (void)compositor_tick();
@@ -4128,6 +4131,7 @@ int main(void)
      * CPU1 applies its own MMU mapping but must not clear CPU0-published
      * settings after this point. */
     apple_fb_handoff_init();
+    video_rom_service_init();
 
     /* Prepare the second Cortex-A9. amp_release_core1() copies the
      * core-1 image (embedded as .rodata.core1_blob via lib/core1_
@@ -4782,7 +4786,9 @@ int main(void)
         usb0_priority_checkpoint();
         ui_poll_sensors();
         usb0_priority_checkpoint();
+        video_rom_service_poll();
         smartport_service_poll();
+        video_rom_service_poll();
         usb0_priority_checkpoint();
         disk2_service_poll();
         usb0_priority_checkpoint();

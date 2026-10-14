@@ -1251,6 +1251,8 @@ run_step(
             "../../../ps_sources/frontend/linear_text_overlay_font.c",
             "../../../ps_sources/frontend/memory_api.c",
             "../../../ps_sources/frontend/memory_api_hw.c",
+            "../../../ps_sources/frontend/glyph_api.c",
+            "../../../ps_sources/frontend/video_rom_service.c",
             "../../../ps_sources/frontend/no_slot_clock_control.c",
             "../../../ps_sources/frontend/onee_service.c",
             "../../../ps_sources/frontend/onee_input_service.c",

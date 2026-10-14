@@ -295,9 +295,11 @@ def test_vtw_direct_read_is_complete_and_fail_closed() -> None:
             "sp_vtw_wait_video_posts_drained()" in direct,
             "a direct video read must not complete until its queued "
             "motherboard writes have drained")
-    require("assign arm_post_ready = core_active && !eng_post_full && !core_post_req;" in vtw_core and
+    require("assign arm_post_ready = core_active && !eng_post_full && !core_post_req &&" in vtw_core and
+            "!video_mirror_mode_q;" in vtw_core and
             "arm_post_we && arm_post_ready" in vtw_core,
-            "CPU0 posts must share the ordered vTW queue without replacing a core post")
+            "CPU0 posts must share the ordered vTW queue without replacing a core post "
+            "or bypassing video-mirror mode")
     require("CARD_CTRL_REG_VTW_POST_PUSH     = 8'h9A" in apple_top and
             "CARD_CTRL_REG_VTW_POST_STATUS   = 8'h9B" in apple_top and
             "vtw_arm_post_accept_count_q" in apple_top and
@@ -317,7 +319,7 @@ def test_vtw_direct_read_is_complete_and_fail_closed() -> None:
     shadow_host = read(SHADOW_HOST_SV)
     require("CARD_CTRL_REG_VTW_SHADOW_DATA4  = 8'h9D" in apple_top and
             "CARD_CTRL_REG_VTW_SHADOW_DATA4_STATUS = 8'h9E" in apple_top and
-            "vtw_shadow_host_port vtw_shadow_host_port_i" in apple_top and
+            "vtw_shadow_host_port #(.WIDE_PORT(1'b1)) vtw_shadow_host_port_i" in apple_top and
             "word_fifo_q [0:1]" in shadow_host and
             "word_accept_count" in shadow_host and
             "CARD_CTRL_VTW_SHADOW_DATA4_ACCEPT_MASK" in shadow,
@@ -475,8 +477,10 @@ def test_compositor_yields_to_pending_smartport_commands() -> None:
     compositor = read(COMPOSITOR_C)
 
     require("uint8_t smartport_service_has_pending(void);" in header and
-            "return (g_cmd_pending_count != 0U) ? 1U : 0U;" in source,
-            "long CPU0 work needs a cheap IRQ-updated pending check")
+            "return (g_cmd_pending_count != 0U ||" in source and
+            "(sp_hw_status() & SP_ST_EXEC_PENDING) != 0U) ? 1U : 0U;" in source,
+            "long CPU0 work must check both the IRQ count and a mailbox request "
+            "that can arrive before its IRQ")
     require("COMPOSITOR_SP_ROWS_PER_SLICE 16" in compositor and
             "compositor_smartport_checkpoint();" in compositor and
             "smartport_service_poll();" in compositor and

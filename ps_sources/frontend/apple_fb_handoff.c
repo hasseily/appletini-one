@@ -45,6 +45,8 @@
  *   0xFFFF1010  display_mode     (uint32_t)
  *   0xFFFF1014  video_rom_gen    (uint32_t)  CPU0 writes, CPU1 reads
  *   0xFFFF1018  debug_dump_req   (uint32_t)  CPU0 writes, CPU1 clears
+ *   0xFFFF101C  video_rom_mode   (uint32_t)  CPU0 writes, CPU1 reads
+ *   0xFFFF1020  video_rom_ack    (uint32_t)  CPU1 writes, CPU0 reads
  */
 
 #include <stdint.h>
@@ -62,12 +64,12 @@
 #define HANDOFF_READER_ACTIVE_ADDR   0xFFFF1008U
 #define HANDOFF_VIDEO_SETTINGS_ADDR  0xFFFF100CU
 #define HANDOFF_DISPLAY_MODE_ADDR   0xFFFF1010U
-/* Video character-ROM override generation. CPU0 bumps it after copying a
- * validated ROM into the APPLE_VIDEO_ROM_OVERRIDE_ADDR buffer (or sets 0 for
- * "no override"); CPU1 rebuilds csbits when it sees the value change. */
+/* ROM data and mode stay fixed from publication until CPU1 acknowledges. */
 #define HANDOFF_VIDEO_ROM_GEN_ADDR   0xFFFF1014U
 /* Diagnostic shadow-dump request word (CPU0 writes, CPU1 clears). */
 #define HANDOFF_DEBUG_DUMP_REQ_ADDR  0xFFFF1018U
+#define HANDOFF_VIDEO_ROM_MODE_ADDR  0xFFFF101CU
+#define HANDOFF_VIDEO_ROM_ACK_ADDR   0xFFFF1020U
 
 #define READER_NONE    0xFFu
 #define PUBLISHED_SLOT_MASK          0x000000FFu
@@ -92,6 +94,10 @@ static volatile uint32_t *const s_video_rom_gen =
     (volatile uint32_t *)HANDOFF_VIDEO_ROM_GEN_ADDR;
 static volatile uint32_t *const s_debug_dump_req =
     (volatile uint32_t *)HANDOFF_DEBUG_DUMP_REQ_ADDR;
+static volatile uint32_t *const s_video_rom_mode =
+    (volatile uint32_t *)HANDOFF_VIDEO_ROM_MODE_ADDR;
+static volatile uint32_t *const s_video_rom_ack =
+    (volatile uint32_t *)HANDOFF_VIDEO_ROM_ACK_ADDR;
 
 /* Per-core local state. Each core has its own copy in its own .bss
  * (CPU0 in lower DDR, CPU1 in upper DDR -- the per-app static).
@@ -193,7 +199,9 @@ void apple_fb_handoff_init(void)
     *s_reader_active  = READER_NONE;
     *s_video_settings = APPLE_VIDEO_SETTINGS_DEFAULT;
     *s_display_mode   = APPLE_FB_DISPLAY_MODE_LEGACY;
-    *s_video_rom_gen  = 0u;   /* 0 = no override -> baked Enhanced US ROM */
+    *s_video_rom_gen  = 0u;
+    *s_video_rom_mode = APPLE_FB_VIDEO_ROM_BUILT_IN;
+    *s_video_rom_ack  = 0u;
     *s_debug_dump_req = APPLE_FB_DUMP_NONE;
     __asm__ volatile ("dsb sy" ::: "memory");
 
@@ -250,8 +258,12 @@ uint32_t apple_fb_video_settings_get(void)
     return settings;
 }
 
-void apple_fb_video_rom_gen_set(uint32_t gen)
+void apple_fb_video_rom_publish(uint32_t gen, uint32_t mode)
 {
+    /* Order shared ROM bytes before mode, then both before generation. */
+    __asm__ volatile ("dmb sy" ::: "memory");
+    *s_video_rom_mode = mode;
+    __asm__ volatile ("dmb sy" ::: "memory");
     *s_video_rom_gen = gen;
     __asm__ volatile ("dmb sy" ::: "memory");
 }
@@ -259,6 +271,28 @@ void apple_fb_video_rom_gen_set(uint32_t gen)
 uint32_t apple_fb_video_rom_gen_get(void)
 {
     const uint32_t gen = *s_video_rom_gen;
+    __asm__ volatile ("dmb sy" ::: "memory");
+    return gen;
+}
+
+uint32_t apple_fb_video_rom_mode_get(void)
+{
+    const uint32_t mode = *s_video_rom_mode;
+    __asm__ volatile ("dmb sy" ::: "memory");
+    return mode;
+}
+
+void apple_fb_video_rom_ack_set(uint32_t gen)
+{
+    /* Finish all shared-buffer reads before releasing it to CPU0. */
+    __asm__ volatile ("dmb sy" ::: "memory");
+    *s_video_rom_ack = gen;
+    __asm__ volatile ("dmb sy" ::: "memory");
+}
+
+uint32_t apple_fb_video_rom_ack_get(void)
+{
+    const uint32_t gen = *s_video_rom_ack;
     __asm__ volatile ("dmb sy" ::: "memory");
     return gen;
 }

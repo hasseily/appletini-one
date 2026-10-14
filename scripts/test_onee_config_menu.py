@@ -81,7 +81,7 @@ def test_menu_row_state_and_exact_help() -> None:
                                 "void config_menu_draw_clock")
 
     require("CONFIG_MENU_BOOT_ONEE_ITEM 2U" in header and
-            "CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM 3U" in header and
+            "CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM 5U" in header and
             "#define CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM \\\n"
             "    CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM" in header,
             "ONE//e must occupy Boot Settings row 2 before USB bindings")
@@ -98,7 +98,7 @@ def test_menu_row_state_and_exact_help() -> None:
             "the ONE//e standalone row must be dimmed while LOCKED")
     require('"ONE//e video standard"' in boot_draw and
             "config_menu_onee_video_standard_text(menu)" in boot_draw and
-            "y + (row_h * 3)" in boot_draw and
+            "y + (row_h * 5)" in boot_draw and
             "if (onee_fixed != 0U)" in boot_draw and
             '"ONE//e video standard"' not in video_draw and
             "CONFIG_VIDEO_ITEM_ONEE_STANDARD" not in internal,
@@ -115,7 +115,7 @@ def test_menu_row_state_and_exact_help() -> None:
         "Runs the Appletini without the Apple //e, using the built-in 65c02 accelerator and a virtual",
         "motherboard. This mode is only available when there is no Apple bus activity detected.",
         "Any such activity disables this mode.",
-        "The standalone mode requires a jumper on the card. Read the documentation for more detail.",
+        "Outside the Apple //e, the jumper supplies the 5V needed for standalone ONE//e or Multitini.",
         "For additional safety, only run the standalone mode when the card is out of the Apple.",
     ]
     onee_help = function_slice(help_source,
@@ -132,7 +132,7 @@ def test_menu_row_state_and_exact_help() -> None:
             help_source and
             "help_item = CONFIG_MENU_BOOT_ONEE_STANDARD_HELP_ITEM;" in source and
             "help_item == CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM" in source,
-            "the shared item 3 must resolve ONE//e standard help only while active")
+            "the shared reset row must resolve ONE//e standard help only while active")
 
 
 def test_onee_standard_keeps_global_callback_and_actions() -> None:

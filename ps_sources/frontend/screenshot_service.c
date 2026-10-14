@@ -22,10 +22,12 @@
 #include "usb_storage_service.h"
 
 #define SCREENSHOT_DIR "0:/screenshots"
-#define SCREENSHOT_OVERLAY_TICKS ((XTime)(3ULL * (uint64_t)COUNTS_PER_SECOND))
+#define SCREENSHOT_OVERLAY_TICKS ((XTime)(3ULL * (uint64_t)(COUNTS_PER_SECOND)))
 #define PNG_ADLER_MOD 65521U
 #define PNG_ADLER_NMAX 5552U
-#define SCREENSHOT_ROWS_PER_POLL 2U
+#define SCREENSHOT_ROWS_PER_POLL 16U
+#define SCREENSHOT_PNG_BATCH_BYTES (64U * 1024U)
+#define SCREENSHOT_POLL_TICKS ((XTime)(4ULL * (uint64_t)(COUNTS_PER_SECOND) / 1000ULL))
 #define SCREENSHOT_NAME_ATTEMPTS 64U
 
 typedef struct {
@@ -37,10 +39,13 @@ typedef struct {
     uint8_t scale_x;
     uint8_t scale_y;
     uint8_t scanlines_mode;
+    video_pixel_mask_frame_t pixel_mask;
 } screenshot_surface_t;
 
 static FATFS g_screenshot_fs;
-static uint8_t g_png_row[1U + (COMP_OUT_MAX_WIDTH * 4U)];
+/* Keep this off the ARM stack. Encode complete deflate rows together so
+ * FatFS sees one large write instead of a tiny header and data per row. */
+static uint8_t g_png_batch[SCREENSHOT_PNG_BATCH_BYTES];
 
 typedef struct {
     uint32_t crc, adler_a, adler_b;
@@ -384,10 +389,13 @@ static void fill_png_row(uint8_t *row,
 
     row[0] = 0U;
     for (uint32_t x = 0U; x < width; ++x) {
+        const uint16_t pixel565 = (src565 != NULL) ?
+            video_pixel_mask_frame_rgb565(&surface->pixel_mask,
+                src565[x / surface->scale_x], (int)x, (int)y) : 0U;
         const uint32_t bgra =
             (blank != 0U) ? 0U
             : (src565 != NULL)
-                ? fb16_to_bgra32(src565[x / surface->scale_x])
+                ? fb16_to_bgra32(pixel565)
                 : src[x / surface->scale_x];
         uint8_t *dst = &row[1U + (x * 4U)];
 
@@ -411,7 +419,7 @@ static int png_begin(FIL *file, screenshot_png_t *png,
     const uint32_t idat_len = 2U + (height * (5U + row_len)) + 4U;
 
     if (width == 0U || height == 0U ||
-        row_len > (uint32_t)sizeof(g_png_row)) {
+        row_len > 1U + COMP_OUT_MAX_WIDTH * 4U) {
         return -1;
     }
 
@@ -442,22 +450,32 @@ static int png_begin(FIL *file, screenshot_png_t *png,
     return 0;
 }
 
-static int png_row(FIL *file, screenshot_png_t *png,
-                   const screenshot_surface_t *surface,
-                   uint32_t y, uint32_t width, uint32_t height)
+static int png_rows(FIL *file, screenshot_png_t *png,
+                    const screenshot_surface_t *surface,
+                    uint32_t y, uint32_t width, uint32_t height,
+                    uint32_t limit, uint32_t *written_rows)
 {
-    uint8_t block_header[5];
     const uint16_t row_len = (uint16_t)(1U + width * 4U);
+    const uint32_t block_len = 5U + row_len;
+    uint32_t rows = 0U, bytes = 0U;
 
-    fill_png_row(g_png_row, surface, y, width);
-    block_header[0] = (uint8_t)((y + 1U == height) ? 0x01U : 0x00U);
-    store_le16(&block_header[1], row_len);
-    store_le16(&block_header[3], (uint16_t)~row_len);
-    if (png_chunk_data(file, &png->crc, block_header, sizeof(block_header)) != 0 ||
-        png_chunk_data(file, &png->crc, g_png_row, row_len) != 0) {
+    *written_rows = 0U;
+    while (rows < limit && y + rows < height &&
+           block_len <= (uint32_t)sizeof(g_png_batch) - bytes) {
+        uint8_t *block = &g_png_batch[bytes];
+        uint8_t *row = block + 5U;
+        block[0] = (uint8_t)((y + rows + 1U == height) ? 0x01U : 0x00U);
+        store_le16(&block[1], row_len);
+        store_le16(&block[3], (uint16_t)~row_len);
+        fill_png_row(row, surface, y + rows, width);
+        adler32_update(&png->adler_a, &png->adler_b, row, row_len);
+        bytes += block_len;
+        ++rows;
+    }
+    if (rows == 0U || png_chunk_data(file, &png->crc, g_png_batch, bytes) != 0) {
         return -1;
     }
-    adler32_update(&png->adler_a, &png->adler_b, g_png_row, row_len);
+    *written_rows = rows;
     return 0;
 }
 
@@ -537,7 +555,7 @@ static void make_timestamp(char *out, size_t out_size, const rtc_pcf8563_time_t 
 
         XTime_GetTime(&now);
         if (COUNTS_PER_SECOND != 0U) {
-            seconds = ((uint64_t)now / (uint64_t)COUNTS_PER_SECOND);
+            seconds = ((uint64_t)now / (uint64_t)(COUNTS_PER_SECOND));
         }
         (void)snprintf(out, out_size, "uptime-%010llu",
                        (unsigned long long)seconds);
@@ -692,10 +710,12 @@ static FRESULT shot_resume_file(void)
 static void shot_poll(void)
 {
     FRESULT fr;
+    XTime started, now;
     int rc = 0;
     if (g_shot.state == SHOT_IDLE) {
         return;
     }
+    XTime_GetTime(&started);
     fat_timestamp_override_begin(&g_shot.rtc);
     if (g_shot.state == SHOT_OPEN) {
         g_shot.usb_was_connected = usb_storage_service_disconnect();
@@ -746,14 +766,24 @@ static void shot_poll(void)
             return;
         }
         if (g_shot.state == SHOT_ROWS) {
-            for (uint32_t n = 0U; n < SCREENSHOT_ROWS_PER_POLL &&
-                 g_shot.next_row < g_shot.height; ++n) {
-                rc = png_row(&g_shot.file, &g_shot.png, &g_shot.surface,
-                             g_shot.next_row, g_shot.width, g_shot.height);
+            uint32_t remaining = SCREENSHOT_ROWS_PER_POLL;
+            while (remaining != 0U && g_shot.next_row < g_shot.height) {
+                uint32_t rows;
+                rc = png_rows(&g_shot.file, &g_shot.png, &g_shot.surface,
+                              g_shot.next_row, g_shot.width, g_shot.height,
+                              remaining, &rows);
                 if (rc != 0) {
                     break;
                 }
-                ++g_shot.next_row;
+                g_shot.next_row += rows;
+                remaining -= rows;
+                /* A synchronous card write can exceed this budget. Stop
+                 * before another block, then close before yielding so a
+                 * remount by another CPU0 service remains safe. */
+                XTime_GetTime(&now);
+                if (now - started >= SCREENSHOT_POLL_TICKS) {
+                    break;
+                }
             }
             if (g_shot.next_row == g_shot.height) {
                 g_shot.state = SHOT_FINISH;
@@ -782,6 +812,7 @@ int screenshot_service_request(screenshot_service_kind_t kind,
     uint32_t native_width, native_height;
     size_t pixel_bytes;
     void *pixels;
+    uint8_t output_mode = DISPLAY_MODE_DEFAULT;
 
     if (g_shot.state != SHOT_IDLE || g_shot.result_pending != 0U) {
         result_set(result, -1, NULL, "SCREENSHOT BUSY");
@@ -832,14 +863,20 @@ int screenshot_service_request(screenshot_service_kind_t kind,
         }
         pixel_bytes = sizeof(uint32_t);
     } else {
-        uint8_t slot = 0xFFU;
-        surface.base565 = compositor_latched_framebuffer(&slot);
-        surface.stride_pixels = COMP_OUT_WIDTH;
+        compositor_output_frame_t frame;
+        if (compositor_capture_output_frame(&frame) == 0U) {
+            result_set(result, -1, NULL, "NO OUTPUT FRAME");
+            return -1;
+        }
+        surface.base565 = frame.pixels;
+        surface.stride_pixels = (uint32_t)frame.width;
         surface.scale_x = 1U;
         surface.scale_y = 1U;
-        width = COMP_OUT_WIDTH;
-        height = COMP_OUT_HEIGHT;
-        if (surface.base565 == NULL || slot >= COMP_OUT_SLOT_COUNT ||
+        surface.pixel_mask = frame.pixel_mask;
+        output_mode = frame.mode;
+        width = (uint32_t)frame.width;
+        height = (uint32_t)frame.height;
+        if (surface.base565 == NULL || frame.slot >= COMP_OUT_SLOT_COUNT ||
             width == 0U || height == 0U || width > COMP_OUT_MAX_WIDTH ||
             height > COMP_OUT_MAX_HEIGHT) {
             result_set(result, -1, NULL, "NO OUTPUT FRAME");
@@ -879,8 +916,8 @@ int screenshot_service_request(screenshot_service_kind_t kind,
     make_timestamp(g_shot.timestamp, sizeof(g_shot.timestamp), rtc);
     (void)snprintf(g_shot.suffix, sizeof(g_shot.suffix), "%s",
                    kind == SCREENSHOT_SERVICE_KIND_A2 ? "a2" :
-                   compositor_output_mode() == DISPLAY_MODE_DEFAULT ? "1080p" :
-                   display_mode_get(compositor_output_mode())->name);
+                   output_mode == DISPLAY_MODE_DEFAULT ? "1080p" :
+                   display_mode_get(output_mode)->name);
     g_shot.state = SHOT_OPEN;
     result_set(result, 0, NULL, "SCREENSHOT QUEUED");
     return 0;

@@ -10,13 +10,12 @@
 
 #include "crc32.h"
 #include "qspi_nor.h"
+#include "multiboot.h"
 #include "uart.h"
 
 #define PRIMARY_FLASH_OFFSET                GOLDEN_SELF_UPDATE_PRIMARY_OFFSET
 #define TRIAL_FLASH_OFFSET                  GOLDEN_SELF_UPDATE_TRIAL_OFFSET
 #define GOLDEN_SLOT_SIZE                    GOLDEN_SELF_UPDATE_SLOT_SIZE
-#define FALLBACK_FLASH_OFFSET               0x00200000U
-#define FALLBACK_FLASH_SIZE                 0x00DF0000U
 #define QSPI_ERASE_SIZE                     0x00010000U
 #define QSPI_ADDRESS_BYTES                  3U
 
@@ -118,6 +117,7 @@ typedef char golden_manifest_size_must_be_32[
 
 static uint32_t g_log_uart;
 static uint32_t g_log_mirror_uart;
+static FATFS g_completion_fs;
 
 static void log_puts(const char *text)
 {
@@ -461,6 +461,25 @@ static int manifest_decode(const uint8_t bytes[GOLDEN_SELF_UPDATE_MANIFEST_SIZE]
     return XST_SUCCESS;
 }
 
+/* Reuse the shared read-only golden validator. It decodes expected marker
+ * bytes at runtime, so this generic library cannot supply a false capability
+ * marker to a single-slot main that did not link the multiboot boot path. */
+static int target_multiboot_read(void *context, uint32_t offset, void *dst, uint32_t len)
+{
+    return reader_read((const image_reader_t *)context, offset, dst, len) == XST_SUCCESS ? 0 : -1;
+}
+
+static int target_is_multiboot_golden(const image_reader_t *reader)
+{
+    mb_flash_t source;
+    uint32_t offset;
+    memset(&source, 0, sizeof(source));
+    source.context = (void *)reader;
+    source.read = target_multiboot_read;
+    source.capacity = MB_FLASH_SIZE;
+    return mb_golden_available(&source, &offset) == MB_OK && offset == MB_GOLDEN_OFFSET;
+}
+
 static int target_preflight(const image_reader_t *reader,
                             target_image_t *target,
                             golden_self_update_result_t *out)
@@ -515,6 +534,11 @@ static int target_preflight(const image_reader_t *reader,
     }
 
     target->total_size = reader->size;
+    if (!target_is_multiboot_golden(reader)) {
+        result_error(out, GSU_E_TARGET_MARKER,
+                     "golden target lacks the linked multiboot golden capability");
+        return XST_FAILURE;
+    }
     out->payload_size = target->manifest.payload_size;
     out->payload_crc32 = target->manifest.payload_crc32;
     return XST_SUCCESS;
@@ -576,60 +600,37 @@ static int flash_golden_preflight(qspi_nor_t *nor,
     return XST_SUCCESS;
 }
 
+static int fallback_flash_read(void *context, uint32_t offset, void *dst, uint32_t len)
+{
+    return qspi_nor_read((qspi_nor_t *)context, offset, dst, len) == XST_SUCCESS ? 0 : -1;
+}
+
 static int fallback_preflight(qspi_nor_t *nor,
                               uint32_t flash_capacity,
                               golden_self_update_result_t *out)
 {
-    flash_reader_ctx_t flash_ctx;
-    image_reader_t reader;
-    golden_self_update_manifest_t manifest;
-    uint8_t manifest_bytes[GOLDEN_SELF_UPDATE_MANIFEST_SIZE];
-    uint32_t payload_size;
-    uint32_t crc;
-    uint32_t available;
-    int marker_found;
-
-    if (flash_capacity <= FALLBACK_FLASH_OFFSET) {
-        result_error(out, GSU_E_FALLBACK_IMAGE, "detected flash has no fallback region");
+    mb_flash_t flash;
+    mb_selection_t selected;
+    if (flash_capacity < MB_FLASH_SIZE) {
+        result_error(out, GSU_E_FALLBACK_IMAGE, "flash does not cover the multiboot layout");
         return XST_FAILURE;
     }
-    available = flash_capacity - FALLBACK_FLASH_OFFSET;
-    if (available > FALLBACK_FLASH_SIZE) {
-        available = FALLBACK_FLASH_SIZE;
-    }
-    flash_ctx.nor = nor;
-    flash_ctx.base = FALLBACK_FLASH_OFFSET;
-    reader.read = flash_read;
-    reader.ctx = &flash_ctx;
-    reader.size = available;
-
-    if (bootgen_image_validate(&reader, &payload_size) != XST_SUCCESS ||
-        payload_size > (FALLBACK_FLASH_SIZE - GOLDEN_SELF_UPDATE_MANIFEST_SIZE) ||
-        !range_valid(payload_size, GOLDEN_SELF_UPDATE_MANIFEST_SIZE, reader.size)) {
-        result_error(out, GSU_E_FALLBACK_IMAGE, "fallback Bootgen image is invalid");
+    memset(&flash, 0, sizeof(flash));
+    flash.context = nor;
+    flash.read = fallback_flash_read;
+    flash.capacity = MB_FLASH_SIZE;
+    if (mb_select(&flash, MB_PRODUCT_NONE, &selected) != MB_OK ||
+        (selected.product == MB_PRODUCT_NONE && selected.legacy == 0U)) {
+        result_error(out, GSU_E_FALLBACK_IMAGE,
+                     "no live verified recovery firmware in either slot");
         return XST_FAILURE;
     }
-    if (reader_read(&reader, payload_size, manifest_bytes,
-                    sizeof(manifest_bytes)) != XST_SUCCESS ||
-        manifest_decode(manifest_bytes, &manifest) != XST_SUCCESS ||
-        manifest.role != GOLDEN_SELF_UPDATE_ROLE_FIRMWARE ||
-        (manifest.flags & GOLDEN_SELF_UPDATE_FLAG_RECOVERY) == 0U ||
-        manifest.payload_size != payload_size) {
-        result_error(out, GSU_E_FALLBACK_MANIFEST,
-                     "fallback recovery manifest is invalid");
-        return XST_FAILURE;
-    }
-    if (stream_crc_and_marker(&reader, payload_size,
-                              &crc, &marker_found) != XST_SUCCESS ||
-        crc != manifest.payload_crc32) {
-        result_error(out, GSU_E_FALLBACK_CRC, "fallback payload CRC32 mismatch");
-        return XST_FAILURE;
-    }
-    if (!marker_found) {
-        result_error(out, GSU_E_FALLBACK_MARKER,
-                     "fallback recovery marker is missing");
-        return XST_FAILURE;
-    }
+    /* mb_select checks Bootgen bounds, the complete payload/footer CRC,
+     * recovery marker, and either the product tag or guarded legacy record.
+     * Neither firmware slot nor boot-choice metadata is changed here. */
+    log_printf("[GSU] Verified recovery %s @0x%08lX\r\n",
+               selected.legacy ? "legacy firmware" : mb_product_name(selected.product),
+               (unsigned long)selected.boot_offset);
     return XST_SUCCESS;
 }
 
@@ -774,7 +775,7 @@ static int qspi_preflight_init(qspi_nor_t *nor,
         return XST_FAILURE;
     }
     capacity = qspi_nor_capacity_bytes(nor);
-    if (capacity < (FALLBACK_FLASH_OFFSET + FALLBACK_FLASH_SIZE)) {
+    if (capacity < MB_FLASH_SIZE) {
         result_error(out, GSU_E_QSPI_INIT, "QSPI capacity does not cover the fixed flash layout");
         return XST_FAILURE;
     }
@@ -1015,6 +1016,114 @@ int golden_self_update_repair_primary(uint32_t current_multiboot_offset,
                (unsigned long)out->flash_crc32,
                (unsigned long)out->boot_offset);
     return XST_SUCCESS;
+}
+
+int golden_self_update_complete_sd(uint32_t current_multiboot_offset,
+                                   const golden_self_update_result_t *repair,
+                                   uint32_t uart_base,
+                                   uint32_t mirror_uart_base)
+{
+    qspi_nor_t nor;
+    flash_reader_ctx_t flash_ctx;
+    image_reader_t primary_reader;
+    target_image_t primary;
+    golden_self_update_result_t validation;
+    FIL file;
+    FILINFO info;
+    FRESULT fr;
+    FSIZE_t size;
+    uint32_t capacity;
+    uint32_t offset;
+    int matched = 1;
+    int read_failed = 0;
+
+    g_log_uart = uart_base;
+    g_log_mirror_uart = mirror_uart_base;
+    if (current_multiboot_offset != PRIMARY_FLASH_OFFSET &&
+        current_multiboot_offset != TRIAL_FLASH_OFFSET) {
+        return GOLDEN_SELF_UPDATE_SD_FAILED;
+    }
+    if (current_multiboot_offset == TRIAL_FLASH_OFFSET &&
+        (repair == NULL || !repair->updated || !repair->verified ||
+         !repair->reset_required || repair->error_code != GSU_E_OK ||
+         repair->boot_offset != PRIMARY_FLASH_OFFSET)) {
+        /* Staging trial alone never acknowledges the SD source. */
+        return GOLDEN_SELF_UPDATE_SD_FAILED;
+    }
+    fr = f_mount(&g_completion_fs, "0:/", 1U);
+    if (fr != FR_OK) {
+        log_printf("[GSU] BOOT.BIN retained: SD completion mount failed fr=%d\r\n", (int)fr);
+        return GOLDEN_SELF_UPDATE_SD_FAILED;
+    }
+    fr = f_open(&file, "0:/BOOT.BIN", FA_READ);
+    if (fr == FR_NO_FILE || fr == FR_NO_PATH) return GOLDEN_SELF_UPDATE_SD_UNCHANGED;
+    if (fr != FR_OK) {
+        log_printf("[GSU] BOOT.BIN retained: completion open failed fr=%d\r\n", (int)fr);
+        return GOLDEN_SELF_UPDATE_SD_FAILED;
+    }
+    size = f_size(&file);
+    result_init(&validation);
+    memset(&primary, 0, sizeof(primary));
+    if (size <= GOLDEN_SELF_UPDATE_MANIFEST_SIZE || size > GOLDEN_SLOT_SIZE) {
+        matched = 0;
+    } else if (qspi_preflight_init(&nor, &capacity, &validation) != XST_SUCCESS ||
+               flash_golden_preflight(&nor, PRIMARY_FLASH_OFFSET, &primary,
+                   &primary_reader, &flash_ctx, &validation) != XST_SUCCESS) {
+        read_failed = 1;
+    } else if (size != primary.total_size ||
+               (current_multiboot_offset == TRIAL_FLASH_OFFSET &&
+                (repair->payload_size != primary.manifest.payload_size ||
+                 repair->payload_crc32 != primary.manifest.payload_crc32 ||
+                 repair->flash_crc32 != primary.manifest.payload_crc32))) {
+        matched = 0;
+    } else {
+        /* Compare every byte including the manifest. Payload CRC equality
+         * alone must not acknowledge a changed or unrelated SD image. */
+        for (offset = 0U; offset < primary.total_size; ) {
+            UINT got = 0U;
+            uint32_t chunk = primary.total_size - offset;
+            if (chunk > IO_CHUNK_SIZE) chunk = IO_CHUNK_SIZE;
+            if (f_read(&file, g_source_buf, (UINT)chunk, &got) != FR_OK ||
+                got != chunk || reader_read(&primary_reader, offset,
+                    g_flash_buf, chunk) != XST_SUCCESS) {
+                read_failed = 1;
+                break;
+            }
+            if (memcmp(g_source_buf, g_flash_buf, chunk) != 0) {
+                matched = 0;
+                break;
+            }
+            offset += chunk;
+        }
+    }
+    fr = f_close(&file);
+    if (fr != FR_OK || read_failed) {
+        log_printf("[GSU] BOOT.BIN retained: completion verification/close failed fr=%d\r\n", (int)fr);
+        return GOLDEN_SELF_UPDATE_SD_FAILED;
+    }
+    if (!matched) {
+        log_puts("[GSU] BOOT.BIN retained: file differs from verified primary\r\n");
+        return GOLDEN_SELF_UPDATE_SD_UNCHANGED;
+    }
+    fr = f_stat("0:/BOOT.OK", &info);
+    if (fr == FR_OK) {
+        if ((info.fattrib & AM_DIR) != 0U) {
+            log_puts("[GSU] BOOT.BIN retained: BOOT.OK is a directory\r\n");
+            return GOLDEN_SELF_UPDATE_SD_FAILED;
+        }
+        fr = f_unlink("0:/BOOT.OK");
+    }
+    if (fr != FR_OK && fr != FR_NO_FILE && fr != FR_NO_PATH) {
+        log_printf("[GSU] BOOT.BIN retained: cannot replace BOOT.OK fr=%d\r\n", (int)fr);
+        return GOLDEN_SELF_UPDATE_SD_FAILED;
+    }
+    fr = f_rename("0:/BOOT.BIN", "0:/BOOT.OK");
+    if (fr != FR_OK) {
+        log_printf("[GSU] BOOT.BIN retained: completion rename failed fr=%d\r\n", (int)fr);
+        return GOLDEN_SELF_UPDATE_SD_FAILED;
+    }
+    log_puts("[GSU] Verified primary: renamed BOOT.BIN to BOOT.OK\r\n");
+    return GOLDEN_SELF_UPDATE_SD_RENAMED;
 }
 
 int golden_self_update_run(const char *source_path,

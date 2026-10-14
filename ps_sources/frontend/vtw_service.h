@@ -5,12 +5,9 @@
  *
  * Thin by design (README_VIRTUAL_TRANSWARP.md): the PL owns the 65C02 core,
  * shadow memory, and bus engine. This service sequences the session --
- * waiting for a positive //e identification, taking the bus, copying the
- * motherboard ROM into the shadow over real bus cycles, then releasing the
- * core -- and exposes configuration plus `vtw status` diagnostics.
- *
- * The ROM copy runs incrementally from vtw_service_poll() so USB/audio
- * polling never stalls; a full copy takes a few dozen poll passes.
+ * waiting for a positive legacy-host identification, taking the bus, loading
+ * the fixed Enhanced //e ROM into the shadow, then releasing the core -- and
+ * exposes configuration plus `vtw status` diagnostics.
  *
  * Disabling the session releases /DMA at a PHI1 boundary, but the frozen
  * motherboard 6502 resumes from stale context: the user must CTRL-RESET,
@@ -24,6 +21,17 @@ void vtw_service_init(uint32_t uart_base);
  * only once the boot ROM has positively identified a //e. */
 void vtw_service_set_enabled(uint8_t enable);
 uint8_t vtw_service_is_enabled(void);
+
+/* Call once with the restored settings, before CPU0_READY releases initial
+ * Apple RESET. A saved ON holds only the physical IIe ROM after its identity
+ * report, so the first prompt/menu and storage boot run on vTW. ONE//e entry
+ * clears this hold before releasing its private core. */
+void vtw_service_prepare_boot_start(void);
+/* CPU0 gives this cold-start transition priority over USB and storage. */
+uint8_t vtw_service_boot_start_pending(void);
+/* One live speed-apply attempt should precede the first storage service poll.
+ * Failure leaves the working 1 MHz session and permits normal service work. */
+uint8_t vtw_service_boot_handoff_pending(void);
 
 /* speed_mode: CARD_CTRL_VTW_SPEED_*; pace_divider: fabric clocks per core
  * cycle in divided mode (min 2 = full rate; 37 ~= 3.6 MHz-equivalent).

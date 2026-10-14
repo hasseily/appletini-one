@@ -15,12 +15,26 @@ from pathlib import Path
 
 MAGIC = b"ATNIMG1\0"
 FORMAT_VERSION = 1
+MULTIBOOT_FORMAT_VERSION = 2
 ROLE_GOLDEN = 1
 ROLE_FIRMWARE = 2
 FLAG_RECOVERY_CAPABLE = 1 << 0
 KNOWN_FLAGS = FLAG_RECOVERY_CAPABLE
+PRODUCT_APPLETINI = 0x100
+PRODUCT_MULTITINI = 0x200
+PRODUCT_MASK = 0x300
+FLAG_MULTIBOOT = 0x400
+PRODUCT_BY_NAME = {"appletini": PRODUCT_APPLETINI, "multitini": PRODUCT_MULTITINI}
+PRODUCT_NAME = {value: name for name, value in PRODUCT_BY_NAME.items()}
+PRODUCT_MARKER = {
+    PRODUCT_APPLETINI: b"APPLETINI-MULTIBOOT-V1",
+    PRODUCT_MULTITINI: b"MULTITINI-MULTIBOOT-V1",
+}
+PRODUCT_OFFSET = {PRODUCT_APPLETINI: 0x200000, PRODUCT_MULTITINI: 0x800000}
+PRODUCT_CAPACITY = {PRODUCT_APPLETINI: 0x600000, PRODUCT_MULTITINI: 0x7E0000}
 MAX_U32 = 0xFFFFFFFF
 COPY_CHUNK_SIZE = 1024 * 1024
+RECOVERY_MARKER = b"APPLETINI-GOLDEN-RECOVERY-V1"
 
 _MANIFEST_PREFIX = struct.Struct("<8s5I")
 _MANIFEST = struct.Struct("<8s6I")
@@ -51,17 +65,29 @@ def _crc32(data: bytes, value: int = 0) -> int:
     return zlib.crc32(data, value) & MAX_U32
 
 
-def _validate_role_and_flags(role: int, flags: int) -> None:
+def _validate_role_and_flags(role: int, flags: int,
+                             version: int = FORMAT_VERSION) -> None:
     if role not in ROLE_NAME:
         raise ManifestError(f"unknown image role {role}")
-    if flags & ~KNOWN_FLAGS:
+    if version == FORMAT_VERSION:
+        known = KNOWN_FLAGS
+    elif version == MULTIBOOT_FORMAT_VERSION:
+        known = KNOWN_FLAGS | PRODUCT_MASK | FLAG_MULTIBOOT
+        if role != ROLE_FIRMWARE:
+            raise ManifestError("manifest v2 is reserved for tagged firmware")
+        product = flags & PRODUCT_MASK
+        if product not in PRODUCT_NAME or flags != product | FLAG_MULTIBOOT | FLAG_RECOVERY_CAPABLE:
+            raise ManifestError("manifest v2 requires one product, multiboot and recovery flags")
+    else:
+        raise ManifestError(f"unsupported manifest version {version}")
+    if flags & ~known:
         raise ManifestError(f"unknown manifest flags 0x{flags:08X}")
 
 
 def encode_manifest(role: int, flags: int, payload_size: int,
-                    payload_crc32: int) -> bytes:
+                    payload_crc32: int, version: int = FORMAT_VERSION) -> bytes:
     """Return one exact 32-byte little-endian manifest."""
-    _validate_role_and_flags(role, flags)
+    _validate_role_and_flags(role, flags, version)
     if not 0 <= payload_size <= MAX_U32:
         raise ManifestError("payload size does not fit in u32")
     if not 0 <= payload_crc32 <= MAX_U32:
@@ -69,7 +95,7 @@ def encode_manifest(role: int, flags: int, payload_size: int,
 
     prefix = _MANIFEST_PREFIX.pack(
         MAGIC,
-        FORMAT_VERSION,
+        version,
         role,
         flags,
         payload_size,
@@ -89,9 +115,7 @@ def decode_manifest(data: bytes) -> ImageManifest:
      manifest_crc32) = _MANIFEST.unpack(data)
     if magic != MAGIC:
         raise ManifestError("bad image manifest magic")
-    if version != FORMAT_VERSION:
-        raise ManifestError(f"unsupported manifest version {version}")
-    _validate_role_and_flags(role, flags)
+    _validate_role_and_flags(role, flags, version)
 
     expected_crc32 = _crc32(data[:_MANIFEST_PREFIX.size])
     if manifest_crc32 != expected_crc32:
@@ -110,6 +134,27 @@ def decode_manifest(data: bytes) -> ImageManifest:
     )
 
 
+def _marker_present(stream, payload_size: int, marker: bytes) -> bool:
+    stream.seek(0)
+    remaining = payload_size
+    tail = b""
+    while remaining:
+        chunk = stream.read(min(remaining, COPY_CHUNK_SIZE))
+        if not chunk:
+            break
+        if marker in tail + chunk:
+            stream.seek(0)
+            return True
+        tail = (tail + chunk)[-(len(marker) - 1):]
+        remaining -= len(chunk)
+    return False
+
+
+def _require_marker(stream, payload_size: int, marker: bytes) -> None:
+    if not _marker_present(stream, payload_size, marker):
+        raise ManifestError(f"manifest requires linked marker {marker.decode('ascii')}")
+
+
 def _payload_crc32(stream, payload_size: int) -> int:
     remaining = payload_size
     crc32 = 0
@@ -123,7 +168,8 @@ def _payload_crc32(stream, payload_size: int) -> int:
 
 
 def verify_image(image_path: Path | str, expected_role: int | None = None,
-                 expected_recovery: bool | None = None) -> ImageManifest:
+                 expected_recovery: bool | None = None,
+                 expected_product: str | None = None) -> ImageManifest:
     """Verify the trailing manifest and payload CRC32 of an image."""
     path = Path(image_path)
     with path.open("rb") as stream:
@@ -141,6 +187,16 @@ def verify_image(image_path: Path | str, expected_role: int | None = None,
                 f"stored={manifest.payload_size} actual={actual_payload_size}"
             )
 
+        if manifest.flags & FLAG_RECOVERY_CAPABLE:
+            _require_marker(stream, manifest.payload_size, RECOVERY_MARKER)
+        if manifest.version == MULTIBOOT_FORMAT_VERSION:
+            product = manifest.flags & PRODUCT_MASK
+            if image_size > PRODUCT_CAPACITY[product]:
+                raise ManifestError("tagged firmware exceeds its product slot capacity")
+            _require_marker(stream, manifest.payload_size, PRODUCT_MARKER[product])
+            other = PRODUCT_MULTITINI if product == PRODUCT_APPLETINI else PRODUCT_APPLETINI
+            if _marker_present(stream, manifest.payload_size, PRODUCT_MARKER[other]):
+                raise ManifestError("tagged firmware contains conflicting product markers")
         stream.seek(0)
         actual_payload_crc32 = _payload_crc32(stream, manifest.payload_size)
         if manifest.payload_crc32 != actual_payload_crc32:
@@ -160,15 +216,29 @@ def verify_image(image_path: Path | str, expected_role: int | None = None,
         if recovery != expected_recovery:
             state = "set" if expected_recovery else "clear"
             raise ManifestError(f"recovery-capable flag is not {state}")
+    if expected_product is not None:
+        if expected_product not in PRODUCT_BY_NAME:
+            raise ManifestError(f"unknown firmware product {expected_product}")
+        if manifest.version != MULTIBOOT_FORMAT_VERSION or (manifest.flags & PRODUCT_MASK) != PRODUCT_BY_NAME[expected_product]:
+            raise ManifestError(f"image is not tagged {expected_product} firmware")
 
     return manifest
 
 
 def append_manifest(payload_path: Path | str, output_path: Path | str,
                     role: int, flags: int = 0,
-                    max_size: int | None = None) -> ImageManifest:
+                    max_size: int | None = None,
+                    product: str | None = None) -> ImageManifest:
     """Copy a payload, append its manifest, verify it, then replace output."""
-    _validate_role_and_flags(role, flags)
+    version = FORMAT_VERSION
+    if product is not None:
+        if product not in PRODUCT_BY_NAME:
+            raise ManifestError(f"unknown firmware product {product}")
+        version = MULTIBOOT_FORMAT_VERSION
+        flags |= PRODUCT_BY_NAME[product] | FLAG_MULTIBOOT | FLAG_RECOVERY_CAPABLE
+        slot_capacity = PRODUCT_CAPACITY[PRODUCT_BY_NAME[product]]
+        max_size = min(max_size, slot_capacity) if max_size is not None else slot_capacity
+    _validate_role_and_flags(role, flags, version)
     if max_size is not None and not (
         MANIFEST_SIZE <= max_size <= MAX_U32 + MANIFEST_SIZE
     ):
@@ -217,6 +287,7 @@ def append_manifest(payload_path: Path | str, output_path: Path | str,
                     flags,
                     payload_size,
                     payload_crc32,
+                    version,
                 ))
                 output_stream.flush()
                 os.fsync(output_stream.fileno())
@@ -225,6 +296,7 @@ def append_manifest(payload_path: Path | str, output_path: Path | str,
             temp_path,
             expected_role=role,
             expected_recovery=bool(flags & FLAG_RECOVERY_CAPABLE),
+            expected_product=product,
         )
         os.replace(temp_path, destination)
         temp_path = None
@@ -239,9 +311,10 @@ def append_manifest(payload_path: Path | str, output_path: Path | str,
 
 def _print_manifest(path: Path, manifest: ImageManifest, verb: str) -> None:
     recovery = "yes" if manifest.flags & FLAG_RECOVERY_CAPABLE else "no"
+    product = PRODUCT_NAME.get(manifest.flags & PRODUCT_MASK, "legacy")
     print(
         f"{verb}: {path} role={ROLE_NAME[manifest.role]} "
-        f"recovery={recovery} payload={manifest.payload_size} "
+        f"v{manifest.version} product={product} recovery={recovery} payload={manifest.payload_size} "
         f"crc32=0x{manifest.payload_crc32:08X}"
     )
 
@@ -273,6 +346,8 @@ def _build_parser() -> argparse.ArgumentParser:
     append_parser.add_argument("--role", choices=ROLE_BY_NAME,
                                required=True)
     append_parser.add_argument("--recovery-capable", action="store_true")
+    append_parser.add_argument("--product", choices=PRODUCT_BY_NAME,
+                               help="tag firmware v2; requires linked product and recovery markers")
     append_parser.add_argument(
         "--max-size",
         type=_parse_size,
@@ -284,8 +359,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     verify_parser.add_argument("image", type=Path)
     verify_parser.add_argument("--role", choices=ROLE_BY_NAME)
+    verify_parser.add_argument("--product", choices=PRODUCT_BY_NAME)
     verify_parser.add_argument("--require-recovery-capable",
                                action="store_true")
+    slot_parser = subparsers.add_parser("slot", help="verify tagged firmware and print its fixed flash offset/capacity")
+    slot_parser.add_argument("image", type=Path)
     return parser
 
 
@@ -301,9 +379,10 @@ def main(argv: list[str] | None = None) -> int:
                 role=ROLE_BY_NAME[args.role],
                 flags=flags,
                 max_size=args.max_size,
+                product=args.product,
             )
             _print_manifest(args.output, manifest, "WROTE")
-        else:
+        elif args.command == "verify":
             expected_role = (ROLE_BY_NAME[args.role]
                              if args.role is not None else None)
             expected_recovery = (True
@@ -312,8 +391,16 @@ def main(argv: list[str] | None = None) -> int:
                 args.image,
                 expected_role=expected_role,
                 expected_recovery=expected_recovery,
+                expected_product=args.product,
             )
             _print_manifest(args.image, manifest, "VERIFIED")
+        else:
+            manifest = verify_image(args.image, expected_role=ROLE_FIRMWARE,
+                                    expected_recovery=True)
+            if manifest.version != MULTIBOOT_FORMAT_VERSION:
+                raise ManifestError("legacy firmware has no product tag; use the golden updater with a rebuilt multiboot image")
+            product = manifest.flags & PRODUCT_MASK
+            print(f"0x{PRODUCT_OFFSET[product]:08X} 0x{PRODUCT_CAPACITY[product]:08X}")
     except (ManifestError, OSError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

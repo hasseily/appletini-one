@@ -82,6 +82,20 @@ uint8_t compositor_frame_picture_rect(uint8_t slot, int *x, int *y, int *width, 
  * composition, or until a slot is composed after a resolution change. */
 uint8_t compositor_frame_output_size(uint8_t slot, int *width, int *height);
 
+typedef struct {
+    const uint16_t *pixels;
+    int width, height;
+    uint8_t slot, mode;
+    video_pixel_mask_frame_t pixel_mask;
+} compositor_output_frame_t;
+
+/* Pair one completed slot with its geometry and final scanout mask. CPU0
+ * callers must copy the pixels before yielding to another compositor tick.
+ * Metadata is copied by value and remains valid after settings change.
+ * The pixels already contain scanlines, ghosting, blur, glow and dot bleed;
+ * replay only pixel_mask when exporting the final displayed output. */
+uint8_t compositor_capture_output_frame(compositor_output_frame_t *frame);
+
 /* FPGA output-pixel grille. Per-slot metadata also drives screenshot masks.
  * UI painters register opaque overlay bounds while composing that slot. */
 void compositor_set_video_pixel_mask(uint8_t mode);

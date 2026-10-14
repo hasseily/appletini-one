@@ -15,25 +15,34 @@ def main():
     source = (ROOT / "ps_sources/frontend/compositor.c").read_text()
     extracted = "\n".join(function(source, name) for name in (
         "compositor_set_video_pixel_mask", "compositor_video_pixel_mask",
-        "compositor_frame_pixel_mask", "compositor_frame_output_size", "compositor_pixel_mask_exclude",
-        "pixel_mask_bounds", "pixel_mask_stage"))
+        "compositor_frame_pixel_mask", "compositor_frame_output_size", "compositor_capture_output_frame",
+        "compositor_pixel_mask_exclude", "pixel_mask_bounds", "pixel_mask_stage",
+        "fb_last_latched_slot", "compositor_latched_framebuffer", "compositor_set_output_mode"))
     # The extractor returns the full function, including its signature.
     harness = r'''
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include "compositor.h"
 #include "video_pixel_mask.h"
 #include "compositor_layout.h"
 #include "display_modes.h"
 static video_pixel_mask_frame_t s_pixel_mask[3], s_pixel_mask_uploaded[3];
 static uint8_t s_pixel_mask_upload_valid[3], s_pixel_mask_supported;
 static uint8_t s_pixel_mask_collecting, s_video_pixel_mask, s_force_full_refresh, s_writer_idx;
-static uint8_t s_paused;
-static struct { int output_width, output_height; } s_picture_rect[3];
+static uint8_t s_paused, s_published_idx, s_output_mode;
+static uint32_t s_published_counter, s_composited_apple_seq;
+static struct { int output_width, output_height; uint8_t output_mode; } s_picture_rect[3];
 static uint32_t registers[256], writes;
+#define FB_BASE_ADDR_REG 0U
+#define FB_STATUS_REG 1U
+#define FB_LAST_LATCHED_REG 2U
 #define FB_MASK_BANK_REG(slot,word) (64U + (slot)*32U + (word))
 #define REG_WRITE(address,value) (registers[(address)]=(value), ++writes)
+#define REG_READ(address) (registers[(address)])
+static void effect_clear_history(void) {}
+static int fb16_set_size(int width, int height) { return width > 0 && height > 0; }
 ''' + extracted + r'''
 static uint16_t oracle(unsigned p, unsigned mode, unsigned x, unsigned y)
 {
@@ -105,9 +114,75 @@ static void check_layout_viewports(void)
     assert(comp_layout_set_output_size(1920, 1080));
     puts("PASS 72 real layout viewports: six resolutions, Max/1x/2x, legacy/SHR, borders on/off, clipped bounds and mask phase");
 }
+static void check_capture_snapshot(void)
+{
+    compositor_output_frame_t shot;
+    s_writer_idx = s_published_idx = 0xFF;
+    registers[FB_LAST_LATCHED_REG] = 0;
+    memset(s_picture_rect, 0, sizeof(s_picture_rect));
+    memset(&shot, 0xA5, sizeof(shot));
+    assert(!compositor_capture_output_frame(NULL));
+    assert(!compositor_capture_output_frame(&shot));
+    assert(!shot.pixels && shot.slot == 0xFF && !shot.width && !shot.height);
+    registers[FB_LAST_LATCHED_REG] = comp_out_slot_addr[1];
+    assert(!compositor_capture_output_frame(&shot)); /* Uncomposed slot. */
+    for (unsigned mode = 0; mode < DISPLAY_MODE_COUNT; ++mode) {
+        const display_mode_t *output = display_mode_get(mode);
+        s_picture_rect[1].output_width = output->width;
+        s_picture_rect[1].output_height = output->height;
+        s_picture_rect[1].output_mode = (uint8_t)mode;
+        s_pixel_mask[1] = (video_pixel_mask_frame_t){.mode=2,.exclusion_count=1,
+            .viewport={9,109,3,63},.excluded={{11,24,9,27}}};
+        const video_pixel_mask_frame_t expected = s_pixel_mask[1];
+        s_output_mode = (uint8_t)((mode+1) % DISPLAY_MODE_COUNT);
+        s_video_pixel_mask = 3;
+        assert(compositor_capture_output_frame(&shot));
+        assert(shot.pixels == (const uint16_t *)(uintptr_t)comp_out_slot_addr[1]);
+        assert(shot.slot == 1 && shot.mode == mode);
+        assert(shot.width == output->width && shot.height == output->height);
+        assert(memcmp(&shot.pixel_mask, &expected, sizeof(expected)) == 0);
+        memset(&s_pixel_mask[1], 0, sizeof(s_pixel_mask[1]));
+        compositor_set_video_pixel_mask(0);
+        assert(memcmp(&shot.pixel_mask, &expected, sizeof(expected)) == 0);
+        assert(video_pixel_mask_frame_rgb565(&shot.pixel_mask, 65535,9,3) ==
+               oracle(65535, 2,0,0));
+        /* A saved private snapshot survives a resolution switch, while live
+         * slots become unavailable until a new complete frame is composed. */
+        compositor_set_output_mode((uint8_t)((mode+1) % DISPLAY_MODE_COUNT));
+        compositor_output_frame_t next;
+        assert(!compositor_capture_output_frame(&next));
+        assert(shot.width == output->width && shot.height == output->height && shot.mode == mode);
+        assert(memcmp(&shot.pixel_mask, &expected, sizeof(expected)) == 0);
+    }
+    s_picture_rect[1].output_width = 800;
+    s_picture_rect[1].output_height = 600;
+    s_paused = 1;
+    assert(!compositor_capture_output_frame(&shot));
+    s_paused = 0;
+    assert(compositor_capture_output_frame(&shot)); /* Menu: no Apple viewport is needed. */
+    s_picture_rect[1].output_width = COMP_OUT_MAX_WIDTH + 1;
+    assert(!compositor_capture_output_frame(&shot));
+    s_picture_rect[1].output_width = 800;
+    s_picture_rect[1].output_height = COMP_OUT_MAX_HEIGHT + 1;
+    assert(!compositor_capture_output_frame(&shot));
+    s_picture_rect[1].output_height = 600;
+    registers[FB_LAST_LATCHED_REG] = 0;
+    s_writer_idx = 0xFF;
+    s_published_idx = 1;
+    assert(compositor_capture_output_frame(&shot) && shot.slot == 1);
+    s_published_idx = 0xFF;
+    s_writer_idx = 1;
+    assert(compositor_capture_output_frame(&shot) && shot.slot == 1);
+    s_writer_idx = 0xFF;
+    assert(!compositor_capture_output_frame(&shot));
+    memset(s_picture_rect, 0, sizeof(s_picture_rect));
+    compositor_set_output_mode(DISPLAY_MODE_DEFAULT);
+    puts("PASS completed-frame snapshot: six modes, slot dimensions/mode/mask, private metadata, resolution invalidation, paused/uncomposed/invalid slots and early-boot fallback");
+}
 int main(void)
 {
     check_layout_viewports();
+    check_capture_snapshot();
     for (unsigned mode=0; mode<=4; ++mode)
         for (unsigned y=0; y<6; ++y)
             for (unsigned x=0; x<3; ++x)
@@ -168,6 +243,7 @@ int main(void)
     tick = function(source, "compositor_tick")
     assert tick.index("pixel_mask_stage(s_writer_idx)") < tick.index('"dsb sy"') < tick.index("REG_WRITE(FB_BASE_ADDR_REG")
     assert "video_pixel_mask_clip_rect(&s_pixel_mask[s_writer_idx].viewport" in tick
+    assert tick.index("s_picture_rect[s_writer_idx].output_mode = s_output_mode") < tick.index("REG_WRITE(FB_BASE_ADDR_REG")
     compiler = os.environ.get("CC") or shutil.which("gcc") or shutil.which("clang") or "E:/AMDDesignTools/2025.2/tps/mingw/10.0.0/win64.o/nt/bin/gcc.exe"
     env = dict(os.environ, PATH=str(Path(compiler).parent)+os.pathsep+os.environ.get("PATH", ""))
     with tempfile.TemporaryDirectory(prefix="mask-check-") as directory:

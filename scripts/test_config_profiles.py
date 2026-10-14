@@ -459,7 +459,7 @@ def test_modern_config_menu_ui_contract() -> None:
             '"About"' in source and
             "static void config_menu_draw_about" in source and
             '#include "../image_versions.h"' in source and
-            "APPLETINI_BOOT_IMAGE_VERSION_FULL" in source and
+            "menu->golden_boot_version" in source and
             "APPLETINI_FIRMWARE_IMAGE_VERSION_FULL" in source and
             '"Versions"' in source and
             source.find('"Versions"') < source.find('"Contributors"') and
@@ -675,7 +675,7 @@ def test_transwarp_slowdown_cycle_presets() -> None:
     require(match is not None,
             "TransWarp slowdown presets must remain a 16-bit table")
     values = [int(value) for value in re.findall(r"(\d+)U", match.group("body"))]
-    require(values == [256, 512, 1024, 2048, 4096, 8192,
+    require(values == [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192,
                        16384, 32768, 65535],
             "TransWarp slowdown presets must end with the 65535-cycle maximum")
     require("idx = (idx + count + (uint32_t)(delta < 0 ? -1 : 1)) % count;" in source,

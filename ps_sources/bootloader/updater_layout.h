@@ -12,7 +12,8 @@ typedef struct {
     uint8_t qspi_addr_bytes; /* 3 for <=16MiB addressing, 4 for >16MiB */
     uint32_t erase_size_bytes; /* usually 64 KiB */
     flash_region_t golden;
-    flash_region_t firmware;
+    flash_region_t firmware; /* Appletini */
+    flash_region_t multitini;
     flash_region_t metadata; /* update and verified-boot metadata */
 } flash_layout_t;
 

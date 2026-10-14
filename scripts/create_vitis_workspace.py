@@ -1043,7 +1043,9 @@ def create_and_build_app(name, src_subdir, domain="standalone_ps7_cortexa9_0"):
             "Remove golden self-update source from frontend_core1",
             lambda: ensure_userconfig_sources_absent(
                 "frontend_core1",
-                ["../../../ps_sources/lib/golden_self_update.c"],
+                ["../../../ps_sources/lib/golden_self_update.c",
+                 "../../../ps_sources/lib/multiboot.c",
+                 "../../../ps_sources/lib/multiboot_platform.c"],
             ),
         )
         # AMP core-1 firmware lives in upper DDR so it does not

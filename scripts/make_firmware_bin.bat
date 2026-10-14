@@ -84,7 +84,7 @@ if not "%RC%"=="0" (
     exit /b %RC%
 )
 
-python "%~dp0image_manifest.py" append "%TMP_RAW%" "%OUT_BIN%" --role firmware --recovery-capable --max-size 0x00DF0000
+python "%~dp0image_manifest.py" append "%TMP_RAW%" "%OUT_BIN%" --role firmware --recovery-capable --product appletini --max-size 0x00600000
 set RC=%ERRORLEVEL%
 del /q "%TMP_RAW%" >nul 2>nul
 

@@ -49,13 +49,16 @@ void screenshot_service_note_local_sd_write_complete(void);
 int screenshot_service_save(screenshot_service_kind_t kind,
                             const rtc_pcf8563_time_t *rtc,
                             screenshot_service_result_t *result);
-/* Snapshot the F1.2.2 capture source, then save bounded row batches from poll().
+/* Snapshot the capture source, then save bounded row batches from poll().
  * A2 uses raw renderer colors, border selection and fixed 2x/4x legacy or
- * 2x/2x SHR scaling with scanlines. OUTPUT copies the full RGB565 framebuffer.
- * Neither capture replays the FPGA mask; A2 omits compositor effects.
+ * 2x/2x SHR scaling with scanlines. OUTPUT copies one completed RGB565 frame
+ * and replays that frame's FPGA pixel mask; the framebuffer already contains
+ * the software effects. A2 keeps its raw colors and omits compositor effects.
  * Returns zero when queued; errors fill result immediately. Consume the
  * completion before requesting another image. Normal batches close their
- * file before returning; framebuffer ownership never spans polls. */
+ * file before returning; framebuffer ownership never spans polls. A poll
+ * writes at most 16 rows in 64 KiB blocks and checks a 4 ms budget between
+ * blocks. A single synchronous SD write or close can take longer. */
 int screenshot_service_request(screenshot_service_kind_t kind,
                                const rtc_pcf8563_time_t *rtc,
                                screenshot_service_result_t *result);

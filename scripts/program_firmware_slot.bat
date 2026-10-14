@@ -1,7 +1,8 @@
 @echo off
 setlocal
 
-REM Program the single firmware slot image at flash offset 0x00200000
+REM Program tagged firmware at its product's fixed multiboot flash offset.
+REM Use the golden SD/UART updater for transactional metadata and XLNX-last installation.
 REM Usage:
 REM   program_firmware_slot.bat [path_to_firmware_bin]
 REM Default:
@@ -11,7 +12,22 @@ set IMAGE=%~1
 if "%IMAGE%"=="" set IMAGE=.\FIRMWARE.BIN
 
 set FSBL=.\vitis_workspace\appletini_platform\export\appletini_platform\sw\boot\fsbl.elf
-set OFFSET=0x200000
+REM No filename-based routing or ambiguous legacy images are accepted.
+set SLOT_INFO=%TEMP%\appletini_slot_%RANDOM%%RANDOM%.txt
+python "%~dp0image_manifest.py" slot "%IMAGE%" > "%SLOT_INFO%"
+if errorlevel 1 (
+    del /q "%SLOT_INFO%" >nul 2>nul
+    echo ERROR: image is not validated tagged multiboot firmware.
+    exit /b 1
+)
+set OFFSET=
+set SLOT_CAPACITY=
+for /f "usebackq tokens=1,2" %%A in ("%SLOT_INFO%") do (
+    set OFFSET=%%A
+    set SLOT_CAPACITY=%%B
+)
+del /q "%SLOT_INFO%" >nul 2>nul
+if not defined OFFSET exit /b 1
 set HW_URL=TCP:localhost:3121
 
 echo.
@@ -19,6 +35,8 @@ echo ===============================================
 echo Program Firmware Slot (QSPI @ %OFFSET%)
 echo ===============================================
 echo IMAGE: %IMAGE%
+echo CAP  : %SLOT_CAPACITY%
+echo Prefer the golden updater to preserve transactional boot metadata.
 echo FSBL : %FSBL%
 echo.
 

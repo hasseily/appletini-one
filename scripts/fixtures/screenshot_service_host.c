@@ -22,13 +22,17 @@ static void *snapshot_malloc(size_t size) { return allocation_fails ? NULL : mal
 typedef struct { char name[96]; unsigned char *data; size_t size; } mock_file_t;
 static mock_file_t files[MAX_FILES];
 static int generation, open_handles, mount_calls, write_calls, close_calls;
+static int open_calls, seek_calls, polls, row_polls, max_writes_per_poll;
 static int fail_write, short_write, fail_close, fail_rename, fail_unlink;
 static int fail_open, fail_seek, fail_directory, not_mounted;
 static int create_collisions, rename_collisions;
-static unsigned bytes_this_poll, max_bytes_per_poll;
+static unsigned bytes_this_poll, max_bytes_per_poll, max_write_bytes;
+static XTime mock_ticks = 123456000U, write_delay_ticks;
 static int usb_connected, disconnects, reconnects, invalidations;
 static uint16_t frame[1920 * 1080];
 static uint8_t frame_slot, output_mode, apple_slot;
+static int frame_width, frame_height, capture_calls;
+static video_pixel_mask_frame_t frame_mask;
 static uint32_t apple_mode, video_settings;
 volatile uint32_t g_compositor_last_apple_slot, g_compositor_last_apple_mode;
 const uint32_t comp_apple_slot_addr[COMP_APPLE_SLOT_COUNT] = {
@@ -70,6 +74,7 @@ FRESULT f_mkdir(const char *path)
 FRESULT f_open(FIL *f, const char *name, uint8_t mode)
 {
     int i = find_file(name);
+    ++open_calls;
     if (fail_open) { return FR_DISK_ERR; }
     assert(not_mounted == 0);
     if (mode & FA_CREATE_NEW) {
@@ -88,6 +93,9 @@ FRESULT f_write(FIL *f, const void *data, UINT size, UINT *written)
 {
     assert(f->open && f->generation == generation);
     ++write_calls;
+    assert(size <= SCREENSHOT_PNG_BATCH_BYTES);
+    if (size > max_write_bytes) { max_write_bytes = size; }
+    mock_ticks += write_delay_ticks;
     if (fail_write == write_calls) { *written = 0; return FR_DISK_ERR; }
     if (short_write == write_calls) { size /= 2; }
     mock_file_t *dest = &files[f->index];
@@ -104,6 +112,7 @@ FRESULT f_write(FIL *f, const void *data, UINT size, UINT *written)
 FRESULT f_lseek(FIL *f, FSIZE_t offset)
 {
     assert(f->open && f->generation == generation);
+    ++seek_calls;
     if (fail_seek) { return FR_DISK_ERR; }
     assert(offset <= f->size); f->position = offset;
     return FR_OK;
@@ -136,7 +145,7 @@ FRESULT f_unlink(const char *name)
     return FR_OK;
 }
 int disk_initialize(int drive) { assert(drive == 0); return 0; }
-void XTime_GetTime(XTime *now) { *now = 123456000; }
+void XTime_GetTime(XTime *now) { *now = mock_ticks; }
 uint8_t usb_storage_service_disconnect(void)
 {
     uint8_t prior = (uint8_t)usb_connected;
@@ -148,6 +157,16 @@ void compositor_request_full_refresh(void) {}
 const uint16_t *compositor_latched_framebuffer(uint8_t *slot)
 {
     *slot = frame_slot; return frame_slot < 3 ? frame : NULL;
+}
+uint8_t compositor_capture_output_frame(compositor_output_frame_t *captured)
+{
+    ++capture_calls;
+    if (frame_slot >= COMP_OUT_SLOT_COUNT) { return 0U; }
+    *captured = (compositor_output_frame_t){
+        .pixels = frame, .width = frame_width, .height = frame_height,
+        .slot = frame_slot, .mode = output_mode, .pixel_mask = frame_mask
+    };
+    return 1U;
 }
 uint8_t compositor_output_mode(void) { return output_mode; }
 uint8_t apple_fb_reader_claim(void) { return apple_slot; }
@@ -173,6 +192,7 @@ static uint16_t pattern(unsigned x, unsigned y)
 static void set_frame(unsigned w, unsigned h)
 {
     comp_out_width = (uint16_t)w; comp_out_height = (uint16_t)h;
+    frame_width = (int)w; frame_height = (int)h;
     fb16_width = (int)w; fb16_height = (int)h;
     for (unsigned y = 0; y < h; ++y) {
         for (unsigned x = 0; x < w; ++x) { frame[y * w + x] = pattern(x, y); }
@@ -214,13 +234,18 @@ static void reset_case(void)
     for (int i = 0; i < MAX_FILES; ++i) { free(files[i].data); }
     memset(files, 0, sizeof(files));
     generation = open_handles = mount_calls = write_calls = close_calls = 0;
+    open_calls = seek_calls = polls = row_polls = max_writes_per_poll = 0;
     fail_write = short_write = fail_close = fail_rename = fail_unlink = 0;
     fail_open = fail_seek = fail_directory = not_mounted = 0;
     create_collisions = rename_collisions = 0;
     allocation_fails = 0;
     bytes_this_poll = max_bytes_per_poll = 0;
+    max_write_bytes = 0;
+    mock_ticks = 123456000U; write_delay_ticks = 0;
     usb_connected = 1; disconnects = reconnects = invalidations = 0;
     frame_slot = 1; output_mode = DISPLAY_MODE_DEFAULT;
+    capture_calls = 0;
+    memset(&frame_mask, 0, sizeof(frame_mask));
     apple_slot = 1; video_settings = 0;
     g_compositor_last_apple_slot = APPLE_FB_NO_SLOT;
     g_compositor_last_apple_mode = APPLE_FB_DISPLAY_MODE_LEGACY;
@@ -242,10 +267,18 @@ static void queue(screenshot_service_kind_t kind)
 }
 static void step(void)
 {
+    const int writes_before = write_calls;
+    const shot_state_t state_before = g_shot.state;
     bytes_this_poll = 0;
+    ++polls;
+    if (state_before == SHOT_ROWS) { ++row_polls; }
     screenshot_service_poll();
     if (bytes_this_poll > max_bytes_per_poll) { max_bytes_per_poll = bytes_this_poll; }
-    assert(bytes_this_poll <= 2U * (6U + 4U * g_shot.width));
+    assert(bytes_this_poll <= SCREENSHOT_ROWS_PER_POLL * (6U + 4U * g_shot.width));
+    if (write_calls - writes_before > max_writes_per_poll) {
+        max_writes_per_poll = write_calls - writes_before;
+    }
+    if (state_before == SHOT_ROWS) { assert(write_calls - writes_before <= 2); }
     assert(g_fattime_override_active == 0);
     if (fail_close >= 0) { assert(open_handles == 0); }
 }
@@ -291,6 +324,7 @@ int main(int argc, char **argv)
             frame_slot = 255; /* Raw Apple capture needs no completed output. */
             output_mode = 5;
             queue(SCREENSHOT_SERVICE_KIND_A2);
+            assert(capture_calls == 0);
             assert(g_shot.surface.base565 == NULL);
             assert(g_shot.surface.scale_x == 2U);
             memset((void *)(uintptr_t)comp_apple_slot_addr[0], 0xFF,
@@ -324,15 +358,71 @@ int main(int argc, char **argv)
         ++generation; /* Another service remounts between each batch. */
     }
     result = finish(1); export_png(argv[1], "full", &result);
-    assert(max_bytes_per_poll == 15372);
+    assert(max_bytes_per_poll == 122976 && max_write_bytes == 61488);
+    assert(polls == 71 && row_polls == 68 && write_calls == 145);
+    assert(open_calls == 70 && seek_calls == 69 && close_calls == 70);
+    assert(capture_calls == 1);
     assert(strstr(result.path, "-1080p-") != NULL);
+    printf("PASS 1080p I/O: 71 polls (68 row polls), 145 writes, "
+           "70 opens/closes, 69 seeks; max block 61488 bytes, "
+           "max row poll 122976 bytes (host counts, not board timing)\n");
+
+    /* One synchronous card write may exceed the budget, but it must stop
+     * a second block. Also exercise exact-boundary and timer-wrap math. */
+    for (unsigned wrapped = 0; wrapped < 2; ++wrapped) {
+        reset_case(); set_frame(1920, 1080); queue(SCREENSHOT_SERVICE_KIND_1080P);
+        step();
+        write_delay_ticks = SCREENSHOT_POLL_TICKS;
+        if (wrapped) { mock_ticks = UINT64_MAX - SCREENSHOT_POLL_TICKS / 2U; }
+        const int before = write_calls;
+        step();
+        assert(g_shot.next_row == 8 && write_calls == before + 1);
+        assert(bytes_this_poll == 61488 && open_handles == 0);
+        write_delay_ticks = 0;
+        assert(screenshot_service_cancel() == 0); result = finish(0);
+    }
+
+    /* The full-width path writes two blocks in one poll. Fail either
+     * block, including a short second write after the first succeeded. */
+    for (unsigned short_mode = 0; short_mode < 2; ++short_mode) {
+        for (unsigned block = 1; block <= 2; ++block) {
+            reset_case(); set_frame(1920, 1080); queue(SCREENSHOT_SERVICE_KIND_1080P);
+            step();
+            if (short_mode) { short_write = write_calls + (int)block; }
+            else { fail_write = write_calls + (int)block; }
+            result = finish(0);
+            assert(file_count(".part") == 0 && usb_connected);
+        }
+    }
+
+    for (unsigned mask = 1; mask <= APPLETINI_VIDEO_PIXEL_MASK_MAX; ++mask) {
+        reset_case();
+        frame_mask = (video_pixel_mask_frame_t){
+            .mode = (uint8_t)mask, .exclusion_count = 1,
+            .viewport = {2, 9, 1, 6}, .excluded = {{4, 6, 2, 4}}
+        };
+        queue(SCREENSHOT_SERVICE_KIND_1080P);
+        assert(capture_calls == 1);
+        memset(frame, 0xFF, sizeof(frame));
+        memset(&frame_mask, 0, sizeof(frame_mask));
+        output_mode = 5;
+        result = finish(1);
+        assert(strstr(result.path, "-1080p-") != NULL);
+        char name[40];
+        snprintf(name, sizeof(name), "full-mask-%u", mask);
+        export_png(argv[1], name, &result);
+    }
 
     reset_case(); set_frame(1360, 768); output_mode = 5;
     queue(SCREENSHOT_SERVICE_KIND_1080P); result = finish(1);
     export_png(argv[1], "wide", &result); assert(strstr(result.path, "-1360x768-") != NULL);
 
-    reset_case(); queue(SCREENSHOT_SERVICE_KIND_1080P);
+    reset_case();
+    /* Output globals may already describe a newly requested mode; use the
+     * completed slot's captured size/stride and mode before and after queue. */
     comp_out_width = 17; comp_out_height = 11;
+    queue(SCREENSHOT_SERVICE_KIND_1080P);
+    frame_width = 19; frame_height = 13; output_mode = 5;
     result = finish(1); export_png(argv[1], "frozen-stride", &result);
 
     reset_case(); not_mounted = 1; queue(SCREENSHOT_SERVICE_KIND_1080P);
@@ -362,7 +452,7 @@ int main(int argc, char **argv)
     assert(f_unlink(g_shot.temporary) == FR_OK);
     result = finish(0); assert(file_count(".part") == 0);
 
-    for (int phase = 0; phase < 4; ++phase) {
+    for (int phase = 0; phase < 3; ++phase) {
         reset_case(); queue(SCREENSHOT_SERVICE_KIND_1080P);
         for (int i = 0; i <= phase; ++i) { step(); }
         assert(screenshot_service_busy());
@@ -432,8 +522,8 @@ int main(int argc, char **argv)
     for (int bad = 0; bad < 5; ++bad) {
         reset_case();
         if (bad == 0) { frame_slot = 255; }
-        if (bad == 1) { comp_out_width = 0; }
-        if (bad == 2) { comp_out_height = COMP_OUT_MAX_HEIGHT + 1U; }
+        if (bad == 1) { frame_width = 0; }
+        if (bad == 2) { frame_height = COMP_OUT_MAX_HEIGHT + 1U; }
         if (bad == 3) { allocation_fails = 1; }
         assert(screenshot_service_request(bad == 4 ? (screenshot_service_kind_t)88 :
                                          SCREENSHOT_SERVICE_KIND_1080P, &rtc, &result) != 0);
@@ -451,6 +541,7 @@ int main(int argc, char **argv)
     assert(strstr(result.path, "uptime-0000000123-1080p-") != NULL);
     reset_case();
     printf("PASS screenshot service: %d cases; every PNG write/close boundary; "
-           "max 15372 bytes per row poll; baseline raw Apple/output pixels; immutable snapshot/remount/collision/cleanup\n", tests);
+           "4 ms block budget; baseline raw Apple/full mask pixels; "
+           "immutable snapshot/remount/collision/cleanup\n", tests);
     return 0;
 }

@@ -12,7 +12,8 @@ typedef enum {
     PSDMA_OWNER_SMARTPORT,
     PSDMA_OWNER_PSRAM_CAL,
     PSDMA_OWNER_UART,
-    PSDMA_OWNER_MEMORY
+    PSDMA_OWNER_MEMORY,
+    PSDMA_OWNER_FIRMWARE_UPDATE
 } psdma_owner_t;
 
 typedef enum {

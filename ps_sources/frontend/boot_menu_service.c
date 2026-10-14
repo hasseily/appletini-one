@@ -3,6 +3,7 @@
 #include <stddef.h>
 
 #include "boot_menu_rom_patch.h"
+#include "boot_menu_vtw_start_rom.h"
 #include "card_control_regs.h"
 #include "onee_service.h"
 
@@ -23,6 +24,11 @@
 #define BOOT_MENU_REG_IIGS_SLOT_CONFIG (BOOT_MENU_MMIO_BASE + 0x1CU)
 
 #define BOOT_MENU_STATUS_MENU_REQUESTED    (1U << 2)
+#define BOOT_MENU_STATUS_BOOT_ELIGIBLE     (1U << 0)
+#define BOOT_MENU_STATUS_WINDOW_ACTIVE     (1U << 1)
+#define BOOT_MENU_STATUS_TIMEOUT_EXPIRED   (1U << 4)
+#define BOOT_MENU_HANDOFF_SLOT_MODE_MASK   (3U << 2)
+#define BOOT_MENU_HANDOFF_PENDING          (1U << 5)
 #define BOOT_MENU_STATUS_CLOSE_REQUESTED   (1U << 3)
 #define BOOT_MENU_STATUS_MENU_ACTIVE_ACK   (1U << 5)
 #define BOOT_MENU_STATUS_KEY_VALID         (1U << 6)
@@ -45,6 +51,10 @@
 #define BOOT_MENU_POP_BUDGET               8U
 
 static uint8_t g_boot_menu_open_reported = 0U;
+static uint8_t g_vtw_boot_rom_installed;
+static uint8_t g_vtw_boot_gate_armed;
+static uint8_t g_vtw_boot_scan_override;
+static boot_menu_handoff_t g_vtw_boot_saved_handoff;
 
 static void boot_menu_service_patch_c8_byte(uint8_t offset, uint8_t value)
 {
@@ -54,9 +64,14 @@ static void boot_menu_service_patch_c8_byte(uint8_t offset, uint8_t value)
 
 static void boot_menu_service_set_vbl_delay(uint8_t x_count, uint8_t y_count)
 {
-    boot_menu_service_patch_c8_byte((uint8_t)BOOT_MENU_C8_PATCH_DELAY_X_OFFSET,
+    const uint8_t x_offset = g_vtw_boot_rom_installed != 0U ?
+        BOOT_MENU_VTW_C8_DELAY_X_OFFSET : BOOT_MENU_C8_PATCH_DELAY_X_OFFSET;
+    const uint8_t y_offset = g_vtw_boot_rom_installed != 0U ?
+        BOOT_MENU_VTW_C8_DELAY_Y_OFFSET : BOOT_MENU_C8_PATCH_DELAY_Y_OFFSET;
+
+    boot_menu_service_patch_c8_byte(x_offset,
                                     x_count);
-    boot_menu_service_patch_c8_byte((uint8_t)BOOT_MENU_C8_PATCH_DELAY_Y_OFFSET,
+    boot_menu_service_patch_c8_byte(y_offset,
                                     y_count);
 }
 
@@ -211,6 +226,9 @@ static uint8_t boot_menu_map_key(uint8_t raw_key, ui_input_t *input)
 void boot_menu_service_init(void)
 {
     g_boot_menu_open_reported = 0U;
+    g_vtw_boot_rom_installed = 0U;
+    g_vtw_boot_gate_armed = 0U;
+    g_vtw_boot_scan_override = 0U;
     boot_menu_service_apply_video_rom_patch();
     boot_menu_service_set_handoff(BOOT_MENU_HANDOFF_SMARTPORT);
     REG_WRITE(BOOT_MENU_REG_TIMEOUT_TICKS, BOOT_MENU_DEFAULT_TIMEOUT_TICKS);
@@ -238,12 +256,96 @@ void boot_menu_service_set_handoff(boot_menu_handoff_t handoff)
         handoff = BOOT_MENU_HANDOFF_SMARTPORT;
         uart_puts(UART0_BASE, "boot_menu_service_set_handoff: invalid handoff mode\r\n");
     }
-    REG_WRITE(BOOT_MENU_REG_HANDOFF_MODE, (uint32_t)handoff);
+    if (g_vtw_boot_scan_override != 0U) {
+        /* Reset handling and settings reapply may change the requested target
+         * while CORE_RUN's first edge is still awaiting its checked echo. */
+        g_vtw_boot_saved_handoff = handoff;
+        REG_WRITE(BOOT_MENU_REG_HANDOFF_MODE, BOOT_MENU_HANDOFF_SMARTPORT);
+    } else {
+        REG_WRITE(BOOT_MENU_REG_HANDOFF_MODE, (uint32_t)handoff);
+    }
 }
 
 void boot_menu_service_request_rom_close(void)
 {
     REG_WRITE(BOOT_MENU_REG_CONTROL, BOOT_MENU_CONTROL_REQUEST_ROM_CLOSE);
+}
+
+void boot_menu_service_install_vtw_boot_gate(uint8_t armed)
+{
+    uint32_t i;
+
+    /* This whole-page write is cold-start only. Warm resets continue to patch
+     * only the timing immediates through apply_video_rom_patch(). */
+    for (i = 0U; i < sizeof(boot_menu_vtw_start_c8_rom); ++i) {
+        boot_menu_service_patch_c8_byte((uint8_t)i,
+                                        boot_menu_vtw_start_c8_rom[i]);
+    }
+    g_vtw_boot_rom_installed = 1U;
+    g_vtw_boot_gate_armed = (armed != 0U) ? 1U : 0U;
+    boot_menu_service_patch_c8_byte(BOOT_MENU_VTW_C8_GATE_OFFSET,
+                                    g_vtw_boot_gate_armed);
+    boot_menu_service_apply_video_rom_patch();
+}
+
+void boot_menu_service_release_vtw_boot_gate(void)
+{
+    if (g_vtw_boot_rom_installed != 0U && g_vtw_boot_gate_armed != 0U) {
+        /* One immediate is safe to change while the native ROM polls it. */
+        boot_menu_service_patch_c8_byte(BOOT_MENU_VTW_C8_GATE_OFFSET, 0U);
+    }
+    g_vtw_boot_gate_armed = 0U;
+}
+
+uint8_t boot_menu_service_vtw_boot_gate_armed(void)
+{
+    return g_vtw_boot_gate_armed;
+}
+
+uint8_t boot_menu_service_vtw_boot_gate_waiting(void)
+{
+    const uint32_t status = REG_READ(BOOT_MENU_REG_STATUS);
+    const uint32_t handoff = REG_READ(BOOT_MENU_REG_HANDOFF_MODE);
+    const uint32_t event = status >> 24;
+
+    /* A zero ("Never") timeout can expire before the IIe probe finishes.
+     * The locked ID plus that fresh owned ROM report still proves this hold:
+     * it occurs before the first prompt, menu request, or target fetch. */
+    return (g_vtw_boot_gate_armed != 0U &&
+            boot_menu_service_machine_mode() == CARD_MACHINE_MODE_IIE &&
+            (event == 0x22U || event == 0x23U) &&
+            ((status >> 12) & 0xFU) == (event & 0xFU) &&
+            (status & (BOOT_MENU_STATUS_BOOT_ELIGIBLE |
+                       BOOT_MENU_STATUS_WINDOW_ACTIVE |
+                       BOOT_MENU_STATUS_TIMEOUT_EXPIRED)) != 0U &&
+            (status & (BOOT_MENU_STATUS_MENU_REQUESTED |
+                       BOOT_MENU_STATUS_CLOSE_REQUESTED)) == 0U &&
+            (handoff & (BOOT_MENU_HANDOFF_SLOT_MODE_MASK |
+                        BOOT_MENU_HANDOFF_PENDING)) == 0U) ? 1U : 0U;
+}
+
+void boot_menu_service_begin_vtw_boot_scan(void)
+{
+    if (g_vtw_boot_scan_override == 0U) {
+        const uint32_t mode = REG_READ(BOOT_MENU_REG_HANDOFF_MODE) & 3U;
+
+        g_vtw_boot_saved_handoff = mode == BOOT_MENU_HANDOFF_DISK2 ?
+            BOOT_MENU_HANDOFF_DISK2 : BOOT_MENU_HANDOFF_SMARTPORT;
+        g_vtw_boot_scan_override = 1U;
+        /* CORE_RUN's rising edge samples the selected target to hide slot 7
+         * for an accelerated Disk II cold scan. This first scan must instead
+         * show the boot menu; the saved target returns after CORE_RUN echoes. */
+        REG_WRITE(BOOT_MENU_REG_HANDOFF_MODE, BOOT_MENU_HANDOFF_SMARTPORT);
+    }
+}
+
+void boot_menu_service_end_vtw_boot_scan(void)
+{
+    if (g_vtw_boot_scan_override != 0U) {
+        REG_WRITE(BOOT_MENU_REG_HANDOFF_MODE,
+                  (uint32_t)g_vtw_boot_saved_handoff);
+        g_vtw_boot_scan_override = 0U;
+    }
 }
 
 void boot_menu_service_debug_snapshot(boot_menu_debug_snapshot_t *snapshot)
@@ -535,6 +637,22 @@ uint8_t boot_menu_service_slot7_handed_off(void)
      * inherently target-agnostic. */
     uint32_t w = REG_READ(BOOT_MENU_REG_HANDOFF_MODE);
     return (((w >> 2U) & 0x3U) == 1U) ? 1U : 0U;
+}
+
+uint8_t boot_menu_service_initial_menu_active(void)
+{
+    const uint32_t status = REG_READ(BOOT_MENU_REG_STATUS);
+    const uint32_t handoff = REG_READ(BOOT_MENU_REG_HANDOFF_MODE);
+
+    /* The ROM clears eligibility before changing slot mode. A zero slot
+     * mode or PS-owned menu acknowledgement alone cannot authorize RESET. */
+    return ((status & BOOT_MENU_STATUS_BOOT_ELIGIBLE) != 0U &&
+            (status & (BOOT_MENU_STATUS_WINDOW_ACTIVE |
+                       BOOT_MENU_STATUS_MENU_REQUESTED)) != 0U &&
+            (status & (BOOT_MENU_STATUS_CLOSE_REQUESTED |
+                       BOOT_MENU_STATUS_TIMEOUT_EXPIRED)) == 0U &&
+            (handoff & (BOOT_MENU_HANDOFF_SLOT_MODE_MASK |
+                        BOOT_MENU_HANDOFF_PENDING)) == 0U) ? 1U : 0U;
 }
 
 void boot_menu_service_force_machine_mode(int mode)

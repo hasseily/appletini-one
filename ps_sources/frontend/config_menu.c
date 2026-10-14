@@ -85,7 +85,8 @@
 #define VTW_SLOW_SLOT_BIT(s)      (1U << ((s) - 1U))   /* s = 1..7 */
 /* Duration presets the menu cycles through (Apple cycles). */
 static const uint16_t k_vtw_slowdown_cycle_presets[] = {
-    256U, 512U, 1024U, 2048U, 4096U, 8192U, 16384U, 32768U, 65535U
+    32U, 64U, 128U, 256U, 512U, 1024U, 2048U, 4096U,
+    8192U, 16384U, 32768U, 65535U
 };
 #define CONFIG_DEFAULT_DISK2_ACTIVITY_VISIBLE 0U
 #define CONFIG_DEFAULT_DISK2_SOUND_VOLUME 5U
@@ -275,17 +276,12 @@ static const char * const k_compact_tab_labels[CONFIG_TAB_COUNT] = {
  * via config_menu_help_resolve(). */
 
 static const char * const k_about_contributors[] = {
-    "hardware:   Karl \"KKR75\" Asseily",
-    "firmware:   Henri \"Rikkles\" Asseily"
-};
-
-static const char * const k_about_versions[] = {
-    "Golden boot: " APPLETINI_BOOT_IMAGE_VERSION_FULL,
-    "Firmware:    " APPLETINI_FIRMWARE_IMAGE_VERSION_FULL
+    "Hardware:   Karl \"KKR75\" Asseily",
+    "Firmware:   Henri \"Rikkles\" Asseily"
 };
 
 static const char * const k_about_third_party[] = {
-    "Project origin and harness - John \"Elltwo\" Flanagan",
+    "Project origin - John \"Elltwo\" Flanagan",
     "CherryUSB - embedded USB stack",
     "FatFs - FAT filesystem module by ChaN",
     "LodePNG - PNG codec by Lode Vandevenne",
@@ -4078,6 +4074,190 @@ void config_menu_save_settings(config_menu_t *menu)
                                             "WROTE 0:/appletini_cfg.txt");
 }
 
+uint8_t config_menu_flush_settings(config_menu_t *menu)
+{
+    if (menu == NULL) {
+        return 0U;
+    }
+    /* Edits save at once. A session-only change cannot be silently discarded. */
+    if (menu->session_only == 0U && menu->onee_persist_write_failed == 0U) {
+        return 1U;
+    }
+    return config_menu_save_settings_to_path(menu, APPLETINI_CFG_PATH, NULL);
+}
+
+void config_menu_refresh_multiboot(config_menu_t *menu)
+{
+    if (menu == NULL) {
+        return;
+    }
+    menu->multiboot_ready = 0U;
+    menu->multiboot_present_mask = 0U;
+    menu->startup_firmware = MB_PRODUCT_APPLETINI;
+    if (menu->platform.get_multiboot_status != NULL) {
+        menu->multiboot_ready = menu->platform.get_multiboot_status(
+            menu->platform.ctx, &menu->multiboot_present_mask,
+            &menu->startup_firmware);
+    }
+}
+
+void config_menu_refresh_golden_boot(config_menu_t *menu)
+{
+    if (menu == NULL) {
+        return;
+    }
+    (void)snprintf(menu->golden_boot_version,
+                   sizeof(menu->golden_boot_version), "Unknown");
+    if (menu->platform.get_golden_boot_version != NULL) {
+        menu->platform.get_golden_boot_version(menu->platform.ctx,
+            menu->golden_boot_version, sizeof(menu->golden_boot_version));
+        menu->golden_boot_version[sizeof(menu->golden_boot_version) - 1U] = '\0';
+        if (menu->golden_boot_version[0] == '\0') {
+            (void)snprintf(menu->golden_boot_version,
+                           sizeof(menu->golden_boot_version), "Unknown");
+        }
+    }
+    menu->golden_boot_file_present =
+        menu->platform.get_golden_boot_file_present != NULL ?
+        (menu->platform.get_golden_boot_file_present(menu->platform.ctx) != 0U) : 0U;
+    menu->golden_boot_update_allowed =
+        menu->platform.get_golden_boot_update_allowed != NULL ?
+        (menu->platform.get_golden_boot_update_allowed(menu->platform.ctx) != 0U) : 0U;
+}
+
+void config_menu_golden_boot_update_finished(config_menu_t *menu, const char *error)
+{
+    if (menu == NULL) {
+        return;
+    }
+    menu->golden_boot_update_pending = 0U;
+    menu->golden_boot_update_confirm = 0U;
+    menu->golden_boot_confirm_update = 0U;
+    config_menu_refresh_golden_boot(menu);
+    config_menu_set_status(menu, 1U,
+        error != NULL && error[0] != '\0' ? error : "GOLDEN BOOT UPDATE FAILED");
+}
+
+static void config_menu_start_golden_boot_update(config_menu_t *menu)
+{
+    config_menu_refresh_golden_boot(menu);
+    if (menu->golden_boot_file_present == 0U) {
+        config_menu_set_status(menu, 1U, "BOOT.BIN NOT AVAILABLE ON SD");
+        return;
+    }
+    if (menu->golden_boot_update_allowed == 0U) {
+        config_menu_set_status(menu, 1U, "Update Golden Boot from the initial boot menu");
+        return;
+    }
+    if (menu->platform.request_golden_boot_update == NULL) {
+        config_menu_set_status(menu, 1U, "GOLDEN BOOT UPDATE UNAVAILABLE");
+        return;
+    }
+    menu->golden_boot_update_confirm = 1U;
+    menu->golden_boot_confirm_update = 0U;
+    config_menu_set_status(menu, 0U, "CONFIRM GOLDEN BOOT UPDATE");
+}
+
+static uint8_t config_menu_golden_boot_handle_input(config_menu_t *menu, ui_input_t input)
+{
+    if (menu->golden_boot_update_pending != 0U) {
+        return 1U;
+    }
+    if (menu->golden_boot_update_confirm == 0U) {
+        return 0U;
+    }
+    switch (input.key) {
+    case UI_KEY_ESC:
+    case UI_KEY_BACK:
+    case UI_KEY_MENU:
+        menu->golden_boot_update_confirm = 0U;
+        menu->golden_boot_confirm_update = 0U;
+        config_menu_set_status(menu, 0U, "GOLDEN BOOT UPDATE CANCELLED");
+        break;
+    case UI_KEY_LEFT:
+    case UI_KEY_UP:
+    case UI_KEY_SHIFT_TAB:
+        menu->golden_boot_confirm_update = 0U;
+        break;
+    case UI_KEY_RIGHT:
+    case UI_KEY_DOWN:
+    case UI_KEY_TAB:
+        menu->golden_boot_confirm_update = 1U;
+        break;
+    case UI_KEY_ENTER:
+        /* The opening Enter/OK and its repeats only select Cancel. A separate
+         * navigation action is required to choose Update and reboot. */
+        if (menu->golden_boot_confirm_update == 0U) {
+            menu->golden_boot_update_confirm = 0U;
+            config_menu_set_status(menu, 0U, "GOLDEN BOOT UPDATE CANCELLED");
+        } else {
+            config_menu_refresh_golden_boot(menu);
+            if (menu->golden_boot_file_present == 0U) {
+                config_menu_golden_boot_update_finished(menu, "BOOT.BIN NO LONGER AVAILABLE");
+            } else if (menu->golden_boot_update_allowed == 0U) {
+                config_menu_golden_boot_update_finished(menu,
+                    "Update Golden Boot from the initial boot menu");
+            } else if (menu->platform.request_golden_boot_update == NULL ||
+                menu->platform.request_golden_boot_update(menu->platform.ctx) != 0) {
+                config_menu_golden_boot_update_finished(menu, "GOLDEN BOOT UPDATE UNAVAILABLE");
+            } else {
+                menu->golden_boot_update_confirm = 0U;
+                menu->golden_boot_update_pending = 1U;
+                config_menu_set_status(menu, 0U, "CHECKING BOOT.BIN AND SAVING MEDIA");
+            }
+        }
+        break;
+    default:
+        break;
+    }
+    return 1U;
+}
+
+static void config_menu_cycle_startup_firmware(config_menu_t *menu)
+{
+    uint32_t product;
+    uint8_t bit;
+
+    config_menu_refresh_multiboot(menu);
+    product = menu->startup_firmware == MB_PRODUCT_MULTITINI ?
+        MB_PRODUCT_APPLETINI : MB_PRODUCT_MULTITINI;
+    bit = product == MB_PRODUCT_APPLETINI ? 1U : 2U;
+    if (menu->multiboot_ready == 0U ||
+        (menu->multiboot_present_mask & bit) == 0U ||
+        menu->platform.set_startup_firmware == NULL) {
+        config_menu_set_status(menu, 1U,
+            menu->multiboot_ready == 0U ? "MULTIBOOT GOLDEN REQUIRED" :
+            "OTHER FIRMWARE NOT INSTALLED");
+        return;
+    }
+    if (menu->platform.set_startup_firmware(menu->platform.ctx, product) != 0) {
+        config_menu_refresh_multiboot(menu);
+        config_menu_set_status(menu, 1U, "STARTUP FIRMWARE WRITE FAILED");
+        return;
+    }
+    config_menu_refresh_multiboot(menu);
+    config_menu_set_status(menu, 0U, "STARTUP FIRMWARE SAVED IN FLASH");
+}
+
+static void config_menu_switch_firmware(config_menu_t *menu)
+{
+    config_menu_refresh_multiboot(menu);
+    if (menu->multiboot_ready == 0U ||
+        (menu->multiboot_present_mask & 2U) == 0U ||
+        menu->platform.request_firmware_switch == NULL) {
+        config_menu_set_status(menu, 1U,
+            menu->multiboot_ready == 0U ? "MULTIBOOT GOLDEN REQUIRED" :
+            "MULTITINI NOT INSTALLED");
+        return;
+    }
+    if (menu->platform.request_firmware_switch(
+            menu->platform.ctx, MB_PRODUCT_MULTITINI) != 0) {
+        config_menu_set_status(menu, 1U, "FIRMWARE SWITCH UNAVAILABLE");
+        return;
+    }
+    config_menu_set_status(menu, 0U, "CHECKING MULTITINI AND SAVING MEDIA");
+}
+
 static void config_menu_load_settings(config_menu_t *menu)
 {
     FIL file;
@@ -4889,12 +5069,16 @@ static uint32_t config_menu_vtw_slowdown_cycle_index(const config_menu_t *menu)
 {
     uint32_t count = (uint32_t)(sizeof(k_vtw_slowdown_cycle_presets) /
                                 sizeof(k_vtw_slowdown_cycle_presets[0]));
+    uint32_t default_index = 0U;
     for (uint32_t i = 0U; i < count; ++i) {
         if (k_vtw_slowdown_cycle_presets[i] == menu->vtw_slowdown_cycles) {
             return i;
         }
+        if (k_vtw_slowdown_cycle_presets[i] == CONFIG_DEFAULT_VTW_SLOWDOWN_CYCLES) {
+            default_index = i;
+        }
     }
-    return 1U;   /* default 512 */
+    return default_index;
 }
 
 static void config_menu_vtw_cycle_slowdown_window(config_menu_t *menu,
@@ -5134,7 +5318,7 @@ static uint32_t config_menu_tab_item_count(const config_menu_t *menu)
     case CONFIG_TAB_PRINTING:
         return CONFIG_PRINTING_ITEM_COUNT;
     case CONFIG_TAB_ABOUT:
-        return 0U;
+        return menu->golden_boot_file_present != 0U ? 1U : 0U;
     case CONFIG_TAB_CLOCK:
         return 9U;
     default:
@@ -5283,6 +5467,9 @@ static void config_menu_clamp_item(config_menu_t *menu)
 
 static void config_menu_on_tab_entered(config_menu_t *menu)
 {
+    if (menu->tab == CONFIG_TAB_ABOUT) {
+        config_menu_refresh_golden_boot(menu);
+    }
     if (menu->tab == CONFIG_TAB_CLOCK) {
         /* Refresh the fields from hardware so the tab opens on the live
          * time instead of the copy taken when the menu opened. */
@@ -5770,6 +5957,13 @@ static uint8_t config_menu_adjust_focused_value(config_menu_t *menu, int8_t delt
 
     if (menu == NULL) {
         return 0U;
+    }
+
+    if (menu->tab == CONFIG_TAB_BOOT_SETTINGS &&
+        menu->item_focus == CONFIG_MENU_BOOT_STARTUP_FIRMWARE_ITEM) {
+        (void)delta;
+        config_menu_cycle_startup_firmware(menu);
+        return 1U;
     }
 
     if (menu->tab == CONFIG_TAB_APPLICARD && menu->item_focus == 1U) {
@@ -7129,6 +7323,12 @@ static void config_menu_activate_item(config_menu_t *menu)
         } else if (menu->item_focus == CONFIG_MENU_BOOT_ONEE_ITEM) {
             config_menu_toggle_onee_mode(menu);
             break;
+        } else if (menu->item_focus == CONFIG_MENU_BOOT_STARTUP_FIRMWARE_ITEM) {
+            config_menu_cycle_startup_firmware(menu);
+            break;
+        } else if (menu->item_focus == CONFIG_MENU_BOOT_SWITCH_FIRMWARE_ITEM) {
+            config_menu_switch_firmware(menu);
+            break;
         } else if (menu->item_focus == CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM) {
             if (config_menu_onee_fixed_bindings_active(menu) != 0U) {
                 config_menu_toggle_onee_video_standard(menu);
@@ -7568,6 +7768,9 @@ static void config_menu_activate_item(config_menu_t *menu)
         break;
 
     case CONFIG_TAB_ABOUT:
+        if (menu->item_focus == 0U) {
+            config_menu_start_golden_boot_update(menu);
+        }
         break;
 
     default:
@@ -7582,6 +7785,8 @@ void config_menu_init(config_menu_t *menu)
     }
 
     memset(menu, 0, sizeof(*menu));
+    (void)snprintf(menu->golden_boot_version,
+                   sizeof(menu->golden_boot_version), "Unknown");
     menu->boot_timeout_mode = CONFIG_DEFAULT_BOOT_TIMEOUT_MODE;
     menu->boot_device = CONFIG_DEFAULT_BOOT_DEVICE;
     menu->onee_mode_state = CONFIG_MENU_ONEE_MODE_OFF;
@@ -7718,7 +7923,7 @@ void config_menu_poll_onee_mode(config_menu_t *menu)
     menu->onee_mode_status =
         menu->platform.get_onee_mode_status(menu->platform.ctx);
 
-    /* Item 3 becomes Reset USB Bindings when ONE//e stops. Do not let a
+    /* The standard row becomes Reset USB Bindings when ONE//e stops. Do not let a
      * focused standard row silently turn into that destructive action. */
     if (menu->tab == CONFIG_TAB_BOOT_SETTINGS &&
         menu->item_focus == CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM &&
@@ -7801,7 +8006,12 @@ void config_menu_set_active(config_menu_t *menu, uint8_t active)
         /* Load the live hardware time so the Clock tab shows the RTC, not
          * the session default or a stale copy from the last open. */
         config_menu_try_read_rtc(menu, 0U);
+        if (menu->tab == CONFIG_TAB_ABOUT) {
+            config_menu_refresh_golden_boot(menu);
+        }
     } else {
+        menu->golden_boot_update_confirm = 0U;
+        menu->golden_boot_confirm_update = 0U;
         config_menu_stop_usb0_sd_remote(menu);
         menu->joystick_page_active = 0U;
         menu->usb_owned = 0U;
@@ -7923,6 +8133,10 @@ uint8_t config_menu_handle_input(config_menu_t *menu, ui_input_t input)
     }
 
     if (config_menu_is_active(menu) &&
+        config_menu_golden_boot_handle_input(menu, input) != 0U) {
+        return 1U;
+    }
+    if (config_menu_is_active(menu) &&
         menu->ethernet_ftp_sd_remote_active != 0U) {
         if (input.key == UI_KEY_ENTER ||
             input.key == UI_KEY_BACK ||
@@ -7959,12 +8173,26 @@ uint8_t config_menu_handle_input(config_menu_t *menu, ui_input_t input)
 
     if ((FB16_WIDTH < 1680 || FB16_HEIGHT < 1000) &&
         menu->tab == CONFIG_TAB_ABOUT) {
-        if (input.key == UI_KEY_UP || input.key == UI_KEY_PAGE_UP) {
-            cmui_compact_scroll(input.key == UI_KEY_UP ? -1 : -8);
+        if (input.key == UI_KEY_UP) {
+            menu->item_focus = 0U;
+            cmui_compact_scroll(-10000);
+            return 1U;
+        }
+        if (input.key == UI_KEY_PAGE_UP) {
+            menu->item_focus = 1U;
+            cmui_compact_scroll(-8);
             return 1U;
         }
         if (input.key == UI_KEY_DOWN || input.key == UI_KEY_PAGE_DOWN) {
+            /* Credits have no actions. Defocus the button so the compact
+             * renderer can scroll; Up returns to the update button. */
+            menu->item_focus = 1U;
             cmui_compact_scroll(input.key == UI_KEY_DOWN ? 1 : 8);
+            return 1U;
+        }
+        if (input.key == UI_KEY_ENTER && menu->item_focus != 0U) {
+            menu->item_focus = 0U;
+            cmui_compact_scroll(-10000);
             return 1U;
         }
     }
@@ -8563,6 +8791,7 @@ static void config_menu_draw_about_bottom_text(uint16_t *fb,
 }
 
 static void config_menu_draw_about(uint16_t *fb,
+                                   const config_menu_t *menu,
                                    int x,
                                    int y,
                                    int w,
@@ -8571,17 +8800,42 @@ static void config_menu_draw_about(uint16_t *fb,
     int cursor = y + 10;
     const int help_h = 92;
     const int bottom = cmui_compact_active() ? 10000 : y + h - help_h - 18;
+    char golden_line[96];
+    const char *version = menu->golden_boot_version[0] != '\0' ?
+        menu->golden_boot_version : "Unknown";
+    const uint8_t button_focused = (uint8_t)(menu->item_focus == 0U);
+    const uint8_t button_disabled = (uint8_t)(menu->golden_boot_update_allowed == 0U);
 
-    config_menu_draw_about_section(
-        fb,
-        x,
-        &cursor,
-        w,
-        bottom,
-        "Versions",
-        k_about_versions,
-        (uint32_t)(sizeof(k_about_versions) /
-                   sizeof(k_about_versions[0])));
+    cmui_text(fb, x, cursor, "Versions", CMUI_COLOR_ACCENT,
+               CMUI_COLOR_BG, CMUI_BODY_SCALE);
+    cursor += 38;
+    (void)snprintf(golden_line, sizeof(golden_line), "Golden Boot: %s", version);
+    if (cmui_compact_active() != 0U) {
+        if (menu->golden_boot_file_present != 0U) {
+            (void)snprintf(golden_line, sizeof(golden_line),
+                "Golden Boot: %s   [Update Golden Boot...]", version);
+            cmui_compact_entry(golden_line, NULL, button_focused, button_disabled);
+        } else {
+            cmui_compact_entry(golden_line, NULL, 0U, 0U);
+        }
+    } else {
+        const int button_w = cmui_text_width("Update Golden Boot...",
+                                              CMUI_BODY_SCALE) + 40;
+        const int text_w = w - 36 -
+            (menu->golden_boot_file_present != 0U ? button_w + 24 : 0);
+        cmui_text_clipped(fb, x + 18, cursor + 8, text_w,
+            golden_line, CMUI_COLOR_TEXT, CMUI_COLOR_BG, CMUI_SMALL_SCALE);
+        if (menu->golden_boot_file_present != 0U) {
+            cmui_row(fb, x + w - 18 - button_w, cursor, button_w,
+                button_focused, button_disabled, "Update Golden Boot...");
+        }
+    }
+    cursor += 40;
+    cmui_text_clipped(fb, x + 18, cursor, w - 36,
+        "Firmware:    " APPLETINI_FIRMWARE_IMAGE_VERSION_FULL,
+        CMUI_COLOR_TEXT, CMUI_COLOR_BG, CMUI_SMALL_SCALE);
+    cursor += 46;
+
     config_menu_draw_about_section(
         fb,
         x,
@@ -8603,6 +8857,46 @@ static void config_menu_draw_about(uint16_t *fb,
         (uint32_t)(sizeof(k_about_third_party) /
                    sizeof(k_about_third_party[0])));
     config_menu_draw_about_bottom_text(fb, x, y, w, h);
+}
+
+static void config_menu_draw_golden_boot_modal(uint16_t *fb,
+                                              const config_menu_t *menu,
+                                              const cmui_rect_t *body)
+{
+    cmui_rect_t panel = {body->x, body->y + 56, body->w, 326};
+    const uint8_t busy = menu->golden_boot_update_pending;
+
+    cmui_panel(fb, &panel, CMUI_COLOR_PANEL);
+    cmui_text(fb, panel.x + 28, panel.y + 28,
+        "Update Golden Boot", CMUI_COLOR_ACCENT,
+        CMUI_COLOR_PANEL, CMUI_TITLE_SCALE);
+    cmui_text_clipped(fb, panel.x + 28, panel.y + 86, panel.w - 56,
+        busy != 0U ? "Checking BOOT.BIN, saving media and updating Golden Boot..." :
+        "Update Golden Boot from BOOT.BIN on the SD card and restart?",
+        CMUI_COLOR_TEXT, CMUI_COLOR_PANEL, CMUI_BODY_SCALE);
+    cmui_text_clipped(fb, panel.x + 28, panel.y + 126, panel.w - 56,
+        busy != 0U ? "Keep power on. The system restarts after verification." :
+        "Keep power on until the update finishes.",
+        CMUI_COLOR_TEXT, CMUI_COLOR_PANEL, CMUI_BODY_SCALE);
+    if (busy != 0U) {
+        return;
+    }
+    if (cmui_compact_active() != 0U) {
+        cmui_compact_entry("Cancel", NULL,
+            (uint8_t)(menu->golden_boot_confirm_update == 0U), 0U);
+        cmui_compact_entry("Update and reboot", NULL,
+            menu->golden_boot_confirm_update, 0U);
+    } else {
+        const int gap = 24;
+        const int button_w = (panel.w - 56 - gap) / 2;
+        cmui_row(fb, panel.x + 28, panel.y + 202, button_w,
+            (uint8_t)(menu->golden_boot_confirm_update == 0U), 0U, "Cancel");
+        cmui_row(fb, panel.x + 28 + button_w + gap, panel.y + 202,
+            button_w, menu->golden_boot_confirm_update, 0U, "Update and reboot");
+    }
+    cmui_text_clipped(fb, panel.x + 28, panel.y + 264, panel.w - 56,
+        "Choose with Left/Right. Enter or USB OK confirms; Back cancels.",
+        CMUI_COLOR_MUTED, CMUI_COLOR_PANEL, CMUI_SMALL_SCALE);
 }
 
 /* Max lines the help panel assembles per frame: the largest centralized
@@ -9099,7 +9393,7 @@ static void config_menu_draw_page(uint16_t *fb, const config_menu_t *menu,
         config_menu_draw_printing(fb, menu, x, y, w);
         break;
     case CONFIG_TAB_ABOUT:
-        config_menu_draw_about(fb, x, y, w, content_h);
+        config_menu_draw_about(fb, menu, x, y, w, content_h);
         break;
     default:
         break;
@@ -9136,7 +9430,10 @@ void config_menu_draw(uint16_t *fb, const config_menu_t *menu, uint8_t usb_owned
         const char *title = (menu->tab < CONFIG_TAB_COUNT) ?
             k_tab_labels[menu->tab] : "Settings";
         cmui_compact_begin();
-        if (menu->ethernet_ftp_sd_remote_active != 0U) {
+        if (menu->golden_boot_update_confirm != 0U ||
+            menu->golden_boot_update_pending != 0U) {
+            config_menu_draw_golden_boot_modal(fb, menu, &logical_body);
+        } else if (menu->ethernet_ftp_sd_remote_active != 0U) {
             config_menu_draw_ethernet_ftp_sd_modal(fb, &logical_body, usb_owned);
         } else if (menu->usb0_sd_remote_active != 0U) {
             config_menu_draw_usb0_sd_remote_modal(fb, &logical_body, usb_owned);
@@ -9171,7 +9468,10 @@ void config_menu_draw(uint16_t *fb, const config_menu_t *menu, uint8_t usb_owned
                    nav.h,
                    CMUI_COLOR_BORDER_SOFT);
 
-    if (menu->ethernet_ftp_sd_remote_active != 0U) {
+    if (menu->golden_boot_update_confirm != 0U ||
+        menu->golden_boot_update_pending != 0U) {
+        config_menu_draw_golden_boot_modal(fb, menu, &body);
+    } else if (menu->ethernet_ftp_sd_remote_active != 0U) {
         config_menu_draw_ethernet_ftp_sd_modal(fb, &body, usb_owned);
     } else if (menu->usb0_sd_remote_active != 0U) {
         config_menu_draw_usb0_sd_remote_modal(fb, &body, usb_owned);
@@ -9187,7 +9487,9 @@ void config_menu_draw(uint16_t *fb, const config_menu_t *menu, uint8_t usb_owned
                 (uint8_t)(boot_menu_service_machine_mode() ==
                           CARD_MACHINE_MODE_IIPLUS));
     if (menu->usb0_sd_remote_active == 0U &&
-        menu->ethernet_ftp_sd_remote_active == 0U) {
+        menu->ethernet_ftp_sd_remote_active == 0U &&
+        menu->golden_boot_update_confirm == 0U &&
+        menu->golden_boot_update_pending == 0U) {
         config_menu_draw_browser(fb, menu, body.x, body.y - 4, body.w);
         /* Printout rename editor / delete confirm draw over the browser. */
         config_menu_printing_draw_overlays(fb, menu, body.x, body.y, body.w);

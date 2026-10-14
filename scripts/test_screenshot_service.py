@@ -18,9 +18,12 @@ def check_integration() -> None:
     generator = (ROOT / "scripts/create_vitis_workspace.py").read_text(encoding="utf-8")
     usb = (frontend / "usb_storage_service.c").read_text(encoding="utf-8")
     service = (frontend / "screenshot_service.c").read_text(encoding="utf-8")
-    for removed in ("compositor_frame_picture_rect", "compositor_frame_output_size",
-                    "compositor_frame_pixel_mask", "video_pixel_mask_frame_rgb565"):
-        assert removed not in service, ("capture must retain F1.2.2 sources", removed)
+    # Raw Apple keeps the F1.2.2 source. Full output uses one coherent completed
+    # slot and replays the FPGA-only mask with that slot's captured metadata.
+    assert "compositor_frame_picture_rect" not in service
+    assert "compositor_capture_output_frame(&frame)" in service
+    assert "surface.pixel_mask = frame.pixel_mask;" in service
+    assert "video_pixel_mask_frame_rgb565(&surface->pixel_mask" in service
     assert "apple_fb_reader_claim()" in service
     for token in (
         '#include "screenshot_service.h"', "screenshot_service_init();",
@@ -54,7 +57,7 @@ def check_integration() -> None:
 
 
 def check_png(path: Path, width: int, height: int, raw_layout: int | None = None,
-              scanlines: int = 0) -> None:
+              scanlines: int = 0, mask_mode: int = 0) -> None:
     image = path.read_bytes()
     assert image[:8] == b"\x89PNG\r\n\x1a\n"
     pos, idat, chunks = 8, bytearray(), []
@@ -83,6 +86,21 @@ def check_png(path: Path, width: int, height: int, raw_layout: int | None = None
             if raw_layout is None:
                 r, g, b = (x * 3 + y * 5) & 31, (x * 7 + y * 11) & 63, (x * 13 + y * 17) & 31
                 rgb = [(r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2)]
+                if mask_mode and 2 <= x < 9 and 1 <= y < 6 and not (
+                        4 <= x < 6 and 2 <= y < 4):
+                    # Independent retained-FPGA arithmetic: expand to 8 bits,
+                    # dim channels at viewport-relative phase, truncate back
+                    # to 565, then PNG expands the resulting output channels.
+                    mx, my = x - 2, y - 1
+                    if mask_mode == 3:
+                        dim = [mx % 3 == 2 or my % 3 == 2] * 3
+                    else:
+                        selected = (mx % 3 + (my & 1 if mask_mode == 2 else 0)) % 3
+                        dim = [channel != selected for channel in range(3)]
+                    rgb = [value - (value >> 2) if dim[channel] else value
+                           for channel, value in enumerate(rgb)]
+                    r, g, b = rgb[0] >> 3, rgb[1] >> 2, rgb[2] >> 3
+                    rgb = [(r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2)]
             else:
                 # Independent F1.2.2 sampling rules (3101934 save_a2_png):
                 # active legacy starts32,16; border starts4,0; SHR starts0,0.
@@ -117,8 +135,26 @@ def main() -> int:
                    "-I", str(ROOT / "scripts/fixtures/screenshot_bsp"),
                    str(ROOT / "scripts/fixtures/screenshot_service_host.c"),
                    str(ROOT / "ps_sources/lib/crc32.c"), "-o", str(executable)]
-        if os.environ.get("SCREENSHOT_SANITIZE", "0" if os.name == "nt" else "1") != "0":
-            command[1:1] = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
+        sanitize = os.environ.get("SCREENSHOT_SANITIZE", "0" if os.name == "nt" else "1") != "0"
+        if sanitize:
+            command[1:1] = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer",
+                            "-fno-sanitize-recover=all"]
+        if os.name == "nt" and "microsoft visual studio" in str(Path(compiler)).lower():
+            # Match the installed VS Clang dynamic CRT/ASan setup. Keep DLLs
+            # beside this generated probe, never in the toolchain or system.
+            command[1:1] = ["-D_CRT_SECURE_NO_WARNINGS=1", "-D_DLL", "-D_MT",
+                            "-Xclang", "--dependent-lib=msvcrt"]
+            compiler_path = Path(compiler).resolve()
+            vc_root = compiler_path.parents[4]
+            runtime = max((vc_root / "Redist/MSVC").glob(
+                "*/x64/Microsoft.VC*.CRT/vcruntime140.dll"),
+                key=lambda path: path.stat().st_mtime_ns)
+            shutil.copy2(runtime, output / runtime.name)
+            if sanitize:
+                resource = Path(subprocess.check_output(
+                    [compiler, "-print-resource-dir"], env=environment, text=True).strip())
+                asan = resource / "lib/windows/clang_rt.asan_dynamic-x86_64.dll"
+                shutil.copy2(asan, output / asan.name)
         subprocess.run(command, check=True, env=environment)
         subprocess.run([str(executable), str(output)], check=True, env=environment)
         for layout, dimensions in enumerate(((1120, 768), (1232, 896), (1280, 800))):
@@ -130,6 +166,8 @@ def main() -> int:
         check_png(output / "full.png", 1920, 1080)
         check_png(output / "wide.png", 1360, 768)
         check_png(output / "frozen-stride.png", 11, 7)
+        for mask_mode in range(1, 4):
+            check_png(output / f"full-mask-{mask_mode}.png", 11, 7, mask_mode=mask_mode)
     return 0
 
 

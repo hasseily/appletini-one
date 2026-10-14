@@ -10,6 +10,7 @@
 #include "usb_hid_service.h"
 #include "onee_input_service.h"
 #include "slot2_gamepad_service.h"
+#include "../lib/multiboot.h"
 
 #define CONFIG_MENU_STATUS_LEN 96U
 #define CONFIG_MENU_PATH_LEN 128U
@@ -27,7 +28,9 @@
 #define CONFIG_MENU_USB_BIND_ACTION_COUNT 14U
 #define CONFIG_MENU_USB_BIND_CAPTURE_NONE 0xFFU
 #define CONFIG_MENU_BOOT_ONEE_ITEM 2U
-#define CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM 3U
+#define CONFIG_MENU_BOOT_STARTUP_FIRMWARE_ITEM 3U
+#define CONFIG_MENU_BOOT_SWITCH_FIRMWARE_ITEM 4U
+#define CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM 5U
 /* The reset row is hidden while ONE//e owns the menu, so its focus index can
  * select the ONE//e-only video-standard row in that mode. */
 #define CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM \
@@ -151,6 +154,20 @@ typedef struct {
     /* Full USB1 host re-enumeration (stop + start), for devices too slow
      * to enumerate at power-on. */
     void (*refresh_usb1)(void *ctx);
+    /* Presence is cached for drawing; mutations recheck flash in the platform. */
+    uint8_t (*get_multiboot_status)(void *ctx, uint8_t *present_mask,
+                                   uint32_t *default_product);
+    int (*set_startup_firmware)(void *ctx, uint32_t product);
+    int (*request_firmware_switch)(void *ctx, uint32_t product);
+    /* Version is a verified flash snapshot; drawing never reads flash or SD. */
+    void (*get_golden_boot_version)(void *ctx, char *dst, size_t capacity);
+    uint8_t (*get_golden_boot_file_present)(void *ctx);
+    /* ONE//e and the physical Apple II's initial boot menu are eligible.
+     * The platform holds the host in RESET upon confirmation. After handing
+     * off to the host OS, or without this callback, updating is unavailable. */
+    uint8_t (*get_golden_boot_update_allowed)(void *ctx);
+    /* Queue only. The main loop validates, saves media, writes, and reboots. */
+    int (*request_golden_boot_update)(void *ctx);
     void (*set_phasor_pan)(void *ctx, uint32_t pan_lo, uint32_t pan_hi);
     void (*set_phasor_audio)(void *ctx,
                              int8_t bass,
@@ -288,6 +305,15 @@ typedef struct {
     uint8_t sp_ramdisk_enabled;
     uint8_t settings_loaded;
     uint8_t session_only;
+    uint8_t multiboot_ready;
+    uint8_t multiboot_present_mask; /* bit 0 Appletini, bit 1 Multitini */
+    uint32_t startup_firmware;
+    char golden_boot_version[32];
+    uint8_t golden_boot_file_present;
+    uint8_t golden_boot_update_allowed;
+    uint8_t golden_boot_update_confirm;
+    uint8_t golden_boot_confirm_update; /* Cancel (0) is the initial choice. */
+    uint8_t golden_boot_update_pending;
     usb_hid_menu_source_t usb_menu_bindings[CONFIG_MENU_USB_BIND_ACTION_COUNT];
     uint8_t usb_binding_capture;
     uint8_t usb_bindings_editable;
@@ -331,6 +357,10 @@ typedef struct {
 
 void config_menu_init(config_menu_t *menu);
 void config_menu_bind_platform(config_menu_t *menu, const config_menu_platform_t *platform);
+void config_menu_refresh_multiboot(config_menu_t *menu);
+void config_menu_refresh_golden_boot(config_menu_t *menu);
+void config_menu_golden_boot_update_finished(config_menu_t *menu, const char *error);
+uint8_t config_menu_flush_settings(config_menu_t *menu);
 void config_menu_apply_boot_runtime(config_menu_t *menu);
 void config_menu_apply_runtime(config_menu_t *menu);
 void config_menu_apply_startup_assets(config_menu_t *menu);

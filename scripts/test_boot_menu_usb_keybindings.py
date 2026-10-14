@@ -107,7 +107,7 @@ def test_boot_settings_draws_binding_editor() -> None:
     source = read(CONFIG_MENU_C)
 
     require("CONFIG_MENU_BOOT_ONEE_ITEM 2U" in header and
-            "CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM 3U" in header and
+            "CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM 5U" in header and
             "CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM (CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM + 1U)" in header and
             "CONFIG_MENU_BOOT_ITEM_COUNT" in header,
             "Boot Settings must reserve rows for the USB binding editor")
@@ -154,7 +154,7 @@ def test_boot_settings_draws_binding_editor() -> None:
             "config_menu_boot_usb_binding_item_for_action(action)" in tabs,
             "visible binding order must put OK/Back in the middle and PrtScr rows below Menu")
     require("const int row_h = CMUI_ROW_H + CMUI_ROW_GAP;" in tabs and
-            "const int heading_y = y + (row_h * ((onee_fixed != 0U) ? 4 : 3));" in tabs and
+            "const int heading_y = y + (row_h * ((onee_fixed != 0U) ? 6 : 5));" in tabs and
             "CMUI_COLOR_ACCENT" in tabs and
             "CMUI_COLOR_BORDER_SOFT" in tabs,
             "USB binding heading must leave the active ONE//e standard row clear")

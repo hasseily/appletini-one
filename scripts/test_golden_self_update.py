@@ -125,10 +125,10 @@ def test_xmodem_targets_keep_firmware_rx_on_sd() -> None:
         "static int receive_golden_xmodem(",
     )
     require("target.kind = SERIAL_RX_TARGET_SD_FILE;" in firmware and
-            "target.max_size = layout->firmware.size;" in firmware and
+            "target.max_size = layout->multitini.size;" in firmware and
             "target.tmp_path = SERIAL_BOOT_RX_TMP_PATH;" in firmware and
             "target.final_path = SERIAL_BOOT_FW_PATH;" in firmware,
-            "legacy rx must still stage FIRMWARE.BIN on SD within the firmware slot limit")
+            "rx must stage FIRMWARE.BIN on SD within the largest product slot limit")
 
     golden = section(
         source,
@@ -175,7 +175,7 @@ def test_trial_boot_repairs_primary_before_monitor() -> None:
     main = read(BOOT_MAIN_C)
 
     cache = "current_boot_offset = boot_control_current_qspi_image_offset();"
-    clear = "boot_control_select_qspi_image_offset(GOLDEN_SELF_UPDATE_PRIMARY_OFFSET);"
+    clear = "boot_control_select_qspi_image_offset(GOLDEN_SELF_UPDATE_PRIMARY_OFFSET) != 0"
     trial = "if (current_boot_offset == GOLDEN_SELF_UPDATE_TRIAL_OFFSET)"
     repair = "golden_self_update_repair_primary(current_boot_offset,"
     first_monitor = "serial_boot_menu(layout, GOLDEN_SERIAL_BOOT_WINDOW_SECONDS)"
@@ -219,6 +219,39 @@ def test_shared_reader_frontends_use_one_update_engine() -> None:
     require("raw Zynq Bootgen image" in header and
             "32-byte golden_self_update_manifest_t trailer" in header,
             "public API must state the source image and manifest contract")
+
+
+def test_sd_completion_follows_verified_primary_and_allows_retry() -> None:
+    source = read(SELF_UPDATE_C)
+    header = read(SELF_UPDATE_H)
+    main = read(BOOT_MAIN_C)
+    trial_flow = section(main,
+        "if (current_boot_offset == GOLDEN_SELF_UPDATE_TRIAL_OFFSET)",
+        "for (;;) {")
+    complete = "(void)golden_self_update_complete_sd(current_boot_offset,"
+    require(main.count(complete) == 2,
+            "Golden must acknowledge after trial repair and retry from primary")
+    require(trial_flow.index("repair_result.boot_offset == GOLDEN_SELF_UPDATE_PRIMARY_OFFSET") <
+            trial_flow.index(complete) <
+            trial_flow.index("boot_control_boot_qspi_image_offset(repair_result.boot_offset);"),
+            "completion must follow verified primary repair and precede its reboot")
+    require("golden_self_update_complete_sd(current_boot_offset, NULL," in trial_flow and
+            trial_flow.index("golden_self_update_complete_sd(current_boot_offset, NULL,") <
+            trial_flow.index("serial_boot_menu(layout, GOLDEN_SERIAL_BOOT_WINDOW_SECONDS)"),
+            "primary startup must retry completion after power loss without staging another image")
+    require("golden_self_update_complete_sd(" not in read(FRONTEND_MAIN_C),
+            "running firmware must retain BOOT.BIN while it only stages the trial image")
+    completion = section(source, "int golden_self_update_complete_sd(",
+                         "int golden_self_update_run(const char *source_path,")
+    require(completion.index("flash_golden_preflight(&nor, PRIMARY_FLASH_OFFSET") <
+            completion.index("memcmp(g_source_buf, g_flash_buf, chunk)") <
+            completion.index("f_close(&file)") <
+            completion.index('f_stat("0:/BOOT.OK", &info)') <
+            completion.index('f_rename("0:/BOOT.BIN", "0:/BOOT.OK")'),
+            "completion must verify primary/full source bytes and close before changing SD names")
+    require("GOLDEN_SELF_UPDATE_SD_FAILED = -1" in header and
+            "GOLDEN_SELF_UPDATE_SD_RENAMED = 1" in header,
+            "completion needs separate advisory failure and successful rename results")
 
 
 def test_running_firmware_selfupdate_callback_boots_verified_trial() -> None:
@@ -367,10 +400,9 @@ def test_preflight_and_ab_commit_order() -> None:
 
     fallback = section(source, "static int fallback_preflight(",
                        "static int program_target_except_ident(")
-    require("manifest.role != GOLDEN_SELF_UPDATE_ROLE_FIRMWARE" in fallback and
-            "GOLDEN_SELF_UPDATE_FLAG_RECOVERY" in fallback and
-            "fallback payload CRC32 mismatch" in fallback and
-            "fallback recovery marker is missing" in fallback,
+    require("mb_select(&flash, MB_PRODUCT_NONE, &selected) != MB_OK" in fallback and
+            "selected.product == MB_PRODUCT_NONE && selected.legacy == 0U" in fallback and
+            "no live verified recovery firmware in either slot" in fallback,
             "fallback preflight must prove a valid recovery firmware before any golden write")
 
     writer = section(source, "static int program_target_except_ident(",
@@ -396,7 +428,7 @@ def test_host_golden_mode_validates_manifest_and_uses_selfrx() -> None:
 
     with tempfile.TemporaryDirectory() as temp_name:
         temp = Path(temp_name)
-        payload = b"golden host validation payload"
+        payload = b"golden host validation payload\0" + image_manifest.RECOVERY_MARKER
         raw = temp / "raw.bin"
         golden = temp / "BOOT.BIN"
         wrong_role = temp / "FIRMWARE.BIN"
@@ -441,7 +473,7 @@ def test_host_golden_mode_validates_manifest_and_uses_selfrx() -> None:
         oversized = temp / "oversized-golden.bin"
         large_raw.write_bytes(
             b"X" * (serial_firmware_update.GOLDEN_IMAGE_MAX_BYTES + 1 -
-                    image_manifest.MANIFEST_SIZE)
+                    image_manifest.MANIFEST_SIZE) + image_manifest.RECOVERY_MARKER
         )
         image_manifest.append_manifest(
             large_raw,
@@ -463,6 +495,7 @@ TESTS = [
     test_update_entry_points_and_trial_reboot,
     test_trial_boot_repairs_primary_before_monitor,
     test_shared_reader_frontends_use_one_update_engine,
+    test_sd_completion_follows_verified_primary_and_allows_retry,
     test_running_firmware_selfupdate_callback_boots_verified_trial,
     test_fixed_slots_and_fault_cut_model,
     test_preflight_and_ab_commit_order,

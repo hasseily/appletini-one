@@ -134,7 +134,7 @@ HELP(boot_onee,
     "Runs the Appletini without the Apple //e, using the built-in 65c02 accelerator and a virtual",
     "motherboard. This mode is only available when there is no Apple bus activity detected.",
     "Any such activity disables this mode.",
-    "The standalone mode requires a jumper on the card. Read the documentation for more detail.",
+    "Outside the Apple //e, the jumper supplies the 5V needed for standalone ONE//e or Multitini.",
     "For additional safety, only run the standalone mode when the card is out of the Apple.");
 
 HELP(boot_onee_standard,
@@ -142,6 +142,19 @@ HELP(boot_onee_standard,
     "PAL has 312 lines and 131 fabric clocks per cycle. Both begin vertical blank at scanner line 192.",
     "The row shows the saved target. A live change stays pending until the next virtual reset or restart.",
     "This row appears only while ONE//e is active. A physical Apple's video standard remains automatic.");
+
+HELP(boot_startup_firmware,
+    "Chooses Appletini or Multitini on the next power-on. The choice is saved in flash, outside profiles.",
+    "A missing or corrupt firmware falls back to the other verified firmware. Both missing stays in golden.",
+    "This needs the multiboot golden bootloader. Only a verified installed firmware can be selected.");
+
+HELP(boot_switch_firmware,
+    "Reboots the card into Multitini for this session. The saved startup firmware stays unchanged.",
+    "Pending disk and settings writes are saved before reboot. Golden validates Multitini after reset.",
+    "Finish screenshots, print jobs, and remote SD sharing first. A failed save cancels the switch.",
+    "Inside the Apple //e, Multitini gets 5V from the host and needs no standalone jumper.",
+    "The jumper supplies 5V only when the card is outside the Apple, for standalone ONE//e or Multitini.",
+    "The Apple program will lose this card's services.");
 
 HELP(boot_bind_reset,
     "Restores every USB menu binding below to its factory default.",
@@ -172,29 +185,29 @@ HELP(boot_bind_tw_slug,
     "Toggles the 0.05 MHz slug speed for debugging, active at all times.",
     "The key works only when the slug debug key is armed on the TransWarp tab.");
 
-/* Item order outside ONE//e: 0 boot wait, 1 boot device, 2 ONE//e, 3 reset
- * bindings, then the bindings in k_boot_usb_binding_action_order: 4-7 nav,
- * 8-9 tabs, 10 OK, 11 BACK, 12-13 screenshots, 14-16 TW speed, 17 TW slug.
- * While ONE//e is active, item 3 becomes the video-standard row. */
+/* Startup firmware is in flash, outside profiles. ONE//e shares its standard
+ * row with the USB reset row. The two multiboot rows precede those bindings. */
 static const help_override_t boot_settings_overrides[] = {
     OVERRIDE(0,  boot_timeout),
     OVERRIDE(1,  boot_device),
     OVERRIDE(2,  boot_onee),
-    OVERRIDE(3,  boot_bind_reset),
-    OVERRIDE(4,  boot_bind_nav),
-    OVERRIDE(5,  boot_bind_nav),
+    OVERRIDE(CONFIG_MENU_BOOT_STARTUP_FIRMWARE_ITEM, boot_startup_firmware),
+    OVERRIDE(CONFIG_MENU_BOOT_SWITCH_FIRMWARE_ITEM, boot_switch_firmware),
+    OVERRIDE(CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM, boot_bind_reset),
     OVERRIDE(6,  boot_bind_nav),
     OVERRIDE(7,  boot_bind_nav),
-    OVERRIDE(8,  boot_bind_tabs),
-    OVERRIDE(9,  boot_bind_tabs),
-    OVERRIDE(10, boot_bind_ok_back),
-    OVERRIDE(11, boot_bind_ok_back),
-    OVERRIDE(12, boot_bind_prtscr),
-    OVERRIDE(13, boot_bind_prtscr),
-    OVERRIDE(14, boot_bind_tw_speed),
-    OVERRIDE(15, boot_bind_tw_speed),
+    OVERRIDE(8,  boot_bind_nav),
+    OVERRIDE(9,  boot_bind_nav),
+    OVERRIDE(10, boot_bind_tabs),
+    OVERRIDE(11, boot_bind_tabs),
+    OVERRIDE(12, boot_bind_ok_back),
+    OVERRIDE(13, boot_bind_ok_back),
+    OVERRIDE(14, boot_bind_prtscr),
+    OVERRIDE(15, boot_bind_prtscr),
     OVERRIDE(16, boot_bind_tw_speed),
-    OVERRIDE(17, boot_bind_tw_slug),
+    OVERRIDE(17, boot_bind_tw_speed),
+    OVERRIDE(18, boot_bind_tw_speed),
+    OVERRIDE(19, boot_bind_tw_slug),
     OVERRIDE(CONFIG_MENU_BOOT_ONEE_STANDARD_HELP_ITEM, boot_onee_standard),
 };
 

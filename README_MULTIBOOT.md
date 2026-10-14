@@ -1,10 +1,10 @@
 # Appletini and Multitini multiboot
 
-Branch `multiboot` in each repository adds shared Golden B2.0.5 and two firmware
-slots. Multitini firmware is M0.2.3; Appletini firmware is F1.3.0-dev10. These are
-development builds. Board validation is pending. No FPGA image changes are
-required: the packages retain their selected supervisor, machine and Appletini
-bitstreams.
+Golden B2.0.6 supports two firmware slots. Multitini firmware is M0.2.3;
+Appletini firmware is F1.3.0. Appletini includes the
+[custom glyph API](README_GLYPH_API.md) and the changes in
+[the F1.3.0 release notes](README_FIRMWARE_F1.3.0.md). This build retains the
+audited Appletini FPGA image and rebuilds both ARM frontend cores.
 
 ## Flash layout
 
@@ -75,8 +75,10 @@ successful update in scan order wins. `BOOT.BIN` still requires the explicit
 `:selfupdate` procedure above. A failed file is not retried during that pass;
 leave it in place and enter Golden again after resolving the failure.
 
-An old version 1 firmware file remains usable as a boot fallback. The new
-updater refuses to install it because it lacks an unambiguous product identity.
+An old version 1 firmware file remains usable as a boot fallback. Golden
+B2.0.6 can also restore an identified, recovery-capable Appletini F1.1.0 or
+later image after validating its size and contents. Unsupported or ambiguous
+legacy images are refused.
 The first Multitini-slot update refuses a legacy image that extends beyond the
 new 6 MiB Appletini boundary. Current selected legacy packages fit within that
 boundary. A multiboot firmware refuses a Golden downgrade without the new
@@ -286,6 +288,23 @@ bezel-only case had ONE//e disabled; it does not require a renderer change.
 Native startup, ROM execution and failure tests accompany this change. Only
 Appletini ARM firmware changes; M0.2.3, B2.0.5, FPGA/core, FSBL and CPU1 inputs
 are retained. First boot and menu exit still need the owner's card test.
+
+## Native ProDOS 80-column startup
+
+With Appletini supplying auxiliary RAM, the native Apple //e cold-start
+probe runs before that RAM is available and leaves external slot-3 ROM
+selected. ProDOS 2.4.3 scans the slots before restoring the internal ROM,
+so BASIC.SYSTEM caches its "No device connected" handler for `PR#3`.
+The reported first-boot values were `$BF98=$B0`, `$BF99=$86`, and
+`$BE16=$9AEE`; a `PR#7` reload changed them to `$B2`, `$8E`, and `$C300`.
+
+F1.3.0 patches the ARM-loaded C8 boot helper to wait for the RAM policy
+and then select the internal slot-3 ROM before booting ProDOS. The
+selection applies when Appletini provides RAM. Physical auxiliary cards,
+disabled RAM, and vTW retain their normal ROM-selection paths. The C7
+slot ROM and FPGA bitstream remain unchanged. Regression tests use the
+actual Apple //e ROM, ProDOS 2.4.3, and BASIC.SYSTEM bytes. Device retesting
+of the rebuilt image remains pending.
 
 ## Shorter vTW slowdown windows
 

@@ -13,6 +13,7 @@
 #include "../image_versions.h"
 #include "../lib/crc32.h"
 #include "../lib/golden_self_update.h"
+#include "../lib/multiboot_platform.h"
 #include "../lib/number_parse.h"
 #include "../lib/qspi_nor.h"
 #include "../lib/uart.h"
@@ -196,7 +197,7 @@ static void print_help(void)
     serial_puts_both("[SER]   status\r\n");
     serial_puts_both("[SER]   continue      - leave monitor and follow normal SD update/boot path\r\n");
     serial_puts_both("[SER]   update        - run SD FIRMWARE.BIN updater now\r\n");
-    serial_puts_both("[SER]   boot          - boot a verified available firmware without SD update\r\n");
+    serial_puts_both("[SER]   boot [appletini|multitini] - boot verified firmware without SD update\r\n");
     serial_puts_both("[SER]   reboot        - reboot back through golden image\r\n");
     serial_puts_both("[SER]   rx [size] [crc32] - receive FIRMWARE.BIN by XMODEM-CRC to SD, then update\r\n");
     serial_puts_both("[SER]   selfupdate    - stage SD BOOT.BIN in the golden trial slot\r\n");
@@ -630,6 +631,38 @@ static serial_boot_action_t run_golden_self_update_from_memory(uint32_t uart_bas
     return SERIAL_BOOT_ACTION_BOOT_GOLDEN_TRIAL;
 }
 
+static serial_boot_action_t select_firmware_command(int argc, char **argv)
+{
+    const mb_flash_t *flash;
+    uint32_t product, golden_offset;
+    int rc;
+
+    if (argc == 1) {
+        serial_puts_both("[SER] Selecting verified available firmware now\r\n");
+        return SERIAL_BOOT_ACTION_BOOT_FIRMWARE;
+    }
+    if (argc != 2 ||
+        (!str_ieq(argv[1], "appletini") && !str_ieq(argv[1], "multitini"))) {
+        serial_puts_both("[SER] usage: boot [appletini|multitini]\r\n");
+        return SERIAL_BOOT_ACTION_NONE;
+    }
+    product = str_ieq(argv[1], "appletini") ? MB_PRODUCT_APPLETINI : MB_PRODUCT_MULTITINI;
+    flash = mb_platform_flash();
+    if (flash == NULL) {
+        serial_puts_both("[SER] Firmware selection failed: flash unavailable\r\n");
+        return SERIAL_BOOT_ACTION_NONE;
+    }
+    rc = mb_prepare_request(flash, product, &golden_offset);
+    if (rc != MB_OK) {
+        serial_logf("[SER] Firmware selection failed rc=%d; staying in monitor\r\n", rc);
+        return SERIAL_BOOT_ACTION_NONE;
+    }
+    /* Only commit a one-shot choice here. Main fully validates the live target
+     * immediately before booting; the saved startup choice is unchanged. */
+    serial_logf("[SER] Selecting verified %s firmware now\r\n", mb_product_name(product));
+    return SERIAL_BOOT_ACTION_BOOT_FIRMWARE;
+}
+
 static serial_boot_action_t process_command(uint32_t uart_base,
                                             char *line,
                                             const flash_layout_t *layout)
@@ -660,8 +693,7 @@ static serial_boot_action_t process_command(uint32_t uart_base,
     if (str_ieq(argv[0], "boot") || str_ieq(argv[0], "firmware") || str_ieq(argv[0], "run")) {
         /* main selects and fully verifies once immediately before booting.
          * Do not scan here and repeat the same scan after returning. */
-        serial_puts_both("[SER] Selecting verified available firmware now\r\n");
-        return SERIAL_BOOT_ACTION_BOOT_FIRMWARE;
+        return select_firmware_command(argc, argv);
     }
     if (str_ieq(argv[0], "reboot") || str_ieq(argv[0], "reset")) {
         serial_puts_both("[SER] Rebooting through golden image\r\n");

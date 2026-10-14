@@ -129,7 +129,7 @@ static void install_update_file(updater_result_t *r, const update_file_t *entry)
     upd_logf("[UPD] Processing %s\r\n", entry->source);
     size = f_size(&file);
     if (size <= MB_MANIFEST_SIZE || size > (FSIZE_t)MB_MULTITINI_CAPACITY || size > (FSIZE_t)UINT32_MAX) {
-        file_err(r, 4, entry->source, "invalid tagged firmware size");
+        file_err(r, 4, entry->source, "invalid firmware size");
         if (f_close(&file) != FR_OK) {
             file_err(r, 6, entry->source, "source close failed; update file retained");
         }
@@ -149,8 +149,9 @@ static void install_update_file(updater_result_t *r, const update_file_t *entry)
     source.read = firmware_file_read;
     source.size = (uint32_t)size;
     golden_led_on();
-    /* The product tag selects A or B, regardless of the SD filename. v1 is
-     * rejected here: an old generic footer cannot identify either product. */
+    /* Tagged contents choose the slot. Original v1 Appletini F >= 1.1.0 may
+     * restore A only after its loaded frontend identity and recovery checks.
+     * Filename changes never identify a generic v1 image as either product. */
     rc = mb_install(flash, &source, &installed);
     fr = f_close(&file);
     if (rc != MB_OK) {
@@ -167,8 +168,9 @@ static void install_update_file(updater_result_t *r, const update_file_t *entry)
     r->flash_crc32 = installed.image_crc32;
     r->verified = 1;
     r->updated = 1;
-    upd_logf("[UPD] Verified %s @0x%08lX size=%lu\r\n",
+    upd_logf("[UPD] Verified %s%s @0x%08lX size=%lu\r\n",
              mb_product_name(installed.product),
+             installed.version==1U ? " (legacy F restoration)" : "",
              (unsigned long)mb_product_offset(installed.product),
              (unsigned long)installed.image_size);
     golden_led_on();

@@ -80,6 +80,11 @@ const char *mb_product_name(uint32_t product);
  * Bootgen payload/table bounds. The source size includes the 32-byte footer. */
 int mb_image_validate(const mb_reader_t *reader, uint32_t expected_product,
                       int allow_legacy, mb_image_t *out);
+/* Installable firmware: tagged v2, or original recovery-capable v1 Appletini
+ * F >= 1.1.0 identified in its loaded frontend. A legacy result reports product
+ * APPLETINI without altering its original payload or manifest. Generic v1
+ * Multitini/unknown images remain migration fallbacks, not update candidates. */
+int mb_firmware_validate(const mb_reader_t *reader, mb_image_t *out);
 int mb_metadata_load(const mb_flash_t *flash, mb_metadata_t *out);
 /* out may be NULL for availability probes. */
 int mb_slot_verify(const mb_flash_t *flash, uint32_t product, mb_image_t *out);
@@ -89,7 +94,8 @@ int mb_slot_verify(const mb_flash_t *flash, uint32_t product, mb_image_t *out);
  * Execution must still use mb_slot_verify/mb_select; installation and startup
  * choice still validate fully. A one-shot request delegates its full target
  * check to Golden and may use this advisory probe before committing metadata.
- * out may be NULL. image_crc32 is zero because the payload was not read. */
+ * Restored legacy Appletini requires full verification and loaded identity;
+ * only tagged probes omit payload reads. out may be NULL. */
 int mb_slot_probe(const mb_flash_t *flash, uint32_t product, mb_image_t *out);
 int mb_golden_available(const mb_flash_t *flash, uint32_t *boot_offset_out);
 /* Discover the linked version in the installed Golden executable, preferring
@@ -102,7 +108,9 @@ int mb_golden_installed_version(const mb_flash_t *flash, char *version,
                                 uint32_t capacity, uint32_t *slot_offset);
 /* NONE selects the persistent default. No eligible product returns golden
  * (product NONE and offset 0); a missing request falls back to the other slot.
- * Legacy is eligible only with old v4 metadata and a complete live v1 image. */
+ * Identified legacy Appletini participates in product/default/request order.
+ * Unknown legacy remains the last fallback and needs old v4 metadata or a
+ * committed legacy record, plus a complete live recovery-capable v1 image. */
 int mb_select(const mb_flash_t *flash, uint32_t requested, mb_selection_t *out);
 int mb_set_default(const mb_flash_t *flash, uint32_t product);
 int mb_set_request(const mb_flash_t *flash, uint32_t product);

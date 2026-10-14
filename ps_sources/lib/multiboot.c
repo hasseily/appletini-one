@@ -277,6 +277,131 @@ int mb_image_validate(const mb_reader_t *reader, uint32_t expected_product,
 {
     return image_validate(reader,expected_product,allow_legacy,2U,0,out);
 }
+
+/* Historical Appletini has no product tag. Its existing UART identity binds a
+ * supported v1 archive to Appletini without changing its bytes or pretending
+ * that it implements the multiboot interface. Encode references as above so
+ * linking this validator into another runtime cannot confer that identity. */
+static const uint8_t legacy_version_prefix[] = {
+    0xA5,0xE3,0xCC,0xD7,0xC8,0xD2,0xC4,0xD7,0xC0,0x85,0xCC,0xC8,0xC4,
+    0xC2,0xC0,0x9F,0x85,0xE3,0xCC,0xD7,0xC8,0xD2,0xC4,0xD7,0xC0,0x85,0xE3
+};
+static const uint8_t legacy_uart_prefix[] = {
+    0xA8,0xAF,0xE4,0xD5,0xD5,0xC9,0xC0,0xD1,0xCC,0xCB,0xCC,0x85,0xC6,
+    0xCA,0xCB,0xD1,0xD7,0xCA,0xC9,0x85,0xF0,0xE4,0xF7,0xF1,0xA8,0xAF
+};
+#define LEGACY_VERSION_SIZE 64U
+#define FRONTEND_EXEC_ADDRESS 0x00100000U
+
+static int legacy_version_supported(const char *text)
+{
+    const char *p=text;
+    uint32_t parts[3],i;
+    for (i=0;i<3U;++i) {
+        uint32_t value=0;
+        if (*p<'0' || *p>'9') return 0;
+        do {
+            uint32_t digit=(uint32_t)(*p-'0');
+            if (value>(UINT32_MAX-digit)/10U) return 0;
+            value=value*10U+digit; ++p;
+        } while (*p>='0' && *p<='9');
+        parts[i]=value;
+        if (i<2U && *p++!='.') return 0;
+    }
+    if (*p=='-') {
+        const char *suffix=++p;
+        while ((*p>='0' && *p<='9') || (*p>='A' && *p<='Z') ||
+               (*p>='a' && *p<='z') || *p=='.' || *p=='-') ++p;
+        if (p==suffix) return 0;
+    }
+    if (*p++!='\r' || *p++!='\n' || *p) return 0;
+    return parts[0]>1U || (parts[0]==1U && parts[1]>=1U);
+}
+
+/* Called only after Bootgen bounds and the complete v1 CRC have passed. Scan
+ * actual CPU0 frontend load segments after its FPGA partition, never FSBL,
+ * partition tables, bitstream, padding or footer. All F1.1.0+ release archives
+ * use this entry address and these startup identities. */
+static int legacy_appletini_identity(const mb_reader_t *r)
+{
+    uint8_t h[0xa0],iht[64],pht[64],buf[IO_SIZE];
+    char prefix[sizeof legacy_version_prefix+1U],uart[sizeof legacy_uart_prefix+1U];
+    char recovery[sizeof marker_recovery+1U],opposite[sizeof marker_multitini+1U];
+    char golden[sizeof marker_golden+1U],version[LEGACY_VERSION_SIZE]={0},candidate[LEGACY_VERSION_SIZE];
+    uint32_t po,count,i,previous_end=FRONTEND_EXEC_ADDRESS;
+    int executed=0,pl_found=0,found=0,uart_found=0,recovery_found=0;
+    marker_decode(prefix,legacy_version_prefix,sizeof legacy_version_prefix);
+    marker_decode(uart,legacy_uart_prefix,sizeof legacy_uart_prefix);
+    marker_decode(recovery,marker_recovery,sizeof marker_recovery);
+    marker_decode(opposite,marker_multitini,sizeof marker_multitini);
+    marker_decode(golden,marker_golden,sizeof marker_golden);
+    if (read_at(r,0,h,sizeof h)!=MB_OK || read_at(r,le32(h+0x98),iht,64)!=MB_OK)
+        return MB_E_READ;
+    po=le32(h+0x9c); count=le32(iht+4);
+    if (count<3U) return MB_E_IMAGE;
+    for (i=1;i<count;++i) {
+        uint32_t load,exec,start,size,off,attr;
+        uint32_t vm=0,um=0,rm=0,om=0,gm=0,length=0;
+        int collecting=0;
+        if (read_at(r,po+i*64U,pht,sizeof pht)!=MB_OK) return MB_E_READ;
+        load=le32(pht+12); exec=le32(pht+16); attr=le32(pht+24)&0xf0U;
+        start=le32(pht+20)*4U; size=le32(pht+4)*4U;
+        if (attr==0x20U) {
+            if (pl_found || executed || load || exec) return MB_E_IMAGE;
+            pl_found=1; continue;
+        }
+        if (attr!=0x10U || !pl_found || load<previous_end || size>UINT32_MAX-load ||
+            (!executed && (load!=FRONTEND_EXEC_ADDRESS || exec!=FRONTEND_EXEC_ADDRESS)) ||
+            (executed && exec)) return MB_E_IMAGE;
+        executed=1; previous_end=load+size;
+        for (off=0;off<size;) {
+            uint32_t n=size-off,j;
+            if (n>sizeof buf) n=sizeof buf;
+            if (read_at(r,start+off,buf,n)!=MB_OK) return MB_E_READ;
+            for (j=0;j<n;++j) {
+                uint8_t byte=buf[j];
+                if (!uart_found) {
+                    um=marker_step(uart,um,byte);
+                    if (um==sizeof legacy_uart_prefix) uart_found=1;
+                }
+                if (!recovery_found) {
+                    rm=marker_step(recovery,rm,byte);
+                    if (rm==sizeof marker_recovery) recovery_found=1;
+                }
+                om=marker_step(opposite,om,byte); gm=marker_step(golden,gm,byte);
+                if (om==sizeof marker_multitini || gm==sizeof marker_golden) return MB_E_MARKER;
+                if (collecting) {
+                    if (length>=sizeof candidate-1U) return MB_E_MARKER;
+                    candidate[length++]=(char)byte;
+                    if (!byte) {
+                        if (!legacy_version_supported(candidate) ||
+                            (found && strcmp(version,candidate))) return MB_E_MARKER;
+                        memcpy(version,candidate,length); found=1;
+                        collecting=0; vm=0;
+                    }
+                } else {
+                    vm=marker_step(prefix,vm,byte);
+                    if (vm==sizeof legacy_version_prefix) { collecting=1; length=0; vm=0; }
+                }
+            }
+            off+=n;
+        }
+        if (collecting) return MB_E_MARKER;
+    }
+    return executed && found && uart_found && recovery_found ? MB_OK : MB_E_MARKER;
+}
+
+int mb_firmware_validate(const mb_reader_t *reader, mb_image_t *out)
+{
+    int rc=mb_image_validate(reader,0,0,out);
+    if (rc!=MB_E_MANIFEST) return rc;
+    rc=mb_image_validate(reader,0,1,out);
+    if (rc!=MB_OK) return rc;
+    if (out->version!=1U || out->image_size>MB_APPLETINI_CAPACITY) return MB_E_IMAGE;
+    rc=legacy_appletini_identity(reader);
+    if (rc==MB_OK) out->product=MB_PRODUCT_APPLETINI;
+    return rc;
+}
 static int flash_image(const mb_flash_t *f, uint32_t offset, uint32_t capacity,
                        uint32_t product, int legacy, uint32_t role, int golden,
                        mb_image_t *out)
@@ -402,6 +527,25 @@ static int recorded_slot_verify(const mb_flash_t *f, const mb_slot_record_t *s,
     if (rc!=MB_OK) return rc;
     return image_matches(s,out) ? MB_OK : MB_E_VERIFY;
 }
+static int identify_legacy_appletini(const mb_flash_t *f, uint32_t offset, mb_image_t *image)
+{
+    flash_reader_t context;
+    mb_reader_t reader;
+    int rc;
+    if (image->version!=1U || image->product!=MB_PRODUCT_NONE ||
+        image->image_size>MB_APPLETINI_CAPACITY) return MB_E_UNAVAILABLE;
+    reader=slot_reader(f,offset,image->image_size,&context);
+    rc=legacy_appletini_identity(&reader);
+    if (rc==MB_OK) image->product=MB_PRODUCT_APPLETINI;
+    return rc;
+}
+static int recorded_appletini_verify(const mb_flash_t *f, const mb_slot_record_t *s,
+                                     mb_image_t *out)
+{
+    int rc=recorded_slot_verify(f,s,1,out);
+    return rc==MB_OK ? identify_legacy_appletini(f,s->offset,out) : rc;
+}
+static int old_legacy_verify(const mb_flash_t *f, mb_image_t *out);
 int mb_slot_verify(const mb_flash_t *f, uint32_t product, mb_image_t *out)
 {
     mb_metadata_t m; mb_image_t local; int rc;
@@ -409,10 +553,20 @@ int mb_slot_verify(const mb_flash_t *f, uint32_t product, mb_image_t *out)
     if (!out) out=&local;
     memset(out,0,sizeof *out);
     rc=mb_metadata_load(f,&m);
-    if (rc==MB_E_METADATA)
-        return flash_image(f,mb_product_offset(product),mb_product_capacity(product),product,0,2U,0,out);
+    if (rc==MB_E_METADATA) {
+        rc=flash_image(f,mb_product_offset(product),mb_product_capacity(product),product,0,2U,0,out);
+        if (rc!=MB_OK && rc!=MB_E_READ && product==MB_PRODUCT_APPLETINI) {
+            rc=old_legacy_verify(f,out);
+            if (rc==MB_OK) rc=identify_legacy_appletini(f,MB_APPLETINI_OFFSET,out);
+        }
+        return rc;
+    }
     if (rc!=MB_OK) return rc;
-    if (m.slots[product_index(product)].product!=product) return MB_E_UNAVAILABLE;
+    if (m.slots[product_index(product)].product!=product) {
+        if (product==MB_PRODUCT_APPLETINI)
+            return recorded_appletini_verify(f,&m.slots[0],out);
+        return MB_E_UNAVAILABLE;
+    }
     return recorded_slot_verify(f,&m.slots[product_index(product)],0,out);
 }
 int mb_slot_probe(const mb_flash_t *f, uint32_t product, mb_image_t *out)
@@ -432,6 +586,14 @@ int mb_slot_probe(const mb_flash_t *f, uint32_t product, mb_image_t *out)
     if (rc!=MB_OK && rc!=MB_E_METADATA) return rc;
     if (rc==MB_OK) {
         const mb_slot_record_t *slot=&metadata.slots[product_index(product)];
+        if (product==MB_PRODUCT_APPLETINI &&
+            slot->flags==(MB_FLAG_SLOT_VALID|MB_FLAG_SLOT_LEGACY)) {
+            /* Legacy metadata intentionally retains unknown product for old
+             * runtimes. Verify its actual loaded identity before presenting A. */
+            rc=recorded_appletini_verify(f,slot,&image);
+            if (rc==MB_OK && out) *out=image;
+            return rc;
+        }
         if (slot->product!=product || slot->flags!=MB_FLAG_SLOT_VALID)
             return MB_E_UNAVAILABLE;
     }
@@ -443,6 +605,12 @@ int mb_slot_probe(const mb_flash_t *f, uint32_t product, mb_image_t *out)
     }
     if (!range(size,sizeof footer,capacity)) return MB_E_IMAGE;
     if (read_at(&reader,size,footer,sizeof footer)!=MB_OK) return MB_E_READ;
+    if (rc==MB_E_METADATA && product==MB_PRODUCT_APPLETINI &&
+        !memcmp(footer,"ATNIMG1\0",8) && le32(footer+8)==1U) {
+        /* Pre-adoption compatibility still needs its guarded v4 record and
+         * the full original image; an advisory footer alone cannot identify F. */
+        return mb_slot_verify(f,product,out);
+    }
     flags=product|MB_FLAG_RECOVERY|MB_FLAG_MULTIBOOT;
     if (memcmp(footer,"ATNIMG1\0",8) || le32(footer+8)!=2U ||
         le32(footer+12)!=2U || le32(footer+16)!=flags ||
@@ -475,7 +643,7 @@ static int old_legacy_verify(const mb_flash_t *f, mb_image_t *out)
 }
 static void record_image(mb_slot_record_t *s, const mb_image_t *image, int legacy)
 {
-    s->product=image->product; s->payload_size=image->payload_size;
+    s->product=legacy ? MB_PRODUCT_NONE : image->product; s->payload_size=image->payload_size;
     s->payload_crc32=image->payload_crc32; s->image_size=image->image_size;
     s->image_crc32=image->image_crc32;
     s->flags=MB_FLAG_SLOT_VALID|(legacy ? MB_FLAG_SLOT_LEGACY : 0U);
@@ -491,23 +659,37 @@ int mb_select(const mb_flash_t *f, uint32_t requested, mb_selection_t *out)
         first=requested ? requested : (m.request_product ? m.request_product : m.default_product);
         if (!product_valid(first)) first=MB_PRODUCT_APPLETINI;
         other=first==MB_PRODUCT_APPLETINI ? MB_PRODUCT_MULTITINI : MB_PRODUCT_APPLETINI;
-        if (m.slots[product_index(first)].product==first &&
-            recorded_slot_verify(f,&m.slots[product_index(first)],0,&image)==MB_OK) {
-            out->product=first; out->boot_offset=mb_product_offset(first); out->image=image;
-        } else if (m.slots[product_index(other)].product==other &&
-                   recorded_slot_verify(f,&m.slots[product_index(other)],0,&image)==MB_OK) {
-            out->product=other; out->boot_offset=mb_product_offset(other); out->image=image;
-        } else if (recorded_slot_verify(f,&m.slots[0],1,&image)==MB_OK) {
+        {
+            uint32_t order[2]={first,other}; unsigned i;
+            for (i=0;i<2U;++i) {
+                uint32_t p=order[i]; const mb_slot_record_t *s=&m.slots[product_index(p)];
+                int legacy=(p==MB_PRODUCT_APPLETINI && (s->flags&MB_FLAG_SLOT_LEGACY));
+                rc=legacy ? recorded_appletini_verify(f,s,&image) :
+                    s->product==p ? recorded_slot_verify(f,s,0,&image) : MB_E_UNAVAILABLE;
+                if (rc==MB_OK) {
+                    out->product=p; out->boot_offset=mb_product_offset(p);
+                    out->legacy=(uint32_t)legacy; out->image=image; return MB_OK;
+                }
+            }
+        }
+        if (recorded_slot_verify(f,&m.slots[0],1,&image)==MB_OK) {
             out->boot_offset=MB_APPLETINI_OFFSET; out->legacy=1; out->image=image;
         }
     } else {
         first=requested ? requested : MB_PRODUCT_APPLETINI;
         other=first==MB_PRODUCT_APPLETINI ? MB_PRODUCT_MULTITINI : MB_PRODUCT_APPLETINI;
-        if (mb_slot_verify(f,first,&image)==MB_OK) {
-            out->product=first; out->boot_offset=mb_product_offset(first); out->image=image;
-        } else if (mb_slot_verify(f,other,&image)==MB_OK) {
-            out->product=other; out->boot_offset=mb_product_offset(other); out->image=image;
-        } else if (old_legacy_verify(f,&image)==MB_OK) {
+        {
+            uint32_t order[2]={first,other}; unsigned i;
+            for (i=0;i<2U;++i) {
+                uint32_t p=order[i];
+                rc=mb_slot_verify(f,p,&image);
+                if (rc==MB_OK) {
+                    out->product=p; out->boot_offset=mb_product_offset(p);
+                    out->legacy=(uint32_t)(image.version==1U); out->image=image; return MB_OK;
+                }
+            }
+        }
+        if (old_legacy_verify(f,&image)==MB_OK) {
             out->boot_offset=MB_APPLETINI_OFFSET; out->legacy=1; out->image=image;
         }
     }
@@ -735,7 +917,8 @@ static int metadata_adopt(const mb_flash_t *f, mb_metadata_t *m,
      * Appletini without creating multiboot metadata; adding Multitini later
      * must not make that newly installed peer the startup default. */
     if ((m->slots[0].flags&MB_FLAG_SLOT_VALID) &&
-        m->slots[0].product==MB_PRODUCT_APPLETINI)
+        (m->slots[0].product==MB_PRODUCT_APPLETINI ||
+         recorded_appletini_verify(f,&m->slots[0],&image)==MB_OK))
         m->default_product=MB_PRODUCT_APPLETINI;
     else if ((m->slots[1].flags&MB_FLAG_SLOT_VALID) &&
              m->slots[1].product==MB_PRODUCT_MULTITINI)
@@ -830,19 +1013,28 @@ int mb_update_begin(const mb_flash_t *f, uint32_t product)
 int mb_update_finish(const mb_flash_t *f, const mb_image_t *source)
 {
     mb_metadata_t m; mb_image_t installed; mb_slot_record_t record; int rc;
-    if (!flash_valid(f,1) || !source || !product_valid(source->product) || source->version!=2U)
+    int legacy=source && source->version==1U;
+    if (!flash_valid(f,1) || !source || !product_valid(source->product) ||
+        (source->version!=2U && !(legacy && source->product==MB_PRODUCT_APPLETINI)))
         return MB_E_ARGUMENT;
     rc=flash_image(f,mb_product_offset(source->product),mb_product_capacity(source->product),
-                  source->product,0,2U,0,&installed);
+                  legacy ? MB_PRODUCT_NONE : source->product,legacy,2U,0,&installed);
     if (rc!=MB_OK) return rc;
+    if (legacy) {
+        rc=identify_legacy_appletini(f,MB_APPLETINI_OFFSET,&installed);
+        if (rc!=MB_OK) return rc;
+    }
     memset(&record,0,sizeof record); record_image(&record,source,0);
     if (!image_matches(&record,&installed)) return MB_E_VERIFY;
     rc=mb_metadata_load(f,&m); if (rc!=MB_OK) return rc;
-    record_image(&m.slots[product_index(source->product)],&installed,0);
+    record_image(&m.slots[product_index(source->product)],&installed,legacy);
     /* With no pre-existing verified tagged selection, the first installed
      * tagged image becomes the default. Adoption and explicit owner choices
      * otherwise survive peer installation. Missing defaults still fall back. */
     if (!product_valid(m.default_product)) m.default_product=source->product;
+    /* Restoration must run the selected old F immediately, even if M is the
+     * saved power-on choice. Preserve that choice independently of this request. */
+    if (legacy) m.request_product=MB_PRODUCT_APPLETINI;
     return metadata_commit(f,&m);
 }
 int mb_install(const mb_flash_t *f, const mb_reader_t *source, mb_image_t *out)
@@ -851,7 +1043,7 @@ int mb_install(const mb_flash_t *f, const mb_reader_t *source, mb_image_t *out)
     uint32_t base,capacity,off; int rc;
     if (!flash_valid(f,1) || !source || !out) return MB_E_ARGUMENT;
     memset(out,0,sizeof *out);
-    rc=mb_image_validate(source,0,0,&image); if (rc!=MB_OK) return rc;
+    rc=mb_firmware_validate(source,&image); if (rc!=MB_OK) return rc;
     capacity=mb_product_capacity(image.product); base=mb_product_offset(image.product);
     if (image.image_size>capacity) return MB_E_IMAGE;
     rc=mb_update_begin(f,image.product); if (rc!=MB_OK) return rc;

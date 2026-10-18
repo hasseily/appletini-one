@@ -108,9 +108,10 @@ void onee_input_service_prepare_cold_reboot(void);
  * Physical-host vTW receives the same mapping when its separate hardware
  * bridge is present and enabled. Each consumer
  * keeps its own session and pending-update state.
- * The keyboard call returns one only when an active Ctrl+Alt+Delete reboot
- * chord consumed forward Delete, so the normal USB binding path can omit
- * that one key. */
+ * Ctrl+forward Delete requests a warm Control-Reset; adding Alt requests a
+ * cold Control-OpenApple-Reset. The keyboard call returns one while a reset
+ * chord consumes forward Delete, until Delete is released, so the normal
+ * USB binding path can omit that key. */
 uint8_t onee_input_service_keyboard_report(uint8_t slot,
                                            uint8_t modifier,
                                            const uint8_t *keys,

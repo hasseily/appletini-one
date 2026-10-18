@@ -46,6 +46,18 @@ and cached PHY results. Reading status does not enumerate devices or run
 new ULPI transactions. The cache records startup/shutdown checks; PORTSC
 reports the current controller state.
 
+## Standalone ONE//e reset shortcuts
+
+In an active standalone ONE//e session, the USB keyboard provides:
+
+- **Ctrl+Delete**: warm reset, like Apple Control-Reset.
+- **Ctrl+Alt+Delete**: cold reboot, like Apple Control-OpenApple-Reset.
+
+Both shortcuts use forward Delete, not Backspace. These reset shortcuts apply
+only to standalone ONE//e. The added warm-reset shortcut changes ARM firmware
+only: rebuild the frontend and `FIRMWARE.BIN`; no HDL or FPGA binary rebuild
+is needed.
+
 ## Validation
 
 For USB joystick input, axis mapping, and paddle timing, see
@@ -56,6 +68,7 @@ python scripts/test_usb1_phy_startup.py
 python scripts/test_usb_hid_service.py
 python scripts/test_boot_menu_usb_keybindings.py
 python scripts/test_onee_usb_controls.py
+python scripts/test_onee_input_service.py
 ```
 
 The PHY regression runs the actual controller glue against a simulated

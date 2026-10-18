@@ -106,7 +106,7 @@ def test_ascii_control_and_navigation_mapping() -> None:
             "ASCII, control, arrow, punctuation, and keypad maps are incomplete")
 
 
-def test_apple_keys_caps_and_cold_reboot_chord() -> None:
+def test_apple_keys_caps_and_reset_chords() -> None:
     service = read(SERVICE_C)
     usb = read(USB_C)
     keyboard = between(service,
@@ -132,9 +132,10 @@ def test_apple_keys_caps_and_cold_reboot_chord() -> None:
             "onee_input_service_take_cold_reboot_request" in service and
             "void onee_input_service_prepare_cold_reboot" in service and
             "ONEE_INPUT_CONTROL_FIFO_FLUSH_BIT |" in service and
-            "ONEE_INPUT_CONTROL_RELEASE_LIVE_BIT" in service and
-            "ONEE_INPUT_CONTROL_RESET_BIT" not in service,
+            "ONEE_INPUT_CONTROL_RELEASE_LIVE_BIT" in service,
             "Ctrl+Alt+forward Delete must queue an ordered cold reboot and flush stale input")
+    require("ONEE_INPUT_CONTROL_RESET_BIT" in service,
+            "Ctrl+forward Delete must use the existing virtual warm-reset request")
     require("onee_reset_chord" in usb and
             "HID_KBD_USAGE_DELFWD" in usb,
             "the consumed reset Delete key must not reach normal USB bindings")
@@ -303,7 +304,7 @@ TESTS = (
     test_bridge_registers_and_hard_runtime_gate,
     test_queue_is_edge_only_and_backpressured,
     test_ascii_control_and_navigation_mapping,
-    test_apple_keys_caps_and_cold_reboot_chord,
+    test_apple_keys_caps_and_reset_chords,
     test_held_key_repeat_contract,
     test_four_paddles_are_normalized_with_stable_fallbacks,
     test_lowest_slot_owns_buttons_and_disconnect_recenters,
@@ -434,6 +435,298 @@ def run_native_behavior_test() -> bool:
             (void)onee_input_service_keyboard_report(slot, 0U, NULL, 0U);
         }
 
+        static uint32_t warm_reset_writes(void)
+        {
+            uint32_t count = 0U;
+            for (uint32_t i = 0U; i < write_count; ++i) {
+                if (writes[i].address == ONEE_INPUT_CONTROL_REG &&
+                    (writes[i].value & 1U) != 0U) {
+                    ++count;
+                }
+            }
+            return count;
+        }
+
+        static void reset_chord_fixture(void)
+        {
+            memset(registers, 0, sizeof(registers));
+            memset(writes, 0, sizeof(writes));
+            write_count = 0U;
+            test_time_ms = 0U;
+            service_state = ONEE_SERVICE_STATE_RUNNING;
+            registers[0x5BU] = CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT;
+            registers[0x5FU] = (0xE1UL << 24) | (1UL << 9);
+            onee_input_service_init();
+            onee_input_service_poll();
+            write_count = 0U;
+        }
+
+        static int test_reset_chords(void)
+        {
+            const uint8_t delete_key = HID_KBD_USAGE_DELFWD;
+            const uint8_t backspace_key = HID_KBD_USAGE_DELETE;
+            const uint8_t letter_key = HID_KBD_USAGE_A;
+            const uint8_t controls[] = { HID_MOD_LCTRL, HID_MOD_RCTRL };
+            const uint8_t alts[] = { HID_MOD_LALT, HID_MOD_RALT };
+            uint32_t before;
+
+            for (uint32_t side = 0U; side < 2U; ++side) {
+                for (uint32_t release_control_first = 0U;
+                     release_control_first < 2U; ++release_control_first) {
+                    reset_chord_fixture();
+                    if (onee_input_service_keyboard_report(
+                            0U, controls[side], &delete_key, 1U) == 0U) {
+                        fail("Ctrl+forward Delete was not consumed");
+                        return 1;
+                    }
+                    onee_input_service_poll();
+                    if (warm_reset_writes() != 1U ||
+                        onee_input_service_take_cold_reboot_request() != 0U ||
+                        writes_to(ONEE_INPUT_KEY_FIFO_REG) != 0U) {
+                        fail("either Ctrl+Delete must request warm reset without cold reboot or input");
+                        return 1;
+                    }
+                    for (uint32_t held = 0U; held < 5U; ++held) {
+                        (void)onee_input_service_keyboard_report(
+                            0U, controls[side], &delete_key, 1U);
+                        test_time_ms += ONEE_INPUT_REPEAT_DELAY_MS;
+                        onee_input_service_poll();
+                    }
+                    if (warm_reset_writes() != 1U ||
+                        writes_to(ONEE_INPUT_KEY_FIFO_REG) != 0U ||
+                        onee_input_service_take_cold_reboot_request() != 0U) {
+                        fail("held Ctrl+Delete repeated reset or leaked a repeat key");
+                        return 1;
+                    }
+                    if (release_control_first != 0U) {
+                        if (onee_input_service_keyboard_report(
+                                0U, 0U, &delete_key, 1U) == 0U) {
+                            fail("held reset Delete reached generic routing after Ctrl release");
+                            return 1;
+                        }
+                    } else {
+                        (void)onee_input_service_keyboard_report(
+                            0U, controls[side], NULL, 0U);
+                    }
+                    onee_input_service_poll();
+                    test_time_ms += ONEE_INPUT_REPEAT_DELAY_MS +
+                                    ONEE_INPUT_REPEAT_RATE_MS;
+                    onee_input_service_poll();
+                    release_keys(0U);
+                    onee_input_service_poll();
+                    if (warm_reset_writes() != 1U ||
+                        writes_to(ONEE_INPUT_KEY_FIFO_REG) != 0U ||
+                        onee_input_service_take_cold_reboot_request() != 0U ||
+                        (last_write(ONEE_INPUT_LIVE_REG) & 7U) != 0U) {
+                        fail("warm reset chord release leaked Delete or modifier state");
+                        return 1;
+                    }
+                    (void)onee_input_service_keyboard_report(
+                        0U, controls[side], &delete_key, 1U);
+                    onee_input_service_poll();
+                    if (warm_reset_writes() != 2U) {
+                        fail("warm reset did not rearm after all chord keys released");
+                        return 1;
+                    }
+                }
+            }
+
+            /* A warm reset drops a queued key before that key can reach the
+             * reset machine. It must flush PL input as well as software input. */
+            reset_chord_fixture();
+            registers[0x5CU] = 1UL << 12;
+            (void)onee_input_service_keyboard_report(
+                1U, 0U, &letter_key, 1U);
+            onee_input_service_poll();
+            (void)onee_input_service_keyboard_report(
+                0U, HID_MOD_LCTRL, &delete_key, 1U);
+            onee_input_service_poll();
+            registers[0x5CU] = 0U;
+            test_time_ms += ONEE_INPUT_REPEAT_DELAY_MS +
+                            ONEE_INPUT_REPEAT_RATE_MS;
+            onee_input_service_poll();
+            if (warm_reset_writes() != 1U ||
+                (last_write(ONEE_INPUT_CONTROL_REG) &
+                    (1U | ONEE_INPUT_CONTROL_FIFO_FLUSH_BIT |
+                     ONEE_INPUT_CONTROL_RELEASE_LIVE_BIT)) !=
+                    (1U | ONEE_INPUT_CONTROL_FIFO_FLUSH_BIT |
+                     ONEE_INPUT_CONTROL_RELEASE_LIVE_BIT) ||
+                writes_to(ONEE_INPUT_KEY_FIFO_REG) != 0U) {
+                fail("warm reset did not flush stale software and PL input");
+                return 1;
+            }
+
+            for (uint32_t ctrl_side = 0U; ctrl_side < 2U; ++ctrl_side) {
+                for (uint32_t alt_side = 0U; alt_side < 2U; ++alt_side) {
+                    reset_chord_fixture();
+                    (void)onee_input_service_keyboard_report(
+                        0U, (uint8_t)(controls[ctrl_side] | alts[alt_side]),
+                        &delete_key, 1U);
+                    onee_input_service_poll();
+                    if (warm_reset_writes() != 0U ||
+                        onee_input_service_take_cold_reboot_request() == 0U ||
+                        onee_input_service_take_cold_reboot_request() != 0U) {
+                        fail("Ctrl+Alt+Delete no longer requests exactly one cold reboot");
+                        return 1;
+                    }
+                    (void)onee_input_service_keyboard_report(
+                        0U, (uint8_t)(controls[ctrl_side] | alts[alt_side]),
+                        &delete_key, 1U);
+                    onee_input_service_poll();
+                    /* Releasing Alt first leaves Ctrl+Delete physically
+                     * held; it must not cause a second, warm reset. */
+                    (void)onee_input_service_keyboard_report(
+                        0U, controls[ctrl_side], &delete_key, 1U);
+                    onee_input_service_poll();
+                    if (onee_input_service_keyboard_report(
+                            0U, 0U, &delete_key, 1U) == 0U) {
+                        fail("cold reset Delete reached generic routing during release");
+                        return 1;
+                    }
+                    test_time_ms += ONEE_INPUT_REPEAT_DELAY_MS;
+                    onee_input_service_poll();
+                    release_keys(0U);
+                    onee_input_service_poll();
+                    if (warm_reset_writes() != 0U ||
+                        onee_input_service_take_cold_reboot_request() != 0U ||
+                        writes_to(ONEE_INPUT_KEY_FIFO_REG) != 0U ||
+                        (last_write(ONEE_INPUT_LIVE_REG) & 7U) != 0U) {
+                        fail("held or releasing cold reset chord caused warm reset or leaked input");
+                        return 1;
+                    }
+                }
+            }
+
+            reset_chord_fixture();
+            (void)onee_input_service_keyboard_report(
+                0U, HID_MOD_LCTRL, &delete_key, 1U);
+            onee_input_service_poll();
+            (void)onee_input_service_keyboard_report(
+                0U, HID_MOD_LCTRL | HID_MOD_LALT, &delete_key, 1U);
+            onee_input_service_poll();
+            if (warm_reset_writes() != 1U ||
+                onee_input_service_take_cold_reboot_request() == 0U ||
+                writes_to(ONEE_INPUT_KEY_FIFO_REG) != 0U) {
+                fail("adding Alt to held Ctrl+Delete did not escalate to cold reboot");
+                return 1;
+            }
+            (void)onee_input_service_keyboard_report(
+                0U, HID_MOD_LCTRL, &delete_key, 1U);
+            onee_input_service_poll();
+            if (warm_reset_writes() != 1U ||
+                onee_input_service_take_cold_reboot_request() != 0U) {
+                fail("cold escalation reverted to warm reset on Alt release");
+                return 1;
+            }
+
+            /* A cold chord which arrives before the pending warm request
+             * executes takes priority over that request. */
+            reset_chord_fixture();
+            (void)onee_input_service_keyboard_report(
+                0U, HID_MOD_LCTRL, &delete_key, 1U);
+            (void)onee_input_service_keyboard_report(
+                0U, HID_MOD_LCTRL | HID_MOD_LALT, &delete_key, 1U);
+            onee_input_service_poll();
+            if (warm_reset_writes() != 0U ||
+                onee_input_service_take_cold_reboot_request() == 0U) {
+                fail("cold chord did not cancel a pending warm request");
+                return 1;
+            }
+
+            /* Cold takes priority across keyboards as well as within one
+             * keyboard report, since both requests affect the same machine. */
+            reset_chord_fixture();
+            (void)onee_input_service_keyboard_report(
+                0U, HID_MOD_RCTRL, &delete_key, 1U);
+            (void)onee_input_service_keyboard_report(
+                1U, HID_MOD_LCTRL | HID_MOD_RALT, &delete_key, 1U);
+            onee_input_service_poll();
+            if (warm_reset_writes() != 0U ||
+                onee_input_service_take_cold_reboot_request() == 0U) {
+                fail("cold chord on a second keyboard did not cancel pending warm reset");
+                return 1;
+            }
+
+            /* Normal editing keys retain their Apple values. Ctrl with
+             * Backspace is not the forward-Delete reset shortcut. */
+            reset_chord_fixture();
+            (void)onee_input_service_keyboard_report(
+                0U, 0U, &delete_key, 1U);
+            onee_input_service_poll();
+            if (last_write(ONEE_INPUT_KEY_FIFO_REG) != 0x7FU) {
+                fail("plain forward Delete mapping changed");
+                return 1;
+            }
+            release_keys(0U);
+            (void)onee_input_service_keyboard_report(
+                0U, 0U, &backspace_key, 1U);
+            onee_input_service_poll();
+            if (last_write(ONEE_INPUT_KEY_FIFO_REG) != 0x08U) {
+                fail("plain Backspace mapping changed");
+                return 1;
+            }
+            release_keys(0U);
+            before = writes_to(ONEE_INPUT_KEY_FIFO_REG);
+            (void)onee_input_service_keyboard_report(
+                0U, HID_MOD_LCTRL, &backspace_key, 1U);
+            onee_input_service_poll();
+            if (warm_reset_writes() != 0U ||
+                onee_input_service_take_cold_reboot_request() != 0U ||
+                writes_to(ONEE_INPUT_KEY_FIFO_REG) != before + 1U ||
+                last_write(ONEE_INPUT_KEY_FIFO_REG) != 0x08U) {
+                fail("Ctrl+Backspace unexpectedly became a reset shortcut");
+                return 1;
+            }
+
+            /* Menu capture and all standalone runtime gates suppress both
+             * resets. Inactive physical-host vTW receives neither shortcut. */
+            for (uint32_t gate = 0U; gate < 5U; ++gate) {
+                reset_chord_fixture();
+                if (gate == 0U) {
+                    onee_input_service_set_blocked(1U);
+                } else if (gate == 1U) {
+                    service_state = ONEE_SERVICE_STATE_OFF;
+                } else if (gate == 2U) {
+                    registers[0x5BU] = 0U;
+                } else if (gate == 3U) {
+                    registers[0x5FU] = (0xFFUL << 24) | (1UL << 9);
+                } else {
+                    registers[0x5FU] = 0xE1UL << 24;
+                }
+                onee_input_service_poll();
+                before = warm_reset_writes();
+                (void)onee_input_service_keyboard_report(
+                    0U, HID_MOD_LCTRL, &delete_key, 1U);
+                onee_input_service_poll();
+                (void)onee_input_service_keyboard_report(
+                    0U, HID_MOD_LCTRL | HID_MOD_LALT, &delete_key, 1U);
+                onee_input_service_poll();
+                if (warm_reset_writes() != before ||
+                    onee_input_service_take_cold_reboot_request() != 0U) {
+                    fail("menu or inactive standalone bridge accepted a reset shortcut");
+                    return 1;
+                }
+            }
+
+            for (uint32_t gate = 0U; gate < 2U; ++gate) {
+                reset_chord_fixture();
+                (void)onee_input_service_keyboard_report(
+                    0U, HID_MOD_LCTRL, &delete_key, 1U);
+                if (gate == 0U) {
+                    onee_input_service_set_blocked(1U);
+                } else {
+                    service_state = ONEE_SERVICE_STATE_OFF;
+                }
+                onee_input_service_poll();
+                if (warm_reset_writes() != 0U ||
+                    onee_input_service_take_cold_reboot_request() != 0U) {
+                    fail("pending warm reset survived menu capture or session stop");
+                    return 1;
+                }
+            }
+            return 0;
+        }
+
         static int expect_vtw_update(uint32_t paddles, uint32_t control,
                                      const char *context)
         {
@@ -506,6 +799,13 @@ def run_native_behavior_test() -> bool:
                     0U, HID_MOD_CTRL | HID_MOD_ALT | HID_MOD_LGUI,
                     &delete_key, 1U) != 0U) {
                 fail("physical-host vTW consumed a ONE//e reset chord");
+                return 1;
+            }
+            onee_input_service_poll();
+            release_keys(0U);
+            if (onee_input_service_keyboard_report(
+                    0U, HID_MOD_LCTRL, &delete_key, 1U) != 0U) {
+                fail("physical-host vTW consumed a ONE//e warm reset chord");
                 return 1;
             }
             onee_input_service_poll();
@@ -1226,7 +1526,7 @@ def run_native_behavior_test() -> bool:
                 return 1;
             }
 
-            if (test_vtw_joystick() != 0) {
+            if (test_reset_chords() != 0 || test_vtw_joystick() != 0) {
                 return 1;
             }
             puts("ONEE AND VTW INPUT SERVICE NATIVE PASS");

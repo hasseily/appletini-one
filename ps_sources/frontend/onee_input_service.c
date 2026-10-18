@@ -29,6 +29,7 @@
 #define ONEE_INPUT_LIVE_CLOSED_APPLE_BIT  (1UL << 2)
 #define ONEE_INPUT_LIVE_BUTTON_SHIFT      3U
 
+#define ONEE_INPUT_CONTROL_RESET_BIT          (1UL << 0)
 #define ONEE_INPUT_CONTROL_OVERFLOW_CLEAR_BIT (1UL << 1)
 #define ONEE_INPUT_CONTROL_FIFO_FLUSH_BIT     (1UL << 2)
 #define ONEE_INPUT_CONTROL_RELEASE_LIVE_BIT   (1UL << 3)
@@ -50,6 +51,12 @@
 #define HID_MOD_CTRL   (HID_MOD_LCTRL | HID_MOD_RCTRL)
 #define HID_MOD_SHIFT  (HID_MOD_LSHIFT | HID_MOD_RSHIFT)
 #define HID_MOD_ALT    (HID_MOD_LALT | HID_MOD_RALT)
+
+enum {
+    ONEE_RESET_CHORD_NONE = 0,
+    ONEE_RESET_CHORD_WARM,
+    ONEE_RESET_CHORD_COLD
+};
 
 typedef struct {
     uint8_t keyboard_seen;
@@ -80,6 +87,7 @@ static uint8_t g_vtw_joystick_active;
 static uint8_t g_vtw_joystick_dirty;
 static uint8_t g_input_blocked;
 static onee_input_joystick_config_t g_joystick_config;
+static uint8_t g_warm_reset_pending;
 static uint8_t g_cold_reboot_pending;
 static uint32_t g_repeat_press_sequence;
 static uint32_t g_repeat_deadline_ms;
@@ -533,6 +541,7 @@ static void onee_input_session_stop(void)
 {
     g_session_active = 0U;
     g_caps_lock = 0U;
+    g_warm_reset_pending = 0U;
     g_cold_reboot_pending = 0U;
     onee_key_queue_clear();
     onee_repeat_clear_press_orders();
@@ -655,6 +664,7 @@ void onee_input_service_init(void)
     g_vtw_joystick_dirty = 1U;
     g_input_blocked = 0U;
     onee_input_service_default_joystick_config(&g_joystick_config);
+    g_warm_reset_pending = 0U;
     g_cold_reboot_pending = 0U;
     g_repeat_press_sequence = 0U;
     onee_repeat_cancel();
@@ -676,6 +686,7 @@ void onee_input_service_poll(void)
     if (g_session_active == 0U) {
         g_session_active = 1U;
         g_caps_lock = 0U;
+        g_warm_reset_pending = 0U;
         g_cold_reboot_pending = 0U;
         onee_key_queue_clear();
         onee_repeat_clear_press_orders();
@@ -685,6 +696,23 @@ void onee_input_service_poll(void)
                   ONEE_INPUT_CONTROL_RELEASE_LIVE_BIT);
         g_live_dirty = 1U;
         g_paddles_dirty = 1U;
+    }
+
+    if (g_warm_reset_pending != 0U) {
+        g_warm_reset_pending = 0U;
+        if (g_input_blocked == 0U && g_cold_reboot_pending == 0U) {
+            /* Flush stale input on the same PL edge that requests private
+             * RESET. The bridge holds the request until hardware ACKs it. */
+            onee_key_queue_clear();
+            onee_repeat_clear_press_orders();
+            REG_WRITE(ONEE_INPUT_CONTROL_REG,
+                      ONEE_INPUT_CONTROL_RESET_BIT |
+                      ONEE_INPUT_CONTROL_FIFO_FLUSH_BIT |
+                      ONEE_INPUT_CONTROL_RELEASE_LIVE_BIT);
+            g_live_dirty = 1U;
+            g_paddles_dirty = 1U;
+            return;
+        }
     }
 
     if (g_live_dirty != 0U) {
@@ -721,6 +749,7 @@ uint8_t onee_input_service_take_cold_reboot_request(void)
 
 void onee_input_service_prepare_cold_reboot(void)
 {
+    g_warm_reset_pending = 0U;
     onee_key_queue_clear();
     onee_repeat_clear_press_orders();
     if (onee_input_bridge_active() != 0U) {
@@ -776,11 +805,11 @@ uint8_t onee_input_service_keyboard_report(uint8_t slot_index,
                                      next_keys,
                                      next_count);
     reset_chord = (uint8_t)(g_session_active != 0U &&
+        g_input_blocked == 0U &&
         (modifier & HID_MOD_CTRL) != 0U &&
-        (modifier & HID_MOD_ALT) != 0U &&
         delete_down != 0U);
 
-    /* Once Ctrl+Alt+Delete forms, keep each chord member hidden from the
+    /* Once a reset chord forms, keep each member hidden from the
      * Apple side until that member is released. This covers every release
      * order and prevents Alt from appearing as an Apple key after reset. */
     slot->reset_modifier_consumed &= modifier;
@@ -795,11 +824,26 @@ uint8_t onee_input_service_keyboard_report(uint8_t slot_index,
     apple_modifier =
         (uint8_t)(modifier & (uint8_t)~slot->reset_modifier_consumed);
 
-    if (reset_chord != 0U && slot->reset_chord_down == 0U) {
-        /* A reset supersedes any translated key which has not reached PL. */
+    if (reset_chord == 0U) {
+        slot->reset_chord_down = ONEE_RESET_CHORD_NONE;
+    } else if ((modifier & HID_MOD_ALT) != 0U) {
+        if (slot->reset_chord_down != ONEE_RESET_CHORD_COLD) {
+            /* Adding Alt may turn a held warm-reset chord into a cold
+             * reboot. Cold always takes priority over an unserved warm reset. */
+            onee_key_queue_clear();
+            g_warm_reset_pending = 0U;
+            g_cold_reboot_pending = 1U;
+            slot->reset_chord_down = ONEE_RESET_CHORD_COLD;
+        }
+    } else if (slot->reset_chord_down == ONEE_RESET_CHORD_NONE) {
         onee_key_queue_clear();
-        g_cold_reboot_pending = 1U;
+        if (g_cold_reboot_pending == 0U) {
+            g_warm_reset_pending = 1U;
+        }
+        slot->reset_chord_down = ONEE_RESET_CHORD_WARM;
     }
+    /* Keep COLD latched while Ctrl+Delete stays held: releasing Alt must
+     * not create an extra warm reset. */
 
     if (slot->reset_delete_consumed != 0U) {
         for (uint8_t next = 0U; next < next_count; ++next) {
@@ -843,7 +887,6 @@ uint8_t onee_input_service_keyboard_report(uint8_t slot_index,
 
     slot->keyboard_seen = 1U;
     slot->modifier = apple_modifier;
-    slot->reset_chord_down = reset_chord;
     slot->key_count = next_count;
     memset(slot->keys, 0, sizeof(slot->keys));
     if (next_count != 0U) {
@@ -860,7 +903,8 @@ uint8_t onee_input_service_keyboard_report(uint8_t slot_index,
     }
     onee_repeat_reselect();
     g_live_dirty = 1U;
-    return reset_chord;
+    return (uint8_t)(g_session_active != 0U &&
+        slot->reset_delete_consumed != 0U);
 }
 
 void onee_input_service_joystick_report(
@@ -914,6 +958,7 @@ void onee_input_service_release_keyboard(void)
         memset(&g_slots[i], 0, offsetof(onee_input_slot_t, joystick_seen));
     }
     onee_key_queue_clear();
+    g_warm_reset_pending = 0U;
     g_cold_reboot_pending = 0U;
     onee_repeat_clear_press_orders();
     g_live_dirty = 1U;

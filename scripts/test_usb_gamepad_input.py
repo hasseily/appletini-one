@@ -31,13 +31,19 @@ FUNCTIONS = (
     "menu_finish_open_close_hold", "menu_poll_open_close_hold",
     "hid_slots_poll_holds", "mouse_menu_start_ok_hold",
     "mouse_menu_finish_ok_hold", "mouse_menu_push_button_edge",
-    "mouse_menu_process_buttons", "gamepad_menu_process_buttons", "hid_axis_active_from_rest",
+    "mouse_menu_process_buttons", "hid_legacy_menu_buttons", "gamepad_menu_process_buttons", "hid_axis_active_from_rest",
+    "gamepad_menu_fixed_button_action", "gamepad_menu_push_fixed",
     "hid_menu_push_hat", "hid_menu_push_axis", "hid_process_gamepad_report",
     "hid_report_id_matches", "hid_extract_bits", "hid_sign_extend",
     "hid_item_signed_value", "hid_desktop_usage_for_field", "hid_onee_axis_from_usage",
+    "hid_process_keyboard_chunks", "hid_packet_complete",
+    "hid_process_boot_mouse_report",
     "hid_collect_button_item", "hid_collect_desktop_item",
     "hid_report_info_has_absolute_joystick", "hid_report_info_has_relative_mouse",
+    "hid_pop_relative_detent", "hid_prepare_relative_report", "hid_poll_relative_inputs", "hid_clear_relative_inputs",
     "hid_process_report_protocol_report",
+    "hid_parse_report_descriptor",
+    "controller_string_descriptor", "controller_optional_strings", "identify_controller", "usb_gamepad_input_identify",
     "usb_gamepad_input_report", "hid_process_report", "hid_report_complete",
     "hid_slots_retry_reports", "usbh_hid_run", "usbh_hid_stop",
     "usb_hid_service_set_menu_capture", "usb_hid_service_set_joystick_preview",
@@ -77,8 +83,8 @@ def main() -> int:
 
     source = (FRONTEND / "usb_hid_service.c").read_text(encoding="utf-8")
     descriptor = extract_function(source, "hid_parse_report_descriptor")[1]
-    assert re.search(r"if \(hid_report_info_has_absolute_joystick\(slot\) != 0U\)\s*\{\s*"
-                     r"slot->onee_joystick = 1U;", descriptor)
+    assert "appletini_usb_parse_input_descriptor" in descriptor
+    assert "&slot->descriptor_meta" in descriptor
     assert "slot2_gamepad_service_poll();" in extract_function(source, "usb_hid_service_poll")[1]
     slot = re.search(r"typedef struct \{.*?\} usb_hid_slot_t;", source, re.DOTALL)
     if slot is None:
@@ -101,8 +107,10 @@ def main() -> int:
     executable = BUILD / "usb_gamepad_input.exe"
     c_file.write_text(harness, encoding="utf-8")
     command = [str(compiler), "-std=c11", "-Wall", "-Wextra", "-Werror",
-               str(c_file), "-I", str(FRONTEND), "-I",
+               str(c_file), str(FRONTEND / "usb_controller_identity.c"),
+               "-I", str(FRONTEND), "-I", str(ROOT / "scripts" / "fixtures"), "-I",
                str(ROOT / "third_party" / "CherryUSB" / "class" / "hid"),
+               "-I", str(ROOT / "third_party" / "CherryUSB" / "common"),
                "-o", str(executable)]
     if "mingw" in str(compiler).lower():
         command.insert(1, "-static")

@@ -7,8 +7,8 @@ to build/joystick_config_menu for visual review (no FPGA tools).
 from pathlib import Path
 import os
 import re
-import shutil
 import subprocess
+from test_onee_input_service import find_native_c_compiler
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONT = ROOT / "ps_sources/frontend"
@@ -53,14 +53,11 @@ def main() -> None:
     assert "config_menu_read_settings_from_path(menu, cfg_path, 1U" in function(menu, "config_menu_load_profile_settings")
 
     OUT.mkdir(parents=True, exist_ok=True)
-    compiler = shutil.which("gcc") or shutil.which("clang")
-    if not compiler:
-        candidate = Path("E:/AMDDesignTools/2025.2/tps/mingw/10.0.0/win64.o/nt/bin/gcc.exe")
-        if candidate.exists():
-            compiler = str(candidate)
+    compiler = find_native_c_compiler()
     if not compiler:
         raise RuntimeError("A native C compiler is required")
-    env = dict(os.environ, PATH=str(Path(compiler).parent) + os.pathsep + os.environ.get("PATH", ""))
+    env = {key: value for key, value in os.environ.items() if key.lower() != "path"}
+    env["PATH"] = str(compiler.parent) + os.pathsep + os.environ.get("PATH", "")
     functions = "\n".join(function(menu, name) for name in (
         "config_menu_ascii_lower", "config_menu_str_ieq", "config_menu_bool_text",
         "config_menu_on_off", "config_menu_parse_indexed_config_key",
@@ -109,16 +106,17 @@ void onee_input_service_get_joystick_snapshot(onee_input_joystick_snapshot_t *s)
         memset(s->paddles, 128, sizeof(s->paddles));
         return;
     }
-    s->axis_valid_mask = 0x3f; s->buttons = 5;
+    s->axis_valid_mask = (1U << ONEE_INPUT_AXIS_COUNT) - 1U; s->buttons = 5;
     s->connected_mask = snapshot_slots;
     for (unsigned slot=0; slot<ONEE_INPUT_DEVICE_SLOT_COUNT; ++slot) {
         if (!(snapshot_slots & (1U<<slot))) continue;
-        s->devices[slot].connected=1; s->devices[slot].axis_valid_mask=0x3f;
+        s->devices[slot].connected=1;
+        s->devices[slot].axis_valid_mask=(1U << ONEE_INPUT_AXIS_COUNT) - 1U;
         s->devices[slot].buttons = slot == 0 ? 5 : 2;
-        for (unsigned i=0; i<6; ++i) s->devices[slot].axis[i]=(uint8_t)((slot*16+i*37)%256);
+        for (unsigned i=0; i<ONEE_INPUT_AXIS_COUNT; ++i) s->devices[slot].axis[i]=(uint8_t)((slot*16+i*37)%256);
         if (s->owner_slot == ONEE_INPUT_DEVICE_SLOT_COUNT) s->owner_slot=(uint8_t)slot;
     }
-    for (unsigned i=0; i<6; ++i) s->axis[i] = (uint8_t)(i*51);
+    for (unsigned i=0; i<ONEE_INPUT_AXIS_COUNT; ++i) s->axis[i] = (uint8_t)(i*51);
     s->paddles[0]=0; s->paddles[1]=128; s->paddles[2]=255; s->paddles[3]=63;
 }
 static void hgr_draw_item(uint16_t *f, int x,int y,int w,uint8_t focused,const char *t,uint32_t color)
@@ -168,6 +166,7 @@ static uint32_t shown_help_count;
 static unsigned compact_preview_rows, compact_focused_rows, compact_layout_checks;
 static unsigned compact_largest_page, compact_smallest_view = 1000;
 static char compact_raw[128];
+static char compact_extra[128];
 void test_compact_bounds(unsigned first, unsigned visible, unsigned count)
 {
     assert(first == 0 && count <= visible);
@@ -188,6 +187,12 @@ void test_compact_row(const char *text, unsigned focused, int width, int availab
                strstr(text,"RX:") && strstr(text,"RY:") && strstr(text,"RZ:"));
         snprintf(compact_raw,sizeof(compact_raw),"%s",text);
         compact_preview_rows |= 2;
+    }
+    if (!strncmp(text,"Extra axes:",11)) {
+        assert(strstr(text,"Slider:") && strstr(text,"Dial:") &&
+               strstr(text,"Wheel:") && strstr(text,"Pan:"));
+        snprintf(compact_extra,sizeof(compact_extra),"%s",text);
+        compact_preview_rows |= 8;
     }
     if (!strncmp(text,"Input buttons:",14)) compact_preview_rows |= 4;
 }
@@ -232,7 +237,7 @@ static void render(config_menu_t *menu, const char *path)
     }
     if (compact) {
         cmui_compact_finish(fb,"USB",tabs,15,CONFIG_TAB_USB,"Settings saved",0,menu->usb_owned,0);
-        assert(compact_preview_rows==7 && compact_focused_rows==1);
+        assert(compact_preview_rows==15 && compact_focused_rows==1);
     } else {
         cmui_rect_t navrow={nav.x,nav.y+12*42,nav.w,34}; cmui_nav_item(fb,&navrow,"USB",1,1);
         cmui_footer(fb,&footer,"Settings saved",0,0,0);
@@ -249,6 +254,8 @@ static void render(config_menu_t *menu, const char *path)
 int main(void)
 {
     config_menu_t menu = {0}, loaded = {0};
+    _Static_assert(ONEE_INPUT_JOYSTICK_SOURCE_OFF == 7, "legacy Off value changed");
+    usb_controller_identity_init();
     onee_input_service_default_joystick_config(&menu.joystick_config);
     onee_input_service_default_joystick_config(&loaded.joystick_config);
     for (unsigned p=0; p<4; ++p) {
@@ -272,6 +279,12 @@ int main(void)
     press(&menu, UI_KEY_DOWN); press(&menu, UI_KEY_LEFT);
     assert(menu.joystick_config.paddle[0].source == ONEE_INPUT_JOYSTICK_SOURCE_OFF);
     press(&menu, UI_KEY_ENTER); assert(menu.joystick_config.paddle[0].source == ONEE_INPUT_JOYSTICK_SOURCE_AUTO);
+    for (unsigned i=0; i<ONEE_INPUT_JOYSTICK_SOURCE_COUNT; ++i) {
+        press(&menu, UI_KEY_RIGHT);
+        assert(menu.joystick_config.paddle[0].source != ONEE_INPUT_JOYSTICK_SOURCE_AUTO ||
+               i == ONEE_INPUT_JOYSTICK_SOURCE_COUNT - 1U);
+    }
+    assert(menu.joystick_config.paddle[0].source == ONEE_INPUT_JOYSTICK_SOURCE_AUTO);
     press(&menu, UI_KEY_DOWN); press(&menu, UI_KEY_ENTER);
     assert(menu.joystick_config.paddle[0].invert == 1 && apply_count == save_count);
     press(&menu, UI_KEY_DOWN);
@@ -307,7 +320,7 @@ int main(void)
         snprintf(value,sizeof(value),"%u",p*10); config_menu_parse_joystick(&menu,key,value);
     }
     for(unsigned p=0;p<4;++p) {
-        char text[256], *line;
+        char text[384], *line;
         config_menu_joystick_config_line(&menu,p,text,sizeof(text));
         line = strtok(text,"\n");
         while(line) {
@@ -320,7 +333,7 @@ int main(void)
     /* Every shared input slot, including Auto, round-trips on all four paddles. */
     for(unsigned device=0;device<=ONEE_INPUT_DEVICE_SLOT_COUNT;++device) {
         for(unsigned p=0;p<4;++p) {
-            char text[256], *line;
+            char text[384], *line;
             menu.joystick_config.paddle[p].device=(uint8_t)device;
             config_menu_joystick_config_line(&menu,p,text,sizeof(text));
             if (!device) assert(strstr(text,".device=Auto\n"));
@@ -332,6 +345,79 @@ int main(void)
             }
             assert(loaded.joystick_config.paddle[p].device == device);
         }
+    }
+    for(unsigned source=0;source<ONEE_INPUT_JOYSTICK_SOURCE_COUNT;++source) {
+        char text[384], *line;
+        menu.joystick_config.paddle[0].source=(uint8_t)source;
+        config_menu_joystick_config_line(&menu,0,text,sizeof(text));
+        line=strtok(text,"\n");
+        while(line) {
+            char *eq=strchr(line,'='); assert(eq); *eq++='\0';
+            assert(config_menu_parse_joystick(&loaded,line,eq));
+            line=strtok(NULL,"\n");
+        }
+        assert(loaded.joystick_config.paddle[0].source==source);
+    }
+    {
+        config_menu_t bound = {0}, saved = {0};
+        usb_controller_device_t device = {0};
+        char text[384], *line;
+        device.connected=1;
+        device.identity.vendor_id=0x1234;
+        device.identity.product_id=0x5678;
+        device.identity.descriptor_hash=0x12345678;
+        device.identity.port_path=0x10203;
+        usb_controller_identity_set(7,&device);
+        onee_input_service_default_joystick_config(&bound.joystick_config);
+        onee_input_service_default_joystick_config(&saved.joystick_config);
+        bound.joystick_page_active=1; bound.joystick_focus=1;
+        bound.tab=CONFIG_TAB_USB; bound.usb_owned=1;
+        bound.onee_mode_state=CONFIG_MENU_ONEE_MODE_RUNNING;
+        bound.joystick_config.paddle[0].device=7;
+        press(&bound,UI_KEY_RIGHT);
+        assert(bound.joystick_config.paddle[0].device==8);
+        assert(usb_controller_identity_equal(&bound.joystick_config.paddle[0].identity,
+                                             &device.identity));
+        config_menu_joystick_config_line(&bound,0,text,sizeof(text));
+        assert(strstr(text,".identity=1234:5678:00:00:12345678:00000000:00010203\n"));
+        assert(strstr(text,".deadzone=0\n"));
+        line=strtok(text,"\n");
+        while(line) {
+            char *eq=strchr(line,'='); assert(eq); *eq++='\0';
+            assert(config_menu_parse_joystick(&saved,line,eq));
+            line=strtok(NULL,"\n");
+        }
+        assert(usb_controller_identity_equal(&saved.joystick_config.paddle[0].identity,
+                                             &device.identity));
+        render(&bound,"joystick_saved_input8.ppm");
+        assert(!strcmp(shown_device,"Input 8 (saved device)"));
+        snprintf(device.name,sizeof(device.name),"Bounded USB controller with a long product name");
+        usb_controller_identity_set(7,&device);
+        render(&bound,"joystick_named_input8.ppm");
+        assert(!strcmp(shown_device,"Input 8: Bounded USB co (saved)"));
+        assert(fb16_set_size(1024,768));
+        render(&bound,"joystick_named_compact.ppm");
+        assert(!strcmp(shown_device,"Input 8: Bounded USB co (saved)"));
+        assert(fb16_set_size(1920,1080));
+        usb_controller_identity_disconnect(7);
+        usb_controller_identity_set(3,&device);
+        snapshot_slots=0x08;
+        render(&bound,"joystick_saved_reordered.ppm");
+        assert(!strcmp(shown_device,"Input 4: Bounded USB co (saved)"));
+        assert(!strcmp(shown_raw_x,"X: 48"));
+        press(&bound,UI_KEY_RIGHT);
+        assert(bound.joystick_config.paddle[0].device==5);
+        assert(!usb_controller_identity_valid(&bound.joystick_config.paddle[0].identity));
+        bound.joystick_config.paddle[0]=saved.joystick_config.paddle[0];
+        usb_controller_identity_disconnect(3);
+        snapshot_slots=0x81;
+        render(&bound,"joystick_saved_unavailable.ppm");
+        assert(!strcmp(shown_device,"Saved device (unavailable)"));
+        assert(!strcmp(shown_raw_x,"X: --"));
+        config_menu_parse_joystick(&saved,"usb.joystick.paddle.0.identity","invalid");
+        assert(!usb_controller_identity_valid(&saved.joystick_config.paddle[0].identity));
+        usb_controller_identity_init();
+        compact_layout_checks=0; compact_largest_page=0; compact_smallest_view=1000;
     }
     static const char *invalid_devices[]={"0","9","-1","256","1.0","1garbage","", "99999999999999999", "Auto", "AUTO"};
     for(unsigned i=0;i<sizeof(invalid_devices)/sizeof(invalid_devices[0]);++i) {
@@ -362,8 +448,9 @@ int main(void)
         assert(applied.paddle[p].sensitivity_percent==100);
         assert(!applied.paddle[p].invert && !applied.paddle[p].deadzone_percent);
     }
-    press(&menu,UI_KEY_TAB); assert(menu.joystick_focus==7);
-    press(&menu,UI_KEY_TAB); assert(menu.joystick_focus==0);
+    unsigned keyboard_tab=menu.tab;
+    press(&menu,UI_KEY_TAB); assert(menu.joystick_focus==7 && menu.tab==keyboard_tab);
+    press(&menu,UI_KEY_TAB); assert(menu.joystick_focus==0 && menu.tab==keyboard_tab);
     press(&menu,UI_KEY_SHIFT_TAB); assert(menu.joystick_focus==7);
     press(&menu,UI_KEY_ENTER); assert(!menu.joystick_page_active && menu.item_focus==3);
     menu.joystick_page_active=1; press(&menu,UI_KEY_ESC); assert(!menu.joystick_page_active);
@@ -430,8 +517,10 @@ int main(void)
             render(&menu,focus==1 || focus==7 ? path : NULL);
             if (state==2 || state==3 || state==6) {
                 assert(strstr(compact_raw,"RX: --") && strstr(compact_raw,"RZ: --"));
+                assert(strstr(compact_extra,"Wheel: --") && strstr(compact_extra,"Pan: --"));
             } else {
                 assert(strstr(compact_raw,"X: 112") && strstr(compact_raw,"RZ: 41"));
+                assert(strstr(compact_extra,"Wheel: 152") && strstr(compact_extra,"Pan: 189"));
             }
             press(&menu,UI_KEY_DOWN);
         }
@@ -463,8 +552,9 @@ int main(void)
     ui_harness = OUT / "config_menu_ui.c"
     ui_harness.write_text(ui_source.replace(audit_point, audit + audit_point))
     exe = OUT / "test.exe"
-    command = [compiler,"-std=c11","-O0","-funsigned-char","-Wall","-Wextra","-Werror","-I",str(FRONT),
+    command = [str(compiler),"-std=c11","-O0","-funsigned-char","-Wall","-Wextra","-Werror","-I",str(FRONT),
         str(harness),str(ui_harness),str(FRONT / "config_menu_logo_png.c"),
+        str(FRONT / "usb_controller_identity.c"),
         str(ROOT / "ps_sources/lib/fb16.c"),str(ROOT / "ps_sources/lib/lodepng.c"),"-o",str(exe)]
     subprocess.run(command, check=True, env=env)
     subprocess.run([str(exe)], cwd=OUT, check=True, env=env)

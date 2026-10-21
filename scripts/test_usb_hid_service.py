@@ -153,6 +153,29 @@ def test_failed_hid_interrupt_submit_retries_after_backoff() -> None:
             poll.find("hid_slots_retry_reports();"),
             "HID retry must run after CherryUSB has reaped this poll's completions")
 
+
+def test_controller_identity_and_relative_lifecycle_hooks() -> None:
+    source = read(USB_HID_C)
+    poll = function_body(source, "usb_hid_service_poll")
+    require("hid_poll_relative_inputs();" in poll and
+            poll.find("cherryusb_host_poll(") < poll.find("hid_poll_relative_inputs();"),
+            "relative pulses must expire from the normal host poll without another USB packet")
+    require("hid_clear_relative_inputs();" in function_body(source, "usb_hid_service_set_menu_capture"),
+            "menu capture transitions must discard old relative motion and queued detents")
+    require("usb_controller_identity_init();" in function_body(source, "usb_hid_service_init") and
+            "usb_controller_identity_set(" in function_body(source, "identify_controller"),
+            "USB enumeration must populate a fresh controller identity registry")
+    for function in ("hid_slots_reset_all", "usb_gamepad_input_disconnect", "usbh_hid_stop"):
+        require("usb_controller_identity_disconnect(" in function_body(source, function),
+                f"{function} must remove stale identities on disconnect or host teardown")
+    identify = function_body(source, "identify_controller")
+    for field in ("vendor_id", "product_id", "interface_id", "transport", "descriptor_hash", "port_path"):
+        require(f"device.identity.{field}" in identify,
+                f"enumeration must retain controller {field}")
+    strings = function_body(source, "controller_optional_strings")
+    require("serial_hash" in strings and "name" in strings,
+            "controller identities must retain serial hashes and product names")
+
 def test_usb_keyboard_and_keypad_emit_bindable_sources() -> None:
     header = read(USB_HID_H)
     source = read(USB_HID_C)
@@ -283,9 +306,12 @@ def test_onee_uses_fixed_keyboard_controls_and_blocks_menu_leakage() -> None:
     hold = function_body(source, "menu_poll_open_close_hold")
     require("g_onee_fixed_mode" not in mouse_buttons and
             "g_onee_fixed_mode" not in hold and
-            desktop.count("g_menu_capture != 0U") >= 3 and
+            desktop.count("g_menu_capture != 0U") >= 2 and
+            "g_onee_fixed_mode" not in function_body(source, "hid_menu_push_hat") and
+            "g_onee_fixed_mode" not in function_body(source, "gamepad_menu_process_buttons") and
+            "USB_HID_MENU_SOURCE_NONE" in function_body(source, "hid_menu_push_hat") and
             "g_onee_fixed_mode == 0U" not in desktop,
-            "saved mouse, joystick, axis, hat, and long-OK routes must work in ONE//e")
+            "saved mouse, joystick axes, fixed Dpad and long-OK routes must work in ONE//e")
     sync = function_body(frontend_main, "ui_sync_usb_menu_capture")
     require("g_usb_menu_owned == 0U || ui_onee_selected() != 0U" in sync and
             "config_menu_capture_usb_binding" in event and
@@ -330,11 +356,13 @@ def test_joystick_preview_suppresses_axis_navigation() -> None:
     hat = function_body(source, "hid_menu_push_hat")
     require("void usb_hid_service_set_joystick_preview(uint8_t active)" in header and
             "g_joystick_preview != 0U" in axis and
-            "g_joystick_preview != 0U" in hat and
+            "g_joystick_preview" not in hat and
+            "gamepad_menu_push_fixed(" in hat and "slot->generic_axes" in hat and
+            "fixed_hat" not in setter and
             "prev_hat = HID_HAT_NEUTRAL" in setter and
             "prev_x_dir = 0" in setter and "prev_y_dir = 0" in setter and
             "hid_slots_reset_menu_state" not in setter,
-            "preview must suppress axis/hat events without clearing keyboard/button state")
+            "preview must suppress stick events while retaining fixed Dpad and physical button state")
     require(all("onee_input_service_set_blocked(" in body and
                 "g_menu_capture != 0U || g_onee_input_blocked != 0U" in body
                 for body in (capture, blocked)),
@@ -353,17 +381,28 @@ def test_joystick_preview_suppresses_axis_navigation() -> None:
         #include "usb_hid_service.h"
         #define USB_HID_SLOT_COUNT 8U
         #define HID_HAT_NEUTRAL 0xFFU
+        #define USB_GAMEPAD_BUTTON_HOME 10U
         typedef struct {
             uint8_t prev_hat;
+            uint8_t fixed_hat, generic_axes;
+            uint32_t gamepad_buttons;
             int8_t prev_x_dir, prev_y_dir;
             uint8_t prev_buttons, raw_axis_active_mask;
         } usb_hid_slot_t;
         static usb_hid_slot_t g_hid_slots[USB_HID_SLOT_COUNT];
         static uint8_t g_joystick_preview;
+        static uint8_t g_menu_capture = 1U;
         static uint32_t event_count;
+        static uint8_t fixed_source_error;
         static usb_hid_menu_action_t last_action;
         static void mouse_menu_push_bindable_action(usb_hid_menu_action_t action)
         {
+            ++event_count;
+            last_action = action;
+        }
+        static void gamepad_menu_push_fixed(usb_hid_menu_action_t action, usb_hid_menu_source_t source)
+        {
+            if (source != USB_HID_MENU_SOURCE_NONE) fixed_source_error = 1U;
             ++event_count;
             last_action = action;
         }
@@ -378,6 +417,7 @@ def test_joystick_preview_suppresses_axis_navigation() -> None:
         {
             usb_hid_slot_t *slot = &g_hid_slots[2];
             slot->prev_hat = 2U;
+            slot->fixed_hat = 2U;
             slot->prev_x_dir = 1;
             slot->prev_y_dir = -1;
             slot->prev_buttons = 5U;
@@ -385,29 +425,43 @@ def test_joystick_preview_suppresses_axis_navigation() -> None:
             usb_hid_service_set_joystick_preview(1U);
             if (slot->prev_hat != HID_HAT_NEUTRAL || slot->prev_x_dir != 0 ||
                 slot->prev_y_dir != 0 || slot->prev_buttons != 5U ||
-                slot->raw_axis_active_mask != 0x3FU) return 1;
+                slot->raw_axis_active_mask != 0x3FU || slot->fixed_hat != 2U) return 1;
             hid_menu_push_axis(slot, &slot->prev_x_dir, 1,
                 USB_HID_MENU_ACTION_LEFT, USB_HID_MENU_ACTION_RIGHT);
             hid_menu_push_hat(slot, 0U);
-            if (event_count != 0U) return 2;
+            if (event_count != 1U || last_action != USB_HID_MENU_ACTION_ITEM_UP) return 2;
             usb_hid_service_set_joystick_preview(0U);
             hid_menu_push_axis(slot, &slot->prev_x_dir, 1,
                 USB_HID_MENU_ACTION_LEFT, USB_HID_MENU_ACTION_RIGHT);
-            if (event_count != 1U || last_action != USB_HID_MENU_ACTION_RIGHT)
+            if (event_count != 2U || last_action != USB_HID_MENU_ACTION_RIGHT)
                 return 3;
             hid_menu_push_axis(slot, &slot->prev_x_dir, 1,
                 USB_HID_MENU_ACTION_LEFT, USB_HID_MENU_ACTION_RIGHT);
-            if (event_count != 1U) return 4;
+            if (event_count != 2U) return 4;
             hid_menu_push_hat(slot, 0U);
-            if (event_count != 2U || last_action != USB_HID_MENU_ACTION_ITEM_UP)
+            if (event_count != 2U)
                 return 5;
             hid_menu_push_hat(slot, 2U);
             if (event_count != 3U || last_action != USB_HID_MENU_ACTION_RIGHT)
                 return 6;
             usb_hid_service_set_joystick_preview(1U);
             hid_menu_push_hat(slot, 4U);
-            if (event_count != 3U || slot->prev_buttons != 5U ||
+            if (event_count != 4U || last_action != USB_HID_MENU_ACTION_ITEM_DOWN || slot->prev_buttons != 5U ||
                 slot->raw_axis_active_mask != 0x3FU) return 7;
+            slot->generic_axes = 1U;
+            hid_menu_push_hat(slot, 0U);
+            g_menu_capture = 0U;
+            slot->generic_axes = 0U;
+            hid_menu_push_hat(slot, 2U);
+            if (event_count != 4U) return 8;
+            g_menu_capture = 1U;
+            slot->gamepad_buttons = UINT32_C(1) << USB_GAMEPAD_BUTTON_HOME;
+            hid_menu_push_hat(slot, 6U);
+            if (event_count != 4U || fixed_source_error) return 9;
+            slot->gamepad_buttons = 0U;
+            hid_menu_push_hat(slot, 8U);
+            hid_menu_push_hat(slot, 0U);
+            if (event_count != 5U || last_action != USB_HID_MENU_ACTION_ITEM_UP) return 10;
             return 0;
         }
         '''), encoding="utf-8")
@@ -575,6 +629,7 @@ def test_vitis_registers_cherryusb_sources_and_linker_section() -> None:
         "../../../ps_sources/frontend/cherryusb_baremetal_osal.c",
         "../../../ps_sources/frontend/cherryusb_usbh_hub_poll.c",
         "../../../ps_sources/frontend/cherryusb_zynq_hc.c",
+        "../../../ps_sources/frontend/usb_controller_identity.c",
     ]:
         require(token in script, f"Vitis generator must register {token}")
 
@@ -1077,6 +1132,7 @@ TESTS = [
     test_slot_setting_does_not_control_physical_usb_mouse,
     test_cherryusb_hid_backend_replaces_custom_enumerator,
     test_failed_hid_interrupt_submit_retries_after_backoff,
+    test_controller_identity_and_relative_lifecycle_hooks,
     test_usb_keyboard_and_keypad_emit_bindable_sources,
     test_onee_uses_fixed_keyboard_controls_and_blocks_menu_leakage,
     test_joystick_preview_suppresses_axis_navigation,

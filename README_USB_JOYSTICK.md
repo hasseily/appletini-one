@@ -31,7 +31,8 @@ buttons from other report IDs. The live joystick preview keeps all 32 bits.
 Apple PB0..PB2 and the fixed slot-2 SNES mapping still use their existing
 buttons; extra controls cannot alias them.
 
-Wired Xbox One and DualShock 4 use these common binding numbers:
+Wired Xbox 360, Xbox One and DualShock 4 use these common binding numbers.
+Xbox 360 Back/Start use the Xbox One View/Menu positions:
 
 | Gamepad button | Xbox One | DualShock 4 |
 | --- | --- | --- |
@@ -50,15 +51,36 @@ Wired Xbox One and DualShock 4 use these common binding numbers:
 | 13 | - | R2 switch |
 | 14 | - | Touchpad click |
 
-Both controllers retain their six analog axes, including the two triggers.
+All three controllers retain their six analog axes, including the two triggers.
 Xbox Guide packets update Guide independently of main button/stick reports.
 DS4 report-counter bits never count as buttons.
 
-With the menu open, unbound LB/RB (L1/R1) select the previous/next tab. Both
-held together cancel tab movement; holding one does not repeat. Learning a
-binding or viewing joystick calibration suppresses these tab shortcuts, and
-normal gameplay keeps its existing controller input. Assigning either shoulder
-an explicit binding disables the default shoulder pair's tab shortcut.
+Controllers always have these config-menu controls, alongside saved bindings:
+
+| Controller input | Config menu action |
+| --- | --- |
+| D-pad | Move up, down, left and right |
+| LB / L1 | Previous tab |
+| RB / R1 | Next tab |
+| A / Cross | OK |
+| B / Circle | Back |
+| Home / Guide / Xbox / PS | Open or close the whole menu |
+
+These controls do not depend on the remappable keyboard, mouse or Gamepad
+bindings. The D-pad and shoulders also work on the joystick preview page;
+analog stick motion still leaves that page's focus alone. Both shoulders held
+together cancel tab movement. Holding a button does not repeat its action.
+Home takes priority over other fixed controls in the same report and stays
+one-shot across menu changes, including separate Xbox Guide packets. B goes
+back through child pages; Home closes the menu from a child page too.
+
+Explicit Gamepad button bindings remain available. A different custom action
+runs alongside the fixed action; an identical action runs once. While learning
+a binding, a button supplies its physical Gamepad source without also selecting
+or closing the menu. Normal gameplay retains the complete controller report.
+Generic HID pads use the shared button positions: A/B on buttons 1/2, LB/RB on
+5/6 and Home on 11. Mice and keypad axis devices keep their native controls and
+opt-in bindings and do not acquire these fixed controller shortcuts.
 
 The new descriptor helper derives from Multitini One commit `1c4f8be`.
 Host tests exercise real parsing, 32 separate binding sources, partial reports,
@@ -72,7 +94,7 @@ Paddle 1 through Paddle 4, then adjust:
 
 - **Device:** Auto or USB input 1 through 8. Each paddle can use a different
   input. Auto selects the lowest connected joystick slot.
-- **Source:** Auto, X, Y, Z, Rx, Ry, Rz, or Off.
+- **Source:** Auto, X, Y, Z, Rx, Ry, Rz, Slider, Dial, Wheel, Pan, or Off.
 - **Invert:** reverse that paddle's direction.
 - **Sensitivity:** 25% through 200%, with 100% as the default. Higher values
   make the same movement have a larger effect. Below 100%, even full travel
@@ -88,8 +110,8 @@ and no deadzone. This preserves the earlier standalone ONE//e mapping. Use zero 
 paddle that needs continuous movement through its center.
 
 The page shows the selected input's raw axes and connection state, all four
-mapped paddle values, and buttons. Compact menus group the preview into three
-rows so all six raw axes, four mapped values, and buttons stay visible at
+mapped paddle values, and buttons. Compact menus group the preview into four
+rows so all ten raw axes, four mapped values, and buttons stay visible at
 1024x768 while changing settings.
 A separate status line shows whether USB controls are available with TransWarp
 or in standalone ONE//e. If TransWarp is not active, you can still test and
@@ -108,29 +130,62 @@ While the config menu captures input, a connected joystick supplies centered
 paddles and released buttons to the Apple. The preview still tracks movement.
 Closing the menu restores the current position without requiring a new report.
 
-Each of the four paddles can use any of the six supported axes on any of the
-eight shared input slots: up to 48 axis sources. Multiple paddles may also use
+Each of the four paddles can use any of the ten supported axes on any of the
+eight shared input slots: up to 80 axis sources. Multiple paddles may also use
 the same device or axis. For two sticks, for example, set Paddle 1/2 to X/Y
 on one USB input and Paddle 3/4 to X/Y on the other. Four separate controllers
 can each supply one paddle.
 
-The input numbers identify shared USB slots, not saved hardware identities.
-Keyboard and mouse HID interfaces use slots too. The numbers follow USB
-connection order and may change after a different startup or reconnect order;
-use the raw preview to identify each stick before saving the mapping.
-Settings store `usb.joystick.paddle.N.device` as `Auto` or a number from 1 to 8
-in both global settings and profiles. Older settings without that key retain
-Auto. The selected slot's absence centers only its mapped paddles; other
-selected slots continue updating.
+The input numbers identify eight shared USB slots. Selecting a connected device
+also saves its USB identity with the mapping. A device with a serial number can
+move between hub ports; devices without a serial use their saved hub path.
+A missing or ambiguous saved device centers its paddles and never selects a
+different controller. The device row shows a bounded product name when available.
+Older settings without an identity retain their original slot-number rules.
+Auto still chooses the lowest connected gamepad.
+
+Keyboards, mice and keypad wheels can expose selectable axis sources while
+keeping their normal keyboard and mouse functions. Generic axis devices start
+unassigned: Auto, Apple pushbuttons and slot-2 gamepad assignment ignore them.
+Select their Device and Source explicitly to drive a paddle. Their buttons can
+still supply an explicit Gamepad binding or be learned in the binding editor.
+Relative X/Y input produces a short velocity pulse, proportional to the reported
+movement. Dial, wheel and pan bursts queue up to 32 pending detents per axis.
+Each pulse releases after 20 ms; queued detents include a 20 ms neutral gap.
+Changing menu capture clears pending motion, so closing the menu cannot replay
+an old burst. Absolute axes keep their position until a new report or disconnect.
+
+Settings retain `usb.joystick.paddle.N.device` as Auto or 1 through 8 and add
+`usb.joystick.paddle.N.identity`. Existing source values, including Off, keep
+their meaning in old settings and profiles.
 
 The lowest connected joystick slot still owns PB0 through PB2. If it
 disconnects, the next controller supplies the buttons and any paddles whose
 device is Auto. Axis-only and button-only
-reports retain the values omitted from that report. HID detection accepts
-two absolute axes or a D-pad hat; relative mice and a lone throttle are
-not selected as joysticks. HID devices and supported vendor gamepads share
+reports retain the values omitted from that report. HID gamepad collections, hats and axis-bearing applications expose input
+sources. Generic axis devices need an explicit mapping, as described above. HID devices and supported vendor gamepads share
 eight input slots. A new HID device cannot replace a connected vendor gamepad
 just because its CherryUSB minor number matches that slot.
+
+## Wired Xbox 360 controllers
+
+USB1 now builds CherryUSB's wired Xbox 360/XInput class (`ff/5d/01`), including
+Microsoft `045e:028e` and the IDs in the pinned class driver's table. The host
+capacity allows the controller's four-endpoint accessory interface to parse.
+The driver validates each 20-byte `00 14` input report and supplies both sticks,
+both triggers, eleven buttons and the D-pad to the shared input path.
+Stick Y increases downward. Triggers use the range 0 through 255.
+
+Startup sends the interface initialization request and player-1 LED command.
+Input and LED transfers use separate aligned buffers. Failed transfers retry
+with a delay; LED output has a bounded attempt count. Disconnect cancels pending
+transfers, releases held controls and frees the shared slot. `usb1 status` shows
+report, malformed-packet, retry and LED counters.
+
+The implementation derives from Multitini One commit
+`6f2a90286956bf8e4956dfc9b94c94dfc3335b05`, with Appletini's paddle, menu and
+slot-2 routing. Multitini's recorded board tests qualify its own image and
+controller; Appletini F1.3.2-dev1 still needs a board check.
 
 ## Wired Xbox One controllers
 
@@ -140,8 +195,8 @@ subclass, and protocol `ff/47/d0`. The USB1 host binds its gamepad interface
 triggers, buttons, and D-pad. The separate Home/Guide report gets the required
 acknowledgement. Audio and accessory interfaces remain unsupported.
 
-This driver currently matches `045e:02ea` only. It does not enable CherryUSB's
-Xbox 360 driver: that driver uses a different USB protocol. The packet format
+This Xbox One driver currently matches `045e:02ea` only. Xbox 360 uses
+the separate XInput driver described below. The packet format
 and startup sequence follow [Linux xpad](https://github.com/torvalds/linux/blob/master/drivers/input/joystick/xpad.c)
 and the [Xbox One protocol notes](https://github.com/quantus/xbox-one-controller-protocol).
 
@@ -236,3 +291,17 @@ python scripts/test_usb_ps4.py
 python scripts/test_multi_joystick_axes.py
 python scripts/test_joystick_config_menu.py
 ```
+
+## Descriptor and report checks
+
+The collection-aware parser keeps keyboard, mouse and gamepad fields separate.
+It retains compact keyboard bitmaps outside the controller-field budget and
+keeps held keys from other report IDs. Short packets cannot partially update
+keys, buttons or axes; rollover reports retain the last good keyboard state.
+Boot/report protocol requests are checked, with a checked boot fallback for
+boot-capable interfaces. The parser uses the actual fetched descriptor length.
+
+`usb1 status` includes product/identity metadata, application collections and
+retained fields. Host regressions cover captured descriptors, malformed inputs,
+relative expiry, mixed transports, saved mappings and disconnects. These checks
+and the firmware package audit are separate from physical board acceptance.

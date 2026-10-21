@@ -8,6 +8,7 @@
 
 #include "usbh_core.h"
 #include "usb_gamepad_input.h"
+#include "usb_controller_identity.h"
 #include "usb_xbox_one.h"
 #include "../lib/uart.h"
 
@@ -197,7 +198,7 @@ static void xbox_input(xbox_one_t *pad, const uint8_t *data, uint32_t len)
         }
         pad->guide = data[4] & 1U;
     } else if (data[0] == 0x20U && data[3] >= 14U) {
-        report->axis_valid_mask = (1U << ONEE_INPUT_AXIS_COUNT) - 1U;
+        report->axis_valid_mask = 0x3fU;
         report->buttons_valid = 1U;
         report->buttons = (uint8_t)((data[4] >> 4) |
                                    (data[5] & 0x30U) |
@@ -209,7 +210,7 @@ static void xbox_input(xbox_one_t *pad, const uint8_t *data, uint32_t len)
         report->axis[ONEE_INPUT_AXIS_RY] = -1 - xbox_s16(data + 16);
         report->axis[ONEE_INPUT_AXIS_Z] = xbox_u16(data + 6);
         report->axis[ONEE_INPUT_AXIS_RZ] = xbox_u16(data + 8);
-        for (uint8_t i = 0U; i < ONEE_INPUT_AXIS_COUNT; ++i) {
+        for (uint8_t i = 0U; i < 6U; ++i) {
             const uint8_t trigger = (i == ONEE_INPUT_AXIS_Z || i == ONEE_INPUT_AXIS_RZ);
             report->logical_min[i] = trigger ? 0 : -32768;
             report->logical_max[i] = trigger ? 1023 : 32767;
@@ -604,6 +605,7 @@ static int xbox_connect(struct usbh_hubport *hport, uint8_t intf)
     pad->connected_at = cherryusb_baremetal_ms();
     pad->hat = 8U;
     hport->config.intf[intf].priv = pad;
+    usb_gamepad_input_identify(pad->slot, hport, intf, USB_CONTROLLER_TRANSPORT_XBOXONE);
     snprintf(hport->config.intf[intf].devname, CONFIG_USBHOST_DEV_NAMELEN,
              "/dev/xboxone%u", pad->index);
     cherryusb_printf("[usb1] Xbox One connected slot=%u vid=%04x pid=%04x intf=0\r\n",

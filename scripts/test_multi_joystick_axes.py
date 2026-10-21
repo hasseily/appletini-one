@@ -78,6 +78,7 @@ def main() -> int:
             memset(registers, 0, sizeof(registers));
             memset(last_writes, 0, sizeof(last_writes));
             write_count = 0U;
+            usb_controller_identity_init();
             registers[0x5BU] = CARD_CTRL_ONEE_STATUS_EFFECTIVE_BIT;
             registers[0x5FU] = (0xE1UL << 24) | (1UL << 9);
             registers[reg_index(CARD_CTRL_VTW_JOYSTICK_CONTROL_REG)] =
@@ -88,8 +89,8 @@ def main() -> int:
             onee_input_service_poll();
         }
 
-        static void report_axes(uint8_t slot, uint8_t mask,
-                                const uint8_t axes[6], uint8_t buttons_valid,
+        static void report_axes(uint8_t slot, uint16_t mask,
+                                const uint8_t axes[ONEE_INPUT_AXIS_COUNT], uint8_t buttons_valid,
                                 uint8_t buttons)
         {
             onee_input_joystick_report_t report;
@@ -122,13 +123,13 @@ def main() -> int:
 
         static int test_independent_devices(void)
         {
-            const uint8_t axes1[6] = {20, 30, 40, 50, 60, 70};
-            const uint8_t axes3[6] = {24, 64, 44, 54, 64, 74};
-            const uint8_t axes5[6] = {28, 38, 48, 192, 68, 78};
-            const uint8_t axes7[6] = {32, 42, 52, 62, 72, 250};
-            const uint8_t partial[6] = {77, 0, 0, 0, 0, 0};
-            const uint8_t lower[6] = {240, 241, 242, 243, 244, 245};
-            const uint8_t moved[6] = {40, 0, 0, 0, 0, 0};
+            const uint8_t axes1[ONEE_INPUT_AXIS_COUNT] = {20, 30, 40, 50, 60, 70};
+            const uint8_t axes3[ONEE_INPUT_AXIS_COUNT] = {24, 64, 44, 54, 64, 74};
+            const uint8_t axes5[ONEE_INPUT_AXIS_COUNT] = {28, 38, 48, 192, 68, 78};
+            const uint8_t axes7[ONEE_INPUT_AXIS_COUNT] = {32, 42, 52, 62, 72, 250};
+            const uint8_t partial[ONEE_INPUT_AXIS_COUNT] = {77, 0, 0, 0, 0, 0};
+            const uint8_t lower[ONEE_INPUT_AXIS_COUNT] = {240, 241, 242, 243, 244, 245};
+            const uint8_t moved[ONEE_INPUT_AXIS_COUNT] = {40, 0, 0, 0, 0, 0};
             onee_input_joystick_config_t config;
             onee_input_joystick_snapshot_t snapshot;
             uint32_t before;
@@ -269,34 +270,37 @@ def main() -> int:
             return 0;
         }
 
-        static int test_all_48_sources(void)
+        static int test_all_80_sources(void)
         {
             onee_input_joystick_config_t config;
             onee_input_joystick_snapshot_t snapshot;
-            uint8_t axes[6];
+            uint8_t axes[ONEE_INPUT_AXIS_COUNT];
 
             reset_service();
             for (uint8_t slot = 0U; slot < 8U; ++slot) {
-                for (uint8_t axis = 0U; axis < 6U; ++axis) {
-                    axes[axis] = 10U + slot * 30U + axis * 4U;
+                for (uint8_t axis = 0U; axis < ONEE_INPUT_AXIS_COUNT; ++axis) {
+                    axes[axis] = 10U + slot * 25U + axis * 4U;
                 }
-                report_axes(slot, 0x3FU, axes, 1U, slot & 7U);
+                report_axes(slot, (1U << ONEE_INPUT_AXIS_COUNT) - 1U, axes, 1U, slot & 7U);
             }
             onee_input_service_get_joystick_snapshot(&snapshot);
             CHECK(snapshot.connected_mask == 0xFFU,
                   "all eight device slots must coexist");
+            CHECK(snapshot.devices[7].axis_valid_mask == 0x3FFU &&
+                  snapshot.devices[7].axis[ONEE_INPUT_AXIS_PAN] == 221U,
+                  "high axis mask bits or tenth preview axis were truncated");
             onee_input_service_default_joystick_config(&config);
             for (uint8_t slot = 0U; slot < 8U; ++slot) {
-                for (uint8_t axis = 0U; axis < 6U; ++axis) {
-                    const uint8_t expected = 10U + slot * 30U + axis * 4U;
+                for (uint8_t axis = 0U; axis < ONEE_INPUT_AXIS_COUNT; ++axis) {
+                    const uint8_t expected = 10U + slot * 25U + axis * 4U;
                     for (uint8_t paddle = 0U; paddle < 4U; ++paddle) {
                         config.paddle[paddle].device = slot + 1U;
                         config.paddle[paddle].source =
-                            ONEE_INPUT_JOYSTICK_SOURCE_X + axis;
+                            onee_input_joystick_axis_source((onee_input_axis_t)axis);
                     }
                     onee_input_service_set_joystick_config(&config);
                     CHECK(expect_bridges(0x01010101UL * expected, 0U, 1U) == 0,
-                          "one of 48 axes could not feed every Apple paddle");
+                          "one of 80 axes could not feed every Apple paddle");
                 }
             }
             onee_input_service_release_all();
@@ -305,9 +309,77 @@ def main() -> int:
             return 0;
         }
 
+        static int test_generic_axes_and_saved_identity(void)
+        {
+            onee_input_joystick_report_t report = {0};
+            onee_input_joystick_config_t config;
+            onee_input_joystick_snapshot_t snapshot;
+            usb_controller_device_t identity = {0};
+            const uint8_t axes[ONEE_INPUT_AXIS_COUNT] = {200, 60, 0, 0, 0, 0};
+
+            reset_service();
+            report.generic_axes = 1U;
+            report.axis_valid_mask = (1U << ONEE_INPUT_AXIS_WHEEL) | (1U << ONEE_INPUT_AXIS_PAN);
+            report.logical_max[ONEE_INPUT_AXIS_WHEEL] = 255;
+            report.logical_max[ONEE_INPUT_AXIS_PAN] = 255;
+            report.axis[ONEE_INPUT_AXIS_PAN] = 255;
+            report.buttons_valid = 1U;
+            report.buttons = 7U;
+            onee_input_service_joystick_report(0U, &report);
+            CHECK(expect_bridges(0x80808080UL, 0U, 0U) == 0,
+                  "generic mouse/keypad axes took Auto or button ownership");
+            onee_input_service_get_joystick_snapshot(&snapshot);
+            CHECK(snapshot.connected_mask == 1U && snapshot.owner_slot == 8U &&
+                  snapshot.devices[0].generic_axes && snapshot.devices[0].axis_valid_mask == 0x300U,
+                  "unassigned generic axes disappeared from explicit device preview");
+            onee_input_service_default_joystick_config(&config);
+            for (uint8_t paddle = 0U; paddle < 4U; ++paddle)
+                config.paddle[paddle].source = ONEE_INPUT_JOYSTICK_SOURCE_OFF;
+            config.paddle[0].device = 1U;
+            config.paddle[0].source = ONEE_INPUT_JOYSTICK_SOURCE_PAN;
+            onee_input_service_set_joystick_config(&config);
+            CHECK(expect_bridges(0x808080FFUL, 0U, 1U) == 0,
+                  "explicit generic axis could not drive ONE//e and vTW paddles");
+            report_axes(1U, 3U, axes, 1U, 2U);
+            CHECK(expect_bridges(0x808080FFUL, 2U, 1U) == 0,
+                  "generic device changed the actual gamepad's PB ownership");
+            onee_input_service_set_joystick_config(NULL);
+            CHECK(expect_bridges(0x80803CC8UL, 2U, 1U) == 0,
+                  "Auto selected a generic device ahead of a real gamepad");
+
+            identity.connected = 1U;
+            identity.identity.vendor_id = 0x1234U;
+            identity.identity.product_id = 0x5678U;
+            identity.identity.port_path = 0x101U;
+            usb_controller_identity_set(1U, &identity);
+            onee_input_service_default_joystick_config(&config);
+            for (uint8_t paddle = 0U; paddle < 4U; ++paddle)
+                config.paddle[paddle].source = ONEE_INPUT_JOYSTICK_SOURCE_OFF;
+            config.paddle[0].device = 2U;
+            config.paddle[0].source = ONEE_INPUT_JOYSTICK_SOURCE_X;
+            CHECK(usb_controller_identity_bind(2U, &config.paddle[0].identity),
+                  "connected controller identity could not be saved");
+            onee_input_service_set_joystick_config(&config);
+            usb_controller_identity_disconnect(1U);
+            onee_input_service_disconnect(1U);
+            usb_controller_identity_set(5U, &identity);
+            report_axes(5U, 3U, axes, 1U, 4U);
+            CHECK(expect_bridges(0x808080C8UL, 4U, 1U) == 0,
+                  "saved identity did not follow its controller to a new input slot");
+            onee_input_service_get_joystick_snapshot(&snapshot);
+            CHECK(snapshot.paddle_slots[0] == 5U,
+                  "preview resolved a stale slot after identity reconnect");
+            onee_input_service_disconnect(5U);
+            usb_controller_identity_disconnect(5U);
+            CHECK(expect_bridges(0x80808080UL, 0U, 0U) == 0,
+                  "missing saved identity fell back to the generic mouse");
+            return 0;
+        }
+
         int main(void)
         {
-            if (test_independent_devices() || test_all_48_sources()) {
+            if (test_independent_devices() || test_all_80_sources() ||
+                test_generic_axes_and_saved_identity()) {
                 return 1;
             }
             puts("MULTI JOYSTICK AXES NATIVE PASS");
@@ -319,7 +391,7 @@ def main() -> int:
     if "mingw" in compiler.as_posix().lower():
         command.append("-static")
     command.extend([
-        str(harness), "-o", str(executable),
+        str(harness), str(FRONTEND / "usb_controller_identity.c"), "-o", str(executable),
         f"-I{FRONTEND}", f"-I{ROOT / 'ps_sources' / 'lib'}",
         f"-I{ROOT / 'third_party' / 'CherryUSB' / 'common'}",
         f"-I{ROOT / 'third_party' / 'CherryUSB' / 'class' / 'hid'}",

@@ -231,8 +231,8 @@ def test_vtw_gate_and_menu_joystick_lifetime() -> None:
                    "uint8_t onee_input_service_take_cold_reboot_request")
     vtw = between(source, "static void vtw_joystick_poll",
                   "static void onee_input_session_stop")
-    joystick = between(usb, "/* One routing path preserves partial buttons",
-                       "static void hid_process_report(")
+    joystick = between(usb, "static void hid_process_gamepad_report(\n",
+                       "void usb_gamepad_input_report(")
     blocked = between(usb, "void usb_hid_service_set_onee_input_blocked",
                       "uint8_t usb_hid_service_all_input_released")
     require(poll.index("vtw_joystick_poll();") <
@@ -266,9 +266,9 @@ def test_hid_parser_feeds_boot_keyboard_and_absolute_joystick() -> None:
             "HID_MAINITEM_RELATIVE" in source and
             "slot->interface_protocol == HID_PROTOCOL_MOUSE" in source,
             "joystick detection must require non-mouse absolute HID axes")
-    require("hid_process_gamepad_report(slot, &onee_joystick" in report and
+    require("hid_process_gamepad_report(slot, &joystick" in report and
             "onee_input_service_joystick_report(slot->index, report)" in source and
-            "onee_joystick.buttons_valid = button_seen" in report,
+            "joystick.buttons_valid = button_seen" in report,
             "parsed absolute axes and PB0-PB2 must reach the ONE//e service")
 
 
@@ -459,6 +459,42 @@ def run_native_behavior_test() -> bool:
             onee_input_service_init();
             onee_input_service_poll();
             write_count = 0U;
+        }
+
+        static int test_nkro_capacity(void)
+        {
+            uint8_t keys[64];
+            uint32_t before;
+            reset_chord_fixture();
+            for (uint8_t index = 0U; index < 63U; ++index)
+                keys[index] = 0x80U + index;
+            keys[63] = HID_KBD_USAGE_A;
+            (void)onee_input_service_keyboard_report(0U, 0U, keys, 64U);
+            onee_input_service_poll();
+            if (g_slots[0].key_count != 64U ||
+                last_write(ONEE_INPUT_KEY_FIFO_REG) != 'a') {
+                fail("64th NKRO key did not reach saved state and Apple FIFO");
+                return 1;
+            }
+            before = writes_to(ONEE_INPUT_KEY_FIFO_REG);
+            (void)onee_input_service_keyboard_report(0U, 0U, &keys[63], 1U);
+            onee_input_service_poll();
+            if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before) {
+                fail("releasing other NKRO keys repeated the held last key");
+                return 1;
+            }
+            release_keys(0U);
+            keys[63] = HID_KBD_USAGE_DELFWD;
+            if (!onee_input_service_keyboard_report(0U, HID_MOD_LCTRL, keys, 64U)) {
+                fail("Ctrl+Delete beyond the eighth NKRO key was not consumed");
+                return 1;
+            }
+            onee_input_service_poll();
+            if (warm_reset_writes() != 1U) {
+                fail("NKRO Ctrl+Delete did not request exactly one warm reset");
+                return 1;
+            }
+            return 0;
         }
 
         static int test_reset_chords(void)
@@ -1526,7 +1562,8 @@ def run_native_behavior_test() -> bool:
                 return 1;
             }
 
-            if (test_reset_chords() != 0 || test_vtw_joystick() != 0) {
+            if (test_reset_chords() != 0 || test_vtw_joystick() != 0 ||
+                test_nkro_capacity() != 0) {
                 return 1;
             }
             puts("ONEE AND VTW INPUT SERVICE NATIVE PASS");
@@ -1536,7 +1573,7 @@ def run_native_behavior_test() -> bool:
 
     compile_cmd = [
         str(compiler), "-std=c11", "-Wall", "-Wextra", "-Werror",
-        str(harness), "-o", str(executable),
+        str(harness), str(FRONTEND / "usb_controller_identity.c"), "-o", str(executable),
         f"-I{FRONTEND}",
         f"-I{ROOT / 'ps_sources' / 'lib'}",
         f"-I{ROOT / 'third_party' / 'CherryUSB' / 'common'}",

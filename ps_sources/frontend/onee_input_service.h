@@ -2,6 +2,7 @@
 #define ONEE_INPUT_SERVICE_H
 
 #include <stdint.h>
+#include "usb_controller_identity.h"
 
 /* HID interfaces and vendor gamepads share these slots. HID keeps its
  * CherryUSB minor number when that slot is free; both transports otherwise
@@ -15,12 +16,18 @@ typedef enum {
     ONEE_INPUT_AXIS_RX,
     ONEE_INPUT_AXIS_RY,
     ONEE_INPUT_AXIS_RZ,
+    ONEE_INPUT_AXIS_SLIDER,
+    ONEE_INPUT_AXIS_DIAL,
+    ONEE_INPUT_AXIS_WHEEL,
+    ONEE_INPUT_AXIS_PAN,
     ONEE_INPUT_AXIS_COUNT
 } onee_input_axis_t;
 
 typedef struct {
-    uint8_t axis_valid_mask;
+    uint16_t axis_valid_mask;
     uint8_t buttons_valid;
+    /* Mouse/keypad controls remain available only through an explicit mapping. */
+    uint8_t generic_axes;
     uint32_t buttons;
     int32_t axis[ONEE_INPUT_AXIS_COUNT];
     int32_t logical_min[ONEE_INPUT_AXIS_COUNT];
@@ -42,12 +49,46 @@ typedef enum {
     ONEE_INPUT_JOYSTICK_SOURCE_RX,
     ONEE_INPUT_JOYSTICK_SOURCE_RY,
     ONEE_INPUT_JOYSTICK_SOURCE_RZ,
-    ONEE_INPUT_JOYSTICK_SOURCE_OFF
+    /* Keep Off at 7 for existing settings and callers. */
+    ONEE_INPUT_JOYSTICK_SOURCE_OFF = 7,
+    ONEE_INPUT_JOYSTICK_SOURCE_SLIDER,
+    ONEE_INPUT_JOYSTICK_SOURCE_DIAL,
+    ONEE_INPUT_JOYSTICK_SOURCE_WHEEL,
+    ONEE_INPUT_JOYSTICK_SOURCE_PAN,
+    ONEE_INPUT_JOYSTICK_SOURCE_COUNT
 } onee_input_joystick_source_t;
+
+static inline onee_input_axis_t onee_input_joystick_source_axis(uint8_t source)
+{
+    if (source >= ONEE_INPUT_JOYSTICK_SOURCE_X &&
+        source <= ONEE_INPUT_JOYSTICK_SOURCE_RZ) {
+        return (onee_input_axis_t)(source - ONEE_INPUT_JOYSTICK_SOURCE_X);
+    }
+    if (source >= ONEE_INPUT_JOYSTICK_SOURCE_SLIDER &&
+        source < ONEE_INPUT_JOYSTICK_SOURCE_COUNT) {
+        return (onee_input_axis_t)(ONEE_INPUT_AXIS_SLIDER +
+                                  source - ONEE_INPUT_JOYSTICK_SOURCE_SLIDER);
+    }
+    return ONEE_INPUT_AXIS_COUNT;
+}
+
+static inline uint8_t onee_input_joystick_axis_source(onee_input_axis_t axis)
+{
+    if (axis < ONEE_INPUT_AXIS_SLIDER) {
+        return (uint8_t)(ONEE_INPUT_JOYSTICK_SOURCE_X + axis);
+    }
+    if (axis < ONEE_INPUT_AXIS_COUNT) {
+        return (uint8_t)(ONEE_INPUT_JOYSTICK_SOURCE_SLIDER +
+                         axis - ONEE_INPUT_AXIS_SLIDER);
+    }
+    return ONEE_INPUT_JOYSTICK_SOURCE_AUTO;
+}
 
 typedef struct {
     uint8_t source;
     uint8_t device; /* 0: first joystick; 1..8: shared USB input slot + 1. */
+    /* Zero retains legacy slot selection; saved identities follow the device. */
+    usb_controller_identity_t identity;
     uint8_t invert;
     uint8_t deadzone_percent;
     uint16_t sensitivity_percent;
@@ -59,7 +100,8 @@ typedef struct {
 
 typedef struct {
     uint8_t connected;
-    uint8_t axis_valid_mask;
+    uint8_t generic_axes;
+    uint16_t axis_valid_mask;
     uint8_t axis[ONEE_INPUT_AXIS_COUNT];
     uint32_t buttons;
 } onee_input_joystick_device_snapshot_t;
@@ -68,7 +110,7 @@ typedef struct {
     uint8_t connected;
     uint8_t owner_slot; /* ONEE_INPUT_DEVICE_SLOT_COUNT when disconnected. */
     uint8_t active;     /* Physical-host vTW hardware gate; separate from USB. */
-    uint8_t axis_valid_mask;
+    uint16_t axis_valid_mask;
     uint8_t axis[ONEE_INPUT_AXIS_COUNT];
     uint8_t paddles[ONEE_INPUT_PADDLE_COUNT];
     uint32_t buttons;

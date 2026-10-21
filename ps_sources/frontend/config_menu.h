@@ -397,6 +397,13 @@ uint8_t config_menu_capture_usb_binding(config_menu_t *menu,
                                         usb_hid_menu_source_t source);
 ui_key_t config_menu_translate_usb_binding(const config_menu_t *menu,
                                            usb_hid_menu_source_t source);
+/* Fixed controller actions bypass saved bindings. An additional source binding
+ * uses only an explicit table entry, without the old mouse-button aliases. */
+ui_key_t config_menu_translate_usb_fixed_action(usb_hid_menu_action_t action);
+ui_key_t config_menu_translate_usb_binding_explicit(const config_menu_t *menu,
+                                                    usb_hid_menu_source_t source);
+/* Controller shoulders change tabs even from an ordinary child page. */
+uint8_t config_menu_handle_usb_fixed_tab(config_menu_t *menu, int direction);
 usb_hid_menu_source_t config_menu_usb_ok_binding_source(const config_menu_t *menu);
 usb_hid_menu_source_t config_menu_usb_open_close_binding_source(const config_menu_t *menu);
 usb_hid_menu_source_t config_menu_usb_screenshot_a2_binding_source(

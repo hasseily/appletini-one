@@ -29,7 +29,7 @@ static inline uint8_t usb_ps4_decode(
     }
 
     memset(report, 0, sizeof(*report));
-    report->axis_valid_mask = (uint8_t)((1U << ONEE_INPUT_AXIS_COUNT) - 1U);
+    report->axis_valid_mask = 0x3fU;
     report->buttons_valid = 1U;
     report->axis[ONEE_INPUT_AXIS_X] = data[1];
     report->axis[ONEE_INPUT_AXIS_Y] = data[2];
@@ -37,7 +37,7 @@ static inline uint8_t usb_ps4_decode(
     report->axis[ONEE_INPUT_AXIS_RY] = data[4];
     report->axis[ONEE_INPUT_AXIS_Z] = data[8];
     report->axis[ONEE_INPUT_AXIS_RZ] = data[9];
-    for (uint8_t axis = 0U; axis < ONEE_INPUT_AXIS_COUNT; ++axis) {
+    for (uint8_t axis = 0U; axis < 6U; ++axis) {
         report->logical_max[axis] = 255;
     }
 

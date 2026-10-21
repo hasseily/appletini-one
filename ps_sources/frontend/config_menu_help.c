@@ -679,15 +679,15 @@ HELP(joystick_paddle,
     "Move your controller to test. Use keys or buttons to navigate.");
 
 HELP(joystick_device,
-    "Each Apple paddle can use a different USB input. Auto uses the first connected joystick.",
-    "Inputs 1-8 are shared USB slots; their numbers can change when devices reconnect.",
-    "Choose a connected input, then move its controls and check the raw axis values.",
-    "An unavailable input keeps its paddle centred until that input connects.");
+    "Each Apple paddle can use a different USB input. Auto uses the first connected gamepad.",
+    "Choosing a connected input saves that device, so it can return on a different USB input number.",
+    "Mouse and keypad axes need an explicit input choice. Check the raw values as you move them.",
+    "A missing saved device keeps its paddle centred until that device connects.");
 
 HELP(joystick_source,
-    "Choose X, Y, Z, RX, RY, or RZ from the selected USB input; up to 48 axes across 8 inputs.",
+    "Choose X, Y, Z, RX, RY, RZ, Slider, Dial, Wheel, or Pan from the selected USB input.",
     "Auto uses X/Y for paddles 1/2 and RX/RY (or Z/RZ) for paddles 3/4.",
-    "Choose another axis if the wrong control moves the bar. Off keeps this paddle centred.");
+    "Relative controls return to centre between steps. Off keeps this paddle centred.");
 
 HELP(joystick_invert,
     "Turn this on if movement goes the wrong way.");

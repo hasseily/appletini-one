@@ -1938,9 +1938,10 @@ static uint8_t config_menu_parse_usb_binding(config_menu_t *menu,
 const char *config_menu_joystick_source_text(uint8_t source)
 {
     static const char *const names[] = {
-        "Auto", "X", "Y", "Z", "RX", "RY", "RZ", "Off"
+        "Auto", "X", "Y", "Z", "RX", "RY", "RZ", "Off",
+        "Slider", "Dial", "Wheel", "Pan"
     };
-    return names[source <= ONEE_INPUT_JOYSTICK_SOURCE_OFF ? source : 0U];
+    return names[source < ONEE_INPUT_JOYSTICK_SOURCE_COUNT ? source : 0U];
 }
 
 static unsigned config_menu_joystick_percent(const char *value,
@@ -1977,9 +1978,11 @@ static uint8_t config_menu_parse_joystick(config_menu_t *menu,
         config->device = end != value && *end == '\0' &&
             device >= 1 && device <= (long)ONEE_INPUT_DEVICE_SLOT_COUNT ?
                 (uint8_t)device : 0U;
+    } else if (strcmp(suffix, ".identity") == 0) {
+        (void)usb_controller_identity_parse(value, &config->identity);
     } else if (strcmp(suffix, ".source") == 0) {
         config->source = ONEE_INPUT_JOYSTICK_SOURCE_AUTO;
-        for (uint8_t source = 0U; source <= ONEE_INPUT_JOYSTICK_SOURCE_OFF; ++source) {
+        for (uint8_t source = 0U; source < ONEE_INPUT_JOYSTICK_SOURCE_COUNT; ++source) {
             if (config_menu_str_ieq(value, config_menu_joystick_source_text(source))) {
                 config->source = source;
                 break;
@@ -2004,6 +2007,8 @@ static void config_menu_joystick_config_line(const config_menu_t *menu,
     const onee_input_joystick_paddle_config_t *config =
         &menu->joystick_config.paddle[paddle];
     char device[16];
+    char identity[USB_CONTROLLER_IDENTITY_TEXT_BYTES];
+    (void)usb_controller_identity_format(&config->identity, identity, sizeof(identity));
     if (config->device == 0U) {
         (void)snprintf(device, sizeof(device), "Auto");
     } else {
@@ -2011,11 +2016,13 @@ static void config_menu_joystick_config_line(const config_menu_t *menu,
     }
     (void)snprintf(line, size,
         "usb.joystick.paddle.%u.device=%s\n"
+        "usb.joystick.paddle.%u.identity=%s\n"
         "usb.joystick.paddle.%u.source=%s\n"
         "usb.joystick.paddle.%u.invert=%s\n"
         "usb.joystick.paddle.%u.sensitivity=%u\n"
         "usb.joystick.paddle.%u.deadzone=%u\n",
         (unsigned)paddle, device,
+        (unsigned)paddle, identity,
         (unsigned)paddle, config_menu_joystick_source_text(config->source),
         (unsigned)paddle, config_menu_on_off(config->invert),
         (unsigned)paddle, (unsigned)config->sensitivity_percent,
@@ -2107,6 +2114,42 @@ uint8_t config_menu_capture_usb_binding(config_menu_t *menu,
                    config_menu_usb_binding_source_text(source));
     config_menu_set_status(menu, 0U, text);
     return 1U;
+}
+
+ui_key_t config_menu_translate_usb_fixed_action(usb_hid_menu_action_t action)
+{
+    switch (action) {
+    case USB_HID_MENU_ACTION_LEFT: return UI_KEY_LEFT;
+    case USB_HID_MENU_ACTION_RIGHT: return UI_KEY_RIGHT;
+    case USB_HID_MENU_ACTION_ITEM_UP: return UI_KEY_UP;
+    case USB_HID_MENU_ACTION_ITEM_DOWN: return UI_KEY_DOWN;
+    case USB_HID_MENU_ACTION_SELECT: return UI_KEY_ENTER;
+    case USB_HID_MENU_ACTION_PREV_TAB: return UI_KEY_SHIFT_TAB;
+    case USB_HID_MENU_ACTION_NEXT_TAB: return UI_KEY_TAB;
+    case USB_HID_MENU_ACTION_BACK: return UI_KEY_BACK;
+    default: return UI_KEY_NONE;
+    }
+}
+
+ui_key_t config_menu_translate_usb_binding_explicit(const config_menu_t *menu,
+                                                    usb_hid_menu_source_t source)
+{
+    if (menu == NULL || source == USB_HID_MENU_SOURCE_NONE ||
+        config_menu_usb_binding_source_valid(source) == 0U) {
+        return UI_KEY_NONE;
+    }
+    if (menu->usb_menu_bindings[CONFIG_MENU_USB_BIND_ACTION_OK] == source) {
+        return UI_KEY_ENTER;
+    }
+    if (menu->usb_menu_bindings[CONFIG_MENU_USB_BIND_ACTION_BACK] == source) {
+        return UI_KEY_BACK;
+    }
+    for (uint32_t action = 0U; action < CONFIG_MENU_USB_BIND_ACTION_COUNT; ++action) {
+        if (menu->usb_menu_bindings[action] == source) {
+            return k_usb_binding_keys[action];
+        }
+    }
+    return UI_KEY_NONE;
 }
 
 ui_key_t config_menu_translate_usb_binding(const config_menu_t *menu,
@@ -3960,7 +4003,7 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                (unsigned)menu->vtw_slowdown_cycles);
 
     for (uint32_t paddle = 0U; paddle < 4U; ++paddle) {
-        char joystick_line[256];
+        char joystick_line[384];
         config_menu_joystick_config_line(menu, paddle, joystick_line, sizeof(joystick_line));
         APPEND_CFG("%s", joystick_line);
     }
@@ -8010,6 +8053,9 @@ void config_menu_set_active(config_menu_t *menu, uint8_t active)
         config_menu_browser_close(menu);
         menu->profile_carousel_active = 0U;
         menu->profile_name_editor_active = 0U;
+        menu->printout_action_active = 0U;
+        menu->printout_editor_active = 0U;
+        menu->printout_delete_confirm_active = 0U;
     }
 }
 
@@ -8045,6 +8091,34 @@ void config_menu_set_usb_owned(config_menu_t *menu, uint8_t usb_owned)
         config_menu_onee_fixed_bindings_active(menu) == 0U) {
         menu->usb_binding_capture = CONFIG_MENU_USB_BIND_CAPTURE_NONE;
     }
+}
+
+uint8_t config_menu_handle_usb_fixed_tab(config_menu_t *menu, int direction)
+{
+    if (menu == NULL || menu->active == 0U || direction == 0) {
+        return 0U;
+    }
+    if (menu->usb_binding_capture != CONFIG_MENU_USB_BIND_CAPTURE_NONE ||
+        menu->golden_boot_update_pending != 0U || menu->usb0_sd_remote_active != 0U ||
+        menu->ethernet_ftp_sd_remote_active != 0U) {
+        return 1U;
+    }
+    /* Leave child views without accepting edits or confirming an operation. */
+    config_menu_browser_close(menu);
+    menu->joystick_page_active = 0U;
+    menu->profile_carousel_active = 0U;
+    menu->profile_name_editor_active = 0U;
+    menu->printout_action_active = 0U;
+    menu->printout_editor_active = 0U;
+    menu->printout_delete_confirm_active = 0U;
+    menu->golden_boot_update_confirm = 0U;
+    menu->golden_boot_confirm_update = 0U;
+    if (direction < 0) {
+        config_menu_prev_tab(menu);
+    } else {
+        config_menu_next_tab(menu);
+    }
+    return 1U;
 }
 
 static uint8_t config_menu_joystick_handle_input(config_menu_t *menu,
@@ -8085,12 +8159,40 @@ static uint8_t config_menu_joystick_handle_input(config_menu_t *menu,
         menu->joystick_paddle = (uint8_t)((menu->joystick_paddle + 4 + delta) % 4);
         return 1U;
     case 1U:
+        if (usb_controller_identity_valid(&config->identity)) {
+            const uint8_t slot = usb_controller_identity_resolve(
+                &config->identity, config->device, UINT8_MAX);
+            if (slot < ONEE_INPUT_DEVICE_SLOT_COUNT) {
+                config->device = slot + 1U;
+            }
+        }
         config->device = (uint8_t)((config->device +
             (int)ONEE_INPUT_DEVICE_SLOT_COUNT + 1 + delta) %
             ((int)ONEE_INPUT_DEVICE_SLOT_COUNT + 1));
+        (void)usb_controller_identity_bind(config->device, &config->identity);
         break;
     case 2U:
-        config->source = (uint8_t)((config->source + 8 + delta) % 8);
+        /* Keep Off last in the menu without changing its saved value. */
+        {
+            static const uint8_t sources[] = {
+                ONEE_INPUT_JOYSTICK_SOURCE_AUTO,
+                ONEE_INPUT_JOYSTICK_SOURCE_X, ONEE_INPUT_JOYSTICK_SOURCE_Y,
+                ONEE_INPUT_JOYSTICK_SOURCE_Z, ONEE_INPUT_JOYSTICK_SOURCE_RX,
+                ONEE_INPUT_JOYSTICK_SOURCE_RY, ONEE_INPUT_JOYSTICK_SOURCE_RZ,
+                ONEE_INPUT_JOYSTICK_SOURCE_SLIDER, ONEE_INPUT_JOYSTICK_SOURCE_DIAL,
+                ONEE_INPUT_JOYSTICK_SOURCE_WHEEL, ONEE_INPUT_JOYSTICK_SOURCE_PAN,
+                ONEE_INPUT_JOYSTICK_SOURCE_OFF
+            };
+            unsigned selected = 0U;
+            for (unsigned index = 0U; index < ONEE_INPUT_JOYSTICK_SOURCE_COUNT; ++index) {
+                if (sources[index] == config->source) {
+                    selected = index;
+                    break;
+                }
+            }
+            config->source = sources[(selected + ONEE_INPUT_JOYSTICK_SOURCE_COUNT +
+                                      delta) % ONEE_INPUT_JOYSTICK_SOURCE_COUNT];
+        }
         break;
     case 3U:
         config->invert = !config->invert;

@@ -110,6 +110,10 @@ static int test_axes_and_partial_reports(void)
     report.axis[1] = 255;
     slot2_gamepad_service_report(0, &report, 8);
     CHECK(snapshot().buttons[0] == 0x061);
+    report.generic_axes = 1U;
+    slot2_gamepad_service_report(1, &report, 8);
+    CHECK(snapshot().present == 1U && snapshot().slots[1] == ONEE_INPUT_DEVICE_SLOT_COUNT);
+    report.generic_axes = 0U;
     onee_input_joystick_report_t high = {0};
     high.buttons_valid = 1U;
     high.buttons_mask = UINT32_C(0xFFFF0000);

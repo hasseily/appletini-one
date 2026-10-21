@@ -38,6 +38,7 @@ static unsigned input_during_clear;
 static unsigned in_callback;
 static unsigned kills;
 static unsigned connects;
+static unsigned identifies;
 static unsigned disconnects;
 static unsigned reports;
 static int allocated_slot = 3;
@@ -186,6 +187,17 @@ int usb_gamepad_input_connect(void)
     return allocated_slot;
 }
 
+void usb_gamepad_input_identify(uint8_t slot, struct usbh_hubport *hport,
+                                uint8_t interface, uint8_t transport)
+{
+    CHECK(slot == (uint8_t)allocated_slot && hport == &port &&
+          interface == 0U && transport == 2U,
+          "Xbox One registered the wrong controller identity");
+    CHECK(connects == identifies + 1U && !pending[0] && !pending[1],
+          "Xbox One identity must precede report transfers");
+    ++identifies;
+}
+
 void usb_gamepad_input_disconnect(uint8_t slot)
 {
     CHECK(slot == (uint8_t)allocated_slot, "disconnect released another device slot");
@@ -197,6 +209,7 @@ void usb_gamepad_input_report(uint8_t slot,
                               uint8_t hat, uint8_t extra_active)
 {
     CHECK(slot == (uint8_t)allocated_slot, "report reached another device slot");
+    CHECK(identifies == connects, "report preceded controller identity registration");
     ++reports;
     last_slot = slot;
     last_report = *report;
@@ -210,6 +223,7 @@ int usbh_submit_urb(struct usbh_urb *urb)
         return clear_halt(urb);
     }
     unsigned direction = (urb->ep->bEndpointAddress & 0x80U) != 0U;
+    CHECK(identifies == connects, "transfer preceded controller identity registration");
     CHECK(urb->timeout == 0U, "driver used a blocking transfer");
     CHECK(urb->complete != NULL, "async transfer has no callback");
     CHECK(pending[direction] == NULL, "same endpoint submitted twice");
@@ -309,7 +323,7 @@ static void prepare(void)
     complete_out_during_clear = input_during_clear = 0U;
     memset(&last_report, 0, sizeof(last_report));
     now_ms = 100U;
-    connects = disconnects = reports = kills = 0U;
+    connects = identifies = disconnects = reports = kills = 0U;
     allocated_slot = 3;
     port.connected = true;
     port.speed = USB_SPEED_FULL;
@@ -781,12 +795,15 @@ static void test_input_and_ack(void)
           last_report.axis[ONEE_INPUT_AXIS_Z] == 512 &&
           last_report.axis[ONEE_INPUT_AXIS_RZ] == 1023,
           "stick signs, Y inversion, or triggers mapped incorrectly");
-    for (unsigned axis = 0; axis < ONEE_INPUT_AXIS_COUNT; ++axis) {
+    for (unsigned axis = 0; axis < 6U; ++axis) {
         unsigned trigger = axis == ONEE_INPUT_AXIS_Z || axis == ONEE_INPUT_AXIS_RZ;
         CHECK(last_report.logical_min[axis] == (trigger ? 0 : -32768) &&
               last_report.logical_max[axis] == (trigger ? 1023 : 32767),
               "axis ranges do not match wire values");
     }
+    for (unsigned axis = 6U; axis < ONEE_INPUT_AXIS_COUNT; ++axis)
+        CHECK(last_report.logical_min[axis] == 0 && last_report.logical_max[axis] == 0,
+              "Xbox One exposed absent generic axes");
     onee_input_joystick_report_t saved = last_report;
     receive(guide, sizeof(guide));
     CHECK(pending[0] != NULL && pending_out_length == sizeof(ack) &&

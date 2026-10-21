@@ -8,7 +8,15 @@
 /* Vendor gamepads share the eight menu/input slots with HID interfaces. */
 int usb_gamepad_input_connect(void);
 void usb_gamepad_input_disconnect(uint8_t slot);
+struct usbh_hubport;
+/* Transport/identity values are declared in usb_controller_identity.h. */
+void usb_gamepad_input_identify(uint8_t slot, struct usbh_hubport *port,
+                               uint8_t interface_id, uint8_t transport);
 
+#define USB_GAMEPAD_BUTTON_A 0U
+#define USB_GAMEPAD_BUTTON_B 1U
+#define USB_GAMEPAD_BUTTON_LEFT_SHOULDER 4U
+#define USB_GAMEPAD_BUTTON_RIGHT_SHOULDER 5U
 #define USB_GAMEPAD_BUTTON_LEFT_STICK 8U
 #define USB_GAMEPAD_BUTTON_RIGHT_STICK 9U
 #define USB_GAMEPAD_BUTTON_HOME 10U

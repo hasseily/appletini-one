@@ -325,6 +325,8 @@ static void mouse_publish_state(unsigned ready, int x, int y, unsigned buttons)
 { (void)ready; (void)x; (void)y; (void)buttons; }
 static void mouse_mark_disconnected(void) { g_ready = 0U; }
 static void onee_input_service_release_all(void) {}
+static void usb_xbox_one_stop(void) {}
+static void usb_xbox_360_stop(void) {}
 static void cherry_event_handler(uint8_t b, uint8_t h, uint8_t p, uint8_t i, uint8_t e)
 { (void)b; (void)h; (void)p; (void)i; (void)e; }
 static int usbh_initialize(uint8_t busid, uintptr_t base,

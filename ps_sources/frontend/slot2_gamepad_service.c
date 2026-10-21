@@ -187,7 +187,7 @@ void slot2_gamepad_service_set_player_devices(const uint8_t devices[4])
 void slot2_gamepad_service_report(uint8_t slot,
     const onee_input_joystick_report_t *report, uint8_t hat)
 {
-    if (slot >= ONEE_INPUT_DEVICE_SLOT_COUNT || report == NULL) {
+    if (slot >= ONEE_INPUT_DEVICE_SLOT_COUNT || report == NULL || report->generic_axes) {
         return;
     }
     slot2_input_t *input = &g_inputs[slot];

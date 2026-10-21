@@ -132,12 +132,15 @@ static void config_menu_draw_joystick(uint16_t *fb,
     char value[32];
 
     onee_input_service_get_joystick_snapshot(&snapshot);
-    const unsigned selected_slot = config->device == 0U ?
-        snapshot.owner_slot : (unsigned)config->device - 1U;
+    const unsigned selected_slot = usb_controller_identity_resolve(
+        &config->identity, config->device, snapshot.connected_mask);
     const onee_input_joystick_device_snapshot_t *device =
         selected_slot < ONEE_INPUT_DEVICE_SLOT_COUNT ?
             &snapshot.devices[selected_slot] : NULL;
     const uint8_t device_connected = device != NULL && device->connected;
+    usb_controller_device_t controller;
+    const uint8_t named_device = device_connected &&
+        usb_controller_identity_get((uint8_t)selected_slot, &controller) && controller.name[0];
     const uint8_t standalone =
         menu->onee_mode_state == CONFIG_MENU_ONEE_MODE_RUNNING;
     const uint8_t available = standalone || snapshot.active;
@@ -170,9 +173,22 @@ static void config_menu_draw_joystick(uint16_t *fb,
         } else {
             (void)snprintf(value, sizeof(value), "Auto (unavailable)");
         }
+    } else if (usb_controller_identity_valid(&config->identity)) {
+        if (device_connected) {
+            (void)snprintf(value, sizeof(value), "Input %u (saved device)", selected_slot + 1U);
+        } else {
+            (void)snprintf(value, sizeof(value), "Saved device (unavailable)");
+        }
     } else {
         (void)snprintf(value, sizeof(value), "Input %u (%s)", (unsigned)config->device,
                        device_connected ? "connected" : "unavailable");
+    }
+    if (named_device) {
+        (void)snprintf(value, sizeof(value), "%s %u: %.*s%s",
+                       config->device == 0U ? "Auto" : "Input", selected_slot + 1U,
+                       usb_controller_identity_valid(&config->identity) ? 14 : 20,
+                       controller.name,
+                       usb_controller_identity_valid(&config->identity) ? " (saved)" : "");
     }
     hgr_draw_value_item(fb, x, y + row_h, controls_w, menu->joystick_focus == 1U,
                         "Source device:", value);
@@ -235,6 +251,10 @@ static void config_menu_draw_joystick(uint16_t *fb,
         (void)snprintf(line, sizeof(line), "X: %s  Y: %s  Z: %s  RX: %s  RY: %s  RZ: %s",
                        raw[0], raw[1], raw[2], raw[3], raw[4], raw[5]);
         cmui_compact_entry("Raw axes", line, 0U, 0U);
+        (void)snprintf(line, sizeof(line), "Slider: %s  Dial: %s  Wheel: %s  Pan: %s",
+                       raw[ONEE_INPUT_AXIS_SLIDER], raw[ONEE_INPUT_AXIS_DIAL],
+                       raw[ONEE_INPUT_AXIS_WHEEL], raw[ONEE_INPUT_AXIS_PAN]);
+        cmui_compact_entry("Extra axes", line, 0U, 0U);
         config_menu_gamepad_buttons_text(line, sizeof(line),
                                          device_connected ? device->buttons : 0U);
         cmui_compact_entry("Input buttons", line, 0U, 0U);
@@ -261,16 +281,18 @@ static void config_menu_draw_joystick(uint16_t *fb,
         (void)snprintf(line, sizeof(line), "Raw axes: no input connected");
     }
     cmui_caption(fb, preview_x, y + 6 * row_h, preview_w, line);
-    for (unsigned axis = 0U; axis < 6U; ++axis) {
+    for (unsigned axis = 0U; axis < ONEE_INPUT_AXIS_COUNT; ++axis) {
         const unsigned col = axis % 3U;
         const unsigned row = axis / 3U;
         if (device_connected && (device->axis_valid_mask & (1U << axis)) != 0U) {
             (void)snprintf(line, sizeof(line), "%s: %u",
-                           config_menu_joystick_source_text((uint8_t)(axis + 1U)),
+                           config_menu_joystick_source_text(
+                               onee_input_joystick_axis_source((onee_input_axis_t)axis)),
                            (unsigned)device->axis[axis]);
         } else {
             (void)snprintf(line, sizeof(line), "%s: --",
-                           config_menu_joystick_source_text((uint8_t)(axis + 1U)));
+                           config_menu_joystick_source_text(
+                               onee_input_joystick_axis_source((onee_input_axis_t)axis)));
         }
         cmui_text(fb, preview_x + (int)col * (preview_w / 3),
                   y + 7 * row_h + (int)row * 28, line,
@@ -279,7 +301,7 @@ static void config_menu_draw_joystick(uint16_t *fb,
     (void)snprintf(line, sizeof(line), "Buttons: ");
     config_menu_gamepad_buttons_text(line + 9, sizeof(line) - 9,
                                      device_connected ? device->buttons : 0U);
-    cmui_caption(fb, preview_x, y + 9 * row_h, preview_w, line);
+    cmui_caption(fb, preview_x, y + 10 * row_h, preview_w, line);
 }
 
 void config_menu_draw_usb(uint16_t *fb,

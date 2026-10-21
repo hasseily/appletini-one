@@ -12,7 +12,7 @@
 #include "usb_hid.h"
 #include "../lib/common.h"
 
-#define ONEE_INPUT_KEY_TRACK_COUNT 8U
+#define ONEE_INPUT_KEY_TRACK_COUNT 64U
 #define ONEE_INPUT_QUEUE_DEPTH 32U
 /* Use wall time because the frontend poll rate changes with display, storage,
  * and USB work. Poll counts made a short tap repeat on a fast main loop. */
@@ -68,8 +68,9 @@ typedef struct {
     uint8_t reset_delete_consumed;
     uint8_t reset_modifier_consumed;
     uint8_t joystick_seen;
+    uint8_t joystick_generic_axes;
     uint32_t joystick_buttons;
-    uint8_t joystick_axis_valid;
+    uint16_t joystick_axis_valid;
     uint8_t joystick_axes[ONEE_INPUT_AXIS_COUNT];
 } onee_input_slot_t;
 
@@ -379,7 +380,7 @@ static uint32_t onee_live_word(void)
             }
         }
         if (joystick_owner == ONEE_INPUT_DEVICE_SLOT_COUNT &&
-            slot->joystick_seen != 0U) {
+            slot->joystick_seen != 0U && slot->joystick_generic_axes == 0U) {
             joystick_owner = i;
         }
     }
@@ -395,10 +396,10 @@ static uint8_t onee_axis_or_neutral(const onee_input_slot_t *slot,
                                     onee_input_axis_t preferred,
                                     onee_input_axis_t fallback)
 {
-    if ((slot->joystick_axis_valid & (uint8_t)(1U << preferred)) != 0U) {
+    if ((slot->joystick_axis_valid & (uint16_t)(1U << preferred)) != 0U) {
         return slot->joystick_axes[preferred];
     }
-    if ((slot->joystick_axis_valid & (uint8_t)(1U << fallback)) != 0U) {
+    if ((slot->joystick_axis_valid & (uint16_t)(1U << fallback)) != 0U) {
         return slot->joystick_axes[fallback];
     }
     return 0x80U;
@@ -429,15 +430,15 @@ static uint8_t onee_mapped_paddle(const onee_input_slot_t *slot, uint8_t paddle)
     }
     if (config->source == ONEE_INPUT_JOYSTICK_SOURCE_AUTO) {
         axis = preferred[paddle];
-        if ((slot->joystick_axis_valid & (uint8_t)(1U << axis)) == 0U) {
+        if ((slot->joystick_axis_valid & (uint16_t)(1U << axis)) == 0U) {
             axis = fallback[paddle];
         }
     } else {
-        axis = (onee_input_axis_t)(config->source -
-                                 ONEE_INPUT_JOYSTICK_SOURCE_X);
+        axis = onee_input_joystick_source_axis(config->source);
     }
     /* Missing/disabled axes stay centered even when inversion is selected. */
-    if ((slot->joystick_axis_valid & (uint8_t)(1U << axis)) == 0U) {
+    if (axis >= ONEE_INPUT_AXIS_COUNT ||
+        (slot->joystick_axis_valid & (uint16_t)(1U << axis)) == 0U) {
         return 0x80U;
     }
     value = onee_axis_or_neutral(slot, axis, axis);
@@ -464,22 +465,21 @@ static const onee_input_slot_t *onee_paddle_slot(uint8_t paddle)
 {
     const onee_input_joystick_paddle_config_t *config =
         &g_joystick_config.paddle[paddle];
+    uint8_t connected = 0U;
+    uint8_t selected;
 
     if (config->source == ONEE_INPUT_JOYSTICK_SOURCE_OFF) {
         return NULL;
     }
-    if (config->device != 0U) {
-        const uint8_t index = (uint8_t)(config->device - 1U);
-        /* An explicit device never falls back to another controller. */
-        return (index < ONEE_INPUT_DEVICE_SLOT_COUNT &&
-                g_slots[index].joystick_seen != 0U) ? &g_slots[index] : NULL;
-    }
     for (uint8_t i = 0U; i < ONEE_INPUT_DEVICE_SLOT_COUNT; ++i) {
-        if (g_slots[i].joystick_seen != 0U) {
-            return &g_slots[i];
+        if (g_slots[i].joystick_seen != 0U &&
+            (g_slots[i].joystick_generic_axes == 0U || config->device != 0U ||
+             usb_controller_identity_valid(&config->identity))) {
+            connected |= (uint8_t)(1U << i);
         }
     }
-    return NULL;
+    selected = usb_controller_identity_resolve(&config->identity, config->device, connected);
+    return selected < ONEE_INPUT_DEVICE_SLOT_COUNT ? &g_slots[selected] : NULL;
 }
 
 static uint32_t onee_paddles_word(void)
@@ -510,7 +510,7 @@ static void vtw_joystick_poll(void)
     /* Keep buttons on the first joystick, independent of paddle mappings. Alt,
      * Apple keys, and keyboard events belong to the ONE//e bridge. */
     for (uint8_t i = 0U; i < ONEE_INPUT_DEVICE_SLOT_COUNT; ++i) {
-        if (g_slots[i].joystick_seen != 0U) {
+        if (g_slots[i].joystick_seen != 0U && g_slots[i].joystick_generic_axes == 0U) {
             /* Menus keep the virtual port present and centered rather than
              * exposing physical inputs while guest delivery is blocked. */
             control = CARD_CTRL_VTW_JOYSTICK_PRESENT_BIT;
@@ -520,6 +520,14 @@ static void vtw_joystick_poll(void)
                            CARD_CTRL_VTW_JOYSTICK_BUTTON_SHIFT;
             }
             break;
+        }
+    }
+    if (control == 0U) {
+        for (uint8_t paddle = 0U; paddle < ONEE_INPUT_PADDLE_COUNT; ++paddle) {
+            if (onee_paddle_slot(paddle) != NULL) {
+                control = CARD_CTRL_VTW_JOYSTICK_PRESENT_BIT;
+                break;
+            }
         }
     }
     /* The mode may leave and return between polls. Hardware clears presence
@@ -569,7 +577,7 @@ void onee_input_service_set_joystick_config(
     if (config != NULL) {
         for (uint8_t i = 0U; i < ONEE_INPUT_PADDLE_COUNT; ++i) {
             next.paddle[i] = config->paddle[i];
-            if (next.paddle[i].source > ONEE_INPUT_JOYSTICK_SOURCE_OFF) {
+            if (next.paddle[i].source >= ONEE_INPUT_JOYSTICK_SOURCE_COUNT) {
                 next.paddle[i].source = ONEE_INPUT_JOYSTICK_SOURCE_AUTO;
             }
             if (next.paddle[i].device > ONEE_INPUT_DEVICE_SLOT_COUNT) {
@@ -626,6 +634,7 @@ void onee_input_service_get_joystick_snapshot(
             continue;
         }
         device->connected = 1U;
+        device->generic_axes = slot->joystick_generic_axes;
         device->axis_valid_mask = slot->joystick_axis_valid;
         device->buttons = slot->joystick_buttons;
         snapshot->connected_mask |= (uint8_t)(1U << i);
@@ -634,7 +643,7 @@ void onee_input_service_get_joystick_snapshot(
                 slot, (onee_input_axis_t)axis, (onee_input_axis_t)axis);
         }
         /* Retain the first-controller view for buttons and existing callers. */
-        if (snapshot->connected == 0U) {
+        if (snapshot->connected == 0U && slot->joystick_generic_axes == 0U) {
             snapshot->connected = 1U;
             snapshot->owner_slot = i;
             snapshot->axis_valid_mask = device->axis_valid_mask;
@@ -918,19 +927,20 @@ void onee_input_service_joystick_report(
     }
     slot = &g_slots[slot_index];
     slot->joystick_seen = 1U;
+    slot->joystick_generic_axes = (report->generic_axes != 0U) ? 1U : 0U;
     if (report->buttons_valid != 0U) {
         const uint32_t mask = report->buttons_mask ? report->buttons_mask : UINT32_MAX;
         slot->joystick_buttons = (slot->joystick_buttons & ~mask) | (report->buttons & mask);
     }
     for (uint8_t axis = 0U; axis < ONEE_INPUT_AXIS_COUNT; ++axis) {
-        if ((report->axis_valid_mask & (uint8_t)(1U << axis)) == 0U) {
+        if ((report->axis_valid_mask & (uint16_t)(1U << axis)) == 0U) {
             continue;
         }
         slot->joystick_axes[axis] = onee_normalize_axis(
             report->axis[axis],
             report->logical_min[axis],
             report->logical_max[axis]);
-        slot->joystick_axis_valid |= (uint8_t)(1U << axis);
+        slot->joystick_axis_valid |= (uint16_t)(1U << axis);
     }
     g_live_dirty = 1U;
     g_paddles_dirty = 1U;

@@ -3819,14 +3819,67 @@ static void ui_save_screenshot(screenshot_service_kind_t kind)
     }
 }
 
+static void ui_toggle_usb_gamepad_menu(ui_state_t *s, config_menu_t *menu)
+{
+    if (!config_menu_is_active(menu)) {
+        g_usb_menu_owned = 1U;
+        ui_set_boot_menu_visible(s, menu, 1U);
+        return;
+    }
+    /* An update must finish before any input can leave its progress page. */
+    if (menu->golden_boot_update_pending != 0U) {
+        return;
+    }
+    if (config_menu_usb0_sd_remote_active(menu) != 0U ||
+        config_menu_ethernet_ftp_sd_remote_active(menu) != 0U) {
+        ui_close_config_menu_child(s, menu);
+        if (config_menu_usb0_sd_remote_active(menu) != 0U ||
+            config_menu_ethernet_ftp_sd_remote_active(menu) != 0U) {
+            return;
+        }
+    }
+    if (g_usb_menu_owned == 0U) {
+        ui_request_boot_menu_close(menu);
+    } else {
+        g_usb_menu_owned = 0U;
+        ui_set_boot_menu_visible(s, menu, 0U);
+    }
+}
+
 static void ui_handle_usb_menu_event(ui_state_t *s,
                                      config_menu_t *menu,
                                      const usb_hid_menu_event_t *event)
 {
     ui_key_t key;
+    ui_key_t fixed_key = UI_KEY_NONE;
 
     if (event == NULL) {
         return;
+    }
+    /* Learn one physical source before its fixed or global action can fire. */
+    if (event->fixed_action != USB_HID_MENU_ACTION_NONE) {
+        if (config_menu_is_active(menu) &&
+            config_menu_usb_binding_capture_action(menu) != CONFIG_MENU_USB_BIND_CAPTURE_NONE) {
+            (void)config_menu_capture_usb_binding(menu, event->source);
+            return;
+        }
+        if (event->fixed_action == USB_HID_MENU_ACTION_TOGGLE) {
+            ui_toggle_usb_gamepad_menu(s, menu);
+        } else {
+            fixed_key = config_menu_translate_usb_fixed_action(event->fixed_action);
+            if (config_menu_is_active(menu) && fixed_key != UI_KEY_NONE) {
+                if (fixed_key == UI_KEY_SHIFT_TAB || fixed_key == UI_KEY_TAB) {
+                    if (config_menu_handle_usb_fixed_tab(menu,
+                            fixed_key == UI_KEY_SHIFT_TAB ? -1 : 1)) {
+                        s->last_key = fixed_key;
+                        s->key_count++;
+                        s->input_seq++;
+                    }
+                } else {
+                    ui_handle_input_with_config(s, menu, ui_make_input(fixed_key));
+                }
+            }
+        }
     }
 
     switch (event->action) {
@@ -3854,7 +3907,7 @@ static void ui_handle_usb_menu_event(ui_state_t *s,
         break;
     }
 
-    if (config_menu_is_active(menu) &&
+    if (event->fixed_action == USB_HID_MENU_ACTION_NONE && config_menu_is_active(menu) &&
         config_menu_usb_binding_capture_action(menu) !=
         CONFIG_MENU_USB_BIND_CAPTURE_NONE) {
         (void)config_menu_capture_usb_binding(menu, event->source);
@@ -3896,12 +3949,14 @@ static void ui_handle_usb_menu_event(ui_state_t *s,
         break;
     }
 
-    if (!config_menu_is_active(menu)) {
+    if (event->fixed_action == USB_HID_MENU_ACTION_TOGGLE || !config_menu_is_active(menu)) {
         return;
     }
 
-    key = ui_key_from_usb_menu_source(menu, event->source);
-    if (key == UI_KEY_NONE) {
+    key = event->fixed_action != USB_HID_MENU_ACTION_NONE ?
+        config_menu_translate_usb_binding_explicit(menu, event->source) :
+        ui_key_from_usb_menu_source(menu, event->source);
+    if (key == UI_KEY_NONE || key == fixed_key) {
         return;
     }
 

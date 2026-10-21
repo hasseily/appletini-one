@@ -1,7 +1,7 @@
 # USB1 host startup
 
-USB1 serves the keyboard, mouse, and other HID devices, including devices
-behind a USB hub. USB0 has a separate device-side role.
+USB1 serves keyboards, mice, HID axis devices and wired Xbox 360/Xbox One
+controllers, including devices behind a USB hub. USB0 has a separate device-side role.
 
 ## Startup and connector power
 
@@ -66,6 +66,10 @@ For USB joystick input, axis mapping, and paddle timing, see
 ```text
 python scripts/test_usb1_phy_startup.py
 python scripts/test_usb_hid_service.py
+python scripts/test_usb_gamepad_input.py
+python scripts/test_usb_controller_identity.py
+python scripts/test_usb_xbox_360.py
+python scripts/test_cherryusb_time.py
 python scripts/test_boot_menu_usb_keybindings.py
 python scripts/test_onee_usb_controls.py
 python scripts/test_onee_input_service.py

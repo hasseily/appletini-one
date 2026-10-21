@@ -22,7 +22,9 @@ typedef enum {
     USB_HID_MENU_ACTION_VTW_SPEED_TOGGLE,
     USB_HID_MENU_ACTION_VTW_SPEED_UP,
     USB_HID_MENU_ACTION_VTW_SPEED_DOWN,
-    USB_HID_MENU_ACTION_VTW_SLUG_TOGGLE
+    USB_HID_MENU_ACTION_VTW_SLUG_TOGGLE,
+    USB_HID_MENU_ACTION_BACK,
+    USB_HID_MENU_ACTION_TOGGLE
 } usb_hid_menu_action_t;
 
 #define USB_HID_VTW_SOURCE_COUNT 4U
@@ -36,6 +38,8 @@ typedef enum {
 typedef struct {
     usb_hid_menu_action_t action;
     usb_hid_menu_source_t source;
+    /* Fixed controller controls coexist with an explicit source binding. */
+    usb_hid_menu_action_t fixed_action;
 } usb_hid_menu_event_t;
 
 typedef struct {
@@ -65,13 +69,14 @@ void usb_hid_service_poll(void);
 uint32_t usb_hid_service_activity_count(void);
 void usb_hid_service_set_sensitivity(uint8_t sensitivity);
 void usb_hid_service_set_menu_capture(uint8_t capture);
-/* Axis/hat motion updates calibration preview without navigating its page.
- * Keyboard, mouse, and joystick button menu actions stay available. */
+/* Analog motion updates calibration preview without navigating its page.
+ * Fixed D-pad and button controls remain available. Binding capture consumes
+ * their physical sources before any fixed or saved action can fire. */
 void usb_hid_service_set_joystick_preview(uint8_t active);
-/* Suppress controller tab shortcuts while the UI learns a binding. */
+/* Learn one physical source before its fixed or saved action can fire. */
 void usb_hid_service_set_binding_capture(uint8_t active);
 void usb_hid_service_set_gamepad_binding_mask(uint32_t mask);
-/* ONE//e replaces saved key bindings with a fixed control set. Blocking the
+/* ONE//e adds its reserved keyboard controls. Blocking the
  * Apple bridge releases guest input but keeps joystick preview reports live. */
 void usb_hid_service_set_onee_fixed_mode(uint8_t enable);
 void usb_hid_service_set_onee_input_blocked(uint8_t blocked);

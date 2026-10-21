@@ -17,8 +17,11 @@
 #define CONFIG_USBHOST_MAX_EHPORTS 8
 #define CONFIG_USBHOST_MAX_INTERFACES 8
 #define CONFIG_USBHOST_MAX_INTF_ALTSETTINGS 2
-#define CONFIG_USBHOST_MAX_ENDPOINTS 4
+/* The pinned parser rejects a count equal to this capacity. Xbox 360
+ * interface 1 advertises four endpoints, so the local capacity is five. */
+#define CONFIG_USBHOST_MAX_ENDPOINTS 5
 #define CONFIG_USBHOST_MAX_HID_CLASS 8
+#define CONFIG_USBHOST_MAX_XBOX_CLASS 4
 #define CONFIG_USB_HID_MAX_REPORT_ITEMS 48
 #define CONFIG_USBHOST_DEV_NAMELEN 16
 #define CONFIG_USBHOST_REQUEST_BUFFER_LEN 512

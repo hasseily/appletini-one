@@ -79,7 +79,8 @@ module tb_apple_timing_reset;
     // clocks without a bus strobe, so a reset-induced update cannot hide.
     bit tracking = 1'b0;
     int next_line, next_cycle, shown_line, shown_cycle;
-    int ticks, reset_ticks, vbl_edges;
+    int ticks, reset_ticks, vbl_edges, rdvbl_edges;
+    int lag_line;
     logic expected_update;
     always @(posedge clk) begin
         if (tracking) begin
@@ -107,6 +108,16 @@ module tb_apple_timing_reset;
                   (expected_update && shown_line == 192 && shown_cycle == 0),
                   "VBL heartbeat changed phase");
             if (dut.apple_vblank_start_pulse) vbl_edges++;
+            // ONE//e RDVBLBAR classifies the line of the previous native
+            // cycle: each VBL edge appears one cycle after the raw counter.
+            lag_line = (shown_cycle != 0) ? shown_line :
+                       (shown_line == 0) ? (host_50hz ? 311 : 261) :
+                       shown_line - 1;
+            check(dut.onee_video_vblank === (lag_line >= 192),
+                  $sformatf("ONE//e RDVBLBAR phase wrong at %0d:%0d",
+                            shown_line, shown_cycle));
+            if (expected_update && shown_line == 192 && shown_cycle == 1)
+                rdvbl_edges++;
         end
     end
 
@@ -159,6 +170,7 @@ module tb_apple_timing_reset;
         ticks = 0;
         reset_ticks = 0;
         vbl_edges = 0;
+        rdvbl_edges = 0;
         for (int standard = 0; standard < 2; standard++) begin
             @(negedge clk);
             tracking = 1'b0;
@@ -198,7 +210,8 @@ module tb_apple_timing_reset;
             phi0_running = 1'b1;
             repeat (20) @(negedge phi0);
         end
-        check(ticks > 70000 && reset_ticks > 35000 && vbl_edges >= 4,
+        check(ticks > 70000 && reset_ticks > 35000 && vbl_edges >= 4 &&
+              rdvbl_edges >= 4,
               "reset/frame coverage did not run");
 
         // Host power-off stops all slot clocks. The existing activity guard
@@ -244,8 +257,8 @@ module tb_apple_timing_reset;
               "return to physical PHI0 did not rearm calibration");
         calibrate();
         repeat (20) @(negedge phi0);
-        $display("APPLE TIMING RESET PASS ticks=%0d reset_ticks=%0d VBL=%0d",
-                 ticks, reset_ticks, vbl_edges);
+        $display("APPLE TIMING RESET PASS ticks=%0d reset_ticks=%0d VBL=%0d RDVBL=%0d",
+                 ticks, reset_ticks, vbl_edges, rdvbl_edges);
         $finish;
     end
 

@@ -6,6 +6,11 @@ The counter uses 65 cycles per line and 262 NTSC or 312 PAL lines per frame.
 VBL starts at line 192. The same line and cycle feed capture timestamps,
 MouseCard VBL, the HDMI activity pulse, and vTW scanner reads.
 
+Synthesized `$C019` RDVBLBAR changes one native cycle after the raw counter,
+as on a //e: VBL starts at 192:1 and ends at 0:1. The vTW status path and the
+ONE//e `onee_video_vblank` signal both apply this lag. Floating-bus reads use
+the scanner position two cycles before the raw counter.
+
 Apple RES# must neither stop this counter nor force it to frame zero.
 The old `apple_top` connection seeded line 0, cycle 0 when RES# rose and
 cleared the VBL phase lock while RES# stayed low. CTRL-RESET could therefore

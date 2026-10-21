@@ -378,7 +378,13 @@ module apple_top(
     logic update_pulse;
     logic [8:0] line_in_frame;
     logic [6:0] cycle_in_line;
-    assign onee_video_vblank = (line_in_frame >= 9'd192);
+    /* ONE//e RDVBLBAR. The //e exposes each VBL edge one native cycle
+     * after the raw scanner counter, as the vTW status path models. At
+     * cycle 0, classify the previous line: VBL starts at 192:1 and ends at
+     * 0:1. The raw level read one cycle early against HGR vapor lock. */
+    assign onee_video_vblank = (cycle_in_line == 7'd0) ?
+        ((line_in_frame >= 9'd193) || (line_in_frame == 9'd0)) :
+        (line_in_frame >= 9'd192);
     logic       video_mode_50hz_detected_q;
     logic       video_mode_50hz_valid_q;
     logic mouse_vblank_start_pulse;

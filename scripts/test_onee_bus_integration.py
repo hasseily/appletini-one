@@ -74,9 +74,12 @@ def static_checks() -> None:
     )
     require(
         ".video_vblank            (onee_video_vblank)" in top and
-        "assign onee_video_vblank = (line_in_frame >= 9'd192);" in top and
+        "assign onee_video_vblank = (cycle_in_line == 7'd0) ?\n"
+        "        ((line_in_frame >= 9'd193) || (line_in_frame == 9'd0)) :\n"
+        "        (line_in_frame >= 9'd192);" in top and
         "wire       onee_speaker;" in top,
-        "motherboard I/O must expose its speaker and use native VBL",
+        "motherboard I/O must expose its speaker and use native VBL "
+        "one cycle after the raw scanner, as the //e does",
     )
     require(
         "onee_input_bridge onee_input_bridge_i" in top and

@@ -1,5 +1,9 @@
 # Tighten fabric and Apple direction paths before optimization. Keep the pixel
 # clock nominal until finish_video_timing.tcl performs its routed repair.
+source [file join [file dirname [info script]] fabric_timing_margin.tcl]
+set implementation_setup_margin [appletini_timing_margin::value]
+set temporary_direction_limit [format %.3f [expr {10.000 - $implementation_setup_margin}]]
+set temporary_phi0_limit [format %.3f [expr {8.000 - $implementation_setup_margin}]]
 proc appletini_check_bus_output_limits {fabric_clock dir_limit phi_limit} {
     set dir_ports [get_ports -quiet {a2fpga_dir_a a2fpga_dir_d}]
     set phi0_port [get_ports -quiet a2fpga_clk]
@@ -48,13 +52,13 @@ foreach margin_clock $margin_clocks {
     }
 }
 
-set_clock_uncertainty -setup 0.200 $fabric_clock
+set_clock_uncertainty -setup $implementation_setup_margin $fabric_clock
 # These match the selectors and exception types in appletini_yarz.xdc.
 # The port-to-port exception is more specific than the two direction limits.
-set_max_delay 9.800 -to [get_ports {a2fpga_dir_a a2fpga_dir_d}]
-set_max_delay -datapath_only 7.800 \
+set_max_delay $temporary_direction_limit -to [get_ports {a2fpga_dir_a a2fpga_dir_d}]
+set_max_delay -datapath_only $temporary_phi0_limit \
     -from [get_ports a2fpga_clk] -to [get_ports a2fpga_dir_d]
-appletini_check_bus_output_limits $fabric_clock 9.800 7.800
+appletini_check_bus_output_limits $fabric_clock $temporary_direction_limit $temporary_phi0_limit
 
 foreach margin_clock $margin_clocks {
     set margin_path [get_timing_paths -quiet -delay_type max \
@@ -64,11 +68,11 @@ foreach margin_clock $margin_clocks {
     }
     set user_uncertainty [get_property USER_UNCERTAINTY $margin_path]
     if {$user_uncertainty eq ""} {set user_uncertainty 0.000}
-    set expected [expr {$margin_clock eq $fabric_clock ? 0.200 : 0.000}]
+    set expected [expr {$margin_clock eq $fabric_clock ? $implementation_setup_margin : 0.000}]
     if {![string is double -strict $user_uncertainty] ||
         abs(double($user_uncertainty) - $expected) > 0.0005} {
         error "$margin_clock implementation margin did not apply: $user_uncertainty ns."
     }
     puts "Implementation setup margin for $margin_clock: $user_uncertainty ns"
 }
-puts "Applied temporary Apple output limits: direction 9.800 ns, PHI0 release 7.800 ns"
+puts "Applied temporary Apple output limits: direction $temporary_direction_limit ns, PHI0 release $temporary_phi0_limit ns"

@@ -9,7 +9,9 @@ ROOT = Path(__file__).resolve().parents[1]
 APPLY = ROOT / "scripts/apply_fabric_timing_margin.tcl"
 CLEAR = ROOT / "scripts/clear_fabric_timing_margin.tcl"
 FINISH = ROOT / "scripts/finish_video_timing.tcl"
+CONFIG = ROOT / "scripts/fabric_timing_margin.tcl"
 MODEL = r"""
+set model_margin 0.2
 set uncertainty 0.0
 set pixel_uncertainty 0.0
 set dir_limit 10.0
@@ -71,7 +73,7 @@ proc set_clock_uncertainty {args} {
     lappend ::clock_writes $args
     set value [lindex $args 1]
     foreach clock [lindex $args end] {
-        if {($value == 0.2 && $clock eq $::ignore_clock_apply) ||
+        if {($value == $::model_margin && $clock eq $::ignore_clock_apply) ||
             ($value == 0.0 && $clock eq $::ignore_clock_restore)} {continue}
         switch $clock {
             fabric_clock {set ::uncertainty $value}
@@ -84,7 +86,7 @@ proc set_max_delay {args} {
     lappend ::writes $args
     set datapath [expr {[lindex $args 0] eq "-datapath_only"}]
     set limit [lindex $args $datapath]
-    if {($::ignore_apply && $limit in {9.800 7.800}) ||
+    if {($::ignore_apply && ($limit == 10.0 - $::model_margin || $limit == 8.0 - $::model_margin)) ||
         ($::ignore_restore && $limit in {10.000 8.000})} {return}
     if {$datapath} {
         if {[lindex $args end] ne "a2fpga_dir_d" ||
@@ -103,8 +105,8 @@ proc phys_opt_design {args} {
     if {$args ne {-directive AggressiveExplore}} {
         error "Unexpected routed repair options: $args"
     }
-    if {$::uncertainty != 0.2 || $::pixel_uncertainty != 0.2 ||
-        $::dir_limit != 9.8 || $::phi_limit != 7.8} {
+    if {$::uncertainty != $::model_margin || $::pixel_uncertainty != $::model_margin ||
+        $::dir_limit != 10.0 - $::model_margin || $::phi_limit != 8.0 - $::model_margin} {
         error "Routed repair ran without both margins and tightened board limits"
     }
     lappend ::repairs $args
@@ -113,9 +115,13 @@ proc phys_opt_design {args} {
 """
 
 
-def model() -> tkinter.Tcl:
+def model(margin: str | None = None) -> tkinter.Tcl:
     interp = tkinter.Tcl()
     interp.eval(MODEL)
+    interp.eval("unset -nocomplain ::env(APPLETINI_IMPLEMENTATION_SETUP_MARGIN_NS)")
+    if margin is not None:
+        interp.setvar("env(APPLETINI_IMPLEMENTATION_SETUP_MARGIN_NS)", margin)
+        interp.setvar("model_margin", float(margin))
     return interp
 
 
@@ -141,6 +147,17 @@ def require_nominal(interp: tkinter.Tcl) -> None:
 
 
 def main() -> int:
+    for margin in (None, "0.200", "0.400", "1.000"):
+        interp = model(margin)
+        source(interp, CONFIG)
+        assert float(interp.call("appletini_timing_margin::value")) == (0.2 if margin is None else float(margin))
+    for value in ("", "NaN", "Inf", "-Inf", "0.199", "1.001", "0.4001", "0.4 ns", "0.4; exit"):
+        interp = model()
+        interp.setvar("env(APPLETINI_IMPLEMENTATION_SETUP_MARGIN_NS)", value)
+        expect_failure(interp, APPLY, "APPLETINI_IMPLEMENTATION_SETUP_MARGIN_NS")
+        assert int(interp.eval("llength $writes")) == 0
+        assert int(interp.eval("llength $clock_writes")) == 0
+
     # Plain apply/clear remains valid for fabric-only experiments and the
     # checkpoint round trip. The normal finish hook performs exactly one repair.
     for final_hook in (CLEAR, FINISH):
@@ -241,7 +258,35 @@ def main() -> int:
     expect_failure(interp, CLEAR, "Expected 10.000 ns")
 
     expect_failure(model(), CLEAR, "Expected 9.800 ns")
-    print("PASS: fabric-first timing, one routed AggressiveExplore pass, exact restoration and failure gates")
+    for margin in ("0.200", "0.400"):
+        for final_hook in (CLEAR, FINISH):
+            interp = model(margin)
+            source(interp, APPLY)
+            assert float(interp.eval("set uncertainty")) == float(margin)
+            assert float(interp.eval("set pixel_uncertainty")) == 0.0
+            assert float(interp.eval("set dir_limit")) == 10.0 - float(margin)
+            assert float(interp.eval("set phi_limit")) == 8.0 - float(margin)
+            source(interp, final_hook)
+            require_nominal(interp)
+            assert int(interp.eval("llength $repairs")) == int(final_hook == FINISH)
+        for clock in ("fabric_clock", "pixel_clock"):
+            interp = model(margin)
+            if clock == "pixel_clock":
+                source(interp, APPLY)
+            interp.setvar("ignore_clock_apply", clock)
+            expect_failure(interp, APPLY if clock == "fabric_clock" else FINISH,
+                           f"{clock} implementation margin did not apply")
+            assert int(interp.eval("llength $repairs")) == 0
+            interp = model(margin)
+            source(interp, APPLY)
+            interp.setvar("ignore_clock_restore", clock)
+            expect_failure(interp, FINISH, f"{clock} implementation margin did not clear")
+        interp = model(margin)
+        source(interp, APPLY)
+        interp.setvar("env(APPLETINI_IMPLEMENTATION_SETUP_MARGIN_NS)", "0.400" if margin == "0.200" else "0.200")
+        expect_failure(interp, FINISH, "before routed timing repair")
+        assert int(interp.eval("llength $repairs")) == 0
+    print("PASS: default/selected margins, finite configuration, fabric-first timing, one routed repair, exact nominal restoration and failure gates")
     return 0
 
 

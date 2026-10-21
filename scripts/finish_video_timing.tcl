@@ -1,11 +1,13 @@
 # Run AggressiveExplore once after routing, then restore nominal constraints
 # before Vivado saves the routed checkpoint and writes the bitstream.
+source [file join [file dirname [info script]] fabric_timing_margin.tcl]
+set implementation_setup_margin [appletini_timing_margin::value]
 set fabric_clock [get_clocks -quiet clk_out1_zynq_ps_bd_clk_wiz_1_0]
 set pixel_clock [get_clocks -quiet clk_out1_zynq_ps_bd_clk_wiz_0_0]
 if {[llength $fabric_clock] != 1 || [llength $pixel_clock] != 1} {
     error "Expected exactly one fabric clock and one pixel clock."
 }
-foreach finish_clock [concat $fabric_clock $pixel_clock] expected {0.200 0.000} {
+foreach finish_clock [concat $fabric_clock $pixel_clock] expected [list $implementation_setup_margin 0.000] {
     set finish_path [get_timing_paths -quiet -delay_type max \
         -from $finish_clock -to $finish_clock -max_paths 1]
     if {[llength $finish_path] != 1} {
@@ -19,7 +21,7 @@ foreach finish_clock [concat $fabric_clock $pixel_clock] expected {0.200 0.000} 
     }
 }
 
-set_clock_uncertainty -setup 0.200 $pixel_clock
+set_clock_uncertainty -setup $implementation_setup_margin $pixel_clock
 set finish_path [get_timing_paths -quiet -delay_type max \
     -from $pixel_clock -to $pixel_clock -max_paths 1]
 if {[llength $finish_path] != 1} {
@@ -27,7 +29,7 @@ if {[llength $finish_path] != 1} {
 }
 set user_uncertainty [get_property USER_UNCERTAINTY $finish_path]
 if {![string is double -strict $user_uncertainty] ||
-    abs(double($user_uncertainty) - 0.200) > 0.0005} {
+    abs(double($user_uncertainty) - $implementation_setup_margin) > 0.0005} {
     error "$pixel_clock implementation margin did not apply: $user_uncertainty ns."
 }
 

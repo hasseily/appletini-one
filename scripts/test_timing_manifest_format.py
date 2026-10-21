@@ -73,8 +73,11 @@ def main() -> int:
             "final_fabric_user_uncertainty_ns" in build_script and
             "final_pixel_user_uncertainty_ns" in build_script,
             "Vivado build must apply and clear its temporary setup margin")
-    require("set_clock_uncertainty -setup 0.200" in
+    require("set_clock_uncertainty -setup $implementation_setup_margin" in
             apply_margin_script and
+            "appletini_timing_margin::value" in apply_margin_script and
+            "appletini_timing_margin::value" in build_script and
+            "margin_config_hook_sha256" in build_script and
             "USER_UNCERTAINTY" in apply_margin_script and
             "set_clock_uncertainty -setup 0.0" in clear_margin_script and
             "USER_UNCERTAINTY" in clear_margin_script,

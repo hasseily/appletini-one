@@ -1,4 +1,8 @@
 # Restore nominal constraints after the fabric-only flow or routed timing repair.
+source [file join [file dirname [info script]] fabric_timing_margin.tcl]
+set implementation_setup_margin [appletini_timing_margin::value]
+set temporary_direction_limit [format %.3f [expr {10.000 - $implementation_setup_margin}]]
+set temporary_phi0_limit [format %.3f [expr {8.000 - $implementation_setup_margin}]]
 proc appletini_check_bus_output_limits {fabric_clock dir_limit phi_limit} {
     set dir_ports [get_ports -quiet {a2fpga_dir_a a2fpga_dir_d}]
     set phi0_port [get_ports -quiet a2fpga_clk]
@@ -30,7 +34,7 @@ set pixel_clock [get_clocks -quiet clk_out1_zynq_ps_bd_clk_wiz_0_0]
 if {[llength $fabric_clock] != 1 || [llength $pixel_clock] != 1} {
     error "Expected exactly one fabric clock and one pixel clock."
 }
-appletini_check_bus_output_limits $fabric_clock 9.800 7.800
+appletini_check_bus_output_limits $fabric_clock $temporary_direction_limit $temporary_phi0_limit
 
 set margin_clocks [concat $fabric_clock $pixel_clock]
 foreach margin_clock $margin_clocks {
@@ -45,13 +49,13 @@ foreach margin_clock $margin_clocks {
     }
     if {$margin_clock eq $fabric_clock} {
         if {![string is double -strict $user_uncertainty] ||
-            abs(double($user_uncertainty) - 0.200) > 0.0005} {
-            error "Expected 0.200 ns $margin_clock implementation margin, got $user_uncertainty ns."
+            abs(double($user_uncertainty) - $implementation_setup_margin) > 0.0005} {
+            error "Expected $implementation_setup_margin ns $margin_clock implementation margin, got $user_uncertainty ns."
         }
     } elseif {![string is double -strict $user_uncertainty] ||
               (abs(double($user_uncertainty)) > 0.0005 &&
-               abs(double($user_uncertainty) - 0.200) > 0.0005)} {
-        error "Expected 0.000 or 0.200 ns $margin_clock implementation margin, got $user_uncertainty ns."
+               abs(double($user_uncertainty) - $implementation_setup_margin) > 0.0005)} {
+        error "Expected 0.000 or $implementation_setup_margin ns $margin_clock implementation margin, got $user_uncertainty ns."
     }
 }
 

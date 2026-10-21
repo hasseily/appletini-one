@@ -29,23 +29,26 @@ if {$positive_slack_only} {
         error "APPLETINI_MIN_SETUP_SLACK_NS must be at least 0.050 and at most 1.0."
     }
 }
-set implementation_setup_margin 0.200
 set script_dir [file dirname [file normalize [info script]]]
+set margin_config_hook [file join $script_dir fabric_timing_margin.tcl]
+source $margin_config_hook
+set implementation_setup_margin [appletini_timing_margin::value]
 set margin_apply_hook \
     [file normalize [file join $script_dir apply_fabric_timing_margin.tcl]]
 set margin_clear_hook \
     [file normalize [file join $script_dir clear_fabric_timing_margin.tcl]]
 set route_finish_hook \
     [file normalize [file join $script_dir finish_video_timing.tcl]]
-foreach hook [list $margin_apply_hook $margin_clear_hook $route_finish_hook] {
+foreach hook [list $margin_config_hook $margin_apply_hook $margin_clear_hook $route_finish_hook] {
     if {![file isfile $hook]} {
         error "Timing-margin hook does not exist: $hook"
     }
 }
+set margin_config_hook_sha256 [timing_run::sha256_file $margin_config_hook]
 set margin_apply_hook_sha256 [timing_run::sha256_file $margin_apply_hook]
 set margin_clear_hook_sha256 [timing_run::sha256_file $margin_clear_hook]
 set route_finish_hook_sha256 [timing_run::sha256_file $route_finish_hook]
-foreach hook_hash [list $margin_apply_hook_sha256 $margin_clear_hook_sha256 $route_finish_hook_sha256] {
+foreach hook_hash [list $margin_config_hook_sha256 $margin_apply_hook_sha256 $margin_clear_hook_sha256 $route_finish_hook_sha256] {
     if {![regexp -nocase {^[0-9a-f]{64}$} $hook_hash]} {
         error "Could not record a timing-margin hook SHA-256."
     }
@@ -80,6 +83,7 @@ dict set build_info rescue_used 0
 dict set build_info synthesis_reused 0
 dict set build_info minimum_wns_ns $minimum_setup_slack
 dict set build_info implementation_setup_margin_ns $implementation_setup_margin
+dict set build_info margin_config_hook_sha256 $margin_config_hook_sha256
 dict set build_info margin_apply_hook_sha256 $margin_apply_hook_sha256
 dict set build_info margin_clear_hook_sha256 $margin_clear_hook_sha256
 dict set build_info route_finish_hook_sha256 $route_finish_hook_sha256

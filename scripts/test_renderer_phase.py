@@ -87,27 +87,27 @@ def test_per_switch_phase_lookahead_is_selective_and_ordered() -> None:
     mask_end = renderer.index("static uint8_t  s_vtw_1mhz_active", tuning_start)
     vtw_mask = renderer[vtw_start:tuning_start]
     tuning = renderer[tuning_start:mask_end]
+    # Every video switch shares the soft-switch manager's serve_en update,
+    # so the one-record vTW write lag applies to all of them.
     for switch in (
         "ACE_SWB_80STORE_BIT",
         "ACE_SWB_TEXT_BIT",
         "ACE_SWB_MIXED_BIT",
         "ACE_SWB_PAGE2_BIT",
         "ACE_SWB_HIRES_BIT",
+        "ACE_SWB_ALTCHARSET_BIT",
         "ACE_SWB_80COL_BIT",
         "ACE_SWB_DHIRES_BIT",
     ):
         require(switch in vtw_mask, f"vTW normalization must include {switch}")
     require(
-        "ACE_SWB_ALTCHARSET_BIT" not in vtw_mask,
-        "ALTCHAR must bypass the vTW-only normalization",
-    )
-    require(
-        "#define PHASE_C050_TEXT       PHASE_NATIVE" in tuning and
+        "#define PHASE_C050_TEXT       PHASE_DELAY_1" in tuning and
         "#define PHASE_C052_MIXED      PHASE_DELAY_1" in tuning and
-        "#define PHASE_C00D_80COL      PHASE_NATIVE" in tuning and
+        "#define PHASE_C00D_80COL      PHASE_ADVANCE_1" in tuning and
         "#define PHASE_C05E_DHIRES     PHASE_NATIVE" in tuning and
-        "#define PHASE_C00F_ALTCHARSET PHASE_NATIVE" in tuning,
-        "only C052 MIXED must retain a one-cycle scanner delay",
+        "#define PHASE_C00F_ALTCHARSET PHASE_ADVANCE_1" in tuning,
+        "C050/C052 must delay one cycle and C00D/C00F advance one cycle "
+        "(ONE//e VIDSYNC measurement)",
     )
     require(
         "#define PHASE_SWITCH_MASK_AT(value)" in tuning and

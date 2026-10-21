@@ -20,7 +20,7 @@
  *       Video-7 MIX state 10 and its UI gate must select monochrome and
  *       color across 8, 8, 8, and 4 dots per 28 dots.
  *   T5  Per-switch scanner phase: TEXT/MIXED delay one cycle,
- *       80COL/DHIRES advance one, and ALTCHAR advances two, with and
+ *       80COL/ALTCHAR advance one, and DHIRES stays native, with and
  *       without the vTW capture normalization.
  *   T6  Static DHGRi cadence: a settled 384-row double-hires weave
  *       publishes once, holds that slot across frame markers, and rebuilds
@@ -829,14 +829,18 @@ static void t5_switch_phase(void)
     apple_cycle_renderer_reset_local_video_state();
     prior = rec_frame(10u, 10u, 1u << ACE_SWB_TEXT_BIT);
     current = rec_frame(10u, 11u, 1u << ACE_SWB_MIXED_BIT);
-    next1 = rec_frame(10u, 12u, 1u << ACE_SWB_80COL_BIT);
-    next2 = rec_frame(10u, 13u, 1u << ACE_SWB_ALTCHARSET_BIT);
+    next1 = rec_frame(10u, 12u,
+                      (1u << ACE_SWB_80COL_BIT) |
+                      (1u << ACE_SWB_ALTCHARSET_BIT));
+    next2 = rec_frame(10u, 13u, 1u << ACE_SWB_DHIRES_BIT);
     apple_cycle_renderer_on_record_lookahead(prior, current, next1);
     apple_cycle_renderer_on_record_lookahead(current, next1, next2);
     got = apple_cycle_renderer_debug_phase_switches();
-    expected = 0u;
+    expected = (1u << ACE_SWB_TEXT_BIT) |
+               (1u << ACE_SWB_80COL_BIT) |
+               (1u << ACE_SWB_ALTCHARSET_BIT);
     expect(got == expected,
-           "T5 native phase delays only C052 MIXED by one cycle");
+           "T5 native phase delays C050/C052 and advances C00D/C00F one cycle");
 
     apple_cycle_renderer_reset_local_video_state();
     apple_cycle_renderer_set_vtw_1mhz(1u);
@@ -855,10 +859,16 @@ static void t5_switch_phase(void)
     apple_cycle_renderer_on_record_lookahead(prior, current, next1);
     apple_cycle_renderer_on_record_lookahead(current, next1, next2);
     got = apple_cycle_renderer_debug_phase_switches();
-    expected = (1u << ACE_SWB_MIXED_BIT) |
+    /* vTW reads each switch one record ahead first. TEXT/MIXED then take
+     * the prior normalized state, 80COL/ALTCHAR the next normalized state,
+     * and DHIRES stays at its normalized current state. */
+    expected = (1u << ACE_SWB_TEXT_BIT) |
+               (1u << ACE_SWB_MIXED_BIT) |
                (1u << ACE_SWB_80STORE_BIT) |
                (1u << ACE_SWB_PAGE2_BIT) |
-               (1u << ACE_SWB_HIRES_BIT);
+               (1u << ACE_SWB_HIRES_BIT) |
+               (1u << ACE_SWB_80COL_BIT) |
+               (1u << ACE_SWB_ALTCHARSET_BIT);
     expect(got == expected,
            "T5 vTW normalization composes with the common phase correction");
 

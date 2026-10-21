@@ -82,13 +82,15 @@ static uint8_t  s_pending_line0_mask = 0u;
 
 /* A 1 MHz vTW record needs one initial normalization because its serialized
  * C0xx access lands in the following capture record. VBL lock and record
- * coordinates stay unchanged. */
+ * coordinates stay unchanged. Every video switch shares the soft-switch
+ * manager's serve_en update, so ALTCHARSET takes the same normalization. */
 #define VTW_PHASE_SW_MASK ( \
     (1U << ACE_SWB_80STORE_BIT) | \
     (1U << ACE_SWB_TEXT_BIT) | \
     (1U << ACE_SWB_MIXED_BIT) | \
     (1U << ACE_SWB_PAGE2_BIT) | \
     (1U << ACE_SWB_HIRES_BIT) | \
+    (1U << ACE_SWB_ALTCHARSET_BIT) | \
     (1U << ACE_SWB_80COL_BIT) | \
     (1U << ACE_SWB_DHIRES_BIT))
 
@@ -103,11 +105,14 @@ static uint8_t  s_pending_line0_mask = 0u;
 #define PHASE_ADVANCE_1   1
 #define PHASE_ADVANCE_2   2
 
-#define PHASE_C050_TEXT       PHASE_NATIVE
+/* ONE//e VIDSYNC, Oct 2026: C050 appeared 1 early, C00D 1 late and C00F
+ * 2 late, one cycle of it from its missing vTW normalization. C052, C05E,
+ * C055, C056 and C001 were exact. Native timing is not yet checked. */
+#define PHASE_C050_TEXT       PHASE_DELAY_1
 #define PHASE_C052_MIXED      PHASE_DELAY_1
-#define PHASE_C00D_80COL      PHASE_NATIVE
+#define PHASE_C00D_80COL      PHASE_ADVANCE_1
 #define PHASE_C05E_DHIRES     PHASE_NATIVE
-#define PHASE_C00F_ALTCHARSET PHASE_NATIVE
+#define PHASE_C00F_ALTCHARSET PHASE_ADVANCE_1
 
 #define PHASE_SETTING_VALID(value) ( \
     (value) == PHASE_DELAY_1 || (value) == PHASE_NATIVE || \

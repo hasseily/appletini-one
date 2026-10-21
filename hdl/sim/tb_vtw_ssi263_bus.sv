@@ -87,7 +87,7 @@ module tb_vtw_ssi263_bus;
         .bus_owned(bus_owned), .dbg_sync_write_check(write_check), .dbg_bus_faults(bus_faults)
     );
     mockingboard card_i (
-        .clk(clk), .rstn(rstn), .apple_q3_raw(q3), .ab_read(bus), .sss(sss),
+        .clk(clk), .rstn(rstn), .apple_q3_raw(q3), .standalone(1'b0), .ab_read(bus), .sss(sss),
         .slot_assign(3'd4), .pan(48'h888888888888), .ssi_pan(8'hF0),
         .audio_control(32'h10000000), .audio_sample_tick(audio_tick), .ab_write(card_write)
     );

@@ -1421,6 +1421,7 @@ module apple_top(
         .clk(clk),
         .rstn(rstn[2]),
         .apple_q3_raw(apple_q3_pin),
+        .standalone(onee_enable_effective),
         .slot_assign(MB1_SLOT_ASSIGN),
         .pan(phasor_pan_q[47:0]),
         .ssi_pan(phasor_pan_q[55:48]),

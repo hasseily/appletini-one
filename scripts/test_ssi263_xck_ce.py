@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile and run the physical-Q3 SSI-263 clock-enable bench."""
+"""Run physical-Q3, standalone cadence and safe SSI-263 source handoffs."""
 
 from __future__ import annotations
 
@@ -21,10 +21,12 @@ def static_checks() -> None:
         "q3_sync1_q",
         "q3_sync2_q",
         '(* ASYNC_REG = "TRUE" *)',
+        "input  logic standalone",
+        "input  logic phi0",
     )
     missing = [item for item in required if item not in source]
     if missing:
-        raise RuntimeError(f"physical-Q3 XCK contract missing: {missing}")
+        raise RuntimeError(f"SSI-263 XCK source contract missing: {missing}")
 
 
 def run(command: list[str]) -> str:
@@ -59,7 +61,9 @@ def main() -> int:
     ])
     output = run([vivado_tool("xsim"), "tb_ssi263_xck_ce_sim", "--runall"])
     # XSim can return zero even after a testbench $fatal.
-    if ("SSI263 XCK CE PASS" not in output or "FAIL" in output or
+    if ("SSI263 XCK CE PASS" not in output or
+            "SSI263 XCK HANDOFF SWEEP: cases=2096" not in output or
+            output.count("SSI263 XCK STANDALONE:") != 4 or "FAIL" in output or
             "Fatal:" in output):
         raise RuntimeError("SSI263 XCK regression failed; see xsim.log")
     return 0

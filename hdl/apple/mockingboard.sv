@@ -13,6 +13,7 @@ module mockingboard(
     input clk,
     input rstn,
     input logic apple_q3_raw,
+    input logic standalone,
     input globals::AppleBus_read ab_read,
     input globals::SoftSwitchState sss,
     input logic [2:0] slot_assign,
@@ -659,6 +660,8 @@ ssi263_xck_ce ssi_xck_ce_i (
     .clk(clk),
     .rstn(rstn),
     .q3_raw(apple_q3_raw),
+    .standalone(standalone),
+    .phi0(ab_read.phi0),
     .xck_ce(ssi_xck_ce)
 );
 

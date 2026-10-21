@@ -1,16 +1,19 @@
 `timescale 1ns / 1ps
 
-// Convert the physical Apple Q3 clock into a one-cycle fabric enable.
+// Convert Apple Q3 or the standalone bus cadence into a fabric enable.
 //
 // The Phasor feeds Q3 to both SSI-263AP XCK pins. Each socket has DIV2
 // asserted, so the SSI control code consumes every second enable. Keeping Q3
 // as a clock enable avoids creating another FPGA clock domain. Qualify the
 // pin level before counting edges so short bus-drive glitches do not clock
-// the speech engine or its FF divider.
+// the speech engine or its FF divider. Standalone has no physical Q3 driver;
+// both edges of its free-running PHI0 supply two XCK enables per bus cycle.
 module ssi263_xck_ce (
     input  logic clk,
     input  logic rstn,
     input  logic q3_raw,
+    input  logic standalone,
+    input  logic phi0,
     output logic xck_ce
 );
 
@@ -20,11 +23,14 @@ module ssi263_xck_ce (
     logic q3_filtered_q, q3_filtered_d_q;
     logic rise_pending_q;
     logic [5:0] spacing_q;
+    logic standalone_q;
+    logic phi0_q;
 
     // Eight equal samples reject short opposite-level pulses. At the
     // 133.333 MHz fabric clock this is 60 ns, well below the Apple Q3
     // phases (about 280 ns high / 210 ns low).
     wire q3_rise = q3_filtered_q && !q3_filtered_d_q;
+    wire source_tick = standalone ? (phi0 ^ phi0_q) : q3_rise;
 
     // A glitch near a real edge can delay qualification. Do not let the
     // next clean edge compress the native engine's work interval: it needs
@@ -42,6 +48,8 @@ module ssi263_xck_ce (
             q3_filtered_d_q <= 1'b0;
             rise_pending_q <= 1'b0;
             spacing_q     <= 6'd0;
+            standalone_q  <= 1'b0;
+            phi0_q        <= 1'b0;
             xck_ce        <= 1'b0;
         end else begin
             q3_sync1_q <= q3_raw;
@@ -50,14 +58,23 @@ module ssi263_xck_ce (
             if (&q3_history_q) q3_filtered_q <= 1'b1;
             else if (~|q3_history_q) q3_filtered_q <= 1'b0;
             q3_filtered_d_q <= q3_filtered_q;
+            standalone_q <= standalone;
+            phi0_q <= phi0;
 
             xck_ce <= 1'b0;
-            if (spacing_q != 6'd0) spacing_q <= spacing_q - 6'd1;
-            if (q3_rise) rise_pending_q <= 1'b1;
-            if ((q3_rise || rise_pending_q) && spacing_q == 6'd0) begin
-                xck_ce <= 1'b1;
+            if (standalone != standalone_q) begin
+                // Drop work from the old source and leave a full safe gap
+                // before the first enable from the new source.
                 spacing_q <= MIN_SPACING_MINUS_ONE;
                 rise_pending_q <= 1'b0;
+            end else begin
+                if (spacing_q != 6'd0) spacing_q <= spacing_q - 6'd1;
+                if (source_tick) rise_pending_q <= 1'b1;
+                if ((source_tick || rise_pending_q) && spacing_q == 6'd0) begin
+                    xck_ce <= 1'b1;
+                    spacing_q <= MIN_SPACING_MINUS_ONE;
+                    rise_pending_q <= 1'b0;
+                end
             end
         end
     end

@@ -26,7 +26,8 @@ module tb_ssi263_calibration;
 
     always #5 clk = ~clk;
 
-    ssi263_xck_ce clock_enable (.clk(clk), .rstn(rstn), .q3_raw(q3_raw), .xck_ce(xck_ce));
+    ssi263_xck_ce clock_enable (.clk(clk), .rstn(rstn), .q3_raw(q3_raw),
+        .standalone(1'b0), .phi0(1'b0), .xck_ce(xck_ce));
     for (genvar chip = 0; chip < 2; chip++) begin : sockets
         ssi263_voice #(.SSI263_TYPE(2), .HAS_SC01(1'b0)) voice (
             .clk(clk), .rstn(rstn), .apple_res(1'b1), .card_enabled(1'b1),

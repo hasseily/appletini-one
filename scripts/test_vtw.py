@@ -200,11 +200,20 @@ def static_checks() -> None:
             ".O(ab_write.wr_addr_rw_en)" in arbiter,
             "the production address-direction OR must stay same-cycle and "
             "placed near U17")
-    require("set_property IOSTANDARD LVCMOS33 [get_ports a2fpga_dir_a]" in xdc and
+    dir_a_pad_match = re.search(
+        r"set_property\s+-dict\s+\{([^}]*)\}\s*\\\s*"
+        r"\[get_ports\s+a2fpga_dir_a\]",
+        xdc,
+    )
+    dir_a_pad_tokens = dir_a_pad_match.group(1).split() if dir_a_pad_match else []
+    dir_a_pad_properties = dict(zip(dir_a_pad_tokens[0::2],
+                                    dir_a_pad_tokens[1::2]))
+    require(dir_a_pad_properties == {"IOSTANDARD": "LVCMOS33", "DRIVE": "12",
+                                     "SLEW": "FAST"} and
             xdc.count("[get_ports a2fpga_dir_a]") == 2 and
-            "set_max_delay 10.0 -to [get_ports {a2fpga_dir_a a2fpga_dir_d}]" in xdc and
-            "SLEW FAST} [get_ports a2fpga_dir_a]" not in xdc,
-            "DIR_A must keep its slow electrical edge and 10 ns output bound")
+            "set_max_delay 10.0 -to [get_ports {a2fpga_dir_a a2fpga_dir_d}]" in xdc,
+            "DIR_A must match DIR_D's 12 mA fast pad edge and keep its "
+            "10 ns output bound")
     require("logic vtw_machine_ok_q;" in top and
             "if (machine_is_iiplus)" in top and
             "else if (machine_identity_legacy)" in top and

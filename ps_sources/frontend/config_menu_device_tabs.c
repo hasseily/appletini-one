@@ -665,6 +665,7 @@ void config_menu_draw_transwarp(uint16_t *fb,
         (w - ((CONFIG_TRANSWARP_SLOT_COUNT - 1U) * slot_gap)) /
         CONFIG_TRANSWARP_SLOT_COUNT;
     uint8_t machine_blocks;
+    uint8_t onee_running;
 
     if (menu == NULL) {
         return;
@@ -674,11 +675,20 @@ void config_menu_draw_transwarp(uint16_t *fb,
      * boot ROM reports (UNKNOWN) the setting is a valid intent that
      * engages later. //e and II/II+ both accelerate. Also dimmed
      * outside the boot menu: sessions start and stop only from BOOT
-     * mode (the toggle handler enforces it; speed stays live). */
+     * mode (the toggle handler enforces it; speed stays live).
+     * ONE//e always runs the vTW core, whatever the saved setting or the
+     * last physical host, so show the row checked and dimmed. */
     machine_blocks =
         (boot_menu_service_machine_mode() == CARD_MACHINE_MODE_IIGS) ? 1U : 0U;
+    onee_running =
+        (menu->onee_mode_state == CONFIG_MENU_ONEE_MODE_RUNNING) ? 1U : 0U;
 
-    if (machine_blocks != 0U) {
+    if (onee_running != 0U) {
+        hgr_draw_check_item_dimmed(fb, x, y, w,
+                                   (uint8_t)(menu->item_focus ==
+                                             CONFIG_TRANSWARP_ITEM_ENABLE),
+                                   1U, "Accelerate the Apple II (ONE//e)");
+    } else if (machine_blocks != 0U) {
         hgr_draw_check_item_dimmed(fb, x, y, w,
                                    (uint8_t)(menu->item_focus ==
                                              CONFIG_TRANSWARP_ITEM_ENABLE),

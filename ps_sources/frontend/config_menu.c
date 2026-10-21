@@ -7681,7 +7681,13 @@ static void config_menu_activate_item(config_menu_t *menu)
              * mid-run would reset a machine with software live on it,
              * and disabling releases /DMA under a motherboard CPU that
              * has been asleep since takeover (handback needs the full
-             * boot path). Speed stays live-adjustable. */
+             * boot path). Speed stays live-adjustable. ONE//e always
+             * enables vTW, so the saved setting must not change. */
+            if (menu->onee_mode_state == CONFIG_MENU_ONEE_MODE_RUNNING) {
+                config_menu_set_status(menu, 1U,
+                    "ONE//e ALWAYS ENABLES TRANSWARP");
+                break;
+            }
             if (menu->usb_owned != 0U) {
                 config_menu_set_status(menu, 1U,
                     "ACCELERATION CAN ONLY CHANGE FROM BOOT MENU");

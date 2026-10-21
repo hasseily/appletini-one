@@ -642,6 +642,18 @@ def static_checks() -> None:
             "and RAM must surface the accelerated-RamWorks status")
     require("TAB_WITH_OVERRIDES(CONFIG_TAB_TRANSWARP, transwarp, transwarp_overrides)," in help_c,
             "TransWarp tab must have help text")
+    transwarp_draw = tabs_c[tabs_c.index("void config_menu_draw_transwarp"):]
+    onee_row = transwarp_draw.find("if (onee_running != 0U) {")
+    iigs_row = transwarp_draw.find("} else if (machine_blocks != 0U) {")
+    transwarp_toggle = menu_c[menu_c.index(
+        "if (menu->item_focus == CONFIG_TRANSWARP_ITEM_ENABLE) {"):]
+    require("(menu->onee_mode_state == CONFIG_MENU_ONEE_MODE_RUNNING)" in transwarp_draw and
+            0 <= onee_row < iigs_row and
+            '1U, "Accelerate the Apple II (ONE//e)"' in transwarp_draw and
+            transwarp_toggle.find('"ONE//e ALWAYS ENABLES TRANSWARP"') <
+            transwarp_toggle.find("if (menu->usb_owned != 0U) {"),
+            "ONE//e must show acceleration checked and locked, ahead of the "
+            "IIgs and boot-mode rows")
 
     # II/II+ hosts: the embedded //e ROM's reset-path Apple-key checks must
     # be patched at load (floating game-connector buttons otherwise enter

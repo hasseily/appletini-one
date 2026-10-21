@@ -73,6 +73,7 @@ Key files:
 - Prefer shared CDC/reset helpers in `hdl/` for new crossings (`cdc_bit_sync.sv`, `cdc_bus_sampled.sv`, `reset_sync.sv`) instead of ad hoc inline synchronizers.
 - `cdc_bus_sampled.sv` is for debug/status sampling only (non-coherent multi-bit capture); do not use it for functional buses.
 - For new RTL, share clock enables and use synchronous resets when behavior permits. Do not change required reset behavior only to cut control sets.
+- Keep the project directory self-sufficient. Do not link volatile places into it, such as `%TEMP%`, session scratch folders or build output folders. This applies to symlinks, junctions, hard links, git worktrees, and paths in scripts, configs and project files. Use scratch folders only for throwaway files; if the project needs a file, copy it into the project.
 
 ## Coding Style & Naming Conventions
 - Use 4-space indentation and keep alignment readable in HDL port lists and C macros.

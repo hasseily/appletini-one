@@ -10,6 +10,11 @@ This script retains the audited FSBL and FPGA image. CPU1 stays unchanged by
 default; APP_MULTIBOOT_REBUILD_CORE1=1 rebuilds it from the current source.
 APP_MULTIBOOT_HARDWARE_ARCHIVE and APP_MULTIBOOT_HARDWARE_MANIFEST may select
 an existing hardware source archive. Every member must match the baseline.
+APP_MULTIBOOT_HARDWARE_RUN explicitly selects a new full timing run instead.
+It requires APP_MULTIBOOT_REBUILD_CORE1=1 and APP_MULTIBOOT_FSBL from the selected
+platform, plus matching frozen source snapshots and archive in the run directory.
+An incremental run requires incremental-proof.json, a timing-qualified full-run
+reference, fresh synthesis, and captured implementation reuse evidence.
 """
 
 import hashlib
@@ -253,6 +258,188 @@ def validate_hardware_archive(archive_path, manifest_path, retained_hashes, lice
     return records
 
 
+def parse_incremental_reuse(text, reference):
+    """Read Vivado's real reuse table, including both supported header forms."""
+    if re.search(r"incremental flow is disabled|(?:fall(?:ing)?\s*back|revert(?:ing)?|switch(?:ing)?)\s+to\s+(?:the\s+)?(?:full|default|non.?incremental)|not using incremental",
+                 text, re.I):
+        raise RuntimeError("implementation fell back from incremental reuse")
+    locations = re.findall(r"^\s*\|\s*DCP Location:\s*\|\s*([^|]+)\|", text, re.M)
+    if not locations or any(Path(value.strip()).resolve() != reference for value in locations):
+        raise RuntimeError("incremental reuse report names a different reference DCP")
+    header = None
+    rows = {}
+    for line in text.splitlines():
+        if not line.lstrip().startswith("|"):
+            continue
+        cells = [value.strip() for value in line.strip().strip("|").split("|")]
+        if cells[0] == "Type" and any(value.startswith("Current Reuse %") for value in cells):
+            header = cells
+        elif header and cells[0] in ("Cells", "Nets"):
+            if len(cells) != len(header):
+                raise RuntimeError("malformed incremental reuse table")
+            matched = next(index for index, name in enumerate(header) if name.startswith("Matched %"))
+            reused = next(index for index, name in enumerate(header) if name.startswith("Current Reuse %"))
+            values = {"matched_percent": float(cells[matched]), "reused_percent": float(cells[reused]),
+                      "total": int(cells[-1])}
+            if (not 0 < values["matched_percent"] <= 100 or not 0 < values["reused_percent"] <= 100
+                    or values["total"] <= 0):
+                raise RuntimeError("incremental implementation did not reuse real matched cells and nets")
+            rows[cells[0].lower()] = values
+    if set(rows) != {"cells", "nets"}:
+        raise RuntimeError("missing actual incremental cell/net reuse evidence")
+    return rows
+
+
+def validate_incremental_reference(manifest_path, timing, root=ROOT, baseline_auditor=None):
+    """Validate selected reference bytes and actual reuse, preserving the mode."""
+    import package_timing_firmware
+
+    run_dir = Path(manifest_path).resolve().parent
+    proof_path = run_dir / "incremental-proof.json"
+    proof = json.loads(proof_path.read_text())
+    if proof.get("schema_version") != 1:
+        raise RuntimeError("unsupported incremental reference proof")
+    reference_run = Path(proof["reference_run"]).resolve()
+    run_root = (root / ".timing_runs").resolve()
+    if reference_run == run_dir or not reference_run.is_relative_to(run_root):
+        raise RuntimeError("incremental reference must be a separate checkout timing run")
+    reference_manifest = reference_run / "manifest.txt"
+    reference = reference_run / "candidate.dcp"
+    if (digest(reference_manifest) != proof["reference_manifest_sha256"]
+            or Path(timing["incremental_reference"]).resolve() != reference
+            or digest(reference) != timing["incremental_reference_sha256"]):
+        raise RuntimeError("incremental reference differs from the selected qualified run")
+    if baseline_auditor is None:
+        raise RuntimeError("incremental validation requires the independent baseline auditor")
+    spec = importlib.util.spec_from_file_location("incremental_reference_auditor", baseline_auditor)
+    auditor = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(auditor)
+    bit = reference_run / "appletini_yarz_top.bit"
+    xsa = reference_run / "appletini_yarz_top.xsa"
+    qualified = auditor.check_timing(reference_manifest, bit.read_bytes(), xsa.read_bytes(), reference.read_bytes())
+    if (float(qualified["minimum_wns_ns"]) < 0.050 or float(qualified["wns_ns"]) < 0.050
+            or qualified["build_id"] != reference_run.name):
+        raise RuntimeError("incremental reference is not a qualifying full implementation")
+    with zipfile.ZipFile(xsa) as archive:
+        bits = [name for name in archive.namelist() if name.endswith(".bit")]
+        if len(bits) != 1 or archive.read(bits[0]) != bit.read_bytes():
+            raise RuntimeError("qualified reference XSA embeds a different bitstream")
+    log = run_dir / "implementation.log"
+    report = run_dir / "implementation-reuse.rpt"
+    if (digest(log) != proof["implementation_log_sha256"]
+            or digest(report) != proof["reuse_report_sha256"]):
+        raise RuntimeError("incremental implementation evidence changed")
+    log_text = log.read_text(errors="replace")
+    commands = re.findall(r"^(?:Command:\s*)?read_checkpoint[^\r\n]*-incremental\s+(?:\"([^\"]+)\"|(\S+))",
+                          log_text, re.M)
+    if not commands or any(Path(quoted or plain).resolve() != reference for quoted, plain in commands):
+        raise RuntimeError("implementation did not read the selected incremental checkpoint")
+    log_reuse = parse_incremental_reuse(log_text, reference)
+    final_reuse = parse_incremental_reuse(report.read_text(errors="replace"), reference)
+    frozen = json.loads((run_dir / "source-before.json").read_text())["files"]
+    for name, value in frozen.items():
+        if not (root / name).is_file() or digest(root / name) != value:
+            raise RuntimeError(f"incremental hardware source differs from its frozen snapshot: {name}")
+    paths = {"proof": proof_path, "reference_manifest": reference_manifest, "reference_dcp": reference,
+             "reference_bitstream": bit, "reference_xsa": xsa, "implementation_log": log, "reuse_report": report}
+    return {"proof": proof, "reference_timing": qualified, "implementation_reuse": log_reuse,
+            "final_reuse": final_reuse, "source_snapshot_current_matches": True,
+            "records": {name: file_record(path) for name, path in paths.items()}}
+
+
+def hardware_auditor_source(text):
+    """Retain every final check while validating explicitly selected reuse."""
+    marker = "    m = timing_manifest.read_manifest(path)\n"
+    mode = '"build_mode": "full"'
+    reference_check = '    need(m.get("incremental_reference", "") == "", "Unexpected incremental reference")'
+    if text.count(marker) != 1 or text.count(mode) != 1 or text.count(reference_check) != 1:
+        raise RuntimeError("independent auditor's timing contract has changed")
+    text = text.replace(marker, marker +
+        '    if m.get("build_mode") == "incremental":\n'
+        '        from build_multiboot_arm import validate_incremental_reference\n'
+        '        validate_incremental_reference(path, m, Path(globals().get("HARDWARE_SOURCE_ROOT", ROOT)),\n'
+        '            Path(globals().get("INDEPENDENT_BASELINE_AUDITOR", Path(__file__).with_name("baseline_audit_firmware.py"))))\n')
+    text = text.replace(mode, '"build_mode": ("incremental" if m.get("build_mode") == "incremental" else "full")')
+    return text.replace(reference_check,
+        '    need(bool(m.get("incremental_reference")) if m.get("build_mode") == "incremental" else '
+        'm.get("incremental_reference", "") == "", "Unexpected incremental reference")')
+
+
+def new_hardware_inputs(platform, baseline, rebuild_core1, environ=None, root=ROOT):
+    """Select new FPGA inputs only with complete timing and frozen source proof."""
+    environ = os.environ if environ is None else environ
+    value = environ.get("APP_MULTIBOOT_HARDWARE_RUN")
+    if not value:
+        if environ.get("APP_MULTIBOOT_FSBL"):
+            raise RuntimeError("APP_MULTIBOOT_FSBL requires APP_MULTIBOOT_HARDWARE_RUN")
+        return None
+    run_dir = Path(value).resolve()
+    if not run_dir.is_dir() or not run_dir.is_relative_to((root / ".timing_runs").resolve()):
+        raise RuntimeError("APP_MULTIBOOT_HARDWARE_RUN must select a run below this checkout's .timing_runs")
+    if not rebuild_core1:
+        raise RuntimeError("new hardware requires APP_MULTIBOOT_REBUILD_CORE1=1")
+    if environ.get("APP_MULTIBOOT_BITSTREAM") or environ.get("APP_MULTIBOOT_XSA"):
+        raise RuntimeError("new hardware inputs must come from APP_MULTIBOOT_HARDWARE_RUN")
+    fsbl_value = environ.get("APP_MULTIBOOT_FSBL")
+    if not fsbl_value:
+        raise RuntimeError("new hardware requires an explicit APP_MULTIBOOT_FSBL")
+    paths = {"bitstream": run_dir / "appletini_yarz_top.bit",
+             "xsa": run_dir / "appletini_yarz_top.xsa",
+             "candidate_dcp": run_dir / "candidate.dcp",
+             "timing_manifest": run_dir / "TIMING_MANIFEST.txt",
+             "source_before": run_dir / "source-before.json",
+             "source_after": run_dir / "source-after.json",
+             "fsbl": Path(fsbl_value).resolve(),
+             "platform_fsbl": platform.parent / "sw/boot/fsbl.elf"}
+    archive = hardware_archive_inputs(environ)
+    if archive is None:
+        archive = (run_dir / "hardware-sources.zip", run_dir / "hardware-source-manifest.json")
+    paths.update(hardware_archive=archive[0], hardware_manifest=archive[1])
+    for path in paths.values():
+        if not path.is_file():
+            raise FileNotFoundError(path)
+    if digest(paths["fsbl"]) != digest(paths["platform_fsbl"]):
+        raise RuntimeError("selected FSBL does not match the selected platform's FSBL")
+    exported_xsa = platform.parent / "hw/appletini_yarz_top.xsa"
+    if not exported_xsa.is_file() or digest(exported_xsa) != digest(paths["xsa"]):
+        raise RuntimeError("selected platform XSA does not match the new hardware run")
+    # Reuse the package's independent timing checks without changing a dirty
+    # source build into a clean-commit claim. Require the stronger 50 ps gate.
+    namespace = {"__file__": str(baseline / "audit_firmware.py"), "__name__": "new_hardware_timing_audit",
+                 "HARDWARE_SOURCE_ROOT": root, "INDEPENDENT_BASELINE_AUDITOR": baseline / "audit_firmware.py"}
+    exec(compile(hardware_auditor_source((baseline / "audit_firmware.py").read_text()),
+                 str(baseline / "audit_firmware.py"), "exec"), namespace)
+    timing = namespace["check_timing"](paths["timing_manifest"], paths["bitstream"].read_bytes(),
+                                  paths["xsa"].read_bytes(), paths["candidate_dcp"].read_bytes())
+    if float(timing["minimum_wns_ns"]) < 0.050 or float(timing["wns_ns"]) < 0.050:
+        raise RuntimeError("new hardware must pass the 0.050 ns setup slack gate")
+    if (root / timing["run_dir"]).resolve() != run_dir:
+        raise RuntimeError("timing manifest names a different hardware run")
+    with zipfile.ZipFile(paths["xsa"]) as xsa:
+        bits = [name for name in xsa.namelist() if name.endswith(".bit")]
+        if len(bits) != 1 or xsa.read(bits[0]) != paths["bitstream"].read_bytes():
+            raise RuntimeError("new hardware XSA embeds a different bitstream")
+    before = json.loads(paths["source_before"].read_text())["files"]
+    after = json.loads(paths["source_after"].read_text())["files"]
+    if before != after:
+        raise RuntimeError("hardware sources changed during the FPGA build")
+    if ("LICENSE" not in before or not any(name.startswith("hdl/") for name in before)
+            or not any(name.startswith("scripts/") for name in before)):
+        raise RuntimeError("new hardware snapshot omits its HDL, build scripts, or license")
+    for name, value in before.items():
+        if (name != "LICENSE" and not selected_hardware_source(name)) or ".." in Path(name).parts:
+            raise RuntimeError(f"unexpected hardware source snapshot member: {name}")
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise RuntimeError(f"invalid hardware source snapshot hash: {name}")
+    validate_hardware_archive(*archive, before, root / "LICENSE")
+    incremental = None
+    if timing["build_mode"] == "incremental":
+        incremental = validate_incremental_reference(paths["timing_manifest"], timing, root, baseline / "audit_firmware.py")
+    return {"run_dir": run_dir, "paths": paths, "hashes": before,
+            "timing": timing, "incremental": incremental,
+            "records": {name: file_record(path) for name, path in paths.items()}}
+
+
 def validate_core1_platform(platform):
     bsp = platform.parent / "sw/standalone_ps7_cortexa9_1/bsp.yaml"
     if not bsp.is_file():
@@ -275,7 +462,8 @@ def source_snapshot(third_party):
     for path in source_files(ROOT / "ps_sources"):
         members[f"ps_sources/{path.relative_to(ROOT / 'ps_sources').as_posix()}"] = path
     for directory in ("xtulator_cpu", "z80emu", "CherryUSB/common", "CherryUSB/core",
-                      "CherryUSB/class/hid", "CherryUSB/class/hub", "CherryUSB/port/ehci"):
+                      "CherryUSB/class/hid", "CherryUSB/class/hub", "CherryUSB/class/vendor/xbox",
+                      "CherryUSB/port/ehci"):
         for path in source_files(third_party / directory):
             members[f"third_party/{path.relative_to(third_party).as_posix()}"] = path
     for path in (third_party / "CherryUSB").iterdir():
@@ -284,6 +472,7 @@ def source_snapshot(third_party):
     for name in ("LICENSE", "scripts/build_multiboot_arm.py",
                  "scripts/create_vitis_workspace.py", "scripts/image_manifest.py",
                  "scripts/package_timing_firmware.py", "scripts/test_multiboot_glyph_build.py",
+                 "scripts/test_multiboot_hardware_run.py",
                  "scripts/build_boot_menu_rom.py", "scripts/build_vtw_boot_start_rom.py",
                  "software/boot_menu_slot7.a65"):
         path = ROOT / name
@@ -326,11 +515,16 @@ def main():
     rebuild_core1 = rebuild_core1_requested()
     core1_plan = core1_source_plan() if rebuild_core1 else None
     core1_bsp = validate_core1_platform(platform) if rebuild_core1 else None
+    hardware_run = new_hardware_inputs(platform, baseline, rebuild_core1)
     hardware_archive = hardware_archive_inputs()
     baseline_root = baseline.parents[1]
     retained_hashes = json.loads((baseline / "source_after.json").read_text())["source_sha256"]
     hardware_archive_records = None
-    if hardware_archive:
+    if hardware_run:
+        retained_hashes = hardware_run["hashes"]
+        hardware_archive = (hardware_run["paths"]["hardware_archive"], hardware_run["paths"]["hardware_manifest"])
+        hardware_archive_records = [file_record(path) for path in hardware_archive]
+    elif hardware_archive:
         validate_hardware_archive(*hardware_archive, retained_hashes, baseline_root / "LICENSE")
         hardware_archive_records = [file_record(path) for path in hardware_archive]
     third_party = Path(os.environ.get("APP_MULTIBOOT_THIRD_PARTY_ROOT", ROOT / "third_party")).resolve()
@@ -361,6 +555,12 @@ def main():
         if digest(path) != expected[name]:
             raise RuntimeError(f"audited retained input changed: {name}: {path}")
     audited_baseline_inputs = {name: file_record(path) for name, path in retained.items()}
+    run_manifest = baseline / "TIMING_MANIFEST.txt"
+    if hardware_run:
+        for name in ("fsbl", "bitstream", "xsa"):
+            retained[name] = hardware_run["paths"][name]
+            expected[name] = digest(retained[name])
+        run_manifest = hardware_run["paths"]["timing_manifest"]
     selected_cpu1_elf = retained["cpu1_elf"]
     selected_cpu1_raw = retained["cpu1_raw"]
     core1_layout = None
@@ -392,7 +592,7 @@ def main():
     compiled_sources = {}
     include_dirs = [ROOT / "ps_sources/frontend", ROOT / "ps_sources/lib"] + [third_party / path for path in (
         "xtulator_cpu", "z80emu", "CherryUSB/common", "CherryUSB/core", "CherryUSB/class/hub",
-        "CherryUSB/class/hid", "CherryUSB/port/ehci")]
+        "CherryUSB/class/hid", "CherryUSB/class/vendor/xbox", "CherryUSB/port/ehci")]
     component_order = ("bootloader", "frontend_core1", "frontend") if rebuild_core1 else ("bootloader", "frontend")
     for name in component_order:
         component = client.create_app_component(name=name, platform=str(platform),
@@ -410,6 +610,7 @@ def main():
             sources = core1_plan["sources"]
         if name == "frontend":
             sources += [third_party / path for path in ("CherryUSB/core/usbh_core.c", "CherryUSB/class/hid/usbh_hid.c",
+                        "CherryUSB/class/vendor/xbox/usbh_xbox.c",
                         "CherryUSB/port/ehci/usb_hc_ehci.c", "xtulator_cpu/cpu.c", "z80emu/z80emu.c")]
             blob = src / "core1_blob.bin"
             run([objcopy, "-O", "binary", selected_cpu1_elf, blob])
@@ -515,8 +716,7 @@ def main():
     verify_image(output / "FIRMWARE.BIN", expected_role=ROLE_FIRMWARE,
                  expected_recovery=True, expected_product="appletini")
 
-    # Publish the source which produced the retained FPGA image, independently
-    # of the new CPU code. Require every selected file to match the d1 record.
+    # Publish the exact frozen hardware sources, independently of CPU sources.
     if hardware_archive:
         for path, record in zip(hardware_archive, hardware_archive_records):
             if digest(path) != record["sha256"]:
@@ -540,6 +740,23 @@ def main():
     retained_evidence.mkdir()
     for name in ("FIRMWARE_AUDIT.json", "software_inputs.json", "BUILD_REPORT.json", "TIMING_MANIFEST.txt", "source_after.json"):
         shutil.copy2(baseline / name, retained_evidence / name)
+    if hardware_run:
+        for name, record in hardware_run["records"].items():
+            if digest(hardware_run["paths"][name]) != record["sha256"]:
+                raise RuntimeError(f"selected new hardware input changed during ARM build: {name}")
+        hardware_evidence = output / "hardware-run"
+        hardware_evidence.mkdir()
+        for name in ("timing_manifest", "source_before", "source_after"):
+            shutil.copy2(hardware_run["paths"][name], hardware_evidence / hardware_run["paths"][name].name)
+        if hardware_run["incremental"]:
+            incremental = hardware_run["incremental"]
+            for name, record in incremental["records"].items():
+                if digest(record["path"]) != record["sha256"]:
+                    raise RuntimeError(f"incremental reference evidence changed during ARM build: {name}")
+            for name in ("incremental-proof.json", "implementation.log", "implementation-reuse.rpt"):
+                shutil.copy2(hardware_run["run_dir"] / name, hardware_evidence / name)
+            write_json(hardware_evidence / "INCREMENTAL_VALIDATION.json", incremental)
+        write_json(hardware_evidence / "INPUTS.json", hardware_run["records"])
 
     # Use the retained independent Bootgen/ELF auditor with this checkout's
     # v2-aware manifest parser. Its explicit inputs never write to the baseline.
@@ -547,7 +764,7 @@ def main():
     baseline_audit = baseline / "audit_firmware.py"
     shutil.copy2(baseline_audit, records / "baseline_audit_firmware.py")
     audit_script = records / "audit_firmware.py"
-    audit_text = baseline_audit.read_text()
+    audit_text = hardware_auditor_source(baseline_audit.read_text())
     old_check = '    need(boot_label in b"".join(s["data"] for s in front_segments), "Wrong loaded boot-version label")'
     if audit_text.count(old_check) != 1:
         raise RuntimeError("retained auditor's boot display contract has changed")
@@ -569,12 +786,14 @@ def main():
                 "--fsbl", str(inputs / "fsbl.elf"), "--frontend", str(inputs / "frontend.elf"),
                 "--bitstream", str(inputs / "appletini_yarz_top.bit"),
                 "--xsa", str(inputs / "appletini_yarz_top.xsa"),
-                "--run-manifest", str(baseline / "TIMING_MANIFEST.txt"),
+                "--run-manifest", str(run_manifest),
                 "--platform-xsa", str(exported_xsa),
                 "--core1-elf", str(inputs / "frontend_core1.elf"),
                 "--core1-blob", str(inputs / "core1_blob.bin"),
                 "--version", firmware_version, "--boot-version", golden_version,
                 "--output", str(output / "FIRMWARE_AUDIT.json")]
+    if hardware_run:
+        sys.argv += ["--candidate-dcp", str(hardware_run["paths"]["candidate_dcp"])]
     try:
         auditor.main()
     finally:
@@ -593,6 +812,11 @@ def main():
         "hardware_source_archive": file_record(output / "hardware-sources.zip"),
         "audited_baseline_inputs": audited_baseline_inputs,
         "hardware_source_inputs": hardware_archive_records,
+        "hardware": {"mode": hardware_run["timing"]["build_mode"] if hardware_run else "retained",
+                     "run_dir": str(hardware_run["run_dir"]) if hardware_run else None,
+                     "inputs": hardware_run["records"] if hardware_run else None,
+                     "source_before_equals_after": True if hardware_run else None,
+                     "incremental_reference": hardware_run["incremental"] if hardware_run else None},
         "cpu1": {"mode": "rebuilt" if rebuild_core1 else "retained",
                  "retained_baseline": None if rebuild_core1 else str(baseline),
                  "elf_sha256": digest(selected_cpu1_elf),

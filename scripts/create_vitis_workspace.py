@@ -13,6 +13,10 @@ import os
 import sys
 from pathlib import Path
 
+# Vitis can execute this file without adding scripts/ to its module path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from frontend_memory import FRONTEND_MEMORY_LINK_FLAGS, audit_frontend_elf
+
 import vitis
 import subprocess
 import shutil
@@ -1187,8 +1191,8 @@ run_step(
     lambda: set_userconfig_optimization_other_flag("frontend", "-falign-functions=32"),
 )
 run_step(
-    "Set frontend heap for bezel PNG decode",
-    lambda: ensure_userconfig_flag("frontend", "-Wl,--defsym,_HEAP_SIZE=0x04000000"),
+    "Set frontend stack and heap",
+    lambda: ensure_userconfig_flag("frontend", FRONTEND_MEMORY_LINK_FLAGS),
 )
 run_step(
     "Link frontend against libm (apple_cycle_renderer chroma init uses cos/sin)",
@@ -1298,11 +1302,9 @@ run_step("Generate core1 blob (objcopy + .S stub)",
          generate_core1_blob_and_stub)
 run_step("Build app frontend", lambda: frontend_comp.build())
 run_step(
-    "Verify app frontend ELF",
-    lambda: require_path(
-        "Verify frontend build output",
-        Path("vitis_workspace") / "frontend" / "build" / "frontend.elf",
-    ),
+    "Verify linked frontend stack and heap",
+    lambda: audit_frontend_elf(
+        Path("vitis_workspace") / "frontend" / "build" / "frontend.elf"),
 )
 
 run_step("Fix frontend launch.json bitstream path", lambda: fix_launch_bitstream("frontend"))

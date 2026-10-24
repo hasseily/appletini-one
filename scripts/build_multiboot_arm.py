@@ -30,9 +30,14 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Vitis can execute this file without adding scripts/ to its module path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from frontend_memory import (
+    FRONTEND_HEAP_BYTES, FRONTEND_MEMORY_LINK_FLAGS, FRONTEND_STACK_BYTES,
+    audit_frontend_elf, audit_frontend_memory,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
-FRONTEND_STACK_BYTES = 0x00010000
-FRONTEND_HEAP_BYTES = 0x04000000
 CORE1_DDR_ORIGIN = 0x20000000
 CORE1_DDR_LENGTH = 0x10000000
 CORE1_SHARED_SOURCES = (
@@ -120,28 +125,6 @@ def audit_core1_layout(elf):
         raise RuntimeError("CPU1 raw load base must match amp.c's 0x20000000 destination")
     return {"entry": entry, "ddr_origin": CORE1_DDR_ORIGIN,
             "ddr_length": CORE1_DDR_LENGTH, "load_segments": loads}
-
-
-def audit_frontend_memory(symbols):
-    """Check the linked reservation, independently of the requested flags."""
-    names = ("_STACK_SIZE", "_stack", "_stack_end", "_HEAP_SIZE", "_heap_start", "_heap_end")
-    addresses = {}
-    for line in symbols.splitlines():
-        fields = line.split()
-        if len(fields) == 3 and fields[2] in names:
-            addresses[fields[2]] = int(fields[0], 16)
-    missing = sorted(set(names) - addresses.keys())
-    if missing:
-        raise RuntimeError(f"missing linked frontend memory symbols: {missing}")
-    stack_span = addresses["_stack"] - addresses["_stack_end"]
-    heap_span = addresses["_heap_end"] - addresses["_heap_start"]
-    if stack_span != addresses["_STACK_SIZE"] or stack_span < FRONTEND_STACK_BYTES:
-        raise RuntimeError(f"frontend stack must reserve at least {FRONTEND_STACK_BYTES} bytes: {addresses}")
-    if heap_span != addresses["_HEAP_SIZE"] or heap_span != FRONTEND_HEAP_BYTES:
-        raise RuntimeError(f"frontend heap must retain {FRONTEND_HEAP_BYTES} bytes: {addresses}")
-    return {"symbols": addresses, "stack_bytes": stack_span,
-            "minimum_stack_bytes": FRONTEND_STACK_BYTES, "heap_bytes": heap_span,
-            "stack_span_matches": True, "heap_span_matches": True}
 
 
 def digest(path):
@@ -470,6 +453,7 @@ def source_snapshot(third_party):
         if path.is_file() and legal_or_readme(path):
             members[f"third_party/CherryUSB/{path.name}"] = path
     for name in ("LICENSE", "scripts/build_multiboot_arm.py",
+                 "scripts/frontend_memory.py",
                  "scripts/create_vitis_workspace.py", "scripts/image_manifest.py",
                  "scripts/package_timing_firmware.py", "scripts/test_multiboot_glyph_build.py",
                  "scripts/test_multiboot_hardware_run.py",
@@ -639,8 +623,7 @@ def main():
             # default cannot hold that call chain. Keep both linker switches
             # in one token because Vitis concatenates this setting's entries.
             set_config(config, "USER_LINK_OTHER_FLAGS",
-                       [f"-Wl,--defsym,_HEAP_SIZE=0x{FRONTEND_HEAP_BYTES:08X},"
-                        f"--defsym,_STACK_SIZE=0x{FRONTEND_STACK_BYTES:08X}"])
+                       [FRONTEND_MEMORY_LINK_FLAGS])
         if name == "bootloader":
             set_config(config, "USER_LINK_OTHER_FLAGS",
                        ["-Wl,--defsym,_STACK_SIZE=0x00010000,--defsym,_HEAP_SIZE=0x00010000"])
@@ -688,7 +671,7 @@ def main():
         shutil.copy2(path, inputs / target)
     shutil.copy2(platform, records / platform.name)
     symbols = subprocess.check_output([str(nm), str(inputs / "frontend.elf")], text=True)
-    frontend_memory = audit_frontend_memory(symbols)
+    frontend_memory = audit_frontend_elf(inputs / "frontend.elf")
     write_json(records / "frontend-memory.json", frontend_memory)
     addresses = {}
     for line in symbols.splitlines():

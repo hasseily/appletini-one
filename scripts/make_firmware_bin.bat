@@ -49,6 +49,13 @@ if not exist "%APP_ELF%" (
     exit /b 1
 )
 
+REM Check the selected frontend's linked reservations before bootgen can package it.
+python "%~dp0frontend_memory.py" "%APP_ELF%"
+if errorlevel 1 (
+    echo ERROR: frontend memory audit failed: %APP_ELF%
+    exit /b 1
+)
+
 set TMP_BIF=%TEMP%\appletini_firmware_%RANDOM%%RANDOM%.bif
 set TMP_RAW=%TEMP%\appletini_firmware_raw_%RANDOM%%RANDOM%.bin
 

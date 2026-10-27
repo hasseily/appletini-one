@@ -267,11 +267,13 @@ def test_usb_bindings_edit_only_from_apple_boot_menu() -> None:
             "        menu,\n"
             "        (uint8_t)(active != 0U && g_usb_menu_owned == 0U));" in frontend_main,
             "menu open/close must enable USB remapping only for Apple-keyboard-owned boot menus")
+    usb_open = frontend_main.split("case USB_HID_MENU_ACTION_OPEN:", 1)[1].split(
+        "case USB_HID_MENU_ACTION_CLOSE:", 1)[0]
     require("case BOOT_MENU_EVENT_OPEN:\n"
             "                    g_usb_menu_owned = 0U;" in frontend_main and
-            "case USB_HID_MENU_ACTION_OPEN:\n"
-            "        if (!config_menu_is_active(menu)) {\n"
-            "            g_usb_menu_owned = 1U;" in frontend_main,
+            "if (!config_menu_is_active(menu)) {" in usb_open and
+            "g_usb_menu_owned = 1U;\n"
+            "            ui_set_boot_menu_visible(s, menu, 1U);" in usb_open,
             "Apple boot-menu opens and USB long-press opens must carry distinct ownership")
 
 

@@ -79,6 +79,26 @@ Left Alt remains Open Apple and right Alt remains Closed Apple. These changes
 affect the ARM frontend only. Host tests cover key routing and menu actions;
 physical USB-keyboard testing remains pending.
 
+## ONE//e standby screen
+
+A stopped card with a valid, quiet safety guard shows the Appletini logo and
+an instruction to enable ONE//e in Boot Settings. Pause/Break or either
+Windows key opens the menu with the ONE//e switch focused. The same fixed
+arrows, Enter, Tab/Shift+Tab and Esc work in this menu while ONE//e is OFF.
+Opening the menu does not turn the mode on or save an ON choice.
+
+Standby uses a separate UI-only input flag. It does not assert the ONE//e
+request, grant bus access or change the saved-ON restore and safety-stop
+rules. Active Apple-bus signals, a missing guard, a pending restore, vTW
+startup and firmware switching suppress standby. An open menu takes display
+priority. This is a quiet-card setup hint, not proof that the card is unplugged.
+
+CPU0 draws into the existing RGB565 output slots and shares the menu's decoded
+logo cache. Each slot keeps the static screen until a menu, status, output-mode
+or screenshot-overlay change needs a redraw. A failed logo decode falls back
+to text. Native tests cover all six output sizes and state/input transitions;
+physical display and keyboard testing remains pending.
+
 ## Validation
 
 For USB joystick input, axis mapping, and paddle timing, see
@@ -94,6 +114,7 @@ python scripts/test_cherryusb_time.py
 python scripts/test_boot_menu_usb_keybindings.py
 python scripts/test_onee_usb_controls.py
 python scripts/test_onee_input_service.py
+python scripts/test_onee_standby.py
 ```
 
 The PHY regression runs the actual controller glue against a simulated

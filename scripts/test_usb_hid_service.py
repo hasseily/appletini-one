@@ -236,7 +236,7 @@ def test_onee_uses_fixed_keyboard_controls_and_blocks_menu_leakage() -> None:
                   "HID_KBD_USAGE_ESCAPE"]:
         require(usage in fixed, f"missing fixed ONE//e menu key {usage}")
     require("ONEE_USB_MODIFIER_SHIFT" in fixed and
-            "usage, modifier, g_menu_capture, g_onee_fixed_mode" in keyboard,
+            "usage, modifier, g_menu_capture, fixed_keyboard_mode" in keyboard,
             "fixed Tab routing must receive the keyboard modifier byte")
     for usage in ["HID_KBD_USAGE_PAGEUP", "HID_KBD_USAGE_PRINTSCN",
                   "HID_KBD_USAGE_KPD0", "HID_KBD_USAGE_KPDPLUS"]:
@@ -257,8 +257,8 @@ def test_onee_uses_fixed_keyboard_controls_and_blocks_menu_leakage() -> None:
             "onee_key_count = 0U;" in keyboard and
             "onee_input_service_keyboard_report(slot->index," in keyboard,
             "menu-owned reports must reach the Apple bridge only as releases")
-    require("onee_usb_apple_usage_allowed(key, g_onee_fixed_mode)" in keyboard and
-            "g_onee_fixed_mode != 0U" in keyboard,
+    require("onee_usb_apple_usage_allowed(key, fixed_keyboard_mode)" in keyboard and
+            "g_onee_fixed_mode != 0U || g_onee_standby_mode != 0U" in keyboard,
             "fixed Pause/Break must not leak into Apple input")
     modifier_filter = keyboard.find("onee_usb_fixed_apple_modifier(")
     apple_report = keyboard.find("onee_input_service_keyboard_report(")
@@ -267,7 +267,7 @@ def test_onee_uses_fixed_keyboard_controls_and_blocks_menu_leakage() -> None:
             "ONEE_USB_MODIFIER_RGUI" in controls and
             "~ONEE_USB_MODIFIER_GUI" in controls,
             "GUI modifiers must not duplicate the fixed Alt Apple keys")
-    fixed_gate = keyboard.find("if (g_onee_fixed_mode != 0U) {")
+    fixed_gate = keyboard.find("if (fixed_keyboard_mode != 0U) {")
     configurable_screenshot = keyboard.find("screenshot_push_source(")
     configurable_speed = keyboard.find("vtw_push_source(")
     require(0 <= fixed_gate < configurable_screenshot < configurable_speed and

@@ -70,6 +70,7 @@ static uint8_t g_report_descs[USB_HID_SLOT_COUNT][HID_REPORT_DESC_BYTES];
 static uint32_t g_report_count, g_transfer_error_count;
 static int g_last_error;
 static uint8_t g_menu_capture, g_joystick_preview, g_onee_fixed_mode;
+static uint8_t g_onee_standby_mode;
 static uint8_t g_onee_input_blocked, g_ready, g_binding_capture;
 static uint32_t g_gamepad_binding_mask;
 static usb_hid_menu_source_t g_screenshot_a2_source, g_screenshot_1080p_source;
@@ -1308,7 +1309,7 @@ static int test_input_kind_state_boundaries(void)
     return 0;
 }
 
-static int test_fixed_onee_keyboard_menu(void)
+static int test_fixed_onee_keyboard_menu(uint8_t standby)
 {
     static const struct {
         uint8_t usage;
@@ -1330,7 +1331,9 @@ static int test_fixed_onee_keyboard_menu(void)
     hid_slots_reset_all();
     g_menu_event_rd = g_menu_event_wr = g_menu_event_count = 0U;
     g_menu_capture = g_binding_capture = g_joystick_preview = 0U;
-    g_onee_fixed_mode = 1U;
+    g_onee_fixed_mode = standby == 0U;
+    usb_hid_service_set_onee_standby_mode(standby);
+    CHECK(g_onee_fixed_mode == (standby == 0U), "standby must not select the virtual machine");
     g_onee_input_blocked = g_ready = 0U;
     memset(g_vtw_sources, 0, sizeof(g_vtw_sources));
     slot->active = 1U;
@@ -1419,11 +1422,40 @@ static int test_fixed_onee_keyboard_menu(void)
         "a saved keyboard OK hold cannot add another ONEe menu-opening key");
     hid_process_keyboard_usages(slot, 0U, no_keys, sizeof(no_keys));
     usb_hid_service_set_onee_fixed_mode(0U);
+    usb_hid_service_set_onee_standby_mode(0U);
     hid_process_keyboard_usages(slot, 0U, custom_ok, sizeof(custom_ok));
     mock_time += MOUSE_MENU_HOLD_TICKS;
     hid_slots_poll_holds();
     CHECK(take_event(USB_HID_MENU_ACTION_OPEN), "ordinary Apple-host saved keyboard OK holds still work");
-    puts("PASS fixed ONEe keyboard navigation, Windows/Pause, Shift+Tab, conflicting bindings and held transitions");
+    printf("PASS %s ONEe keyboard navigation, Windows/Pause, Shift+Tab, conflicts and held transitions\n",
+           standby != 0U ? "OFF" : "running");
+    return 0;
+}
+
+static int test_onee_standby_transition(void)
+{
+    usb_hid_slot_t *slot = &g_hid_slots[0];
+    const uint8_t keys[] = {HID_KBD_USAGE_A};
+    const uint8_t released[] = {0U};
+
+    hid_slots_reset_all();
+    g_onee_fixed_mode = g_onee_standby_mode = g_menu_capture = 0U;
+    g_menu_event_rd = g_menu_event_wr = g_menu_event_count = 0U;
+    g_menu_ok_source = g_menu_open_close_source =
+        usb_hid_menu_source_from_keyboard_usage(keys[0]);
+    slot->active = 1U;
+    hid_process_keyboard_usages(slot, 0U, keys, sizeof(keys));
+    CHECK(slot->open_close_down, "ordinary keyboard press arms its saved menu hold");
+    usb_hid_service_set_onee_standby_mode(1U);
+    mock_time += MOUSE_MENU_HOLD_TICKS;
+    hid_slots_poll_holds();
+    hid_process_keyboard_usages(slot, 0U, keys, sizeof(keys));
+    CHECK(!slot->open_close_down && !g_menu_event_count && !g_onee_fixed_mode,
+        "entering standby cancels an old hold without replaying its key or selecting ONEe");
+    hid_process_keyboard_usages(slot, 0U, released, sizeof(released));
+    CHECK(!g_menu_event_count, "release after standby transition cannot open or select");
+    usb_hid_service_set_onee_standby_mode(0U);
+    puts("PASS OFF policy transition cancels saved keyboard holds without key replay");
     return 0;
 }
 
@@ -1625,6 +1657,8 @@ int main(void)
     CHECK(test_generic_button_bindings_and_composite_guards() == 0, "generic bindings and composite holds");
     CHECK(test_optional_identity_metadata() == 0, "optional USB identity metadata");
     CHECK(test_fixed_controller_navigation() == 0, "fixed controller navigation alongside saved bindings");
-    CHECK(test_fixed_onee_keyboard_menu() == 0, "fixed ONEe keyboard menu routing");
+    CHECK(test_fixed_onee_keyboard_menu(0U) == 0, "running ONEe keyboard menu routing");
+    CHECK(test_fixed_onee_keyboard_menu(1U) == 0, "OFF ONEe keyboard menu routing");
+    CHECK(test_onee_standby_transition() == 0, "ONEe standby routing transition");
     return 0;
 }

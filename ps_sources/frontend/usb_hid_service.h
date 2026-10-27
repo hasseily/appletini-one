@@ -79,6 +79,9 @@ void usb_hid_service_set_gamepad_binding_mask(uint32_t mask);
 /* ONE//e adds its reserved keyboard controls. Blocking the
  * Apple bridge releases guest input but keeps joystick preview reports live. */
 void usb_hid_service_set_onee_fixed_mode(uint8_t enable);
+/* Fixed menu keys while ONE//e is OFF. This is UI routing only; it never
+ * changes the ONE//e selection, isolation or guest-input policy. */
+void usb_hid_service_set_onee_standby_mode(uint8_t enable);
 void usb_hid_service_set_onee_input_blocked(uint8_t blocked);
 uint8_t usb_hid_service_all_input_released(void);
 void usb_hid_service_set_menu_ok_source(usb_hid_menu_source_t source);

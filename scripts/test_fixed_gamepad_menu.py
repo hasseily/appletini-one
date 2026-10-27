@@ -57,6 +57,7 @@ typedef struct {
 typedef struct { uint32_t input_seq, key_count; ui_key_t last_key; } ui_state_t;
 enum { SCREENSHOT_SERVICE_KIND_A2, SCREENSHOT_SERVICE_KIND_1080P };
 static uint8_t g_usb_menu_owned;
+static uint8_t g_onee_standby_available;
 static ui_key_t keys[16];
 static unsigned key_count, captures, screenshots, speed_actions, notices;
 static unsigned opens, closes, rom_closes;
@@ -123,7 +124,7 @@ static void config_menu_stop_usb0_sd_remote(config_menu_t *menu) { menu->usb0_sd
         code += function(menu, name)
     for name in ("config_menu_browser_close", "config_menu_on_tab_entered",
                  "config_menu_prev_tab", "config_menu_next_tab", "config_menu_handle_usb_fixed_tab",
-                 "config_menu_set_active"):
+                 "config_menu_focus_onee_setup", "config_menu_set_active"):
         code += function(menu, name)
     for name in ("ui_key_from_usb_menu_source", "ui_toggle_usb_gamepad_menu", "ui_handle_usb_menu_event"):
         code += function(frontend, name)
@@ -135,6 +136,7 @@ static void reset(config_menu_t *menu, ui_state_t *state)
     key_count=captures=screenshots=speed_actions=notices=opens=closes=rom_closes=0U;
     reader_closes=preview_clears=clamp_calls=clock_refreshes=golden_refreshes=0U;
     capture_on_enter=share_stop_pending=0U; captured_source=USB_HID_MENU_SOURCE_NONE;
+    g_onee_standby_available=0U;
 }
 static void fixed(config_menu_t *menu, ui_state_t *state,
                   usb_hid_menu_action_t action, unsigned button, usb_hid_menu_action_t global)
@@ -327,6 +329,28 @@ static void test_fixed_keyboard_navigation(void)
     assert(menu.tab==CONFIG_TAB_PRINTING && !menu.browser_active && menu.item_focus==0U);
     puts("PASS fixed keyboard navigation overrides saved actions, changes real tabs and preserves capture and closed-menu guards");
 }
+static void test_standby_menu_entry(void)
+{
+    config_menu_t menu; ui_state_t state;
+    const usb_hid_menu_event_t open={.action=USB_HID_MENU_ACTION_OPEN,
+        .source=USB_HID_MENU_SOURCE_KEY_BASE|0xE3U,.fixed_action=USB_HID_MENU_ACTION_NONE};
+    const usb_hid_menu_event_t close={.action=USB_HID_MENU_ACTION_CLOSE,
+        .source=USB_HID_MENU_SOURCE_KEY_BASE|0x48U,.fixed_action=USB_HID_MENU_ACTION_NONE};
+    reset(&menu,&state); menu.active=0U; menu.tab=CONFIG_TAB_VIDEO;
+    g_onee_standby_available=1U;
+    ui_handle_usb_menu_event(&state,&menu,&open);
+    assert(menu.active && opens==1U && !key_count && menu.tab==CONFIG_TAB_BOOT_SETTINGS &&
+        menu.item_focus==CONFIG_MENU_BOOT_ONEE_ITEM);
+    /* Menu opening only focuses the switch; it must not synthesize Enter. */
+    ui_handle_usb_menu_event(&state,&menu,&open);
+    assert(opens==1U && !key_count);
+    ui_handle_usb_menu_event(&state,&menu,&close);
+    assert(!menu.active && closes==1U && !key_count);
+    reset(&menu,&state); menu.active=0U; menu.tab=CONFIG_TAB_VIDEO; menu.item_focus=4U;
+    ui_handle_usb_menu_event(&state,&menu,&open);
+    assert(menu.active && menu.tab==CONFIG_TAB_VIDEO && menu.item_focus==4U);
+    puts("PASS standby keys open the focused manual switch without selecting it; normal menu focus stays intact");
+}
 static void test_legacy_sources(void)
 {
     config_menu_t menu; ui_state_t state;
@@ -347,7 +371,7 @@ int main(void)
     _Static_assert(USB_HID_MENU_ACTION_TOGGLE==17,"Toggle must append to old actions");
     test_fixed_navigation_and_explicit_bindings(); test_learning_and_opening_capture();
     test_toggle_children_and_safety(); test_fixed_tabs_leave_real_child_state();
-    test_fixed_keyboard_navigation(); test_legacy_sources();
+    test_fixed_keyboard_navigation(); test_standby_menu_entry(); test_legacy_sources();
     return 0;
 }
 '''

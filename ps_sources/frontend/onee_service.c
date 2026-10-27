@@ -633,6 +633,13 @@ uint32_t onee_service_status(void)
     return g_status;
 }
 
+uint8_t onee_service_standby_available(void)
+{
+    return (g_manual_request == 0U && g_runtime_started == 0U &&
+            g_restore_pending == 0U &&
+            onee_service_check_start(g_status) == ONEE_START_CHECK_OK) ? 1U : 0U;
+}
+
 uint8_t onee_service_isolation_confirmed(void)
 {
     const uint32_t required =

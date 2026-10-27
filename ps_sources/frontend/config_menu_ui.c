@@ -274,18 +274,18 @@ static uint16_t cmui_alpha_blend(uint32_t src, uint16_t dst565)
     return FB16_RGB(r, g, b);
 }
 
-static uint8_t cmui_logo_draw(uint16_t *fb, int x, int y)
+static uint8_t cmui_logo_draw_scaled(uint16_t *fb, int x, int y, unsigned scale)
 {
-    if (fb == NULL || cmui_logo_load() == 0U) {
+    if (fb == NULL || scale == 0U || cmui_logo_load() == 0U) {
         return 0U;
     }
 
-    for (unsigned row = 0U; row < s_cmui_logo_h; ++row) {
+    for (unsigned row = 0U; row < s_cmui_logo_h * scale; ++row) {
         const int dy = y + (int)row;
         if ((unsigned)dy >= (unsigned)FB16_HEIGHT) {
             continue;
         }
-        for (unsigned col = 0U; col < s_cmui_logo_w; ++col) {
+        for (unsigned col = 0U; col < s_cmui_logo_w * scale; ++col) {
             const int dx = x + (int)col;
             uint16_t *dst;
             uint32_t src;
@@ -293,8 +293,8 @@ static uint8_t cmui_logo_draw(uint16_t *fb, int x, int y)
             if ((unsigned)dx >= (unsigned)FB16_WIDTH) {
                 continue;
             }
-            src = s_cmui_logo_pixels[((size_t)row * (size_t)s_cmui_logo_w) +
-                                      (size_t)col];
+            src = s_cmui_logo_pixels[((size_t)(row / scale) *
+                                     (size_t)s_cmui_logo_w) + (size_t)(col / scale)];
             if ((src >> 24U) == 0U) {
                 continue;
             }
@@ -303,6 +303,51 @@ static uint8_t cmui_logo_draw(uint16_t *fb, int x, int y)
         }
     }
     return 1U;
+}
+
+static uint8_t cmui_logo_draw(uint16_t *fb, int x, int y)
+{
+    return cmui_logo_draw_scaled(fb, x, y, 1U);
+}
+
+static void cmui_standby_text(uint16_t *fb, int y, const char *text,
+                             uint16_t color, int preferred_scale)
+{
+    const int scale = cmui_fit_scale(text, FB16_WIDTH - 48, preferred_scale);
+    const int width = cmui_text_width(text, scale);
+
+    fb16_string_scaled(fb, (FB16_WIDTH - width) / 2, y, text,
+                       color, FB16_COLOR_BLACK, scale);
+}
+
+void cmui_onee_standby_draw(uint16_t *fb)
+{
+    const unsigned logo_scale = (FB16_WIDTH >= 1680) ? 2U : 1U;
+    const int title_scale = (FB16_WIDTH >= 1600) ? 4 : 3;
+    const int body_scale = (FB16_WIDTH >= 1600) ? 3 : 2;
+    const int logo_h = (int)(config_menu_logo_png_height * logo_scale);
+    const int logo_w = (int)(config_menu_logo_png_width * logo_scale);
+    const int logo_gap = (FB16_WIDTH >= 1600) ? 48 : 32;
+    const int block_h = logo_h + logo_gap +
+        FB16_BUILTIN_FONT_HEIGHT * (title_scale + 2 * body_scale + 2) + 80;
+    int y = (FB16_HEIGHT - block_h) / 2;
+
+    if (fb == NULL) {
+        return;
+    }
+    fb16_clear(fb, FB16_COLOR_BLACK);
+    if (cmui_logo_draw_scaled(fb, (FB16_WIDTH - logo_w) / 2, y, logo_scale) == 0U) {
+        cmui_standby_text(fb, y + logo_h / 2, "Appletini ONE", CMUI_COLOR_TEXT, 3);
+    }
+    y += logo_h + logo_gap;
+    cmui_standby_text(fb, y, "ONE//e Standalone Mode is OFF", CMUI_COLOR_TEXT, title_scale);
+    y += FB16_BUILTIN_FONT_HEIGHT * title_scale + 20;
+    cmui_standby_text(fb, y, "Open Boot Settings and turn it ON to start your Apple //e.",
+                      CMUI_COLOR_MUTED, body_scale);
+    y += FB16_BUILTIN_FONT_HEIGHT * body_scale + 28;
+    cmui_standby_text(fb, y, "Pause/Break or Windows opens the menu", CMUI_COLOR_TEXT, body_scale);
+    y += FB16_BUILTIN_FONT_HEIGHT * body_scale + 32;
+    cmui_standby_text(fb, y, "USB keyboard -> USB1", CMUI_COLOR_MUTED, 2);
 }
 
 void cmui_screen_rects(cmui_rect_t *nav,

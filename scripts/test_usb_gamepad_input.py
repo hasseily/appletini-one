@@ -48,6 +48,7 @@ FUNCTIONS = (
     "hid_slots_retry_reports", "usbh_hid_run", "usbh_hid_stop",
     "usb_hid_service_set_menu_capture", "usb_hid_service_set_joystick_preview",
     "usb_hid_service_set_onee_fixed_mode",
+    "usb_hid_service_set_onee_standby_mode",
     "usb_hid_service_set_binding_capture", "usb_hid_service_set_gamepad_binding_mask",
     "usb_hid_service_set_onee_input_blocked",
     "usb_hid_service_all_input_released", "usb_hid_service_set_menu_ok_source",

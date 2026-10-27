@@ -8031,6 +8031,14 @@ uint8_t config_menu_storage_activity_page_visible(const config_menu_t *menu)
             menu->tab == CONFIG_TAB_DISK2) ? 1U : 0U;
 }
 
+void config_menu_focus_onee_setup(config_menu_t *menu)
+{
+    if (menu != NULL) {
+        menu->tab = CONFIG_TAB_BOOT_SETTINGS;
+        menu->item_focus = CONFIG_MENU_BOOT_ONEE_ITEM;
+    }
+}
+
 void config_menu_set_active(config_menu_t *menu, uint8_t active)
 {
     if (menu == NULL) {

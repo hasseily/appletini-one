@@ -43,6 +43,7 @@
 #include "display_modes.h"
 #include "display_output.h"
 #include "config_menu.h"
+#include "config_menu_ui.h"
 #include "debug_overlay.h"
 #include "disk2_service.h"
 #include "disk2_sound_samples.h"
@@ -144,6 +145,8 @@ static uint32_t g_output_slot_bg_generation[COMP_OUT_SLOT_COUNT];
 static uint8_t g_output_slot_bg_show_bezel[COMP_OUT_SLOT_COUNT];
 static uint8_t g_output_slot_apple_mode[COMP_OUT_SLOT_COUNT];
 static uint8_t g_output_slot_debug_dirty[COMP_OUT_SLOT_COUNT];
+static uint8_t g_output_slot_standby[COMP_OUT_SLOT_COUNT];
+static uint8_t g_onee_standby_available;
 static char g_bezel_status[160] = "not loaded";
 
 typedef struct {
@@ -2861,6 +2864,7 @@ static void ui_invalidate_static_backgrounds(void)
     memset(g_output_slot_bg_show_bezel, 0, sizeof(g_output_slot_bg_show_bezel));
     memset(g_output_slot_apple_mode, 0, sizeof(g_output_slot_apple_mode));
     memset(g_output_slot_debug_dirty, 0, sizeof(g_output_slot_debug_dirty));
+    memset(g_output_slot_standby, 0, sizeof(g_output_slot_standby));
 }
 
 static void ui_restore_static_rect(uint16_t *fb,
@@ -2990,6 +2994,7 @@ static void ui_mark_slot_dynamic(uint16_t *fb)
         g_output_slot_bg_generation[slot] = 0U;
         g_output_slot_apple_mode[slot] = APPLE_FB_DISPLAY_MODE_LEGACY;
         g_output_slot_debug_dirty[slot] = 0U;
+        g_output_slot_standby[slot] = 0U;
     }
 }
 
@@ -3484,6 +3489,50 @@ static void ui_collect_debug_overlay_snapshot(debug_overlay_snapshot_t *snapshot
         (usb_storage_service_needs_attention() != 0) ? 1U : 0U;
 }
 
+static void ui_sync_onee_standby(const config_menu_t *menu)
+{
+    /* This only offers setup on a stopped, quiet card. It does not infer
+     * physical removal or grant a ONE//e request or bus ownership. */
+    const uint8_t available = (menu != NULL &&
+        onee_service_standby_available() != 0U &&
+        vtw_service_session_active() == 0U &&
+        vtw_service_boot_start_pending() == 0U &&
+        vtw_service_boot_handoff_pending() == 0U &&
+        g_golden_boot_update_request == 0U &&
+        g_firmware_switch_request == MB_PRODUCT_NONE &&
+        g_firmware_switch_active == 0U && g_firmware_switch_fault == 0U) ? 1U : 0U;
+
+    if (available != g_onee_standby_available) {
+        g_onee_standby_available = available;
+        ui_invalidate_static_backgrounds();
+        compositor_request_full_refresh();
+    }
+    usb_hid_service_set_onee_standby_mode(available);
+}
+
+static int ui_compose_onee_standby(uint16_t *fb, compositor_ui_phase_t phase)
+{
+    if (phase == COMPOSITOR_UI_PHASE_BASE) {
+        const uint8_t slot = comp_out_addr_to_slot((uint32_t)(uintptr_t)fb);
+        screenshot_service_rect_t rect;
+        uint8_t restore = 0U;
+
+        while (screenshot_service_restore_rect_for_frame(fb, &rect) != 0U) {
+            restore = 1U;
+        }
+        if (slot == 0xFFU || g_output_slot_standby[slot] == 0U || restore != 0U) {
+            cmui_onee_standby_draw(fb);
+            ui_mark_slot_dynamic(fb);
+            if (slot != 0xFFU) {
+                g_output_slot_standby[slot] = 1U;
+            }
+        }
+    } else {
+        screenshot_service_draw_overlay(fb);
+    }
+    return 1;
+}
+
 /* Two-phase compositor callback. BASE paints/restores the bezel before the
  * Apple subwindow. OVERLAY paints all dynamic UI after the Apple blit so the
  * border never covers status text or the storage activity view. */
@@ -3505,6 +3554,9 @@ static int ui_compose_frame(uint16_t *fb,
          config_menu_storage_activity_page_visible(menu) != 0U) ? 1U : 0U;
     const int menu_active = (int)config_menu_is_active(menu);
 
+    if (g_onee_standby_available != 0U && !menu_active) {
+        return ui_compose_onee_standby(fb, phase);
+    }
     XTime_GetTime(&t0);
 
     if (phase == COMPOSITOR_UI_PHASE_BASE) {
@@ -3729,6 +3781,7 @@ static ui_key_t ui_key_from_usb_menu_source(const config_menu_t *menu,
 
 static void ui_sync_usb_menu_capture(config_menu_t *menu)
 {
+    ui_sync_onee_standby(menu);
     if (!config_menu_is_active(menu)) {
         g_usb_menu_owned = 0U;
     }
@@ -3894,6 +3947,9 @@ static void ui_handle_usb_menu_event(ui_state_t *s,
     switch (event->action) {
     case USB_HID_MENU_ACTION_OPEN:
         if (!config_menu_is_active(menu)) {
+            if (g_onee_standby_available != 0U) {
+                config_menu_focus_onee_setup(menu);
+            }
             g_usb_menu_owned = 1U;
             ui_set_boot_menu_visible(s, menu, 1U);
         }
@@ -4531,12 +4587,14 @@ int main(void)
 
     while (1) {
         if (g_firmware_switch_fault != 0U) {
+            ui_sync_onee_standby(&config_menu);
             (void)compositor_tick();
             continue;
         }
         uart_budget = 32U;
         onee_service_poll();
         config_menu_poll_onee_mode(&config_menu);
+        ui_sync_onee_standby(&config_menu);
         ui_close_menu_on_onee_running(&ui, &config_menu);
         ui_sync_onee_menu_pause(&config_menu);
         boot_menu_service_refresh_machine_policy();

@@ -159,6 +159,7 @@ static uint8_t g_joystick_preview;
 static uint8_t g_binding_capture;
 static uint32_t g_gamepad_binding_mask;
 static uint8_t g_onee_fixed_mode;
+static uint8_t g_onee_standby_mode;
 static uint8_t g_onee_input_blocked;
 static usb_hid_menu_event_t g_menu_events[MOUSE_MENU_EVENT_DEPTH];
 static uint8_t g_menu_event_rd;
@@ -1375,6 +1376,8 @@ static void hid_process_keyboard_usages(usb_hid_slot_t *slot,
     uint32_t onee_key_count = 0U;
     uint8_t onee_modifier = modifier;
     uint8_t onee_reset_chord;
+    const uint8_t fixed_keyboard_mode =
+        (g_onee_fixed_mode != 0U || g_onee_standby_mode != 0U) ? 1U : 0U;
 
     if (slot == NULL || keys == NULL) {
         return;
@@ -1390,12 +1393,12 @@ static void hid_process_keyboard_usages(usb_hid_slot_t *slot,
         }
         if (onee_key_count >= HID_KEY_TRACK_COUNT ||
             key <= HID_KBD_USAGE_ERRUNDEF ||
-            onee_usb_apple_usage_allowed(key, g_onee_fixed_mode) == 0U) {
+            onee_usb_apple_usage_allowed(key, fixed_keyboard_mode) == 0U) {
             continue;
         }
         onee_keys[onee_key_count++] = key;
     }
-    if (g_onee_fixed_mode != 0U) {
+    if (fixed_keyboard_mode != 0U) {
         onee_modifier = onee_usb_fixed_apple_modifier(onee_modifier);
     }
     if (g_onee_input_blocked != 0U) {
@@ -1447,11 +1450,11 @@ static void hid_process_keyboard_usages(usb_hid_slot_t *slot,
                                HID_SOURCE_TRACK_COUNT) != 0U) {
             continue;
         }
-        if (g_onee_fixed_mode != 0U) {
+        if (fixed_keyboard_mode != 0U) {
             const uint8_t usage =
                 (uint8_t)(next_sources[i] & USB_HID_MENU_SOURCE_KEY_MASK);
             fixed_action = onee_usb_keyboard_action(
-                usage, modifier, g_menu_capture, g_onee_fixed_mode);
+                usage, modifier, g_menu_capture, fixed_keyboard_mode);
             fixed_route = onee_usb_fixed_route(usage, fixed_action);
             if ((fixed_route & ONEE_USB_ROUTE_PUSH_NOW) != 0U) {
                 mouse_menu_push_event(fixed_action, next_sources[i]);
@@ -1466,7 +1469,7 @@ static void hid_process_keyboard_usages(usb_hid_slot_t *slot,
         if (vtw_push_source(next_sources[i]) != 0U) {
             continue;
         }
-        if (g_onee_fixed_mode == 0U &&
+        if (fixed_keyboard_mode == 0U &&
             next_sources[i] == g_menu_open_close_source) {
             menu_start_open_close_hold(slot, next_sources[i]);
             if (g_menu_capture != 0U && next_sources[i] == g_menu_ok_source) {
@@ -2662,6 +2665,7 @@ int usb_hid_service_init(void)
     g_gamepad_binding_mask = 0U;
     g_joystick_preview = 0U;
     g_onee_fixed_mode = 0U;
+    g_onee_standby_mode = 0U;
     g_onee_input_blocked = 0U;
     g_menu_ok_source = USB_HID_MENU_ACTION_SELECT;
     g_menu_open_close_source = USB_HID_MENU_ACTION_SELECT;
@@ -2874,6 +2878,30 @@ void usb_hid_service_set_onee_fixed_mode(uint8_t enable)
     }
     /* Do not carry a key latched under one routing policy into the other. */
     onee_input_service_release_keyboard();
+}
+
+void usb_hid_service_set_onee_standby_mode(uint8_t enable)
+{
+    enable = (enable != 0U) ? 1U : 0U;
+    if (g_onee_standby_mode == enable) {
+        return;
+    }
+    g_onee_standby_mode = enable;
+    for (uint32_t i = 0U; i < USB_HID_SLOT_COUNT; ++i) {
+        usb_hid_slot_t *slot = &g_hid_slots[i];
+
+        /* Cancel old keyboard holds without replaying held keys or disturbing
+         * the mouse/gamepad paths on a composite device. */
+        if (usb_hid_menu_source_is_keyboard(slot->open_close_down_source) != 0U) {
+            menu_finish_open_close_hold(slot, slot->open_close_down_source);
+        }
+        if (usb_hid_menu_source_is_keyboard(slot->ok_down_source) != 0U) {
+            slot->ok_down = slot->ok_hold_fired = 0U;
+            slot->ok_down_tick = 0U;
+            slot->ok_down_source = USB_HID_MENU_SOURCE_NONE;
+            slot->ok_down_action = USB_HID_MENU_ACTION_NONE;
+        }
+    }
 }
 
 void usb_hid_service_set_onee_input_blocked(uint8_t blocked)

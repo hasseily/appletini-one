@@ -67,6 +67,8 @@ void cmui_screen_rects(cmui_rect_t *nav,
                        cmui_rect_t *body,
                        cmui_rect_t *footer);
 void cmui_clear(uint16_t *fb);
+/* Centered, static setup screen. Reuses the menu logo cache and framebuffer. */
+void cmui_onee_standby_draw(uint16_t *fb);
 void cmui_panel(uint16_t *fb, const cmui_rect_t *rect, uint32_t bg);
 void cmui_header(uint16_t *fb,
                  const char *brand,

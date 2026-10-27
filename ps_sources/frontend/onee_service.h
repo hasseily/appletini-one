@@ -75,6 +75,9 @@ void onee_service_request_stop(void);
 void onee_service_poll(void);
 onee_service_state_t onee_service_state(void);
 uint32_t onee_service_status(void);
+/* Read-only UI hint: a stopped, quiet card can offer manual setup. This does
+ * not select ONE//e, clear a stop latch, or prove the connector is unplugged. */
+uint8_t onee_service_standby_available(void);
 /* True only while the PL confirms a selected, hazard-free, isolated private
  * bus. Host-machine policy may use this for ONE//e-only service paths; it must
  * never grant access to the physical Apple bus. */

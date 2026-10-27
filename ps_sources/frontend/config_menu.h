@@ -386,6 +386,8 @@ uint8_t config_menu_output_mode(const config_menu_t *menu);
 uint8_t config_menu_size_multiplier(const config_menu_t *menu);
 uint8_t config_menu_storage_activity_page_visible(const config_menu_t *menu);
 void config_menu_set_active(config_menu_t *menu, uint8_t active);
+/* Focus the manual ONE//e switch without changing or saving its value. */
+void config_menu_focus_onee_setup(config_menu_t *menu);
 void config_menu_toggle(config_menu_t *menu);
 void config_menu_set_usb_bindings_editable(config_menu_t *menu, uint8_t editable);
 void config_menu_set_usb_owned(config_menu_t *menu, uint8_t usb_owned);

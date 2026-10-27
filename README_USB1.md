@@ -46,7 +46,7 @@ and cached PHY results. Reading status does not enumerate devices or run
 new ULPI transactions. The cache records startup/shutdown checks; PORTSC
 reports the current controller state.
 
-## Standalone ONE//e reset shortcuts
+## Standalone ONE//e keyboard controls
 
 In an active standalone ONE//e session, the USB keyboard provides:
 
@@ -57,6 +57,27 @@ Both shortcuts use forward Delete, not Backspace. These reset shortcuts apply
 only to standalone ONE//e. The added warm-reset shortcut changes ARM firmware
 only: rebuild the frontend and `FIRMWARE.BIN`; no HDL or FPGA binary rebuild
 is needed.
+
+ONE//e also provides fixed keyboard menu controls:
+
+| Key | Action |
+| --- | --- |
+| Pause/Break | Open or close the menu |
+| Left or right Windows/GUI | Open the menu |
+| Arrow keys | Navigate while the menu is open |
+| Enter or keypad Enter | Select while the menu is open |
+| Tab / Shift+Tab | Next / previous tab while the menu is open |
+| Esc | Go back while the menu is open |
+
+Both Shift keys work with Tab. Fixed menu keys take precedence over saved
+USB bindings in ONE//e. With the menu closed, arrows, Enter, Tab and Esc
+keep their normal Apple input; only Pause/Break and Windows/GUI act as
+keyboard menu shortcuts. Holding a saved keyboard OK key does not open or
+close the ONE//e menu. Mouse and gamepad OK holds still work.
+
+Left Alt remains Open Apple and right Alt remains Closed Apple. These changes
+affect the ARM frontend only. Host tests cover key routing and menu actions;
+physical USB-keyboard testing remains pending.
 
 ## Validation
 

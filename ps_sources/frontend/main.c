@@ -3856,8 +3856,13 @@ static void ui_handle_usb_menu_event(ui_state_t *s,
     if (event == NULL) {
         return;
     }
+    /* Fixed ONE//e keyboard events carry their action directly. Saved
+     * bindings must not add a second action to the same key press. */
+    const ui_key_t keyboard_key =
+        usb_hid_menu_source_is_keyboard(event->source) != 0U ?
+            config_menu_translate_usb_fixed_action(event->action) : UI_KEY_NONE;
     /* Learn one physical source before its fixed or global action can fire. */
-    if (event->fixed_action != USB_HID_MENU_ACTION_NONE) {
+    if (event->fixed_action != USB_HID_MENU_ACTION_NONE || keyboard_key != UI_KEY_NONE) {
         if (config_menu_is_active(menu) &&
             config_menu_usb_binding_capture_action(menu) != CONFIG_MENU_USB_BIND_CAPTURE_NONE) {
             (void)config_menu_capture_usb_binding(menu, event->source);
@@ -3866,7 +3871,8 @@ static void ui_handle_usb_menu_event(ui_state_t *s,
         if (event->fixed_action == USB_HID_MENU_ACTION_TOGGLE) {
             ui_toggle_usb_gamepad_menu(s, menu);
         } else {
-            fixed_key = config_menu_translate_usb_fixed_action(event->fixed_action);
+            fixed_key = keyboard_key != UI_KEY_NONE ? keyboard_key :
+                config_menu_translate_usb_fixed_action(event->fixed_action);
             if (config_menu_is_active(menu) && fixed_key != UI_KEY_NONE) {
                 if (fixed_key == UI_KEY_SHIFT_TAB || fixed_key == UI_KEY_TAB) {
                     if (config_menu_handle_usb_fixed_tab(menu,
@@ -3879,6 +3885,9 @@ static void ui_handle_usb_menu_event(ui_state_t *s,
                     ui_handle_input_with_config(s, menu, ui_make_input(fixed_key));
                 }
             }
+        }
+        if (keyboard_key != UI_KEY_NONE) {
+            return;
         }
     }
 

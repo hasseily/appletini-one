@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run fixed controller event consumers with the real binding translators."""
+"""Run fixed controller and ONE//e keyboard consumers with real binding translators."""
 
 from pathlib import Path
 import re
@@ -284,6 +284,49 @@ static void test_fixed_tabs_leave_real_child_state(void)
     assert(!config_menu_handle_usb_fixed_tab(&menu,1));
     puts("PASS fixed shoulders change actual tabs from joystick/browser children, preserve entry refreshes and modal safeguards");
 }
+static void test_fixed_keyboard_navigation(void)
+{
+    config_menu_t menu; ui_state_t state;
+    static const struct {
+        uint8_t usage;
+        usb_hid_menu_action_t action;
+        ui_key_t key;
+    } controls[] = {
+        {0x52U,USB_HID_MENU_ACTION_ITEM_UP,UI_KEY_UP},
+        {0x51U,USB_HID_MENU_ACTION_ITEM_DOWN,UI_KEY_DOWN},
+        {0x50U,USB_HID_MENU_ACTION_LEFT,UI_KEY_LEFT},
+        {0x4FU,USB_HID_MENU_ACTION_RIGHT,UI_KEY_RIGHT},
+        {0x28U,USB_HID_MENU_ACTION_SELECT,UI_KEY_ENTER},
+        {0x58U,USB_HID_MENU_ACTION_SELECT,UI_KEY_ENTER},
+        {0x29U,USB_HID_MENU_ACTION_BACK,UI_KEY_BACK},
+        {0x2BU,USB_HID_MENU_ACTION_NEXT_TAB,UI_KEY_TAB},
+        {0x2BU,USB_HID_MENU_ACTION_PREV_TAB,UI_KEY_SHIFT_TAB},
+    };
+    for (unsigned i=0U;i<sizeof(controls)/sizeof(controls[0]);++i) {
+        const usb_hid_menu_source_t source=USB_HID_MENU_SOURCE_KEY_BASE|controls[i].usage;
+        const usb_hid_menu_event_t event={.action=controls[i].action,.source=source,
+            .fixed_action=USB_HID_MENU_ACTION_NONE};
+        reset(&menu,&state);
+        menu.usb_menu_bindings[CONFIG_MENU_USB_BIND_ACTION_RIGHT]=source;
+        ui_handle_usb_menu_event(&state,&menu,&event);
+        assert(state.key_count==1U && state.last_key==controls[i].key);
+        if (controls[i].key==UI_KEY_TAB || controls[i].key==UI_KEY_SHIFT_TAB)
+            assert(!key_count && menu.tab==(controls[i].key==UI_KEY_TAB ? 1U : CONFIG_TAB_COUNT-1U));
+        else assert(key_count==1U && keys[0]==controls[i].key);
+        reset(&menu,&state); menu.active=0U;
+        ui_handle_usb_menu_event(&state,&menu,&event);
+        assert(!state.key_count && !key_count && !opens);
+        reset(&menu,&state); menu.usb_binding_capture=CONFIG_MENU_USB_BIND_ACTION_OK;
+        ui_handle_usb_menu_event(&state,&menu,&event);
+        assert(captures==1U && captured_source==source && !state.key_count && !key_count);
+    }
+    reset(&menu,&state); menu.tab=CONFIG_TAB_USB; menu.browser_active=1U; menu.item_focus=9U;
+    const usb_hid_menu_event_t tab={.action=USB_HID_MENU_ACTION_NEXT_TAB,
+        .source=USB_HID_MENU_SOURCE_KEY_BASE|0x2BU,.fixed_action=USB_HID_MENU_ACTION_NONE};
+    ui_handle_usb_menu_event(&state,&menu,&tab);
+    assert(menu.tab==CONFIG_TAB_PRINTING && !menu.browser_active && menu.item_focus==0U);
+    puts("PASS fixed keyboard navigation overrides saved actions, changes real tabs and preserves capture and closed-menu guards");
+}
 static void test_legacy_sources(void)
 {
     config_menu_t menu; ui_state_t state;
@@ -303,7 +346,8 @@ int main(void)
     _Static_assert(USB_HID_MENU_ACTION_BACK==16,"Back must append to old actions");
     _Static_assert(USB_HID_MENU_ACTION_TOGGLE==17,"Toggle must append to old actions");
     test_fixed_navigation_and_explicit_bindings(); test_learning_and_opening_capture();
-    test_toggle_children_and_safety(); test_fixed_tabs_leave_real_child_state(); test_legacy_sources();
+    test_toggle_children_and_safety(); test_fixed_tabs_leave_real_child_state();
+    test_fixed_keyboard_navigation(); test_legacy_sources();
     return 0;
 }
 '''

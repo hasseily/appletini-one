@@ -568,7 +568,9 @@ static void hid_slot_reset_menu_state(usb_hid_slot_t *slot)
     slot->prev_buttons = 0U;
     slot->prev_gamepad_buttons = slot->gamepad_buttons;
     slot->gamepad_tab = 0U;
-    memset(slot->prev_sources, 0, sizeof(slot->prev_sources));
+    /* Keep keyboard edges across menu and policy changes. A held Pause or
+     * Windows key must not fire again as soon as capture changes. Full slot
+     * reset clears these sources when a device connects or disconnects. */
     slot->prev_hat = HID_HAT_NEUTRAL;
     slot->prev_x_dir = 0;
     slot->prev_y_dir = 0;
@@ -1449,7 +1451,7 @@ static void hid_process_keyboard_usages(usb_hid_slot_t *slot,
             const uint8_t usage =
                 (uint8_t)(next_sources[i] & USB_HID_MENU_SOURCE_KEY_MASK);
             fixed_action = onee_usb_keyboard_action(
-                usage, g_menu_capture, g_onee_fixed_mode);
+                usage, modifier, g_menu_capture, g_onee_fixed_mode);
             fixed_route = onee_usb_fixed_route(usage, fixed_action);
             if ((fixed_route & ONEE_USB_ROUTE_PUSH_NOW) != 0U) {
                 mouse_menu_push_event(fixed_action, next_sources[i]);
@@ -1464,7 +1466,8 @@ static void hid_process_keyboard_usages(usb_hid_slot_t *slot,
         if (vtw_push_source(next_sources[i]) != 0U) {
             continue;
         }
-        if (next_sources[i] == g_menu_open_close_source) {
+        if (g_onee_fixed_mode == 0U &&
+            next_sources[i] == g_menu_open_close_source) {
             menu_start_open_close_hold(slot, next_sources[i]);
             if (g_menu_capture != 0U && next_sources[i] == g_menu_ok_source) {
                 keyboard_menu_start_ok_hold(slot,

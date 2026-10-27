@@ -227,8 +227,17 @@ def test_onee_uses_fixed_keyboard_controls_and_blocks_menu_leakage() -> None:
     require("HID_KBD_USAGE_PAUSE" in fixed and
             "USB_HID_MENU_ACTION_OPEN" in fixed and
             "USB_HID_MENU_ACTION_CLOSE" in fixed and
-            "usage != HID_KBD_USAGE_PAUSE" in fixed,
-            "Pause/Break must be the only fixed ONE//e menu key")
+            "HID_KBD_USAGE_LGUI" in fixed and
+            "HID_KBD_USAGE_RGUI" in fixed and
+            "menu_capture == 0U" in fixed,
+            "ONE//e must keep Pause toggle, Windows open and menu-only navigation")
+    for usage in ["HID_KBD_USAGE_UP", "HID_KBD_USAGE_DOWN", "HID_KBD_USAGE_LEFT",
+                  "HID_KBD_USAGE_RIGHT", "HID_KBD_USAGE_ENTER", "HID_KBD_USAGE_TAB",
+                  "HID_KBD_USAGE_ESCAPE"]:
+        require(usage in fixed, f"missing fixed ONE//e menu key {usage}")
+    require("ONEE_USB_MODIFIER_SHIFT" in fixed and
+            "usage, modifier, g_menu_capture, g_onee_fixed_mode" in keyboard,
+            "fixed Tab routing must receive the keyboard modifier byte")
     for usage in ["HID_KBD_USAGE_PAGEUP", "HID_KBD_USAGE_PRINTSCN",
                   "HID_KBD_USAGE_KPD0", "HID_KBD_USAGE_KPDPLUS"]:
         require(usage not in fixed,
@@ -277,8 +286,9 @@ def test_onee_uses_fixed_keyboard_controls_and_blocks_menu_leakage() -> None:
     route = function_body(controls, "onee_usb_fixed_route")
     require("onee_usb_fixed_usage_reserved(usage)" in route and
             "ONEE_USB_ROUTE_PUSH_NOW" in route and
-            "ONEE_USB_ROUTE_CONSUME_SOURCE" in route,
-            "the fixed route must consume only Pause and the two Alt sources")
+            "ONEE_USB_ROUTE_CONSUME_SOURCE" in route and
+            "onee_usb_menu_navigation_usage(usage)" in route,
+            "fixed controls must bypass saved bindings while guest navigation stays available")
 
     require("onee_service_sync_menu_policy(config_menu_is_active(menu))" in
             pause_sync and

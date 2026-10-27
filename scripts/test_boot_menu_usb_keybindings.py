@@ -295,7 +295,7 @@ def test_onee_draws_fixed_controls_and_editable_bindings() -> None:
             '"RESET: Ctrl+Alt+Del"' in tabs and
             '"OPEN APPLE: Left Alt"' in tabs and
             '"CLOSED APPLE: Right Alt"' in tabs and
-            '"MENU: Pause/Break + Long OK"' in tabs and
+            '"MENU: Pause/Break or Windows"' in tabs and
             "const int fixed_menu_y = reset_y + row_h;" in tabs and
             "fixed_menu_y,\n"
             "                             w," in tabs and
@@ -316,11 +316,10 @@ def test_onee_draws_fixed_controls_and_editable_bindings() -> None:
             "config_menu_capture_usb_binding(menu, event->source)" in frontend_main and
             "g_usb_menu_owned == 0U || ui_onee_selected() != 0U" in frontend_main,
             "ONE//e must allow binding capture even when USB opened the menu")
-    require("ONE//e fixes Reset, Open Apple, Closed Apple, and Pause/Break. Other USB bindings stay editable." in
-            help_source and
-            "Pause/Break and a long press of the saved OK binding both open or close the ONE//e menu." in
-            help_source,
-            "Boot Settings help must explain the fixed controls and both Menu routes")
+    require("Pause/Break opens or closes its menu; either Windows key opens it." in help_source and
+            "arrows move, Enter selects, Tab/Shift+Tab changes tabs, and Esc goes back." in help_source and
+            "saved mouse or gamepad OK binding" in help_source,
+            "Boot Settings help must explain fixed keyboard navigation, menu keys and mouse/gamepad holds")
 
 
 def test_open_close_is_long_press_of_open_close_source() -> None:
@@ -371,7 +370,7 @@ def test_usb_keyboard_uses_binding_sources_only() -> None:
     require("event->action" in frontend_main and
             "config_menu_translate_usb_binding(menu, source)" in frontend_main and
             "config_menu_capture_usb_binding(menu, event->source)" in frontend_main,
-            "frontend must route keyboard/keypad source events only through the USB binding table")
+            "frontend must retain saved keyboard/keypad binding capture and translation")
     require("usb_hid_menu_source_is_keyboard(source) != 0U" in source and
             "config_menu_usb_binding_source_clamp_for_action(\n"
             "    uint32_t action," in source,

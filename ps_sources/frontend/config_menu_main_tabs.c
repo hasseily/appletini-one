@@ -221,7 +221,7 @@ void config_menu_draw_boot_settings(uint16_t *fb,
                              fixed_menu_y,
                              w,
                              0U,
-                             "MENU: Pause/Break + Long OK");
+                             "MENU: Pause/Break or Windows");
     } else if (menu->usb_bindings_editable != 0U) {
         hgr_draw_item(fb,
                       x,

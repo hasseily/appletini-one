@@ -115,8 +115,10 @@ HELP(boot_settings,
     "In normal use the USB device's MENU key opens USB mode, and the USB keys drive the menu.",
     "Leave the Apple keyboard alone in USB mode: it reaches the running program.",
     "In USB bindings, Up/Down move within a column, Left/Right move columns, and Enter captures a new input.",
-    "ONE//e fixes Reset, Open Apple, Closed Apple, and Pause/Break. Other USB bindings stay editable.",
-    "Pause/Break and a long press of the saved OK binding both open or close the ONE//e menu.",
+    "ONE//e fixes Reset and the Apple keys. Pause/Break opens or closes its menu; either Windows key opens it.",
+    "In the ONE//e menu, arrows move, Enter selects, Tab/Shift+Tab changes tabs, and Esc goes back.",
+    "These menu keys override saved bindings only in ONE//e. With the menu closed, navigation keys type into the Apple.",
+    "A long press of the saved mouse or gamepad OK binding can still open or close the menu.",
     "TW keys change TransWarp speed any time: toggle 1 MHz, step the preset, toggle the 0.05 MHz slug.");
 
 HELP(boot_timeout,

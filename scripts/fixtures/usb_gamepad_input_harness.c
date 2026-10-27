@@ -1242,6 +1242,7 @@ static int test_input_kind_state_boundaries(void)
     hid_slots_reset_all();
     g_menu_event_rd = g_menu_event_wr = g_menu_event_count = 0U;
     g_menu_capture = 1U;
+    g_onee_fixed_mode = 0U;
     g_binding_capture = g_joystick_preview = 0U;
     g_gamepad_binding_mask = 0U;
     g_screenshot_a2_source = g_screenshot_1080p_source = 0U;
@@ -1304,6 +1305,125 @@ static int test_input_kind_state_boundaries(void)
         usb_hid_service_pop_menu_event(&event) && event.source == g_menu_ok_source &&
         !g_menu_event_count, "gamepad release finishes its own composite hold once");
     puts("PASS mouse/keyboard state across pad learning and composite gamepad hold isolation");
+    return 0;
+}
+
+static int test_fixed_onee_keyboard_menu(void)
+{
+    static const struct {
+        uint8_t usage;
+        usb_hid_menu_action_t action;
+    } navigation[] = {
+        {HID_KBD_USAGE_UP, USB_HID_MENU_ACTION_ITEM_UP},
+        {HID_KBD_USAGE_DOWN, USB_HID_MENU_ACTION_ITEM_DOWN},
+        {HID_KBD_USAGE_LEFT, USB_HID_MENU_ACTION_LEFT},
+        {HID_KBD_USAGE_RIGHT, USB_HID_MENU_ACTION_RIGHT},
+        {HID_KBD_USAGE_ENTER, USB_HID_MENU_ACTION_SELECT},
+        {HID_KBD_USAGE_KPDEMTER, USB_HID_MENU_ACTION_SELECT},
+        {HID_KBD_USAGE_TAB, USB_HID_MENU_ACTION_NEXT_TAB},
+        {HID_KBD_USAGE_ESCAPE, USB_HID_MENU_ACTION_BACK},
+    };
+    const uint8_t no_keys[] = {0U};
+    usb_hid_menu_event_t event;
+    usb_hid_slot_t *slot = &g_hid_slots[0];
+
+    hid_slots_reset_all();
+    g_menu_event_rd = g_menu_event_wr = g_menu_event_count = 0U;
+    g_menu_capture = g_binding_capture = g_joystick_preview = 0U;
+    g_onee_fixed_mode = 1U;
+    g_onee_input_blocked = g_ready = 0U;
+    memset(g_vtw_sources, 0, sizeof(g_vtw_sources));
+    slot->active = 1U;
+
+    for (unsigned i = 0U; i < sizeof(navigation) / sizeof(navigation[0]); ++i) {
+        const uint8_t keys[] = {navigation[i].usage};
+        const usb_hid_menu_source_t source =
+            usb_hid_menu_source_from_keyboard_usage(keys[0]);
+        /* Conflicting saved bindings must not run in either menu state. */
+        g_screenshot_a2_source = g_screenshot_1080p_source = source;
+        g_vtw_sources[0] = source;
+        g_menu_ok_source = g_menu_open_close_source = source;
+        usb_hid_service_set_menu_capture(0U);
+        usb_hid_service_set_onee_input_blocked(0U);
+        hid_process_keyboard_usages(slot, 0U, keys, sizeof(keys));
+        CHECK(mock_keys[keys[0]] && !g_menu_event_count && !slot->open_close_down,
+            "closed ONEe menu leaves navigation in the guest without saved shortcuts or holds");
+        mock_time += MOUSE_MENU_HOLD_TICKS;
+        hid_slots_poll_holds();
+        hid_process_keyboard_usages(slot, 0U, keys, sizeof(keys));
+        CHECK(!g_menu_event_count, "holding a gameplay navigation key cannot open the menu");
+        usb_hid_service_set_menu_capture(1U);
+        usb_hid_service_set_onee_input_blocked(1U);
+        hid_process_keyboard_usages(slot, 0U, keys, sizeof(keys));
+        CHECK(!g_menu_event_count && !mock_key_count,
+            "opening the menu cannot turn an already-held guest key into menu input");
+        hid_process_keyboard_usages(slot, 0U, no_keys, sizeof(no_keys));
+        hid_process_keyboard_usages(slot, 0U, keys, sizeof(keys));
+        CHECK(!mock_key_count && !mock_modifiers &&
+            usb_hid_service_pop_menu_event(&event) && event.action == navigation[i].action &&
+            event.source == source && event.fixed_action == USB_HID_MENU_ACTION_NONE &&
+            !g_menu_event_count && !slot->open_close_down && !slot->ok_down,
+            "menu navigation emits one immediate fixed action and no guest input or saved hold");
+        hid_process_keyboard_usages(slot, 0U, keys, sizeof(keys));
+        CHECK(!g_menu_event_count, "a held menu key cannot repeat its action on identical reports");
+        usb_hid_service_set_menu_capture(0U);
+        hid_process_keyboard_usages(slot, 0U, keys, sizeof(keys));
+        CHECK(!g_menu_event_count && !mock_key_count && !usb_hid_service_all_input_released(),
+            "closing the menu retains guest blocking until held navigation is released");
+        hid_process_keyboard_usages(slot, 0U, no_keys, sizeof(no_keys));
+        CHECK(!g_menu_event_count && usb_hid_service_all_input_released(),
+            "key release cannot select, reopen or dispatch a saved shortcut");
+    }
+
+    g_screenshot_a2_source = g_screenshot_1080p_source = 0U;
+    memset(g_vtw_sources, 0, sizeof(g_vtw_sources));
+    for (unsigned side = 0U; side < 2U; ++side) {
+        const uint8_t modifier = (uint8_t)(1U << (side ? 5U : 1U));
+        const uint8_t tab[] = {HID_KBD_USAGE_TAB};
+        hid_process_keyboard_usages(slot, modifier, no_keys, sizeof(no_keys));
+        usb_hid_service_set_menu_capture(1U);
+        hid_process_keyboard_usages(slot, modifier, tab, sizeof(tab));
+        CHECK(take_event(USB_HID_MENU_ACTION_PREV_TAB) && !g_menu_event_count,
+            "both Shift modifiers reach fixed previous-tab routing");
+        hid_process_keyboard_usages(slot, 0U, no_keys, sizeof(no_keys));
+        usb_hid_service_set_menu_capture(0U);
+    }
+    usb_hid_service_set_onee_input_blocked(0U);
+    for (unsigned side = 0U; side < 2U; ++side) {
+        const uint8_t modifier = (uint8_t)(1U << (side ? 7U : 3U));
+        hid_process_keyboard_usages(slot, modifier, no_keys, sizeof(no_keys));
+        CHECK(take_event(USB_HID_MENU_ACTION_OPEN) && !g_menu_event_count && !mock_modifiers,
+            "either Windows modifier opens the menu without asserting an Apple key");
+        usb_hid_service_set_menu_capture(1U);
+        hid_process_keyboard_usages(slot, modifier, no_keys, sizeof(no_keys));
+        hid_process_keyboard_usages(slot, 0U, no_keys, sizeof(no_keys));
+        hid_process_keyboard_usages(slot, modifier, no_keys, sizeof(no_keys));
+        CHECK(!g_menu_event_count, "Windows is open-only, including a fresh press inside the menu");
+        hid_process_keyboard_usages(slot, 0U, no_keys, sizeof(no_keys));
+        const uint8_t pause[] = {HID_KBD_USAGE_PAUSE};
+        hid_process_keyboard_usages(slot, 0U, pause, sizeof(pause));
+        CHECK(take_event(USB_HID_MENU_ACTION_CLOSE) && !g_menu_event_count,
+            "Pause retains menu close");
+        usb_hid_service_set_menu_capture(0U);
+        hid_process_keyboard_usages(slot, 0U, pause, sizeof(pause));
+        CHECK(!g_menu_event_count, "held Pause cannot reopen after closing");
+        hid_process_keyboard_usages(slot, 0U, no_keys, sizeof(no_keys));
+    }
+    const uint8_t custom_ok[] = {HID_KBD_USAGE_A};
+    g_menu_ok_source = g_menu_open_close_source =
+        usb_hid_menu_source_from_keyboard_usage(custom_ok[0]);
+    hid_process_keyboard_usages(slot, 0U, custom_ok, sizeof(custom_ok));
+    mock_time += MOUSE_MENU_HOLD_TICKS;
+    hid_slots_poll_holds();
+    CHECK(mock_keys[custom_ok[0]] && !g_menu_event_count && !slot->open_close_down,
+        "a saved keyboard OK hold cannot add another ONEe menu-opening key");
+    hid_process_keyboard_usages(slot, 0U, no_keys, sizeof(no_keys));
+    usb_hid_service_set_onee_fixed_mode(0U);
+    hid_process_keyboard_usages(slot, 0U, custom_ok, sizeof(custom_ok));
+    mock_time += MOUSE_MENU_HOLD_TICKS;
+    hid_slots_poll_holds();
+    CHECK(take_event(USB_HID_MENU_ACTION_OPEN), "ordinary Apple-host saved keyboard OK holds still work");
+    puts("PASS fixed ONEe keyboard navigation, Windows/Pause, Shift+Tab, conflicting bindings and held transitions");
     return 0;
 }
 
@@ -1505,5 +1625,6 @@ int main(void)
     CHECK(test_generic_button_bindings_and_composite_guards() == 0, "generic bindings and composite holds");
     CHECK(test_optional_identity_metadata() == 0, "optional USB identity metadata");
     CHECK(test_fixed_controller_navigation() == 0, "fixed controller navigation alongside saved bindings");
+    CHECK(test_fixed_onee_keyboard_menu() == 0, "fixed ONEe keyboard menu routing");
     return 0;
 }

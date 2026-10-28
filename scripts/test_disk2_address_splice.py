@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Run the actual ARM decoder on a board-captured TURBO address splice."""
+"""Run the actual ARM decoder on a board-captured TURBO address splice and on
+tracks with missing sectors."""
 import ctypes
 import hashlib
 import json
@@ -9,7 +10,8 @@ import re
 import subprocess
 
 from test_onee_input_service import find_native_c_compiler
-from test_disk2_standard import nibblize_track, make_sector_track, find_prologues
+from test_disk2_standard import (nibblize_track, make_sector_track, find_prologues,
+                                 physical_to_file_sector)
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'build/disk2-address-splice-test'
@@ -39,7 +41,8 @@ def main():
     for name in ('decode44_pair', 'sector_image_file_sector', 'gcr_decode_6and2',
                  'decode_6and2_sector', 'denibblize_sector_track'):
         shared += function(source, name) + '\n'
-    shared += 'int decode(const uint8_t *n, uint32_t len, uint8_t *out, uint8_t po, uint8_t t) { return denibblize_sector_track(n,len,out,po,t); }\n'
+    shared += ('int decode(const uint8_t *n, uint32_t len, uint8_t *out, uint8_t po, uint8_t t, '
+               'uint16_t *seen) { return denibblize_sector_track(n,len,out,po,t,seen); }\n')
 
     def compile_decoder(name, text):
         path = OUT / (name + '.c'); path.write_text(text, encoding='utf-8')
@@ -48,11 +51,18 @@ def main():
                         '-shared', str(path), '-o', str(lib)], check=True)
         dll = ctypes.CDLL(str(lib))
         dll.decode.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p,
-                               ctypes.c_uint8, ctypes.c_uint8]
+                               ctypes.c_uint8, ctypes.c_uint8,
+                               ctypes.POINTER(ctypes.c_uint16)]
+        def decode_seen(raw, po, track, stored=bytes(4096)):
+            # The firmware passes the stored track; the decoder replaces only
+            # the sectors that it decodes.
+            output = (ctypes.c_ubyte * 4096).from_buffer_copy(stored)
+            seen = ctypes.c_uint16(0)
+            assert dll.decode(raw, len(raw), output, po, track, ctypes.byref(seen)) == 0
+            return bytes(output), seen.value
         def decode(raw, po, track):
-            output = (ctypes.c_ubyte * 4096)()
-            assert dll.decode(raw, len(raw), output, po, track) == 0
-            return bytes(output)
+            return decode_seen(raw, po, track)[0]
+        decode.seen = decode_seen
         return decode
 
     fixed = compile_decoder('fixed', shared)
@@ -64,8 +74,9 @@ def main():
     meta = json.loads(fixture.with_suffix('.json').read_text())
     raw = fixture.read_bytes()
     assert hashlib.sha256(raw).hexdigest() == meta['raw_sha256']
-    good = fixed(raw, 1, 7); bad = stock(raw, 1, 7)
+    good, good_seen = fixed.seen(raw, 1, 7); bad = stock(raw, 1, 7)
     assert hashlib.sha256(good).hexdigest() == meta['decoded_sha256']
+    assert good_seen == 0xFFFF
     assert bad != good and bad[:512] == bytes(512)
     # Preserve full address/checksum/data checks while treating only the
     # third address-epilogue byte as part of the overwriteable sync gap.
@@ -83,13 +94,32 @@ def main():
                          (addresses[0] + 9, 1), (data_fields[0] + 3, 1)):
             changed = bytearray(base); changed[pos] ^= xor
             assert fixed(bytes(changed), po, 7) != expected
+        # A sector that does not decode keeps its stored bytes, and the seen
+        # mask names it. The firmware then write-protects the drive.
+        stored = bytes([0xC3]) * 4096
+        track, seen = fixed.seen(base, po, 7, stored)
+        assert track == expected and seen == 0xFFFF
+        changed = bytearray(base); changed[data_fields[1] + 3 + 342] ^= 1
+        track, seen = fixed.seen(bytes(changed), po, 7, stored)
+        start = physical_to_file_sector(1, po) * 256
+        want = bytearray(expected); want[start:start + 256] = stored[start:start + 256]
+        assert track == bytes(want) and seen == 0xFFFF & ~(1 << 1)
+        # With no valid address field, as after a 13-sector write, the stored
+        # track stays as it was.
+        changed = bytearray(base)
+        for pos in addresses:
+            changed[pos + 2] = 0xB5
+        track, seen = fixed.seen(bytes(changed), po, 7, stored)
+        assert track == stored and seen == 0
     report = {'pass': True, 'actual_c_decoder': True,
               'board_fixture_stock_rule_loses_data': True,
               'board_fixture_fixed_hash_matches_native_write': True,
               'third_address_epilogue_values_tested_per_order': 256,
-              'sector_orders': ['DOS', 'ProDOS'], 'negative_validation_cases': 8}
+              'sector_orders': ['DOS', 'ProDOS'], 'negative_validation_cases': 8,
+              'missing_sectors_keep_stored_bytes': True}
     (OUT / 'report.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
-    print('PASS actual C decoder: captured TURBO splice, all third-byte values, and invalid-field rejection')
+    print('PASS actual C decoder: captured TURBO splice, all third-byte values, invalid-field '
+          'rejection, and stored bytes kept for missing sectors')
 
 
 if __name__ == '__main__':

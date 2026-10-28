@@ -2065,13 +2065,21 @@ static uart_control_event_t process_disk2_command(
     for (uint8_t drive = 0U; drive < DISK2_DRIVE_COUNT; ++drive) {
         disk2_image_info_t info;
         const char *path = disk2_service_get_image_path(drive);
+        char sector_fault[24];
 
         if (disk2_service_get_image_info(drive, &info) != 0) {
             continue;
         }
+        if (info.sector_fault_missing != 0U) {
+            snprintf(sector_fault, sizeof(sector_fault), "t%u:$%04X",
+                     (unsigned)info.sector_fault_track,
+                     (unsigned)info.sector_fault_missing);
+        } else {
+            snprintf(sector_fault, sizeof(sector_fault), "none");
+        }
         snprintf(line,
                  sizeof(line),
-                 "disk2 d%u: %s %s %s wozwrite=%s size=%lu tracks=%lu blocks=%lu path=%s\r\n",
+                 "disk2 d%u: %s %s %s wozwrite=%s size=%lu tracks=%lu blocks=%lu sectorfault=%s path=%s\r\n",
                  (unsigned)drive + 1U,
                  info.present ? "present" : "empty",
                  disk2_service_format_name(info.format),
@@ -2081,6 +2089,7 @@ static uart_control_event_t process_disk2_command(
                  (unsigned long)info.file_size,
                  (unsigned long)info.track_count,
                  (unsigned long)info.logical_blocks,
+                 sector_fault,
                  (path[0] != '\0') ? path : "-");
         uart_puts(control->control_uart_base, line);
     }

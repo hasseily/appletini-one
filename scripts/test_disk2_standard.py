@@ -32,6 +32,7 @@ CONFIG_MENU_C = REPO_ROOT / "ps_sources" / "frontend" / "config_menu.c"
 CONFIG_MENU_HELP_C = REPO_ROOT / "ps_sources" / "frontend" / "config_menu_help.c"
 CONFIG_MENU_DEVICE_TABS_C = REPO_ROOT / "ps_sources" / "frontend" / "config_menu_device_tabs.c"
 FRONTEND_MAIN_C = REPO_ROOT / "ps_sources" / "frontend" / "main.c"
+UART_CONTROL_C = REPO_ROOT / "ps_sources" / "frontend" / "uart_control.c"
 
 SECTOR_BYTES = 256
 SECTORS_PER_TRACK = 16
@@ -209,10 +210,15 @@ def denibblize_track(nibbles: bytes | bytearray,
                      expected_track: int,
                      base_track: bytes | bytearray | None = None) -> bytes:
     require(len(nibbles) >= 512, "nibble stream is too short")
-    # AppleWin starts every denibblized write with a zeroed 4K track. Valid
-    # address/data pairs fill their sectors; absent or invalid sectors stay 0.
-    del base_track
-    sector_track = bytearray(TRACK_DENIBBLIZED_SIZE)
+    # Writeback starts from the stored track. Valid address/data pairs
+    # replace their sectors; absent or invalid sectors keep the stored bytes.
+    # With no stored track, they stay zero.
+    if base_track is None:
+        sector_track = bytearray(TRACK_DENIBBLIZED_SIZE)
+    else:
+        require(len(base_track) == TRACK_DENIBBLIZED_SIZE,
+                "stored track has the wrong size")
+        sector_track = bytearray(base_track)
     offset = 0
     sector = -1
     sectors_seen = 0
@@ -363,16 +369,39 @@ def test_c_constants_and_source_contract() -> None:
     require("static int decode_6and2_sector" in source and
             "if (raw[342] != saved)" in source,
             "DSK/PO writeback must validate each sector data checksum")
-    require("uint8_t expected_track)" in source and
+    require("uint8_t expected_track,\n"
+            "                                   uint16_t *sectors_seen_out)" in source and
             "track != expected_track" in source and
             "(uint8_t)(volume ^ track ^ address_sector) != checksum" in source,
             "DSK/PO writeback must validate address track and checksum fields")
     require("encoded[343] == 0xDEU" in source and
             "encoded[8] != 0xDEU" in source,
             "DSK/PO writeback must validate address and data epilogues")
-    require("memset(sector_track, 0," in source and
-            "return 0;" in source,
-            "DSK/PO writeback must zero missing sectors and accept valid ones")
+    require("memset(sector_track, 0," not in source and
+            "rc = read_sector_physical_track(drive, track, g_sector_track_buf);\n"
+            "        if (rc != 0) {\n"
+            "            return rc;\n"
+            "        }\n"
+            "        rc = denibblize_sector_track(g_track_buf, length, g_sector_track_buf," in source and
+            "*sectors_seen_out = sectors_seen;" in source,
+            "DSK/PO writeback must start from the stored track, so that a "
+            "missing sector keeps its stored bytes instead of zeros")
+    require("rc = write_sector_physical_track(drive, track, g_sector_track_buf);\n"
+            "        if (rc == 0 && sectors_seen != 0xFFFFU) {\n"
+            "            disable_sector_write_after_missing(drive, track, sectors_seen);" in source,
+            "a DSK/PO writeback that misses a sector must stop later writes "
+            "after it saves the valid sectors")
+    disable = re.search(r"static void disable_sector_write_after_missing\(.*?\n\}\n",
+                        source, re.S)
+    require(disable is not None and
+            "info->read_only = 1U;" in disable.group(0) and
+            "info->sector_fault_missing = (uint16_t)~sectors_seen;" in disable.group(0) and
+            "publish_drive(drive);" in disable.group(0),
+            "a missed sector must write-protect the drive in the PL and record "
+            "the missing sectors")
+    uart = UART_CONTROL_C.read_text(encoding="utf-8")
+    require("sectorfault=%s" in uart and "info.sector_fault_missing" in uart,
+            "disk2 status must show the last missed-sector fault")
     require("scanned < (len * 2U)" in source and
             "nib[offset] == 0xD5U" in source and
             "parts_left" not in source,
@@ -1004,10 +1033,11 @@ def test_dsk_and_po_writeback_accepts_gap_splice_noise() -> None:
                 f"{name} rejected harmless $D5 bytes in a write-splice gap")
 
 
-def test_dsk_and_po_writeback_keeps_valid_sectors_and_zeros_bad_ones() -> None:
+def test_dsk_and_po_writeback_keeps_stored_bytes_for_bad_sectors() -> None:
     for is_prodos, name in ((False, "DSK"), (True, "PO")):
         track_number = 7
         original = make_sector_track(track_number)
+        stored = bytes([0xC3]) * TRACK_DENIBBLIZED_SIZE
         valid = bytearray(nibblize_track(original, track_number, is_prodos))
         address_offsets = find_prologues(valid, b"\xD5\xAA\x96")
         data_offsets = find_prologues(valid, b"\xD5\xAA\xAD")
@@ -1055,15 +1085,15 @@ def test_dsk_and_po_writeback_keeps_valid_sectors_and_zeros_bad_ones() -> None:
         cases.append((missing_sector, 6, "a missing data field"))
 
         for stream, bad_physical_sector, description in cases:
-            decoded = denibblize_track(stream, is_prodos, track_number)
+            decoded = denibblize_track(stream, is_prodos, track_number, stored)
             bad_file_sector = physical_to_file_sector(
                 bad_physical_sector, is_prodos)
             expected = bytearray(original)
             start = bad_file_sector * SECTOR_BYTES
-            expected[start:start + SECTOR_BYTES] = bytes(SECTOR_BYTES)
+            expected[start:start + SECTOR_BYTES] = stored[start:start + SECTOR_BYTES]
             require(decoded == bytes(expected),
-                    f"{name} did not preserve every valid sector and zero "
-                    f"only the sector with {description}")
+                    f"{name} did not update every valid sector and keep the "
+                    f"stored bytes of only the sector with {description}")
 
 
 def test_nib_passthrough_read_and_write() -> None:
@@ -1239,7 +1269,7 @@ def run() -> int:
         test_dsk_and_po_tracks_have_applewin_layout_and_decode_correctly,
         test_dsk_and_po_writeback_round_trip_full_tracks,
         test_dsk_and_po_writeback_accepts_gap_splice_noise,
-        test_dsk_and_po_writeback_keeps_valid_sectors_and_zeros_bad_ones,
+        test_dsk_and_po_writeback_keeps_stored_bytes_for_bad_sectors,
         test_nib_passthrough_read_and_write,
         test_pl_standard_stream_advance_matches_applewin_readwrite,
         test_pl_standard_partial_read_matches_applewin_threshold,

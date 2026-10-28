@@ -1434,11 +1434,17 @@ static int decode_6and2_sector(uint8_t *sector, const uint8_t *encoded)
     return 0;
 }
 
+/* sector_track holds the stored track on entry. Only sectors with a valid
+ * address/data pair replace their stored bytes; the others keep them.
+ * AppleWin zero-fills missing sectors instead, but a DSK/DO/PO image cannot
+ * hold an absent sector: the next load rebuilds all 16, so zeros would only
+ * destroy data. *sectors_seen_out gets one bit per decoded physical sector. */
 static int denibblize_sector_track(const uint8_t *nib,
                                    uint32_t len,
                                    uint8_t *sector_track,
                                    uint8_t is_prodos,
-                                   uint8_t expected_track)
+                                   uint8_t expected_track,
+                                   uint16_t *sectors_seen_out)
 {
     uint32_t offset = 0U;
     int sector = -1;
@@ -1446,14 +1452,10 @@ static int denibblize_sector_track(const uint8_t *nib,
     uint8_t encoded[384];
     uint8_t decoded_sector[DISK2_SECTOR_BYTES];
 
-    if (nib == NULL || sector_track == NULL || len < 512U) {
+    if (nib == NULL || sector_track == NULL || sectors_seen_out == NULL ||
+        len < 512U) {
         return -1;
     }
-    /* AppleWin writes a freshly zeroed 4K track and fills only sectors that
-     * have a valid address/data pair. This is important for protected disks
-     * whose formatter intentionally leaves sectors absent. */
-    memset(sector_track, 0,
-           DISK2_DSK_SECTORS_PER_TRACK * DISK2_SECTOR_BYTES);
 
     /*
      * Inspect every byte position instead of assuming that the first 33
@@ -1547,6 +1549,7 @@ static int denibblize_sector_track(const uint8_t *nib,
         offset = next1;
     }
 
+    *sectors_seen_out = sectors_seen;
     return 0;
 }
 
@@ -2824,6 +2827,39 @@ static void disable_woz_write_after_reject(uint8_t drive, uint8_t qtrack)
     }
 }
 
+/* After a normal DOS or ProDOS write, every sector of a DSK/DO/PO track
+ * decodes: the ARM built the track from all 16 sectors, and only data fields
+ * change. A missing sector means a write cut short by reset, a timing fault,
+ * or a format that the image cannot hold. The missing sectors keep their
+ * stored bytes. Write-protect the drive until the next mount, so that later
+ * writes cannot build on a lost sector. The PL refuses writes while the
+ * drive is read-only. */
+static void disable_sector_write_after_missing(uint8_t drive,
+                                               uint8_t track,
+                                               uint16_t sectors_seen)
+{
+    disk2_image_info_t *info;
+
+    if (drive >= DISK2_DRIVE_COUNT) {
+        return;
+    }
+    info = &g_disk2_info[drive];
+    info->read_only = 1U;
+    info->sector_fault_track = track;
+    info->sector_fault_missing = (uint16_t)~sectors_seen;
+    publish_drive(drive);
+    if (g_uart_base != 0U) {
+        char msg[96];
+
+        (void)snprintf(msg, sizeof(msg),
+                       "Disk II write disabled d%u t%u: sectors $%04X "
+                       "missing, stored bytes kept\r\n",
+                       (unsigned)drive + 1U, (unsigned)track,
+                       (unsigned)info->sector_fault_missing);
+        uart_puts(g_uart_base, msg);
+    }
+}
+
 static int flush_dirty_track(uint8_t drive, uint8_t qtrack)
 {
     uint8_t track;
@@ -2910,13 +2946,22 @@ static int flush_dirty_track(uint8_t drive, uint8_t qtrack)
     } else if (info->format == DISK2_IMAGE_DSK ||
                info->format == DISK2_IMAGE_DO ||
                info->format == DISK2_IMAGE_PO) {
+        uint16_t sectors_seen = 0U;
+
+        rc = read_sector_physical_track(drive, track, g_sector_track_buf);
+        if (rc != 0) {
+            return rc;
+        }
         rc = denibblize_sector_track(g_track_buf, length, g_sector_track_buf,
                                      sector_image_is_prodos_order(info->format),
-                                     track);
+                                     track, &sectors_seen);
         if (rc != 0) {
             return rc;
         }
         rc = write_sector_physical_track(drive, track, g_sector_track_buf);
+        if (rc == 0 && sectors_seen != 0xFFFFU) {
+            disable_sector_write_after_missing(drive, track, sectors_seen);
+        }
     } else {
         rc = -1;
     }

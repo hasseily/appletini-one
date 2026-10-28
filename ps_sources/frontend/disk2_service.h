@@ -42,6 +42,10 @@ typedef struct {
     uint32_t woz_tmap_offset;
     uint32_t woz_trks_offset;
     uint32_t woz_trks_size;
+    /* Last DSK/DO/PO writeback that missed sectors; mask 0 means none.
+     * Cleared on mount. */
+    uint8_t sector_fault_track;
+    uint16_t sector_fault_missing;
 } disk2_image_info_t;
 
 typedef struct {

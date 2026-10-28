@@ -1,0 +1,89 @@
+{
+  "firmware_rebuilt": false,
+  "firmware_written": false,
+  "fpga_written": false,
+  "scope": "physical ONE//e, stock F1.3.3b3",
+  "before": "\r\ncmd> status\r\n---- card status ----\r\nui: frames=184271 keys=0\r\nboot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0\r\nvideo: vsync=on scanlines=Medium\r\ntext mono: fg=black bg=black\r\ndisplay mono: off\r\napple fb: slot=2 mode=SHR target=50Hz apple_fps=25.04 hdmi_fps=50.08 blits=94107 comp_pub=94108 comp_skip=0 pl_vblanks=187879 latched=0x3E000000\r\nupdater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'\r\naudio: en=on mute=off tone=1000Hz amp=0x00600000\r\nspdif dbg: clkc=0 q3lvl=0 q3tog=0\r\nrtc: 2026-10-28 09:45:39\r\ntemp: +35.25 C\r\n\r\ncmd> vtw status\r\nvtw: idle, session=ONE//e, host-intent=off, machine=unknown\r\nvtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0\r\nvtw: reset seen=0 source=none rstn=$0\r\nvtw: slowdown mask=$008 cycles=256\r\nvtw: speed=TURBO div=37 c074=0 ignore=0 d2accel=on owned=1 run=1 pc=639C\r\nvtw: core=2052740167 bus=695618214 posted=103646 invalid=0\r\nvtw: perf fabric=1953459708 steps=2052768153 classic=731769387\r\nvtw: cache hits=515069083 misses=676967227 invalidations=20045\r\nvtw: wait disk=0 video=40242231\r\nvtw: qfill=0 qhw=508 qdrop=0 sessions=1\r\nvtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00\r\nvtw: c000 reads=65535 bit7=0 last=$00 prev=park $FFFF R drive=0\r\nvtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=001 altzp=0 rd/wt=00 80st=0 text=1\r\nvtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)\r\nvtw: cxxx trail CF1F CF1E CFFB CF1D CF1C CF1B C818 C817 (new->old)\r\nvtw: last bus read $C000 = $00, irqs seen=0\r\nvtw: persisted setting = OFF\r\n",
+  "original_settings_sha256": "a9351b958deff7e60deabe085a1663d35566d158237b7e4412a960200e38c0e4",
+  "profile_1": "\r\ncmd> vtw status\r\nvtw: idle, session=ONE//e, host-intent=off, machine=unknown\r\nvtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0\r\nvtw: reset seen=0 source=none rstn=$0\r\nvtw: slowdown mask=$008 cycles=256\r\nvtw: speed=1 MHz default div=37 c074=0 ignore=0 d2accel=on owned=1 run=1 pc=29D4\r\nvtw: core=27502077 bus=2312167 posted=27490 invalid=0\r\nvtw: perf fabric=3602857489 steps=27502687 classic=27502687\r\nvtw: cache hits=0 misses=0 invalidations=81\r\nvtw: wait disk=0 video=0\r\nvtw: qfill=0 qhw=1 qdrop=0 sessions=1\r\nvtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00\r\nvtw: c000 reads=65535 bit7=0 last=$00 prev=park $FFFF R drive=0\r\nvtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=101 altzp=0 rd/wt=00 80st=0 text=1\r\nvtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)\r\nvtw: cxxx trail CF1F CF1E CFFB CF1D CF1C CF1B C818 C817 (new->old)\r\nvtw: last bus read $C000 = $00, irqs seen=0\r\nvtw: persisted setting = OFF\r\n",
+  "screen_1": "STOCK SMARTPORT COPY TIMING             \n512 BYTES; BLOCK 1599; 32 PER CASE      \nREADY: 1=NATIVE T=TURBO                 \n1 ROM $4751 10576..11283 N=32           \n1 RAM $4751 10204..10888 N=32           \n1 ROM $9000 10583..11297 N=32           \n1 RAM $9000 10204..10831 N=32           \nSAVED PASS RC=00 WRAP=0                 \nREADY: 1=NATIVE T=TURBO                 \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        ",
+  "profile_T": "\r\ncmd> vtw status\r\nvtw: idle, session=ONE//e, host-intent=off, machine=unknown\r\nvtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0\r\nvtw: reset seen=0 source=none rstn=$0\r\nvtw: slowdown mask=$008 cycles=256\r\nvtw: speed=TURBO div=37 c074=0 ignore=0 d2accel=on owned=1 run=1 pc=29D3\r\nvtw: core=48435091 bus=4109260 posted=164389 invalid=0\r\nvtw: perf fabric=1349584169 steps=48438815 classic=50041514\r\nvtw: cache hits=5351978 misses=6 invalidations=119\r\nvtw: wait disk=0 video=0\r\nvtw: qfill=0 qhw=1 qdrop=0 sessions=1\r\nvtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00\r\nvtw: c000 reads=65535 bit7=1 last=$31 prev=park $FFFF R drive=0\r\nvtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=101 altzp=0 rd/wt=00 80st=0 text=1\r\nvtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)\r\nvtw: cxxx trail CF1F CF1E CFFB CF1D CF1C CF1B C830 C82F (new->old)\r\nvtw: last bus read $C000 = $31, irqs seen=0\r\nvtw: persisted setting = OFF\r\n",
+  "screen_T": "STOCK SMARTPORT COPY TIMING             \n512 BYTES; BLOCK 1599; 32 PER CASE      \nREADY: 1=NATIVE T=TURBO                 \n1 ROM $4751 10576..11283 N=32           \n1 RAM $4751 10204..10888 N=32           \n1 ROM $9000 10583..11297 N=32           \n1 RAM $9000 10204..10831 N=32           \nSAVED PASS RC=00 WRAP=0                 \nREADY: 1=NATIVE T=TURBO                 \nT ROM $4751 12758..13331 N=32           \nT RAM $4751 4444..5152 N=32             \nT ROM $9000 8954..9592 N=32             \nT RAM $9000 1973..2669 N=32             \nSAVED PASS RC=00 WRAP=0                 \nREADY: 1=NATIVE T=TURBO                 \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        ",
+  "results": {
+    "NATIVE.BIN": [
+      {
+        "destination": "0x4751",
+        "path": "ROM",
+        "count": 32,
+        "min_ticks": 10576,
+        "max_ticks": 11283,
+        "mean_ticks": 10783.90625
+      },
+      {
+        "destination": "0x4751",
+        "path": "RAM",
+        "count": 32,
+        "min_ticks": 10204,
+        "max_ticks": 10888,
+        "mean_ticks": 10466.375
+      },
+      {
+        "destination": "0x9000",
+        "path": "ROM",
+        "count": 32,
+        "min_ticks": 10583,
+        "max_ticks": 11297,
+        "mean_ticks": 10881.8125
+      },
+      {
+        "destination": "0x9000",
+        "path": "RAM",
+        "count": 32,
+        "min_ticks": 10204,
+        "max_ticks": 10831,
+        "mean_ticks": 10425.71875
+      }
+    ],
+    "TURBO.BIN": [
+      {
+        "destination": "0x4751",
+        "path": "ROM",
+        "count": 32,
+        "min_ticks": 12758,
+        "max_ticks": 13331,
+        "mean_ticks": 12982.84375
+      },
+      {
+        "destination": "0x4751",
+        "path": "RAM",
+        "count": 32,
+        "min_ticks": 4444,
+        "max_ticks": 5152,
+        "mean_ticks": 4736.28125
+      },
+      {
+        "destination": "0x9000",
+        "path": "ROM",
+        "count": 32,
+        "min_ticks": 8954,
+        "max_ticks": 9592,
+        "mean_ticks": 9232.90625
+      },
+      {
+        "destination": "0x9000",
+        "path": "RAM",
+        "count": 32,
+        "min_ticks": 1973,
+        "max_ticks": 2669,
+        "mean_ticks": 2147.0
+      }
+    ]
+  },
+  "passed": true,
+  "restored": {
+    "settings_sha256": "a9351b958deff7e60deabe085a1663d35566d158237b7e4412a960200e38c0e4",
+    "runtime": "\r\ncmd> status\r\n---- card status ----\r\nui: frames=1120 keys=0\r\nboot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0\r\nvideo: vsync=on scanlines=Medium\r\ntext mono: fg=black bg=black\r\ndisplay mono: off\r\napple fb: slot=2 mode=SHR target=50Hz apple_fps=25.04 hdmi_fps=50.08 blits=632 comp_pub=634 comp_skip=0 pl_vblanks=1151 latched=0x3E400000\r\nupdater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'\r\naudio: en=on mute=off tone=1000Hz amp=0x00600000\r\nspdif dbg: clkc=0 q3lvl=0 q3tog=0\r\nrtc: 2026-10-28 09:47:21\r\ntemp: +35.25 C\r\n\r\ncmd> vtw status\r\nvtw: idle, session=ONE//e, host-intent=off, machine=unknown\r\nvtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0\r\nvtw: reset seen=0 source=none rstn=$0\r\nvtw: slowdown mask=$008 cycles=256\r\nvtw: speed=TURBO div=37 c074=0 ignore=0 d2accel=on owned=1 run=1 pc=638C\r\nvtw: core=944158422 bus=5819972 posted=103646 invalid=0\r\nvtw: perf fabric=3197644712 steps=944185046 classic=1187774871\r\nvtw: cache hits=632907913 misses=204259599 invalidations=20045\r\nvtw: wait disk=0 video=40244256\r\nvtw: qfill=0 qhw=508 qdrop=0 sessions=1\r\nvtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00\r\nvtw: c000 reads=65535 bit7=0 last=$00 prev=park $FFFF R drive=0\r\nvtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=001 altzp=0 rd/wt=00 80st=0 text=1\r\nvtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)\r\nvtw: cxxx trail CF1F CF1E CFFB CF1D CF1C CF1B C818 C817 (new->old)\r\nvtw: last bus read $C063 = $7F, irqs seen=0\r\nvtw: persisted setting = OFF\r\n",
+    "media": "\r\ncmd> sd status\r\nsd: hw ready=1 exec=0 in=0 out=0 drypop=0 lastctl=$01\r\nsd: svc irq=205 pending=0 status=1 read=201 write=0\r\nsd: vtw direct=0 rwblk=0 postblk=0 fallback=0\r\nsd: vtw fb range=0 state=0 map=0 shadow=0 post=0 dma=0\r\nsd: vtw split blocks=0 spans=0 max=0\r\nsd: vtw write direct=0 preflight=0 stream=0 fault=0\r\nsd: cache hit=4 miss=197 bypass=0 post-credit-reads=0 dma-owner=0\r\nsd: lat dispatch us last=2 avg=37 max=233 samples=205\r\nsd: lat ready us last=102 avg=146 max=351\r\nsd: init=1 fs=1 slot=7 ramdisk=1\r\nsd: SP1 open=1 ram=0 ro=0 blocks=1600 path=0:/_software/Appletini Only/libtini/starfall\r\nsd: SP2 open=1 ram=1 ro=0 blocks=65535 path=RAM32 (volatile)\r\nsd: SP3 open=0 ram=0 ro=1 blocks=0 path=\r\nsd: SP4 open=0 ram=0 ro=1 blocks=0 path=\r\nsd: SP5 open=0 ram=0 ro=1 blocks=0 path=\r\nsd: SP6 open=0 ram=0 ro=1 blocks=0 path=\r\nsd: SP7 open=0 ram=0 ro=1 blocks=0 path=\r\nsd: SP8 open=0 ram=0 ro=1 blocks=0 path=\r\n",
+    "ftp": "\r\ncmd> ftp status\r\nftp: off\r\n"
+  }
+}

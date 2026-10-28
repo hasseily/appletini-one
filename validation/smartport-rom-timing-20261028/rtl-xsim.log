@@ -1,0 +1,28 @@
+
+****** xsim v2025.2 (64-bit)
+  **** SW Build 6299465 on Fri Nov 14 19:35:11 GMT 2025
+  **** IP Build 6300035 on Fri Nov 14 10:48:45 MST 2025
+  **** SharedData Build 6298862 on Thu Nov 13 04:50:51 MST 2025
+  **** Start of session at: Wed Oct 28 09:14:06 2026
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source xsim.dir/copy_timing_snap/xsim_script.tcl
+# xsim {copy_timing_snap} -autoloadwcfg -runall
+Time resolution is 1 ps
+run -all
+COPY RESULT mode=2 rom=1 record=1 dest=4751 clocks=1278953 ticks=9763.000000 c8=7170 fifo=512 pop=512 flush_clocks=0 flush_starts=0 posted=512
+COPY RESULT mode=3 rom=1 record=1 dest=4751 clocks=1573796 ticks=12013.709924 c8=7170 fifo=512 pop=512 flush_clocks=476541 flush_starts=512 posted=512
+COPY RESULT mode=3 rom=0 record=1 dest=4751 clocks=527368 ticks=4025.709924 c8=0 fifo=512 pop=512 flush_clocks=359179 flush_starts=512 posted=512
+COPY RESULT mode=2 rom=0 record=1 dest=4751 clocks=1278953 ticks=9763.000000 c8=0 fifo=512 pop=512 flush_clocks=0 flush_starts=0 posted=512
+COPY RESULT mode=3 rom=1 record=0 dest=4751 clocks=1074293 ticks=8200.709924 c8=7170 fifo=512 pop=512 flush_clocks=0 flush_starts=0 posted=512
+COPY RESULT mode=3 rom=0 record=0 dest=4751 clocks=201440 ticks=1537.709924 c8=0 fifo=512 pop=512 flush_clocks=0 flush_starts=0 posted=512
+COPY RESULT mode=3 rom=1 record=1 dest=9000 clocks=1073900 ticks=8197.709924 c8=7170 fifo=512 pop=512 flush_clocks=0 flush_starts=0 posted=0
+COPY RESULT mode=3 rom=0 record=1 dest=9000 clocks=201440 ticks=1537.709924 c8=0 fifo=512 pop=512 flush_clocks=0 flush_starts=0 posted=0
+COPY RESULT mode=2 rom=1 record=1 dest=9000 clocks=1278953 ticks=9763.000000 c8=7170 fifo=512 pop=512 flush_clocks=0 flush_starts=0 posted=0
+SMARTPORT COPY TIMING PASS
+$finish called at time : 74031093750 ps : File "C:/Users/hasse/source/repos/hasseily/appletini-one/hdl/sim/tb_smartport_copy_timing.sv" Line 369
+run: Time (s): cpu = 00:00:00 ; elapsed = 00:00:45 . Memory (MB): peak = 220.145 ; gain = 0.000
+exit
+INFO: xsimkernel Simulation Memory Usage: 13260 KB (Peak: 13260 KB), Simulation CPU Usage: 44327 ms
+INFO: [Common 17-206] Exiting xsim at Wed Oct 28 09:14:53 2026...

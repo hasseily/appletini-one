@@ -1,0 +1,12 @@
+{
+  "program_sha256": "33aeb0fb53b00a91447ebf7ad5a976ca07cbf46d39345fb7c87d446dad3626ac",
+  "bss_end": 14693,
+  "sources": {
+    "software\\smartport_copy_timing\\main.c": "89185dc1544fe93fdf7da7844f389a0a0eddab440645d1712cc9a917c0a56aa5",
+    "software\\smartport_copy_timing\\transport.s": "21b6fd5f63f5f02b71077f2f72844a6e6cff3346ade86d4ba0c32267faf3a657"
+  },
+  "prodos_input_sha256": "398d333cb2ab92df9f8bb2cf64b946f2567116910eb8359cf4bdee5d4194f0fa",
+  "volume_sha256": "8dfa98d09efb8e00e38bdb2d9faae453448281d74ebd8b7e21de4518d15ee443",
+  "firmware_rebuilt": false,
+  "firmware_written": false
+}

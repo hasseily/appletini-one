@@ -1,0 +1,62 @@
+{
+  "test_package_sha256": "f3e5092d6834452bd3d6e4a0e79736bb7d7028b3c390184da3832ba34642d522",
+  "stock_package_sha256": "cbbdd97ff97d43f7609f3da73ff0368164621350b18ff6ec7398c480d66672c2",
+  "fpga_rebuilt": false,
+  "golden_written": false,
+  "runs": [
+    {
+      "speed": "1mhz",
+      "profile": "\r\ncmd> vtw status\r\nvtw: idle, session=ONE//e, host-intent=off, machine=unknown\r\nvtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0\r\nvtw: reset seen=0 source=none rstn=$0\r\nvtw: slowdown mask=$028 cycles=256\r\nvtw: speed=1 MHz default div=37 c074=0 ignore=0 d2accel=off owned=1 run=1 pc=33E8\r\nvtw: core=20708096 bus=1928738 posted=37467 invalid=0\r\nvtw: perf fabric=2712846071 steps=20708706 classic=20708706\r\nvtw: cache hits=0 misses=0 invalidations=85\r\nvtw: wait disk=0 video=0\r\nvtw: qfill=0 qhw=1 qdrop=0 sessions=1\r\nvtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00\r\nvtw: c000 reads=65535 bit7=0 last=$00 prev=park $FFFF R drive=0\r\nvtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=101 altzp=0 rd/wt=00 80st=0 text=1\r\nvtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)\r\nvtw: cxxx trail CF1F CF1E CFFB CF1D CF1C CF1B C818 C817 (new->old)\r\nvtw: last bus read $C000 = $00, irqs seen=0\r\nvtw: persisted setting = OFF\r\n",
+      "screen": "SMARTPORT NET TRANSPORT CHECKPOINT      \nR: SLOT ROM   L: LIBTINI-STYLE FIFO     \nX: RESET LOOP P: RECOVERY PROBE         \nS: ROM TIMING SWEEP                     \nSPEED LABEL: 1=1 MHZ, T=TURBO           \nGEN=4; 1008 READS; 9..512 BYTES         \nNETSP AND NETD2 SCRATCH FILES REQUIRED  \n500 READS OK                            \n1000 READS OK                           \nPASS AT READ 1008 RC=00                 \nPRESS A KEY TO RETURN                   \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        ",
+      "source_reads": 1008,
+      "elapsed_host_seconds": 80.95299999997951,
+      "pass_": true,
+      "result_sha256": "a9243757109356f22ddb2124dd19511b25543133fbef5696235a2ccb8a7b1b89",
+      "sizes": 504,
+      "max_call_ticks": 38830,
+      "size_512": {
+        "size": 512,
+        "count": 2,
+        "call_min": 10717,
+        "call_max": 10719,
+        "irq_min": 10543,
+        "irq_max": 10578,
+        "call_total": 21436,
+        "irq_total": 21121
+      },
+      "scratch_round": 895,
+      "both_storage_patterns_verified": true
+    },
+    {
+      "speed": "turbo",
+      "profile": "\r\ncmd> vtw status\r\nvtw: idle, session=ONE//e, host-intent=off, machine=unknown\r\nvtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0\r\nvtw: reset seen=0 source=none rstn=$0\r\nvtw: slowdown mask=$028 cycles=256\r\nvtw: speed=TURBO div=37 c074=0 ignore=0 d2accel=off owned=1 run=1 pc=33E8\r\nvtw: core=39079256 bus=3248015 posted=37467 invalid=0\r\nvtw: perf fabric=130142875 steps=39082920 classic=40671485\r\nvtw: cache hits=5304746 misses=6 invalidations=86\r\nvtw: wait disk=0 video=0\r\nvtw: qfill=0 qhw=1 qdrop=0 sessions=1\r\nvtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00\r\nvtw: c000 reads=65535 bit7=0 last=$00 prev=park $FFFF R drive=0\r\nvtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=101 altzp=0 rd/wt=00 80st=0 text=1\r\nvtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)\r\nvtw: cxxx trail CF1F CF1E CFFB CF1D CF1C CF1B C818 C817 (new->old)\r\nvtw: last bus read $C000 = $00, irqs seen=0\r\nvtw: persisted setting = OFF\r\n",
+      "screen": "SMARTPORT NET TRANSPORT CHECKPOINT      \nR: SLOT ROM   L: LIBTINI-STYLE FIFO     \nX: RESET LOOP P: RECOVERY PROBE         \nS: ROM TIMING SWEEP                     \nSPEED LABEL: 1=1 MHZ, T=TURBO           \nGEN=4; 1008 READS; 9..512 BYTES         \nNETSP AND NETD2 SCRATCH FILES REQUIRED  \n500 READS OK                            \n1000 READS OK                           \nPASS AT READ 1008 RC=00                 \nPRESS A KEY TO RETURN                   \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        ",
+      "source_reads": 1008,
+      "elapsed_host_seconds": 17.219000000011874,
+      "pass_": true,
+      "result_sha256": "b65524a2ddc07634cc0f9b67890b8439f16c953056202dac6034bb6724458234",
+      "sizes": 504,
+      "max_call_ticks": 10213,
+      "size_512": {
+        "size": 512,
+        "count": 2,
+        "call_min": 9443,
+        "call_max": 9681,
+        "irq_min": 9247,
+        "irq_max": 9524,
+        "call_total": 19124,
+        "irq_total": 18771
+      },
+      "scratch_round": 895,
+      "both_storage_patterns_verified": true
+    }
+  ],
+  "before": "\r\ncmd> status\r\n---- card status ----\r\nui: frames=3623 keys=0\r\nboot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0\r\nvideo: vsync=on scanlines=Medium\r\ntext mono: fg=black bg=black\r\ndisplay mono: off\r\napple fb: slot=0 mode=SHR target=50Hz apple_fps=25.04 hdmi_fps=50.09 blits=1906 comp_pub=1908 comp_skip=0 pl_vblanks=3676 latched=0x3E000000\r\nupdater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'\r\naudio: en=on mute=off tone=1000Hz amp=0x00600000\r\nspdif dbg: clkc=0 q3lvl=0 q3tog=0\r\nrtc: 2026-10-28 10:06:28\r\ntemp: +34.56 C\r\n\r\ncmd> vtw status\r\nvtw: idle, session=ONE//e, host-intent=off, machine=unknown\r\nvtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0\r\nvtw: reset seen=0 source=none rstn=$0\r\nvtw: slowdown mask=$008 cycles=256\r\nvtw: speed=TURBO div=37 c074=0 ignore=0 d2accel=on owned=1 run=1 pc=91DE\r\nvtw: core=3109115510 bus=15154318 posted=103646 invalid=0\r\nvtw: perf fabric=1331544510 steps=3109143125 classic=3912635216\r\nvtw: cache hits=2083988176 misses=675510752 invalidations=20045\r\nvtw: wait disk=0 video=40240588\r\nvtw: qfill=0 qhw=508 qdrop=0 sessions=1\r\nvtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00\r\nvtw: c000 reads=65535 bit7=0 last=$00 prev=park $FFFF R drive=0\r\nvtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=001 altzp=0 rd/wt=00 80st=0 text=1\r\nvtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)\r\nvtw: cxxx trail CF1F CF1E CFFB CF1D CF1C CF1B C818 C817 (new->old)\r\nvtw: last bus read $C063 = $7F, irqs seen=0\r\nvtw: persisted setting = OFF\r\n",
+  "passed": true,
+  "restored": {
+    "settings_sha256": "a9351b958deff7e60deabe085a1663d35566d158237b7e4412a960200e38c0e4",
+    "media": "\r\ncmd> sd status\r\nsd: hw ready=1 exec=0 in=0 out=0 drypop=0 lastctl=$01\r\nsd: svc irq=205 pending=0 status=1 read=201 write=0\r\nsd: vtw direct=0 rwblk=0 postblk=0 fallback=0\r\nsd: vtw fb range=0 state=0 map=0 shadow=0 post=0 dma=0\r\nsd: vtw split blocks=0 spans=0 max=0\r\nsd: vtw write direct=0 preflight=0 stream=0 fault=0\r\nsd: cache hit=4 miss=197 bypass=0 post-credit-reads=0 dma-owner=0\r\nsd: lat dispatch us last=2 avg=46 max=177 samples=205\r\nsd: lat ready us last=101 avg=155 max=298\r\nsd: init=1 fs=1 slot=7 ramdisk=1\r\nsd: SP1 open=1 ram=0 ro=0 blocks=1600 path=0:/_software/Appletini Only/libtini/starfall\r\nsd: SP2 open=1 ram=1 ro=0 blocks=65535 path=RAM32 (volatile)\r\nsd: SP3 open=0 ram=0 ro=1 blocks=0 path=\r\nsd: SP4 open=0 ram=0 ro=1 blocks=0 path=\r\nsd: SP5 open=0 ram=0 ro=1 blocks=0 path=\r\nsd: SP6 open=0 ram=0 ro=1 blocks=0 path=\r\nsd: SP7 open=0 ram=0 ro=1 blocks=0 path=\r\nsd: SP8 open=0 ram=0 ro=1 blocks=0 path=\r\n",
+    "runtime": "\r\ncmd> status\r\n---- card status ----\r\nui: frames=1426 keys=0\r\nboot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0\r\nvideo: vsync=on scanlines=Medium\r\ntext mono: fg=black bg=black\r\ndisplay mono: off\r\napple fb: slot=0 mode=SHR target=50Hz apple_fps=25.04 hdmi_fps=50.08 blits=816 comp_pub=819 comp_skip=0 pl_vblanks=1454 latched=0x3E000000\r\nupdater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'\r\naudio: en=on mute=off tone=1000Hz amp=0x00600000\r\nspdif dbg: clkc=0 q3lvl=0 q3tog=0\r\nrtc: 2026-10-28 10:12:38\r\ntemp: +34.75 C\r\n\r\ncmd> vtw status\r\nvtw: idle, session=ONE//e, host-intent=off, machine=unknown\r\nvtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0\r\nvtw: reset seen=0 source=none rstn=$0\r\nvtw: slowdown mask=$008 cycles=256\r\nvtw: speed=TURBO div=37 c074=0 ignore=0 d2accel=on owned=1 run=1 pc=638C\r\nvtw: core=1203531424 bus=6945705 posted=103646 invalid=0\r\nvtw: perf fabric=4004169833 steps=1203558538 classic=1514225631\r\nvtw: cache hits=806750726 misses=260716027 invalidations=20045\r\nvtw: wait disk=0 video=40240565\r\nvtw: qfill=0 qhw=508 qdrop=0 sessions=1\r\nvtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00\r\nvtw: c000 reads=65535 bit7=0 last=$00 prev=park $FFFF R drive=0\r\nvtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=001 altzp=0 rd/wt=00 80st=0 text=1\r\nvtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)\r\nvtw: cxxx trail CF1F CF1E CFFB CF1D CF1C CF1B C818 C817 (new->old)\r\nvtw: last bus read $C063 = $7F, irqs seen=0\r\nvtw: persisted setting = OFF\r\n",
+    "ftp": "\r\ncmd> ftp status\r\nftp: off\r\n"
+  }
+}

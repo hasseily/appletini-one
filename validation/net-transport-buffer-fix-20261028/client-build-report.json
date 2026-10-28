@@ -1,0 +1,24 @@
+{
+  "program_sha256": "d04022fdbe9bbe1cde23cc08ee276d79ae50ddac8a0706930d8abd6c7c1102e1",
+  "prodos_input_sha256": "398d333cb2ab92df9f8bb2cf64b946f2567116910eb8359cf4bdee5d4194f0fa",
+  "buffer_layout": {
+    "reply_start": 36864,
+    "reply_end_exclusive": 37378,
+    "bss_end": 27973,
+    "heap_end_exclusive": 34816,
+    "software_stack_start": 34816,
+    "software_stack_end_exclusive": 36864
+  },
+  "volumes": {
+    "NETSP.po": "0b21a05722ba9222978d5963ea772bb5ea996c621c6e44fc853f74d3fce5b479",
+    "NETD2.po": "06f12a279bb8fe7b8aa2f75c1730d3bb29c11209aaf808064a930536cd61a19b"
+  },
+  "sources": {
+    "software/net_transport_checkpoint/apple2enh.cfg": "f1dccf0057b6085961af74328a9fb2632081165e090b29363425299f2af06b1f",
+    "software/net_transport_checkpoint/main.c": "c41b2ddb001906b56b0fb920d21a25095c327c3c7875f31fa50db0a8ed989ed8",
+    "software/net_transport_checkpoint/model.cfg": "bcd9d81d9c2faa60a8ef851093f806241c1358b853efae2e372975e18c7e41df",
+    "software/net_transport_checkpoint/prodos_disk.py": "02e6d539bac3ac0c1d0b185d2fa87d97db2f8dccb81a44c82dbf742a4ca596c1",
+    "software/net_transport_checkpoint/PRODOS_PACKER_LICENSE.txt": "f6e7761e75ce300b15c5b916b78265fb93f0339cd5320f2aae31ca9fc864c7bf",
+    "software/net_transport_checkpoint/transport.s": "69a5e74d6b0b73faa9a2af0d4f496c5684382e11ce8a5c66dde07fdbd5cbccd8"
+  }
+}

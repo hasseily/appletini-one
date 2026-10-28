@@ -1,0 +1,14 @@
+{
+  "test_class": "native ARM core plus real 65C02 ROM/raw client model; no board timing",
+  "native_random_reads": 20000,
+  "successful_client_reads": 2020,
+  "failure_calls": 3,
+  "all_reply_sizes": [
+    9,
+    512
+  ],
+  "default_test_source_disabled": true,
+  "generation_wrap_skips_zero": true,
+  "timer_wrap_detected": true,
+  "pass": true
+}

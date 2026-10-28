@@ -1,0 +1,19 @@
+[
+  {
+    "version": "client-v1",
+    "program_sha256": "90da8040cf075388e0afe04b3ac0e51bfd7f3355caccaf36e0dc384fa1adb736",
+    "buffer_label": "al 004945 ._nt_buffer",
+    "relinked_binary_identical": true
+  },
+  {
+    "version": "client-v3",
+    "program_sha256": "bb99c7b8683bc6873897f254c97c6db70a002a2681aaccfc8bfd167e9d95c3f7",
+    "buffer_label": "al 004733 ._nt_buffer",
+    "relinked_binary_identical": true
+  },
+  {
+    "version": "current-v4",
+    "program_sha256": "6f5bac8982d37c539f0852636734ddcf46e111d0d983df46904042604bee2006",
+    "buffer_label": "al 004751 ._nt_buffer"
+  }
+]

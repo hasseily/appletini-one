@@ -1,0 +1,17 @@
+{
+  "pass": true,
+  "buffer_layout": {
+    "reply_start": 36864,
+    "reply_end_exclusive": 37378,
+    "bss_end": 27973,
+    "heap_end_exclusive": 34816,
+    "software_stack_start": 34816,
+    "software_stack_end_exclusive": 36864
+  },
+  "model_reply_start": 36864,
+  "linker_overflow_rejected": [
+    "CODE",
+    "BSS",
+    "NETBUF"
+  ]
+}

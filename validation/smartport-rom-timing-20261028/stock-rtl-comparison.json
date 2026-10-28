@@ -1,0 +1,29 @@
+{
+  "reference": "F1.3.3b3",
+  "comparison": "byte equality after CRLF normalization",
+  "git_blob_sha256": {
+    "hdl/globals.sv": "1ca41b151399cadcf01c7b032431cca55046520fefab84ba1b0627e4475e1eb0",
+    "hdl/reset_sync.sv": "d4405843728c24b3a99b2a17cfcb2eb556a8a842815c376c6d9673dec90ab350",
+    "hdl/apple/apple_cycle_capture_pkg.sv": "7ed38373e4cf33c340c75ef73b67f38aa5acae4bbbe6ff7d90e2f312926320f1",
+    "hdl/sim/xpm_fifo_sync_model.sv": "ac1b630e5d7982461f1544f72bd14d54dd8948edb536e544ac964a6ede6ed216",
+    "hdl/apple/apple_timing_gen.sv": "3a8ad14cd791ef41070c32683c839c8c2d89852af87b167dcdba253562c7f94d",
+    "hdl/apple/apple_virtual_bus.sv": "88994e772cb35d9d35e712f631b093bb72c20aa8ba848bfc4d5bbd712c0deaec",
+    "hdl/apple/apple_c01x_status_decode.sv": "bd28a2e629ccccc11d0ad3ee260fb324eefb3099782b8ef990785ec006b6ba2a",
+    "hdl/apple/apple_bus_write_arbiter.sv": "b5fa333871c5d380010c80c9bf873595bf9d28a081de053463a92915a9e1b9b8",
+    "hdl/apple/soft_switch_manager.sv": "7f2eebc9bb2916b4108cb7042015fe7dff1501a487b58476dbb7ad99c8bdb0a7",
+    "hdl/apple/onee_motherboard_io.sv": "4abf0607d5d0e69a4eeacff0c5f5173d4eda3166f3a5dc434cd69bc69094eed9",
+    "hdl/apple/onee_cold_slot_scan.sv": "46dba60289bcfadd6d30229c8a4a59149117f95ebf8f051c69019a784d0a0f97",
+    "hdl/apple/vtw_shadow.sv": "5ef1d77d8748cf56a98256b3efe84baec690dbc5fbc1945b66e37dd9fbca24bb",
+    "hdl/apple/vtw_bus_engine.sv": "7259de90579bc399883835bb7d5276323f7bf803068edc81255c52d7cbcfd60c",
+    "hdl/apple/w65c02_core.sv": "20bbe9bf4366c3c760d45e48a774ef5ae62ebd66d3ecf76462628f789e33522f",
+    "hdl/apple/vtw_turbo_cache.sv": "4ccb7d60a35ee326f0f5afa34a228b9059d4f06afd05443421b0078ef3ee978a",
+    "hdl/apple/vtw_video_coalescer.sv": "042c601b11c9efbc970f9ec55a5f8448d8eb57d93f8a3081ff8eabcf62096cb1",
+    "hdl/apple/vtw_video_policy.sv": "729f3f881ce858d7e6e9eb1667cf62379e8b984a78b552a0addd6b6c44499701",
+    "hdl/apple/vtw_video_bank_sync.sv": "097e1f76c7d6aa33df704d6b861cc8597a0b1236b3279e6f7ed8b550100797fd",
+    "hdl/apple/vtw_core_top.sv": "60647e5ef4886b908de12b0578ce8e9b52c31142661ecdf5891d938360bea988",
+    "hdl/apple/linear_text_overlay_card.sv": "5bfab424f87686c53fe7b29be1fc232d8aca13597db2aa01d5c90b224d2a922c",
+    "hdl/apple/smartport_card.sv": "b78623d9f9f6dadc479822d272cf09123619529d9bc62a637b5778d0db7b754d",
+    "hdl/apple/smartport_a2retronet_style_c700.mem": "4b8772c82581a2200f87c3facf5ec31b40a5095d07c7fb56816c537f3646e35b",
+    "hdl/apple/smartport_a2retronet_style_c800.mem": "5c8e6476a37b2da539dbe398f606d47fccc7423804702c74865fa8507872dde2"
+  }
+}

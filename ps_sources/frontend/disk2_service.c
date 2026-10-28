@@ -676,7 +676,7 @@ static uint8_t cached_nib_address_valid(const uint8_t *track,
                                         uint32_t pos,
                                         uint8_t sector_count)
 {
-    uint8_t encoded[11];
+    uint8_t encoded[10];
     uint8_t volume;
     uint8_t track_number;
     uint8_t sector;
@@ -690,9 +690,10 @@ static uint8_t cached_nib_address_valid(const uint8_t *track,
             return 0U;
         }
     }
+    /* Check DE AA only, as the sector decoder does: a data-write splice may
+     * cover the third epilogue byte ($EB) with sync. */
     if (encoded[8] != 0xDEU ||
-        encoded[9] != 0xAAU ||
-        encoded[10] != 0xEBU) {
+        encoded[9] != 0xAAU) {
         return 0U;
     }
     volume = decode44_pair(encoded, sizeof(encoded), 0U);

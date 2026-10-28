@@ -419,6 +419,9 @@ def test_c_constants_and_source_contract() -> None:
             "cached_nib_address_valid(data, pos, 13U)" in source and
             "DISK2_WOZ_BOOT_SECTOR_13" in source,
             "valid 13-sector NIB address fields and marked WOZ images must be rejected")
+    require("encoded[10] != 0xEBU" not in source,
+            "address checks must accept the DE AA ending; a write splice may "
+            "cover the third epilogue byte with sync")
 
 
 def test_standard_images_are_memory_cached_like_applewin() -> None:

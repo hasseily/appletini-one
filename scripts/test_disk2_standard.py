@@ -252,7 +252,7 @@ def denibblize_track(nibbles: bytes | bytearray,
                     and track == expected_track
                     and address_sector < SECTORS_PER_TRACK
                     and (volume ^ track ^ address_sector) == checksum
-                    and encoded[8:11] == b"\xDE\xAA\xEB"
+                    and encoded[8:10] == b"\xDE\xAA"
                 )
                 if address_valid:
                     sector = address_sector

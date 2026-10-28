@@ -1510,10 +1510,13 @@ static int denibblize_sector_track(const uint8_t *nib,
                     address_sector >= DISK2_DSK_SECTORS_PER_TRACK ||
                     (uint8_t)(volume ^ track ^ address_sector) != checksum ||
                     encoded[8] != 0xDEU ||
-                    encoded[9] != 0xAAU ||
-                    encoded[10] != 0xEBU) {
+                    encoded[9] != 0xAAU) {
                     address_valid = 0U;
                 }
+                /* A data-write sync splice may replace the nominal third
+                 * address epilogue byte ($EB) with $FF. ProDOS accepts DE AA;
+                 * the raw stream and data checksum remain valid. Requiring
+                 * $EB here discarded valid sectors during TURBO writeback. */
                 /*
                  * An invalid prologue-shaped sequence may be splice noise in
                  * the gap between a valid address and its data field. Do not

@@ -1,0 +1,14 @@
+{
+  "source": "physical stock F1.3.3b3 ONE//e TURBO write, 2026-10-28",
+  "track": 7,
+  "is_prodos": true,
+  "raw_sha256": "f9db3ce4606520a72b9bfd58d5de3ed8a39233548bbe6cc77a87483c9340366b",
+  "decoded_sha256": "8f13b0c1da0f7e7d1104534d5e9781ac803f012aa211dc00a09ef3ba59f0fba8",
+  "rewritten_physical_sectors": [
+    0,
+    2
+  ],
+  "address_epilogue": "DE AA FF",
+  "data_epilogue": "DE AA EB",
+  "raw_program_rounds": 32
+}

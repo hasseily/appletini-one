@@ -1,2 +1,3 @@
 # Keep tracked text files LF-terminated across platforms.
 * text=auto eol=lf
+scripts/fixtures/disk2_turbo_address_splice.nib binary

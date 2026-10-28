@@ -5,6 +5,15 @@ around a Xilinx Zynq-7020. The PL handles cycle-sensitive Apple bus behavior;
 the two ARM cores provide storage, video rendering, USB services, configuration,
 and higher-level peripheral emulation.
 
+## Firmware F1.3.3
+
+[F1.3.3](README_RELEASE_F1.3.3.md) adds verified HTTP/S and JSON over Ethernet,
+DNS settings, the libtini network API and direct A2LYNX HTTPS. Software 1.1.0
+adds STARFALL online rankings. The release retains the tested FPGA payload;
+Golden stays B2.0.6. Read the first-use setup and timing limits in the release
+notes. The [RSA integrity stress result](README_RSA_STRESS_CHECKPOINT.md)
+covers video, USB input and verified SmartPort/Disk II writes at both speeds.
+
 ## Virtual Hardware
 
 - SmartPort storage and Disk II disk-image support

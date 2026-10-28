@@ -44,6 +44,7 @@ utils_1/
 
 # Build output directories
 build/
+/deliverables/
 firmwares/
 export/
 

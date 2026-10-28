@@ -1,0 +1,58 @@
+{
+  "pass": true,
+  "version": "F1.3.3",
+  "sha256": "3fcc6b5c098d0a7e33b8371c2f368d6087d59ca1cdf0857b4a5537a848af4742",
+  "golden_written": false,
+  "fpga_rebuilt": false,
+  "requests": [
+    {
+      "name": "ladder",
+      "rc": 0,
+      "verify": 0,
+      "status": 200,
+      "body": 166,
+      "handshake_us": 507042,
+      "elapsed_us": 922693,
+      "step_max_us": 3658,
+      "slice_max_us": 3758,
+      "tls_heap_peak": 86592,
+      "seed_generation": 28,
+      "sha256": "f315fb96e406fad000f0123d3eecce3b7b5f3c275425201f54fae1be43e61e06"
+    },
+    {
+      "name": "rsa2048",
+      "rc": 0,
+      "verify": 0,
+      "status": 200,
+      "body": 603,
+      "handshake_us": 593292,
+      "elapsed_us": 821770,
+      "step_max_us": 27857,
+      "slice_max_us": 27860,
+      "tls_heap_peak": 95872,
+      "seed_generation": 28,
+      "sha256": "bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb"
+    },
+    {
+      "name": "rsa4096",
+      "rc": 0,
+      "verify": 0,
+      "status": 200,
+      "body": 602,
+      "handshake_us": 790353,
+      "elapsed_us": 1021764,
+      "step_max_us": 23958,
+      "slice_max_us": 23961,
+      "tls_heap_peak": 96128,
+      "seed_generation": 28,
+      "sha256": "b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207"
+    }
+  ],
+  "boot": "\r\ncmd> http status\r\n[http-status] state=0 result=0 verify=0x00000000 status=0 bytes=0 step_max_us=0 slice_max_us=0 heap_peak=49520 utc=1793213985 rtc_offset=180 crypto=1 trust=1 seed_generation=28 dns=8.8.8.8\r\n[http-json] slice_max_us=1 boot_prepare_us=36846 ready=1 prepare_error=0 stack_used_upper=8456 stack_guard=512\r\n[usb1] event bus=0 hub=2 port=1 intf=255 ev=3\r\n[usb1] event bus=0 hub=2 port=1 intf=255 ev=2\r\n[I/usbh_hub] New low-speed device on Bus 0, Hub 2, Port 1 connected\r\n[I/usbh_core] New device found,idVendor:06a3,idProduct:8000,bcdDevice:0120\r\n[I/usbh_core] The device has 1 bNumConfigurations\r\n[I/usbh_core] The device has 3 interfaces\r\n[I/usbh_core] Enumeration success, start loading class driver\r\n[usb1] event bus=0 hub=2 port=1 intf=255 ev=5\r\n[I/usbh_core] Loading hid class driver on interface 0\r\n[I/usbh_hid] Ep=81 Attr=03 Mps=8 Interval=10 Mult=00\r\n[I/usbh_hid] Register HID Class:/dev/input0\r\n[usb1] CherryUSB HID connected slot=0 dev=3 proto=1 subclass=1 parsed=0 mouse=0 joystick=0 ps4=0\r\n[usb1] event bus=0 hub=2 port=1 intf=0 ev=10\r\n[I/usbh_core] Loading hid class driver on interface 1\r\n[I/usbh_hid] Ep=82 Attr=03 Mps=5 Interval=10 Mult=00\r\n[I/usbh_hid] Register HID Class:/dev/input1\r\n[W/usbh_core] Control transfer failed, errorcode -8, retrying...\r\n[W/usbh_core] Control transfer failed, errorcode -8, retrying...\r\n[usb1] CherryUSB HID connected slot=1 dev=3 proto=0 subclass=0 parsed=1 mouse=0 joystick=0 ps4=0\r\n[usb1] event bus=0 hub=2 port=1 intf=1 ev=10\r\n[I/usbh_core] Loading hid class driver on interface 2\r\n[I/usbh_hid] Ep=83 Attr=03 Mps=2 Interval=10 Mult=00\r\n[I/usbh_hid] Register HID Class:/dev/input2\r\n[W/usbh_core] Control transfer failed, errorcode -8, retrying...\r\n[W/usbh_core] Control transfer failed, errorcode -8, retrying...\r\n[usb1] CherryUSB HID connected slot=2 dev=3 proto=0 subclass=0 parsed=1 mouse=0 joystick=1 ps4=0\r\n[usb1] event bus=0 hub=2 port=1 intf=2 ev=10\r\n[usb1] event bus=0 hub=2 port=2 intf=255 ev=3\r\n[",
+  "status": "usb1] event bus=0 hub=2 port=2 intf=255 ev=2\r\n[I/usbh_hub] New full-speed device on Bus 0, Hub 2, Port 2 connected\r\n[I/usbh_core] New device found,idVendor:045e,idProduct:028e,bcdDevice:0114\r\n[I/usbh_core] The device has 1 bNumConfigurations\r\n[I/usbh_core] The device has 4 interfaces\r\n[I/usbh_core] Enumeration success, start loading class driver\r\n[usb1] event bus=0 hub=2 port=2 intf=255 ev=5\r\n[I/usbh_core] Loading xbox class driver on interface 0\r\n[I/USB] Ep=81 Attr=03 Mps=32 Interval=04 Mult=00\r\n[I/USB] Ep=01 Attr=03 Mps=32 Interval=08 Mult=00\r\n[I/USB] Register XBOX Class:/dev/xbox0\r\n[usb1] Xbox 360 connected slot=3 class=0 vid=045e pid=028e intf=0\r\n[W/usbh_core] Control transfer failed, errorcode -8, retrying...\r\n[W/usbh_core] Control transfer failed, errorcode -8, retrying...\r\n[usb1] event bus=0 hub=2 port=2 intf=0 ev=10\r\n[E/usbh_core] Do not support Class:0xff, Subclass:0x5d, Protocl:0x03 on interface 1\r\n[usb1] event bus=0 hub=2 port=2 intf=1 ev=9\r\n[E/usbh_core] Do not support Class:0xff, Subclass:0x5d, Protocl:0x02 on interface 2\r\n[usb1] event bus=0 hub=2 port=2 intf=2 ev=9\r\n[E/usbh_core] Do not support Class:0xff, Subclass:0xfd, Protocl:0x13 on interface 3\r\n[usb1] event bus=0 hub=2 port=2 intf=3 ev=9\r\n[usb1] event bus=0 hub=2 port=4 intf=255 ev=3\r\n[usb1] event bus=0 hub=2 port=4 intf=255 ev=2\r\n[I/usbh_hub] New low-speed device on Bus 0, Hub 2, Port 4 connected\r\n[I/usbh_core] New device found,idVendor:30fa,idProduct:0400,bcdDevice:0100\r\n[I/usbh_core] The device has 1 bNumConfigurations\r\n[I/usbh_core] The device has 1 interfaces\r\n[I/usbh_core] Enumeration success, start loading class driver\r\n[usb1] event bus=0 hub=2 port=4 intf=255 ev=5\r\n[I/usbh_core] Loading hid class driver on interface 0\r\n[I/usbh_hid] Ep=81 Attr=03 Mps=5 Interval=10 Mult=00\r\n[I/usbh_hid] Register HID Class:/dev/input3\r\n[usb1] CherryUSB HID connected slot=4 dev=5 proto=2 subclass=1 parsed=1 mouse=1 joystick=1 ps4=0\r\n[usb1] CherryUSB mousecard HID dev=5 speed=low hub=2 port=4 if=0 ep=0x00000081\r\n[usb1] event bus=0 hub=2 port=4 intf=0 ev=10\r\n\r\ncmd> status\r\n---- card status ----\r\nui: frames=13 keys=0\r\nboot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0\r\nvideo: vsync=on scanlines=Medium\r\ntext mono: fg=black bg=black\r\ndisplay mono: off\r\napple fb: slot=0 mode=legacy target=50Hz apple_fps=0.00 hdmi_fps=0.00 blits=222 comp_pub=223 comp_skip=0 pl_vblanks=135 latched=0x3E800000\r\nupdater meta: golden='B2.0.6' local_fw='Firmware F1.3.3'\r\naudio: en=on mute=off tone=1000Hz amp=0x00600000\r\nspdif dbg: clkc=0 q3lvl=0 q3tog=0\r\nrtc: 2026-10-28 21:59:47\r\ntemp: +35.00 C\r\n",
+  "receipt_verified": true,
+  "profile_unchanged": true,
+  "final_boot": "\r\ncmd> http status\r\n[http-status] state=0 result=0 verify=0x00000000 status=0 bytes=0 step_max_us=0 slice_max_us=0 heap_peak=49520 utc=1793214007 rtc_offset=180 crypto=1 trust=1 seed_generation=29 dns=8.8.8.8\r\n[http-json] slice_max_us=1 boot_prepare_us=36917 ready=1 prepare_error=0 stack_used_upper=8456 stack_guard=512\r\n[usb1] event bus=0 hub=2 port=1 intf=255 ev=3\r\n[usb1] event bus=0 hub=2 port=1 intf=255 ev=2\r\n[I/usbh_hub] New low-speed device on Bus 0, Hub 2, Port 1 connected\r\n[I/usbh_core] New device found,idVendor:06a3,idProduct:8000,bcdDevice:0120\r\n[I/usbh_core] The device has 1 bNumConfigurations\r\n[I/usbh_core] The device has 3 interfaces\r\n[I/usbh_core] Enumeration success, start loading class driver\r\n[usb1] event bus=0 hub=2 port=1 intf=255 ev=5\r\n[I/usbh_core] Loading hid class driver on interface 0\r\n[I/usbh_hid] Ep=81 Attr=03 Mps=8 Interval=10 Mult=00\r\n[I/usbh_hid] Register HID Class:/dev/input0\r\n[usb1] CherryUSB HID connected slot=0 dev=3 proto=1 subclass=1 parsed=0 mouse=0 joystick=0 ps4=0\r\n[usb1] event bus=0 hub=2 port=1 intf=0 ev=10\r\n[I/usbh_core] Loading hid class driver on interface 1\r\n[I/usbh_hid] Ep=82 Attr=03 Mps=5 Interval=10 Mult=00\r\n[I/usbh_hid] Register HID Class:/dev/input1\r\n[W/usbh_core] Control transfer failed, errorcode -8, retrying...\r\n[W/usbh_core] Control transfer failed, errorcode -8, retrying...\r\n[usb1] CherryUSB HID connected slot=1 dev=3 proto=0 subclass=0 parsed=1 mouse=0 joystick=0 ps4=0\r\n[usb1] event bus=0 hub=2 port=1 intf=1 ev=10\r\n[I/usbh_core] Loading hid class driver on interface 2\r\n[I/usbh_hid] Ep=83 Attr=03 Mps=2 Interval=10 Mult=00\r\n[I/usbh_hid] Register HID Class:/dev/input2\r\n[W/usbh_core] Control transfer failed, errorcode -8, retrying...\r\n[W/usbh_core] Control transfer failed, errorcode -8, retrying...\r\n[usb1] CherryUSB HID connected slot=2 dev=3 proto=0 subclass=0 parsed=1 mouse=0 joystick=1 ps4=0\r\n[usb1] event bus=0 hub=2 port=1 intf=2 ev=10\r\n[usb1] event bus=0 hub=2 port=2 intf=255 ev=3\r\n",
+  "final_status": "\r\ncmd> status\r\n---- card status ----\r\nui: frames=176 keys=0\r\nboot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0\r\nvideo: vsync=on scanlines=Medium\r\ntext mono: fg=black bg=black\r\ndisplay mono: off\r\napple fb: slot=0 mode=SHR target=50Hz apple_fps=25.04 hdmi_fps=50.08 blits=333 comp_pub=335 comp_skip=0 pl_vblanks=300 latched=0x3E400000\r\nupdater meta: golden='B2.0.6' local_fw='Firmware F1.3.3'\r\naudio: en=on mute=off tone=1000Hz amp=0x00600000\r\nspdif dbg: clkc=0 q3lvl=0 q3tog=0\r\nrtc: 2026-10-28 22:00:12\r\ntemp: +34.87 C\r\n",
+  "left_at_starfall_title": true
+}

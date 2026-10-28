@@ -1,0 +1,10 @@
+{
+  "action": "prepare",
+  "firmware_rebuilt": false,
+  "firmware_written": false,
+  "golden_written": false,
+  "physical_scope": "physical Appletini in ONE//e mode",
+  "stock_receipt_sha256": "cbbdd97ff97d43f7609f3da73ff0368164621350b18ff6ec7398c480d66672c2",
+  "original_settings_sha256": "a9351b958deff7e60deabe085a1663d35566d158237b7e4412a960200e38c0e4",
+  "completed": true
+}

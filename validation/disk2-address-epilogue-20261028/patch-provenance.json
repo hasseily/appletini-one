@@ -1,0 +1,17 @@
+{
+  "diagnostic_only": true,
+  "stock_elf_sha256": "64202e761ba91dd84fcb847cf77d7fe490b3b112a3688b9aa2189df11918f631",
+  "patched_elf_sha256": "3f1fad1945b124b543450217be475ca07fd5c5fbd80dee0f6e63cc5a2e2bf71b",
+  "address": "0x15124c",
+  "file_offset": 336460,
+  "old_instruction": "E24220EB: sub r2,r2,#235",
+  "new_instruction": "E3A02000: mov r2,#0",
+  "meaning": "Treat the third address-epilogue byte as unconstrained; CLZ/LSR then yields true. All address 4-and-4, track, sector, checksum, DE AA, and data validation remain unchanged.",
+  "changed_instruction_words": 1,
+  "fpga_rebuilt": false,
+  "arm_rebuilt": false,
+  "cpu1_blob_changed": false,
+  "test_package_sha256": "e654ac5015e331dd6381ded0c052ddc17a45138173125bd9e279e55e37d7b8ca",
+  "bitstream_sha256": "94c578698466ac057d5a58768e7b1c98fd680dca38a7840cd82f1d226f6dfd34",
+  "fsbl_sha256": "7e47637e290b70701381d8ac3c91c267129dde7e4b12e172e76b4634786f7079"
+}

@@ -1,0 +1,54 @@
+{
+  "game": {
+    "GAME_IRQ": 31499,
+    "GAME_CLOCK_RUNNING": 47368,
+    "GAME_UPDATE": 20768,
+    "GAME_AUDIO_PROLOGUE": 35933,
+    "GAME_AUDIO_COUNTER": 47363,
+    "GAME_LATCH": 46211,
+    "GAME_FRAMES": 45938
+  },
+  "probe_labels": {
+    "ack": 43265,
+    "cal_after": 43332,
+    "cal_before": 43328,
+    "cal_first_after": 43370,
+    "cal_last_before": 43374,
+    "cal_wait_limit": 43378,
+    "cap": 43398,
+    "clock_units": 43268,
+    "command": 43264,
+    "latch": 43368,
+    "length": 43325,
+    "phase": 43267,
+    "probe_foreground": 41751,
+    "probe_irq": 41650,
+    "rc": 43324,
+    "selector": 43400,
+    "stamp": 43336,
+    "state": 43264,
+    "transport": 42322
+  },
+  "irq_prefix": "d8ad08b9",
+  "update_prefix": "205d8c",
+  "probe_bytes": 1134,
+  "game_sha256": "fddde7bb78c289e21bf74d17a4db5768c6a0de45d68bf4cc7f09f3fd8e2364c0",
+  "disk_sha256": "4cc5fde1d1135688657cfca7519407034cf6a2f5aff1b0e680f18ea2a251375d",
+  "probe_sha256": "7151a580afb6a316d3c73f28959f582e41a434ddf1bfca3ca8f5407feefb76a8",
+  "limits": {
+    "code": [
+      41600,
+      43264
+    ],
+    "data": [
+      43264,
+      43520
+    ],
+    "buffer": [
+      43520,
+      44034
+    ],
+    "scene_start": 44080
+  },
+  "restriction": "sector 1 only; restart before each short phase; no boss overlay"
+}

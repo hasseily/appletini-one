@@ -10,9 +10,12 @@
  * shadow RAM, while unsafe ranges keep the normal FIFO path. */
 
 #include "smartport_service.h"
+#include "https_probe.h"
 #include "memory_api.h"
 #include "memory_api_hw.h"
+#include "net_service.h"
 #include "glyph_api.h"
+#include "net_transport_test.h"
 #include "video_rom_service.h"
 
 #include <stdint.h>
@@ -1215,6 +1218,8 @@ static void sp_glyph_check_reset(void)
                               CARD_CTRL_APPLE_RESET_SEQ_MASK;
     if (g_glyph_reset_sequence_valid == 0U || sequence != g_glyph_reset_sequence) {
         glyph_api_reset();
+        net_transport_test_reset(sequence);
+        net_service_reset();
         g_glyph_reset_sequence = sequence;
         g_glyph_reset_sequence_valid = 1U;
     }
@@ -1688,7 +1693,22 @@ static void execute_command(void)
                 sp_response_append(result);
                 break;
             }
-            length = build_sp_status(dev, unit, status_code);
+            if (unit == 0U && status_code >= NET_SELECTOR && status_code <= NET_LAST_SELECTOR) {
+                length = len == 10U ? net_service_status(
+                    status_code, list, g_scratch, sizeof(g_scratch)) : 0U;
+                /* Diagnostic images advertise ATNT only, never the production ABI. */
+                if (length == 0U && (status_code == NET_TEST_DESCRIPTOR_SELECTOR ||
+                                    status_code == NET_TEST_DATA_SELECTOR)) {
+                    length = len == 10U ? net_transport_test_status(
+                        status_code, list, g_scratch, sizeof(g_scratch)) : 0U;
+                }
+                if (!memory_api_hw_response_valid()) {
+                    g_irq_tick_valid = 0U;
+                    return;
+                }
+            } else {
+                length = build_sp_status(dev, unit, status_code);
+            }
             if (length == 0U) {
                 result = ERR_BADCTL;
                 sp_response_append(result);
@@ -1787,7 +1807,8 @@ static void execute_command(void)
         case 0x04: {   /* CONTROL: private controller services */
             uint16_t payload_length = 0U;
             if (unit != 0U || (list[4] != MEMORY_API_SELECTOR &&
-                               list[4] != GLYPH_API_SELECTOR)) {
+                               list[4] != GLYPH_API_SELECTOR &&
+                               list[4] != NET_SELECTOR)) {
                 result = ERR_BADCTL;
                 sp_response_append(result);
                 break;
@@ -1801,11 +1822,15 @@ static void execute_command(void)
              * padding, so do not impose a new zero-padding requirement. */
             if (list[0] != 3U || len < 12U ||
                 (uint32_t)payload_length + 12U != len) {
-                result = (list[4] == GLYPH_API_SELECTOR)
+                result = (list[4] == NET_SELECTOR)
+                    ? net_service_control(NULL, 0U)
+                    : (list[4] == GLYPH_API_SELECTOR)
                     ? glyph_api_execute(NULL, 0U, &sp_glyph_backend)
                     : memory_api_execute(NULL, 0U, &memory_api_hardware);
             } else {
-                result = (list[4] == GLYPH_API_SELECTOR)
+                result = (list[4] == NET_SELECTOR)
+                    ? net_service_control(g_cmd_buf + 12U, payload_length)
+                    : (list[4] == GLYPH_API_SELECTOR)
                     ? glyph_api_execute(g_cmd_buf + 12U, payload_length,
                                         &sp_glyph_backend)
                     : memory_api_execute(g_cmd_buf + 12U, payload_length,
@@ -2173,6 +2198,8 @@ int smartport_service_init(uint32_t uart_base)
 
     g_uart_base = uart_base;
     glyph_api_reset();
+    net_transport_test_reset(0U);
+    net_service_reset();
     g_glyph_reset_sequence_valid = 0U;
     g_smartport_slot = 0U;
     smartport_devices_ensure_defaults();
@@ -2369,6 +2396,7 @@ void smartport_service_uart_status(uint32_t uart_base)
 
 void smartport_service_poll(void)
 {
+    https_probe_service_tick(HTTPS_PROBE_SMARTPORT);
     const uint32_t vtw_status = REG_READ(CARD_CTRL_VTW_STATUS_REG);
 
     sp_glyph_check_reset();
@@ -2541,6 +2569,12 @@ int smartport_service_read_block(uint8_t device,
     memcpy(buffer, cache_ptr, to_copy);
     if (actual_out != NULL) *actual_out = to_copy;
     return 0;
+}
+
+void smartport_service_get_cache_stats(smartport_cache_stats_t *out)
+{
+    out->hits = g_cache_hit_count;
+    out->misses = g_cache_miss_count;
 }
 
 int smartport_service_get_activity(smartport_activity_t *out)

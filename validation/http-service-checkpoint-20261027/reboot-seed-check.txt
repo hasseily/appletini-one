@@ -1,0 +1,8 @@
+
+cmd> http config 8.8.8.8 180
+[http] config rc=0
+
+cmd> http status
+[http-status] state=11 utc=1793120291 rtc_offset=180 crypto=1 trust=1 seed_generation=6 dns=8.8.8.8
+
+cmd> re�^\C��>���-,�?=yGC.�Z��G[��I)�>:�_8Y���)\�y���9{��9R>	��OK���

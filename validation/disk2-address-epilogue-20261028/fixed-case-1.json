@@ -1,0 +1,74 @@
+{
+  "action": "case",
+  "firmware_rebuilt": false,
+  "firmware_written": false,
+  "golden_written": false,
+  "physical_scope": "physical Appletini in ONE//e mode",
+  "case": 1,
+  "speed": "1mhz",
+  "disk2_acceleration": true,
+  "slowdown_mask": 8,
+  "slowdown_ticks": 256,
+  "live_before": "\r\ncmd> vtw status\r\nvtw: idle, session=ONE//e, host-intent=off, machine=unknown\r\nvtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0\r\nvtw: reset seen=0 source=none rstn=$0\r\nvtw: slowdown mask=$008 cycles=256\r\nvtw: speed=1 MHz default div=37 c074=0 ignore=0 d2accel=on owned=1 run=1 pc=293B\r\nvtw: core=25921297 bus=2212552 posted=27759 invalid=0\r\nvtw: perf fabric=3395775428 steps=25921907 classic=25921907\r\nvtw: cache hits=0 misses=0 invalidations=73\r\nvtw: wait disk=0 video=0\r\nvtw: qfill=0 qhw=1 qdrop=0 sessions=1\r\nvtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00\r\nvtw: c000 reads=65535 bit7=0 last=$00 prev=park $FFFF R drive=0\r\nvtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=101 altzp=0 rd/wt=00 80st=0 text=1\r\nvtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)\r\nvtw: cxxx trail CF1F CF1E CFFB CF1D CF1C CF1B C818 C817 (new->old)\r\nvtw: last bus read $C000 = $00, irqs seen=0\r\nvtw: persisted setting = OFF\r\n",
+  "profile_sha256": "037b421188ab1ed286a563e9bed64e4517dc013e0729ae25d61563fe07bf5a79",
+  "stock_live_code_fingerprints": {
+    "disk2_service_poll": {
+      "address": 1384032,
+      "words": [
+        3818926080,
+        3912060912,
+        3812896774,
+        3796750452,
+        3851636760,
+        3851632688,
+        3890243669,
+        3890705493
+      ]
+    },
+    "smartport_service_poll": {
+      "address": 1474848,
+      "words": [
+        3912060912,
+        3808515840,
+        3812642911,
+        3818926337,
+        3796750412,
+        3855951428,
+        3851641300,
+        3851632676
+      ]
+    }
+  },
+  "firmware_variant": "stock F1.3.3b3 plus one decoder instruction correction",
+  "screen": "STOCK DISK II WRITE CHECK               \nCASE 1..5: 1                            \nSMARTPORT CONTROL: 8 ROUNDS             \nSMARTPORT PASS                          \nDISK II: 32 ROUNDS                      \n8 DISK II ROUNDS OK                     \n16 DISK II ROUNDS OK                    \n24 DISK II ROUNDS OK                    \n32 DISK II ROUNDS OK                    \nPASS TARGET=1 STAGE=0 ROUND=32          \nSP=8 D2=32 E=0 OS=00                    \nRESULT SAVE OK                          \nDONE; PRESS A KEY                       \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        ",
+  "elapsed_host_seconds": 112.75,
+  "live_after": "\r\ncmd> vtw status\r\nvtw: idle, session=ONE//e, host-intent=off, machine=unknown\r\nvtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0\r\nvtw: reset seen=0 source=none rstn=$0\r\nvtw: slowdown mask=$008 cycles=256\r\nvtw: speed=1 MHz default div=37 c074=0 ignore=0 d2accel=on owned=1 run=1 pc=2933\r\nvtw: core=145459414 bus=5024203 posted=219482 invalid=0\r\nvtw: perf fabric=1875402427 steps=145460046 classic=145460046\r\nvtw: cache hits=0 misses=0 invalidations=625\r\nvtw: wait disk=0 video=0\r\nvtw: qfill=0 qhw=1 qdrop=0 sessions=1\r\nvtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00\r\nvtw: c000 reads=65535 bit7=1 last=$31 prev=park $FFFF R drive=0\r\nvtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=101 altzp=0 rd/wt=00 80st=0 text=1\r\nvtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)\r\nvtw: cxxx trail CF1F CF1E CFFB CF1D CF1C CF1B C830 C82F (new->old)\r\nvtw: last bus read $C000 = $31, irqs seen=0\r\nvtw: persisted setting = OFF\r\n",
+  "disk2_after": "\r\ncmd> disk2 status\r\ndisk2 d1: present PO rw wozwrite=off size=143360 tracks=35 blocks=280 path=0:/D2CHECK/DISK.PO\r\ndisk2 d2: empty none rw wozwrite=off size=0 tracks=0 blocks=0 path=-\r\ndisk2 pl: status=0xD2000005 psram=0x00000000 lastio=0xC8 iocount=1546416 underruns=0\r\ndisk2 track: loaded=1 match=1 cur=d1 q28 load=d1 q28 len=6384 pos=1015 reads=1427308\r\ndisk2 write: dirty=0 d1 q0 writes=45440 latch=0xDE\r\ndisk2 state: en=1 motor=0 spin=0 drive=1 phase=0x0 q6=0 q7=0\r\n",
+  "smartport_after": "\r\ncmd> sd status\r\nsd: hw ready=1 exec=0 in=0 out=0 drypop=0 lastctl=$01\r\nsd: svc irq=155 pending=0 status=12 read=119 write=21\r\nsd: vtw direct=0 rwblk=0 postblk=0 fallback=0\r\nsd: vtw fb range=0 state=0 map=0 shadow=0 post=0 dma=0\r\nsd: vtw split blocks=0 spans=0 max=0\r\nsd: vtw write direct=0 preflight=0 stream=0 fault=0\r\nsd: cache hit=78 miss=61 bypass=1 post-credit-reads=0 dma-owner=0\r\nsd: lat dispatch us last=4 avg=130 max=8462 samples=155\r\nsd: lat ready us last=555 avg=264 max=9033\r\nsd: init=1 fs=1 slot=7 ramdisk=1\r\nsd: SP1 open=1 ram=0 ro=0 blocks=1600 path=0:/D2CHECK/HOST.PO\r\nsd: SP2 open=1 ram=1 ro=0 blocks=65535 path=RAM32 (volatile)\r\nsd: SP3 open=0 ram=0 ro=1 blocks=0 path=\r\nsd: SP4 open=0 ram=0 ro=1 blocks=0 path=\r\nsd: SP5 open=0 ram=0 ro=1 blocks=0 path=\r\nsd: SP6 open=0 ram=0 ro=1 blocks=0 path=\r\nsd: SP7 open=0 ram=0 ro=1 blocks=0 path=\r\nsd: SP8 open=0 ram=0 ro=1 blocks=0 path=\r\n",
+  "host": {
+    "sha256": "f36f65173260da1748fad11d0831dec6596e5f74bef37b2bc101445439bdf88b",
+    "valid_volume": true,
+    "scratch_sha256": "04b50059eb4331f18bf9ea8b21c9aacddb2e947b9c87fb9f32f1b8b5ad350813",
+    "persisted_pattern_verified": true
+  },
+  "disk2": {
+    "sha256": "538ab64953e1132555063d3efaae8713ca246e924d31fca983c8440f61d1d453",
+    "valid_volume": true,
+    "scratch_sha256": "f8ce59e9a332fb4a6dce2df10d8d274ec5d0143273ed4ad0104b4358933cbeb5",
+    "persisted_pattern_verified": true
+  },
+  "result": {
+    "pass": true,
+    "target": 1,
+    "stage": 0,
+    "errno": 0,
+    "oserror": 0,
+    "round": 32,
+    "smartport_rounds": 8,
+    "disk2_rounds": 32,
+    "mismatch_offset": 0,
+    "got": 0,
+    "expected": 0
+  },
+  "completed": true
+}

@@ -1,0 +1,6 @@
+
+cmd> http get http://checkpoint.appletini.test:8080/short
+[http] start rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=62 handshake_us=0 elapsed_us=26988 step_max_us=3308 slice_max_us=3310 tls_heap_peak=43952 seed_generation=7
+[http-sha256] bc78ba81bcc823012dd595fbf7ce72a5bd4ec13490f6f667fd330fe56085be6d
+[http] done

@@ -1,0 +1,23 @@
+{
+  "url": "https://checkpoint.appletini.test:8443/truncate",
+  "case": "truncate",
+  "result": {
+    "rc": -1,
+    "verify": 0,
+    "status": 200,
+    "body": 3,
+    "handshake_us": 194185,
+    "elapsed_us": 201737,
+    "step_max_us": 3314,
+    "slice_max_us": 3316,
+    "tls_heap_peak": 43952,
+    "seed_generation": 7
+  },
+  "phases": [],
+  "require_workload": false,
+  "pass": true,
+  "sha256": "2f05d4b689d270cafb02285f35f44866f7dc8a2d368a3f9d1124373eeab31fb1",
+  "expected_sha256": "bc78ba81bcc823012dd595fbf7ce72a5bd4ec13490f6f667fd330fe56085be6d",
+  "per_request_seed": false,
+  "per_request_time": false
+}

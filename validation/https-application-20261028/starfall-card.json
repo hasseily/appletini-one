@@ -1,0 +1,44 @@
+{
+  "pass": true,
+  "state_mutations": true,
+  "score_is_artificial": true,
+  "inputs": {
+    "FIRMWARE.BIN": "e6313677d0f4f42049809db9332bdf38b7e9d96cd60a4d174d66179ad89a345d",
+    "ATNETCA.PEM": "369ed928ad3253b5ee3ccab3019c0385e599b3af02bebe79b9bb3e76352686a0",
+    "STARFALL.PO": "d23e23c09b435cede5dc087333361a755f52d77d27340293eee11026d55846e9",
+    "STARFALL.LBL": "3e0baa65df763bff7ba63b79dee21bccd407e954c03b2c445c362b9e9561613b",
+    "NETCHECK.PO": "c0bf83d437c42d0917395c04bcbe3c3367162f566ac28df1cc01f93f7f36cee0",
+    "NETCHECK.LBL": "9d191f0a6834249819a124fe2d358076c9019efb6c14eef4edcddc55ee2a0011"
+  },
+  "first_phase": 8,
+  "http": "\r\ncmd> http status\r\n[http-status] state=10 result=0 verify=0x00000000 status=200 bytes=137 step_max_us=3613 slice_max_us=3714 heap_peak=86592 utc=1793206829 rtc_offset=180 crypto=1 trust=1 seed_generation=7 dns=8.8.8.8\r\n[http-json] slice_max_us=2 boot_prepare_us=41460 ready=1 prepare_error=0 stack_used_upper=9612 stack_guard=512\r\n",
+  "run_id": "da376f74f2a5474891f09b5da2537b74",
+  "name": "QACARD",
+  "retry_phase": 8,
+  "ladder_phase": 8,
+  "left_at_title": "\r\ncmd> http status\r\n[http-status] state=0 result=0 verify=0x00000000 status=0 bytes=0 step_max_us=0 slice_max_us=0 heap_peak=49520 utc=1793206839 rtc_offset=180 crypto=1 trust=1 seed_generation=8 dns=8.8.8.8\r\n[http-json] slice_max_us=1 boot_prepare_us=36504 ready=1 prepare_error=0 stack_used_upper=8456 stack_guard=512\r\n[usb1] event bus=0 hub=2 port=1 intf=255 ev=3\r\n[usb1] event bus=0 hub=2 port=1 intf=255 ev=2\r\n[I/usbh_hub] New low-speed device on Bus 0, Hub 2, Port 1 connected\r\n[I/usbh_core] New device found,idVendor:06a3,idProduct:8000,bcdDevice:0120\r\n[I/usbh_core] The device has 1 bNumConfigurations\r\n[I/usbh_core] The device has 3 interfaces\r\n[I/usbh_core] Enumeration success, start loading class driver\r\n[usb1] event bus=0 hub=2 port=1 intf=255 ev=5\r\n[I/usbh_core] Loading hid class driver on interface 0\r\n[I/usbh_hid] Ep=81 Attr=03 Mps=8 Interval=10 Mult=00\r\n[I/usbh_hid] Register HID Class:/dev/input0\r\n[usb1] CherryUSB HID connected slot=0 dev=3 proto=1 subclass=1 parsed=0 mouse=0 joystick=0 ps4=0\r\n[usb1] event bus=0 hub=2 port=1 intf=0 ev=10\r\n[I/usbh_core] Loading hid class driver on interface 1\r\n[I/usbh_hid] Ep=82 Attr=03 Mps=5 Interval=10 Mult=00\r\n[I/usbh_hid] Register HID Class:/dev/input1\r\n[W/usbh_core] Control transfer failed, errorcode -8, retrying...\r\n[W/usbh_core] Control transfer failed, errorcode -8, retrying...\r\n[usb1] CherryUSB HID connected slot=1 dev=3 proto=0 subclass=0 parsed=1 mouse=0 joystick=0 ps4=0\r\n[usb1] event bus=0 hub=2 port=1 intf=1 ev=10\r\n[I/usbh_core] Loading hid class driver on interface 2\r\n[I/usbh_hid] Ep=83 Attr=03 Mps=2 Interval=10 Mult=00\r\n[I/usbh_hid] Register HID Class:/dev/input2\r\n[W/usbh_core] Control transfer failed, errorcode -8, retrying...\r\n[W/usbh_core] Control transfer failed, errorcode -8, retrying...\r\n[usb1] CherryUSB HID connected slot=2 dev=3 proto=0 subclass=0 parsed=1 mouse=0 joystick=1 ps4=0\r\n[usb1] event bus=0 hub=2 port=1 intf=2 ev=10\r\n[usb1] event bus=0 hub=2 port=2 intf=255 ev=3\r\n[usb1] event bus=0 hub=2 port=2 intf=255 ev=2\r\n",
+  "harness_note": "HTTP Error 403: Forbidden",
+  "database_row": {
+    "run_id": "da376f74f2a5474891f09b5da2537b74",
+    "name": "QACARD",
+    "platform": "appletini",
+    "score": 1234,
+    "sector": 1,
+    "kills": 10,
+    "rows_found": 1
+  },
+  "ladder": {
+    "scores": [
+      {
+        "rank": 1,
+        "name": "QACARD",
+        "score": 1234,
+        "sector": 1,
+        "kills": 10,
+        "version": "1.0-net1",
+        "platform": "appletini",
+        "submitted_at": "2026-10-28T17:00:25.000Z"
+      }
+    ]
+  }
+}

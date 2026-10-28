@@ -1,0 +1,33 @@
+{
+  "base_git_head": "f602c53731b57556e57b050e0a0102f2aa21c3e7",
+  "scope": "working tree contains prior unrelated work; hashes identify this tested source snapshot",
+  "python_dependencies": {
+    "py65": "1.2.0",
+    "pyserial": "3.5"
+  },
+  "sources": {
+    "README_NET_TRANSPORT_CHECKPOINT.md": "dab55be35b5f45241adf67ce696a6db5c936de1aef2d2b2432648ed845172885",
+    "README_HTTPS_JSON_PLAN.md": "c15dd9230c55f2bf2e4b506e436cd490e6fcd6d2fd3e351344b39a9f38e7373c",
+    "README_HTTPS_CHECKPOINT.md": "576842cd0c80bfe12a7924356ab508471b8833772940bb0b00f57407d9a01b99",
+    "ps_sources/frontend/net_transport_test.c": "ce2ee4b03da27b6c0a3f68bdfd539bce46f33322118d0f2caf72bab174108075",
+    "ps_sources/frontend/net_transport_test.h": "55d0edffd9dc1096885716943c010f7165a116545bdfaf987b6e9a7fd17090d4",
+    "ps_sources/frontend/smartport_service.c": "cbc99136b246cb812f82fa57ce651a8c2e7b5355a9f2c34b73b1d07afdc4feec",
+    "scripts/create_vitis_workspace.py": "333d2b979bdc2ae0bd2fea25b23f1bd69d3488501f4f59ba3c36099fff3558d4",
+    "software/net_transport_checkpoint/main.c": "8e5a541085d579727ce1e9bc6fe725526bffb78674f03e0036158d1f5f0b55a4",
+    "software/net_transport_checkpoint/model.cfg": "70bbb1ddf80f80e5fa5734d9b9789d9796a00187fe59da2ccf4bc6d60d16638b",
+    "software/net_transport_checkpoint/prodos_disk.py": "c8e2462bbb2810f1c51f5a495cd30ffcac7b9638e877336d3fec0f5c1e351967",
+    "software/net_transport_checkpoint/PRODOS_PACKER_LICENSE.txt": "0dc5ec22f384cea313aeed8a7d01469f27d422e8f44d93c74501c46ee219a782",
+    "software/net_transport_checkpoint/transport.s": "69a5e74d6b0b73faa9a2af0d4f496c5684382e11ce8a5c66dde07fdbd5cbccd8",
+    "scripts/build_net_transport_checkpoint.py": "88d5c771f5d9faec3f6b36707b500b9fbb571bb5aec07c59191420528fbf809f",
+    "scripts/build_net_transport_client.py": "ffc28cbefe38d0f82f1ea36b2fa42ed5b11c92f333ccb955adea1606358e8e3d",
+    "scripts/test_net_transport.py": "ed42ad8700c3d4a962cfd2c0790fad8820e502c4ef591d829cab7aed467cb8f1",
+    "scripts/net_transport_board.py": "f66c2b7c4c7464538f08cafa934128a2fa1cc10bb820bf7ee1e00f8dbc710898",
+    "scripts/run_net_transport_checkpoint.py": "c43881b5b6727cf982999edddd61d8936f7cbc14c49602a3126b37dfd498f7c9",
+    "scripts/collect_net_transport_checkpoint.py": "c3f465ff852e52ab5cfd1d578892fbb6a814da93e867c8e503edd682066a1de6",
+    "scripts/requirements-net-transport.txt": "5f664e4814a434f4a9e1f7847403c27100632b9068e4ca2c551efe4d857a2551",
+    "scripts/fixtures/net_transport_test.json": "9b1c638587142efed625c59dc33529201b7434e8e632f4c1da7132ec5fb4e9c4",
+    "scripts/fixtures/net_transport_client_globals.s": "3500ca371f77954a3a47d3c880a88dd90bebecd9bdf7a79c4e134a2c391167bb"
+  },
+  "restoration_checks_pass": true,
+  "final_runtime_after_cleanup_reboot_verified": true
+}

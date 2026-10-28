@@ -1,0 +1,27 @@
+[
+  {
+    "results": [
+      {
+        "run_id": "da376f74f2a5474891f09b5da2537b74"
+      }
+    ],
+    "success": true,
+    "meta": {
+      "served_by": "v3-prod",
+      "served_by_region": "WEUR",
+      "served_by_colo": "CDG",
+      "served_by_primary": true,
+      "timings": {
+        "sql_duration_ms": 0.2683
+      },
+      "duration": 0.2683,
+      "changes": 1,
+      "last_row_id": 0,
+      "changed_db": true,
+      "size_after": 98304,
+      "rows_read": 2,
+      "rows_written": 1,
+      "total_attempts": 1
+    }
+  }
+]

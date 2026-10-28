@@ -1,0 +1,6 @@
+
+cmd> http get https://www.cloudflare.com/favicon.ico
+[http] start rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=908 handshake_us=397155 elapsed_us=763616 step_max_us=25451 slice_max_us=25454 tls_heap_peak=43952 seed_generation=7
+[http-sha256] 5414bc6e4b3f6e10f99b5d37abf4420da4dcaece66f8f2c08e090e87267adbc5
+[http] done

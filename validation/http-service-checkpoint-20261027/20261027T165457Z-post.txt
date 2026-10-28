@@ -1,0 +1,6 @@
+
+cmd> http post https://checkpoint.appletini.test:8443/post {"message":"hello","rows":[{"name":"STARFALL","score":12345}]}
+[http] start rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=62 handshake_us=2233491 elapsed_us=2398453 step_max_us=3391 slice_max_us=3393 tls_heap_peak=38872 seed_generation=6
+[http-sha256] bc78ba81bcc823012dd595fbf7ce72a5bd4ec13490f6f667fd330fe56085be6d
+[http] done

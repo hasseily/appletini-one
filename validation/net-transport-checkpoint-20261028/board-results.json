@@ -1,0 +1,116 @@
+{
+  "collected_utc": "20261028T014334Z",
+  "runs": {
+    "R1.LOG": {
+      "pass": true,
+      "header": {
+        "test": "transport-0.1",
+        "mode": "ROM",
+        "speed": "1",
+        "reads": "10000",
+        "pass": "1"
+      },
+      "size_rows": 504,
+      "reads": 10000,
+      "timing_wrap_validated": false,
+      "max_call_native_ticks": 12182,
+      "max_irq_inner_native_ticks": 12073,
+      "irq_timing_scope": "inner interval is a lower bound; complete call interval is an upper bound",
+      "result_sha256": "c3f012ed5568d7a9e599d6009d1c628b2bc8fe3de1334bad38aa1a82d1b5abb7"
+    },
+    "RS1.LOG": {
+      "pass": true,
+      "header": {
+        "test": "transport-0.1",
+        "mode": "ROM",
+        "speed": "1",
+        "reads": "1008",
+        "pass": "1",
+        "timer_wrap_checked": "1"
+      },
+      "size_rows": 504,
+      "reads": 1008,
+      "timing_wrap_validated": true,
+      "max_call_native_ticks": 11833,
+      "max_irq_inner_native_ticks": 11694,
+      "irq_timing_scope": "inner interval is a lower bound; complete call interval is an upper bound",
+      "result_sha256": "eb9aa69b6d42884ab2764a3cef5bfeec0de63f4c99c6dae03da95bc724bd6890"
+    },
+    "RT.BIN": {
+      "pass": true,
+      "header": {
+        "test": "transport-0.1",
+        "mode": "ROM",
+        "speed": "T",
+        "reads": "10000",
+        "pass": "1",
+        "timer_wrap_checked": "1"
+      },
+      "size_rows": 504,
+      "reads": 10000,
+      "timing_wrap_validated": true,
+      "max_call_native_ticks": 14305,
+      "max_irq_inner_native_ticks": 14148,
+      "irq_timing_scope": "inner interval is a lower bound; complete call interval is an upper bound",
+      "result_sha256": "444349eb09d31d18b46298ee8c670bc1c27a4e57c67a64eb1653d8b3e32a5406"
+    },
+    "L1.BIN": {
+      "pass": true,
+      "header": {
+        "test": "transport-0.1",
+        "mode": "libtini-style",
+        "speed": "1",
+        "reads": "10000",
+        "pass": "1",
+        "timer_wrap_checked": "1"
+      },
+      "size_rows": 504,
+      "reads": 10000,
+      "timing_wrap_validated": true,
+      "max_call_native_ticks": 11487,
+      "max_irq_inner_native_ticks": 11313,
+      "irq_timing_scope": "inner interval is a lower bound; complete call interval is an upper bound",
+      "result_sha256": "51629585834feecc3034969bb6d0f6eff247f8182b67d908f8b2d2b88278e4dc"
+    },
+    "LT.BIN": {
+      "pass": true,
+      "header": {
+        "test": "transport-0.1",
+        "mode": "libtini-style",
+        "speed": "T",
+        "reads": "10000",
+        "pass": "1",
+        "timer_wrap_checked": "1"
+      },
+      "size_rows": 504,
+      "reads": 10000,
+      "timing_wrap_validated": true,
+      "max_call_native_ticks": 5225,
+      "max_irq_inner_native_ticks": 5068,
+      "irq_timing_scope": "inner interval is a lower bound; complete call interval is an upper bound",
+      "result_sha256": "83194ba2f3583dc4ed917b3853cfc602f2728d6d66196b4f8bc749e781737b79"
+    }
+  },
+  "source": "physical board SD readback",
+  "NETSP": {
+    "sha256": "d59373f46f2ef3bc611f601dbc57a6e253a3bb8444b717c8f51af7b2b9075670",
+    "valid_volume": true,
+    "scratch_sha256": "564adb3116c70edc43ff7c09c29964a81ac9affccc9c75bd94762011b240a0f9",
+    "scratch_round_mod256": 255,
+    "scratch_pattern_valid": true,
+    "expected_scratch_round": 9983
+  },
+  "reset_recovery": {
+    "generation": 5,
+    "reset_sequence": 3,
+    "initial_read_count": 0
+  },
+  "NETD2": {
+    "sha256": "cdcce5c846f11356c73728080441753f31e4d0284964c5a5d3e4df6c90f5b8ba",
+    "valid_volume": true,
+    "scratch_sha256": "564adb3116c70edc43ff7c09c29964a81ac9affccc9c75bd94762011b240a0f9",
+    "scratch_round_mod256": 255,
+    "scratch_pattern_valid": true,
+    "expected_scratch_round": 9983
+  }
+}

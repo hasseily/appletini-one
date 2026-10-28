@@ -1,0 +1,23 @@
+{
+  "url": "http://checkpoint.appletini.test:8080/redirect",
+  "case": "redirect",
+  "result": {
+    "rc": 0,
+    "verify": 0,
+    "status": 200,
+    "body": 62,
+    "handshake_us": 174472,
+    "elapsed_us": 224631,
+    "step_max_us": 3310,
+    "slice_max_us": 3312,
+    "tls_heap_peak": 43952,
+    "seed_generation": 7
+  },
+  "phases": [],
+  "require_workload": false,
+  "pass": true,
+  "sha256": "bc78ba81bcc823012dd595fbf7ce72a5bd4ec13490f6f667fd330fe56085be6d",
+  "expected_sha256": "bc78ba81bcc823012dd595fbf7ce72a5bd4ec13490f6f667fd330fe56085be6d",
+  "per_request_seed": false,
+  "per_request_time": false
+}

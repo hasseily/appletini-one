@@ -1,0 +1,20 @@
+{
+  "completed": true,
+  "via_hz_reference": 1017811.7048346056,
+  "tick_us": 0.9825,
+  "audio_via_hz_rounded": 1017812,
+  "audio_period_ticks": 10178,
+  "audio_latch": 10176,
+  "raw_audio_clock_preserved": true,
+  "rom26_loss_detected": true,
+  "all_phase_timebases_checked": true,
+  "measurement_quantum_ticks": 256,
+  "mask_interval_uncertainty_ticks_approx": 280,
+  "instrumentation_affects_fps": true,
+  "uninstrumented_26mhz_fps_not_accepted": true,
+  "native_game_workload_rejected": true,
+  "clock_gap_observed_native": true,
+  "user_listening": "Normal until low-speed run, then slowing/CLOCK GAP; not a waveform capture.",
+  "stock_restored": true,
+  "diagnostic_flags_disabled_in_default_build": true
+}

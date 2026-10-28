@@ -1,0 +1,24 @@
+{
+  "sources": {
+    "README_STARFALL_IRQ_CLOCK.md": "d5e6caf5c29f3f28768aba78d50bc00a38a1d67682dc256788ec889dc34720b6",
+    "README_NET_TRANSPORT_CHECKPOINT.md": "5862fd3d156462d29fa4c05956c8c96f20698a4d14708b2a1edd9a803b1103de",
+    "README_HTTPS_JSON_PLAN.md": "3d69016e20fafe6ebf18d1b17dfdf1a6c1919c0748a40910eb4b574b8190434e",
+    "ps_sources/frontend/net_transport_test.c": "85ec3a76df6138354b81cd0c1f26f0c5583cb970c01996dbd5b56408d75cf117",
+    "ps_sources/frontend/net_transport_test.h": "55d0edffd9dc1096885716943c010f7165a116545bdfaf987b6e9a7fd17090d4",
+    "scripts/build_net_transport_checkpoint.py": "fceae4bd4ad71e0af48f0c47730e2c6c59838824abf0438648c76f9f31c33761",
+    "scripts/build_starfall_irq_checkpoint.py": "41f180a0c41c5720ef9b3bfee4d5f15c46f71ca5c49a502c9c5ee9f782f38080",
+    "scripts/run_starfall_irq_checkpoint.py": "6baff9370bddf52312d51f895a63d3f0866bd5e4b2ef9c59dbdd81cdbbdfa9ff",
+    "scripts/test_starfall_irq_checkpoint.py": "b2f2875bd00c4f366e89b655f594f664e627dcac54f149cafd4a10b1b9f21b7b",
+    "scripts/test_timer_calibration.py": "4f62a86f87f588da8fdd749caa8829882daec425d8c4e9b965802b1f1ffe7217",
+    "software/starfall_irq_checkpoint/probe.s": "6264bbb4730259ac93c4e949c06c59592e44580baaee9e9091d32774d8a478c9",
+    "software/starfall_irq_checkpoint/probe.cfg": "5636c6fd24b258985fc8341ff7df8135220e624016cefde2812ec96d2c44537a"
+  },
+  "arm_timestamp_feature": "opt-in APPLETINI_TIMER_CALIBRATION=1, observed ATTC packet",
+  "probe_bytes": 1134,
+  "input_game_unchanged": true,
+  "limits": [
+    "private pattern replies, not HTTP/TLS",
+    "instrumented frame rates",
+    "1 MHz calibration only"
+  ]
+}

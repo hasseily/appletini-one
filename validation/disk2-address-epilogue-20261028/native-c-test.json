@@ -1,0 +1,12 @@
+{
+  "pass": true,
+  "actual_c_decoder": true,
+  "board_fixture_stock_rule_loses_data": true,
+  "board_fixture_fixed_hash_matches_native_write": true,
+  "third_address_epilogue_values_tested_per_order": 256,
+  "sector_orders": [
+    "DOS",
+    "ProDOS"
+  ],
+  "negative_validation_cases": 8
+}

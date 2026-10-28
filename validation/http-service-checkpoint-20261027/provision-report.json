@@ -1,0 +1,7 @@
+{
+  "seed_existing": false,
+  "per_request_seed": false,
+  "rtc_offset_minutes": 180,
+  "dns": "10.17.1.17",
+  "trust_sha256": "17fc9656f5180625f140b1fe1903daf28a5df877460479cc1fbcfd7b07380eaa"
+}

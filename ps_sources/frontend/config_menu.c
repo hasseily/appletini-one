@@ -3801,6 +3801,8 @@ static void config_menu_parse_key_value(config_menu_t *menu, const char *key, co
         (void)config_menu_parse_ipv4(value, menu->ethernet_config.subnet);
     } else if (strcmp(key, "ethernet.gateway") == 0) {
         (void)config_menu_parse_ipv4(value, menu->ethernet_config.gateway);
+    } else if (strcmp(key, "ethernet.dns") == 0) {
+        (void)config_menu_parse_ipv4(value, menu->ethernet_config.dns);
     } else if (strcmp(key, "clock.enabled") == 0) {
         menu->clock_enabled = config_menu_bool_text(value);
     } else if (strcmp(key, "ram.enabled") == 0) {
@@ -3826,6 +3828,7 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
     char ethernet_ip[16];
     char ethernet_subnet[16];
     char ethernet_gateway[16];
+    char ethernet_dns[16];
     /* Scratch for one quoted path value at a time (see config_menu_quote_path).
      * No single APPEND_CFG below passes two path args, so reuse is safe. */
     char path_val[CONFIG_MENU_PATH_LEN + 3U];
@@ -3847,6 +3850,7 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
     config_menu_format_ipv4(menu->ethernet_config.subnet,
                             ethernet_subnet,
                             sizeof(ethernet_subnet));
+    config_menu_format_ipv4(menu->ethernet_config.dns, ethernet_dns, sizeof(ethernet_dns));
     config_menu_format_ipv4(menu->ethernet_config.gateway,
                             ethernet_gateway,
                             sizeof(ethernet_gateway));
@@ -4034,6 +4038,7 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                "ethernet.ip=%s\n"
                "ethernet.subnet=%s\n"
                "ethernet.gateway=%s\n"
+               "ethernet.dns=%s\n"
                "clock.enabled=%s\n"
                "ram.enabled=%s\n",
                config_menu_on_off(menu->sp_ramdisk_enabled),
@@ -4047,6 +4052,7 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                ethernet_ip,
                ethernet_subnet,
                ethernet_gateway,
+               ethernet_dns,
                config_menu_on_off(menu->clock_enabled),
                config_menu_on_off(menu->ram_enabled));
 
@@ -5592,6 +5598,9 @@ static uint8_t *config_menu_ethernet_edit_target(config_menu_t *menu,
             *width = UTHERNET2_IPV4_LEN;
         }
         return menu->ethernet_config.gateway;
+    case CONFIG_ETHERNET_ITEM_DNS:
+        if (width != NULL) *width = UTHERNET2_IPV4_LEN;
+        return menu->ethernet_config.dns;
     default:
         return NULL;
     }
@@ -5608,6 +5617,8 @@ static const char *config_menu_ethernet_field_name(uint32_t item)
         return "SUBNET OCTET";
     case CONFIG_ETHERNET_ITEM_GATEWAY:
         return "GATEWAY OCTET";
+    case CONFIG_ETHERNET_ITEM_DNS:
+        return "DNS OCTET";
     default:
         return "ETHERNET FIELD";
     }
@@ -7599,6 +7610,7 @@ static void config_menu_activate_item(config_menu_t *menu)
         case CONFIG_ETHERNET_ITEM_IP:
         case CONFIG_ETHERNET_ITEM_SUBNET:
         case CONFIG_ETHERNET_ITEM_GATEWAY:
+        case CONFIG_ETHERNET_ITEM_DNS:
             config_menu_ethernet_cycle_edit_index(menu);
             break;
         case CONFIG_ETHERNET_ITEM_READ:

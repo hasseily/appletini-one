@@ -1,0 +1,8 @@
+{
+  "image": "C:\\Users\\hasse\\source\\repos\\hasseily\\appletini-one\\firmwares\\firmware-F1.3.3b3\\FIRMWARE.BIN",
+  "sha256": "cbbdd97ff97d43f7609f3da73ff0368164621350b18ff6ec7398c480d66672c2",
+  "board": "10.17.1.18",
+  "sd_readback_verified": true,
+  "golden_written": false,
+  "method": "existing FTP then SD firmware updater"
+}

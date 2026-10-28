@@ -1,0 +1,71 @@
+{
+  "transfers": [
+    {
+      "rc": 0,
+      "verify": 0,
+      "status": 200,
+      "body": 62,
+      "handshake_us": 148802,
+      "elapsed_us": 14517702,
+      "step_max_us": 26436,
+      "slice_max_us": 26438,
+      "tls_heap_peak": 38880,
+      "seed_generation": 2
+    },
+    {
+      "rc": 0,
+      "verify": 0,
+      "status": 200,
+      "body": 62,
+      "handshake_us": 598013,
+      "elapsed_us": 639275,
+      "step_max_us": 3328,
+      "slice_max_us": 3330,
+      "tls_heap_peak": 38880,
+      "seed_generation": 2
+    },
+    {
+      "rc": 0,
+      "verify": 0,
+      "status": 200,
+      "body": 908,
+      "handshake_us": 472773,
+      "elapsed_us": 610934,
+      "step_max_us": 5685,
+      "slice_max_us": 5809,
+      "tls_heap_peak": 43952,
+      "seed_generation": 2
+    },
+    {
+      "rc": -111,
+      "verify": 4294967295,
+      "status": 0,
+      "body": 0,
+      "handshake_us": 0,
+      "elapsed_us": 30005118,
+      "step_max_us": 3499,
+      "slice_max_us": 3501,
+      "tls_heap_peak": 43952,
+      "seed_generation": 2
+    }
+  ],
+  "dns_arp_retries": 8,
+  "dns_reply_retries": 9,
+  "client": {
+    "_netcheck_phase": 4,
+    "_netcheck_error": 0,
+    "_netcheck_http": 200,
+    "_netcheck_bytes": 18
+  },
+  "stock_restored": true,
+  "fpga_rebuilt": false,
+  "golden_written": false,
+  "tcp_retry_evidence": "production engine with register model",
+  "switch_configuration_verified": false,
+  "sources": {
+    "ps_sources/frontend/http_service.c": "f652ac5f9a88830e41614c5682fc007f1442ce5fea89d83e89984d9b69e80a3d",
+    "ps_sources/frontend/http_service.h": "d7c63ed4303170097f3d6e7f529d1748ef576bd0e9d8342542a25095a4d83fbf",
+    "scripts/fixtures/http_network_host.c": "a71204f526d678c1dd452b182cc273d4c2d98351e5de4022683a6a8f4cb47ccf",
+    "scripts/test_http_network.py": "89f4cbfd85701bc68fd65afdd80c9bdceb00f46f79063c87da5e70fc358517a7"
+  }
+}

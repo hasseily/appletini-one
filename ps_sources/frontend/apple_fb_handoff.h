@@ -122,6 +122,18 @@ uint32_t apple_fb_reader_publish_seq(void);
 uint32_t apple_fb_reader_published_display_mode(void);
 uint32_t apple_fb_reader_published_format_detail(void);
 
+/* CPU1-owned capture counters in strongly ordered OCM. Diagnostic readers
+ * use a sequence check rather than reading CPU1's cached global variables. */
+typedef struct {
+    uint32_t records;
+    uint32_t gaps;
+    uint32_t oversized;
+    uint32_t resyncs;
+    uint32_t frames;
+} apple_fb_health_t;
+void apple_fb_health_publish(const apple_fb_health_t *health);
+int apple_fb_health_get(apple_fb_health_t *health);
+
 /* CPU0/shared init: reset shared handoff/control words to their boot defaults.
  * Call once at boot from CPU0. */
 void apple_fb_handoff_init(void);

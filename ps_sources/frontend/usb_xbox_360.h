@@ -8,5 +8,6 @@
 void usb_xbox_360_poll(void);
 void usb_xbox_360_stop(void);
 void usb_xbox_360_dump_status(uint32_t uart_base);
+void usb_xbox_360_get_activity(uint32_t *reports, uint32_t *errors);
 
 #endif /* USB_XBOX_360_H */

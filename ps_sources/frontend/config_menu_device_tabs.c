@@ -549,6 +549,7 @@ void config_menu_draw_ethernet(uint16_t *fb,
     char ip[16];
     char subnet[16];
     char gateway[16];
+    char dns[16];
     char label[40];
 
     if (menu == NULL) {
@@ -566,6 +567,7 @@ void config_menu_draw_ethernet(uint16_t *fb,
     config_menu_format_ipv4(menu->ethernet_config.ip, ip, sizeof(ip));
     config_menu_format_ipv4(menu->ethernet_config.subnet, subnet, sizeof(subnet));
     config_menu_format_ipv4(menu->ethernet_config.gateway, gateway, sizeof(gateway));
+    config_menu_format_ipv4(menu->ethernet_config.dns, dns, sizeof(dns));
 
     hgr_draw_check_item(fb, x, y + row_h, w,
                         (uint8_t)(menu->item_focus ==
@@ -624,23 +626,26 @@ void config_menu_draw_ethernet(uint16_t *fb,
                         label,
                         gateway);
 
-    hgr_draw_item(fb, x, y + (7 * row_h), w,
+    (void)snprintf(label, sizeof(label), "DNS [%u/4]",
+        (unsigned)config_menu_ethernet_selected_index(menu, UTHERNET2_IPV4_LEN) + 1U);
+    hgr_draw_value_item(fb, x, y + (7 * row_h), w,
+        (uint8_t)(menu->item_focus == CONFIG_ETHERNET_ITEM_DNS), label, dns);
+    hgr_draw_item(fb, x, y + (8 * row_h), w,
                   (uint8_t)(menu->item_focus == CONFIG_ETHERNET_ITEM_READ),
                   "Read config from card",
                   HGR_WHITE);
-    hgr_draw_item(fb, x, y + (8 * row_h), w,
+    hgr_draw_item(fb, x, y + (9 * row_h), w,
                   (uint8_t)(menu->item_focus == CONFIG_ETHERNET_ITEM_WRITE),
                   "Write config to card",
                   HGR_WHITE);
-    hgr_draw_item(fb, x, y + (9 * row_h), w,
+    hgr_draw_item(fb, x, y + (10 * row_h), w,
                   (uint8_t)(menu->item_focus == CONFIG_ETHERNET_ITEM_DHCP),
                   "Get IP from network (DHCP)",
                   HGR_WHITE);
-    hgr_draw_item(fb, x, y + (10 * row_h), w,
+    hgr_draw_item(fb, x, y + (11 * row_h), w,
                   (uint8_t)(menu->item_focus == CONFIG_ETHERNET_ITEM_TEST),
                   "Test link",
                   HGR_WHITE);
-    /* Leave one blank row between the regular Ethernet actions and FTP. */
     hgr_draw_item(fb, x, y + (12 * row_h), w,
                   (uint8_t)(menu->item_focus == CONFIG_ETHERNET_ITEM_FTP_SD),
                   menu->ethernet_ftp_sd_remote_active ?

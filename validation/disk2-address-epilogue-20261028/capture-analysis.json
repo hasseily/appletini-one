@@ -1,0 +1,38 @@
+{
+  "raw_nib_program_passed_32_rounds": true,
+  "stock_converter_rejected_capture": true,
+  "fixed_converter_matches_native_entire_disk": true,
+  "fixed_disk_sha256": "538ab64953e1132555063d3efaae8713ca246e924d31fca983c8440f61d1d453",
+  "changed_address_epilogues": [
+    {
+      "track": 0,
+      "physical_sector": 8,
+      "address_offset": 3216,
+      "address_fields": "fffeaaaaaeaafbfedeaaff",
+      "address_checksum_valid": true
+    },
+    {
+      "track": 0,
+      "physical_sector": 10,
+      "address_offset": 4008,
+      "address_fields": "fffeaaaaafaafafedeaaff",
+      "address_checksum_valid": true
+    },
+    {
+      "track": 7,
+      "physical_sector": 0,
+      "address_offset": 48,
+      "address_fields": "fffeabafaaaafefbdeaaff",
+      "address_checksum_valid": true
+    },
+    {
+      "track": 7,
+      "physical_sector": 2,
+      "address_offset": 840,
+      "address_fields": "fffeabafabaafffbdeaaff",
+      "address_checksum_valid": true
+    }
+  ],
+  "raw_capture_sha256": "264086c71b4a8866eaa747b18467acbce70f1d1406d2ac0c11c4c030a6c755b8",
+  "original_collector_error": "It used the strict decoder, detected a missing volume header, and could not validate the NIB result; this was not an Apple program failure."
+}

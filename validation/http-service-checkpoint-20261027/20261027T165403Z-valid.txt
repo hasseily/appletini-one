@@ -1,0 +1,10 @@
+
+cmd> http bench https://checkpoint.appletini.test:8443/probe
+[http-bench] armed rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=65536 handshake_us=1714048 elapsed_us=7129397 step_max_us=4016 slice_max_us=4018 tls_heap_peak=38872 seed_generation=6
+[http-sha256] 4b640d85ab3ba30fd02c9fc9db4a8928f416322ad27022ea58a65aaee68a4df2
+[http] done
+[http-phase] name=baseline us=3002188 health=1 video_frames=144 capture_records=436525 capture_frames=144 blits=129 gaps=0 oversized=0 resync=0 hid=14 hid_errors=0 xbox=67 xbox_errors=0 loop_max_us=24662 usb1_gap_us=24676 sp_gap_us=24436 usb0_gap_us=22581 sd_reads=131 sd_errors=0 sd_crc_errors=0 sd_avg_us=361 sd_max_us=388 cache_misses=127 apple_reads=0 apple_writes=0
+[http-phase] name=https us=7132113 health=1 video_frames=341 capture_records=1059002 capture_frames=341 blits=301 gaps=0 oversized=0 resync=0 hid=244 hid_errors=0 xbox=270 xbox_errors=0 loop_max_us=26190 usb1_gap_us=27007 sp_gap_us=27016 usb0_gap_us=22600 sd_reads=303 sd_errors=0 sd_crc_errors=0 sd_avg_us=376 sd_max_us=545 cache_misses=303 apple_reads=0 apple_writes=0
+[http-phase] name=recovery us=3020319 health=1 video_frames=145 capture_records=489502 capture_frames=145 blits=130 gaps=0 oversized=0 resync=0 hid=170 hid_errors=0 xbox=103 xbox_errors=0 loop_max_us=24722 usb1_gap_us=24725 sp_gap_us=24651 usb0_gap_us=22577 sd_reads=131 sd_errors=0 sd_crc_errors=0 sd_avg_us=373 sd_max_us=391 cache_misses=131 apple_reads=0 apple_writes=0
+[http-bench] done

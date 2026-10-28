@@ -1,0 +1,23 @@
+{
+  "url": "https://www.cloudflare.com/favicon.ico",
+  "case": "valid",
+  "result": {
+    "rc": 0,
+    "verify": 0,
+    "status": 200,
+    "body": 908,
+    "handshake_us": 320316,
+    "elapsed_us": 634107,
+    "step_max_us": 5697,
+    "slice_max_us": 5820,
+    "tls_heap_peak": 43952,
+    "seed_generation": 6
+  },
+  "phases": [],
+  "require_workload": false,
+  "pass": true,
+  "sha256": "5414bc6e4b3f6e10f99b5d37abf4420da4dcaece66f8f2c08e090e87267adbc5",
+  "expected_sha256": "5414bc6e4b3f6e10f99b5d37abf4420da4dcaece66f8f2c08e090e87267adbc5",
+  "per_request_seed": false,
+  "per_request_time": false
+}

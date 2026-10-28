@@ -1,0 +1,21 @@
+{
+  "stock_firmware_sha256": "cbbdd97ff97d43f7609f3da73ff0368164621350b18ff6ec7398c480d66672c2",
+  "test_package_sha256": "f3e5092d6834452bd3d6e4a0e79736bb7d7028b3c390184da3832ba34642d522",
+  "client_program_sha256": {
+    "v1": "90da8040cf075388e0afe04b3ac0e51bfd7f3355caccaf36e0dc384fa1adb736",
+    "v3": "bb99c7b8683bc6873897f254c97c6db70a002a2681aaccfc8bfd167e9d95c3f7",
+    "v2": "2bf185be088f7e7cf78248abcd3aa1eaaa5f3f0993c2264cdad8425ecbcfe88a",
+    "v4": "6f5bac8982d37c539f0852636734ddcf46e111d0d983df46904042604bee2006"
+  },
+  "settings_original_sha256": "a9351b958deff7e60deabe085a1663d35566d158237b7e4412a960200e38c0e4",
+  "test_settings_slot6_sha256": "da0035ad211ed900aea5d3001191da17ba9e686b3294087d71944e494843ae0f",
+  "failed_turbo_NETD2_sha256": "89f244ff0dc00cd58361efa59406bf6e19e0fa0bcc9fb0909452eea66f43f2bf",
+  "physical_scope": "Zynq board running ONE//e; no external Apple bus pins tested",
+  "client_versions": {
+    "v1": "native ROM stress; earlier timer wrap check is not accepted for timing",
+    "v2": "native ROM 1008-read timing sweep with corrected timer check",
+    "v3": "both TURBO stress runs; binary log writer",
+    "v4": "native raw stress and reset probe; requires saved marker for recovery-only success"
+  },
+  "final_deployed_client_readback_verified": true
+}

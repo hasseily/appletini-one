@@ -7,6 +7,7 @@
 #include "ff.h"
 #include "screenshot_service.h"
 #include "uthernet2_control.h"
+#include "http_seed.h"
 
 #define FTP_CONTROL_SOCKET       0U
 #define FTP_DATA_SOCKET          1U
@@ -423,7 +424,7 @@ static int make_fat_path(const char *input,
 {
     int len;
 
-    if (normalize_virtual_path(input, virtual_path) != 0) {
+    if (normalize_virtual_path(input, virtual_path) != 0 || http_seed_path_private(virtual_path)) {
         return -1;
     }
     len = snprintf(fat_path, FTP_FAT_PATH_LEN, "0:%s", virtual_path);

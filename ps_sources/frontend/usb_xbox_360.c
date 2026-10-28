@@ -332,6 +332,17 @@ void usb_xbox_360_stop(void)
     }
 }
 
+void usb_xbox_360_get_activity(uint32_t *reports, uint32_t *errors)
+{
+    *reports = 0U;
+    *errors = 0U;
+    for (unsigned index = 0U; index < CONFIG_USBHOST_MAX_XBOX_CLASS; ++index) {
+        const xbox360_t *pad = &g_xbox360[index];
+        *reports += pad->reports;
+        *errors += pad->invalid_reports + pad->submit_errors + pad->transfer_errors;
+    }
+}
+
 void usb_xbox_360_dump_status(uint32_t uart_base)
 {
     char line[256];

@@ -16,6 +16,7 @@
 #include "xusbps_hw.h"
 
 #include "usb_hid_service.h"
+#include "https_probe.h"
 #include "usb_gamepad_input.h"
 #include "usb_ps4_report.h"
 #include "usb_xbox_one.h"
@@ -3288,6 +3289,7 @@ void usb_hid_service_dump_status(uint32_t uart_base)
 
 void usb_hid_service_poll(void)
 {
+    https_probe_service_tick(HTTPS_PROBE_USB1);
     /* Arm a newly running session before this poll can deliver its first HID
      * report, then flush report changes without waiting for the next loop. */
     onee_input_service_poll();

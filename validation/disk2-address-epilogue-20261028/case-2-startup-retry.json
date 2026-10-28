@@ -1,0 +1,8 @@
+{
+  "action": "case",
+  "firmware_rebuilt": false,
+  "firmware_written": false,
+  "golden_written": false,
+  "physical_scope": "physical Appletini in ONE//e mode",
+  "error": "[WinError 10061] No connection could be made because the target machine actively refused it"
+}

@@ -1,0 +1,12 @@
+
+cmd> https seed [redacted]
+[https] fresh seed accepted
+
+cmd> https run 10.17.1.17 8443 checkpoint.appletini.test 1827672627
+[https] baseline started; read-only SP1 workload, then verified TLS
+[https-phase] name=baseline us=3000020 health=1 video_frames=0 capture_records=150 capture_frames=0 blits=75 gaps=0 oversized=0 resync=0 hid=0 hid_errors=0 xbox=0 xbox_errors=0 loop_max_us=23073 usb1_gap_us=23466 sp_gap_us=21899 usb0_gap_us=21447 sd_reads=151 sd_errors=0 sd_crc_errors=0 sd_avg_us=365 sd_max_us=373 cache_misses=151 apple_reads=0 apple_writes=0
+[https-phase] name=https us=90594 health=1 video_frames=0 capture_records=5 capture_frames=0 blits=2 gaps=0 oversized=0 resync=0 hid=0 hid_errors=0 xbox=0 xbox_errors=0 loop_max_us=22607 usb1_gap_us=22099 sp_gap_us=22115 usb0_gap_us=21477 sd_reads=5 sd_errors=0 sd_crc_errors=0 sd_avg_us=366 sd_max_us=372 cache_misses=5 apple_reads=0 apple_writes=0
+[https-phase] name=recovery us=3018788 health=1 video_frames=0 capture_records=151 capture_frames=0 blits=76 gaps=0 oversized=0 resync=0 hid=0 hid_errors=0 xbox=0 xbox_errors=0 loop_max_us=21499 usb1_gap_us=21892 sp_gap_us=23460 usb0_gap_us=21454 sd_reads=151 sd_errors=0 sd_crc_errors=0 sd_avg_us=365 sd_max_us=373 cache_misses=151 apple_reads=0 apple_writes=0
+[https-result] rc=-9984 verify=0x00000001 status=0 body=0 body_valid=1 handshake_us=0 step_max_us=1327 handshake_step_max_us=1327 tls_heap_peak=36660 calls=249 tls=TLSv1.2 cipher=(null)
+[https-sha256] e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+[https] done

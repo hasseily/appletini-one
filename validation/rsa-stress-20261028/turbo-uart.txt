@@ -1,0 +1,301 @@
+
+cmd> http stress 60
+[http-stress] armed rc=0
+[http-stress] request=1 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=678931 elapsed_us=888006 step_max_us=27858 slice_max_us=27861 tls_heap_peak=95872 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=2 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=849181 elapsed_us=1115612 step_max_us=24019 slice_max_us=24021 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=3 url=https://rsa2048.badssl.com/ start_rc=0
+
+cmd> vtw dump 318C 1
+0318C: 01
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=639026 elapsed_us=876292 step_max_us=24614 slice_max_us=24616 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=4 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=586381 elapsed_us=814269 step_max_us=24877 slice_max_us=24879 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=5 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=527099 elapsed_us=734596 step_max_us=24607 slice_max_us=24609 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=6 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=786842 elapsed_us=1006418 step_max_us=23935 slice_max_us=23937 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=7 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=561605 elapsed_us=774878 step_max_us=24621 slice_max_us=24623 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=8 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=772059 elapsed_us=982518 step_max_us=24010 slice_max_us=24012 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=9 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=558006 elapsed_us=777303 step_max_us=24696 slice_max_us=24699 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=10 url=https://rsa4096.badssl.com/ start_rc=0
+
+cmd> vtw dump 318C 1
+0318C: 01
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=858992 elapsed_us=1083109 step_max_us=24010 slice_max_us=24013 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=11 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=648825 elapsed_us=899100 step_max_us=24697 slice_max_us=24699 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=12 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=817743 elapsed_us=1023852 step_max_us=24019 slice_max_us=24021 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=13 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=689020 elapsed_us=923470 step_max_us=24617 slice_max_us=24618 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=14 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=675445 elapsed_us=917670 step_max_us=24890 slice_max_us=24893 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=15 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=538839 elapsed_us=754286 step_max_us=24703 slice_max_us=24706 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=16 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=548012 elapsed_us=767533 step_max_us=24873 slice_max_us=24876 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=17 url=https://rsa2048.badssl.com/ start_rc=0
+
+cmd> vtw dump 318C 1
+0318C: 01
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=535175 elapsed_us=742335 step_max_us=24596 slice_max_us=24598 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=18 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=788657 elapsed_us=1014390 step_max_us=23927 slice_max_us=23929 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=19 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=556664 elapsed_us=766637 step_max_us=24618 slice_max_us=24620 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=20 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=794095 elapsed_us=1003285 step_max_us=24007 slice_max_us=24010 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=21 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=635328 elapsed_us=865358 step_max_us=24694 slice_max_us=24697 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=22 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=868107 elapsed_us=1114996 step_max_us=23936 slice_max_us=23938 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=23 url=https://rsa2048.badssl.com/ start_rc=0
+
+cmd> vtw dump 318C 1
+0318C: 01
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=680867 elapsed_us=927289 step_max_us=24523 slice_max_us=24525 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=24 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=918551 elapsed_us=1144536 step_max_us=24014 slice_max_us=24016 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=25 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=568109 elapsed_us=836133 step_max_us=24708 slice_max_us=24711 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=26 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=798181 elapsed_us=1034693 step_max_us=24010 slice_max_us=24014 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=27 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=534985 elapsed_us=775446 step_max_us=24601 slice_max_us=24602 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=28 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=755242 elapsed_us=984358 step_max_us=24008 slice_max_us=24011 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=29 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=555639 elapsed_us=763171 step_max_us=24688 slice_max_us=24690 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=30 url=https://rsa4096.badssl.com/ start_rc=0
+
+cmd> vtw dump 318C 1
+0318C: 01
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=773656 elapsed_us=974701 step_max_us=24011 slice_max_us=24014 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=31 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=528005 elapsed_us=746097 step_max_us=24590 slice_max_us=24592 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=32 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=907335 elapsed_us=1154003 step_max_us=24125 slice_max_us=24127 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=33 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=639005 elapsed_us=877596 step_max_us=24695 slice_max_us=24697 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=34 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=941513 elapsed_us=1194185 step_max_us=23927 slice_max_us=23930 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=35 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=588327 elapsed_us=836176 step_max_us=24622 slice_max_us=24625 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=36 url=https://rsa4096.badssl.com/ start_rc=0
+
+cmd> vtw dump 318C 1
+0318C: 01
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=798715 elapsed_us=1016016 step_max_us=24007 slice_max_us=24010 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=37 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=545929 elapsed_us=786714 step_max_us=24526 slice_max_us=24528 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=38 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=790444 elapsed_us=982490 step_max_us=24004 slice_max_us=24007 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=39 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=535239 elapsed_us=755652 step_max_us=24703 slice_max_us=24704 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=40 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=757340 elapsed_us=972234 step_max_us=24010 slice_max_us=24012 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=41 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=527086 elapsed_us=734835 step_max_us=24607 slice_max_us=24609 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=42 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=806902 elapsed_us=1016261 step_max_us=24010 slice_max_us=24013 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=43 url=https://rsa2048.badssl.com/ start_rc=0
+
+cmd> vtw dump 318C 1
+0318C: 01
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=627752 elapsed_us=865049 step_max_us=24541 slice_max_us=24543 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=44 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=810065 elapsed_us=1055616 step_max_us=23944 slice_max_us=23948 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=45 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=661358 elapsed_us=916053 step_max_us=24600 slice_max_us=24602 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=46 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=930936 elapsed_us=1175033 step_max_us=23938 slice_max_us=23940 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=47 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=619058 elapsed_us=876787 step_max_us=24525 slice_max_us=24528 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=48 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=769533 elapsed_us=973406 step_max_us=24010 slice_max_us=24013 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=49 url=https://rsa2048.badssl.com/ start_rc=0
+
+cmd> vtw dump 318C 1
+0318C: 01
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=558036 elapsed_us=975066 step_max_us=24524 slice_max_us=24526 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=50 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=781807 elapsed_us=985588 step_max_us=23943 slice_max_us=23945 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=51 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=544419 elapsed_us=754883 step_max_us=24529 slice_max_us=24530 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=52 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=771977 elapsed_us=982578 step_max_us=24008 slice_max_us=24010 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=53 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=657203 elapsed_us=955118 step_max_us=24699 slice_max_us=24702 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=54 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=847239 elapsed_us=1085296 step_max_us=24013 slice_max_us=24015 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=55 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=629877 elapsed_us=894046 step_max_us=24703 slice_max_us=24706 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=56 url=https://rsa4096.badssl.com/ start_rc=0
+
+cmd> vtw dump 318C 1
+0318C: 01
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=798743 elapsed_us=1018093 step_max_us=24013 slice_max_us=24015 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=57 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=640692 elapsed_us=876236 step_max_us=24684 slice_max_us=24687 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=58 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=778737 elapsed_us=1027773 step_max_us=24012 slice_max_us=24016 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=59 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=555290 elapsed_us=761886 step_max_us=24629 slice_max_us=24632 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=60 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=757240 elapsed_us=973065 step_max_us=24015 slice_max_us=24018 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=61 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=563574 elapsed_us=787752 step_max_us=24609 slice_max_us=24611 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=62 url=https://rsa4096.badssl.com/ start_rc=0
+
+cmd> vtw dump 318C 1
+0318C: 01
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=773965 elapsed_us=981791 step_max_us=23932 slice_max_us=23934 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=63 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=528105 elapsed_us=756455 step_max_us=24692 slice_max_us=24695 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-stress] request=64 url=https://rsa4096.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=602 handshake_us=856950 elapsed_us=1083668 step_max_us=24009 slice_max_us=24012 tls_heap_peak=96128 seed_generation=26
+[http-sha256] b4c1d4180328ca96141e41ebed476c2dccb0876262cb60754757a01f50616207
+[http] done
+[http-stress] request=65 url=https://rsa2048.badssl.com/ start_rc=0
+[http-result] rc=0 verify=0x00000000 status=200 body=603 handshake_us=647630 elapsed_us=896308 step_max_us=24675 slice_max_us=24677 tls_heap_peak=96128 seed_generation=26
+[http-sha256] bd6a87a1d94783fe75ae070677e0244955ab2830233f94bb2d3e4708affebccb
+[http] done
+[http-phase] name=baseline us=3002130 health=1 video_frames=151 capture_records=3127617 capture_frames=151 blits=267 gaps=0 oversized=0 resync=0 hid=796 hid_errors=0 xbox=342 xbox_errors=0 loop_max_us=19224 usb1_gap_us=19226 sp_gap_us=19236 usb0_gap_us=16099 sd_reads=0 sd_errors=0 sd_crc_errors=0 sd_avg_us=0 sd_max_us=0 cache_misses=8 apple_reads=50 apple_writes=8
+[http-phase] name=https us=60164889 health=1 video_frames=3019 capture_records=62629158 capture_frames=3019 blits=4392 gaps=0 oversized=0 resync=0 hid=20484 hid_errors=0 xbox=7020 xbox_errors=0 loop_max_us=40386 usb1_gap_us=40396 sp_gap_us=40456 usb0_gap_us=27881 sd_reads=0 sd_errors=0 sd_crc_errors=0 sd_avg_us=0 sd_max_us=0 cache_misses=82 apple_reads=992 apple_writes=166
+[http-phase] name=recovery us=3002624 health=1 video_frames=151 capture_records=3125471 capture_frames=151 blits=288 gaps=0 oversized=0 resync=0 hid=653 hid_errors=0 xbox=320 xbox_errors=0 loop_max_us=20943 usb1_gap_us=20946 sp_gap_us=20955 usb0_gap_us=15902 sd_reads=0 sd_errors=0 sd_crc_errors=0 sd_avg_us=0 sd_max_us=0 cache_misses=4 apple_reads=48 apple_writes=8
+[http-stress-summary] requests=65 start_errors=0
+[http-bench] done
+
+cmd> vtw dump 318C 1
+0318C: 01

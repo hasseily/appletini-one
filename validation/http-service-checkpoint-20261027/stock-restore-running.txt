@@ -1,0 +1,23 @@
+
+cmd> status
+---- card status ----
+ui: frames=4372 keys=0
+boot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0
+video: vsync=on scanlines=Medium
+text mono: fg=black bg=black
+display mono: off
+apple fb: slot=0 mode=SHR target=50Hz apple_fps=25.04 hdmi_fps=50.08 blits=2359 comp_pub=2360 comp_skip=0 pl_vblanks=4559 latched=0x3E000000
+updater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'
+audio: en=on mute=off tone=1000Hz amp=0x00600000
+spdif dbg: clkc=0 q3lvl=0 q3tog=0
+rtc: 2026-10-27 20:06:19
+temp: +35.31 C
+
+cmd> http status
+Unknown cmd. Use :help
+
+cmd> https net
+Unknown cmd. Use :help
+
+cmd> ftp status
+ftp: off

@@ -1,0 +1,33 @@
+
+cmd> status
+---- card status ----
+ui: frames=18264 keys=0
+boot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0
+video: vsync=on scanlines=Medium
+text mono: fg=black bg=black
+display mono: off
+apple fb: slot=2 mode=SHR target=50Hz apple_fps=25.04 hdmi_fps=50.08 blits=9486 comp_pub=9487 comp_skip=0 pl_vblanks=18698 latched=0x3E000000
+updater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'
+audio: en=on mute=off tone=1000Hz amp=0x00600000
+spdif dbg: clkc=0 q3lvl=0 q3tog=0
+rtc: 2026-10-28 03:25:35
+temp: +29.12 C
+
+cmd> vtw status
+vtw: idle, session=ONE//e, host-intent=off, machine=unknown
+vtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0
+vtw: reset seen=0 source=none rstn=$0
+vtw: slowdown mask=$008 cycles=256
+vtw: speed=TURBO div=37 c074=0 ignore=0 d2accel=on owned=1 run=1 pc=91EB
+vtw: core=3113594025 bus=70758649 posted=103646 invalid=0
+vtw: perf fabric=2712189132 steps=3113621682 classic=2955594643
+vtw: cache hits=2133241788 misses=3481162112 invalidations=20045
+vtw: wait disk=0 video=40240556
+vtw: qfill=0 qhw=508 qdrop=0 sessions=1
+vtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00
+vtw: c000 reads=65535 bit7=0 last=$00 prev=park $FFFF R drive=0
+vtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=001 altzp=0 rd/wt=00 80st=0 text=1
+vtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)
+vtw: cxxx trail CF1F CF1E CFFB CF1D CF1C CF1B C818 C817 (new->old)
+vtw: last bus read $C062 = $7F, irqs seen=0
+vtw: persisted setting = OFF

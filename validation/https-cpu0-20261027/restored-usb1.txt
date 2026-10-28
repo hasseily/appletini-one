@@ -1,0 +1,50 @@
+
+cmd> usb1 status
+---- usb1 CherryUSB HID ----
+service: started=1 ready=1 active_hids=4 report_pending=4 reports=0 submit_errs=0 xfer_errs=0 last_err=0
+ehci: errors=9 token=80140d40 qtd=1 pid=1 length=20 remaining=20 actual=0
+mouse_regs: status=0x00000100 x=0 y=0 buttons=0x00000000 commit=0x00000002 mode=0x00000000 clamp_x=0..1023 clamp_y=0..1023
+root: PORTSC=0x88001205 ccs=1 pe=1 pp=1 phcd=0 pspd=2
+hid: aggregate_mice=1 aggregate_buttons=0x00000000
+phy (cached): setup_rc=0 off_rc=0 drive_known=1 drive=1 vbus_known=1 vbus_valid=1 id=0424:0004 func=41 iface=10 otg=66 ulpi_err=0 timeouts=0
+hid0: dev=3 if=0 protocol=1 subclass=1 mousecard=0 parsed=0 pending=1 reports=0 submit_errs=0 xfer_errs=0 last_err=0
+  intin: ep=0x00000081 mps=8 interval=10 speed=1 hub=2 port=1
+  app0 page=0001 usage=0006 capabilities=10
+hid1: dev=3 if=1 protocol=0 subclass=0 mousecard=0 parsed=1 pending=1 reports=0 submit_errs=0 xfer_errs=0 last_err=0
+  intin: ep=0x00000082 mps=5 interval=10 speed=1 hub=2 port=1
+  app0 page=000c usage=0001 capabilities=00
+  app1 page=0001 usage=0080 capabilities=00
+  app2 page=ff00 usage=ff00 capabilities=00
+hid2: dev=3 if=2 protocol=0 subclass=0 mousecard=0 parsed=1 pending=1 reports=0 submit_errs=0 xfer_errs=0 last_err=0
+  intin: ep=0x00000083 mps=2 interval=10 speed=1 hub=2 port=1
+  input=USB Gaming Keyboard Pro vid=06a3 pid=8000 generic=0 axes=000 serial=00000000 path=ec741ef7
+  app0 page=0001 usage=0005 capabilities=41
+  field0 app=0 id=0 page=0009 usage=0001 flags=02 offset=0 size=1 count=1
+  field1 app=0 id=0 page=0009 usage=0002 flags=02 offset=1 size=1 count=1
+  field2 app=0 id=0 page=0009 usage=0003 flags=02 offset=2 size=1 count=1
+  field3 app=0 id=0 page=0009 usage=0004 flags=02 offset=3 size=1 count=1
+  field4 app=0 id=0 page=0009 usage=0005 flags=02 offset=4 size=1 count=1
+  field5 app=0 id=0 page=0009 usage=0006 flags=02 offset=5 size=1 count=1
+  field6 app=0 id=0 page=0009 usage=0007 flags=02 offset=6 size=1 count=1
+  field7 app=0 id=0 page=0009 usage=0008 flags=02 offset=7 size=1 count=1
+  field8 app=0 id=0 page=0009 usage=0009 flags=02 offset=8 size=1 count=1
+  field9 app=0 id=0 page=0009 usage=000a flags=02 offset=9 size=1 count=1
+  field10 app=0 id=0 page=0009 usage=000b flags=02 offset=10 size=1 count=1
+hid4: dev=5 if=0 protocol=2 subclass=1 mousecard=1 parsed=1 pending=1 reports=0 submit_errs=0 xfer_errs=0 last_err=0
+  intin: ep=0x00000081 mps=5 interval=10 speed=1 hub=2 port=4
+  input=USB Optical Mouse  vid=30fa pid=0400 generic=1 axes=103 serial=00000000 path=786cac96
+  app0 page=0001 usage=0002 capabilities=66
+  field0 app=0 id=0 page=0009 usage=0001 flags=02 offset=0 size=1 count=1
+  field1 app=0 id=0 page=0009 usage=0002 flags=02 offset=1 size=1 count=1
+  field2 app=0 id=0 page=0009 usage=0003 flags=02 offset=2 size=1 count=1
+  field3 app=0 id=0 page=0009 usage=0004 flags=02 offset=3 size=1 count=1
+  field4 app=0 id=0 page=0009 usage=0005 flags=02 offset=4 size=1 count=1
+  field5 app=0 id=0 page=0001 usage=0030 flags=06 offset=8 size=12 count=1
+  field6 app=0 id=0 page=0001 usage=0031 flags=06 offset=20 size=12 count=1
+  field7 app=0 id=0 page=0001 usage=0038 flags=06 offset=32 size=8 count=1
+  Xbox 360 slot=3 reports=2 invalid=5 submit=0 xfer=0 err=-2 led=1 out_try=1 out_err=0 len=3 data=010306
+slot2: card=1 fpga=1 blocked=0 present=1
+  player1: usb=4 buttons=000
+  player2: usb=0 buttons=000
+  player3: usb=0 buttons=000
+  player4: usb=0 buttons=000

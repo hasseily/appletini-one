@@ -1,0 +1,9 @@
+{
+  "abi": "step-1 diagnostic 0.1; production ABI remains step 2",
+  "vectors": [
+    {"name":"first_eight_bytes","selector":131,"offset":0,"capacity":16,"reply_hex":"02010000000008005aa3ec357ec71059"},
+    {"name":"last_byte","selector":131,"offset":32767,"capacity":9,"reply_hex":"0202ff7f0000010081"},
+    {"name":"empty_at_end","selector":131,"offset":32768,"capacity":512,"reply_hex":"0202008000000000"},
+    {"name":"past_end","selector":131,"offset":65535,"capacity":9,"reply_hex":"0202ffff00000000"}
+  ]
+}

@@ -486,10 +486,10 @@ HELP(ethernet_config,
 
 HELP(ethernet_fields,
     "Enter moves to the next byte or octet; Left/Right decrements or increments the selected value.",
-    "MAC is saved as six hexadecimal bytes; IP, subnet, and gateway are saved as dotted decimal.");
+    "MAC is saved as six hexadecimal bytes; IP, subnet, gateway, and DNS use dotted decimal.");
 
 HELP(ethernet_dhcp,
-    "DHCP uses the configured MAC address to request IP, subnet, and gateway from the local network.",
+    "DHCP uses the configured MAC address to request IP, subnet, gateway, and DNS from the network.",
     "A successful lease enables boot configuration; later boots request a fresh lease.");
 
 HELP(ethernet_test,
@@ -507,6 +507,7 @@ static const help_override_t ethernet_overrides[] = {
     OVERRIDE(CONFIG_ETHERNET_ITEM_IP, ethernet_fields),
     OVERRIDE(CONFIG_ETHERNET_ITEM_SUBNET, ethernet_fields),
     OVERRIDE(CONFIG_ETHERNET_ITEM_GATEWAY, ethernet_fields),
+    OVERRIDE(CONFIG_ETHERNET_ITEM_DNS, ethernet_fields),
     OVERRIDE(CONFIG_ETHERNET_ITEM_DHCP, ethernet_dhcp),
     OVERRIDE(CONFIG_ETHERNET_ITEM_TEST, ethernet_test),
     OVERRIDE(CONFIG_ETHERNET_ITEM_FTP_SD, ethernet_ftp_sd),

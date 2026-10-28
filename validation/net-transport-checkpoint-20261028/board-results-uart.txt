@@ -1,0 +1,35 @@
+
+cmd> sd status
+sd: hw ready=1 exec=0 in=0 out=0 drypop=0 lastctl=$01
+sd: svc irq=147 pending=0 status=8 read=121 write=12
+sd: vtw direct=0 rwblk=0 postblk=0 fallback=0
+sd: vtw fb range=0 state=0 map=0 shadow=0 post=0 dma=0
+sd: vtw split blocks=0 spans=0 max=0
+sd: vtw write direct=0 preflight=0 stream=0 fault=0
+sd: cache hit=64 miss=69 bypass=0 post-credit-reads=0 dma-owner=0
+sd: lat dispatch us last=3 avg=68 max=514 samples=147
+sd: lat ready us last=526 avg=182 max=1719
+sd: init=1 fs=1 slot=7 ramdisk=1
+sd: SP1 open=1 ram=0 ro=0 blocks=1600 path=0:/NETTEST/NETSP.PO
+sd: SP2 open=1 ram=1 ro=0 blocks=65535 path=RAM32 (volatile)
+sd: SP3 open=0 ram=0 ro=1 blocks=0 path=
+sd: SP4 open=0 ram=0 ro=1 blocks=0 path=
+sd: SP5 open=0 ram=0 ro=1 blocks=0 path=
+sd: SP6 open=0 ram=0 ro=1 blocks=0 path=
+sd: SP7 open=0 ram=0 ro=1 blocks=0 path=
+sd: SP8 open=0 ram=0 ro=1 blocks=0 path=
+
+cmd> disk2 status
+disk2 d1: present PO rw wozwrite=off size=143360 tracks=35 blocks=280 path=0:/NETTEST/NETD2.PO
+disk2 d2: empty none rw wozwrite=off size=0 tracks=0 blocks=0 path=-
+disk2 pl: status=0xD2000005 psram=0x00000000 lastio=0x00 iocount=0 underruns=0
+disk2 track: loaded=1 match=1 cur=d1 q0 load=d1 q0 len=6384 pos=0 reads=0
+disk2 write: dirty=0 d1 q0 writes=0 latch=0xFF
+disk2 state: en=1 motor=0 spin=0 drive=1 phase=0x0 q6=0 q7=0
+
+cmd> ftp on
+ftp: on (anonymous read/write, passive)
+
+cmd> ftp off
+ftp sd: media restore disk2=-12 smartport=0
+ftp: off

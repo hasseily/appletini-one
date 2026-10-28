@@ -1,0 +1,12 @@
+{
+  "program_sha256": "6f5bac8982d37c539f0852636734ddcf46e111d0d983df46904042604bee2006",
+  "volume_sha256": "6b74674973b7211e0cb1c04b24936e2c099998803f7ccfd42ee54a00e9836e4a",
+  "preserved_files": [
+    "SCRATCH",
+    "R1.LOG",
+    "RS1.LOG",
+    "RT.BIN",
+    "LT.BIN"
+  ],
+  "sd_readback_verified": true
+}

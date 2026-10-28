@@ -1,0 +1,21 @@
+{
+  "frontend_sha256": "bb3c6b54b0d7d9cc80de4f0960f9430eb5b01125d95af574e535ef9a42f7b152",
+  "core1_sha256": "b1b05e94b7c241b1f1d93c7a2c0fb84f03175a5d698153e4c2ddeeb7560798c1",
+  "embedded_core1_sha256": "fba05ba55b811e2139276473467c778b96dc9867f88349ecf3270bc45c826adb",
+  "frontend_memory": {
+    "symbols": {
+      "_heap_end": 78684560,
+      "_heap_start": 11575696,
+      "_STACK_SIZE": 65536,
+      "_HEAP_SIZE": 67108864,
+      "_stack_end": 78684560,
+      "_stack": 78750096
+    },
+    "stack_bytes": 65536,
+    "minimum_stack_bytes": 65536,
+    "heap_bytes": 67108864,
+    "stack_span_matches": true,
+    "heap_span_matches": true
+  },
+  "probe_absent": true
+}

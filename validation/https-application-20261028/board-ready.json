@@ -1,0 +1,13 @@
+{
+  "pass": true,
+  "fpga_rebuilt": false,
+  "golden_written": false,
+  "FIRMWARE.BIN": "e6313677d0f4f42049809db9332bdf38b7e9d96cd60a4d174d66179ad89a345d",
+  "STARFALL.PO": "d23e23c09b435cede5dc087333361a755f52d77d27340293eee11026d55846e9",
+  "ATNETCA.PEM": "369ed928ad3253b5ee3ccab3019c0385e599b3af02bebe79b9bb3e76352686a0",
+  "dns": "8.8.8.8",
+  "boot": "\r\ncmd> http status\r\n[http-status] state=0 result=0 verify=0x00000000 status=0 bytes=0 step_max_us=0 slice_max_us=0 heap_peak=49520 utc=1793208241 rtc_offset=180 crypto=1 trust=1 seed_generation=21 dns=8.8.8.8\r\n[http-json] slice_max_us=1 boot_prepare_us=40501 ready=1 prepare_error=0 stack_used_upper=8456 stack_guard=512\r\n",
+  "status": "\r\ncmd> status\r\n---- card status ----\r\nui: frames=261 keys=0\r\nboot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0\r\nvideo: vsync=on scanlines=Medium\r\ntext mono: fg=black bg=black\r\ndisplay mono: off\r\napple fb: slot=1 mode=SHR target=50Hz apple_fps=25.04 hdmi_fps=50.09 blits=309 comp_pub=309 comp_skip=0 pl_vblanks=267 latched=0x3E000000\r\nupdater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'\r\naudio: en=on mute=off tone=1000Hz amp=0x00600000\r\nspdif dbg: clkc=0 q3lvl=0 q3tog=0\r\nrtc: 2026-10-28 20:24:06\r\ntemp: +35.31 C\r\n",
+  "speed": "\r\ncmd> vtw status\r\nvtw: idle, session=ONE//e, host-intent=off, machine=unknown\r\nvtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0\r\nvtw: reset seen=0 source=none rstn=$0\r\nvtw: slowdown mask=$008 cycles=256\r\nvtw: speed=TURBO div=37 c074=0 ignore=0 d2accel=on owned=1 run=1 pc=251D\r\nvtw: core=178645838 bus=2679318 posted=103659 invalid=0\r\nvtw: perf fabric=840713337 steps=178672484 classic=224437856\r\nvtw: cache hits=118343876 misses=38970109 invalidations=20580\r\nvtw: wait disk=0 video=40261597\r\nvtw: qfill=0 qhw=508 qdrop=0 sessions=1\r\nvtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00\r\nvtw: c000 reads=65535 bit7=0 last=$00 prev=park $FFFF R drive=0\r\nvtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=001 altzp=0 rd/wt=00 80st=0 text=1\r\nvtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)\r\nvtw: cxxx trail CFFF CFF2 CFF0 CFF2 CFF0 CFF2 CFF0 CFF2 (new->old)\r\nvtw: last bus read $C063 = $7F, irqs seen=0\r\nvtw: persisted setting = OFF\r\n",
+  "left_at_title": true
+}

@@ -1,0 +1,65 @@
+
+cmd> status
+---- card status ----
+ui: frames=1174 keys=0
+boot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0
+video: vsync=on scanlines=Medium
+text mono: fg=black bg=black
+display mono: off
+apple fb: slot=2 mode=SHR target=50Hz apple_fps=25.04 hdmi_fps=50.08 blits=796 comp_pub=797 comp_skip=0 pl_vblanks=1316 latched=0x3E400000
+updater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'
+audio: en=on mute=off tone=1000Hz amp=0x00600000
+spdif dbg: clkc=0 q3lvl=0 q3tog=0
+rtc: 2026-10-28 04:46:07
+temp: +35.25 C
+
+
+cmd> vtw status
+vtw: idle, session=ONE//e, host-intent=off, machine=unknown
+vtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0
+vtw: reset seen=0 source=none rstn=$0
+vtw: slowdown mask=$008 cycles=256
+vtw: speed=TURBO div=37 c074=0 ignore=0 d2accel=on owned=1 run=1 pc=638C
+vtw: core=1056403922 bus=6353205 posted=103646 invalid=0
+vtw: perf fabric=3552624503 steps=1056431020 classic=1329037009
+vtw: cache hits=708109652 misses=228681003 invalidations=20045
+vtw: wait disk=0 video=40245076
+vtw: qfill=0 qhw=508 qdrop=0 sessions=1
+vtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00
+vtw: c000 reads=65535 bit7=0 last=$00 prev=park $FFFF R drive=0
+vtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=001 altzp=0 rd/wt=00 80st=0 text=1
+vtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)
+vtw: cxxx trail CF1F CF1E CFFB CF1D CF1C CF1B C818 C817 (new->old)
+vtw: last bus read $C063 = $7F, irqs seen=0
+vtw: persisted setting = OFF
+
+
+cmd> sd status
+sd: hw ready=1 exec=0 in=0 out=0 drypop=0 lastctl=$01
+sd: svc irq=205 pending=0 status=1 read=201 write=0
+sd: vtw direct=0 rwblk=0 postblk=0 fallback=0
+sd: vtw fb range=0 state=0 map=0 shadow=0 post=0 dma=0
+sd: vtw split blocks=0 spans=0 max=0
+sd: vtw write direct=0 preflight=0 stream=0 fault=0
+sd: cache hit=4 miss=197 bypass=0 post-credit-reads=0 dma-owner=0
+sd: lat dispatch us last=164 avg=97 max=728 samples=205
+sd: lat ready us last=265 avg=204 max=829
+sd: init=1 fs=1 slot=7 ramdisk=1
+sd: SP1 open=1 ram=0 ro=0 blocks=1600 path=0:/_software/Appletini Only/libtini/starfall
+sd: SP2 open=1 ram=1 ro=0 blocks=65535 path=RAM32 (volatile)
+sd: SP3 open=0 ram=0 ro=1 blocks=0 path=
+sd: SP4 open=0 ram=0 ro=1 blocks=0 path=
+sd: SP5 open=0 ram=0 ro=1 blocks=0 path=
+sd: SP6 open=0 ram=0 ro=1 blocks=0 path=
+sd: SP7 open=0 ram=0 ro=1 blocks=0 path=
+sd: SP8 open=0 ram=0 ro=1 blocks=0 path=
+
+
+cmd> disk2 status
+disk2 d1: present DSK ro wozwrite=off size=143360 tracks=35 blocks=280 path=0:/_software/Programming/D71 DOS 3.3 System Master.dsk
+disk2 d2: empty none rw wozwrite=off size=0 tracks=0 blocks=0 path=-
+disk2 pl: status=0xD2000005 psram=0x00000000 lastio=0x00 iocount=0 underruns=0
+disk2 track: loaded=0 match=0 cur=d1 q0 load=d1 q0 len=0 pos=0 reads=0
+disk2 write: dirty=0 d1 q0 writes=0 latch=0xFF
+disk2 state: en=1 motor=0 spin=0 drive=1 phase=0x0 q6=0 q7=0
+

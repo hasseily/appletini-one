@@ -47,11 +47,15 @@ typedef struct {
     uint8_t server_id[UTHERNET2_IPV4_LEN];
     uint8_t subnet[UTHERNET2_IPV4_LEN];
     uint8_t gateway[UTHERNET2_IPV4_LEN];
+    uint8_t dns[UTHERNET2_IPV4_LEN];
     uint8_t ip[UTHERNET2_IPV4_LEN];
     uint8_t has_server_id;
     uint8_t has_subnet;
     uint8_t has_gateway;
+    uint8_t has_dns;
 } dhcp_parse_t;
+/* DNS has no W5100S register. Keep the applied setting with the controller. */
+static uint8_t configured_dns[4];
 
 typedef enum {
     DHCP_ASYNC_IDLE = 0,
@@ -96,7 +100,8 @@ void uthernet2_default_config(uthernet2_network_config_t *config)
         {0x02U, 0x41U, 0x50U, 0x50U, 0x4CU, 0x01U},
         {192U, 168U, 1U, 50U},
         {255U, 255U, 255U, 0U},
-        {192U, 168U, 1U, 1U}
+        {192U, 168U, 1U, 1U},
+        {0U, 0U, 0U, 0U}
     };
 
     if (config != NULL) {
@@ -291,6 +296,7 @@ int uthernet2_read_network_config(uthernet2_network_config_t *config)
         w5100_read(W5100_REG_GAR, config->gateway, sizeof(config->gateway)) != 0) {
         return -1;
     }
+    memcpy(config->dns, configured_dns, sizeof(config->dns));
     return 0;
 }
 
@@ -302,6 +308,7 @@ static int w5100_write_network_config(const uthernet2_network_config_t *config)
         w5100_write(W5100_REG_SIPR, config->ip, sizeof(config->ip)) != 0) {
         return -1;
     }
+    memcpy(configured_dns, config->dns, sizeof(configured_dns));
     return 0;
 }
 
@@ -669,6 +676,9 @@ static uint8_t dhcp_parse_packet(const uint8_t *packet,
         } else if (code == 3U && option_len >= 4U) {
             memcpy(out->gateway, &packet[pos], 4U);
             out->has_gateway = 1U;
+        } else if (code == 6U && option_len >= 4U) {
+            memcpy(out->dns, &packet[pos], 4U);
+            out->has_dns = 1U;
         }
         pos = (uint16_t)(pos + option_len);
     }
@@ -846,6 +856,10 @@ static int dhcp_async_complete(const dhcp_parse_t *ack,
                                size_t detail_len)
 {
     uthernet2_network_config_t acquired;
+
+    memset(&acquired, 0, sizeof(acquired));
+    if (ack->has_dns) memcpy(acquired.dns, ack->dns, sizeof(acquired.dns));
+    else if (g_dhcp.offer.has_dns) memcpy(acquired.dns, g_dhcp.offer.dns, sizeof(acquired.dns));
 
     memcpy(acquired.mac, g_dhcp.mac, sizeof(acquired.mac));
     memcpy(acquired.ip, ack->ip, sizeof(acquired.ip));

@@ -1,0 +1,7 @@
+{
+  "src/net.c": "73a802341aaf9fa59cb4e3311cf02d91c2eb1491dcfa077ea625e2e136117cb4",
+  "src/target/net.s": "edae36db86bc219465e234524568de1d52d006d8725f43ccda06861d5db428c9",
+  "include/libtini/net.h": "6fa3232775c60fc639bfa7cf046a7542e693fbd06a626b033bc212e25e3b5bb6",
+  "tests/net_validate.py": "08b860f4c62f6f64c05051e80ab7aa5b5efa738b8b9ea711fbe2b4f5eccbab91",
+  "tests/net_target.c": "e5d11d4696a27f0345aa006230598c4bfa662c9d0cbba1e1297280922349976e"
+}

@@ -1,0 +1,13212 @@
+
+
+cmd> status
+
+---- card status ----
+
+ui: frames=21383 keys=0
+
+boot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0
+
+video: vsync=on scanlines=Medium
+
+text mono: fg=black bg=black
+
+display mono: off
+
+apple fb: slot=0 mode=SHR target=50Hz apple_fps=25.04 hdmi_fps=50.08 blits=11097 comp_pub=11098 comp_skip=0 pl_vblanks=21909 latched=0x3E000000
+
+updater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'
+
+audio: en=on mute=off tone=1000Hz amp=0x00600000
+
+spdif dbg: clkc=0 q3lvl=0 q3tog=0
+
+rtc: 2026-10-28 11:36:28
+
+temp: +35.37 C
+
+
+
+cmd> vtw status
+
+vtw: idle, session=ONE//e, host-intent=off, machine=unknown
+
+vtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0
+
+vtw: reset seen=0 source=none rstn=$0
+
+vtw: slowdown mask=$008 cycles=256
+
+vtw: speed=TURBO div=37 c074=0 ignore=0 d2accel=on owned=1 run=1 pc=63A5
+
+vtw: core=1526969896 bus=82445467 posted=103647 invalid=0
+
+vtw: perf fabric=2535103478 steps=1526997450 classic=2049273116
+
+vtw: cache hits=3867890972 misses=4151323425 invalidations=20070
+
+vtw: wait disk=0 video=40258923
+
+vtw: qfill=0 qhw=508 qdrop=0 sessions=1
+
+vtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00
+
+vtw: c000 reads=65535 bit7=0 last=$00 prev=park $FFFF R drive=0
+
+vtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=001 altzp=0 rd/wt=00 80st=0 text=1
+
+vtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)
+
+vtw: cxxx trail CF1F CF1E CFFB CF1D CF1C CF1B C818 C817 (new->old)
+
+vtw: last bus read $C000 = $00, irqs seen=0
+
+vtw: persisted setting = OFF
+
+
+
+cmd> ftp on
+
+ftp: on (anonymous read/write, passive)
+
+smartport: RAM32 32MB ram disk mounted
+
+smartport: RAM32 32MB ram disk mounted
+
+smartport: RAM32 32MB ram disk mounted
+
+smartport: RAM32 32MB ram disk mounted
+
+
+
+cmd> ftp off
+
+ftp sd: media restore disk2=-12 smartport=-12
+
+ftp: off
+
+
+
+cmC�8��y�NG>YO=9���Z��G[��]�\�������C:�v>��v)�>:�|���������������CCh�����^Cy�K��C��*K�{���P�IR>�22������
+
+==============================
+
+text_ui_test main start
+
+Firmware image: Firmware F1.3.3b3
+
+APPLETINI-MULTIBOOT-V1
+
+Debug UART: UART0
+
+Control UART: UART1 + UART0
+
+==============================
+
+core 1: cold wake issued
+
+boot menu VBL ROM patch: NTSC default
+
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+
+boot menu: register init complete
+
+[boottime] cpu0 card_control_init: 2 us
+
+onee: restore armed from saved ON status=0xE10098C8
+
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+
+[boottime] cpu0 Ethernet config write: 13 us
+
+[boottime] cpu0 config load and bind: 2208229148 us
+
+[bootdbg] after config bind slot_mask raw=0x00000080 norm=0x00000080 request=0x00000080 effective=0x00000080 slot6=0
+
+[bootdbg] after config bind boot_regs status=0x00000001 timeout=0x17C841C0 handoff=0x00000001 mode=SMARTPORT slot7=BOOTMENU pending=0
+
+[bootdbg] after config bind apple_status=0x0C disk2=0 smartport=1 eligible=1 active=0 timeout_or_closed=0
+
+gic_init OK
+
+apple_cycle_egress_init: ring 0x3F200000+1MB, producer 0x3F000000, shadows 0x3F100000/0x3F110000
+
+apple_cycle_egress_init OK
+
+RTC boot read: rc=0 valid=1 status=0x00 2026-10-28 11:37:38
+
+USB mass-storage service: raw SD card on USB0
+
+SD backend: block0=00 00 00 00 sig=AA55 p0 type=07 lba=32768 count=122134528
+
+SD backend: p0 boot=EB 76 90 45 58 46 41 54 sig=AA55
+
+SD backend: p0 bpb bps=0 spc=0 rsv=0 fats=0 spf=0 root=0 fsinfo=0 backup=0 flags=0000 ver=0000
+
+SD backend: exporting partition 0 base=32768 blocks=122134528 MB=59636
+
+SD backend: blocks=122167296 (0x07482000) MB=59652
+
+Storage capacity: blocks=122134528 (0x0747A000) MB=59636
+
+USB0 SD remote mount is available from the USB tab.
+
+USB0 mass-storage device configured (attach deferred)
+
+apple_cycle_renderer_init: 3-slot Apple FB ring at 0x3F300000+, legacy 616x224 / VidHD SHR 640x400 BGRA32
+
+psram cal: pattern write FAILED
+
+Applicard: embedded boot ROM ready
+
+AD8088: clean-room monitor + 640K Plus RAM ready (8088 core idle)
+
+vtw: virtual TransWarp service ready
+
+
+
+Appletini control UART
+
+UI keys:
+
+  W/S=up/down  A/D=left/right  E=OK  T=toggle
+
+  L=scanlines  M=menu  Tab/Space/Esc and terminal arrows work
+
+  : or ; starts a command; ENTER runs it; ? prints this help
+
+General:
+
+  help | status | temp | selfupdate | reboot | reset
+
+  nav <up|down|left|right|e|select|action|back|home|toggle|scanlines|tab|shift-tab|pgup|pgdn|space|esc|menu>
+
+  machine [auto|force <unknown|iiplus|iie|iigs>]
+
+Video and audio:
+
+  vsync <on|off|toggle>
+
+  scanlines [status|off|light|medium|strong|toggle]
+
+  textmono [status] | textmono <black|white|amber|green> <black|white|amber|green>
+
+  mono [status|off|black|white|amber|green]
+
+  audio <status|on|off>
+
+  audio mute [on|off|toggle] | audio tone <1..20000>
+
+  audio amp <0xHEX|DEC>
+
+  comp stats | comp uncap [on|off]
+
+  shadow [main|aux|a2li]
+
+Storage and USB:
+
+  sd [status|reset] | sd dumpblk <block> [count]
+
+  disk2 status | disk2 verify | disk2 underruns
+
+  disk2 scan [d1|d2] [all] | disk2 wozscan [d1|d2] [all]
+
+  disk2 wozwrite <d1|d2> <on|off|status>
+
+  usb [status|resetstats] | usb1 [status|start|stop]
+
+  sdd [status|on|off]
+
+  ftp [status|on|off]
+
+Cards and acceleration:
+
+  z80 [status|on|off|reset]
+
+  z80 budget <tstates> | z80 wall <us> | z80 dump <hex-addr> [hex-len]
+
+  8088 [status|dump <hex-addr> [hex-len]|trace on|off|paddle]
+
+  vtw [status|on|off] | vtw speed <full|turbo|1mhz|div <2-255>>
+
+  vtw dump <hex-phys> [hex-len]
+
+  ss [on|off|force <on|off>|dump]
+
+Bus diagnostics:
+
+  bustail [count [back]] | bustail on | bustail save
+
+  bustail find <addr16> | bustail entry
+
+  busdbg [clear] | irqdbg | sswatch [on|off]
+
+  bankprobe | spverify
+
+  mrd <aligned-addr> [count] | mwr <aligned-addr> <value>
+
+DMA diagnostics:
+
+  dma hold <on|off> | dma status | dma blocks | dma tail | dma reset
+
+  dma dump <mcaddr24> [count<=56] | dma peek <addr> [count]
+
+  dma probe [addr] [pattern] [count] | dma write <addr> [verify]
+
+  dma trace [status|off|clear]
+
+  dma trace arm [addr|release|resume [addr]]
+
+  dma trace dump [start] [count]
+
+RTC and raw PSRAM diagnostics:
+
+  rtc get | rtc set YYYY-MM-DD HH:MM:SS
+
+  pid | pqpi | pqpix | pres | ptr
+
+  pqr <hex-addr> | pqw <hex-addr> <hex-hi> <hex-lo>
+
+  psr <hex-addr> | psw <hex-addr> <hex-hi> <hex-lo>
+
+  pd <hex-delay> | ps <hex-addr>
+
+smartport: RAM32 32MB ram disk mounted
+
+SmartPort service: mounted 0:/IRQCHECK/STARFALL.PO
+
+[usb1] CherryUSB HID service init (stopped)
+
+[usb1] CherryUSB host start
+
+[usb1] event bus=0 hub=0 port=0 intf=255 ev=12
+
+[I/USB] EHCI HCIVERSION:0x0100
+
+[I/USB] EHCI HCSPARAMS:0x010011
+
+[I/USB] EHCI HCCPARAMS:0x0006
+
+[I/USB] EHCI ppc:1, n_ports:1, n_cc:0, n_pcc:0
+
+[I/USB] EHCI uses tt for ls/fs device
+
+[usb1] ULPI 0424:0004 host VBUS valid func=41 iface=10 otg=66
+
+usb1 start: ok
+
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+
+Disk II D1: DSK image selected
+
+machine: aux provide OFF
+
+machine: ramworks OFF
+
+machine: mode -> unknown
+
+machine: effective slot mask 0x00000080 host bus master blocked
+
+[bootdbg] after runtime apply slot_mask raw=0x00000080 norm=0x00000080 request=0x00000096 effective=0x00000080 slot6=0
+
+[bootdbg] after runtime apply boot_regs status=0x00000001 timeout=0x17C841C0 handoff=0x00000001 mode=SMARTPORT slot7=BOOTMENU pending=0
+
+[bootdbg] after runtime apply apple_status=0x0C disk2=0 smartport=1 eligible=1 active=0 timeout_or_closed=0
+
+loaded custom bezel 1920x1080 from 0:/bezels/bezel_blue_phosphor.png
+
+smartport: RAM32 32MB ram disk mounted
+
+SmartPort service: media refreshed after startup assets
+
+Updater meta boot: B2.0.6
+
+Updater local firmware: Firmware F1.3.3b3
+
+compositor: FB_BASE_ADDR_REG round-trip: wrote 0x3E000000, read 0x3E000000 [OK]
+
+compositor_init: 3-slot output FB ring at 0x3E000000/0x3E400000/0x3E800000, 1920x1080 RGB565
+
+compositor: Apple blit = NEON (vld1q/vzipq burst reads)
+
+Output resolution: 1920x1080
+
+usb1: settling during boot prompt
+
+[bootdbg] pre apple release slot_mask raw=0x00000080 norm=0x00000080 request=0x00000096 effective=0x00000080 slot6=0
+
+[bootdbg] pre apple release boot_regs status=0x00000001 timeout=0xFFFFFFFF handoff=0x00000001 mode=SMARTPORT slot7=BOOTMENU pending=0
+
+[bootdbg] pre apple release apple_status=0x0C disk2=0 smartport=1 eligible=1 active=0 timeout_or_closed=0
+
+boot menu VBL ROM patch: NTSC default
+
+[boottime] cpu0 deferred Disk II sound publish: 1833 us
+
+onee: restore raised request status=0xE10098C8
+
+[usb1] event bus=0 hub=1 port=1 intf=255 ev=3
+
+[usb1] event bus=0 hub=1 port=1 intf=255 ev=2
+
+[I/usbh_hub] New high-speed device on Bus 0, Hub 1, Port 1 connected
+
+[I/usbh_core] New device found,idVendor:2109,idProduct:2822,bcdDevice:9013
+
+[I/usbh_core] The device has 1 bNumConfigurations
+
+[I/usbh_core] The device has 1 interfaces
+
+[I/usbh_core] Enumeration success, start loading class driver
+
+[usb1] event bus=0 hub=1 port=1 intf=255 ev=5
+
+[I/usbh_core] Loading hub class driver on interface 0
+
+[I/usbh_hub] Ep=81 Attr=03 Mps=1 Interval=12 Mult=00
+
+[I/usbh_hub] Register HUB Class:/dev/hub2
+
+[usb1] event bus=0 hub=1 port=1 intf=0 ev=10
+
+SD media attached: reloading settings and media
+
+smartport: RAM32 32MB ram disk mounted
+
+SD media: SmartPort mounted 0:/IRQCHECK/STARFALL.PO
+
+
+
+cmd> status
+
+---- card status ----
+
+ui: frames=0 keys=0
+
+boot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0
+
+video: vsync=on scanlines=Medium
+
+text mono: fg=black bg=black
+
+display mono: off
+
+apple fb: slot=2 mode=legacy target=50Hz apple_fps=0.00 hdmi_fps=0.00 blits=50 comp_pub=52 comp_skip=0 pl_vblanks=35 latched=0x3E400000
+
+updater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'
+
+audio: en=on mute=off tone=1000Hz amp=0x00600000
+
+spdif dbg: clkc=0 q3lvl=0 q3tog=0
+
+rtc: 2026-10-28 11:37:40
+
+temp: +35.43 C
+
+machine: effective slot mask 0x00000096 ONE//e private bus enabled
+
+boot menu VBL ROM patch: PAL
+
+vtw: ONE//e cold ROM loaded, core released
+
+machine: ramworks 8MB ON
+
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+
+[usb1] event bus=0 hub=2 port=1 intf=255 ev=3
+
+[usb1] event bus=0 hub=2 port=1 intf=255 ev=2
+
+[I/usbh_hub] New low-speed device on Bus 0, Hub 2, Port 1 connected
+
+[I/usbh_core] New device found,idVendor:06a3,idProduct:8000,bcdDevice:0120
+
+[I/usbh_core] The device has 1 bNumConfigurations
+
+[I/usbh_core] The device has 3 interfaces
+
+[I/usbh_core] Enumeration success, start loading class driver
+
+[usb1] event bus=0 hub=2 port=1 intf=255 ev=5
+
+[I/usbh_core] Loading hid class driver on interface 0
+
+[I/usbh_hid] Ep=81 Attr=03 Mps=8 Interval=10 Mult=00
+
+[I/usbh_hid] Register HID Class:/dev/input0
+
+[usb1] CherryUSB HID connected slot=0 dev=3 proto=1 subclass=1 parsed=0 mouse=0 joystick=0 ps4=0
+
+[usb1] event bus=0 hub=2 port=1 intf=0 ev=10
+
+[I/usbh_core] Loading hid class driver on interface 1
+
+[I/usbh_hid] Ep=82 Attr=03 Mps=5 Interval=10 Mult=00
+
+[I/usbh_hid] Register HID Class:/dev/input1
+
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+
+[usb1] CherryUSB HID connected slot=1 dev=3 proto=0 subclass=0 parsed=1 mouse=0 joystick=0 ps4=0
+
+[usb1] event bus=0 hub=2 port=1 intf=1 ev=10
+
+[I/usbh_core] Loading hid class driver on interface 2
+
+[I/usbh_hid] Ep=83 Attr=03 Mps=2 Interval=10 Mult=00
+
+[I/usbh_hid] Register HID Class:/dev/input2
+
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+
+[usb1] CherryUSB HID connected slot=2 dev=3 proto=0 subclass=0 parsed=1 mouse=0 joystick=1 ps4=0
+
+[usb1] event bus=0 hub=2 port=1 intf=2 ev=10
+
+[usb1] event bus=0 hub=2 port=2 intf=255 ev=3
+
+[usb1] event bus=0 hub=2 port=2 intf=255 ev=2
+
+[I/usbh_hub] New full-speed device on Bus 0, Hub 2, Port 2 connected
+
+[I/usbh_core] New device found,idVendor:045e,idProduct:028e,bcdDevice:0114
+
+[I/usbh_core] The device has 1 bNumConfigurations
+
+[I/usbh_core] The device has 4 interfaces
+
+[I/usbh_core] Enumeration success, start loading class driver
+
+[usb1] event bus=0 hub=2 port=2 intf=255 ev=5
+
+[I/usbh_core] Loading xbox class driver on interface 0
+
+[I/USB] Ep=81 Attr=03 Mps=32 Interval=04 Mult=00
+
+[I/USB] Ep=01 Attr=03 Mps=32 Interval=08 Mult=00
+
+[I/USB] Register XBOX Class:/dev/xbox0
+
+[usb1] Xbox 360 connected slot=3 class=0 vid=045e pid=028e intf=0
+
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+
+[usb1] event bus=0 hub=2 port=2 intf=0 ev=10
+
+[E/usbh_core] Do not support Class:0xff, Subclass:0x5d, Protocl:0x03 on interface 1
+
+[usb1] event bus=0 hub=2 port=2 intf=1 ev=9
+
+[E/usbh_core] Do not support Class:0xff, Subclass:0x5d, Protocl:0x02 on interface 2
+
+[usb1] event bus=0 hub=2 port=2 intf=2 ev=9
+
+[E/usbh_core] Do not support Class:0xff, Subclass:0xfd, Protocl:0x13 on interface 3
+
+[usb1] event bus=0 hub=2 port=2 intf=3 ev=9
+
+[usb1] event bus=0 hub=2 port=4 intf=255 ev=3
+
+[usb1] event bus=0 hub=2 port=4 intf=255 ev=2
+
+[I/usbh_hub] New low-speed device on Bus 0, Hub 2, Port 4 connected
+
+[I/usbh_core] New device found,idVendor:30fa,idProduct:0400,bcdDevice:0100
+
+[I/usbh_core] The device has 1 bNumConfigurations
+
+[I/usbh_core] The device has 1 interfaces
+
+[I/usbh_core] Enumeration success, start loading class driver
+
+[usb1] event bus=0 hub=2 port=4 intf=255 ev=5
+
+[I/usbh_core] Loading hid class driver on interface 0
+
+[I/usbh_hid] Ep=81 Attr=03 Mps=5 Interval=10 Mult=00
+
+[I/usbh_hid] Register HID Class:/dev/input3
+
+[usb1] CherryUSB HID connected slot=4 dev=5 proto=2 subclass=1 parsed=1 mouse=1 joystick=1 ps4=0
+
+[usb1] CherryUSB mousecard HID dev=5 speed=low hub=2 port=4 if=0 ep=0x00000081
+
+[usb1] event bus=0 hub=2 port=4 intf=0 ev=10
+
+
+
+cmd> status
+
+---- card status ----
+
+ui: frames=48 keys=0
+
+boot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0
+
+video: vsync=on scanlines=Medium
+
+text mono: fg=black bg=black
+
+display mono: off
+
+apple fb: slot=1 mode=SHR target=50Hz apple_fps=85.60 hdmi_fps=50.58 blits=191 comp_pub=193 comp_skip=0 pl_vblanks=153 latched=0x3E800000
+
+updater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'
+
+audio: en=on mute=off tone=1000Hz amp=0x00600000
+
+spdif dbg: clkc=0 q3lvl=0 q3tog=0
+
+rtc: 2026-10-28 11:37:42
+
+temp: +35.43 C
+
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+
+usb1: settled during prompt, 22 events
+
+
+
+cmd> vtw dump B370 1
+
+0B370: 00
+
+
+
+cmd> vtw dump 5120 3
+
+05120: 20 5D 8C
+
+
+
+cmd> mwr 0x40000170 0x50
+
+ok
+
+
+
+cmd> vtw dump B370 1
+
+0B370: 00
+
+
+
+cmd> vtw dump B370 1
+
+0B370: 01
+
+
+
+cmd> vtw dump B47C 1
+
+0B47C: 01
+
+
+
+cmd> mrd 0x400001C0
+
+0x400001C0: 0x0025008F
+
+
+
+cmd> mwr 0x400001C0 0x25018F
+
+ok
+
+
+
+cmd> mrd 0x400001C0
+
+0x400001C0: 0x0025018F
+
+
+
+cmd> vtw dump 7B0B 4
+
+07B0B: D8 AD 08 B9
+
+
+
+cmd> mwr 0x400001C4 0xA280
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x78
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x38
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xED
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x19
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x85
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x38
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xED
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x85
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x18
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x6D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x85
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x90
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xEE
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x5
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xEE
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x6
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xEE
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x7
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x28
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x60
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x48
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xDA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x5A
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x50
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x29
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x40
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x49
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x20
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x80
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x41
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x38
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xED
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8B
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x5
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xED
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xB
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x90
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x16
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8B
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xE
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x90
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8B
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xE
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xBD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x10
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF7
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xEE
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x10
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xEE
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x11
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x7A
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xFA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x68
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x28
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xB9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x7B
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x48
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xDA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x5A
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x1B
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x20
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x1E
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x1B
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x29
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x1B
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xFF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x18
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x19
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xEE
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x20
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x80
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x37
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x33
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x33
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x5
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xDE
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x20
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x1B
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x10
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x90
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x7
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x16
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xB0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x6B
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xEE
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x1
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x11
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x11
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x78
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x38
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xED
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x16
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8B
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x5
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xED
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x17
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x13
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x90
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x16
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8B
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x12
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x90
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x13
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8B
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x12
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xBD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x16
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x10
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF7
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xEE
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x14
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xEE
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x15
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x28
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x10
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x43
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xB9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x38
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xED
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8A
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x5
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x90
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x38
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xB9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8A
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x20
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x31
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA5
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x20
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x52
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA5
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xEE
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x32
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xEE
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x33
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3A
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x34
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x90
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x34
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x18
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x6D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x36
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x36
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x90
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xEE
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x37
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xEE
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x38
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x7A
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xFA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x68
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x28
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x20
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x5D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x23
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x51
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x78
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x68
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x83
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xB4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x84
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x69
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x84
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xB4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x85
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x28
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x72
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x78
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3F
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xBD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x1E
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xBD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xB9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x26
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xBD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x72
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xB3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x2E
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x10
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xEB
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xB
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x7F
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xBD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAB
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x10
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF7
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x28
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x72
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x78
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x48
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x31
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xE
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x10
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xFA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x68
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xBD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x1A
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x16
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xBD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xB9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x22
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xBD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x72
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xB3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x2A
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x10
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xE5
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xB9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8A
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x28
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x72
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x20
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x72
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xBD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x40
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x10
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF7
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x20
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x86
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x87
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x82
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x88
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x20
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x52
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA5
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x20
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x80
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xBD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x44
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x10
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF7
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x1F
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xBD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x48
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x10
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF7
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x60
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x20
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xBD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x44
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x6A
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x10
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF7
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x20
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x80
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x38
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xED
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x6A
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x5
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xED
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x6B
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x73
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x90
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xEB
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x20
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x80
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xBD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x6E
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x10
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF7
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x20
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x52
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA5
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x20
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x80
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xBD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x44
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x10
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF7
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xBD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x58
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x10
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF7
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x72
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x83
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x88
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x80
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAC
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x11
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xFF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xE8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x12
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xE8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x86
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8E
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x87
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x60
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x68
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x80
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCC
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x80
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x81
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xFF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAB
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAC
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x1
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAC
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x78
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x19
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x84
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x15
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x87
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA6
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x15
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x81
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x6
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x2C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xFF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x2C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC7
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA5
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x44
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x82
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA5
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x45
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x83
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8E
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8F
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x90
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x88
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x91
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x92
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x93
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x82
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA7
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x92
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x93
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x86
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x94
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x87
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x95
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x14
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x12
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x20
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC7
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8E
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3E
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x70
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA6
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xB9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF5
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF1
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF1
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x30
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x16
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x84
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x38
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xED
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x19
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xBE
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x90
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x67
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x70
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA6
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x86
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x36
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3E
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x87
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x28
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x64
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x44
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x85
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x45
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAE
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x87
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x20
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xE2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA6
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xE6
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x45
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAE
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x86
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x16
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x91
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x44
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x80
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x61
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x2C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xFF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x81
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x10
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x7
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x82
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x85
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x44
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x83
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x85
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x45
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x80
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xB
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x84
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x38
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xED
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x19
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x64
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x90
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF5
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x84
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x38
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xED
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x19
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC4
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3A
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3B
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x80
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x48
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x28
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x15
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x36
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x87
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x1C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x1
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x80
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCC
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x1F
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x81
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x80
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x16
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xFF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAB
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCC
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x13
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAC
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x80
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAC
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCC
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x7
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x1
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAC
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCC
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x5
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x71
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA9
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x60
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xAD
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x8D
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xCF
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x91
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x44
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC8
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xD0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xF5
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x60
+
+ok
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> vtw dump A280 46E
+
+0A280: 08 78 D8 AD 08 A9 38 ED 19 C4 8D 85 A9 38 AD 08
+
+0A290: A9 ED 85 A9 8D 08 A9 18 AD 04 A9 6D 85 A9 8D 04
+
+0A2A0: A9 90 0D EE 05 A9 D0 08 EE 06 A9 D0 03 EE 07 A9
+
+0A2B0: 28 60 08 48 DA 5A D8 AD 02 A9 F0 50 AD 8D C4 29
+
+0A2C0: 40 F0 49 20 80 A2 AD 03 A9 F0 41 38 AD 04 A9 ED
+
+0A2D0: 0A A9 8D 8B A9 AD 05 A9 ED 0B A9 8D 8C A9 CD 0F
+
+0A2E0: A9 90 16 D0 08 AD 8B A9 CD 0E A9 90 0C AD 8C A9
+
+0A2F0: 8D 0F A9 AD 8B A9 8D 0E A9 A2 03 BD 04 A9 9D 0A
+
+0A300: A9 CA 10 F7 EE 10 A9 D0 03 EE 11 A9 7A FA 68 28
+
+0A310: D8 AD 08 B9 4C 0F 7B 08 48 DA 5A D8 AD 02 A9 D0
+
+0A320: 1B A9 20 8D 1E C4 AD 1B C4 29 C3 8D 1B C4 A9 FF
+
+0A330: 8D 18 C4 8D 19 C4 8D 08 A9 EE 02 A9 20 80 A2 AD
+
+0A340: 00 A9 F0 37 C9 02 D0 03 4C 33 A4 C9 03 D0 03 4C
+
+0A350: A3 A4 C9 04 D0 03 4C 33 A4 C9 05 D0 03 4C DE A4
+
+0A360: C9 20 D0 03 4C 1B A4 C9 10 90 07 C9 16 B0 03 4C
+
+0A370: 6B A4 9C 00 A9 EE 01 A9 4C 11 A4 AD 03 A9 D0 03
+
+0A380: 4C 11 A4 08 78 38 AD 04 A9 ED 16 A9 8D 8B A9 AD
+
+0A390: 05 A9 ED 17 A9 8D 8C A9 CD 13 A9 90 16 D0 08 AD
+
+0A3A0: 8B A9 CD 12 A9 90 0C AD 8C A9 8D 13 A9 AD 8B A9
+
+0A3B0: 8D 12 A9 A2 03 BD 04 A9 9D 16 A9 CA 10 F7 EE 14
+
+0A3C0: A9 D0 03 EE 15 A9 28 AD 03 A9 C9 10 F0 43 AD 03
+
+0A3D0: B9 38 ED 8A A9 C9 05 90 38 AD 03 B9 8D 8A A9 20
+
+0A3E0: 31 A5 20 52 A5 AD 3C A9 F0 03 8D 09 A9 EE 32 A9
+
+0A3F0: D0 03 EE 33 A9 AD 3A A9 CD 34 A9 90 03 8D 34 A9
+
+0A400: 18 6D 36 A9 8D 36 A9 90 08 EE 37 A9 D0 03 EE 38
+
+0A410: A9 7A FA 68 28 20 5D 8C 4C 23 51 08 78 AD 68 A9
+
+0A420: 8D 83 B4 8D 84 C4 AD 69 A9 8D 84 B4 8D 85 C4 28
+
+0A430: 4C 72 A3 08 78 AD 03 A9 8D 3F A9 9C 03 A9 A2 03
+
+0A440: BD 04 A9 9D 1E A9 BD 03 B9 9D 26 A9 BD 72 B3 9D
+
+0A450: 2E A9 CA 10 EB AD 00 A9 C9 04 F0 0B A2 7F BD 00
+
+0A460: A9 9D 00 AB CA 10 F7 28 4C 72 A3 08 78 48 A2 31
+
+0A470: A9 00 9D 0E A9 CA 10 FA 68 8D 03 A9 A2 03 BD 04
+
+0A480: A9 9D 1A A9 9D 16 A9 9D 0A A9 BD 03 B9 9D 22 A9
+
+0A490: BD 72 B3 9D 2A A9 CA 10 E5 AD 03 B9 8D 8A A9 28
+
+0A4A0: 4C 72 A3 20 A9 A4 4C 72 A3 A2 03 BD 04 A9 9D 40
+
+0A4B0: A9 CA 10 F7 A9 20 8D 86 A9 9C 87 A9 A9 82 8D 88
+
+0A4C0: A9 20 52 A5 20 80 A2 A2 03 BD 04 A9 9D 44 A9 CA
+
+0A4D0: 10 F7 A2 1F BD 00 AA 9D 48 A9 CA 10 F7 60 9C 03
+
+0A4E0: A9 20 A9 A4 A2 03 BD 44 A9 9D 6A A9 CA 10 F7 20
+
+0A4F0: 80 A2 38 AD 04 A9 ED 6A A9 AD 05 A9 ED 6B A9 CD
+
+0A500: 73 A9 90 EB 20 80 A2 A2 03 BD 04 A9 9D 6E A9 CA
+
+0A510: 10 F7 20 52 A5 20 80 A2 A2 03 BD 04 A9 9D 44 A9
+
+0A520: CA 10 F7 A2 0F BD 00 AA 9D 58 A9 CA 10 F7 4C 72
+
+0A530: A3 A9 83 8D 88 A9 A9 80 A2 00 AC 03 A9 C0 11 F0
+
+0A540: 0A A9 FF E8 C0 12 F0 03 A9 00 E8 8D 86 A9 8E 87
+
+0A550: A9 60 08 68 8D 80 A9 A9 CC 8D 80 AA 8D 81 AA 8D
+
+0A560: FF AB 8D 00 AC 8D 01 AC 78 D8 AD 19 C4 8D 84 A9
+
+0A570: 9C 3C A9 AD 03 A9 C9 15 D0 03 4C 87 A6 AD 15 C0
+
+0A580: 8D 81 A9 8D 06 C0 2C FF CF 2C 00 C7 A5 44 8D 82
+
+0A590: A9 A5 45 8D 83 A9 A9 03 8D 8D A9 9C 8E A9 9C 8F
+
+0A5A0: A9 A9 AA 8D 90 A9 AD 88 A9 8D 91 A9 9C 92 A9 9C
+
+0A5B0: 93 A9 C9 82 D0 0A A9 A7 8D 92 A9 A9 CA 8D 93 A9
+
+0A5C0: AD 86 A9 8D 94 A9 AD 87 A9 8D 95 A9 AD 03 A9 C9
+
+0A5D0: 14 D0 12 20 0D C7 00 8D A9 8D 3C A9 8E 3D A9 8C
+
+0A5E0: 3E A9 4C 70 A6 A9 00 8D F0 CF A0 00 B9 8D A9 8D
+
+0A5F0: F0 CF C8 C0 09 D0 F5 A9 02 8D F1 CF A2 00 AD F1
+
+0A600: CF 30 16 AD 84 A9 38 ED 19 C4 C9 BE 90 F0 A9 67
+
+0A610: 8D 3C A9 8D 09 A9 4C 70 A6 AD F0 CF 8D F2 CF 8D
+
+0A620: 3C A9 D0 4C AD F0 CF 8D F2 CF 8D 3D A9 CD 86 A9
+
+0A630: D0 36 AD F0 CF 8D F2 CF 8D 3E A9 CD 87 A9 D0 28
+
+0A640: 64 44 A9 AA 85 45 A0 00 AE 87 A9 F0 08 20 E2 A6
+
+0A650: E6 45 CA D0 F8 AE 86 A9 F0 16 AD F0 CF 8D F2 CF
+
+0A660: 91 44 C8 CA D0 F4 80 08 A9 61 8D 3C A9 8D 09 A9
+
+0A670: 2C FF CF AD 81 A9 10 03 8D 07 C0 AD 82 A9 85 44
+
+0A680: AD 83 A9 85 45 80 0B AD 84 A9 38 ED 19 C4 C9 64
+
+0A690: 90 F5 AD 84 A9 38 ED 19 C4 8D 3A A9 9C 3B A9 AD
+
+0A6A0: 80 A9 48 28 AD 03 A9 C9 15 F0 36 AD 87 A9 C9 02
+
+0A6B0: F0 1C C9 01 F0 0C AD 80 AA C9 CC D0 1F AD 81 AA
+
+0A6C0: 80 16 AD FF AB C9 CC D0 13 AD 00 AC 80 0A AD 00
+
+0A6D0: AC C9 CC D0 07 AD 01 AC C9 CC F0 05 A9 71 8D 09
+
+0A6E0: A9 60 AD F0 CF 8D F2 CF 91 44 C8 D0 F5 60
+
+
+
+cmd> mwr 0x400001C4 0x7B0B
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xB2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA2
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xEA
+
+ok
+
+
+
+cmd> vtw dump 7B0B 4
+
+07B0B: 4C B2 A2 EA
+
+
+
+cmd> mwr 0x400001C4 0x5120
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4C
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x17
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xA3
+
+ok
+
+
+
+cmd> vtw dump 5120 3
+
+05120: 4C 17 A3
+
+
+
+cmd> mwr 0x400001C0 0x25008F
+
+ok
+
+
+
+cmd> mrd 0x400001C0
+
+0x400001C0: 0x0025008F
+
+
+
+cmd> vtw speed 1mhz
+
+vtw: speed set
+
+
+
+cmd> vtw status
+
+vtw: idle, session=ONE//e, host-intent=off, machine=unknown
+
+vtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0
+
+vtw: reset seen=0 source=none rstn=$0
+
+vtw: slowdown mask=$008 cycles=256
+
+vtw: speed=1 MHz default div=37 c074=0 ignore=0 d2accel=on owned=1 run=1 pc=58FF
+
+vtw: core=621592652 bus=4231287 posted=560917 invalid=0
+
+vtw: perf fabric=1597717243 steps=621593285 classic=777390327
+
+vtw: cache hits=416405674 misses=134675127 invalidations=96090
+
+vtw: wait disk=0 video=103187423
+
+vtw: qfill=0 qhw=508 qdrop=0 sessions=1
+
+vtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00
+
+vtw: c000 reads=65535 bit7=1 last=$50 prev=park $FFFF R drive=0
+
+vtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=011 altzp=0 rd/wt=00 80st=0 text=1
+
+vtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)
+
+vtw: cxxx trail C700 CFFF C440 C484 C48D C419 C48D C410 (new->old)
+
+vtw: last bus write $C006 = $00, irqs seen=127 (sat)
+
+vtw: persisted setting = OFF
+
+
+
+cmd> mwr 0x400001C4 0xA972
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x80
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 00
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x5
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 01
+
+
+
+cmd> vtw dump A940 34
+
+0A940: 2A 30 00 00 36 B0 00 00 41 54 54 43 C2 4A 60 34
+
+0A950: 06 00 00 00 5F 43 DE 13 41 54 54 43 30 89 26 D8
+
+0A960: 06 00 00 00 5F 43 DE 13 00 00 31 30 00 00 31 B0
+
+0A970: 00 00 00 80
+
+
+
+cmd> vtw speed turbo
+
+vtw: speed set
+
+
+
+cmd> mwr 0x40000170 0x52
+
+ok
+
+
+
+cmd> vtw status
+
+vtw: idle, session=ONE//e, host-intent=off, machine=unknown
+
+vtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0
+
+vtw: reset seen=0 source=none rstn=$0
+
+vtw: slowdown mask=$008 cycles=256
+
+vtw: speed=TURBO div=37 c074=0 ignore=0 d2accel=on owned=1 run=1 pc=015B
+
+vtw: core=655181010 bus=4414219 posted=723139 invalid=0
+
+vtw: perf fabric=3386663162 steps=655185189 classic=815400622
+
+vtw: cache hits=431347733 misses=138611293 invalidations=132400
+
+vtw: wait disk=0 video=124077011
+
+vtw: qfill=14 qhw=508 qdrop=0 sessions=1
+
+vtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00
+
+vtw: c000 reads=65535 bit7=2 last=$52 prev=park $FFFF R drive=0
+
+vtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=011 altzp=0 rd/wt=01 80st=0 text=1
+
+vtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)
+
+vtw: cxxx trail C419 C419 C419 C419 C419 C419 C419 C419 (new->old)
+
+vtw: last bus read $C419 = $BE, irqs seen=127 (sat)
+
+vtw: persisted setting = OFF
+
+
+
+cmd> mwr 0x400001C4 0xA972
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x80
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 01
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x5
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 01
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 01
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 01
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 01
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 01
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 01
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 01
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 01
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 01
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 01
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 01
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 01
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 01
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 01
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 01
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 02
+
+
+
+cmd> vtw dump A940 34
+
+0A940: 94 FF 00 00 9D 7F 01 00 41 54 54 43 07 D0 B8 3D
+
+0A950: 07 00 00 00 5F 43 DE 13 41 54 54 43 D6 31 7D E1
+
+0A960: 07 00 00 00 5F 43 DE 13 00 00 9A FF 00 00 9A 7F
+
+0A970: 01 00 00 80
+
+
+
+cmd> mwr 0x400001C4 0xA968
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x27
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 02
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x20
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 03
+
+
+
+cmd> mwr 0x40000170 0x52
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 03
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 04
+
+
+
+cmd> vtw dump A940 28
+
+0A940: 9B B0 01 00 A2 B0 01 00 41 54 54 43 13 F9 32 20
+
+0A950: 08 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 04
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x10
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 05
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 05
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 06
+
+
+
+cmd> vtw dump A900 80
+
+0A900: 00 06 01 00 64 3E 02 00 9B 00 63 35 02 00 29 00
+
+0A910: C1 02 32 00 A2 1B 75 35 02 00 FE C7 01 00 76 35
+
+0A920: 02 00 BB 0A 00 00 7C 0D 00 00 EB 00 00 00 BF 01
+
+0A930: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 10
+
+0A940: 9B B0 01 00 A2 B0 01 00 41 54 54 43 13 F9 32 20
+
+0A950: 08 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00 C0 27 9A FF 00 00 9A 7F
+
+0A970: 01 00 00 80 00 00 00 00 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 06
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 07
+
+
+
+cmd> vtw dump A940 28
+
+0A940: F2 4C 02 00 F6 4C 02 00 41 54 54 43 E3 68 30 E8
+
+0A950: 08 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump B370 30
+
+0B370: 01 00 0A 02 00 00 0E 02 00 00 67 01 00 00 56 00
+
+0B380: 00 00 78 00 AE 00 03 00 09 04 01 0B 05 00 00 00
+
+0B390: 01 82 82 00 12 00 00 00 00 00 40 01 C8 00 A0 00
+
+
+
+cmd> mwr 0x40000170 0x52
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 07
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 08
+
+
+
+cmd> vtw dump A940 28
+
+0A940: 93 73 02 00 97 73 02 00 41 54 54 43 D9 9E 9B 19
+
+0A950: 09 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 08
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x11
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 09
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 09
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 0A
+
+
+
+cmd> vtw dump AA00 80
+
+0AA00: 04 01 00 00 00 00 78 00 5A A3 EC 35 7E C7 10 59
+
+0AA10: A2 EB 34 7D C6 0F 58 A1 EB 32 7D C4 0F 56 A1 E8
+
+0AA20: 33 7A C5 0C 57 9E E9 30 78 C1 0E 57 9C E5 32 7B
+
+0AA30: C0 09 56 9F E4 2D 7A C3 09 50 9F E6 2D 74 C3 0A
+
+0AA40: 51 98 E7 2E 75 BC 0B 52 9E E7 28 71 BA 03 54 9D
+
+0AA50: E6 2F 70 B9 02 4B 9C E5 2F 76 B9 00 4B 92 E5 2C
+
+0AA60: 77 BE 01 48 93 DA 2D 74 BC 05 4A 93 D8 21 76 BF
+
+0AA70: 04 4D 92 DB 20 69 BE 07 4D 94 DB 22 69 B0 07 4E
+
+
+
+cmd> vtw dump A900 80
+
+0A900: 00 0A 01 00 0C 08 03 00 F3 00 5E F8 02 00 2B 00
+
+0A910: C2 02 38 00 FB 18 61 F8 02 00 DC 8A 02 00 6A F8
+
+0A920: 02 00 A1 0F 00 00 63 12 00 00 5F 02 00 00 33 03
+
+0A930: 00 00 8D 00 07 00 CF 02 00 00 07 00 00 80 00 11
+
+0A940: 93 73 02 00 97 73 02 00 41 54 54 43 D9 9E 9B 19
+
+0A950: 09 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00 C0 27 9A FF 00 00 9A 7F
+
+0A970: 01 00 00 80 00 00 00 00 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 0A
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 0B
+
+
+
+cmd> vtw dump A940 28
+
+0A940: 9D 16 03 00 A6 16 03 00 41 54 54 43 CE 12 31 EA
+
+0A950: 09 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump B370 30
+
+0B370: 01 00 8B 03 00 00 8E 03 00 00 73 01 00 00 57 00
+
+0B380: 00 00 78 00 AE 00 03 00 0C 04 01 0C 05 00 00 00
+
+0B390: 01 82 82 00 12 00 00 00 00 00 40 01 C8 00 A0 00
+
+
+
+cmd> mwr 0x40000170 0x52
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 0B
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 0C
+
+
+
+cmd> vtw dump A940 28
+
+0A940: 24 3D 03 00 29 3D 03 00 41 54 54 43 94 4D 79 1B
+
+0A950: 0A 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 0C
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x12
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 0D
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 0D
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 0E
+
+
+
+cmd> vtw dump AA00 1FF
+
+0AA00: 04 01 00 00 00 00 F7 01 5A A3 EC 35 7E C7 10 59
+
+0AA10: A2 EB 34 7D C6 0F 58 A1 EB 32 7D C4 0F 56 A1 E8
+
+0AA20: 33 7A C5 0C 57 9E E9 30 78 C1 0E 57 9C E5 32 7B
+
+0AA30: C0 09 56 9F E4 2D 7A C3 09 50 9F E6 2D 74 C3 0A
+
+0AA40: 51 98 E7 2E 75 BC 0B 52 9E E7 28 71 BA 03 54 9D
+
+0AA50: E6 2F 70 B9 02 4B 9C E5 2F 76 B9 00 4B 92 E5 2C
+
+0AA60: 77 BE 01 48 93 DA 2D 74 BC 05 4A 93 D8 21 76 BF
+
+0AA70: 04 4D 92 DB 20 69 BE 07 4D 94 DB 22 69 B0 07 4E
+
+0AA80: 95 DC 23 6A B1 F8 4F 96 D2 2B 64 BD F6 4F 98 D1
+
+0AA90: 2A 63 BC F5 4E 87 D0 29 63 BA F5 4C 87 DE 29 60
+
+0AAA0: BB F2 4D 84 DF 16 61 B8 F0 49 86 DF 14 6D BA F3
+
+0AAB0: 48 81 DE 17 6C A5 F2 4B 81 D8 17 6E A5 FC 4B 82
+
+0AAC0: D9 10 6F A6 FD 34 83 DA 16 6F A0 F9 32 8B DC 15
+
+0AAD0: 6E A7 F8 31 8A C3 14 6D A7 FE 31 88 C3 1A 6D A4
+
+0AAE0: FF 36 89 C0 1B 52 A5 FC 34 8D C2 1B 50 A9 FE 37
+
+0AAF0: 8C C5 1A 53 A8 E1 36 8F C5 1C 53 AA E1 38 8F C6
+
+0AB00: 1D 54 AB E2 39 70 C7 1E 7D A6 EF 58 81 CA 33 7C
+
+0AB10: A5 EE 57 80 C9 32 7B A4 EC 57 9E C9 30 7B A2 ED
+
+0AB20: 54 9F C6 31 78 A3 EA 55 9F C4 0D 7A A3 E8 51 9E
+
+0AB30: C7 0C 75 A2 EB 50 99 C6 0E 75 BC EB 52 99 C0 0F
+
+0AB40: 76 BD E4 53 9A C1 08 77 B9 E2 2B 9C C5 0E 77 B8
+
+0AB50: E1 2A 93 C4 0D 76 BF E0 28 93 DA 0D 74 BF E6 29
+
+0AB60: 90 DB 02 75 BC E7 2E 91 DB 00 49 BE E7 2C 95 DA
+
+0AB70: 03 48 B1 E6 2F 94 DD 02 4A B1 F8 2F 96 DD 04 4B
+
+0AB80: B2 F9 20 97 DE 05 4C B3 F5 2E 67 D0 09 42 BB F4
+
+0AB90: 2D 66 DF 08 41 BA F3 2C 64 DF 16 41 B8 F3 2A 65
+
+0ABA0: DC 17 4E B9 F0 2B 62 DD 17 4C 85 F2 2B 60 D9 16
+
+0ABB0: 4F 84 FD 2A 63 D8 11 4E 86 FD 34 63 DA 11 48 87
+
+0ABC0: FE 35 6C DB 12 49 80 FF 31 6A A3 14 4D 86 FF 30
+
+0ABD0: 69 A2 1B 4C 85 FE 37 68 A0 1B 52 85 FC 37 6E A1
+
+0ABE0: 18 53 8A FD 34 6F A6 19 53 88 C1 36 6F A4 1D 52
+
+0ABF0: 8B C0 39 6E A7 1C 55 8A C2 39 70 A7 1E 55 8C
+
+
+
+cmd> vtw dump A900 80
+
+0A900: 00 0E 01 00 C9 D1 03 00 36 00 17 C2 03 00 29 00
+
+0A910: C4 02 32 00 DC 16 14 C2 03 00 50 54 03 00 38 C2
+
+0A920: 03 00 B2 14 00 00 76 17 00 00 E0 03 00 00 B4 04
+
+0A930: 00 00 8D 00 0C 00 63 05 00 00 09 00 00 FF 01 12
+
+0A940: 24 3D 03 00 29 3D 03 00 41 54 54 43 94 4D 79 1B
+
+0A950: 0A 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00 C0 27 9A FF 00 00 9A 7F
+
+0A970: 01 00 00 80 00 00 00 00 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 0E
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 0F
+
+
+
+cmd> vtw dump A940 28
+
+0A940: 2E E0 03 00 32 E0 03 00 41 54 54 43 9A 1B 0B EC
+
+0A950: 0A 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump B370 30
+
+0B370: 01 00 0C 05 00 00 0E 05 00 00 73 01 00 00 57 00
+
+0B380: 00 00 78 00 AE 00 03 00 0C 04 01 0C 05 00 00 00
+
+0B390: 01 82 82 00 12 00 00 00 00 00 40 01 C8 00 A0 00
+
+
+
+cmd> mwr 0x40000170 0x52
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 0F
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 10
+
+
+
+cmd> vtw dump A940 28
+
+0A940: FE 06 04 00 03 07 04 00 41 54 54 43 68 31 B3 1D
+
+0A950: 0B 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 10
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x13
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 11
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 11
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 12
+
+
+
+cmd> vtw dump AA00 200
+
+0AA00: 04 01 00 00 00 00 F8 01 5A A3 EC 35 7E C7 10 59
+
+0AA10: A2 EB 34 7D C6 0F 58 A1 EB 32 7D C4 0F 56 A1 E8
+
+0AA20: 33 7A C5 0C 57 9E E9 30 78 C1 0E 57 9C E5 32 7B
+
+0AA30: C0 09 56 9F E4 2D 7A C3 09 50 9F E6 2D 74 C3 0A
+
+0AA40: 51 98 E7 2E 75 BC 0B 52 9E E7 28 71 BA 03 54 9D
+
+0AA50: E6 2F 70 B9 02 4B 9C E5 2F 76 B9 00 4B 92 E5 2C
+
+0AA60: 77 BE 01 48 93 DA 2D 74 BC 05 4A 93 D8 21 76 BF
+
+0AA70: 04 4D 92 DB 20 69 BE 07 4D 94 DB 22 69 B0 07 4E
+
+0AA80: 95 DC 23 6A B1 F8 4F 96 D2 2B 64 BD F6 4F 98 D1
+
+0AA90: 2A 63 BC F5 4E 87 D0 29 63 BA F5 4C 87 DE 29 60
+
+0AAA0: BB F2 4D 84 DF 16 61 B8 F0 49 86 DF 14 6D BA F3
+
+0AAB0: 48 81 DE 17 6C A5 F2 4B 81 D8 17 6E A5 FC 4B 82
+
+0AAC0: D9 10 6F A6 FD 34 83 DA 16 6F A0 F9 32 8B DC 15
+
+0AAD0: 6E A7 F8 31 8A C3 14 6D A7 FE 31 88 C3 1A 6D A4
+
+0AAE0: FF 36 89 C0 1B 52 A5 FC 34 8D C2 1B 50 A9 FE 37
+
+0AAF0: 8C C5 1A 53 A8 E1 36 8F C5 1C 53 AA E1 38 8F C6
+
+0AB00: 1D 54 AB E2 39 70 C7 1E 7D A6 EF 58 81 CA 33 7C
+
+0AB10: A5 EE 57 80 C9 32 7B A4 EC 57 9E C9 30 7B A2 ED
+
+0AB20: 54 9F C6 31 78 A3 EA 55 9F C4 0D 7A A3 E8 51 9E
+
+0AB30: C7 0C 75 A2 EB 50 99 C6 0E 75 BC EB 52 99 C0 0F
+
+0AB40: 76 BD E4 53 9A C1 08 77 B9 E2 2B 9C C5 0E 77 B8
+
+0AB50: E1 2A 93 C4 0D 76 BF E0 28 93 DA 0D 74 BF E6 29
+
+0AB60: 90 DB 02 75 BC E7 2E 91 DB 00 49 BE E7 2C 95 DA
+
+0AB70: 03 48 B1 E6 2F 94 DD 02 4A B1 F8 2F 96 DD 04 4B
+
+0AB80: B2 F9 20 97 DE 05 4C B3 F5 2E 67 D0 09 42 BB F4
+
+0AB90: 2D 66 DF 08 41 BA F3 2C 64 DF 16 41 B8 F3 2A 65
+
+0ABA0: DC 17 4E B9 F0 2B 62 DD 17 4C 85 F2 2B 60 D9 16
+
+0ABB0: 4F 84 FD 2A 63 D8 11 4E 86 FD 34 63 DA 11 48 87
+
+0ABC0: FE 35 6C DB 12 49 80 FF 31 6A A3 14 4D 86 FF 30
+
+0ABD0: 69 A2 1B 4C 85 FE 37 68 A0 1B 52 85 FC 37 6E A1
+
+0ABE0: 18 53 8A FD 34 6F A6 19 53 88 C1 36 6F A4 1D 52
+
+0ABF0: 8B C0 39 6E A7 1C 55 8A C2 39 70 A7 1E 55 8C C3
+
+
+
+cmd> vtw dump A900 80
+
+0A900: 00 12 01 00 28 9C 04 00 D7 00 08 8C 04 00 32 00
+
+0A910: C3 02 39 00 1D 17 29 8C 04 00 4B 1E 04 00 2A 8C
+
+0A920: 04 00 C7 19 00 00 8A 1C 00 00 62 05 00 00 36 06
+
+0A930: 00 00 8D 00 0C 00 54 05 00 00 0B 00 00 00 02 13
+
+0A940: FE 06 04 00 03 07 04 00 41 54 54 43 68 31 B3 1D
+
+0A950: 0B 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00 C0 27 9A FF 00 00 9A 7F
+
+0A970: 01 00 00 80 00 00 00 00 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 12
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 13
+
+
+
+cmd> vtw dump A940 28
+
+0A940: 85 AA 04 00 8A AA 04 00 41 54 54 43 DB 5F E6 EE
+
+0A950: 0B 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump B370 30
+
+0B370: 01 00 8F 06 00 00 90 06 00 00 75 01 00 00 57 00
+
+0B380: 00 00 78 00 AE 00 03 00 0C 05 01 0C 05 00 00 00
+
+0B390: 01 82 82 00 12 00 00 00 00 00 40 01 C8 00 A0 00
+
+
+
+cmd> mwr 0x40000170 0x52
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 13
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 14
+
+
+
+cmd> vtw dump A940 28
+
+0A940: 13 D1 04 00 18 D1 04 00 41 54 54 43 9B 84 39 20
+
+0A950: 0C 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 14
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x14
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 15
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 15
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 16
+
+
+
+cmd> vtw dump AA00 200
+
+0AA00: 04 01 00 00 00 00 F8 01 5A A3 EC 35 7E C7 10 59
+
+0AA10: A2 EB 34 7D C6 0F 58 A1 EB 32 7D C4 0F 56 A1 E8
+
+0AA20: 33 7A C5 0C 57 9E E9 30 78 C1 0E 57 9C E5 32 7B
+
+0AA30: C0 09 56 9F E4 2D 7A C3 09 50 9F E6 2D 74 C3 0A
+
+0AA40: 51 98 E7 2E 75 BC 0B 52 9E E7 28 71 BA 03 54 9D
+
+0AA50: E6 2F 70 B9 02 4B 9C E5 2F 76 B9 00 4B 92 E5 2C
+
+0AA60: 77 BE 01 48 93 DA 2D 74 BC 05 4A 93 D8 21 76 BF
+
+0AA70: 04 4D 92 DB 20 69 BE 07 4D 94 DB 22 69 B0 07 4E
+
+0AA80: 95 DC 23 6A B1 F8 4F 96 D2 2B 64 BD F6 4F 98 D1
+
+0AA90: 2A 63 BC F5 4E 87 D0 29 63 BA F5 4C 87 DE 29 60
+
+0AAA0: BB F2 4D 84 DF 16 61 B8 F0 49 86 DF 14 6D BA F3
+
+0AAB0: 48 81 DE 17 6C A5 F2 4B 81 D8 17 6E A5 FC 4B 82
+
+0AAC0: D9 10 6F A6 FD 34 83 DA 16 6F A0 F9 32 8B DC 15
+
+0AAD0: 6E A7 F8 31 8A C3 14 6D A7 FE 31 88 C3 1A 6D A4
+
+0AAE0: FF 36 89 C0 1B 52 A5 FC 34 8D C2 1B 50 A9 FE 37
+
+0AAF0: 8C C5 1A 53 A8 E1 36 8F C5 1C 53 AA E1 38 8F C6
+
+0AB00: 1D 54 AB E2 39 70 C7 1E 7D A6 EF 58 81 CA 33 7C
+
+0AB10: A5 EE 57 80 C9 32 7B A4 EC 57 9E C9 30 7B A2 ED
+
+0AB20: 54 9F C6 31 78 A3 EA 55 9F C4 0D 7A A3 E8 51 9E
+
+0AB30: C7 0C 75 A2 EB 50 99 C6 0E 75 BC EB 52 99 C0 0F
+
+0AB40: 76 BD E4 53 9A C1 08 77 B9 E2 2B 9C C5 0E 77 B8
+
+0AB50: E1 2A 93 C4 0D 76 BF E0 28 93 DA 0D 74 BF E6 29
+
+0AB60: 90 DB 02 75 BC E7 2E 91 DB 00 49 BE E7 2C 95 DA
+
+0AB70: 03 48 B1 E6 2F 94 DD 02 4A B1 F8 2F 96 DD 04 4B
+
+0AB80: B2 F9 20 97 DE 05 4C B3 F5 2E 67 D0 09 42 BB F4
+
+0AB90: 2D 66 DF 08 41 BA F3 2C 64 DF 16 41 B8 F3 2A 65
+
+0ABA0: DC 17 4E B9 F0 2B 62 DD 17 4C 85 F2 2B 60 D9 16
+
+0ABB0: 4F 84 FD 2A 63 D8 11 4E 86 FD 34 63 DA 11 48 87
+
+0ABC0: FE 35 6C DB 12 49 80 FF 31 6A A3 14 4D 86 FF 30
+
+0ABD0: 69 A2 1B 4C 85 FE 37 68 A0 1B 52 85 FC 37 6E A1
+
+0ABE0: 18 53 8A FD 34 6F A6 19 53 88 C1 36 6F A4 1D 52
+
+0ABF0: 8B C0 39 6E A7 1C 55 8A C2 39 70 A7 1E 55 8C C3
+
+
+
+cmd> vtw dump A900 80
+
+0A900: 00 16 01 00 C9 65 05 00 36 00 45 56 05 00 39 00
+
+0A910: C2 02 57 00 6C 0B 1E 56 05 00 AE E8 04 00 66 56
+
+0A920: 05 00 DE 1E 00 00 A0 21 00 00 E4 06 00 00 B8 07
+
+0A930: 00 00 8D 00 26 00 F5 13 00 00 24 00 00 00 02 14
+
+0A940: 13 D1 04 00 18 D1 04 00 41 54 54 43 9B 84 39 20
+
+0A950: 0C 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00 C0 27 9A FF 00 00 9A 7F
+
+0A970: 01 00 00 80 00 00 00 00 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 16
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 17
+
+
+
+cmd> vtw dump A940 28
+
+0A940: 2D 74 05 00 31 74 05 00 41 54 54 43 5C 63 DF F0
+
+0A950: 0C 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump B370 30
+
+0B370: 01 00 10 08 00 00 10 08 00 00 73 01 00 00 57 00
+
+0B380: 00 00 78 00 AE 00 03 00 0C 04 01 0C 05 00 00 00
+
+0B390: 01 82 82 00 12 00 00 00 00 00 40 01 C8 00 A0 00
+
+
+
+cmd> mwr 0x40000170 0x52
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 17
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 18
+
+
+
+cmd> vtw dump A940 28
+
+0A940: F6 9A 05 00 FC 9A 05 00 41 54 54 43 C7 9D 80 22
+
+0A950: 0D 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 18
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x15
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 19
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 19
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1A
+
+
+
+cmd> vtw dump A900 80
+
+0A900: 00 1A 01 00 87 28 06 00 78 00 79 1F 06 00 89 00
+
+0A910: 37 02 94 00 2A 05 07 1F 06 00 F5 B1 05 00 7F 1F
+
+0A920: 06 00 ED 23 00 00 24 26 00 00 65 08 00 00 09 09
+
+0A930: 00 00 71 00 64 00 24 2C 00 00 64 00 00 00 00 15
+
+0A940: F6 9A 05 00 FC 9A 05 00 41 54 54 43 C7 9D 80 22
+
+0A950: 0D 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00 C0 27 9A FF 00 00 9A 7F
+
+0A970: 01 00 00 80 00 00 00 00 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1A
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1B
+
+
+
+cmd> vtw dump A940 28
+
+0A940: E6 36 06 00 EE 36 06 00 41 54 54 43 3E 0A FD E9
+
+0A950: 0D 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump B370 30
+
+0B370: 01 00 56 09 00 00 59 09 00 00 3C 01 00 00 55 00
+
+0B380: 00 00 78 00 AE 00 03 00 0B 04 01 0B 05 00 00 00
+
+0B390: 01 82 82 00 12 00 00 00 00 00 40 01 C8 00 A0 00
+
+
+
+cmd> vtw speed div 5
+
+vtw: speed set
+
+
+
+cmd> mwr 0x40000170 0x52
+
+ok
+
+
+
+cmd> vtw status
+
+vtw: idle, session=ONE//e, host-intent=off, machine=unknown
+
+vtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0
+
+vtw: reset seen=0 source=none rstn=$0
+
+vtw: slowdown mask=$008 cycles=256
+
+vtw: speed=26 MHz div=5 c074=0 ignore=0 d2accel=on owned=1 run=1 pc=8235
+
+vtw: core=2168498160 bus=8788649 posted=13451298 invalid=0
+
+vtw: perf fabric=2653334308 steps=2168511995 classic=2619524033
+
+vtw: cache hits=1479218762 misses=414091109 invalidations=1898139
+
+vtw: wait disk=0 video=1851172220
+
+vtw: qfill=0 qhw=508 qdrop=0 sessions=1
+
+vtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00
+
+vtw: c000 reads=65535 bit7=9 last=$52 prev=park $FFFF R drive=0
+
+vtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=011 altzp=0 rd/wt=00 80st=0 text=1
+
+vtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)
+
+vtw: cxxx trail C410 C410 C41F C410 C410 C41F C410 C410 (new->old)
+
+vtw: last bus write $C004 = $00, irqs seen=127 (sat)
+
+vtw: persisted setting = OFF
+
+
+
+cmd> mwr 0x400001C4 0xA972
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x80
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1B
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x5
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1B
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1B
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1B
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1B
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1B
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1B
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1B
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1B
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1B
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1B
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1B
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1B
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1B
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1B
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1B
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1C
+
+
+
+cmd> vtw dump A940 34
+
+0A940: 46 87 06 00 4E 07 07 00 41 54 54 43 24 EC CF 50
+
+0A950: 0E 00 00 00 5F 43 DE 13 41 54 54 43 F6 F1 93 F4
+
+0A960: 0E 00 00 00 5F 43 DE 13 C0 27 4B 87 06 00 4B 07
+
+0A970: 07 00 00 80
+
+
+
+cmd> mwr 0x400001C4 0xA968
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0xC0
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x27
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1C
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x20
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1D
+
+
+
+cmd> mwr 0x40000170 0x52
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1D
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1E
+
+
+
+cmd> vtw dump A940 28
+
+0A940: D2 34 07 00 D7 34 07 00 41 54 54 43 54 E9 AA 32
+
+0A950: 0F 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1E
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x10
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1F
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 1F
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 20
+
+
+
+cmd> vtw dump A900 80
+
+0A900: 00 20 01 00 E8 C2 07 00 17 00 E0 B9 07 00 28 00
+
+0A910: C3 02 5B 00 BD 03 D6 B9 07 00 28 4C 07 00 EC B9
+
+0A920: 07 00 DC 2C 00 00 9F 2F 00 00 F6 09 00 00 8F 0A
+
+0A930: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 10
+
+0A940: D2 34 07 00 D7 34 07 00 41 54 54 43 54 E9 AA 32
+
+0A950: 0F 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00 C0 27 4B 87 06 00 4B 07
+
+0A970: 07 00 00 80 00 00 00 00 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 20
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 21
+
+
+
+cmd> vtw dump A940 28
+
+0A940: 5D D1 07 00 62 D1 07 00 41 54 54 43 9D FA EE FA
+
+0A950: 0F 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump B370 30
+
+0B370: 01 00 C2 0A 00 00 2E 0B 00 00 64 01 00 00 56 00
+
+0B380: 00 00 78 00 AE 00 03 00 09 05 01 0B 05 00 00 00
+
+0B390: 01 82 82 00 12 00 00 00 00 00 40 01 C8 00 A0 00
+
+
+
+cmd> mwr 0x40000170 0x52
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 21
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 22
+
+
+
+cmd> vtw dump A940 28
+
+0A940: FB F7 07 00 FF F7 07 00 41 54 54 43 7F F1 53 2C
+
+0A950: 10 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 22
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x11
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 23
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 23
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 24
+
+
+
+cmd> vtw dump AA00 80
+
+0AA00: 04 01 00 00 00 00 78 00 5A A3 EC 35 7E C7 10 59
+
+0AA10: A2 EB 34 7D C6 0F 58 A1 EB 32 7D C4 0F 56 A1 E8
+
+0AA20: 33 7A C5 0C 57 9E E9 30 78 C1 0E 57 9C E5 32 7B
+
+0AA30: C0 09 56 9F E4 2D 7A C3 09 50 9F E6 2D 74 C3 0A
+
+0AA40: 51 98 E7 2E 75 BC 0B 52 9E E7 28 71 BA 03 54 9D
+
+0AA50: E6 2F 70 B9 02 4B 9C E5 2F 76 B9 00 4B 92 E5 2C
+
+0AA60: 77 BE 01 48 93 DA 2D 74 BC 05 4A 93 D8 21 76 BF
+
+0AA70: 04 4D 92 DB 20 69 BE 07 4D 94 DB 22 69 B0 07 4E
+
+
+
+cmd> vtw dump A900 80
+
+0A900: 00 24 01 00 2D 8D 08 00 D2 00 3A 7D 08 00 2D 00
+
+0A910: C4 02 5B 00 8B 03 F3 7C 08 00 5F 0F 08 00 42 7D
+
+0A920: 08 00 C5 31 00 00 89 34 00 00 07 0B 00 00 97 0B
+
+0A930: 00 00 8B 00 08 00 3E 03 00 00 05 00 00 80 00 11
+
+0A940: FB F7 07 00 FF F7 07 00 41 54 54 43 7F F1 53 2C
+
+0A950: 10 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00 C0 27 4B 87 06 00 4B 07
+
+0A970: 07 00 00 80 00 00 00 00 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 24
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 25
+
+
+
+cmd> vtw dump A940 28
+
+0A940: 47 9B 08 00 4E 9B 08 00 41 54 54 43 5B AD 3F FD
+
+0A950: 10 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump B370 30
+
+0B370: 01 00 D3 0B 00 00 A8 0C 00 00 6E 01 00 00 57 00
+
+0B380: 00 00 78 00 AE 00 03 00 0C 04 01 0C 05 00 00 00
+
+0B390: 01 82 82 00 12 00 00 00 00 00 40 01 C8 00 A0 00
+
+
+
+cmd> mwr 0x40000170 0x52
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 25
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 26
+
+
+
+cmd> vtw dump A940 28
+
+0A940: 0A C2 08 00 10 C2 08 00 41 54 54 43 B0 B2 D4 2E
+
+0A950: 11 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 26
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x12
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 27
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 27
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 28
+
+
+
+cmd> vtw dump AA00 1FF
+
+0AA00: 04 01 00 00 00 00 F7 01 5A A3 EC 35 7E C7 10 59
+
+0AA10: A2 EB 34 7D C6 0F 58 A1 EB 32 7D C4 0F 56 A1 E8
+
+0AA20: 33 7A C5 0C 57 9E E9 30 78 C1 0E 57 9C E5 32 7B
+
+0AA30: C0 09 56 9F E4 2D 7A C3 09 50 9F E6 2D 74 C3 0A
+
+0AA40: 51 98 E7 2E 75 BC 0B 52 9E E7 28 71 BA 03 54 9D
+
+0AA50: E6 2F 70 B9 02 4B 9C E5 2F 76 B9 00 4B 92 E5 2C
+
+0AA60: 77 BE 01 48 93 DA 2D 74 BC 05 4A 93 D8 21 76 BF
+
+0AA70: 04 4D 92 DB 20 69 BE 07 4D 94 DB 22 69 B0 07 4E
+
+0AA80: 95 DC 23 6A B1 F8 4F 96 D2 2B 64 BD F6 4F 98 D1
+
+0AA90: 2A 63 BC F5 4E 87 D0 29 63 BA F5 4C 87 DE 29 60
+
+0AAA0: BB F2 4D 84 DF 16 61 B8 F0 49 86 DF 14 6D BA F3
+
+0AAB0: 48 81 DE 17 6C A5 F2 4B 81 D8 17 6E A5 FC 4B 82
+
+0AAC0: D9 10 6F A6 FD 34 83 DA 16 6F A0 F9 32 8B DC 15
+
+0AAD0: 6E A7 F8 31 8A C3 14 6D A7 FE 31 88 C3 1A 6D A4
+
+0AAE0: FF 36 89 C0 1B 52 A5 FC 34 8D C2 1B 50 A9 FE 37
+
+0AAF0: 8C C5 1A 53 A8 E1 36 8F C5 1C 53 AA E1 38 8F C6
+
+0AB00: 1D 54 AB E2 39 70 C7 1E 7D A6 EF 58 81 CA 33 7C
+
+0AB10: A5 EE 57 80 C9 32 7B A4 EC 57 9E C9 30 7B A2 ED
+
+0AB20: 54 9F C6 31 78 A3 EA 55 9F C4 0D 7A A3 E8 51 9E
+
+0AB30: C7 0C 75 A2 EB 50 99 C6 0E 75 BC EB 52 99 C0 0F
+
+0AB40: 76 BD E4 53 9A C1 08 77 B9 E2 2B 9C C5 0E 77 B8
+
+0AB50: E1 2A 93 C4 0D 76 BF E0 28 93 DA 0D 74 BF E6 29
+
+0AB60: 90 DB 02 75 BC E7 2E 91 DB 00 49 BE E7 2C 95 DA
+
+0AB70: 03 48 B1 E6 2F 94 DD 02 4A B1 F8 2F 96 DD 04 4B
+
+0AB80: B2 F9 20 97 DE 05 4C B3 F5 2E 67 D0 09 42 BB F4
+
+0AB90: 2D 66 DF 08 41 BA F3 2C 64 DF 16 41 B8 F3 2A 65
+
+0ABA0: DC 17 4E B9 F0 2B 62 DD 17 4C 85 F2 2B 60 D9 16
+
+0ABB0: 4F 84 FD 2A 63 D8 11 4E 86 FD 34 63 DA 11 48 87
+
+0ABC0: FE 35 6C DB 12 49 80 FF 31 6A A3 14 4D 86 FF 30
+
+0ABD0: 69 A2 1B 4C 85 FE 37 68 A0 1B 52 85 FC 37 6E A1
+
+0ABE0: 18 53 8A FD 34 6F A6 19 53 88 C1 36 6F A4 1D 52
+
+0ABF0: 8B C0 39 6E A7 1C 55 8A C2 39 70 A7 1E 55 8C
+
+
+
+cmd> vtw dump A900 80
+
+0A900: 00 28 01 00 BC 56 09 00 43 00 0D 47 09 00 34 00
+
+0A910: C2 02 5E 00 65 03 E2 46 09 00 83 D9 08 00 34 47
+
+0A920: 09 00 DA 36 00 00 9C 39 00 00 18 0C 00 00 A2 0C
+
+0A930: 00 00 87 00 0E 00 27 06 00 00 0A 00 00 FF 01 12
+
+0A940: 0A C2 08 00 10 C2 08 00 41 54 54 43 B0 B2 D4 2E
+
+0A950: 11 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00 C0 27 4B 87 06 00 4B 07
+
+0A970: 07 00 00 80 00 00 00 00 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 28
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 29
+
+
+
+cmd> vtw dump A940 28
+
+0A940: 26 65 09 00 29 65 09 00 41 54 54 43 77 3F 7C FF
+
+0A950: 11 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump B370 30
+
+0B370: 01 00 DD 0C 00 00 22 0E 00 00 6D 01 00 00 57 00
+
+0B380: 00 00 78 00 AE 00 03 00 0C 04 01 0C 05 00 00 00
+
+0B390: 01 82 82 00 12 00 00 00 00 00 40 01 C8 00 A0 00
+
+
+
+cmd> mwr 0x40000170 0x52
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 29
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 2A
+
+
+
+cmd> vtw dump A940 28
+
+0A940: BF 8B 09 00 C6 8B 09 00 41 54 54 43 0C 3E E1 30
+
+0A950: 12 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 2A
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x13
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 2B
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 2B
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 2C
+
+
+
+cmd> vtw dump AA00 200
+
+0AA00: 04 01 00 00 00 00 F8 01 5A A3 EC 35 7E C7 10 59
+
+0AA10: A2 EB 34 7D C6 0F 58 A1 EB 32 7D C4 0F 56 A1 E8
+
+0AA20: 33 7A C5 0C 57 9E E9 30 78 C1 0E 57 9C E5 32 7B
+
+0AA30: C0 09 56 9F E4 2D 7A C3 09 50 9F E6 2D 74 C3 0A
+
+0AA40: 51 98 E7 2E 75 BC 0B 52 9E E7 28 71 BA 03 54 9D
+
+0AA50: E6 2F 70 B9 02 4B 9C E5 2F 76 B9 00 4B 92 E5 2C
+
+0AA60: 77 BE 01 48 93 DA 2D 74 BC 05 4A 93 D8 21 76 BF
+
+0AA70: 04 4D 92 DB 20 69 BE 07 4D 94 DB 22 69 B0 07 4E
+
+0AA80: 95 DC 23 6A B1 F8 4F 96 D2 2B 64 BD F6 4F 98 D1
+
+0AA90: 2A 63 BC F5 4E 87 D0 29 63 BA F5 4C 87 DE 29 60
+
+0AAA0: BB F2 4D 84 DF 16 61 B8 F0 49 86 DF 14 6D BA F3
+
+0AAB0: 48 81 DE 17 6C A5 F2 4B 81 D8 17 6E A5 FC 4B 82
+
+0AAC0: D9 10 6F A6 FD 34 83 DA 16 6F A0 F9 32 8B DC 15
+
+0AAD0: 6E A7 F8 31 8A C3 14 6D A7 FE 31 88 C3 1A 6D A4
+
+0AAE0: FF 36 89 C0 1B 52 A5 FC 34 8D C2 1B 50 A9 FE 37
+
+0AAF0: 8C C5 1A 53 A8 E1 36 8F C5 1C 53 AA E1 38 8F C6
+
+0AB00: 1D 54 AB E2 39 70 C7 1E 7D A6 EF 58 81 CA 33 7C
+
+0AB10: A5 EE 57 80 C9 32 7B A4 EC 57 9E C9 30 7B A2 ED
+
+0AB20: 54 9F C6 31 78 A3 EA 55 9F C4 0D 7A A3 E8 51 9E
+
+0AB30: C7 0C 75 A2 EB 50 99 C6 0E 75 BC EB 52 99 C0 0F
+
+0AB40: 76 BD E4 53 9A C1 08 77 B9 E2 2B 9C C5 0E 77 B8
+
+0AB50: E1 2A 93 C4 0D 76 BF E0 28 93 DA 0D 74 BF E6 29
+
+0AB60: 90 DB 02 75 BC E7 2E 91 DB 00 49 BE E7 2C 95 DA
+
+0AB70: 03 48 B1 E6 2F 94 DD 02 4A B1 F8 2F 96 DD 04 4B
+
+0AB80: B2 F9 20 97 DE 05 4C B3 F5 2E 67 D0 09 42 BB F4
+
+0AB90: 2D 66 DF 08 41 BA F3 2C 64 DF 16 41 B8 F3 2A 65
+
+0ABA0: DC 17 4E B9 F0 2B 62 DD 17 4C 85 F2 2B 60 D9 16
+
+0ABB0: 4F 84 FD 2A 63 D8 11 4E 86 FD 34 63 DA 11 48 87
+
+0ABC0: FE 35 6C DB 12 49 80 FF 31 6A A3 14 4D 86 FF 30
+
+0ABD0: 69 A2 1B 4C 85 FE 37 68 A0 1B 52 85 FC 37 6E A1
+
+0ABE0: 18 53 8A FD 34 6F A6 19 53 88 C1 36 6F A4 1D 52
+
+0ABF0: 8B C0 39 6E A7 1C 55 8A C2 39 70 A7 1E 55 8C C3
+
+
+
+cmd> vtw dump A900 80
+
+0A900: 00 2C 01 00 70 20 0A 00 8F 00 EA 10 0A 00 34 00
+
+0A910: C3 02 5D 00 65 03 AD 10 0A 00 38 A3 09 00 FC 10
+
+0A920: 0A 00 ED 3B 00 00 B0 3E 00 00 23 0D 00 00 AD 0D
+
+0A930: 00 00 89 00 10 00 55 06 00 00 0B 00 00 00 02 13
+
+0A940: BF 8B 09 00 C6 8B 09 00 41 54 54 43 0C 3E E1 30
+
+0A950: 12 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00 C0 27 4B 87 06 00 4B 07
+
+0A970: 07 00 00 80 00 00 00 00 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 2C
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 2D
+
+
+
+cmd> vtw dump A940 28
+
+0A940: DD 2E 0A 00 E5 2E 0A 00 41 54 54 43 42 DE 8B 01
+
+0A950: 13 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump B370 30
+
+0B370: 01 00 E8 0D 00 00 9E 0F 00 00 6E 01 00 00 57 00
+
+0B380: 00 00 78 00 AE 00 03 00 0C 04 01 0C 05 00 00 00
+
+0B390: 01 82 82 00 12 00 00 00 00 00 40 01 C8 00 A0 00
+
+
+
+cmd> mwr 0x40000170 0x52
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 2D
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 2E
+
+
+
+cmd> vtw dump A940 28
+
+0A940: 49 55 0A 00 4F 55 0A 00 41 54 54 43 0E B9 B3 32
+
+0A950: 13 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 2E
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x14
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 2F
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 2F
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 30
+
+
+
+cmd> vtw dump AA00 200
+
+0AA00: 04 01 00 00 00 00 F8 01 5A A3 EC 35 7E C7 10 59
+
+0AA10: A2 EB 34 7D C6 0F 58 A1 EB 32 7D C4 0F 56 A1 E8
+
+0AA20: 33 7A C5 0C 57 9E E9 30 78 C1 0E 57 9C E5 32 7B
+
+0AA30: C0 09 56 9F E4 2D 7A C3 09 50 9F E6 2D 74 C3 0A
+
+0AA40: 51 98 E7 2E 75 BC 0B 52 9E E7 28 71 BA 03 54 9D
+
+0AA50: E6 2F 70 B9 02 4B 9C E5 2F 76 B9 00 4B 92 E5 2C
+
+0AA60: 77 BE 01 48 93 DA 2D 74 BC 05 4A 93 D8 21 76 BF
+
+0AA70: 04 4D 92 DB 20 69 BE 07 4D 94 DB 22 69 B0 07 4E
+
+0AA80: 95 DC 23 6A B1 F8 4F 96 D2 2B 64 BD F6 4F 98 D1
+
+0AA90: 2A 63 BC F5 4E 87 D0 29 63 BA F5 4C 87 DE 29 60
+
+0AAA0: BB F2 4D 84 DF 16 61 B8 F0 49 86 DF 14 6D BA F3
+
+0AAB0: 48 81 DE 17 6C A5 F2 4B 81 D8 17 6E A5 FC 4B 82
+
+0AAC0: D9 10 6F A6 FD 34 83 DA 16 6F A0 F9 32 8B DC 15
+
+0AAD0: 6E A7 F8 31 8A C3 14 6D A7 FE 31 88 C3 1A 6D A4
+
+0AAE0: FF 36 89 C0 1B 52 A5 FC 34 8D C2 1B 50 A9 FE 37
+
+0AAF0: 8C C5 1A 53 A8 E1 36 8F C5 1C 53 AA E1 38 8F C6
+
+0AB00: 1D 54 AB E2 39 70 C7 1E 7D A6 EF 58 81 CA 33 7C
+
+0AB10: A5 EE 57 80 C9 32 7B A4 EC 57 9E C9 30 7B A2 ED
+
+0AB20: 54 9F C6 31 78 A3 EA 55 9F C4 0D 7A A3 E8 51 9E
+
+0AB30: C7 0C 75 A2 EB 50 99 C6 0E 75 BC EB 52 99 C0 0F
+
+0AB40: 76 BD E4 53 9A C1 08 77 B9 E2 2B 9C C5 0E 77 B8
+
+0AB50: E1 2A 93 C4 0D 76 BF E0 28 93 DA 0D 74 BF E6 29
+
+0AB60: 90 DB 02 75 BC E7 2E 91 DB 00 49 BE E7 2C 95 DA
+
+0AB70: 03 48 B1 E6 2F 94 DD 02 4A B1 F8 2F 96 DD 04 4B
+
+0AB80: B2 F9 20 97 DE 05 4C B3 F5 2E 67 D0 09 42 BB F4
+
+0AB90: 2D 66 DF 08 41 BA F3 2C 64 DF 16 41 B8 F3 2A 65
+
+0ABA0: DC 17 4E B9 F0 2B 62 DD 17 4C 85 F2 2B 60 D9 16
+
+0ABB0: 4F 84 FD 2A 63 D8 11 4E 86 FD 34 63 DA 11 48 87
+
+0ABC0: FE 35 6C DB 12 49 80 FF 31 6A A3 14 4D 86 FF 30
+
+0ABD0: 69 A2 1B 4C 85 FE 37 68 A0 1B 52 85 FC 37 6E A1
+
+0ABE0: 18 53 8A FD 34 6F A6 19 53 88 C1 36 6F A4 1D 52
+
+0ABF0: 8B C0 39 6E A7 1C 55 8A C2 39 70 A7 1E 55 8C C3
+
+
+
+cmd> vtw dump A900 80
+
+0A900: 00 30 01 00 45 EA 0A 00 BA 00 96 DA 0A 00 50 00
+
+0A910: C1 02 84 00 C5 02 4E DA 0A 00 BB 6C 0A 00 9A DA
+
+0A920: 0A 00 FE 40 00 00 BF 43 00 00 2D 0E 00 00 9C 0E
+
+0A930: 00 00 81 00 2B 00 5C 13 00 00 25 00 00 00 02 14
+
+0A940: 49 55 0A 00 4F 55 0A 00 41 54 54 43 0E B9 B3 32
+
+0A950: 13 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00 C0 27 4B 87 06 00 4B 07
+
+0A970: 07 00 00 80 00 00 00 00 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 30
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 31
+
+
+
+cmd> vtw dump A940 28
+
+0A940: BA F8 0A 00 BE F8 0A 00 41 54 54 43 2B 0E C9 03
+
+0A950: 14 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump B370 30
+
+0B370: 01 00 D8 0E 00 00 19 11 00 00 6E 01 00 00 57 00
+
+0B380: 00 00 78 00 AE 00 03 00 0C 04 01 0C 05 00 00 00
+
+0B390: 01 82 82 00 12 00 00 00 00 00 40 01 C8 00 A0 00
+
+
+
+cmd> mwr 0x40000170 0x52
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 31
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 32
+
+
+
+cmd> vtw dump A940 28
+
+0A940: AD 1F 0B 00 B2 1F 0B 00 41 54 54 43 68 2E 9E 35
+
+0A950: 14 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 32
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x15
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 33
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 33
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x4
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 34
+
+
+
+cmd> vtw dump A900 80
+
+0A900: 00 34 01 00 69 AD 0B 00 96 00 80 A4 0B 00 8B 00
+
+0A910: 34 02 C9 00 14 02 8C A4 0B 00 F3 36 0B 00 9F A4
+
+0A920: 0B 00 11 46 00 00 45 48 00 00 1D 0F 00 00 70 0F
+
+0A930: 00 00 68 00 64 00 A0 28 00 00 64 00 00 00 00 15
+
+0A940: AD 1F 0B 00 B2 1F 0B 00 41 54 54 43 68 2E 9E 35
+
+0A950: 14 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00 C0 27 4B 87 06 00 4B 07
+
+0A970: 07 00 00 80 00 00 00 00 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 34
+
+
+
+cmd> mwr 0x400001C4 0xA900
+
+ok
+
+
+
+cmd> mwr 0x400001C8 0x3
+
+ok
+
+
+
+cmd> vtw dump A901 1
+
+0A901: 35
+
+
+
+cmd> vtw dump A940 28
+
+0A940: E2 BB 0B 00 E8 BB 0B 00 41 54 54 43 6F AE 74 FD
+
+0A950: 14 00 00 00 5F 43 DE 13 00 00 00 00 00 00 00 00
+
+0A960: 00 00 00 00 00 00 00 00
+
+
+
+cmd> vtw dump B370 30
+
+0B370: 01 00 A4 0F 00 00 5C 12 00 00 37 01 00 00 55 00
+
+0B380: 00 00 78 00 AE 00 03 00 0B 04 01 0B 05 00 00 00
+
+0B390: 01 82 82 00 12 00 00 00 00 00 40 01 C8 00 A0 00
+
+
+
+cmd> ftp on
+
+ftp: on (anonymous read/write, passive)
+
+smartport: RAM32 32MB ram disk mounted
+
+smartport: RAM32 32MB ram disk mounted
+
+screenshot: SmartPort media refresh failed rc=-4
+
+smartport: RAM32 32MB ram disk mounted
+
+screenshot: SmartPort media refresh failed rc=-5
+
+smartport: RAM32 32MB ram disk mounted
+
+screenshot: SmartPort media refresh failed rc=-5
+
+
+
+cmd> ftp off
+
+ftp sd: media restore disk2=-12 smartport=-12
+
+ftp: off
+
+
+
+cm�C�8���NG,�>YO=9���Z��G[��]������-�4�>�K
+62:�|���������������CC��
+��
+^Cy������*K�=���P�IR>�-Y��K���
+
+==============================
+
+text_ui_test main start
+
+Firmware image: Firmware F1.3.3b3
+
+APPLETINI-MULTIBOOT-V1
+
+Debug UART: UART0
+
+Control UART: UART1 + UART0
+
+==============================
+
+core 1: cold wake issued
+
+boot menu VBL ROM patch: NTSC default
+
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+
+boot menu: register init complete
+
+[boottime] cpu0 card_control_init: 2 us
+
+onee: restore armed from saved ON status=0xE10098C8
+
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+
+[boottime] cpu0 Ethernet config write: 13 us
+
+[boottime] cpu0 config load and bind: 2208230671 us
+
+[bootdbg] after config bind slot_mask raw=0x00000080 norm=0x00000080 request=0x00000080 effective=0x00000080 slot6=0
+
+[bootdbg] after config bind boot_regs status=0x00000001 timeout=0x17C841C0 handoff=0x00000001 mode=SMARTPORT slot7=BOOTMENU pending=0
+
+[bootdbg] after config bind apple_status=0x0C disk2=0 smartport=1 eligible=1 active=0 timeout_or_closed=0
+
+gic_init OK
+
+apple_cycle_egress_init: ring 0x3F200000+1MB, producer 0x3F000000, shadows 0x3F100000/0x3F110000
+
+apple_cycle_egress_init OK
+
+RTC boot read: rc=0 valid=1 status=0x00 2026-10-28 11:43:10
+
+USB mass-storage service: raw SD card on USB0
+
+SD backend: block0=00 00 00 00 sig=AA55 p0 type=07 lba=32768 count=122134528
+
+SD backend: p0 boot=EB 76 90 45 58 46 41 54 sig=AA55
+
+SD backend: p0 bpb bps=0 spc=0 rsv=0 fats=0 spf=0 root=0 fsinfo=0 backup=0 flags=0000 ver=0000
+
+SD backend: exporting partition 0 base=32768 blocks=122134528 MB=59636
+
+SD backend: blocks=122167296 (0x07482000) MB=59652
+
+Storage capacity: blocks=122134528 (0x0747A000) MB=59636
+
+USB0 SD remote mount is available from the USB tab.
+
+USB0 mass-storage device configured (attach deferred)
+
+apple_cycle_renderer_init: 3-slot Apple FB ring at 0x3F300000+, legacy 616x224 / VidHD SHR 640x400 BGRA32
+
+psram cal: pattern write FAILED
+
+Applicard: embedded boot ROM ready
+
+AD8088: clean-room monitor + 640K Plus RAM ready (8088 core idle)
+
+vtw: virtual TransWarp service ready
+
+
+
+Appletini control UART
+
+UI keys:
+
+  W/S=up/down  A/D=left/right  E=OK  T=toggle
+
+  L=scanlines  M=menu  Tab/Space/Esc and terminal arrows work
+
+  : or ; starts a command; ENTER runs it; ? prints this help
+
+General:
+
+  help | status | temp | selfupdate | reboot | reset
+
+  nav <up|down|left|right|e|select|action|back|home|toggle|scanlines|tab|shift-tab|pgup|pgdn|space|esc|menu>
+
+  machine [auto|force <unknown|iiplus|iie|iigs>]
+
+Video and audio:
+
+  vsync <on|off|toggle>
+
+  scanlines [status|off|light|medium|strong|toggle]
+
+  textmono [status] | textmono <black|white|amber|green> <black|white|amber|green>
+
+  mono [status|off|black|white|amber|green]
+
+  audio <status|on|off>
+
+  audio mute [on|off|toggle] | audio tone <1..20000>
+
+  audio amp <0xHEX|DEC>
+
+  comp stats | comp uncap [on|off]
+
+  shadow [main|aux|a2li]
+
+Storage and USB:
+
+  sd [status|reset] | sd dumpblk <block> [count]
+
+  disk2 status | disk2 verify | disk2 underruns
+
+  disk2 scan [d1|d2] [all] | disk2 wozscan [d1|d2] [all]
+
+  disk2 wozwrite <d1|d2> <on|off|status>
+
+  usb [status|resetstats] | usb1 [status|start|stop]
+
+  sdd [status|on|off]
+
+  ftp [status|on|off]
+
+Cards and acceleration:
+
+  z80 [status|on|off|reset]
+
+  z80 budget <tstates> | z80 wall <us> | z80 dump <hex-addr> [hex-len]
+
+  8088 [status|dump <hex-addr> [hex-len]|trace on|off|paddle]
+
+  vtw [status|on|off] | vtw speed <full|turbo|1mhz|div <2-255>>
+
+  vtw dump <hex-phys> [hex-len]
+
+  ss [on|off|force <on|off>|dump]
+
+Bus diagnostics:
+
+  bustail [count [back]] | bustail on | bustail save
+
+  bustail find <addr16> | bustail entry
+
+  busdbg [clear] | irqdbg | sswatch [on|off]
+
+  bankprobe | spverify
+
+  mrd <aligned-addr> [count] | mwr <aligned-addr> <value>
+
+DMA diagnostics:
+
+  dma hold <on|off> | dma status | dma blocks | dma tail | dma reset
+
+  dma dump <mcaddr24> [count<=56] | dma peek <addr> [count]
+
+  dma probe [addr] [pattern] [count] | dma write <addr> [verify]
+
+  dma trace [status|off|clear]
+
+  dma trace arm [addr|release|resume [addr]]
+
+  dma trace dump [start] [count]
+
+RTC and raw PSRAM diagnostics:
+
+  rtc get | rtc set YYYY-MM-DD HH:MM:SS
+
+  pid | pqpi | pqpix | pres | ptr
+
+  pqr <hex-addr> | pqw <hex-addr> <hex-hi> <hex-lo>
+
+  psr <hex-addr> | psw <hex-addr> <hex-hi> <hex-lo>
+
+  pd <hex-delay> | ps <hex-addr>
+
+smartport: RAM32 32MB ram disk mounted
+
+SmartPort service: mounted 0:/_software/Appletini Only/libtini/starfall.po
+
+[usb1] CherryUSB HID service init (stopped)
+
+[usb1] CherryUSB host start
+
+[usb1] event bus=0 hub=0 port=0 intf=255 ev=12
+
+[I/USB] EHCI HCIVERSION:0x0100
+
+[I/USB] EHCI HCSPARAMS:0x010011
+
+[I/USB] EHCI HCCPARAMS:0x0006
+
+[I/USB] EHCI ppc:1, n_ports:1, n_cc:0, n_pcc:0
+
+[I/USB] EHCI uses tt for ls/fs device
+
+[usb1] ULPI 0424:0004 host VBUS valid func=41 iface=10 otg=66
+
+usb1 start: ok
+
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+
+Disk II D1: DSK image selected
+
+machine: aux provide OFF
+
+machine: ramworks OFF
+
+machine: mode -> unknown
+
+machine: effective slot mask 0x00000080 host bus master blocked
+
+[bootdbg] after runtime apply slot_mask raw=0x00000080 norm=0x00000080 request=0x00000096 effective=0x00000080 slot6=0
+
+[bootdbg] after runtime apply boot_regs status=0x00000001 timeout=0x17C841C0 handoff=0x00000001 mode=SMARTPORT slot7=BOOTMENU pending=0
+
+[bootdbg] after runtime apply apple_status=0x0C disk2=0 smartport=1 eligible=1 active=0 timeout_or_closed=0
+
+loaded custom bezel 1920x1080 from 0:/bezels/bezel_blue_phosphor.png
+
+smartport: RAM32 32MB ram disk mounted
+
+SmartPort service: media refreshed after startup assets
+
+Updater meta boot: B2.0.6
+
+Updater local firmware: Firmware F1.3.3b3
+
+compositor: FB_BASE_ADDR_REG round-trip: wrote 0x3E000000, read 0x3E000000 [OK]
+
+compositor_init: 3-slot output FB ring at 0x3E000000/0x3E400000/0x3E800000, 1920x1080 RGB565
+
+compositor: Apple blit = NEON (vld1q/vzipq burst reads)
+
+Output resolution: 1920x1080
+
+usb1: settling during boot prompt
+
+[bootdbg] pre apple release slot_mask raw=0x00000080 norm=0x00000080 request=0x00000096 effective=0x00000080 slot6=0
+
+[bootdbg] pre apple release boot_regs status=0x00000001 timeout=0xFFFFFFFF handoff=0x00000001 mode=SMARTPORT slot7=BOOTMENU pending=0
+
+[bootdbg] pre apple release apple_status=0x0C disk2=0 smartport=1 eligible=1 active=0 timeout_or_closed=0
+
+boot menu VBL ROM patch: NTSC default
+
+[boottime] cpu0 deferred Disk II sound publish: 1810 us
+
+onee: restore raised request status=0xE10098C8
+
+[usb1] event bus=0 hub=1 port=1 intf=255 ev=3
+
+[usb1] event bus=0 hub=1 port=1 intf=255 ev=2
+
+[I/usbh_hub] New high-speed device on Bus 0, Hub 1, Port 1 connected
+
+[I/usbh_core] New device found,idVendor:2109,idProduct:2822,bcdDevice:9013
+
+[I/usbh_core] The device has 1 bNumConfigurations
+
+[I/usbh_core] The device has 1 interfaces
+
+[I/usbh_core] Enumeration success, start loading class driver
+
+[usb1] event bus=0 hub=1 port=1 intf=255 ev=5
+
+[I/usbh_core] Loading hub class driver on interface 0
+
+[I/usbh_hub] Ep=81 Attr=03 Mps=1 Interval=12 Mult=00
+
+[I/usbh_hub] Register HUB Class:/dev/hub2
+
+[usb1] event bus=0 hub=1 port=1 intf=0 ev=10
+
+SD media attached: reloading settings and media
+
+smartport: RAM32 32MB ram disk mounted
+
+SD media: SmartPort mounted 0:/_software/Appletini Only/libtini/starfall.po
+
+
+
+cmd> status
+
+---- card status ----
+
+ui: frames=0 keys=0
+
+boot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0
+
+video: vsync=on scanlines=Medium
+
+text mono: fg=black bg=black
+
+display mono: off
+
+apple fb: slot=0 mode=legacy target=50Hz apple_fps=0.00 hdmi_fps=0.00 blits=31 comp_pub=32 comp_skip=0 pl_vblanks=32 latched=0x3E400000
+
+updater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'
+
+audio: en=on mute=off tone=1000Hz amp=0x00600000
+
+spdif dbg: clkc=0 q3lvl=0 q3tog=0
+
+rtc: 2026-10-28 11:43:12
+
+temp: +35.06 C
+
+machine: effective slot mask 0x00000096 ONE//e private bus enabled
+
+boot menu VBL ROM patch: PAL
+
+vtw: ONE//e cold ROM loaded, core released
+
+machine: ramworks 8MB ON
+
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+
+[usb1] event bus=0 hub=2 port=1 intf=255 ev=3
+
+[usb1] event bus=0 hub=2 port=1 intf=255 ev=2
+
+[I/usbh_hub] New low-speed device on Bus 0, Hub 2, Port 1 connected
+
+[I/usbh_core] New device found,idVendor:06a3,idProduct:8000,bcdDevice:0120
+
+[I/usbh_core] The device has 1 bNumConfigurations
+
+[I/usbh_core] The device has 3 interfaces
+
+[I/usbh_core] Enumeration success, start loading class driver
+
+[usb1] event bus=0 hub=2 port=1 intf=255 ev=5
+
+[I/usbh_core] Loading hid class driver on interface 0
+
+[I/usbh_hid] Ep=81 Attr=03 Mps=8 Interval=10 Mult=00
+
+[I/usbh_hid] Register HID Class:/dev/input0
+
+[usb1] CherryUSB HID connected slot=0 dev=3 proto=1 subclass=1 parsed=0 mouse=0 joystick=0 ps4=0
+
+[usb1] event bus=0 hub=2 port=1 intf=0 ev=10
+
+[I/usbh_core] Loading hid class driver on interface 1
+
+[I/usbh_hid] Ep=82 Attr=03 Mps=5 Interval=10 Mult=00
+
+[I/usbh_hid] Register HID Class:/dev/input1
+
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+
+[usb1] CherryUSB HID connected slot=1 dev=3 proto=0 subclass=0 parsed=1 mouse=0 joystick=0 ps4=0
+
+[usb1] event bus=0 hub=2 port=1 intf=1 ev=10
+
+[I/usbh_core] Loading hid class driver on interface 2
+
+[I/usbh_hid] Ep=83 Attr=03 Mps=2 Interval=10 Mult=00
+
+[I/usbh_hid] Register HID Class:/dev/input2
+
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+
+[usb1] CherryUSB HID connected slot=2 dev=3 proto=0 subclass=0 parsed=1 mouse=0 joystick=1 ps4=0
+
+[usb1] event bus=0 hub=2 port=1 intf=2 ev=10
+
+[usb1] event bus=0 hub=2 port=2 intf=255 ev=3
+
+[usb1] event bus=0 hub=2 port=2 intf=255 ev=2
+
+[I/usbh_hub] New full-speed device on Bus 0, Hub 2, Port 2 connected
+
+[I/usbh_core] New device found,idVendor:045e,idProduct:028e,bcdDevice:0114
+
+[I/usbh_core] The device has 1 bNumConfigurations
+
+[I/usbh_core] The device has 4 interfaces
+
+[I/usbh_core] Enumeration success, start loading class driver
+
+[usb1] event bus=0 hub=2 port=2 intf=255 ev=5
+
+[I/usbh_core] Loading xbox class driver on interface 0
+
+[I/USB] Ep=81 Attr=03 Mps=32 Interval=04 Mult=00
+
+[I/USB] Ep=01 Attr=03 Mps=32 Interval=08 Mult=00
+
+[I/USB] Register XBOX Class:/dev/xbox0
+
+[usb1] Xbox 360 connected slot=3 class=0 vid=045e pid=028e intf=0
+
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+
+[usb1] event bus=0 hub=2 port=2 intf=0 ev=10
+
+[E/usbh_core] Do not support Class:0xff, Subclass:0x5d, Protocl:0x03 on interface 1
+
+[usb1] event bus=0 hub=2 port=2 intf=1 ev=9
+
+[E/usbh_core] Do not support Class:0xff, Subclass:0x5d, Protocl:0x02 on interface 2
+
+[usb1] event bus=0 hub=2 port=2 intf=2 ev=9
+
+[E/usbh_core] Do not support Class:0xff, Subclass:0xfd, Protocl:0x13 on interface 3
+
+[usb1] event bus=0 hub=2 port=2 intf=3 ev=9
+
+[usb1] event bus=0 hub=2 port=4 intf=255 ev=3
+
+[usb1] event bus=0 hub=2 port=4 intf=255 ev=2
+
+[I/usbh_hub] New low-speed device on Bus 0, Hub 2, Port 4 connected
+
+[I/usbh_core] New device found,idVendor:30fa,idProduct:0400,bcdDevice:0100
+
+[I/usbh_core] The device has 1 bNumConfigurations
+
+[I/usbh_core] The device has 1 interfaces
+
+[I/usbh_core] Enumeration success, start loading class driver
+
+[usb1] event bus=0 hub=2 port=4 intf=255 ev=5
+
+[I/usbh_core] Loading hid class driver on interface 0
+
+[I/usbh_hid] Ep=81 Attr=03 Mps=5 Interval=10 Mult=00
+
+[I/usbh_hid] Register HID Class:/dev/input3
+
+[usb1] CherryUSB HID connected slot=4 dev=5 proto=2 subclass=1 parsed=1 mouse=1 joystick=1 ps4=0
+
+[usb1] CherryUSB mousecard HID dev=5 speed=low hub=2 port=4 if=0 ep=0x00000081
+
+[usb1] event bus=0 hub=2 port=4 intf=0 ev=10
+
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+
+usb1: settled during prompt, 22 events
+
+
+
+cmd> status
+
+---- card status ----
+
+ui: frames=51 keys=0
+
+boot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0
+
+video: vsync=on scanlines=Medium
+
+text mono: fg=black bg=black
+
+display mono: off
+
+apple fb: slot=1 mode=SHR target=50Hz apple_fps=50.59 hdmi_fps=50.59 blits=149 comp_pub=150 comp_skip=0 pl_vblanks=151 latched=0x3E000000
+
+updater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'
+
+audio: en=on mute=off tone=1000Hz amp=0x00600000
+
+spdif dbg: clkc=0 q3lvl=0 q3tog=0
+
+rtc: 2026-10-28 11:43:14
+
+temp: +35.12 C
+
+
+
+cmd> ftp on
+
+ftp: on (anonymous read/write, passive)
+
+
+
+cmd> ftp off
+
+ftp sd: media restore disk2=-12 smartport=0
+
+ftp: off
+
+
+
+cm\C�8���y�NG,�?��MV�rz�-����K
+6r:�_8Yρ�R�ˎK���P�I>�Nz]����OK���
+
+==============================
+
+text_ui_test main start
+
+Firmware image: Firmware F1.3.3b3
+
+APPLETINI-MULTIBOOT-V1
+
+Debug UART: UART0
+
+Control UART: UART1 + UART0
+
+==============================
+
+core 1: cold wake issued
+
+boot menu VBL ROM patch: NTSC default
+
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+
+boot menu: register init complete
+
+[boottime] cpu0 card_control_init: 2 us
+
+onee: restore armed from saved ON status=0xE10098C8
+
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+
+[boottime] cpu0 Ethernet config write: 13 us
+
+[boottime] cpu0 config load and bind: 2208230663 us
+
+[bootdbg] after config bind slot_mask raw=0x00000080 norm=0x00000080 request=0x00000080 effective=0x00000080 slot6=0
+
+[bootdbg] after config bind boot_regs status=0x00000001 timeout=0x17C841C0 handoff=0x00000001 mode=SMARTPORT slot7=BOOTMENU pending=0
+
+[bootdbg] after config bind apple_status=0x0C disk2=0 smartport=1 eligible=1 active=0 timeout_or_closed=0
+
+gic_init OK
+
+apple_cycle_egress_init: ring 0x3F200000+1MB, producer 0x3F000000, shadows 0x3F100000/0x3F110000
+
+apple_cycle_egress_init OK
+
+RTC boot read: rc=0 valid=1 status=0x00 2026-10-28 11:43:50
+
+USB mass-storage service: raw SD card on USB0
+
+SD backend: block0=00 00 00 00 sig=AA55 p0 type=07 lba=32768 count=122134528
+
+SD backend: p0 boot=EB 76 90 45 58 46 41 54 sig=AA55
+
+SD backend: p0 bpb bps=0 spc=0 rsv=0 fats=0 spf=0 root=0 fsinfo=0 backup=0 flags=0000 ver=0000
+
+SD backend: exporting partition 0 base=32768 blocks=122134528 MB=59636
+
+SD backend: blocks=122167296 (0x07482000) MB=59652
+
+Storage capacity: blocks=122134528 (0x0747A000) MB=59636
+
+USB0 SD remote mount is available from the USB tab.
+
+USB0 mass-storage device configured (attach deferred)
+
+apple_cycle_renderer_init: 3-slot Apple FB ring at 0x3F300000+, legacy 616x224 / VidHD SHR 640x400 BGRA32
+
+psram cal: pattern write FAILED
+
+Applicard: embedded boot ROM ready
+
+AD8088: clean-room monitor + 640K Plus RAM ready (8088 core idle)
+
+vtw: virtual TransWarp service ready
+
+
+
+Appletini control UART
+
+UI keys:
+
+  W/S=up/down  A/D=left/right  E=OK  T=toggle
+
+  L=scanlines  M=menu  Tab/Space/Esc and terminal arrows work
+
+  : or ; starts a command; ENTER runs it; ? prints this help
+
+General:
+
+  help | status | temp | selfupdate | reboot | reset
+
+  nav <up|down|left|right|e|select|action|back|home|toggle|scanlines|tab|shift-tab|pgup|pgdn|space|esc|menu>
+
+  machine [auto|force <unknown|iiplus|iie|iigs>]
+
+Video and audio:
+
+  vsync <on|off|toggle>
+
+  scanlines [status|off|light|medium|strong|toggle]
+
+  textmono [status] | textmono <black|white|amber|green> <black|white|amber|green>
+
+  mono [status|off|black|white|amber|green]
+
+  audio <status|on|off>
+
+  audio mute [on|off|toggle] | audio tone <1..20000>
+
+  audio amp <0xHEX|DEC>
+
+  comp stats | comp uncap [on|off]
+
+  shadow [main|aux|a2li]
+
+Storage and USB:
+
+  sd [status|reset] | sd dumpblk <block> [count]
+
+  disk2 status | disk2 verify | disk2 underruns
+
+  disk2 scan [d1|d2] [all] | disk2 wozscan [d1|d2] [all]
+
+  disk2 wozwrite <d1|d2> <on|off|status>
+
+  usb [status|resetstats] | usb1 [status|start|stop]
+
+  sdd [status|on|off]
+
+  ftp [status|on|off]
+
+Cards and acceleration:
+
+  z80 [status|on|off|reset]
+
+  z80 budget <tstates> | z80 wall <us> | z80 dump <hex-addr> [hex-len]
+
+  8088 [status|dump <hex-addr> [hex-len]|trace on|off|paddle]
+
+  vtw [status|on|off] | vtw speed <full|turbo|1mhz|div <2-255>>
+
+  vtw dump <hex-phys> [hex-len]
+
+  ss [on|off|force <on|off>|dump]
+
+Bus diagnostics:
+
+  bustail [count [back]] | bustail on | bustail save
+
+  bustail find <addr16> | bustail entry
+
+  busdbg [clear] | irqdbg | sswatch [on|off]
+
+  bankprobe | spverify
+
+  mrd <aligned-addr> [count] | mwr <aligned-addr> <value>
+
+DMA diagnostics:
+
+  dma hold <on|off> | dma status | dma blocks | dma tail | dma reset
+
+  dma dump <mcaddr24> [count<=56] | dma peek <addr> [count]
+
+  dma probe [addr] [pattern] [count] | dma write <addr> [verify]
+
+  dma trace [status|off|clear]
+
+  dma trace arm [addr|release|resume [addr]]
+
+  dma trace dump [start] [count]
+
+RTC and raw PSRAM diagnostics:
+
+  rtc get | rtc set YYYY-MM-DD HH:MM:SS
+
+  pid | pqpi | pqpix | pres | ptr
+
+  pqr <hex-addr> | pqw <hex-addr> <hex-hi> <hex-lo>
+
+  psr <hex-addr> | psw <hex-addr> <hex-hi> <hex-lo>
+
+  pd <hex-delay> | ps <hex-addr>
+
+smartport: RAM32 32MB ram disk mounted
+
+SmartPort service: mounted 0:/_software/Appletini Only/libtini/starfall.po
+
+[usb1] CherryUSB HID service init (stopped)
+
+[usb1] CherryUSB host start
+
+[usb1] event bus=0 hub=0 port=0 intf=255 ev=12
+
+[I/USB] EHCI HCIVERSION:0x0100
+
+[I/USB] EHCI HCSPARAMS:0x010011
+
+[I/USB] EHCI HCCPARAMS:0x0006
+
+[I/USB] EHCI ppc:1, n_ports:1, n_cc:0, n_pcc:0
+
+[I/USB] EHCI uses tt for ls/fs device
+
+[usb1] ULPI 0424:0004 host VBUS valid func=41 iface=10 otg=66
+
+usb1 start: ok
+
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+
+Disk II D1: DSK image selected
+
+machine: aux provide OFF
+
+machine: ramworks OFF
+
+machine: mode -> unknown
+
+machine: effective slot mask 0x00000080 host bus master blocked
+
+[bootdbg] after runtime apply slot_mask raw=0x00000080 norm=0x00000080 request=0x00000096 effective=0x00000080 slot6=0
+
+[bootdbg] after runtime apply boot_regs status=0x00000001 timeout=0x17C841C0 handoff=0x00000001 mode=SMARTPORT slot7=BOOTMENU pending=0
+
+[bootdbg] after runtime apply apple_status=0x0C disk2=0 smartport=1 eligible=1 active=0 timeout_or_closed=0
+
+loaded custom bezel 1920x1080 from 0:/bezels/bezel_blue_phosphor.png
+
+smartport: RAM32 32MB ram disk mounted
+
+SmartPort service: media refreshed after startup assets
+
+Updater meta boot: B2.0.6
+
+Updater local firmware: Firmware F1.3.3b3
+
+compositor: FB_BASE_ADDR_REG round-trip: wrote 0x3E000000, read 0x3E000000 [OK]
+
+compositor_init: 3-slot output FB ring at 0x3E000000/0x3E400000/0x3E800000, 1920x1080 RGB565
+
+compositor: Apple blit = NEON (vld1q/vzipq burst reads)
+
+Output resolution: 1920x1080
+
+usb1: settling during boot prompt
+
+[bootdbg] pre apple release slot_mask raw=0x00000080 norm=0x00000080 request=0x00000096 effective=0x00000080 slot6=0
+
+[bootdbg] pre apple release boot_regs status=0x00000001 timeout=0xFFFFFFFF handoff=0x00000001 mode=SMARTPORT slot7=BOOTMENU pending=0
+
+[bootdbg] pre apple release apple_status=0x0C disk2=0 smartport=1 eligible=1 active=0 timeout_or_closed=0
+
+boot menu VBL ROM patch: NTSC default
+
+[boottime] cpu0 deferred Disk II sound publish: 1816 us
+
+onee: restore raised request status=0xE10098C8
+
+[usb1] event bus=0 hub=1 port=1 intf=255 ev=3
+
+[usb1] event bus=0 hub=1 port=1 intf=255 ev=2
+
+[I/usbh_hub] New high-speed device on Bus 0, Hub 1, Port 1 connected
+
+[I/usbh_core] New device found,idVendor:2109,idProduct:2822,bcdDevice:9013
+
+[I/usbh_core] The device has 1 bNumConfigurations
+
+[I/usbh_core] The device has 1 interfaces
+
+[I/usbh_core] Enumeration success, start loading class driver
+
+[usb1] event bus=0 hub=1 port=1 intf=255 ev=5
+
+[I/usbh_core] Loading hub class driver on interface 0
+
+[I/usbh_hub] Ep=81 Attr=03 Mps=1 Interval=12 Mult=00
+
+[I/usbh_hub] Register HUB Class:/dev/hub2
+
+[usb1] event bus=0 hub=1 port=1 intf=0 ev=10
+
+SD media attached: reloading settings and media
+
+smartport: RAM32 32MB ram disk mounted
+
+SD media: SmartPort mounted 0:/_software/Appletini Only/libtini/starfall.po
+
+machine: effective slot mask 0x00000096 ONE//e private bus enabled
+
+boot menu VBL ROM patch: PAL
+
+vtw: ONE//e cold ROM loaded, core released
+
+machine: ramworks 8MB ON
+
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+
+[usb1] event bus=0 hub=2 port=1 intf=255 ev=3
+
+[usb1] event bus=0 hub=2 port=1 intf=255 ev=2
+
+[I/usbh_hub] New low-speed device on Bus 0, Hub 2, Port 1 connected
+
+[I/usbh_core] New device found,idVendor:06a3,idProduct:8000,bcdDevice:0120
+
+[I/usbh_core] The device has 1 bNumConfigurations
+
+[I/usbh_core] The device has 3 interfaces
+
+[I/usbh_core] Enumeration success, start loading class driver
+
+[usb1] event bus=0 hub=2 port=1 intf=255 ev=5
+
+[I/usbh_core] Loading hid class driver on interface 0
+
+[I/usbh_hid] Ep=81 Attr=03 Mps=8 Interval=10 Mult=00
+
+[I/usbh_hid] Register HID Class:/dev/input0
+
+[usb1] CherryUSB HID connected slot=0 dev=3 proto=1 subclass=1 parsed=0 mouse=0 joystick=0 ps4=0
+
+[usb1] event bus=0 hub=2 port=1 intf=0 ev=10
+
+[I/usbh_core] Loading hid class driver on interface 1
+
+[I/usbh_hid] Ep=82 Attr=03 Mps=5 Interval=10 Mult=00
+
+[I/usbh_hid] Register HID Class:/dev/input1
+
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+
+[usb1] CherryUSB HID connected slot=1 dev=3 proto=0 subclass=0 parsed=1 mouse=0 joystick=0 ps4=0
+
+[usb1] event bus=0 hub=2 port=1 intf=1 ev=10
+
+[I/usbh_core] Loading hid class driver on interface 2
+
+[I/usbh_hid] Ep=83 Attr=03 Mps=2 Interval=10 Mult=00
+
+[I/usbh_hid] Register HID Class:/dev/input2
+
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+
+[usb1] CherryUSB HID connected slot=2 dev=3 proto=0 subclass=0 parsed=1 mouse=0 joystick=1 ps4=0
+
+[usb1] event bus=0 hub=2 port=1 intf=2 ev=10
+
+[usb1] event bus=0 hub=2 port=2 intf=255 ev=3
+
+[usb1] event bus=0 hub=2 port=2 intf=255 ev=2
+
+[I/usbh_hub] New full-speed device on Bus 0, Hub 2, Port 2 connected
+
+[I/usbh_core] New device found,idVendor:045e,idProduct:028e,bcdDevice:0114
+
+[I/usbh_core] The device has 1 bNumConfigurations
+
+[I/usbh_core] The device has 4 interfaces
+
+[I/usbh_core] Enumeration success, start loading class driver
+
+[usb1] event bus=0 hub=2 port=2 intf=255 ev=5
+
+[I/usbh_core] Loading xbox class driver on interface 0
+
+[I/USB] Ep=81 Attr=03 Mps=32 Interval=04 Mult=00
+
+[I/USB] Ep=01 Attr=03 Mps=32 Interval=08 Mult=00
+
+[I/USB] Register XBOX Class:/dev/xbox0
+
+[usb1] Xbox 360 connected slot=3 class=0 vid=045e pid=028e intf=0
+
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+
+[usb1] event bus=0 hub=2 port=2 intf=0 ev=10
+
+[E/usbh_core] Do not support Class:0xff, Subclass:0x5d, Protocl:0x03 on interface 1
+
+[usb1] event bus=0 hub=2 port=2 intf=1 ev=9
+
+[E/usbh_core] Do not support Class:0xff, Subclass:0x5d, Protocl:0x02 on interface 2
+
+[usb1] event bus=0 hub=2 port=2 intf=2 ev=9
+
+[E/usbh_core] Do not support Class:0xff, Subclass:0xfd, Protocl:0x13 on interface 3
+
+[usb1] event bus=0 hub=2 port=2 intf=3 ev=9
+
+[usb1] event bus=0 hub=2 port=4 intf=255 ev=3
+
+[usb1] event bus=0 hub=2 port=4 intf=255 ev=2
+
+[I/usbh_hub] New low-speed device on Bus 0, Hub 2, Port 4 connected
+
+[I/usbh_core] New device found,idVendor:30fa,idProduct:0400,bcdDevice:0100
+
+[I/usbh_core] The device has 1 bNumConfigurations
+
+[I/usbh_core] The device has 1 interfaces
+
+[I/usbh_core] Enumeration success, start loading class driver
+
+[usb1] event bus=0 hub=2 port=4 intf=255 ev=5
+
+[I/usbh_core] Loading hid class driver on interface 0
+
+[I/usbh_hid] Ep=81 Attr=03 Mps=5 Interval=10 Mult=00
+
+[I/usbh_hid] Register HID Class:/dev/input3
+
+[usb1] CherryUSB HID connected slot=4 dev=5 proto=2 subclass=1 parsed=1 mouse=1 joystick=1 ps4=0
+
+[usb1] CherryUSB mousecard HID dev=5 speed=low hub=2 port=4 if=0 ep=0x00000081
+
+[usb1] event bus=0 hub=2 port=4 intf=0 ev=10
+
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+
+usb1: settled during prompt, 22 events
+
+
+
+cmd> status
+
+---- card status ----
+
+ui: frames=567 keys=0
+
+boot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0
+
+video: vsync=on scanlines=Medium
+
+text mono: fg=black bg=black
+
+display mono: off
+
+apple fb: slot=1 mode=SHR target=50Hz apple_fps=25.04 hdmi_fps=50.08 blits=510 comp_pub=511 comp_skip=0 pl_vblanks=702 latched=0x3E400000
+
+updater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'
+
+audio: en=on mute=off tone=1000Hz amp=0x00600000
+
+spdif dbg: clkc=0 q3lvl=0 q3tog=0
+
+rtc: 2026-10-28 11:44:05
+
+temp: +35.06 C
+
+
+
+cmd> sd status
+
+sd: hw ready=1 exec=0 in=0 out=0 drypop=0 lastctl=$01
+
+sd: svc irq=206 pending=0 status=1 read=202 write=0
+
+sd: vtw direct=0 rwblk=0 postblk=0 fallback=0
+
+sd: vtw fb range=0 state=0 map=0 shadow=0 post=0 dma=0
+
+sd: vtw split blocks=0 spans=0 max=0
+
+sd: vtw write direct=0 preflight=0 stream=0 fault=0
+
+sd: cache hit=4 miss=198 bypass=0 post-credit-reads=0 dma-owner=0
+
+sd: lat dispatch us last=52 avg=96 max=459 samples=206
+
+sd: lat ready us last=154 avg=204 max=570
+
+sd: init=1 fs=1 slot=7 ramdisk=1
+
+sd: SP1 open=1 ram=0 ro=0 blocks=1600 path=0:/_software/Appletini Only/libtini/starfall
+
+sd: SP2 open=1 ram=1 ro=0 blocks=65535 path=RAM32 (volatile)
+
+sd: SP3 open=0 ram=0 ro=1 blocks=0 path=
+
+sd: SP4 open=0 ram=0 ro=1 blocks=0 path=
+
+sd: SP5 open=0 ram=0 ro=1 blocks=0 path=
+
+sd: SP6 open=0 ram=0 ro=1 blocks=0 path=
+
+sd: SP7 open=0 ram=0 ro=1 blocks=0 path=
+
+sd: SP8 open=0 ram=0 ro=1 blocks=0 path=
+
+
+
+cmd> status
+
+---- card status ----
+
+ui: frames=1160 keys=0
+
+boot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0
+
+video: vsync=on scanlines=Medium
+
+text mono: fg=black bg=black
+
+display mono: off
+
+apple fb: slot=1 mode=SHR target=50Hz apple_fps=25.04 hdmi_fps=50.09 blits=812 comp_pub=813 comp_skip=0 pl_vblanks=1306 latched=0x3E400000
+
+updater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'
+
+audio: en=on mute=off tone=1000Hz amp=0x00600000
+
+spdif dbg: clkc=0 q3lvl=0 q3tog=0
+
+rtc: 2026-10-28 11:44:17
+
+temp: +35.12 C
+
+
+
+cmd> ftp status
+
+ftp: off
+

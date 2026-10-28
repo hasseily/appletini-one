@@ -1,0 +1,28 @@
+{
+  "comparison": "direct full-file byte comparison, not only hashes or scratch data",
+  "reference": "stock native case-1-disk2.po",
+  "reference_bytes": 143360,
+  "cases": [
+    {
+      "case": 1,
+      "bytes": 143360,
+      "byte_for_byte_equal_to_stock_native": true,
+      "differing_byte_count": 0,
+      "sha256": "538ab64953e1132555063d3efaae8713ca246e924d31fca983c8440f61d1d453"
+    },
+    {
+      "case": 2,
+      "bytes": 143360,
+      "byte_for_byte_equal_to_stock_native": true,
+      "differing_byte_count": 0,
+      "sha256": "538ab64953e1132555063d3efaae8713ca246e924d31fca983c8440f61d1d453"
+    },
+    {
+      "case": 3,
+      "bytes": 143360,
+      "byte_for_byte_equal_to_stock_native": true,
+      "differing_byte_count": 0,
+      "sha256": "538ab64953e1132555063d3efaae8713ca246e924d31fca983c8440f61d1d453"
+    }
+  ]
+}

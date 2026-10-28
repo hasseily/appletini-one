@@ -1,0 +1,18 @@
+
+cmd> ftp on
+ftp: on (anonymous read/write, passive)
+
+cmd> ftp off
+ftp sd: media restore disk2=-12 smartport=0
+ftp: off
+
+cmd> http config 10.17.1.17 180
+[http] config rc=0
+
+cmd> http get https://checkpoint.appletini.test:8443/delay
+[http] start rc=0
+
+cmd> http cancel
+[http-result] rc=-108 verify=0x00000000 status=0 body=0 handshake_us=146271 elapsed_us=516145 step_max_us=3539 slice_max_us=3540 tls_heap_peak=43952 seed_generation=6
+[http-sha256] e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+[http] done

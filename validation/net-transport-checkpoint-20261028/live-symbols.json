@@ -1,0 +1,19 @@
+{
+  "generation": {
+    "address": 2782520,
+    "size": 1
+  },
+  "reset_sequence": {
+    "address": 11571204,
+    "size": 4
+  },
+  "read_count": {
+    "address": 11571208,
+    "size": 4
+  },
+  "net_transport_test_status": {
+    "address": 1742720,
+    "size": 616,
+    "first_word": 3813801984
+  }
+}

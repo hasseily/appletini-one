@@ -71,6 +71,44 @@
 #define HANDOFF_VIDEO_ROM_MODE_ADDR  0xFFFF101CU
 #define HANDOFF_VIDEO_ROM_ACK_ADDR   0xFFFF1020U
 
+/* Reserved independently of the existing framebuffer/control words. */
+#define HANDOFF_HEALTH_ADDR          0xFFFF1100U
+#define HANDOFF_HEALTH_MAGIC         0x48545031U
+
+void apple_fb_health_publish(const apple_fb_health_t *health)
+{
+    volatile uint32_t *words = (volatile uint32_t *)HANDOFF_HEALTH_ADDR;
+    uint32_t sequence = words[1];
+    words[1] = sequence + 1U;
+    __asm__ volatile ("dmb sy" ::: "memory");
+    words[2] = health->records;
+    words[3] = health->gaps;
+    words[4] = health->oversized;
+    words[5] = health->resyncs;
+    words[6] = health->frames;
+    words[0] = HANDOFF_HEALTH_MAGIC;
+    __asm__ volatile ("dmb sy" ::: "memory");
+    words[1] = sequence + 2U;
+}
+
+int apple_fb_health_get(apple_fb_health_t *health)
+{
+    const volatile uint32_t *words = (const volatile uint32_t *)HANDOFF_HEALTH_ADDR;
+    for (unsigned attempt = 0U; attempt < 4U; ++attempt) {
+        uint32_t sequence = words[1];
+        if (words[0] != HANDOFF_HEALTH_MAGIC || (sequence & 1U)) continue;
+        __asm__ volatile ("dmb sy" ::: "memory");
+        health->records = words[2];
+        health->gaps = words[3];
+        health->oversized = words[4];
+        health->resyncs = words[5];
+        health->frames = words[6];
+        __asm__ volatile ("dmb sy" ::: "memory");
+        if (words[1] == sequence) return 1;
+    }
+    return 0;
+}
+
 #define READER_NONE    0xFFu
 #define PUBLISHED_SLOT_MASK          0x000000FFu
 #define PUBLISHED_DISPLAY_MODE_SHIFT 8u
@@ -202,6 +240,8 @@ void apple_fb_handoff_init(void)
     *s_video_rom_gen  = 0u;
     *s_video_rom_mode = APPLE_FB_VIDEO_ROM_BUILT_IN;
     *s_video_rom_ack  = 0u;
+    *(volatile uint32_t *)HANDOFF_HEALTH_ADDR = 0U;
+    *(volatile uint32_t *)(HANDOFF_HEALTH_ADDR + 4U) = 0U;
     *s_debug_dump_req = APPLE_FB_DUMP_NONE;
     __asm__ volatile ("dsb sy" ::: "memory");
 

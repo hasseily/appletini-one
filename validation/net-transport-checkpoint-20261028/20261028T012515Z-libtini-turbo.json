@@ -1,0 +1,13 @@
+{
+  "mode": "libtini",
+  "speed": "turbo",
+  "pass": true,
+  "board_run": true,
+  "poll_interval_seconds": 15,
+  "started_utc": "20261028T012515Z",
+  "mode_status": "\r\ncmd> vtw status\r\nvtw: idle, session=ONE//e, host-intent=off, machine=unknown\r\nvtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0\r\nvtw: reset seen=0 source=none rstn=$0\r\nvtw: slowdown mask=$028 cycles=256\r\nvtw: speed=TURBO div=37 c074=0 ignore=0 d2accel=off owned=1 run=1 pc=33CA\r\nvtw: core=105676993 bus=9321989 posted=37295 invalid=0\r\nvtw: perf fabric=2390789454 steps=105680717 classic=131885607\r\nvtw: cache hits=70109907 misses=17438204 invalidations=85\r\nvtw: wait disk=0 video=37285918\r\nvtw: qfill=0 qhw=508 qdrop=0 sessions=1\r\nvtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00\r\nvtw: c000 reads=65535 bit7=0 last=$00 prev=park $FFFF R drive=0\r\nvtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=101 altzp=0 rd/wt=00 80st=0 text=1\r\nvtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)\r\nvtw: cxxx trail CF1F CF1E CFFB CF1D CF1C CF1B C818 C817 (new->old)\r\nvtw: last bus read $C000 = $00, irqs seen=0\r\nvtw: persisted setting = OFF\r\n",
+  "resumed": false,
+  "screen": "9000 READS OK TRANSPORT CHECKPOINT      \n9500 READS OK L: LIBTINI-STYLE FIFO     \n10000 READS OKP: RECOVERY PROBE         \nPASS AT READ 10000 RC=00                \nPRESS A KEY TO RETURN T=TURBO           \nGEN=4; 10000 READS; 9..512 BYTES        \nNETSP AND NETD2 SCRATCH FILES REQUIRED  \n500 READS OK                            \n1000 READS OK                           \n1500 READS OK                           \n2000 READS OK                           \n2500 READS OK                           \n3000 READS OK                           \n3500 READS OK                           \n4000 READS OK                           \n4500 READS OK                           \n5000 READS OK                           \n5500 READS OK                           \n6000 READS OK                           \n6500 READS OK                           \n7000 READS OK                           \n7500 READS OK                           \n8000 READS OK                           \n8500 READS OK                           ",
+  "source_reads": 10000,
+  "elapsed_host_seconds": 128.79699999999139
+}

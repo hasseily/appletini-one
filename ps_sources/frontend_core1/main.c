@@ -355,6 +355,9 @@ int main(void)
         "[cpu1] health line armed: per-1s deltas; gap/ovr/resync should stay 0,"
         " frames ~= line rate\r\n");
 #endif
+#ifdef APPLETINI_HTTPS_PROBE
+    uint32_t health_divider = 0U;
+#endif
     for (;;) {
         const uint32_t apple_status = apple_reset_status_read();
         const uint8_t reset_seq =
@@ -380,6 +383,16 @@ int main(void)
          * loop returns to drain the capture ring before it can back up. No-op
          * in every non-PAL-accurate mode. */
         apple_pal_video_pump();
+
+#ifdef APPLETINI_HTTPS_PROBE
+        if ((++health_divider & 255U) == 0U) {
+            const apple_fb_health_t health = {
+                g_records_processed, g_gap_markers_seen, g_oversized_drains,
+                g_acr_resyncs_cleared, g_acr_frames_complete
+            };
+            apple_fb_health_publish(&health);
+        }
+#endif
 
 #if CPU1_STATUS_UART
         const uint64_t ticks_per_second = cpu1_counts_per_second();

@@ -1,0 +1,29 @@
+{
+  "git_head": "f602c53731b57556e57b050e0a0102f2aa21c3e7",
+  "scope": "Only ProDOS diagnostic software built; running stock ARM and FPGA unchanged",
+  "hashes": {
+    "software/disk2_write_checkpoint/main.c": "cf3b55f4ef64a5557b229e8ff1f4d43255ace0c829116629ecc757823a0bd4c0",
+    "scripts/build_disk2_write_checkpoint.py": "b1657363b24bace70a9e49ea9e2c6926f259516a2e6f1d21604c574c9457eabd",
+    "scripts/run_disk2_write_checkpoint.py": "5ba2c35e1966f6575e7c22af5e1e79e965e3344389a03a072f0231eff909fe11",
+    "software/net_transport_checkpoint/prodos_disk.py": "c8e2462bbb2810f1c51f5a495cd30ffcac7b9638e877336d3fec0f5c1e351967",
+    "scripts/https_probe_host.py": "dfbc0f43ad8e9e306a2bf366c98c31b6b1a5699b2a11825f3e1ae34b2826a0b4",
+    "scripts/run_net_transport_checkpoint.py": "c43881b5b6727cf982999edddd61d8936f7cbc14c49602a3126b37dfd498f7c9",
+    "firmwares/firmware-F1.3.3b3/FIRMWARE.BIN": "cbbdd97ff97d43f7609f3da73ff0368164621350b18ff6ec7398c480d66672c2",
+    "firmwares/firmware-F1.3.3b3/inputs/frontend.elf": "64202e761ba91dd84fcb847cf77d7fe490b3b112a3688b9aa2189df11918f631",
+    "firmwares/firmware-F1.3.3b3/inputs/frontend_core1.elf": "95a07772c323da517dbfa57471ab871e59c82759e49f682b8581314bc4d1bad3",
+    "firmwares/firmware-F1.3.3b3/inputs/appletini_yarz_top.bit": "94c578698466ac057d5a58768e7b1c98fd680dca38a7840cd82f1d226f6dfd34",
+    "README_DISK2_STOCK_CHECKPOINT.md": "bf8863d9c35101ea841f82e561e4626c46b117b05d36f8ee3b7fd574a4f0c7ed",
+    "README_NET_TRANSPORT_CHECKPOINT.md": "3ef3a84e4dee3431a7ac4e050548c0abdbc30293bec15714bcb00dc3727726a9",
+    "scripts/requirements-net-transport.txt": "a180adee98e6eed6d2c5c84b88ca9432a035f759d99d6243fc8edafb4118c673"
+  },
+  "private_settings_included": false,
+  "failed_disk_images": "Retained under ignored build/disk2-stock-checkpoint",
+  "all_deployed_SYS_readback_hashes_verified": true,
+  "original_settings_restored_and_runtime_verified": true,
+  "compiler_version": "cl65 V2.19",
+  "compiler_executable_sha256": "81d473b0698a65348f302f507429b233ac5ad166ce58ea6e3db645432b126f5b",
+  "python_dependencies": {
+    "pyserial": "3.5",
+    "cryptography": "49.0.0"
+  }
+}

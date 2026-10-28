@@ -1,0 +1,2792 @@
+Modules list:
+-------------
+startup.o:
+    RODATA            Offs=000000  Size=000007  Align=00001  Fill=0000
+    STARTUP           Offs=000000  Size=0000E4  Align=00001  Fill=0000
+    OSSTATE           Offs=000000  Size=000062  Align=00001  Fill=0000
+    ONCE              Offs=000000  Size=0000E4  Align=00001  Fill=0000
+    AMEMCODE          Offs=000000  Size=000001  Align=00001  Fill=0000
+    LOWCODE           Offs=000000  Size=000001  Align=00001  Fill=0000
+starfall.o:
+    CODE              Offs=000000  Size=001BE5  Align=00001  Fill=0000
+    RODATA            Offs=000007  Size=000CD3  Align=00001  Fill=0000
+    BSS               Offs=000000  Size=0000F5  Align=00001  Fill=0000
+    DATA              Offs=000000  Size=000111  Align=00001  Fill=0000
+    LOADER            Offs=000000  Size=000099  Align=00001  Fill=0000
+    TITLE             Offs=000000  Size=0003CF  Align=00001  Fill=0000
+    PANELS            Offs=000000  Size=000374  Align=00001  Fill=0000
+    BOSS              Offs=000000  Size=000347  Align=00001  Fill=0000
+    SCENE             Offs=000000  Size=000740  Align=00001  Fill=0000
+    NEARBSS           Offs=000000  Size=000084  Align=00001  Fill=0000
+    BOSSBSS           Offs=000000  Size=000014  Align=00001  Fill=0000
+    LOWCODE           Offs=000001  Size=000196  Align=00001  Fill=0000
+starfall_game.o:
+    CODE              Offs=001BE5  Size=001378  Align=00001  Fill=0000
+    RODATA            Offs=000CDA  Size=000018  Align=00001  Fill=0000
+    PLAY              Offs=000000  Size=000339  Align=00001  Fill=0000
+    NEARBSS           Offs=000084  Size=000273  Align=00001  Fill=0000
+starfall_boss.o:
+    BOSS              Offs=000347  Size=000642  Align=00001  Fill=0000
+    BOSSBSS           Offs=000014  Size=0000AC  Align=00001  Fill=0000
+build/libtini.lib(audio.o):
+    CODE              Offs=002F5D  Size=000C96  Align=00001  Fill=0000
+    RODATA            Offs=000CF2  Size=000010  Align=00001  Fill=0000
+    BSS               Offs=0000F5  Size=000145  Align=00001  Fill=0000
+    DATA              Offs=000111  Size=000002  Align=00001  Fill=0000
+    TISETUP           Offs=000000  Size=000539  Align=00001  Fill=0000
+build/libtini.lib(error.o):
+    CODE              Offs=003BF3  Size=00001E  Align=00001  Fill=0000
+    BSS               Offs=00023A  Size=000001  Align=00001  Fill=0000
+build/libtini.lib(font.o):
+    RODATA            Offs=000D02  Size=0001C8  Align=00001  Fill=0000
+build/libtini.lib(graphics.o):
+    CODE              Offs=003C11  Size=00050A  Align=00001  Fill=0000
+    BSS               Offs=00023B  Size=0000A5  Align=00001  Fill=0000
+    TISETUP           Offs=000539  Size=000109  Align=00001  Fill=0000
+build/libtini.lib(graphics_text.o):
+    CODE              Offs=00411B  Size=000132  Align=00001  Fill=0000
+build/libtini.lib(graphics_video.o):
+    BSS               Offs=0002E0  Size=000007  Align=00001  Fill=0000
+    DATA              Offs=000113  Size=000002  Align=00001  Fill=0000
+    TISETUP           Offs=000642  Size=0000DB  Align=00001  Fill=0000
+    LOWCODE           Offs=000197  Size=0003D2  Align=00001  Fill=0000
+build/libtini.lib(input.o):
+    CODE              Offs=00424D  Size=00010D  Align=00001  Fill=0000
+    BSS               Offs=0002E7  Size=00000B  Align=00001  Fill=0000
+build/libtini.lib(input_joystick.o):
+    CODE              Offs=00435A  Size=00047A  Align=00001  Fill=0000
+    BSS               Offs=0002F2  Size=000023  Align=00001  Fill=0000
+build/libtini.lib(input_stick.o):
+    CODE              Offs=0047D4  Size=0001D5  Align=00001  Fill=0000
+    RODATA            Offs=000ECA  Size=000004  Align=00001  Fill=0000
+    BSS               Offs=000315  Size=000014  Align=00001  Fill=0000
+    DATA              Offs=000115  Size=000003  Align=00001  Fill=0000
+build/libtini.lib(memory.o):
+    CODE              Offs=0049A9  Size=000E51  Align=00001  Fill=0000
+    BSS               Offs=000329  Size=000105  Align=00001  Fill=0000
+    TISETUP           Offs=00071D  Size=0000A6  Align=00001  Fill=0000
+build/libtini.lib(scene.o):
+    CODE              Offs=0057FA  Size=000008  Align=00001  Fill=0000
+    BSS               Offs=00042E  Size=00006B  Align=00001  Fill=0000
+build/libtini.lib(storage.o):
+    BSS               Offs=000499  Size=0000EC  Align=00001  Fill=0000
+    TIFILES           Offs=000000  Size=000A97  Align=00001  Fill=0000
+build/libtini.lib(timing_gap.o):
+    CODE              Offs=005802  Size=000006  Align=00001  Fill=0000
+    BSS               Offs=000585  Size=000001  Align=00001  Fill=0000
+build/libtini.lib(timing_steps.o):
+    CODE              Offs=005808  Size=0000D8  Align=00001  Fill=0000
+    BSS               Offs=000586  Size=00000D  Align=00001  Fill=0000
+    TISETUP           Offs=0007C3  Size=000078  Align=00001  Fill=0000
+build/libtini.lib(target_audio.o):
+    CODE              Offs=0058E0  Size=0001E6  Align=00001  Fill=0000
+    RODATA            Offs=000ECE  Size=000006  Align=00001  Fill=0000
+    BSS               Offs=000593  Size=000006  Align=00001  Fill=0000
+    DATA              Offs=000118  Size=000006  Align=00001  Fill=0000
+build/libtini.lib(target_digits.o):
+    CODE              Offs=005AC6  Size=000096  Align=00001  Fill=0000
+    BSS               Offs=000599  Size=00000C  Align=00001  Fill=0000
+build/libtini.lib(target_hardware.o):
+    CODE              Offs=005B5C  Size=000028  Align=00001  Fill=0000
+build/libtini.lib(target_memory.o):
+    CODE              Offs=005B84  Size=000048  Align=00001  Fill=0000
+    RODATA            Offs=000ED4  Size=000022  Align=00001  Fill=0000
+build/libtini.lib(target_publish.o):
+    BSS               Offs=0005A5  Size=000004  Align=00001  Fill=0000
+    LOWCODE           Offs=000569  Size=000074  Align=00001  Fill=0000
+build/libtini.lib(target_rows.o):
+    CODE              Offs=005BCC  Size=000089  Align=00001  Fill=0000
+    BSS               Offs=0005A9  Size=000009  Align=00001  Fill=0000
+build/libtini.lib(target_scene.o):
+    CODE              Offs=005C55  Size=0007EA  Align=00001  Fill=0000
+    RODATA            Offs=000EF6  Size=000008  Align=00001  Fill=0000
+    BSS               Offs=0005B2  Size=00005A  Align=00001  Fill=0000
+build/libtini.lib(target_song.o):
+    CODE              Offs=00643F  Size=0001FC  Align=00001  Fill=0000
+    BSS               Offs=00060C  Size=0000C3  Align=00001  Fill=0000
+    LOWCODE           Offs=0005DD  Size=000264  Align=00001  Fill=0000
+build/libtini.lib(target_storage.o):
+    TIFILES           Offs=000A97  Size=000029  Align=00001  Fill=0000
+build/libtini.lib(target_surface.o):
+    CODE              Offs=00663B  Size=0000D6  Align=00001  Fill=0000
+    BSS               Offs=0006CF  Size=00000B  Align=00001  Fill=0000
+build/libtini.lib(target_text.o):
+    CODE              Offs=006711  Size=0002FD  Align=00001  Fill=0000
+    BSS               Offs=0006DA  Size=00002C  Align=00001  Fill=0000
+    LOWCODE           Offs=000841  Size=0000B8  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(add.o):
+    CODE              Offs=006A0E  Size=00001C  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(addeqsp.o):
+    CODE              Offs=006A2A  Size=000011  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(addysp.o):
+    CODE              Offs=006A3B  Size=00000E  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(and.o):
+    CODE              Offs=006A49  Size=000010  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(aslax1.o):
+    CODE              Offs=006A59  Size=000008  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(aslax2.o):
+    CODE              Offs=006A61  Size=00000B  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(aslax3.o):
+    CODE              Offs=006A6C  Size=00000E  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(aslax4.o):
+    CODE              Offs=006A7A  Size=000011  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(asleax1.o):
+    CODE              Offs=006A8B  Size=00000C  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(asr.o):
+    CODE              Offs=006A97  Size=00003C  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(asrax1.o):
+    CODE              Offs=006AD3  Size=00000A  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(asrax2.o):
+    CODE              Offs=006ADD  Size=00000F  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(axlong.o):
+    CODE              Offs=006AEC  Size=00000D  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(bneg.o):
+    CODE              Offs=006AF9  Size=00000E  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(call.o):
+    CODE              Offs=006B07  Size=000007  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(compl.o):
+    CODE              Offs=006B0E  Size=000009  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(decax1.o):
+    CODE              Offs=006B17  Size=000007  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(decax4.o):
+    CODE              Offs=006B1E  Size=000007  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(decax6.o):
+    CODE              Offs=006B25  Size=000007  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(decax8.o):
+    CODE              Offs=006B2C  Size=000007  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(decaxy.o):
+    CODE              Offs=006B33  Size=000009  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(decsp1.o):
+    CODE              Offs=006B3C  Size=000009  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(decsp2.o):
+    CODE              Offs=006B45  Size=00000D  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(decsp3.o):
+    CODE              Offs=006B52  Size=00000D  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(decsp4.o):
+    CODE              Offs=006B5F  Size=00000D  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(decsp5.o):
+    CODE              Offs=006B6C  Size=00000D  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(decsp6.o):
+    CODE              Offs=006B79  Size=00000D  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(decsp7.o):
+    CODE              Offs=006B86  Size=00000D  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(div.o):
+    CODE              Offs=006B93  Size=000015  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(icmp.o):
+    CODE              Offs=006BA8  Size=00002E  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(incax2.o):
+    CODE              Offs=006BD6  Size=000007  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(incax3.o):
+    CODE              Offs=006BDD  Size=000005  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(incax5.o):
+    CODE              Offs=006BE2  Size=000005  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(incax6.o):
+    CODE              Offs=006BE7  Size=000005  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(incax7.o):
+    CODE              Offs=006BEC  Size=000005  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(incax8.o):
+    CODE              Offs=006BF1  Size=000005  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(incaxy.o):
+    CODE              Offs=006BF6  Size=00000B  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(incsp1.o):
+    CODE              Offs=006C01  Size=000007  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(incsp2.o):
+    CODE              Offs=006C08  Size=000016  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(incsp3.o):
+    CODE              Offs=006C1E  Size=000005  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(incsp4.o):
+    CODE              Offs=006C23  Size=000005  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(incsp5.o):
+    CODE              Offs=006C28  Size=000005  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(incsp6.o):
+    CODE              Offs=006C2D  Size=000005  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(incsp7.o):
+    CODE              Offs=006C32  Size=000005  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(incsp8.o):
+    CODE              Offs=006C37  Size=000005  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(jmpvec.o):
+    DATA              Offs=00011E  Size=000003  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(ladd.o):
+    CODE              Offs=006C3C  Size=000025  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(laddeq.o):
+    CODE              Offs=006C61  Size=00002D  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(laddeqsp.o):
+    CODE              Offs=006C8E  Size=000023  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(lbneg.o):
+    CODE              Offs=006CB1  Size=000011  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(lcmp.o):
+    CODE              Offs=006CC2  Size=00003B  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(ldai.o):
+    CODE              Offs=006CFD  Size=00000C  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(ldaxi.o):
+    CODE              Offs=006D09  Size=00000D  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(ldaxsp.o):
+    CODE              Offs=006D16  Size=000009  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(ldeaxi.o):
+    CODE              Offs=006D1F  Size=000017  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(ldeaxysp.o):
+    CODE              Offs=006D36  Size=000013  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(ldec.o):
+    CODE              Offs=006D49  Size=000015  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(ldptr1sp.o):
+    CODE              Offs=006D5E  Size=00000C  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(leaaxsp.o):
+    CODE              Offs=006D6A  Size=00000C  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(leq.o):
+    CODE              Offs=006D76  Size=000006  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(linc.o):
+    CODE              Offs=006D7C  Size=000011  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(lmul.o):
+    CODE              Offs=006D8D  Size=00005C  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(lne.o):
+    CODE              Offs=006DE9  Size=000006  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(lor.o):
+    CODE              Offs=006DEF  Size=000024  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(lpush.o):
+    CODE              Offs=006E13  Size=000021  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(lsub.o):
+    CODE              Offs=006E34  Size=000027  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(lsubeqsp.o):
+    CODE              Offs=006E5B  Size=000027  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(ltest.o):
+    CODE              Offs=006E82  Size=00000F  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(ludiv.o):
+    CODE              Offs=006E91  Size=00007A  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(luge.o):
+    CODE              Offs=006F0B  Size=000006  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(lugt.o):
+    CODE              Offs=006F11  Size=000006  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(lule.o):
+    CODE              Offs=006F17  Size=000006  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(lult.o):
+    CODE              Offs=006F1D  Size=000006  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(makebool.o):
+    CODE              Offs=006F23  Size=00002C  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(memcpy.o):
+    CODE              Offs=006F4F  Size=00003C  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(memset.o):
+    CODE              Offs=006F8B  Size=00005D  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(mod.o):
+    CODE              Offs=006FE8  Size=000011  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(mul.o):
+    CODE              Offs=006FF9  Size=000045  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(mul8.o):
+    CODE              Offs=00703E  Size=00003A  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(mulax10.o):
+    CODE              Offs=007078  Size=000019  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(mulax3.o):
+    CODE              Offs=007091  Size=000011  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(mulax5.o):
+    CODE              Offs=0070A2  Size=000014  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(mulax6.o):
+    CODE              Offs=0070B6  Size=000016  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(mulax7.o):
+    CODE              Offs=0070CC  Size=000019  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(negabs.o):
+    CODE              Offs=0070E5  Size=000012  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(or.o):
+    CODE              Offs=0070F7  Size=000012  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(popptr1.o):
+    CODE              Offs=007109  Size=00000E  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(pusha.o):
+    CODE              Offs=007117  Size=000016  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(pushax.o):
+    CODE              Offs=00712D  Size=00001A  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(pushw.o):
+    CODE              Offs=007147  Size=00000F  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(pushwsp.o):
+    CODE              Offs=007156  Size=00001C  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(shelp.o):
+    CODE              Offs=007172  Size=000020  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(shl.o):
+    CODE              Offs=007192  Size=000033  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(shr.o):
+    CODE              Offs=0071C5  Size=000034  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(shrax1.o):
+    CODE              Offs=0071F9  Size=000008  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(shrax4.o):
+    CODE              Offs=007201  Size=000011  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(shreax1.o):
+    CODE              Offs=007212  Size=00000C  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(staspidx.o):
+    CODE              Offs=00721E  Size=000016  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(staxsp.o):
+    CODE              Offs=007234  Size=00000B  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(staxspi.o):
+    CODE              Offs=00723F  Size=00001B  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(steaxsp.o):
+    CODE              Offs=00725A  Size=000015  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(steaxspi.o):
+    CODE              Offs=00726F  Size=000022  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(strcat.o):
+    CODE              Offs=007291  Size=000031  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(strcpy.o):
+    CODE              Offs=0072C2  Size=00001F  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(strlen.o):
+    CODE              Offs=0072E1  Size=000016  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(sub.o):
+    CODE              Offs=0072F7  Size=000015  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(subeqsp.o):
+    CODE              Offs=00730C  Size=000015  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(subysp.o):
+    CODE              Offs=007321  Size=00000D  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(udiv.o):
+    CODE              Offs=00732E  Size=00004F  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(ule.o):
+    CODE              Offs=00737D  Size=00000A  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(umod.o):
+    CODE              Offs=007387  Size=000011  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(zerobss.o):
+    CODE              Offs=007398  Size=000023  Align=00001  Fill=0000
+D:\Repos\cc65\lib\none.lib(zeropage.o):
+    ZEROPAGE          Offs=000000  Size=00001A  Align=00001  Fill=0000
+
+
+Segment list:
+-------------
+Name                   Start     End    Size  Align
+----------------------------------------------------
+ZEROPAGE              000080  000099  00001A  00001
+RODATA                000800  0016FD  000EFE  00001
+AMEMCODE              0016FE  0016FE  000001  00001
+LOWCODE               0016FF  001FF7  0008F9  00001
+STARTUP               002000  0020E3  0000E4  00001
+CODE                  0020E4  00949E  0073BB  00001
+OSSTATE               00949F  009500  000062  00001
+DATA                  009501  009621  000121  00001
+BOSS                  009622  009FAA  000989  00001
+PANELS                009622  009995  000374  00001
+PLAY                  009622  00995A  000339  00001
+TIFILES               009622  00A0E1  000AC0  00001
+TITLE                 009622  0099F0  0003CF  00001
+TISETUP               0099F1  00A22B  00083B  00001
+BOSSBSS               009FAB  00A06A  0000C0  00001
+LOADER                00A0E2  00A17A  000099  00001
+ONCE                  00A17B  00A25E  0000E4  00001
+SCENE                 00AC30  00B36F  000740  00001
+BSS                   00B370  00BA75  000706  00001
+NEARBSS               00BB00  00BDF6  0002F7  00001
+
+
+Exports list by name:
+---------------------
+__AMEMCODE_LOAD__         00B15D RLA    __AMEMCODE_RUN__          0016FE RLA    
+__AMEMCODE_SIZE__         000001 REA    __BSS_RUN__               00B370 RLA    
+__BSS_SIZE__              000706 REA    __DATA_SIZE__             000121 REA    
+__LOADER_RUN__            00A0E2 RLA    __LOADER_SIZE__           000099 REA    
+__LOWCODE_LOAD__          00B15E RLA    __LOWCODE_RUN__           0016FF RLA    
+__LOWCODE_SIZE__          0008F9 REA    __NEARBSS_RUN__           00BB00 RLA    
+__NEARBSS_SIZE__          0002F7 REA    __NEAR_SIZE__             000300 REA    
+__NEAR_START__            00BB00 RLA    __OSSTATE_RUN__           00949F RLA    
+__OSSTATE_SIZE__          000062 REA    __RODATA_LOAD__           00A25F RLA    
+__RODATA_RUN__            000800 RLA    __RODATA_SIZE__           000EFE REA    
+__SCENE_RUN__             00AC30 RLA    __STACKSTART__            00BF00 REA    
+__STARTUP__               000001 REA    __WINDOWEND__             00AC30 REA    
+_main                     003869 RLA    _memcpy                   009033 RLA    
+_memset                   009077 RLA    _sf_aimed                 003E2E RLA    
+_sf_begin                 009622 RLA    _sf_boss                  009FBF RLA    
+_sf_boss_bomb             009CCF RLA    _sf_boss_hit              009C2B RLA    
+_sf_boss_ram              009CFC RLA    _sf_boss_step             00999E RLA    
+_sf_drop                  0040D4 RLA    _sf_effect                003D6A RLA    
+_sf_enemy_shot            003DBD RLA    _sf_events                00BDBA RLA    
+_sf_hurt                  003FD6 RLA    _sf_multiplier            0042F7 RLA    
+_sf_muzzle_style          00BDBE RLA    _sf_muzzle_x              00BDBC RLA    
+_sf_muzzle_y              00BDBD RLA    _sf_new                   003CC9 RLA    
+_sf_next_sector           004040 RLA    _sf_pickup                003EC0 RLA    
+_sf_random                003D41 RLA    _sf_spawn                 003F0D RLA    
+_sf_state                 00BB84 RLA    _sf_step                  0040EA RLA    
+_strcat                   009375 RLA    _strcpy                   0093A6 RLA    
+_strlen                   0093C5 RLA    _ti_audio_cleanup_hook    00B6A3 RLA    
+_ti_audio_clock_valid     005260 RLA    _ti_audio_dirty           00B475 RLA    
+_ti_audio_effect          0054C6 RLA    _ti_audio_effect_voice    005434 RLA    
+_ti_audio_init            0099F1 RLA    _ti_audio_music_end       00B478 RLA    
+_ti_audio_music_mask      005892 RLA    _ti_audio_music_voices    00B476 RLA    
+_ti_audio_music_volume    00B469 RLA    _ti_audio_native          00B47C RLA    
+_ti_audio_player          00B467 RLA    _ti_audio_reserve         005371 RLA    
+_ti_audio_resume_clock    005301 RLA    _ti_audio_shutdown        005041 RLA    
+_ti_audio_source_hz       00526F RLA    _ti_audio_speech_enabled  00B47D RLA    
+_ti_audio_ticks           007AEB RLA    _ti_audio_tone            00579B RLA    
+_ti_audio_update          005120 RLA    _ti_audio_voices          005252 RLA    
+_ti_ay_chip               00B480 RLA    _ti_ay_reg                00B481 RLA    
+_ti_ay_value              00B482 RLA    _ti_ay_write              007B53 RLA    
+_ti_clock_counter         00B903 RLA    _ti_clock_install         007A50 RLA    
+_ti_clock_latch           00B483 RLA    _ti_clock_pause           007AB2 RLA    
+_ti_clock_remove          007A63 RLA    _ti_clock_resume          007AD1 RLA    
+_ti_clock_start           007A6C RLA    _ti_clock_stop            007AA0 RLA    
+_ti_cpu_publish_rows      001C68 RLA    _ti_cpu_read              007C94 RLA    
+_ti_cpu_write             007C9E RLA    _ti_cpu_write_rows        007CB0 RLA    
+_ti_diag_video_begin      00A10E RLA    _ti_diag_video_end        00734D RLA    
+_ti_diag_video_write      0073F8 RLA    _ti_digits                007BAA RLA    
+_ti_error_first           005CEB RLA    _ti_error_keep            005CD7 RLA    
+_ti_file_buffer           00AD00 REA    _ti_font                  001502 RLA    
+_ti_font_index            00168A RLA    _ti_gfx_begin             00A033 RLA    
+_ti_gfx_clear             005D6E RLA    _ti_gfx_clip              0060A8 RLA    
+_ti_gfx_end               00197F RLA    _ti_gfx_palette           001896 RLA    
+_ti_gfx_present           0019DF RLA    _ti_gfx_rect              005DDD RLA    
+_ti_gfx_rows              00B5AB RLA    _ti_gfx_rows_begin        0060F4 RLA    
+_ti_gfx_surface_create    009F2A RLA    _ti_gfx_surface_free      005CF5 RLA    
+_ti_gfx_surface_valid     005F8D RLA    _ti_gfx_text              0061FF RLA    
+_ti_gfx_text_opaque       00622A RLA    _ti_graphics_cleanup_hook 00B6A1 RLA    
+_ti_init                  006A8D RLA    _ti_input_buttons         006395 RLA    
+_ti_input_held            0063C1 RLA    _ti_input_key             00634F RLA    
+_ti_input_poll            006331 RLA    _ti_io_addr               00B69B RLA    
+_ti_io_bank               00B699 RLA    _ti_io_len                00B69A RLA    
+_ti_io_near               00B69D RLA    _ti_io_rows               00B91A RLA    
+_ti_io_stride             00B91B RLA    _ti_io_width              00B919 RLA    
+_ti_joystick_read         00643E RLA    _ti_memory_address        00761E RLA    
+_ti_memory_end            00BA80 REA    _ti_memory_in_range       0074BC RLA    
+_ti_memory_lookup         007452 RLA    _ti_mli_call              00A0B9 RLA    
+_ti_mli_command           00B809 RLA    _ti_mli_params            00B80A RLA    
+_ti_music_stop            005493 RLA    _ti_near_end              00BE00 REA    
+_ti_near_start            00BB00 REA    _ti_near_valid            00704D RLA    
+_ti_pack_load             009808 RLA    _ti_phasor_probe          0079E7 RLA    
+_ti_platform_setup        007C68 RLA    _ti_pub_rows              00B917 RLA    
+_ti_pub_to                00B915 RLA    _ti_readable_low_end      002000 REA    
+_ti_readable_low_start    000800 REA    _ti_readable_start        002000 REA    
+_ti_res_alloc             006BA3 RLA    _ti_res_fill              006F89 RLA    
+_ti_res_free              006E85 RLA    _ti_res_read              006EAB RLA    
+_ti_res_write             006F1A RLA    _ti_row_base_addr         00BA40 RLA    
+_ti_row_base_bank         00BA3F RLA    _ti_row_bytes             00BA45 RLA    
+_ti_row_next              008742 RLA    _ti_row_read              00875F RLA    
+_ti_row_seek              00871F RLA    _ti_row_stride            00BA46 RLA    
+_ti_row_write             008763 RLA    _ti_scene_add             007F97 RLA    
+_ti_scene_bands           00B7A5 RLA    _ti_scene_begin           007D39 RLA    
+_ti_scene_blocks          00B7A6 RLA    _ti_scene_bottom          00AF40 RLA    
+_ti_scene_capacity        0020E4 RLA    _ti_scene_color           00AE60 RLA    
+_ti_scene_count           00B7A8 RLA    _ti_scene_draw            008057 RLA    
+_ti_scene_end             00B7A9 RLA    _ti_scene_fill            00B7A7 RLA    
+_ti_scene_forget          0078E2 RLA    _ti_scene_frame           0078DE RLA    
+_ti_scene_image           00ADF0 RLA    _ti_scene_image_count     00B7A0 RLA    
+_ti_scene_images          00B79E RLA    _ti_scene_invalidate      0080E9 RLA    
+_ti_scene_lines           00B7A4 RLA    _ti_scene_mask            00B7BC RLA    
+_ti_scene_row_bytes       00B7A3 RLA    _ti_scene_row_hi          00B7B4 RLA    
+_ti_scene_row_lo          00B7AC RLA    _ti_scene_screen          00B7AA RLA    
+_ti_scene_service         00B807 RLA    _ti_scene_strip           00AFB0 RLA    
+_ti_scene_strip_width     0020E5 RLA    _ti_scene_top             00AED0 RLA    
+_ti_scene_x0              00B7A1 RLA    _ti_scene_x_hi            00ACA0 RLA    
+_ti_scene_x_lo            00AC30 RLA    _ti_scene_y0              00B7A2 RLA    
+_ti_scene_y_hi            00AD80 RLA    _ti_scene_y_lo            00AD10 RLA    
+_ti_shutdown              006B03 RLA    _ti_song_start            008523 RLA    
+_ti_speech_bind           009DC0 RLA    _ti_speech_busy           0055E0 RLA    
+_ti_speech_say            005597 RLA    _ti_speech_stop           0055EF RLA    
+_ti_ssi_inf               00B47F RLA    _ti_ssi_ready             00B47E RLA    
+_ti_ssi_take_ready        007AFF RLA    _ti_stack_bottom          00BE00 REA    
+_ti_stack_top             00BF00 REA    _ti_steps_begin           00A1B4 RLA    
+_ti_steps_due             00790A RLA    _ti_steps_reset           0078EC RLA    
+_ti_stick_read            0068B8 RLA    _ti_stick_recalibrate     006A81 RLA    
+_ti_storage_pause_hook    00B6A5 RLA    _ti_storage_resume_hook   00B6A7 RLA    
+_ti_text_draw             0087F5 RLA    _ti_text_ink              00BA52 RLA    
+_ti_text_opaque           00BA54 RLA    _ti_text_paper            00BA53 RLA    
+_ti_text_string           00BA50 RLA    _ti_text_surface          00BA4A RLA    
+_ti_text_x                00BA4C RLA    _ti_text_y                00BA4E RLA    
+_ti_time_note_gap         0078E6 RLA    _ti_transfer_start        00BA80 REA    
+_ti_via_probe             0079C4 RLA    _ti_video_backup          00B69F RLA    
+_ti_video_off             007C62 RLA    _ti_video_on              007C5C RLA    
+_ti_video_storage_begin   00713B RLA    _ti_video_storage_end     00725D RLA    
+_ti_writable_start        009501 REA    addeq0sp                  008B0E RLA    
+addeqysp                  008B10 RLA    addysp                    008B20 RLA    
+addysp1                   008B1F RLA    aslax2                    008B45 RLA    
+aslax3                    008B50 RLA    asrax1                    008BB7 RLA    
+asrax2                    008BC1 RLA    asraxy                    008B82 RLA    
+axlong                    008BD0 RLA    axulong                   008BD6 RLA    
+bnega                     008BE1 RLA    bnegax                    008BDD RLA    
+bnegeax                   008D95 RLA    booleq                    00900D RLA    
+boolge                    00901E RLA    boolne                    009007 RLA    
+booluge                   00902E RLA    boolugt                   00902C RLA    
+boolule                   009024 RLA    boolult                   009026 RLA    
+c_sp                      000080 RLZ    callax                    008BEB RLA    
+complax                   008BF2 RLA    decax1                    008BFB RLA    
+decax4                    008C02 RLA    decax6                    008C09 RLA    
+decax8                    008C10 RLA    decaxy                    008C17 RLA    
+deceaxy                   008E2D RLA    decsp1                    008C20 RLA    
+decsp2                    008C29 RLA    decsp3                    008C36 RLA    
+decsp4                    008C43 RLA    decsp5                    008C50 RLA    
+decsp6                    008C5D RLA    decsp7                    008C6A RLA    
+incax2                    008CBA RLA    incax3                    008CC1 RLA    
+incax4                    008CDA RLA    incax5                    008CC6 RLA    
+incax6                    008CCB RLA    incax7                    008CD0 RLA    
+incax8                    008CD5 RLA    incaxy                    008CDC RLA    
+inceaxy                   008E60 RLA    incsp1                    008CE5 RLA    
+incsp2                    008CF4 RLA    incsp3                    008D02 RLA    
+incsp4                    008D07 RLA    incsp5                    008D0C RLA    
+incsp6                    008D11 RLA    incsp7                    008D16 RLA    
+incsp8                    008D1B RLA    jmpvec                    00961F RLA    
+laddeq                    008D4D RLA    laddeq1                   008D45 RLA    
+laddeqa                   008D47 RLA    laddeqysp                 008D74 RLA    
+ldaidx                    008DE1 RLA    ldax0sp                   008DFA RLA    
+ldaxi                     008DED RLA    ldaxidx                   008DEF RLA    
+ldaxysp                   008DFC RLA    ldeax0sp                  008E1A RLA    
+ldeaxi                    008E03 RLA    ldeaxidx                  008E05 RLA    
+ldeaxysp                  008E1C RLA    ldptr10sp                 008E42 RLA    
+ldptr1ysp                 008E44 RLA    leaa0sp                   008E4E RLA    
+lsubeqysp                 008F41 RLA    mul8x16                   009124 RLA    
+mul8x16a                  00912E RLA    mulax10                   00915C RLA    
+mulax3                    009175 RLA    mulax5                    009186 RLA    
+mulax6                    00919A RLA    mulax7                    0091B0 RLA    
+negax                     0091CD RLA    popax                     008CEC RLA    
+popptr1                   0091ED RLA    popsargsudiv16            009256 RLA    
+ptr1                      000088 RLZ    ptr2                      00008A RLZ    
+ptr3                      00008C RLZ    ptr4                      00008E RLZ    
+push0                     009211 RLA    push0ax                   008EFA RLA    
+pusha                     0091FF RLA    pusha0                    009213 RLA    
+pushax                    009215 RLA    pusheax                   008F00 RLA    
+pushl0                    008EF7 RLA    pushw                     00922B RLA    
+pushw0sp                  00923A RLA    pushwidx                  00922D RLA    
+pushwysp                  00923C RLA    shlax1                    008B3D RLA    
+shlax4                    008B5E RLA    shlaxy                    00927D RLA    
+shleax1                   008B6F RLA    shrax1                    0092DD RLA    
+shrax4                    0092E5 RLA    shraxy                    0092B0 RLA    
+shreax1                   0092F6 RLA    sreg                      000082 RLZ    
+staspidx                  009302 RLA    stax0sp                   009318 RLA    
+staxspidx                 009323 RLA    staxysp                   00931A RLA    
+steax0sp                  00933E RLA    steaxspidx                009353 RLA    
+steaxysp                  009340 RLA    subeqysp                  0093F2 RLA    
+subysp                    009405 RLA    tmp1                      000090 RLZ    
+tmp2                      000091 RLZ    tmp3                      000092 RLZ    
+tmp4                      000093 RLZ    tosadd0ax                 008D20 RLA    
+tosaddax                  008AF4 RLA    tosaddeax                 008D26 RLA    
+tosanda0                  008B2D RLA    tosdiva0                  008C77 RLA    
+tosdivax                  008C79 RLA    toseqeax                  008E5A RLA    
+tosicmp                   008C8E RLA    tosicmp0                  008C8C RLA    
+toslcmp                   008DA6 RLA    tosmoda0                  0090CC RLA    
+tosmula0                  009122 RLA    tosmulax                  0090DD RLA    
+tosneeax                  008ECD RLA    tosora0                   0091DB RLA    
+tosorax                   0091DD RLA    tosoreax                  008ED9 RLA    
+tossuba0                  0093DB RLA    tossubax                  0093DD RLA    
+tossubeax                 008F1E RLA    tosudiv0ax                008F75 RLA    
+tosudiva0                 009412 RLA    tosudivax                 009414 RLA    
+tosudiveax                008F7B RLA    tosugeeax                 008FEF RLA    
+tosugteax                 008FF5 RLA    tosuleax                  009465 RLA    
+tosuleeax                 008FFB RLA    tosulteax                 009001 RLA    
+tosumoda0                 00946B RLA    tosumodax                 00946D RLA    
+tosumul0ax                008E71 RLA    tosumula0                 009122 RLA    
+tosumulax                 0090DD RLA    tosumuleax                008E77 RLA    
+udiv16                    009423 RLA    utsteax                   008F66 RLA    
+zerobss                   00947C RLA    
+
+
+Exports list by value:
+----------------------
+__STARTUP__               000001 REA    __AMEMCODE_SIZE__         000001 REA    
+__OSSTATE_SIZE__          000062 REA    c_sp                      000080 RLZ    
+sreg                      000082 RLZ    ptr1                      000088 RLZ    
+ptr2                      00008A RLZ    ptr3                      00008C RLZ    
+ptr4                      00008E RLZ    tmp1                      000090 RLZ    
+tmp2                      000091 RLZ    tmp3                      000092 RLZ    
+tmp4                      000093 RLZ    __LOADER_SIZE__           000099 REA    
+__DATA_SIZE__             000121 REA    __NEARBSS_SIZE__          0002F7 REA    
+__NEAR_SIZE__             000300 REA    __BSS_SIZE__              000706 REA    
+_ti_readable_low_start    000800 REA    __RODATA_RUN__            000800 RLA    
+__LOWCODE_SIZE__          0008F9 REA    __RODATA_SIZE__           000EFE REA    
+_ti_font                  001502 RLA    _ti_font_index            00168A RLA    
+__AMEMCODE_RUN__          0016FE RLA    __LOWCODE_RUN__           0016FF RLA    
+_ti_gfx_palette           001896 RLA    _ti_gfx_end               00197F RLA    
+_ti_gfx_present           0019DF RLA    _ti_cpu_publish_rows      001C68 RLA    
+_ti_readable_start        002000 REA    _ti_readable_low_end      002000 REA    
+_ti_scene_capacity        0020E4 RLA    _ti_scene_strip_width     0020E5 RLA    
+_main                     003869 RLA    _sf_new                   003CC9 RLA    
+_sf_random                003D41 RLA    _sf_effect                003D6A RLA    
+_sf_enemy_shot            003DBD RLA    _sf_aimed                 003E2E RLA    
+_sf_pickup                003EC0 RLA    _sf_spawn                 003F0D RLA    
+_sf_hurt                  003FD6 RLA    _sf_next_sector           004040 RLA    
+_sf_drop                  0040D4 RLA    _sf_step                  0040EA RLA    
+_sf_multiplier            0042F7 RLA    _ti_audio_shutdown        005041 RLA    
+_ti_audio_update          005120 RLA    _ti_audio_voices          005252 RLA    
+_ti_audio_clock_valid     005260 RLA    _ti_audio_source_hz       00526F RLA    
+_ti_audio_resume_clock    005301 RLA    _ti_audio_reserve         005371 RLA    
+_ti_audio_effect_voice    005434 RLA    _ti_music_stop            005493 RLA    
+_ti_audio_effect          0054C6 RLA    _ti_speech_say            005597 RLA    
+_ti_speech_busy           0055E0 RLA    _ti_speech_stop           0055EF RLA    
+_ti_audio_tone            00579B RLA    _ti_audio_music_mask      005892 RLA    
+_ti_error_keep            005CD7 RLA    _ti_error_first           005CEB RLA    
+_ti_gfx_surface_free      005CF5 RLA    _ti_gfx_clear             005D6E RLA    
+_ti_gfx_rect              005DDD RLA    _ti_gfx_surface_valid     005F8D RLA    
+_ti_gfx_clip              0060A8 RLA    _ti_gfx_rows_begin        0060F4 RLA    
+_ti_gfx_text              0061FF RLA    _ti_gfx_text_opaque       00622A RLA    
+_ti_input_poll            006331 RLA    _ti_input_key             00634F RLA    
+_ti_input_buttons         006395 RLA    _ti_input_held            0063C1 RLA    
+_ti_joystick_read         00643E RLA    _ti_stick_read            0068B8 RLA    
+_ti_stick_recalibrate     006A81 RLA    _ti_init                  006A8D RLA    
+_ti_shutdown              006B03 RLA    _ti_res_alloc             006BA3 RLA    
+_ti_res_free              006E85 RLA    _ti_res_read              006EAB RLA    
+_ti_res_write             006F1A RLA    _ti_res_fill              006F89 RLA    
+_ti_near_valid            00704D RLA    _ti_video_storage_begin   00713B RLA    
+_ti_video_storage_end     00725D RLA    _ti_diag_video_end        00734D RLA    
+_ti_diag_video_write      0073F8 RLA    _ti_memory_lookup         007452 RLA    
+_ti_memory_in_range       0074BC RLA    _ti_memory_address        00761E RLA    
+_ti_scene_frame           0078DE RLA    _ti_scene_forget          0078E2 RLA    
+_ti_time_note_gap         0078E6 RLA    _ti_steps_reset           0078EC RLA    
+_ti_steps_due             00790A RLA    _ti_via_probe             0079C4 RLA    
+_ti_phasor_probe          0079E7 RLA    _ti_clock_install         007A50 RLA    
+_ti_clock_remove          007A63 RLA    _ti_clock_start           007A6C RLA    
+_ti_clock_stop            007AA0 RLA    _ti_clock_pause           007AB2 RLA    
+_ti_clock_resume          007AD1 RLA    _ti_audio_ticks           007AEB RLA    
+_ti_ssi_take_ready        007AFF RLA    _ti_ay_write              007B53 RLA    
+_ti_digits                007BAA RLA    _ti_video_on              007C5C RLA    
+_ti_video_off             007C62 RLA    _ti_platform_setup        007C68 RLA    
+_ti_cpu_read              007C94 RLA    _ti_cpu_write             007C9E RLA    
+_ti_cpu_write_rows        007CB0 RLA    _ti_scene_begin           007D39 RLA    
+_ti_scene_add             007F97 RLA    _ti_scene_draw            008057 RLA    
+_ti_scene_invalidate      0080E9 RLA    _ti_song_start            008523 RLA    
+_ti_row_seek              00871F RLA    _ti_row_next              008742 RLA    
+_ti_row_read              00875F RLA    _ti_row_write             008763 RLA    
+_ti_text_draw             0087F5 RLA    tosaddax                  008AF4 RLA    
+addeq0sp                  008B0E RLA    addeqysp                  008B10 RLA    
+addysp1                   008B1F RLA    addysp                    008B20 RLA    
+tosanda0                  008B2D RLA    shlax1                    008B3D RLA    
+aslax2                    008B45 RLA    aslax3                    008B50 RLA    
+shlax4                    008B5E RLA    shleax1                   008B6F RLA    
+asraxy                    008B82 RLA    asrax1                    008BB7 RLA    
+asrax2                    008BC1 RLA    axlong                    008BD0 RLA    
+axulong                   008BD6 RLA    bnegax                    008BDD RLA    
+bnega                     008BE1 RLA    callax                    008BEB RLA    
+complax                   008BF2 RLA    decax1                    008BFB RLA    
+decax4                    008C02 RLA    decax6                    008C09 RLA    
+decax8                    008C10 RLA    decaxy                    008C17 RLA    
+decsp1                    008C20 RLA    decsp2                    008C29 RLA    
+decsp3                    008C36 RLA    decsp4                    008C43 RLA    
+decsp5                    008C50 RLA    decsp6                    008C5D RLA    
+decsp7                    008C6A RLA    tosdiva0                  008C77 RLA    
+tosdivax                  008C79 RLA    tosicmp0                  008C8C RLA    
+tosicmp                   008C8E RLA    incax2                    008CBA RLA    
+incax3                    008CC1 RLA    incax5                    008CC6 RLA    
+incax6                    008CCB RLA    incax7                    008CD0 RLA    
+incax8                    008CD5 RLA    incax4                    008CDA RLA    
+incaxy                    008CDC RLA    incsp1                    008CE5 RLA    
+popax                     008CEC RLA    incsp2                    008CF4 RLA    
+incsp3                    008D02 RLA    incsp4                    008D07 RLA    
+incsp5                    008D0C RLA    incsp6                    008D11 RLA    
+incsp7                    008D16 RLA    incsp8                    008D1B RLA    
+tosadd0ax                 008D20 RLA    tosaddeax                 008D26 RLA    
+laddeq1                   008D45 RLA    laddeqa                   008D47 RLA    
+laddeq                    008D4D RLA    laddeqysp                 008D74 RLA    
+bnegeax                   008D95 RLA    toslcmp                   008DA6 RLA    
+ldaidx                    008DE1 RLA    ldaxi                     008DED RLA    
+ldaxidx                   008DEF RLA    ldax0sp                   008DFA RLA    
+ldaxysp                   008DFC RLA    ldeaxi                    008E03 RLA    
+ldeaxidx                  008E05 RLA    ldeax0sp                  008E1A RLA    
+ldeaxysp                  008E1C RLA    deceaxy                   008E2D RLA    
+ldptr10sp                 008E42 RLA    ldptr1ysp                 008E44 RLA    
+leaa0sp                   008E4E RLA    toseqeax                  008E5A RLA    
+inceaxy                   008E60 RLA    tosumul0ax                008E71 RLA    
+tosumuleax                008E77 RLA    tosneeax                  008ECD RLA    
+tosoreax                  008ED9 RLA    pushl0                    008EF7 RLA    
+push0ax                   008EFA RLA    pusheax                   008F00 RLA    
+tossubeax                 008F1E RLA    lsubeqysp                 008F41 RLA    
+utsteax                   008F66 RLA    tosudiv0ax                008F75 RLA    
+tosudiveax                008F7B RLA    tosugeeax                 008FEF RLA    
+tosugteax                 008FF5 RLA    tosuleeax                 008FFB RLA    
+tosulteax                 009001 RLA    boolne                    009007 RLA    
+booleq                    00900D RLA    boolge                    00901E RLA    
+boolule                   009024 RLA    boolult                   009026 RLA    
+boolugt                   00902C RLA    booluge                   00902E RLA    
+_memcpy                   009033 RLA    _memset                   009077 RLA    
+tosmoda0                  0090CC RLA    tosmulax                  0090DD RLA    
+tosumulax                 0090DD RLA    tosmula0                  009122 RLA    
+tosumula0                 009122 RLA    mul8x16                   009124 RLA    
+mul8x16a                  00912E RLA    mulax10                   00915C RLA    
+mulax3                    009175 RLA    mulax5                    009186 RLA    
+mulax6                    00919A RLA    mulax7                    0091B0 RLA    
+negax                     0091CD RLA    tosora0                   0091DB RLA    
+tosorax                   0091DD RLA    popptr1                   0091ED RLA    
+pusha                     0091FF RLA    push0                     009211 RLA    
+pusha0                    009213 RLA    pushax                    009215 RLA    
+pushw                     00922B RLA    pushwidx                  00922D RLA    
+pushw0sp                  00923A RLA    pushwysp                  00923C RLA    
+popsargsudiv16            009256 RLA    shlaxy                    00927D RLA    
+shraxy                    0092B0 RLA    shrax1                    0092DD RLA    
+shrax4                    0092E5 RLA    shreax1                   0092F6 RLA    
+staspidx                  009302 RLA    stax0sp                   009318 RLA    
+staxysp                   00931A RLA    staxspidx                 009323 RLA    
+steax0sp                  00933E RLA    steaxysp                  009340 RLA    
+steaxspidx                009353 RLA    _strcat                   009375 RLA    
+_strcpy                   0093A6 RLA    _strlen                   0093C5 RLA    
+tossuba0                  0093DB RLA    tossubax                  0093DD RLA    
+subeqysp                  0093F2 RLA    subysp                    009405 RLA    
+tosudiva0                 009412 RLA    tosudivax                 009414 RLA    
+udiv16                    009423 RLA    tosuleax                  009465 RLA    
+tosumoda0                 00946B RLA    tosumodax                 00946D RLA    
+zerobss                   00947C RLA    __OSSTATE_RUN__           00949F RLA    
+_ti_writable_start        009501 REA    jmpvec                    00961F RLA    
+_sf_begin                 009622 RLA    _ti_pack_load             009808 RLA    
+_sf_boss_step             00999E RLA    _ti_audio_init            0099F1 RLA    
+_sf_boss_hit              009C2B RLA    _sf_boss_bomb             009CCF RLA    
+_sf_boss_ram              009CFC RLA    _ti_speech_bind           009DC0 RLA    
+_ti_gfx_surface_create    009F2A RLA    _sf_boss                  009FBF RLA    
+_ti_gfx_begin             00A033 RLA    _ti_mli_call              00A0B9 RLA    
+__LOADER_RUN__            00A0E2 RLA    _ti_diag_video_begin      00A10E RLA    
+_ti_steps_begin           00A1B4 RLA    __RODATA_LOAD__           00A25F RLA    
+__SCENE_RUN__             00AC30 RLA    _ti_scene_x_lo            00AC30 RLA    
+__WINDOWEND__             00AC30 REA    _ti_scene_x_hi            00ACA0 RLA    
+_ti_file_buffer           00AD00 REA    _ti_scene_y_lo            00AD10 RLA    
+_ti_scene_y_hi            00AD80 RLA    _ti_scene_image           00ADF0 RLA    
+_ti_scene_color           00AE60 RLA    _ti_scene_top             00AED0 RLA    
+_ti_scene_bottom          00AF40 RLA    _ti_scene_strip           00AFB0 RLA    
+__AMEMCODE_LOAD__         00B15D RLA    __LOWCODE_LOAD__          00B15E RLA    
+__BSS_RUN__               00B370 RLA    _ti_audio_player          00B467 RLA    
+_ti_audio_music_volume    00B469 RLA    _ti_audio_dirty           00B475 RLA    
+_ti_audio_music_voices    00B476 RLA    _ti_audio_music_end       00B478 RLA    
+_ti_audio_native          00B47C RLA    _ti_audio_speech_enabled  00B47D RLA    
+_ti_ssi_ready             00B47E RLA    _ti_ssi_inf               00B47F RLA    
+_ti_ay_chip               00B480 RLA    _ti_ay_reg                00B481 RLA    
+_ti_ay_value              00B482 RLA    _ti_clock_latch           00B483 RLA    
+_ti_gfx_rows              00B5AB RLA    _ti_io_bank               00B699 RLA    
+_ti_io_len                00B69A RLA    _ti_io_addr               00B69B RLA    
+_ti_io_near               00B69D RLA    _ti_video_backup          00B69F RLA    
+_ti_graphics_cleanup_hook 00B6A1 RLA    _ti_audio_cleanup_hook    00B6A3 RLA    
+_ti_storage_pause_hook    00B6A5 RLA    _ti_storage_resume_hook   00B6A7 RLA    
+_ti_scene_images          00B79E RLA    _ti_scene_image_count     00B7A0 RLA    
+_ti_scene_x0              00B7A1 RLA    _ti_scene_y0              00B7A2 RLA    
+_ti_scene_row_bytes       00B7A3 RLA    _ti_scene_lines           00B7A4 RLA    
+_ti_scene_bands           00B7A5 RLA    _ti_scene_blocks          00B7A6 RLA    
+_ti_scene_fill            00B7A7 RLA    _ti_scene_count           00B7A8 RLA    
+_ti_scene_end             00B7A9 RLA    _ti_scene_screen          00B7AA RLA    
+_ti_scene_row_lo          00B7AC RLA    _ti_scene_row_hi          00B7B4 RLA    
+_ti_scene_mask            00B7BC RLA    _ti_scene_service         00B807 RLA    
+_ti_mli_command           00B809 RLA    _ti_mli_params            00B80A RLA    
+_ti_clock_counter         00B903 RLA    _ti_pub_to                00B915 RLA    
+_ti_pub_rows              00B917 RLA    _ti_io_width              00B919 RLA    
+_ti_io_rows               00B91A RLA    _ti_io_stride             00B91B RLA    
+_ti_row_base_bank         00BA3F RLA    _ti_row_base_addr         00BA40 RLA    
+_ti_row_bytes             00BA45 RLA    _ti_row_stride            00BA46 RLA    
+_ti_text_surface          00BA4A RLA    _ti_text_x                00BA4C RLA    
+_ti_text_y                00BA4E RLA    _ti_text_string           00BA50 RLA    
+_ti_text_ink              00BA52 RLA    _ti_text_paper            00BA53 RLA    
+_ti_text_opaque           00BA54 RLA    _ti_memory_end            00BA80 REA    
+_ti_transfer_start        00BA80 REA    __NEARBSS_RUN__           00BB00 RLA    
+__NEAR_START__            00BB00 RLA    _ti_near_start            00BB00 REA    
+_sf_state                 00BB84 RLA    _sf_events                00BDBA RLA    
+_sf_muzzle_x              00BDBC RLA    _sf_muzzle_y              00BDBD RLA    
+_sf_muzzle_style          00BDBE RLA    _ti_near_end              00BE00 REA    
+_ti_stack_bottom          00BE00 REA    __STACKSTART__            00BF00 REA    
+_ti_stack_top             00BF00 REA    
+
+
+Imports list:
+-------------
+__AMEMCODE_LOAD__ ([linker generated]):
+    startup.o                 build/asm/startup.s:13
+__AMEMCODE_RUN__ ([linker generated]):
+    startup.o                 build/asm/startup.s:13
+__AMEMCODE_SIZE__ ([linker generated]):
+    startup.o                 build/asm/startup.s:13
+__BSS_RUN__ ([linker generated]):
+    zerobss.o                 common/zerobss.s:8
+__BSS_SIZE__ ([linker generated]):
+    zerobss.o                 common/zerobss.s:8
+__DATA_SIZE__ ([linker generated]):
+    [linker generated]        examples/starfall/starfall.cfg:62
+    [linker generated]        examples/starfall/starfall.cfg:61
+    [linker generated]        examples/starfall/starfall.cfg:59
+    [linker generated]        examples/starfall/starfall.cfg:58
+    [linker generated]        examples/starfall/starfall.cfg:57
+    [linker generated]        examples/starfall/starfall.cfg:56
+    [linker generated]        examples/starfall/starfall.cfg:55
+    [linker generated]        examples/starfall/starfall.cfg:54
+    [linker generated]        examples/starfall/starfall.cfg:50
+    [linker generated]        examples/starfall/starfall.cfg:49
+__LOADER_RUN__ ([linker generated]):
+    [linker generated]        examples/starfall/starfall.cfg:52
+    [linker generated]        examples/starfall/starfall.cfg:51
+__LOADER_SIZE__ ([linker generated]):
+    [linker generated]        examples/starfall/starfall.cfg:52
+    [linker generated]        examples/starfall/starfall.cfg:51
+__LOWCODE_LOAD__ ([linker generated]):
+    startup.o                 build/asm/startup.s:14
+__LOWCODE_RUN__ ([linker generated]):
+    startup.o                 build/asm/startup.s:14
+__LOWCODE_SIZE__ ([linker generated]):
+    startup.o                 build/asm/startup.s:14
+__NEARBSS_RUN__ ([linker generated]):
+    startup.o                 build/asm/startup.s:15
+__NEARBSS_SIZE__ ([linker generated]):
+    startup.o                 build/asm/startup.s:15
+__NEAR_SIZE__ ([linker generated]):
+    [linker generated]        examples/starfall/starfall.cfg:34
+__NEAR_START__ ([linker generated]):
+    [linker generated]        examples/starfall/starfall.cfg:34
+    [linker generated]        examples/starfall/starfall.cfg:33
+__OSSTATE_RUN__ ([linker generated]):
+    [linker generated]        examples/starfall/starfall.cfg:62
+    [linker generated]        examples/starfall/starfall.cfg:61
+    [linker generated]        examples/starfall/starfall.cfg:59
+    [linker generated]        examples/starfall/starfall.cfg:58
+    [linker generated]        examples/starfall/starfall.cfg:57
+    [linker generated]        examples/starfall/starfall.cfg:56
+    [linker generated]        examples/starfall/starfall.cfg:55
+    [linker generated]        examples/starfall/starfall.cfg:54
+    [linker generated]        examples/starfall/starfall.cfg:50
+    [linker generated]        examples/starfall/starfall.cfg:49
+    [linker generated]        examples/starfall/starfall.cfg:27
+    [linker generated]        examples/starfall/starfall.cfg:26
+    [linker generated]        examples/starfall/starfall.cfg:25
+__OSSTATE_SIZE__ ([linker generated]):
+    [linker generated]        examples/starfall/starfall.cfg:62
+    [linker generated]        examples/starfall/starfall.cfg:61
+    [linker generated]        examples/starfall/starfall.cfg:59
+    [linker generated]        examples/starfall/starfall.cfg:58
+    [linker generated]        examples/starfall/starfall.cfg:57
+    [linker generated]        examples/starfall/starfall.cfg:56
+    [linker generated]        examples/starfall/starfall.cfg:55
+    [linker generated]        examples/starfall/starfall.cfg:54
+    [linker generated]        examples/starfall/starfall.cfg:50
+    [linker generated]        examples/starfall/starfall.cfg:49
+    [linker generated]        examples/starfall/starfall.cfg:27
+    [linker generated]        examples/starfall/starfall.cfg:25
+__RODATA_LOAD__ ([linker generated]):
+    startup.o                 build/asm/startup.s:12
+__RODATA_RUN__ ([linker generated]):
+    startup.o                 build/asm/startup.s:12
+__RODATA_SIZE__ ([linker generated]):
+    startup.o                 build/asm/startup.s:12
+__SCENE_RUN__ ([linker generated]):
+    [linker generated]        examples/starfall/starfall.cfg:41
+__STACKSTART__ ([linker generated]):
+    startup.o                 build/asm/startup.s:11
+__STARTUP__ (startup.o):
+    starfall.o                build/asm/starfall.s:13
+__WINDOWEND__ ([linker generated]):
+    [linker generated]        examples/starfall/starfall.cfg:64
+    [linker generated]        examples/starfall/starfall.cfg:64
+    [linker generated]        examples/starfall/starfall.cfg:62
+    [linker generated]        examples/starfall/starfall.cfg:59
+    [linker generated]        examples/starfall/starfall.cfg:57
+    [linker generated]        examples/starfall/starfall.cfg:55
+    [linker generated]        examples/starfall/starfall.cfg:50
+    [linker generated]        examples/starfall/starfall.cfg:47
+_main (starfall.o):
+    startup.o                 build/asm/startup.s:10
+_memcpy (memcpy.o):
+    input_stick.o             build/asm/input_stick.s:280
+    graphics_video.o          build/asm/graphics_video.s:687
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:71
+_memset (memset.o):
+    graphics.o                build/asm/graphics.s:13
+_sf_aimed (starfall_game.o):
+    starfall_boss.o           build/asm/starfall_boss.s:21
+_sf_begin (starfall_game.o):
+    starfall.o                build/asm/starfall.s:65
+_sf_boss (starfall_boss.o):
+    starfall.o                build/asm/starfall.s:103
+_sf_boss_bomb (starfall_boss.o):
+    starfall_game.o           build/asm/starfall_game.s:31
+_sf_boss_hit (starfall_boss.o):
+    starfall_game.o           build/asm/starfall_game.s:30
+_sf_boss_ram (starfall_boss.o):
+    starfall_game.o           build/asm/starfall_game.s:32
+_sf_boss_step (starfall_boss.o):
+    starfall_game.o           build/asm/starfall_game.s:29
+_sf_drop (starfall_game.o):
+    starfall_boss.o           build/asm/starfall_boss.s:26
+_sf_effect (starfall_game.o):
+    starfall_boss.o           build/asm/starfall_boss.s:19
+_sf_enemy_shot (starfall_game.o):
+    starfall_boss.o           build/asm/starfall_boss.s:20
+_sf_events (starfall_game.o):
+    starfall_boss.o           build/asm/starfall_boss.s:14
+_sf_hurt (starfall_game.o):
+    starfall_boss.o           build/asm/starfall_boss.s:24
+_sf_multiplier (starfall_game.o):
+    starfall.o                build/asm/starfall.s:67
+_sf_muzzle_style (starfall_game.o):
+    starfall_boss.o           build/asm/starfall_boss.s:17
+_sf_muzzle_x (starfall_game.o):
+    starfall_boss.o           build/asm/starfall_boss.s:15
+_sf_muzzle_y (starfall_game.o):
+    starfall_boss.o           build/asm/starfall_boss.s:16
+_sf_new (starfall_game.o):
+    starfall.o                build/asm/starfall.s:64
+_sf_next_sector (starfall_game.o):
+    starfall_boss.o           build/asm/starfall_boss.s:25
+_sf_pickup (starfall_game.o):
+    starfall_boss.o           build/asm/starfall_boss.s:22
+_sf_random (starfall_game.o):
+    starfall_boss.o           build/asm/starfall_boss.s:18
+_sf_spawn (starfall_game.o):
+    starfall_boss.o           build/asm/starfall_boss.s:23
+_sf_state (starfall_game.o):
+    starfall_boss.o           build/asm/starfall_boss.s:13
+    starfall.o                build/asm/starfall.s:63
+_sf_step (starfall_game.o):
+    starfall.o                build/asm/starfall.s:66
+_strcat (strcat.o):
+    starfall.o                build/asm/starfall.s:68
+_strcpy (strcpy.o):
+    starfall.o                build/asm/starfall.s:69
+_strlen (strlen.o):
+    starfall.o                build/asm/starfall.s:70
+_ti_audio_cleanup_hook (memory.o):
+    audio.o                   build/asm/audio.s:34
+_ti_audio_clock_valid (audio.o):
+    starfall.o                build/asm/starfall.s:44
+_ti_audio_dirty (audio.o):
+    target_song.o             build/asm/target_song.s:12
+_ti_audio_effect (audio.o):
+    starfall.o                build/asm/starfall.s:50
+_ti_audio_effect_voice (audio.o):
+    starfall.o                build/asm/starfall.s:47
+_ti_audio_init (audio.o):
+    starfall.o                build/asm/starfall.s:39
+_ti_audio_music_end (audio.o):
+    target_song.o             build/asm/target_song.s:13
+_ti_audio_music_mask (audio.o):
+    target_song.o             build/asm/target_song.s:10
+_ti_audio_music_voices (audio.o):
+    target_song.o             build/asm/target_song.s:13
+_ti_audio_music_volume (audio.o):
+    target_song.o             build/asm/target_song.s:12
+_ti_audio_native (audio.o):
+    target_audio.o            build/asm/target_audio.s:10
+_ti_audio_player (audio.o):
+    target_song.o             build/asm/target_song.s:12
+_ti_audio_reserve (audio.o):
+    starfall.o                build/asm/starfall.s:46
+_ti_audio_resume_clock (audio.o):
+    starfall.o                build/asm/starfall.s:45
+_ti_audio_shutdown (audio.o):
+    starfall.o                build/asm/starfall.s:40
+_ti_audio_source_hz (audio.o):
+    input_joystick.o          build/asm/input_joystick.s:14
+_ti_audio_speech_enabled (audio.o):
+    target_audio.o            build/asm/target_audio.s:10
+_ti_audio_ticks (target_audio.o):
+    target_song.o             build/asm/target_song.s:10
+    input_stick.o             build/asm/input_stick.s:13
+    audio.o                   build/asm/audio.s:17
+    starfall.o                build/asm/starfall.s:42
+_ti_audio_tone (audio.o):
+    target_song.o             build/asm/target_song.s:11
+_ti_audio_update (audio.o):
+    starfall.o                build/asm/starfall.s:41
+_ti_audio_voices (audio.o):
+    target_song.o             build/asm/target_song.s:10
+    input_joystick.o          build/asm/input_joystick.s:13
+    starfall.o                build/asm/starfall.s:43
+_ti_ay_chip (audio.o):
+    target_audio.o            build/asm/target_audio.s:11
+_ti_ay_reg (audio.o):
+    target_audio.o            build/asm/target_audio.s:11
+_ti_ay_value (audio.o):
+    target_audio.o            build/asm/target_audio.s:11
+_ti_ay_write (target_audio.o):
+    audio.o                   build/asm/audio.s:65
+_ti_clock_counter (target_audio.o):
+    input_joystick.o          build/asm/input_joystick.s:18
+_ti_clock_install (target_audio.o):
+    audio.o                   build/asm/audio.s:58
+_ti_clock_latch (audio.o):
+    target_audio.o            build/asm/target_audio.s:12
+_ti_clock_pause (target_audio.o):
+    audio.o                   build/asm/audio.s:66
+_ti_clock_remove (target_audio.o):
+    audio.o                   build/asm/audio.s:59
+_ti_clock_resume (target_audio.o):
+    audio.o                   build/asm/audio.s:67
+_ti_clock_start (target_audio.o):
+    audio.o                   build/asm/audio.s:63
+_ti_clock_stop (target_audio.o):
+    audio.o                   build/asm/audio.s:64
+_ti_cpu_publish_rows (target_publish.o):
+    graphics_video.o          build/asm/graphics_video.s:37
+_ti_cpu_read (target_memory.o):
+    target_surface.o          build/asm/target_surface.s:15
+    memory.o                  build/asm/memory.s:25
+_ti_cpu_write (target_memory.o):
+    target_rows.o             build/asm/target_rows.s:11
+    target_surface.o          build/asm/target_surface.s:15
+    target_publish.o          build/asm/target_publish.s:12
+    memory.o                  build/asm/memory.s:26
+_ti_cpu_write_rows (target_rows.o):
+    target_scene.o            build/asm/target_scene.s:28
+_ti_diag_video_begin (memory.o):
+    graphics_video.o          build/asm/graphics_video.s:22
+_ti_diag_video_end (memory.o):
+    graphics_video.o          build/asm/graphics_video.s:23
+    audio.o                   build/asm/audio.s:39
+_ti_diag_video_write (memory.o):
+    graphics_video.o          build/asm/graphics_video.s:24
+_ti_digits (target_digits.o):
+    starfall.o                build/asm/starfall.s:28
+_ti_error_first (error.o):
+    starfall.o                build/asm/starfall.s:15
+_ti_error_keep (error.o):
+    starfall.o                build/asm/starfall.s:14
+_ti_file_buffer ([linker generated]):
+    storage.o                 build/asm/storage.s:26
+_ti_font (font.o):
+    target_text.o             build/asm/target_text.s:17
+_ti_font_index (font.o):
+    target_text.o             build/asm/target_text.s:17
+_ti_gfx_begin (graphics_video.o):
+    starfall.o                build/asm/starfall.s:29
+_ti_gfx_clear (graphics.o):
+    starfall.o                build/asm/starfall.s:24
+_ti_gfx_clip (graphics.o):
+    graphics_video.o          build/asm/graphics_video.s:30
+_ti_gfx_end (graphics_video.o):
+    starfall.o                build/asm/starfall.s:31
+_ti_gfx_palette (graphics_video.o):
+    starfall.o                build/asm/starfall.s:30
+_ti_gfx_present (graphics_video.o):
+    starfall.o                build/asm/starfall.s:32
+_ti_gfx_rect (graphics.o):
+    starfall.o                build/asm/starfall.s:25
+_ti_gfx_rows (graphics.o):
+    target_text.o             build/asm/target_text.s:17
+    target_surface.o          build/asm/target_surface.s:16
+    target_publish.o          build/asm/target_publish.s:13
+    graphics_video.o          build/asm/graphics_video.s:31
+_ti_gfx_rows_begin (graphics.o):
+    graphics_video.o          build/asm/graphics_video.s:33
+    graphics_text.o           build/asm/graphics_text.s:17
+_ti_gfx_surface_create (graphics.o):
+    starfall.o                build/asm/starfall.s:22
+_ti_gfx_surface_free (graphics.o):
+    starfall.o                build/asm/starfall.s:23
+_ti_gfx_surface_valid (graphics.o):
+    graphics_video.o          build/asm/graphics_video.s:29
+    graphics_text.o           build/asm/graphics_text.s:16
+_ti_gfx_text (graphics_text.o):
+    starfall.o                build/asm/starfall.s:26
+_ti_gfx_text_opaque (graphics_text.o):
+    starfall.o                build/asm/starfall.s:27
+_ti_graphics_cleanup_hook (memory.o):
+    graphics_video.o          build/asm/graphics_video.s:21
+_ti_init (memory.o):
+    starfall.o                build/asm/starfall.s:16
+_ti_input_buttons (input.o):
+    input_joystick.o          build/asm/input_joystick.s:15
+    starfall.o                build/asm/starfall.s:57
+_ti_input_held (input.o):
+    starfall.o                build/asm/starfall.s:58
+_ti_input_key (input.o):
+    starfall.o                build/asm/starfall.s:56
+_ti_input_poll (input.o):
+    starfall.o                build/asm/starfall.s:55
+_ti_io_addr (memory.o):
+    target_rows.o             build/asm/target_rows.s:11
+    target_surface.o          build/asm/target_surface.s:15
+    target_scene.o            build/asm/target_scene.s:29
+    target_publish.o          build/asm/target_publish.s:12
+    target_memory.o           build/asm/target_memory.s:23
+_ti_io_bank (memory.o):
+    target_rows.o             build/asm/target_rows.s:11
+    target_surface.o          build/asm/target_surface.s:15
+    target_publish.o          build/asm/target_publish.s:12
+    target_memory.o           build/asm/target_memory.s:23
+_ti_io_len (memory.o):
+    target_rows.o             build/asm/target_rows.s:11
+    target_surface.o          build/asm/target_surface.s:15
+    target_publish.o          build/asm/target_publish.s:12
+    target_memory.o           build/asm/target_memory.s:23
+_ti_io_near (memory.o):
+    target_rows.o             build/asm/target_rows.s:11
+    target_surface.o          build/asm/target_surface.s:15
+    target_scene.o            build/asm/target_scene.s:29
+    target_publish.o          build/asm/target_publish.s:12
+    target_memory.o           build/asm/target_memory.s:23
+_ti_io_rows (target_rows.o):
+    target_scene.o            build/asm/target_scene.s:29
+_ti_io_stride (target_rows.o):
+    target_scene.o            build/asm/target_scene.s:29
+_ti_io_width (target_rows.o):
+    target_scene.o            build/asm/target_scene.s:29
+_ti_joystick_read (input_joystick.o):
+    input_stick.o             build/asm/input_stick.s:14
+    starfall.o                build/asm/starfall.s:59
+_ti_memory_address (memory.o):
+    graphics.o                build/asm/graphics.s:25
+_ti_memory_end ([linker generated]):
+    memory.o                  build/asm/memory.s:50
+_ti_memory_in_range (memory.o):
+    graphics.o                build/asm/graphics.s:24
+_ti_memory_lookup (memory.o):
+    graphics.o                build/asm/graphics.s:23
+_ti_mli_call (target_storage.o):
+    storage.o                 build/asm/storage.s:29
+_ti_mli_command (storage.o):
+    target_storage.o          build/asm/target_storage.s:5
+_ti_mli_params (storage.o):
+    target_storage.o          build/asm/target_storage.s:5
+_ti_music_stop (audio.o):
+    target_song.o             build/asm/target_song.s:11
+    starfall.o                build/asm/starfall.s:49
+_ti_near_end ([linker generated]):
+    memory.o                  build/asm/memory.s:56
+_ti_near_start ([linker generated]):
+    memory.o                  build/asm/memory.s:55
+_ti_near_valid (memory.o):
+    target_text.o             build/asm/target_text.s:15
+    target_song.o             build/asm/target_song.s:10
+    target_scene.o            build/asm/target_scene.s:18
+    target_digits.o           build/asm/target_digits.s:8
+    storage.o                 build/asm/storage.s:21
+    input_stick.o             build/asm/input_stick.s:17
+    input_joystick.o          build/asm/input_joystick.s:17
+    input.o                   build/asm/input.s:19
+    graphics_video.o          build/asm/graphics_video.s:20
+    graphics.o                build/asm/graphics.s:22
+    audio.o                   build/asm/audio.s:33
+_ti_pack_load (storage.o):
+    starfall.o                build/asm/starfall.s:62
+_ti_phasor_probe (target_audio.o):
+    audio.o                   build/asm/audio.s:62
+_ti_platform_setup (target_memory.o):
+    startup.o                 build/asm/startup.s:10
+_ti_pub_rows (target_publish.o):
+    graphics_video.o          build/asm/graphics_video.s:35
+_ti_pub_to (target_publish.o):
+    graphics_video.o          build/asm/graphics_video.s:36
+_ti_readable_low_end ([linker generated]):
+    memory.o                  build/asm/memory.s:52
+_ti_readable_low_start ([linker generated]):
+    memory.o                  build/asm/memory.s:51
+_ti_readable_start ([linker generated]):
+    memory.o                  build/asm/memory.s:49
+_ti_res_alloc (memory.o):
+    storage.o                 build/asm/storage.s:13
+    graphics.o                build/asm/graphics.s:14
+_ti_res_fill (memory.o):
+    graphics.o                build/asm/graphics.s:16
+_ti_res_free (memory.o):
+    storage.o                 build/asm/storage.s:14
+    graphics.o                build/asm/graphics.s:15
+_ti_res_read (memory.o):
+    starfall.o                build/asm/starfall.s:18
+_ti_res_write (memory.o):
+    storage.o                 build/asm/storage.s:15
+_ti_row_base_addr (target_surface.o):
+    graphics.o                build/asm/graphics.s:31
+_ti_row_base_bank (target_surface.o):
+    graphics.o                build/asm/graphics.s:29
+_ti_row_bytes (target_surface.o):
+    target_text.o             build/asm/target_text.s:16
+    target_publish.o          build/asm/target_publish.s:11
+    graphics_video.o          build/asm/graphics_video.s:32
+    graphics.o                build/asm/graphics.s:30
+_ti_row_next (target_surface.o):
+    target_text.o             build/asm/target_text.s:16
+    target_publish.o          build/asm/target_publish.s:11
+    graphics.o                build/asm/graphics.s:35
+_ti_row_read (target_surface.o):
+    target_text.o             build/asm/target_text.s:16
+    target_publish.o          build/asm/target_publish.s:11
+    graphics.o                build/asm/graphics.s:36
+_ti_row_seek (target_surface.o):
+    target_text.o             build/asm/target_text.s:16
+    graphics_video.o          build/asm/graphics_video.s:34
+    graphics.o                build/asm/graphics.s:34
+_ti_row_stride (target_surface.o):
+    target_text.o             build/asm/target_text.s:16
+    graphics.o                build/asm/graphics.s:32
+_ti_row_write (target_surface.o):
+    target_text.o             build/asm/target_text.s:16
+    graphics.o                build/asm/graphics.s:37
+_ti_scene_add (target_scene.o):
+    starfall.o                build/asm/starfall.s:35
+_ti_scene_bands (scene.o):
+    target_scene.o            build/asm/target_scene.s:24
+_ti_scene_begin (target_scene.o):
+    starfall.o                build/asm/starfall.s:33
+_ti_scene_blocks (scene.o):
+    target_scene.o            build/asm/target_scene.s:24
+_ti_scene_bottom (starfall.o):
+    target_scene.o            build/asm/target_scene.s:21
+_ti_scene_capacity (starfall.o):
+    target_scene.o            build/asm/target_scene.s:22
+_ti_scene_color (starfall.o):
+    target_scene.o            build/asm/target_scene.s:21
+_ti_scene_count (scene.o):
+    target_scene.o            build/asm/target_scene.s:25
+_ti_scene_draw (target_scene.o):
+    starfall.o                build/asm/starfall.s:38
+_ti_scene_end (scene.o):
+    target_scene.o            build/asm/target_scene.s:25
+_ti_scene_fill (scene.o):
+    target_scene.o            build/asm/target_scene.s:25
+_ti_scene_forget (scene.o):
+    starfall.o                build/asm/starfall.s:36
+_ti_scene_frame (scene.o):
+    starfall.o                build/asm/starfall.s:34
+_ti_scene_image (starfall.o):
+    target_scene.o            build/asm/target_scene.s:21
+_ti_scene_image_count (scene.o):
+    target_scene.o            build/asm/target_scene.s:23
+_ti_scene_images (scene.o):
+    target_scene.o            build/asm/target_scene.s:23
+_ti_scene_invalidate (target_scene.o):
+    starfall.o                build/asm/starfall.s:37
+_ti_scene_lines (scene.o):
+    target_scene.o            build/asm/target_scene.s:24
+_ti_scene_mask (scene.o):
+    target_scene.o            build/asm/target_scene.s:27
+_ti_scene_row_bytes (scene.o):
+    target_scene.o            build/asm/target_scene.s:24
+_ti_scene_row_hi (scene.o):
+    target_scene.o            build/asm/target_scene.s:26
+_ti_scene_row_lo (scene.o):
+    target_scene.o            build/asm/target_scene.s:26
+_ti_scene_screen (scene.o):
+    target_scene.o            build/asm/target_scene.s:25
+_ti_scene_service (scene.o):
+    target_scene.o            build/asm/target_scene.s:27
+_ti_scene_strip (starfall.o):
+    target_scene.o            build/asm/target_scene.s:19
+_ti_scene_strip_width (starfall.o):
+    target_scene.o            build/asm/target_scene.s:19
+_ti_scene_top (starfall.o):
+    target_scene.o            build/asm/target_scene.s:21
+_ti_scene_x0 (scene.o):
+    target_scene.o            build/asm/target_scene.s:23
+_ti_scene_x_hi (starfall.o):
+    target_scene.o            build/asm/target_scene.s:20
+_ti_scene_x_lo (starfall.o):
+    target_scene.o            build/asm/target_scene.s:20
+_ti_scene_y0 (scene.o):
+    target_scene.o            build/asm/target_scene.s:23
+_ti_scene_y_hi (starfall.o):
+    target_scene.o            build/asm/target_scene.s:20
+_ti_scene_y_lo (starfall.o):
+    target_scene.o            build/asm/target_scene.s:20
+_ti_shutdown (memory.o):
+    starfall.o                build/asm/starfall.s:17
+    startup.o                 build/asm/startup.s:10
+_ti_song_start (target_song.o):
+    starfall.o                build/asm/starfall.s:48
+_ti_speech_bind (audio.o):
+    starfall.o                build/asm/starfall.s:51
+_ti_speech_busy (audio.o):
+    starfall.o                build/asm/starfall.s:53
+_ti_speech_say (audio.o):
+    starfall.o                build/asm/starfall.s:52
+_ti_speech_stop (audio.o):
+    starfall.o                build/asm/starfall.s:54
+_ti_ssi_inf (audio.o):
+    target_audio.o            build/asm/target_audio.s:10
+_ti_ssi_ready (audio.o):
+    target_audio.o            build/asm/target_audio.s:10
+_ti_ssi_take_ready (target_audio.o):
+    audio.o                   build/asm/audio.s:60
+_ti_stack_bottom ([linker generated]):
+    memory.o                  build/asm/memory.s:53
+_ti_stack_top ([linker generated]):
+    memory.o                  build/asm/memory.s:54
+_ti_steps_begin (timing_steps.o):
+    starfall.o                build/asm/starfall.s:19
+_ti_steps_due (timing_steps.o):
+    starfall.o                build/asm/starfall.s:21
+_ti_steps_reset (timing_steps.o):
+    starfall.o                build/asm/starfall.s:20
+_ti_stick_read (input_stick.o):
+    starfall.o                build/asm/starfall.s:60
+_ti_stick_recalibrate (input_stick.o):
+    starfall.o                build/asm/starfall.s:61
+_ti_storage_pause_hook (memory.o):
+    storage.o                 build/asm/storage.s:22
+    audio.o                   build/asm/audio.s:35
+_ti_storage_resume_hook (memory.o):
+    storage.o                 build/asm/storage.s:23
+    audio.o                   build/asm/audio.s:36
+_ti_text_draw (target_text.o):
+    graphics_text.o           build/asm/graphics_text.s:25
+_ti_text_ink (target_text.o):
+    graphics_text.o           build/asm/graphics_text.s:22
+_ti_text_opaque (target_text.o):
+    graphics_text.o           build/asm/graphics_text.s:24
+_ti_text_paper (target_text.o):
+    graphics_text.o           build/asm/graphics_text.s:23
+_ti_text_string (target_text.o):
+    graphics_text.o           build/asm/graphics_text.s:21
+_ti_text_surface (target_text.o):
+    graphics_text.o           build/asm/graphics_text.s:18
+_ti_text_x (target_text.o):
+    graphics_text.o           build/asm/graphics_text.s:19
+_ti_text_y (target_text.o):
+    graphics_text.o           build/asm/graphics_text.s:20
+_ti_time_note_gap (timing_gap.o):
+    target_scene.o            build/asm/target_scene.s:18
+    storage.o                 build/asm/storage.s:16
+    memory.o                  build/asm/memory.s:20
+    graphics_video.o          build/asm/graphics_video.s:13
+    graphics_text.o           build/asm/graphics_text.s:13
+    graphics.o                build/asm/graphics.s:17
+    audio.o                   build/asm/audio.s:13
+_ti_transfer_start ([linker generated]):
+    memory.o                  build/asm/memory.s:47
+_ti_via_probe (target_audio.o):
+    audio.o                   build/asm/audio.s:61
+_ti_video_backup (memory.o):
+    target_scene.o            build/asm/target_scene.s:28
+    graphics_video.o          build/asm/graphics_video.s:19
+_ti_video_off (target_hardware.o):
+    memory.o                  build/asm/memory.s:29
+_ti_video_on (target_hardware.o):
+    memory.o                  build/asm/memory.s:28
+_ti_video_storage_begin (memory.o):
+    storage.o                 build/asm/storage.s:24
+    audio.o                   build/asm/audio.s:37
+_ti_video_storage_end (memory.o):
+    storage.o                 build/asm/storage.s:25
+    audio.o                   build/asm/audio.s:38
+_ti_writable_start ([linker generated]):
+    memory.o                  build/asm/memory.s:48
+addeq0sp (addeqsp.o):
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+addeqysp (addeqsp.o):
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    graphics_video.o          build/asm/graphics_video.s:687
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+addysp (addysp.o):
+    incsp8.o                  runtime/incsp8.s:8
+    incsp7.o                  runtime/incsp7.s:8
+    incsp6.o                  runtime/incsp6.s:8
+    incsp5.o                  runtime/incsp5.s:8
+    incsp4.o                  runtime/incsp4.s:8
+    incsp3.o                  runtime/incsp3.s:8
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics_text.o           build/asm/graphics_text.s:201
+    graphics_text.o           build/asm/graphics_text.s:201
+    graphics_text.o           build/asm/graphics_text.s:201
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+addysp1 (addysp.o):
+    sub.o                     runtime/sub.s:8
+    or.o                      runtime/or.s:9
+    ludiv.o                   runtime/ludiv.s:9
+    lsub.o                    runtime/lsub.s:11
+    lor.o                     runtime/lor.s:9
+    lmul.o                    runtime/lmul.s:9
+    ladd.o                    runtime/ladd.s:8
+    and.o                     runtime/and.s:8
+aslax2 (aslax2.o):
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    starfall_game.o           build/asm/starfall_game.s:3019
+aslax3 (aslax3.o):
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+asrax1 (asrax1.o):
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+asrax2 (asrax2.o):
+    starfall_game.o           build/asm/starfall_game.s:3019
+asraxy (asr.o):
+    starfall.o                build/asm/starfall.s:8877
+axlong (axlong.o):
+    graphics_video.o          build/asm/graphics_video.s:687
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+axulong (axlong.o):
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    input_joystick.o          build/asm/input_joystick.s:630
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+bnega (bneg.o):
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+bnegax (bneg.o):
+    input_joystick.o          build/asm/input_joystick.s:630
+    audio.o                   build/asm/audio.s:2638
+bnegeax (lbneg.o):
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    starfall_game.o           build/asm/starfall_game.s:3019
+booleq (makebool.o):
+    leq.o                     runtime/leq.s:8
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+boolge (makebool.o):
+    audio.o                   build/asm/audio.s:2638
+boolne (makebool.o):
+    lne.o                     runtime/lne.s:8
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    starfall_game.o           build/asm/starfall_game.s:3019
+booluge (makebool.o):
+    luge.o                    runtime/luge.s:8
+    starfall_boss.o           build/asm/starfall_boss.s:931
+boolugt (makebool.o):
+    lugt.o                    runtime/lugt.s:8
+boolule (makebool.o):
+    ule.o                     runtime/ule.s:8
+    lule.o                    runtime/lule.s:8
+boolult (makebool.o):
+    lult.o                    runtime/lult.s:8
+c_sp (zeropage.o):
+    lcmp.o                    runtime/lcmp.s:10
+    subysp.o                  runtime/subysp.s:9
+    subeqsp.o                 runtime/subeqsp.s:8
+    sub.o                     runtime/sub.s:9
+    steaxsp.o                 runtime/steaxsp.s:8
+    staxspi.o                 runtime/staxspi.s:10
+    staxsp.o                  runtime/staxsp.s:8
+    staspidx.o                runtime/staspidx.s:9
+    pushwsp.o                 runtime/pushwsp.s:8
+    pushax.o                  runtime/pushax.s:8
+    pusha.o                   runtime/pusha.s:8
+    popptr1.o                 runtime/popptr1.s:9
+    or.o                      runtime/or.s:10
+    memset.o                  common/memset.s:20
+    memcpy.o                  common/memcpy.s:15
+    ludiv.o                   runtime/ludiv.s:10
+    lsubeqsp.o                runtime/lsubeqsp.s:8
+    lsub.o                    runtime/lsub.s:12
+    lpush.o                   runtime/lpush.s:13
+    lor.o                     runtime/lor.s:10
+    lmul.o                    runtime/lmul.s:10
+    leaaxsp.o                 runtime/leaaxsp.s:8
+    ldptr1sp.o                runtime/ldptr1sp.s:8
+    ldeaxysp.o                runtime/ldeaxysp.s:12
+    ldaxsp.o                  runtime/ldaxsp.s:8
+    laddeqsp.o                runtime/laddeqsp.s:8
+    ladd.o                    runtime/ladd.s:9
+    incsp2.o                  runtime/incsp2.s:8
+    incsp1.o                  runtime/incsp1.s:8
+    icmp.o                    runtime/icmp.s:9
+    decsp7.o                  runtime/decsp7.s:8
+    decsp6.o                  runtime/decsp6.s:8
+    decsp5.o                  runtime/decsp5.s:8
+    decsp4.o                  runtime/decsp4.s:8
+    decsp3.o                  runtime/decsp3.s:8
+    decsp2.o                  runtime/decsp2.s:8
+    decsp1.o                  runtime/decsp1.s:8
+    and.o                     runtime/and.s:9
+    addysp.o                  runtime/addysp.s:8
+    addeqsp.o                 runtime/addeqsp.s:8
+    add.o                     runtime/add.s:12
+    target_song.o             D:\Repos\cc65\asminc/zeropage.inc:11
+    target_scene.o            D:\Repos\cc65\asminc/zeropage.inc:11
+    target_digits.o           D:\Repos\cc65\asminc/zeropage.inc:11
+    timing_steps.o            build/asm/timing_steps.s:10
+    storage.o                 build/asm/storage.s:10
+    memory.o                  build/asm/memory.s:10
+    input_stick.o             build/asm/input_stick.s:10
+    input_joystick.o          build/asm/input_joystick.s:10
+    input.o                   build/asm/input.s:10
+    graphics_video.o          build/asm/graphics_video.s:10
+    graphics_text.o           build/asm/graphics_text.s:10
+    graphics.o                build/asm/graphics.s:10
+    error.o                   build/asm/error.s:10
+    audio.o                   build/asm/audio.s:10
+    starfall_boss.o           build/asm/starfall_boss.s:10
+    starfall_game.o           build/asm/starfall_game.s:10
+    starfall.o                build/asm/starfall.s:10
+    startup.o                 D:\Repos\cc65\asminc/zeropage.inc:11
+callax (call.o):
+    target_scene.o            build/asm/target_scene.s:18
+    timing_steps.o            build/asm/timing_steps.s:218
+    timing_steps.o            build/asm/timing_steps.s:218
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    graphics_video.o          build/asm/graphics_video.s:687
+complax (compl.o):
+    input_joystick.o          build/asm/input_joystick.s:630
+    audio.o                   build/asm/audio.s:2638
+decax1 (decax1.o):
+    timing_steps.o            build/asm/timing_steps.s:218
+    memory.o                  build/asm/memory.s:2092
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+decax4 (decax4.o):
+    starfall.o                build/asm/starfall.s:8877
+decax6 (decax6.o):
+    starfall.o                build/asm/starfall.s:8877
+decax8 (decax8.o):
+    starfall.o                build/asm/starfall.s:8877
+decaxy (decaxy.o):
+    input_stick.o             build/asm/input_stick.s:280
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+deceaxy (ldec.o):
+    input_joystick.o          build/asm/input_joystick.s:630
+    audio.o                   build/asm/audio.s:2638
+decsp1 (decsp1.o):
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    input.o                   build/asm/input.s:250
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+decsp2 (decsp2.o):
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+decsp3 (decsp3.o):
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    audio.o                   build/asm/audio.s:2638
+decsp4 (decsp4.o):
+    lpush.o                   runtime/lpush.s:12
+    memory.o                  build/asm/memory.s:2092
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics.o                build/asm/graphics.s:840
+decsp5 (decsp5.o):
+    memory.o                  build/asm/memory.s:2092
+    audio.o                   build/asm/audio.s:2638
+decsp6 (decsp6.o):
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    audio.o                   build/asm/audio.s:2638
+decsp7 (decsp7.o):
+    memory.o                  build/asm/memory.s:2092
+incax2 (incax2.o):
+    storage.o                 build/asm/storage.s:1431
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+incax3 (incax3.o):
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+incax4 (incaxy.o):
+    graphics.o                build/asm/graphics.s:840
+    starfall_game.o           build/asm/starfall_game.s:3019
+incax5 (incax5.o):
+    starfall.o                build/asm/starfall.s:8877
+incax6 (incax6.o):
+    graphics.o                build/asm/graphics.s:840
+    starfall_game.o           build/asm/starfall_game.s:3019
+incax7 (incax7.o):
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+incax8 (incax8.o):
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall.o                build/asm/starfall.s:8877
+incaxy (incaxy.o):
+    incax8.o                  runtime/incax8.s:8
+    incax7.o                  runtime/incax7.s:8
+    incax6.o                  runtime/incax6.s:8
+    incax5.o                  runtime/incax5.s:8
+    incax3.o                  runtime/incax3.s:8
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+inceaxy (linc.o):
+    storage.o                 build/asm/storage.s:1431
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+incsp1 (incsp1.o):
+    storage.o                 build/asm/storage.s:1431
+    input_joystick.o          build/asm/input_joystick.s:630
+    input.o                   build/asm/input.s:250
+    input.o                   build/asm/input.s:250
+    graphics_video.o          build/asm/graphics_video.s:687
+    error.o                   build/asm/error.s:74
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+incsp2 (incsp2.o):
+    staxspi.o                 runtime/staxspi.s:9
+    staspidx.o                runtime/staspidx.s:8
+    popptr1.o                 runtime/popptr1.s:8
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    input_stick.o             build/asm/input_stick.s:280
+    input_joystick.o          build/asm/input_joystick.s:630
+    input_joystick.o          build/asm/input_joystick.s:630
+    input.o                   build/asm/input.s:250
+    input.o                   build/asm/input.s:250
+    input.o                   build/asm/input.s:250
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+incsp3 (incsp3.o):
+    storage.o                 build/asm/storage.s:1431
+    input_joystick.o          build/asm/input_joystick.s:630
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+incsp4 (incsp4.o):
+    lcmp.o                    runtime/lcmp.s:9
+    target_song.o             build/asm/target_song.s:9
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+incsp5 (incsp5.o):
+    target_scene.o            build/asm/target_scene.s:18
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+incsp6 (incsp6.o):
+    target_digits.o           build/asm/target_digits.s:8
+    timing_steps.o            build/asm/timing_steps.s:218
+    memory.o                  build/asm/memory.s:2092
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+incsp7 (incsp7.o):
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+incsp8 (incsp8.o):
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+jmpvec (jmpvec.o):
+    audio.o                   build/asm/audio.s:2638
+laddeq (laddeq.o):
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+laddeq1 (laddeq.o):
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+laddeqa (laddeq.o):
+    starfall_game.o           build/asm/starfall_game.s:3019
+laddeqysp (laddeqsp.o):
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+ldaidx (ldai.o):
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+ldax0sp (ldaxsp.o):
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    input_joystick.o          build/asm/input_joystick.s:630
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+ldaxi (ldaxi.o):
+    storage.o                 build/asm/storage.s:1431
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+ldaxidx (ldaxi.o):
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+ldaxysp (ldaxsp.o):
+    timing_steps.o            build/asm/timing_steps.s:218
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics_text.o           build/asm/graphics_text.s:201
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+ldeax0sp (ldeaxysp.o):
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    graphics_video.o          build/asm/graphics_video.s:687
+ldeaxi (ldeaxi.o):
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+ldeaxidx (ldeaxi.o):
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+ldeaxysp (ldeaxysp.o):
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    graphics_video.o          build/asm/graphics_video.s:687
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+ldptr10sp (ldptr1sp.o):
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    input.o                   build/asm/input.s:250
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+ldptr1ysp (ldptr1sp.o):
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+leaa0sp (leaaxsp.o):
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics.o                build/asm/graphics.s:840
+lsubeqysp (lsubeqsp.o):
+    memory.o                  build/asm/memory.s:2092
+mul8x16 (mul8.o):
+    mul.o                     runtime/mul.s:8
+mul8x16a (mul8.o):
+    mul.o                     runtime/mul.s:8
+mulax10 (mulax10.o):
+    starfall.o                build/asm/starfall.s:8877
+mulax3 (mulax3.o):
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+mulax5 (mulax5.o):
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+mulax6 (mulax6.o):
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+mulax7 (mulax7.o):
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+negax (negabs.o):
+    shelp.o                   runtime/shelp.s:11
+    mod.o                     runtime/mod.s:11
+    div.o                     runtime/div.s:11
+    starfall_game.o           build/asm/starfall_game.s:3019
+popax (incsp2.o):
+    strcpy.o                  common/strcpy.s:8
+    strcat.o                  common/strcat.s:9
+    shr.o                     runtime/shr.s:15
+    shl.o                     runtime/shl.s:15
+    shelp.o                   runtime/shelp.s:11
+    memset.o                  common/memset.s:19
+    memcpy.o                  common/memcpy.s:14
+    asr.o                     runtime/asr.s:15
+popptr1 (popptr1.o):
+    umod.o                    runtime/umod.s:8
+    udiv.o                    runtime/udiv.s:9
+    steaxspi.o                runtime/steaxspi.s:9
+    mul8.o                    runtime/mul8.s:9
+    mul.o                     runtime/mul.s:9
+    memcpy.o                  common/memcpy.s:14
+popsargsudiv16 (shelp.o):
+    mod.o                     runtime/mod.s:11
+    div.o                     runtime/div.s:11
+ptr1 (zeropage.o):
+    lcmp.o                    runtime/lcmp.s:10
+    zerobss.o                 common/zerobss.s:9
+    udiv.o                    runtime/udiv.s:10
+    strcpy.o                  common/strcpy.s:9
+    strcat.o                  common/strcat.s:10
+    steaxspi.o                runtime/steaxspi.s:10
+    staxspi.o                 runtime/staxspi.s:10
+    staspidx.o                runtime/staspidx.s:9
+    shelp.o                   runtime/shelp.s:12
+    pushw.o                   runtime/pushw.s:9
+    popptr1.o                 runtime/popptr1.s:9
+    mulax7.o                  runtime/mulax7.s:10
+    mulax6.o                  runtime/mulax6.s:9
+    mulax5.o                  runtime/mulax5.s:9
+    mulax3.o                  runtime/mulax3.s:9
+    mulax10.o                 runtime/mulax10.s:9
+    mul8.o                    runtime/mul8.s:10
+    mul.o                     runtime/mul.s:10
+    memset.o                  common/memset.s:20
+    memcpy.o                  common/memcpy.s:15
+    ludiv.o                   runtime/ludiv.s:10
+    lmul.o                    runtime/lmul.s:10
+    ldptr1sp.o                runtime/ldptr1sp.s:8
+    ldeaxi.o                  runtime/ldeaxi.s:8
+    ldaxi.o                   runtime/ldaxi.s:8
+    ldai.o                    runtime/ldai.s:8
+    laddeq.o                  runtime/laddeq.s:12
+    div.o                     runtime/div.s:12
+    call.o                    runtime/call.s:8
+    target_text.o             D:\Repos\cc65\asminc/zeropage.inc:12
+    target_song.o             D:\Repos\cc65\asminc/zeropage.inc:12
+    target_scene.o            D:\Repos\cc65\asminc/zeropage.inc:12
+    target_memory.o           D:\Repos\cc65\asminc/zeropage.inc:12
+    target_digits.o           D:\Repos\cc65\asminc/zeropage.inc:12
+    storage.o                 build/asm/storage.s:11
+    memory.o                  build/asm/memory.s:11
+    input_stick.o             build/asm/input_stick.s:11
+    input.o                   build/asm/input.s:11
+    graphics_video.o          build/asm/graphics_video.s:11
+    graphics.o                build/asm/graphics.s:11
+    audio.o                   build/asm/audio.s:11
+    starfall_boss.o           build/asm/starfall_boss.s:11
+    starfall_game.o           build/asm/starfall_game.s:11
+    starfall.o                build/asm/starfall.s:11
+    startup.o                 D:\Repos\cc65\asminc/zeropage.inc:12
+ptr2 (zeropage.o):
+    strcpy.o                  common/strcpy.s:9
+    strcat.o                  common/strcat.s:10
+    memset.o                  common/memset.s:20
+    memcpy.o                  common/memcpy.s:15
+    ludiv.o                   runtime/ludiv.s:10
+    target_text.o             D:\Repos\cc65\asminc/zeropage.inc:12
+    target_song.o             D:\Repos\cc65\asminc/zeropage.inc:12
+    target_scene.o            D:\Repos\cc65\asminc/zeropage.inc:12
+    target_memory.o           D:\Repos\cc65\asminc/zeropage.inc:12
+    audio.o                   build/asm/audio.s:11
+    starfall_game.o           build/asm/starfall_game.s:11
+    starfall.o                build/asm/starfall.s:11
+    startup.o                 D:\Repos\cc65\asminc/zeropage.inc:12
+ptr3 (zeropage.o):
+    memset.o                  common/memset.s:20
+    memcpy.o                  common/memcpy.s:15
+    ludiv.o                   runtime/ludiv.s:10
+    lmul.o                    runtime/lmul.s:10
+    target_song.o             D:\Repos\cc65\asminc/zeropage.inc:12
+ptr4 (zeropage.o):
+    umod.o                    runtime/umod.s:9
+    udiv.o                    runtime/udiv.s:10
+    strlen.o                  common/strlen.s:12
+    shelp.o                   runtime/shelp.s:12
+    mul8.o                    runtime/mul8.s:10
+    mul.o                     runtime/mul.s:10
+    ludiv.o                   runtime/ludiv.s:10
+    lmul.o                    runtime/lmul.s:10
+    linc.o                    runtime/linc.s:8
+    target_scene.o            D:\Repos\cc65\asminc/zeropage.inc:12
+push0 (pushax.o):
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+push0ax (lpush.o):
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    starfall.o                build/asm/starfall.s:8877
+pusha (pusha.o):
+    target_song.o             build/asm/target_song.s:9
+    timing_steps.o            build/asm/timing_steps.s:218
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    input_joystick.o          build/asm/input_joystick.s:630
+    input_joystick.o          build/asm/input_joystick.s:630
+    input.o                   build/asm/input.s:250
+    input.o                   build/asm/input.s:250
+    input.o                   build/asm/input.s:250
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics_text.o           build/asm/graphics_text.s:201
+    graphics_text.o           build/asm/graphics_text.s:201
+    graphics_text.o           build/asm/graphics_text.s:201
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    error.o                   build/asm/error.s:74
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+pusha0 (pushax.o):
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    input_stick.o             build/asm/input_stick.s:280
+    input_joystick.o          build/asm/input_joystick.s:630
+    input.o                   build/asm/input.s:250
+    input.o                   build/asm/input.s:250
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+pushax (pushax.o):
+    pushw.o                   runtime/pushw.s:8
+    target_text.o             build/asm/target_text.s:15
+    target_song.o             build/asm/target_song.s:9
+    target_scene.o            build/asm/target_scene.s:18
+    target_digits.o           build/asm/target_digits.s:8
+    timing_steps.o            build/asm/timing_steps.s:218
+    timing_steps.o            build/asm/timing_steps.s:218
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    input_stick.o             build/asm/input_stick.s:280
+    input_joystick.o          build/asm/input_joystick.s:630
+    input_joystick.o          build/asm/input_joystick.s:630
+    input_joystick.o          build/asm/input_joystick.s:630
+    input.o                   build/asm/input.s:250
+    input.o                   build/asm/input.s:250
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+pusheax (lpush.o):
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    input_joystick.o          build/asm/input_joystick.s:630
+    input_joystick.o          build/asm/input_joystick.s:630
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+pushl0 (lpush.o):
+    memory.o                  build/asm/memory.s:2092
+    starfall.o                build/asm/starfall.s:8877
+pushw (pushw.o):
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+pushw0sp (pushwsp.o):
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    input_stick.o             build/asm/input_stick.s:280
+    input_joystick.o          build/asm/input_joystick.s:630
+    input_joystick.o          build/asm/input_joystick.s:630
+    input.o                   build/asm/input.s:250
+    graphics.o                build/asm/graphics.s:840
+pushwidx (pushw.o):
+    memory.o                  build/asm/memory.s:2092
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+pushwysp (pushwsp.o):
+    timing_steps.o            build/asm/timing_steps.s:218
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics_text.o           build/asm/graphics_text.s:201
+    graphics_text.o           build/asm/graphics_text.s:201
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+shlax1 (aslax1.o):
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+shlax4 (aslax4.o):
+    memory.o                  build/asm/memory.s:2092
+shlaxy (shl.o):
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+shleax1 (asleax1.o):
+    input_joystick.o          build/asm/input_joystick.s:630
+shrax1 (shrax1.o):
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    starfall.o                build/asm/starfall.s:8877
+shrax4 (shrax4.o):
+    memory.o                  build/asm/memory.s:2092
+shraxy (shr.o):
+    starfall.o                build/asm/starfall.s:8877
+shreax1 (shreax1.o):
+    starfall.o                build/asm/starfall.s:8877
+sreg (zeropage.o):
+    lcmp.o                    runtime/lcmp.s:10
+    umod.o                    runtime/umod.s:9
+    udiv.o                    runtime/udiv.s:10
+    steaxspi.o                runtime/steaxspi.s:10
+    steaxsp.o                 runtime/steaxsp.s:8
+    shreax1.o                 runtime/shreax1.s:8
+    mod.o                     runtime/mod.s:12
+    ludiv.o                   runtime/ludiv.s:10
+    ltest.o                   runtime/ltest.s:8
+    lsubeqsp.o                runtime/lsubeqsp.s:8
+    lsub.o                    runtime/lsub.s:12
+    lpush.o                   runtime/lpush.s:13
+    lor.o                     runtime/lor.s:10
+    lmul.o                    runtime/lmul.s:10
+    linc.o                    runtime/linc.s:8
+    ldec.o                    runtime/ldec.s:9
+    ldeaxysp.o                runtime/ldeaxysp.s:12
+    ldeaxi.o                  runtime/ldeaxi.s:8
+    lbneg.o                   runtime/lbneg.s:8
+    laddeqsp.o                runtime/laddeqsp.s:8
+    laddeq.o                  runtime/laddeq.s:12
+    ladd.o                    runtime/ladd.s:9
+    icmp.o                    runtime/icmp.s:9
+    axlong.o                  runtime/axlong.s:9
+    asleax1.o                 runtime/asleax1.s:8
+    target_audio.o            D:\Repos\cc65\asminc/zeropage.inc:11
+    storage.o                 build/asm/storage.s:10
+    memory.o                  build/asm/memory.s:10
+    input_joystick.o          build/asm/input_joystick.s:10
+    graphics_video.o          build/asm/graphics_video.s:10
+    graphics.o                build/asm/graphics.s:10
+    audio.o                   build/asm/audio.s:10
+    starfall_boss.o           build/asm/starfall_boss.s:10
+    starfall_game.o           build/asm/starfall_game.s:10
+    starfall.o                build/asm/starfall.s:10
+    startup.o                 D:\Repos\cc65\asminc/zeropage.inc:11
+staspidx (staspidx.o):
+    input_joystick.o          build/asm/input_joystick.s:630
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+stax0sp (staxsp.o):
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    input_joystick.o          build/asm/input_joystick.s:630
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+staxspidx (staxspi.o):
+    memory.o                  build/asm/memory.s:2092
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+staxysp (staxsp.o):
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+steax0sp (steaxsp.o):
+    memory.o                  build/asm/memory.s:2092
+steaxspidx (steaxspi.o):
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+steaxysp (steaxsp.o):
+    storage.o                 build/asm/storage.s:1431
+    graphics_video.o          build/asm/graphics_video.s:687
+    audio.o                   build/asm/audio.s:2638
+subeqysp (subeqsp.o):
+    memory.o                  build/asm/memory.s:2092
+    graphics.o                build/asm/graphics.s:840
+subysp (subysp.o):
+    storage.o                 build/asm/storage.s:1431
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+tmp1 (zeropage.o):
+    steaxspi.o                runtime/steaxspi.s:10
+    staxspi.o                 runtime/staxspi.s:10
+    staspidx.o                runtime/staspidx.s:9
+    shreax1.o                 runtime/shreax1.s:8
+    shrax4.o                  runtime/shrax4.s:8
+    shrax1.o                  runtime/shrax1.s:8
+    shr.o                     runtime/shr.s:16
+    shl.o                     runtime/shl.s:16
+    shelp.o                   runtime/shelp.s:12
+    or.o                      runtime/or.s:10
+    mul.o                     runtime/mul.s:10
+    mod.o                     runtime/mod.s:12
+    ltest.o                   runtime/ltest.s:8
+    lor.o                     runtime/lor.s:10
+    ldec.o                    runtime/ldec.s:9
+    lbneg.o                   runtime/lbneg.s:8
+    ladd.o                    runtime/ladd.s:9
+    incaxy.o                  runtime/incaxy.s:8
+    div.o                     runtime/div.s:12
+    decaxy.o                  runtime/decaxy.s:8
+    asrax2.o                  runtime/asrax2.s:8
+    asrax1.o                  runtime/asrax1.s:8
+    asr.o                     runtime/asr.s:16
+    asleax1.o                 runtime/asleax1.s:8
+    aslax4.o                  runtime/aslax4.s:8
+    aslax3.o                  runtime/aslax3.s:8
+    aslax2.o                  runtime/aslax2.s:8
+    aslax1.o                  runtime/aslax1.s:8
+    add.o                     runtime/add.s:12
+    target_text.o             D:\Repos\cc65\asminc/zeropage.inc:13
+    target_song.o             D:\Repos\cc65\asminc/zeropage.inc:13
+    target_scene.o            D:\Repos\cc65\asminc/zeropage.inc:13
+    timing_steps.o            build/asm/timing_steps.s:11
+    storage.o                 build/asm/storage.s:11
+    memory.o                  build/asm/memory.s:11
+    graphics.o                build/asm/graphics.s:11
+    audio.o                   build/asm/audio.s:11
+    starfall_boss.o           build/asm/starfall_boss.s:11
+tmp2 (zeropage.o):
+    steaxspi.o                runtime/steaxspi.s:10
+    shelp.o                   runtime/shelp.s:12
+    lmul.o                    runtime/lmul.s:10
+    div.o                     runtime/div.s:12
+    target_text.o             D:\Repos\cc65\asminc/zeropage.inc:13
+    target_song.o             D:\Repos\cc65\asminc/zeropage.inc:13
+    target_scene.o            D:\Repos\cc65\asminc/zeropage.inc:13
+tmp3 (zeropage.o):
+    strcat.o                  common/strcat.s:10
+    steaxspi.o                runtime/steaxspi.s:10
+    ludiv.o                   runtime/ludiv.s:10
+    lmul.o                    runtime/lmul.s:10
+    target_song.o             D:\Repos\cc65\asminc/zeropage.inc:13
+    target_scene.o            D:\Repos\cc65\asminc/zeropage.inc:13
+tmp4 (zeropage.o):
+    ludiv.o                   runtime/ludiv.s:10
+    lmul.o                    runtime/lmul.s:10
+    target_text.o             D:\Repos\cc65\asminc/zeropage.inc:13
+    target_scene.o            D:\Repos\cc65\asminc/zeropage.inc:13
+tosadd0ax (ladd.o):
+    memory.o                  build/asm/memory.s:2092
+tosaddax (add.o):
+    audio.o                   build/asm/audio.s:2638
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_game.o           build/asm/starfall_game.s:3019
+tosaddeax (ladd.o):
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+tosanda0 (and.o):
+    starfall.o                build/asm/starfall.s:8877
+tosdiva0 (div.o):
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+tosdivax (div.o):
+    starfall_game.o           build/asm/starfall_game.s:3019
+toseqeax (leq.o):
+    memory.o                  build/asm/memory.s:2092
+tosicmp (icmp.o):
+    ule.o                     runtime/ule.s:8
+    timing_steps.o            build/asm/timing_steps.s:218
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+tosicmp0 (icmp.o):
+    audio.o                   build/asm/audio.s:2638
+    starfall_game.o           build/asm/starfall_game.s:3019
+toslcmp (lcmp.o):
+    lult.o                    runtime/lult.s:8
+    lule.o                    runtime/lule.s:8
+    lugt.o                    runtime/lugt.s:8
+    luge.o                    runtime/luge.s:8
+    lne.o                     runtime/lne.s:8
+    leq.o                     runtime/leq.s:8
+tosmoda0 (mod.o):
+    starfall_game.o           build/asm/starfall_game.s:3019
+tosmula0 (mul8.o):
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+tosmulax (mul.o):
+    starfall_game.o           build/asm/starfall_game.s:3019
+tosneeax (lne.o):
+    input_joystick.o          build/asm/input_joystick.s:630
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+tosora0 (or.o):
+    input.o                   build/asm/input.s:250
+    graphics.o                build/asm/graphics.s:840
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+tosorax (or.o):
+    starfall.o                build/asm/starfall.s:8877
+tosoreax (lor.o):
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+tossuba0 (sub.o):
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+tossubax (sub.o):
+    graphics.o                build/asm/graphics.s:840
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+tossubeax (lsub.o):
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics.o                build/asm/graphics.s:840
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    starfall.o                build/asm/starfall.s:8877
+tosudiv0ax (ludiv.o):
+    memory.o                  build/asm/memory.s:2092
+    input_joystick.o          build/asm/input_joystick.s:630
+    audio.o                   build/asm/audio.s:2638
+tosudiva0 (udiv.o):
+    input_stick.o             build/asm/input_stick.s:280
+    audio.o                   build/asm/audio.s:2638
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+tosudivax (udiv.o):
+    timing_steps.o            build/asm/timing_steps.s:218
+    input_joystick.o          build/asm/input_joystick.s:630
+    starfall.o                build/asm/starfall.s:8877
+tosudiveax (ludiv.o):
+    input_joystick.o          build/asm/input_joystick.s:630
+    input_joystick.o          build/asm/input_joystick.s:630
+tosugeeax (luge.o):
+    starfall.o                build/asm/starfall.s:8877
+tosugteax (lugt.o):
+    storage.o                 build/asm/storage.s:1431
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics.o                build/asm/graphics.s:840
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+tosuleax (ule.o):
+    memory.o                  build/asm/memory.s:2092
+tosuleeax (lule.o):
+    memory.o                  build/asm/memory.s:2092
+tosulteax (lult.o):
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+tosumoda0 (umod.o):
+    audio.o                   build/asm/audio.s:2638
+    audio.o                   build/asm/audio.s:2638
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+tosumodax (umod.o):
+    starfall_boss.o           build/asm/starfall_boss.s:931
+tosumul0ax (lmul.o):
+    storage.o                 build/asm/storage.s:1431
+    memory.o                  build/asm/memory.s:2092
+    memory.o                  build/asm/memory.s:2092
+    input_joystick.o          build/asm/input_joystick.s:630
+tosumula0 (mul8.o):
+    timing_steps.o            build/asm/timing_steps.s:218
+    graphics_video.o          build/asm/graphics_video.s:687
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+    starfall.o                build/asm/starfall.s:8877
+tosumulax (mul.o):
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_boss.o           build/asm/starfall_boss.s:931
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+tosumuleax (lmul.o):
+    input_joystick.o          build/asm/input_joystick.s:630
+    graphics_video.o          build/asm/graphics_video.s:687
+    graphics.o                build/asm/graphics.s:840
+    graphics.o                build/asm/graphics.s:840
+udiv16 (udiv.o):
+    umod.o                    runtime/umod.s:8
+    shelp.o                   runtime/shelp.s:11
+utsteax (ltest.o):
+    memory.o                  build/asm/memory.s:2092
+    audio.o                   build/asm/audio.s:2638
+    starfall_game.o           build/asm/starfall_game.s:3019
+    starfall.o                build/asm/starfall.s:8877
+zerobss (zerobss.o):
+    startup.o                 build/asm/startup.s:10
+

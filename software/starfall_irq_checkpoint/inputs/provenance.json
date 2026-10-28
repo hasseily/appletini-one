@@ -1,0 +1,15 @@
+{
+  "source_repository": "appletini-software/libtini",
+  "files": {
+    "audio.c": "46f688bb401a6b390093419cdbd2eb792127bf35df6fc7491d69bac97ed63539",
+    "audio.s": "8499a3de16160793329d5eebf9a17018fc9687ac52ebb8ff4a1c9551f588b942",
+    "LIBTINI_LICENSE.txt": "0dc5ec22f384cea313aeed8a7d01469f27d422e8f44d93c74501c46ee219a782",
+    "starfall-main.c": "35ccc68c8f8457a7ba07f06733b9609db4c9b0aeac06d6c37701d2c132e5cfc9",
+    "starfall.lbl": "86ea967650ca17262b5461b46d138d9f919edde7b931ccaa977ee820539f8f04",
+    "starfall.map": "40e6e04818c59a00754b82eb615cd7daa582b3ce7e5f9e2bf67f642b029ef380",
+    "STARFALL.PAK": "f539af811bf87b9b36617b0b6d93a0ed82c9a1d50c7a216de371894039af4a0d",
+    "STARFALL.SYSTEM": "fddde7bb78c289e21bf74d17a4db5768c6a0de45d68bf4cc7f09f3fd8e2364c0",
+    "STARFALL.PO": "4cc5fde1d1135688657cfca7519407034cf6a2f5aff1b0e680f18ea2a251375d"
+  },
+  "sdk_build_manifest_matched": true
+}

@@ -1,0 +1,125 @@
+[
+  {
+    "case": 1,
+    "speed": "1mhz",
+    "disk2_acceleration": true,
+    "slowdown_mask": 8,
+    "result": {
+      "pass": true,
+      "target": 1,
+      "stage": 0,
+      "errno": 0,
+      "oserror": 0,
+      "round": 32,
+      "smartport_rounds": 8,
+      "disk2_rounds": 32,
+      "mismatch_offset": 0,
+      "got": 0,
+      "expected": 0
+    },
+    "disk2_sd_readback": {
+      "sha256": "538ab64953e1132555063d3efaae8713ca246e924d31fca983c8440f61d1d453",
+      "valid_volume": true,
+      "scratch_sha256": "f8ce59e9a332fb4a6dce2df10d8d274ec5d0143273ed4ad0104b4358933cbeb5",
+      "persisted_pattern_verified": true
+    }
+  },
+  {
+    "case": 2,
+    "speed": "turbo",
+    "disk2_acceleration": true,
+    "slowdown_mask": 8,
+    "result": {
+      "pass": false,
+      "target": 1,
+      "stage": 7,
+      "errno": 0,
+      "oserror": 0,
+      "round": 0,
+      "smartport_rounds": 8,
+      "disk2_rounds": 0,
+      "mismatch_offset": 0,
+      "got": 0,
+      "expected": 83
+    },
+    "disk2_sd_readback": {
+      "sha256": "c405a29e77886eef5725e3d5af7f5840e4319cc9caed6b8e5bd595e4537505d0",
+      "valid_volume": false,
+      "error": "Missing volume header"
+    }
+  },
+  {
+    "case": 3,
+    "speed": "turbo",
+    "disk2_acceleration": false,
+    "slowdown_mask": 8,
+    "result": {
+      "pass": false,
+      "target": 1,
+      "stage": 7,
+      "errno": 0,
+      "oserror": 0,
+      "round": 0,
+      "smartport_rounds": 8,
+      "disk2_rounds": 0,
+      "mismatch_offset": 0,
+      "got": 0,
+      "expected": 83
+    },
+    "disk2_sd_readback": {
+      "sha256": "c405a29e77886eef5725e3d5af7f5840e4319cc9caed6b8e5bd595e4537505d0",
+      "valid_volume": false,
+      "error": "Missing volume header"
+    }
+  },
+  {
+    "case": 4,
+    "speed": "turbo",
+    "disk2_acceleration": true,
+    "slowdown_mask": 40,
+    "result": {
+      "pass": true,
+      "target": 1,
+      "stage": 0,
+      "errno": 0,
+      "oserror": 0,
+      "round": 32,
+      "smartport_rounds": 8,
+      "disk2_rounds": 32,
+      "mismatch_offset": 0,
+      "got": 0,
+      "expected": 0
+    },
+    "disk2_sd_readback": {
+      "sha256": "538ab64953e1132555063d3efaae8713ca246e924d31fca983c8440f61d1d453",
+      "valid_volume": true,
+      "scratch_sha256": "f8ce59e9a332fb4a6dce2df10d8d274ec5d0143273ed4ad0104b4358933cbeb5",
+      "persisted_pattern_verified": true
+    }
+  },
+  {
+    "case": 5,
+    "speed": "turbo",
+    "disk2_acceleration": false,
+    "slowdown_mask": 40,
+    "result": {
+      "pass": true,
+      "target": 1,
+      "stage": 0,
+      "errno": 0,
+      "oserror": 0,
+      "round": 32,
+      "smartport_rounds": 8,
+      "disk2_rounds": 32,
+      "mismatch_offset": 0,
+      "got": 0,
+      "expected": 0
+    },
+    "disk2_sd_readback": {
+      "sha256": "538ab64953e1132555063d3efaae8713ca246e924d31fca983c8440f61d1d453",
+      "valid_volume": true,
+      "scratch_sha256": "f8ce59e9a332fb4a6dce2df10d8d274ec5d0143273ed4ad0104b4358933cbeb5",
+      "persisted_pattern_verified": true
+    }
+  }
+]

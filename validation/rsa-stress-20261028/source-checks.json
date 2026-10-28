@@ -1,0 +1,99 @@
+[
+  {
+    "test": "test_amp_startup",
+    "exit_code": 0,
+    "seconds": 0.578
+  },
+  {
+    "test": "test_uthernet2_card",
+    "exit_code": 0,
+    "seconds": 8.719
+  },
+  {
+    "test": "test_smartport_service",
+    "exit_code": 0,
+    "seconds": 0.094
+  },
+  {
+    "test": "test_smartport_data_phase",
+    "exit_code": 0,
+    "seconds": 7.031
+  },
+  {
+    "test": "test_smartport_rom",
+    "exit_code": 0,
+    "seconds": 0.25
+  },
+  {
+    "test": "test_disk2_address_splice",
+    "exit_code": 0,
+    "seconds": 0.484
+  },
+  {
+    "test": "test_disk2_standard",
+    "exit_code": 0,
+    "seconds": 0.688
+  },
+  {
+    "test": "test_disk2_turbo_time",
+    "exit_code": 0,
+    "seconds": 47.093
+  },
+  {
+    "test": "test_ftp_sd_service",
+    "exit_code": 0,
+    "seconds": 0.047,
+    "initial_exit_code": 1,
+    "note": "Updated stale Ethernet layout contract for the DNS row; rerun passed"
+  },
+  {
+    "test": "test_uart_help",
+    "exit_code": 0,
+    "seconds": 0.062
+  },
+  {
+    "test": "test_usb_hid_service",
+    "exit_code": 0,
+    "seconds": 0.25
+  },
+  {
+    "test": "test_usb_xbox_360",
+    "exit_code": 0,
+    "seconds": 0.469
+  },
+  {
+    "test": "test_config_profiles",
+    "exit_code": 0,
+    "seconds": 0.094
+  },
+  {
+    "test": "test_http_service",
+    "exit_code": 0,
+    "seconds": 0.469
+  },
+  {
+    "test": "test_http_network",
+    "exit_code": 0,
+    "seconds": 10.859
+  },
+  {
+    "test": "test_http_tls",
+    "exit_code": 0,
+    "seconds": 9.078
+  },
+  {
+    "test": "test_https_setup",
+    "exit_code": 0,
+    "seconds": 0.094
+  },
+  {
+    "test": "test_net_service",
+    "exit_code": 0,
+    "seconds": 0.375
+  },
+  {
+    "test": "test_net_transport",
+    "exit_code": 0,
+    "seconds": 27.719
+  }
+]

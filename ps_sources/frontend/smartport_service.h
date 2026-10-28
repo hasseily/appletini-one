@@ -78,6 +78,12 @@ typedef struct {
 
 int smartport_service_get_activity(smartport_activity_t *out);
 
+typedef struct {
+    uint32_t hits;
+    uint32_t misses;
+} smartport_cache_stats_t;
+void smartport_service_get_cache_stats(smartport_cache_stats_t *out);
+
 #define SMARTPORT_DMA_LOG_DEPTH 64U
 
 

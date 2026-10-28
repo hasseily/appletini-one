@@ -1,0 +1,6 @@
+
+cmd> http get https://wrong.appletini.test:8443/probe
+[http] start rc=0
+[http-result] rc=-9984 verify=0x00000004 status=0 body=0 handshake_us=0 elapsed_us=894701 step_max_us=3470 slice_max_us=3472 tls_heap_peak=38872 seed_generation=6
+[http-sha256] e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+[http] done

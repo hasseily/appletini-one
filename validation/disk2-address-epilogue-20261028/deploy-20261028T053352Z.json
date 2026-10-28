@@ -1,0 +1,8 @@
+{
+  "image": "C:\\Users\\hasse\\source\\repos\\hasseily\\appletini-one\\build\\disk2-address-fix\\FIRMWARE-address-epilogue-test.BIN",
+  "sha256": "e654ac5015e331dd6381ded0c052ddc17a45138173125bd9e279e55e37d7b8ca",
+  "board": "10.17.1.18",
+  "sd_readback_verified": true,
+  "golden_written": false,
+  "method": "existing FTP then SD firmware updater"
+}

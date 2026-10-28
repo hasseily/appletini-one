@@ -1,0 +1,3 @@
+# Host-only controlled peers and serial runner; versions used for board validation.
+pyserial==3.5
+cryptography==49.0.0

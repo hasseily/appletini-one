@@ -49,6 +49,10 @@
 #include "disk2_sound_samples.h"
 #include "psram_bench.h"
 #include "printer_service.h"
+#include "https_probe.h"
+#include "http_service.h"
+#include "net_service.h"
+#include "http_bench.h"
 #include "screenshot_service.h"
 #include "smartport_service.h"
 #include "usb_hid_service.h"
@@ -1690,6 +1694,7 @@ static void control_set_sdd_stream_enabled(void *ctx, uint8_t enable)
 static void control_set_usb0_sd_remote_mount(void *ctx, uint8_t enable)
 {
     (void)ctx;
+    http_service_storage_busy(enable);
     /* Finish local ownership before handing the filesystem to the host. */
     if (screenshot_service_busy() != 0U) {
         (void)screenshot_service_cancel();
@@ -1762,6 +1767,11 @@ static int control_set_ethernet_ftp_sd_remote(void *ctx,
         CARD_CTRL_SLOT_BIT(CARD_CTRL_SLOT_DISK2);
 
     (void)ctx;
+    if (enable != 0U && (https_probe_active() || http_service_active() || http_bench_active())) {
+        if (detail != NULL && detail_len != 0U)
+            (void)snprintf(detail, detail_len, "Finish the HTTP/S request first");
+        return -1;
+    }
     if (screenshot_service_busy() != 0U) {
         (void)screenshot_service_cancel();
     }
@@ -2610,6 +2620,7 @@ static void ui_poll_sensors(void)
 
 static void usb0_priority_checkpoint(void)
 {
+    https_probe_service_tick(HTTPS_PROBE_USB0);
     if (g_firmware_switch_active != 0U) {
         return;
     }
@@ -4493,6 +4504,15 @@ int main(void)
             uart_puts(UART0_BASE, " (sd synth still available)\r\n");
         }
     }
+    /* Seed sync and public-CA parsing happen before the Apple starts, while
+     * startup already owns the SD card. Requests only use the cached state. */
+    http_service_clock(g_rtc.year,g_rtc.month,g_rtc.day,g_rtc.hour,g_rtc.min,g_rtc.sec,g_rtc.valid);
+    {
+        int http_rc = http_service_boot_prepare();
+        uart_puts(UART0_BASE,"HTTP boot preparation: ");
+        uart_putdec(UART0_BASE,(uint32_t)(http_rc < 0 ? -http_rc : http_rc));
+        uart_puts(UART0_BASE,http_rc ? " (check HTTPS setup files)\r\n" : " ready\r\n");
+    }
     (void)usb_hid_service_init();
     // USB init clears input state after the saved profile has been loaded.
     // Restore its mapping before enumeration can deliver the first report.
@@ -4592,6 +4612,15 @@ int main(void)
             continue;
         }
         uart_budget = 32U;
+        http_service_clock(g_rtc.year,g_rtc.month,g_rtc.day,g_rtc.hour,g_rtc.min,g_rtc.sec,g_rtc.valid);
+        if (g_firmware_switch_active == 0U) {
+            net_service_set_via_hz(onee_service_isolation_confirmed() ?
+                ((REG_READ(CARD_CTRL_ONEE_VIDEO_REG) & CARD_CTRL_ONEE_VIDEO_ACTIVE_50HZ_BIT) ?
+                    1017812U : 1025641U) : 0U);
+            http_service_poll();
+            net_service_poll();
+        }
+        if (g_firmware_switch_active == 0U) https_probe_poll();
         onee_service_poll();
         config_menu_poll_onee_mode(&config_menu);
         ui_sync_onee_standby(&config_menu);

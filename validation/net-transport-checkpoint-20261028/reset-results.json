@@ -1,0 +1,15 @@
+{
+  "pass": true,
+  "physical_scope": "ONE//e warm virtual Apple reset, not ARM restart or FPGA reload",
+  "request": "write 1 to ONE//e input bridge control 0x4000017C",
+  "unread_fifo_bytes_before": 256,
+  "unread_fifo_bytes_after": 0,
+  "generation_before": 4,
+  "generation_after": 5,
+  "reset_sequence_before": 2,
+  "reset_sequence_after": 3,
+  "read_count_before": 1,
+  "read_count_after": 0,
+  "fresh_program_loaded_by": "ProDOS Bitsy Bye, down arrow then Return on NETTEST.SYSTEM",
+  "post_reset_descriptor": "41544e5400012005008001000080000009000002080001000300000000000000"
+}

@@ -1,0 +1,10 @@
+
+cmd> ftp on
+ftp: on (anonymous read/write, passive)
+smartport: RAM32 32MB ram disk mounted
+
+cmd> ftp off
+ftp sd: media restore disk2=-12 smartport=-12
+ftp: off
+
+cm�/�G��8���y�Z,�~Y=y���Z��G[��]��

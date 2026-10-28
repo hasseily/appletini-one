@@ -1,0 +1,8 @@
+{
+  "image": "C:\\Users\\hasse\\source\\repos\\hasseily\\appletini-one\\build\\https-cpu0-checkpoint\\FIRMWARE.BIN",
+  "sha256": "a3b2b14ada8ed7fe7d36c603dc4d5400260ba64067a2b786c2807f9f030d42d6",
+  "board": "10.17.1.18",
+  "sd_readback_verified": true,
+  "golden_written": false,
+  "method": "existing FTP then SD firmware updater"
+}

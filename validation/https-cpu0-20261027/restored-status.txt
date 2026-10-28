@@ -1,0 +1,55 @@
+
+cmd> status
+---- card status ----
+ui: frames=7283 keys=0
+boot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0
+video: vsync=on scanlines=Medium
+text mono: fg=black bg=black
+display mono: off
+apple fb: slot=2 mode=SHR target=50Hz apple_fps=25.04 hdmi_fps=50.08 blits=3853 comp_pub=3854 comp_skip=0 pl_vblanks=7531 latched=0x3E400000
+updater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'
+audio: en=on mute=off tone=1000Hz amp=0x00600000
+spdif dbg: clkc=0 q3lvl=0 q3tog=0
+rtc: 2026-10-27 17:57:02
+temp: +35.12 C
+
+cmd> https net
+Unknown cmd. Use :help
+
+cmd> usb status
+---- usb storage perf ----
+limits: max_cbw=128 KiB block=512 queue_capacity~=528 packets
+medium: ready=1 reinit=0/0 guard_rej=0 sense=00/00 idle_to=0 wd_recover=0 ring_full=0 csw_fail=0 csw_retry=0
+bot: proto_stalls=0 (data-IN failed -> stall+CSW per BOT)
+usb0: starts=1 irq=0 rst=0 ui=0 ue=0 pc=0 mask=0x00000000 cfg=0
+attach: disc=1 conn=0 need_ep0_prime=0
+ep0: setup=0 data=0 rx_fail=0 other=0 stall=0 send_fail=0
+setup: bm=0x00 req=0x00 wValue=0x0000 wIndex=0x0000 wLen=0 errors=0 class=0
+recovery: msc_reset=0 clr_halt=0 (BOT error-recovery path)
+desc: dev=0 cfg=0 str=0 qual=0 other=0 last=0x00 req=0 reply=0 setaddr=0 setcfg=0
+ep1: rx=0 tx=0 fail=0 other=0 ep0prime=0/0 ep1prime=0/0 lastprime ep=0 dir=0 st=0
+regs: cmd=0x00000000 sts=0x00000080 intr=0x00000000 addr=0x00000000 eplist=0x006C3000 mode=0x0000000A portsc=0x8C000004 otgsc=0x00201020
+port: ccs=0 csc=0 pe=1 pec=0 susp=0 pr=0 hsp=0 ls=0 pp=0 phcd=0 spd=3
+otg: id=0 avv=0 asv=0 bsv=0 bse=1 ot=0 dp=0 idpu=1 1mst=0
+phy: usb0clk=0x00101941 usb1clk=0x00101941 rst=0x00000000
+mio28-31: 0x00001704 0x00001705 0x00001704 0x00001705
+mio32-39: 0x00001704 0x00001704 0x00001704 0x00001704 0x00001705 0x00001704 0x00001704 0x00001704
+ulpi: view=0x08000000
+epregs: stat=0x00000000 prime=0x00000000 ready=0x00000000 comp=0x00000000 epcr0=0x00800080 epcr1=0x00000000
+ep1inq: dqh=0x006C30C0 cfg=0x22000000 cptr=0x006C3380 qnext=0x00000000 qtok=0x00000000 dtds=0x006C3380 head=0x006C3380 tail=0x006C3380
+ep1intd: hnext=0x006C33A1 htok=0x00000000 hbuf=0x00000000 tnext=0x006C33A1 ttok=0x00000000 tbuf=0x00000000 req=0 txed=0 buf=0x00000000 tact=0 thalt=0 terr=0 tlen=0
+out: pkts=0 fast=0 queued=0 proc=0 drops=0 q_hi=0 q_now=0
+out bytes: rx=0 KiB fast=0 KiB queued=0 KiB proc=0 KiB
+cbw: pkts=0 phase=0 rxleft=0 len=0 sig=0x00000000 tag=0x00000000 xfer=0 op=0x00
+cbw2: flags=0x00 lun=0 cblen=0 cmds=0 tur=0 inq=0 cap=0 mode=0 sense=0 r10=0 w10=0 unhandled=0
+cmd2: getcap=0 medrem=0 verify=0 sync=0 start=0 format=0 modesel=0
+ep1in: sends=0 fail=0 data=0 datafail=0 csw=0 lastlen=0 lastst=0 datalen=0 datast=0 residue=0 status=0
+scsi write: cmds=0 fail=0 async=0 ovf=0 pend=0/16 maxpend=0 req=0 MiB recv=0 MiB ok=0 MiB max=0 blk
+write usb-rx: 0.00 MiB/s total=0 MiB last=0 us max=0 us
+write total: 0.00 MiB/s total=0 MiB last=0 us max=0 us
+scsi read: cmds=0 fail=0 bytes=0 MiB max=0 blk
+read cmd: 0.00 MiB/s total=0 MiB last=0 us max=0 us
+sd write: ops=0 fail=0 bytes=0 MiB max=0 blk
+sd write: 0.00 MiB/s total=0 MiB last=0 us max=0 us
+sd read: ops=0 fail=0 bytes=0 MiB max=0 blk
+sd read: 0.00 MiB/s total=0 MiB last=0 us max=0 us

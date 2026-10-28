@@ -1,0 +1,1223 @@
+
+cmd> status
+---- card status ----
+ui: frames=3510 keys=0
+boot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0
+video: vsync=on scanlines=Medium
+text mono: fg=black bg=black
+display mono: off
+apple fb: slot=2 mode=SHR target=50Hz apple_fps=25.04 hdmi_fps=50.09 blits=1951 comp_pub=1953 comp_skip=0 pl_vblanks=3660 latched=0x3E000000
+updater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'
+audio: en=on mute=off tone=1000Hz amp=0x00600000
+spdif dbg: clkc=0 q3lvl=0 q3tog=0
+rtc: 2026-10-28 18:33:28
+temp: +34.81 C
+
+cmd> vtw status
+vtw: idle, session=ONE//e, host-intent=off, machine=unknown
+vtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0
+vtw: reset seen=0 source=none rstn=$0
+vtw: slowdown mask=$008 cycles=256
+vtw: speed=TURBO div=37 c074=0 ignore=0 d2accel=on owned=1 run=1 pc=63B5
+vtw: core=3061801704 bus=14994907 posted=103647 invalid=0
+vtw: perf fabric=1190521527 steps=3061829275 classic=3849804663
+vtw: cache hits=2039049946 misses=678398283 invalidations=20070
+vtw: wait disk=0 video=40253545
+vtw: qfill=0 qhw=508 qdrop=0 sessions=1
+vtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00
+vtw: c000 reads=65535 bit7=0 last=$00 prev=park $FFFF R drive=0
+vtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=001 altzp=0 rd/wt=00 80st=0 text=1
+vtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)
+vtw: cxxx trail CF1F CF1E CFFB CF1D CF1C CF1B C818 C817 (new->old)
+vtw: last bus read $C063 = $7F, irqs seen=0
+vtw: persisted setting = OFF
+
+cmd> ftp on
+ftp: on (anonymous read/write, passive)
+smartport: RAM32 32MB ram disk mounted
+smartport: RAM32 32MB ram disk mounted
+smartport: RAM32 32MB ram disk mounted
+smartport: RAM32 32MB ram disk mounted
+smartport: RAM32 32MB ram disk mounted
+smartport: RAM32 32MB ram disk mounted
+
+cmd> ftp off
+ftp sd: media restore disk2=-12 smartport=-12
+ftp: off
+
+cm/�GC�K�Y��-X�~=y���Z�G�_��]�����R:���Ct�\��KC;��<��������������CCh�E��E^Cy������R�ˎK���(�9K�Z�O�2������
+==============================
+text_ui_test main start
+Firmware image: Firmware F1.3.3b3
+APPLETINI-MULTIBOOT-V1
+Debug UART: UART0
+Control UART: UART1 + UART0
+==============================
+core 1: cold wake issued
+boot menu VBL ROM patch: NTSC default
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+boot menu: register init complete
+[boottime] cpu0 card_control_init: 2 us
+onee: restore armed from saved ON status=0xE10098C8
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+[boottime] cpu0 Ethernet config write: 13 us
+[boottime] cpu0 config load and bind: 2208197160 us
+[bootdbg] after config bind slot_mask raw=0x00000080 norm=0x00000080 request=0x00000080 effective=0x00000080 slot6=0
+[bootdbg] after config bind boot_regs status=0x00000001 timeout=0x17C841C0 handoff=0x00000001 mode=SMARTPORT slot7=BOOTMENU pending=0
+[bootdbg] after config bind apple_status=0x0C disk2=0 smartport=1 eligible=1 active=0 timeout_or_closed=0
+gic_init OK
+apple_cycle_egress_init: ring 0x3F200000+1MB, producer 0x3F000000, shadows 0x3F100000/0x3F110000
+apple_cycle_egress_init OK
+RTC boot read: rc=0 valid=1 status=0x00 2026-10-28 18:34:35
+USB mass-storage service: raw SD card on USB0
+SD backend: block0=00 00 00 00 sig=AA55 p0 type=07 lba=32768 count=122134528
+SD backend: p0 boot=EB 76 90 45 58 46 41 54 sig=AA55
+SD backend: p0 bpb bps=0 spc=0 rsv=0 fats=0 spf=0 root=0 fsinfo=0 backup=0 flags=0000 ver=0000
+SD backend: exporting partition 0 base=32768 blocks=122134528 MB=59636
+SD backend: blocks=122167296 (0x07482000) MB=59652
+Storage capacity: blocks=122134528 (0x0747A000) MB=59636
+USB0 SD remote mount is available from the USB tab.
+USB0 mass-storage device configured (attach deferred)
+apple_cycle_renderer_init: 3-slot Apple FB ring at 0x3F300000+, legacy 616x224 / VidHD SHR 640x400 BGRA32
+psram cal: pattern write FAILED
+Applicard: embedded boot ROM ready
+AD8088: clean-room monitor + 640K Plus RAM ready (8088 core idle)
+vtw: virtual TransWarp service ready
+
+Appletini control UART
+UI keys:
+  W/S=up/down  A/D=left/right  E=OK  T=toggle
+  L=scanlines  M=menu  Tab/Space/Esc and terminal arrows work
+  : or ; starts a command; ENTER runs it; ? prints this help
+General:
+  help | status | temp | selfupdate | reboot | reset
+  nav <up|down|left|right|e|select|action|back|home|toggle|scanlines|tab|shift-tab|pgup|pgdn|space|esc|menu>
+  machine [auto|force <unknown|iiplus|iie|iigs>]
+Video and audio:
+  vsync <on|off|toggle>
+  scanlines [status|off|light|medium|strong|toggle]
+  textmono [status] | textmono <black|white|amber|green> <black|white|amber|green>
+  mono [status|off|black|white|amber|green]
+  audio <status|on|off>
+  audio mute [on|off|toggle] | audio tone <1..20000>
+  audio amp <0xHEX|DEC>
+  comp stats | comp uncap [on|off]
+  shadow [main|aux|a2li]
+Storage and USB:
+  sd [status|reset] | sd dumpblk <block> [count]
+  disk2 status | disk2 verify | disk2 underruns
+  disk2 scan [d1|d2] [all] | disk2 wozscan [d1|d2] [all]
+  disk2 wozwrite <d1|d2> <on|off|status>
+  usb [status|resetstats] | usb1 [status|start|stop]
+  sdd [status|on|off]
+  ftp [status|on|off]
+Cards and acceleration:
+  z80 [status|on|off|reset]
+  z80 budget <tstates> | z80 wall <us> | z80 dump <hex-addr> [hex-len]
+  8088 [status|dump <hex-addr> [hex-len]|trace on|off|paddle]
+  vtw [status|on|off] | vtw speed <full|turbo|1mhz|div <2-255>>
+  vtw dump <hex-phys> [hex-len]
+  ss [on|off|force <on|off>|dump]
+Bus diagnostics:
+  bustail [count [back]] | bustail on | bustail save
+  bustail find <addr16> | bustail entry
+  busdbg [clear] | irqdbg | sswatch [on|off]
+  bankprobe | spverify
+  mrd <aligned-addr> [count] | mwr <aligned-addr> <value>
+DMA diagnostics:
+  dma hold <on|off> | dma status | dma blocks | dma tail | dma reset
+  dma dump <mcaddr24> [count<=56] | dma peek <addr> [count]
+  dma probe [addr] [pattern] [count] | dma write <addr> [verify]
+  dma trace [status|off|clear]
+  dma trace arm [addr|release|resume [addr]]
+  dma trace dump [start] [count]
+RTC and raw PSRAM diagnostics:
+  rtc get | rtc set YYYY-MM-DD HH:MM:SS
+  pid | pqpi | pqpix | pres | ptr
+  pqr <hex-addr> | pqw <hex-addr> <hex-hi> <hex-lo>
+  psr <hex-addr> | psw <hex-addr> <hex-hi> <hex-lo>
+  pd <hex-delay> | ps <hex-addr>
+smartport: RAM32 32MB ram disk mounted
+SmartPort service: mounted 0:/HTTPAPI/NETCHECK.PO
+[usb1] CherryUSB HID service init (stopped)
+[usb1] CherryUSB host start
+[usb1] event bus=0 hub=0 port=0 intf=255 ev=12
+[I/USB] EHCI HCIVERSION:0x0100
+[I/USB] EHCI HCSPARAMS:0x010011
+[I/USB] EHCI HCCPARAMS:0x0006
+[I/USB] EHCI ppc:1, n_ports:1, n_cc:0, n_pcc:0
+[I/USB] EHCI uses tt for ls/fs device
+[usb1] ULPI 0424:0004 host VBUS valid func=41 iface=10 otg=66
+usb1 start: ok
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+Disk II D1: DSK image selected
+machine: aux provide OFF
+machine: ramworks OFF
+machine: mode -> unknown
+machine: effective slot mask 0x00000080 host bus master blocked
+[bootdbg] after runtime apply slot_mask raw=0x00000080 norm=0x00000080 request=0x00000096 effective=0x00000080 slot6=0
+[bootdbg] after runtime apply boot_regs status=0x00000001 timeout=0x17C841C0 handoff=0x00000001 mode=SMARTPORT slot7=BOOTMENU pending=0
+[bootdbg] after runtime apply apple_status=0x0C disk2=0 smartport=1 eligible=1 active=0 timeout_or_closed=0
+loaded custom bezel 1920x1080 from 0:/bezels/bezel_blue_phosphor.png
+smartport: RAM32 32MB ram disk mounted
+SmartPort service: media refreshed after startup assets
+Updater meta boot: B2.0.6
+Updater local firmware: Firmware F1.3.3b3
+compositor: FB_BASE_ADDR_REG round-trip: wrote 0x3E000000, read 0x3E000000 [OK]
+compositor_init: 3-slot output FB ring at 0x3E000000/0x3E400000/0x3E800000, 1920x1080 RGB565
+compositor: Apple blit = NEON (vld1q/vzipq burst reads)
+Output resolution: 1920x1080
+usb1: settling during boot prompt
+[bootdbg] pre apple release slot_mask raw=0x00000080 norm=0x00000080 request=0x00000096 effective=0x00000080 slot6=0
+[bootdbg] pre apple release boot_regs status=0x00000001 timeout=0xFFFFFFFF handoff=0x00000001 mode=SMARTPORT slot7=BOOTMENU pending=0
+[bootdbg] pre apple release apple_status=0x0C disk2=0 smartport=1 eligible=1 active=0 timeout_or_closed=0
+boot menu VBL ROM patch: NTSC default
+[boottime] cpu0 deferred Disk II sound publish: 1811 us
+onee: restore raised request status=0xE10098C8
+[usb1] event bus=0 hub=1 port=1 intf=255 ev=3
+[usb1] event bus=0 hub=1 port=1 intf=255 ev=2
+[I/usbh_hub] New high-speed device on Bus 0, Hub 1, Port 1 connected
+[I/usbh_core] New device found,idVendor:2109,idProduct:2822,bcdDevice:9013
+[I/usbh_core] The device has 1 bNumConfigurations
+[I/usbh_core] The device has 1 interfaces
+[I/usbh_core] Enumeration success, start loading class driver
+[usb1] event bus=0 hub=1 port=1 intf=255 ev=5
+[I/usbh_core] Loading hub class driver on interface 0
+[I/usbh_hub] Ep=81 Attr=03 Mps=1 Interval=12 Mult=00
+[I/usbh_hub] Register HUB Class:/dev/hub2
+[usb1] event bus=0 hub=1 port=1 intf=0 ev=10
+SD media attached: reloading settings and media
+smartport: RAM32 32MB ram disk mounted
+SD media: SmartPort mounted 0:/HTTPAPI/NETCHECK.PO
+
+cmd> status
+---- card status ----
+ui: frames=0 keys=0
+boot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0
+video: vsync=on scanlines=Medium
+text mono: fg=black bg=black
+display mono: off
+apple fb: slot=0 mode=legacy target=50Hz apple_fps=0.00 hdmi_fps=0.00 blits=31 comp_pub=33 comp_skip=0 pl_vblanks=32 latched=0x3E000000
+updater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'
+audio: en=on mute=off tone=1000Hz amp=0x00600000
+spdif dbg: clkc=0 q3lvl=0 q3tog=0
+rtc: 2026-10-28 18:34:37
+temp: +34.75 C
+
+cmd> status
+---- card status ----
+ui: frames=0 keys=0
+boot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0
+video: vsync=on scanlines=Medium
+text mono: fg=black bg=black
+display mono: off
+apple fb: slot=0 mode=legacy target=50Hz apple_fps=0.00 hdmi_fps=0.00 blits=31 comp_pub=33 comp_skip=0 pl_vblanks=32 latched=0x3E000000
+updater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'
+audio: en=on mute=off tone=1000Hz amp=0x00600000
+spdif dbg: clkc=0 q3lvl=0 q3tog=0
+rtc: 2026-10-28 18:34:37
+temp: +34.75 C
+
+cmd> status
+---- card status ----
+ui: frames=0 keys=0
+boot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0
+video: vsync=on scanlines=Medium
+text mono: fg=black bg=black
+display mono: off
+apple fb: slot=0 mode=legacy target=50Hz apple_fps=0.00 hdmi_fps=0.00 blits=31 comp_pub=33 comp_skip=0 pl_vblanks=33 latched=0x3E800000
+updater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'
+audio: en=on mute=off tone=1000Hz amp=0x00600000
+spdif dbg: clkc=0 q3lvl=0 q3tog=0
+rtc: 2026-10-28 18:34:37
+temp: +34.75 C
+machine: effective slot mask 0x00000096 ONE//e private bus enabled
+boot menu VBL ROM patch: PAL
+vtw: ONE//e cold ROM loaded, core released
+machine: ramworks 8MB ON
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+
+cm�\C�YV��ZG,�>YO=9���Z��G[��K62:�<��8�G�\W�G��P9;��r>=F_OK���
+==============================
+text_ui_test main start
+Firmware image: Firmware F1.3.3b3
+APPLETINI-MULTIBOOT-V1
+Debug UART: UART0
+Control UART: UART1 + UART0
+==============================
+core 1: cold wake issued
+boot menu VBL ROM patch: NTSC default
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+boot menu: register init complete
+[boottime] cpu0 card_control_init: 2 us
+onee: restore armed from saved ON status=0xE10098C8
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+[boottime] cpu0 Ethernet config write: 13 us
+[boottime] cpu0 config load and bind: 2208197265 us
+[bootdbg] after config bind slot_mask raw=0x00000080 norm=0x00000080 request=0x00000080 effective=0x00000080 slot6=0
+[bootdbg] after config bind boot_regs status=0x00000001 timeout=0x17C841C0 handoff=0x00000001 mode=SMARTPORT slot7=BOOTMENU pending=0
+[bootdbg] after config bind apple_status=0x0C disk2=0 smartport=1 eligible=1 active=0 timeout_or_closed=0
+gic_init OK
+apple_cycle_egress_init: ring 0x3F200000+1MB, producer 0x3F000000, shadows 0x3F100000/0x3F110000
+apple_cycle_egress_init OK
+RTC boot read: rc=0 valid=1 status=0x00 2026-10-28 18:34:42
+USB mass-storage service: raw SD card on USB0
+SD backend: block0=00 00 00 00 sig=AA55 p0 type=07 lba=32768 count=122134528
+SD backend: p0 boot=EB 76 90 45 58 46 41 54 sig=AA55
+SD backend: p0 bpb bps=0 spc=0 rsv=0 fats=0 spf=0 root=0 fsinfo=0 backup=0 flags=0000 ver=0000
+SD backend: exporting partition 0 base=32768 blocks=122134528 MB=59636
+SD backend: blocks=122167296 (0x07482000) MB=59652
+Storage capacity: blocks=122134528 (0x0747A000) MB=59636
+USB0 SD remote mount is available from the USB tab.
+USB0 mass-storage device configured (attach deferred)
+apple_cycle_renderer_init: 3-slot Apple FB ring at 0x3F300000+, legacy 616x224 / VidHD SHR 640x400 BGRA32
+psram cal: pattern write FAILED
+Applicard: embedded boot ROM ready
+AD8088: clean-room monitor + 640K Plus RAM ready (8088 core idle)
+vtw: virtual TransWarp service ready
+
+Appletini control UART
+UI keys:
+  W/S=up/down  A/D=left/right  E=OK  T=toggle
+  L=scanlines  M=menu  Tab/Space/Esc and terminal arrows work
+  : or ; starts a command; ENTER runs it; ? prints this help
+General:
+  help | status | temp | selfupdate | reboot | reset
+  nav <up|down|left|right|e|select|action|back|home|toggle|scanlines|tab|shift-tab|pgup|pgdn|space|esc|menu>
+  machine [auto|force <unknown|iiplus|iie|iigs>]
+Video and audio:
+  vsync <on|off|toggle>
+  scanlines [status|off|light|medium|strong|toggle]
+  textmono [status] | textmono <black|white|amber|green> <black|white|amber|green>
+  mono [status|off|black|white|amber|green]
+  audio <status|on|off>
+  audio mute [on|off|toggle] | audio tone <1..20000>
+  audio amp <0xHEX|DEC>
+  comp stats | comp uncap [on|off]
+  shadow [main|aux|a2li]
+Storage and USB:
+  sd [status|reset] | sd dumpblk <block> [count]
+  disk2 status | disk2 verify | disk2 underruns
+  disk2 scan [d1|d2] [all] | disk2 wozscan [d1|d2] [all]
+  disk2 wozwrite <d1|d2> <on|off|status>
+  usb [status|resetstats] | usb1 [status|start|stop]
+  sdd [status|on|off]
+  ftp [status|on|off]
+Cards and acceleration:
+  z80 [status|on|off|reset]
+  z80 budget <tstates> | z80 wall <us> | z80 dump <hex-addr> [hex-len]
+  8088 [status|dump <hex-addr> [hex-len]|trace on|off|paddle]
+  vtw [status|on|off] | vtw speed <full|turbo|1mhz|div <2-255>>
+  vtw dump <hex-phys> [hex-len]
+  ss [on|off|force <on|off>|dump]
+Bus diagnostics:
+  bustail [count [back]] | bustail on | bustail save
+  bustail find <addr16> | bustail entry
+  busdbg [clear] | irqdbg | sswatch [on|off]
+  bankprobe | spverify
+  mrd <aligned-addr> [count] | mwr <aligned-addr> <value>
+DMA diagnostics:
+  dma hold <on|off> | dma status | dma blocks | dma tail | dma reset
+  dma dump <mcaddr24> [count<=56] | dma peek <addr> [count]
+  dma probe [addr] [pattern] [count] | dma write <addr> [verify]
+  dma trace [status|off|clear]
+  dma trace arm [addr|release|resume [addr]]
+  dma trace dump [start] [count]
+RTC and raw PSRAM diagnostics:
+  rtc get | rtc set YYYY-MM-DD HH:MM:SS
+  pid | pqpi | pqpix | pres | ptr
+  pqr <hex-addr> | pqw <hex-addr> <hex-hi> <hex-lo>
+  psr <hex-addr> | psw <hex-addr> <hex-hi> <hex-lo>
+  pd <hex-delay> | ps <hex-addr>
+smartport: RAM32 32MB ram disk mounted
+SmartPort service: mounted 0:/HTTPAPI/NETCHECK.PO
+[usb1] CherryUSB HID service init (stopped)
+[usb1] CherryUSB host start
+[usb1] event bus=0 hub=0 port=0 intf=255 ev=12
+[I/USB] EHCI HCIVERSION:0x0100
+[I/USB] EHCI HCSPARAMS:0x010011
+[I/USB] EHCI HCCPARAMS:0x0006
+[I/USB] EHCI ppc:1, n_ports:1, n_cc:0, n_pcc:0
+[I/USB] EHCI uses tt for ls/fs device
+[usb1] ULPI 0424:0004 host VBUS valid func=41 iface=10 otg=66
+usb1 start: ok
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+Disk II D1: DSK image selected
+machine: aux provide OFF
+machine: ramworks OFF
+machine: mode -> unknown
+machine: effective slot mask 0x00000080 host bus master blocked
+[bootdbg] after runtime apply slot_mask raw=0x00000080 norm=0x00000080 request=0x00000096 effective=0x00000080 slot6=0
+[bootdbg] after runtime apply boot_regs status=0x00000001 timeout=0x17C841C0 handoff=0x00000001 mode=SMARTPORT slot7=BOOTMENU pending=0
+[bootdbg] after runtime apply apple_status=0x0C disk2=0 smartport=1 eligible=1 active=0 timeout_or_closed=0
+loaded custom bezel 1920x1080 from 0:/bezels/bezel_blue_phosphor.png
+smartport: RAM32 32MB ram disk mounted
+SmartPort service: media refreshed after startup assets
+Updater meta boot: B2.0.6
+Updater local firmware: Firmware F1.3.3b3
+compositor: FB_BASE_ADDR_REG round-trip: wrote 0x3E000000, read 0x3E000000 [OK]
+compositor_init: 3-slot output FB ring at 0x3E000000/0x3E400000/0x3E800000, 1920x1080 RGB565
+compositor: Apple blit = NEON (vld1q/vzipq burst reads)
+Output resolution: 1920x1080
+usb1: settling during boot prompt
+[bootdbg] pre apple release slot_mask raw=0x00000080 norm=0x00000080 request=0x00000096 effective=0x00000080 slot6=0
+[bootdbg] pre apple release boot_regs status=0x00000001 timeout=0xFFFFFFFF handoff=0x00000001 mode=SMARTPORT slot7=BOOTMENU pending=0
+[bootdbg] pre apple release apple_status=0x0C disk2=0 smartport=1 eligible=1 active=0 timeout_or_closed=0
+boot menu VBL ROM patch: NTSC default
+[boottime] cpu0 deferred Disk II sound publish: 1812 us
+onee: restore raised request status=0xE10098C8
+[usb1] event bus=0 hub=1 port=1 intf=255 ev=3
+[usb1] event bus=0 hub=1 port=1 intf=255 ev=2
+[I/usbh_hub] New high-speed device on Bus 0, Hub 1, Port 1 connected
+[I/usbh_core] New device found,idVendor:2109,idProduct:2822,bcdDevice:9013
+[I/usbh_core] The device has 1 bNumConfigurations
+[I/usbh_core] The device has 1 interfaces
+[I/usbh_core] Enumeration success, start loading class driver
+[usb1] event bus=0 hub=1 port=1 intf=255 ev=5
+[I/usbh_core] Loading hub class driver on interface 0
+[I/usbh_hub] Ep=81 Attr=03 Mps=1 Interval=12 Mult=00
+[I/usbh_hub] Register HUB Class:/dev/hub2
+[usb1] event bus=0 hub=1 port=1 intf=0 ev=10
+SD media attached: reloading settings and media
+smartport: RAM32 32MB ram disk mounted
+SD media: SmartPort mounted 0:/HTTPAPI/NETCHECK.PO
+
+cmd> status
+---- card status ----
+ui: frames=0 keys=0
+boot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0
+video: vsync=on scanlines=Medium
+text mono: fg=black bg=black
+display mono: off
+apple fb: slot=0 mode=legacy target=50Hz apple_fps=0.00 hdmi_fps=0.00 blits=31 comp_pub=33 comp_skip=0 pl_vblanks=32 latched=0x3E000000
+updater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'
+audio: en=on mute=off tone=1000Hz amp=0x00600000
+spdif dbg: clkc=0 q3lvl=0 q3tog=0
+rtc: 2026-10-28 18:34:44
+temp: +34.75 C
+
+cmd> status
+---- card status ----
+ui: frames=0 keys=0
+boot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0
+video: vsync=on scanlines=Medium
+text mono: fg=black bg=black
+display mono: off
+apple fb: slot=0 mode=legacy target=50Hz apple_fps=0.00 hdmi_fps=0.00 blits=31 comp_pub=33 comp_skip=0 pl_vblanks=32 latched=0x3E000000
+updater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'
+audio: en=on mute=off tone=1000Hz amp=0x00600000
+spdif dbg: clkc=0 q3lvl=0 q3tog=0
+rtc: 2026-10-28 18:34:44
+temp: +34.75 C
+
+cmd> status
+---- card status ----
+ui: frames=0 keys=0
+boot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0
+video: vsync=on scanlines=Medium
+text mono: fg=black bg=black
+display mono: off
+apple fb: slot=0 mode=legacy target=50Hz apple_fps=0.00 hdmi_fps=0.00 blits=31 comp_pub=33 comp_skip=0 pl_vblanks=33 latched=0x3E800000
+updater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'
+audio: en=on mute=off tone=1000Hz amp=0x00600000
+spdif dbg: clkc=0 q3lvl=0 q3tog=0
+rtc: 2026-10-28 18:34:44
+temp: +34.75 C
+machine: effective slot mask 0x00000096 ONE//e private bus enabled
+boot menu VBL ROM patch: PAL
+vtw: ONE//e cold ROM loaded, core released
+machine: ramworks 8MB ON
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+
+cmd> http trace on
+[http] trace set
+[usb1] event bus=0 hub=2 port=1 intf=255 ev=3
+[usb1] event bus=0 hub=2 port=1 intf=255 ev=2
+[I/usbh_hub] New low-speed device on Bus 0, Hub 2, Port 1 connected
+[I/usbh_core] New device found,idVendor:06a3,idProduct:8000,bcdDevice:0120
+[I/usbh_core] The device has 1 bNumConfigurations
+[I/usbh_core] The device has 3 interfaces
+[I/usbh_core] Enumeration success, start loading class driver
+[usb1] event bus=0 hub=2 port=1 intf=255 ev=5
+[I/usbh_core] Loading hid class driver on interface 0
+[I/usbh_hid] Ep=81 Attr=03 Mps=8 Interval=10 Mult=00
+[I/usbh_hid] Register HID Class:/dev/input0
+[usb1] CherryUSB HID connected slot=0 dev=3 proto=1 subclass=1 parsed=0 mouse=0 joystick=0 ps4=0
+[usb1] event bus=0 hub=2 port=1 intf=0 ev=10
+[I/usbh_core] Loading hid class driver on interface 1
+[I/usbh_hid] Ep=82 Attr=03 Mps=5 Interval=10 Mult=00
+[I/usbh_hid] Register HID Class:/dev/input1
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+[usb1] CherryUSB HID connected slot=1 dev=3 proto=0 subclass=0 parsed=1 mouse=0 joystick=0 ps4=0
+[usb1] event bus=0 hub=2 port=1 intf=1 ev=10
+[I/usbh_core] Loading hid class driver on interface 2
+[I/usbh_hid] Ep=83 Attr=03 Mps=2 Interval=10 Mult=00
+[I/usbh_hid] Register HID Class:/dev/input2
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+[usb1] CherryUSB HID connected slot=2 dev=3 proto=0 subclass=0 parsed=1 mouse=0 joystick=1 ps4=0
+[usb1] event bus=0 hub=2 port=1 intf=2 ev=10
+[usb1] event bus=0 hub=2 port=2 intf=255 ev=3
+[usb1] event bus=0 hub=2 port=2 intf=255 ev=2
+[I/usbh_hub] New full-speed device on Bus 0, Hub 2, Port 2 connected
+[I/usbh_core] New device found,idVendor:045e,idProduct:028e,bcdDevice:0114
+[I/usbh_core] The device has 1 bNumConfigurations
+[I/usbh_core] The device has 4 interfaces
+[I/usbh_core] Enumeration success, start loading class driver
+[usb1] event bus=0 hub=2 port=2 intf=255 ev=5
+[I/usbh_core] Loading xbox class driver on interface 0
+[I/USB] Ep=81 Attr=03 Mps=32 Interval=04 Mult=00
+[I/USB] Ep=01 Attr=03 Mps=32 Interval=08 Mult=00
+[I/USB] Register XBOX Class:/dev/xbox0
+[usb1] Xbox 360 connected slot=3 class=0 vid=045e pid=028e intf=0
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+[usb1] event bus=0 hub=2 port=2 intf=0 ev=10
+[E/usbh_core] Do not support Class:0xff, Subclass:0x5d, Protocl:0x03 on interface 1
+[usb1] event bus=0 hub=2 port=2 intf=1 ev=9
+[E/usbh_core] Do not support Class:0xff, Subclass:0x5d, Protocl:0x02 on interface 2
+[usb1] event bus=0 hub=2 port=2 intf=2 ev=9
+[E/usbh_core] Do not support Class:0xff, Subclass:0xfd, Protocl:0x13 on interface 3
+[usb1] event bus=0 hub=2 port=2 intf=3 ev=9
+[usb1] event bus=0 hub=2 port=4 intf=255 ev=3
+[usb1] event bus=0 hub=2 port=4 intf=255 ev=2
+[I/usbh_hub] New low-speed device on Bus 0, Hub 2, Port 4 connected
+[I/usbh_core] New device found,idVendor:30fa,idProduct:0400,bcdDevice:0100
+[I/usbh_core] The device has 1 bNumConfigurations
+[I/usbh_core] The device has 1 interfaces
+[I/usbh_core] Enumeration success, start loading class driver
+[usb1] event bus=0 hub=2 port=4 intf=255 ev=5
+[I/usbh_core] Loading hid class driver on interface 0
+[I/usbh_hid] Ep=81 Attr=03 Mps=5 Interval=10 Mult=00
+[I/usbh_hid] Register HID Class:/dev/input3
+[usb1] CherryUSB HID connected slot=4 dev=5 proto=2 subclass=1 parsed=1 mouse=1 joystick=1 ps4=0
+[usb1] CherryUSB mousecard HID dev=5 speed=low hub=2 port=4 if=0 ep=0x00000081
+[usb1] event bus=0 hub=2 port=4 intf=0 ev=10
+
+cmd> http get https://checkpoint.appletini.test:8443/short
+[http] start rc=0
+
+cmd> http st[http-stage] state=1
+[http-stage] config
+[http-stage] rng
+[http-stage] trust
+[http-stage] claim
+
+[http] busy
+[http-stage] state=2
+[http-stage] state=3
+[http-stage] state=4
+[http-stage] state=5
+[http-stage] state=6
+[http-stage] request build
+[http-stage] config free
+[http-stage] heap=0 key_cert=00000000 ssl=212 config=104
+[http-stage] config defaults
+[http-stage] ssl setup
+[http-stage] ssl ready
+[http-stage] state=7
+[http-stage] state=8
+[http-stage] state=9
+[http-result] rc=0 verify=0x00000000 status=200 body=62 handshake_us=158252 elapsed_us=279056 step_max_us=99169 slice_max_us=99171 tls_heap_peak=38880 seed_generation=2
+[http-sha256] bc78ba81bcc823012dd595fbf7ce72a5bd4ec13490f6f667fd330fe56085be6d
+[http] done
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+usb1: settled during prompt, 22 events
+
+cmd> http status
+[http-status] state=10 result=0 verify=0x00000000 status=200 bytes=62 step_max_us=99169 slice_max_us=99171 heap_peak=38880 utc=1793201687 rtc_offset=180 crypto=1 trust=1 seed_generation=2 dns=10.17.1.17
+[http-json] slice_max_us=1
+
+cmd> http net
+[http-net] link=1 ip=10.17.1.18 gateway=10.17.1.1
+[http-net-reg] 0000: 03 0A 11 01 01 FF FF FF 00 02 41 50 50 4C 01 0A 11 01 12 00 00 00 00 07 D0 07 06 06 00 00 00 00
+[http-net-reg] 0400: 01 00 00 00 EA 17 A8 A1 59 F5 36 B9 0A 11 01 11 20 FB 05 B4 00 00 80 00 00 00 00 00 00 00 04 04 10 00 E9 2C E9 2C 00 00 03 EA 03 EA FF 40 00 00 00 01 07 D0 07 00 00 00 00 00 00 00 00 00 00 00
+[http-net-reg] 0500: 02 00 00 00 EA 17 A8 A1 59 F5 36 B9 0A 11 01 11 00 35 05 C0 00 00 80 00 00 00 00 00 00 00 02 02 08 00 00 2B 00 2B 00 00 00 43 00 43 FF 40 00 00 00 01 07 D0 07 00 00 00 00 00 00 00 00 00 00 00
+
+cmd> http get https://checkpoint.appletini.test:8443/short
+[http] start rc=0
+[http-stage] state=1
+[http-stage] config
+[http-stage] rng
+[http-stage] trust
+[http-stage] claim
+[http-stage] state=2
+[http-stage] state=3
+[http-stage] state=4
+[http-stage] state=5
+[http-stage] state=6
+[http-stage] request build
+[http-stage] config free
+[http-stage] heap=0 key_cert=00000000 ssl=212 config=104
+[http-stage] config defaults
+[http-stage] ssl setup
+[http-stage] ssl ready
+[http-stage] state=7
+[http-stage] state=8
+[http-stage] state=9
+[http-result] rc=0 verify=0x00000000 status=200 body=62 handshake_us=157704 elapsed_us=165187 step_max_us=3348 slice_max_us=3350 tls_heap_peak=38880 seed_generation=2
+[http-sha256] bc78ba81bcc823012dd595fbf7ce72a5bd4ec13490f6f667fd330fe56085be6d
+[http] done
+
+cmd> http status
+[http-status] state=10 result=0 verify=0x00000000 status=200 bytes=62 step_max_us=3348 slice_max_us=3350 heap_peak=38880 utc=1793201691 rtc_offset=180 crypto=1 trust=1 seed_generation=2 dns=10.17.1.17
+[http-json] slice_max_us=1
+
+cmd> http config 8.8.8.8 180
+[http] config rc=0
+
+cmd> http get https://www.cloudflare.com/favicon.ico
+[http] start rc=0
+[http-stage] state=1
+[http-stage] config
+[http-stage] rng
+[http-stage] trust
+[http-stage] claim
+[http-stage] state=2
+[http-stage] state=3
+[http-stage] state=4
+[http-stage] state=5
+[http-stage] state=6
+[http-stage] request build
+[http-stage] config free
+[http-stage] heap=0 key_cert=00000000 ssl=212 config=104
+[http-stage] config defaults
+[http-stage] ssl setup
+[http-stage] ssl ready
+[http-stage] state=7
+[http-stage] state=8
+[http-stage] state=9
+[http-result] rc=0 verify=0x00000000 status=200 body=908 handshake_us=1076955 elapsed_us=1217316 step_max_us=5706 slice_max_us=5842 tls_heap_peak=43952 seed_generation=2
+[http-sha256] 5414bc6e4b3f6e10f99b5d37abf4420da4dcaece66f8f2c08e090e87267adbc5
+[http] done
+
+cmd> http status
+[http-status] state=10 result=0 verify=0x00000000 status=200 bytes=908 step_max_us=5706 slice_max_us=5842 heap_peak=43952 utc=1793201694 rtc_offset=180 crypto=1 trust=1 seed_generation=2 dns=8.8.8.8
+[http-json] slice_max_us=1
+
+cmd> http config 10.17.1.17 180
+[http] config rc=0
+
+cmd> http get https://noanswer.appletini.test:8443/short
+[http] start rc=0
+[http-stage] state=1
+[http-stage] config
+[http-stage] rng
+[http-stage] trust
+[http-stage] claim
+[http-stage] state=2
+[http-stage] state=3
+[http-stage] state=4
+
+cmd> http status
+[http-status] state=4 result=0 verify=0xFFFFFFFF status=0 bytes=0 step_max_us=3544 slice_max_us=3545 heap_peak=43952 utc=1793201698 rtc_offset=180 crypto=1 trust=1 seed_generation=2 dns=10.17.1.17
+[http-json] slice_max_us=1
+[http-stage] DNS reply retry
+[http-stage] state=3
+[http-stage] state=4
+
+cmd> http status
+[http-status] state=4 result=0 verify=0xFFFFFFFF status=0 bytes=0 step_max_us=3544 slice_max_us=3545 heap_peak=43952 utc=1793201699 rtc_offset=180 crypto=1 trust=1 seed_generation=2 dns=10.17.1.17
+[http-json] slice_max_us=1
+
+cmd> http status
+[http-status] state=4 result=0 verify=0xFFFFFFFF status=0 bytes=0 step_max_us=3544 slice_max_us=3545 heap_peak=43952 utc=1793201701 rtc_offset=180 crypto=1 trust=1 seed_generation=2 dns=10.17.1.17
+[http-json] slice_max_us=1
+[http-stage] DNS reply retry
+[http-stage] state=3
+[http-stage] state=4
+
+cmd> http status
+[http-status] state=4 result=0 verify=0xFFFFFFFF status=0 bytes=0 step_max_us=3544 slice_max_us=3545 heap_peak=43952 utc=1793201702 rtc_offset=180 crypto=1 trust=1 seed_generation=2 dns=10.17.1.17
+[http-json] slice_max_us=1
+
+cmd> http status
+[http-status] state=4 result=0 verify=0xFFFFFFFF status=0 bytes=0 step_max_us=3544 slice_max_us=3545 heap_peak=43952 utc=1793201704 rtc_offset=180 crypto=1 trust=1 seed_generation=2 dns=10.17.1.17
+[http-json] slice_max_us=1
+[http-stage] DNS reply retry
+[http-stage] state=3
+[http-stage] state=4
+
+cmd> http status
+[http-status] state=4 result=0 verify=0xFFFFFFFF status=0 bytes=0 step_max_us=3544 slice_max_us=3545 heap_peak=43952 utc=1793201705 rtc_offset=180 crypto=1 trust=1 seed_generation=2 dns=10.17.1.17
+[http-json] slice_max_us=1
+
+cmd> http status
+[http-status] state=4 result=0 verify=0xFFFFFFFF status=0 bytes=0 step_max_us=3544 slice_max_us=3545 heap_peak=43952 utc=1793201707 rtc_offset=180 crypto=1 trust=1 seed_generation=2 dns=10.17.1.17
+[http-json] slice_max_us=1
+[http-stage] DNS reply retry
+[http-stage] state=3
+[http-stage] state=4
+
+cmd> http status
+[http-status] state=4 result=0 verify=0xFFFFFFFF status=0 bytes=0 step_max_us=3544 slice_max_us=3545 heap_peak=43952 utc=1793201709 rtc_offset=180 crypto=1 trust=1 seed_generation=2 dns=10.17.1.17
+[http-json] slice_max_us=1
+
+cmd> http status
+[http-status] state=4 result=0 verify=0xFFFFFFFF status=0 bytes=0 step_max_us=3544 slice_max_us=3545 heap_peak=43952 utc=1793201710 rtc_offset=180 crypto=1 trust=1 seed_generation=2 dns=10.17.1.17
+[http-json] slice_max_us=1
+[http-stage] DNS reply retry
+[http-stage] state=3
+[http-stage] state=4
+
+cmd> http status
+[http-status] state=4 result=0 verify=0xFFFFFFFF status=0 bytes=0 step_max_us=3544 slice_max_us=3545 heap_peak=43952 utc=1793201712 rtc_offset=180 crypto=1 trust=1 seed_generation=2 dns=10.17.1.17
+[http-json] slice_max_us=1
+
+cmd> http status
+[http-status] state=4 result=0 verify=0xFFFFFFFF status=0 bytes=0 step_max_us=3544 slice_max_us=3545 heap_peak=43952 utc=1793201713 rtc_offset=180 crypto=1 trust=1 seed_generation=2 dns=10.17.1.17
+[http-json] slice_max_us=1
+[http-stage] DNS reply retry
+[http-stage] state=3
+[http-stage] state=4
+
+cmd> http status
+[http-status] state=4 result=0 verify=0xFFFFFFFF status=0 bytes=0 step_max_us=3544 slice_max_us=3545 heap_peak=43952 utc=1793201715 rtc_offset=180 crypto=1 trust=1 seed_generation=2 dns=10.17.1.17
+[http-json] slice_max_us=1
+
+cmd> http status
+[http-status] state=4 result=0 verify=0xFFFFFFFF status=0 bytes=0 step_max_us=3544 slice_max_us=3545 heap_peak=43952 utc=1793201716 rtc_offset=180 crypto=1 trust=1 seed_generation=2 dns=10.17.1.17
+[http-json] slice_max_us=1
+[http-stage] DNS reply retry
+[http-stage] state=3
+[http-stage] state=4
+
+cmd> http status
+[http-status] state=4 result=0 verify=0xFFFFFFFF status=0 bytes=0 step_max_us=3544 slice_max_us=3545 heap_peak=43952 utc=1793201718 rtc_offset=180 crypto=1 trust=1 seed_generation=2 dns=10.17.1.17
+[http-json] slice_max_us=1
+
+cmd> http status
+[http-status] state=4 result=0 verify=0xFFFFFFFF status=0 bytes=0 step_max_us=3544 slice_max_us=3545 heap_peak=43952 utc=1793201719 rtc_offset=180 crypto=1 trust=1 seed_generation=2 dns=10.17.1.17
+[http-json] slice_max_us=1
+[http-stage] DNS reply retry
+[http-stage] state=3
+[http-stage] state=4
+
+cmd> http status
+[http-status] state=4 result=0 verify=0xFFFFFFFF status=0 bytes=0 step_max_us=3544 slice_max_us=3545 heap_peak=43952 utc=1793201721 rtc_offset=180 crypto=1 trust=1 seed_generation=2 dns=10.17.1.17
+[http-json] slice_max_us=1
+
+cmd> http status
+[http-status] state=4 result=0 verify=0xFFFFFFFF status=0 bytes=0 step_max_us=3544 slice_max_us=3545 heap_peak=43952 utc=1793201722 rtc_offset=180 crypto=1 trust=1 seed_generation=2 dns=10.17.1.17
+[http-json] slice_max_us=1
+[http-stage] DNS reply retry
+[http-stage] state=3
+[http-stage] state=4
+
+cmd> http status
+[http-status] state=4 result=0 verify=0xFFFFFFFF status=0 bytes=0 step_max_us=3544 slice_max_us=3545 heap_peak=43952 utc=1793201724 rtc_offset=180 crypto=1 trust=1 seed_generation=2 dns=10.17.1.17
+[http-json] slice_max_us=1
+
+cmd> http status
+[http-status] state=4 result=0 verify=0xFFFFFFFF status=0 bytes=0 step_max_us=3544 slice_max_us=3545 heap_peak=43952 utc=1793201725 rtc_offset=180 crypto=1 trust=1 seed_generation=2 dns=10.17.1.17
+[http-json] slice_max_us=1
+[http-result] rc=-111 verify=0xFFFFFFFF status=0 body=0 handshake_us=0 elapsed_us=30004770 step_max_us=3544 slice_max_us=3545 tls_heap_peak=43952 seed_generation=2
+[http-sha256] e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+[http] done
+
+cmd> http status
+[http-status] state=11 result=-111 verify=0xFFFFFFFF status=0 bytes=0 step_max_us=3544 slice_max_us=3545 heap_peak=43952 utc=1793201727 rtc_offset=180 crypto=1 trust=1 seed_generation=2 dns=10.17.1.17
+[http-json] slice_max_us=1
+
+cmd> vtw dump 4698 1
+04698: 00
+
+cmd> mwr 0x400001C4 0x469E
+ok
+
+cmd> mwr 0x400001C8 1
+ok
+
+cmd> vtw dump 4698 8
+04698: 04 00 C8 00 12 00 01 01
+
+cmd> vtw dump 4698 8
+04698: 04 00 C8 00 12 00 01 01
+
+cmd> http status
+[http-status] state=10 result=0 verify=0x00000000 status=200 bytes=43 step_max_us=3331 slice_max_us=3332 heap_peak=43952 utc=1793201732 rtc_offset=180 crypto=1 trust=1 seed_generation=2 dns=10.17.1.17
+[http-json] slice_max_us=2
+
+cmd> http net
+[http-net] link=1 ip=10.17.1.18 gateway=10.17.1.1
+[http-net-reg] 0000: 03 0A 11 01 01 FF FF FF 00 02 41 50 50 4C 01 0A 11 01 12 00 00 00 00 07 D0 07 06 06 00 00 00 00
+[http-net-reg] 0400: 01 00 00 00 FC CD A8 A1 59 F5 36 B9 0A 11 01 11 20 FB 05 B4 00 00 80 00 00 00 00 00 00 00 04 04 10 00 E9 83 E9 83 00 00 03 F7 03 F7 FF 40 00 00 00 01 07 D0 07 00 00 00 00 00 00 00 00 00 00 00
+[http-net-reg] 0500: 02 00 00 00 FC CD A8 A1 59 F5 36 B9 0A 11 01 11 00 35 05 C0 00 00 80 00 00 00 00 00 00 00 02 02 08 00 00 2B 00 2B 00 00 00 43 00 43 FF 40 00 00 00 01 07 D0 07 00 00 00 00 00 00 00 00 00 00 00
+
+cmd> http erase-test-provisioning
+[http] erase-test-provisioning rc=0
+
+cmd> ftp on
+ftp: on (anonymous read/write, passive)
+smartport: RAM32 32MB ram disk mounted
+smartport: RAM32 32MB ram disk mounted
+smartport: RAM32 32MB ram disk mounted
+smartport: RAM32 32MB ram disk mounted
+screenshot: SmartPort media refresh failed rc=-4
+smartport: RAM32 32MB ram disk mounted
+screenshot: SmartPort media refresh failed rc=-5
+smartport: RAM32 32MB ram disk mounted
+screenshot: SmartPort media refresh failed rc=-5
+
+cmd> ftp off
+ftp sd: media restore disk2=-12 smartport=-12
+ftp: off
+
+cm�\C�YV��ZG,�?O=9G.�-��_��]���C��R���C~�>�K)�>:������������N����8�[�
+��
+/�y�Y��~ǏR�ˎK���P�IR>��:)���K���
+==============================
+text_ui_test main start
+Firmware image: Firmware F1.3.3b3
+APPLETINI-MULTIBOOT-V1
+Debug UART: UART0
+Control UART: UART1 + UART0
+==============================
+core 1: cold wake issued
+boot menu VBL ROM patch: NTSC default
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+boot menu: register init complete
+[boottime] cpu0 card_control_init: 2 us
+onee: restore armed from saved ON status=0xE10098C8
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+[boottime] cpu0 Ethernet config write: 13 us
+[boottime] cpu0 config load and bind: 2208230889 us
+[bootdbg] after config bind slot_mask raw=0x00000080 norm=0x00000080 request=0x00000080 effective=0x00000080 slot6=0
+[bootdbg] after config bind boot_regs status=0x00000001 timeout=0x17C841C0 handoff=0x00000001 mode=SMARTPORT slot7=BOOTMENU pending=0
+[bootdbg] after config bind apple_status=0x0C disk2=0 smartport=1 eligible=1 active=0 timeout_or_closed=0
+gic_init OK
+apple_cycle_egress_init: ring 0x3F200000+1MB, producer 0x3F000000, shadows 0x3F100000/0x3F110000
+apple_cycle_egress_init OK
+RTC boot read: rc=0 valid=1 status=0x00 2026-10-28 18:36:35
+USB mass-storage service: raw SD card on USB0
+SD backend: block0=00 00 00 00 sig=AA55 p0 type=07 lba=32768 count=122134528
+SD backend: p0 boot=EB 76 90 45 58 46 41 54 sig=AA55
+SD backend: p0 bpb bps=0 spc=0 rsv=0 fats=0 spf=0 root=0 fsinfo=0 backup=0 flags=0000 ver=0000
+SD backend: exporting partition 0 base=32768 blocks=122134528 MB=59636
+SD backend: blocks=122167296 (0x07482000) MB=59652
+Storage capacity: blocks=122134528 (0x0747A000) MB=59636
+USB0 SD remote mount is available from the USB tab.
+USB0 mass-storage device configured (attach deferred)
+apple_cycle_renderer_init: 3-slot Apple FB ring at 0x3F300000+, legacy 616x224 / VidHD SHR 640x400 BGRA32
+psram cal: pattern write FAILED
+Applicard: embedded boot ROM ready
+AD8088: clean-room monitor + 640K Plus RAM ready (8088 core idle)
+vtw: virtual TransWarp service ready
+
+Appletini control UART
+UI keys:
+  W/S=up/down  A/D=left/right  E=OK  T=toggle
+  L=scanlines  M=menu  Tab/Space/Esc and terminal arrows work
+  : or ; starts a command; ENTER runs it; ? prints this help
+General:
+  help | status | temp | selfupdate | reboot | reset
+  nav <up|down|left|right|e|select|action|back|home|toggle|scanlines|tab|shift-tab|pgup|pgdn|space|esc|menu>
+  machine [auto|force <unknown|iiplus|iie|iigs>]
+Video and audio:
+  vsync <on|off|toggle>
+  scanlines [status|off|light|medium|strong|toggle]
+  textmono [status] | textmono <black|white|amber|green> <black|white|amber|green>
+  mono [status|off|black|white|amber|green]
+  audio <status|on|off>
+  audio mute [on|off|toggle] | audio tone <1..20000>
+  audio amp <0xHEX|DEC>
+  comp stats | comp uncap [on|off]
+  shadow [main|aux|a2li]
+Storage and USB:
+  sd [status|reset] | sd dumpblk <block> [count]
+  disk2 status | disk2 verify | disk2 underruns
+  disk2 scan [d1|d2] [all] | disk2 wozscan [d1|d2] [all]
+  disk2 wozwrite <d1|d2> <on|off|status>
+  usb [status|resetstats] | usb1 [status|start|stop]
+  sdd [status|on|off]
+  ftp [status|on|off]
+Cards and acceleration:
+  z80 [status|on|off|reset]
+  z80 budget <tstates> | z80 wall <us> | z80 dump <hex-addr> [hex-len]
+  8088 [status|dump <hex-addr> [hex-len]|trace on|off|paddle]
+  vtw [status|on|off] | vtw speed <full|turbo|1mhz|div <2-255>>
+  vtw dump <hex-phys> [hex-len]
+  ss [on|off|force <on|off>|dump]
+Bus diagnostics:
+  bustail [count [back]] | bustail on | bustail save
+  bustail find <addr16> | bustail entry
+  busdbg [clear] | irqdbg | sswatch [on|off]
+  bankprobe | spverify
+  mrd <aligned-addr> [count] | mwr <aligned-addr> <value>
+DMA diagnostics:
+  dma hold <on|off> | dma status | dma blocks | dma tail | dma reset
+  dma dump <mcaddr24> [count<=56] | dma peek <addr> [count]
+  dma probe [addr] [pattern] [count] | dma write <addr> [verify]
+  dma trace [status|off|clear]
+  dma trace arm [addr|release|resume [addr]]
+  dma trace dump [start] [count]
+RTC and raw PSRAM diagnostics:
+  rtc get | rtc set YYYY-MM-DD HH:MM:SS
+  pid | pqpi | pqpix | pres | ptr
+  pqr <hex-addr> | pqw <hex-addr> <hex-hi> <hex-lo>
+  psr <hex-addr> | psw <hex-addr> <hex-hi> <hex-lo>
+  pd <hex-delay> | ps <hex-addr>
+smartport: RAM32 32MB ram disk mounted
+SmartPort service: mounted 0:/_software/Appletini Only/libtini/starfall.po
+[usb1] CherryUSB HID service init (stopped)
+[usb1] CherryUSB host start
+[usb1] event bus=0 hub=0 port=0 intf=255 ev=12
+[I/USB] EHCI HCIVERSION:0x0100
+[I/USB] EHCI HCSPARAMS:0x010011
+[I/USB] EHCI HCCPARAMS:0x0006
+[I/USB] EHCI ppc:1, n_ports:1, n_cc:0, n_pcc:0
+[I/USB] EHCI uses tt for ls/fs device
+[usb1] ULPI 0424:0004 host VBUS valid func=41 iface=10 otg=66
+usb1 start: ok
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+Disk II D1: DSK image selected
+machine: aux provide OFF
+machine: ramworks OFF
+machine: mode -> unknown
+machine: effective slot mask 0x00000080 host bus master blocked
+[bootdbg] after runtime apply slot_mask raw=0x00000080 norm=0x00000080 request=0x00000096 effective=0x00000080 slot6=0
+[bootdbg] after runtime apply boot_regs status=0x00000001 timeout=0x17C841C0 handoff=0x00000001 mode=SMARTPORT slot7=BOOTMENU pending=0
+[bootdbg] after runtime apply apple_status=0x0C disk2=0 smartport=1 eligible=1 active=0 timeout_or_closed=0
+loaded custom bezel 1920x1080 from 0:/bezels/bezel_blue_phosphor.png
+smartport: RAM32 32MB ram disk mounted
+SmartPort service: media refreshed after startup assets
+Updater meta boot: B2.0.6
+Updater local firmware: Firmware F1.3.3b3
+compositor: FB_BASE_ADDR_REG round-trip: wrote 0x3E000000, read 0x3E000000 [OK]
+compositor_init: 3-slot output FB ring at 0x3E000000/0x3E400000/0x3E800000, 1920x1080 RGB565
+compositor: Apple blit = NEON (vld1q/vzipq burst reads)
+Output resolution: 1920x1080
+usb1: settling during boot prompt
+[bootdbg] pre apple release slot_mask raw=0x00000080 norm=0x00000080 request=0x00000096 effective=0x00000080 slot6=0
+[bootdbg] pre apple release boot_regs status=0x00000001 timeout=0xFFFFFFFF handoff=0x00000001 mode=SMARTPORT slot7=BOOTMENU pending=0
+[bootdbg] pre apple release apple_status=0x0C disk2=0 smartport=1 eligible=1 active=0 timeout_or_closed=0
+boot menu VBL ROM patch: NTSC default
+[boottime] cpu0 deferred Disk II sound publish: 1814 us
+onee: restore raised request status=0xE10098C8
+[usb1] event bus=0 hub=1 port=1 intf=255 ev=3
+[usb1] event bus=0 hub=1 port=1 intf=255 ev=2
+[I/usbh_hub] New high-speed device on Bus 0, Hub 1, Port 1 connected
+[I/usbh_core] New device found,idVendor:2109,idProduct:2822,bcdDevice:9013
+[I/usbh_core] The device has 1 bNumConfigurations
+[I/usbh_core] The device has 1 interfaces
+[I/usbh_core] Enumeration success, start loading class driver
+[usb1] event bus=0 hub=1 port=1 intf=255 ev=5
+[I/usbh_core] Loading hub class driver on interface 0
+[I/usbh_hub] Ep=81 Attr=03 Mps=1 Interval=12 Mult=00
+[I/usbh_hub] Register HUB Class:/dev/hub2
+[usb1] event bus=0 hub=1 port=1 intf=0 ev=10
+SD media attached: reloading settings and media
+smartport: RAM32 32MB ram disk mounted
+SD media: SmartPort mounted 0:/_software/Appletini Only/libtini/starfall.po
+
+cmd> status
+---- card status ----
+ui: frames=0 keys=0
+boot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0
+video: vsync=on scanlines=Medium
+text mono: fg=black bg=black
+display mono: off
+apple fb: slot=1 mode=legacy target=50Hz apple_fps=0.00 hdmi_fps=0.00 blits=69 comp_pub=71 comp_skip=0 pl_vblanks=37 latched=0x3E800000
+updater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'
+audio: en=on mute=off tone=1000Hz amp=0x00600000
+spdif dbg: clkc=0 q3lvl=0 q3tog=0
+rtc: 2026-10-28 18:36:37
+temp: +34.68 C
+
+cmd> status
+---- card status ----
+ui: frames=0 keys=0
+boot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0
+video: vsync=on scanlines=Medium
+text mono: fg=black bg=black
+display mono: off
+apple fb: slot=1 mode=legacy target=50Hz apple_fps=0.00 hdmi_fps=0.00 blits=69 comp_pub=71 comp_skip=0 pl_vblanks=37 latched=0x3E800000
+updater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'
+audio: en=on mute=off tone=1000Hz amp=0x00600000
+spdif dbg: clkc=0 q3lvl=0 q3tog=0
+rtc: 2026-10-28 18:36:37
+temp: +34.68 C
+
+cmd> status
+---- card status ----
+ui: frames=0 keys=0
+boot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0
+video: vsync=on scanlines=Medium
+text mono: fg=black bg=black
+display mono: off
+apple fb: slot=1 mode=legacy target=50Hz apple_fps=0.00 hdmi_fps=0.00 blits=69 comp_pub=71 comp_skip=0 pl_vblanks=37 latched=0x3E800000
+updater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'
+audio: en=on mute=off tone=1000Hz amp=0x00600000
+spdif dbg: clkc=0 q3lvl=0 q3tog=0
+rtc: 2026-10-28 18:36:37
+temp: +34.68 C
+machine: effective slot mask 0x00000096 ONE//e private bus enabled
+boot menu VBL ROM patch: PAL
+vtw: ONE//e cold ROM loaded, core released
+machine: ramworks 8MB ON
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+
+cmd> ftp on
+ftp: on (anonymous read/write, passive)
+[usb1] event bus=0 hub=2 port=1 intf=255 ev=3
+[usb1] event bus=0 hub=2 port=1 intf=255 ev=2
+[I/usbh_hub] New low-speed device on Bus 0, Hub 2, Port 1 connected
+[I/usbh_core] New device found,idVendor:06a3,idProduct:8000,bcdDevice:0120
+[I/usbh_core] The device has 1 bNumConfigurations
+[I/usbh_core] The device has 3 interfaces
+[I/usbh_core] Enumeration success, start loading class driver
+[usb1] event bus=0 hub=2 port=1 intf=255 ev=5
+[I/usbh_core] Loading hid class driver on interface 0
+[I/usbh_hid] Ep=81 Attr=03 Mps=8 Interval=10 Mult=00
+[I/usbh_hid] Register HID Class:/dev/input0
+[usb1] CherryUSB HID connected slot=0 dev=3 proto=1 subclass=1 parsed=0 mouse=0 joystick=0 ps4=0
+[usb1] event bus=0 hub=2 port=1 intf=0 ev=10
+[I/usbh_core] Loading hid class driver on interface 1
+[I/usbh_hid] Ep=82 Attr=03 Mps=5 Interval=10 Mult=00
+[I/usbh_hid] Register HID Class:/dev/input1
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+[usb1] CherryUSB HID connected slot=1 dev=3 proto=0 subclass=0 parsed=1 mouse=0 joystick=0 ps4=0
+[usb1] event bus=0 hub=2 port=1 intf=1 ev=10
+[I/usbh_core] Loading hid class driver on interface 2
+[I/usbh_hid] Ep=83 Attr=03 Mps=2 Interval=10 Mult=00
+[I/usbh_hid] Register HID Class:/dev/input2
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+[usb1] CherryUSB HID connected slot=2 dev=3 proto=0 subclass=0 parsed=1 mouse=0 joystick=1 ps4=0
+[usb1] event bus=0 hub=2 port=1 intf=2 ev=10
+[usb1] event bus=0 hub=2 port=2 intf=255 ev=3
+[usb1] event bus=0 hub=2 port=2 intf=255 ev=2
+[I/usbh_hub] New full-speed device on Bus 0, Hub 2, Port 2 connected
+[I/usbh_core] New device found,idVendor:045e,idProduct:028e,bcdDevice:0114
+[I/usbh_core] The device has 1 bNumConfigurations
+[I/usbh_core] The device has 4 interfaces
+[I/usbh_core] Enumeration success, start loading class driver
+[usb1] event bus=0 hub=2 port=2 intf=255 ev=5
+[I/usbh_core] Loading xbox class driver on interface 0
+[I/USB] Ep=81 Attr=03 Mps=32 Interval=04 Mult=00
+[I/USB] Ep=01 Attr=03 Mps=32 Interval=08 Mult=00
+[I/USB] Register XBOX Class:/dev/xbox0
+[usb1] Xbox 360 connected slot=3 class=0 vid=045e pid=028e intf=0
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+[W/usbh_core] Control transfer failed, errorcode -8, retrying...
+[usb1] event bus=0 hub=2 port=2 intf=0 ev=10
+[E/usbh_core] Do not support Class:0xff, Subclass:0x5d, Protocl:0x03 on interface 1
+[usb1] event bus=0 hub=2 port=2 intf=1 ev=9
+[E/usbh_core] Do not support Class:0xff, Subclass:0x5d, Protocl:0x02 on interface 2
+[usb1] event bus=0 hub=2 port=2 intf=2 ev=9
+[E/usbh_core] Do not support Class:0xff, Subclass:0xfd, Protocl:0x13 on interface 3
+[usb1] event bus=0 hub=2 port=2 intf=3 ev=9
+[usb1] event bus=0 hub=2 port=4 intf=255 ev=3
+[usb1] event bus=0 hub=2 port=4 intf=255 ev=2
+[I/usbh_hub] New low-speed device on Bus 0, Hub 2, Port 4 connected
+[I/usbh_core] New device found,idVendor:30fa,idProduct:0400,bcdDevice:0100
+[I/usbh_core] The device has 1 bNumConfigurations
+[I/usbh_core] The device has 1 interfaces
+[I/usbh_core] Enumeration success, start loading class driver
+[usb1] event bus=0 hub=2 port=4 intf=255 ev=5
+[I/usbh_core] Loading hid class driver on interface 0
+[I/usbh_hid] Ep=81 Attr=03 Mps=5 Interval=10 Mult=00
+[I/usbh_hid] Register HID Class:/dev/input3
+[usb1] CherryUSB HID connected slot=4 dev=5 proto=2 subclass=1 parsed=1 mouse=1 joystick=1 ps4=0
+[usb1] CherryUSB mousecard HID dev=5 speed=low hub=2 port=4 if=0 ep=0x00000081
+[usb1] event bus=0 hub=2 port=4 intf=0 ev=10
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+usb1: settled during prompt, 22 events
+
+cmd> ftp off
+ftp sd: media restore disk2=-12 smartport=0
+ftp: off
+
+c�\C�8���y�NG,�>YO=GEY���G����v�)C��<?�����R��=����P�IR>�[=i8���
+==============================
+text_ui_test main start
+Firmware image: Firmware F1.3.3b3
+APPLETINI-MULTIBOOT-V1
+Debug UART: UART0
+Control UART: UART1 + UART0
+==============================
+core 1: cold wake issued
+boot menu VBL ROM patch: NTSC default
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+boot menu: register init complete
+[boottime] cpu0 card_control_init: 2 us
+onee: restore armed from saved ON status=0xE10098C8
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+[boottime] cpu0 Ethernet config write: 13 us
+[boottime] cpu0 config load and bind: 2208230825 us
+[bootdbg] after config bind slot_mask raw=0x00000080 norm=0x00000080 request=0x00000080 effective=0x00000080 slot6=0
+[bootdbg] after config bind boot_regs status=0x00000001 timeout=0x17C841C0 handoff=0x00000001 mode=SMARTPORT slot7=BOOTMENU pending=0
+[bootdbg] after config bind apple_status=0x0C disk2=0 smartport=1 eligible=1 active=0 timeout_or_closed=0
+gic_init OK
+apple_cycle_egress_init: ring 0x3F200000+1MB, producer 0x3F000000, shadows 0x3F100000/0x3F110000
+apple_cycle_egress_init OK
+RTC boot read: rc=0 valid=1 status=0x00 2026-10-28 18:36:46
+USB mass-storage service: raw SD card on USB0
+SD backend: block0=00 00 00 00 sig=AA55 p0 type=07 lba=32768 count=122134528
+SD backend: p0 boot=EB 76 90 45 58 46 41 54 sig=AA55
+SD backend: p0 bpb bps=0 spc=0 rsv=0 fats=0 spf=0 root=0 fsinfo=0 backup=0 flags=0000 ver=0000
+SD backend: exporting partition 0 base=32768 blocks=122134528 MB=59636
+SD backend: blocks=122167296 (0x07482000) MB=59652
+Storage capacity: blocks=122134528 (0x0747A000) MB=59636
+USB0 SD remote mount is available from the USB tab.
+USB0 mass-storage device configured (attach deferred)
+apple_cycle_renderer_init: 3-slot Apple FB ring at 0x3F300000+, legacy 616x224 / VidHD SHR 640x400 BGRA32
+psram cal: pattern write FAILED
+Applicard: embedded boot ROM ready
+AD8088: clean-room monitor + 640K Plus RAM ready (8088 core idle)
+vtw: virtual TransWarp service ready
+
+Appletini control UART
+UI keys:
+  W/S=up/down  A/D=left/right  E=OK  T=toggle
+  L=scanlines  M=menu  Tab/Space/Esc and terminal arrows work
+  : or ; starts a command; ENTER runs it; ? prints this help
+General:
+  help | status | temp | selfupdate | reboot | reset
+  nav <up|down|left|right|e|select|action|back|home|toggle|scanlines|tab|shift-tab|pgup|pgdn|space|esc|menu>
+  machine [auto|force <unknown|iiplus|iie|iigs>]
+Video and audio:
+  vsync <on|off|toggle>
+  scanlines [status|off|light|medium|strong|toggle]
+  textmono [status] | textmono <black|white|amber|green> <black|white|amber|green>
+  mono [status|off|black|white|amber|green]
+  audio <status|on|off>
+  audio mute [on|off|toggle] | audio tone <1..20000>
+  audio amp <0xHEX|DEC>
+  comp stats | comp uncap [on|off]
+  shadow [main|aux|a2li]
+Storage and USB:
+  sd [status|reset] | sd dumpblk <block> [count]
+  disk2 status | disk2 verify | disk2 underruns
+  disk2 scan [d1|d2] [all] | disk2 wozscan [d1|d2] [all]
+  disk2 wozwrite <d1|d2> <on|off|status>
+  usb [status|resetstats] | usb1 [status|start|stop]
+  sdd [status|on|off]
+  ftp [status|on|off]
+Cards and acceleration:
+  z80 [status|on|off|reset]
+  z80 budget <tstates> | z80 wall <us> | z80 dump <hex-addr> [hex-len]
+  8088 [status|dump <hex-addr> [hex-len]|trace on|off|paddle]
+  vtw [status|on|off] | vtw speed <full|turbo|1mhz|div <2-255>>
+  vtw dump <hex-phys> [hex-len]
+  ss [on|off|force <on|off>|dump]
+Bus diagnostics:
+  bustail [count [back]] | bustail on | bustail save
+  bustail find <addr16> | bustail entry
+  busdbg [clear] | irqdbg | sswatch [on|off]
+  bankprobe | spverify
+  mrd <aligned-addr> [count] | mwr <aligned-addr> <value>
+DMA diagnostics:
+  dma hold <on|off> | dma status | dma blocks | dma tail | dma reset
+  dma dump <mcaddr24> [count<=56] | dma peek <addr> [count]
+  dma probe [addr] [pattern] [count] | dma write <addr> [verify]
+  dma trace [status|off|clear]
+  dma trace arm [addr|release|resume [addr]]
+  dma trace dump [start] [count]
+RTC and raw PSRAM diagnostics:
+  rtc get | rtc set YYYY-MM-DD HH:MM:SS
+  pid | pqpi | pqpix | pres | ptr
+  pqr <hex-addr> | pqw <hex-addr> <hex-hi> <hex-lo>
+  psr <hex-addr> | psw <hex-addr> <hex-hi> <hex-lo>
+  pd <hex-delay> | ps <hex-addr>
+smartport: RAM32 32MB ram disk mounted
+SmartPort service: mounted 0:/_software/Appletini Only/libtini/starfall.po
+[usb1] CherryUSB HID service init (stopped)
+[usb1] CherryUSB host start
+[usb1] event bus=0 hub=0 port=0 intf=255 ev=12
+[I/USB] EHCI HCIVERSION:0x0100
+[I/USB] EHCI HCSPARAMS:0x010011
+[I/USB] EHCI HCCPARAMS:0x0006
+[I/USB] EHCI ppc:1, n_ports:1, n_cc:0, n_pcc:0
+[I/USB] EHCI uses tt for ls/fs device
+[usb1] ULPI 0424:0004 host VBUS valid func=41 iface=10 otg=66
+usb1 start: ok
+boot_menu_service_set_handoff: handoff set to SMARTPORT
+Disk II D1: DSK image selected
+machine: aux provide OFF
+machine: ramworks OFF
+machine: mode -> unknown
+machine: effective slot mask 0x00000080 host bus master blocked
+[bootdbg] after runtime apply slot_mask raw=0x00000080 norm=0x00000080 request=0x00000096 effective=0x00000080 slot6=0
+[bootdbg] after runtime apply boot_regs status=0x00000001 timeout=0x17C841C0 handoff=0x00000001 mode=SMARTPORT slot7=BOOTMENU pending=0
+[bootdbg] after runtime apply apple_status=0x0C disk2=0 smartport=1 eligible=1 active=0 timeout_or_closed=0
+loaded custom bezel 1920x1080 from 0:/bezels/bezel_blue_phosphor.png
+smartport: RAM32 32MB ram disk mounted
+SmartPort service: media refreshed after startup assets
+Updater meta boot: B2.0.6
+Updater local firmware: Firmware F1.3.3b3
+compositor: FB_BASE_ADDR_REG round-trip: wrote 0x3E000000, read 0x3E000000 [OK]
+compositor_init: 3-slot output FB ring at 0x3E000000/0x3E400000/0x3E800000, 1920x1080 RGB565
+compositor: Apple blit = NEON (vld1q/vzipq burst reads)
+Output resolution: 1920x1080
+usb1: settling during boot prompt
+[bootdbg] pre apple release slot_mask raw=0x00000080 norm=0x00000080 request=0x00000096 effective=0x00000080 slot6=0
+[bootdbg] pre apple release boot_regs status=0x00000001 timeout=0xFFFFFFFF handoff=0x00000001 mode=SMARTPORT slot7=BOOTMENU pending=0
+[bootdbg] pre apple release apple_status=0x0C disk2=0 smartport=1 eligible=1 active=0 timeout_or_closed=0
+boot menu VBL ROM patch: NTSC default
+[boottime] cpu0 deferred Disk II sound publish: 1814 us
+onee: restore raised request status=0xE10098C8
+[usb1] event bus=0 hub=1 port=1 intf=255 ev=3
+[usb1] event bus=0 hub=1 port=1 intf=255 ev=2
+[I/usbh_hub] New high-speed device on Bus 0, Hub 1, Port 1 connected
+[I/usbh_core] New device found,idVendor:2109,idProduct:2822,bcdDevice:9013
+[I/usbh_core] The device has 1 bNumConfigurations
+[I/usbh_core] The device has 1 interfaces
+[I/usbh_core] Enumeration success, start loading class driver
+[usb1] event bus=0 hub=1 port=1 intf=255 ev=5
+[I/usbh_core] Loading hub class driver on interface 0
+[I/usbh_hub] Ep=81 Attr=03 Mps=1 Interval=12 Mult=00
+[I/usbh_hub] Register HUB Class:/dev/hub2
+[usb1] event bus=0 hub=1 port=1 intf=0 ev=10
+SD media attached: reloading settings and media
+smartport: RAM32 32MB ram disk mounted
+SD media: SmartPort mounted 0:/_software/Appletini Only/libtini/starfall.po
+
+cmd> status
+---- card status ----
+ui: frames=0 keys=0
+boot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0
+video: vsync=on scanlines=Medium
+text mono: fg=black bg=black
+display mono: off
+apple fb: slot=2 mode=legacy target=50Hz apple_fps=0.00 hdmi_fps=0.00 blits=71 comp_pub=73 comp_skip=0 pl_vblanks=38 latched=0x3E400000
+updater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'
+audio: en=on mute=off tone=1000Hz amp=0x00600000
+spdif dbg: clkc=0 q3lvl=0 q3tog=0
+rtc: 2026-10-28 18:36:47
+temp: +34.62 C
+
+cmd> status
+---- card status ----
+ui: frames=0 keys=0
+boot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0
+video: vsync=on scanlines=Medium
+text mono: fg=black bg=black
+display mono: off
+apple fb: slot=2 mode=legacy target=50Hz apple_fps=0.00 hdmi_fps=0.00 blits=71 comp_pub=73 comp_skip=0 pl_vblanks=38 latched=0x3E400000
+updater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'
+audio: en=on mute=off tone=1000Hz amp=0x00600000
+spdif dbg: clkc=0 q3lvl=0 q3tog=0
+rtc: 2026-10-28 18:36:47
+temp: +34.62 C
+
+cmd> status
+---- card status ----
+ui: frames=0 keys=0
+boot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0
+video: vsync=on scanlines=Medium
+text mono: fg=black bg=black
+display mono: off
+apple fb: slot=2 mode=legacy target=50Hz apple_fps=0.00 hdmi_fps=0.00 blits=71 comp_pub=73 comp_skip=0 pl_vblanks=38 latched=0x3E400000
+updater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'
+audio: en=on mute=off tone=1000Hz amp=0x00600000
+spdif dbg: clkc=0 q3lvl=0 q3tog=0
+rtc: 2026-10-28 18:36:47
+temp: +34.62 C
+machine: effective slot mask 0x00000096 ONE//e private bus enabled
+boot menu VBL ROM patch: PAL
+vtw: ONE//e cold ROM loaded, core released
+machine: ramworks 8MB ON
+boot_menu_service_set_handoff: handoff set to SMARTPORT

@@ -1,0 +1,426 @@
+{
+  "firmware_sha256": "2f93a6b846267f073155cbcffe7707e60cb97ad3a294ef80b4f23618febad8a0",
+  "stock_sha256": "cbbdd97ff97d43f7609f3da73ff0368164621350b18ff6ec7398c480d66672c2",
+  "fpga_rebuilt": false,
+  "golden_written": false,
+  "cases": [
+    {
+      "speed": "1mhz-calibration",
+      "profile": "\r\ncmd> vtw status\r\nvtw: idle, session=ONE//e, host-intent=off, machine=unknown\r\nvtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0\r\nvtw: reset seen=0 source=none rstn=$0\r\nvtw: slowdown mask=$008 cycles=256\r\nvtw: speed=1 MHz default div=37 c074=0 ignore=0 d2accel=on owned=1 run=1 pc=58FF\r\nvtw: core=621592652 bus=4231287 posted=560917 invalid=0\r\nvtw: perf fabric=1597717243 steps=621593285 classic=777390327\r\nvtw: cache hits=416405674 misses=134675127 invalidations=96090\r\nvtw: wait disk=0 video=103187423\r\nvtw: qfill=0 qhw=508 qdrop=0 sessions=1\r\nvtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00\r\nvtw: c000 reads=65535 bit7=1 last=$50 prev=park $FFFF R drive=0\r\nvtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=011 altzp=0 rd/wt=00 80st=0 text=1\r\nvtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)\r\nvtw: cxxx trail C700 CFFF C440 C484 C48D C419 C48D C410 (new->old)\r\nvtw: last bus write $C006 = $00, irqs seen=127 (sat)\r\nvtw: persisted setting = OFF\r\n",
+      "calibration": [
+        {
+          "before_units": 12330,
+          "after_units": 12337,
+          "arm_ticks": 26648529602,
+          "arm_hz": 333333343
+        },
+        {
+          "before_units": 45105,
+          "after_units": 45110,
+          "arm_ticks": 29396207920,
+          "arm_hz": 333333343
+        }
+      ],
+      "phases": [],
+      "calibration_bounds_hz": [
+        1017629.2215274086,
+        1018063.7702250505
+      ],
+      "scope": "timer calibration only; no 1 MHz gameplay acceptance"
+    },
+    {
+      "speed": "turbo",
+      "profile": "\r\ncmd> vtw status\r\nvtw: idle, session=ONE//e, host-intent=off, machine=unknown\r\nvtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0\r\nvtw: reset seen=0 source=none rstn=$0\r\nvtw: slowdown mask=$008 cycles=256\r\nvtw: speed=TURBO div=37 c074=0 ignore=0 d2accel=on owned=1 run=1 pc=015B\r\nvtw: core=655181010 bus=4414219 posted=723139 invalid=0\r\nvtw: perf fabric=3386663162 steps=655185189 classic=815400622\r\nvtw: cache hits=431347733 misses=138611293 invalidations=132400\r\nvtw: wait disk=0 video=124077011\r\nvtw: qfill=14 qhw=508 qdrop=0 sessions=1\r\nvtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00\r\nvtw: c000 reads=65535 bit7=2 last=$52 prev=park $FFFF R drive=0\r\nvtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=011 altzp=0 rd/wt=01 80st=0 text=1\r\nvtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)\r\nvtw: cxxx trail C419 C419 C419 C419 C419 C419 C419 C419 (new->old)\r\nvtw: last bus read $C419 = $BE, irqs seen=127 (sat)\r\nvtw: persisted setting = OFF\r\n",
+      "calibration": [
+        {
+          "before_units": 65428,
+          "after_units": 65434,
+          "arm_ticks": 31100293127,
+          "arm_hz": 333333343
+        },
+        {
+          "before_units": 98202,
+          "after_units": 98205,
+          "arm_ticks": 33847849430,
+          "arm_hz": 333333343
+        }
+      ],
+      "phases": [
+        {
+          "name": "baseline",
+          "seconds": 7.0483651478230875,
+          "audio_ticks": 705,
+          "expected_audio_ticks": 704.8677539791707,
+          "tick_deficit": -0.13224602082925685,
+          "irq_count": 705,
+          "calls": 0,
+          "max_irq_gap_ms": 10.311981553694926,
+          "max_foreground_gap_ms": 12.575587260603568,
+          "max_mask_ticks_approx": 0,
+          "max_mask_ms_approx": 0.0,
+          "frames": 212,
+          "stamp_before": {
+            "before_units": 110747,
+            "after_units": 110754,
+            "arm_ticks": 34899949843,
+            "arm_hz": 333333343
+          },
+          "stamp_after": {
+            "before_units": 150770,
+            "after_units": 150774,
+            "arm_ticks": 38255225059,
+            "arm_hz": 333333343
+          },
+          "game_state": "01000a0200000e02000067010000560000007800ae0003000904010b05000000018282001200000000004001c800a000",
+          "last_payload_verified": false
+        },
+        {
+          "name": "raw128",
+          "seconds": 7.053898406217753,
+          "audio_ticks": 706,
+          "expected_audio_ticks": 705.4211043426999,
+          "tick_deficit": -0.5788956573001087,
+          "irq_count": 706,
+          "calls": 141,
+          "max_irq_gap_ms": 10.815005044119069,
+          "max_foreground_gap_ms": 14.084657731875996,
+          "max_mask_ticks_approx": 1792,
+          "max_mask_ms_approx": 1.7605822164844995,
+          "frames": 212,
+          "stamp_before": {
+            "before_units": 160659,
+            "after_units": 160663,
+            "arm_ticks": 39084334809,
+            "arm_hz": 333333343
+          },
+          "stamp_after": {
+            "before_units": 202397,
+            "after_units": 202406,
+            "arm_ticks": 42583790286,
+            "arm_hz": 333333343
+          },
+          "game_state": "01008b0300008e03000073010000570000007800ae0003000c04010c05000000018282001200000000004001c800a000",
+          "last_payload_verified": true
+        },
+        {
+          "name": "raw511",
+          "seconds": 7.07653446328684,
+          "audio_ticks": 708,
+          "expected_audio_ticks": 707.6848103753193,
+          "tick_deficit": -0.31518962468067,
+          "irq_count": 708,
+          "calls": 141,
+          "max_irq_gap_ms": 10.311981553694926,
+          "max_foreground_gap_ms": 12.575587260603568,
+          "max_mask_ticks_approx": 3072,
+          "max_mask_ms_approx": 3.018140942544856,
+          "frames": 212,
+          "stamp_before": {
+            "before_units": 212260,
+            "after_units": 212265,
+            "arm_ticks": 43410607508,
+            "arm_hz": 333333343
+          },
+          "stamp_after": {
+            "before_units": 253998,
+            "after_units": 254002,
+            "arm_ticks": 46909823898,
+            "arm_hz": 333333343
+          },
+          "game_state": "01000c0500000e05000073010000570000007800ae0003000c04010c05000000018282001200000000004001c800a000",
+          "last_payload_verified": true
+        },
+        {
+          "name": "raw512",
+          "seconds": 7.074270857579931,
+          "audio_ticks": 707,
+          "expected_audio_ticks": 707.4584397720574,
+          "tick_deficit": 0.4584397720574316,
+          "irq_count": 707,
+          "calls": 141,
+          "max_irq_gap_ms": 12.575587260603568,
+          "max_foreground_gap_ms": 14.336169477088069,
+          "max_mask_ticks_approx": 3072,
+          "max_mask_ms_approx": 3.018140942544856,
+          "frames": 212,
+          "stamp_before": {
+            "before_units": 263934,
+            "after_units": 263939,
+            "arm_ticks": 47742923112,
+            "arm_hz": 333333343
+          },
+          "stamp_after": {
+            "before_units": 305797,
+            "after_units": 305802,
+            "arm_ticks": 51252715483,
+            "arm_hz": 333333343
+          },
+          "game_state": "01008f0600009006000075010000570000007800ae0003000c05010c05000000018282001200000000004001c800a000",
+          "last_payload_verified": true
+        },
+        {
+          "name": "rom512",
+          "seconds": 7.06446189951666,
+          "audio_ticks": 706,
+          "expected_audio_ticks": 706.4775004912557,
+          "tick_deficit": 0.4775004912556824,
+          "irq_count": 706,
+          "calls": 141,
+          "max_irq_gap_ms": 14.336169477088069,
+          "max_foreground_gap_ms": 21.881521833450208,
+          "max_mask_ticks_approx": 9728,
+          "max_mask_ms_approx": 9.557446318058712,
+          "frames": 212,
+          "stamp_before": {
+            "before_units": 315667,
+            "after_units": 315672,
+            "arm_ticks": 52080247963,
+            "arm_hz": 333333343
+          },
+          "stamp_after": {
+            "before_units": 357421,
+            "after_units": 357425,
+            "arm_ticks": 55580779356,
+            "arm_hz": 333333343
+          },
+          "game_state": "0100100800001008000073010000570000007800ae0003000c04010c05000000018282001200000000004001c800a000",
+          "last_payload_verified": true
+        },
+        {
+          "name": "positive25ms",
+          "seconds": 7.052892359236905,
+          "audio_ticks": 567,
+          "expected_audio_ticks": 705.3204951856947,
+          "tick_deficit": 138.32049518569465,
+          "irq_count": 567,
+          "calls": 113,
+          "max_irq_gap_ms": 34.45710909405378,
+          "max_foreground_gap_ms": 37.22373829138656,
+          "max_mask_ticks_approx": 25600,
+          "max_mask_ms_approx": 25.151174521207135,
+          "frames": 164,
+          "stamp_before": {
+            "before_units": 367350,
+            "after_units": 367356,
+            "arm_ticks": 56413429191,
+            "arm_hz": 333333343
+          },
+          "stamp_after": {
+            "before_units": 407270,
+            "after_units": 407278,
+            "arm_ticks": 59760249406,
+            "arm_hz": 333333343
+          },
+          "game_state": "010056090000590900003c010000550000007800ae0003000b04010b05000000018282001200000000004001c800a000",
+          "last_payload_verified": false
+        }
+      ],
+      "calibration_bounds_hz": [
+        1017674.4129687373,
+        1018015.8072565187
+      ],
+      "audio_period_ticks": 10178
+    },
+    {
+      "speed": "26mhz",
+      "profile": "\r\ncmd> vtw status\r\nvtw: idle, session=ONE//e, host-intent=off, machine=unknown\r\nvtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0\r\nvtw: reset seen=0 source=none rstn=$0\r\nvtw: slowdown mask=$008 cycles=256\r\nvtw: speed=26 MHz div=5 c074=0 ignore=0 d2accel=on owned=1 run=1 pc=8235\r\nvtw: core=2168498160 bus=8788649 posted=13451298 invalid=0\r\nvtw: perf fabric=2653334308 steps=2168511995 classic=2619524033\r\nvtw: cache hits=1479218762 misses=414091109 invalidations=1898139\r\nvtw: wait disk=0 video=1851172220\r\nvtw: qfill=0 qhw=508 qdrop=0 sessions=1\r\nvtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00\r\nvtw: c000 reads=65535 bit7=9 last=$52 prev=park $FFFF R drive=0\r\nvtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=011 altzp=0 rd/wt=00 80st=0 text=1\r\nvtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)\r\nvtw: cxxx trail C410 C410 C41F C410 C410 C41F C410 C410 (new->old)\r\nvtw: last bus write $C004 = $00, irqs seen=127 (sat)\r\nvtw: persisted setting = OFF\r\n",
+      "calibration": [
+        {
+          "before_units": 427846,
+          "after_units": 427851,
+          "arm_ticks": 61485345828,
+          "arm_hz": 333333343
+        },
+        {
+          "before_units": 460619,
+          "after_units": 460622,
+          "arm_ticks": 64232878582,
+          "arm_hz": 333333343
+        }
+      ],
+      "phases": [
+        {
+          "name": "baseline",
+          "seconds": 7.067527292972869,
+          "audio_ticks": 707,
+          "expected_audio_ticks": 706.7793279622716,
+          "tick_deficit": -0.2206720377283773,
+          "irq_count": 707,
+          "calls": 0,
+          "max_irq_gap_ms": 10.060537071847502,
+          "max_foreground_gap_ms": 22.887721838453064,
+          "max_mask_ticks_approx": 0,
+          "max_mask_ms_approx": 0.0,
+          "frames": 153,
+          "stamp_before": {
+            "before_units": 472274,
+            "after_units": 472279,
+            "arm_ticks": 65274571092,
+            "arm_hz": 333333343
+          },
+          "stamp_after": {
+            "before_units": 512349,
+            "after_units": 512354,
+            "arm_ticks": 68634475165,
+            "arm_hz": 333333343
+          },
+          "game_state": "0100c20a00002e0b000064010000560000007800ae0003000905010b05000000018282001200000000004001c800a000",
+          "last_payload_verified": false
+        },
+        {
+          "name": "raw128",
+          "seconds": 7.0753242092035515,
+          "audio_ticks": 708,
+          "expected_audio_ticks": 707.5590489290627,
+          "tick_deficit": -0.44095107093733077,
+          "irq_count": 708,
+          "calls": 139,
+          "max_irq_gap_ms": 11.318104205828439,
+          "max_foreground_gap_ms": 22.887721838453064,
+          "max_mask_ticks_approx": 2048,
+          "max_mask_ms_approx": 2.0121074143695,
+          "frames": 144,
+          "stamp_before": {
+            "before_units": 522235,
+            "after_units": 522239,
+            "arm_ticks": 69463175551,
+            "arm_hz": 333333343
+          },
+          "stamp_after": {
+            "before_units": 564039,
+            "after_units": 564046,
+            "arm_ticks": 72968285531,
+            "arm_hz": 333333343
+          },
+          "game_state": "0100d30b0000a80c00006e010000570000007800ae0003000c04010c05000000018282001200000000004001c800a000",
+          "last_payload_verified": true
+        },
+        {
+          "name": "raw511",
+          "seconds": 7.062748537863742,
+          "audio_ticks": 706,
+          "expected_audio_ticks": 706.3014344664964,
+          "tick_deficit": 0.3014344664964028,
+          "irq_count": 706,
+          "calls": 135,
+          "max_irq_gap_ms": 13.07869819340175,
+          "max_foreground_gap_ms": 23.64226211884163,
+          "max_mask_ticks_approx": 3584,
+          "max_mask_ms_approx": 3.521187975146625,
+          "frames": 138,
+          "stamp_before": {
+            "before_units": 573962,
+            "after_units": 573968,
+            "arm_ticks": 73800135344,
+            "arm_hz": 333333343
+          },
+          "stamp_after": {
+            "before_units": 615718,
+            "after_units": 615721,
+            "arm_ticks": 77300776823,
+            "arm_hz": 333333343
+          },
+          "game_state": "0100dd0c0000220e00006d010000570000007800ae0003000c04010c05000000018282001200000000004001c800a000",
+          "last_payload_verified": true
+        },
+        {
+          "name": "raw512",
+          "seconds": 7.067527292972869,
+          "audio_ticks": 707,
+          "expected_audio_ticks": 706.7793279622716,
+          "tick_deficit": -0.2206720377283773,
+          "irq_count": 707,
+          "calls": 137,
+          "max_irq_gap_ms": 13.07869819340175,
+          "max_foreground_gap_ms": 23.390748692045438,
+          "max_mask_ticks_approx": 4096,
+          "max_mask_ms_approx": 4.024214828739,
+          "frames": 138,
+          "stamp_before": {
+            "before_units": 625599,
+            "after_units": 625606,
+            "arm_ticks": 78129479180,
+            "arm_hz": 333333343
+          },
+          "stamp_after": {
+            "before_units": 667357,
+            "after_units": 667365,
+            "arm_ticks": 81630322242,
+            "arm_hz": 333333343
+          },
+          "game_state": "0100e80d00009e0f00006e010000570000007800ae0003000c04010c05000000018282001200000000004001c800a000",
+          "last_payload_verified": true
+        },
+        {
+          "name": "rom512",
+          "seconds": 7.074318155496367,
+          "audio_ticks": 705,
+          "expected_audio_ticks": 707.4584397720574,
+          "tick_deficit": 2.4584397720574316,
+          "irq_count": 705,
+          "calls": 129,
+          "max_irq_gap_ms": 20.121074143695004,
+          "max_foreground_gap_ms": 33.19977233709675,
+          "max_mask_ticks_approx": 11008,
+          "max_mask_ms_approx": 10.815077352236063,
+          "frames": 111,
+          "stamp_before": {
+            "before_units": 677193,
+            "after_units": 677199,
+            "arm_ticks": 82455017742,
+            "arm_hz": 333333343
+          },
+          "stamp_after": {
+            "before_units": 719034,
+            "after_units": 719038,
+            "arm_ticks": 85962853931,
+            "arm_hz": 333333343
+          },
+          "game_state": "0100d80e0000191100006e010000570000007800ae0003000c04010c05000000018282001200000000004001c800a000",
+          "last_payload_verified": true
+        },
+        {
+          "name": "positive25ms",
+          "seconds": 7.061490970729761,
+          "audio_ticks": 564,
+          "expected_audio_ticks": 706.1756730202397,
+          "tick_deficit": 142.17567302023974,
+          "irq_count": 564,
+          "calls": 104,
+          "max_irq_gap_ms": 34.96036632467007,
+          "max_foreground_gap_ms": 50.554198786033695,
+          "max_mask_ticks_approx": 25600,
+          "max_mask_ms_approx": 25.15134267961875,
+          "frames": 83,
+          "stamp_before": {
+            "before_units": 729005,
+            "after_units": 729010,
+            "arm_ticks": 86798904936,
+            "arm_hz": 333333343
+          },
+          "stamp_after": {
+            "before_units": 768994,
+            "after_units": 769000,
+            "arm_ticks": 90151628399,
+            "arm_hz": 333333343
+          },
+          "game_state": "0100a40f00005c12000037010000550000007800ae0003000b04010b05000000018282001200000000004001c800a000",
+          "last_payload_verified": false
+        }
+      ],
+      "calibration_bounds_hz": [
+        1017683.1354178932,
+        1017993.4744630429
+      ],
+      "audio_period_ticks": 10178
+    }
+  ],
+  "before": "\r\ncmd> status\r\n---- card status ----\r\nui: frames=21383 keys=0\r\nboot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0\r\nvideo: vsync=on scanlines=Medium\r\ntext mono: fg=black bg=black\r\ndisplay mono: off\r\napple fb: slot=0 mode=SHR target=50Hz apple_fps=25.04 hdmi_fps=50.08 blits=11097 comp_pub=11098 comp_skip=0 pl_vblanks=21909 latched=0x3E000000\r\nupdater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'\r\naudio: en=on mute=off tone=1000Hz amp=0x00600000\r\nspdif dbg: clkc=0 q3lvl=0 q3tog=0\r\nrtc: 2026-10-28 11:36:28\r\ntemp: +35.37 C\r\n\r\ncmd> vtw status\r\nvtw: idle, session=ONE//e, host-intent=off, machine=unknown\r\nvtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0\r\nvtw: reset seen=0 source=none rstn=$0\r\nvtw: slowdown mask=$008 cycles=256\r\nvtw: speed=TURBO div=37 c074=0 ignore=0 d2accel=on owned=1 run=1 pc=63A5\r\nvtw: core=1526969896 bus=82445467 posted=103647 invalid=0\r\nvtw: perf fabric=2535103478 steps=1526997450 classic=2049273116\r\nvtw: cache hits=3867890972 misses=4151323425 invalidations=20070\r\nvtw: wait disk=0 video=40258923\r\nvtw: qfill=0 qhw=508 qdrop=0 sessions=1\r\nvtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00\r\nvtw: c000 reads=65535 bit7=0 last=$00 prev=park $FFFF R drive=0\r\nvtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=001 altzp=0 rd/wt=00 80st=0 text=1\r\nvtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)\r\nvtw: cxxx trail CF1F CF1E CFFB CF1D CF1C CF1B C818 C817 (new->old)\r\nvtw: last bus read $C000 = $00, irqs seen=0\r\nvtw: persisted setting = OFF\r\n",
+  "completed": true,
+  "restored": {
+    "settings_sha256": "a9351b958deff7e60deabe085a1663d35566d158237b7e4412a960200e38c0e4",
+    "media": "\r\ncmd> sd status\r\nsd: hw ready=1 exec=0 in=0 out=0 drypop=0 lastctl=$01\r\nsd: svc irq=206 pending=0 status=1 read=202 write=0\r\nsd: vtw direct=0 rwblk=0 postblk=0 fallback=0\r\nsd: vtw fb range=0 state=0 map=0 shadow=0 post=0 dma=0\r\nsd: vtw split blocks=0 spans=0 max=0\r\nsd: vtw write direct=0 preflight=0 stream=0 fault=0\r\nsd: cache hit=4 miss=198 bypass=0 post-credit-reads=0 dma-owner=0\r\nsd: lat dispatch us last=52 avg=96 max=459 samples=206\r\nsd: lat ready us last=154 avg=204 max=570\r\nsd: init=1 fs=1 slot=7 ramdisk=1\r\nsd: SP1 open=1 ram=0 ro=0 blocks=1600 path=0:/_software/Appletini Only/libtini/starfall\r\nsd: SP2 open=1 ram=1 ro=0 blocks=65535 path=RAM32 (volatile)\r\nsd: SP3 open=0 ram=0 ro=1 blocks=0 path=\r\nsd: SP4 open=0 ram=0 ro=1 blocks=0 path=\r\nsd: SP5 open=0 ram=0 ro=1 blocks=0 path=\r\nsd: SP6 open=0 ram=0 ro=1 blocks=0 path=\r\nsd: SP7 open=0 ram=0 ro=1 blocks=0 path=\r\nsd: SP8 open=0 ram=0 ro=1 blocks=0 path=\r\n",
+    "runtime": "\r\ncmd> status\r\n---- card status ----\r\nui: frames=1160 keys=0\r\nboot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0\r\nvideo: vsync=on scanlines=Medium\r\ntext mono: fg=black bg=black\r\ndisplay mono: off\r\napple fb: slot=1 mode=SHR target=50Hz apple_fps=25.04 hdmi_fps=50.09 blits=812 comp_pub=813 comp_skip=0 pl_vblanks=1306 latched=0x3E400000\r\nupdater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'\r\naudio: en=on mute=off tone=1000Hz amp=0x00600000\r\nspdif dbg: clkc=0 q3lvl=0 q3tog=0\r\nrtc: 2026-10-28 11:44:17\r\ntemp: +35.12 C\r\n",
+    "ftp": "\r\ncmd> ftp status\r\nftp: off\r\n"
+  }
+}

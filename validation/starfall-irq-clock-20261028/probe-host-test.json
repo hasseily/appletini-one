@@ -1,0 +1,15 @@
+{
+  "pass": true,
+  "raw_sizes": [
+    128,
+    511,
+    512
+  ],
+  "stock_rom_512": true,
+  "positive_control": true,
+  "irq_ack_owned_by_original_driver": true,
+  "via_a_low_reads": 0,
+  "actual_driver_ticks": 10,
+  "frozen_payload_unchanged": true,
+  "tight_calibration_32bit_extension": true
+}

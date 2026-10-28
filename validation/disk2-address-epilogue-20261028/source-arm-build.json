@@ -1,0 +1,22 @@
+{
+  "arm_source_build_pass": true,
+  "diagnostic_features_enabled": false,
+  "source_sha256": "9eb5621d85c66ed896fd0af36948294f4f1f61172691e3b270c20885ef3d7156",
+  "elf_sha256": "5be0bc5f05b4b5e1737f8b5d996aefb7bf45a94004646ebd5c7824b8196c1ee1",
+  "memory_audit": {
+    "symbols": {
+      "_heap_end": 78684560,
+      "_heap_start": 11575696,
+      "_STACK_SIZE": 65536,
+      "_HEAP_SIZE": 67108864,
+      "_stack_end": 78684560,
+      "_stack": 78750096
+    },
+    "stack_bytes": 65536,
+    "minimum_stack_bytes": 65536,
+    "heap_bytes": 67108864,
+    "stack_span_matches": true,
+    "heap_span_matches": true
+  },
+  "not_the_hardware_test_payload": true
+}

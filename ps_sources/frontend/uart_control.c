@@ -12,6 +12,8 @@
 #include "xil_cache.h"
 #include "ff.h"
 #include "psram_bench.h"
+#include "https_probe.h"
+#include "http_service.h"
 #include "card_control_regs.h"
 #include "apple_fb_handoff.h"
 #include "boot_menu_service.h"
@@ -2165,6 +2167,8 @@ static uart_control_event_t process_command(
         uart_puts(control->control_uart_base, "cmd: empty\r\n");
         return event;
     }
+    if (https_probe_command(argc, argv, control->control_uart_base)) return event;
+    if (http_service_command(argc, argv, control->control_uart_base)) return event;
 
     if (str_ieq(argv[0], "help")) {
         uart_control_print_help(control, ops);

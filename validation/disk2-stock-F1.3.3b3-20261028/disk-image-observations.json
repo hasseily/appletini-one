@@ -1,0 +1,37 @@
+{
+  "1": {
+    "sd_readback_sha256": "538ab64953e1132555063d3efaae8713ca246e924d31fca983c8440f61d1d453",
+    "changed_prodos_blocks": [
+      56
+    ],
+    "block_2_all_zero": false
+  },
+  "2": {
+    "sd_readback_sha256": "c405a29e77886eef5725e3d5af7f5840e4319cc9caed6b8e5bd595e4537505d0",
+    "changed_prodos_blocks": [
+      2
+    ],
+    "block_2_all_zero": true
+  },
+  "3": {
+    "sd_readback_sha256": "c405a29e77886eef5725e3d5af7f5840e4319cc9caed6b8e5bd595e4537505d0",
+    "changed_prodos_blocks": [
+      2
+    ],
+    "block_2_all_zero": true
+  },
+  "4": {
+    "sd_readback_sha256": "538ab64953e1132555063d3efaae8713ca246e924d31fca983c8440f61d1d453",
+    "changed_prodos_blocks": [
+      56
+    ],
+    "block_2_all_zero": false
+  },
+  "5": {
+    "sd_readback_sha256": "538ab64953e1132555063d3efaae8713ca246e924d31fca983c8440f61d1d453",
+    "changed_prodos_blocks": [
+      56
+    ],
+    "block_2_all_zero": false
+  }
+}

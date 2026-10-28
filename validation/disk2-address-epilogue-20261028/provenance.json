@@ -1,0 +1,13 @@
+{
+  "fix_commit": "ca8cf1f2f82a6009b2097d8a4378c69168a0a87f",
+  "source_hashes": {
+    "ps_sources/frontend/disk2_service.c": "9eb5621d85c66ed896fd0af36948294f4f1f61172691e3b270c20885ef3d7156",
+    "scripts/test_disk2_standard.py": "885f8efbcfba7cb39052807bb53c1bee04982bd3a2481c1c03498bc2aabdac94",
+    "scripts/test_disk2_address_splice.py": "6866b812166b1574437932d66e78e60b94d97dfc071904fe9efc76ea4b418662",
+    "scripts/fixtures/disk2_turbo_address_splice.json": "6e518b776410c4f390187aff35804b3237b55b47448fbf02c226b178058086ee",
+    "scripts/fixtures/disk2_turbo_address_splice.nib": "f9db3ce4606520a72b9bfd58d5de3ed8a39233548bbe6cc77a87483c9340366b",
+    "README_DISK2_ADDRESS_EPILOGUE_FIX.md": "bdaddc2f30190ffb3588471f98465383625a79bdf640a60202f8e4f166f08eda",
+    "scripts/run_disk2_write_checkpoint.py": "4fb5e025ae11d6b79704c3476a086f2a7db5375435d7bd6aed701a68153fcc2d"
+  },
+  "original_firmware_and_settings_restored": true
+}

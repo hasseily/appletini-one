@@ -1,0 +1,5 @@
+# Host tools used for the SmartPort transport checkpoint.
+py65==1.2.0
+pyserial==3.5
+# The shared UART helper imports the controlled HTTPS peer module.
+cryptography==49.0.0

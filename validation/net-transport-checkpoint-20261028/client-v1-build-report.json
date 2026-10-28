@@ -1,0 +1,15 @@
+{
+  "program_sha256": "90da8040cf075388e0afe04b3ac0e51bfd7f3355caccaf36e0dc384fa1adb736",
+  "prodos_input_sha256": "398d333cb2ab92df9f8bb2cf64b946f2567116910eb8359cf4bdee5d4194f0fa",
+  "volumes": {
+    "NETSP.po": "70ab3cc3a325ec75fd0b5f274dd6228a461889e6231f2c98ccbaf2dc0521ff19",
+    "NETD2.po": "a59b2986f21f429bfc6ea365e32d836d960e06548ee672a44d68fab2b94bc7c2"
+  },
+  "sources": {
+    "software/net_transport_checkpoint/main.c": "742590bee084ec638e51b5609fa9642651251ca954337efdd267ba08a16e9404",
+    "software/net_transport_checkpoint/model.cfg": "70bbb1ddf80f80e5fa5734d9b9789d9796a00187fe59da2ccf4bc6d60d16638b",
+    "software/net_transport_checkpoint/prodos_disk.py": "c8e2462bbb2810f1c51f5a495cd30ffcac7b9638e877336d3fec0f5c1e351967",
+    "software/net_transport_checkpoint/PRODOS_PACKER_LICENSE.txt": "0dc5ec22f384cea313aeed8a7d01469f27d422e8f44d93c74501c46ee219a782",
+    "software/net_transport_checkpoint/transport.s": "e57f2cd6ebf8d086fa3a9a73e3de43c258cf9c80c7feb6c075a89478a68d5a9c"
+  }
+}

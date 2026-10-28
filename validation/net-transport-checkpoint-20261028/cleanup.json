@@ -1,0 +1,10 @@
+{
+  "settings_after_reboot_match_original": true,
+  "settings_sha256": "a9351b958deff7e60deabe085a1663d35566d158237b7e4412a960200e38c0e4",
+  "removed_owned_test_paths": [
+    "/NETTEST/NETSP.PO",
+    "/NETTEST/NETD2.PO",
+    "/NETTEST"
+  ],
+  "user_media_deleted": false
+}

@@ -177,14 +177,15 @@ def test_ethernet_tab_modal_contract() -> None:
     main = read("ps_sources/frontend/main.c")
     vitis = read("scripts/create_vitis_workspace.py")
 
-    require("#define CONFIG_ETHERNET_ITEM_FTP_SD 11U" in internal and
-            "#define CONFIG_ETHERNET_ITEM_COUNT 12U" in internal,
+    require("#define CONFIG_ETHERNET_ITEM_DNS 7U" in internal and
+            "#define CONFIG_ETHERNET_ITEM_FTP_SD 12U" in internal and
+            "#define CONFIG_ETHERNET_ITEM_COUNT 13U" in internal,
             "FTP sharing must be the final Ethernet-tab row")
     require('"Test link"' in tabs and '"SD Card FTP Sharing"' in tabs and
             tabs.index('"Test link"') < tabs.index('"SD Card FTP Sharing"'),
             "FTP sharing must render below the existing Ethernet actions")
     require("y + (12 * row_h)" in tabs,
-            "FTP sharing must leave one blank row after the regular Ethernet actions")
+            "DNS uses the former spacer; FTP must stay within the existing tab height")
     require("config_menu_start_ethernet_ftp_sd_remote(menu);" in menu and
             "WAIT FOR DHCP TO FINISH" in menu and
             "config_menu_stop_ethernet_ftp_sd_remote(menu);" in menu,

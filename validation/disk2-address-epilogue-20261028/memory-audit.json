@@ -1,0 +1,15 @@
+{
+  "symbols": {
+    "_heap_end": 78684560,
+    "_heap_start": 11575696,
+    "_STACK_SIZE": 65536,
+    "_HEAP_SIZE": 67108864,
+    "_stack_end": 78684560,
+    "_stack": 78750096
+  },
+  "stack_bytes": 65536,
+  "minimum_stack_bytes": 65536,
+  "heap_bytes": 67108864,
+  "stack_span_matches": true,
+  "heap_span_matches": true
+}

@@ -48,6 +48,7 @@ typedef struct {
     uint8_t ip[UTHERNET2_IPV4_LEN];
     uint8_t subnet[UTHERNET2_IPV4_LEN];
     uint8_t gateway[UTHERNET2_IPV4_LEN];
+    uint8_t dns[UTHERNET2_IPV4_LEN];
 } uthernet2_network_config_t;
 
 typedef struct {

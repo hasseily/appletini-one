@@ -1,0 +1,9 @@
+{
+  "client-build.json": "64e878b077526948877a29d5b92d3d6d0f994c6868aaf05dd324badb16048cea",
+  "diagnostic-build.json": "51b8189b3a8ec2ae728aee248abbf73991c28e274484104440b19f7f125fb73b",
+  "expected.json": "c03f84d70f7f44e52cdae6549b4158a6de2859f7e2935fca5b92596644af23eb",
+  "full-uart.txt": "99eeab2a86f0f6a37152dcdb60b48a68418c5158482c8406021cf035b5189d9a",
+  "result.json": "09519d1769e15b3030d4006d0bd1dd4d9794d4cc486fd38d28d957b21519a3c4",
+  "source-checks.json": "8434ed1463d51825eebaab1c3aca27d0f3a70e6f147f6c2f71bdc0f4798b40cf",
+  "turbo-uart.txt": "3659cb0a0395172abf0f006afe97212d2ce25fba3e473241f0f511396d44c47b"
+}

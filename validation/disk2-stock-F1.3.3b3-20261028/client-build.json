@@ -1,0 +1,10 @@
+{
+  "program_sha256": "6334b312c5c92d6d55efe370c197293e35827fbcab98770e479d18a0e9e4045d",
+  "source_sha256": "cf3b55f4ef64a5557b229e8ff1f4d43255ace0c829116629ecc757823a0bd4c0",
+  "prodos_input_sha256": "398d333cb2ab92df9f8bb2cf64b946f2567116910eb8359cf4bdee5d4194f0fa",
+  "volume_sha256": {
+    "D2HOST": "7b93f4ad8d650f854af5ccb45fc079a123ab3bb6ceba48d83684479b2763f82d",
+    "D2TEST": "5f3a55c4c4f9d5ebbc8728593ed612be290e6e9089ec5f791967ec64fa63eadc"
+  },
+  "firmware_rebuilt": false
+}

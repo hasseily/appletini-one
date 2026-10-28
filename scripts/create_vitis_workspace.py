@@ -5,8 +5,8 @@
 
 # NOTE: To run this script: `vitis -s create_vitis_workspace.py`
 
-# FINAL NOTE:   If you can't delete the workspace because of a permission error, close any Vitis instances and kill any java process in the task manager.
-#               When you quit the `vitis` command, the java process is not killed automatically. Kill the fucker with a vengeance.
+# If workspace cleanup fails, close the Vitis sessions that own that workspace.
+# Leave unrelated Java tools running.
 
 import json
 import os
@@ -16,6 +16,7 @@ from pathlib import Path
 # Vitis can execute this file without adding scripts/ to its module path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from frontend_memory import FRONTEND_MEMORY_LINK_FLAGS, audit_frontend_elf
+from http_build_config import configure_http_service
 
 import vitis
 import subprocess
@@ -738,14 +739,17 @@ def remove_existing_workspace():
     """Remove vitis_workspace/ and verify the deletion.
 
     Vitis processes (vitis-ide.exe, java.exe) sometimes hold file
-    handles inside the workspace even after taskkill returns. shutil's
+    handles inside the workspace even after client shutdown. shutil's
     rmtree silently ignores per-file errors via onerror=del_rw and
     leaves a partial directory behind, which then makes
     create_platform_component fail with a misleading INVALID_ARGUMENT
     'invalid project location'. Retry a few times with a small delay
     between attempts, then raise loud if the directory still has
     contents. """
-    workspace_path = Path("vitis_workspace")
+    workspace_path = Path("vitis_workspace").resolve()
+    expected_workspace = Path(__file__).resolve().parents[1] / "vitis_workspace"
+    if workspace_path != expected_workspace:
+        raise RuntimeError(f"Refusing to remove workspace outside {expected_workspace}: {workspace_path}")
     if not workspace_path.exists():
         print("vitis_workspace does not exist; continuing.", flush=True)
         return
@@ -767,9 +771,7 @@ def remove_existing_workspace():
     residue = sorted(p.name for p in workspace_path.iterdir())
     raise RuntimeError(
         f"Could not fully remove {workspace_path}; "
-        f"residue: {residue}. Close Vitis and kill any java.exe / "
-        f"vitis-ide.exe / vitis-server.exe processes manually, then "
-        f"re-run." +
+        f"residue: {residue}. Close Vitis sessions that own this workspace, then re-run." +
         (f" Last rmtree error: {last_err}" if last_err else "")
     )
 
@@ -1178,6 +1180,7 @@ run_step("Generate config menu logo PNG source",
 run_step("Generate Disk II sound sample source",
          generate_disk2_sound_sample_sources)
 frontend_comp = create_app_only("frontend", "ps_sources/frontend")
+run_step("Enable normal HTTP/S and JSON service",lambda:configure_http_service(Path.cwd()))
 run_step(
     "Set frontend optimization to -O2",
     lambda: set_userconfig_optimization("frontend", "-O2"),
@@ -1251,6 +1254,14 @@ run_step(
             "../../../ps_sources/frontend/disk2_service.c",
             "../../../ps_sources/frontend/disk2_sound_samples.c",
             "../../../ps_sources/frontend/imagewriter.c",
+            "../../../ps_sources/frontend/https_probe.c",
+            "../../../ps_sources/frontend/http_core.c",
+            "../../../ps_sources/frontend/http_seed.c",
+            "../../../ps_sources/frontend/http_service.c",
+            "../../../ps_sources/frontend/net_service.c",
+            "../../../ps_sources/frontend/net_json.c",
+            "../../../ps_sources/frontend/net_transport_test.c",
+            "../../../ps_sources/frontend/http_bench.c",
             "../../../ps_sources/frontend/linear_text_overlay.c",
             "../../../ps_sources/frontend/linear_text_overlay_capture.c",
             "../../../ps_sources/frontend/linear_text_overlay_font.c",
@@ -1318,6 +1329,4 @@ run_step("Fix bootloader launch.json bitstream path", lambda: fix_launch_bitstre
 
 print("\nWorkspace creation completed successfully.", flush=True)
 run_step("Shutdown Vitis client", lambda: vitis.dispose())
-
-# kill lingering vitis server
-run_step("Kill Vitis server", lambda: subprocess.run(["C:\\WINDOWS\\system32\\taskkill.exe","/F","/IM","java.exe"]))
+# Do not kill every java.exe: other projects or tools may own those processes.

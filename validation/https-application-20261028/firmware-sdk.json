@@ -1,0 +1,206 @@
+{
+  "pass": true,
+  "inputs": {
+    "FIRMWARE.BIN": "e6313677d0f4f42049809db9332bdf38b7e9d96cd60a4d174d66179ad89a345d",
+    "ATNETCA.PEM": "369ed928ad3253b5ee3ccab3019c0385e599b3af02bebe79b9bb3e76352686a0",
+    "STARFALL.PO": "d23e23c09b435cede5dc087333361a755f52d77d27340293eee11026d55846e9",
+    "STARFALL.LBL": "3e0baa65df763bff7ba63b79dee21bccd407e954c03b2c445c362b9e9561613b",
+    "NETCHECK.PO": "c0bf83d437c42d0917395c04bcbe3c3367162f566ac28df1cc01f93f7f36cee0",
+    "NETCHECK.LBL": "9d191f0a6834249819a124fe2d358076c9019efb6c14eef4edcddc55ee2a0011"
+  },
+  "fpga_rebuilt": false,
+  "golden_written": false,
+  "requests": [
+    {
+      "rc": 0,
+      "verify": 0,
+      "status": 200,
+      "body": 13,
+      "handshake_us": 998403,
+      "elapsed_us": 1337921,
+      "step_max_us": 3627,
+      "slice_max_us": 3739,
+      "tls_heap_peak": 86592,
+      "seed_generation": 4,
+      "url": "https://appletini.org/leaderboards/starfall/api/ladder"
+    },
+    {
+      "rc": 0,
+      "verify": 0,
+      "status": 200,
+      "body": 603,
+      "handshake_us": 669312,
+      "elapsed_us": 919046,
+      "step_max_us": 27856,
+      "slice_max_us": 27859,
+      "tls_heap_peak": 95872,
+      "seed_generation": 4,
+      "url": "https://rsa2048.badssl.com/"
+    },
+    {
+      "rc": 0,
+      "verify": 0,
+      "status": 200,
+      "body": 602,
+      "handshake_us": 658949,
+      "elapsed_us": 879195,
+      "step_max_us": 24893,
+      "slice_max_us": 24896,
+      "tls_heap_peak": 96128,
+      "seed_generation": 4,
+      "url": "https://rsa4096.badssl.com/"
+    }
+  ],
+  "sdk": [
+    {
+      "speed": "full",
+      "case": "echo",
+      "phase": 4,
+      "error": 0,
+      "http": 200,
+      "bytes": 18,
+      "result": 0,
+      "status": "\r\ncmd> http status\r\n[http-status] state=10 result=0 verify=0x00000000 status=200 bytes=43 step_max_us=155 slice_max_us=157 heap_peak=49520 utc=1793206587 rtc_offset=180 crypto=1 trust=1 seed_generation=5 dns=8.8.8.8\r\n[http-json] slice_max_us=2 boot_prepare_us=37390 ready=1 prepare_error=0 stack_used_upper=16536 stack_guard=512\r\n"
+    },
+    {
+      "speed": "full",
+      "case": "max-string",
+      "phase": 4,
+      "error": 0,
+      "http": 200,
+      "bytes": 32745,
+      "result": 0,
+      "status": "\r\ncmd> http status\r\n[http-status] state=10 result=0 verify=0x00000000 status=200 bytes=32768 step_max_us=305 slice_max_us=881 heap_peak=49520 utc=1793206593 rtc_offset=180 crypto=1 trust=1 seed_generation=5 dns=8.8.8.8\r\n[http-json] slice_max_us=6 boot_prepare_us=37390 ready=1 prepare_error=0 stack_used_upper=16536 stack_guard=512\r\n"
+    },
+    {
+      "speed": "full",
+      "case": "max-nodes",
+      "phase": 4,
+      "error": 0,
+      "http": 200,
+      "bytes": 32747,
+      "result": 0,
+      "status": "\r\ncmd> http status\r\n[http-status] state=10 result=0 verify=0x00000000 status=200 bytes=32768 step_max_us=305 slice_max_us=999 heap_peak=49520 utc=1793206599 rtc_offset=180 crypto=1 trust=1 seed_generation=5 dns=8.8.8.8\r\n[http-json] slice_max_us=7 boot_prepare_us=37390 ready=1 prepare_error=0 stack_used_upper=16536 stack_guard=512\r\n"
+    },
+    {
+      "speed": "full",
+      "case": "max-utf8",
+      "phase": 4,
+      "error": 0,
+      "http": 200,
+      "bytes": 10921,
+      "result": 0,
+      "status": "\r\ncmd> http status\r\n[http-status] state=10 result=0 verify=0x00000000 status=200 bytes=32768 step_max_us=314 slice_max_us=897 heap_peak=49520 utc=1793206605 rtc_offset=180 crypto=1 trust=1 seed_generation=5 dns=8.8.8.8\r\n[http-json] slice_max_us=7 boot_prepare_us=37390 ready=1 prepare_error=0 stack_used_upper=16536 stack_guard=512\r\n"
+    },
+    {
+      "speed": "full",
+      "case": "stream32k",
+      "phase": 4,
+      "error": 0,
+      "http": 200,
+      "bytes": 32768,
+      "result": 0,
+      "status": "\r\ncmd> http status\r\n[http-status] state=10 result=0 verify=0x00000000 status=200 bytes=32768 step_max_us=294 slice_max_us=881 heap_peak=49520 utc=1793206611 rtc_offset=180 crypto=1 trust=1 seed_generation=5 dns=8.8.8.8\r\n[http-json] slice_max_us=7 boot_prepare_us=37390 ready=1 prepare_error=0 stack_used_upper=16536 stack_guard=512\r\n"
+    },
+    {
+      "speed": "full",
+      "case": "invalid-json",
+      "phase": 3,
+      "error": 10,
+      "http": 200,
+      "bytes": 0,
+      "result": 0,
+      "status": "\r\ncmd> http status\r\n[http-status] state=10 result=0 verify=0x00000000 status=200 bytes=29 step_max_us=146 slice_max_us=148 heap_peak=49520 utc=1793206616 rtc_offset=180 crypto=1 trust=1 seed_generation=5 dns=8.8.8.8\r\n[http-json] slice_max_us=7 boot_prepare_us=37390 ready=1 prepare_error=0 stack_used_upper=16536 stack_guard=512\r\n"
+    },
+    {
+      "speed": "full",
+      "case": "bad-hostname",
+      "phase": 2,
+      "error": 9,
+      "http": 0,
+      "bytes": 0,
+      "result": 0,
+      "status": "\r\ncmd> http status\r\n[http-status] state=11 result=-9984 verify=0x00000004 status=0 bytes=0 step_max_us=27755 slice_max_us=27796 heap_peak=95872 utc=1793206622 rtc_offset=180 crypto=1 trust=1 seed_generation=5 dns=8.8.8.8\r\n[http-json] slice_max_us=7 boot_prepare_us=37390 ready=1 prepare_error=0 stack_used_upper=16536 stack_guard=512\r\n"
+    },
+    {
+      "speed": "turbo",
+      "case": "echo",
+      "phase": 4,
+      "error": 0,
+      "http": 200,
+      "bytes": 18,
+      "result": 0,
+      "status": "\r\ncmd> http status\r\n[http-status] state=10 result=0 verify=0x00000000 status=200 bytes=43 step_max_us=117 slice_max_us=167 heap_peak=49520 utc=1793206680 rtc_offset=180 crypto=1 trust=1 seed_generation=6 dns=8.8.8.8\r\n[http-json] slice_max_us=2 boot_prepare_us=37361 ready=1 prepare_error=0 stack_used_upper=16536 stack_guard=512\r\n"
+    },
+    {
+      "speed": "turbo",
+      "case": "max-string",
+      "phase": 4,
+      "error": 0,
+      "http": 200,
+      "bytes": 32745,
+      "result": 0,
+      "status": "\r\ncmd> http status\r\n[http-status] state=10 result=0 verify=0x00000000 status=200 bytes=32768 step_max_us=304 slice_max_us=879 heap_peak=49520 utc=1793206686 rtc_offset=180 crypto=1 trust=1 seed_generation=6 dns=8.8.8.8\r\n[http-json] slice_max_us=6 boot_prepare_us=37361 ready=1 prepare_error=0 stack_used_upper=16536 stack_guard=512\r\n"
+    },
+    {
+      "speed": "turbo",
+      "case": "max-nodes",
+      "phase": 4,
+      "error": 0,
+      "http": 200,
+      "bytes": 32747,
+      "result": 0,
+      "status": "\r\ncmd> http status\r\n[http-status] state=10 result=0 verify=0x00000000 status=200 bytes=32768 step_max_us=305 slice_max_us=879 heap_peak=49520 utc=1793206692 rtc_offset=180 crypto=1 trust=1 seed_generation=6 dns=8.8.8.8\r\n[http-json] slice_max_us=7 boot_prepare_us=37361 ready=1 prepare_error=0 stack_used_upper=16536 stack_guard=512\r\n"
+    },
+    {
+      "speed": "turbo",
+      "case": "max-utf8",
+      "phase": 4,
+      "error": 0,
+      "http": 200,
+      "bytes": 10921,
+      "result": 0,
+      "status": "\r\ncmd> http status\r\n[http-status] state=10 result=0 verify=0x00000000 status=200 bytes=32768 step_max_us=305 slice_max_us=996 heap_peak=49520 utc=1793206698 rtc_offset=180 crypto=1 trust=1 seed_generation=6 dns=8.8.8.8\r\n[http-json] slice_max_us=7 boot_prepare_us=37361 ready=1 prepare_error=0 stack_used_upper=16536 stack_guard=512\r\n"
+    },
+    {
+      "speed": "turbo",
+      "case": "stream32k",
+      "phase": 4,
+      "error": 0,
+      "http": 200,
+      "bytes": 32768,
+      "result": 0,
+      "status": "\r\ncmd> http status\r\n[http-status] state=10 result=0 verify=0x00000000 status=200 bytes=32768 step_max_us=294 slice_max_us=886 heap_peak=49520 utc=1793206704 rtc_offset=180 crypto=1 trust=1 seed_generation=6 dns=8.8.8.8\r\n[http-json] slice_max_us=7 boot_prepare_us=37361 ready=1 prepare_error=0 stack_used_upper=16536 stack_guard=512\r\n"
+    },
+    {
+      "speed": "turbo",
+      "case": "invalid-json",
+      "phase": 3,
+      "error": 10,
+      "http": 200,
+      "bytes": 0,
+      "result": 0,
+      "status": "\r\ncmd> http status\r\n[http-status] state=10 result=0 verify=0x00000000 status=200 bytes=29 step_max_us=145 slice_max_us=148 heap_peak=49520 utc=1793206709 rtc_offset=180 crypto=1 trust=1 seed_generation=6 dns=8.8.8.8\r\n[http-json] slice_max_us=7 boot_prepare_us=37361 ready=1 prepare_error=0 stack_used_upper=16536 stack_guard=512\r\n"
+    },
+    {
+      "speed": "turbo",
+      "case": "bad-hostname",
+      "phase": 2,
+      "error": 9,
+      "http": 0,
+      "bytes": 0,
+      "result": 0,
+      "status": "\r\ncmd> http status\r\n[http-status] state=11 result=-9984 verify=0x00000004 status=0 bytes=0 step_max_us=27733 slice_max_us=27774 heap_peak=95872 utc=1793206714 rtc_offset=180 crypto=1 trust=1 seed_generation=6 dns=8.8.8.8\r\n[http-json] slice_max_us=7 boot_prepare_us=37361 ready=1 prepare_error=0 stack_used_upper=16536 stack_guard=512\r\n"
+    }
+  ],
+  "before": "\r\ncmd> status\r\n---- card status ----\r\nui: frames=4098 keys=0\r\nboot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0\r\nvideo: vsync=on scanlines=Medium\r\ntext mono: fg=black bg=black\r\ndisplay mono: off\r\napple fb: slot=0 mode=legacy target=50Hz apple_fps=50.18 hdmi_fps=50.18 blits=6527 comp_pub=6529 comp_skip=0 pl_vblanks=4205 latched=0x3E000000\r\nupdater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'\r\naudio: en=on mute=off tone=1000Hz amp=0x00600000\r\nspdif dbg: clkc=0 q3lvl=0 q3tog=0\r\nrtc: 2026-10-28 19:57:42\r\ntemp: +35.87 C\r\n\r\ncmd> vtw status\r\nvtw: idle, session=ONE//e, host-intent=off, machine=unknown\r\nvtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0\r\nvtw: reset seen=0 source=none rstn=$0\r\nvtw: slowdown mask=$008 cycles=256\r\nvtw: speed=33 MHz div=37 c074=0 ignore=0 d2accel=on owned=1 run=1 pc=3651\r\nvtw: core=2653054859 bus=4905257 posted=763169 invalid=0\r\nvtw: perf fabric=2640149957 steps=2653075131 classic=2672121622\r\nvtw: cache hits=50414751 misses=15578435 invalidations=341\r\nvtw: wait disk=0 video=30392716\r\nvtw: qfill=0 qhw=508 qdrop=0 sessions=1\r\nvtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00\r\nvtw: c000 reads=65535 bit7=0 last=$00 prev=park $FFFF R drive=0\r\nvtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=001 altzp=0 rd/wt=00 80st=0 text=1\r\nvtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)\r\nvtw: cxxx trail CFFF CFF2 CFF0 CFF1 CFF1 CFF1 CFF1 CFF1 (new->old)\r\nvtw: last bus read $C000 = $00, irqs seen=0\r\nvtw: persisted setting = OFF\r\n",
+  "loaded": "[I/usbh_hub] Register HUB Class:/dev/hub2\r\n[usb1] event bus=0 hub=1 port=1 intf=0 ev=10\r\nSD media attached: reloading settings and media\r\nsmartport: RAM32 32MB ram disk mounted\r\nSD media: SmartPort mounted 0:/HTTPTEST1/NETCHECK.PO\r\n\r\ncmd> status\r\n---- card status ----\r\nui: frames=0 keys=0\r\nboot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0\r\nvideo: vsync=on scanlines=Medium\r\ntext mono: fg=black bg=black\r\ndisplay mono: off\r\napple fb: slot=1 mode=legacy target=50Hz apple_fps=0.00 hdmi_fps=0.00 blits=68 comp_pub=70 comp_skip=0 pl_vblanks=37 latched=0x3E800000\r\nupdater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'\r\naudio: en=on mute=off tone=1000Hz amp=0x00600000\r\nspdif dbg: clkc=0 q3lvl=0 q3tog=0\r\nrtc: 2026-10-28 19:56:07\r\ntemp: +36.06 C\r\n\r\ncmd> status\r\n---- card status ----\r\nui: frames=0 keys=0\r\nboot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0\r\nvideo: vsync=on scanlines=Medium\r\ntext mono: fg=black bg=black\r\ndisplay mono: off\r\napple fb: slot=1 mode=legacy target=50Hz apple_fps=0.00 hdmi_fps=0.00 blits=68 comp_pub=70 comp_skip=0 pl_vblanks=37 latched=0x3E800000\r\nupdater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'\r\naudio: en=on mute=off tone=1000Hz amp=0x00600000\r\nspdif dbg: clkc=0 q3lvl=0 q3tog=0\r\nrtc: 2026-10-28 19:56:07\r\ntemp: +36.06 C\r\n\r\ncmd> status\r\n---- card status ----\r\nui: frames=0 keys=0\r\nboot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0\r\nvideo: vsync=on scanlines=Medium\r\ntext mono: fg=black bg=black\r\ndisplay mono: off\r\napple fb: slot=1 mode=legacy target=50Hz apple_fps=0.00 hdmi_fps=0.00 blits=68 comp_pub=70 comp_skip=0 pl_vblanks=37 latched=0x3E800000\r\nupdater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'\r\naudio: en=on mute=off tone=1000Hz amp=0x00600000\r\nspdif dbg: clkc=0 q3lvl=0 q3tog=0\r\nrtc: 2026-10-28 19:56:07\r\ntemp: +36.06 C\r\n\r\ncmd> statmachine: effective slot mask 0x00000096 ONE//e private bus enabled\r\nboot menu VBL ROM patch: PAL\r\nvtw: ONE//e cold ROM loaded, core released\r\nmachine: ramworks 8MB ON\r\nboot_menu_service_set_handoff: handoff set to SMARTPORT\r\nus\r\n---- card status ----\r\nui: frames=1 keys=0\r\nboot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0\r\nvideo: vsync=on scanlines=Medium\r\ntext mono: fg=black bg=black\r\ndisplay mono: off\r\napple fb: slot=2 mode=legacy target=50Hz apple_fps=0.00 hdmi_fps=0.00 blits=69 comp_pub=71 comp_skip=0 pl_vblanks=38 latched=0x3E800000\r\nupdater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'\r\naudio: en=on mute=off tone=1000Hz amp=0x00600000\r\nspdif dbg: clkc=0 q3lvl=0 q3tog=0\r\nrtc: 2026-10-28 19:56:07\r\ntemp: +36.06 C\r\n[usb1] event bus=0 hub=2 port=4 intf=255 ev=3\r\n[usb1] event bus=0 hub=2 port=4 intf=255 ev=2\r\n[I/usbh_hub] New low-speed device on Bus 0, Hub 2, Port 4 connected\r\n[I/usbh_core] New device found,idVendor:30fa,idProduct:0400,bcdDevice:0100\r\n[I/usbh_core] The device has 1 bNumConfigurations\r\n[I/usbh_core] The device has 1 interfaces\r\n[I/usbh_core] Enumeration success, start loading class driver\r\n[usb1] event bus=0 hub=2 port=4 intf=255 ev=5\r\n[I/usbh_core] Loading hid class driver on interface 0\r\n[I/usbh_hid] Ep=81 Attr=03 Mps=5 Interval=10 Mult=00\r\n[I/usbh_hid] Register HID Class:/dev/input3\r\n[usb1] CherryUSB HID connected slot=4 dev=5 proto=2 subclass=1 parsed=1 mouse=1 joystick=1 ps4=0\r\n[usb1] CherryUSB mousecard HID dev=5 speed=low hub=2 port=4 if=0 ep=0x00000081\r\n[usb1] event bus=0 hub=2 port=4 intf=0 ev=10\r\n\r\ncmd> http status\r\n[http-status] state=0 result=0 verify=0x00000000 status=0 bytes=0 step_max_us=0 slice_max_us=0 heap_peak=49520 utc=1793206568 rtc_offset=180 crypto=1 trust=1 seed_generation=4 dns=8.8.8.8\r\n[http-json] slice_max_us=1 boot_prepare_us=75659 ready=1 prepare_error=0 stack_used_upper=9612 stack_guard=512\r\n\r\ncmd> http status\r\n[http-status] state=0 result=0 verify=0x00000000 status=0 bytes=0 step_max_us=0 slice_max_us=0 heap_peak=49520 utc=1793206568 rtc_offset=180 crypto=1 trust=1 seed_generation=4 dns=8.8.8.8\r\n[http-json] slice_max_us=1 boot_prepare_us=75659 ready=1 prepare_error=0 stack_used_upper=9612 stack_guard=512\r\n",
+  "prepared": "\r\ncmd> http status\r\n[http-status] state=11 result=-9984 verify=0x00000004 status=0 bytes=0 step_max_us=27755 slice_max_us=27796 heap_peak=95872 utc=1793206664 rtc_offset=180 crypto=1 trust=1 seed_generation=5 dns=8.8.8.8\r\n[http-json] slice_max_us=7 boot_prepare_us=37390 ready=1 prepare_error=0 stack_used_upper=16536 stack_guard=512\r\n",
+  "starfall_title": "\r\ncmd> status\r\n---- card status ----\r\nui: frames=4243 keys=0\r\nboot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0\r\nvideo: vsync=on scanlines=Medium\r\ntext mono: fg=black bg=black\r\ndisplay mono: off\r\napple fb: slot=1 mode=legacy target=50Hz apple_fps=100.17 hdmi_fps=50.08 blits=6813 comp_pub=6815 comp_skip=0 pl_vblanks=4350 latched=0x3E400000\r\nupdater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'\r\naudio: en=on mute=off tone=1000Hz amp=0x00600000\r\nspdif dbg: clkc=0 q3lvl=0 q3tog=0\r\nrtc: 2026-10-28 19:57:45\r\ntemp: +35.87 C\r\n",
+  "speeds": {
+    "full": "\r\ncmd> vtw status\r\nvtw: idle, session=ONE//e, host-intent=off, machine=unknown\r\nvtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0\r\nvtw: reset seen=0 source=none rstn=$0\r\nvtw: slowdown mask=$008 cycles=256\r\nvtw: speed=33 MHz div=37 c074=0 ignore=0 d2accel=on owned=1 run=1 pc=3F2D\r\nvtw: core=92087953 bus=774199 posted=30321 invalid=0\r\nvtw: perf fabric=384113192 steps=92106833 classic=111124925\r\nvtw: cache hits=50339798 misses=15555153 invalidations=64\r\nvtw: wait disk=0 video=26896260\r\nvtw: qfill=0 qhw=501 qdrop=0 sessions=1\r\nvtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00\r\nvtw: c000 reads=65535 bit7=0 last=$00 prev=park $FFFF R drive=0\r\nvtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=001 altzp=0 rd/wt=00 80st=0 text=1\r\nvtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)\r\nvtw: cxxx trail CF1F CF1E CFFB CF1D CF1C CF1B C818 C817 (new->old)\r\nvtw: last bus read $C000 = $00, irqs seen=0\r\nvtw: persisted setting = OFF\r\n",
+    "turbo": "\r\ncmd> vtw status\r\nvtw: idle, session=ONE//e, host-intent=off, machine=unknown\r\nvtw: trace=armed reason=none faults addr=0 selfdata=0 dmahigh=0\r\nvtw: reset seen=0 source=none rstn=$0\r\nvtw: slowdown mask=$008 cycles=256\r\nvtw: speed=TURBO div=37 c074=0 ignore=0 d2accel=on owned=1 run=1 pc=363C\r\nvtw: core=135633969 bus=837939 posted=30321 invalid=0\r\nvtw: perf fabric=527625802 steps=135663402 classic=161370728\r\nvtw: cache hits=68020185 misses=21046487 invalidations=65\r\nvtw: wait disk=0 video=26896260\r\nvtw: qfill=0 qhw=501 qdrop=0 sessions=1\r\nvtw: wrchk mismatch=0 last $0000 expected=$00 observed=$00\r\nvtw: c000 reads=65535 bit7=0 last=$00 prev=park $FFFF R drive=0\r\nvtw: sw intcx=0 slotc3=0 intc8=0 lc r/w/b2=001 altzp=0 rd/wt=00 80st=0 text=1\r\nvtw: sw trail w07:00 r15:00 w06:17 r1F:00 r1F:00 r1F:00 w07:00 r15:00 (new->old)\r\nvtw: cxxx trail CF1F CF1E CFFB CF1D CF1C CF1B C818 C817 (new->old)\r\nvtw: last bus read $C000 = $00, irqs seen=0\r\nvtw: persisted setting = OFF\r\n"
+  },
+  "final_boot": "[I/usbh_hub] Register HUB Class:/dev/hub2\r\n[usb1] event bus=0 hub=1 port=1 intf=0 ev=10\r\nSD media attached: reloading settings and media\r\nsmartport: RAM32 32MB ram disk mounted\r\nSD media: SmartPort mounted 0:/HTTPTEST1/STARFALL.PO\r\n\r\ncmd> status\r\n---- card status ----\r\nui: frames=0 keys=0\r\nboot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0\r\nvideo: vsync=on scanlines=Medium\r\ntext mono: fg=black bg=black\r\ndisplay mono: off\r\napple fb: slot=1 mode=legacy target=50Hz apple_fps=0.00 hdmi_fps=0.00 blits=68 comp_pub=70 comp_skip=0 pl_vblanks=37 latched=0x3E800000\r\nupdater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'\r\naudio: en=on mute=off tone=1000Hz amp=0x00600000\r\nspdif dbg: clkc=0 q3lvl=0 q3tog=0\r\nrtc: 2026-10-28 19:58:40\r\ntemp: +35.81 C\r\n\r\ncmd> status\r\n---- card status ----\r\nui: frames=0 keys=0\r\nboot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0\r\nvideo: vsync=on scanlines=Medium\r\ntext mono: fg=black bg=black\r\ndisplay mono: off\r\napple fb: slot=1 mode=legacy target=50Hz apple_fps=0.00 hdmi_fps=0.00 blits=68 comp_pub=70 comp_skip=0 pl_vblanks=37 latched=0x3E800000\r\nupdater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'\r\naudio: en=on mute=off tone=1000Hz amp=0x00600000\r\nspdif dbg: clkc=0 q3lvl=0 q3tog=0\r\nrtc: 2026-10-28 19:58:40\r\ntemp: +35.81 C\r\n\r\ncmd> status\r\n---- card status ----\r\nui: frames=0 keys=0\r\nboot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0\r\nvideo: vsync=on scanlines=Medium\r\ntext mono: fg=black bg=black\r\ndisplay mono: off\r\napple fb: slot=1 mode=legacy target=50Hz apple_fps=0.00 hdmi_fps=0.00 blits=68 comp_pub=70 comp_skip=0 pl_vblanks=37 latched=0x3E800000\r\nupdater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'\r\naudio: en=on mute=off tone=1000Hz amp=0x00600000\r\nspdif dbg: clkc=0 q3lvl=0 q3tog=0\r\nrtc: 2026-10-28 19:58:40\r\ntemp: +35.81 C\r\n\r\ncmd> statmachine: effective slot mask 0x00000096 ONE//e private bus enabled\r\nboot menu VBL ROM patch: PAL\r\nvtw: ONE//e cold ROM loaded, core released\r\nmachine: ramworks 8MB ON\r\nboot_menu_service_set_handoff: handoff set to SMARTPORT\r\nus\r\n---- card status ----\r\nui: frames=1 keys=0\r\nboot cfg: device=SmartPort timeout=3 seconds disk2_slot6=0 loaded=1 session=0\r\nvideo: vsync=on scanlines=Medium\r\ntext mono: fg=black bg=black\r\ndisplay mono: off\r\napple fb: slot=2 mode=legacy target=50Hz apple_fps=0.00 hdmi_fps=0.00 blits=69 comp_pub=71 comp_skip=0 pl_vblanks=38 latched=0x3E800000\r\nupdater meta: golden='B2.0.6' local_fw='Firmware F1.3.3b3'\r\naudio: en=on mute=off tone=1000Hz amp=0x00600000\r\nspdif dbg: clkc=0 q3lvl=0 q3tog=0\r\nrtc: 2026-10-28 19:58:40\r\ntemp: +35.81 C\r\n[usb1] event bus=0 hub=2 port=4 intf=255 ev=2\r\n[I/usbh_hub] New low-speed device on Bus 0, Hub 2, Port 4 connected\r\n[I/usbh_core] New device found,idVendor:30fa,idProduct:0400,bcdDevice:0100\r\n[I/usbh_core] The device has 1 bNumConfigurations\r\n[I/usbh_core] The device has 1 interfaces\r\n[I/usbh_core] Enumeration success, start loading class driver\r\n[usb1] event bus=0 hub=2 port=4 intf=255 ev=5\r\n[I/usbh_core] Loading hid class driver on interface 0\r\n[I/usbh_hid] Ep=81 Attr=03 Mps=5 Interval=10 Mult=00\r\n[I/usbh_hid] Register HID Class:/dev/input3\r\n[usb1] CherryUSB HID connected slot=4 dev=5 proto=2 subclass=1 parsed=1 mouse=1 joystick=1 ps4=0\r\n[usb1] CherryUSB mousecard HID dev=5 speed=low hub=2 port=4 if=0 ep=0x00000081\r\n[usb1] event bus=0 hub=2 port=4 intf=0 ev=10\r\n\r\ncmd> http status\r\n[http-status] state=0 result=0 verify=0x00000000 status=0 bytes=0 step_max_us=0 slice_max_us=0 heap_peak=49520 utc=1793206721 rtc_offset=180 crypto=1 trust=1 seed_generation=7 dns=8.8.8.8\r\n[http-json] slice_max_us=1 boot_prepare_us=41460 ready=1 prepare_error=0 stack_used_upper=9612 stack_guard=512\r\n\r\ncmd> http status\r\n[http-status] state=0 result=0 verify=0x00000000 status=0 bytes=0 step_max_us=0 slice_max_us=0 heap_peak=49520 utc=1793206721 rtc_offset=180 crypto=1 trust=1 seed_generation=7 dns=8.8.8.8\r\n[http-json] slice_max_us=1 boot_prepare_us=41460 ready=1 prepare_error=0 stack_used_upper=9612 stack_guard=512\r\nb",
+  "left_ready": true
+}

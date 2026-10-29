@@ -38,6 +38,7 @@ module onee_mode_safety_guard #(
     output wire        physical_bus_isolate,
     output logic       physical_isolation_hold = 1'b0,
     output wire        apple_activity_now,
+    output wire        apple_activity_status,
     output logic       apple_activity_lockout = 1'b1,
     output logic       reselect_armed = 1'b0,
     output logic       onee_selected = 1'b0,
@@ -142,6 +143,12 @@ module onee_mode_safety_guard #(
     assign apple_activity_now =
         apple_power_present_raw ||
         apple_raw_transition || apple_activity_sampled;
+
+    // Software status uses only synchronized terms. A raw pin cone into a
+    // status flop outside this guard falls under the 5 ns raw-input route
+    // bound, and a status read gains nothing from a sub-clock view. The
+    // sticky lockout still reports events which end before a clock edge.
+    assign apple_activity_status = apple_activity_synchronized;
 
     always_ff @(posedge clk or negedge resetn) begin
         if (!resetn) begin
@@ -254,12 +261,13 @@ module onee_mode_safety_guard #(
     assign physical_bus_isolate =
         manual_enable_request || onee_selected || physical_isolation_hold;
 
+    // Status only. Like apple_activity_status, use synchronized terms.
     always_comb begin
         if (!resetn)
             inhibit_reason = INHIBIT_RESET;
-        else if (apple_power_present_raw)
+        else if (apple_power_present_sync)
             inhibit_reason = INHIBIT_APPLE_POWER;
-        else if (apple_activity_now || apple_activity_sampled)
+        else if (apple_activity_sampled)
             inhibit_reason = INHIBIT_APPLE_ACTIVITY;
         else if (apple_activity_lockout)
             inhibit_reason = INHIBIT_ACTIVITY_LOCKOUT;

@@ -155,7 +155,7 @@ module apple_top(
     logic onee_force_outputs_off;
     logic physical_bus_isolate;
     logic onee_physical_isolation_hold;
-    logic onee_activity_now;
+    logic onee_activity_status;
     logic onee_activity_lockout;
     logic onee_reselect_armed;
     logic onee_selected;
@@ -188,7 +188,8 @@ module apple_top(
         .force_outputs_off      (onee_force_outputs_off),
         .physical_bus_isolate   (physical_bus_isolate),
         .physical_isolation_hold(onee_physical_isolation_hold),
-        .apple_activity_now     (onee_activity_now),
+        .apple_activity_now     (),
+        .apple_activity_status  (onee_activity_status),
         .apple_activity_lockout (onee_activity_lockout),
         .reselect_armed         (onee_reselect_armed),
         .onee_selected          (onee_selected),
@@ -203,15 +204,17 @@ module apple_top(
      * stop on the first observed Apple clock edge. */
     assign tini_aux_oe_pin = !physical_bus_isolate;
 
-    // Keep live raw-pin diagnostics out of the large AXI readback mux. Safety
-    // captures short events inside the guard; its machine-wide state changes
-    // only after that request crosses into the fabric clock domain.
+    // Keep live activity diagnostics out of the large AXI readback mux. These
+    // status inputs come only from the guard's synchronized state, so no raw
+    // slot pin reaches this flop. Safety captures short events inside the
+    // guard; its machine-wide state changes only after that request crosses
+    // into the fabric clock domain.
     always_ff @(posedge clk) begin
         if (!rstn[1]) begin
             onee_activity_status_q       <= 1'b0;
             onee_inhibit_reason_status_q <= 3'd1;
         end else begin
-            onee_activity_status_q       <= onee_activity_now;
+            onee_activity_status_q       <= onee_activity_status;
             onee_inhibit_reason_status_q <= onee_inhibit_reason;
         end
     end
@@ -1981,6 +1984,7 @@ module apple_top(
     logic [15:0] vtw_arm_post_addr_q;
     logic [7:0]  vtw_arm_post_wdata_q;
     logic        vtw_arm_post_ready;
+    logic        vtw_arm_post_ready_status_q;
     logic [30:0] vtw_arm_post_accept_count_q;
     logic        vtw_arm_rw_flush_pulse_q;
     logic        vtw_arm_rw_release_pulse_q;
@@ -2585,6 +2589,7 @@ module apple_top(
             vtw_arm_post_pulse_q            <= 1'b0;
             vtw_arm_post_addr_q             <= 16'h0000;
             vtw_arm_post_wdata_q            <= 8'h00;
+            vtw_arm_post_ready_status_q     <= 1'b0;
             vtw_arm_post_accept_count_q     <= 31'd0;
             vtw_arm_rw_flush_pulse_q        <= 1'b0;
             vtw_arm_rw_release_pulse_q      <= 1'b0;
@@ -2615,6 +2620,10 @@ module apple_top(
                 vtw_arm_rw_release_pulse_q <= 1'b1;
             end
 
+            // The ready bit is a readback diagnostic only; software polls
+            // the accept count. One clock of delay keeps the deep vTW post
+            // decode cone out of the AXI readback mux.
+            vtw_arm_post_ready_status_q <= vtw_arm_post_ready;
             if (vtw_arm_post_pulse_q && vtw_arm_post_ready) begin
                 vtw_arm_post_accept_count_q <=
                     vtw_arm_post_accept_count_q + 31'd1;
@@ -3093,7 +3102,7 @@ module apple_top(
                 CARD_CTRL_REG_SLOT2_STATE_LO,
                 CARD_CTRL_REG_SLOT2_STATE_HI:
                     as_client_rdata_q <= slot2_ps_rdata;
-                CARD_CTRL_REG_VTW_POST_STATUS: as_client_rdata_q <= {vtw_arm_post_ready,
+                CARD_CTRL_REG_VTW_POST_STATUS: as_client_rdata_q <= {vtw_arm_post_ready_status_q,
                                                                     vtw_arm_post_accept_count_q};
                 CARD_CTRL_REG_VTW_RW_FLUSH:    as_client_rdata_q <= {vtw_arm_rw_flush_busy_q,
                                                                     vtw_arm_rw_hold_state,

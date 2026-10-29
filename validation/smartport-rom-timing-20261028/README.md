@@ -32,5 +32,5 @@ ARM firmware, FPGA and golden boot were not rebuilt or written. The exact
 saved settings were restored, the original STARFALL image reopened, the
 owned `/SPCOPY` directory was removed, and FTP was off at completion.
 Private settings backups and complete SD images remain in ignored build
-output. See `README_SMARTPORT_ROM_TIMING.md` at the repository root for
-the diagnosis, limits and reproduction commands.
+output. See [the historical diagnosis](https://github.com/hasseily/appletini-one/blob/97a678cf27d083e30f237435822b7f9bfd9f8174/README_SMARTPORT_ROM_TIMING.md)
+for the limits and reproduction commands.

@@ -228,15 +228,3 @@ bytes until acknowledgement, reset persistence, generation wrap, and exact
 menu-ROM restoration. The renderer/compositor regression also passed 29,088
 frame checks. The SmartPort, memory API, config, browser, ONE//e, video-output,
 and VidHD regressions passed.
-
-F1.3.0 on `custom-glyphs` includes the F1.3.0-dev10 multiboot base. Both ARM
-frontend cores build with Vitis 2025.2, and the frontend embeds the rebuilt
-renderer core. No HDL or slot-ROM bytes changed. The multiboot builder's
-`APP_MULTIBOOT_REBUILD_CORE1=1` option rebuilds that core before CPU0. Its
-explicit hardware archive inputs preserve the audited FPGA sources while
-the bitstream and FSBL remain unchanged. The test image uses the current
-Appletini product manifest and 6 MB firmware-slot limit.
-
-The user reported that the earlier glyph test worked; that image used the
-F1.2.5 base. The final F1.3.0 build still needs a device
-test. Host checks do not establish live HDMI behavior.

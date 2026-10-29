@@ -1,10 +1,9 @@
 # Appletini and Multitini multiboot
 
-Golden B2.0.6 supports two firmware slots. Multitini firmware is M0.2.3;
-Appletini firmware is F1.3.0. Appletini includes the
-[custom glyph API](README_GLYPH_API.md) and the changes in
-[the F1.3.0 release notes](README_FIRMWARE_F1.3.0.md). This build retains the
-audited Appletini FPGA image and rebuilds both ARM frontend cores.
+The card stores Appletini and Multitini firmware in separate QSPI slots.
+Golden validates the images and starts the selected firmware. Both
+configuration menus can select the startup firmware or switch to the other
+installed firmware.
 
 ## Flash layout
 

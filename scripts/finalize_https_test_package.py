@@ -1,8 +1,14 @@
 """Attach checked board evidence and notices to the hands-on test package."""
 from pathlib import Path
-import hashlib,json,shutil,zipfile
+import argparse,hashlib,json,shutil,zipfile
 ROOT=Path(__file__).resolve().parents[1]
 def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--results',type=Path,required=True,
+                        help='explicit retained hands-on results Markdown to include')
+    args=parser.parse_args()
+    results=args.results.resolve(strict=True)
+    if not results.is_file():parser.error('--results must name a file')
     out=ROOT/'deliverables/https-starfall-test2-20261028'
     previous=json.loads((out/'SHA256SUMS.json').read_text())
     for name,digest in previous.items():assert hashlib.sha256((out/name).read_bytes()).hexdigest()==digest,name
@@ -29,7 +35,7 @@ def main():
       'MBEDTLS-CHANGES.txt':ROOT/'third_party/mbedtls/APPLETINI_PATCHES.md',
       'LICENSE-IP65.txt':ROOT/'build/a2lynx-acceptance/inputs/LICENSE-IP65.txt',
       'LICENSE-W5100.txt':ROOT/'build/a2lynx-acceptance/inputs/LICENSE-W5100.txt',
-      'RESULTS.md':ROOT/'README_HTTPS_HANDS_ON.md'}.items():shutil.copy2(path,out/name)
+      'RESULTS.md':results}.items():shutil.copy2(path,out/name)
     package_evidence=out/'evidence';package_evidence.mkdir(exist_ok=True)
     for path in evidence.iterdir():
         if path.is_file():shutil.copy2(path,package_evidence/path.name)

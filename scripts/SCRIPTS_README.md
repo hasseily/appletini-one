@@ -107,7 +107,8 @@ vivado -mode batch -source scripts/test_timing_run_properties.tcl
   and CRC32 manifest.
 - `program_boot.bat`: factory and bench recovery tool that programs `BOOT.BIN`
   at QSPI offset `0x00000000`; it is not the field-update path.
-- `program_firmware_slot.bat`: program `FIRMWARE.BIN` at `0x00200000`.
+- `program_firmware_slot.bat`: program tagged firmware at its product's
+  flash-slot offset.
 - `serial_firmware_update.py`: upload `FIRMWARE.BIN` through the golden UART
   monitor with XMODEM-CRC.
 
@@ -124,9 +125,11 @@ The serial updater requires pyserial. The normal field-update path installs
 `make_boot_bin.bat` passes `--max-size 0x100000`; this limit includes the
 32-byte manifest.
 
-The field path for every golden-boot update uses frontend Firmware F1.0.1 or
-later. Boot the matching frontend, put `BOOT.BIN` in the SD root, stop USB or
-FTP SD sharing, and enter `:selfupdate` on USB0. See the
+For a Golden update, put the supplied `BOOT.BIN` in the SD root and use
+**About > Update Golden Boot... > Update and reboot** in the initial boot
+configuration menu or isolated ONE//e menu. Finish downloads, printing,
+screenshots and SD sharing first. The serial `:selfupdate` alternative
+requires those activities to have finished manually. See the
 [Golden Boot Update guide](../README_BOOT_UPDATE.md#golden-boot-update).
 
 Self-update stages and checks the new file in golden B at `0x00100000`. B must
@@ -173,12 +176,8 @@ their command-line help.
 
 ## Flash Layout
 
-| Region | Offset | Size |
-| --- | ---: | ---: |
-| Golden A | `0x00000000` | `0x00100000` |
-| Golden B | `0x00100000` | `0x00100000` |
-| Firmware | `0x00200000` | `0x00DF0000` |
-| Metadata | `0x00FF0000` | `0x00010000` |
-
-Keep these offsets synchronized with
-`ps_sources/bootloader/updater_layout.c` and `ps_sources/image_versions.h`.
+The region offsets and capacities are defined in
+[`multiboot.h`](../ps_sources/lib/multiboot.h) and used by
+[`updater_layout.c`](../ps_sources/bootloader/updater_layout.c).
+See [the current flash layout](../README_BOOT_UPDATE.md#flash-layout) for
+both firmware slots, both Golden slots and the two metadata sectors.

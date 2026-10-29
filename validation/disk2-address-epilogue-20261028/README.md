@@ -1,7 +1,7 @@
 # Address-epilogue diagnosis and correction — 28 October 2026
 
 The cause and implementation are in the
-[fix guide](../../README_DISK2_ADDRESS_EPILOGUE_FIX.md). This record separates
+[historical fix guide](https://github.com/hasseily/appletini-one/blob/97a678cf27d083e30f237435822b7f9bfd9f8174/README_DISK2_ADDRESS_EPILOGUE_FIX.md). This record separates
 the stock raw capture, actual-C decoder regression, source ARM build, and
 isolated hardware experiment.
 

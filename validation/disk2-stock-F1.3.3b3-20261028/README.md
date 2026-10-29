@@ -6,7 +6,7 @@ control and both TURBO slot-6 slowdown controls pass all 32 rounds, including
 SD readback. This is a physical ONE//e result with ProDOS `.PO` disk images.
 External Apple bus pins, WOZ, and DOS 3.3 remain untested.
 
-See [the test and reproduction guide](../../README_DISK2_STOCK_CHECKPOINT.md).
+See [the historical test and reproduction guide](https://github.com/hasseily/appletini-one/blob/97a678cf27d083e30f237435822b7f9bfd9f8174/README_DISK2_STOCK_CHECKPOINT.md).
 
 ## Matrix
 

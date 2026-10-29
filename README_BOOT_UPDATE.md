@@ -1,61 +1,146 @@
-# Boot and Firmware Update
+# Boot and firmware updates
 
-Appletini One uses two golden-boot slots and one firmware slot in its
-128 Mbit / 16 MB Quad SPI flash.
+Golden boot validates and installs firmware from the physical SD card or
+the USB-to-UART console. Appletini and Multitini occupy separate flash slots.
+Golden itself has a primary slot and a trial slot for updates.
 
-## Flash Layout
+A normal firmware update uses `FIRMWARE.BIN`. Update Golden only when the
+release or migration instructions provide a new `BOOT.BIN`; a firmware-only
+release can keep the installed Golden version.
 
-| Region | Offset | Size | Contents |
-| --- | ---: | ---: | --- |
-| Golden A | `0x00000000` | `0x00100000` | Primary `BOOT.BIN` |
-| Golden B | `0x00100000` | `0x00100000` | Trial and backup `BOOT.BIN` |
-| Firmware | `0x00200000` | `0x00DF0000` | `FIRMWARE.BIN`: FSBL, bitstream, and apps |
-| Metadata | `0x00FF0000` | `0x00010000` | Last checked firmware record |
+## Flash layout
 
-The image build scripts add a 32-byte manifest to each file. It records the
-image role, recovery flag, payload size, and payload CRC32. Use `BOOT.BIN` and
-`FIRMWARE.BIN` from the same release.
+The production card has 16 MiB of QSPI flash. The current layout is defined
+in [multiboot.h](ps_sources/lib/multiboot.h).
 
-## Firmware Update
+| Region | Offset | Capacity |
+| --- | ---: | ---: |
+| Primary Golden | `0x00000000` | `0x00100000` (1 MiB) |
+| Trial Golden | `0x00100000` | `0x00100000` (1 MiB) |
+| Appletini firmware | `0x00200000` | `0x00600000` (6 MiB) |
+| Multitini firmware | `0x00800000` | `0x007E0000` (7.875 MiB) |
+| Metadata copy A | `0x00FE0000` | `0x00010000` (64 KiB) |
+| Metadata copy B | `0x00FF0000` | `0x00010000` (64 KiB) |
 
-1. Put `FIRMWARE.BIN` in the root of the card's SD volume.
-2. Reboot the card.
-3. Let golden boot write and check the firmware slot.
-4. Wait for the updater to rename the file to `FIRMWARE.OK` and start the
-   frontend.
+Current firmware images have a 32-byte manifest containing product identity,
+size and CRCs, plus identity markers in the executable. Golden validates
+these before installation and selects the slot from the image's contents.
+Renaming a file does not change its product. See [multiboot](README_MULTIBOOT.md)
+for migration from older layouts and startup selection.
 
-The firmware update path does not write either golden-boot slot. It checks the
-whole flash copy before it marks the firmware as valid.
+## Firmware update from SD
 
-## Golden Boot Update
+1. Copy the firmware image supplied for your product to the SD card's FAT
+   root as `FIRMWARE.BIN`.
+2. Finish downloads, printing and other SD writes, then stop USB or FTP SD
+   sharing.
+3. Restart into Golden. From the firmware console, `:reboot` enters Golden.
+4. Keep power on while Golden checks the file, programs its firmware slot
+   and verifies the flash contents.
+5. Check the update log and the firmware version after boot. The normal SD
+   acknowledgement renames `FIRMWARE.BIN` to `FIRMWARE.OK`.
 
-This is the supported field procedure for frontend Firmware F1.0.1 and later.
-It works even when the golden boot already on the card predates B1.2.0.
+Golden scans these filenames in order:
 
-1. Install and boot the matching `FIRMWARE.BIN`. Confirm that the normal
-   frontend is F1.0.1 or later.
-2. Put the matching `BOOT.BIN` in the root of the card's SD volume.
-3. Stop USB SD sharing and FTP SD sharing if either is active.
-4. Connect USB0 and open its control serial port at `921600` baud, 8 data bits,
-   no parity, 1 stop bit, and no flow control. You may need the
-   [Silicon Labs CP210x USB-to-UART VCP drivers](https://www.silabs.com/software-and-tools/usb-to-uart-bridge-vcp-drivers?tab=downloads)
-   for the port to appear.
-5. Enter `:selfupdate` and press Enter.
-6. Keep the card powered until all automatic reboots finish and the normal
-   frontend starts again.
+| Candidate file | Acknowledged file |
+| --- | --- |
+| `FIRMWARE.BIN` | `FIRMWARE.OK` |
+| `FIRMWARE-APPLETINI.BIN` | `FIRMWARE-APPLETINI.OK` |
+| `FIRMWARE-MULTITINI.BIN` | `FIRMWARE-MULTITINI.OK` |
 
-The frontend checks `BOOT.BIN` and the installed recovery firmware before it
-starts an update. It writes and checks Golden B, boots that copy, then repairs
-and checks Golden A. Do not remove power before the normal frontend returns.
+This permits installing both products in one pass. A bad candidate does
+not prevent a later valid candidate from being checked. If several valid
+files target the same product, the last successful installation wins.
 
-If a check fails before the first write, the command stops without changing
-either golden-boot slot and reports the cause on USB0.
+Firmware installation writes the selected product slot and its metadata;
+the other firmware slot and both Golden slots remain available. Golden
+boots a verified selection after processing the complete batch.
 
-## Release Check
+The `.OK` rename follows flash verification and closing the source file.
+An SD close or rename error can leave `.BIN` present even after successful
+programming. Use the log and booted version to establish the result before
+retrying. Keep user media and settings backed up when maintaining the card.
 
-1. Build matched `BOOT.BIN` and `FIRMWARE.BIN` files.
-2. Install `FIRMWARE.BIN` and boot its F1.0.1-or-later frontend.
-3. Follow the Golden Boot Update steps above.
-4. Confirm that the log shows the Golden B trial, the Golden A repair and
-   check, and the final boot through Golden A.
-5. Confirm that the normal frontend starts and reports the new golden version.
+## Golden boot update
+
+Use the Appletini configuration menu for the normal Golden update:
+
+1. Boot a compatible working firmware and copy the supplied `BOOT.BIN` to
+   the SD card's FAT root.
+2. Finish downloads, printing, screenshots and other SD writes. Stop USB
+   and FTP SD sharing.
+3. On a physical Apple II, enter the **initial boot configuration menu**.
+   Reopening the menu after handing storage to the Apple does not enable
+   this operation. The isolated ONE//e configuration menu also supports it.
+4. Open **About**, select **Update Golden Boot...** beside the Golden
+   version, then select **Update and reboot** in the confirmation dialog.
+   The initial selection is **Cancel**.
+5. Keep the card powered and leave the SD card installed until the automatic
+   reboots finish and the normal firmware returns.
+6. Check the installed Golden version in **About** and the `BOOT.OK`
+   acknowledgement on SD.
+
+The button appears when `BOOT.BIN` is present. It is disabled outside the
+allowed startup/isolation state; file presence alone does not validate it.
+The updater checks the image and a verified recovery-capable firmware before
+writing. The menu also saves media and obtains a safe Apple-bus hold.
+
+The update writes and verifies trial Golden at `0x00100000`, then boots it.
+That running trial verifies and repairs primary Golden at `0x00000000`,
+leaving the trial copy intact, and boots the verified primary.
+
+After the primary image is verified and matches the SD file byte for byte,
+Golden renames `BOOT.BIN` to `BOOT.OK`. An SD acknowledgement error leaves
+the file for a later retry; it does not invalidate a verified primary image.
+
+The console command `:selfupdate` can also stage SD-root `BOOT.BIN`. Finish
+all downloads, printing, screenshots and SD activity before using this
+serial alternative; it does not perform all the menu's activity checks.
+
+## Serial recovery
+
+Connect the card's CP2105 USB-to-UART bridge and select one of its serial
+ports. Both console UARTs use **921600 baud, 8 data bits, no parity, one stop
+bit and no flow control**. Port numbers depend on the PC. The serial tools
+require Python and `pyserial`. Finish SD activity before rebooting a running
+frontend for a serial upload.
+
+List available ports:
+
+```bat
+python scripts\serial_firmware_update.py --list-ports
+```
+
+Replace `COM3` below with the card's console port. Close any terminal using
+that port before starting the upload tool.
+
+To upload firmware from a running compatible frontend:
+
+```bat
+python scripts\serial_firmware_update.py .\FIRMWARE.BIN --port COM3 --reboot-golden
+```
+
+`--reboot-golden` sends `:reboot` and catches the Golden monitor. If the card
+is already in that monitor, omit this option. Golden receives the image
+with XMODEM-CRC and validates it before installing it.
+
+To upload a Golden image through the monitor:
+
+```bat
+python scripts\serial_firmware_update.py .\BOOT.BIN --golden --port COM3 --reboot-golden
+```
+
+`--golden` selects the monitor's `selfrx` command. This receives the image
+into RAM and uses the verified trial-to-primary procedure; it needs no
+SD-root `BOOT.BIN`. A verified recovery-capable firmware must still be
+installed. Keep power on through the automatic reboots.
+
+For a local image check that does not open a serial port:
+
+```bat
+python scripts\image_manifest.py verify .\BOOT.BIN --role golden --require-recovery-capable
+python scripts\image_manifest.py verify .\FIRMWARE.BIN --role firmware --require-recovery-capable
+```
+
+Factory/JTAG programming tools are described in
+[the scripts guide](scripts/SCRIPTS_README.md).

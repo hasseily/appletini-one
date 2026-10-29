@@ -88,8 +88,9 @@ scripts\make_firmware_bin.bat
 - `FIRMWARE.BIN` contains the FSBL, PL bitstream, CPU1 renderer, and frontend.
 
 Both build scripts append an image-role, recovery, size, and CRC32 manifest.
-Use matched `BOOT.BIN` and `FIRMWARE.BIN` files from one release. The BOOT
-build fails if the final file exceeds either 1 MiB golden slot.
+Use the images specified by the release or migration instructions for each
+component. The BOOT build fails if the final file exceeds either 1 MiB
+Golden slot.
 
 C-only frontend changes require a Vitis rebuild and a new `FIRMWARE.BIN`; HDL,
 clock, AXI, or constraint changes require the full Vivado and Vitis sequence.
@@ -119,15 +120,14 @@ python scripts\serial_firmware_update.py .\FIRMWARE.BIN --port COM3 --reboot-gol
 
 ### Golden Boot Update
 
-Frontend Firmware F1.0.1 and later update golden boot through the running
-frontend. Put the matching `BOOT.BIN` in the SD root, stop USB or FTP SD
-sharing, connect to the USB0 control serial port, and enter `:selfupdate`.
-Keep power on until all automatic reboots finish and the normal frontend
-returns.
+Put the supplied `BOOT.BIN` in the SD root and use **About > Update Golden
+Boot...** in the initial boot configuration menu, or the isolated ONE//e
+menu. Confirm **Update and reboot**, then keep power on until the normal
+firmware returns. The updater stages a verified trial copy before repairing
+the primary Golden image.
 
-This is the supported field procedure, including for cards with an older
-golden boot. See the exact steps in
-[README_BOOT_UPDATE.md](README_BOOT_UPDATE.md#golden-boot-update).
+See [Boot and firmware updates](README_BOOT_UPDATE.md) for the current flash
+layout, preparation, serial alternatives and `BOOT.OK` acknowledgement.
 
 ## Validation
 

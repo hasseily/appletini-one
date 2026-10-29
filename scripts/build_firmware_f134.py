@@ -108,7 +108,7 @@ def main():
                      "scripts/audit_firmware_release.py", "scripts/make_firmware_bin.bat",
                      "scripts/image_manifest.py",
                      "scripts/test_onee_input_service.py", "scripts/setup_https.py",
-                     "README_RELEASE_F1.3.4.md", "third_party/mbedtls/LICENSE",
+                     "docs/releases/F1.3.4.md", "third_party/mbedtls/LICENSE",
                      "third_party/mbedtls/APPLETINI_PATCHES.md",
                      "scripts/fixtures/f134_candidate_baseline.json",
                      "scripts/build_https_roots.py", "third_party/mozilla-ca/LICENSE",

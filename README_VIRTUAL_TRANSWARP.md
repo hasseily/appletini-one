@@ -1,4 +1,4 @@
-# Virtual TransWarp — Design Document
+# Virtual TransWarp
 
 **TURBO** is a separate speed choice after the fixed **33 MHz** preset.
 The 1 MHz through 33 MHz presets retain their cycle-exact execution path.
@@ -171,7 +171,7 @@ PL (fabric)                                        CPU0 (ARM)
 Timing in the wrapper's existing tap vocabulary (133 MHz fabric, PHI0 edges
 from the majority filter; ~7.5 ns/tap).
 
-**Synchronous cycle (all $C000–$CFFF, boot-time ROM copy, phase-2 RamWorks):**
+**Synchronous cycle ($C000–$CFFF accesses routed to the Apple bus and boot-time ROM copy):**
 1. Request from the core wrapper (or ARM port B during boot):
    `{addr[15:0], rw, wdata[7:0]}`; core CE deasserts.
 2. Engine waits for the next PHI0 **fall**, then at `fall+TAP_DRIVE_ADDR`
@@ -293,16 +293,13 @@ slot presence; its only software-visible surface is the $C074 register in
 motherboard address space, decoded by watching the bus exactly as the real
 card's PALs do.
 
-## 7. Phase 2 plan
+## 7. Controls and accelerated I/O
 
-In priority order:
-
-1. **RamWorks at accelerator speed** — implemented (see the §2 RamWorks
+1. **RamWorks at accelerator speed** (see the §2 RamWorks
    row). 8 MB from PSRAM through the vTW line cache when the Appletini
    provides aux; clean 64K semantics otherwise.
-2. **Speed controls: config menu + assignable USB keymap actions —
-   implemented.** No new soft switches, ever — $C074 stays the only
-   decoded register (TW contract; silently claiming more I/O addresses
+2. **Speed controls: config menu + assignable USB keymap actions.**
+   $C074 stays the only decoded register (TW contract; claiming more I/O addresses
    risks colliding with 40 years of software). Four assignable keyboard
    actions in the Boot-settings USB keymap (global: they fire with the
    menu open or closed, unbound by default), all PS-side writes to the
@@ -331,12 +328,8 @@ In priority order:
    including a request for the same saved preset. Session enable/disable stays
    BOOT-mode-only; only speed is live. The boot beeps double as audible
    speed confirmation.
-3. **Own-card I/O short-circuit — SmartPort at core speed (implemented).**
-   Previously every slot-7 access — the driver code in slot/expansion ROM
-   *and* the DATA/CTRL/DPOP registers — was a 1 MHz bus cycle, so disk I/O
-   was the one thing acceleration did not accelerate (the 512-byte
-   transfer loop and its instruction fetches both ran at bus rate). Now,
-   when the Appletini's SmartPort card owns slot 7 (`sp_active`, i.e. after
+3. **SmartPort at core speed.**
+   When the Appletini's SmartPort card owns slot 7 (`sp_active`, i.e. after
    the boot menu hands off), `vtw_core_top` classifies the core's accesses
    to the card's Apple surface — slot ROM $C700–$C7FF, expansion ROM
    $C800–$CFEE, and DATA/CTRL/DPOP at $CFF0–$CFF2 — using its **private**
@@ -351,9 +344,9 @@ In priority order:
    $C7xx over the bus; after, SmartPort is short-circuited. The disk
    *service* latency (PS/USB) is unchanged — only the transport and driver
    execution accelerate, which is the dominant cost.
-4. **Virtual Disk II reads at core speed — implementation pending hardware
-   validation.** When the Appletini Disk II owns slot 6, even reads of
-   `$C0E0-$C0EE` use a private `disk2_card` port. One virtual Disk II tick is
+4. **Virtual Disk II reads at core speed.** When the Appletini Disk II owns
+   slot 6, even reads of `$C0E0-$C0EE` use a private `disk2_card` port.
+   One virtual Disk II tick is
    generated for each completed vTW CPU cycle, so standard nibble rotation,
    WOZ bit cells, empty-drive settling, and deferred head steps scale with the
    chosen CPU speed. A track-stage or DDR line-cache miss holds both the CPU
@@ -367,7 +360,7 @@ In priority order:
    copy-protection timing stay
    unchanged. Motor and seek audio remain tied to real time. Covered by
    `tb_disk2_vtw_read`, `test_disk2_standard.py`, and `test_disk2_woz.py`.
-5. **Per-region slowdown — implemented (TW DIP block 2).** After the core
+5. **Per-region slowdown (TW DIP block 2).** After the core
    touches an enabled timing-sensitive region it drops to cycle-locked
    1 MHz for a configurable window (retriggered per access), so speaker
    pitch, paddle timing, and per-slot device loops stay correct at high
@@ -382,53 +375,13 @@ In priority order:
    warp. Validated by `tb_vtw_slowdown` (warp baseline runs fast; speaker
    slowdown collapses the rate to ~1 MHz; a non-matching region enable
    stays warp).
-6. **II/II+ acceleration — implemented, bench validation pending.**
-   Acceleration only, no memory changes: the machine gate accepts a
-   positive II/II+ identification, and the core's translator runs a
-   sanitized view (aux switches, internal $CX ROM, and slot-3 internal
-   ROM forced off; slot 3 owns $C3xx; language card tracked normally —
-   the shadow carries the LC image, so a stock $C08x-protocol LC works).
-   IIe-probing software can write $C00x freely without deranging the
-   shadow. The boot copy runs unchanged ($C100–$CFFF captures floating
-   garbage the sanitized translator never reads; $D000–$FFFF gets the
-   real II+ ROM through forced LC-ROM reads). Aux-provide/RamWorks stay
-   off via the existing IIe-only PS policy. Still needs first-hardware
-   validation on a real II+: bus buffering under /DMA mastering and the
-   machine's reset physiology have never been measured there.
-7. **Config-menu polish** — slug-key arm checkbox + top-of-screen
-   speed overlay done; per-region slowdown toggles and a RamWorks
-   status row remain (follow items 4 and 1 respectively).
+
+## 8. Compatibility limits
 
 **Explicit non-goals:** IIgs support; mid-flight handback (impossible on
 NMOS, same as the real TW); NMOS-cycle-timing emulation (the vTW is a
 65C02 exactly as the physical TW is — for 100% NMOS cycle accuracy,
 disable acceleration).
 
-**Fallback (de-risk only):** if the chosen core misbehaves, an ARM-side
-interpreted 65C02 (Appli-Card Z80 pattern) can drive the same
-`vtw_bus_engine` request interface unchanged — the engine contract is
-requester-agnostic by design.
-
-## 8. Risks and their measurements
-
-| Risk | Measurement / mitigation |
-|---|---|
-| BRAM budget | Measured: 36/140 tiles used today; shadow ≈ +40 → ~55%. Re-check utilization + timing after integration; drop aux-LC (−4 tiles) if squeezed |
-| Core correctness/licensing | License check before import; Klaus Dormann functional tests in simulation against the BRAM shadow; undocumented-opcode policy = 65C02 NOPs |
-| Timing closure with core + shadow | Core and BRAM are a self-contained island off the fabric clock; only the bus-engine FIFO crosses into tap-domain logic. Keep the island in its own hierarchy for floorplanning |
-| Posted-queue coherency corners | Flush-before-video-window-I/O rule; test vapor-lock/floating-bus software |
-| Our own capture/serve paths seeing master cycles | By design they must (that is how HDMI renders); early-assert discipline makes our cycles the easy case, validated by the existing suite |
-| Contention with a physical accelerator | vTW enable is manual + documented: never with a real TW/FastChip installed (two DMA masters) |
-
-## 9. Acceptance tests
-
-The physical-TW validation suite, re-run against the vTW at full speed and
-at cycle-locked 1 MHz, plus a vTW-disabled stock pass unchanged:
-cold boot through boot menu → BASIC; CATALOG + DOS 3.3 SAVE/LOAD round-trip;
-Ultima V logo + Phasor music; SmartPort "A:APPLETINI" boot (DPOP protocol);
-Disk II DSK/PO save-load round-trip; NIB and WOZ copy-protected reads; empty
-drive 2 prompt and disk swap; Disk II writes at forced 1 MHz;
-monitor `0L` listing; A2DeskTop slot listing (Phasor must appear at 1 MHz
-mode — a fidelity improvement over the real card); CRT liveness via the
-posted write-through; Klaus Dormann suite in simulation before first
-hardware boot.
+Do not enable vTW with a physical TransWarp or FastChip installed: both
+devices would try to control the Apple bus.

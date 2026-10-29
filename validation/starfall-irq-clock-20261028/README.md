@@ -1,7 +1,7 @@
 # STARFALL IRQ and VIA clock evidence, 2026-10-28
 
-See `README_STARFALL_IRQ_CLOCK.md` at the repository root for results and
-limits. The accepted run contains a timer-only 1 MHz calibration and
+See [the historical clock study](https://github.com/hasseily/appletini-one/blob/97a678cf27d083e30f237435822b7f9bfd9f8174/README_STARFALL_IRQ_CLOCK.md)
+for results and limits. The accepted run contains a timer-only 1 MHz calibration and
 complete audio workloads at the 26 MHz menu preset and TURBO.
 
 * `board-results.json`: ARM/VIA sample brackets, all phase metrics, live

@@ -8,7 +8,7 @@ TURBO acceptance requires the compatibility profile below. External Apple bus
 pins remain untested.
 
 This test enables a known byte source on private STATUS `$82`/`$83`, not HTTP
-or JSON. See [the implementation and reproduction guide](../../README_NET_TRANSPORT_CHECKPOINT.md).
+or JSON. See [the historical implementation and reproduction guide](https://github.com/hasseily/appletini-one/blob/97a678cf27d083e30f237435822b7f9bfd9f8174/README_NET_TRANSPORT_CHECKPOINT.md).
 
 ## Runs
 

@@ -45,7 +45,7 @@ def finish_release(root, out, report):
         "This package contains no private seeds.\n\n"
         "Install FIRMWARE.BIN with the normal SD updater. Golden B2.0.6 stays in place.\n",
         newline="\n")
-    shutil.copy2(root / "README_RELEASE_F1.3.4.md", out / "RELEASE_NOTES.md")
+    shutil.copy2(root / "docs/releases/F1.3.4.md", out / "RELEASE_NOTES.md")
     shutil.copy2(out / "BASELINE_TIMING_MANIFEST.txt", out / "TIMING_MANIFEST.txt")
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
     dirty = subprocess.check_output(["git", "status", "--porcelain", "--ignore-submodules=all"], cwd=root, text=True)

@@ -1,0 +1,65 @@
+{
+  "firmware_sha256": "7c0144ec20b5bd60b7031994f2677a3ef0b582e2c8c3386391d3da004398db61",
+  "top_level_firmware_matches": true,
+  "version": "F1.3.4",
+  "boot_version": "B2.0.6",
+  "production_changes_from_working_candidate": [
+    "ps_sources/image_versions.h"
+  ],
+  "runtime_sources_match": true,
+  "source_zip_matches_current_files": true,
+  "qualified_inputs_preserved": true,
+  "unrelated_hdl_preserved": true,
+  "published": false,
+  "tagged": false,
+  "flashed": false,
+  "separate_f134_board_run": false,
+  "assets": {
+    "FIRMWARE.BIN": {
+      "bytes": 4761708,
+      "sha256": "7c0144ec20b5bd60b7031994f2677a3ef0b582e2c8c3386391d3da004398db61"
+    },
+    "HTTPS-SETUP.zip": {
+      "bytes": 44568,
+      "sha256": "578268815cb1a76f7612e7cdd023b26f614a9c953b5635d4e2f58681622ec859"
+    },
+    "Appletini-F1.3.4.zip": {
+      "bytes": 2512472,
+      "sha256": "2efeb7b0e6202dafb855dc1f095d49da9419ce662230de887abb455b84d02b44"
+    },
+    "ARM-SOURCES.zip": {
+      "bytes": 3305604,
+      "sha256": "ae452112b2d8c789bac16ad7f4a7fe55469aff229fb548811b8c1bf6ea86570d"
+    },
+    "ARM_BUILD.json": {
+      "bytes": 63578,
+      "sha256": "8b669b6ad3a51eb81b29dab1dda2e67f7c3164ca126d296260e8e28eb9b0ec4e"
+    },
+    "FIRMWARE_AUDIT.json": {
+      "bytes": 10322,
+      "sha256": "a23f56d5e2088fef5b774dd7e7847fdaf3f816c6a86f43bb247057ad92946d06"
+    },
+    "SOURCE_COMMIT.txt": {
+      "bytes": 149,
+      "sha256": "e47af40b0ebc1c015476dd7b0e97896e9a7ef121ccffc53b443134152582cacb"
+    },
+    "SOURCE_STATE.json": {
+      "bytes": 3594,
+      "sha256": "56d3cb4b43fe9db3e34e3196a9f84a7e11c6345e92299eb7a183282d0e42b4cb"
+    },
+    "SOURCE_TEST_HASHES.json": {
+      "bytes": 86108,
+      "sha256": "0645d4045edf51b6f1c6d3af212643433a0e82bc95876d44806574aa83c1dc5c"
+    },
+    "RELEASE_NOTES.md": {
+      "bytes": 4790,
+      "sha256": "32eab43391c076812e8ecd25b96e610482604bdecd29c90f9f0a9c4e8b087b42"
+    },
+    "TIMING_MANIFEST.txt": {
+      "bytes": 2213,
+      "sha256": "c6e2aad18cf6c26c4b28ee3d244e58a05fa5da842fb8d70d9667d1f16c8b1c38"
+    }
+  },
+  "release_helpers_have_no_legacy_build_inputs": true,
+  "normal_tls_test_uses_persistent_public_test_ca": true
+}

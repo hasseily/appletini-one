@@ -1,31 +1,41 @@
-"""Package a normal ARM release with an explicitly selected, retained FPGA."""
+"""Package an ARM release from explicit retained inputs and test evidence."""
 from pathlib import Path
 import argparse,hashlib,json,re,shutil,subprocess,sys,zipfile
 ROOT=Path(__file__).resolve().parents[1]
 sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--version',required=True)
-    parser.add_argument('--baseline',type=Path,required=True);args=parser.parse_args()
+    parser.add_argument('--baseline',type=Path,required=True)
+    parser.add_argument('--build-inputs',type=Path,required=True,
+                        help='retained directory containing FIRMWARE.BIN, report and ELF inputs')
+    parser.add_argument('--build-report',type=Path,
+                        help='source report; default ARM_BUILD.json or build-report.json in --build-inputs')
+    parser.add_argument('--stress-report',type=Path,required=True,help='retained completed RSA stress result JSON')
+    parser.add_argument('--platform-xsa',type=Path,required=True,help='explicit matching platform XSA used by the build')
+    args=parser.parse_args()
     assert re.fullmatch(r'F\d+\.\d+\.\d+',args.version)
     out=ROOT/'firmwares'/('firmware-'+args.version);assert not out.exists(),'Release directory already exists'
-    build=ROOT/'build/http-service-checkpoint';report=json.loads((build/'build-report.json').read_text())
+    build=args.build_inputs.resolve()
+    report_path=args.build_report or build/('ARM_BUILD.json' if (build/'ARM_BUILD.json').is_file() else 'build-report.json')
+    report=json.loads(report_path.read_text())
+    elf_inputs=build/'inputs' if (build/'inputs').is_dir() else build
     assert report['application'] and not report['diagnostics'] and not report['fpga_rebuilt']
     assert report['package']['bitstream_sha256']=='94c578698466ac057d5a58768e7b1c98fd680dca38a7840cd82f1d226f6dfd34'
     for name,value in report['sources'].items():assert sha(ROOT/name)==value,('Stale ARM build',name)
     assert report['package']['sha256']==sha(build/'FIRMWARE.BIN')
-    stress=json.loads((ROOT/'build/rsa-stress/journal.json').read_text())
+    stress=json.loads(args.stress_report.read_text())
     assert stress['pass'] and stress['restored'] and len(stress['cases'])==2
     out.mkdir(parents=True);inputs=out/'inputs';inputs.mkdir()
     for name in ('fsbl.elf','appletini_yarz_top.bit','appletini_yarz_top.xsa'):
         shutil.copy2(args.baseline/'inputs'/name,inputs/name)
-    for name in ('frontend.elf','frontend_core1.elf','core1_blob.bin'):shutil.copy2(build/name,inputs/name)
+    for name in ('frontend.elf','frontend_core1.elf','core1_blob.bin'):shutil.copy2(elf_inputs/name,inputs/name)
     shutil.copy2(build/'FIRMWARE.BIN',out/'FIRMWARE.BIN')
-    shutil.copy2(build/'build-report.json',out/'ARM_BUILD.json')
+    shutil.copy2(report_path,out/'ARM_BUILD.json')
     shutil.copy2(args.baseline/'TIMING_MANIFEST.txt',out/'TIMING_MANIFEST.txt')
     subprocess.run([sys.executable,str(ROOT/'scripts/audit_firmware_release.py'),
         '--firmware',str(out/'FIRMWARE.BIN'),'--fsbl',str(inputs/'fsbl.elf'),'--frontend',str(inputs/'frontend.elf'),
         '--bitstream',str(inputs/'appletini_yarz_top.bit'),'--xsa',str(inputs/'appletini_yarz_top.xsa'),
-        '--platform-xsa',str(ROOT/'vitis_workspace/appletini_platform/hw/appletini_yarz_top.xsa'),
+        '--platform-xsa',str(args.platform_xsa),
         '--run-manifest',str(out/'TIMING_MANIFEST.txt'),'--core1-elf',str(inputs/'frontend_core1.elf'),
         '--core1-blob',str(inputs/'core1_blob.bin'),'--version',args.version,'--boot-version','B2.0.6',
         '--output',str(out/'FIRMWARE_AUDIT.json')],check=True,cwd=ROOT)

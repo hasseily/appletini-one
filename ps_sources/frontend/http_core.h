@@ -5,9 +5,12 @@
 
 #define HTTP_URL_MAX 1024U
 #define HTTP_HOST_MAX 254U
-#define HTTP_LINE_MAX 4096U
+/* GitHub's CSP header exceeds 4 KiB. This bounded line buffer is part of
+ * the static foreground service state; the aggregate header limit remains. */
+#define HTTP_LINE_MAX 8192U
 #define HTTP_HEADER_MAX 16384U
 #define HTTP_RETAIN_MAX 32768U
+#define HTTP_FILENAME_MAX 128U
 
 enum { HTTP_MORE = 0, HTTP_COMPLETE = 1, HTTP_PAUSED = 2,
        HTTP_FORMAT = -1, HTTP_LIMIT = -2, HTTP_UNSUPPORTED = -3 };
@@ -19,9 +22,12 @@ typedef struct {
 typedef int (*http_body_sink_t)(void *, const uint8_t *, size_t);
 typedef struct {
     char line[HTTP_LINE_MAX], location[HTTP_URL_MAX], content_type[128];
-    uint32_t body_bytes, body_limit, remaining, chunk_remaining, header_bytes;
+    /* Advisory UTF-8/legacy filename only. A file sink must sanitize it. */
+    char suggested_filename[HTTP_FILENAME_MAX];
+    uint32_t body_bytes, body_limit, remaining, chunk_remaining, header_bytes, content_length;
     uint16_t status, line_length;
     uint8_t state, has_length, chunked, head, interim, saw_cr, done;
+    uint8_t headers_ready, attachment, disposition_seen;
 } http_parser_t;
 
 int http_url_parse(const char *text, http_url_t *url);

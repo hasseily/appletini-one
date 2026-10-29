@@ -141,11 +141,11 @@ int http_request_build(const http_url_t *url, const char *method,
                        int strip_credentials, char *out, size_t cap)
 {
     size_t used;
-    int n;
+    int n, user_agent = 0;
     if (!token(method)) return HTTP_FORMAT;
     n = snprintf(out, cap, "%s %s HTTP/1.1\r\nHost: %s:%u\r\n"
                  "Connection: close\r\nAccept-Encoding: identity\r\n"
-                 "User-Agent: Appletini-HTTP/1\r\nContent-Length: %lu\r\n",
+                 "Content-Length: %lu\r\n",
                  method, url->path, url->host, url->port, (unsigned long)body_length);
     if (n < 0 || (size_t)n >= cap) return HTTP_LIMIT;
     used = (size_t)n;
@@ -164,6 +164,8 @@ int http_request_build(const http_url_t *url, const char *method,
             if (((unsigned char)headers[i] < 32U && headers[i] != '\t') || headers[i] == 127) return HTTP_FORMAT;
         if (equal(name, "Host") || equal(name, "Content-Length") || equal(name, "Transfer-Encoding") ||
             equal(name, "Connection") || equal(name, "Accept-Encoding")) return HTTP_FORMAT;
+        /* A caller may select its browser identity. Never send two UAs. */
+        if (equal(name, "User-Agent") && user_agent++) return HTTP_FORMAT;
         if (!(strip_credentials && (equal(name, "Authorization") || equal(name, "Cookie") ||
                                    equal(name, "Proxy-Authorization")))) {
             if (length + 2U >= cap - used) return HTTP_LIMIT;
@@ -171,6 +173,12 @@ int http_request_build(const http_url_t *url, const char *method,
             memcpy(out + used, "\r\n", 2); used += 2;
         }
         headers = end ? end + 1 : headers + length;
+    }
+    if (!user_agent) {
+        static const char default_agent[] = "User-Agent: Appletini-HTTP/1\r\n";
+        if (sizeof(default_agent) + 2U > cap - used) return HTTP_LIMIT;
+        memcpy(out + used, default_agent, sizeof(default_agent) - 1U);
+        used += sizeof(default_agent) - 1U;
     }
     if (cap - used < 3U) return HTTP_LIMIT;
     memcpy(out + used, "\r\n", 3);
@@ -181,6 +189,104 @@ void http_parser_init(http_parser_t *p, int head, uint32_t limit)
 {
     memset(p, 0, sizeof(*p));
     p->head = head != 0; p->body_limit = limit;
+}
+
+static char *parameter_token_end(char *value)
+{
+    while (*value && (isalnum((unsigned char)*value) || strchr("!#$%&'*+-.^_`|~", *value))) ++value;
+    return value;
+}
+static int hex_digit(unsigned char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    c = (unsigned char)tolower(c);
+    return c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
+}
+/* RFC 8187 UTF-8 extended value. Unsupported charsets leave the ordinary
+ * filename as fallback. Never decode percent escapes in a plain filename. */
+static int extended_filename(char *value, char out[HTTP_FILENAME_MAX])
+{
+    char *language = strchr(value, '\''), *bytes;
+    size_t n = 0;
+    int overflow = 0;
+    if (!language) return HTTP_FORMAT;
+    *language++ = '\0';
+    bytes = strchr(language, '\'');
+    if (!bytes) return HTTP_FORMAT;
+    *bytes++ = '\0';
+    if (!equal(value, "UTF-8")) return 0;
+    while (*bytes) {
+        unsigned char c = (unsigned char)*bytes++;
+        if (c == '%') {
+            int high, low;
+            if (!bytes[0] || !bytes[1] || (high = hex_digit((unsigned char)bytes[0])) < 0 ||
+                (low = hex_digit((unsigned char)bytes[1])) < 0) return HTTP_FORMAT;
+            c = (unsigned char)(high * 16 + low); bytes += 2;
+        } else if (c == '\'' || c == '*' || c >= 128U) return HTTP_FORMAT;
+        if (c < 32U || c == 127U) return HTTP_FORMAT;
+        if (n + 1U < HTTP_FILENAME_MAX) out[n++] = (char)c;
+        else overflow = 1;
+    }
+    out[overflow ? 0U : n] = '\0';
+    return 1;
+}
+static int content_disposition(http_parser_t *p, char *value)
+{
+    char *end = parameter_token_end(value), saved;
+    uint8_t filename_seen = 0, extended_seen = 0, extended_valid = 0;
+    if (p->disposition_seen || end == value) return HTTP_FORMAT;
+    p->disposition_seen = 1;
+    saved = *end; *end = '\0'; p->attachment = (uint8_t)equal(value, "attachment"); *end = saved;
+    value = end;
+    for (;;) {
+        char *name, *name_end, *first, *last, *next;
+        uint8_t filename, extended, quoted;
+        while (*value == ' ' || *value == '\t') ++value;
+        if (!*value) return 0;
+        if (*value++ != ';') return HTTP_FORMAT;
+        while (*value == ' ' || *value == '\t') ++value;
+        name = value; name_end = parameter_token_end(name);
+        if (name_end == name) return HTTP_FORMAT;
+        saved = *name_end; *name_end = '\0';
+        filename = (uint8_t)equal(name, "filename");
+        extended = (uint8_t)equal(name, "filename*");
+        *name_end = saved; value = name_end;
+        while (*value == ' ' || *value == '\t') ++value;
+        if (*value++ != '=') return HTTP_FORMAT;
+        while (*value == ' ' || *value == '\t') ++value;
+        quoted = (uint8_t)(*value == '"');
+        if (quoted) {
+            first = ++value; last = first;
+            while (*value && *value != '"') {
+                if (*value == '\\' && !*++value) return HTTP_FORMAT;
+                *last++ = *value++;
+            }
+            if (*value++ != '"') return HTTP_FORMAT;
+        } else {
+            first = value; last = parameter_token_end(first); value = last;
+            if (last == first) return HTTP_FORMAT;
+        }
+        next = value;
+        while (*next == ' ' || *next == '\t') ++next;
+        if (*next && *next != ';') return HTTP_FORMAT;
+        saved = *last; *last = '\0';
+        if (filename) {
+            if (filename_seen++) return HTTP_FORMAT;
+            if (!extended_valid) {
+                size_t length = (size_t)(last - first);
+                if (length < sizeof(p->suggested_filename)) memcpy(p->suggested_filename, first, length + 1U);
+                else p->suggested_filename[0] = '\0';
+            }
+        } else if (extended) {
+            int result;
+            if (extended_seen++ || quoted) return HTTP_FORMAT;
+            result = extended_filename(first, p->suggested_filename);
+            if (result < 0) return result;
+            extended_valid = (uint8_t)result;
+        }
+        *last = saved;
+        value = next;
+    }
 }
 
 static int response_line(http_parser_t *p)
@@ -216,15 +322,17 @@ static int response_line(http_parser_t *p)
         if (p->status < 200) {
             if (++p->interim > 4U) return HTTP_LIMIT;
             p->state = P_STATUS; p->header_bytes = 0;
-            p->has_length = p->chunked = 0; p->remaining = 0;
-            p->location[0] = p->content_type[0] = '\0';
+            p->has_length = p->chunked = p->headers_ready = p->attachment = p->disposition_seen = 0;
+            p->remaining = p->content_length = 0;
+            p->location[0] = p->content_type[0] = p->suggested_filename[0] = '\0';
             return 0;
         }
         if (p->chunked && p->has_length) return HTTP_FORMAT;
         if (p->head || p->status == 204 || p->status == 304 || (p->has_length && !p->remaining)) {
-            p->done = 1; return HTTP_COMPLETE;
+            p->headers_ready = p->done = 1; return HTTP_COMPLETE;
         }
         if (p->has_length && p->remaining > p->body_limit) return HTTP_LIMIT;
+        p->headers_ready = 1;
         p->state = p->chunked ? P_CHUNK_SIZE : p->has_length ? P_LENGTH : P_CLOSE;
         return 0;
     }
@@ -249,7 +357,7 @@ static int response_line(http_parser_t *p)
             size = size * 10U + digit;
         }
         if (p->has_length && size != p->remaining) return HTTP_FORMAT;
-        p->remaining = size; p->has_length = 1;
+        p->remaining = p->content_length = size; p->has_length = 1;
     } else if (equal(p->line, "Transfer-Encoding")) {
         if (p->chunked || !equal(value, "chunked")) return HTTP_UNSUPPORTED;
         p->chunked = 1;
@@ -261,6 +369,8 @@ static int response_line(http_parser_t *p)
     } else if (equal(p->line, "Location")) {
         if (strlen(value) >= sizeof(p->location)) return HTTP_LIMIT;
         strcpy(p->location, value);
+    } else if (equal(p->line, "Content-Disposition")) {
+        return content_disposition(p, value);
     }
     return 0;
 }

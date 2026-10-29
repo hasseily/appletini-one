@@ -21,6 +21,7 @@ def main():
             '-I'+str(ROOT/'ps_sources/frontend'), '-I'+str(ROOT/'third_party/mbedtls/include'),
             str(ROOT/'scripts/fixtures/http_network_host.c'),
             str(ROOT/'ps_sources/frontend/http_core.c'), str(ROOT/'ps_sources/frontend/http_seed.c'),
+            str(ROOT/'ps_sources/frontend/http_roots.c'),
             str(ROOT/'ps_sources/lib/crc32.c')]
     args += [str(p) for p in sorted((ROOT/'third_party/mbedtls/library').glob('*.c'))]
     args += ['-lws2_32', '-o', str(executable)]

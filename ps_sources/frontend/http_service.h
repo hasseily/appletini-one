@@ -12,6 +12,7 @@ enum { HTTP_E_BUSY = -100, HTTP_E_ARGUMENT = -101, HTTP_E_IO = -102,
        HTTP_E_DNS = -106, HTTP_E_TIMEOUT = -107, HTTP_E_CANCELLED = -108,
        HTTP_E_REDIRECT = -109, HTTP_E_STORAGE_BUSY = -110,
        HTTP_E_NETWORK_NOT_READY = -111 };
+enum { HTTP_OWNER_NONE, HTTP_OWNER_NET, HTTP_OWNER_DOWNLOAD };
 typedef struct {
     const char *url, *method, *headers;
     const uint8_t *body;
@@ -26,13 +27,28 @@ typedef struct {
     uint64_t handshake_us, elapsed_us, seed_generation;
     char url[HTTP_URL_MAX];
     char content_type[128];
+    uint8_t headers_ready, attachment, content_length_known;
+    uint32_t content_length;
+    char suggested_filename[HTTP_FILENAME_MAX];
 } http_status_t;
 
 #ifdef APPLETINI_HTTP_SERVICE
-/* Run once during boot, before Apple release. No seed sync or CA parsing
- * belongs to the live request poll. Files changed later require a reboot. */
+/* Run once during boot, before Apple release. Missing seed pairs can use the
+ * experimental XADC collector. No sampling, seed sync or CA parsing belongs
+ * to the live request poll. Files changed later require a reboot. */
 int http_service_boot_prepare(void);
 int http_service_start(const http_request_t *request);
+/* Foreground ownership survives HTTP completion until drained/released.
+ * Legacy start/read/cancel use NONE and cannot disturb NET/DOWNLOAD. */
+int http_service_start_owned(const http_request_t *request, uint8_t owner);
+size_t http_service_read_owned(uint8_t owner, uint8_t *out, size_t capacity);
+const uint8_t *http_service_retained_owned(uint8_t owner, size_t *length);
+int http_service_cancel_owned(uint8_t owner);
+int http_service_release_owned(uint8_t owner);
+uint8_t http_service_getowner(void);
+/* Atomically take an unread final 2xx NET stream, including buffered bytes.
+ * No HTTP request is restarted. DOWNLOAD has a 30s idle / 24h total limit. */
+int http_service_handoff_download(void);
 void http_service_poll(void);
 void http_service_cancel(void);
 void http_service_storage_busy(int busy);

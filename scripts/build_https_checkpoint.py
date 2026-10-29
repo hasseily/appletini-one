@@ -92,7 +92,9 @@ def main():
         append_config("frontend", "USER_INCLUDE_DIRECTORIES", ['"../../../third_party/mbedtls/include"'])
         sources = ['"../../../ps_sources/frontend/https_probe.c"']
         sources += ['"../../../ps_sources/frontend/' + name + '"' for name in
-                    ("http_core.c", "http_seed.c", "http_service.c", "http_bench.c", "net_service.c", "net_json.c")]
+                    ("http_core.c", "http_seed.c", "http_entropy.c", "http_roots.c",
+                     "http_service.c", "http_download.c", "download_filename.c",
+                     "http_bench.c", "net_service.c", "net_json.c")]
         sources += ['"../../../' + path.relative_to(ROOT).as_posix() + '"'
                     for path in sorted((ROOT / "third_party/mbedtls/library").glob("*.c"))]
         append_config("frontend", "USER_COMPILE_SOURCES", sources)

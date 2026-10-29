@@ -20,6 +20,7 @@
 #include "compositor_layout.h"
 #include "display_modes.h"
 #include "printer_service.h"
+#include "http_download.h"
 #include "profile_manager.h"
 #include "onee_fixed_mode.h"
 #include "../image_versions.h"
@@ -243,6 +244,7 @@ typedef struct {
        PROFILE_MANAGER_THUMB_H + PROFILE_MANAGER_THUMB_W - 1U) / PROFILE_MANAGER_THUMB_W))
 
 static FATFS g_config_fs;
+static config_menu_t *g_deferred_smartport_refresh;
 static config_browser_entry_t g_browser_entries[CONFIG_BROWSER_MAX_ENTRIES];
 static config_browser_preview_cache_t g_browser_preview_cache;
 
@@ -1359,7 +1361,13 @@ static void config_menu_parent_path(const char *path, char *out, size_t out_len)
 
 FRESULT config_menu_mount_sd(void)
 {
-    FRESULT fr = f_mount(&g_config_fs, "0:/", 1U);
+    FRESULT fr;
+
+    /* Registering a different FATFS invalidates the download's live FIL. */
+    if (http_download_active()) {
+        return FR_LOCKED;
+    }
+    fr = f_mount(&g_config_fs, "0:/", 1U);
 
     if (fr == FR_OK) {
         return fr;
@@ -1379,7 +1387,7 @@ static FRESULT config_menu_open_path(FIL *file, const char *path, BYTE mode)
     }
 
     fr = f_open(file, path, mode);
-    if (fr == FR_OK || fr == FR_NO_FILE) {
+    if (fr != FR_NOT_ENABLED) {
         return fr;
     }
 
@@ -3009,10 +3017,17 @@ static void config_menu_apply_smartport_paths(config_menu_t *menu)
 void config_menu_refresh_smartport_media_after_menu_sd(config_menu_t *menu)
 {
     if (menu == NULL ||
-        menu->active == 0U ||
         menu->platform.reset_smartport_media == NULL) {
         return;
     }
+    if (menu->active == 0U && g_deferred_smartport_refresh != menu) {
+        return;
+    }
+    if (http_download_active()) {
+        g_deferred_smartport_refresh = menu;
+        return;
+    }
+    g_deferred_smartport_refresh = NULL;
 
     /*
      * FatFs has one mounted object per volume. The config browser/save paths
@@ -3175,7 +3190,14 @@ void config_menu_poll_ethernet(config_menu_t *menu)
     char detail[CONFIG_MENU_STATUS_LEN];
     int result;
 
-    if (menu == NULL || menu->ethernet_dhcp_pending == 0U) {
+    if (menu == NULL || http_download_active()) {
+        return;
+    }
+    if (g_deferred_smartport_refresh == menu) {
+        config_menu_refresh_smartport_media_after_menu_sd(menu);
+    }
+    /* Keep a completed DHCP result pending until its settings can be saved. */
+    if (menu->ethernet_dhcp_pending == 0U) {
         return;
     }
     if (menu->ethernet_slot1_enabled == 0U ||
@@ -4413,7 +4435,7 @@ static void config_menu_restore_onee_intent(config_menu_t *menu)
  * inserted. Either event may make 0:/appletini_cfg.txt readable. */
 void config_menu_retry_settings_if_needed(config_menu_t *menu)
 {
-    if (menu == NULL || menu->settings_loaded != 0U) {
+    if (menu == NULL || menu->settings_loaded != 0U || http_download_active()) {
         return;
     }
 
@@ -7992,9 +8014,8 @@ void config_menu_poll_onee_mode(config_menu_t *menu)
     }
 
     menu->onee_persisted_enabled = (persist_enable != 0U) ? 1U : 0U;
-    /* FTP owns the SD volume. Keep the pending update live and save it after
-     * the modal releases the volume. */
-    if (menu->ethernet_ftp_sd_remote_active != 0U) {
+    /* Keep the pending update unacknowledged until SD ownership is released. */
+    if (menu->ethernet_ftp_sd_remote_active != 0U || http_download_active()) {
         return;
     }
     if (menu->onee_persist_write_failed != 0U) {
@@ -8054,6 +8075,10 @@ void config_menu_focus_onee_setup(config_menu_t *menu)
 void config_menu_set_active(config_menu_t *menu, uint8_t active)
 {
     if (menu == NULL) {
+        return;
+    }
+    /* Opening probes settings and thumbnails before the next UI draw. */
+    if (active != 0U && menu->active == 0U && http_download_active()) {
         return;
     }
     menu->active = (active != 0U) ? 1U : 0U;

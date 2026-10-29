@@ -4,6 +4,7 @@
 #include "mbedtls/x509_crt.h"
 #include "mbedtls/platform_time.h"
 #include "mbedtls/platform.h"
+#include "http_roots.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -34,9 +35,13 @@ int main(int argc,char **argv)
     mbedtls_ssl_init(&ssl);mbedtls_ssl_config_init(&config);mbedtls_ctr_drbg_init(&drbg);mbedtls_x509_crt_init(&ca);
     mbedtls_ctr_drbg_set_entropy_len(&drbg,48);
     assert(!mbedtls_ctr_drbg_seed(&drbg,entropy,NULL,(const unsigned char *)"native fixture",14));
-    FILE *file=fopen(argv[1],"rb");assert(file);
-    size_t n=fread(pem,1,sizeof(pem)-1,file);assert(!ferror(file));fclose(file);pem[n]=0;
-    assert(!mbedtls_x509_crt_parse(&ca,pem,n+1));
+    if(!strcmp(argv[1],"embedded")) {
+        assert(!http_builtin_roots_load(&ca));
+    } else {
+        FILE *file=fopen(argv[1],"rb");assert(file);
+        size_t n=fread(pem,1,sizeof(pem)-1,file);assert(!ferror(file));fclose(file);pem[n]=0;
+        assert(!mbedtls_x509_crt_parse(&ca,pem,n+1));
+    }
     for(unsigned i=0;i<5;++i) {
         mbedtls_ssl_config_free(&config);mbedtls_ssl_config_init(&config);
         assert(!mbedtls_ssl_config_defaults(&config,MBEDTLS_SSL_IS_CLIENT,MBEDTLS_SSL_TRANSPORT_STREAM,MBEDTLS_SSL_PRESET_DEFAULT));

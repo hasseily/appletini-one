@@ -11,12 +11,20 @@ static uint32_t slot_mask;
 #include "../../ps_sources/frontend/http_service.c"
 
 uint64_t host_time;
+#ifndef HTTP_HOST_FAKE_SD
+/* Network-state cases must never need first-use entropy or touch storage. */
+int http_entropy_seed(uint8_t out[HTTP_SEED_BYTES]) { (void)out; return -1; }
+void http_entropy_status(http_entropy_stats_t *out)
+{ memset(out,0,sizeof(*out));out->result=HTTP_ENTROPY_UNAVAILABLE; }
+const char *http_entropy_result_name(int result) { (void)result;return "fixture unavailable"; }
+#endif
 static uint8_t ir[2], socket_state;
 static unsigned ir_reads, rx_reads, closes, connects, sends, clear_flags;
 static unsigned tx_bytes;
 static uint8_t dns_wire[520];
 static uint16_t rx_available;
 static int fail_ir;
+static uint8_t host_dns[4];
 void uart_puts(uint32_t uart,const char *text) { (void)uart;(void)text; }
 uint8_t ftp_sd_service_active(void) { return 0; }
 int usb_sdd_service_active(void) { return 0; }
@@ -58,7 +66,8 @@ int uthernet2_w5100_socket_ring_read(uint8_t s,uint16_t a,uint8_t *p,uint16_t n)
 { assert(s==SOCKET_DNS&&a+n<=sizeof(dns_wire));memcpy(p,dns_wire+a,n);return 0; }
 int uthernet2_w5100_socket_ring_write(uint8_t s,uint16_t a,const uint8_t *p,uint16_t n)
 { (void)a;assert(s==SOCKET_DNS&&p[0]==0x12&&p[1]==0x34);tx_bytes+=n;return 0; }
-int uthernet2_read_network_config(uthernet2_network_config_t *out) { memset(out,0,sizeof(*out));return 0; }
+int uthernet2_read_network_config(uthernet2_network_config_t *out)
+{ memset(out,0,sizeof(*out));memcpy(out->dns,host_dns,sizeof(host_dns));return 0; }
 int uthernet2_test(uthernet2_test_result_t *out) { memset(out,0,sizeof(*out));return 0; }
 
 static void setup(uint8_t state)

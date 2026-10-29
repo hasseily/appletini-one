@@ -18,10 +18,11 @@ def main():
     executable=OUT/'http_tls_host.exe'
     args=[str(compiler),'-std=c11','-O1','-DMBEDTLS_CONFIG_FILE=<http_service_mbedtls_config.h>',
           '-I'+str(ROOT/'ps_sources/frontend'),'-I'+str(ROOT/'third_party/mbedtls/include'),
-          str(ROOT/'scripts/fixtures/http_tls_host.c')]
+          str(ROOT/'scripts/fixtures/http_tls_host.c'),str(ROOT/'ps_sources/frontend/http_roots.c')]
     args += [str(p) for p in sorted((ROOT/'third_party/mbedtls/library').glob('*.c'))]
     args += ['-lws2_32','-o',str(executable)]
     subprocess.run(args,cwd=ROOT,env=env,check=True)
     subprocess.run([str(executable),str(ca)],cwd=ROOT,env=env,check=True,timeout=15)
+    subprocess.run([str(executable),'embedded'],cwd=ROOT,env=env,check=True,timeout=15)
 
 if __name__=='__main__': main()

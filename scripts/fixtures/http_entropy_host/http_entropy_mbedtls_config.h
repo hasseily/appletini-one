@@ -1,0 +1,6 @@
+/* SPDX-License-Identifier: MIT */
+#ifndef HTTP_ENTROPY_MBEDTLS_CONFIG_H
+#define HTTP_ENTROPY_MBEDTLS_CONFIG_H
+#define MBEDTLS_SHA256_C
+#define MBEDTLS_PLATFORM_C
+#endif

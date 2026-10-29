@@ -1,6 +1,8 @@
 #ifdef APPLETINI_HTTP_SERVICE
 #include "http_service.h"
 #include "http_seed.h"
+#include "http_roots.h"
+#include "http_entropy.h"
 #include "http_bench.h"
 #include "net_service.h"
 #include "uthernet2_control.h"
@@ -35,6 +37,12 @@
 #define IO_CALLS 8U
 #define IO_CHUNK 512U
 #define REQUEST_TIMEOUT 30000000ULL
+#ifndef HTTP_DOWNLOAD_IDLE_US
+#define HTTP_DOWNLOAD_IDLE_US 30000000ULL
+#endif
+#ifndef HTTP_DOWNLOAD_TOTAL_US
+#define HTTP_DOWNLOAD_TOTAL_US 86400000000ULL
+#endif
 #define DNS_TIMEOUT 3000000ULL
 #define CONNECT_RETRY_US 200000ULL
 
@@ -46,11 +54,12 @@ static struct {
     uint8_t body[2048], receive[IO_CHUNK], stream[STREAM_RING], retained[HTTP_RETAIN_MAX];
     size_t body_length, sent, request_length, rx_at, rx_length, read_at, ring_at, ring_count;
     uint8_t dns[4], peer[4], credit, sending, owns_eth, redirects, strip_credentials;
-    uint8_t crypto_ready, trust_ready, entropy_used, reseed_needed;
+    uint8_t crypto_ready, trust_ready, entropy_used, reseed_needed, owner;
     uint8_t entropy[HTTP_SEED_BYTES];
     uint16_t source_port, dns_id;
-    uint32_t saved_mask, io_bytes;
+    uint32_t saved_mask, io_bytes, consumed;
     uint64_t started, completed, deadline, dns_deadline, connect_at, handshake_started;
+    uint64_t download_idle;
     mbedtls_ssl_context ssl;
     mbedtls_ssl_config config;
     mbedtls_x509_crt ca;
@@ -65,6 +74,7 @@ static uint8_t rtc_valid;
 static int rtc_offset;
 static int storage_busy;
 static uint8_t configured_dns[4], boot_prepared;
+static uint8_t seed_autoprovisioned;
 static int prepare_error;
 static uint32_t prepare_us;
 /* Paint only unused foreground stack, below a guard under the current SP.
@@ -101,8 +111,10 @@ static void trace(const char *text)
 static uint64_t microseconds(void)
 {
     XTime ticks;
+    const uint64_t frequency = (uint64_t)(COUNTS_PER_SECOND);
     XTime_GetTime(&ticks);
-    return (uint64_t)ticks * 1000000ULL / (uint64_t)(COUNTS_PER_SECOND);
+    return ((uint64_t)ticks / frequency) * 1000000ULL +
+           (((uint64_t)ticks % frequency) * 1000000ULL) / frequency;
 }
 static void maximum(uint32_t *out, uint64_t value)
 { if (value > *out) *out = value > UINT32_MAX ? UINT32_MAX : (uint32_t)value; }
@@ -154,20 +166,51 @@ static int file_read(const char *path, uint8_t *out, size_t length)
     if (f_close(&file) != FR_OK) result = 1;
     return result ? -1 : 0;
 }
-static int file_write(const char *path, const uint8_t *data, size_t length)
+static int file_write_mode(const char *path, const uint8_t *data, size_t length, unsigned mode)
 {
     FIL file;
     UINT wrote = 0;
-    if (ensure_fs() || f_open(&file, path, FA_WRITE | FA_CREATE_ALWAYS) != FR_OK) return -1;
+    if (ensure_fs() || f_open(&file, path, FA_WRITE | mode) != FR_OK) return -1;
     int result = f_write(&file, data, (UINT)length, &wrote) != FR_OK || wrote != length;
     if (!result && f_sync(&file) != FR_OK) result = 1;
     if (f_close(&file) != FR_OK) result = 1;
     return result ? -1 : 0;
 }
+static int file_write(const char *path, const uint8_t *data, size_t length)
+{ return file_write_mode(path, data, length, FA_CREATE_ALWAYS); }
 static int seed_read(void *ctx, unsigned slot, uint8_t *out, size_t length)
 { (void)ctx; return file_read(seed_paths[slot], out, length); }
 static int seed_write(void *ctx, unsigned slot, const uint8_t *data, size_t length)
 { (void)ctx; return file_write(seed_paths[slot], data, length); }
+static int seed_create(void *ctx, unsigned slot, const uint8_t *data, size_t length)
+{ (void)ctx; return file_write_mode(seed_paths[slot], data, length, FA_CREATE_NEW); }
+
+static int seed_prepare(void)
+{
+    FILINFO info;
+    FRESULT a, b;
+    uint64_t generation;
+    unsigned slot;
+    if (ensure_fs()) return HTTP_E_SEED;
+    a = f_stat(seed_paths[0], &info);
+    b = f_stat(seed_paths[1], &info);
+    if (a == FR_NO_FILE && b == FR_NO_FILE) {
+        /* First use only. Never replace partial, unreadable or corrupt state.
+         * Exclusive creation also refuses a file that appears after stat. */
+        int result = http_entropy_seed(g_http.entropy);
+        if (!result) result = http_seed_commit(seed_read, seed_create, NULL, 0, 1, g_http.entropy);
+        if (!result) result = http_seed_commit(seed_read, seed_create, NULL, 1, 1, g_http.entropy);
+        mbedtls_platform_zeroize(g_http.entropy, sizeof(g_http.entropy));
+        if (result) return HTTP_E_SEED;
+        seed_autoprovisioned = 1;
+    } else if (a != FR_OK || b != FR_OK) {
+        return HTTP_E_SEED;
+    }
+    /* Validate the complete pair before crypto_init advances persisted state. */
+    int result = http_seed_select(seed_read, NULL, g_http.entropy, &generation, &slot);
+    mbedtls_platform_zeroize(g_http.entropy, sizeof(g_http.entropy));
+    return result ? HTTP_E_SEED : 0;
+}
 static int entropy(void *ctx, unsigned char *out, size_t length)
 {
     (void)ctx;
@@ -203,16 +246,25 @@ static int ipv4(const char *text, uint8_t out[4])
 static int load_config(void)
 {
     uint8_t bytes[8];
-    if (file_read("0:/ATNET.CFG", bytes, sizeof(bytes)) || bytes[0] != 'N' || bytes[1] != 1) return HTTP_E_ARGUMENT;
-    memcpy(configured_dns, bytes + 2, 4);
+    FILINFO info;
+    if (ensure_fs()) return HTTP_E_IO;
+    FRESULT found = f_stat("0:/ATNET.CFG", &info);
+    memset(configured_dns, 0, sizeof(configured_dns));
+    rtc_offset = 0; /* With no override, keep the RTC in UTC and use menu/DHCP DNS. */
+    if (found == FR_OK) {
+        if (file_read("0:/ATNET.CFG", bytes, sizeof(bytes)) || bytes[0] != 'N' || bytes[1] != 1) return HTTP_E_ARGUMENT;
+        memcpy(configured_dns, bytes + 2, 4);
+        rtc_offset = (int16_t)((unsigned)bytes[6] | ((unsigned)bytes[7] << 8));
+        if (rtc_offset < -840 || rtc_offset > 840) return HTTP_E_TIME;
+    } else if (found != FR_NO_FILE) {
+        return HTTP_E_IO;
+    }
     memcpy(g_http.dns, configured_dns, 4);
     if (!(g_http.dns[0] | g_http.dns[1] | g_http.dns[2] | g_http.dns[3])) {
         uthernet2_network_config_t network;
         if (uthernet2_read_network_config(&network)) return HTTP_E_IO;
         memcpy(g_http.dns, network.dns, sizeof(g_http.dns));
     }
-    rtc_offset = (int16_t)((unsigned)bytes[6] | ((unsigned)bytes[7] << 8));
-    if (rtc_offset < -840 || rtc_offset > 840) return HTTP_E_TIME;
     return 0;
 }
 static int crypto_init(void)
@@ -228,6 +280,7 @@ static int crypto_init(void)
     mbedtls_ssl_config_init(&g_http.config);
     mbedtls_x509_crt_init(&g_http.ca);
     mbedtls_ctr_drbg_init(&g_http.drbg);
+    if (seed_prepare()) return HTTP_E_SEED;
     if (http_seed_select(seed_read, NULL, g_http.entropy, &generation, &slot)) return HTTP_E_SEED;
     g_http.entropy_used = 0;
     mbedtls_ctr_drbg_set_entropy_len(&g_http.drbg, HTTP_SEED_BYTES);
@@ -249,17 +302,26 @@ static int trust_load(void)
 {
     FIL file;
     UINT got;
+    int result;
     if (g_http.trust_ready) return 0;
-    if (f_open(&file, "0:/ATNETCA.PEM", FA_READ) != FR_OK) return HTTP_E_TRUST;
-    size_t length = f_size(&file);
-    int result = !length || length >= sizeof(trust_pem) ||
-        f_read(&file, trust_pem, (UINT)length, &got) != FR_OK || got != length;
-    if (f_close(&file) != FR_OK) result = 1;
-    if (!result) {
-        trust_pem[length] = 0;
-        result = mbedtls_x509_crt_parse(&g_http.ca, trust_pem, length + 1U);
+    FRESULT opened = f_open(&file, "0:/ATNETCA.PEM", FA_READ);
+    if (opened == FR_NO_FILE) {
+        result = http_builtin_roots_load(&g_http.ca);
+    } else if (opened != FR_OK) {
+        result = -1;
+    } else {
+        /* An existing override replaces the defaults. Invalid or unreadable
+         * overrides fail closed instead of changing the chosen trust set. */
+        size_t length = f_size(&file);
+        result = !length || length >= sizeof(trust_pem) ||
+            f_read(&file, trust_pem, (UINT)length, &got) != FR_OK || got != length;
+        if (f_close(&file) != FR_OK) result = 1;
+        if (!result) {
+            trust_pem[length] = 0;
+            result = mbedtls_x509_crt_parse(&g_http.ca, trust_pem, length + 1U);
+        }
+        memset(trust_pem, 0, sizeof(trust_pem));
     }
-    memset(trust_pem, 0, sizeof(trust_pem));
     if (result) { mbedtls_x509_crt_free(&g_http.ca); mbedtls_x509_crt_init(&g_http.ca); return HTTP_E_TRUST; }
     g_http.trust_ready = 1; return 0;
 }
@@ -269,7 +331,7 @@ int http_service_boot_prepare(void)
     stack_prepare();
     uint64_t started = microseconds();
     int result;
-    if (http_service_active()) return HTTP_E_BUSY;
+    if (http_service_active() || g_http.owner != HTTP_OWNER_NONE) return HTTP_E_BUSY;
     boot_prepared = 1;
     prepare_error = load_config();
     if (!prepare_error) prepare_error = crypto_init();
@@ -335,9 +397,37 @@ static void finish(int result)
 }
 int http_service_active(void)
 { return g_http.status.state >= HTTP_S_PREPARE && g_http.status.state <= HTTP_S_READ; }
-void http_service_cancel(void) { if (http_service_active()) finish(HTTP_E_CANCELLED); }
+uint8_t http_service_getowner(void) { return g_http.owner; }
+int http_service_cancel_owned(uint8_t owner)
+{
+    if (owner != g_http.owner) return HTTP_E_BUSY;
+    if (http_service_active()) finish(HTTP_E_CANCELLED);
+    g_http.ring_count = g_http.read_at = 0;
+    g_http.owner = HTTP_OWNER_NONE; g_http.download_idle = 0;
+    return 0;
+}
+void http_service_cancel(void) { (void)http_service_cancel_owned(HTTP_OWNER_NONE); }
+int http_service_release_owned(uint8_t owner)
+{
+    if (owner != g_http.owner || http_service_active() ||
+        (g_http.status.retained ? g_http.ring_count != g_http.read_at : g_http.ring_count != 0)) return HTTP_E_BUSY;
+    g_http.owner = HTTP_OWNER_NONE; g_http.download_idle = 0;
+    return 0;
+}
+int http_service_handoff_download(void)
+{
+    uint64_t now = microseconds();
+    if (g_http.owner != HTTP_OWNER_NET || g_http.status.retained || g_http.consumed ||
+        !g_http.parser.headers_ready || g_http.parser.status < 200 || g_http.parser.status >= 300 ||
+        (g_http.status.state != HTTP_S_READ && g_http.status.state != HTTP_S_DONE)) return HTTP_E_ARGUMENT;
+    if (g_http.status.state != HTTP_S_DONE && now >= g_http.deadline) return HTTP_E_TIMEOUT;
+    g_http.owner = HTTP_OWNER_DOWNLOAD;
+    g_http.deadline = now + HTTP_DOWNLOAD_TOTAL_US;
+    g_http.download_idle = now + HTTP_DOWNLOAD_IDLE_US;
+    return 0;
+}
 void http_service_storage_busy(int busy)
-{ storage_busy = busy != 0; if (storage_busy) { http_service_cancel();net_service_reset(); } }
+{ storage_busy = busy != 0; if (storage_busy) { if (http_service_active()) finish(HTTP_E_CANCELLED);net_service_reset(); } }
 
 static int socket_send(void *ctx, const unsigned char *bytes, size_t length)
 {
@@ -381,7 +471,9 @@ static int socket_receive(void *ctx, unsigned char *bytes, size_t length)
         uthernet2_w5100_socket_ring_read(SOCKET_TCP,pointer,bytes,available) ||
         uthernet2_w5100_write16(uthernet2_w5100_socket_reg(SOCKET_TCP,W5100_SN_RX_RD),(uint16_t)(pointer + available)) ||
         uthernet2_w5100_socket_command(SOCKET_TCP,W5100_CR_RECV)) return HTTP_E_IO;
-    g_http.io_bytes += available; return available;
+    g_http.io_bytes += available;
+    if (g_http.owner == HTTP_OWNER_DOWNLOAD) g_http.download_idle = microseconds() + HTTP_DOWNLOAD_IDLE_US;
+    return available;
 }
 static int body_sink(void *ctx, const uint8_t *data, size_t length)
 {
@@ -397,8 +489,9 @@ static int body_sink(void *ctx, const uint8_t *data, size_t length)
     }
     return 0;
 }
-size_t http_service_read(uint8_t *out, size_t capacity)
+size_t http_service_read_owned(uint8_t owner, uint8_t *out, size_t capacity)
 {
+    if (owner != g_http.owner || !out) return 0;
     size_t n = g_http.status.retained ? g_http.ring_count - g_http.read_at : g_http.ring_count;
     if (n > capacity) n = capacity;
     if (g_http.status.retained) { memcpy(out,g_http.retained + g_http.read_at,n); g_http.read_at += n; }
@@ -406,19 +499,32 @@ size_t http_service_read(uint8_t *out, size_t capacity)
         for (size_t i=0;i<n;++i) out[i] = g_http.stream[(g_http.ring_at + i) % STREAM_RING];
         g_http.ring_at = (g_http.ring_at + n) % STREAM_RING; g_http.ring_count -= n;
     }
+    g_http.consumed += (uint32_t)n;
     return n;
 }
-const uint8_t *http_service_retained(size_t *length)
+size_t http_service_read(uint8_t *out, size_t capacity)
+{ return http_service_read_owned(HTTP_OWNER_NONE, out, capacity); }
+const uint8_t *http_service_retained_owned(uint8_t owner, size_t *length)
 {
+    if (owner != g_http.owner) { *length = 0; return NULL; }
     *length = g_http.status.retained ? g_http.ring_count : 0;
     return g_http.retained;
 }
+const uint8_t *http_service_retained(size_t *length)
+{ return http_service_retained_owned(HTTP_OWNER_NONE, length); }
 void http_service_status(http_status_t *out)
 {
     *out = g_http.status;
     out->status = g_http.parser.status;
     out->body_bytes = g_http.parser.body_bytes;
     memcpy(out->content_type,g_http.parser.content_type,sizeof(out->content_type));
+    out->headers_ready = g_http.parser.headers_ready;
+    out->attachment = (uint8_t)(out->headers_ready && g_http.parser.attachment);
+    out->content_length_known = (uint8_t)(out->headers_ready && g_http.parser.has_length);
+    out->content_length = out->headers_ready ? g_http.parser.content_length : 0;
+    if (out->headers_ready)
+        memcpy(out->suggested_filename, g_http.parser.suggested_filename, sizeof(out->suggested_filename));
+    else out->suggested_filename[0] = '\0';
     out->buffered = (uint32_t)(g_http.status.retained ? g_http.ring_count - g_http.read_at : g_http.ring_count);
     out->elapsed_us = g_http.started ? (http_service_active() ? microseconds() : g_http.completed) - g_http.started : 0;
     if (g_http.crypto_ready) {
@@ -470,10 +576,11 @@ static int redirect(void)
     return begin_connection();
 }
 
-int http_service_start(const http_request_t *request)
+int http_service_start_owned(const http_request_t *request, uint8_t owner)
 {
     http_url_t parsed;
-    if (http_service_active() || console.active) return HTTP_E_BUSY;
+    if (owner > HTTP_OWNER_NET) return HTTP_E_ARGUMENT;
+    if (g_http.owner != HTTP_OWNER_NONE || http_service_active() || console.active) return HTTP_E_BUSY;
     if (storage_busy || ftp_sd_service_active() || usb_sdd_service_active()) return HTTP_E_STORAGE_BUSY;
     if (!request || !request->url || !request->method || request->body_length > sizeof(g_http.body) ||
         (request->body_length && !request->body) || strlen(request->method) >= sizeof(g_http.method) ||
@@ -489,6 +596,7 @@ int http_service_start(const http_request_t *request)
     if (request->body_length) memcpy(g_http.body,request->body,request->body_length);
     g_http.status.retained = request->retain != 0;
     g_http.ring_at = g_http.ring_count = g_http.read_at = 0;
+    g_http.owner = owner; g_http.consumed = 0; g_http.download_idle = 0;
     g_http.redirects = g_http.strip_credentials = 0;
     memset(&g_http.parser,0,sizeof(g_http.parser));
     g_http.started = microseconds(); g_http.completed = 0; g_http.deadline = g_http.started + REQUEST_TIMEOUT;
@@ -496,6 +604,8 @@ int http_service_start(const http_request_t *request)
     g_http.status.state = HTTP_S_PREPARE;
     return 0;
 }
+int http_service_start(const http_request_t *request)
+{ return http_service_start_owned(request, HTTP_OWNER_NONE); }
 
 static int step(void)
 {
@@ -694,7 +804,7 @@ void http_service_poll(void)
             uint64_t before = microseconds();
             uint8_t old_state = g_http.status.state;
             uint32_t bytes = g_http.io_bytes;
-            if (before >= g_http.deadline) {
+            if (before >= g_http.deadline || (g_http.download_idle && before >= g_http.download_idle)) {
                 finish(old_state >= HTTP_S_DNS_OPEN && old_state <= HTTP_S_CONNECT ?
                        HTTP_E_NETWORK_NOT_READY : HTTP_E_TIMEOUT);
                 break;
@@ -721,7 +831,11 @@ int http_service_command(int argc, char **argv, uint32_t uart)
     char line[360];
     int result = 0;
     if (argc < 1 || strcmp(argv[0],"http")) return 0;
-    if (argc == 2 && !strcmp(argv[1],"cancel")) { http_bench_cancel();http_service_cancel(); return 1; }
+    if (argc == 2 && !strcmp(argv[1],"cancel")) {
+        if (g_http.owner != HTTP_OWNER_NONE) uart_puts(uart,"[http] busy\r\n");
+        else { http_bench_cancel();http_service_cancel(); }
+        return 1;
+    }
     if (argc == 2 && !strcmp(argv[1],"status")) {
         http_status_t status;http_service_status(&status);
         (void)snprintf(line,sizeof(line),"[http-status] state=%u result=%d verify=0x%08lX status=%u bytes=%lu step_max_us=%lu slice_max_us=%lu heap_peak=%lu utc=%lu rtc_offset=%d crypto=%u trust=%u seed_generation=%llu dns=%u.%u.%u.%u\r\n",
@@ -731,9 +845,16 @@ int http_service_command(int argc, char **argv, uint32_t uart)
             (unsigned long long)status.seed_generation,g_http.dns[0],g_http.dns[1],g_http.dns[2],g_http.dns[3]);
         uart_puts(uart,line);
         (void)snprintf(line,sizeof(line),"[http-json] slice_max_us=%lu boot_prepare_us=%lu ready=%u prepare_error=%d stack_used_upper=%lu stack_guard=512\r\n",(unsigned long)net_service_json_max_us(),(unsigned long)prepare_us,boot_prepared,prepare_error,(unsigned long)stack_used_upper());
+        uart_puts(uart,line);
+        http_entropy_stats_t noise;
+        http_entropy_status(&noise);
+        (void)snprintf(line,sizeof(line),"[http-entropy] source=experimental-xadc auto_created=%u result=%s samples=%lu changes=%lu min=%u max=%u max_repeat=%u max_symbol=%u elapsed_us=%lu\r\n",
+            seed_autoprovisioned, (noise.samples || noise.result) ? http_entropy_result_name(noise.result) : "not-run",
+            (unsigned long)noise.samples,(unsigned long)noise.changes,noise.min_raw,noise.max_raw,
+            noise.max_repeat,noise.max_symbol_count,(unsigned long)noise.elapsed_us);
         uart_puts(uart,line);return 1;
     }
-    if (http_service_active() || console.active || http_bench_active() || storage_busy || ftp_sd_service_active() || usb_sdd_service_active()) { uart_puts(uart,"[http] busy\r\n"); return 1; }
+    if (g_http.owner != HTTP_OWNER_NONE || http_service_active() || console.active || http_bench_active() || storage_busy || ftp_sd_service_active() || usb_sdd_service_active()) { uart_puts(uart,"[http] busy\r\n"); return 1; }
 #ifdef APPLETINI_HTTP_BENCH
     if(argc==3&&!strcmp(argv[1],"stress")) {
         char *end;unsigned long seconds=strtoul(argv[2],&end,10);

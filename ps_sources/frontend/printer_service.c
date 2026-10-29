@@ -81,13 +81,23 @@ static FRESULT printer_mount_sd(void)
 
 static FRESULT printer_ensure_dir(void)
 {
-    FRESULT fr = printer_mount_sd();
-
-    if (fr != FR_OK) {
-        return fr;
+    /* Reuse the volume: a remount invalidates other services' open files. */
+    FRESULT fr = f_mkdir(PRINTER_SERVICE_DIR);
+    if (fr == FR_NOT_ENABLED) {
+        fr = printer_mount_sd();
+        if (fr == FR_OK) fr = f_mkdir(PRINTER_SERVICE_DIR);
     }
-    fr = f_mkdir(PRINTER_SERVICE_DIR);
     return (fr == FR_EXIST) ? FR_OK : fr;
+}
+
+static FRESULT printer_open_output(FIL *file, const char *path)
+{
+    FRESULT fr = f_open(file, path, FA_CREATE_ALWAYS | FA_WRITE);
+    if (fr == FR_NOT_ENABLED) {
+        fr = printer_mount_sd();
+        if (fr == FR_OK) fr = f_open(file, path, FA_CREATE_ALWAYS | FA_WRITE);
+    }
+    return fr;
 }
 
 /* Highest existing print_NNNN number in the printouts directory, so
@@ -216,13 +226,7 @@ static void printer_page_done(void *ctx,
         }
         (void)snprintf(path, sizeof(path), "%s/print_%04u.png",
                        PRINTER_SERVICE_DIR, (unsigned)g_next_seq);
-        fr = f_open(&file, path, FA_CREATE_ALWAYS | FA_WRITE);
-        if (fr != FR_OK) {
-            fr = printer_mount_sd();
-            if (fr == FR_OK) {
-                fr = f_open(&file, path, FA_CREATE_ALWAYS | FA_WRITE);
-            }
-        }
+        fr = printer_open_output(&file, path);
         if (fr == FR_OK) {
             rc = printer_write_exact(&file, png, (uint32_t)png_size);
             if (f_close(&file) != FR_OK && rc == 0) {

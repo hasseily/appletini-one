@@ -7,9 +7,11 @@
 #include "mbedtls/memory_buffer_alloc.h"
 #include "mbedtls/x509_crt.h"
 #include "mbedtls/ecp.h"
+#include "http_roots.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 static unsigned char pool[512U*1024U] __attribute__((aligned(32))),pem[65568];
@@ -45,8 +47,12 @@ int main(int argc,char **argv)
     mbedtls_memory_buffer_alloc_init(pool,sizeof(pool));mbedtls_ssl_init(&ssl);mbedtls_ssl_config_init(&config);
     mbedtls_x509_crt_init(&ca);mbedtls_ctr_drbg_init(&rng);mbedtls_ctr_drbg_set_entropy_len(&rng,48);
     assert(!mbedtls_ctr_drbg_seed(&rng,entropy,NULL,(const unsigned char *)"handshake fixture",17));
-    FILE *file=fopen(argv[4],"rb");assert(file);size_t n=fread(pem,1,sizeof(pem)-1,file);assert(feof(file));fclose(file);pem[n]=0;
-    assert(!mbedtls_x509_crt_parse(&ca,pem,n+1));
+    if(!strcmp(argv[4],"embedded")) {
+        assert(!http_builtin_roots_load(&ca));
+    } else {
+        FILE *file=fopen(argv[4],"rb");assert(file);size_t n=fread(pem,1,sizeof(pem)-1,file);assert(feof(file));fclose(file);pem[n]=0;
+        assert(!mbedtls_x509_crt_parse(&ca,pem,n+1));
+    }
     assert(!mbedtls_ssl_config_defaults(&config,MBEDTLS_SSL_IS_CLIENT,MBEDTLS_SSL_TRANSPORT_STREAM,MBEDTLS_SSL_PRESET_DEFAULT));
     int suites[2]={atoi(argv[6]),0};
     mbedtls_ssl_conf_ciphersuites(&config,suites);mbedtls_ssl_conf_authmode(&config,MBEDTLS_SSL_VERIFY_REQUIRED);

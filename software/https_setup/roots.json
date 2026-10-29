@@ -1,9 +1,11 @@
 {
   "source": "https://curl.se/ca/cacert.pem",
   "source_sha256": "796f1389bfea13c0ed78f663b765baaff54a508e5483786bd6ece73c5e3e3cbe",
-  "as_of": "2026-10-28",
-  "pem_bytes": 33175,
-  "sha256": "369ed928ad3253b5ee3ccab3019c0385e599b3af02bebe79b9bb3e76352686a0",
+  "as_of": "2026-10-29",
+  "pem_bytes": 37359,
+  "sha256": "8f305ef87b0fc03cb11f0f8ec2d3372c811940e52894f847d3bf4efd2c9cc94c",
+  "embedded_der_bytes": 26175,
+  "embedded_der_sha256": "6df506dd67948631e69c5a5338b6eecbd4028ed33f1fbd075866e759176cb4fc",
   "roots": [
     {
       "subject": "CN=Amazon Root CA 1,O=Amazon,C=US",
@@ -106,6 +108,11 @@
       "der_sha256": "2cabeafe37d06ca22aba7391c0033d25982952c453647349763a3ab5ad6ccf69"
     },
     {
+      "subject": "CN=Go Daddy Root Certificate Authority - G2,O=GoDaddy.com\\, Inc.,L=Scottsdale,ST=Arizona,C=US",
+      "not_after": "2037-12-31T23:59:59+00:00",
+      "der_sha256": "45140b3247eb9cc8c5b4f0d7b53091f73292089e6e5a63e2749dd3aca9198eda"
+    },
+    {
       "subject": "CN=ISRG Root X1,O=Internet Security Research Group,C=US",
       "not_after": "2035-06-04T11:04:38+00:00",
       "der_sha256": "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6"
@@ -114,6 +121,16 @@
       "subject": "CN=ISRG Root X2,O=Internet Security Research Group,C=US",
       "not_after": "2040-09-17T16:00:00+00:00",
       "der_sha256": "69729b8e15a86efc177a57afb7171dfc64add28c2fca8cf1507e34453ccb1470"
+    },
+    {
+      "subject": "CN=SSL.com TLS ECC Root CA 2022,O=SSL Corporation,C=US",
+      "not_after": "2046-08-19T16:33:47+00:00",
+      "der_sha256": "c32ffd9f46f936d16c3673990959434b9ad60aafbb9e7cf33654f144cc1ba143"
+    },
+    {
+      "subject": "CN=SSL.com TLS RSA Root CA 2022,O=SSL Corporation,C=US",
+      "not_after": "2046-08-19T16:34:21+00:00",
+      "der_sha256": "8faf7d2e2cb4709bb8e0b33666bf75a5dd45b5de480f8ea8d4bfe6bebc17f2ed"
     },
     {
       "subject": "CN=Sectigo Public Server Authentication Root E46,O=Sectigo Limited,C=GB",

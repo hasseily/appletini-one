@@ -18,8 +18,10 @@ def main():
     subprocess.run([str(compiler), '-std=c11', '-Wall', '-Wextra', '-Werror',
                     '-DAPPLETINI_HTTP_SERVICE=1', '-DNET_SERVICE_HOST=1',
                     '-I' + str(ROOT / 'ps_sources/frontend'),
+                    '-I' + str(ROOT / 'scripts/fixtures/http_service_host'),
                     *[str(ROOT / name) for name in ('scripts/fixtures/net_service_host.c',
-                        'ps_sources/frontend/net_service.c', 'ps_sources/frontend/net_json.c')],
+                        'ps_sources/frontend/net_service.c', 'ps_sources/frontend/net_json.c',
+                        'ps_sources/frontend/http_download.c','ps_sources/frontend/download_filename.c')],
                     '-o', str(exe)], env=env, cwd=ROOT, check=True)
     subprocess.run([str(exe)], env=env, cwd=ROOT, check=True)
 

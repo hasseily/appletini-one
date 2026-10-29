@@ -5,12 +5,21 @@
 
 /* Version 1: unit zero, nine SmartPort list bytes. All integers are LE. */
 #define NET_SELECTOR 0x82U
-#define NET_LAST_SELECTOR 0x86U
+#define NET_LAST_SELECTOR 0x87U
 #define NET_VERSION 1U
 #define NET_DESCRIPTOR_SIZE 64U
 #define NET_REPLY_HEADER 8U
 #define NET_REQUEST_MAX 1012U
 #define NET_START_HEADER 12U
+#define NET_CAP_DOWNLOAD 0x10U
+#define NET_FLAG_RETAIN 1U
+#define NET_FLAG_AUTO_DOWNLOAD 2U
+#define NET_FLAG_FORCE_DOWNLOAD 4U
+/* START flags live at byte2. Optional FORCE filename length occupies10..11;
+ * its non-NUL bytes follow method/URL/headers/body. RETAIN cannot combine
+ * with download flags; AUTO/FORCE require GET with no body. Descriptor48..61
+ * contains state,knownflag,int16result,written32,total32,pathlength16.
+ * Selector87 returns the completed FAT path, using the normal chunk header. */
 enum { NET_START = 1, NET_CANCEL, NET_JSON };
 enum { NET_IDLE, NET_QUEUED, NET_ACTIVE, NET_DONE, NET_FAILED, NET_CANCELLED };
 enum { NET_MORE = 1, NET_END, NET_SOURCE_FAILED, NET_LOST };

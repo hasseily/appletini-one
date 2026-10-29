@@ -9,6 +9,7 @@ static http_status_t backend;
 static uint8_t body[32768];
 static size_t bytes, consumed;
 static unsigned starts, cancels;
+static uint8_t owner;
 int http_service_start(const http_request_t *r)
 {
     ++starts;memset(&backend,0,sizeof(backend));backend.state=HTTP_S_READ;
@@ -19,6 +20,18 @@ void http_service_cancel(void){++cancels;backend.state=HTTP_S_FAILED;backend.res
 void http_service_status(http_status_t *out){*out=backend;out->buffered=(uint32_t)(bytes-consumed);out->body_bytes=(uint32_t)bytes;}
 const uint8_t *http_service_retained(size_t *n){*n=bytes;return body;}
 size_t http_service_read(uint8_t *out,size_t n){if(n>bytes-consumed)n=bytes-consumed;memcpy(out,body+consumed,n);consumed+=n;return n;}
+uint8_t http_service_getowner(void){return owner;}
+int http_service_start_owned(const http_request_t *r,uint8_t who)
+{ if(owner)return HTTP_E_BUSY;owner=who;return http_service_start(r); }
+int http_service_cancel_owned(uint8_t who)
+{ if(owner!=who)return HTTP_E_BUSY;http_service_cancel();owner=0;consumed=bytes;return 0; }
+int http_service_release_owned(uint8_t who)
+{ if(owner!=who||consumed<bytes)return HTTP_E_BUSY;owner=0;return 0; }
+size_t http_service_read_owned(uint8_t who,uint8_t *out,size_t n)
+{ return owner==who?http_service_read(out,n):0; }
+int http_service_handoff_download(void){return HTTP_E_ARGUMENT;}
+const uint8_t *http_service_retained_owned(uint8_t who,size_t *n)
+{if(owner!=who){*n=0;return NULL;}return http_service_retained(n);}
 static net_json_t json;
 static void document(const char *s,int valid)
 {

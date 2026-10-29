@@ -1,0 +1,286 @@
+{
+  "audit_script": {
+    "path": "C:\\Users\\hasse\\source\\repos\\hasseily\\appletini-one\\scripts\\audit_firmware_release.py",
+    "sha256": "a5636247a538c979d3dc239f336166a8dd8eea989ef77a11baa37425caa69ff9"
+  },
+  "audited_utc": "2026-10-29T20:00:35.223455+00:00",
+  "bitstream": {
+    "configuration_matches": true,
+    "endian": "word-swapped",
+    "header_fields": {
+      "a": "appletini_yarz_top;COMPRESS=TRUE;UserID=0XFFFFFFFF;Version=2025.2;SW_CRC=c07b3566",
+      "b": "7z020clg484",
+      "c": "2026/10/21",
+      "d": "17:41:47"
+    },
+    "noop_padding_bytes": 20,
+    "xsa_embedded_bitstream_matches": true,
+    "xsa_member": "appletini_yarz_top.bit"
+  },
+  "boot_version": "B2.0.6",
+  "core1": {
+    "blob_address": 2822488,
+    "blob_sha256": "fba05ba55b811e2139276473467c778b96dc9867f88349ecf3270bc45c826adb",
+    "blob_size_bytes": 213068,
+    "checked": true,
+    "frontend_size_word_matches": true,
+    "frontend_symbol_span_matches": true,
+    "packaged_frontend_load_bytes_match": true,
+    "raw_binary_load_address": 536870912,
+    "raw_binary_matches_generated_blob": true
+  },
+  "elf_checks": {
+    "frontend": {
+      "all_file_backed_bytes_match": true,
+      "entry_address": 1048576,
+      "segments": [
+        {
+          "file_bytes": 1989500,
+          "load_address": 1048576,
+          "partition_chunks": [
+            {
+              "address": 1048576,
+              "bytes": 1989500,
+              "partition": 0
+            }
+          ],
+          "sha256": "700906340fd5d6929e968ef4a8ca896ef1c63a49e70f1cc056be9ded4f0cb4ff"
+        },
+        {
+          "file_bytes": 18188,
+          "load_address": 3047424,
+          "partition_chunks": [
+            {
+              "address": 3047424,
+              "bytes": 18188,
+              "partition": 1
+            }
+          ],
+          "sha256": "868e63bb70d0d6a881681871f651a7ef53ad8b3c77e8bb5d535df63bbde5f829"
+        }
+      ],
+      "zero_fill_bytes": 0
+    },
+    "fsbl": {
+      "all_file_backed_bytes_match": true,
+      "entry_address": 0,
+      "segments": [
+        {
+          "file_bytes": 85024,
+          "load_address": 0,
+          "partition_chunks": [
+            {
+              "address": 0,
+              "bytes": 85024,
+              "partition": 0
+            }
+          ],
+          "sha256": "a6877305ed6ad42e2a2791a0be80e5082a423d87aa3a5e6680eda6447d830921"
+        },
+        {
+          "file_bytes": 16404,
+          "load_address": 98304,
+          "partition_chunks": [
+            {
+              "address": 98304,
+              "bytes": 16404,
+              "partition": 0
+            }
+          ],
+          "sha256": "2f41151c0003e27707c7cf25ec2bb06ea5c1f020e0eb834263719bc20cebcbe3"
+        },
+        {
+          "file_bytes": 224,
+          "load_address": 128532,
+          "partition_chunks": [
+            {
+              "address": 128532,
+              "bytes": 224,
+              "partition": 0
+            }
+          ],
+          "sha256": "7a2ca7472ae8172aa6c87919804c390cb84e03697a6b4779262e2d925e120cdb"
+        }
+      ],
+      "zero_fill_bytes": 27104
+    }
+  },
+  "inputs": {
+    "bitstream": {
+      "path": "C:\\Users\\hasse\\source\\repos\\hasseily\\appletini-one\\firmwares\\firmware-F1.3.4\\inputs\\appletini_yarz_top.bit",
+      "sha256": "94c578698466ac057d5a58768e7b1c98fd680dca38a7840cd82f1d226f6dfd34",
+      "size_bytes": 2619452
+    },
+    "core1_blob": {
+      "path": "C:\\Users\\hasse\\source\\repos\\hasseily\\appletini-one\\firmwares\\firmware-F1.3.4\\inputs\\core1_blob.bin",
+      "sha256": "fba05ba55b811e2139276473467c778b96dc9867f88349ecf3270bc45c826adb",
+      "size_bytes": 213068
+    },
+    "core1_elf": {
+      "path": "C:\\Users\\hasse\\source\\repos\\hasseily\\appletini-one\\firmwares\\firmware-F1.3.4\\inputs\\frontend_core1.elf",
+      "sha256": "b1b05e94b7c241b1f1d93c7a2c0fb84f03175a5d698153e4c2ddeeb7560798c1",
+      "size_bytes": 1000324
+    },
+    "firmware": {
+      "path": "C:\\Users\\hasse\\source\\repos\\hasseily\\appletini-one\\firmwares\\firmware-F1.3.4\\FIRMWARE.BIN",
+      "sha256": "7c0144ec20b5bd60b7031994f2677a3ef0b582e2c8c3386391d3da004398db61",
+      "size_bytes": 4761708
+    },
+    "frontend": {
+      "path": "C:\\Users\\hasse\\source\\repos\\hasseily\\appletini-one\\firmwares\\firmware-F1.3.4\\inputs\\frontend.elf",
+      "sha256": "a72f7ae77b272720c06ce1b8e54b1fbf6d7e1cb782648fcf438fb7850885f737",
+      "size_bytes": 7728196
+    },
+    "fsbl": {
+      "path": "C:\\Users\\hasse\\source\\repos\\hasseily\\appletini-one\\firmwares\\firmware-F1.3.4\\inputs\\fsbl.elf",
+      "sha256": "7e47637e290b70701381d8ac3c91c267129dde7e4b12e172e76b4634786f7079",
+      "size_bytes": 586240
+    },
+    "platform_xsa_0": {
+      "path": "C:\\Users\\hasse\\source\\repos\\hasseily\\appletini-one\\vitis_workspace\\appletini_platform\\export\\appletini_platform\\hw\\appletini_yarz_top.xsa",
+      "sha256": "a08f244f95072b39d180b6f905e64d260a0a1a2b7f0d28de43baee783c4e9e23",
+      "size_bytes": 1583868
+    },
+    "run_manifest": {
+      "path": "C:\\Users\\hasse\\source\\repos\\hasseily\\appletini-one\\firmwares\\firmware-F1.3.4\\BASELINE_TIMING_MANIFEST.txt",
+      "sha256": "c6e2aad18cf6c26c4b28ee3d244e58a05fa5da842fb8d70d9667d1f16c8b1c38",
+      "size_bytes": 2213
+    },
+    "xsa": {
+      "path": "C:\\Users\\hasse\\source\\repos\\hasseily\\appletini-one\\firmwares\\firmware-F1.3.4\\inputs\\appletini_yarz_top.xsa",
+      "sha256": "a08f244f95072b39d180b6f905e64d260a0a1a2b7f0d28de43baee783c4e9e23",
+      "size_bytes": 1583868
+    }
+  },
+  "limitations": [
+    "No hardware boot, listening, flash, or physical validation performed.",
+    "Binary identity and declared timing gates do not establish source-to-build identity without a separate source snapshot and build logs.",
+    "The audit supports plain unsigned unencrypted Zynq images; unsupported layouts fail.",
+    "ELF BSS is not stored in the image; startup zeroing is not executed by this audit.",
+    "Platform XSA identity is checked only for explicit --platform-xsa inputs; PS build freshness needs build evidence."
+  ],
+  "manifest": {
+    "flags": 1281,
+    "manifest_crc32": 3355366504,
+    "payload_crc32": 2106169801,
+    "payload_size": 4761676,
+    "role": 2,
+    "version": 2
+  },
+  "partitions": [
+    {
+      "attributes": 16,
+      "entry_address": 0,
+      "image": "fsbl.elf",
+      "length": 128756,
+      "load_address": 0,
+      "offset": 5888,
+      "sha256": "a4a330a51bbc97ef7ed2082906bb0fdd9bfab7a65eb05951bbe04f7d582bd9e6"
+    },
+    {
+      "attributes": 32,
+      "entry_address": 0,
+      "image": "appletini_yarz_top.bit",
+      "length": 2619328,
+      "load_address": 0,
+      "offset": 134656,
+      "sha256": "2bd7ef67f81f1087aebbe576a39880d6025caa3ba35968516f64310fd81db537"
+    },
+    {
+      "attributes": 16,
+      "entry_address": 1048576,
+      "image": "frontend.elf",
+      "length": 1989500,
+      "load_address": 1048576,
+      "offset": 2753984,
+      "sha256": "700906340fd5d6929e968ef4a8ca896ef1c63a49e70f1cc056be9ded4f0cb4ff"
+    },
+    {
+      "attributes": 16,
+      "entry_address": 0,
+      "image": "frontend.elf",
+      "length": 18188,
+      "load_address": 3047424,
+      "offset": 4743488,
+      "sha256": "868e63bb70d0d6a881681871f651a7ef53ad8b3c77e8bb5d535df63bbde5f829"
+    }
+  ],
+  "status": "PASS",
+  "timing": {
+    "bitstream_sha256": "94c578698466ac057d5a58768e7b1c98fd680dca38a7840cd82f1d226f6dfd34",
+    "bram_tiles": "110",
+    "build_id": "20261021T142320Z-8af06741-full",
+    "build_mode": "full",
+    "bus_skew_status": "PASS",
+    "bus_skew_wns_ns": "5.605",
+    "candidate_dcp_sha256": "0be0fdaba4562c1c9f089f8584a122575f315f58460a51e7a346685c3d775172",
+    "carry4s": "3495",
+    "constraint_bounds_status": "PASS",
+    "control_set_opt_threshold": "auto",
+    "control_sets": "1552",
+    "device_part": "xc7z020clg484-2",
+    "dsps": "30",
+    "f7_muxes": "1818",
+    "f8_muxes": "397",
+    "final_direction_a_limit_ns": "10.000",
+    "final_direction_d_limit_ns": "10.000",
+    "final_fabric_user_uncertainty_ns": "0.000",
+    "final_phi0_release_limit_ns": "8.000",
+    "final_pixel_user_uncertainty_ns": "0.000",
+    "git_dirty": "1",
+    "git_sha": "8af06741f3b9454b6bc226b7d55f69cc09097ccf",
+    "hold_failing_endpoints": "0",
+    "impl_strategy": "Vivado Implementation Defaults",
+    "implementation_setup_margin_ns": "0.300",
+    "implementation_wall_seconds": "934",
+    "incremental_reference": "",
+    "incremental_reference_sha256": "",
+    "jobs": "8",
+    "lut_logic": "37845",
+    "lut_memory": "276",
+    "luts": "38121",
+    "margin_apply_hook_sha256": "ba8358d4d2e93d4b9851f64d011d310a29beb58a86891fd4f94ed8dd15791252",
+    "margin_clear_hook_sha256": "5dd267b7e28864763a5e0ffb7f49f84395960ab969e1ace3f2a2c46fc8e7d46d",
+    "margin_config_hook_sha256": "26ec4c2142664645c88ceb80d0889c66db6501a27033ee99b5df5197866982ef",
+    "minimum_wns_ns": "0.000",
+    "missing_constraint_objects": "0",
+    "opt_directive": "Explore",
+    "phys_opt_directive": "Explore",
+    "place_directive": "Default",
+    "post_route_phys_opt_directive": "enabled=0;directive=Default",
+    "pulse_width_failing_endpoints": "0",
+    "ramb18": "10",
+    "ramb36": "105",
+    "registers": "29128",
+    "rescue_used": "0",
+    "route_directive": "directive=Explore;more_options=",
+    "route_errors": "0",
+    "route_finish_hook_sha256": "5948296d6fe00059cbb3d6bcb32069fbe342ed21f6be400dedd5d1898d9d6a0c",
+    "route_status": "PASS",
+    "run_dir": ".timing_runs/20261021T142320Z-8af06741-full",
+    "seed_control": "Vivado default",
+    "setup_failing_endpoints": "0",
+    "shift_register_luts": "14",
+    "short_sha": "8af06741",
+    "slices": "12689",
+    "speed_grade": "-2",
+    "status": "exported",
+    "synth_retiming": "auto",
+    "synth_strategy": "Vivado Synthesis Defaults",
+    "synthesis_reused": "0",
+    "synthesis_wall_seconds": "173",
+    "ths_ns": "0.000",
+    "tns_ns": "0.000",
+    "tpws_ns": "0.000",
+    "unconstrained_internal_endpoints": "0",
+    "utc_end": "2026-10-21T14:42:51Z",
+    "utc_start": "2026-10-21T14:23:20Z",
+    "vivado_version": "2025.2",
+    "whs_ns": "0.034",
+    "wns_ns": "0.047",
+    "worker_threads": "8",
+    "wpws_ns": "0.265",
+    "xsa_sha256": "a08f244f95072b39d180b6f905e64d260a0a1a2b7f0d28de43baee783c4e9e23"
+  },
+  "version": "F1.3.4"
+}

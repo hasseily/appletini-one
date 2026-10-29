@@ -51,6 +51,7 @@
 #include "printer_service.h"
 #include "https_probe.h"
 #include "http_service.h"
+#include "http_download.h"
 #include "net_service.h"
 #include "http_bench.h"
 #include "screenshot_service.h"
@@ -222,6 +223,8 @@ static uint8_t g_usb1_background_poll_active = 0U;
 static uint8_t g_usb1_background_compositor_ready = 0U;
 static uint8_t g_ftp_slots_suppressed = 0U;
 static uint32_t g_ftp_saved_slot_mask = 0U;
+static uint8_t g_usb0_sd_handover_pending = 0U;
+static uint8_t g_screenshot_media_refresh_pending = 0U;
 
 static void ui_invalidate_static_backgrounds(void);
 
@@ -1700,6 +1703,18 @@ static void control_set_usb0_sd_remote_mount(void *ctx, uint8_t enable)
         (void)screenshot_service_cancel();
     }
     if (enable) {
+        /* Keep the host detached until every local download FIL is closed.
+         * Retry a failed close/unlink in the foreground while the menu shows
+         * the pending mount; Escape still cancels the handover. */
+        if (http_download_quiesce() != 0) {
+            if (g_usb0_sd_handover_pending == 0U) {
+                uart_puts(UART0_BASE,
+                          "usb0 sd remote: waiting for download cleanup\r\n");
+            }
+            g_usb0_sd_handover_pending = 1U;
+            return;
+        }
+        g_usb0_sd_handover_pending = 0U;
         if (usb_sdd_service_active()) {
             usb_sdd_service_stop();
         }
@@ -1723,7 +1738,15 @@ static void control_set_usb0_sd_remote_mount(void *ctx, uint8_t enable)
         }
         usb_storage_service_connect();
     } else {
+        g_usb0_sd_handover_pending = 0U;
         (void)usb_storage_service_disconnect();
+    }
+}
+
+static void control_poll_usb0_sd_handover(void)
+{
+    if (g_usb0_sd_handover_pending != 0U && http_download_quiesce() == 0) {
+        control_set_usb0_sd_remote_mount(NULL, 1U);
     }
 }
 
@@ -1767,7 +1790,8 @@ static int control_set_ethernet_ftp_sd_remote(void *ctx,
         CARD_CTRL_SLOT_BIT(CARD_CTRL_SLOT_DISK2);
 
     (void)ctx;
-    if (enable != 0U && (https_probe_active() || http_service_active() || http_bench_active())) {
+    if (enable != 0U && (https_probe_active() || http_service_active() ||
+                        http_download_active() || http_bench_active())) {
         if (detail != NULL && detail_len != 0U)
             (void)snprintf(detail, detail_len, "Finish the HTTP/S request first");
         return -1;
@@ -2188,10 +2212,11 @@ static void control_service_firmware_switch(config_menu_t *menu)
     }
     g_firmware_switch_request = MB_PRODUCT_NONE;
     if (screenshot_service_busy() != 0U || printer_service_job_active() != 0U ||
+        http_download_active() ||
         (REG_READ(CARD_CTRL_SSC_STATUS_REG) & CARD_CTRL_SSC_STATUS_COUNT_MASK) != 0U ||
         config_menu_usb0_sd_remote_active(menu) != 0U ||
         config_menu_ethernet_ftp_sd_remote_active(menu) != 0U) {
-        error = "FINISH SD SHARING, SCREENSHOTS AND PRINTING FIRST";
+        error = "FINISH DOWNLOADS, SD SHARING, SCREENSHOTS AND PRINTING FIRST";
         goto failed;
     }
     /* Presence is advisory. The request checks Golden before reset; Golden
@@ -2379,10 +2404,11 @@ static void control_service_golden_boot_update(config_menu_t *menu)
     g_golden_boot_update_request = 0U;
     memset(&result, 0, sizeof(result));
     if (screenshot_service_busy() != 0U || printer_service_job_active() != 0U ||
+        http_download_active() ||
         (REG_READ(CARD_CTRL_SSC_STATUS_REG) & CARD_CTRL_SSC_STATUS_COUNT_MASK) != 0U ||
         config_menu_usb0_sd_remote_active(menu) != 0U ||
         config_menu_ethernet_ftp_sd_remote_active(menu) != 0U) {
-        error = "Finish SD sharing, screenshots and printing first";
+        error = "Finish downloads, SD sharing, screenshots and printing first";
         goto failed;
     }
     if (menu_platform_get_golden_boot_file_present(NULL) == 0U) {
@@ -2697,10 +2723,24 @@ static void usb1_boot_settle_poll(config_menu_t *menu)
 
 static void ui_screenshot_sd_write_complete(void *ctx)
 {
+    (void)ctx;
+    g_screenshot_media_refresh_pending = 1U;
+}
+
+static void ui_poll_screenshot_media_refresh(const config_menu_t *menu)
+{
     int rc;
     char line[96];
 
-    (void)ctx;
+    /* Reopening SmartPort remounts FatFs and invalidates an open download.
+     * A completed screenshot can wait until all local writes have closed. */
+    if (g_screenshot_media_refresh_pending == 0U || http_download_active() ||
+        config_menu_usb0_sd_remote_active(menu) != 0U ||
+        config_menu_ethernet_ftp_sd_remote_active(menu) != 0U ||
+        usb_sdd_service_active()) {
+        return;
+    }
+    g_screenshot_media_refresh_pending = 0U;
     rc = smartport_service_reset_media(SMARTPORT_SERVICE_ALL_DEVICES);
     if (rc != 0) {
         (void)snprintf(line,
@@ -2724,6 +2764,9 @@ static void ui_poll_sd_media_arrival(config_menu_t *menu)
     int rc;
 
     if (ready == last_ready) {
+        return;
+    }
+    if (ready != 0U && http_download_active()) {
         return;
     }
     last_ready = ready;
@@ -2775,6 +2818,13 @@ static void ui_request_boot_menu_close(config_menu_t *menu)
 static void ui_handle_input_with_config(ui_state_t *s, config_menu_t *menu, ui_input_t in)
 {
     if (!in.pressed) {
+        return;
+    }
+    if (!config_menu_is_active(menu) && in.key == UI_KEY_MENU && http_download_active()) {
+        screenshot_service_show_notice("FINISH OR CANCEL DOWNLOAD FIRST");
+        s->last_key = in.key;
+        s->key_count++;
+        s->input_seq++;
         return;
     }
 
@@ -3664,6 +3714,10 @@ static void ui_set_boot_menu_visible(ui_state_t *s,
                                      uint8_t active)
 {
     (void)s;
+    if (active != 0U && !config_menu_is_active(menu) && http_download_active()) {
+        screenshot_service_show_notice("FINISH OR CANCEL DOWNLOAD FIRST");
+        return;
+    }
     config_menu_set_usb_owned(
         menu,
         (uint8_t)(active != 0U && g_usb_menu_owned != 0U));
@@ -4511,7 +4565,7 @@ int main(void)
         int http_rc = http_service_boot_prepare();
         uart_puts(UART0_BASE,"HTTP boot preparation: ");
         uart_putdec(UART0_BASE,(uint32_t)(http_rc < 0 ? -http_rc : http_rc));
-        uart_puts(UART0_BASE,http_rc ? " (check HTTPS setup files)\r\n" : " ready\r\n");
+        uart_puts(UART0_BASE,http_rc ? " (check SD, entropy and HTTPS settings)\r\n" : " ready\r\n");
     }
     (void)usb_hid_service_init();
     // USB init clears input state after the saved profile has been loaded.
@@ -4620,6 +4674,7 @@ int main(void)
             http_service_poll();
             net_service_poll();
         }
+        control_poll_usb0_sd_handover();
         if (g_firmware_switch_active == 0U) https_probe_poll();
         onee_service_poll();
         config_menu_poll_onee_mode(&config_menu);
@@ -4951,6 +5006,7 @@ int main(void)
         ui_poll_sd_media_arrival(&config_menu);
         usb0_priority_checkpoint();
         screenshot_service_poll();
+        ui_poll_screenshot_media_refresh(&config_menu);
         {
             screenshot_service_result_t screenshot_result;
             if (screenshot_service_take_result(&screenshot_result) != 0U) {

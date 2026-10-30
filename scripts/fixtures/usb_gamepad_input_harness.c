@@ -9,6 +9,7 @@
 #include "usb_errno.h"
 #include "usb_gamepad_input.h"
 #include "onee_usb_controls.h"
+#include "usb_keyboard_ascii.h"
 #include "usb_ps4_report.h"
 #include "slot2_gamepad_service.h"
 
@@ -70,6 +71,7 @@ static uint8_t g_report_descs[USB_HID_SLOT_COUNT][HID_REPORT_DESC_BYTES];
 static uint32_t g_report_count, g_transfer_error_count;
 static int g_last_error;
 static uint8_t g_menu_capture, g_joystick_preview, g_onee_fixed_mode;
+static uint8_t g_menu_text_capture;
 static uint8_t g_onee_standby_mode;
 static uint8_t g_onee_input_blocked, g_ready, g_binding_capture;
 static uint32_t g_gamepad_binding_mask;

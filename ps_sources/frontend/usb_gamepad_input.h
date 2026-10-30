@@ -15,6 +15,7 @@ void usb_gamepad_input_identify(uint8_t slot, struct usbh_hubport *port,
 
 #define USB_GAMEPAD_BUTTON_A 0U
 #define USB_GAMEPAD_BUTTON_B 1U
+#define USB_GAMEPAD_BUTTON_Y 3U
 #define USB_GAMEPAD_BUTTON_LEFT_SHOULDER 4U
 #define USB_GAMEPAD_BUTTON_RIGHT_SHOULDER 5U
 #define USB_GAMEPAD_BUTTON_LEFT_STICK 8U

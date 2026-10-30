@@ -7,8 +7,8 @@
 #define UTHERNET2_MAC_LEN 6U
 #define UTHERNET2_IPV4_LEN 4U
 
-/* Shared W5100S register and 4+2+1+1 KB socket-memory layout. Keep all users
- * on this one definition so raw DHCP and TCP services cannot drift apart. */
+/* Default shared W5100S 4+2+1+1 KB socket-memory layout. The exclusive
+ * updater may temporarily change RX only through set_rx_layout below. */
 #define W5100_REG_RMSR           0x001AU
 #define W5100_REG_TMSR           0x001BU
 #define W5100_SOCKET_MEM_4_2_1_1 0x06U
@@ -19,12 +19,14 @@
 #define W5100_SN_SR              0x03U
 #define W5100_SN_PORT            0x04U
 #define W5100_SN_DIPR            0x0CU
+#define W5100_SN_RXBUF_SIZE      0x1EU
 #define W5100_SN_TX_FSR          0x20U
 #define W5100_SN_TX_WR           0x24U
 #define W5100_SN_RX_RSR          0x26U
 #define W5100_SN_RX_RD           0x28U
 
 #define W5100_SN_MR_TCP          0x01U
+#define W5100_SN_MR_ND           0x20U
 #define W5100_SN_MR_MACRAW_MF    0x44U
 #define W5100_CR_OPEN            0x01U
 #define W5100_CR_LISTEN          0x02U
@@ -70,6 +72,11 @@ int uthernet2_w5100_read16_stable(uint16_t addr, uint16_t *value);
 int uthernet2_w5100_write16(uint16_t addr, uint16_t value);
 int uthernet2_w5100_socket_command(uint8_t socket, uint8_t command);
 int uthernet2_w5100_socket_status(uint8_t socket, uint8_t *status);
+/* W5100S only; caller owns Ethernet and all four sockets must be CLOSED.
+ * UPDATE gives S0 all 8 KiB RX and disables S1..3 RX; normal is 4+2+1+1.
+ * A failure can leave a partial configuration: restore normal successfully
+ * before returning Ethernet to the Apple. TX allocation is never changed. */
+int uthernet2_w5100_set_rx_layout(uint8_t update_only);
 int uthernet2_w5100_socket_ring_read(uint8_t socket,
                                      uint16_t pointer,
                                      uint8_t *dst,

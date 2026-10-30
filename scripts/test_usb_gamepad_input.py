@@ -22,6 +22,7 @@ FUNCTIONS = (
     "mouse_menu_push_event", "mouse_menu_push_action",
     "mouse_menu_push_bindable_action", "mouse_menu_action_from_source",
     "keyboard_menu_push_source", "hid_source_list_add",
+    "keyboard_menu_push_text",
     "keyboard_menu_start_ok_hold", "hid_process_keyboard_usages",
     "mouse_menu_source_button_mask", "menu_hold_source_valid",
     "hid_slot_reset_menu_state", "hid_slot_reset", "hid_slots_reset_all",
@@ -47,6 +48,7 @@ FUNCTIONS = (
     "usb_gamepad_input_report", "hid_process_report", "hid_report_complete",
     "hid_slots_retry_reports", "usbh_hid_run", "usbh_hid_stop",
     "usb_hid_service_set_menu_capture", "usb_hid_service_set_joystick_preview",
+    "usb_hid_service_set_text_capture",
     "usb_hid_service_set_onee_fixed_mode",
     "usb_hid_service_set_onee_standby_mode",
     "usb_hid_service_set_binding_capture", "usb_hid_service_set_gamepad_binding_mask",
@@ -76,13 +78,8 @@ def extract_function(source: str, name: str) -> tuple[str, str]:
     return source[match.start():brace].strip() + ";", source[match.start():end]
 
 
-def main() -> int:
-    compiler = find_native_c_compiler()
-    if compiler is None:
-        print("SKIP native USB gamepad input: no host C compiler")
-        return 0
-
-    source = (FRONTEND / "usb_hid_service.c").read_text(encoding="utf-8")
+def render_production_harness(source: str, boot_keyboard: bool = False) -> str:
+    """Insert production functions; reusable by the profile text-path harness."""
     descriptor = extract_function(source, "hid_parse_report_descriptor")[1]
     assert "appletini_usb_parse_input_descriptor" in descriptor
     assert "&slot->descriptor_meta" in descriptor
@@ -90,9 +87,12 @@ def main() -> int:
     slot = re.search(r"typedef struct \{.*?\} usb_hid_slot_t;", source, re.DOTALL)
     if slot is None:
         raise AssertionError("missing production USB slot type")
-    functions = [extract_function(source, name) for name in FUNCTIONS]
+    names = (*FUNCTIONS, "hid_process_boot_keyboard_report") if boot_keyboard else FUNCTIONS
+    functions = [extract_function(source, name) for name in names]
     harness = (ROOT / "scripts" / "fixtures" /
                "usb_gamepad_input_harness.c").read_text(encoding="utf-8")
+    if boot_keyboard:
+        harness = harness.replace(extract_function(harness, "hid_process_boot_keyboard_report")[1], "")
     harness = harness.replace("/* PRODUCTION_SLOT */", slot.group())
     hid_header = (ROOT / "third_party/CherryUSB/class/hid/usbh_hid.h").read_text()
     report_types = hid_header[hid_header.index("struct usbh_hid_report_item_attribute"):
@@ -103,6 +103,16 @@ def main() -> int:
                               "\n".join(item[0] for item in functions))
     harness = harness.replace("/* PRODUCTION_FUNCTIONS */",
                               "\n\n".join(item[1] for item in functions))
+    return harness
+
+
+def main() -> int:
+    compiler = find_native_c_compiler()
+    if compiler is None:
+        print("SKIP native USB gamepad input: no host C compiler")
+        return 0
+    source = (FRONTEND / "usb_hid_service.c").read_text(encoding="utf-8")
+    harness = render_production_harness(source)
     BUILD.mkdir(parents=True, exist_ok=True)
     c_file = BUILD / "usb_gamepad_input.c"
     executable = BUILD / "usb_gamepad_input.exe"

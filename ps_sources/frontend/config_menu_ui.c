@@ -15,13 +15,14 @@ static unsigned s_cmui_logo_h;
 static uint8_t s_cmui_logo_ready;
 static uint8_t s_cmui_logo_failed;
 
-#define CMUI_COMPACT_MAX_ROWS 160U
+#define CMUI_COMPACT_MAX_ROWS 1024U
 #define CMUI_COMPACT_TEXT_LEN 320U
 #define CMUI_COMPACT_MAX_HELP 12U
 typedef struct {
     char text[CMUI_COMPACT_TEXT_LEN];
     uint8_t focused;
     uint8_t dimmed;
+    uint8_t right_aligned;
 } cmui_compact_row_t;
 
 static uint8_t s_compact_active;
@@ -31,6 +32,13 @@ static const char *s_compact_title;
 static cmui_compact_row_t s_compact_rows[CMUI_COMPACT_MAX_ROWS];
 static const char *s_compact_help[CMUI_COMPACT_MAX_HELP];
 static uint32_t s_compact_help_count;
+static uint32_t s_compact_visible_rows;
+static uint8_t s_update_badge;
+
+void cmui_set_update_badge(uint8_t available)
+{
+    s_update_badge = available != 0U;
+}
 
 typedef struct {
     int scale;
@@ -44,7 +52,8 @@ typedef struct {
     uint32_t visible_rows;
 } cmui_compact_layout_t;
 
-static cmui_compact_layout_t cmui_compact_layout(uint32_t help_rows)
+static cmui_compact_layout_t cmui_compact_layout(uint32_t help_rows,
+                                               uint32_t footer_rows)
 {
     cmui_compact_layout_t layout;
     int max_help_rows;
@@ -56,7 +65,10 @@ static cmui_compact_layout_t cmui_compact_layout(uint32_t help_rows)
     layout.row_h = layout.font_h + 8;
     layout.margin = 8;
     layout.content_y = layout.margin + (2 * layout.line_h) + 6;
-    layout.footer_y = FB16_HEIGHT - layout.margin - (2 * layout.line_h);
+    if (s_update_badge != 0U) {
+        layout.content_y += layout.line_h + 6;
+    }
+    layout.footer_y = FB16_HEIGHT - layout.margin - (int)footer_rows * layout.line_h;
     /* Keep room for at least eight settings when help needs wrapping. */
     max_help_rows = (layout.footer_y - layout.content_y - 8 * layout.row_h) /
                    layout.line_h;
@@ -74,7 +86,7 @@ static cmui_compact_layout_t cmui_compact_layout(uint32_t help_rows)
 
 uint32_t cmui_compact_row_capacity(void)
 {
-    return cmui_compact_layout(0U).visible_rows;
+    return cmui_compact_layout(0U, 2U).visible_rows;
 }
 
 uint8_t cmui_compact_active(void)
@@ -87,9 +99,22 @@ void cmui_compact_scroll(int delta)
     if (delta < 0) {
         s_compact_scroll = s_compact_scroll > (uint32_t)(-delta) ?
             s_compact_scroll - (uint32_t)(-delta) : 0U;
-    } else if (s_compact_scroll + (uint32_t)delta < s_compact_count) {
-        s_compact_scroll += (uint32_t)delta;
+    } else if (s_compact_count != 0U) {
+        const uint32_t maximum = s_compact_count - 1U;
+        s_compact_scroll = s_compact_scroll >= maximum ||
+            (uint32_t)delta >= maximum - s_compact_scroll ?
+            maximum : s_compact_scroll + (uint32_t)delta;
     }
+}
+
+uint32_t cmui_compact_scroll_offset(void)
+{
+    return s_compact_scroll;
+}
+
+uint32_t cmui_compact_visible_rows(void)
+{
+    return s_compact_visible_rows != 0U ? s_compact_visible_rows : cmui_compact_row_capacity();
 }
 
 void cmui_compact_begin(void)
@@ -115,6 +140,14 @@ void cmui_compact_entry(const char *label, const char *value,
                    (value != NULL) ? value : "");
     row->focused = focused;
     row->dimmed = dimmed;
+    row->right_aligned = 0U;
+}
+
+void cmui_compact_entry_right(const char *label)
+{
+    const uint32_t previous = s_compact_count;
+    cmui_compact_entry(label, NULL, 0U, 0U);
+    if (s_compact_count > previous) s_compact_rows[previous].right_aligned = 1U;
 }
 
 static int cmui_scale(int scale)
@@ -957,7 +990,8 @@ void cmui_footer(uint16_t *fb,
                  const char *status,
                  uint8_t warning,
                  uint8_t usb_owned,
-                 uint8_t iiplus_keyboard)
+                 uint8_t iiplus_keyboard,
+                 const char *input_hint)
 {
     uint32_t status_color;
     int x;
@@ -985,7 +1019,12 @@ void cmui_footer(uint16_t *fb,
     fb16_fill_rect(fb, footer->x, footer->y, footer->w, 2,
                    CMUI_COLOR_BORDER_SOFT);
     x = footer->x;
-    if (usb_owned != 0U) {
+    if (input_hint != NULL && input_hint[0] != '\0') {
+        const int hint_scale = cmui_text_width(input_hint, CMUI_SMALL_SCALE) <= footer->w ?
+            CMUI_SMALL_SCALE : 1;
+        cmui_text_clipped(fb, x, footer->y + 28, footer->w, input_hint,
+                          CMUI_COLOR_MUTED, CMUI_COLOR_BG, hint_scale);
+    } else if (usb_owned != 0U) {
         for (uint32_t i = 0U; i < (sizeof(usb_keys) / sizeof(usb_keys[0])); ++i) {
             const int key_w = cmui_text_width(usb_keys[i], CMUI_SMALL_SCALE) + 18;
             fb16_fill_rect(fb, x, footer->y + 22, key_w, 28,
@@ -1033,7 +1072,7 @@ void cmui_footer(uint16_t *fb,
         }
         cmui_text_clipped(fb,
                           footer->x + footer->w - status_w,
-                          footer->y + 28,
+                          footer->y + ((input_hint != NULL && input_hint[0] != '\0') ? 6 : 28),
                           status_w,
                           status,
                           status_color,
@@ -1058,18 +1097,26 @@ static void cmui_compact_draw_tabs(uint16_t *fb, int y, int scale,
         return;
     }
     for (uint32_t i = 0U; i < count; ++i) {
-        width += cmui_text_width(tabs[i], scale) + 2 * pad + gap;
+        const char *label = s_update_badge != 0U && i + 1U == count ?
+            "About - Update available" : tabs[i];
+        width += cmui_text_width(label, scale) + 2 * pad + gap;
     }
     if (scale > 1 && width - gap > FB16_WIDTH - 2 * margin) {
         scale = 1;
     }
     height = FB16_BUILTIN_FONT_HEIGHT * scale + 6;
     for (uint32_t i = 0U; i < count; ++i) {
-        const int tab_w = cmui_text_width(tabs[i], scale) + 2 * pad;
+        const char *label = s_update_badge != 0U && i + 1U == count ?
+            "About - Update available" : tabs[i];
+        const int tab_w = cmui_text_width(label, scale) + 2 * pad;
         const uint32_t bg = (i == selected) ? CMUI_COLOR_ROW_ACTIVE : CMUI_COLOR_PANEL;
         const uint32_t fg = (i == selected) ? CMUI_COLOR_ACCENT : CMUI_COLOR_MUTED;
+        if (x + tab_w > FB16_WIDTH - margin) {
+            x = margin;
+            y += height + 4;
+        }
         fb16_fill_rect(fb, x, y, tab_w, height, bg);
-        cmui_text(fb, x + pad, y + 2, tabs[i], fg, bg, scale);
+        cmui_text(fb, x + pad, y + 2, label, fg, bg, scale);
         if (i == selected) {
             fb16_fill_rect(fb, x, y + height - 2, tab_w, 2, CMUI_COLOR_ACCENT);
         }
@@ -1081,21 +1128,23 @@ void cmui_compact_finish(uint16_t *fb, const char *title,
                           const char * const *tabs, uint32_t tab_count,
                           uint32_t selected_tab,
                           const char *status, uint8_t warning,
-                          uint8_t usb_owned, uint8_t iiplus_keyboard)
+                          uint8_t usb_owned, uint8_t iiplus_keyboard,
+                          const char *input_hint)
 {
-    cmui_compact_layout_t layout = cmui_compact_layout(0U);
+    cmui_compact_layout_t layout = cmui_compact_layout(0U, 2U);
     const int scale = layout.scale;
     const int font_h = layout.font_h;
     const int line_h = layout.line_h;
     const int row_h = layout.row_h;
     const int margin = layout.margin;
     const int content_y = layout.content_y;
-    const int footer_y = layout.footer_y;
+    int footer_y;
     const size_t cols = (size_t)((FB16_WIDTH - (4 * margin)) /
                                 (FB16_BUILTIN_FONT_ADVANCE_X * scale));
     char wrapped[CMUI_COMPACT_TEXT_LEN];
     char heading[160];
     uint32_t help_rows = 0U;
+    uint32_t input_rows = 1U;
     uint32_t focus = 0U;
     uint32_t first = 0U;
     uint8_t has_focus = 0U;
@@ -1104,6 +1153,18 @@ void cmui_compact_finish(uint16_t *fb, const char *title,
     int y;
 
     s_compact_active = 0U;
+    if (input_hint != NULL && input_hint[0] != '\0') {
+        size_t hint_cols = (size_t)((FB16_WIDTH - 2 * margin) /
+                                   (FB16_BUILTIN_FONT_ADVANCE_X * scale));
+        const char *p = input_hint;
+        if (hint_cols == 0U) hint_cols = 1U;
+        if (hint_cols >= sizeof(wrapped)) hint_cols = sizeof(wrapped) - 1U;
+        input_rows = 0U;
+        do {
+            p = cmui_wrap_line(p, wrapped, hint_cols);
+            ++input_rows;
+        } while (*p != '\0' && input_rows < 3U);
+    }
     for (uint32_t i = 0U; i < s_compact_help_count; ++i) {
         const char *p = s_compact_help[i];
         while (p != NULL && *p != '\0') {
@@ -1111,9 +1172,11 @@ void cmui_compact_finish(uint16_t *fb, const char *title,
             ++help_rows;
         }
     }
-    layout = cmui_compact_layout(help_rows);
+    layout = cmui_compact_layout(help_rows, 1U + input_rows);
+    footer_y = layout.footer_y;
     help_y = layout.help_y;
     visible = layout.visible_rows;
+    s_compact_visible_rows = visible;
     for (uint32_t i = 0U; i < s_compact_count; ++i) {
         if (s_compact_rows[i].focused != 0U) {
             focus = i;
@@ -1131,6 +1194,8 @@ void cmui_compact_finish(uint16_t *fb, const char *title,
     if (focus >= visible) {
         first = focus - visible + 1U;
     }
+    /* Keep the stored position in range when a dynamic page loses rows. */
+    s_compact_scroll = first;
     cmui_clear(fb);
     (void)snprintf(heading, sizeof(heading),
                    "Appletini / %s   %dx%d   Rows %u-%u/%u", title,
@@ -1145,15 +1210,23 @@ void cmui_compact_finish(uint16_t *fb, const char *title,
     y = content_y;
     for (uint32_t i = first; i < s_compact_count && i < first + visible; ++i) {
         const cmui_compact_row_t *row = &s_compact_rows[i];
-        const uint32_t bg = row->focused ? CMUI_COLOR_ROW_ACTIVE : CMUI_COLOR_ROW;
-        const uint32_t fg = row->dimmed ? CMUI_COLOR_DIM :
+        const uint8_t blank = row->text[strspn(row->text, " \t")] == '\0';
+        const uint32_t bg = row->focused ? CMUI_COLOR_ROW_ACTIVE :
+            (blank ? CMUI_COLOR_BG : CMUI_COLOR_ROW);
+        const uint32_t fg = row->right_aligned ? CMUI_COLOR_MUTED : row->dimmed ? CMUI_COLOR_DIM :
             (row->focused ? CMUI_COLOR_ACCENT : CMUI_COLOR_TEXT);
+        const int text_right = FB16_WIDTH - 2 * margin;
+        int text_x = margin * 2;
+        if (row->right_aligned) {
+            text_x = text_right - cmui_text_width(row->text, scale);
+            if (text_x < margin * 2) text_x = margin * 2;
+        }
         fb16_fill_rect(fb, margin, y, FB16_WIDTH - 2 * margin, row_h - 2, bg);
         if (row->focused) {
             fb16_fill_rect(fb, margin, y, 3, row_h - 2, CMUI_COLOR_ACCENT);
         }
-        cmui_text_clipped(fb, margin * 2, y + 3,
-                          FB16_WIDTH - 4 * margin, row->text, fg, bg, scale);
+        cmui_text_clipped(fb, text_x, y + 3,
+                          text_right - text_x, row->text, fg, bg, scale);
         y += row_h;
     }
     y = help_y;
@@ -1170,9 +1243,25 @@ void cmui_compact_finish(uint16_t *fb, const char *title,
     cmui_text_clipped(fb, margin, footer_y, FB16_WIDTH - 2 * margin,
                       status, warning ? CMUI_COLOR_WARN : CMUI_COLOR_SUCCESS,
                       CMUI_COLOR_BG, scale);
-    cmui_text_clipped(fb, margin, footer_y + line_h, FB16_WIDTH - 2 * margin,
-                      usb_owned ? "USB controls: Tabs / Navigate / Change / Select / Back" :
-                      (iiplus_keyboard ? "Q/A: Tabs   O/L: Move   <>: Change   Enter: Select   Esc: Close" :
-                       "Tab/Del: Tabs   Up/Down: Move   <>: Change   Enter: Select   Esc: Close"),
-                      CMUI_COLOR_MUTED, CMUI_COLOR_BG, scale);
+    if (input_hint != NULL && input_hint[0] != '\0') {
+        size_t hint_cols = (size_t)((FB16_WIDTH - 2 * margin) /
+                                   (FB16_BUILTIN_FONT_ADVANCE_X * scale));
+        const char *p = input_hint;
+        if (hint_cols == 0U) hint_cols = 1U;
+        if (hint_cols >= sizeof(wrapped)) hint_cols = sizeof(wrapped) - 1U;
+        y = footer_y + line_h;
+        for (uint32_t i = 0U; *p != '\0' && i < input_rows &&
+             y + font_h <= FB16_HEIGHT - margin; ++i) {
+            p = cmui_wrap_line(p, wrapped, hint_cols);
+            cmui_text_clipped(fb, margin, y, FB16_WIDTH - 2 * margin,
+                              wrapped, CMUI_COLOR_MUTED, CMUI_COLOR_BG, scale);
+            y += line_h;
+        }
+    } else {
+        cmui_text_clipped(fb, margin, footer_y + line_h, FB16_WIDTH - 2 * margin,
+                          usb_owned ? "USB controls: Tabs / Navigate / Change / Select / Back" :
+                          (iiplus_keyboard ? "Q/A: Tabs   O/L: Move   <>: Change   Enter: Select   Esc: Close" :
+                           "Tab/Del: Tabs   Up/Down: Move   <>: Change   Enter: Select   Esc: Close"),
+                          CMUI_COLOR_MUTED, CMUI_COLOR_BG, scale);
+    }
 }

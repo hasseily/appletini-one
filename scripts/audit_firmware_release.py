@@ -340,7 +340,12 @@ def main():
     boot_label = ("Boot " + args.boot_version + "\0").encode("ascii")
     need(label in b"".join(s["data"] for s in front_segments), "Wrong loaded frontend version")
     need(boot_label not in b"".join(s["data"] for s in front_segments), "Frontend still embeds a misleading static boot label")
-    need(b"Golden Boot: %s\0" in b"".join(s["data"] for s in front_segments), "Missing installed Golden display format")
+    front_bytes = b"".join(s["data"] for s in front_segments)
+    golden_display = b"Golden Boot: %s\0" in front_bytes or (
+        b"%s: %s   Available: %s\0" in front_bytes and
+        b"Golden Boot\0" in front_bytes and
+        "menu_platform_get_golden_boot_version" in front_symbols)
+    need(golden_display, "Missing installed Golden display format")
     need("mb_golden_installed_version" in front_symbols and "golden_self_update_run" in front_symbols, "Missing installed-version/update implementation")
     core1 = {"checked": False}
     if args.core1_elf:

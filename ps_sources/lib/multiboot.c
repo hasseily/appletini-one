@@ -318,11 +318,12 @@ static int legacy_version_supported(const char *text)
     return parts[0]>1U || (parts[0]==1U && parts[1]>=1U);
 }
 
-/* Called only after Bootgen bounds and the complete v1 CRC have passed. Scan
+/* Called only after Bootgen bounds and the complete image CRC have passed. Scan
  * actual CPU0 frontend load segments after its FPGA partition, never FSBL,
  * partition tables, bitstream, padding or footer. All F1.1.0+ release archives
  * use this entry address and these startup identities. */
-static int legacy_appletini_identity(const mb_reader_t *r)
+static int legacy_appletini_identity(const mb_reader_t *r, char *out_version,
+                                      uint32_t capacity)
 {
     uint8_t h[0xa0],iht[64],pht[64],buf[IO_SIZE];
     char prefix[sizeof legacy_version_prefix+1U],uart[sizeof legacy_uart_prefix+1U];
@@ -388,7 +389,15 @@ static int legacy_appletini_identity(const mb_reader_t *r)
         }
         if (collecting) return MB_E_MARKER;
     }
-    return executed && found && uart_found && recovery_found ? MB_OK : MB_E_MARKER;
+    if (!executed || !found || !uart_found || !recovery_found) return MB_E_MARKER;
+    if (out_version != NULL) {
+        const size_t length = strlen(version);
+        if (length < 2U || capacity < length) return MB_E_ARGUMENT;
+        out_version[0] = 'F';
+        memcpy(out_version + 1, version, length - 2U);
+        out_version[length - 1U] = '\0';
+    }
+    return MB_OK;
 }
 
 int mb_firmware_validate(const mb_reader_t *reader, mb_image_t *out)
@@ -398,7 +407,7 @@ int mb_firmware_validate(const mb_reader_t *reader, mb_image_t *out)
     rc=mb_image_validate(reader,0,1,out);
     if (rc!=MB_OK) return rc;
     if (out->version!=1U || out->image_size>MB_APPLETINI_CAPACITY) return MB_E_IMAGE;
-    rc=legacy_appletini_identity(reader);
+    rc=legacy_appletini_identity(reader,NULL,0U);
     if (rc==MB_OK) out->product=MB_PRODUCT_APPLETINI;
     return rc;
 }
@@ -535,7 +544,7 @@ static int identify_legacy_appletini(const mb_flash_t *f, uint32_t offset, mb_im
     if (image->version!=1U || image->product!=MB_PRODUCT_NONE ||
         image->image_size>MB_APPLETINI_CAPACITY) return MB_E_UNAVAILABLE;
     reader=slot_reader(f,offset,image->image_size,&context);
-    rc=legacy_appletini_identity(&reader);
+    rc=legacy_appletini_identity(&reader,NULL,0U);
     if (rc==MB_OK) image->product=MB_PRODUCT_APPLETINI;
     return rc;
 }
@@ -871,6 +880,54 @@ static int golden_installed_at(const mb_flash_t *f, uint32_t offset,
     memcpy(version,identity.version,strlen(identity.version)+1U);
     return MB_OK;
 }
+static int update_version_stable(const char *text, char prefix)
+{
+    if (*text++ != prefix) return 0;
+    for (uint32_t part = 0U; part < 3U; ++part) {
+        const char *start = text;
+        uint32_t value = 0U;
+        if (*text < '0' || *text > '9') return 0;
+        do {
+            const uint32_t digit = (uint32_t)(*text++ - '0');
+            if (value > (UINT32_MAX - digit) / 10U) return 0;
+            value = value * 10U + digit;
+        } while (*text >= '0' && *text <= '9');
+        if (text - start > 1 && *start == '0') return 0;
+        if (part < 2U && *text++ != '.') return 0;
+    }
+    return *text == '\0';
+}
+
+int mb_update_image_validate(const mb_reader_t *reader, uint8_t is_golden,
+                              mb_image_t *out, char *version, uint32_t capacity)
+{
+    int rc;
+    if (version != NULL && capacity != 0U) version[0] = '\0';
+    if (reader == NULL || out == NULL || version == NULL || capacity == 0U)
+        return MB_E_ARGUMENT;
+    if (is_golden != 0U) {
+        golden_identity_t identity;
+        rc = image_validate(reader, 0U, 1, 1U, 1, out);
+        if (rc != MB_OK) return rc;
+        rc = golden_loaded_identity(reader, &identity);
+        if (rc != MB_OK) return rc;
+        if (!update_version_stable(identity.version, 'B') || identity.major < 2U)
+            return MB_E_MARKER;
+        if (strlen(identity.version) >= capacity) return MB_E_ARGUMENT;
+        memcpy(version, identity.version, strlen(identity.version) + 1U);
+    } else {
+        rc = mb_image_validate(reader, MB_PRODUCT_APPLETINI, 0, out);
+        if (rc != MB_OK) return rc;
+        rc = legacy_appletini_identity(reader, version, capacity);
+        if (rc != MB_OK) return rc;
+        if (!update_version_stable(version, 'F')) {
+            version[0] = '\0';
+            return MB_E_MARKER;
+        }
+    }
+    return MB_OK;
+}
+
 int mb_golden_installed_version(const mb_flash_t *f, char *version,
                                 uint32_t capacity, uint32_t *slot_offset)
 {

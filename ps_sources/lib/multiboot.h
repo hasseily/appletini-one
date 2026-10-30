@@ -85,6 +85,10 @@ int mb_image_validate(const mb_reader_t *reader, uint32_t expected_product,
  * APPLETINI without altering its original payload or manifest. Generic v1
  * Multitini/unknown images remain migration fallbacks, not update candidates. */
 int mb_firmware_validate(const mb_reader_t *reader, mb_image_t *out);
+/* Verify a tagged Appletini firmware or manifest Golden download and return
+ * its stable F/B version from loaded CPU0 bytes. Never writes flash. */
+int mb_update_image_validate(const mb_reader_t *reader, uint8_t is_golden,
+                              mb_image_t *out, char *version, uint32_t capacity);
 int mb_metadata_load(const mb_flash_t *flash, mb_metadata_t *out);
 /* out may be NULL for availability probes. */
 int mb_slot_verify(const mb_flash_t *flash, uint32_t product, mb_image_t *out);

@@ -52,6 +52,7 @@
 #include "https_probe.h"
 #include "http_service.h"
 #include "http_download.h"
+#include "online_update_service.h"
 #include "net_service.h"
 #include "http_bench.h"
 #include "screenshot_service.h"
@@ -140,6 +141,10 @@ static uint8_t g_firmware_switch_active;
 static uint8_t g_firmware_switch_fault;
 static char g_installed_golden_version[32] = "Unknown";
 static uint8_t g_golden_boot_update_request;
+#ifdef APPLETINI_HTTP_SERVICE
+static uint8_t g_online_update_approved_kind = ONLINE_UPDATE_KIND_COUNT;
+static void menu_platform_cancel_online_update(void *ctx);
+#endif
 static uint8_t g_usb_menu_owned = 0U;
 static uint8_t g_onee_ui_running_seen = 0U;
 static uint16_t *g_bezel_565 = NULL;
@@ -809,7 +814,8 @@ static void card_control_apply_slot_policy(void)
         }
     }
     g_card_slot_effective_mask = effective;
-    REG_WRITE(CARD_CTRL_SLOT_ENABLE_REG, g_card_slot_effective_mask);
+    REG_WRITE(CARD_CTRL_SLOT_ENABLE_REG,
+        http_service_filter_slot_mask(g_card_slot_effective_mask));
 }
 
 static void card_control_write_slot_mask(uint32_t slot_mask)
@@ -1570,6 +1576,15 @@ static int menu_platform_ethernet_read_config(void *ctx,
     return uthernet2_read_network_config(config);
 }
 
+static uint8_t menu_platform_ethernet_update_busy(void)
+{
+#ifdef APPLETINI_HTTP_SERVICE
+    return (uint8_t)(online_update_active() || http_service_getowner() == HTTP_OWNER_UPDATE);
+#else
+    return 0U;
+#endif
+}
+
 static int menu_platform_ethernet_write_config(void *ctx,
                                                const uthernet2_network_config_t *config)
 {
@@ -1577,6 +1592,7 @@ static int menu_platform_ethernet_write_config(void *ctx,
     int result;
 
     (void)ctx;
+    if (menu_platform_ethernet_update_busy()) return -1;
     XTime_GetTime(&started);
     result = uthernet2_write_network_config(config);
     boot_timing_log("Ethernet config write", started);
@@ -1599,6 +1615,11 @@ static int menu_platform_ethernet_dhcp_start(
     int result;
 
     (void)ctx;
+    if (menu_platform_ethernet_update_busy()) {
+        if (detail != NULL && detail_len != 0U)
+            (void)snprintf(detail, detail_len, "FINISH OR CANCEL ONLINE UPDATE FIRST");
+        return -1;
+    }
     result = uthernet2_dhcp_start(mac, detail, detail_len);
     if (result == 0) {
         XTime_GetTime(&g_ethernet_dhcp_started);
@@ -1615,6 +1636,11 @@ static int menu_platform_ethernet_dhcp_poll(
     int result;
 
     (void)ctx;
+    if (menu_platform_ethernet_update_busy()) {
+        if (detail != NULL && detail_len != 0U)
+            (void)snprintf(detail, detail_len, "ONLINE UPDATE IN PROGRESS");
+        return 0; /* Preserve the pending DHCP until the NIC is available. */
+    }
     result = uthernet2_dhcp_poll(lease, detail, detail_len);
     if (result != 0 && g_ethernet_dhcp_started != 0U) {
         boot_timing_log(result > 0 ?
@@ -1629,6 +1655,7 @@ static int menu_platform_ethernet_dhcp_poll(
 static void menu_platform_ethernet_dhcp_cancel(void *ctx)
 {
     (void)ctx;
+    if (menu_platform_ethernet_update_busy()) return;
     uthernet2_dhcp_cancel();
     g_ethernet_dhcp_started = 0U;
 }
@@ -1703,6 +1730,15 @@ static void control_set_usb0_sd_remote_mount(void *ctx, uint8_t enable)
         (void)screenshot_service_cancel();
     }
     if (enable) {
+#ifdef APPLETINI_HTTP_SERVICE
+        if (online_update_active()) {
+            menu_platform_cancel_online_update(NULL);
+            if (online_update_active()) {
+                g_usb0_sd_handover_pending = 1U;
+                return;
+            }
+        }
+#endif
         /* Keep the host detached until every local download FIL is closed.
          * Retry a failed close/unlink in the foreground while the menu shows
          * the pending mount; Escape still cancels the handover. */
@@ -1791,6 +1827,9 @@ static int control_set_ethernet_ftp_sd_remote(void *ctx,
 
     (void)ctx;
     if (enable != 0U && (https_probe_active() || http_service_active() ||
+#ifdef APPLETINI_HTTP_SERVICE
+                        online_update_active() ||
+#endif
                         http_download_active() || http_bench_active())) {
         if (detail != NULL && detail_len != 0U)
             (void)snprintf(detail, detail_len, "Finish the HTTP/S request first");
@@ -2118,6 +2157,149 @@ static int menu_platform_request_firmware_switch(void *ctx, uint32_t product)
     return 0;
 }
 
+#ifdef APPLETINI_HTTP_SERVICE
+static void menu_platform_get_online_update_status(void *ctx,
+                                                   online_update_snapshot_t *status)
+{
+    (void)ctx;
+    online_update_status(status);
+}
+
+static int menu_platform_request_online_update_check(void *ctx)
+{
+    (void)ctx;
+    if (control_golden_boot_update_allowed() == 0U) return -1;
+    return online_update_check();
+}
+
+static int menu_platform_request_online_update_download(void *ctx, uint8_t kind)
+{
+    int rc;
+    (void)ctx;
+    if (kind >= ONLINE_UPDATE_KIND_COUNT ||
+        control_golden_boot_update_allowed() == 0U) return -1;
+    rc = online_update_start(kind);
+    if (rc == 0) g_online_update_approved_kind = kind;
+    return rc;
+}
+
+static void menu_platform_cancel_online_update(void *ctx)
+{
+    (void)ctx;
+    g_online_update_approved_kind = ONLINE_UPDATE_KIND_COUNT;
+    online_update_cancel();
+}
+
+static int menu_platform_request_online_update_install(void *ctx, uint8_t kind)
+{
+    online_update_snapshot_t status;
+    const char *path = online_update_ready_path();
+    (void)ctx;
+    online_update_status(&status);
+    if (kind >= ONLINE_UPDATE_KIND_COUNT || status.state != ONLINE_UPDATE_READY ||
+        status.kind != kind || path == NULL || control_golden_boot_update_allowed() == 0U ||
+        g_firmware_switch_request != MB_PRODUCT_NONE ||
+        g_golden_boot_update_request != 0U || g_firmware_switch_active != 0U ||
+        g_firmware_switch_fault != 0U || online_update_active() ||
+        strcmp(path, kind == ONLINE_UPDATE_BOOT ? "0:/BOOT.BIN" : "0:/FIRMWARE.BIN"))
+        return -1;
+    if (kind == ONLINE_UPDATE_BOOT)
+        return menu_platform_request_golden_boot_update(NULL);
+    g_firmware_switch_request = MB_PRODUCT_APPLETINI;
+    return 0;
+}
+
+static uint8_t control_online_update_allowed(const config_menu_t *menu)
+{
+    return (uint8_t)(config_menu_is_active(menu) &&
+        control_golden_boot_update_allowed() && !g_firmware_switch_active &&
+        !g_firmware_switch_fault && !g_golden_boot_update_request &&
+        g_firmware_switch_request == MB_PRODUCT_NONE &&
+        !vtw_service_boot_start_pending() && !vtw_service_boot_handoff_pending());
+}
+
+static uint8_t control_online_update_busy(const config_menu_t *menu)
+{
+    return (uint8_t)(http_download_active() ||
+        screenshot_service_busy() || printer_service_job_active() ||
+        usb_sdd_service_active() || menu->ethernet_dhcp_pending ||
+        (REG_READ(CARD_CTRL_SSC_STATUS_REG) & CARD_CTRL_SSC_STATUS_COUNT_MASK) ||
+        config_menu_usb0_sd_remote_active(menu) ||
+        config_menu_ethernet_ftp_sd_remote_active(menu));
+}
+
+static void control_service_online_update(ui_state_t *ui, config_menu_t *menu)
+{
+    online_update_snapshot_t status;
+    XTime started, now;
+    uint8_t allowed = control_online_update_allowed(menu);
+    uint8_t busy = control_online_update_busy(menu);
+    XTime_GetTime(&started);
+    /* Foreground maintenance only. Each synchronous HTTP/SD call completes
+     * before the 2ms budget is checked; it cannot be preempted here. */
+    for (uint8_t pass = 0U; pass < 8U; ++pass) {
+        allowed = control_online_update_allowed(menu);
+        busy = control_online_update_busy(menu);
+        online_update_poll(allowed, busy);
+        XTime_GetTime(&now);
+        if (allowed == 0U || busy != 0U || !online_update_active() ||
+            pass == 7U || ticks_to_us(now - started) >= 2000U) {
+            break;
+        }
+        if (http_service_getowner() == HTTP_OWNER_UPDATE) {
+            http_service_poll_budget(2000U - ticks_to_us(now - started));
+        }
+        XTime_GetTime(&now);
+        if (ticks_to_us(now - started) >= 2000U) {
+            break;
+        }
+    }
+    if (config_menu_poll_online_update(menu)) ++ui->input_seq;
+    online_update_status(&status);
+    if (g_online_update_approved_kind < ONLINE_UPDATE_KIND_COUNT) {
+        if (!allowed || busy || status.state == ONLINE_UPDATE_FAILED ||
+            status.state == ONLINE_UPDATE_CANCELLED) {
+            g_online_update_approved_kind = ONLINE_UPDATE_KIND_COUNT;
+        } else if (status.state == ONLINE_UPDATE_READY &&
+                   status.kind == g_online_update_approved_kind) {
+            const uint8_t kind = g_online_update_approved_kind;
+            g_online_update_approved_kind = ONLINE_UPDATE_KIND_COUNT;
+            if (menu_platform_request_online_update_install(NULL, kind) == 0) {
+                menu->online_update_install_pending = 1U;
+            } else {
+                config_menu_online_update_finished(menu, "UPDATE READY; INSTALL NOT AVAILABLE");
+            }
+            ++ui->input_seq;
+        }
+    }
+}
+
+static uint8_t ui_online_update_composite_due(const ui_state_t *ui,
+                                               const config_menu_t *menu)
+{
+    static XTime last_paint;
+    static uint32_t last_input;
+    static uint8_t throttled;
+    XTime now;
+    if (!online_update_active() || !control_online_update_allowed(menu) ||
+        control_online_update_busy(menu)) {
+        if (throttled != 0U) compositor_request_full_refresh();
+        throttled = 0U;
+        return 1U;
+    }
+    XTime_GetTime(&now);
+    if (throttled == 0U || last_input != ui->input_seq ||
+        compositor_full_refresh_active() || ticks_to_us(now - last_paint) >= 100000U) {
+        if (throttled == 0U || last_input != ui->input_seq) compositor_request_full_refresh();
+        last_paint = now;
+        last_input = ui->input_seq;
+        throttled = 1U;
+        return 1U;
+    }
+    return 0U;
+}
+#endif
+
 static int control_hold_quiet_connector(uint32_t *saved_request,
                                          uint8_t *requested)
 {
@@ -2213,6 +2395,9 @@ static void control_service_firmware_switch(config_menu_t *menu)
     g_firmware_switch_request = MB_PRODUCT_NONE;
     if (screenshot_service_busy() != 0U || printer_service_job_active() != 0U ||
         http_download_active() ||
+#ifdef APPLETINI_HTTP_SERVICE
+        online_update_active() ||
+#endif
         (REG_READ(CARD_CTRL_SSC_STATUS_REG) & CARD_CTRL_SSC_STATUS_COUNT_MASK) != 0U ||
         config_menu_usb0_sd_remote_active(menu) != 0U ||
         config_menu_ethernet_ftp_sd_remote_active(menu) != 0U) {
@@ -2223,10 +2408,18 @@ static void control_service_firmware_switch(config_menu_t *menu)
      * fully checks target payload and fallback before executing firmware. */
     control_refresh_multiboot();
     if (g_multiboot_status_valid == 0U ||
-        g_multiboot_status.multitini_present == 0U) {
+        (product == MB_PRODUCT_MULTITINI ?
+            g_multiboot_status.multitini_present == 0U :
+            g_multiboot_status.appletini_present == 0U)) {
         error = "MULTITINI OR MULTIBOOT GOLDEN NOT VERIFIED";
         goto failed;
     }
+#ifdef APPLETINI_HTTP_SERVICE
+    if (product == MB_PRODUCT_APPLETINI && control_golden_boot_update_allowed() == 0U) {
+        error = "UPDATE FIRMWARE FROM THE INITIAL BOOT MENU";
+        goto failed;
+    }
+#endif
     /* Finish captured SmartPort commands before RESET clears its transport. */
     g_firmware_switch_active = 1U;
     for (uint32_t attempt = 0U; attempt < 64U &&
@@ -2362,6 +2555,10 @@ failed:
         return;
     }
     g_firmware_switch_active = 0U;
+#ifdef APPLETINI_HTTP_SERVICE
+    if (product == MB_PRODUCT_APPLETINI)
+        config_menu_online_update_finished(menu, error);
+#endif
     if (dma_reserved != 0U) {
         psdma_release(PSDMA_OWNER_FIRMWARE_UPDATE);
     }
@@ -2405,6 +2602,9 @@ static void control_service_golden_boot_update(config_menu_t *menu)
     memset(&result, 0, sizeof(result));
     if (screenshot_service_busy() != 0U || printer_service_job_active() != 0U ||
         http_download_active() ||
+#ifdef APPLETINI_HTTP_SERVICE
+        online_update_active() ||
+#endif
         (REG_READ(CARD_CTRL_SSC_STATUS_REG) & CARD_CTRL_SSC_STATUS_COUNT_MASK) != 0U ||
         config_menu_usb0_sd_remote_active(menu) != 0U ||
         config_menu_ethernet_ftp_sd_remote_active(menu) != 0U) {
@@ -2527,6 +2727,10 @@ failed:
         error = "Boot register recovery failed; reboot the card";
     }
     config_menu_golden_boot_update_finished(menu, error);
+#ifdef APPLETINI_HTTP_SERVICE
+    if (menu->online_update_install_pending != 0U)
+        config_menu_online_update_finished(menu, error);
+#endif
     if (cpu1_hold_attempted != 0U) {
         /* Cold SEV cannot safely restart a processor that was reset. */
         g_firmware_switch_fault = 1U;
@@ -2735,6 +2939,9 @@ static void ui_poll_screenshot_media_refresh(const config_menu_t *menu)
     /* Reopening SmartPort remounts FatFs and invalidates an open download.
      * A completed screenshot can wait until all local writes have closed. */
     if (g_screenshot_media_refresh_pending == 0U || http_download_active() ||
+#ifdef APPLETINI_HTTP_SERVICE
+        online_update_active() ||
+#endif
         config_menu_usb0_sd_remote_active(menu) != 0U ||
         config_menu_ethernet_ftp_sd_remote_active(menu) != 0U ||
         usb_sdd_service_active()) {
@@ -2766,7 +2973,11 @@ static void ui_poll_sd_media_arrival(config_menu_t *menu)
     if (ready == last_ready) {
         return;
     }
-    if (ready != 0U && http_download_active()) {
+    if (ready != 0U && (http_download_active()
+#ifdef APPLETINI_HTTP_SERVICE
+                       || online_update_active()
+#endif
+                       )) {
         return;
     }
     last_ready = ready;
@@ -2808,6 +3019,16 @@ static void ui_handle_input(ui_state_t *s, ui_input_t in)
 
 static void ui_request_boot_menu_close(config_menu_t *menu)
 {
+#ifdef APPLETINI_HTTP_SERVICE
+    if (online_update_active()) {
+        menu_platform_cancel_online_update(NULL);
+        if (online_update_active()) {
+            menu->status_warning = 1U;
+            (void)snprintf(menu->status, sizeof(menu->status), "WAIT FOR UPDATE FILE CLEANUP");
+            return;
+        }
+    }
+#endif
     /* Publish only the boot-critical slot/handoff/timeout state while the
      * ROM is still waiting in its menu loop.  The later CLOSE event is too
      * late for any operation that can remount or reprobe storage. */
@@ -2840,6 +3061,10 @@ static void ui_handle_input_with_config(ui_state_t *s, config_menu_t *menu, ui_i
     }
 
     if (config_menu_handle_input(menu, in) != 0U) {
+        /* Checkpoints may poll USB again before the menu batch ends. Set
+         * text focus now so the next report sees a newly opened editor. */
+        usb_hid_service_set_text_capture((uint8_t)(config_menu_is_active(menu) &&
+            (menu->profile_name_editor_active || menu->printout_editor_active)));
         s->last_key = in.key;
         s->key_count++;
         s->input_seq++;
@@ -3714,6 +3939,19 @@ static void ui_set_boot_menu_visible(ui_state_t *s,
                                      uint8_t active)
 {
     (void)s;
+#ifdef APPLETINI_HTTP_SERVICE
+    if (active == 0U) {
+        if (menu->online_update_install_pending != 0U) return;
+        if (online_update_active()) {
+            menu_platform_cancel_online_update(NULL);
+            if (online_update_active()) {
+                menu->status_warning = 1U;
+                (void)snprintf(menu->status, sizeof(menu->status), "WAIT FOR UPDATE FILE CLEANUP");
+                return;
+            }
+        }
+    }
+#endif
     if (active != 0U && !config_menu_is_active(menu) && http_download_active()) {
         screenshot_service_show_notice("FINISH OR CANCEL DOWNLOAD FIRST");
         return;
@@ -3812,7 +4050,13 @@ static uint8_t ui_config_menu_has_close_consumer(const config_menu_t *menu)
     if (menu == NULL || !config_menu_is_active(menu)) {
         return 0U;
     }
-    return (config_menu_usb0_sd_remote_active(menu) != 0U ||
+    return (
+            menu->about_credits_active != 0U ||
+#ifdef APPLETINI_HTTP_SERVICE
+            menu->online_update_confirm || menu->online_update_download_pending ||
+            menu->online_update_install_pending ||
+#endif
+            config_menu_usb0_sd_remote_active(menu) != 0U ||
             config_menu_ethernet_ftp_sd_remote_active(menu) != 0U ||
             menu->usb_binding_capture != CONFIG_MENU_USB_BIND_CAPTURE_NONE ||
             menu->browser_active != 0U ||
@@ -3889,6 +4133,8 @@ static void ui_sync_usb_menu_capture(config_menu_t *menu)
         usb_hid_service_set_vtw_sources(vtw_sources);
     }
     usb_hid_service_set_menu_capture(config_menu_is_active(menu));
+    usb_hid_service_set_text_capture((uint8_t)(config_menu_is_active(menu) &&
+        (menu->profile_name_editor_active || menu->printout_editor_active)));
     usb_hid_service_set_joystick_preview(
         (uint8_t)(config_menu_is_active(menu) && menu->joystick_page_active));
     ui_sync_onee_menu_pause(menu);
@@ -3931,6 +4177,12 @@ static void ui_report_screenshot(const screenshot_service_result_t *result)
 static void ui_save_screenshot(screenshot_service_kind_t kind)
 {
     screenshot_service_result_t result;
+#ifdef APPLETINI_HTTP_SERVICE
+    if (online_update_active()) {
+        screenshot_service_show_notice("FINISH THE UPDATE FIRST");
+        return;
+    }
+#endif
     if (screenshot_service_request(kind, &g_rtc, &result) != 0) {
         screenshot_service_show_confirmation(result.message);
         ui_report_screenshot(&result);
@@ -3974,6 +4226,19 @@ static void ui_handle_usb_menu_event(ui_state_t *s,
     if (event == NULL) {
         return;
     }
+    if (config_menu_is_active(menu) &&
+        config_menu_usb_binding_capture_action(menu) == CONFIG_MENU_USB_BIND_CAPTURE_NONE &&
+        usb_hid_menu_source_is_keyboard(event->source) != 0U &&
+        event->ascii != 0U) {
+        if (menu->profile_name_editor_active || menu->printout_editor_active) {
+            ui_input_t input = ui_make_input(UI_KEY_NONE);
+            input.pressed = 1U;
+            input.ascii = event->ascii;
+            ui_handle_input_with_config(s, menu, input);
+        }
+        /* Text queued for a closed editor must not become a shortcut. */
+        return;
+    }
     /* Fixed ONE//e keyboard events carry their action directly. Saved
      * bindings must not add a second action to the same key press. */
     const ui_key_t keyboard_key =
@@ -4004,7 +4269,8 @@ static void ui_handle_usb_menu_event(ui_state_t *s,
                 }
             }
         }
-        if (keyboard_key != UI_KEY_NONE) {
+        if (keyboard_key != UI_KEY_NONE ||
+            event->fixed_action == USB_HID_MENU_ACTION_KEYBOARD) {
             return;
         }
     }
@@ -4423,6 +4689,13 @@ int main(void)
         menu_platform.get_golden_boot_file_present = menu_platform_get_golden_boot_file_present;
         menu_platform.get_golden_boot_update_allowed = menu_platform_get_golden_boot_update_allowed;
         menu_platform.request_golden_boot_update = menu_platform_request_golden_boot_update;
+#ifdef APPLETINI_HTTP_SERVICE
+        menu_platform.get_online_update_status = menu_platform_get_online_update_status;
+        menu_platform.request_online_update_check = menu_platform_request_online_update_check;
+        menu_platform.request_online_update_download = menu_platform_request_online_update_download;
+        menu_platform.cancel_online_update = menu_platform_cancel_online_update;
+        menu_platform.request_online_update_install = menu_platform_request_online_update_install;
+#endif
         menu_platform.set_phasor_pan = control_set_phasor_pan;
         menu_platform.set_phasor_audio = control_set_phasor_audio;
         menu_platform.set_mouse_sensitivity = control_set_mouse_sensitivity;
@@ -4567,6 +4840,9 @@ int main(void)
         uart_putdec(UART0_BASE,(uint32_t)(http_rc < 0 ? -http_rc : http_rc));
         uart_puts(UART0_BASE,http_rc ? " (check SD, entropy and HTTPS settings)\r\n" : " ready\r\n");
     }
+#ifdef APPLETINI_HTTP_SERVICE
+    online_update_init(APPLETINI_FIRMWARE_IMAGE_VERSION_SHORT, g_installed_golden_version);
+#endif
     (void)usb_hid_service_init();
     // USB init clears input state after the saved profile has been loaded.
     // Restore its mapping before enumeration can deliver the first report.
@@ -4683,6 +4959,11 @@ int main(void)
         ui_sync_onee_menu_pause(&config_menu);
         boot_menu_service_refresh_machine_policy();
         control_refresh_machine_policy();
+#ifdef APPLETINI_HTTP_SERVICE
+        /* A takeover may skip the rest of this loop. Withdraw the updater's
+         * HTTP and SD ownership before that early continuation. */
+        control_service_online_update(&ui, &config_menu);
+#endif
         if (vtw_service_boot_start_pending() != 0U) {
             /* Keep RESET transport cleanup and HDMI alive during takeover.
              * USB enumeration and media work must not delay this first boot.
@@ -5110,7 +5391,13 @@ int main(void)
                 ui_update_fps(&ui);
             }
             usb0_priority_checkpoint();
+#ifdef APPLETINI_HTTP_SERVICE
+            if (ui_online_update_composite_due(&ui, &config_menu)) {
+                (void)compositor_tick();
+            }
+#else
             (void)compositor_tick();
+#endif
             usb0_priority_checkpoint();
         }
 

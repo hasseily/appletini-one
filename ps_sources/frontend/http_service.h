@@ -12,7 +12,11 @@ enum { HTTP_E_BUSY = -100, HTTP_E_ARGUMENT = -101, HTTP_E_IO = -102,
        HTTP_E_DNS = -106, HTTP_E_TIMEOUT = -107, HTTP_E_CANCELLED = -108,
        HTTP_E_REDIRECT = -109, HTTP_E_STORAGE_BUSY = -110,
        HTTP_E_NETWORK_NOT_READY = -111 };
-enum { HTTP_OWNER_NONE, HTTP_OWNER_NET, HTTP_OWNER_DOWNLOAD };
+enum { HTTP_OWNER_NONE, HTTP_OWNER_NET, HTTP_OWNER_DOWNLOAD, HTTP_OWNER_UPDATE };
+#define HTTP_DEFAULT_STREAM_BYTES 4096U
+#define HTTP_UPDATE_STREAM_BYTES  (128U * 1024U)
+#define HTTP_DEFAULT_IO_BYTES     512U
+#define HTTP_UPDATE_IO_BYTES      4096U
 typedef struct {
     const char *url, *method, *headers;
     const uint8_t *body;
@@ -30,6 +34,8 @@ typedef struct {
     uint8_t headers_ready, attachment, content_length_known;
     uint32_t content_length;
     char suggested_filename[HTTP_FILENAME_MAX];
+    /* Ethernet remains isolated from the Apple until normal RX map restores. */
+    uint8_t ethernet_restore_pending;
 } http_status_t;
 
 #ifdef APPLETINI_HTTP_SERVICE
@@ -46,10 +52,16 @@ const uint8_t *http_service_retained_owned(uint8_t owner, size_t *length);
 int http_service_cancel_owned(uint8_t owner);
 int http_service_release_owned(uint8_t owner);
 uint8_t http_service_getowner(void);
+/* Keep the physical Ethernet slot disabled while its NIC is owned, while
+ * remembering the latest configured enable bit for eventual restoration. */
+uint32_t http_service_filter_slot_mask(uint32_t desired);
 /* Atomically take an unread final 2xx NET stream, including buffered bytes.
  * No HTTP request is restarted. DOWNLOAD has a 30s idle / 24h total limit. */
 int http_service_handoff_download(void);
 void http_service_poll(void);
+/* Extra safe-menu pump: UPDATE owner only, clamps its slice to max_us.
+ * Zero does no work. One hardware/crypto operation can finish after the cap. */
+void http_service_poll_budget(uint32_t max_us);
 void http_service_cancel(void);
 void http_service_storage_busy(int busy);
 int http_service_active(void);
@@ -63,7 +75,9 @@ void http_service_console_begin(uint32_t uart);
 #else
 static inline int http_service_boot_prepare(void) { return 0; }
 static inline void http_service_poll(void) {}
+static inline void http_service_poll_budget(uint32_t us) { (void)us; }
 static inline int http_service_active(void) { return 0; }
+static inline uint32_t http_service_filter_slot_mask(uint32_t mask) { return mask; }
 static inline void http_service_storage_busy(int busy) { (void)busy; }
 static inline void http_service_clock(unsigned y,unsigned m,unsigned d,unsigned h,unsigned n,unsigned s,int v)
 { (void)y;(void)m;(void)d;(void)h;(void)n;(void)s;(void)v; }

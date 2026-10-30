@@ -26,6 +26,7 @@ uint16_t uthernet2_w5100_socket_reg(uint8_t socket, uint16_t offset)
 { return (uint16_t)(0x400U + socket * 0x100U + offset); }
 int uthernet2_read_reg(uint16_t address, uint8_t *out) { (void)address; *out = 0; return 0; }
 int uthernet2_write_reg(uint16_t address, uint8_t value) { (void)address; (void)value; return 0; }
+int uthernet2_w5100_set_rx_layout(uint8_t update_only) { (void)update_only; return 0; }
 int uthernet2_w5100_socket_command(uint8_t socket, uint8_t command) { (void)socket; (void)command; return 0; }
 int uthernet2_w5100_socket_status(uint8_t socket, uint8_t *out) { (void)socket; *out = socket_state; return 0; }
 int uthernet2_w5100_read16_stable(uint16_t address, uint16_t *out)

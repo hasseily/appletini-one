@@ -35,6 +35,7 @@
 #include "usb_errno.h"
 #include "usb_hid.h"
 #include "onee_usb_controls.h"
+#include "usb_keyboard_ascii.h"
 
 #include "../lib/uart.h"
 
@@ -94,6 +95,7 @@ typedef struct {
     uint8_t boot_mouse;
     uint8_t boot_keyboard;
     uint8_t keyboard_keys_down;
+    uint8_t keyboard_caps_lock;
     uint8_t raw_buttons_down;
     uint16_t raw_axis_active_mask;
     uint16_t raw_axis_rest_valid_mask;
@@ -156,6 +158,7 @@ static uint8_t g_ready;
 static uint8_t g_seq;
 static uint8_t g_sensitivity = MOUSE_SENSITIVITY_BASE;
 static uint8_t g_menu_capture;
+static uint8_t g_menu_text_capture;
 static uint8_t g_joystick_preview;
 static uint8_t g_binding_capture;
 static uint32_t g_gamepad_binding_mask;
@@ -465,6 +468,7 @@ static void mouse_menu_push_event(usb_hid_menu_action_t action,
     g_menu_events[g_menu_event_wr].action = action;
     g_menu_events[g_menu_event_wr].source = source;
     g_menu_events[g_menu_event_wr].fixed_action = USB_HID_MENU_ACTION_NONE;
+    g_menu_events[g_menu_event_wr].ascii = 0U;
     g_menu_event_wr = (uint8_t)((g_menu_event_wr + 1U) % MOUSE_MENU_EVENT_DEPTH);
     g_menu_event_count++;
 }
@@ -489,6 +493,16 @@ static usb_hid_menu_action_t mouse_menu_action_from_source(usb_hid_menu_source_t
 static void keyboard_menu_push_source(usb_hid_menu_source_t source)
 {
     mouse_menu_push_event(USB_HID_MENU_ACTION_NONE, source);
+}
+
+static void keyboard_menu_push_text(usb_hid_menu_source_t source, uint8_t ascii)
+{
+    if (ascii == 0U || g_menu_event_count >= MOUSE_MENU_EVENT_DEPTH) {
+        return;
+    }
+    const uint8_t index = g_menu_event_wr;
+    keyboard_menu_push_source(source);
+    g_menu_events[index].ascii = ascii;
 }
 
 static uint8_t screenshot_source_valid(usb_hid_menu_source_t source)
@@ -998,6 +1012,9 @@ static uint8_t hid_legacy_menu_buttons(const usb_hid_slot_t *slot)
 {
     uint8_t legacy = slot->generic_axes ? 0U :
         (uint8_t)(slot->gamepad_buttons & ~g_gamepad_binding_mask & 0x0cU);
+    if (g_menu_capture && g_menu_text_capture && !g_binding_capture) {
+        legacy &= (uint8_t)~(1U << USB_GAMEPAD_BUTTON_Y);
+    }
     if (g_menu_capture && !g_binding_capture && !g_joystick_preview &&
         !(g_gamepad_binding_mask & UINT32_C(0x30))) legacy &= (uint8_t)~0x10U;
     return (uint8_t)(slot->native_mouse_buttons | legacy);
@@ -1038,6 +1055,7 @@ static void gamepad_menu_push_fixed(usb_hid_menu_action_t fixed_action,
     g_menu_events[g_menu_event_wr].action = action;
     g_menu_events[g_menu_event_wr].source = source;
     g_menu_events[g_menu_event_wr].fixed_action = fixed_action;
+    g_menu_events[g_menu_event_wr].ascii = 0U;
     g_menu_event_wr = (uint8_t)((g_menu_event_wr + 1U) % MOUSE_MENU_EVENT_DEPTH);
     ++g_menu_event_count;
 }
@@ -1087,6 +1105,13 @@ static void gamepad_menu_process_buttons(usb_hid_slot_t *slot)
         const usb_hid_menu_action_t fixed_action = fixed ? gamepad_menu_fixed_button_action(button) : USB_HID_MENU_ACTION_NONE;
         const uint8_t physical_press = (fixed_pressed & bit) != 0U;
         if (!(pressed & bit) && !physical_press) continue;
+        if (fixed && g_menu_capture && g_menu_text_capture && !g_binding_capture &&
+            button == USB_GAMEPAD_BUTTON_Y) {
+            if (physical_press) {
+                gamepad_menu_push_fixed(USB_HID_MENU_ACTION_KEYBOARD, source);
+            }
+            continue;
+        }
         if (fixed_action != USB_HID_MENU_ACTION_NONE) {
             if (g_binding_capture) {
                 /* The consumer learns this source before any fixed action. */
@@ -1451,9 +1476,24 @@ static void hid_process_keyboard_usages(usb_hid_slot_t *slot,
                                HID_SOURCE_TRACK_COUNT) != 0U) {
             continue;
         }
+        const uint8_t usage =
+            (uint8_t)(next_sources[i] & USB_HID_MENU_SOURCE_KEY_MASK);
+        if (usage == HID_KBD_USAGE_CAPSLOCK) {
+            slot->keyboard_caps_lock ^= 1U;
+        }
+        if (g_menu_capture != 0U && g_menu_text_capture != 0U &&
+            g_binding_capture == 0U) {
+            keyboard_menu_push_text(next_sources[i],
+                usb_keyboard_text_from_usage(usage, modifier,
+                                              slot->keyboard_caps_lock));
+            /* Keep the fixed menu key available, but do not let name
+             * characters or modifiers fire saved shortcuts or OK holds. */
+            if (usage != HID_KBD_USAGE_PAUSE &&
+                usage != HID_KBD_USAGE_LGUI && usage != HID_KBD_USAGE_RGUI) {
+                continue;
+            }
+        }
         if (fixed_keyboard_mode != 0U) {
-            const uint8_t usage =
-                (uint8_t)(next_sources[i] & USB_HID_MENU_SOURCE_KEY_MASK);
             fixed_action = onee_usb_keyboard_action(
                 usage, modifier, g_menu_capture, fixed_keyboard_mode);
             fixed_route = onee_usb_fixed_route(usage, fixed_action);
@@ -2662,6 +2702,7 @@ int usb_hid_service_init(void)
     g_seq = 0U;
     g_sensitivity = MOUSE_SENSITIVITY_BASE;
     g_menu_capture = 0U;
+    g_menu_text_capture = 0U;
     g_binding_capture = 0U;
     g_gamepad_binding_mask = 0U;
     g_joystick_preview = 0U;
@@ -2817,6 +2858,32 @@ void usb_hid_service_set_menu_capture(uint8_t capture)
         g_x = (int32_t)(REG_READ(MOUSE_REG_X) & 0xFFFFU);
         g_y = (int32_t)(REG_READ(MOUSE_REG_Y) & 0xFFFFU);
         mouse_publish_state(1U, g_x, g_y, 0U);
+    }
+}
+
+void usb_hid_service_set_text_capture(uint8_t active)
+{
+    active = (active != 0U) ? 1U : 0U;
+    if (g_menu_text_capture == active) {
+        return;
+    }
+    g_menu_text_capture = active;
+    for (uint32_t i = 0U; i < USB_HID_SLOT_COUNT; ++i) {
+        usb_hid_slot_t *slot = &g_hid_slots[i];
+
+        /* A shortcut started before the editor opened must not fire on
+         * release or after a hold. Keep press edges and gamepad holds. */
+        if (usb_hid_menu_source_is_keyboard(slot->ok_down_source) != 0U) {
+            slot->ok_down = 0U;
+            slot->ok_hold_fired = 0U;
+            slot->ok_down_source = USB_HID_MENU_SOURCE_NONE;
+            slot->ok_down_action = USB_HID_MENU_ACTION_NONE;
+        }
+        if (usb_hid_menu_source_is_keyboard(slot->open_close_down_source) != 0U) {
+            slot->open_close_down = 0U;
+            slot->open_close_hold_fired = 0U;
+            slot->open_close_down_source = USB_HID_MENU_SOURCE_NONE;
+        }
     }
 }
 

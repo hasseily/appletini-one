@@ -439,6 +439,31 @@ uint8_t config_menu_printing_handle_input(config_menu_t *menu,
         return 0U;
     }
 
+    /* Physical typing works with the controller keyboard shown or hidden. */
+    if (input.ascii != 0U) {
+        switch (input.ascii) {
+        case 13U:
+            printout_rename_commit(menu);
+            break;
+        case 8U:
+        case 127U:
+            printout_editor_delete(menu);
+            break;
+        case 27U:
+            printout_editor_close(menu);
+            break;
+        default:
+            printout_editor_append(menu, input.ascii);
+            break;
+        }
+        return 1U;
+    }
+    if (input.key == UI_KEY_KEYBOARD) {
+        menu->printout_editor_virtual =
+            (menu->printout_editor_virtual == 0U) ? 1U : 0U;
+        return 1U;
+    }
+
     if (menu->printout_editor_virtual != 0U) {
         switch (input.key) {
         case UI_KEY_LEFT:
@@ -471,11 +496,6 @@ uint8_t config_menu_printing_handle_input(config_menu_t *menu,
         default:
             return 1U;
         }
-    }
-
-    if (input.ascii != 0U) {
-        printout_editor_append(menu, input.ascii);
-        return 1U;
     }
 
     switch (input.key) {
@@ -604,6 +624,9 @@ static void printout_draw_editor(uint16_t *fb,
                       CMUI_COLOR_ROW,
                       CMUI_BODY_SCALE);
 
+    cmui_text_clipped(fb, panel_x + 20, panel_y + panel_h - 38,
+                      panel_w - 40, "Type to edit | Y / Triangle: Keyboard",
+                      CMUI_COLOR_MUTED, CMUI_COLOR_PANEL, CMUI_SMALL_SCALE);
     if (menu->printout_editor_virtual == 0U) {
         return;
     }

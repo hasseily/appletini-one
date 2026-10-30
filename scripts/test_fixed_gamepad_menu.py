@@ -2,6 +2,8 @@
 """Run fixed controller and ONE//e keyboard consumers with real binding translators."""
 
 from pathlib import Path
+import hashlib
+import json
 import re
 import subprocess
 
@@ -37,6 +39,7 @@ def main() -> int:
 #include <stdio.h>
 #include <string.h>
 #include "usb_hid_service.h"
+#include "online_update_core.h"
 #define HID_KBD_USAGE_ERRUNDEF 3U
 #define HID_KBD_USAGE_MAX 0xE7U
 '''
@@ -51,6 +54,10 @@ typedef struct {
     uint8_t joystick_page_active, profile_carousel_active, profile_name_editor_active;
     uint8_t printout_action_active, printout_editor_active, printout_delete_confirm_active;
     uint8_t golden_boot_update_confirm, golden_boot_confirm_update;
+    uint8_t online_update_confirm, online_update_confirm_update;
+    uint8_t online_update_download_pending, online_update_install_pending;
+    uint8_t about_credits_active;
+    online_update_snapshot_t online_update;
     uint8_t usb_owned, onee_persist_retry_polls;
     unsigned tab, item_focus;
 } config_menu_t;
@@ -62,10 +69,14 @@ static ui_key_t keys[16];
 static unsigned key_count, captures, screenshots, speed_actions, notices;
 static unsigned opens, closes, rom_closes;
 static unsigned reader_closes, preview_clears, clamp_calls, clock_refreshes, golden_refreshes;
+static uint32_t g_about_credits_top,g_about_credits_rows,g_about_credits_visible;
+static unsigned compact_scroll_resets;
+static void cmui_compact_scroll(int delta) { assert(delta==-1000000);++compact_scroll_resets; }
 static uint8_t capture_on_enter, share_stop_pending;
 static usb_hid_menu_source_t captured_source;
 void config_menu_set_active(config_menu_t *menu, uint8_t active);
 static uint8_t config_menu_is_active(const config_menu_t *menu) { return menu->active; }
+static int http_download_active(void) { return 0; }
 static uint8_t config_menu_usb0_sd_remote_active(const config_menu_t *menu) { return menu->usb0_sd_remote_active; }
 static uint8_t config_menu_ethernet_ftp_sd_remote_active(const config_menu_t *menu) { return menu->ethernet_ftp_sd_remote_active; }
 static uint8_t config_menu_usb_binding_capture_action(const config_menu_t *menu) { return menu->usb_binding_capture; }
@@ -89,8 +100,7 @@ static void ui_handle_input_with_config(ui_state_t *state, config_menu_t *menu, 
 }
 static void ui_close_config_menu_child(ui_state_t *state, config_menu_t *menu)
 { ui_handle_input_with_config(state,menu,ui_make_input(UI_KEY_ESC)); }
-static uint8_t ui_config_menu_has_close_consumer(const config_menu_t *menu)
-{ return menu->browser_active || menu->usb0_sd_remote_active || menu->ethernet_ftp_sd_remote_active || menu->golden_boot_update_pending; }
+/* CLOSE_CONSUMER */
 static void ui_set_boot_menu_visible(ui_state_t *state, config_menu_t *menu, uint8_t active)
 {
     (void)state; config_menu_set_active(menu,active);
@@ -114,6 +124,7 @@ static void config_menu_retry_settings_if_needed(config_menu_t *menu) { (void)me
 static void config_menu_refresh_smartport_media_after_menu_sd(config_menu_t *menu) { (void)menu; }
 static void config_menu_stop_usb0_sd_remote(config_menu_t *menu) { menu->usb0_sd_remote_active=0U; }
 '''
+    code = code.replace("/* CLOSE_CONSUMER */", function(frontend, "ui_config_menu_has_close_consumer"))
     for name in ("k_usb_binding_keys", "k_usb_binding_source_order", "k_usb_binding_button_source_order"):
         code += array(menu, name)
     for name in ("usb_hid_menu_source_from_keyboard_usage", "usb_hid_menu_source_is_keyboard",
@@ -122,7 +133,7 @@ static void config_menu_stop_usb0_sd_remote(config_menu_t *menu) { menu->usb0_sd
     for name in ("config_menu_usb_binding_source_valid", "config_menu_translate_usb_fixed_action",
                  "config_menu_translate_usb_binding_explicit", "config_menu_translate_usb_binding"):
         code += function(menu, name)
-    for name in ("config_menu_browser_close", "config_menu_on_tab_entered",
+    for name in ("config_menu_about_reset_scroll", "config_menu_online_update_busy", "config_menu_browser_close", "config_menu_on_tab_entered",
                  "config_menu_prev_tab", "config_menu_next_tab", "config_menu_handle_usb_fixed_tab",
                  "config_menu_focus_onee_setup", "config_menu_set_active"):
         code += function(menu, name)
@@ -137,6 +148,7 @@ static void reset(config_menu_t *menu, ui_state_t *state)
     reader_closes=preview_clears=clamp_calls=clock_refreshes=golden_refreshes=0U;
     capture_on_enter=share_stop_pending=0U; captured_source=USB_HID_MENU_SOURCE_NONE;
     g_onee_standby_available=0U;
+    g_about_credits_top=g_about_credits_rows=g_about_credits_visible=compact_scroll_resets=0;
 }
 static void fixed(config_menu_t *menu, ui_state_t *state,
                   usb_hid_menu_action_t action, unsigned button, usb_hid_menu_action_t global)
@@ -284,6 +296,18 @@ static void test_fixed_tabs_leave_real_child_state(void)
     assert(!config_menu_handle_usb_fixed_tab(NULL,1));
     reset(&menu,&state); menu.active=0U;
     assert(!config_menu_handle_usb_fixed_tab(&menu,1));
+    reset(&menu,&state);menu.tab=CONFIG_TAB_ABOUT;menu.about_credits_active=1;
+    g_about_credits_top=7;g_about_credits_rows=90;g_about_credits_visible=8;
+    fixed(&menu,&state,USB_HID_MENU_ACTION_NEXT_TAB,5U,USB_HID_MENU_ACTION_NONE);
+    assert(menu.tab==CONFIG_TAB_PROFILES && !menu.about_credits_active && !key_count);
+    assert(!g_about_credits_top && !g_about_credits_rows && !g_about_credits_visible && compact_scroll_resets==1);
+    fixed(&menu,&state,USB_HID_MENU_ACTION_PREV_TAB,4U,USB_HID_MENU_ACTION_NONE);
+    assert(menu.tab==CONFIG_TAB_ABOUT && !menu.about_credits_active && compact_scroll_resets==2 && golden_refreshes==1);
+    reset(&menu,&state);menu.tab=CONFIG_TAB_ABOUT;menu.about_credits_active=1;
+    fixed(&menu,&state,USB_HID_MENU_ACTION_BACK,1U,USB_HID_MENU_ACTION_NONE);
+    assert(menu.active && !closes && key_count==1 && keys[0]==UI_KEY_BACK);
+    fixed(&menu,&state,USB_HID_MENU_ACTION_TOGGLE,10U,USB_HID_MENU_ACTION_NONE);
+    assert(!menu.active && !menu.about_credits_active && closes==1);
     puts("PASS fixed shoulders change actual tabs from joystick/browser children, preserve entry refreshes and modal safeguards");
 }
 static void test_fixed_keyboard_navigation(void)
@@ -384,7 +408,19 @@ int main(void)
         command.append("-static")
     command += ["-I", str(FRONT), str(source), "-o", str(executable)]
     subprocess.run(command, cwd=ROOT, check=True)
-    subprocess.run([str(executable)], cwd=ROOT, check=True)
+    result=subprocess.run([str(executable)], cwd=ROOT, check=True,
+                          capture_output=True,text=True,encoding="utf-8")
+    print(result.stdout,end="")
+    (OUT/"validation.json").write_text(json.dumps({
+        "hardware_test":False,"production_gamepad_dispatcher_and_close_consumer":True,
+        "ui_event_handler_mocked":True,
+        "coverage":"existing7groups plus actual About tab scroll resets, Back child routing and Home whole-menu close",
+        "source_sha256":{name:hashlib.sha256((FRONT/name).read_bytes()).hexdigest()
+                         for name in ("main.c","config_menu.c","config_menu.h","usb_hid_service.c")},
+        "test_script_sha256":hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "harness_sha256":hashlib.sha256(source.read_bytes()).hexdigest(),
+        "exit_code":result.returncode,"stdout":result.stdout,
+    },indent=2)+"\n",encoding="utf-8")
     return 0
 
 

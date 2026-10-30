@@ -31,11 +31,16 @@
 #define UDP_MODE 2U
 #define UDP_READY 0x22U
 #define REQUEST_MAX 4096U
-#define STREAM_RING 4096U
+#define STREAM_RING HTTP_DEFAULT_STREAM_BYTES
+#define UPDATE_STREAM_RING HTTP_UPDATE_STREAM_BYTES
 #define SLICE_US 750U
 #define SLICE_STEPS 32U
 #define IO_CALLS 8U
 #define IO_CHUNK 512U
+#define UPDATE_IO_CHUNK HTTP_UPDATE_IO_BYTES
+#define UPDATE_SLICE_US 2000U
+#define UPDATE_SLICE_STEPS 64U
+#define UPDATE_IO_CALLS 32U
 #define REQUEST_TIMEOUT 30000000ULL
 #ifndef HTTP_DOWNLOAD_IDLE_US
 #define HTTP_DOWNLOAD_IDLE_US 30000000ULL
@@ -51,10 +56,11 @@ static struct {
     http_url_t url;
     http_parser_t parser;
     char method[16], headers[2049], request[REQUEST_MAX];
-    uint8_t body[2048], receive[IO_CHUNK], stream[STREAM_RING], retained[HTTP_RETAIN_MAX];
+    uint8_t body[2048], receive[UPDATE_IO_CHUNK], stream[UPDATE_STREAM_RING], retained[HTTP_RETAIN_MAX];
     size_t body_length, sent, request_length, rx_at, rx_length, read_at, ring_at, ring_count;
     uint8_t dns[4], peer[4], credit, sending, owns_eth, redirects, strip_credentials;
     uint8_t crypto_ready, trust_ready, entropy_used, reseed_needed, owner;
+    uint8_t rx_update, rx_restore_needed, cancel_pending;
     uint8_t entropy[HTTP_SEED_BYTES];
     uint16_t source_port, dns_id;
     uint32_t saved_mask, io_bytes, consumed;
@@ -375,22 +381,40 @@ static int claim(void)
     g_http.saved_mask = REG_READ(CARD_CTRL_SLOT_ENABLE_REG);
     REG_WRITE(CARD_CTRL_SLOT_ENABLE_REG, g_http.saved_mask & ~(1UL << 1));
     g_http.owns_eth = 1;
+    g_http.rx_restore_needed = (uint8_t)(g_http.owner==HTTP_OWNER_UPDATE);
     for (unsigned i=0;i<4;++i) close_socket(i);
-    return uthernet2_write_reg(W5100_REG_RMSR,W5100_SOCKET_MEM_4_2_1_1) ||
-           uthernet2_write_reg(W5100_REG_TMSR,W5100_SOCKET_MEM_4_2_1_1) ? HTTP_E_IO : 0;
+    if (uthernet2_write_reg(W5100_REG_RMSR,W5100_SOCKET_MEM_4_2_1_1) ||
+        uthernet2_write_reg(W5100_REG_TMSR,W5100_SOCKET_MEM_4_2_1_1)) return HTTP_E_IO;
+    if (g_http.owner==HTTP_OWNER_UPDATE && uthernet2_w5100_set_rx_layout(0)) return HTTP_E_IO;
+    g_http.rx_update=g_http.rx_restore_needed=0;
+    return 0;
 }
-static void finish(int result)
+static int release_ethernet(void)
 {
     if (g_http.owns_eth) {
         close_socket(SOCKET_TCP); close_socket(SOCKET_DNS);
+        if (g_http.rx_restore_needed) {
+            close_socket(2U); close_socket(3U);
+            if (uthernet2_w5100_set_rx_layout(0)) {
+                g_http.status.ethernet_restore_pending=1;
+                return HTTP_E_IO;
+            }
+            g_http.rx_update=g_http.rx_restore_needed=0;
+        }
         uint32_t mask = REG_READ(CARD_CTRL_SLOT_ENABLE_REG);
         REG_WRITE(CARD_CTRL_SLOT_ENABLE_REG,(mask & ~(1UL << 1)) | (g_http.saved_mask & (1UL << 1)));
         g_http.owns_eth = 0;
     }
+    g_http.status.ethernet_restore_pending=0;
+    return 0;
+}
+static void finish(int result)
+{
+    int restored=release_ethernet();
     if (g_http.url.tls) g_http.status.verify = mbedtls_ssl_get_verify_result(&g_http.ssl);
-    g_http.status.result = result;
+    g_http.status.result = result?result:restored;
     if (result && g_http.status.retained) g_http.ring_count = g_http.read_at = 0;
-    g_http.status.state = result ? HTTP_S_FAILED : HTTP_S_DONE;
+    g_http.status.state = result || restored ? HTTP_S_FAILED : HTTP_S_DONE;
     g_http.completed = microseconds();
     mbedtls_ssl_free(&g_http.ssl);
     mbedtls_ssl_init(&g_http.ssl);
@@ -398,18 +422,30 @@ static void finish(int result)
 int http_service_active(void)
 { return g_http.status.state >= HTTP_S_PREPARE && g_http.status.state <= HTTP_S_READ; }
 uint8_t http_service_getowner(void) { return g_http.owner; }
+uint32_t http_service_filter_slot_mask(uint32_t desired)
+{
+    const uint32_t ethernet=1UL<<1;
+    if (!g_http.owns_eth) return desired;
+    g_http.saved_mask=(g_http.saved_mask&~ethernet)|(desired&ethernet);
+    return desired&~ethernet;
+}
 int http_service_cancel_owned(uint8_t owner)
 {
     if (owner != g_http.owner) return HTTP_E_BUSY;
     if (http_service_active()) finish(HTTP_E_CANCELLED);
+    if (g_http.owns_eth && release_ethernet()) {
+        g_http.cancel_pending=1;
+        return HTTP_E_IO;
+    }
     g_http.ring_count = g_http.read_at = 0;
     g_http.owner = HTTP_OWNER_NONE; g_http.download_idle = 0;
+    g_http.cancel_pending=0;
     return 0;
 }
 void http_service_cancel(void) { (void)http_service_cancel_owned(HTTP_OWNER_NONE); }
 int http_service_release_owned(uint8_t owner)
 {
-    if (owner != g_http.owner || http_service_active() ||
+    if (owner != g_http.owner || http_service_active() || g_http.owns_eth ||
         (g_http.status.retained ? g_http.ring_count != g_http.read_at : g_http.ring_count != 0)) return HTTP_E_BUSY;
     g_http.owner = HTTP_OWNER_NONE; g_http.download_idle = 0;
     return 0;
@@ -445,7 +481,8 @@ static int socket_send(void *ctx, const unsigned char *bytes, size_t length)
     }
     if (uthernet2_w5100_read16_stable(uthernet2_w5100_socket_reg(SOCKET_TCP,W5100_SN_TX_FSR),&room)) return HTTP_E_IO;
     if (!room) return MBEDTLS_ERR_SSL_WANT_WRITE;
-    if (length > IO_CHUNK) length = IO_CHUNK;
+    const size_t chunk=g_http.owner==HTTP_OWNER_UPDATE?UPDATE_IO_CHUNK:IO_CHUNK;
+    if (length > chunk) length = chunk;
     if (length > room) length = room;
     if (uthernet2_w5100_read16(uthernet2_w5100_socket_reg(SOCKET_TCP,W5100_SN_TX_WR),&pointer) ||
         uthernet2_w5100_socket_ring_write(SOCKET_TCP,pointer,bytes,(uint16_t)length) ||
@@ -465,14 +502,16 @@ static int socket_receive(void *ctx, unsigned char *bytes, size_t length)
         if (uthernet2_w5100_socket_status(SOCKET_TCP,&status)) return HTTP_E_IO;
         return status == W5100_SR_CLOSED || status == W5100_SR_CLOSE_WAIT ? 0 : MBEDTLS_ERR_SSL_WANT_READ;
     }
-    if (length > IO_CHUNK) length = IO_CHUNK;
+    const size_t chunk=g_http.owner==HTTP_OWNER_UPDATE?UPDATE_IO_CHUNK:IO_CHUNK;
+    if (length > chunk) length = chunk;
     if (available > length) available = (uint16_t)length;
     if (uthernet2_w5100_read16(uthernet2_w5100_socket_reg(SOCKET_TCP,W5100_SN_RX_RD),&pointer) ||
         uthernet2_w5100_socket_ring_read(SOCKET_TCP,pointer,bytes,available) ||
         uthernet2_w5100_write16(uthernet2_w5100_socket_reg(SOCKET_TCP,W5100_SN_RX_RD),(uint16_t)(pointer + available)) ||
         uthernet2_w5100_socket_command(SOCKET_TCP,W5100_CR_RECV)) return HTTP_E_IO;
     g_http.io_bytes += available;
-    if (g_http.owner == HTTP_OWNER_DOWNLOAD) g_http.download_idle = microseconds() + HTTP_DOWNLOAD_IDLE_US;
+    if (g_http.owner == HTTP_OWNER_DOWNLOAD || g_http.owner == HTTP_OWNER_UPDATE)
+        g_http.download_idle = microseconds() + HTTP_DOWNLOAD_IDLE_US;
     return available;
 }
 static int body_sink(void *ctx, const uint8_t *data, size_t length)
@@ -483,8 +522,13 @@ static int body_sink(void *ctx, const uint8_t *data, size_t length)
         if (length > HTTP_RETAIN_MAX - g_http.ring_count) return -1;
         memcpy(g_http.retained + g_http.ring_count,data,length); g_http.ring_count += length;
     } else {
-        if (length > STREAM_RING - g_http.ring_count) return 1;
-        for (size_t i=0;i<length;++i) g_http.stream[(g_http.ring_at + g_http.ring_count + i) % STREAM_RING] = data[i];
+        const size_t capacity=g_http.owner==HTTP_OWNER_UPDATE?UPDATE_STREAM_RING:STREAM_RING;
+        if (length > capacity - g_http.ring_count) return 1;
+        const size_t at=(g_http.ring_at+g_http.ring_count)&(capacity-1U);
+        size_t first=capacity-at;
+        if (first>length) first=length;
+        memcpy(g_http.stream+at,data,first);
+        memcpy(g_http.stream,data+first,length-first);
         g_http.ring_count += length;
     }
     return 0;
@@ -496,8 +540,12 @@ size_t http_service_read_owned(uint8_t owner, uint8_t *out, size_t capacity)
     if (n > capacity) n = capacity;
     if (g_http.status.retained) { memcpy(out,g_http.retained + g_http.read_at,n); g_http.read_at += n; }
     else {
-        for (size_t i=0;i<n;++i) out[i] = g_http.stream[(g_http.ring_at + i) % STREAM_RING];
-        g_http.ring_at = (g_http.ring_at + n) % STREAM_RING; g_http.ring_count -= n;
+        const size_t ring_capacity=g_http.owner==HTTP_OWNER_UPDATE?UPDATE_STREAM_RING:STREAM_RING;
+        size_t first=ring_capacity-g_http.ring_at;
+        if (first>n) first=n;
+        memcpy(out,g_http.stream+g_http.ring_at,first);
+        memcpy(out+first,g_http.stream,n-first);
+        g_http.ring_at = (g_http.ring_at + n)&(ring_capacity-1U); g_http.ring_count -= n;
     }
     g_http.consumed += (uint32_t)n;
     return n;
@@ -537,6 +585,12 @@ static int begin_connection(void)
 {
     uint8_t random[4];
     if (random_bytes(&g_http.drbg,random,sizeof(random))) return HTTP_E_SEED;
+    /* A redirect may need DNS on S1, which has no RX space in UPDATE mode. */
+    if (g_http.rx_restore_needed) {
+        close_socket(SOCKET_TCP);close_socket(SOCKET_DNS);
+        if (uthernet2_w5100_set_rx_layout(0)) return HTTP_E_IO;
+        g_http.rx_update=g_http.rx_restore_needed=0;
+    }
     g_http.source_port = (uint16_t)(49152U + ((((unsigned)random[0] << 8) | random[1]) & 16383U));
     g_http.dns_id = (uint16_t)(((unsigned)random[2] << 8) | random[3]);
     g_http.sent = g_http.rx_at = g_http.rx_length = 0; g_http.sending = 0; g_http.connect_at = 0;
@@ -579,8 +633,8 @@ static int redirect(void)
 int http_service_start_owned(const http_request_t *request, uint8_t owner)
 {
     http_url_t parsed;
-    if (owner > HTTP_OWNER_NET) return HTTP_E_ARGUMENT;
-    if (g_http.owner != HTTP_OWNER_NONE || http_service_active() || console.active) return HTTP_E_BUSY;
+    if (owner > HTTP_OWNER_NET && owner != HTTP_OWNER_UPDATE) return HTTP_E_ARGUMENT;
+    if (g_http.owner != HTTP_OWNER_NONE || g_http.owns_eth || http_service_active() || console.active) return HTTP_E_BUSY;
     if (storage_busy || ftp_sd_service_active() || usb_sdd_service_active()) return HTTP_E_STORAGE_BUSY;
     if (!request || !request->url || !request->method || request->body_length > sizeof(g_http.body) ||
         (request->body_length && !request->body) || strlen(request->method) >= sizeof(g_http.method) ||
@@ -597,9 +651,14 @@ int http_service_start_owned(const http_request_t *request, uint8_t owner)
     g_http.status.retained = request->retain != 0;
     g_http.ring_at = g_http.ring_count = g_http.read_at = 0;
     g_http.owner = owner; g_http.consumed = 0; g_http.download_idle = 0;
+    g_http.rx_update=g_http.rx_restore_needed=g_http.cancel_pending=0;
     g_http.redirects = g_http.strip_credentials = 0;
     memset(&g_http.parser,0,sizeof(g_http.parser));
     g_http.started = microseconds(); g_http.completed = 0; g_http.deadline = g_http.started + REQUEST_TIMEOUT;
+    if (owner == HTTP_OWNER_UPDATE && request->retain == 0U) {
+        g_http.deadline = g_http.started + HTTP_DOWNLOAD_TOTAL_US;
+        g_http.download_idle = g_http.started + HTTP_DOWNLOAD_IDLE_US;
+    }
     g_http.status.verify = UINT32_MAX;
     g_http.status.state = HTTP_S_PREPARE;
     return 0;
@@ -668,7 +727,15 @@ static int step(void)
     if (g_http.status.state == HTTP_S_OPEN) {
         if (microseconds() < g_http.connect_at) return MBEDTLS_ERR_SSL_WANT_WRITE;
         close_socket(SOCKET_TCP);
-        if (uthernet2_write_reg(uthernet2_w5100_socket_reg(SOCKET_TCP,W5100_SN_MR),W5100_SN_MR_TCP) ||
+        if (g_http.owner==HTTP_OWNER_UPDATE && !g_http.rx_update) {
+            g_http.rx_restore_needed=1;
+            if (uthernet2_w5100_set_rx_layout(1)) return HTTP_E_IO;
+            g_http.rx_update=1;
+        }
+        /* W5100S 4.3.3: ND sends TCP ACKs immediately instead of waiting for
+         * RTR/window growth. Only the safe-menu updater changes this policy. */
+        const uint8_t mode=W5100_SN_MR_TCP | (g_http.owner==HTTP_OWNER_UPDATE?W5100_SN_MR_ND:0U);
+        if (uthernet2_write_reg(uthernet2_w5100_socket_reg(SOCKET_TCP,W5100_SN_MR),mode) ||
             uthernet2_w5100_write16(uthernet2_w5100_socket_reg(SOCKET_TCP,W5100_SN_PORT),g_http.source_port) ||
             uthernet2_w5100_socket_command(SOCKET_TCP,W5100_CR_OPEN)) return HTTP_E_IO;
         g_http.status.state = HTTP_S_CONNECT; g_http.sending = 0; return 0;
@@ -745,8 +812,9 @@ static int step(void)
     }
     if (g_http.status.state == HTTP_S_READ) {
         if (g_http.rx_at == g_http.rx_length) {
-            result = g_http.url.tls ? mbedtls_ssl_read(&g_http.ssl,g_http.receive,sizeof(g_http.receive)) :
-                                      socket_receive(NULL,g_http.receive,sizeof(g_http.receive));
+            const size_t chunk=g_http.owner==HTTP_OWNER_UPDATE?UPDATE_IO_CHUNK:IO_CHUNK;
+            result = g_http.url.tls ? mbedtls_ssl_read(&g_http.ssl,g_http.receive,chunk) :
+                                      socket_receive(NULL,g_http.receive,chunk);
             if (result == 0 || result == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
                 if (http_parser_eof(&g_http.parser) != HTTP_COMPLETE) return HTTP_FORMAT;
                 result = redirect(); if (result == 1) finish(0); return result < 0 ? result : 0;
@@ -795,12 +863,21 @@ static void console_poll(void)
         mbedtls_sha256_free(&console.hash); console.active = 0;
     }
 }
-void http_service_poll(void)
+static void poll_http(uint32_t max_us)
 {
+    if (!http_service_active() && g_http.status.ethernet_restore_pending &&
+        !release_ethernet() && g_http.cancel_pending) {
+        g_http.ring_count=g_http.read_at=0;
+        g_http.owner=HTTP_OWNER_NONE;g_http.download_idle=0;g_http.cancel_pending=0;
+    }
     if (http_service_active()) {
         uint64_t start = microseconds();
-        g_http.credit = IO_CALLS;
-        for (unsigned i=0;i<SLICE_STEPS && http_service_active();++i) {
+        const int update=g_http.owner==HTTP_OWNER_UPDATE;
+        const unsigned steps=update?UPDATE_SLICE_STEPS:SLICE_STEPS;
+        unsigned slice=update?UPDATE_SLICE_US:SLICE_US;
+        if (update && max_us && max_us<slice) slice=max_us;
+        g_http.credit = update?UPDATE_IO_CALLS:IO_CALLS;
+        for (unsigned i=0;i<steps && http_service_active();++i) {
             uint64_t before = microseconds();
             uint8_t old_state = g_http.status.state;
             uint32_t bytes = g_http.io_bytes;
@@ -814,12 +891,20 @@ void http_service_poll(void)
             if (result < 0 && result != MBEDTLS_ERR_SSL_WANT_READ && result != MBEDTLS_ERR_SSL_WANT_WRITE && result != MBEDTLS_ERR_SSL_CRYPTO_IN_PROGRESS) { finish(result); break; }
             if ((result == MBEDTLS_ERR_SSL_WANT_READ || result == MBEDTLS_ERR_SSL_WANT_WRITE) &&
                 (g_http.io_bytes == bytes || !g_http.credit)) break;
-            if (old_state < HTTP_S_HANDSHAKE || microseconds() - start >= SLICE_US) break;
+            if (old_state < HTTP_S_HANDSHAKE || microseconds() - start >= slice) break;
         }
         maximum(&g_http.status.max_slice_us,microseconds() - start);
     }
+}
+void http_service_poll(void)
+{
+    poll_http(0U);
     console_poll();
     http_bench_poll();
+}
+void http_service_poll_budget(uint32_t max_us)
+{
+    if (max_us && g_http.owner==HTTP_OWNER_UPDATE) poll_http(max_us);
 }
 
 #ifdef APPLETINI_HTTP_DIAGNOSTICS

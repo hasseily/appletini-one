@@ -21,6 +21,9 @@
 #include "display_modes.h"
 #include "printer_service.h"
 #include "http_download.h"
+#ifdef APPLETINI_HTTP_SERVICE
+#include "online_update_service.h"
+#endif
 #include "profile_manager.h"
 #include "onee_fixed_mode.h"
 #include "../image_versions.h"
@@ -298,10 +301,29 @@ static const char * const k_about_third_party[] = {
     "Mockingboard/Phasor reference - Tom Charlesworth",
     "z80emu - Lin Ke-Fong",
     "AD8088 Reboot Camp '83 - Seth Kushniryk",
-    "",
-    "And in no particular order: Peter Ferrie, John Brooks, fenarinarsa, Jansky, the Paris a2cp",
-    "fatdog, 4am, arekkusu, MAME, Infinitum, the Apple II discords and so many more..."
+    "The MAME Project - MAME emulator by Nicola Salmoria and others",
+    "The MiSTer Project - MiSTer FPGA by Sorgelig and others",
+    "And in no particular order:",
+    "  Peter Ferrie, John Brooks, fenarinarsa, Jansky, the Paris a2cp, Baz,",
+    "  fatdog, 4am, arekkusu, Infinitum, the Apple II discords and so many more..."
 };
+
+/* CPU0's most recently drawn wide credit viewport. Keeping this display
+ * cache separate lets the public draw callback retain its const menu API. */
+static uint32_t g_about_credits_top;
+static uint32_t g_about_credits_rows;
+static uint32_t g_about_credits_visible;
+
+uint32_t config_menu_about_credits_offset(void)
+{
+    return g_about_credits_top;
+}
+
+static void config_menu_about_reset_scroll(void)
+{
+    g_about_credits_top = g_about_credits_rows = g_about_credits_visible = 0U;
+    cmui_compact_scroll(-1000000);
+}
 
 static const char * const k_usb_binding_config_keys[CONFIG_MENU_USB_BIND_ACTION_COUNT] = {
     "usb.menu.bind.up",
@@ -1364,7 +1386,11 @@ FRESULT config_menu_mount_sd(void)
     FRESULT fr;
 
     /* Registering a different FATFS invalidates the download's live FIL. */
-    if (http_download_active()) {
+    if (http_download_active()
+#ifdef APPLETINI_HTTP_SERVICE
+        || online_update_active()
+#endif
+        ) {
         return FR_LOCKED;
     }
     fr = f_mount(&g_config_fs, "0:/", 1U);
@@ -2135,6 +2161,7 @@ ui_key_t config_menu_translate_usb_fixed_action(usb_hid_menu_action_t action)
     case USB_HID_MENU_ACTION_PREV_TAB: return UI_KEY_SHIFT_TAB;
     case USB_HID_MENU_ACTION_NEXT_TAB: return UI_KEY_TAB;
     case USB_HID_MENU_ACTION_BACK: return UI_KEY_BACK;
+    case USB_HID_MENU_ACTION_KEYBOARD: return UI_KEY_KEYBOARD;
     default: return UI_KEY_NONE;
     }
 }
@@ -3023,7 +3050,11 @@ void config_menu_refresh_smartport_media_after_menu_sd(config_menu_t *menu)
     if (menu->active == 0U && g_deferred_smartport_refresh != menu) {
         return;
     }
-    if (http_download_active()) {
+    if (http_download_active()
+#ifdef APPLETINI_HTTP_SERVICE
+        || online_update_active()
+#endif
+        ) {
         g_deferred_smartport_refresh = menu;
         return;
     }
@@ -3072,6 +3103,13 @@ static void config_menu_apply_disk2_sound(config_menu_t *menu)
 static uint8_t config_menu_ethernet_card_access(config_menu_t *menu)
 {
     if (menu == NULL) {
+        return 0U;
+    }
+    if (menu->online_update.state == ONLINE_UPDATE_CHECKING ||
+        menu->online_update.state == ONLINE_UPDATE_DOWNLOADING ||
+        menu->online_update.state == ONLINE_UPDATE_VERIFYING ||
+        menu->online_update_download_pending != 0U || menu->online_update_install_pending != 0U) {
+        config_menu_set_status(menu, 1U, "FINISH OR CANCEL ONLINE UPDATE FIRST");
         return 0U;
     }
     if (menu->ethernet_slot1_enabled == 0U) {
@@ -3935,14 +3973,13 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                                             path_val, sizeof(path_val))
                    : "FIRMWARE");
 
-    /* ONE//e selection and virtual video standard are global choices. A
-     * profile load must never change either one. */
+    /* The standalone enable latch belongs only to the working config. */
     if (strcmp(path, APPLETINI_CFG_PATH) == 0) {
-        APPEND_CFG("onee.standalone.persisted=%s\n"
-                   "onee.video.standard=%s\n",
-                   config_menu_on_off(menu->onee_persisted_enabled),
-                   (menu->onee_video_50hz != 0U) ? "PAL" : "NTSC");
+        APPEND_CFG("onee.standalone.persisted=%s\n",
+                   config_menu_on_off(menu->onee_persisted_enabled));
     }
+    APPEND_CFG("onee.video.standard=%s\n",
+               (menu->onee_video_50hz != 0U) ? "PAL" : "NTSC");
 
     APPEND_CFG("video.rom=%s\n",
                (menu->video_rom_path[0] != '\0')
@@ -4198,6 +4235,198 @@ void config_menu_golden_boot_update_finished(config_menu_t *menu, const char *er
     config_menu_refresh_golden_boot(menu);
     config_menu_set_status(menu, 1U,
         error != NULL && error[0] != '\0' ? error : "GOLDEN BOOT UPDATE FAILED");
+}
+
+static uint8_t config_menu_online_update_busy(const config_menu_t *menu)
+{
+    return menu->online_update_download_pending != 0U ||
+        menu->online_update_install_pending != 0U ||
+        menu->online_update.state == ONLINE_UPDATE_DOWNLOADING ||
+        menu->online_update.state == ONLINE_UPDATE_VERIFYING;
+}
+
+uint8_t config_menu_poll_online_update(config_menu_t *menu)
+{
+    online_update_snapshot_t status;
+    online_update_snapshot_t comparison;
+    uint8_t changed;
+    uint8_t redraw;
+    uint8_t previous_state;
+    if (menu == NULL || menu->platform.get_online_update_status == NULL) {
+        return 0U;
+    }
+    memset(&status, 0, sizeof(status));
+    menu->platform.get_online_update_status(menu->platform.ctx, &status);
+    status.installed_f[sizeof(status.installed_f) - 1U] = '\0';
+    status.installed_b[sizeof(status.installed_b) - 1U] = '\0';
+    status.latest_f[sizeof(status.latest_f) - 1U] = '\0';
+    status.latest_b[sizeof(status.latest_b) - 1U] = '\0';
+    status.detail[sizeof(status.detail) - 1U] = '\0';
+    status.stage[sizeof(status.stage) - 1U] = '\0';
+    changed = (uint8_t)(memcmp(&menu->online_update, &status, sizeof(status)) != 0);
+    comparison = menu->online_update;
+    comparison.received = status.received;
+    comparison.total = status.total;
+    comparison.elapsed_ms = status.elapsed_ms;
+    comparison.bytes_per_second = status.bytes_per_second;
+    comparison.sd_writes = status.sd_writes;
+    redraw = (uint8_t)(memcmp(&comparison, &status, sizeof(status)) != 0);
+    previous_state = menu->online_update.state;
+    menu->online_update = status;
+    if (previous_state != status.state && (status.state == ONLINE_UPDATE_CHECKING ||
+        status.state == ONLINE_UPDATE_DOWNLOADING)) {
+        menu->online_update_ui_error[0] = '\0';
+    }
+    if (changed != 0U && (status.state == ONLINE_UPDATE_FAILED ||
+        status.state == ONLINE_UPDATE_CANCELLED || status.state == ONLINE_UPDATE_READY ||
+        (previous_state != status.state && (status.state == ONLINE_UPDATE_CURRENT ||
+                                           status.state == ONLINE_UPDATE_AVAILABLE)))) {
+        menu->online_update_download_pending = 0U;
+        if (status.state != ONLINE_UPDATE_READY) {
+            menu->online_update_install_pending = 0U;
+        }
+        config_menu_set_status(menu, status.state == ONLINE_UPDATE_FAILED,
+            status.detail[0] != '\0' ? status.detail :
+            (status.state == ONLINE_UPDATE_READY ? "UPDATE DOWNLOADED AND VERIFIED" :
+             status.state == ONLINE_UPDATE_CANCELLED ? "UPDATE CANCELLED" :
+             status.state == ONLINE_UPDATE_CURRENT ? "NO NEWER STABLE UPDATE" :
+             status.state == ONLINE_UPDATE_AVAILABLE ? "UPDATE AVAILABLE" : "UPDATE FAILED"));
+    }
+    /* Main paints progress periodically using its monotonic clock. Counter
+     * changes alone must not turn every socket read into a full UI redraw. */
+    return redraw;
+}
+
+void config_menu_online_update_finished(config_menu_t *menu, const char *error)
+{
+    if (menu == NULL) {
+        return;
+    }
+    menu->online_update_confirm = 0U;
+    menu->online_update_confirm_update = 0U;
+    menu->online_update_download_pending = 0U;
+    menu->online_update_install_pending = 0U;
+    config_menu_refresh_golden_boot(menu);
+    (void)config_menu_poll_online_update(menu);
+    config_menu_set_status(menu, 1U,
+        error != NULL && error[0] != '\0' ? error : "UPDATE INSTALL FAILED");
+    (void)snprintf(menu->online_update_ui_error,
+        sizeof(menu->online_update_ui_error), "%s", menu->status);
+}
+
+static void config_menu_start_online_update(config_menu_t *menu, uint8_t kind)
+{
+    const uint8_t staged = (uint8_t)(menu->online_update.state == ONLINE_UPDATE_READY &&
+                                    menu->online_update.kind == kind);
+    config_menu_refresh_golden_boot(menu);
+    if (config_menu_online_update_busy(menu) != 0U || kind >= ONLINE_UPDATE_KIND_COUNT) {
+        return;
+    }
+    if (menu->golden_boot_update_allowed == 0U) {
+        config_menu_set_status(menu, 1U, "UPDATE FROM INITIAL BOOT MENU OR ISOLATED ONE//e");
+        return;
+    }
+    if ((staged == 0U && ((menu->online_update.available_mask & (1U << kind)) == 0U ||
+         menu->platform.request_online_update_download == NULL)) ||
+        (staged != 0U && menu->platform.request_online_update_install == NULL)) {
+        config_menu_set_status(menu, 1U, "CHECK FOR UPDATES FIRST");
+        return;
+    }
+    menu->online_update_confirm = 1U;
+    menu->online_update_confirm_update = 0U;
+    menu->online_update_confirm_kind = kind;
+    menu->online_update_confirm_install = staged;
+    config_menu_set_status(menu, 0U, staged != 0U ?
+        "CONFIRM INSTALL AND RESTART" : "CONFIRM DOWNLOAD, INSTALL AND RESTART");
+}
+
+static void config_menu_online_update_check(config_menu_t *menu)
+{
+    if (menu->online_update.state == ONLINE_UPDATE_CHECKING) {
+        if (menu->platform.cancel_online_update != NULL) {
+            menu->platform.cancel_online_update(menu->platform.ctx);
+        }
+        return;
+    }
+    if (config_menu_online_update_busy(menu) != 0U) {
+        return;
+    }
+    if (menu->platform.request_online_update_check == NULL ||
+        menu->platform.request_online_update_check(menu->platform.ctx) != 0) {
+        config_menu_set_status(menu, 1U, "UPDATE CHECK UNAVAILABLE");
+    } else {
+        menu->online_update_ui_error[0] = '\0';
+        config_menu_set_status(menu, 0U, "CHECKING STABLE GITHUB RELEASE");
+    }
+}
+
+static uint8_t config_menu_online_update_handle_input(config_menu_t *menu, ui_input_t input)
+{
+    if (config_menu_online_update_busy(menu) != 0U) {
+        if (menu->online_update_install_pending == 0U &&
+            (input.key == UI_KEY_ESC || input.key == UI_KEY_BACK ||
+             input.key == UI_KEY_MENU || input.key == UI_KEY_ENTER) &&
+            menu->platform.cancel_online_update != NULL) {
+            menu->platform.cancel_online_update(menu->platform.ctx);
+            config_menu_set_status(menu, 0U, "CANCELLING UPDATE DOWNLOAD");
+        }
+        return 1U;
+    }
+    if (menu->online_update_confirm == 0U) {
+        return 0U;
+    }
+    switch (input.key) {
+    case UI_KEY_ESC:
+    case UI_KEY_BACK:
+    case UI_KEY_MENU:
+        menu->online_update_confirm = 0U;
+        menu->online_update_confirm_update = 0U;
+        config_menu_set_status(menu, 0U, "UPDATE CANCELLED");
+        break;
+    case UI_KEY_LEFT:
+    case UI_KEY_UP:
+    case UI_KEY_SHIFT_TAB:
+        menu->online_update_confirm_update = 0U;
+        break;
+    case UI_KEY_RIGHT:
+    case UI_KEY_DOWN:
+    case UI_KEY_TAB:
+        menu->online_update_confirm_update = 1U;
+        break;
+    case UI_KEY_ENTER:
+        if (menu->online_update_confirm_update == 0U) {
+            menu->online_update_confirm = 0U;
+            config_menu_set_status(menu, 0U, "UPDATE CANCELLED");
+        } else {
+            const uint8_t kind = menu->online_update_confirm_kind;
+            const uint8_t install = menu->online_update_confirm_install;
+            int result = -1;
+            config_menu_refresh_golden_boot(menu);
+            if (menu->golden_boot_update_allowed == 0U) {
+                config_menu_online_update_finished(menu, "UPDATE NO LONGER SAFE; RETURN TO INITIAL BOOT MENU");
+                break;
+            }
+            if (install != 0U && menu->platform.request_online_update_install != NULL) {
+                result = menu->platform.request_online_update_install(menu->platform.ctx, kind);
+            } else if (install == 0U && menu->platform.request_online_update_download != NULL) {
+                result = menu->platform.request_online_update_download(menu->platform.ctx, kind);
+            }
+            menu->online_update_confirm = 0U;
+            if (result != 0) {
+                config_menu_online_update_finished(menu, "UPDATE REQUEST FAILED");
+            } else {
+                menu->online_update_ui_error[0] = '\0';
+                menu->online_update_install_pending = install;
+                menu->online_update_download_pending = (uint8_t)(install == 0U);
+                config_menu_set_status(menu, 0U, install != 0U ?
+                    "SAVING MEDIA AND INSTALLING UPDATE" : "DOWNLOADING UPDATE; BACK CANCELS");
+            }
+        }
+        break;
+    default:
+        break;
+    }
+    return 1U;
 }
 
 static void config_menu_start_golden_boot_update(config_menu_t *menu)
@@ -4607,8 +4836,7 @@ static void config_menu_reset_settings_only(config_menu_t *menu)
 
     menu->boot_timeout_mode = CONFIG_DEFAULT_BOOT_TIMEOUT_MODE;
     menu->boot_device = CONFIG_DEFAULT_BOOT_DEVICE;
-    /* Keep onee_video_50hz: like the ONE//e enable latch, it is global and a
-     * profile reset must not replace it with a profile-local default. */
+    menu->onee_video_50hz = CONFIG_DEFAULT_ONEE_VIDEO_50HZ;
     menu->output_mode = DISPLAY_MODE_DEFAULT;
     menu->size_multiplier = 0U;
     menu->scanlines_mode = CONFIG_DEFAULT_SCANLINES_MODE;
@@ -4751,10 +4979,9 @@ static uint8_t config_menu_read_settings_from_path(config_menu_t *menu,
             if (strcmp(key, "appletini.config.version") == 0) {
                 cfg_version = (uint32_t)strtoul(value, NULL, 10);
             }
-            /* ONE//e state and video standard are global. Ignore copied,
-             * hand-edited, or future profile keys for both choices. */
-            if (strcmp(key, "onee.standalone.persisted") != 0 &&
-                strcmp(key, "onee.video.standard") != 0) {
+            /* Profiles restore video cadence without changing the
+             * standalone enable latch. */
+            if (strcmp(key, "onee.standalone.persisted") != 0) {
                 config_menu_parse_key_value(menu, key, value);
             }
         }
@@ -5380,7 +5607,7 @@ static uint32_t config_menu_tab_item_count(const config_menu_t *menu)
     case CONFIG_TAB_PRINTING:
         return CONFIG_PRINTING_ITEM_COUNT;
     case CONFIG_TAB_ABOUT:
-        return menu->golden_boot_file_present != 0U ? 1U : 0U;
+        return menu->golden_boot_file_present != 0U ? 4U : 3U;
     case CONFIG_TAB_CLOCK:
         return 9U;
     default:
@@ -5529,6 +5756,8 @@ static void config_menu_clamp_item(config_menu_t *menu)
 
 static void config_menu_on_tab_entered(config_menu_t *menu)
 {
+    menu->about_credits_active = 0U;
+    config_menu_about_reset_scroll();
     if (menu->tab == CONFIG_TAB_ABOUT) {
         config_menu_refresh_golden_boot(menu);
     }
@@ -7843,6 +8072,10 @@ static void config_menu_activate_item(config_menu_t *menu)
 
     case CONFIG_TAB_ABOUT:
         if (menu->item_focus == 0U) {
+            config_menu_online_update_check(menu);
+        } else if (menu->item_focus <= 2U) {
+            config_menu_start_online_update(menu, (uint8_t)(menu->item_focus - 1U));
+        } else if (menu->item_focus == 3U) {
             config_menu_start_golden_boot_update(menu);
         }
         break;
@@ -8097,6 +8330,10 @@ void config_menu_set_active(config_menu_t *menu, uint8_t active)
     } else {
         menu->golden_boot_update_confirm = 0U;
         menu->golden_boot_confirm_update = 0U;
+        menu->online_update_confirm = 0U;
+        menu->online_update_confirm_update = 0U;
+        menu->about_credits_active = 0U;
+        config_menu_about_reset_scroll();
         config_menu_stop_usb0_sd_remote(menu);
         menu->joystick_page_active = 0U;
         menu->usb_owned = 0U;
@@ -8151,7 +8388,8 @@ uint8_t config_menu_handle_usb_fixed_tab(config_menu_t *menu, int direction)
     }
     if (menu->usb_binding_capture != CONFIG_MENU_USB_BIND_CAPTURE_NONE ||
         menu->golden_boot_update_pending != 0U || menu->usb0_sd_remote_active != 0U ||
-        menu->ethernet_ftp_sd_remote_active != 0U) {
+        menu->ethernet_ftp_sd_remote_active != 0U ||
+        config_menu_online_update_busy(menu) != 0U) {
         return 1U;
     }
     /* Leave child views without accepting edits or confirming an operation. */
@@ -8164,6 +8402,8 @@ uint8_t config_menu_handle_usb_fixed_tab(config_menu_t *menu, int direction)
     menu->printout_delete_confirm_active = 0U;
     menu->golden_boot_update_confirm = 0U;
     menu->golden_boot_confirm_update = 0U;
+    menu->online_update_confirm = 0U;
+    menu->online_update_confirm_update = 0U;
     if (direction < 0) {
         config_menu_prev_tab(menu);
     } else {
@@ -8270,12 +8510,82 @@ static uint8_t config_menu_joystick_handle_input(config_menu_t *menu,
     return 1U;
 }
 
+static void config_menu_about_scroll(int direction, uint8_t page)
+{
+    if (FB16_WIDTH < 1680 || FB16_HEIGHT < 1000) {
+        const uint32_t visible = cmui_compact_visible_rows();
+        const int step = page != 0U && visible > 1U ? (int)visible - 1 : 1;
+        cmui_compact_scroll(direction < 0 ? -step : step);
+    } else {
+        const uint32_t maximum = g_about_credits_rows > g_about_credits_visible ?
+            g_about_credits_rows - g_about_credits_visible : 0U;
+        const uint32_t step = page != 0U && g_about_credits_visible > 1U ?
+            g_about_credits_visible - 1U : 1U;
+        if (g_about_credits_top > maximum) g_about_credits_top = maximum;
+        if (direction < 0) {
+            g_about_credits_top = g_about_credits_top > step ? g_about_credits_top - step : 0U;
+        } else {
+            g_about_credits_top = step < maximum - g_about_credits_top ?
+                g_about_credits_top + step : maximum;
+        }
+    }
+}
+
+static uint8_t config_menu_about_handle_input(config_menu_t *menu, ui_input_t input)
+{
+    const uint8_t compact = (uint8_t)(FB16_WIDTH < 1680 || FB16_HEIGHT < 1000);
+    const uint32_t actions = menu->golden_boot_file_present != 0U ? 4U : 3U;
+    if (menu->tab != CONFIG_TAB_ABOUT) return 0U;
+    if (menu->about_credits_active == 0U) {
+        if (input.key != UI_KEY_PAGE_DOWN && input.key != UI_KEY_PAGE_UP &&
+            !(input.key == UI_KEY_DOWN && menu->item_focus + 1U >= actions)) return 0U;
+        menu->about_credits_active = 1U;
+        menu->item_focus = actions;
+        g_about_credits_top = 0U;
+        if (compact != 0U)
+            config_menu_about_scroll(input.key == UI_KEY_PAGE_UP ? -1 : 1,
+                (uint8_t)(input.key != UI_KEY_DOWN));
+        return 1U;
+    }
+    switch (input.key) {
+    case UI_KEY_UP:
+        if ((compact != 0U ? cmui_compact_scroll_offset() : g_about_credits_top) == 0U) {
+            menu->about_credits_active = 0U;
+            menu->item_focus = actions - 1U;
+        } else config_menu_about_scroll(-1, 0U);
+        break;
+    case UI_KEY_DOWN: config_menu_about_scroll(1, 0U); break;
+    case UI_KEY_PAGE_UP: config_menu_about_scroll(-1, 1U); break;
+    case UI_KEY_PAGE_DOWN: config_menu_about_scroll(1, 1U); break;
+    case UI_KEY_ENTER:
+    case UI_KEY_BACK:
+    case UI_KEY_ESC:
+        menu->about_credits_active = 0U;
+        menu->item_focus = 0U;
+        g_about_credits_top = 0U;
+        cmui_compact_scroll(-1000000);
+        break;
+    case UI_KEY_TAB:
+    case UI_KEY_SHIFT_TAB:
+        menu->about_credits_active = 0U;
+        return 0U;
+    case UI_KEY_MENU:
+        return 0U;
+    default: break;
+    }
+    return 1U;
+}
+
 uint8_t config_menu_handle_input(config_menu_t *menu, ui_input_t input)
 {
     if (menu == NULL || input.pressed == 0U) {
         return 0U;
     }
 
+    if (config_menu_is_active(menu) &&
+        config_menu_online_update_handle_input(menu, input) != 0U) {
+        return 1U;
+    }
     if (config_menu_is_active(menu) &&
         config_menu_golden_boot_handle_input(menu, input) != 0U) {
         return 1U;
@@ -8315,31 +8625,6 @@ uint8_t config_menu_handle_input(config_menu_t *menu, ui_input_t input)
         return 0U;
     }
 
-    if ((FB16_WIDTH < 1680 || FB16_HEIGHT < 1000) &&
-        menu->tab == CONFIG_TAB_ABOUT) {
-        if (input.key == UI_KEY_UP) {
-            menu->item_focus = 0U;
-            cmui_compact_scroll(-10000);
-            return 1U;
-        }
-        if (input.key == UI_KEY_PAGE_UP) {
-            menu->item_focus = 1U;
-            cmui_compact_scroll(-8);
-            return 1U;
-        }
-        if (input.key == UI_KEY_DOWN || input.key == UI_KEY_PAGE_DOWN) {
-            /* Credits have no actions. Defocus the button so the compact
-             * renderer can scroll; Up returns to the update button. */
-            menu->item_focus = 1U;
-            cmui_compact_scroll(input.key == UI_KEY_DOWN ? 1 : 8);
-            return 1U;
-        }
-        if (input.key == UI_KEY_ENTER && menu->item_focus != 0U) {
-            menu->item_focus = 0U;
-            cmui_compact_scroll(-10000);
-            return 1U;
-        }
-    }
     if (config_menu_joystick_handle_input(menu, input) != 0U) {
         return 1U;
     }
@@ -8405,6 +8690,8 @@ uint8_t config_menu_handle_input(config_menu_t *menu, ui_input_t input)
         }
         return 1U;
     }
+
+    if (config_menu_about_handle_input(menu, input) != 0U) return 1U;
 
     if (menu->tab == CONFIG_TAB_BOOT_SETTINGS &&
         menu->item_focus >= CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM &&
@@ -8859,6 +9146,11 @@ static void config_menu_draw_tabs(uint16_t *fb, const config_menu_t *menu,
         };
 
         cmui_nav_item(fb, &row, k_tab_labels[i], active, 1U);
+        if (i == CONFIG_TAB_ABOUT && menu->online_update.available_mask != 0U) {
+            cmui_text_clipped(fb, row.x + 104, row.y + 13, row.w - 116,
+                "Update available", CMUI_COLOR_WARN,
+                active != 0U ? CMUI_COLOR_ROW_ACTIVE : CMUI_COLOR_PANEL, 1);
+        }
     }
 }
 
@@ -8882,7 +9174,7 @@ static void config_menu_draw_about_section(uint16_t *fb,
     *y += 38;
 
     for (uint32_t i = 0U; i < line_count; ++i) {
-        if (*y + FB16_BUILTIN_FONT_HEIGHT > bottom) {
+        if (*y + FB16_BUILTIN_FONT_HEIGHT * CMUI_SMALL_SCALE > bottom) {
             break;
         }
         cmui_text_clipped(fb,
@@ -8895,42 +9187,242 @@ static void config_menu_draw_about_section(uint16_t *fb,
                           CMUI_SMALL_SCALE);
         *y += line_h;
     }
-    *y += 18;
+    *y += 26;
+    if (cmui_compact_active() != 0U) cmui_compact_entry(" ", NULL, 0U, 0U);
 }
 
-static void config_menu_draw_about_bottom_text(uint16_t *fb,
-                                               int x,
-                                               int y,
-                                               int w,
-                                               int h)
+static size_t config_menu_about_columns(int width)
 {
-    const config_menu_help_block_t help =
-        config_menu_help_resolve(CONFIG_TAB_ABOUT, 0U);
-    const int line_h = 28;
-    const int total_h = (int)help.count * line_h;
-    int text_y = y + h - total_h;
+    const uint8_t compact = cmui_compact_active();
+    const int scale = compact != 0U ?
+        ((FB16_WIDTH >= 1024 && FB16_HEIGHT >= 768) ? 2 : 1) : CMUI_SMALL_SCALE;
+    const int available = compact != 0U ? FB16_WIDTH - 32 : width;
+    const size_t columns = available > 0 ?
+        (size_t)(available / (FB16_BUILTIN_FONT_ADVANCE_X * scale)) : 1U;
+    return columns == 0U ? 1U : columns > 159U ? 159U : columns;
+}
 
-    if (help.count == 0U || h <= 0) {
+static const char *config_menu_about_wrap(const char *text, char line[160], size_t columns)
+{
+    size_t count;
+    while (*text == ' ' || *text == '\t') ++text;
+    count = strlen(text);
+    if (count > columns) {
+        count = columns;
+        while (count != 0U && text[count] != ' ') --count;
+        if (count == 0U) count = columns;
+    }
+    memcpy(line, text, count);
+    line[count] = '\0';
+    text += count;
+    while (*text == ' ' || *text == '\t') ++text;
+    return text;
+}
+
+/* Counting and drawing use one wrapped-row iterator, without a virtual
+ * framebuffer or a truncated copy of the wide credits. */
+static uint32_t config_menu_about_credit_lines(uint16_t *fb, int x, int y, int width,
+                                               uint32_t first, uint32_t visible)
+{
+    const size_t columns = config_menu_about_columns(width);
+    const uint8_t compact = cmui_compact_active();
+    uint32_t row = 0U;
+    char line[160];
+    for (uint32_t i = 0U; i < sizeof(k_about_third_party) / sizeof(k_about_third_party[0]); ++i) {
+        const char *text = k_about_third_party[i];
+        do {
+            text = config_menu_about_wrap(text, line, columns);
+            if (fb != NULL && row >= first && row - first < visible) {
+                if (compact != 0U && line[0] == '\0') cmui_compact_entry(" ", NULL, 0U, 0U);
+                else cmui_text_clipped(fb, x, y + (int)(row - first) * 28,
+                    width, line, CMUI_COLOR_TEXT, CMUI_COLOR_BG, CMUI_SMALL_SCALE);
+            }
+            ++row;
+        } while (*text != '\0');
+    }
+    return row;
+}
+
+static void config_menu_draw_about_credits(uint16_t *fb, const config_menu_t *menu,
+                                           int x, int y, int width, int bottom)
+{
+    const config_menu_help_block_t intro = config_menu_help_resolve(CONFIG_TAB_ABOUT, 0U);
+    const size_t columns = config_menu_about_columns(width - 36);
+    char line[160];
+    cmui_text(fb, x, y, "Third-party codebases and inspiration",
+        CMUI_COLOR_ACCENT, CMUI_COLOR_BG, CMUI_BODY_SCALE);
+    y += 38;
+    for (uint32_t i = 0U; i < intro.count; ++i) {
+        const char *text = intro.lines[i];
+        const uint8_t signature = (uint8_t)(i + 1U == intro.count);
+        do {
+            text = config_menu_about_wrap(text, line, columns);
+            if (signature != 0U && cmui_compact_active() != 0U) {
+                cmui_compact_entry_right(line);
+            } else {
+                const int text_width = cmui_text_width(line, CMUI_SMALL_SCALE);
+                const int text_x = signature != 0U ?
+                    x + width - 18 - text_width : x + 18;
+                cmui_text_clipped(fb, text_x, y, x + width - 18 - text_x, line,
+                    signature != 0U ? CMUI_COLOR_MUTED : CMUI_COLOR_TEXT,
+                    CMUI_COLOR_BG, CMUI_SMALL_SCALE);
+            }
+            y += 28;
+        } while (*text != '\0');
+    }
+    y += 24;
+    if (cmui_compact_active() != 0U) {
+        cmui_compact_entry(" ", NULL, 0U, 0U);
+        (void)config_menu_about_credit_lines(fb, x + 18, y, width - 36, 0U, UINT32_MAX);
         return;
     }
-    if (text_y < y) {
-        text_y = y;
+    g_about_credits_rows = config_menu_about_credit_lines(NULL, 0, 0, width - 36, 0U, 0U);
+    g_about_credits_visible = bottom > y + 28 ? (uint32_t)((bottom - y - 28) / 28) : 0U;
+    {
+        const uint32_t maximum = g_about_credits_rows > g_about_credits_visible ?
+            g_about_credits_rows - g_about_credits_visible : 0U;
+        if (g_about_credits_top > maximum) g_about_credits_top = maximum;
     }
+    (void)config_menu_about_credit_lines(fb, x + 18, y, width - 36,
+        g_about_credits_top, g_about_credits_visible);
+    {
+        const uint32_t end = g_about_credits_top + g_about_credits_visible;
+        (void)snprintf(line, sizeof(line), "Credits %lu-%lu of %lu%s",
+            (unsigned long)(g_about_credits_visible != 0U ? g_about_credits_top + 1U : 0U),
+            (unsigned long)(end < g_about_credits_rows ? end : g_about_credits_rows),
+            (unsigned long)g_about_credits_rows,
+            menu->about_credits_active != 0U ? "" : " - Down after the last action to scroll");
+        cmui_text_clipped(fb, x + 18, bottom - 20, width - 36, line,
+            CMUI_COLOR_MUTED, CMUI_COLOR_BG, CMUI_SMALL_SCALE);
+    }
+}
 
-    for (uint32_t i = 0U; i < help.count; ++i) {
-        if (text_y + FB16_BUILTIN_FONT_HEIGHT > y + h) {
-            break;
+static void config_menu_draw_update_message(uint16_t *fb, int x, int *y,
+                                             int w, const char *text,
+                                             uint32_t color)
+{
+    const uint8_t compact = cmui_compact_active();
+    const int scale = compact != 0U ?
+        ((FB16_WIDTH >= 1024 && FB16_HEIGHT >= 768) ? 2 : 1) : CMUI_SMALL_SCALE;
+    const int available = compact != 0U ? FB16_WIDTH - 32 : w;
+    size_t columns = (size_t)(available / (FB16_BUILTIN_FONT_ADVANCE_X * scale));
+    char line[160];
+    if (columns == 0U) columns = 1U;
+    if (columns >= sizeof(line)) columns = sizeof(line) - 1U;
+    while (text != NULL && text[0] != '\0') {
+        size_t count = strlen(text);
+        if (count > columns) {
+            count = columns;
+            while (count != 0U && text[count] != ' ') --count;
+            if (count == 0U) count = columns;
         }
-        cmui_text_clipped(fb,
-                          x + 18,
-                          text_y,
-                          w - 36,
-                          help.lines[i],
-                          (i == (help.count - 1U)) ?
-                              CMUI_COLOR_MUTED : CMUI_COLOR_TEXT,
-                          CMUI_COLOR_BG,
-                          CMUI_SMALL_SCALE);
-        text_y += line_h;
+        memcpy(line, text, count);
+        line[count] = '\0';
+        cmui_text_clipped(fb, x, *y, w, line, color, CMUI_COLOR_BG, scale);
+        *y += 28;
+        text += count;
+        while (*text == ' ') ++text;
+    }
+}
+
+static void config_menu_draw_online_update_result(uint16_t *fb,
+                                                  const config_menu_t *menu,
+                                                  int x, int *y, int w)
+{
+    const online_update_snapshot_t *update = &menu->online_update;
+    const uint8_t local_error = (uint8_t)(menu->online_update_ui_error[0] != '\0');
+    const uint8_t failed = (uint8_t)(local_error != 0U || update->state == ONLINE_UPDATE_FAILED);
+    const uint32_t color = failed != 0U ? CMUI_COLOR_WARN : CMUI_COLOR_MUTED;
+    const char *state = "Not checked";
+    char line[192];
+    switch (update->state) {
+    case ONLINE_UPDATE_CHECKING: state = "Checking GitHub"; break;
+    case ONLINE_UPDATE_CURRENT: state = "Up to date"; break;
+    case ONLINE_UPDATE_AVAILABLE: state = "Update available"; break;
+    case ONLINE_UPDATE_DOWNLOADING: state = "Downloading"; break;
+    case ONLINE_UPDATE_VERIFYING: state = "Verifying download"; break;
+    case ONLINE_UPDATE_READY: state = "Download verified"; break;
+    case ONLINE_UPDATE_FAILED: state = "Failed"; break;
+    case ONLINE_UPDATE_CANCELLED: state = "Cancelled"; break;
+    default: break;
+    }
+    (void)snprintf(line, sizeof(line), "Last update: %s%s%s",
+        local_error != 0U ? "Could not complete" : state,
+        failed != 0U && local_error == 0U && update->stage[0] != '\0' ? " - " : "",
+        failed != 0U && local_error == 0U ? update->stage : "");
+    config_menu_draw_update_message(fb, x, y, w, line, color);
+    if (local_error != 0U || update->detail[0] != '\0') {
+        config_menu_draw_update_message(fb, x, y, w,
+            local_error != 0U ? menu->online_update_ui_error : update->detail, color);
+    }
+    if (failed == 0U && (update->state == ONLINE_UPDATE_CHECKING ||
+        update->state == ONLINE_UPDATE_DOWNLOADING || update->state == ONLINE_UPDATE_VERIFYING) &&
+        (update->received != 0U || update->elapsed_ms != 0U)) {
+        (void)snprintf(line, sizeof(line), "Received %lu / %lu bytes",
+            (unsigned long)update->received, (unsigned long)update->total);
+        config_menu_draw_update_message(fb, x, y, w, line, color);
+        (void)snprintf(line, sizeof(line), "Elapsed %lu.%lu s   %lu.%lu KiB/s",
+            (unsigned long)(update->elapsed_ms / 1000U),
+            (unsigned long)((update->elapsed_ms / 100U) % 10U),
+            (unsigned long)(update->bytes_per_second / 1024U),
+            (unsigned long)(((update->bytes_per_second % 1024U) * 10U) / 1024U));
+        config_menu_draw_update_message(fb, x, y, w, line, color);
+    }
+    if (failed != 0U && update->state == ONLINE_UPDATE_FAILED) {
+        (void)snprintf(line, sizeof(line), "Report code: %d", update->result);
+        config_menu_draw_update_message(fb, x, y, w, line, color);
+        if (update->http_status != 0U || update->http_result != 0 ||
+            (update->tls_verify != 0U && update->tls_verify != UINT32_MAX)) {
+            char verification[24];
+            if (update->tls_verify == UINT32_MAX) {
+                (void)snprintf(verification, sizeof(verification), "not run");
+            } else {
+                (void)snprintf(verification, sizeof(verification), "%08lX", (unsigned long)update->tls_verify);
+            }
+            (void)snprintf(line, sizeof(line), "HTTP %u; transport %d; TLS verify %s",
+                (unsigned)update->http_status, update->http_result, verification);
+            config_menu_draw_update_message(fb, x, y, w, line, color);
+        }
+        if (update->fatfs_result != 0 || update->validation_result != 0 || update->cleanup_result != 0) {
+            (void)snprintf(line, sizeof(line), "SD result %d; image check %d; cleanup %d",
+                update->fatfs_result, update->validation_result, update->cleanup_result);
+            config_menu_draw_update_message(fb, x, y, w, line, color);
+        }
+    }
+    *y += 8;
+}
+
+static void config_menu_draw_online_update_row(uint16_t *fb,
+                                               const config_menu_t *menu,
+                                               uint8_t kind,
+                                               int x, int y, int w)
+{
+    const online_update_snapshot_t *update = &menu->online_update;
+    const char *installed = kind == ONLINE_UPDATE_FIRMWARE ?
+        APPLETINI_FIRMWARE_IMAGE_VERSION_SHORT : menu->golden_boot_version;
+    const char *latest = kind == ONLINE_UPDATE_FIRMWARE ? update->latest_f : update->latest_b;
+    const uint8_t staged = (uint8_t)(update->state == ONLINE_UPDATE_READY && update->kind == kind);
+    const uint8_t disabled = (uint8_t)(menu->golden_boot_update_allowed == 0U ||
+        config_menu_online_update_busy(menu) != 0U ||
+        (staged == 0U && (update->available_mask & (1U << kind)) == 0U));
+    const uint8_t focused = (uint8_t)(menu->about_credits_active == 0U &&
+                                     menu->item_focus == (uint32_t)kind + 1U);
+    const char *button = staged != 0U ?
+        (kind == ONLINE_UPDATE_FIRMWARE ? "Install staged firmware..." : "Install staged boot...") :
+        (kind == ONLINE_UPDATE_FIRMWARE ? "Update firmware..." : "Update boot...");
+    char line[128];
+    (void)snprintf(line, sizeof(line), "%s: %s   Available: %s",
+        kind == ONLINE_UPDATE_FIRMWARE ? "Firmware" : "Golden Boot",
+        installed[0] != '\0' ? installed : "Unknown",
+        latest[0] != '\0' ? latest : "Not checked");
+    if (cmui_compact_active() != 0U) {
+        cmui_compact_entry(line, NULL, 0U, 0U);
+        cmui_compact_entry(button, NULL, focused, disabled);
+    } else {
+        const int button_w = cmui_text_width(button, CMUI_BODY_SCALE) + 40;
+        cmui_text_clipped(fb, x + 18, y + 8, w - button_w - 60,
+            line, CMUI_COLOR_TEXT, CMUI_COLOR_BG, CMUI_SMALL_SCALE);
+        cmui_row(fb, x + w - 18 - button_w, y, button_w, focused, disabled, button);
     }
 }
 
@@ -8942,43 +9434,32 @@ static void config_menu_draw_about(uint16_t *fb,
                                    int h)
 {
     int cursor = y + 10;
-    const int help_h = 92;
-    const int bottom = cmui_compact_active() ? 10000 : y + h - help_h - 18;
-    char golden_line[96];
-    const char *version = menu->golden_boot_version[0] != '\0' ?
-        menu->golden_boot_version : "Unknown";
-    const uint8_t button_focused = (uint8_t)(menu->item_focus == 0U);
+    const int bottom = cmui_compact_active() ? 10000 : y + h - 8;
     const uint8_t button_disabled = (uint8_t)(menu->golden_boot_update_allowed == 0U);
 
     cmui_text(fb, x, cursor, "Versions", CMUI_COLOR_ACCENT,
                CMUI_COLOR_BG, CMUI_BODY_SCALE);
     cursor += 38;
-    (void)snprintf(golden_line, sizeof(golden_line), "Golden Boot: %s", version);
-    if (cmui_compact_active() != 0U) {
-        if (menu->golden_boot_file_present != 0U) {
-            (void)snprintf(golden_line, sizeof(golden_line),
-                "Golden Boot: %s   [Update Golden Boot...]", version);
-            cmui_compact_entry(golden_line, NULL, button_focused, button_disabled);
-        } else {
-            cmui_compact_entry(golden_line, NULL, 0U, 0U);
-        }
-    } else {
-        const int button_w = cmui_text_width("Update Golden Boot...",
-                                              CMUI_BODY_SCALE) + 40;
-        const int text_w = w - 36 -
-            (menu->golden_boot_file_present != 0U ? button_w + 24 : 0);
-        cmui_text_clipped(fb, x + 18, cursor + 8, text_w,
-            golden_line, CMUI_COLOR_TEXT, CMUI_COLOR_BG, CMUI_SMALL_SCALE);
-        if (menu->golden_boot_file_present != 0U) {
-            cmui_row(fb, x + w - 18 - button_w, cursor, button_w,
-                button_focused, button_disabled, "Update Golden Boot...");
-        }
+    cmui_row(fb, x + 18, cursor, w - 36,
+        (uint8_t)(menu->about_credits_active == 0U && menu->item_focus == 0U),
+        (uint8_t)(menu->platform.request_online_update_check == NULL ||
+                  config_menu_online_update_busy(menu) != 0U),
+        menu->online_update.state == ONLINE_UPDATE_CHECKING ?
+            "Checking GitHub... (Enter to cancel)" : "Check for updates");
+    cursor += 42;
+    config_menu_draw_online_update_result(fb, menu, x + 18, &cursor, w - 36);
+    config_menu_draw_online_update_row(fb, menu, ONLINE_UPDATE_FIRMWARE, x, cursor, w);
+    cursor += 42;
+    config_menu_draw_online_update_row(fb, menu, ONLINE_UPDATE_BOOT, x, cursor, w);
+    cursor += 42;
+    if (menu->golden_boot_file_present != 0U) {
+        cmui_row(fb, x + 18, cursor, w - 36,
+            (uint8_t)(menu->about_credits_active == 0U && menu->item_focus == 3U), button_disabled,
+            "Update Golden Boot... (local BOOT.BIN)");
+        cursor += 42;
     }
-    cursor += 40;
-    cmui_text_clipped(fb, x + 18, cursor, w - 36,
-        "Firmware:    " APPLETINI_FIRMWARE_IMAGE_VERSION_FULL,
-        CMUI_COLOR_TEXT, CMUI_COLOR_BG, CMUI_SMALL_SCALE);
-    cursor += 46;
+    cursor += 24;
+    if (cmui_compact_active() != 0U) cmui_compact_entry(" ", NULL, 0U, 0U);
 
     config_menu_draw_about_section(
         fb,
@@ -8990,17 +9471,7 @@ static void config_menu_draw_about(uint16_t *fb,
         k_about_contributors,
         (uint32_t)(sizeof(k_about_contributors) /
                    sizeof(k_about_contributors[0])));
-    config_menu_draw_about_section(
-        fb,
-        x,
-        &cursor,
-        w,
-        bottom,
-        "Third-party codebases and inspiration",
-        k_about_third_party,
-        (uint32_t)(sizeof(k_about_third_party) /
-                   sizeof(k_about_third_party[0])));
-    config_menu_draw_about_bottom_text(fb, x, y, w, h);
+    config_menu_draw_about_credits(fb, menu, x, cursor, w, bottom);
 }
 
 static void config_menu_draw_golden_boot_modal(uint16_t *fb,
@@ -9041,6 +9512,74 @@ static void config_menu_draw_golden_boot_modal(uint16_t *fb,
     cmui_text_clipped(fb, panel.x + 28, panel.y + 264, panel.w - 56,
         "Choose with Left/Right. Enter or USB OK confirms; Back cancels.",
         CMUI_COLOR_MUTED, CMUI_COLOR_PANEL, CMUI_SMALL_SCALE);
+}
+
+static void config_menu_draw_online_update_modal(uint16_t *fb,
+                                                const config_menu_t *menu,
+                                                const cmui_rect_t *body)
+{
+    cmui_rect_t panel = {body->x, body->y + 56, body->w, 350};
+    const uint8_t busy = config_menu_online_update_busy(menu);
+    const uint8_t install = menu->online_update_install_pending;
+    const uint8_t kind = busy != 0U && menu->online_update_download_pending == 0U &&
+        menu->online_update_install_pending == 0U ?
+        menu->online_update.kind : menu->online_update_confirm_kind;
+    const char *title = kind == ONLINE_UPDATE_BOOT ? "Update boot" : "Update firmware";
+    const char *confirm = menu->online_update_confirm_install != 0U ?
+        "Install and restart" : "Download, install and restart";
+    char line[128];
+    cmui_panel(fb, &panel, CMUI_COLOR_PANEL);
+    cmui_text(fb, panel.x + 28, panel.y + 28, title,
+        CMUI_COLOR_ACCENT, CMUI_COLOR_PANEL, CMUI_TITLE_SCALE);
+    if (busy != 0U) {
+        (void)snprintf(line, sizeof(line), "%s: %lu / %lu bytes",
+            install != 0U ? "Installing" :
+            menu->online_update.state == ONLINE_UPDATE_VERIFYING ? "Verifying" : "Downloading",
+            (unsigned long)menu->online_update.received,
+            (unsigned long)menu->online_update.total);
+    } else {
+        (void)snprintf(line, sizeof(line), "%s %s and restart?",
+            menu->online_update_confirm_install != 0U ? "Install verified" : "Download and install",
+            kind == ONLINE_UPDATE_BOOT ? "BOOT.BIN" : "FIRMWARE.BIN");
+    }
+    cmui_text_clipped(fb, panel.x + 28, panel.y + 86, panel.w - 56,
+        line, CMUI_COLOR_TEXT, CMUI_COLOR_PANEL, CMUI_BODY_SCALE);
+    cmui_text_clipped(fb, panel.x + 28, panel.y + 126, panel.w - 56,
+        install != 0U ? "Keep power on. The system restarts after verification." :
+        busy != 0U ? "Back or Enter cancels before installation starts." :
+        "Keep power on during installation. Cancel is selected by default.",
+        CMUI_COLOR_TEXT, CMUI_COLOR_PANEL, CMUI_BODY_SCALE);
+    if (busy != 0U && install == 0U) {
+        (void)snprintf(line, sizeof(line), "Elapsed %lu.%lu s   %lu.%lu KiB/s",
+            (unsigned long)(menu->online_update.elapsed_ms / 1000U),
+            (unsigned long)((menu->online_update.elapsed_ms / 100U) % 10U),
+            (unsigned long)(menu->online_update.bytes_per_second / 1024U),
+            (unsigned long)(((menu->online_update.bytes_per_second % 1024U) * 10U) / 1024U));
+        cmui_text_clipped(fb, panel.x + 28, panel.y + 164, panel.w - 56,
+            line, CMUI_COLOR_TEXT, CMUI_COLOR_PANEL, CMUI_SMALL_SCALE);
+    }
+    if (busy != 0U && menu->online_update.detail[0] != '\0') {
+        cmui_text_clipped(fb, panel.x + 28, panel.y + 196, panel.w - 56,
+            menu->online_update.detail, CMUI_COLOR_MUTED, CMUI_COLOR_PANEL, CMUI_SMALL_SCALE);
+    }
+    if (install != 0U) {
+        return;
+    }
+    if (cmui_compact_active() != 0U) {
+        cmui_compact_entry("Cancel", NULL,
+            (uint8_t)(busy != 0U || menu->online_update_confirm_update == 0U), 0U);
+        if (busy == 0U) {
+            cmui_compact_entry(confirm, NULL, menu->online_update_confirm_update, 0U);
+        }
+    } else {
+        const int button_w = (panel.w - 80) / 2;
+        cmui_row(fb, panel.x + 28, panel.y + 224, button_w,
+            (uint8_t)(busy != 0U || menu->online_update_confirm_update == 0U), 0U, "Cancel");
+        if (busy == 0U) {
+            cmui_row(fb, panel.x + 52 + button_w, panel.y + 224, button_w,
+                menu->online_update_confirm_update, 0U, confirm);
+        }
+    }
 }
 
 /* Max lines the help panel assembles per frame: the largest centralized
@@ -9564,9 +10103,25 @@ void config_menu_draw(uint16_t *fb, const config_menu_t *menu, uint8_t usb_owned
     cmui_rect_t nav;
     cmui_rect_t body;
     cmui_rect_t footer;
+    const char *input_hint = NULL;
 
     if (!config_menu_is_active(menu)) {
         return;
+    }
+    cmui_set_update_badge((uint8_t)(menu->online_update.available_mask != 0U));
+    if (menu->profile_name_editor_active || menu->printout_editor_active) {
+        const uint8_t virtual_keyboard = menu->profile_name_editor_active ?
+            menu->profile_name_editor_virtual : menu->printout_editor_virtual;
+        input_hint = virtual_keyboard ?
+            "D-pad: Move | A: Select | B: Delete | Y/Triangle: Hide keyboard" :
+            "Type name | Enter: Save | Esc: Cancel | Y/Triangle: Keyboard";
+    }
+    if (input_hint == NULL && menu->tab == CONFIG_TAB_ABOUT && menu->about_credits_active != 0U &&
+        menu->online_update_confirm == 0U && config_menu_online_update_busy(menu) == 0U &&
+        menu->golden_boot_update_confirm == 0U && menu->golden_boot_update_pending == 0U &&
+        menu->usb0_sd_remote_active == 0U && menu->ethernet_ftp_sd_remote_active == 0U &&
+        menu->browser_active == 0U && config_menu_text_reader_active() == 0U) {
+        input_hint = "Credits: Up/Down scroll | PgUp/PgDn page | Enter/Back return";
     }
 
     if (FB16_WIDTH < 1680 || FB16_HEIGHT < 1000) {
@@ -9574,7 +10129,9 @@ void config_menu_draw(uint16_t *fb, const config_menu_t *menu, uint8_t usb_owned
         const char *title = (menu->tab < CONFIG_TAB_COUNT) ?
             k_tab_labels[menu->tab] : "Settings";
         cmui_compact_begin();
-        if (menu->golden_boot_update_confirm != 0U ||
+        if (menu->online_update_confirm != 0U || config_menu_online_update_busy(menu) != 0U) {
+            config_menu_draw_online_update_modal(fb, menu, &logical_body);
+        } else if (menu->golden_boot_update_confirm != 0U ||
             menu->golden_boot_update_pending != 0U) {
             config_menu_draw_golden_boot_modal(fb, menu, &logical_body);
         } else if (menu->ethernet_ftp_sd_remote_active != 0U) {
@@ -9595,7 +10152,7 @@ void config_menu_draw(uint16_t *fb, const config_menu_t *menu, uint8_t usb_owned
                             menu->tab, menu->status, menu->status_warning,
                             usb_owned,
                             (uint8_t)(boot_menu_service_machine_mode() ==
-                                      CARD_MACHINE_MODE_IIPLUS));
+                                      CARD_MACHINE_MODE_IIPLUS), input_hint);
         return;
     }
 
@@ -9612,7 +10169,9 @@ void config_menu_draw(uint16_t *fb, const config_menu_t *menu, uint8_t usb_owned
                    nav.h,
                    CMUI_COLOR_BORDER_SOFT);
 
-    if (menu->golden_boot_update_confirm != 0U ||
+    if (menu->online_update_confirm != 0U || config_menu_online_update_busy(menu) != 0U) {
+        config_menu_draw_online_update_modal(fb, menu, &body);
+    } else if (menu->golden_boot_update_confirm != 0U ||
         menu->golden_boot_update_pending != 0U) {
         config_menu_draw_golden_boot_modal(fb, menu, &body);
     } else if (menu->ethernet_ftp_sd_remote_active != 0U) {
@@ -9629,11 +10188,12 @@ void config_menu_draw(uint16_t *fb, const config_menu_t *menu, uint8_t usb_owned
                 menu->status_warning,
                 usb_owned,
                 (uint8_t)(boot_menu_service_machine_mode() ==
-                          CARD_MACHINE_MODE_IIPLUS));
+                          CARD_MACHINE_MODE_IIPLUS), input_hint);
     if (menu->usb0_sd_remote_active == 0U &&
         menu->ethernet_ftp_sd_remote_active == 0U &&
         menu->golden_boot_update_confirm == 0U &&
-        menu->golden_boot_update_pending == 0U) {
+        menu->golden_boot_update_pending == 0U &&
+        menu->online_update_confirm == 0U && config_menu_online_update_busy(menu) == 0U) {
         config_menu_draw_browser(fb, menu, body.x, body.y - 4, body.w);
         /* Printout rename editor / delete confirm draw over the browser. */
         config_menu_printing_draw_overlays(fb, menu, body.x, body.y, body.w);

@@ -141,12 +141,12 @@ static void render(config_menu_t *menu, const char *path)
     cmui_help_panel(fb,&help_rect,"Help",help,help_count);
     if (compact) {
         expected_focus=menu->item_focus; focused_rows=0;
-        cmui_compact_finish(fb,"Phasor",tabs,15,CONFIG_TAB_MOCKINGBOARD,"Settings saved",0,1,0);
+        cmui_compact_finish(fb,"Phasor",tabs,15,CONFIG_TAB_MOCKINGBOARD,"Settings saved",0,1,0,NULL);
         assert(focused_rows == 1);
     } else {
         for (unsigned i=0; i<help_count; ++i) assert(cmui_text_width(help[i],2) <= body.w-40);
         cmui_rect_t navrow={nav.x,nav.y+6*42,nav.w,34}; cmui_nav_item(fb,&navrow,"Phasor",1,1);
-        cmui_footer(fb,&footer,"Settings saved",0,1,0);
+        cmui_footer(fb,&footer,"Settings saved",0,1,0,NULL);
     }
     if (path) {
         FILE *file=fopen(path,"wb"); assert(file);

@@ -10,6 +10,7 @@
 #include "usb_hid_service.h"
 #include "onee_input_service.h"
 #include "slot2_gamepad_service.h"
+#include "online_update_core.h"
 #include "../lib/multiboot.h"
 
 #define CONFIG_MENU_STATUS_LEN 96U
@@ -168,6 +169,13 @@ typedef struct {
     uint8_t (*get_golden_boot_update_allowed)(void *ctx);
     /* Queue only. The main loop validates, saves media, writes, and reboots. */
     int (*request_golden_boot_update)(void *ctx);
+    /* Snapshot only; requests queue work for the main loop. No network or
+     * flash operation runs inside the menu input/render callbacks. */
+    void (*get_online_update_status)(void *ctx, online_update_snapshot_t *status);
+    int (*request_online_update_check)(void *ctx);
+    int (*request_online_update_download)(void *ctx, uint8_t kind);
+    void (*cancel_online_update)(void *ctx);
+    int (*request_online_update_install)(void *ctx, uint8_t kind);
     void (*set_phasor_pan)(void *ctx, uint32_t pan_lo, uint32_t pan_hi);
     void (*set_phasor_audio)(void *ctx,
                              int8_t bass,
@@ -213,7 +221,7 @@ typedef struct {
     uint8_t onee_mode_state;     /* live service state */
     uint32_t onee_mode_status;   /* live PL supervisor readback */
     uint8_t onee_persisted_enabled; /* global config only; never profiled */
-    uint8_t onee_video_50hz;     /* desired global standard; 0 NTSC, 1 PAL */
+    uint8_t onee_video_50hz;     /* desired profile standard; 0 NTSC, 1 PAL */
     uint8_t onee_persist_write_failed;
     uint32_t onee_persist_retry_polls;
     uint8_t scanlines_mode;
@@ -314,6 +322,15 @@ typedef struct {
     uint8_t golden_boot_update_confirm;
     uint8_t golden_boot_confirm_update; /* Cancel (0) is the initial choice. */
     uint8_t golden_boot_update_pending;
+    online_update_snapshot_t online_update; /* transient, never serialized */
+    char online_update_ui_error[CONFIG_MENU_STATUS_LEN];
+    uint8_t online_update_confirm;
+    uint8_t online_update_confirm_update; /* Cancel is the initial choice. */
+    uint8_t online_update_confirm_kind;
+    uint8_t online_update_confirm_install;
+    uint8_t online_update_download_pending;
+    uint8_t online_update_install_pending;
+    uint8_t about_credits_active; /* transient focus, independent of update actions */
     usb_hid_menu_source_t usb_menu_bindings[CONFIG_MENU_USB_BIND_ACTION_COUNT];
     uint8_t usb_binding_capture;
     uint8_t usb_bindings_editable;
@@ -360,6 +377,11 @@ void config_menu_bind_platform(config_menu_t *menu, const config_menu_platform_t
 void config_menu_refresh_multiboot(config_menu_t *menu);
 void config_menu_refresh_golden_boot(config_menu_t *menu);
 void config_menu_golden_boot_update_finished(config_menu_t *menu, const char *error);
+/* Copies live counters; returns true for immediate stage/state/error redraws.
+ * Main paints progress-only changes on its monotonic 100ms schedule. */
+uint8_t config_menu_poll_online_update(config_menu_t *menu);
+uint32_t config_menu_about_credits_offset(void);
+void config_menu_online_update_finished(config_menu_t *menu, const char *error);
 uint8_t config_menu_flush_settings(config_menu_t *menu);
 void config_menu_apply_boot_runtime(config_menu_t *menu);
 void config_menu_apply_runtime(config_menu_t *menu);

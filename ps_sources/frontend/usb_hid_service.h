@@ -24,7 +24,8 @@ typedef enum {
     USB_HID_MENU_ACTION_VTW_SPEED_DOWN,
     USB_HID_MENU_ACTION_VTW_SLUG_TOGGLE,
     USB_HID_MENU_ACTION_BACK,
-    USB_HID_MENU_ACTION_TOGGLE
+    USB_HID_MENU_ACTION_TOGGLE,
+    USB_HID_MENU_ACTION_KEYBOARD
 } usb_hid_menu_action_t;
 
 #define USB_HID_VTW_SOURCE_COUNT 4U
@@ -40,6 +41,8 @@ typedef struct {
     usb_hid_menu_source_t source;
     /* Fixed controller controls coexist with an explicit source binding. */
     usb_hid_menu_action_t fixed_action;
+    /* Press-time text, including Enter, Backspace and Escape. */
+    uint8_t ascii;
 } usb_hid_menu_event_t;
 
 typedef struct {
@@ -69,6 +72,8 @@ void usb_hid_service_poll(void);
 uint32_t usb_hid_service_activity_count(void);
 void usb_hid_service_set_sensitivity(uint8_t sensitivity);
 void usb_hid_service_set_menu_capture(uint8_t capture);
+/* Give name editors text before saved keyboard shortcuts. */
+void usb_hid_service_set_text_capture(uint8_t active);
 /* Analog motion updates calibration preview without navigating its page.
  * Fixed D-pad and button controls remain available. Binding capture consumes
  * their physical sources before any fixed or saved action can fire. */

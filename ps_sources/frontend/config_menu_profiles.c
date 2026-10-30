@@ -537,6 +537,31 @@ static uint8_t profile_name_editor_handle_input(config_menu_t *menu,
         return 0U;
     }
 
+    /* Physical typing works with the controller keyboard shown or hidden. */
+    if (input.ascii != 0U) {
+        switch (input.ascii) {
+        case 13U:
+            profile_name_editor_commit(menu);
+            break;
+        case 8U:
+        case 127U:
+            profile_name_editor_delete(menu);
+            break;
+        case 27U:
+            profile_name_editor_cancel(menu);
+            break;
+        default:
+            profile_name_editor_append(menu, input.ascii);
+            break;
+        }
+        return 1U;
+    }
+    if (input.key == UI_KEY_KEYBOARD) {
+        menu->profile_name_editor_virtual =
+            (menu->profile_name_editor_virtual == 0U) ? 1U : 0U;
+        return 1U;
+    }
+
     if (menu->profile_name_editor_virtual != 0U) {
         switch (input.key) {
         case UI_KEY_LEFT:
@@ -569,11 +594,6 @@ static uint8_t profile_name_editor_handle_input(config_menu_t *menu,
         default:
             return 1U;
         }
-    }
-
-    if (input.ascii != 0U) {
-        profile_name_editor_append(menu, input.ascii);
-        return 1U;
     }
 
     switch (input.key) {
@@ -1109,6 +1129,9 @@ static void profile_draw_name_editor(uint16_t *fb,
                       CMUI_COLOR_ROW,
                       CMUI_BODY_SCALE);
 
+    cmui_text_clipped(fb, panel_x + 20, panel_y + panel_h - 38,
+                      panel_w - 40, "Type to edit | Y / Triangle: Keyboard",
+                      CMUI_COLOR_MUTED, CMUI_COLOR_PANEL, CMUI_SMALL_SCALE);
     if (menu->profile_name_editor_virtual == 0U) {
         return;
     }

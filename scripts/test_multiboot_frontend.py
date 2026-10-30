@@ -52,6 +52,7 @@ def main():
 #include "card_control_regs.h"
 #include "../lib/framebuffer.h"
 #include "../lib/psdma.h"
+#define APPLETINI_HTTP_SERVICE 1
 #define COUNTS_PER_SECOND 100000000U / 2U
 enum { MB_OK=0, MB_PRODUCT_NONE=0, MB_PRODUCT_APPLETINI=0x100,
        MB_PRODUCT_MULTITINI=0x200, MB_GOLDEN_OFFSET=0 };
@@ -68,6 +69,7 @@ typedef struct {
     config_menu_platform_t platform;
     uint8_t multiboot_ready, multiboot_present_mask, session_only;
     uint8_t onee_persist_write_failed, status_warning, applicard_slot5_enabled;
+    uint8_t online_update_install_pending;
     uint32_t startup_firmware;
     char status[96];
 } config_menu_t;
@@ -91,6 +93,7 @@ static psdma_owner_t dma_owner;
 static unsigned dma_busy,dma_claims,dma_releases,dma_granted;
 static unsigned reset_cleanups,late_pending;
 static unsigned cpu1_hold_error, restart_calls;
+static unsigned online_busy, update_allowed, online_failures, last_request_product;
 static XTime time_now;
 static char events[256]; static unsigned event_count;
 static void event(char value) { assert(event_count < sizeof(events)-1); events[event_count++]=value; events[event_count]=0; }
@@ -100,7 +103,7 @@ static int mb_platform_status_ui(uint32_t product, mb_platform_status_t *out) {
 static int mb_platform_set_default(uint32_t product) {
     ++default_calls; if (!default_rc) live_status.default_product=product; return (int)default_rc;
 }
-static int mb_platform_prepare_request(uint32_t product,uint32_t *offset) { assert(product==MB_PRODUCT_MULTITINI); ++golden_checks; event('G'); *offset=0x100000; ++requests; event('R'); return golden_rc ? (int)golden_rc:(int)request_rc; }
+static int mb_platform_prepare_request(uint32_t product,uint32_t *offset) { assert(product==MB_PRODUCT_MULTITINI || product==MB_PRODUCT_APPLETINI); last_request_product=product; ++golden_checks; event('G'); *offset=0x100000; ++requests; event('R'); return golden_rc ? (int)golden_rc:(int)request_rc; }
 static int mb_platform_read_report(char *text,uint32_t size) { assert(size);text[0]=0;return MB_OK; }
 static int mb_platform_clear_request(void) { ++clears; return (int)clear_rc; }
 static void config_menu_set_status(config_menu_t *menu, uint8_t warning, const char *text) {
@@ -110,6 +113,12 @@ static uint8_t config_menu_save_settings_to_path(config_menu_t *menu, const char
     (void)menu; (void)message; assert(strcmp(path,APPLETINI_CFG_PATH)==0); ++settings_calls; event('C'); return (uint8_t)settings_ok;
 }
 static uint8_t screenshot_service_busy(void) { return (uint8_t)screenshot_busy; }
+static uint8_t http_download_active(void) { return 0U; }
+static uint8_t online_update_active(void) { return (uint8_t)online_busy; }
+static uint8_t control_golden_boot_update_allowed(void) { return (uint8_t)update_allowed; }
+static void config_menu_online_update_finished(config_menu_t *menu,const char *error) {
+    assert(error && error[0]); ++online_failures; menu->online_update_install_pending=0;
+}
 static uint8_t printer_service_job_active(void) { return (uint8_t)printer_busy; }
 static uint8_t config_menu_usb0_sd_remote_active(const config_menu_t *menu) { (void)menu; return (uint8_t)usb_remote; }
 static uint8_t config_menu_ethernet_ftp_sd_remote_active(const config_menu_t *menu) { (void)menu; return (uint8_t)ftp_remote; }
@@ -253,6 +262,7 @@ static config_menu_t prepare(void) {
     dma_owner=PSDMA_OWNER_NONE; dma_busy=dma_claims=dma_releases=dma_granted=0;
     reset_cleanups=late_pending=0;
     cpu1_hold_error=restart_calls=0;
+    online_busy=online_failures=last_request_product=0; update_allowed=1;
     event_count=0; events[0]=0;
     memset(g_devices,0,sizeof(g_devices));
     g_devices[0].image_open=1; g_devices[0].image_file=7;
@@ -409,6 +419,33 @@ int main(void) {
         if(fault==8) disk_rc=1;
         control_service_firmware_switch(&menu); cancelled(&menu); assert(!requests);
     }
+    for(unsigned fault=0;fault<11;++fault) {
+        menu=prepare(); g_firmware_switch_request=MB_PRODUCT_APPLETINI; menu.online_update_install_pending=1;
+        if(fault==1) update_allowed=0;
+        if(fault==2) online_busy=1;
+        if(fault==3) disk_rc=1;
+        if(fault==4) settings_ok=0;
+        if(fault==5) sync_error=1;
+        if(fault==6) request_rc=1;
+        if(fault==7) dma_busy=1;
+        if(fault==8) { isolated=0; reset_ctrl_fail=1; }
+        if(fault==9) cpu1_hold_error=1;
+        if(fault==10) live_status.appletini_present=0;
+        control_service_firmware_switch(&menu);
+        if(fault==0) {
+            assert(resets==1 && worker_calls==1 && requests==1 && last_request_product==MB_PRODUCT_APPLETINI);
+            assert(settings_calls==1 && sync_calls==1 && disk_calls==1 && !online_failures);
+            assert(strchr(events,'D') < strchr(events,'C') && strchr(events,'C') < strchr(events,'F'));
+            assert(strchr(events,'F') < strchr(events,'R') && strchr(events,'R') < strchr(events,'W') && strchr(events,'W') < strchr(events,'B'));
+        } else if(fault==9) {
+            assert(!resets && worker_calls==1 && restart_calls==1 && g_firmware_switch_fault);
+            assert(dma_owner==PSDMA_OWNER_FIRMWARE_UPDATE && !dma_releases && !stop_calls);
+        } else {
+            cancelled(&menu); assert(online_failures==1 && !menu.online_update_install_pending);
+            if(fault==6) assert(last_request_product==MB_PRODUCT_APPLETINI && clears==1);
+        }
+    }
+    puts("PASS: online APPLETINI update uses the complete retained save/sync/DMA/host-hold/CPU1/recovery path and safe-fails ten injected faults");
     puts("PASS: menu presence, startup persistence, one-shot switch, physical Apple reset/delay/readback/timeout, pre-reset command drain and quiet isolation cleanup");
     return 0;
 }

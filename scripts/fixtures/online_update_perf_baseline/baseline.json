@@ -1,0 +1,14 @@
+{
+  "reference_firmware_sha256": "c8f102b8cf60dad7c2e13aa8c54978b6c470b0a71c47ba3812e5d4d5759b344a",
+  "sources": {
+    "ps_sources/frontend/online_update_service.c": "33673c0978f30cd866ffab9e40c37202f6c670f63f24485d4270130043e40c4b",
+    "ps_sources/frontend/online_update_service.h": "091fde6557491a7c122f4a4e8f83d2802056db9cd7e55214583878e33c107b29",
+    "ps_sources/frontend/online_update_core.c": "42b57bb47f926d01431439ea6b5d8b8813994226154dacca2326070d5249d62c",
+    "ps_sources/frontend/online_update_core.h": "cdb404e1b2130d44ec2b53b8894382c774d8de4c447d3b6e9261095fb6d9740f",
+    "ps_sources/frontend/http_service.c": "93c6434bb9944dfdded39846aaeb86e7dff674ebf3a894b70edd55cfda23f29c",
+    "ps_sources/frontend/http_service.h": "aaee8115df000634c640b9ed76243dc919403063092abc78c694bde96625b936",
+    "ps_sources/frontend/http_core.c": "1ccdb7ca1831d5700258c23ab8611918de9cfc68d465aa06e18624d274b45997",
+    "ps_sources/frontend/http_core.h": "b0fc5e0dfe483ae2ea59ae56f3068f9f8ae9f36361972f2bd495a92a9d33e4ff",
+    "ps_sources/frontend/uthernet2_control.h": "e30b8d2bb3d8d455106c856116176f426381d10983c671d6f676867980463e0d"
+  }
+}

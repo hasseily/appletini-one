@@ -79,6 +79,29 @@ Left Alt remains Open Apple and right Alt remains Closed Apple. These changes
 affect the ARM frontend only. Host tests cover key routing and menu actions;
 physical USB-keyboard testing remains pending.
 
+## ONE//e video standard in profiles
+
+Profiles save and restore the ONE//e PAL/NTSC setting. Saving the current
+profile or using Save As records the selected standard. Loading a profile
+also saves that standard in the working configuration for the next boot.
+Older profiles without this setting use NTSC; save them again after choosing
+PAL if needed. Loading a profile keeps the standalone enable setting.
+
+While ONE//e is running, a changed standard takes effect at the next virtual
+reset or restart. The Boot Settings row shows when the change is pending.
+
+## Names in the config menu
+
+A USB keyboard can type profile names in **Save As** and **Rename**, and
+rename printouts. These editors use the US keyboard layout, including Shift,
+Caps Lock and keypad characters. Enter saves, Backspace deletes, and Esc
+cancels. Saved keyboard shortcuts do not run while a name editor has focus.
+
+Press **Y / Triangle** on a gamepad to show or hide the on-screen keyboard.
+Use the D-pad to move and A / Cross to select a key. USB typing works with
+the grid shown or hidden. The bottom bar shows the controls for the current
+editor. Outside these editors, Y keeps its normal saved binding.
+
 ## ONE//e standby screen
 
 A stopped card with a valid, quiet safety guard shows the Appletini logo and

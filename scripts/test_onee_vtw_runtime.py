@@ -527,6 +527,7 @@ def menu_speed_replay_harness() -> str:
         static unsigned load_attempts, runtime_applies, restored_intents;
         static unsigned ethernet_applies, bezel_applies, rom_applies;
         static uint8_t load_succeeds, loaded_mode, loaded_divider;
+        static int http_download_active(void) { return 0; }
         static void config_menu_load_settings(config_menu_t *menu)
         {
             ++load_attempts;

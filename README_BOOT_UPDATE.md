@@ -8,6 +8,59 @@ A normal firmware update uses `FIRMWARE.BIN`. Update Golden only when the
 release or migration instructions provide a new `BOOT.BIN`; a firmware-only
 release can keep the installed Golden version.
 
+## GitHub updates from About
+
+The configuration menu checks the latest published stable release from
+[hasseily/appletini-one](https://github.com/hasseily/appletini-one/releases/latest).
+Drafts, prereleases and version tags with prerelease suffixes are excluded.
+The automatic check runs once per boot when the initial boot menu or an
+isolated ONE//e menu is open and Ethernet and SD storage are available.
+Use **Check for updates** in About to retry a failed check.
+
+An **Update available** badge appears beside About when either image is newer.
+About compares firmware and boot versions separately. It reads the boot version
+from the verified `BOOT.BIN` image, so including the same boot image in another
+firmware release does not trigger a boot update.
+
+Select **Update firmware...** or **Update boot...**, then confirm **Download,
+install and restart**. The initial choice is Cancel. The card downloads the
+release asset directly over HTTPS to the physical SD card, checks its exact
+size, GitHub SHA-256 digest, image manifest, product and linked version, then
+uses the normal firmware or Golden updater. Escape cancels the download.
+Keep the card powered once installation starts.
+
+The transfer uses a 128 KiB HTTP ring and a separate 128 KiB SD write buffer
+in the card's ARM RAM. Full SD writes use 128 KiB blocks; only the final write
+can be smaller. The progress view shows elapsed time and average KiB/s.
+During a transfer, progress redraws run at 10 Hz while input and error changes
+still refresh at once. The Apple II's RAM is not used for these buffers.
+
+The release assets must be named exactly `FIRMWARE.BIN` and `BOOT.BIN`, under a
+stable firmware tag such as `F1.3.6`. Only newer versions are offered. Missing
+assets do not enable an update button. No update is installed merely because
+a check found one.
+
+Downloads use `.part` files until verification and close succeed. Existing
+SD-root `.BIN` or `.part` files are kept; move or remove them before retrying
+an online download. The local **Update Golden Boot...** action remains
+available for a manually copied `BOOT.BIN`.
+
+The installed Golden can stay at B2.0.6. The online updater needs working
+Ethernet, a writable FAT SD card, and the correct RTC time for HTTPS. SD
+sharing, printing, screenshots, or a firmware handoff pause or cancel it.
+It does not take Ethernet from a running physical Apple session.
+
+About keeps the last update result in the page, including the failed step and
+the underlying error. HTTP status, certificate verification, image validation,
+and SD errors appear when available. These details remain visible if another
+menu action changes the bottom status bar. If cleanup also fails, the first
+failure is kept and the cleanup error is shown separately.
+
+To read all About credits, press Down past the last update button. Up and Down
+scroll the credits; Page Up and Page Down move by a page. Enter, Back or Esc
+returns to the update buttons. The gamepad's direction pad and default A/B
+buttons use the same controls. Long credit lines wrap to the display width.
+
 ## Flash layout
 
 The production card has 16 MiB of QSPI flash. The current layout is defined

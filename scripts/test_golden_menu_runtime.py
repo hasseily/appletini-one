@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Exercise the production deferred Golden update with injected failures."""
 import os
+import hashlib
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -19,8 +21,9 @@ PREAMBLE = r'''
 #include "card_control_regs.h"
 #include "../lib/framebuffer.h"
 #include "../lib/psdma.h"
+#define APPLETINI_HTTP_SERVICE 1
 typedef uint64_t XTime;
-typedef struct { unsigned pending; char status[128]; } config_menu_t;
+typedef struct { unsigned pending,online_update_install_pending; char status[128]; } config_menu_t;
 typedef struct { int updated,verified,reset_required; uint32_t boot_offset; char error_msg[96]; } golden_self_update_result_t;
 enum { UART0_BASE=0,UART1_BASE=1 };
 /* Match the BSP's deliberately unparenthesized expression. */
@@ -30,6 +33,7 @@ static unsigned fault,events,gsu_calls,holds,stops,finished,rebooted,prepare,res
 static unsigned reset_polls,reset_syncs,legacy_reads,legacy_writes,smartport_polls;
 static unsigned handed_off,pending_count,dma_claims,dma_releases,dma_busy,dma_granted;
 static unsigned reset_cleanups;
+static unsigned online_finished;
 static psdma_owner_t dma_owner;
 static uint8_t g_golden_boot_update_request,g_firmware_switch_active,g_firmware_switch_fault;
 static uint32_t vtw_ctrl,onee,boot_register,reset_status;
@@ -68,6 +72,8 @@ static void write_reg(unsigned reg,uint32_t value) {
 #define REG_WRITE(a,v) write_reg(a,v)
 static unsigned screenshot_service_busy(void) { return fault==1; }
 static unsigned printer_service_job_active(void) { return fault==2; }
+static unsigned http_download_active(void) { return fault==33; }
+static unsigned online_update_active(void) { return fault==34; }
 static unsigned config_menu_usb0_sd_remote_active(config_menu_t *m) { (void)m;return fault==4; }
 static unsigned config_menu_ethernet_ftp_sd_remote_active(config_menu_t *m) { (void)m;return fault==21; }
 static unsigned menu_platform_get_golden_boot_file_present(void *p) { assert(p==NULL);return fault!=6; }
@@ -153,6 +159,10 @@ static void control_reboot_preselected_golden(void) {
 static void config_menu_golden_boot_update_finished(config_menu_t *m,const char *error) {
     assert(error && *error);++finished;m->pending=0;snprintf(m->status,sizeof(m->status),"%s",error);
 }
+static void config_menu_online_update_finished(config_menu_t *m,const char *error) {
+    assert(error && *error && !strcmp(m->status,error));
+    assert(m->online_update_install_pending);++online_finished;m->online_update_install_pending=0;
+}
 '''
 
 SCENARIOS = r'''
@@ -173,15 +183,15 @@ int main(void) {
     assert(saved==original && requested && vtw_ctrl==original && reset_syncs==1);
     control_service_golden_boot_update(&menu);
     assert(!gsu_calls&&!holds&&!finished);
-    for(fault=0;fault<=32;++fault) {
+    for(fault=0;fault<=34;++fault) {
         events=gsu_calls=holds=stops=finished=rebooted=prepare=restores=refreshes=0;
         reset_polls=reset_syncs=legacy_reads=legacy_writes=smartport_polls=0;
-        dma_claims=dma_releases=dma_granted=reset_cleanups=0; handed_off=fault==27;
+        dma_claims=dma_releases=dma_granted=reset_cleanups=online_finished=0; handed_off=fault==27;
         dma_owner=fault==29 ? PSDMA_OWNER_SMARTPORT:PSDMA_OWNER_NONE;
         dma_busy=fault==30;
         pending_count=fault==7 ? 65:fault==31 ? 3:fault==28 ? 1:0;
         g_golden_boot_update_request=1;g_firmware_switch_active=g_firmware_switch_fault=0;
-        menu.pending=1;menu.status[0]=0;order[0]=0;ticks=0;
+        menu.pending=menu.online_update_install_pending=1;menu.status[0]=0;order[0]=0;ticks=0;
         vtw_ctrl=0x123400E0U;reset_status=CARD_CTRL_APPLE_RESET_RES_BIT|0x55U;onee=0x40;boot_register=0x123;
         if(!setjmp(reset_jump)) control_service_golden_boot_update(&menu);
         assert(!g_golden_boot_update_request);
@@ -189,10 +199,12 @@ int main(void) {
         if(fault==0||fault==16||fault==20||fault==25||fault==31) {
             assert(rebooted==1&&holds==1&&gsu_calls==1&&stops==3&&!finished);
             assert(menu.pending&&g_firmware_switch_active&&!g_firmware_switch_fault);
+            assert(menu.online_update_install_pending && !online_finished);
             assert(dma_claims==1&&!dma_releases&&dma_owner==PSDMA_OWNER_FIRMWARE_UPDATE);
             assert(!reset_cleanups);
         } else {
             assert(!rebooted&&!stops&&finished==1&&!menu.pending&&menu.status[0]);
+            assert(online_finished==1 && !menu.online_update_install_pending);
             assert(holds==(fault==15 ? 1U:0U));
             if(fault==15||fault==17) {
                 assert(g_firmware_switch_fault&&g_firmware_switch_active);
@@ -217,6 +229,12 @@ int main(void) {
             if(fault==32) assert(!smartport_polls&&dma_claims==1&&dma_releases==1);
         }
     }
+    /* The same failure from a local SD update has no online modal to finish. */
+    fault=6;events=finished=online_finished=0;order[0]=0;
+    menu.pending=1;menu.online_update_install_pending=0;g_golden_boot_update_request=1;
+    control_service_golden_boot_update(&menu);
+    assert(finished==1 && !menu.pending && !online_finished);
+    puts("PASS: HTTP/update ownership blocks flash; every failed online BOOT installation clears its pending modal, local updates stay independent");
     puts("PASS: production deferred Golden update and physical-reset acknowledgement/readback/delay, unsupported legacy DMA, original-control recovery, and retained reset on safe halt");
     puts("PASS: real BSP frequency/2 expression and exact 100ms conversion boundary");
     return 0;
@@ -225,7 +243,7 @@ int main(void) {
 
 
 def main():
-    source = (ROOT / "ps_sources/frontend/main.c").read_text()
+    source = (ROOT / "ps_sources/frontend/main.c").read_text(encoding="utf-8")
     service = function(source, "control_service_golden_boot_update")
     assert "amp_release_core1" not in service
     assert "mb_platform_request" not in service
@@ -235,14 +253,23 @@ def main():
     helpers = function(source, "ticks_to_us") + function(source, "control_golden_boot_update_allowed") + function(source, "control_hold_apple_reset")
     OUT.mkdir(parents=True, exist_ok=True)
     harness = OUT / "runtime.c"
-    harness.write_text(PREAMBLE + helpers + service + SCENARIOS)
+    harness.write_text(PREAMBLE + helpers + service + SCENARIOS, encoding="utf-8")
     compiler = shutil.which("gcc") or "C:/msys64/ucrt64/bin/gcc.exe"
     env = dict(os.environ, PATH=str(Path(compiler).parent) + os.pathsep + os.environ.get("PATH", ""))
     executable = OUT / "runtime.exe"
     subprocess.run([compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-O0",
                     "-I",str(ROOT / "ps_sources/frontend"),
                     str(harness), "-o", str(executable)], check=True, env=env)
-    subprocess.run([str(executable)], check=True, env=env)
+    result = subprocess.run([str(executable)], check=True, env=env,
+                            capture_output=True,text=True,encoding="utf-8")
+    print(result.stdout,end="")
+    (OUT / "validation.json").write_text(json.dumps({
+        "hardware_test":False,"native_production_helpers":True,
+        "APPLETINI_HTTP_SERVICE":True,"injected_scenarios":35,
+        "main_sha256":hashlib.sha256((ROOT / "ps_sources/frontend/main.c").read_bytes()).hexdigest(),
+        "harness_sha256":hashlib.sha256(harness.read_bytes()).hexdigest(),
+        "exit_code":result.returncode,"stdout":result.stdout,
+    },indent=2)+"\n",encoding="utf-8")
 
 
 if __name__ == "__main__":

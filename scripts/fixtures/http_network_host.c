@@ -56,6 +56,10 @@ int uthernet2_w5100_socket_command(uint8_t socket,uint8_t command)
 }
 int uthernet2_w5100_socket_status(uint8_t socket,uint8_t *out)
 { (void)socket;*out=socket_state;return 0; }
+/* These network-state cases model NIC access; separate controller tests
+ * exercise the actual W5100S allocation/readback and wrap helpers. */
+int uthernet2_w5100_set_rx_layout(uint8_t update_only)
+{ (void)update_only;return 0; }
 int uthernet2_w5100_read16_stable(uint16_t address,uint16_t *out)
 { assert((address&255)==W5100_SN_RX_RSR);++rx_reads;*out=rx_available;return 0; }
 int uthernet2_w5100_read16(uint16_t a,uint16_t *out) { (void)a;*out=0;return 0; }

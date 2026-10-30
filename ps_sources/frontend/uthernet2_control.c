@@ -56,6 +56,8 @@ typedef struct {
 } dhcp_parse_t;
 /* DNS has no W5100S register. Keep the applied setting with the controller. */
 static uint8_t configured_dns[4];
+static uint8_t rx_update_only;
+static uint8_t rx_layout_changing;
 
 typedef enum {
     DHCP_ASYNC_IDLE = 0,
@@ -184,7 +186,10 @@ int uthernet2_read_reg(uint16_t addr, uint8_t *value)
 
 int uthernet2_write_reg(uint16_t addr, uint8_t value)
 {
-    return uthernet2_command(addr, 1U, value, NULL);
+    int result=uthernet2_command(addr, 1U, value, NULL);
+    if (!result && !rx_layout_changing && addr==W5100_REG_RMSR && value==W5100_SOCKET_MEM_4_2_1_1)
+        rx_update_only=0;
+    return result;
 }
 
 static int w5100_read(uint16_t addr, uint8_t *dst, uint16_t len)
@@ -285,6 +290,44 @@ int uthernet2_w5100_socket_status(uint8_t socket, uint8_t *status)
     return socket < 4U && status != NULL ?
         uthernet2_read_reg(
             uthernet2_w5100_socket_reg(socket, W5100_SN_SR), status) : -1;
+}
+
+int uthernet2_w5100_set_rx_layout(uint8_t update_only)
+{
+    static const uint8_t normal[4]={4U,2U,1U,1U};
+    uint8_t value;
+    /* WIZnet W5100S datasheet v1.2.8, 3.2.13: per-socket RX sizes may
+     * be 0/1/2/4/8 KiB, with total <=8 KiB. RMSR alone cannot encode zeros.
+     * https://docs.wiznet.io/img/products/w5100s/w5100s-ds-v128e.pdf */
+    for (uint8_t socket=0;socket<4U;++socket)
+        if (uthernet2_w5100_socket_status(socket,&value) || value!=W5100_SR_CLOSED)
+            return -1;
+    rx_layout_changing=1;
+    if (update_only) {
+        /* Remove allocations first, so no intermediate sum exceeds 8 KiB. */
+        for (uint8_t socket=0;socket<4U;++socket)
+            if (uthernet2_write_reg(uthernet2_w5100_socket_reg(socket,W5100_SN_RXBUF_SIZE),0U))
+                goto failed;
+        if (uthernet2_write_reg(uthernet2_w5100_socket_reg(0U,W5100_SN_RXBUF_SIZE),8U))
+            goto failed;
+    } else {
+        /* Restore the compatibility register as well as the W5100S sizes. */
+        if (uthernet2_write_reg(W5100_REG_RMSR,W5100_SOCKET_MEM_4_2_1_1)) goto failed;
+        for (uint8_t socket=0;socket<4U;++socket)
+            if (uthernet2_write_reg(uthernet2_w5100_socket_reg(socket,W5100_SN_RXBUF_SIZE),normal[socket]))
+                goto failed;
+    }
+    for (uint8_t socket=0;socket<4U;++socket) {
+        const uint8_t expected=update_only?(socket?0U:8U):normal[socket];
+        if (uthernet2_read_reg(uthernet2_w5100_socket_reg(socket,W5100_SN_RXBUF_SIZE),&value) || value!=expected)
+            goto failed;
+    }
+    rx_update_only=(uint8_t)(update_only!=0U);
+    rx_layout_changing=0;
+    return 0;
+failed:
+    rx_layout_changing=0;
+    return -1;
 }
 
 int uthernet2_read_network_config(uthernet2_network_config_t *config)
@@ -424,12 +467,12 @@ int uthernet2_w5100_socket_ring_read(uint8_t socket,
                                      uint8_t *dst,
                                      uint16_t len)
 {
-    const uint16_t base = socket < 4U ?
-        w5100_rx_base_4_2_1_1[socket] : 0U;
-    const uint16_t mask = socket < 4U ?
-        w5100_mask_4_2_1_1[socket] : 0U;
+    const uint16_t base = rx_update_only ? 0x6000U :
+        (socket < 4U ? w5100_rx_base_4_2_1_1[socket] : 0U);
+    const uint16_t mask = rx_update_only ? 0x1FFFU :
+        (socket < 4U ? w5100_mask_4_2_1_1[socket] : 0U);
 
-    if (socket >= 4U || (dst == NULL && len != 0U)) {
+    if (socket >= 4U || (rx_update_only && socket!=0U) || (dst == NULL && len != 0U)) {
         return -1;
     }
     while (len != 0U) {

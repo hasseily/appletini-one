@@ -50,6 +50,9 @@ def main():
 #include "slot2_gamepad_service.h"
 #include "config_menu_ui.h"
 #include "display_modes.h"
+#include "video_blur.h"
+#include "video_filter_config.h"
+#include "video_pixel_mask.h"
 '''
     code += re.search(r"typedef enum \{\s+CONFIG_TAB_PROFILES.*?} config_tab_t;", internal, re.S).group(0) + "\n"
     for label_array in ("k_tab_labels", "k_compact_tab_labels"):
@@ -59,6 +62,11 @@ typedef struct {
     uint8_t slot2_card, slot2_card_explicit, slot2_player_devices[4];
     uint8_t mouse_slot2_enabled, mouse_sensitivity;
     uint8_t settings_loaded, session_only, vtw_turbo_enabled, size_multiplier;
+    uint8_t video_legacy_horizontal, video_legacy_vertical, video_filter_explicit;
+    uint8_t video_blur_strength, video_dot_bleed, video_smoothing_explicit;
+    uint8_t video_legacy_crt_blending, video_legacy_crt_explicit;
+    uint8_t video_blending_vertical_explicit, video_blending_horizontal_explicit;
+    uint8_t video_pixel_mask;
     uint32_t tab, item_focus;
     struct {
         void *ctx;
@@ -98,6 +106,9 @@ typedef struct { int unused; } FIL;
 #define FA_READ 1
 #define APPLETINI_CFG_MAX 8192
 #define CONFIG_DEFAULT_VTW_TURBO_ENABLED 0
+#define CONFIG_DEFAULT_VIDEO_BLUR_STRENGTH APPLETINI_VIDEO_BLUR_OFF
+#define CONFIG_DEFAULT_VIDEO_DOT_BLEED APPLETINI_VIDEO_DOT_BLEED_LIGHT
+#define CONFIG_DEFAULT_VIDEO_PIXEL_MASK APPLETINI_VIDEO_PIXEL_MASK_OFF
 static const char *cfg_contents;
 static int cfg_read_result;
 static FRESULT config_menu_open_cfg(FIL *file,unsigned flags)
@@ -118,7 +129,7 @@ static void config_menu_parse_key_value(config_menu_t *m,const char *key,const c
 { (void)config_menu_parse_slot2(m,key,value); }
 '''
     loaders = function(menu, "config_menu_load_settings") + function(menu, "config_menu_read_settings_from_path")
-    for helper in sorted(set(re.findall(r"^    (config_menu_(?:coerce_\w+|migrate_\w+|usb_bindings_coerce))\(menu\);", loaders, re.M))):
+    for helper in sorted(set(re.findall(r"^    (config_menu_(?:coerce_\w+|migrate_\w+|usb_bindings_coerce|resolve_video_blending))\(menu\);", loaders, re.M))):
         code += "#define " + helper + "(menu) ((void)(menu))\n"
     code += re.search(r"^#define APPLETINI_CFG_VERSION .*", menu, re.M).group(0) + "\n" + loaders
     code += r'''
@@ -255,7 +266,7 @@ int main(void)
                 assert(strstr(s_compact_rows[0].text,config_menu_slot2_card_text((uint8_t)card)));
                 cmui_help_panel(fb,NULL,"Help",help,sizeof(help)/sizeof(help[0]));
                 cmui_compact_finish(fb,k_tab_labels[CONFIG_TAB_MOUSE],k_compact_tab_labels,
-                    CONFIG_TAB_COUNT,CONFIG_TAB_MOUSE,"Settings saved",0,0,0);
+                    CONFIG_TAB_COUNT,CONFIG_TAB_MOUSE,"Settings saved",0,0,0,NULL);
                 ++render_cases;
                 if (!mode && !focus) {
                     char name[32]; snprintf(name,sizeof(name),"slot2_%u",card); save_preview(fb,name);

@@ -146,7 +146,7 @@ static void finish_compact(uint16_t *fb, unsigned selected_tab, const char *stat
 {
     expected_tab=selected_tab; visible_tabs=0; active_tabs=0; record_tabs=1; tab_text_right=0;
     cmui_compact_finish(fb,k_tab_labels[selected_tab],k_compact_tab_labels,
-                        CONFIG_TAB_COUNT,selected_tab,status,0,(uint8_t)usb,0);
+                        CONFIG_TAB_COUNT,selected_tab,status,0,(uint8_t)usb,0,NULL);
     record_tabs=0;
     assert(visible_tabs==(1U<<CONFIG_TAB_COUNT)-1U);
     assert(active_tabs==1);
@@ -646,7 +646,7 @@ int main(void)
             cmui_help_panel(fb,&help_rect,"Help",help,4);
             assert(help_min_scale==2);
             assert(d->width==1680 ? help_rows>4 : help_rows==4);
-            cmui_footer(fb,&footer,"Settings saved",0,0,0);
+            cmui_footer(fb,&footer,"Settings saved",0,0,0,NULL);
         }
         save_preview(fb,d->name);
         for (unsigned choice=0;choice<3;++choice) {
@@ -669,7 +669,7 @@ int main(void)
                 help_rows=0; help_min_scale=2;
                 cmui_help_panel(fb,&help_rect,"Help",preview_help,preview_lines);
                 assert(help_min_scale==2 && help_rows==preview_lines);
-                cmui_footer(fb,&footer,"Settings saved",0,0,0);
+                cmui_footer(fb,&footer,"Settings saved",0,0,0,NULL);
             } else {
                 cmui_compact_begin();
                 config_menu_draw_video(fb,&m,0,0,1480);

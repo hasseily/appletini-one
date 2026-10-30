@@ -174,16 +174,17 @@ def static_contract_checks() -> None:
             "wire [11:0] h_total = mode_1080p50_latched ?" in dvi_timing,
             "DVI mode is not applied at a complete-frame boundary")
 
-    require("#define APPLETINI_CFG_VERSION 117U" in menu and
+    version = re.search(r"#define APPLETINI_CFG_VERSION (\d+)U", menu)
+    require(version is not None and int(version.group(1)) >= 117 and
             "cfg_version < APPLETINI_CFG_VERSION" in menu,
-            "older global config migration to v117 is not enabled")
+            "older global config migration from v117 is not enabled")
     require('strcmp(key, "onee.video.standard") == 0' in menu and
             '"onee.video.standard=%s\\n"' in menu,
-            "global ONE//e video standard persistence is missing")
+            "ONE//e video standard persistence is missing")
     require(
-        'strcmp(key, "onee.standalone.persisted") != 0 &&\n'
-        '                strcmp(key, "onee.video.standard") != 0' in menu,
-        "profile load does not reject the global standard key",
+        'if (strcmp(key, "onee.standalone.persisted") != 0) {' in menu and
+        'strcmp(key, "onee.video.standard") != 0' not in menu,
+        "profiles must accept their video standard and reject global enable",
     )
     require("CONFIG_DEFAULT_ONEE_VIDEO_50HZ 0U" in menu and
             "menu->onee_video_50hz = CONFIG_DEFAULT_ONEE_VIDEO_50HZ;" in menu,

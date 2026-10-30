@@ -142,7 +142,7 @@ HELP(boot_onee,
 HELP(boot_onee_standard,
     "Chooses cadence for the built-in ONE//e only: NTSC has 262 lines and 130 fabric clocks per cycle.",
     "PAL has 312 lines and 131 fabric clocks per cycle. Both begin vertical blank at scanner line 192.",
-    "The row shows the saved target. A live change stays pending until the next virtual reset or restart.",
+    "Profiles save and restore this target. A live change stays pending until the next virtual reset or restart.",
     "This row appears only while ONE//e is active. A physical Apple's video standard remains automatic.");
 
 HELP(boot_startup_firmware,
@@ -754,7 +754,7 @@ static const help_override_t printing_overrides[] = {
 /* ======================================================================== */
 HELP(about,
     "The firmware is open-source and available on GitHub. We only stand on the shoulders of giants.",
-    "                                                            Rikkles && KKR75 - Yarze, Lebanon");
+    "Rikkles && KKR75 - Yarze, Lebanon");
 
 /* ======================================================================== */
 /*  MASTER TABLE -- one row per tab.                                        */

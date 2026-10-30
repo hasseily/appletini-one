@@ -52,16 +52,24 @@ typedef struct {
  * Rendering them at a native font size keeps settings readable at 640x400. */
 uint8_t cmui_compact_active(void);
 void cmui_compact_begin(void);
+/* A small About notification; the compact tab wraps when necessary. */
+void cmui_set_update_badge(uint8_t available);
 /* Rows that fit above the footer when the page has no help text. */
 uint32_t cmui_compact_row_capacity(void);
 void cmui_compact_scroll(int delta);
+uint32_t cmui_compact_scroll_offset(void);
+uint32_t cmui_compact_visible_rows(void);
 void cmui_compact_entry(const char *label, const char *value,
                          uint8_t focused, uint8_t dimmed);
+/* Muted attribution aligned to the compact text area's right edge. */
+void cmui_compact_entry_right(const char *label);
+/* A nonempty input_hint replaces generic controls; status keeps its own row. */
 void cmui_compact_finish(uint16_t *fb, const char *title,
                           const char * const *tabs, uint32_t tab_count,
                           uint32_t selected_tab,
                           const char *status, uint8_t warning,
-                          uint8_t usb_owned, uint8_t iiplus_keyboard);
+                          uint8_t usb_owned, uint8_t iiplus_keyboard,
+                          const char *input_hint);
 
 void cmui_screen_rects(cmui_rect_t *nav,
                        cmui_rect_t *body,
@@ -169,11 +177,13 @@ void cmui_slider(uint16_t *fb,
                  uint32_t max_value,
                  uint32_t center_value,
                  const char *value_text);
+/* NULL/empty input_hint retains the standard Apple/USB control labels. */
 void cmui_footer(uint16_t *fb,
                  const cmui_rect_t *footer,
                  const char *status,
                  uint8_t warning,
                  uint8_t usb_owned,
-                 uint8_t iiplus_keyboard);
+                 uint8_t iiplus_keyboard,
+                 const char *input_hint);
 
 #endif

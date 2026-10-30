@@ -236,11 +236,11 @@ static void render(config_menu_t *menu, const char *path)
         if (!compact) assert(cmui_text_width(shown_help[i],CMUI_SMALL_SCALE) <= help_rect.w-40);
     }
     if (compact) {
-        cmui_compact_finish(fb,"USB",tabs,15,CONFIG_TAB_USB,"Settings saved",0,menu->usb_owned,0);
+        cmui_compact_finish(fb,"USB",tabs,15,CONFIG_TAB_USB,"Settings saved",0,menu->usb_owned,0,NULL);
         assert(compact_preview_rows==15 && compact_focused_rows==1);
     } else {
         cmui_rect_t navrow={nav.x,nav.y+12*42,nav.w,34}; cmui_nav_item(fb,&navrow,"USB",1,1);
-        cmui_footer(fb,&footer,"Settings saved",0,0,0);
+        cmui_footer(fb,&footer,"Settings saved",0,0,0,NULL);
     }
     if (!path) { free(fb); return; }
     FILE *ppm=fopen(path,"wb"); assert(ppm);

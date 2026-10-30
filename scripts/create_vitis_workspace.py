@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from frontend_memory import FRONTEND_MEMORY_LINK_FLAGS, audit_frontend_elf
 from http_build_config import configure_http_service
+from vitis_app_build import build_app_component, regenerate_bsp_checked, write_workspace_receipt
 
 import vitis
 import subprocess
@@ -776,22 +777,7 @@ def remove_existing_workspace():
     )
 
 
-# kill any existing vitis server. Windows taskkill on the full process
-# tree, then give the OS a moment to actually release file handles
-# before we try to rmtree the workspace.
-run_step("Kill existing Vitis IDE",
-         lambda: subprocess.run(["C:\\WINDOWS\\system32\\taskkill.exe", "/F", "/T",
-                                 "/IM", "vitis-ide.exe"]))
-run_step("Kill existing Vitis server (vitis-server.exe)",
-         lambda: subprocess.run(["C:\\WINDOWS\\system32\\taskkill.exe", "/F", "/T",
-                                 "/IM", "vitis-server.exe"]))
-run_step("Kill stray java.exe (Vitis Java runtime)",
-         lambda: subprocess.run(["C:\\WINDOWS\\system32\\taskkill.exe", "/F", "/T",
-                                 "/IM", "java.exe"]))
-time.sleep(1.0)
-
-
-# nuke existing workspace directory
+# Report locked workspace files rather than terminating unrelated processes.
 run_step("Remove existing vitis_workspace", remove_existing_workspace)
 
 client = run_step("Create Vitis client", lambda: vitis.create_client())
@@ -842,7 +828,8 @@ run_step(
         lib_name="xilffs",
     ),
 )
-run_step("Regenerate standalone_ps7_cortexa9_0 BSP", lambda: domain.regenerate())
+run_step("Regenerate standalone_ps7_cortexa9_0 BSP", lambda: regenerate_bsp_checked(
+    domain, Path("vitis_workspace/appletini_platform/ps7_cortexa9_0/standalone_ps7_cortexa9_0/bsp")))
 run_step(
     "Sync generated FatFs exFAT files",
     lambda: enable_fatfs_exfat(
@@ -943,7 +930,8 @@ run_step(
 )
 run_step(
     "Regenerate core 1 BSP",
-    lambda: domain_core1.regenerate(),
+    lambda: regenerate_bsp_checked(
+        domain_core1, Path("vitis_workspace/appletini_platform/ps7_cortexa9_1/standalone_ps7_cortexa9_1/bsp")),
 )
 
 platform_build_status = run_step("Build platform", lambda: platform.build())
@@ -1096,7 +1084,7 @@ def create_and_build_app(name, src_subdir, domain="standalone_ps7_cortexa9_0"):
             "Enable NEON on frontend_core1 (RGGB demosaic row path)",
             lambda: set_userconfig_mfpu("frontend_core1", "-mfpu=neon"),
         )
-    run_step(f"Build app {name}", lambda: comp.build())
+    run_step(f"Build app {name}", lambda: build_app_component(comp, name))
     # Vitis 2025.2 can print a failed CMake build yet return normally from
     # comp.build(). Treat the ELF as the build result so the script cannot
     # report success after a link failure.
@@ -1261,6 +1249,8 @@ run_step(
             "../../../ps_sources/frontend/http_roots.c",
             "../../../ps_sources/frontend/http_service.c",
             "../../../ps_sources/frontend/http_download.c",
+            "../../../ps_sources/frontend/online_update_core.c",
+            "../../../ps_sources/frontend/online_update_service.c",
             "../../../ps_sources/frontend/download_filename.c",
             "../../../ps_sources/frontend/net_service.c",
             "../../../ps_sources/frontend/net_json.c",
@@ -1315,7 +1305,7 @@ run_step(
 )
 run_step("Generate core1 blob (objcopy + .S stub)",
          generate_core1_blob_and_stub)
-run_step("Build app frontend", lambda: frontend_comp.build())
+run_step("Build app frontend", lambda: build_app_component(frontend_comp, "frontend"))
 run_step(
     "Verify linked frontend stack and heap",
     lambda: audit_frontend_elf(
@@ -1334,3 +1324,5 @@ run_step("Fix bootloader launch.json bitstream path", lambda: fix_launch_bitstre
 print("\nWorkspace creation completed successfully.", flush=True)
 run_step("Shutdown Vitis client", lambda: vitis.dispose())
 # Do not kill every java.exe: other projects or tools may own those processes.
+run_step("Write successful workspace completion receipt",
+         lambda: write_workspace_receipt(Path("vitis_workspace")))

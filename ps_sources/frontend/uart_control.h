@@ -23,7 +23,8 @@ typedef enum {
     UI_KEY_PAGE_DOWN,
     UI_KEY_SPACE,
     UI_KEY_ESC,
-    UI_KEY_MENU
+    UI_KEY_MENU,
+    UI_KEY_KEYBOARD
 } ui_key_t;
 
 typedef struct {

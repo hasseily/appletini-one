@@ -137,7 +137,7 @@ static void draw_check(uint16_t *fb, const config_menu_t *menu, unsigned capacit
         cmui_compact_begin();
         config_menu_draw_browser(fb, menu, 0, 0, 1480);
         assert(s_compact_count == expected + 3U);
-        cmui_compact_finish(fb, "Files", tabs, 1, 0, "Choose a file", 0, 0, 0);
+        cmui_compact_finish(fb, "Files", tabs, 1, 0, "Choose a file", 0, 0, 0, NULL);
     } else {
         cmui_screen_rects(NULL, &body, NULL);
         config_menu_draw_browser(fb, menu, body.x, body.y - 4, body.w);

@@ -489,6 +489,7 @@ void cpu_reset(CPU_t* cpu) {
 	cpu->ip = 0x0000;
 	cpu->hltstate = 0;
 	cpu->trap_toggle = 0;
+	cpu->io_pending = 0; /* Appletini: a reset drops any pending port transfer. */
 }
 
 FUNC_INLINE uint16_t readrm16(CPU_t* cpu, uint8_t rmval) {
@@ -1106,6 +1107,21 @@ void cpu_intcall(CPU_t* cpu, uint8_t intnum) {
 	cpu->tf = 0;
 }
 
+/* Appletini: use right after a port callback inside cpu_exec. If the callback
+   left the transfer pending, nothing architectural has changed yet, so restart
+   the instruction at its first prefix byte and end the slice. Clearing
+   trap_toggle stops a single-step trap from firing twice for this instruction.
+   The machine model clears cpu->io_pending when the bridge completes the
+   transfer, then calls cpu_exec again to retry the same instruction. */
+#define APPLETINI_IO_RETRY_IF_PENDING() \
+	do { \
+		if (cpu->io_pending) { \
+			cpu->ip = firstip; \
+			cpu->trap_toggle = 0; \
+			return; \
+		} \
+	} while (0)
+
 void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 
 	uint32_t loopcount;
@@ -1113,6 +1129,11 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 	static uint16_t firstip;
 
 	for (loopcount = 0; loopcount < execloops; loopcount++) {
+
+		/* Appletini: no progress while a port transfer is still pending. */
+		if (cpu->io_pending) {
+			return;
+		}
 
 		if (cpu->trap_toggle) {
 			cpu_intcall(cpu, 1);
@@ -1974,18 +1995,18 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			}
 			break;
 
-		case 0x6C:	/* 6E INSB */
+		case 0x6C:	/* 6C INSB: ES:[DI] <- port DX. DI steps; SI does not (80186/V30). */
 			if (cpu->reptype && (cpu->regs.wordregs[regcx] == 0)) {
 				break;
 			}
 
-			putmem8(cpu, cpu->segregs[reges], cpu->regs.wordregs[regdi], port_read(cpu, cpu->regs.wordregs[regdx]));
+			cpu->oper1b = port_read(cpu, cpu->regs.wordregs[regdx]);
+			APPLETINI_IO_RETRY_IF_PENDING();
+			putmem8(cpu, cpu->segregs[reges], cpu->regs.wordregs[regdi], cpu->oper1b);
 			if (cpu->df) {
-				cpu->regs.wordregs[regsi] = cpu->regs.wordregs[regsi] - 1;
 				cpu->regs.wordregs[regdi] = cpu->regs.wordregs[regdi] - 1;
 			}
 			else {
-				cpu->regs.wordregs[regsi] = cpu->regs.wordregs[regsi] + 1;
 				cpu->regs.wordregs[regdi] = cpu->regs.wordregs[regdi] + 1;
 			}
 
@@ -2001,18 +2022,18 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			cpu->ip = firstip;
 			break;
 
-		case 0x6D:	/* 6F INSW */
+		case 0x6D:	/* 6D INSW: ES:[DI] <- port DX. DI steps; SI does not (80186/V30). */
 			if (cpu->reptype && (cpu->regs.wordregs[regcx] == 0)) {
 				break;
 			}
 
-			putmem16(cpu, cpu->segregs[reges], cpu->regs.wordregs[regdi], port_readw(cpu, cpu->regs.wordregs[regdx]));
+			cpu->oper1 = port_readw(cpu, cpu->regs.wordregs[regdx]);
+			APPLETINI_IO_RETRY_IF_PENDING();
+			putmem16(cpu, cpu->segregs[reges], cpu->regs.wordregs[regdi], cpu->oper1);
 			if (cpu->df) {
-				cpu->regs.wordregs[regsi] = cpu->regs.wordregs[regsi] - 2;
 				cpu->regs.wordregs[regdi] = cpu->regs.wordregs[regdi] - 2;
 			}
 			else {
-				cpu->regs.wordregs[regsi] = cpu->regs.wordregs[regsi] + 2;
 				cpu->regs.wordregs[regdi] = cpu->regs.wordregs[regdi] + 2;
 			}
 
@@ -2028,19 +2049,18 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			cpu->ip = firstip;
 			break;
 
-		case 0x6E:	/* 6E OUTSB */
+		case 0x6E:	/* 6E OUTSB: port DX <- DS:[SI]. SI steps; DI does not (80186/V30). */
 			if (cpu->reptype && (cpu->regs.wordregs[regcx] == 0)) {
 				break;
 			}
 
 			port_write(cpu, cpu->regs.wordregs[regdx], getmem8(cpu, cpu->useseg, cpu->regs.wordregs[regsi]));
+			APPLETINI_IO_RETRY_IF_PENDING();
 			if (cpu->df) {
 				cpu->regs.wordregs[regsi] = cpu->regs.wordregs[regsi] - 1;
-				cpu->regs.wordregs[regdi] = cpu->regs.wordregs[regdi] - 1;
 			}
 			else {
 				cpu->regs.wordregs[regsi] = cpu->regs.wordregs[regsi] + 1;
-				cpu->regs.wordregs[regdi] = cpu->regs.wordregs[regdi] + 1;
 			}
 
 			if (cpu->reptype) {
@@ -2055,19 +2075,18 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			cpu->ip = firstip;
 			break;
 
-		case 0x6F:	/* 6F OUTSW */
+		case 0x6F:	/* 6F OUTSW: port DX <- DS:[SI]. SI steps; DI does not (80186/V30). */
 			if (cpu->reptype && (cpu->regs.wordregs[regcx] == 0)) {
 				break;
 			}
 
 			port_writew(cpu, cpu->regs.wordregs[regdx], getmem16(cpu, cpu->useseg, cpu->regs.wordregs[regsi]));
+			APPLETINI_IO_RETRY_IF_PENDING();
 			if (cpu->df) {
 				cpu->regs.wordregs[regsi] = cpu->regs.wordregs[regsi] - 2;
-				cpu->regs.wordregs[regdi] = cpu->regs.wordregs[regdi] - 2;
 			}
 			else {
 				cpu->regs.wordregs[regsi] = cpu->regs.wordregs[regsi] + 2;
-				cpu->regs.wordregs[regdi] = cpu->regs.wordregs[regdi] + 2;
 			}
 
 			if (cpu->reptype) {
@@ -3101,25 +3120,31 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 		case 0xE4:	/* E4 IN cpu->regs.byteregs[regal] Ib */
 			cpu->oper1b = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
 			StepIP(cpu, 1);
-			cpu->regs.byteregs[regal] = (uint8_t)port_read(cpu, cpu->oper1b);
+			cpu->oper2b = port_read(cpu, cpu->oper1b);
+			APPLETINI_IO_RETRY_IF_PENDING();
+			cpu->regs.byteregs[regal] = cpu->oper2b;
 			break;
 
 		case 0xE5:	/* E5 IN eAX Ib */
 			cpu->oper1b = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
 			StepIP(cpu, 1);
-			cpu->regs.wordregs[regax] = port_readw(cpu, cpu->oper1b);
+			cpu->oper2 = port_readw(cpu, cpu->oper1b);
+			APPLETINI_IO_RETRY_IF_PENDING();
+			cpu->regs.wordregs[regax] = cpu->oper2;
 			break;
 
 		case 0xE6:	/* E6 OUT Ib cpu->regs.byteregs[regal] */
 			cpu->oper1b = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
 			StepIP(cpu, 1);
 			port_write(cpu, cpu->oper1b, cpu->regs.byteregs[regal]);
+			APPLETINI_IO_RETRY_IF_PENDING();
 			break;
 
 		case 0xE7:	/* E7 OUT Ib eAX */
 			cpu->oper1b = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
 			StepIP(cpu, 1);
 			port_writew(cpu, cpu->oper1b, cpu->regs.wordregs[regax]);
+			APPLETINI_IO_RETRY_IF_PENDING();
 			break;
 
 		case 0xE8:	/* E8 CALL Jv */
@@ -3151,22 +3176,28 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 
 		case 0xEC:	/* EC IN cpu->regs.byteregs[regal] regdx */
 			cpu->oper1 = cpu->regs.wordregs[regdx];
-			cpu->regs.byteregs[regal] = (uint8_t)port_read(cpu, cpu->oper1);
+			cpu->oper2b = port_read(cpu, cpu->oper1);
+			APPLETINI_IO_RETRY_IF_PENDING();
+			cpu->regs.byteregs[regal] = cpu->oper2b;
 			break;
 
 		case 0xED:	/* ED IN eAX regdx */
 			cpu->oper1 = cpu->regs.wordregs[regdx];
-			cpu->regs.wordregs[regax] = port_readw(cpu, cpu->oper1);
+			cpu->oper2 = port_readw(cpu, cpu->oper1);
+			APPLETINI_IO_RETRY_IF_PENDING();
+			cpu->regs.wordregs[regax] = cpu->oper2;
 			break;
 
 		case 0xEE:	/* EE OUT regdx cpu->regs.byteregs[regal] */
 			cpu->oper1 = cpu->regs.wordregs[regdx];
 			port_write(cpu, cpu->oper1, cpu->regs.byteregs[regal]);
+			APPLETINI_IO_RETRY_IF_PENDING();
 			break;
 
 		case 0xEF:	/* EF OUT regdx eAX */
 			cpu->oper1 = cpu->regs.wordregs[regdx];
 			port_writew(cpu, cpu->oper1, cpu->regs.wordregs[regax]);
+			APPLETINI_IO_RETRY_IF_PENDING();
 			break;
 
 		case 0xF0:	/* F0 LOCK */

@@ -33,6 +33,15 @@ typedef struct CPU CPU_t;
 struct CPU {
 	/* Appletini machine-model context passed to the memory and I/O callbacks. */
 	void *opaque;
+	/* Appletini: a port callback sets this when the transfer cannot complete
+	   yet (for example, the Apple must service the port first). The I/O
+	   instruction then restores IP to its first prefix byte and returns from
+	   cpu_exec before it changes any register or memory. The machine model
+	   clears the flag once the bridge completes the transfer and must not
+	   run cpu_exec or deliver an interrupt while the flag is set. On retry
+	   the callback must return the completed data, not post the transfer
+	   again. */
+	uint8_t io_pending;
 	union _bytewordregs_ regs;
 	uint8_t	opcode, segoverride, reptype, hltstate;
 	uint16_t segregs[4], savecs, saveip, ip, useseg, oldsp;

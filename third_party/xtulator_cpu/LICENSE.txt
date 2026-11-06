@@ -9,10 +9,16 @@ Imported files: cpu.c, cpu.h, cpuconf.h.
 
 Appletini changes are deliberately small and visible in those files:
 
-* select the CPU_8086 instruction set (the AD8088 contains an 8088),
+* select the CPU_8086 instruction set by default (the AD8088 contains an
+  8088); a build may define CPU_V20 or another profile on the command line,
 * remove XTulator's PC/PIC and logging dependencies,
-* provide the local inline macro, and
-* add an opaque machine-model context pointer to CPU_t.
+* provide the local inline macro,
+* add an opaque machine-model context pointer to CPU_t,
+* add io_pending to CPU_t: a port callback sets it when the transfer cannot
+  complete yet, and every I/O instruction then restores IP and returns from
+  cpu_exec before it changes any register or memory, and
+* make INSB/INSW step DI only and OUTSB/OUTSW step SI only, as the 80186 and
+  V30 define them (these handlers are compiled out under CPU_8086).
 
 The complete GNU GPL version 3 license for this combined work is in the
 repository root LICENSE file. The original copyright and GPL notice remain

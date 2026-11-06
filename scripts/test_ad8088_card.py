@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 from pathlib import Path
 
 
@@ -246,8 +247,12 @@ def test_ui_and_build() -> None:
     main_c = text("ps_sources/frontend/main.c")
     vitis = text("scripts/create_vitis_workspace.py")
 
-    require("#define APPLETINI_CFG_VERSION 117U" in config,
-            "slot-5 personality must remain in the current config schema")
+    # The AD8088 personality entered the saved config schema at version 113.
+    # Read the current number instead of pinning it, so later bumps for other
+    # features do not break this test.
+    version_match = re.search(r"#define APPLETINI_CFG_VERSION\s+(\d+)U", config)
+    require(version_match is not None and int(version_match.group(1)) >= 113,
+            "config schema version missing or older than the AD8088 schema")
     require('"slot5.processor"' in config and
             '"slot5.processor=%s' in config,
             "slot-5 personality must load and save")

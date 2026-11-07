@@ -71,6 +71,7 @@ typedef enum {
 typedef enum {
     CONFIG_SLOT5_PROCESSOR_Z80 = 0,
     CONFIG_SLOT5_PROCESSOR_AD8088,
+    CONFIG_SLOT5_PROCESSOR_TRANSPORTER,
     CONFIG_SLOT5_PROCESSOR_COUNT
 } config_slot5_processor_t;
 

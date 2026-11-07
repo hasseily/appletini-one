@@ -3775,6 +3775,8 @@ static void config_menu_parse_key_value(config_menu_t *menu, const char *key, co
         menu->applicard_slot5_enabled = config_menu_bool_text(value);
     } else if (strcmp(key, "slot5.processor") == 0) {
         menu->slot5_processor =
+            (config_menu_str_ieq(value, "TRANSPORTER") != 0U) ?
+                CONFIG_SLOT5_PROCESSOR_TRANSPORTER :
             (config_menu_str_ieq(value, "AD8088") != 0U) ?
                 CONFIG_SLOT5_PROCESSOR_AD8088 : CONFIG_SLOT5_PROCESSOR_Z80;
     } else if (strcmp(key, "applicard.resource.max") == 0) {
@@ -4052,6 +4054,8 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                config_menu_on_off(menu->slot2_card == SLOT2_CARD_MOUSE),
                (unsigned)menu->mouse_sensitivity,
                config_menu_on_off(menu->applicard_slot5_enabled),
+               menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_TRANSPORTER ?
+                   "TRANSPORTER" :
                menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_AD8088 ?
                    "AD8088" : "Z80",
                config_menu_on_off(menu->applicard_resource_max),
@@ -5124,8 +5128,9 @@ static void config_menu_set_slot5_processor(config_menu_t *menu,
     if (menu == NULL) {
         return;
     }
-    processor = (processor == CONFIG_SLOT5_PROCESSOR_AD8088) ?
-        CONFIG_SLOT5_PROCESSOR_AD8088 : CONFIG_SLOT5_PROCESSOR_Z80;
+    if (processor >= CONFIG_SLOT5_PROCESSOR_COUNT) {
+        processor = CONFIG_SLOT5_PROCESSOR_Z80;
+    }
     if (processor == CONFIG_SLOT5_PROCESSOR_AD8088 &&
         menu->applicard_slot5_enabled != 0U && menu->vtw_enabled != 0U) {
         config_menu_set_status(menu, 1U,
@@ -5139,9 +5144,19 @@ static void config_menu_set_slot5_processor(config_menu_t *menu,
     }
     config_menu_save_settings(menu);
     config_menu_set_status(menu, 0U,
+        menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_TRANSPORTER ?
+            "SLOT 5: PC TRANSPORTER TEST MODE" :
         menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_AD8088 ?
             "SLOT 5: ALF AD8088 PLUS 640K" :
             "SLOT 5: Z80 APPLI-CARD");
+}
+
+static void config_menu_cycle_slot5_processor(config_menu_t *menu, int delta)
+{
+    unsigned next = (unsigned)menu->slot5_processor +
+        (delta < 0 ? CONFIG_SLOT5_PROCESSOR_COUNT - 1U : 1U);
+    config_menu_set_slot5_processor(menu,
+        (uint8_t)(next % CONFIG_SLOT5_PROCESSOR_COUNT));
 }
 
 /* Single authority for the selected slot-5 card's enable state. */
@@ -5174,6 +5189,8 @@ void config_menu_set_applicard_enabled(config_menu_t *menu, uint8_t enable)
     config_menu_save_settings(menu);
     if (menu->applicard_slot5_enabled != 0U) {
         config_menu_set_status(menu, 0U,
+            menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_TRANSPORTER ?
+                "PC TRANSPORTER TEST MODE ON" :
             menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_AD8088 ?
                 "AD8088 PLUS 640K ON - SLOT 5" :
                 "APPLI-CARD Z80 ON - SLOT 5");
@@ -6263,10 +6280,7 @@ static uint8_t config_menu_adjust_focused_value(config_menu_t *menu, int8_t delt
     }
 
     if (menu->tab == CONFIG_TAB_APPLICARD && menu->item_focus == 1U) {
-        (void)delta;
-        config_menu_set_slot5_processor(menu,
-            menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_AD8088 ?
-                CONFIG_SLOT5_PROCESSOR_Z80 : CONFIG_SLOT5_PROCESSOR_AD8088);
+        config_menu_cycle_slot5_processor(menu, delta);
         return 1U;
     }
 
@@ -8023,9 +8037,7 @@ static void config_menu_activate_item(config_menu_t *menu)
             config_menu_set_applicard_enabled(menu,
                 menu->applicard_slot5_enabled ? 0U : 1U);
         } else if (menu->item_focus == 1U) {
-            config_menu_set_slot5_processor(menu,
-                menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_AD8088 ?
-                    CONFIG_SLOT5_PROCESSOR_Z80 : CONFIG_SLOT5_PROCESSOR_AD8088);
+            config_menu_cycle_slot5_processor(menu, 1);
         } else if (menu->item_focus == 2U) {
             menu->applicard_resource_max =
                 menu->applicard_resource_max ? 0U : 1U;

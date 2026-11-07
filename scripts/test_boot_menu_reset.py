@@ -211,8 +211,14 @@ def test_boot_menu_close_does_not_reprobe_storage_after_handoff() -> None:
             close_request.index("config_menu_apply_boot_runtime(menu);") <
             close_request.index("boot_menu_service_request_rom_close();"),
             "boot-critical config must be published before the ROM starts handoff")
-    require(source.count("ui_request_boot_menu_close(menu);") == 2,
-            "Apple-keyboard and USB close actions must share the safe close sequence")
+    for caller in ("ui_handle_input_with_config", "ui_toggle_usb_gamepad_menu",
+                   "ui_handle_usb_menu_event"):
+        caller_start = source.find(f"static void {caller}(")
+        caller_end = source.find("\nstatic ", caller_start + 1)
+        require(caller_start >= 0 and caller_end > caller_start,
+                f"frontend must keep the {caller} input handler")
+        require("ui_request_boot_menu_close(menu);" in source[caller_start:caller_end],
+                f"{caller} must use the safe ROM-close sequence")
     require("boot_close_child_suppress" not in source and
             "UI_BOOT_CLOSE_CHILD_SUPPRESS" not in source,
             "child ESC must not rely on suppressing a ROM close after the ROM has already released the Apple")

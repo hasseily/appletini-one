@@ -56,18 +56,18 @@ module tb_axisimple_wrapper_wskid;
     globals::AxiSimple_common as_common;
     wire [31:0] as_vtw_phasor_wdata;
     wire [3:0]  as_vtw_phasor_wstrb;
-    AxiSimple_if as_clients [7:0] ();
-    wire [7:0] client_awvalid;
+    AxiSimple_if as_clients [8:0] ();
+    wire [8:0] client_awvalid;
 
     genvar gi;
     generate
-        for (gi = 0; gi < 8; gi = gi + 1) begin : CLIENT_WIRES
+        for (gi = 0; gi < 9; gi = gi + 1) begin : CLIENT_WIRES
             assign client_awvalid[gi] = as_clients[gi].awvalid;
             assign as_clients[gi].rdata = 32'hA5000000 | gi;
         end
     endgenerate
 
-    axisimple_wrapper dut (
+    axisimple_wrapper #(.CLIENT_COUNT(9)) dut (
         .S_AXI_ACLK(clk),
         .S_AXI_ARESETN(rstn),
         .S_AXI_AWVALID(s_awvalid),
@@ -148,7 +148,7 @@ module tb_axisimple_wrapper_wskid;
     always @(posedge clk) begin
         if (rstn) begin
             monitor_hits = 0;
-            for (monitor_i = 0; monitor_i < 8; monitor_i = monitor_i + 1) begin
+            for (monitor_i = 0; monitor_i < 9; monitor_i = monitor_i + 1) begin
                 if (client_awvalid[monitor_i]) begin
                     monitor_hits = monitor_hits + 1;
                     if (write_count < 64) begin
@@ -598,6 +598,16 @@ module tb_axisimple_wrapper_wskid;
         check_response(bbase, 12'h501, "queued response 0");
         check_response(bbase + 1, 12'h502, "queued response 1");
         check_response(bbase + 2, 12'h503, "queued response 2");
+
+        wbase = write_count;
+        bbase = response_count;
+        send_aw(32'h40080008, 4'd0, 12'h508, 1'b0);
+        send_w(32'h50435435, 4'hF, 1'b1);
+        wait_for_responses(bbase + 1, "Transporter response");
+        check_write(wbase, 8, 8'h02, 32'h50435435, 4'hF,
+                    "Transporter MMIO write");
+        send_ar(32'h40080000, 12'h509, 1'b0, 32'hA5000008, 2'b00,
+                "Transporter MMIO read");
 
         repeat (5) @(posedge clk);
         if (fails == 0) begin

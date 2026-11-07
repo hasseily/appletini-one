@@ -221,7 +221,8 @@ def check_hdl():
     policy_path = top.split("apple_bus_client_policy_gate #(", 1)[1].split(
         "apple_bus_write_arbiter #(", 1)[0]
     arbiter_path = top.split("apple_bus_write_arbiter_i(", 1)[1]
-    require("applicard_ab_write" in policy_path and
+    require("assign slot5_ab_write = pct_mode ? pct_ab_write : applicard_ab_write;" in top and
+            "slot5_ab_write" in policy_path and
             ".client_writes(policy_gated_client_writes)" in arbiter_path,
             "applicard writer must reach the arbiter through the safety gate")
     require("APPLE_BUS_CLIENT_COUNT = 13" in top and

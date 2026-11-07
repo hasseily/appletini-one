@@ -62,6 +62,8 @@ apple/mouse_card.sv
 apple/slot2_gamepad_card.sv
 apple/slot2_card.sv
 apple/applicard_card.sv
+apple/pc_transporter_card.sv
+apple/pc_transporter_pit.sv
 apple/uthernet2_card.sv
 apple/ssc_card.sv
 apple/supersprite_card.sv

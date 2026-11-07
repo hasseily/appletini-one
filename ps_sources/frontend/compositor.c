@@ -49,6 +49,10 @@
 #include "display_modes.h"
 #include "scanlines.h"
 #include "linear_text_overlay.h"
+#include "pc_transporter_machine.h"
+#include "pc_transporter_regs.h"
+#include "pc_transporter_service.h"
+#include "pc_transporter_video.h"
 #include "supersprite_vdp.h"
 #include "video_blur.h"
 #include "video_mono.h"
@@ -1490,6 +1494,60 @@ static int draw_apple_subwindow(uint16_t *fb, uint8_t slot)
     return 1;
 }
 
+/* Read the CGA state without changing the shared CRTC index. */
+static int draw_pc_transporter_picture(uint16_t *fb, uint32_t frame)
+{
+    int width = COMP_SUBWIN_WIDTH;
+    int height = COMP_SUBWIN_HEIGHT;
+
+    if (!pc_transporter_service_video_active()) {
+        return 0;
+    }
+
+    uint32_t status = REG_READ(PCT_CGA_STATE);
+    uint32_t low = REG_READ(PCT_CGA_CRTC_LOW);
+    uint32_t high = REG_READ(PCT_CGA_CRTC_HIGH);
+    const uint32_t last_status = REG_READ(PCT_CGA_STATE);
+    if (status != last_status) {
+        status = last_status;
+        low = REG_READ(PCT_CGA_CRTC_LOW);
+        high = REG_READ(PCT_CGA_CRTC_HIGH);
+    }
+    if ((status & PCT_CGA_VIDEO_ENABLE) == 0U) {
+        return 0;
+    }
+
+    if (width > (height * 4) / 3) {
+        width = (height * 4) / 3;
+    } else {
+        height = (width * 3) / 4;
+    }
+    const int x = COMP_SUBWIN_X_OFF + (COMP_SUBWIN_WIDTH - width) / 2;
+    const int y = COMP_SUBWIN_Y_OFF + (COMP_SUBWIN_HEIGHT - height) / 2;
+    const pc_transporter_video_state_t state = {
+        .start_address = (uint16_t)(((low >> 16) & 0xFFU) << 8 | (low >> 24)),
+        .cursor_address = (uint16_t)(((high & 0xFFU) << 8) | ((high >> 8) & 0xFFU)),
+        .cursor_start = (uint8_t)low,
+        .cursor_end = (uint8_t)(low >> 8),
+        .mode = (uint8_t)status,
+        .color = (uint8_t)(status >> 8),
+    };
+    const volatile uint8_t *vram =
+        (const volatile uint8_t *)(uintptr_t)(PCT_DDR_BASE + PCT_CGA_RAM_BASE);
+    const volatile uint8_t *font =
+        (const volatile uint8_t *)(uintptr_t)(PCT_DDR_BASE + PCT_CGA_FONT_OFFSET);
+
+    pc_transporter_video_draw(fb + y * COMP_OUT_WIDTH + x, COMP_OUT_WIDTH,
+                              (unsigned)width, (unsigned)height, &state,
+                              vram, font, frame);
+    s_picture_rect[s_writer_idx].x = x;
+    s_picture_rect[s_writer_idx].y = y;
+    s_picture_rect[s_writer_idx].width = width;
+    s_picture_rect[s_writer_idx].height = height;
+    s_picture_rect[s_writer_idx].valid = 1;
+    return 1;
+}
+
 /* ---------- SuperSprite (TMS9918) overlay ---------- */
 
 /* Render the software VDP and black-key it over the Apple subwindow: only
@@ -2017,10 +2075,16 @@ int compositor_tick(void)
             g_compositor_last_apple_mode == APPLE_FB_DISPLAY_MODE_SHR);
     } else {
         XTime_GetTime(&apple_start);
-        apple_drawn = draw_apple_subwindow(fb, apple_slot);
-        draw_supersprite_overlay(fb);
-        linear_text_overlay_draw(fb,
-            g_compositor_last_apple_mode == APPLE_FB_DISPLAY_MODE_SHR);
+        if (draw_pc_transporter_picture(fb, now)) {
+            s_composited_apple_seq = apple_seq;
+            linear_text_overlay_draw(NULL,
+                g_compositor_last_apple_mode == APPLE_FB_DISPLAY_MODE_SHR);
+        } else {
+            apple_drawn = draw_apple_subwindow(fb, apple_slot);
+            draw_supersprite_overlay(fb);
+            linear_text_overlay_draw(fb,
+                g_compositor_last_apple_mode == APPLE_FB_DISPLAY_MODE_SHR);
+        }
         XTime_GetTime(&apple_end);
     }
 

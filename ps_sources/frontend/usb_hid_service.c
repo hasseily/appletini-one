@@ -16,6 +16,7 @@
 #include "xusbps_hw.h"
 
 #include "usb_hid_service.h"
+#include "pc_transporter_service.h"
 #include "https_probe.h"
 #include "usb_gamepad_input.h"
 #include "usb_ps4_report.h"
@@ -609,6 +610,7 @@ static void hid_slot_reset(usb_hid_slot_t *slot)
         return;
     }
     index = slot->index;
+    (void)pc_transporter_service_keyboard_report(index, 0U, NULL, 0U, false);
     memset(slot, 0, sizeof(*slot));
     slot->index = index;
     slot->fixed_hat = HID_HAT_NEUTRAL;
@@ -1427,7 +1429,9 @@ static void hid_process_keyboard_usages(usb_hid_slot_t *slot,
     if (fixed_keyboard_mode != 0U) {
         onee_modifier = onee_usb_fixed_apple_modifier(onee_modifier);
     }
-    if (g_onee_input_blocked != 0U) {
+    bool pct_capture = pc_transporter_service_keyboard_report(slot->index,
+        modifier, keys, count, g_menu_capture == 0U && g_onee_input_blocked == 0U);
+    if (g_onee_input_blocked != 0U || pct_capture) {
         onee_modifier = 0U;
         onee_key_count = 0U;
     }

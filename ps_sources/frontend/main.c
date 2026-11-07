@@ -35,6 +35,7 @@
 #include "boot_menu_service.h"
 #include "applicard_service.h"
 #include "ad8088_service.h"
+#include "pc_transporter_service.h"
 #include "applicard_regs.h"
 #include "vtw_service.h"
 #include "onee_service.h"
@@ -916,12 +917,15 @@ static void control_apply_slot5_service(uint8_t enable)
 {
     const uint8_t slot_effective =
         ((g_card_slot_effective_mask & (1UL << 5)) != 0U) ? 1U : 0U;
+    const bool active = enable != 0U && slot_effective != 0U;
+    const bool pct_active = active &&
+        g_slot5_processor == CONFIG_SLOT5_PROCESSOR_TRANSPORTER;
 
-    /* Always disarm both first. This makes live personality changes atomic
-     * from the PS point of view; each CPU retains a separate DDR arena. */
+    /* Keep the Transporter session when the slot keeps its owner. */
     applicard_service_set_enabled(0U);
     ad8088_service_set_enabled(0U);
-    if (enable != 0U && slot_effective != 0U) {
+    pc_transporter_service_set_enabled(pct_active);
+    if (active && !pct_active) {
         if (g_slot5_processor == CONFIG_SLOT5_PROCESSOR_AD8088) {
             if (boot_menu_service_host_bus_master_allowed() != 0U ||
                 control_onee_isolated() != 0U) {
@@ -937,13 +941,23 @@ static void control_set_slot5_processor(void *ctx, uint8_t processor)
 {
     const uint8_t enabled =
         ((g_card_slot_enable_mask & (1UL << 5)) != 0U) ? 1U : 0U;
+    const uint8_t next = processor < CONFIG_SLOT5_PROCESSOR_COUNT ?
+        processor : CONFIG_SLOT5_PROCESSOR_Z80;
 
     (void)ctx;
-    g_slot5_processor =
-        (processor == CONFIG_SLOT5_PROCESSOR_AD8088) ?
-            CONFIG_SLOT5_PROCESSOR_AD8088 : CONFIG_SLOT5_PROCESSOR_Z80;
+    if (next == CONFIG_SLOT5_PROCESSOR_TRANSPORTER &&
+        g_slot5_processor == next && REG_READ(APPLICARD_REG_MODE) == APPLICARD_MODE_TRANSPORTER) {
+        control_apply_slot5_service(enabled);
+        return;
+    }
+    g_slot5_processor = next;
     control_apply_slot5_service(0U);
+    if (g_slot5_processor == CONFIG_SLOT5_PROCESSOR_TRANSPORTER) {
+        pc_transporter_service_init(UART0_BASE);
+    }
     REG_WRITE(APPLICARD_REG_MODE,
+              g_slot5_processor == CONFIG_SLOT5_PROCESSOR_TRANSPORTER ?
+                  APPLICARD_MODE_TRANSPORTER :
               g_slot5_processor == CONFIG_SLOT5_PROCESSOR_AD8088 ?
                   APPLICARD_MODE_AD8088 : APPLICARD_MODE_Z80);
     control_apply_slot5_service(enabled);
@@ -5281,6 +5295,7 @@ int main(void)
         usb0_priority_checkpoint();
         applicard_service_poll();
         ad8088_service_poll();
+        pc_transporter_service_poll();
         usb0_priority_checkpoint();
         vtw_service_poll();
         usb0_priority_checkpoint();

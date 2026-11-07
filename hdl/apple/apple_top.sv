@@ -22,6 +22,7 @@ module apple_top(
     AxiSimple_if.client mouse_as_client,
     AxiSimple_if.client disk2_as_client,
     AxiSimple_if.client applicard_as_client,
+    AxiSimple_if.client pc_transporter_as_client,
     inout [7:0] apple_data_pin,
     inout [15:0] apple_addr_pin,
     inout apple_rw_pin,
@@ -351,9 +352,10 @@ module apple_top(
                                              : physical_ab_read;
     assign ab_write = physical_bus_isolate ? '0 : ab_write_arb;
 
-    // Mouse data consumers all require data_en. The private
-    // bus has already captured their byte before that strobe; bypass its
-    // unused live-data arm without changing any phase, policy, or reset.
+    // These data consumers require data_en. The private bus captures the byte
+    // before that strobe, so they can bypass the unused live-data mux. The
+    // vTW core, cycle capture and PSRAM also read data only at data_en. With
+    // this copy, no card reply path reaches their data inputs.
     always_comb begin
         data_phase_ab_read = ab_read;
         data_phase_ab_read.data = onee_enable_effective ?
@@ -1036,7 +1038,7 @@ module apple_top(
         .clk(clk),
         .resetn(rstn[0]),
         .soft_reset(!ab_read.res),
-        .ab_read(ab_read),
+        .ab_read(data_phase_ab_read),
         .sss(capture_sss),
         .line_in_frame(line_in_frame),
         .cycle_in_line(cycle_in_line),
@@ -1230,6 +1232,23 @@ module apple_top(
     logic        mb1_dbg_ssi_backend_done;
     logic        mb1_dbg_ssi_enable_ints;
     globals::AppleBus_write applicard_ab_write;
+    globals::AppleBus_write pct_ab_write;
+    logic pct_mode;
+    // Register the Transporter's own enable. It keeps the slot policy decode
+    // off the card's reply-drive path. apple_bus_client_policy_gate still
+    // removes every slot 5 output in the same clock when policy disables it.
+    logic pct_bus_enable;
+    always_ff @(posedge clk) begin
+        pct_bus_enable <= rstn[2] && card_slot5_bus_enable && pct_mode;
+    end
+    globals::AppleBus_write slot5_ab_write;
+    assign slot5_ab_write = pct_mode ? pct_ab_write : applicard_ab_write;
+
+    logic pct_mem_valid, pct_mem_ready, pct_mem_write;
+    logic [19:0] pct_mem_addr;
+    logic [63:0] pct_mem_wdata, pct_mem_rdata;
+    logic [7:0] pct_mem_wstrb;
+    logic pct_mem_done, pct_mem_error;
     globals::AppleBus_write uthernet_ab_write;
     globals::AppleBus_write ssc_ab_write;
     globals::AppleBus_write disk2_ab_write;
@@ -1317,7 +1336,7 @@ module apple_top(
     psram_simple psram_simple_i (
         .clk(clk),
         .resetn(rstn[0]),
-        .ab_read(ab_read),
+        .ab_read(data_phase_ab_read),
         .sss(sss),
         .aux_provide_en(aux_provide_en_q),
         .vtw_bus_owned(vtw_bus_owned),
@@ -1366,6 +1385,15 @@ module apple_top(
         .mc_ready(mc_disk2_ready),
         .mc_rdata(mc_disk2_rdata),
         .mc_rvalid(mc_disk2_rvalid),
+        .pct_valid(pct_mem_valid),
+        .pct_write(pct_mem_write),
+        .pct_addr(pct_mem_addr),
+        .pct_wdata(pct_mem_wdata),
+        .pct_wstrb(pct_mem_wstrb),
+        .pct_ready(pct_mem_ready),
+        .pct_done(pct_mem_done),
+        .pct_rdata(pct_mem_rdata),
+        .pct_error(pct_mem_error),
         .axi_read(axi_hp3_read),
         .axi_write(axi_hp3_write)
     );
@@ -1614,7 +1642,29 @@ module apple_top(
         .slot_assign(3'h5),
         .as_common(as_common),
         .as_client(applicard_as_client),
-        .ab_write(applicard_ab_write)
+        .ab_write(applicard_ab_write),
+        .pc_transporter_mode(pct_mode)
+    );
+
+    pc_transporter_card pc_transporter_card_i (
+        .clk(clk),
+        .rstn(rstn[2]),
+        .ab_read(gate_ab(data_phase_ab_read, pct_bus_enable)),
+        .sss(sss),
+        .card_enabled(pct_bus_enable),
+        .slot_assign(3'h5),
+        .as_common(as_common),
+        .as_client(pc_transporter_as_client),
+        .mem_req_valid(pct_mem_valid),
+        .mem_req_ready(pct_mem_ready),
+        .mem_req_write(pct_mem_write),
+        .mem_req_addr(pct_mem_addr),
+        .mem_req_wdata(pct_mem_wdata),
+        .mem_req_wstrb(pct_mem_wstrb),
+        .mem_rsp_valid(pct_mem_done),
+        .mem_rsp_rdata(pct_mem_rdata),
+        .mem_rsp_error(pct_mem_error),
+        .ab_write(pct_ab_write)
     );
 
     uthernet2_card uthernet2_card_i (
@@ -2302,7 +2352,7 @@ module apple_top(
         .video_mode_50hz(video_mode_50hz),
         .video_line(line_in_frame),
         .video_cycle(cycle_in_line),
-        .ab_read(ab_read),
+        .ab_read(data_phase_ab_read),
         .ab_write(vtw_ab_write),
         .rw_req_valid(vtw_rw_req_valid),
         .rw_req_rw(vtw_rw_req_rw),
@@ -2433,7 +2483,7 @@ module apple_top(
             brain_transplant_write,
             mb1_ab_write,
             slot2_ab_write,
-            applicard_ab_write,
+            slot5_ab_write,
             uthernet_ab_write,
             ssc_ab_write,
             supersprite_safe_ab_write,
@@ -2462,7 +2512,7 @@ module apple_top(
             brain_transplant_write,
             mb1_ab_write,
             slot2_ab_write,
-            applicard_ab_write,
+            slot5_ab_write,
             uthernet_ab_write,
             ssc_ab_write,
             supersprite_ab_write,

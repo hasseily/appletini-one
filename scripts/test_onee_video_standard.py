@@ -169,9 +169,12 @@ def static_contract_checks() -> None:
     require("cdc_apple_video_mode_50hz_i" in video_top and
             ".mode_1080p50 (apple_video_mode_50hz_pixel)" in video_top,
             "DVI timing does not receive the selected standard safely")
+    h_total = between(dvi_timing, "wire [11:0] h_total =", ";")
     require("if (frame_end) begin" in dvi_timing and
             "mode_1080p50_latched <= mode_1080p50;" in dvi_timing and
-            "wire [11:0] h_total = mode_1080p50_latched ?" in dvi_timing,
+            "output_mode == VIDEO_DEFAULT_MODE ?" in h_total and
+            "mode_1080p50_latched ? H_TOTAL_50 : H_TOTAL_60" in h_total and
+            ": timing.h_total" in h_total,
             "DVI mode is not applied at a complete-frame boundary")
 
     version = re.search(r"#define APPLETINI_CFG_VERSION (\d+)U", menu)

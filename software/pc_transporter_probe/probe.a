@@ -1,0 +1,358 @@
+!cpu 65c02
+* = $2000
+
+slot_page = $C500
+internal_rom = $C015
+release_c8 = $CFFF
+pointer_low = $CF00
+pointer_mid = $CF01
+pointer_bank = $CF02
+data_inc = $CF03
+data_hold = $CF04
+cc_bank = $CF05
+cc_page = $CF06
+ce_bank = $CF0E
+ce_page = $CF0F
+card_status = $CF30
+guest_status = $CF31
+cout = $FDED
+prbyte = $FDDA
+monz = $FF69
+
+!macro pointer .addr {
+    lda #<.addr
+    sta pointer_low
+    lda #>.addr
+    sta pointer_mid
+    lda #^.addr
+    sta pointer_bank
+}
+
+!macro check .value, .code, .addr {
+    cmp #.value
+    beq +
+    sta observed
+    lda #.value
+    sta expected
+    lda #<.addr
+    sta failed_address
+    lda #>.addr
+    sta failed_address + 1
+    lda #.code
+    jmp finish
++
+}
+
+!macro check_pointer .addr, .code {
+    lda pointer_low
+    +check <.addr, .code, pointer_low
+    lda pointer_mid
+    +check >.addr, .code, pointer_mid
+    lda pointer_bank
+    +check ^.addr, .code, pointer_bank
+}
+
+    jmp start
+signature:      !fill 4, 0
+status:         !byte $FF
+expected:       !byte 0
+observed:       !byte 0
+failed_address: !word 0
+
+monitor_entry:
+    jsr start
+    cld
+    jmp monz
+
+start:
+    php
+    sei
+    cld
+    pha
+    phx
+    phy
+    ldx #3
+.clear_signature:
+    stz signature,x
+    dex
+    bpl .clear_signature
+    lda #$FF
+    sta status
+    stz expected
+    stz observed
+    stz failed_address
+    stz failed_address + 1
+    stz restore_regs
+    stz saved_bytes
+
+    lda internal_rom
+    and #$80
+    +check $00, $01, internal_rom
+    bit release_c8
+    lda slot_page
+    +check $FF, $02, slot_page
+    lda guest_status
+    and #$10
+    +check $10, $03, guest_status
+    lda card_status
+    and #$80
+    +check $00, $03, card_status
+
+    lda pointer_low
+    sta old_pointer
+    lda pointer_mid
+    sta old_pointer + 1
+    lda pointer_bank
+    sta old_pointer + 2
+    lda cc_bank
+    sta old_cc
+    lda cc_page
+    sta old_cc + 1
+    lda ce_bank
+    sta old_ce
+    lda ce_page
+    sta old_ce + 1
+    inc restore_regs
+
+    +pointer $030201
+    +check_pointer $030201, $04
+
+    ; A write while C8 is released must not change the pointer latch.
+    bit release_c8
+    lda #$D6
+    sta pointer_low
+    bit slot_page
+    +check_pointer $030201, $05
+
+    ldx #0
+.seed:
+    jsr select_sample
+    lda data_hold
+    sta samples + 4,x
+    lda samples + 3,x
+    sta data_hold
+    txa
+    clc
+    adc #5
+    tax
+    stx saved_bytes
+    cpx #sample_bytes
+    bne .seed
+
+    +pointer $0000FF
+    lda data_hold
+    +check $51, $10, data_hold
+    +check_pointer $0000FF, $10
+    lda data_inc
+    +check $51, $11, data_inc
+    +check_pointer $000100, $11
+    lda data_hold
+    +check $A5, $11, data_hold
+
+    +pointer $00FFFF
+    lda data_inc
+    +check $3E, $12, data_inc
+    +check_pointer $010000, $12
+    lda data_hold
+    +check $B7, $12, data_hold
+
+    +pointer $0BFFFF
+    lda data_inc
+    +check_pointer $0C0000, $13
+    lda data_hold
+    +check $FF, $13, data_hold
+
+    +pointer $0FFFFF
+    lda data_inc
+    +check $FF, $14, data_inc
+    +check_pointer $100000, $14
+
+    +pointer $FFFFFF
+    lda data_hold
+    +check $FF, $15, data_hold
+    +check_pointer $FFFFFF, $15
+    lda data_inc
+    +check $FF, $15, data_inc
+    +check_pointer $000000, $15
+    lda data_hold
+    +check $11, $15, data_hold
+
+    ; Read the last byte as the instruction after changing either register.
+    lda #$7F
+    sta cc_page
+    lda #$02
+    sta cc_bank
+    lda $CDFF
+    +check $91, $20, $CDFF
+    lda #$03
+    sta cc_bank
+    lda $CDFF
+    +check $72, $21, $CDFF
+    lda #$81
+    sta cc_page
+    lda $CDFF
+    +check $53, $22, $CDFF
+
+    ; The second half of a $FF00-based CC window crosses the bank.
+    lda #$06
+    sta cc_bank
+    lda #$FF
+    sta cc_page
+    lda $CDFF
+    +check $C4, $23, $CDFF
+
+    lda #$7F
+    sta ce_page
+    lda #$04
+    sta ce_bank
+    lda $CEFF
+    +check $A6, $24, $CEFF
+    lda #$05
+    sta ce_bank
+    lda $CEFF
+    +check $4D, $25, $CEFF
+    lda #$81
+    sta ce_page
+    lda $CEFF
+    +check $B2, $26, $CEFF
+
+    +pointer $06003A
+    lda #$5A
+    sta data_hold
+    lda data_hold
+    +check $5A, $30, data_hold
+    +check_pointer $06003A, $30
+
+    +pointer $0000FF
+    lda #$6C
+    sta data_inc
+    lda data_inc
+    +check $A5, $31, data_inc
+    +check_pointer $000101, $31
+    +pointer $0000FF
+    lda data_hold
+    +check $6C, $31, data_hold
+
+    lda #$E1
+    sta $CDFF
+    lda $CDFF
+    +check $E1, $32, $CDFF
+    lda #$2D
+    sta $CEFF
+    lda $CEFF
+    +check $2D, $33, $CEFF
+
+    lda #$00
+finish:
+    sta status
+    ldx #0
+.restore_sample:
+    cpx saved_bytes
+    beq .restore_regs
+    jsr select_sample
+    lda samples + 4,x
+    sta data_hold
+    lda data_hold
+    cmp samples + 4,x
+    beq .next_sample
+    ldy status
+    bne .next_sample
+    sta observed
+    lda samples + 4,x
+    sta expected
+    lda #<data_hold
+    sta failed_address
+    lda #>data_hold
+    sta failed_address + 1
+    lda #$40
+    sta status
+.next_sample:
+    txa
+    clc
+    adc #5
+    tax
+    bra .restore_sample
+.restore_regs:
+    lda restore_regs
+    beq .release
+    lda old_pointer
+    sta pointer_low
+    lda old_pointer + 1
+    sta pointer_mid
+    lda old_pointer + 2
+    sta pointer_bank
+    lda old_cc
+    sta cc_bank
+    lda old_cc + 1
+    sta cc_page
+    lda old_ce
+    sta ce_bank
+    lda old_ce + 1
+    sta ce_page
+.release:
+    bit release_c8
+    ldx #3
+.mark_done:
+    lda magic,x
+    sta signature,x
+    dex
+    bpl .mark_done
+    ldx #0
+.print:
+    lda report,x
+    beq .print_code
+    ora #$80
+    phx
+    jsr cout
+    plx
+    inx
+    bra .print
+.print_code:
+    lda status
+    jsr prbyte
+    lda #$8D
+    jsr cout
+    ply
+    plx
+    pla
+    plp
+    rts
+
+select_sample:
+    lda samples,x
+    sta pointer_low
+    lda samples + 1,x
+    sta pointer_mid
+    lda samples + 2,x
+    sta pointer_bank
+    rts
+
+magic:          !text "PCT5"
+report:         !byte 13
+                !text "PCT5 RESULT "
+                !byte 0
+restore_regs:   !byte 0
+saved_bytes:    !byte 0
+old_pointer:    !fill 3, 0
+old_cc:         !fill 2, 0
+old_ce:         !fill 2, 0
+
+!macro sample .addr, .value {
+    !byte <.addr, >.addr, ^.addr, .value, 0
+}
+
+samples:
+    +sample $000000, $11
+    +sample $0000FF, $51
+    +sample $000100, $A5
+    +sample $00FFFF, $3E
+    +sample $010000, $B7
+    +sample $0280FF, $91
+    +sample $0380FF, $72
+    +sample $0382FF, $53
+    +sample $047FFF, $A6
+    +sample $057FFF, $4D
+    +sample $0581FF, $B2
+    +sample $06003A, $96
+    +sample $0700FF, $C4
+sample_bytes = * - samples

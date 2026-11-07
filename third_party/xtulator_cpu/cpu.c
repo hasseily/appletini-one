@@ -1924,12 +1924,12 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 		case 0x62: /* 62 BOUND Gv, Ev (80186+) */
 			modregrm(cpu);
 			getea(cpu, cpu->rm);
-			if (signext32(getreg16(cpu, cpu->reg)) < signext32(getmem16(cpu, cpu->ea >> 4, cpu->ea & 15))) {
+			if (signext32(getreg16(cpu, cpu->reg)) < signext32(cpu_readw(cpu, cpu->ea))) {
 				cpu_intcall(cpu, 5); //bounds check exception
 			}
 			else {
 				cpu->ea += 2;
-				if (signext32(getreg16(cpu, cpu->reg)) > signext32(getmem16(cpu, cpu->ea >> 4, cpu->ea & 15))) {
+				if (signext32(getreg16(cpu, cpu->reg)) > signext32(cpu_readw(cpu, cpu->ea))) {
 					cpu_intcall(cpu, 5); //bounds check exception
 				}
 			}

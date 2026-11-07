@@ -161,9 +161,9 @@ def test_usb_tab_sdd_and_sd_remote_mount() -> None:
             "config menu must define the USB tab")
     require('"USB"' in c,
             "config menu tab labels must expose USB")
-    require("return 3U;              /* SD remote mount + SDD stream + USB1 refresh */"
-            in c,
-            "USB tab must have SDD stream, SD remote-mount, and USB1 refresh items")
+    require("case CONFIG_TAB_USB:\n        return 4U;" in c,
+            "USB tab must have SD remote-mount, SDD stream, USB1 refresh, "
+            "and joystick settings items")
     require('"usb.sdd.stream.enabled"' in c and
             '"usb.sdd.stream.enabled=%s\\n"' in c and
             '"sdd_stream_enable"' not in c,

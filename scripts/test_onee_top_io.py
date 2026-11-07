@@ -103,7 +103,9 @@ def static_contract_checks() -> None:
             ".enabled                 (onee_enable_effective)" in motherboard,
             "virtual RESET must reach enabled motherboard state through ab_read")
     vtw = instance_text(apple, "vtw_core_top vtw_core_top_i")
-    require(".ab_read(ab_read)" in vtw,
+    # The vTW copy replaces only the data byte, which it reads at data_en.
+    require(".ab_read(data_phase_ab_read)" in vtw and
+            "        data_phase_ab_read = ab_read;\n" in apple,
             "virtual RESET must reach the soft CPU through ab_read")
     physical_bus = instance_text(apple, "apple_bus_wrapper apple_bus_wrapper_i")
     require("onee_virtual_res_n" not in physical_bus and

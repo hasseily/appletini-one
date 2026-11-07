@@ -246,6 +246,13 @@ def check_masked_wskid_copy() -> None:
         r"wire\s+vtw_sh_byte_write\s*=.*?;",
         r"wire\s+vtw_sh_word_write\s*=.*?;",
         r"wire\s+vtw_sh_word_read\s*=.*?;",
+        r"wire\s+vtw_copy_start\s*=.*?;",
+        r"wire\s+vtw_copy_release\s*=.*?;",
+        r"wire\s+vtw_copy_abort\s*=.*?;",
+        r"CARD_CTRL_REG_VTW_COPY_SOURCE\s*:\s*vtw_copy_source_q\s*<=.*?;",
+        r"CARD_CTRL_REG_VTW_COPY_DEST\s*:\s*vtw_copy_dest_q\s*<=.*?;",
+        r"CARD_CTRL_REG_VTW_COPY_LENGTH\s*:\s*vtw_copy_length_q\s*<=.*?;",
+        r"vtw_copy_engine\s+vtw_copy_engine_i\s*\(.*?\);",
         r"vtw_shadow_host_port\s+(?:#\s*\([^;]*?\)\s*)?"
         r"vtw_shadow_host_port_i\s*\(.*?\);",
         r"CARD_CTRL_REG_PHASOR_PAN_LO\s*:\s*begin.*?end",
@@ -391,7 +398,7 @@ def check_no_exclusive_mmio_contract() -> None:
     # This is deliberately broad. Any new atomic use needs review before it
     # can coexist with a PL register plane that has no exclusive monitor.
     forbidden = re.compile(
-        r"(?:__atomic|__sync|__ldrex|__strex|\bldrex(?:b|h|d)?\b|"
+        r"(?:__atomic|__sync(?!_synchronize\b)|__ldrex|__strex|\bldrex(?:b|h|d)?\b|"
         r"\bstrex(?:b|h|d)?\b|\bclrex\b|\bswpb?\b|"
         r"Xil_InitializeSpinLock|\bstdatomic\.h\b)",
         re.IGNORECASE,

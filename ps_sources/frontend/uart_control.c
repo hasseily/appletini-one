@@ -27,6 +27,7 @@
 #include "usb_sdd_service.h"
 #include "applicard_service.h"
 #include "ad8088_service.h"
+#include "pc_transporter_service.h"
 #include "vtw_service.h"
 #include "config_menu.h"
 #include "xusbps_class_storage.h"
@@ -1717,6 +1718,7 @@ void uart_control_print_help(const uart_control_t *control, const uart_control_o
         "  z80 [status|on|off|reset]\r\n"
         "  z80 budget <tstates> | z80 wall <us> | z80 dump <hex-addr> [hex-len]\r\n"
         "  8088 [status|dump <hex-addr> [hex-len]|trace on|off|paddle]\r\n"
+        "  pct [status]\r\n"
         "  vtw [status|on|off] | vtw speed <full|turbo|1mhz|div <2-255>>\r\n"
         "  vtw dump <hex-phys> [hex-len]\r\n"
         "  ss [on|off|force <on|off>|dump]\r\n"
@@ -2297,6 +2299,15 @@ static uart_control_event_t process_command(
         }
         uart_puts(control->control_uart_base,
                   "usage: ftp [status|on|off]\r\n");
+        return event;
+    }
+
+    if (str_ieq(argv[0], "pct")) {
+        if (argc < 2 || str_ieq(argv[1], "status")) {
+            pc_transporter_service_uart_status(control->control_uart_base);
+        } else {
+            uart_puts(control->control_uart_base, "usage: pct [status]\r\n");
+        }
         return event;
     }
 

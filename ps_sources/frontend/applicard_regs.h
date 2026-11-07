@@ -39,6 +39,7 @@
 
 #define APPLICARD_MODE_Z80         0U
 #define APPLICARD_MODE_AD8088      1U
+#define APPLICARD_MODE_TRANSPORTER 2U
 
 /* STATUS fields */
 #define APPLICARD_STATUS_F_Z80      (1U << 0)  /* byte pending for the Z80 */

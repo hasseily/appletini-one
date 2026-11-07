@@ -20,7 +20,8 @@ module applicard_card (
     input  logic [2:0]               slot_assign,
     input  globals::AxiSimple_common as_common,
     AxiSimple_if.client              as_client,
-    output globals::AppleBus_write   ab_write
+    output globals::AppleBus_write   ab_write,
+    output logic                     pc_transporter_mode
 );
 
     // Original PCPI register indices. Do not renumber: released firmware and
@@ -42,8 +43,9 @@ module applicard_card (
     localparam logic [7:0] AXI_REG_BUS_STATUS  = 8'h0C;
     localparam logic [7:0] AXI_REG_BUS_BUFFER0 = 8'h40;
 
-    localparam logic MODE_Z80    = 1'b0;
-    localparam logic MODE_AD8088 = 1'b1;
+    localparam logic [1:0] MODE_Z80    = 2'd0;
+    localparam logic [1:0] MODE_AD8088 = 2'd1;
+    localparam logic [1:0] MODE_PCT    = 2'd2;
 
     localparam logic [3:0] IO_READ_Z80_DATA  = 4'h0;
     localparam logic [3:0] IO_WRITE_Z80_DATA = 4'h1;
@@ -65,7 +67,10 @@ module applicard_card (
     // flag: PS completion or 8088 OUT 0 sets it; an Apple write to port 0
     // clears it. While the PROM monitor is idle, a port-0 write also posts a
     // command for the PS dispatcher.
-    logic       mode_q;
+    logic [1:0] mode_q;
+    // A separate flop for the slot 5 output select. It always equals
+    // (mode_q == MODE_PCT) and keeps that compare off the bus arbiter path.
+    logic       pct_mode_q;
     logic [7:0] ad_port_q [0:15];
     logic       ad_cmd_pending_q;
     logic       ad_flag_q;
@@ -78,7 +83,8 @@ module applicard_card (
 
     logic apple_res_q;
 
-    wire enabled = card_enabled && (slot_assign != 3'h0);
+    assign pc_transporter_mode = pct_mode_q;
+    wire enabled = card_enabled && (slot_assign != 3'h0) && !pc_transporter_mode;
     wire apple_bus_active = enabled && ab_read.res;
     wire slot_io_hit =
         apple_bus_active &&
@@ -271,6 +277,7 @@ module applicard_card (
             nmi_req_q        <= 1'b0;
             toz80_seq_q      <= 8'h00;
             mode_q           <= MODE_Z80;
+            pct_mode_q       <= 1'b0;
             ad_cmd_pending_q <= 1'b0;
             ad_flag_q        <= 1'b1;
             ad_running_q     <= 1'b0;
@@ -680,7 +687,12 @@ module applicard_card (
             // processors and must release any in-flight bus ownership.
             if (as_client.awvalid && as_common.awaddr == AXI_REG_MODE &&
                 as_common.wstrb[0]) begin
-                mode_q           <= as_common.wdata[0];
+                case (as_common.wdata[1:0])
+                    MODE_AD8088: mode_q <= MODE_AD8088;
+                    MODE_PCT:    mode_q <= MODE_PCT;
+                    default:     mode_q <= MODE_Z80;
+                endcase
+                pct_mode_q <= as_common.wdata[1:0] == MODE_PCT;
                 toz80_q          <= 8'h00;
                 to6502_q         <= 8'h00;
                 f_z80_q          <= 1'b0;
@@ -767,7 +779,7 @@ module applicard_card (
                 12'd0, nmi_req_q, reset_req_q, f_6502_q, f_z80_q,
                 toz80_q, to6502_q
             };
-            AXI_REG_MODE: as_client.rdata = {31'd0, mode_q};
+            AXI_REG_MODE: as_client.rdata = {30'd0, mode_q};
             AXI_REG_AD_STATUS: as_client.rdata = {
                 ad_seq_q,
                 ad_last_data_q,

@@ -1,6 +1,8 @@
 `timescale 1ns / 1ps
 
-module axisimple_wrapper(
+module axisimple_wrapper #(
+    parameter int CLIENT_COUNT = 8
+)(
     input	wire				S_AXI_ACLK,
     input	wire				S_AXI_ARESETN,
     //
@@ -54,7 +56,7 @@ module axisimple_wrapper(
     output wire [31:0] as_vtw_phasor_wdata,
     output wire [3:0]  as_vtw_phasor_wstrb,
     output globals::AxiSimple_common as_common,
-    AxiSimple_if.master as_clients [7:0]
+    AxiSimple_if.master as_clients [CLIENT_COUNT-1:0]
 );
 
     // these signals are all dummy signals in the interface,
@@ -68,11 +70,11 @@ module axisimple_wrapper(
     (* keep="soft" *) wire [3:0] axid_awcache_unused;
     (* keep="soft" *) wire [2:0] axid_awprot_unused;
     (* keep="soft" *) wire [3:0] axid_awqos_unused;
-    (* keep="soft" *) wire [7:0] axid_wvalid_unused;
+    (* keep="soft" *) wire [CLIENT_COUNT-1:0] axid_wvalid_unused;
     (* keep="soft" *) wire axid_wlast_unused;
     (* keep="soft" *) wire axid_bready_unused;
 
-    (* keep="soft" *) wire [7:0] axid_arvalid_unused;
+    (* keep="soft" *) wire [CLIENT_COUNT-1:0] axid_arvalid_unused;
     (* keep="soft" *) wire axid_arid_unused;
     (* keep="soft" *) wire [3:0] axid_arlen_unused;
     (* keep="soft" *) wire [2:0] axid_arsize_unused;
@@ -91,11 +93,17 @@ module axisimple_wrapper(
 
     // these signals are actually used by the module,
     // but we are defining our access as always returning OK (0)
-    wire [15:0] axid_bresp_unused = 0;
-    wire [15:0] axid_rresp_unused = 0;
+    wire [2*CLIENT_COUNT-1:0] axid_bresp_unused = '0;
+    wire [2*CLIENT_COUNT-1:0] axid_rresp_unused = '0;
 
-    wire [7:0] axi_awvalid_array;
-    wire [255:0] axi_rdata_array;
+    wire [CLIENT_COUNT-1:0] axi_awvalid_array;
+    wire [32*CLIENT_COUNT-1:0] axi_rdata_array;
+
+    function automatic logic [32*CLIENT_COUNT-1:0] client_addresses();
+        for (int i = 0; i < CLIENT_COUNT; i++) begin
+            client_addresses[32*i +: 32] = 32'h40000000 + (i << 16);
+        end
+    endfunction
 
     /* Break the hard-PS write-data fanout before it reaches the eight PL
      * register clients. Keep WDATA, WSTRB, and WLAST in one registered AXI
@@ -139,32 +147,10 @@ module axisimple_wrapper(
         .C_AXI_DATA_WIDTH(32),
         .C_AXI_ADDR_WIDTH(32),
         .C_AXI_ID_WIDTH(12),
-        .NS(8), // Number of Slaves (8)
+        .NS(CLIENT_COUNT),
         .OPT_LOWPOWER(1),
-        .SLAVE_ADDR(
-            {
-                { 32'h40070000 },
-                { 32'h40060000 },
-                { 32'h40050000 },
-                { 32'h40040000 },
-                { 32'h40030000 },
-                { 32'h40020000 },
-                { 32'h40010000 },
-                { 32'h40000000 }
-            }
-        ),
-        .SLAVE_MASK(
-            {
-                { 32'hffff0000 },
-                { 32'hffff0000 },
-                { 32'hffff0000 },
-                { 32'hffff0000 },
-                { 32'hffff0000 },
-                { 32'hffff0000 },
-                { 32'hffff0000 },
-                { 32'hffff0000 }
-            }
-        ),
+        .SLAVE_ADDR(client_addresses()),
+        .SLAVE_MASK({CLIENT_COUNT{32'hffff0000}}),
         // The GP0 clients are side-effect MMIO registers, not shared memory.
         // Firmware must not issue exclusive accesses to this register plane.
         .OPT_EXCLUSIVE_ACCESS(1'b0)
@@ -240,7 +226,7 @@ module axisimple_wrapper(
     );
 
     genvar i;
-    for (i = 0; i < 8; ++i) begin
+    for (i = 0; i < CLIENT_COUNT; ++i) begin
         assign as_clients[i].awvalid = axi_awvalid_array[i];
         assign axi_rdata_array[i*32+31:i*32] = as_clients[i].rdata;
     end

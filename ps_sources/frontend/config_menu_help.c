@@ -524,6 +524,7 @@ HELP(applicard,
 HELP(applicard_processor,
     "Z80 Appli-Card runs PCPI CP/M with the firmware's built-in boot ROM.",
     "ALF AD8088 Plus provides an 8088 and 640 KB RAM, including the AD128K-compatible range.",
+    "PC Transporter test mode provides a guest CPU and an Apple slot 5 interface.",
     "Changing the selection resets the selected virtual processor. Turn virtual TransWarp off",
     "while using AD8088 because both processors need to master the Apple bus.");
 

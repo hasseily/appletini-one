@@ -691,13 +691,13 @@ module appletini_yarz_top (
     wire converted_arlock = M_AXI_GP0_0_arlock != 2'b00;
 
     globals::AxiSimple_common as_common;
-    AxiSimple_if as_clients[7:0]();
+    AxiSimple_if as_clients[8:0]();
     wire [31:0] as_vtw_phasor_wdata;
     wire [3:0]  as_vtw_phasor_wstrb;
 
     // as_clients[7] is the Applicard register file inside apple_top.
 
-    axisimple_wrapper(
+    axisimple_wrapper #(.CLIENT_COUNT(9)) axisimple_wrapper_i (
         .S_AXI_ACLK(fclk_clk0),
         .S_AXI_ARESETN(peripheral_133M_aresetn[4]),
         .S_AXI_AWVALID(M_AXI_GP0_0_awvalid),
@@ -784,6 +784,7 @@ module appletini_yarz_top (
         .mouse_as_client(as_clients[5]),
         .disk2_as_client(as_clients[6]),
         .applicard_as_client(as_clients[7]),
+        .pc_transporter_as_client(as_clients[8]),
         .apple_data_pin(a2fpga_d),
         .apple_addr_pin(a2fpga_a),
         .apple_rw_pin(a2fpga_rdwr_n),

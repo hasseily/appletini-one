@@ -364,6 +364,8 @@ void config_menu_draw_applicard(uint16_t *fb,
     hgr_draw_value_item(fb, x, y + row_h, w,
                         (uint8_t)(menu->item_focus == 1U),
                         "Processor card:",
+                        menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_TRANSPORTER ?
+                            "PC Transporter (test)" :
                         menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_AD8088 ?
                             "ALF AD8088 Plus (640K)" : "Z80 Appli-Card");
     hgr_draw_value_item(fb, x, y + (2 * row_h), w,

@@ -26,17 +26,24 @@ def main():
         loop.index('if (vtw_service_boot_handoff_pending() != 0U)'), \
         'boot handoff must receive update safety cancellation first'
     names = ('menu_platform_request_golden_boot_update',
-             'card_control_apply_slot_policy', 'menu_platform_ethernet_update_busy',
+             'card_control_normalize_slot_mask', 'card_control_apply_slot_policy',
+             'card_control_write_slot_mask', 'control_set_slot_enabled',
+             'menu_platform_ethernet_update_busy',
              'menu_platform_ethernet_read_config', 'menu_platform_ethernet_write_config',
              'menu_platform_ethernet_test', 'menu_platform_ethernet_dhcp_start',
              'menu_platform_ethernet_dhcp_poll', 'menu_platform_ethernet_dhcp_cancel',
+             'control_online_update_ethernet_enabled', 'control_online_update_network_ready',
              'menu_platform_get_online_update_status', 'menu_platform_request_online_update_check',
              'menu_platform_request_online_update_download', 'menu_platform_cancel_online_update',
              'menu_platform_request_online_update_install', 'ticks_to_us',
              'control_online_update_allowed', 'control_online_update_busy',
-             'control_service_online_update', 'ui_online_update_composite_due')
+             'control_service_online_update',
+             'ui_online_update_composite_due')
     menu_names = ('config_menu_poll_online_update', 'config_menu_online_update_finished',
-                  'config_menu_ethernet_card_access')
+                  'config_menu_ethernet_card_access', 'config_menu_start_ethernet_dhcp',
+                  'config_menu_apply_ethernet_config', 'config_menu_poll_ethernet',
+                  'config_menu_ethernet_toggle_slot', 'config_menu_online_update_busy',
+                  'config_menu_online_update_check')
     fixture = (ROOT / 'scripts/fixtures/online_update_main_harness.c').read_text(encoding='utf-8')
     bodies = '\n'.join(extract_function(menu, name)[1] for name in menu_names)
     bodies += '\n' + '\n'.join(extract_function(runtime, name)[1] for name in names)

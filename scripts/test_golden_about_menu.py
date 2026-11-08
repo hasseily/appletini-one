@@ -612,6 +612,10 @@ int main(void)
     snprintf(online.latest_b,sizeof(online.latest_b),"B2.0.7");
     assert(config_menu_poll_online_update(&menu));
     assert(!config_menu_poll_online_update(&menu));
+    menu.ethernet_slot1_enabled=0;
+    menu.item_focus=0; press(&menu,UI_KEY_ENTER);
+    assert(!online_checks && menu.status_warning);
+    menu.ethernet_slot1_enabled=1;
     menu.item_focus=0; press(&menu,UI_KEY_ENTER);
     assert(online_checks==1 && !online_downloads && !online_installs);
     online.state=ONLINE_UPDATE_CHECKING; assert(config_menu_poll_online_update(&menu));

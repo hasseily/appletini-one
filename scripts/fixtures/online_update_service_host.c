@@ -312,7 +312,7 @@ int main(int argc,char **argv)
         assert(snapshot().state==ONLINE_UPDATE_CHECKING && http_service_active());
         assert(online_update_prepare_restart()==0);
         assert(snapshot().state==ONLINE_UPDATE_CANCELLED && snapshot().result==ONLINE_UPDATE_E_CANCELLED);
-        assert(!online_update_active() && owner==HTTP_OWNER_NONE);
+        assert(!online_update_active() && !online_update_check_pending() && owner==HTTP_OWNER_NONE);
         assert(cancel_attempts==1 && !handles && !creates && !renames);
         puts("PASS restart synchronously cancels an active release check");return 0;
     }

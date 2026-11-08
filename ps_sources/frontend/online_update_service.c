@@ -250,6 +250,14 @@ void online_update_init(const char *firmware,const char *boot)
     update.auto_pending=1;
     detail("Update check waits for the configuration menu");
 }
+void online_update_schedule_check(void)
+{
+    update.auto_pending=1;
+}
+int online_update_check_pending(void)
+{
+    return update.auto_pending;
+}
 int online_update_check(void)
 {
     if (online_update_active()) return HTTP_E_BUSY;

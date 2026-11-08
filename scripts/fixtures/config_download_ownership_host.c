@@ -34,12 +34,13 @@ typedef struct {
 } platform_t;
 typedef struct {
     platform_t platform;
-    uint8_t active, settings_loaded, ethernet_dhcp_pending, ethernet_dhcp_report;
+    uint8_t active, settings_loaded, ethernet_dhcp_pending, ethernet_dhcp_acquired, ethernet_dhcp_report;
     uint8_t ethernet_slot1_enabled, ethernet_config_enabled, ethernet_address_mode;
     uint8_t session_only, onee_mode_state, onee_persisted_enabled;
     uint32_t onee_mode_status, onee_persist_retry_polls;
     uint8_t tab, item_focus, ethernet_ftp_sd_remote_active, onee_persist_write_failed;
     uint8_t golden_boot_update_confirm, golden_boot_confirm_update;
+    uint8_t online_update_confirm, online_update_confirm_update, about_credits_active;
     uint8_t joystick_page_active, usb_owned, usb_binding_capture;
     uint8_t profile_carousel_active, profile_name_editor_active;
     uint8_t printout_action_active, printout_editor_active, printout_delete_confirm_active;
@@ -91,6 +92,7 @@ static void config_menu_try_read_rtc(config_menu_t *m, uint8_t report)
 static void config_menu_refresh_golden_boot(config_menu_t *m) { (void)m; assert(!busy); ++probes; }
 static void config_menu_stop_usb0_sd_remote(config_menu_t *m) { (void)m; }
 static void config_menu_browser_close(config_menu_t *m) { (void)m; ++closes; }
+static void config_menu_about_reset_scroll(void) {}
 #include "config_sd_helpers.inc"
 
 static void reset(config_menu_t *m)

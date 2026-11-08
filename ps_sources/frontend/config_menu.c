@@ -3138,6 +3138,7 @@ static uint8_t config_menu_start_ethernet_dhcp(config_menu_t *menu,
     if (config_menu_ethernet_card_access(menu) == 0U) {
         return 0U;
     }
+    menu->ethernet_dhcp_acquired = 0U;
     if (menu->platform.ethernet_dhcp_start == NULL ||
         menu->platform.ethernet_dhcp_poll == NULL) {
         if (report != 0U) {
@@ -3152,9 +3153,10 @@ static uint8_t config_menu_start_ethernet_dhcp(config_menu_t *menu,
         menu->ethernet_dhcp_pending = 0U;
         menu->ethernet_dhcp_report = 0U;
     }
-    if (menu->platform.ethernet_write_config == NULL ||
-        menu->platform.ethernet_write_config(menu->platform.ctx,
-                                             &menu->ethernet_config) != 0) {
+    if (menu->ethernet_config_enabled != 0U &&
+        (menu->platform.ethernet_write_config == NULL ||
+         menu->platform.ethernet_write_config(menu->platform.ctx,
+                                              &menu->ethernet_config) != 0)) {
         if (report != 0U) {
             config_menu_set_status(menu, 1U, "UTHERNET II CONFIG WRITE FAILED");
         }
@@ -3239,8 +3241,9 @@ void config_menu_poll_ethernet(config_menu_t *menu)
         return;
     }
     if (menu->ethernet_slot1_enabled == 0U ||
-        menu->ethernet_config_enabled == 0U ||
-        menu->ethernet_address_mode != CONFIG_MENU_ETHERNET_ADDRESS_DHCP) {
+        (menu->ethernet_dhcp_report == 0U &&
+         (menu->ethernet_config_enabled == 0U ||
+          menu->ethernet_address_mode != CONFIG_MENU_ETHERNET_ADDRESS_DHCP))) {
         if (menu->platform.ethernet_dhcp_cancel != NULL) {
             menu->platform.ethernet_dhcp_cancel(menu->platform.ctx);
         }
@@ -3279,6 +3282,7 @@ void config_menu_poll_ethernet(config_menu_t *menu)
     menu->ethernet_config = lease;
     menu->ethernet_address_mode = CONFIG_MENU_ETHERNET_ADDRESS_DHCP;
     menu->ethernet_config_enabled = 1U;
+    menu->ethernet_dhcp_acquired = 1U;
     config_menu_save_settings(menu);
     if (menu->ethernet_dhcp_report != 0U && menu->session_only == 0U) {
         config_menu_ethernet_set_status_ip(menu,
@@ -4330,6 +4334,10 @@ static void config_menu_start_online_update(config_menu_t *menu, uint8_t kind)
         config_menu_set_status(menu, 1U, "UPDATE FROM INITIAL BOOT MENU OR ISOLATED ONE//e");
         return;
     }
+    if (staged == 0U && menu->ethernet_slot1_enabled == 0U) {
+        config_menu_set_status(menu, 1U, "ENABLE ETHERNET FOR ONLINE UPDATES");
+        return;
+    }
     if ((staged == 0U && ((menu->online_update.available_mask & (1U << kind)) == 0U ||
          menu->platform.request_online_update_download == NULL)) ||
         (staged != 0U && menu->platform.request_online_update_install == NULL)) {
@@ -4355,12 +4363,16 @@ static void config_menu_online_update_check(config_menu_t *menu)
     if (config_menu_online_update_busy(menu) != 0U) {
         return;
     }
+    if (menu->ethernet_slot1_enabled == 0U) {
+        config_menu_set_status(menu, 1U, "ENABLE ETHERNET FOR ONLINE UPDATES");
+        return;
+    }
     if (menu->platform.request_online_update_check == NULL ||
         menu->platform.request_online_update_check(menu->platform.ctx) != 0) {
         config_menu_set_status(menu, 1U, "UPDATE CHECK UNAVAILABLE");
     } else {
         menu->online_update_ui_error[0] = '\0';
-        config_menu_set_status(menu, 0U, "CHECKING STABLE GITHUB RELEASE");
+        config_menu_set_status(menu, 0U, "UPDATE CHECK QUEUED; WAITING FOR ETHERNET");
     }
 }
 
@@ -4910,6 +4922,7 @@ static void config_menu_reset_settings_only(config_menu_t *menu)
     menu->ethernet_address_mode = CONFIG_DEFAULT_ETHERNET_ADDRESS_MODE;
     menu->ethernet_edit_index = 0U;
     menu->ethernet_dhcp_pending = 0U;
+    menu->ethernet_dhcp_acquired = 0U;
     menu->ethernet_dhcp_report = 0U;
     menu->ethernet_ftp_sd_remote_active = 0U;
     uthernet2_default_config(&menu->ethernet_config);
@@ -5898,6 +5911,7 @@ static void config_menu_ethernet_toggle_slot(config_menu_t *menu)
         return;
     }
     menu->ethernet_slot1_enabled = menu->ethernet_slot1_enabled ? 0U : 1U;
+    menu->ethernet_dhcp_acquired = 0U;
     if (menu->ethernet_slot1_enabled == 0U) {
         if (menu->ethernet_dhcp_pending != 0U &&
             menu->platform.ethernet_dhcp_cancel != NULL) {
@@ -5911,6 +5925,9 @@ static void config_menu_ethernet_toggle_slot(config_menu_t *menu)
         menu->platform.set_slot_enabled(menu->platform.ctx,
                                         ETHERNET_CONTROL_SLOT,
                                         menu->ethernet_slot1_enabled);
+    }
+    if (menu->ethernet_slot1_enabled != 0U) {
+        (void)config_menu_apply_ethernet_config(menu, 0U);
     }
     config_menu_save_settings(menu);
     config_menu_set_status(menu,
@@ -5949,6 +5966,7 @@ static void config_menu_ethernet_toggle_mode(config_menu_t *menu)
         (menu->ethernet_address_mode == CONFIG_MENU_ETHERNET_ADDRESS_DHCP) ?
         CONFIG_MENU_ETHERNET_ADDRESS_STATIC :
         CONFIG_MENU_ETHERNET_ADDRESS_DHCP;
+    menu->ethernet_dhcp_acquired = 0U;
     config_menu_save_settings(menu);
     if (menu->session_only != 0U) {
         return;
@@ -8178,6 +8196,7 @@ void config_menu_init(config_menu_t *menu)
     menu->ethernet_address_mode = CONFIG_DEFAULT_ETHERNET_ADDRESS_MODE;
     menu->ethernet_edit_index = 0U;
     menu->ethernet_dhcp_pending = 0U;
+    menu->ethernet_dhcp_acquired = 0U;
     menu->ethernet_dhcp_report = 0U;
     uthernet2_default_config(&menu->ethernet_config);
     menu->clock_enabled = CONFIG_DEFAULT_CLOCK_ENABLED;
@@ -9347,6 +9366,11 @@ static void config_menu_draw_online_update_result(uint16_t *fb,
     const uint32_t color = failed != 0U ? CMUI_COLOR_WARN : CMUI_COLOR_MUTED;
     const char *state = "Not checked";
     char line[192];
+    if (menu->ethernet_slot1_enabled == 0U && update->state != ONLINE_UPDATE_READY) {
+        config_menu_draw_update_message(fb, x, y, w, "Enable Ethernet to check online", CMUI_COLOR_MUTED);
+        *y += 8;
+        return;
+    }
     switch (update->state) {
     case ONLINE_UPDATE_CHECKING: state = "Checking GitHub"; break;
     case ONLINE_UPDATE_CURRENT: state = "Up to date"; break;
@@ -9416,7 +9440,8 @@ static void config_menu_draw_online_update_row(uint16_t *fb,
     const uint8_t staged = (uint8_t)(update->state == ONLINE_UPDATE_READY && update->kind == kind);
     const uint8_t disabled = (uint8_t)(menu->golden_boot_update_allowed == 0U ||
         config_menu_online_update_busy(menu) != 0U ||
-        (staged == 0U && (update->available_mask & (1U << kind)) == 0U));
+        (staged == 0U && (menu->ethernet_slot1_enabled == 0U ||
+                        (update->available_mask & (1U << kind)) == 0U)));
     const uint8_t focused = (uint8_t)(menu->about_credits_active == 0U &&
                                      menu->item_focus == (uint32_t)kind + 1U);
     const char *button = staged != 0U ?
@@ -9455,6 +9480,7 @@ static void config_menu_draw_about(uint16_t *fb,
     cmui_row(fb, x + 18, cursor, w - 36,
         (uint8_t)(menu->about_credits_active == 0U && menu->item_focus == 0U),
         (uint8_t)(menu->platform.request_online_update_check == NULL ||
+                  menu->ethernet_slot1_enabled == 0U ||
                   config_menu_online_update_busy(menu) != 0U),
         menu->online_update.state == ONLINE_UPDATE_CHECKING ?
             "Checking GitHub... (Enter to cancel)" : "Check for updates");

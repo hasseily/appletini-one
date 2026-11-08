@@ -144,6 +144,7 @@ static char g_installed_golden_version[32] = "Unknown";
 static uint8_t g_golden_boot_update_request;
 #ifdef APPLETINI_HTTP_SERVICE
 static uint8_t g_online_update_approved_kind = ONLINE_UPDATE_KIND_COUNT;
+static XTime g_online_update_network_probe_after;
 static void menu_platform_cancel_online_update(void *ctx);
 #endif
 static uint8_t g_usb_menu_owned = 0U;
@@ -979,6 +980,13 @@ static void control_set_slot_enabled(void *ctx, uint8_t slot, uint8_t enable)
     } else {
         slot_mask &= ~slot_bit;
     }
+#ifdef APPLETINI_HTTP_SERVICE
+    if (slot == 1U && ((slot_mask ^ g_card_slot_enable_mask) & slot_bit) != 0U &&
+        enable != 0U) {
+        g_online_update_network_probe_after = 0U;
+        online_update_schedule_check();
+    }
+#endif
     card_control_write_slot_mask(slot_mask);
     if (slot == 5U) {
         /* Slot 5 is a mutually exclusive Z80/8088 personality. */
@@ -2179,11 +2187,36 @@ static void menu_platform_get_online_update_status(void *ctx,
     online_update_status(status);
 }
 
+static uint8_t control_online_update_ethernet_enabled(const config_menu_t *menu)
+{
+    return (uint8_t)(menu != NULL && menu->ethernet_slot1_enabled != 0U &&
+        (g_card_slot_effective_mask & (1UL << 1)) != 0U);
+}
+
+static uint8_t control_online_update_network_ready(const config_menu_t *menu)
+{
+    uthernet2_test_result_t network;
+
+    /* A failed DHCP attempt may restore a previous lease to the NIC. */
+    if (menu->ethernet_config_enabled != 0U &&
+        menu->ethernet_address_mode == CONFIG_MENU_ETHERNET_ADDRESS_DHCP &&
+        menu->ethernet_dhcp_acquired == 0U) {
+        return 0U;
+    }
+    return (uint8_t)(uthernet2_test(&network) == 0 && network.link_up != 0U &&
+        (network.config.ip[0] | network.config.ip[1] |
+         network.config.ip[2] | network.config.ip[3]) != 0U);
+}
+
 static int menu_platform_request_online_update_check(void *ctx)
 {
     (void)ctx;
-    if (control_golden_boot_update_allowed() == 0U) return -1;
-    return online_update_check();
+    if (control_golden_boot_update_allowed() == 0U ||
+        !control_online_update_ethernet_enabled(g_config_menu_state) ||
+        online_update_active()) return -1;
+    g_online_update_network_probe_after = 0U;
+    online_update_schedule_check();
+    return 0;
 }
 
 static int menu_platform_request_online_update_download(void *ctx, uint8_t kind)
@@ -2191,7 +2224,10 @@ static int menu_platform_request_online_update_download(void *ctx, uint8_t kind)
     int rc;
     (void)ctx;
     if (kind >= ONLINE_UPDATE_KIND_COUNT ||
-        control_golden_boot_update_allowed() == 0U) return -1;
+        control_golden_boot_update_allowed() == 0U ||
+        !control_online_update_ethernet_enabled(g_config_menu_state) ||
+        online_update_active() || g_config_menu_state->ethernet_dhcp_pending != 0U ||
+        !control_online_update_network_ready(g_config_menu_state)) return -1;
     rc = online_update_start(kind);
     if (rc == 0) g_online_update_approved_kind = kind;
     return rc;
@@ -2254,6 +2290,22 @@ static void control_service_online_update(ui_state_t *ui, config_menu_t *menu)
     for (uint8_t pass = 0U; pass < 8U; ++pass) {
         allowed = control_online_update_allowed(menu);
         busy = control_online_update_busy(menu);
+        /* Network availability gates network work only. An already verified
+         * local file still uses the normal install authorization below. */
+        const uint8_t ethernet = control_online_update_ethernet_enabled(menu);
+        if (!ethernet && online_update_active()) {
+            allowed = 0U;
+            online_update_poll(allowed, busy);
+            break;
+        }
+        if (!online_update_active() && online_update_check_pending()) {
+            if (!ethernet || !allowed || busy || started < g_online_update_network_probe_after)
+                break;
+            if (!control_online_update_network_ready(menu)) {
+                g_online_update_network_probe_after = started + (COUNTS_PER_SECOND) / 4U;
+                break;
+            }
+        }
         online_update_poll(allowed, busy);
         XTime_GetTime(&now);
         if (allowed == 0U || busy != 0U || !online_update_active() ||
@@ -4965,7 +5017,10 @@ int main(void)
             net_service_set_via_hz(onee_service_isolation_confirmed() ?
                 ((REG_READ(CARD_CTRL_ONEE_VIDEO_REG) & CARD_CTRL_ONEE_VIDEO_ACTIVE_50HZ_BIT) ?
                     1017812U : 1025641U) : 0U);
-            http_service_poll();
+            if (http_service_getowner() != HTTP_OWNER_UPDATE ||
+                (g_card_slot_effective_mask & (1UL << 1)) != 0U) {
+                http_service_poll();
+            }
             net_service_poll();
         }
         control_poll_usb0_sd_handover();

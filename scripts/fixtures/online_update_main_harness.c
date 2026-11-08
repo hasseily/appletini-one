@@ -4,6 +4,8 @@
 #include <string.h>
 #include "config_menu.h"
 #include "card_control_regs.h"
+#define CONFIG_ETHERNET_ITEM_SLOT 0U
+#define ETHERNET_CONTROL_SLOT 1U
 #define APPLETINI_HTTP_SERVICE 1
 
 typedef struct { uint32_t input_seq; } ui_state_t;
@@ -22,6 +24,8 @@ static void XTime_GetTime(XTime *now) { *now=clock_ticks; }
 static void compositor_request_full_refresh(void) { ++refresh_calls;force_refresh=1; }
 static uint8_t compositor_full_refresh_active(void) { return force_refresh; }
 static uint8_t g_online_update_approved_kind = ONLINE_UPDATE_KIND_COUNT;
+static XTime g_online_update_network_probe_after;
+static config_menu_t *g_config_menu_state;
 static uint8_t g_golden_boot_update_request, g_firmware_switch_active, g_firmware_switch_fault;
 static uint32_t g_firmware_switch_request;
 static online_update_snapshot_t live;
@@ -30,15 +34,20 @@ static uint8_t boot_start, boot_handoff, http_busy, screenshot_busy, printer_bus
 static uint8_t sdd_busy, usb_remote, ftp_remote;
 static uint32_t ssc_pending;
 static int service_result;
+static uint8_t check_pending, link_up, ip_assigned;
 static unsigned check_calls, start_calls, cancel_calls, poll_calls, finish_calls;
 static uint8_t started_kind;
 static const char *ready_path;
 static XTime g_ethernet_dhcp_started;
 static unsigned nic_reads,nic_tests,nic_writes,dhcp_starts,dhcp_polls,dhcp_cancels,timing_logs;
+static int dhcp_result;
+static config_menu_t *g_deferred_smartport_refresh;
 static uint32_t g_card_slot_enable_mask,g_card_slot_effective_mask,slot_register,filter_seen;
 static uint8_t onee_isolated,filter_hold;
 static uint8_t control_onee_isolated(void) { return onee_isolated; }
 static uint8_t boot_menu_service_slot_allowed(uint8_t slot) { (void)slot;return 1; }
+static void control_apply_slot5_service(uint8_t enable) { (void)enable;assert(0); }
+static void vtw_service_set_disk2_config_enabled(uint8_t enable) { (void)enable;assert(0); }
 static uint32_t http_service_filter_slot_mask(uint32_t mask) {
     filter_seen=mask;return filter_hold?mask&~(1U<<1):mask;
 }
@@ -49,12 +58,24 @@ static void write_register(uint32_t address,uint32_t value) {
 static uint8_t config_menu_onee_fixed_bindings_active(const config_menu_t *menu) { (void)menu;return 0; }
 int uthernet2_read_network_config(uthernet2_network_config_t *config) { (void)config;++nic_reads;return 0; }
 int uthernet2_write_network_config(const uthernet2_network_config_t *config) { (void)config;++nic_writes;return 0; }
-int uthernet2_test(uthernet2_test_result_t *result) { (void)result;++nic_tests;return 0; }
+int uthernet2_test(uthernet2_test_result_t *result) {
+    memset(result,0,sizeof(*result));
+    result->link_up=link_up;
+    result->config.ip[0]=ip_assigned?192U:0U;
+    ++nic_tests;
+    return 0;
+}
 int uthernet2_dhcp_start(const uint8_t mac[UTHERNET2_MAC_LEN],char *detail,size_t size) {
     (void)mac;(void)detail;(void)size;++dhcp_starts;return 0;
 }
 int uthernet2_dhcp_poll(uthernet2_network_config_t *config,char *detail,size_t size) {
-    (void)config;(void)detail;(void)size;++dhcp_polls;return 0;
+    (void)detail;(void)size;
+    if (dhcp_result>0) {
+        memset(config,0,sizeof(*config));
+        config->ip[0]=192U;
+    }
+    ++dhcp_polls;
+    return dhcp_result;
 }
 void uthernet2_dhcp_cancel(void) { ++dhcp_cancels; }
 static void boot_timing_log(const char *text,XTime started) { (void)text;(void)started;++timing_logs; }
@@ -78,7 +99,8 @@ static uint32_t read_register(uint32_t address)
 { assert(address == CARD_CTRL_SSC_STATUS_REG); return ssc_pending; }
 #define REG_READ(address) read_register(address)
 static void online_update_status(online_update_snapshot_t *status) { *status = live; }
-static int online_update_check(void) { ++check_calls; return service_result; }
+static void online_update_schedule_check(void) { check_pending=1; }
+static int online_update_check_pending(void) { return check_pending; }
 static int online_update_start(uint8_t kind) { ++start_calls; started_kind = kind; return service_result; }
 static void online_update_cancel(void) { ++cancel_calls; }
 static uint8_t online_update_active(void) { return service_active; }
@@ -86,6 +108,10 @@ static const char *online_update_ready_path(void) { return ready_path; }
 static void online_update_poll(uint8_t safe, uint8_t busy)
 {
     ++poll_calls; poll_allowed = safe; poll_busy = busy;
+    if (check_pending && safe && !busy && !service_active) {
+        check_pending=0;
+        ++check_calls;
+    }
     clock_ticks+=update_cost;
     if(ready_after_polls && poll_calls>=ready_after_polls) {
         live.state=ONLINE_UPDATE_READY;service_active=0;
@@ -99,6 +125,14 @@ static void config_menu_set_status(config_menu_t *menu, uint8_t warning, const c
     if (warning) ++finish_calls;
 }
 void config_menu_refresh_golden_boot(config_menu_t *menu) { menu->golden_boot_update_allowed = allowed; }
+void config_menu_save_settings(config_menu_t *menu) { (void)menu; }
+void config_menu_refresh_smartport_media_after_menu_sd(config_menu_t *menu) { (void)menu; }
+static void config_menu_ethernet_set_status_ip(config_menu_t *menu,const char *prefix,
+                                             uint8_t warning,const uthernet2_network_config_t *config)
+{
+    (void)config;
+    config_menu_set_status(menu,warning,prefix);
+}
 
 /* PRODUCTION_FUNCTIONS */
 
@@ -106,6 +140,11 @@ static void reset(config_menu_t *menu, ui_state_t *ui)
 {
     memset(menu, 0, sizeof(*menu)); memset(ui, 0, sizeof(*ui)); memset(&live, 0, sizeof(live));
     menu->active = allowed = 1;
+    menu->ethernet_slot1_enabled=1;
+    g_config_menu_state=menu;
+    g_online_update_network_probe_after=0;
+    check_pending=0;
+    link_up=ip_assigned=1;
     live.state = ONLINE_UPDATE_AVAILABLE; live.available_mask = 3;
     g_online_update_approved_kind = ONLINE_UPDATE_KIND_COUNT;
     g_golden_boot_update_request = g_firmware_switch_active = g_firmware_switch_fault = 0;
@@ -116,13 +155,21 @@ static void reset(config_menu_t *menu, ui_state_t *ui)
     service_result = 0; check_calls = start_calls = cancel_calls = poll_calls = finish_calls = 0;
     ready_path = "0:/FIRMWARE.BIN";
     menu->platform.get_online_update_status = menu_platform_get_online_update_status;
+    menu->platform.request_online_update_check=menu_platform_request_online_update_check;
+    menu->platform.set_slot_enabled=control_set_slot_enabled;
+    menu->platform.ethernet_write_config=menu_platform_ethernet_write_config;
+    menu->platform.ethernet_dhcp_start=menu_platform_ethernet_dhcp_start;
+    menu->platform.ethernet_dhcp_poll=menu_platform_ethernet_dhcp_poll;
+    menu->platform.ethernet_dhcp_cancel=menu_platform_ethernet_dhcp_cancel;
     (void)ui_online_update_composite_due(ui,menu); /* reset the private pacing state in inactive mode */
     clock_ticks=update_cost=http_cost=http_calls=refresh_calls=force_refresh=lose_safe_after_http=ready_after_polls=0;
     last_http_budget=0;
     http_owner=HTTP_OWNER_UPDATE;
     g_ethernet_dhcp_started=0;
+    dhcp_result=0;
     nic_reads=nic_tests=nic_writes=dhcp_starts=dhcp_polls=dhcp_cancels=timing_logs=0;
     g_card_slot_enable_mask=g_card_slot_effective_mask=slot_register=filter_seen=0;
+    g_card_slot_enable_mask=g_card_slot_effective_mask=1U<<1;
     onee_isolated=filter_hold=0;
 }
 static void no_install(void)
@@ -140,7 +187,9 @@ int main(void)
     config_menu_t menu;
     ui_state_t ui;
     reset(&menu, &ui);
-    assert(menu_platform_request_online_update_check(NULL) == 0 && check_calls == 1);
+    assert(menu_platform_request_online_update_check(NULL) == 0 && !check_calls && check_pending);
+    control_service_online_update(&ui,&menu);
+    assert(check_calls==1 && !check_pending && nic_tests==1);
     allowed = 0;
     assert(menu_platform_request_online_update_check(NULL) != 0 && check_calls == 1);
     assert(menu_platform_request_online_update_download(NULL, ONLINE_UPDATE_BOOT) != 0 && !start_calls);
@@ -150,6 +199,90 @@ int main(void)
     assert(menu_platform_request_online_update_download(NULL, ONLINE_UPDATE_FIRMWARE) != 0 && start_calls == 1);
     assert(g_online_update_approved_kind == ONLINE_UPDATE_KIND_COUNT);
     puts("PASS queued check/download callbacks reject unsafe, invalid and failed starts without approval");
+
+    reset(&menu,&ui);
+    menu.ethernet_slot1_enabled=0;
+    online_update_schedule_check();
+    assert(menu_platform_request_online_update_check(NULL)!=0);
+    assert(menu_platform_request_online_update_download(NULL,ONLINE_UPDATE_FIRMWARE)!=0);
+    control_service_online_update(&ui,&menu);
+    assert(check_pending && !check_calls && !nic_tests && !start_calls);
+    menu.ethernet_slot1_enabled=1;
+    menu.ethernet_config_enabled=1;
+    menu.ethernet_address_mode=CONFIG_MENU_ETHERNET_ADDRESS_DHCP;
+    menu.ethernet_dhcp_pending=1;
+    assert(!menu_platform_request_online_update_check(NULL));
+    control_service_online_update(&ui,&menu);
+    assert(check_pending && !check_calls && !nic_tests);
+    menu.ethernet_dhcp_pending=0;
+    control_service_online_update(&ui,&menu);
+    assert(check_pending && !check_calls && !nic_tests); /* NIC still has stale IP. */
+    assert(menu_platform_request_online_update_download(NULL,ONLINE_UPDATE_FIRMWARE)!=0);
+    assert(!start_calls && !nic_tests);
+    clock_ticks+=250000;
+    menu.ethernet_dhcp_acquired=1;
+    control_service_online_update(&ui,&menu);
+    control_service_online_update(&ui,&menu);
+    assert(!check_pending && check_calls==1 && nic_tests==1);
+
+    reset(&menu,&ui);
+    ip_assigned=0;
+    online_update_schedule_check();
+    control_service_online_update(&ui,&menu);
+    control_service_online_update(&ui,&menu);
+    assert(check_pending && !check_calls && nic_tests==1);
+    clock_ticks+=250000;
+    link_up=0;ip_assigned=1;
+    control_service_online_update(&ui,&menu);
+    assert(check_pending && !check_calls && nic_tests==2);
+    assert(menu_platform_request_online_update_download(NULL,ONLINE_UPDATE_FIRMWARE)!=0);
+    assert(!start_calls && nic_tests==3);
+    clock_ticks+=250000;
+    link_up=1;
+    control_service_online_update(&ui,&menu);
+    assert(!check_pending && check_calls==1 && nic_tests==4);
+    reset(&menu,&ui);
+    menu.ethernet_slot1_enabled=0;
+    service_active=1;
+    control_service_online_update(&ui,&menu);
+    assert(poll_calls==1 && !poll_allowed && !http_calls && !nic_tests);
+    puts("PASS Ethernet OFF suppresses checks and cancels active work; current DHCP or live static IP and link release a coalesced check");
+
+    reset(&menu,&ui);http_owner=HTTP_OWNER_NONE;
+    config_menu_ethernet_toggle_slot(&menu);
+    assert(!menu.ethernet_slot1_enabled && !check_pending);
+    config_menu_online_update_check(&menu);
+    assert(!check_pending && strstr(menu.status,"ENABLE ETHERNET"));
+    menu.ethernet_config_enabled=1;
+    menu.ethernet_address_mode=CONFIG_MENU_ETHERNET_ADDRESS_DHCP;
+    menu.usb_owned=1;
+    config_menu_ethernet_toggle_slot(&menu);
+    assert(menu.ethernet_slot1_enabled && check_pending && !dhcp_starts && !nic_writes);
+    config_menu_ethernet_toggle_slot(&menu);
+    menu.usb_owned=0;
+    config_menu_ethernet_toggle_slot(&menu);
+    assert(menu.ethernet_dhcp_pending && dhcp_starts==1 && nic_writes==1);
+    dhcp_result=-1;
+    config_menu_poll_ethernet(&menu);
+    control_service_online_update(&ui,&menu);
+    assert(!menu.ethernet_dhcp_pending && !menu.ethernet_dhcp_acquired && !nic_tests && !check_calls);
+    assert(config_menu_start_ethernet_dhcp(&menu,1));
+    dhcp_result=1;
+    config_menu_poll_ethernet(&menu);
+    clock_ticks+=250000;
+    control_service_online_update(&ui,&menu);
+    assert(menu.ethernet_dhcp_acquired && !menu.ethernet_dhcp_pending && check_calls==1);
+    config_menu_ethernet_toggle_slot(&menu);
+    assert(!menu.ethernet_dhcp_acquired);
+    ready(ONLINE_UPDATE_FIRMWARE);
+    assert(!menu_platform_request_online_update_install(NULL,ONLINE_UPDATE_FIRMWARE));
+
+    reset(&menu,&ui);http_owner=HTTP_OWNER_NONE;
+    assert(!menu.ethernet_config_enabled && config_menu_start_ethernet_dhcp(&menu,1));
+    dhcp_result=1;
+    config_menu_poll_ethernet(&menu);
+    assert(dhcp_starts==1 && dhcp_polls==1 && !nic_writes && menu.ethernet_dhcp_acquired);
+    puts("PASS runtime enable reapplies saved network settings only under existing ownership rules; DHCP failure, retry, and offline local install");
 
     for (uint8_t kind = 0; kind < ONLINE_UPDATE_KIND_COUNT; ++kind) {
         reset(&menu, &ui); ready(kind);
@@ -333,6 +466,7 @@ int main(void)
     assert(slot_register==(g_card_slot_enable_mask&~(1U<<1)));
     filter_hold=0;card_control_apply_slot_policy();assert(slot_register==g_card_slot_enable_mask);
     puts("PASS all four mutating Ethernet callbacks defer during active UPDATE/restore ownership, read-only access remains, readable UI refusal and configured-vs-filtered slot policy preserved");
-    puts("9 online main integration groups passed (native; service/flash mocked)");
+
+    puts("11 online main integration groups passed (native; service/flash mocked)");
     return 0;
 }

@@ -7,6 +7,8 @@
  * READY means a complete validated root file; no flash/reboot is performed. */
 #if defined(APPLETINI_HTTP_SERVICE) || defined(ONLINE_UPDATE_HOST)
 void online_update_init(const char *installed_f, const char *installed_b);
+void online_update_schedule_check(void);
+int online_update_check_pending(void);
 int online_update_check(void);
 int online_update_start(uint8_t kind);
 void online_update_cancel(void);
@@ -20,6 +22,8 @@ int online_update_prepare_restart(void);
 const char *online_update_ready_path(void);
 #else
 static inline void online_update_init(const char *f,const char *b) { (void)f;(void)b; }
+static inline void online_update_schedule_check(void) {}
+static inline int online_update_check_pending(void) { return 0; }
 static inline int online_update_check(void) { return ONLINE_UPDATE_E_UNSAFE; }
 static inline int online_update_start(uint8_t k) { (void)k;return ONLINE_UPDATE_E_UNSAFE; }
 static inline void online_update_cancel(void) {}

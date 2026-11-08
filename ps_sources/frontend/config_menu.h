@@ -305,6 +305,7 @@ typedef struct {
     uint8_t ethernet_address_mode;
     uint8_t ethernet_edit_index;
     uint8_t ethernet_dhcp_pending;
+    uint8_t ethernet_dhcp_acquired; /* current session only */
     uint8_t ethernet_dhcp_report;
     uint8_t ethernet_ftp_sd_remote_active;
     uthernet2_network_config_t ethernet_config;

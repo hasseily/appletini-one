@@ -13,8 +13,9 @@ release can keep the installed Golden version.
 The configuration menu checks the latest published stable release from
 [hasseily/appletini-one](https://github.com/hasseily/appletini-one/releases/latest).
 Drafts, prereleases and version tags with prerelease suffixes are excluded.
-The automatic check runs once per boot when the initial boot menu or an
-isolated ONE//e menu is open and Ethernet and SD storage are available.
+The card queues an automatic check at boot and when you enable Ethernet.
+The check runs when the initial boot menu or an isolated ONE//e menu is open,
+SD storage is available, and the Ethernet card has an IP address.
 Use **Check for updates** in About to retry a failed check.
 
 An **Update available** badge appears beside About when either image is newer.

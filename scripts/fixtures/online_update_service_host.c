@@ -22,11 +22,13 @@ static size_t delivered,consumed;
 static unsigned char retained[ONLINE_UPDATE_JSON_BYTES];
 static unsigned char ring[4096];
 static size_t ring_bytes;
-/* Diagnostic fault controls are unused by the ordinary lifecycle cases. */
+/* Fault controls for transport diagnostics and restart preparation. */
 static int inject_source=-1,inject_start_rc,inject_transport_rc,poison_cancel_status,inject_old_request;
 static unsigned inject_http_status,inject_verify;
 static unsigned built_request_mask,old_header_rejections;
+enum { CANCEL_UNBLOCKED, CANCEL_RESTORE_PENDING, CANCEL_TRANSPORT_ACTIVE, CANCEL_OTHER_FAILURE };
 static int cancel_block;
+static unsigned cancel_attempts;
 static int is(const char *name) { return !strcmp(scenario,name); }
 static int same(const char *a,const char *b)
 {
@@ -118,6 +120,8 @@ FRESULT f_rename(const char *old,const char *next)
 FRESULT f_mkdir(const char *path) { (void)path;assert(!"updater writes only SD root");return FR_DENIED; }
 
 uint8_t http_service_getowner(void) { return owner; }
+int http_service_active(void)
+{ return status_http.state>=HTTP_S_PREPARE && status_http.state<=HTTP_S_READ; }
 static unsigned occurrences(const char *text,const char *needle)
 { unsigned count=0;while((text=strstr(text,needle))!=NULL){++count;text+=strlen(needle);}return count; }
 static int build_actual_request(const http_request_t *request)
@@ -171,9 +175,14 @@ int http_service_start_owned(const http_request_t *request,uint8_t who)
 int http_service_cancel_owned(uint8_t who)
 {
     if(!occupied||owner!=who)return HTTP_E_BUSY;
-    if(cancel_block){status_http.ethernet_restore_pending=1;return HTTP_E_IO;}
+    ++cancel_attempts;
+    status_http.state=cancel_block==CANCEL_TRANSPORT_ACTIVE?HTTP_S_READ:HTTP_S_FAILED;
+    if(cancel_block) {
+        status_http.ethernet_restore_pending=(uint8_t)(cancel_block!=CANCEL_OTHER_FAILURE);
+        return HTTP_E_IO;
+    }
     ++cancels;occupied=0;owner=HTTP_OWNER_NONE;ring_bytes=0;
-    status_http.state=HTTP_S_FAILED;status_http.result=HTTP_E_CANCELLED;
+    status_http.ethernet_restore_pending=0;status_http.result=HTTP_E_CANCELLED;
     if(poison_cancel_status) {status_http.status=599;status_http.verify=0xdeadbeefU;}
     return 0;
 }
@@ -239,6 +248,45 @@ static void load(input_t *in,const char *path)
 }
 static void expect_old(const char *path,const char *text)
 { int slot=find(path);assert(slot>=0&&fs[slot].size==strlen(text)&&!memcmp(fs[slot].data,text,strlen(text))); }
+
+static void check_api_restart(int deferred)
+{
+    inject_source=0;
+    inject_http_status=504;
+    poison_cancel_status=1;
+    cancel_block=deferred?CANCEL_RESTORE_PENDING:CANCEL_UNBLOCKED;
+    step(1,0);
+    assert(snapshot().state==ONLINE_UPDATE_CHECKING && owner==HTTP_OWNER_UPDATE);
+    step(1,0);
+
+    online_update_snapshot_t failed=snapshot();
+    assert(failed.state==ONLINE_UPDATE_FAILED && failed.result==ONLINE_UPDATE_E_HTTP);
+    assert(failed.http_status==504 && !strcmp(failed.stage,"Release response"));
+    assert(!handles && !creates && !renames && !*online_update_ready_path());
+    assert(online_update_active()==deferred && cancel_attempts==1);
+
+    assert(online_update_prepare_restart()==0);
+    assert(cancel_attempts==(unsigned)(1+deferred));
+    if(deferred) {
+        assert(online_update_active() && owner==HTTP_OWNER_UPDATE && !cancels);
+        assert(!http_service_active() && status_http.ethernet_restore_pending);
+        cancel_block=CANCEL_TRANSPORT_ACTIVE;
+        assert(online_update_prepare_restart()==HTTP_E_BUSY && cancel_attempts==3);
+        assert(http_service_active() && status_http.ethernet_restore_pending && owner==HTTP_OWNER_UPDATE);
+        cancel_block=CANCEL_OTHER_FAILURE;
+        assert(online_update_prepare_restart()==HTTP_E_BUSY && cancel_attempts==4);
+        assert(!http_service_active() && !status_http.ethernet_restore_pending && owner==HTTP_OWNER_UPDATE);
+        cancel_block=CANCEL_UNBLOCKED;
+        assert(online_update_prepare_restart()==0 && cancel_attempts==5);
+    }
+    online_update_snapshot_t after=snapshot();
+    assert(after.state==failed.state && after.result==failed.result && after.http_status==failed.http_status);
+    assert(!strcmp(after.stage,failed.stage) && !strcmp(after.detail,failed.detail));
+    assert(!online_update_active() && owner==HTTP_OWNER_NONE && cancels==1);
+    assert(!handles && !creates && !renames && !*online_update_ready_path());
+    printf("PASS %s preserves release 504/-215 across restart preparation\n",scenario);
+}
+
 int main(int argc,char **argv)
 {
     assert(argc==5);scenario=argv[1];load(&documents[0],argv[2]);load(&documents[1],argv[3]);load(&documents[2],argv[4]);
@@ -255,7 +303,19 @@ int main(int argc,char **argv)
         online_update_cancel();step(1,0);assert(!starts&&!online_update_active());
         puts("PASS cancel-before-auto-check");return 0;
     }
+    if(is("restart-api-504")||is("restart-api-504-restore")) {
+        check_api_restart(is("restart-api-504-restore"));
+        return 0;
+    }
     step(1,0);
+    if(is("restart-cancel-checking")) {
+        assert(snapshot().state==ONLINE_UPDATE_CHECKING && http_service_active());
+        assert(online_update_prepare_restart()==0);
+        assert(snapshot().state==ONLINE_UPDATE_CANCELLED && snapshot().result==ONLINE_UPDATE_E_CANCELLED);
+        assert(!online_update_active() && owner==HTTP_OWNER_NONE);
+        assert(cancel_attempts==1 && !handles && !creates && !renames);
+        puts("PASS restart synchronously cancels an active release check");return 0;
+    }
     if(is("api-owner-change")) {
         for(unsigned i=0;i<100&&!snapshot().total;++i)step(1,0);
         assert(snapshot().total&&owner==HTTP_OWNER_UPDATE);
@@ -312,8 +372,33 @@ int main(int argc,char **argv)
         printf("PASS %s %d\n",scenario,snapshot().result);return 0;
     }
     assert(!start_result);
+    if(is("restart-block-active-download")||is("restart-block-part-cleanup")) {
+        const char *part="0:/FIRMWARE.BIN.part";
+        for(unsigned i=0;i<20&&(!handles||!http_service_active());++i)step(1,0);
+        assert(handles==1 && owner==HTTP_OWNER_UPDATE && find(part)>=0);
+        unsigned before_cancel=cancel_attempts;
+        assert(online_update_prepare_restart()==HTTP_E_BUSY && cancel_attempts==before_cancel);
+        assert(snapshot().state==ONLINE_UPDATE_DOWNLOADING && handles==1 && find(part)>=0);
+        if(is("restart-block-part-cleanup")) {
+            inject_source=1;inject_transport_rc=HTTP_E_TIMEOUT;unlink_error=1;
+            cancel_block=CANCEL_RESTORE_PENDING;
+            for(unsigned i=0;i<20&&snapshot().state!=ONLINE_UPDATE_FAILED;++i)step(1,0);
+            assert(snapshot().state==ONLINE_UPDATE_FAILED && snapshot().result==HTTP_E_TIMEOUT);
+            assert(!handles && find(part)>=0 && online_update_active());
+            assert(owner==HTTP_OWNER_UPDATE && !http_service_active() && status_http.ethernet_restore_pending);
+            unsigned before_unlink=unlinks;
+            assert(online_update_prepare_restart()==HTTP_E_BUSY && unlinks==before_unlink+1);
+            assert(find(part)>=0 && !renames);
+            unlink_error=0;
+            assert(online_update_prepare_restart()==0 && unlinks==before_unlink+2);
+            assert(find(part)<0 && online_update_active() && owner==HTTP_OWNER_UPDATE);
+            cancel_block=CANCEL_UNBLOCKED;
+            assert(online_update_prepare_restart()==0 && !online_update_active() && owner==HTTP_OWNER_NONE);
+        }
+        printf("PASS %s blocks restart while the updater owns the file\n",scenario);return 0;
+    }
     if(is("cancel-restore")||is("completion-restore")) {
-        cancel_block=1;
+        cancel_block=CANCEL_RESTORE_PENDING;
         if(is("cancel-restore")) {
             for(unsigned i=0;i<20&&(!occupied||!snapshot().received);++i)step(1,0);
             assert(occupied&&owner==HTTP_OWNER_UPDATE);online_update_cancel();
@@ -322,7 +407,7 @@ int main(int argc,char **argv)
         assert(online_update_active()&&owner==HTTP_OWNER_UPDATE&&!handles&&!renames);
         assert(snapshot().result==(is("cancel-restore")?ONLINE_UPDATE_E_CANCELLED:HTTP_E_IO));
         assert(online_update_start(ONLINE_UPDATE_FIRMWARE)==HTTP_E_BUSY);
-        cancel_block=0;terminal();assert(!renames&&find("0:/FIRMWARE.BIN.part")<0);
+        cancel_block=CANCEL_UNBLOCKED;terminal();assert(!renames&&find("0:/FIRMWARE.BIN.part")<0);
         printf("PASS %s heldHTTPowner across deferredrestore; noverify/publish\n",scenario);return 0;
     }
     if(is("cancel")||is("lost-allowed")||is("storage-busy")||is("cleanup-retry")) {

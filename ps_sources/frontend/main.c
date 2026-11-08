@@ -2409,15 +2409,19 @@ static void control_service_firmware_switch(config_menu_t *menu)
     g_firmware_switch_request = MB_PRODUCT_NONE;
     if (screenshot_service_busy() != 0U || printer_service_job_active() != 0U ||
         http_download_active() ||
-#ifdef APPLETINI_HTTP_SERVICE
-        online_update_active() ||
-#endif
         (REG_READ(CARD_CTRL_SSC_STATUS_REG) & CARD_CTRL_SSC_STATUS_COUNT_MASK) != 0U ||
         config_menu_usb0_sd_remote_active(menu) != 0U ||
         config_menu_ethernet_ftp_sd_remote_active(menu) != 0U) {
         error = "FINISH DOWNLOADS, SD SHARING, SCREENSHOTS AND PRINTING FIRST";
         goto failed;
     }
+#ifdef APPLETINI_HTTP_SERVICE
+    if (product == MB_PRODUCT_APPLETINI ? online_update_active() :
+        online_update_prepare_restart() != 0) {
+        error = "FINISH THE ONLINE UPDATE OR ITS CLEANUP FIRST";
+        goto failed;
+    }
+#endif
     /* Presence is advisory. The request checks Golden before reset; Golden
      * fully checks target payload and fallback before executing firmware. */
     control_refresh_multiboot();

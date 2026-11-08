@@ -94,6 +94,7 @@ static unsigned dma_busy,dma_claims,dma_releases,dma_granted;
 static unsigned reset_cleanups,late_pending;
 static unsigned cpu1_hold_error, restart_calls;
 static unsigned online_busy, update_allowed, online_failures, last_request_product;
+static unsigned restart_ready;
 static XTime time_now;
 static char events[256]; static unsigned event_count;
 static void event(char value) { assert(event_count < sizeof(events)-1); events[event_count++]=value; events[event_count]=0; }
@@ -115,6 +116,7 @@ static uint8_t config_menu_save_settings_to_path(config_menu_t *menu, const char
 static uint8_t screenshot_service_busy(void) { return (uint8_t)screenshot_busy; }
 static uint8_t http_download_active(void) { return 0U; }
 static uint8_t online_update_active(void) { return (uint8_t)online_busy; }
+static int online_update_prepare_restart(void) { return online_busy && !restart_ready; }
 static uint8_t control_golden_boot_update_allowed(void) { return (uint8_t)update_allowed; }
 static void config_menu_online_update_finished(config_menu_t *menu,const char *error) {
     assert(error && error[0]); ++online_failures; menu->online_update_install_pending=0;
@@ -262,7 +264,7 @@ static config_menu_t prepare(void) {
     dma_owner=PSDMA_OWNER_NONE; dma_busy=dma_claims=dma_releases=dma_granted=0;
     reset_cleanups=late_pending=0;
     cpu1_hold_error=restart_calls=0;
-    online_busy=online_failures=last_request_product=0; update_allowed=1;
+    online_busy=online_failures=last_request_product=restart_ready=0; update_allowed=1;
     event_count=0; events[0]=0;
     memset(g_devices,0,sizeof(g_devices));
     g_devices[0].image_open=1; g_devices[0].image_file=7;
@@ -289,6 +291,13 @@ static void cancelled(const config_menu_t *menu) {
 }
 int main(void) {
     config_menu_t menu=prepare();
+    online_busy=1; restart_ready=1;
+    control_service_firmware_switch(&menu);
+    assert(requests==1 && last_request_product==MB_PRODUCT_MULTITINI && resets==1);
+    menu=prepare(); online_busy=1;
+    control_service_firmware_switch(&menu);
+    assert(!requests && !resets && menu.status_warning);
+    menu=prepare();
     config_menu_cycle_startup_firmware(&menu);
     assert(default_calls==1 && menu.startup_firmware==MB_PRODUCT_MULTITINI && !menu.status_warning);
     assert(live_status.default_product==MB_PRODUCT_MULTITINI);

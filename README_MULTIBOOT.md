@@ -43,9 +43,11 @@ The handoff flushes writable media, drains video activity, closes SD owners,
 stops USB, holds CPU1 in reset and restarts through Golden. A failed preparation
 cancels the switch and attempts to restore the running firmware. Appletini
 also requires a safe Apple-bus hold or guarded stand-alone isolation. It refuses
-switches during active SD sharing, screenshots or print jobs. Running Appletini
-while the card is installed in an Apple II still requires the host conditions
-that Appletini normally needs.
+switches during active downloads, SD sharing, screenshots or print jobs. A
+restart cancels a release check and can proceed after an HTTP error once the
+network transfer has stopped and any partial update file has been cleaned up.
+Running Appletini while the card is installed in an Apple II still requires the
+host conditions that Appletini normally needs.
 
 ## Upgrade from a single firmware
 

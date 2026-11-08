@@ -203,6 +203,34 @@ int online_update_active(void)
 {
     return update.phase!=P_NONE || update.open || update.owns_part || update.http_owned || update.cleanup;
 }
+int online_update_prepare_restart(void)
+{
+    if (update.status.state == ONLINE_UPDATE_CHECKING) {
+        online_update_cancel();
+        /* With the check cancelled, this poll only runs its cleanup. */
+        online_update_poll(1U, 0U);
+    } else if (update.phase == P_NONE && update.cleanup) {
+        (void)cleanup();
+    }
+    if (!online_update_active()) {
+        return 0;
+    }
+    if (update.phase == P_NONE && !update.open && !update.owns_part &&
+        (update.status.state == ONLINE_UPDATE_FAILED ||
+         update.status.state == ONLINE_UPDATE_CANCELLED) &&
+        update.http_owned && http_service_getowner() == HTTP_OWNER_UPDATE &&
+        !http_service_active()) {
+        http_status_t source;
+        http_service_status(&source);
+        /* Restart can leave the idle NIC isolated. Keep ownership so a
+         * cancelled restart resumes normal restore retries. */
+        if (source.ethernet_restore_pending) {
+            return 0;
+        }
+    }
+    return HTTP_E_BUSY;
+}
+
 void online_update_status(online_update_snapshot_t *out)
 { if(out)*out=update.status; }
 const char *online_update_ready_path(void)

@@ -15,6 +15,8 @@ void online_update_poll(uint8_t allowed, uint8_t busy);
  * never replaces result, stage, or the original FatFs/validation failure. */
 void online_update_status(online_update_snapshot_t *out);
 int online_update_active(void);
+/* Cancel a release check and check whether a card restart can proceed. */
+int online_update_prepare_restart(void);
 const char *online_update_ready_path(void);
 #else
 static inline void online_update_init(const char *f,const char *b) { (void)f;(void)b; }

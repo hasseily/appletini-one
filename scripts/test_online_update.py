@@ -196,6 +196,8 @@ def main():
                          'sync-fail','close-fail','read-fail','rename-fail','rename-race','truncated',
                          'http-fail','http404','cancel','lost-allowed','storage-busy','cleanup-retry',
                          'cancel-before-start','cancel-ready','api-owner-change','cancel-restore','completion-restore',
+                         'restart-api-504','restart-api-504-restore','restart-cancel-checking',
+                         'restart-block-active-download','restart-block-part-cleanup',
                          'redirect-assets','redirect-objects','redirect-evil','redirect-http','redirect-port'):
             service_case(scenario,scenario)
         for name,assets in [('missing-fw',[release(large_fw,boot)['assets'][1]]),
@@ -252,7 +254,7 @@ def main():
         for mask in (4,8,0x4008,0xffffffff):
             diagnostic_case('api-tls-'+hex(mask),'api-response',rc=-9984,verify=mask,
                             stage='Release response',primary=-9984)
-        for code in (403,404,429,500,503):
+        for code in (403,404,429,500,503,504):
             diagnostic_case('api-http-'+str(code),'api-response',code=code,stage='Release response',primary=-215)
         diagnostic_case('invalid-json','metadata',code=200,stage='Release metadata',primary=-201,
                         document=b'<html>not release metadata</html>')

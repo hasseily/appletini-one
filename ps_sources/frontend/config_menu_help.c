@@ -501,6 +501,12 @@ HELP(ethernet_ftp_sd,
     "FTP owns Ethernet and the SD card until Enter, Escape, Back, or Menu stops sharing.",
     "Use this only on a trusted LAN: FTP sends file data without encryption.");
 
+#ifdef APPLETINI_HTTP_SERVICE
+HELP(ethernet_cogs,
+    "Browse Apple II games from the CoGS catalog over Ethernet.",
+    "Select an entry to save its disk image to the SD card. Bundle entries contain more than one title.");
+#endif
+
 static const help_override_t ethernet_overrides[] = {
     OVERRIDE(CONFIG_ETHERNET_ITEM_CONFIG_ENABLED, ethernet_config),
     OVERRIDE(CONFIG_ETHERNET_ITEM_MAC, ethernet_fields),
@@ -511,6 +517,9 @@ static const help_override_t ethernet_overrides[] = {
     OVERRIDE(CONFIG_ETHERNET_ITEM_DHCP, ethernet_dhcp),
     OVERRIDE(CONFIG_ETHERNET_ITEM_TEST, ethernet_test),
     OVERRIDE(CONFIG_ETHERNET_ITEM_FTP_SD, ethernet_ftp_sd),
+#ifdef APPLETINI_HTTP_SERVICE
+    OVERRIDE(CONFIG_ETHERNET_ITEM_COGS, ethernet_cogs),
+#endif
 };
 
 /* ======================================================================== */

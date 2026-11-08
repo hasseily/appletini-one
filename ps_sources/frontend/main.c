@@ -54,6 +54,7 @@
 #include "http_service.h"
 #include "http_download.h"
 #include "online_update_service.h"
+#include "cogs_service.h"
 #include "net_service.h"
 #include "http_bench.h"
 #include "screenshot_service.h"
@@ -1601,7 +1602,9 @@ static int menu_platform_ethernet_read_config(void *ctx,
 static uint8_t menu_platform_ethernet_update_busy(void)
 {
 #ifdef APPLETINI_HTTP_SERVICE
-    return (uint8_t)(online_update_active() || http_service_getowner() == HTTP_OWNER_UPDATE);
+    const uint8_t owner = http_service_getowner();
+    return (uint8_t)(online_update_active() || owner == HTTP_OWNER_UPDATE ||
+        owner == HTTP_OWNER_COGS);
 #else
     return 0U;
 #endif
@@ -1753,6 +1756,7 @@ static void control_set_usb0_sd_remote_mount(void *ctx, uint8_t enable)
     }
     if (enable) {
 #ifdef APPLETINI_HTTP_SERVICE
+        cogs_service_cancel();
         if (online_update_active()) {
             menu_platform_cancel_online_update(NULL);
             if (online_update_active()) {
@@ -2262,6 +2266,7 @@ static int menu_platform_request_online_update_install(void *ctx, uint8_t kind)
 static uint8_t control_online_update_allowed(const config_menu_t *menu)
 {
     return (uint8_t)(config_menu_is_active(menu) &&
+        !config_menu_cogs_active(menu) && !cogs_service_active() &&
         control_golden_boot_update_allowed() && !g_firmware_switch_active &&
         !g_firmware_switch_fault && !g_golden_boot_update_request &&
         g_firmware_switch_request == MB_PRODUCT_NONE &&
@@ -2338,6 +2343,28 @@ static void control_service_online_update(ui_state_t *ui, config_menu_t *menu)
             ++ui->input_seq;
         }
     }
+}
+
+static void control_service_cogs(config_menu_t *menu)
+{
+    if (!cogs_service_active()) {
+        return;
+    }
+    const uint8_t owner = http_service_getowner();
+    const uint8_t allowed = (uint8_t)(config_menu_cogs_active(menu) &&
+        control_golden_boot_update_allowed() && !g_firmware_switch_active &&
+        !g_golden_boot_update_request && g_firmware_switch_request == MB_PRODUCT_NONE &&
+        !vtw_service_boot_start_pending() && !vtw_service_boot_handoff_pending() &&
+        control_online_update_ethernet_enabled(menu) && !menu->ethernet_dhcp_pending &&
+        !online_update_active() && !g_usb0_sd_handover_pending &&
+        !usb_sdd_service_active() && !config_menu_usb0_sd_remote_active(menu) &&
+        !config_menu_ethernet_ftp_sd_remote_active(menu) &&
+        !screenshot_service_busy() && !printer_service_job_active() &&
+        (REG_READ(CARD_CTRL_SSC_STATUS_REG) & CARD_CTRL_SSC_STATUS_COUNT_MASK) == 0U &&
+        (owner == HTTP_OWNER_COGS ||
+         (owner == HTTP_OWNER_NONE && !http_service_active() && !http_download_active() &&
+          control_online_update_network_ready(menu))));
+    cogs_service_poll(allowed);
 }
 
 static uint8_t ui_online_update_composite_due(const ui_state_t *ui,
@@ -2461,6 +2488,9 @@ static void control_service_firmware_switch(config_menu_t *menu)
     g_firmware_switch_request = MB_PRODUCT_NONE;
     if (screenshot_service_busy() != 0U || printer_service_job_active() != 0U ||
         http_download_active() ||
+#ifdef APPLETINI_HTTP_SERVICE
+        cogs_service_active() ||
+#endif
         (REG_READ(CARD_CTRL_SSC_STATUS_REG) & CARD_CTRL_SSC_STATUS_COUNT_MASK) != 0U ||
         config_menu_usb0_sd_remote_active(menu) != 0U ||
         config_menu_ethernet_ftp_sd_remote_active(menu) != 0U) {
@@ -2673,7 +2703,7 @@ static void control_service_golden_boot_update(config_menu_t *menu)
     if (screenshot_service_busy() != 0U || printer_service_job_active() != 0U ||
         http_download_active() ||
 #ifdef APPLETINI_HTTP_SERVICE
-        online_update_active() ||
+        online_update_active() || cogs_service_active() ||
 #endif
         (REG_READ(CARD_CTRL_SSC_STATUS_REG) & CARD_CTRL_SSC_STATUS_COUNT_MASK) != 0U ||
         config_menu_usb0_sd_remote_active(menu) != 0U ||
@@ -4124,7 +4154,7 @@ static uint8_t ui_config_menu_has_close_consumer(const config_menu_t *menu)
             menu->about_credits_active != 0U ||
 #ifdef APPLETINI_HTTP_SERVICE
             menu->online_update_confirm || menu->online_update_download_pending ||
-            menu->online_update_install_pending ||
+            menu->online_update_install_pending || menu->cogs_active ||
 #endif
             config_menu_usb0_sd_remote_active(menu) != 0U ||
             config_menu_ethernet_ftp_sd_remote_active(menu) != 0U ||
@@ -5036,6 +5066,7 @@ int main(void)
         /* A takeover may skip the rest of this loop. Withdraw the updater's
          * HTTP and SD ownership before that early continuation. */
         control_service_online_update(&ui, &config_menu);
+        control_service_cogs(&config_menu);
 #endif
         if (vtw_service_boot_start_pending() != 0U) {
             /* Keep RESET transport cleanup and HDMI alive during takeover.

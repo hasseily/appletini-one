@@ -450,17 +450,22 @@ int http_service_release_owned(uint8_t owner)
     g_http.owner = HTTP_OWNER_NONE; g_http.download_idle = 0;
     return 0;
 }
-int http_service_handoff_download(void)
+int http_service_handoff_download_owned(uint8_t owner)
 {
     uint64_t now = microseconds();
-    if (g_http.owner != HTTP_OWNER_NET || g_http.status.retained || g_http.consumed ||
+    if ((owner != HTTP_OWNER_NET && owner != HTTP_OWNER_COGS) ||
+        g_http.owner != owner || g_http.download_idle || g_http.status.retained || g_http.consumed ||
         !g_http.parser.headers_ready || g_http.parser.status < 200 || g_http.parser.status >= 300 ||
         (g_http.status.state != HTTP_S_READ && g_http.status.state != HTTP_S_DONE)) return HTTP_E_ARGUMENT;
     if (g_http.status.state != HTTP_S_DONE && now >= g_http.deadline) return HTTP_E_TIMEOUT;
-    g_http.owner = HTTP_OWNER_DOWNLOAD;
+    if (owner == HTTP_OWNER_NET) g_http.owner = HTTP_OWNER_DOWNLOAD;
     g_http.deadline = now + HTTP_DOWNLOAD_TOTAL_US;
     g_http.download_idle = now + HTTP_DOWNLOAD_IDLE_US;
     return 0;
+}
+int http_service_handoff_download(void)
+{
+    return http_service_handoff_download_owned(HTTP_OWNER_NET);
 }
 void http_service_storage_busy(int busy)
 { storage_busy = busy != 0; if (storage_busy) { if (http_service_active()) finish(HTTP_E_CANCELLED);net_service_reset(); } }
@@ -510,7 +515,8 @@ static int socket_receive(void *ctx, unsigned char *bytes, size_t length)
         uthernet2_w5100_write16(uthernet2_w5100_socket_reg(SOCKET_TCP,W5100_SN_RX_RD),(uint16_t)(pointer + available)) ||
         uthernet2_w5100_socket_command(SOCKET_TCP,W5100_CR_RECV)) return HTTP_E_IO;
     g_http.io_bytes += available;
-    if (g_http.owner == HTTP_OWNER_DOWNLOAD || g_http.owner == HTTP_OWNER_UPDATE)
+    if (g_http.owner == HTTP_OWNER_DOWNLOAD || g_http.owner == HTTP_OWNER_UPDATE ||
+        (g_http.owner == HTTP_OWNER_COGS && g_http.download_idle != 0U))
         g_http.download_idle = microseconds() + HTTP_DOWNLOAD_IDLE_US;
     return available;
 }
@@ -607,6 +613,22 @@ static int begin_connection(void)
     }
     return 0;
 }
+static int cogs_origin_allowed(const http_url_t *url)
+{
+    static const char *const hosts[] = {
+        "a2cogs.com", "disks.a2cogs.com", "github.com",
+        "release-assets.githubusercontent.com", "objects.githubusercontent.com",
+        "archive.org",
+    };
+    if (!url->tls || url->port != 443U) return 0;
+    for (size_t i = 0; i < sizeof(hosts) / sizeof(hosts[0]); ++i)
+        if (!strcmp(url->host, hosts[i])) return 1;
+    const size_t host_length = strlen(url->host);
+    const char archive_suffix[] = ".archive.org";
+    return host_length >= sizeof(archive_suffix) &&
+           !strcmp(url->host + host_length - (sizeof(archive_suffix) - 1U), archive_suffix);
+}
+
 static int redirect(void)
 {
     char target[HTTP_URL_MAX];
@@ -616,6 +638,7 @@ static int redirect(void)
     if (status != 301 && status != 302 && status != 303 && status != 307 && status != 308) return HTTP_E_REDIRECT;
     if (++g_http.redirects > 3U || http_url_resolve(g_http.status.url,g_http.parser.location,target,sizeof(target)) ||
         http_url_parse(target,&next) || (g_http.url.tls && !next.tls)) return HTTP_E_REDIRECT;
+    if (g_http.owner == HTTP_OWNER_COGS && !cogs_origin_allowed(&next)) return HTTP_E_REDIRECT;
     if (strcmp(next.host,g_http.url.host) || next.port != g_http.url.port || next.tls != g_http.url.tls)
         g_http.strip_credentials = 1;
     if ((status == 303 && strcmp(g_http.method,"HEAD")) || ((status == 301 || status == 302) && !strcmp(g_http.method,"POST"))) {
@@ -633,13 +656,16 @@ static int redirect(void)
 int http_service_start_owned(const http_request_t *request, uint8_t owner)
 {
     http_url_t parsed;
-    if (owner > HTTP_OWNER_NET && owner != HTTP_OWNER_UPDATE) return HTTP_E_ARGUMENT;
+    if (owner > HTTP_OWNER_NET && owner != HTTP_OWNER_UPDATE && owner != HTTP_OWNER_COGS)
+        return HTTP_E_ARGUMENT;
     if (g_http.owner != HTTP_OWNER_NONE || g_http.owns_eth || http_service_active() || console.active) return HTTP_E_BUSY;
     if (storage_busy || ftp_sd_service_active() || usb_sdd_service_active()) return HTTP_E_STORAGE_BUSY;
     if (!request || !request->url || !request->method || request->body_length > sizeof(g_http.body) ||
         (request->body_length && !request->body) || strlen(request->method) >= sizeof(g_http.method) ||
         (request->headers && strlen(request->headers) >= sizeof(g_http.headers)) ||
         http_url_parse(request->url,&parsed)) return HTTP_E_ARGUMENT;
+    if (owner == HTTP_OWNER_COGS && (!cogs_origin_allowed(&parsed) || strcmp(request->method,"GET") ||
+                                    request->body_length)) return HTTP_E_ARGUMENT;
     uint64_t generation = g_http.status.seed_generation;
     memset(&g_http.status,0,sizeof(g_http.status));
     g_http.status.seed_generation = generation;

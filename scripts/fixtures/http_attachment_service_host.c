@@ -177,8 +177,51 @@ int main(void)
     host_time = total; http_service_poll(); assert(g_http.status.result == HTTP_E_TIMEOUT);
     assert(!http_service_cancel_owned(HTTP_OWNER_DOWNLOAD));
 
+    static const char *const allowed[] = {
+        "https://a2cogs.com/cogs-volumes.json", "https://disks.a2cogs.com/disk.2mg",
+        "https://github.com/a2-4am/4cade/releases/latest/download/disk.hdv",
+        "https://release-assets.githubusercontent.com/disk.hdv",
+        "https://objects.githubusercontent.com/disk.hdv",
+        "https://archive.org/download/disk", "https://ia801000.us.archive.org/disk",
+    };
+    static const char *const denied[] = {
+        "http://a2cogs.com/cogs-volumes.json", "https://a2cogs.com:8443/",
+        "https://127.0.0.1/", "https://a2cogs.com.evil.test/", "https://evilarchive.org/",
+        "https://archive.org.evil.test/", "https://a2cogs.com@evil.test/",
+    };
+    http_request_t cogs = {allowed[0], "GET", "", NULL, 0, 0};
+    for (size_t i = 0; i < sizeof(denied) / sizeof(denied[0]); ++i) {
+        cogs.url = denied[i];
+        assert(http_service_start_owned(&cogs, HTTP_OWNER_COGS) == HTTP_E_ARGUMENT);
+    }
+    for (size_t i = 0; i < sizeof(allowed) / sizeof(allowed[0]); ++i) {
+        cogs.url = allowed[i];
+        assert(!http_service_start_owned(&cogs, HTTP_OWNER_COGS));
+        assert(!http_service_cancel_owned(HTTP_OWNER_COGS));
+    }
+    cogs.url = allowed[0];
+    assert(!http_service_start_owned(&cogs, HTTP_OWNER_COGS));
+    g_http.parser.status = 302;
+    strcpy(g_http.parser.location, "https://a2cogs.com.evil.test/disk");
+    assert(redirect() == HTTP_E_REDIRECT && !strcmp(g_http.status.url, cogs.url));
+    strcpy(g_http.parser.location, "http://a2cogs.com/disk");
+    assert(redirect() == HTTP_E_REDIRECT && !strcmp(g_http.status.url, cogs.url));
+    http_parser_init(&g_http.parser, 0, UINT32_MAX);
+    const char response[] = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\ndisk";
+    assert(http_parser_feed(&g_http.parser, (const uint8_t *)response,
+        sizeof(response) - 1U, &used, body_sink, NULL) == HTTP_COMPLETE);
+    g_http.status.state = HTTP_S_DONE;
+    assert(http_service_handoff_download() == HTTP_E_ARGUMENT);
+    assert(!http_service_handoff_download_owned(HTTP_OWNER_COGS));
+    assert(http_service_handoff_download_owned(HTTP_OWNER_COGS) == HTTP_E_ARGUMENT);
+    assert(http_service_getowner() == HTTP_OWNER_COGS && g_http.download_idle != 0U);
+    assert(!http_service_read_owned(HTTP_OWNER_DOWNLOAD, out, sizeof(out)));
+    assert(http_service_cancel_owned(HTTP_OWNER_DOWNLOAD) == HTTP_E_BUSY);
+    assert(http_service_read_owned(HTTP_OWNER_COGS, out, sizeof(out)) == 4 && !memcmp(out, "disk", 4));
+    assert(!http_service_release_owned(HTTP_OWNER_COGS));
+
     /* Timer conversion must remain correct beyond the old multiply overflow. */
     host_time = UINT64_C(50000000000000); assert(microseconds() == host_time);
-    puts("PASS production attachment handoff: metadata before body, 8KiB binary stream, no refetch/prefix loss, owner isolation through DONE, redirects, idle RX progress, total timeout and long uptime");
+    puts("PASS production attachment handoff: metadata before body, 8KiB binary stream, no refetch/prefix loss, owner isolation through DONE, redirects, idle RX progress, total timeout, long uptime and CoGS HTTPS policy");
     return 0;
 }

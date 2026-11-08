@@ -22,6 +22,7 @@
 #include "printer_service.h"
 #include "http_download.h"
 #ifdef APPLETINI_HTTP_SERVICE
+#include "cogs_service.h"
 #include "online_update_service.h"
 #endif
 #include "profile_manager.h"
@@ -5601,6 +5602,98 @@ uint8_t config_menu_ethernet_ftp_sd_remote_active(const config_menu_t *menu)
     return (menu != NULL && menu->ethernet_ftp_sd_remote_active != 0U) ? 1U : 0U;
 }
 
+uint8_t config_menu_cogs_active(const config_menu_t *menu)
+{
+    return (menu != NULL && menu->cogs_active != 0U) ? 1U : 0U;
+}
+
+#ifdef APPLETINI_HTTP_SERVICE
+static void config_menu_open_cogs(config_menu_t *menu)
+{
+    if (cogs_service_browse(1U) != 0) {
+        config_menu_set_status(menu, 1U, "COGS GAMES COULD NOT START");
+        return;
+    }
+    menu->cogs_active = 1U;
+    menu->cogs_selected = 0U;
+    config_menu_set_status(menu, 0U, "");
+}
+
+static void config_menu_close_cogs(config_menu_t *menu)
+{
+    if (menu->cogs_active != 0U) {
+        menu->cogs_active = 0U;
+        cogs_service_cancel();
+    }
+}
+
+static void config_menu_cogs_handle_input(config_menu_t *menu, ui_key_t key)
+{
+    if (key == UI_KEY_BACK || key == UI_KEY_ESC || key == UI_KEY_MENU) {
+        config_menu_close_cogs(menu);
+        return;
+    }
+
+    const cogs_service_status_t *status = cogs_service_status();
+    if (status->state == COGS_LOADING || status->state == COGS_DOWNLOADING) {
+        return;
+    }
+    const cogs_catalog_page_t *page = cogs_service_page();
+    if (menu->cogs_selected >= page->count) {
+        menu->cogs_selected = 0U;
+    }
+
+    uint16_t next_page = 0U;
+    switch (key) {
+    case UI_KEY_UP:
+        if (page->count != 0U) {
+            menu->cogs_selected = (menu->cogs_selected == 0U) ?
+                (uint8_t)(page->count - 1U) : (uint8_t)(menu->cogs_selected - 1U);
+        }
+        break;
+    case UI_KEY_DOWN:
+        if (page->count != 0U) {
+            menu->cogs_selected = (uint8_t)((menu->cogs_selected + 1U) % page->count);
+        }
+        break;
+    case UI_KEY_LEFT:
+    case UI_KEY_PAGE_UP:
+        if (status->page > 1U) {
+            next_page = (uint16_t)(status->page - 1U);
+        }
+        break;
+    case UI_KEY_RIGHT:
+    case UI_KEY_PAGE_DOWN:
+        if (status->page != 0U && status->page < page->pages) {
+            next_page = (uint16_t)(status->page + 1U);
+        }
+        break;
+    case UI_KEY_ENTER:
+        if (page->count != 0U) {
+            if (cogs_service_download(menu->cogs_selected) != 0) {
+                config_menu_set_status(menu, 1U, "COGS DOWNLOAD COULD NOT START");
+            } else {
+                config_menu_set_status(menu, 0U, "");
+            }
+        } else if (status->state == COGS_FAILED) {
+            next_page = (status->page != 0U) ? status->page : 1U;
+        }
+        break;
+    default:
+        break;
+    }
+
+    if (next_page != 0U) {
+        if (cogs_service_browse(next_page) == 0) {
+            menu->cogs_selected = 0U;
+            config_menu_set_status(menu, 0U, "");
+        } else {
+            config_menu_set_status(menu, 1U, "COGS PAGE COULD NOT START");
+        }
+    }
+}
+#endif
+
 static uint32_t config_menu_tab_item_count(const config_menu_t *menu)
 {
     if (menu == NULL) {
@@ -7896,6 +7989,11 @@ static void config_menu_activate_item(config_menu_t *menu)
         case CONFIG_ETHERNET_ITEM_DNS:
             config_menu_ethernet_cycle_edit_index(menu);
             break;
+#ifdef APPLETINI_HTTP_SERVICE
+        case CONFIG_ETHERNET_ITEM_COGS:
+            config_menu_open_cogs(menu);
+            break;
+#endif
         case CONFIG_ETHERNET_ITEM_READ:
         case CONFIG_ETHERNET_ITEM_WRITE:
         case CONFIG_ETHERNET_ITEM_DHCP:
@@ -8359,6 +8457,9 @@ void config_menu_set_active(config_menu_t *menu, uint8_t active)
             config_menu_refresh_golden_boot(menu);
         }
     } else {
+#ifdef APPLETINI_HTTP_SERVICE
+        config_menu_close_cogs(menu);
+#endif
         menu->golden_boot_update_confirm = 0U;
         menu->golden_boot_confirm_update = 0U;
         menu->online_update_confirm = 0U;
@@ -8420,6 +8521,9 @@ uint8_t config_menu_handle_usb_fixed_tab(config_menu_t *menu, int direction)
     if (menu->usb_binding_capture != CONFIG_MENU_USB_BIND_CAPTURE_NONE ||
         menu->golden_boot_update_pending != 0U || menu->usb0_sd_remote_active != 0U ||
         menu->ethernet_ftp_sd_remote_active != 0U ||
+#ifdef APPLETINI_HTTP_SERVICE
+        config_menu_cogs_active(menu) != 0U ||
+#endif
         config_menu_online_update_busy(menu) != 0U) {
         return 1U;
     }
@@ -8613,6 +8717,12 @@ uint8_t config_menu_handle_input(config_menu_t *menu, ui_input_t input)
         return 0U;
     }
 
+#ifdef APPLETINI_HTTP_SERVICE
+    if (config_menu_is_active(menu) && config_menu_cogs_active(menu) != 0U) {
+        config_menu_cogs_handle_input(menu, input.key);
+        return 1U;
+    }
+#endif
     if (config_menu_is_active(menu) &&
         config_menu_online_update_handle_input(menu, input) != 0U) {
         return 1U;
@@ -9943,6 +10053,68 @@ static void config_menu_draw_browser(uint16_t *fb,
     }
 }
 
+#ifdef APPLETINI_HTTP_SERVICE
+static void config_menu_draw_cogs(uint16_t *fb, const config_menu_t *menu,
+                                 const cmui_rect_t *body)
+{
+    const cogs_service_status_t *status = cogs_service_status();
+    const cogs_catalog_page_t *page = cogs_service_page();
+    const int row_h = CMUI_ROW_H + CMUI_ROW_GAP;
+    const int x = body->x + 18;
+    const int w = body->w - 36;
+    const int list_y = body->y + 96;
+    const int capacity = cmui_compact_active() ?
+        (int)cmui_compact_row_capacity() - 3 : (body->h - 108) / row_h;
+    const unsigned visible = (capacity > 0) ? (unsigned)capacity : 1U;
+    const unsigned selected = menu->cogs_selected < page->count ?
+        menu->cogs_selected : 0U;
+    const unsigned first = selected >= visible ? selected + 1U - visible : 0U;
+    char line[160];
+
+    cmui_panel(fb, body, CMUI_COLOR_PANEL);
+    cmui_text(fb, x, body->y + 12, "CoGS games",
+              CMUI_COLOR_TEXT, CMUI_COLOR_PANEL, CMUI_TITLE_SCALE);
+    if (page->pages != 0U && status->state != COGS_LOADING) {
+        (void)snprintf(line, sizeof(line), "Page %u of %u",
+                       (unsigned)status->page, (unsigned)page->pages);
+        cmui_text(fb, x, body->y + 38, line,
+                  CMUI_COLOR_MUTED, CMUI_COLOR_PANEL, CMUI_SMALL_SCALE);
+    }
+    if (status->state == COGS_DOWNLOADING && status->total != 0U) {
+        (void)snprintf(line, sizeof(line), "Downloading %lu / %lu bytes",
+                       (unsigned long)status->received, (unsigned long)status->total);
+    } else if (status->detail[0] != '\0') {
+        (void)snprintf(line, sizeof(line), "%s", status->detail);
+    } else {
+        const char *message = "";
+        if (status->state == COGS_LOADING) message = "Loading games";
+        else if (status->state == COGS_DOWNLOADING) message = "Downloading disk image";
+        else if (status->state == COGS_SAVED) message = "Saved to the SD card";
+        else if (status->state == COGS_FAILED) message = "Request failed";
+        else if (page->count == 0U) message = "No compatible games on this page";
+        (void)snprintf(line, sizeof(line), "%s", message);
+    }
+    cmui_text_clipped(fb, x, body->y + 62, w, line,
+                      status->state == COGS_FAILED ? CMUI_COLOR_WARN : CMUI_COLOR_TEXT,
+                      CMUI_COLOR_PANEL, CMUI_SMALL_SCALE);
+
+    if (status->state == COGS_LOADING || status->state == COGS_DOWNLOADING) {
+        return;
+    }
+    for (unsigned index = first; index < page->count && index - first < visible; ++index) {
+        const cogs_catalog_entry_t *entry = &page->entries[index];
+        if (entry->bundle[0] != '\0') {
+            (void)snprintf(line, sizeof(line), "[Bundle] %.47s | %.47s",
+                           entry->title, entry->bundle);
+        } else {
+            (void)snprintf(line, sizeof(line), "%.47s", entry->title);
+        }
+        hgr_draw_item(fb, x, list_y + (int)(index - first) * row_h, w,
+                      (uint8_t)(index == selected), line, HGR_WHITE);
+    }
+}
+#endif
+
 static void config_menu_draw_usb0_sd_remote_modal(uint16_t *fb,
                                                   const cmui_rect_t *body,
                                                   uint8_t usb_owned)
@@ -10154,6 +10326,20 @@ void config_menu_draw(uint16_t *fb, const config_menu_t *menu, uint8_t usb_owned
             "D-pad: Move | A: Select | B: Delete | Y/Triangle: Hide keyboard" :
             "Type name | Enter: Save | Esc: Cancel | Y/Triangle: Keyboard";
     }
+#ifdef APPLETINI_HTTP_SERVICE
+    if (config_menu_cogs_active(menu) != 0U) {
+        const uint8_t state = cogs_service_status()->state;
+        if (state == COGS_LOADING || state == COGS_DOWNLOADING) {
+            input_hint = usb_owned ? "B: Cancel" : "Esc: Cancel";
+        } else if (state == COGS_FAILED && cogs_service_page()->count == 0U) {
+            input_hint = usb_owned ? "A: Retry | B: Back" : "Enter: Retry | Esc: Back";
+        } else {
+            input_hint = usb_owned ?
+                "Up/Down: Select | Left/Right: Page | A: Download | B: Back" :
+                "Up/Down: Select | Left/Right: Page | Enter: Download | Esc: Back";
+        }
+    }
+#endif
     if (input_hint == NULL && menu->tab == CONFIG_TAB_ABOUT && menu->about_credits_active != 0U &&
         menu->online_update_confirm == 0U && config_menu_online_update_busy(menu) == 0U &&
         menu->golden_boot_update_confirm == 0U && menu->golden_boot_update_pending == 0U &&
@@ -10176,6 +10362,10 @@ void config_menu_draw(uint16_t *fb, const config_menu_t *menu, uint8_t usb_owned
             config_menu_draw_ethernet_ftp_sd_modal(fb, &logical_body, usb_owned);
         } else if (menu->usb0_sd_remote_active != 0U) {
             config_menu_draw_usb0_sd_remote_modal(fb, &logical_body, usb_owned);
+#ifdef APPLETINI_HTTP_SERVICE
+        } else if (config_menu_cogs_active(menu) != 0U) {
+            config_menu_draw_cogs(fb, menu, &logical_body);
+#endif
         } else if (config_menu_text_reader_active() != 0U) {
             config_menu_text_reader_draw(fb, &logical_body);
         } else if (menu->printout_action_active || menu->printout_editor_active ||
@@ -10216,6 +10406,10 @@ void config_menu_draw(uint16_t *fb, const config_menu_t *menu, uint8_t usb_owned
         config_menu_draw_ethernet_ftp_sd_modal(fb, &body, usb_owned);
     } else if (menu->usb0_sd_remote_active != 0U) {
         config_menu_draw_usb0_sd_remote_modal(fb, &body, usb_owned);
+#ifdef APPLETINI_HTTP_SERVICE
+    } else if (config_menu_cogs_active(menu) != 0U) {
+        config_menu_draw_cogs(fb, menu, &body);
+#endif
     } else {
         config_menu_draw_tabs(fb, menu, nav.x, nav.y, nav.w);
         config_menu_draw_page(fb, menu, body.x, body.y, body.w, body.h);
@@ -10229,6 +10423,7 @@ void config_menu_draw(uint16_t *fb, const config_menu_t *menu, uint8_t usb_owned
                           CARD_MACHINE_MODE_IIPLUS), input_hint);
     if (menu->usb0_sd_remote_active == 0U &&
         menu->ethernet_ftp_sd_remote_active == 0U &&
+        config_menu_cogs_active(menu) == 0U &&
         menu->golden_boot_update_confirm == 0U &&
         menu->golden_boot_update_pending == 0U &&
         menu->online_update_confirm == 0U && config_menu_online_update_busy(menu) == 0U) {

@@ -1254,6 +1254,8 @@ run_step(
             "../../../ps_sources/frontend/http_download.c",
             "../../../ps_sources/frontend/online_update_core.c",
             "../../../ps_sources/frontend/online_update_service.c",
+            "../../../ps_sources/frontend/cogs_catalog.c",
+            "../../../ps_sources/frontend/cogs_service.c",
             "../../../ps_sources/frontend/download_filename.c",
             "../../../ps_sources/frontend/net_service.c",
             "../../../ps_sources/frontend/net_json.c",

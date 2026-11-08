@@ -16,7 +16,7 @@ static uint32_t update_cost, http_cost;
 static uint32_t last_http_budget;
 static unsigned http_calls, refresh_calls;
 static uint8_t force_refresh, lose_safe_after_http;
-enum { HTTP_OWNER_NONE, HTTP_OWNER_NET, HTTP_OWNER_UPDATE };
+enum { HTTP_OWNER_NONE, HTTP_OWNER_NET, HTTP_OWNER_UPDATE, HTTP_OWNER_COGS };
 static uint8_t http_owner;
 static uint8_t http_service_getowner(void) { return http_owner; }
 static unsigned ready_after_polls;
@@ -27,6 +27,7 @@ static uint8_t g_online_update_approved_kind = ONLINE_UPDATE_KIND_COUNT;
 static XTime g_online_update_network_probe_after;
 static config_menu_t *g_config_menu_state;
 static uint8_t g_golden_boot_update_request, g_firmware_switch_active, g_firmware_switch_fault;
+static uint8_t g_usb0_sd_handover_pending;
 static uint32_t g_firmware_switch_request;
 static online_update_snapshot_t live;
 static uint8_t allowed, service_active, poll_allowed, poll_busy, disconnected;
@@ -35,6 +36,8 @@ static uint8_t sdd_busy, usb_remote, ftp_remote;
 static uint32_t ssc_pending;
 static int service_result;
 static uint8_t check_pending, link_up, ip_assigned;
+static uint8_t cogs_open, cogs_active, cogs_allowed, transport_active;
+static unsigned cogs_polls;
 static unsigned check_calls, start_calls, cancel_calls, poll_calls, finish_calls;
 static uint8_t started_kind;
 static const char *ready_path;
@@ -87,6 +90,10 @@ static void http_service_poll_budget(uint32_t max_us) {
     if(lose_safe_after_http) boot_handoff=1;
 }
 uint8_t config_menu_is_active(const config_menu_t *menu) { return menu->active; }
+uint8_t config_menu_cogs_active(const config_menu_t *menu) { (void)menu; return cogs_open; }
+static int cogs_service_active(void) { return cogs_active; }
+static void cogs_service_poll(uint8_t safe) { ++cogs_polls; cogs_allowed=safe; }
+static int http_service_active(void) { return transport_active; }
 static uint8_t vtw_service_boot_start_pending(void) { return boot_start; }
 static uint8_t vtw_service_boot_handoff_pending(void) { return boot_handoff; }
 static uint8_t http_download_active(void) { return http_busy; }
@@ -144,6 +151,8 @@ static void reset(config_menu_t *menu, ui_state_t *ui)
     g_config_menu_state=menu;
     g_online_update_network_probe_after=0;
     check_pending=0;
+    cogs_open=cogs_active=cogs_allowed=transport_active=g_usb0_sd_handover_pending=0U;
+    cogs_polls=0U;
     link_up=ip_assigned=1;
     live.state = ONLINE_UPDATE_AVAILABLE; live.available_mask = 3;
     g_online_update_approved_kind = ONLINE_UPDATE_KIND_COUNT;
@@ -467,6 +476,29 @@ int main(void)
     filter_hold=0;card_control_apply_slot_policy();assert(slot_register==g_card_slot_enable_mask);
     puts("PASS all four mutating Ethernet callbacks defer during active UPDATE/restore ownership, read-only access remains, readable UI refusal and configured-vs-filtered slot policy preserved");
 
-    puts("11 online main integration groups passed (native; service/flash mocked)");
+    reset(&menu,&ui);
+    cogs_open=cogs_active=check_pending=1;
+    http_owner=HTTP_OWNER_NONE;
+    control_service_online_update(&ui,&menu);
+    assert(!poll_allowed && !check_calls && check_pending);
+    control_service_cogs(&menu);
+    assert(cogs_polls==1U && cogs_allowed && nic_tests==1U);
+    http_owner=HTTP_OWNER_COGS; transport_active=http_busy=1U;
+    control_service_cogs(&menu);
+    assert(cogs_polls==2U && cogs_allowed && nic_tests==1U);
+    boot_start=1U;
+    control_service_cogs(&menu);
+    assert(cogs_polls==3U && !cogs_allowed);
+    boot_start=0U; g_usb0_sd_handover_pending=1U;
+    control_service_cogs(&menu);
+    assert(cogs_polls==4U && !cogs_allowed);
+    g_usb0_sd_handover_pending=0U; cogs_open=0U;
+    control_service_cogs(&menu);
+    assert(cogs_polls==5U && !cogs_allowed);
+    cogs_open=1U; http_owner=HTTP_OWNER_NONE; transport_active=http_busy=0U; ip_assigned=0U;
+    control_service_cogs(&menu);
+    assert(cogs_polls==6U && !cogs_allowed);
+    puts("PASS CoGS waits for network and storage, excludes update discovery, and cancels across menu close and boot takeover");
+    puts("12 online main integration groups passed (native; service/flash mocked)");
     return 0;
 }

@@ -332,6 +332,8 @@ typedef struct {
     uint8_t online_update_confirm_install;
     uint8_t online_update_download_pending;
     uint8_t online_update_install_pending;
+    uint8_t cogs_active;
+    uint8_t cogs_selected;
     uint8_t about_credits_active; /* transient focus, independent of update actions */
     usb_hid_menu_source_t usb_menu_bindings[CONFIG_MENU_USB_BIND_ACTION_COUNT];
     uint8_t usb_binding_capture;
@@ -405,6 +407,7 @@ uint8_t config_menu_usb0_sd_remote_active(const config_menu_t *menu);
 void config_menu_start_ethernet_ftp_sd_remote(config_menu_t *menu);
 void config_menu_stop_ethernet_ftp_sd_remote(config_menu_t *menu);
 uint8_t config_menu_ethernet_ftp_sd_remote_active(const config_menu_t *menu);
+uint8_t config_menu_cogs_active(const config_menu_t *menu);
 uint8_t config_menu_is_active(const config_menu_t *menu);
 uint8_t config_menu_output_mode(const config_menu_t *menu);
 uint8_t config_menu_size_multiplier(const config_menu_t *menu);

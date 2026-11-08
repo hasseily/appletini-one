@@ -116,6 +116,7 @@ static uint8_t config_menu_save_settings_to_path(config_menu_t *menu, const char
 static uint8_t screenshot_service_busy(void) { return (uint8_t)screenshot_busy; }
 static uint8_t http_download_active(void) { return 0U; }
 static uint8_t online_update_active(void) { return (uint8_t)online_busy; }
+static int cogs_service_active(void) { return 0; }
 static int online_update_prepare_restart(void) { return online_busy && !restart_ready; }
 static uint8_t control_golden_boot_update_allowed(void) { return (uint8_t)update_allowed; }
 static void config_menu_online_update_finished(config_menu_t *menu,const char *error) {

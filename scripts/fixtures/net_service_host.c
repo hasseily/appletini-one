@@ -30,6 +30,7 @@ int http_service_release_owned(uint8_t who)
 size_t http_service_read_owned(uint8_t who,uint8_t *out,size_t n)
 { return owner==who?http_service_read(out,n):0; }
 int http_service_handoff_download(void){return HTTP_E_ARGUMENT;}
+int http_service_handoff_download_owned(uint8_t owner){(void)owner;return HTTP_E_ARGUMENT;}
 const uint8_t *http_service_retained_owned(uint8_t who,size_t *n)
 {if(owner!=who){*n=0;return NULL;}return http_service_retained(n);}
 static net_json_t json;

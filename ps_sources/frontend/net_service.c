@@ -196,7 +196,7 @@ static uint16_t read_source(uint8_t selector,uint16_t offset,uint16_t max,uint8_
                 }
                 /* Body reads drain the ring after receipt finishes. Do not
                  * use the occupancy cached when ACTIVE first became DONE. */
-                http_service_status(&net.status);
+                if(http_service_getowner()==HTTP_OWNER_NET)http_service_status(&net.status);
                 if(state!=NET_LOST&&net.state==NET_DONE&&offset+length==net.stream_offset&&!net.status.buffered)
                     state=NET_END;
                 /* Stream pointers above already refer to the requested offset. */

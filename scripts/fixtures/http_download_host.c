@@ -94,12 +94,14 @@ const uint8_t *http_service_retained(size_t *length){*length=0;return ring;}
 const uint8_t *http_service_retained_owned(uint8_t who,size_t *length)
 {*length=0;return owner==who?ring:NULL;}
 void http_service_status(http_status_t *out){*out=backend;out->buffered=(uint32_t)ring_length;out->body_bytes=received;}
-int http_service_handoff_download(void)
+int http_service_handoff_download_owned(uint8_t who)
 {
-    if(!occupied||owner!=HTTP_OWNER_NET||consumed||backend.retained||!backend.headers_ready||
+    if(!occupied||owner!=who||consumed||backend.retained||!backend.headers_ready||
        backend.status<200||backend.status>=300||backend.state==HTTP_S_FAILED)return HTTP_E_ARGUMENT;
-    owner=HTTP_OWNER_DOWNLOAD;++handoffs;return 0;
+    if(who==HTTP_OWNER_NET)owner=HTTP_OWNER_DOWNLOAD;
+    ++handoffs;return 0;
 }
+int http_service_handoff_download(void){return http_service_handoff_download_owned(HTTP_OWNER_NET);}
 static uint8_t packet[1012],reply[512],list[9]={3};
 static unsigned descriptor(void)
 {assert(net_service_status(0x82,list,reply,sizeof(reply))==64);return reply[48];}
@@ -144,6 +146,82 @@ static void reset(void)
 static void failure(int error)
 {net_service_poll();assert(descriptor()==HTTP_DL_FAILED);assert((int16_t)(reply[50]|((unsigned)reply[51]<<8))==error);
  assert(reply[8]==NET_FAILED&&!handles&&(owner==HTTP_OWNER_NONE||(!handoffs&&owner==HTTP_OWNER_NET)));assert(!renames);++tests;}
+
+static void cogs_response(void)
+{
+    const http_request_t request = {"https://disks.a2cogs.com/source.2mg", "GET", NULL, NULL, 0, 0};
+    assert(!http_service_start_owned(&request, HTTP_OWNER_COGS));
+    backend.state = HTTP_S_READ;
+    backend.status = 200;
+    backend.headers_ready = 1;
+}
+
+static void cogs_download_cases(void)
+{
+    http_download_status_t status;
+    reset();
+    cogs_response();
+    assert(!http_download_begin_cogs(&backend, "../../source.2mg", 4));
+    assert(find("0:/_software") >= 0 && find("0:/_software/CoGS") >= 0);
+    assert(find("0:/_software/CoGS/source.2mg.part") >= 0);
+    make("0:/_software/CoGS/source.2mg", 0); /* A new file appears before commit. */
+    assert(descriptor() == HTTP_DL_NONE && !*http_download_path());
+    assert(net_service_control(packet, request(NET_FLAG_FORCE_DOWNLOAD, NULL)) == 0x2F);
+    memset(packet, 0, 12); packet[0] = 1; packet[1] = NET_CANCEL;
+    assert(!net_service_control(packet, 12));
+    net_service_poll();
+    net_service_reset();
+    net_service_poll();
+    assert(owner == HTTP_OWNER_COGS && handles == 1 && !cancels);
+    feed((const uint8_t *)"disk", 4);
+    backend.state = HTTP_S_DONE;
+    http_download_cogs_poll();
+    http_download_cogs_poll();
+    http_download_cogs_status(&status);
+    assert(status.state == HTTP_DL_DONE && status.total_known && status.written == 4);
+    assert(!strcmp(http_download_cogs_path(), "0:/_software/CoGS/source-1.2mg"));
+    int slot = find(http_download_cogs_path());
+    assert(slot >= 0 && fs[slot].length == 4 && !memcmp(fs[slot].data, "disk", 4));
+    assert(!http_download_active() && !handles && owner == HTTP_OWNER_NONE);
+    assert(descriptor() == HTTP_DL_NONE && !*http_download_path());
+    ++tests;
+
+    reset();
+    cogs_response();
+    backend.content_length_known = 1;
+    backend.content_length = 3;
+    assert(http_download_begin_cogs(&backend, "source.2mg", 4) == HTTP_DL_E_LENGTH);
+    assert(!creates && !http_download_cogs_active() && !*http_download_cogs_path());
+    assert(owner == HTTP_OWNER_COGS && !http_service_cancel_owned(HTTP_OWNER_COGS));
+    ++tests;
+
+    for (size_t length = 3; length <= 5; length += 2) {
+        reset();
+        cogs_response();
+        assert(!http_download_begin_cogs(&backend, "source.2mg", 4));
+        feed((const uint8_t *)"disks", length);
+        backend.state = HTTP_S_DONE;
+        http_download_cogs_poll();
+        http_download_cogs_status(&status);
+        assert(status.state == HTTP_DL_FAILED && status.result == HTTP_DL_E_LENGTH);
+        assert(!handles && !renames && unlinks == 1 && !http_download_cogs_active());
+        ++tests;
+    }
+
+    reset();
+    cogs_response();
+    assert(!http_download_begin_cogs(&backend, "source.2mg", 4));
+    close_fail = 1;
+    assert(http_download_quiesce() == HTTP_DL_E_CLEANUP);
+    assert(owner == HTTP_OWNER_NONE && handles == 1 && http_download_cogs_active());
+    net_service_reset();
+    assert(handles == 1);
+    close_fail = 0;
+    http_download_cogs_poll();
+    assert(!http_download_active() && !handles && unlinks == 1 && !renames);
+    ++tests;
+}
+
 int main(void)
 {
     reset();begin(NET_FLAG_AUTO_DOWNLOAD,NULL,1,1,200003);assert(descriptor()==HTTP_DL_WRITING);
@@ -217,5 +295,6 @@ int main(void)
     length=request(NET_FLAG_FORCE_DOWNLOAD,NULL);memcpy(packet+12,"PUT",3);assert(net_service_control(packet,length)==0x21);
     length=request(NET_FLAG_AUTO_DOWNLOAD,NULL);memcpy(packet+12,"PUT",3);assert(net_service_control(packet,length)==0x21);
     length=request(NET_FLAG_FORCE_DOWNLOAD,"BAD");packet[length-1]=0;assert(net_service_control(packet,length)==0x21);++tests;
-    reset();printf("PASS %u download lifecycle groups: same-response200003B, ownership, no MIME auto, redirects, safe names, races, file faults, cancel/reset, ABI validation\n",tests);return 0;
+    cogs_download_cases();
+    reset();printf("PASS %u download lifecycle groups: same-response200003B, ownership, no MIME auto, redirects, safe names, races, file faults, cancel/reset, ABI validation, CoGS length and staging isolation\n",tests);return 0;
 }

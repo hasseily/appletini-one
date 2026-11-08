@@ -546,7 +546,11 @@ void config_menu_draw_ethernet(uint16_t *fb,
                                int y,
                                int w)
 {
+#ifdef APPLETINI_HTTP_SERVICE
+    const int row_h = CMUI_ROW_H + CMUI_ROW_GAP - 1;
+#else
     const int row_h = CMUI_ROW_H + CMUI_ROW_GAP;
+#endif
     char mac[18];
     char ip[16];
     char subnet[16];
@@ -654,6 +658,11 @@ void config_menu_draw_ethernet(uint16_t *fb,
                       "SD Card FTP Sharing [ACTIVE]" :
                       "SD Card FTP Sharing",
                   HGR_WHITE);
+#ifdef APPLETINI_HTTP_SERVICE
+    hgr_draw_item(fb, x, y + (13 * row_h), w,
+                  (uint8_t)(menu->item_focus == CONFIG_ETHERNET_ITEM_COGS),
+                  "CoGS games", HGR_WHITE);
+#endif
 }
 
 void config_menu_draw_transwarp(uint16_t *fb,

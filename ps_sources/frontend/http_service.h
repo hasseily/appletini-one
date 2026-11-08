@@ -12,7 +12,7 @@ enum { HTTP_E_BUSY = -100, HTTP_E_ARGUMENT = -101, HTTP_E_IO = -102,
        HTTP_E_DNS = -106, HTTP_E_TIMEOUT = -107, HTTP_E_CANCELLED = -108,
        HTTP_E_REDIRECT = -109, HTTP_E_STORAGE_BUSY = -110,
        HTTP_E_NETWORK_NOT_READY = -111 };
-enum { HTTP_OWNER_NONE, HTTP_OWNER_NET, HTTP_OWNER_DOWNLOAD, HTTP_OWNER_UPDATE };
+enum { HTTP_OWNER_NONE, HTTP_OWNER_NET, HTTP_OWNER_DOWNLOAD, HTTP_OWNER_UPDATE, HTTP_OWNER_COGS };
 #define HTTP_DEFAULT_STREAM_BYTES 4096U
 #define HTTP_UPDATE_STREAM_BYTES  (128U * 1024U)
 #define HTTP_DEFAULT_IO_BYTES     512U
@@ -58,6 +58,8 @@ uint32_t http_service_filter_slot_mask(uint32_t desired);
 /* Atomically take an unread final 2xx NET stream, including buffered bytes.
  * No HTTP request is restarted. DOWNLOAD has a 30s idle / 24h total limit. */
 int http_service_handoff_download(void);
+/* CoGS retains its private owner after claiming an unread HTTPS stream. */
+int http_service_handoff_download_owned(uint8_t owner);
 void http_service_poll(void);
 /* Extra safe-menu pump: UPDATE owner only, clamps its slice to max_us.
  * Zero does no work. One hardware/crypto operation can finish after the cap. */

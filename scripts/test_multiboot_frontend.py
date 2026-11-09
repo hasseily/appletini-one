@@ -22,14 +22,16 @@ def main():
     tabs = (FRONT / "config_menu_main_tabs.c").read_text()
     amp = (ROOT / "ps_sources/lib/amp.c").read_text()
     smartport = (FRONT / "smartport_service.c").read_text()
-    assert "CONFIG_MENU_BOOT_STARTUP_FIRMWARE_ITEM 3U" in header
-    assert "CONFIG_MENU_BOOT_SWITCH_FIRMWARE_ITEM 4U" in header
-    assert "CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM 5U" in header
+    assert "CONFIG_MENU_BOOT_GOLDEN_UPDATER_ITEM 3U" in header
+    assert "CONFIG_MENU_BOOT_STARTUP_FIRMWARE_ITEM 4U" in header
+    assert "CONFIG_MENU_BOOT_SWITCH_FIRMWARE_ITEM 5U" in header
+    assert "CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM 6U" in header
     activate = function(menu, "config_menu_activate_item")
     assert "CONFIG_MENU_BOOT_STARTUP_FIRMWARE_ITEM" in activate
     assert "CONFIG_MENU_BOOT_SWITCH_FIRMWARE_ITEM" in activate
     assert "config_menu_cycle_startup_firmware(menu);" in activate
     assert "config_menu_switch_firmware(menu);" in activate
+    assert "config_menu_reboot_golden_updater(menu);" in activate
     assert "config_menu_cycle_startup_firmware(menu);" in function(menu, "config_menu_adjust_focused_value")
     assert "startup_firmware" not in function(menu, "config_menu_save_settings_to_path")
     boot_draw = function(tabs, "config_menu_draw_boot_settings")
@@ -56,6 +58,7 @@ def main():
 #define COUNTS_PER_SECOND 100000000U / 2U
 enum { MB_OK=0, MB_PRODUCT_NONE=0, MB_PRODUCT_APPLETINI=0x100,
        MB_PRODUCT_MULTITINI=0x200, MB_GOLDEN_OFFSET=0 };
+#define CONFIG_MENU_FIRMWARE_TARGET_GOLDEN_UPDATER UINT32_MAX
 typedef uint64_t XTime;
 typedef struct { uint8_t golden_available, appletini_present, multitini_present;
                  uint32_t default_product, request_product; uint8_t legacy_present; } mb_platform_status_t;
@@ -77,10 +80,11 @@ typedef struct {
 #define UART0_BASE 0U
 static mb_platform_status_t live_status, g_multiboot_status;
 static uint8_t g_multiboot_status_valid, g_firmware_switch_active, g_firmware_switch_fault;
+static uint8_t g_golden_boot_update_request;
 static uint32_t g_firmware_switch_request, g_card_slot_enable_mask;
 static unsigned status_rc, golden_rc, request_rc, default_rc, menu_request_rc;
 static unsigned clear_rc, multiboot_fail, multiboot_restore_fail, multiboot_writes, hw_multiboot;
-static unsigned screenshot_busy, printer_busy, printer_queued, usb_remote, ftp_remote;
+static unsigned screenshot_busy, printer_busy, printer_queued, usb_remote, ftp_remote, download_busy;
 static unsigned isolated, host_allowed, hold_timeout, pause_ok;
 static unsigned disk_rc, settings_ok, sync_error, pending_count;
 static unsigned default_calls, menu_request_calls, requests, clears, resets, holds;
@@ -94,7 +98,8 @@ static unsigned dma_busy,dma_claims,dma_releases,dma_granted;
 static unsigned reset_cleanups,late_pending;
 static unsigned cpu1_hold_error, restart_calls;
 static unsigned online_busy, update_allowed, online_failures, last_request_product;
-static unsigned restart_ready;
+static unsigned online_prepare_calls;
+static int online_prepare_result;
 static XTime time_now;
 static char events[256]; static unsigned event_count;
 static void event(char value) { assert(event_count < sizeof(events)-1); events[event_count++]=value; events[event_count]=0; }
@@ -114,10 +119,13 @@ static uint8_t config_menu_save_settings_to_path(config_menu_t *menu, const char
     (void)menu; (void)message; assert(strcmp(path,APPLETINI_CFG_PATH)==0); ++settings_calls; event('C'); return (uint8_t)settings_ok;
 }
 static uint8_t screenshot_service_busy(void) { return (uint8_t)screenshot_busy; }
-static uint8_t http_download_active(void) { return 0U; }
-static uint8_t online_update_active(void) { return (uint8_t)online_busy; }
+static uint8_t http_download_active(void) { return (uint8_t)download_busy; }
 static int cogs_service_active(void) { return 0; }
-static int online_update_prepare_restart(void) { return online_busy && !restart_ready; }
+static uint8_t online_update_active(void) { return (uint8_t)online_busy; }
+static int online_update_prepare_restart(void) {
+    ++online_prepare_calls;
+    return online_prepare_result;
+}
 static uint8_t control_golden_boot_update_allowed(void) { return (uint8_t)update_allowed; }
 static void config_menu_online_update_finished(config_menu_t *menu,const char *error) {
     assert(error && error[0]); ++online_failures; menu->online_update_install_pending=0;
@@ -223,7 +231,7 @@ static void compositor_request_full_refresh(void) {}
 static void Xil_DCacheFlush(void) {}
 static void uart_puts(uint32_t uart, const char *text) { (void)uart; (void)text; }
 static void control_reboot_preselected_golden(void) {
-    assert(hw_multiboot==32);
+    assert(hw_multiboot==(requests ? 32U : MB_GOLDEN_OFFSET));
     if(!isolated && host_allowed) {
         assert(hw_vtw&CARD_CTRL_VTW_CTRL_APPLE_RES_BIT);
         assert(!(reg_read(CARD_CTRL_APPLE_RESET_STATUS_REG)&CARD_CTRL_APPLE_RESET_RES_BIT));
@@ -238,7 +246,8 @@ static void control_reboot_preselected_golden(void) {
         body = re.sub(r'__asm__ volatile \(.*?\);', '(void)0;', function(runtime, name), flags=re.S)
         code += body + "\n"
     for name in ("config_menu_flush_settings", "config_menu_refresh_multiboot",
-                 "config_menu_cycle_startup_firmware", "config_menu_switch_firmware"):
+                 "config_menu_cycle_startup_firmware", "config_menu_switch_firmware",
+                 "config_menu_reboot_golden_updater"):
         code += function(menu, name) + "\n"
     code += function(smartport, "smartport_service_sync_sd") + "\n"
     code += function(runtime, "control_hold_quiet_connector") + "\n"
@@ -253,11 +262,12 @@ static config_menu_t prepare(void) {
     live_status.default_product=MB_PRODUCT_APPLETINI;
     status_rc=golden_rc=request_rc=default_rc=menu_request_rc=0;
     clear_rc=multiboot_fail=multiboot_restore_fail=multiboot_writes=0; hw_multiboot=64;
-    screenshot_busy=printer_busy=printer_queued=usb_remote=ftp_remote=hold_timeout=0;
+    screenshot_busy=printer_busy=printer_queued=usb_remote=ftp_remote=download_busy=hold_timeout=0;
     isolated=host_allowed=pause_ok=settings_ok=1;
     disk_rc=sync_error=pending_count=0;
     default_calls=menu_request_calls=requests=clears=resets=holds=disk_calls=sync_calls=settings_calls=golden_checks=stop_calls=worker_calls=0;
     g_firmware_switch_fault=g_firmware_switch_active=0; g_firmware_switch_request=MB_PRODUCT_MULTITINI;
+    g_golden_boot_update_request=0;
     g_card_slot_enable_mask=0xB0; hw_features=7; hw_dma=0; time_now=0;
     hw_onee=hw_vtw=isolation_fail=isolation_hazard=0;
     reset_ctrl_fail=reset_reads=reset_syncs=legacy_reads=legacy_writes=0;
@@ -265,7 +275,8 @@ static config_menu_t prepare(void) {
     dma_owner=PSDMA_OWNER_NONE; dma_busy=dma_claims=dma_releases=dma_granted=0;
     reset_cleanups=late_pending=0;
     cpu1_hold_error=restart_calls=0;
-    online_busy=online_failures=last_request_product=restart_ready=0; update_allowed=1;
+    online_busy=online_failures=last_request_product=0; update_allowed=1;
+    online_prepare_calls=0; online_prepare_result=0;
     event_count=0; events[0]=0;
     memset(g_devices,0,sizeof(g_devices));
     g_devices[0].image_open=1; g_devices[0].image_file=7;
@@ -292,13 +303,6 @@ static void cancelled(const config_menu_t *menu) {
 }
 int main(void) {
     config_menu_t menu=prepare();
-    online_busy=1; restart_ready=1;
-    control_service_firmware_switch(&menu);
-    assert(requests==1 && last_request_product==MB_PRODUCT_MULTITINI && resets==1);
-    menu=prepare(); online_busy=1;
-    control_service_firmware_switch(&menu);
-    assert(!requests && !resets && menu.status_warning);
-    menu=prepare();
     config_menu_cycle_startup_firmware(&menu);
     assert(default_calls==1 && menu.startup_firmware==MB_PRODUCT_MULTITINI && !menu.status_warning);
     assert(live_status.default_product==MB_PRODUCT_MULTITINI);
@@ -320,6 +324,47 @@ int main(void) {
     assert(menu_platform_request_firmware_switch(NULL,MB_PRODUCT_MULTITINI)!=0);
     assert(menu_platform_request_firmware_switch(NULL,MB_PRODUCT_APPLETINI)!=0);
 
+    /* The updater uses the same quiesce path without a one-shot product request. */
+    menu=prepare(); g_firmware_switch_request=MB_PRODUCT_NONE;
+    menu.platform.request_firmware_switch=menu_platform_request_firmware_switch;
+    live_status.golden_available=live_status.multitini_present=0;
+    config_menu_reboot_golden_updater(&menu);
+    assert(g_firmware_switch_request==CONFIG_MENU_FIRMWARE_TARGET_GOLDEN_UPDATER && !menu.status_warning);
+    control_service_firmware_switch(&menu);
+    assert(resets==1 && hw_multiboot==MB_GOLDEN_OFFSET);
+    assert(disk_calls==1 && settings_calls==1 && sync_calls==1);
+    assert(!requests && !clears && !default_calls && live_status.default_product==MB_PRODUCT_APPLETINI);
+    menu=prepare(); g_firmware_switch_request=CONFIG_MENU_FIRMWARE_TARGET_GOLDEN_UPDATER;
+    sync_error=1; control_service_firmware_switch(&menu); cancelled(&menu);
+    assert(!requests && !clears && !multiboot_writes);
+
+    /* A terminal GitHub response can leave only Ethernet restore pending.
+     * Direct menu reboots depend on storage readiness, including in that case. */
+    enum { UPDATE_504_CLEAN, UPDATE_504_RESTORE, UPDATE_DOWNLOAD, UPDATE_SD_CLEANUP, UPDATE_CASES };
+    for(unsigned golden=0;golden<2;++golden) {
+        for(unsigned update=0;update<UPDATE_CASES;++update) {
+            const int storage_busy = update==UPDATE_DOWNLOAD || update==UPDATE_SD_CLEANUP;
+            menu=prepare(); g_firmware_switch_request=MB_PRODUCT_NONE;
+            menu.platform.request_firmware_switch=menu_platform_request_firmware_switch;
+            online_busy=update!=UPDATE_504_CLEAN;
+            online_prepare_result=storage_busy ? -1 : 0;
+            if(golden) config_menu_reboot_golden_updater(&menu);
+            else config_menu_switch_firmware(&menu);
+            assert(g_firmware_switch_request==(golden ? CONFIG_MENU_FIRMWARE_TARGET_GOLDEN_UPDATER : MB_PRODUCT_MULTITINI));
+            control_service_firmware_switch(&menu);
+            assert(online_prepare_calls==1);
+            if(storage_busy) {
+                cancelled(&menu);
+                assert(!disk_calls && !requests);
+                assert(!strcmp(menu.status,"FINISH THE ONLINE UPDATE OR ITS CLEANUP FIRST"));
+            } else {
+                assert(resets==1 && disk_calls==1 && settings_calls==1 && sync_calls==1);
+                assert(requests==!golden && hw_multiboot==(golden ? MB_GOLDEN_OFFSET : 32U));
+            }
+        }
+    }
+    puts("PASS: direct menu reboots permit terminal HTTP cleanup and reject update storage ownership");
+
     /* UI presence goes stale: the live target and golden decide every switch. */
     menu=prepare(); live_status.multitini_present=0;
     control_service_firmware_switch(&menu); cancelled(&menu); assert(!disk_calls && !requests);
@@ -327,12 +372,15 @@ int main(void) {
     control_service_firmware_switch(&menu); cancelled(&menu); assert(!requests);
     menu=prepare(); golden_rc=1;
     control_service_firmware_switch(&menu); cancelled(&menu); assert(requests==1 && disk_calls==1 && clears==1);
-    for(unsigned mode=0;mode<5;++mode) {
+    for(unsigned mode=0;mode<6;++mode) {
         menu=prepare();
         if(mode==0) screenshot_busy=1; if(mode==1) printer_busy=1;
         if(mode==2) usb_remote=1; if(mode==3) ftp_remote=1;
         if(mode==4) printer_queued=1;
-        control_service_firmware_switch(&menu); cancelled(&menu); assert(!requests && !disk_calls);
+        if(mode==5) download_busy=1;
+        control_service_firmware_switch(&menu); cancelled(&menu);
+        assert(!requests && !disk_calls && !online_prepare_calls);
+        assert(!strcmp(menu.status,"FINISH DOWNLOADS, SD SHARING, SCREENSHOTS AND PRINTING FIRST"));
     }
     menu=prepare(); isolated=host_allowed=0;
     control_service_firmware_switch(&menu); cancelled(&menu); assert(!holds && !disk_calls);
@@ -442,6 +490,7 @@ int main(void) {
         if(fault==9) cpu1_hold_error=1;
         if(fault==10) live_status.appletini_present=0;
         control_service_firmware_switch(&menu);
+        assert(!online_prepare_calls);
         if(fault==0) {
             assert(resets==1 && worker_calls==1 && requests==1 && last_request_product==MB_PRODUCT_APPLETINI);
             assert(settings_calls==1 && sync_calls==1 && disk_calls==1 && !online_failures);
@@ -507,6 +556,7 @@ typedef struct {
     uint8_t usb_menu_bindings[14];
 } config_menu_t;
 static unsigned screen_w, help_y, focus_count, saw_startup, saw_switch, switch_dim;
+static int golden_y, startup_y;
 static uint8_t config_menu_onee_fixed_bindings_active(const config_menu_t *menu) { return menu->fixed; }
 static const char *config_menu_boot_timeout_text(unsigned value) { (void)value; return "3 seconds"; }
 static const char *config_menu_boot_device_text(unsigned value) { (void)value; return "SmartPort"; }
@@ -520,8 +570,12 @@ static void record_item(int x, int y, int w, uint8_t focus, uint8_t dimmed, cons
     assert(y>=154 && y+CMUI_ROW_H <= (int)help_y-4);
     assert((int)strlen(text)*14+48<=w);
     focus_count+=focus!=0;
-    if(strstr(text,"Startup firmware")) ++saw_startup;
-    if(strstr(text,"Switch to Multitini")) { ++saw_switch; switch_dim=dimmed; }
+    if(!strcmp(text,"Golden updater: Reboot card")) { assert(!dimmed); golden_y=y; }
+    if(strstr(text,"Startup firmware")) { ++saw_startup; startup_y=y; }
+    if(strstr(text,"Switch to Multitini")) {
+        ++saw_switch; switch_dim=dimmed;
+        if(!dimmed) assert(!strcmp(text,"Switch to Multitini: Restart into Multitini"));
+    }
 }
 static void hgr_draw_item(uint16_t *fb,int x,int y,int w,uint8_t focus,const char *text,uint32_t color) {
     (void)fb; (void)color; record_item(x,y,w,focus,0,text);
@@ -559,14 +613,16 @@ int main(void) {
         unsigned height=mode?1080:1050;
         help_y=height-38-58-18-210;
         for(unsigned fixed=0;fixed<2;++fixed) for(unsigned ready=0;ready<2;++ready)
-        for(unsigned present=0;present<4;++present) for(unsigned focus=0;focus<20;++focus) {
+        for(unsigned present=0;present<4;++present) for(unsigned focus=0;focus<CONFIG_MENU_BOOT_ITEM_COUNT;++focus) {
             config_menu_t menu={0}; menu.fixed=(uint8_t)fixed;
             menu.usb_bindings_editable=1; menu.usb_binding_capture=0xff;
             menu.multiboot_ready=(uint8_t)ready; menu.multiboot_present_mask=(uint8_t)present;
             menu.startup_firmware=0x100; menu.item_focus=focus;
             focus_count=saw_startup=saw_switch=0;
+            golden_y=startup_y=0;
             config_menu_draw_boot_settings(NULL,&menu,380,154,(int)screen_w-428);
             assert(focus_count==1 && saw_startup==1 && saw_switch==1);
+            assert(golden_y!=0 && startup_y-golden_y==CMUI_ROW_H+1);
             assert(switch_dim==(!ready || !(present&2)));
             ++checks;
         }

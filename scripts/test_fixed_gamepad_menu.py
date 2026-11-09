@@ -35,11 +35,13 @@ def main() -> int:
     hid = (FRONT / "usb_hid_service.c").read_text()
     code = r'''
 #include <assert.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include "usb_hid_service.h"
 #include "online_update_core.h"
+#define APPLETINI_HTTP_SERVICE 1
 #define HID_KBD_USAGE_ERRUNDEF 3U
 #define HID_KBD_USAGE_MAX 0xE7U
 '''
@@ -56,7 +58,8 @@ typedef struct {
     uint8_t golden_boot_update_confirm, golden_boot_confirm_update;
     uint8_t online_update_confirm, online_update_confirm_update;
     uint8_t online_update_download_pending, online_update_install_pending;
-    uint8_t about_credits_active;
+    uint8_t about_credits_active, cogs_active, status_warning;
+    char status[CONFIG_MENU_STATUS_LEN];
     online_update_snapshot_t online_update;
     uint8_t usb_owned, onee_persist_retry_polls;
     unsigned tab, item_focus;
@@ -65,9 +68,12 @@ typedef struct { uint32_t input_seq, key_count; ui_key_t last_key; } ui_state_t;
 enum { SCREENSHOT_SERVICE_KIND_A2, SCREENSHOT_SERVICE_KIND_1080P };
 static uint8_t g_usb_menu_owned;
 static uint8_t g_onee_standby_available;
+/* MENU_CLOSE_STATE */
 static ui_key_t keys[16];
 static unsigned key_count, captures, screenshots, speed_actions, notices;
 static unsigned opens, closes, rom_closes;
+static unsigned update_cancels, capture_syncs;
+static uint8_t update_active;
 static unsigned reader_closes, preview_clears, clamp_calls, clock_refreshes, golden_refreshes;
 static uint32_t g_about_credits_top,g_about_credits_rows,g_about_credits_visible;
 static unsigned compact_scroll_resets;
@@ -79,6 +85,8 @@ static uint8_t config_menu_is_active(const config_menu_t *menu) { return menu->a
 static int http_download_active(void) { return 0; }
 static uint8_t config_menu_usb0_sd_remote_active(const config_menu_t *menu) { return menu->usb0_sd_remote_active; }
 static uint8_t config_menu_ethernet_ftp_sd_remote_active(const config_menu_t *menu) { return menu->ethernet_ftp_sd_remote_active; }
+static uint8_t config_menu_cogs_active(const config_menu_t *menu) { return menu->cogs_active; }
+static void config_menu_close_cogs(config_menu_t *menu) { menu->cogs_active = 0U; }
 static uint8_t config_menu_usb_binding_capture_action(const config_menu_t *menu) { return menu->usb_binding_capture; }
 static uint8_t config_menu_capture_usb_binding(config_menu_t *menu, usb_hid_menu_source_t source)
 {
@@ -101,15 +109,24 @@ static void ui_handle_input_with_config(ui_state_t *state, config_menu_t *menu, 
 static void ui_close_config_menu_child(ui_state_t *state, config_menu_t *menu)
 { ui_handle_input_with_config(state,menu,ui_make_input(UI_KEY_ESC)); }
 /* CLOSE_CONSUMER */
-static void ui_set_boot_menu_visible(ui_state_t *state, config_menu_t *menu, uint8_t active)
+static int online_update_active(void) { return update_active; }
+static void menu_platform_cancel_online_update(void *ctx) { (void)ctx; ++update_cancels; }
+static void config_menu_apply_boot_runtime(config_menu_t *menu) { (void)menu; }
+static void boot_menu_service_request_rom_close(void) { ++rom_closes; }
+static void config_menu_set_usb_owned(config_menu_t *menu, uint8_t owned) { menu->usb_owned = owned; }
+static void config_menu_set_usb_bindings_editable(config_menu_t *menu, uint8_t editable)
+{ (void)menu; (void)editable; }
+static uint8_t ui_onee_selected(void) { return 0U; }
+static void menu_chime_play(void) { }
+static void ui_sync_onee_menu_pause(config_menu_t *menu)
 {
-    (void)state; config_menu_set_active(menu,active);
-    if (active) ++opens;
+    if (menu->active) ++opens;
     else ++closes;
 }
-static void ui_request_boot_menu_close(config_menu_t *menu) { (void)menu; ++rom_closes; }
-static void ui_save_screenshot(unsigned kind) { (void)kind; ++screenshots; }
+static void ui_sync_usb_menu_capture(config_menu_t *menu) { (void)menu; ++capture_syncs; }
 static void screenshot_service_show_notice(const char *notice) { (void)notice; ++notices; }
+/* MENU_CLOSE */
+static void ui_save_screenshot(unsigned kind) { (void)kind; ++screenshots; }
 static void vtw_service_speed_toggle(void) { ++speed_actions; }
 static void vtw_service_speed_step(int delta) { (void)delta; ++speed_actions; }
 static void vtw_service_slug_toggle(void) { ++speed_actions; }
@@ -124,7 +141,16 @@ static void config_menu_retry_settings_if_needed(config_menu_t *menu) { (void)me
 static void config_menu_refresh_smartport_media_after_menu_sd(config_menu_t *menu) { (void)menu; }
 static void config_menu_stop_usb0_sd_remote(config_menu_t *menu) { menu->usb0_sd_remote_active=0U; }
 '''
+    close_state = re.search(r"typedef enum \{[^{}]*\} ui_menu_close_t;", frontend)
+    if not close_state:
+        raise AssertionError("missing deferred menu close state")
+    code = code.replace("/* MENU_CLOSE_STATE */",
+                        close_state.group(0) + "\nstatic ui_menu_close_t g_deferred_menu_close;")
     code = code.replace("/* CLOSE_CONSUMER */", function(frontend, "ui_config_menu_has_close_consumer"))
+    code = code.replace("/* MENU_CLOSE */", "\n".join(function(frontend, name) for name in (
+        "ui_defer_menu_close_for_update", "ui_request_boot_menu_close",
+        "ui_set_boot_menu_visible", "ui_poll_deferred_menu_close",
+    )))
     for name in ("k_usb_binding_keys", "k_usb_binding_source_order", "k_usb_binding_button_source_order"):
         code += array(menu, name)
     for name in ("usb_hid_menu_source_from_keyboard_usage", "usb_hid_menu_source_is_keyboard",
@@ -143,11 +169,13 @@ static void config_menu_stop_usb0_sd_remote(config_menu_t *menu) { menu->usb0_sd
 static void reset(config_menu_t *menu, ui_state_t *state)
 {
     memset(menu,0,sizeof(*menu)); memset(state,0,sizeof(*state)); memset(keys,0,sizeof(keys));
-    menu->active=1U; menu->usb_binding_capture=CONFIG_MENU_USB_BIND_CAPTURE_NONE; g_usb_menu_owned=1U;
+    menu->active=1U; menu->usb_binding_capture=CONFIG_MENU_USB_BIND_CAPTURE_NONE;
+    menu->usb_owned=g_usb_menu_owned=1U;
     key_count=captures=screenshots=speed_actions=notices=opens=closes=rom_closes=0U;
     reader_closes=preview_clears=clamp_calls=clock_refreshes=golden_refreshes=0U;
     capture_on_enter=share_stop_pending=0U; captured_source=USB_HID_MENU_SOURCE_NONE;
     g_onee_standby_available=0U;
+    update_active=0U; update_cancels=capture_syncs=0U; g_deferred_menu_close=UI_MENU_CLOSE_NONE;
     g_about_credits_top=g_about_credits_rows=g_about_credits_visible=compact_scroll_resets=0;
 }
 static void fixed(config_menu_t *menu, ui_state_t *state,
@@ -259,6 +287,46 @@ static void test_toggle_children_and_safety(void)
         assert(menu.active && !closes && !rom_closes && key_count==1);
     }
     puts("PASS current-state Home toggles whole menus, B backs children, ROM/SD/update close safeguards stay intact");
+}
+static void test_deferred_update_close_preserves_owner(void)
+{
+    config_menu_t menu;
+    ui_state_t state;
+    for (unsigned toggle = 0U; toggle < 2U; ++toggle) {
+        reset(&menu, &state);
+        update_active = 1U;
+        if (toggle) {
+            fixed(&menu, &state, USB_HID_MENU_ACTION_TOGGLE, 10U, USB_HID_MENU_ACTION_NONE);
+        } else {
+            fixed(&menu, &state, USB_HID_MENU_ACTION_NONE, 10U, USB_HID_MENU_ACTION_CLOSE);
+        }
+        assert(update_cancels == 1U && g_deferred_menu_close == UI_MENU_CLOSE_OVERLAY);
+        assert(menu.active && menu.usb_owned && g_usb_menu_owned && !closes && !rom_closes);
+        assert(menu.status_warning && strcmp(menu.status, "WAIT FOR UPDATE FILE CLEANUP") == 0);
+        ui_poll_deferred_menu_close(&state, &menu);
+        assert(menu.active && g_usb_menu_owned && !closes && !rom_closes && !capture_syncs);
+        assert(update_cancels == 1U);
+
+        update_active = 0U;
+        ui_poll_deferred_menu_close(&state, &menu);
+        assert(!menu.active && !menu.usb_owned && !g_usb_menu_owned && closes == 1U && !rom_closes);
+        assert(g_deferred_menu_close == UI_MENU_CLOSE_NONE && capture_syncs == 1U);
+        ui_poll_deferred_menu_close(&state, &menu);
+        assert(closes == 1U && !rom_closes && capture_syncs == 1U);
+    }
+
+    reset(&menu, &state);
+    menu.usb_owned = g_usb_menu_owned = 0U;
+    update_active = 1U;
+    fixed(&menu, &state, USB_HID_MENU_ACTION_NONE, 10U, USB_HID_MENU_ACTION_CLOSE);
+    assert(update_cancels == 1U && g_deferred_menu_close == UI_MENU_CLOSE_ROM);
+    assert(menu.active && !closes && !rom_closes);
+    update_active = 0U;
+    ui_poll_deferred_menu_close(&state, &menu);
+    assert(menu.active && !closes && rom_closes == 1U && !capture_syncs);
+    ui_poll_deferred_menu_close(&state, &menu);
+    assert(rom_closes == 1U);
+    puts("PASS deferred USB and ROM menu closes preserve ownership through update cleanup");
 }
 static void test_fixed_tabs_leave_real_child_state(void)
 {
@@ -395,6 +463,7 @@ int main(void)
     _Static_assert(USB_HID_MENU_ACTION_TOGGLE==17,"Toggle must append to old actions");
     test_fixed_navigation_and_explicit_bindings(); test_learning_and_opening_capture();
     test_toggle_children_and_safety(); test_fixed_tabs_leave_real_child_state();
+    test_deferred_update_close_preserves_owner();
     test_fixed_keyboard_navigation(); test_standby_menu_entry(); test_legacy_sources();
     return 0;
 }
@@ -413,8 +482,9 @@ int main(void)
     print(result.stdout,end="")
     (OUT/"validation.json").write_text(json.dumps({
         "hardware_test":False,"production_gamepad_dispatcher_and_close_consumer":True,
+        "production_deferred_menu_close":True,
         "ui_event_handler_mocked":True,
-        "coverage":"existing7groups plus actual About tab scroll resets, Back child routing and Home whole-menu close",
+        "coverage":"fixed input, child routing, About scroll resets, and deferred USB menu close after update cleanup",
         "source_sha256":{name:hashlib.sha256((FRONT/name).read_bytes()).hexdigest()
                          for name in ("main.c","config_menu.c","config_menu.h","usb_hid_service.c")},
         "test_script_sha256":hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),

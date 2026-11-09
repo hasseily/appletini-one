@@ -14,7 +14,10 @@ module mockingboard(
     input rstn,
     input logic apple_q3_raw,
     input logic standalone,
+    // The card reads ab_read.data only at data_en. An SSI-263 read drives
+    // D7 only, so D6-D0 come from the live bus byte at serve_en.
     input globals::AppleBus_read ab_read,
+    input logic [7:0] serve_data,
     input globals::SoftSwitchState sss,
     input logic [2:0] slot_assign,
     input logic [47:0] pan,
@@ -189,7 +192,7 @@ logic signed [20:0] tone_warm_shaped_l_q;
 logic signed [20:0] tone_warm_shaped_r_q;
 
 wire ssi_read_drive = ssi_secondary_read || ssi_primary_read;
-wire [7:0] ssi_read_data = {ssi_secondary_read ? ssi0_d7 : ssi1_d7, ab_read.data[6:0]};
+wire [7:0] ssi_read_data = {ssi_secondary_read ? ssi0_d7 : ssi1_d7, serve_data[6:0]};
 
 logic [7:0] psg0_data_out;
 logic [7:0] psg1_data_out;

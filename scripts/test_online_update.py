@@ -106,7 +106,7 @@ def main():
     case('exact-both-size',got[2:]==['1',str(len(fw)),'1',str(len(boot))])
     for key in ('draft','prerelease'):
         doc=copy.deepcopy(base);doc[key]=True;parse_case(key,doc,-202)
-    for tag in ('F1.3.5b1','F1.3.5-rc1','F01.3.5','vF1.3.5','B2.0.7','F1.3','F1.3.5+build'):
+    for tag in ('F1.3.5b1','F1.3.5-rc1','F1.3.7dev1','F01.3.5','vF1.3.5','B2.0.7','F1.3','F1.3.5+build'):
         doc=copy.deepcopy(base);doc['tag_name']=tag;parse_case('reject-tag-'+tag.replace('+','_'),doc,-202)
     for key in ('tag_name','draft','prerelease','published_at','assets'):
         doc=copy.deepcopy(base);del doc[key];parse_case('missing-'+key,doc,-202)
@@ -145,6 +145,15 @@ def main():
                                    ('F1.3.4b1','F1.3.5','F'),('F1.3.4','F1.3.5-rc1','F'),
                                    ('F1.3.4','F4294967296.0.0','F')]:
         case('semver-reject-'+installed+'-'+offered,run('compare',installed,offered,prefix)[0]=='-207')
+    for offered,want in [('F1.3.6',-1),('F1.3.7',1),('F1.3.8',1)]:
+        case('dev-installed-stable-offer-'+offered,run('firmware-offer','F1.3.7dev1',offered)==['0',str(want)])
+    case('stable-installed-same-version',run('firmware-offer','F1.3.7','F1.3.7')==['0','0'])
+    for installed in ('F1.3.7dev','F1.3.7dev0','F1.3.7dev01','F1.3.7dev1x'):
+        case('invalid-installed-'+installed,run('firmware-offer',installed,'F1.3.8')[0]=='-207')
+    case('reject-dev-offer',run('firmware-offer','F1.3.7','F1.3.8dev1')[0]=='-207')
+    case('reject-dev-version-in-strict-compare',run('compare','F1.3.7dev1','F1.3.7','F')[0]=='-207')
+    dev_image=out/'development-firmware.bin';dev_image.write_bytes(image('F1.3.7dev1'))
+    case('reject-dev-online-image',run('image',dev_image,0)[0]!='0')
     for version,golden in [('F01.3.4',False),('B02.0.6',True)]:
         path=out/('leading-zero-'+version+'.bin');path.write_bytes(image(version,golden=golden))
         case('loaded-version-reject-'+version,run('image',path,int(golden))[0]!='0')

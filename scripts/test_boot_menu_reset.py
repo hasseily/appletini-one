@@ -672,7 +672,6 @@ def test_apple_reset_closes_active_menu() -> None:
             "    }" in source,
             "reset hook must only act on sequence changes")
     require("if (config_menu_is_active(menu)) {\n"
-            "        g_usb_menu_owned = 0U;\n"
             "        ui_set_boot_menu_visible(s, menu, 0U);\n"
             "    }" in source,
             "Apple reset must close every visible menu")

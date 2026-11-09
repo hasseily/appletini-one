@@ -7,18 +7,28 @@
 #include "http_service.h"
 
 #define STANDALONE_URL "https://disks.a2cogs.com/disks/game.po?cache=v.1"
-#define SHARED_URL "https://github.com/a2-4am/4cade/releases/download/v6.1/Total.Replay.hdv"
+#define REPLAY_URL "https://github.com/a2-4am/4cade/releases/download/v6.1/Total.Replay.hdv"
+#define REPLAY_TITLE "Total Replay v6.1"
+#define GENERATED_URL "https://disks.a2cogs.com/disks/game%02u.po"
 #define STANDALONE_BYTES (280U * 512U)
-#define SHARED_BYTES (65535U * 512U)
+#define REPLAY_BYTES 33553920U
 
 static const char mixed_catalog[] =
-    "{\"pages\":2,\"count\":5,\"volumes\":["
+    "{\"pages\":4,\"count\":25,\"volumes\":["
     "{\"name\":\"Standalone Game\",\"url\":\"" STANDALONE_URL "\",\"blocks\":280,\"cat\":\"G\",\"host\":\"any\"},"
-    "{\"name\":\"Shared Game\",\"url\":\"" SHARED_URL "\",\"blocks\":65535,\"cat\":\"G\",\"host\":\"any\","
-      "\"in\":\"Total Replay v6.1\"},"
+    "{\"name\":\"Airheart\",\"url\":\"" REPLAY_URL "\",\"blocks\":65535,\"cat\":\"G\",\"host\":\"any\","
+      "\"in\":\"" REPLAY_TITLE "\"},"
     "{\"name\":\"GS Game\",\"url\":\"https://example.com/gs.po\",\"blocks\":1,\"cat\":\"G\",\"host\":\"gs\"},"
     "{\"name\":\"Utility\",\"url\":\"https://example.com/util.po\",\"blocks\":1,\"cat\":\"S\",\"host\":\"any\"},"
     "{\"name\":\"Unsupported\",\"url\":\"https://example.com/odd.woz\",\"blocks\":1,\"cat\":\"G\",\"host\":\"any\"}]}";
+static const char empty_page[] = "{\"pages\":4,\"count\":25,\"volumes\":[]}";
+static const char final_catalog_page[] =
+    "{\"pages\":4,\"count\":25,\"volumes\":["
+    "{\"name\":\"Game 19\",\"url\":\"https://disks.a2cogs.com/disks/game19.po\",\"blocks\":280,\"cat\":\"G\",\"host\":\"any\"},"
+    "{\"name\":\"" REPLAY_TITLE "\",\"url\":\"" REPLAY_URL "\",\"blocks\":65535,\"cat\":\"G\",\"host\":\"any\"}]}";
+static const char partial_catalog[] =
+    "{\"pages\":2,\"count\":1,\"volumes\":["
+    "{\"name\":\"Replacement\",\"url\":\"" STANDALONE_URL "\",\"blocks\":280,\"cat\":\"G\",\"host\":\"any\"}]}";
 
 static uint8_t owner;
 static http_status_t response;
@@ -146,18 +156,25 @@ const char *http_download_cogs_path(void)
     return writer_path;
 }
 
-static void begin_page(uint16_t page)
+static void start_queued_page(uint16_t page)
 {
     unsigned previous_requests = requests;
-    assert(cogs_service_browse(page) == 0);
     assert(cogs_service_status()->state == COGS_LOADING);
-    assert(requests == previous_requests && owner == HTTP_OWNER_NONE);
+    assert(owner == HTTP_OWNER_NONE);
     cogs_service_poll(1U);
     assert(requests == previous_requests + 1U && owner == HTTP_OWNER_COGS && retain_requested);
     char expected[96];
     (void)snprintf(expected, sizeof(expected),
                    "https://a2cogs.com/disks/search?q=&p=%u&cat=G&host=8", (unsigned)page);
     assert(strcmp(request_url, expected) == 0);
+}
+
+static void begin_scan(void)
+{
+    unsigned previous_requests = requests;
+    assert(cogs_service_browse_first() == 0);
+    assert(requests == previous_requests && owner == HTTP_OWNER_NONE);
+    start_queued_page(1U);
 }
 
 static void reply(unsigned code, uint8_t state)
@@ -171,8 +188,67 @@ static void reply(unsigned code, uint8_t state)
 static void expect_idle(uint8_t state, const char *message)
 {
     assert(cogs_service_status()->state == state);
-    assert(strstr(cogs_service_status()->detail, message) != NULL);
+    if (message != NULL) {
+        assert(strstr(cogs_service_status()->detail, message) != NULL);
+    }
     assert(!cogs_service_active() && owner == HTTP_OWNER_NONE && !writer_active);
+}
+
+static void answer_catalog(const char *body)
+{
+    retained = body;
+    reply(200U, HTTP_S_DONE);
+}
+
+static void answer_numbered_page(unsigned pages, unsigned total, unsigned start, unsigned count)
+{
+    char body[4096];
+    size_t used = (size_t)snprintf(body, sizeof(body),
+                                 "{\"pages\":%u,\"count\":%u,\"volumes\":[", pages, total);
+    for (unsigned i = 0; i < count; ++i) {
+        unsigned number = start + i;
+        int added = snprintf(body + used, sizeof(body) - used,
+            "%s{\"name\":\"Game %02u\",\"url\":\"" GENERATED_URL "\",\"blocks\":280,\"cat\":\"G\",\"host\":\"any\"}",
+            i == 0U ? "" : ",", number, number);
+        assert(added > 0 && (size_t)added < sizeof(body) - used);
+        used += (size_t)added;
+    }
+    assert(sizeof(body) - used >= 3U);
+    strcpy(body + used, "]}");
+    answer_catalog(body);
+}
+
+static void expect_catalog_page(unsigned page, unsigned pages, unsigned count)
+{
+    assert(cogs_service_status()->page == page);
+    assert(cogs_service_page()->pages == pages);
+    assert(cogs_service_page()->count == count);
+}
+
+static void expect_entry(unsigned row, const char *title, const char *url, uint32_t bytes)
+{
+    assert(row < cogs_service_page()->count);
+    const cogs_catalog_entry_t *entry = &cogs_service_page()->entries[row];
+    assert(strcmp(entry->title, title) == 0);
+    assert(strcmp(entry->url, url) == 0 && entry->bytes == bytes);
+}
+
+static void expect_numbered_entry(unsigned row, unsigned number)
+{
+    char title[32], url[HTTP_URL_MAX];
+    (void)snprintf(title, sizeof(title), "Game %02u", number);
+    (void)snprintf(url, sizeof(url), GENERATED_URL, number);
+    expect_entry(row, title, url, STANDALONE_BYTES);
+}
+
+static void browse_cached(unsigned page, unsigned pages, unsigned count)
+{
+    unsigned previous_requests = requests;
+    assert(cogs_service_browse((uint16_t)page) == 0);
+    assert(!cogs_service_active() && owner == HTTP_OWNER_NONE);
+    expect_catalog_page(page, pages, count);
+    cogs_service_poll(1U);
+    assert(requests == previous_requests && owner == HTTP_OWNER_NONE);
 }
 
 static void begin_asset(uint8_t row, const char *url)
@@ -194,7 +270,8 @@ static void image_headers(uint32_t bytes, const char *content_type)
     reply(200U, HTTP_S_READ);
 }
 
-static void check_save(uint8_t row, const char *url, const char *name, uint32_t bytes)
+static void check_save(uint8_t row, const char *url, const char *name, uint32_t bytes,
+                       const char *final_path)
 {
     unsigned previous_begins = writer_begins;
     begin_asset(row, url);
@@ -204,39 +281,172 @@ static void check_save(uint8_t row, const char *url, const char *name, uint32_t 
     assert(strcmp(writer_name, name) == 0 && writer_expected_bytes == bytes);
     cogs_service_poll(1U);
     assert(cogs_service_status()->received == 512U);
+    (void)snprintf(writer_path, sizeof(writer_path), "%s", final_path);
     writer_action = WRITER_COMPLETE;
     cogs_service_poll(1U);
-    expect_idle(COGS_SAVED, name);
+    expect_idle(COGS_SAVED, final_path);
+    char expected[sizeof(cogs_service_status()->detail)];
+    (void)snprintf(expected, sizeof(expected), "saved: %s", final_path);
+    assert(strcmp(cogs_service_status()->detail, expected) == 0);
     assert(cogs_service_status()->received == bytes);
 }
 
-int main(void)
+static void expect_no_cache(void)
 {
-    assert(cogs_service_browse(0U) != 0 && cogs_service_browse(2U) != 0);
+    assert(cogs_service_page()->count == 0U && cogs_service_browse(1U) != 0);
     assert(cogs_service_download(0U) != 0);
-    begin_page(1U);
+}
+
+static void check_failed_scans(void)
+{
+    unsigned previous_requests = requests;
+    assert(cogs_service_browse_first() == 0);
+    cogs_service_poll(0U);
+    expect_idle(COGS_FAILED, "idle card and Ethernet");
+    assert(requests == previous_requests);
+    expect_no_cache();
+
+    begin_scan();
+    answer_catalog(partial_catalog);
+    assert(cogs_service_active() && cogs_service_page()->count == 0U);
+    start_queued_page(2U);
+    reply(504U, HTTP_S_DONE);
+    expect_idle(COGS_FAILED, "HTTP 504");
+    expect_no_cache();
+
+    begin_scan();
+    response.result = HTTP_E_DNS;
+    reply(0U, HTTP_S_FAILED);
+    expect_idle(COGS_FAILED, "(-106)");
+    expect_no_cache();
+
+    begin_scan();
+    answer_catalog("{\"pages\":2,\"volumes\":[");
+    expect_idle(COGS_FAILED, "Invalid CoGS catalog");
+    expect_no_cache();
+
+    begin_scan();
+    answer_catalog(partial_catalog);
+    start_queued_page(2U);
+    answer_catalog("{\"pages\":3,\"volumes\":[]}");
+    expect_idle(COGS_FAILED, "Invalid CoGS catalog");
+    expect_no_cache();
+
+    begin_scan();
+    cogs_service_poll(0U);
+    expect_idle(COGS_FAILED, "idle card and Ethernet");
+    expect_no_cache();
+
+    owner = HTTP_OWNER_UPDATE;
+    unsigned previous_cancels = http_cancels;
+    assert(cogs_service_browse_first() == 0);
+    cogs_service_poll(1U);
+    assert(!cogs_service_active() && cogs_service_status()->state == COGS_FAILED);
+    assert(owner == HTTP_OWNER_UPDATE && http_cancels == previous_cancels);
+    owner = HTTP_OWNER_NONE;
+    expect_no_cache();
+    puts("PASS scan failures, permission loss and foreign HTTP owner isolation");
+
+    begin_scan();
+    answer_catalog(partial_catalog);
+    assert(cogs_service_active() && owner == HTTP_OWNER_NONE);
+    previous_requests = requests;
+    cogs_service_cancel();
+    cogs_service_poll(1U);
+    expect_idle(COGS_IDLE, "cancelled");
+    assert(requests == previous_requests);
+    expect_no_cache();
+
+    begin_scan();
+    answer_catalog(partial_catalog);
+    start_queued_page(2U);
+    cogs_service_cancel();
+    cogs_service_poll(1U);
+    expect_idle(COGS_IDLE, "cancelled");
+    expect_no_cache();
+
+    begin_scan();
+    http_cleanup_blocked = 1U;
+    answer_catalog(partial_catalog);
+    assert(cogs_service_active() && owner == HTTP_OWNER_COGS);
+    previous_requests = requests;
+    cogs_service_cancel();
+    cogs_service_poll(1U);
+    assert(cogs_service_active() && owner == HTTP_OWNER_COGS && requests == previous_requests);
+    http_cleanup_blocked = 0U;
+    cogs_service_poll(1U);
+    expect_idle(COGS_IDLE, "cancelled");
+    assert(requests == previous_requests);
+    expect_no_cache();
+    puts("PASS scan cancellation discards staged rows even during HTTP cleanup");
+}
+
+static void check_scan_bounds(void)
+{
+    begin_scan();
+    answer_catalog("{\"pages\":257,\"volumes\":[]}");
+    expect_idle(COGS_FAILED, NULL);
+    expect_no_cache();
+
+    begin_scan();
+    for (unsigned page = 1U; page <= 15U; ++page) {
+        if (page > 1U) {
+            start_queued_page((uint16_t)page);
+        }
+        answer_numbered_page(15U, 257U, (page - 1U) * 18U + 1U, page == 15U ? 5U : 18U);
+        assert(cogs_service_page()->count == 0U);
+    }
+    expect_idle(COGS_FAILED, NULL);
+    expect_no_cache();
+    puts("PASS source page and eligible entry bounds reject oversize without partial cache");
+}
+
+static void check_compact_scan(void)
+{
+    unsigned previous_requests = requests;
+    begin_scan();
     assert(cogs_service_browse(1U) != 0 && cogs_service_download(0U) != 0);
-    retained = mixed_catalog;
-    reply(200U, HTTP_S_DONE);
+    answer_catalog(mixed_catalog);
+    assert(cogs_service_page()->count == 0U);
+    start_queued_page(2U);
+    answer_catalog(empty_page);
+    start_queued_page(3U);
+    answer_numbered_page(4U, 25U, 1U, 18U);
+    assert(cogs_service_page()->count == 0U);
+    start_queued_page(4U);
+    answer_catalog(final_catalog_page);
     expect_idle(COGS_READY, "Choose a game");
-    assert(cogs_service_status()->page == 1U && cogs_service_page()->count == 2U);
-    assert(cogs_service_page()->pages == 2U && cogs_service_browse(3U) != 0);
-    assert(cogs_service_download(2U) != 0);
+    expect_catalog_page(1U, 2U, 20U);
+    assert(requests == previous_requests + 4U && cogs_service_browse(3U) != 0);
+    expect_entry(0U, "Standalone Game", STANDALONE_URL, STANDALONE_BYTES);
+    for (unsigned row = 1U; row < 20U; ++row) {
+        expect_numbered_entry(row, row);
+    }
+    check_save(19U, "https://disks.a2cogs.com/disks/game19.po", "Game 19.po", STANDALONE_BYTES,
+               "0:/_software/CoGS/Game 19.po");
+    browse_cached(2U, 2U, 1U);
+    expect_entry(0U, REPLAY_TITLE, REPLAY_URL, REPLAY_BYTES);
+    assert(cogs_service_download(1U) != 0);
+    check_save(0U, REPLAY_URL, REPLAY_TITLE ".hdv", REPLAY_BYTES,
+               "0:/_software/CoGS/" REPLAY_TITLE ".hdv");
+    browse_cached(1U, 2U, 20U);
+    expect_entry(0U, "Standalone Game", STANDALONE_URL, STANDALONE_BYTES);
 
-    begin_page(2U);
-    retained = "{\"pages\":2,\"count\":5,\"volumes\":[]}";
-    reply(200U, HTTP_S_DONE);
-    expect_idle(COGS_READY, "No 8-bit games");
-    assert(cogs_service_status()->page == 2U && cogs_service_page()->count == 0U);
-    begin_page(1U);
-    retained = mixed_catalog;
-    reply(200U, HTTP_S_DONE);
+    browse_cached(2U, 2U, 1U);
+    previous_requests = requests;
+    assert(cogs_service_browse_first() == 0);
     expect_idle(COGS_READY, "Choose a game");
-    puts("PASS 1-based 8-bit games queries, paging, and real catalog filtering");
+    expect_catalog_page(1U, 2U, 20U);
+    cogs_service_poll(1U);
+    assert(requests == previous_requests);
+    puts("PASS raw scan, Replay parent download, ordered 20+1 compaction and cache-only paging");
+}
 
-    check_save(0U, STANDALONE_URL, "Standalone Game.po", STANDALONE_BYTES);
-    check_save(1U, SHARED_URL, "Total Replay v6.1.hdv", SHARED_BYTES);
-    puts("PASS standalone and shared volume names, exact byte counts, and completed save");
+static void check_downloads(void)
+{
+    check_save(0U, STANDALONE_URL, "Standalone Game.po", STANDALONE_BYTES,
+               "0:/_software/CoGS/Standalone Game-1.po");
+    puts("PASS standalone volume name, exact byte count, and final save path");
 
     unsigned previous_begins = writer_begins;
     begin_asset(0U, STANDALONE_URL);
@@ -251,20 +461,7 @@ int main(void)
     expect_idle(COGS_FAILED, "(-127)");
     assert(writer_begins == previous_begins + 1U && writer_expected_bytes == STANDALONE_BYTES);
 
-    begin_page(2U);
-    reply(504U, HTTP_S_DONE);
-    expect_idle(COGS_FAILED, "HTTP 504");
-    assert(cogs_service_status()->page == 1U && cogs_service_page()->count == 2U);
-    begin_page(2U);
-    response.result = HTTP_E_DNS;
-    reply(0U, HTTP_S_FAILED);
-    expect_idle(COGS_FAILED, "(-106)");
-    begin_page(2U);
-    retained = "{\"pages\":2,\"volumes\":[";
-    reply(200U, HTTP_S_DONE);
-    expect_idle(COGS_FAILED, "Invalid CoGS catalog");
-    assert(cogs_service_page()->count == 2U);
-    puts("PASS HTTP, image MIME/length, and malformed catalog errors");
+    puts("PASS download HTTP and image MIME/length errors");
 
     begin_asset(0U, STANDALONE_URL);
     image_headers(STANDALONE_BYTES, "application/octet-stream");
@@ -296,27 +493,44 @@ int main(void)
     expect_idle(COGS_FAILED, "(-122)");
     puts("PASS cancel and failed SD cleanup retain ownership until cleanup completes");
 
-    unsigned previous_requests = requests;
-    assert(cogs_service_browse(1U) == 0);
-    cogs_service_poll(0U);
-    expect_idle(COGS_FAILED, "idle card and Ethernet");
-    assert(requests == previous_requests);
-    begin_page(1U);
-    cogs_service_poll(0U);
-    expect_idle(COGS_FAILED, "idle card and Ethernet");
     begin_asset(0U, STANDALONE_URL);
     image_headers(STANDALONE_BYTES, "application/octet-stream");
     unsigned previous_writer_cancels = writer_cancels;
     cogs_service_poll(0U);
     expect_idle(COGS_READY, "Download cancelled");
     assert(writer_cancels == previous_writer_cancels + 1U);
+    puts("PASS download permission loss");
+}
 
-    owner = HTTP_OWNER_UPDATE;
-    previous_cancels = http_cancels;
-    assert(cogs_service_browse(1U) == 0);
+static void check_empty_scan(void)
+{
+    begin_scan();
+    answer_catalog("{\"pages\":1,\"count\":0,\"volumes\":[]}");
+    expect_idle(COGS_READY, "No 8-bit game disks");
+    expect_catalog_page(0U, 0U, 0U);
+    assert(cogs_service_browse(1U) != 0);
+    assert(cogs_service_download(0U) != 0);
+    unsigned previous_requests = requests;
+    assert(cogs_service_browse_first() == 0);
+    expect_idle(COGS_READY, "No 8-bit game disks");
+    expect_catalog_page(0U, 0U, 0U);
     cogs_service_poll(1U);
-    assert(!cogs_service_active() && cogs_service_status()->state == COGS_FAILED);
-    assert(owner == HTTP_OWNER_UPDATE && http_cancels == previous_cancels);
-    puts("PASS permission loss and foreign HTTP owner isolation");
+    assert(requests == previous_requests);
+    puts("PASS empty completed catalog is also cached");
+}
+
+int main(int argc, char **argv)
+{
+    assert(cogs_service_browse(0U) != 0 && cogs_service_browse(2U) != 0);
+    expect_no_cache();
+    if (argc == 2 && strcmp(argv[1], "empty") == 0) {
+        check_empty_scan();
+        return 0;
+    }
+    assert(argc == 1);
+    check_failed_scans();
+    check_scan_bounds();
+    check_compact_scan();
+    check_downloads();
     return 0;
 }

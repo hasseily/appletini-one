@@ -27,6 +27,10 @@
 #define FUNC_INLINE static inline
 #endif
 
+#ifndef CPU_BEGIN_INSTRUCTION
+#define CPU_BEGIN_INSTRUCTION(cpu) ((void)0)
+#endif
+
 const uint8_t byteregtable[8] = { regal, regcl, regdl, regbl, regah, regch, regdh, regbh };
 
 const uint8_t parity[0x100] = {
@@ -40,6 +44,7 @@ const uint8_t parity[0x100] = {
 	0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1
 };
 
+#ifndef CPU_CUSTOM_WORD_MEMORY
 void cpu_writew(CPU_t* cpu, uint32_t addr32, uint16_t value) {
 	cpu_write(cpu, addr32, (uint8_t)value);
 	cpu_write(cpu, addr32 + 1, (uint8_t)(value >> 8));
@@ -48,6 +53,7 @@ void cpu_writew(CPU_t* cpu, uint32_t addr32, uint16_t value) {
 uint16_t cpu_readw(CPU_t* cpu, uint32_t addr32) {
 	return ((uint16_t)cpu_read(cpu, addr32) | (uint16_t)(cpu_read(cpu, addr32 + 1) << 8));
 }
+#endif
 
 FUNC_INLINE void flag_szp8(CPU_t* cpu, uint8_t value) {
 	if (!value) {
@@ -495,7 +501,7 @@ void cpu_reset(CPU_t* cpu) {
 FUNC_INLINE uint16_t readrm16(CPU_t* cpu, uint8_t rmval) {
 	if (cpu->mode < 3) {
 		getea(cpu, rmval);
-		return cpu_read(cpu, cpu->ea) | ((uint16_t)cpu_read(cpu, cpu->ea + 1) << 8);
+		return cpu_readw(cpu, cpu->ea);
 	}
 	else {
 		return getreg16(cpu, rmval);
@@ -515,8 +521,7 @@ FUNC_INLINE uint8_t readrm8(CPU_t* cpu, uint8_t rmval) {
 FUNC_INLINE void writerm16(CPU_t* cpu, uint8_t rmval, uint16_t value) {
 	if (cpu->mode < 3) {
 		getea(cpu, rmval);
-		cpu_write(cpu, cpu->ea, value & 0xFF);
-		cpu_write(cpu, cpu->ea + 1, value >> 8);
+		cpu_writew(cpu, cpu->ea, value);
 	}
 	else {
 		putreg16(cpu, rmval, value);
@@ -844,7 +849,7 @@ FUNC_INLINE void op_grp3_8(CPU_t* cpu) {
 	switch (cpu->reg) {
 	case 0:
 	case 1: /* TEST */
-		flag_log8(cpu, cpu->oper1b & getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+		flag_log8(cpu, cpu->oper1b & getcode8(cpu));
 		StepIP(cpu, 1);
 		break;
 
@@ -971,7 +976,7 @@ FUNC_INLINE void op_grp3_16(CPU_t* cpu) {
 	switch (cpu->reg) {
 	case 0:
 	case 1: /* TEST */
-		flag_log16(cpu, cpu->oper1 & getmem16(cpu, cpu->segregs[regcs], cpu->ip));
+		flag_log16(cpu, cpu->oper1 & getcode16(cpu));
 		StepIP(cpu, 2);
 		break;
 
@@ -1153,13 +1158,14 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 		cpu->useseg = cpu->segregs[regds];
 		docontinue = 0;
 		firstip = cpu->ip;
+		CPU_BEGIN_INSTRUCTION(cpu);
 
 		while (!docontinue) {
 			cpu->segregs[regcs] = cpu->segregs[regcs] & 0xFFFF;
 			cpu->ip = cpu->ip & 0xFFFF;
 			cpu->savecs = cpu->segregs[regcs];
 			cpu->saveip = cpu->ip;
-			cpu->opcode = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->opcode = getcode8(cpu);
 			StepIP(cpu, 1);
 
 			switch (cpu->opcode) {
@@ -1236,7 +1242,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 
 		case 0x4:	/* 04 ADD cpu->regs.byteregs[regal] Ib */
 			cpu->oper1b = cpu->regs.byteregs[regal];
-			cpu->oper2b = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper2b = getcode8(cpu);
 			StepIP(cpu, 1);
 			op_add8(cpu);
 			cpu->regs.byteregs[regal] = cpu->res8;
@@ -1244,7 +1250,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 
 		case 0x5:	/* 05 ADD eAX Iv */
 			cpu->oper1 = cpu->regs.wordregs[regax];
-			cpu->oper2 = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper2 = getcode16(cpu);
 			StepIP(cpu, 2);
 			op_add16(cpu);
 			cpu->regs.wordregs[regax] = cpu->res16;
@@ -1296,7 +1302,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 
 		case 0xC:	/* 0C OR cpu->regs.byteregs[regal] Ib */
 			cpu->oper1b = cpu->regs.byteregs[regal];
-			cpu->oper2b = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper2b = getcode8(cpu);
 			StepIP(cpu, 1);
 			op_or8(cpu);
 			cpu->regs.byteregs[regal] = cpu->res8;
@@ -1304,7 +1310,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 
 		case 0xD:	/* 0D OR eAX Iv */
 			cpu->oper1 = cpu->regs.wordregs[regax];
-			cpu->oper2 = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper2 = getcode16(cpu);
 			StepIP(cpu, 2);
 			op_or16(cpu);
 			cpu->regs.wordregs[regax] = cpu->res16;
@@ -1354,7 +1360,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 
 		case 0x14:	/* 14 ADC cpu->regs.byteregs[regal] Ib */
 			cpu->oper1b = cpu->regs.byteregs[regal];
-			cpu->oper2b = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper2b = getcode8(cpu);
 			StepIP(cpu, 1);
 			op_adc8(cpu);
 			cpu->regs.byteregs[regal] = cpu->res8;
@@ -1362,7 +1368,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 
 		case 0x15:	/* 15 ADC eAX Iv */
 			cpu->oper1 = cpu->regs.wordregs[regax];
-			cpu->oper2 = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper2 = getcode16(cpu);
 			StepIP(cpu, 2);
 			op_adc16(cpu);
 			cpu->regs.wordregs[regax] = cpu->res16;
@@ -1410,7 +1416,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 
 		case 0x1C:	/* 1C SBB cpu->regs.byteregs[regal] Ib */
 			cpu->oper1b = cpu->regs.byteregs[regal];
-			cpu->oper2b = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper2b = getcode8(cpu);
 			StepIP(cpu, 1);
 			op_sbb8(cpu);
 			cpu->regs.byteregs[regal] = cpu->res8;
@@ -1418,7 +1424,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 
 		case 0x1D:	/* 1D SBB eAX Iv */
 			cpu->oper1 = cpu->regs.wordregs[regax];
-			cpu->oper2 = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper2 = getcode16(cpu);
 			StepIP(cpu, 2);
 			op_sbb16(cpu);
 			cpu->regs.wordregs[regax] = cpu->res16;
@@ -1466,7 +1472,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 
 		case 0x24:	/* 24 AND cpu->regs.byteregs[regal] Ib */
 			cpu->oper1b = cpu->regs.byteregs[regal];
-			cpu->oper2b = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper2b = getcode8(cpu);
 			StepIP(cpu, 1);
 			op_and8(cpu);
 			cpu->regs.byteregs[regal] = cpu->res8;
@@ -1474,7 +1480,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 
 		case 0x25:	/* 25 AND eAX Iv */
 			cpu->oper1 = cpu->regs.wordregs[regax];
-			cpu->oper2 = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper2 = getcode16(cpu);
 			StepIP(cpu, 2);
 			op_and16(cpu);
 			cpu->regs.wordregs[regax] = cpu->res16;
@@ -1533,7 +1539,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 
 		case 0x2C:	/* 2C SUB cpu->regs.byteregs[regal] Ib */
 			cpu->oper1b = cpu->regs.byteregs[regal];
-			cpu->oper2b = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper2b = getcode8(cpu);
 			StepIP(cpu, 1);
 			op_sub8(cpu);
 			cpu->regs.byteregs[regal] = cpu->res8;
@@ -1541,7 +1547,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 
 		case 0x2D:	/* 2D SUB eAX Iv */
 			cpu->oper1 = cpu->regs.wordregs[regax];
-			cpu->oper2 = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper2 = getcode16(cpu);
 			StepIP(cpu, 2);
 			op_sub16(cpu);
 			cpu->regs.wordregs[regax] = cpu->res16;
@@ -1600,7 +1606,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 
 		case 0x34:	/* 34 XOR cpu->regs.byteregs[regal] Ib */
 			cpu->oper1b = cpu->regs.byteregs[regal];
-			cpu->oper2b = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper2b = getcode8(cpu);
 			StepIP(cpu, 1);
 			op_xor8(cpu);
 			cpu->regs.byteregs[regal] = cpu->res8;
@@ -1608,7 +1614,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 
 		case 0x35:	/* 35 XOR eAX Iv */
 			cpu->oper1 = cpu->regs.wordregs[regax];
-			cpu->oper2 = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper2 = getcode16(cpu);
 			StepIP(cpu, 2);
 			op_xor16(cpu);
 			cpu->regs.wordregs[regax] = cpu->res16;
@@ -1658,14 +1664,14 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 
 		case 0x3C:	/* 3C CMP cpu->regs.byteregs[regal] Ib */
 			cpu->oper1b = cpu->regs.byteregs[regal];
-			cpu->oper2b = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper2b = getcode8(cpu);
 			StepIP(cpu, 1);
 			flag_sub8(cpu, cpu->oper1b, cpu->oper2b);
 			break;
 
 		case 0x3D:	/* 3D CMP eAX Iv */
 			cpu->oper1 = cpu->regs.wordregs[regax];
-			cpu->oper2 = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper2 = getcode16(cpu);
 			StepIP(cpu, 2);
 			flag_sub16(cpu, cpu->oper1, cpu->oper2);
 			break;
@@ -1936,14 +1942,14 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0x68:	/* 68 PUSH Iv (80186+) */
-			push(cpu, getmem16(cpu, cpu->segregs[regcs], cpu->ip));
+			push(cpu, getcode16(cpu));
 			StepIP(cpu, 2);
 			break;
 
 		case 0x69:	/* 69 IMUL Gv Ev Iv (80186+) */
 			modregrm(cpu);
 			cpu->temp1 = readrm16(cpu, cpu->rm);
-			cpu->temp2 = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->temp2 = getcode16(cpu);
 			StepIP(cpu, 2);
 			if ((cpu->temp1 & 0x8000L) == 0x8000L) {
 				cpu->temp1 = cpu->temp1 | 0xFFFF0000L;
@@ -1966,14 +1972,14 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0x6A:	/* 6A PUSH Ib (80186+) */
-			push(cpu, (uint16_t)signext(getmem8(cpu, cpu->segregs[regcs], cpu->ip)));
+			push(cpu, (uint16_t)signext(getcode8(cpu)));
 			StepIP(cpu, 1);
 			break;
 
 		case 0x6B:	/* 6B IMUL Gv Eb Ib (80186+) */
 			modregrm(cpu);
 			cpu->temp1 = readrm16(cpu, cpu->rm);
-			cpu->temp2 = signext(getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+			cpu->temp2 = signext(getcode8(cpu));
 			StepIP(cpu, 1);
 			if ((cpu->temp1 & 0x8000L) == 0x8000L) {
 				cpu->temp1 = cpu->temp1 | 0xFFFF0000L;
@@ -2103,7 +2109,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 #endif
 
 		case 0x70:	/* 70 JO Jb */
-			cpu->temp16 = signext(getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+			cpu->temp16 = signext(getcode8(cpu));
 			StepIP(cpu, 1);
 			if (cpu->of) {
 				cpu->ip = cpu->ip + cpu->temp16;
@@ -2111,7 +2117,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0x71:	/* 71 JNO Jb */
-			cpu->temp16 = signext(getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+			cpu->temp16 = signext(getcode8(cpu));
 			StepIP(cpu, 1);
 			if (!cpu->of) {
 				cpu->ip = cpu->ip + cpu->temp16;
@@ -2119,7 +2125,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0x72:	/* 72 JB Jb */
-			cpu->temp16 = signext(getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+			cpu->temp16 = signext(getcode8(cpu));
 			StepIP(cpu, 1);
 			if (cpu->cf) {
 				cpu->ip = cpu->ip + cpu->temp16;
@@ -2127,7 +2133,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0x73:	/* 73 JNB Jb */
-			cpu->temp16 = signext(getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+			cpu->temp16 = signext(getcode8(cpu));
 			StepIP(cpu, 1);
 			if (!cpu->cf) {
 				cpu->ip = cpu->ip + cpu->temp16;
@@ -2135,7 +2141,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0x74:	/* 74 JZ Jb */
-			cpu->temp16 = signext(getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+			cpu->temp16 = signext(getcode8(cpu));
 			StepIP(cpu, 1);
 			if (cpu->zf) {
 				cpu->ip = cpu->ip + cpu->temp16;
@@ -2143,7 +2149,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0x75:	/* 75 JNZ Jb */
-			cpu->temp16 = signext(getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+			cpu->temp16 = signext(getcode8(cpu));
 			StepIP(cpu, 1);
 			if (!cpu->zf) {
 				cpu->ip = cpu->ip + cpu->temp16;
@@ -2151,7 +2157,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0x76:	/* 76 JBE Jb */
-			cpu->temp16 = signext(getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+			cpu->temp16 = signext(getcode8(cpu));
 			StepIP(cpu, 1);
 			if (cpu->cf || cpu->zf) {
 				cpu->ip = cpu->ip + cpu->temp16;
@@ -2159,7 +2165,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0x77:	/* 77 JA Jb */
-			cpu->temp16 = signext(getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+			cpu->temp16 = signext(getcode8(cpu));
 			StepIP(cpu, 1);
 			if (!cpu->cf && !cpu->zf) {
 				cpu->ip = cpu->ip + cpu->temp16;
@@ -2167,7 +2173,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0x78:	/* 78 JS Jb */
-			cpu->temp16 = signext(getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+			cpu->temp16 = signext(getcode8(cpu));
 			StepIP(cpu, 1);
 			if (cpu->sf) {
 				cpu->ip = cpu->ip + cpu->temp16;
@@ -2175,7 +2181,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0x79:	/* 79 JNS Jb */
-			cpu->temp16 = signext(getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+			cpu->temp16 = signext(getcode8(cpu));
 			StepIP(cpu, 1);
 			if (!cpu->sf) {
 				cpu->ip = cpu->ip + cpu->temp16;
@@ -2183,7 +2189,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0x7A:	/* 7A JPE Jb */
-			cpu->temp16 = signext(getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+			cpu->temp16 = signext(getcode8(cpu));
 			StepIP(cpu, 1);
 			if (cpu->pf) {
 				cpu->ip = cpu->ip + cpu->temp16;
@@ -2191,7 +2197,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0x7B:	/* 7B JPO Jb */
-			cpu->temp16 = signext(getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+			cpu->temp16 = signext(getcode8(cpu));
 			StepIP(cpu, 1);
 			if (!cpu->pf) {
 				cpu->ip = cpu->ip + cpu->temp16;
@@ -2199,7 +2205,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0x7C:	/* 7C JL Jb */
-			cpu->temp16 = signext(getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+			cpu->temp16 = signext(getcode8(cpu));
 			StepIP(cpu, 1);
 			if (cpu->sf != cpu->of) {
 				cpu->ip = cpu->ip + cpu->temp16;
@@ -2207,7 +2213,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0x7D:	/* 7D JGE Jb */
-			cpu->temp16 = signext(getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+			cpu->temp16 = signext(getcode8(cpu));
 			StepIP(cpu, 1);
 			if (cpu->sf == cpu->of) {
 				cpu->ip = cpu->ip + cpu->temp16;
@@ -2215,7 +2221,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0x7E:	/* 7E JLE Jb */
-			cpu->temp16 = signext(getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+			cpu->temp16 = signext(getcode8(cpu));
 			StepIP(cpu, 1);
 			if ((cpu->sf != cpu->of) || cpu->zf) {
 				cpu->ip = cpu->ip + cpu->temp16;
@@ -2223,7 +2229,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0x7F:	/* 7F JG Jb */
-			cpu->temp16 = signext(getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+			cpu->temp16 = signext(getcode8(cpu));
 			StepIP(cpu, 1);
 			if (!cpu->zf && (cpu->sf == cpu->of)) {
 				cpu->ip = cpu->ip + cpu->temp16;
@@ -2234,7 +2240,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 		case 0x82:	/* 80/82 GRP1 Eb Ib */
 			modregrm(cpu);
 			cpu->oper1b = readrm8(cpu, cpu->rm);
-			cpu->oper2b = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper2b = getcode8(cpu);
 			StepIP(cpu, 1);
 			switch (cpu->reg) {
 			case 0:
@@ -2275,11 +2281,11 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			modregrm(cpu);
 			cpu->oper1 = readrm16(cpu, cpu->rm);
 			if (cpu->opcode == 0x81) {
-				cpu->oper2 = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+				cpu->oper2 = getcode16(cpu);
 				StepIP(cpu, 2);
 			}
 			else {
-				cpu->oper2 = signext(getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+				cpu->oper2 = signext(getcode8(cpu));
 				StepIP(cpu, 1);
 			}
 
@@ -2450,9 +2456,9 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0x9A:	/* 9A CALL Ap */
-			cpu->oper1 = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper1 = getcode16(cpu);
 			StepIP(cpu, 2);
-			cpu->oper2 = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper2 = getcode16(cpu);
 			StepIP(cpu, 2);
 			push(cpu, cpu->segregs[regcs]);
 			push(cpu, cpu->ip);
@@ -2485,23 +2491,23 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0xA0:	/* A0 MOV cpu->regs.byteregs[regal] Ob */
-			cpu->regs.byteregs[regal] = getmem8(cpu, cpu->useseg, getmem16(cpu, cpu->segregs[regcs], cpu->ip));
+			cpu->regs.byteregs[regal] = getmem8(cpu, cpu->useseg, getcode16(cpu));
 			StepIP(cpu, 2);
 			break;
 
 		case 0xA1:	/* A1 MOV eAX Ov */
-			cpu->oper1 = getmem16(cpu, cpu->useseg, getmem16(cpu, cpu->segregs[regcs], cpu->ip));
+			cpu->oper1 = getmem16(cpu, cpu->useseg, getcode16(cpu));
 			StepIP(cpu, 2);
 			cpu->regs.wordregs[regax] = cpu->oper1;
 			break;
 
 		case 0xA2:	/* A2 MOV Ob cpu->regs.byteregs[regal] */
-			putmem8(cpu, cpu->useseg, getmem16(cpu, cpu->segregs[regcs], cpu->ip), cpu->regs.byteregs[regal]);
+			putmem8(cpu, cpu->useseg, getcode16(cpu), cpu->regs.byteregs[regal]);
 			StepIP(cpu, 2);
 			break;
 
 		case 0xA3:	/* A3 MOV Ov eAX */
-			putmem16(cpu, cpu->useseg, getmem16(cpu, cpu->segregs[regcs], cpu->ip), cpu->regs.wordregs[regax]);
+			putmem16(cpu, cpu->useseg, getcode16(cpu), cpu->regs.wordregs[regax]);
 			StepIP(cpu, 2);
 			break;
 
@@ -2634,14 +2640,14 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 
 		case 0xA8:	/* A8 TEST cpu->regs.byteregs[regal] Ib */
 			cpu->oper1b = cpu->regs.byteregs[regal];
-			cpu->oper2b = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper2b = getcode8(cpu);
 			StepIP(cpu, 1);
 			flag_log8(cpu, cpu->oper1b & cpu->oper2b);
 			break;
 
 		case 0xA9:	/* A9 TEST eAX Iv */
 			cpu->oper1 = cpu->regs.wordregs[regax];
-			cpu->oper2 = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper2 = getcode16(cpu);
 			StepIP(cpu, 2);
 			flag_log16(cpu, cpu->oper1 & cpu->oper2);
 			break;
@@ -2816,93 +2822,93 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0xB0:	/* B0 MOV cpu->regs.byteregs[regal] Ib */
-			cpu->regs.byteregs[regal] = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->regs.byteregs[regal] = getcode8(cpu);
 			StepIP(cpu, 1);
 			break;
 
 		case 0xB1:	/* B1 MOV cpu->regs.byteregs[regcl] Ib */
-			cpu->regs.byteregs[regcl] = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->regs.byteregs[regcl] = getcode8(cpu);
 			StepIP(cpu, 1);
 			break;
 
 		case 0xB2:	/* B2 MOV cpu->regs.byteregs[regdl] Ib */
-			cpu->regs.byteregs[regdl] = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->regs.byteregs[regdl] = getcode8(cpu);
 			StepIP(cpu, 1);
 			break;
 
 		case 0xB3:	/* B3 MOV cpu->regs.byteregs[regbl] Ib */
-			cpu->regs.byteregs[regbl] = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->regs.byteregs[regbl] = getcode8(cpu);
 			StepIP(cpu, 1);
 			break;
 
 		case 0xB4:	/* B4 MOV cpu->regs.byteregs[regah] Ib */
-			cpu->regs.byteregs[regah] = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->regs.byteregs[regah] = getcode8(cpu);
 			StepIP(cpu, 1);
 			break;
 
 		case 0xB5:	/* B5 MOV cpu->regs.byteregs[regch] Ib */
-			cpu->regs.byteregs[regch] = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->regs.byteregs[regch] = getcode8(cpu);
 			StepIP(cpu, 1);
 			break;
 
 		case 0xB6:	/* B6 MOV cpu->regs.byteregs[regdh] Ib */
-			cpu->regs.byteregs[regdh] = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->regs.byteregs[regdh] = getcode8(cpu);
 			StepIP(cpu, 1);
 			break;
 
 		case 0xB7:	/* B7 MOV cpu->regs.byteregs[regbh] Ib */
-			cpu->regs.byteregs[regbh] = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->regs.byteregs[regbh] = getcode8(cpu);
 			StepIP(cpu, 1);
 			break;
 
 		case 0xB8:	/* B8 MOV eAX Iv */
-			cpu->oper1 = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper1 = getcode16(cpu);
 			StepIP(cpu, 2);
 			cpu->regs.wordregs[regax] = cpu->oper1;
 			break;
 
 		case 0xB9:	/* B9 MOV eCX Iv */
-			cpu->oper1 = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper1 = getcode16(cpu);
 			StepIP(cpu, 2);
 			cpu->regs.wordregs[regcx] = cpu->oper1;
 			break;
 
 		case 0xBA:	/* BA MOV eDX Iv */
-			cpu->oper1 = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper1 = getcode16(cpu);
 			StepIP(cpu, 2);
 			cpu->regs.wordregs[regdx] = cpu->oper1;
 			break;
 
 		case 0xBB:	/* BB MOV eBX Iv */
-			cpu->oper1 = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper1 = getcode16(cpu);
 			StepIP(cpu, 2);
 			cpu->regs.wordregs[regbx] = cpu->oper1;
 			break;
 
 		case 0xBC:	/* BC MOV eSP Iv */
-			cpu->regs.wordregs[regsp] = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->regs.wordregs[regsp] = getcode16(cpu);
 			StepIP(cpu, 2);
 			break;
 
 		case 0xBD:	/* BD MOV eBP Iv */
-			cpu->regs.wordregs[regbp] = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->regs.wordregs[regbp] = getcode16(cpu);
 			StepIP(cpu, 2);
 			break;
 
 		case 0xBE:	/* BE MOV eSI Iv */
-			cpu->regs.wordregs[regsi] = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->regs.wordregs[regsi] = getcode16(cpu);
 			StepIP(cpu, 2);
 			break;
 
 		case 0xBF:	/* BF MOV eDI Iv */
-			cpu->regs.wordregs[regdi] = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->regs.wordregs[regdi] = getcode16(cpu);
 			StepIP(cpu, 2);
 			break;
 
 		case 0xC0:	/* C0 GRP2 byte imm8 (80186+) */
 			modregrm(cpu);
 			cpu->oper1b = readrm8(cpu, cpu->rm);
-			cpu->oper2b = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper2b = getcode8(cpu);
 			StepIP(cpu, 1);
 			writerm8(cpu, cpu->rm, op_grp2_8(cpu, cpu->oper2b));
 			break;
@@ -2910,13 +2916,13 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 		case 0xC1:	/* C1 GRP2 word imm8 (80186+) */
 			modregrm(cpu);
 			cpu->oper1 = readrm16(cpu, cpu->rm);
-			cpu->oper2 = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper2 = getcode8(cpu);
 			StepIP(cpu, 1);
 			writerm16(cpu, cpu->rm, op_grp2_16(cpu, (uint8_t)cpu->oper2));
 			break;
 
 		case 0xC2:	/* C2 RET Iw */
-			cpu->oper1 = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper1 = getcode16(cpu);
 			cpu->ip = pop(cpu);
 			cpu->regs.wordregs[regsp] = cpu->regs.wordregs[regsp] + cpu->oper1;
 			break;
@@ -2941,20 +2947,20 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 
 		case 0xC6:	/* C6 MOV Eb Ib */
 			modregrm(cpu);
-			writerm8(cpu, cpu->rm, getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+			writerm8(cpu, cpu->rm, getcode8(cpu));
 			StepIP(cpu, 1);
 			break;
 
 		case 0xC7:	/* C7 MOV Ev Iv */
 			modregrm(cpu);
-			writerm16(cpu, cpu->rm, getmem16(cpu, cpu->segregs[regcs], cpu->ip));
+			writerm16(cpu, cpu->rm, getcode16(cpu));
 			StepIP(cpu, 2);
 			break;
 
 		case 0xC8:	/* C8 ENTER (80186+) */
-			cpu->stacksize = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->stacksize = getcode16(cpu);
 			StepIP(cpu, 2);
-			cpu->nestlev = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->nestlev = getcode8(cpu);
 			StepIP(cpu, 1);
 			push(cpu, cpu->regs.wordregs[regbp]);
 			cpu->frametemp = cpu->regs.wordregs[regsp];
@@ -2978,7 +2984,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0xCA:	/* CA RETF Iw */
-			cpu->oper1 = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper1 = getcode16(cpu);
 			cpu->ip = pop(cpu);
 			cpu->segregs[regcs] = pop(cpu);
 			cpu->regs.wordregs[regsp] = cpu->regs.wordregs[regsp] + cpu->oper1;
@@ -2994,7 +3000,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0xCD:	/* CD INT Ib */
-			cpu->oper1b = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper1b = getcode8(cpu);
 			StepIP(cpu, 1);
 			cpu_intcall(cpu, cpu->oper1b);
 			break;
@@ -3040,7 +3046,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0xD4:	/* D4 AAM I0 */
-			cpu->oper1 = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper1 = getcode8(cpu);
 			StepIP(cpu, 1);
 			if (!cpu->oper1) {
 				cpu_intcall(cpu, 0);
@@ -3053,7 +3059,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0xD5:	/* D5 AAD I0 */
-			cpu->oper1 = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper1 = getcode8(cpu);
 			StepIP(cpu, 1);
 			cpu->regs.byteregs[regal] = (cpu->regs.byteregs[regah] * cpu->oper1 + cpu->regs.byteregs[regal]) & 255;
 			cpu->regs.byteregs[regah] = 0;
@@ -3083,7 +3089,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0xE0:	/* E0 LOOPNZ Jb */
-			cpu->temp16 = signext(getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+			cpu->temp16 = signext(getcode8(cpu));
 			StepIP(cpu, 1);
 			cpu->regs.wordregs[regcx] = cpu->regs.wordregs[regcx] - 1;
 			if ((cpu->regs.wordregs[regcx]) && !cpu->zf) {
@@ -3092,7 +3098,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0xE1:	/* E1 LOOPZ Jb */
-			cpu->temp16 = signext(getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+			cpu->temp16 = signext(getcode8(cpu));
 			StepIP(cpu, 1);
 			cpu->regs.wordregs[regcx] = cpu->regs.wordregs[regcx] - 1;
 			if (cpu->regs.wordregs[regcx] && (cpu->zf == 1)) {
@@ -3101,7 +3107,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0xE2:	/* E2 LOOP Jb */
-			cpu->temp16 = signext(getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+			cpu->temp16 = signext(getcode8(cpu));
 			StepIP(cpu, 1);
 			cpu->regs.wordregs[regcx] = cpu->regs.wordregs[regcx] - 1;
 			if (cpu->regs.wordregs[regcx]) {
@@ -3110,7 +3116,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0xE3:	/* E3 JCXZ Jb */
-			cpu->temp16 = signext(getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+			cpu->temp16 = signext(getcode8(cpu));
 			StepIP(cpu, 1);
 			if (!cpu->regs.wordregs[regcx]) {
 				cpu->ip = cpu->ip + cpu->temp16;
@@ -3118,7 +3124,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0xE4:	/* E4 IN cpu->regs.byteregs[regal] Ib */
-			cpu->oper1b = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper1b = getcode8(cpu);
 			StepIP(cpu, 1);
 			cpu->oper2b = port_read(cpu, cpu->oper1b);
 			APPLETINI_IO_RETRY_IF_PENDING();
@@ -3126,7 +3132,7 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0xE5:	/* E5 IN eAX Ib */
-			cpu->oper1b = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper1b = getcode8(cpu);
 			StepIP(cpu, 1);
 			cpu->oper2 = port_readw(cpu, cpu->oper1b);
 			APPLETINI_IO_RETRY_IF_PENDING();
@@ -3134,42 +3140,42 @@ void cpu_exec(CPU_t* cpu, uint32_t execloops) {
 			break;
 
 		case 0xE6:	/* E6 OUT Ib cpu->regs.byteregs[regal] */
-			cpu->oper1b = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper1b = getcode8(cpu);
 			StepIP(cpu, 1);
 			port_write(cpu, cpu->oper1b, cpu->regs.byteregs[regal]);
 			APPLETINI_IO_RETRY_IF_PENDING();
 			break;
 
 		case 0xE7:	/* E7 OUT Ib eAX */
-			cpu->oper1b = getmem8(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper1b = getcode8(cpu);
 			StepIP(cpu, 1);
 			port_writew(cpu, cpu->oper1b, cpu->regs.wordregs[regax]);
 			APPLETINI_IO_RETRY_IF_PENDING();
 			break;
 
 		case 0xE8:	/* E8 CALL Jv */
-			cpu->oper1 = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper1 = getcode16(cpu);
 			StepIP(cpu, 2);
 			push(cpu, cpu->ip);
 			cpu->ip = cpu->ip + cpu->oper1;
 			break;
 
 		case 0xE9:	/* E9 JMP Jv */
-			cpu->oper1 = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper1 = getcode16(cpu);
 			StepIP(cpu, 2);
 			cpu->ip = cpu->ip + cpu->oper1;
 			break;
 
 		case 0xEA:	/* EA JMP Ap */
-			cpu->oper1 = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper1 = getcode16(cpu);
 			StepIP(cpu, 2);
-			cpu->oper2 = getmem16(cpu, cpu->segregs[regcs], cpu->ip);
+			cpu->oper2 = getcode16(cpu);
 			cpu->ip = cpu->oper1;
 			cpu->segregs[regcs] = cpu->oper2;
 			break;
 
 		case 0xEB:	/* EB JMP Jb */
-			cpu->oper1 = signext(getmem8(cpu, cpu->segregs[regcs], cpu->ip));
+			cpu->oper1 = signext(getcode8(cpu));
 			StepIP(cpu, 1);
 			cpu->ip = cpu->ip + cpu->oper1;
 			break;

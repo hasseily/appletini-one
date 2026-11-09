@@ -91,6 +91,10 @@ struct CPU {
 #define StepIP(mycpu, x)	mycpu->ip += x
 #define getmem8(mycpu, x, y)	cpu_read(mycpu, segbase(x) + y)
 #define getmem16(mycpu, x, y)	cpu_readw(mycpu, segbase(x) + y)
+#ifndef getcode8
+#define getcode8(x)	getmem8(x, (x)->segregs[regcs], (x)->ip)
+#define getcode16(x)	getmem16(x, (x)->segregs[regcs], (x)->ip)
+#endif
 #define putmem8(mycpu, x, y, z)	cpu_write(mycpu, segbase(x) + y, z)
 #define putmem16(mycpu, x, y, z)	cpu_writew(mycpu, segbase(x) + y, z)
 #define signext(value)	(int16_t)(int8_t)(value)
@@ -124,7 +128,7 @@ struct CPU {
 }
 
 #define modregrm(x) { \
-	x->addrbyte = getmem8(x, x->segregs[regcs], x->ip); \
+	x->addrbyte = getcode8(x); \
 	StepIP(x, 1); \
 	x->mode = x->addrbyte >> 6; \
 	x->reg = (x->addrbyte >> 3) & 7; \
@@ -133,7 +137,7 @@ struct CPU {
 	{ \
 	case 0: \
 	if(x->rm == 6) { \
-	x->disp16 = getmem16(x, x->segregs[regcs], x->ip); \
+	x->disp16 = getcode16(x); \
 	StepIP(x, 2); \
 	} \
 	if(((x->rm == 2) || (x->rm == 3)) && !x->segoverride) { \
@@ -142,7 +146,7 @@ struct CPU {
 	break; \
  \
 	case 1: \
-	x->disp16 = signext(getmem8(x, x->segregs[regcs], x->ip)); \
+	x->disp16 = signext(getcode8(x)); \
 	StepIP(x, 1); \
 	if(((x->rm == 2) || (x->rm == 3) || (x->rm == 6)) && !x->segoverride) { \
 	x->useseg = x->segregs[regss]; \
@@ -150,7 +154,7 @@ struct CPU {
 	break; \
  \
 	case 2: \
-	x->disp16 = getmem16(x, x->segregs[regcs], x->ip); \
+	x->disp16 = getcode16(x); \
 	StepIP(x, 2); \
 	if(((x->rm == 2) || (x->rm == 3) || (x->rm == 6)) && !x->segoverride) { \
 	x->useseg = x->segregs[regss]; \

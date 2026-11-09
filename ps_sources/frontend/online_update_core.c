@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
-static int version(const char *text, char prefix, uint32_t parts[3])
+static int version(const char *text, char prefix, uint32_t parts[3], int *development)
 {
     if (!text) return 0;
     if (!strncmp(text,"Firmware ",9)) text+=9;
@@ -20,22 +20,43 @@ static int version(const char *text, char prefix, uint32_t parts[3])
         if (text==start || (text-start>1 && *start=='0')) return 0;
         parts[i]=n;
         if (i<2) { if (*text++!='.') return 0; }
-        else if (*text) return 0;
     }
+    if (development != NULL) *development=0;
+    if (*text == '\0') return 1;
+    if (development == NULL || prefix != 'F' || strncmp(text,"dev",3) ||
+        text[3] < '1' || text[3] > '9') return 0;
+    text+=4;
+    while (*text >= '0' && *text <= '9') ++text;
+    if (*text != '\0') return 0;
+    *development=1;
     return 1;
 }
-int online_update_version_compare(const char *installed,const char *offered,
-                                  char prefix,int *comparison)
+
+static int compare_versions(const char *installed,const char *offered,
+                            char prefix,int *comparison,int allow_development)
 {
     uint32_t a[3],b[3];
+    int development=0;
     if (!comparison || (prefix!='F'&&prefix!='B') ||
-        !version(installed,prefix,a) || !version(offered,prefix,b))
+        !version(installed,prefix,a,allow_development ? &development : NULL) ||
+        !version(offered,prefix,b,NULL))
         return ONLINE_UPDATE_E_VERSION;
-    *comparison=0;
+    *comparison=development;
     for (unsigned i=0;i<3;++i) if (a[i]!=b[i]) {
         *comparison=b[i]>a[i]?1:-1; break;
     }
     return 0;
+}
+
+int online_update_version_compare(const char *installed,const char *offered,
+                                  char prefix,int *comparison)
+{
+    return compare_versions(installed,offered,prefix,comparison,0);
+}
+
+int online_update_firmware_offer_compare(const char *installed,const char *offered,int *comparison)
+{
+    return compare_versions(installed,offered,'F',comparison,1);
 }
 const char *online_update_filename(uint8_t kind)
 {
@@ -159,7 +180,7 @@ static int release(online_update_core_t *c)
             seen|=bit;
             if (bit==1 && (!string(j,value,c->release.tag,sizeof c->release.tag) ||
                 c->release.tag[0]!='F' || strchr(c->release.tag,' ') ||
-                !version(c->release.tag,'F',parts)))
+                !version(c->release.tag,'F',parts,NULL)))
                 return ONLINE_UPDATE_E_RELEASE;
             if ((bit==2 || bit==4) && (j->tokens[value].type!=NJ_BOOL ||
                 !literal(j,value,"false"))) return ONLINE_UPDATE_E_RELEASE;

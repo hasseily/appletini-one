@@ -46,6 +46,7 @@
 #include "../frontend/apple_pal_video_timing.h"
 #include "../frontend/card_control_regs.h"
 #include "../frontend/linear_text_overlay.h"
+#include "../frontend/pc_transporter_cga_capture.h"
 
 #define RESET_RELEASE_REG            0x4000000CU
 #define RESET_RELEASE_CPU1_READY_BIT (1UL << 1)
@@ -336,6 +337,8 @@ int main(void)
         for (;;) { __asm__ volatile ("wfe"); }
     }
     linear_text_overlay_capture_init();
+    pc_transporter_cga_capture_init();
+    apple_cycle_egress_set_checkpoint(pc_transporter_cga_capture_poll);
 
     REG_WRITE(RESET_RELEASE_REG,
               RESET_RELEASE_CPU1_READY_BIT);
@@ -371,6 +374,7 @@ int main(void)
         apple_cycle_renderer_sync_shr_mode(
             (apple_status & CARD_CTRL_APPLE_RESET_SHR_ACTIVE_BIT) != 0U);
         linear_text_overlay_capture_poll();
+        pc_transporter_cga_capture_poll();
         apple_cycle_egress_poll();
 
         /* Diagnostic shadow-dump request from CPU0's UART console.

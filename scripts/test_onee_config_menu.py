@@ -81,7 +81,7 @@ def test_menu_row_state_and_exact_help() -> None:
                                 "void config_menu_draw_clock")
 
     require("CONFIG_MENU_BOOT_ONEE_ITEM 2U" in header and
-            "CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM 5U" in header and
+            "CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM 6U" in header and
             "#define CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM \\\n"
             "    CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM" in header,
             "ONE//e must occupy Boot Settings row 2 before USB bindings")
@@ -98,7 +98,7 @@ def test_menu_row_state_and_exact_help() -> None:
             "the ONE//e standalone row must be dimmed while LOCKED")
     require('"ONE//e video standard"' in boot_draw and
             "config_menu_onee_video_standard_text(menu)" in boot_draw and
-            "y + (row_h * 5)" in boot_draw and
+            "y + (row_h * 6)" in boot_draw and
             "if (onee_fixed != 0U)" in boot_draw and
             '"ONE//e video standard"' not in video_draw and
             "CONFIG_VIDEO_ITEM_ONEE_STANDARD" not in internal,

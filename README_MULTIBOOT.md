@@ -33,7 +33,8 @@ boot. If neither tagged image is valid, a verified legacy image can still boot;
 otherwise Golden stays in its recovery monitor.
 
 In Multitini, use **System > Startup firmware** or **Switch to Appletini**.
-In Appletini, use **Boot Settings > Startup firmware** or **Switch to Multitini**.
+In Appletini, use **Boot Settings > Startup firmware** or select
+**Restart into Multitini** on the **Switch to Multitini** row.
 Changing Startup firmware saves the power-on preference. Switching firmware
 uses a one-shot request and leaves that preference unchanged. Missing targets
 are disabled in the menus. Both actions check the live flash again before

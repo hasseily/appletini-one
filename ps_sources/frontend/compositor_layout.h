@@ -53,8 +53,9 @@
  *   0x3F500000  Apple FB slot 2    (1 MB)              ┘
  *   0x3F600000..0x3F7FFFFF  virtual Z80 Appli-Card RAM (2 MB)
  *   0x3F800000..0x3F8FFFFF  virtual AD8088 address space (1 MB)
- *   0x3F900000..0x3F9FFFFF  PC Transporter RAM section (1 MB)
- *   0x3FA00000..0x3FFFFFFF  free
+ *   0x3F900000..0x3F9FFFFF  PC Transporter guest RAM and CGA capture (1 MB)
+ *   0x3FA00000..0x3FDFFFFF  PC Transporter EMS backing (4 MB, CPU0 only)
+ *   0x3FE00000..0x3FFFFFFF  free
  */
 
 #ifndef COMPOSITOR_LAYOUT_H

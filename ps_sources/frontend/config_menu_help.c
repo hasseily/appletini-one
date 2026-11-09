@@ -30,6 +30,7 @@
 
 #include "config_menu_help.h"
 #include "config_menu_internal.h"   /* for config_tab_t / CONFIG_TAB_* */
+#include "http_download.h"
 
 /* --- authoring helpers: you should not need to change these --------------- */
 
@@ -145,6 +146,10 @@ HELP(boot_onee_standard,
     "Profiles save and restore this target. A live change stays pending until the next virtual reset or restart.",
     "This row appears only while ONE//e is active. A physical Apple's video standard remains automatic.");
 
+HELP(boot_golden_updater,
+    "Saves pending disk and settings writes, then reboots the card into the Golden SD updater.",
+    "Golden checks the SD card for updates before it starts the chosen firmware.");
+
 HELP(boot_startup_firmware,
     "Chooses Appletini or Multitini on the next power-on. The choice is saved in flash, outside profiles.",
     "A missing or corrupt firmware falls back to the other verified firmware. Both missing stays in golden.",
@@ -188,28 +193,29 @@ HELP(boot_bind_tw_slug,
     "The key works only when the slug debug key is armed on the TransWarp tab.");
 
 /* Startup firmware is in flash, outside profiles. ONE//e shares its standard
- * row with the USB reset row. The two multiboot rows precede those bindings. */
+ * row with the USB reset row. */
 static const help_override_t boot_settings_overrides[] = {
     OVERRIDE(0,  boot_timeout),
     OVERRIDE(1,  boot_device),
     OVERRIDE(2,  boot_onee),
+    OVERRIDE(CONFIG_MENU_BOOT_GOLDEN_UPDATER_ITEM, boot_golden_updater),
     OVERRIDE(CONFIG_MENU_BOOT_STARTUP_FIRMWARE_ITEM, boot_startup_firmware),
     OVERRIDE(CONFIG_MENU_BOOT_SWITCH_FIRMWARE_ITEM, boot_switch_firmware),
     OVERRIDE(CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM, boot_bind_reset),
-    OVERRIDE(6,  boot_bind_nav),
-    OVERRIDE(7,  boot_bind_nav),
-    OVERRIDE(8,  boot_bind_nav),
-    OVERRIDE(9,  boot_bind_nav),
-    OVERRIDE(10, boot_bind_tabs),
-    OVERRIDE(11, boot_bind_tabs),
-    OVERRIDE(12, boot_bind_ok_back),
-    OVERRIDE(13, boot_bind_ok_back),
-    OVERRIDE(14, boot_bind_prtscr),
-    OVERRIDE(15, boot_bind_prtscr),
-    OVERRIDE(16, boot_bind_tw_speed),
-    OVERRIDE(17, boot_bind_tw_speed),
-    OVERRIDE(18, boot_bind_tw_speed),
-    OVERRIDE(19, boot_bind_tw_slug),
+    OVERRIDE(CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM + 0U, boot_bind_nav),
+    OVERRIDE(CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM + 1U, boot_bind_nav),
+    OVERRIDE(CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM + 2U, boot_bind_nav),
+    OVERRIDE(CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM + 3U, boot_bind_nav),
+    OVERRIDE(CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM + 4U, boot_bind_tabs),
+    OVERRIDE(CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM + 5U, boot_bind_tabs),
+    OVERRIDE(CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM + 6U, boot_bind_ok_back),
+    OVERRIDE(CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM + 7U, boot_bind_ok_back),
+    OVERRIDE(CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM + 8U, boot_bind_prtscr),
+    OVERRIDE(CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM + 9U, boot_bind_prtscr),
+    OVERRIDE(CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM + 10U, boot_bind_tw_speed),
+    OVERRIDE(CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM + 11U, boot_bind_tw_speed),
+    OVERRIDE(CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM + 12U, boot_bind_tw_speed),
+    OVERRIDE(CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM + 13U, boot_bind_tw_slug),
     OVERRIDE(CONFIG_MENU_BOOT_ONEE_STANDARD_HELP_ITEM, boot_onee_standard),
 };
 
@@ -504,7 +510,7 @@ HELP(ethernet_ftp_sd,
 #ifdef APPLETINI_HTTP_SERVICE
 HELP(ethernet_cogs,
     "Browse Apple II games from the CoGS catalog over Ethernet.",
-    "Select an entry to save its disk image to the SD card. Bundle entries contain more than one title.");
+    "Select an 8-bit game or Replay collection to save it to " HTTP_DOWNLOAD_COGS_DIRECTORY " on the SD card.");
 #endif
 
 static const help_override_t ethernet_overrides[] = {
@@ -539,9 +545,9 @@ HELP(applicard_processor,
 
 HELP(applicard_resource,
     "Resource usage sets how much Appletini CPU time the selected processor may claim per pass.",
-    "Standard is right for everyday use. Maximum improves sustained long computations (compilers,",
-    "number crunching), at the cost of slightly less responsive menus while",
-    "the coprocessor is working flat out. Disk and console speed are unaffected.");
+    "Maximum gives the PC Transporter longer CPU bursts during foreground work.",
+    "It can speed up calculations and games that spend most of their time on the CPU.",
+    "Standard gives menus and other services more time between bursts.");
 
 static const help_override_t applicard_overrides[] = {
     OVERRIDE(1, applicard_processor),

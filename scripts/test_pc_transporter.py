@@ -29,13 +29,21 @@ def host_tests(out, bios, routing):
     env["PATH"] = str(Path(cc).parent) + os.pathsep + env["PATH"]
     front = ROOT / "ps_sources/frontend"
     core = ROOT / "third_party/xtulator_cpu"
-    flags = [cc, "-std=c99", "-Wall", "-Wextra", "-Werror", "-I", front, "-I", core]
+    flags = [cc, "-std=c99", "-Wall", "-Wextra", "-Werror", "-I", front, "-I", core, "-I", out]
     test_inputs = [bios, routing] if bios is not None else []
     machine = front / "pc_transporter_machine.c"
     ad8088 = front / "ad8088_machine.c"
     cpu = core / "cpu.c"
+    service = (front / "pc_transporter_service.c").read_text(encoding="utf-8")
+    for header in ("xil_cache.h", "xil_mmu.h", "xiltimer.h", "../lib/common.h", "../lib/uart.h"):
+        service = service.replace(f'#include "{header}"\n', "")
+    # The native fixture supplies MMIO, DDR and BSP functions. It runs on one thread.
+    barrier = '__asm__ volatile ("dsb sy" ::: "memory");'
+    (out / "pc_transporter_service_native.inc").write_text(
+        service.replace(barrier, "(void)0;"), encoding="utf-8")
     jobs = (
         ("test_pc_transporter_machine", [machine, ad8088, cpu], test_inputs),
+        ("test_pc_transporter_service", [machine], []),
         ("test_pc_transporter_video", [front / "pc_transporter_video.c",
                                        front / "linear_text_overlay_font.c"], []),
         ("test_ad8088_cpu", [machine, ad8088, cpu], []),
@@ -56,7 +64,7 @@ def vivado_tool(name):
 def rtl_tests(out):
     hdl = ROOT / "hdl"
     sources = ["globals.sv", "apple/soft_switch_manager.sv", "apple/pc_transporter_pit.sv",
-               "apple/pc_transporter_card.sv", "apple/disk2_ddr_bridge.sv",
+               "apple/pc_transporter_card.sv", "apple/apple_virtual_bus.sv", "apple/disk2_ddr_bridge.sv",
                "sim/tb_pc_transporter_card.sv", "sim/tb_disk2_ddr_bridge_shared.sv"]
     run([vivado_tool("xvlog"), "--sv", *(hdl / src for src in sources)], out)
     for name, success in (("tb_pc_transporter_card", "PC TRANSPORTER CARD PASS"),

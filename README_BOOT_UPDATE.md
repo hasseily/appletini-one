@@ -17,6 +17,12 @@ The card queues an automatic check at boot and when you enable Ethernet.
 The check runs when the initial boot menu or an isolated ONE//e menu is open,
 SD storage is available, and the Ethernet card has an IP address.
 Use **Check for updates** in About to retry a failed check.
+Closing the menu during a check cancels the check. The menu finishes closing
+as soon as the updater releases its HTTP and SD resources. ONE//e resumes
+after the menu closes and the controls are released.
+
+On the dev14 board retest, switching between Standard and Maximum resource
+usage during an update check allowed the menu to close and ONE//e to resume.
 
 An **Update available** badge appears beside About when either image is newer.
 About compares firmware and boot versions separately. It reads the boot version
@@ -88,7 +94,8 @@ for migration from older layouts and startup selection.
    root as `FIRMWARE.BIN`.
 2. Finish downloads, printing and other SD writes, then stop USB or FTP SD
    sharing.
-3. Restart into Golden. From the firmware console, `:reboot` enters Golden.
+3. In Boot Settings, select **Golden updater → Reboot card**. The firmware
+   console command `:reboot` also enters Golden.
 4. Keep power on while Golden checks the file, programs its firmware slot
    and verifies the flash contents.
 5. Check the update log and the firmware version after boot. The normal SD

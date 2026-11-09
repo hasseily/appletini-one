@@ -219,6 +219,7 @@ static inline int ace_sw_dhires    (uint64_t r) { return (int)((r >> ACE_BIT_SW_
 /* --- Public API -------------------------------------------------------- */
 int  apple_cycle_egress_init(void);
 void apple_cycle_egress_poll(void);
+void apple_cycle_egress_set_checkpoint(void (*checkpoint)(void));
 
 /* AMP secondary-core MMU setup. Marks the ring + producer-pointer
  * region non-cacheable on the calling core's MMU table so reads of

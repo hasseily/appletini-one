@@ -9,6 +9,8 @@
 #include "usb_errno.h"
 #include "usb_gamepad_input.h"
 #include "onee_usb_controls.h"
+#include "pc_transporter_regs.h"
+#include "pc_transporter_service.h"
 #include "usb_keyboard_ascii.h"
 #include "usb_ps4_report.h"
 #include "slot2_gamepad_service.h"
@@ -32,7 +34,16 @@
 #define UART0_BASE 0U
 #define MOUSE_REG_X 0U
 #define MOUSE_REG_Y 1U
-#define REG_READ(address) ((void)(address), 0U)
+static uint32_t mock_pct_status, mock_pct_cga_state;
+static uint32_t mock_reg_read(uintptr_t address)
+{
+    switch (address) {
+    case PCT_STATUS: return mock_pct_status;
+    case PCT_CGA_STATE: return mock_pct_cga_state;
+    default: return 0U;
+    }
+}
+#define REG_READ(address) mock_reg_read(address)
 typedef uint64_t XTime;
 /* PRODUCTION_REPORT_TYPES */
 struct mock_altsetting { struct usb_interface_descriptor intf_desc; };
@@ -100,6 +111,8 @@ static unsigned mock_protocol_calls[2];
 static int mock_protocol_result[2];
 static uint8_t mock_keys[256], mock_modifiers;
 static uint32_t mock_keyboard_calls, mock_key_count;
+static bool enabled, opcode_failed, memory_failed, guest_running, guest_keyboard_exclusive;
+/* PRODUCTION_PCT_KEYBOARD */
 static int32_t mock_mouse_dx, mock_mouse_dy;
 static uint8_t mock_mouse_buttons;
 static uint32_t mock_mouse_calls;
@@ -769,6 +782,7 @@ static int test_fixed_controller_navigation(void)
             USB_HID_MENU_SOURCE_GAMEPAD_BASE + USB_GAMEPAD_BUTTON_HOME, USB_HID_MENU_ACTION_NONE),
             "Home requests one global config-menu toggle");
         usb_hid_service_set_menu_capture(1U);
+        usb_hid_service_set_onee_input_blocked(1U);
         usb_hid_service_set_joystick_preview(0U);
         send_fixed_report(slot, &report, HID_HAT_NEUTRAL);
         CHECK(!g_menu_event_count, "held Home cannot toggle back after opening capture");
@@ -778,6 +792,18 @@ static int test_fixed_controller_navigation(void)
         send_fixed_report(slot, &partial_home, SLOT2_GAMEPAD_HAT_UNCHANGED);
         CHECK(!g_menu_event_count && slot->gamepad_buttons == report.buttons,
             "separate axis packet cannot release or repeat the held Home packet");
+        report.buttons = 0U; send_fixed_report(slot, &report, HID_HAT_NEUTRAL);
+        report.buttons = UINT32_C(1) << USB_GAMEPAD_BUTTON_HOME;
+        send_fixed_report(slot, &report, HID_HAT_NEUTRAL);
+        CHECK(take_fixed_event(USB_HID_MENU_ACTION_TOGGLE,
+            USB_HID_MENU_SOURCE_GAMEPAD_BASE + USB_GAMEPAD_BUTTON_HOME, USB_HID_MENU_ACTION_NONE),
+            "second Home press toggles while menu capture blocks ONE//e input");
+        report.buttons = 0U; send_fixed_report(slot, &report, HID_HAT_NEUTRAL);
+        report.buttons = UINT32_C(1) << USB_GAMEPAD_BUTTON_B;
+        send_fixed_report(slot, &report, HID_HAT_NEUTRAL);
+        CHECK(take_fixed_event(USB_HID_MENU_ACTION_BACK,
+            USB_HID_MENU_SOURCE_GAMEPAD_BASE + USB_GAMEPAD_BUTTON_B, USB_HID_MENU_ACTION_NONE),
+            "controller B still reaches the menu while ONE//e input is blocked");
         report.buttons = 0U; send_fixed_report(slot, &report, HID_HAT_NEUTRAL);
         report.buttons = (UINT32_C(1) << USB_GAMEPAD_BUTTON_HOME) | 1U;
         send_fixed_report(slot, &report, HID_HAT_NEUTRAL);
@@ -1394,6 +1420,88 @@ static int test_fixed_onee_keyboard_menu(uint8_t standby)
         usb_hid_service_set_menu_capture(0U);
     }
     usb_hid_service_set_onee_input_blocked(0U);
+    if (standby == 0U) {
+        const uint8_t escape[] = {HID_KBD_USAGE_ESCAPE};
+        const uint8_t demo_keys[] = {0x14U, HID_KBD_USAGE_ESCAPE, 0x1EU, 0x1FU};
+        const uint8_t demo_scan_codes[] = {0x10U, 0x01U, 0x02U, 0x03U};
+        enabled = true;
+        mock_pct_status = PCT_ENABLED | PCT_HALT | PCT_DRAINED;
+        mock_pct_cga_state = 0x00010F1AU;
+        CHECK(pc_transporter_service_cga_state() == mock_pct_cga_state,
+              "option 2 shows host-drawn graphics while the V30 is halted");
+        const uint8_t static_queued = key_write;
+        hid_process_keyboard_usages(slot, 0U, escape, sizeof(escape));
+        CHECK(mock_key_count == 1U && mock_keys[HID_KBD_USAGE_ESCAPE] &&
+              key_write == static_queued,
+              "option 2 leaves Escape on the Apple keyboard");
+        hid_process_keyboard_usages(slot, 0U, no_keys, sizeof(no_keys));
+        mock_pct_status &= ~PCT_DRAINED;
+        CHECK(pc_transporter_service_cga_state() == 0U,
+              "halted graphics wait for queued VRAM writes");
+        mock_pct_status |= PCT_DRAINED | PCT_FAULT;
+        CHECK(pc_transporter_service_cga_state() == 0U,
+              "halted graphics do not cover an Apple-side error");
+        mock_pct_status = PCT_ENABLED | PCT_HALT | PCT_DRAINED | PCT_RESET;
+        CHECK(pc_transporter_service_cga_state() == 0U,
+              "reset guest does not expose halted graphics");
+        mock_pct_status &= ~PCT_RESET;
+        mock_pct_cga_state = 0x00020008U;
+        CHECK(pc_transporter_service_cga_state() == 0U,
+              "demo baseline CGA text leaves the Apple menu visible");
+        mock_pct_cga_state = 0x00ED0028U;
+        CHECK(pc_transporter_service_cga_state() == mock_pct_cga_state,
+              "held Portware displays the original launcher warning in CGA text");
+        mock_pct_status &= ~PCT_DRAINED;
+        CHECK(pc_transporter_service_cga_state() == 0U,
+              "held Portware text waits for the writes to finish");
+        mock_pct_status |= PCT_DRAINED;
+        mock_pct_cga_state = 0x061E000DU;
+        CHECK(pc_transporter_service_cga_state() == mock_pct_cga_state,
+              "held Portware displays the 80-column Control Panel with blink clear");
+        const uint8_t enter[] = {HID_KBD_USAGE_ENTER};
+        hid_process_keyboard_usages(slot, 0U, enter, sizeof(enter));
+        CHECK(mock_key_count == 1U && mock_keys[HID_KBD_USAGE_ENTER] &&
+              key_write == static_queued,
+              "the halted Control Panel still receives keys on the Apple keyboard");
+        hid_process_keyboard_usages(slot, 0U, no_keys, sizeof(no_keys));
+        sync_keyboard_focus(true, 0U);
+        mock_pct_cga_state = 0x00020008U;
+        CHECK(pc_transporter_service_cga_state() == mock_pct_cga_state,
+              "running Portware can still select CGA text");
+        mock_pct_cga_state = 0x00030002U;
+        CHECK(pc_transporter_service_cga_state() == 0U,
+              "blanked CGA leaves Apple video visible even when the guest runs");
+        for (unsigned i = 0U; i < sizeof(demo_keys); ++i) {
+            const uint8_t queued = key_write;
+            hid_process_keyboard_usages(slot, 0U, &demo_keys[i], 1U);
+            CHECK(mock_key_count == 1U && mock_keys[demo_keys[i]] &&
+                  key_write != queued && key_queue[queued] == demo_scan_codes[i],
+                  "direct V30 guest keeps demo keys on Apple and exposes XT scans");
+            hid_process_keyboard_usages(slot, 0U, no_keys, sizeof(no_keys));
+        }
+        sync_keyboard_focus(true, PCT_APPLE_IRQ_ENABLED);
+        sync_keyboard_focus(true, 0U);
+        hid_process_keyboard_usages(slot, 0U, escape, sizeof(escape));
+        CHECK(!mock_key_count && !g_menu_event_count,
+            "Portware keeps exclusive keys while it briefly masks Apple IRQs");
+        hid_process_keyboard_usages(slot, 0U, no_keys, sizeof(no_keys));
+        usb_hid_service_set_menu_capture(1U);
+        usb_hid_service_set_onee_input_blocked(1U);
+        hid_process_keyboard_usages(slot, 0U, escape, sizeof(escape));
+        CHECK(take_event(USB_HID_MENU_ACTION_BACK) && !mock_key_count && !g_menu_event_count,
+            "active menu still receives Escape while the PC Transporter is running");
+        hid_process_keyboard_usages(slot, 0U, no_keys, sizeof(no_keys));
+        usb_hid_service_set_menu_capture(0U);
+        usb_hid_service_set_onee_input_blocked(0U);
+        sync_keyboard_focus(false, 0U);
+        sync_keyboard_focus(true, 0U);
+        hid_process_keyboard_usages(slot, 0U, escape, sizeof(escape));
+        CHECK(mock_key_count == 1U && mock_keys[HID_KBD_USAGE_ESCAPE],
+              "a fresh direct guest starts with the Apple keyboard available");
+        hid_process_keyboard_usages(slot, 0U, no_keys, sizeof(no_keys));
+        sync_keyboard_focus(false, 0U);
+        enabled = false;
+    }
     for (unsigned side = 0U; side < 2U; ++side) {
         const uint8_t modifier = (uint8_t)(1U << (side ? 7U : 3U));
         hid_process_keyboard_usages(slot, modifier, no_keys, sizeof(no_keys));

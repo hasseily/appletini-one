@@ -29,7 +29,7 @@ def main():
     borders = compositor[compositor.index("static void fill_border_rect"):
                          compositor.index("static int draw_apple_subwindow")]
     apple_drawing = compositor[compositor.index("static int draw_apple_subwindow"):
-                               compositor.index("/* ---------- SuperSprite")]
+                               compositor.index("/* ---------- PC Transporter picture")]
     size_api = compositor[compositor.index("void compositor_set_size_multiplier"):
                           compositor.index("void compositor_init")]
     overlay = (ROOT / "ps_sources/frontend/linear_text_overlay.c").read_text(encoding="utf-8")

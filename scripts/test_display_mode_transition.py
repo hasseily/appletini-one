@@ -94,15 +94,20 @@ static uint32_t g_output_slot_bg_generation[COMP_OUT_SLOT_COUNT];
 static uint8_t g_output_slot_bg_show_bezel[COMP_OUT_SLOT_COUNT];
 static uint8_t g_output_slot_apple_mode[COMP_OUT_SLOT_COUNT];
 static uint8_t g_output_slot_debug_dirty[COMP_OUT_SLOT_COUNT];
+static uint8_t g_output_slot_standby[COMP_OUT_SLOT_COUNT];
 static uint32_t claimed_mode, published_mode;
 typedef struct { uint8_t size_multiplier; } config_menu_t;
 static uint8_t g_storage_activity[64], s_force_full_refresh;
 static unsigned effect_history_clears;
+static uint8_t pct_video_active;
+static unsigned pct_video_polls;
 static uint8_t config_menu_size_multiplier(const config_menu_t *menu)
 {
     return menu->size_multiplier;
 }
 static void effect_clear_history(void) { ++effect_history_clears; }
+static uint8_t pc_transporter_service_guest_running(void) { return pct_video_active; }
+static void pc_transporter_service_video_poll(void) { ++pct_video_polls; }
 
 /* PRODUCTION_SIZE_API */
 
@@ -198,6 +203,18 @@ static void setup(void)
             storage[slot][i] = GUARD_VALUE;
         ui_prepare_static_background(frames[slot], test_bezel != 0U);
         check_background(frames[slot]);
+    }
+    if (test_border == 0U) {
+        pct_video_active = 1U;
+        pct_video_polls = 0U;
+        ui_invalidate_static_backgrounds();
+        for (unsigned slot = 0; slot < COMP_OUT_SLOT_COUNT; ++slot) {
+            fill(frames[slot], OLD_APPLE);
+            ui_prepare_static_background(frames[slot], test_bezel != 0U);
+            check_background(frames[slot]);
+        }
+        CHECK(pct_video_polls == COMP_OUT_SLOT_COUNT * ((FB16_HEIGHT + 3U) / 4U));
+        pct_video_active = 0U;
     }
     check_guards();
 }

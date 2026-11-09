@@ -53,6 +53,7 @@
 #include "pc_transporter_regs.h"
 #include "pc_transporter_service.h"
 #include "pc_transporter_video.h"
+#include "pc_transporter_cga_capture.h"
 #include "supersprite_vdp.h"
 #include "video_blur.h"
 #include "video_mono.h"
@@ -126,6 +127,7 @@ static uint8_t               s_format_badge_enabled = 0u;
 static uint8_t               s_border_enabled = 0u;
 static uint8_t               s_border_flood = 0u;
 static volatile uint8_t      s_force_full_refresh = 0u;
+static int s_pc_transporter_picture_active;
 static volatile uint8_t      s_paused = 0u;
 static uint8_t s_output_mode = DISPLAY_MODE_DEFAULT;
 
@@ -1494,36 +1496,66 @@ static int draw_apple_subwindow(uint16_t *fb, uint8_t slot)
     return 1;
 }
 
+/* ---------- PC Transporter picture ---------- */
+
+typedef struct {
+    uint32_t status;
+    uint32_t crtc_low;
+    uint32_t crtc_high;
+    uint32_t geometry;
+} pc_transporter_picture_t;
+
 /* Read the CGA state without changing the shared CRTC index. */
-static int draw_pc_transporter_picture(uint16_t *fb, uint32_t frame)
+static int read_pc_transporter_picture(pc_transporter_picture_t *picture)
 {
+    picture->status = pc_transporter_service_cga_state();
+    if (picture->status == 0U) {
+        return 0;
+    }
+
+    picture->crtc_low = REG_READ(PCT_CGA_CRTC_LOW);
+    picture->crtc_high = REG_READ(PCT_CGA_CRTC_HIGH);
+    picture->geometry = REG_READ(PCT_CGA_GEOMETRY);
+    const uint32_t last_status = pc_transporter_service_cga_state();
+    if (last_status == 0U) {
+        return 0;
+    }
+    if (picture->status != last_status) {
+        picture->status = last_status;
+        picture->crtc_low = REG_READ(PCT_CGA_CRTC_LOW);
+        picture->crtc_high = REG_READ(PCT_CGA_CRTC_HIGH);
+        picture->geometry = REG_READ(PCT_CGA_GEOMETRY);
+    }
+    return pc_transporter_service_guest_running() ||
+        ((picture->geometry & 0xFFU) != 0U && (picture->geometry & 0x7F00U) != 0U);
+}
+
+static void draw_pc_transporter_picture(uint16_t *fb,
+                                        const pc_transporter_picture_t *picture)
+{
+    const uint32_t status = picture->status;
+    const uint32_t low = picture->crtc_low;
+    const uint32_t high = picture->crtc_high;
+    const uint32_t geometry = picture->geometry;
     int width = COMP_SUBWIN_WIDTH;
     int height = COMP_SUBWIN_HEIGHT;
 
-    if (!pc_transporter_service_video_active()) {
-        return 0;
+    if (width > (int)COMP_OUT_WIDTH) {
+        width = (int)COMP_OUT_WIDTH;
     }
-
-    uint32_t status = REG_READ(PCT_CGA_STATE);
-    uint32_t low = REG_READ(PCT_CGA_CRTC_LOW);
-    uint32_t high = REG_READ(PCT_CGA_CRTC_HIGH);
-    const uint32_t last_status = REG_READ(PCT_CGA_STATE);
-    if (status != last_status) {
-        status = last_status;
-        low = REG_READ(PCT_CGA_CRTC_LOW);
-        high = REG_READ(PCT_CGA_CRTC_HIGH);
+    if (height > (int)COMP_OUT_HEIGHT) {
+        height = (int)COMP_OUT_HEIGHT;
     }
-    if ((status & PCT_CGA_VIDEO_ENABLE) == 0U) {
-        return 0;
-    }
-
     if (width > (height * 4) / 3) {
         width = (height * 4) / 3;
     } else {
         height = (width * 3) / 4;
     }
-    const int x = COMP_SUBWIN_X_OFF + (COMP_SUBWIN_WIDTH - width) / 2;
-    const int y = COMP_SUBWIN_Y_OFF + (COMP_SUBWIN_HEIGHT - height) / 2;
+    const int x = ((int)COMP_OUT_WIDTH - width) / 2;
+    const int y = ((int)COMP_OUT_HEIGHT - height) / 2;
+    const bool guest_running = pc_transporter_service_guest_running();
+    const volatile uint8_t *captured = guest_running ?
+        pc_transporter_cga_capture_claim(status, geometry, low) : NULL;
     const pc_transporter_video_state_t state = {
         .start_address = (uint16_t)(((low >> 16) & 0xFFU) << 8 | (low >> 24)),
         .cursor_address = (uint16_t)(((high & 0xFFU) << 8) | ((high >> 8) & 0xFFU)),
@@ -1531,21 +1563,30 @@ static int draw_pc_transporter_picture(uint16_t *fb, uint32_t frame)
         .cursor_end = (uint8_t)(low >> 8),
         .mode = (uint8_t)status,
         .color = (uint8_t)(status >> 8),
+        .horizontal_displayed = (uint8_t)geometry,
+        .vertical_displayed = (uint8_t)(geometry >> 8),
+        .maximum_scanline = (uint8_t)(geometry >> 16),
+        .graphics_linear = captured != NULL,
     };
-    const volatile uint8_t *vram =
+    const volatile uint8_t *vram = captured != NULL ? captured :
         (const volatile uint8_t *)(uintptr_t)(PCT_DDR_BASE + PCT_CGA_RAM_BASE);
     const volatile uint8_t *font =
         (const volatile uint8_t *)(uintptr_t)(PCT_DDR_BASE + PCT_CGA_FONT_OFFSET);
+    const uint32_t cga_frame = (status & PCT_CGA_GRAPHICS) == 0U ?
+        REG_READ(PCT_CGA_RASTER) >> 16 : 0U;
 
     pc_transporter_video_draw(fb + y * COMP_OUT_WIDTH + x, COMP_OUT_WIDTH,
                               (unsigned)width, (unsigned)height, &state,
-                              vram, font, frame);
+                              vram, font, cga_frame,
+                              guest_running ? pc_transporter_service_video_poll : NULL);
+    if (captured != NULL) {
+        pc_transporter_cga_capture_release();
+    }
     s_picture_rect[s_writer_idx].x = x;
     s_picture_rect[s_writer_idx].y = y;
     s_picture_rect[s_writer_idx].width = width;
     s_picture_rect[s_writer_idx].height = height;
     s_picture_rect[s_writer_idx].valid = 1;
-    return 1;
 }
 
 /* ---------- SuperSprite (TMS9918) overlay ---------- */
@@ -1722,6 +1763,7 @@ uint8_t compositor_size_multiplier(void)
 void compositor_init(compositor_ui_draw_fn draw_fn)
 {
     linear_text_overlay_init();
+    s_pc_transporter_picture_active = 0;
     s_pixel_mask_supported = REG_READ(FB_MASK_CAPABILITY_REG) == FB_MASK_CAPABILITY;
     s_pixel_mask_collecting = 0U;
     memset(s_pixel_mask, 0, sizeof(s_pixel_mask));
@@ -2051,6 +2093,16 @@ int compositor_tick(void)
      * mode during that restore; keep this frame's mode and pixels paired. */
     const uint8_t apple_slot = apple_fb_reader_claim();
 
+    /* Apple and CGA cover different pixels. Invalidate all output slots
+     * before the base pass so each restores its background on next use. */
+    pc_transporter_picture_t pc_transporter_picture;
+    const int pc_transporter_picture_active =
+        read_pc_transporter_picture(&pc_transporter_picture);
+    if (pc_transporter_picture_active != s_pc_transporter_picture_active) {
+        s_pc_transporter_picture_active = pc_transporter_picture_active;
+        compositor_request_full_refresh();
+    }
+
     /* Paint the static background first. The base callback returns non-zero
      * when the boot/config menu owns the whole screen and the Apple subwindow
      * must be suppressed. */
@@ -2075,7 +2127,8 @@ int compositor_tick(void)
             g_compositor_last_apple_mode == APPLE_FB_DISPLAY_MODE_SHR);
     } else {
         XTime_GetTime(&apple_start);
-        if (draw_pc_transporter_picture(fb, now)) {
+        if (pc_transporter_picture_active) {
+            draw_pc_transporter_picture(fb, &pc_transporter_picture);
             s_composited_apple_seq = apple_seq;
             linear_text_overlay_draw(NULL,
                 g_compositor_last_apple_mode == APPLE_FB_DISPLAY_MODE_SHR);

@@ -203,6 +203,7 @@ int online_update_active(void)
 {
     return update.phase!=P_NONE || update.open || update.owns_part || update.http_owned || update.cleanup;
 }
+
 int online_update_prepare_restart(void)
 {
     if (update.status.state == ONLINE_UPDATE_CHECKING) {
@@ -374,7 +375,7 @@ static void available(void)
     int comparison;
     update.status.available_mask=0;
     if (update.release.assets[ONLINE_UPDATE_FIRMWARE].present &&
-        !online_update_version_compare(update.status.installed_f,update.status.latest_f,'F',&comparison) && comparison>0)
+        !online_update_firmware_offer_compare(update.status.installed_f,update.status.latest_f,&comparison) && comparison>0)
         update.status.available_mask|=1U<<ONLINE_UPDATE_FIRMWARE;
     if (update.release.assets[ONLINE_UPDATE_BOOT].present &&
         !online_update_version_compare(update.status.installed_b,update.status.latest_b,'B',&comparison) && comparison>0)
@@ -533,8 +534,8 @@ void online_update_poll(uint8_t allowed,uint8_t busy)
                 strcpy(update.status.latest_f,update.release.tag);
                 update.status.firmware_bytes=update.release.assets[ONLINE_UPDATE_FIRMWARE].size;
                 int comparison;
-                if (!online_update_version_compare(update.status.installed_f,
-                    update.status.latest_f,'F',&comparison) && comparison>0)
+                if (!online_update_firmware_offer_compare(update.status.installed_f,
+                    update.status.latest_f,&comparison) && comparison>0)
                     update.status.available_mask|=1U<<ONLINE_UPDATE_FIRMWARE;
             }
             update.status.boot_bytes=update.release.assets[ONLINE_UPDATE_BOOT].size;

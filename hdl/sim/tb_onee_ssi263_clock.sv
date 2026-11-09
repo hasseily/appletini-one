@@ -52,7 +52,7 @@ module tb_onee_ssi263_clock;
     );
     mockingboard card_i (
         .clk(clk), .rstn(rstn), .apple_q3_raw(q3), .standalone(standalone),
-        .ab_read(bus), .sss(sss), .slot_assign(3'd4),
+        .ab_read(bus), .serve_data(bus.data), .sss(sss), .slot_assign(3'd4),
         .pan(48'h888888888888), .ssi_pan(8'hF0),
         .audio_control(32'h10000000), .audio_sample_tick(audio_tick),
         .ab_write(card_write), .audio_l(audio_l), .audio_r(audio_r),

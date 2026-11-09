@@ -2,15 +2,29 @@
 
 module tb_pc_transporter_card;
     localparam int READ_WAIT = 12;
+    localparam int VIRTUAL_READ_WAIT = 561;
     localparam int RAM_LINES = 98304;
 
     logic clk = 1'b0;
     logic rstn = 1'b0;
     logic card_enabled = 1'b1;
+    logic measure_cga_demo = 1'b0;
+    int cga_demo_clocks = 0;
+    int cga_demo_chars = 0;
     always #5 clk = ~clk;
 
+    always @(posedge clk) begin
+        if (measure_cga_demo) begin
+            cga_demo_clocks <= cga_demo_clocks + 1;
+            if (dut.cga_char_tick) cga_demo_chars <= cga_demo_chars + 1;
+        end
+    end
+
     globals::AppleBus_read ab_read;
+    globals::AppleBus_read card_read;
+    globals::AppleBus_read virtual_read;
     globals::AppleBus_write ab_write;
+    globals::AppleBus_write virtual_write;
     globals::SoftSwitchState sss;
     globals::AxiSimple_common as_common;
     AxiSimple_if axi();
@@ -20,6 +34,19 @@ module tb_pc_transporter_card;
     logic [63:0] mem_req_wdata, mem_rsp_rdata;
     logic [7:0] mem_req_wstrb;
     logic mem_rsp_valid, mem_rsp_error;
+    logic virtual_bus = 1'b0;
+    logic virtual_write_other_byte = 1'b0;
+    logic virtual_cpu_cycle = 1'b0, virtual_req_valid = 1'b0;
+    logic virtual_req_ready, virtual_resp_valid;
+    logic [7:0] virtual_resp_data;
+    logic [15:0] virtual_address = 16'hCE00;
+    logic pct_virtual_hold, pct_virtual_wait;
+    logic model_rsp_valid = 1'b0, model_rsp_error = 1'b0;
+    logic [63:0] model_rsp_data;
+    logic hp3_ready, hp3_done, hp3_error;
+    logic [63:0] hp3_rdata;
+    Axi3_read_if #(.ADDR_WIDTH(32), .DATA_WIDTH(64)) hp3_read();
+    Axi3_write_if #(.ADDR_WIDTH(32), .DATA_WIDTH(64)) hp3_write();
 
     logic [63:0] backing [0:RAM_LINES-1];
     logic backend_busy = 1'b0;
@@ -29,6 +56,7 @@ module tb_pc_transporter_card;
     int remaining;
     int read_count = 0;
     int write_count = 0;
+    int hp3_read_count = 0;
     int alias_reads_before;
     int alias_writes_before;
     logic [19:0] accepted_addr;
@@ -36,26 +64,72 @@ module tb_pc_transporter_card;
     logic [7:0] accepted_strobes;
     logic accepted_write, accepted_error;
 
-    pc_transporter_card #(.READ_WAIT_CYCLES(READ_WAIT)) dut (
-        .clk(clk), .rstn(rstn), .ab_read(ab_read), .sss(sss),
+    assign card_read = virtual_bus ? virtual_read : ab_read;
+
+    pc_transporter_card #(
+        .READ_WAIT_CYCLES(READ_WAIT), .VIRTUAL_READ_WAIT_CYCLES(VIRTUAL_READ_WAIT)
+    ) dut (
+        .clk(clk), .rstn(rstn), .ab_read(card_read), .sss(sss),
+        .virtual_bus(virtual_bus),
         .card_enabled(card_enabled), .slot_assign(3'd5),
         .as_common(as_common), .as_client(axi), .mem_req_valid(mem_req_valid),
         .mem_req_ready(mem_req_ready), .mem_req_write(mem_req_write),
         .mem_req_addr(mem_req_addr), .mem_req_wdata(mem_req_wdata),
         .mem_req_wstrb(mem_req_wstrb), .mem_rsp_valid(mem_rsp_valid),
         .mem_rsp_rdata(mem_rsp_rdata), .mem_rsp_error(mem_rsp_error),
+        .virtual_capture_wait(pct_virtual_wait), .virtual_data_hold(pct_virtual_hold),
         .ab_write(ab_write)
     );
 
     soft_switch_manager switches (
-        .clk(clk), .rstn(rstn), .ramworks_en(1'b0), .ab_read(ab_read), .sss(sss)
+        .clk(clk), .rstn(rstn), .ramworks_en(1'b0), .ab_read(card_read), .sss(sss)
     );
 
-    assign mem_req_ready = !backend_busy && !backend_blocked;
+    always_comb begin
+        virtual_write = ab_write;
+        if (!virtual_cpu_cycle) begin
+            virtual_write.assert_dma = 1'b1;
+            virtual_write.wr_addr_rw_en = 1'b1;
+            virtual_write.wr_addr = virtual_write_other_byte ? 16'hCE08 : virtual_address;
+            virtual_write.wr_rw = !virtual_write_other_byte;
+            if (virtual_write_other_byte) begin
+                virtual_write.wr_dma_data_en = 1'b1;
+                virtual_write.wr_data = 8'h5A;
+            end
+        end
+    end
+
+    apple_virtual_bus #(.ENABLE_DATA_CAPTURE_HOLD(1'b1)) onee_bus (
+        .clk(clk), .resetn(rstn && virtual_bus), .video_mode_50hz(1'b0),
+        .res_n_in(1'b1), .irq_n_in(1'b1), .nmi_n_in(1'b1), .rdy_n_in(1'b1),
+        .dma_n_in(1'b1), .inh_n_in(1'b1),
+        .req_valid(virtual_req_valid), .req_ready(virtual_req_ready),
+        .req_addr(virtual_address), .req_rw(1'b1), .req_wdata(8'd0),
+        .resp_valid(virtual_resp_valid), .resp_rdata(virtual_resp_data),
+        .data_capture_hold(pct_virtual_hold), .data_capture_wait(pct_virtual_wait),
+        .floating_bus_data(8'hFF), .ab_write(virtual_write),
+        .ab_read(virtual_read), .data_phase_data()
+    );
+
+    disk2_ddr_bridge hp3_bridge (
+        .clk(clk), .rstn(rstn), .mc_line_addr(21'd0), .mc_rw(1'b1),
+        .mc_wdata(64'd0), .mc_wstrb(8'd0), .mc_valid(1'b0),
+        .mc_ready(), .mc_rdata(), .mc_rvalid(),
+        .pct_valid(virtual_bus && mem_req_valid), .pct_write(mem_req_write),
+        .pct_addr(mem_req_addr), .pct_wdata(mem_req_wdata), .pct_wstrb(mem_req_wstrb),
+        .pct_ready(hp3_ready), .pct_done(hp3_done), .pct_rdata(hp3_rdata),
+        .pct_error(hp3_error), .axi_read(hp3_read), .axi_write(hp3_write)
+    );
+
+    assign mem_req_ready = virtual_bus ? hp3_ready : !backend_busy && !backend_blocked;
+    assign mem_rsp_valid = virtual_bus ? hp3_done : model_rsp_valid;
+    assign mem_rsp_rdata = virtual_bus ? hp3_rdata : model_rsp_data;
+    assign mem_rsp_error = virtual_bus ? hp3_error : model_rsp_error;
 
     always @(posedge clk) begin
-        mem_rsp_valid <= 1'b0;
-        if (mem_req_valid && mem_req_ready) begin
+        model_rsp_valid <= 1'b0;
+        if (hp3_read.arvalid && hp3_read.arready) hp3_read_count <= hp3_read_count + 1;
+        if (!virtual_bus && mem_req_valid && mem_req_ready) begin
             if ((mem_req_addr[2:0] != 3'd0) || (mem_req_addr >= 20'hC0000)) begin
                 $fatal(1, "Backend saw an invalid line address %05x", mem_req_addr);
             end
@@ -75,9 +149,9 @@ module tb_pc_transporter_card;
         if (backend_busy) begin
             if (remaining == 1) begin
                 backend_busy  <= 1'b0;
-                mem_rsp_valid <= 1'b1;
-                mem_rsp_error <= accepted_error;
-                mem_rsp_rdata <= backing[accepted_addr[19:3]];
+                model_rsp_valid <= 1'b1;
+                model_rsp_error <= accepted_error;
+                model_rsp_data  <= backing[accepted_addr[19:3]];
                 if (accepted_write && !accepted_error) begin
                     for (int i = 0; i < 8; i++) begin
                         if (accepted_strobes[i]) begin
@@ -237,6 +311,210 @@ module tb_pc_transporter_card;
         end
     endtask
 
+    task automatic virtual_hp3_read(input logic [15:0] address, input int response_clock,
+                                    input logic [7:0] expected, input bit cpu_cycle = 1'b0,
+                                    input bit keep_bus = 1'b0);
+        bit timed_out;
+        int capture_clock, elapsed, reads_before, clocks_to_start;
+
+        timed_out = response_clock < 0;
+        // R travels through the HP3 bridge, the card reply, then data capture.
+        capture_clock = timed_out ? 75 + VIRTUAL_READ_WAIT :
+                        (response_clock < 121 ? 124 : response_clock + 3);
+
+        if (virtual_bus) begin
+            clocks_to_start = (130 - $unsigned(onee_bus.phase_q)) % 130;
+            repeat (clocks_to_start) @(negedge clk);
+        end
+        reads_before = hp3_read_count;
+        virtual_address = address;
+        virtual_cpu_cycle = cpu_cycle;
+        virtual_req_valid = cpu_cycle;
+        virtual_bus = 1'b1;
+        repeat (8) @(negedge clk);
+        if (cpu_cycle && !virtual_req_ready) $fatal(1, "Virtual CPU request was not accepted");
+        @(negedge clk);
+        virtual_req_valid = 1'b0;
+        repeat (64) @(negedge clk);
+        if (!virtual_read.serve_en || virtual_read.dma !== cpu_cycle ||
+            virtual_read.addr != address || !hp3_read.rready ||
+            hp3_read.araddr != 32'h3F92_0100 || ab_write.wr_data_en) begin
+            $fatal(1, "Virtual read %04x did not prefetch before serve", address);
+        end
+
+        for (elapsed = 73; elapsed < capture_clock; elapsed++) begin
+            hp3_read.rvalid = elapsed == response_clock;
+            if (virtual_read.data_en || virtual_resp_valid ||
+                pct_virtual_wait !== (elapsed >= 123 && elapsed < capture_clock - 1)) begin
+                $fatal(1, "Virtual read %04x captured or held at the wrong clock %0d", address, elapsed);
+            end
+            if (pct_virtual_wait && (virtual_read.addr != address || !virtual_read.rw ||
+                virtual_read.addr_en || virtual_read.sss_en || virtual_read.serve_en ||
+                virtual_read.drive_en)) begin
+                $fatal(1, "Virtual read %04x changed its address or repeated a strobe", address);
+            end
+            @(negedge clk);
+        end
+        hp3_read.rvalid = 1'b0;
+        if (!virtual_read.data_en || pct_virtual_wait || virtual_read.data !== expected ||
+            ab_write.wr_data_en !== !timed_out) begin
+            $fatal(1, "Virtual read %04x captured %02x at clock %0d, expected %02x",
+                   address, virtual_read.data, capture_clock, expected);
+        end
+        @(negedge clk);
+        if (virtual_read.data_en || ab_write.wr_data_en || virtual_resp_valid !== cpu_cycle ||
+            (cpu_cycle && virtual_resp_data !== expected)) begin
+            $fatal(1, "Virtual read %04x did not close with one CPU response when requested", address);
+        end
+        if (timed_out) begin
+            if (!hp3_read.rready) $fatal(1, "Timed-out HP3 read was not awaiting its stale response");
+            hp3_read.rdata = '1;
+            hp3_read.rvalid = 1'b1;
+        end
+        @(negedge clk);
+        hp3_read.rvalid = 1'b0;
+        hp3_read.rdata = 64'h0000_0000_00C7_B6A5;
+        repeat (3) begin
+            if (virtual_read.data_en || virtual_resp_valid || ab_write.wr_data_en || pct_virtual_wait) begin
+                $fatal(1, "Virtual read %04x repeated its data or consumed a stale response", address);
+            end
+            @(negedge clk);
+        end
+        if (hp3_read_count != reads_before + 1) $fatal(1, "Virtual read %04x repeated HP3 AR", address);
+        if (!keep_bus) begin
+            virtual_bus = 1'b0;
+            virtual_cpu_cycle = 1'b0;
+            virtual_address = 16'hCE00;
+        end
+    endtask
+
+    task automatic virtual_read_after_write;
+        int read_ready_phase, response_phase;
+
+        hp3_write.awready = 1'b1;
+        hp3_write.wready = 1'b1;
+        virtual_write_other_byte = 1'b1;
+        virtual_bus = 1'b1;
+        repeat (125) @(negedge clk);
+        virtual_write_other_byte = 1'b0;
+
+        // The preceding cycle wrote $CE08. Hold its AXI write response
+        // past phase 25 of the $CE00 read, then drain it before serve.
+        repeat (30) @(negedge clk);
+        if (!virtual_read.addr_en || !hp3_write.bready ||
+            hp3_write.awaddr != 32'h3F92_0108 || hp3_write.wstrb != 8'h01 ||
+            hp3_write.wdata[7:0] != 8'h5A || hp3_read.arvalid || hp3_read.rready) begin
+            $fatal(1, "Virtual read did not reach phase 25 behind the pending write");
+        end
+        repeat (5) @(negedge clk);
+        hp3_write.bvalid = 1'b1;
+        @(negedge clk);
+        hp3_write.bvalid = 1'b0;
+
+        for (read_ready_phase = 31; read_ready_phase < 73; read_ready_phase++) begin
+            if (hp3_read.rready) break;
+            @(negedge clk);
+        end
+        if (read_ready_phase == 73 || hp3_read.araddr != 32'h3F92_0100) begin
+            $fatal(1, "Virtual read did not recover its prefetch after the prior write drained");
+        end
+
+        // Return data 55 clocks after AR acceptance. A request started at
+        // serve could not receive this response before data capture.
+        response_phase = read_ready_phase - 1 + 55;
+        if (response_phase > 121) $fatal(1, "Recovered prefetch started too late");
+        repeat (response_phase - read_ready_phase) @(negedge clk);
+        hp3_read.rvalid = 1'b1;
+        @(negedge clk);
+        hp3_read.rvalid = 1'b0;
+        repeat (123 - response_phase) @(negedge clk);
+        if (!virtual_read.data_en || virtual_read.data !== 8'hA5 || !ab_write.wr_data_en) begin
+            $fatal(1, "Recovered virtual prefetch did not return the completion marker");
+        end
+        @(negedge clk);
+        if (ab_write.wr_data_en) $fatal(1, "Recovered virtual reply remained driven after data_en");
+        virtual_bus = 1'b0;
+        hp3_write.awready = 1'b0;
+        hp3_write.wready = 1'b0;
+    endtask
+
+    task automatic expect_cgademo_raster;
+        const logic [7:0] registers [0:15] = '{
+            8'h3E, 8'h30, 8'h31, 8'h05, 8'h7F, 8'h06, 8'h78, 8'h7A,
+            8'h02, 8'h01, 8'h20, 8'h07, 8'h00, 8'h00, 8'h00, 8'h00
+        };
+        const int line_chars = 63;
+        const int frame_limit = 2_470_000;
+        int frame_clocks, fast_start_clocks, fast_start_chars, fast_line_clocks;
+        logic [15:0] frame_seq;
+
+        expect_read(16'hCF31, 8'h00, 8'h09);
+        measure_cga_demo = 1'b1;
+        apple_write(16'hCF2E, 8'h02);
+        for (int i = 0; i < 16; i++) begin
+            apple_write(16'hCF2C, 8'(i));
+            apple_write(16'hCF2D, registers[i]);
+        end
+        apple_write(16'hCF2F, 8'h0F);
+        apple_write(16'hCF2E, 8'h1A);
+        expect_axi(8'h10, 32'h00017830, 32'hFFFFFFFF);
+        frame_seq = dut.cga_frame_q;
+        expect_read(16'hCF31, 8'h00, 8'h09);
+        while (!dut.cga_hblank_q && cga_demo_clocks < 10_000) @(negedge clk);
+        if (!dut.cga_hblank_q || cga_demo_chars != 48) begin
+            $fatal(1, "CGADEMO2 horizontal blank must start at character 48");
+        end
+        expect_read(16'hCF31, 8'h01, 8'h09);
+        while (dut.cga_hblank_q && cga_demo_clocks < 10_000) @(negedge clk);
+        if (dut.cga_hblank_q || cga_demo_chars != line_chars) begin
+            $fatal(1, "CGADEMO2 horizontal blank must end at the next 63-character line");
+        end
+
+        while (!dut.cga_vsync && cga_demo_clocks < frame_limit) @(negedge clk);
+        if (!dut.cga_vsync || cga_demo_chars != 244 * line_chars) begin
+            $fatal(1, "CGADEMO2 vertical sync must start at line 244");
+        end
+        expect_axi(8'h11, {frame_seq, 16'h0F40}, 32'hFFFFFFFF);
+        expect_read(16'hCF31, 8'h08, 8'h09);
+        apple_write(16'hCF2E, 8'h12);
+        expect_read(16'hCF31, 8'h08, 8'h09);
+        // Disabling video does not stop status transitions. Horizontal
+        // blank must also remain observable inside a vertical sync pulse.
+        while (!dut.cga_hblank_q && cga_demo_clocks < frame_limit) @(negedge clk);
+        expect_read(16'hCF31, 8'h09, 8'h09);
+        while (dut.cga_vsync && cga_demo_clocks < frame_limit) @(negedge clk);
+        if (dut.cga_vsync || cga_demo_chars != (244 + 16) * line_chars) begin
+            $fatal(1, "CGADEMO2 vertical sync must last 16 scanlines");
+        end
+        expect_read(16'hCF31, 8'h00, 8'h09);
+
+        while (dut.cga_adjust_q && cga_demo_clocks < frame_limit) @(negedge clk);
+        if (dut.cga_adjust_q || cga_demo_chars != 262 * line_chars ||
+            cga_demo_clocks < 2_440_000 || cga_demo_clocks >= frame_limit) begin
+            $fatal(1, "CGADEMO2 frame measured %0d characters over %0d fabric clocks",
+                   cga_demo_chars, cga_demo_clocks);
+        end
+        frame_clocks = cga_demo_clocks;
+        expect_axi(8'h11, {frame_seq + 16'd1, 16'h0000}, 32'hFFFFFFFF);
+
+        // Mode bit 0 selects eight dots instead of sixteen per character.
+        // Measure one whole line after changing modes at the frame boundary.
+        apple_write(16'hCF2E, 8'h1B);
+        while (!dut.cga_line_start_q && cga_demo_clocks < frame_limit) @(negedge clk);
+        fast_start_clocks = cga_demo_clocks;
+        fast_start_chars = cga_demo_chars;
+        @(negedge clk);
+        while (!dut.cga_line_start_q && cga_demo_clocks < frame_limit) @(negedge clk);
+        fast_line_clocks = cga_demo_clocks - fast_start_clocks;
+        if (cga_demo_chars - fast_start_chars != line_chars ||
+            fast_line_clocks < 4_670 || fast_line_clocks > 4_695) begin
+            $fatal(1, "CGA fast mode measured %0d fabric clocks per line", fast_line_clocks);
+        end
+        $display("CGADEMO2 raster: 63 x 262 characters in %0d fabric clocks, fast line %0d clocks",
+                 frame_clocks, fast_line_clocks);
+        measure_cga_demo = 1'b0;
+    endtask
+
     task automatic pointer(input logic [23:0] value);
         apple_write(16'hCF00, value[7:0]);
         apple_write(16'hCF01, value[15:8]);
@@ -262,8 +540,15 @@ module tb_pc_transporter_card;
         ab_read.res = 1'b1;
         as_common = '0;
         axi.awvalid = 1'b0;
-        mem_rsp_valid = 1'b0;
-        mem_rsp_error = 1'b0;
+        hp3_read.arready = 1'b1;
+        hp3_read.rvalid = 1'b0;
+        hp3_read.rdata = 64'h0000_0000_00C7_B6A5;
+        hp3_read.rresp = 2'b00;
+        hp3_read.rlast = 1'b1;
+        hp3_write.awready = 1'b0;
+        hp3_write.wready = 1'b0;
+        hp3_write.bvalid = 1'b0;
+        hp3_write.bresp = 2'b00;
         backing[20'h00000 >> 3] = 64'h8877665544332211;
         backing[20'h001F8 >> 3] = 64'hA800000000000000;
         backing[20'h0FFF8 >> 3] = 64'hB700000000000000;
@@ -284,7 +569,23 @@ module tb_pc_transporter_card;
         expect_quiet(3);
         finish_cycle('0);
 
+        // CGADEMO2 and the PCTTEST identity case read these slot bytes.
         expect_read(16'hC500, 8'hFF);
+        expect_read(16'hC505, 8'h03);
+        expect_read(16'hC507, 8'h00);
+        expect_read(16'hC5F5, 8'hAE);
+        expect_read(16'hC5F6, 8'h50);
+        expect_read(16'hC5F7, 8'h43);
+        expect_read(16'hC5F8, 8'h54);
+        expect_read(16'hC5F9, 8'hFF);
+        card_enabled = 1'b0;
+        start_cycle(16'hC505, 1'b1, 1'b1);
+        expect_quiet(4);
+        finish_cycle('0);
+        card_enabled = 1'b1;
+        if (read_count != 0 || write_count != 0) begin
+            $fatal(1, "Slot identity reads reached the DDR backend");
+        end
         apple_write(16'hC822, 8'hA4);
         expect_read(16'hC822, 8'hA4);
         axi_write(8'h03, 32'h00000022);
@@ -411,17 +712,51 @@ module tb_pc_transporter_card;
         expect_read(16'hCF00, 8'h01);
 
         // A native-looking early address must not start a request during DMA.
+        alias_reads_before = read_count;
         start_early_read(16'hCF04, 1'b0);
         repeat (8) begin
             if (mem_req_valid) $fatal(1, "DMA cycle started an early read");
             @(negedge clk);
         end
+        if (read_count != alias_reads_before) $fatal(1, "Physical DMA read prefetched RAM");
         confirm_early_read(16'hCF04);
         repeat (8) @(negedge clk);
         if (!ab_write.wr_data_en || ab_write.wr_data != 8'hE6) begin
             $fatal(1, "DMA cycle did not use the authoritative read");
         end
         finish_cycle('0);
+
+        apple_write(16'hCF0E, 8'h02);
+        apple_write(16'hCF0F, 8'h01);
+        virtual_hp3_read(16'hCE00, 121, 8'hA5);
+        expect_axi(8'h05, 32'd0);
+        expect_axi(8'h0E, 32'd0);
+        expect_axi(8'h0F, 32'd0);
+        virtual_hp3_read(16'hCE00, 122, 8'hA5);
+        expect_axi(8'h0E, 32'd1);
+        expect_axi(8'h0F, 32'd1);
+        virtual_hp3_read(16'hCE02, 130, 8'hC7);
+        pointer(24'h020101);
+        virtual_hp3_read(16'hCF03, 250, 8'hB6, 1'b1);
+        expect_read(16'hCF00, 8'h02);
+        expect_axi(8'h05, 32'd0);
+        expect_axi(8'h0E, 32'd3);
+        expect_axi(8'h0F, 32'd129);
+
+        // No HP3 response until after timeout. A subsequent CPU read must
+        // succeed on the same running bus and get its own lane's data.
+        virtual_hp3_read(16'hCE00, -1, 8'hFF, 1'b1, 1'b1);
+        virtual_hp3_read(16'hCE02, 121, 8'hC7, 1'b1);
+        expect_axi(8'h05, 32'd1);
+        expect_axi(8'h06, 32'd0);
+        expect_axi(8'h07, 32'd0);
+        expect_axi(8'h0E, 32'd4);
+        expect_axi(8'h0F, 32'd512);
+        axi_write(8'h08, 32'd1);
+        expect_axi(8'h0E, 32'd0);
+        expect_axi(8'h0F, 32'd0);
+        virtual_read_after_write();
+        expect_axi(8'h05, 32'd0);
 
         // A pointer write to the B0000 region also writes its CGA alias.
         // The page window writes the selected RAM byte only.
@@ -718,6 +1053,7 @@ module tb_pc_transporter_card;
         expect_read(16'hC500, 8'hFF);
         expect_read(16'hCF10, 8'h00);
         expect_read(16'hCF11, 8'h00);
+        expect_cgademo_raster();
 
         if (read_count < 10) $fatal(1, "The synthetic backend was not exercised");
         $display("PC TRANSPORTER CARD PASS");

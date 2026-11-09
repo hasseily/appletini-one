@@ -211,8 +211,8 @@ def main():
     mode.add_argument("--audit-only", action="store_true")
     args = parser.parse_args()
     out, run_dir = args.output.resolve(), args.timing_run.resolve()
-    if not re.fullmatch(r"F\d+\.\d+\.\d+", args.version) or not out.is_relative_to(ROOT / "build") or out == ROOT / "build":
-        raise RuntimeError("Use a stable F version and an explicit project build/ candidate directory")
+    if not re.fullmatch(r"F\d+\.\d+\.\d+(?:dev[1-9][0-9]*)?", args.version) or not out.is_relative_to(ROOT / "build") or out == ROOT / "build":
+        raise RuntimeError("Use an F version with an optional dev number and an explicit project build/ candidate directory")
     if args.finalize_only or args.audit_only:
         report = json.loads((out / "ARM_BUILD.json").read_text())
         if report["version"] != args.version:

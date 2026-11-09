@@ -52,6 +52,8 @@ typedef struct {
  * Rendering them at a native font size keeps settings readable at 640x400. */
 uint8_t cmui_compact_active(void);
 void cmui_compact_begin(void);
+/* Fit a long list in the current compact frame without reducing the font. */
+void cmui_compact_use_dense_rows(void);
 /* A small About notification; the compact tab wraps when necessary. */
 void cmui_set_update_badge(uint8_t available);
 /* Rows that fit above the footer when the page has no help text. */

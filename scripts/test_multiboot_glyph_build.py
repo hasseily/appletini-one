@@ -95,7 +95,7 @@ class GlyphBuildTests(unittest.TestCase):
         plan = self.make_source_plan()
         names = {path.name for path in plan["sources"]}
         self.assertTrue({"main.c", "uart.c", "crc32.c", "apple_cycle_renderer.c",
-                         "apple_fb_handoff.c"}.issubset(names))
+                         "apple_fb_handoff.c", "pc_transporter_cga_capture.c"}.issubset(names))
         self.assertFalse(builder.CORE1_EXCLUDED_LIBS & names)
         self.assertNotIn("glyph_api.c", names)
         self.assertEqual(plan["domain"], "standalone_ps7_cortexa9_1")

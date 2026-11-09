@@ -62,8 +62,10 @@ def static_contract_checks() -> None:
         raise RuntimeError("virtual bus must register the resolved data byte")
     if "phase_data_q ? cycle_data_q : bus_data_live" not in rtl:
         raise RuntimeError("virtual bus must hold data only during data_en")
-    if "phase_data_q <= (phase_q == PHASE_WIDTH'(DATA_CLK - 1))" not in rtl:
-        raise RuntimeError("virtual bus must register its data phase strobe")
+    if ("phase_data_q <= capture_data;" not in rtl or
+            "if (capture_data) begin" not in rtl or
+            "capture_data = phase_capture && !data_capture_wait;" not in rtl):
+        raise RuntimeError("virtual bus must register data and its strobe after a capture hold")
 
 
 def main() -> None:

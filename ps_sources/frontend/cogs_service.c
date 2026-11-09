@@ -10,13 +10,21 @@
 enum { P_IDLE, P_PAGE_START, P_PAGE_READ, P_IMAGE_START, P_IMAGE_READ,
        P_IMAGE_WRITE, P_HTTP_CLEANUP };
 
+#define COGS_MAX_SOURCE_PAGES 256U
+#define COGS_MAX_GAMES 256U
+
 static cogs_catalog_page_t catalog;
 static cogs_catalog_page_t incoming;
+static cogs_catalog_entry_t games[COGS_MAX_GAMES];
 static cogs_service_status_t status;
-static uint16_t requested_page;
+static uint16_t source_page;
+static uint16_t source_pages;
+static uint16_t game_count;
 static uint8_t selected_row;
 static uint8_t phase;
+static uint8_t phase_after_cleanup;
 static uint8_t cancel_requested;
+static uint8_t cache_ready;
 
 int cogs_service_active(void)
 {
@@ -39,17 +47,42 @@ static void set_status(uint8_t state, const char *detail)
     (void)snprintf(status.detail, sizeof(status.detail), "%s", detail);
 }
 
-int cogs_service_browse(uint16_t page)
+static void show_page(uint16_t page)
 {
-    if (cogs_service_active() || page == 0U ||
-        (page != 1U && page > catalog.pages)) {
+    const unsigned offset = (page - 1U) * COGS_PAGE_CAPACITY;
+    const unsigned remaining = game_count - offset;
+    catalog.count = (uint8_t)(remaining < COGS_PAGE_CAPACITY ? remaining : COGS_PAGE_CAPACITY);
+    memcpy(catalog.entries, &games[offset], catalog.count * sizeof(games[0]));
+    status.page = catalog.pages != 0U ? page : 0U;
+    status.received = status.total = 0U;
+    set_status(COGS_READY, catalog.count != 0U ? "Choose a game to download" :
+                                               "No 8-bit game disks");
+}
+
+int cogs_service_browse_first(void)
+{
+    if (cogs_service_active()) {
         return -1;
     }
-    requested_page = page;
+    if (cache_ready) {
+        show_page(1U);
+        return 0;
+    }
+    source_page = 1U;
+    source_pages = game_count = 0U;
     cancel_requested = 0U;
     status.received = status.total = 0U;
     phase = P_PAGE_START;
-    set_status(COGS_LOADING, "Loading 8-bit games");
+    set_status(COGS_LOADING, "Loading 8-bit game disks");
+    return 0;
+}
+
+int cogs_service_browse(uint16_t page)
+{
+    if (cogs_service_active() || !cache_ready || page == 0U || page > catalog.pages) {
+        return -1;
+    }
+    show_page(page);
     return 0;
 }
 
@@ -72,14 +105,20 @@ void cogs_service_cancel(void)
     cancel_requested = 1U;
 }
 
-static void release_http(void)
+static void release_http_to(uint8_t next)
 {
-    phase = P_IDLE;
+    phase = next;
     if (http_service_getowner() == HTTP_OWNER_COGS &&
         http_service_cancel_owned(HTTP_OWNER_COGS) != 0 &&
         http_service_getowner() == HTTP_OWNER_COGS) {
+        phase_after_cleanup = next;
         phase = P_HTTP_CLEANUP;
     }
+}
+
+static void release_http(void)
+{
+    release_http_to(P_IDLE);
 }
 
 static void finish(uint8_t state, const char *detail)
@@ -118,13 +157,30 @@ static void read_catalog(void)
     size_t length = 0U;
     const uint8_t *data = http_service_retained_owned(HTTP_OWNER_COGS, &length);
     if (data == NULL || cogs_catalog_parse(data, length, &incoming) != 0 ||
-        (incoming.pages != 0U && requested_page > incoming.pages)) {
+        source_page > incoming.pages || (source_pages != 0U && source_pages != incoming.pages)) {
         finish(COGS_FAILED, "Invalid CoGS catalog page");
         return;
     }
-    catalog = incoming;
-    status.page = requested_page;
-    finish(COGS_READY, catalog.count == 0U ? "No 8-bit games on this page" : "Choose a game to download");
+    const unsigned new_count = (unsigned)game_count + incoming.count;
+    if (incoming.pages > COGS_MAX_SOURCE_PAGES || new_count > COGS_MAX_GAMES) {
+        finish(COGS_FAILED, "CoGS catalog exceeds the browser limit");
+        return;
+    }
+    source_pages = incoming.pages;
+    memcpy(&games[game_count], incoming.entries, incoming.count * sizeof(games[0]));
+    game_count = (uint16_t)new_count;
+
+    if (source_page < source_pages) {
+        ++source_page;
+        (void)snprintf(status.detail, sizeof(status.detail), "Loading catalog page %u of %u",
+                       (unsigned)source_page, (unsigned)source_pages);
+        release_http_to(P_PAGE_START);
+        return;
+    }
+    catalog.pages = (uint16_t)((game_count + COGS_PAGE_CAPACITY - 1U) / COGS_PAGE_CAPACITY);
+    cache_ready = 1U;
+    show_page(1U);
+    release_http();
 }
 
 static void begin_image(const http_status_t *response)
@@ -151,8 +207,7 @@ static void begin_image(const http_status_t *response)
         finish(COGS_FAILED, "Response is not a disk image");
         return;
     }
-    const char *title = entry->bundle[0] != '\0' ? entry->bundle : entry->title;
-    (void)snprintf(name, sizeof(name), "%s%.*s", title, (int)extension_length, extension);
+    (void)snprintf(name, sizeof(name), "%s%.*s", entry->title, (int)extension_length, extension);
     const int result = http_download_begin_cogs(response, name, entry->bytes);
     if (result != 0) {
         transport_error("CoGS download", 0U, result);
@@ -179,10 +234,9 @@ static void poll_image_writer(uint8_t allowed)
         return;
     }
     if (download.state == HTTP_DL_DONE) {
-        const char *path = http_download_cogs_path();
-        const char *name = strrchr(path, '/');
         status.state = COGS_SAVED;
-        (void)snprintf(status.detail, sizeof(status.detail), "Saved %.85s", name != NULL ? name + 1 : path);
+        (void)snprintf(status.detail, sizeof(status.detail), COGS_SAVED_PREFIX "%s",
+                       http_download_cogs_path());
         release_http();
     } else if (cancel_requested || download.state == HTTP_DL_CANCELLED) {
         finish(COGS_READY, "Download cancelled");
@@ -197,7 +251,11 @@ void cogs_service_poll(uint8_t allowed)
         return;
     }
     if (phase == P_HTTP_CLEANUP) {
-        release_http();
+        if (phase_after_cleanup == P_PAGE_START && (cancel_requested || !allowed)) {
+            finish(catalog.count != 0U ? COGS_READY : COGS_IDLE, "CoGS request cancelled");
+        } else {
+            release_http_to(phase_after_cleanup);
+        }
         return;
     }
     if (phase == P_IMAGE_WRITE) {
@@ -215,7 +273,7 @@ void cogs_service_poll(uint8_t allowed)
     if (phase == P_PAGE_START) {
         char url[96];
         (void)snprintf(url, sizeof(url),
-                       "https://a2cogs.com/disks/search?q=&p=%u&cat=G&host=8", requested_page);
+                       "https://a2cogs.com/disks/search?q=&p=%u&cat=G&host=8", (unsigned)source_page);
         start_http(url, 1U, P_PAGE_READ);
         return;
     }

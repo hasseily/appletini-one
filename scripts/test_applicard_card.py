@@ -215,7 +215,7 @@ def check_hdl():
     # apple_top wiring: enable bit 5, gate_ab, arbiter membership.
     require("wire card_slot5_enable = card_slot_enable_mask_q[5];" in top,
             "slot 5 enable wire missing")
-    require("gate_ab(ab_read, card_slot5_bus_enable)" in top,
+    require("gate_ab(data_phase_ab_read, card_slot5_bus_enable)" in top,
             "applicard must be gated bus-deaf when disabled")
     require(".slot_assign(3'h5)" in top, "applicard must claim slot 5")
     policy_path = top.split("apple_bus_client_policy_gate #(", 1)[1].split(

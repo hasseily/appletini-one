@@ -14,6 +14,7 @@ OUT = ROOT / "build/resolution_config_menu"
 
 def main():
     menu = (FRONT / "config_menu.c").read_text()
+    frontend = (FRONT / "main.c").read_text()
     tabs = (FRONT / "config_menu_main_tabs.c").read_text()
     internal = (FRONT / "config_menu_internal.h").read_text()
     help_source = (FRONT / "config_menu_help.c").read_text()
@@ -40,6 +41,9 @@ def main():
     assert '"video.dot.bleed=%s\\n"' in function(menu, "config_menu_save_settings_to_path")
     assert "cmui_compact_finish" in function(menu, "config_menu_draw")
     assert "k_compact_tab_labels, CONFIG_TAB_COUNT" in function(menu, "config_menu_draw")
+    vblank = frontend.index("if (cur_vblank != last_seen_vblank)")
+    assert "ui_sync_video_color_mode(&config_menu);" in frontend[
+        vblank:frontend.index("usb0_priority_checkpoint();", vblank)]
     OUT.mkdir(parents=True, exist_ok=True)
     compiler = shutil.which("gcc") or shutil.which("clang")
     if not compiler:
@@ -163,9 +167,11 @@ typedef struct {
     uint8_t video_legacy_crt_blending, video_legacy_crt_explicit, video_blending_vertical_explicit;
     uint8_t video_blending_horizontal_explicit, video_pixel_mask;
     uint8_t boot_timeout_mode, boot_device;
+    int8_t clean_video_phase_cycles, pal_video_phase_cycles;
     char bezel_path[32];
     struct {
         uint8_t (*is_apple_video_50hz)(void *);
+        void (*set_video_output)(void *, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, int8_t, int8_t);
         void (*set_video_blur)(void *, uint8_t);
         void (*set_video_pixel_mask)(void *, uint8_t);
         void *ctx;
@@ -178,11 +184,15 @@ typedef struct {
     code += "#define CONFIG_DEFAULT_VIDEO_PIXEL_MASK APPLETINI_VIDEO_PIXEL_MASK_OFF\n"
     code += "#define CONFIG_DEFAULT_VIDEO_BLUR_STRENGTH APPLETINI_VIDEO_BLUR_OFF\n"
     code += "#define CONFIG_DEFAULT_VIDEO_DOT_BLEED APPLETINI_VIDEO_DOT_BLEED_LIGHT\n"
+    for name in ("CONFIG_DEFAULT_VIDEO_MONO_COLOR", "CONFIG_DEFAULT_CLEAN_VIDEO_PHASE_CYCLES",
+                 "CONFIG_DEFAULT_PAL_VIDEO_PHASE_CYCLES"):
+        code += re.search(rf"^#define {name} .*", menu, re.M).group(0) + "\n"
     for name in ("config_menu_ascii_lower", "config_menu_str_ieq", "config_menu_bool_text",
                  "config_menu_video_output_text_value",
                  "config_menu_video_color_mode_text", "config_menu_video_color_mode_config",
                  "config_menu_video_color_mode_value", "config_menu_pal_accurate_modes_allowed",
                  "config_menu_video_color_mode_allowed", "config_menu_next_color_mode",
+                 "config_menu_effective_video_color_mode",
                  "config_menu_video_mono_color_text", "config_menu_video_variant_label",
                  "config_menu_video_variant_text",
                  "config_menu_video_blur_text", "config_menu_video_blur_config",
@@ -192,6 +202,7 @@ typedef struct {
                  "config_menu_video_pixel_mask_config", "config_menu_video_pixel_mask_text",
                  "config_menu_cycle_video_pixel_mask", "config_menu_apply_video_pixel_mask",
                  "config_menu_resolve_video_blending", "config_menu_coerce_video_blur",
+                 "config_menu_coerce_video_output", "config_menu_apply_video_output",
                  "config_menu_apply_video_blur",
                  "config_menu_scanlines_config", "config_menu_on_off",
                  "config_menu_video_mono_color_config", "config_menu_video_ghosting_config",
@@ -261,7 +272,7 @@ static const char *config_menu_quote_path(const char *path, char *scratch, unsig
     code += "}\n"
     loader = function(menu, "config_menu_load_settings")
     for helper in re.findall(r"^    (config_menu_(?:coerce_\w+|migrate_\w+|usb_bindings_coerce))\(menu\);", loader, re.M):
-        if helper != "config_menu_coerce_video_blur":
+        if helper not in ("config_menu_coerce_video_blur", "config_menu_coerce_video_output"):
             code += "#define " + helper + "(menu) ((void)(menu))\n"
     code += re.search(r"^#define APPLETINI_CFG_VERSION .*", menu, re.M).group(0) + "\n"
     code += loader
@@ -289,7 +300,110 @@ static void save_video_settings(const config_menu_t *menu, char *output, unsigne
     mask_lines = re.search(r"HELP\(video_pixel_mask,\s*(.*?)\);", help_source, re.S).group(1)
     code += "\nstatic const char *mask_help[]={\n" + mask_lines + "\n};\n"
     code += r"""
+static uint8_t g_display_mono_enable_shadow, g_display_mono_color_shadow, g_video_color_mode_shadow;
+static uint8_t g_video7_auto_mono_enable_shadow, g_dhgr_col140m_enable_shadow;
+static uint8_t g_border_enabled_shadow, g_border_color_shadow, g_border_flood_shadow;
+static int8_t g_clean_video_phase_cycles_shadow, g_pal_video_phase_cycles_shadow;
+static uint32_t published_video_settings;
+static unsigned video_publishes, video_refreshes;
+static void apple_fb_video_settings_set(uint32_t settings)
+{
+    published_video_settings = settings;
+    ++video_publishes;
+}
+static void compositor_request_full_refresh(void) { ++video_refreshes; }
+"""
+    code += function(frontend, "video_output_publish")
+    code += function(frontend, "ui_sync_video_color_mode")
+    code += r"""
 static uint8_t video_is_pal(void *context) { return *(uint8_t *)context; }
+typedef struct {
+    uint8_t active_pal, applied_color_mode;
+} color_probe_t;
+static uint8_t color_probe_is_pal(void *context) { return ((color_probe_t *)context)->active_pal; }
+static void record_color_output(void *context, uint8_t mono, uint8_t tint, uint8_t mode,
+                                uint8_t video7, uint8_t col140m, int8_t clean, int8_t pal)
+{
+    (void)mono; (void)tint; (void)video7; (void)col140m; (void)clean; (void)pal;
+    ((color_probe_t *)context)->applied_color_mode = mode;
+    g_video_color_mode_shadow = mode;
+}
+static void check_pal_color_restore(void)
+{
+    const uint8_t modes[] = {APPLE_VIDEO_COLOR_PAL_ACCURATE_TV,
+                            APPLE_VIDEO_COLOR_PAL_ACCURATE_COMPOSITE, APPLE_VIDEO_COLOR_RGB};
+    for (unsigned i = 0; i < sizeof(modes) / sizeof(modes[0]); ++i) {
+        char saved[2048], unrelated_save[2048], expected_line[64];
+        const uint8_t requested = modes[i];
+        const uint8_t ntsc_mode = apple_video_color_mode_is_pal_accurate(requested) ?
+            APPLE_VIDEO_COLOR_COMPOSITE_MONITOR : requested;
+        color_probe_t probe = {.active_pal = 1U};
+        config_menu_t edited = {0};
+        edited.platform.ctx = &probe;
+        edited.platform.is_apple_video_50hz = color_probe_is_pal;
+        edited.platform.set_video_output = record_color_output;
+        edited.video_color_mode = config_menu_next_color_mode(&edited, requested - 1U, 1);
+        assert(edited.video_color_mode == requested);
+        config_menu_apply_video_output(&edited);
+        assert(probe.applied_color_mode == requested);
+        save_video_settings(&edited, saved, sizeof(saved));
+        snprintf(expected_line, sizeof(expected_line), "video.color.mode=%s\n",
+                 config_menu_video_color_mode_config(requested));
+        assert(strstr(saved, expected_line));
+
+        for (unsigned loader = 0; loader < 3; ++loader) {
+            config_menu_t cold = {0};
+            cold.platform = edited.platform;
+            probe.active_pal = 0U;  /* ONE//e has not applied its saved PAL cadence yet. */
+            cfg_contents = saved;
+            if (loader == 0) {
+                config_menu_load_settings(&cold);
+                assert(cold.settings_loaded);
+            } else {
+                assert(config_menu_read_settings_from_path(&cold, "profile/config.txt", loader - 1U, NULL));
+            }
+            assert(cold.video_color_mode == requested);
+            config_menu_apply_video_output(&cold);
+            assert(probe.applied_color_mode == ntsc_mode);
+            assert(!strcmp(config_menu_video_variant_text(&cold), config_menu_video_color_mode_text(ntsc_mode)));
+
+            cold.scanlines_mode = APPLETINI_SCANLINES_STRONG;
+            save_video_settings(&cold, unrelated_save, sizeof(unrelated_save));
+            assert(strstr(unrelated_save, expected_line));
+            cfg_contents = unrelated_save;
+            config_menu_load_settings(&cold);
+            assert(cold.video_color_mode == requested);
+
+            /* A session-only UART mono change must survive timing transitions. */
+            g_display_mono_enable_shadow = 1U;
+            g_display_mono_color_shadow = APPLE_VIDEO_MONO_GREEN;
+            video_output_publish();
+            const unsigned publishes_before = video_publishes;
+            const unsigned refreshes_before = video_refreshes;
+            const unsigned saves_before = cfg_saves;
+            ui_sync_video_color_mode(&cold);
+            assert(video_publishes == publishes_before);
+            probe.active_pal = 1U;
+            ui_sync_video_color_mode(&cold);
+            assert(apple_video_settings_color_mode(published_video_settings) == requested);
+            assert(cold.video_color_mode == requested);
+            assert(!strcmp(config_menu_video_variant_text(&cold), config_menu_video_color_mode_text(requested)));
+            ui_sync_video_color_mode(&cold);
+            probe.active_pal = 0U;
+            ui_sync_video_color_mode(&cold);
+            assert(apple_video_settings_color_mode(published_video_settings) == ntsc_mode);
+            assert(apple_video_settings_mono_enabled(published_video_settings));
+            assert(apple_video_settings_mono_color(published_video_settings) == APPLE_VIDEO_MONO_GREEN);
+            assert(cold.video_color_mode == requested);
+            const unsigned changes = requested == ntsc_mode ? 0U : 2U;
+            assert(video_publishes == publishes_before + changes);
+            assert(video_refreshes == refreshes_before + changes);
+            assert(cfg_saves == saves_before);
+        }
+    }
+    cfg_contents = NULL;
+    puts("PASS: PAL color survives cold global/profile reload and unrelated save; live NTSC/PAL reapplies");
+}
 static void set_blur(void *context, uint8_t strength) { *(uint8_t *)context=strength; }
 static void set_pixel_mask(void *context, uint8_t mode) { *(uint8_t *)context=mode; }
 static void save_preview(uint16_t *fb, const char *name)
@@ -478,6 +592,7 @@ int main(void)
         ++mask_cases;
     }
     printf("PASS: %u independent mask/global/profile cases, defaults, invalid keys, cycling and runtime apply\n",mask_cases);
+    check_pal_color_restore();
     m.video_color_mode=APPLE_VIDEO_COLOR_IDEALIZED;
     const char *ui_order[] = {
         "1024x768", "1200x800", "1280x1024", "1360x768", "1680x1050", "1920x1080"

@@ -182,15 +182,18 @@ static int read_entry(unsigned object, cogs_catalog_entry_t *entry)
         at = catalog_json.tokens[value].next;
     }
 
+    if (fields[FIELD_BUNDLE]) {
+        const net_json_token_t *bundle = &catalog_json.tokens[fields[FIELD_BUNDLE]];
+        /* A nonempty "in" marks a member. The collection disk has its own row. */
+        if (bundle->type != NJ_STRING || bundle->end != bundle->start + 2U) {
+            return 0;
+        }
+    }
     if (!fields[FIELD_CAT] || !read_string(fields[FIELD_CAT], category, sizeof(category), 0) ||
         strcmp(category, "G") != 0 || !fields[FIELD_HOST] ||
         !read_string(fields[FIELD_HOST], host, sizeof(host), 0) || strcmp(host, "any") != 0 ||
         !fields[FIELD_TITLE] || !read_string(fields[FIELD_TITLE], entry->title, sizeof(entry->title), 1) ||
         !entry->title[0] || !fields[FIELD_URL]) {
-        return 0;
-    }
-    entry->bundle[0] = '\0';
-    if (fields[FIELD_BUNDLE] && !read_string(fields[FIELD_BUNDLE], entry->bundle, sizeof(entry->bundle), 1)) {
         return 0;
     }
     return read_image(fields[FIELD_URL], fields[FIELD_BYTES], fields[FIELD_BLOCKS], entry);
@@ -239,7 +242,7 @@ int cogs_catalog_parse(const uint8_t *json, size_t length, cogs_catalog_page_t *
     }
     for (unsigned at = volumes + 1U; at < catalog_json.tokens[volumes].next;
          at = catalog_json.tokens[at].next) {
-        if (++rows > COGS_PAGE_CAPACITY) {
+        if (++rows > COGS_PROVIDER_PAGE_CAPACITY) {
             return -1;
         }
         const int result = read_entry(at, &out->entries[count]);

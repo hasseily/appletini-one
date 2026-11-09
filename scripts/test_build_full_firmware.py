@@ -110,7 +110,7 @@ class FullFirmwareInputTests(unittest.TestCase):
         out.mkdir(parents=True)
         header = self.root / "ps_sources/image_versions.h"
         header.parent.mkdir()
-        header.write_text('"F1.3.6" "B2.0.6"\n')
+        header.write_text('"F1.3.7dev1" "B2.0.6"\n')
         (self.root / "project").mkdir()
         boot = self.root / "BOOT.BIN"
         boot.write_bytes(b"unchanged-Golden-fixture")
@@ -118,9 +118,9 @@ class FullFirmwareInputTests(unittest.TestCase):
                  "frontend_memory.py", "make_firmware_bin.bat", "audit_firmware_release.py", "image_manifest.py", "package_timing_firmware.py")
         (self.root / "scripts").mkdir()
         for name in tools: (self.root / "scripts" / name).write_text("test-only build tool")
-        (out / "SOURCE_FREEZE.json").write_text(json.dumps(dict(git_head="a" * 40, firmware_version="F1.3.6", boot_version="B2.0.6",
+        (out / "SOURCE_FREEZE.json").write_text(json.dumps(dict(git_head="a" * 40, firmware_version="F1.3.7dev1", boot_version="B2.0.6",
             arm_source_hashes=build.arm_sources(), fpga_source_hashes={})))
-        argv = ["build_full_firmware.py", "--version", "F1.3.6", "--timing-run", str(self.run_dir), "--output", str(out), "--build-only"]
+        argv = ["build_full_firmware.py", "--version", "F1.3.7dev1", "--timing-run", str(self.run_dir), "--output", str(out), "--build-only"]
         with patch.object(sys, "argv", argv), patch.object(build, "BOOT_SHA", build.sha(boot)), \
              patch.object(build.subprocess, "check_output", return_value="a" * 40 + "\n"), patch.object(build, "run", return_value=None) as cli:
             with self.assertRaisesRegex(RuntimeError, "without a successful workspace completion receipt"): build.main()

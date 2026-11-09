@@ -89,11 +89,18 @@ def render_production_harness(source: str, boot_keyboard: bool = False) -> str:
         raise AssertionError("missing production USB slot type")
     names = (*FUNCTIONS, "hid_process_boot_keyboard_report") if boot_keyboard else FUNCTIONS
     functions = [extract_function(source, name) for name in names]
+    pct = (FRONTEND / "pc_transporter_service.c").read_text(encoding="utf-8")
+    functions.extend(extract_function(pct, name) for name in (
+        "collect_keys", "pc_transporter_service_keyboard_report", "sync_keyboard_focus",
+        "pc_transporter_service_cga_state"))
     harness = (ROOT / "scripts" / "fixtures" /
                "usb_gamepad_input_harness.c").read_text(encoding="utf-8")
     if boot_keyboard:
         harness = harness.replace(extract_function(harness, "hid_process_boot_keyboard_report")[1], "")
     harness = harness.replace("/* PRODUCTION_SLOT */", slot.group())
+    harness = harness.replace("/* PRODUCTION_PCT_KEYBOARD */",
+                              pct[pct.index("static uint8_t key_state["):
+                                  pct.index("static void collect_keys")])
     hid_header = (ROOT / "third_party/CherryUSB/class/hid/usbh_hid.h").read_text()
     report_types = hid_header[hid_header.index("struct usbh_hid_report_item_attribute"):
                               hid_header.index("struct usbh_hid {")]

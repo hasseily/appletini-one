@@ -4,12 +4,14 @@
 /*
  * Manually bump these when generating a new boot image or firmware image.
  * They are displayed by boot_updater (UART) and text_ui_test (UART + Home UI).
+ * Increment the firmware dev number for each new development image.
+ * Drop the dev suffix when preparing a release.
  */
 #define APPLETINI_BOOT_IMAGE_VERSION_SHORT      "B2.0.6"
 #define APPLETINI_BOOT_IMAGE_VERSION_FULL       "Boot B2.0.6"
 
-#define APPLETINI_FIRMWARE_IMAGE_VERSION_SHORT  "F1.3.7"
-#define APPLETINI_FIRMWARE_IMAGE_VERSION_FULL   "Firmware F1.3.7"
+#define APPLETINI_FIRMWARE_IMAGE_VERSION_SHORT  "F1.3.7dev14"
+#define APPLETINI_FIRMWARE_IMAGE_VERSION_FULL   "Firmware F1.3.7dev14"
 
 /* Current updater/flash layout configuration shown in firmware UI. */
 #define APPLETINI_FLASH_LAYOUT_LABEL            "QSPI 16MB Appletini + Multitini"

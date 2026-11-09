@@ -43,6 +43,7 @@ CORE1_DDR_LENGTH = 0x10000000
 CORE1_SHARED_SOURCES = (
     "apple_cycle_egress.c", "apple_cycle_renderer.c", "apple_fb_handoff.c",
     "apple_pal_video_timing.c", "linear_text_overlay_capture.c",
+    "pc_transporter_cga_capture.c",
     "apple2e_video_rom_data.c", "appletini_csbits.c", "appletini_ntsc.c",
     "compositor_layout.c",
 )

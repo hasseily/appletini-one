@@ -29,9 +29,10 @@
 #define CONFIG_MENU_USB_BIND_ACTION_COUNT 14U
 #define CONFIG_MENU_USB_BIND_CAPTURE_NONE 0xFFU
 #define CONFIG_MENU_BOOT_ONEE_ITEM 2U
-#define CONFIG_MENU_BOOT_STARTUP_FIRMWARE_ITEM 3U
-#define CONFIG_MENU_BOOT_SWITCH_FIRMWARE_ITEM 4U
-#define CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM 5U
+#define CONFIG_MENU_BOOT_GOLDEN_UPDATER_ITEM 3U
+#define CONFIG_MENU_BOOT_STARTUP_FIRMWARE_ITEM 4U
+#define CONFIG_MENU_BOOT_SWITCH_FIRMWARE_ITEM 5U
+#define CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM 6U
 /* The reset row is hidden while ONE//e owns the menu, so its focus index can
  * select the ONE//e-only video-standard row in that mode. */
 #define CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM \
@@ -39,6 +40,7 @@
 #define CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM (CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM + 1U)
 #define CONFIG_MENU_BOOT_ITEM_COUNT \
     (CONFIG_MENU_BOOT_USB_BIND_FIRST_ITEM + CONFIG_MENU_USB_BIND_ACTION_COUNT)
+#define CONFIG_MENU_FIRMWARE_TARGET_GOLDEN_UPDATER UINT32_MAX
 #define CONFIG_MENU_PROFILE_ITEM_COUNT 5U
 #define CONFIG_MENU_ETHERNET_ADDRESS_STATIC 0U
 #define CONFIG_MENU_ETHERNET_ADDRESS_DHCP 1U
@@ -160,7 +162,7 @@ typedef struct {
     uint8_t (*get_multiboot_status)(void *ctx, uint8_t *present_mask,
                                    uint32_t *default_product);
     int (*set_startup_firmware)(void *ctx, uint32_t product);
-    int (*request_firmware_switch)(void *ctx, uint32_t product);
+    int (*request_firmware_switch)(void *ctx, uint32_t target);
     /* Version is a verified flash snapshot; drawing never reads flash or SD. */
     void (*get_golden_boot_version)(void *ctx, char *dst, size_t capacity);
     uint8_t (*get_golden_boot_file_present)(void *ctx);
@@ -389,6 +391,7 @@ void config_menu_online_update_finished(config_menu_t *menu, const char *error);
 uint8_t config_menu_flush_settings(config_menu_t *menu);
 void config_menu_apply_boot_runtime(config_menu_t *menu);
 void config_menu_apply_runtime(config_menu_t *menu);
+uint8_t config_menu_effective_video_color_mode(const config_menu_t *menu);
 void config_menu_apply_startup_assets(config_menu_t *menu);
 void config_menu_start_boot_dhcp(config_menu_t *menu);
 void config_menu_poll_onee_mode(config_menu_t *menu);

@@ -277,7 +277,10 @@ module apple_top(
         .active                 (onee_warm_reset_active)
     );
 
-    apple_virtual_bus apple_virtual_bus_i (
+    logic pct_virtual_data_hold, pct_virtual_capture_wait;
+    apple_virtual_bus #(
+        .ENABLE_DATA_CAPTURE_HOLD(1'b1)
+    ) apple_virtual_bus_i (
         .clk              (clk),
         .resetn           (rstn[1]),
         .video_mode_50hz  (onee_video_50hz_active),
@@ -295,6 +298,8 @@ module apple_top(
         .resp_valid       (virtual_resp_valid),
         .resp_rdata       (virtual_resp_rdata),
         .floating_bus_data(onee_floating_bus_data),
+        .data_capture_hold(pct_virtual_data_hold),
+        .data_capture_wait(pct_virtual_capture_wait),
         .ab_write         (virtual_ab_write_arb),
         .ab_read          (virtual_ab_read),
         .data_phase_data  (virtual_data_phase_data)
@@ -354,8 +359,9 @@ module apple_top(
 
     // These data consumers require data_en. The private bus captures the byte
     // before that strobe, so they can bypass the unused live-data mux. The
-    // vTW core, cycle capture and PSRAM also read data only at data_en. With
-    // this copy, no card reply path reaches their data inputs.
+    // vTW core, cycle capture, PSRAM, SuperSprite, AppliCard and the
+    // Mockingboard also read data only at data_en. With this copy, no card
+    // reply path reaches their data inputs.
     always_comb begin
         data_phase_ab_read = ab_read;
         data_phase_ab_read.data = onee_enable_effective ?
@@ -1465,7 +1471,8 @@ module apple_top(
         .audio_control(phasor_audio_q),
         .audio_sample_tick(audio_sample_tick),
         .sss(sss),
-        .ab_read(gate_ab(ab_read, card_slot4_bus_enable)),
+        .ab_read(gate_ab(data_phase_ab_read, card_slot4_bus_enable)),
+        .serve_data(ab_read.data),
         .ab_write(mb1_ab_write),
         .audio_l(mb1_audio_l),
         .audio_r(mb1_audio_r),
@@ -1632,7 +1639,7 @@ module apple_top(
     applicard_card applicard_card_i (
         .clk(clk),
         .rstn(rstn[2]),
-        .ab_read(gate_ab(ab_read, card_slot5_bus_enable)),
+        .ab_read(gate_ab(data_phase_ab_read, card_slot5_bus_enable)),
         .card_enabled(card_slot5_bus_enable),
         .disk2_timing_active(disk2_sound_spinning),
         // A stand-alone motherboard owns the only virtual bus even before
@@ -1652,6 +1659,7 @@ module apple_top(
         .ab_read(gate_ab(data_phase_ab_read, pct_bus_enable)),
         .sss(sss),
         .card_enabled(pct_bus_enable),
+        .virtual_bus(onee_enable_effective),
         .slot_assign(3'h5),
         .as_common(as_common),
         .as_client(pc_transporter_as_client),
@@ -1664,6 +1672,8 @@ module apple_top(
         .mem_rsp_valid(pct_mem_done),
         .mem_rsp_rdata(pct_mem_rdata),
         .mem_rsp_error(pct_mem_error),
+        .virtual_capture_wait(pct_virtual_capture_wait),
+        .virtual_data_hold(pct_virtual_data_hold),
         .ab_write(pct_ab_write)
     );
 
@@ -2441,7 +2451,9 @@ module apple_top(
 
     apple_slot7_devsel_guard apple_slot7_devsel_guard_i (
         .devsel_required       (physical_slot7_devsel_required),
-        .ab_read_in            (ab_read),
+        // The guard reads no data. SmartPort and the boot card replace the
+        // byte, and SuperSprite reads it only at data_en.
+        .ab_read_in            (data_phase_ab_read),
         .physical_ab_read      (physical_ab_read),
         .supersprite_write_in  (supersprite_ab_write),
         .smartport_write_in    (smartport_ab_write),

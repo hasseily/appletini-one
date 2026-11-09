@@ -97,7 +97,8 @@ void config_menu_draw_boot_settings(uint16_t *fb,
         CONFIG_MENU_USB_BIND_ACTION_VTW_SPEED_DOWN,
         CONFIG_MENU_USB_BIND_ACTION_VTW_SLUG_TOGGLE
     };
-    const int heading_y = y + (row_h * ((onee_fixed != 0U) ? 6 : 5));
+    const int heading_y = y + row_h *
+        ((int)CONFIG_MENU_BOOT_USB_BIND_RESET_ITEM + (onee_fixed != 0U));
     const int heading_text_w =
         ((int)strlen(heading_text) *
          FB16_BUILTIN_FONT_ADVANCE_X *
@@ -151,6 +152,9 @@ void config_menu_draw_boot_settings(uint16_t *fb,
             "ONE//e standalone",
             config_menu_onee_mode_text(menu));
     }
+    hgr_draw_value_item(fb, x, y + (row_h * 3), w,
+                        (uint8_t)(menu->item_focus == CONFIG_MENU_BOOT_GOLDEN_UPDATER_ITEM),
+                        "Golden updater", "Reboot card");
     {
         const uint8_t other_bit = menu->startup_firmware == MB_PRODUCT_MULTITINI ?
             1U : 2U;
@@ -164,23 +168,23 @@ void config_menu_draw_boot_settings(uint16_t *fb,
             (menu->multiboot_ready != 0U &&
              (menu->multiboot_present_mask & 2U) != 0U) ?
                 hgr_draw_value_item : hgr_draw_value_item_dimmed;
-        draw_startup(fb, x, y + (row_h * 3), w,
+        draw_startup(fb, x, y + (row_h * 4), w,
                      (uint8_t)(menu->item_focus == CONFIG_MENU_BOOT_STARTUP_FIRMWARE_ITEM),
                      "Startup firmware",
                      menu->multiboot_ready != 0U ?
                          mb_product_name(menu->startup_firmware) : "Multiboot golden required");
-        draw_switch(fb, x, y + (row_h * 4), w,
+        draw_switch(fb, x, y + (row_h * 5), w,
                     (uint8_t)(menu->item_focus == CONFIG_MENU_BOOT_SWITCH_FIRMWARE_ITEM),
                     "Switch to Multitini",
                     menu->multiboot_ready == 0U ? "Multiboot golden required" :
                     ((menu->multiboot_present_mask & 2U) != 0U ?
-                        "Reboot card" : "Not installed"));
+                        "Restart into Multitini" : "Not installed"));
     }
     if (onee_fixed != 0U) {
         hgr_draw_value_item(
             fb,
             x,
-            y + (row_h * 5),
+            y + (row_h * 6),
             w,
             (uint8_t)(menu->item_focus ==
                       CONFIG_MENU_BOOT_ONEE_STANDARD_ITEM),
@@ -334,9 +338,8 @@ void config_menu_draw_boot_settings(uint16_t *fb,
         const uint8_t focused =
             (uint8_t)(menu->item_focus ==
                       config_menu_boot_usb_binding_item_for_action(action));
-        /* Spacer row between the screenshot pair and the TransWarp
-         * bindings so the two groups read as separate blocks. */
-        const int spacer = (i >= 2U) ? 1 : 0;
+        /* Keep the spacer between groups only when the fixed keys are hidden. */
+        const int spacer = (onee_fixed == 0U && i >= 2U) ? 1 : 0;
         const int row_y = binding_y +
             ((int)i + right_row_offset + spacer) * row_h;
 

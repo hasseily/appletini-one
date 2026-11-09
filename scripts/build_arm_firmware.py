@@ -33,6 +33,11 @@ def write_json(path,value):
     path.write_text(json.dumps(value,indent=2)+'\n',encoding='utf-8',newline='\n')
 
 
+def baseline_timing_manifest(base):
+    manifest=base/'TIMING_MANIFEST.txt'
+    return manifest if manifest.is_file() else base/'BASELINE_TIMING_MANIFEST.txt'
+
+
 def sources():
     # Include headers even when they are not separate compiler command entries.
     return {p.relative_to(ROOT).as_posix():sha(p) for tree in ('ps_sources','third_party')
@@ -69,7 +74,8 @@ def finish(out,args,report):
     members.update(p.name for p in ROOT.glob('LICENSE*') if p.is_file())
     base=args.baseline.resolve()
     members.update((base/name).relative_to(ROOT).as_posix() for name in
-                   ('FIRMWARE.BIN','ARM_BUILD.json','FIRMWARE_AUDIT.json','TIMING_MANIFEST.txt'))
+                   ('FIRMWARE.BIN','ARM_BUILD.json','FIRMWARE_AUDIT.json'))
+    members.add(baseline_timing_manifest(base).relative_to(ROOT).as_posix())
     members.update((base/'inputs'/name).relative_to(ROOT).as_posix() for name in INPUTS)
     members.update(p.relative_to(ROOT).as_posix() for tree in ('ps_sources','third_party')
                    for p in (ROOT/tree).rglob('*') if p.is_file() and
@@ -118,8 +124,11 @@ def main():
     parser.add_argument('--resume',action='store_true',help='retry an unfinished build; refuses to replace any packaged firmware')
     mode=parser.add_mutually_exclusive_group();mode.add_argument('--build-only',action='store_true');mode.add_argument('--finalize-only',action='store_true');mode.add_argument('--audit-only',action='store_true')
     args=parser.parse_args();base=args.baseline.resolve();out=args.output.resolve()
-    if not re.fullmatch(r'F\d+\.\d+\.\d+',args.version): raise RuntimeError('Stable F version required')
-    if not base.is_relative_to(ROOT/'firmwares'): raise RuntimeError('Retained baseline must be a project-owned firmwares/ release')
+    if not re.fullmatch(r'F\d+\.\d+\.\d+(?:dev[1-9][0-9]*)?',args.version):
+        raise RuntimeError('Use an F version with an optional dev number')
+    if not any(base != directory and base.is_relative_to(directory)
+               for directory in (ROOT/'firmwares', ROOT/'build')):
+        raise RuntimeError('Retained baseline must be a project-owned firmware release or build')
     if not out.is_relative_to(ROOT) or out==ROOT or out.is_relative_to(ROOT/'firmwares'):
         raise RuntimeError('Candidate output must be a new project directory outside published firmwares/')
     if args.finalize_only:
@@ -134,6 +143,9 @@ def main():
         raise RuntimeError('Baseline firmware/audit identity mismatch')
     for name,key in INPUTS.items():
         if sha(base/'inputs'/name)!=audit['inputs'][key]['sha256']: raise RuntimeError(f'Baseline input mismatch: {name}')
+    manifest=baseline_timing_manifest(base)
+    if not manifest.is_file() or sha(manifest)!=audit['inputs']['run_manifest']['sha256']:
+        raise RuntimeError('Baseline timing manifest differs from its audit')
     header=(ROOT/'ps_sources/image_versions.h').read_text()
     boot=audit['boot_version']
     if f'"{args.version}"' not in header or f'"{boot}"' not in header: raise RuntimeError('Version header differs from requested firmware/retained Boot')
@@ -142,7 +154,8 @@ def main():
     before=sources();out.mkdir(parents=True,exist_ok=True);(out/'inputs').mkdir(exist_ok=True)
     if any((out/'inputs'/n).exists() and sha(out/'inputs'/n)!=sha(base/'inputs'/n) for n in INPUTS): raise RuntimeError('Prepared input differs from baseline')
     for name in INPUTS: shutil.copy2(base/'inputs'/name,out/'inputs'/name)
-    for name in ('ARM_BUILD.json','FIRMWARE_AUDIT.json','TIMING_MANIFEST.txt'): shutil.copy2(base/name,out/('BASELINE_'+name))
+    for name in ('ARM_BUILD.json','FIRMWARE_AUDIT.json'): shutil.copy2(base/name,out/('BASELINE_'+name))
+    shutil.copy2(manifest,out/'BASELINE_TIMING_MANIFEST.txt')
     workspace=ROOT/'vitis_workspace/frontend';build=workspace/'build'
     platforms=[ROOT/'vitis_workspace/appletini_platform'/n for n in
                ('export/appletini_platform/hw/appletini_yarz_top.xsa','hw/appletini_yarz_top.xsa')]
@@ -158,7 +171,7 @@ def main():
     commands=json.loads((build/'compile_commands.json').read_text());match=re.match(r'^(?:"([^"]+)"|(\S+))',commands[0]['command'])
     compiler=Path(match.group(1) or match.group(2));env={k:v for k,v in os.environ.items() if k.lower()!='path'}
     env['PATH']=str(compiler.parent)+os.pathsep+next(v for k,v in os.environ.items() if k.lower()=='path')
-    command=[cmake,'--build',str(build),'--parallel','8'];direct=None
+    command=[cmake,'--build',str(build),'--parallel','8','--','-d','keeprsp'];direct=None
     print('Building CPU0 only: '+' '.join(command),flush=True)
     try: run(command,out/'CPU0_BUILD.log',env)
     except RuntimeError:
@@ -171,10 +184,14 @@ def main():
         run(direct,out/'DIRECT_LINK.log',env,build)
     if sources()!=before: raise RuntimeError('Production sources changed during CPU0 build')
     shutil.copy2(build/'frontend.elf',out/'inputs/frontend.elf')
-    (out/'build-config').mkdir()
+    (out/'build-config').mkdir(exist_ok=True)
     for name,path in {'UserConfig.cmake':workspace/'src/UserConfig.cmake','lscript.ld':workspace/'src/lscript.ld',
-                      'build.ninja':build/'build.ninja','rules.ninja':build/'CMakeFiles/rules.ninja','frontend.elf.rsp':build/'CMakeFiles/frontend.elf.rsp'}.items(): shutil.copy2(path,out/'build-config'/name)
-    scratch=out/'scratch';scratch.mkdir();env.update(XILINX_VITIS=r'C:\Xilinx\2025.2\Vitis',TEMP=str(scratch),TMP=str(scratch))
+                      'build.ninja':build/'build.ninja','rules.ninja':build/'CMakeFiles/rules.ninja'}.items():
+        shutil.copy2(path,out/'build-config'/name)
+    response_file=build/'CMakeFiles/frontend.elf.rsp'
+    if response_file.is_file():
+        shutil.copy2(response_file,out/'build-config'/response_file.name)
+    scratch=out/'scratch';scratch.mkdir(exist_ok=True);env.update(XILINX_VITIS=r'C:\Xilinx\2025.2\Vitis',TEMP=str(scratch),TMP=str(scratch))
     package=[str(ROOT/'scripts/make_firmware_bin.bat'),str(out/'FIRMWARE.BIN'),str(out/'inputs/fsbl.elf'),str(out/'inputs/appletini_yarz_top.bit'),str(out/'inputs/frontend.elf')]
     run(package,out/'PACKAGE.log',env)
     audit_command=[sys.executable,str(ROOT/'scripts/audit_firmware_release.py'),'--firmware',str(out/'FIRMWARE.BIN'),

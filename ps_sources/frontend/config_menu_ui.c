@@ -26,6 +26,7 @@ typedef struct {
 } cmui_compact_row_t;
 
 static uint8_t s_compact_active;
+static uint8_t s_compact_dense_rows;
 static uint32_t s_compact_count;
 static uint32_t s_compact_scroll;
 static const char *s_compact_title;
@@ -53,7 +54,8 @@ typedef struct {
 } cmui_compact_layout_t;
 
 static cmui_compact_layout_t cmui_compact_layout(uint32_t help_rows,
-                                               uint32_t footer_rows)
+                                               uint32_t footer_rows,
+                                               uint8_t dense_rows)
 {
     cmui_compact_layout_t layout;
     int max_help_rows;
@@ -62,7 +64,7 @@ static cmui_compact_layout_t cmui_compact_layout(uint32_t help_rows,
     layout.scale = (FB16_WIDTH >= 1024 && FB16_HEIGHT >= 768) ? 2 : 1;
     layout.font_h = FB16_BUILTIN_FONT_HEIGHT * layout.scale;
     layout.line_h = layout.font_h + 4;
-    layout.row_h = layout.font_h + 8;
+    layout.row_h = layout.font_h + (dense_rows ? 5 : 8);
     layout.margin = 8;
     layout.content_y = layout.margin + (2 * layout.line_h) + 6;
     if (s_update_badge != 0U) {
@@ -86,7 +88,7 @@ static cmui_compact_layout_t cmui_compact_layout(uint32_t help_rows,
 
 uint32_t cmui_compact_row_capacity(void)
 {
-    return cmui_compact_layout(0U, 2U).visible_rows;
+    return cmui_compact_layout(0U, 2U, 0U).visible_rows;
 }
 
 uint8_t cmui_compact_active(void)
@@ -120,8 +122,14 @@ uint32_t cmui_compact_visible_rows(void)
 void cmui_compact_begin(void)
 {
     s_compact_active = 1U;
+    s_compact_dense_rows = 0U;
     s_compact_count = 0U;
     s_compact_help_count = 0U;
+}
+
+void cmui_compact_use_dense_rows(void)
+{
+    s_compact_dense_rows = 1U;
 }
 
 void cmui_compact_entry(const char *label, const char *value,
@@ -993,6 +1001,7 @@ void cmui_footer(uint16_t *fb,
                  uint8_t iiplus_keyboard,
                  const char *input_hint)
 {
+    const uint8_t separate_status_row = (input_hint != NULL && input_hint[0] != '\0');
     uint32_t status_color;
     int x;
 
@@ -1019,7 +1028,7 @@ void cmui_footer(uint16_t *fb,
     fb16_fill_rect(fb, footer->x, footer->y, footer->w, 2,
                    CMUI_COLOR_BORDER_SOFT);
     x = footer->x;
-    if (input_hint != NULL && input_hint[0] != '\0') {
+    if (separate_status_row) {
         const int hint_scale = cmui_text_width(input_hint, CMUI_SMALL_SCALE) <= footer->w ?
             CMUI_SMALL_SCALE : 1;
         cmui_text_clipped(fb, x, footer->y + 28, footer->w, input_hint,
@@ -1065,14 +1074,14 @@ void cmui_footer(uint16_t *fb,
 
     status_color = (warning != 0U) ? CMUI_COLOR_WARN : CMUI_COLOR_SUCCESS;
     {
-        const int max_status_w = footer->w / 2;
+        const int max_status_w = separate_status_row ? footer->w : footer->w / 2;
         int status_w = cmui_text_width(status, CMUI_SMALL_SCALE);
         if (status_w > max_status_w) {
             status_w = max_status_w;
         }
         cmui_text_clipped(fb,
                           footer->x + footer->w - status_w,
-                          footer->y + ((input_hint != NULL && input_hint[0] != '\0') ? 6 : 28),
+                          footer->y + (separate_status_row ? 6 : 28),
                           status_w,
                           status,
                           status_color,
@@ -1131,7 +1140,7 @@ void cmui_compact_finish(uint16_t *fb, const char *title,
                           uint8_t usb_owned, uint8_t iiplus_keyboard,
                           const char *input_hint)
 {
-    cmui_compact_layout_t layout = cmui_compact_layout(0U, 2U);
+    cmui_compact_layout_t layout = cmui_compact_layout(0U, 2U, s_compact_dense_rows);
     const int scale = layout.scale;
     const int font_h = layout.font_h;
     const int line_h = layout.line_h;
@@ -1172,7 +1181,7 @@ void cmui_compact_finish(uint16_t *fb, const char *title,
             ++help_rows;
         }
     }
-    layout = cmui_compact_layout(help_rows, 1U + input_rows);
+    layout = cmui_compact_layout(help_rows, 1U + input_rows, s_compact_dense_rows);
     footer_y = layout.footer_y;
     help_y = layout.help_y;
     visible = layout.visible_rows;
@@ -1240,9 +1249,12 @@ void cmui_compact_finish(uint16_t *fb, const char *title,
             y += line_h;
         }
     }
-    cmui_text_clipped(fb, margin, footer_y, FB16_WIDTH - 2 * margin,
+    const int status_w = FB16_WIDTH - 2 * margin;
+    const int status_scale = s_compact_dense_rows ?
+        cmui_fit_scale(status, status_w, scale) : scale;
+    cmui_text_clipped(fb, margin, footer_y, status_w,
                       status, warning ? CMUI_COLOR_WARN : CMUI_COLOR_SUCCESS,
-                      CMUI_COLOR_BG, scale);
+                      CMUI_COLOR_BG, status_scale);
     if (input_hint != NULL && input_hint[0] != '\0') {
         size_t hint_cols = (size_t)((FB16_WIDTH - 2 * margin) /
                                    (FB16_BUILTIN_FONT_ADVANCE_X * scale));

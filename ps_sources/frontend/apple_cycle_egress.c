@@ -47,6 +47,12 @@ static uint32_t s_consumer_ptr;
  * Copy each record once, then do all lookahead work from this cached array. */
 #define ACE_LOOKAHEAD_BATCH_RECORDS 256U
 static uint64_t s_lookahead_batch[ACE_LOOKAHEAD_BATCH_RECORDS];
+static void (*s_checkpoint)(void);
+
+void apple_cycle_egress_set_checkpoint(void (*checkpoint)(void))
+{
+    s_checkpoint = checkpoint;
+}
 
 /* --- Macros for ring access ---------------------------------------- */
 #define ACE_RING_SLOT(off) \
@@ -232,6 +238,9 @@ void apple_cycle_egress_poll(void)
                batch_count < ACE_LOOKAHEAD_BATCH_RECORDS) {
             s_lookahead_batch[batch_count++] = ACE_RING_SLOT(batch_scan);
             batch_scan = (batch_scan + ACE_RECORD_BYTES) & ACE_RING_MASK;
+            if ((batch_count & 7U) == 0U && s_checkpoint != NULL) {
+                s_checkpoint();
+            }
         }
         batch_reaches_producer = batch_scan == producer;
 
@@ -260,6 +269,9 @@ void apple_cycle_egress_poll(void)
                 }
             }
             budget--;
+            if ((budget & 7U) == 0U && s_checkpoint != NULL) {
+                s_checkpoint();
+            }
 
             if (rec == 0ULL) {
                 /* Gap marker: both halves zero. The FPGA emits this on

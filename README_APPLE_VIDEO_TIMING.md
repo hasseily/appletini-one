@@ -25,6 +25,10 @@ Changing between physical PHI0 and the ONE//e virtual clock also allows a
 fresh calibration. ONE//e keeps its existing frame-zero seed and calibration
 reset on virtual CPU reset.
 
+PAL Accurate Composite and PAL Accurate TV stay saved when the live timing
+is unknown or NTSC. The renderer uses Composite Monitor until it detects PAL,
+then applies the saved mode. This includes ONE//e startup with PAL selected.
+
 Run `python scripts/test_apple_timing_reset.py` for the reset regression.
 It compiles the production PHI0/RES# sampler, activity detector, and timing
 counter with the timing wiring and reset block extracted from `apple_top`.

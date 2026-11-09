@@ -59,6 +59,9 @@ typedef struct {
  * Returns zero on valid input; comparison is offered relative to installed. */
 int online_update_version_compare(const char *installed, const char *offered,
                                   char prefix, int *comparison);
+/* The installed firmware may have a dev suffix. Offers must be stable. */
+int online_update_firmware_offer_compare(const char *installed, const char *offered,
+                                         int *comparison);
 const char *online_update_filename(uint8_t kind);
 /* Caller owns an immutable source buffer and advances available as RX arrives.
  * Feed is bounded by budget; result 0 pending, 1 complete, negative failure. */

@@ -4,13 +4,15 @@
 // There is one request in flight. Each accepted request gets one response,
 // including writes. The backend and bridge must share the fabric reset.
 module pc_transporter_card #(
-    parameter int READ_WAIT_CYCLES = 12
+    parameter int READ_WAIT_CYCLES = 12,
+    parameter int VIRTUAL_READ_WAIT_CYCLES = 561
 ) (
     input  logic                     clk,
     input  logic                     rstn,
     input  globals::AppleBus_read    ab_read,
     input  globals::SoftSwitchState  sss,
     input  logic                     card_enabled,
+    input  logic                     virtual_bus,
     input  logic [2:0]               slot_assign,
     input  globals::AxiSimple_common as_common,
     AxiSimple_if.client              as_client,
@@ -23,6 +25,8 @@ module pc_transporter_card #(
     input  logic                     mem_rsp_valid,
     input  logic [63:0]              mem_rsp_rdata,
     input  logic                     mem_rsp_error,
+    input  logic                     virtual_capture_wait,
+    output logic                     virtual_data_hold,
     output globals::AppleBus_write   ab_write
 );
 
@@ -40,12 +44,25 @@ module pc_transporter_card #(
     localparam logic [7:0] REG_CGA_STATE = 8'h0B;
     localparam logic [7:0] REG_CRTC_0A   = 8'h0C;
     localparam logic [7:0] REG_CRTC_0E   = 8'h0D;
+    localparam logic [7:0] REG_HOLDS     = 8'h0E;
+    localparam logic [7:0] REG_HOLD_MAX  = 8'h0F;
+    localparam logic [7:0] REG_CGA_GEOMETRY = 8'h10;
+    localparam logic [7:0] REG_CGA_RASTER = 8'h11;
 
     localparam logic [24:0] RAM_BYTES = 25'h0C0000;
     localparam logic [14:0] PORT_RAM_TAG = 15'h02FC; // $BF000 through $BF3FF
-    localparam int WAIT_WIDTH = $clog2(READ_WAIT_CYCLES + 1);
+    localparam int MAX_READ_WAIT = (READ_WAIT_CYCLES > VIRTUAL_READ_WAIT_CYCLES) ?
+                                   READ_WAIT_CYCLES : VIRTUAL_READ_WAIT_CYCLES;
+    localparam int WAIT_WIDTH = $clog2(MAX_READ_WAIT + 1);
     localparam int WRITE_DEPTH = 4;
     localparam int WRITE_PTR_WIDTH = $clog2(WRITE_DEPTH);
+    localparam int CGA_PHASE_BITS = 24;
+    localparam longint CGA_FABRIC_HZ = 133000000;
+    localparam longint CGA_DOT_HZ = 14318180;
+    localparam logic [CGA_PHASE_BITS:0] CGA_DOT_STEP =
+        (CGA_PHASE_BITS+1)'(((CGA_DOT_HZ << CGA_PHASE_BITS) + CGA_FABRIC_HZ/2) /
+                            CGA_FABRIC_HZ);
+    localparam logic [4:0] CGA_VSYNC_LINES = 5'd16;
 
     logic [23:0] pointer_q;
     logic [15:0] page_cc_q;
@@ -99,6 +116,7 @@ module pc_transporter_card #(
     logic        port_response_q;
     logic [1:0]  port_data_ready_q;
     logic        c8_owned_q;
+    logic        virtual_bus_q;
     logic [7:0]  reply_data_q;
     logic        reply_valid_q;
     logic [7:0]  local_read_data;
@@ -108,6 +126,21 @@ module pc_transporter_card #(
     logic [7:0]  cga_mode_q;
     logic [7:0]  cga_color_q;
     logic [15:0] cga_seq_q;
+    logic [CGA_PHASE_BITS-1:0] cga_dot_phase_q;
+    logic        cga_dot_tick_q;
+    logic [3:0]  cga_dot_q;
+    logic [7:0]  cga_column_q;
+    logic [6:0]  cga_row_q;
+    logic [4:0]  cga_raster_q;
+    logic        cga_adjust_q;
+    logic        cga_line_start_q;
+    logic        cga_hblank_q;
+    logic [4:0]  cga_vsync_lines_q;
+    logic [15:0] cga_frame_q;
+    wire cga_char_tick = cga_dot_tick_q && (&cga_dot_q[2:0]) &&
+                         (cga_mode_q[0] || cga_dot_q[3]);
+    wire cga_vsync = cga_vsync_lines_q != 5'd0;
+    wire cga_timing_programmed = crtc_regs_q[0] != 8'd0;
 
     logic [19:0] write_addr_q [WRITE_DEPTH];
     logic [7:0]  write_data_q [WRITE_DEPTH];
@@ -126,6 +159,7 @@ module pc_transporter_card #(
     logic        mem_prefetch_q;
     logic [2:0]  mem_read_lane_q;
     logic        early_valid_q;
+    logic        virtual_prefetch_pending_q;
     logic [15:0] early_apple_addr_q;
     logic        early_result_q;
     logic        early_error_q;
@@ -136,6 +170,13 @@ module pc_transporter_card #(
     logic [31:0] read_misses_q;
     logic [31:0] write_drops_q;
     logic [31:0] mem_errors_q;
+    logic [31:0] virtual_holds_q;
+    logic [WAIT_WIDTH-1:0] virtual_hold_cycles_q;
+    logic [WAIT_WIDTH-1:0] virtual_max_hold_q;
+
+    // The physical bus cannot wait. ONE//e captures only after the pending
+    // read has registered its reply or reached the bounded timeout.
+    assign virtual_data_hold = virtual_bus_q && read_wait_q;
 
     initial begin
         for (int i = 0; i < 1024; i++) begin
@@ -145,7 +186,10 @@ module pc_transporter_card #(
 
     wire enabled = card_enabled && (slot_assign != 3'd0);
     wire active = enabled && ab_read.res;
-    wire c8_selected = active && !sss.sw_intcxrom &&
+    // A reply belongs to the bus that requested it. The two buses can be
+    // in different phases when ONE//e enters or leaves service.
+    wire bus_cycle_active = active && (virtual_bus == virtual_bus_q);
+    wire c8_selected = bus_cycle_active && !sss.sw_intcxrom &&
                        !sss.c8_internal_rom &&
                        (sss.c8_select == slot_assign) &&
                        sss.io_select[slot_assign];
@@ -162,7 +206,7 @@ module pc_transporter_card #(
                              (ab_read.addr[7:0] == 8'h04));
     wire ram_hit = cc_hit || ce_hit || pointer_data_hit;
     wire ctrl_hit = c8_hit && (ab_read.addr[15:6] == 10'h33C);
-    wire apple_serve = active && ab_read.cycle_valid && ab_read.serve_en;
+    wire apple_serve = bus_cycle_active && ab_read.cycle_valid && ab_read.serve_en;
     wire apple_commit = active && c8_selected && ab_read.cycle_valid &&
                         ab_read.data_en && apple_cycle_q;
     wire apple_write = apple_commit && !ab_read.rw;
@@ -393,7 +437,19 @@ module pc_transporter_card #(
 
     always_comb begin
         local_read_data = 8'hFF;
-        if (ctrl_hit) begin
+        if (slot_hit) begin
+            // Identification bytes read by the Apple slot scanner. Other
+            // offsets, including the boot ROM entry points, return $FF.
+            case (ab_read.addr[7:0])
+                8'h05: local_read_data = 8'h03;
+                8'h07: local_read_data = 8'h00;
+                8'hF5: local_read_data = 8'hAE;
+                8'hF6: local_read_data = 8'h50;
+                8'hF7: local_read_data = 8'h43;
+                8'hF8: local_read_data = 8'h54;
+                default: ;
+            endcase
+        end else if (ctrl_hit) begin
             case (ab_read.addr[5:0])
                 6'h00: local_read_data = pointer_q[7:0];
                 6'h01: local_read_data = pointer_q[15:8];
@@ -406,10 +462,12 @@ module pc_transporter_card #(
                 6'h28, 6'h29, 6'h2A, 6'h2B: local_read_data = pit_read_data;
                 6'h30: local_read_data = {apple_irq_pending, guest_int_q,
                                           ctrl_apple_rdata[5:0]};
-                // The Apple calibration path polls PIT OUT2. PS status
-                // reports the guest HALT latch independently.
+                // PIT OUT2 serves calibration. Retrace stays live when CGA
+                // output is blanked for a mode change.
                 6'h31: local_read_data = {xfer_q[16], xfer_q[17], pit_out2,
-                                         guest_reset_q, ctrl_apple_rdata[3:0]};
+                                         guest_reset_q, cga_timing_programmed && cga_vsync,
+                                         ctrl_apple_rdata[2:1],
+                                         cga_timing_programmed && cga_hblank_q};
                 6'h32: local_read_data = {xfer_pending_q, key_ready_q,
                                           timer0_pending_q, ctrl_apple_rdata[4:0]};
                 6'h33: local_read_data = key_scan_q;
@@ -497,6 +555,71 @@ module pc_transporter_card #(
         end
     end
 
+    // The Apple status follows the guest CRTC even if the compositor runs at
+    // another rate. Bit 0 marks the whole horizontal blank interval, including
+    // on lines in vertical blank, so software can count one edge per line.
+    always_ff @(posedge clk) begin
+        if (!rstn || !active) begin
+            cga_dot_phase_q   <= '0;
+            cga_dot_tick_q    <= 1'b0;
+            cga_dot_q         <= '0;
+            cga_column_q      <= '0;
+            cga_row_q         <= '0;
+            cga_raster_q      <= '0;
+            cga_adjust_q      <= 1'b0;
+            cga_line_start_q  <= 1'b0;
+            cga_hblank_q      <= 1'b0;
+            cga_vsync_lines_q <= '0;
+            cga_frame_q       <= '0;
+        end else begin
+            {cga_dot_tick_q, cga_dot_phase_q} <= {1'b0, cga_dot_phase_q} + CGA_DOT_STEP;
+            if (cga_dot_tick_q) cga_dot_q <= cga_dot_q + 1'b1;
+
+            cga_hblank_q <= cga_column_q >= crtc_regs_q[1];
+            cga_line_start_q <= 1'b0;
+            if (cga_char_tick) begin
+                if (cga_column_q >= crtc_regs_q[0]) begin
+                    cga_column_q <= '0;
+                    cga_line_start_q <= 1'b1;
+                    if (cga_adjust_q) begin
+                        if (cga_raster_q + 6'd1 >= {1'b0, crtc_regs_q[5][4:0]}) begin
+                            cga_row_q <= '0;
+                            cga_raster_q <= '0;
+                            cga_adjust_q <= 1'b0;
+                            cga_frame_q <= cga_frame_q + 1'b1;
+                        end else begin
+                            cga_raster_q <= cga_raster_q + 1'b1;
+                        end
+                    end else if (cga_raster_q >= crtc_regs_q[9][4:0]) begin
+                        cga_raster_q <= '0;
+                        if (cga_row_q >= crtc_regs_q[4][6:0]) begin
+                            cga_row_q <= '0;
+                            cga_adjust_q <= crtc_regs_q[5][4:0] != 5'd0;
+                            if (crtc_regs_q[5][4:0] == 5'd0) begin
+                                cga_frame_q <= cga_frame_q + 1'b1;
+                            end
+                        end else begin
+                            cga_row_q <= cga_row_q + 1'b1;
+                        end
+                    end else begin
+                        cga_raster_q <= cga_raster_q + 1'b1;
+                    end
+                end else begin
+                    cga_column_q <= cga_column_q + 1'b1;
+                end
+            end
+
+            if (cga_line_start_q) begin
+                if (!cga_adjust_q && cga_raster_q == 5'd0 &&
+                    cga_row_q == crtc_regs_q[7][6:0]) begin
+                    cga_vsync_lines_q <= CGA_VSYNC_LINES;
+                end else if (cga_vsync) begin
+                    cga_vsync_lines_q <= cga_vsync_lines_q - 1'b1;
+                end
+            end
+        end
+    end
+
     // Keep the two reply bytes until CF32 acknowledges the transfer.
     // Apple writes take precedence over the initial read from port storage.
     always_comb begin
@@ -544,16 +667,35 @@ module pc_transporter_card #(
         end
     end
 
-    wire cycle_closed = !active || !c8_selected || ab_read.addr_en || ab_read.data_en;
+    wire cycle_closed = !c8_selected || ab_read.addr_en || ab_read.data_en;
     wire reply_boundary = cycle_closed || ab_read.serve_en;
-    // An early read is for this Apple cycle only. A DMA master can leave an
-    // old address in the early sample. Only the later sample can drive data.
-    wire prefetch_start = c8_selected && ab_read.cycle_valid && ab_read.addr_en &&
-                          ab_read.rw_early && ab_read.dma && !ab_read.serve_en &&
-                          is_ram_window(ab_read.addr_early) &&
-                          window_in_range_q[window_index(ab_read.addr_early)] &&
-                          !window_port_tag_q[window_index(ab_read.addr_early)] &&
-                          (write_count_q == '0);
+    // A physical DMA master can leave an old address in the early sample.
+    // The virtual bus captures its owner, address and R/W before addr_en,
+    // including vTW DMA cycles. Only the later sample can drive data.
+    wire early_candidate = c8_selected && ab_read.cycle_valid && ab_read.addr_en &&
+                           ab_read.rw_early && (ab_read.dma || virtual_bus_q) &&
+                           !ab_read.serve_en &&
+                           is_ram_window(ab_read.addr_early) &&
+                           window_in_range_q[window_index(ab_read.addr_early)] &&
+                           !window_port_tag_q[window_index(ab_read.addr_early)];
+    // ONE//e holds the early address through serve_en. If an older RAM
+    // transaction blocks addr_en, keep the read eligible until serve_en.
+    wire retry_virtual_prefetch = virtual_prefetch_pending_q && virtual_bus_q &&
+                                  c8_selected && ab_read.cycle_valid && !reply_boundary;
+    wire mem_idle = !mem_req_valid && !mem_inflight_q;
+    wire prefetch_start = (early_candidate || retry_virtual_prefetch) &&
+                          (write_count_q == '0) && (!virtual_bus_q || mem_idle);
+
+    always_ff @(posedge clk) begin
+        if (!rstn || !virtual_bus_q || !c8_selected || !ab_read.cycle_valid ||
+            ab_read.serve_en || ab_read.data_en) begin
+            virtual_prefetch_pending_q <= 1'b0;
+        end else if (ab_read.addr_en) begin
+            virtual_prefetch_pending_q <= early_candidate && !prefetch_start;
+        end else if (prefetch_start) begin
+            virtual_prefetch_pending_q <= 1'b0;
+        end
+    end
     // A data commit or a closed cycle clears early_valid_q. The window
     // registers change only at those points, so a matching Apple address
     // also selects the prefetched RAM byte.
@@ -640,7 +782,7 @@ module pc_transporter_card #(
             if (mem_complete) begin
                 mem_inflight_q <= 1'b0;
             end
-            if (!mem_req_valid && !mem_inflight_q) begin
+            if (mem_idle) begin
                 if (prefetch_start) begin
                     mem_req_valid   <= 1'b1;
                     mem_req_write   <= 1'b0;
@@ -680,6 +822,7 @@ module pc_transporter_card #(
             apple_port_ram_q  <= 1'b0;
             apple_mirror_q    <= 1'b0;
             apple_cycle_q     <= 1'b0;
+            virtual_bus_q     <= 1'b0;
             port_response_q   <= 1'b0;
             reply_valid_q     <= 1'b0;
             reply_data_q      <= 8'hFF;
@@ -692,7 +835,8 @@ module pc_transporter_card #(
             early_error_q     <= 1'b0;
             early_data_q      <= '0;
         end else begin
-            if (!active || (apple_cycle_q && !c8_selected) ||
+            virtual_bus_q <= virtual_bus;
+            if (!bus_cycle_active || (apple_cycle_q && !c8_selected) ||
                 ab_read.addr_en || ab_read.serve_en || ab_read.data_en) begin
                 apple_cycle_q   <= 1'b0;
                 port_response_q <= 1'b0;
@@ -746,7 +890,11 @@ module pc_transporter_card #(
                         end else if (!early_error) begin
                             read_wait_q   <= 1'b1;
                             read_sent_q   <= early_pending;
-                            read_cycles_q <= WAIT_WIDTH'(READ_WAIT_CYCLES);
+                            // ONE//e can wait up to about 4 us past normal
+                            // capture. Physical reads keep their fixed window.
+                            read_cycles_q <= virtual_bus_q ?
+                                WAIT_WIDTH'(VIRTUAL_READ_WAIT_CYCLES) :
+                                WAIT_WIDTH'(READ_WAIT_CYCLES);
                         end
                     end else begin
                         reply_valid_q <= 1'b1;
@@ -888,11 +1036,23 @@ module pc_transporter_card #(
             read_misses_q <= '0;
             write_drops_q <= '0;
             mem_errors_q  <= '0;
+            virtual_holds_q <= '0;
+            virtual_hold_cycles_q <= '0;
+            virtual_max_hold_q <= '0;
         end else begin
             if (read_miss) read_misses_q <= read_misses_q + 1'b1;
             if (ram_write && !queue_write) write_drops_q <= write_drops_q + 1'b1;
             if (early_error || (mem_complete && mem_rsp_error &&
                 (mem_req_write || read_on_time))) mem_errors_q <= mem_errors_q + 1'b1;
+            if (virtual_capture_wait) begin
+                if (virtual_hold_cycles_q == '0) virtual_holds_q <= virtual_holds_q + 1'b1;
+                if (virtual_hold_cycles_q == virtual_max_hold_q) begin
+                    virtual_max_hold_q <= virtual_hold_cycles_q + 1'b1;
+                end
+                virtual_hold_cycles_q <= virtual_hold_cycles_q + 1'b1;
+            end else begin
+                virtual_hold_cycles_q <= '0;
+            end
         end
     end
 
@@ -916,6 +1076,12 @@ module pc_transporter_card #(
             REG_MISSES: as_client.rdata = read_misses_q;
             REG_DROPS: as_client.rdata = write_drops_q;
             REG_ERRORS: as_client.rdata = mem_errors_q;
+            REG_HOLDS: as_client.rdata = virtual_holds_q;
+            REG_HOLD_MAX: as_client.rdata = 32'(virtual_max_hold_q);
+            REG_CGA_GEOMETRY: as_client.rdata =
+                {8'b0, crtc_regs_q[9], crtc_regs_q[6], crtc_regs_q[1]};
+            REG_CGA_RASTER: as_client.rdata =
+                {cga_frame_q, cga_adjust_q, cga_hblank_q, 2'b0, cga_row_q, cga_raster_q};
             REG_KEYS: as_client.rdata = {15'd0, key_ready_q, key_scan_q, key_modifiers_q};
             REG_ACK_DATA: as_client.rdata = {16'd0, ack_data_q};
             REG_CGA_STATE: as_client.rdata = {cga_seq_q, cga_color_q, cga_mode_q};
@@ -930,7 +1096,7 @@ module pc_transporter_card #(
         ab_write = '0;
         ab_write.assert_irq = rstn && active && irq_enable_q && apple_irq_pending;
         ab_write.wr_data = port_response_q ? apple_port_reply_q : reply_data_q;
-        ab_write.wr_data_en = rstn && active && ab_read.cycle_valid && ab_read.rw &&
+        ab_write.wr_data_en = rstn && bus_cycle_active && ab_read.cycle_valid && ab_read.rw &&
                               !ab_read.addr_en &&
                               (!apple_cycle_q || c8_owned_q) &&
                               (reply_valid_q || (port_response_q && port_data_ready_q[1]));

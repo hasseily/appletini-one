@@ -93,9 +93,17 @@ def static_contract_checks() -> None:
     require("virtual_ab_read.data_en &&" in reset and
             "virtual_ab_read.cycle_valid" in reset,
             "warm reset must count private native bus cycles")
-    virtual_bus = instance_text(apple, "apple_virtual_bus apple_virtual_bus_i")
+    virtual_bus = instance_text(apple, "apple_virtual_bus #(")
     require(".res_n_in         (onee_virtual_res_n)" in virtual_bus,
             "warm reset must drive the virtual motherboard RESET input")
+    pct = instance_text(apple, "pc_transporter_card pc_transporter_card_i")
+    require(".ENABLE_DATA_CAPTURE_HOLD(1'b1)" in virtual_bus and
+            ".data_capture_hold(pct_virtual_data_hold)" in virtual_bus and
+            ".data_capture_wait(pct_virtual_capture_wait)" in virtual_bus and
+            ".virtual_bus(onee_enable_effective)" in pct and
+            ".virtual_capture_wait(pct_virtual_capture_wait)" in pct and
+            ".virtual_data_hold(pct_virtual_data_hold)" in pct,
+            "Transporter read holds must reach the private data capture only")
     motherboard = instance_text(
         apple, "onee_motherboard_io onee_motherboard_io_i"
     )
@@ -107,6 +115,19 @@ def static_contract_checks() -> None:
     require(".ab_read(data_phase_ab_read)" in vtw and
             "        data_phase_ab_read = ab_read;\n" in apple,
             "virtual RESET must reach the soft CPU through ab_read")
+    # These cards also read data only at data_en. The Mockingboard keeps
+    # the live byte for the floating SSI-263 read bits.
+    mockingboard = instance_text(apple, "mockingboard mb1")
+    applicard = instance_text(apple, "applicard_card applicard_card_i")
+    slot7_guard = instance_text(
+        apple, "apple_slot7_devsel_guard apple_slot7_devsel_guard_i"
+    )
+    require(".ab_read(gate_ab(data_phase_ab_read, card_slot4_bus_enable))"
+            in mockingboard and ".serve_data(ab_read.data)" in mockingboard and
+            ".ab_read(gate_ab(data_phase_ab_read, card_slot5_bus_enable))"
+            in applicard and
+            ".ab_read_in            (data_phase_ab_read)" in slot7_guard,
+            "data_en cards must take the captured data byte")
     physical_bus = instance_text(apple, "apple_bus_wrapper apple_bus_wrapper_i")
     require("onee_virtual_res_n" not in physical_bus and
             ".apple_res_pin(apple_res_pin)" in physical_bus,

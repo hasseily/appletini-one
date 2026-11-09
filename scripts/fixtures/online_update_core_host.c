@@ -28,6 +28,10 @@ static int read_image(void *context,uint32_t at,void *out,uint32_t n)
 }
 int main(int argc,char **argv)
 {
+    if (argc==4 && !strcmp(argv[1],"firmware-offer")) {
+        int cmp=99,rc=online_update_firmware_offer_compare(argv[2],argv[3],&cmp);
+        printf("%d %d\n",rc,cmp); return 0;
+    }
     if (argc==5 && !strcmp(argv[1],"compare")) {
         int cmp=99,rc=online_update_version_compare(argv[2],argv[3],argv[4][0],&cmp);
         printf("%d %d\n",rc,cmp); return 0;

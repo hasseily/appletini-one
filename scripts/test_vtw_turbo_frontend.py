@@ -66,6 +66,7 @@ def main() -> int:
         #include "slot2_gamepad_service.h"
 
         #define CONFIG_SLOT5_PROCESSOR_AD8088 1U
+        #define CONFIG_SLOT5_PROCESSOR_TRANSPORTER 2U
         typedef struct {
             uint8_t vtw_enabled, vtw_speed_mode, vtw_pace_divider;
             uint8_t vtw_ignore_c074, vtw_disable_disk2_accel;

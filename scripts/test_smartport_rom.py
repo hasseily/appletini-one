@@ -110,20 +110,27 @@ def test_block_helpers_preserve_prodos_buffer_page() -> None:
 class SmartportMemory:
     """64K memory with the card's side-effect-free DATA and explicit DPOP."""
 
-    def __init__(self, ctrl: int, fifo: bytes):
+    def __init__(self, ctrl: int, fifo: bytes, *, response: bytes | None = None):
         self.data = bytearray(65536)
         self.ctrl = ctrl
         self.fifo = list(fifo)
+        self.response = response
+        self.command = bytearray()
         self.data_reads = 0
         self.data_writes = 0
         self.ctrl_writes: list[int] = []
         self.pops = 0
+        self.dry_reads = 0
+        self.dry_pops = 0
 
     def __getitem__(self, address: int) -> int:
         address &= 0xFFFF
         if address == 0xCFF0:
             self.data_reads += 1
-            return self.fifo[0] if self.fifo else 0
+            if self.fifo:
+                return self.fifo[0]
+            self.dry_reads += 1
+            return 0
         if address == 0xCFF1:
             return self.ctrl
         return self.data[address]
@@ -132,13 +139,20 @@ class SmartportMemory:
         address &= 0xFFFF
         if address == 0xCFF0:
             self.data_writes += 1
+            self.command.append(value & 0xFF)
             return
         if address == 0xCFF1:
             self.ctrl_writes.append(value & 0xFF)
+            if self.response is not None:
+                self.fifo.extend(self.response)
+                self.response = None
+                self.ctrl |= 0x80
             return
         if address == 0xCFF2:
             if self.fifo:
                 self.fifo.pop(0)
+            else:
+                self.dry_pops += 1
             self.pops += 1
             return
         self.data[address] = value & 0xFF
@@ -232,6 +246,58 @@ def test_vtw_write_preflight_rom_contract() -> None:
             "native writes must keep the original payload-only flow")
 
 
+def test_character_read_rom_contract() -> None:
+    slot = read_mem(SLOT_MEM)
+    cont = read_mem(CONT_MEM)
+    caller = 0x0600
+    params = 0x0800
+    destination = 0x12FE  # Exercise the indexed buffer across page boundaries.
+    original = bytes([0xA5]) * 514
+    saved_zp = b"\x11\x22\x33\x44"
+
+    for requested, actual, status in (
+        (512, 257, 0), (4, 1, 0), (512, 0, 0), (0, 0, 0),
+        (1, 1, 0), (257, 257, 0), (512, 512, 0), (257, 0, 0x27),
+    ):
+        case = f"character READ requested={requested} actual={actual} status=0x{status:02X}"
+        payload = bytes((i * 73 + i // 256 + 19) & 0xFF for i in range(actual))
+        reply = bytes([status]) if status else b"\x00" + actual.to_bytes(2, "little") + payload
+        memory = SmartportMemory(0, b"", response=reply)
+        memory.data[0xC700:0xC800] = slot
+        memory.data[0xC800:0xD000] = cont
+        # JSR $C70D, inline SmartPort READ command and command-list address.
+        memory.data[caller:caller + 6] = b"\x20\x0D\xC7\x08" + params.to_bytes(2, "little")
+        param_list = (b"\x04\x01" + destination.to_bytes(2, "little") +
+                      requested.to_bytes(2, "little") + b"\x00\x00\x00")
+        memory.data[params:params + len(param_list)] = param_list
+        memory.data[destination - 1:destination + 513] = original
+        memory.data[0x44:0x48] = saved_zp
+        mpu = MPU(memory=memory, pc=caller)
+        mpu.sp = 0xFF
+        for _ in range(20000):
+            if mpu.pc == caller + 6:
+                break
+            mpu.step()
+        else:
+            raise TestFailure(f"{case} did not return after the inline parameters")
+
+        require(memory.ctrl_writes == [0x02] and memory.command == b"\x08" + param_list,
+                f"{case} must submit exactly one SmartPort command with the caller's count")
+        require(mpu.a == status and bool(mpu.p & mpu.CARRY) == bool(status),
+                f"{case} must return the response status in A and carry")
+        if status == 0:
+            require((mpu.x | (mpu.y << 8)) == actual,
+                    f"{case} must return the actual byte count in X/Y")
+        require(memory.data[destination - 1:destination + 513] ==
+                original[:1] + payload + original[1 + actual:],
+                f"{case} must write exactly the returned payload without touching adjacent bytes")
+        require(memory.data_reads == len(reply) and memory.pops == len(reply) and
+                not memory.fifo and not memory.dry_reads and not memory.dry_pops,
+                f"{case} must consume exactly one DATA/DPOP pair per response byte")
+        require(mpu.sp == 0xFF and memory.data[0x44:0x48] == saved_zp,
+                f"{case} must preserve the caller's stack and buffer zero page")
+
+
 def test_vivado_sources_include_active_smartport_roms() -> None:
     sources = HDL_SOURCES.read_text(encoding="utf-8")
 
@@ -245,6 +311,7 @@ TESTS = [
     test_block_helpers_preserve_prodos_buffer_page,
     test_vtw_direct_block_rom_contract,
     test_vtw_write_preflight_rom_contract,
+    test_character_read_rom_contract,
     test_vivado_sources_include_active_smartport_roms,
 ]
 

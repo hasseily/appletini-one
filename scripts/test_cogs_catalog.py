@@ -32,8 +32,7 @@ int main(int argc, char **argv)
     if (result != 0) return 0;
     for (unsigned i = 0; i < page.count; ++i) {
         const cogs_catalog_entry_t *entry = &page.entries[i];
-        printf("%s\t%s\t%s\t%lu\n", entry->title, entry->bundle,
-               entry->url, (unsigned long)entry->bytes);
+        printf("%s\t%s\t%lu\n", entry->title, entry->url, (unsigned long)entry->bytes);
     }
     return 0;
 }
@@ -71,14 +70,31 @@ def main():
                   **{"in": "Total Replay v6.1"})
     installer = dict(name="Knights of Legend 3_5 Installer", blocks=1600, cat="G", host="any", url=wrapped)
     assert parse(dict(pages=36, count=640, volumes=[first, bundle, installer])) == [
-        ["0", "36", "3"],
-        [first["name"], "", po, "143360"],
-        ["Airheart", "Total Replay v6.1", hdv, "33553920"],
-        [installer["name"], "", wrapped, "819264"],
+        ["0", "36", "2"],
+        [first["name"], po, "143360"],
+        [installer["name"], wrapped, "819264"],
     ]
+    assert parse(dict(pages=36, count=640, volumes=[bundle] * 18)) == [["0", "36", "0"]]
     assert parse(dict(pages=1, count=0, volumes=[])) == [["0", "1", "0"]]
 
-    filtered = [dict(first, cat="S"), dict(first, host="gs"), dict(first, cat="GG"),
+    replay_images = (
+        ("Total Replay v6.1", hdv),
+        ("Total Replay II: Instant Replay",
+         "https://github.com/a2-4am/4sports/releases/download/v1.0-alpha.4/Total.Replay.II.hdv"),
+        ("Wizard Replay v2.3",
+         "https://github.com/a2-4am/wizard-replay/releases/download/v2.3/wizard-replay.hdv"),
+        ("Total Replay v7.0",
+         "https://github.com/a2-4am/4cade/releases/download/v7.0/Total.Replay.hdv?raw=1"),
+    )
+    replays = [dict(first, name=name, blocks=65535, url=url) for name, url in replay_images]
+    replay_members = [dict(replay, name="Individual Game", **{"in": replay["name"]})
+                      for replay in replays]
+    assert parse(dict(pages=1, volumes=replays + replay_members)) == [
+        ["0", "1", "4"], *[[name, url, "33553920"] for name, url in replay_images],
+    ]
+    filtered = [bundle, dict(first, **{"in": "Collection"}), dict(first, **{"in": None}),
+                dict(first, **{"in": ["Collection"]}), dict(first, **{"in": "\u0000"}),
+                dict(first, cat="S"), dict(first, host="gs"), dict(first, cat="GG"),
                 dict(first, host=None), dict(first, name=""), dict(first, url="https://example.com/game.woz"),
                 dict(first, url="http://example.com/game.po"), dict(first, url="https://u@h/game.po"),
                 dict(first, url="https://example.com/a#game.po"), dict(first, url="https://example.com/.po"),
@@ -89,19 +105,32 @@ def main():
                 dict(installer, bytes=819200),
                 {key: value for key, value in first.items() if key not in ("blocks", "host")},
                 {key: value for key, value in first.items() if key != "cat"}]
+    filtered += [dict(replays[0], host="gs"), dict(replays[1], cat="S")]
     for entry in filtered:
-        assert parse(dict(pages=1, volumes=[entry, bundle])) == [
-            ["0", "1", "1"], ["Airheart", "Total Replay v6.1", hdv, "33553920"]
+        assert parse(dict(pages=1, volumes=[entry, first])) == [
+            ["0", "1", "1"], [first["name"], po, "143360"]
         ], entry
+    raw = "https://disks.a2cogs.com/disks/standalone.hdv"
+    explicit_standalone = dict(first, blocks=65535, url=raw, **{"in": ""})
+    assert parse(dict(pages=1, volumes=[explicit_standalone])) == [
+        ["0", "1", "1"], [first["name"], raw, "33553920"]
+    ]
+    same_publisher = "https://github.com/a2-4am/4cade/releases/download/v6.1/Standalone.hdv"
+    other_publisher = "https://github.com/other/4cade/releases/download/v6.1/Total.Replay.hdv"
+    assert parse(dict(pages=1, volumes=[dict(first, url=url) for url in
+                                      (same_publisher, other_publisher)])) == [
+        ["0", "1", "2"], [first["name"], same_publisher, "143360"],
+        [first["name"], other_publisher, "143360"]
+    ]
 
     explicit = dict(name="é😀" + "A" * 48, bytes=512, cat="G", host="any",
                     url="https://example.com/A.PO?file=a.zip")
     assert parse(dict(pages=1, volumes=[explicit])) == [
-        ["0", "1", "1"], ["??" + "A" * 45, "", explicit["url"], "512"]
+        ["0", "1", "1"], ["??" + "A" * 45, explicit["url"], "512"]
     ]
     assert parse(b'{"volumes":[{"url":"https:\\/\\/example.com\\/x.po","host":"any",'
                  b'"name":"Game","blocks":1,"\\u0063at":"\\u0047"}],"pages":2}') == [
-        ["0", "2", "1"], ["Game", "", "https://example.com/x.po", "512"]
+        ["0", "2", "1"], ["Game", "https://example.com/x.po", "512"]
     ]
     assert parse(dict(pages=1, volumes=[first] * 18))[0] == ["0", "1", "18"]
     invalid = [b"", b'{"pages":1,"volumes":[]', b'{"pages":1,"volumes":[]} null',
@@ -118,7 +147,7 @@ def main():
     for document in invalid:
         assert parse(document) == [["-1", "0", "0"]], document
     assert parse(b'{"pages":1,"volumes":[]}' + b" " * 32769) == [["-1", "0", "0"]]
-    print("PASS CoGS pages, 8-bit game filtering, exact image sizes, and malformed catalog rejection")
+    print("PASS CoGS pages, Replay disks, 8-bit game filtering, image sizes, and malformed catalog rejection")
 
 
 if __name__ == "__main__":

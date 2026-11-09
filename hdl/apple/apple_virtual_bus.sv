@@ -15,7 +15,8 @@ module apple_virtual_bus #(
     parameter integer ADDR_CLK       = 25,
     parameter integer SSS_CLK        = 26,
     parameter integer SERVE_CLK      = 73,
-    parameter integer DATA_CLK       = 124
+    parameter integer DATA_CLK       = 124,
+    parameter bit     ENABLE_DATA_CAPTURE_HOLD = 1'b0
 ) (
     input  logic                    clk,
     input  logic                    resetn,
@@ -45,6 +46,10 @@ module apple_virtual_bus #(
     // client serves.
     input  logic [7:0]              floating_bus_data,
 
+    // A private-bus device can extend the final high phase while it waits
+    // for a read. The device must release the hold on completion or timeout.
+    input  logic                    data_capture_hold,
+    output logic                    data_capture_wait,
     input  globals::AppleBus_write  ab_write,
     output globals::AppleBus_read   ab_read,
     // For consumers which inspect data only at data_en. This is the same
@@ -75,6 +80,10 @@ module apple_virtual_bus #(
     wire phase_sss   = (phase_q == PHASE_WIDTH'(SSS_CLK));
     wire phase_serve = (phase_q == PHASE_WIDTH'(SERVE_CLK));
     wire phase_data  = phase_data_q;
+    wire phase_capture = phase_q == PHASE_WIDTH'(DATA_CLK - 1);
+    assign data_capture_wait = ENABLE_DATA_CAPTURE_HOLD && phase_capture &&
+                               data_capture_hold;
+    wire capture_data = phase_capture && !data_capture_wait;
     wire [PHASE_WIDTH-1:0] cycle_clks = video_mode_50hz ?
         PHASE_WIDTH'(PAL_CYCLE_CLKS) : PHASE_WIDTH'(CYCLE_CLKS);
 
@@ -155,14 +164,16 @@ module apple_virtual_bus #(
             resp_rdata   <= '0;
         end else begin
             resp_valid <= 1'b0;
-            phase_data_q <= (phase_q == PHASE_WIDTH'(DATA_CLK - 1));
+            phase_data_q <= capture_data;
 
             // Use >= so a PAL-to-NTSC switch during private RESET also
             // recovers cleanly when the old phase was the PAL-only last tick.
-            if (phase_q >= (cycle_clks - PHASE_WIDTH'(1))) begin
-                phase_q <= '0;
-            end else begin
-                phase_q <= phase_q + PHASE_WIDTH'(1);
+            if (!data_capture_wait) begin
+                if (phase_q >= (cycle_clks - PHASE_WIDTH'(1))) begin
+                    phase_q <= '0;
+                end else begin
+                    phase_q <= phase_q + PHASE_WIDTH'(1);
+                end
             end
 
             // Resolve the current owner once per fabric clock after drive_en,
@@ -182,7 +193,7 @@ module apple_virtual_bus #(
             // hold it across the public data phase. This keeps late registered
             // card replies intact while removing the live card arbiter from
             // every data-phase consumer.
-            if (phase_q == PHASE_WIDTH'(DATA_CLK - 1)) begin
+            if (capture_data) begin
                 cycle_data_q <= bus_data_live;
             end
 

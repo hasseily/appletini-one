@@ -143,7 +143,7 @@ def static_checks() -> None:
         )
 
     require(
-        "apple_virtual_bus apple_virtual_bus_i" in apple_top and
+        ") apple_virtual_bus_i (" in apple_top and
         ".req_valid        (1'b0)" in apple_top and
         ".ab_write         (virtual_ab_write_arb)" in apple_top and
         "apple_virtual_bus_write_arbiter_i" in apple_top and

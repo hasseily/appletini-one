@@ -26,6 +26,7 @@ def main():
     ]
     subprocess.run(command, cwd=ROOT, check=True)
     subprocess.run([str(exe)], cwd=OUT, check=True, timeout=20)
+    subprocess.run([str(exe), "empty"], cwd=OUT, check=True, timeout=20)
 
 
 if __name__ == "__main__":

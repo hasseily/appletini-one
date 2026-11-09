@@ -178,6 +178,10 @@
  */
 int i2c_init(XIicPs *i2c);
 
+/* Temporarily service foreground work during short reads on a polled I2C
+ * controller. The callback must not use I2C or reenter this driver. */
+void i2c_set_wait_checkpoint(void (*checkpoint)(void));
+
 /**
  * @brief Write bytes to I2C device
  *

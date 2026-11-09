@@ -2379,6 +2379,16 @@ static uint8_t config_menu_video_color_mode_allowed(const config_menu_t *menu,
     return config_menu_pal_accurate_modes_allowed(menu);
 }
 
+uint8_t config_menu_effective_video_color_mode(const config_menu_t *menu)
+{
+    /* Live cadence can be unknown while the saved ONE//e standard starts. */
+    if (menu != NULL &&
+        config_menu_video_color_mode_allowed(menu, menu->video_color_mode) != 0U) {
+        return menu->video_color_mode;
+    }
+    return CONFIG_DEFAULT_VIDEO_COLOR_MODE;
+}
+
 const char *config_menu_video_variant_label(const config_menu_t *menu)
 {
     return (menu != NULL && menu->video_output_mono != 0U) ?
@@ -2390,12 +2400,8 @@ const char *config_menu_video_variant_text(const config_menu_t *menu)
     if (menu != NULL && menu->video_output_mono != 0U) {
         return config_menu_video_mono_color_text(menu->video_mono_color);
     }
-    if (menu != NULL &&
-        config_menu_video_color_mode_allowed(menu, menu->video_color_mode) == 0U) {
-        return config_menu_video_color_mode_text(CONFIG_DEFAULT_VIDEO_COLOR_MODE);
-    }
     return config_menu_video_color_mode_text(
-        (menu != NULL) ? menu->video_color_mode : CONFIG_DEFAULT_VIDEO_COLOR_MODE);
+        config_menu_effective_video_color_mode(menu));
 }
 
 uint8_t config_menu_video_pal_accurate_help_visible(const config_menu_t *menu)
@@ -2537,6 +2543,9 @@ static uint8_t config_menu_next_color_mode(const config_menu_t *menu,
                                            int8_t delta)
 {
     mode = apple_video_color_mode_clamp(mode);
+    if (config_menu_video_color_mode_allowed(menu, mode) == 0U) {
+        mode = CONFIG_DEFAULT_VIDEO_COLOR_MODE;
+    }
     for (uint32_t i = 0U; i < APPLE_VIDEO_COLOR_COUNT; ++i) {
         if (delta < 0) {
             mode = (mode == 0U) ?
@@ -2602,9 +2611,6 @@ static void config_menu_coerce_video_output(config_menu_t *menu)
         menu->video_mono_color = CONFIG_DEFAULT_VIDEO_MONO_COLOR;
     }
     menu->video_color_mode = apple_video_color_mode_clamp(menu->video_color_mode);
-    if (config_menu_video_color_mode_allowed(menu, menu->video_color_mode) == 0U) {
-        menu->video_color_mode = CONFIG_DEFAULT_VIDEO_COLOR_MODE;
-    }
     menu->video7_auto_mono_enabled =
         (menu->video7_auto_mono_enabled != 0U) ? 1U : 0U;
     menu->dhgr_col140m_enabled =
@@ -2805,7 +2811,7 @@ static void config_menu_apply_video_output(config_menu_t *menu)
         menu->platform.set_video_output(menu->platform.ctx,
                                         menu->video_output_mono,
                                         menu->video_mono_color,
-                                        menu->video_color_mode,
+                                        config_menu_effective_video_color_mode(menu),
                                         menu->video7_auto_mono_enabled,
                                         menu->dhgr_col140m_enabled,
                                         menu->clean_video_phase_cycles,
@@ -4521,6 +4527,17 @@ static uint8_t config_menu_golden_boot_handle_input(config_menu_t *menu, ui_inpu
     return 1U;
 }
 
+static void config_menu_reboot_golden_updater(config_menu_t *menu)
+{
+    if (menu->platform.request_firmware_switch == NULL ||
+        menu->platform.request_firmware_switch(
+            menu->platform.ctx, CONFIG_MENU_FIRMWARE_TARGET_GOLDEN_UPDATER) != 0) {
+        config_menu_set_status(menu, 1U, "GOLDEN UPDATER REBOOT UNAVAILABLE");
+        return;
+    }
+    config_menu_set_status(menu, 0U, "SAVING MEDIA FOR GOLDEN UPDATER");
+}
+
 static void config_menu_cycle_startup_firmware(config_menu_t *menu)
 {
     uint32_t product;
@@ -5610,7 +5627,7 @@ uint8_t config_menu_cogs_active(const config_menu_t *menu)
 #ifdef APPLETINI_HTTP_SERVICE
 static void config_menu_open_cogs(config_menu_t *menu)
 {
-    if (cogs_service_browse(1U) != 0) {
+    if (cogs_service_browse_first() != 0) {
         config_menu_set_status(menu, 1U, "COGS GAMES COULD NOT START");
         return;
     }
@@ -5676,7 +5693,7 @@ static void config_menu_cogs_handle_input(config_menu_t *menu, ui_key_t key)
                 config_menu_set_status(menu, 0U, "");
             }
         } else if (status->state == COGS_FAILED) {
-            next_page = (status->page != 0U) ? status->page : 1U;
+            config_menu_open_cogs(menu);
         }
         break;
     default:
@@ -7743,6 +7760,9 @@ static void config_menu_activate_item(config_menu_t *menu)
             menu->boot_device = (uint8_t)((menu->boot_device + 1U) % CONFIG_BOOT_DEVICE_COUNT);
         } else if (menu->item_focus == CONFIG_MENU_BOOT_ONEE_ITEM) {
             config_menu_toggle_onee_mode(menu);
+            break;
+        } else if (menu->item_focus == CONFIG_MENU_BOOT_GOLDEN_UPDATER_ITEM) {
+            config_menu_reboot_golden_updater(menu);
             break;
         } else if (menu->item_focus == CONFIG_MENU_BOOT_STARTUP_FIRMWARE_ITEM) {
             config_menu_cycle_startup_firmware(menu);
@@ -10059,58 +10079,42 @@ static void config_menu_draw_cogs(uint16_t *fb, const config_menu_t *menu,
 {
     const cogs_service_status_t *status = cogs_service_status();
     const cogs_catalog_page_t *page = cogs_service_page();
-    const int row_h = CMUI_ROW_H + CMUI_ROW_GAP;
     const int x = body->x + 18;
     const int w = body->w - 36;
-    const int list_y = body->y + 96;
-    const int capacity = cmui_compact_active() ?
-        (int)cmui_compact_row_capacity() - 3 : (body->h - 108) / row_h;
-    const unsigned visible = (capacity > 0) ? (unsigned)capacity : 1U;
+    const int list_y = body->y + 48;
     const unsigned selected = menu->cogs_selected < page->count ?
         menu->cogs_selected : 0U;
-    const unsigned first = selected >= visible ? selected + 1U - visible : 0U;
+    const char *detail = status->detail;
     char line[160];
 
-    cmui_panel(fb, body, CMUI_COLOR_PANEL);
-    cmui_text(fb, x, body->y + 12, "CoGS games",
-              CMUI_COLOR_TEXT, CMUI_COLOR_PANEL, CMUI_TITLE_SCALE);
-    if (page->pages != 0U && status->state != COGS_LOADING) {
-        (void)snprintf(line, sizeof(line), "Page %u of %u",
-                       (unsigned)status->page, (unsigned)page->pages);
-        cmui_text(fb, x, body->y + 38, line,
-                  CMUI_COLOR_MUTED, CMUI_COLOR_PANEL, CMUI_SMALL_SCALE);
+    if (cmui_compact_active()) {
+        cmui_compact_use_dense_rows();
     }
-    if (status->state == COGS_DOWNLOADING && status->total != 0U) {
+    cmui_panel(fb, body, CMUI_COLOR_PANEL);
+    cmui_text(fb, x, body->y + 8, "CoGS games",
+              CMUI_COLOR_TEXT, CMUI_COLOR_PANEL, CMUI_TITLE_SCALE);
+    if (status->state == COGS_SAVED) {
+        detail = "";
+    } else if (status->state == COGS_DOWNLOADING && status->total != 0U) {
         (void)snprintf(line, sizeof(line), "Downloading %lu / %lu bytes",
                        (unsigned long)status->received, (unsigned long)status->total);
-    } else if (status->detail[0] != '\0') {
-        (void)snprintf(line, sizeof(line), "%s", status->detail);
-    } else {
-        const char *message = "";
-        if (status->state == COGS_LOADING) message = "Loading games";
-        else if (status->state == COGS_DOWNLOADING) message = "Downloading disk image";
-        else if (status->state == COGS_SAVED) message = "Saved to the SD card";
-        else if (status->state == COGS_FAILED) message = "Request failed";
-        else if (page->count == 0U) message = "No compatible games on this page";
-        (void)snprintf(line, sizeof(line), "%s", message);
+        detail = line;
+    } else if (detail[0] == '\0') {
+        if (status->state == COGS_LOADING) detail = "Loading games";
+        else if (status->state == COGS_DOWNLOADING) detail = "Downloading disk image";
+        else if (status->state == COGS_FAILED) detail = "Request failed";
+        else if (page->count == 0U) detail = "No compatible games on this page";
     }
-    cmui_text_clipped(fb, x, body->y + 62, w, line,
+    cmui_text_clipped(fb, x, body->y + 28, w, detail,
                       status->state == COGS_FAILED ? CMUI_COLOR_WARN : CMUI_COLOR_TEXT,
                       CMUI_COLOR_PANEL, CMUI_SMALL_SCALE);
 
     if (status->state == COGS_LOADING || status->state == COGS_DOWNLOADING) {
         return;
     }
-    for (unsigned index = first; index < page->count && index - first < visible; ++index) {
-        const cogs_catalog_entry_t *entry = &page->entries[index];
-        if (entry->bundle[0] != '\0') {
-            (void)snprintf(line, sizeof(line), "[Bundle] %.47s | %.47s",
-                           entry->title, entry->bundle);
-        } else {
-            (void)snprintf(line, sizeof(line), "%.47s", entry->title);
-        }
-        hgr_draw_item(fb, x, list_y + (int)(index - first) * row_h, w,
-                      (uint8_t)(index == selected), line, HGR_WHITE);
+    for (unsigned index = 0; index < page->count; ++index) {
+        cmui_row(fb, x, list_y + (int)index * CMUI_ROW_H, w,
+                 (uint8_t)(index == selected), 0U, page->entries[index].title);
     }
 }
 #endif
@@ -10314,10 +10318,16 @@ void config_menu_draw(uint16_t *fb, const config_menu_t *menu, uint8_t usb_owned
     cmui_rect_t body;
     cmui_rect_t footer;
     const char *input_hint = NULL;
+#ifdef APPLETINI_HTTP_SERVICE
+    char cogs_input_hint[128];
+#endif
 
     if (!config_menu_is_active(menu)) {
         return;
     }
+    const char *footer_status = menu->status;
+    uint8_t footer_warning = menu->status_warning;
+
     cmui_set_update_badge((uint8_t)(menu->online_update.available_mask != 0U));
     if (menu->profile_name_editor_active || menu->printout_editor_active) {
         const uint8_t virtual_keyboard = menu->profile_name_editor_active ?
@@ -10328,15 +10338,34 @@ void config_menu_draw(uint16_t *fb, const config_menu_t *menu, uint8_t usb_owned
     }
 #ifdef APPLETINI_HTTP_SERVICE
     if (config_menu_cogs_active(menu) != 0U) {
-        const uint8_t state = cogs_service_status()->state;
+        const cogs_service_status_t *status = cogs_service_status();
+        const uint8_t state = status->state;
+        const cogs_catalog_page_t *page = cogs_service_page();
+        if (state == COGS_SAVED) {
+            footer_status = status->detail;
+            footer_warning = 0U;
+        }
         if (state == COGS_LOADING || state == COGS_DOWNLOADING) {
             input_hint = usb_owned ? "B: Cancel" : "Esc: Cancel";
-        } else if (state == COGS_FAILED && cogs_service_page()->count == 0U) {
-            input_hint = usb_owned ? "A: Retry | B: Back" : "Enter: Retry | Esc: Back";
+        } else if (page->count == 0U) {
+            if (state == COGS_FAILED) {
+                input_hint = usb_owned ? "A: Retry | B: Back" : "Enter: Retry | Esc: Back";
+            } else {
+                input_hint = usb_owned ? "B: Back" : "Esc: Back";
+            }
+        } else if (page->pages <= 1U) {
+            input_hint = usb_owned ?
+                "Up/Down: Select | A: Download | B: Back" :
+                "Up/Down: Select | Enter: Download | Esc: Back";
         } else {
             input_hint = usb_owned ?
                 "Up/Down: Select | Left/Right: Page | A: Download | B: Back" :
                 "Up/Down: Select | Left/Right: Page | Enter: Download | Esc: Back";
+        }
+        if (status->page != 0U && page->pages != 0U && state != COGS_LOADING) {
+            (void)snprintf(cogs_input_hint, sizeof(cogs_input_hint), "Page %u of %u | %s",
+                           (unsigned)status->page, (unsigned)page->pages, input_hint);
+            input_hint = cogs_input_hint;
         }
     }
 #endif
@@ -10377,7 +10406,7 @@ void config_menu_draw(uint16_t *fb, const config_menu_t *menu, uint8_t usb_owned
             config_menu_draw_page(fb, menu, 0, 0, logical_body.w, logical_body.h);
         }
         cmui_compact_finish(fb, title, k_compact_tab_labels, CONFIG_TAB_COUNT,
-                            menu->tab, menu->status, menu->status_warning,
+                            menu->tab, footer_status, footer_warning,
                             usb_owned,
                             (uint8_t)(boot_menu_service_machine_mode() ==
                                       CARD_MACHINE_MODE_IIPLUS), input_hint);
@@ -10416,8 +10445,8 @@ void config_menu_draw(uint16_t *fb, const config_menu_t *menu, uint8_t usb_owned
     }
     cmui_footer(fb,
                 &footer,
-                menu->status,
-                menu->status_warning,
+                footer_status,
+                footer_warning,
                 usb_owned,
                 (uint8_t)(boot_menu_service_machine_mode() ==
                           CARD_MACHINE_MODE_IIPLUS), input_hint);

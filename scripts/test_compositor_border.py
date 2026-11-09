@@ -189,6 +189,34 @@ def test_border_is_below_foreground_overlays() -> None:
             "debug, storage, and status overlays must be confined to the post-Apple phase")
 
 
+def test_pc_transporter_footprint_transition() -> None:
+    source = COMPOSITOR.read_text(encoding="utf-8")
+    frontend = FRONTEND_MAIN.read_text(encoding="utf-8")
+    tick = source[source.index("int compositor_tick(void)"):]
+    base = tick.index("COMPOSITOR_UI_PHASE_BASE")
+    require(tick.index("read_pc_transporter_picture(&pc_transporter_picture)") <
+            tick.index("if (pc_transporter_picture_active != s_pc_transporter_picture_active)") <
+            tick.index("s_pc_transporter_picture_active = pc_transporter_picture_active;") <
+            tick.index("compositor_request_full_refresh();") < base,
+            "both Apple/CGA footprint transitions must invalidate before the base pass")
+    require(tick.count("read_pc_transporter_picture(") == 1 and
+            base < tick.index("if (pc_transporter_picture_active)") <
+            tick.index("draw_pc_transporter_picture(fb, &pc_transporter_picture)") <
+            tick.index("COMPOSITOR_UI_PHASE_OVERLAY"),
+            "CGA must draw from the same state used to select the footprint")
+    thunk = frontend[frontend.index("static int ui_compose_thunk("):]
+    require(thunk.index("phase == COMPOSITOR_UI_PHASE_BASE") <
+            thunk.index("compositor_full_refresh_active()") <
+            thunk.index("ui_invalidate_static_backgrounds();") <
+            thunk.index("return ui_compose_frame("),
+            "the base pass must apply refresh before painting")
+    invalidate_start = frontend.index("static void ui_invalidate_static_backgrounds(void)\n{")
+    invalidate = frontend[invalidate_start:frontend.index("\n}", invalidate_start)]
+    require("memset(g_output_slot_bg_generation, 0, sizeof(g_output_slot_bg_generation));"
+            in invalidate,
+            "refresh must invalidate every cached output slot")
+
+
 def main() -> int:
     test_layout()
     test_frame_coherent_color()
@@ -197,6 +225,7 @@ def main() -> int:
     test_synthesized_legacy_border()
     test_format_badge_stays_on_active_image()
     test_border_is_below_foreground_overlays()
+    test_pc_transporter_footprint_transition()
     print("compositor border tests: PASS")
     return 0
 

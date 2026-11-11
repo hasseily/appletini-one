@@ -1,0 +1,73 @@
+{
+  "version": "F1.3.7dev16",
+  "kind": "test candidate",
+  "firmware": {
+    "size_bytes": 4973548,
+    "sha256": "4b6a43b1d05f7c79d28176793c471106bc2b3314320d6369c0dd609f46b78cad"
+  },
+  "runtime_zip": {
+    "file": "Appletini-F1.3.7dev16-full-candidate.zip",
+    "size_bytes": 2700753,
+    "sha256": "8915a5bff4227b287475a35be869afa09feb49c5c9e11649aca20a10113cfe0e"
+  },
+  "build_base_commit": "09a3bd1551dc973fb065ecdc5433cfd1ea906a0a",
+  "build_had_uncommitted_changes": true,
+  "selected_pl_build": "20261111T203601Z-09a3bd15-full",
+  "fpga_rebuilt_for_packaging": false,
+  "arm_build_completed_utc": "2026-11-11T21:18:36.381915+00:00",
+  "timing": {
+    "wns_ns": "0.106",
+    "minimum_wns_ns": "0.000",
+    "whs_ns": "0.033",
+    "wpws_ns": "0.265",
+    "setup_failing_endpoints": "0",
+    "hold_failing_endpoints": "0",
+    "pulse_width_failing_endpoints": "0",
+    "route_status": "PASS",
+    "bus_skew_status": "PASS",
+    "constraint_bounds_status": "PASS",
+    "missing_constraint_objects": "0",
+    "unconstrained_internal_endpoints": "0"
+  },
+  "post_build_required_wns_ns": 0.05,
+  "post_build_qualification_status": "PASS",
+  "original_timing_manifest_sha256": "842e67a6089c8dab170f01e6933a3f19b87f8cfe30648e91c9c62232bc66f775",
+  "inputs": {
+    "appletini_yarz_top.bit": {
+      "size_bytes": 2614796,
+      "sha256": "c0c835098ae539443033b97ed0dfd5ffe8db67c7c780265b58ab26d3e1a0c389"
+    },
+    "appletini_yarz_top.xsa": {
+      "size_bytes": 1632339,
+      "sha256": "f0271f58a6dd7b0d531a201e240cb39364888a5be5efe44fe2b4884a6ae02e9c"
+    },
+    "candidate.dcp": {
+      "size_bytes": 31680815,
+      "sha256": "80e0e61fb6c9f049a624248180938efc62a44483be7c55baffb1d9784f4f0dd6"
+    },
+    "fsbl.elf": {
+      "size_bytes": 586240,
+      "sha256": "7e47637e290b70701381d8ac3c91c267129dde7e4b12e172e76b4634786f7079"
+    },
+    "frontend.elf": {
+      "size_bytes": 8642612,
+      "sha256": "14b87eb38905ca7295087b9b10916c13a69de59837ebdcc82e85c2b7e07770ad"
+    },
+    "frontend_core1.elf": {
+      "size_bytes": 1047496,
+      "sha256": "28e4c04673f65738662eedfae015d6ae94d1cacdf8669add29e273f36850bfa2"
+    },
+    "core1_blob.bin": {
+      "size_bytes": 229452,
+      "sha256": "d9f5ad321803dbfac92578b29349a5b86ff3188e9b95968f764c9f9a081e8df1"
+    }
+  },
+  "audit_status": "PASS",
+  "bootgen_partition_count": 4,
+  "cpu1_checked": true,
+  "golden_boot_version": "B2.0.6",
+  "golden_rebuilt": false,
+  "hardware_tested": false,
+  "github_release_published": false,
+  "source_note": "Commit captures the verified build inputs. Git text line-ending normalization may change source byte hashes. Build base, original dirty flag and original export gate are retained."
+}

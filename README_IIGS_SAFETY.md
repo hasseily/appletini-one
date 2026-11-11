@@ -13,8 +13,8 @@ logical slot to **Your Card**. Leave those physical slots free of conflicting
 cards. Appletini does not change the IIgs Control Panel settings.
 
 The slot-3 setup has passed source checks, simulation, and a ROM boot-order
-trace in GSSquared. The F1.3.7dev15 test package at
-`build/gs-support-firmware-m350/FIRMWARE.BIN` passed the selected PL timing
+trace in GSSquared. The F1.3.7dev16 test package at
+`build/gs-support-single-phasor-firmware-m250/FIRMWARE.BIN` passed the selected PL timing
 gate and ARM/package audits. Board qualification remains pending. See the
 [validation record](README_IIGS_VALIDATION.md).
 
@@ -80,13 +80,17 @@ default physical-slot-7 GS profile keeps physical IRQ off.
 | Logical slot | Slot-3 profile service | IIgs service displaced by external ROM |
 | --- | --- | --- |
 | 1 | Uthernet II and SSC printer interface in separate I/O windows | Printer port |
-| 2 | Mousecard, 4Play, or SNES MAX | Modem port |
+| 2 | Mousecard, 4Play, SNES MAX, or Phasor | Modem port |
 | 4 | Mockingboard or Phasor | ROM 1 native mouse firmware |
 | 5 | Z80 Appli-Card or PC Transporter with private memory | Internal 3.5-inch disk service |
 | 6 | Disk II | Internal 5.25-inch disk service |
 | 7 | Boot menu and SmartPort, or SuperSprite after handoff | AppleTalk |
 
 The no-slot clock is available only under its enabled Appletini ROM windows.
+The Phasor can occupy slot 2 or slot 4, with one shared set of audio
+settings. F1.3.7dev16 includes this selectable placement and has passed
+build and package checks. Board tests remain pending. See the
+[Phasor diagnosis and validation record](README_PHASOR_GS.md).
 Leave slot 4 internal to retain native mouse support on ROM 1. ROM 3 removes
 that firmware dependency. The virtual Mousecard does not replace the ADB
 mouse automatically. [Apple Technical Note 26](https://apple2.gs/technotes/tn-iigs-026/)

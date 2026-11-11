@@ -60,7 +60,7 @@ module tb_phasor_demo_filter;
     end
 
     mockingboard dut (
-        .clk(clk), .rstn(rstn), .apple_q3_raw(q3_pin), .standalone(1'b0), .ab_read(bus), .serve_data(bus.data),
+        .clk(clk), .rstn(rstn), .apple_q3_raw(q3_pin), .standalone(1'b0), .iigs_data_tick(1'b0), .ab_read(bus), .serve_data(bus.data),
         .sss(sss), .slot_assign(slot), .pan(48'h888888888888), .ssi_pan(8'hF0), .audio_control(audio_control),
         .audio_sample_tick(audio_tick), .ab_write(response),
         .audio_l(audio_l), .audio_r(audio_r), .dbg_ssi_irq(),

@@ -11,6 +11,7 @@ static void test_write(uint32_t address, uint32_t value);
 #include "slot2_gamepad_service.c"
 
 #define UART0_BASE 0U
+#define SLOT2_TEST_MODE_MASK 0x07U
 #define OTHER_SLOTS 0x92U
 static uint32_t g_card_slot_enable_mask, g_card_slot_effective_mask;
 static uint32_t control, staged[2], committed[2];
@@ -40,10 +41,10 @@ static void test_write(uint32_t address, uint32_t value)
         staged[write_count % 3U] = value;
         event(write_count % 3U == 0U ? 'L' : 'H');
     } else {
-        if ((control & 3U) != (value & 3U)) {
+        if ((control & SLOT2_TEST_MODE_MASK) != (value & SLOT2_TEST_MODE_MASK)) {
             assert((g_card_slot_enable_mask & (1U << 2)) == 0U);
         }
-        control = (control & 0xFFFF0000U) | (value & CARD_CTRL_SLOT2_STATE_MASK);
+        control = (control & ~CARD_CTRL_SLOT2_STATE_MASK) | (value & CARD_CTRL_SLOT2_STATE_MASK);
         memcpy(committed, staged, sizeof(committed));
         event('C');
     }
@@ -62,8 +63,8 @@ static void card_control_write_slot_mask(uint32_t mask)
 
 static void control_apply_slot5_service(uint8_t enabled)
 { (void)enabled; assert(!"slot-2 changes must not touch slot-5 services"); }
-static void vtw_service_set_disk2_config_enabled(uint8_t enabled)
-{ (void)enabled; assert(!"slot-2 changes must not touch disk services"); }
+static void control_apply_disk2_policy(void)
+{ assert(!"slot-2 changes must not touch disk services"); }
 static void uart_puts(uint32_t base, const char *message)
 {
     assert(base == UART0_BASE);
@@ -82,6 +83,7 @@ static void clear_events(void)
 static void reset(uint8_t available)
 {
     control = available ? 0x53320001U : 0U;
+    if (available == 2U) control |= CARD_CTRL_SLOT2_PHASOR_PRESENT_BIT;
     g_card_slot_enable_mask = g_card_slot_effective_mask = OTHER_SLOTS;
     write_count = 0U;
     warnings = 0U;
@@ -95,7 +97,7 @@ static void reset(uint8_t available)
 int main(void)
 {
     slot2_gamepad_snapshot_t snapshot;
-    reset(1U);
+    reset(2U);
     control_set_slot2_card(NULL, SLOT2_CARD_MOUSE);
     assert(strcmp(events, "DLHCE") == 0);
     mouse_initialized = 1U;
@@ -127,14 +129,14 @@ int main(void)
             }
             slot2_gamepad_service_get_snapshot(&snapshot);
             assert(snapshot.card == next);
-            assert((control & 3U) == next);
+            assert((control & SLOT2_TEST_MODE_MASK) == next);
             assert(((g_card_slot_enable_mask >> 2) & 1U) == (next != SLOT2_CARD_OFF));
         }
     }
     assert(warnings == 0U);
     clear_events();
     control_set_slot2_card(NULL, 255U);
-    assert(strcmp(events, "DLHCD") == 0 && (control & 3U) == SLOT2_CARD_OFF);
+    assert(strcmp(events, "DLHCD") == 0 && (control & SLOT2_TEST_MODE_MASK) == SLOT2_CARD_OFF);
     assert((g_card_slot_enable_mask & (1U << 2)) == 0U);
 
     /* Device choices use the real service and remain independent of the
@@ -145,6 +147,16 @@ int main(void)
     assert(snapshot.slots[0] == 0U && snapshot.slots[1] == 0U &&
            snapshot.slots[2] == ONEE_INPUT_DEVICE_SLOT_COUNT);
 
+    reset(1U);
+    control_set_slot2_card(NULL, SLOT2_CARD_MOUSE);
+    clear_events();
+    control_set_slot2_card(NULL, SLOT2_CARD_PHASOR);
+    assert(strcmp(events, "DLHCD") == 0 && warnings == 1U);
+    assert((control & SLOT2_TEST_MODE_MASK) == SLOT2_CARD_OFF);
+    clear_events();
+    control_set_slot2_card(NULL, SLOT2_CARD_MOUSE);
+    assert(strcmp(events, "DLHCE") == 0 && warnings == 1U);
+
     reset(0U);
     control_set_slot2_card(NULL, SLOT2_CARD_MOUSE);
     assert(strcmp(events, "DE") == 0 && write_count == 0U && warnings == 0U);
@@ -152,18 +164,18 @@ int main(void)
     clear_events();
     control_set_slot2_card(NULL, SLOT2_CARD_MOUSE);
     assert(strcmp(events, "E") == 0 && mouse_initialized);
-    for (uint8_t card = SLOT2_CARD_FOUR_PLAY; card <= SLOT2_CARD_SNES_MAX; ++card) {
+    for (uint8_t card = SLOT2_CARD_FOUR_PLAY; card <= SLOT2_CARD_PHASOR; ++card) {
         clear_events();
         control_set_slot2_card(NULL, card);
         assert(strcmp(events, "DD") == 0 && write_count == 0U);
         assert((g_card_slot_enable_mask & (1U << 2)) == 0U);
     }
-    assert(warnings == 2U);
+    assert(warnings == 3U);
     clear_events();
     control_set_slot2_card(NULL, 255U);
-    assert(strcmp(events, "DD") == 0 && write_count == 0U && warnings == 2U);
+    assert(strcmp(events, "D") == 0 && write_count == 0U && warnings == 3U);
     slot2_gamepad_service_get_snapshot(&snapshot);
     assert(snapshot.card == SLOT2_CARD_OFF && !snapshot.available);
-    puts("PASS slot2 runtime control: Mouse reapply preserves state, all card transitions disable/commit/enable, old FPGA Mouse compatibility and gamepad rejection, invalid Off");
+    puts("PASS slot2 runtime control: Mouse reapply preserves state, all card transitions disable/commit/enable, old FPGA Mouse compatibility and gamepad/Phasor rejection, invalid Off");
     return 0;
 }

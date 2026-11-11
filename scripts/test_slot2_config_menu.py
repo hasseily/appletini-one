@@ -23,7 +23,7 @@ def main():
                  "config_menu_load_settings", "config_menu_read_settings_from_path"):
         assert "config_menu_slot2_reset(menu);" in function(menu, name), name
     assert "config_menu_parse_slot2(menu, key, value)" in function(menu, "config_menu_parse_key_value")
-    assert "config_menu_apply_slot2(menu);" in function(menu, "config_menu_apply_runtime_internal")
+    assert "config_menu_apply_slot_cards(menu);" in function(menu, "config_menu_apply_runtime_internal")
     assert "config_menu_slot2_adjust(menu, 1)" in function(menu, "config_menu_activate_item")
     assert "config_menu_slot2_adjust(menu, delta)" in menu
     serializer = function(menu, "config_menu_save_settings_to_path")
@@ -54,6 +54,67 @@ def main():
 #include "video_filter_config.h"
 #include "video_pixel_mask.h"
 '''
+    code += r'''
+#include "card_control_regs.h"
+static uint32_t slot2_control, slot2_state_lo, slot2_state_hi;
+static uint32_t reg_read(uint32_t reg)
+{
+    assert(reg == CARD_CTRL_SLOT2_CONTROL_REG);
+    return slot2_control;
+}
+static void reg_write(uint32_t reg, uint32_t value)
+{
+    switch (reg) {
+    case CARD_CTRL_SLOT2_CONTROL_REG:
+        slot2_control = (slot2_control & ~CARD_CTRL_SLOT2_STATE_MASK) | value;
+        break;
+    case CARD_CTRL_SLOT2_STATE_LO_REG:
+        slot2_state_lo = value;
+        break;
+    case CARD_CTRL_SLOT2_STATE_HI_REG:
+        slot2_state_hi = value;
+        break;
+    default:
+        assert(0);
+    }
+}
+#define REG_READ reg_read
+#define REG_WRITE reg_write
+'''
+    code += (FRONT / "slot2_gamepad_service.c").read_text().replace('#include "../lib/common.h"', "")
+    code += r'''
+static void test_slot2_selector(void)
+{
+    slot2_gamepad_snapshot_t state;
+    slot2_gamepad_service_init();
+    slot2_control = CARD_CTRL_SLOT2_PHASOR_PRESENT_BIT;
+    assert(!slot2_phasor_available());
+    slot2_control = CARD_CTRL_SLOT2_SIGNATURE << CARD_CTRL_SLOT2_SIGNATURE_SHIFT;
+    for (uint8_t card = SLOT2_CARD_OFF; card <= SLOT2_CARD_SNES_MAX; ++card) {
+        slot2_gamepad_service_set_card(card);
+        assert((slot2_control & CARD_CTRL_SLOT2_STATE_MASK) == card);
+    }
+    slot2_gamepad_service_set_card(SLOT2_CARD_PHASOR);
+    assert(!(slot2_control & CARD_CTRL_SLOT2_STATE_MASK));
+    slot2_control |= 1U << 8; /* Unreleased dual-core ABI is not relocation. */
+    assert(!slot2_phasor_available());
+    slot2_gamepad_service_set_card(SLOT2_CARD_PHASOR);
+    assert(!(slot2_control & CARD_CTRL_SLOT2_STATE_MASK));
+    slot2_control |= CARD_CTRL_SLOT2_PHASOR_PRESENT_BIT;
+    assert(slot2_phasor_available());
+    onee_input_joystick_report_t report = {.buttons_valid = 1, .buttons = 1};
+    slot2_gamepad_service_report(0, &report, SLOT2_GAMEPAD_HAT_NEUTRAL);
+    slot2_gamepad_service_set_card(SLOT2_CARD_FOUR_PLAY);
+    assert(slot2_control & (1U << CARD_CTRL_SLOT2_PRESENT_SHIFT));
+    slot2_gamepad_service_set_card(SLOT2_CARD_PHASOR);
+    slot2_gamepad_service_get_snapshot(&state);
+    assert(state.card == SLOT2_CARD_PHASOR && !state.present);
+    assert((slot2_control & CARD_CTRL_SLOT2_STATE_MASK) == SLOT2_CARD_PHASOR);
+    assert(slot2_state_lo == 0 && slot2_state_hi == 0);
+    slot2_gamepad_service_set_card(SLOT2_CARD_FOUR_PLAY);
+    assert(slot2_control & (1U << CARD_CTRL_SLOT2_PRESENT_SHIFT));
+}
+'''
     code += re.search(r"typedef enum \{\s+CONFIG_TAB_PROFILES.*?} config_tab_t;", internal, re.S).group(0) + "\n"
     for label_array in ("k_tab_labels", "k_compact_tab_labels"):
         code += re.search(r"static const char \* const " + label_array + r"\[CONFIG_TAB_COUNT\] = \{.*?\n};", menu, re.S).group(0) + "\n"
@@ -61,6 +122,7 @@ def main():
 typedef struct {
     uint8_t slot2_card, slot2_card_explicit, slot2_player_devices[4];
     uint8_t mouse_slot2_enabled, mouse_sensitivity;
+    uint8_t iigs_slot3_profile, mockingboard_slot4_enabled;
     uint8_t settings_loaded, session_only, vtw_turbo_enabled, size_multiplier;
     uint8_t video_legacy_horizontal, video_legacy_vertical, video_filter_explicit;
     uint8_t video_blur_strength, video_dot_bleed, video_smoothing_explicit;
@@ -68,34 +130,56 @@ typedef struct {
     uint8_t video_blending_vertical_explicit, video_blending_horizontal_explicit;
     uint8_t video_pixel_mask;
     uint32_t tab, item_focus;
+    uint16_t vtw_slowdown_mask, vtw_slowdown_cycles;
     struct {
         void *ctx;
         void (*set_slot2_card)(void *,uint8_t);
         void (*set_slot2_player_devices)(void *,const uint8_t [4]);
         void (*set_slot_enabled)(void *,uint8_t,uint8_t);
+        void (*set_vtw_slowdown)(void *,uint16_t,uint16_t);
+        uint8_t (*slot2_phasor_available)(void *);
     } platform;
 } config_menu_t;
 static unsigned saves, card_applies, device_applies, legacy_applies, events;
-static uint8_t applied_card, applied_devices[4], legacy_enabled;
+static uint8_t applied_card, applied_devices[4], legacy_enabled, applied_slot4;
+static void config_menu_refresh_vtw_slowdown(config_menu_t *menu);
 static void config_menu_save_settings(config_menu_t *menu)
 { ++saves; menu->session_only=0; }
 static void apply_devices(void *ctx,const uint8_t devices[4])
 { (void)ctx; ++device_applies; memcpy(applied_devices,devices,4); events=events*10+1; }
 static void apply_card(void *ctx,uint8_t card)
-{ (void)ctx; ++card_applies; applied_card=card; events=events*10+2; }
+{ (void)ctx; assert(card != SLOT2_CARD_PHASOR || !applied_slot4); ++card_applies; applied_card=card; events=events*10+2; }
 static void apply_legacy(void *ctx,uint8_t slot,uint8_t enable)
-{ (void)ctx; assert(slot==2); ++legacy_applies; legacy_enabled=enable; }
+{ (void)ctx; if (slot==2) { ++legacy_applies; legacy_enabled=enable; } else { assert(slot==4); } }
+static void apply_slot4(void *ctx,uint8_t slot,uint8_t enable)
+{ (void)ctx; assert(slot==4); assert(!enable || applied_card != SLOT2_CARD_PHASOR); applied_slot4=enable; }
 #define MOUSE_CONTROL_SLOT 2U
+#define MOCKINGBOARD_CONTROL_SLOT 4U
+#define HGR_WHITE 0xFFFFu
+#define HGR_DIMMED 0x7FFFu
 '''
     for name in ("config_menu_ascii_lower", "config_menu_str_ieq", "config_menu_bool_text",
                  "config_menu_on_off", "config_menu_parse_indexed_config_key",
                  "config_menu_slot2_card_text", "config_menu_slot2_card_config",
                  "config_menu_slot2_device_text", "config_menu_slot2_device_config",
                  "config_menu_slot2_player_count", "config_menu_slot2_reset",
-                 "config_menu_parse_slot2", "config_menu_apply_slot2", "config_menu_slot2_adjust",
+                 "config_menu_parse_slot2", "config_menu_apply_slot2", "config_menu_coerce_phasor_slot",
+                 "config_menu_apply_slot_cards", "config_menu_set_phasor_slot", "config_menu_slot2_adjust",
                  "config_menu_ascii_lower_in_place", "config_menu_is_space", "config_menu_trim",
                  "config_menu_parse_config_line"):
         code += function(menu, name)
+    for macro in ("VTW_SLOW_SLOT_BIT", "CONFIG_DEFAULT_VTW_SLOWDOWN_CYCLES"):
+        code += re.search(r"^#define " + macro + r".*$", menu, re.M).group(0) + "\n"
+    for name in ("config_menu_phasor_slot_enabled", "config_menu_apply_vtw_slowdown",
+                 "config_menu_refresh_vtw_slowdown"):
+        code += function(menu, name)
+    code += r'''
+static uint16_t applied_slowdown_mask, applied_slowdown_cycles;
+static uint8_t phasor_available(void *ctx)
+{ (void)ctx; return slot2_phasor_available(); }
+static void apply_slowdown(void *ctx,uint16_t mask,uint16_t cycles)
+{ (void)ctx; applied_slowdown_mask=mask; applied_slowdown_cycles=cycles; }
+'''
     code += r'''
 typedef unsigned UINT;
 typedef int FRESULT;
@@ -124,12 +208,15 @@ static void config_menu_set_status(config_menu_t *m,unsigned warning,const char 
 static void config_menu_set_sd_error(config_menu_t *m,const char *text,FRESULT result)
 { (void)m; (void)text; (void)result; }
 static void config_menu_reset_settings_only(config_menu_t *m)
-{ config_menu_slot2_reset(m); m->mouse_sensitivity=100; }
+{ config_menu_slot2_reset(m); m->mockingboard_slot4_enabled=0; m->mouse_sensitivity=100; }
 static void config_menu_parse_key_value(config_menu_t *m,const char *key,const char *value)
-{ (void)config_menu_parse_slot2(m,key,value); }
+{ if (strcmp(key,"phasor.slot4.enabled")==0) m->mockingboard_slot4_enabled=config_menu_bool_text(value);
+  else (void)config_menu_parse_slot2(m,key,value); }
 '''
     loaders = function(menu, "config_menu_load_settings") + function(menu, "config_menu_read_settings_from_path")
     for helper in sorted(set(re.findall(r"^    (config_menu_(?:coerce_\w+|migrate_\w+|usb_bindings_coerce|resolve_video_blending))\(menu\);", loaders, re.M))):
+        if helper == "config_menu_coerce_phasor_slot":
+            continue
         code += "#define " + helper + "(menu) ((void)(menu))\n"
     code += re.search(r"^#define APPLETINI_CFG_VERSION .*", menu, re.M).group(0) + "\n" + loaders
     code += r'''
@@ -147,7 +234,7 @@ static void record_string(uint16_t *fb,int x,int y,const char *text,uint16_t fg,
     code += "\n".join(re.findall(r"^#define MOUSE_SENSITIVITY_.*", menu, re.M)) + "\n"
     code += re.search(r"static const uint8_t k_mouse_sensitivity_steps.*?\n};", menu, re.S).group(0) + "\n"
     for name in ("config_menu_mouse_sensitivity_clamp", "config_menu_mouse_sensitivity_index",
-                 "hgr_draw_mouse_sensitivity_item", "hgr_draw_value_item"):
+                 "hgr_draw_mouse_sensitivity_item", "hgr_draw_value_item", "hgr_draw_lock_icon", "hgr_draw_item_with_lock_ex", "hgr_draw_item_ex", "hgr_draw_item"):
         code += function(menu, name)
     code += function(tabs, "config_menu_draw_mouse")
     code += "static const char *const help[]={\n" + re.search(r"HELP\(mouse,\s*(.*?)\);", help_source, re.S).group(1) + "\n};\n"
@@ -167,6 +254,7 @@ static void save_preview(uint16_t *fb,const char *name)
 }
 int main(void)
 {
+    test_slot2_selector();
     config_menu_t m={0};
     m.tab=CONFIG_TAB_MOUSE; m.mouse_sensitivity=65;
     m.platform.set_slot2_card=apply_card;
@@ -218,6 +306,21 @@ int main(void)
     cfg_contents="mouse.slot2.enabled=ON\n";
     assert(config_menu_read_settings_from_path(&m,"profile",0,NULL));
     assert(m.slot2_card==SLOT2_CARD_MOUSE && !m.slot2_player_devices[0]);
+    const char *both_orders[] = {
+        "phasor.slot4.enabled=ON\nslot2.card=PHASOR\n",
+        "slot2.card=PHASOR\nphasor.slot4.enabled=ON\n"
+    };
+    for (unsigned i = 0; i < 2; ++i) {
+        cfg_contents = both_orders[i];
+        m.settings_loaded = 0;
+        config_menu_load_settings(&m);
+        assert(m.slot2_card == SLOT2_CARD_PHASOR && !m.mockingboard_slot4_enabled);
+        assert(config_menu_read_settings_from_path(&m, "profile", 1, NULL));
+        assert(m.slot2_card == SLOT2_CARD_PHASOR && !m.mockingboard_slot4_enabled);
+    }
+    cfg_contents="phasor.slot4.enabled=ON\nmouse.slot2.enabled=ON\n";
+    assert(config_menu_read_settings_from_path(&m,"profile",1,NULL));
+    assert(m.slot2_card == SLOT2_CARD_MOUSE && m.mockingboard_slot4_enabled);
     cfg_contents=""; assert(config_menu_read_settings_from_path(&m,"profile",1,NULL));
     assert(m.slot2_card==SLOT2_CARD_OFF && !m.slot2_card_explicit);
 
@@ -234,8 +337,32 @@ int main(void)
     assert(config_menu_slot2_adjust(&m,-1)); assert(m.slot2_player_devices[3]==9);
     m.slot2_card=SLOT2_CARD_SNES_MAX; config_menu_apply_slot2(&m); assert(m.item_focus==2);
     m.slot2_card=SLOT2_CARD_MOUSE; config_menu_apply_slot2(&m); assert(m.item_focus==1);
-    m.slot2_card=SLOT2_CARD_OFF; config_menu_apply_slot2(&m); assert(m.item_focus==0);
+    m.platform.set_slot_enabled=apply_slot4;
+    m.platform.set_vtw_slowdown=apply_slowdown;
+    m.platform.slot2_phasor_available=phasor_available;
+    m.vtw_slowdown_mask=VTW_SLOW_SLOT_BIT(1U);
+    config_menu_set_phasor_slot(&m, 4);
+    assert(applied_card==SLOT2_CARD_MOUSE && applied_slot4);
+    assert(applied_slowdown_mask == (1U | VTW_SLOW_SLOT_BIT(4U)));
+    assert(applied_slowdown_cycles == CONFIG_DEFAULT_VTW_SLOWDOWN_CYCLES);
+    config_menu_set_phasor_slot(&m, 2);
+    assert(applied_card==SLOT2_CARD_PHASOR && !m.mouse_slot2_enabled && m.item_focus==1);
+    assert(!applied_slot4);
+    assert(applied_slowdown_mask == (1U | VTW_SLOW_SLOT_BIT(2U)));
+    slot2_control &= ~CARD_CTRL_SLOT2_PHASOR_PRESENT_BIT;
+    config_menu_refresh_vtw_slowdown(&m);
+    assert(applied_slowdown_mask == 1U && applied_slowdown_cycles == 0U);
+    assert(m.slot2_card == SLOT2_CARD_PHASOR && !m.mockingboard_slot4_enabled);
+    slot2_control |= CARD_CTRL_SLOT2_PHASOR_PRESENT_BIT;
+    config_menu_set_phasor_slot(&m, 4);
+    assert(applied_card==SLOT2_CARD_OFF && applied_slot4 && m.item_focus==0);
+    config_menu_set_phasor_slot(&m, 2);
+    m.item_focus=0;
+    assert(config_menu_slot2_adjust(&m,1));
+    assert(applied_card==SLOT2_CARD_OFF && !applied_slot4);
+    assert(applied_slowdown_mask == m.vtw_slowdown_mask && m.vtw_slowdown_mask == 1U);
     assert(m.mouse_sensitivity==65 && legacy_applies==0 && device_applies==card_applies);
+    m.platform.set_slot_enabled=apply_legacy;
     m.platform.set_slot2_card=NULL;
     for (unsigned card=0;card<SLOT2_CARD_COUNT;++card) {
         m.slot2_card=(uint8_t)card; config_menu_apply_slot2(&m);
@@ -255,7 +382,7 @@ int main(void)
         uint16_t *fb=allocation+64;
         for (unsigned card=0;card<SLOT2_CARD_COUNT;++card) {
             m.slot2_card=(uint8_t)card;
-            unsigned count=card==SLOT2_CARD_MOUSE ? 2 : 1+config_menu_slot2_player_count((uint8_t)card);
+            unsigned count=(card==SLOT2_CARD_MOUSE || card==SLOT2_CARD_PHASOR) ? 2 : 1+config_menu_slot2_player_count((uint8_t)card);
             for (unsigned focus=0;focus<count;++focus) {
                 m.item_focus=focus; cmui_compact_begin();
                 config_menu_draw_mouse(fb,&m,0,0,1480);
@@ -278,7 +405,7 @@ int main(void)
         }
         free(allocation);
     }
-    assert(render_cases==DISPLAY_MODE_COUNT*11);
+    assert(render_cases==DISPLAY_MODE_COUNT*13);
     puts("PASS: slot2 legacy migration, key precedence, strict device values, global retry/profile reset, callbacks, controls, focus, all resolution text/framebuffer bounds");
     return 0;
 }

@@ -533,6 +533,9 @@ void config_menu_draw_mouse(uint16_t *fb,
         hgr_draw_mouse_sensitivity_item(fb, x, y + (CMUI_ROW_H + CMUI_ROW_GAP),
                                         w, (uint8_t)(menu->item_focus == 1U),
                                         menu->mouse_sensitivity);
+    } else if (menu->slot2_card == SLOT2_CARD_PHASOR) {
+        hgr_draw_item(fb, x, y + (CMUI_ROW_H + CMUI_ROW_GAP), w,
+                      (uint8_t)(menu->item_focus == 1U), "Phasor audio settings...", HGR_WHITE);
     } else {
         const uint8_t players = config_menu_slot2_player_count(menu->slot2_card);
         for (uint8_t player = 0U; player < players; ++player) {
@@ -772,8 +775,7 @@ void config_menu_draw_transwarp(uint16_t *fb,
         const uint32_t item = CONFIG_TRANSWARP_ITEM_SLOT_FIRST + slot - 1U;
         const int slot_x = x + ((int)(slot - 1U) * (slot_w + slot_gap));
         const uint8_t phasor_auto_slow =
-            (uint8_t)(slot == MOCKINGBOARD_CONTROL_SLOT &&
-                      menu->mockingboard_slot4_enabled != 0U);
+            config_menu_phasor_slot_enabled(menu, slot);
         const uint8_t checked =
             (uint8_t)(phasor_auto_slow != 0U ||
                       (menu->vtw_slowdown_mask &

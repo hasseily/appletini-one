@@ -138,7 +138,7 @@ def test_four_ay_chips_and_phasor_chip_selects() -> None:
             "assign via1_porta_in = selected_psg_data(via1_ay0_drive, psg1_data_out,\n"
             "                                         via1_ay1_drive, psg3_data_out);" in source,
             "VIA Port A readback must select the addressed AY data bus")
-    require("wire via_bus_clock = card_enabled && ab_read.data_en;" in source and
+    require("wire via_bus_clock = card_enabled && (ab_read.data_en || iigs_data_tick);" in source and
             "wire via_timer_clock = card_enabled && ab_read.phi0_tick;" in source and
             "wire phasor_timer_read_extra_clock = !mockingboard_only && phasor_native;" in source and
             "psg_ce_extra_q <= phasor_native && via_bus_clock;" in source and
@@ -457,7 +457,9 @@ def test_phasor_pan_registers_and_menu_schema() -> None:
             "void (*set_phasor_audio)(void *ctx," in header and
             "uint8_t mockingboard_pan[12];" in header and
             "int8_t phasor_warmth;" in header and
-            "int8_t phasor_volume;" in header,
+            "int8_t phasor_volume;" in header and
+            "config_phasor_settings_t phasor_slot2;" not in header and
+            "config_phasor_settings_t phasor_slot4;" not in header,
             "config menu platform must carry Phasor pan and audio-control values")
     version_match = re.search(r"#define APPLETINI_CFG_VERSION\s+(\d+)U", config)
     require(version_match is not None and int(version_match.group(1)) >= 100 and
@@ -466,17 +468,15 @@ def test_phasor_pan_registers_and_menu_schema() -> None:
             "#define PHASOR_WARMTH_DEFAULT 8" in internal and
             "#define PHASOR_PSG_MODE_YM2149 0U" in internal and
             "#define PHASOR_PSG_MODE_AY8913 1U" in internal and
-            '"Slot 4 Phasor"' in config and
+            '"Phasor"' in config and
             '"phasor.slot4.enabled=%s\\n"' in phasor_config and
             '"phasor.pan.%u=%u\\n"' in phasor_config and
+            all(field in phasor_config for field in (
+                "phasor.eq.bass=%d", "phasor.eq.mid=%d", "phasor.eq.treble=%d",
+                "phasor.warmth=%d", "phasor.volume=%d", "phasor.psg.mode=%s",
+            )) and
             "11U, 5U, 11U," in phasor_config and
             "5U, 11U, 5U" in phasor_config and
-            '"phasor.eq.bass=%d\\n"' in phasor_config and
-            '"phasor.eq.mid=%d\\n"' in phasor_config and
-            '"phasor.eq.treble=%d\\n"' in phasor_config and
-            '"phasor.warmth=%d\\n"' in phasor_config and
-            '"phasor.volume=%d\\n"' in phasor_config and
-            '"phasor.psg.mode=%s\\n"' in phasor_config and
             "for (uint32_t channel = 0U; channel < MOCKINGBOARD_CHANNEL_COUNT; ++channel)" in phasor_config,
             "saved config and visible menu must describe the Phasor card")
     require('strcmp(key, "phasor.slot4.enabled") == 0' in phasor_config and
@@ -516,7 +516,7 @@ def test_phasor_pan_registers_and_menu_schema() -> None:
     require("uint8_t phasor_mockingboard_only;" in header and
             "uint8_t mockingboard_only);" in header and
             'strcmp(key, "phasor.mockingboard.only") == 0' in phasor_config and
-            '"phasor.mockingboard.only=%s\\n"' in phasor_config and
+            'phasor.mockingboard.only=%s\\n' in phasor_config and
             "menu->item_focus == PHASOR_MOCKINGBOARD_ONLY_FOCUS" in phasor_config and
             '"Mockingboard Only"' in phasor_config,
             "config menu must persist and expose the Phasor Mockingboard-only toggle")
@@ -527,7 +527,7 @@ def test_phasor_pan_registers_and_menu_schema() -> None:
             "                        (uint8_t)(menu->item_focus == PHASOR_MOCKINGBOARD_ONLY_FOCUS),\n"
             "                        menu->phasor_mockingboard_only,\n"
             "                        \"Mockingboard Only\")" in phasor_config,
-            "Mockingboard-only toggle must sit directly under Enable in Slot 4")
+            "Mockingboard-only toggle must sit directly under the selected slot enable")
     require("menu->phasor_mockingboard_only != 0U &&\n"
             "                     channel >= 6U" in phasor_config and
             "if (phasor_pan_channel_disabled(menu, channel) != 0U) {\n"
@@ -548,11 +548,12 @@ def test_phasor_pan_registers_and_menu_schema() -> None:
     require("#define CARD_CTRL_PHASOR_PAN_LO_REG        CARD_CTRL_REG_ADDR(0x08U)" in card_regs and
             "#define CARD_CTRL_PHASOR_PAN_HI_REG        CARD_CTRL_REG_ADDR(0x0AU)" in card_regs and
             "#define CARD_CTRL_PHASOR_AUDIO_REG         CARD_CTRL_REG_ADDR(0x0CU)" in card_regs and
-            "REG_WRITE(CARD_CTRL_PHASOR_PAN_HI_REG, pan_hi);" in frontend_main and
             "phasor_audio_pack5(warmth) << 15" in frontend_main and
             "phasor_audio_pack5(volume) << 20" in frontend_main and
             "((uint32_t)(psg_ay_mode != 0U)) << 25" in frontend_main and
             "speech_formant" not in frontend_main and
+            "PHASOR2_" not in card_regs and
+            "REG_WRITE(CARD_CTRL_PHASOR_PAN_HI_REG, pan_hi);" in frontend_main and
             "REG_WRITE(CARD_CTRL_PHASOR_AUDIO_REG, packed);" in frontend_main,
             "frontend must write Phasor pan and audio-control registers")
     require("tone_bass_control_q <= clamp_audio_control(audio_control[4:0]);" in mockingboard and
@@ -597,6 +598,34 @@ def test_phasor_pan_registers_and_menu_schema() -> None:
             "card_control_publish_ssi263_samples" not in frontend_main and
             "ssi263_phoneme_samples" not in vitis_script,
             "frontend must not expose a PS-side SSI263 sample table")
+
+
+def test_phasor_relocation_contract() -> None:
+    top = read(APPLE_TOP_SV)
+    selector = read(REPO_ROOT / "hdl" / "apple" / "slot2_card.sv")
+    require(len(re.findall(r"\bmockingboard\s+\w+\s*\(", top)) == 1,
+            "one Phasor core must serve both locations")
+    require("assign phasor_location2 = mode_q == MODE_PHASOR;" in selector and
+            "assign phasor_selected = card_active && phasor_location2;" in selector and
+            "card_slot4_bus_enable && !phasor_location2" in top,
+            "selecting slot 2 must suppress slot 4 even when slot 2 is disabled")
+    require("(phasor_location2_q == phasor_location2)" in top and
+            ".rstn(phasor_enabled)" in top and
+            "phasor_enabled && !phasor_location2 ? mb1_ab_write : '0" in top and
+            "phasor_enabled && phasor_location2 ? mb1_ab_write : '0" in top,
+            "a slot move must reset the card and block its prior reply")
+    require(".slot_assign(phasor_location2 ? 3'd2 : 3'd4)" in top and
+            "phasor_location2 ? 8'h04 : 8'h10, iigs_bus_permissions" in top and
+            ".iigs_data_tick(native_gs_active && physical_data_tick && phasor_enabled)" in top,
+            "the chosen slot must own access while IIgs supplies a continuous late tick")
+    config = read(CONFIG_MENU_C)
+    phasor_config = read(CONFIG_MENU_PHASOR_C)
+    card_regs = read(CARD_CONTROL_REGS_H)
+    require("static const uint8_t slots[] = {0U, 4U, 2U};" in phasor_config and
+            "slot == 4U && menu->slot2_card != SLOT2_CARD_PHASOR" in config,
+            "menu must select one location and suppress slot 4 on mixed saved settings")
+    require(re.search(r"CARD_CTRL_SLOT2_PHASOR_PRESENT_BIT\s+\(1U << 9\)", card_regs),
+            "frontend must distinguish relocatable Phasor support from the dual-card draft")
 
 
 def test_phasor_is_apple_bus_driven() -> None:
@@ -650,6 +679,7 @@ TESTS = [
     test_via_apple_reset_preserves_timer_latches,
     test_phasor_irq_is_suppressed_during_apple_reset,
     test_phasor_pan_registers_and_menu_schema,
+    test_phasor_relocation_contract,
     test_phasor_is_apple_bus_driven,
     test_virtual_irq_uses_bidirectional_open_collector_lane,
 ]

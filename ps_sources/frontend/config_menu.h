@@ -139,6 +139,7 @@ typedef struct {
     void (*set_slot_enabled)(void *ctx, uint8_t slot, uint8_t enable);
     uint8_t (*get_slot_enabled)(void *ctx, uint8_t slot);
     void (*set_slot2_card)(void *ctx, uint8_t card);
+    uint8_t (*slot2_phasor_available)(void *ctx);
     void (*set_slot2_player_devices)(void *ctx, const uint8_t devices[4]);
     void (*set_slot5_processor)(void *ctx, uint8_t processor);
     void (*set_applicard_resource_max)(void *ctx, uint8_t maximum);
@@ -400,6 +401,8 @@ void config_menu_poll_onee_mode(config_menu_t *menu);
 void config_menu_poll_ethernet(config_menu_t *menu);
 void config_menu_retry_settings_if_needed(config_menu_t *menu);
 void config_menu_set_sdd_stream(config_menu_t *menu, uint8_t enable);
+void config_menu_set_phasor_slot(config_menu_t *menu, uint8_t slot);
+uint8_t config_menu_phasor_slot_enabled(const config_menu_t *menu, uint8_t slot);
 void config_menu_refresh_vtw_slowdown(config_menu_t *menu);
 void config_menu_set_applicard_enabled(config_menu_t *menu, uint8_t enable);
 void config_menu_set_vtw_enabled(config_menu_t *menu, uint8_t enable);

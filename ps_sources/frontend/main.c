@@ -1064,12 +1064,21 @@ static void control_set_slot2_card(void *ctx, uint8_t card)
         control_set_slot_enabled(ctx, 2U, 0U);
     }
     slot2_gamepad_service_set_card(card);
-    const uint8_t supported = (card == SLOT2_CARD_MOUSE) || state.available;
+    const uint8_t supported = card == SLOT2_CARD_PHASOR ? slot2_phasor_available() :
+        (card == SLOT2_CARD_MOUSE || state.available);
     control_set_slot_enabled(ctx, 2U,
         (uint8_t)(card != SLOT2_CARD_OFF && supported));
     if (card >= SLOT2_CARD_FOUR_PLAY && !supported) {
-        uart_puts(UART0_BASE, "[slot2] Gamepad card requires updated FPGA firmware\r\n");
+        uart_puts(UART0_BASE, card == SLOT2_CARD_PHASOR ?
+            "[slot2] Phasor requires updated FPGA firmware\r\n" :
+            "[slot2] Gamepad card requires updated FPGA firmware\r\n");
     }
+}
+
+static uint8_t control_slot2_phasor_available(void *ctx)
+{
+    (void)ctx;
+    return slot2_phasor_available();
 }
 
 static void control_set_slot2_player_devices(void *ctx, const uint8_t devices[4])
@@ -4897,6 +4906,7 @@ int main(void)
         menu_platform.set_slot_enabled = control_set_slot_enabled;
         menu_platform.get_slot_enabled = control_get_slot_enabled;
         menu_platform.set_slot2_card = control_set_slot2_card;
+        menu_platform.slot2_phasor_available = control_slot2_phasor_available;
         menu_platform.set_slot2_player_devices = control_set_slot2_player_devices;
         menu_platform.set_slot5_processor = control_set_slot5_processor;
         menu_platform.set_applicard_resource_max = control_set_applicard_resource_max;

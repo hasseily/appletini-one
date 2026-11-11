@@ -418,7 +418,8 @@ HELP(mouse,
 HELP(phasor,
     "Phasor sound card: four YM2149 chips, 12 channels, and two SSI-263 speech chips.",
     "The Phasor is essentially 2 Mockingboard cards in one slot. It should run all Mockingboard software.",
-    "On a ROM 1 IIgs, leave slot 4 internal for the native mouse. Phasor replaces its firmware.",
+    "Use Left/Right or Enter on the first row to select Off, Slot 4, or Slot 2.",
+    "On a ROM 1 IIgs, select Slot 2 to leave slot 4 internal for the native mouse.",
     "Pan sliders position the AY channels and each SSI. SSI volume sets speech level against the AYs.",
     "Bass, Mid, Treble, and Volume adjust the complete mix.");
 
@@ -613,7 +614,7 @@ HELP(transwarp_slowdown_slots,
     "peripherals that expect the Apple bus to run at 1 MHz.",
     "Per-slot slowdown mirrors the real TransWarp's DIP block 2: after the core touches an enabled",
     "timing-sensitive region, it drops to 1 MHz for the slowdown window, then resumes full speed.",
-    "Slot 4 is automatically slowed down when the virtual Phasor is active.");
+    "The slot with the virtual Phasor slows to 1 MHz.");
 
 HELP(transwarp_slowdown_window,
     "Controls the duration of the slowdown window for all slowdown regions.",

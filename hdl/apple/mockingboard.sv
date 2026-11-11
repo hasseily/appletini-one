@@ -14,6 +14,7 @@ module mockingboard(
     input rstn,
     input logic apple_q3_raw,
     input logic standalone,
+    input logic iigs_data_tick,  // Late PHI0 pulse, independent of GS bus selection.
     // The card reads ab_read.data only at data_en. An SSI-263 read drives
     // D7 only, so D6-D0 come from the live bus byte at serve_en.
     input globals::AppleBus_read ab_read,
@@ -86,7 +87,10 @@ wire via1_hit =
 wire card_reset = !rstn || !card_enabled;
 wire apple_reset = !ab_read.res;
 wire via_reset = card_reset || apple_reset;
-wire via_bus_clock = card_enabled && ab_read.data_en;
+// The AY cores and native-mode extra tick need elapsed PHI0 time.
+// The GS slot gate removes data_en on unrelated and fast accesses.
+// Keep the continuous GS pulse at the same late phase as legacy data_en.
+wire via_bus_clock = card_enabled && (ab_read.data_en || iigs_data_tick);
 wire via_timer_clock = card_enabled && ab_read.phi0_tick;
 // A real Phasor presents timer probes one 1 MHz tick later than a plain
 // Mockingboard -- but only in Phasor native mode. In Mockingboard-compat
@@ -350,25 +354,21 @@ endfunction
 
 function automatic logic [8:0] apply_pan_gain(input logic [7:0] sample,
                                               input logic [4:0] gain);
+    logic fractional;
+    logic [8:0] half, quarter, eighth, sixteenth;
     logic [8:0] s;
-    begin
-        s = {1'b0, sample};
-        case (gain)
-            5'd0:    apply_pan_gain = 9'd0;
-            5'd2:    apply_pan_gain = s >> 3;
-            5'd4:    apply_pan_gain = s >> 2;
-            5'd5:    apply_pan_gain = (s >> 2) + (s >> 4);
-            5'd6:    apply_pan_gain = (s >> 2) + (s >> 3);
-            5'd7:    apply_pan_gain = (s >> 2) + (s >> 3) + (s >> 4);
-            5'd8:    apply_pan_gain = s >> 1;
-            5'd9:    apply_pan_gain = (s >> 1) + (s >> 4);
-            5'd10:   apply_pan_gain = (s >> 1) + (s >> 3);
-            5'd11:   apply_pan_gain = (s >> 1) + (s >> 3) + (s >> 4);
-            5'd12:   apply_pan_gain = (s >> 1) + (s >> 2);
-            5'd14:   apply_pan_gain = (s >> 1) + (s >> 2) + (s >> 3);
-            default: apply_pan_gain = s;
-        endcase
-    end
+    s = {1'b0, sample};
+    // Select each shift before adding to preserve truncation per term.
+    case (gain)
+        5'd0, 5'd2, 5'd4, 5'd5, 5'd6, 5'd7,
+        5'd8, 5'd9, 5'd10, 5'd11, 5'd12, 5'd14: fractional = 1'b1;
+        default: fractional = 1'b0;
+    endcase
+    half = gain[3] ? (s >> 1) : 9'd0;
+    quarter = gain[2] ? (s >> 2) : 9'd0;
+    eighth = gain[1] ? (s >> 3) : 9'd0;
+    sixteenth = gain[0] ? (s >> 4) : 9'd0;
+    apply_pan_gain = fractional ? (half + quarter) + (eighth + sixteenth) : s;
 endfunction
 
 function automatic signed [16:0] mix2_to_wide(input logic [10:0] value);

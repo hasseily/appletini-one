@@ -74,21 +74,19 @@ module ssi263_stereo_mixer (
     // A small shift/add selector avoids using DSPs for control coefficients.
     // Fractional rounding here is below one Q14 coefficient unit per term.
     function automatic logic [15:0] pan_coefficient(input logic [15:0] gain, input logic [4:0] balance);
+        logic fractional;
+        logic [15:0] half, quarter, eighth, sixteenth;
+        // Select each shift before adding to preserve truncation per term.
         case (balance)
-            0:pan_coefficient=0;
-            2:pan_coefficient=gain>>3;
-            4:pan_coefficient=gain>>2;
-            5:pan_coefficient=(gain>>2)+(gain>>4);
-            6:pan_coefficient=(gain>>2)+(gain>>3);
-            7:pan_coefficient=(gain>>2)+(gain>>3)+(gain>>4);
-            8:pan_coefficient=gain>>1;
-            9:pan_coefficient=(gain>>1)+(gain>>4);
-            10:pan_coefficient=(gain>>1)+(gain>>3);
-            11:pan_coefficient=(gain>>1)+(gain>>3)+(gain>>4);
-            12:pan_coefficient=(gain>>1)+(gain>>2);
-            14:pan_coefficient=(gain>>1)+(gain>>2)+(gain>>3);
-            default:pan_coefficient=gain;
+            5'd0, 5'd2, 5'd4, 5'd5, 5'd6, 5'd7,
+            5'd8, 5'd9, 5'd10, 5'd11, 5'd12, 5'd14: fractional = 1'b1;
+            default: fractional = 1'b0;
         endcase
+        half = balance[3] ? (gain >> 1) : 16'd0;
+        quarter = balance[2] ? (gain >> 2) : 16'd0;
+        eighth = balance[1] ? (gain >> 3) : 16'd0;
+        sixteenth = balance[0] ? (gain >> 4) : 16'd0;
+        pan_coefficient = fractional ? (half + quarter) + (eighth + sixteenth) : gain;
     endfunction
     function automatic logic [15:0] ramp(input logic [15:0] current_gain, input logic [15:0] target);
         if (current_gain < target)

@@ -19,6 +19,8 @@ module apple_bus_wrapper (
     /* Filtered Apple RES# (post-hysteresis), exported for the reset
      * forensics stickies in apple_top. */
     output logic                  res_filtered_out,
+    // Same phase as data_en, including cycles unselected by /M2SEL.
+    output logic                  data_tick_out,
     output logic [31:0]           dbg_lost_cycle_count,
 
     /* Bus-capture forensics (II+ ghost-write investigation). Saturating
@@ -587,6 +589,7 @@ module apple_bus_wrapper (
             addr_pipe        <= '0;
             data_pipe        <= '0;
             ab_read_r        <= '0;
+            data_tick_out    <= 1'b0;
             /* Interrupt lines idle deasserted (active low). */
             ab_read_r.irq    <= 1'b1;
             ab_read_r.nmi    <= 1'b1;
@@ -625,6 +628,7 @@ module apple_bus_wrapper (
             ab_read_r.res           <= res_filtered;
             ab_read_r.addr_en       <= 1'b0;
             ab_read_r.data_en       <= 1'b0;
+            data_tick_out           <= 1'b0;
             ab_read_r.phi0_tick     <= 1'b0;
             ab_read_r.sss_en        <= 1'b0;
             ab_read_r.serve_en      <= 1'b0;
@@ -670,6 +674,7 @@ module apple_bus_wrapper (
             else if (data_phase_snap_bus) begin
                 ab_read_r.data    <= data_clean;
                 ab_read_r.data_en <= ab_read_r.cycle_valid;
+                data_tick_out     <= 1'b1;
                 /* IRQ/NMI sampling: late PHI0, the same phase a real
                  * 6502 samples IRQ (end of phi2) -- the bus has been
                  * quiet for ~800 ns. The early-PHI1 point used before

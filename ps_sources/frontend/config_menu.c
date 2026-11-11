@@ -259,7 +259,7 @@ static const char * const k_tab_labels[CONFIG_TAB_COUNT] = {
     "Slot 7 Smartport",
     "Slot 6 Disk II",
     "Slot 5 Processor",
-    "Slot 4 Phasor",
+    "Phasor",
     "Slot 2",
     "Slot 1 Ethernet",
     "TransWarp",
@@ -3305,7 +3305,7 @@ static void config_menu_apply_vtw_slowdown(config_menu_t *menu, uint8_t save);
 const char *config_menu_slot2_card_text(uint8_t card)
 {
     static const char *const names[SLOT2_CARD_COUNT] = {
-        "Off", "Mouse", "4Play", "SNES MAX"
+        "Off", "Mouse", "4Play", "SNES MAX", "Phasor"
     };
     return names[card < SLOT2_CARD_COUNT ? card : SLOT2_CARD_OFF];
 }
@@ -3313,7 +3313,7 @@ const char *config_menu_slot2_card_text(uint8_t card)
 static const char *config_menu_slot2_card_config(uint8_t card)
 {
     static const char *const names[SLOT2_CARD_COUNT] = {
-        "OFF", "MOUSE", "FOUR_PLAY", "SNES_MAX"
+        "OFF", "MOUSE", "FOUR_PLAY", "SNES_MAX", "PHASOR"
     };
     return names[card < SLOT2_CARD_COUNT ? card : SLOT2_CARD_OFF];
 }
@@ -3399,7 +3399,7 @@ static void config_menu_apply_slot2(config_menu_t *menu)
     }
     menu->mouse_slot2_enabled = menu->slot2_card == SLOT2_CARD_MOUSE;
     if (menu->tab == CONFIG_TAB_MOUSE) {
-        const uint32_t rows = 1U + (menu->mouse_slot2_enabled ? 1U :
+        const uint32_t rows = 1U + ((menu->mouse_slot2_enabled || menu->slot2_card == SLOT2_CARD_PHASOR) ? 1U :
             config_menu_slot2_player_count(menu->slot2_card));
         if (menu->item_focus >= rows) {
             menu->item_focus = rows - 1U;
@@ -3415,6 +3415,39 @@ static void config_menu_apply_slot2(config_menu_t *menu)
         menu->platform.set_slot_enabled(menu->platform.ctx, MOUSE_CONTROL_SLOT,
                                            menu->mouse_slot2_enabled);
     }
+}
+
+static void config_menu_coerce_phasor_slot(config_menu_t *menu)
+{
+    if (menu->slot2_card == SLOT2_CARD_PHASOR) {
+        menu->mockingboard_slot4_enabled = 0U;
+    }
+}
+
+static void config_menu_apply_slot_cards(config_menu_t *menu)
+{
+    config_menu_coerce_phasor_slot(menu);
+    if (menu->slot2_card == SLOT2_CARD_PHASOR && menu->platform.set_slot_enabled != NULL) {
+        menu->platform.set_slot_enabled(menu->platform.ctx, MOCKINGBOARD_CONTROL_SLOT, 0U);
+    }
+    config_menu_apply_slot2(menu);
+    if (menu->slot2_card != SLOT2_CARD_PHASOR && menu->platform.set_slot_enabled != NULL) {
+        menu->platform.set_slot_enabled(menu->platform.ctx, MOCKINGBOARD_CONTROL_SLOT,
+                                        menu->mockingboard_slot4_enabled);
+    }
+}
+
+void config_menu_set_phasor_slot(config_menu_t *menu, uint8_t slot)
+{
+    if (slot == 2U) {
+        menu->slot2_card = SLOT2_CARD_PHASOR;
+    } else if (menu->slot2_card == SLOT2_CARD_PHASOR) {
+        menu->slot2_card = SLOT2_CARD_OFF;
+    }
+    menu->mockingboard_slot4_enabled = slot == 4U;
+    config_menu_apply_slot_cards(menu);
+    config_menu_refresh_vtw_slowdown(menu);
+    config_menu_save_settings(menu);
 }
 
 static uint8_t config_menu_slot2_adjust(config_menu_t *menu, int8_t delta)
@@ -3436,8 +3469,14 @@ static uint8_t config_menu_slot2_adjust(config_menu_t *menu, int8_t delta)
     }
     *value = delta < 0 ? (*value == 0U ? count - 1U : *value - 1U) :
         (uint8_t)((*value + 1U) % count);
-    config_menu_apply_slot2(menu);
-    config_menu_save_settings(menu);
+    if (menu->item_focus == 0U) {
+        config_menu_apply_slot_cards(menu);
+        config_menu_refresh_vtw_slowdown(menu);
+        config_menu_save_settings(menu);
+    } else {
+        config_menu_apply_slot2(menu);
+        config_menu_save_settings(menu);
+    }
     return 1U;
 }
 
@@ -3479,7 +3518,7 @@ static void config_menu_apply_runtime_internal(config_menu_t *menu,
         menu->platform.set_slot5_processor(menu->platform.ctx,
                                            menu->slot5_processor);
     }
-    config_menu_apply_slot2(menu);
+    config_menu_apply_slot_cards(menu);
     if (menu->platform.set_slot_enabled != NULL) {
         menu->platform.set_slot_enabled(menu->platform.ctx,
                                         ETHERNET_CONTROL_SLOT,
@@ -3488,9 +3527,6 @@ static void config_menu_apply_runtime_internal(config_menu_t *menu,
             menu->platform.set_ssc_enabled(menu->platform.ctx,
                                            menu->ssc_slot1_enabled);
         }
-        menu->platform.set_slot_enabled(menu->platform.ctx,
-                                        MOCKINGBOARD_CONTROL_SLOT,
-                                        menu->mockingboard_slot4_enabled);
         menu->platform.set_slot_enabled(menu->platform.ctx,
                                         APPLICARD_CONTROL_SLOT,
                                         menu->applicard_slot5_enabled);
@@ -4658,6 +4694,7 @@ static void config_menu_load_settings(config_menu_t *menu)
     }
 
     config_menu_resolve_video_blending(menu);
+    config_menu_coerce_phasor_slot(menu);
     config_menu_coerce_boot_device(menu);
     config_menu_coerce_video_output(menu);
     config_menu_coerce_video_ghosting(menu);
@@ -5030,6 +5067,7 @@ static uint8_t config_menu_read_settings_from_path(config_menu_t *menu,
     }
 
     config_menu_resolve_video_blending(menu);
+    config_menu_coerce_phasor_slot(menu);
     config_menu_coerce_boot_device(menu);
     config_menu_coerce_video_output(menu);
     config_menu_coerce_video_ghosting(menu);
@@ -5374,11 +5412,20 @@ void config_menu_set_vtw_speed(config_menu_t *menu,
     config_menu_save_settings(menu);
 }
 
-/* Mockingboard / Phasor live in slot 4. Its virtual-card detection reads
+/* Phasor detection reads
  * the 6522 VIA timers with cycle-counted loops, which fail at high core
  * speed -- so its slot slowdown is ALWAYS forced on when the card is
  * present, regardless of the per-slot config. */
-#define VTW_MOCKINGBOARD_SLOT 4U
+uint8_t config_menu_phasor_slot_enabled(const config_menu_t *menu, uint8_t slot)
+{
+    if (slot == 2U) {
+        return menu->slot2_card == SLOT2_CARD_PHASOR &&
+               menu->platform.slot2_phasor_available != NULL &&
+               menu->platform.slot2_phasor_available(menu->platform.ctx);
+    }
+    return slot == 4U && menu->slot2_card != SLOT2_CARD_PHASOR &&
+           menu->mockingboard_slot4_enabled;
+}
 
 /* Push the per-region slowdown config to the PL (and persist). The stored
  * mask is the user's choice; the mask actually sent to hardware also
@@ -5393,11 +5440,12 @@ static void config_menu_apply_vtw_slowdown(config_menu_t *menu, uint8_t save)
     }
     eff_mask   = menu->vtw_slowdown_mask;
     eff_cycles = menu->vtw_slowdown_cycles;
-    if (menu->mockingboard_slot4_enabled != 0U) {
-        eff_mask |= VTW_SLOW_SLOT_BIT(VTW_MOCKINGBOARD_SLOT);
-        if (eff_cycles == 0U) {
-            eff_cycles = CONFIG_DEFAULT_VTW_SLOWDOWN_CYCLES;
-        }
+    const uint16_t phasor_mask =
+        (config_menu_phasor_slot_enabled(menu, 2U) ? VTW_SLOW_SLOT_BIT(2U) : 0U) |
+        (config_menu_phasor_slot_enabled(menu, 4U) ? VTW_SLOW_SLOT_BIT(4U) : 0U);
+    eff_mask |= phasor_mask;
+    if (phasor_mask != 0U && eff_cycles == 0U) {
+        eff_cycles = CONFIG_DEFAULT_VTW_SLOWDOWN_CYCLES;
     }
     if (menu->platform.set_vtw_slowdown != NULL) {
         menu->platform.set_vtw_slowdown(menu->platform.ctx,
@@ -5463,10 +5511,8 @@ static uint8_t config_menu_vtw_toggle_focused_slot(config_menu_t *menu)
 
     slot = (uint8_t)(menu->item_focus -
                      CONFIG_TRANSWARP_ITEM_SLOT_FIRST + 1U);
-    if (slot == VTW_MOCKINGBOARD_SLOT &&
-        menu->mockingboard_slot4_enabled != 0U) {
-        config_menu_set_status(menu, 0U,
-            "SLOT 4 AUTO-SLOWED WHILE VIRTUAL PHASOR IS ACTIVE");
+    if (config_menu_phasor_slot_enabled(menu, slot)) {
+        config_menu_set_status(menu, 0U, "SLOT AUTO-SLOWED WHILE VIRTUAL PHASOR IS ACTIVE");
         return 1U;
     }
     (void)snprintf(name, sizeof(name), "SLOT %u", (unsigned)slot);
@@ -5737,7 +5783,8 @@ static uint32_t config_menu_tab_item_count(const config_menu_t *menu)
     case CONFIG_TAB_DISK2:
         return 5U;
     case CONFIG_TAB_MOUSE:
-        return 1U + (menu->slot2_card == SLOT2_CARD_MOUSE ? 1U :
+        return 1U + ((menu->slot2_card == SLOT2_CARD_MOUSE ||
+                     menu->slot2_card == SLOT2_CARD_PHASOR) ? 1U :
             config_menu_slot2_player_count(menu->slot2_card));
     case CONFIG_TAB_MOCKINGBOARD:
         return config_menu_phasor_item_count();
@@ -7975,6 +8022,11 @@ static void config_menu_activate_item(config_menu_t *menu)
         break;
 
     case CONFIG_TAB_MOUSE:
+        if (menu->slot2_card == SLOT2_CARD_PHASOR && menu->item_focus == 1U) {
+            menu->tab = CONFIG_TAB_MOCKINGBOARD;
+            menu->item_focus = 0U;
+            break;
+        }
         if (config_menu_slot2_adjust(menu, 1) != 0U) {
             break;
         }

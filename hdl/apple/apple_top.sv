@@ -895,9 +895,20 @@ module apple_top(
     wire card_ssc_bus_enable = card_ssc_enable &&
         (onee_enable_effective || card_host_enable_mask[1]);
     logic slot2_mouse_selected;
+    logic slot2_phasor_selected;
+    logic phasor_location2;
+    logic phasor_location2_q = 1'b0;
+    // A move blocks access immediately and resets the card at the next edge.
+    always_ff @(posedge clk)
+        phasor_location2_q <= phasor_location2;
+    wire phasor_slot4_enabled = card_slot4_bus_enable && !phasor_location2;
+    wire phasor_enabled = rstn[2] && (phasor_location2_q == phasor_location2) &&
+        (phasor_location2 ? (card_slot2_bus_enable && slot2_phasor_selected) :
+                            phasor_slot4_enabled);
     wire [7:0] no_slot_clock_configured_slots =
-        ((card_slot2_bus_enable && slot2_mouse_selected) ? 8'h04 : 8'h00) |
-        (card_slot4_bus_enable ? 8'h10 : 8'h00) |
+        ((card_slot2_bus_enable && (slot2_mouse_selected || slot2_phasor_selected)) ?
+            8'h04 : 8'h00) |
+        (phasor_slot4_enabled ? 8'h10 : 8'h00) |
         (card_slot6_bus_enable ? 8'h40 : 8'h00) |
         ((onee_slot7_cards_visible && card_slot7_bus_enable) ?
             8'h80 : 8'h00);
@@ -1352,6 +1363,8 @@ module apple_top(
     // individual writer interfaces that get arbited into the mux
     globals::AppleBus_write brain_transplant_write;
     globals::AppleBus_write mb1_ab_write;
+    wire globals::AppleBus_write phasor_slot4_reply =
+        phasor_enabled && !phasor_location2 ? mb1_ab_write : '0;
     globals::AppleBus_read mouse_ab_read;
     globals::AppleBus_write mouse_ab_write;
     globals::AppleBus_write slot2_ab_write;
@@ -1391,6 +1404,7 @@ module apple_top(
     globals::AppleBus_write no_slot_clock_ab_write;
     globals::AppleBus_write supersprite_ab_write;
     logic signed [15:0] ss_psg_audio;   // SuperSprite AY-3-8910 output
+    logic physical_data_tick;
     logic signed [15:0] mb1_audio_l;    // mockingboard pre-mix (SS PSG summed in)
     logic signed [15:0] mb1_audio_r;
     // SuperSprite PS-facing readback (driven by supersprite_card_i).
@@ -1414,6 +1428,7 @@ module apple_top(
     logic        vtw_iiplus_dma_refresh_active;
     apple_bus_wrapper apple_bus_wrapper_i (
         .res_filtered_out(res_filtered_dbg),
+        .data_tick_out(physical_data_tick),
         .dbg_lost_cycle_count(dbg_lost_cycle_count),
         .dbg_bus_quality(busdbg_quality),
         .dbg_tap_mismatch(busdbg_tap_mismatch),
@@ -1616,20 +1631,20 @@ module apple_top(
         return g;
     endfunction
 
-    localparam logic [2:0] MB1_SLOT_ASSIGN = 3'h4;
-
     mockingboard mb1(
         .clk(clk),
-        .rstn(rstn[2]),
+        .rstn(phasor_enabled),
         .apple_q3_raw(apple_q3_pin),
         .standalone(onee_enable_effective),
-        .slot_assign(MB1_SLOT_ASSIGN),
+        .slot_assign(phasor_location2 ? 3'd2 : 3'd4),
         .pan(phasor_pan_q[47:0]),
         .ssi_pan(phasor_pan_q[55:48]),
         .audio_control(phasor_audio_q),
         .audio_sample_tick(audio_sample_tick),
+        .iigs_data_tick(native_gs_active && physical_data_tick && phasor_enabled),
         .sss(sss),
-        .ab_read(gate_slot_ab(data_phase_ab_read, card_slot4_bus_enable, 8'h10, iigs_bus_permissions)),
+        .ab_read(gate_slot_ab(data_phase_ab_read, phasor_enabled,
+                              phasor_location2 ? 8'h04 : 8'h10, iigs_bus_permissions)),
         .serve_data(ab_read.data),
         .ab_write(mb1_ab_write),
         .audio_l(mb1_audio_l),
@@ -1639,18 +1654,12 @@ module apple_top(
         .dbg_ssi_enable_ints(mb1_dbg_ssi_enable_ints)
     );
 
-    // Sum the SuperSprite PSG into the card-audio bus with saturation. The PSG
-    // output is pre-scaled with headroom; halve it so a full Mockingboard mix
-    // plus PSG cannot wrap.
-    //
-    // Registered (one fclk stage) to pipeline the audio summation: the
-    // downstream mixer (appletini_yarz_top) adds disk2 audio with another
-    // saturating stage and only samples on an audio tick (~48 kHz), so the
-    // whole PSG->mix->sample chain was a single ~14-level combinational path
-    // on the 133 MHz clock. Splitting it here halves the depth; the added
-    // ~7.5 ns of latency on a ~48 kHz sample stream is inaudible.
-    wire signed [16:0] ss_mix_l = mb1_audio_l + (ss_psg_audio >>> 1);
-    wire signed [16:0] ss_mix_r = mb1_audio_r + (ss_psg_audio >>> 1);
+    // Mute a disabled Phasor and register the saturated SuperSprite/Phasor
+    // sum to break the audio timing path.
+    wire signed [16:0] ss_mix_l =
+        (phasor_enabled ? mb1_audio_l : 16'sd0) + (ss_psg_audio >>> 1);
+    wire signed [16:0] ss_mix_r =
+        (phasor_enabled ? mb1_audio_r : 16'sd0) + (ss_psg_audio >>> 1);
     logic signed [15:0] mockingboard_audio_l_q;
     logic signed [15:0] mockingboard_audio_r_q;
     always_ff @(posedge clk) begin
@@ -1679,8 +1688,11 @@ module apple_top(
         .ps_wr_en(as_client.awvalid),
         .ps_rdata(slot2_ps_rdata),
         .mouse_selected(slot2_mouse_selected),
+        .phasor_selected(slot2_phasor_selected),
+        .phasor_location2(phasor_location2),
         .mouse_ab_read(mouse_ab_read),
         .mouse_ab_write(mouse_ab_write),
+        .phasor_ab_write(phasor_enabled && phasor_location2 ? mb1_ab_write : '0),
         .ab_write(slot2_ab_write)
     );
 
@@ -1718,6 +1730,7 @@ module apple_top(
     logic        irqdbg_mouse_irq_prev_q;
     logic        irqdbg_ssi_backend_prev_q;
     logic        irqdbg_ssi_irq_prev_q;
+    wire mouse_irq_asserted = slot2_mouse_selected && slot2_ab_write.assert_irq;
     // CPU IRQ/BRK-vector fetches: the 6502 reads $FFFE (then $FFFF) whenever it
     // takes an IRQ or executes BRK. Counting $FFFE reads tells us whether the
     // CPU services ANY interrupt during a freeze (climbing) or has interrupts
@@ -1736,7 +1749,7 @@ module apple_top(
             irqdbg_ssi_irq_prev_q     <= 1'b0;
         end
         else begin
-            irqdbg_mouse_irq_prev_q   <= slot2_ab_write.assert_irq;
+            irqdbg_mouse_irq_prev_q   <= mouse_irq_asserted;
             irqdbg_ssi_backend_prev_q <= mb1_dbg_ssi_backend_done;
             irqdbg_ssi_irq_prev_q     <= mb1_dbg_ssi_irq;
             if (ab_read.serve_en && ab_read.rw &&
@@ -1746,7 +1759,7 @@ module apple_top(
             if (mouse_vblank_start_pulse && irqdbg_mouse_vbl_q != 8'hFF) begin
                 irqdbg_mouse_vbl_q <= irqdbg_mouse_vbl_q + 8'd1;
             end
-            if (slot2_ab_write.assert_irq && !irqdbg_mouse_irq_prev_q &&
+            if (mouse_irq_asserted && !irqdbg_mouse_irq_prev_q &&
                 irqdbg_mouse_irq_q != 8'hFF) begin
                 irqdbg_mouse_irq_q <= irqdbg_mouse_irq_q + 8'd1;
             end
@@ -1780,7 +1793,7 @@ module apple_top(
      * newest in the low 16 bits; read via 0x31-0x34, cleared with the
      * bus forensics (write 0x2D). */
     logic [127:0] busdbg_mring_q;
-    wire busdbg_mouse_wr = ab_read.data_en && !ab_read.rw &&
+    wire busdbg_mouse_wr = slot2_mouse_selected && ab_read.data_en && !ab_read.rw &&
                            (ab_read.addr[15:4] == 12'hC0A);
     always_ff @(posedge clk) begin
         if (!rstn[2] || busdbg_clear_pulse) begin
@@ -2653,7 +2666,7 @@ module apple_top(
         onee_enable_effective,
         (machine_inh_allowed || onee_enable_effective),
         (machine_inh_allowed || onee_enable_effective),
-        card_slot4_bus_enable,
+        phasor_slot4_enabled,
         card_slot2_bus_enable,
         (card_slot5_enable && card_host_enable_mask[5]),
         card_slot1_bus_enable,
@@ -2675,9 +2688,10 @@ module apple_top(
             onee_motherboard_ab_write,
             vtw_ab_write,
             brain_transplant_write,
-            gate_iigs_reply(mb1_ab_write, 8'h10, iigs_rom_mask[4], iigs_bus_permissions),
+            gate_iigs_reply(phasor_slot4_reply, 8'h10, iigs_rom_mask[4], iigs_bus_permissions),
             gate_iigs_reply(slot2_ab_write, 8'h04,
-                slot2_mouse_selected && iigs_rom_mask[2], iigs_bus_permissions),
+                (slot2_mouse_selected || slot2_phasor_selected) && iigs_rom_mask[2],
+                iigs_bus_permissions),
             gate_iigs_reply(slot5_ab_write, 8'h20, pct_mode && iigs_rom_mask[5], iigs_bus_permissions),
             gate_iigs_reply(uthernet_ab_write, iigs_uthernet_reply_slots, 1'b0, iigs_bus_permissions),
             gate_iigs_reply(ssc_ab_write, iigs_ssc_reply_slots, 1'b0, iigs_bus_permissions),
@@ -2705,7 +2719,7 @@ module apple_top(
             onee_motherboard_ab_write,
             vtw_ab_write,
             brain_transplant_write,
-            mb1_ab_write,
+            phasor_slot4_reply,
             slot2_ab_write,
             slot5_ab_write,
             uthernet_ab_write,

@@ -34,14 +34,15 @@ def main() -> None:
 #include "card_control_regs.h"
 #include "config_menu_ui.h"
 #include "config_menu_help.h"
+#include "slot2_gamepad_service.h"
 '''
     code += internal[internal.index("/* Coordinate and palette"):
                      internal.index("uint8_t config_menu_appendf(")]
     code += "typedef struct {\n    struct {\n        void *ctx;\n"
-    code += "        void (*set_slot_enabled)(void *, uint8_t, uint8_t);\n"
+    code += "        uint8_t (*slot2_phasor_available)(void *);\n"
     code += public[public.index("    void (*set_phasor_pan)"):
                    public.index("    void (*set_mouse_sensitivity)")]
-    code += "    } platform;\n    unsigned item_focus;\n"
+    code += "    } platform;\n    unsigned item_focus;\n    uint8_t slot2_card;\n"
     code += public[public.index("    uint8_t mockingboard_slot4_enabled;"):
                    public.index("    uint8_t ethernet_slot1_enabled;")]
     code += "} config_menu_t;\n"
@@ -57,7 +58,11 @@ static void reg_write(uint32_t reg, uint32_t value)
 }
 #define REG_WRITE reg_write
 static void config_menu_save_settings(config_menu_t *menu) { (void)menu; ++saved; }
-static void config_menu_refresh_vtw_slowdown(config_menu_t *menu) { (void)menu; }
+static void config_menu_set_phasor_slot(config_menu_t *menu, uint8_t slot)
+{
+    menu->slot2_card = slot == 2U ? SLOT2_CARD_PHASOR : SLOT2_CARD_OFF;
+    menu->mockingboard_slot4_enabled = slot == 4U;
+}
 '''
     for name in ("control_set_phasor_pan", "phasor_audio_pack5", "control_set_phasor_audio"):
         code += function(callbacks, name)
@@ -168,6 +173,13 @@ int main(void)
     assert(menu.phasor_ssi_volume_db == 0 && menu.phasor_ssi_pan[0] == 0 && menu.phasor_ssi_pan[1] == 15);
     config_menu_phasor_apply(&menu);
     assert(audio == 0x02040000U && pan_hi == 0xF05B5B5BU && pan_lo == 0x005B5B5BU);
+    assert(config_menu_phasor_adjust(&menu, 1) && menu.mockingboard_slot4_enabled);
+    config_menu_phasor_activate(&menu);
+    assert(menu.slot2_card == SLOT2_CARD_PHASOR && !menu.mockingboard_slot4_enabled);
+    config_menu_phasor_apply(&menu);
+    assert(audio == 0x02040000U && pan_hi == 0xF05B5B5BU && pan_lo == 0x005B5B5BU);
+    assert(config_menu_phasor_adjust(&menu, -1) && menu.mockingboard_slot4_enabled);
+    assert(config_menu_phasor_adjust(&menu, -1) && !menu.mockingboard_slot4_enabled);
     /* Old configurations have no SSI settings: the new defaults remain. */
     assert(config_menu_phasor_parse_setting(&menu,"phasor.volume","-2"));
     assert(menu.phasor_ssi_volume_db == 0 && menu.phasor_ssi_pan[1] == 15);
@@ -210,6 +222,11 @@ int main(void)
         }
     }
     assert(compact_checks == 3*config_menu_phasor_item_count());
+    menu.mockingboard_slot4_enabled=0;
+    menu.slot2_card=SLOT2_CARD_PHASOR;
+    menu.item_focus=PHASOR_SLOT_FOCUS;
+    assert(fb16_set_size(640,400));
+    render(&menu,NULL);
     puts("PASS: 5,632 SSI gain/pan/mode combinations, config round trips, bounds, register preservation, defaults, 66 compact focus checks");
     return 0;
 }

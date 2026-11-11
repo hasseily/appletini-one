@@ -581,9 +581,8 @@ def test_no_vidhd_identity_and_slot_layout() -> None:
             "wire card_slot2_enable = card_slot_enable_mask_q[2];" in top and
             "wire card_slot4_enable = card_slot_enable_mask_q[4];" in top,
             "PL default slot mask must leave every optional slot off; the PS enables Ethernet slot 1, mouse slot 2 and Phasor slot 4 from saved settings")
-    require("localparam logic [2:0] MB1_SLOT_ASSIGN = 3'h4;" in top and
-            ".slot_assign(MB1_SLOT_ASSIGN)" in top,
-            "Phasor must be controlled as slot 4")
+    require(".slot_assign(phasor_location2 ? 3'd2 : 3'd4)" in top,
+            "The single Phasor must use the selected slot address")
     slot2 = read(REPO_ROOT / "hdl/apple/slot2_card.sv")
     require("slot2_card slot2_card_i" in top and
             ".enabled(card_slot2_enable)" in top and
@@ -603,7 +602,7 @@ def test_no_vidhd_identity_and_slot_layout() -> None:
             "firmware slot-control constants must match the PL slot layout")
     require("#define MOUSE_CONTROL_SLOT 2U" in config_menu and
             "#define MOCKINGBOARD_CONTROL_SLOT 4U" in config_menu_internal and
-            '"Slot 4 Phasor"' in config_menu and
+            '"Phasor"' in config_menu and
             "phasor.slot4.enabled=%s\\n" in config_menu_phasor and
             "phasor.pan.%u=%u\\n" in config_menu_phasor and
             "for (uint32_t channel = 0U; channel < MOCKINGBOARD_CHANNEL_COUNT; ++channel)" in config_menu_phasor and
@@ -612,7 +611,7 @@ def test_no_vidhd_identity_and_slot_layout() -> None:
             "config_menu_slot2_card_text(menu->slot2_card)" in config_menu_device_tabs and
             '"slot2.card=%s\\n"' in config_menu and
             '"Slot 2"' in config_menu and
-            "Enable in Slot 4" in config_menu_phasor and
+            "Phasor location" in config_menu_phasor and
             'strcmp(key, "mouse.slot2.enabled") == 0' in config_menu and
             'strcmp(key, "phasor.slot4.enabled") == 0' in config_menu_phasor and
             'strcmp(key, "mockingboard_slot5") == 0' not in config_menu_phasor,

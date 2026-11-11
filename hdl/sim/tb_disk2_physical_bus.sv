@@ -67,6 +67,11 @@ module tb_disk2_physical_bus;
     globals::AppleBus_write disk_write;
     globals::AppleBus_write [11:0] client_writes;
     globals::AppleBus_write ab_write;
+    logic late_tick;
+    int late_ticks = 0;
+    always @(posedge clk)
+        if (late_tick)
+            late_ticks <= late_ticks + 1;
     globals::SoftSwitchState sss;
     globals::AxiSimple_common as_common;
     AxiSimple_if axi();
@@ -132,6 +137,7 @@ module tb_disk2_physical_bus;
         .tini_addr_dir_pin(tini_addr_dir_pin),
         .tini_data_dir_pin(tini_data_dir_pin),
         .ab_read(ab_read),
+        .data_tick_out(late_tick),
         .ab_write(ab_write)
     );
 
@@ -399,6 +405,7 @@ module tb_disk2_physical_bus;
 
     task automatic gs_unselected_cycles;
         int start_ticks;
+        int start_late_ticks;
         logic [31:0] start_accesses;
         @(posedge phi0);
         host_is_iiplus = 1'b0;
@@ -410,6 +417,7 @@ module tb_disk2_physical_bus;
         cpu_addr_oe = 1'b1;
         cpu_rw = 1'b1;
         start_ticks = disk_ticks;
+        start_late_ticks = late_ticks;
         start_accesses = card_i.io_access_count_q;
         repeat (16) begin
             @(posedge phi0);
@@ -420,6 +428,8 @@ module tb_disk2_physical_bus;
         end
         check(disk_ticks - start_ticks == 16,
               "Disk II lost elapsed time during unselected GS cycles");
+        check(late_ticks - start_late_ticks == 16,
+              "Phasor lost late clock pulses during unselected GS cycles");
         cpu_addr_oe = 1'b0;
     endtask
 

@@ -105,6 +105,14 @@ uint8_t slot2_gamepad_service_available(void)
         == CARD_CTRL_SLOT2_SIGNATURE;
 }
 
+uint8_t slot2_phasor_available(void)
+{
+    const uint32_t control = REG_READ(CARD_CTRL_SLOT2_CONTROL_REG);
+
+    return (control >> CARD_CTRL_SLOT2_SIGNATURE_SHIFT) == CARD_CTRL_SLOT2_SIGNATURE &&
+           (control & CARD_CTRL_SLOT2_PHASOR_PRESENT_BIT) != 0U;
+}
+
 void slot2_gamepad_service_get_snapshot(slot2_gamepad_snapshot_t *snapshot)
 {
     if (snapshot == NULL) {
@@ -116,6 +124,7 @@ void slot2_gamepad_service_get_snapshot(slot2_gamepad_snapshot_t *snapshot)
     snapshot->available = slot2_gamepad_service_available();
     snapshot->blocked = g_blocked;
     memset(snapshot->slots, ONEE_INPUT_DEVICE_SLOT_COUNT, sizeof(snapshot->slots));
+    if (g_card == SLOT2_CARD_PHASOR) return;
     const uint8_t players = g_card == SLOT2_CARD_SNES_MAX ? 2U : SLOT2_GAMEPAD_PLAYER_COUNT;
     for (uint8_t player = 0U; player < players; ++player) {
         const uint8_t device = g_devices[player];
@@ -164,7 +173,8 @@ void slot2_gamepad_service_init(void)
 
 void slot2_gamepad_service_set_card(uint8_t card)
 {
-    g_card = card < SLOT2_CARD_COUNT ? card : SLOT2_CARD_OFF;
+    g_card = card < SLOT2_CARD_COUNT &&
+        (card != SLOT2_CARD_PHASOR || slot2_phasor_available()) ? card : SLOT2_CARD_OFF;
     slot2_gamepad_service_poll();
 }
 

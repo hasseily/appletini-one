@@ -1,14 +1,18 @@
-# Slot 2: Mouse, 4Play and SNES MAX
+# Slot 2: Mouse, 4Play, SNES MAX and Phasor
 
 The `four-play` branch adds two USB-backed gamepad cards to slot 2. In the
-**Slot 2** menu, choose **Off**, **Mouse**, **4Play**, or **SNES MAX**. Only the
+**Slot 2** menu, choose **Off**, **Mouse**, **4Play**, **SNES MAX**, or **Phasor**. Only the
 selected card responds. Mouse sensitivity stays saved while another card is
 selected. Reapplying other menu settings does not reset the mouse.
 
 These cards need the updated FPGA and frontend together. They work through
 the normal Apple bus and the private ONE//e bus, without requiring TransWarp.
-The existing physical IIgs slot restrictions still apply: slot 2 remains
-disabled on a physical IIgs host. ONE//e keeps its separate slot policy.
+On a physical IIgs, slot 2 needs the opt-in physical-slot-3 profile and
+external slot-2 ownership. ONE//e keeps its separate slot policy.
+The single Phasor can move between slots 4 and 2, keeping its audio settings.
+Selecting it in slot 2 removes it from slot 4. F1.3.7dev16 passed FPGA timing
+and package checks; board tests remain pending. See the
+[Phasor validation record](README_PHASOR_GS.md).
 
 ## Controllers and player choices
 
@@ -83,7 +87,7 @@ See the author's [SNES MAX software notes](https://lukazi.blogspot.com/2021/09/g
 ## Settings and FPGA registers
 
 Global settings and profiles save `slot2.card` as `OFF`, `MOUSE`, `FOUR_PLAY`,
-or `SNES_MAX`, and `slot2.player1.device` through `slot2.player4.device` as
+`SNES_MAX`, or `PHASOR`, and `slot2.player1.device` through `slot2.player4.device` as
 `AUTO`, `1`–`8`, or `OFF`. Fresh settings default to Off and Auto. Old
 `mouse.slot2.enabled` settings still select Mouse or Off. An explicit new
 card key wins regardless of file order. New files also save the legacy mouse
@@ -94,7 +98,7 @@ crossing or placement constraint:
 
 | Register index | Address | Function |
 | --- | --- | --- |
-| `$AD` | `$400002B4` | Commit staged state, card choice bits 1:0, presence bits 7:4 |
+| `$AD` | `$400002B4` | Commit staged state, card choice bits 2:0, presence bits 7:4; read-only relocatable-Phasor capability bit 9 |
 | `$AE` | `$400002B8` | Stage players 1/2 in low/high halfwords |
 | `$AF` | `$400002BC` | Stage players 3/4 in low/high halfwords |
 
@@ -104,6 +108,9 @@ CONTROL reads return signature `$5332` in bits 31:16. Firmware checks that
 signature before using these registers; an older FPGA can still use Mouse
 but cannot enable either gamepad card. FPGA reset selects Mouse for older
 firmware compatibility; the existing slot enable mask still gates access.
+Selectors 0-3 keep their old meanings. Selector 4 chooses Phasor only when
+the FPGA advertises bit 9; selectors 5-7 select Off. Saved Phasor settings
+survive use with an older FPGA that lacks this capability.
 
 ## Validation
 

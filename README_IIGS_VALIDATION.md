@@ -1,9 +1,25 @@
 # Apple IIgs support validation
 
-The earlier combined run failed the +0.200 ns release target. The user
-selected the later PL in `build/gs-support-pl-m350` for testing. It passes
-its supplied +0.050 ns gate at +0.051 ns. The matching F1.3.7dev15 ARM build
-and package passed their audits. Physical board acceptance remains pending.
+The current F1.3.7dev16 package uses the user-selected single-Phasor PL in
+`build/gs-support-single-phasor-pl-m250`. Its +0.106 ns setup result clears
+the separate +0.050 ns package gate; hold is +0.033 ns and pulse width is
++0.265 ns, with no failing endpoints. Its fresh matching ARM build and
+image audit passed. Physical board acceptance remains pending.
+
+The earlier F1.3.7dev15 package used `build/gs-support-pl-m350`, which passed
+its supplied +0.050 ns gate at +0.051 ns. Those artifacts remain unchanged.
+
+New source work after dev15 adds a continuous GS AY clock and a single
+Phasor selectable in slot 4 or slot 2. The tester's Pure Noise detection
+failure remains open. See the
+[separate diagnosis and validation record](README_PHASOR_GS.md).
+The discarded dual-Phasor run, `20261111T191525Z-09a3bd15-full`, repeated the
+passing m350 recipe but failed detail placement: 53,989 combined LUTs
+exceeded the 53,200 limit, and remaining logic needed 9,351 slices where
+8,169 remained. No retry, ARM build, or package followed. The single-card
+run `20261111T194546Z-09a3bd15-full` then ended during synthesis: its main
+process exited without a result, leaving orphan workers. No placement or
+timing result exists; the cause is unknown. No retry or ARM/package followed.
 
 ## Source and simulation
 

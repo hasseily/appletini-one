@@ -9,6 +9,7 @@ typedef enum {
     SLOT2_CARD_MOUSE,
     SLOT2_CARD_FOUR_PLAY,
     SLOT2_CARD_SNES_MAX,
+    SLOT2_CARD_PHASOR,
     SLOT2_CARD_COUNT
 } slot2_card_t;
 
@@ -34,6 +35,7 @@ void slot2_gamepad_service_init(void);
 void slot2_gamepad_service_set_card(uint8_t card);
 void slot2_gamepad_service_set_player_devices(const uint8_t devices[4]);
 uint8_t slot2_gamepad_service_available(void);
+uint8_t slot2_phasor_available(void);
 void slot2_gamepad_service_report(uint8_t slot,
     const onee_input_joystick_report_t *report, uint8_t hat);
 void slot2_gamepad_service_disconnect(uint8_t slot);

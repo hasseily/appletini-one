@@ -353,10 +353,23 @@ uint8_t config_menu_phasor_append_settings(const config_menu_t *menu,
     return ok;
 }
 
+static uint8_t phasor_slot_index(const config_menu_t *menu)
+{
+    return menu->slot2_card == SLOT2_CARD_PHASOR ? 2U :
+           menu->mockingboard_slot4_enabled ? 1U : 0U;
+}
+
 uint8_t config_menu_phasor_adjust(config_menu_t *menu, int8_t delta)
 {
     if (menu == NULL) {
         return 0U;
+    }
+
+    if (menu->item_focus == PHASOR_SLOT_FOCUS) {
+        static const uint8_t slots[] = {0U, 4U, 2U};
+        const uint8_t next = (phasor_slot_index(menu) + (delta < 0 ? 2U : 1U)) % 3U;
+        config_menu_set_phasor_slot(menu, slots[next]);
+        return 1U;
     }
 
     if (menu->item_focus >= PHASOR_PAN_FOCUS_BASE &&
@@ -446,16 +459,7 @@ void config_menu_phasor_activate(config_menu_t *menu)
     }
 
     if (menu->item_focus == PHASOR_SLOT_FOCUS) {
-        menu->mockingboard_slot4_enabled = menu->mockingboard_slot4_enabled ? 0U : 1U;
-        if (menu->platform.set_slot_enabled != NULL) {
-            menu->platform.set_slot_enabled(menu->platform.ctx,
-                                            MOCKINGBOARD_CONTROL_SLOT,
-                                            menu->mockingboard_slot4_enabled);
-        }
-        /* The Mockingboard/Phasor slot is always slowed to 1 MHz for
-         * cycle-counted detection; refresh the effective slowdown mask. */
-        config_menu_refresh_vtw_slowdown(menu);
-        config_menu_save_settings(menu);
+        (void)config_menu_phasor_adjust(menu, 1);
         return;
     }
 
@@ -608,9 +612,22 @@ void config_menu_phasor_draw(uint16_t *fb,
         return;
     }
 
-    hgr_draw_check_item(fb, x, y, w,
+    const char *location = "Off";
+    switch (phasor_slot_index(menu)) {
+    case 1U:
+        location = "Slot 4";
+        break;
+    case 2U:
+        location = menu->platform.slot2_phasor_available != NULL &&
+                   menu->platform.slot2_phasor_available(menu->platform.ctx) ?
+                   "Slot 2" : "Slot 2 (needs FPGA update)";
+        break;
+    default:
+        break;
+    }
+    hgr_draw_value_item(fb, x, y, w,
                         (uint8_t)(menu->item_focus == PHASOR_SLOT_FOCUS),
-                        menu->mockingboard_slot4_enabled, "Enable in Slot 4");
+                        "Phasor location", location);
 
     hgr_draw_check_item(fb,
                         x,

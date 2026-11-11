@@ -591,14 +591,13 @@ def test_transwarp_slot_slowdown_rows() -> None:
             'snprintf(slot_label, sizeof(slot_label), "%u"' in device_tabs and
             "fb, slot_x, y + (6 * row_h), slot_w" in device_tabs,
             "TransWarp tab must show slots 1-7 as checkbox cells under one heading")
-    require("slot == MOCKINGBOARD_CONTROL_SLOT" in device_tabs and
-            "menu->mockingboard_slot4_enabled != 0U" in device_tabs and
+    require("config_menu_phasor_slot_enabled(menu, slot)" in device_tabs and
             "const uint8_t checked =\n"
             "            (uint8_t)(phasor_auto_slow != 0U ||" in device_tabs and
             "hgr_draw_check_item_dimmed(\n"
             "                fb, slot_x, y + (6 * row_h), slot_w" in device_tabs and
             "(uint8_t)(menu->item_focus == item), checked, slot_label);" in device_tabs,
-            "active virtual Phasor must show slot 4 checked and disabled")
+            "each active virtual Phasor slot must appear checked and disabled")
     require('"Slowdown window:", win_val' in device_tabs and
             "hgr_draw_value_item(fb, x, y + (7 * row_h), w" in device_tabs,
             "slowdown window must follow the compact physical-slot row")
@@ -614,8 +613,8 @@ def test_transwarp_slot_slowdown_rows() -> None:
     require("static uint8_t config_menu_vtw_toggle_focused_slot" in source and
             "menu->item_focus -\n"
             "                     CONFIG_TRANSWARP_ITEM_SLOT_FIRST + 1U" in source and
-            "slot == VTW_MOCKINGBOARD_SLOT" in source and
-            "SLOT 4 AUTO-SLOWED WHILE VIRTUAL PHASOR IS ACTIVE" in source and
+            "config_menu_phasor_slot_enabled(menu, slot)" in source and
+            "SLOT AUTO-SLOWED WHILE VIRTUAL PHASOR IS ACTIVE" in source and
             "config_menu_vtw_toggle_focused_slot(menu)" not in adjust and
             "(void)config_menu_vtw_toggle_focused_slot(menu);" in activate,
             "only OK may toggle an available focused TransWarp slot checkbox")
@@ -648,7 +647,7 @@ def test_transwarp_slot_slowdown_rows() -> None:
     speed_help = re.search(r"HELP\(transwarp_speed,\s*(.*?)\);", help_source, re.DOTALL)
     require(speed_help is not None and "TURBO" not in speed_help.group(1),
             "Speed help must omit the TURBO text now shown under its checkbox")
-    require("Slot 4 is automatically slowed down when the virtual Phasor is active." in
+    require("The slot with the virtual Phasor slows to 1 MHz." in
             help_source,
             "TransWarp slot help must explain the automatic virtual Phasor slowdown")
     require('"Slow Floating bus ($C019,$C030-$C05F)"' in device_tabs and

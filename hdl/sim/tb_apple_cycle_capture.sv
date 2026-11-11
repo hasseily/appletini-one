@@ -15,6 +15,14 @@ module tb_apple_cycle_capture;
     logic [6:0]      cycle_in_line = '0;
     logic            frame_en = 1'b0;
     logic            fake_shr_allowed = 1'b1;
+    logic            native_gs_active = 1'b0;
+    logic            native_gs_observe = 1'b0;
+    logic            native_gs_tick = 1'b0;
+    logic            native_gs_phase_locked = 1'b0;
+    logic [7:0]      native_gs_c022 = 8'h00;
+    logic [7:0]      native_gs_c029 = 8'h00;
+    logic [7:0]      native_gs_c02b = 8'h00;
+    logic [3:0]      native_gs_border = 4'h0;
     logic            overlay_devsel_enabled = 1'b0;
     logic            overlay_capture_armed = 1'b0;
     logic            overlay_capture_bank_aux = 1'b0;
@@ -45,6 +53,9 @@ module tb_apple_cycle_capture;
         .cycle_in_line(cycle_in_line),
         .frame_en(frame_en),
         .fake_shr_allowed(fake_shr_allowed),
+        .native_gs_active, .native_gs_observe, .native_gs_tick,
+        .native_gs_phase_locked, .native_gs_c022, .native_gs_c029,
+        .native_gs_c02b, .native_gs_border,
         .overlay_devsel_enabled(overlay_devsel_enabled),
         .overlay_capture_armed(overlay_capture_armed),
         .overlay_capture_bank_aux(overlay_capture_bank_aux),
@@ -593,6 +604,253 @@ module tb_apple_cycle_capture;
         check(cycle_capture_empty, "all direct records drain exactly once");
     endtask
 
+    task automatic test_native_gs_capture;
+        AppleCycleRecord got;
+        logic [63:0] bits;
+        logic [15:0] controls [4];
+        $display("TEST: native GS snapshots, timing, writes, and gaps");
+        soft_reset_dut();
+        native_gs_observe = 1'b1;
+        ab_read.cycle_valid = 1'b1;
+        ab_read.addr = 16'hC029;
+        ab_read.data = 8'hC0;
+        frame_en = 1'b1;
+        native_gs_tick = 1'b1;
+        direct_valid = 1'b1;
+        push_cycle();
+        native_gs_tick = 1'b0;
+        check(!direct_ready, "pre-ID observation blocks direct legacy records");
+        direct_valid = 1'b0;
+        repeat (3) @(negedge clk);
+        check(cycle_capture_empty && !shr_capture_active,
+              "pre-ID observation emits no timing, IO, or synthetic SHR");
+
+        ab_read.addr = 16'h4078;
+        ab_read.data = 8'hA5;
+        sss.addr_decode_late = 24'h014078;
+        sss.addr_decode_late_en = 1'b1;
+        frame_en = 1'b1;
+        line_in_frame = 9'd5;
+        cycle_in_line = 7'd17;
+        native_gs_tick = 1'b1;
+        push_cycle();
+        native_gs_tick = 1'b0;
+        pop_record(got);
+        bits = got;
+        check(bits == {3'd5, 28'd0, 24'h014078, 1'b1, 8'hA5} &&
+              cycle_capture_empty,
+              "pre-ID memory updates use only the untimed shadow half");
+        ab_read.m2sel = 1'b1;
+        frame_en = 1'b1;
+        push_cycle();
+        repeat (3) @(negedge clk);
+        check(cycle_capture_empty, "pre-ID shadow ignores unqualified memory");
+        ab_read.m2sel = 1'b0;
+        ab_read.addr = 16'hC029;
+        sss.addr_decode_late_en = 1'b0;
+
+        native_gs_active = 1'b1;
+        native_gs_phase_locked = 1'b1;
+        native_gs_c022 = 8'hE2;
+        native_gs_c029 = 8'h01;
+        native_gs_c02b = 8'h10;
+        native_gs_border = 4'hA;
+        sss.sw_text = 1'b1;
+        line_in_frame = 9'd0;
+        cycle_in_line = 7'd0;
+        frame_en = 1'b1;
+        native_gs_tick = 1'b1;
+        ab_read.data = 8'h80;
+        ab_read.data_en = 1'b1;
+        @(negedge clk);
+        native_gs_tick = 1'b0;
+        ab_read.data_en = 1'b0;
+        frame_en = 1'b0;
+        pop_record(got);
+        bits = got;
+        check(bits == {3'd4, 1'b1, 9'd0, 7'd0, 11'h040,
+                       8'hE2, 8'h01, 8'h10, 1'b1, 1'b1, 2'b00, 4'hA, 1'b0},
+              "native entry snapshot has the agreed bit layout and precedes tick");
+        pop_record(got);
+        check(got.record_kind == RECORD_KIND_LEGACY && got.frame_en &&
+              !got.addr_decode_en && got.line_in_frame == 0 &&
+              got.cycle_in_line == 0, "native tick precedes simultaneous IO");
+        pop_record(got);
+        bits = got;
+        check(bits == {3'd3, 16'hC029, 8'h80, 9'd0, 7'd0, 21'd0},
+              "native C029 has its own IO kind and original bus byte");
+        check(cycle_capture_empty && !capture_drop_sticky && !shr_capture_active,
+              "three simultaneous native sources fit without synthetic SHR");
+
+        // The host clock still advances through an invalid M2SEL cycle.
+        cycle_in_line = 7'd1;
+        native_gs_tick = 1'b1;
+        ab_read.m2sel = 1'b1;
+        ab_read.data_en = 1'b1;
+        @(negedge clk);
+        native_gs_tick = 1'b0;
+        ab_read.data_en = 1'b0;
+        pop_record(got);
+        check(got.record_kind == RECORD_KIND_LEGACY && got.frame_en &&
+              got.cycle_in_line == 1 && !got.addr_decode_en && cycle_capture_empty,
+              "an unqualified bus cycle produces only a beam tick");
+
+        ab_read.m2sel = 1'b0;
+        controls = '{16'hC022, 16'hC02B, 16'hC034, 16'hC068};
+        foreach (controls[i]) begin
+            ab_read.addr = controls[i];
+            ab_read.data = 8'h40 + 8'(i);
+            push_cycle();
+            pop_record(got);
+            bits = got;
+            check(bits == {3'd3, controls[i], ab_read.data, 9'd0, 7'd1, 21'd0},
+                  "native control write preserves address, byte, and timestamp");
+        end
+        ab_read.addr = 16'hC035;
+        push_cycle();
+        repeat (3) @(negedge clk);
+        check(cycle_capture_empty, "native C035 must not emit a synthetic IO event");
+
+        ab_read.addr = 16'hC02B;
+        ab_read.data = 8'h00;
+        ab_read.data_en = 1'b1;
+        @(negedge clk);
+        ab_read.data_en = 1'b0;
+        native_gs_c02b = 8'h00;
+        native_gs_phase_locked = 1'b0;
+        pop_record(got);
+        check(got.record_kind == RECORD_KIND_GS_IO,
+              "standard change precedes its lock-loss snapshot");
+        pop_record(got);
+        bits = got;
+        check(got.record_kind == RECORD_KIND_GS_STATE && !bits[8] &&
+              bits[16:9] == 8'h00 && cycle_capture_empty,
+              "lock loss publishes a snapshot even without a beam tick");
+        native_gs_phase_locked = 1'b1;
+        native_gs_tick = 1'b1;
+        cycle_in_line = 7'd63;
+        @(negedge clk);
+        native_gs_tick = 1'b0;
+        pop_record(got);
+        bits = got;
+        check(got.record_kind == RECORD_KIND_GS_STATE && bits[8] &&
+              bits[50:44] == 7'd63, "reacquisition snapshots the corrected position");
+        pop_record(got);
+        check(got.record_kind == RECORD_KIND_LEGACY && got.cycle_in_line == 7'd63,
+              "first corrected beam tick follows the snapshot");
+
+        ab_read.addr = 16'h9FFF;
+        ab_read.data = 8'hA6;
+        native_gs_c029 = 8'h01;
+        sss.addr_decode_late = 24'h019FFF;
+        sss.addr_decode_late_en = 1'b1;
+        cycle_in_line = 7'd2;
+        push_cycle();
+        pop_record(got);
+        check(got.record_kind == RECORD_KIND_LEGACY && got.frame_en &&
+              got.addr_decode_en && got.addr_decode == 24'h019FFF &&
+              got.data == 8'hA6 && got.cycle_in_line == 2,
+              "E1 SHR writes retain time while SHR and frame selection are off");
+
+        ab_read.addr = 16'h0BFF;
+        ab_read.data = 8'h3B;
+        sss.addr_decode_late = 24'h000BFF;
+        cycle_in_line = 7'd3;
+        native_gs_tick = 1'b1;
+        ab_read.data_en = 1'b1;
+        @(negedge clk);
+        native_gs_tick = 1'b0;
+        ab_read.data_en = 1'b0;
+        pop_record(got);
+        check(got.record_kind == RECORD_KIND_LEGACY && got.frame_en &&
+              got.addr_decode_en && got.addr_decode == 24'h000BFF &&
+              got.data == 8'h3B && got.cycle_in_line == 3 && cycle_capture_empty,
+              "E0 text write and simultaneous tick share one ordered record");
+
+        // An additional batch arriving while the older frame tick is pending
+        // must signal a loss rather than interleave with that batch.
+        cycle_in_line = 7'd0;
+        native_gs_tick = 1'b1;
+        @(negedge clk);
+        cycle_in_line = 7'd1;
+        @(negedge clk);
+        native_gs_tick = 1'b0;
+        pop_record(got);
+        bits = got;
+        check(got.record_kind == RECORD_KIND_GS_STATE && !bits[7],
+              "periodic snapshot preserves unselected frame state");
+        pop_record(got);
+        check(got.record_kind == RECORD_KIND_LEGACY && got.cycle_in_line == 0 &&
+              cycle_capture_empty && capture_drop_sticky,
+              "older native batch remains ordered and new loss is explicit");
+        pulse_drop_ack();
+
+        cycle_in_line = 7'd2;
+        native_gs_tick = 1'b1;
+        @(negedge clk);
+        native_gs_tick = 1'b0;
+        soft_reset = 1'b1;
+        @(negedge clk);
+        pop_record(got);
+        check(got.record_kind == RECORD_KIND_LEGACY && got.cycle_in_line == 2,
+              "native reset does not discard the preceding queued beam tick");
+        pop_record(got);
+        bits = got;
+        check(got.record_kind == RECORD_KIND_GS_STATE && bits[0],
+              "native reset assertion emits a snapshot");
+        soft_reset = 1'b0;
+        pop_record(got);
+        bits = got;
+        check(got.record_kind == RECORD_KIND_GS_STATE && !bits[0],
+              "native reset release emits a snapshot");
+
+        // Lose the first exit snapshot behind a pending frame tick.
+        // There is no later native frame to repeat the inactive state.
+        cycle_in_line = 7'd0;
+        native_gs_tick = 1'b1;
+        @(negedge clk);
+        native_gs_tick = 1'b0;
+        native_gs_active = 1'b0;
+        native_gs_observe = 1'b0;
+        pop_record(got);
+        bits = got;
+        check(got.record_kind == RECORD_KIND_GS_STATE && bits[60],
+              "last native frame snapshot precedes the exit");
+        pop_record(got);
+        check(got.record_kind == RECORD_KIND_LEGACY && got.frame_en,
+              "last native frame tick precedes the exit");
+        pop_record(got);
+        bits = got;
+        check(got.record_kind == RECORD_KIND_GS_STATE && !bits[60] &&
+              capture_drop_sticky,
+              "a dropped native exit retries its inactive snapshot");
+        pulse_drop_ack();
+
+        // A mode change while reset is held still has to retire the active
+        // state, even if an older batch forces the first exit attempt out.
+        native_gs_active = 1'b1;
+        native_gs_observe = 1'b1;
+        native_gs_tick = 1'b1;
+        soft_reset = 1'b1;
+        @(negedge clk);
+        native_gs_tick = 1'b0;
+        native_gs_active = 1'b0;
+        native_gs_observe = 1'b0;
+        pop_record(got);
+        bits = got;
+        check(got.record_kind == RECORD_KIND_GS_STATE && bits[60] && bits[0],
+              "reset-held native entry is ordered");
+        pop_record(got);
+        check(got.record_kind == RECORD_KIND_LEGACY && got.frame_en,
+              "reset-held entry preserves the queued tick");
+        pop_record(got);
+        bits = got;
+        check(got.record_kind == RECORD_KIND_GS_STATE && !bits[60] &&
+              bits[0] && capture_drop_sticky,
+              "native exit retries without clearing the FIFO while reset stays low");
+        soft_reset = 1'b0;
+    endtask
+
     initial begin
         repeat (4) @(posedge clk);
         @(negedge clk);
@@ -610,6 +868,7 @@ module tb_apple_cycle_capture;
         test_full_and_overlay_drop();
         test_c029_and_soft_reset();
         test_direct_video();
+        test_native_gs_capture();
 
         if (failures == 0)
             $display("APPLE CYCLE CAPTURE PASS");

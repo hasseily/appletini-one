@@ -103,10 +103,11 @@ def check_png(path: Path, width: int, height: int, raw_layout: int | None = None
                     rgb = [(r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2)]
             else:
                 # Independent F1.2.2 sampling rules (3101934 save_a2_png):
-                # active legacy starts32,16; border starts4,0; SHR starts0,0.
+                # Active legacy/IIgs starts at 32,16; legacy border starts
+                # at 4,0 and IIgs border or SHR starts at 0,0.
                 sy_scale = 2 if raw_layout == 2 else 4
-                sx = x // 2 + (32 if raw_layout == 0 else 4 if raw_layout == 1 else 0)
-                sy = y // sy_scale + (16 if raw_layout == 0 else 0)
+                sx = x // 2 + (32 if raw_layout in (0, 3) else 4 if raw_layout == 1 else 0)
+                sy = y // sy_scale + (16 if raw_layout in (0, 3) else 0)
                 blank = (scanlines >= 2 and y % 2 == 1) if sy_scale == 2 else (
                     scanlines != 0 and y % 4 >= 4 - scanlines)
                 rgb = [0, 0, 0] if blank else [
@@ -157,12 +158,14 @@ def main() -> int:
                 shutil.copy2(asan, output / asan.name)
         subprocess.run(command, check=True, env=environment)
         subprocess.run([str(executable), str(output)], check=True, env=environment)
-        for layout, dimensions in enumerate(((1120, 768), (1232, 896), (1280, 800))):
-            for scanlines in range(4):
+        for layout, dimensions in enumerate(((1120, 768), (1232, 896), (1280, 800),
+                                             (1280, 800), (1408, 928))):
+            for scanlines in (range(4) if layout < 3 else (0, 3)):
                 check_png(output / f"raw-{layout}-scan-{scanlines}.png", *dimensions,
                           raw_layout=layout, scanlines=scanlines)
         check_png(output / "raw-interlace-baseline.png", 1120, 768, raw_layout=0)
         check_png(output / "raw-fallback.png", 1280, 800, raw_layout=2)
+        check_png(output / "raw-gs-fallback.png", 1280, 800, raw_layout=3)
         check_png(output / "full.png", 1920, 1080)
         check_png(output / "wide.png", 1360, 768)
         check_png(output / "frozen-stride.png", 11, 7)

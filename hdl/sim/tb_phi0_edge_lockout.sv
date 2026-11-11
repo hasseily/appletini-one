@@ -138,6 +138,8 @@ module tb_phi0_edge_lockout;
 
     always @(posedge clk) begin
         if (counting) begin
+            if (ab_read.phi0_tick !== ab_read.sss_en)
+                $fatal(1, "Legacy timing tick did not match the early decode phase");
             if (ab_read.sss_en)  sss_cnt  <= sss_cnt + 1;
             if (ab_read.data_en) data_cnt <= data_cnt + 1;
             if (ab_read.addr_en) addr_cnt <= addr_cnt + 1;

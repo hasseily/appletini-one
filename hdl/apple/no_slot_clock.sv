@@ -79,7 +79,7 @@ module no_slot_clock (
         if (rom_output_read && state_q == NSC_TRANSFER) begin
             ab_write_d.wr_data    = {7'h00, shift_q[0]};
             ab_write_d.wr_data_en = 1'b1;
-        end else if (ab_read.sss_en || ab_read.data_en) begin
+        end else if (ab_read.addr_en || ab_read.sss_en || ab_read.data_en) begin
             ab_write_d.wr_data    = 8'h00;
             ab_write_d.wr_data_en = 1'b0;
         end

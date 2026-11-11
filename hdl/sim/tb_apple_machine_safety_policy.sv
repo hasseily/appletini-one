@@ -3,6 +3,7 @@
 module tb_apple_machine_safety_policy;
     logic [3:0] locked_machine_id;
     logic machine_id_fault, iigs_slot_policy_fault;
+    logic iigs_slot3_profile;
     logic [7:0] iigs_external_slot_mask;
     logic iigs_external_slot_mask_valid;
     logic [1:0] requested_machine_mode;
@@ -21,6 +22,7 @@ module tb_apple_machine_safety_policy;
         locked_machine_id = 0;
         machine_id_fault = 0;
         iigs_slot_policy_fault = 0;
+        iigs_slot3_profile = 0;
         iigs_external_slot_mask = 8'hFF;
         iigs_external_slot_mask_valid = 1;
         for (int mode = 0; mode < 4; mode++) begin
@@ -74,6 +76,24 @@ module tb_apple_machine_safety_policy;
         check(machine_identity_fault && !machine_inh_allowed &&
               physical_slot_allowed_mask == 0,
               "slot-policy fault also revokes legacy grants");
+        iigs_slot_policy_fault = 0;
+        iigs_slot3_profile = 1;
+        locked_machine_id = 0;
+        #1;
+        check(machine_gs_m2_qualify && !machine_inh_allowed &&
+              !machine_identity_iigs && physical_slot_allowed_mask == 0,
+              "explicit profile qualifies bootstrap without granting optional slots");
+        locked_machine_id = 3;
+        #1;
+        check(machine_identity_fault && !machine_inh_allowed &&
+              machine_gs_m2_qualify && physical_slot_allowed_mask == 0,
+              "legacy identity conflicts with explicit GS profile");
+        locked_machine_id = 4;
+        iigs_external_slot_mask = 8'hFF;
+        #1;
+        check(!machine_identity_fault && !machine_inh_allowed &&
+              physical_slot_allowed_mask == 8'hF6,
+              "confirmed slot-3 profile enables the external virtual map");
         $display("APPLE MACHINE SAFETY POLICY PASS");
         $finish;
     end

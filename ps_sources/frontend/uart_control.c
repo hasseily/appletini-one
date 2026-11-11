@@ -1075,6 +1075,7 @@ static const char *apple_fb_mode_name(uint32_t mode)
 {
     switch (mode) {
     case APPLE_FB_DISPLAY_MODE_SHR:      return "SHR";
+    case APPLE_FB_DISPLAY_MODE_GS:       return "IIgs";
     case APPLE_FB_DISPLAY_MODE_LEGACY_I: return "legacy-i";
     default:                             return "legacy";
     }
@@ -2860,6 +2861,21 @@ static uart_control_event_t process_command(
                 boot_menu_service_machine_forced() ? ", FORCED" : "",
                 (unsigned long)REG_READ(CARD_CTRL_MACHINE_MODE_REG));
             uart_puts(control->control_uart_base, line);
+            const uint32_t profile = REG_READ(CARD_CTRL_IIGS_PROFILE_REG);
+            if ((profile & CARD_CTRL_IIGS_PROFILE_SLOT3_BIT) != 0U ||
+                boot_menu_service_machine_mode() == CARD_MACHINE_MODE_IIGS) {
+                const uint32_t map = boot_menu_service_iigs_slot_map();
+
+                (void)snprintf(line, sizeof(line),
+                    "IIgs slot-3 profile=%s identity_fault=%u map=%s C02D=%02X I/O=%02X ROM=%02X\r\n",
+                    (profile & CARD_CTRL_IIGS_PROFILE_SLOT3_BIT) != 0U ? "on" : "off",
+                    (unsigned)((profile & CARD_CTRL_IIGS_PROFILE_ID_FAULT_BIT) != 0U),
+                    (map & CARD_CTRL_IIGS_SLOT_MAP_VALID_BIT) != 0U ? "live" : "unavailable",
+                    (unsigned)(map & 0xFFU),
+                    (unsigned)((map >> CARD_CTRL_IIGS_SLOT_IO_SHIFT) & 0xFFU),
+                    (unsigned)(map >> CARD_CTRL_IIGS_SLOT_ROM_SHIFT));
+                uart_puts(control->control_uart_base, line);
+            }
         }
         return event;
     }

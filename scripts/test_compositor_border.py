@@ -125,9 +125,11 @@ def test_shr_border_surrounds_video() -> None:
             "s_scanlines_mode,\n                                  scale);" in shr,
             "SHR flood must use its current scale for the scanline phase")
     require("g_output_slot_apple_mode[slot] != next_mode" in frontend and
-            "apple_fb_reader_display_mode() == APPLE_FB_DISPLAY_MODE_SHR" in frontend and
+            "const uint32_t claimed_mode = apple_fb_reader_display_mode();" in frontend and
+            "claimed_mode == APPLE_FB_DISPLAY_MODE_SHR" in frontend and
+            "claimed_mode == APPLE_FB_DISPLAY_MODE_GS" in frontend and
             "0, 0, FB16_WIDTH, FB16_HEIGHT" in frontend,
-            "either mode transition must restore the whole background from claimed geometry")
+            "mode transitions must restore the whole background from claimed geometry")
 
 
 def test_synthesized_legacy_border() -> None:
@@ -156,11 +158,9 @@ def test_format_badge_stays_on_active_image() -> None:
     ]
 
     require("draw_format_badge(fb,\n"
-            "                          (int)COMP_SUBWIN_X_OFF,\n"
-            "                          (int)COMP_SUBWIN_Y_OFF,\n"
-            "                          (int)COMP_SUBWIN_WIDTH);" in legacy and
+            "                          view.x, view.y, view.width);" in legacy and
             "draw_format_badge(fb, dst_x, dst_y, src_w * 2);" not in legacy,
-            "legacy badge must stay on the active image when border state changes")
+            "legacy and IIgs badges must stay on the active image when border state changes")
 
 
 def test_border_is_below_foreground_overlays() -> None:

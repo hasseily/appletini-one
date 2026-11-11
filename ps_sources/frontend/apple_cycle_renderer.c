@@ -238,6 +238,27 @@ static inline uint8_t pal_positive_phase_preroll_cycle(uint32_t raw_line,
 
 static uint8_t  s_vidhd_screen_color = 0u;
 static uint8_t  s_vidhd_newvideo = 0u;
+static uint8_t s_gs_active;
+static uint8_t s_gs_newvideo;
+static uint8_t s_gs_screen_color;
+static uint8_t s_gs_langsel;
+static uint8_t s_gs_wait_state;
+static uint16_t s_gs_recovery_records;
+/* A drop marker can overtake capture FIFO (4096), egress stage (16),
+ * and the capture packing/pending registers. Round up the queue bound.
+ * Native time ticks are continuous, so this bound is less than a frame. */
+#define GS_GAP_QUEUE_BOUND 4160u
+static uint8_t s_gs_raster_armed;
+static uint8_t s_gs_raster_time_valid;
+static uint8_t s_gs_raster_finish;
+static uint8_t s_gs_raster_start;
+static uint8_t s_gs_previous_shr_cell;
+static uint8_t s_gs_flash_frames;
+static uint8_t s_gs_phase_locked;
+static uint8_t s_gs_line_scb;
+static uint32_t s_gs_line_palette[16];
+static uint32_t s_gs_raster_last_time;
+volatile uint32_t g_acr_gs_capture_gaps;
 /* After an Apple reset, CPU0 clears the PL's fake-SHR state with a
  * DMA write of $01 to $C029. Until that lands, the PL still reports
  * SHR active; hold off adopting it so the stale image cannot flash
@@ -426,11 +447,12 @@ static inline uint16_t scanner_addr_hgr(int line, int cycle, uint32_t sw) {
 }
 
 static inline int vidhd_shr_enabled(void) {
-    return (s_vidhd_newvideo & 0xC0u) == 0xC0u;
+    return s_gs_active ? (s_gs_newvideo & 0x80u) != 0u :
+                         (s_vidhd_newvideo & 0xC0u) == 0xC0u;
 }
 
 static inline int vidhd_bw_forced(void) {
-    return (s_vidhd_newvideo & 0x20u) != 0u;
+    return !s_gs_active && (s_vidhd_newvideo & 0x20u) != 0u;
 }
 
 static inline uint16_t shr_scanline_addr(uint32_t y, uint32_t x) {
@@ -455,7 +477,7 @@ static inline uint32_t shr_apply_c029_bw(uint32_t bgra) {
 
 static const volatile uint8_t *s_shr_color_bank; /* set per field pass */
 
-static inline uint32_t shr_palette_color(uint16_t palette_base, uint8_t idx) {
+static inline uint32_t shr_read_palette_color(uint16_t palette_base, uint8_t idx) {
     const volatile uint8_t *bank = s_shr_color_bank;
     const uint16_t a = (uint16_t)(palette_base + ((uint16_t)(idx & 0x0Fu) * 2u));
     const uint16_t raw =
@@ -464,7 +486,18 @@ static inline uint32_t shr_palette_color(uint16_t palette_base, uint8_t idx) {
     const uint8_t b = (uint8_t)((raw & 0x000Fu) * 16u);
     const uint8_t g = (uint8_t)(((raw >> 4) & 0x000Fu) * 16u);
     const uint8_t r = (uint8_t)(((raw >> 8) & 0x000Fu) * 16u);
+    if (s_gs_active) {
+        return shr_pack_bgra((uint8_t)(r | (r >> 4)),
+                             (uint8_t)(g | (g >> 4)),
+                             (uint8_t)(b | (b >> 4)));
+    }
     return shr_apply_c029_bw(shr_pack_bgra(r, g, b));
+}
+
+static inline uint32_t shr_palette_color(uint16_t palette_base, uint8_t idx)
+{
+    return s_gs_active ? s_gs_line_palette[idx & 0x0Fu] :
+                         shr_read_palette_color(palette_base, idx);
 }
 
 /* ---------- Mode pick ---------- */
@@ -586,6 +619,11 @@ static inline uint32_t aw_bgr(uint8_t r, uint8_t g, uint8_t b) {
 }
 
 static uint32_t aw_palette_color(uint8_t index) {
+    static const uint8_t gs_hgr_indices[] = {0u, 15u, 6u, 9u, 12u, 3u};
+
+    if (s_gs_active && index <= AW_HGR_VIOLET)
+        return apple_video_iigs_border_bgra(gs_hgr_indices[index]);
+
     if (index >= AW_BLACK && index <= AW_WHITE) {
         return aw_pack_bgra(g_aAppleWinBaseColors[index - AW_BLACK]);
     }
@@ -607,8 +645,14 @@ static uint32_t aw_palette_color(uint8_t index) {
     }
 }
 
+static inline uint32_t aw_base_color(uint8_t base_index)
+{
+    return s_gs_active ? apple_video_iigs_border_bgra(base_index) :
+                         s_aw_base_packed[base_index & 0x0Fu];
+}
+
 static inline void aw_emit_base_index(uint8_t base_index) {
-    *g_pVideoAddress++ = s_aw_base_packed[base_index & 0x0F];
+    *g_pVideoAddress++ = aw_base_color(base_index);
 }
 
 static inline uint8_t aw_rol_nib(uint8_t x) {
@@ -865,7 +909,7 @@ static void step_dhgr_rgb(uint32_t sw) {
     for (int i = 0; i < 7; ++i) {
         const uint8_t bits = (uint8_t)(dwordval & 0x0FU);
         const uint8_t color = (uint8_t)(((bits & 7U) << 1) | ((bits & 8U) >> 3));
-        colors[i] = aw_pack_bgra(g_aAppleWinBaseColors[color]);
+        colors[i] = aw_base_color(color);
         dwordval >>= 4;
     }
 
@@ -958,7 +1002,10 @@ static void step_dlores_crisp(uint32_t sw) {
 
 static void aw_emit_duochrome_bits(uint8_t bits, uint8_t width, uint8_t double_pixels) {
     for (uint8_t x = 0; x < width; x += double_pixels ? 2U : 1U) {
-        const uint32_t color = aw_pack_bgra(g_aAppleWinBaseColors[(bits & 1U) ? 15 : 0]);
+        const uint32_t color = s_gs_active ?
+            apple_video_iigs_border_bgra((bits & 1U) ? s_gs_screen_color >> 4 :
+                                          s_gs_screen_color & 0x0Fu) :
+            aw_pack_bgra(g_aAppleWinBaseColors[(bits & 1U) ? 15 : 0]);
         bits >>= 1;
         *g_pVideoAddress++ = color;
         if (double_pixels) {
@@ -1188,8 +1235,8 @@ static void step_text40(uint32_t sw) {
         if (g_nVideoCharSet == 0 && (m & 0xC0) == 0x40) {
             c ^= (uint8_t)g_nTextFlashMask;
         }
-        if (s_render_mono_enable == 0u &&
-            s_render_color_mode == APPLE_VIDEO_COLOR_RGB) {
+        if (s_gs_active || (s_render_mono_enable == 0u &&
+            s_render_color_mode == APPLE_VIDEO_COLOR_RGB)) {
             aw_emit_duochrome_bits(c, 14, 1);
         } else {
             uint16_t bits = g_aPixelDoubleMaskHGR[c & 0x7F];
@@ -1214,8 +1261,8 @@ static void step_text80(uint32_t sw) {
         if (g_nVideoCharSet == 0 && (m & 0xC0) == 0x40) main ^= g_nTextFlashMask;
         if (g_nVideoCharSet == 0 && (a & 0xC0) == 0x40) aux  ^= g_nTextFlashMask;
         uint16_t bits = (uint16_t)((main << 7) | (aux & 0x7F));
-        if (s_render_mono_enable == 0u &&
-            s_render_color_mode == APPLE_VIDEO_COLOR_RGB) {
+        if (s_gs_active || (s_render_mono_enable == 0u &&
+            s_render_color_mode == APPLE_VIDEO_COLOR_RGB)) {
             aw_emit_duochrome_bits((uint8_t)aux, 7, 0);
             aw_emit_duochrome_bits((uint8_t)main, 7, 0);
             g_nLastColumnPixelNTSC = (uint16_t)((bits >> 14) & 1);
@@ -1386,7 +1433,11 @@ static void shr_render_cell_320(uint32_t *row0, uint32_t x,
         const uint8_t pixel1 = (uint8_t)((byte >> 4) & 0x0Fu);
         uint32_t color1 = shr_palette_color(palette_base, pixel1);
         if (color_fill && pixel1 == 0u) {
-            color1 = (dst != row0) ? *(dst - 1) : 0u;
+            /* Apple leaves a leading zero undefined in Color Fill mode.
+             * For native output start at palette 0 until a nonzero pixel. */
+            if (!s_gs_active || (dst != row0 && (i != 0u || s_gs_previous_shr_cell))) {
+                color1 = (dst != row0) ? *(dst - 1) : 0u;
+            }
         }
         *dst++ = color1;
         *dst++ = color1;
@@ -2130,7 +2181,9 @@ void apple_cycle_renderer_note_aux_ctrl_write(uint8_t value)
 {
     /* Both paged types keep their second field in MAIN $2000-$9FFF:
      * 1 = interlace (spatial), 2 = page flip (temporal). */
-    shr_update_post_wide((value == 1u || value == 2u) ? 1u : 0u);
+    if (!s_gs_active) {
+        shr_update_post_wide((value == 1u || value == 2u) ? 1u : 0u);
+    }
 }
 
 /* Exact per-byte floor average, used to merge page-flip fields on
@@ -2648,7 +2701,7 @@ static void apply_video_settings_if_changed(void) {
 
     if (settings != s_video_settings_seen) {
         s_border_enabled = apple_video_settings_border_enabled(settings);
-        if (border_default != s_border_default_color) {
+        if (!s_gs_active && border_default != s_border_default_color) {
             s_vidhd_border_color = border_default;
         }
         s_border_default_color = border_default;
@@ -2670,13 +2723,13 @@ static void apply_video_settings_if_changed(void) {
      * flip a whole SHR slideshow to monochrome). SHR's own $C029 B&W
      * control (bw_force) remains honored. */
     const uint8_t video7_mono =
-        ((shr_now == 0u) &&
+        ((!s_gs_active && shr_now == 0u) &&
          (apple_video_settings_video7_auto_mono_enabled(settings) != 0u) &&
          (s_video7_rgb_mode == 3u)) ? 1u : 0u;
     const uint8_t video7_auto_mono =
         ((user_mono == 0u) && (video7_mono != 0u)) ? 1u : 0u;
     const uint8_t video7_mix =
-        ((shr_now == 0u) &&
+        ((!s_gs_active && shr_now == 0u) &&
          (apple_video_settings_dhgr_col140m_enabled(settings) != 0u) &&
          (s_video7_rgb_mode == 2u)) ? 1u : 0u;
     const uint8_t effective_mono =
@@ -2717,6 +2770,8 @@ static void apply_video_settings_if_changed(void) {
 
 void apple_cycle_renderer_reset_local_video_state(void)
 {
+    /* Native reset is delivered in capture order by the GS state record. */
+    if (s_gs_active) return;
     s_shr_sync_hold = 1u;
     const uint32_t text_sw = SW_BIT(TEXT);
     const uint32_t settings = apple_fb_video_settings_get();
@@ -2882,6 +2937,7 @@ volatile uint32_t g_acr_shr_mode_resyncs = 0u;
  * the PL's state -- it is the side that actually gates the stream. */
 void apple_cycle_renderer_sync_shr_mode(uint8_t pl_shr_active)
 {
+    if (s_gs_active) return;
     const int local = vidhd_shr_enabled();
 
     if (s_shr_sync_hold) {
@@ -2944,6 +3000,74 @@ static void handle_vidhd_io_record(uint64_t rec)
     }
 }
 
+static void gs_set_video_register(uint16_t address, uint8_t value)
+{
+    const int was_shr = vidhd_shr_enabled();
+
+    switch (address) {
+    case 0xC022U:
+        s_gs_screen_color = value;
+        break;
+    case 0xC029U:
+        s_gs_newvideo = value & 0xE1u;
+        apply_video_settings_if_changed();
+        break;
+    case 0xC02BU:
+        s_gs_langsel = value;
+        break;
+    case 0xC034U:
+        value = apple_video_iigs_border_color_clamp(value);
+        if (s_vidhd_border_color != value) {
+            s_vidhd_border_color = value;
+            s_shr_cache_invalidate = 1u;
+        }
+        break;
+    default:
+        break; /* C068 state is also reflected in the time records. */
+    }
+    if (was_shr != vidhd_shr_enabled()) {
+        s_shr_cache_invalidate = 1u;
+    }
+}
+
+static void gs_raster_state(uint64_t rec);
+
+static void handle_gs_state_record(uint64_t rec)
+{
+    const uint8_t active = (uint8_t)ace_frame_en(rec);
+    const uint8_t reset = (uint8_t)((rec >> ACE_BIT_GS_RESET) & 1u);
+
+    if (s_gs_active != active || reset) {
+        s_gs_active = active;
+        s_vidhd_newvideo = 0u;
+        s_vidhd_border_color = s_border_default_color;
+        shr_mode_switch_resync();
+    }
+    const uint8_t locked = (uint8_t)((rec >> ACE_BIT_GS_PHASE_LOCKED) & 1u);
+    if (s_gs_wait_state && active) {
+        if (reset || !locked) {
+            s_gs_recovery_records = 0u;
+        } else if (ace_line_in_frame(rec) == 0u && ace_cycle_in_line(rec) == 0u) {
+            if (s_gs_wait_state == 2u) {
+                s_gs_wait_state = 1u;
+                s_gs_recovery_records = 0u;
+            } else if (s_gs_recovery_records >= GS_GAP_QUEUE_BOUND) {
+                s_gs_wait_state = 0u;
+            }
+        }
+    }
+    if (!s_gs_wait_state || !active) gs_raster_state(rec);
+    if (!active) return;
+
+    gs_set_video_register(0xC022U, (uint8_t)(rec >> ACE_BIT_GS_C022_LO));
+    gs_set_video_register(0xC029U, (uint8_t)(rec >> ACE_BIT_GS_C029_LO));
+    gs_set_video_register(0xC02BU, (uint8_t)(rec >> ACE_BIT_GS_C02B_LO));
+    gs_set_video_register(0xC034U, (uint8_t)((rec >> ACE_BIT_GS_BORDER_LO) & 0x0Fu));
+    s_current_sw = ace_softswitch_bits(rec);
+    s_scanner_frame_lines = (s_gs_langsel & 0x10u) ?
+        ATN_SCANNER_MAX_VERT_PAL : ATN_SCANNER_MAX_VERT_NTSC;
+}
+
 static void publish_current_frame(void)
 {
     /* Slot memory is non-cacheable, but order all completed pixel stores
@@ -2953,6 +3077,220 @@ static void publish_current_frame(void)
                                          s_frame_format_detail,
                                          s_vidhd_border_color);
     g_acr_frames_complete++;
+}
+
+static void gs_render_mono_cell(uint16_t bits)
+{
+    for (uint32_t i = 0u; i < 14u; ++i) {
+        *g_pVideoAddress++ = (bits & 1u) ? 0xFFFFFFFFu : 0xFF000000u;
+        bits >>= 1;
+    }
+}
+
+/* Both native modes share a cell grid and one bordered frame. */
+static void gs_raster_cell(uint32_t *row, uint32_t line, uint32_t cycle, uint32_t sw)
+{
+    const uint32_t x = cycle - ATN_SCANNER_HORZ_START;
+    uint32_t *const dst = row + x * 16u;
+    const int shr = vidhd_shr_enabled();
+
+    if (shr) {
+        const uint16_t palette_base =
+            (uint16_t)(0x9E00u + (s_gs_line_scb & 0x0Fu) * 32u);
+        const uint16_t addr = shr_scanline_addr(line, x);
+        const uint32_t data = (uint32_t)g_aux_bank[addr] |
+            ((uint32_t)g_aux_bank[addr + 1u] << 8) |
+            ((uint32_t)g_aux_bank[addr + 2u] << 16) |
+            ((uint32_t)g_aux_bank[addr + 3u] << 24);
+        if (s_gs_line_scb & 0x80u) {
+            s_shr_badge_geometry_mask |= 2u;
+            shr_render_cell_640(row, x, data, palette_base);
+        } else {
+            s_shr_badge_geometry_mask |= 1u;
+            shr_render_cell_320(row, x, data, palette_base, (s_gs_line_scb & 0x20u) != 0u);
+        }
+        s_shr_badge_family_mask |= 1u;
+    } else {
+        const uint32_t border = apple_video_iigs_border_bgra(s_vidhd_border_color);
+
+        if (line < ATN_SCANNER_Y_DISPLAY) {
+            static uint32_t legacy[14];
+            g_nVideoClockVert = (int)line;
+            g_nVideoClockHorz = (int)cycle;
+            g_nVideoCharSet = sw_altcharset(sw) ? 1 : 0;
+            g_pVideoAddress = legacy;
+            switch (pick_mode(sw, (int)line)) {
+            case MODE_TEXT40: step_text40(sw); break;
+            case MODE_TEXT80: step_text80(sw); break;
+            case MODE_HGR:
+                if ((s_gs_newvideo & 0x20u) && sw_dhires(sw) && !sw_80col(sw)) {
+                    gs_render_mono_cell(g_aPixelDoubleMaskHGR[
+                        g_main_bank[scanner_addr_hgr((int)line, (int)cycle, sw)] & 0x7Fu]);
+                } else {
+                    step_hgr_rgb(sw);
+                }
+                break;
+            case MODE_DHGR:
+                if (s_gs_newvideo & 0x20u) {
+                    const uint16_t addr = scanner_addr_hgr((int)line, (int)cycle, sw);
+                    gs_render_mono_cell((uint16_t)((g_aux_bank[addr] & 0x7Fu) |
+                        ((uint16_t)(g_main_bank[addr] & 0x7Fu) << 7)));
+                } else {
+                    step_dhgr_rgb(sw);
+                }
+                break;
+            case MODE_LORES:  step_lores_crisp(sw); break;
+            case MODE_DLORES: step_dlores_crisp(sw); break;
+            default:
+                for (uint32_t i = 0u; i < 14u; ++i) legacy[i] = border;
+                break;
+            }
+            for (uint32_t i = 0u; i < 16u; ++i) dst[i] = legacy[i * 14u / 16u];
+        } else {
+            for (uint32_t i = 0u; i < 16u; ++i) dst[i] = border;
+        }
+    }
+    s_gs_previous_shr_cell = (uint8_t)shr;
+}
+
+/* The exact VGC fetch position is unmeasured. Use one pre-pixel
+ * boundary for the SCB and its selected palette. */
+#define GS_LINE_FETCH_CYCLE ATN_SCANNER_HORZ_START
+
+static void gs_latch_scanline(uint32_t line)
+{
+    s_gs_line_scb = g_aux_bank[0x9D00u + line];
+    const uint16_t palette_base =
+        (uint16_t)(0x9E00u + (s_gs_line_scb & 0x0Fu) * 32u);
+
+    for (uint32_t i = 0u; i < 16u; ++i) {
+        s_gs_line_palette[i] = shr_read_palette_color(palette_base, (uint8_t)i);
+    }
+    s_gs_previous_shr_cell = 0u;
+}
+
+static void gs_raster_visible_cycle(uint32_t line, uint32_t cycle, uint32_t sw)
+{
+    uint32_t x;
+
+    if (line < COMP_APPLE_GS_ACTIVE_HEIGHT && cycle == GS_LINE_FETCH_CYCLE)
+        gs_latch_scanline(line);
+
+    if (cycle < 2u) {
+        line = (line == 0u) ? s_scanner_frame_lines - 1u : line - 1u;
+        x = COMP_APPLE_GS_ACTIVE_X + COMP_APPLE_GS_ACTIVE_WIDTH + cycle * 16u;
+    } else if (cycle >= ATN_SCANNER_HORZ_START - 2u) {
+        x = (cycle - (ATN_SCANNER_HORZ_START - 2u)) * 16u;
+    } else {
+        return;
+    }
+
+    uint32_t row;
+    if (line < COMP_APPLE_GS_ACTIVE_HEIGHT + COMP_APPLE_GS_ACTIVE_Y) {
+        row = line + COMP_APPLE_GS_ACTIVE_Y;
+    } else if (line >= s_scanner_frame_lines - COMP_APPLE_GS_ACTIVE_Y) {
+        row = line - (s_scanner_frame_lines - COMP_APPLE_GS_ACTIVE_Y);
+    } else {
+        return;
+    }
+
+    uint32_t *const pixels = g_atn_framebuffer + row * COMP_APPLE_GS_WIDTH;
+    if (line < COMP_APPLE_GS_ACTIVE_HEIGHT && cycle >= ATN_SCANNER_HORZ_START) {
+        gs_raster_cell(pixels + COMP_APPLE_GS_ACTIVE_X, line, cycle, sw);
+    } else {
+        const uint32_t color = apple_video_iigs_border_bgra(s_vidhd_border_color);
+
+        for (uint32_t i = 0u; i < 16u; ++i) pixels[x + i] = color;
+    }
+    g_acr_cycles_rendered++;
+}
+
+static void gs_raster_begin_frame(void)
+{
+    apply_video_rom_if_changed();
+    apply_video_settings_if_changed();
+    s_cached_writer_slot = apple_fb_writer_slot();
+    appletini_ntsc_set_framebuffer(
+        (uint32_t *)(uintptr_t)comp_apple_slot_addr[s_cached_writer_slot]);
+    s_frame_display_mode = APPLE_FB_DISPLAY_MODE_GS;
+    shr_badge_begin();
+    s_shr_color_bank = g_aux_bank;
+    s_gs_raster_armed = 1u;
+    s_gs_raster_start = 0u;
+    g_resync_pending = 0u;
+}
+
+static void gs_raster_drop(void)
+{
+    s_gs_raster_armed = 0u;
+    s_gs_raster_time_valid = 0u;
+    s_gs_raster_finish = 0u;
+    s_gs_raster_start = 0u;
+}
+
+static void gs_raster_time(uint32_t line, uint32_t cycle, uint32_t sw)
+{
+    const uint32_t time = line * ATN_SCANNER_MAX_HORZ + cycle;
+
+    if (line >= s_scanner_frame_lines || cycle >= ATN_SCANNER_MAX_HORZ) {
+        gs_raster_drop();
+        return;
+    }
+    if (s_gs_raster_time_valid && time == s_gs_raster_last_time) return;
+    if (time == 0u) {
+        s_gs_raster_finish = s_gs_raster_armed && s_gs_raster_time_valid &&
+            s_gs_raster_last_time + 1u == s_scanner_frame_lines * ATN_SCANNER_MAX_HORZ;
+        s_gs_raster_armed = 0u;
+        if (++s_gs_flash_frames == 16u) {
+            s_gs_flash_frames = 0u;
+            g_nTextFlashMask ^= 0xFFFFu;
+        }
+    } else if (!s_gs_raster_time_valid || time != s_gs_raster_last_time + 1u) {
+        gs_raster_drop();
+    }
+    s_gs_raster_time_valid = 1u;
+    s_gs_raster_last_time = time;
+
+    if (s_gs_raster_armed || s_gs_raster_finish) {
+        gs_raster_visible_cycle(line, cycle, sw);
+    }
+    /* The first two clocks of line zero finish the old top border. */
+    if (time == 1u) {
+        if (s_gs_raster_finish) {
+            s_frame_format_detail = s_shr_badge_family_mask != 0u ?
+                shr_badge_detail(APPLE_FB_FORMAT_PAGE_NONE) : APPLE_FB_FORMAT_UNKNOWN;
+            publish_current_frame();
+            s_gs_raster_finish = 0u;
+        }
+        if (s_gs_raster_start) gs_raster_begin_frame();
+    }
+}
+
+static void gs_raster_state(uint64_t rec)
+{
+    const uint8_t active = (uint8_t)ace_frame_en(rec);
+    const uint8_t reset = (uint8_t)((rec >> ACE_BIT_GS_RESET) & 1u);
+    const uint8_t phase_locked = (uint8_t)((rec >> ACE_BIT_GS_PHASE_LOCKED) & 1u);
+    const uint8_t selected = (uint8_t)((rec >> ACE_BIT_GS_FRAME_SELECTED) & 1u);
+    if (!active || reset || s_gs_phase_locked != phase_locked) {
+        gs_raster_drop();
+    }
+    s_gs_phase_locked = phase_locked;
+    if (!active || reset || ace_line_in_frame(rec) != 0u || ace_cycle_in_line(rec) != 0u) return;
+
+    gs_raster_time(0u, 0u, ace_softswitch_bits(rec));
+    s_gs_raster_start = selected && phase_locked;
+}
+
+void apple_cycle_renderer_before_record(uint64_t rec)
+{
+    if (!s_gs_active || s_gs_wait_state) return;
+
+    if (ace_record_kind(rec) == ACE_RECORD_KIND_LEGACY && ace_frame_en(rec)) {
+        gs_raster_time(ace_line_in_frame(rec), ace_cycle_in_line(rec), ace_softswitch_bits(rec));
+    } else if (ace_record_kind(rec) == ACE_RECORD_KIND_GS_IO) {
+        gs_raster_time(ace_io_line_in_frame(rec), ace_io_cycle_in_line(rec), s_current_sw);
+    }
 }
 
 static void on_frame_end(void) {
@@ -3208,6 +3546,38 @@ int apple_cycle_renderer_init(void) {
 
 /* ---------- Per-record dispatch ---------- */
 
+static int dispatch_gs_record(uint64_t rec)
+{
+    if (ace_record_kind(rec) == ACE_RECORD_KIND_GS_SHADOW) return 1;
+    if (ace_record_kind(rec) == ACE_RECORD_KIND_GS_STATE) {
+        handle_gs_state_record(rec);
+        return 1;
+    }
+    if (ace_record_kind(rec) == ACE_RECORD_KIND_GS_IO) {
+        if (s_gs_active && !s_gs_wait_state)
+            gs_set_video_register(ace_io_addr(rec), ace_io_data(rec));
+        return 1;
+    }
+    if (s_gs_active) {
+        if (ace_record_kind(rec) == ACE_RECORD_KIND_LEGACY && ace_frame_en(rec)) {
+            s_current_sw = ace_softswitch_bits(rec);
+            if (s_gs_wait_state && s_gs_recovery_records < GS_GAP_QUEUE_BOUND)
+                s_gs_recovery_records++;
+        }
+        return 1;
+    }
+
+    return 0;
+}
+
+static void gs_raster_gap(void)
+{
+    s_gs_wait_state = 2u;
+    s_gs_recovery_records = 0u;
+    if (s_gs_active) g_acr_gs_capture_gaps++;
+    gs_raster_drop();
+}
+
 static void apple_cycle_renderer_dispatch_record(uint64_t rec) {
     g_acr_records_seen++;
 
@@ -3222,8 +3592,11 @@ static void apple_cycle_renderer_dispatch_record(uint64_t rec) {
         s_shr_cache_valid = 0u;
         s_shr_cache_invalidate = 1u;
         apple_pal_video_resync();
+        gs_raster_gap();
         return;
     }
+
+    if (dispatch_gs_record(rec)) return;
 
     if (ace_record_kind(rec) == ACE_RECORD_KIND_IO_WRITE) {
         handle_vidhd_io_record(rec);
@@ -3594,7 +3967,7 @@ void apple_cycle_renderer_set_vtw_1mhz(uint8_t active)
 
 int apple_cycle_renderer_needs_phase_lookahead(uint64_t rec)
 {
-    return phase_record_is_frame(rec) && !vidhd_shr_enabled();
+    return !s_gs_active && phase_record_is_frame(rec) && !vidhd_shr_enabled();
 }
 
 /* Diagnostic: one-line A2Li/SHR gate dump over UART0, printed from
@@ -3680,7 +4053,7 @@ void apple_cycle_renderer_on_record_lookahead(uint64_t rec,
                                               uint64_t next1,
                                               uint64_t next2)
 {
-    if (phase_record_is_frame(rec) && !vidhd_shr_enabled()) {
+    if (!s_gs_active && phase_record_is_frame(rec) && !vidhd_shr_enabled()) {
         rec = phase_correct_record(rec, next1, next2);
     } else if (rec == 0ULL || vidhd_shr_enabled()) {
         s_phase_prev_valid = 0u;

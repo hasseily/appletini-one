@@ -425,6 +425,11 @@ module vtw_core_top (
     end
 
     soft_switch_manager vtw_ssm (
+        .iigs_profile(1'b0),
+        .iigs_bootstrap_slot7(1'b0),
+        .iigs_boot_mask(8'h00),
+        .iigs_boot_mask_valid(1'b0),
+        .iigs_native_video(1'b0), .iigs_bank_latch(1'b0),
         .clk(clk),
         .rstn(rstn),
         .ramworks_en(ramworks_en),
@@ -438,6 +443,11 @@ module vtw_core_top (
     // Only RAMWRT, PAGE2 and 80STORE are consumed from this instance.
     globals::SoftSwitchState video_physical_sss;
     soft_switch_manager video_physical_ssm (
+        .iigs_profile(1'b0),
+        .iigs_bootstrap_slot7(1'b0),
+        .iigs_boot_mask(8'h00),
+        .iigs_boot_mask_valid(1'b0),
+        .iigs_native_video(1'b0), .iigs_bank_latch(1'b0),
         .clk(clk), .rstn(rstn), .ramworks_en(ramworks_en),
         .ab_read(ab_read), .sss(video_physical_sss)
     );
@@ -1587,7 +1597,7 @@ module vtw_core_top (
      * normal-cycle predicate for one fabric clock so the card's readiness
      * feedback does not feed its own rotation enables on the same edge.
      * disk2_card adds the direct-access tick when its registered private
-     * request executes. Physical Disk II cycles use ab_read.sss_en inside
+     * request executes. Physical Disk II cycles use ab_read.phi0_tick inside
      * disk2_card and are suppressed here. */
     wire d2_req_fire = d2_req_valid && d2_req_ready;
     wire d2_cycle_tick_accept =
@@ -2206,7 +2216,7 @@ module vtw_core_top (
                 default: xstate_q <= X_CAPTURE;
             endcase
 
-            /* The scanner coordinates have advanced at sss_en and remain
+            /* The scanner coordinates have advanced at phi0_tick and remain
              * stable here at the native read-data phase. pace_ok cannot
              * complete this exact-1 MHz status cycle until the following
              * fabric edge, so core_data_in_q has a full registered setup

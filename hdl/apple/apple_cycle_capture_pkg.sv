@@ -13,6 +13,9 @@ package apple_cycle_capture_pkg;
     localparam logic [2:0] RECORD_KIND_LEGACY         = 3'b000;
     localparam logic [2:0] RECORD_KIND_IO_WRITE       = 3'b001;
     localparam logic [2:0] RECORD_KIND_SOFTSW_ACCESS  = 3'b010;
+    localparam logic [2:0] RECORD_KIND_GS_IO          = 3'b011;
+    localparam logic [2:0] RECORD_KIND_GS_STATE       = 3'b100;
+    localparam logic [2:0] RECORD_KIND_GS_SHADOW      = 3'b101;
 
     typedef struct packed {
         logic [2:0]  record_kind;       // [63:61]
@@ -50,6 +53,35 @@ package apple_cycle_capture_pkg;
     );
         pack_io_write_record =
             AppleCycleRecord'({RECORD_KIND_IO_WRITE, apple_addr, data, line_in_frame, cycle_in_line, 21'd0});
+    endfunction
+
+    function automatic AppleCycleRecord pack_gs_io_record(
+        input logic [15:0] apple_addr,
+        input logic [7:0]  data,
+        input logic [8:0]  line_in_frame,
+        input logic [6:0]  cycle_in_line
+    );
+        return AppleCycleRecord'({RECORD_KIND_GS_IO, apple_addr, data,
+                                  line_in_frame, cycle_in_line, 21'd0});
+    endfunction
+
+    function automatic AppleCycleRecord pack_gs_state_record(
+        input logic        active,
+        input logic [8:0]  line_in_frame,
+        input logic [6:0]  cycle_in_line,
+        input logic [10:0] softswitch_bits,
+        input logic [7:0]  c022,
+        input logic [7:0]  c029,
+        input logic [7:0]  c02b,
+        input logic        phase_locked,
+        input logic        frame_selected,
+        input logic [3:0]  border,
+        input logic        reset_active
+    );
+        return AppleCycleRecord'({RECORD_KIND_GS_STATE, active,
+                                  line_in_frame, cycle_in_line, softswitch_bits,
+                                  c022, c029, c02b, phase_locked, frame_selected,
+                                  2'b00, border, reset_active});
     endfunction
 
     function automatic AppleCycleRecord pack_softswitch_access_record(

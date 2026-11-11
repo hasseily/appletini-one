@@ -16,7 +16,7 @@ def main():
     effects = comp[comp.index("#define EFFECT_HISTORY_STRIDE"):
                    comp.index("/* ---------- Format badge")]
     drawing = comp[comp.index("static void fill_border_rect"):
-                   comp.index("/* ---------- SuperSprite")]
+                   comp.index("/* ---------- PC Transporter picture")]
     active_start = comp.index("static inline int compositor_apple_effects_active")
     effects_active = comp[active_start:comp.index("\n}", active_start) + 2]
     source = BUILD / "pipeline.c"

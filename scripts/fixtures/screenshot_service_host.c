@@ -214,7 +214,8 @@ static void map_apple_frames(void)
 static void set_apple_frame(uint32_t mode)
 {
     apple_mode = mode;
-    const unsigned stride = mode == APPLE_FB_DISPLAY_MODE_SHR ? 640U : 624U;
+    const unsigned stride = mode == APPLE_FB_DISPLAY_MODE_GS ? 704U :
+                            (mode == APPLE_FB_DISPLAY_MODE_SHR ? 640U : 624U);
     for (unsigned slot = 0; slot < COMP_APPLE_SLOT_COUNT; ++slot) {
         uint32_t *pixels = (uint32_t *)(uintptr_t)comp_apple_slot_addr[slot];
         for (unsigned i = 0; i < COMP_APPLE_SLOT_BYTES / 4U; ++i) {
@@ -314,12 +315,15 @@ int main(int argc, char **argv)
     screenshot_service_result_t result;
     /* These are the F1.2.2 dimensions and sample locations, independent of
      * the output mode and its composed picture rectangle. */
-    for (unsigned layout = 0; layout < 3; ++layout) {
+    for (unsigned layout = 0; layout < 5; ++layout) {
         for (unsigned scanlines = 0; scanlines < 4; ++scanlines) {
+            if (layout >= 3 && scanlines != 0 && scanlines != 3) { continue; }
             reset_case();
-            set_apple_frame(layout == 2 ? APPLE_FB_DISPLAY_MODE_SHR :
-                                         APPLE_FB_DISPLAY_MODE_LEGACY);
-            video_settings = layout == 1 ? (1U << APPLE_VIDEO_SETTINGS_BORDER_ENABLE_SHIFT) : 0U;
+            set_apple_frame(layout >= 3 ? APPLE_FB_DISPLAY_MODE_GS :
+                            (layout == 2 ? APPLE_FB_DISPLAY_MODE_SHR :
+                             APPLE_FB_DISPLAY_MODE_LEGACY));
+            video_settings = (layout == 1 || layout == 4) ?
+                (1U << APPLE_VIDEO_SETTINGS_BORDER_ENABLE_SHIFT) : 0U;
             screenshot_service_set_scanlines((uint8_t)scanlines);
             frame_slot = 255; /* Raw Apple capture needs no completed output. */
             output_mode = 5;
@@ -350,6 +354,13 @@ int main(int argc, char **argv)
     g_compositor_last_apple_mode = APPLE_FB_DISPLAY_MODE_SHR;
     queue(SCREENSHOT_SERVICE_KIND_A2); result = finish(1);
     export_png(argv[1], "raw-fallback", &result);
+
+    reset_case(); set_apple_frame(APPLE_FB_DISPLAY_MODE_GS);
+    apple_slot = APPLE_FB_NO_SLOT;
+    g_compositor_last_apple_slot = 2;
+    g_compositor_last_apple_mode = APPLE_FB_DISPLAY_MODE_GS;
+    queue(SCREENSHOT_SERVICE_KIND_A2); result = finish(1);
+    export_png(argv[1], "raw-gs-fallback", &result);
 
     reset_case(); set_frame(1920, 1080); queue(SCREENSHOT_SERVICE_KIND_1080P);
     memset(frame, 0xFF, sizeof(frame));

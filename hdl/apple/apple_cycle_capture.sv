@@ -12,6 +12,14 @@ module apple_cycle_capture (
      * or the isolated ONE//e. Never interpret a physical IIgs C029 write as
      * this IIe-only mode. */
     input  logic                            fake_shr_allowed,
+    input  logic                            native_gs_active,
+    input  logic                            native_gs_observe,
+    input  logic                            native_gs_tick,
+    input  logic                            native_gs_phase_locked,
+    input  logic [7:0]                      native_gs_c022,
+    input  logic [7:0]                      native_gs_c029,
+    input  logic [7:0]                      native_gs_c02b,
+    input  logic [3:0]                      native_gs_border,
 
     // Slot-7 linear text overlay capture window. The bank bit matches
     // addr_decode_late[16]; limit is exclusive.
@@ -49,10 +57,9 @@ module apple_cycle_capture (
 
     import apple_cycle_capture_pkg::*;
 
-    /* 4096 entries hold roughly 4 ms of sustained 1 MHz Apple traffic.
-     * This covers a gap marker, notification, and several ring bursts while
-     * the PS poll is delayed; an overflow invalidates the renderer's frame.
-     * The 64-bit FIFO consumes approximately eight BRAM18 blocks. */
+    /* 4096 entries hold roughly 4 ms at one record per Apple cycle, or
+     * 2 ms with a separate native tick and write on each cycle. An overflow
+     * invalidates the renderer's frame. */
     localparam int FIFO_DEPTH = 4096;
     localparam int FIFO_WIDTH = $bits(AppleCycleRecord);
 
@@ -83,6 +90,12 @@ module apple_cycle_capture (
                (a == 16'hC05F);
     endfunction
 
+    function automatic logic is_native_gs_video_write(input logic [15:0] a);
+        return (a == 16'hC022) || (a == 16'hC029) ||
+               (a == 16'hC02B) || (a == 16'hC034) ||
+               (a == 16'hC068);
+    endfunction
+
     /* ab_read.addr/rw are the authoritative PHI0-high sample (valid for
      * 6502 and DMA masters alike), and sss.addr_decode_late is their
      * translation -- both registered well before the data_en push below.
@@ -92,12 +105,16 @@ module apple_cycle_capture (
     wire        cap_rw   = ab_read.rw;
     wire [23:0] cap_addr_decode    = sss.addr_decode_late;
     wire        cap_addr_decode_en = sss.addr_decode_late_en;
+    wire native_access = ab_read.data_en && ab_read.cycle_valid &&
+                         !ab_read.m2sel && !soft_reset;
+    wire native_io_write = native_gs_active && native_access && !cap_rw &&
+                           is_native_gs_video_write(cap_addr);
 
     // Rule 1: qualifying bus write into video memory (in addr_decode space).
     logic rule1_valid;
     logic overlay_rule_valid;
     assign overlay_rule_valid =
-        overlay_capture_armed &&
+        !native_gs_observe && overlay_capture_armed &&
         !(suppress_bus_writes === 1'b1) &&
         (cap_rw == 1'b0) &&
         cap_addr_decode_en &&
@@ -133,22 +150,25 @@ module apple_cycle_capture (
 
     logic io_push_request;
     assign io_push_request =
-        vidhd_register_write ||
-        video7_softswitch_access ||
-        overlay_command_write;
+        native_io_write ||
+        (!soft_reset && !native_gs_observe && !native_gs_active &&
+         (vidhd_register_write || video7_softswitch_access ||
+          overlay_command_write));
 
     // Fake-SHR on the Apple //e is selected by C029 only. While active,
     // the PS renderer builds complete frames from the captured AUX shadow,
     // so streaming every Apple cycle just overloads the capture path. Keep
     // memory/IO write records, and emit one frame marker per Apple frame.
     logic shr_capture_active_q;
+    wire legacy_fake_shr_allowed = fake_shr_allowed &&
+                                   !native_gs_observe && !native_gs_active;
     wire c029_write_cycle =
-        fake_shr_allowed &&
+        legacy_fake_shr_allowed &&
         ab_read.data_en &&
         (cap_rw == 1'b0) &&
         (cap_addr == 16'hC029);
     wire c029_write_shr_active = (ab_read.data[7:6] == 2'b11);
-    wire shr_capture_active_next = !fake_shr_allowed ? 1'b0 :
+    wire shr_capture_active_next = !legacy_fake_shr_allowed ? 1'b0 :
         (c029_write_cycle ? c029_write_shr_active : shr_capture_active_q);
     wire shr_frame_marker =
         shr_capture_active_next &&
@@ -161,7 +181,7 @@ module apple_cycle_capture (
     always_ff @(posedge clk) begin
         if (~resetn || soft_reset) begin
             shr_capture_active_q <= 1'b0;
-        end else if (!fake_shr_allowed) begin
+        end else if (!legacy_fake_shr_allowed) begin
             shr_capture_active_q <= 1'b0;
         end else if (c029_write_cycle) begin
             shr_capture_active_q <= c029_write_shr_active;
@@ -170,8 +190,17 @@ module apple_cycle_capture (
 
     assign shr_capture_active = shr_capture_active_q;
 
-    logic apple_push_request;
-    assign apple_push_request = ab_read.data_en && (rule1_valid || capture_frame_en);
+    // Before the boot ROM confirms IIgs identity, preserve only the video
+    // shadow. Untimed shadow records cannot start a synthetic video mode.
+    wire shadow_only = native_gs_observe && !native_gs_active;
+    wire memory_valid = rule1_valid &&
+        (!(native_gs_observe || native_gs_active) || native_access);
+    wire time_valid = native_gs_active ?
+        (native_gs_tick || memory_valid) : (!shadow_only && capture_frame_en);
+    wire apple_push_request = native_gs_active ?
+        (native_gs_tick || memory_valid) :
+        (shadow_only ? memory_valid :
+         (!soft_reset && ab_read.data_en && (rule1_valid || capture_frame_en)));
 
     // Apple-bus record (frame and bus-write halves; each gated to zero when
     // its triggering condition isn't met).
@@ -179,9 +208,10 @@ module apple_cycle_capture (
 
     always_comb begin
         apple_record_din = '0;
-        apple_record_din.record_kind = RECORD_KIND_LEGACY;
+        apple_record_din.record_kind = shadow_only ?
+            RECORD_KIND_GS_SHADOW : RECORD_KIND_LEGACY;
 
-        if (capture_frame_en) begin
+        if (time_valid) begin
             apple_record_din.frame_en      = 1'b1;
             apple_record_din.line_in_frame = line_in_frame;
             apple_record_din.cycle_in_line = cycle_in_line;
@@ -198,7 +228,7 @@ module apple_cycle_capture (
             apple_record_din.sw_dhires     = sss.sw_dhires;
         end
 
-        if (rule1_valid) begin
+        if (memory_valid) begin
             apple_record_din.addr_decode    = cap_addr_decode;
             apple_record_din.addr_decode_en = 1'b1;
             apple_record_din.data           = ab_read.data;
@@ -221,7 +251,11 @@ module apple_cycle_capture (
     };
 
     always_comb begin
-        if (video7_softswitch_access) begin
+        if (native_io_write) begin
+            io_record_din = pack_gs_io_record(
+                cap_addr, ab_read.data, line_in_frame, cycle_in_line
+            );
+        end else if (video7_softswitch_access) begin
             io_record_din = pack_softswitch_access_record(
                 cap_addr,
                 current_softswitch_bits,
@@ -238,28 +272,73 @@ module apple_cycle_capture (
         end
     end
 
+    logic native_gs_active_q;
+    logic native_gs_reset_q;
+    logic native_gs_phase_locked_q;
+    logic native_reset_hold_q;
+    logic native_state_retry_q;
+    logic state_push_request_q;
+    wire native_state_request = (native_gs_active != native_gs_active_q) ||
+        (native_state_retry_q && !state_push_request_q) ||
+        (native_gs_active &&
+         ((soft_reset != native_gs_reset_q) ||
+          (native_gs_phase_locked != native_gs_phase_locked_q) ||
+          (native_gs_tick && line_in_frame == 9'd0 && cycle_in_line == 7'd0)));
+
+    // Native reset is part of the ordered stream. Keep its pending records
+    // even if the physical profile exits while the reset line is still low.
+    wire capture_reset = !resetn ||
+        (soft_reset && !native_gs_observe && !native_gs_active &&
+         !native_gs_active_q && !native_reset_hold_q);
+    always_ff @(posedge clk) begin
+        if (!resetn) begin
+            native_gs_active_q <= 1'b0;
+            native_gs_reset_q <= 1'b0;
+            native_gs_phase_locked_q <= 1'b0;
+            native_reset_hold_q <= 1'b0;
+        end else begin
+            native_gs_active_q <= native_gs_active;
+            native_gs_reset_q <= soft_reset;
+            native_gs_phase_locked_q <= native_gs_phase_locked;
+            if (!soft_reset)
+                native_reset_hold_q <= 1'b0;
+            else if (native_gs_observe || native_gs_active || native_gs_active_q)
+                native_reset_hold_q <= 1'b1;
+        end
+    end
+
     // Register each cycle's complete record set before FIFO arbitration. This
     // keeps Apple-bus decode and record packing out of the BRAM write path.
     AppleCycleRecord apple_record_q;
     AppleCycleRecord io_record_q;
+    AppleCycleRecord state_record_q;
     logic            apple_push_request_q;
     logic            io_push_request_q;
+    logic            native_batch_q;
     logic            overlay_drop_source_q;
 
     always_ff @(posedge clk) begin
         apple_record_q <= apple_record_din;
         io_record_q    <= io_record_din;
+        state_record_q <= pack_gs_state_record(
+            native_gs_active, line_in_frame, cycle_in_line, current_softswitch_bits,
+            native_gs_c022, native_gs_c029, native_gs_c02b,
+            native_gs_phase_locked, frame_en, native_gs_border, soft_reset
+        );
+        native_batch_q <= native_gs_active;
 
-        if (~resetn || soft_reset) begin
+        if (capture_reset) begin
             apple_push_request_q <= 1'b0;
             io_push_request_q    <= 1'b0;
+            state_push_request_q <= 1'b0;
             overlay_drop_source_q <= 1'b0;
         end else begin
             apple_push_request_q <= apple_push_request;
             io_push_request_q    <= io_push_request;
+            state_push_request_q <= native_state_request;
             overlay_drop_source_q <=
                 (apple_push_request && overlay_rule_valid) ||
-                overlay_command_write;
+                (io_push_request && overlay_command_write);
         end
     end
 
@@ -272,7 +351,22 @@ module apple_cycle_capture (
     AppleCycleRecord       record_din;
     AppleCycleRecord       direct_record;
     AppleCycleRecord       pending_record_q;
+    AppleCycleRecord       pending_tail_q;
     logic                  pending_record_valid;
+    logic                  pending_tail_valid;
+
+    // Legacy IO precedes the legacy cycle record. Native state precedes
+    // the beam tick, and the beam tick precedes a simultaneous IO write.
+    wire primary_valid = native_batch_q ? apple_push_request_q : io_push_request_q;
+    wire secondary_valid = native_batch_q ? io_push_request_q : apple_push_request_q;
+    wire AppleCycleRecord primary_record = native_batch_q ? apple_record_q : io_record_q;
+    wire AppleCycleRecord secondary_record = native_batch_q ? io_record_q : apple_record_q;
+    wire incoming_valid = state_push_request_q || primary_valid || secondary_valid;
+    wire incoming_pair = (state_push_request_q && (primary_valid || secondary_valid)) ||
+                         (primary_valid && secondary_valid);
+    wire incoming_triple = state_push_request_q && primary_valid && secondary_valid;
+    wire AppleCycleRecord incoming_second =
+        (state_push_request_q && primary_valid) ? primary_record : secondary_record;
 
     always_comb begin
         direct_record = '0;
@@ -282,10 +376,12 @@ module apple_cycle_capture (
 
         if (pending_record_valid)
             record_din = pending_record_q;
-        else if (io_push_request_q)
-            record_din = io_record_q;
-        else if (apple_push_request_q)
-            record_din = apple_record_q;
+        else if (state_push_request_q)
+            record_din = state_record_q;
+        else if (primary_valid)
+            record_din = primary_record;
+        else if (secondary_valid)
+            record_din = secondary_record;
         else
             record_din = direct_record;
     end
@@ -296,42 +392,49 @@ module apple_cycle_capture (
     // The DATA strobe covers every raw record source without placing the
     // address/overlay decode on the direct-write acceptance path.
     assign direct_ready = resetn && !soft_reset && !fifo_full &&
+        !native_gs_observe && !native_gs_active && !native_gs_active_q &&
+        !native_state_retry_q &&
         (fifo_write_count < 13'(FIFO_DEPTH - 32)) &&
-        !pending_record_valid && !io_push_request_q &&
-        !apple_push_request_q && !ab_read.data_en;
+        !pending_record_valid && !incoming_valid && !ab_read.data_en;
     wire direct_push = (direct_valid === 1'b1) && direct_ready;
 
     // Combined push request -- used for the drop-sticky check below.
-    wire push_request =
-        pending_record_valid ||
-        io_push_request_q ||
-        apple_push_request_q;
+    wire push_request = pending_record_valid || incoming_valid;
 
     assign fifo_wr_en = (push_request || direct_push) && !fifo_full;
     assign fifo_rd_en = cycle_capture_rd_en && !fifo_empty;
 
-    // Set wins. A full FIFO or a third simultaneous record source marks
-    // the stream incomplete until egress acknowledges the gap.
+    // Keep the oldest batch together. If another batch arrives before the
+    // pending records drain, report the lost batch instead of reordering.
     logic capture_drop_sticky_q;
     always_ff @(posedge clk) begin
-        if (~resetn || soft_reset) begin
+        if (capture_reset) begin
             capture_drop_sticky_q <= 1'b0;
             pending_record_valid  <= 1'b0;
             pending_record_q      <= '0;
+            pending_tail_valid    <= 1'b0;
+            pending_tail_q        <= '0;
+            native_state_retry_q  <= 1'b0;
         end else begin
+            // Publish the current state after a lost snapshot. Inactive
+            // mode has no periodic snapshot to repair a dropped exit.
+            if (state_push_request_q)
+                native_state_retry_q <= fifo_full || pending_record_valid;
+
             if (pending_record_valid && fifo_wr_en) begin
-                pending_record_valid <= 1'b0;
+                pending_record_q <= pending_tail_q;
+                pending_record_valid <= pending_tail_valid;
+                pending_tail_valid <= 1'b0;
             end
 
-            if (io_push_request_q && apple_push_request_q &&
-                !pending_record_valid && !fifo_full) begin
-                pending_record_q     <= apple_record_q;
+            if (incoming_pair && !pending_record_valid && !fifo_full) begin
+                pending_record_q     <= incoming_second;
                 pending_record_valid <= 1'b1;
+                pending_tail_valid   <= incoming_triple;
+                pending_tail_q       <= secondary_record;
             end
 
-            if ((push_request && fifo_full && !pending_record_valid) ||
-                (pending_record_valid &&
-                 (io_push_request_q || apple_push_request_q)))
+            if (incoming_valid && (fifo_full || pending_record_valid))
                 capture_drop_sticky_q <= 1'b1;
             else if (capture_drop_ack)
                 capture_drop_sticky_q <= 1'b0;
@@ -344,7 +447,7 @@ module apple_cycle_capture (
      * general sticky bit, but does not create a false overlay STALE state. */
     logic overlay_capture_drop_sticky_q;
     always_ff @(posedge clk) begin
-        if (~resetn || soft_reset) begin
+        if (capture_reset) begin
             overlay_capture_drop_sticky_q <= 1'b0;
         end else begin
             if (((!pending_record_valid && fifo_full) ||
@@ -377,7 +480,7 @@ module apple_cycle_capture (
         .ECC_MODE           ("no_ecc"),
         .WAKEUP_TIME        (0)
     ) cycle_fifo_inst (
-        .rst            (~resetn || soft_reset),
+        .rst            (capture_reset),
         .wr_clk         (clk),
         .din            (record_din),
         .wr_en          (fifo_wr_en),

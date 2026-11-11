@@ -309,6 +309,19 @@
 #define CARD_CTRL_VTW_COPY_ERROR_BIT          (1UL << 2)
 #define CARD_CTRL_VTW_COPY_ABORTED_BIT        (1UL << 3)
 #define CARD_CTRL_VTW_COPY_COMPLETED_MASK      0xFFFFUL
+
+/* Physical IIgs slot map. Low byte is C02D; the upper bytes give live
+ * I/O and slot ROM permissions, independent of requested cards. */
+#define CARD_CTRL_IIGS_SLOT_MAP_REG          CARD_CTRL_REG_ADDR(0xB6U)
+#define CARD_CTRL_IIGS_SLOT_MAP_VALID_BIT    (1U << 8)
+#define CARD_CTRL_IIGS_SLOT_IO_SHIFT         16U
+#define CARD_CTRL_IIGS_SLOT_ROM_SHIFT        24U
+/* Bit 0 latches while the physical host is held in reset and clears only
+ * on PL reset. ROM identity still controls physical machine safety. */
+#define CARD_CTRL_IIGS_PROFILE_REG           CARD_CTRL_REG_ADDR(0xB7U)
+#define CARD_CTRL_IIGS_PROFILE_SLOT3_BIT     (1U << 0)
+#define CARD_CTRL_IIGS_PROFILE_ID_FAULT_BIT   (1U << 1)
+
 /* TURBO performance counters, cleared with busdbg clear: fabric clocks,
  * accepted CPU steps, classic guest cycles, cached read hits, read misses,
  * invalidation events, Disk II wait clocks, and video/post wait clocks. */

@@ -418,7 +418,12 @@ mid_iie_enh:
           lda #CMD_MID_IIE_ENH
           jmp mid_aux_probe
 mid_gs:
-          ; Report GS first so the PL arms active-low /M2SEL qualification.
+          ; The slot-3 profile already observes the slow bus. Bracket the
+          ; vertical counter with horizontal reads to establish video phase.
+          lda $C02F
+          lda $C02E
+          lda $C02F
+          ; Report GS so the PL locks the identity.
           ; $27 escapes the next command byte as the raw $C02D external-slot
           ; mask. The PL locks the first pair and accepts exact warm repeats.
           lda #CMD_MID_IIGS

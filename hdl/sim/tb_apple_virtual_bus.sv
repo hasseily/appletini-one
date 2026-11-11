@@ -74,6 +74,8 @@ module tb_apple_virtual_bus;
                            ab_read.data_en;
             check(strobe_count <= 1, "virtual bus strobes overlap");
             check(ab_read.cycle_valid, "virtual //e cycle was invalid");
+            check(ab_read.phi0_tick === ab_read.sss_en,
+                  "virtual PHI0 tick changed phase");
 
             if (ab_read.drive_en) begin
                 check(phase_order == 0, "drive_en phase order");

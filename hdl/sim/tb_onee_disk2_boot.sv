@@ -65,7 +65,7 @@ module tb_onee_disk2_boot;
     apple_timing_gen timing_i (
         .clk(clk),
         .resetn(resetn),
-        .apple_bus_pulse(ab_read.sss_en),
+        .apple_bus_pulse(ab_read.phi0_tick),
         .video_mode_50hz(1'b0),
         .update_pulse(update_pulse),
         .line_in_frame(line_in_frame),
@@ -106,6 +106,11 @@ module tb_onee_disk2_boot;
     );
 
     soft_switch_manager manager_i (
+        .iigs_profile(1'b0),
+        .iigs_bootstrap_slot7(1'b0),
+        .iigs_boot_mask(8'h00),
+        .iigs_boot_mask_valid(1'b0),
+        .iigs_native_video(1'b0), .iigs_bank_latch(1'b0),
         .clk(clk),
         .rstn(resetn),
         .ramworks_en(1'b0),

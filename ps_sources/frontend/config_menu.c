@@ -264,7 +264,7 @@ static const char * const k_tab_labels[CONFIG_TAB_COUNT] = {
     "Slot 1 Ethernet",
     "TransWarp",
     "Clock",
-    "RAM",
+    "RAM / Host",
     "USB",
     "Printing",
     "About"
@@ -3986,8 +3986,9 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                                             path_val, sizeof(path_val))
                    : "FIRMWARE");
 
-    /* The standalone enable latch belongs only to the working config. */
+    /* Physical installation and the standalone latch belong to the working config. */
     if (strcmp(path, APPLETINI_CFG_PATH) == 0) {
+        APPEND_CFG("host.iigs.slot3=%s\n", config_menu_on_off(menu->iigs_slot3_profile));
         APPEND_CFG("onee.standalone.persisted=%s\n",
                    config_menu_on_off(menu->onee_persisted_enabled));
     }
@@ -4621,6 +4622,7 @@ static void config_menu_load_settings(config_menu_t *menu)
         return;
     }
 
+    menu->iigs_slot3_profile = 0U;
     /* Each file must opt in; a missing key never inherits TURBO permission. */
     menu->vtw_turbo_enabled = CONFIG_DEFAULT_VTW_TURBO_ENABLED;
     config_menu_slot2_reset(menu);
@@ -4646,7 +4648,11 @@ static void config_menu_load_settings(config_menu_t *menu)
             if (strcmp(key, "appletini.config.version") == 0) {
                 cfg_version = (uint32_t)strtoul(value, NULL, 10);
             }
-            config_menu_parse_key_value(menu, key, value);
+            if (strcmp(key, "host.iigs.slot3") == 0) {
+                menu->iigs_slot3_profile = config_menu_bool_text(value);
+            } else {
+                config_menu_parse_key_value(menu, key, value);
+            }
         }
         line = strtok(NULL, "\r\n");
     }
@@ -5743,7 +5749,7 @@ static uint32_t config_menu_tab_item_count(const config_menu_t *menu)
     case CONFIG_TAB_TRANSWARP:
         return CONFIG_TRANSWARP_ITEM_COUNT;
     case CONFIG_TAB_RAM:
-        return 1U;
+        return 2U;
     case CONFIG_TAB_PRINTING:
         return CONFIG_PRINTING_ITEM_COUNT;
     case CONFIG_TAB_ABOUT:
@@ -8068,6 +8074,17 @@ static void config_menu_activate_item(config_menu_t *menu)
         break;
 
     case CONFIG_TAB_RAM:
+        if (menu->item_focus == 1U) {
+            menu->iigs_slot3_profile = menu->iigs_slot3_profile ? 0U : 1U;
+            (void)config_menu_save_settings_to_path(menu, APPLETINI_CFG_PATH,
+                                                   "SAVED. RESTART APPLETINI TO APPLY");
+            break;
+        }
+        if (boot_menu_service_machine_mode() == CARD_MACHINE_MODE_IIGS &&
+            menu->onee_mode_state != CONFIG_MENU_ONEE_MODE_RUNNING) {
+            config_menu_set_status(menu, 1U, "IIgs HOST RAM ACCESS IS OFF");
+            break;
+        }
         if (menu->usb_owned != 0U) {
             config_menu_set_status(menu, 1U,
                 "RAM CAN ONLY CHANGE FROM BOOT MENU");

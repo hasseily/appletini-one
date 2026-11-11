@@ -161,7 +161,21 @@ static void fill(uint16_t *fb, uint16_t color)
 
 static comp_viewport_t viewport(uint32_t mode)
 {
-    return mode == APPLE_FB_DISPLAY_MODE_SHR ? comp_shr_viewport : comp_legacy_viewport;
+    comp_viewport_t view = (mode == APPLE_FB_DISPLAY_MODE_SHR ||
+                            mode == APPLE_FB_DISPLAY_MODE_GS) ?
+                           comp_shr_viewport : comp_legacy_viewport;
+    if (mode == APPLE_FB_DISPLAY_MODE_GS) {
+        view.border_x = view.x - 32 * view.scale;
+        view.border_y = view.y - 32 * view.scale;
+        view.border_width = 704 * view.scale;
+        view.border_height = 464 * view.scale;
+    }
+    return view;
+}
+
+static uint32_t expected_mode_key(uint32_t mode)
+{
+    return mode == APPLE_FB_DISPLAY_MODE_LEGACY_I ? APPLE_FB_DISPLAY_MODE_LEGACY : mode;
 }
 
 static int in_picture(int x, int y, comp_viewport_t v)
@@ -240,15 +254,13 @@ static void exercise_transition(uint32_t prior_mode, uint32_t next_mode)
         check_background(frames[test_slot]);
         paint_picture(frames[test_slot], next_mode, NEW_APPLE);
         check_picture(frames[test_slot], next_mode);
-        CHECK(g_output_slot_apple_mode[test_slot] ==
-              (next_mode == APPLE_FB_DISPLAY_MODE_SHR ? APPLE_FB_DISPLAY_MODE_SHR : APPLE_FB_DISPLAY_MODE_LEGACY));
+        CHECK(g_output_slot_apple_mode[test_slot] == expected_mode_key(next_mode));
         for (unsigned other = 0; other < COMP_OUT_SLOT_COUNT; ++other) {
             if (other < test_slot) check_picture(frames[other], next_mode);
             if (other > test_slot) {
                 CHECK(frames[other][0] ==
                       (in_picture(0, 0, viewport(prior_mode)) ? OLD_APPLE : OLD_FLOOD));
-                CHECK(g_output_slot_apple_mode[other] ==
-                      (prior_mode == APPLE_FB_DISPLAY_MODE_SHR ? APPLE_FB_DISPLAY_MODE_SHR : APPLE_FB_DISPLAY_MODE_LEGACY));
+                CHECK(g_output_slot_apple_mode[other] == expected_mode_key(prior_mode));
             }
         }
         check_guards();
@@ -384,13 +396,18 @@ int main(void)
                 exercise_transition(APPLE_FB_DISPLAY_MODE_SHR, APPLE_FB_DISPLAY_MODE_LEGACY);
                 exercise_transition(APPLE_FB_DISPLAY_MODE_LEGACY_I, APPLE_FB_DISPLAY_MODE_SHR);
                 exercise_transition(APPLE_FB_DISPLAY_MODE_SHR, APPLE_FB_DISPLAY_MODE_LEGACY_I);
+                exercise_transition(APPLE_FB_DISPLAY_MODE_LEGACY, APPLE_FB_DISPLAY_MODE_GS);
+                exercise_transition(APPLE_FB_DISPLAY_MODE_GS, APPLE_FB_DISPLAY_MODE_LEGACY);
+                exercise_transition(APPLE_FB_DISPLAY_MODE_SHR, APPLE_FB_DISPLAY_MODE_GS);
+                exercise_transition(APPLE_FB_DISPLAY_MODE_GS, APPLE_FB_DISPLAY_MODE_SHR);
                 exercise_unchanged();
                 exercise_size_changes(APPLE_FB_DISPLAY_MODE_LEGACY);
                 exercise_size_changes(APPLE_FB_DISPLAY_MODE_SHR);
                 exercise_size_changes(APPLE_FB_DISPLAY_MODE_LEGACY_I);
+                exercise_size_changes(APPLE_FB_DISPLAY_MODE_GS);
             }
         }
-        printf("PASS %s: all three slots, legacy/SHR both ways, bezel/border variants, frame coherence and guards\n", mode->name);
+        printf("PASS %s: all slots, legacy/SHR/IIgs transitions, bezel/border variants, frame coherence and guards\n", mode->name);
         printf("PASS %s: same-mode Max/1x/2x shrink/grow, independent fit and per-slot background/overlay cleanup\n", mode->name);
     }
     ui_restore_apple_footprint_if_needed(NULL, 0U);

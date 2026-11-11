@@ -137,9 +137,9 @@ module tb_disk2_vtw_read;
 
     task automatic physical_tick;
         @(negedge clk);
-        ab_read.sss_en = 1'b1;
+        ab_read.phi0_tick = 1'b1;
         @(negedge clk);
-        ab_read.sss_en = 1'b0;
+        ab_read.phi0_tick = 1'b0;
     endtask
 
     task automatic virtual_ticks(input int count);
@@ -282,7 +282,7 @@ module tb_disk2_vtw_read;
               "private read passed or lost pending classic guest ticks");
         vtw_cycle_ticks = 4'd1;
 
-        // A native Disk II cycle uses only the physical sss_en pulse. A
+        // A native Disk II cycle uses only the physical phi0_tick pulse. A
         // virtual pulse presented at the same time source selection is native
         // must not advance the card.
         vtw_native_cycle_active = 1'b1;

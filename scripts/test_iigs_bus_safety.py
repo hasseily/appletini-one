@@ -7,6 +7,7 @@ Requires the Xilinx simulation tools (xvlog/xelab/xsim) on PATH.
 from __future__ import annotations
 
 import shutil
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -23,6 +24,8 @@ SOURCES = [
     "hdl/apple/apple_bus_client_policy_gate.sv",
     "hdl/apple/apple_machine_safety_policy.sv",
     "hdl/apple/apple_slot7_devsel_guard.sv",
+    "hdl/apple/soft_switch_manager.sv",
+    "hdl/apple/apple_timing_gen.sv",
     "hdl/apple/boot_menu_card.sv",
     "hdl/sim/tb_apple_bus_addr_enable.sv",
     "hdl/sim/tb_apple_bus_isolation.sv",
@@ -31,6 +34,8 @@ SOURCES = [
     "hdl/sim/tb_apple_machine_policy_latch.sv",
     "hdl/sim/tb_apple_slot7_devsel_guard.sv",
     "hdl/sim/tb_iigs_bootstrap_path.sv",
+    "hdl/sim/tb_iigs_live_slots.sv",
+    "hdl/sim/tb_iigs_video_timing.sv",
     "hdl/sim/tb_iie_bootstrap_path.sv",
     "hdl/sim/tb_boot_menu_iigs_policy.sv",
 ]
@@ -49,6 +54,8 @@ BENCHES = [
     ("tb_apple_machine_policy_latch", "APPLE MACHINE POLICY LATCH PASS"),
     ("tb_apple_slot7_devsel_guard", "APPLE SLOT7 DEVSEL GUARD PASS"),
     ("tb_iigs_bootstrap_path", "IIGS BOOTSTRAP PATH PASS"),
+    ("tb_iigs_live_slots", "IIGS LIVE SLOTS PASS"),
+    ("tb_iigs_video_timing", "IIGS VIDEO TIMING PASS"),
     ("tb_iie_bootstrap_path", "IIE BOOTSTRAP PATH PASS"),
     ("tb_boot_menu_iigs_policy", "BOOT MENU IIGS POLICY PASS"),
 ]
@@ -116,10 +123,13 @@ def static_checks() -> None:
         "physical pad gate must cover INH replacement bytes and bus-master data",
     )
     require(
-        "wire physical_irq_allowed = machine_identity_legacy;" in top
+        "(machine_identity_iigs && iigs_slot3_profile_q)" in top
         and ".inh_allowed(machine_inh_allowed_wrapper_q && machine_inh_allowed)" in top
         and ".physical_bus_isolate(physical_bus_output_isolate)" in top
-        and "boot_menu_machine_id_fault || boot_menu_iigs_policy_fault;" in top
+        and "boot_menu_machine_id_fault || boot_menu_iigs_policy_fault ||" in top
+        and "(|{boot_menu_machine_id[3], boot_menu_machine_id[1:0]})" in top
+        and "machine_identity_fault_q <= rstn[2] && machine_identity_fault;" in top
+        and "assign iigs_ownership_active = (machine_identity_iigs || iigs_slot3_profile_q)" in top
         and "machine_inh_allowed = machine_identity_legacy;" in policy,
         "physical controls must use the direct ROM policy and immediate fault isolation",
     )
@@ -131,11 +141,18 @@ def static_checks() -> None:
         "physical safety restrictions must not feed into the ONEe private bus",
     )
     require(
-        "minimal_io_only" not in guard
-        and "if (devsel_required && ab_read_in.m2sel)" in guard
-        and "supersprite_write_out.assert_irq = 1'b0;" in guard
-        and "physical_ab_read.devsel_n" in guard,
-        "identified GS device I/O and stale responses require live selection",
+        "apple_iigs_slot_access iigs_slot_access_i" in top
+        and "ab_read.res && ab_read.cycle_valid && !ab_read.m2sel" in guard
+        and "permissions.late_slot & slots" in top
+        and "permissions.data_slot & slots" in top
+        and "reply.wr_data_en && (|(permissions.reply_slot & slots))" in top
+        and "reply.assert_irq && irq_enabled" in top,
+        "GS replies use live slot ownership while IRQ uses device permission",
+    )
+    require(
+        "gate_iigs_reply(slot5_ab_write, 8'h20, pct_mode && iigs_rom_mask[5],"
+        in top and "(card_slot5_enable && card_host_enable_mask[5])" in top,
+        "only a configured, ROM-mapped PC Transporter may assert GS slot 5 IRQ",
     )
     require(
         "slot7_overlay_devsel_visible" in top
@@ -153,6 +170,46 @@ def static_checks() -> None:
     )
 
 
+def extract_top_routing(out_dir: Path = OUT_DIR) -> Path:
+    """Compile the production top-level phase and reply gates with the trace."""
+    top = (ROOT / "hdl/apple/apple_top.sv").read_text(encoding="utf-8")
+    definition_end = top.index("} iigs_bus_permissions_t;")
+    definition_start = top.rindex("    typedef struct packed {", 0, definition_end)
+    functions = [top[definition_start:definition_end + len("} iigs_bus_permissions_t;")]]
+    for name in ("gate_ab", "gate_slot_ab", "gate_iigs_reply"):
+        gate = re.search(
+            rf"    function automatic globals::AppleBus_(?:read|write) {name}\("
+            r".*?    endfunction", top, re.S,
+        )
+        require(gate is not None, f"unable to extract apple_top {name}")
+        functions.append(gate[0])
+    path = out_dir / "iigs_top_routing.sv"
+    path.write_text(
+        """module iigs_top_routing (
+    input logic iigs_ownership_active, machine_identity_fault,
+    input logic onee_enable_effective, enabled, irq_enabled,
+    input logic [7:0] iigs_early_slot, iigs_late_slot, iigs_data_slot, iigs_reply_slot, slots,
+    input globals::AppleBus_read host_bus,
+    input globals::AppleBus_write device_reply,
+    output globals::AppleBus_read device_bus,
+    output globals::AppleBus_write host_reply
+);
+"""
+        + "\n".join(functions)
+        + """
+    iigs_bus_permissions_t permissions;
+    assign permissions = {machine_identity_fault && !onee_enable_effective,
+                          iigs_ownership_active, iigs_early_slot,
+                          iigs_late_slot, iigs_data_slot, iigs_reply_slot};
+    assign device_bus = gate_slot_ab(host_bus, enabled, slots, permissions);
+    assign host_reply = gate_iigs_reply(device_reply, slots, irq_enabled, permissions);
+endmodule
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
 def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     for mem in MEM_FILES:
@@ -160,9 +217,11 @@ def main() -> int:
     try:
         static_checks()
         print("PASS static IIgs integration checks")
+        routing = extract_top_routing()
         run(
             [vivado_tool("xvlog"), "--sv"]
-            + [str(ROOT / source) for source in SOURCES],
+            + [str(ROOT / source) for source in SOURCES]
+            + [str(routing)],
             OUT_DIR / "xvlog.log",
         )
         for bench, _ in BENCHES:

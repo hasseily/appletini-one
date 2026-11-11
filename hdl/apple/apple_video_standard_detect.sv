@@ -2,7 +2,7 @@
 /* Physical host video standard (PAL 50 Hz / NTSC 60 Hz) from the PHI0 line
  * period.
  *
- * Every apple_bus_pulse is one PHI0 cycle (the wrapper's sss_en strobe).
+ * Every apple_bus_pulse is one PHI0 cycle.
  * 65 pulses span one scan line: 8533 fabric clocks on a PAL host
  * (912 dots / 14.25 MHz = 64.000 us) and 8493 on NTSC (912 / 14.31818 MHz
  * = 63.695 us) at 133.333 MHz, so the threshold sits 20 clocks (150 ns)

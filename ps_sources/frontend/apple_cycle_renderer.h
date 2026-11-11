@@ -9,8 +9,8 @@
  * own per-cycle scan state (g_nVideoClockVert/Horz, g_pVideoAddress,
  * signal-bit register) inside appletini_ntsc.c globals.
  *
- * The renderer writes 616x224 Apple border-ring frames or 640x400 SHR
- * frames into comp_apple_slot_addr[] (see compositor_layout.h). It publishes
+ * The renderer writes legacy 616x224, synthetic SHR 640x400, and native
+ * IIgs 704x232 bordered frames into comp_apple_slot_addr[] (see compositor_layout.h). It publishes
  * completed frames through the atomic 3-slot handoff in apple_fb_handoff.[ch].
  * Static SHR shadows reuse the last published slot. The compositor claims the
  * freshest slot whenever it composes an output frame; writer and reader slots
@@ -30,7 +30,8 @@ int apple_cycle_renderer_init(void);
 
 /* Apple RESET# resets the PL soft-switch manager, but the PS-side renderer
  * keeps local VidHD/C029 state. Call this when the Apple reset sequence
- * changes so the local renderer state comes back as TEXT/C051. */
+ * changes so the local renderer state comes back as TEXT/C051.
+ * Native IIgs applies its reset through ordered capture records. */
 void apple_cycle_renderer_reset_local_video_state(void);
 
 /* CPU1 sets this from the PL's effective vTW 1 MHz status before draining
@@ -69,6 +70,9 @@ void apple_cycle_renderer_on_record_lookahead(uint64_t rec,
  * Defined as a weak symbol so 2b.1 can call it whether or not 2b.2 is
  * linked in. Default-weak version is a no-op. */
 void apple_cycle_renderer_on_record(uint64_t rec);
+
+/* Native capture gaps can leave stale mirror bytes until the host redraws. */
+extern volatile uint32_t g_acr_gs_capture_gaps;
 
 /* Last phase-corrected switch word. Used by the host timing test and useful
  * for a precise UART diagnostic without exposing renderer internals. */

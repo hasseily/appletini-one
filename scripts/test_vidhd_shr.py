@@ -106,13 +106,13 @@ def test_capture_emits_two_records_for_vidhd_io_plus_frame() -> None:
             "current_softswitch_bits" in source,
             "capture must emit soft-switch records with same-cycle soft-switch state")
     require("pending_record_valid" in source and
-            "pending_record_q     <= apple_record_q;" in source,
+            "pending_record_q     <= incoming_second;" in source,
             "capture must queue the frame/memory record when an I/O write also occurs")
     require("apple_push_request_q <= apple_push_request;" in source and
             "io_push_request_q    <= io_push_request;" in source and
             "if (pending_record_valid)" in source and
-            "else if (io_push_request_q)" in source and
-            "else if (apple_push_request_q)\n            record_din = apple_record_q;" in source and
+            "native_batch_q ? apple_push_request_q : io_push_request_q;" in source and
+            "native_batch_q ? io_push_request_q : apple_push_request_q;" in source and
             "else\n            record_din = direct_record;" in source,
             "capture arbitration must emit pending, I/O, Apple, then direct records")
     require("logic shr_capture_active_q;" in source and
@@ -124,7 +124,7 @@ def test_capture_emits_two_records_for_vidhd_io_plus_frame() -> None:
             "capture must emit sparse frame markers while fake-SHR is active")
     require("wire capture_frame_en =" in source and
             "(!shr_capture_active_next || shr_frame_marker)" in source and
-            "assign apple_push_request = ab_read.data_en && (rule1_valid || capture_frame_en);" in source,
+            "ab_read.data_en && (rule1_valid || capture_frame_en)" in source,
             "fake-SHR must keep memory writes but suppress per-cycle frame records")
 
 
@@ -132,12 +132,11 @@ def test_shr_capture_uses_aux_shadow_without_m2b0() -> None:
     source = read(SOFT_SWITCH_MANAGER_SV)
     capture = read(CAPTURE_SV)
 
-    require("ab_read.m2b0" not in source,
-            "M2B0 must not steer real Apple memory on the Apple //e fake-SHR path")
+    require("if (iigs_native_video && !ab_read.m2sel && iigs_bank_latch && ab_read.m2b0)"
+            in " ".join(source.split()),
+            "M2B0 bank selection must require native IIgs observation")
     require("ss_shr" not in source,
             "soft-switch manager must not gate real bank steering on C029 SHR")
-    require("captured AUX $2000-$9FFF shadow" in source,
-            "soft-switch manager comment must document the simple AUX-shadow SHR source")
     require("ab_read.m2b0" not in capture and "shr_m2b0_shadow_write" not in capture,
             "capture must not synthesize IIgs M2B0 SHR writes for the Apple //e path")
     require("0x002000-0x009FFF" in capture and
@@ -207,7 +206,7 @@ def test_renderer_implements_video7_auto_white_mono() -> None:
             "each $C05F rising edge must clock !80COL, first into bit 1 and "
             "second into bit 0 (AppleWin RGBMonitor latch F2,F1)")
     require("const uint8_t video7_mono =\n"
-            "        ((shr_now == 0u) &&\n"
+            "        ((!s_gs_active && shr_now == 0u) &&\n"
             "         (apple_video_settings_video7_auto_mono_enabled(settings) != 0u) &&\n"
             "         (s_video7_rgb_mode == 3u)) ? 1u : 0u;" in source and
             "const uint8_t video7_auto_mono =\n"
@@ -218,7 +217,7 @@ def test_renderer_implements_video7_auto_white_mono() -> None:
             "Video-7 mode 3 must auto-force white mono only when bootmenu mono is off, "
             "the toggle is enabled, and C029 SHR is not active")
     require("const uint8_t video7_mix =\n"
-            "        ((shr_now == 0u) &&\n"
+            "        ((!s_gs_active && shr_now == 0u) &&\n"
             "         (apple_video_settings_dhgr_col140m_enabled(settings) != 0u) &&\n"
             "         (s_video7_rgb_mode == 2u)) ? 1u : 0u;" in source and
             "s_render_dhgr_col140m_enable = video7_mix;" in source,
@@ -424,11 +423,13 @@ def test_compositor_and_handoff_are_mode_aware() -> None:
             "UART :status must expose Apple FB handoff mode so black-screen SHR can be diagnosed")
     require("static uint8_t g_output_slot_apple_mode[COMP_OUT_SLOT_COUNT];" in frontend_main and
             "static void ui_restore_apple_footprint_if_needed" in frontend_main and
-            "apple_fb_reader_display_mode() == APPLE_FB_DISPLAY_MODE_SHR" in frontend_main and
+            "const uint32_t claimed_mode = apple_fb_reader_display_mode();" in frontend_main and
+            "claimed_mode == APPLE_FB_DISPLAY_MODE_SHR" in frontend_main and
+            "claimed_mode == APPLE_FB_DISPLAY_MODE_GS" in frontend_main and
             "g_output_slot_apple_mode[slot] != next_mode" in frontend_main and
             "0, 0, FB16_WIDTH, FB16_HEIGHT," in frontend_main and
             "ui_restore_apple_footprint_if_needed(fb, show_bezel);" in frontend_main,
-            "static bezel caching must restore the full background in both directions using the claimed frame mode")
+            "static bezel caching must restore the whole footprint on legacy, SHR and IIgs mode changes")
 
 
 def test_shr_generation_cache() -> None:
@@ -586,7 +587,7 @@ def test_no_vidhd_identity_and_slot_layout() -> None:
     slot2 = read(REPO_ROOT / "hdl/apple/slot2_card.sv")
     require("slot2_card slot2_card_i" in top and
             ".enabled(card_slot2_enable)" in top and
-            ".ab_read(gate_ab(data_phase_ab_read, card_slot2_bus_enable))" in top and
+            ".ab_read(gate_slot_ab(data_phase_ab_read, card_slot2_bus_enable, 8'h04, iigs_bus_permissions))" in top and
             "mouse_card mouse_card_i" in top and
             ".rstn(slot2_mouse_selected)" in top and
             ".ab_read(mouse_ab_read)" in top and

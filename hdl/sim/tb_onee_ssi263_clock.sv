@@ -48,6 +48,11 @@ module tb_onee_ssi263_clock;
         .ab_read(bus), .data_phase_data()
     );
     soft_switch_manager soft_switch_i (
+        .iigs_profile(1'b0),
+        .iigs_bootstrap_slot7(1'b0),
+        .iigs_boot_mask(8'h00),
+        .iigs_boot_mask_valid(1'b0),
+        .iigs_native_video(1'b0), .iigs_bank_latch(1'b0),
         .clk(clk), .rstn(rstn), .ramworks_en(1'b0), .ab_read(bus), .sss(sss)
     );
     mockingboard card_i (

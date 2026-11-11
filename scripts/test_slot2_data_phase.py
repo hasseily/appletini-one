@@ -33,8 +33,8 @@ def source_checks() -> None:
         "data_phase_ab_read=ab_read;",
         "data_phase_ab_read.data=onee_enable_effective?"
         "virtual_data_phase_data:physical_ab_read.data;",
-        ".ab_read(gate_ab(data_phase_ab_read,card_slot2_bus_enable))",
-        "boot_menu_ab_read=gate_ab(slot7_devsel_ab_read,!onee_enable_effective);",
+        ".ab_read(gate_slot_ab(data_phase_ab_read,card_slot2_bus_enable,8'h04,iigs_bus_permissions))",
+        "boot_menu_ab_read=gate_slot_ab(slot7_devsel_ab_read,!onee_enable_effective,8'h80,iigs_bus_permissions);",
         "boot_menu_ab_read.data=physical_ab_read.data;",
         ".ab_read(boot_menu_ab_read)",
     )

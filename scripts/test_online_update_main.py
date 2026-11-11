@@ -27,7 +27,8 @@ def main():
         'boot handoff must receive update safety cancellation first'
     names = ('menu_platform_request_golden_boot_update',
              'card_control_normalize_slot_mask', 'card_control_apply_slot_policy',
-             'card_control_write_slot_mask', 'control_set_slot_enabled',
+             'card_control_write_slot_mask', 'control_apply_disk2_policy',
+             'control_set_slot_enabled',
              'menu_platform_ethernet_update_busy',
              'menu_platform_ethernet_read_config', 'menu_platform_ethernet_write_config',
              'menu_platform_ethernet_test', 'menu_platform_ethernet_dhcp_start',

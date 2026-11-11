@@ -120,7 +120,7 @@ module tb_onee_video_path;
     apple_timing_gen timing_i (
         .clk(clk),
         .resetn(resetn),
-        .apple_bus_pulse(ab_read.sss_en),
+        .apple_bus_pulse(ab_read.phi0_tick),
         .video_mode_50hz(1'b0),
         .update_pulse(update_pulse),
         .line_in_frame(line_in_frame),
@@ -130,6 +130,11 @@ module tb_onee_video_path;
     );
 
     soft_switch_manager manager_i (
+        .iigs_profile(1'b0),
+        .iigs_bootstrap_slot7(1'b0),
+        .iigs_boot_mask(8'h00),
+        .iigs_boot_mask_valid(1'b0),
+        .iigs_native_video(1'b0), .iigs_bank_latch(1'b0),
         .clk(clk),
         .rstn(resetn),
         .ramworks_en(1'b0),
@@ -152,6 +157,9 @@ module tb_onee_video_path;
         .cycle_in_line(cycle_in_line),
         .frame_en(frame_en),
         .fake_shr_allowed(1'b1),
+        .native_gs_active(1'b0), .native_gs_observe(1'b0), .native_gs_tick(1'b0),
+        .native_gs_phase_locked(1'b0), .native_gs_c022(8'h00),
+        .native_gs_c029(8'h00), .native_gs_c02b(8'h00), .native_gs_border(4'h0),
         .overlay_devsel_enabled(1'b0),
         .overlay_capture_armed(1'b0),
         .overlay_capture_bank_aux(1'b0),
@@ -324,7 +332,7 @@ module tb_onee_video_path;
         begin
             do begin
                 @(posedge clk);
-            end while (!ab_read.sss_en);
+            end while (!ab_read.phi0_tick);
             #1;
             check(update_pulse, "native bus tick did not update scanner");
         end

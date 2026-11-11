@@ -131,10 +131,9 @@ def test_apple_top_integration() -> None:
     require("wire supersprite_visible_desired =\n"
             "        card_supersprite_enable && !onee_smartport_boot_owner &&\n"
             "        onee_slot7_cards_visible && card_slot7_bus_enable;" in s and
-            ".ab_read(gate_ab(slot7_devsel_ab_read,\n"
-            "                         supersprite_bus_visible))" in s and
+            ".ab_read(gate_slot_ab(slot7_devsel_ab_read, supersprite_bus_visible, 8'h80, iigs_bus_permissions))" in s and
             "apple_slot7_devsel_guard apple_slot7_devsel_guard_i" in s and
-            "machine_identity_iigs;" in s and
+            "gate_iigs_reply(supersprite_safe_ab_write, 8'h80, iigs_rom_mask[7], iigs_bus_permissions)" in s and
             ".slot_assign(3'h7)" in s,
             "SuperSprite must use only the isolated or DEVSEL-guarded slot-7 path")
     require("card_feature_enable_mask_q[CARD_CTRL_FEATURE_SS_ENABLE_BIT]" in s,
@@ -146,8 +145,8 @@ def test_apple_top_integration() -> None:
             "        onee_slot7_cards_visible && card_slot7_bus_enable;" in s and
             "wire vtw_smartport_visible = ab_read.addr_en" in s and
             ".ab_read(smartport_ab_read)" in s and
-            "smartport_ab_read = gate_ab(slot7_devsel_ab_read," in s and
-            "vtw_smartport_visible || slot7_overlay_devsel_visible);" in s,
+            "smartport_ab_read = gate_slot_ab(slot7_devsel_ab_read," in s and
+            "vtw_smartport_visible || slot7_overlay_devsel_visible, 8'h80, iigs_bus_permissions);" in s,
             "slot-7 ownership must stay stable and DEVSEL-guarded for each cycle")
     require(".vblank_tick(bm_vbl_cmd_pulse)" in s,
             "frame tick reuses the boot ROM VBL command pulse")

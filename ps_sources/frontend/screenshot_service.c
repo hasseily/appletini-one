@@ -842,7 +842,19 @@ int screenshot_service_request(screenshot_service_kind_t kind,
         surface.base = (const uint32_t *)(uintptr_t)comp_apple_slot_addr[slot];
         surface.scale_x = 2U;
         surface.scanlines_mode = g_scanlines_mode;
-        if (mode == APPLE_FB_DISPLAY_MODE_SHR) {
+        if (mode == APPLE_FB_DISPLAY_MODE_GS) {
+            surface.stride_pixels = COMP_APPLE_GS_STRIDE_BYTES / COMP_APPLE_BPP;
+            surface.scale_y = 4U;
+            if (apple_video_settings_border_enabled(video_settings) != 0U) {
+                width = COMP_APPLE_GS_WIDTH * 2U;
+                height = COMP_APPLE_GS_HEIGHT * 4U;
+            } else {
+                surface.base += COMP_APPLE_GS_ACTIVE_Y * surface.stride_pixels;
+                surface.x_offset = COMP_APPLE_GS_ACTIVE_X;
+                width = COMP_APPLE_GS_ACTIVE_WIDTH * 2U;
+                height = COMP_APPLE_GS_ACTIVE_HEIGHT * 4U;
+            }
+        } else if (mode == APPLE_FB_DISPLAY_MODE_SHR) {
             surface.stride_pixels = COMP_APPLE_SHR_ROW_PIXELS;
             surface.scale_y = 2U;
             width = COMP_APPLE_SHR_WIDTH * 2U;

@@ -50,14 +50,11 @@ package globals;
         logic phi0;
         logic m2sel;
         logic m2b0;
-        /* Sampled active-low slot device select. This PCB routes /DEVSEL but
-         * not /IOSEL or /IOSTRB; physical IIgs slot-7 I/O must require it. */
+        /* Sampled active-low device select for the physical slot. */
         logic devsel_n;
-        /* A decodable Apple bus cycle. Identified IIgs machines require
-         * M2SEL at the address sample; IIe, II+, and unidentified machines
-         * accept every sampled cycle. addr_en still fires for an invalid
-         * cycle so clients can clear any pending bus drive, while sss_en and
-         * data_en are suppressed. */
+        /* GS mode requires /M2SEL at the address sample. addr_en fires on
+         * invalid cycles to clear pending replies. sss_en, serve_en, and
+         * data_en only fire on valid cycles. */
         logic cycle_valid;
         logic inh;
         logic res;
@@ -71,8 +68,9 @@ package globals;
         logic data_en;       // 1 in the phase that data field updates
         logic addr_en;       // 1 in the phase that addr_early/rw_early
                              // update (= TAP_ADDR_SNAP, early PHI1 snap)
-        logic sss_en;        // early-decode strobe: INH-path translate and
-                             // the Apple-cycle cadence tick (timing gen)
+        logic phi0_tick;     // elapsed-time tick at the early-decode phase,
+                             // independent of bus access qualification
+        logic sss_en;        // qualified early-decode strobe for INH/PSRAM
         logic serve_en;      // 1 in the phase that addr/rw update (the
                              // PHI0-high sample); the universal strobe for
                              // observation and card serving

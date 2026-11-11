@@ -35,6 +35,7 @@
  * at the legacy row stride, starting at slot row 0, no border data.
  * The compositor blits it 2x2 into the same rect as legacy 2x4. */
 #define APPLE_FB_DISPLAY_MODE_LEGACY_I 2U
+#define APPLE_FB_DISPLAY_MODE_GS       3U
 
 /* Frame format detail, published atomically with the slot and display mode.
  * CPU0 must not infer this from the renderer's cached main/AUX shadows: those

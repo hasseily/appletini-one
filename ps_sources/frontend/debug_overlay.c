@@ -202,11 +202,12 @@ static void draw_vidhd_shr_state(uint16_t *fb,
     const uint8_t shr_active =
         (s != NULL && s->apple_mode == APPLE_FB_DISPLAY_MODE_SHR) ? 1U : 0U;
 
-    (void)snprintf(text,
-                   sizeof(text),
-                   "%04lX SHR %u",
-                   (unsigned long)c029_addr,
-                   (unsigned)shr_active);
+    if (s != NULL && s->apple_mode == APPLE_FB_DISPLAY_MODE_GS) {
+        (void)snprintf(text, sizeof(text), "%04lX IIgs video", (unsigned long)c029_addr);
+    } else {
+        (void)snprintf(text, sizeof(text), "%04lX SHR %u",
+                       (unsigned long)c029_addr, (unsigned)shr_active);
+    }
     line(fb,
          x,
          y,
@@ -547,7 +548,8 @@ static void draw_video(uint16_t *fb, const debug_overlay_snapshot_t *s)
     (void)snprintf(text,
                    sizeof(text),
                    "Apple %s %s",
-                   (s->apple_mode == APPLE_FB_DISPLAY_MODE_SHR) ? "SHR" : "legacy",
+                   (s->apple_mode == APPLE_FB_DISPLAY_MODE_GS) ? "IIgs" :
+                   (s->apple_mode == APPLE_FB_DISPLAY_MODE_SHR ? "SHR" : "legacy"),
                    (s->apple_video_50hz != 0U) ? "50Hz" : "60Hz");
     line(fb, x, y, w, 0U, text, FB16_COLOR_WHITE);
     if (s->video_output_mono != 0U) {

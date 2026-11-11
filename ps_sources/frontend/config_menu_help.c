@@ -418,6 +418,7 @@ HELP(mouse,
 HELP(phasor,
     "Phasor sound card: four YM2149 chips, 12 channels, and two SSI-263 speech chips.",
     "The Phasor is essentially 2 Mockingboard cards in one slot. It should run all Mockingboard software.",
+    "On a ROM 1 IIgs, leave slot 4 internal for the native mouse. Phasor replaces its firmware.",
     "Pan sliders position the AY channels and each SSI. SSI volume sets speech level against the AYs.",
     "Bass, Mid, Treble, and Volume adjust the complete mix.");
 
@@ -662,8 +663,16 @@ HELP(ram_provide,
     "With TransWarp acceleration on, 128K is built into the accelerator and the 8MB RamWorks",
     "is served from PSRAM at accelerator speed (a physical aux card disables both, as always).");
 
+HELP(ram_iigs_slot3,
+    "Enable only when Appletini is installed in physical slot 3 of an Apple IIgs.",
+    "Restart Appletini to apply. Set each reserved logical slot to Your Card in the IIgs Control Panel.",
+    "Leave those physical slots free of conflicting cards.",
+    "SmartPort stays in logical slot 7. Leave slot 4 internal on a ROM 1 IIgs to keep the native mouse.",
+    "Aux RAM, RamWorks, TransWarp, and AD8088 host-memory access stay blocked on the IIgs.");
+
 static const help_override_t ram_overrides[] = {
     OVERRIDE(0, ram_provide),
+    OVERRIDE(1, ram_iigs_slot3),
 };
 
 /* ======================================================================== */

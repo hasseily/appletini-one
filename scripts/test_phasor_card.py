@@ -139,7 +139,7 @@ def test_four_ay_chips_and_phasor_chip_selects() -> None:
             "                                         via1_ay1_drive, psg3_data_out);" in source,
             "VIA Port A readback must select the addressed AY data bus")
     require("wire via_bus_clock = card_enabled && ab_read.data_en;" in source and
-            "wire via_timer_clock = card_enabled && ab_read.sss_en;" in source and
+            "wire via_timer_clock = card_enabled && ab_read.phi0_tick;" in source and
             "wire phasor_timer_read_extra_clock = !mockingboard_only && phasor_native;" in source and
             "psg_ce_extra_q <= phasor_native && via_bus_clock;" in source and
             "wire psg_clock = via_bus_clock || psg_ce_extra_q;" in source and
@@ -389,7 +389,7 @@ def test_via_timer_reads_preserve_pre_tick_value() -> None:
     source = read(MOCKINGBOARD_SV)
     via = read(VIA6522_V)
 
-    require("wire via_timer_clock = card_enabled && ab_read.sss_en;" in source and
+    require("wire via_timer_clock = card_enabled && ab_read.phi0_tick;" in source and
             "ab_read.serve_en && ab_read.rw && (via0_hit || via1_hit)" in source,
             "Mockingboard timer cadence must remain early while reads use late authoritative decode")
     require("reg [15:0] timer1_bus_value;" in via and
@@ -622,7 +622,7 @@ def test_virtual_irq_uses_bidirectional_open_collector_lane() -> None:
     top = read(APPLETINI_YARZ_TOP_SV)
 
     require("inout  wire                   apple_irq_pin" in wrapper and
-            "wire apple_irq_drive_low = !physical_bus_isolate &&" in wrapper and
+            "wire apple_irq_drive_low = rstn && !physical_bus_isolate &&" in wrapper and
             "ab_write.assert_irq &&" in wrapper and
             "(!host_is_iiplus || !irq_rearm_release_q);" in wrapper and
             "assign apple_irq_pin = apple_irq_drive_low ? 1'b0 : 1'bz;" in wrapper and

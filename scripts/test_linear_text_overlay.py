@@ -87,7 +87,8 @@ def static_checks() -> None:
             "LTO_CTL_MARK_STALE" in capture_c and
             '"dsb sy"' in capture_c,
             "CPU1 must order buffer writes and mark capture gaps stale")
-    require(re.search(r"draw_supersprite_overlay\(fb\);\s+linear_text_overlay_draw\(fb,",
+    require(re.search(r"draw_supersprite_overlay\(fb\);\s+linear_text_overlay_draw\(\s*"
+                      r"g_compositor_last_apple_mode == APPLE_FB_DISPLAY_MODE_GS \? NULL : fb,",
                       compositor) is not None and "APPLE_FB_DISPLAY_MODE_SHR" in compositor,
             "text overlay must draw above Apple and SuperSprite video")
     require("linear_text_overlay_poll_frame_latch" in compositor and

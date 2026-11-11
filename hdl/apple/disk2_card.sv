@@ -439,7 +439,7 @@ module disk2_card (
      * core-provided virtual tick. */
     wire disk_cycle_tick =
         (!vtw_active || vtw_native_cycle_active ||
-         vtw_write_timing_active) ? ab_read.sss_en :
+         vtw_write_timing_active) ? ab_read.phi0_tick :
                                     (vtw_replay_tick || vtw_io_read);
 
     // Wide track-size and drive/head matches must not feed the CPU's write

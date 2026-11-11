@@ -306,11 +306,11 @@ def test_disk2_slot6_uses_boot_handoff_gate() -> None:
             "wire disk2_card_enabled =\n"
             "        card_slot6_bus_enable &&\n"
             "        (onee_enable_effective || disk2_active_timing_q);" in source and
-            ".ab_read(gate_ab(ab_read, disk2_card_enabled))" in source and
+            ".ab_read(gate_slot_ab(data_phase_ab_read, disk2_card_enabled, 8'h40, iigs_bus_permissions))" in source and
             "wire disk2_live_handoff_serve =\n"
             "        !onee_enable_effective && card_slot6_bus_enable && disk2_active &&\n"
             "        !disk2_active_timing_q;" in source and
-            ".rom_serve_en(ab_read.serve_en && disk2_live_handoff_serve)" in source and
+            ".rom_serve_en(ab_read.serve_en && disk2_live_handoff_serve &&" in source and
             ".slot_assign(3'h6)" in source,
             "Disk II must honor Slot 6 at its input without changing the physical "
             "output policy, handoff gate, or one-cycle live ROM bypass")
@@ -347,7 +347,7 @@ def test_disk2_handoff_timing_gate_phase_contract() -> None:
     require("wire disk2_live_handoff_serve =\n"
             "        !onee_enable_effective && card_slot6_bus_enable && disk2_active &&\n"
             "        !disk2_active_timing_q;" in top and
-            ".rom_serve_en(ab_read.serve_en && disk2_live_handoff_serve)" in top,
+            ".rom_serve_en(ab_read.serve_en && disk2_live_handoff_serve &&" in top,
             "the live slot-ROM bypass must exist only during the physical host's "
             "one-clock handoff window and must keep the slot-disable gate")
 
@@ -617,10 +617,13 @@ def test_iiplus_vaporlock_path_is_patchable_and_fits() -> None:
             "II+ vaporlock delay counts must be single-byte patch values")
 
     require(len(c8) == 256, "C8 expansion ROM image must remain exactly one page")
-    last_used = max((index for index, byte in enumerate(c8) if byte != 0xEA),
-                    default=-1)
-    require(last_used < 0xE8,
-            "C8 expansion ROM must retain at least 24 bytes of slack after the II+ path")
+    # Check the actual firmware overlay rather than reserving a fixed amount
+    # of unused space in the retained ROM. Its builder rejects page overflow
+    # and verifies that the C7 bytes and C8 call targets stay fixed.
+    from build_vtw_boot_start_rom import build as build_vtw_start
+
+    _, _, patched_c8, _ = build_vtw_start()
+    require(len(patched_c8) == 256, "firmware C8 overlay must fit one page")
 
 
 def test_boot_prompt_shows_appletini_name() -> None:

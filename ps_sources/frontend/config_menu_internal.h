@@ -154,7 +154,6 @@ uint8_t config_menu_appendf(char *buffer,
                             int *len,
                             const char *fmt,
                             ...);
-void config_menu_set_status(config_menu_t *menu, uint8_t warning, const char *text);
 void config_menu_save_settings(config_menu_t *menu);
 uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                                           const char *path,

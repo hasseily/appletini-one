@@ -359,6 +359,10 @@ void config_menu_draw_applicard(uint16_t *fb,
         return;
     }
 
+    const uint8_t physical_iigs =
+        boot_menu_service_machine_mode() == CARD_MACHINE_MODE_IIGS &&
+        menu->onee_mode_state != CONFIG_MENU_ONEE_MODE_RUNNING;
+
     hgr_draw_check_item(fb, x, y, w, (uint8_t)(menu->item_focus == 0U),
                         menu->applicard_slot5_enabled, "Enable in Slot 5");
     hgr_draw_value_item(fb, x, y + row_h, w,
@@ -367,7 +371,9 @@ void config_menu_draw_applicard(uint16_t *fb,
                         menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_TRANSPORTER ?
                             "PC Transporter (test)" :
                         menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_AD8088 ?
-                            "ALF AD8088 Plus (640K)" : "Z80 Appli-Card");
+                            (physical_iigs != 0U ? "ALF AD8088 (blocked on IIgs)" :
+                                                    "ALF AD8088 Plus (640K)") :
+                            "Z80 Appli-Card");
     hgr_draw_value_item(fb, x, y + (2 * row_h), w,
                         (uint8_t)(menu->item_focus == 2U),
                         "Resource usage:",
@@ -708,7 +714,7 @@ void config_menu_draw_transwarp(uint16_t *fb,
         hgr_draw_check_item_dimmed(fb, x, y, w,
                                    (uint8_t)(menu->item_focus ==
                                              CONFIG_TRANSWARP_ITEM_ENABLE),
-                                   0U, "Accelerate (not on a IIgs)");
+                                   menu->vtw_enabled, "Acceleration blocked on IIgs");
     } else if (menu->usb_owned != 0U) {
         hgr_draw_check_item_dimmed(fb, x, y, w,
                                    (uint8_t)(menu->item_focus ==
@@ -810,7 +816,14 @@ void config_menu_draw_ram(uint16_t *fb,
         return;
     }
 
-    if (menu->usb_owned != 0U) {
+    const uint8_t physical_iigs =
+        boot_menu_service_machine_mode() == CARD_MACHINE_MODE_IIGS &&
+        menu->onee_mode_state != CONFIG_MENU_ONEE_MODE_RUNNING;
+
+    if (physical_iigs != 0U) {
+        hgr_draw_check_item_dimmed(fb, x, y, w, focused,
+                                   menu->ram_enabled, "Aux RAM / RamWorks blocked on IIgs");
+    } else if (menu->usb_owned != 0U) {
         hgr_draw_check_item_dimmed(fb, x, y, w, focused,
                                    menu->ram_enabled,
                                    "Provide 64K aux + 8MB RamWorks");
@@ -822,12 +835,14 @@ void config_menu_draw_ram(uint16_t *fb,
                             menu->ram_enabled,
                             "Provide 64K aux + 8MB RamWorks");
     }
-    if (menu->vtw_enabled != 0U) {
+    hgr_draw_check_item(fb, x, y + row_h, w, (uint8_t)(menu->item_focus == 1U),
+                        menu->iigs_slot3_profile, "IIgs physical slot 3 (after restart)");
+    if (menu->vtw_enabled != 0U && physical_iigs == 0U) {
         /* Informational only (not a focusable item): the accelerated
          * machine always has 128K from shadow memory; with Appletini
          * RAM enabled (no physical aux card) the accelerator serves the
          * full 8MB RamWorks from PSRAM at speed. */
-        hgr_draw_item_dimmed(fb, x, y + row_h, w, 0U,
+        hgr_draw_item_dimmed(fb, x, y + (2 * row_h), w, 0U,
                              menu->ram_enabled != 0U
                                  ? "TransWarp on: 128K + 8MB RamWorks, accelerated"
                                  : "TransWarp on: 128K built in");

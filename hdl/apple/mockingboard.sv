@@ -60,8 +60,7 @@ wire [3:0] phasor_mode_nibble = {1'b1, slot_assign};
 
 /* ab_read.addr/rw are the authoritative PHI0-high sample (valid for 6502
  * and DMA masters alike). Read serving keys on serve_en; register-write
- * side effects key on data_en; via_timer_clock keeps sss_en as its pure
- * 1 MHz cadence tick. */
+ * side effects key on data_en. VIA timers use the continuous PHI0 tick. */
 wire slot_io_hit =
     card_enabled &&
     sss.slot_access &&
@@ -88,7 +87,7 @@ wire card_reset = !rstn || !card_enabled;
 wire apple_reset = !ab_read.res;
 wire via_reset = card_reset || apple_reset;
 wire via_bus_clock = card_enabled && ab_read.data_en;
-wire via_timer_clock = card_enabled && ab_read.sss_en;
+wire via_timer_clock = card_enabled && ab_read.phi0_tick;
 // A real Phasor presents timer probes one 1 MHz tick later than a plain
 // Mockingboard -- but only in Phasor native mode. In Mockingboard-compat
 // mode a real Phasor's timers are indistinguishable from a plain

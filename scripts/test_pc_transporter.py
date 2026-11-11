@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+from test_iigs_bus_safety import extract_top_routing
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,10 +64,12 @@ def vivado_tool(name):
 
 def rtl_tests(out):
     hdl = ROOT / "hdl"
-    sources = ["globals.sv", "apple/soft_switch_manager.sv", "apple/pc_transporter_pit.sv",
+    sources = ["globals.sv", "apple/soft_switch_manager.sv", "apple/apple_slot7_devsel_guard.sv",
+               "apple/pc_transporter_pit.sv",
                "apple/pc_transporter_card.sv", "apple/apple_virtual_bus.sv", "apple/disk2_ddr_bridge.sv",
                "sim/tb_pc_transporter_card.sv", "sim/tb_disk2_ddr_bridge_shared.sv"]
-    run([vivado_tool("xvlog"), "--sv", *(hdl / src for src in sources)], out)
+    run([vivado_tool("xvlog"), "--sv", *(hdl / src for src in sources),
+         extract_top_routing(out)], out)
     for name, success in (("tb_pc_transporter_card", "PC TRANSPORTER CARD PASS"),
                           ("tb_disk2_ddr_bridge_shared", "DISK II AND TRANSPORTER DDR PASS")):
         snapshot = f"{name}_snap"

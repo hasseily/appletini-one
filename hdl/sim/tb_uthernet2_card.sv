@@ -131,6 +131,64 @@ module tb_uthernet2_card;
         ab_read.data_en = 1'b0;
     endtask
 
+    task automatic check_expired_read(input bit unselected_boundary);
+        pulse_host_read();
+        wait (!eth_cs_n);
+        pulse_apple_read(2'b11);
+        if (!dut.apple_read_pending_q)
+            $fatal(1, "test did not defer the Apple read");
+
+        // A denied GS access has an address boundary but no data strobe.
+        // The qualified case ends at data_en while the read is still queued.
+        if (unselected_boundary) begin
+            ab_read.addr_en = 1'b1;
+            ab_read.cycle_valid = 1'b0;
+            ab_read.m2sel = 1'b1;
+        end else begin
+            ab_read.data_en = 1'b1;
+        end
+        @(negedge clk);
+        ab_read.addr_en = 1'b0;
+        ab_read.data_en = 1'b0;
+
+        // No Uthernet strobe occurs while the following SSC address is on
+        // the bus. An expired reply must stay off throughout recovery.
+        ab_read.addr = 16'hC09A;
+        repeat (70) begin
+            if (ab_write.wr_data_en)
+                $fatal(1, "deferred Uthernet read reopened after cycle end (unselected=%0d)",
+                       unselected_boundary);
+            @(negedge clk);
+        end
+        ab_read.cycle_valid = 1'b1;
+        ab_read.m2sel = 1'b0;
+        wait_ready();
+    endtask
+
+    task automatic check_late_physical_read;
+        logic [15:0] next_phys_addr;
+
+        pulse_apple_read(2'b11);
+        // Wait for the W5100 data read to start, then close the Apple
+        // cycle before the sampled data can become an Apple reply.
+        for (int i = 0; i < 50 && (eth_rd_n || eth_a != 2'b11); ++i)
+            @(negedge clk);
+        if (eth_rd_n || eth_a != 2'b11)
+            $fatal(1, "late-completion test did not start a W5100 data read");
+        next_phys_addr = dut.access_addr_q + 16'd1;
+        ab_read.data_en = 1'b1;
+        @(negedge clk);
+        ab_read.data_en = 1'b0;
+        repeat (8) begin
+            if (ab_write.wr_data_en)
+                $fatal(1, "late W5100 completion reopened the Apple reply");
+            @(negedge clk);
+        end
+        wait_ready();
+        if (dut.phys_addr_q != next_phys_addr)
+            $fatal(1, "late W5100 completion did not advance the physical pointer");
+    endtask
+
     initial begin
         ab_read = '0;
         sss = '0;
@@ -242,6 +300,10 @@ module tb_uthernet2_card;
         if (host_ready) $fatal(1, "host became ready before Apple write data");
         finish_apple_cycle(8'h00);
         wait_ready();
+
+        check_expired_read(1'b0);
+        check_expired_read(1'b1);
+        check_late_physical_read();
 
         $display("UTHERNET2 ARBITRATION PASS");
         $finish;

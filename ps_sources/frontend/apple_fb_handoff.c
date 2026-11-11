@@ -150,7 +150,8 @@ static uint32_t s_reader_format_detail = APPLE_FB_FORMAT_UNKNOWN; /* CPU0 only *
 static inline uint32_t handoff_normalize_display_mode(uint32_t display_mode)
 {
     return (display_mode == APPLE_FB_DISPLAY_MODE_SHR ||
-            display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I) ?
+            display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I ||
+            display_mode == APPLE_FB_DISPLAY_MODE_GS) ?
         display_mode : APPLE_FB_DISPLAY_MODE_LEGACY;
 }
 

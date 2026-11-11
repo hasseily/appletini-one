@@ -345,7 +345,7 @@ static void fixture(unsigned target) {
     expect_native_c3_before_release=0;
     g_machine_id_raw=g_aux_card_present=g_aux_probe_seen=g_machine_forced=0;
     g_iigs_seen=g_machine_identity_fault=g_iigs_policy_fault_seen=0;
-    g_iigs_slot_config_valid=g_iigs_external_slot_mask=0;
+    g_iigs_slot_map=0;
     g_machine_mode_applied=g_aux_provide_applied=g_ramworks_applied=0xFFU;
     g_intent_enabled=0;g_speed_mode=CARD_CTRL_VTW_SPEED_DIVIDED;
     g_pace_divider=19U;g_announced_wait=g_announced_handoff_wait=0;

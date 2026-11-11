@@ -165,6 +165,11 @@ module tb_onee_joined_bus;
     );
 
     soft_switch_manager manager_i (
+        .iigs_profile(1'b0),
+        .iigs_bootstrap_slot7(1'b0),
+        .iigs_boot_mask(8'h00),
+        .iigs_boot_mask_valid(1'b0),
+        .iigs_native_video(1'b0), .iigs_bank_latch(1'b0),
         .clk(clk),
         .rstn(resetn),
         .ramworks_en(1'b0),
@@ -225,6 +230,7 @@ module tb_onee_joined_bus;
         gated = value;
         if (!enabled) begin
             gated.addr_en  = 1'b0;
+            gated.phi0_tick = 1'b0;
             gated.sss_en   = 1'b0;
             gated.serve_en = 1'b0;
             gated.data_en  = 1'b0;

@@ -118,6 +118,15 @@ uint8_t comp_out_addr_to_slot(uint32_t addr);
 #define COMP_APPLE_SHR_STRIDE_BYTES (COMP_APPLE_SHR_ROW_PIXELS * COMP_APPLE_BPP)
 #define COMP_APPLE_SHR_BYTES        (COMP_APPLE_SHR_HEIGHT * COMP_APPLE_SHR_STRIDE_BYTES)
 
+/* Native IIgs active and border pixels share one canvas. */
+#define COMP_APPLE_GS_ACTIVE_WIDTH   640u
+#define COMP_APPLE_GS_ACTIVE_HEIGHT  200u
+#define COMP_APPLE_GS_ACTIVE_X        32u
+#define COMP_APPLE_GS_ACTIVE_Y        16u
+#define COMP_APPLE_GS_WIDTH          704u
+#define COMP_APPLE_GS_HEIGHT         232u
+#define COMP_APPLE_GS_STRIDE_BYTES   (COMP_APPLE_GS_WIDTH * COMP_APPLE_BPP)
+
 #define COMP_APPLE_SLOT_BYTES       0x00100000u
 #define COMP_APPLE_BYTES            COMP_APPLE_SLOT_BYTES
 

@@ -151,6 +151,9 @@ module uthernet2_card #(
     logic reset_done_q;
 
     logic read_pending_q;
+    // The physical W5100 read may finish after its Apple reply expires.
+    // A queued new Apple read does not own that older operation's result.
+    logic read_response_active_q;
     logic read_valid_q;
     logic [7:0] read_data_q;
 
@@ -199,6 +202,7 @@ module uthernet2_card #(
     wire apple_io_write_addr_start = ab_read.serve_en && ab_read.cycle_valid &&
                                       !ab_read.rw && slot_io_hit;
     wire apple_io_write_start = ab_read.data_en && !ab_read.rw && slot_io_hit;
+    wire apple_cycle_ended = ab_read.addr_en || ab_read.data_en || !ab_read.res;
     wire apple_io_start = apple_io_read_start || apple_io_write_start;
     wire [1:0] apple_io_reg = ab_read.addr[1:0];
     wire apple_waiting = apple_io_start || apple_io_write_addr_start ||
@@ -372,6 +376,7 @@ module uthernet2_card #(
     task automatic start_apple_read(input logic [1:0] reg_sel);
         begin
             read_pending_q <= 1'b1;
+            read_response_active_q <= 1'b1;
             if (reg_sel != U2_REG_DATA) begin
                 read_data_q <= apple_local_read_data(reg_sel, mode_q, data_addr_q);
                 read_valid_q <= 1'b1;
@@ -423,7 +428,7 @@ module uthernet2_card #(
             ab_write_d.wr_data_en = 1'b1;
         end
 
-        if (ab_read.data_en) begin
+        if (apple_cycle_ended) begin
             ab_write_d.wr_data = 8'h00;
             ab_write_d.wr_data_en = 1'b0;
         end
@@ -440,6 +445,7 @@ module uthernet2_card #(
             reset_released_q <= 1'b0;
             reset_done_q <= 1'b0;
             read_pending_q <= 1'b0;
+            read_response_active_q <= 1'b0;
             read_valid_q <= 1'b0;
             read_data_q <= 8'h00;
             mode_q <= 8'h00;
@@ -528,9 +534,14 @@ module uthernet2_card #(
                 eth_rst_n <= 1'b1;
             end
 
-            if (ab_read.data_en) begin
+            if (apple_cycle_ended) begin
                 read_pending_q <= 1'b0;
+                read_response_active_q <= 1'b0;
                 read_valid_q <= 1'b0;
+                // Drop work that missed its reply window before it started.
+                // An active W5100 transaction still updates the pointer.
+                apple_read_pending_q <= 1'b0;
+                apple_write_reserved_q <= 1'b0;
             end
 
             if (host_active_q && apple_waiting &&
@@ -545,7 +556,8 @@ module uthernet2_card #(
                     bus_kind_q <= BUS_KIND_NONE;
                     op_cycle_q <= '0;
 
-                    if (reset_done_q && apple_read_pending_q) begin
+                    if (reset_done_q && apple_read_pending_q &&
+                        !apple_cycle_ended) begin
                         apple_read_pending_q <= 1'b0;
                         start_apple_read(apple_read_pending_reg_q);
                     end else if (reset_done_q && apple_io_read_start) begin
@@ -758,8 +770,10 @@ module uthernet2_card #(
                             end
 
                             BUS_KIND_DATA_READ: begin
-                                read_data_q <= eth_d_i;
-                                read_valid_q <= 1'b1;
+                                if (read_response_active_q && !apple_cycle_ended) begin
+                                    read_data_q <= eth_d_i;
+                                    read_valid_q <= 1'b1;
+                                end
                                 mark_physical_data_access();
                             end
 

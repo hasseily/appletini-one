@@ -9,6 +9,7 @@ module apple_machine_safety_policy (
     input  logic [3:0] locked_machine_id,
     input  logic       machine_id_fault,
     input  logic       iigs_slot_policy_fault,
+    input  logic       iigs_slot3_profile,
     input  logic [7:0] iigs_external_slot_mask,
     input  logic       iigs_external_slot_mask_valid,
     input  logic [1:0] requested_machine_mode,
@@ -26,7 +27,9 @@ module apple_machine_safety_policy (
 );
 
     always_comb begin
-        machine_identity_fault = machine_id_fault || iigs_slot_policy_fault;
+        machine_identity_fault = machine_id_fault || iigs_slot_policy_fault ||
+            (iigs_slot3_profile && locked_machine_id != 4'd0 &&
+             locked_machine_id != 4'd4);
         machine_identity_reported = (locked_machine_id != 4'd0);
         // Only the boot ROM's locked physical-host report grants ownership.
         machine_identity_legacy =
@@ -40,16 +43,15 @@ module apple_machine_safety_policy (
         if (machine_identity_legacy) begin
             physical_slot_allowed_mask = 8'hFE;
         end else if (machine_identity_iigs &&
-                     iigs_external_slot_mask_valid &&
-                     iigs_external_slot_mask[7]) begin
-            /* Only the wired physical slot survives on GS. Other logical
-             * slots lack live select inputs and cannot be proved external. */
-            physical_slot_allowed_mask = 8'h80;
+                     iigs_external_slot_mask_valid) begin
+            physical_slot_allowed_mask = iigs_external_slot_mask &
+                (iigs_slot3_profile ? 8'hF6 : 8'h80);
         end
 
         machine_inh_allowed = machine_identity_legacy;
         // Keep GS qualification active even after a later identity conflict.
-        machine_gs_m2_qualify = (locked_machine_id == 4'd4);
+        machine_gs_m2_qualify = iigs_slot3_profile ||
+                                (locked_machine_id == 4'd4);
         machine_is_iiplus = machine_identity_legacy &&
                             (locked_machine_id == 4'd1);
 
@@ -58,7 +60,7 @@ module apple_machine_safety_policy (
         if (machine_identity_fault) begin
             effective_machine_mode = 2'd0;
             effective_m2sel_active_high = 1'b0;
-        end else if (locked_machine_id == 4'd4) begin
+        end else if (machine_gs_m2_qualify) begin
             effective_machine_mode = 2'd3;
             effective_m2sel_active_high = 1'b0;
         end else if (!machine_identity_legacy) begin

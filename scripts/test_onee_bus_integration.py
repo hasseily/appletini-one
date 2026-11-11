@@ -69,7 +69,9 @@ def static_checks() -> None:
         "onee_motherboard_io onee_motherboard_io_i" in top and
         ".enabled                 (onee_enable_effective)" in top and
         ".softswitch_ab_read      (onee_softswitch_ab_read)" in top and
-        ".ab_read(onee_softswitch_ab_read)" in top,
+        "softswitch_data_phase_ab_read = onee_softswitch_ab_read;" in top and
+        "softswitch_data_phase_ab_read.data = data_phase_ab_read.data;" in top and
+        ".ab_read(softswitch_data_phase_ab_read)" in top,
         "ONE//e motherboard I/O must be effective-only and feed the manager",
     )
     require(
@@ -120,12 +122,12 @@ def static_checks() -> None:
         "virtual ownership must not grant physical ownership or bypass isolation",
     )
     require(
-        "card_slot2_bus_enable, (card_slot5_enable && physical_slot_allowed_mask[5]), "
+        "card_slot2_bus_enable, (card_slot5_enable && card_host_enable_mask[5]), "
         "card_slot1_bus_enable," in normalized_top,
         "physical Appli-Card client 7 must use slot-5 host permission without a ONE//e grant",
     )
     require(
-        ".vtw_enabled(vtw_enable_eff || onee_enable_effective)" in top,
+        ".vtw_enabled(vtw_enable_eff || onee_enable_effective ||" in top,
         "ONE//e must explicitly block the AppliCard/AD8088 bus master",
     )
 
@@ -147,8 +149,8 @@ def static_checks() -> None:
         "session_boot_target_disk2 <= boot_target_disk2;" in cold_scan and
         "slot7_hidden <= boot_target_disk2;" in cold_scan and
         ".ab_read(boot_menu_ab_read)" in top and
-        "boot_menu_ab_read = gate_ab(slot7_devsel_ab_read, "
-        "!onee_enable_effective);" in normalized_top and
+        "boot_menu_ab_read = gate_slot_ab(slot7_devsel_ab_read, "
+        "!onee_enable_effective, 8'h80, iigs_bus_permissions);" in normalized_top and
         "apple_bootstrap_guard" not in top,
         "ONE//e must sample the same slot-enabled boot target as the host",
     )
@@ -161,8 +163,8 @@ def static_checks() -> None:
         "        (onee_enable_effective || smartport_active)" in top and
         "else if (ab_read.addr_en) begin\n"
         "            vtw_smartport_visible_q <= vtw_smartport_visible_desired;" in top and
-        ".ab_read(gate_ab(slot7_devsel_ab_read," in top and
-        "supersprite_bus_visible))" in top,
+        ".ab_read(gate_slot_ab(slot7_devsel_ab_read," in top and
+        "supersprite_bus_visible, 8'h80, iigs_bus_permissions))" in top,
         "SmartPort-selected ONE//e must own slot 7 over saved SuperSprite",
     )
     require(
@@ -172,7 +174,7 @@ def static_checks() -> None:
         "wire disk2_card_enabled =\n"
         "        card_slot6_bus_enable &&\n"
         "        (onee_enable_effective || disk2_active_timing_q);" in top and
-        ".ab_read(gate_ab(ab_read, disk2_card_enabled))" in top and
+        ".ab_read(gate_slot_ab(data_phase_ab_read, disk2_card_enabled, 8'h40, iigs_bus_permissions))" in top and
         "assign vtw_disk2_active = !onee_enable_effective" in top,
         "ONE//e must gate Disk II input while keeping physical output policy stable",
     )

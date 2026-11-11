@@ -315,6 +315,7 @@ typedef struct {
     uint8_t ram_enabled;
     uint8_t ramworks_enabled;
     uint8_t sp_ramdisk_enabled;
+    uint8_t iigs_slot3_profile;     /* working config; latched at firmware startup */
     uint8_t settings_loaded;
     uint8_t session_only;
     uint8_t multiboot_ready;
@@ -378,6 +379,7 @@ typedef struct {
     char status[CONFIG_MENU_STATUS_LEN];
 } config_menu_t;
 
+void config_menu_set_status(config_menu_t *menu, uint8_t warning, const char *text);
 void config_menu_init(config_menu_t *menu);
 void config_menu_bind_platform(config_menu_t *menu, const config_menu_platform_t *platform);
 void config_menu_refresh_multiboot(config_menu_t *menu);

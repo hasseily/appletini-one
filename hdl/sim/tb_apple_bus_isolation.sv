@@ -240,6 +240,16 @@ module tb_apple_bus_isolation;
         check(tini_data_dir_pin == 1'b1 && apple_data_pin === 8'h5A,
               "selected slave read restores data after the staged gate");
 
+        gs_m2_qualify = 1'b1;
+        physical_slave_select_ok = 1'b0;
+        #1;
+        check(tini_data_dir_pin == 1'b0 && apple_data_pin === 8'hzz,
+              "live GS selection must release a staged byte before the clock");
+        check(apple_irq_pin === 1'b0,
+              "revoking GS slave selection must preserve a permitted IRQ");
+        physical_slave_select_ok = 1'b1;
+        gs_m2_qualify = 1'b0;
+
         physical_irq_allowed = 1'b0;
         #1;
         check(apple_irq_pin === 1'b1,
@@ -278,6 +288,11 @@ module tb_apple_bus_isolation;
         release dut.ab_read_r.cycle_valid;
         release dut.ab_read_r.rw;
         release dut.m2sel_clean;
+        check(apple_irq_pin === 1'b0, "expected a pending IRQ before reset");
+        rstn = 1'b0;
+        #1;
+        check(apple_irq_pin === 1'b1,
+              "wrapper reset must release a pending IRQ before the clock");
         $display("APPLE BUS ISOLATION PASS");
         $finish;
     end

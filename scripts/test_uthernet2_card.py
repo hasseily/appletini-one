@@ -329,7 +329,7 @@ def main():
 
     require("wire card_slot1_enable = card_slot_enable_mask_q[1];" in top,
             "Apple top must expose slot 1 enable")
-    require(".ab_read(gate_ab(ab_read, card_slot1_bus_enable))" in top and
+    require(".ab_read(gate_slot_ab(data_phase_ab_read, card_slot1_bus_enable, 8'h02, iigs_bus_permissions))" in top and
             ".slot_assign(3'h1)" in top,
             "Uthernet II card must be gated by slot 1 enable and assigned to slot 1")
     require("apple_bus_client_policy_gate #(" in top and

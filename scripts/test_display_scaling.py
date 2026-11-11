@@ -64,13 +64,14 @@ static uint32_t test_display_mode, test_format_detail;
 static uint8_t s_border_enabled, s_border_flood, s_scanlines_mode;
 static uint8_t s_video_ghosting_strength, s_video_blur_strength, s_video_glow_strength;
 static uint8_t s_format_badge_enabled;
+static int badge_x, badge_y, badge_width;
 volatile uint32_t g_compositor_last_apple_slot, g_compositor_last_apple_mode;
 uint32_t apple_fb_reader_display_mode(void) { return test_display_mode; }
 uint32_t apple_fb_reader_format_detail(void) { return test_format_detail; }
 uint8_t apple_fb_reader_border_color(void) { return 12; }
 static int compositor_apple_effects_active(void) { return s_video_ghosting_strength != 0 || s_video_blur_strength != 0 || s_video_glow_strength != 0 || s_mono_width != 0; }
 static void draw_format_badge(uint16_t *fb, int x, int y, int w) {
-    (void)fb; (void)x; (void)y; (void)w;
+    (void)fb; badge_x = x; badge_y = y; badge_width = w;
 }
 ''' + apple_drawing + overlay_palette + r'''
 static linear_text_overlay_config_t s_active;
@@ -284,6 +285,62 @@ static void check_claimed_border_modes(void) {
     }
     s_video_ghosting_strength = 0;
 }
+static void check_native_gs_canvas(void) {
+    const comp_viewport_t *active = &comp_shr_viewport;
+    const comp_viewport_t view = apple_picture_viewport(APPLE_FB_DISPLAY_MODE_GS);
+    const int sx = active->scale, sy = 2 * sx;
+    const int canvas_x = active->x - 32 * sx;
+    const int canvas_y = active->y - 16 * sy;
+    const uint16_t flood = fb16_from_bgra32(apple_video_iigs_border_bgra(12));
+    CHECK(view.x == active->x && view.y == active->y &&
+          view.width == 640 * sx && view.height == 200 * sy);
+    CHECK(view.border_x == canvas_x && view.border_y == canvas_y &&
+          view.border_width == 704 * sx && view.border_height == 232 * sy);
+    for (unsigned y = 0; y < 232; ++y)
+        for (unsigned x = 0; x < 704; ++x)
+            test_apple[y * 704 + x] = 0xFF000000U |
+                (((x * 7) & 255) << 16) | (((y * 3) & 255) << 8) |
+                ((x + 2 * y) & 255);
+    test_display_mode = APPLE_FB_DISPLAY_MODE_GS;
+    s_format_badge_enabled = 1;
+    for (unsigned borders = 0; borders < 3; ++borders) {
+        s_border_enabled = borders != 0;
+        s_border_flood = borders == 2;
+        for (unsigned effects_on = 0; effects_on < 2; ++effects_on) {
+            /* Native text and SHR publish exactly the same geometry. */
+            test_format_detail = effects_on ? APPLE_FB_FORMAT_SHR_640 : APPLE_FB_FORMAT_TEXT;
+            s_video_ghosting_strength = effects_on;
+            s_scanlines_mode = effects_on ? 3 : 0;
+            const int ox = borders ? canvas_x : active->x;
+            const int oy = borders ? canvas_y : active->y;
+            const int w = borders ? 704 : 640;
+            const int h = borders ? 232 : 200;
+            const uint32_t *source = test_apple + (borders ? 0 : 16 * 704 + 32);
+            effect_clear_history();
+            reset_output();
+            CHECK(!draw_apple_subwindow(fb, COMP_APPLE_SLOT_COUNT));
+            CHECK(draw_apple_subwindow(fb, 0));
+            CHECK(badge_x == active->x && badge_y == active->y &&
+                  badge_width == active->width);
+            check_guards();
+            for (int y = 0; y < FB16_HEIGHT; ++y) {
+                for (int x = 0; x < FB16_WIDTH; ++x) {
+                    uint16_t want = 0x1357;
+                    if (x >= ox && x < ox + w * sx && y >= oy && y < oy + h * sy)
+                        want = shade(fb16_from_bgra32(source[((y - oy) / sy) * 704 +
+                                                            (x - ox) / sx]),
+                                     (unsigned)(y - oy) & (sy - 1), sy, s_scanlines_mode);
+                    else if (borders == 2)
+                        want = shade(flood, (unsigned)(y - canvas_y) & (sy - 1),
+                                     sy, s_scanlines_mode);
+                    CHECK(fb[y * FB16_WIDTH + x] == want);
+                }
+            }
+        }
+    }
+    s_format_badge_enabled = 0;
+    s_video_ghosting_strength = 0;
+}
 int main(void) {
     /* Explicit catalog expectations catch ID or mode-list drift. */
     static const int expected[][4] = {
@@ -337,6 +394,8 @@ int main(void) {
         check_overlay(0);
         check_overlay(1);
         check_claimed_border_modes();
+        if (preference == 0 && (mode == 0 || mode == 2))
+            check_native_gs_canvas();
         printf("PASS %s preference %s: centered scale, borders, scanlines, effects, text overlay and guards\n",
                d->name, preference == 0 ? "Max" : preference == 1 ? "1x" : "2x");
     }

@@ -141,6 +141,7 @@ module apple_virtual_bus #(
         ab_read.nmi         = bus_nmi_n;
         ab_read.data_en     = phase_data;
         ab_read.addr_en     = phase_addr;
+        ab_read.phi0_tick   = phase_sss;
         ab_read.sss_en      = phase_sss;
         ab_read.serve_en    = phase_serve;
         ab_read.drive_en    = phase_drive;

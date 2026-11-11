@@ -111,6 +111,9 @@
 #define ACE_RECORD_KIND_LEGACY          0U
 #define ACE_RECORD_KIND_IO_WRITE        1U
 #define ACE_RECORD_KIND_SOFTSW_ACCESS   2U
+#define ACE_RECORD_KIND_GS_IO           3U
+#define ACE_RECORD_KIND_GS_STATE        4U
+#define ACE_RECORD_KIND_GS_SHADOW       5U
 
 #define ACE_BIT_RECORD_KIND_LO    61
 #define ACE_BIT_IO_ADDR_LO        45
@@ -135,6 +138,18 @@
 #define ACE_BIT_ADDR_DECODE_LO    9
 #define ACE_BIT_ADDR_DECODE_EN    8
 #define ACE_BIT_DATA_LO           0
+
+/* Kind 3 uses the ordered I/O fields above. Kind 4 uses the common
+ * time and soft-switch fields, bit 60 for native-active, register bytes
+ * through C02B, four C034 border bits, and three state flags. Kind 5 uses
+ * only the common shadow-write fields [32:0], for passive pre-ID capture. */
+#define ACE_BIT_GS_C022_LO        25
+#define ACE_BIT_GS_C029_LO        17
+#define ACE_BIT_GS_C02B_LO         9
+#define ACE_BIT_GS_PHASE_LOCKED     8
+#define ACE_BIT_GS_FRAME_SELECTED   7
+#define ACE_BIT_GS_BORDER_LO        1
+#define ACE_BIT_GS_RESET           0
 
 /* --- Inline accessors -------------------------------------------------- */
 static inline uint32_t ace_record_kind(uint64_t r) {
@@ -238,6 +253,8 @@ __attribute__((weak)) int apple_cycle_renderer_needs_phase_lookahead(uint64_t re
 __attribute__((weak)) void apple_cycle_renderer_on_record_lookahead(
     uint64_t rec, uint64_t next1, uint64_t next2);
 __attribute__((weak)) void apple_cycle_renderer_on_record(uint64_t rec);
+/* Replay elapsed native pixels against the shadow before this event. */
+__attribute__((weak)) void apple_cycle_renderer_before_record(uint64_t rec);
 
 /* --- Public state ------------------------------------------------------ */
 extern volatile uint8_t  *const g_main_bank;       /* 64 KB at 0x3F100000 */

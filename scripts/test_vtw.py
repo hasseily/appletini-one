@@ -388,11 +388,11 @@ def static_checks() -> None:
             "wire disk2_card_enabled =\n"
             "        card_slot6_bus_enable &&\n"
             "        (onee_enable_effective || disk2_active_timing_q);" in top and
-            ".ab_read(gate_ab(ab_read, disk2_card_enabled))" in top and
+            ".ab_read(gate_slot_ab(data_phase_ab_read, disk2_card_enabled, 8'h40, iigs_bus_permissions))" in top and
             "wire disk2_live_handoff_serve =\n"
             "        !onee_enable_effective && card_slot6_bus_enable && disk2_active &&\n"
             "        !disk2_active_timing_q;" in top and
-            ".rom_serve_en(ab_read.serve_en && disk2_live_handoff_serve)" in top and
+            ".rom_serve_en(ab_read.serve_en && disk2_live_handoff_serve &&" in top and
             "wire rom_read_serve = ab_read.serve_en || rom_serve_en;" in disk2 and
             "wire ab_rom_read = rom_read_serve && ab_read.rw && slot_rom_hit;" in disk2 and
             "assign vtw_disk2_active = !onee_enable_effective &&" in top and

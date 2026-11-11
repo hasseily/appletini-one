@@ -10,7 +10,7 @@ module apple_boot_report_trace #(parameter bit GS = 0);
     logic onee_enable_effective = 0;
     globals::AppleBus_read physical_ab_read, guarded_read, boot_ab_read;
     globals::AppleBus_write boot_raw_write, guarded_write, boot_ab_write;
-    globals::SoftSwitchState sss;
+    globals::SoftSwitchState sss, legacy_sss;
     globals::AxiSimple_common as_common;
     AxiSimple_if as_if();
     logic [3:0] boot_machine_id;
@@ -29,10 +29,29 @@ module apple_boot_report_trace #(parameter bit GS = 0);
         boot_machine_id_fault || boot_iigs_policy_fault;
     wire ownership_allowed = machine_identity_legacy && !output_kill;
 
+    if (GS) begin : gs_switches
+        logic live_mask_valid;
+        wire bootstrap_slot7 = machine_identity_iigs && !live_mask_valid;
+        soft_switch_manager switches (
+            .clk, .rstn(resetn), .ramworks_en(1'b0),
+            .iigs_profile(machine_identity_iigs),
+            .iigs_bootstrap_slot7(bootstrap_slot7),
+            .iigs_boot_mask(boot_iigs_slot_mask),
+            .iigs_boot_mask_valid(boot_iigs_slot_mask_valid),
+            .iigs_native_video(1'b0), .iigs_bank_latch(1'b0),
+            .ab_read(physical_ab_read), .sss,
+            .iigs_live_mask(), .iigs_live_mask_valid(live_mask_valid),
+            .iigs_io_mask(), .iigs_rom_mask()
+        );
+    end else begin : legacy_switches
+        assign sss = legacy_sss;
+    end
+
     apple_machine_safety_policy policy_i (
         .locked_machine_id(boot_machine_id),
         .machine_id_fault(boot_machine_id_fault),
         .iigs_slot_policy_fault(boot_iigs_policy_fault),
+        .iigs_slot3_profile(1'b0),
         .iigs_external_slot_mask(boot_iigs_slot_mask),
         .iigs_external_slot_mask_valid(boot_iigs_slot_mask_valid),
         .requested_machine_mode(2'd2), .requested_m2sel_active_high(1'b1),
@@ -142,8 +161,8 @@ module apple_boot_report_trace #(parameter bit GS = 0);
         @(negedge clk);
         resetn = 0;
         physical_ab_read = '0;
-        sss = '0;
-        sss.slot_access = 1;
+        legacy_sss = '0;
+        legacy_sss.slot_access = 1;
         physical_ab_read.devsel_n = !GS;
         physical_ab_read.devsel_n_early = !GS;
         repeat (3) @(posedge clk);
@@ -163,7 +182,7 @@ module apple_boot_report_trace #(parameter bit GS = 0);
             rom_read(16'hC700 + offset, !GS && !offset[0], 1, rom[offset]);
         check(!ownership_allowed && physical_slot_allowed_mask == 0,
               "slot ROM execution alone grants no physical ownership");
-        sss.io_select[7] = 1;
+        legacy_sss.io_select[7] = 1;
         write_cycle(16'hCA00, 8'h70);
         rom_read(16'hCA00, 0, 1, 8'h70);
         write_cycle(16'hC0F0, 8'h01);
@@ -186,12 +205,21 @@ module apple_boot_report_trace #(parameter bit GS = 0);
             check(machine_identity_iigs && machine_gs_m2_qualify &&
                   !ownership_allowed && physical_slot_allowed_mask == 0,
                   "GS report fixes M2SEL policy without ownership or slots");
+            check(sss.c8_select == 3'd7,
+                  "registered GS mode retains the running boot ROM's C8 claim");
+            rom_read(16'hC800, 0, 1, c8rom[0]);
             write_cycle(16'hC0F0, 8'h27);
             write_cycle(16'hC0F0, 8'h80);
             check(boot_iigs_slot_mask_valid && physical_slot_allowed_mask == 8'h80 &&
                   !ownership_allowed, "GS report pair grants slot 7 data only");
             rom_read(16'hC800, 1, 0, 0);
             rom_read(16'hC800, 0, 1, c8rom[0]);
+            onee_enable_effective = 1;
+            repeat (3) @(negedge clk);
+            onee_enable_effective = 0;
+            repeat (3) @(negedge clk);
+            rom_read(16'hC705, 0, 0, 0);
+            rom_read(16'hC800, 0, 0, 0);
             write_cycle(16'hC0F0, 8'h23, 1);
             check(boot_machine_id == 4 && !reported_identity_fault,
                   "GS internal device remap ignores a stale command");

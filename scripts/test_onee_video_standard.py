@@ -127,14 +127,15 @@ def static_contract_checks() -> None:
     detector_module = read("hdl/apple/apple_video_standard_detect.sv")
     require(
         hashlib.sha256(detector_module.encode("utf-8")).hexdigest() ==
-        "40a53e8c62f7f3ed2695d595e9087ba489a60ae1892cf9777931f47f88add59a",
+        "2e94f0086c7b03a80f1b123784e4d81090a7f32eecba66b7b08561ce72639e53",
         "physical Apple PAL/NTSC detector module changed",
     )
     require(
         "assign video_mode_50hz = onee_enable_effective ?\n"
         "        onee_video_50hz_active :\n"
-        "        (video_mode_50hz_valid_q && video_mode_50hz_detected_q);" in top,
-        "ONE//e standard does not leave the physical measured path intact",
+        "        (native_gs_observe ? native_gs_c02b[4] :\n"
+        "         (video_mode_50hz_valid_q && video_mode_50hz_detected_q));" in top,
+        "Legacy measured standard and isolated ONE//e standard must stay independent",
     )
 
     require(".apple_video_mode_valid(video_mode_50hz_valid)" in top and

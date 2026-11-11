@@ -70,7 +70,7 @@ def test_sources():
 
     require("ssc_card ssc_card_i" in top and
             ".slot_assign(3'h1)" in top and
-            "gate_ab(ab_read, card_ssc_bus_enable)" in top,
+            "gate_slot_ab(data_phase_ab_read, card_ssc_bus_enable, 8'h02, iigs_bus_permissions)" in top,
             "apple_top must place the SSC in slot 1 behind its feature bit")
     require("apple_bus_client_policy_gate #(" in top and
             "APPLE_BUS_CLIENT_COUNT = 13" in top and

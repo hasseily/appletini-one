@@ -32,7 +32,7 @@ def integration_checks() -> None:
         ".resetn(rstn[3])",
         ".card_resetn(rstn[2])",
         ".enabled(card_slot2_enable)",
-        ".ab_read(gate_ab(data_phase_ab_read,card_slot2_bus_enable))",
+        ".ab_read(gate_slot_ab(data_phase_ab_read,card_slot2_bus_enable,8'h04,iigs_bus_permissions))",
         ".ps_wr_en(as_client.awvalid)",
         ".ps_rdata(slot2_ps_rdata)",
         ".mouse_selected(slot2_mouse_selected)",
@@ -64,7 +64,7 @@ def integration_checks() -> None:
     clients = re.findall(r"\.client_writes\(\{([^}]*)\}\)", compact)
     require(len(clients) == 2, "expected physical policy and virtual client lists")
     for client_list in clients:
-        require("slot2_ab_write" in client_list.split(","),
+        require(re.search(r"\bslot2_ab_write\b", client_list) is not None,
                 "an arbiter client list omits the selected slot-2 output")
         require("mouse_ab_write" not in client_list,
                 "an arbiter bypasses slot-2 selection with raw Mouse output")

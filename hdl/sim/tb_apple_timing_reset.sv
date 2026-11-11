@@ -15,6 +15,8 @@ module tb_apple_timing_reset;
     logic onee_enable_effective = 1'b0;
     wire onee_activity_quiet;
     logic boot_command = 1'b0;
+    logic gs_m2_qualify = 1'b0;
+    logic m2sel_n = 1'b1;
     globals::AppleBus_read physical_ab_read;
     globals::AppleBus_read virtual_ab_read = '0;
     wire globals::AppleBus_read ab_read = onee_enable_effective ?
@@ -37,13 +39,13 @@ module tb_apple_timing_reset;
 
     apple_bus_wrapper bus_i (
         .clk(clk), .rstn(rstn[1]), .physical_bus_isolate(1'b0),
-        .dbg_clear(1'b0), .inh_allowed(1'b1),
+        .dbg_clear(1'b0), .inh_allowed(!gs_m2_qualify),
         .physical_slave_select_ok(1'b1), .physical_irq_allowed(1'b1),
-        .gs_m2_qualify(1'b0), .m2sel_active_high(1'b0),
+        .gs_m2_qualify(gs_m2_qualify), .m2sel_active_high(1'b0),
         .host_is_iiplus(1'b0), .iiplus_dma_refresh_active(1'b0),
         .apple_data_pin(apple_data_pin), .apple_addr_pin(apple_addr_pin),
         .apple_rw_pin(apple_rw_pin), .apple_phi0_pin(phi0),
-        .apple_m2sel_pin(1'b0), .apple_m2b0_pin(1'b0),
+        .apple_m2sel_pin(m2sel_n), .apple_m2b0_pin(1'b0),
         .apple_devsel_n_pin(1'b1), .apple_inh_pin(apple_inh_pin),
         .apple_res_pin(apple_res_pin), .apple_irq_pin(apple_irq_pin),
         .apple_rdy_pin(apple_rdy_pin), .apple_dma_pin(apple_dma_pin),
@@ -80,11 +82,23 @@ module tb_apple_timing_reset;
     bit tracking = 1'b0;
     int next_line, next_cycle, shown_line, shown_cycle;
     int ticks, reset_ticks, vbl_edges, rdvbl_edges;
+    int gap_start_ticks;
+    bit check_unselected = 1'b0;
     int lag_line;
     logic expected_update;
     always @(posedge clk) begin
         if (tracking) begin
-            expected_update = physical_ab_read.sss_en;
+            expected_update = physical_ab_read.phi0_tick;
+            if (!gs_m2_qualify)
+                check(expected_update === physical_ab_read.sss_en,
+                      "legacy early-decode phase changed");
+            if (check_unselected) begin
+                check(!physical_ab_read.sss_en && !physical_ab_read.serve_en &&
+                      !physical_ab_read.data_en && !physical_ab_read.cycle_valid,
+                      "unselected GS cycle reached an access phase");
+                check(apple_irq_pin === 1'b0,
+                      "pending IRQ dropped during an unselected GS cycle");
+            end
             if (expected_update) begin
                 shown_line = next_line;
                 shown_cycle = next_cycle;
@@ -257,6 +271,33 @@ module tb_apple_timing_reset;
               "return to physical PHI0 did not rearm calibration");
         calibrate();
         repeat (20) @(negedge phi0);
+
+        // Run four complete scanner lines without an M2SEL-qualified access.
+        // IRQ remains asserted even though the same profile denies bus mastery.
+        @(posedge phi0);
+        gs_m2_qualify = 1'b1;
+        ab_write.assert_irq = 1'b1;
+        repeat (3) @(negedge phi0);
+        @(posedge phi0);
+        #100;
+        gap_start_ticks = ticks;
+        check_unselected = 1'b1;
+        repeat (4 * 65) @(posedge phi0);
+        #100;
+        check_unselected = 1'b0;
+        check(ticks - gap_start_ticks == 4 * 65,
+              "unselected GS cycle lost or doubled a PHI0 tick");
+        m2sel_n = 1'b0;
+        @(posedge phi0);
+        #100;
+        check(physical_ab_read.cycle_valid,
+              "the first selected cycle after a fast-memory gap was lost");
+        check(apple_irq_pin === 1'b0,
+              "the first selected cycle changed the pending IRQ");
+        ab_write.assert_irq = 1'b0;
+        #1;
+        check(apple_irq_pin === 1'b1, "acknowledgment did not release IRQ");
+
         $display("APPLE TIMING RESET PASS ticks=%0d reset_ticks=%0d VBL=%0d RDVBL=%0d",
                  ticks, reset_ticks, vbl_edges, rdvbl_edges);
         $finish;

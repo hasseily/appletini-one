@@ -2,8 +2,18 @@ module soft_switch_manager (
     input  logic                       clk,
     input  logic                       rstn,
     input  logic                       ramworks_en,
+    input  logic                       iigs_profile,
+    input  logic                       iigs_bootstrap_slot7,
+    input  logic [7:0]                 iigs_boot_mask,
+    input  logic                       iigs_boot_mask_valid,
+    input  logic                       iigs_native_video,
+    input  logic                       iigs_bank_latch,
     input  globals::AppleBus_read      ab_read,
-    output globals::SoftSwitchState    sss
+    output globals::SoftSwitchState    sss,
+    output logic [7:0]                 iigs_live_mask,
+    output logic                       iigs_live_mask_valid,
+    output logic [7:0]                 iigs_io_mask,
+    output logic [7:0]                 iigs_rom_mask
 );
 
     import globals::*;
@@ -51,6 +61,121 @@ module soft_switch_manager (
     logic        ss_addr_decode_late_en;
     apple_route_kind_e ss_route_kind;
     logic [6:0]  ss_ramworks_bank;
+    logic        iigs_report_seen;
+    logic        iigs_profile_q;
+    logic [2:0]  iigs_c8_slot;
+    logic        iigs_c8_internal;
+
+    // C02D has no slot-3 bit. Slot 3 follows SLOTC3ROM for Cn;
+    // slots 3 and 4 have permanently enabled device I/O.
+    // Keep the default bootstrap grant through the edge that imports the
+    // report. Once consumed, the old report cannot reopen it after isolation.
+    wire iigs_legacy_bootstrap = iigs_bootstrap_slot7 && !iigs_report_seen;
+    wire [7:0] iigs_selected_mask = iigs_live_mask_valid ?
+        iigs_live_mask : (iigs_legacy_bootstrap ? 8'h80 : 8'h00);
+    // Internal next-state logic uses the unregistered masks.
+    wire [7:0] iigs_io_mask_now = iigs_selected_mask | 8'h18;
+    wire [7:0] iigs_rom_mask_now = ss_intcxrom ? 8'h00 :
+        (iigs_selected_mask | (ss_slotc3rom ? 8'h08 : 8'h00));
+
+    /* Registered copies for card decode. Every card decodes C8 ownership
+     * and slot access on its bus strobes, so these must not add mask
+     * logic to those paths. The copies follow their register inputs one
+     * clock later. The inputs change only at bus strobes, PS writes, or
+     * policy changes, and bus strobes are at least 30 clocks apart, so a
+     * strobe always sees settled values. */
+    logic [7:0] iigs_io_mask_q    = 8'h18;
+    logic [7:0] iigs_rom_mask_q   = 8'h00;
+    logic [2:0] iigs_c8_owner_q   = 3'd0;
+    logic [7:0] iigs_io_select_q  = 8'h00;
+    logic [7:0] cn_rom_visible_q  = 8'hF6;  // Cn ROM visibility, per slot
+    assign iigs_io_mask = iigs_io_mask_q;
+    assign iigs_rom_mask = iigs_rom_mask_q;
+    wire iigs_valid_cycle = ab_read.cycle_valid && !ab_read.m2sel;
+    wire iigs_state_write = iigs_profile && iigs_valid_cycle &&
+        ab_read.data_en && !ab_read.rw && ab_read.addr == 16'hC068;
+    wire iigs_slot_write = iigs_profile && iigs_valid_cycle &&
+        ab_read.data_en && !ab_read.rw && ab_read.addr == 16'hC02D;
+    wire iigs_cn_cycle = ab_read.addr[15:11] == 5'h18 &&
+                         ab_read.addr[10:8] != 3'd0;
+    wire [2:0] iigs_cn_slot = ab_read.addr[10:8];
+
+    always_ff @(posedge clk) begin
+        iigs_profile_q <= rstn && iigs_profile;
+        if (!rstn) begin
+            iigs_report_seen <= 1'b0;
+            iigs_live_mask <= 8'h00;
+            iigs_live_mask_valid <= 1'b0;
+        end else if (!iigs_profile) begin
+            // Losing observation invalidates the live map. An old report
+            // cannot seed it again after a private ONE//e session.
+            iigs_report_seen <= iigs_report_seen || iigs_boot_mask_valid;
+            iigs_live_mask <= 8'h00;
+            iigs_live_mask_valid <= 1'b0;
+        end else begin
+            if (iigs_boot_mask_valid && !iigs_report_seen) begin
+                iigs_report_seen <= 1'b1;
+                if (!iigs_live_mask_valid) begin
+                    iigs_live_mask <= iigs_boot_mask & 8'hF6;
+                    iigs_live_mask_valid <= 1'b1;
+                end
+            end
+            if (ab_read.res && iigs_slot_write) begin
+                iigs_live_mask <= ab_read.data & 8'hF6;
+                iigs_live_mask_valid <= 1'b1;
+            end
+        end
+
+        // A remapped slot must touch Cn again to claim C8 after re-enable.
+        // Also revoke a claim on a global internal-ROM override. An
+        // internal CFFF can occur while the physical bus is unselected.
+        // The GS has one C8 owner. An observed internal C3 claim is sticky
+        // until a selected CFFF access or reset.
+        if (!rstn || !iigs_profile || !ab_read.res) begin
+            iigs_c8_slot <= 3'd0;
+            iigs_c8_internal <= 1'b0;
+        end else if (!iigs_profile_q && iigs_legacy_bootstrap) begin
+            // The default profile can first discover the GS inside the C7
+            // boot session. Retain that session's already observed claim.
+            iigs_c8_slot <= ss_io_select[7] ? 3'd7 : 3'd0;
+            iigs_c8_internal <= ss_c8_internal_rom;
+        end else begin
+            if (!iigs_rom_mask_now[iigs_c8_slot] ||
+                (iigs_slot_write && iigs_c8_slot != 3'd3 &&
+                 !ab_read.data[iigs_c8_slot]) ||
+                (iigs_state_write && ab_read.data[0]))
+                iigs_c8_slot <= 3'd0;
+            if (ab_read.serve_en && iigs_valid_cycle) begin
+                if (iigs_cn_cycle) begin
+                    iigs_c8_slot <= iigs_rom_mask_now[iigs_cn_slot] ?
+                        iigs_cn_slot : 3'd0;
+                    if (iigs_cn_slot == 3'd3 && !ss_slotc3rom)
+                        iigs_c8_internal <= 1'b1;
+                end
+                if (ab_read.addr == 16'hCFFF) begin
+                    iigs_c8_slot <= 3'd0;
+                    iigs_c8_internal <= 1'b0;
+                end
+            end
+        end
+    end
+
+    // Card-facing copies (see the note at iigs_io_mask_q). The C8 owner
+    // follows iigs_c8_slot one clock later; the legacy path is unchanged.
+    wire [2:0] iigs_c8_owner_now =
+        !iigs_c8_internal && iigs_rom_mask_now[iigs_c8_slot] ?
+        iigs_c8_slot : 3'd0;
+    always_ff @(posedge clk) begin
+        iigs_io_mask_q   <= iigs_io_mask_now;
+        iigs_rom_mask_q  <= iigs_rom_mask_now;
+        iigs_c8_owner_q  <= iigs_c8_owner_now;
+        iigs_io_select_q <= (iigs_c8_owner_now == 3'd0) ? 8'h00 :
+                            (8'h01 << iigs_c8_owner_now);
+        // Slot 0 has no Cn window. Legacy: INTCXROM hides every slot and
+        // SLOTC3ROM off hides slot 3. Aligned with iigs_profile_q.
+        cn_rom_visible_q <= 8'hFE & (iigs_profile ? iigs_rom_mask_now :
+            (ss_intcxrom ? 8'h00 : (ss_slotc3rom ? 8'hFF : 8'hF7)));
+    end
 
     // ---- Address decoding helpers (combinational) ----
     wire is_c0xx     = (ab_read.addr[15:8]  == 8'hc0);
@@ -71,9 +196,8 @@ module soft_switch_manager (
     // selected RamWorks bank. The video fetcher intentionally reads fixed
     // bank 1 for aux display fetches, matching the Apple IIe scanner path.
     //
-    // M2B0 is intentionally not used for real memory steering here. The
-    // current Apple //e fake-SHR path is selected only by C029 and reads the
-    // captured AUX $2000-$9FFF shadow; there is no IIgs M2B0 bank source.
+    // M2B0 is only used by the native GS observation decode below.
+    // It cannot grant host memory ownership or change the early INH decode.
     //
     // Address translation lives in globals::translate_apple_addr (shared
     // with the virtual TransWarp's private switch copy). This module feeds
@@ -244,11 +368,32 @@ module soft_switch_manager (
                 begin : obs_decode_translator
                     logic [31:0]        rb_decoded_addr_obs;
                     apple_route_kind_e  rb_route_kind_obs;
-                    translate_apple_addr(xlate_st, ab_read.addr, ab_read.rw,
+                    TranslateState obs_state;
+                    obs_state = xlate_st;
+                    if (iigs_native_video)
+                        obs_state.sw_ramworks_bank = 7'd0;
+                    translate_apple_addr(obs_state, ab_read.addr, ab_read.rw,
                                          rb_decoded_addr_obs, rb_route_kind_obs);
+                    // Apple IIgs Hardware Reference describes NEWVIDEO.0
+                    // set as enabling the bank latch. M2B0 clear still
+                    // needs RAMRD/RAMWRT/ALTZP and 80STORE/PAGE2 decoding.
+                    if (iigs_native_video && !ab_read.m2sel &&
+                        iigs_bank_latch && ab_read.m2b0)
+                        rb_decoded_addr_obs[23:16] = 8'd1;
                     ss_addr_decode_late_en <= (rb_route_kind_obs == APPLE_ROUTE_CACHE);
                     ss_addr_decode_late    <= rb_decoded_addr_obs[23:0];
                 end
+            end
+
+            // The GS State register aliases these individual switches.
+            if (iigs_state_write) begin
+                ss_altzp       <= ab_read.data[7];
+                ss_page2       <= ab_read.data[6];
+                ss_auxread     <= ab_read.data[5];
+                ss_auxwrite    <= ab_read.data[4];
+                ss_lcram_read  <= !ab_read.data[3];
+                ss_lcram_bank2 <= ab_read.data[2];
+                ss_intcxrom    <= ab_read.data[0];
             end
 
             // Soft reset (apple-side RES) -- overrides updates this cycle
@@ -294,26 +439,30 @@ module soft_switch_manager (
     assign sss.route_kind      = ss_route_kind;
     /* INTC8ROM exclusion: while the internal C8 ROM owns the window,
      * no slot card may claim it (the //e inhibits I/O STROBE'). */
-    assign sss.c8_select      = ss_c8_internal_rom ? 3'h0 : ss_c8_select;
+    // The GS profile selects registered copies. iigs_profile_q follows
+    // the policy one clock later, like the copies themselves.
+    assign sss.c8_select = iigs_profile_q ? iigs_c8_owner_q :
+        (ss_c8_internal_rom ? 3'h0 : ss_c8_select);
     /* Per-cycle $Cnxx slot-access qualifier, combinational from the
      * authoritative address sample so serve_en-keyed card decode sees
-     * it with zero staleness. Uses the registered INTCXROM/SLOTC3ROM
-     * state as of this cycle's start (same semantics the registered
-     * version had). Only meaningful at/after serve_en; during PHI1
+     * it with zero staleness. The per-slot ROM visibility is registered
+     * from INTCXROM/SLOTC3ROM (or the GS ROM mask). Those switches change
+     * only at bus strobes, so a serve_en always sees the state as of this
+     * cycle's start. Only meaningful at/after serve_en; during PHI1
      * ab_read.addr still holds the previous cycle's sample.  */
     assign sss.slot_access =
-        (ab_read.addr[15:12] == 4'hc) &&
-        (ab_read.addr[11] == 1'b0) &&
-        (ab_read.addr[10:8] != 3'h0) &&
-        !ss_intcxrom &&
-        !((ab_read.addr[10:8] == 3'h3) && !ss_slotc3rom);
+        (ab_read.addr[15:11] == 5'h18) &&
+        cn_rom_visible_q[ab_read.addr[10:8]] &&
+        (!iigs_profile_q || iigs_valid_cycle);
     assign sss.sw_80store     = ss_80store;
     assign sss.sw_intcxrom    = ss_intcxrom;
     assign sss.sw_slotc3rom   = ss_slotc3rom;
-    assign sss.c8_internal_rom = ss_c8_internal_rom;
+    assign sss.c8_internal_rom = iigs_profile_q ? iigs_c8_internal :
+        ss_c8_internal_rom;
     /* Per-slot FFs, gated like c8_select: no card drives while the
      * internal ROM owns the window. */
-    assign sss.io_select = ss_c8_internal_rom ? 8'h00 : ss_io_select;
+    assign sss.io_select = iigs_profile_q ? iigs_io_select_q :
+        (ss_c8_internal_rom ? 8'h00 : ss_io_select);
     assign sss.sw_ramrd       = ss_auxread;
     assign sss.sw_ramwrt      = ss_auxwrite;
     assign sss.sw_altzp       = ss_altzp;

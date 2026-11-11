@@ -22,9 +22,11 @@ module tb_pc_transporter_card;
 
     globals::AppleBus_read ab_read;
     globals::AppleBus_read card_read;
+    globals::AppleBus_read switch_read, gs_card_read;
     globals::AppleBus_read virtual_read;
     globals::AppleBus_write ab_write;
     globals::AppleBus_write virtual_write;
+    globals::AppleBus_write gs_reply;
     globals::SoftSwitchState sss;
     globals::AxiSimple_common as_common;
     AxiSimple_if axi();
@@ -35,6 +37,12 @@ module tb_pc_transporter_card;
     logic [7:0] mem_req_wstrb;
     logic mem_rsp_valid, mem_rsp_error;
     logic virtual_bus = 1'b0;
+    logic gs_profile = 1'b0;
+    // Wrapper pre-sample address and load strobes for the GS decode.
+    logic [15:0] gs_sample_addr = 16'h0000;
+    logic gs_sample_early_en = 1'b0, gs_sample_late_en = 1'b0;
+    logic [7:0] gs_io_mask, gs_rom_mask, gs_early_slot, gs_late_slot;
+    logic [7:0] gs_data_slot, gs_reply_slot;
     logic virtual_write_other_byte = 1'b0;
     logic virtual_cpu_cycle = 1'b0, virtual_req_valid = 1'b0;
     logic virtual_req_ready, virtual_resp_valid;
@@ -64,7 +72,8 @@ module tb_pc_transporter_card;
     logic [7:0] accepted_strobes;
     logic accepted_write, accepted_error;
 
-    assign card_read = virtual_bus ? virtual_read : ab_read;
+    assign switch_read = virtual_bus ? virtual_read : ab_read;
+    assign card_read = gs_profile ? gs_card_read : switch_read;
 
     pc_transporter_card #(
         .READ_WAIT_CYCLES(READ_WAIT), .VIRTUAL_READ_WAIT_CYCLES(VIRTUAL_READ_WAIT)
@@ -82,7 +91,31 @@ module tb_pc_transporter_card;
     );
 
     soft_switch_manager switches (
-        .clk(clk), .rstn(rstn), .ramworks_en(1'b0), .ab_read(card_read), .sss(sss)
+        .iigs_profile(gs_profile),
+        .iigs_bootstrap_slot7(1'b0),
+        .iigs_boot_mask(8'h00),
+        .iigs_boot_mask_valid(1'b0),
+        .iigs_native_video(1'b0), .iigs_bank_latch(1'b0),
+        .clk(clk), .rstn(rstn), .ramworks_en(1'b0), .ab_read(switch_read), .sss(sss),
+        .iigs_live_mask(), .iigs_live_mask_valid(), .iigs_io_mask(gs_io_mask),
+        .iigs_rom_mask(gs_rom_mask)
+    );
+    apple_iigs_slot_access gs_access (
+        .clk, .resetn(rstn), .ab_read(ab_read),
+        .sample_addr(gs_sample_addr), .sample_early_en(gs_sample_early_en),
+        .sample_late_en(gs_sample_late_en), .io_mask(gs_io_mask),
+        .rom_mask(gs_rom_mask), .c8_owner(sss.c8_select),
+        .early_slot(gs_early_slot), .late_slot(gs_late_slot),
+        .data_slot(gs_data_slot), .reply_slot(gs_reply_slot)
+    );
+    iigs_top_routing gs_routing (
+        .iigs_ownership_active(gs_profile), .machine_identity_fault(1'b0),
+        .onee_enable_effective(virtual_bus), .enabled(card_enabled),
+        .irq_enabled(gs_rom_mask[5]), .iigs_early_slot(gs_early_slot),
+        .iigs_late_slot(gs_late_slot), .iigs_data_slot(gs_data_slot),
+        .iigs_reply_slot(gs_reply_slot),
+        .slots(8'h20), .host_bus(ab_read), .device_reply(ab_write),
+        .device_bus(gs_card_read), .host_reply(gs_reply)
     );
 
     always_comb begin
@@ -173,12 +206,23 @@ module tb_pc_transporter_card;
         end
     end
 
+    // In GS mode the wrapper's pre-sample address reaches the ownership
+    // decode one clock before each address load. Model that clock there.
     task automatic start_cycle(input logic [15:0] address, input logic is_read,
                                input logic qualified);
+        if (gs_profile) begin
+            @(negedge clk);
+            gs_sample_addr = ab_read.addr_early;
+            gs_sample_early_en = 1'b1;
+        end
         @(negedge clk);
+        gs_sample_early_en = 1'b0;
+        gs_sample_addr = address;
+        gs_sample_late_en = gs_profile;
         ab_read.addr_en = 1'b1;
         ab_read.cycle_valid = qualified;
         @(negedge clk);
+        gs_sample_late_en = 1'b0;
         ab_read.addr_en = 1'b0;
         ab_read.addr = address;
         ab_read.rw = is_read;
@@ -188,7 +232,13 @@ module tb_pc_transporter_card;
     endtask
 
     task automatic start_early_read(input logic [15:0] address, input logic dma_n);
+        if (gs_profile) begin
+            @(negedge clk);
+            gs_sample_addr = address;
+            gs_sample_early_en = 1'b1;
+        end
         @(negedge clk);
+        gs_sample_early_en = 1'b0;
         ab_read.cycle_valid = 1'b1;
         ab_read.addr_en = 1'b1;
         ab_read.addr_early = address;
@@ -199,6 +249,13 @@ module tb_pc_transporter_card;
     endtask
 
     task automatic confirm_early_read(input logic [15:0] address);
+        if (gs_profile) begin
+            @(negedge clk);
+            gs_sample_addr = address;
+            gs_sample_late_en = 1'b1;
+            @(negedge clk);
+            gs_sample_late_en = 1'b0;
+        end
         ab_read.addr = address;
         ab_read.rw = 1'b1;
         ab_read.serve_en = 1'b1;
@@ -1054,6 +1111,30 @@ module tb_pc_transporter_card;
         expect_read(16'hCF10, 8'h00);
         expect_read(16'hCF11, 8'h00);
         expect_cgademo_raster();
+
+        // GS remaps affect the aperture without resetting the private PCT.
+        gs_profile = 1'b1;
+        apple_write(16'hC02D, 8'h20);
+        expect_read(16'hC500, 8'hFF);
+        pointer(24'h000001);
+        apple_write(16'hCF10, 8'h5A);
+        apple_write(16'hC02D, 8'h00);
+        alias_reads_before = read_count;
+        start_early_read(16'hCF04, 1'b1);
+        expect_quiet(8);
+        confirm_early_read(16'hCF04);
+        expect_quiet(8);
+        if (read_count != alias_reads_before || gs_reply.wr_data_en)
+            $fatal(1, "Remapped PCT started prefetch or drove data");
+        finish_cycle('0);
+        apple_write(16'hCF10, 8'h00);
+        apple_write(16'hC02D, 8'h20);
+        start_cycle(16'hCF10, 1'b1, 1'b1);
+        expect_quiet(4);
+        finish_cycle('0);
+        expect_read(16'hC500, 8'hFF);
+        expect_read(16'hCF00, 8'h01);
+        expect_read(16'hCF10, 8'h5A);
 
         if (read_count < 10) $fatal(1, "The synthetic backend was not exercised");
         $display("PC TRANSPORTER CARD PASS");

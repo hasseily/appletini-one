@@ -12,11 +12,18 @@ OUT = ROOT / "build/smartport_data_phase"
 
 def extract_adapter(text: str, name: str) -> str:
     gate = re.search(r"    function automatic globals::AppleBus_read gate_ab\(.*?    endfunction", text, re.S)
-    data = re.search(r"    always_comb begin\s+data_phase_ab_read = ab_read;.*?    end", text, re.S)
+    slot_gate = re.search(r"    function automatic globals::AppleBus_read gate_slot_ab\(.*?    endfunction", text, re.S)
+    permission_end = text.index("} iigs_bus_permissions_t;")
+    permission_start = text.rindex("    typedef struct packed {", 0, permission_end)
+    permission_type = text[permission_start:permission_end + len("} iigs_bus_permissions_t;")]
+    data = re.search(
+        r"    always_comb begin\s+data_phase_ab_read = ab_read;"
+        r"\s+data_phase_ab_read\.data = [^;]+;", text,
+    )
     start = text.index("    globals::AppleBus_read smartport_ab_read;")
     stop = text.index("    smartport_card smartport_card_i (", start)
     body = text[start:stop].replace("    globals::AppleBus_read smartport_ab_read;", "", 1)
-    if not gate or not data:
+    if not gate or not slot_gate or not data:
         raise RuntimeError("Top-level routing extraction failed")
     return f"""module {name} (
     input globals::AppleBus_read ab_read, physical_ab_read, slot7_devsel_ab_read,
@@ -25,8 +32,14 @@ def extract_adapter(text: str, name: str) -> str:
     output globals::AppleBus_read smartport_ab_read
 );
     globals::AppleBus_read data_phase_ab_read;
+    // This equivalence bench covers default physical and private routing.
+    // The live GS permissions run through the IIgs slot-policy bench.
+{permission_type}
+    localparam iigs_bus_permissions_t iigs_bus_permissions = '0;
 {gate[0]}
+{slot_gate[0]}
 {data[0]}
+    end
 {body}
 endmodule
 """

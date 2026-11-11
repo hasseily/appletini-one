@@ -1,0 +1,74 @@
+{
+  "version": "F1.3.7dev15",
+  "kind": "prerelease",
+  "firmware": {
+    "size_bytes": 4972844,
+    "sha256": "b97168535090f5d03998de6a7959eac538b26b2429027e1e6414ed4a193785a6"
+  },
+  "build_base_commit": "2d5a594a512be603ea45dfdfc00b830ce8803d24",
+  "build_had_uncommitted_changes": true,
+  "selected_pl_build": "20261111T110934Z-2d5a594a-full",
+  "fpga_rebuilt_for_packaging": false,
+  "arm_build_completed_utc": "2026-11-11T13:08:14.018855+00:00",
+  "timing": {
+    "wns_ns": "0.051",
+    "minimum_wns_ns": "0.050",
+    "whs_ns": "0.043",
+    "wpws_ns": "0.265",
+    "setup_failing_endpoints": "0",
+    "hold_failing_endpoints": "0",
+    "pulse_width_failing_endpoints": "0",
+    "route_status": "PASS",
+    "bus_skew_status": "PASS",
+    "constraint_bounds_status": "PASS",
+    "missing_constraint_objects": "0",
+    "unconstrained_internal_endpoints": "0"
+  },
+  "inputs": {
+    "bitstream": {
+      "size_bytes": 2615312,
+      "sha256": "dc65e9ca5042fae715dbea944d2f61e6af1418f41df970bc880e168b6d011014"
+    },
+    "candidate_dcp": {
+      "size_bytes": 31927256,
+      "sha256": "d6a2ff97d8178675035defd05032894a4c0338efa6ddaa9f8596e3f700c42b34"
+    },
+    "core1_blob": {
+      "size_bytes": 229452,
+      "sha256": "a3c7d1b2117d27aa75858e7ce6334105c7bde9c582b37d30630be17877c64425"
+    },
+    "core1_elf": {
+      "size_bytes": 1047444,
+      "sha256": "5229f57ba7ee6c3d736bbed07771554cda71f6acbf1cbb1f727b002b76b1bfcc"
+    },
+    "firmware": {
+      "size_bytes": 4972844,
+      "sha256": "b97168535090f5d03998de6a7959eac538b26b2429027e1e6414ed4a193785a6"
+    },
+    "frontend": {
+      "size_bytes": 8638140,
+      "sha256": "f75d538a8f674497a650d2065a5205d3ba70fe47aef489b7ec5440107874441f"
+    },
+    "fsbl": {
+      "size_bytes": 586240,
+      "sha256": "7e47637e290b70701381d8ac3c91c267129dde7e4b12e172e76b4634786f7079"
+    },
+    "platform_xsa_0": {
+      "size_bytes": 1650087,
+      "sha256": "adf3ed9dcc549076f36635c492f28f49c4aae1b4b622c3bca1115477461fe45f"
+    },
+    "platform_xsa_1": {
+      "size_bytes": 1650087,
+      "sha256": "adf3ed9dcc549076f36635c492f28f49c4aae1b4b622c3bca1115477461fe45f"
+    },
+    "xsa": {
+      "size_bytes": 1650087,
+      "sha256": "adf3ed9dcc549076f36635c492f28f49c4aae1b4b622c3bca1115477461fe45f"
+    }
+  },
+  "audit_status": "PASS",
+  "bootgen_partition_count": 4,
+  "cpu1_checked": true,
+  "hardware_tested": false,
+  "source_note": "Release commit captures the verified build inputs; Git text line-ending normalization may change source byte hashes. Build base and original dirty flag are retained above."
+}

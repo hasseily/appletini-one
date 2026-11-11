@@ -250,10 +250,10 @@ module tb_disk2_woz_rw;
             as_common.wdata = 32'd64;
             as_common.wstrb = 4'h1;
             axi.awvalid = 1'b1;
-            ab_read.sss_en = 1'b1;
+            ab_read.phi0_tick = 1'b1;
             @(negedge clk);
             axi.awvalid = 1'b0;
-            ab_read.sss_en = 1'b0;
+            ab_read.phi0_tick = 1'b0;
             check(dut.drive_bit_offset_q[0] == 17'd1 &&
                   dut.woz_bit_accum_q == 16'd0 &&
                   dut.track_bit_timing_q == 8'd64 &&
@@ -272,7 +272,7 @@ module tb_disk2_woz_rw;
     endtask
 
     // Perform one real Apple slot-I/O cycle. vtw_native_cycle_active selects
-    // the physical sss_en source when the accelerator owns the CPU.
+    // the physical phi0_tick source when the accelerator owns the CPU.
     task automatic physical_access(input logic [3:0] io_addr,
                                    input logic is_read,
                                    input logic [7:0] write_data,
@@ -283,7 +283,7 @@ module tb_disk2_woz_rw;
         ab_read.data = write_data;
         ab_read.serve_en = is_read;
         ab_read.data_en = !is_read;
-        ab_read.sss_en = 1'b1;
+        ab_read.phi0_tick = 1'b1;
         vtw_native_cycle_active = vtw_active;
         @(posedge clk);
         #1;
@@ -291,17 +291,17 @@ module tb_disk2_woz_rw;
         @(negedge clk);
         ab_read.serve_en = 1'b0;
         ab_read.data_en = 1'b0;
-        ab_read.sss_en = 1'b0;
+        ab_read.phi0_tick = 1'b0;
         ab_read.rw = 1'b1;
         vtw_native_cycle_active = 1'b0;
     endtask
 
     task automatic physical_tick;
         @(negedge clk);
-        ab_read.sss_en = 1'b1;
+        ab_read.phi0_tick = 1'b1;
         vtw_native_cycle_active = vtw_active;
         @(negedge clk);
-        ab_read.sss_en = 1'b0;
+        ab_read.phi0_tick = 1'b0;
         vtw_native_cycle_active = 1'b0;
     endtask
 
@@ -312,10 +312,10 @@ module tb_disk2_woz_rw;
             if (use_virtual_source)
                 vtw_cycle_tick = 1'b1;
             else
-                ab_read.sss_en = 1'b1;
+                ab_read.phi0_tick = 1'b1;
             @(negedge clk);
             vtw_cycle_tick = 1'b0;
-            ab_read.sss_en = 1'b0;
+            ab_read.phi0_tick = 1'b0;
         end
     endtask
 
@@ -379,7 +379,7 @@ module tb_disk2_woz_rw;
         vtw_native_cycle_active = 1'b0;
         ab_read.serve_en = 1'b0;
         ab_read.data_en = 1'b0;
-        ab_read.sss_en = 1'b0;
+        ab_read.phi0_tick = 1'b0;
         model_seed_line0 = line0;
         model_seed_line1 = line0;
         repeat (5) @(posedge clk);

@@ -51,13 +51,11 @@ module apple_bus_wrapper (
     input  logic                  physical_slave_select_ok,
     input  logic                  physical_irq_allowed,
 
-    /* M2SEL qualification. When gs_m2_qualify is high for an identified
-     * IIgs, a bus cycle is
-     * only decodable if M2SEL was asserted at the address snap; the
-     * sss_en/data_en strobes are suppressed for all other cycles and
-     * ab_read.cycle_valid reports the verdict for addr_en-keyed
-     * early decoders. m2sel_active_high selects the sampled polarity;
-     * IIgs /M2SEL is active low unless board logic inverts it. */
+    /* GS mode requires active-low /M2SEL at the address sample.
+     * sss_en/serve_en/data_en only fire for valid accesses, and
+     * cycle_valid reports the verdict to addr_en-keyed decoders.
+     * phi0_tick marks each accepted PHI0 period. The polarity control
+     * applies to the legacy input interpretation. */
     input  logic                  gs_m2_qualify,
     input  logic                  m2sel_active_high,
     input  logic                  host_is_iiplus,
@@ -89,7 +87,14 @@ module apple_bus_wrapper (
 
     // Internal bus
     output globals::AppleBus_read ab_read,
-    input  globals::AppleBus_write ab_write
+    input  globals::AppleBus_write ab_write,
+
+    /* Pre-sample address and its load strobes, for decoders that must
+     * register a result on the same edge that loads ab_read.addr_early
+     * (sample_early_en) or ab_read.addr (sample_late_en). */
+    output logic [15:0]           sample_addr,
+    output logic                  sample_early_en,
+    output logic                  sample_late_en
 );
 
     // ------------------------------------------------------------------
@@ -221,7 +226,7 @@ module apple_bus_wrapper (
      * PHI0 input through the edge-connector translators. Under a fabric bus
      * master (vTW) that ringing lasts long enough to beat the majority
      * filter: thousands of phantom edges per session (busdbg short edges,
-     * extra/missing data_en), each one an extra sss_en that skews the
+     * extra/missing data_en), each one an extra PHI0 tick that skews the
      * 50/60 Hz line-period verdict and flaps the HDMI mode.
      *
      * After an accepted edge the filtered level is held for
@@ -278,6 +283,12 @@ module apple_bus_wrapper (
     wire addr_phase_snap_late    = data_pipe[TAP_ADDR_SNAP_LATE];
     wire data_phase_snap_bus     = data_pipe[TAP_DATA_SNAP];
     wire addr_phase_drive        = addr_pipe[TAP_DRIVE_ADDR];
+
+    // Same conditions as the ab_read_r load chain below.
+    assign sample_addr     = addr_clean;
+    assign sample_early_en = rstn && addr_phase_snap_bus;
+    assign sample_late_en  = rstn && !addr_phase_snap_bus &&
+                             !addr_phase_sss_ready && addr_phase_snap_late;
 
     // ------------------------------------------------------------------
     // Pin drivers
@@ -340,13 +351,13 @@ module apple_bus_wrapper (
         end
     end
 
-    /* Decide slave read permission before the tuple register. Ownership
-     * remains a live veto: dropping INH/DMA permission must also release
-     * the previous staged byte, even after the arbiter drops its request. */
+    /* Tag the byte with its sampled selection. The live GS selection and
+     * INH/DMA permission can each revoke an already staged byte. */
     wire physical_data_en_safe =
         physical_data_en_q &&
         (!physical_ownership_dependent_q || inh_allowed) &&
-        physical_select_allowed_q;
+        physical_select_allowed_q &&
+        (!gs_m2_qualify || physical_slave_select_ok);
     wire drive_live = bus_emit_state && physical_data_en_safe;
     wire read_response_live =
         drive_live && (!physical_addr_rw_en_q || physical_rw_q);
@@ -495,7 +506,7 @@ module apple_bus_wrapper (
      * level-low behavior, and ab_write.assert_irq remains a level for the vTW
      * core's internal interrupt path. Driving is still low/high-Z only,
      * preserving the open-collector electrical contract. */
-    wire apple_irq_drive_low = !physical_bus_isolate &&
+    wire apple_irq_drive_low = rstn && !physical_bus_isolate &&
                                physical_irq_allowed &&
                                ab_write.assert_irq &&
                                (!host_is_iiplus || !irq_rearm_release_q);
@@ -614,6 +625,7 @@ module apple_bus_wrapper (
             ab_read_r.res           <= res_filtered;
             ab_read_r.addr_en       <= 1'b0;
             ab_read_r.data_en       <= 1'b0;
+            ab_read_r.phi0_tick     <= 1'b0;
             ab_read_r.sss_en        <= 1'b0;
             ab_read_r.serve_en      <= 1'b0;
             /* Independent of the sample chain below: fires every cycle at
@@ -639,6 +651,7 @@ module apple_bus_wrapper (
                 addr_en_emitted_q     <= 1'b1;
             end
             else if (addr_phase_sss_ready) begin
+                ab_read_r.phi0_tick <= 1'b1;
                 /* Early-decode strobe: suppressed whole for M2-invalid
                  * cycles so every downstream decoder inherits
                  * qualification. */

@@ -29,6 +29,19 @@ def timing_harness(top: str) -> str:
     reset_end = top.index("    /* Physical host standard from the PHI0 line period", reset_start)
     counter_start = top.index("    apple_timing_gen apple_timing_gen_i (")
     counter_end = top.index("    );", counter_start) + len("    );")
+    native_decls = ""
+    if "apple_iigs_video_timing iigs_timing_i" in top:
+        counter_end = top.index("    /* psram_simple owns", counter_end)
+        native_decls = """
+    wire native_gs_observe = 1'b0;
+    wire globals::AppleBus_read physical_ab_read = ab_read;
+    logic native_gs_phase_locked, native_gs_tick;
+    logic [7:0] native_gs_c022, native_gs_c029, native_gs_c02b;
+    logic [3:0] native_gs_border;
+    logic [8:0] native_gs_line, legacy_timing_line;
+    logic [6:0] native_gs_cycle, legacy_timing_cycle;
+    logic legacy_timing_update;
+"""
     return """module apple_timing_reset_harness (
     input logic clk,
     input logic [3:0] rstn,
@@ -42,7 +55,7 @@ def timing_harness(top: str) -> str:
     wire onee_video_vblank;
     wire video_mode_50hz_out;
     wire apple_vblank_start_pulse;
-""" + top[signals_start:signals_end] + top[reset_start:reset_end] + top[counter_start:counter_end] + """
+""" + native_decls + top[signals_start:signals_end] + top[reset_start:reset_end] + top[counter_start:counter_end] + """
     assign bm_vbl_cmd_pulse = boot_command;
     assign video_mode_50hz_detected_q = host_50hz;
     assign video_mode_50hz_valid_q = 1'b1;

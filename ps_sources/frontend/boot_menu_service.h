@@ -63,11 +63,12 @@ uint8_t boot_menu_service_machine_mode(void);
 /* Host bus masters are allowed only after a II/II+ or IIe report. UNKNOWN,
  * IIgs, and conflicting reports fail closed. */
 uint8_t boot_menu_service_host_bus_master_allowed(void);
-/* True when this logical slot may answer the detected host. On an IIgs only
- * physical slot 7 can pass, after a valid boot-time $C02D report. */
-uint8_t boot_menu_service_slot_allowed(uint8_t slot);
-/* bits 7:0 = last IIgs $C02D value, bit 8 = valid. */
-uint16_t boot_menu_service_iigs_slot_config(void);
+/* Permissions for the physical host. The IIgs maps I/O and slot ROM
+ * separately. Unknown hosts and invalid maps grant neither permission. */
+uint8_t boot_menu_service_slot_io_allowed(uint8_t slot);
+uint8_t boot_menu_service_slot_rom_allowed(uint8_t slot);
+/* See CARD_CTRL_IIGS_SLOT_MAP_REG for the packed live map. */
+uint32_t boot_menu_service_iigs_slot_map(void);
 const char *boot_menu_service_machine_name(void);
 uint8_t boot_menu_service_aux_card_present(void);
 /* True once the boot menu has handed slot 7 off to a boot target (SmartPort

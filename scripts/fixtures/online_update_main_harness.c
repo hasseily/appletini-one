@@ -48,7 +48,11 @@ static config_menu_t *g_deferred_smartport_refresh;
 static uint32_t g_card_slot_enable_mask,g_card_slot_effective_mask,slot_register,filter_seen;
 static uint8_t onee_isolated,filter_hold;
 static uint8_t control_onee_isolated(void) { return onee_isolated; }
-static uint8_t boot_menu_service_slot_allowed(uint8_t slot) { (void)slot;return 1; }
+static uint8_t g_slot5_processor = CONFIG_SLOT5_PROCESSOR_Z80;
+static uint8_t control_iigs_virtual_slots_active(void) { return 0; }
+static uint8_t boot_menu_service_host_bus_master_allowed(void) { return 1; }
+static uint8_t boot_menu_service_slot_io_allowed(uint8_t slot) { (void)slot;return 1; }
+static uint8_t boot_menu_service_slot_rom_allowed(uint8_t slot) { (void)slot;return 1; }
 static void control_apply_slot5_service(uint8_t enable) { (void)enable;assert(0); }
 static void vtw_service_set_disk2_config_enabled(uint8_t enable) { (void)enable;assert(0); }
 static uint32_t http_service_filter_slot_mask(uint32_t mask) {
@@ -125,7 +129,7 @@ static void online_update_poll(uint8_t safe, uint8_t busy)
     }
     if (disconnected) { live.state = ONLINE_UPDATE_FAILED; live.result = -9984; }
 }
-static void config_menu_set_status(config_menu_t *menu, uint8_t warning, const char *text)
+void config_menu_set_status(config_menu_t *menu, uint8_t warning, const char *text)
 {
     menu->status_warning = warning;
     snprintf(menu->status, sizeof(menu->status), "%s", text);

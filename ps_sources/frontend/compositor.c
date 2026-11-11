@@ -153,8 +153,8 @@ static uint32_t ticks_to_us(XTime ticks)
 
 /* ---------- Apple subwindow ghosting ---------- */
 
-#define EFFECT_HISTORY_STRIDE COMP_APPLE_SHR_WIDTH
-#define EFFECT_HISTORY_PIXELS (COMP_APPLE_SHR_WIDTH * COMP_APPLE_SHR_HEIGHT)
+#define EFFECT_HISTORY_STRIDE COMP_APPLE_GS_WIDTH
+#define EFFECT_HISTORY_PIXELS (EFFECT_HISTORY_STRIDE * COMP_APPLE_SHR_HEIGHT)
 #define EFFECT_WEIGHT_FULL    64U
 
 /* Decay numerators (per frame, in 64ths) -- THE tuning knobs for the
@@ -188,9 +188,9 @@ static const uint8_t k_effect_numer_tail[APPLETINI_VIDEO_GHOSTING_MAX + 1U] = {
 
 static uint32_t s_effect_history[EFFECT_HISTORY_PIXELS]
     __attribute__((aligned(32)));
-static uint32_t s_effect_row[COMP_APPLE_SHR_WIDTH]
+static uint32_t s_effect_row[EFFECT_HISTORY_STRIDE]
     __attribute__((aligned(32)));
-static uint16_t s_effect_2x_row[COMP_APPLE_SHR_WIDTH * 2U]
+static uint16_t s_effect_2x_row[EFFECT_HISTORY_STRIDE * 2U]
     __attribute__((aligned(32)));
 
 /* Claimed-frame mono span. The optional colored border stays on the RGB
@@ -393,7 +393,7 @@ static inline uint32_t effect_rgb_eighth(uint32_t p)
     return (p >> 3) & 0x001F1F1FU;
 }
 
-static uint32_t s_effect_blur_ring[3U][COMP_APPLE_SHR_WIDTH]
+static uint32_t s_effect_blur_ring[3U][EFFECT_HISTORY_STRIDE]
     __attribute__((aligned(32)));
 
 /* ---------- Phosphor glow (additive halo) ----------
@@ -410,9 +410,9 @@ static uint32_t s_effect_blur_ring[3U][COMP_APPLE_SHR_WIDTH]
 
 /* Sharp (pre-blur) rows for the glow-over-sharp base when blur is off,
  * plus scratch for the assembled base and halo rows at emit time. */
-static uint32_t s_effect_sharp_ring[3U][COMP_APPLE_SHR_WIDTH]
+static uint32_t s_effect_sharp_ring[3U][EFFECT_HISTORY_STRIDE]
     __attribute__((aligned(32)));
-static uint32_t s_effect_halo_row[COMP_APPLE_SHR_WIDTH]
+static uint32_t s_effect_halo_row[EFFECT_HISTORY_STRIDE]
     __attribute__((aligned(32)));
 
 /* Saturating per-channel add in the same pairwise-field style as
@@ -580,9 +580,9 @@ static void effect_blur_h_row(const uint32_t *src,
     }
 }
 
-static uint32_t s_effect_glow_ring[3U][COMP_APPLE_SHR_WIDTH]
+static uint32_t s_effect_glow_ring[3U][EFFECT_HISTORY_STRIDE]
     __attribute__((aligned(32)));
-static uint32_t s_effect_blurred_row[COMP_APPLE_SHR_WIDTH]
+static uint32_t s_effect_blurred_row[EFFECT_HISTORY_STRIDE]
     __attribute__((aligned(32)));
 
 static inline uint32_t effect_glow_tent(uint32_t a, uint32_t b, uint32_t c)
@@ -870,7 +870,7 @@ static void blit_apple_effects_scaled(uint16_t *fb,
                                    uint8_t glow)
 {
     if (src == NULL || src_w <= 0 || src_h <= 0 ||
-        src_w > (int)COMP_APPLE_SHR_WIDTH ||
+        src_w > (int)EFFECT_HISTORY_STRIDE ||
         src_h > (int)COMP_APPLE_SHR_HEIGHT) {
         return;
     }
@@ -1080,8 +1080,10 @@ static const char *format_badge_label(void)
     case APPLE_FB_FORMAT_SHR3200_MIXED: name = "SHR-3200 MIXED"; break;
     case APPLE_FB_FORMAT_SHR_EXT_MIXED: name = "SHR EXT MIXED"; break;
     default:
-        name = (g_compositor_last_apple_mode == APPLE_FB_DISPLAY_MODE_SHR) ?
-               "SHR ?" : "VIDEO ?";
+        name = (g_compositor_last_apple_mode == APPLE_FB_DISPLAY_MODE_GS) ?
+               "IIGS VIDEO" :
+               (g_compositor_last_apple_mode == APPLE_FB_DISPLAY_MODE_SHR ?
+                "SHR ?" : "VIDEO ?");
         break;
     }
 
@@ -1239,16 +1241,31 @@ static void draw_solid_border_ring(uint16_t *fb,
                      color, scanline_mode, border_y, vertical_scale);
 }
 
+static comp_viewport_t apple_picture_viewport(uint32_t mode)
+{
+    comp_viewport_t view = (mode == APPLE_FB_DISPLAY_MODE_SHR ||
+                            mode == APPLE_FB_DISPLAY_MODE_GS) ?
+                           comp_shr_viewport : comp_legacy_viewport;
+    if (mode == APPLE_FB_DISPLAY_MODE_GS) {
+        view.border_x = view.x - (int)COMP_APPLE_GS_ACTIVE_X * view.scale;
+        view.border_y = view.y - (int)COMP_APPLE_GS_ACTIVE_Y * 2 * view.scale;
+        view.border_width = (int)COMP_APPLE_GS_WIDTH * view.scale;
+        view.border_height = (int)COMP_APPLE_GS_HEIGHT * 2 * view.scale;
+    }
+    return view;
+}
+
 static int draw_apple_subwindow(uint16_t *fb, uint8_t slot)
 {
     /* The frame was claimed before the background callback, so its
      * cleanup and this blit use the same display mode. */
-    if (slot == APPLE_FB_NO_SLOT) {
+    if (slot >= COMP_APPLE_SLOT_COUNT) {
         return 0;
     }
     const uint32_t display_mode = apple_fb_reader_display_mode();
-    const uint8_t scale = (display_mode == APPLE_FB_DISPLAY_MODE_SHR)
-        ? comp_shr_viewport.scale : comp_legacy_viewport.scale;
+    const int native_gs = display_mode == APPLE_FB_DISPLAY_MODE_GS;
+    const comp_viewport_t view = apple_picture_viewport(display_mode);
+    const uint8_t scale = view.scale;
     const uint8_t border_color = apple_fb_reader_border_color();
     const uint32_t format_detail = apple_fb_reader_format_detail();
     const uint32_t mono_detail = format_detail & APPLE_FB_FORMAT_MONO_MASK;
@@ -1265,11 +1282,15 @@ static int draw_apple_subwindow(uint16_t *fb, uint8_t slot)
             APPLE_FB_FORMAT_MONO_COLOR_MASK) >> APPLE_FB_FORMAT_MONO_COLOR_SHIFT);
         const int woven = display_mode == APPLE_FB_DISPLAY_MODE_LEGACY_I;
         s_mono_x = (!synthetic_legacy_border && s_border_enabled != 0U)
-            ? (int)COMP_APPLE_BORDER_H_PIXELS : 0;
+            ? (native_gs ? (int)COMP_APPLE_GS_ACTIVE_X :
+               (int)COMP_APPLE_BORDER_H_PIXELS) : 0;
         s_mono_y = (!synthetic_legacy_border && s_border_enabled != 0U)
-            ? (int)COMP_APPLE_BORDER_V_LINES : 0;
-        s_mono_width = (int)COMP_APPLE_WIDTH;
-        s_mono_height = woven ? 384 : (int)COMP_APPLE_HEIGHT;
+            ? (native_gs ? (int)COMP_APPLE_GS_ACTIVE_Y :
+               (int)COMP_APPLE_BORDER_V_LINES) : 0;
+        s_mono_width = native_gs ? (int)COMP_APPLE_GS_ACTIVE_WIDTH :
+                                 (int)COMP_APPLE_WIDTH;
+        s_mono_height = native_gs ? (int)COMP_APPLE_GS_ACTIVE_HEIGHT :
+                                  (woven ? 384 : (int)COMP_APPLE_HEIGHT);
         s_mono_channel_shift = video_mono_channel_shift(color);
         if (color != s_mono_tint_color) {
             video_mono_build_tint(s_mono_tint, color);
@@ -1432,8 +1453,33 @@ static int draw_apple_subwindow(uint16_t *fb, uint8_t slot)
     int dst_y;
     int src_w;
     int src_h;
+    int src_stride = (int)COMP_APPLE_ROW_PIXELS;
 
-    if (s_border_enabled != 0u && !synthetic_legacy_border) {
+    if (native_gs) {
+        src_stride = (int)(COMP_APPLE_GS_STRIDE_BYTES / COMP_APPLE_BPP);
+        if (s_border_enabled != 0u) {
+            if (s_border_flood != 0u) {
+                draw_border_flood(fb,
+                                  view.border_x, view.border_y,
+                                  view.border_width, view.border_height,
+                                  fb16_from_bgra32(
+                                      apple_video_iigs_border_bgra(border_color)),
+                                  s_scanlines_mode, (uint8_t)(2U * scale));
+            }
+            src = src_base;
+            dst_x = view.border_x;
+            dst_y = view.border_y;
+            src_w = (int)COMP_APPLE_GS_WIDTH;
+            src_h = (int)COMP_APPLE_GS_HEIGHT;
+        } else {
+            src = src_base + (int)COMP_APPLE_GS_ACTIVE_Y * src_stride +
+                  (int)COMP_APPLE_GS_ACTIVE_X;
+            dst_x = view.x;
+            dst_y = view.y;
+            src_w = (int)COMP_APPLE_GS_ACTIVE_WIDTH;
+            src_h = (int)COMP_APPLE_GS_ACTIVE_HEIGHT;
+        }
+    } else if (s_border_enabled != 0u && !synthetic_legacy_border) {
         if (s_border_flood != 0u) {
             draw_border_flood(fb,
                               (int)COMP_BORDER_X_OFF,
@@ -1465,7 +1511,7 @@ static int draw_apple_subwindow(uint16_t *fb, uint8_t slot)
                                src,
                                src_w,
                                src_h,
-                               (int)COMP_APPLE_ROW_PIXELS,
+                               src_stride,
                                scale,
                                (uint8_t)(2U * scale),
                                s_scanlines_mode,
@@ -1479,7 +1525,7 @@ static int draw_apple_subwindow(uint16_t *fb, uint8_t slot)
                                 src,
                                 src_w,
                                 src_h,
-                                (int)COMP_APPLE_ROW_PIXELS,
+                                src_stride,
                                 scale, (uint8_t)(2U * scale),
                                 s_scanlines_mode);
     }
@@ -1489,9 +1535,7 @@ static int draw_apple_subwindow(uint16_t *fb, uint8_t slot)
          * first image during boot; a fixed anchor prevents the badge from
          * jumping between the ring and the picture. */
         draw_format_badge(fb,
-                          (int)COMP_SUBWIN_X_OFF,
-                          (int)COMP_SUBWIN_Y_OFF,
-                          (int)COMP_SUBWIN_WIDTH);
+                          view.x, view.y, view.width);
     }
     return 1;
 }
@@ -1602,11 +1646,12 @@ static void draw_supersprite_overlay(uint16_t *fb)
         return;
     }
 
+    const comp_viewport_t *view =
+        g_compositor_last_apple_mode == APPLE_FB_DISPLAY_MODE_GS ?
+        &comp_shr_viewport : &comp_legacy_viewport;
     for (int sy = 0; sy < SS_VDP_HEIGHT; ++sy) {
-        const int oy0 = (int)COMP_SUBWIN_Y_OFF +
-            (sy * (int)COMP_SUBWIN_HEIGHT) / SS_VDP_HEIGHT;
-        const int oy1 = (int)COMP_SUBWIN_Y_OFF +
-            ((sy + 1) * (int)COMP_SUBWIN_HEIGHT) / SS_VDP_HEIGHT;
+        const int oy0 = view->y + (sy * view->height) / SS_VDP_HEIGHT;
+        const int oy1 = view->y + ((sy + 1) * view->height) / SS_VDP_HEIGHT;
         const uint32_t *srow = f->pixels + sy * SS_VDP_WIDTH;
         for (int sx = 0; sx < SS_VDP_WIDTH; ++sx) {
             const uint32_t p = srow[sx];
@@ -1614,10 +1659,8 @@ static void draw_supersprite_overlay(uint16_t *fb)
                 continue;  /* black => transparent, keep Apple pixel */
             }
             const uint16_t p565 = fb16_from_bgra32(p);
-            const int ox0 = (int)COMP_SUBWIN_X_OFF +
-                (sx * (int)COMP_SUBWIN_WIDTH) / SS_VDP_WIDTH;
-            const int ox1 = (int)COMP_SUBWIN_X_OFF +
-                ((sx + 1) * (int)COMP_SUBWIN_WIDTH) / SS_VDP_WIDTH;
+            const int ox0 = view->x + (sx * view->width) / SS_VDP_WIDTH;
+            const int ox1 = view->x + ((sx + 1) * view->width) / SS_VDP_WIDTH;
             for (int oy = oy0; oy < oy1; ++oy) {
                 uint16_t *drow = fb + oy * FB16_WIDTH;
                 for (int ox = ox0; ox < ox1; ++ox) {
@@ -2135,7 +2178,8 @@ int compositor_tick(void)
         } else {
             apple_drawn = draw_apple_subwindow(fb, apple_slot);
             draw_supersprite_overlay(fb);
-            linear_text_overlay_draw(fb,
+            linear_text_overlay_draw(
+                g_compositor_last_apple_mode == APPLE_FB_DISPLAY_MODE_GS ? NULL : fb,
                 g_compositor_last_apple_mode == APPLE_FB_DISPLAY_MODE_SHR);
         }
         XTime_GetTime(&apple_end);
@@ -2152,19 +2196,11 @@ int compositor_tick(void)
     }
     XTime_GetTime(&ui_end);
     if (apple_drawn) {
-        const int shr = g_compositor_last_apple_mode == APPLE_FB_DISPLAY_MODE_SHR;
-        s_picture_rect[s_writer_idx].x = s_border_enabled ?
-            (shr ? (int)COMP_SHR_BORDER_X_OFF:(int)COMP_BORDER_X_OFF) :
-            (shr ? (int)COMP_SUBWIN_SHR_X_OFF:(int)COMP_SUBWIN_X_OFF);
-        s_picture_rect[s_writer_idx].y = s_border_enabled ?
-            (shr ? (int)COMP_SHR_BORDER_Y_OFF:(int)COMP_BORDER_Y_OFF) :
-            (shr ? (int)COMP_SUBWIN_SHR_Y_OFF:(int)COMP_SUBWIN_Y_OFF);
-        s_picture_rect[s_writer_idx].width = s_border_enabled ?
-            (shr ? (int)COMP_SHR_BORDER_WIDTH:(int)COMP_BORDER_WIDTH) :
-            (shr ? (int)COMP_SUBWIN_SHR_WIDTH:(int)COMP_SUBWIN_WIDTH);
-        s_picture_rect[s_writer_idx].height = s_border_enabled ?
-            (shr ? (int)COMP_SHR_BORDER_HEIGHT:(int)COMP_BORDER_HEIGHT) :
-            (shr ? (int)COMP_SUBWIN_SHR_HEIGHT:(int)COMP_SUBWIN_HEIGHT);
+        const comp_viewport_t view = apple_picture_viewport(g_compositor_last_apple_mode);
+        s_picture_rect[s_writer_idx].x = s_border_enabled ? view.border_x : view.x;
+        s_picture_rect[s_writer_idx].y = s_border_enabled ? view.border_y : view.y;
+        s_picture_rect[s_writer_idx].width = s_border_enabled ? view.border_width : view.width;
+        s_picture_rect[s_writer_idx].height = s_border_enabled ? view.border_height : view.height;
         s_picture_rect[s_writer_idx].valid = 1;
         /* Borders can extend off-screen at Max/2x. Anchor the mask to the
          * visible clipped viewport, just as a cropped screenshot does. */

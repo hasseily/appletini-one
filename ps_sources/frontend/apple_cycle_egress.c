@@ -169,7 +169,8 @@ static int egress_find_phase_lookahead(const uint64_t *records,
     while (scan < record_count) {
         const uint64_t candidate = records[scan];
 
-        if (candidate == 0ULL) {
+        if (candidate == 0ULL || ace_record_kind(candidate) == ACE_RECORD_KIND_GS_STATE ||
+            ace_record_kind(candidate) == ACE_RECORD_KIND_GS_IO) {
             return 1;
         }
         if (ace_record_kind(candidate) == ACE_RECORD_KIND_IO_WRITE &&
@@ -273,6 +274,10 @@ void apple_cycle_egress_poll(void)
                 s_checkpoint();
             }
 
+            if (apple_cycle_renderer_before_record) {
+                apple_cycle_renderer_before_record(rec);
+            }
+
             if (rec == 0ULL) {
                 /* Gap marker: both halves zero. The FPGA emits this on
                  * ring-full or on-chip FIFO drop. */
@@ -282,18 +287,21 @@ void apple_cycle_egress_poll(void)
             } else {
                 switch (ace_record_kind(rec)) {
                 case ACE_RECORD_KIND_LEGACY:
+                case ACE_RECORD_KIND_GS_SHADOW:
                     if (ace_addr_decode_en(rec)) {
                         uint32_t a = ace_addr_decode(rec);
                         uint8_t  d = ace_data(rec);
                         if ((a & 0x010000U) != 0U) {
                             g_aux_bank[a & 0xFFFFU] = d;
-                            if ((a & 0xFFFFU) == 0x9DF8U) {
+                            if (ace_record_kind(rec) == ACE_RECORD_KIND_LEGACY &&
+                                (a & 0xFFFFU) == 0x9DF8U) {
                                 apple_cycle_renderer_note_aux_ctrl_write(d);
                             }
                         } else {
                             g_main_bank[a & 0xFFFFU] = d;
                         }
-                        linear_text_overlay_capture_on_write(a, d);
+                        if (ace_record_kind(rec) == ACE_RECORD_KIND_LEGACY)
+                            linear_text_overlay_capture_on_write(a, d);
                         if ((uint16_t)(a & 0xFFFFU) >= 0x2000U &&
                             (uint16_t)(a & 0xFFFFU) <= 0x9FFFU) {
                             g_video_shadow_generation++;
@@ -309,7 +317,7 @@ void apple_cycle_egress_poll(void)
                         g_bus_writes_seen++;
                     }
 
-                    if (ace_frame_en(rec)) {
+                    if (ace_record_kind(rec) == ACE_RECORD_KIND_LEGACY && ace_frame_en(rec)) {
                         g_frame_records_seen++;
                     }
                     break;

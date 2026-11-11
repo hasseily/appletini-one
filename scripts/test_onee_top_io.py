@@ -122,9 +122,9 @@ def static_contract_checks() -> None:
     slot7_guard = instance_text(
         apple, "apple_slot7_devsel_guard apple_slot7_devsel_guard_i"
     )
-    require(".ab_read(gate_ab(data_phase_ab_read, card_slot4_bus_enable))"
+    require(".ab_read(gate_slot_ab(data_phase_ab_read, card_slot4_bus_enable, 8'h10, iigs_bus_permissions))"
             in mockingboard and ".serve_data(ab_read.data)" in mockingboard and
-            ".ab_read(gate_ab(data_phase_ab_read, card_slot5_bus_enable))"
+            ".ab_read(gate_slot_ab(data_phase_ab_read, card_slot5_bus_enable, 8'h20, iigs_bus_permissions))"
             in applicard and
             ".ab_read_in            (data_phase_ab_read)" in slot7_guard,
             "data_en cards must take the captured data byte")

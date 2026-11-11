@@ -25,6 +25,8 @@ module tb_disk2_physical_bus;
 
     logic rstn = 1'b0;
     logic host_is_iiplus = 1'b0;
+    logic gs_m2_qualify = 1'b0;
+    logic m2sel_n = 1'b0;
 
     wire [7:0]  apple_data_pin;
     wire [15:0] apple_addr_pin;
@@ -60,6 +62,8 @@ module tb_disk2_physical_bus;
     assign (weak0, weak1) apple_nmi_pin  = 1'b1;
 
     globals::AppleBus_read  ab_read;
+    globals::AppleBus_read  card_bus;
+    bit disk2_externally_mapped = 1'b1;
     globals::AppleBus_write disk_write;
     globals::AppleBus_write [11:0] client_writes;
     globals::AppleBus_write ab_write;
@@ -80,6 +84,17 @@ module tb_disk2_physical_bus;
     logic tini_addr_dir_pin;
     logic tini_data_dir_pin;
 
+    always_comb begin
+        card_bus = ab_read;
+        if (!disk2_externally_mapped) begin
+            card_bus.sss_en = 1'b0;
+            card_bus.serve_en = 1'b0;
+            card_bus.data_en = 1'b0;
+            if (ab_read.addr_en)
+                card_bus.cycle_valid = 1'b0;
+        end
+    end
+
     apple_bus_wrapper wrapper_i (
         .clk(clk),
         .rstn(rstn),
@@ -92,10 +107,10 @@ module tb_disk2_physical_bus;
         .dbg_tap_last(),
         .dbg_ghost_write(),
         .dbg_clear(1'b0),
-        .inh_allowed(1'b1),
+        .inh_allowed(!gs_m2_qualify),
         .physical_slave_select_ok(1'b1),
         .physical_irq_allowed(1'b1),
-        .gs_m2_qualify(1'b0),
+        .gs_m2_qualify(gs_m2_qualify),
         .m2sel_active_high(1'b0),
         .host_is_iiplus(host_is_iiplus),
         .iiplus_dma_refresh_active(1'b0),
@@ -103,7 +118,7 @@ module tb_disk2_physical_bus;
         .apple_addr_pin(apple_addr_pin),
         .apple_rw_pin(apple_rw_pin),
         .apple_phi0_pin(phi0),
-        .apple_m2sel_pin(1'b0),
+        .apple_m2sel_pin(m2sel_n),
         .apple_m2b0_pin(1'b0),
         .apple_devsel_n_pin(1'b1),
         .apple_inh_pin(apple_inh_pin),
@@ -140,7 +155,7 @@ module tb_disk2_physical_bus;
     disk2_card card_i (
         .clk(clk),
         .rstn(rstn),
-        .ab_read(ab_read),
+        .ab_read(card_bus),
         .rom_serve_en(1'b0),
         .sss(sss),
         .slot_assign(3'd6),
@@ -193,7 +208,10 @@ module tb_disk2_physical_bus;
     logic sampled_ownership;
     logic sampled_serve;
     logic sampled_sync_fall;
+    int disk_ticks = 0;
     always @(posedge clk) begin
+        if (card_i.disk_cycle_tick)
+            disk_ticks++;
         fabric_edge_count = fabric_edge_count + 1;
         last_fabric_edge_at = $realtime;
         sampled_data_en = ab_write.wr_data_en;
@@ -379,6 +397,79 @@ module tb_disk2_physical_bus;
         cpu_addr_oe = 1'b0;
     endtask
 
+    task automatic gs_unselected_cycles;
+        int start_ticks;
+        logic [31:0] start_accesses;
+        @(posedge phi0);
+        host_is_iiplus = 1'b0;
+        gs_m2_qualify = 1'b1;
+        m2sel_n = 1'b1;
+        @(posedge phi0);
+        #100ns;
+        cpu_addr = 16'hC0EE; // a decoded read would change Q7 and reply
+        cpu_addr_oe = 1'b1;
+        cpu_rw = 1'b1;
+        start_ticks = disk_ticks;
+        start_accesses = card_i.io_access_count_q;
+        repeat (16) begin
+            @(posedge phi0);
+            #350ns;
+            check(!tini_data_dir_pin, "unselected Disk II read drove data");
+            check(card_i.io_access_count_q == start_accesses && card_i.q7_q,
+                  "unselected cycle changed Disk II registers");
+        end
+        check(disk_ticks - start_ticks == 16,
+              "Disk II lost elapsed time during unselected GS cycles");
+        cpu_addr_oe = 1'b0;
+    endtask
+
+    task automatic track_reg_write(input logic [7:0] addr,
+                                   input logic [31:0] value);
+        @(negedge clk);
+        as_common.awaddr = addr;
+        as_common.wdata = value;
+        as_common.wstrb = 4'hF;
+        axi.awvalid = 1'b1;
+        @(negedge clk);
+        axi.awvalid = 1'b0;
+    endtask
+
+    task automatic gs_remap_rotation;
+        logic [12:0] start_position;
+        logic [31:0] start_accesses;
+
+        m2sel_n = 1'b0;
+        track_reg_write(8'h10, 32'd1);  // drive 1 has media
+        track_reg_write(8'h07, 32'd256);
+        track_reg_write(8'h06, 32'd1);  // commit drive 1, quarter track 0
+        cpu_write(16'hC0E9, 8'h00);    // motor on
+        check(card_i.standard_stream_active, "rotation test did not start");
+
+        // Model an internal C02D mapping at the slot aperture. M2SEL
+        // still qualifies the host cycle and the physical clock continues.
+        @(posedge phi0);
+        #100ns;
+        disk2_externally_mapped = 1'b0;
+        cpu_addr = 16'hC0EE;
+        cpu_addr_oe = 1'b1;
+        start_position = card_i.drive_stream_pos_q[0];
+        start_accesses = card_i.io_access_count_q;
+        repeat (48) @(posedge phi0);
+        #350ns;
+        check(ab_read.cycle_valid, "remapped host cycle was not M2SEL-qualified");
+        check(card_i.drive_stream_pos_q[0] != start_position,
+              "Disk II rotation stalled while slot 6 was internal");
+        check(card_i.io_access_count_q == start_accesses && card_i.q7_q,
+              "internal slot-6 cycle changed Disk II registers");
+
+        @(negedge phi0);
+        #80ns;
+        cpu_addr_oe = 1'b0;
+        disk2_externally_mapped = 1'b1;
+        cpu_write(16'hC0EE, 8'h00);
+        check(!card_i.q7_q, "external remap did not restore Disk II access");
+    endtask
+
     initial begin
         sss = '0;
         sss.slot_access = 1'b1;
@@ -417,6 +508,9 @@ module tb_disk2_physical_bus;
         check(card_i.q7_q === 1'b1,
               "odd read changed the Q7-high state");
 
+        gs_unselected_cycles();
+        gs_remap_rotation();
+
         check(data_drive_count == 2,
               $sformatf("saw %0d response drive windows, expected 2",
                         data_drive_count));
@@ -428,7 +522,7 @@ module tb_disk2_physical_bus;
     end
 
     initial begin
-        #100us;
+        #150us;
         $fatal(1, "FAIL: tb_disk2_physical_bus timeout");
     end
 endmodule

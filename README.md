@@ -5,16 +5,22 @@ around a Xilinx Zynq-7020. The PL handles cycle-sensitive Apple bus behavior;
 the two ARM cores provide storage, video rendering, USB services, configuration,
 and higher-level peripheral emulation.
 
+The current stable firmware is [F1.3.7](docs/releases/F1.3.7.md), based on
+the accepted dev20 build. It adds CoGS downloads, PC Transporter test mode,
+experimental IIgs support, and speech, display-sync, and ONE//e input fixes.
+
 ## Virtual Hardware
 
 - SmartPort storage and Disk II disk-image support
-- Selectable slot-5 coprocessor: PCPI-compatible Z80 Appli-Card or 640 KB ALF AD8088 Plus
+- Selectable slot-5 coprocessor: PCPI-compatible Z80 Appli-Card, 640 KB ALF
+  AD8088 Plus, or PC Transporter test mode
 - Phasor/Mockingboard audio with dual SSI-263 speech
 - Uthernet II compatible W5100 interface
 - Mouse card, RamWorks memory, and no-slot clock
 - VidHD-compatible video controls and SuperSprite graphics
 - Accurate Apple //e video capture, HDMI output, borders, scanlines, and profiles
 - USB keyboard, mouse, storage, firmware update, and SuperDuperDisplay support
+- CoGS game-disk browsing and downloads over Ethernet
 
 The [native SSI-263 FPGA engine](docs/SSI263_NATIVE.md) drives both speech
 sockets. The Phasor menu controls SSI volume and independent pan.

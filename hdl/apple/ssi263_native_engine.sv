@@ -50,7 +50,7 @@ module ssi263_native_engine #(
     ssi263_native_pitch pitch_i (
         .clk(clk), .rstn(rstn), .warm_reset(warm_reset), .mode_latch(mode_latch),
         .write_strobe(write_strobe),
-        .write_reg(write_reg), .write_data(write_data), .audio_tick(audio_tick),
+        .write_reg(write_reg), .write_data(write_data), .xck_ce(effective_ce),
         .inflection_for_tick(pitch_for_tick),
         .active_inflection(), .current_function()
     );

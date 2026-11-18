@@ -13,7 +13,7 @@
 using namespace ssi_host;
 
 namespace {
-uint64_t observations = 0, checks = 0, samples = 0, writes = 0;
+uint64_t observations = 0, checks = 0, samples = 0, writes = 0, glide_steps = 0;
 uint64_t coincident = 0, stalled = 0;
 
 template<class T> void number(std::istream& in, T& value) {
@@ -55,29 +55,34 @@ public:
     explicit Fixture(const Tables& tables) : tables_(tables) { reset(); }
     void reset() {
         ref = std::make_unique<Baseline>(tables_);
+        ref->use_prototype_glide(true);
         dut.rstn = 0; dut.write_strobe = 1; dut.write_reg = 3;
-        dut.write_data = 0x5c; dut.audio_tick = 1;
+        dut.write_data = 0x5c; dut.xck_ce = 1;
         dut.warm_reset = 0; dut.mode_latch = 0;
         dut.clk = 0; dut.eval(); dut.clk = 1; dut.eval();
-        dut.rstn = 1; dut.write_strobe = 0; dut.audio_tick = 0; dut.eval();
+        dut.rstn = 1; dut.write_strobe = 0; dut.xck_ce = 0; dut.eval();
         equal(dut.active_inflection, ref->active_inflection(), "reset active");
         equal(dut.current_function, ref->current_function(), "reset function");
     }
     void cycle(bool audio = true, int reg = -1, int value = 0) {
         ++observations;
-        dut.audio_tick = audio; dut.write_strobe = reg >= 0;
+        dut.xck_ce = audio; dut.write_strobe = reg >= 0;
         dut.write_reg = reg >= 0 ? reg : 0; dut.write_data = value;
         if (reg >= 0) { ref->write(reg, value); ++writes; if (audio) ++coincident; }
         dut.warm_reset = 0; dut.mode_latch = 0;
+        // A write precedes a coincident XCK; the source tick on that XCK
+        // reads the moved count.
+        const int before = ref->active_inflection();
+        if (audio) { ref->glide_xck(1); ++samples; }
+        else ++stalled;
+        if (reg < 0 && ref->active_inflection() != before) ++glide_steps;
         dut.clk = 0; dut.eval();
         const int live = ((ref->register_value(2) & 8) << 8) |
                          (ref->register_value(1) << 3) | (ref->register_value(2) & 7);
         const int expected = ref->current_function() == 3 ? ref->active_inflection() : live;
-        equal(dut.inflection_for_tick, expected, "pre-sample source inflection");
-        if (audio) { ref->sample(); ++samples; }
-        else ++stalled;
+        equal(dut.inflection_for_tick, expected, "source inflection on this XCK");
         dut.clk = 1; dut.eval();
-        equal(dut.active_inflection, ref->active_inflection(), "post-sample active inflection");
+        equal(dut.active_inflection, ref->active_inflection(), "registered active inflection");
         equal(dut.current_function, ref->current_function(), "function");
     }
     void run(int count) { for (int n = 0; n < count; ++n) cycle(); }
@@ -122,18 +127,26 @@ int main(int argc, char** argv) {
             }
         }
 
-        // Every step size, direction and active/target field pair. Include
-        // transitions that finish on one cadence edge and full-range glides.
+        // Every slope setting with slow, middle and fast RATE, in both
+        // directions, long enough for several counts. One count of I[10:3]
+        // takes 128*(8-slope)*(16-RATE) XCK.
         for (int step = 0; step < 8; ++step)
-            for (int from = 0; from < 32; ++from)
-                for (int to = 0; to < 32; ++to) {
-                    f.reset();
-                    f.word((from << 6) | (step << 3) | 5);
-                    f.mode(3);
-                    f.word(0x800 | (to << 6) | (step << 3) | 2);
-                    f.cycle(true, 0, 0x2c);
-                    f.run(84);
-                }
+            for (int rate : {0, 8, 15})
+                for (int from : {0, 7, 31})
+                    for (int to : {0, 9, 31}) {
+                        f.reset();
+                        f.word((from << 6) | (step << 3) | 5, false, rate);
+                        f.mode(3);
+                        f.word(0x800 | (to << 6) | (step << 3) | 2, false, rate);
+                        f.cycle(true, 0, 0x2c);
+                        f.run(128 * (8 - step) * (16 - rate) * 5 + 77);
+                    }
+        // Full-range glides at the fastest setting reach and hold the target.
+        for (int to : {0, 31}) {
+            f.reset(); f.word(((31 - to) << 6) | 0x38, false, 15); f.mode(3);
+            f.word((to << 6) | 0x38, false, 15); f.cycle(true, 0, 0x2c);
+            f.run(128 * 260);
+        }
 
         // Repeated CTL and function changes must not reseed a used glide;
         // FF aliases must have no effect on the pitch-only state.
@@ -144,9 +157,9 @@ int main(int argc, char** argv) {
             if (n && n % 29989 == 0) f.reset();
         }
         std::cout << "{\"status\":\"passed\",\"observations\":" << observations
-                  << ",\"checks\":" << checks << ",\"audio_samples\":" << samples
-                  << ",\"writes\":" << writes << ",\"coincident_write_samples\":" << coincident
-                  << ",\"no_sample_observations\":" << stalled << "}\n";
+                  << ",\"checks\":" << checks << ",\"xck_ticks\":" << samples << ",\"glide_steps\":" << glide_steps
+                  << ",\"writes\":" << writes << ",\"coincident_write_xck\":" << coincident
+                  << ",\"no_xck_observations\":" << stalled << "}\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

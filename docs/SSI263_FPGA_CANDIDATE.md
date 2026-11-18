@@ -51,7 +51,7 @@ ELF contains `F1.2.5-d2`. This build has not been tested on a card.
 | Module | Role |
 | --- | --- |
 | `ssi263_native_controller` | Raw ROM scanner, eight DDA slots, held TPARM state, duration, ART and amplitude clocks, filter phases |
-| `ssi263_native_pitch` | Retained listening-model inflection policy, isolated from sound generation |
+| `ssi263_native_pitch` | Pitch word and the prototype RATE-coupled inflection glide, isolated from sound generation |
 | `ssi263_native_source` | U68 amplitude count, U62 pitch, glottal load/count, CD4006 noise and phase latches |
 | `ssi263_native_tract` | Scheduled charge transfers, five formants, output/reconstruction holds |
 | `ssi263_native_engine` | Per-socket sequencing, DIV2, 48 kHz sample requests and deadline faults |
@@ -162,10 +162,15 @@ with the known buggy prototype:
 - Unknown cold routes use the provisional FRIC1 fallback that removed the
   first-H hiss. Held control state still carries its unknown flag; the fallback
   does not assert a known physical U20 reset value.
-- Inflection mode 3 retains the previous approximate glide table and 20 kHz
-  cadence. The standalone adapter contains only that register/pitch policy,
-  with no imported sound tables or old oscillator. It differs from the
-  prototype RATE-coupled glide.
+- Inflection mode 3 now follows the prototype RATE-coupled glide (sheet 3:
+  U27, U21A, U66, U65/U64). I[10:3] moves one count toward {I[10:6],000}
+  per 128*(8-slope)*(16-RATE) effective XCK, which is one count of the
+  12-bit word per 16*(8-slope)*(16-RATE) XCK. I11 and I[2:0] act at once.
+  This equals the rate that the ssi263-speech project measured on a real
+  chip in 426 glides. Two policies remain: the first transitioned phone
+  adopts its target once, because U65/U64 have no reset, and the dividers
+  run free of the scanner's SEL1 phase. Source and simulation checks pass;
+  no FPGA build or card test includes this change yet.
 - The tract remains an ideal integer charge model. Analog component tolerances,
   amplifier limits, propagation at coincident edges and output reconstruction
   beyond the modeled hold remain unverified against production SSI silicon.
@@ -184,7 +189,7 @@ not yet specify complete fixes for:
   but does not uniquely choose the replacement counter/latch behavior.
 - The late S-to-I transition in the song. Retaining AMP does not change that
   passage; the PW0/duration timing remains a separate question.
-- The prototype U166B write inhibit, pitch glide and unknown cold-state policy.
+- The prototype U166B write inhibit and unknown cold-state policy.
 - High-frequency output reconstruction and amplitude-dependent tone. A single
   fixed EQ cannot explain the measured amplitude-dependent change.
 

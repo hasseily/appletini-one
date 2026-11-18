@@ -114,6 +114,7 @@ int main(int argc, char** argv) {
         for (int socket = 0; socket != 2; ++socket) {
             audio[socket].set_native_transition_mode(mode == "transitions");
             audio[socket].use_exact_pitch(mode == "pitch");
+            audio[socket].use_prototype_glide(mode == "prototype");
             controls[socket].set_articulation_reference_rate(articulation_reference);
         }
         const int64_t first_tick = events.empty() ? 0 : std::min<int64_t>(0, events[0].tick);
@@ -139,7 +140,8 @@ int main(int argc, char** argv) {
                         auto& source = sources[socket];
                         control.set_ampct_zero(source.ampct_zero());
                         control.advance_xck(1);
-                        // Only transitioned mode retains the running glide policy.
+                        audio[socket].glide_xck(1);
+                        // Only transitioned mode uses the running glide count.
                         // Immediate writes must reach the next native reload.
                         const auto& a = audio[socket];
                         const int rate = a.register_value(2);

@@ -188,7 +188,7 @@ static void bus_contracts() {
 
 static void pcm_parity(const Tables& tables) {
     Bench b;b.reset();auto& d=b.d;
-    Baseline pitch(tables);NativeControl control(tables);NativeSource source;PrototypeTract tract(2);
+    Baseline pitch(tables);pitch.use_prototype_glide(true);NativeControl control(tables);NativeSource source;PrototypeTract tract(2);
     control.write(4,0); // Explicit production cold FF latch override.
     const int regs[]={0,1,2,4,3}, values[]={0xf1,0x58,0xf0,231,0x0f};
     for(int k=0;k<5;++k){b.write(regs[k],values[k]);pitch.write(regs[k],values[k]);control.write(regs[k],values[k]);}
@@ -208,7 +208,7 @@ static void pcm_parity(const Tables& tables) {
         }
         if(effective) {
             last_effective=n;
-            control.set_ampct_zero(source.ampct_zero());control.advance_xck(1);
+            control.set_ampct_zero(source.ampct_zero());control.advance_xck(1);pitch.glide_xck(1);
             const int r=pitch.register_value(2),live=((r&8)<<8)|(pitch.register_value(1)<<3)|(r&7);
             source.tick(control,pitch.current_function()==3?pitch.active_inflection():live);
             const auto& o=source.output();

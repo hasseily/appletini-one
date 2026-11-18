@@ -48,6 +48,7 @@ static int timed_contracts(const Tables& tables) {
     auto b=std::make_unique<Vssi263_native_engine>();
     Vssi263_native_engine* dut[2]={a.get(),b.get()};
     Baseline pitch[2]={Baseline(tables),Baseline(tables)};
+    for(auto& p:pitch)p.use_prototype_glide(true);
     NativeControl control[2]={NativeControl(tables),NativeControl(tables)};
     NativeSource source[2];
     PrototypeTract tract[2]={PrototypeTract(2),PrototypeTract(2)};
@@ -101,6 +102,7 @@ static int timed_contracts(const Tables& tables) {
             if(effective) {
                 control[s].set_ampct_zero(source[s].ampct_zero());
                 control[s].advance_xck(1);
+                pitch[s].glide_xck(1);
                 const int rate=pitch[s].register_value(2);
                 const int live=((rate&8)<<8)|(pitch[s].register_value(1)<<3)|(rate&7);
                 source[s].tick(control[s],pitch[s].current_function()==3?pitch[s].active_inflection():live);
@@ -159,6 +161,7 @@ int main(int argc, char** argv) {
         require(bool(trace), "truncated events");
         std::ofstream pcm(argv[3], std::ios::binary);
         Baseline pitch[2] = {Baseline(tables,hz), Baseline(tables,hz)};
+        for (auto& p : pitch) p.use_prototype_glide(true);
         NativeControl control[2] = {NativeControl(tables,hz), NativeControl(tables,hz)};
         NativeSource source[2];
         PrototypeTract tract[2] = {PrototypeTract(2), PrototypeTract(2)};
@@ -188,6 +191,7 @@ int main(int argc, char** argv) {
             for (int s=0;s<2;++s) {
                 control[s].set_ampct_zero(source[s].ampct_zero());
                 control[s].advance_xck(1);
+                pitch[s].glide_xck(1);
                 const int rate = pitch[s].register_value(2);
                 const int live = ((rate&8)<<8)|(pitch[s].register_value(1)<<3)|(rate&7);
                 source[s].tick(control[s],pitch[s].current_function()==3?pitch[s].active_inflection():live);

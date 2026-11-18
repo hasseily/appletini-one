@@ -44,9 +44,8 @@ public:
     // This is a model calibration value, not a measured source voltage.
     explicit NativeSource(int voice_trim_q16 = 16384);
     void tick(const NativeSourceInputs& inputs);
-    // The renderer supplies Baseline::active_inflection() between output
-    // samples: native XCK divider, retained approximate pitch-glide cadence.
-    // This does not import the prototype's speech-RATE-dependent glide.
+    // The renderer supplies Baseline::active_inflection() on every XCK:
+    // native XCK divider, with the prototype's RATE-coupled pitch glide.
     void tick(const NativeControl& control, int active_inflection);
     const NativeSourceOutput& output() const { return output_; }
     const NativeSourceMetrics& metrics() const { return metrics_; }

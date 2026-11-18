@@ -75,7 +75,35 @@ public:
 
     int duration_phase() const { return ticks_; }
     int pitch_phase() const { return pitch_; }
-    int active_inflection() const { return active_inflection_; }
+    int active_inflection() const {
+        if (!prototype_glide_) return active_inflection_;
+        const int live = live_inflection();
+        return function_ == 3 ? (live & 0x807) | (glide_ << 3) : live;
+    }
+
+    // Prototype transitioned inflection (sheet 3: U27, U21A, U66, U65/U64).
+    // The caller supplies every effective XCK, after same-tick writes and
+    // before the source reads the pitch. SEL1 rises once per 64 XCK. U27
+    // divides by 16-RATE and U21A halves, so RATECLK has a period of
+    // 128*(16-RATE) XCK. U66 divides its rises by 8-I[5:3]. Each U66 output
+    // moves the 8-bit counter I[10:3] one count toward {I[10:6],000}.
+    // I11 and I[2:0] always act at once. sample() does not move this glide.
+    void use_prototype_glide(bool enabled) { prototype_glide_ = enabled; }
+    void glide_xck(int edges) {
+        for (; edges > 0; --edges) {
+            if (++glide_sel1_ != 64) continue;
+            glide_sel1_ = 0;
+            if (glide_rate_left_ != 1) { --glide_rate_left_; continue; }
+            glide_rate_left_ = 16 - (rate_ >> 4);
+            glide_rateclk_ = !glide_rateclk_;
+            if (!glide_rateclk_) continue;
+            if (glide_move_left_ != 1) { --glide_move_left_; continue; }
+            glide_move_left_ = 8 - (inflect_ & 7);
+            const int target = inflect_ & 0xF8;
+            if (glide_ < target) ++glide_;
+            else if (glide_ > target) --glide_;
+        }
+    }
     int current_function() const { return function_; }
     int register_value(int reg) const {
         switch (reg) {
@@ -196,6 +224,9 @@ private:
         int next = live_inflection();
         if (function_ == 3) {
             if (inflection_seeded_) next = (next & ~0x7C0) | (active_inflection_ & 0x7C0);
+            // U65/U64 have no reset. The first transitioned phone adopts
+            // its target once; later phones keep the running count.
+            else glide_ = inflect_ & 0xF8;
             inflection_seeded_ = true;
         }
         active_inflection_ = next;
@@ -418,6 +449,8 @@ private:
     int update_counter_ = 0, control_accum_ = 0, noise_state_ = 0;
     int64_t xck_accum_ = 0;
     int exact_pitch_edges_ = 0;
+    bool prototype_glide_ = false, glide_rateclk_ = false;
+    int glide_ = 0, glide_sel1_ = 0, glide_rate_left_ = 16, glide_move_left_ = 8;
     int external_voice_ = 0, external_noise_ = 0;
     int filter_phase_ = 0, closed_ = 0, fx_ = 0, presence_low_ = 0, audio_ = 0;
 };

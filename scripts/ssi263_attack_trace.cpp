@@ -67,6 +67,7 @@ int main(int argc, char** argv) {
             if (e.socket == 0) events.push_back(e);
         }
         Baseline pitch(tables, hz);
+        pitch.use_prototype_glide(true);
         NativeControl control(tables, hz);
         NativeSource source;
         PrototypeTract tract(1);
@@ -109,6 +110,7 @@ int main(int argc, char** argv) {
             for (; native_tick < tick; ++native_tick) {
                 control.set_ampct_zero(source.ampct_zero());
                 control.advance_xck(1);
+                pitch.glide_xck(1);
                 const int rate = pitch.register_value(2);
                 const int live_i = ((rate & 8) << 8) | (pitch.register_value(1) << 3) | (rate & 7);
                 source.tick(control, pitch.current_function() == 3 ? pitch.active_inflection() : live_i);

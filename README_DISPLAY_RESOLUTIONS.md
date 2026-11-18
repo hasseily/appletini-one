@@ -95,6 +95,18 @@ its existing Apple 50/60 Hz timing policy. The display must accept the selected
 timing; 1200x800 and the lower modes' 50 Hz timings need particular care.
 This implementation does not select modes from EDID.
 
+Both VSYNC edges now coincide with HSYNC assertion. The timing generator
+uses the next active-video row at that edge, so the change preserves the
+vertical porch and pulse lengths. In 1080p, this moves both VSYNC edges
+192 pixel clocks earlier. Pixel clocks, DE, framebuffer reads, and frame
+totals keep their existing behavior, including 1126 lines for active NTSC
+1080p (about 59.947 Hz) and 1123 lines for active PAL 1080p.
+
+This change targets the flicker and horizontal wrap reported on an ASUS
+PA32QCV with F1.3.6 and a direct HDMI connection to an NTSC system. That
+report is not a hardware test of this change. Validation on the affected
+monitor remains pending.
+
 1360x768 uses the 60 Hz DMT timing (positive H/V sync), as listed in the
 [Linux DRM DMT table](https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/drm_edid.c).
 Its 50 Hz preset keeps the same pixel clock and uses 954 total lines.
@@ -113,6 +125,11 @@ mode-switch driver's success and failure paths. RTL simulations cover all six
 timings at 50/60 Hz, clock-switch sequencing and recovery, and framebuffer
 drain/restart, including the partial final burst at 1680x1050. The tests also
 check that the PS and PL mode tables agree.
+
+The timing regression checks both VSYNC edges against HSYNC assertion and
+the expected row for all six modes at 50/60 Hz. It also checks active
+1080p genlock with explicit 1126-line NTSC and 1123-line PAL totals. The
+unaligned RTL fails both edge checks.
 
 The generated AMD Clocking Wizard and MMCM simulation passes all six clock
 rates and a late clock-change failure followed by recovery to 148.5 MHz.

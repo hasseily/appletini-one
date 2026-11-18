@@ -6,11 +6,12 @@ module tb_video_output_modes;
     logic resetn = 0;
     logic [3:0] mode = 4;
     logic pal = 0;
+    logic genlock_enable = 0;
     wire hsync, vsync, de, vblank;
     wire [11:0] h, v;
     video_timing_gen timing (
         .clk_pixel(clk), .rst_n(resetn), .output_mode(mode),
-        .mode_1080p50(pal), .genlock_vblank_start(1'b0),
+        .mode_1080p50(pal), .genlock_vblank_start(genlock_enable && vblank),
         .hsync(hsync), .vsync(vsync), .de(de),
         .h_count(h), .v_count(v), .vblank_start(vblank)
     );
@@ -19,50 +20,99 @@ module tb_video_output_modes;
     int ht[VIDEO_MODE_COUNT] = '{1344, 1360, 1688, 1840, 2200, 1792};
     int vt60[VIDEO_MODE_COUNT] = '{806, 828, 1066, 1080, 1125, 795};
     int vt50[VIDEO_MODE_COUNT] = '{967, 993, 1280, 1293, 1125, 954};
+    int hf[VIDEO_MODE_COUNT] = '{24, 48, 48, 48, 88, 64};
+    int vf[VIDEO_MODE_COUNT] = '{3, 3, 1, 3, 4, 3};
     int hs[VIDEO_MODE_COUNT] = '{136, 32, 112, 32, 44, 112};
     int vs[VIDEO_MODE_COUNT] = '{6, 10, 3, 6, 5, 6};
     bit hp[VIDEO_MODE_COUNT] = '{0, 1, 1, 1, 1, 1};
     bit vp[VIDEO_MODE_COUNT] = '{0, 0, 1, 0, 1, 1};
-    int pixels, cycles, hsync_cycles, vsync_cycles, vblanks;
-    int total_h, total_v;
+
+    task automatic check_frame(input int m, input bit standard, input bit genlock);
+        int pixels, cycles, hsync_cycles, vsync_cycles, vblanks;
+        int total_h, total_v, sync_start;
+        int vsync_assertions, vsync_deassertions, phase_errors, expected_v;
+        bit previous_hsync, previous_vsync;
+
+        @(negedge clk);
+        resetn = 0;
+        mode = 4'(m);
+        pal = standard;
+        genlock_enable = genlock;
+        repeat (8) @(negedge clk);
+        resetn = 1;
+        // Let the activity detector and its frame-boundary latch settle.
+        // The synthetic heartbeat supplies one pulse per output frame.
+        repeat (genlock ? 3 : 1) begin
+            do @(negedge clk); while (h != 0 || v != 0);
+        end
+        pixels = 0; cycles = 0; hsync_cycles = 0;
+        vsync_cycles = 0; vblanks = 0;
+        vsync_assertions = 0; vsync_deassertions = 0; phase_errors = 0;
+        previous_hsync = hsync;
+        previous_vsync = vsync;
+        total_h = m == 4 && standard ? 2640 : ht[m];
+        total_v = standard ? vt50[m] : vt60[m];
+        if (m == 4 && genlock)
+            total_v = standard ? 1123 : 1126;
+        sync_start = widths[m] + (m == 4 && standard ? 528 : hf[m]);
+        do begin
+            pixels += int'(de);
+            hsync_cycles += int'(hsync == hp[m]);
+            vsync_cycles += int'(vsync == vp[m]);
+            vblanks += int'(vblank);
+            if (vsync != previous_vsync) begin
+                if (vsync == vp[m]) begin
+                    vsync_assertions++;
+                    expected_v = heights[m] + vf[m] - 1;
+                end else begin
+                    vsync_deassertions++;
+                    expected_v = heights[m] + vf[m] + vs[m] - 1;
+                end
+                // Both VSYNC edges must coincide with HSYNC assertion.
+                // Registered outputs trail the counters by one pixel;
+                // VSYNC belongs to the row after this blanking interval.
+                if (hsync != hp[m] || previous_hsync == hp[m] ||
+                    h != sync_start + 1 || v != expected_v) begin
+                    $display("FAIL: mode %0d PAL %0d genlock %0d VSYNC %s at h=%0d v=%0d; expected HSYNC assertion at h=%0d v=%0d",
+                        m, standard, genlock, vsync == vp[m] ? "assert" : "deassert",
+                        h, v, sync_start + 1, expected_v);
+                    phase_errors++;
+                end
+            end
+            previous_hsync = hsync;
+            previous_vsync = vsync;
+            cycles++;
+            @(negedge clk);
+        end while (h != 0 || v != 0);
+        if (phase_errors || vsync_assertions != 1 || vsync_deassertions != 1)
+            $fatal(1, "mode %0d PAL %0d genlock %0d VSYNC edge check: errors=%0d assert=%0d deassert=%0d",
+                m, standard, genlock, phase_errors, vsync_assertions, vsync_deassertions);
+        if (pixels != widths[m] * heights[m] || cycles != total_h * total_v ||
+            hsync_cycles != hs[m] * total_v ||
+            vsync_cycles != vs[m] * total_h || vblanks != 1)
+            $fatal(1, "mode %0d PAL %0d genlock %0d pixels=%0d cycles=%0d hs=%0d vs=%0d vb=%0d",
+                m, standard, genlock, pixels, cycles, hsync_cycles, vsync_cycles, vblanks);
+        if (video_frame_bursts(4'(m)) * 128 < widths[m] * heights[m] * 2 ||
+            video_frame_bursts(4'(m)) * 128 - widths[m] * heights[m] * 2 >= 128)
+            $fatal(1, "invalid final-burst rounding");
+        $display("PASS: mode %0d PAL %0d genlock %0d totals=%0dx%0d both VSYNC edges aligned",
+            m, standard, genlock, total_h, total_v);
+    endtask
 
     initial begin
         for (int m = 0; m < VIDEO_MODE_COUNT; m++) begin
             for (int standard = 0; standard < 2; standard++) begin
-                @(negedge clk);
-                resetn = 0;
-                mode = 4'(m);
-                pal = 1'(standard);
-                repeat (8) @(negedge clk);
-                resetn = 1;
-                do @(negedge clk); while (h != 0 || v != 0);
-                pixels = 0; cycles = 0; hsync_cycles = 0;
-                vsync_cycles = 0; vblanks = 0;
-                total_h = m == 4 && standard ? 2640 : ht[m];
-                total_v = standard ? vt50[m] : vt60[m];
-                do begin
-                    pixels += int'(de);
-                    hsync_cycles += int'(hsync == hp[m]);
-                    vsync_cycles += int'(vsync == vp[m]);
-                    vblanks += int'(vblank);
-                    cycles++;
-                    @(negedge clk);
-                end while (h != 0 || v != 0);
-                if (pixels != widths[m] * heights[m] || cycles != total_h * total_v ||
-                    hsync_cycles != hs[m] * total_v ||
-                    vsync_cycles != vs[m] * total_h || vblanks != 1)
-                    $fatal(1, "mode %0d PAL %0d pixels=%0d cycles=%0d hs=%0d vs=%0d vb=%0d",
-                        m, standard, pixels, cycles, hsync_cycles, vsync_cycles, vblanks);
-                if (video_frame_bursts(4'(m)) * 128 < widths[m] * heights[m] * 2 ||
-                    video_frame_bursts(4'(m)) * 128 - widths[m] * heights[m] * 2 >= 128)
-                    $fatal(1, "invalid final-burst rounding");
+                check_frame(m, 1'(standard), 0);
             end
         end
+        // Preserve the live-Apple frame totals while testing sync phase.
+        check_frame(4, 0, 1);
+        check_frame(4, 1, 1);
         $display("VIDEO OUTPUT TIMING PASS");
         $finish;
     end
     initial begin
-        #300000000;
+        #600000000;
         $fatal(1, "timing test timeout");
     end
 endmodule

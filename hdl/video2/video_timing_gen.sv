@@ -71,14 +71,14 @@
 //
 // VERTICAL BLANKING STRUCTURE
 // ===========================
-// Regardless of V_TOTAL, the blanking structure is:
-//   Lines 0 to 1079:           Active video  (V_VISIBLE = 1080)
-//   Lines 1080 to 1083:        Front porch   (V_FRONT = 4)
-//   Lines 1084 to 1088:        Vsync pulse   (V_SYNC = 5)
-//   Lines 1089 to V_TOTAL-1:   Back porch    (varies: 34-37 lines)
+// Active video uses rows 0 to 1079, with h=0 at the first active column.
+// VSYNC asserts at the HSYNC edge preceding row 1084 and deasserts at the
+// HSYNC edge preceding row 1089. Both edges align with HSYNC assertion;
+// the pulse still spans five full lines after a four-line front porch.
+// DE and vblank_start keep their h=0 line boundary.
 //
-// Only the back porch length changes between modes.  Active video, front
-// porch, and sync are always identical.
+// Only the back porch length changes with V_TOTAL. Active video, front
+// porch, and sync keep the same lengths.
 //******************************************************************************
 
 module video_timing_gen (
@@ -185,8 +185,10 @@ module video_timing_gen (
                         (h_counter <  (H_VISIBLE + h_front + H_SYNC));
 
     wire v_in_visible = (v_counter < V_VISIBLE);
-    wire v_in_sync    = (v_counter >= (V_VISIBLE + V_FRONT)) &&
-                        (v_counter <  (V_VISIBLE + V_FRONT + V_SYNC));
+    // HSYNC precedes h=0 of the next active-video row. Decode that row so
+    // VSYNC edges move to the preceding HSYNC without adding a porch line.
+    wire v_next_in_sync = (v_counter_line_next >= (V_VISIBLE + V_FRONT)) &&
+                          (v_counter_line_next <  (V_VISIBLE + V_FRONT + V_SYNC));
 
     // V_TOTAL to use for the NEXT frame.  Computed combinationally from the
     // current genlock_active state and the (unlatched) mode input.  Sampled
@@ -294,8 +296,8 @@ module video_timing_gen (
     always @(posedge clk_pixel) begin
         if (!rst_n)
             vsync_reg <= ~V_SYNC_POL;
-        else
-            vsync_reg <= v_in_sync ? V_SYNC_POL : ~V_SYNC_POL;
+        else if (h_counter == (H_VISIBLE + h_front))
+            vsync_reg <= v_next_in_sync ? V_SYNC_POL : ~V_SYNC_POL;
     end
 
     //==========================================================================

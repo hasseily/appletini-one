@@ -76,6 +76,8 @@ def test_queue_is_edge_only_and_backpressured() -> None:
             "slot->key_count)" in keyboard and
             "onee_key_queue_push(code);" in keyboard,
             "only a new HID usage may enqueue an Apple key")
+    require("ONEE_INPUT_FIFO_STATUS_EMPTY_BIT      (1UL << 13)" in source,
+            "key repeat must see whether the PL FIFO still holds a key")
     require("ONEE_INPUT_FIFO_STATUS_FULL_BIT       (1UL << 12)" in source and
             "ONEE_INPUT_FIFO_STATUS_FULL_BIT" in poll and
             "REG_WRITE(ONEE_INPUT_KEY_FIFO_REG" in poll and
@@ -385,6 +387,11 @@ def run_native_behavior_test() -> bool:
 
         static uint32_t test_reg_read(uint32_t address)
         {
+            /* The PL FIFO reports EMPTY (bit 13) when it holds no key. A
+             * fixture value of zero stands for that drained FIFO. */
+            if (reg_index(address) == 0x5CU && registers[0x5CU] == 0U) {
+                return 1UL << 13;
+            }
             return registers[reg_index(address)];
         }
 
@@ -1223,6 +1230,64 @@ def run_native_behavior_test() -> bool:
             if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before) {
                 fail("held HID key emitted more than one Apple event");
                 return 1;
+            }
+
+            /* A held key must not build a backlog of repeats while the
+             * Apple program has not yet read the key that waits in the PL
+             * FIFO. A real //e has one latch and no queue. */
+            registers[0x5CU] = (1UL << 8) | (1UL << 7) | 'A';
+            before = writes_to(ONEE_INPUT_KEY_FIFO_REG);
+            for (uint32_t n = 0U; n < 40U; ++n) {
+                test_time_ms += ONEE_INPUT_REPEAT_DELAY_MS;
+                onee_input_service_poll();
+            }
+            if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before) {
+                fail("repeats queued while an earlier key still waited");
+                return 1;
+            }
+            registers[0x5CU] = 0U;
+            test_time_ms += ONEE_INPUT_REPEAT_DELAY_MS;
+            onee_input_service_poll();
+            onee_input_service_poll();
+            if (writes_to(ONEE_INPUT_KEY_FIFO_REG) != before + 1U ||
+                last_write(ONEE_INPUT_KEY_FIFO_REG) != 'A') {
+                fail("repeat did not resume with one key after the FIFO drained");
+                return 1;
+            }
+            registers[0x5CU] = 0U;
+
+            /* A new key replaces keys that still wait unread, as the single
+             * //e latch does: the PL FIFO is flushed, then the new key goes
+             * in. With nothing waiting there is no flush. */
+            {
+                uint32_t control_before;
+
+                release_keys(2U);
+                registers[0x5CU] = (1UL << 8) | (1UL << 7) | 'A';
+                control_before = writes_to(ONEE_INPUT_CONTROL_REG);
+                boot_keys[0] = HID_KBD_USAGE_ESCAPE;
+                (void)onee_input_service_keyboard_report(
+                    2U, 0U, boot_keys, 6U);
+                onee_input_service_poll();
+                if (writes_to(ONEE_INPUT_CONTROL_REG) != control_before + 1U ||
+                    last_write(ONEE_INPUT_CONTROL_REG) !=
+                        ONEE_INPUT_CONTROL_FIFO_FLUSH_BIT ||
+                    last_write(ONEE_INPUT_KEY_FIFO_REG) != 0x1BU) {
+                    fail("new key did not replace the unread queued key");
+                    return 1;
+                }
+                release_keys(2U);
+                registers[0x5CU] = 0U;
+                control_before = writes_to(ONEE_INPUT_CONTROL_REG);
+                boot_keys[0] = HID_KBD_USAGE_A;
+                (void)onee_input_service_keyboard_report(
+                    2U, 0U, boot_keys, 6U);
+                onee_input_service_poll();
+                if (writes_to(ONEE_INPUT_CONTROL_REG) != control_before ||
+                    last_write(ONEE_INPUT_KEY_FIFO_REG) != 'a') {
+                    fail("key with nothing waiting flushed the FIFO");
+                    return 1;
+                }
             }
 
             /* A short tap emits one edge even if the service polls many times

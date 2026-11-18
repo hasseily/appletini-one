@@ -34,6 +34,7 @@
 #define ONEE_INPUT_CONTROL_FIFO_FLUSH_BIT     (1UL << 2)
 #define ONEE_INPUT_CONTROL_RELEASE_LIVE_BIT   (1UL << 3)
 #define ONEE_INPUT_FIFO_STATUS_FULL_BIT       (1UL << 12)
+#define ONEE_INPUT_FIFO_STATUS_EMPTY_BIT      (1UL << 13)
 #define ONEE_INPUT_STATUS_ENABLED_BIT         (1UL << 9)
 #define ONEE_INPUT_STATUS_SIGNATURE_SHIFT     24U
 #define ONEE_INPUT_STATUS_SIGNATURE           0xE1U
@@ -325,7 +326,15 @@ static void onee_repeat_poll(void)
         onee_repeat_reselect();
         return;
     }
-    onee_key_queue_push(code);
+    /* A real //e has one key latch and no queue: a repeat only strobes the
+     * latch again. Queue a repeat only when no earlier key still waits, so
+     * a program that reads the keyboard rarely does not collect a backlog
+     * of repeats to work through after the key is released. */
+    if (g_key_queue_count == 0U &&
+        (REG_READ(ONEE_INPUT_KEY_FIFO_REG) &
+         ONEE_INPUT_FIFO_STATUS_EMPTY_BIT) != 0U) {
+        onee_key_queue_push(code);
+    }
     /* Schedule from now, not the old deadline. If other frontend work stalls
      * polling, resume with one repeat instead of a queue-filling catch-up. */
     g_repeat_deadline_ms = now + ONEE_INPUT_REPEAT_RATE_MS;
@@ -863,6 +872,8 @@ uint8_t onee_input_service_keyboard_report(uint8_t slot_index,
     }
 
     if (g_session_active != 0U) {
+        uint8_t stale_dropped = 0U;
+
         for (uint32_t i = 0U; i < next_count; ++i) {
             const uint8_t usage = next_keys[i];
             uint8_t code;
@@ -883,6 +894,21 @@ uint8_t onee_input_service_keyboard_report(uint8_t slot_index,
             code = onee_ascii_from_usage(usage,
                                          apple_modifier,
                                          g_caps_lock);
+            /* A real //e has one key latch: a new key replaces an unread
+             * one. Drop keys that still wait in the queues when a new key
+             * arrives, once per report so that keys pressed together all
+             * stay. The key already in the Apple latch cannot be replaced
+             * from here, so at most that one key comes before the new one. */
+            if (code != 0U && stale_dropped == 0U) {
+                stale_dropped = 1U;
+                if (g_key_queue_count != 0U ||
+                    (REG_READ(ONEE_INPUT_KEY_FIFO_REG) &
+                     ONEE_INPUT_FIFO_STATUS_EMPTY_BIT) == 0U) {
+                    onee_key_queue_clear();
+                    REG_WRITE(ONEE_INPUT_CONTROL_REG,
+                              ONEE_INPUT_CONTROL_FIFO_FLUSH_BIT);
+                }
+            }
             onee_key_queue_push(code);
             if (code != 0U) {
                 ++g_repeat_press_sequence;

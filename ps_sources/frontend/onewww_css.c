@@ -18,7 +18,7 @@ enum {
     P_ALIGN, P_UNDERLINE, P_WHITE_SPACE, P_LIST_NONE,
     P_MARGIN_TOP, P_MARGIN_RIGHT, P_MARGIN_BOTTOM, P_MARGIN_LEFT,
     P_PADDING_TOP, P_PADDING_RIGHT, P_PADDING_BOTTOM, P_PADDING_LEFT,
-    P_WIDTH, P_MAX_WIDTH, P_FLOAT, P_CLEAR, P_FLEX_COLUMN,
+    P_WIDTH, P_MAX_WIDTH, P_HEIGHT, P_MAX_HEIGHT, P_FLOAT, P_CLEAR, P_FLEX_COLUMN,
     P_BORDER_TOP, P_BORDER_RIGHT, P_BORDER_BOTTOM, P_BORDER_LEFT
 };
 /* Lengths: 1/64 pixel, 1/64 em, or a percentage. U_AUTO: an auto margin. */
@@ -57,7 +57,18 @@ typedef struct chunk {
     size_t used, size;
 } chunk_t;
 
+#define MAX_VARS    400
+#define MAX_PENDING 24
+
 struct onewww_css {
+    /* Custom properties (--name) that the page sets for all elements, in
+     * a rule for :root, html or body. */
+    struct { const char *name, *value; } var[MAX_VARS];
+    int vars;
+    /* Sheets wait here until all are known: a sheet can use a custom
+     * property that a later sheet sets. */
+    struct { char *text; size_t length; } pending[MAX_PENDING];
+    int pendings;
     chunk_t *chunks;
     rule_t *by_hash[HASH_SIZE];
     rule_t *by_tag[OW_TAG_COUNT];
@@ -188,6 +199,39 @@ static int length(const char *p, size_t n, uint8_t *unit, int32_t *value)
     const char *end = p + n, *q = p;
     int32_t v;
 
+    /* clamp(low, value, high), min(a, b, ...) and max(a, b, ...) */
+    if (n > 5U && p[n - 1U] == ')' &&
+        (memcmp(p, "clamp(", 6U) == 0 || memcmp(p, "min(", 4U) == 0 || memcmp(p, "max(", 4U) == 0)) {
+        const char kind = p[1];             /* 'l', 'i' or 'a' */
+        int32_t part[3];
+        int parts = 0;
+        q = strchr(p, '(') + 1;
+        while (q < end - 1 && parts < 3) {
+            const char *stop = q;
+            uint8_t part_unit;
+            int depth = 0;
+            for (; stop < end - 1; stop++) {
+                if (*stop == '(') depth++;
+                else if (*stop == ')') depth--;
+                else if (*stop == ',' && depth == 0) break;
+            }
+            while (q < stop && is_space(*q)) q++;
+            while (stop > q && is_space(stop[-1])) stop--;
+            if (!length(q, (size_t)(stop - q), &part_unit, &part[parts])) return 0;
+            if (part_unit == U_EM) part[parts] *= 16;
+            parts++;
+            q = stop;
+            while (q < end - 1 && (is_space(*q) || *q == ',')) q++;
+        }
+        if (parts == 0 || (kind == 'l' && parts != 3)) return 0;
+        v = part[0];
+        if (kind == 'l') v = part[1] < part[0] ? part[0] : part[1] > part[2] ? part[2] : part[1];
+        for (int i = 1; i < parts && kind != 'l'; i++) {
+            if (kind == 'i' ? part[i] < v : part[i] > v) v = part[i];
+        }
+        *unit = U_PX; *value = v;
+        return 1;
+    }
     if (!number(&q, end, &v)) return 0;
     n = (size_t)(end - q);
     *unit = U_PX;
@@ -288,6 +332,8 @@ static int split(const char *v, size_t n, token_t *out, int max)
     return count;
 }
 
+static const onewww_css_t *s_parsing;
+
 /* Copies a value in lower case, takes "!important" off and replaces
  * var(name, fallback) by the fallback. Returns the length, or 0. */
 static size_t prepare(const char *v, size_t n, char *out, int *important)
@@ -309,8 +355,11 @@ static size_t prepare(const char *v, size_t n, char *out, int *important)
             while (used != 0U && is_space(out[used - 1U])) out[--used] = '\0';
         }
     }
-    for (int round = 0; round < 4; round++) {
-        char *var = strstr(out, "var("), *q, *comma = NULL;
+    for (int round = 0; round < 8; round++) {
+        char *var = strstr(out, "var("), *q, *comma = NULL, *name, *name_end;
+        char value[VALUE_MAX];
+        const char *found = NULL;
+        size_t found_n = 0, tail_n;
         int depth = 0;
         if (var == NULL) break;
         for (q = var + 3; *q != '\0'; q++) {
@@ -318,15 +367,28 @@ static size_t prepare(const char *v, size_t n, char *out, int *important)
             else if (*q == ')') { if (--depth == 0) break; }
             else if (*q == ',' && depth == 1 && comma == NULL) comma = q;
         }
-        if (*q == '\0' || comma == NULL) return 0U;
-        {
-            char *from = comma + 1;
-            size_t keep_n;
-            while (from < q && is_space(*from)) from++;
-            keep_n = (size_t)(q - from);
-            memmove(var, from, keep_n);
-            memmove(var + keep_n, q + 1, strlen(q + 1) + 1U);
+        if (*q == '\0') return 0U;
+        name = var + 4;
+        while (is_space(*name)) name++;
+        name_end = comma != NULL ? comma : q;
+        while (name_end > name && is_space(name_end[-1])) name_end--;
+        for (int i = 0; s_parsing != NULL && i < s_parsing->vars; i++) {
+            if (strlen(s_parsing->var[i].name) == (size_t)(name_end - name) &&
+                memcmp(s_parsing->var[i].name, name, (size_t)(name_end - name)) == 0) {
+                found = s_parsing->var[i].value;        /* the last one wins */
+            }
         }
+        if (found != NULL) found_n = strlen(found);
+        else if (comma != NULL) {                       /* the fallback value */
+            found = comma + 1;
+            while (found < q && is_space(*found)) found++;
+            found_n = (size_t)(q - found);
+        } else return 0U;
+        tail_n = strlen(q + 1);
+        if ((size_t)(var - out) + found_n + tail_n >= VALUE_MAX || found_n >= sizeof(value)) return 0U;
+        memcpy(value, found, found_n);
+        memmove(var + found_n, q + 1, tail_n + 1U);
+        memcpy(var, value, found_n);
     }
     used = strlen(out);
     if (strstr(out, "calc(") != NULL || strstr(out, "env(") != NULL) return 0U;
@@ -550,9 +612,11 @@ static void declaration(decls_t *d, const char *name, size_t name_n,
         uint8_t unit;
         int32_t value;
         if (length(t[0].p, t[0].n, &unit, &value) && unit == U_PX && value <= 64) d->tiny = 1U;
-        else if (name[0] == 'w') put_size(d, P_WIDTH, &t[0]);
+        else put_size(d, name[0] == 'w' ? P_WIDTH : P_HEIGHT, &t[0]);
     } else if (word_is(name, name_n, "max-width")) {
         put_size(d, P_MAX_WIDTH, &t[0]);
+    } else if (word_is(name, name_n, "max-height")) {
+        put_size(d, P_MAX_HEIGHT, &t[0]);
     } else if (word_is(name, name_n, "float")) {
         put(d, P_FLOAT, U_NONE, word_is(v, n, "left") ? OW_FLOAT_LEFT :
             word_is(v, n, "right") ? OW_FLOAT_RIGHT : OW_FLOAT_NONE);
@@ -822,6 +886,12 @@ static const char *block_end(const char *p, const char *end)
     return end;
 }
 
+/* The screen width that @media rules see. The screen has 640 pixels, but
+ * a narrow width makes most sites hide their menu behind a button that
+ * needs JavaScript. A wide width gives the menu as plain links. The
+ * layout then fits the boxes to the real width. */
+#define MEDIA_WIDTH 1280
+
 static int feature_ok(const char *p, size_t n)
 {
     const char *colon = memchr(p, ':', n);
@@ -839,7 +909,7 @@ static int feature_ok(const char *p, size_t n)
     if (word_is(p, name_n, "min-width") || word_is(p, name_n, "max-width")) {
         if (!length(colon, value_n, &unit, &value)) return 0;
         if (unit == U_EM) value *= 16;
-        return p[1] == 'i' ? 640 * 64 >= value : 640 * 64 <= value;
+        return p[1] == 'i' ? MEDIA_WIDTH * 64 >= value : MEDIA_WIDTH * 64 <= value;
     }
     if (word_is(p, name_n, "orientation")) return word_is(colon, value_n, "landscape");
     if (word_is(p, name_n, "prefers-reduced-motion")) return word_is(colon, value_n, "reduce");
@@ -940,6 +1010,89 @@ static void sheet(onewww_css_t *css, const char *p, const char *end, int depth)
     }
 }
 
+/* Is this selector list only :root, html or body? */
+static int is_page_selector(const char *p, const char *end)
+{
+    while (p < end) {
+        const char *comma = memchr(p, ',', (size_t)(end - p));
+        const char *stop = comma != NULL ? comma : end, *e = stop;
+        while (p < stop && is_space(*p)) p++;
+        while (e > p && is_space(e[-1])) e--;
+        if (!word_is(p, (size_t)(e - p), ":root") && !word_is(p, (size_t)(e - p), "html") &&
+            !word_is(p, (size_t)(e - p), "body")) return 0;
+        p = stop + 1;
+    }
+    return 1;
+}
+
+/* Finds the custom properties that a sheet sets for the page. */
+static void collect_vars(onewww_css_t *css, const char *p, const char *end, int depth)
+{
+    while (p < end) {
+        const char *open, *close;
+        while (p < end && (is_space(*p) || *p == ';' || *p == '}')) p++;
+        open = p;
+        while (open < end && *open != '{' && *open != ';') open++;
+        if (open >= end) break;
+        if (*open == ';') { p = open + 1; continue; }
+        close = block_end(open, end);
+        if (*p == '@') {
+            char query[VALUE_MAX];
+            size_t n = 0;
+            const char *q = p + 1;
+            while (q < open && is_ident((unsigned char)*q)) q++;
+            if ((size_t)(q - p) == 6U && lower((unsigned char)p[1]) == 'm' && depth < 4) {
+                while (q < open && n + 1U < sizeof(query)) query[n++] = (char)lower((unsigned char)*q++);
+                if (q == open) {
+                    const char *text = query;
+                    while (n != 0U && is_space(query[n - 1U])) n--;
+                    while (n != 0U && is_space(*text)) { text++; n--; }
+                    if (media_ok(text, n)) collect_vars(css, open + 1, close, depth + 1);
+                }
+            } else if ((size_t)(q - p) == 6U && depth < 4) {     /* @layer */
+                collect_vars(css, open + 1, close, depth + 1);
+            }
+        } else if (is_page_selector(p, open)) {
+            const char *d = open + 1;
+            while (d < close) {
+                const char *colon, *stop;
+                while (d < close && (is_space(*d) || *d == ';')) d++;
+                for (stop = d; stop < close && *stop != ';'; stop++) {}
+                colon = memchr(d, ':', (size_t)(stop - d));
+                if (colon != NULL && stop - d > 3 && d[0] == '-' && d[1] == '-' &&
+                    css->vars < MAX_VARS) {
+                    const char *name_end = colon, *v = colon + 1, *v_end = stop;
+                    char *value;
+                    while (name_end > d && is_space(name_end[-1])) name_end--;
+                    while (v < v_end && is_space(*v)) v++;
+                    while (v_end > v && is_space(v_end[-1])) v_end--;
+                    value = arena(css, (size_t)(v_end - v) + 1U);
+                    if (value == NULL) return;
+                    for (size_t i = 0; i < (size_t)(v_end - v); i++) value[i] = (char)lower((unsigned char)v[i]);
+                    value[v_end - v] = '\0';
+                    css->var[css->vars].name = keep(css, d, (size_t)(name_end - d));
+                    css->var[css->vars].value = value;
+                    css->vars++;
+                }
+                d = stop < close ? stop + 1 : close;
+            }
+        }
+        p = close < end ? close + 1 : end;
+    }
+}
+
+/* Parses the sheets that wait. */
+static void parse_pending(onewww_css_t *css)
+{
+    s_parsing = css;
+    for (int i = 0; i < css->pendings; i++) {
+        sheet(css, css->pending[i].text, css->pending[i].text + css->pending[i].length, 0);
+        free(css->pending[i].text);
+        css->pending[i].text = NULL;
+    }
+    css->pendings = 0;
+}
+
 void onewww_css_add(onewww_css_t *css, const char *text, size_t length)
 {
     char *copy;
@@ -958,6 +1111,13 @@ void onewww_css_add(onewww_css_t *css, const char *text, size_t length)
         } else copy[n++] = text[i] == '\0' ? ' ' : text[i];
     }
     copy[n] = '\0';
+    if (css->author && css->pendings < MAX_PENDING) {
+        collect_vars(css, copy, copy + n, 0);
+        css->pending[css->pendings].text = copy;
+        css->pending[css->pendings++].length = n;
+        return;
+    }
+    s_parsing = css;
     sheet(css, copy, copy + n, 0);
     free(copy);
 }
@@ -976,6 +1136,8 @@ onewww_css_t *onewww_css_new(void)
 void onewww_css_free(onewww_css_t *css)
 {
     if (css == NULL) return;
+    for (int i = 0; i < css->pendings; i++) free(css->pending[i].text);
+    if (s_parsing == css) s_parsing = NULL;
     while (css->chunks != NULL) {
         chunk_t *next = css->chunks->next;
         free(css->chunks);
@@ -1156,6 +1318,9 @@ static void apply(onewww_style_t *s, int parent_font, const decl_t *d, int count
             break;
         case P_WIDTH: s->width = to_size(d, s->font_px); break;
         case P_MAX_WIDTH: s->max_width = to_size(d, s->font_px); break;
+        /* A height in percent has no meaning here: only lengths count. */
+        case P_HEIGHT: s->height = d->unit == U_PERCENT ? 0 : to_size(d, s->font_px); break;
+        case P_MAX_HEIGHT: s->max_height = d->unit == U_PERCENT ? 0 : to_size(d, s->font_px); break;
         case P_FLOAT: s->floating = (uint8_t)d->value; break;
         case P_CLEAR: s->clear = (uint8_t)d->value; break;
         case P_FLEX_COLUMN: s->flex_column = (uint8_t)d->value; break;
@@ -1279,6 +1444,8 @@ int onewww_css_resolve(onewww_css_t *css, onewww_dom_t *dom)
         css = own = onewww_css_new();
         if (css == NULL) return -1;
     }
+    parse_pending(css);
+    s_parsing = css;            /* style attributes can use var() too */
     while (e != NULL && result == 0) {
         if (e->tag != OW_TEXT) {
             if (style_element(css, dom, e) != 0) result = -1;

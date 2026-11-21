@@ -45,6 +45,7 @@ typedef struct onewww_style {
     int16_t padding_top, padding_bottom, padding_left, padding_right;
     /* Pixels; a negative value is a percentage of the space; 0: not set. */
     int16_t width, max_width;
+    int16_t height, max_height; /* pixels, for pictures; 0: not set */
     uint8_t floating;           /* OW_FLOAT_* */
     uint8_t clear;              /* OW_SIDE_LEFT and OW_SIDE_RIGHT */
     uint8_t border;             /* OW_SIDE_*: sides with a visible border */

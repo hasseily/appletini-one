@@ -13,14 +13,14 @@ OUT = ROOT / "ps_sources/frontend/onewww_font_data.c"
 
 # id, file, pixel size. The ids match onewww_font.h.
 FACES = [
-    ("BODY", "DejaVuSans.ttf", 14),
-    ("BODY_B", "DejaVuSans-Bold.ttf", 14),
-    ("BODY_I", "DejaVuSans-Oblique.ttf", 14),
-    ("BODY_BI", "DejaVuSans-BoldOblique.ttf", 14),
-    ("H1", "DejaVuSans-Bold.ttf", 26),
-    ("H2", "DejaVuSans-Bold.ttf", 19),
-    ("MONO", "DejaVuSansMono.ttf", 13),
-    ("SMALL", "DejaVuSans.ttf", 11),
+    ("BODY", "DejaVuSans.ttf", 12),
+    ("BODY_B", "DejaVuSans-Bold.ttf", 12),
+    ("BODY_I", "DejaVuSans-Oblique.ttf", 12),
+    ("BODY_BI", "DejaVuSans-BoldOblique.ttf", 12),
+    ("H1", "DejaVuSans-Bold.ttf", 22),
+    ("H2", "DejaVuSans-Bold.ttf", 16),
+    ("MONO", "DejaVuSansMono.ttf", 11),
+    ("SMALL", "DejaVuSans.ttf", 10),
 ]
 # Latin with its extensions and common signs, for all faces.
 CODES = (list(range(32, 127)) + list(range(160, 384)) +

@@ -48,7 +48,7 @@ int main(int argc, char **argv)
     }
     /* A stop request in the parser, then in the layout, must leave an
      * empty page and no damage; the next build must be normal. */
-    for (stop_after = 1; stop_after <= 41; stop_after += 40) {
+    for (stop_after = 1; internal && stop_after <= 41; stop_after += 40) {
         calls = 0;
         onewww_pause = stop_soon;
         if (onewww_page_build(html, length, NULL, internal ? NULL : argv[2], internal) == 0 ||

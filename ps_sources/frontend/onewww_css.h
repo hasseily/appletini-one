@@ -12,7 +12,8 @@
  * ~= ^= $= *= forms, :first-child, :last-child, :only-child, :empty,
  * :root, :link, :not(simple), and the combinators space, >, + and ~.
  * A selector with another pseudo-class or a pseudo-element is ignored.
- * @media rules are evaluated for a screen of 640 pixels. */
+ * @media rules are evaluated for a screen of 1280 pixels: see
+ * MEDIA_WIDTH in onewww_css.c. */
 
 typedef struct onewww_css onewww_css_t;
 

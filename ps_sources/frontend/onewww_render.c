@@ -21,13 +21,20 @@
 
 /* Row colours. A 640-mode row shows four colours; the four colour groups
  * of the 640 mode hold the same four. Each text row has its own paper and
- * ink. A row with one text colour has two mixed colours between paper and
- * ink, for smooth letter edges. A row with a second text colour (the
- * accent, for example a link) has one mixed colour, ink and the accent.
- * The first text on a row sets its paper and ink. */
+ * ink. The first text on a row sets them. A row has one of three forms:
+ *   one text colour:    paper, two mixed colours, ink (smooth edges);
+ *   two text colours:   paper, one mixed colour, ink, accent
+ *                       (smooth edges for the ink only);
+ *   three text colours: paper, ink, accent, third (no smooth edges).
+ * A row changes to the next form when a new colour comes; its pixels are
+ * kept. A fourth colour takes the nearest of the three. */
 typedef struct {
-    uint16_t paper, ink, accent;        /* 0RGB; accent OW_NO_COLOR: none */
+    uint16_t paper, ink;
+    uint16_t accent, third;             /* 0RGB, or OW_NO_COLOR: not used */
 } rowpal_t;
+
+/* Colours that the eye does not tell apart count as one. */
+#define SAME_COLOUR 2
 
 #define PAL_MAX     2048U
 #define PAL_STATUS  0x7FFFU             /* a row of the status line */
@@ -58,7 +65,7 @@ static uint8_t s_status_scb[ONEWWW_STATUS_ROWS];
 static uint16_t s_status_pal[ONEWWW_STATUS_ROWS];
 
 /* Entry 0 is the page: its paper and ink are those of <body>. */
-static rowpal_t s_pal[PAL_MAX] = { { 0x0FFF, 0x0000, OW_NO_COLOR } };
+static rowpal_t s_pal[PAL_MAX] = { { 0x0FFF, 0x0000, OW_NO_COLOR, OW_NO_COLOR } };
 static uint32_t s_pals = 1U;
 /* The sixteen colours of each picture that has rows of its own. */
 static uint16_t s_pic[PIC_MAX][16];
@@ -72,7 +79,8 @@ static int color_distance(uint16_t a, uint16_t b)
     return (dr < 0 ? -dr : dr) + (dg < 0 ? -dg : dg) + (db < 0 ? -db : db);
 }
 
-static uint16_t pal_get(uint16_t paper, uint16_t ink, uint16_t accent)
+static uint16_t pal_get(uint16_t paper, uint16_t ink, uint16_t accent,
+                        uint16_t third)
 {
     uint32_t best = 0U;
     int best_d = 1 << 30;
@@ -80,13 +88,15 @@ static uint16_t pal_get(uint16_t paper, uint16_t ink, uint16_t accent)
     for (uint32_t i = s_pals; i-- > 0U;) {       /* new entries are likely */
         const rowpal_t *p = &s_pal[i];
         int d;
-        if (p->paper == paper && p->ink == ink && p->accent == accent) return (uint16_t)i;
+        if (p->paper == paper && p->ink == ink && p->accent == accent &&
+            p->third == third) return (uint16_t)i;
         d = color_distance(p->paper, paper) * 4 + color_distance(p->ink, ink) +
-            (p->accent == accent ? 0 : 2);
+            (p->accent == accent ? 0 : 2) + (p->third == third ? 0 : 2);
         if (d < best_d) { best_d = d; best = i; }
     }
     if (s_pals == PAL_MAX) return (uint16_t)best;
     s_pal[s_pals].paper = paper; s_pal[s_pals].ink = ink; s_pal[s_pals].accent = accent;
+    s_pal[s_pals].third = third;
     return (uint16_t)s_pals++;
 }
 
@@ -135,43 +145,74 @@ static void row_claim(surface_t *s, int y, uint16_t paper, uint16_t ink)
 {
     if (y < 0 || (uint32_t)y >= s->rows || (s->scb[y] & SCB_USED) != 0U ||
         s->pal[y] >= PAL_STATUS) return;
-    s->pal[y] = pal_get(paper, ink, OW_NO_COLOR);
+    s->pal[y] = pal_get(paper, ink, OW_NO_COLOR, OW_NO_COLOR);
     s->scb[y] |= SCB_USED;
 }
 
+static void row_remap(surface_t *s, int y, const uint8_t *map)
+{
+    uint8_t *row = s->px + (size_t)y * ROW_BYTES;
+
+    for (unsigned i = 0; i < ROW_BYTES; i++) {
+        const uint8_t v = row[i];
+        if (v != 0U) {
+            row[i] = (uint8_t)((map[v >> 6] << 6) | (map[(v >> 4) & 3U] << 4) |
+                               (map[(v >> 2) & 3U] << 2) | map[v & 3U]);
+        }
+    }
+}
+
 /* Returns the pixel values of a row for the coverage levels 1..3 of a
- * text colour, or NULL for a row that cannot take text. A row with one
- * text colour changes to a row with an accent when a second one comes. */
+ * colour, or NULL for a row that cannot take text. The row changes its
+ * form when the colour is new for it. The paper colour itself gives
+ * pixel value 0: text that is cut out of a coloured background. */
 static const uint8_t *row_map(surface_t *s, int y, uint16_t colour,
                               uint16_t paper)
 {
     static const uint8_t plain[4] = { 0U, 1U, 2U, 3U };
-    static const uint8_t as_ink[4] = { 0U, 1U, 1U, 2U };
-    static const uint8_t as_accent[4] = { 0U, 1U, 1U, 3U };
+    static const uint8_t cut[4] = { 0U, 0U, 0U, 0U };
+    /* Two colours: the mixed colour belongs to the ink. The accent has
+     * hard edges, or it would get a fringe in the colour of the ink. */
+    static const uint8_t ink2[4] = { 0U, 1U, 1U, 2U };
+    static const uint8_t accent2[4] = { 0U, 0U, 3U, 3U };
+    static const uint8_t to2[4] = { 0U, 1U, 1U, 2U };       /* one -> two */
+    /* Three colours: no mixed colour. */
+    static const uint8_t ink3[4] = { 0U, 0U, 1U, 1U };
+    static const uint8_t accent3[4] = { 0U, 0U, 2U, 2U };
+    static const uint8_t third3[4] = { 0U, 0U, 3U, 3U };
+    static const uint8_t to3[4] = { 0U, 0U, 1U, 2U };       /* two -> three */
     const rowpal_t *p;
+    int d_ink, d_accent, d_third;
 
     if (y < 0 || (uint32_t)y >= s->rows || s->pal[y] >= PAL_PIC) return NULL;
     if (s->pal[y] == PAL_STATUS) return plain;
     row_claim(s, y, paper, colour == INK_OF_ROW ? s_pal[0].ink : colour);
     p = &s_pal[s->pal[y]];
+    if (colour != INK_OF_ROW && colour == p->paper) return cut;
+    d_ink = colour == INK_OF_ROW ? 0 : color_distance(colour, p->ink);
     if (p->accent == OW_NO_COLOR) {
-        uint8_t *row;
-        if (colour == INK_OF_ROW || colour == p->ink) return plain;
-        row = s->px + (size_t)y * ROW_BYTES;
-        for (unsigned i = 0; i < ROW_BYTES; i++) {      /* keep the pixels */
-            const uint8_t v = row[i];
-            if (v != 0U) {
-                row[i] = (uint8_t)((as_ink[v >> 6] << 6) | (as_ink[(v >> 4) & 3U] << 4) |
-                                   (as_ink[(v >> 2) & 3U] << 2) | as_ink[v & 3U]);
-            }
-        }
-        s->pal[y] = pal_get(p->paper, p->ink, colour);
-        return as_accent;
+        if (d_ink <= SAME_COLOUR) return plain;
+        row_remap(s, y, to2);
+        s->pal[y] = pal_get(p->paper, p->ink, colour, OW_NO_COLOR);
+        return accent2;
     }
-    if (colour == INK_OF_ROW || colour == p->ink) return as_ink;
-    if (colour == p->accent) return as_accent;
-    return color_distance(colour, p->accent) < color_distance(colour, p->ink) ?
-           as_accent : as_ink;
+    d_accent = color_distance(colour, p->accent);
+    if (p->third == OW_NO_COLOR) {
+        if (d_ink <= SAME_COLOUR) return ink2;
+        if (d_accent <= SAME_COLOUR) return accent2;
+        row_remap(s, y, to3);
+        s->pal[y] = pal_get(p->paper, p->ink, p->accent, colour);
+        return third3;
+    }
+    d_third = color_distance(colour, p->third);
+    if (d_ink <= d_accent && d_ink <= d_third) return ink3;
+    return d_accent <= d_third ? accent3 : third3;
+}
+
+/* Lines use the lightest level that the row has. */
+static uint8_t line_value(const uint8_t *map, unsigned level)
+{
+    return map[level] != 0U ? map[level] : map[3];
 }
 
 static void hline(surface_t *s, int x0, int x1, int y, unsigned level,
@@ -179,7 +220,7 @@ static void hline(surface_t *s, int x0, int x1, int y, unsigned level,
 {
     const uint8_t *map = row_map(s, y, colour, paper);
     if (map == NULL) return;
-    for (int x = x0; x < x1; x++) put640(s, x, y, map[level]);
+    for (int x = x0; x < x1; x++) put640(s, x, y, line_value(map, level));
 }
 
 static void vline(surface_t *s, int x, int y0, int y1, unsigned level,
@@ -187,8 +228,17 @@ static void vline(surface_t *s, int x, int y0, int y1, unsigned level,
 {
     for (int y = y0; y < y1; y++) {
         const uint8_t *map = row_map(s, y, INK_OF_ROW, paper);
-        if (map != NULL) put640(s, x, y, map[level]);
+        if (map != NULL) put640(s, x, y, line_value(map, level));
     }
+}
+
+/* Fills a part of a row with a colour: the background of a word. */
+static void fill_row(surface_t *s, int x0, int x1, int y, uint16_t colour,
+                     uint16_t paper)
+{
+    const uint8_t *map = row_map(s, y, colour, paper);
+    if (map == NULL) return;
+    for (int x = x0; x < x1; x++) put640(s, x, y, map[3]);
 }
 
 static const onewww_glyph_t *glyph_find(const onewww_font_t *f, uint16_t code)
@@ -367,7 +417,7 @@ enum { IMG_WANTED, IMG_LOADED, IMG_FAILED };
 typedef struct {
     const onewww_node_t *node;
     char *url;
-    uint8_t *rgb;               /* w x h x 3, on white paper */
+    uint8_t *rgb;               /* w x h x 3, on the paper of the page */
     uint16_t w, h;              /* size of rgb */
     uint16_t natural_w, natural_h;
     uint8_t state;
@@ -409,6 +459,9 @@ static uint8_t *scale_rgb(const uint8_t *src, unsigned comps, unsigned w, unsign
                           unsigned tw, unsigned th)
 {
     uint8_t *out = malloc((size_t)tw * th * 3U);
+    const unsigned paper[3] = { ((s_pal[0].paper >> 8) & 15U) * 17U,
+                                ((s_pal[0].paper >> 4) & 15U) * 17U,
+                                (s_pal[0].paper & 15U) * 17U };
 
     if (out == NULL) return NULL;
     for (unsigned ty = 0; ty < th; ty++) {
@@ -425,11 +478,11 @@ static uint8_t *scale_rgb(const uint8_t *src, unsigned comps, unsigned w, unsign
             for (unsigned y = y0; y < y1; y++) {
                 const uint8_t *p = src + ((size_t)y * w + x0) * comps;
                 for (unsigned x = x0; x < x1; x++, p += comps) {
-                    if (comps == 4U) {          /* on white paper */
+                    if (comps == 4U) {          /* on the paper of the page */
                         const unsigned a = p[3];
-                        sum[0] += (p[0] * a + 255U * (255U - a)) / 255U;
-                        sum[1] += (p[1] * a + 255U * (255U - a)) / 255U;
-                        sum[2] += (p[2] * a + 255U * (255U - a)) / 255U;
+                        sum[0] += (p[0] * a + paper[0] * (255U - a)) / 255U;
+                        sum[1] += (p[1] * a + paper[1] * (255U - a)) / 255U;
+                        sum[2] += (p[2] * a + paper[2] * (255U - a)) / 255U;
                     } else { sum[0] += p[0]; sum[1] += p[1]; sum[2] += p[2]; }
                     count++;
                 }
@@ -499,7 +552,7 @@ static void draw_gray(surface_t *s, const image_t *im, int x, int y, int w, int 
         if (map == NULL) continue;
         p = &s_pal[s->pal[y + ry]];
         lp = luminance12(p->paper); li = luminance12(p->ink);
-        steps = p->accent == OW_NO_COLOR ? 3 : 2;
+        steps = p->accent == OW_NO_COLOR ? 3 : p->third == OW_NO_COLOR ? 2 : 1;
         if (li == lp) continue;
         for (int rx = 0; rx < w; rx++) {
             int level = luminance(rgb + ((size_t)ry * w + rx) * 3U) + cur[rx + 1] / 16;
@@ -513,7 +566,8 @@ static void draw_gray(surface_t *s, const image_t *im, int x, int y, int w, int 
             next[rx] = (int16_t)(next[rx] + e * 3);
             next[rx + 1] = (int16_t)(next[rx + 1] + e * 5);
             next[rx + 2] = (int16_t)(next[rx + 2] + e);
-            put640(s, x + rx, y + ry, steps == 3 ? (uint8_t)q : (uint8_t)(q == 2 ? 2 : q));
+            /* Pixel values of paper .. ink: 0123, 012 or 01. */
+            put640(s, x + rx, y + ry, (uint8_t)q);
         }
     }
     free(rgb); free(err);
@@ -670,6 +724,7 @@ typedef struct {
     int16_t x, w;
     int32_t link;       /* -1: not a link */
     uint16_t colour;
+    uint16_t back;      /* background of the word, or OW_NO_COLOR */
     uint8_t font, underline;
     int16_t image;      /* -1: text. Else a picture, w wide and ih high */
     uint16_t ih;
@@ -688,6 +743,7 @@ typedef struct {
 /* Text properties that an element gives to its content. */
 typedef struct {
     uint16_t colour;
+    uint16_t back;              /* background inside the line, or OW_NO_COLOR */
     uint8_t font, underline, pre, nowrap;
     uint8_t list;               /* 1 = bullets, 2 = numbers */
     int *counter;               /* number of the next <li> */
@@ -717,7 +773,7 @@ typedef struct {
     uint8_t align, top_level;
 } flow_t;
 
-static const text_t s_plain = { 0x0000, ONEWWW_FONT_BODY, 0, 0, 0, 0, NULL, -1 };
+static const text_t s_plain = { 0x0000, OW_NO_COLOR, ONEWWW_FONT_BODY, 0, 0, 0, 0, NULL, -1 };
 
 /* Set when onewww_pause asks to stop. The walk then ends quickly. */
 static uint8_t s_abort;
@@ -780,10 +836,10 @@ static void flow_flush(flow_t *f, int force)
     height = ascent + descent + 2;
     top = f->y + 1;
     f->gap = 0;
-    /* A large picture that is alone on its line gets rows of its own:
-     * 320 mode with sixteen colours. */
+    /* A picture that is alone on its line gets rows of its own: 320 mode
+     * with sixteen colours. Very small ones stay in the text rows. */
     if (f->s != NULL && f->top_level && l->items == 1U && l->item[0].image >= 0 &&
-        l->item[0].w >= 160 && f->y >= f->fl_bottom && f->y >= f->fr_bottom &&
+        l->item[0].w >= 48 && f->y >= f->fl_bottom && f->y >= f->fr_bottom &&
         s_pics < PIC_MAX) {
         const item_t *it = &l->item[0];
         int x = f->x0 + left;
@@ -811,6 +867,7 @@ static void flow_flush(flow_t *f, int force)
         for (unsigned i = 0; i < l->items; i++) {
             int k = 0;
             if (l->item[i].image >= 0) continue;    /* a picture has no text colour */
+            if (l->item[i].back != OW_NO_COLOR) continue;   /* text on its own paper */
             while (k < colours && colour[k] != l->item[i].colour) k++;
             if (k == colours) {
                 if (colours == 4) continue;
@@ -839,9 +896,18 @@ static void flow_flush(flow_t *f, int force)
         const item_t *it = &l->item[i];
         const onewww_font_t *font = &onewww_fonts[it->font];
         const int x_start = f->x0 + left + shift + it->x;
-        const uint16_t colour = readable(it->colour, f->paper);
+        uint16_t colour = readable(it->colour, f->paper);
         int x = x_start;
 
+        if (it->back != OW_NO_COLOR && it->image < 0) {
+            /* A word with a background: fill it, then draw the text on it.
+             * Text in a colour near to the page paper is cut out. */
+            for (int y = f->y; y < f->y + height; y++) {
+                fill_row(f->s, x_start - 3, x_start + it->w + 3, y, it->back, f->paper);
+            }
+            colour = readable(it->colour, it->back);
+            if (color_distance(colour, f->paper) <= 6) colour = f->paper;
+        }
         if (it->image >= 0) {
             draw_gray(f->s, &s_img[it->image], x_start, top + ascent - (int)it->ih,
                       it->w, (int)it->ih, f->paper);
@@ -896,12 +962,16 @@ static void flow_word_end(flow_t *f, const text_t *tx)
     l->codes += l->word_len;
     it->font = tx->font;
     it->colour = tx->colour;
+    it->back = tx->back;
     it->underline = tx->underline;
     it->link = tx->link;
     it->image = -1; it->ih = 0U;
-    /* An underline also covers the space between the words of one run. */
-    if (it->underline && space_w != 0 && l->items > 1U &&
-        l->item[l->items - 2U].underline && l->item[l->items - 2U].link == it->link) {
+    /* An underline or a background also covers the space between the
+     * words of one run. */
+    if ((it->underline || it->back != OW_NO_COLOR) && space_w != 0 && l->items > 1U &&
+        l->item[l->items - 2U].underline == it->underline &&
+        l->item[l->items - 2U].back == it->back &&
+        l->item[l->items - 2U].link == it->link) {
         l->item[l->items - 2U].w = (int16_t)(l->item[l->items - 2U].w + space_w);
     }
     it->x = (int16_t)(l->width + space_w);
@@ -931,6 +1001,7 @@ static void flow_image(flow_t *f, const text_t *tx, int image, int w, int h)
     it = &l->item[l->items++];
     it->start = (uint16_t)l->codes; it->count = 0U;
     it->font = tx->font; it->colour = tx->colour; it->underline = 0U;
+    it->back = OW_NO_COLOR;
     it->link = tx->link;
     it->image = (int16_t)image; it->ih = (uint16_t)h;
     it->x = (int16_t)(l->width + space_w);
@@ -1108,13 +1179,26 @@ static int is_hidden(const onewww_node_t *n)
     return n->style == NULL || n->style->display == OW_D_NONE;
 }
 
+/* Does an element have text that shows? */
+static int has_text(const onewww_node_t *n)
+{
+    for (const onewww_node_t *c = n->first; c != NULL; c = c->next) {
+        if (c->tag == OW_TEXT) {
+            for (uint32_t i = 0; i < c->length; i++) {
+                if ((unsigned char)c->text[i] > ' ') return 1;
+            }
+        } else if (!is_hidden(c) && has_text(c)) return 1;
+    }
+    return 0;
+}
+
 /* The text properties of an element, from its style. */
 static void text_style(text_t *tx, const onewww_style_t *cs)
 {
     if (cs->font_px >= 26U) tx->font = ONEWWW_FONT_H1;
     else if (cs->font_px >= 19U) tx->font = ONEWWW_FONT_H2;
-    else if (cs->mono) tx->font = ONEWWW_FONT_MONO;
     else if (cs->font_px <= 12U) tx->font = ONEWWW_FONT_SMALL;
+    else if (cs->mono) tx->font = ONEWWW_FONT_MONO;
     else tx->font = (uint8_t)(ONEWWW_FONT_BODY + (cs->bold ? 1 : 0) + (cs->italic ? 2 : 0));
     tx->colour = cs->color; tx->underline = cs->underline;
     tx->pre = cs->pre; tx->nowrap = cs->nowrap;
@@ -1240,31 +1324,51 @@ static int image_for(flow_t *f, const onewww_node_t *n)
     return (int)s_imgs++;
 }
 
-/* The size of a picture on the page. Returns 0 when it cannot show. */
-static int image_box(const onewww_node_t *n, int image, int avail, int *w, int *h)
+/* The size of a picture on the page. Returns 0 when it cannot show.
+ * The style sheet counts before the width and height attributes. A size
+ * that is given for one side only keeps the proportions of the picture. */
+static int image_box(const onewww_node_t *n, int image, int avail, int measure,
+                     int column, int *w, int *h)
 {
     const image_t *im = &s_img[image];
     const onewww_style_t *cs = n->style;
-    const int attr_w = attr_number(n, "width", 0), attr_h = attr_number(n, "height", 0);
-    int dw, dh;
+    const int32_t nw = im->natural_w, nh = im->natural_h;
+    /* A measure run has no column width yet: a percentage then says
+     * nothing, and the picture has its own size. */
+    /* column: the picture floats and the column has its width already. */
+    const int css_w = cs->width > 0 ? cs->width :
+                      cs->width < 0 && column ? avail :
+                      cs->width < 0 && !measure ? avail * -cs->width / 100 : 0;
+    const int css_h = cs->height;
+    const int most_w = cs->max_width > 0 ? cs->max_width :
+                       cs->max_width < 0 && !measure ? avail * -cs->max_width / 100 : 0;
+    int32_t dw, dh;
 
-    if (im->state != IMG_LOADED || avail < 8) return 0;
-    if (cs->width > 0) dw = cs->width;
-    else if (cs->width < 0) dw = avail * -cs->width / 100;
-    else dw = attr_w > 0 ? attr_w : im->natural_w;
-    if (cs->width == 0 && attr_w > 0 && attr_h > 0) dh = attr_h;
-    else dh = (int)((int32_t)im->natural_h * dw / im->natural_w);
-    if (cs->max_width > 0 && dw > cs->max_width) { dh = dh * cs->max_width / dw; dw = cs->max_width; }
-    if (dw > avail) { dh = (int)((int32_t)dh * avail / dw); dw = avail; }
-    if (dh > 1200) { dw = (int)((int32_t)dw * 1200 / dh); dh = 1200; }
+    if (im->state != IMG_LOADED || avail < 8 || nw == 0 || nh == 0) return 0;
+    if (css_w > 0 && css_h > 0) { dw = css_w; dh = css_h; }
+    else if (css_w > 0) { dw = css_w; dh = nh * dw / nw; }
+    else if (css_h > 0) { dh = css_h; dw = nw * dh / nh; }
+    else {
+        const int attr_w = attr_number(n, "width", 0), attr_h = attr_number(n, "height", 0);
+        if (attr_w > 0 && attr_h > 0) { dw = attr_w; dh = attr_h; }
+        else if (attr_w > 0) { dw = attr_w; dh = nh * dw / nw; }
+        else if (attr_h > 0) { dh = attr_h; dw = nw * dh / nh; }
+        else { dw = nw; dh = nh; }
+    }
+    if (dw < 1) dw = 1;
+    if (dh < 1) dh = 1;
+    if (most_w > 0 && dw > most_w) { dh = dh * most_w / dw; dw = most_w; }
+    if (cs->max_height > 0 && dh > cs->max_height) { dw = dw * cs->max_height / dh; dh = cs->max_height; }
+    if (dw > avail) { dh = dh * avail / dw; dw = avail; }
+    if (dh > 1200) { dw = dw * 1200 / dh; dh = 1200; }
     if (dw < 4 || dh < 4) return 0;
-    *w = dw; *h = dh;
+    *w = (int)dw; *h = (int)dh;
     return 1;
 }
 
 #define FLOAT_GAP 10
-#define FLEX_GAP  12
-#define FLEX_MAX  8
+#define FLEX_GAP  8
+#define FLEX_MAX  12
 
 /* Puts a floating element at the side of the column. The lines that
  * follow go around it. Returns 0 when the element is too wide to float:
@@ -1398,7 +1502,8 @@ static void walk_node(flow_t *f, const onewww_node_t *n, text_t tx)
         {
             int w, h;
             const int image = image_for(f, n);
-            if (image >= 0 && image_box(n, image, f->w - f->indent - f->right, &w, &h)) {
+            if (image >= 0 && image_box(n, image, f->w - left_inset(f) - right_inset(f),
+                                        f->s == NULL, f->float_root == n, &w, &h)) {
                 flow_image(f, &tx, image, w, h);
                 return;
             }
@@ -1435,6 +1540,7 @@ static void walk_node(flow_t *f, const onewww_node_t *n, text_t tx)
         return;
     }
     case OW_BUTTON:
+        if (!has_text(n)) return;       /* a button with a picture only */
         tx.font = ONEWWW_FONT_BODY_B;
         flow_literal(f, &tx, "[");
         walk_children(f, n, tx);
@@ -1460,6 +1566,7 @@ static void walk_node(flow_t *f, const onewww_node_t *n, text_t tx)
         walk_block(f, n, tx, &before);
     } else {
         f->line->width += cs->margin_left + cs->padding_left;
+        if (cs->background != OW_NO_COLOR) tx.back = cs->background;
         walk_children(f, n, tx);
         flow_word_end(f, &tx);
         f->line->width += cs->margin_right + cs->padding_right;
@@ -2112,8 +2219,9 @@ void onewww_compose(uint32_t top, const char *left, const char *right,
                     uint8_t *fields)
 {
     static const uint8_t magic[4] = { 0xD3, 0xC8, 0xD2, 0xB4 };  /* SHR4 */
-    static const rowpal_t status_pal = { STATUS_PAPER, 0x0000, OW_NO_COLOR };
-    static uint8_t row_scb[ONEWWW_VIEW_ROWS], row_accent[ONEWWW_VIEW_ROWS];
+    static const rowpal_t status_pal = { STATUS_PAPER, 0x0000, OW_NO_COLOR, OW_NO_COLOR };
+    /* row_ink: the pixel value of the ink of each row (3, 2 or 1). */
+    static uint8_t row_scb[ONEWWW_VIEW_ROWS], row_ink[ONEWWW_VIEW_ROWS];
     static uint16_t row_pal[ONEWWW_VIEW_ROWS];
     const surface_t *page = view_page();
     const doc_t *doc = view_doc();
@@ -2144,7 +2252,8 @@ void onewww_compose(uint32_t top, const char *left, const char *right,
         scb &= SCB_640;
         p = pal == PAL_STATUS ? &status_pal : pal < PAL_PIC ? &pals[pal] : NULL;
         row_scb[r] = scb; row_pal[r] = pal;
-        row_accent[r] = p != NULL && p->accent != OW_NO_COLOR;
+        row_ink[r] = p == NULL || p->accent == OW_NO_COLOR ? 3U :
+                     p->third == OW_NO_COLOR ? 2U : 1U;
         if (px != NULL) memcpy(base + line * ROW_BYTES, px, ROW_BYTES);
         for (slot = 0; slot < slots[field] && slot_pal[field][slot] != pal; slot++) {}
         if (slot == slots[field] && slots[field] == 16U) {
@@ -2158,8 +2267,9 @@ void onewww_compose(uint32_t top, const char *left, const char *right,
                 int d;
                 if (o == NULL) continue;
                 d = color_distance(o->paper, p->paper) * 4 + color_distance(o->ink, p->ink) +
-                    ((o->accent != OW_NO_COLOR) != (p->accent != OW_NO_COLOR) ? 40 : 0);
-                if (d < best_d) { best_d = d; slot = i; row_accent[r] = o->accent != OW_NO_COLOR; }
+                    ((o->accent != OW_NO_COLOR) != (p->accent != OW_NO_COLOR) ? 40 : 0) +
+                    ((o->third != OW_NO_COLOR) != (p->third != OW_NO_COLOR) ? 40 : 0);
+                if (d < best_d) { best_d = d; slot = i; }
             }
         } else if (slot == slots[field]) {
             uint8_t *entry = base + 0x7E00U + (uint32_t)slot * 32U;
@@ -2171,10 +2281,14 @@ void onewww_compose(uint32_t top, const char *left, const char *right,
                     four[1] = mix(p->paper, p->ink, 1, 3);
                     four[2] = mix(p->paper, p->ink, 2, 3);
                     four[3] = p->ink;
-                } else {
+                } else if (p->third == OW_NO_COLOR) {
                     four[1] = mix(p->paper, p->ink, 1, 2);
                     four[2] = p->ink;
                     four[3] = p->accent;
+                } else {
+                    four[1] = p->ink;
+                    four[2] = p->accent;
+                    four[3] = p->third;
                 }
             }
             for (unsigned i = 0; i < 16U; i++) {
@@ -2185,7 +2299,7 @@ void onewww_compose(uint32_t top, const char *left, const char *right,
         }
         base[0x7D00U + line] = (uint8_t)(scb | slot);
     }
-    /* The selected link: paper and the last colour change places. */
+    /* The selected link: paper and its text colour change places. */
     for (uint32_t i = 0; selected >= 0 && i < doc->rects; i++) {
         const rect_t *rc = &doc->rect[i];
         if (rc->link != (uint32_t)selected || rc->y + rc->h <= top ||
@@ -2203,14 +2317,32 @@ void onewww_compose(uint32_t top, const char *left, const char *right,
                 }
                 continue;
             }
-            for (int x = rc->x0 - 1; x <= rc->x1; x++) {
-                unsigned shift, v;
-                if (x < 0 || x >= PAGE_WIDTH) continue;
-                shift = 6U - 2U * ((unsigned)x & 3U);
-                v = (row[x >> 2] >> shift) & 3U;
-                if (v == 0U || v == 3U) {
-                    row[x >> 2] = (uint8_t)((row[x >> 2] & ~(3U << shift)) |
-                                            ((v ^ 3U) << shift));
+            {
+                /* The text colour is the pixel value that the link has
+                 * most on this row. */
+                unsigned count[4] = { 0U, 0U, 0U, 0U }, text = 3U;
+                for (int x = rc->x0; x < rc->x1; x++) {
+                    if (x >= 0 && x < PAGE_WIDTH) {
+                        count[(row[x >> 2] >> (6U - 2U * ((unsigned)x & 3U))) & 3U]++;
+                    }
+                }
+                /* On a row with two text colours, value 1 is the mixed
+                 * colour of the ink: it stays as it is. */
+                if (row_ink[r] == 1U && count[1] > count[text]) text = 1U;
+                if (count[2] > count[text]) text = 2U;
+                if (count[text] == 0U) text = row_ink[r];
+                for (int x = rc->x0 - 1; x <= rc->x1; x++) {
+                    unsigned shift, v;
+                    if (x < 0 || x >= PAGE_WIDTH) continue;
+                    shift = 6U - 2U * ((unsigned)x & 3U);
+                    v = (row[x >> 2] >> shift) & 3U;
+                    if (row_ink[r] == 3U) {
+                        /* One text colour: all four levels turn round. */
+                        row[x >> 2] = (uint8_t)(row[x >> 2] ^ (3U << shift));
+                    } else if (v == 0U || v == text) {
+                        row[x >> 2] = (uint8_t)((row[x >> 2] & ~(3U << shift)) |
+                                                ((v == 0U ? text : 0U) << shift));
+                    }
                 }
             }
         }
@@ -2236,7 +2368,7 @@ void onewww_compose(uint32_t top, const char *left, const char *right,
             if (c == ' ' || x < 0 || x >= PAGE_WIDTH) continue;
             if (row_scb[r] == SCB_640) {
                 const unsigned shift = 6U - 2U * ((unsigned)x & 3U);
-                const unsigned ink = row_accent[r] ? 2U : 3U;
+                const unsigned ink = row_ink[r];
                 row[x >> 2] = (uint8_t)((row[x >> 2] & ~(3U << shift)) |
                                         ((c == 'X' ? ink : 0U) << shift));
             } else {

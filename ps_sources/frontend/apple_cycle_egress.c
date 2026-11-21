@@ -20,8 +20,6 @@
 
 #include "apple_cycle_egress.h"
 #include "apple_cycle_renderer.h"
-#include "apple_fb_handoff.h"
-#include "compositor_layout.h"
 #include "linear_text_overlay.h"
 
 /* --- Public state -------------------------------------------------- */
@@ -50,14 +48,6 @@ static uint32_t s_consumer_ptr;
 #define ACE_LOOKAHEAD_BATCH_RECORDS 256U
 static uint64_t s_lookahead_batch[ACE_LOOKAHEAD_BATCH_RECORDS];
 static void (*s_checkpoint)(void);
-
-/* ONEWWW direct picture state (CPU1). */
-static uint8_t s_direct_active;
-static uint32_t s_direct_gen_seen;
-static inline uint8_t *direct_backup(void)
-{
-    return (uint8_t *)(uintptr_t)APPLE_DIRECT_SHR_BACKUP_ADDR;
-}
 
 void apple_cycle_egress_set_checkpoint(void (*checkpoint)(void))
 {
@@ -207,63 +197,6 @@ static int egress_find_phase_lookahead(const uint64_t *records,
     return 0;
 }
 
-/* --- Direct SHR picture (ONEWWW) -------------------------------------
- * CPU1 only. CPU0 fills the staging area and publishes a generation.
- * SHOW copies both fields into the shadow at $2000-$9FFF; from the first
- * SHOW the captured Apple writes to that range go to a backup. RELEASE,
- * or an Apple reset, puts the backup into the shadow again. */
-void apple_cycle_egress_direct_release(void)
-{
-    if (s_direct_active == 0U) {
-        return;
-    }
-    memcpy((void *)(g_aux_bank + 0x2000U), direct_backup(),
-           APPLE_DIRECT_SHR_FIELD_BYTES);
-    memcpy((void *)(g_main_bank + 0x2000U),
-           direct_backup() + APPLE_DIRECT_SHR_FIELD_BYTES,
-           APPLE_DIRECT_SHR_FIELD_BYTES);
-    s_direct_active = 0U;
-    g_video_shadow_generation++;
-    g_legacy_video_shadow_generation++;
-    apple_cycle_renderer_note_aux_ctrl_write(g_aux_bank[0x9DF8U]);
-}
-
-void apple_cycle_egress_direct_poll(void)
-{
-    const uint32_t gen = apple_fb_direct_gen_get();
-    const uint8_t *staging =
-        (const uint8_t *)(uintptr_t)APPLE_DIRECT_SHR_STAGING_ADDR;
-
-    if (gen == s_direct_gen_seen) {
-        return;
-    }
-    if (apple_fb_direct_mode_get() == APPLE_FB_DIRECT_SHOW) {
-        if (s_direct_active == 0U) {
-            memcpy(direct_backup(), (const void *)(g_aux_bank + 0x2000U),
-                   APPLE_DIRECT_SHR_FIELD_BYTES);
-            memcpy(direct_backup() + APPLE_DIRECT_SHR_FIELD_BYTES,
-                   (const void *)(g_main_bank + 0x2000U),
-                   APPLE_DIRECT_SHR_FIELD_BYTES);
-            s_direct_active = 1U;
-        }
-        memcpy((void *)(g_aux_bank + 0x2000U), staging,
-               APPLE_DIRECT_SHR_FIELD_BYTES);
-        memcpy((void *)(g_main_bank + 0x2000U),
-               staging + APPLE_DIRECT_SHR_FIELD_BYTES,
-               APPLE_DIRECT_SHR_FIELD_BYTES);
-        g_video_shadow_generation++;
-        g_legacy_video_shadow_generation++;
-        apple_cycle_renderer_note_aux_ctrl_write(g_aux_bank[0x9DF8U]);
-        /* The copy is complete: the renderer need not wait for a quiet
-         * frame as it does for a picture that the Apple writes. */
-        apple_cycle_renderer_note_direct_shr();
-    } else {
-        apple_cycle_egress_direct_release();
-    }
-    s_direct_gen_seen = gen;
-    apple_fb_direct_ack_set(gen);
-}
-
 /* --- Poll ----------------------------------------------------------- */
 void apple_cycle_egress_poll(void)
 {
@@ -358,17 +291,6 @@ void apple_cycle_egress_poll(void)
                     if (ace_addr_decode_en(rec)) {
                         uint32_t a = ace_addr_decode(rec);
                         uint8_t  d = ace_data(rec);
-                        if (s_direct_active != 0U &&
-                            (uint16_t)(a & 0xFFFFU) >= 0x2000U &&
-                            (uint16_t)(a & 0xFFFFU) <= 0x9FFFU) {
-                            /* ONEWWW owns the shown $2000-$9FFF. Keep the
-                             * Apple's bytes for the release. */
-                            direct_backup()[(((a & 0x010000U) != 0U) ? 0U :
-                                APPLE_DIRECT_SHR_FIELD_BYTES) +
-                                (a & 0xFFFFU) - 0x2000U] = d;
-                            if (ace_record_kind(rec) == ACE_RECORD_KIND_LEGACY)
-                                linear_text_overlay_capture_on_write(a, d);
-                        } else {
                         if ((a & 0x010000U) != 0U) {
                             g_aux_bank[a & 0xFFFFU] = d;
                             if (ace_record_kind(rec) == ACE_RECORD_KIND_LEGACY &&
@@ -391,7 +313,6 @@ void apple_cycle_egress_poll(void)
                             (video_addr >= 0x2000U &&
                              video_addr <= 0x9FFFU)) {
                             g_legacy_video_shadow_generation++;
-                        }
                         }
                         g_bus_writes_seen++;
                     }

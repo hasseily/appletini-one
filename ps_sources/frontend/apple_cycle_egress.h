@@ -234,10 +234,6 @@ static inline int ace_sw_dhires    (uint64_t r) { return (int)((r >> ACE_BIT_SW_
 /* --- Public API -------------------------------------------------------- */
 int  apple_cycle_egress_init(void);
 void apple_cycle_egress_poll(void);
-
-/* CPU1: take a direct SHR picture or a release from CPU0 (ONEWWW). */
-void apple_cycle_egress_direct_poll(void);
-void apple_cycle_egress_direct_release(void);
 void apple_cycle_egress_set_checkpoint(void (*checkpoint)(void));
 
 /* AMP secondary-core MMU setup. Marks the ring + producer-pointer

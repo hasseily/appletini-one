@@ -47,9 +47,6 @@
  *   0xFFFF1018  debug_dump_req   (uint32_t)  CPU0 writes, CPU1 clears
  *   0xFFFF101C  video_rom_mode   (uint32_t)  CPU0 writes, CPU1 reads
  *   0xFFFF1020  video_rom_ack    (uint32_t)  CPU1 writes, CPU0 reads
- *   0xFFFF1024  direct_gen       (uint32_t)  CPU0 writes, CPU1 reads
- *   0xFFFF1028  direct_mode      (uint32_t)  CPU0 writes, CPU1 reads
- *   0xFFFF102C  direct_ack       (uint32_t)  CPU1 writes, CPU0 reads
  */
 
 #include <stdint.h>
@@ -73,9 +70,6 @@
 #define HANDOFF_DEBUG_DUMP_REQ_ADDR  0xFFFF1018U
 #define HANDOFF_VIDEO_ROM_MODE_ADDR  0xFFFF101CU
 #define HANDOFF_VIDEO_ROM_ACK_ADDR   0xFFFF1020U
-#define HANDOFF_DIRECT_GEN_ADDR      0xFFFF1024U
-#define HANDOFF_DIRECT_MODE_ADDR     0xFFFF1028U
-#define HANDOFF_DIRECT_ACK_ADDR      0xFFFF102CU
 
 /* Reserved independently of the existing framebuffer/control words. */
 #define HANDOFF_HEALTH_ADDR          0xFFFF1100U
@@ -247,9 +241,6 @@ void apple_fb_handoff_init(void)
     *s_video_rom_gen  = 0u;
     *s_video_rom_mode = APPLE_FB_VIDEO_ROM_BUILT_IN;
     *s_video_rom_ack  = 0u;
-    *(volatile uint32_t *)HANDOFF_DIRECT_GEN_ADDR = 0U;
-    *(volatile uint32_t *)HANDOFF_DIRECT_MODE_ADDR = APPLE_FB_DIRECT_RELEASE;
-    *(volatile uint32_t *)HANDOFF_DIRECT_ACK_ADDR = 0U;
     *(volatile uint32_t *)HANDOFF_HEALTH_ADDR = 0U;
     *(volatile uint32_t *)(HANDOFF_HEALTH_ADDR + 4U) = 0U;
     *s_debug_dump_req = APPLE_FB_DUMP_NONE;
@@ -317,39 +308,6 @@ void apple_fb_video_rom_publish(uint32_t gen, uint32_t mode)
     *s_video_rom_gen = gen;
     __asm__ volatile ("dmb sy" ::: "memory");
 }
-
-static uint32_t handoff_word_get(uint32_t address)
-{
-    const uint32_t value = *(volatile uint32_t *)(uintptr_t)address;
-    __asm__ volatile ("dmb sy" ::: "memory");
-    return value;
-}
-
-static void handoff_word_set(uint32_t address, uint32_t value)
-{
-    __asm__ volatile ("dmb sy" ::: "memory");
-    *(volatile uint32_t *)(uintptr_t)address = value;
-    __asm__ volatile ("dmb sy" ::: "memory");
-}
-
-void apple_fb_direct_publish(uint32_t gen, uint32_t mode)
-{
-    /* Order the staging bytes before mode, then both before generation. */
-    handoff_word_set(HANDOFF_DIRECT_MODE_ADDR, mode);
-    handoff_word_set(HANDOFF_DIRECT_GEN_ADDR, gen);
-}
-
-uint32_t apple_fb_direct_gen_get(void)
-{ return handoff_word_get(HANDOFF_DIRECT_GEN_ADDR); }
-
-uint32_t apple_fb_direct_mode_get(void)
-{ return handoff_word_get(HANDOFF_DIRECT_MODE_ADDR); }
-
-void apple_fb_direct_ack_set(uint32_t gen)
-{ handoff_word_set(HANDOFF_DIRECT_ACK_ADDR, gen); }
-
-uint32_t apple_fb_direct_ack_get(void)
-{ return handoff_word_get(HANDOFF_DIRECT_ACK_ADDR); }
 
 uint32_t apple_fb_video_rom_gen_get(void)
 {

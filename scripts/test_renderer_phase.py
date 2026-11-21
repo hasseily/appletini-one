@@ -107,14 +107,35 @@ def test_per_switch_phase_lookahead_is_selective_and_ordered() -> None:
         "#define PHASE_C05E_DHIRES     PHASE_NATIVE" in tuning and
         "#define PHASE_C00F_ALTCHARSET PHASE_ADVANCE_1" in tuning,
         "C050/C052 must delay one cycle and C00D/C00F advance one cycle "
-        "(ONE//e VIDSYNC measurement)",
+        "(ONE//e VIDSYNC measurement, clean renderer)",
+    )
+    # The PAL-accurate renderer models TEXT and 80COL latency itself.
+    require(
+        "#define PHASE_PAL_C050_TEXT       PHASE_NATIVE" in tuning and
+        "#define PHASE_PAL_C052_MIXED      PHASE_DELAY_1" in tuning and
+        "#define PHASE_PAL_C00D_80COL      PHASE_NATIVE" in tuning and
+        "#define PHASE_PAL_C05E_DHIRES     PHASE_NATIVE" in tuning and
+        "#define PHASE_PAL_C00F_ALTCHARSET PHASE_DELAY_1" in tuning,
+        "PAL-accurate: C050/C00D native, C052/C00F delay one cycle "
+        "(ONE//e VIDSYNC measurement, PAL-accurate renderer)",
     )
     require(
         "#define PHASE_SWITCH_MASK_AT(value)" in tuning and
-        "PHASE_SWITCH_MASK_AT(PHASE_DELAY_1)" in tuning and
-        "PHASE_SWITCH_MASK_AT(PHASE_ADVANCE_1)" in tuning and
-        "PHASE_SWITCH_MASK_AT(PHASE_ADVANCE_2)" in tuning,
-        "phase masks must derive from the per-switch tuning table",
+        "#define PHASE_PAL_SWITCH_MASK_AT(value)" in tuning and
+        all(
+            f"{table}({setting})" in tuning
+            for table in ("PHASE_SWITCH_MASK_AT", "PHASE_PAL_SWITCH_MASK_AT")
+            for setting in ("PHASE_DELAY_1", "PHASE_ADVANCE_1", "PHASE_ADVANCE_2")
+        ),
+        "phase masks must derive from the per-switch tuning tables",
+    )
+    require(
+        "apple_pal_video_mode_is_active(s_render_color_mode) != 0u) ? 1u : 0u;"
+        in renderer and
+        "s_phase_delay_1_sw_mask[table]" in renderer and
+        "s_phase_advance_1_sw_mask[table]" in renderer and
+        "s_phase_advance_2_sw_mask[table]" in renderer,
+        "phase correction must select the table of the active renderer",
     )
     require(
         "phase_records_are_consecutive(s_phase_prev_record, rec)" in renderer and

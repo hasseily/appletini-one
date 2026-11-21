@@ -13,10 +13,9 @@ enum { HTTP_E_BUSY = -100, HTTP_E_ARGUMENT = -101, HTTP_E_IO = -102,
        HTTP_E_REDIRECT = -109, HTTP_E_STORAGE_BUSY = -110,
        HTTP_E_NETWORK_NOT_READY = -111 };
 enum { HTTP_OWNER_NONE, HTTP_OWNER_NET, HTTP_OWNER_DOWNLOAD, HTTP_OWNER_UPDATE, HTTP_OWNER_COGS };
-#define HTTP_DEFAULT_STREAM_BYTES 4096U
-#define HTTP_UPDATE_STREAM_BYTES  (128U * 1024U)
-#define HTTP_DEFAULT_IO_BYTES     512U
-#define HTTP_UPDATE_IO_BYTES      4096U
+/* Body ring and largest single socket read, for every client. */
+#define HTTP_STREAM_BYTES (128U * 1024U)
+#define HTTP_IO_BYTES     4096U
 typedef struct {
     const char *url, *method, *headers;
     const uint8_t *body;

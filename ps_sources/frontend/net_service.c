@@ -3,6 +3,9 @@
 #include "net_json.h"
 #include "http_service.h"
 #include "http_download.h"
+#include "net_image.h"
+#include "net_page.h"
+#include <stdlib.h>
 #include <string.h>
 #ifndef NET_SERVICE_HOST
 #include "xiltimer.h"
@@ -31,6 +34,21 @@ static struct {
     char download_hint[HTTP_FILENAME_MAX];
     http_status_t status;
     net_json_t json;
+    /* Picture or page request: the response body on the heap, the
+     * finished rows or page here. image/page: the request is in that mode. */
+    uint8_t image, page;
+    uint16_t box_w, box_h, image_status;
+    uint8_t *encoded;
+    size_t encoded_length, encoded_capacity, picture_length;
+    uint8_t picture[NET_PAGE_OUT_MAX];
+    /* Linked style sheets of a page, fetched one by one after the HTML.
+     * css_stage 1: a sheet is on the way. css_used: net.status is the
+     * page's and must not follow the sheet requests. */
+    uint8_t css_stage, css_index, css_used;
+    uint16_t css_status;
+    uint8_t *css;
+    size_t css_length, css_capacity, css_mark;
+    uint64_t css_started;
 } net;
 static uint16_t get16(const uint8_t *p) {return (uint16_t)(p[0]|((unsigned)p[1]<<8));}
 static void put16(uint8_t *p,uint16_t n) {p[0]=(uint8_t)n;p[1]=(uint8_t)(n>>8);}
@@ -40,8 +58,113 @@ static void drop(void)
     net.replay_length=0;net.replay_offset=net.stream_offset=0;
     net.json.result=NJ_NONE;net.json.value_length=0;net.json.value_type=0;
     memset(&net.status,0,sizeof(net.status));
+    free(net.encoded);net.encoded=NULL;
+    net.encoded_length=net.encoded_capacity=net.picture_length=0;net.image_status=0;net.page=0;
+    free(net.css);net.css=NULL;
+    net.css_length=net.css_capacity=0;net.css_stage=net.css_used=0;
+}
+#define CSS_SHEET_US 8000000ULL
+static void page_finish(void)
+{
+    net.picture_length=net_page_filter(net.encoded,net.encoded_length,net.status.content_type,
+                                       net.status.url,net.css,net.css_length,
+                                       net.picture,sizeof(net.picture),NULL);
+    free(net.encoded);net.encoded=NULL;net.encoded_length=net.encoded_capacity=0;
+    free(net.css);net.css=NULL;net.css_length=net.css_capacity=0;
+    net.css_stage=0;net.state=NET_DONE;
+}
+/* Start the next linked style sheet, or filter the page when none is left. */
+static void css_next(void)
+{
+    char url[HTTP_URL_MAX];
+    net.css_used=1;
+    if(http_service_getowner()==HTTP_OWNER_NET)(void)http_service_cancel_owned(HTTP_OWNER_NET);
+    for(;net.css_index<NET_PAGE_SHEETS;++net.css_index) {
+        if(!net_page_stylesheet(net.encoded,net.encoded_length,net.status.url,net.css_index,url,sizeof(url)))break;
+        http_request_t request={url,"GET",net.headers,NULL,0,0};
+        if(http_service_start_owned(&request,HTTP_OWNER_NET))continue;
+        net.css_stage=1;net.css_status=0;net.css_mark=net.css_length;net.css_started=json_clock();
+        return;
+    }
+    page_finish();
+}
+static void css_poll(void)
+{
+    uint8_t piece[4096];
+    http_status_t sheet;
+    size_t n;
+    int ok;
+    if(http_service_getowner()!=HTTP_OWNER_NET){++net.css_index;css_next();return;}
+    http_service_status(&sheet);
+    ok=sheet.headers_ready&&sheet.status>=200&&sheet.status<300;
+    /* A redirect or an error page is not style text. */
+    if(sheet.status!=net.css_status){net.css_status=sheet.status;net.css_length=net.css_mark;}
+    while((n=http_service_read_owned(HTTP_OWNER_NET,piece,sizeof(piece)))!=0) {
+        if(!ok||net.css_length+n+1U>NET_PAGE_CSS_MAX)continue;
+        if(net.css_length+n+1U>net.css_capacity) {
+            size_t wanted=net.css_capacity?net.css_capacity*2U:65536U;
+            while(wanted<net.css_length+n+1U)wanted*=2U;
+            uint8_t *grown=realloc(net.css,wanted);
+            if(!grown)continue;
+            net.css=grown;net.css_capacity=wanted;
+        }
+        memcpy(net.css+net.css_length,piece,n);net.css_length+=n;
+    }
+    http_service_status(&sheet);
+    if(sheet.state==HTTP_S_FAILED||(sheet.state==HTTP_S_DONE&&!sheet.buffered)||
+       json_clock()-net.css_started>CSS_SHEET_US) {
+        if(sheet.state!=HTTP_S_DONE||!ok)net.css_length=net.css_mark;
+        else if(net.css_length<net.css_capacity)net.css[net.css_length++]='\n';
+        ++net.css_index;css_next();
+    }
+}
+/* Move the body of a 2xx response to the heap, then convert it. Bodies of
+ * other responses are read and dropped so that the stream cannot stall. */
+static void image_poll(void)
+{
+    uint8_t piece[4096];
+    size_t n;
+    const size_t limit=net.page?NET_PAGE_RAW_MAX:NET_IMAGE_ENCODED_MAX;
+    int accept=net.status.headers_ready&&net.status.status>=200&&net.status.status<300;
+    if(net.status.status!=net.image_status){net.image_status=net.status.status;net.encoded_length=0;}
+    while((n=http_service_read_owned(HTTP_OWNER_NET,piece,sizeof(piece)))!=0) {
+        if(!accept)continue;
+        if(net.encoded_length+n>limit) {
+            /* A page keeps its first part; the filter output is short anyway. */
+            if(net.page)continue;
+            (void)http_service_cancel_owned(HTTP_OWNER_NET);
+            net.state=NET_FAILED;net.result=NET_IMAGE_E_SIZE;return;
+        }
+        if(net.encoded_length+n>net.encoded_capacity) {
+            size_t wanted=net.encoded_capacity?net.encoded_capacity*2U:65536U;
+            if(net.status.content_length_known&&net.status.content_length<=limit&&
+               net.status.content_length>wanted)wanted=net.status.content_length;
+            while(wanted<net.encoded_length+n)wanted*=2U;
+            uint8_t *grown=realloc(net.encoded,wanted);
+            if(!grown) {
+                (void)http_service_cancel_owned(HTTP_OWNER_NET);
+                net.state=NET_FAILED;net.result=NET_IMAGE_E_MEMORY;return;
+            }
+            net.encoded=grown;net.encoded_capacity=wanted;
+        }
+        memcpy(net.encoded+net.encoded_length,piece,n);net.encoded_length+=n;
+    }
+    http_service_status(&net.status);
+    if(net.status.state!=HTTP_S_DONE||net.status.buffered)return;
+    if(accept&&net.page) {
+        /* The HTML is complete. Its style sheets give the image sizes. */
+        net.css_index=0;css_next();return;
+    } else if(accept) {
+        int result=net_image_convert(net.encoded,net.encoded_length,net.box_w,net.box_h,
+                                     net.picture,&net.picture_length);
+        if(result){net.picture_length=0;net.result=(int16_t)result;}
+        net.state=result?NET_FAILED:NET_DONE;
+    } else net.state=NET_DONE; /* The client reports the HTTP status. */
+    free(net.encoded);net.encoded=NULL;net.encoded_length=net.encoded_capacity=0;
 }
 void net_service_set_via_hz(uint32_t hz) {net.via_hz=hz;}
+int net_service_image_active(void)
+{return (net.image||(net.flags&NET_FLAG_PAGE))&&(net.state==NET_QUEUED||net.state==NET_ACTIVE);}
 void net_service_reset(void)
 {
     /* Called at foreground scope: finish private-file cleanup before an SD
@@ -56,17 +179,23 @@ uint8_t net_service_control(const uint8_t *p,size_t length)
     unsigned op=p[1],method=p[3];
     size_t url=get16(p+4),headers=get16(p+6),body=get16(p+8),hint=get16(p+10);
     if(op==NET_START) {
-        if((p[2]&~7U)||((p[2]&NET_FLAG_RETAIN)&&(p[2]&6U))||
+        const unsigned image=p[2]&NET_FLAG_IMAGE;
+        if((p[2]&~31U)||((p[2]&NET_FLAG_PAGE)&&(p[2]&(NET_FLAG_RETAIN|NET_FLAG_FORCE_DOWNLOAD)))||((p[2]&NET_FLAG_RETAIN)&&(p[2]&6U))||(image&&p[2]!=NET_FLAG_IMAGE)||
            !method||method>15||!url||url>=HTTP_URL_MAX||hint>=HTTP_FILENAME_MAX||
-           (hint&&!(p[2]&NET_FLAG_FORCE_DOWNLOAD))||
+           (image?hint!=4U:(hint&&!(p[2]&NET_FLAG_FORCE_DOWNLOAD)))||
            NET_START_HEADER+method+url+headers+body+hint!=length)return 0x21;
-        if((p[2]&6U)&&(method!=3||body||memcmp(p+12,"GET",3)))return 0x21;
+        if((p[2]&14U)&&(method!=3||body||memcmp(p+12,"GET",3)))return 0x21;
         /* Text fields are length delimited on the wire, never embedded NUL. */
         if(memchr(p+NET_START_HEADER,0,method+url+headers)||
-           memchr(p+NET_START_HEADER+method+url+headers+body,0,hint))return 0x21;
+           (!image&&memchr(p+NET_START_HEADER+method+url+headers+body,0,hint)))return 0x21;
+        if(image) {
+            const uint8_t *box=p+NET_START_HEADER+method+url+headers;
+            if(!get16(box)||get16(box)>NET_IMAGE_BOX_W_MAX||
+               !get16(box+2)||get16(box+2)>NET_IMAGE_BOX_H_MAX)return 0x21;
+        }
         if(http_download_active())return 0x2F;
         memcpy(net.packet,p,length);net.packet_length=(uint16_t)length;
-        drop();net.flags=p[2];net.retain=p[2]&NET_FLAG_RETAIN;
+        drop();net.flags=p[2];net.retain=p[2]&NET_FLAG_RETAIN;net.image=image!=0U;
         net.download_handoff=0;
         if(p[2]&6U)http_download_wait();else http_download_reset();
         net.state=NET_QUEUED;net.result=0;
@@ -97,6 +226,7 @@ void net_service_poll(void)
             memcpy(net.method,p+12,m);net.method[m]=0;
             memcpy(net.url,p+12+m,u);net.url[u]=0;
             memcpy(net.headers,p+12+m+u,h);net.headers[h]=0;
+            if(net.image){net.box_w=get16(p+12+m+u+h);net.box_h=get16(p+12+m+u+h+2);f=0;}
             memcpy(net.download_hint,p+12+m+u+h+b,f);net.download_hint[f]=0;
             http_request_t request={net.url,net.method,net.headers,p+12+m+u+h,b,net.retain};
             int result=http_service_start_owned(&request,HTTP_OWNER_NET);
@@ -108,8 +238,9 @@ void net_service_poll(void)
             net.state=NET_ACTIVE;
         }
     }
-    if(net.state==NET_DONE&&!net.download_handoff&&http_service_getowner()==HTTP_OWNER_NET)
+    if(net.state==NET_DONE&&!net.download_handoff&&!net.css_used&&http_service_getowner()==HTTP_OWNER_NET)
         http_service_status(&net.status);
+    if(net.state==NET_ACTIVE&&net.css_stage){css_poll();return;}
     if(net.state==NET_ACTIVE) {
         http_download_status_t saved;
         http_download_status(&saved);
@@ -137,6 +268,8 @@ void net_service_poll(void)
             net.state=net.result==HTTP_E_CANCELLED?NET_CANCELLED:NET_FAILED;
             net.replay_length=0;net.json.result=NJ_NONE;
             if(net.flags&6U)http_download_fail(net.result);
+        } else if(net.image||net.page) {
+            image_poll();
         } else {
             if(saved.state==HTTP_DL_WAITING&&net.status.headers_ready&&
                net.status.status>=200&&net.status.status<300) {
@@ -155,6 +288,14 @@ void net_service_poll(void)
                     net.result=HTTP_DL_E_HTTP;return;
                 }
                 http_download_reset(); /* Final non-2xx belongs to the page client. */
+            }
+            /* The download decision is over. An HTML page goes through
+             * the filter; all other bodies stream as before. */
+            http_download_status(&saved);
+            if((net.flags&NET_FLAG_PAGE)&&saved.state!=HTTP_DL_WAITING&&net.status.headers_ready&&
+               net.status.status>=200&&net.status.status<300&&
+               net_page_is_html(net.status.content_type)) {
+                net.page=1;image_poll();return;
             }
             size_t length;
             (void)http_service_retained_owned(HTTP_OWNER_NET,&length);
@@ -182,7 +323,8 @@ static uint16_t read_source(uint8_t selector,uint16_t offset,uint16_t max,uint8_
                 out[0]=net.generation;out[1]=net.download_handoff?NET_SOURCE_FAILED:NET_MORE;
                 put32(out+2,offset);put16(out+6,0);return NET_REPLY_HEADER;
             }
-            if(net.retain)source=http_service_retained_owned(HTTP_OWNER_NET,&length);
+            if(net.image||net.page){source=net.picture;length=net.state==NET_DONE?net.picture_length:0;}
+            else if(net.retain)source=http_service_retained_owned(HTTP_OWNER_NET,&length);
             else {
                 uint32_t end=net.replay_offset+net.replay_length;
                 if(offset<net.replay_offset||offset>end)state=NET_LOST;
@@ -207,7 +349,7 @@ static uint16_t read_source(uint8_t selector,uint16_t offset,uint16_t max,uint8_
             else if(net.json.result!=NJ_PENDING)state=NET_END;
         } else if(selector==0x85) {source=(const uint8_t *)net.status.url;length=strlen(net.status.url);}
         else if(selector==0x86) {source=(const uint8_t *)net.status.content_type;length=strlen(net.status.content_type);}
-        if(selector!=0x83||net.retain) {
+        if(selector!=0x83||net.retain||net.image||net.page) {
             if(offset>length)state=NET_LOST;
             else {if(source)source+=offset;n=length-offset;}
             if(net.state==NET_DONE&&state!=NET_LOST)state=NET_END;
@@ -216,7 +358,7 @@ static uint16_t read_source(uint8_t selector,uint16_t offset,uint16_t max,uint8_
     if(n>max-NET_REPLY_HEADER)n=max-NET_REPLY_HEADER;
     if(state==NET_SOURCE_FAILED||state==NET_LOST)n=0;
     /* END means this reply reaches the end, not merely that receipt finished. */
-    if(state==NET_END&&offset<=length&&n<length-((selector==0x83&&!net.retain)?0:offset))state=NET_MORE;
+    if(state==NET_END&&offset<=length&&n<length-((selector==0x83&&!net.retain&&!net.image&&!net.page)?0:offset))state=NET_MORE;
     out[0]=net.generation;out[1]=state;put32(out+2,offset);put16(out+6,(uint16_t)n);
     if(n)memcpy(out+NET_REPLY_HEADER,source,n);
     return (uint16_t)(NET_REPLY_HEADER+n);
@@ -227,7 +369,7 @@ uint16_t net_service_status(uint8_t selector,const uint8_t list[9],uint8_t *out,
     if(selector==NET_SELECTOR) {
         if(capacity<NET_DESCRIPTOR_SIZE)return 0;
         memset(out,0,NET_DESCRIPTOR_SIZE);memcpy(out,"ATNH",4);
-        out[4]=NET_VERSION;out[5]=NET_DESCRIPTOR_SIZE;out[6]=15|NET_CAP_DOWNLOAD;out[7]=net.generation;
+        out[4]=NET_VERSION;out[5]=NET_DESCRIPTOR_SIZE;out[6]=15|NET_CAP_DOWNLOAD|NET_CAP_IMAGE|NET_CAP_PAGE;out[7]=net.generation;
         out[8]=net.state;out[9]=net.retain;put16(out+10,(uint16_t)net.result);
         put16(out+12,net.status.status);out[14]=net.json.result;out[15]=net.json.value_type;
         put32(out+16,net.status.body_bytes);put32(out+20,net.status.buffered);

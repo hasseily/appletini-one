@@ -6,7 +6,9 @@
 #include <string.h>
 
 #define COLLISION_LIMIT 10000U
-#define COPY_BYTES 4096U
+/* One SD write costs about the same for 4 KiB as for 32 KiB. Write the body
+ * in pieces of this size; only the last piece of a file can be smaller. */
+#define COPY_BYTES (32U * 1024U)
 
 typedef struct {
     http_download_status_t status;
@@ -20,7 +22,7 @@ typedef struct {
 static staged_download_t net_download;
 static staged_download_t cogs_download;
 /* Only one HTTP request can feed a staged download at a time. */
-static uint8_t buffer[COPY_BYTES];
+static uint8_t buffer[COPY_BYTES] __attribute__((aligned(32)));
 static http_status_t source_status;
 static FATFS download_fs;
 
@@ -256,7 +258,12 @@ static void poll(staged_download_t *download)
         if (opened < 0) fail(download, opened);
         if (opened <= 0) return;
     }
-    size_t length = http_service_read_owned(owner, buffer, sizeof(buffer));
+    size_t length = 0;
+    /* Take a full piece, or the rest of the body when all of it is here. */
+    if (source_status.buffered >= sizeof(buffer) || source_status.state == HTTP_S_DONE ||
+        (download->status.total_known &&
+         source_status.buffered >= download->status.total - download->status.written))
+        length = http_service_read_owned(owner, buffer, sizeof(buffer));
     if (length) {
         if (length > UINT32_MAX - download->status.written) {
             fail(download, HTTP_DL_E_LIMIT);

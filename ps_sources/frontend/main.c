@@ -2450,15 +2450,25 @@ static void control_service_cogs(config_menu_t *menu)
     cogs_service_poll(allowed);
 }
 
-static uint8_t ui_online_update_composite_due(const ui_state_t *ui,
-                                               const config_menu_t *menu)
+/* A repaint holds the main loop for about 20 ms, and no network data moves
+ * in that time. While a transfer runs, repaint at 10 Hz. Input still
+ * repaints at once. This covers the online update, the CoGS browser while
+ * it loads or downloads, and a file download that an Apple program started
+ * (the Apple picture then also updates at 10 Hz until the file is saved). */
+static uint8_t ui_transfer_composite_due(const ui_state_t *ui,
+                                          const config_menu_t *menu)
 {
     static XTime last_paint;
     static uint32_t last_input;
     static uint8_t throttled;
     XTime now;
-    if (!online_update_active() || !control_online_update_allowed(menu) ||
-        control_online_update_busy(menu)) {
+    const uint8_t update = (uint8_t)(online_update_active() &&
+        control_online_update_allowed(menu) && !control_online_update_busy(menu));
+    const uint8_t download = (uint8_t)(
+        (cogs_service_active() && config_menu_cogs_active(menu)) ||
+        http_service_getowner() == HTTP_OWNER_DOWNLOAD ||
+        net_service_image_active());
+    if (!update && !download) {
         if (throttled != 0U) compositor_request_full_refresh();
         throttled = 0U;
         return 1U;
@@ -5632,7 +5642,7 @@ int main(void)
             }
             usb0_priority_checkpoint();
 #ifdef APPLETINI_HTTP_SERVICE
-            if (ui_online_update_composite_due(&ui, &config_menu)) {
+            if (ui_transfer_composite_due(&ui, &config_menu)) {
                 (void)compositor_tick();
             }
 #else

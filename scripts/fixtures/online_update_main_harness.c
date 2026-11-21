@@ -16,7 +16,7 @@ static uint32_t update_cost, http_cost;
 static uint32_t last_http_budget;
 static unsigned http_calls, refresh_calls;
 static uint8_t force_refresh, lose_safe_after_http;
-enum { HTTP_OWNER_NONE, HTTP_OWNER_NET, HTTP_OWNER_UPDATE, HTTP_OWNER_COGS };
+enum { HTTP_OWNER_NONE, HTTP_OWNER_NET, HTTP_OWNER_DOWNLOAD, HTTP_OWNER_UPDATE, HTTP_OWNER_COGS };
 static uint8_t http_owner;
 static uint8_t http_service_getowner(void) { return http_owner; }
 static unsigned ready_after_polls;
@@ -96,6 +96,8 @@ static void http_service_poll_budget(uint32_t max_us) {
 uint8_t config_menu_is_active(const config_menu_t *menu) { return menu->active; }
 uint8_t config_menu_cogs_active(const config_menu_t *menu) { (void)menu; return cogs_open; }
 static int cogs_service_active(void) { return cogs_active; }
+static uint8_t net_image_active;
+static int net_service_image_active(void) { return net_image_active; }
 static void cogs_service_poll(uint8_t safe) { ++cogs_polls; cogs_allowed=safe; }
 static int http_service_active(void) { return transport_active; }
 static uint8_t vtw_service_boot_start_pending(void) { return boot_start; }
@@ -174,7 +176,7 @@ static void reset(config_menu_t *menu, ui_state_t *ui)
     menu->platform.ethernet_dhcp_start=menu_platform_ethernet_dhcp_start;
     menu->platform.ethernet_dhcp_poll=menu_platform_ethernet_dhcp_poll;
     menu->platform.ethernet_dhcp_cancel=menu_platform_ethernet_dhcp_cancel;
-    (void)ui_online_update_composite_due(ui,menu); /* reset the private pacing state in inactive mode */
+    (void)ui_transfer_composite_due(ui,menu); /* reset the private pacing state in inactive mode */
     clock_ticks=update_cost=http_cost=http_calls=refresh_calls=force_refresh=lose_safe_after_http=ready_after_polls=0;
     last_http_budget=0;
     http_owner=HTTP_OWNER_UPDATE;
@@ -434,15 +436,37 @@ int main(void)
     reset(&menu,&ui);service_active=1;unsigned paints=0;
     for(unsigned millisecond=0;millisecond<=1000;++millisecond) {
         clock_ticks=(XTime)millisecond*1000;
-        paints+=ui_online_update_composite_due(&ui,&menu);force_refresh=0;
+        paints+=ui_transfer_composite_due(&ui,&menu);force_refresh=0;
     }
     assert(paints==11); /* first paint, then ten 100ms intervals */
-    clock_ticks+=1;++ui.input_seq;assert(ui_online_update_composite_due(&ui,&menu) && force_refresh);
-    force_refresh=0;clock_ticks+=1;assert(!ui_online_update_composite_due(&ui,&menu));
-    force_refresh=1;assert(ui_online_update_composite_due(&ui,&menu));force_refresh=0;
-    ++ui.input_seq;live.state=ONLINE_UPDATE_FAILED;assert(ui_online_update_composite_due(&ui,&menu));force_refresh=0;
-    service_active=0;assert(ui_online_update_composite_due(&ui,&menu) && force_refresh);
-    force_refresh=0;assert(ui_online_update_composite_due(&ui,&menu));
+    clock_ticks+=1;++ui.input_seq;assert(ui_transfer_composite_due(&ui,&menu) && force_refresh);
+    force_refresh=0;clock_ticks+=1;assert(!ui_transfer_composite_due(&ui,&menu));
+    force_refresh=1;assert(ui_transfer_composite_due(&ui,&menu));force_refresh=0;
+    ++ui.input_seq;live.state=ONLINE_UPDATE_FAILED;assert(ui_transfer_composite_due(&ui,&menu));force_refresh=0;
+    service_active=0;assert(ui_transfer_composite_due(&ui,&menu) && force_refresh);
+    force_refresh=0;assert(ui_transfer_composite_due(&ui,&menu));
+    /* The CoGS browser, an Apple file download and a picture request use
+     * the same 10 Hz limit. */
+    for(unsigned source=0;source<3;++source) {
+        reset(&menu,&ui);http_owner=source==1?HTTP_OWNER_DOWNLOAD:source==2?HTTP_OWNER_NET:HTTP_OWNER_NONE;
+        cogs_open=cogs_active=(uint8_t)!source;net_image_active=source==2;paints=0;
+        for(unsigned millisecond=0;millisecond<=1000;++millisecond) {
+            clock_ticks=(XTime)millisecond*1000;
+            paints+=ui_transfer_composite_due(&ui,&menu);force_refresh=0;
+        }
+        assert(paints==11);
+        clock_ticks+=1;++ui.input_seq;assert(ui_transfer_composite_due(&ui,&menu) && force_refresh);
+        force_refresh=0;clock_ticks+=1;assert(!ui_transfer_composite_due(&ui,&menu));
+        /* The limit ends with the transfer, with one full repaint. */
+        if(source) http_owner=HTTP_OWNER_NET; else cogs_active=0U;
+        net_image_active=0;
+        assert(ui_transfer_composite_due(&ui,&menu) && force_refresh);
+        force_refresh=0;assert(ui_transfer_composite_due(&ui,&menu));
+    }
+    /* A CoGS transfer that lost its menu, or a page request, has no limit. */
+    reset(&menu,&ui);cogs_active=1U;http_owner=HTTP_OWNER_NET;
+    for(unsigned n=0;n<3;++n){clock_ticks+=1;assert(ui_transfer_composite_due(&ui,&menu));}
+    http_owner=HTTP_OWNER_UPDATE;
     puts("PASS fresh progress snapshots without per-chunk invalidation;11 paints over1001 modeled1ms iterations, input/error/full-refresh/completion remain immediate");
     for(unsigned phase=0;phase<3;++phase) {
         reset(&menu,&ui);

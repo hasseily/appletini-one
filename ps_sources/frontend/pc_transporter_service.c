@@ -363,7 +363,7 @@ void pc_transporter_service_set_enabled(bool active)
 void pc_transporter_service_uart_status(uint32_t uart_base)
 {
     if (!initialized) {
-        uart_puts(uart_base, "PC Transporter test mode has not started.\r\n");
+        uart_puts(uart_base, "PC Transporter has not started.\r\n");
         return;
     }
     char line[256];

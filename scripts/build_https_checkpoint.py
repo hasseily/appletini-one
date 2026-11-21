@@ -94,7 +94,7 @@ def main():
         sources += ['"../../../ps_sources/frontend/' + name + '"' for name in
                     ("http_core.c", "http_seed.c", "http_entropy.c", "http_roots.c",
                      "http_service.c", "http_download.c", "download_filename.c",
-                     "http_bench.c", "net_service.c", "net_json.c")]
+                     "http_bench.c", "net_service.c", "net_json.c", "net_image.c", "net_page.c")]
         sources += ['"../../../' + path.relative_to(ROOT).as_posix() + '"'
                     for path in sorted((ROOT / "third_party/mbedtls/library").glob("*.c"))]
         append_config("frontend", "USER_COMPILE_SOURCES", sources)

@@ -56,6 +56,19 @@ groups, with both setup margins active. It then restores both clocks and
 the Apple output requirements. Applying the pixel margin before placement
 was measured and rejected.
 
+Before placement, `replicate_direction_sources.tcl` gives the logic of the
+two Apple direction pads its own source registers. About 25 registers all
+over the fabric feed `a2fpga_dir_a` and `a2fpga_dir_d` under a 10 ns limit,
+and most have many other loads. For each one the hook adds a twin flip-flop
+with the same D, CE, reset and clock nets and the same INIT, and moves only
+the load pins inside the direction logic to the twin. Each twin equals its
+original in every clock cycle, so no logic, state or bus phase changes. The
+hook reads its result back from the netlist and stops the build on any
+difference. The manifest records the hook hash and the twin count of the
+routed design. In ten runs without the hook a direction path was the worst
+path each time (-0.09 to -0.45 ns). With it, the first run had +0.27 ns on
+both pads.
+
 The build reopens the final design and checks both clocks' nominal
 uncertainty, the original board requirements, all 32 Apple/Gray-pointer
 bounds, and the full timing/route reports. Export requires global setup

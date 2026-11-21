@@ -7,10 +7,10 @@
 #include <string.h>
 
 static struct {char path[192];uint8_t *data;size_t length;int exists,dir,open;} fs[40];
-static unsigned creates,renames,unlinks,handles,tests,stat_calls;
+static unsigned creates,renames,unlinks,handles,tests,stat_calls,writes,write_min,write_max,write_tail;
 static int readonly_sd,write_fail,short_write,sync_fail,close_fail,rename_fail,unlink_fail,mkdir_fail,rename_race;
 static http_status_t backend;
-static uint8_t ring[4096],owner;
+static uint8_t ring[HTTP_STREAM_BYTES],owner;
 static size_t ring_length;
 static unsigned starts,cancels,handoffs;
 static int occupied;
@@ -47,6 +47,7 @@ FRESULT f_close(FIL *file)
 FRESULT f_write(FIL *file,const void *data,UINT length,UINT *wrote)
 {
     assert(fs[file->slot].open);*wrote=0;if(write_fail)return FR_DISK_ERR;
+    ++writes;write_tail=length;if(length<write_min)write_min=length;if(length>write_max)write_max=length;
     if(short_write&&length)--length;
     size_t end=file->position+length;uint8_t *next=realloc(fs[file->slot].data,end?end:1);assert(next);
     fs[file->slot].data=next;memcpy(next+file->position,data,length);
@@ -140,7 +141,8 @@ static void reset(void)
     net_service_reset();net_service_poll();
     for(unsigned i=0;i<40;++i){assert(!fs[i].open);free(fs[i].data);memset(&fs[i],0,sizeof(fs[i]));}
     memset(&backend,0,sizeof(backend));owner=0;occupied=0;ring_length=received=consumed=0;
-    creates=renames=unlinks=handles=starts=cancels=handoffs=stat_calls=0;
+    creates=renames=unlinks=handles=starts=cancels=handoffs=stat_calls=writes=write_max=write_tail=0;
+    write_min=UINT32_MAX;
     readonly_sd=write_fail=short_write=sync_fail=close_fail=rename_fail=unlink_fail=mkdir_fail=rename_race=0;
 }
 static void failure(int error)
@@ -231,6 +233,9 @@ int main(void)
     while(at<200003){unsigned n=200003-at;if(n>sizeof(block))n=sizeof(block);
         for(unsigned i=0;i<n;++i)block[i]=(uint8_t)((at+i)*7U+((at+i)>>8));
         feed(block,n);net_service_poll();at+=n;}
+    /* Body bytes reach SD in 32 KiB pieces. Only the last piece is smaller,
+     * and it goes out when the rest of a known length has arrived. */
+    assert(creates==1&&writes==7&&write_max==32768&&write_min==200003%32768&&write_tail==write_min&&!ring_length);
     backend.state=HTTP_S_DONE;net_service_poll();int slot=completed();assert(slot>=0&&fs[slot].length==200003);
     for(unsigned i=0;i<200003;++i)assert(fs[slot].data[i]==(uint8_t)(i*7U+(i>>8)));
     assert(starts==1&&handoffs==1&&creates==1&&renames==1&&!handles);

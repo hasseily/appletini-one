@@ -279,8 +279,11 @@ static void check_save(uint8_t row, const char *url, const char *name, uint32_t 
     image_headers(bytes, "application/octet-stream");
     assert(writer_active && writer_begins == previous_begins + 1U);
     assert(strcmp(writer_name, name) == 0 && writer_expected_bytes == bytes);
+    assert(cogs_service_status()->bytes_per_second == 0U);
+    response.elapsed_us = 250000U;
     cogs_service_poll(1U);
     assert(cogs_service_status()->received == 512U);
+    assert(cogs_service_status()->bytes_per_second == 2048U);
     (void)snprintf(writer_path, sizeof(writer_path), "%s", final_path);
     writer_action = WRITER_COMPLETE;
     cogs_service_poll(1U);
@@ -406,13 +409,19 @@ static void check_compact_scan(void)
     unsigned previous_requests = requests;
     begin_scan();
     assert(cogs_service_browse(1U) != 0 && cogs_service_download(0U) != 0);
+    /* The scan shows a percentage, not the provider's page numbers. */
+    assert(strcmp(cogs_service_status()->detail, "Loading games: 0%") == 0);
     answer_catalog(mixed_catalog);
     assert(cogs_service_page()->count == 0U);
+    assert(cogs_service_status()->state == COGS_LOADING && cogs_service_status()->page == 0U);
+    assert(strcmp(cogs_service_status()->detail, "Loading games: 25%") == 0);
     start_queued_page(2U);
     answer_catalog(empty_page);
+    assert(strcmp(cogs_service_status()->detail, "Loading games: 50%") == 0);
     start_queued_page(3U);
     answer_numbered_page(4U, 25U, 1U, 18U);
     assert(cogs_service_page()->count == 0U);
+    assert(strcmp(cogs_service_status()->detail, "Loading games: 75%") == 0);
     start_queued_page(4U);
     answer_catalog(final_catalog_page);
     expect_idle(COGS_READY, "Choose a game");

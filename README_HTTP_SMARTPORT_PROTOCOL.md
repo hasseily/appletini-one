@@ -17,12 +17,12 @@ then the payload. The payload is at most 1012 bytes, including this header:
 | --- | --- | --- |
 | 0 | 1 | Version, 1 |
 | 1 | 1 | START=1, CANCEL=2, JSON=3 |
-| 2 | 1 | START flags: RETAIN=1, AUTO_DOWNLOAD=2, FORCE_DOWNLOAD=4; otherwise zero |
+| 2 | 1 | START flags: RETAIN=1, AUTO_DOWNLOAD=2, FORCE_DOWNLOAD=4, IMAGE=8, PAGE=16; otherwise zero |
 | 3 | 1 | START method length, 1..15; otherwise zero |
 | 4 | 2 | START URL length or JSON Pointer length |
 | 6 | 2 | START header-lines length; otherwise zero |
 | 8 | 2 | START body length; otherwise zero |
-| 10 | 2 | START optional filename-hint length, 0..127, FORCE_DOWNLOAD only; otherwise zero |
+| 10 | 2 | START optional filename-hint length, 0..127, FORCE_DOWNLOAD only; exactly 4 with IMAGE; otherwise zero |
 | 12 | variable | START: method, URL, header lines, body, filename hint; JSON: pointer |
 
 Fields have no terminating NUL. Method, URL, headers and the filename hint
@@ -40,6 +40,66 @@ Flags zero select STREAM. RETAIN cannot combine with either download flag.
 AUTO_DOWNLOAD and FORCE_DOWNLOAD require the exact method `GET` and an empty
 request body. A nonempty filename hint requires FORCE_DOWNLOAD. Clients must
 check the DOWNLOAD capability before sending either flag or a filename hint.
+
+### PAGE: pages filtered by the card
+
+Capability bit `$40` of descriptor byte 6 reports the page service. PAGE
+cannot combine with RETAIN or FORCE_DOWNLOAD. It can combine with
+AUTO_DOWNLOAD, and it works with any method.
+
+When the final 2xx response has the type `text/html` or
+`application/xhtml+xml`, the card collects up to 4 MiB of it and writes a
+page of at most 65,535 bytes in 7-bit ASCII. While the state is ACTIVE,
+BODY (`$83`) returns MORE with no bytes. When the state is DONE, BODY
+returns the page, addressed by offset as for RETAIN. A response of any
+other type streams as without the flag.
+
+The page uses only `<h1>`..`<h6>` with their end tags, `<p>`, `<br>`,
+`<li>`, `<a href="...">` with `</a>` (and `download` when the source had
+it), `<img src="..." w=N h=N>` (the display size in pixels, when the page
+gives it by attributes or by CSS; the filter adds no line break around an
+image), `<b id="...">` for the targets of same-page links,
+and the entities `&lt;` and `&amp;`. URLs are as in the source; the client
+resolves them against the final URL (`$85`).
+
+For the image sizes, the card fetches up to three linked style sheets
+after the HTML (8 s for each sheet, 1 MiB for all sheets of a page; a
+sheet that fails is left out). During these requests the state stays ACTIVE, and the
+descriptor, URL and content type stay those of the page.
+
+A form is one link. Its URL is absolute and holds the fixed fields; `%s`
+stands for each field that the user must type, in order, and the link text
+is `[Form: name, ...]` or `[Send form]`. The client puts the URL-encoded
+text in place of each `%s`. A GET form has the URL `action?fields`. A POST
+form has `post:` + action + one space + body; the client sends the body
+with `Content-Type: application/x-www-form-urlencoded`. If the output does
+not fit, it ends with `<p>[Page cut: too long]`.
+
+### IMAGE: pictures converted by the card
+
+Capability bit `$20` of descriptor byte 6 reports the picture service.
+The IMAGE flag stands alone. It requires the exact method `GET` and an
+empty request body. The four bytes that follow the headers hold the box:
+width 1..560 and height 1..384, each little-endian 16 bit.
+
+The card fetches the URL, follows redirects, and decodes PNG, JPEG
+(baseline and progressive) or GIF (first frame). The encoded image can
+have up to 8 MiB and up to 4096 x 4096 and 4,194,304 pixels. The card
+shrinks the image to the box with its proportions (it never enlarges),
+puts transparent pixels on white paper, or on black paper when the opaque
+part is light, and dithers to 1 bit.
+
+While the state is ACTIVE, BODY (`$83`) returns MORE with no bytes. When
+the state is DONE, BODY returns the picture, addressed by offset as for
+RETAIN: width and height in pixels (LE16 each), then `height` rows of
+`(width+6)/7` bytes. A byte holds seven pixels, bit 0 leftmost, 1 = white;
+bit 7 and the padding pixels are 0. These are the bytes of a 560-column
+monochrome double hi-res row. The largest picture has 30,724 bytes.
+
+Results: `-120` not a supported image, `-121` image too large, `-122` no
+memory. A final HTTP status outside 2xx gives DONE with an empty BODY;
+the client must inspect the status. During a picture request the screen
+repaints 10 times each second.
 
 The handler copies START and returns. The foreground poll cancels the old
 backend and starts the new one. DNS, SD setup, and TLS never run in the
@@ -133,6 +193,13 @@ buffer. Downloads can exceed the 16-bit BODY offset range. Use the 32-bit
 written and total fields for progress; total zero may be a known empty file,
 so always check the known-length bit.
 
+From F1.3.8dev3 the manager writes the file in pieces of 32768 bytes, so the
+written field moves in steps of that size until the last piece. While the
+manager owns the stream, the firmware repaints the screen 10 times each
+second, so that the network gets most of the processor time. The Apple
+picture goes back to its normal rate when the file is saved or the download
+fails.
+
 WRITING includes waiting for an unused name and final commit. DONE means the
 response completed successfully, any known length matched, and the private
 `.part` file was synced, closed and renamed. Only then is the completed FAT
@@ -179,7 +246,8 @@ the retained source or the STREAM replay range. Read offsets cannot exceed
 65535 in this version; applications stop before wrapping that field.
 
 RETAIN holds at most 32768 decoded body bytes. Reads do not consume them.
-STREAM has a 4096-byte ring. The service keeps the last reply (at most 504
+STREAM has a 131072-byte ring (4096 bytes before F1.3.8dev3), so the
+`buffered` field of the descriptor can be that large. The service keeps the last reply (at most 504
 bytes) for replay. Reading within it returns its suffix; reading just after
 it releases it and consumes the next ring bytes. Older or skipped offsets
 return LOST. The generation lets the client reject an old reply.

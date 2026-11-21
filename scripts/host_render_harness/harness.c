@@ -21,7 +21,8 @@
  *       color across 8, 8, 8, and 4 dots per 28 dots.
  *   T5  Per-switch scanner phase: TEXT/MIXED delay one cycle,
  *       80COL/ALTCHAR advance one, and DHIRES stays native, with and
- *       without the vTW capture normalization.
+ *       without the vTW capture normalization. The PAL-accurate
+ *       renderer has its own table: MIXED/ALTCHAR delay one cycle.
  *   T6  Static DHGRi cadence: a settled 384-row double-hires weave
  *       publishes once, holds that slot across frame markers, and rebuilds
  *       exactly once after a shadow write settles.
@@ -873,6 +874,70 @@ static void t5_switch_phase(void)
            "T5 vTW normalization composes with the common phase correction");
 
     apple_cycle_renderer_set_vtw_1mhz(0u);
+
+    /* The PAL-accurate renderer has its own table: TEXT, 80COL and DHIRES
+     * native, MIXED and ALTCHAR one cycle late. The renderer reads the
+     * colour mode at a frame start, so run one frame first. */
+    {
+        const uint32_t saved_settings = s_settings;
+
+        s_settings = apple_video_settings_pack(
+            0u, APPLE_VIDEO_MONO_GREEN,
+            APPLE_VIDEO_COLOR_PAL_ACCURATE_COMPOSITE);
+        apple_cycle_renderer_reset_local_video_state();
+        legacy_full_frame(1u << ACE_SWB_TEXT_BIT);
+        legacy_full_frame(1u << ACE_SWB_TEXT_BIT);
+
+        prior = rec_frame(10u, 10u,
+                          (1u << ACE_SWB_MIXED_BIT) |
+                          (1u << ACE_SWB_ALTCHARSET_BIT));
+        current = rec_frame(10u, 11u,
+                            (1u << ACE_SWB_TEXT_BIT) |
+                            (1u << ACE_SWB_PAGE2_BIT));
+        next1 = rec_frame(10u, 12u,
+                          (1u << ACE_SWB_80COL_BIT) |
+                          (1u << ACE_SWB_HIRES_BIT));
+        next2 = rec_frame(10u, 13u, 1u << ACE_SWB_DHIRES_BIT);
+        apple_cycle_renderer_on_record_lookahead(prior, current, next1);
+        apple_cycle_renderer_on_record_lookahead(current, next1, next2);
+        got = apple_cycle_renderer_debug_phase_switches();
+        expected = (1u << ACE_SWB_MIXED_BIT) |
+                   (1u << ACE_SWB_ALTCHARSET_BIT) |
+                   (1u << ACE_SWB_TEXT_BIT) |
+                   (1u << ACE_SWB_PAGE2_BIT);
+        expect(got == expected,
+               "T5 PAL-accurate phase keeps C050/C00D native and delays C052/C00F");
+
+        apple_cycle_renderer_set_vtw_1mhz(1u);
+        prior = rec_frame(20u, 20u, 0u);
+        current = rec_frame(20u, 21u,
+                            (1u << ACE_SWB_MIXED_BIT) |
+                            (1u << ACE_SWB_ALTCHARSET_BIT));
+        next1 = rec_frame(20u, 22u,
+                          (1u << ACE_SWB_TEXT_BIT) |
+                          (1u << ACE_SWB_80COL_BIT) |
+                          (1u << ACE_SWB_PAGE2_BIT));
+        next2 = rec_frame(20u, 23u, 1u << ACE_SWB_DHIRES_BIT);
+        apple_cycle_renderer_on_record_lookahead(prior, current, next1);
+        apple_cycle_renderer_on_record_lookahead(current, next1, next2);
+        got = apple_cycle_renderer_debug_phase_switches();
+        /* vTW reads each switch one record ahead first. MIXED and ALTCHAR
+         * then take the prior normalized state, which is the current raw
+         * state. No switch takes the state two records ahead. */
+        expected = (1u << ACE_SWB_MIXED_BIT) |
+                   (1u << ACE_SWB_ALTCHARSET_BIT) |
+                   (1u << ACE_SWB_TEXT_BIT) |
+                   (1u << ACE_SWB_80COL_BIT) |
+                   (1u << ACE_SWB_PAGE2_BIT);
+        expect(got == expected,
+               "T5 PAL-accurate phase composes with the vTW normalization");
+        apple_cycle_renderer_set_vtw_1mhz(0u);
+
+        s_settings = saved_settings;
+        apple_cycle_renderer_reset_local_video_state();
+        legacy_full_frame(1u << ACE_SWB_TEXT_BIT);
+        legacy_full_frame(1u << ACE_SWB_TEXT_BIT);
+    }
 }
 
 static void t6_dhgri_static_cache(void)

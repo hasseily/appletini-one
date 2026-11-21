@@ -21,7 +21,8 @@ def main():
                     '-I' + str(ROOT / 'scripts/fixtures/http_service_host'),
                     *[str(ROOT / name) for name in ('scripts/fixtures/net_service_host.c',
                         'ps_sources/frontend/net_service.c', 'ps_sources/frontend/net_json.c',
-                        'ps_sources/frontend/http_download.c','ps_sources/frontend/download_filename.c')],
+                        'ps_sources/frontend/http_download.c','ps_sources/frontend/download_filename.c',
+                        'ps_sources/frontend/net_image.c','ps_sources/frontend/net_page.c','ps_sources/lib/lodepng.c')],
                     '-o', str(exe)], env=env, cwd=ROOT, check=True)
     subprocess.run([str(exe)], env=env, cwd=ROOT, check=True)
 

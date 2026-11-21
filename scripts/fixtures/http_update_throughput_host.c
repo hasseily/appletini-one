@@ -13,8 +13,9 @@ static void begin_owner(uint8_t who)
     assert(!http_service_start_owned(&request,who));assert(!claim()&&!(slot_mask&2U));
     g_http.status.state=HTTP_S_OPEN;memset(g_http.peer,1,sizeof g_http.peer);
     assert(!step());assert(g_http.status.state==HTTP_S_CONNECT);
-    assert(registers[0x400+W5100_SN_MR]==(who==HTTP_OWNER_UPDATE?0x21:0x01));
-    assert(layout==(unsigned)(who==HTTP_OWNER_UPDATE));
+    /* Every owner gets the 8 KiB socket and immediate ACKs. */
+    assert(registers[0x400+W5100_SN_MR]==0x21);
+    assert(layout==1U);
     g_http.status.state=HTTP_S_READ;registers[0x400+W5100_SN_SR]=W5100_SR_ESTABLISHED;
     http_parser_init(&g_http.parser,0,UINT32_MAX);
 }
@@ -27,10 +28,10 @@ static void response(size_t n)
 static void ring_case(uint8_t who)
 {
     begin_owner(who);response(400003);
-    size_t capacity=who==HTTP_OWNER_UPDATE?HTTP_UPDATE_STREAM_BYTES:HTTP_DEFAULT_STREAM_BYTES;
+    size_t capacity=HTTP_STREAM_BYTES;
     g_http.ring_at=capacity-19;
     for(unsigned i=0;i<100;++i){size_t before=wire_at;http_service_poll();if(wire_at==before&&g_http.ring_count)break;}
-    size_t chunk=who==HTTP_OWNER_UPDATE?HTTP_UPDATE_IO_BYTES:HTTP_DEFAULT_IO_BYTES;
+    size_t chunk=HTTP_IO_BYTES;
     assert(g_http.ring_count>capacity-chunk&&g_http.ring_count<=capacity&&http_service_active());size_t stalled=wire_at;
     for(unsigned i=0;i<4;++i)http_service_poll();assert(wire_at==stalled);
     http_service_poll_budget(0);assert(wire_at==stalled);
@@ -52,8 +53,17 @@ int main(void)
     begin_owner(HTTP_OWNER_UPDATE);response(300000);rx_cost_us=50;
     unsigned before=rx_calls;http_service_poll_budget(120);assert(rx_calls-before>=1&&rx_calls-before<=3);
     assert(!http_service_cancel_owned(HTTP_OWNER_UPDATE)&&!layout&&(slot_mask&2U));
-    begin_owner(HTTP_OWNER_NET);response(100000);before=rx_calls;http_service_poll_budget(120);assert(rx_calls==before);
-    http_service_poll();assert(rx_calls-before<=8&&rx_max<=4096);assert(!http_service_cancel_owned(HTTP_OWNER_NET));
+    begin_owner(HTTP_OWNER_NET);response(400000);before=rx_calls;http_service_poll_budget(120);assert(rx_calls==before);
+    http_service_poll();assert(rx_calls-before>=1&&rx_calls-before<=32&&rx_max<=4096);
+    /* TLS reads a whole record in one call chain. The first read of a poll
+     * always runs; a later read stops when the slice is over. */
+    uint8_t piece[4096];rx_cost_us=1500;
+    g_http.credit=32;g_http.read_calls=0;g_http.read_deadline=host_time+2000;
+    assert(socket_receive(NULL,piece,sizeof piece)==4096);
+    assert(socket_receive(NULL,piece,sizeof piece)==4096);
+    assert(socket_receive(NULL,piece,sizeof piece)==MBEDTLS_ERR_SSL_WANT_READ&&g_http.credit==30);
+    g_http.read_calls=0;assert(socket_receive(NULL,piece,sizeof piece)==4096);
+    rx_cost_us=0;assert(!http_service_cancel_owned(HTTP_OWNER_NET));
 
     begin_owner(HTTP_OWNER_UPDATE);response(10);layout_fail=1;
     slot_mask=http_service_filter_slot_mask(0xa7U);assert(slot_mask==0xa5U&&(g_http.saved_mask&2U));
@@ -82,6 +92,6 @@ int main(void)
         } else assert(g_http.status.state==HTTP_S_DNS_OPEN&&!layout&&g_http.owns_eth&&!(slot_mask&2U));
         assert(!http_service_cancel_owned(HTTP_OWNER_UPDATE));crypto_reset();mbedtls_memory_buffer_alloc_free();
     }
-    puts("PASS actual HTTP throughput groups: NET4KiB/UPDATE128KiB backpressure+2spanwrap, binary400003B, ownerisolation, budget0/clamped/noNETwork, TCPmode1/21, cancelrestorefailurehold/retry, redirectDNSnormalmap+failurehold");
+    puts("PASS actual HTTP throughput groups: NET/UPDATE128KiB backpressure+2spanwrap, binary400003B, ownerisolation, budget0/clamped/noNETwork, readsliceafterfirstread, TCPmode21+8KiBallowners, cancelrestorefailurehold/retry, redirectDNSnormalmap+failurehold");
     return 0;
 }

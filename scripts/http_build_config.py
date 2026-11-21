@@ -22,7 +22,7 @@ def configure_http_service(root,diagnostics=False):
              ('http_core.c','http_seed.c','http_entropy.c','http_roots.c',
               'http_service.c','http_download.c','download_filename.c',
               'online_update_core.c','online_update_service.c',
-              'http_bench.c','net_service.c','net_json.c')]
+              'http_bench.c','net_service.c','net_json.c','net_image.c','net_page.c')]
     sources+=['"../../../'+p.relative_to(root).as_posix()+'"' for p in sorted((root/'third_party/mbedtls/library').glob('*.c'))]
     add('USER_COMPILE_SOURCES',sources)
     path.write_text(text)

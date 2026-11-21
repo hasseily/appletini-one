@@ -6,7 +6,8 @@ Vivado no longer includes them in `hdl/hdl_sources.txt`.
 
 Started 2026-10-06 on `codex/ssi263-physical-match-handoff`.
 The die-target firmware build is `F1.2.5-d2`. The earlier listening checkpoint
-was `F1.2.5-d1`.
+was `F1.2.5-d1`. `F1.3.8dev1` went back to the SSI-263A amplitude targets; see
+[the ROM format note](SSI263_SC02_ROM_FORMAT.md).
 
 The listening checkpoint now has a complete FPGA audio implementation:
 scanner, transitions, source, five formants and a per-socket scheduler. The

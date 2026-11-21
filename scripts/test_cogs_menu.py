@@ -50,7 +50,7 @@ static cogs_catalog_page_t page;
 static unsigned browse_calls, open_calls, cancel_calls, download_calls, download_row;
 static int browse_refused;
 static uint8_t cache_ready;
-static unsigned rows, focused, progress, cogs_entry;
+static unsigned rows, focused, progress, progress_rate, cogs_entry;
 static unsigned saved_calls, page_calls, hint_calls;
 static unsigned expected_selected;
 static int previous_bottom, last_game_bottom, compact_footer_divider;
@@ -91,6 +91,8 @@ static void record_text(uint16_t *fb, int x, int y, const char *text,
         ++rows;
     } else if (!strcmp(text, "Downloading 100 / 400 bytes")) {
         ++progress;
+    } else if (!strcmp(text, "Downloading 100 / 400 bytes at 300 KiB/s")) {
+        ++progress_rate;
     } else if (!strncmp(text, "saved: ", 7)) {
         assert(!strcmp(text, saved_status));
         assert(fg == CMUI_COLOR_SUCCESS && bg == CMUI_COLOR_BG);
@@ -369,6 +371,10 @@ int main(void)
     status.total = 400U;
     draw_catalog(&menu, 0U);
     assert(progress == 1U && rows == 0U && page_calls == 1U);
+    status.bytes_per_second = 300U * 1024U + 1000U;
+    draw_catalog(&menu, 0U);
+    assert(progress_rate == 1U && rows == 0U);
+    status.bytes_per_second = 0U;
     config_menu_cogs_handle_input(&menu, UI_KEY_ESC);
     assert(cancel_calls == 1U && !config_menu_cogs_active(&menu) && menu.active);
 

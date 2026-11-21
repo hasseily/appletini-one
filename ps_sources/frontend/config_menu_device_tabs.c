@@ -369,7 +369,7 @@ void config_menu_draw_applicard(uint16_t *fb,
                         (uint8_t)(menu->item_focus == 1U),
                         "Processor card:",
                         menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_TRANSPORTER ?
-                            "PC Transporter (test)" :
+                            "PC Transporter" :
                         menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_AD8088 ?
                             (physical_iigs != 0U ? "ALF AD8088 (blocked on IIgs)" :
                                                     "ALF AD8088 Plus (640K)") :

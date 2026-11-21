@@ -31,16 +31,17 @@
 #define UDP_MODE 2U
 #define UDP_READY 0x22U
 #define REQUEST_MAX 4096U
-#define STREAM_RING HTTP_DEFAULT_STREAM_BYTES
-#define UPDATE_STREAM_RING HTTP_UPDATE_STREAM_BYTES
-#define SLICE_US 750U
-#define SLICE_STEPS 32U
-#define IO_CALLS 8U
-#define IO_CHUNK 512U
-#define UPDATE_IO_CHUNK HTTP_UPDATE_IO_BYTES
-#define UPDATE_SLICE_US 2000U
-#define UPDATE_SLICE_STEPS 64U
-#define UPDATE_IO_CALLS 32U
+/* One transfer profile serves every client. A poll runs for one slice.
+ * Outside the updater, the first socket read of a poll always runs and
+ * later reads stop when the slice is over. So one poll holds the main loop
+ * for about one 4 KiB read more than the slice. */
+#define STREAM_RING HTTP_STREAM_BYTES
+#define IO_CHUNK HTTP_IO_BYTES
+#define SLICE_US 2000U
+#define SLICE_STEPS 64U
+#define IO_CALLS 32U
+/* A saved TLS session is offered to the same host and port for this long. */
+#define SESSION_REUSE_US 600000000ULL
 #define REQUEST_TIMEOUT 30000000ULL
 #ifndef HTTP_DOWNLOAD_IDLE_US
 #define HTTP_DOWNLOAD_IDLE_US 30000000ULL
@@ -56,22 +57,32 @@ static struct {
     http_url_t url;
     http_parser_t parser;
     char method[16], headers[2049], request[REQUEST_MAX];
-    uint8_t body[2048], receive[UPDATE_IO_CHUNK], stream[UPDATE_STREAM_RING], retained[HTTP_RETAIN_MAX];
+    uint8_t body[2048], receive[IO_CHUNK], stream[STREAM_RING], retained[HTTP_RETAIN_MAX];
     size_t body_length, sent, request_length, rx_at, rx_length, read_at, ring_at, ring_count;
     uint8_t dns[4], peer[4], credit, sending, owns_eth, redirects, strip_credentials;
     uint8_t crypto_ready, trust_ready, entropy_used, reseed_needed, owner;
-    uint8_t rx_update, rx_restore_needed, cancel_pending;
+    uint8_t rx_update, rx_restore_needed, cancel_pending, read_calls;
     uint8_t entropy[HTTP_SEED_BYTES];
     uint16_t source_port, dns_id;
     uint32_t saved_mask, io_bytes, consumed;
     uint64_t started, completed, deadline, dns_deadline, connect_at, handshake_started;
-    uint64_t download_idle;
+    uint64_t download_idle, read_deadline;
     mbedtls_ssl_context ssl;
     mbedtls_ssl_config config;
     mbedtls_x509_crt ca;
     mbedtls_ctr_drbg_context drbg;
 } g_http;
 static uint8_t tls_heap[512U * 1024U] __attribute__((aligned(32)));
+/* The last verified TLS session. The server resumes it only when it still
+ * holds the keys of that handshake, so the certificate check stays valid.
+ * It lives in tls_heap: free it before that heap is cleared. */
+static struct {
+    mbedtls_ssl_session session;
+    char host[HTTP_HOST_MAX];
+    uint16_t port;
+    uint8_t valid;
+    uint64_t saved_at;
+} g_resume;
 static uint8_t trust_pem[65568U] __attribute__((aligned(32)));
 static const char *const seed_paths[] = {"0:/ATNETA.SED", "0:/ATNETB.SED"};
 static uint32_t rtc_local;
@@ -233,8 +244,15 @@ static int random_bytes(void *ctx, unsigned char *out, size_t length)
     if (result) g_http.reseed_needed = 1;
     return result;
 }
+static void session_forget(void)
+{
+    if (g_resume.valid) mbedtls_ssl_session_free(&g_resume.session);
+    mbedtls_ssl_session_init(&g_resume.session);
+    g_resume.valid = 0;
+}
 static void crypto_reset(void)
 {
+    session_forget();
     mbedtls_ssl_free(&g_http.ssl);
     mbedtls_ssl_config_free(&g_http.config);
     mbedtls_x509_crt_free(&g_http.ca);
@@ -282,6 +300,8 @@ static int crypto_init(void)
     if (g_http.crypto_ready && !g_http.reseed_needed) return 0;
     if (g_http.reseed_needed) crypto_reset();
     mbedtls_memory_buffer_alloc_init(tls_heap, sizeof(tls_heap));
+    mbedtls_ssl_session_init(&g_resume.session);
+    g_resume.valid = 0;
     mbedtls_ssl_init(&g_http.ssl);
     mbedtls_ssl_config_init(&g_http.config);
     mbedtls_x509_crt_init(&g_http.ca);
@@ -381,11 +401,11 @@ static int claim(void)
     g_http.saved_mask = REG_READ(CARD_CTRL_SLOT_ENABLE_REG);
     REG_WRITE(CARD_CTRL_SLOT_ENABLE_REG, g_http.saved_mask & ~(1UL << 1));
     g_http.owns_eth = 1;
-    g_http.rx_restore_needed = (uint8_t)(g_http.owner==HTTP_OWNER_UPDATE);
+    g_http.rx_restore_needed = 1;
     for (unsigned i=0;i<4;++i) close_socket(i);
     if (uthernet2_write_reg(W5100_REG_RMSR,W5100_SOCKET_MEM_4_2_1_1) ||
         uthernet2_write_reg(W5100_REG_TMSR,W5100_SOCKET_MEM_4_2_1_1)) return HTTP_E_IO;
-    if (g_http.owner==HTTP_OWNER_UPDATE && uthernet2_w5100_set_rx_layout(0)) return HTTP_E_IO;
+    if (uthernet2_w5100_set_rx_layout(0)) return HTTP_E_IO;
     g_http.rx_update=g_http.rx_restore_needed=0;
     return 0;
 }
@@ -486,8 +506,7 @@ static int socket_send(void *ctx, const unsigned char *bytes, size_t length)
     }
     if (uthernet2_w5100_read16_stable(uthernet2_w5100_socket_reg(SOCKET_TCP,W5100_SN_TX_FSR),&room)) return HTTP_E_IO;
     if (!room) return MBEDTLS_ERR_SSL_WANT_WRITE;
-    const size_t chunk=g_http.owner==HTTP_OWNER_UPDATE?UPDATE_IO_CHUNK:IO_CHUNK;
-    if (length > chunk) length = chunk;
+    if (length > IO_CHUNK) length = IO_CHUNK;
     if (length > room) length = room;
     if (uthernet2_w5100_read16(uthernet2_w5100_socket_reg(SOCKET_TCP,W5100_SN_TX_WR),&pointer) ||
         uthernet2_w5100_socket_ring_write(SOCKET_TCP,pointer,bytes,(uint16_t)length) ||
@@ -501,20 +520,25 @@ static int socket_receive(void *ctx, unsigned char *bytes, size_t length)
     uint8_t status;
     (void)ctx;
     if (!g_http.credit) return MBEDTLS_ERR_SSL_WANT_READ;
+    /* TLS asks for a whole record in one call chain. End that chain when the
+     * slice is over, after at least one read, so the main loop runs again.
+     * The updater runs in the safe menu and keeps its longer chain. */
+    if (g_http.owner != HTTP_OWNER_UPDATE && g_http.read_calls &&
+        microseconds() >= g_http.read_deadline) return MBEDTLS_ERR_SSL_WANT_READ;
     --g_http.credit;
     if (uthernet2_w5100_read16_stable(uthernet2_w5100_socket_reg(SOCKET_TCP,W5100_SN_RX_RSR),&available)) return HTTP_E_IO;
     if (!available) {
         if (uthernet2_w5100_socket_status(SOCKET_TCP,&status)) return HTTP_E_IO;
         return status == W5100_SR_CLOSED || status == W5100_SR_CLOSE_WAIT ? 0 : MBEDTLS_ERR_SSL_WANT_READ;
     }
-    const size_t chunk=g_http.owner==HTTP_OWNER_UPDATE?UPDATE_IO_CHUNK:IO_CHUNK;
-    if (length > chunk) length = chunk;
+    if (length > IO_CHUNK) length = IO_CHUNK;
     if (available > length) available = (uint16_t)length;
     if (uthernet2_w5100_read16(uthernet2_w5100_socket_reg(SOCKET_TCP,W5100_SN_RX_RD),&pointer) ||
         uthernet2_w5100_socket_ring_read(SOCKET_TCP,pointer,bytes,available) ||
         uthernet2_w5100_write16(uthernet2_w5100_socket_reg(SOCKET_TCP,W5100_SN_RX_RD),(uint16_t)(pointer + available)) ||
         uthernet2_w5100_socket_command(SOCKET_TCP,W5100_CR_RECV)) return HTTP_E_IO;
     g_http.io_bytes += available;
+    if (g_http.read_calls != UINT8_MAX) ++g_http.read_calls;
     if (g_http.owner == HTTP_OWNER_DOWNLOAD || g_http.owner == HTTP_OWNER_UPDATE ||
         (g_http.owner == HTTP_OWNER_COGS && g_http.download_idle != 0U))
         g_http.download_idle = microseconds() + HTTP_DOWNLOAD_IDLE_US;
@@ -528,7 +552,7 @@ static int body_sink(void *ctx, const uint8_t *data, size_t length)
         if (length > HTTP_RETAIN_MAX - g_http.ring_count) return -1;
         memcpy(g_http.retained + g_http.ring_count,data,length); g_http.ring_count += length;
     } else {
-        const size_t capacity=g_http.owner==HTTP_OWNER_UPDATE?UPDATE_STREAM_RING:STREAM_RING;
+        const size_t capacity=STREAM_RING;
         if (length > capacity - g_http.ring_count) return 1;
         const size_t at=(g_http.ring_at+g_http.ring_count)&(capacity-1U);
         size_t first=capacity-at;
@@ -546,7 +570,7 @@ size_t http_service_read_owned(uint8_t owner, uint8_t *out, size_t capacity)
     if (n > capacity) n = capacity;
     if (g_http.status.retained) { memcpy(out,g_http.retained + g_http.read_at,n); g_http.read_at += n; }
     else {
-        const size_t ring_capacity=g_http.owner==HTTP_OWNER_UPDATE?UPDATE_STREAM_RING:STREAM_RING;
+        const size_t ring_capacity=STREAM_RING;
         size_t first=ring_capacity-g_http.ring_at;
         if (first>n) first=n;
         memcpy(out,g_http.stream+g_http.ring_at,first);
@@ -753,14 +777,17 @@ static int step(void)
     if (g_http.status.state == HTTP_S_OPEN) {
         if (microseconds() < g_http.connect_at) return MBEDTLS_ERR_SSL_WANT_WRITE;
         close_socket(SOCKET_TCP);
-        if (g_http.owner==HTTP_OWNER_UPDATE && !g_http.rx_update) {
+        /* The Apple cannot reach the chip while a request owns it, so the
+         * TCP socket takes all 8 KiB of receive memory. DNS, when needed,
+         * has finished on the normal map before this point. */
+        if (!g_http.rx_update) {
             g_http.rx_restore_needed=1;
             if (uthernet2_w5100_set_rx_layout(1)) return HTTP_E_IO;
             g_http.rx_update=1;
         }
         /* W5100S 4.3.3: ND sends TCP ACKs immediately instead of waiting for
-         * RTR/window growth. Only the safe-menu updater changes this policy. */
-        const uint8_t mode=W5100_SN_MR_TCP | (g_http.owner==HTTP_OWNER_UPDATE?W5100_SN_MR_ND:0U);
+         * RTR/window growth. */
+        const uint8_t mode=W5100_SN_MR_TCP | W5100_SN_MR_ND;
         if (uthernet2_write_reg(uthernet2_w5100_socket_reg(SOCKET_TCP,W5100_SN_MR),mode) ||
             uthernet2_w5100_write16(uthernet2_w5100_socket_reg(SOCKET_TCP,W5100_SN_PORT),g_http.source_port) ||
             uthernet2_w5100_socket_command(SOCKET_TCP,W5100_CR_OPEN)) return HTTP_E_IO;
@@ -808,6 +835,15 @@ static int step(void)
                 trace("ssl setup");
                 if ((result = mbedtls_ssl_setup(&g_http.ssl,&g_http.config)) ||
                     (result = mbedtls_ssl_set_hostname(&g_http.ssl,g_http.url.host))) return result;
+                if (g_resume.valid && g_resume.port == g_http.url.port &&
+                    !strcmp(g_resume.host,g_http.url.host) &&
+                    microseconds() - g_resume.saved_at < SESSION_REUSE_US &&
+                    mbedtls_ssl_set_session(&g_http.ssl,&g_resume.session)) {
+                    /* Reuse is optional. Go on with a full handshake. */
+                    session_forget();
+                    if ((result = mbedtls_ssl_session_reset(&g_http.ssl)) ||
+                        (result = mbedtls_ssl_set_hostname(&g_http.ssl,g_http.url.host))) return result;
+                }
                 trace("ssl ready");
                 mbedtls_ssl_set_bio(&g_http.ssl,NULL,socket_send,socket_receive,NULL);
                 g_http.handshake_started = microseconds(); g_http.status.state = HTTP_S_HANDSHAKE;
@@ -821,6 +857,16 @@ static int step(void)
         if (!result && mbedtls_ssl_is_handshake_over(&g_http.ssl)) {
             g_http.status.verify = mbedtls_ssl_get_verify_result(&g_http.ssl);
             g_http.status.handshake_us += microseconds() - g_http.handshake_started;
+            session_forget();
+            if (!mbedtls_ssl_get_session(&g_http.ssl,&g_resume.session)) {
+                strcpy(g_resume.host,g_http.url.host);
+                g_resume.port = g_http.url.port;
+                g_resume.saved_at = microseconds();
+                g_resume.valid = 1;
+            } else {
+                mbedtls_ssl_session_free(&g_resume.session);
+                mbedtls_ssl_session_init(&g_resume.session);
+            }
             g_http.status.state = HTTP_S_WRITE;
         }
         return result;
@@ -838,9 +884,8 @@ static int step(void)
     }
     if (g_http.status.state == HTTP_S_READ) {
         if (g_http.rx_at == g_http.rx_length) {
-            const size_t chunk=g_http.owner==HTTP_OWNER_UPDATE?UPDATE_IO_CHUNK:IO_CHUNK;
-            result = g_http.url.tls ? mbedtls_ssl_read(&g_http.ssl,g_http.receive,chunk) :
-                                      socket_receive(NULL,g_http.receive,chunk);
+            result = g_http.url.tls ? mbedtls_ssl_read(&g_http.ssl,g_http.receive,IO_CHUNK) :
+                                      socket_receive(NULL,g_http.receive,IO_CHUNK);
             if (result == 0 || result == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
                 if (http_parser_eof(&g_http.parser) != HTTP_COMPLETE) return HTTP_FORMAT;
                 result = redirect(); if (result == 1) finish(0); return result < 0 ? result : 0;
@@ -898,12 +943,12 @@ static void poll_http(uint32_t max_us)
     }
     if (http_service_active()) {
         uint64_t start = microseconds();
-        const int update=g_http.owner==HTTP_OWNER_UPDATE;
-        const unsigned steps=update?UPDATE_SLICE_STEPS:SLICE_STEPS;
-        unsigned slice=update?UPDATE_SLICE_US:SLICE_US;
-        if (update && max_us && max_us<slice) slice=max_us;
-        g_http.credit = update?UPDATE_IO_CALLS:IO_CALLS;
-        for (unsigned i=0;i<steps && http_service_active();++i) {
+        unsigned slice=SLICE_US;
+        if (max_us && max_us<slice) slice=max_us;
+        g_http.credit = IO_CALLS;
+        g_http.read_calls = 0;
+        g_http.read_deadline = start + slice;
+        for (unsigned i=0;i<SLICE_STEPS && http_service_active();++i) {
             uint64_t before = microseconds();
             uint8_t old_state = g_http.status.state;
             uint32_t bytes = g_http.io_bytes;

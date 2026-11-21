@@ -1,12 +1,14 @@
-# PC Transporter test mode
+# PC Transporter
 
-The PC Transporter test mode uses virtual slot 5. It provides a guest CPU, shared RAM, Apple I/O registers, CGA output and USB keyboard input. Use the test mode to collect startup and bus timing data. [Design study](docs/PC_TRANSPORTER_STUDY.md)
+The PC Transporter uses virtual slot 5. It provides a V30 guest CPU, shared RAM, Apple I/O registers, CGA output and USB keyboard input. The guest boots from a ProDOS hard disk file.
+
+**Floppy drives are not supported.** TransDrive and the PC floppy controller have no implementation, and none is planned. Use the hard disk file, and the Appletini storage features to move files. [Design study](docs/PC_TRANSPORTER_STUDY.md)
 
 ## Setup
 
 1. Use a matching Appletini FPGA build and ARM frontend.
 2. Use an enhanced Apple //e with physical slot 5 empty.
-3. Select **PC Transporter (test)** under **Processor card**. Enable slot 5.
+3. Select **PC Transporter** under **Processor card**. Enable slot 5.
 4. Boot your original AE system disk. Use the 2.0.5 disk identified in the study for comparison with the reference trace.
 5. Enter `pct status` in the Appletini UART console. Record the status, transfer, guest address and fault counters.
 
@@ -192,4 +194,4 @@ MAME at `ce12c0474a7f5786748327d0320179344bddffba` returned `$CF31=$21` on the f
 
 With a 360 KiB FreeDOS disk, the pinned MAME build reached the kernel and drive enumeration by 45 emulated seconds. The capture ended before a command prompt appeared. The test disk SHA-256 is `b5c3a868a375952e52ed89feecfdb0a90c96af32bf0663e424a7bdd3f15b1a48`. [FreeDOS disk source](https://jorisvr.nl/article/freedos)
 
-The Appletini board still needs a connector timing test and a complete DOS boot with the original Apple software. Measure cold reads and bus deadlines under video, storage and ARM load. Verify `TRANSFER.EXE` in both directions and check that the data remains correct after restart. TransDrive and the original floppy media path remain open.
+The Appletini board still needs a connector timing test and a complete DOS boot with the original Apple software. Measure cold reads and bus deadlines under video, storage and ARM load. Verify `TRANSFER.EXE` in both directions and check that the data remains correct after restart. TransDrive and the original floppy media path are not supported.

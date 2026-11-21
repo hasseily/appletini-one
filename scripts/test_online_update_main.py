@@ -39,7 +39,7 @@ def main():
              'menu_platform_request_online_update_install', 'ticks_to_us',
              'control_online_update_allowed', 'control_online_update_busy',
              'control_service_online_update', 'control_service_cogs',
-             'ui_online_update_composite_due')
+             'ui_transfer_composite_due')
     menu_names = ('config_menu_poll_online_update', 'config_menu_online_update_finished',
                   'config_menu_ethernet_card_access', 'config_menu_start_ethernet_dhcp',
                   'config_menu_apply_ethernet_config', 'config_menu_poll_ethernet',

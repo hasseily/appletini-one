@@ -1,5 +1,6 @@
 # One fixed profile for create_project and build_and_export_xsa.
 # Apply the fabric margin before placement and run one routed repair.
+# Give the direction-pin logic its own source registers before placement.
 namespace eval appletini_run_profile {
     # Preserve completed runs when their settings already match the profile.
     proc set_if_changed {run property expected} {
@@ -14,7 +15,8 @@ namespace eval appletini_run_profile {
     set threads_hook [file join $helper_dir vivado_run_threads.tcl]
     set margin_apply [file join $helper_dir apply_fabric_timing_margin.tcl]
     set route_finish [file join $helper_dir finish_video_timing.tcl]
-    foreach hook [list $threads_hook $margin_apply $route_finish] {
+    set direction_twins [file join $helper_dir replicate_direction_sources.tcl]
+    foreach hook [list $threads_hook $margin_apply $route_finish $direction_twins] {
         if {![file isfile $hook]} {error "Missing Vivado run hook: $hook"}
     }
     source $threads_hook
@@ -40,7 +42,7 @@ namespace eval appletini_run_profile {
         STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED 0 \
         STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE Default \
         STEPS.INIT_DESIGN.TCL.PRE $threads_hook \
-        STEPS.OPT_DESIGN.TCL.PRE $margin_apply \
+        STEPS.OPT_DESIGN.TCL.PRE $margin_apply         STEPS.PLACE_DESIGN.TCL.PRE $direction_twins \
         STEPS.ROUTE_DESIGN.TCL.POST $route_finish]
     # The route hook runs one AggressiveExplore pass and clears both temporary margins.
     foreach run [list $synth $impl] settings [list $synth_settings $impl_settings] {

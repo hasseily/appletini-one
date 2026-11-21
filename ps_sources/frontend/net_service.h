@@ -12,9 +12,23 @@
 #define NET_REQUEST_MAX 1012U
 #define NET_START_HEADER 12U
 #define NET_CAP_DOWNLOAD 0x10U
+#define NET_CAP_IMAGE 0x20U
+#define NET_CAP_PAGE 0x40U
 #define NET_FLAG_RETAIN 1U
 #define NET_FLAG_AUTO_DOWNLOAD 2U
 #define NET_FLAG_FORCE_DOWNLOAD 4U
+/* IMAGE: the card fetches a PNG, JPEG or GIF and converts it to 1-bit rows
+ * (net_image.h). The flag stands alone, needs GET with no body, and uses
+ * the four bytes of the filename field as box width and height (LE16 each).
+ * Selector83 returns the finished picture after state DONE; before that it
+ * returns MORE with no bytes. Results -120..-122 report a bad image. */
+#define NET_FLAG_IMAGE 8U
+/* PAGE: when the final response is HTML, the card filters it to a short
+ * ASCII page (net_page.h). Selector83 then returns that page after state
+ * DONE, addressed by offset; before that it returns MORE with no bytes.
+ * Other content types stream as without the flag. PAGE can combine with
+ * AUTO_DOWNLOAD, and works with any method. */
+#define NET_FLAG_PAGE 16U
 /* START flags live at byte2. Optional FORCE filename length occupies10..11;
  * its non-NUL bytes follow method/URL/headers/body. RETAIN cannot combine
  * with download flags; AUTO/FORCE require GET with no body. Descriptor48..61
@@ -30,6 +44,8 @@ uint16_t net_service_status(uint8_t selector, const uint8_t list[9],
                             uint8_t *out, size_t capacity);
 void net_service_poll(void);
 void net_service_reset(void);
+/* A picture or page request is queued or its data is on the way. */
+int net_service_image_active(void);
 /* Zero for an external Apple clock; ONE//e returns its profile's VIA clock. */
 void net_service_set_via_hz(uint32_t hz);
 uint32_t net_service_json_max_us(void);
@@ -40,6 +56,7 @@ static inline uint16_t net_service_status(uint8_t s,const uint8_t l[9],uint8_t *
 { (void)s;(void)l;(void)p;(void)n;return 0; }
 static inline void net_service_poll(void) {}
 static inline void net_service_reset(void) {}
+static inline int net_service_image_active(void) { return 0; }
 static inline void net_service_set_via_hz(uint32_t hz) { (void)hz; }
 static inline uint32_t net_service_json_max_us(void) { return 0; }
 #endif

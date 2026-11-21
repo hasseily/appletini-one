@@ -5,15 +5,15 @@ around a Xilinx Zynq-7020. The PL handles cycle-sensitive Apple bus behavior;
 the two ARM cores provide storage, video rendering, USB services, configuration,
 and higher-level peripheral emulation.
 
-The current stable firmware is [F1.3.7](docs/releases/F1.3.7.md), based on
-the accepted dev20 build. It adds CoGS downloads, PC Transporter test mode,
-experimental IIgs support, and speech, display-sync, and ONE//e input fixes.
+The current stable firmware is [F1.3.8](docs/releases/F1.3.8.md). It adds
+the picture, page and form services for the TINIBROWSER web browser, faster
+downloads, and fixes for PAL-accurate video timing and SSI-263 speech levels.
 
 ## Virtual Hardware
 
 - SmartPort storage and Disk II disk-image support
 - Selectable slot-5 coprocessor: PCPI-compatible Z80 Appli-Card, 640 KB ALF
-  AD8088 Plus, or PC Transporter test mode
+  AD8088 Plus, or PC Transporter (no floppy drives)
 - Phasor/Mockingboard audio with dual SSI-263 speech
 - Uthernet II compatible W5100 interface
 - Mouse card, RamWorks memory, and no-slot clock

@@ -95,51 +95,62 @@ static uint8_t  s_pending_line0_mask = 0u;
     (1U << ACE_SWB_DHIRES_BIT))
 
 /*
- * Scanner phase tuning table. Change only the five PHASE_Cxxx_* lines after
- * a hardware timing check. If a switch appears early, delay it. If it appears
- * late, advance it. The correction applies equally to native and vTW video,
- * after the separate 1 MHz vTW normalization above.
+ * Scanner phase tuning tables, one for each renderer. Change only the
+ * PHASE_Cxxx_* and PHASE_PAL_Cxxx_* lines after a hardware timing check. If a
+ * switch appears early, delay it. If it appears late, advance it. The
+ * correction applies equally to native and vTW video, after the separate
+ * 1 MHz vTW normalization above.
  */
 #define PHASE_DELAY_1   (-1)
 #define PHASE_NATIVE      0
 #define PHASE_ADVANCE_1   1
 #define PHASE_ADVANCE_2   2
 
-/* ONE//e VIDSYNC, Oct 2026: C050 appeared 1 early, C00D 1 late and C00F
- * 2 late, one cycle of it from its missing vTW normalization. C052, C05E,
- * C055, C056 and C001 were exact. Native timing is not yet checked. */
+/* Clean (AppleWin) renderer. ONE//e VIDSYNC, Oct 2026: C050 appeared 1
+ * early, C00D 1 late and C00F 2 late, one cycle of it from its missing vTW
+ * normalization. C052, C05E, C055, C056 and C001 were exact. Native timing
+ * is not yet checked. */
 #define PHASE_C050_TEXT       PHASE_DELAY_1
 #define PHASE_C052_MIXED      PHASE_DELAY_1
 #define PHASE_C00D_80COL      PHASE_ADVANCE_1
 #define PHASE_C05E_DHIRES     PHASE_NATIVE
 #define PHASE_C00F_ALTCHARSET PHASE_ADVANCE_1
 
-#define PHASE_SETTING_VALID(value) ( \
-    (value) == PHASE_DELAY_1 || (value) == PHASE_NATIVE || \
-    (value) == PHASE_ADVANCE_1 || (value) == PHASE_ADVANCE_2)
+/* PAL-accurate renderer. Its signal model has its own TEXT and 80COL
+ * latencies. ONE//e VIDSYNC, Nov 2026, with the clean table also applied to
+ * this renderer: C050 appeared 1 late, C00D 1 early and C00F 2 early. C052,
+ * C05E, C055, C056 and C001 were exact. So TEXT and 80COL need no correction
+ * here, and ALTCHARSET needs one cycle of delay. Native timing is not yet
+ * checked. */
+#define PHASE_PAL_C050_TEXT       PHASE_NATIVE
+#define PHASE_PAL_C052_MIXED      PHASE_DELAY_1
+#define PHASE_PAL_C00D_80COL      PHASE_NATIVE
+#define PHASE_PAL_C05E_DHIRES     PHASE_NATIVE
+#define PHASE_PAL_C00F_ALTCHARSET PHASE_DELAY_1
 
-#if !PHASE_SETTING_VALID(PHASE_C050_TEXT) || \
-    !PHASE_SETTING_VALID(PHASE_C052_MIXED) || \
-    !PHASE_SETTING_VALID(PHASE_C00D_80COL) || \
-    !PHASE_SETTING_VALID(PHASE_C05E_DHIRES) || \
-    !PHASE_SETTING_VALID(PHASE_C00F_ALTCHARSET)
+#define PHASE_SETTING_VALID(value) (     (value) == PHASE_DELAY_1 || (value) == PHASE_NATIVE ||     (value) == PHASE_ADVANCE_1 || (value) == PHASE_ADVANCE_2)
+
+#if !PHASE_SETTING_VALID(PHASE_C050_TEXT) ||     !PHASE_SETTING_VALID(PHASE_C052_MIXED) ||     !PHASE_SETTING_VALID(PHASE_C00D_80COL) ||     !PHASE_SETTING_VALID(PHASE_C05E_DHIRES) ||     !PHASE_SETTING_VALID(PHASE_C00F_ALTCHARSET) ||     !PHASE_SETTING_VALID(PHASE_PAL_C050_TEXT) ||     !PHASE_SETTING_VALID(PHASE_PAL_C052_MIXED) ||     !PHASE_SETTING_VALID(PHASE_PAL_C00D_80COL) ||     !PHASE_SETTING_VALID(PHASE_PAL_C05E_DHIRES) ||     !PHASE_SETTING_VALID(PHASE_PAL_C00F_ALTCHARSET)
 #error "Unsupported Apple video soft-switch phase setting"
 #endif
 
-#define PHASE_SWITCH_MASK_AT(value) ( \
-    ((PHASE_C050_TEXT == (value)) ? (1U << ACE_SWB_TEXT_BIT) : 0U) | \
-    ((PHASE_C052_MIXED == (value)) ? (1U << ACE_SWB_MIXED_BIT) : 0U) | \
-    ((PHASE_C00D_80COL == (value)) ? (1U << ACE_SWB_80COL_BIT) : 0U) | \
-    ((PHASE_C05E_DHIRES == (value)) ? (1U << ACE_SWB_DHIRES_BIT) : 0U) | \
-    ((PHASE_C00F_ALTCHARSET == (value)) ? \
-        (1U << ACE_SWB_ALTCHARSET_BIT) : 0U))
+#define PHASE_SWITCH_MASK_AT(value) (     ((PHASE_C050_TEXT == (value)) ? (1U << ACE_SWB_TEXT_BIT) : 0U) |     ((PHASE_C052_MIXED == (value)) ? (1U << ACE_SWB_MIXED_BIT) : 0U) |     ((PHASE_C00D_80COL == (value)) ? (1U << ACE_SWB_80COL_BIT) : 0U) |     ((PHASE_C05E_DHIRES == (value)) ? (1U << ACE_SWB_DHIRES_BIT) : 0U) |     ((PHASE_C00F_ALTCHARSET == (value)) ?         (1U << ACE_SWB_ALTCHARSET_BIT) : 0U))
 
-#define PHASE_DELAY_1_SW_MASK \
-    PHASE_SWITCH_MASK_AT(PHASE_DELAY_1)
-#define PHASE_ADVANCE_1_SW_MASK \
-    PHASE_SWITCH_MASK_AT(PHASE_ADVANCE_1)
-#define PHASE_ADVANCE_2_SW_MASK \
-    PHASE_SWITCH_MASK_AT(PHASE_ADVANCE_2)
+#define PHASE_PAL_SWITCH_MASK_AT(value) (     ((PHASE_PAL_C050_TEXT == (value)) ? (1U << ACE_SWB_TEXT_BIT) : 0U) |     ((PHASE_PAL_C052_MIXED == (value)) ? (1U << ACE_SWB_MIXED_BIT) : 0U) |     ((PHASE_PAL_C00D_80COL == (value)) ? (1U << ACE_SWB_80COL_BIT) : 0U) |     ((PHASE_PAL_C05E_DHIRES == (value)) ?         (1U << ACE_SWB_DHIRES_BIT) : 0U) |     ((PHASE_PAL_C00F_ALTCHARSET == (value)) ?         (1U << ACE_SWB_ALTCHARSET_BIT) : 0U))
+
+/* Index 0 is the clean renderer, index 1 the PAL-accurate renderer. */
+static const uint32_t s_phase_delay_1_sw_mask[2] = {
+    PHASE_SWITCH_MASK_AT(PHASE_DELAY_1),
+    PHASE_PAL_SWITCH_MASK_AT(PHASE_DELAY_1)
+};
+static const uint32_t s_phase_advance_1_sw_mask[2] = {
+    PHASE_SWITCH_MASK_AT(PHASE_ADVANCE_1),
+    PHASE_PAL_SWITCH_MASK_AT(PHASE_ADVANCE_1)
+};
+static const uint32_t s_phase_advance_2_sw_mask[2] = {
+    PHASE_SWITCH_MASK_AT(PHASE_ADVANCE_2),
+    PHASE_PAL_SWITCH_MASK_AT(PHASE_ADVANCE_2)
+};
 
 static uint8_t  s_vtw_1mhz_active = 0u;
 static uint8_t  s_phase_prev_valid = 0u;
@@ -3921,6 +3932,10 @@ static uint64_t phase_correct_record(uint64_t rec,
     uint32_t baseline1 = raw1;
     uint32_t corrected;
     const uint64_t packed_mask = 0x7FFULL << ACE_BIT_SW_DHIRES;
+    /* The two renderers model switch latency differently, so each has its
+     * own table. The colour mode changes only at a frame start. */
+    const unsigned table =
+        (apple_pal_video_mode_is_active(s_render_color_mode) != 0u) ? 1u : 0u;
 
     if (s_vtw_1mhz_active != 0u && have_next1) {
         baseline0 = phase_replace_bits(baseline0, raw1,
@@ -3936,15 +3951,15 @@ static uint64_t phase_correct_record(uint64_t rec,
         phase_records_are_consecutive(s_phase_prev_record, rec)) {
         corrected = phase_replace_bits(corrected,
                                        s_phase_prev_baseline_sw,
-                                       PHASE_DELAY_1_SW_MASK);
+                                       s_phase_delay_1_sw_mask[table]);
     }
     if (have_next1) {
         corrected = phase_replace_bits(corrected, baseline1,
-                                       PHASE_ADVANCE_1_SW_MASK);
+                                       s_phase_advance_1_sw_mask[table]);
     }
     if (have_next2) {
         corrected = phase_replace_bits(corrected, raw2,
-                                       PHASE_ADVANCE_2_SW_MASK);
+                                       s_phase_advance_2_sw_mask[table]);
     }
 
     s_phase_prev_valid = 1u;

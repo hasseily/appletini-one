@@ -5220,7 +5220,7 @@ static void config_menu_set_slot5_processor(config_menu_t *menu,
     config_menu_save_settings(menu);
     config_menu_set_status(menu, 0U,
         menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_TRANSPORTER ?
-            "SLOT 5: PC TRANSPORTER TEST MODE" :
+            "SLOT 5: PC TRANSPORTER" :
         menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_AD8088 ?
             "SLOT 5: ALF AD8088 PLUS 640K" :
             "SLOT 5: Z80 APPLI-CARD");
@@ -5265,7 +5265,7 @@ void config_menu_set_applicard_enabled(config_menu_t *menu, uint8_t enable)
     if (menu->applicard_slot5_enabled != 0U) {
         config_menu_set_status(menu, 0U,
             menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_TRANSPORTER ?
-                "PC TRANSPORTER TEST MODE ON" :
+                "PC TRANSPORTER ON - SLOT 5" :
             menu->slot5_processor == CONFIG_SLOT5_PROCESSOR_AD8088 ?
                 "AD8088 PLUS 640K ON - SLOT 5" :
                 "APPLI-CARD Z80 ON - SLOT 5");
@@ -10165,8 +10165,14 @@ static void config_menu_draw_cogs(uint16_t *fb, const config_menu_t *menu,
     if (status->state == COGS_SAVED) {
         detail = "";
     } else if (status->state == COGS_DOWNLOADING && status->total != 0U) {
-        (void)snprintf(line, sizeof(line), "Downloading %lu / %lu bytes",
-                       (unsigned long)status->received, (unsigned long)status->total);
+        if (status->bytes_per_second >= 1024U) {
+            (void)snprintf(line, sizeof(line), "Downloading %lu / %lu bytes at %lu KiB/s",
+                           (unsigned long)status->received, (unsigned long)status->total,
+                           (unsigned long)(status->bytes_per_second / 1024U));
+        } else {
+            (void)snprintf(line, sizeof(line), "Downloading %lu / %lu bytes",
+                           (unsigned long)status->received, (unsigned long)status->total);
+        }
         detail = line;
     } else if (detail[0] == '\0') {
         if (status->state == COGS_LOADING) detail = "Loading games";

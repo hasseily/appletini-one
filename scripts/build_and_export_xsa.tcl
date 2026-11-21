@@ -39,7 +39,8 @@ set margin_clear_hook \
     [file normalize [file join $script_dir clear_fabric_timing_margin.tcl]]
 set route_finish_hook \
     [file normalize [file join $script_dir finish_video_timing.tcl]]
-foreach hook [list $margin_config_hook $margin_apply_hook $margin_clear_hook $route_finish_hook] {
+set direction_twin_hook     [file normalize [file join $script_dir replicate_direction_sources.tcl]]
+foreach hook [list $margin_config_hook $margin_apply_hook $margin_clear_hook $route_finish_hook $direction_twin_hook] {
     if {![file isfile $hook]} {
         error "Timing-margin hook does not exist: $hook"
     }
@@ -48,7 +49,8 @@ set margin_config_hook_sha256 [timing_run::sha256_file $margin_config_hook]
 set margin_apply_hook_sha256 [timing_run::sha256_file $margin_apply_hook]
 set margin_clear_hook_sha256 [timing_run::sha256_file $margin_clear_hook]
 set route_finish_hook_sha256 [timing_run::sha256_file $route_finish_hook]
-foreach hook_hash [list $margin_config_hook_sha256 $margin_apply_hook_sha256 $margin_clear_hook_sha256 $route_finish_hook_sha256] {
+set direction_twin_hook_sha256 [timing_run::sha256_file $direction_twin_hook]
+foreach hook_hash [list $margin_config_hook_sha256 $margin_apply_hook_sha256 $margin_clear_hook_sha256 $route_finish_hook_sha256 $direction_twin_hook_sha256] {
     if {![regexp -nocase {^[0-9a-f]{64}$} $hook_hash]} {
         error "Could not record a timing-margin hook SHA-256."
     }
@@ -87,6 +89,8 @@ dict set build_info margin_config_hook_sha256 $margin_config_hook_sha256
 dict set build_info margin_apply_hook_sha256 $margin_apply_hook_sha256
 dict set build_info margin_clear_hook_sha256 $margin_clear_hook_sha256
 dict set build_info route_finish_hook_sha256 $route_finish_hook_sha256
+dict set build_info direction_twin_hook_sha256 $direction_twin_hook_sha256
+dict set build_info direction_source_twins ""
 dict set build_info final_fabric_user_uncertainty_ns ""
 dict set build_info final_pixel_user_uncertainty_ns ""
 dict set build_info seed_control "Vivado default"
@@ -290,6 +294,12 @@ foreach {domain clock_name} {fabric clk_out1_zynq_ps_bd_clk_wiz_1_0
     }
 }
 set fabric_clock [get_clocks clk_out1_zynq_ps_bd_clk_wiz_1_0]
+# The pre-placement hook must have given the direction pads their own sources.
+set direction_source_twins [llength [get_cells -quiet -hierarchical     -filter {NAME =~ *_dirtwin && IS_PRIMITIVE}]]
+dict set build_info direction_source_twins $direction_source_twins
+if {$direction_source_twins == 0} {
+    error "The routed design has no direction-source twin."
+}
 # Check the reopened design independently of the implementation hook process.
 # Final setup slack must use the board's original output timing requirements.
 foreach spec {

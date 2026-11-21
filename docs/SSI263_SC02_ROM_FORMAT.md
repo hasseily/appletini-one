@@ -3,28 +3,78 @@
 ## Scope
 
 This note records the format of the supplied SSI-263A parameter ROM and the
-use of its low nibbles in the archived SC-02 prototype schematic. The active
-table now uses target codes read from an SSI-263P die. It keeps the original
-low control nibbles because the die read does not establish their byte wiring.
+use of its low nibbles in the archived SC-02 prototype schematic. Since
+F1.3.8dev1 the active table is that ROM again, byte for byte. From F1.2.5-d2
+to F1.3.7 the table used amplitude targets read from an SSI-263P die. A
+recording of two SSI 263 AP chips showed that those chips have the SSI-263A
+values.
 
 The net and latch behavior below is exact for the saved prototype schematic
 and its ROM. It does not prove that the final production SSI-263 die used the
 same inner wiring. Use a real production-card capture to settle any difference.
 
 The checked-in active table is
-[`hdl/apple/ssi263_sc02_rom.mem`](../hdl/apple/ssi263_sc02_rom.mem). The low
-control bits came from a previously supplied `ssi263a.bin` when commit
-`9ddcdc3` first added this table. That source file is not in this repo, so
-the recorded hashes identify it but do not let this repo check its origin.
-The 2 KiB source image had these identities:
+[`hdl/apple/ssi263_sc02_rom.mem`](../hdl/apple/ssi263_sc02_rom.mem). It is
+the first 512 bytes of a previously supplied `ssi263a.bin`, which commit
+`9ddcdc3` first added. The maker of that file is not known. Its other 1,536
+bytes are zero, so the table and the hashes below give the full file.
+The 2 KiB source image has these identities:
 
 - CRC32: `CC0A72EE`
 - SHA-256:
   `9C3BBA73319E1ED3652C85DAC19874DF04CBB72E62FDD63D6CBD7B34FF81F941`
 
-## Die target update for F1.2.5-d2
+## SSI-263A amplitude targets for F1.3.8dev1
 
-The active table's six upper-nibble fields use the phoneme bits from
+The SSI-263A file and the SSI-263P die read agree on all low nibbles and on
+the F1, F2, nasal and F3 targets of all 64 phones. They differ in 16
+amplitude targets of 12 phones:
+
+| Phone | Code | Voice amplitude, P die / A file | Noise amplitude, P die / A file |
+|---|---:|---|---|
+| L1 | `$21` | 8 / 15 | same |
+| Z | `$2F` | 1 / 2 | 10 / 15 |
+| J | `$31` | 1 / 2 | 10 / 15 |
+| SCH | `$32` | same | 6 / 9 |
+| V | `$33` | 3 / 6 | 4 / 8 |
+| F | `$34` | same | 4 / 8 |
+| THV | `$35` | 1 / 2 | 2 / 4 |
+| TH | `$36` | same | 2 / 6 |
+| M | `$37` | 10 / 15 | same |
+| N | `$38` | 8 / 15 | same |
+| NG | `$39` | 4 / 8 | same |
+| LB | `$3F` | 8 / 15 | same |
+
+The calibration recording of 2026-10-06 settles which values the real
+chips have. It holds two chips marked SSI 263 AP on a Phasor. Each chip
+speaks all 64 phones for 400 ms with R1 = `$6F`, R2 = `$8E`, R3 = `$7C` and
+R4 = `$E7`. The host model rendered the same register writes with each
+table. The comparison used the power above 60 Hz from 200 ms to 350 ms of
+each phone, in dB from AH, for the 55 phones that sound:
+
+| Table | RMS error | Worst error |
+|---|---:|---:|
+| P die targets | 3.64 dB | 12.6 dB (TH) |
+| A file | 1.27 dB | 2.9 dB |
+
+With the P die targets, the 12 phones above were 5.0 to 12.6 dB too weak.
+Their spectrum shape was correct, and their harmonics were low by one
+constant gain, as a wrong amplitude code gives. With the A file all 12 are
+within 2.7 dB. The other phones do not change.
+
+Limits: this is one recording of two AP chips, and no SSI-263P chip was
+recorded. The P die read can be correct for the P chip. The two chip types
+then have different amplitude tables.
+
+The active 512-byte table has SHA-256
+`101d129a5f104e6190f2eca518bbf9ef65bf4ff92684d29eba56d9641aa02b0a`. Run
+`python scripts/test_ssi263_die_rom.py` to check the table against the die
+bit matrix, the 16 listed differences and the host table mirror.
+
+## Die target update for F1.2.5-d2 (replaced in F1.3.8dev1)
+
+From F1.2.5-d2 to F1.3.7 the table's six upper-nibble fields used the phoneme
+bits from
 [Casso's SSI-263P die extraction](https://github.com/relmer/Casso/tree/87704604d38531ff0ac2ddefdb0b1779c0b1982f/specs/024-mockingboard-speech/rom-extraction).
 The exact 64-row raw bit matrix is saved as
 [`ssi263p_die_bits.csv`](../scripts/fixtures/ssi263_native/ssi263p_die_bits.csv).
@@ -32,21 +82,16 @@ The independent [die review](https://github.com/tgeczy/ssi263-speech/blob/0cc92b
 reports agreement on all 1,856 visible bits. F1 uses the bottom PAR row as
 its low bit; that field reading remains under study.
 
-Selectors 0, 1, 2, 3, 5, and 6 now hold die-decoded F1, F2, nasal, F3,
-voice amplitude, and noise amplitude targets. The first four fields already
-agreed across all 64 phones. The update changes 16 amplitude bytes: L1, Z,
-J, SCH, V, F, THV, TH, M, N, NG, and LB have at least one changed target.
-Selectors 4 and 7 stay zero. Every low nibble remains byte-for-byte as before;
-its SHA-256 when stored as one low-nibble value per byte is
+In those builds selectors 0, 1, 2, 3, 5, and 6 held die-decoded F1, F2,
+nasal, F3, voice amplitude, and noise amplitude targets. The first four
+fields already agreed across all 64 phones. That update changed the 16
+amplitude bytes in the table above. Selectors 4 and 7 stay zero. No low
+nibble changed; the SHA-256 of the low nibbles, stored as one value per
+byte, is
 `ec766017bd444b275405bfb2825083e58e59ea1113328b5ba1f881ad0760118d`.
 
-The new active 512-byte table has SHA-256
+That 512-byte table had SHA-256
 `ea494f047de11c533cb36a51d8686949206cedb91ab4855bdf9bde9500f828d9`.
-Padding it with 1,536 zero bytes gives SHA-256
-`849baa20baae3d756f26813cf4e4f47392573e735cb4c66afdc434f9932147e0`;
-that padded table is not the original source image. Run
-`python scripts/test_ssi263_die_rom.py` to check all raw bits, target fields,
-control nibbles, and the host table mirror.
 
 ## Address and byte layout
 

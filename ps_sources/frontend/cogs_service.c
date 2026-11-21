@@ -54,7 +54,7 @@ static void show_page(uint16_t page)
     catalog.count = (uint8_t)(remaining < COGS_PAGE_CAPACITY ? remaining : COGS_PAGE_CAPACITY);
     memcpy(catalog.entries, &games[offset], catalog.count * sizeof(games[0]));
     status.page = catalog.pages != 0U ? page : 0U;
-    status.received = status.total = 0U;
+    status.received = status.total = status.bytes_per_second = 0U;
     set_status(COGS_READY, catalog.count != 0U ? "Choose a game to download" :
                                                "No 8-bit game disks");
 }
@@ -71,9 +71,9 @@ int cogs_service_browse_first(void)
     source_page = 1U;
     source_pages = game_count = 0U;
     cancel_requested = 0U;
-    status.received = status.total = 0U;
+    status.received = status.total = status.bytes_per_second = 0U;
     phase = P_PAGE_START;
-    set_status(COGS_LOADING, "Loading 8-bit game disks");
+    set_status(COGS_LOADING, "Loading games: 0%");
     return 0;
 }
 
@@ -93,7 +93,7 @@ int cogs_service_download(uint8_t row)
     }
     selected_row = row;
     cancel_requested = 0U;
-    status.received = 0U;
+    status.received = status.bytes_per_second = 0U;
     status.total = catalog.entries[row].bytes;
     phase = P_IMAGE_START;
     set_status(COGS_DOWNLOADING, "Connecting to the disk image host");
@@ -171,9 +171,11 @@ static void read_catalog(void)
     game_count = (uint16_t)new_count;
 
     if (source_page < source_pages) {
+        /* The provider's page count means nothing to the user: most rows are
+         * filtered out. Show the share of the catalog that has arrived. */
+        (void)snprintf(status.detail, sizeof(status.detail), "Loading games: %u%%",
+                       (unsigned)source_page * 100U / (unsigned)source_pages);
         ++source_page;
-        (void)snprintf(status.detail, sizeof(status.detail), "Loading catalog page %u of %u",
-                       (unsigned)source_page, (unsigned)source_pages);
         release_http_to(P_PAGE_START);
         return;
     }
@@ -227,6 +229,14 @@ static void poll_image_writer(uint8_t allowed)
     http_download_status_t download;
     http_download_cogs_status(&download);
     status.received = download.written;
+    if (http_service_getowner() == HTTP_OWNER_COGS) {
+        static http_status_t source;
+        http_service_status(&source);
+        if (source.elapsed_us != 0U) {
+            const uint64_t rate = (uint64_t)download.written * 1000000ULL / source.elapsed_us;
+            status.bytes_per_second = rate > UINT32_MAX ? UINT32_MAX : (uint32_t)rate;
+        }
+    }
     if (http_download_cogs_active()) {
         if (download.state != HTTP_DL_WRITING) {
             set_status(COGS_DOWNLOADING, "Waiting for SD cleanup");

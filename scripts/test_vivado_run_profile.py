@@ -91,7 +91,8 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="appletini_run_profile_") as tmp:
         directory = Path(tmp)
         for name in ("configure_vivado_run_profile.tcl", "vivado_run_threads.tcl",
-                     "apply_fabric_timing_margin.tcl", "finish_video_timing.tcl"):
+                     "apply_fabric_timing_margin.tcl", "finish_video_timing.tcl",
+                     "replicate_direction_sources.tcl"):
             (directory / name).write_text((ROOT / "scripts" / name).read_text(encoding="utf-8"), encoding="utf-8")
         profile = directory / "configure_vivado_run_profile.tcl"
         interp.call("source", str(profile))
@@ -114,6 +115,7 @@ def main() -> int:
                 "STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE": "Default",
                 "STEPS.INIT_DESIGN.TCL.PRE": "vivado_run_threads.tcl",
                 "STEPS.OPT_DESIGN.TCL.PRE": "apply_fabric_timing_margin.tcl",
+                "STEPS.PLACE_DESIGN.TCL.PRE": "replicate_direction_sources.tcl",
                 "STEPS.ROUTE_DESIGN.TCL.POST": "finish_video_timing.tcl",
             },
         }

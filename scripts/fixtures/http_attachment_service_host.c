@@ -116,7 +116,7 @@ int main(void)
         copied += http_service_read_owned(HTTP_OWNER_DOWNLOAD, out + copied, sizeof(out) - copied);
     }
     assert(copied == sizeof(payload) && !memcmp(out, payload, copied));
-    assert(g_http.status.state == HTTP_S_DONE && g_http.started == started && network_receives > 8);
+    assert(g_http.status.state == HTTP_S_DONE && g_http.started == started && network_receives > 2);
     http_service_status(&status); assert(status.content_length == sizeof(payload));
     assert(http_service_start(&another) == HTTP_E_BUSY); /* DONE still owned. */
     assert(!http_service_release_owned(HTTP_OWNER_DOWNLOAD) && http_service_getowner() == HTTP_OWNER_NONE);

@@ -1,7 +1,10 @@
 #include "net_service.h"
 #include "net_json.h"
 #include "http_service.h"
+#include "net_image.h"
+#include "../../ps_sources/lib/lodepng.h"
 #include <assert.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -144,4 +147,133 @@ static void transport_tests(void)
     packet[0]=2;assert(net_service_control(packet,12)==0x21);
     assert(net_service_control(packet,1013)==0x21);
 }
-int main(void){json_tests();transport_tests();puts("PASS strict incremental JSON, pointer lookup, production protocol, lifecycle, replay and reply bounds");return 0;}
+static unsigned start_image(unsigned flags,unsigned w,unsigned h,unsigned box_bytes)
+{
+    const char *url="https://example.test/a.png";
+    memset(packet,0,12);packet[0]=1;packet[1]=NET_START;packet[2]=(uint8_t)flags;
+    packet[3]=3;packet[4]=(uint8_t)strlen(url);packet[10]=(uint8_t)box_bytes;
+    memcpy(packet+12,"GET",3);memcpy(packet+15,url,strlen(url));
+    uint8_t *box=packet+15+strlen(url);
+    box[0]=(uint8_t)w;box[1]=(uint8_t)(w>>8);box[2]=(uint8_t)h;box[3]=(uint8_t)(h>>8);
+    return net_service_control(packet,15+strlen(url)+box_bytes);
+}
+static int16_t result_now(void)
+{assert(read_at(0x82,0,64)==64);return (int16_t)((unsigned)reply[10]|((unsigned)reply[11]<<8));}
+static void image_tests(void)
+{
+    unsigned char rgba[20*10*4],*png=NULL;size_t png_size=0;
+    memset(rgba,255,sizeof(rgba));
+    for(unsigned i=0;i<10*10;++i)memset(rgba+(i/10*20+i%10)*4,0,3); /* left half black */
+    assert(!lodepng_encode32(&png,&png_size,rgba,20,10)&&png_size<sizeof(body));
+    net_service_reset();net_service_poll();
+    assert(read_at(0x82,0,64)==64&&(reply[6]&NET_CAP_IMAGE));
+    /* The flag stands alone and needs a legal box of exactly four bytes. */
+    assert(start_image(NET_FLAG_IMAGE|NET_FLAG_RETAIN,546,144,4)==0x21);
+    assert(start_image(NET_FLAG_IMAGE|NET_FLAG_AUTO_DOWNLOAD,546,144,4)==0x21);
+    assert(start_image(NET_FLAG_IMAGE,546,144,3)==0x21);
+    assert(start_image(NET_FLAG_IMAGE,0,144,4)==0x21);
+    assert(start_image(NET_FLAG_IMAGE,561,144,4)==0x21);
+    assert(start_image(NET_FLAG_IMAGE,546,385,4)==0x21);
+    assert(start_image(16,546,144,4)==0x21);
+
+    assert(!start_image(NET_FLAG_IMAGE,546,144,4));net_service_poll();
+    backend.headers_ready=1;backend.status=200;
+    /* The body arrives in two parts. No picture byte shows before DONE. */
+    memcpy(body,png,png_size);bytes=png_size/2;net_service_poll();
+    assert(read_at(0x82,0,64)==64&&reply[8]==NET_ACTIVE);
+    assert(read_at(0x83,0,512)==8&&reply[1]==NET_MORE&&consumed==bytes);
+    bytes=png_size;backend.state=HTTP_S_DONE;net_service_poll();
+    assert(read_at(0x82,0,64)==64&&reply[8]==NET_DONE&&consumed==bytes);
+    unsigned n=read_at(0x83,0,512);
+    assert(n==8+4+3*10&&reply[1]==NET_END);
+    assert(reply[8]==20&&reply[9]==0&&reply[10]==10&&reply[11]==0);
+    for(unsigned y=0;y<10;++y) {
+        const uint8_t *row=reply+12+y*3;
+        assert(row[0]==0&&row[1]==0x78&&row[2]==0x3F); /* pixels 10..19 white */
+    }
+    assert(read_at(0x83,4,9)==9&&reply[1]==NET_MORE&&reply[8]==0);
+    assert(read_at(0x83,34,512)==8&&reply[1]==NET_END);
+    assert(read_at(0x83,35,512)==8&&reply[1]==NET_LOST);
+
+    /* Not an image: the request fails with the format result. */
+    assert(!start_image(NET_FLAG_IMAGE,546,144,4));net_service_poll();
+    backend.headers_ready=1;backend.status=200;
+    memcpy(body,"<html>no</html>",15);bytes=15;backend.state=HTTP_S_DONE;net_service_poll();
+    assert(result_now()==NET_IMAGE_E_FORMAT&&reply[8]==NET_FAILED);
+    assert(read_at(0x83,0,512)==8&&reply[1]==NET_SOURCE_FAILED);
+
+    /* HTTP error: body dropped, DONE with the status for the client. */
+    assert(!start_image(NET_FLAG_IMAGE,546,144,4));net_service_poll();
+    backend.headers_ready=1;backend.status=404;
+    memcpy(body,png,png_size);bytes=png_size;backend.state=HTTP_S_DONE;net_service_poll();
+    assert(read_at(0x82,0,64)==64&&reply[8]==NET_DONE&&reply[12]==(404&255)&&consumed==bytes);
+    assert(read_at(0x83,0,512)==8&&reply[1]==NET_END);
+
+    /* A plain request after a picture request reads the stream again. */
+    start(0);memset(body,'q',100);bytes=100;backend.state=HTTP_S_DONE;net_service_poll();
+    assert(read_at(0x83,0,512)==108&&reply[1]==NET_END&&reply[8]=='q');
+    net_service_reset();net_service_poll();
+    free(png);
+}
+static void page_tests(void)
+{
+    const char *url="https://example.test/a";
+    const char *html="<html><head><script>x='</p>'</script><body><p>Hi <a href=/x>there</a>";
+    const char *clean="<p>Hi <a href=\"/x\">there</a>";
+    net_service_reset();net_service_poll();
+    assert(read_at(0x82,0,64)==64&&(reply[6]&NET_CAP_PAGE));
+    for(unsigned flags=NET_FLAG_PAGE;flags<=(NET_FLAG_PAGE|NET_FLAG_AUTO_DOWNLOAD);flags+=NET_FLAG_AUTO_DOWNLOAD) {
+        memset(packet,0,12);packet[0]=1;packet[1]=NET_START;packet[2]=(uint8_t)flags;
+        packet[3]=3;packet[4]=(uint8_t)strlen(url);
+        memcpy(packet+12,"GET",3);memcpy(packet+15,url,strlen(url));
+        assert(!net_service_control(packet,15+strlen(url)));net_service_poll();
+        strcpy(backend.content_type,"text/html; charset=utf-8");
+        backend.headers_ready=1;backend.status=200;
+        memcpy(body,html,strlen(html));bytes=strlen(html)/2;net_service_poll();
+        assert(read_at(0x82,0,64)==64&&reply[8]==NET_ACTIVE);
+        assert(read_at(0x83,0,512)==8&&reply[1]==NET_MORE);
+        bytes=strlen(html);backend.state=HTTP_S_DONE;net_service_poll();net_service_poll();
+        assert(read_at(0x82,0,64)==64&&reply[8]==NET_DONE);
+        assert(read_at(0x83,0,512)==8+strlen(clean)&&reply[1]==NET_END);
+        assert(!memcmp(reply+8,clean,strlen(clean)));
+        assert(read_at(0x83,3,12)==12&&reply[1]==NET_MORE&&!memcmp(reply+8,clean+3,4));
+    }
+    /* A linked style sheet: one more request, then the image has its size. */
+    {
+        const char *linked="<link rel=stylesheet href=/a.css><img class=k src=i.png>";
+        const char *sheet=".k{width:64px}";
+        memset(packet,0,12);packet[0]=1;packet[1]=NET_START;packet[2]=NET_FLAG_PAGE;
+        packet[3]=3;packet[4]=(uint8_t)strlen(url);
+        memcpy(packet+12,"GET",3);memcpy(packet+15,url,strlen(url));
+        assert(!net_service_control(packet,15+strlen(url)));net_service_poll();
+        strcpy(backend.content_type,"text/html");backend.headers_ready=1;backend.status=200;
+        memcpy(body,linked,strlen(linked));bytes=strlen(linked);backend.state=HTTP_S_DONE;
+        unsigned before=starts;net_service_poll();net_service_poll();
+        assert(starts==before+1&&!strcmp(backend.url,"https://example.test/a.css"));
+        assert(read_at(0x82,0,64)==64&&reply[8]==NET_ACTIVE);
+        strcpy(backend.content_type,"text/css");backend.headers_ready=1;backend.status=200;
+        memcpy(body,sheet,strlen(sheet));bytes=strlen(sheet);backend.state=HTTP_S_DONE;net_service_poll();
+        assert(read_at(0x82,0,64)==64&&reply[8]==NET_DONE);
+        /* The descriptor still describes the page, not the sheet. */
+        assert(read_at(0x86,0,128)==8+9&&!memcmp(reply+8,"text/html",9));
+        assert(read_at(0x83,0,512)>8&&reply[1]==NET_END&&!memcmp(reply+8,"<img src=\"i.png\" w=64>",22));
+    }
+    /* Not HTML: the body streams without change. */
+    memset(packet,0,12);packet[0]=1;packet[1]=NET_START;packet[2]=NET_FLAG_PAGE;
+    packet[3]=3;packet[4]=(uint8_t)strlen(url);
+    memcpy(packet+12,"GET",3);memcpy(packet+15,url,strlen(url));
+    assert(!net_service_control(packet,15+strlen(url)));net_service_poll();
+    strcpy(backend.content_type,"text/plain");backend.headers_ready=1;backend.status=200;
+    memcpy(body,html,strlen(html));bytes=strlen(html);backend.state=HTTP_S_DONE;net_service_poll();
+    assert(read_at(0x83,0,512)==8+strlen(html)&&reply[1]==NET_END&&!memcmp(reply+8,html,strlen(html)));
+    /* PAGE cannot combine with RETAIN or FORCE_DOWNLOAD. */
+    packet[2]=NET_FLAG_PAGE|NET_FLAG_RETAIN;assert(net_service_control(packet,15+strlen(url))==0x21);
+    packet[2]=NET_FLAG_PAGE|NET_FLAG_FORCE_DOWNLOAD;assert(net_service_control(packet,15+strlen(url))==0x21);
+    /* A POST can ask for a filtered page. */
+    memset(packet,0,12);packet[0]=1;packet[1]=NET_START;packet[2]=NET_FLAG_PAGE;
+    packet[3]=4;packet[4]=(uint8_t)strlen(url);packet[8]=3;
+    memcpy(packet+12,"POST",4);memcpy(packet+16,url,strlen(url));memcpy(packet+16+strlen(url),"a=b",3);
+    assert(!net_service_control(packet,16+strlen(url)+3));
+    net_service_reset();net_service_poll();
+}
+int main(void){json_tests();transport_tests();image_tests();page_tests();puts("PASS page request: filtered HTML by offset, plain stream for other types, flag rules, POST");puts("PASS picture request: flag rules, staged body, rows, bad image, HTTP error");puts("PASS strict incremental JSON, pointer lookup, production protocol, lifecycle, replay and reply bounds");return 0;}

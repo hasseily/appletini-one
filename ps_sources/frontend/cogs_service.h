@@ -12,6 +12,8 @@ typedef struct {
     uint8_t state;
     uint16_t page;
     uint32_t received, total;
+    /* Average of the current download since its request began. 0: not known. */
+    uint32_t bytes_per_second;
     char detail[HTTP_DOWNLOAD_PATH_MAX + sizeof(COGS_SAVED_PREFIX) - 1U];
 } cogs_service_status_t;
 
